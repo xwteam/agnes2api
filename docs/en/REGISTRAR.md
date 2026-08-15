@@ -123,11 +123,18 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
   aborted only leaves the round incomplete (see the next bullet). If you want even the
   pathological case to stay within the wall clock, set `MINT_BATCH` to 1–2, or lower
   `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
-- **With `REGISTRAR_FALLBACK` configured, multiply both estimates above by the number of
-  channels (i.e. ×2).** "The verification code never arrives" is a channel-level failure, so the
-  same refill slot waits out another `CODE_TIMEOUT_MS` on the fallback channel. The startup
-  warning `TEND_INTERVAL_MS is below the worst-case round duration` uses exactly this model:
-  `MINT_BATCH × CODE_TIMEOUT_MS × number of channels`.
+- **With `REGISTRAR_FALLBACK` configured, multiply the *worst case* by the number of channels
+  (i.e. ×2); the typical duration is unchanged.** In the typical case the code arrives and the
+  fallback is never engaged; only a channel-level failure such as "the verification code never
+  arrives" makes the same refill slot wait out another `CODE_TIMEOUT_MS` on the fallback. The
+  startup warning `TEND_INTERVAL_MS is below the worst-case round duration` uses exactly this
+  model: `MINT_BATCH × CODE_TIMEOUT_MS × number of channels`.
+- **⚠️ On Worker with a fallback configured, lower `MINT_BATCH`.** With the defaults the worst
+  case is `5 × 120s × 2 = 1200s`, **over the 900s wall clock**. If both channels stop receiving
+  mail (e.g. Agnes stops sending codes), that Cron invocation is aborted at 900s and the mailbox
+  being minted at that moment is never deleted (it expires ~24h later on YYDS via `expiresAt`,
+  or after the 1h TTL on MoeMail). To keep even the worst case inside the wall clock, set
+  `MINT_BATCH` to **3 or lower** (`3 × 120 × 2 = 720s`). Node/Docker has no such limit.
 - **Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers
   out with both formulas above.** When the limit is hit, the platform aborts that Cron
   invocation.
@@ -162,8 +169,8 @@ attempt, whether it succeeded or failed.
   which layer broke: `code_timeout` = this channel is not receiving Agnes' mail (MX record /
   forwarding rule); `register_failed` / `login_failed` / `key_failed` = Agnes changed its
   sign-up path; `provider_error` = the mailbox service itself (credentials, active-mailbox
-  quota, outage); `provider_missing` = you selected a channel but never supplied its
-  credentials — a configuration error.
+  quota, outage); `provider_missing` = an internal wiring error; it should not appear
+  under a normal configuration (missing credentials fail at startup, long before this).
 - If a channel keeps failing to register (for example, Agnes has tightened its verification-code
   or CAPTCHA policy), that's an upstream change no amount of code can work around. You can disable
   the registrar and switch to manually importing keys instead (see [DEPLOY.md](DEPLOY.md)).

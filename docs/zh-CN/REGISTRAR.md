@@ -107,10 +107,17 @@ Agnes 账号、登录、铸出一把 API key 写入池子。注册过程需要�
   情况下会顶到墙钟上限**——这是有意接受的取舍：每铸出一把 key 就立即写入存储，被中止
   只会让当轮不完整（见下一条）。若希望连极端情况也留在墙钟内，把 `MINT_BATCH` 调到
   1~2，或调小 `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`。
-- **配了 `REGISTRAR_FALLBACK` 时，上面两个估算都要乘以通道数（即 ×2）。** 因为「收不到
-  验证码」属于通道级失败，同一个补池名额会在备通道上再等一次 `CODE_TIMEOUT_MS`。启动
-  时那条 `TEND_INTERVAL_MS 小于单轮最坏耗时` 的告警用的就是这个模型：
+- **配了 `REGISTRAR_FALLBACK` 时，「最坏耗时」要乘以通道数（即 ×2）；常态耗时不变。**
+  常态下验证码正常到达，备通道根本不会被启用；只有「收不到验证码」这类通道级失败，才会
+  让同一个补池名额在备通道上再等一次 `CODE_TIMEOUT_MS`。启动时那条
+  `TEND_INTERVAL_MS 小于单轮最坏耗时` 的告警用的就是这个模型：
   `MINT_BATCH × CODE_TIMEOUT_MS × 通道数`。
+- **⚠️ Worker + 备通道请务必调小 `MINT_BATCH`。** 默认值下最坏一轮是
+  `5 × 120 秒 × 2 = 1200 秒`，**超过 900 秒墙钟**。两条通道同时收不到信（例如 Agnes 停发
+  验证码）时，本次 Cron 会在 900 秒被平台中止，正在铸的那个临时邮箱来不及删除而残留
+  （YYDS 侧约 24 小时后随 `expiresAt` 过期，MoeMail 侧按 1 小时 TTL 过期）。想让最坏情况
+  也留在墙钟内，Worker 形态配了备通道就把 `MINT_BATCH` 调到 **3 或更小**
+  （`3 × 120 × 2 = 720 秒`）。Node/Docker 没有这个墙钟限制，不受影响。
 - **在调大 `MINT_BATCH`、`CODE_TIMEOUT_MS` 或 `MAX_DOMAIN_ATTEMPTS` 之前，请自行按上面
   两个公式核算。** 顶到上限时，本次 Cron 调用会被平台中止。
 - 即使被中止也不会丢失已经铸好的 key——每铸出一把就立即写入存储，只是当轮次的补池不完
@@ -138,6 +145,6 @@ Agnes 账号、登录、铸出一把 API key 写入池子。注册过程需要�
   `code_timeout` = 这条通道收不到 Agnes 的信（域名 MX / 邮件转发规则）；
   `register_failed` / `login_failed` / `key_failed` = Agnes 侧的注册链路变了；
   `provider_error` = 邮箱服务本身（凭据、活跃邮箱配额、服务不可用）；
-  `provider_missing` = 配了这条通道却没给它的凭据，属于配置错误。
+  `provider_missing` = 内部接线错误，正常配置下不会出现（缺凭据是启动即报错，走不到这里）。
 - 若某条通道持续注册失败（例如 Agnes 收紧了验证码或人机验证策略），这是代码层面无法
   规避的上游变化，可以关闭注册机、改为手动导入 key（见 [DEPLOY.md](DEPLOY.md)）。
