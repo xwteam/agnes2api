@@ -106,6 +106,9 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
       let tryFallback = false;
       switch (out.reason) {
         case "provider_error":
+          // 通道级失败：列域名失败、凭据无效，以及「所有候选域名上都建不出邮箱」
+          //（mintOne 把这三种都归到 provider_error）。设计 §4.5 承诺的正是这三种
+          // 情况降级到备通道。
           tryFallback = true;
           break;
         case "domain_blocked_all":

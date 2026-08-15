@@ -78,6 +78,33 @@ describe("mintOne", () => {
     expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "upstream_error" });
   });
 
+  it("所有候选域名上都建不出邮箱时返回 provider_error（通道级失败，可降级到备通道）", async () => {
+    // 设计 §4.5 把「连续建邮箱失败」与「列域名失败、凭据无效」并列为通道级失败。
+    // 此前这条路径轮完后返回 domain_blocked_all，而 tender 把 domain_blocked_all
+    // 归入「换通道也没用」，备通道配了也永远不会启用。
+    const provider = new FakeMailProvider({
+      domains: ["x.test", "y.test", "z.test"],
+      failCreateOn: ["x.test", "y.test", "z.test"],
+    });
+    const { seen, agnes } = agnesStub({ login: "tok", key: "sk-ok" });
+    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "provider_error" });
+    // 一个邮箱都没建出来 → 一次验证码都没发出去 → 根本没资格声称"域名全被屏蔽"。
+    expect(provider.created).toEqual([]);
+    expect(seen).toEqual([]);
+  });
+
+  it("只有部分域名建不出邮箱、其余域名被上游拒(400)时仍是 domain_blocked_all（不误报通道级失败）", async () => {
+    // 与上一条成对：只要有过一次成功建邮箱，就说明通道本身是活的，失败原因该
+    // 归到域名而不是通道。两条断言的 reason 不同，避免"谁赢都通过"。
+    const provider = new FakeMailProvider({
+      domains: ["bad.test", "blocked.test"],
+      failCreateOn: ["bad.test"],
+    });
+    const { agnes } = agnesStub({ sendCode: () => 400 });
+    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "domain_blocked_all" });
+    expect(provider.created).toHaveLength(1);
+  });
+
   it("最多只试 maxDomainAttempts 个域名", async () => {
     const provider = new FakeMailProvider({ domains: ["a.test", "b.test", "c.test", "d.test", "e.test"] });
     const { seen, agnes } = agnesStub({ sendCode: () => 400 });
@@ -117,6 +144,17 @@ describe("mintOne", () => {
       expect(provider.deleted).toEqual(provider.created);
       expect(provider.deleted.length).toBeGreaterThan(0);
     }
+  });
+
+  it("轮换多个域名全部失败时，每个域名建出的邮箱都被删掉（不是只删最后一个）", async () => {
+    // 上一条固定单域名，deleted 恒为 1，删除是不是发生在**每一轮**域名轮换里
+    // 看不出来。这条让 3 个域名依次被 400 拒掉，断言 3 个邮箱一个不落地删干净
+    // ——YYDS 免费档同时只能有 15 个活跃邮箱，漏删会直接把配额吃光。
+    const provider = new FakeMailProvider({ domains: ["a.test", "b.test", "c.test"] });
+    const { agnes } = agnesStub({ sendCode: () => 400 });
+    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "domain_blocked_all" });
+    expect(provider.created).toHaveLength(3);
+    expect(provider.deleted).toEqual(provider.created);
   });
 
   it("列域名失败返回 provider_error", async () => {

@@ -123,6 +123,9 @@ describe("tendOnce", () => {
   });
 
   it("主通道通道级失败时降级到备通道", async () => {
+    // 注意：这条覆盖的是**列域名失败**那一种。下面 broken.createMailbox 那行永远
+    // 走不到（listDomains 先抛错，mintOne 直接返回），另一种通道级失败——「所有
+    // 域名上都建不出邮箱」——由紧随其后的那条用 failCreateOn 的用例覆盖。
     const broken: MailProvider = {
       name: "yyds" as const,
       async listDomains(): Promise<string[]> { throw new Error("down"); },
@@ -136,6 +139,27 @@ describe("tendOnce", () => {
     const out = await tendOnce(deps);
     expect(out.minted).toBe(1);
     expect(backup.created.length).toBe(1);
+    expect(await repo.all()).toHaveLength(1);
+  });
+
+  it("主通道在所有域名上都建不出邮箱时也降级到备通道（通道级失败的第二种形态）", async () => {
+    // 这是 fake-mailbox 的 failCreateOn 选项存在的理由，此前全仓零使用：域名列得
+    // 出来、但每个域名的 createMailbox 都失败（凭据失效、活跃邮箱配额耗尽、邮箱
+    // 服务挂了）。设计 §4.5 与五语言用户文档都承诺这种情况会降级，此前它被归成
+    // domain_blocked_all，备通道永不启用。
+    const brokenCreate = new FakeMailProvider({
+      domains: ["a.test", "b.test", "c.test"],
+      failCreateOn: ["a.test", "b.test", "c.test"],
+    });
+    const backup = new FakeMailProvider();
+    const { repo, deps } = await makeDeps({ fallback: "moemail", targetKeys: 1 });
+    deps.providers = { yyds: brokenCreate, moemail: backup };
+    const out = await tendOnce(deps);
+    expect(out.minted).toBe(1);
+    expect(brokenCreate.created).toEqual([]);
+    // 备通道确实被调用了（不是"主通道恰好也成功了"这种殊途同归）。
+    expect(backup.created).toHaveLength(1);
+    expect(out.failures).toEqual([{ reason: "provider_error", channel: "yyds" }]);
     expect(await repo.all()).toHaveLength(1);
   });
 

@@ -54,6 +54,17 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
   // "上游故障"误判成"换个域名就好"，据此做的退避决策会决策错。用这个标记把两者
   // 分开，只要出现过一次非 400 的非 2xx，就不能再声称"域名全被屏蔽"。
   let sawUpstreamError = false;
+  // 「所有候选域名上都建不出邮箱」是**通道级**失败（凭据失效、活跃邮箱配额耗尽、
+  // 邮箱服务本身挂了），不是域名问题：设计 §4.5 与五语言用户文档都把「连续建邮箱
+  // 失败」与「列域名失败、凭据无效」并列为该降级到备通道的三种通道级失败。此前这条
+  // 路径一律 continue、轮完后返回 domain_blocked_all，而 tender 把 domain_blocked_all
+  // 归入「换通道也没用」，于是备通道明明配好了却永远不会被启用，日志还把排障引向
+  // 域名方向。用这个标记把两者分开。
+  //
+  // 复用 provider_error 而不是新增 reason：tender 对它的处置（降级到备通道）与这里
+  // 需要的完全一致，且 listDomains 失败、凭据无效走的也是同一个语义——「这条通道
+  // 现在产不出邮箱」。多一个 reason 只会让 tender 的 switch 多一支相同的分支。
+  let createdAny = false;
 
   for (const domain of candidates) {
     let mailbox: Mailbox;
@@ -63,6 +74,7 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       console.warn(`[agnes2api] 建临时邮箱失败，换下一个域名：${domain}`, err);
       continue; // 这个域名建不出邮箱，换下一个
     }
+    createdAny = true;
 
     try {
       const status = await sendCode(deps.agnes, mailbox.address);
@@ -100,6 +112,16 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
         console.warn(`[agnes2api] 删临时邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
       }
     }
+  }
+
+  if (!createdAny) {
+    // 一个邮箱都没建出来，说明连「让 Agnes 看一眼这个域名」的机会都没有过，
+    // 谈不上域名被屏蔽。这条日志要能把运维引向邮箱通道（凭据/配额/服务），
+    // 而不是域名。
+    console.warn(
+      `[agnes2api] ${candidates.length} 个候选域名上都建不出临时邮箱，按通道级失败处理（可降级到备通道）`,
+    );
+    return { ok: false, reason: "provider_error" };
   }
 
   return sawUpstreamError
