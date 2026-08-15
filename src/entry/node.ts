@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { setInterval as nodeSetInterval } from "node:timers";
 import { pathToFileURL } from "node:url";
 import { buildApp, buildTendDeps } from "../http/wire.js";
+import { loadConfig } from "../core/config.js";
 import { FileStorage } from "../adapters/storage-file.js";
 import { tendOnce } from "../core/registrar/tender.js";
 import type { TendDeps } from "../core/registrar/tender.js";
@@ -18,37 +19,45 @@ export async function main(env: Record<string, string | undefined> = process.env
   const app = await buildApp(env, storage, { probeStorage: true });
   const port = Number(env.PORT ?? 8080);
 
-  // 注册机未启用（默认状态）时 buildTendDeps 直接返回 null，不起定时器。
-  // 装配本身也可能失败（例如注册机配置非法）——同下面 runTend() 的原则，装配
-  // 阶段的失败也不该让网关整个进程起不来：转发能力与补池能力相互独立。当前
-  // buildApp() 先于这里执行、会对同一份注册机配置做同等校验并率先抛错，这层
-  // try/catch 眼下不可达，但不该是巧合式安全——防的是未来重构把 buildApp 与
-  // buildTendDeps 的校验路径解耦后悄悄引入的回归（与 worker.ts 的 scheduled()
-  // 对称）。
-  let tendDeps: TendDeps | null = null;
-  try {
-    tendDeps = await buildTendDeps(env, storage);
-  } catch (err) {
-    console.error("[registrar] 装配补池依赖失败", err);
-  }
-  if (tendDeps) {
-    // 在途守卫。`setInterval` 不等上一轮 resolve，而单轮最坏耗时
-    //（MINT_BATCH × CODE_TIMEOUT_MS，默认 5×120 秒）轻易就能超过 TEND_INTERVAL_MS，
-    // 于是补池轮次会重叠着跑。这正是「顺序铸、不并发」这条**功能性**约束要防的
-    // 事：并发会同时撞邮箱服务的建号限流与 Agnes 的注册风控。tender 在**轮内**
-    // 严防 Promise.all，轮间的重叠只能在调度接线这一层挡住。
-    let inFlight = false;
+  // 在途守卫。`setInterval` 不等上一轮 resolve，而单轮最坏耗时
+  //（MINT_BATCH × CODE_TIMEOUT_MS，默认 5×120 秒）轻易就能超过 TEND_INTERVAL_MS，
+  // 于是补池轮次会重叠着跑。这正是「顺序铸、不并发」这条**功能性**约束要防的
+  // 事：并发会同时撞邮箱服务的建号限流与 Agnes 的注册风控。tender 在**轮内**
+  // 严防 Promise.all，轮间的重叠只能在调度接线这一层挡住。
+  let inFlight = false;
 
-    const runTend = async () => {
-      if (inFlight) {
-        console.warn(
-          "[registrar] 上一轮补池仍在进行，跳过本次触发（可调大 TEND_INTERVAL_MS 或调小 MINT_BATCH）",
-        );
+  const runTend = async () => {
+    if (inFlight) {
+      console.warn(
+        "[registrar] 上一轮补池仍在进行，跳过本次触发（可调大 TEND_INTERVAL_MS 或调小 MINT_BATCH）",
+      );
+      return;
+    }
+    inFlight = true;
+    try {
+      // **每一轮都重新读一次配置**（环境变量 + 存储），与 Worker 侧每次 Cron 都
+      // 重新 buildTendDeps 的行为对齐。此前只在启动时装配一次、之后一直复用那份
+      // 快照：P3 的面板是这份配置的编辑器（设计 §11），同一个面板操作在 Worker
+      // 上立即生效、在 Node 上却必须重启进程；更糟的是启动时 enabled=false 就
+      // 根本没有定时器，此后怎么改存储都打不开，而启动时 enabled=true 则从存储
+      // 关也关不掉。
+      //
+      // 未启用时 buildTendDeps 在构造任何 provider 之前就返回 null：这一轮除了
+      // 读一次配置不产生任何副作用，不会触达邮箱或 Agnes——与 Worker 侧
+      // REGISTRAR_ENABLED=false 时 Cron 空转的语义完全一致。
+      let deps: TendDeps | null;
+      try {
+        deps = await buildTendDeps(env, storage);
+      } catch (err) {
+        // 装配失败（例如注册机配置被改成非法值）只记日志：转发能力与补池能力
+        // 相互独立，不该因为补池装配失败而让整个网关进程停摆。
+        console.error("[registrar] 装配补池依赖失败", err);
         return;
       }
-      inFlight = true;
+      if (!deps) return; // 注册机未启用：零副作用
+
       try {
-        const r = await tendOnce(tendDeps);
+        const r = await tendOnce(deps);
         if (!r.skipped) {
           console.log(
             `[registrar] 补池完成 available=${r.available} attempted=${r.attempted} minted=${r.minted}`,
@@ -57,21 +66,27 @@ export async function main(env: Record<string, string | undefined> = process.env
       } catch (err) {
         // 补池失败不该让网关进程崩掉——转发能力与补池能力是相互独立的。
         console.error("[registrar] 补池失败", err);
-      } finally {
-        inFlight = false;
       }
-    };
+    } finally {
+      inFlight = false;
+    }
+  };
 
-    // 立即跑一轮：否则冷启动后要空等满一个间隔（默认 30 分钟）才开始补池。
-    void runTend();
+  // 定时器的**间隔**仍取自启动时的配置：改间隔要重启进程，改 enabled 及其余配置
+  // 项则每一轮都会生效。这里单独读一次配置，是因为未启用时 buildTendDeps 返回
+  // null、拿不到 tendIntervalMs，而定时器必须先存在，之后从存储打开注册机才有
+  // 东西可触发。
+  const { registrar } = await loadConfig(env, storage);
 
-    // 显式用 node:timers 的 setInterval（而非全局 setInterval）：这个项目的
-    // tsconfig 同时装了 @cloudflare/workers-types 和 node 的类型，全局
-    // setInterval 的重载在两者间不保证解析到带 unref() 的 Node 版本。unref
-    // 让定时器不阻止进程退出，否则容器收到停止信号后要等到下一次触发才肯退，
-    // 测试里也会因为悬挂的 timer handle 导致 vitest 进程不退出。
-    nodeSetInterval(runTend, tendDeps.config.tendIntervalMs).unref();
-  }
+  // 立即跑一轮：否则冷启动后要空等满一个间隔（默认 30 分钟）才开始补池。
+  void runTend();
+
+  // 显式用 node:timers 的 setInterval（而非全局 setInterval）：这个项目的
+  // tsconfig 同时装了 @cloudflare/workers-types 和 node 的类型，全局
+  // setInterval 的重载在两者间不保证解析到带 unref() 的 Node 版本。unref
+  // 让定时器不阻止进程退出，否则容器收到停止信号后要等到下一次触发才肯退，
+  // 测试里也会因为悬挂的 timer handle 导致 vitest 进程不退出。
+  nodeSetInterval(runTend, registrar.tendIntervalMs).unref();
 
   return serve({ fetch: app.fetch, port }, (info) => {
     console.log(`agnes2api listening on :${info.port}`);
