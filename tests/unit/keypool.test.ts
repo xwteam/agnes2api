@@ -5,11 +5,12 @@ import {
 import type { KeyRecord } from "../../src/core/types.js";
 
 const NOW = 1_000_000;
+const STRIKE_CFG = { maxStrikes: 3, cooldownStrikeMs: 1_800_000 };
 
 function rec(over: Partial<KeyRecord> = {}): KeyRecord {
   return {
     id: "id1", key: "sk-x", addedAt: 0, lastUsedAt: null,
-    cooldownUntil: 0, strikes: 0, evicted: false, evictedReason: null, ...over,
+    cooldownUntil: 0, cooldownReason: null, strikes: 0, evicted: false, evictedReason: null, ...over,
   };
 }
 
@@ -54,26 +55,42 @@ describe("状态迁移", () => {
     expect(r.strikes).toBe(0);
     expect(r.lastUsedAt).toBe(NOW);
   });
-  it("冷却设置到期时刻", () => {
-    expect(applyCooldown(rec(), NOW, 60_000).cooldownUntil).toBe(NOW + 60_000);
+  it("冷却设置到期时刻并记录原因", () => {
+    const r = applyCooldown(rec(), NOW, 60_000, "rate limited");
+    expect(r.cooldownUntil).toBe(NOW + 60_000);
+    expect(r.cooldownReason).toBe("rate limited");
   });
-  it("strike 未达上限只累加不剔除", () => {
-    const r = applyStrike(rec({ strikes: 1 }), 3, "timeout");
+  it("strike 未达上限只累加，不冷却也不剔除", () => {
+    const r = applyStrike(rec({ strikes: 1 }), NOW, STRIKE_CFG, "timeout");
     expect(r.strikes).toBe(2);
     expect(r.evicted).toBe(false);
+    expect(r.cooldownUntil).toBe(0);
   });
-  it("strike 达到上限即永久剔除并记原因", () => {
-    const r = applyStrike(rec({ strikes: 2 }), 3, "timeout");
-    expect(r.strikes).toBe(3);
-    expect(r.evicted).toBe(true);
-    expect(r.evictedReason).toBe("timeout");
+
+  // 设计 §7.2.1：瞬时故障累计到上限时是**长冷却**，不是永久剔除。
+  // 原实现在这里置 evicted，导致上游一次抖动就能永久摧毁整个池子。
+  it("strike 达到上限时进入长冷却而不是永久剔除", () => {
+    const r = applyStrike(rec({ strikes: 2 }), NOW, STRIKE_CFG, "upstream 503");
+    expect(r.evicted).toBe(false);
+    expect(r.evictedReason).toBeNull();
+    expect(r.cooldownUntil).toBe(NOW + STRIKE_CFG.cooldownStrikeMs);
+    expect(r.cooldownReason).toBe("upstream 503");
+  });
+  it("进入长冷却时 strikes 清零，冷却到期后该 key 重新可用", () => {
+    const r = applyStrike(rec({ strikes: 2 }), NOW, STRIKE_CFG, "upstream 503");
+    expect(r.strikes).toBe(0);
+    expect(isAvailable(r, NOW)).toBe(false);
+    expect(isAvailable(r, NOW + STRIKE_CFG.cooldownStrikeMs)).toBe(true);
   });
   it("剔除记录原因", () => {
     expect(applyEvict(rec(), "upstream 401").evictedReason).toBe("upstream 401");
   });
+  it("成功会清掉冷却原因", () => {
+    expect(applySuccess(rec({ cooldownReason: "rate limited" }), NOW).cooldownReason).toBeNull();
+  });
   it("状态迁移不修改入参", () => {
     const original = rec({ strikes: 0 });
-    applyStrike(original, 3, "x");
+    applyStrike(original, NOW, STRIKE_CFG, "x");
     expect(original.strikes).toBe(0);
   });
 });

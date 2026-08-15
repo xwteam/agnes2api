@@ -46,10 +46,12 @@ describe("POST /v1/chat/completions", () => {
     expect(await res.text()).toContain('"content":"a"');
   });
 
-  it("流式请求补 Content-Type 时保留上游其余响应头", async () => {
+  // 补 Content-Type 时是在既有响应头基础上追加，而不是整体替换——白名单里的
+  // cache-control 必须活下来。白名单之外的上游头则一律不转发（见 I2 的用例）。
+  it("流式请求补 Content-Type 时保留白名单内的其余响应头", async () => {
     const sse = 'data: {"choices":[{"delta":{"content":"a"}}]}\n\ndata: [DONE]\n\n';
     const { app } = await makeApp([
-      { status: 200, body: sse, headers: { "x-request-id": "req-123" } },
+      { status: 200, body: sse, headers: { "cache-control": "no-transform" } },
     ]);
     const res = await app.request("/v1/chat/completions", {
       method: "POST",
@@ -57,6 +59,6 @@ describe("POST /v1/chat/completions", () => {
       body: JSON.stringify({ model: "agnes-2.0-flash", stream: true, messages: [] }),
     });
     expect(res.headers.get("content-type")).toContain("text/event-stream");
-    expect(res.headers.get("x-request-id")).toBe("req-123");
+    expect(res.headers.get("cache-control")).toBe("no-transform");
   });
 });

@@ -47,7 +47,7 @@ describe("Entry fail-closed 行为", () => {
         maxStrikes: 3,
         cooldownRateLimitMs: 60_000,
         cooldownPaymentMs: 3_600_000,
-        logLevel: "info",
+        cooldownStrikeMs: 1_800_000,
       });
     });
 
@@ -59,7 +59,7 @@ describe("Entry fail-closed 行为", () => {
         MAX_STRIKES: "5",
         COOLDOWN_RATE_LIMIT_MS: "30000",
         COOLDOWN_PAYMENT_MS: "7200000",
-        LOG_LEVEL: "debug",
+        COOLDOWN_STRIKE_MS: "900000",
       };
       const config = configFromEnv(env);
       expect(config).toEqual({
@@ -69,7 +69,7 @@ describe("Entry fail-closed 行为", () => {
         maxStrikes: 5,
         cooldownRateLimitMs: 30000,
         cooldownPaymentMs: 7200000,
-        logLevel: "debug",
+        cooldownStrikeMs: 900000,
       });
     });
   });

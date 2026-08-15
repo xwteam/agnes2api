@@ -41,4 +41,57 @@ describe("loadConfig", () => {
     await s.put("config", { upstreamTimeoutMs: "abc" as any });
     await expect(loadConfig({ GATEWAY_TOKEN: "t" }, s)).rejects.toThrow(/upstreamTimeoutMs/);
   });
+
+  it("默认包含 30 分钟的 strike 冷却时长", async () => {
+    const c = await loadConfig({ GATEWAY_TOKEN: "t" }, new MemoryStorage());
+    expect(c.cooldownStrikeMs).toBe(1_800_000);
+  });
+
+  it("COOLDOWN_STRIKE_MS 走同一套优先级：env > 存储 > 默认", async () => {
+    const s = new MemoryStorage();
+    await s.put("config", { cooldownStrikeMs: 600_000 });
+    expect((await loadConfig({ GATEWAY_TOKEN: "t" }, s)).cooldownStrikeMs).toBe(600_000);
+    expect(
+      (await loadConfig({ GATEWAY_TOKEN: "t", COOLDOWN_STRIKE_MS: "120000" }, s)).cooldownStrikeMs,
+    ).toBe(120_000);
+  });
+
+  // M4：只校验 Number.isFinite 是不够的。
+  // UPSTREAM_TIMEOUT_MS=-1 会让 setTimeout 立即触发（一个请求打满全池）；
+  // MAX_STRIKES=0 让 `strikes >= maxStrikes` 在第一次失败时即成立，等于跳过容错。
+  describe("数值下界", () => {
+    const cases: [string, string][] = [
+      ["UPSTREAM_TIMEOUT_MS", "-1"],
+      ["UPSTREAM_TIMEOUT_MS", "0"],
+      ["MAX_STRIKES", "0"],
+      ["MAX_STRIKES", "-3"],
+      ["MAX_STRIKES", "2.5"],
+      ["COOLDOWN_RATE_LIMIT_MS", "-1"],
+      ["COOLDOWN_PAYMENT_MS", "0"],
+      ["COOLDOWN_STRIKE_MS", "-1000"],
+    ];
+
+    for (const [name, value] of cases) {
+      it(`${name}=${value} 时启动即抛错`, async () => {
+        await expect(
+          loadConfig({ GATEWAY_TOKEN: "t", [name]: value }, new MemoryStorage()),
+        ).rejects.toThrow(new RegExp(name));
+      });
+    }
+
+    it("存储中的越界数值同样抛错", async () => {
+      const s = new MemoryStorage();
+      await s.put("config", { maxStrikes: 0 });
+      await expect(loadConfig({ GATEWAY_TOKEN: "t" }, s)).rejects.toThrow(/maxStrikes/);
+    });
+
+    it("下界之内的合法值照常接受", async () => {
+      const c = await loadConfig(
+        { GATEWAY_TOKEN: "t", MAX_STRIKES: "1", UPSTREAM_TIMEOUT_MS: "1" },
+        new MemoryStorage(),
+      );
+      expect(c.maxStrikes).toBe(1);
+      expect(c.upstreamTimeoutMs).toBe(1);
+    });
+  });
 });

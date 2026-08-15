@@ -7,7 +7,7 @@ import type { GatewayConfig } from "../../src/core/config.js";
 export const TEST_CONFIG: GatewayConfig = {
   gatewayToken: "t", agnesBaseUrl: "https://upstream.test/v1",
   upstreamTimeoutMs: 8000, maxStrikes: 3,
-  cooldownRateLimitMs: 60_000, cooldownPaymentMs: 3_600_000, logLevel: "info",
+  cooldownRateLimitMs: 60_000, cooldownPaymentMs: 3_600_000, cooldownStrikeMs: 1_800_000,
 };
 
 export async function makeApp(outcomes: ConstructorParameters<typeof FakeFetcher>[0] = [], keys = ["k1"]) {

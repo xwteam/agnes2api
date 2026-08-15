@@ -7,7 +7,7 @@ export interface GatewayConfig {
   maxStrikes: number;
   cooldownRateLimitMs: number;
   cooldownPaymentMs: number;
-  logLevel: string;
+  cooldownStrikeMs: number;
 }
 
 const DEFAULTS = {
@@ -16,11 +16,19 @@ const DEFAULTS = {
   maxStrikes: 3,
   cooldownRateLimitMs: 60_000,
   cooldownPaymentMs: 3_600_000,
-  logLevel: "info",
+  cooldownStrikeMs: 1_800_000,
 } as const;
 
 type Env = Record<string, string | undefined>;
 
+/**
+ * 读取一个数值配置项，优先级：环境变量 > 存储 > 内置默认值。
+ *
+ * 这里的每一项都是「时长（毫秒）」或「次数」，取值必须是正整数：
+ * `UPSTREAM_TIMEOUT_MS=-1` 会让 setTimeout 立刻触发，一个请求就能把整池打成
+ * strike；`MAX_STRIKES=0` 更糟——`strikes >= maxStrikes` 在第一次失败时即成立
+ * （`1 >= 0`），等于跳过了整个容错机制。故只校验 Number.isFinite 是不够的。
+ */
 function num(
   env: Env,
   envName: string,
@@ -31,18 +39,22 @@ function num(
   const raw = env[envName];
   if (raw !== undefined) {
     const n = Number(raw);
-    if (!Number.isFinite(n)) throw new Error(`环境变量 ${envName} 不是合法数值: ${raw}`);
+    if (!isPositiveInt(n)) throw new Error(`环境变量 ${envName} 必须是正整数: ${raw}`);
     return n;
   }
 
   if (stored !== undefined) {
-    if (!Number.isFinite(stored)) {
-      throw new Error(`存储中的 ${fieldName} 不是合法数值: ${stored}`);
+    if (!isPositiveInt(stored)) {
+      throw new Error(`存储中的 ${fieldName} 必须是正整数: ${stored}`);
     }
     return stored;
   }
 
   return fallback;
+}
+
+function isPositiveInt(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n >= 1;
 }
 
 export function configFromEnv(env: Env): GatewayConfig {
@@ -56,7 +68,7 @@ export function configFromEnv(env: Env): GatewayConfig {
     maxStrikes: num(env, "MAX_STRIKES", "maxStrikes", undefined, DEFAULTS.maxStrikes),
     cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", undefined, DEFAULTS.cooldownRateLimitMs),
     cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", undefined, DEFAULTS.cooldownPaymentMs),
-    logLevel: env.LOG_LEVEL ?? DEFAULTS.logLevel,
+    cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", undefined, DEFAULTS.cooldownStrikeMs),
   };
 }
 
@@ -73,6 +85,6 @@ export async function loadConfig(env: Env, storage: Storage): Promise<GatewayCon
     maxStrikes: num(env, "MAX_STRIKES", "maxStrikes", stored.maxStrikes, DEFAULTS.maxStrikes),
     cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", stored.cooldownRateLimitMs, DEFAULTS.cooldownRateLimitMs),
     cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", stored.cooldownPaymentMs, DEFAULTS.cooldownPaymentMs),
-    logLevel: env.LOG_LEVEL ?? stored.logLevel ?? DEFAULTS.logLevel,
+    cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", stored.cooldownStrikeMs, DEFAULTS.cooldownStrikeMs),
   };
 }
