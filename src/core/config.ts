@@ -45,6 +45,21 @@ function num(
   return fallback;
 }
 
+export function configFromEnv(env: Env): GatewayConfig {
+  const gatewayToken = env.GATEWAY_TOKEN;
+  if (!gatewayToken) throw new Error("缺少 GATEWAY_TOKEN，网关无法启动");
+
+  return {
+    gatewayToken,
+    agnesBaseUrl: env.AGNES_BASE_URL ?? DEFAULTS.agnesBaseUrl,
+    upstreamTimeoutMs: num(env, "UPSTREAM_TIMEOUT_MS", "upstreamTimeoutMs", undefined, DEFAULTS.upstreamTimeoutMs),
+    maxStrikes: num(env, "MAX_STRIKES", "maxStrikes", undefined, DEFAULTS.maxStrikes),
+    cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", undefined, DEFAULTS.cooldownRateLimitMs),
+    cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", undefined, DEFAULTS.cooldownPaymentMs),
+    logLevel: env.LOG_LEVEL ?? DEFAULTS.logLevel,
+  };
+}
+
 export async function loadConfig(env: Env, storage: Storage): Promise<GatewayConfig> {
   const stored = (await storage.get<Partial<GatewayConfig>>("config")) ?? {};
 

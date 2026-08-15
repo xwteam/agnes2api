@@ -1,25 +1,29 @@
 import { createApp } from "../http/app.js";
+import { configFromEnv } from "../core/config.js";
 import { VERSION } from "../version.js";
+
+let cachedApp: ReturnType<typeof createApp> | null = null;
+let cachedToken: string | undefined;
 
 export default {
   async fetch(req: Request, env: Record<string, string | undefined>): Promise<Response> {
-    const gatewayToken = env.GATEWAY_TOKEN;
-    if (!gatewayToken) {
-      return new Response("缺少 GATEWAY_TOKEN，网关无法启动", { status: 500 });
-    }
+    const token = env.GATEWAY_TOKEN;
+    let app = cachedApp;
 
-    const app = createApp({
-      version: VERSION,
-      config: {
-        gatewayToken,
-        agnesBaseUrl: env.AGNES_BASE_URL ?? "https://apihub.agnes-ai.com/v1",
-        upstreamTimeoutMs: env.UPSTREAM_TIMEOUT_MS ? Number(env.UPSTREAM_TIMEOUT_MS) : 8000,
-        maxStrikes: env.MAX_STRIKES ? Number(env.MAX_STRIKES) : 3,
-        cooldownRateLimitMs: env.COOLDOWN_RATE_LIMIT_MS ? Number(env.COOLDOWN_RATE_LIMIT_MS) : 60_000,
-        cooldownPaymentMs: env.COOLDOWN_PAYMENT_MS ? Number(env.COOLDOWN_PAYMENT_MS) : 3_600_000,
-        logLevel: env.LOG_LEVEL ?? "info",
-      },
-    });
+    // 如果 token 变化或还未初始化，重新构造 app
+    if (!app || cachedToken !== token) {
+      try {
+        const config = configFromEnv(env);
+        app = createApp({
+          version: VERSION,
+          config,
+        });
+        cachedApp = app;
+        cachedToken = token;
+      } catch (err) {
+        return new Response((err as Error).message, { status: 500 });
+      }
+    }
 
     return app.fetch(req);
   },
