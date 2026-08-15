@@ -68,7 +68,7 @@ export class MoeMailProvider implements MailProvider {
       // TTL 到期自愈。至少要留痕——活跃邮箱有上限（上游默认 30，超限建邮箱返回
       // 403），配额被这种泄漏吃掉时不能毫无信号。
       console.warn(
-        `[agnes2api] MoeMail 建邮箱响应无法解析或缺少 id/email：邮箱可能已在上游创建但 handle 丢失，` +
+        `[registrar] MoeMail 建邮箱响应无法解析或缺少 id/email：邮箱可能已在上游创建但 handle 丢失，` +
           `无法主动删除，只能等 ${MAILBOX_TTL_MS / 60_000} 分钟 TTL 到期自愈（domain=${domain}）`,
       );
       throw new Error("MoeMail 建邮箱响应无法解析或缺少 id 或 email");
@@ -122,14 +122,14 @@ export class MoeMailProvider implements MailProvider {
       // 删不掉一样会把配额吃光，必须留痕。
       if (!r.ok) {
         console.warn(
-          `[agnes2api] MoeMail 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address} HTTP ${r.status}`,
+          `[registrar] MoeMail 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address} HTTP ${r.status}`,
         );
       }
     } catch (err) {
       // 用完即删是尽力而为，理由同 YYDS 适配器：key 已经拿到了，邮箱残留是次要
       // 问题，不该让整次铸 key 失败，但要留痕方便观测残留是否在堆积。沿用 P1
       // 既有先例（无日志端口，直接 console，参见 src/core/storage-health.ts）。
-      console.warn(`[agnes2api] MoeMail 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
+      console.warn(`[registrar] MoeMail 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
     }
   }
 }

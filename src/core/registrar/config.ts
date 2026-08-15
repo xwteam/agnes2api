@@ -75,7 +75,7 @@ function channel(raw: string | undefined, envName: string, strict: boolean): Cha
   if (raw !== "yyds" && raw !== "moemail") {
     const msg = `${envName} 只能是 yyds 或 moemail: ${raw}`;
     if (strict) throw new Error(msg);
-    console.warn(`[agnes2api] 注册机未启用，忽略格式非法的 ${envName}: ${raw}`);
+    console.warn(`[registrar] 注册机未启用，忽略格式非法的 ${envName}: ${raw}`);
     return null;
   }
   return raw;
@@ -94,7 +94,7 @@ function storedChannel(raw: unknown, field: string, strict: boolean): Channel | 
   if (raw !== "yyds" && raw !== "moemail") {
     const msg = `存储中的 ${field} 只能是 yyds 或 moemail: ${String(raw)}`;
     if (strict) throw new Error(msg);
-    console.warn(`[agnes2api] 注册机未启用，忽略存储中格式非法的 ${field}: ${String(raw)}`);
+    console.warn(`[registrar] 注册机未启用，忽略存储中格式非法的 ${field}: ${String(raw)}`);
     return null;
   }
   return raw;
@@ -164,7 +164,7 @@ export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): Re
   // 各自都合法，只是搭配不划算，没到该拒绝启动的程度。
   if (enabled && cfg.tendIntervalMs < cfg.mintBatch * cfg.codeTimeoutMs) {
     console.warn(
-      `[agnes2api] TEND_INTERVAL_MS(${cfg.tendIntervalMs}) 小于单轮最坏耗时 ` +
+      `[registrar] TEND_INTERVAL_MS(${cfg.tendIntervalMs}) 小于单轮最坏耗时 ` +
         `MINT_BATCH×CODE_TIMEOUT_MS(${cfg.mintBatch * cfg.codeTimeoutMs})，补池轮次可能重叠并被跳过`,
     );
   }

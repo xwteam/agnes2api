@@ -137,14 +137,14 @@ export class YydsProvider implements MailProvider {
       // 不在了」（404）与「凭据/配额出问题」（403/500）。
       if (!r.ok) {
         console.warn(
-          `[agnes2api] YYDS 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address} HTTP ${r.status}`,
+          `[registrar] YYDS 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address} HTTP ${r.status}`,
         );
       }
     } catch (err) {
       // 用完即删是尽力而为：key 已经拿到了，邮箱残留是次要问题，不该让整次铸 key
       // 失败，但要留痕方便观测残留是否在堆积。沿用 P1 既有先例（无日志端口，直接
       // console，参见 src/core/storage-health.ts）。
-      console.warn(`[agnes2api] YYDS 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
+      console.warn(`[registrar] YYDS 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
     }
   }
 }

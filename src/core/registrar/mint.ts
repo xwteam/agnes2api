@@ -54,7 +54,7 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
   try {
     domains = await deps.provider.listDomains();
   } catch (err) {
-    console.warn("[agnes2api] 列域名失败", err);
+    console.warn("[registrar] 列域名失败", err);
     return { ok: false, reason: "provider_error" };
   }
   if (domains.length === 0) return { ok: false, reason: "provider_error" };
@@ -83,7 +83,7 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
     try {
       mailbox = await deps.provider.createMailbox(domain);
     } catch (err) {
-      console.warn(`[agnes2api] 建临时邮箱失败，换下一个域名：${domain}`, err);
+      console.warn(`[registrar] 建临时邮箱失败，换下一个域名：${domain}`, err);
       continue; // 这个域名建不出邮箱，换下一个
     }
     createdAny = true;
@@ -101,7 +101,7 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       }
       if (status < 200 || status >= 300) {
         sawUpstreamError = true;
-        console.warn(`[agnes2api] 发验证码遇到非 2xx 非域名屏蔽的状态码，换下一个域名：${domain} status=${status}`);
+        console.warn(`[registrar] 发验证码遇到非 2xx 非域名屏蔽的状态码，换下一个域名：${domain} status=${status}`);
         continue;
       }
 
@@ -127,7 +127,7 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       // `TendResult` 也拿不到（P3 面板要展示的就是它）。而单次铸 key 光轮询验证码
       // 就要打约 40 次请求，120 秒窗口内撞一次瞬时网络错误是常态，不该是"整轮报废"
       // 级别的事件。收敛成一个 reason 交回给 tender，由它决定怎么退避。
-      console.warn(`[agnes2api] 铸 key 过程中出现网络层错误，本次作废：${domain}`, err);
+      console.warn(`[registrar] 铸 key 过程中出现网络层错误，本次作废：${domain}`, err);
       return { ok: false, reason: "network_error" };
     } finally {
       // 用完即删：YYDS 免费档最多同时存在 15 个邮箱，中途任何一步失败都必须把
@@ -137,7 +137,7 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       try {
         await deps.provider.deleteMailbox(mailbox);
       } catch (err) {
-        console.warn(`[agnes2api] 删临时邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
+        console.warn(`[registrar] 删临时邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
       }
     }
   }
@@ -147,7 +147,7 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
     // 谈不上域名被屏蔽。这条日志要能把运维引向邮箱通道（凭据/配额/服务），
     // 而不是域名。
     console.warn(
-      `[agnes2api] ${candidates.length} 个候选域名上都建不出临时邮箱，按通道级失败处理（可降级到备通道）`,
+      `[registrar] ${candidates.length} 个候选域名上都建不出临时邮箱，按通道级失败处理（可降级到备通道）`,
     );
     return { ok: false, reason: "provider_error" };
   }
