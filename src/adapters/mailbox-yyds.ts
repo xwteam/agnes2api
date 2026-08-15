@@ -1,7 +1,7 @@
 import type { MailProvider } from "../ports/mailbox.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
-import { extractCode } from "../core/registrar/code.js";
+import { extractCode, normalizeBody } from "../core/registrar/code.js";
 
 export interface YydsDeps {
   fetcher: Fetcher;
@@ -150,7 +150,12 @@ export class YydsProvider implements MailProvider {
           // 才标记 seen 避免重复请求。
           seen.add(id);
           if (detail.verificationCode) return String(detail.verificationCode);
-          const code = extractCode(detail.subject ?? "", `${detail.text ?? ""} ${detail.html ?? ""}`);
+          // text 与 html 都要喂进去：真实模板里码在 html 的 class="…verification…"
+          // 元素中，纯文本兜底则来自 text。html 在真机上是数组，交给 normalizeBody。
+          const code = extractCode(
+            normalizeBody(detail.subject),
+            `${normalizeBody(detail.text)}\n${normalizeBody(detail.html)}`,
+          );
           if (code) return code;
         }
       }

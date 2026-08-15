@@ -1,7 +1,7 @@
 import type { MailProvider } from "../ports/mailbox.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
-import { extractCode } from "../core/registrar/code.js";
+import { extractCode, normalizeBody } from "../core/registrar/code.js";
 
 export interface MoeMailDeps {
   fetcher: Fetcher;
@@ -110,8 +110,8 @@ export class MoeMailProvider implements MailProvider {
         }
         for (const m of (data?.messages ?? []) as Array<Record<string, any>>) {
           const code = extractCode(
-            String(m?.subject ?? ""),
-            `${m?.content ?? ""} ${m?.html ?? ""}`,
+            normalizeBody(m?.subject),
+            `${normalizeBody(m?.content)}\n${normalizeBody(m?.html)}`,
           );
           if (code) return code;
         }

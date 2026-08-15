@@ -15,6 +15,24 @@ const CSS_COLOR_LIKE = /#[0-9a-fA-F]{6}\b/g;
 const MAX_BODY_LEN = 64 * 1024;
 const MAX_SUBJECT_LEN = 1024;
 
+/**
+ * 把邮件正文字段规整成一个字符串。
+ *
+ * 真机实测：YYDS 详情响应里的 `html` 是**数组**（元素数 1），`text` 是字符串。
+ * 此前代码写的是模板插值 `` `${detail.text} ${detail.html}` ``——对单元素数组碰巧
+ * 等价于该元素，所以一直能工作；但多段 HTML 时 `Array.prototype.toString` 会用
+ * **逗号**拼接，形态不可控（逗号会直接贴到数字上，影响 `\b` 边界判定）。
+ * 这里显式处理数组形态，用换行拼接。
+ *
+ * 两家适配器共用：MoeMail 上游 `html`/`content` 在库里是 text 列（字符串），这条
+ * 对它是防御性的，但保持两边同一条解析路径比各写各的更不容易漂移。
+ */
+export function normalizeBody(v: unknown): string {
+  if (Array.isArray(v)) return v.map((x) => (typeof x === "string" ? x : String(x ?? ""))).join("\n");
+  if (typeof v === "string") return v;
+  return v == null ? "" : String(v);
+}
+
 export function extractCode(subject: string, body: string): string | null {
   if (!body) return null;
 

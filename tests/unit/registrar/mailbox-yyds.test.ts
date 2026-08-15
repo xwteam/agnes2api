@@ -321,6 +321,53 @@ describe("YydsProvider", () => {
     }
   });
 
+  // === RM7：详情的 html 字段真机上是数组，不是字符串 ===
+
+  it("RM7 detail.html 是多段数组时按段拼接，逗号拼接会抠出错误的码", async () => {
+    // 真机实测 html 是数组（元素数 1），单元素时 `${array}` 碰巧等价于该元素，
+    // 所以旧实现一直能工作。多段时 `${array}` 走 Array.prototype.toString，用
+    // **逗号**拼接——而 extractCode 的快路径要求
+    // `class="…verification…">\s*(\d{6})\s*<`，逗号不是 `\s`，快路径直接失配，
+    // 于是回退到"全文第一个六位数"，被正文里排在前面的订单号抢走。
+    //
+    // 这条用例特意让两种拼接产出**不同**的结果（逗号 → 998877，换行 → 246813），
+    // 而不是随便造一段多段 HTML——后者两条路都能通过，等于没测。
+    let t = 0;
+    const { fetcher } = stubFetcher((url) => {
+      if (url.includes("/v1/messages/")) {
+        return {
+          status: 200,
+          body: { data: { subject: "Your Agnes Platform Verification Code", html: [
+            "<div>Order 998877</div><p class=\"verification-code\">",
+            "246813",
+            "</p>",
+          ] } },
+        };
+      }
+      return { status: 200, body: { data: { messages: [{ id: "m1" }] } } };
+    });
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    expect(await p.pollCode({ address: "u1@a.test", handle: "acct-42" }, 5000)).toBe("246813");
+  });
+
+  it("RM7 detail.html 仍是字符串时照常工作（不能为了修数组把字符串路径改坏）", async () => {
+    let t = 0;
+    const { fetcher } = stubFetcher((url) => {
+      if (url.includes("/v1/messages/")) {
+        return { status: 200, body: { data: { subject: "验证码", html: "<p>您的验证码 135791</p>" } } };
+      }
+      return { status: 200, body: { data: { messages: [{ id: "m1" }] } } };
+    });
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    expect(await p.pollCode({ address: "u1@a.test", handle: "acct-42" }, 5000)).toBe("135791");
+  });
+
   // === M3：轮询期间 fetch reject 与非 2xx 的容错必须对称 ===
   //
   // 同一个瞬时故障，返回 HTTP 500 时轮询继续、fetch reject（TCP reset / 单请求超时

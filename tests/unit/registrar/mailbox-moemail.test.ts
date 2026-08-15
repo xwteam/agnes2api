@@ -235,6 +235,25 @@ describe("MoeMailProvider", () => {
     expect(attempts).toBe(2);
   });
 
+  it("RM7 消息的 html 若是数组也按段拼接（上游库里是 text 列，这里是防御性对齐）", async () => {
+    // MoeMail 上游 `messages[].html` 在库里是 text 列（字符串），数组形态是 YYDS
+    // 那边的真机事实。两家共用同一条解析路径，避免以后各自漂移；用与 YYDS 同款的
+    // 判别式 fixture（逗号拼接 → 998877，换行拼接 → 246813）。
+    let t = 0;
+    const { fetcher } = stubFetcher(() => ({
+      status: 200,
+      body: { messages: [{
+        id: "m1", subject: "Your Agnes Platform Verification Code",
+        html: ["<div>Order 998877</div><p class=\"verification-code\">", "246813", "</p>"],
+      }] },
+    }));
+    const p = new MoeMailProvider({
+      fetcher, baseUrl: "https://m.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    expect(await p.pollCode({ address: "u@a.test", handle: "eid-1" }, 5000)).toBe("246813");
+  });
+
   // === M3：轮询期间 fetch reject 与非 2xx 的容错必须对称（同 YYDS 适配器） ===
 
   it("M3 轮询请求 reject（网络抖动/超时）后不中断，下一轮仍能取到验证码", async () => {
