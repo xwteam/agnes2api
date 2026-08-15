@@ -45,6 +45,10 @@ describe("鉴权中间件", () => {
     const res = await app.request("/v1/ping", { headers: { authorization: "bearer secret" } });
     expect(res.status).toBe(200);
   });
+});
+
+describe("鉴权中间件 - 空凭据防御（auth('')）", () => {
+  const app = appWith("");
 
   it("空 x-api-key 返回 401", async () => {
     const res = await app.request("/v1/ping", { headers: { "x-api-key": "" } });
