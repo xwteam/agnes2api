@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": "dist",
-    "types": ["node"]
+    "types": ["@cloudflare/workers-types", "node"]
   },
   "include": ["src"]
 }
