@@ -9,11 +9,31 @@ const CSS_COLOR_LIKE = /#[0-9a-fA-F]{6}\b/g;
  *
  * 这里的正文来自**临时邮箱**——那个地址一旦生成，任何人都能往它投递，正文长度
  * 完全不受我们控制。下面全是对整份正文的正则扫描，把一封几 MB 的邮件喂进来只会
- * 平白吃掉 CPU（Worker 的 CPU 时间是有上限的），而 Agnes 的验证码邮件远小于这个
- * 量级，截断不影响识别。64 KiB 正文 / 1 KiB 主题即便对富文本邮件也很宽裕。
+ * 平白吃掉 CPU（Worker 的 CPU 时间是有上限的）。
+ *
+ * 上限取 1 MiB 而不是更小：Agnes 的验证码邮件走 HTML 模板，一旦内嵌 base64 logo
+ *（`data:image/png;base64,…` 动辄 100 KB+）且图片排在验证码元素之前，几十 KiB 的
+ * 上限会被图片整个吃掉——extractCode 恒返回 null、pollCode 一路空转到超时、注册机
+ * 100% 静默失效，而单测里的正文都是短字符串，全绿。这几条正则都是线性扫描，
+ * 1 MiB 也只是毫秒级，这个阈值换来的 CPU 收益远小于它带来的漏码风险。
  */
-const MAX_BODY_LEN = 64 * 1024;
+const MAX_BODY_LEN = 1024 * 1024;
 const MAX_SUBJECT_LEN = 1024;
+
+/**
+ * 截断到 `max` 个字符供正则扫描。
+ *
+ * 截断点若落在一串数字中间，会凭空造出一个左右都带 `\b` 的六位数——例如尾部是
+ * 「订单号 1234567890」，切在第 6 位后变成「订单号 123456<EOF>」，末尾就是词边界，
+ * `\b(\d{6})\b` 直接命中并返回一个错误的验证码。所以只要真的发生了截断，就把结尾
+ * 那段数字整个丢掉（换成空格，免得把前后文粘到一起）：它本来就是残缺的，不可能是
+ * 完整的码。注意补一个字符**不足以**消掉这个伪边界——空格前面照样是词边界，必须
+ * 把残缺的数字本身去掉。
+ */
+function boundedForScan(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max).replace(/\d+$/, " ");
+}
 
 /**
  * 把邮件正文字段规整成一个字符串。
@@ -36,10 +56,10 @@ export function normalizeBody(v: unknown): string {
 export function extractCode(subject: string, body: string): string | null {
   if (!body) return null;
 
-  const boundedSubject = subject.slice(0, MAX_SUBJECT_LEN);
+  const boundedSubject = boundedForScan(subject, MAX_SUBJECT_LEN);
 
   // 先抹掉 CSS 十六进制颜色，避免 #123456 被当成验证码。
-  const cleanBody = body.slice(0, MAX_BODY_LEN).replace(CSS_COLOR_LIKE, " ");
+  const cleanBody = boundedForScan(body, MAX_BODY_LEN).replace(CSS_COLOR_LIKE, " ");
 
   // 优先：带 verification 字样类名的元素。
   // **数字必须是该元素的直接文本**——这个严格性是判别器，不是缺陷：

@@ -103,14 +103,40 @@ describe("extractCode", () => {
   // === M6：输入长度上限 ===
   // 正文来自临时邮箱——那个地址一旦生成任何人都能投递，长度不受我们控制。
 
-  it("超长正文只扫描前 64 KiB：上限内的验证码照常取到", () => {
+  it("超长正文只扫描前 1 MiB：上限内的验证码照常取到", () => {
     const body = `验证码 246810 ${"x ".repeat(1024 * 1024)}`;
     expect(extractCode("", body)).toBe("246810");
   });
 
-  it("超长正文里位于 64 KiB 之外的内容不参与匹配（确实截断了，而不是碰巧能跑）", () => {
-    const body = `${"x".repeat(64 * 1024)}验证码 246810`;
+  it("超长正文里位于 1 MiB 之外的内容不参与匹配（确实截断了，而不是碰巧能跑）", () => {
+    const body = `${"x".repeat(1024 * 1024)}验证码 246810`;
     expect(extractCode("", body)).toBeNull();
+  });
+
+  // === D3：上限从 64 KiB 提到 1 MiB，并处理「截断点落在数字串中间」 ===
+
+  it("D3 验证码排在一段 >64 KiB 的内嵌大图之后时仍能取到（旧的 64 KiB 上限会漏码）", () => {
+    // Agnes 的验证码邮件是 HTML 模板，内嵌 base64 logo 动辄 100 KB+。图片排在验证码
+    // 元素之前时，64 KiB 的上限会被图片整个吃光 → 恒返回 null → 注册机 100% 静默失效。
+    const bigImage = `<img src="data:image/png;base64,${"A".repeat(100 * 1024)}">`;
+    const body = `${bigImage}<p class="verification-code">246810</p>`;
+    expect(extractCode("Your Agnes Platform Verification Code", body)).toBe("246810");
+  });
+
+  it("D3 长数字串跨越上限边界时返回 null，而不是切出来的前六位", () => {
+    // 截断点落在长数字串中间会凭空造出一个左右都带 \b 的六位数：
+    // 「订单号 1234567890」切在第 6 位后成了「订单号 123456<EOF>」，末尾即词边界。
+    // 注意：在截断处补一个空格**不能**消掉这个伪边界，必须把残缺的数字整段丢掉。
+    // 数字前面必须留一个非词字符（这里是空格），否则 `x123456` 左侧压根没有 \b，
+    // 裸 slice 也返回 null——那样这条用例就成了「谁赢都通过」的假阳性。
+    const body = `${"x".repeat(1024 * 1024 - 7)} 1234567890`;
+    expect(extractCode("", body)).toBeNull();
+  });
+
+  it("D3 上限内的数字串不受影响（成对用例，防止把正常的码也一起丢掉）", () => {
+    // 与上一条对照：同样以数字收尾，但没发生截断，就必须照常取到。
+    const body = `${"x".repeat(100)}验证码 654321`;
+    expect(extractCode("", body)).toBe("654321");
   });
 
   it("超长主题同样被截断（主题也来自外部输入）", () => {
