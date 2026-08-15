@@ -68,4 +68,21 @@ describe("toSseStream", () => {
     const text = await new Response(toSseStream(gen())).text();
     expect(text).toBe("data: 1\n\ndata: 2\n\n");
   });
+
+  it("取消流后会调用生成器的 return()，令其 finally 块执行到", async () => {
+    let cleaned = false;
+    async function* gen() {
+      try {
+        yield "data: 1\n\n";
+        await new Promise(() => {}); // 模拟卡在等待上游下一条数据
+        yield "data: 2\n\n"; // 不应该被执行到
+      } finally {
+        cleaned = true;
+      }
+    }
+    const reader = toSseStream(gen()).getReader();
+    await reader.read(); // 消费第一条，生成器此时挂起在 await new Promise 处
+    await reader.cancel();
+    expect(cleaned).toBe(true);
+  });
 });

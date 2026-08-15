@@ -50,5 +50,11 @@ export function toSseStream(gen: AsyncGenerator<string>): ReadableStream<Uint8Ar
       if (done) controller.close();
       else controller.enqueue(encoder.encode(value));
     },
+    async cancel() {
+      // 客户端提前断开连接时 ReadableStream 会调用这里。把取消信号转发
+      // 给生成器的 return()，让它有机会走到自己的 finally 块，进而释放
+      // 它持有的上游读取器——否则上游连接会一直挂着，直到被动超时或 GC。
+      await gen.return(undefined);
+    },
   });
 }
