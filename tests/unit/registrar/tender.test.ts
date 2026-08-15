@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tendOnce } from "../../../src/core/registrar/tender.js";
+import { tendOnce, type TendFailureReason } from "../../../src/core/registrar/tender.js";
 import { KeyPoolRepo } from "../../../src/core/dispatcher.js";
 import { MemoryStorage } from "../../helpers/fake-storage.js";
 import { FakeMailProvider } from "../../helpers/fake-mailbox.js";
@@ -48,6 +48,17 @@ async function makeDeps(over: Partial<RegistrarConfig> = {}, provider: MailProvi
 }
 
 describe("tendOnce", () => {
+  it("failures[].reason 是联合类型而不是裸 string（P3 消费时要能拿到穷尽检查）", () => {
+    // 这条断言真正生效的地方是 `tsc --noEmit`：把 reason 退回 string 之后，下面
+    // 的 @ts-expect-error 会变成"未使用的指令"从而让类型检查失败。运行时断言只是
+    // 顺带确认取值。
+    const ok: TendFailureReason = "code_timeout";
+    // @ts-expect-error 不在联合里的 reason 必须在类型层就被挡住
+    const bad: TendFailureReason = "not_a_real_reason";
+    expect(ok).toBe("code_timeout");
+    expect(bad).toBe("not_a_real_reason");
+  });
+
   it("未启用时立即返回且零副作用", async () => {
     const { repo, deps } = await makeDeps({ enabled: false });
     const out = await tendOnce(deps);

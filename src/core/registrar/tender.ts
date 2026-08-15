@@ -4,14 +4,24 @@ import type { AgnesDeps } from "./agnes.js";
 import type { RegistrarConfig, Channel } from "./config.js";
 import { requirePrimary } from "./config.js";
 import { isAvailable } from "../keypool.js";
-import { mintOne } from "./mint.js";
+import { mintOne, type MintOutcome } from "./mint.js";
+
+/**
+ * 一次铸 key 失败的归因：`mintOne` 给出的所有 reason，外加 `provider_missing`
+ *（它不是 mintOne 的产物——表示 chain 里的通道压根没构造出 provider，是接线错误）。
+ *
+ * 用联合类型而不是裸 `string`：下面的 switch 特意用 `never` 做了穷尽检查，好让
+ * `MintOutcome` 新增 reason 时编译期就提醒这里表态；如果对外的 `TendResult` 把
+ * 类型信息退化成 string，P3 消费这份结构时就拿不到同样的穷尽保障了。
+ */
+export type TendFailureReason = Extract<MintOutcome, { ok: false }>["reason"] | "provider_missing";
 
 export interface TendResult {
   skipped: boolean;
   available: number;
   attempted: number;
   minted: number;
-  failures: Array<{ reason: string; channel: string }>;
+  failures: Array<{ reason: TendFailureReason; channel: string }>;
 }
 
 export interface TendDeps {
