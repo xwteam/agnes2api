@@ -235,39 +235,52 @@ describe("YydsProvider", () => {
     expect(body.localPart).toMatch(/^u[a-z0-9]{10}$/);
   });
 
-  // === I7：建邮箱的不可恢复泄漏 ===
-  // 响应 2xx 但正文解析不出 data.address 时，邮箱**可能已经在上游建出来了**，
-  // 而 handle 丢失就永远删不掉（YYDS 侧没有 TTL，永久占配额）。抛错之前必须用
-  // 请求时已知的 localPart@domain 兜底删一次。
+  // === RM3：建邮箱解析失败时不做无效兜底，改成诚实告警 ===
+  // 响应 2xx 但解析不出 data.address/data.id 时，邮箱**可能已经在上游建出来了**。
+  // 此前这里按 `localPart@domain` 兜底删一次——但删除要 id，而 id 恰恰就是这条
+  // 路径丢掉的东西（真机实测用 address 删恒 404，且没有按 address 反查 id 的端点）。
+  // 那次 DELETE 只会稳定产出假 404，稀释「邮箱在堆积」这个真信号。
 
-  it("I7 createMailbox 响应 2xx 但缺 data.address 时，按 localPart@domain 兜底删除后再抛错", async () => {
-    const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { data: {} } }));
-    const p = new YydsProvider({
-      fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
-    });
-    await expect(p.createMailbox("a.test")).rejects.toThrow(/data\.address/);
-    // 第 2 次调用必须是针对刚才那个 localPart 的 DELETE，否则邮箱就泄漏了。
-    expect(calls).toHaveLength(2);
-    expect(calls[1]!.init.method).toBe("DELETE");
-    expect(calls[1]!.url).toBe("https://y.test/v1/accounts/uaaaaaaaaaa%40a.test");
+  it("RM3 createMailbox 缺 data.id 时不发出注定 404 的兜底 DELETE，只留一条诚实告警", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { data: {} } }));
+      const p = new YydsProvider({
+        fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
+      });
+      await expect(p.createMailbox("a.test")).rejects.toThrow(/data\.address|data\.id/);
+      // 只有建邮箱那一次请求：不再有第二次注定失败的 DELETE。
+      expect(calls).toHaveLength(1);
+      expect(calls.some((c) => (c.init.method ?? "GET") === "DELETE")).toBe(false);
+      // 告警要能人工核对（带 localPart@domain）并说明它什么时候自己消失。
+      const msg = String(warnSpy.mock.calls[0]?.[0]);
+      expect(msg).toContain("uaaaaaaaaaa@a.test");
+      expect(msg).toContain("24");
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
-  it("I7 createMailbox 响应 2xx 但正文非 JSON 时，同样兜底删除后再抛错", async () => {
-    const calls: Array<{ url: string; init: RequestInit }> = [];
-    const fetcher = {
-      async fetch(url: string, init: RequestInit) {
-        calls.push({ url, init });
-        if ((init.method ?? "GET") === "DELETE") return new Response("{}", { status: 200 });
-        return new Response("<html>Bad Gateway</html>", { status: 200 });
-      },
-    };
-    const p = new YydsProvider({
-      fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
-    });
-    await expect(p.createMailbox("a.test")).rejects.toThrow(/无法解析|data\.address/);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]!.init.method).toBe("DELETE");
-    expect(calls[1]!.url).toBe("https://y.test/v1/accounts/uaaaaaaaaaa%40a.test");
+  it("RM3 createMailbox 响应 2xx 但正文非 JSON 时同样只告警、不发兜底 DELETE", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const calls: Array<{ url: string; init: RequestInit }> = [];
+      const fetcher = {
+        async fetch(url: string, init: RequestInit) {
+          calls.push({ url, init });
+          if ((init.method ?? "GET") === "DELETE") return new Response("{}", { status: 200 });
+          return new Response("<html>Bad Gateway</html>", { status: 200 });
+        },
+      };
+      const p = new YydsProvider({
+        fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
+      });
+      await expect(p.createMailbox("a.test")).rejects.toThrow(/无法解析|data\.address|data\.id/);
+      expect(calls).toHaveLength(1);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("createMailbox 非 2xx 时抛错并带上状态码，且不发出兜底删除（上游没建成，别乱删）", async () => {

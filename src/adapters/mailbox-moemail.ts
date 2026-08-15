@@ -63,10 +63,11 @@ export class MoeMailProvider implements MailProvider {
       data = null;
     }
     if (typeof data?.id !== "string" || typeof data?.email !== "string") {
-      // 与 YYDS 不同，MoeMail 用**服务端生成的 id** 定位邮箱，请求侧无从推断，
-      // 没法像 YYDS 那样兜底删除：这封邮箱若真的建出来了，只能等建邮箱时传的
-      // TTL 到期自愈。至少要留痕——活跃邮箱有上限（上游默认 30，超限建邮箱返回
-      // 403），配额被这种泄漏吃掉时不能毫无信号。
+      // 两家在这条路径上是同一个形态：删除都要**服务端生成的 id**，而 id 恰恰是
+      // 解析失败时丢掉的东西，请求侧无从推断，所以谁都做不了兜底删除（YYDS 侧同款
+      // 处置见 mailbox-yyds.ts 的对应分支）。这封邮箱若真的建出来了，只能等建邮箱
+      // 时传的 TTL 到期自愈。至少要留痕——活跃邮箱有上限（上游默认 30，超限建邮箱
+      // 返回 403），配额被这种泄漏吃掉时不能毫无信号。
       console.warn(
         `[registrar] MoeMail 建邮箱响应无法解析或缺少 id/email：邮箱可能已在上游创建但 handle 丢失，` +
           `无法主动删除，只能等 ${MAILBOX_TTL_MS / 60_000} 分钟 TTL 到期自愈（domain=${domain}）`,

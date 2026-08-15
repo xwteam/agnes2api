@@ -56,8 +56,7 @@ export class YydsProvider implements MailProvider {
     });
     if (!r.ok) throw new Error(`YYDS 建邮箱失败: HTTP ${r.status}`);
     // 2xx 之后的任何解析失败都意味着同一件事：邮箱**可能已经在上游建出来了**，
-    // 而我们手上没有它的 id，于是它删不掉。所以抛错之前用请求时就已知的
-    // `localPart@domain` 兜底删一次。
+    // 而我们手上没有它的 id，于是它删不掉——处置见下面那段注释。
     let data: Record<string, any> | null = null;
     try {
       data = ((await r.json()) as Record<string, any>)?.data ?? null;
@@ -70,9 +69,20 @@ export class YydsProvider implements MailProvider {
     // 少任何一个都会让后续调用 100% 打空。
     if (typeof address !== "string" || address.length === 0
       || typeof id !== "string" || id.length === 0) {
+      // **不做兜底删除。** 此前这里用 `localPart@domain` 兜底调了一次 deleteMailbox，
+      // 但删除需要 id，而 id 恰恰就是这条路径丢掉的那个东西——真机实测用 address
+      // 删一定 404，而且 `GET /v1/accounts` 也是 404（没有按 address 反查 id 的列表
+      // 端点）。发一次注定失败的 DELETE 只会往「删邮箱失败」那条 warn 里灌稳定的
+      // 假 404，稀释「邮箱正在堆积、配额即将耗尽」这个真信号，运维看多了就会开始
+      // 忽略这类日志。改成诚实告警：说清楚这个邮箱可能已经建出来了、我们删不掉、
+      // 以及它什么时候自己消失（真机实测 `expiresAt` = 建号时刻 + 约 24 小时）。
       const guessed = `${lp}@${domain}`;
-      await this.deleteMailbox({ address: guessed, handle: guessed });
-      throw new Error(`YYDS 建邮箱响应无法解析或缺少 data.address / data.id（已按 ${guessed} 兜底删除）`);
+      console.warn(
+        `[registrar] YYDS 建邮箱响应无法解析或缺少 data.address / data.id：邮箱可能已在上游` +
+          `创建但拿不到 id，无法主动删除，约 24 小时后随 expiresAt 自动过期；` +
+          `活跃邮箱配额会被它占住，可按 ${guessed} 人工核对（domain=${domain}）`,
+      );
+      throw new Error("YYDS 建邮箱响应无法解析或缺少 data.address / data.id");
     }
     // **收信按 address 定位、删除按 id 定位**——真机实测的契约：
     //   GET    /v1/messages?address={address} → 200，换成 id → 404 inbox_not_found
