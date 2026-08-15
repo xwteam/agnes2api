@@ -128,6 +128,92 @@ beforeEach(() => {
   intervals.length = 0;
 });
 
+describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
+  it("Node 侧：启动立即跑一轮，并按 TEND_INTERVAL_MS 注册定时器，回调也确实调到 tendOnce", async () => {
+    tendOnceMock.mockResolvedValue(RESULT);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const server = await main(nodeEnv({ TEND_INTERVAL_MS: "1800000" }));
+    try {
+      await flush();
+      // ① 冷启动立即跑一轮：否则要空等满一个间隔（默认 30 分钟）才开始补池。
+      expect(tendOnceMock).toHaveBeenCalledTimes(1);
+
+      // ② 定时器真的注册了，且用的是配置里的间隔（不是硬编码的常量）。
+      expect(intervals).toHaveLength(1);
+      expect(intervals[0]!.ms).toBe(1_800_000);
+
+      // ③ 定时器回调不是空壳：到点确实会再跑一轮。
+      intervals[0]!.fn();
+      await flush();
+      expect(tendOnceMock).toHaveBeenCalledTimes(2);
+
+      // 传进去的确实是装配好的补池依赖，不是随便一个对象。
+      const deps = tendOnceMock.mock.calls[0]![0] as { config: { enabled: boolean }; providers: Record<string, unknown> };
+      expect(deps.config.enabled).toBe(true);
+      expect(deps.providers.yyds).toBeDefined();
+    } finally {
+      logSpy.mockRestore();
+      await close(server);
+    }
+  });
+
+  it("Node 侧：TEND_INTERVAL_MS 改了，定时器的间隔跟着改（间隔不是写死的）", async () => {
+    tendOnceMock.mockResolvedValue(RESULT);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // 60 秒远小于单轮最坏耗时，会触发配置告警，这里只关心间隔取值。
+    const server = await main(nodeEnv({ TEND_INTERVAL_MS: "60000" }));
+    try {
+      await flush();
+      expect(intervals).toHaveLength(1);
+      expect(intervals[0]!.ms).toBe(60_000);
+    } finally {
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
+      await close(server);
+    }
+  });
+
+  it("Node 侧：REGISTRAR_ENABLED=false（默认）时既不跑也不注册定时器", async () => {
+    tendOnceMock.mockResolvedValue(RESULT);
+    const server = await main({
+      GATEWAY_TOKEN: "t", PORT: "0", DATA_DIR: mkdtempSync(join(tmpdir(), "a2a-sched-off-")),
+    });
+    try {
+      await flush();
+      expect(tendOnceMock).not.toHaveBeenCalled();
+      expect(intervals).toHaveLength(0);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("Worker 侧：scheduled 交给 ctx.waitUntil 的 promise 确实会调用 tendOnce", async () => {
+    tendOnceMock.mockResolvedValue(RESULT);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { ctx, waited } = fakeCtx();
+    try {
+      await worker.scheduled!(controller(), workerEnv(), ctx);
+      expect(waited).toHaveLength(1);
+      await waited[0];
+      expect(tendOnceMock).toHaveBeenCalledTimes(1);
+      const deps = tendOnceMock.mock.calls[0]![0] as { config: { enabled: boolean }; providers: Record<string, unknown> };
+      expect(deps.config.enabled).toBe(true);
+      expect(deps.providers.yyds).toBeDefined();
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("Worker 侧：REGISTRAR_ENABLED 未开时不调 tendOnce（零副作用）", async () => {
+    tendOnceMock.mockResolvedValue(RESULT);
+    const { ctx, waited } = fakeCtx();
+    await worker.scheduled!(controller(), workerEnv({ REGISTRAR_ENABLED: undefined, REGISTRAR_PRIMARY: undefined }), ctx);
+    expect(tendOnceMock).not.toHaveBeenCalled();
+    expect(waited).toHaveLength(0);
+  });
+});
+
 describe("C4 补池轮次不可并发重入", () => {
   it("Node 侧：上一轮还没结束时，定时器再次到点会被跳过并留痕", async () => {
     const gate = deferred();
