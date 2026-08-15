@@ -1,0 +1,30 @@
+{
+  "name": "agnes2api",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "test:workers": "vitest run --config vitest.workers.config.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "dev:node": "node --experimental-strip-types src/entry/node.ts",
+    "dev:worker": "wrangler dev"
+  },
+  "keywords": [],
+  "author": "",
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "hono": "4.13.2"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.21.3",
+    "@cloudflare/workers-types": "5.20260815.1",
+    "@types/node": "22",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.123.0"
+  }
+}

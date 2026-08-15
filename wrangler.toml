@@ -1,0 +1,7 @@
+name = "agnes2api"
+main = "src/entry/worker.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
