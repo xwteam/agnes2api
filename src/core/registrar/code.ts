@@ -4,11 +4,24 @@
  */
 const CSS_COLOR_LIKE = /#[0-9a-fA-F]{6}\b/g;
 
+/**
+ * 输入长度上限。
+ *
+ * 这里的正文来自**临时邮箱**——那个地址一旦生成，任何人都能往它投递，正文长度
+ * 完全不受我们控制。下面全是对整份正文的正则扫描，把一封几 MB 的邮件喂进来只会
+ * 平白吃掉 CPU（Worker 的 CPU 时间是有上限的），而 Agnes 的验证码邮件远小于这个
+ * 量级，截断不影响识别。64 KiB 正文 / 1 KiB 主题即便对富文本邮件也很宽裕。
+ */
+const MAX_BODY_LEN = 64 * 1024;
+const MAX_SUBJECT_LEN = 1024;
+
 export function extractCode(subject: string, body: string): string | null {
   if (!body) return null;
 
+  const boundedSubject = subject.slice(0, MAX_SUBJECT_LEN);
+
   // 先抹掉 CSS 十六进制颜色，避免 #123456 被当成验证码。
-  const cleanBody = body.replace(CSS_COLOR_LIKE, " ");
+  const cleanBody = body.slice(0, MAX_BODY_LEN).replace(CSS_COLOR_LIKE, " ");
 
   // 优先：带 verification 字样类名的元素。
   // **数字必须是该元素的直接文本**——这个严格性是判别器，不是缺陷：
@@ -18,7 +31,7 @@ export function extractCode(subject: string, body: string): string | null {
   const tagged = cleanBody.match(/class=["'][^"']*verification[^"']*["'][^>]*>\s*(\d{6})\s*</);
   if (tagged) return tagged[1]!;
 
-  const cleaned = `${subject} ${cleanBody}`;
+  const cleaned = `${boundedSubject} ${cleanBody}`;
 
   // 关键词锚定：优先取「验证码 / verification code / auth code」附近的六位数，
   // 避免订单号之类排在前面的数字被误取。

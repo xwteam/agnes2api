@@ -99,4 +99,25 @@ describe("extractCode", () => {
     // RGB123456 中的 123456 是一个单词的一部分（无左边界），真码在后面
     expect(extractCode("", html)).toBe("789012");
   });
+
+  // === M6：输入长度上限 ===
+  // 正文来自临时邮箱——那个地址一旦生成任何人都能投递，长度不受我们控制。
+
+  it("超长正文只扫描前 64 KiB：上限内的验证码照常取到", () => {
+    const body = `验证码 246810 ${"x ".repeat(1024 * 1024)}`;
+    expect(extractCode("", body)).toBe("246810");
+  });
+
+  it("超长正文里位于 64 KiB 之外的内容不参与匹配（确实截断了，而不是碰巧能跑）", () => {
+    const body = `${"x".repeat(64 * 1024)}验证码 246810`;
+    expect(extractCode("", body)).toBeNull();
+  });
+
+  it("超长主题同样被截断（主题也来自外部输入）", () => {
+    // 主题前 1 KiB 全是无关内容，真码在 1 KiB 之外；正文里没有六位数。
+    const subject = `${"y".repeat(1024)}验证码 135791`;
+    expect(extractCode(subject, "正文没有码")).toBeNull();
+    // 对照：主题在上限内时照常能取到。
+    expect(extractCode("验证码 135791", "正文没有码")).toBe("135791");
+  });
 });
