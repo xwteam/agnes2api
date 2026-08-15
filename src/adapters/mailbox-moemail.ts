@@ -50,9 +50,22 @@ export class MoeMailProvider implements MailProvider {
       body: JSON.stringify({ name, expiryTime: MAILBOX_TTL_MS, domain }),
     });
     if (!r.ok) throw new Error(`MoeMail 建邮箱失败: HTTP ${r.status}`);
-    const data = (await r.json()) as Record<string, any>;
+    let data: Record<string, any> | null = null;
+    try {
+      data = (await r.json()) as Record<string, any>;
+    } catch {
+      data = null;
+    }
     if (typeof data?.id !== "string" || typeof data?.email !== "string") {
-      throw new Error("MoeMail 建邮箱响应缺少 id 或 email");
+      // 与 YYDS 不同，MoeMail 用**服务端生成的 id** 定位邮箱，请求侧无从推断，
+      // 没法像 YYDS 那样兜底删除：这封邮箱若真的建出来了，只能等建邮箱时传的
+      // TTL 到期自愈。至少要留痕——活跃邮箱有上限（上游默认 30，超限建邮箱返回
+      // 403），配额被这种泄漏吃掉时不能毫无信号。
+      console.warn(
+        `[agnes2api] MoeMail 建邮箱响应无法解析或缺少 id/email：邮箱可能已在上游创建但 handle 丢失，` +
+          `无法主动删除，只能等 ${MAILBOX_TTL_MS / 60_000} 分钟 TTL 到期自愈（domain=${domain}）`,
+      );
+      throw new Error("MoeMail 建邮箱响应无法解析或缺少 id 或 email");
     }
     // MoeMail 用 id 定位邮箱，与 YYDS 用地址不同。
     return { address: data.email, handle: data.id };

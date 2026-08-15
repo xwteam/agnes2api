@@ -151,6 +151,45 @@ describe("MoeMailProvider", () => {
     expect(body.name).toMatch(/^u[a-z0-9]{10}$/);
   });
 
+  // === I7：建邮箱的不可恢复泄漏（MoeMail 侧只能留痕） ===
+  // MoeMail 用服务端生成的 id 定位邮箱，请求侧推断不出，没法像 YYDS 那样兜底
+  // 删除；这里明确其泄漏语义：抛错、留痕、指明只能等 TTL 自愈。
+
+  it("I7 createMailbox 响应 2xx 但缺 id 时抛错，并 warn 说明只能等 TTL 自愈", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { email: "u@a.test" } }));
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await expect(p.createMailbox("a.test")).rejects.toThrow(/id/);
+    // 没有 handle 就删不掉，不该凭空发出一个删不中的 DELETE。
+    expect(calls).toHaveLength(1);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const msg = String(warnSpy.mock.calls[0]?.[0]);
+    expect(msg).toContain("TTL");
+    expect(msg).toContain("a.test");
+    warnSpy.mockRestore();
+  });
+
+  it("I7 createMailbox 响应 2xx 但正文非 JSON 时同样抛错并留痕（而不是抛出解析异常）", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetcher = { async fetch() { return new Response("<html>502</html>", { status: 200 }); } };
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await expect(p.createMailbox("a.test")).rejects.toThrow(/缺少 id 或 email/);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it("createMailbox 非 2xx 时抛错并带上状态码（配额超限的 403 就走这条）", async () => {
+    const { fetcher } = stubFetcher(() => ({ status: 403 }));
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await expect(p.createMailbox("a.test")).rejects.toThrow(/403/);
+  });
+
+  it("listDomains 非 2xx 时抛错并带上状态码（通道级失败信号）", async () => {
+    const { fetcher } = stubFetcher(() => ({ status: 500 }));
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await expect(p.listDomains()).rejects.toThrow(/500/);
+  });
+
   it("轮询响应 200 但 body 非 JSON 时不中断，下一轮仍能取到验证码", async () => {
     let attempts = 0;
     let t = 0;

@@ -209,6 +209,54 @@ describe("YydsProvider", () => {
     expect(body.localPart).toMatch(/^u[a-z0-9]{10}$/);
   });
 
+  // === I7：建邮箱的不可恢复泄漏 ===
+  // 响应 2xx 但正文解析不出 data.address 时，邮箱**可能已经在上游建出来了**，
+  // 而 handle 丢失就永远删不掉（YYDS 侧没有 TTL，永久占配额）。抛错之前必须用
+  // 请求时已知的 localPart@domain 兜底删一次。
+
+  it("I7 createMailbox 响应 2xx 但缺 data.address 时，按 localPart@domain 兜底删除后再抛错", async () => {
+    const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { data: {} } }));
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
+    });
+    await expect(p.createMailbox("a.test")).rejects.toThrow(/data\.address/);
+    // 第 2 次调用必须是针对刚才那个 localPart 的 DELETE，否则邮箱就泄漏了。
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.init.method).toBe("DELETE");
+    expect(calls[1]!.url).toBe("https://y.test/v1/accounts/uaaaaaaaaaa%40a.test");
+  });
+
+  it("I7 createMailbox 响应 2xx 但正文非 JSON 时，同样兜底删除后再抛错", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetcher = {
+      async fetch(url: string, init: RequestInit) {
+        calls.push({ url, init });
+        if ((init.method ?? "GET") === "DELETE") return new Response("{}", { status: 200 });
+        return new Response("<html>Bad Gateway</html>", { status: 200 });
+      },
+    };
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
+    });
+    await expect(p.createMailbox("a.test")).rejects.toThrow(/无法解析|data\.address/);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.init.method).toBe("DELETE");
+    expect(calls[1]!.url).toBe("https://y.test/v1/accounts/uaaaaaaaaaa%40a.test");
+  });
+
+  it("createMailbox 非 2xx 时抛错并带上状态码，且不发出兜底删除（上游没建成，别乱删）", async () => {
+    const { calls, fetcher } = stubFetcher(() => ({ status: 429 }));
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await expect(p.createMailbox("a.test")).rejects.toThrow(/429/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("listDomains 非 2xx 时抛错并带上状态码（通道级失败信号）", async () => {
+    const { fetcher } = stubFetcher(() => ({ status: 401 }));
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await expect(p.listDomains()).rejects.toThrow(/401/);
+  });
+
   it("deleteMailbox 发出的是 DELETE 到 /v1/accounts/<handle> 并带 X-API-Key", async () => {
     const { calls, fetcher } = stubFetcher(() => ({ status: 200 }));
     const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
