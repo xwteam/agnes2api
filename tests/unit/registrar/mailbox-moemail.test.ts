@@ -99,6 +99,31 @@ describe("MoeMailProvider", () => {
     expect(new Headers(calls[0]!.init.headers).get("x-api-key")).toBe("k");
   });
 
+  it("I2 四类请求（列域名/建邮箱/轮询/删邮箱）都带单请求超时的 signal", async () => {
+    let t = 0;
+    const { calls, fetcher } = stubFetcher((url, init) => {
+      if (url.includes("/api/config")) return { status: 200, body: { emailDomains: "a.test" } };
+      if (url.includes("/api/emails/generate")) return { status: 200, body: { id: "eid-1", email: "u@a.test" } };
+      if ((init.method ?? "GET") === "GET") {
+        return { status: 200, body: { messages: [{ id: "m1", subject: "验证码", content: "验证码 654321" }] } };
+      }
+      return { status: 200, body: {} };
+    });
+    const p = new MoeMailProvider({
+      fetcher, baseUrl: "https://m.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    await p.listDomains();
+    const m = await p.createMailbox("a.test");
+    await p.pollCode(m, 5000);
+    await p.deleteMailbox(m);
+    expect(calls.length).toBe(4); // 列域名 + 建邮箱 + 轮询 + 删邮箱
+    for (const c of calls) {
+      expect(c.init.signal).toBeInstanceOf(AbortSignal);
+      expect(c.init.signal!.aborted).toBe(false);
+    }
+  });
+
   it("deleteMailbox 网络异常（fetch 抛错）也不向上传播", async () => {
     const fetcher = { async fetch() { throw new Error("network down"); } };
     const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });

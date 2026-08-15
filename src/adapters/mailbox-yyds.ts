@@ -1,5 +1,5 @@
 import type { MailProvider } from "../ports/mailbox.js";
-import type { Mailbox } from "../core/registrar/types.js";
+import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode } from "../core/registrar/code.js";
 
@@ -24,9 +24,18 @@ export class YydsProvider implements MailProvider {
     return { "X-API-Key": this.deps.apiKey, "content-type": "application/json" };
   }
 
+  /**
+   * 单请求超时。注意 `pollCode` 的截止判断只在每轮循环开头做一次，请求本身挂起
+   * 是不计入的——没有这个超时，一个挂死的连接就能让单轮无限拖长，把整轮补池推过
+   * Worker Cron 的墙钟上限，届时 mintOne 的 finally 不会执行，邮箱就漏了。
+   */
+  private signal(): AbortSignal {
+    return AbortSignal.timeout(REGISTRAR_REQUEST_TIMEOUT_MS);
+  }
+
   async listDomains(): Promise<string[]> {
     const r = await this.deps.fetcher.fetch(`${this.deps.baseUrl}/v1/domains`, {
-      method: "GET", headers: this.headers(),
+      method: "GET", headers: this.headers(), signal: this.signal(),
     });
     if (!r.ok) throw new Error(`YYDS 列域名失败: HTTP ${r.status}`);
     const data = (await r.json()) as Record<string, any>;
@@ -43,6 +52,7 @@ export class YydsProvider implements MailProvider {
     }
     const r = await this.deps.fetcher.fetch(`${this.deps.baseUrl}/v1/accounts`, {
       method: "POST", headers: this.headers(), body: JSON.stringify({ localPart: lp, domain }),
+      signal: this.signal(),
     });
     if (!r.ok) throw new Error(`YYDS 建邮箱失败: HTTP ${r.status}`);
     // 2xx 之后的任何解析失败都意味着同一件事：邮箱**可能已经在上游建出来了**，
@@ -70,7 +80,9 @@ export class YydsProvider implements MailProvider {
     const seen = new Set<string>();
     while (this.deps.now() - start < timeoutMs) {
       const listUrl = `${this.deps.baseUrl}/v1/messages?address=${encodeURIComponent(mailbox.handle)}`;
-      const lr = await this.deps.fetcher.fetch(listUrl, { method: "GET", headers: this.headers() });
+      const lr = await this.deps.fetcher.fetch(listUrl, {
+        method: "GET", headers: this.headers(), signal: this.signal(),
+      });
       if (lr.ok) {
         // 列表响应偶发 200 但 body 非 JSON（网关超时页等），解析失败按未取到消息处理，
         // 不中断整条轮询——与 `!lr.ok` 时"本轮跳过、继续轮询"的设计意图保持一致。
@@ -86,7 +98,9 @@ export class YydsProvider implements MailProvider {
           const id = m?.id;
           if (!id || seen.has(id)) continue;
           const dUrl = `${this.deps.baseUrl}/v1/messages/${encodeURIComponent(id)}?address=${encodeURIComponent(mailbox.handle)}`;
-          const dr = await this.deps.fetcher.fetch(dUrl, { method: "GET", headers: this.headers() });
+          const dr = await this.deps.fetcher.fetch(dUrl, {
+            method: "GET", headers: this.headers(), signal: this.signal(),
+          });
           // 拉详情失败（HTTP 非 2xx 或响应体非 JSON）不标记 seen：这封邮件可能已经
           // 到达，只是这次请求恰好撞上第三方 API 的瞬时错误，下一轮还要能重试，
           // 否则验证码邮件会被永久跳过、一路空转到超时。
@@ -114,7 +128,7 @@ export class YydsProvider implements MailProvider {
     try {
       const r = await this.deps.fetcher.fetch(
         `${this.deps.baseUrl}/v1/accounts/${encodeURIComponent(mailbox.handle)}`,
-        { method: "DELETE", headers: this.headers() },
+        { method: "DELETE", headers: this.headers(), signal: this.signal() },
       );
       // 非 2xx 才是最常见的删除失败路径：404/403/500 都会让 fetch 正常 resolve，
       // 根本走不到下面的 catch。不在这里留痕的话，「邮箱正在堆积、配额（免费档

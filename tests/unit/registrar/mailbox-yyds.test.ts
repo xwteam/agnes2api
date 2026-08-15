@@ -257,6 +257,31 @@ describe("YydsProvider", () => {
     await expect(p.listDomains()).rejects.toThrow(/401/);
   });
 
+  it("I2 四类请求（列域名/建邮箱/轮询/删邮箱）都带单请求超时的 signal", async () => {
+    // pollCode 的截止判断只在每轮循环开头做一次，请求本身挂起是不计入的——
+    // 单请求超时是这条链路上唯一能兜住挂起连接的东西。
+    let t = 0;
+    const { calls, fetcher } = stubFetcher((url) => {
+      if (url.includes("/v1/messages/")) return { status: 200, body: { data: { verificationCode: "654321" } } };
+      if (url.includes("/v1/messages")) return { status: 200, body: { data: { messages: [{ id: "m1" }] } } };
+      if (url.includes("/v1/domains")) return { status: 200, body: { data: [{ domain: "a.test" }] } };
+      return { status: 200, body: { data: { address: "u1@a.test" } } };
+    });
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    await p.listDomains();
+    const m = await p.createMailbox("a.test");
+    await p.pollCode(m, 5000);
+    await p.deleteMailbox(m);
+    expect(calls.length).toBe(5); // 列域名 + 建邮箱 + 列消息 + 拉详情 + 删邮箱
+    for (const c of calls) {
+      expect(c.init.signal).toBeInstanceOf(AbortSignal);
+      expect(c.init.signal!.aborted).toBe(false);
+    }
+  });
+
   it("deleteMailbox 发出的是 DELETE 到 /v1/accounts/<handle> 并带 X-API-Key", async () => {
     const { calls, fetcher } = stubFetcher(() => ({ status: 200 }));
     const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });

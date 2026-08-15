@@ -100,13 +100,27 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
 - The CPU time limit is 30 seconds, but the `await`ed network calls during a refill (sending and
   polling for the verification code) don't count against CPU time, so the CPU limit isn't the
   real constraint.
-- With the default configuration, the worst-case duration is roughly
-  `MINT_BATCH × CODE_TIMEOUT_MS` = 5 × 120s = 600s, plus up to ~20s from the random delays
-  between mint attempts within a round (at most 4 gaps, up to 5s each) — about **600–620s**
-  total, leaving roughly **30% headroom** under the 900s wall-clock limit.
-- **Before raising `MINT_BATCH` or `CODE_TIMEOUT_MS`, work out the new worst case with the
-  formula above and confirm it won't hit the 15-minute wall-clock limit.** If it does, the
-  platform will abort that Cron invocation.
+- Every HTTP request on the registrar's path carries a **15-second per-request timeout**
+  (a fixed value, not configurable). It is what makes the two estimates below meaningful:
+  without it, a single hung connection can stretch a round indefinitely.
+- **Typical duration** (every request returns quickly and the first domain isn't blocked) is
+  dominated by waiting for the verification code: roughly `MINT_BATCH × CODE_TIMEOUT_MS` =
+  5 × 120s = 600s, plus up to ~20s from the random delays between mint attempts within a round
+  (at most 4 gaps, up to 5s each) — about **600–620s** total, leaving roughly **30% headroom**
+  under the 900s wall-clock limit.
+- **Theoretical worst case** has to include the per-request timeout. Besides polling for the
+  code, one mint issues "1 request to list domains + 3 per domain attempted (create mailbox,
+  send code, delete mailbox) + 3 more (register, log in, create key)", i.e.
+  `CODE_TIMEOUT_MS + (1 + 3 × MAX_DOMAIN_ATTEMPTS + 3) × 15s`, which is about
+  120 + 420 = **540s** with the defaults; multiplied by `MINT_BATCH` that is far beyond 900s.
+  In other words, **the default configuration can hit the wall-clock limit in pathological
+  cases** — a deliberate trade-off: each key is persisted the moment it is minted, so being
+  aborted only leaves the round incomplete (see the next bullet). If you want even the
+  pathological case to stay within the wall clock, set `MINT_BATCH` to 1–2, or lower
+  `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
+- **Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers
+  out with both formulas above.** When the limit is hit, the platform aborts that Cron
+  invocation.
 - Being aborted does not lose any key that was already minted — each key is written to storage
   as soon as it's minted, so an interrupted round is simply incomplete; the next scheduled round
   picks up where it left off.

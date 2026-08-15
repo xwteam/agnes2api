@@ -1,4 +1,5 @@
 import type { Fetcher } from "../../ports/fetcher.js";
+import { REGISTRAR_REQUEST_TIMEOUT_MS } from "./types.js";
 
 export interface AgnesDeps {
   fetcher: Fetcher;
@@ -11,12 +12,20 @@ const BASE_HEADERS = {
   accept: "application/json",
 } as const;
 
+/**
+ * 注册链四步各自的单请求超时。没有它，一个挂起的连接就能把整轮补池拖过 Worker
+ * Cron 的 15 分钟墙钟，正在铸的那个邮箱的清理（mintOne 的 finally）也就永远不会
+ * 执行。与 P1 转发路径（core/dispatcher.ts）带 AbortController 的做法一致。
+ */
+const timeoutSignal = () => AbortSignal.timeout(REGISTRAR_REQUEST_TIMEOUT_MS);
+
 /** 发验证码。**原样返回状态码不抛错**：400 表示该域名被 Agnes 屏蔽，调用方要据此换域名。 */
 export async function sendCode(deps: AgnesDeps, email: string): Promise<number> {
   const url = `${deps.platformUrl}/api/verification?email=${encodeURIComponent(email)}&purpose=register`;
   const r = await deps.fetcher.fetch(url, {
     method: "GET",
     headers: { ...BASE_HEADERS, "x-user-language": "zh-CN" },
+    signal: timeoutSignal(),
   });
   return r.status;
 }
@@ -28,6 +37,7 @@ export async function register(
     method: "POST",
     headers: { ...BASE_HEADERS, "x-user-language": "zh" },
     body: JSON.stringify({ email, password, password_confirm: password, code }),
+    signal: timeoutSignal(),
   });
   return r.ok;
 }
@@ -40,6 +50,7 @@ export async function login(
     method: "POST",
     headers: { ...BASE_HEADERS, "x-user-language": "zh" },
     body: JSON.stringify({ username: email, password }),
+    signal: timeoutSignal(),
   });
   if (!r.ok) return null;
   // 网关超时/维护页等场景会以 200 状态返回非 JSON 正文（与 mailbox-yyds.ts 的
@@ -72,6 +83,7 @@ export async function createKey(
     method: "POST",
     headers: { ...BASE_HEADERS, "x-user-language": "zh-CN", authorization: `Bearer ${token}` },
     body: JSON.stringify({ name }),
+    signal: timeoutSignal(),
   });
   if (!r.ok) return null;
   // 同上：非 JSON 正文按取不到 key 处理，不抛错。

@@ -1,5 +1,5 @@
 import type { MailProvider } from "../ports/mailbox.js";
-import type { Mailbox } from "../core/registrar/types.js";
+import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode } from "../core/registrar/code.js";
 
@@ -26,9 +26,14 @@ export class MoeMailProvider implements MailProvider {
     return { "X-API-Key": this.deps.apiKey, "content-type": "application/json" };
   }
 
+  /** 单请求超时，理由同 YYDS 适配器：轮询的截止判断拦不住挂起的请求。 */
+  private signal(): AbortSignal {
+    return AbortSignal.timeout(REGISTRAR_REQUEST_TIMEOUT_MS);
+  }
+
   async listDomains(): Promise<string[]> {
     const r = await this.deps.fetcher.fetch(`${this.deps.baseUrl}/api/config`, {
-      method: "GET", headers: this.headers(),
+      method: "GET", headers: this.headers(), signal: this.signal(),
     });
     if (!r.ok) throw new Error(`MoeMail 列域名失败: HTTP ${r.status}`);
     const data = (await r.json()) as Record<string, any>;
@@ -48,6 +53,7 @@ export class MoeMailProvider implements MailProvider {
     const r = await this.deps.fetcher.fetch(`${this.deps.baseUrl}/api/emails/generate`, {
       method: "POST", headers: this.headers(),
       body: JSON.stringify({ name, expiryTime: MAILBOX_TTL_MS, domain }),
+      signal: this.signal(),
     });
     if (!r.ok) throw new Error(`MoeMail 建邮箱失败: HTTP ${r.status}`);
     let data: Record<string, any> | null = null;
@@ -80,7 +86,7 @@ export class MoeMailProvider implements MailProvider {
     while (this.deps.now() - start < timeoutMs) {
       const r = await this.deps.fetcher.fetch(
         `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`,
-        { method: "GET", headers: this.headers() },
+        { method: "GET", headers: this.headers(), signal: this.signal() },
       );
       if (r.ok) {
         // 列表响应偶发 200 但 body 非 JSON（网关异常页等），解析失败按本轮未取到
@@ -109,7 +115,7 @@ export class MoeMailProvider implements MailProvider {
     try {
       const r = await this.deps.fetcher.fetch(
         `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`,
-        { method: "DELETE", headers: this.headers() },
+        { method: "DELETE", headers: this.headers(), signal: this.signal() },
       );
       // 理由同 YYDS 适配器：非 2xx 会正常 resolve、进不了 catch，是最常见的失败
       // 路径。MoeMail 侧同样有活跃邮箱上限（上游默认 30，超限建邮箱返回 403），

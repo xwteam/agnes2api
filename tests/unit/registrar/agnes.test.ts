@@ -104,6 +104,30 @@ describe("createKey", () => {
   });
 });
 
+describe("单请求超时（I2）", () => {
+  it("注册链四步的每个请求都带 AbortSignal：一个挂起的连接不该拖垮整轮补池", async () => {
+    // 没有它，所有耗时预算（CODE_TIMEOUT_MS、Worker Cron 的 15 分钟墙钟）都建立在
+    // "每个请求都会及时返回"这个未言明的前提上；一次挂起就能把单轮推过墙钟，
+    // 正在铸的那个邮箱的清理（mintOne 的 finally）也就永远不会执行。
+    const { calls, fetcher } = recordingFetcher([
+      { status: 200 },
+      { status: 200 },
+      { status: 200, body: { data: { access_token: "tok" } } },
+      { status: 200, body: { data: { key: "sk-1" } } },
+    ]);
+    const deps = { fetcher, platformUrl: PLATFORM };
+    await sendCode(deps, "a@x.test");
+    await register(deps, "a@x.test", "pw", "123456");
+    await login(deps, "a@x.test", "pw");
+    await createKey(deps, "tok", "auto");
+    expect(calls).toHaveLength(4);
+    for (const c of calls) {
+      expect(c.init.signal).toBeInstanceOf(AbortSignal);
+      expect(c.init.signal!.aborted).toBe(false);
+    }
+  });
+});
+
 describe("randomPassword", () => {
   it("长度固定且注入的随机源决定结果（可复现）", () => {
     const a = randomPassword(() => 0.5);
