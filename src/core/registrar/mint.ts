@@ -8,6 +8,7 @@ export type MintOutcome =
       ok: false;
       reason:
         | "domain_blocked_all"
+        | "upstream_error"
         | "code_timeout"
         | "register_failed"
         | "login_failed"
@@ -48,6 +49,11 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
   if (domains.length === 0) return { ok: false, reason: "provider_error" };
 
   const candidates = shuffle(domains, rand).slice(0, deps.maxDomainAttempts);
+  // 400 是"域名被 Agnes 屏蔽"的真实信号；其他非 2xx（例如上游整体宕机返回 500）
+  // 混进来的话，轮完所有域名后如果一律归因于 domain_blocked_all，会让调用方把
+  // "上游故障"误判成"换个域名就好"，据此做的退避决策会决策错。用这个标记把两者
+  // 分开，只要出现过一次非 400 的非 2xx，就不能再声称"域名全被屏蔽"。
+  let sawUpstreamError = false;
 
   for (const domain of candidates) {
     let mailbox: Mailbox;
@@ -62,7 +68,11 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       const status = await sendCode(deps.agnes, mailbox.address);
       // 400 = Agnes 屏蔽了该域名。这是域名轮换赖以工作的信号，不是错误。
       if (status === 400) continue;
-      if (status < 200 || status >= 300) continue;
+      if (status < 200 || status >= 300) {
+        sawUpstreamError = true;
+        console.warn(`[agnes2api] 发验证码遇到非 2xx 非域名屏蔽的状态码，换下一个域名：${domain} status=${status}`);
+        continue;
+      }
 
       const code = await deps.provider.pollCode(mailbox, deps.codeTimeoutMs);
       if (!code) return { ok: false, reason: "code_timeout" };
@@ -92,5 +102,7 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
     }
   }
 
-  return { ok: false, reason: "domain_blocked_all" };
+  return sawUpstreamError
+    ? { ok: false, reason: "upstream_error" }
+    : { ok: false, reason: "domain_blocked_all" };
 }

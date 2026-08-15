@@ -69,6 +69,15 @@ describe("login", () => {
     const { fetcher } = recordingFetcher([{ status: 200, body: { data: {} } }]);
     expect(await login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw")).toBeNull();
   });
+
+  it("响应体不是合法 JSON 时返回 null 而不是抛错（网关超时/维护页等可能以 200 返回非 JSON 正文）", async () => {
+    const fetcher = {
+      async fetch() {
+        return new Response("<html>maintenance</html>", { status: 200 });
+      },
+    };
+    await expect(login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw")).resolves.toBeNull();
+  });
 });
 
 describe("createKey", () => {
@@ -83,6 +92,15 @@ describe("createKey", () => {
   it("非 2xx 返回 null", async () => {
     const { fetcher } = recordingFetcher([{ status: 401 }]);
     expect(await createKey({ fetcher, platformUrl: PLATFORM }, "bad", "auto")).toBeNull();
+  });
+
+  it("响应体不是合法 JSON 时返回 null 而不是抛错（网关超时/维护页等可能以 200 返回非 JSON 正文）", async () => {
+    const fetcher = {
+      async fetch() {
+        return new Response("<html>maintenance</html>", { status: 200 });
+      },
+    };
+    await expect(createKey({ fetcher, platformUrl: PLATFORM }, "tok-1", "auto")).resolves.toBeNull();
   });
 });
 

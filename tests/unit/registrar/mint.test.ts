@@ -64,6 +64,20 @@ describe("mintOne", () => {
     expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "domain_blocked_all" });
   });
 
+  it("发验证码遇到非 400 的非 2xx（上游整体故障）时返回 upstream_error 而不是 domain_blocked_all", async () => {
+    const provider = new FakeMailProvider({ domains: ["x.test", "y.test"] });
+    const { agnes } = agnesStub({ sendCode: () => 500 });
+    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "upstream_error" });
+  });
+
+  it("400 与其他非 2xx 混杂时也归为 upstream_error（不能谎称域名全被屏蔽）", async () => {
+    const provider = new FakeMailProvider({ domains: ["blocked.test", "down.test"] });
+    const { agnes } = agnesStub({
+      sendCode: (email) => (email.endsWith("@blocked.test") ? 400 : 503),
+    });
+    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "upstream_error" });
+  });
+
   it("最多只试 maxDomainAttempts 个域名", async () => {
     const provider = new FakeMailProvider({ domains: ["a.test", "b.test", "c.test", "d.test", "e.test"] });
     const { seen, agnes } = agnesStub({ sendCode: () => 400 });

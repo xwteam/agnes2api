@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { registrarFromEnv } from "../../../src/core/registrar/config.js";
+import { describe, it, expect, vi } from "vitest";
+import { registrarFromEnv, requirePrimary } from "../../../src/core/registrar/config.js";
 
 describe("registrarFromEnv", () => {
   it("默认不启用", () => {
@@ -62,12 +62,29 @@ describe("registrarFromEnv", () => {
   // P1 遗留：配置校验此前只覆盖环境变量层，没覆盖存储层。primary/fallback 是决定
   // 走哪条代码分支的枚举值，若存储里的垃圾值能绕过校验静默流入，下游按通道分支的
   // 代码（例如选哪个 MailProvider 适配器）会拿到既不是 yyds 也不是 moemail 的值。
-  it("存储中的 primary 非法值时抛错，不能绕过校验静默流入", () => {
-    expect(() => registrarFromEnv({}, { primary: "garbage" as never })).toThrow(/primary/);
+  // 通道格式校验现在受 enabled 门控（见下面"未启用时…只 warn"的用例），故这里要
+  // 显式启用注册机，才能真正打在"启用时格式非法必须抛错"这条分支上。
+  it("启用时存储中的 primary 非法值抛错，不能绕过校验静默流入", () => {
+    expect(() => registrarFromEnv({ REGISTRAR_ENABLED: "true" }, { primary: "garbage" as never }))
+      .toThrow(/primary/);
   });
 
-  it("存储中的 fallback 非法值时抛错，不能绕过校验静默流入", () => {
-    expect(() => registrarFromEnv({}, { fallback: "garbage" as never })).toThrow(/fallback/);
+  it("启用时存储中的 fallback 非法值抛错，不能绕过校验静默流入", () => {
+    expect(() => registrarFromEnv({ REGISTRAR_ENABLED: "true" }, { fallback: "garbage" as never }))
+      .toThrow(/fallback/);
+  });
+
+  // 注册机关闭时，一个用不到的字段不该让整个网关起不来（例如 P3 面板写入 bug、
+  // 手工改存储、跨版本迁移遗留）。只留痕，不阻断启动。
+  it("未启用时存储中通道格式脏数据只 warn 不抛错，网关仍能正常启动", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let cfg: ReturnType<typeof registrarFromEnv> | undefined;
+    expect(() => {
+      cfg = registrarFromEnv({}, { primary: "garbage" as never, fallback: "trash" as never });
+    }).not.toThrow();
+    expect(cfg!.enabled).toBe(false);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it("主备通道相同时抛错（降级到自己没有意义）", () => {
@@ -85,5 +102,38 @@ describe("registrarFromEnv", () => {
     expect(() => registrarFromEnv(
       { REGISTRAR_ENABLED: "false", REGISTRAR_PRIMARY: "yyds" }, {},
     )).not.toThrow();
+  });
+
+  it("mintDelayMinMs 大于 mintDelayMaxMs 时抛错并点名两个环境变量", () => {
+    expect(() => registrarFromEnv({ MINT_DELAY_MIN_MS: "9000", MINT_DELAY_MAX_MS: "3000" }, {}))
+      .toThrow(/MINT_DELAY_MIN_MS/);
+    expect(() => registrarFromEnv({ MINT_DELAY_MIN_MS: "9000", MINT_DELAY_MAX_MS: "3000" }, {}))
+      .toThrow(/MINT_DELAY_MAX_MS/);
+  });
+
+  it("mintDelayMinMs 等于 mintDelayMaxMs 时不抛错（固定延迟是合法配置）", () => {
+    const c = registrarFromEnv({ MINT_DELAY_MIN_MS: "3000", MINT_DELAY_MAX_MS: "3000" }, {});
+    expect(c.mintDelayMinMs).toBe(3000);
+    expect(c.mintDelayMaxMs).toBe(3000);
+  });
+});
+
+describe("requirePrimary", () => {
+  it("enabled 且 primary 合法时返回该通道", () => {
+    const cfg = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" }, {});
+    expect(requirePrimary(cfg)).toBe("yyds");
+  });
+
+  it("enabled=false 时抛错（即便 primary 字段因类型断言而非空）", () => {
+    const cfg = registrarFromEnv({}, {});
+    expect(() => requirePrimary(cfg)).toThrow();
+  });
+
+  it("enabled=true 但 primary 为 null 时抛错", () => {
+    // registrarFromEnv 本身在 enabled 且 primary 为空时已经抛错，这里直接构造
+    // 一个"绕过 registrarFromEnv"的畸形 cfg 来验证 requirePrimary 自身的判空逻辑，
+    // 不依赖上游是否也会拦截。
+    const cfg = { enabled: true, primary: null } as unknown as Parameters<typeof requirePrimary>[0];
+    expect(() => requirePrimary(cfg)).toThrow();
   });
 });

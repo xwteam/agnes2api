@@ -42,7 +42,14 @@ export async function login(
     body: JSON.stringify({ username: email, password }),
   });
   if (!r.ok) return null;
-  const data = (await r.json()) as unknown;
+  // 网关超时/维护页等场景会以 200 状态返回非 JSON 正文（与 mailbox-yyds.ts 的
+  // 同类防御一致），解析失败按取不到令牌处理，不让异常穿透 mintOne 的返回契约。
+  let data: unknown;
+  try {
+    data = await r.json();
+  } catch {
+    return null;
+  }
   if (typeof data !== "object" || data === null) return null;
   const d = (data as Record<string, unknown>).data;
   if (typeof d === "object" && d !== null) {
@@ -67,7 +74,13 @@ export async function createKey(
     body: JSON.stringify({ name }),
   });
   if (!r.ok) return null;
-  const data = (await r.json()) as unknown;
+  // 同上：非 JSON 正文按取不到 key 处理，不抛错。
+  let data: unknown;
+  try {
+    data = await r.json();
+  } catch {
+    return null;
+  }
   if (typeof data !== "object" || data === null) return null;
   const d = (data as Record<string, unknown>).data;
   if (typeof d === "object" && d !== null) {

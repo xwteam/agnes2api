@@ -65,10 +65,18 @@ function posInt(env: Env, envName: string, field: string, stored: unknown, fallb
   return stored;
 }
 
-function channel(raw: string | undefined, envName: string): Channel | null {
+/**
+ * `strict=false`（注册机未启用）时格式非法只 `console.warn` 并当作未设置（`null`），
+ * 不抛错：一个被显式关闭的子系统的脏配置不该让整个网关起不来。`strict=true`
+ * （已启用）时维持原有的抛错行为，因为这时通道值真的要被使用。
+ */
+function channel(raw: string | undefined, envName: string, strict: boolean): Channel | null {
   if (raw === undefined || raw === "") return null;
   if (raw !== "yyds" && raw !== "moemail") {
-    throw new Error(`${envName} 只能是 yyds 或 moemail: ${raw}`);
+    const msg = `${envName} 只能是 yyds 或 moemail: ${raw}`;
+    if (strict) throw new Error(msg);
+    console.warn(`[agnes2api] 注册机未启用，忽略格式非法的 ${envName}: ${raw}`);
+    return null;
   }
   return raw;
 }
@@ -78,11 +86,16 @@ function channel(raw: string | undefined, envName: string): Channel | null {
  * 路径，但通道这种枚举值如果只在 env 侧校验、存储侧直接透传，垃圾数据会绕过校验
  * 静默流入一个类型上声明为 `"yyds" | "moemail"` 的字段，后续按通道分支的代码
  * （例如"选哪个 MailProvider 适配器"）就会拿到既不匹配 yyds 也不匹配 moemail 的值。
+ *
+ * 同 `channel()`：`strict=false`（未启用）时只 warn 不抛错，见上面注释。
  */
-function storedChannel(raw: unknown, field: string): Channel | null {
+function storedChannel(raw: unknown, field: string, strict: boolean): Channel | null {
   if (raw === undefined || raw === null) return null;
   if (raw !== "yyds" && raw !== "moemail") {
-    throw new Error(`存储中的 ${field} 只能是 yyds 或 moemail: ${String(raw)}`);
+    const msg = `存储中的 ${field} 只能是 yyds 或 moemail: ${String(raw)}`;
+    if (strict) throw new Error(msg);
+    console.warn(`[agnes2api] 注册机未启用，忽略存储中格式非法的 ${field}: ${String(raw)}`);
+    return null;
   }
   return raw;
 }
@@ -104,8 +117,11 @@ function creds(env: Env, stored: Partial<RegistrarConfig>, ch: Channel): Channel
 
 export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): RegistrarConfig {
   const enabled = (env.REGISTRAR_ENABLED ?? String(stored.enabled ?? false)) === "true";
-  const primary = channel(env.REGISTRAR_PRIMARY, "REGISTRAR_PRIMARY") ?? storedChannel(stored.primary, "primary");
-  const fallback = channel(env.REGISTRAR_FALLBACK, "REGISTRAR_FALLBACK") ?? storedChannel(stored.fallback, "fallback");
+  // 通道格式校验受 enabled 门控：未启用时脏数据只 warn，见 channel()/storedChannel() 注释。
+  const primary = channel(env.REGISTRAR_PRIMARY, "REGISTRAR_PRIMARY", enabled)
+    ?? storedChannel(stored.primary, "primary", enabled);
+  const fallback = channel(env.REGISTRAR_FALLBACK, "REGISTRAR_FALLBACK", enabled)
+    ?? storedChannel(stored.fallback, "fallback", enabled);
 
   if (enabled && !primary) {
     throw new Error("注册机已启用但未指定 REGISTRAR_PRIMARY（yyds 或 moemail，两者平级需显式选择）");
@@ -133,6 +149,12 @@ export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): Re
     moemail: null,
   };
 
+  if (cfg.mintDelayMinMs > cfg.mintDelayMaxMs) {
+    throw new Error(
+      `MINT_DELAY_MIN_MS 不能大于 MINT_DELAY_MAX_MS: ${cfg.mintDelayMinMs} > ${cfg.mintDelayMaxMs}`,
+    );
+  }
+
   if (!enabled) return cfg;
 
   for (const ch of [primary, fallback].filter((c): c is Channel => c !== null)) {
@@ -140,4 +162,18 @@ export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): Re
     else cfg.moemail = creds(env, stored, "moemail");
   }
   return cfg;
+}
+
+/**
+ * `RegistrarConfig.primary` 的类型是非空 `Channel`，但 `enabled=false` 时运行时值
+ * 其实是 `null`（靠构造处的 `as Channel` 断言压住，类型系统不会强制消费方先判断
+ * `enabled`）。下游一旦裸读 `cfg.primary` 却忘了先判空，拿到的要么是 `undefined`
+ * 引发的无上下文异常，要么是运行时 `null`。这个访问器把判断收敛到一处：调用方
+ * 不必再自己记得先查 `enabled`。
+ */
+export function requirePrimary(cfg: RegistrarConfig): Channel {
+  if (!cfg.enabled || !cfg.primary) {
+    throw new Error("注册机未启用或未配置邮箱通道");
+  }
+  return cfg.primary;
 }
