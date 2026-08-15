@@ -1,0 +1,181 @@
+# デプロイガイド
+
+**Language:** [English](../en/DEPLOY.md) | [简体中文](../zh-CN/DEPLOY.md) | [繁體中文](../zh-TW/DEPLOY.md) | 日本語 | [한국어](../ko/DEPLOY.md)
+
+agnes2api は同一のコードベースとリクエスト処理ロジックから構築された 2 つの
+デプロイ先を提供します。あなたのインフラに合わせてどちらかを選んでください。
+両者の違いはストレージバックエンドのみです。Worker は Cloudflare KV
+ネームスペースを、Docker はマウントされたボリューム上の JSON ファイルを使います。
+
+## 環境変数
+
+| 変数 | 必須 | デフォルト | 説明 |
+|---|---|---|---|
+| `GATEWAY_TOKEN` | **はい** | – | クライアントが本ゲートウェイを呼び出す際に提示しなければならないトークン。 |
+| `AGNES_BASE_URL` | いいえ | `https://apihub.agnes-ai.com/v1` | 上流 Agnes API のベース URL。 |
+| `UPSTREAM_TIMEOUT_MS` | いいえ | `8000` | この時間（ミリ秒）以内に最初のバイトが届かない場合、上流呼び出しを中断する。 |
+| `MAX_STRIKES` | いいえ | `3` | 連続する一時的な失敗（タイムアウト、ネットワークエラー、上流 `5xx`）がこの閾値に達すると key を永久に排除する。 |
+| `COOLDOWN_RATE_LIMIT_MS` | いいえ | `60000` | 上流が `429` を返した後、その key に適用されるクールダウン時間。 |
+| `COOLDOWN_PAYMENT_MS` | いいえ | `3600000` | 上流が `402` を返した後、その key に適用されるクールダウン時間。 |
+| `LOG_LEVEL` | いいえ | `info` | ログの詳細度。 |
+| `PORT` | いいえ（Node/Docker のみ） | `8080` | Node ランタイムのリッスンポート。Worker では使用されません。 |
+| `DATA_DIR` | いいえ（Node/Docker のみ） | `/app/data` | ファイルストレージが `store.json` を書き込むディレクトリ。Worker では使用されません。 |
+
+`COOLDOWN_RATE_LIMIT_MS` と `COOLDOWN_PAYMENT_MS` は `.env.example` に既定では
+記載されていませんが、どちらのデプロイ先でも環境変数として読み込まれ、必要に
+応じて設定できます。
+
+上記の設定にかかわらず、上流の `401`/`403` は即座にその key を永久排除します
+——これらは「この key はもう有効ではない」状態として扱われ、回復可能な
+一時的な状態としては扱われません。
+
+## Cloudflare Worker
+
+### 方法 A —— Deploy to Cloudflare ボタン
+
+ルートの [README](../../README.md) にあるボタンをクリックし、Cloudflare を
+認可すると、リポジトリを fork/clone してデプロイまで自動的に行われます。
+その後も、下記の **secret** と **KV ネームスペース** の手順は自分で完了させる
+必要があります——ボタンだけではこの 2 つは設定されません。
+
+### 方法 B —— 手動デプロイ
+
+1. リポジトリをクローンして依存関係をインストールします。
+
+   ```bash
+   git clone https://github.com/xwteam/agnes2api.git
+   cd agnes2api
+   pnpm install
+   ```
+
+2. key プール用の KV ネームスペースを作成し、`POOL` としてバインドします。
+
+   ```bash
+   npx wrangler kv namespace create POOL
+   ```
+
+   返された namespace の `id` を `wrangler.toml` に貼り付け、
+   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID` を置き換えます。
+
+   ```toml
+   [[kv_namespaces]]
+   binding = "POOL"
+   id = "your-namespace-id"
+   ```
+
+3. ゲートウェイトークンを Worker の secret として設定します（絶対に
+   `wrangler.toml` にコミットしないでください）。
+
+   ```bash
+   npx wrangler secret put GATEWAY_TOKEN
+   ```
+
+4. デプロイします。
+
+   ```bash
+   npx wrangler deploy
+   ```
+
+### タグ push による自動デプロイ
+
+`.github/workflows/deploy-worker.yml` は `v*` タグが push されると自動的に
+Worker をデプロイします。ただし、リポジトリの
+**Settings → Secrets and variables → Actions** に `CLOUDFLARE_API_TOKEN`
+が設定されている必要があります。設定されていない場合、ワークフローは警告を
+出力してデプロイ手順をスキップし、実行自体は失敗しません。
+
+### ローカル開発
+
+```bash
+npx wrangler dev
+```
+
+`GATEWAY_TOKEN` は `wrangler.toml` と同じディレクトリにあるローカルの
+`.dev.vars` ファイル（すでに `.gitignore` 済み）に書いてください——
+`wrangler.toml` に直接秘密情報を書かないでください。
+
+## Docker
+
+1. リポジトリをクローンし、環境変数ファイルを準備します。
+
+   ```bash
+   git clone https://github.com/xwteam/agnes2api.git
+   cd agnes2api
+   cp .env.example .env
+   ```
+
+2. `.env` を編集し、少なくとも `GATEWAY_TOKEN` を設定します。それ以外の
+   変数は上記の [環境変数](#環境変数) 表を参照してください。
+
+3. コンテナを起動します。
+
+   ```bash
+   docker compose up -d
+   ```
+
+   `docker-compose.yml` は既定でポート `8080` を公開し（`.env` の `PORT` で
+   上書き可能）、`./data` をコンテナ内の `/app/data` にマウントします——
+   `store.json`（key プールと永続化された設定）はここに保存されます。
+   再起動やアップグレードをまたいでこのディレクトリを必ず保持してください。
+   インポート済みの key プールの唯一のコピーです。
+
+4. コンテナが健全に起動しているか確認します。
+
+   ```bash
+   curl http://localhost:8080/health
+   ```
+
+   イメージには `HEALTHCHECK` が組み込まれており、Docker はこれをもとに
+   コンテナの健全性を報告します。
+
+## 上流 Agnes key のインポート
+
+現バージョンのゲートウェイには key をプールへ追加するための HTTP
+エンドポイントはありません。ストレージバックエンドへ直接書き込む必要が
+あります。各エントリは `key:<id>` というキーを持つ JSON オブジェクトで、
+`<id>` はプール内で一意な任意の文字列で構いません（ゲートウェイ自身が
+レコードを作成する際は key のハッシュ値から導出しますが、読み込み時には
+その値は検証されないため、手動インポートでは任意の一意な識別子で問題
+ありません）。
+
+```json
+{
+  "id": "1a2b3c4d5e6f7a8b",
+  "key": "実際の-agnes-api-key",
+  "addedAt": 1735689600000,
+  "lastUsedAt": null,
+  "cooldownUntil": 0,
+  "strikes": 0,
+  "evicted": false,
+  "evictedReason": null
+}
+```
+
+### Docker
+
+実行中のプロセスとの書き込み競合を避けるため、まずコンテナを停止し、
+ホスト上で `./data/store.json` を編集して、キー
+`"key:1a2b3c4d5e6f7a8b"` の下に上記のようなレコードを追加してから、
+コンテナを再度起動します。
+
+```bash
+docker compose stop
+# ./data/store.json を編集
+docker compose start
+```
+
+`./data/store.json` がまだ存在しない場合は、`key:<id>` という形式の
+キーを持つ単一の JSON オブジェクトとして新規作成してください。
+
+### Cloudflare Worker
+
+wrangler を使ってレコードを `POOL` KV ネームスペースへ直接書き込みます。
+
+```bash
+npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
+  '{"id":"1a2b3c4d5e6f7a8b","key":"実際の-agnes-api-key","addedAt":1735689600000,"lastUsedAt":null,"cooldownUntil":0,"strikes":0,"evicted":false,"evictedReason":null}' \
+  --remote
+```
+
+`--remote` を省略すると、本番ではなく `wrangler dev` が使用するローカルの
+ネームスペースに書き込まれます。
