@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type * as DispatcherModule from "../../src/core/dispatcher.js";
 import { configFromEnv } from "../../src/core/config.js";
+import { registrarFromEnv } from "../../src/core/registrar/config.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { FakeFetcher } from "../helpers/fake-fetcher.js";
 
@@ -27,6 +28,7 @@ const CONFIG = {
   cooldownRateLimitMs: 60_000,
   cooldownPaymentMs: 3_600_000,
   cooldownStrikeMs: 1_800_000,
+  registrar: registrarFromEnv({}, {}),
 };
 
 async function makeRepo(keys: string[]) {

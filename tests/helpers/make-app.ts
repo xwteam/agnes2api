@@ -4,11 +4,14 @@ import { createStorageHealth } from "../../src/core/storage-health.js";
 import { MemoryStorage } from "./fake-storage.js";
 import { FakeFetcher } from "./fake-fetcher.js";
 import type { GatewayConfig } from "../../src/core/config.js";
+import { registrarFromEnv } from "../../src/core/registrar/config.js";
 
 export const TEST_CONFIG: GatewayConfig = {
   gatewayToken: "t", agnesBaseUrl: "https://upstream.test/v1",
   upstreamTimeoutMs: 8000, upstreamSyncTimeoutMs: 120_000, maxStrikes: 3,
   cooldownRateLimitMs: 60_000, cooldownPaymentMs: 3_600_000, cooldownStrikeMs: 1_800_000,
+  // 注册机默认关闭，测试夹具无需凭据。
+  registrar: registrarFromEnv({}, {}),
 };
 
 /**

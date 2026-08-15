@@ -1,4 +1,5 @@
 import type { Storage } from "../ports/storage.js";
+import { registrarFromEnv, type RegistrarConfig } from "./registrar/config.js";
 
 export interface GatewayConfig {
   gatewayToken: string;
@@ -18,6 +19,7 @@ export interface GatewayConfig {
   cooldownRateLimitMs: number;
   cooldownPaymentMs: number;
   cooldownStrikeMs: number;
+  registrar: RegistrarConfig;
 }
 
 const DEFAULTS = {
@@ -83,6 +85,7 @@ export function configFromEnv(env: Env): GatewayConfig {
     cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", undefined, DEFAULTS.cooldownRateLimitMs),
     cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", undefined, DEFAULTS.cooldownPaymentMs),
     cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", undefined, DEFAULTS.cooldownStrikeMs),
+    registrar: registrarFromEnv(env, {}),
   };
 }
 
@@ -101,5 +104,6 @@ export async function loadConfig(env: Env, storage: Storage): Promise<GatewayCon
     cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", stored.cooldownRateLimitMs, DEFAULTS.cooldownRateLimitMs),
     cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", stored.cooldownPaymentMs, DEFAULTS.cooldownPaymentMs),
     cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", stored.cooldownStrikeMs, DEFAULTS.cooldownStrikeMs),
+    registrar: registrarFromEnv(env, stored.registrar ?? {}),
   };
 }

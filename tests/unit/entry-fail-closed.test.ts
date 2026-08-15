@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { configFromEnv } from "../../src/core/config.js";
+import { registrarFromEnv } from "../../src/core/registrar/config.js";
+
+const DEFAULT_REGISTRAR = registrarFromEnv({}, {});
 
 describe("Entry fail-closed 行为", () => {
   describe("configFromEnv 缺少 GATEWAY_TOKEN", () => {
@@ -54,6 +57,7 @@ describe("Entry fail-closed 行为", () => {
         cooldownRateLimitMs: 60_000,
         cooldownPaymentMs: 3_600_000,
         cooldownStrikeMs: 1_800_000,
+        registrar: DEFAULT_REGISTRAR,
       });
     });
 
@@ -78,6 +82,7 @@ describe("Entry fail-closed 行为", () => {
         cooldownRateLimitMs: 30000,
         cooldownPaymentMs: 7200000,
         cooldownStrikeMs: 900000,
+        registrar: DEFAULT_REGISTRAR,
       });
     });
   });
