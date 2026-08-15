@@ -13,6 +13,12 @@ id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 # 注册机（P2，默认关闭）的补池调度：每 30 分钟触发一次 scheduled()，与
 # TEND_INTERVAL_MS 的默认值（1_800_000ms）一致。REGISTRAR_ENABLED=false 时
 # scheduled() 会在 buildTendDeps 里提前返回 null，触发器空转不产生副作用。
+#
+# 墙钟预算：MINT_BATCH（默认 5）× CODE_TIMEOUT_MS（默认 120s）+ 铸 key 间隔延时，
+# 受 Cloudflare Cron Trigger 单次调用 15 分钟（900s）墙钟上限约束——`ctx.waitUntil()`
+# 不会延长这个上限（那个宽限只对 HTTP 请求有效）。CPU 时间上限 30 秒不是瓶颈，
+# 因为 await 网络 I/O 不计入 CPU 时间。默认配置最坏耗时约 600~620 秒，余量约 30%；
+# 调大 MINT_BATCH 或 CODE_TIMEOUT_MS 前先按这个公式核算是否会顶到 15 分钟墙钟。
 [triggers]
 crons = ["*/30 * * * *"]
 

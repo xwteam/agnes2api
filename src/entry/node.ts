@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { buildApp, buildTendDeps } from "../http/wire.js";
 import { FileStorage } from "../adapters/storage-file.js";
 import { tendOnce } from "../core/registrar/tender.js";
+import type { TendDeps } from "../core/registrar/tender.js";
 
 /**
  * node 运行时的真实启动路径：选存储实现（FileStorage）、装配 app、监听端口。
@@ -18,7 +19,18 @@ export async function main(env: Record<string, string | undefined> = process.env
   const port = Number(env.PORT ?? 8080);
 
   // 注册机未启用（默认状态）时 buildTendDeps 直接返回 null，不起定时器。
-  const tendDeps = await buildTendDeps(env, storage);
+  // 装配本身也可能失败（例如注册机配置非法）——同下面 runTend() 的原则，装配
+  // 阶段的失败也不该让网关整个进程起不来：转发能力与补池能力相互独立。当前
+  // buildApp() 先于这里执行、会对同一份注册机配置做同等校验并率先抛错，这层
+  // try/catch 眼下不可达，但不该是巧合式安全——防的是未来重构把 buildApp 与
+  // buildTendDeps 的校验路径解耦后悄悄引入的回归（与 worker.ts 的 scheduled()
+  // 对称）。
+  let tendDeps: TendDeps | null = null;
+  try {
+    tendDeps = await buildTendDeps(env, storage);
+  } catch (err) {
+    console.error("[registrar] 装配补池依赖失败", err);
+  }
   if (tendDeps) {
     const runTend = async () => {
       try {

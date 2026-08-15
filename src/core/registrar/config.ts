@@ -126,7 +126,7 @@ export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): Re
   if (enabled && !primary) {
     throw new Error("注册机已启用但未指定 REGISTRAR_PRIMARY（yyds 或 moemail，两者平级需显式选择）");
   }
-  if (fallback && fallback === primary) {
+  if (enabled && fallback && fallback === primary) {
     throw new Error("REGISTRAR_FALLBACK 与 REGISTRAR_PRIMARY 相同，降级到自己没有意义");
   }
 

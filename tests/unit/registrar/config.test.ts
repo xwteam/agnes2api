@@ -93,6 +93,19 @@ describe("registrarFromEnv", () => {
     )).toThrow(/相同/);
   });
 
+  // 回归用例：主备相同的校验此前没有像"启用但未指定主通道"那条一样受 enabled
+  // 门控，导致运维在真正打开注册机之前先把两个通道变量摆成同一个值（例如照抄
+  // 文档示例、提前布置环境变量）就会让 registrarFromEnv 抛错——而这个函数是
+  // loadConfig()/buildApp() 内部调用链的一环，两个入口都会经过它，于是关闭状态
+  // 下的一条注册机专属校验会把整个网关的启动都拖垮。
+  it("未启用时主备通道相同不抛错，网关能正常构建（关闭状态不该受注册机专属校验拖累）", () => {
+    expect(() => registrarFromEnv(
+      { REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "yyds" }, {},
+    )).not.toThrow();
+    const c = registrarFromEnv({ REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "yyds" }, {});
+    expect(c.enabled).toBe(false);
+  });
+
   it("未启用时不校验凭据（关着就不该因为没配 key 而启动失败）", () => {
     // 关键：REGISTRAR_PRIMARY 已指定但对应凭据缺失——原始测试只传了
     // { REGISTRAR_ENABLED: "false" }，此时 primary 本来就是 null，凭据校验循环

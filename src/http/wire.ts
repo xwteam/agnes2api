@@ -68,7 +68,9 @@ export async function buildApp(
 /**
  * 为 `tendOnce` 装配依赖。注册机未启用（`registrar.enabled=false`，默认状态）时
  * 在构造任何 provider 之前就返回 `null`——两个入口据此判断要不要起调度
- * （Worker 的 `scheduled` 导出 / Node 的定时器），未启用时不产生任何网络请求。
+ * （Worker 的 `scheduled` 导出 / Node 的定时器），未启用时不会产生触达邮箱/Agnes
+ * 侧的网络请求（`loadConfig` 本身仍会读一次存储，对 Worker/KV 形态而言是一次
+ * 真实的 KV 读取，不在此列）。
  *
  * 不复用 `buildApp` 内部 watchStorage 包过的存储：补池失败已经由调用方各自
  * 的 try/catch 兜底并打日志（见两个入口），不需要接入 `/health` 的可写性
