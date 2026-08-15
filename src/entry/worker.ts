@@ -1,5 +1,6 @@
-import { buildApp } from "../http/wire.js";
+import { buildApp, buildTendDeps } from "../http/wire.js";
 import { KvStorage } from "../adapters/storage-kv.js";
+import { tendOnce } from "../core/registrar/tender.js";
 import type { Hono } from "hono";
 
 export interface Env {
@@ -28,5 +29,38 @@ export default {
     }
 
     return app.fetch(req);
+  },
+
+  /**
+   * Cron 触发的补池入口。`wrangler.toml` 里的 `[triggers]` 配了触发频率，平台按
+   * 该频率调用这个导出——与 Node 侧命令式的 `setInterval` 不同，这里是声明式的，
+   * 触发本身不需要我们自己起定时器。
+   *
+   * 装配依赖失败或补池失败都只记日志、不重新抛出：一次 Cron 调用失败不该影响
+   * 下一次调度，也不该影响 fetch() 处理的正常转发请求。
+   */
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    let deps;
+    try {
+      deps = await buildTendDeps(env as Record<string, string | undefined>, new KvStorage(env.POOL));
+    } catch (err) {
+      console.error("[registrar] 装配补池依赖失败", err);
+      return;
+    }
+    if (!deps) return; // 注册机未启用：零副作用
+
+    ctx.waitUntil(
+      tendOnce(deps)
+        .then((r) => {
+          if (!r.skipped) {
+            console.log(
+              `[registrar] 补池完成 available=${r.available} attempted=${r.attempted} minted=${r.minted}`,
+            );
+          }
+        })
+        .catch((err) => {
+          console.error("[registrar] 补池失败", err);
+        }),
+    );
   },
 };

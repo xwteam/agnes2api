@@ -180,4 +180,51 @@ describe("tendOnce", () => {
       "create:u2@a.test", "delete:u2@a.test",
     ]);
   });
+
+  it("通道缺 provider 时记录一条失败，而不是静默空转", async () => {
+    // 主通道 yyds 在 chain 里，但 providers 里根本没构造它——这是接线错误
+    // （Task 7 最容易触发的那种），不是"这条通道没配"的正常状态。
+    const { repo, deps } = await makeDeps({ targetKeys: 1, mintBatch: 1 });
+    deps.providers = {};
+    const out = await tendOnce(deps);
+    expect(out.attempted).toBe(1);
+    expect(out.minted).toBe(0);
+    expect(out.failures).toEqual([{ reason: "provider_missing", channel: "yyds" }]);
+    expect(await repo.all()).toHaveLength(0);
+  });
+
+  it("本轮先成功铸出一把 key，紧接着下一次尝试触发 upstream_error 整轮中止时，已铸成功的 key 仍完整写入池子", async () => {
+    // 与现有的两条中止类测试对照：那两条都是"第一次就失败"，从未出现
+    // minted>0 之后再中止的组合。这里第一次尝试完整走完注册链路拿到 key，
+    // 第二次尝试的验证码请求才切到 500 触发 upstream_error 整轮中止，
+    // 断言第一次已经 add 进池子的 key 不会因为后面中止而回滚。
+    const provider = new FakeMailProvider({ domains: ["x.test"] });
+    const { repo, deps } = await makeDeps({ targetKeys: 3, mintBatch: 3 }, provider);
+    let verificationCalls = 0;
+    deps.agnes = {
+      platformUrl: "https://platform.test",
+      fetcher: {
+        async fetch(url: string) {
+          if (url.includes("/api/verification")) {
+            verificationCalls++;
+            return new Response("{}", { status: verificationCalls === 1 ? 200 : 500 });
+          }
+          if (url.includes("/api/user/login")) {
+            return new Response(JSON.stringify({ data: { access_token: "tok" } }), { status: 200 });
+          }
+          if (url.includes("/api/token")) {
+            return new Response(JSON.stringify({ data: { key: "sk-first" } }), { status: 200 });
+          }
+          return new Response("{}", { status: 200 });
+        },
+      },
+    };
+    const out = await tendOnce(deps);
+    expect(out.attempted).toBe(2);
+    expect(out.minted).toBe(1);
+    expect(out.failures).toEqual([{ reason: "upstream_error", channel: "yyds" }]);
+    const all = await repo.all();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.key).toBe("sk-first");
+  });
 });

@@ -71,7 +71,14 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
 
     for (const ch of chain) {
       const provider = deps.providers[ch];
-      if (!provider) continue;
+      if (!provider) {
+        // 通道在 chain 里却没构造出对应 provider——这是接线错误（例如漏配置
+        // 某个通道），不是"这条通道本来就没配"的正常状态。静默 continue 会让
+        // attempted 正常自增、minted=0、failures=[]，观测层面查不出原因；这里
+        // 留一条记录，让接线错误在 TendResult 里可见。
+        failures.push({ reason: "provider_missing", channel: ch });
+        continue;
+      }
 
       const out = await mintOne({
         provider,

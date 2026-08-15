@@ -5,6 +5,11 @@ import { NativeFetcher } from "../adapters/fetcher-native.js";
 import { createStorageHealth, probeWritable, watchStorage } from "../core/storage-health.js";
 import { VERSION } from "../version.js";
 import type { Storage } from "../ports/storage.js";
+import type { Channel } from "../core/registrar/config.js";
+import type { MailProvider } from "../ports/mailbox.js";
+import type { TendDeps } from "../core/registrar/tender.js";
+import { YydsProvider } from "../adapters/mailbox-yyds.js";
+import { MoeMailProvider } from "../adapters/mailbox-moemail.js";
 
 export interface BuildOptions {
   /**
@@ -58,4 +63,40 @@ export async function buildApp(
     now: () => Date.now(),
     storageHealth,
   });
+}
+
+/**
+ * 为 `tendOnce` 装配依赖。注册机未启用（`registrar.enabled=false`，默认状态）时
+ * 在构造任何 provider 之前就返回 `null`——两个入口据此判断要不要起调度
+ * （Worker 的 `scheduled` 导出 / Node 的定时器），未启用时不产生任何网络请求。
+ *
+ * 不复用 `buildApp` 内部 watchStorage 包过的存储：补池失败已经由调用方各自
+ * 的 try/catch 兜底并打日志（见两个入口），不需要接入 `/health` 的可写性
+ * 探测——那是网关转发能力的信号，与补池能力相互独立。
+ */
+export async function buildTendDeps(
+  env: Record<string, string | undefined>,
+  storage: Storage,
+): Promise<TendDeps | null> {
+  const config = await loadConfig(env, storage);
+  const reg = config.registrar;
+  if (!reg.enabled) return null;
+
+  const fetcher = new NativeFetcher();
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+  const now = () => Date.now();
+
+  const providers: Partial<Record<Channel, MailProvider>> = {};
+  if (reg.yyds) providers.yyds = new YydsProvider({ fetcher, ...reg.yyds, sleep, now });
+  if (reg.moemail) providers.moemail = new MoeMailProvider({ fetcher, ...reg.moemail, sleep, now });
+
+  return {
+    repo: new KeyPoolRepo(storage),
+    config: reg,
+    providers,
+    agnes: { fetcher, platformUrl: reg.agnesPlatformUrl },
+    now,
+    sleep,
+    rand: Math.random,
+  };
 }

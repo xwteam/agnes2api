@@ -1,7 +1,9 @@
 import { serve } from "@hono/node-server";
+import { setInterval as nodeSetInterval } from "node:timers";
 import { pathToFileURL } from "node:url";
-import { buildApp } from "../http/wire.js";
+import { buildApp, buildTendDeps } from "../http/wire.js";
 import { FileStorage } from "../adapters/storage-file.js";
+import { tendOnce } from "../core/registrar/tender.js";
 
 /**
  * node 运行时的真实启动路径：选存储实现（FileStorage）、装配 app、监听端口。
@@ -14,6 +16,34 @@ export async function main(env: Record<string, string | undefined> = process.env
   // 必须在启动那一刻探出来并让 /health 如实报告，不能等到第一个请求失败才发现。
   const app = await buildApp(env, storage, { probeStorage: true });
   const port = Number(env.PORT ?? 8080);
+
+  // 注册机未启用（默认状态）时 buildTendDeps 直接返回 null，不起定时器。
+  const tendDeps = await buildTendDeps(env, storage);
+  if (tendDeps) {
+    const runTend = async () => {
+      try {
+        const r = await tendOnce(tendDeps);
+        if (!r.skipped) {
+          console.log(
+            `[registrar] 补池完成 available=${r.available} attempted=${r.attempted} minted=${r.minted}`,
+          );
+        }
+      } catch (err) {
+        // 补池失败不该让网关进程崩掉——转发能力与补池能力是相互独立的。
+        console.error("[registrar] 补池失败", err);
+      }
+    };
+
+    // 立即跑一轮：否则冷启动后要空等满一个间隔（默认 30 分钟）才开始补池。
+    void runTend();
+
+    // 显式用 node:timers 的 setInterval（而非全局 setInterval）：这个项目的
+    // tsconfig 同时装了 @cloudflare/workers-types 和 node 的类型，全局
+    // setInterval 的重载在两者间不保证解析到带 unref() 的 Node 版本。unref
+    // 让定时器不阻止进程退出，否则容器收到停止信号后要等到下一次触发才肯退，
+    // 测试里也会因为悬挂的 timer handle 导致 vitest 进程不退出。
+    nodeSetInterval(runTend, tendDeps.config.tendIntervalMs).unref();
+  }
 
   return serve({ fetch: app.fetch, port }, (info) => {
     console.log(`agnes2api listening on :${info.port}`);

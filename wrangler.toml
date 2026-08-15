@@ -10,6 +10,12 @@ enabled = true
 binding = "POOL"
 id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 
+# 注册机（P2，默认关闭）的补池调度：每 30 分钟触发一次 scheduled()，与
+# TEND_INTERVAL_MS 的默认值（1_800_000ms）一致。REGISTRAR_ENABLED=false 时
+# scheduled() 会在 buildTendDeps 里提前返回 null，触发器空转不产生副作用。
+[triggers]
+crons = ["*/30 * * * *"]
+
 # GATEWAY_TOKEN 是必填的敏感值，不要写进本文件（会被提交到仓库）。
 # 本地开发：在 .env.example 旁新建 .dev.vars（已 gitignore），写入 GATEWAY_TOKEN=...
 # 生产部署：wrangler secret put GATEWAY_TOKEN
