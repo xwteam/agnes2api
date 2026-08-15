@@ -13,7 +13,7 @@ PATTERNS=(
 
 fail=0
 for p in "${PATTERNS[@]}"; do
-  if git grep -nInE "$p" -- ':!scripts/scan-secrets.sh' ':!*.lock' ':!pnpm-lock.yaml'; then
+  if git grep --untracked -nInE "$p" -- ':!scripts/scan-secrets.sh' ':!*.lock' ':!pnpm-lock.yaml'; then
     echo "❌ 命中疑似凭据模式: $p" >&2
     fail=1
   fi
