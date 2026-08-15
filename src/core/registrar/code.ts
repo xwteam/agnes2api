@@ -5,6 +5,51 @@
 const CSS_COLOR_LIKE = /#[0-9a-fA-F]{6}\b/g;
 
 /**
+ * 下面两条正则里所有 `*`/`+` 量词都**必须有上界**。
+ *
+ * 正文长度上限是 1 MiB（见 `MAX_BODY_LEN`），而无界量词后面跟一个通常匹配不上的
+ * 尾巴时，正则引擎会在每个起始位置贪婪吃满再逐字符回退，整体退化成 O(n²)。实测
+ * （构造性输入，非理论推断）：
+ *
+ * | 模式 | 64 KiB | 1 MiB |
+ * |---|---|---|
+ * | `[^"']*verification[^"']*["']` | 820 ms | 约 215 秒 |
+ * | `[^\d]*\b(\d{6})\b` | 约 85 ms | 约 22 秒 |
+ * | 限长到 200 后 | <1 ms | 12~460 ms |
+ *
+ * Node 形态下这是同步 CPU，会把整个事件循环（含四个协议的转发）堵死；Worker 形态
+ * 会撞 30 秒 CPU 上限被平台中止，`mintOne` 的 finally 不执行，邮箱就漏了。
+ *
+ * 200 这个上界对真实邮件是够的：`[^"']` 段是 class 属性值，`[^\d]` 段**本来就跨不过
+ * 任何数字**（`padding:10px` 里的 10 就能截断它），所以它的实际触及范围是「关键词到
+ * 下一段数字之间」，真实模板里只有几十个字符。够不到时会落到最后那条兜底正则，是
+ * 降级而不是失效。
+ */
+const MAX_GAP = 200;
+
+/**
+ * 优先：带 verification 字样类名的元素。
+ * **数字必须是该元素的直接文本**——这个严格性是判别器，不是缺陷：
+ * verification-title 这类容器不含数字时匹配失败，正则引擎会自动前进到
+ * 下一个候选容器（verification-code），从而拿到真正的验证码。
+ * 放宽成 [\s\S]*? 会让第一个开标签吞掉全文，后面的容器再无机会。
+ */
+const TAGGED_CODE = new RegExp(
+  `class=["'][^"']{0,${MAX_GAP}}verification[^"']{0,${MAX_GAP}}["'][^>]*>\\s*(\\d{6})\\s*<`,
+);
+
+/**
+ * 关键词锚定：优先取「验证码 / verification code / auth code」附近的六位数，
+ * 避免订单号之类排在前面的数字被误取。
+ * 两侧 \b 缺一不可：`[^\d]` 吃不进数字但吃得进字母（abc887766 会误命中），
+ * 右边界防止从时间戳/工单号这类长数字串里切出前六位。
+ */
+const KEYWORD_ANCHORED_CODE = new RegExp(
+  `(?:验证码|verification[\\s-]?code|auth[\\s-]?code)[^\\d]{0,${MAX_GAP}}\\b(\\d{6})\\b`,
+  "i",
+);
+
+/**
  * 输入长度上限。
  *
  * 这里的正文来自**临时邮箱**——那个地址一旦生成，任何人都能往它投递，正文长度
@@ -14,8 +59,11 @@ const CSS_COLOR_LIKE = /#[0-9a-fA-F]{6}\b/g;
  * 上限取 1 MiB 而不是更小：Agnes 的验证码邮件走 HTML 模板，一旦内嵌 base64 logo
  *（`data:image/png;base64,…` 动辄 100 KB+）且图片排在验证码元素之前，几十 KiB 的
  * 上限会被图片整个吃掉——extractCode 恒返回 null、pollCode 一路空转到超时、注册机
- * 100% 静默失效，而单测里的正文都是短字符串，全绿。这几条正则都是线性扫描，
- * 1 MiB 也只是毫秒级，这个阈值换来的 CPU 收益远小于它带来的漏码风险。
+ * 100% 静默失效，而单测里的正文都是短字符串，全绿。
+ *
+ * 提高上限的**前提**是上面 `MAX_GAP` 那一段：只有当所有量词都有上界、扫描确实是
+ * 线性的时候，1 MiB 才只是毫秒级。别在没读那段注释的情况下往回调这个值，也别在
+ * 这个文件里新增无界量词。
  */
 const MAX_BODY_LEN = 1024 * 1024;
 const MAX_SUBJECT_LEN = 1024;
@@ -32,7 +80,17 @@ const MAX_SUBJECT_LEN = 1024;
  */
 function boundedForScan(s: string, max: number): string {
   if (s.length <= max) return s;
-  return s.slice(0, max).replace(/\d+$/, " ");
+  // 刻意**不用** `/\d+$/` 这样的正则：保留的前缀里若有长数字串而结尾不是数字，
+  // 正则引擎会在每个起始位置把数字串贪婪吃完再逐字符回退，退化成 O(n²)——实测
+  // 128 KiB 就要 35 秒，1 MiB 外推到几十分钟，比它想防的那个问题严重得多。
+  // 这里从截断点往回走一次即可，线性，1 MiB 全数字的最坏输入实测约 5 ms。
+  let end = max;
+  while (end > 0) {
+    const c = s.charCodeAt(end - 1);
+    if (c < 48 || c > 57) break; // 非 0-9
+    end--;
+  }
+  return `${s.slice(0, end)} `;
 }
 
 /**
@@ -61,24 +119,17 @@ export function extractCode(subject: string, body: string): string | null {
   // 先抹掉 CSS 十六进制颜色，避免 #123456 被当成验证码。
   const cleanBody = boundedForScan(body, MAX_BODY_LEN).replace(CSS_COLOR_LIKE, " ");
 
-  // 优先：带 verification 字样类名的元素。
-  // **数字必须是该元素的直接文本**——这个严格性是判别器，不是缺陷：
-  // verification-title 这类容器不含数字时匹配失败，正则引擎会自动前进到
-  // 下一个候选容器（verification-code），从而拿到真正的验证码。
-  // 放宽成 [\s\S]*? 会让第一个开标签吞掉全文，后面的容器再无机会。
-  const tagged = cleanBody.match(/class=["'][^"']*verification[^"']*["'][^>]*>\s*(\d{6})\s*</);
+  // 优先：带 verification 字样类名的元素（理由见 TAGGED_CODE 处的注释）。
+  const tagged = cleanBody.match(TAGGED_CODE);
   if (tagged) return tagged[1]!;
 
   const cleaned = `${boundedSubject} ${cleanBody}`;
 
-  // 关键词锚定：优先取「验证码 / verification code / auth code」附近的六位数，
-  // 避免订单号之类排在前面的数字被误取。
-  // 两侧 \b 缺一不可：[^\d]* 吃不进数字但吃得进字母（abc887766 会误命中），
-  // 右边界防止从时间戳/工单号这类长数字串里切出前六位。
-  const keywordPattern = /(?:验证码|verification[\s-]?code|auth[\s-]?code)[^\d]*\b(\d{6})\b/i;
-  const keyword = cleaned.match(keywordPattern);
+  // 其次：关键词锚定（理由见 KEYWORD_ANCHORED_CODE 处的注释）。
+  const keyword = cleaned.match(KEYWORD_ANCHORED_CODE);
   if (keyword) return keyword[1]!;
 
+  // 兜底：全文第一个六位数。`\b\d{6}\b` 是定长量词，线性扫描，1 MiB 实测约 4 ms。
   const m = cleaned.match(/\b(\d{6})\b/);
   return m ? m[1]! : null;
 }
