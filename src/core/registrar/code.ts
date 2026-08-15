@@ -7,22 +7,21 @@ const CSS_COLOR_LIKE = /#[0-9a-fA-F]{6}\b/g;
 export function extractCode(subject: string, body: string): string | null {
   if (!body) return null;
 
-  // 优先：模板通常给验证码套一个带 verification 字样的类名，这是最可靠的锚点。
-  // 放宽到允许嵌套元素（数字不必是直接子节点），同时右边界防止误切。
-  const tagged = body.match(/class=["'][^"']*verification[^"']*["'][^>]*>[\s\S]*?(\d{6})\b/);
+  // 先抹掉 CSS 十六进制颜色——快路径也要抹，否则 #123456 会被当成验证码。
+  const cleanBody = body.replace(CSS_COLOR_LIKE, " ");
+
+  // 优先：带 verification 字样的类名是最可靠的锚点。允许嵌套元素。
+  // \b(\d{6})\b 两侧边界缺一不可：懒惰量词会滑进长数字串内部，只有右边界挡不住。
+  const tagged = cleanBody.match(/class=["'][^"']*verification[^"']*["'][^>]*>[\s\S]*?\b(\d{6})\b/);
   if (tagged) return tagged[1]!;
 
-  // 兜底：先把十六进制颜色抹掉，再找第一个独立的六位数。
-  const cleaned = `${subject} ${body}`.replace(CSS_COLOR_LIKE, " ");
+  const cleaned = `${subject} ${cleanBody}`;
 
-  // 先尝试在关键词附近找：优先找「验证码 / verification code / auth code」字样附近的六位数。
-  // 允许关键词和数字之间有任意非数字字符（包括汉字、标点、空格）。
-  // 右边界 \b 防止从长数字串（如时间戳、工单号）中切割部分数字。
-  const keywordPattern = /(?:验证码|verification[\s-]?code|auth[\s-]?code)[^\d]*(\d{6})\b/i;
+  // 关键词锚定。同样要两侧边界：[^\d]* 吃不进数字但吃得进字母，abc887766 会误命中。
+  const keywordPattern = /(?:验证码|verification[\s-]?code|auth[\s-]?code)[^\d]*\b(\d{6})\b/i;
   const keyword = cleaned.match(keywordPattern);
   if (keyword) return keyword[1]!;
 
-  // 没有关键词锚点时，退回到取第一个独立的六位数。
   const m = cleaned.match(/\b(\d{6})\b/);
   return m ? m[1]! : null;
 }
