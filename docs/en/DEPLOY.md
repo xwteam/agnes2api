@@ -13,18 +13,28 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 | `GATEWAY_TOKEN` | **yes** | – | The token clients must present to call this gateway. |
 | `AGNES_BASE_URL` | no | `https://apihub.agnes-ai.com/v1` | Upstream Agnes API base URL. |
 | `UPSTREAM_TIMEOUT_MS` | no | `8000` | Abort an upstream call if no first byte arrives within this many milliseconds. |
-| `MAX_STRIKES` | no | `3` | Consecutive transient failures (timeouts, network errors, upstream `5xx`) before a key is permanently evicted. |
+| `MAX_STRIKES` | no | `3` | Consecutive transient failures (timeouts, network errors, upstream `5xx`) before a key is put into a long cooldown. |
 | `COOLDOWN_RATE_LIMIT_MS` | no | `60000` | Cooldown duration applied to a key after an upstream `429`. |
 | `COOLDOWN_PAYMENT_MS` | no | `3600000` | Cooldown duration applied to a key after an upstream `402`. |
-| `LOG_LEVEL` | no | `info` | Log verbosity. |
+| `COOLDOWN_STRIKE_MS` | no | `1800000` | Cooldown duration applied once a key reaches `MAX_STRIKES`. The key recovers automatically when it expires. |
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
 
 `COOLDOWN_RATE_LIMIT_MS` and `COOLDOWN_PAYMENT_MS` aren't listed in `.env.example` by
 default, but both are read from the environment and can be set for either deployment target.
+Every numeric variable above must be a positive integer; the gateway refuses to start otherwise.
 
-An upstream `401`/`403` evicts the key immediately regardless of any of the settings above —
-those are treated as "this key is no longer valid," not a transient condition.
+Eviction and cooldown are deliberately different things. An upstream `401`/`403` evicts the key
+**permanently** regardless of any of the settings above — those mean "this key is no longer
+valid," and retrying is pointless. Transient failures never evict: once a key reaches
+`MAX_STRIKES` it only goes into a `COOLDOWN_STRIKE_MS` cooldown and comes back on its own, so a
+spell of upstream flakiness cannot permanently destroy your pool.
+
+When no key can serve a request the gateway answers `503` with a machine-readable
+`error.reason`: `pool_empty` (no keys imported), `all_cooling` (every key is cooling down —
+this recovers by itself, and a `Retry-After` header tells you when), `all_evicted` (every key
+was permanently evicted for invalid credentials — this does **not** recover; import new keys),
+or `upstream_error` (keys are fine, the upstream failed on every attempt).
 
 ## Cloudflare Worker
 

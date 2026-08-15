@@ -13,18 +13,26 @@ agnes2api 提供两种部署形态，构建自同一套代码与请求处理逻�
 | `GATEWAY_TOKEN` | **是** | – | 客户端调用本网关时必须携带的令牌。 |
 | `AGNES_BASE_URL` | 否 | `https://apihub.agnes-ai.com/v1` | 上游 Agnes API 的基址。 |
 | `UPSTREAM_TIMEOUT_MS` | 否 | `8000` | 上游首字节超过这个毫秒数未返回则中止本次调用。 |
-| `MAX_STRIKES` | 否 | `3` | 连续瞬时故障（超时、网络错误、上游 `5xx`）累计到该阈值后，该 key 被永久剔除。 |
+| `MAX_STRIKES` | 否 | `3` | 连续瞬时故障（超时、网络错误、上游 `5xx`）累计到该阈值后，该 key 进入长冷却。 |
 | `COOLDOWN_RATE_LIMIT_MS` | 否 | `60000` | 上游返回 `429` 后，对应 key 的冷却时长。 |
 | `COOLDOWN_PAYMENT_MS` | 否 | `3600000` | 上游返回 `402` 后，对应 key 的冷却时长。 |
-| `LOG_LEVEL` | 否 | `info` | 日志级别。 |
+| `COOLDOWN_STRIKE_MS` | 否 | `1800000` | key 的瞬时故障累计到 `MAX_STRIKES` 后的冷却时长，到期自动恢复。 |
 | `PORT` | 否（仅 Node/Docker） | `8080` | Node 运行时的监听端口，Worker 不使用该变量。 |
 | `DATA_DIR` | 否（仅 Node/Docker） | `/app/data` | 文件存储写入 `store.json` 的目录，Worker 不使用该变量。 |
 
 `COOLDOWN_RATE_LIMIT_MS` 与 `COOLDOWN_PAYMENT_MS` 默认没有写在 `.env.example` 里，但两种
-部署形态都会读取这两个环境变量，可按需设置。
+部署形态都会读取这两个环境变量，可按需设置。以上数值型变量都必须是正整数，否则网关
+拒绝启动。
 
-无论以上参数如何设置，上游 `401`/`403` 都会立即永久剔除该 key——这两种状态被视为
-「这个 key 已失效」，而不是可恢复的瞬时故障。
+「剔除」与「冷却」是两回事。无论以上参数如何设置，上游 `401`/`403` 都会**永久**剔除该
+key——这两种状态被视为「这个 key 已失效」，重试没有意义。瞬时故障则永远不会导致剔除：
+累计到 `MAX_STRIKES` 只是进入 `COOLDOWN_STRIKE_MS` 的冷却，到期自动恢复，因此上游抽风
+不会永久损毁你的 key 池。
+
+当没有任何 key 能服务本次请求时，网关返回 `503`，并在 `error.reason` 里给出可判别的原因：
+`pool_empty`（尚未导入 key）、`all_cooling`（全部 key 冷却中，会自动恢复，响应头 `Retry-After`
+给出恢复时刻）、`all_evicted`（全部 key 因凭据失效被永久剔除，**不会**自愈，请更换 key）、
+`upstream_error`（key 本身可用，但上游每次尝试都失败）。
 
 ## Cloudflare Worker
 

@@ -44,16 +44,27 @@ Four models are exposed. Which one you should pass depends on which endpoint you
 
 If no upstream key is available, the gateway returns `503` before ever calling upstream:
 
-```json
-{ "error": { "reason": "pool_empty", "message": "key 池为空，请先导入 key" } }
-```
+| `reason` | Self-healing? | Meaning |
+|---|---|---|
+| `pool_empty` | – | No key has been imported yet. |
+| `all_cooling` | **yes** | Every key is cooling down (rate limit, payment required, or repeated transient failures). A `Retry-After` header gives the earliest recovery time. |
+| `all_evicted` | **no** | Every key was permanently evicted because its credentials are invalid (upstream `401`/`403`). Import new keys. |
+| `upstream_error` | **yes** | The keys are fine; the upstream failed on every attempt. |
 
 ```json
-{ "error": { "reason": "all_cooling", "message": "全部 key 处于冷却或已剔除状态" } }
+{ "error": { "reason": "all_cooling", "message": "全部 key 暂不可用：2 把冷却中（到期自动恢复）、0 把已永久剔除" } }
 ```
 
 Every other upstream error status (`400`, `404`, etc.) is passed through unchanged, in the
-upstream's own error shape — the gateway does not rewrite it.
+upstream's own error shape — the gateway does not rewrite it. The two exceptions are upstream
+`401`/`403`, whose body is **never** forwarded (it is the most likely place for an upstream API
+to echo back a key fragment), and an upstream `200` whose body isn't JSON on a
+format-converting route, which becomes a `502`.
+
+Upstream response headers are not forwarded either: only `content-type`, `cache-control` and
+`retry-after` survive. Anything else (`set-cookie`, `www-authenticate`, vendor `x-*` headers)
+is dropped, since the pool rotates keys per request and those headers describe the upstream
+account, not your gateway.
 
 ---
 
