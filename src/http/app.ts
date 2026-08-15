@@ -4,6 +4,7 @@ import { openaiRoutes } from "./routes/openai.js";
 import { anthropicRoutes } from "./routes/anthropic.js";
 import { geminiRoutes } from "./routes/gemini.js";
 import { responsesRoutes } from "./routes/responses.js";
+import { mediaRoutes } from "./routes/media.js";
 import { auth } from "./middleware/auth.js";
 import type { GatewayConfig } from "../core/config.js";
 import type { DispatchDeps } from "../core/dispatcher.js";
@@ -22,5 +23,6 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/", anthropicRoutes(deps));
   app.route("/", geminiRoutes(deps));
   app.route("/", responsesRoutes(deps));
+  app.route("/", mediaRoutes(deps));
   return app;
 }

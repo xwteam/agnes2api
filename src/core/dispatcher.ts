@@ -55,6 +55,7 @@ export async function dispatch(args: {
   path: string;
   body: unknown;
   stream: boolean;
+  method?: "GET" | "POST";
   deps: DispatchDeps;
 }): Promise<Response> {
   const { repo, fetcher, config, now } = args.deps;
@@ -75,17 +76,20 @@ export async function dispatch(args: {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), config.upstreamTimeoutMs);
 
+    const method = args.method ?? "POST";
+    const init: RequestInit & { signal: AbortSignal } = {
+      method,
+      headers: {
+        ...(method === "POST" ? { "content-type": "application/json" } : {}),
+        authorization: `Bearer ${record.key}`,
+      },
+      signal: controller.signal,
+    };
+    if (method === "POST") init.body = JSON.stringify(args.body);
+
     let res: Response;
     try {
-      res = await fetcher.fetch(`${config.agnesBaseUrl}${args.path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${record.key}`,
-        },
-        body: JSON.stringify(args.body),
-        signal: controller.signal,
-      });
+      res = await fetcher.fetch(`${config.agnesBaseUrl}${args.path}`, init);
     } catch (err) {
       clearTimeout(timer);
       const action = classifyThrown(err);

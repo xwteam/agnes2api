@@ -167,4 +167,14 @@ describe("dispatch", () => {
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ error: { reason: "all_cooling" } });
   });
+
+  it("GET 请求不携带 body", async () => {
+    const repo = await makeRepo(["k1"]);
+    let seen: RequestInit | null = null;
+    const fetcher = { async fetch(_u: string, init: RequestInit) { seen = init; return new Response("{}"); } };
+    await dispatch({ path: "/videos/x", body: undefined, stream: false, method: "GET",
+      deps: { repo, fetcher: fetcher as any, config: CONFIG, now: () => 1 } });
+    expect(seen!.body).toBeUndefined();
+    expect(seen!.method).toBe("GET");
+  });
 });
