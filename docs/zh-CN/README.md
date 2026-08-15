@@ -32,6 +32,8 @@ API 协议——OpenAI、Anthropic、Gemini、OpenAI-Responses——并提供图
   永久剔除，连续瞬时故障累计到阈值后同样剔除。
 - **接受四种凭据传递方式** —— `Authorization: Bearer`、`x-api-key`、`x-goog-api-key`、
   查询参数 `?key=` 均被接受，正好覆盖各协议官方 SDK 默认发送的凭据形式。
+- **可选的自动补池（默认关闭）** —— 启用注册机后，可用 key 低于目标值时会自动注册
+  Agnes 账号补齐，见 [REGISTRAR.md](REGISTRAR.md)。
 
 ## 端点速查
 

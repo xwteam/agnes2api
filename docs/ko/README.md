@@ -42,6 +42,9 @@ Anthropic, Gemini, OpenAI-Responses라는 4가지 주요 LLM API 프로토콜로
 - **4가지 인증 정보 전달 방식 수용** —— `Authorization: Bearer`, `x-api-key`,
   `x-goog-api-key`, 쿼리 파라미터 `?key=` 모두 수용됩니다. 각 프로토콜의
   공식 SDK가 기본으로 전송하는 형식과 정확히 일치합니다.
+- **선택적 자동 키 풀 보충(기본값은 비활성화)** —— 레지스트라를 활성화하면 사용
+  가능한 key가 목표치 아래로 떨어질 때 Agnes 계정을 자동으로 등록해 보충합니다.
+  [REGISTRAR.md](REGISTRAR.md)를 참고하세요.
 
 ## 엔드포인트 한눈에 보기
 

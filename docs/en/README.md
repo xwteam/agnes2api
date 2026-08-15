@@ -38,6 +38,9 @@ automatically cools down or evicts misbehaving upstream keys.
 - **Four accepted credential formats** — `Authorization: Bearer`, `x-api-key`,
   `x-goog-api-key`, and the `?key=` query parameter are all accepted, matching what each
   protocol's official SDK sends by default.
+- **Optional auto-refill (disabled by default)** — enable the registrar and it automatically
+  registers Agnes accounts to top up the key pool whenever it drops below target, see
+  [REGISTRAR.md](REGISTRAR.md).
 
 ## Endpoints at a glance
 

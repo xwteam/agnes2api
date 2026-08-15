@@ -1,0 +1,120 @@
+# 註冊機（自動補池）
+
+**語言：** [English](../en/REGISTRAR.md) | [简体中文](../zh-CN/REGISTRAR.md) | 繁體中文 | [日本語](../ja/REGISTRAR.md) | [한국어](../ko/REGISTRAR.md)
+
+> **預設關閉。** `REGISTRAR_ENABLED` 預設為 `false`，裝上本專案不會自動開始註冊任何帳號；
+> 只有明確把它設為 `true` 才會啟用註冊機。
+
+## 這是什麼
+
+註冊機是一個可選元件：當 key 池中的可用 key 數低於 `TARGET_KEYS` 時，它會自動註冊新的
+Agnes 帳號、登入、鑄出一把 API key 寫入池子。註冊過程需要接收 Agnes 寄來的信箱驗證碼，
+因此依賴下文的信箱通道之一。
+
+> **合規提示**
+>
+> 大量註冊與 Agnes 服務條款之間存在張力。是否啟用註冊機、以何種頻率使用，須由部署者自行
+> 判斷並承擔相應責任——本專案不替使用者做這個決定。
+
+## 兩條信箱通道：如何選擇
+
+註冊機支援兩條信箱通道，用來接收驗證碼：
+
+| | YYDS Mail | MoeMail |
+|---|---|---|
+| 性質 | 第三方臨時信箱服務 | 可自行部署的臨時信箱服務 |
+| API 基底位址 | 有預設值（`YYDS_BASE_URL`，指向其公開 API 端點） | 無預設值（`MOEMAIL_BASE_URL`），需填入你自己部署實例的位址 |
+| 取得憑證 | 向該服務申請 API Key（`YYDS_API_KEY`） | 在自己部署的實例中產生 API Key（`MOEMAIL_API_KEY`） |
+
+**兩條通道完全平等，本專案不預設主通道，也不推薦任何一條。** `REGISTRAR_PRIMARY` 沒有
+預設值，啟用註冊機時必須明確指定為 `yyds` 或 `moemail`。`REGISTRAR_FALLBACK` 為選填：
+主通道遇到**通道層級失敗**（列網域失敗、連續建信箱失敗、憑證無效）時會自動降級到備用
+通道；留空表示不降級。
+
+判斷依據：註冊機靠「換網域」繞開 Agnes 對一次性信箱網域的封鎖，可用網域越多，註冊機就
+越耐用。查一下你在兩邊各自擁有多少可用網域，網域較多的那一條更適合作為主通道——這與是
+哪家服務無關，只取決於你自己的帳號或自建實例的配置。
+
+## 零內建憑證，請自行準備
+
+本儲存庫不包含任何真實金鑰、帳號或私有網域。啟用註冊機前，你需要自行準備：
+
+- **使用 YYDS Mail**：向該服務申請一個 API Key，填入 `YYDS_API_KEY`（`YYDS_BASE_URL`
+  已有預設值，通常無需更改）。
+- **使用 MoeMail**：自行部署一個 MoeMail 實例，把它的存取位址填入 `MOEMAIL_BASE_URL`、
+  在實例中產生的 API Key 填入 `MOEMAIL_API_KEY`（兩項都沒有預設值，必須明確提供）。
+
+至少準備好 `REGISTRAR_PRIMARY` 所指向的那一條通道；若配置了 `REGISTRAR_FALLBACK`，也要
+準備好對應通道的憑證。
+
+## 設定項目
+
+| 變數 | 是否必填 | 預設值 | 說明 |
+|---|---|---|---|
+| `REGISTRAR_ENABLED` | 否 | `false` | 總開關，須為 `true` 才會啟用註冊機。 |
+| `REGISTRAR_PRIMARY` | 啟用時必填 | 無 | 主通道，`yyds` 或 `moemail`；兩者平等，無預設值。 |
+| `REGISTRAR_FALLBACK` | 否 | 空（不降級） | 備用通道，`yyds` 或 `moemail`；主通道發生通道層級失敗時降級至此。 |
+| `TARGET_KEYS` | 否 | `20` | 目標可用 key 數，低於此值才會觸發補池。 |
+| `MINT_BATCH` | 否 | `5` | 單輪最多鑄幾把 key。 |
+| `TEND_INTERVAL_MS` | 否（僅 Node/Docker） | `1800000`（30 分鐘） | Node 側補池排程間隔；Worker 側則由 `wrangler.toml` 的 Cron 決定，見下文。 |
+| `CODE_TIMEOUT_MS` | 否 | `120000`（120 秒） | 單次鑄 key 等待驗證碼的逾時。 |
+| `MINT_DELAY_MIN_MS` | 否 | `2000` | 單輪內每次鑄 key 之間隨機間隔的下限（毫秒）。 |
+| `MINT_DELAY_MAX_MS` | 否 | `5000` | 單輪內每次鑄 key 之間隨機間隔的上限（毫秒）。 |
+| `MAX_DOMAIN_ATTEMPTS` | 否 | `8` | 單次鑄 key 最多嘗試幾個臨時信箱網域。 |
+| `TOKEN_NAME` | 否 | `auto` | 鑄出的 Agnes API key 在 Agnes 後台顯示的名稱。 |
+| `AGNES_PLATFORM_URL` | 否 | `https://platform-backend.agnes-ai.com` | 註冊、登入、鑄 key 使用的 Agnes 平台後端位址（廠商公開端點）。 |
+| `YYDS_BASE_URL` | 否 | `https://maliapi.215.im` | YYDS Mail 的 API 基底位址（廠商公開端點）。 |
+| `YYDS_API_KEY` | 通道為 yyds 時必填 | 空 | YYDS Mail 的 API Key。 |
+| `MOEMAIL_BASE_URL` | 通道為 moemail 時必填 | 空 | 你自己部署的 MoeMail 實例位址，無預設值。 |
+| `MOEMAIL_API_KEY` | 通道為 moemail 時必填 | 空 | 該 MoeMail 實例的 API Key。 |
+
+`MINT_DELAY_MIN_MS`、`MINT_DELAY_MAX_MS`、`TOKEN_NAME`、`AGNES_PLATFORM_URL` 預設沒有寫
+在 `.env.example` 中（預設值通常已足夠），但兩種部署形態都會讀取，可依需求設定。以上
+數值型變數皆須為正整數，否則閘道拒絕啟動。
+
+## 兩種執行時的排程差異
+
+| 部署形態 | 觸發方式 | 由誰決定間隔 |
+|---|---|---|
+| Cloudflare Worker | `wrangler.toml` 的 `[triggers]` Cron（預設 `*/30 * * * *`，即每 30 分鐘一次） | 修改 `wrangler.toml` 中的 cron 表達式 |
+| Node / Docker | 行程內計時器 | `TEND_INTERVAL_MS`（預設 `1800000` 毫秒） |
+
+兩種執行時最終都會呼叫同一個補池函式，設定項目完全相同，差異只在「由誰負責準時觸
+發」。
+
+### Cloudflare Cron 觸發器的牆鐘上限（務必讀完再調整參數）
+
+若使用 Worker 部署，補池由 Cron Trigger 觸發，請務必了解以下限制：
+
+- Cron Trigger 單次呼叫的牆鐘（wall-clock）上限為 **15 分鐘（900 秒）**。
+- **`ctx.waitUntil()` 不會延長此上限**——該寬限機制只對 HTTP 請求生效，對 Cron 觸發的
+  呼叫不適用。
+- CPU 時間上限為 30 秒，但補池過程中的 `await` 網路請求（寄驗證碼、輪詢驗證碼等）不計
+  入 CPU 時間，所以 CPU 上限並非實際瓶頸。
+- 預設設定下的最差耗時約為 `MINT_BATCH × CODE_TIMEOUT_MS` = 5 × 120 秒 = 600 秒，加上
+  單輪內鑄 key 之間的隨機間隔（最多 4 次、每次至多 5 秒）約 20 秒，合計約
+  **600～620 秒**，距 900 秒的牆鐘上限還有約 **30% 的餘裕**。
+- **在調大 `MINT_BATCH` 或 `CODE_TIMEOUT_MS` 之前，請自行依上述公式核算新的最差耗時是
+  否會頂到 15 分鐘的牆鐘上限。** 一旦頂到，本次 Cron 呼叫會被平台中止。
+- 即使被中止也不會遺失已經鑄好的 key——每鑄出一把就立即寫入儲存，只是當輪次的補池不
+  完整，下一個排程週期會繼續嘗試補齊。
+
+## 為什麼依序鑄 key、不並行
+
+補池在單輪內**依序**鑄 key，每次之間插入隨機間隔，而不是並行發出多個鑄 key 請求。這不
+是效能取捨，而是功能性限制：並行會同時撞上 YYDS Mail 的建號限流（短時間內建立信箱超過
+約 10 次會回傳 `403`）與 Agnes 自身的註冊風控。依序執行加隨機間隔是讓註冊機能持續運作
+的必要條件，不建議透過並行來「最佳化」它。
+
+## 隱私說明
+
+註冊過程中產生的信箱位址、帳號密碼只在記憶體中短暫存在，**用完即棄、不會被持久化**；
+儲存中只會出現鑄出的 API key 記錄。鑄 key 結束後（無論成功或失敗）臨時信箱都會被刪除。
+
+## 疑難排解
+
+- **啟用後若缺憑證，啟動即報錯並指明缺少哪一項設定**：註冊機採用 fail-closed 策略，缺
+  憑證不會靜默降級，而是讓閘道明確失敗，方便排查。
+- 補池過程中的日誌一律帶 `[registrar]` 前綴，可據此過濾查看註冊機相關的執行狀態。
+- 若某條通道持續註冊失敗（例如 Agnes 收緊了驗證碼或人機驗證策略），這是程式碼層面無法
+  規避的上游變化，可以關閉註冊機、改為手動匯入 key（見 [DEPLOY.md](DEPLOY.md)）。

@@ -25,6 +25,29 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 default, but both are read from the environment and can be set for either deployment target.
 Every numeric variable above must be a positive integer; the gateway refuses to start otherwise.
 
+### Registrar variables (optional, disabled by default)
+
+The registrar is an optional auto-refill component, disabled by default, and does not affect
+the gateway's core forwarding behavior. This is a quick-reference table only — for how it works,
+how to choose between the two mailbox channels, the Cloudflare Cron wall-clock limit, and more,
+see [REGISTRAR.md](REGISTRAR.md).
+
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `REGISTRAR_ENABLED` | no | `false` | Master switch; must be `true` to enable the registrar. |
+| `REGISTRAR_PRIMARY` | required once enabled | none | Primary channel, `yyds` or `moemail`; the two are equal, no default. |
+| `REGISTRAR_FALLBACK` | no | empty (no fallback) | Fallback channel, `yyds` or `moemail`. |
+| `TARGET_KEYS` | no | `20` | Target number of usable keys. |
+| `MINT_BATCH` | no | `5` | Maximum keys minted per round. |
+| `TEND_INTERVAL_MS` | no (Node/Docker only) | `1800000` | Node-side refill interval; on the Worker this is governed by the Cron in `wrangler.toml` instead. |
+| `CODE_TIMEOUT_MS` | no | `120000` | Timeout waiting for the verification code. |
+| `MINT_DELAY_MIN_MS` / `MINT_DELAY_MAX_MS` | no | `2000` / `5000` | Random delay between mint attempts. |
+| `MAX_DOMAIN_ATTEMPTS` | no | `8` | Maximum domains tried per mint attempt. |
+| `TOKEN_NAME` | no | `auto` | Display name given to the minted key in the Agnes dashboard. |
+| `AGNES_PLATFORM_URL` | no | `https://platform-backend.agnes-ai.com` | Agnes platform backend used for registration. |
+| `YYDS_BASE_URL` / `YYDS_API_KEY` | no / required if a channel is yyds | `https://maliapi.215.im` / empty | YYDS Mail channel credentials. |
+| `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | required if a channel is moemail | empty / empty | MoeMail channel credentials (self-hosted, no default address). |
+
 ### What each of the two timeout budgets covers
 
 The criterion is *when the upstream's first byte can possibly arrive*, not the name of the

@@ -25,6 +25,28 @@ agnes2api 提供两种部署形态，构建自同一套代码与请求处理逻�
 部署形态都会读取这两个环境变量，可按需设置。以上数值型变量都必须是正整数，否则网关
 拒绝启动。
 
+### 注册机相关变量（可选，默认关闭）
+
+注册机是一套可选的自动补池组件，默认关闭，不影响网关的核心转发功能。以下只列变量速查，
+工作原理、两条邮箱通道如何选择、Cloudflare Cron 墙钟限制等完整说明见
+[REGISTRAR.md](REGISTRAR.md)。
+
+| 变量 | 是否必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `REGISTRAR_ENABLED` | 否 | `false` | 总开关，为 `true` 才会启用注册机。 |
+| `REGISTRAR_PRIMARY` | 启用时必填 | 无 | 主通道，`yyds` 或 `moemail`；两者平级，无默认值。 |
+| `REGISTRAR_FALLBACK` | 否 | 空（不降级） | 备通道，`yyds` 或 `moemail`。 |
+| `TARGET_KEYS` | 否 | `20` | 目标可用 key 数。 |
+| `MINT_BATCH` | 否 | `5` | 单轮最多铸几把 key。 |
+| `TEND_INTERVAL_MS` | 否（仅 Node/Docker） | `1800000` | Node 侧补池间隔；Worker 侧由 `wrangler.toml` 的 Cron 决定。 |
+| `CODE_TIMEOUT_MS` | 否 | `120000` | 轮询验证码的超时。 |
+| `MINT_DELAY_MIN_MS` / `MINT_DELAY_MAX_MS` | 否 | `2000` / `5000` | 每次铸 key 之间的随机间隔。 |
+| `MAX_DOMAIN_ATTEMPTS` | 否 | `8` | 单次铸 key 最多尝试几个域名。 |
+| `TOKEN_NAME` | 否 | `auto` | 铸出的 key 在 Agnes 后台显示的名称。 |
+| `AGNES_PLATFORM_URL` | 否 | `https://platform-backend.agnes-ai.com` | 注册用的 Agnes 平台后端地址。 |
+| `YYDS_BASE_URL` / `YYDS_API_KEY` | 否 / 通道为 yyds 时必填 | `https://maliapi.215.im` / 空 | YYDS Mail 通道凭据。 |
+| `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | 通道为 moemail 时必填 | 空 / 空 | MoeMail 通道凭据（自建服务，无默认地址）。 |
+
 ### 两档超时分别管什么
 
 判据是「上游的第一个字节什么时候才可能到达」，不是端点的名字：

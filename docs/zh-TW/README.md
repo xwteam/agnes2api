@@ -33,6 +33,8 @@ key 池：異常的上游 key 會被自動冷卻或剔除。
 - **接受四種憑證傳遞方式** —— `Authorization: Bearer`、`x-api-key`、
   `x-goog-api-key`、查詢參數 `?key=` 皆可接受，正好對應各協議官方 SDK 預設發送的
   憑證形式。
+- **可選的自動補池（預設關閉）** —— 啟用註冊機後，可用 key 低於目標值時會自動註冊
+  Agnes 帳號補齊，見 [REGISTRAR.md](REGISTRAR.md)。
 
 ## 端點速查
 

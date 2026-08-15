@@ -27,6 +27,29 @@ agnes2api は同一のコードベースとリクエスト処理ロジックか�
 応じて設定できます。上記の数値型の変数はすべて正の整数である必要があり、
 そうでない場合ゲートウェイは起動を拒否します。
 
+### レジストラー関連の変数（オプション、デフォルトで無効）
+
+レジストラーはオプションの自動プール補充コンポーネントで、デフォルトでは無効になって
+おり、ゲートウェイの中核である転送機能には影響しません。ここでは変数の早見表のみを
+示します。動作原理、2 つのメールボックスチャネルの選び方、Cloudflare Cron の壁時計
+上限などの詳細は [REGISTRAR.md](REGISTRAR.md) を参照してください。
+
+| 変数 | 必須 | デフォルト | 説明 |
+|---|---|---|---|
+| `REGISTRAR_ENABLED` | いいえ | `false` | マスタースイッチ。`true` にしないとレジストラーは有効になりません。 |
+| `REGISTRAR_PRIMARY` | 有効化時は必須 | なし | 主チャネル、`yyds` または `moemail`。両者は対等でデフォルト値なし。 |
+| `REGISTRAR_FALLBACK` | いいえ | 空（フォールバックなし） | 副チャネル、`yyds` または `moemail`。 |
+| `TARGET_KEYS` | いいえ | `20` | 目標とする利用可能 key 数。 |
+| `MINT_BATCH` | いいえ | `5` | 1 ラウンドで発行する key の最大数。 |
+| `TEND_INTERVAL_MS` | いいえ（Node/Docker のみ） | `1800000` | Node 側の補充間隔。Worker 側は `wrangler.toml` の Cron が代わりに決める。 |
+| `CODE_TIMEOUT_MS` | いいえ | `120000` | 認証コードを待つタイムアウト。 |
+| `MINT_DELAY_MIN_MS` / `MINT_DELAY_MAX_MS` | いいえ | `2000` / `5000` | 発行試行の間に入れるランダム待機時間。 |
+| `MAX_DOMAIN_ATTEMPTS` | いいえ | `8` | 1 回の発行試行で試すドメインの最大数。 |
+| `TOKEN_NAME` | いいえ | `auto` | 発行された key が Agnes 管理画面に表示される名前。 |
+| `AGNES_PLATFORM_URL` | いいえ | `https://platform-backend.agnes-ai.com` | 登録に使う Agnes プラットフォームのバックエンド。 |
+| `YYDS_BASE_URL` / `YYDS_API_KEY` | いいえ / チャネルが yyds の場合は必須 | `https://maliapi.215.im` / 空 | YYDS Mail チャネルの認証情報。 |
+| `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | チャネルが moemail の場合は必須 | 空 / 空 | MoeMail チャネルの認証情報（自己ホスト、デフォルトアドレスなし）。 |
+
 ### 2 つのタイムアウト予算の使い分け
 
 判断基準は「上流の最初のバイトがいつ届き得るか」であり、エンドポイントの名前では

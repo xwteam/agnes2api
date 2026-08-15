@@ -27,6 +27,29 @@ agnes2api는 동일한 코드베이스와 요청 처리 로직으로 만들어�
 들이므로 필요에 따라 설정할 수 있습니다. 위의 수치형 변수는 모두 양의 정수여야
 하며, 그렇지 않으면 게이트웨이가 기동을 거부합니다.
 
+### 레지스트라 관련 변수(선택 사항, 기본값은 비활성화)
+
+레지스트라는 선택적인 자동 키 풀 보충 구성 요소로, 기본값은 비활성화이며 게이트웨이의
+핵심 전달 기능에는 영향을 주지 않습니다. 아래는 변수 빠른 참조용 표일 뿐이며, 동작
+원리, 두 메일함 채널을 고르는 방법, Cloudflare Cron의 월클록 상한 등 전체 설명은
+[REGISTRAR.md](REGISTRAR.md)를 참고하세요.
+
+| 변수 | 필수 여부 | 기본값 | 설명 |
+|---|---|---|---|
+| `REGISTRAR_ENABLED` | 아니오 | `false` | 마스터 스위치. `true`여야 레지스트라가 활성화됨. |
+| `REGISTRAR_PRIMARY` | 활성화 시 필수 | 없음 | 주 채널, `yyds` 또는 `moemail`. 둘은 대등하며 기본값 없음. |
+| `REGISTRAR_FALLBACK` | 아니오 | 공백(폴백 없음) | 보조 채널, `yyds` 또는 `moemail`. |
+| `TARGET_KEYS` | 아니오 | `20` | 목표로 하는 사용 가능 key 수. |
+| `MINT_BATCH` | 아니오 | `5` | 한 라운드에서 발급할 key의 최대 개수. |
+| `TEND_INTERVAL_MS` | 아니오(Node/Docker 전용) | `1800000` | Node 측 보충 간격. Worker 측은 `wrangler.toml`의 Cron이 대신 결정. |
+| `CODE_TIMEOUT_MS` | 아니오 | `120000` | 인증 코드를 기다리는 타임아웃. |
+| `MINT_DELAY_MIN_MS` / `MINT_DELAY_MAX_MS` | 아니오 | `2000` / `5000` | 발급 시도 사이의 무작위 대기 시간. |
+| `MAX_DOMAIN_ATTEMPTS` | 아니오 | `8` | 한 번의 발급 시도에서 시도할 도메인의 최대 개수. |
+| `TOKEN_NAME` | 아니오 | `auto` | 발급된 key가 Agnes 대시보드에 표시되는 이름. |
+| `AGNES_PLATFORM_URL` | 아니오 | `https://platform-backend.agnes-ai.com` | 등록에 사용하는 Agnes 플랫폼 백엔드. |
+| `YYDS_BASE_URL` / `YYDS_API_KEY` | 아니오 / 채널이 yyds일 때 필수 | `https://maliapi.215.im` / 공백 | YYDS Mail 채널 자격 증명. |
+| `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | 채널이 moemail일 때 필수 | 공백 / 공백 | MoeMail 채널 자격 증명(자체 호스팅, 기본 주소 없음). |
+
 ### 두 가지 타임아웃 예산의 역할
 
 기준은 "업스트림의 첫 바이트가 언제 도착할 수 있는가"이지 엔드포인트의 이름이
