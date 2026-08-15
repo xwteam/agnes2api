@@ -129,12 +129,19 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
   arrives" makes the same refill slot wait out another `CODE_TIMEOUT_MS` on the fallback. The
   startup warning `TEND_INTERVAL_MS is below the worst-case round duration` uses exactly this
   model: `MINT_BATCH × CODE_TIMEOUT_MS × number of channels`.
-- **⚠️ On Worker with a fallback configured, lower `MINT_BATCH`.** With the defaults the worst
-  case is `5 × 120s × 2 = 1200s`, **over the 900s wall clock**. If both channels stop receiving
-  mail (e.g. Agnes stops sending codes), that Cron invocation is aborted at 900s and the mailbox
-  being minted at that moment is never deleted (it expires ~24h later on YYDS via `expiresAt`,
-  or after the 1h TTL on MoeMail). To keep even the worst case inside the wall clock, set
-  `MINT_BATCH` to **3 or lower** (`3 × 120 × 2 = 720s`). Node/Docker has no such limit.
+- **On Worker the registrar stops on its own before the wall clock runs out — you do not need
+  to tune anything for this.** Before starting each mint it checks whether the remaining wall
+  clock can hold one complete mint (`CODE_TIMEOUT_MS × number of channels`, plus the inter-attempt
+  delay). If it cannot, that attempt is **never started**: the round ends early, a
+  `本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾` line is logged, keys already minted are
+  kept, and the remaining slots roll over to the next scheduled round.
+  Not starting is the whole point, as opposed to being cut off mid-flight: when the platform
+  aborts a round, the temporary mailbox in use at that moment is never deleted (it expires ~24h
+  later on YYDS via `expiresAt`, or after the 1h TTL on MoeMail). Stopping voluntarily guarantees
+  every attempt runs to completion and every mailbox gets deleted.
+  So on Worker **`MINT_BATCH` is a per-round ceiling, not a guarantee**: setting it high is
+  harmless, the round may simply not fill it. Node/Docker has no platform wall clock, does not
+  engage this mechanism, and will use `MINT_BATCH` in full.
 - **Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers
   out with both formulas above.** When the limit is hit, the platform aborts that Cron
   invocation.

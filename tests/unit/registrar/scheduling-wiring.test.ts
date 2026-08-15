@@ -272,6 +272,53 @@ describe("I4 Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）
   });
 });
 
+describe("轮级墙钟预算只装在有平台墙钟上限的那个入口上", () => {
+  // 预算本身**做什么**由 tender.test.ts 的三条用例守（真时钟推进、真的少跑一次、
+  // 每次尝试都完整走完）。这里守的是接线：预算只能出现在 Worker 那一侧，而且它的
+  // 取值必须同时满足两条真实约束——比 Cron 墙钟小（否则等于没有余量，照样会被平台
+  // 从中间砍断、邮箱漏删），又比默认配置下的单次最坏耗时大（否则一次尝试都不敢
+  // 开始，注册机直接瘫掉）。只断言「有这个字段」是不够的。
+
+  /** Cloudflare Cron Trigger 单次调用的墙钟上限。 */
+  const CRON_WALL_CLOCK_MS = 900_000;
+  /** 默认配置下单次铸 key 的最坏墙钟：CODE_TIMEOUT_MS(120s) × 通道数(最多 2)。 */
+  const WORST_ATTEMPT_DEFAULT_MS = 120_000 * 2;
+
+  function budgetOf(): number | undefined {
+    const deps = tendOnceMock.mock.calls[0]![0] as { roundBudgetMs?: number };
+    return deps.roundBudgetMs;
+  }
+
+  it("Worker 侧传预算，且取值留出了余量、又足够开始一次尝试", async () => {
+    tendOnceMock.mockResolvedValue(RESULT);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { ctx, waited } = fakeCtx();
+    try {
+      await worker.scheduled!(controller(), workerEnv(), ctx);
+      await waited[0];
+      const budget = budgetOf();
+      expect(budget).toBeDefined();
+      expect(budget!).toBeLessThan(CRON_WALL_CLOCK_MS);
+      expect(budget!).toBeGreaterThan(WORST_ATTEMPT_DEFAULT_MS);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("Node 侧不传预算（没有平台墙钟上限，硬塞一个反而会平白少铸 key）", async () => {
+    tendOnceMock.mockResolvedValue(RESULT);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const server = await main(nodeEnv());
+    try {
+      await waitFor(() => tendOnceMock.mock.calls.length === 1);
+      expect(budgetOf()).toBeUndefined();
+    } finally {
+      logSpy.mockRestore();
+      await close(server);
+    }
+  });
+});
+
 describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
   // failures 此前从未被任何一处代码引用（全仓 grep 只命中 tender.ts 自身），
   // 于是「Agnes 加了人机校验」「备通道凭据没配」这类持续性故障在生产里唯一的

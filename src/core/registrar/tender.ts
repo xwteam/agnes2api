@@ -50,6 +50,19 @@ export interface TendDeps {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   rand: () => number;
+  /**
+   * 本轮可用的墙钟预算（毫秒）。**可选**——不传就没有预算约束。
+   *
+   * 只有存在平台墙钟上限的运行时才需要它：Cloudflare 的 Cron Trigger 单次调用最多
+   * 15 分钟，超时**被平台直接中止**，此刻正在 `mintOne` 的 try 块里的那个临时邮箱，
+   * 它的 finally（`deleteMailbox`）不会执行 —— 邮箱泄漏，且没有任何日志。攒够几个
+   * 就把活跃邮箱配额吃光，建邮箱一律失败。这正是前两轮花了很大力气才杀掉的那条
+   * 死亡链，不能靠「文档告诉用户把 MINT_BATCH 调小」来兜。
+   *
+   * Node/Docker 侧没有这种上限，因此 `src/entry/node.ts` **不传**这个字段，行为与
+   * 引入它之前完全一致；给 Node 硬编码一个预算反而是错的。
+   */
+  roundBudgetMs?: number;
 }
 
 /**
@@ -82,15 +95,42 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   const chain: Channel[] = deps.config.fallback ? [primary, deps.config.fallback] : [primary];
 
   const rounds = Math.min(need, deps.config.mintBatch);
+  const roundStartedAt = now;
   const failures: TendResult["failures"] = [];
   let attempted = 0;
   let minted = 0;
 
+  // 单次铸 key 的最坏墙钟：等满验证码超时，且 `code_timeout` 属于通道级失败会降级，
+  // 所以同一个补池名额最坏要在 chain 上的每条通道各等满一次。这是墙钟里**占绝对
+  // 大头**的一项（默认 120 秒/通道），也正是 M1 之后新出现的那个撞墙钟场景：两条
+  // 通道同时收不到信时，5 个名额 ×2 通道 ×120 秒 = 1200 秒 > Cron 的 900 秒。
+  const worstAttemptMs = deps.config.codeTimeoutMs * chain.length;
+
   for (let i = 0; i < rounds; i++) {
-    if (i > 0) {
+    // 间隔先算出来：它也要计入预算，且必须在「要不要开始这次尝试」之前就知道。
+    const delayMs = i === 0
+      ? 0
+      : deps.config.mintDelayMinMs
+        + Math.floor(deps.rand() * Math.max(0, deps.config.mintDelayMaxMs - deps.config.mintDelayMinMs));
+
+    // 轮级墙钟预算：**永远不启动一次明知跑不完的尝试**。
+    //
+    // 关键在于「不开始」而不是「跑到一半停下」——被平台从中间砍断时 mintOne 的
+    // finally 不会执行，邮箱就漏了；主动提前收尾则每一次尝试都完整走完，邮箱一定
+    // 被删掉。代价只是这一轮少铸几把，下个调度周期会接着补，使用者不需要调任何参数。
+    const elapsedMs = deps.now() - roundStartedAt;
+    if (deps.roundBudgetMs !== undefined && elapsedMs + delayMs + worstAttemptMs > deps.roundBudgetMs) {
+      console.warn(
+        `[registrar] 本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾（剩余名额留给下次调度）：`
+          + `已用 ${elapsedMs}ms，预算 ${deps.roundBudgetMs}ms，单次最坏 ${worstAttemptMs}ms，`
+          + `本轮 attempted=${attempted} minted=${minted}（上限 ${rounds}）`,
+      );
+      break;
+    }
+
+    if (delayMs > 0) {
       // 顺序铸并插入随机间隔：并发会同时撞邮箱服务的建号限流与上游的注册风控。
-      const span = Math.max(0, deps.config.mintDelayMaxMs - deps.config.mintDelayMinMs);
-      await deps.sleep(deps.config.mintDelayMinMs + Math.floor(deps.rand() * span));
+      await deps.sleep(delayMs);
     }
     attempted++;
 

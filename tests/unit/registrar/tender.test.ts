@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tendOnce, type TendFailureReason } from "../../../src/core/registrar/tender.js";
+import { tendOnce, type TendFailureReason, type TendDeps } from "../../../src/core/registrar/tender.js";
 import { KeyPoolRepo } from "../../../src/core/dispatcher.js";
 import { MemoryStorage } from "../../helpers/fake-storage.js";
 import { FakeMailProvider } from "../../helpers/fake-mailbox.js";
@@ -37,14 +37,16 @@ function agnesOk() {
 async function makeDeps(over: Partial<RegistrarConfig> = {}, provider: MailProvider = new FakeMailProvider()) {
   const repo = new KeyPoolRepo(new MemoryStorage());
   const providers: Partial<Record<Channel, MailProvider>> = { yyds: provider };
-  return {
-    repo,
-    deps: {
-      repo, config: { ...CFG, ...over },
-      providers,
-      agnes: agnesOk(), now: () => 1000, sleep: async () => {}, rand: () => 0.5,
-    },
+  // 显式标注 TendDeps：不标的话推断出的是这个字面量的形状，用例里给可选字段
+  // （roundBudgetMs）赋值会被 tsc 拒绝，而 vitest 的 esbuild 转换不做类型检查，
+  // 只有 `pnpm typecheck` 会揪出来——这也是发版清单必须把 typecheck 与 test
+  // 并列为必跑项的原因。
+  const deps: TendDeps = {
+    repo, config: { ...CFG, ...over },
+    providers,
+    agnes: agnesOk(), now: () => 1000, sleep: async () => {}, rand: () => 0.5,
   };
+  return { repo, deps };
 }
 
 describe("tendOnce", () => {
@@ -326,6 +328,102 @@ describe("tendOnce", () => {
       "create:u1@a.test", "delete:u1@a.test",
       "create:u2@a.test", "delete:u2@a.test",
     ]);
+  });
+
+  // === 轮级墙钟预算：永远不启动一次明知跑不完的尝试 ===
+  //
+  // 存在的理由是那条死亡链：Worker Cron 撞 15 分钟墙钟 → 平台**直接中止** →
+  // 此刻在 mintOne try 块里的邮箱，它的 finally（deleteMailbox）不执行 → 邮箱泄漏
+  // 且零日志 → 活跃邮箱配额被吃光 → 建邮箱一律失败。M1 把 code_timeout 改成通道级
+  // 降级之后，「两条通道都收不到信」这个场景的单轮最坏耗时翻倍到 1200 秒，撞穿
+  // 900 秒墙钟，所以必须在 tender 里主动收手，而不是靠文档让用户调 MINT_BATCH。
+  //
+  // 下面三条统一用**递进假时钟**：`pollCode` 每次推进 codeTimeoutMs（模拟等满验证码
+  // 超时），`sleep` 推进它自己的毫秒数。这样 `deps.now()` 是真的在走，预算判据被
+  // 真实地求值，而不是靠断言某个字段存在。
+  function clockedProvider(name: Channel, tick: () => void, order: string[]): MailProvider {
+    let n = 0;
+    return {
+      name: name as "yyds",
+      async listDomains() { return ["a.test"]; },
+      async createMailbox(domain: string) {
+        const address = `${name}-u${n++}@${domain}`;
+        order.push(`create:${address}`);
+        return { address, handle: `id-${address}` };
+      },
+      async pollCode() { tick(); return "123456"; },
+      async deleteMailbox(m) { order.push(`delete:${m.address}`); },
+    };
+  }
+
+  it("预算只够 2 次尝试而 mintBatch=5 时：只尝试 2 次，且两次都完整跑完（邮箱都删了）", async () => {
+    let t = 0;
+    const order: string[] = [];
+    const provider = clockedProvider("yyds", () => { t += 5000; }, order);
+    const { repo, deps } = await makeDeps({ targetKeys: 5, mintBatch: 5, codeTimeoutMs: 5000 }, provider);
+    deps.now = () => t;
+    deps.sleep = async (ms: number) => { t += ms; };
+    // 单次最坏 = codeTimeoutMs × chain 长度 = 5000 × 1。预算 12000 只装得下 2 次
+    // （第 3 次开始前已用 10001ms，10001 + 1 + 5000 = 15002 > 12000）。
+    deps.roundBudgetMs = 12_000;
+
+    const out = await tendOnce(deps);
+
+    // ① 少铸而不是被砍断：只开始了 2 次。
+    expect(out.attempted).toBe(2);
+    expect(out.minted).toBe(2);
+    // ② 已经铸到的 key 正常返回并真的进了池子。
+    expect(await repo.all()).toHaveLength(2);
+    // ③ **没有任何一次尝试是被中途打断的**：每个建出来的邮箱都紧跟着一次删除，
+    //    create/delete 严格成对交替。这条才是预算机制存在的全部意义——被平台从
+    //    中间砍断时，最后那次的 delete 是不会出现的。
+    expect(order).toEqual([
+      "create:yyds-u0@a.test", "delete:yyds-u0@a.test",
+      "create:yyds-u1@a.test", "delete:yyds-u1@a.test",
+    ]);
+  });
+
+  it("不传 roundBudgetMs 时行为完全不变（Node/Docker 侧零回归）", async () => {
+    // 与上一条**同一份时钟、同一个 provider、同一个 mintBatch**，唯一的差别是没有
+    // 预算。断言 5 次全跑满——这条成对用例锁住「可选」这个语义，防止预算被写成
+    // 无条件生效（那样 Node 会平白少铸 key）。
+    let t = 0;
+    const order: string[] = [];
+    const provider = clockedProvider("yyds", () => { t += 5000; }, order);
+    const { repo, deps } = await makeDeps({ targetKeys: 5, mintBatch: 5, codeTimeoutMs: 5000 }, provider);
+    deps.now = () => t;
+    deps.sleep = async (ms: number) => { t += ms; };
+
+    const out = await tendOnce(deps);
+
+    expect(out.attempted).toBe(5);
+    expect(out.minted).toBe(5);
+    expect(await repo.all()).toHaveLength(5);
+    expect(order).toHaveLength(10);
+  });
+
+  it("配了备通道时预算按两条通道算，同样的预算装得下的尝试更少", async () => {
+    // 单次最坏 = codeTimeoutMs × chain 长度，chain 长度随 fallback 变。与第一条
+    // **预算、时钟、codeTimeoutMs 全部相同**，只多配一条备通道：装得下的次数从
+    // 2 掉到 1。把 `× chain.length` 去掉（写成只乘 1）这条就会红。
+    let t = 0;
+    const order: string[] = [];
+    const primary = clockedProvider("yyds", () => { t += 5000; }, order);
+    const backup = clockedProvider("moemail", () => { t += 5000; }, order);
+    const { deps } = await makeDeps({
+      targetKeys: 5, mintBatch: 5, codeTimeoutMs: 5000, fallback: "moemail",
+    }, primary);
+    deps.providers = { yyds: primary, moemail: backup };
+    deps.now = () => t;
+    deps.sleep = async (ms: number) => { t += ms; };
+    deps.roundBudgetMs = 12_000;
+
+    const out = await tendOnce(deps);
+
+    expect(out.attempted).toBe(1);
+    expect(out.minted).toBe(1);
+    // 主通道就成功了，备通道不该被碰（否则说明失败的是别的东西）。
+    expect(order).toEqual(["create:yyds-u0@a.test", "delete:yyds-u0@a.test"]);
   });
 
   it("通道缺 provider 时记录一条失败，而不是静默空转", async () => {
