@@ -129,19 +129,34 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
   arrives" makes the same refill slot wait out another `CODE_TIMEOUT_MS` on the fallback. The
   startup warning `TEND_INTERVAL_MS is below the worst-case round duration` uses exactly this
   model: `MINT_BATCH × CODE_TIMEOUT_MS × number of channels`.
-- **On Worker the registrar stops on its own before the wall clock runs out — you do not need
-  to tune anything for this.** Before starting each mint it checks whether the remaining wall
-  clock can hold one complete mint (`CODE_TIMEOUT_MS × number of channels`, plus the inter-attempt
-  delay). If it cannot, that attempt is **never started**: the round ends early, a
+- **On Worker the registrar stops on its own before the wall clock runs out** — this covers the
+  "worst case" bullet above, but *not* the "theoretical worst case" one. Before starting each
+  mint it checks whether the remaining wall clock can hold one complete mint
+  (`CODE_TIMEOUT_MS × number of channels`, plus the inter-attempt delay). If it cannot, that
+  attempt is **never started**: the round ends early, a
   `本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾` line is logged, keys already minted are
   kept, and the remaining slots roll over to the next scheduled round.
   Not starting is the whole point, as opposed to being cut off mid-flight: when the platform
   aborts a round, the temporary mailbox in use at that moment is never deleted (it expires ~24h
-  later on YYDS via `expiresAt`, or after the 1h TTL on MoeMail). Stopping voluntarily guarantees
-  every attempt runs to completion and every mailbox gets deleted.
-  So on Worker **`MINT_BATCH` is a per-round ceiling, not a guarantee**: setting it high is
-  harmless, the round may simply not fill it. Node/Docker has no platform wall clock, does not
-  engage this mechanism, and will use `MINT_BATCH` in full.
+  later on YYDS via `expiresAt`, or after the 1h TTL on MoeMail).
+  So on Worker **`MINT_BATCH` is a per-round ceiling, not a guarantee**: the round may simply not
+  fill it. Node/Docker has no platform wall clock, does not engage this mechanism, and will use
+  `MINT_BATCH` in full.
+- **⚠️ The budget is not a blanket guarantee — a residual case remains.** The check only counts
+  the dominant term, `CODE_TIMEOUT_MS × number of channels`. It deliberately does **not** include
+  the 15-second per-request timeouts or the 403 back-offs: including them would mean no attempt
+  ever dares to start, since the "theoretical worst case" above already exceeds 900s on its own.
+  The budget is 87% of the wall clock, and the ~120s left over is what covers those tails. So:
+  - **"the upstream simply isn't delivering the verification code"** — the common slow case in
+    this section — **is fully covered**;
+  - **"nearly every HTTP request hangs for its full 15s"** is pathological: a single attempt can
+    exceed the reserved headroom and still be aborted by the platform, leaving that temporary
+    mailbox behind. If that worries you, work the "theoretical worst case" formula above and set
+    `MINT_BATCH` to 1–2, or lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
+- **Do not set `CODE_TIMEOUT_MS` too high.** Once `CODE_TIMEOUT_MS × number of channels` exceeds
+  the per-round budget (87% of the wall clock), **no attempt can start at all** on Worker and the
+  refill produces nothing, round after round. Startup logs an explicit error about this, but work
+  the numbers out before you tune.
 - **Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers
   out with both formulas above.** When the limit is hit, the platform aborts that Cron
   invocation.
