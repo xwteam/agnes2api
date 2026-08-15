@@ -146,4 +146,50 @@ describe("toAnthropicStream", () => {
     release();
     await reader.cancel();
   });
+
+  it("upstream 正阻塞在 read() 上等下一个 token 时取消：cancel() 必须及时 resolve 且真的释放 upstream（真实断连场景）", async () => {
+    let upstreamCancelled = false;
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        const e = new TextEncoder();
+        c.enqueue(e.encode(`data: ${JSON.stringify({ id: "c1", choices: [{ delta: { content: "甲" } }] })}\n\n`));
+        // 之后既不再 enqueue，也不 close——模拟上游仍在生成，下一个 token 还没到。
+        // 这是会真正发生的场景：客户端在模型还在吐字时断开连接。
+      },
+      cancel() { upstreamCancelled = true; },
+    });
+
+    const reader = toAnthropicStream(upstream, "m").getReader();
+    await reader.read(); // message_start
+    await reader.read(); // content_block_start
+    await reader.read(); // content_block_delta("甲")
+    // 故意不 await 这次 read：它会一路下钻到 parseSseStream 内部对 upstream 的
+    // 第二次 reader.read()，而 upstream 不会再发数据也不会关闭，这次 read 真
+    // 实地悬空在飞行中——不是「生成器刚 yield 完、没有 pending next()」那种
+    // 协作式假象。
+    const pendingRead = reader.read();
+    await new Promise((r) => setTimeout(r, 20)); // 给上面这条调用链留出时间真正落到那次挂起的 read() 上
+
+    await Promise.race([
+      reader.cancel(),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("cancel() 超过 500ms 未 resolve：取消被卡在了排队的 next() 后面")), 500);
+      }),
+    ]);
+    await pendingRead.catch(() => {});
+
+    expect(upstreamCancelled).toBe(true);
+  });
+
+  it("每次流式响应的 message_start.id 都各自生成，不共享同一个占位符", async () => {
+    const upstream1 = upstreamSse([{ id: "c1", choices: [{ delta: { content: "a" } }] }]);
+    const upstream2 = upstreamSse([{ id: "c2", choices: [{ delta: { content: "b" } }] }]);
+    const text1 = await new Response(toAnthropicStream(upstream1, "m")).text();
+    const text2 = await new Response(toAnthropicStream(upstream2, "m")).text();
+    const id1 = /"message":\{"id":"(.+?)"/.exec(text1)?.[1];
+    const id2 = /"message":\{"id":"(.+?)"/.exec(text2)?.[1];
+    expect(id1).toBeDefined();
+    expect(id1).not.toBe("msg_unknown");
+    expect(id1).not.toBe(id2);
+  });
 });

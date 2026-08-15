@@ -85,4 +85,44 @@ describe("toSseStream", () => {
     await reader.cancel();
     expect(cleaned).toBe(true);
   });
+
+  // 上面那条测试只证明了「生成器刚 yield 完、没有 pending next()」这种协作式
+  // 场景下 gen.return() 能生效——它不代表安全。真正会发生连接泄漏的场景是：
+  // parseSseStream 内部正阻塞在一次不会自己 resolve 的 reader.read() 上（上游
+  // 还没发下一个字节，也没关闭）。这时 gen.return() 会排在那个已经在飞行中的
+  // .next() 后面，永远等不到执行。必须靠带外的 AbortSignal 直接 reader.cancel()
+  // 才能解除阻塞——这条测试把流真正驱动到那个状态再取消，钉死这个真实场景。
+  it("upstream 正阻塞在 read() 上时取消：借助 signal/onCancel 能及时 resolve 并真正取消 upstream", async () => {
+    let upstreamCancelled = false;
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("data: 1\n\n"));
+        // 之后既不再 enqueue，也不 close。
+      },
+      cancel() { upstreamCancelled = true; },
+    });
+
+    const controller = new AbortController();
+    async function* gen() {
+      for await (const raw of parseSseStream(upstream, controller.signal)) {
+        yield `data: ${raw}\n\n`;
+      }
+    }
+    const stream = toSseStream(gen(), () => controller.abort());
+    const reader = stream.getReader();
+
+    await reader.read(); // 消费第一条
+    const pendingRead = reader.read(); // 故意不 await：这次真正卡在 upstream 的第二次 read() 上
+    await new Promise((r) => setTimeout(r, 20));
+
+    await Promise.race([
+      reader.cancel(),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("cancel() 超过 500ms 未 resolve")), 500);
+      }),
+    ]);
+    await pendingRead.catch(() => {});
+
+    expect(upstreamCancelled).toBe(true);
+  });
 });

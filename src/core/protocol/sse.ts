@@ -9,32 +9,59 @@ function extractPayloads(block: string): { payloads: string[]; done: boolean } {
   return { payloads, done: false };
 }
 
-export async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+/**
+ * @param signal 可选。用于带外中断一次正阻塞在 reader.read() 上、上游还没
+ *   发下一个字节的读取。不能指望调用方对本函数返回的异步生成器调用
+ *   `.return()` 来打断它：`.return()` 会排在已经在飞行中的 `.next()`
+ *   请求后面（AsyncGenerator 内部按 FIFO 处理 next/return/throw 请求），
+ *   而这次 `.next()` 内部的 `await reader.read()` 在上游没有更多数据、
+ *   也没有关闭连接之前永远不会自己 resolve，于是 `.return()` 也永远轮
+ *   不到执行——这不是本函数特有的 bug，是「只转发 .return() 然后指望
+ *   for-await 的 IteratorClose」这个设计本身的结构性问题。
+ *   这里改为直接对 reader 调 cancel()：按 Streams 规范，cancel() 会让
+ *   所有当前挂起中的 read() 请求立即以 `{ done: true }` 结算，从而绕开
+ *   生成器的迭代器请求队列。对真实 fetch() 的响应体而言，cancel() 还会
+ *   进一步中止底层的 HTTP 请求，这才是真正释放上游连接的地方。
+ */
+export async function* parseSseStream(
+  body: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) !== -1) {
-      const block = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const found = extractPayloads(block);
-      for (const p of found.payloads) yield p;
-      if (found.done) return;
-    }
+  const onAbort = () => { reader.cancel().catch(() => {}); };
+  if (signal) {
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
   }
 
-  // 流可能不以完整的空行结尾结束（连接中断、非 [DONE] 式终止、代理截断
-  // 都可能发生）。flush 解码器里滞留的字节，把缓冲区剩下的内容当作最后
-  // 一个（可能不完整）块处理，否则最后一个事件会被静默丢弃。
-  buf += decoder.decode();
-  const tail = extractPayloads(buf);
-  for (const p of tail.payloads) yield p;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const found = extractPayloads(block);
+        for (const p of found.payloads) yield p;
+        if (found.done) return;
+      }
+    }
+
+    // 流可能不以完整的空行结尾结束（连接中断、非 [DONE] 式终止、代理截断
+    // 都可能发生）。flush 解码器里滞留的字节，把缓冲区剩下的内容当作最后
+    // 一个（可能不完整）块处理，否则最后一个事件会被静默丢弃。
+    buf += decoder.decode();
+    const tail = extractPayloads(buf);
+    for (const p of tail.payloads) yield p;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 export function sseEvent(event: string | null, data: unknown): string {
@@ -42,7 +69,18 @@ export function sseEvent(event: string | null, data: unknown): string {
   return event === null ? body : `event: ${event}\n${body}`;
 }
 
-export function toSseStream(gen: AsyncGenerator<string>): ReadableStream<Uint8Array> {
+/**
+ * @param onCancel 可选。客户端提前断开连接、这个函数返回的 ReadableStream
+ *   被消费方 cancel 时，除了尝试 `gen.return()` 之外，会先同步调用它——
+ *   给调用方一个不经过生成器迭代器请求队列、立即生效的带外取消入口。
+ *   典型用法是翻转一个 AbortController，并把它的 signal 传给
+ *   parseSseStream；若只依赖 `gen.return()`，一旦生成器正阻塞在一个不会
+ *   自己 resolve 的 await（例如上游还没发下一个字节），取消会永远卡住。
+ */
+export function toSseStream(
+  gen: AsyncGenerator<string>,
+  onCancel?: () => void,
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   return new ReadableStream({
     async pull(controller) {
@@ -51,10 +89,8 @@ export function toSseStream(gen: AsyncGenerator<string>): ReadableStream<Uint8Ar
       else controller.enqueue(encoder.encode(value));
     },
     async cancel() {
-      // 客户端提前断开连接时 ReadableStream 会调用这里。把取消信号转发
-      // 给生成器的 return()，让它有机会走到自己的 finally 块，进而释放
-      // 它持有的上游读取器——否则上游连接会一直挂着，直到被动超时或 GC。
-      await gen.return(undefined);
+      onCancel?.();
+      await gen.return(undefined).catch(() => {});
     },
   });
 }

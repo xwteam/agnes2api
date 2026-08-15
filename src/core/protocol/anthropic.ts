@@ -46,6 +46,15 @@ export function toAnthropicResponse(openai: any, model: string) {
 }
 
 export function toAnthropicStream(upstream: ReadableStream<Uint8Array>, model: string) {
+  // 本地合成一个 id，在读上游之前就能产出——不依赖上游 chunk 里的 id，
+  // 对首字节延迟零代价，同时保证每个流式响应都有互不相同的 message id
+  // （不然下游按 message id 做的日志/追踪/去重/缓存会互相撞车）。
+  const messageId = `msg_${crypto.randomUUID()}`;
+  // 客户端断连时用来带外中断一次正阻塞在 reader.read() 上的读取，见
+  // parseSseStream 与 toSseStream 对 signal/onCancel 的说明——不能只靠
+  // 生成器的 return()，那会排在已在飞行中的 next() 后面永远等不到执行。
+  const controller = new AbortController();
+
   async function* gen(): AsyncGenerator<string> {
     let finish = "stop";
 
@@ -55,7 +64,7 @@ export function toAnthropicStream(upstream: ReadableStream<Uint8Array>, model: s
     yield sseEvent("message_start", {
       type: "message_start",
       message: {
-        id: "msg_unknown", type: "message", role: "assistant", model,
+        id: messageId, type: "message", role: "assistant", model,
         content: [], stop_reason: null, stop_sequence: null,
         usage: { input_tokens: 0, output_tokens: 0 },
       },
@@ -64,10 +73,7 @@ export function toAnthropicStream(upstream: ReadableStream<Uint8Array>, model: s
       type: "content_block_start", index: 0, content_block: { type: "text", text: "" },
     });
 
-    // 客户端断开时 toSseStream.cancel() 会对这个生成器调用 return()，
-    // for-await-of 按 IteratorClose 语义自动把 return() 转发给
-    // parseSseStream(upstream) 这个内层异步生成器，无需在此手写清理代码。
-    for await (const raw of parseSseStream(upstream)) {
+    for await (const raw of parseSseStream(upstream, controller.signal)) {
       let chunk: any;
       try { chunk = JSON.parse(raw); } catch { continue; }
       const choice = chunk.choices?.[0];
@@ -89,5 +95,5 @@ export function toAnthropicStream(upstream: ReadableStream<Uint8Array>, model: s
     yield sseEvent("message_stop", { type: "message_stop" });
   }
 
-  return toSseStream(gen());
+  return toSseStream(gen(), () => controller.abort());
 }
