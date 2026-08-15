@@ -55,6 +55,25 @@ If no upstream key is available, the gateway returns `503` before ever calling u
 { "error": { "reason": "all_cooling", "message": "全部 key 暂不可用：2 把冷却中（到期自动恢复）、0 把已永久剔除" } }
 ```
 
+## Synchronous-endpoint timeout (`504`)
+
+Image generation, video job creation and **every non-streaming chat request** (all four
+protocols) run on the synchronous budget `UPSTREAM_SYNC_TIMEOUT_MS` (default 120000 ms, see the
+[deployment guide](DEPLOY.md#environment-variables)). When every key tried within that total
+budget failed to answer, the gateway returns `504`:
+
+| `reason` | Meaning |
+|---|---|
+| `upstream_timeout` | The request used up the whole `UPSTREAM_SYNC_TIMEOUT_MS` budget and none of the keys it tried answered within their attempt budget. Either the upstream is slow / the budget is too small, or the upstream sessions behind those keys are hung. |
+
+```json
+{ "error": { "reason": "upstream_timeout", "message": "同步端点用尽了 120000 毫秒的总预算：已尝试 2 把 key，均未在各自的尝试预算内收到上游响应……" } }
+```
+
+That total budget is the worst case a client ever waits, regardless of pool size. A `504` means
+**no** key was punished; a key is only charged for its timeout when another key succeeded within
+the same request.
+
 Every other upstream error status (`400`, `404`, etc.) is passed through unchanged, in the
 upstream's own error shape — the gateway does not rewrite it. The two exceptions are upstream
 `401`/`403`, whose body is **never** forwarded (it is the most likely place for an upstream API
@@ -77,8 +96,27 @@ curl http://localhost:8080/health
 ```
 
 ```json
-{ "status": "ok", "version": "0.1.0" }
+{ "status": "ok", "version": "0.1.0", "storage": { "writable": true } }
 ```
+
+`storage.writable` reports whether the storage holding the key pool is actually writable. It is
+maintained by a one-off probe at startup plus every real write at runtime; the health check
+itself never writes. When storage is not writable the endpoint answers **HTTP `503`**:
+
+```json
+{
+  "status": "degraded",
+  "version": "0.1.0",
+  "storage": {
+    "writable": false,
+    "detail": "数据目录不可写，key 池无法持久化。Docker 部署常见于绑定挂载的宿主目录属主与容器内运行用户不一致，详见容器日志"
+  }
+}
+```
+
+The image's built-in `HEALTHCHECK` keys off the response status, so such a container is marked
+unhealthy by Docker. The underlying error goes to the container logs only — it is never echoed
+on this unauthenticated endpoint.
 
 ## `GET /v1/models`
 

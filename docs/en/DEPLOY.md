@@ -12,7 +12,8 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 |---|---|---|---|
 | `GATEWAY_TOKEN` | **yes** | – | The token clients must present to call this gateway. |
 | `AGNES_BASE_URL` | no | `https://apihub.agnes-ai.com/v1` | Upstream Agnes API base URL. |
-| `UPSTREAM_TIMEOUT_MS` | no | `8000` | Abort an upstream call if no first byte arrives within this many milliseconds. |
+| `UPSTREAM_TIMEOUT_MS` | no | `8000` | First-byte timeout for **streaming** responses and video polling: abort the upstream call if no first byte arrives within this many milliseconds. |
+| `UPSTREAM_SYNC_TIMEOUT_MS` | no | `120000` | Total timeout budget for **synchronous** endpoints — the ones whose first byte only arrives once the upstream has computed the whole result: image generation, video job creation, and every **non-streaming** chat request. See below. |
 | `MAX_STRIKES` | no | `3` | Consecutive transient failures (timeouts, network errors, upstream `5xx`) before a key is put into a long cooldown. |
 | `COOLDOWN_RATE_LIMIT_MS` | no | `60000` | Cooldown duration applied to a key after an upstream `429`. |
 | `COOLDOWN_PAYMENT_MS` | no | `3600000` | Cooldown duration applied to a key after an upstream `402`. |
@@ -23,6 +24,31 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 `COOLDOWN_RATE_LIMIT_MS` and `COOLDOWN_PAYMENT_MS` aren't listed in `.env.example` by
 default, but both are read from the environment and can be set for either deployment target.
 Every numeric variable above must be a positive integer; the gateway refuses to start otherwise.
+
+### What each of the two timeout budgets covers
+
+The criterion is *when the upstream's first byte can possibly arrive*, not the name of the
+endpoint:
+
+| Budget | Endpoints | Variable |
+|---|---|---|
+| First-byte | **Streaming** chat (`stream: true`), video polling `GET /v1/videos/{id}` | `UPSTREAM_TIMEOUT_MS` |
+| Synchronous | Image generation, video job creation, and **every non-streaming chat request** (all four protocols) | `UPSTREAM_SYNC_TIMEOUT_MS` |
+
+A non-streaming request only gets its response headers once the upstream has generated the
+entire answer — exactly the same latency shape as image generation. Holding it to the 8-second
+first-byte budget fails perfectly normal requests and drags the key pool down with them.
+
+`UPSTREAM_SYNC_TIMEOUT_MS` is the **total budget for one request**, i.e. the worst case a client
+ever waits — not "pool size × budget". Within that budget the gateway spends at most half on a
+single key and keeps the rest for retrying with another key, so one hung key (connects but never
+answers) cannot swallow the request. Set it to **at least twice the worst-case duration of a
+single call**.
+
+A synchronous timeout does not punish the key right away: only if another key succeeds *within
+the same request* does the gateway charge the timeout to the key that timed out (reaching
+`MAX_STRIKES` puts it into cooldown). If every key in that request timed out, none is punished —
+that is far more likely to be an undersized budget or a slow upstream.
 
 Eviction and cooldown are deliberately different things. An upstream `401`/`403` evicts the key
 **permanently** regardless of any of the settings above — those mean "this key is no longer
@@ -127,7 +153,41 @@ git-ignored) — do not put secrets directly in `wrangler.toml`.
    curl http://localhost:8080/health
    ```
 
-   The image also ships a `HEALTHCHECK` that Docker uses to report container health.
+   The image also ships a `HEALTHCHECK` that Docker uses to report container health. If the
+   data directory is not writable, `/health` answers `503` with `"status": "degraded"`, the
+   container is marked unhealthy, and the underlying reason is in the container logs.
+
+### The container rewrites the ownership of `./data` (read this first)
+
+The container **enters its entrypoint as root**, does two things, and only then drops
+privileges:
+
+- If `DATA_DIR` (default `/app/data`) is not owned by the in-container runtime user `app`
+  (**uid 100 / gid 101**), it recursively `chown`s that directory. If ownership already
+  matches, nothing is rewritten.
+- It then re-executes the server through `su-exec`, so the **main process (PID 1) runs as
+  `app`, not as root**.
+
+This has to happen at runtime because with a bind mount the host directory's ownership
+overrides the build-time `chown` baked into the image, leaving the in-container `app` user
+unable to write `store.json` — a silent failure in which every API call returns `pool_empty`.
+
+**Side effect:** with a bind mount those are *host* files. After `docker compose up -d`, your
+`./data` and everything in it is owned by `100:101` instead of your own uid, and you will need
+`sudo` to read, write, or back it up from the host. If you do not want that, run the container
+as a non-root user with `--user` (or compose's `user:`): the entrypoint then skips the `chown`
+entirely and you provide a directory your chosen uid can write.
+
+For the same reason the image deliberately has **no `USER app`**, so its default user is root
+(`docker inspect --format '{{.Config.User}}' <image>` prints nothing). This matters on
+Kubernetes: with `runAsNonRoot: true` and no explicit `runAsUser`, the kubelet refuses to start
+the container. Such deployments should set `runAsUser: 100` and `runAsGroup: 101` (or any uid of
+your own) and prepare the volume ownership themselves — a non-root start takes the entrypoint's
+"no chown, exec directly" branch.
+
+Safety boundary: if `DATA_DIR` is set to `/` or to a top-level system directory (`/etc`, `/usr`,
+…), the entrypoint refuses to recursively chown it (it only prints a warning and still starts),
+so a stray value cannot make the whole container filesystem writable by `app`.
 
 ## Importing an upstream Agnes key
 
