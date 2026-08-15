@@ -20,6 +20,11 @@ describe("Entry fail-closed 行为", () => {
       expect(() => configFromEnv(env)).toThrow("UPSTREAM_TIMEOUT_MS");
     });
 
+    it("非法的 UPSTREAM_SYNC_TIMEOUT_MS 抛错而不是 NaN", () => {
+      const env = { GATEWAY_TOKEN: "test", UPSTREAM_SYNC_TIMEOUT_MS: "abc" };
+      expect(() => configFromEnv(env)).toThrow("UPSTREAM_SYNC_TIMEOUT_MS");
+    });
+
     it("非法的 MAX_STRIKES 抛错而不是 NaN", () => {
       const env = { GATEWAY_TOKEN: "test", MAX_STRIKES: "not_a_number" };
       expect(() => configFromEnv(env)).toThrow("MAX_STRIKES");
@@ -44,6 +49,7 @@ describe("Entry fail-closed 行为", () => {
         gatewayToken: "secret",
         agnesBaseUrl: "https://apihub.agnes-ai.com/v1",
         upstreamTimeoutMs: 8000,
+        upstreamSyncTimeoutMs: 120_000,
         maxStrikes: 3,
         cooldownRateLimitMs: 60_000,
         cooldownPaymentMs: 3_600_000,
@@ -56,6 +62,7 @@ describe("Entry fail-closed 行为", () => {
         GATEWAY_TOKEN: "secret",
         AGNES_BASE_URL: "http://custom.example.com",
         UPSTREAM_TIMEOUT_MS: "5000",
+        UPSTREAM_SYNC_TIMEOUT_MS: "45000",
         MAX_STRIKES: "5",
         COOLDOWN_RATE_LIMIT_MS: "30000",
         COOLDOWN_PAYMENT_MS: "7200000",
@@ -66,6 +73,7 @@ describe("Entry fail-closed 行为", () => {
         gatewayToken: "secret",
         agnesBaseUrl: "http://custom.example.com",
         upstreamTimeoutMs: 5000,
+        upstreamSyncTimeoutMs: 45000,
         maxStrikes: 5,
         cooldownRateLimitMs: 30000,
         cooldownPaymentMs: 7200000,

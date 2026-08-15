@@ -22,7 +22,9 @@ describe("node 入口: 真实启动路径", () => {
       const port = (server.address() as AddressInfo).port;
       const res = await fetch(`http://127.0.0.1:${port}/health`);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ status: "ok", version: "0.1.0" });
+      expect(await res.json()).toEqual({
+        status: "ok", version: "0.1.0", storage: { writable: true },
+      });
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));

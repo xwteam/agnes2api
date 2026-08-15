@@ -15,14 +15,19 @@ const VIDEO_ID = /^[A-Za-z0-9_-]{1,128}$/;
 // 图片：同步转发。视频：建任务 + 轮询的两段式。
 // 成片不在网关落地——上游返回什么（URL 或字节流）就原样转发，
 // 让 Worker 与 Docker 两种部署形态行为一致，也不引入对象存储依赖。
+//
+// 超时档位（`timeout`）在本文件里三条路由上并不一致，这是刻意的：
+// 图片生成与视频建任务是**同步**接口，首字节要等上游把整个结果算完才到达（实测图片
+// 11.99 秒），必须用 `sync` 档；视频轮询只是查一次任务状态，是快接口，沿用默认的 8 秒
+// 首字节档即可——给它长超时只会让一次上游卡死拖住客户端两分钟。
 export function mediaRoutes(deps: DispatchDeps): Hono {
   const app = new Hono();
 
   app.post("/v1/images/generations", async (c) =>
-    dispatch({ path: "/images/generations", body: await readJson(c), stream: false, deps }));
+    dispatch({ path: "/images/generations", body: await readJson(c), stream: false, timeout: "sync", deps }));
 
   app.post("/v1/videos", async (c) =>
-    dispatch({ path: "/videos", body: await readJson(c), stream: false, deps }));
+    dispatch({ path: "/videos", body: await readJson(c), stream: false, timeout: "sync", deps }));
 
   app.get("/v1/videos/:id", async (c) => {
     const id = c.req.param("id");

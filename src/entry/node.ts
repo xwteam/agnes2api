@@ -10,7 +10,9 @@ import { FileStorage } from "../adapters/storage-file.js";
  */
 export async function main(env: Record<string, string | undefined> = process.env) {
   const storage = new FileStorage(env.DATA_DIR ?? "/app/data");
-  const app = await buildApp(env, storage);
+  // 数据目录是绑定挂载，属主不匹配就整个网关不可用（写不进 store.json），
+  // 必须在启动那一刻探出来并让 /health 如实报告，不能等到第一个请求失败才发现。
+  const app = await buildApp(env, storage, { probeStorage: true });
   const port = Number(env.PORT ?? 8080);
 
   return serve({ fetch: app.fetch, port }, (info) => {

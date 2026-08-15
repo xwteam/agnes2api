@@ -10,10 +10,12 @@ import { mediaRoutes } from "./routes/media.js";
 import { auth } from "./middleware/auth.js";
 import type { GatewayConfig } from "../core/config.js";
 import type { DispatchDeps } from "../core/dispatcher.js";
+import type { StorageHealth } from "../core/storage-health.js";
 
 export interface AppDeps extends DispatchDeps {
   version: string;
   config: GatewayConfig;
+  storageHealth: StorageHealth;
 }
 
 export function createApp(deps: AppDeps): Hono {
@@ -27,7 +29,7 @@ export function createApp(deps: AppDeps): Hono {
     return errorResponse(500, "internal_error", "网关内部错误");
   });
 
-  app.route("/", healthRoutes(deps.version));
+  app.route("/", healthRoutes(deps.version, deps.storageHealth));
   app.use("/v1/*", auth(deps.config.gatewayToken));
   app.use("/v1beta/*", auth(deps.config.gatewayToken));
   app.route("/", openaiRoutes(deps));

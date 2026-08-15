@@ -2,8 +2,20 @@ import { createApp } from "./app.js";
 import { loadConfig } from "../core/config.js";
 import { KeyPoolRepo } from "../core/dispatcher.js";
 import { NativeFetcher } from "../adapters/fetcher-native.js";
+import { createStorageHealth, probeWritable, watchStorage } from "../core/storage-health.js";
 import { VERSION } from "../version.js";
 import type { Storage } from "../ports/storage.js";
+
+export interface BuildOptions {
+  /**
+   * 装配时探一次存储可写性（写一个探针键再删掉）。
+   *
+   * 只有 Node/Docker 形态该开：那里的数据目录是绑定挂载，属主不匹配就整个网关不可用，
+   * 必须在启动那一刻就发现。Worker/KV 形态没有这个失败模式，而 worker 入口在每个隔离体
+   * 冷启动时都会重新装配一次 app，开着它等于把 KV 的写配额消耗在健康检查上。
+   */
+  probeStorage?: boolean;
+}
 
 /**
  * 从环境变量与存储装配出完整的 app。两个入口（worker/node）都调用它，
@@ -14,13 +26,36 @@ import type { Storage } from "../ports/storage.js";
  * storage 中持久化的配置（例如未来的管理接口写入的覆盖值），是 configFromEnv
  * 的严格超集；没有理由在有 storage 可用时退化成只读 env 的版本。
  */
-export async function buildApp(env: Record<string, string | undefined>, storage: Storage) {
-  const config = await loadConfig(env, storage);
+export async function buildApp(
+  env: Record<string, string | undefined>,
+  storage: Storage,
+  options: BuildOptions = {},
+) {
+  const storageHealth = createStorageHealth();
+  // 包一层之后，后续所有写操作（key 池状态回写、启动探测）的成败都会自动反映到
+  // /health 上，健康检查自身不需要再写盘。
+  const watched = watchStorage(storage, storageHealth, () => Date.now());
+
+  if (options.probeStorage) {
+    const err = await probeWritable(watched);
+    if (err) {
+      console.error(
+        `[agnes2api] 数据目录不可写，key 池无法持久化，/health 将报告 degraded：${err.message}`,
+      );
+      console.error(
+        "[agnes2api] Docker 绑定挂载常见原因：宿主 ./data 的属主与容器内运行用户不一致。" +
+          "本镜像的 entrypoint 会以 root 启动并 chown 数据目录后再降权，若仍不可写，请检查该目录是否只读或位于不支持 chown 的文件系统。",
+      );
+    }
+  }
+
+  const config = await loadConfig(env, watched);
   return createApp({
     version: VERSION,
     config,
-    repo: new KeyPoolRepo(storage),
+    repo: new KeyPoolRepo(watched),
     fetcher: new NativeFetcher(),
     now: () => Date.now(),
+    storageHealth,
   });
 }

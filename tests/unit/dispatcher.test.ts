@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type * as DispatcherModule from "../../src/core/dispatcher.js";
+import { configFromEnv } from "../../src/core/config.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { FakeFetcher } from "../helpers/fake-fetcher.js";
 
@@ -21,6 +22,7 @@ const CONFIG = {
   gatewayToken: "t",
   agnesBaseUrl: "https://upstream.test/v1",
   upstreamTimeoutMs: 8000,
+  upstreamSyncTimeoutMs: 120_000,
   maxStrikes: 3,
   cooldownRateLimitMs: 60_000,
   cooldownPaymentMs: 3_600_000,
@@ -389,5 +391,118 @@ describe("dispatch", () => {
       deps: { repo, fetcher: fetcher as any, config: CONFIG, now: () => 1 } });
     expect(seen!.body).toBeUndefined();
     expect(seen!.method).toBe("GET");
+  });
+});
+
+// ── C-RM2：8 秒是「流式首字节」的调优值，不能统一套到同步端点 ────────────────
+//
+// 真机实测：直连上游 /images/generations 首字节耗时 11.99 秒（HTTP 200，同步接口，
+// 首字节 = 整张图渲染完）。经网关（8 秒超时）则每把 key 各记一次 strike 后返回失败，
+// 三次图片请求即可把整池打进 30 分钟长冷却。
+//
+// 本组用例刻意使用 configFromEnv 产出的**内置默认配置**而不是文件顶部的 CONFIG 字面量：
+// 只有这样，把 DEFAULTS.upstreamSyncTimeoutMs 改回 8000 才会让它们变红。
+describe("按端点语义区分超时", () => {
+  const DEFAULTS = configFromEnv({ GATEWAY_TOKEN: "t", AGNES_BASE_URL: "https://upstream.test/v1" });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("内置默认值：同步端点的预算远大于流式首字节的 8 秒", () => {
+    expect(DEFAULTS.upstreamTimeoutMs).toBe(8000);
+    expect(DEFAULTS.upstreamSyncTimeoutMs).toBeGreaterThanOrEqual(60_000);
+  });
+
+  it("同步端点：上游 12 秒才吐首字节（实测值），用内置默认配置照样成功", async () => {
+    vi.useFakeTimers();
+    const repo = await makeRepo(["k1"]);
+    const f = new FakeFetcher([
+      { status: 200, body: '{"data":[{"url":"https://example.invalid/a.png"}]}', delayMs: 11_990 },
+    ]);
+    const pending = dispatch({
+      path: "/images/generations", body: {}, stream: false, timeout: "sync",
+      deps: { repo, fetcher: f, config: DEFAULTS, now: () => 1000 },
+    });
+    await vi.advanceTimersByTimeAsync(11_990);
+    const res = await pending;
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ data: [{ url: "https://example.invalid/a.png" }] });
+    expect((await repo.all())[0]!.strikes).toBe(0);
+  });
+
+  it("流式/对话端点：同一个 12 秒的上游，仍然在 8 秒被甩掉并记 strike（§7.3 语义不变）", async () => {
+    vi.useFakeTimers();
+    const repo = await makeRepo(["k1"]);
+    const f = new FakeFetcher([{ status: 200, body: "{}", delayMs: 11_990 }]);
+    const pending = dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: f, config: DEFAULTS, now: () => 1000 },
+    });
+    await vi.advanceTimersByTimeAsync(11_990);
+    const res = await pending;
+
+    expect(res.status).toBe(503);
+    const k1 = (await repo.all())[0]!;
+    expect(k1.strikes).toBe(1);
+    expect(k1.cooldownUntil).toBe(0);
+  });
+
+  // 判断：同步端点超时**不**记 strike，也不再换下一把 key。理由见 dispatcher.ts 的
+  // syncTimedOut 注释。这条用例钉住的正是「三次图片请求打垮整池」那个连带后果。
+  it("同步端点超时：504、不记 strike、不再尝试池中其他 key", async () => {
+    vi.useFakeTimers();
+    const repo = await makeRepo(["k1", "k2", "k3"]);
+    const f = new FakeFetcher(
+      Array.from({ length: 3 }, () => ({ status: 200, body: "{}", delayMs: 300_000 })),
+    );
+    const pending = dispatch({
+      path: "/images/generations", body: {}, stream: false, timeout: "sync",
+      deps: { repo, fetcher: f, config: DEFAULTS, now: () => 1000 },
+    });
+    await vi.advanceTimersByTimeAsync(DEFAULTS.upstreamSyncTimeoutMs);
+    const res = await pending;
+
+    expect(res.status).toBe(504);
+    expect(await res.json()).toMatchObject({ error: { reason: "upstream_timeout" } });
+    expect(f.usedKeys).toEqual(["k1"]);
+    const all = await repo.all();
+    expect(all.map((r) => r.strikes)).toEqual([0, 0, 0]);
+    expect(all.map((r) => r.cooldownUntil)).toEqual([0, 0, 0]);
+    expect(all.map((r) => r.evicted)).toEqual([false, false, false]);
+  });
+
+  it("三次图片超时之后，整池依然全部可用（连带摧毁 key 池的路径已断开）", async () => {
+    vi.useFakeTimers();
+    const repo = await makeRepo(["k1", "k2", "k3"]);
+    const f = new FakeFetcher(
+      Array.from({ length: 9 }, () => ({ status: 200, body: "{}", delayMs: 300_000 })),
+    );
+    for (let i = 0; i < 3; i++) {
+      const pending = dispatch({
+        path: "/images/generations", body: {}, stream: false, timeout: "sync",
+        deps: { repo, fetcher: f, config: DEFAULTS, now: () => 1000 },
+      });
+      await vi.advanceTimersByTimeAsync(DEFAULTS.upstreamSyncTimeoutMs);
+      expect((await pending).status).toBe(504);
+    }
+    const all = await repo.all();
+    expect(all.every((r) => !r.evicted && r.cooldownUntil === 0 && r.strikes === 0)).toBe(true);
+  });
+
+  // 只豁免「超时」，不豁免「连不上」：真正坏掉的 key 会立刻抛网络错误，那条通路仍然
+  // 记 strike 并换下一把，否则同步端点就永远没有淘汰坏 key 的能力了。
+  it("同步端点的网络错误仍然记 strike 并换下一把 key", async () => {
+    const repo = await makeRepo(["k1", "k2"]);
+    const f = new FakeFetcher([{ throws: new Error("ECONNREFUSED") }, { status: 200, body: "{}" }]);
+    const res = await dispatch({
+      path: "/images/generations", body: {}, stream: false, timeout: "sync",
+      deps: { repo, fetcher: f, config: DEFAULTS, now: () => 1000 },
+    });
+
+    expect(res.status).toBe(200);
+    expect(f.usedKeys).toEqual(["k1", "k2"]);
+    expect((await repo.all()).find((r) => r.key === "k1")!.strikes).toBe(1);
   });
 });

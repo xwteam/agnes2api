@@ -82,3 +82,66 @@ describe("GET /v1/videos/{id} 的路径穿越防护", () => {
     expect(fetcher.sentUrls).toEqual(["https://upstream.test/v1/videos/task_1-ABC"]);
   });
 });
+
+// ── C-RM2：路由必须按端点语义挑超时档，而不是全体共用 8 秒 ────────────────────
+//
+// 这组用例走真实时钟，把两档超时按同一比例缩到毫秒级：`SLOW_UPSTREAM` 落在快档之外、
+// 慢档之内。删掉 media.ts 里的 `timeout: "sync"` 就会让图片/建任务两条用例变红，
+// 而给轮询也挂上 `sync` 会让第三条变红。
+describe("媒体端点的超时档位", () => {
+  const SCALED = { upstreamTimeoutMs: 50, upstreamSyncTimeoutMs: 5000 };
+  const SLOW_UPSTREAM = 300;
+  const AUTH = { authorization: "Bearer t", "content-type": "application/json" };
+
+  it("图片生成用同步档：上游远超快档预算才返回首字节，仍然成功", async () => {
+    const { app } = await makeApp(
+      [{ status: 200, body: '{"created":1}', delayMs: SLOW_UPSTREAM }], ["k1"], SCALED,
+    );
+    const res = await app.request("/v1/images/generations", {
+      method: "POST", headers: AUTH, body: JSON.stringify({ prompt: "一只猫" }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("视频建任务用同步档", async () => {
+    const { app } = await makeApp(
+      [{ status: 200, body: '{"id":"task-1"}', delayMs: SLOW_UPSTREAM }], ["k1"], SCALED,
+    );
+    const res = await app.request("/v1/videos", {
+      method: "POST", headers: AUTH, body: JSON.stringify({ prompt: "一只猫在跑" }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("视频轮询是快接口，仍用首字节档（上游拖过预算即失败，不给它两分钟）", async () => {
+    const { app } = await makeApp(
+      [{ status: 200, body: "{}", delayMs: SLOW_UPSTREAM }], ["k1"], SCALED,
+    );
+    const res = await app.request("/v1/videos/task-1", { headers: { authorization: "Bearer t" } });
+    expect(res.status).toBe(503);
+  });
+
+  it("对话端点仍用首字节档（8 秒语义没有被顺手放宽）", async () => {
+    const { app } = await makeApp(
+      [{ status: 200, body: "{}", delayMs: SLOW_UPSTREAM }], ["k1"], SCALED,
+    );
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST", headers: AUTH, body: JSON.stringify({ model: "m", messages: [] }),
+    });
+    expect(res.status).toBe(503);
+  });
+
+  it("图片生成超时返回 504，且明说未惩罚任何 key", async () => {
+    // 这条要的是「超时之后怎么办」，把同步档也压到毫秒级，免得真等满 5 秒。
+    const { app, repo } = await makeApp(
+      [{ status: 200, body: "{}", delayMs: 60_000 }], ["k1", "k2"],
+      { upstreamTimeoutMs: 50, upstreamSyncTimeoutMs: 120 },
+    );
+    const res = await app.request("/v1/images/generations", {
+      method: "POST", headers: AUTH, body: JSON.stringify({ prompt: "x" }),
+    });
+    expect(res.status).toBe(504);
+    expect(await res.json()).toMatchObject({ error: { reason: "upstream_timeout" } });
+    expect((await repo.all()).every((r) => r.strikes === 0 && r.cooldownUntil === 0)).toBe(true);
+  });
+});

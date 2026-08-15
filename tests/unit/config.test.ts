@@ -12,6 +12,32 @@ describe("loadConfig", () => {
     expect(c.cooldownPaymentMs).toBe(3_600_000);
   });
 
+  // C-RM2：同步端点（图片生成、视频建任务）的首字节要等上游把结果算完才到达，
+  // 实测约 12 秒，8 秒预算会让它 100% 失败。默认值必须显著大于流式首字节的 8 秒。
+  it("同步端点超时有独立默认值，且远大于流式首字节的 8 秒", async () => {
+    const c = await loadConfig({ GATEWAY_TOKEN: "t" }, new MemoryStorage());
+    expect(c.upstreamSyncTimeoutMs).toBe(120_000);
+    expect(c.upstreamSyncTimeoutMs).toBeGreaterThanOrEqual(60_000);
+  });
+
+  it("UPSTREAM_SYNC_TIMEOUT_MS 走同一套优先级：env > 存储 > 默认", async () => {
+    const s = new MemoryStorage();
+    await s.put("config", { upstreamSyncTimeoutMs: 90_000 });
+    expect((await loadConfig({ GATEWAY_TOKEN: "t" }, s)).upstreamSyncTimeoutMs).toBe(90_000);
+    expect(
+      (await loadConfig({ GATEWAY_TOKEN: "t", UPSTREAM_SYNC_TIMEOUT_MS: "150000" }, s))
+        .upstreamSyncTimeoutMs,
+    ).toBe(150_000);
+  });
+
+  it("调大同步超时不影响流式首字节的 8 秒", async () => {
+    const c = await loadConfig(
+      { GATEWAY_TOKEN: "t", UPSTREAM_SYNC_TIMEOUT_MS: "150000" },
+      new MemoryStorage(),
+    );
+    expect(c.upstreamTimeoutMs).toBe(8000);
+  });
+
   it("存储中的 config 键覆盖默认值", async () => {
     const s = new MemoryStorage();
     await s.put("config", { upstreamTimeoutMs: 5000 });
@@ -63,6 +89,9 @@ describe("loadConfig", () => {
     const cases: [string, string][] = [
       ["UPSTREAM_TIMEOUT_MS", "-1"],
       ["UPSTREAM_TIMEOUT_MS", "0"],
+      ["UPSTREAM_SYNC_TIMEOUT_MS", "-1"],
+      ["UPSTREAM_SYNC_TIMEOUT_MS", "0"],
+      ["UPSTREAM_SYNC_TIMEOUT_MS", "1.5"],
       ["MAX_STRIKES", "0"],
       ["MAX_STRIKES", "-3"],
       ["MAX_STRIKES", "2.5"],

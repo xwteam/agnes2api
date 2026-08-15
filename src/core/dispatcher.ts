@@ -136,11 +136,52 @@ function unavailable(records: KeyRecord[], now: number): Response {
   return fail("upstream_error", "已尝试池中每一把 key，上游均返回失败；key 本身仍可用");
 }
 
+/**
+ * 端点的**上游延迟语义**，决定用哪个超时预算、以及超时后如何处置这把 key。
+ *
+ * 它与 `stream` 参数是两件事：`stream` 说的是「返回给客户端的响应形态」，这里说的是
+ * 「上游首字节什么时候才可能到达」。视频建任务（`POST /videos`）不是流式却很慢，视频
+ * 轮询（`GET /videos/{id}`）同样不是流式却很快——两者用同一个 `stream: false`，但超时
+ * 语义完全相反，所以必须独立表达。
+ *
+ * - `firstByte`（默认）：上游一开始说话就算首字节，用 `UPSTREAM_TIMEOUT_MS`（8 秒）。
+ *   适用于流式/非流式对话与视频轮询这类快接口。慢 key 在这里应当被快速甩掉（设计 §7.3）。
+ * - `sync`：首字节要等上游把整个结果算完才到达（图片生成、视频建任务），用
+ *   `UPSTREAM_SYNC_TIMEOUT_MS`（默认 2 分钟）。
+ */
+export type TimeoutProfile = "firstByte" | "sync";
+
+/**
+ * 同步端点超时：504，且**不惩罚这把 key、也不再换下一把**。
+ *
+ * ① 为什么不记 strike：这里的超时衡量的是「上游把整张图渲染完需要多久」与「网关给了
+ * 多少预算」之间的关系，而不是这把 key 是否健康。预算配小了就把池中每把 key 都判为
+ * 不健康，是把配置问题记到 key 头上——实测正是这条路径：一次图片请求让池中每把 key
+ * 各吃一次 strike，三次请求即可把任意规模的整池打进 30 分钟长冷却，连对话一起拖死。
+ * 真正坏掉的 key 走的是「网络错误」分支（连不上会立刻抛错，不需要等满超时），那条
+ * 分支仍然记 strike；对话端点也仍然按 8 秒首字节把慢 key 甩掉。惩罚通路并没有消失。
+ *
+ * ② 为什么不再换下一把：换 key 重试的前提是「换一把可能更快」，但同步端点的耗时由
+ * 上游的渲染工作量决定，不由 key 决定，重试没有理由得到不同结果；代价却是客户端要为
+ * 每把 key 再等一个完整预算——20 把 key 的池子就是 20 × 2 分钟。让客户端的最坏等待
+ * 停在一个预算内，并把「是预算问题、不是 key 问题」直接写进错误体。
+ */
+function syncTimedOut(timeoutMs: number): Response {
+  return jsonBody(504, {
+    error: {
+      reason: "upstream_timeout",
+      message: `同步端点在 ${timeoutMs} 毫秒内未收到上游响应。这是超时预算问题而非 key 故障，未惩罚任何 key；如确需更长时间，调大 UPSTREAM_SYNC_TIMEOUT_MS 后重试`,
+    },
+  });
+}
+
 export async function dispatch(args: {
   path: string;
   body: unknown;
   stream: boolean;
   method?: "GET" | "POST";
+  /** 见 TimeoutProfile。缺省为 `firstByte`，即保持原有的 8 秒首字节语义。 */
+  timeout?: TimeoutProfile;
   /**
    * 调用方随后会把响应体解析成 JSON 做协议转换时置为 true。
    *
@@ -153,6 +194,8 @@ export async function dispatch(args: {
   deps: DispatchDeps;
 }): Promise<Response> {
   const { repo, fetcher, config, now } = args.deps;
+  const profile: TimeoutProfile = args.timeout ?? "firstByte";
+  const timeoutMs = profile === "sync" ? config.upstreamSyncTimeoutMs : config.upstreamTimeoutMs;
   const records = await repo.all();
   if (records.length === 0) return fail("pool_empty", "key 池为空，请先导入 key");
 
@@ -181,7 +224,7 @@ export async function dispatch(args: {
     const slot = records.indexOf(record);
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), config.upstreamTimeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     const method = args.method ?? "POST";
     const init: RequestInit & { signal: AbortSignal } = {
@@ -200,7 +243,12 @@ export async function dispatch(args: {
     } catch (err) {
       clearTimeout(timer);
       const action = classifyThrown(err);
-      await commit(slot, applyStrike(record, now(), config, action.kind === "strike" ? action.reason : "unknown"));
+      const reason = action.kind === "strike" ? action.reason : "unknown";
+
+      // 同步端点超时既不记 strike 也不换 key，见 syncTimedOut 的说明。
+      if (profile === "sync" && reason === "timeout") return done(syncTimedOut(timeoutMs));
+
+      await commit(slot, applyStrike(record, now(), config, reason));
       continue;
     }
     // 首字节已到，解除超时，让响应体自由流动。
