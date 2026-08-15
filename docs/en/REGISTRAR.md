@@ -32,8 +32,13 @@ The registrar supports two mailbox channels for receiving verification codes:
 neither.** `REGISTRAR_PRIMARY` has no default; you must explicitly set it to `yyds` or `moemail`
 when enabling the registrar. `REGISTRAR_FALLBACK` is optional: when the primary channel hits a
 **channel-level failure** (listing domains fails, mailbox creation fails repeatedly, invalid
-credentials), the registrar falls back to it automatically for that attempt. Leave it empty to
-disable fallback.
+credentials, the verification code never arrives), the registrar falls back to it automatically
+for that attempt. Leave it empty to disable fallback.
+
+> "The verification code never arrives" counts as a channel-level failure: the code is delivered
+> *through* that mailbox channel, so a broken MX record or a deleted mail-forwarding rule — every
+> API call returns 2xx, the mail simply never shows up — likewise means "this channel cannot
+> produce a key right now".
 
 What to base the choice on: the registrar works around Agnes blocking disposable-mailbox domains
 by rotating domains, so the more usable domains you have, the longer it keeps working. Check how
@@ -118,6 +123,11 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
   aborted only leaves the round incomplete (see the next bullet). If you want even the
   pathological case to stay within the wall clock, set `MINT_BATCH` to 1–2, or lower
   `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
+- **With `REGISTRAR_FALLBACK` configured, multiply both estimates above by the number of
+  channels (i.e. ×2).** "The verification code never arrives" is a channel-level failure, so the
+  same refill slot waits out another `CODE_TIMEOUT_MS` on the fallback channel. The startup
+  warning `TEND_INTERVAL_MS is below the worst-case round duration` uses exactly this model:
+  `MINT_BATCH × CODE_TIMEOUT_MS × number of channels`.
 - **Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers
   out with both formulas above.** When the limit is hit, the platform aborts that Cron
   invocation.
@@ -147,6 +157,13 @@ attempt, whether it succeeded or failed.
   variable is missing.** The registrar follows a fail-closed policy — missing credentials never
   degrade silently, they fail the gateway loudly so the problem is easy to spot.
 - Refill logs are consistently prefixed with `[registrar]`, so you can filter for them.
+- **When a round leaves slots unminted, the closing log adds a warning containing `reasons=`**,
+  e.g. `reasons=yyds:register_failed×3 moemail:code_timeout×1`. Read that line first to tell
+  which layer broke: `code_timeout` = this channel is not receiving Agnes' mail (MX record /
+  forwarding rule); `register_failed` / `login_failed` / `key_failed` = Agnes changed its
+  sign-up path; `provider_error` = the mailbox service itself (credentials, active-mailbox
+  quota, outage); `provider_missing` = you selected a channel but never supplied its
+  credentials — a configuration error.
 - If a channel keeps failing to register (for example, Agnes has tightened its verification-code
   or CAPTCHA policy), that's an upstream change no amount of code can work around. You can disable
   the registrar and switch to manually importing keys instead (see [DEPLOY.md](DEPLOY.md)).

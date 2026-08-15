@@ -160,6 +160,35 @@ describe("registrarFromEnv", () => {
     warnSpy.mockRestore();
   });
 
+  it("配了备通道时单轮最坏耗时按两条通道算（code_timeout 会降级重试一次）", () => {
+    // M1 之后 code_timeout 属于通道级失败，配了备通道时同一个补池名额最坏要等
+    // 两次 CODE_TIMEOUT_MS。墙钟模型跟着变，这条告警的阈值必须同步，否则用户按
+    // 「没告警＝安全」调参会直接撞上轮次重叠。
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // 700000 > 5×120000 = 600000（单通道不告警），< 5×120000×2 = 1200000（双通道要告警）。
+    // 阈值取在两个模型之间，旧模型下这条必红。
+    registrarFromEnv(
+      {
+        ...ENABLED, REGISTRAR_FALLBACK: "moemail",
+        MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
+        TEND_INTERVAL_MS: "700000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000",
+      },
+      {},
+    );
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0]?.[0])).toContain("1200000");
+    warnSpy.mockRestore();
+  });
+
+  it("同样的 700000 在单通道下不告警（成对用例，锁住通道数这个因子）", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    registrarFromEnv(
+      { ...ENABLED, TEND_INTERVAL_MS: "700000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {},
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it("注册机未启用时不做这项告警（关着的子系统不该刷屏）", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     registrarFromEnv({ TEND_INTERVAL_MS: "1000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {});

@@ -174,6 +174,73 @@ describe("tendOnce", () => {
     expect(await repo.all()).toHaveLength(1);
   });
 
+  // === M1：主通道收不到验证码也是通道级失败，必须降级 ===
+
+  it("主通道收不到验证码（code_timeout）时降级到备通道，且 key 真的进了池子", async () => {
+    // 死亡链的新变体：邮箱通道的 API 全 2xx（建邮箱/删邮箱/列域名一切正常），
+    // 只是验证码永远收不到——MX 记录失效、Cloudflare Email Routing 的 catch-all
+    // 规则被删都是这个形态。此前 code_timeout 被归进「换通道也没用」，备通道
+    // 配好了也一次都不会被调用，key 池耗尽后网关整体不可用。
+    //
+    // 断言的是**真实效果**而不是「mock 被调过」：池子里确实多了一把 key，且那把
+    // key 是备通道那条链路铸出来的。
+    const deadPrimary = new FakeMailProvider({ domains: ["a.test", "b.test"], code: null });
+    const backup = new FakeMailProvider();
+    const { repo, deps } = await makeDeps({ fallback: "moemail", targetKeys: 1 });
+    deps.providers = { yyds: deadPrimary, moemail: backup };
+    deps.agnes = {
+      platformUrl: "https://platform.test",
+      fetcher: {
+        async fetch(url: string) {
+          if (url.includes("/api/user/login")) {
+            return new Response(JSON.stringify({ data: { access_token: "tok" } }), { status: 200 });
+          }
+          if (url.includes("/api/token")) {
+            return new Response(JSON.stringify({ data: { key: "sk-from-fallback" } }), { status: 200 });
+          }
+          return new Response("{}", { status: 200 });
+        },
+      },
+    };
+    const out = await tendOnce(deps);
+    expect(out.minted).toBe(1);
+    // 备通道确实被走了一遍（建了邮箱），不是「主通道后来自己好了」。
+    expect(backup.created).toHaveLength(1);
+    expect(out.failures).toEqual([{ reason: "code_timeout", channel: "yyds" }]);
+    const all = await repo.all();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.key).toBe("sk-from-fallback");
+  });
+
+  it("主通道收不到验证码时不会在通道内换域名死等（单次尝试只烧一份 codeTimeoutMs 的预算）", async () => {
+    // 与上一条成对：降级是对的，但不能顺手把「逐个域名重试」也带进来——那会让
+    // 单次铸 key 最坏耗时变成 MAX_DOMAIN_ATTEMPTS × CODE_TIMEOUT_MS，远超
+    // Worker Cron 的 900 秒墙钟（详见 tender.ts 的 case "code_timeout" 注释）。
+    // 主通道给 5 个域名、验证码永远收不到：pollCode 只该被调 1 次。
+    let polls = 0;
+    const deadPrimary = new FakeMailProvider({
+      domains: ["a.test", "b.test", "c.test", "d.test", "e.test"], code: null,
+    });
+    deadPrimary.pollCode = async () => { polls++; return null; };
+    const backup = new FakeMailProvider();
+    const { deps } = await makeDeps({ fallback: "moemail", targetKeys: 1 });
+    deps.providers = { yyds: deadPrimary, moemail: backup };
+    const out = await tendOnce(deps);
+    expect(polls).toBe(1);
+    expect(out.minted).toBe(1);
+  });
+
+  it("无备通道时主通道收不到验证码：本次失败，但剩余名额继续尝试（不整轮中止）", async () => {
+    // 单通道部署没有出口，但也不该把整轮砍掉——下一次尝试会重新洗牌域名，
+    // 「个别域名 MX 坏了」这种情况靠重抽就能恢复。
+    const deadPrimary = new FakeMailProvider({ domains: ["a.test", "b.test"], code: null });
+    const { deps } = await makeDeps({ targetKeys: 3 }, deadPrimary);
+    const out = await tendOnce(deps);
+    expect(out.attempted).toBe(3);
+    expect(out.minted).toBe(0);
+    expect(out.failures.every((f) => f.reason === "code_timeout")).toBe(true);
+  });
+
   it("无备通道时主通道失败即本次失败", async () => {
     const broken: MailProvider = {
       name: "yyds" as const,

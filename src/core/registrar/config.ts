@@ -157,15 +157,22 @@ export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): Re
     );
   }
 
-  // 单轮最坏耗时 ≈ mintBatch × codeTimeoutMs（每次铸 key 最长要等满验证码超时）。
+  // 单轮最坏耗时 ≈ mintBatch × codeTimeoutMs × 通道数（每次铸 key 最长要等满验证码
+  // 超时；配了备通道时，「验证码超时」属于通道级失败会降级重试一次，于是同一个名额
+  // 最坏要等两次超时——见 tender.ts 的 case "code_timeout"）。
+  //
   // 它超过补池间隔时，轮次会重叠着跑——两个入口各有兜底（Node 的在途守卫、Worker
   // 的 KV 短锁）会把重叠的那次跳过，但被跳过的名额就白白浪费了，该调的是配置本身。
   // 与上面 MINT_DELAY_MIN/MAX 的交叉校验同一性质，区别是这里只 warn 不抛错：数值
-  // 各自都合法，只是搭配不划算，没到该拒绝启动的程度。
-  if (enabled && cfg.tendIntervalMs < cfg.mintBatch * cfg.codeTimeoutMs) {
+  // 各自都合法，只是搭配不划算，没到该拒绝启动的程度。这条 warn 受 enabled 门控，
+  // 关着的注册机不会打。
+  const chainLength = cfg.fallback ? 2 : 1;
+  const worstRoundMs = cfg.mintBatch * cfg.codeTimeoutMs * chainLength;
+  if (enabled && cfg.tendIntervalMs < worstRoundMs) {
     console.warn(
       `[registrar] TEND_INTERVAL_MS(${cfg.tendIntervalMs}) 小于单轮最坏耗时 ` +
-        `MINT_BATCH×CODE_TIMEOUT_MS(${cfg.mintBatch * cfg.codeTimeoutMs})，补池轮次可能重叠并被跳过`,
+        `MINT_BATCH×CODE_TIMEOUT_MS×通道数(${cfg.mintBatch}×${cfg.codeTimeoutMs}×${chainLength}=${worstRoundMs})，` +
+        `补池轮次可能重叠并被跳过`,
     );
   }
 

@@ -126,9 +126,9 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
 
       failures.push({ reason: out.reason, channel: ch });
 
-      // 只有通道本身坏了（建不出邮箱、列不出域名）才值得降级到备通道；其余原因
-      // 换通道也没用——域名被拒/验证码超时/账号链路失败都与「用哪个邮箱服务」
-      // 无关，留给下一轮重试更省配额。upstream_error 需要单独处理：见下面那支。
+      // 只有通道本身坏了（建不出邮箱、列不出域名、收不到验证码）才值得降级到备
+      // 通道；其余原因换通道也没用——域名被拒/账号链路失败打的都是同一个 Agnes
+      // 后端，留给下一轮重试更省配额。upstream_error 需要单独处理：见下面那支。
       // 用 switch 而不是 `!== "provider_error"` 的一刀切，是为了让联合类型的
       // 穷尽检查（default 分支的 never）在 MintOutcome 新增 reason 时提醒这里
       // 也要决定怎么退避，而不是被默认行为悄悄吞掉。
@@ -153,8 +153,23 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
           // 本次作废，下一次尝试前本就有 mintDelay 的随机间隔。真正的通道级归因
           // 已经由 listDomains / createMailbox 那两条路径（provider_error）覆盖。
           break;
-        case "domain_blocked_all":
         case "code_timeout":
+          // 验证码正是**经由这条邮箱通道**投递的，所以「收不到信」就是「这条通道
+          // 现在产不出 key」——MX 记录失效、Cloudflare Email Routing 的 catch-all
+          // 规则被删、上游把 Agnes 的发件方判成垃圾邮件，都是这个形态：API 全 2xx，
+          // 建邮箱/删邮箱/列域名一切正常，只是信永远不到。此前它被归进「换通道也
+          // 没用」那一组，于是备通道配好了却一次都不会被启用，key 池耗尽后网关整体
+          // 不可用——与 C1 修复前的终态完全一致，只是起点从「建不出邮箱」换成了
+          // 「收不到验证码」。
+          //
+          // 只做通道级降级，**不**在 mintOne 内部逐个域名重试（既有生产实现是后者）：
+          // 换域名重试每次要额外花满 codeTimeoutMs（默认 120 秒），单次铸 key 最坏
+          // 到 8×120 秒，远超 Worker Cron 的 900 秒墙钟；而 mintOne 每次进来都会重新
+          // 洗牌域名，「个别域名 MX 坏了」这种情况靠下一次尝试重抽即可恢复，代价只
+          // 有一个补池名额。真正换不回来的是**通道级**收信故障，那正是降级要解决的。
+          tryFallback = true;
+          break;
+        case "domain_blocked_all":
         case "register_failed":
         case "login_failed":
         case "key_failed":
