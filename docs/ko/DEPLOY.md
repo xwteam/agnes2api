@@ -45,7 +45,7 @@ agnes2api는 동일한 코드베이스와 요청 처리 로직으로 만들어�
 | `CODE_TIMEOUT_MS` | 아니오 | `120000` | 인증 코드를 기다리는 타임아웃. |
 | `MINT_DELAY_MIN_MS` / `MINT_DELAY_MAX_MS` | 아니오 | `2000` / `5000` | 발급 시도 사이의 무작위 대기 시간. |
 | `MAX_DOMAIN_ATTEMPTS` | 아니오 | `8` | 한 번의 발급 시도에서 시도할 도메인의 최대 개수. |
-| `TOKEN_NAME` | 아니오 | `auto` | 발급된 key가 Agnes 대시보드에 표시되는 이름. |
+| `REGISTRAR_TOKEN_NAME` | 아니오 | `auto` | 발급된 key가 Agnes 대시보드에 표시되는 이름. |
 | `AGNES_PLATFORM_URL` | 아니오 | `https://platform-backend.agnes-ai.com` | 등록에 사용하는 Agnes 플랫폼 백엔드. |
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | 아니오 / 채널이 yyds일 때 필수 | `https://maliapi.215.im` / 공백 | YYDS Mail 채널 자격 증명. |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | 채널이 moemail일 때 필수 | 공백 / 공백 | MoeMail 채널 자격 증명(자체 호스팅, 기본 주소 없음). |

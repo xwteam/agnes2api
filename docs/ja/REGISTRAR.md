@@ -71,14 +71,14 @@
 | `MINT_DELAY_MIN_MS` | いいえ | `2000` | 1 ラウンド内で発行試行の間に入れるランダム待機時間の下限（ミリ秒）。 |
 | `MINT_DELAY_MAX_MS` | いいえ | `5000` | 1 ラウンド内で発行試行の間に入れるランダム待機時間の上限（ミリ秒）。 |
 | `MAX_DOMAIN_ATTEMPTS` | いいえ | `8` | 1 回の発行試行で試す一時メールドメインの最大数。 |
-| `TOKEN_NAME` | いいえ | `auto` | 発行された Agnes API key が Agnes 管理画面に表示される名前。 |
+| `REGISTRAR_TOKEN_NAME` | いいえ | `auto` | 発行された Agnes API key が Agnes 管理画面に表示される名前。 |
 | `AGNES_PLATFORM_URL` | いいえ | `https://platform-backend.agnes-ai.com` | 登録・ログイン・key 発行に使う Agnes プラットフォームのバックエンド（ベンダーの公開エンドポイント）。 |
 | `YYDS_BASE_URL` | いいえ | `https://maliapi.215.im` | YYDS Mail の API ベース URL（ベンダーの公開エンドポイント）。 |
 | `YYDS_API_KEY` | チャネルが yyds の場合は必須 | 空 | YYDS Mail の API Key。 |
 | `MOEMAIL_BASE_URL` | チャネルが moemail の場合は必須 | 空 | 自分でホストした MoeMail インスタンスのアドレス。デフォルトなし。 |
 | `MOEMAIL_API_KEY` | チャネルが moemail の場合は必須 | 空 | その MoeMail インスタンスの API Key。 |
 
-`MINT_DELAY_MIN_MS`、`MINT_DELAY_MAX_MS`、`TOKEN_NAME`、`AGNES_PLATFORM_URL` は既定では
+`MINT_DELAY_MIN_MS`、`MINT_DELAY_MAX_MS`、`REGISTRAR_TOKEN_NAME`、`AGNES_PLATFORM_URL` は既定では
 `.env.example` に記載されていません（多くの場合デフォルトで十分なため）が、どちらの
 デプロイ先でも読み込まれるので必要に応じて設定できます。上記の数値型変数はすべて正の
 整数である必要があり、そうでない場合ゲートウェイは起動を拒否します。

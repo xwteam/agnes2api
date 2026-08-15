@@ -130,6 +130,12 @@ describe("registrarFromEnv", () => {
     expect(c.mintDelayMaxMs).toBe(3000);
   });
 
+  it("tokenName 读的是 REGISTRAR_TOKEN_NAME（无前缀的 TOKEN_NAME 在容器里太容易撞车）", () => {
+    expect(registrarFromEnv({ REGISTRAR_TOKEN_NAME: "mine" }, {}).tokenName).toBe("mine");
+    // 无前缀的旧名字不再被读取——否则编排层里别的组件设的 TOKEN_NAME 会静默生效。
+    expect(registrarFromEnv({ TOKEN_NAME: "someone-elses" }, {}).tokenName).toBe("auto");
+  });
+
   // === C4：补池间隔与单轮最坏耗时的交叉校验（只 warn，不抛错） ===
 
   const ENABLED = { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" };

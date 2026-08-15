@@ -143,7 +143,9 @@ export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): Re
     mintDelayMinMs: posInt(env, "MINT_DELAY_MIN_MS", "mintDelayMinMs", stored.mintDelayMinMs, DEFAULTS.mintDelayMinMs),
     mintDelayMaxMs: posInt(env, "MINT_DELAY_MAX_MS", "mintDelayMaxMs", stored.mintDelayMaxMs, DEFAULTS.mintDelayMaxMs),
     maxDomainAttempts: posInt(env, "MAX_DOMAIN_ATTEMPTS", "maxDomainAttempts", stored.maxDomainAttempts, DEFAULTS.maxDomainAttempts),
-    tokenName: env.TOKEN_NAME ?? stored.tokenName ?? DEFAULTS.tokenName,
+    // 前缀不能省：容器编排层（compose/K8s）里 TOKEN_NAME 这种通用名字太容易与
+    // 别的组件撞车，而撞上的后果是静默改掉铸出的 key 在 Agnes 后台的显示名。
+    tokenName: env.REGISTRAR_TOKEN_NAME ?? stored.tokenName ?? DEFAULTS.tokenName,
     agnesPlatformUrl: env.AGNES_PLATFORM_URL ?? stored.agnesPlatformUrl ?? DEFAULTS.agnesPlatformUrl,
     yyds: null,
     moemail: null,

@@ -68,14 +68,14 @@ set `REGISTRAR_FALLBACK`, prepare credentials for that channel as well.
 | `MINT_DELAY_MIN_MS` | no | `2000` | Lower bound of the random delay between mint attempts within a round (ms). |
 | `MINT_DELAY_MAX_MS` | no | `5000` | Upper bound of the random delay between mint attempts within a round (ms). |
 | `MAX_DOMAIN_ATTEMPTS` | no | `8` | Maximum number of temp-mailbox domains tried per mint attempt. |
-| `TOKEN_NAME` | no | `auto` | The display name given to the minted key in the Agnes dashboard. |
+| `REGISTRAR_TOKEN_NAME` | no | `auto` | The display name given to the minted key in the Agnes dashboard. |
 | `AGNES_PLATFORM_URL` | no | `https://platform-backend.agnes-ai.com` | Agnes platform backend used for registration, login, and key minting (vendor's public endpoint). |
 | `YYDS_BASE_URL` | no | `https://maliapi.215.im` | YYDS Mail API base URL (vendor's public endpoint). |
 | `YYDS_API_KEY` | required if a channel is `yyds` | empty | YYDS Mail API key. |
 | `MOEMAIL_BASE_URL` | required if a channel is `moemail` | empty | Address of your own MoeMail instance, no default. |
 | `MOEMAIL_API_KEY` | required if a channel is `moemail` | empty | API key for that MoeMail instance. |
 
-`MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `TOKEN_NAME`, and `AGNES_PLATFORM_URL` aren't listed
+`MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `REGISTRAR_TOKEN_NAME`, and `AGNES_PLATFORM_URL` aren't listed
 in `.env.example` by default (the defaults are usually fine), but both deployment targets read
 them and you can set them if needed. Every numeric variable above must be a positive integer; the
 gateway refuses to start otherwise.

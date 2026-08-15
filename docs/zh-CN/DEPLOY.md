@@ -42,7 +42,7 @@ agnes2api 提供两种部署形态，构建自同一套代码与请求处理逻�
 | `CODE_TIMEOUT_MS` | 否 | `120000` | 轮询验证码的超时。 |
 | `MINT_DELAY_MIN_MS` / `MINT_DELAY_MAX_MS` | 否 | `2000` / `5000` | 每次铸 key 之间的随机间隔。 |
 | `MAX_DOMAIN_ATTEMPTS` | 否 | `8` | 单次铸 key 最多尝试几个域名。 |
-| `TOKEN_NAME` | 否 | `auto` | 铸出的 key 在 Agnes 后台显示的名称。 |
+| `REGISTRAR_TOKEN_NAME` | 否 | `auto` | 铸出的 key 在 Agnes 后台显示的名称。 |
 | `AGNES_PLATFORM_URL` | 否 | `https://platform-backend.agnes-ai.com` | 注册用的 Agnes 平台后端地址。 |
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | 否 / 通道为 yyds 时必填 | `https://maliapi.215.im` / 空 | YYDS Mail 通道凭据。 |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | 通道为 moemail 时必填 | 空 / 空 | MoeMail 通道凭据（自建服务，无默认地址）。 |

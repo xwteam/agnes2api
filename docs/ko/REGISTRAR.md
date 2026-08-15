@@ -70,14 +70,14 @@
 | `MINT_DELAY_MIN_MS` | 아니오 | `2000` | 한 라운드 내 발급 시도 사이에 두는 무작위 대기 시간의 하한(밀리초). |
 | `MINT_DELAY_MAX_MS` | 아니오 | `5000` | 한 라운드 내 발급 시도 사이에 두는 무작위 대기 시간의 상한(밀리초). |
 | `MAX_DOMAIN_ATTEMPTS` | 아니오 | `8` | 한 번의 발급 시도에서 시도할 임시 메일함 도메인의 최대 개수. |
-| `TOKEN_NAME` | 아니오 | `auto` | 발급된 Agnes API key가 Agnes 대시보드에 표시되는 이름. |
+| `REGISTRAR_TOKEN_NAME` | 아니오 | `auto` | 발급된 Agnes API key가 Agnes 대시보드에 표시되는 이름. |
 | `AGNES_PLATFORM_URL` | 아니오 | `https://platform-backend.agnes-ai.com` | 등록·로그인·key 발급에 사용하는 Agnes 플랫폼 백엔드(벤더의 공개 엔드포인트). |
 | `YYDS_BASE_URL` | 아니오 | `https://maliapi.215.im` | YYDS Mail의 API base URL(벤더의 공개 엔드포인트). |
 | `YYDS_API_KEY` | 채널이 yyds일 때 필수 | 공백 | YYDS Mail의 API Key. |
 | `MOEMAIL_BASE_URL` | 채널이 moemail일 때 필수 | 공백 | 직접 배포한 MoeMail 인스턴스 주소. 기본값 없음. |
 | `MOEMAIL_API_KEY` | 채널이 moemail일 때 필수 | 공백 | 해당 MoeMail 인스턴스의 API Key. |
 
-`MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `TOKEN_NAME`, `AGNES_PLATFORM_URL`은 기본적으
+`MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `REGISTRAR_TOKEN_NAME`, `AGNES_PLATFORM_URL`은 기본적으
 로 `.env.example`에 나열되어 있지 않지만(대개 기본값으로 충분하기 때문), 두 배포 대상
 모두 이 값을 읽어 들이므로 필요하면 설정할 수 있습니다. 위의 수치형 변수는 모두 양의
 정수여야 하며, 그렇지 않으면 게이트웨이가 기동을 거부합니다.

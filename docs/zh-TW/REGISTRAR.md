@@ -61,14 +61,14 @@ Agnes 帳號、登入、鑄出一把 API key 寫入池子。註冊過程需要�
 | `MINT_DELAY_MIN_MS` | 否 | `2000` | 單輪內每次鑄 key 之間隨機間隔的下限（毫秒）。 |
 | `MINT_DELAY_MAX_MS` | 否 | `5000` | 單輪內每次鑄 key 之間隨機間隔的上限（毫秒）。 |
 | `MAX_DOMAIN_ATTEMPTS` | 否 | `8` | 單次鑄 key 最多嘗試幾個臨時信箱網域。 |
-| `TOKEN_NAME` | 否 | `auto` | 鑄出的 Agnes API key 在 Agnes 後台顯示的名稱。 |
+| `REGISTRAR_TOKEN_NAME` | 否 | `auto` | 鑄出的 Agnes API key 在 Agnes 後台顯示的名稱。 |
 | `AGNES_PLATFORM_URL` | 否 | `https://platform-backend.agnes-ai.com` | 註冊、登入、鑄 key 使用的 Agnes 平台後端位址（廠商公開端點）。 |
 | `YYDS_BASE_URL` | 否 | `https://maliapi.215.im` | YYDS Mail 的 API 基底位址（廠商公開端點）。 |
 | `YYDS_API_KEY` | 通道為 yyds 時必填 | 空 | YYDS Mail 的 API Key。 |
 | `MOEMAIL_BASE_URL` | 通道為 moemail 時必填 | 空 | 你自己部署的 MoeMail 實例位址，無預設值。 |
 | `MOEMAIL_API_KEY` | 通道為 moemail 時必填 | 空 | 該 MoeMail 實例的 API Key。 |
 
-`MINT_DELAY_MIN_MS`、`MINT_DELAY_MAX_MS`、`TOKEN_NAME`、`AGNES_PLATFORM_URL` 預設沒有寫
+`MINT_DELAY_MIN_MS`、`MINT_DELAY_MAX_MS`、`REGISTRAR_TOKEN_NAME`、`AGNES_PLATFORM_URL` 預設沒有寫
 在 `.env.example` 中（預設值通常已足夠），但兩種部署形態都會讀取，可依需求設定。以上
 數值型變數皆須為正整數，否則閘道拒絕啟動。
 
