@@ -1,6 +1,7 @@
 import { buildApp, buildTendDeps } from "../http/wire.js";
 import { KvStorage } from "../adapters/storage-kv.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
+import { WORKER_CRON_WALL_CLOCK_MS, WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
 import type { Hono } from "hono";
 
 export interface Env {
@@ -19,24 +20,9 @@ const TEND_LOCK_KEY = "registrar_tend_lock";
  * 上一轮要么已经结束、要么已经被平台中止，锁不该再拦住新的一轮——否则一次
  * 被中止的调用会让补池永久停摆。
  */
-const TEND_LOCK_TTL_MS = 900_000;
+const TEND_LOCK_TTL_MS = WORKER_CRON_WALL_CLOCK_MS;
 
-/**
- * 补池一轮的墙钟预算，交给 `tendOnce` 用来决定「还要不要再开始一次铸 key」。
- *
- * 取上面那个 15 分钟墙钟上限的 87%，留出约 120 秒余量。余量不是随手定的：预算判据
- * 只算了占大头的那一项（`CODE_TIMEOUT_MS × 通道数`），单次尝试还会额外花掉若干个
- * 15 秒的单请求超时（列域名、每个域名的建/发/删、注册登录建 key）与 403 退避，
- * 这 120 秒就是留给这些尾巴的。把它们也算进判据是行不通的——理论最坏本来就高于
- * 900 秒，那样会变成一次尝试都不敢开始。
- *
- * 因此这条预算**精确针对** M1 引入的那个场景（两条通道都收不到验证码，纯等超时，
- * 5×2×120 秒 = 1200 秒撞穿墙钟）；「每个 HTTP 请求都挂满 15 秒」那种病态情形不在
- * 它的覆盖范围内，那一条是 P2 之前就存在并已在文档里写明接受的取舍。
- *
- * Node/Docker 没有平台墙钟上限，`node.ts` 刻意不传这个字段。
- */
-const TEND_ROUND_BUDGET_MS = 780_000;
+
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -94,7 +80,7 @@ export default {
         try {
           // 只有 Worker 形态传轮级预算：Cron 被平台中止时 mintOne 的 finally 不跑、
           // 邮箱漏删，必须靠「不启动跑不完的尝试」来避免（见 TEND_ROUND_BUDGET_MS）。
-          const r = await tendOnce({ ...deps, roundBudgetMs: TEND_ROUND_BUDGET_MS });
+          const r = await tendOnce({ ...deps, roundBudgetMs: WORKER_ROUND_BUDGET_MS });
           if (!r.skipped) {
             console.log(
               `[registrar] 补池完成 available=${r.available} attempted=${r.attempted} minted=${r.minted}`,

@@ -120,11 +120,24 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
     // 被删掉。代价只是这一轮少铸几把，下个调度周期会接着补，使用者不需要调任何参数。
     const elapsedMs = deps.now() - roundStartedAt;
     if (deps.roundBudgetMs !== undefined && elapsedMs + delayMs + worstAttemptMs > deps.roundBudgetMs) {
-      console.warn(
-        `[registrar] 本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾（剩余名额留给下次调度）：`
-          + `已用 ${elapsedMs}ms，预算 ${deps.roundBudgetMs}ms，单次最坏 ${worstAttemptMs}ms，`
-          + `本轮 attempted=${attempted} minted=${minted}（上限 ${rounds}）`,
-      );
+      if (attempted === 0) {
+        // 一次都没开始过，说明预算连**单次**最坏耗时都装不下——这不是「这轮差一点」
+        // 而是「这个配置在本运行时下永远铸不出 key」，每一轮都会原地打转。走 error
+        // 且措辞必须与下面那条区分开：failures 是空的（没尝试过就没有失败），
+        // `minted < attempted` 是 `0 < 0` 为假，两个入口的归因日志一条都不会打，
+        // 这里是唯一能说破它的地方。
+        console.error(
+          `[registrar] 单次铸 key 的最坏耗时(${worstAttemptMs}ms = CODE_TIMEOUT_MS×通道数)已超过`
+            + `本轮墙钟预算(${deps.roundBudgetMs}ms)，一次尝试都无法开始，补池将持续零产出——`
+            + `这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS 或去掉备通道`,
+        );
+      } else {
+        console.warn(
+          `[registrar] 本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾（剩余名额留给下次调度）：`
+            + `已用 ${elapsedMs}ms，预算 ${deps.roundBudgetMs}ms，单次最坏 ${worstAttemptMs}ms，`
+            + `本轮 attempted=${attempted} minted=${minted}（上限 ${rounds}）`,
+        );
+      }
       break;
     }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { tendOnce, type TendFailureReason, type TendDeps } from "../../../src/core/registrar/tender.js";
 import { KeyPoolRepo } from "../../../src/core/dispatcher.js";
 import { MemoryStorage } from "../../helpers/fake-storage.js";
@@ -424,6 +424,66 @@ describe("tendOnce", () => {
     expect(out.minted).toBe(1);
     // 主通道就成功了，备通道不该被碰（否则说明失败的是别的东西）。
     expect(order).toEqual(["create:yyds-u0@a.test", "delete:yyds-u0@a.test"]);
+  });
+
+  it("I-1 预算连一次尝试都装不下时，走 error 且措辞与「本轮提前收尾」区分开", async () => {
+    // 这是永久停摆而不是瞬时状况：每一轮都 attempted=0 / minted=0 / failures=[]，
+    // 两个入口的归因日志走 `minted < attempted`（0<0 为假）一条都不打，这条 error
+    // 是唯一能说破它的地方。断言的是**运维在日志里实际拿到的那句话**——既要能和
+    // 「本轮提前收尾」区分开（否则用户会当成等一会儿就好），也要带上可执行的处置。
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let t = 0;
+      const order: string[] = [];
+      const provider = clockedProvider("yyds", () => { t += 5000; }, order);
+      const { repo, deps } = await makeDeps({ targetKeys: 5, mintBatch: 5, codeTimeoutMs: 5000 }, provider);
+      deps.now = () => t;
+      deps.sleep = async (ms: number) => { t += ms; };
+      deps.roundBudgetMs = 4_000; // < 单次最坏 5000，第一次就开不了
+
+      const out = await tendOnce(deps);
+
+      expect(out.attempted).toBe(0);
+      expect(out.minted).toBe(0);
+      // 零副作用：一个邮箱都不该建出来（不能"先建了再发现预算不够"）。
+      expect(order).toEqual([]);
+      expect(await repo.all()).toHaveLength(0);
+
+      const errMsg = String(errSpy.mock.calls[0]?.[0]);
+      expect(errMsg).toContain("一次尝试都无法开始");
+      expect(errMsg).toContain("CODE_TIMEOUT_MS");
+      // 不能退化成那条读起来像瞬时状况的 warn。
+      expect(warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("提前收尾")))
+        .toBeUndefined();
+    } finally {
+      warnSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+  });
+
+  it("I-1 成对：预算装得下至少一次时走的是 warn 而不是 error（别把正常收尾报成配置错误）", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let t = 0;
+      const order: string[] = [];
+      const provider = clockedProvider("yyds", () => { t += 5000; }, order);
+      const { deps } = await makeDeps({ targetKeys: 5, mintBatch: 5, codeTimeoutMs: 5000 }, provider);
+      deps.now = () => t;
+      deps.sleep = async (ms: number) => { t += ms; };
+      deps.roundBudgetMs = 12_000;
+
+      const out = await tendOnce(deps);
+
+      expect(out.attempted).toBe(2);
+      expect(errSpy).not.toHaveBeenCalled();
+      expect(warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("提前收尾")))
+        .toBeDefined();
+    } finally {
+      warnSpy.mockRestore();
+      errSpy.mockRestore();
+    }
   });
 
   it("通道缺 provider 时记录一条失败，而不是静默空转", async () => {

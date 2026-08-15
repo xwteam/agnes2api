@@ -1,3 +1,5 @@
+import { WORKER_ROUND_BUDGET_MS } from "./types.js";
+
 export type Channel = "yyds" | "moemail";
 
 export interface ChannelCreds {
@@ -173,6 +175,24 @@ export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): Re
       `[registrar] TEND_INTERVAL_MS(${cfg.tendIntervalMs}) 小于单轮最坏耗时 ` +
         `MINT_BATCH×CODE_TIMEOUT_MS×通道数(${cfg.mintBatch}×${cfg.codeTimeoutMs}×${chainLength}=${worstRoundMs})，` +
         `补池轮次可能重叠并被跳过`,
+    );
+  }
+
+  // CODE_TIMEOUT_MS 没有上界（posInt 只管正整数），而 Worker 形态的轮级预算是个
+  // 固定值。`codeTimeoutMs × 通道数` 一旦超过它，tendOnce 连**第一次**尝试都不敢
+  // 开始：attempted=0、minted=0、failures 为空——两个入口的归因日志走的是
+  // `minted < attempted`（0 < 0 为假）所以一条都不打，用户只看到「本轮墙钟预算
+  // 不足」，读起来像瞬时状况，实际是永久停摆。启动期把它说破。
+  //
+  // 只 warn 不抛错：Node/Docker 没有平台墙钟上限，同一份配置在那边完全合法，
+  // 抛错会让一个正当的 Node 部署起不来。文案里点明形态差异。
+  const worstAttemptMs = cfg.codeTimeoutMs * chainLength;
+  if (enabled && worstAttemptMs > WORKER_ROUND_BUDGET_MS) {
+    console.warn(
+      `[registrar] CODE_TIMEOUT_MS×通道数(${cfg.codeTimeoutMs}×${chainLength}=${worstAttemptMs}) ` +
+        `超过 Worker 单轮墙钟预算(${WORKER_ROUND_BUDGET_MS})：Cloudflare Worker 形态下补池会` +
+        `一把 key 都铸不出来（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。` +
+        `Node/Docker 没有平台墙钟上限，不受此限制。`,
     );
   }
 

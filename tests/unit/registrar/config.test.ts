@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { WORKER_CRON_WALL_CLOCK_MS, WORKER_ROUND_BUDGET_MS } from "../../../src/core/registrar/types.js";
 import { registrarFromEnv, requirePrimary } from "../../../src/core/registrar/config.js";
 
 describe("registrarFromEnv", () => {
@@ -215,6 +216,50 @@ describe("registrarFromEnv", () => {
     warnSpy.mockRestore();
   });
 
+  it("I-1 CODE_TIMEOUT_MS×通道数 超过 Worker 轮级预算时启动期告警（否则是永久静默停摆）", () => {
+    // CODE_TIMEOUT_MS 无上界，而 Worker 的轮级预算是固定值。超过之后 tendOnce 连
+    // 第一次尝试都不敢开始：attempted=0、minted=0、failures=[]，两个入口的归因日志
+    // 走的是 `minted < attempted`（0<0 为假）一条都不打——用户只看到「本轮预算不足」，
+    // 读起来像瞬时状况，实际每一轮都零产出。
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // 400s × 2 通道 = 800s > 780s 预算。TEND_INTERVAL_MS 给得足够大，避免上面那条
+      // 重叠告警混进来——这条断言要能确定命中的是新加的这一条。
+      registrarFromEnv(
+        {
+          ...ENABLED, REGISTRAR_FALLBACK: "moemail",
+          MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
+          CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000",
+        },
+        {},
+      );
+      const msgs = warnSpy.mock.calls.map((c) => String(c[0]));
+      const hit = msgs.find((m) => m.includes("Worker 单轮墙钟预算"));
+      expect(hit, `实际日志：${JSON.stringify(msgs)}`).toBeDefined();
+      expect(hit).toContain("800000");
+      // 必须点明形态差异，否则 Node 用户会以为自己也中招。
+      expect(hit).toContain("Node/Docker");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("I-1 同样的 400s 在单通道下不告警（400s < 780s 预算，成对用例）", () => {
+    // 与上一条唯一的差别是没有备通道：`× 通道数` 这个因子被真正求值了才能同时通过
+    // 这两条。若实现漏乘通道数，上一条就不会触发。
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      registrarFromEnv(
+        { ...ENABLED, CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000" },
+        {},
+      );
+      expect(warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("Worker 单轮墙钟预算")))
+        .toBeUndefined();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("注册机未启用时不做这项告警（关着的子系统不该刷屏）", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     registrarFromEnv({ TEND_INTERVAL_MS: "1000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {});
@@ -240,5 +285,38 @@ describe("requirePrimary", () => {
     // 不依赖上游是否也会拦截。
     const cfg = { enabled: true, primary: null } as unknown as Parameters<typeof requirePrimary>[0];
     expect(() => requirePrimary(cfg)).toThrow();
+  });
+});
+
+describe("I-2 五语言文档对轮级预算的表述必须有条件、且与代码同步", () => {
+  // 这个功能的立项理由就是「不接受用文档兜」，所以文档反过来把它写成无条件保证是
+  // 特别有害的一种错：既掩盖了残余场景（预算判据不含单请求超时与 403 退避），
+  // 也在公开仓里立了一个站不住的承诺（「邮箱一定被删掉」）。
+  //
+  // 每种语言各给一条**必须出现**的残余说明和一条**禁止出现**的无条件措辞，
+  // 任何一种语言漏改都会红——五语言同步靠的就是这条，人工核对靠不住。
+  const LANGS: Array<{ lang: string; must: string; banned: string }> = [
+    { lang: "zh-CN", must: "残余场景仍然存在", banned: "不需要为此调参数" },
+    { lang: "zh-TW", must: "殘餘場景仍然存在", banned: "不需要為此調參數" },
+    { lang: "en", must: "a residual case remains", banned: "you do not need to tune anything" },
+    { lang: "ja", must: "残るケースがあります", banned: "調整する必要はありません" },
+    { lang: "ko", must: "남는 시나리오가 있습니다", banned: "조정할 필요가 없습니다" },
+  ];
+
+  it.each(LANGS)("$lang 写出了残余场景，且没有无条件保证的措辞", ({ lang, must, banned }) => {
+    const doc = readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8");
+    expect(doc, `${lang} 缺少残余场景说明`).toContain(must);
+    expect(doc, `${lang} 仍有无条件保证的措辞`).not.toContain(banned);
+  });
+
+  it("文档写的 87% 与代码里的预算/墙钟比例一致（改了常量就得改文档）", () => {
+    // 五语言都拿 87% 这个数向用户解释余量从哪来。它是从两个常量算出来的，
+    // 只调常量不改文档就会对不上——这条把它们钉在一起。
+    const pct = Math.round((WORKER_ROUND_BUDGET_MS / WORKER_CRON_WALL_CLOCK_MS) * 100);
+    expect(pct).toBe(87);
+    for (const { lang } of LANGS) {
+      expect(readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8"), `${lang} 没写 ${pct}%`)
+        .toContain(`${pct}%`);
+    }
   });
 });
