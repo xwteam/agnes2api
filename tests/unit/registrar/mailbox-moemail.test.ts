@@ -115,6 +115,30 @@ describe("MoeMailProvider", () => {
     warnSpy.mockRestore();
   });
 
+  // 与上一条成对：上一条只覆盖「fetch 抛异常」，而 404/403/500 会正常 resolve、
+  // 进不了 catch，是最常见的失败路径。MoeMail 侧同样有活跃邮箱上限（上游默认 30），
+  // 删不掉照样把配额吃光，必须留痕。
+  it("deleteMailbox 收到非 2xx（不抛错的失败路径）也 warn 留痕并带上状态码", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { fetcher } = stubFetcher(() => ({ status: 500 }));
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await expect(p.deleteMailbox({ address: "u1@a.test", handle: "eid-1" })).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const msg = String(warnSpy.mock.calls[0]?.[0]);
+    expect(msg).toContain("u1@a.test");
+    expect(msg).toContain("500");
+    warnSpy.mockRestore();
+  });
+
+  it("deleteMailbox 成功（2xx）时不产生噪音日志", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { fetcher } = stubFetcher(() => ({ status: 200 }));
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await p.deleteMailbox({ address: "u1@a.test", handle: "eid-1" });
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it("createMailbox 用注入的 rand 生成确定的 name 并放进请求体", async () => {
     const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { id: "eid-1", email: "fixed@a.test" } }));
     // rand 恒定返回 0 -> 字母表第 0 位 'a'，循环 10 次生成 "aaaaaaaaaa"，加前缀 "u" 共 11 位。

@@ -94,10 +94,18 @@ export class MoeMailProvider implements MailProvider {
 
   async deleteMailbox(mailbox: Mailbox): Promise<void> {
     try {
-      await this.deps.fetcher.fetch(
+      const r = await this.deps.fetcher.fetch(
         `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`,
         { method: "DELETE", headers: this.headers() },
       );
+      // 理由同 YYDS 适配器：非 2xx 会正常 resolve、进不了 catch，是最常见的失败
+      // 路径。MoeMail 侧同样有活跃邮箱上限（上游默认 30，超限建邮箱返回 403），
+      // 删不掉一样会把配额吃光，必须留痕。
+      if (!r.ok) {
+        console.warn(
+          `[agnes2api] MoeMail 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address} HTTP ${r.status}`,
+        );
+      }
     } catch (err) {
       // 用完即删是尽力而为，理由同 YYDS 适配器：key 已经拿到了，邮箱残留是次要
       // 问题，不该让整次铸 key 失败，但要留痕方便观测残留是否在堆积。沿用 P1

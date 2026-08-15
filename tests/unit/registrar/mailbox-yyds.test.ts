@@ -171,6 +171,32 @@ describe("YydsProvider", () => {
     warnSpy.mockRestore();
   });
 
+  // 上面那条 ③ 只覆盖了「fetch 抛异常」这条路径。真实上游更常见的是 404/403/500——
+  // 这些会让 fetch 正常 resolve，压根进不了 catch，此前一条日志都不记，等于删邮箱
+  // 失败 100% 静默。带状态码断言，避免实现只是笼统 warn 一句而丢掉排障信息。
+  it("③b deleteMailbox 收到非 2xx（不抛错的失败路径）也 warn 留痕并带上状态码", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { fetcher } = stubFetcher(() => ({ status: 404 }));
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await expect(p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" })).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const msg = String(warnSpy.mock.calls[0]?.[0]);
+    expect(msg).toContain("u1@a.test");
+    expect(msg).toContain("404");
+    warnSpy.mockRestore();
+  });
+
+  it("③c deleteMailbox 成功（2xx）时不产生噪音日志", async () => {
+    // 与 ③b 成对：只有「非 2xx 才 warn」才能同时通过这两条。若实现改成无条件 warn，
+    // 这条会红。
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { fetcher } = stubFetcher(() => ({ status: 200 }));
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" });
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it("④ createMailbox 用注入的 rand 生成确定的 localPart 并放进请求体", async () => {
     const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { data: { address: "fixed@a.test" } } }));
     // rand 恒定返回 0 -> 字母表第 0 位 'a'，循环 10 次生成 "aaaaaaaaaa"，加前缀 "u" 共 11 位。

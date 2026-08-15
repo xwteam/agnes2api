@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { MailProvider } from "../../src/ports/mailbox.js";
 import type { Mailbox } from "../../src/core/registrar/types.js";
 import { YydsProvider } from "../../src/adapters/mailbox-yyds.js";
@@ -164,5 +164,42 @@ runPollResilienceContract(
   "MoeMailProvider",
   (fetch, clock) => new MoeMailProvider({ fetcher: { fetch }, baseUrl: "https://m.test", apiKey: "k", ...clock }),
   moemailFlakyListUpstream,
+  { address: "u1@a.test", handle: "eid-1" },
+);
+
+/**
+ * 补充：删邮箱收到**非 2xx**（404/403/500）时必须留痕，这是两家共有的契约。
+ *
+ * 端口文档写的是「失败只应记日志」，而 `fetch` 对 404/403/500 是正常 resolve 的——
+ * 只 try/catch 抛出的异常，等于把最常见的那条失败路径变成 100% 静默。而用完即删
+ * 是功能能否持续工作的前提（设计 §4.1：YYDS 免费档同时 15 个邮箱、MoeMail 上游
+ * 默认 30 个），删不掉又没有信号，就会以"域名全被屏蔽"的假象表现出来。
+ */
+function runDeleteFailureContract(
+  name: string,
+  make: (fetch: (url: string, init: RequestInit) => Promise<Response>) => MailProvider,
+  mailbox: Mailbox,
+) {
+  it(`${name}: 删邮箱收到非 2xx 时不抛错，但用 console.warn 留痕并带上状态码`, async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const p = make(async () => new Response("{}", { status: 404 }));
+    await expect(p.deleteMailbox(mailbox)).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const msg = String(warnSpy.mock.calls[0]?.[0]);
+    expect(msg).toContain(mailbox.address);
+    expect(msg).toContain("404");
+    warnSpy.mockRestore();
+  });
+}
+
+runDeleteFailureContract(
+  "YydsProvider",
+  (fetch) => new YydsProvider({ fetcher: { fetch }, baseUrl: "https://y.test", apiKey: "k", ...makeClock() }),
+  { address: "u1@a.test", handle: "u1@a.test" },
+);
+
+runDeleteFailureContract(
+  "MoeMailProvider",
+  (fetch) => new MoeMailProvider({ fetcher: { fetch }, baseUrl: "https://m.test", apiKey: "k", ...makeClock() }),
   { address: "u1@a.test", handle: "eid-1" },
 );
