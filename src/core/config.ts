@@ -21,12 +21,28 @@ const DEFAULTS = {
 
 type Env = Record<string, string | undefined>;
 
-function num(env: Env, name: string, stored: number | undefined, fallback: number): number {
-  const raw = env[name];
-  if (raw === undefined) return stored ?? fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) throw new Error(`环境变量 ${name} 不是合法数值: ${raw}`);
-  return n;
+function num(
+  env: Env,
+  envName: string,
+  fieldName: string,
+  stored: number | undefined,
+  fallback: number,
+): number {
+  const raw = env[envName];
+  if (raw !== undefined) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) throw new Error(`环境变量 ${envName} 不是合法数值: ${raw}`);
+    return n;
+  }
+
+  if (stored !== undefined) {
+    if (!Number.isFinite(stored)) {
+      throw new Error(`存储中的 ${fieldName} 不是合法数值: ${stored}`);
+    }
+    return stored;
+  }
+
+  return fallback;
 }
 
 export async function loadConfig(env: Env, storage: Storage): Promise<GatewayConfig> {
@@ -38,10 +54,10 @@ export async function loadConfig(env: Env, storage: Storage): Promise<GatewayCon
   return {
     gatewayToken,
     agnesBaseUrl: env.AGNES_BASE_URL ?? stored.agnesBaseUrl ?? DEFAULTS.agnesBaseUrl,
-    upstreamTimeoutMs: num(env, "UPSTREAM_TIMEOUT_MS", stored.upstreamTimeoutMs, DEFAULTS.upstreamTimeoutMs),
-    maxStrikes: num(env, "MAX_STRIKES", stored.maxStrikes, DEFAULTS.maxStrikes),
-    cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", stored.cooldownRateLimitMs, DEFAULTS.cooldownRateLimitMs),
-    cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", stored.cooldownPaymentMs, DEFAULTS.cooldownPaymentMs),
+    upstreamTimeoutMs: num(env, "UPSTREAM_TIMEOUT_MS", "upstreamTimeoutMs", stored.upstreamTimeoutMs, DEFAULTS.upstreamTimeoutMs),
+    maxStrikes: num(env, "MAX_STRIKES", "maxStrikes", stored.maxStrikes, DEFAULTS.maxStrikes),
+    cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", stored.cooldownRateLimitMs, DEFAULTS.cooldownRateLimitMs),
+    cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", stored.cooldownPaymentMs, DEFAULTS.cooldownPaymentMs),
     logLevel: env.LOG_LEVEL ?? stored.logLevel ?? DEFAULTS.logLevel,
   };
 }

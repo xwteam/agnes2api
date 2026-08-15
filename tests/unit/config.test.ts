@@ -35,4 +35,10 @@ describe("loadConfig", () => {
       loadConfig({ GATEWAY_TOKEN: "t", UPSTREAM_TIMEOUT_MS: "abc" }, new MemoryStorage()),
     ).rejects.toThrow(/UPSTREAM_TIMEOUT_MS/);
   });
+
+  it("存储中的数值型配置为非法值时抛错", async () => {
+    const s = new MemoryStorage();
+    await s.put("config", { upstreamTimeoutMs: "abc" as any });
+    await expect(loadConfig({ GATEWAY_TOKEN: "t" }, s)).rejects.toThrow(/upstreamTimeoutMs/);
+  });
 });
