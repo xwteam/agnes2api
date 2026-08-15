@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toInternalRequest, toAnthropicResponse, toAnthropicStream } from "../../src/core/protocol/anthropic.js";
+import { toInternalRequest, toAnthropicResponse, toAnthropicStream, UnsupportedContentError } from "../../src/core/protocol/anthropic.js";
 
 describe("toInternalRequest", () => {
   it("把 system 提到 messages 首位", () => {
@@ -18,6 +18,43 @@ describe("toInternalRequest", () => {
       messages: [{ role: "user", content: "你好" }],
     });
     expect(r.messages).toHaveLength(1);
+  });
+
+  // I4：Anthropic 官方允许 system 是内容块数组，所有开启 prompt caching 的 SDK
+  // 都这么发。原实现把裸数组直接塞进 messages，上游收到的 content 不是字符串。
+  it("system 为内容块数组时压平成字符串，而不是把裸数组发给上游", () => {
+    const r = toInternalRequest({
+      model: "agnes-2.0-flash", max_tokens: 100,
+      system: [{ type: "text", text: "你是" }, { type: "text", text: "助手" }],
+      messages: [{ role: "user", content: "你好" }],
+    });
+    expect(r.messages[0]).toEqual({ role: "system", content: "你是助手" });
+    expect(typeof r.messages[0]!.content).toBe("string");
+  });
+
+  it("system 为空数组时不插入空消息", () => {
+    const r = toInternalRequest({
+      model: "agnes-2.0-flash", max_tokens: 100, system: [],
+      messages: [{ role: "user", content: "你好" }],
+    });
+    expect(r.messages).toHaveLength(1);
+  });
+
+  it("遇到无法映射的内容块时抛错，而不是静默丢弃", () => {
+    for (const type of ["image", "tool_use", "tool_result"]) {
+      expect(() => toInternalRequest({
+        model: "agnes-2.0-flash", max_tokens: 100,
+        messages: [{ role: "user", content: [{ type: "text", text: "看图" }, { type }] }],
+      })).toThrow(UnsupportedContentError);
+    }
+  });
+
+  it("system 里出现无法映射的内容块时同样抛错", () => {
+    expect(() => toInternalRequest({
+      model: "agnes-2.0-flash", max_tokens: 100,
+      system: [{ type: "image" }],
+      messages: [{ role: "user", content: "x" }],
+    })).toThrow(UnsupportedContentError);
   });
 
   it("把 max_tokens 映射为 OpenAI 的同名字段", () => {

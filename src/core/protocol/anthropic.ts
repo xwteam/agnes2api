@@ -1,23 +1,47 @@
 import { parseSseStream, sseEvent, toSseStream } from "./sse.js";
 
-interface AnthropicContentPart { type: string; text?: string }
+export interface AnthropicContentPart { type: string; text?: string }
 export interface AnthropicRequest {
   model: string;
   max_tokens: number;
-  system?: string;
+  /**
+   * Anthropic 官方允许 `system` 是字符串**或**内容块数组——所有开启 prompt caching
+   * 的 SDK 都是用数组形式发的。原实现把它标成 string 并直接塞进 messages，
+   * 数组就会以裸数组的形式发给上游（content 不是字符串），上游只能报错。
+   */
+  system?: string | AnthropicContentPart[];
   stream?: boolean;
   messages: { role: string; content: string | AnthropicContentPart[] }[];
 }
 
+/**
+ * 请求里出现了本网关无法映射到 OpenAI chat 格式的内容块。
+ *
+ * 内部规范格式只有纯文本，`image` / `tool_use` / `tool_result` 等块无法无损转换。
+ * 原实现是静默过滤掉非 text 块——客户端发了图片却得到一个只看了文字的回答，
+ * 既无从察觉也无从排查。宁可明确报 400。
+ */
+export class UnsupportedContentError extends Error {
+  constructor(readonly blockType: string) {
+    super(`不支持的内容块类型: ${blockType}（本网关仅支持 text）`);
+    this.name = "UnsupportedContentError";
+  }
+}
+
 function flatten(content: string | AnthropicContentPart[]): string {
-  return typeof content === "string"
-    ? content
-    : content.filter((p) => p.type === "text").map((p) => p.text ?? "").join("");
+  if (typeof content === "string") return content;
+  let out = "";
+  for (const p of content) {
+    if (p.type !== "text") throw new UnsupportedContentError(p.type);
+    out += p.text ?? "";
+  }
+  return out;
 }
 
 export function toInternalRequest(req: AnthropicRequest) {
   const messages: { role: string; content: string }[] = [];
-  if (req.system) messages.push({ role: "system", content: req.system });
+  const system = req.system === undefined ? "" : flatten(req.system);
+  if (system) messages.push({ role: "system", content: system });
   for (const m of req.messages) messages.push({ role: m.role, content: flatten(m.content) });
   return { model: req.model, messages, max_tokens: req.max_tokens, stream: req.stream === true };
 }

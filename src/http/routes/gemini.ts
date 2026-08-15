@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { dispatch, type DispatchDeps } from "../../core/dispatcher.js";
 import { toInternalRequest, toGeminiResponse, toGeminiStream, geminiModelList, type GeminiRequest } from "../../core/protocol/gemini.js";
+import { readJson } from "../errors.js";
 
 export function geminiRoutes(deps: DispatchDeps): Hono {
   const app = new Hono();
@@ -18,9 +19,11 @@ export function geminiRoutes(deps: DispatchDeps): Hono {
     const method = rest.slice(idx + 1);
     const stream = method === "streamGenerateContent";
 
-    const req = await c.req.json<GeminiRequest>();
+    const req = await readJson<GeminiRequest>(c);
     const internal = { ...toInternalRequest(req, model), stream };
-    const res = await dispatch({ path: "/chat/completions", body: internal, stream, deps });
+    const res = await dispatch({
+      path: "/chat/completions", body: internal, stream, expectJson: !stream, deps,
+    });
     if (!res.ok) return res;                      // 错误一律原样透传
 
     if (stream && res.body) {
