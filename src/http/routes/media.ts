@@ -20,6 +20,8 @@ const VIDEO_ID = /^[A-Za-z0-9_-]{1,128}$/;
 // 图片生成与视频建任务是**同步**接口，首字节要等上游把整个结果算完才到达（实测图片
 // 11.99 秒），必须用 `sync` 档；视频轮询只是查一次任务状态，是快接口，沿用默认的 8 秒
 // 首字节档即可——给它长超时只会让一次上游卡死拖住客户端两分钟。
+// 轮询是「非流式但仍用首字节档」的唯一一处例外，对话四条路由的判据是
+// `stream ? "firstByte" : "sync"`（见 TimeoutProfile）。
 export function mediaRoutes(deps: DispatchDeps): Hono {
   const app = new Hono();
 

@@ -432,12 +432,12 @@ describe("按端点语义区分超时", () => {
     expect((await repo.all())[0]!.strikes).toBe(0);
   });
 
-  it("流式/对话端点：同一个 12 秒的上游，仍然在 8 秒被甩掉并记 strike（§7.3 语义不变）", async () => {
+  it("流式对话：同一个 12 秒的上游，仍然在 8 秒被甩掉并记 strike（§7.3 语义不变）", async () => {
     vi.useFakeTimers();
     const repo = await makeRepo(["k1"]);
     const f = new FakeFetcher([{ status: 200, body: "{}", delayMs: 11_990 }]);
     const pending = dispatch({
-      path: "/chat/completions", body: {}, stream: false,
+      path: "/chat/completions", body: {}, stream: true, timeout: "firstByte",
       deps: { repo, fetcher: f, config: DEFAULTS, now: () => 1000 },
     });
     await vi.advanceTimersByTimeAsync(11_990);
@@ -449,24 +449,106 @@ describe("按端点语义区分超时", () => {
     expect(k1.cooldownUntil).toBe(0);
   });
 
-  // 判断：同步端点超时**不**记 strike，也不再换下一把 key。理由见 dispatcher.ts 的
-  // syncTimedOut 注释。这条用例钉住的正是「三次图片请求打垮整池」那个连带后果。
-  it("同步端点超时：504、不记 strike、不再尝试池中其他 key", async () => {
+  // 非流式对话与图片生成是同一种延迟语义（上游把整段回答生成完才发响应头），
+  // 路由层因此给它 `sync` 档。这条钉住的是「一次 12 秒的非流式对话不该伤到池」。
+  it("非流式对话（同步档）：12 秒的上游照样成功，池毫发无损", async () => {
     vi.useFakeTimers();
+    const repo = await makeRepo(["k1", "k2", "k3"]);
+    const f = new FakeFetcher([{ status: 200, body: '{"choices":[]}', delayMs: 11_990 }]);
+    const pending = dispatch({
+      path: "/chat/completions", body: {}, stream: false, timeout: "sync",
+      deps: { repo, fetcher: f, config: DEFAULTS, now: () => Date.now() },
+    });
+    await vi.advanceTimersByTimeAsync(11_990);
+    const res = await pending;
+
+    expect(res.status).toBe(200);
+    expect(f.usedKeys).toEqual(["k1"]);
+    const all = await repo.all();
+    expect(all.every((r) => r.strikes === 0 && r.cooldownUntil === 0)).toBe(true);
+  });
+
+  // ── C-RM2b：同步档的预算跨 key 共享，一把挂起的 key 不再吃掉整个请求 ─────────
+  //
+  // 「挂起」= TCP 连得上但上游永不响应，触发的是网关自己的 AbortController，因此走的是
+  // 超时分支而**不是**网络错误分支——原实现在这里直接返回 504，池中其余 key 一把都不试，
+  // 于是 N 把 key 的池子里只要挂了 1 把，就有 1/N 的请求硬失败且永远如此。
+
+  it("一把 key 挂起时改用下一把，请求成功，并把超时记到挂起的那把头上", async () => {
+    vi.useFakeTimers();
+    const repo = await makeRepo(["k1", "k2"]);
+    const f = new FakeFetcher([
+      { status: 200, body: "{}", delayMs: 300_000 },      // k1 挂起
+      { status: 200, body: '{"ok":true}', delayMs: 500 }, // k2 正常
+    ]);
+    const pending = dispatch({
+      path: "/images/generations", body: {}, stream: false, timeout: "sync",
+      deps: { repo, fetcher: f, config: DEFAULTS, now: () => Date.now() },
+    });
+    await vi.advanceTimersByTimeAsync(DEFAULTS.upstreamSyncTimeoutMs);
+    const res = await pending;
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(f.usedKeys).toEqual(["k1", "k2"]);
+    // 同一次请求里 k2 成功了 = 上游当时应答得了 → k1 的超时归因于 k1 自己。
+    const all = await repo.all();
+    expect(all.find((r) => r.key === "k1")!.strikes).toBe(1);
+    expect(all.find((r) => r.key === "k2")!.strikes).toBe(0);
+  });
+
+  it("挂起的 key 连续被归因到 MAX_STRIKES 后进入长冷却，池子自己把它淘汰掉", async () => {
+    vi.useFakeTimers();
+    const repo = await makeRepo(["k1", "k2"]);
+    const f = {
+      async fetch(_u: string, init: RequestInit & { signal?: AbortSignal }) {
+        const hung = new Headers(init.headers).get("authorization") === "Bearer k1";
+        if (!hung) return new Response('{"ok":true}', { status: 200 });
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            const e = new Error("aborted");
+            e.name = "AbortError";
+            reject(e);
+          }, { once: true });
+        });
+      },
+    };
+    for (let i = 0; i < DEFAULTS.maxStrikes; i++) {
+      const pending = dispatch({
+        path: "/images/generations", body: {}, stream: false, timeout: "sync",
+        deps: { repo, fetcher: f as never, config: DEFAULTS, now: () => Date.now() },
+      });
+      await vi.advanceTimersByTimeAsync(DEFAULTS.upstreamSyncTimeoutMs);
+      expect((await pending).status).toBe(200);
+    }
+    const k1 = (await repo.all()).find((r) => r.key === "k1")!;
+    expect(k1.cooldownReason).toBe("sync timeout");
+    expect(k1.cooldownUntil).toBeGreaterThan(Date.now());
+    expect(k1.evicted).toBe(false); // 是可自愈的长冷却，不是永久剔除
+    expect((await repo.all()).find((r) => r.key === "k2")!.cooldownUntil).toBe(0);
+  });
+
+  it("整体预算耗尽才返回 504：客户端最坏只等一个预算，且不惩罚任何 key", async () => {
+    vi.useFakeTimers();
+    const started = Date.now();
     const repo = await makeRepo(["k1", "k2", "k3"]);
     const f = new FakeFetcher(
       Array.from({ length: 3 }, () => ({ status: 200, body: "{}", delayMs: 300_000 })),
     );
     const pending = dispatch({
       path: "/images/generations", body: {}, stream: false, timeout: "sync",
-      deps: { repo, fetcher: f, config: DEFAULTS, now: () => 1000 },
+      deps: { repo, fetcher: f, config: DEFAULTS, now: () => Date.now() },
     });
     await vi.advanceTimersByTimeAsync(DEFAULTS.upstreamSyncTimeoutMs);
     const res = await pending;
 
     expect(res.status).toBe(504);
     expect(await res.json()).toMatchObject({ error: { reason: "upstream_timeout" } });
-    expect(f.usedKeys).toEqual(["k1"]);
+    // 等待上界 = 一个 UPSTREAM_SYNC_TIMEOUT_MS，不是「池大小 × 预算」。
+    expect(Date.now() - started).toBe(DEFAULTS.upstreamSyncTimeoutMs);
+    // 预算被切成两半，因此这一个预算内换了一次 key；第三把没轮到。
+    expect(f.usedKeys).toEqual(["k1", "k2"]);
+    // 全都超时 = 没有任何对照说明是 key 的问题，一把都不惩罚。
     const all = await repo.all();
     expect(all.map((r) => r.strikes)).toEqual([0, 0, 0]);
     expect(all.map((r) => r.cooldownUntil)).toEqual([0, 0, 0]);
@@ -482,7 +564,7 @@ describe("按端点语义区分超时", () => {
     for (let i = 0; i < 3; i++) {
       const pending = dispatch({
         path: "/images/generations", body: {}, stream: false, timeout: "sync",
-        deps: { repo, fetcher: f, config: DEFAULTS, now: () => 1000 },
+        deps: { repo, fetcher: f, config: DEFAULTS, now: () => Date.now() },
       });
       await vi.advanceTimersByTimeAsync(DEFAULTS.upstreamSyncTimeoutMs);
       expect((await pending).status).toBe(504);

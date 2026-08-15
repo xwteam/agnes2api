@@ -20,8 +20,11 @@ export function anthropicRoutes(deps: DispatchDeps): Hono {
       throw e;
     }
 
+    // 超时档由 stream 决定：非流式要等上游把整段回答生成完才发响应头，与图片生成
+    // 同一种延迟语义，必须用同步档（见 TimeoutProfile）。
     const res = await dispatch({
       path: "/chat/completions", body: internal, stream: internal.stream,
+      timeout: internal.stream ? "firstByte" : "sync",
       expectJson: !internal.stream, deps,
     });
 

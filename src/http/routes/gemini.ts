@@ -21,8 +21,11 @@ export function geminiRoutes(deps: DispatchDeps): Hono {
 
     const req = await readJson<GeminiRequest>(c);
     const internal = { ...toInternalRequest(req, model), stream };
+    // 超时档由 stream 决定：非流式要等上游把整段回答生成完才发响应头，与图片生成
+    // 同一种延迟语义，必须用同步档（见 TimeoutProfile）。
     const res = await dispatch({
-      path: "/chat/completions", body: internal, stream, expectJson: !stream, deps,
+      path: "/chat/completions", body: internal, stream,
+      timeout: stream ? "firstByte" : "sync", expectJson: !stream, deps,
     });
     if (!res.ok) return res;                      // 错误一律原样透传
 

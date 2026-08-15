@@ -139,38 +139,51 @@ function unavailable(records: KeyRecord[], now: number): Response {
 /**
  * 端点的**上游延迟语义**，决定用哪个超时预算、以及超时后如何处置这把 key。
  *
- * 它与 `stream` 参数是两件事：`stream` 说的是「返回给客户端的响应形态」，这里说的是
- * 「上游首字节什么时候才可能到达」。视频建任务（`POST /videos`）不是流式却很慢，视频
- * 轮询（`GET /videos/{id}`）同样不是流式却很快——两者用同一个 `stream: false`，但超时
- * 语义完全相反，所以必须独立表达。
+ * 判据是「上游的第一个字节什么时候才可能到达」，不是端点的名字：
  *
- * - `firstByte`（默认）：上游一开始说话就算首字节，用 `UPSTREAM_TIMEOUT_MS`（8 秒）。
- *   适用于流式/非流式对话与视频轮询这类快接口。慢 key 在这里应当被快速甩掉（设计 §7.3）。
- * - `sync`：首字节要等上游把整个结果算完才到达（图片生成、视频建任务），用
- *   `UPSTREAM_SYNC_TIMEOUT_MS`（默认 2 分钟）。
+ * - `firstByte`：上游一开口就算首字节，用 `UPSTREAM_TIMEOUT_MS`（8 秒）。**流式**响应
+ *   属于这一类，慢 key 在这里被快速甩掉（设计 §7.3）；视频轮询（`GET /videos/{id}`）
+ *   虽然不是流式，但它只查一次任务状态，同样是快接口，也归这一类。
+ * - `sync`：首字节要等上游把整个结果算完才到达，用 `UPSTREAM_SYNC_TIMEOUT_MS`
+ *   （默认 2 分钟）。图片生成、视频建任务属于这一类，**非流式对话同样属于这一类**
+ *   ——上游要把整段回答生成完才发响应头，与图片生成是同一种延迟语义。
+ *
+ * 因此路由层的判据是 `timeout: stream ? "firstByte" : "sync"`；档位仍由调用方显式传入
+ * 而不在这里按 `stream` 自动推断，因为视频轮询是「非流式的快接口」这唯一的例外。
  */
 export type TimeoutProfile = "firstByte" | "sync";
 
 /**
- * 同步端点超时：504，且**不惩罚这把 key、也不再换下一把**。
+ * 同步档下，单次尝试最多用掉整体预算的几分之一。
  *
- * ① 为什么不记 strike：这里的超时衡量的是「上游把整张图渲染完需要多久」与「网关给了
- * 多少预算」之间的关系，而不是这把 key 是否健康。预算配小了就把池中每把 key 都判为
- * 不健康，是把配置问题记到 key 头上——实测正是这条路径：一次图片请求让池中每把 key
- * 各吃一次 strike，三次请求即可把任意规模的整池打进 30 分钟长冷却，连对话一起拖死。
- * 真正坏掉的 key 走的是「网络错误」分支（连不上会立刻抛错，不需要等满超时），那条
- * 分支仍然记 strike；对话端点也仍然按 8 秒首字节把慢 key 甩掉。惩罚通路并没有消失。
+ * 取 2 是为了同时满足两个互相拉扯的要求：①客户端最坏只等**一个**预算
+ * （`UPSTREAM_SYNC_TIMEOUT_MS`），不能是「池大小 × 预算」；②一把挂起的 key
+ * （TCP 连得上但永不响应）不能吃掉整个请求，必须还能换一把再试——否则 20 把 key
+ * 的池子里只要有 1 把挂起，就有 5% 的请求硬失败，且没有任何自愈通路。
+ * 两者只能靠切分预算调和：单次尝试 1/2 预算，超时后换下一把 key 再用剩下的 1/2。
  *
- * ② 为什么不再换下一把：换 key 重试的前提是「换一把可能更快」，但同步端点的耗时由
- * 上游的渲染工作量决定，不由 key 决定，重试没有理由得到不同结果；代价却是客户端要为
- * 每把 key 再等一个完整预算——20 把 key 的池子就是 20 × 2 分钟。让客户端的最坏等待
- * 停在一个预算内，并把「是预算问题、不是 key 问题」直接写进错误体。
+ * 默认配置下单次仍有 60 秒，是实测图片生成耗时（11.99 秒）的五倍。代价是：若单次调用
+ * 真有可能超过预算的一半，就该把 `UPSTREAM_SYNC_TIMEOUT_MS` 设成「单次最坏耗时的两倍
+ * 以上」——五份 DEPLOY.md 的环境变量表已写明这一点。
  */
-function syncTimedOut(timeoutMs: number): Response {
+const SYNC_ATTEMPT_SHARE = 2;
+
+/**
+ * 同步档把整体预算耗光仍未拿到任何上游响应：504。
+ *
+ * 只有「本次请求的每一次尝试都超时」才会走到这里——只要有任何一把 key 真的应答过
+ * （哪怕是 500），返回的就是那把 key 的结果，而不是这个 504。
+ *
+ * 文案刻意**不**断言「这是超时预算问题而非 key 故障」：原实现这么写，而在「key 对应的
+ * 上游会话被挂起」时它是一句假话，会把运维引向调大 `UPSTREAM_SYNC_TIMEOUT_MS`，只会让
+ * 挂起挂得更久。这里只陈述事实——试了几把 key、总预算多少、本次没有惩罚任何 key——
+ * 并把两种可能都摆出来。
+ */
+function syncBudgetExhausted(triedKeys: number, budgetMs: number): Response {
   return jsonBody(504, {
     error: {
       reason: "upstream_timeout",
-      message: `同步端点在 ${timeoutMs} 毫秒内未收到上游响应。这是超时预算问题而非 key 故障，未惩罚任何 key；如确需更长时间，调大 UPSTREAM_SYNC_TIMEOUT_MS 后重试`,
+      message: `同步端点用尽了 ${budgetMs} 毫秒的总预算：已尝试 ${triedKeys} 把 key，均未在各自的尝试预算内收到上游响应。可能是上游整体变慢或预算配小（可调大 UPSTREAM_SYNC_TIMEOUT_MS），也可能是这几把 key 对应的上游会话被挂起；本次未惩罚任何 key`,
     },
   });
 }
@@ -195,17 +208,54 @@ export async function dispatch(args: {
 }): Promise<Response> {
   const { repo, fetcher, config, now } = args.deps;
   const profile: TimeoutProfile = args.timeout ?? "firstByte";
-  const timeoutMs = profile === "sync" ? config.upstreamSyncTimeoutMs : config.upstreamTimeoutMs;
   const records = await repo.all();
   if (records.length === 0) return fail("pool_empty", "key 池为空，请先导入 key");
 
+  // 同步档的预算是**跨 key 共享**的：`deadline` 决定客户端的等待上界（始终是一个
+  // `UPSTREAM_SYNC_TIMEOUT_MS`），`attemptBudget` 决定单次尝试最多占用其中多少，
+  // 剩下的留给「换一把 key 再试」。见 SYNC_ATTEMPT_SHARE。
+  const syncDeadline = now() + config.upstreamSyncTimeoutMs;
+  const syncAttemptBudget = Math.max(
+    1,
+    Math.floor(config.upstreamSyncTimeoutMs / SYNC_ATTEMPT_SHARE),
+  );
+
   let lastError: Response | null = null;
   const attempts = records.length;
+  /** 本次请求里超时过的 key 槽位（同步档专用），见 attributeSyncTimeouts。 */
+  const timedOutSlots: number[] = [];
 
   const commit = async (at: number, updated: KeyRecord) => {
     await repo.save(updated);
     records[at] = updated;
   };
+
+  /**
+   * 同步档超时的归因：只有当**同一次请求里**另一把 key 真的成功了，才把先前那些超时
+   * 记到对应 key 头上。
+   *
+   * 这是能拿到的最强的对照：同一时刻、同一个上游、同一份预算，A 超时而 B 成功，
+   * 说明上游当时是应答得了的，超时来自 A 自己（例如会话挂起）。反过来，如果整轮下来
+   * 没有任何 key 成功，那更可能是预算配小了或上游整体变慢——那是配置/上游的问题，
+   * 不该记到 key 头上（原实现正是在这里把一次图片请求变成「整池各记一次 strike」）。
+   *
+   * 记账复用既有的 strike 通路：累计到 `MAX_STRIKES` 进长冷却、成功即清零，与其他
+   * 瞬时故障同一套语义，不额外引入一个需要迁移的计数字段。
+   */
+  const attributeSyncTimeouts = async (successSlot: number) => {
+    for (const at of new Set(timedOutSlots)) {
+      // 同一把 key 先超时后成功（第二次尝试变快了）时不惩罚它：它刚刚自证还活着。
+      if (at === successSlot) continue;
+      await commit(at, applyStrike(records[at]!, now(), config, "sync timeout"));
+    }
+    timedOutSlots.length = 0;
+  };
+
+  /** 一把 key 都没应答时的兜底响应：同步档耗尽预算报 504，其余情形沿用池健康度的 503。 */
+  const nothingAnswered = () =>
+    timedOutSlots.length > 0
+      ? syncBudgetExhausted(new Set(timedOutSlots).size, config.upstreamSyncTimeoutMs)
+      : unavailable(records, now());
 
   // 任何一条 return 路径都要先把攒着的上一个上游错误响应体取消掉，否则它的
   // 响应体永远没人消费（见 discard 的说明）。
@@ -215,9 +265,17 @@ export async function dispatch(args: {
   };
 
   for (let i = 0; i < attempts; i++) {
+    let timeoutMs = config.upstreamTimeoutMs;
+    if (profile === "sync") {
+      const remaining = syncDeadline - now();
+      // 预算耗尽就别再发注定被立刻 abort 的请求了。
+      if (remaining <= 0) break;
+      timeoutMs = Math.min(syncAttemptBudget, remaining);
+    }
+
     const picked = selectKey(records, cursor, now());
     if (!picked) {
-      return lastError ?? unavailable(records, now());
+      return lastError ?? nothingAnswered();
     }
     cursor = picked.nextCursor;
     const record = picked.record;
@@ -245,8 +303,13 @@ export async function dispatch(args: {
       const action = classifyThrown(err);
       const reason = action.kind === "strike" ? action.reason : "unknown";
 
-      // 同步端点超时既不记 strike 也不换 key，见 syncTimedOut 的说明。
-      if (profile === "sync" && reason === "timeout") return done(syncTimedOut(timeoutMs));
+      // 同步档超时**先不记账**：此刻还分不清是「预算配小了」还是「这把 key 挂起了」。
+      // 先记下它，继续用剩余预算换下一把 key；等本次请求有没有 key 成功之后再归因
+      // （见 attributeSyncTimeouts）。
+      if (profile === "sync" && reason === "timeout") {
+        timedOutSlots.push(slot);
+        continue;
+      }
 
       await commit(slot, applyStrike(record, now(), config, reason));
       continue;
@@ -267,9 +330,11 @@ export async function dispatch(args: {
           });
           continue;
         }
+        await attributeSyncTimeouts(slot);
         await commit(slot, applySuccess(record, now()));
         return done(new Response(text, { status: res.status, headers: safeHeaders(res) }));
       }
+      await attributeSyncTimeouts(slot);
       await commit(slot, applySuccess(record, now()));
       return done(sanitize(res));
     }
@@ -295,7 +360,7 @@ export async function dispatch(args: {
     else await commit(slot, applyStrike(record, now(), config, action.reason));
   }
 
-  return lastError ?? unavailable(records, now());
+  return lastError ?? nothingAnswered();
 }
 
 function isJson(text: string): boolean {
