@@ -296,6 +296,68 @@ describe("YydsProvider", () => {
     }
   });
 
+  // === M3：轮询期间 fetch reject 与非 2xx 的容错必须对称 ===
+  //
+  // 同一个瞬时故障，返回 HTTP 500 时轮询继续、fetch reject（TCP reset / 单请求超时
+  // 到点的 TimeoutError）时却穿出 pollCode、被 mint.ts 收成 network_error 作废整次
+  // 铸 key——而那一刻验证码往往已经在邮箱里、窗口还剩 100 多秒。
+
+  it("M3 列表请求 reject（网络抖动/超时）后不中断轮询，下一轮仍能取到验证码", async () => {
+    let listAttempts = 0;
+    let t = 0;
+    const fetcher = {
+      async fetch(url: string) {
+        if (url.includes("/v1/messages/")) {
+          return new Response(JSON.stringify({ data: { verificationCode: "654321" } }), { status: 200 });
+        }
+        listAttempts++;
+        // 第 1 次以 TimeoutError reject——这正是 AbortSignal.timeout 到点时的真实行为。
+        if (listAttempts === 1) throw new DOMException("The operation was aborted", "TimeoutError");
+        return new Response(JSON.stringify({ data: { messages: [{ id: "m1" }] } }), { status: 200 });
+      },
+    };
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 10000)).toBe("654321");
+    expect(listAttempts).toBe(2);
+  });
+
+  it("M3 详情请求 reject 时不写 seen，下一轮重新拉同一封仍能取到验证码", async () => {
+    // 与「详情非 2xx」那条同构：reject 也不能让这封邮件被永久跳过，否则会一路空转到
+    // 超时。断言 detailAttempts=2 才能证明真的重试了同一封，而不是靠别的邮件蒙对。
+    let detailAttempts = 0;
+    let t = 0;
+    const fetcher = {
+      async fetch(url: string) {
+        if (url.includes("/v1/messages/")) {
+          detailAttempts++;
+          if (detailAttempts === 1) throw new Error("ECONNRESET");
+          return new Response(JSON.stringify({ data: { verificationCode: "778899" } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ data: { messages: [{ id: "m1" }] } }), { status: 200 });
+      },
+    };
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 10000)).toBe("778899");
+    expect(detailAttempts).toBe(2);
+  });
+
+  it("M3 全程 reject 时按超时返回 null，而不是把异常抛给调用方", async () => {
+    // 成对用例：容错不等于吞掉一切——CODE_TIMEOUT_MS 仍是唯一的轮询截止依据。
+    let t = 0;
+    const fetcher = { async fetch(): Promise<Response> { throw new Error("ECONNRESET"); } };
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    await expect(p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 9000)).resolves.toBeNull();
+  });
+
   it("deleteMailbox 发出的是 DELETE 到 /v1/accounts/<handle> 并带 X-API-Key", async () => {
     const { calls, fetcher } = stubFetcher(() => ({ status: 200 }));
     const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });

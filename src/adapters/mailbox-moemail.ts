@@ -84,11 +84,20 @@ export class MoeMailProvider implements MailProvider {
     // 不永久跳过。MoeMail 的列表接口自带正文，每轮都是一次性、无状态地重新扫描
     // 整份列表，没有"标记后failed"的中间态，天然没有这个坑，不必为了对齐硬加。
     while (this.deps.now() - start < timeoutMs) {
-      const r = await this.deps.fetcher.fetch(
-        `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`,
-        { method: "GET", headers: this.headers(), signal: this.signal() },
-      );
-      if (r.ok) {
+      // `fetch` 本身 reject（DNS 失败 / TCP reset / TLS 错误，以及单请求超时到点抛出的
+      // TimeoutError）与下面已经容忍的「HTTP 非 2xx」「响应体非 JSON」是同一类瞬时故障，
+      // 处置必须一致：本轮跳过、继续轮询，只有 timeoutMs 耗尽才收工。理由同 YYDS 适配器
+      // 里同位置的注释——此前一次网络抖动就会作废整次铸 key，而验证码往往已经到了。
+      let r: Response | null;
+      try {
+        r = await this.deps.fetcher.fetch(
+          `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`,
+          { method: "GET", headers: this.headers(), signal: this.signal() },
+        );
+      } catch {
+        r = null;
+      }
+      if (r?.ok) {
         // 列表响应偶发 200 但 body 非 JSON（网关异常页等），解析失败按本轮未取到
         // 消息处理，不中断整条轮询。这里只有一次请求（列表自带正文，无需二次拉
         // 详情），因此解析失败等价于 YYDS 里"列表侧解析失败＝跳过整轮"的语义。

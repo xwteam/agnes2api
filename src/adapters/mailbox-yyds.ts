@@ -80,10 +80,22 @@ export class YydsProvider implements MailProvider {
     const seen = new Set<string>();
     while (this.deps.now() - start < timeoutMs) {
       const listUrl = `${this.deps.baseUrl}/v1/messages?address=${encodeURIComponent(mailbox.handle)}`;
-      const lr = await this.deps.fetcher.fetch(listUrl, {
-        method: "GET", headers: this.headers(), signal: this.signal(),
-      });
-      if (lr.ok) {
+      // `fetch` 本身 reject（DNS 失败 / TCP reset / TLS 错误，以及单请求超时到点抛出的
+      // TimeoutError）与下面已经容忍的「HTTP 非 2xx」「响应体非 JSON」是同一类瞬时故障，
+      // 处置必须一致：本轮跳过、继续轮询，只有 timeoutMs 耗尽才收工。此前这里没有
+      // try/catch，一次网络抖动就会穿出 pollCode，被 mint.ts 收成 network_error 作废
+      // 整次铸 key——而那一刻验证码往往已经在邮箱里、窗口还剩 100 多秒。单次铸 key 光
+      // 轮询就要打约 40 次请求，抖动是常态而非异常；同一个故障返回 HTTP 500 反而能成功
+      // 是说不通的。
+      let lr: Response | null;
+      try {
+        lr = await this.deps.fetcher.fetch(listUrl, {
+          method: "GET", headers: this.headers(), signal: this.signal(),
+        });
+      } catch {
+        lr = null;
+      }
+      if (lr?.ok) {
         // 列表响应偶发 200 但 body 非 JSON（网关超时页等），解析失败按未取到消息处理，
         // 不中断整条轮询——与 `!lr.ok` 时"本轮跳过、继续轮询"的设计意图保持一致。
         let listJson: Record<string, any> | null = null;
@@ -98,13 +110,19 @@ export class YydsProvider implements MailProvider {
           const id = m?.id;
           if (!id || seen.has(id)) continue;
           const dUrl = `${this.deps.baseUrl}/v1/messages/${encodeURIComponent(id)}?address=${encodeURIComponent(mailbox.handle)}`;
-          const dr = await this.deps.fetcher.fetch(dUrl, {
-            method: "GET", headers: this.headers(), signal: this.signal(),
-          });
-          // 拉详情失败（HTTP 非 2xx 或响应体非 JSON）不标记 seen：这封邮件可能已经
-          // 到达，只是这次请求恰好撞上第三方 API 的瞬时错误，下一轮还要能重试，
-          // 否则验证码邮件会被永久跳过、一路空转到超时。
-          if (!dr.ok) continue;
+          let dr: Response | null;
+          try {
+            dr = await this.deps.fetcher.fetch(dUrl, {
+              method: "GET", headers: this.headers(), signal: this.signal(),
+            });
+          } catch {
+            // 与非 2xx 同处置，理由见上面列表请求处的注释。
+            dr = null;
+          }
+          // 拉详情失败（fetch reject、HTTP 非 2xx 或响应体非 JSON）不标记 seen：这封
+          // 邮件可能已经到达，只是这次请求恰好撞上第三方 API 的瞬时错误，下一轮还要
+          // 能重试，否则验证码邮件会被永久跳过、一路空转到超时。
+          if (!dr?.ok) continue;
           let detail: Record<string, any>;
           try {
             detail = ((await dr.json()) as Record<string, any>)?.data ?? {};

@@ -234,4 +234,37 @@ describe("MoeMailProvider", () => {
     expect(await p.pollCode({ address: "u@a.test", handle: "eid-1" }, 10000)).toBe("445566");
     expect(attempts).toBe(2);
   });
+
+  // === M3：轮询期间 fetch reject 与非 2xx 的容错必须对称（同 YYDS 适配器） ===
+
+  it("M3 轮询请求 reject（网络抖动/超时）后不中断，下一轮仍能取到验证码", async () => {
+    let attempts = 0;
+    let t = 0;
+    const fetcher = {
+      async fetch() {
+        attempts++;
+        // 第 1 次以 TimeoutError reject——AbortSignal.timeout 到点时的真实行为。
+        if (attempts === 1) throw new DOMException("The operation was aborted", "TimeoutError");
+        return new Response(JSON.stringify({
+          messages: [{ id: "m1", subject: "验证码", content: "您的验证码 998877" }],
+        }), { status: 200 });
+      },
+    };
+    const p = new MoeMailProvider({
+      fetcher, baseUrl: "https://m.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    expect(await p.pollCode({ address: "u@a.test", handle: "eid-1" }, 10000)).toBe("998877");
+    expect(attempts).toBe(2);
+  });
+
+  it("M3 全程 reject 时按超时返回 null，而不是把异常抛给调用方", async () => {
+    let t = 0;
+    const fetcher = { async fetch(): Promise<Response> { throw new Error("ECONNRESET"); } };
+    const p = new MoeMailProvider({
+      fetcher, baseUrl: "https://m.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    await expect(p.pollCode({ address: "u@a.test", handle: "eid-1" }, 9000)).resolves.toBeNull();
+  });
 });
