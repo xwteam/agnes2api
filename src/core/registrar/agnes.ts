@@ -42,9 +42,20 @@ export async function login(
     body: JSON.stringify({ username: email, password }),
   });
   if (!r.ok) return null;
-  const data = (await r.json()) as Record<string, any>;
-  const d = (data?.data ?? {}) as Record<string, any>;
-  return d.access_token || d.token || data.access_token || data.token || null;
+  const data = (await r.json()) as unknown;
+  if (typeof data !== "object" || data === null) return null;
+  const d = (data as Record<string, unknown>).data;
+  if (typeof d === "object" && d !== null) {
+    const token = (d as Record<string, unknown>).access_token || (d as Record<string, unknown>).token;
+    if (typeof token === "string") return token;
+  }
+  if (typeof (data as Record<string, unknown>).access_token === "string") {
+    return (data as Record<string, unknown>).access_token as string;
+  }
+  if (typeof (data as Record<string, unknown>).token === "string") {
+    return (data as Record<string, unknown>).token as string;
+  }
+  return null;
 }
 
 export async function createKey(
@@ -56,8 +67,16 @@ export async function createKey(
     body: JSON.stringify({ name }),
   });
   if (!r.ok) return null;
-  const data = (await r.json()) as Record<string, any>;
-  return data?.data?.key || data?.key || null;
+  const data = (await r.json()) as unknown;
+  if (typeof data !== "object" || data === null) return null;
+  const d = (data as Record<string, unknown>).data;
+  if (typeof d === "object" && d !== null) {
+    const key = (d as Record<string, unknown>).key;
+    if (typeof key === "string") return key;
+  }
+  const key = (data as Record<string, unknown>).key;
+  if (typeof key === "string") return key;
+  return null;
 }
 
 const PW_ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";

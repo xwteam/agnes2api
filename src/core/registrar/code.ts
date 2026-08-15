@@ -8,11 +8,20 @@ export function extractCode(subject: string, body: string): string | null {
   if (!body) return null;
 
   // 优先：模板通常给验证码套一个带 verification 字样的类名，这是最可靠的锚点。
-  const tagged = body.match(/class=["'][^"']*verification[^"']*["'][^>]*>\s*(\d{6})\s*</);
+  // 放宽到允许嵌套元素（数字不必是直接子节点）。
+  const tagged = body.match(/class=["'][^"']*verification[^"']*["'][^>]*>[\s\S]*?(\d{6})/);
   if (tagged) return tagged[1]!;
 
   // 兜底：先把十六进制颜色抹掉，再找第一个独立的六位数。
   const cleaned = `${subject} ${body}`.replace(CSS_COLOR_LIKE, " ");
+
+  // 先尝试在关键词附近找：优先找「验证码 / verification code / code」等字样附近的六位数。
+  // 允许关键词和数字之间有任意非数字字符（包括汉字、标点、空格）。
+  const keywordPattern = /(?:验证码|verification[\s-]?code|code|auth[\s-]?code)[^\d]*(\d{6})/i;
+  const keyword = cleaned.match(keywordPattern);
+  if (keyword) return keyword[1]!;
+
+  // 没有关键词锚点时，退回到取第一个独立的六位数。
   const m = cleaned.match(/\b(\d{6})\b/);
   return m ? m[1]! : null;
 }

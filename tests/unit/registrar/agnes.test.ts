@@ -91,7 +91,7 @@ describe("randomPassword", () => {
     const a = randomPassword(() => 0.5);
     const b = randomPassword(() => 0.5);
     expect(a).toBe(b);
-    expect(a.length).toBeGreaterThanOrEqual(14);
+    expect(a.length).toBe(16);
   });
 
   it("不同随机源产出不同密码", () => {

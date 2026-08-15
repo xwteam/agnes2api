@@ -24,4 +24,19 @@ describe("extractCode", () => {
   it("没有六位数时返回 null", () => {
     expect(extractCode("hi", "no digits here 12345")).toBeNull();
   });
+
+  it("正文含订单号在前、验证码在后，必须取验证码那个", () => {
+    const html = "订单号 887766，您的验证码是 246813，十分钟内有效";
+    expect(extractCode("", html)).toBe("246813");
+  });
+
+  it("verification 类元素嵌套形态也能匹配（子节点不是直接文本）", () => {
+    const html = `<div class="verification"><span>123456</span></div>`;
+    expect(extractCode("", html)).toBe("123456");
+  });
+
+  it("用 code 或 verification code 关键词锚定兜底路径", () => {
+    const html = "order 654321, your verification code: 135790";
+    expect(extractCode("", html)).toBe("135790");
+  });
 });
