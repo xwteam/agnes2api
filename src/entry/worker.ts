@@ -22,8 +22,6 @@ const TEND_LOCK_KEY = "registrar_tend_lock";
  */
 const TEND_LOCK_TTL_MS = WORKER_CRON_WALL_CLOCK_MS;
 
-
-
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     let app = cachedApp;
@@ -79,7 +77,8 @@ export default {
       (async () => {
         try {
           // 只有 Worker 形态传轮级预算：Cron 被平台中止时 mintOne 的 finally 不跑、
-          // 邮箱漏删，必须靠「不启动跑不完的尝试」来避免（见 TEND_ROUND_BUDGET_MS）。
+          // 邮箱漏删，必须靠「不启动跑不完的尝试」来避免。预算取值与理由见
+          // core/registrar/types.ts 的 WORKER_ROUND_BUDGET_MS。
           const r = await tendOnce({ ...deps, roundBudgetMs: WORKER_ROUND_BUDGET_MS });
           if (!r.skipped) {
             console.log(

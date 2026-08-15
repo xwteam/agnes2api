@@ -155,8 +155,16 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
     `MINT_BATCH` to 1–2, or lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
 - **Do not set `CODE_TIMEOUT_MS` too high.** Once `CODE_TIMEOUT_MS × number of channels` exceeds
   the per-round budget (87% of the wall clock), **no attempt can start at all** on Worker and the
-  refill produces nothing, round after round. Startup logs an explicit error about this, but work
-  the numbers out before you tune.
+  refill produces nothing, round after round. Two log lines cover this:
+  - **At startup**, a **warning** (`console.warn`) such as
+    `[registrar] CODE_TIMEOUT_MS×通道数(...) 超过 Worker 单轮墙钟预算(...)`.
+    It does **not** stop the gateway from starting — unlike "missing credentials fail at
+    startup". Node/Docker has no platform wall clock and the same configuration is perfectly
+    valid there, so both runtimes print this warning but only Worker is actually affected.
+  - **On every Worker refill round**, an **error** (`console.error`) such as
+    `[registrar] 单次铸 key 的最坏耗时(...ms = CODE_TIMEOUT_MS×通道数)已超过本轮墙钟预算`.
+    It repeats every round, which is how you tell this is a standing condition rather than a
+    one-off.
 - **Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers
   out with both formulas above.** When the limit is hit, the platform aborts that Cron
   invocation.

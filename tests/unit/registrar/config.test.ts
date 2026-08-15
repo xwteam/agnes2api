@@ -318,5 +318,50 @@ describe("I-2 五语言文档对轮级预算的表述必须有条件、且与代
       expect(readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8"), `${lang} 没写 ${pct}%`)
         .toContain(`${pct}%`);
     }
+    // 只钉比例是不够的：按比例同改两个常量（例如 1560000/1800000）pct 仍是 87、
+    // 全绿，而文档里「约 120 秒余量」会变成 240 秒且无人发觉。余量的**绝对值**才是
+    // 五语言拿来解释「尾巴由谁吸收」的那个数，一并钉住。
+    const marginMs = WORKER_CRON_WALL_CLOCK_MS - WORKER_ROUND_BUDGET_MS;
+    expect(marginMs).toBe(120_000);
+    for (const { lang } of LANGS) {
+      expect(readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8"), `${lang} 没写 ${marginMs / 1000} 秒余量`)
+        .toContain(`${marginMs / 1000}`);
+    }
+  });
+
+  it("启动那条是 warn 不是 error，且五语言给的可 grep 片段与代码真实输出一致", () => {
+    // 复评抓到的：五语言都写「启动时打印**错误**日志」，而代码用的是 console.warn，
+    // 且那条 console.error 是运行期每轮打的。级别和时机双双对不上，用户按文档去启动
+    // 日志里 grep error 会一无所获。这条把文档给的片段与代码真实输出钉在一起——
+    // 改了日志文案就必须同步改五语言，反之亦然。
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      registrarFromEnv(
+        {
+          REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k",
+          REGISTRAR_FALLBACK: "moemail",
+          MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
+          CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000",
+        },
+        {},
+      );
+      const FRAGMENT = "[registrar] CODE_TIMEOUT_MS×通道数";
+      const hit = warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.startsWith(FRAGMENT));
+      expect(hit, "启动期这条必须是 console.warn 且以文档给的片段开头").toBeDefined();
+      // 启动期**不能**用 error：那会与「缺凭据启动即报错、网关起不来」混为一谈，
+      // 而这里刻意选了不阻止启动（Node 侧同一份配置完全合法）。
+      expect(errSpy).not.toHaveBeenCalled();
+      for (const { lang } of LANGS) {
+        const doc = readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8");
+        expect(doc, `${lang} 没给启动告警的可 grep 片段`).toContain(FRAGMENT);
+        // 必须把两个级别都写出来，否则读者分不清哪条在启动、哪条在运行期。
+        expect(doc, `${lang} 没区分 warn/error 两个级别`).toContain("console.warn");
+        expect(doc, `${lang} 没区分 warn/error 两个级别`).toContain("console.error");
+      }
+    } finally {
+      errSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 });

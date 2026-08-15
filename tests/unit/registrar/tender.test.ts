@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { tendOnce, type TendFailureReason, type TendDeps } from "../../../src/core/registrar/tender.js";
 import { KeyPoolRepo } from "../../../src/core/dispatcher.js";
 import { MemoryStorage } from "../../helpers/fake-storage.js";
@@ -453,6 +454,15 @@ describe("tendOnce", () => {
       const errMsg = String(errSpy.mock.calls[0]?.[0]);
       expect(errMsg).toContain("一次尝试都无法开始");
       expect(errMsg).toContain("CODE_TIMEOUT_MS");
+      // 五语言排障小节把这条的开头原样给出来供 grep（旧的那条 warn 一直是这么给的，
+      // 而说破「永久停摆」的这条此前一个字都没进文档——用户反而 grep 不到它）。
+      // 这里把文档给的片段与代码真实输出钉在一起：改文案就必须同步改五语言。
+      const FRAGMENT = "[registrar] 单次铸 key 的最坏耗时";
+      expect(errMsg.startsWith(FRAGMENT)).toBe(true);
+      for (const lang of ["zh-CN", "zh-TW", "en", "ja", "ko"]) {
+        expect(readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8"), `${lang} 没给这条 error 的可 grep 片段`)
+          .toContain(FRAGMENT);
+      }
       // 不能退化成那条读起来像瞬时状况的 warn。
       expect(warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("提前收尾")))
         .toBeUndefined();
