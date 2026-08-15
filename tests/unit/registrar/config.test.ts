@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { registrarFromEnv, requirePrimary } from "../../../src/core/registrar/config.js";
 
 describe("registrarFromEnv", () => {
@@ -36,6 +37,31 @@ describe("registrarFromEnv", () => {
     expect(() => registrarFromEnv(
       { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k", REGISTRAR_FALLBACK: "moemail" }, {},
     )).toThrow(/MOEMAIL/);
+  });
+
+  it("M5 yyds 作**备**通道时 YYDS_API_KEY 同样必填（不是「主通道才要」）", () => {
+    // 与上一条镜像：上一条只覆盖了 moemail 作备通道，yyds 那一半零覆盖，而
+    // .env.example 的错误注释（「主通道启用时必填」）正是把用户往这个配置上引——
+    // 结果 Node 进程 process.exit(1)、Worker 全部请求 500，整个网关的转发能力被
+    // 一个备通道凭据打掉。两条方向都钉住，才算守住「两条通道一视同仁」。
+    expect(() => registrarFromEnv(
+      {
+        REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "moemail",
+        MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
+        REGISTRAR_FALLBACK: "yyds",
+      },
+      {},
+    )).toThrow(/YYDS_API_KEY/);
+  });
+
+  it("M5 .env.example 的凭据注释按「主通道或备通道任一」措辞，两条通道对称", () => {
+    // .env.example 是用户复制来改的那份文件，它的措辞就是这条约束对外的唯一说明；
+    // 上面那条断言的是代码行为，这条断言的是文档不与代码矛盾。
+    const env = readFileSync(".env.example", "utf8");
+    expect(env).toContain("# YYDS Mail 凭据（主通道或备通道任一为 yyds 时必填）");
+    expect(env).toContain("主通道或备通道任一为 moemail 时两项都必填");
+    // 旧措辞会让用户以为备通道凭据可以不填。
+    expect(env).not.toContain("（主通道启用时必填）");
   });
 
   it("MoeMail 作主通道时同时要 base url 与 key（自建服务无默认地址）", () => {
