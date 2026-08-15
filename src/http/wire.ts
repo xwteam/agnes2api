@@ -37,7 +37,7 @@ export async function buildApp(
   const watched = watchStorage(storage, storageHealth, () => Date.now());
 
   if (options.probeStorage) {
-    const err = await probeWritable(watched);
+    const err = await probeWritable(watched, storageHealth, () => Date.now());
     if (err) {
       console.error(
         `[agnes2api] 数据目录不可写，key 池无法持久化，/health 将报告 degraded：${err.message}`,

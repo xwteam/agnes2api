@@ -34,6 +34,13 @@ class ReadOnlyStorage implements Storage {
   }
 }
 
+/** 写得进、删不掉：数据目录挂了 sticky 位、或探针写完后被只读重挂时就是这个形态。 */
+class UndeletableStorage extends MemoryStorage {
+  override async delete(): Promise<void> {
+    throw new Error("EPERM: operation not permitted");
+  }
+}
+
 describe("watchStorage", () => {
   it("写成功时记为可写", async () => {
     const health = createStorageHealth();
@@ -91,6 +98,25 @@ describe("probeWritable", () => {
   it("不可写时返回失败原因", async () => {
     const err = await probeWritable(new ReadOnlyStorage());
     expect(err?.message).toMatch(/EACCES/);
+  });
+
+  // M-RM9：可写性的结论只看 put。原实现把 put+delete 一起 try，于是「写得进、删不掉」
+  // 既误报 degraded、又把探针键留在存储里，两个后果同时发生。
+  it("put 成功而 delete 失败时仍判为可写，只记日志，不误报 degraded", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const health = createStorageHealth();
+      const inner = new UndeletableStorage();
+      const watched = watchStorage(inner, health, () => 5);
+
+      expect(await probeWritable(watched, health, () => 5)).toBeNull();
+      expect(health.status().writable).toBe(true);
+      expect(logged).toHaveBeenCalled();
+      // 探针键删不掉只能留着，但它不以 `key:` 开头，不会被当成一把 key。
+      expect(await inner.list("key:")).toEqual([]);
+    } finally {
+      logged.mockRestore();
+    }
   });
 });
 

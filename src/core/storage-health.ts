@@ -96,16 +96,39 @@ const PROBE_KEY = "health:probe";
 /**
  * 启动时探一次「存储是不是真的可写」，返回失败原因（成功则返回 null）。
  *
- * 传进来的 storage 应当是 `watchStorage` 包过的那一层，探测结果会自动记进 StorageHealth。
+ * 传进来的 storage 应当是 `watchStorage` 包过的那一层，探测结果会自动记进 StorageHealth；
+ * 把同一个 StorageHealth 也传进来，才能修正下面说的那个误报。
  * 探测失败**不阻止进程启动**：让容器起来并把 `/health` 报成不健康，比崩溃重启循环更容易
  * 排障——运维能直接 curl 到原因，也仍然会在 `docker ps` 里看到 unhealthy。
+ *
+ * **可写性的结论只看 `put`**：`delete` 只是「不留痕迹」的收尾，它失败并不能推翻「刚刚
+ * 确实写进去了」这个事实。原实现把两步一起 try，于是「写得进、删不掉」会被误报成
+ * degraded——而那种情况下探针键还留在存储里，两个后果同时发生。
  */
-export async function probeWritable(storage: Storage): Promise<Error | null> {
+export async function probeWritable(
+  storage: Storage,
+  health?: StorageHealth,
+  now: () => number = () => Date.now(),
+): Promise<Error | null> {
   try {
-    await storage.put(PROBE_KEY, { at: Date.now() });
-    await storage.delete(PROBE_KEY);
-    return null;
+    await storage.put(PROBE_KEY, { at: now() });
   } catch (err) {
-    return err instanceof Error ? err : new Error(String(err));
+    return toError(err);
   }
+
+  try {
+    await storage.delete(PROBE_KEY);
+  } catch (err) {
+    console.error(
+      `[agnes2api] 健康探针键 ${PROBE_KEY} 清理失败（不影响「存储可写」的结论）：${toError(err).message}`,
+    );
+    // storage 若是 watchStorage 包过的那层，上面这次失败已经被它记成不可写；
+    // 按 put 的结论纠正回来，否则 /health 会因为一次删除失败而误报 degraded。
+    health?.record(true, now());
+  }
+  return null;
+}
+
+function toError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
 }
