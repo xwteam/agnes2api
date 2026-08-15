@@ -9,6 +9,8 @@ export interface YydsDeps {
   apiKey: string;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
+  /** 随机源，可选，默认 `Math.random`。注入后 `createMailbox` 的 localPart 可确定性断言。 */
+  rand?: () => number;
 }
 
 const LOCAL_PART_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -34,9 +36,10 @@ export class YydsProvider implements MailProvider {
   }
 
   async createMailbox(domain: string): Promise<Mailbox> {
+    const rand = this.deps.rand ?? Math.random;
     let lp = "u";
     for (let i = 0; i < 10; i++) {
-      lp += LOCAL_PART_ALPHABET[Math.floor(Math.random() * LOCAL_PART_ALPHABET.length)]!;
+      lp += LOCAL_PART_ALPHABET[Math.floor(rand() * LOCAL_PART_ALPHABET.length)]!;
     }
     const r = await this.deps.fetcher.fetch(`${this.deps.baseUrl}/v1/accounts`, {
       method: "POST", headers: this.headers(), body: JSON.stringify({ localPart: lp, domain }),
@@ -56,17 +59,34 @@ export class YydsProvider implements MailProvider {
       const listUrl = `${this.deps.baseUrl}/v1/messages?address=${encodeURIComponent(mailbox.handle)}`;
       const lr = await this.deps.fetcher.fetch(listUrl, { method: "GET", headers: this.headers() });
       if (lr.ok) {
-        const listJson = (await lr.json()) as Record<string, any>;
+        // 列表响应偶发 200 但 body 非 JSON（网关超时页等），解析失败按未取到消息处理，
+        // 不中断整条轮询——与 `!lr.ok` 时"本轮跳过、继续轮询"的设计意图保持一致。
+        let listJson: Record<string, any> | null = null;
+        try {
+          listJson = (await lr.json()) as Record<string, any>;
+        } catch {
+          listJson = null;
+        }
         const raw = listJson?.data;
         const msgs = Array.isArray(raw) ? raw : raw?.messages;
         for (const m of (msgs ?? []) as Array<{ id?: string }>) {
           const id = m?.id;
           if (!id || seen.has(id)) continue;
-          seen.add(id);
           const dUrl = `${this.deps.baseUrl}/v1/messages/${encodeURIComponent(id)}?address=${encodeURIComponent(mailbox.handle)}`;
           const dr = await this.deps.fetcher.fetch(dUrl, { method: "GET", headers: this.headers() });
+          // 拉详情失败（HTTP 非 2xx 或响应体非 JSON）不标记 seen：这封邮件可能已经
+          // 到达，只是这次请求恰好撞上第三方 API 的瞬时错误，下一轮还要能重试，
+          // 否则验证码邮件会被永久跳过、一路空转到超时。
           if (!dr.ok) continue;
-          const detail = ((await dr.json()) as Record<string, any>)?.data ?? {};
+          let detail: Record<string, any>;
+          try {
+            detail = ((await dr.json()) as Record<string, any>)?.data ?? {};
+          } catch {
+            continue;
+          }
+          // 详情已成功拿到并解析，这封邮件的处理结果（无论有没有码）不会再变，
+          // 才标记 seen 避免重复请求。
+          seen.add(id);
           if (detail.verificationCode) return String(detail.verificationCode);
           const code = extractCode(detail.subject ?? "", `${detail.text ?? ""} ${detail.html ?? ""}`);
           if (code) return code;
@@ -83,8 +103,11 @@ export class YydsProvider implements MailProvider {
         `${this.deps.baseUrl}/v1/accounts/${encodeURIComponent(mailbox.handle)}`,
         { method: "DELETE", headers: this.headers() },
       );
-    } catch {
-      // 用完即删是尽力而为：key 已经拿到了，邮箱残留是次要问题。
+    } catch (err) {
+      // 用完即删是尽力而为：key 已经拿到了，邮箱残留是次要问题，不该让整次铸 key
+      // 失败，但要留痕方便观测残留是否在堆积。沿用 P1 既有先例（无日志端口，直接
+      // console，参见 src/core/storage-health.ts）。
+      console.warn(`[agnes2api] YYDS 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
     }
   }
 }
