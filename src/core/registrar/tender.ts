@@ -86,6 +86,7 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
         tokenName: deps.config.tokenName,
         codeTimeoutMs: deps.config.codeTimeoutMs,
         maxDomainAttempts: deps.config.maxDomainAttempts,
+        sleep: deps.sleep,
         rand: deps.rand,
       });
 
@@ -110,6 +111,12 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
           //（mintOne 把这三种都归到 provider_error）。设计 §4.5 承诺的正是这三种
           // 情况降级到备通道。
           tryFallback = true;
+          break;
+        case "rate_limited":
+          // 撞上 Agnes 的注册限流（403）。mintOne 内部已经按 5 秒退避过并换了域名，
+          // 这里不再加码：换通道打的还是同一个后端（没意义），整轮中止又会把恢复
+          // 拖到下一个调度周期（默认 30 分钟）——而限流恰恰是"等一下就好"的那类
+          // 故障。下一次尝试前本就有 mintDelay 的随机间隔。
           break;
         case "network_error":
           // 瞬时网络错误（DNS / TCP reset / TLS）：既不能断定这条通道坏了——它可能

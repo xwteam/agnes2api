@@ -14,7 +14,8 @@ export type MintOutcome =
         | "login_failed"
         | "key_failed"
         | "provider_error"
-        | "network_error";
+        | "network_error"
+        | "rate_limited";
     };
 
 export interface MintDeps {
@@ -23,9 +24,18 @@ export interface MintDeps {
   tokenName: string;
   codeTimeoutMs: number;
   maxDomainAttempts: number;
+  /** 撞上限流（403）后的等待，由调用方注入——core 不自己起定时器。 */
+  sleep: (ms: number) => Promise<void>;
   /** 随机源，可选，默认 `Math.random`。注入后域名洗牌与密码生成都可确定性断言。 */
   rand?: () => number;
 }
+
+/**
+ * 撞上限流后的等待时长。取自既有生产实现（跑了一个多月）里 `403 → sleep(5000)`
+ * 的同款处置：限流与宕机的正确退避不一样——前者等一下再换个域名试就能过去，
+ * 后者继续尝试只是在故障期间制造更多注定失败的请求。
+ */
+const RATE_LIMIT_BACKOFF_MS = 5_000;
 
 /** Fisher-Yates 洗牌，随机源注入以便测试可复现。 */
 function shuffle<T>(items: T[], rand: () => number): T[] {
@@ -66,6 +76,7 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
   // 需要的完全一致，且 listDomains 失败、凭据无效走的也是同一个语义——「这条通道
   // 现在产不出邮箱」。多一个 reason 只会让 tender 的 switch 多一支相同的分支。
   let createdAny = false;
+  let sawRateLimited = false;
 
   for (const domain of candidates) {
     let mailbox: Mailbox;
@@ -81,6 +92,13 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       const status = await sendCode(deps.agnes, mailbox.address);
       // 400 = Agnes 屏蔽了该域名。这是域名轮换赖以工作的信号，不是错误。
       if (status === 400) continue;
+      if (status === 403) {
+        // 限流。移植时它被并进了"非 2xx 一律当上游错误"，可两者的正确退避不同：
+        // 上游宕机要整轮中止（见下面那支），限流只要等一下再换个域名。
+        sawRateLimited = true;
+        await deps.sleep(RATE_LIMIT_BACKOFF_MS);
+        continue;
+      }
       if (status < 200 || status >= 300) {
         sawUpstreamError = true;
         console.warn(`[agnes2api] 发验证码遇到非 2xx 非域名屏蔽的状态码，换下一个域名：${domain} status=${status}`);
@@ -134,7 +152,9 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
     return { ok: false, reason: "provider_error" };
   }
 
-  return sawUpstreamError
-    ? { ok: false, reason: "upstream_error" }
-    : { ok: false, reason: "domain_blocked_all" };
+  // 归因优先级：宕机 > 限流 > 域名屏蔽。出现过一次非 400/403 的非 2xx 就说明后端
+  // 真的有问题，那时"再等一会儿"的判断不成立，应该让 tender 中止整轮。
+  if (sawUpstreamError) return { ok: false, reason: "upstream_error" };
+  if (sawRateLimited) return { ok: false, reason: "rate_limited" };
+  return { ok: false, reason: "domain_blocked_all" };
 }

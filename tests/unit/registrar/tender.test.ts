@@ -178,6 +178,27 @@ describe("tendOnce", () => {
     expect(out.failures[0]!.reason).toBe("provider_error");
   });
 
+  it("撞上限流（rate_limited）时不中止整轮、也不换通道：与 upstream_error 的退避刻意不同", async () => {
+    // 与上面 upstream_error 那条对照：同样是"每次都失败"，但 403 是限流——等一下
+    // 再试是有用的，整轮中止只会把恢复拖到下一个调度周期。两条断言的 attempted
+    // 不同（3 vs 1），避免"谁赢都通过"。
+    const provider = new FakeMailProvider({ domains: ["x.test"] });
+    const backup = new FakeMailProvider();
+    const { deps } = await makeDeps({ targetKeys: 3, fallback: "moemail" }, provider);
+    deps.providers = { yyds: provider, moemail: backup };
+    deps.agnes = {
+      platformUrl: "https://platform.test",
+      fetcher: { async fetch(url: string) {
+        return new Response("{}", { status: url.includes("/api/verification") ? 403 : 200 });
+      } },
+    };
+    const out = await tendOnce(deps);
+    expect(out.attempted).toBe(3);
+    expect(out.minted).toBe(0);
+    expect(out.failures.every((f) => f.reason === "rate_limited")).toBe(true);
+    expect(backup.created).toEqual([]);
+  });
+
   it("网络层错误不让整轮 reject：TendResult 照常返回，剩余名额继续尝试，且不换通道", async () => {
     // I1：五处 fetcher.fetch 任何一处 reject 此前都会穿透 mintOne → tendOnce 整轮
     // reject，剩余名额作废、TendResult（P3 面板要展示的数据）也拿不到。

@@ -36,7 +36,10 @@ function agnesStub(plan: {
   };
 }
 
-const BASE = { tokenName: "auto", codeTimeoutMs: 5000, maxDomainAttempts: 8, rand: () => 0.5 };
+const BASE = {
+  tokenName: "auto", codeTimeoutMs: 5000, maxDomainAttempts: 8,
+  sleep: async () => {}, rand: () => 0.5,
+};
 
 describe("mintOne", () => {
   it("顺利时返回 key", async () => {
@@ -103,6 +106,43 @@ describe("mintOne", () => {
     const { agnes } = agnesStub({ sendCode: () => 400 });
     expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "domain_blocked_all" });
     expect(provider.created).toHaveLength(1);
+  });
+
+  // === M2：限流（403）与上游宕机（其他非 2xx）的退避不同 ===
+
+  it("发验证码遇 403（限流）时先退避再换域名，后续域名仍能成功铸出 key", async () => {
+    const provider = new FakeMailProvider({ domains: ["first.test", "second.test"] });
+    const slept: number[] = [];
+    const { agnes } = agnesStub({
+      sendCode: (email) => (email.endsWith("@first.test") ? 403 : 200),
+      login: "tok", key: "sk-ok",
+    });
+    const out = await mintOne({
+      provider, agnes, ...BASE, sleep: async (ms: number) => { slept.push(ms); },
+    });
+    expect(out).toEqual({ ok: true, key: "sk-ok" });
+    // 限流之后必须真的等一下——既有生产实现同款的 5 秒退避。
+    expect(slept).toEqual([5000]);
+  });
+
+  it("所有域名都遇 403 时返回 rate_limited，而不是 domain_blocked_all/upstream_error", async () => {
+    const provider = new FakeMailProvider({ domains: ["x.test", "y.test"] });
+    const slept: number[] = [];
+    const { agnes } = agnesStub({ sendCode: () => 403 });
+    const out = await mintOne({
+      provider, agnes, ...BASE, sleep: async (ms: number) => { slept.push(ms); },
+    });
+    expect(out).toEqual({ ok: false, reason: "rate_limited" });
+    expect(slept).toEqual([5000, 5000]);
+  });
+
+  it("403 与 500 混杂时归为 upstream_error（宕机的归因优先于限流）", async () => {
+    // 限流可以"等一下再来"，宕机必须整轮中止；两者同时出现时按更严重的那个归因。
+    const provider = new FakeMailProvider({ domains: ["limited.test", "down.test"] });
+    const { agnes } = agnesStub({
+      sendCode: (email) => (email.endsWith("@limited.test") ? 403 : 500),
+    });
+    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "upstream_error" });
   });
 
   it("最多只试 maxDomainAttempts 个域名", async () => {
