@@ -1,0 +1,42 @@
+name: Deploy Worker
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  # GitHub Actions 的 secrets 上下文不能直接用在 if: 条件里，只能先在一个 run 步骤中
+  # 判断、写入 step output，再让下游 job 用该 output 做条件——这是官方推荐的写法。
+  check-secret:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: 检查是否已配置 CLOUDFLARE_API_TOKEN
+        id: check
+        env:
+          # 经 env 传递而非直接拼进脚本体，避免密钥内容被当作 shell 语法解释。
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [[ -n "$CF_TOKEN" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::仓库未配置 secret CLOUDFLARE_API_TOKEN，本次跳过 Cloudflare Worker 自动部署（不影响 Docker 镜像发布）。如需启用：Settings → Secrets and variables → Actions 添加该 secret 后，重新推送 tag 或手动运行本工作流（workflow_dispatch）。"
+          fi
+
+  deploy:
+    needs: check-secret
+    if: needs.check-secret.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: deploy
