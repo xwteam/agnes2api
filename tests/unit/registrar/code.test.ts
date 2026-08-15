@@ -171,6 +171,40 @@ describe("extractCode", () => {
     expect(Date.now() - started).toBeLessThan(400);
   });
 
+  // === 快路径的上界必须够真实模板用，超界的后果是**错码**不是 null ===
+  //
+  // 快路径失配后会落到兜底的「全文第一个六位数」，所以下面每条载荷都在验证码**之前**
+  // 放了一个干扰六位数（订单号 998877）。没有这个干扰项的话，超界与不超界都会返回
+  // 143770（前者靠兜底、后者靠快路径），就是一条「谁赢都通过」的假阳性。
+
+  it("长内联 style 的验证码元素（属性段 >200 <400）取到真码而不是前面的订单号", () => {
+    // 很普通的营销模板形态：一个 style 里放长 font-family 列表 + 字号 + 颜色 +
+    // 字距 + 内边距，属性段轻松超过 200。实测把上界从 400 收回 200 时，这条返回的
+    // 是 998877——不是 null，是一个看起来完全合理的错码，会被当验证码提交上去。
+    const body = '<p>Order 998877</p>'
+      + '<div class="verification-code" style="font-family:-apple-system,BlinkMacSystemFont,'
+      + "'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB',sans-serif;"
+      + 'font-size:32px;line-height:1.4;color:#333333;letter-spacing:4px;padding:16px 0;'
+      + 'text-align:center">143770</div>';
+    const attrs = body.indexOf(">", body.indexOf("verification-code"))
+      - (body.indexOf('"', body.indexOf("class=") + 7) + 1);
+    // 夹在两个上界之间，这条才同时守住「200 不够」和「不必放到 800」。
+    expect(attrs).toBeGreaterThan(200);
+    expect(attrs).toBeLessThan(400);
+    expect(extractCode("Your Agnes Platform Verification Code", body)).toBe("143770");
+  });
+
+  it("格式化过的模板（换行 + 缩进空白）也取到真码而不是前面的订单号", () => {
+    // `>` 与验证码之间的排版空白：真实 Agnes 模板是 `>143770<`（零空白），但格式化
+    // 过的模板是换行 + 缩进。实测「换行 + 12 空格」在 `\\s{0,8}` 下就会失配并返回
+    // 998877——这正是「别不加论证就随手定一个小上界」的第二个例子。
+    const body = '<p>Order 998877</p>\n'
+      + '        <div class="verification-code">\n'
+      + '            143770\n'
+      + '        </div>';
+    expect(extractCode("Your Agnes Platform Verification Code", body)).toBe("143770");
+  });
+
   it("D3 上限内的数字串不受影响（成对用例，防止把正常的码也一起丢掉）", () => {
     // 与上一条对照：同样以数字收尾，但没发生截断，就必须照常取到。
     const body = `${"x".repeat(100)}验证码 654321`;
