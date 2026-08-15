@@ -124,4 +124,47 @@ describe("dispatch", () => {
     });
     expect((await repo.all())[0]!.strikes).toBe(0);
   });
+
+  it("fetch 抛普通异常时记 strike 并换下一把 key 重试成功", async () => {
+    const repo = await makeRepo(["k1", "k2"]);
+    const f = new FakeFetcher([{ throws: new Error("boom") }, { status: 200, body: "{}" }]);
+    const res = await dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: f, config: { ...CONFIG, maxStrikes: 1 }, now: () => 1000 },
+    });
+    expect(res.status).toBe(200);
+    expect(f.usedKeys).toEqual(["k1", "k2"]);
+    const k1 = (await repo.all()).find((r) => r.key === "k1")!;
+    expect(k1.strikes).toBe(1);
+    expect(k1.evicted).toBe(true);
+    expect(k1.evictedReason).toBe("network error");
+  });
+
+  it("fetch 抛 AbortError（超时）时同样记 strike 并换下一把", async () => {
+    const repo = await makeRepo(["k1", "k2"]);
+    const abortErr = new Error("aborted");
+    abortErr.name = "AbortError";
+    const f = new FakeFetcher([{ throws: abortErr }, { status: 200, body: "{}" }]);
+    const res = await dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: f, config: { ...CONFIG, maxStrikes: 1 }, now: () => 1000 },
+    });
+    expect(res.status).toBe(200);
+    expect(f.usedKeys).toEqual(["k1", "k2"]);
+    const k1 = (await repo.all()).find((r) => r.key === "k1")!;
+    expect(k1.strikes).toBe(1);
+    expect(k1.evicted).toBe(true);
+    expect(k1.evictedReason).toBe("timeout");
+  });
+
+  it("所有 key 都抛错时返回 503（当前实现落到 all_cooling，因为 catch 分支不写 lastError）", async () => {
+    const repo = await makeRepo(["k1", "k2"]);
+    const f = new FakeFetcher([{ throws: new Error("e1") }, { throws: new Error("e2") }]);
+    const res = await dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: f, config: CONFIG, now: () => 1000 },
+    });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: { reason: "all_cooling" } });
+  });
 });
