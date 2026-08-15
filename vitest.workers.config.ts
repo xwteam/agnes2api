@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.toml" },
+      miniflare: { kvNamespaces: ["POOL"] },
     }),
   ],
   test: {

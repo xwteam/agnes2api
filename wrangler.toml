@@ -5,3 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [observability]
 enabled = true
+
+[[kv_namespaces]]
+binding = "POOL"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
