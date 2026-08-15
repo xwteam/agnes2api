@@ -13,7 +13,8 @@ export type MintOutcome =
         | "register_failed"
         | "login_failed"
         | "key_failed"
-        | "provider_error";
+        | "provider_error"
+        | "network_error";
     };
 
 export interface MintDeps {
@@ -101,6 +102,15 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
 
       // 账号密码到此为止，不返回也不持久化（设计文档 §4.3）。
       return { ok: true, key };
+    } catch (err) {
+      // 上面五处 `fetcher.fetch`（发码、轮询、注册、登录、建 key）任何一处 reject
+      // ——`NativeFetcher` 就是裸 `fetch`，DNS 失败 / TCP reset / TLS 错误都 reject
+      // ——此前会直接穿透 mintOne，让 tendOnce 整轮 reject：剩余名额全部作废，
+      // `TendResult` 也拿不到（P3 面板要展示的就是它）。而单次铸 key 光轮询验证码
+      // 就要打约 40 次请求，120 秒窗口内撞一次瞬时网络错误是常态，不该是"整轮报废"
+      // 级别的事件。收敛成一个 reason 交回给 tender，由它决定怎么退避。
+      console.warn(`[agnes2api] 铸 key 过程中出现网络层错误，本次作废：${domain}`, err);
+      return { ok: false, reason: "network_error" };
     } finally {
       // 用完即删：YYDS 免费档最多同时存在 15 个邮箱，中途任何一步失败都必须把
       // 临时邮箱删掉，否则很快就申请不到新邮箱。deleteMailbox 按端口契约本就

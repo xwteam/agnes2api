@@ -186,6 +186,51 @@ describe("mintOne", () => {
     await expect(mintOne({ provider, agnes, ...BASE })).resolves.toEqual({ ok: true, key: "sk-ok" });
   });
 
+  // === I1：网络层错误不再穿透整轮 ===
+
+  it("注册链路中途 fetch 抛错（网络层）时返回 network_error，而不是让异常穿透出去", async () => {
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const agnes = {
+      platformUrl: "https://platform.test",
+      fetcher: {
+        async fetch(url: string) {
+          // 发验证码正常，登录这一步撞上 TCP reset —— NativeFetcher 是裸 fetch，
+          // 这类错误是 reject 而不是非 2xx。
+          if (url.includes("/api/user/login")) throw new Error("ECONNRESET");
+          return new Response("{}", { status: 200 });
+        },
+      },
+    };
+    await expect(mintOne({ provider, agnes, ...BASE })).resolves.toEqual({
+      ok: false, reason: "network_error",
+    });
+    // 网络错误也要走 finally 的清理，否则邮箱就漏了。
+    expect(provider.deleted).toEqual(provider.created);
+    expect(provider.deleted).toHaveLength(1);
+  });
+
+  it("发验证码这一步 fetch 抛错时同样收敛成 network_error", async () => {
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const agnes = {
+      platformUrl: "https://platform.test",
+      fetcher: { async fetch(): Promise<Response> { throw new Error("EAI_AGAIN"); } },
+    };
+    await expect(mintOne({ provider, agnes, ...BASE })).resolves.toEqual({
+      ok: false, reason: "network_error",
+    });
+    expect(provider.deleted).toHaveLength(1);
+  });
+
+  it("轮询验证码抛错（邮箱侧网络错误）时也是 network_error，不穿透", async () => {
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    provider.pollCode = async () => { throw new Error("socket hang up"); };
+    const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
+    await expect(mintOne({ provider, agnes, ...BASE })).resolves.toEqual({
+      ok: false, reason: "network_error",
+    });
+    expect(provider.deleted).toHaveLength(1);
+  });
+
   it("不传 rand 时按 Math.random 兜底也能正常出 key", async () => {
     const provider = new FakeMailProvider({ domains: ["only.test"] });
     const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });

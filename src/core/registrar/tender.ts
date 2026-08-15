@@ -111,6 +111,13 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
           // 情况降级到备通道。
           tryFallback = true;
           break;
+        case "network_error":
+          // 瞬时网络错误（DNS / TCP reset / TLS）：既不能断定这条通道坏了——它可能
+          // 出在 Agnes 那五个请求里的任何一个，换通道打的还是同一个后端——也不足以
+          // 判定上游整体故障而中止整轮。按设计 §7「一轮内单次失败不中断整轮」处理：
+          // 本次作废，下一次尝试前本就有 mintDelay 的随机间隔。真正的通道级归因
+          // 已经由 listDomains / createMailbox 那两条路径（provider_error）覆盖。
+          break;
         case "domain_blocked_all":
         case "code_timeout":
         case "register_failed":

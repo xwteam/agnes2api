@@ -178,6 +178,30 @@ describe("tendOnce", () => {
     expect(out.failures[0]!.reason).toBe("provider_error");
   });
 
+  it("网络层错误不让整轮 reject：TendResult 照常返回，剩余名额继续尝试，且不换通道", async () => {
+    // I1：五处 fetcher.fetch 任何一处 reject 此前都会穿透 mintOne → tendOnce 整轮
+    // reject，剩余名额作废、TendResult（P3 面板要展示的数据）也拿不到。
+    const provider = new FakeMailProvider({ domains: ["x.test"] });
+    const backup = new FakeMailProvider();
+    const { repo, deps } = await makeDeps({ targetKeys: 3, fallback: "moemail" }, provider);
+    deps.providers = { yyds: provider, moemail: backup };
+    deps.agnes = {
+      platformUrl: "https://platform.test",
+      fetcher: { async fetch(): Promise<Response> { throw new Error("ECONNRESET"); } },
+    };
+    const out = await tendOnce(deps);
+    expect(out.attempted).toBe(3);
+    expect(out.minted).toBe(0);
+    expect(out.failures).toEqual([
+      { reason: "network_error", channel: "yyds" },
+      { reason: "network_error", channel: "yyds" },
+      { reason: "network_error", channel: "yyds" },
+    ]);
+    // 打的是同一个 Agnes 后端，换邮箱通道没有意义：备通道一次都不该被调用。
+    expect(backup.created).toEqual([]);
+    expect(await repo.all()).toHaveLength(0);
+  });
+
   it("顺序铸 key，不并发：每一次的建邮箱/删邮箱必须成对完成才能进入下一次", async () => {
     // 守护「顺序执行不并发」这条业务硬约束：如果实现改成 Promise.all，三次
     // mintOne 的 createMailbox 会在任何一次的 deleteMailbox 之前就抢跑，
