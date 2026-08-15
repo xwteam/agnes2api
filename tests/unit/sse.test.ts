@@ -40,6 +40,16 @@ describe("parseSseStream", () => {
     const s = streamOf(': ping\n\ndata: {"a":1}\n\n');
     expect(await collect(parseSseStream(s))).toEqual(['{"a":1}']);
   });
+
+  it("流结尾没有收尾的空行也要产出最后一个事件", async () => {
+    const s = streamOf('data: {"a":1}\n\ndata: {"a":2}');
+    expect(await collect(parseSseStream(s))).toEqual(['{"a":1}', '{"a":2}']);
+  });
+
+  it("流结尾只有单个换行也要产出最后一个事件", async () => {
+    const s = streamOf('data: {"a":1}\n\ndata: {"a":2}\n');
+    expect(await collect(parseSseStream(s))).toEqual(['{"a":1}', '{"a":2}']);
+  });
 });
 
 describe("sseEvent", () => {

@@ -1,3 +1,14 @@
+function extractPayloads(block: string): { payloads: string[]; done: boolean } {
+  const payloads: string[] = [];
+  for (const line of block.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (payload === "[DONE]") return { payloads, done: true };
+    if (payload) payloads.push(payload);
+  }
+  return { payloads, done: false };
+}
+
 export async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -12,14 +23,18 @@ export async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncGe
     while ((idx = buf.indexOf("\n\n")) !== -1) {
       const block = buf.slice(0, idx);
       buf = buf.slice(idx + 2);
-      for (const line of block.split("\n")) {
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (payload === "[DONE]") return;
-        if (payload) yield payload;
-      }
+      const found = extractPayloads(block);
+      for (const p of found.payloads) yield p;
+      if (found.done) return;
     }
   }
+
+  // 流可能不以完整的空行结尾结束（连接中断、非 [DONE] 式终止、代理截断
+  // 都可能发生）。flush 解码器里滞留的字节，把缓冲区剩下的内容当作最后
+  // 一个（可能不完整）块处理，否则最后一个事件会被静默丢弃。
+  buf += decoder.decode();
+  const tail = extractPayloads(buf);
+  for (const p of tail.payloads) yield p;
 }
 
 export function sseEvent(event: string | null, data: unknown): string {

@@ -1,6 +1,6 @@
 import type { Fetcher } from "../../src/ports/fetcher.js";
 
-type Outcome = { status: number; body?: string } | { throws: Error };
+type Outcome = { status: number; body?: string; headers?: Record<string, string> } | { throws: Error };
 
 export class FakeFetcher implements Fetcher {
   readonly usedKeys: string[] = [];
@@ -13,6 +13,6 @@ export class FakeFetcher implements Fetcher {
     this.usedKeys.push(auth.replace(/^Bearer /, ""));
     const o = this.outcomes[this.i++] ?? { status: 200, body: "{}" };
     if ("throws" in o) throw o.throws;
-    return new Response(o.body ?? "{}", { status: o.status });
+    return new Response(o.body ?? "{}", { status: o.status, headers: o.headers });
   }
 }

@@ -45,4 +45,18 @@ describe("POST /v1/chat/completions", () => {
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     expect(await res.text()).toContain('"content":"a"');
   });
+
+  it("流式请求补 Content-Type 时保留上游其余响应头", async () => {
+    const sse = 'data: {"choices":[{"delta":{"content":"a"}}]}\n\ndata: [DONE]\n\n';
+    const { app } = await makeApp([
+      { status: 200, body: sse, headers: { "x-request-id": "req-123" } },
+    ]);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: "Bearer t", "content-type": "application/json" },
+      body: JSON.stringify({ model: "agnes-2.0-flash", stream: true, messages: [] }),
+    });
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    expect(res.headers.get("x-request-id")).toBe("req-123");
+  });
 });
