@@ -139,6 +139,18 @@ Anthropic Messages プロトコルです。リクエスト内の `system` と配
 `content` は上流へ転送する前にフラット化され、応答は Anthropic の
 content block 構造に変換されます。
 
+`content`（または `system`）配列に内部のプレーンテキスト形式へ変換できないブロック——
+`text` 以外の型、例えば `image`、`tool_use`、`tool_result`——が含まれている場合、ゲート
+ウェイは上流へ転送する前に `400` を返します。以前のバージョンのようにそのブロックを
+黙って捨てることはありません。
+
+```json
+{ "error": { "type": "invalid_request_error", "message": "不支持的内容块类型: image（本网关仅支持 text）" } }
+```
+
+`message` 中のブロック型は実際に受け取った値に置き換わります。メッセージ文字列自体は
+前述のとおり中国語のみです。
+
 ```bash
 curl -X POST http://localhost:8080/v1/messages \
   -H "x-api-key: your-gateway-token" \

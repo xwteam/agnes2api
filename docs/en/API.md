@@ -131,6 +131,18 @@ OpenAI-style `data: {...}` chunks, terminated by `data: [DONE]`.
 Anthropic Messages protocol. `system` and array-form `content` blocks are flattened before
 being forwarded upstream; the response is converted into Anthropic's content-block shape.
 
+If the `content` (or `system`) array contains a block that can't be mapped to the gateway's
+internal plain-text format — any non-`text` type, e.g. `image`, `tool_use`, `tool_result` —
+the gateway returns `400` before forwarding anything upstream, instead of silently dropping
+the block as earlier versions did:
+
+```json
+{ "error": { "type": "invalid_request_error", "message": "不支持的内容块类型: image（本网关仅支持 text）" } }
+```
+
+The block type in `message` is substituted with whatever value was actually received; the
+message text itself is Chinese-only, per the note above.
+
 ```bash
 curl -X POST http://localhost:8080/v1/messages \
   -H "x-api-key: your-gateway-token" \

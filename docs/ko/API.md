@@ -137,6 +137,18 @@ Anthropic Messages 프로토콜입니다. 요청의 `system`과 배열 형태의
 업스트림으로 전달되기 전에 평탄화되며, 응답은 Anthropic의 content block
 구조로 변환됩니다.
 
+`content`(또는 `system`) 배열에 내부 일반 텍스트 형식으로 변환할 수 없는 블록——`text`가
+아닌 타입, 예: `image`, `tool_use`, `tool_result`——이 포함되어 있으면, 게이트웨이는
+업스트림으로 전달하기 전에 `400`을 반환합니다. 이전 버전처럼 해당 블록을 조용히
+버리지 않습니다.
+
+```json
+{ "error": { "type": "invalid_request_error", "message": "不支持的内容块类型: image（本网关仅支持 text）" } }
+```
+
+`message`의 블록 타입은 실제로 받은 값으로 대체됩니다. 메시지 문자열 자체는 위에서
+설명한 대로 중국어로만 제공됩니다.
+
 ```bash
 curl -X POST http://localhost:8080/v1/messages \
   -H "x-api-key: your-gateway-token" \

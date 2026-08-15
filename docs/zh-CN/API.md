@@ -123,6 +123,16 @@ OpenAI 风格 `data: {...}` 分片，以 `data: [DONE]` 结束。
 Anthropic Messages 协议。请求体中的 `system` 与数组形态的 `content` 会在转发上游前被
 压平；响应会被转换为 Anthropic 的 content block 结构。
 
+若 `content`（或 `system`）数组里出现无法映射到内部纯文本格式的块——任何非 `text` 类型，
+例如 `image`、`tool_use`、`tool_result`——网关会在转发上游前直接返回 `400`，而不是像早期
+版本那样静默丢弃该块：
+
+```json
+{ "error": { "type": "invalid_request_error", "message": "不支持的内容块类型: image（本网关仅支持 text）" } }
+```
+
+`message` 中的块类型会替换成实际收到的值。
+
 ```bash
 curl -X POST http://localhost:8080/v1/messages \
   -H "x-api-key: your-gateway-token" \

@@ -126,6 +126,16 @@ OpenAI 風格 `data: {...}` 分片，以 `data: [DONE]` 結束。
 Anthropic Messages 協議。請求內的 `system` 與陣列形式的 `content` 會在轉發上游前被
 壓平；回應會轉換為 Anthropic 的 content block 結構。
 
+若 `content`（或 `system`）陣列裡出現無法映射到內部純文字格式的區塊——任何非 `text` 型別，
+例如 `image`、`tool_use`、`tool_result`——閘道會在轉發上游前直接回傳 `400`，而不是像早期
+版本那樣靜默丟棄該區塊：
+
+```json
+{ "error": { "type": "invalid_request_error", "message": "不支持的内容块类型: image（本网关仅支持 text）" } }
+```
+
+`message` 中的區塊型別會替換成實際收到的值。
+
 ```bash
 curl -X POST http://localhost:8080/v1/messages \
   -H "x-api-key: your-gateway-token" \
