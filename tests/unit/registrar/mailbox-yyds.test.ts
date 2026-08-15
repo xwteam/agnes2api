@@ -26,13 +26,25 @@ describe("YydsProvider", () => {
     expect(await p.listDomains()).toEqual(["a.test", "b.test"]);
   });
 
-  it("createMailbox 带 X-API-Key 并返回 data.address", async () => {
-    const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { data: { address: "u1@a.test" } } }));
+  it("RM1 createMailbox 的 handle 取 data.id 而不是 data.address", async () => {
+    // 真机契约：收信要 address（`/v1/messages?address=`），删除要 id
+    // （`/v1/accounts/{id}`），两个接口用的键不一样。fixture 里 address 与 id
+    // **必须取不同的值**，否则这条就是「谁赢都通过」的假阳性。
+    const { calls, fetcher } = stubFetcher(() => ({
+      status: 200, body: { data: { address: "u1@a.test", id: "acct-42" } },
+    }));
     const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
     const m = await p.createMailbox("a.test");
-    expect(m).toEqual({ address: "u1@a.test", handle: "u1@a.test" });
+    expect(m).toEqual({ address: "u1@a.test", handle: "acct-42" });
     expect(new Headers(calls[0]!.init.headers).get("x-api-key")).toBe("k");
     expect(JSON.parse(calls[0]!.init.body as string).domain).toBe("a.test");
+  });
+
+  it("RM1 createMailbox 响应有 address 但缺 id 时抛错（缺 id 等于删不掉）", async () => {
+    // 与上一条成对：只校验 address 的实现会让 handle 落成 undefined，删邮箱 100% 打空。
+    const { fetcher } = stubFetcher(() => ({ status: 200, body: { data: { address: "u1@a.test" } } }));
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    await expect(p.createMailbox("a.test")).rejects.toThrow(/data\.id/);
   });
 
   it("pollCode 逐封拉详情并优先用 verificationCode 字段", async () => {
@@ -212,7 +224,7 @@ describe("YydsProvider", () => {
   });
 
   it("④ createMailbox 用注入的 rand 生成确定的 localPart 并放进请求体", async () => {
-    const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { data: { address: "fixed@a.test" } } }));
+    const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { data: { address: "fixed@a.test", id: "acct-fixed" } } }));
     // rand 恒定返回 0 -> 字母表第 0 位 'a'，循环 10 次生成 "aaaaaaaaaa"，加前缀 "u" 共 11 位。
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
@@ -279,7 +291,7 @@ describe("YydsProvider", () => {
       if (url.includes("/v1/messages/")) return { status: 200, body: { data: { verificationCode: "654321" } } };
       if (url.includes("/v1/messages")) return { status: 200, body: { data: { messages: [{ id: "m1" }] } } };
       if (url.includes("/v1/domains")) return { status: 200, body: { data: [{ domain: "a.test" }] } };
-      return { status: 200, body: { data: { address: "u1@a.test" } } };
+      return { status: 200, body: { data: { address: "u1@a.test", id: "acct-42" } } };
     });
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
@@ -358,12 +370,32 @@ describe("YydsProvider", () => {
     await expect(p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 9000)).resolves.toBeNull();
   });
 
-  it("deleteMailbox 发出的是 DELETE 到 /v1/accounts/<handle> 并带 X-API-Key", async () => {
+  it("RM1 deleteMailbox 打在 /v1/accounts/<id> 上（不是 address）", async () => {
+    // address 与 handle(id) 取不同的值，两条路径不再殊途同归：实现若沿用
+    // `/v1/accounts/{address}`（真机实测恒 404），这条会红。
     const { calls, fetcher } = stubFetcher(() => ({ status: 200 }));
     const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
-    await p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" });
+    await p.deleteMailbox({ address: "u1@a.test", handle: "acct-42" });
     expect(calls[0]!.init.method).toBe("DELETE");
-    expect(calls[0]!.url).toBe("https://y.test/v1/accounts/u1%40a.test");
+    expect(calls[0]!.url).toBe("https://y.test/v1/accounts/acct-42");
     expect(new Headers(calls[0]!.init.headers).get("x-api-key")).toBe("k");
+  });
+
+  it("RM1 pollCode 的 address= 带的是 address（不是 id），列表与详情两处都是", async () => {
+    // 真机实测：`GET /v1/messages?address={id}` 返回 404 inbox_not_found。
+    // 这里 address 与 handle 取不同值，实现若沿用 mailbox.handle 就会红。
+    let t = 0;
+    const { calls, fetcher } = stubFetcher((url) => {
+      if (url.includes("/v1/messages/")) return { status: 200, body: { data: { verificationCode: "654321" } } };
+      return { status: 200, body: { data: { messages: [{ id: "m1" }] } } };
+    });
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
+    expect(await p.pollCode({ address: "u1@a.test", handle: "acct-42" }, 5000)).toBe("654321");
+    expect(calls[0]!.url).toBe("https://y.test/v1/messages?address=u1%40a.test");
+    expect(calls[1]!.url).toBe("https://y.test/v1/messages/m1?address=u1%40a.test");
+    expect(calls.every((c) => !c.url.includes("acct-42"))).toBe(true);
   });
 });

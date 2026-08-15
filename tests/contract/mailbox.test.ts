@@ -19,7 +19,7 @@ function yydsUpstream() {
       return new Response(JSON.stringify({ data: [{ domain: "a.test" }] }), { status: 200 });
     }
     if (url.includes("/v1/accounts") && init.method === "POST") {
-      return new Response(JSON.stringify({ data: { address: "u@a.test" } }), { status: 200 });
+      return new Response(JSON.stringify({ data: { address: "u@a.test", id: "acct-u" } }), { status: 200 });
     }
     if (url.includes("/v1/messages/")) {
       return new Response(JSON.stringify({ data: { verificationCode: "424242" } }), { status: 200 });
@@ -157,7 +157,7 @@ runPollResilienceContract(
   "YydsProvider",
   (fetch, clock) => new YydsProvider({ fetcher: { fetch }, baseUrl: "https://y.test", apiKey: "k", ...clock }),
   yydsFlakyListUpstream,
-  { address: "u1@a.test", handle: "u1@a.test" },
+  { address: "u1@a.test", handle: "acct-u1" },
 );
 
 runPollResilienceContract(
@@ -195,7 +195,7 @@ function runDeleteFailureContract(
 runDeleteFailureContract(
   "YydsProvider",
   (fetch) => new YydsProvider({ fetcher: { fetch }, baseUrl: "https://y.test", apiKey: "k", ...makeClock() }),
-  { address: "u1@a.test", handle: "u1@a.test" },
+  { address: "u1@a.test", handle: "acct-u1" },
 );
 
 runDeleteFailureContract(

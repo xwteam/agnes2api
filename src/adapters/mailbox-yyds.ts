@@ -56,30 +56,37 @@ export class YydsProvider implements MailProvider {
     });
     if (!r.ok) throw new Error(`YYDS 建邮箱失败: HTTP ${r.status}`);
     // 2xx 之后的任何解析失败都意味着同一件事：邮箱**可能已经在上游建出来了**，
-    // 而我们手上没有 handle，于是它永远删不掉。YYDS 侧没有 TTL，这种泄漏会永久
-    // 占用活跃邮箱配额；`mintOne` 又会接着试下一个域名，单次铸 key 最多漏 8 个、
-    // 单轮最多 40 个，远超 15 个的配额上限。所以抛错之前，用请求时就已知的
-    // `localPart@domain` 兜底删一次——YYDS 正是用地址定位邮箱，这个信息此刻是齐的。
-    let address: unknown;
+    // 而我们手上没有它的 id，于是它删不掉。所以抛错之前用请求时就已知的
+    // `localPart@domain` 兜底删一次。
+    let data: Record<string, any> | null = null;
     try {
-      address = ((await r.json()) as Record<string, any>)?.data?.address;
+      data = ((await r.json()) as Record<string, any>)?.data ?? null;
     } catch {
-      address = undefined;
+      data = null;
     }
-    if (typeof address !== "string" || address.length === 0) {
+    const address = data?.address;
+    const id = data?.id;
+    // id 与 address 都要校验：**两个接口用的键不一样**（见下面 return 处的注释），
+    // 少任何一个都会让后续调用 100% 打空。
+    if (typeof address !== "string" || address.length === 0
+      || typeof id !== "string" || id.length === 0) {
       const guessed = `${lp}@${domain}`;
       await this.deleteMailbox({ address: guessed, handle: guessed });
-      throw new Error(`YYDS 建邮箱响应无法解析或缺少 data.address（已按 ${guessed} 兜底删除）`);
+      throw new Error(`YYDS 建邮箱响应无法解析或缺少 data.address / data.id（已按 ${guessed} 兜底删除）`);
     }
-    // YYDS 用地址本身定位邮箱，故 handle 与 address 相同。
-    return { address, handle: address };
+    // **收信按 address 定位、删除按 id 定位**——真机实测的契约：
+    //   GET    /v1/messages?address={address} → 200，换成 id → 404 inbox_not_found
+    //   DELETE /v1/accounts/{id}              → 204，换成 address → 404 account_not_found
+    // 所以 handle（= 删除用的定位符）必须存 id，收信那两处则显式用 mailbox.address。
+    // 此前 handle 存的是 address，删邮箱因此每次都 404，用完即删从未真正生效。
+    return { address, handle: id };
   }
 
   async pollCode(mailbox: Mailbox, timeoutMs: number): Promise<string | null> {
     const start = this.deps.now();
     const seen = new Set<string>();
     while (this.deps.now() - start < timeoutMs) {
-      const listUrl = `${this.deps.baseUrl}/v1/messages?address=${encodeURIComponent(mailbox.handle)}`;
+      const listUrl = `${this.deps.baseUrl}/v1/messages?address=${encodeURIComponent(mailbox.address)}`;
       // `fetch` 本身 reject（DNS 失败 / TCP reset / TLS 错误，以及单请求超时到点抛出的
       // TimeoutError）与下面已经容忍的「HTTP 非 2xx」「响应体非 JSON」是同一类瞬时故障，
       // 处置必须一致：本轮跳过、继续轮询，只有 timeoutMs 耗尽才收工。此前这里没有
@@ -109,7 +116,7 @@ export class YydsProvider implements MailProvider {
         for (const m of (msgs ?? []) as Array<{ id?: string }>) {
           const id = m?.id;
           if (!id || seen.has(id)) continue;
-          const dUrl = `${this.deps.baseUrl}/v1/messages/${encodeURIComponent(id)}?address=${encodeURIComponent(mailbox.handle)}`;
+          const dUrl = `${this.deps.baseUrl}/v1/messages/${encodeURIComponent(id)}?address=${encodeURIComponent(mailbox.address)}`;
           let dr: Response | null;
           try {
             dr = await this.deps.fetcher.fetch(dUrl, {
