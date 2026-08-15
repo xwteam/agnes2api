@@ -1,0 +1,12 @@
+services:
+  agnes2api:
+    image: ghcr.io/xwteam/agnes2api:latest
+    container_name: agnes2api
+    env_file: .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

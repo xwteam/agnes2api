@@ -9,3 +9,7 @@ enabled = true
 [[kv_namespaces]]
 binding = "POOL"
 id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# GATEWAY_TOKEN 是必填的敏感值，不要写进本文件（会被提交到仓库）。
+# 本地开发：在 .env.example 旁新建 .dev.vars（已 gitignore），写入 GATEWAY_TOKEN=...
+# 生产部署：wrangler secret put GATEWAY_TOKEN

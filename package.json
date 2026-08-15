@@ -2,15 +2,15 @@
   "name": "agnes2api",
   "version": "0.1.0",
   "description": "",
-  "main": "index.js",
   "type": "module",
   "license": "MIT",
+  "packageManager": "pnpm@9.15.4",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "build": "tsc -p tsconfig.build.json",
-    "dev:node": "node --experimental-strip-types src/entry/node.ts",
+    "dev:node": "pnpm build && node dist/entry/node.js",
     "dev:worker": "wrangler dev"
   },
   "keywords": [],
