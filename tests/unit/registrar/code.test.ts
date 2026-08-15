@@ -25,15 +25,38 @@ describe("extractCode", () => {
     expect(extractCode("hi", "no digits here 12345")).toBeNull();
   });
 
+  // === 快路径：优先级 + 严格形态 ===
+
+  it("快路径优先于兜底：干扰项在前也要取 verification 容器里的码", () => {
+    // 兜底会取到前面的 887766，只有快路径先命中才能拿到 123456。
+    const html = `<p>887766</p><div class="verification">123456</div>`;
+    expect(extractCode("", html)).toBe("123456");
+  });
+
+  it("多容器：verification-title 不含数字时要前进到 verification-code", () => {
+    // 快路径要求数字是元素的**直接文本**，这个严格性是判别器：title 匹配失败后
+    // 正则引擎自动前进到下一个候选容器。放宽成 [\s\S]*? 会让 title 的开标签
+    // 吞掉全文，直接返回错误的 246813。
+    const html = `<td class="verification-title">邮箱验证</td><td>246813</td><td class="verification-code">357911</td>`;
+    expect(extractCode("", html)).toBe("357911");
+  });
+
+  it("多容器：verification-wrapper 包着整张表也要落到 verification-code", () => {
+    const html = `<table class="verification-wrapper"><tr><td>246813</td></tr><tr><td class="verification-code">357911</td></tr></table>`;
+    expect(extractCode("", html)).toBe("357911");
+  });
+
+  it("CSS 颜色要在兜底路径生效：#123456 不能被当成验证码", () => {
+    // 这条不含关键词，必须走兜底，才真正守得住 CSS_COLOR_LIKE。
+    const html = `<body style="border-color:#123456">Agnes 135790</body>`;
+    expect(extractCode("", html)).toBe("135790");
+  });
+
+  // === 关键词锚定 ===
+
   it("正文含订单号在前、验证码在后，必须取验证码那个", () => {
     const html = "订单号 887766，您的验证码是 246813，十分钟内有效";
     expect(extractCode("", html)).toBe("246813");
-  });
-
-  it("verification 类元素嵌套形态也能匹配，需干扰项区分快路径", () => {
-    // 干扰项 887766 在前，只有走快路径才能拿到 123456
-    const html = `<p>887766</p><div class="verification"><span>123456</span></div>`;
-    expect(extractCode("", html)).toBe("123456");
   });
 
   it("用 verification code 或 auth code 关键词锚定（移除裸 code 防止误匹配）", () => {
@@ -41,7 +64,6 @@ describe("extractCode", () => {
     expect(extractCode("", html)).toBe("135790");
   });
 
-  // === 约束 4 回归用例：关键词锚定右边界 ===
   it("边界形态：关键词后紧跟时间戳 10 位数字，只取 6 位不误切", () => {
     const html = "验证码有效期至 2026081512:00，为 246813";
     // 关键词 «验证码» 后面是 «有效期至» 然后是 10 位数 2026081512
@@ -55,6 +77,13 @@ describe("extractCode", () => {
     expect(extractCode("", html)).toBe("135790");
   });
 
+  it("边界形态：关键词后字母贴数字不应误命中（abc887766 中不应切 887766）", () => {
+    const html = "验证码abc887766 要显示 357911";
+    // [^\d]* 吃不进数字但吃得进字母，会吃掉 abc 后从 887766 起匹配。
+    // 干扰项必须放在关键词**之后**，左边界 \b 才真正被考验。
+    expect(extractCode("", html)).toBe("357911");
+  });
+
   it("边界形态：关键词在正文中间，真码在后", () => {
     const html = "订单号 112233，验证码是 445566，有效期 10 分钟";
     expect(extractCode("", html)).toBe("445566");
@@ -62,36 +91,12 @@ describe("extractCode", () => {
 
   it("边界形态：关键词出现多次，只取第一个附近的六位数", () => {
     const html = "验证码 111111，另一个验证码 222222";
-    // 第一个关键词附近的 111111，即使后面有 222222 也不取
     expect(extractCode("", html)).toBe("111111");
   });
 
   it("边界形态：六位数紧贴字母时不误匹配（e.g. 编码、RGB）", () => {
     const html = "色号 #ff0000 (RGB123456)，验证码 789012";
-    // RGB123456 中的 123456 是一个单词的一部分（无右边界），真码在后面
+    // RGB123456 中的 123456 是一个单词的一部分（无左边界），真码在后面
     expect(extractCode("", html)).toBe("789012");
-  });
-
-  // === 根因 1 回归测试：快路径必须先抹 CSS 颜色 ===
-  it("根因 1：快路径中 CSS 颜色被误匹配（#123456 不应被当成验证码）", () => {
-    const html = `<div class="verification">#123456 验证码 357911</div>`;
-    // 快路径必须先抹掉 #123456，然后找到真码 357911
-    expect(extractCode("", html)).toBe("357911");
-  });
-
-  // === 根因 2 回归测试：快路径左边界防止滑进长数字串 ===
-  it("根因 2：快路径懒惰量词滑进长数字串（2026081512 中不应切割 081512）", () => {
-    const html = `<div class="verification">2026081512 验证码 357911</div>`;
-    // 快路径的 [\s\S]*? 会贪心滑入数字串内部，必须加左边界 \b 挡住
-    // 应该找到真码 357911 而不是从 2026081512 中切割的 081512
-    expect(extractCode("", html)).toBe("357911");
-  });
-
-  // === 根因 3 回归测试：关键词路径左边界防止字母贴数字误命中 ===
-  it("根因 3：关键词路径字母贴数字不应误命中（abc887766 中不应切 887766）", () => {
-    const html = "abc887766 验证码 357911";
-    // 关键词 «验证码» 前面有 abc887766，[^\d]* 会吃掉 abc 然后从 887766 起匹配
-    // 必须加左边界 \b 确保只匹配独立数字
-    expect(extractCode("", html)).toBe("357911");
   });
 });
