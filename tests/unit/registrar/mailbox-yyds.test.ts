@@ -36,22 +36,32 @@ describe("YydsProvider", () => {
   });
 
   it("pollCode 逐封拉详情并优先用 verificationCode 字段", async () => {
+    // 递进假时钟而非 noSleep + now:()=>0：被测代码一旦取不到码，后者会陷入微任务
+    // 饥饿式挂起（整个进程卡死、定位不到具体用例），前者只是正常地断言失败。
+    let t = 0;
     const { fetcher } = stubFetcher((url) => {
       if (url.includes("/v1/messages/")) return { status: 200, body: { data: { verificationCode: "654321" } } };
       return { status: 200, body: { data: { messages: [{ id: "m1" }] } } };
     });
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 5000)).toBe("654321");
   });
 
   it("verificationCode 缺失时回退到从正文抠码", async () => {
+    let t = 0;
     const { fetcher } = stubFetcher((url) => {
       if (url.includes("/v1/messages/")) {
         return { status: 200, body: { data: { subject: "验证码", html: "<p>您的验证码 112233</p>" } } };
       }
       return { status: 200, body: { data: { messages: [{ id: "m1" }] } } };
     });
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 5000)).toBe("112233");
   });
 
@@ -76,6 +86,7 @@ describe("YydsProvider", () => {
   // 这条让 detail 同时带 verificationCode 与另一个可抠码的正文，两者不同，
   // 只有真正先看 verificationCode 字段才能通过。
   it("detail 同时含 verificationCode 与可抠码正文时，取 verificationCode 而非正文里的码", async () => {
+    let t = 0;
     const { fetcher } = stubFetcher((url) => {
       if (url.includes("/v1/messages/")) {
         return {
@@ -85,7 +96,10 @@ describe("YydsProvider", () => {
       }
       return { status: 200, body: { data: { messages: [{ id: "m1" }] } } };
     });
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k",
+      sleep: async () => { t += 3000; }, now: () => t,
+    });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 5000)).toBe("654321");
   });
 
