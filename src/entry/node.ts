@@ -32,7 +32,21 @@ export async function main(env: Record<string, string | undefined> = process.env
     console.error("[registrar] 装配补池依赖失败", err);
   }
   if (tendDeps) {
+    // 在途守卫。`setInterval` 不等上一轮 resolve，而单轮最坏耗时
+    //（MINT_BATCH × CODE_TIMEOUT_MS，默认 5×120 秒）轻易就能超过 TEND_INTERVAL_MS，
+    // 于是补池轮次会重叠着跑。这正是「顺序铸、不并发」这条**功能性**约束要防的
+    // 事：并发会同时撞邮箱服务的建号限流与 Agnes 的注册风控。tender 在**轮内**
+    // 严防 Promise.all，轮间的重叠只能在调度接线这一层挡住。
+    let inFlight = false;
+
     const runTend = async () => {
+      if (inFlight) {
+        console.warn(
+          "[registrar] 上一轮补池仍在进行，跳过本次触发（可调大 TEND_INTERVAL_MS 或调小 MINT_BATCH）",
+        );
+        return;
+      }
+      inFlight = true;
       try {
         const r = await tendOnce(tendDeps);
         if (!r.skipped) {
@@ -43,6 +57,8 @@ export async function main(env: Record<string, string | undefined> = process.env
       } catch (err) {
         // 补池失败不该让网关进程崩掉——转发能力与补池能力是相互独立的。
         console.error("[registrar] 补池失败", err);
+      } finally {
+        inFlight = false;
       }
     };
 

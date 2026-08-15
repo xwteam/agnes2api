@@ -129,6 +129,37 @@ describe("registrarFromEnv", () => {
     expect(c.mintDelayMinMs).toBe(3000);
     expect(c.mintDelayMaxMs).toBe(3000);
   });
+
+  // === C4：补池间隔与单轮最坏耗时的交叉校验（只 warn，不抛错） ===
+
+  const ENABLED = { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" };
+
+  it("TEND_INTERVAL_MS 小于 MINT_BATCH×CODE_TIMEOUT_MS 时启动期 warn（轮次会重叠）", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const c = registrarFromEnv(
+      { ...ENABLED, TEND_INTERVAL_MS: "60000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {},
+    );
+    expect(c.enabled).toBe(true); // 只是警告，配置照常生效
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const msg = String(warnSpy.mock.calls[0]?.[0]);
+    expect(msg).toContain("TEND_INTERVAL_MS");
+    expect(msg).toContain("600000"); // 算出来的单轮最坏耗时
+    warnSpy.mockRestore();
+  });
+
+  it("TEND_INTERVAL_MS 足够大时不 warn（成对用例，防止无条件告警）", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    registrarFromEnv({ ...ENABLED, TEND_INTERVAL_MS: "1800000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {});
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("注册机未启用时不做这项告警（关着的子系统不该刷屏）", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    registrarFromEnv({ TEND_INTERVAL_MS: "1000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {});
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
 });
 
 describe("requirePrimary", () => {
