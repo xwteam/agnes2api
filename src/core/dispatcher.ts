@@ -54,8 +54,16 @@ let cursor = 0;
  *
  * 不含 `content-length` / `content-encoding`：响应体在这里被重新包装（fetch 已解压），
  * 沿用上游的这两个头会与实际字节不符。
+ *
+ * 含 `content-disposition`：媒体路由（图片/视频）承诺「上游返回什么就原样转发响应体」，
+ * 剥掉它会导致浏览器端下载丢失文件名。它不带凭据语义，也不像 `content-length` 那样
+ * 可能与重新包装后的实际字节不一致，放行是安全的。
+ *
+ * 不含 `accept-ranges` / `content-range`：两者都是 range 请求的语义，网关目前不支持
+ * range（不解析、不转发 `Range` 请求头），放行只会让客户端以为支持而发起注定失败的
+ * range 请求，属于误导而非帮助。
  */
-const SAFE_RESPONSE_HEADERS = ["content-type", "cache-control", "retry-after"];
+const SAFE_RESPONSE_HEADERS = ["content-type", "cache-control", "retry-after", "content-disposition"];
 
 function safeHeaders(res: Response): Headers {
   const headers = new Headers();

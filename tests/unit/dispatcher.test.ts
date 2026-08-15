@@ -279,6 +279,24 @@ describe("dispatch", () => {
     expect(res.headers.get("content-type")).toBe("application/json");
   });
 
+  it("content-disposition 会被透传（媒体路由下载文件名依赖它），set-cookie 等仍被剥掉", async () => {
+    const repo = await makeRepo(["k1"]);
+    const f = new FakeFetcher([{
+      status: 200, body: "binary-ish",
+      headers: {
+        "content-disposition": 'attachment; filename="video.mp4"',
+        "set-cookie": "sess=upstream", "content-type": "video/mp4",
+      },
+    }]);
+    const res = await dispatch({
+      path: "/videos", body: {}, stream: false,
+      deps: { repo, fetcher: f, config: CONFIG, now: () => 1000 },
+    });
+    expect(res.headers.get("content-disposition")).toBe('attachment; filename="video.mp4"');
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(res.headers.get("content-type")).toBe("video/mp4");
+  });
+
   it("上游 401 的错误体绝不透传给客户端（那是最可能回显 key 片段的地方）", async () => {
     const repo = await makeRepo(["k1"]);
     const leak = '{"error":"invalid api key: sk-live-ABCDEF0123456789"}';
