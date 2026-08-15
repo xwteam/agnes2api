@@ -45,42 +45,44 @@ export function runStorageContract(name: string, make: () => Storage) {
     // 15 轮评审的原因。dispatch 在返回成功响应前就要写回 key 状态，
     // 所以「两个并发请求」在生产里是常态而非边角场景。
 
+    // 用独立前缀（而不是 key:）：workerd 下跑的是真 KV，命名空间在同一个测试文件
+    // 的用例之间是持久的，共用 key: 前缀会与上面那条 list 用例互相污染。
     it("并发写入不同键时每个键都留存", async () => {
       const n = 20;
-      const keys = Array.from({ length: n }, (_, i) => `key:c${i}`);
+      const keys = Array.from({ length: n }, (_, i) => `conc:a${i}`);
       await Promise.all(keys.map((k, i) => s.put(k, { v: i })));
 
       const got = await Promise.all(keys.map((k) => s.get<{ v: number }>(k)));
       expect(got).toEqual(keys.map((_, i) => ({ v: i })));
-      expect((await s.list("key:")).sort()).toEqual([...keys].sort());
+      expect((await s.list("conc:a")).sort()).toEqual([...keys].sort());
     });
 
     it("并发写入同一个键不抛错，最终值是写入过的某一个", async () => {
       const n = 20;
       const results = await Promise.allSettled(
-        Array.from({ length: n }, (_, i) => s.put("key:same", { v: i })),
+        Array.from({ length: n }, (_, i) => s.put("conc:same", { v: i })),
       );
       const rejected = results.filter((r) => r.status === "rejected");
       expect(rejected.map((r) => String((r as PromiseRejectedResult).reason))).toEqual([]);
 
-      const final = await s.get<{ v: number }>("key:same");
+      const final = await s.get<{ v: number }>("conc:same");
       expect(final).not.toBeNull();
       expect(final!.v).toBeGreaterThanOrEqual(0);
       expect(final!.v).toBeLessThan(n);
     });
 
     it("并发的写与删混合执行时，未被删的键不受影响", async () => {
-      await s.put("key:keep", { v: "keep" });
+      await s.put("conc:keep", { v: "keep" });
       const ops: Promise<void>[] = [];
       for (let i = 0; i < 10; i++) {
-        ops.push(s.put(`key:tmp${i}`, { v: i }));
-        ops.push(s.delete(`key:gone${i}`));
+        ops.push(s.put(`conc:tmp${i}`, { v: i }));
+        ops.push(s.delete(`conc:gone${i}`));
       }
       const results = await Promise.allSettled(ops);
       expect(results.filter((r) => r.status === "rejected")).toEqual([]);
 
-      expect(await s.get("key:keep")).toEqual({ v: "keep" });
-      const survivors = (await s.list("key:tmp")).sort();
+      expect(await s.get("conc:keep")).toEqual({ v: "keep" });
+      const survivors = (await s.list("conc:tmp")).sort();
       expect(survivors).toHaveLength(10);
     });
   });
