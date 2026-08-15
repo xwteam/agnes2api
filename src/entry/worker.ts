@@ -1,6 +1,6 @@
 import { buildApp, buildTendDeps } from "../http/wire.js";
 import { KvStorage } from "../adapters/storage-kv.js";
-import { tendOnce } from "../core/registrar/tender.js";
+import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import type { Hono } from "hono";
 
 export interface Env {
@@ -80,6 +80,10 @@ export default {
             console.log(
               `[registrar] 补池完成 available=${r.available} attempted=${r.attempted} minted=${r.minted}`,
             );
+            // 与 Node 入口同一份口径：见 node.ts 里同位置的注释。
+            if (r.minted < r.attempted) {
+              console.warn(`[registrar] 本轮有名额未铸出，归因 reasons=${summarizeFailures(r.failures)}`);
+            }
           }
         } catch (err) {
           console.error("[registrar] 补池失败", err);

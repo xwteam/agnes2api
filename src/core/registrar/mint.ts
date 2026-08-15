@@ -105,18 +105,38 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
         continue;
       }
 
+      // 下面四条 warn 是 M2 的另一半：这四种 reason 此前是**完全静默**返回的，
+      // 运维在日志里只能看到收尾那行 minted=0。四条各自指向完全不同的处置——
+      // 邮件没到（通道/MX）、Agnes 加了人机校验、Agnes 改了登录响应、建 key 接口
+      // 变了——不留痕就只能靠猜。
       const code = await deps.provider.pollCode(mailbox, deps.codeTimeoutMs);
-      if (!code) return { ok: false, reason: "code_timeout" };
+      if (!code) {
+        console.warn(
+          `[registrar] 等待验证码超时，这条邮箱通道收不到 Agnes 的信：${mailbox.address} ` +
+            `codeTimeoutMs=${deps.codeTimeoutMs}`,
+        );
+        return { ok: false, reason: "code_timeout" };
+      }
 
       const password = randomPassword(rand);
       if (!(await register(deps.agnes, mailbox.address, password, code))) {
+        console.warn(`[registrar] Agnes 注册被拒（验证码已正常收到）：${mailbox.address}`);
         return { ok: false, reason: "register_failed" };
       }
       const token = await login(deps.agnes, mailbox.address, password);
-      if (!token) return { ok: false, reason: "login_failed" };
+      if (!token) {
+        console.warn(`[registrar] Agnes 登录未返回令牌（账号已注册成功）：${mailbox.address}`);
+        return { ok: false, reason: "login_failed" };
+      }
 
       const key = await createKey(deps.agnes, token, deps.tokenName);
-      if (!key) return { ok: false, reason: "key_failed" };
+      if (!key) {
+        console.warn(
+          `[registrar] Agnes 建 key 未返回 key（注册与登录都成功）：${mailbox.address} ` +
+            `tokenName=${deps.tokenName}`,
+        );
+        return { ok: false, reason: "key_failed" };
+      }
 
       // 账号密码到此为止，不返回也不持久化（设计文档 §4.3）。
       return { ok: true, key };

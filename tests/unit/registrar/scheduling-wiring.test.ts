@@ -272,6 +272,80 @@ describe("I4 Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）
   });
 });
 
+describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
+  // failures 此前从未被任何一处代码引用（全仓 grep 只命中 tender.ts 自身），
+  // 于是「Agnes 加了人机校验」「备通道凭据没配」这类持续性故障在生产里唯一的
+  // 信号就是一行 minted=0。两个入口必须给出同一份口径。
+  //
+  // fixture 刻意用**两种不同的 reason + 两条不同的通道**，且各自次数不同（3 vs 1）：
+  // 只打第一条、只打通道、只打 reason、丢掉计数，任何一种偷工都会被抓出来。
+  const FAILED: TendResult = {
+    skipped: false, available: 0, attempted: 4, minted: 0,
+    failures: [
+      { reason: "register_failed", channel: "yyds" },
+      { reason: "register_failed", channel: "yyds" },
+      { reason: "register_failed", channel: "yyds" },
+      { reason: "code_timeout", channel: "moemail" },
+    ],
+  };
+
+  function reasonsLine(warnSpy: { mock: { calls: unknown[][] } }): string | undefined {
+    return warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("reasons="));
+  }
+
+  it("Node 侧：minted < attempted 时 warn 出聚合归因", async () => {
+    tendOnceMock.mockResolvedValue(FAILED);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const server = await main(nodeEnv());
+    try {
+      await waitFor(() => reasonsLine(warnSpy) !== undefined);
+      const line = reasonsLine(warnSpy)!;
+      expect(line).toContain("yyds:register_failed×3");
+      expect(line).toContain("moemail:code_timeout×1");
+    } finally {
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
+      await close(server);
+    }
+  });
+
+  it("Worker 侧：minted < attempted 时 warn 出同一份聚合归因", async () => {
+    tendOnceMock.mockResolvedValue(FAILED);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { ctx, waited } = fakeCtx();
+    try {
+      await worker.scheduled!(controller(), workerEnv(), ctx);
+      await waited[0];
+      const line = reasonsLine(warnSpy);
+      expect(line).toBeDefined();
+      expect(line).toContain("yyds:register_failed×3");
+      expect(line).toContain("moemail:code_timeout×1");
+    } finally {
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
+  it("名额全部铸出时不打这条 warn（不是无条件噪音）", async () => {
+    tendOnceMock.mockResolvedValue({
+      skipped: false, available: 0, attempted: 2, minted: 2, failures: [],
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { ctx, waited } = fakeCtx();
+    try {
+      await worker.scheduled!(controller(), workerEnv(), ctx);
+      await waited[0];
+      expect(reasonsLine(warnSpy)).toBeUndefined();
+    } finally {
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+});
+
 describe("C4 补池轮次不可并发重入", () => {
   it("Node 侧：上一轮还没结束时，定时器再次到点会被跳过并留痕", async () => {
     const gate = deferred();

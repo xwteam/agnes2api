@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { buildApp, buildTendDeps } from "../http/wire.js";
 import { loadConfig } from "../core/config.js";
 import { FileStorage } from "../adapters/storage-file.js";
-import { tendOnce } from "../core/registrar/tender.js";
+import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import type { TendDeps } from "../core/registrar/tender.js";
 
 /**
@@ -62,6 +62,11 @@ export async function main(env: Record<string, string | undefined> = process.env
           console.log(
             `[registrar] 补池完成 available=${r.available} attempted=${r.attempted} minted=${r.minted}`,
           );
+          // 有名额没铸出来时把归因也打出来：只看 minted=0 无法区分 Agnes 挂了、
+          // 邮箱通道挂了、还是通道配错了，而这三种的处置完全不同。
+          if (r.minted < r.attempted) {
+            console.warn(`[registrar] 本轮有名额未铸出，归因 reasons=${summarizeFailures(r.failures)}`);
+          }
         }
       } catch (err) {
         // 补池失败不该让网关进程崩掉——转发能力与补池能力是相互独立的。

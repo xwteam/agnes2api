@@ -24,6 +24,24 @@ export interface TendResult {
   failures: Array<{ reason: TendFailureReason; channel: string }>;
 }
 
+/**
+ * 把 `TendResult.failures` 聚合成一行可 grep 的归因，例如
+ * `yyds:register_failed×3 moemail:code_timeout×1`。
+ *
+ * 放在这里而不是各自的入口里：两个入口的收尾日志必须给出**同一份口径**，否则
+ * Docker 与 Worker 的排障方式就得写两套，而这条日志是 P2 阶段唯一的归因出口
+ *（P3 面板才会消费结构化的 `failures` 本身）。没有它，运维只能看到一行
+ * `minted=0`，无法区分是 Agnes 挂了、邮箱通道挂了、还是自己配错了通道。
+ */
+export function summarizeFailures(failures: TendResult["failures"]): string {
+  const by = new Map<string, number>();
+  for (const f of failures) {
+    const k = `${f.channel}:${f.reason}`;
+    by.set(k, (by.get(k) ?? 0) + 1);
+  }
+  return [...by].map(([k, n]) => `${k}×${n}`).join(" ");
+}
+
 export interface TendDeps {
   repo: KeyPoolRepo;
   config: RegistrarConfig;

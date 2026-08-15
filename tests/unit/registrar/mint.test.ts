@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mintOne } from "../../../src/core/registrar/mint.js";
 import { FakeMailProvider } from "../../helpers/fake-mailbox.js";
 
@@ -269,6 +269,86 @@ describe("mintOne", () => {
       ok: false, reason: "network_error",
     });
     expect(provider.deleted).toHaveLength(1);
+  });
+
+  // === M2：四种此前完全静默的 reason 必须各留一条 warn ===
+  //
+  // 这四条 return 是「注册机停摆但日志里查不出原因」的直接成因：收尾日志只有
+  // minted=0，而这四种的处置完全不同（换通道 / 等 Agnes 恢复 / 改配置）。
+  // 每条都断言 warn 里带得出**定位信息**（邮箱地址、超时值、tokenName），
+  // 而不是只断言「warn 被调用过」——后者一句笼统的日志也能通过。
+
+  it("验证码超时时留一条 warn，带上邮箱地址与 codeTimeoutMs", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const provider = new FakeMailProvider({ domains: ["only.test"], code: null });
+      const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
+      await mintOne({ provider, agnes, ...BASE, codeTimeoutMs: 7777 });
+      const msgs = warnSpy.mock.calls.map((c) => String(c[0]));
+      const hit = msgs.find((m) => m.includes("验证码超时"));
+      expect(hit, `实际日志：${JSON.stringify(msgs)}`).toBeDefined();
+      expect(hit).toContain(provider.created[0]!);
+      expect(hit).toContain("7777");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("注册被拒时留一条 warn，带上邮箱地址", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const provider = new FakeMailProvider({ domains: ["only.test"] });
+      const { agnes } = agnesStub({ register: false });
+      await mintOne({ provider, agnes, ...BASE });
+      const hit = warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("注册被拒"));
+      expect(hit).toBeDefined();
+      expect(hit).toContain(provider.created[0]!);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("登录拿不到令牌时留一条 warn，带上邮箱地址", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const provider = new FakeMailProvider({ domains: ["only.test"] });
+      const { agnes } = agnesStub({ login: null });
+      await mintOne({ provider, agnes, ...BASE });
+      const hit = warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("登录未返回令牌"));
+      expect(hit).toBeDefined();
+      expect(hit).toContain(provider.created[0]!);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("建 key 失败时留一条 warn，带上邮箱地址与 tokenName", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const provider = new FakeMailProvider({ domains: ["only.test"] });
+      const { agnes } = agnesStub({ login: "tok", key: null });
+      await mintOne({ provider, agnes, ...BASE, tokenName: "my-token-name" });
+      const hit = warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("建 key 未返回 key"));
+      expect(hit).toBeDefined();
+      expect(hit).toContain(provider.created[0]!);
+      expect(hit).toContain("my-token-name");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("成功铸出 key 的路径不产生这四条 warn（不是无条件乱打日志）", async () => {
+    // 与上面四条成对：只有「失败才 warn」才能同时通过这五条。若实现改成无条件
+    // 打日志，这条会红。
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const provider = new FakeMailProvider({ domains: ["only.test"] });
+      const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
+      expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: true, key: "sk-ok" });
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("不传 rand 时按 Math.random 兜底也能正常出 key", async () => {
