@@ -2,6 +2,7 @@ import type { MailProvider } from "../ports/mailbox.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
+import type { Logger } from "../ports/logger.js";
 
 export interface MoeMailDeps {
   fetcher: Fetcher;
@@ -11,12 +12,18 @@ export interface MoeMailDeps {
   now: () => number;
   /** 随机源，可选，默认 `Math.random`。注入后 `createMailbox` 的 localPart 可确定性断言。 */
   rand?: () => number;
+  /** 事件日志 sink，由调用方注入——适配器层不直接碰 console。 */
+  logger: Logger;
 }
 
 const LOCAL_PART_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const POLL_INTERVAL_MS = 3000;
 /** 邮箱只用来收一次验证码，一小时足够，也便于服务端自行回收。 */
 const MAILBOX_TTL_MS = 3_600_000;
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 export class MoeMailProvider implements MailProvider {
   readonly name = "moemail" as const;
@@ -68,10 +75,12 @@ export class MoeMailProvider implements MailProvider {
       // 处置见 mailbox-yyds.ts 的对应分支）。这封邮箱若真的建出来了，只能等建邮箱
       // 时传的 TTL 到期自愈。至少要留痕——活跃邮箱有上限（上游默认 30，超限建邮箱
       // 返回 403），配额被这种泄漏吃掉时不能毫无信号。
-      console.warn(
-        `[registrar] MoeMail 建邮箱响应无法解析或缺少 id/email：邮箱可能已在上游创建但 handle 丢失，` +
-          `无法主动删除，只能等 ${MAILBOX_TTL_MS / 60_000} 分钟 TTL 到期自愈（domain=${domain}）`,
-      );
+      this.deps.logger.log({
+        level: "warn", event: "registrar.mailbox_create_unparseable",
+        msg: "MoeMail 建邮箱响应无法解析或缺少 id/email：邮箱可能已在上游创建但 handle 丢失，"
+          + "无法主动删除，只能等 TTL 到期自愈",
+        fields: { provider: "moemail", domain, ttlMinutes: MAILBOX_TTL_MS / 60_000 },
+      });
       throw new Error("MoeMail 建邮箱响应无法解析或缺少 id 或 email");
     }
     // MoeMail 用 id 定位邮箱，与 YYDS 用地址不同。
@@ -131,15 +140,20 @@ export class MoeMailProvider implements MailProvider {
       // 路径。MoeMail 侧同样有活跃邮箱上限（上游默认 30，超限建邮箱返回 403），
       // 删不掉一样会把配额吃光，必须留痕。
       if (!r.ok) {
-        console.warn(
-          `[registrar] MoeMail 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address} HTTP ${r.status}`,
-        );
+        this.deps.logger.log({
+          level: "warn", event: "registrar.delete_mailbox_failed",
+          msg: "MoeMail 删邮箱失败（残留不影响已拿到的结果）",
+          fields: { provider: "moemail", address: mailbox.address, status: r.status },
+        });
       }
     } catch (err) {
       // 用完即删是尽力而为，理由同 YYDS 适配器：key 已经拿到了，邮箱残留是次要
-      // 问题，不该让整次铸 key 失败，但要留痕方便观测残留是否在堆积。沿用 P1
-      // 既有先例（无日志端口，直接 console，参见 src/core/storage-health.ts）。
-      console.warn(`[registrar] MoeMail 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
+      // 问题，不该让整次铸 key 失败，但要留痕方便观测残留是否在堆积。
+      this.deps.logger.log({
+        level: "warn", event: "registrar.delete_mailbox_failed",
+        msg: "MoeMail 删邮箱失败（残留不影响已拿到的结果）",
+        fields: { provider: "moemail", address: mailbox.address, err: errMsg(err) },
+      });
     }
   }
 }

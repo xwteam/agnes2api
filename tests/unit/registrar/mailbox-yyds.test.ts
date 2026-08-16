@@ -1,5 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { YydsProvider } from "../../../src/adapters/mailbox-yyds.js";
+import { NULL_LOGGER } from "../../../src/ports/logger.js";
+import { recordingLogger } from "../../helpers/recording-logger.js";
 
 function stubFetcher(handler: (url: string, init: RequestInit) => { status: number; body?: unknown }) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -22,7 +24,7 @@ describe("YydsProvider", () => {
     const { fetcher } = stubFetcher(() => ({
       status: 200, body: { data: [{ domain: "a.test" }, { domain: "" }, { domain: "b.test" }] },
     }));
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     expect(await p.listDomains()).toEqual(["a.test", "b.test"]);
   });
 
@@ -33,7 +35,7 @@ describe("YydsProvider", () => {
     const { calls, fetcher } = stubFetcher(() => ({
       status: 200, body: { data: { address: "u1@a.test", id: "acct-42" } },
     }));
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     const m = await p.createMailbox("a.test");
     expect(m).toEqual({ address: "u1@a.test", handle: "acct-42" });
     expect(new Headers(calls[0]!.init.headers).get("x-api-key")).toBe("k");
@@ -43,7 +45,7 @@ describe("YydsProvider", () => {
   it("RM1 createMailbox 响应有 address 但缺 id 时抛错（缺 id 等于删不掉）", async () => {
     // 与上一条成对：只校验 address 的实现会让 handle 落成 undefined，删邮箱 100% 打空。
     const { fetcher } = stubFetcher(() => ({ status: 200, body: { data: { address: "u1@a.test" } } }));
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     await expect(p.createMailbox("a.test")).rejects.toThrow(/data\.id/);
   });
 
@@ -57,7 +59,7 @@ describe("YydsProvider", () => {
     });
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 5000)).toBe("654321");
   });
@@ -72,7 +74,7 @@ describe("YydsProvider", () => {
     });
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 5000)).toBe("112233");
   });
@@ -82,14 +84,14 @@ describe("YydsProvider", () => {
     const { fetcher } = stubFetcher(() => ({ status: 200, body: { data: { messages: [] } } }));
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 5000)).toBeNull();
   });
 
   it("deleteMailbox 失败不抛错（用完即删是尽力而为）", async () => {
     const { fetcher } = stubFetcher(() => ({ status: 500 }));
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     await expect(p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" })).resolves.toBeUndefined();
   });
 
@@ -110,7 +112,7 @@ describe("YydsProvider", () => {
     });
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 5000)).toBe("654321");
   });
@@ -120,7 +122,7 @@ describe("YydsProvider", () => {
   // 抛异常（模拟网络错误），只有 catch 真的生效才不会向上传播。
   it("deleteMailbox 网络异常（fetch 抛错）也不向上传播", async () => {
     const fetcher = { async fetch() { throw new Error("network down"); } };
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     await expect(p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" })).resolves.toBeUndefined();
   });
 
@@ -141,7 +143,7 @@ describe("YydsProvider", () => {
     });
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 10000)).toBe("654321");
     expect(detailAttempts).toBe(2);
@@ -162,7 +164,7 @@ describe("YydsProvider", () => {
     };
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 10000)).toBe("111222");
   });
@@ -182,45 +184,46 @@ describe("YydsProvider", () => {
     };
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 10000)).toBe("333444");
   });
 
-  it("③ deleteMailbox 失败时用 console.warn 留痕（不新建日志端口）", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("③ deleteMailbox 失败时记 registrar.delete_mailbox_failed 事件（不新建日志端口）", async () => {
+    // console.* 已经被换成注入的 Logger：spy console 只会看到空 mock，必须改成
+    // recordingLogger 断言事件名 + fields，而不是断言「console 被调用了」。
+    const logger = recordingLogger();
     const fetcher = { async fetch() { throw new Error("network down"); } };
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
     await p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" });
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(String(warnSpy.mock.calls[0]?.[0])).toContain("u1@a.test");
-    warnSpy.mockRestore();
+    const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.fields?.provider).toBe("yyds");
+    expect(e?.fields?.address).toBe("u1@a.test");
   });
 
   // 上面那条 ③ 只覆盖了「fetch 抛异常」这条路径。真实上游更常见的是 404/403/500——
   // 这些会让 fetch 正常 resolve，压根进不了 catch，此前一条日志都不记，等于删邮箱
-  // 失败 100% 静默。带状态码断言，避免实现只是笼统 warn 一句而丢掉排障信息。
-  it("③b deleteMailbox 收到非 2xx（不抛错的失败路径）也 warn 留痕并带上状态码", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  // 失败 100% 静默。带状态码断言，避免实现只是笼统记一条事件而丢掉排障信息。
+  it("③b deleteMailbox 收到非 2xx（不抛错的失败路径）也记事件并带上状态码", async () => {
+    const logger = recordingLogger();
     const { fetcher } = stubFetcher(() => ({ status: 404 }));
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
     await expect(p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" })).resolves.toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    const msg = String(warnSpy.mock.calls[0]?.[0]);
-    expect(msg).toContain("u1@a.test");
-    expect(msg).toContain("404");
-    warnSpy.mockRestore();
+    const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
+    expect(e).toBeDefined();
+    expect(e?.fields?.address).toBe("u1@a.test");
+    expect(e?.fields?.status).toBe(404);
   });
 
   it("③c deleteMailbox 成功（2xx）时不产生噪音日志", async () => {
-    // 与 ③b 成对：只有「非 2xx 才 warn」才能同时通过这两条。若实现改成无条件 warn，
+    // 与 ③b 成对：只有「非 2xx 才记」才能同时通过这两条。若实现改成无条件记事件，
     // 这条会红。
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logger = recordingLogger();
     const { fetcher } = stubFetcher(() => ({ status: 200 }));
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
     await p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" });
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
+    expect(logger.entries).toEqual([]);
   });
 
   it("④ createMailbox 用注入的 rand 生成确定的 localPart 并放进请求体", async () => {
@@ -228,6 +231,7 @@ describe("YydsProvider", () => {
     // rand 恒定返回 0 -> 字母表第 0 位 'a'，循环 10 次生成 "aaaaaaaaaa"，加前缀 "u" 共 11 位。
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
+      logger: NULL_LOGGER,
     });
     await p.createMailbox("a.test");
     const body = JSON.parse(calls[0]!.init.body as string);
@@ -241,58 +245,53 @@ describe("YydsProvider", () => {
   // 路径丢掉的东西（真机实测用 address 删恒 404，且没有按 address 反查 id 的端点）。
   // 那次 DELETE 只会稳定产出假 404，稀释「邮箱在堆积」这个真信号。
 
-  it("RM3 createMailbox 缺 data.id 时不发出注定 404 的兜底 DELETE，只留一条诚实告警", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { data: {} } }));
-      const p = new YydsProvider({
-        fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
-      });
-      await expect(p.createMailbox("a.test")).rejects.toThrow(/data\.address|data\.id/);
-      // 只有建邮箱那一次请求：不再有第二次注定失败的 DELETE。
-      expect(calls).toHaveLength(1);
-      expect(calls.some((c) => (c.init.method ?? "GET") === "DELETE")).toBe(false);
-      // 告警要能人工核对（带 localPart@domain）并说明它什么时候自己消失。
-      const msg = String(warnSpy.mock.calls[0]?.[0]);
-      expect(msg).toContain("uaaaaaaaaaa@a.test");
-      expect(msg).toContain("24");
-    } finally {
-      warnSpy.mockRestore();
-    }
+  it("RM3 createMailbox 缺 data.id 时不发出注定 404 的兜底 DELETE，只留一条诚实告警事件", async () => {
+    const logger = recordingLogger();
+    const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { data: {} } }));
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
+      logger,
+    });
+    await expect(p.createMailbox("a.test")).rejects.toThrow(/data\.address|data\.id/);
+    // 只有建邮箱那一次请求：不再有第二次注定失败的 DELETE。
+    expect(calls).toHaveLength(1);
+    expect(calls.some((c) => (c.init.method ?? "GET") === "DELETE")).toBe(false);
+    // 告警要能人工核对（带 localPart@domain）。
+    const e = logger.entries.find((x) => x.event === "registrar.mailbox_create_unparseable");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.fields?.provider).toBe("yyds");
+    expect(e?.fields?.guessed).toBe("uaaaaaaaaaa@a.test");
   });
 
   it("RM3 createMailbox 响应 2xx 但正文非 JSON 时同样只告警、不发兜底 DELETE", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const calls: Array<{ url: string; init: RequestInit }> = [];
-      const fetcher = {
-        async fetch(url: string, init: RequestInit) {
-          calls.push({ url, init });
-          if ((init.method ?? "GET") === "DELETE") return new Response("{}", { status: 200 });
-          return new Response("<html>Bad Gateway</html>", { status: 200 });
-        },
-      };
-      const p = new YydsProvider({
-        fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
-      });
-      await expect(p.createMailbox("a.test")).rejects.toThrow(/无法解析|data\.address|data\.id/);
-      expect(calls).toHaveLength(1);
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      warnSpy.mockRestore();
-    }
+    const logger = recordingLogger();
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetcher = {
+      async fetch(url: string, init: RequestInit) {
+        calls.push({ url, init });
+        if ((init.method ?? "GET") === "DELETE") return new Response("{}", { status: 200 });
+        return new Response("<html>Bad Gateway</html>", { status: 200 });
+      },
+    };
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
+      logger,
+    });
+    await expect(p.createMailbox("a.test")).rejects.toThrow(/无法解析|data\.address|data\.id/);
+    expect(calls).toHaveLength(1);
+    expect(logger.has("registrar.mailbox_create_unparseable")).toBe(true);
   });
 
   it("createMailbox 非 2xx 时抛错并带上状态码，且不发出兜底删除（上游没建成，别乱删）", async () => {
     const { calls, fetcher } = stubFetcher(() => ({ status: 429 }));
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     await expect(p.createMailbox("a.test")).rejects.toThrow(/429/);
     expect(calls).toHaveLength(1);
   });
 
   it("listDomains 非 2xx 时抛错并带上状态码（通道级失败信号）", async () => {
     const { fetcher } = stubFetcher(() => ({ status: 401 }));
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     await expect(p.listDomains()).rejects.toThrow(/401/);
   });
 
@@ -308,7 +307,7 @@ describe("YydsProvider", () => {
     });
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     await p.listDomains();
     const m = await p.createMailbox("a.test");
@@ -348,7 +347,7 @@ describe("YydsProvider", () => {
     });
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "acct-42" }, 5000)).toBe("246813");
   });
@@ -363,7 +362,7 @@ describe("YydsProvider", () => {
     });
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "acct-42" }, 5000)).toBe("135791");
   });
@@ -390,7 +389,7 @@ describe("YydsProvider", () => {
     };
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 10000)).toBe("654321");
     expect(listAttempts).toBe(2);
@@ -413,7 +412,7 @@ describe("YydsProvider", () => {
     };
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 10000)).toBe("778899");
     expect(detailAttempts).toBe(2);
@@ -425,7 +424,7 @@ describe("YydsProvider", () => {
     const fetcher = { async fetch(): Promise<Response> { throw new Error("ECONNRESET"); } };
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     await expect(p.pollCode({ address: "u1@a.test", handle: "u1@a.test" }, 9000)).resolves.toBeNull();
   });
@@ -434,7 +433,7 @@ describe("YydsProvider", () => {
     // address 与 handle(id) 取不同的值，两条路径不再殊途同归：实现若沿用
     // `/v1/accounts/{address}`（真机实测恒 404），这条会红。
     const { calls, fetcher } = stubFetcher(() => ({ status: 200 }));
-    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     await p.deleteMailbox({ address: "u1@a.test", handle: "acct-42" });
     expect(calls[0]!.init.method).toBe("DELETE");
     expect(calls[0]!.url).toBe("https://y.test/v1/accounts/acct-42");
@@ -451,7 +450,7 @@ describe("YydsProvider", () => {
     });
     const p = new YydsProvider({
       fetcher, baseUrl: "https://y.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u1@a.test", handle: "acct-42" }, 5000)).toBe("654321");
     expect(calls[0]!.url).toBe("https://y.test/v1/messages?address=u1%40a.test");

@@ -1,5 +1,6 @@
 import type { Storage } from "../ports/storage.js";
 import { registrarFromEnv, type RegistrarConfig } from "./registrar/config.js";
+import { NULL_LOGGER, type Logger } from "../ports/logger.js";
 
 export interface GatewayConfig {
   gatewayToken: string;
@@ -72,7 +73,7 @@ function isPositiveInt(n: unknown): n is number {
   return typeof n === "number" && Number.isInteger(n) && n >= 1;
 }
 
-export function configFromEnv(env: Env): GatewayConfig {
+export function configFromEnv(env: Env, logger: Logger = NULL_LOGGER): GatewayConfig {
   const gatewayToken = env.GATEWAY_TOKEN;
   if (!gatewayToken) throw new Error("缺少 GATEWAY_TOKEN，网关无法启动");
 
@@ -85,11 +86,11 @@ export function configFromEnv(env: Env): GatewayConfig {
     cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", undefined, DEFAULTS.cooldownRateLimitMs),
     cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", undefined, DEFAULTS.cooldownPaymentMs),
     cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", undefined, DEFAULTS.cooldownStrikeMs),
-    registrar: registrarFromEnv(env, {}),
+    registrar: registrarFromEnv(env, {}, logger),
   };
 }
 
-export async function loadConfig(env: Env, storage: Storage): Promise<GatewayConfig> {
+export async function loadConfig(env: Env, storage: Storage, logger: Logger = NULL_LOGGER): Promise<GatewayConfig> {
   const stored = (await storage.get<Partial<GatewayConfig>>("config")) ?? {};
 
   const gatewayToken = env.GATEWAY_TOKEN ?? stored.gatewayToken;
@@ -104,6 +105,6 @@ export async function loadConfig(env: Env, storage: Storage): Promise<GatewayCon
     cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", stored.cooldownRateLimitMs, DEFAULTS.cooldownRateLimitMs),
     cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", stored.cooldownPaymentMs, DEFAULTS.cooldownPaymentMs),
     cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", stored.cooldownStrikeMs, DEFAULTS.cooldownStrikeMs),
-    registrar: registrarFromEnv(env, stored.registrar ?? {}),
+    registrar: registrarFromEnv(env, stored.registrar ?? {}, logger),
   };
 }

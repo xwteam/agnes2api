@@ -2,6 +2,7 @@ import type { MailProvider } from "../ports/mailbox.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
+import type { Logger } from "../ports/logger.js";
 
 export interface YydsDeps {
   fetcher: Fetcher;
@@ -11,10 +12,16 @@ export interface YydsDeps {
   now: () => number;
   /** 随机源，可选，默认 `Math.random`。注入后 `createMailbox` 的 localPart 可确定性断言。 */
   rand?: () => number;
+  /** 事件日志 sink，由调用方注入——适配器层不直接碰 console。 */
+  logger: Logger;
 }
 
 const LOCAL_PART_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const POLL_INTERVAL_MS = 3000;
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 export class YydsProvider implements MailProvider {
   readonly name = "yyds" as const;
@@ -77,11 +84,12 @@ export class YydsProvider implements MailProvider {
       // 忽略这类日志。改成诚实告警：说清楚这个邮箱可能已经建出来了、我们删不掉、
       // 以及它什么时候自己消失（真机实测 `expiresAt` = 建号时刻 + 约 24 小时）。
       const guessed = `${lp}@${domain}`;
-      console.warn(
-        `[registrar] YYDS 建邮箱响应无法解析或缺少 data.address / data.id：邮箱可能已在上游` +
-          `创建但拿不到 id，无法主动删除，约 24 小时后随 expiresAt 自动过期；` +
-          `活跃邮箱配额会被它占住，可按 ${guessed} 人工核对（domain=${domain}）`,
-      );
+      this.deps.logger.log({
+        level: "warn", event: "registrar.mailbox_create_unparseable",
+        msg: "YYDS 建邮箱响应无法解析或缺少 data.address / data.id：邮箱可能已在上游创建但拿不到 id，"
+          + "无法主动删除，约 24 小时后随 expiresAt 自动过期；活跃邮箱配额会被它占住，可按 guessed 人工核对",
+        fields: { provider: "yyds", domain, guessed },
+      });
       throw new Error("YYDS 建邮箱响应无法解析或缺少 data.address / data.id");
     }
     // **收信按 address 定位、删除按 id 定位**——真机实测的契约：
@@ -176,15 +184,20 @@ export class YydsProvider implements MailProvider {
       // 工作的前提（设计 §4.1），不是卫生习惯。带上状态码，便于区分「邮箱早就
       // 不在了」（404）与「凭据/配额出问题」（403/500）。
       if (!r.ok) {
-        console.warn(
-          `[registrar] YYDS 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address} HTTP ${r.status}`,
-        );
+        this.deps.logger.log({
+          level: "warn", event: "registrar.delete_mailbox_failed",
+          msg: "YYDS 删邮箱失败（残留不影响已拿到的结果）",
+          fields: { provider: "yyds", address: mailbox.address, status: r.status },
+        });
       }
     } catch (err) {
       // 用完即删是尽力而为：key 已经拿到了，邮箱残留是次要问题，不该让整次铸 key
-      // 失败，但要留痕方便观测残留是否在堆积。沿用 P1 既有先例（无日志端口，直接
-      // console，参见 src/core/storage-health.ts）。
-      console.warn(`[registrar] YYDS 删邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
+      // 失败，但要留痕方便观测残留是否在堆积。
+      this.deps.logger.log({
+        level: "warn", event: "registrar.delete_mailbox_failed",
+        msg: "YYDS 删邮箱失败（残留不影响已拿到的结果）",
+        fields: { provider: "yyds", address: mailbox.address, err: errMsg(err) },
+      });
     }
   }
 }

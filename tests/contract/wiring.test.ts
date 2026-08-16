@@ -92,3 +92,20 @@ describe("buildApp 的存储可写性探测", () => {
   });
 
 });
+
+// wire.ts 忘了把 logger 传给 loadConfig 时，注册机的配置告警会静默消失——
+// 而这些告警正是「用户填了脏配置，注册机悄悄关着」的唯一线索。可选参数抓不到，
+// 只能靠行为断言。这里不用 recordingLogger（buildApp 内部自建 ConsoleLogger），
+// 改为侦听 console.warn 并断言前缀，等价地证明了那条链路是通的。
+it("buildApp 会把 logger 接到配置层：脏的存储 registrar 配置产生一条 [registrar] 告警", async () => {
+  const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const s = new MemoryStorage();
+    await s.put("config", { registrar: { primary: "garbage" } });
+    await buildApp({ GATEWAY_TOKEN: "t" }, s);
+    const lines = spy.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.startsWith("[registrar] registrar.config_ignored"))).toBe(true);
+  } finally {
+    spy.mockRestore();
+  }
+});

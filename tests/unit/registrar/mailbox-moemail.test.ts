@@ -1,5 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { MoeMailProvider } from "../../../src/adapters/mailbox-moemail.js";
+import { NULL_LOGGER } from "../../../src/ports/logger.js";
+import { recordingLogger } from "../../helpers/recording-logger.js";
 
 function stubFetcher(handler: (url: string, init: RequestInit) => { status: number; body?: unknown }) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -22,7 +24,7 @@ describe("MoeMailProvider", () => {
     const { calls, fetcher } = stubFetcher(() => ({
       status: 200, body: { emailDomains: "a.test, b.test,,c.test" },
     }));
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     expect(await p.listDomains()).toEqual(["a.test", "b.test", "c.test"]);
     expect(calls[0]!.url).toBe("https://m.test/api/config");
     expect(new Headers(calls[0]!.init.headers).get("x-api-key")).toBe("k");
@@ -32,7 +34,7 @@ describe("MoeMailProvider", () => {
     // id 与 email 特意给不同的值：如果实现误把 handle 设成 email（照抄 YYDS 的
     // "handle=address"），这条断言才会真正失败，而不是两条路径殊途同归。
     const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { id: "eid-99", email: "zzz@a.test" } }));
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     const m = await p.createMailbox("a.test");
     expect(m).toEqual({ address: "zzz@a.test", handle: "eid-99" });
     expect(new Headers(calls[0]!.init.headers).get("x-api-key")).toBe("k");
@@ -54,7 +56,7 @@ describe("MoeMailProvider", () => {
     // 挂起（本任务里用变异测试真实复现过），递进时钟至少能让用例正常超时失败。
     const p = new MoeMailProvider({
       fetcher, baseUrl: "https://m.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u@a.test", handle: "eid-1" }, 5000)).toBe("654321");
     // 只应打这一次请求：GET /api/emails/<id>，不存在第二次拉详情的请求。
@@ -75,7 +77,7 @@ describe("MoeMailProvider", () => {
     });
     const p = new MoeMailProvider({
       fetcher, baseUrl: "https://m.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u@a.test", handle: "eid-1" }, 5000)).toBe("998877");
   });
@@ -85,14 +87,14 @@ describe("MoeMailProvider", () => {
     const { fetcher } = stubFetcher(() => ({ status: 200, body: { messages: [] } }));
     const p = new MoeMailProvider({
       fetcher, baseUrl: "https://m.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u@a.test", handle: "eid-1" }, 5000)).toBeNull();
   });
 
   it("deleteMailbox 发出 DELETE 到 /api/emails/<id> 并带 X-API-Key", async () => {
     const { calls, fetcher } = stubFetcher(() => ({ status: 200 }));
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     await p.deleteMailbox({ address: "u@a.test", handle: "eid-1" });
     expect(calls[0]!.init.method).toBe("DELETE");
     expect(calls[0]!.url).toBe("https://m.test/api/emails/eid-1");
@@ -111,7 +113,7 @@ describe("MoeMailProvider", () => {
     });
     const p = new MoeMailProvider({
       fetcher, baseUrl: "https://m.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     await p.listDomains();
     const m = await p.createMailbox("a.test");
@@ -126,42 +128,43 @@ describe("MoeMailProvider", () => {
 
   it("deleteMailbox 网络异常（fetch 抛错）也不向上传播", async () => {
     const fetcher = { async fetch() { throw new Error("network down"); } };
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     await expect(p.deleteMailbox({ address: "u@a.test", handle: "eid-1" })).resolves.toBeUndefined();
   });
 
-  it("deleteMailbox 失败时用 console.warn 留痕（不新建日志端口）", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("deleteMailbox 失败时记 registrar.delete_mailbox_failed 事件（不新建日志端口）", async () => {
+    // console.* 已经被换成注入的 Logger：spy console 只会看到空 mock，必须改成
+    // recordingLogger 断言事件名 + fields。
+    const logger = recordingLogger();
     const fetcher = { async fetch() { throw new Error("network down"); } };
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
     await p.deleteMailbox({ address: "u1@a.test", handle: "eid-1" });
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(String(warnSpy.mock.calls[0]?.[0])).toContain("u1@a.test");
-    warnSpy.mockRestore();
+    const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.fields?.provider).toBe("moemail");
+    expect(e?.fields?.address).toBe("u1@a.test");
   });
 
   // 与上一条成对：上一条只覆盖「fetch 抛异常」，而 404/403/500 会正常 resolve、
   // 进不了 catch，是最常见的失败路径。MoeMail 侧同样有活跃邮箱上限（上游默认 30），
   // 删不掉照样把配额吃光，必须留痕。
-  it("deleteMailbox 收到非 2xx（不抛错的失败路径）也 warn 留痕并带上状态码", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("deleteMailbox 收到非 2xx（不抛错的失败路径）也记事件并带上状态码", async () => {
+    const logger = recordingLogger();
     const { fetcher } = stubFetcher(() => ({ status: 500 }));
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
     await expect(p.deleteMailbox({ address: "u1@a.test", handle: "eid-1" })).resolves.toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    const msg = String(warnSpy.mock.calls[0]?.[0]);
-    expect(msg).toContain("u1@a.test");
-    expect(msg).toContain("500");
-    warnSpy.mockRestore();
+    const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
+    expect(e).toBeDefined();
+    expect(e?.fields?.address).toBe("u1@a.test");
+    expect(e?.fields?.status).toBe(500);
   });
 
   it("deleteMailbox 成功（2xx）时不产生噪音日志", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logger = recordingLogger();
     const { fetcher } = stubFetcher(() => ({ status: 200 }));
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
     await p.deleteMailbox({ address: "u1@a.test", handle: "eid-1" });
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
+    expect(logger.entries).toEqual([]);
   });
 
   it("createMailbox 用注入的 rand 生成确定的 name 并放进请求体", async () => {
@@ -169,6 +172,7 @@ describe("MoeMailProvider", () => {
     // rand 恒定返回 0 -> 字母表第 0 位 'a'，循环 10 次生成 "aaaaaaaaaa"，加前缀 "u" 共 11 位。
     const p = new MoeMailProvider({
       fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, rand: () => 0,
+      logger: NULL_LOGGER,
     });
     await p.createMailbox("a.test");
     const body = JSON.parse(calls[0]!.init.body as string);
@@ -180,38 +184,37 @@ describe("MoeMailProvider", () => {
   // MoeMail 用服务端生成的 id 定位邮箱，请求侧推断不出，没法像 YYDS 那样兜底
   // 删除；这里明确其泄漏语义：抛错、留痕、指明只能等 TTL 自愈。
 
-  it("I7 createMailbox 响应 2xx 但缺 id 时抛错，并 warn 说明只能等 TTL 自愈", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("I7 createMailbox 响应 2xx 但缺 id 时抛错，并记事件说明只能等 TTL 自愈", async () => {
+    const logger = recordingLogger();
     const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { email: "u@a.test" } }));
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
     await expect(p.createMailbox("a.test")).rejects.toThrow(/id/);
     // 没有 handle 就删不掉，不该凭空发出一个删不中的 DELETE。
     expect(calls).toHaveLength(1);
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    const msg = String(warnSpy.mock.calls[0]?.[0]);
-    expect(msg).toContain("TTL");
-    expect(msg).toContain("a.test");
-    warnSpy.mockRestore();
+    const e = logger.entries.find((x) => x.event === "registrar.mailbox_create_unparseable");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.fields?.provider).toBe("moemail");
+    expect(e?.fields?.domain).toBe("a.test");
+    expect(e?.fields?.ttlMinutes).toBe(60);
   });
 
   it("I7 createMailbox 响应 2xx 但正文非 JSON 时同样抛错并留痕（而不是抛出解析异常）", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logger = recordingLogger();
     const fetcher = { async fetch() { return new Response("<html>502</html>", { status: 200 }); } };
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
     await expect(p.createMailbox("a.test")).rejects.toThrow(/缺少 id 或 email/);
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    warnSpy.mockRestore();
+    expect(logger.has("registrar.mailbox_create_unparseable")).toBe(true);
   });
 
   it("createMailbox 非 2xx 时抛错并带上状态码（配额超限的 403 就走这条）", async () => {
     const { fetcher } = stubFetcher(() => ({ status: 403 }));
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     await expect(p.createMailbox("a.test")).rejects.toThrow(/403/);
   });
 
   it("listDomains 非 2xx 时抛错并带上状态码（通道级失败信号）", async () => {
     const { fetcher } = stubFetcher(() => ({ status: 500 }));
-    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0 });
+    const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
     await expect(p.listDomains()).rejects.toThrow(/500/);
   });
 
@@ -229,7 +232,7 @@ describe("MoeMailProvider", () => {
     };
     const p = new MoeMailProvider({
       fetcher, baseUrl: "https://m.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u@a.test", handle: "eid-1" }, 10000)).toBe("445566");
     expect(attempts).toBe(2);
@@ -249,7 +252,7 @@ describe("MoeMailProvider", () => {
     }));
     const p = new MoeMailProvider({
       fetcher, baseUrl: "https://m.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u@a.test", handle: "eid-1" }, 5000)).toBe("246813");
   });
@@ -271,7 +274,7 @@ describe("MoeMailProvider", () => {
     };
     const p = new MoeMailProvider({
       fetcher, baseUrl: "https://m.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     expect(await p.pollCode({ address: "u@a.test", handle: "eid-1" }, 10000)).toBe("998877");
     expect(attempts).toBe(2);
@@ -282,7 +285,7 @@ describe("MoeMailProvider", () => {
     const fetcher = { async fetch(): Promise<Response> { throw new Error("ECONNRESET"); } };
     const p = new MoeMailProvider({
       fetcher, baseUrl: "https://m.test", apiKey: "k",
-      sleep: async () => { t += 3000; }, now: () => t,
+      sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     await expect(p.pollCode({ address: "u@a.test", handle: "eid-1" }, 9000)).resolves.toBeNull();
   });

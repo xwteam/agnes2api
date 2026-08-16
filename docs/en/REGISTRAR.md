@@ -133,9 +133,12 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
   "worst case" bullet above, but *not* the "theoretical worst case" one. Before starting each
   mint it checks whether the remaining wall clock can hold one complete mint
   (`CODE_TIMEOUT_MS × number of channels`, plus the inter-attempt delay). If it cannot, that
-  attempt is **never started**: the round ends early, a
-  `本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾` line is logged, keys already minted are
-  kept, and the remaining slots roll over to the next scheduled round.
+  attempt is **never started**: the round ends early, a `registrar.round_budget_exhausted`
+  warning is logged (something like "not enough wall-clock budget left to complete another
+  mint, ending the round early"), keys already minted are kept, and the remaining slots roll
+  over to the next scheduled round. (If even the *first* attempt doesn't fit, a different event
+  fires instead — `registrar.round_budget_impossible`, at error level; see "Do not set
+  `CODE_TIMEOUT_MS` too high" below.)
   Not starting is the whole point, as opposed to being cut off mid-flight: when the platform
   aborts a round, the temporary mailbox in use at that moment is never deleted (it expires ~24h
   later on YYDS via `expiresAt`, or after the 1h TTL on MoeMail).
@@ -155,14 +158,25 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
     `MINT_BATCH` to 1–2, or lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
 - **Do not set `CODE_TIMEOUT_MS` too high.** Once `CODE_TIMEOUT_MS × number of channels` exceeds
   the per-round budget (87% of the wall clock), **no attempt can start at all** on Worker and the
-  refill produces nothing, round after round. Two log lines cover this:
-  - **At startup**, a **warning** (`console.warn`) such as
-    `[registrar] CODE_TIMEOUT_MS×通道数(...) 超过 Worker 单轮墙钟预算(...)`.
+  refill produces nothing, round after round. Two log lines cover this — grep by **event name**
+  (see "Troubleshooting" below; more reliable than grepping prose, which can drift across
+  wording changes, and — being Chinese in this doc's examples until now — was never greppable
+  for non-Chinese-reading operators in the first place):
+  - **At startup**, a **warning** (`console.warn`), event name
+    `registrar.attempt_exceeds_worker_budget` (`grep 'registrar.attempt_exceeds_worker_budget'`),
+    something like
+    `[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS times the channel
+    count exceeds the Worker per-round wall-clock budget codeTimeoutMs=... chainLength=...
+    worstAttemptMs=... workerRoundBudgetMs=...`.
     It does **not** stop the gateway from starting — unlike "missing credentials fail at
     startup". Node/Docker has no platform wall clock and the same configuration is perfectly
     valid there, so both runtimes print this warning but only Worker is actually affected.
-  - **On every Worker refill round**, an **error** (`console.error`) such as
-    `[registrar] 单次铸 key 的最坏耗时(...ms = CODE_TIMEOUT_MS×通道数)已超过本轮墙钟预算`.
+  - **On every Worker refill round** where not even the first attempt fits, an **error**
+    (`console.error`), event name `registrar.round_budget_impossible`
+    (`grep 'registrar.round_budget_impossible'`), something like
+    `[registrar] registrar.round_budget_impossible the worst-case time for one mint already
+    exceeds this round's wall-clock budget, not a single attempt can start
+    worstAttemptMs=... roundBudgetMs=...`.
     It repeats every round, which is how you tell this is a standing condition rather than a
     one-off.
 - **Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers
@@ -193,7 +207,12 @@ attempt, whether it succeeded or failed.
 - **If credentials are missing while enabled, the process fails to start and tells you which
   variable is missing.** The registrar follows a fail-closed policy — missing credentials never
   degrade silently, they fail the gateway loudly so the problem is easy to spot.
-- Refill logs are consistently prefixed with `[registrar]`, so you can filter for them.
+- Refill logs are consistently prefixed with `[registrar]`, so you can filter for them. The
+  second field on every log line is a stable, machine-readable **event name** (e.g.
+  `registrar.round_budget_impossible`). Grepping by event name is more reliable than grepping
+  the human-readable message: the message is prose and can change wording; the event name is
+  the one part of this logging that's a stable public contract, and it doubles as a
+  language-neutral anchor for operators who don't read Chinese.
 - **When a round leaves slots unminted, the closing log adds a warning containing `reasons=`**,
   e.g. `reasons=yyds:register_failed×3 moemail:code_timeout×1`. Read that line first to tell
   which layer broke: `code_timeout` = this channel is not receiving Agnes' mail (MX record /

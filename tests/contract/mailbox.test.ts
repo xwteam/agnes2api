@@ -1,8 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { MailProvider } from "../../src/ports/mailbox.js";
 import type { Mailbox } from "../../src/core/registrar/types.js";
 import { YydsProvider } from "../../src/adapters/mailbox-yyds.js";
 import { MoeMailProvider } from "../../src/adapters/mailbox-moemail.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
+import { recordingLogger } from "../helpers/recording-logger.js";
 
 /**
  * 两家各自的假上游：同样的语义，不同的线上格式。
@@ -94,12 +96,12 @@ function makeClock() {
 
 runMailProviderContract("YydsProvider", () => new YydsProvider({
   fetcher: { fetch: yydsUpstream() }, baseUrl: "https://y.test", apiKey: "k",
-  ...makeClock(),
+  ...makeClock(), logger: NULL_LOGGER,
 }));
 
 runMailProviderContract("MoeMailProvider", () => new MoeMailProvider({
   fetcher: { fetch: moemailUpstream() }, baseUrl: "https://m.test", apiKey: "k",
-  ...makeClock(),
+  ...makeClock(), logger: NULL_LOGGER,
 }));
 
 /**
@@ -155,14 +157,14 @@ function moemailFlakyListUpstream() {
 
 runPollResilienceContract(
   "YydsProvider",
-  (fetch, clock) => new YydsProvider({ fetcher: { fetch }, baseUrl: "https://y.test", apiKey: "k", ...clock }),
+  (fetch, clock) => new YydsProvider({ fetcher: { fetch }, baseUrl: "https://y.test", apiKey: "k", ...clock, logger: NULL_LOGGER }),
   yydsFlakyListUpstream,
   { address: "u1@a.test", handle: "acct-u1" },
 );
 
 runPollResilienceContract(
   "MoeMailProvider",
-  (fetch, clock) => new MoeMailProvider({ fetcher: { fetch }, baseUrl: "https://m.test", apiKey: "k", ...clock }),
+  (fetch, clock) => new MoeMailProvider({ fetcher: { fetch }, baseUrl: "https://m.test", apiKey: "k", ...clock, logger: NULL_LOGGER }),
   moemailFlakyListUpstream,
   { address: "u1@a.test", handle: "eid-1" },
 );
@@ -177,29 +179,30 @@ runPollResilienceContract(
  */
 function runDeleteFailureContract(
   name: string,
-  make: (fetch: (url: string, init: RequestInit) => Promise<Response>) => MailProvider,
+  make: (fetch: (url: string, init: RequestInit) => Promise<Response>, logger: ReturnType<typeof recordingLogger>) => MailProvider,
   mailbox: Mailbox,
 ) {
-  it(`${name}: 删邮箱收到非 2xx 时不抛错，但用 console.warn 留痕并带上状态码`, async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const p = make(async () => new Response("{}", { status: 404 }));
+  it(`${name}: 删邮箱收到非 2xx 时不抛错，但记 registrar.delete_mailbox_failed 事件并带上状态码`, async () => {
+    // console.* 已经被换成注入的 Logger：spy console 只会看到空 mock，必须改成
+    // recordingLogger 断言事件名 + fields。
+    const logger = recordingLogger();
+    const p = make(async () => new Response("{}", { status: 404 }), logger);
     await expect(p.deleteMailbox(mailbox)).resolves.toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    const msg = String(warnSpy.mock.calls[0]?.[0]);
-    expect(msg).toContain(mailbox.address);
-    expect(msg).toContain("404");
-    warnSpy.mockRestore();
+    const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.fields?.address).toBe(mailbox.address);
+    expect(e?.fields?.status).toBe(404);
   });
 }
 
 runDeleteFailureContract(
   "YydsProvider",
-  (fetch) => new YydsProvider({ fetcher: { fetch }, baseUrl: "https://y.test", apiKey: "k", ...makeClock() }),
+  (fetch, logger) => new YydsProvider({ fetcher: { fetch }, baseUrl: "https://y.test", apiKey: "k", ...makeClock(), logger }),
   { address: "u1@a.test", handle: "acct-u1" },
 );
 
 runDeleteFailureContract(
   "MoeMailProvider",
-  (fetch) => new MoeMailProvider({ fetcher: { fetch }, baseUrl: "https://m.test", apiKey: "k", ...makeClock() }),
+  (fetch, logger) => new MoeMailProvider({ fetcher: { fetch }, baseUrl: "https://m.test", apiKey: "k", ...makeClock(), logger }),
   { address: "u1@a.test", handle: "eid-1" },
 );

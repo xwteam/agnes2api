@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { WORKER_CRON_WALL_CLOCK_MS, WORKER_ROUND_BUDGET_MS } from "../../../src/core/registrar/types.js";
 import { registrarFromEnv, requirePrimary } from "../../../src/core/registrar/config.js";
+import { recordingLogger } from "../../helpers/recording-logger.js";
 
 describe("registrarFromEnv", () => {
   it("默认不启用", () => {
@@ -103,15 +104,16 @@ describe("registrarFromEnv", () => {
 
   // 注册机关闭时，一个用不到的字段不该让整个网关起不来（例如 P3 面板写入 bug、
   // 手工改存储、跨版本迁移遗留）。只留痕，不阻断启动。
-  it("未启用时存储中通道格式脏数据只 warn 不抛错，网关仍能正常启动", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("未启用时存储中通道格式脏数据只记事件不抛错，网关仍能正常启动", () => {
+    // console.* 已经被换成注入的 Logger（第 3 个可选参数）：spy console 只会看到空
+    // mock，必须改成 recordingLogger 断言事件名。
+    const logger = recordingLogger();
     let cfg: ReturnType<typeof registrarFromEnv> | undefined;
     expect(() => {
-      cfg = registrarFromEnv({}, { primary: "garbage" as never, fallback: "trash" as never });
+      cfg = registrarFromEnv({}, { primary: "garbage" as never, fallback: "trash" as never }, logger);
     }).not.toThrow();
     expect(cfg!.enabled).toBe(false);
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
+    expect(logger.has("registrar.config_ignored")).toBe(true);
   });
 
   it("主备通道相同时抛错（降级到自己没有意义）", () => {
@@ -167,31 +169,32 @@ describe("registrarFromEnv", () => {
 
   const ENABLED = { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" };
 
-  it("TEND_INTERVAL_MS 小于 MINT_BATCH×CODE_TIMEOUT_MS 时启动期 warn（轮次会重叠）", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  // console.* 已经被换成注入的 Logger（第 3 个可选参数）：下面全部改成 recordingLogger
+  // 断言事件名 + fields，而不是 spy console 断言文案子串。
+
+  it("TEND_INTERVAL_MS 小于 MINT_BATCH×CODE_TIMEOUT_MS 时启动期记 registrar.interval_shorter_than_worst_round（轮次会重叠）", () => {
+    const logger = recordingLogger();
     const c = registrarFromEnv(
-      { ...ENABLED, TEND_INTERVAL_MS: "60000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {},
+      { ...ENABLED, TEND_INTERVAL_MS: "60000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {}, logger,
     );
     expect(c.enabled).toBe(true); // 只是警告，配置照常生效
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    const msg = String(warnSpy.mock.calls[0]?.[0]);
-    expect(msg).toContain("TEND_INTERVAL_MS");
-    expect(msg).toContain("600000"); // 算出来的单轮最坏耗时
-    warnSpy.mockRestore();
+    const e = logger.entries.find((x) => x.event === "registrar.interval_shorter_than_worst_round");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.fields?.tendIntervalMs).toBe(60000);
+    expect(e?.fields?.worstRoundMs).toBe(600000); // 算出来的单轮最坏耗时
   });
 
-  it("TEND_INTERVAL_MS 足够大时不 warn（成对用例，防止无条件告警）", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    registrarFromEnv({ ...ENABLED, TEND_INTERVAL_MS: "1800000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {});
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
+  it("TEND_INTERVAL_MS 足够大时不记该事件（成对用例，防止无条件告警）", () => {
+    const logger = recordingLogger();
+    registrarFromEnv({ ...ENABLED, TEND_INTERVAL_MS: "1800000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {}, logger);
+    expect(logger.has("registrar.interval_shorter_than_worst_round")).toBe(false);
   });
 
   it("配了备通道时单轮最坏耗时按两条通道算（code_timeout 会降级重试一次）", () => {
     // M1 之后 code_timeout 属于通道级失败，配了备通道时同一个补池名额最坏要等
     // 两次 CODE_TIMEOUT_MS。墙钟模型跟着变，这条告警的阈值必须同步，否则用户按
     // 「没告警＝安全」调参会直接撞上轮次重叠。
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logger = recordingLogger();
     // 700000 > 5×120000 = 600000（单通道不告警），< 5×120000×2 = 1200000（双通道要告警）。
     // 阈值取在两个模型之间，旧模型下这条必红。
     registrarFromEnv(
@@ -200,71 +203,59 @@ describe("registrarFromEnv", () => {
         MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
         TEND_INTERVAL_MS: "700000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000",
       },
-      {},
+      {}, logger,
     );
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(String(warnSpy.mock.calls[0]?.[0])).toContain("1200000");
-    warnSpy.mockRestore();
+    const e = logger.entries.find((x) => x.event === "registrar.interval_shorter_than_worst_round");
+    expect(e).toBeDefined();
+    expect(e?.fields?.worstRoundMs).toBe(1200000);
   });
 
   it("同样的 700000 在单通道下不告警（成对用例，锁住通道数这个因子）", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logger = recordingLogger();
     registrarFromEnv(
-      { ...ENABLED, TEND_INTERVAL_MS: "700000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {},
+      { ...ENABLED, TEND_INTERVAL_MS: "700000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {}, logger,
     );
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
+    expect(logger.has("registrar.interval_shorter_than_worst_round")).toBe(false);
   });
 
-  it("I-1 CODE_TIMEOUT_MS×通道数 超过 Worker 轮级预算时启动期告警（否则是永久静默停摆）", () => {
+  it("I-1 CODE_TIMEOUT_MS×通道数 超过 Worker 轮级预算时启动期记 registrar.attempt_exceeds_worker_budget（否则是永久静默停摆）", () => {
     // CODE_TIMEOUT_MS 无上界，而 Worker 的轮级预算是固定值。超过之后 tendOnce 连
     // 第一次尝试都不敢开始：attempted=0、minted=0、failures=[]，两个入口的归因日志
     // 走的是 `minted < attempted`（0<0 为假）一条都不打——用户只看到「本轮预算不足」，
     // 读起来像瞬时状况，实际每一轮都零产出。
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      // 400s × 2 通道 = 800s > 780s 预算。TEND_INTERVAL_MS 给得足够大，避免上面那条
-      // 重叠告警混进来——这条断言要能确定命中的是新加的这一条。
-      registrarFromEnv(
-        {
-          ...ENABLED, REGISTRAR_FALLBACK: "moemail",
-          MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
-          CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000",
-        },
-        {},
-      );
-      const msgs = warnSpy.mock.calls.map((c) => String(c[0]));
-      const hit = msgs.find((m) => m.includes("Worker 单轮墙钟预算"));
-      expect(hit, `实际日志：${JSON.stringify(msgs)}`).toBeDefined();
-      expect(hit).toContain("800000");
-      // 必须点明形态差异，否则 Node 用户会以为自己也中招。
-      expect(hit).toContain("Node/Docker");
-    } finally {
-      warnSpy.mockRestore();
-    }
+    const logger = recordingLogger();
+    // 400s × 2 通道 = 800s > 780s 预算。TEND_INTERVAL_MS 给得足够大，避免上面那条
+    // 重叠告警混进来——这条断言要能确定命中的是新加的这一条。
+    registrarFromEnv(
+      {
+        ...ENABLED, REGISTRAR_FALLBACK: "moemail",
+        MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
+        CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000",
+      },
+      {}, logger,
+    );
+    const e = logger.entries.find((x) => x.event === "registrar.attempt_exceeds_worker_budget");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.fields?.worstAttemptMs).toBe(800000);
+    // 必须点明形态差异，否则 Node 用户会以为自己也中招。
+    expect(e?.msg).toContain("Node/Docker");
   });
 
   it("I-1 同样的 400s 在单通道下不告警（400s < 780s 预算，成对用例）", () => {
     // 与上一条唯一的差别是没有备通道：`× 通道数` 这个因子被真正求值了才能同时通过
     // 这两条。若实现漏乘通道数，上一条就不会触发。
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      registrarFromEnv(
-        { ...ENABLED, CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000" },
-        {},
-      );
-      expect(warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("Worker 单轮墙钟预算")))
-        .toBeUndefined();
-    } finally {
-      warnSpy.mockRestore();
-    }
+    const logger = recordingLogger();
+    registrarFromEnv(
+      { ...ENABLED, CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000" },
+      {}, logger,
+    );
+    expect(logger.has("registrar.attempt_exceeds_worker_budget")).toBe(false);
   });
 
   it("注册机未启用时不做这项告警（关着的子系统不该刷屏）", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    registrarFromEnv({ TEND_INTERVAL_MS: "1000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {});
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
+    const logger = recordingLogger();
+    registrarFromEnv({ TEND_INTERVAL_MS: "1000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {}, logger);
+    expect(logger.entries).toEqual([]);
   });
 });
 
@@ -329,39 +320,38 @@ describe("I-2 五语言文档对轮级预算的表述必须有条件、且与代
     }
   });
 
-  it("启动那条是 warn 不是 error，且五语言给的可 grep 片段与代码真实输出一致", () => {
-    // 复评抓到的：五语言都写「启动时打印**错误**日志」，而代码用的是 console.warn，
-    // 且那条 console.error 是运行期每轮打的。级别和时机双双对不上，用户按文档去启动
-    // 日志里 grep error 会一无所获。这条把文档给的片段与代码真实输出钉在一起——
-    // 改了日志文案就必须同步改五语言，反之亦然。
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      registrarFromEnv(
-        {
-          REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k",
-          REGISTRAR_FALLBACK: "moemail",
-          MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
-          CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000",
-        },
-        {},
-      );
-      const FRAGMENT = "[registrar] CODE_TIMEOUT_MS×通道数";
-      const hit = warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.startsWith(FRAGMENT));
-      expect(hit, "启动期这条必须是 console.warn 且以文档给的片段开头").toBeDefined();
-      // 启动期**不能**用 error：那会与「缺凭据启动即报错、网关起不来」混为一谈，
-      // 而这里刻意选了不阻止启动（Node 侧同一份配置完全合法）。
-      expect(errSpy).not.toHaveBeenCalled();
-      for (const { lang } of LANGS) {
-        const doc = readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8");
-        expect(doc, `${lang} 没给启动告警的可 grep 片段`).toContain(FRAGMENT);
-        // 必须把两个级别都写出来，否则读者分不清哪条在启动、哪条在运行期。
-        expect(doc, `${lang} 没区分 warn/error 两个级别`).toContain("console.warn");
-        expect(doc, `${lang} 没区分 warn/error 两个级别`).toContain("console.error");
-      }
-    } finally {
-      errSpy.mockRestore();
-      warnSpy.mockRestore();
+  it("启动那条是 warn 不是 error，且五语言给的可 grep 事件名与代码真实输出一致", () => {
+    // 复评抓到的：五语言都写「启动时打印**错误**日志」，而代码用的是 warn 级别，
+    // 且那条 error 是运行期每轮打的。级别和时机双双对不上，用户按文档去启动日志里
+    // grep error 会一无所获。这条把文档给的锚点与代码真实输出钉在一起——改了事件名
+    // 就必须同步改五语言，反之亦然。
+    //
+    // console.* 已经被换成注入的 Logger：spy console 只会看到空 mock，必须改成
+    // recordingLogger 断言事件名 + 级别。五语言的可 grep 锚点也从「按中文文案 grep」
+    // 改成「按事件名 grep」——英日韩用户此前永远搜不到中文片段（P2 M-5 遗留）。
+    const logger = recordingLogger();
+    registrarFromEnv(
+      {
+        REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k",
+        REGISTRAR_FALLBACK: "moemail",
+        MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
+        CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000",
+      },
+      {}, logger,
+    );
+    const EVENT = "registrar.attempt_exceeds_worker_budget";
+    const e = logger.entries.find((x) => x.event === EVENT);
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    // 启动期**不能**用 error：那会与「缺凭据启动即报错、网关起不来」混为一谈，
+    // 而这里刻意选了不阻止启动（Node 侧同一份配置完全合法）。
+    expect(e?.level).toBe("warn");
+    expect(logger.entries.some((x) => x.level === "error")).toBe(false);
+    for (const { lang } of LANGS) {
+      const doc = readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8");
+      expect(doc, `${lang} 没给启动告警的可 grep 事件名`).toContain(EVENT);
+      // 必须把两个级别都写出来，否则读者分不清哪条在启动、哪条在运行期。
+      expect(doc, `${lang} 没区分 warn/error 两个级别`).toContain("console.warn");
+      expect(doc, `${lang} 没区分 warn/error 两个级别`).toContain("console.error");
     }
   });
 });

@@ -1,9 +1,12 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { describe, it, expect } from "vitest";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { registrarFromEnv } from "../../../src/core/registrar/config.js";
 import { mintOne } from "../../../src/core/registrar/mint.js";
 import { YydsProvider } from "../../../src/adapters/mailbox-yyds.js";
 import { MoeMailProvider } from "../../../src/adapters/mailbox-moemail.js";
+import { recordingLogger } from "../../helpers/recording-logger.js";
+import type { Logger } from "../../../src/ports/logger.js";
 
 /**
  * M4：五语言 REGISTRAR.md 的排障小节对外承诺「补池过程中的日志统一带 `[registrar]`
@@ -11,70 +14,69 @@ import { MoeMailProvider } from "../../../src/adapters/mailbox-moemail.js";
  * （`docker logs … | grep '[registrar]'` / `wrangler tail --search '[registrar]'`）
  * 排障时，M1/M2 新增的那些诊断信号会被整段过滤掉，等于白修。
  *
- * 这里两层守护：
- * - 行为层：真的触发几条代表性日志，断言运维 grep 得到的那个字符串确实以
- *   `[registrar]` 开头（下面每条用例都对应一个具体的失败场景）。
- * - 源码层：注册机自有文件里逐个 console 调用点都必须带这个前缀。行为层只能覆盖
- *   被单测触达的那几条，而承诺是对**全部**日志给的；漏掉一条就等于漏掉一条运维
- *   看不见的信号，所以这一层按调用点数量对齐，新增一条无前缀日志也会变红。
+ * P3a 把裸 console.* 换成注入的 Logger 之后，前缀不再由每个调用点手写字符串，
+ * 而是由 `ConsoleLogger` 按事件名的命名空间（`registrar.` 前缀）派生——这正是
+ * 这条不变量此前会被漏掉 14 条的成因。守门方式也跟着换了两层：
+ * - 源码层：这些文件里**一个 console 调用点都不许有**——新加一条 console.warn
+ *   立刻变红（下面 LOGGER_ONLY_SOURCES / src/core 全目录扫描两条）。
+ * - 行为层：真的触发几条代表性日志，注入 recordingLogger 断言**事件名**
+ *   （而不是 console 输出的文案）——事件名才是这套日志唯一稳定的对外契约。
  */
 
 /**
- * 注册机自有的源文件：文件里的每一条日志都是注册机日志，因此可以按「console 调用点
- * 数 == [registrar] 出现次数」对齐。
+ * 已经把裸 console.* 换成注入 Logger 的源文件：这里**一个 console.(log|warn|error|
+ * info|debug)( 调用点都不该有**。
+ *
+ * 注意正则要求调用点后面紧跟左括号——`grep "console\."` 这种不带括号的裸子串匹配
+ * 会把「注释里提到 console.warn」这类散文也算进去（P3a Task 1 开工时的真实教训：
+ * `config.ts` 曾有一行中文注释写「`console.warn`」，裸 grep 会把它误算成一个调用点，
+ * 得到与这里断言的 0 不一致的数字）。下面两条断言用的正则始终是
+ * `console\.(log|warn|error|info|debug)\(`，只匹配真实调用，不匹配注释里的提及。
  */
-const REGISTRAR_ONLY_SOURCES = [
+const LOGGER_ONLY_SOURCES = [
   "src/core/registrar/config.ts",
   "src/core/registrar/mint.ts",
   "src/core/registrar/tender.ts",
   "src/core/registrar/agnes.ts",
   "src/core/registrar/code.ts",
+  "src/core/storage-health.ts",
   "src/adapters/mailbox-yyds.ts",
   "src/adapters/mailbox-moemail.ts",
 ];
 
-/**
- * 两个入口既有注册机日志也有网关自身的日志（监听端口、启动失败），不能按数量对齐，
- * 只守「不许再出现 [agnes2api] 前缀的注册机日志」。
- */
-const MIXED_SOURCES = ["src/entry/node.ts", "src/entry/worker.ts"];
+const CONSOLE_CALL = /console\.(log|warn|error|info|debug)\(/g;
 
-/**
- * 每条用例都自己装一次 console.warn 的间谍。刻意不在用例里手写 `mockRestore()`：
- * 断言一旦失败就会抛出，写在后面的 restore 根本执行不到，于是间谍泄漏到下一条
- * 用例，把「一条真失败」放大成「四条全红」，掩盖真正出问题的那一条。统一交给
- * afterEach 兜底。
- */
-function spyWarn() {
-  const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
-  spy.mockClear();
-  return spy;
+function walkTs(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) out.push(...walkTs(p));
+    else if (p.endsWith(".ts")) out.push(p);
+  }
+  return out;
 }
 
-afterEach(() => {
-  vi.restoreAllMocks();
+it("这些文件里一个 console 调用点都没有——core 零 IO 与「事件要能落库」都靠它", () => {
+  for (const rel of LOGGER_ONLY_SOURCES) {
+    const src = readFileSync(rel, "utf8");
+    const calls = src.match(CONSOLE_CALL) ?? [];
+    expect(calls, `${rel} 仍有 ${calls.length} 处裸 console 调用`).toEqual([]);
+  }
 });
 
-function firstWarnArg(spy: ReturnType<typeof spyWarn>): string {
-  return String((spy.mock.calls[0] as unknown[] | undefined)?.[0] ?? "");
-}
+it("src/core 全目录零 console——只列白名单会漏掉将来新增的文件", () => {
+  const offenders: string[] = [];
+  for (const rel of walkTs("src/core")) {
+    const src = readFileSync(rel, "utf8");
+    if (CONSOLE_CALL.test(src)) offenders.push(rel);
+    CONSOLE_CALL.lastIndex = 0; // 全局正则 + .test() 有状态，用完必须复位，否则漏检下一个文件
+  }
+  expect(offenders).toEqual([]);
+});
 
-describe("注册机日志前缀（文档对外承诺 [registrar]）", () => {
-  it("注册机自有源文件里没有残留的 [agnes2api]，且每个 console 调用点都带 [registrar]", () => {
-    for (const rel of REGISTRAR_ONLY_SOURCES) {
-      const src = readFileSync(rel, "utf8");
-      expect(src, `${rel} 仍有 [agnes2api] 前缀`).not.toContain("[agnes2api]");
-      const consoleCalls = src.match(/console\.(log|warn|error)\(/g)?.length ?? 0;
-      const prefixed = src.match(/\[registrar\]/g)?.length ?? 0;
-      expect(prefixed, `${rel} 的 console 调用点数与 [registrar] 前缀数不一致`).toBe(consoleCalls);
-    }
-    for (const rel of MIXED_SOURCES) {
-      expect(readFileSync(rel, "utf8"), `${rel} 仍有 [agnes2api] 前缀`).not.toContain("[agnes2api]");
-    }
-  });
-
-  it("mintOne 列域名失败时打出的那条 warn 以 [registrar] 开头", async () => {
-    const warnSpy = spyWarn();
+describe("注册机日志事件（文档对外承诺 [registrar] 前缀 + 稳定事件名）", () => {
+  it("mintOne 列域名失败时记 registrar.list_domains_failed 事件", async () => {
+    const logger = recordingLogger();
     const provider = {
       name: "yyds" as const,
       async listDomains(): Promise<string[]> { throw new Error("down"); },
@@ -86,28 +88,34 @@ describe("注册机日志前缀（文档对外承诺 [registrar]）", () => {
       provider,
       agnes: { platformUrl: "https://platform.test", fetcher: { async fetch() { return new Response("{}"); } } },
       tokenName: "auto", codeTimeoutMs: 5000, maxDomainAttempts: 8,
-      sleep: async () => {}, rand: () => 0.5,
+      sleep: async () => {}, rand: () => 0.5, logger,
     });
-    expect(firstWarnArg(warnSpy).startsWith("[registrar]")).toBe(true);
+    expect(logger.events()).toContain("registrar.list_domains_failed");
   });
 
-  it("两家适配器删邮箱失败时打出的那条 warn 都以 [registrar] 开头", async () => {
+  it("两家适配器删邮箱失败时都记 registrar.delete_mailbox_failed，且带 provider 字段", async () => {
     const clock = { sleep: async () => {}, now: () => 0 };
+    // 404 是「删除没生效」的真实形态（P2 RM1 实测过），stub 必须真的返回它而不是 200。
     const fetcher = { async fetch() { return new Response("{}", { status: 404 }); } };
-
-    for (const p of [
-      new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", ...clock }),
-      new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", ...clock }),
-    ]) {
-      const warnSpy = spyWarn();
-      await p.deleteMailbox({ address: "u1@a.test", handle: "id-1" });
-      expect(firstWarnArg(warnSpy).startsWith("[registrar]"), p.name).toBe(true);
+    for (const [name, make] of [
+      ["yyds", (l: Logger) => new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", ...clock, logger: l })],
+      ["moemail", (l: Logger) => new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", ...clock, logger: l })],
+    ] as const) {
+      const logger = recordingLogger();
+      await make(logger).deleteMailbox({ address: "u1@a.test", handle: "id-1" });
+      const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
+      expect(e, name).toBeTruthy();
+      expect(e?.fields?.provider, name).toBe(name);
     }
   });
 
-  it("config 忽略脏通道值时打出的那条 warn 以 [registrar] 开头", () => {
-    const warnSpy = spyWarn();
-    registrarFromEnv({ REGISTRAR_PRIMARY: "typo-here" }, {});
-    expect(firstWarnArg(warnSpy).startsWith("[registrar]")).toBe(true);
+  it("config 忽略脏通道值时记 registrar.config_ignored，且 source 区分 env 与 stored", () => {
+    const a = recordingLogger();
+    registrarFromEnv({ REGISTRAR_PRIMARY: "typo-here" }, {}, a);
+    expect(a.entries.find((x) => x.event === "registrar.config_ignored")?.fields?.source).toBe("env");
+
+    const b = recordingLogger();
+    registrarFromEnv({}, { primary: "garbage" as never }, b);
+    expect(b.entries.find((x) => x.event === "registrar.config_ignored")?.fields?.source).toBe("stored");
   });
 });

@@ -138,8 +138,12 @@ Worker にデプロイする場合、補充は Cron トリガーによって起�
   時間」はカバーしますが、「理論上の最悪」はカバーしません）。1 回の発行を始める前に毎回
   「残りの壁時計でこの 1 回を最後まで走らせられるか」を判定し（判定式は
   `CODE_TIMEOUT_MS × チャネル数` ＋ 試行間隔）、足りなければ**そもそも開始しません**。
-  ラウンドを早めに終了し、`本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾` を 1 行出力し、
+  ラウンドを早めに終了し、`registrar.round_budget_exhausted` という警告イベントを記録します
+  （「今回の壁時計予算では発行をもう 1 回完走できないため、早めに切り上げます」という内容）。
   すでに発行済みの key はそのまま保存され、残りの枠は次のスケジュールに回されます。
+  （1 回目の発行すら収まらない場合は別のイベント `registrar.round_budget_impossible`
+  （レベルはエラー）が記録されます。詳細は下の「`CODE_TIMEOUT_MS` を大きくしすぎないで
+  ください」を参照。）
   重要なのは「途中で切られる」のではなく「開始しない」ことです。プラットフォームに中断
   されると、その時点で使用中だった一時メールボックスは削除されずに残ります（YYDS は約
   24 時間後に `expiresAt` で、MoeMail は 1 時間の TTL で失効）。
@@ -159,15 +163,26 @@ Worker にデプロイする場合、補充は Cron トリガーによって起�
     `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS` を小さくしてください。
 - **`CODE_TIMEOUT_MS` を大きくしすぎないでください。** `CODE_TIMEOUT_MS × チャネル数` が
   1 ラウンドの予算（壁時計の 87%）を超えると、Worker では**試行を 1 回も開始できず**、補充は
-  毎ラウンド何も生み出しません。ログは 2 か所に出ます。
-  - **起動時**は**警告**（`console.warn`）で、次のような 1 行です:
-    `[registrar] CODE_TIMEOUT_MS×通道数(...) 超过 Worker 单轮墙钟预算(...)`。
+  毎ラウンド何も生み出しません。ログは 2 か所に出ます。**イベント名**で grep するのが
+  中国語の文言で grep するより確実です（下の「トラブルシューティング」参照。文言は表現の
+  調整で変わり得ますが、イベント名は変わりません。またこれまでの例は中国語だったため、
+  中国語を読めない運用者は本来 grep できませんでした）。
+  - **起動時**は**警告**（`console.warn`）で、イベント名は
+    `registrar.attempt_exceeds_worker_budget`（`grep 'registrar.attempt_exceeds_worker_budget'`）。
+    出力はおおよそ次の形です:
+    `[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×チャネル数が
+    Worker の 1 ラウンド壁時計予算を超えています codeTimeoutMs=... chainLength=...
+    worstAttemptMs=... workerRoundBudgetMs=...`。
     これは**ゲートウェイの起動を止めません**——「認証情報が不足すると起動時にエラーとなり
     起動しない」ケースとは異なります。Node / Docker にはプラットフォームの壁時計上限が
     なく同じ設定でも完全に正当なので、両方のランタイムでこの警告は出ますが、実際に影響を
     受けるのは Worker だけです。
-  - **Worker の補充ラウンドごと**に**エラー**（`console.error`）が出ます:
-    `[registrar] 单次铸 key 的最坏耗时(...ms = CODE_TIMEOUT_MS×通道数)已超过本轮墙钟预算`。
+  - **Worker の補充ラウンドごと**（1 回目の発行すら開始できない場合）に**エラー**
+    （`console.error`）が出ます。イベント名は `registrar.round_budget_impossible`
+    （`grep 'registrar.round_budget_impossible'`）。出力はおおよそ次の形です:
+    `[registrar] registrar.round_budget_impossible 1 回の発行の最悪所要時間がすでに
+    このラウンドの壁時計予算を超えており、1 回も開始できません
+    worstAttemptMs=... roundBudgetMs=...`。
     毎ラウンド出るので、一時的な事象ではなく継続状態だと判断できます。
 - **`MINT_BATCH`・`CODE_TIMEOUT_MS`・`MAX_DOMAIN_ATTEMPTS` を大きくする前に、上記 2 つの
   式で必ず計算してください。** 上限に達すると、その回の Cron 呼び出しはプラットフォーム
@@ -199,7 +214,10 @@ Worker にデプロイする場合、補充は Cron トリガーによって起�
   かに見過ごすことはなく、ゲートウェイを明確に失敗させることで問題を発見しやすくして
   います。
 - 補充処理中のログには一貫して `[registrar]` というプレフィックスが付くため、これで
-  フィルタリングして状況を確認できます。
+  フィルタリングして状況を確認できます。各ログ行の 2 番目のフィールドは安定した
+  機械可読の**イベント名**（例: `registrar.round_budget_impossible`）です。イベント名で
+  grep する方が、人間向けの文言で grep するより確実です——文言は表現の調整で変わり得ま
+  すが、イベント名はこのログの唯一の安定した対外契約であり、変わりません。
 - **1 ラウンドで発行しきれなかった枠があると、終了ログに `reasons=` 付きの警告が 1 行
   追加されます**（例：`reasons=yyds:register_failed×3 moemail:code_timeout×1`）。まずは
   この行でどの層の障害かを判断してください。`code_timeout` = このチャネルが Agnes から

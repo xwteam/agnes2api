@@ -116,8 +116,10 @@ Agnes 帳號、登入、鑄出一把 API key 寫入池子。註冊過程需要�
 - **Worker 形態會在牆鐘耗盡前主動收手（覆蓋上面「最差耗時」那一項，不覆蓋「理論最差」）。**
   每次準備開始一次鑄 key 之前，註冊機都會先算「剩餘牆鐘夠不夠完整跑完這一次」，
   判據是 `CODE_TIMEOUT_MS × 通道數` 再加上嘗試間隔；不夠就**根本不開始**，提前結束
-  本輪、印出一條 `本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾`，已經鑄好的 key
-  照常入池，剩餘名額留給下個排程週期。
+  本輪、記一條 `registrar.round_budget_exhausted` 警告（形如「本輪牆鐘預算不足以再
+  完整跑完一次鑄 key，提前收尾」），已經鑄好的 key 照常入池，剩餘名額留給下個排程
+  週期。（若連第一次嘗試都裝不下，走的是另一個事件 `registrar.round_budget_impossible`，
+  層級為錯誤，見下面「`CODE_TIMEOUT_MS` 別調得過大」一節。）
   關鍵在於「不開始」而不是「跑到一半被砍」：被平台從中間中止時，那次正在用的臨時信箱
   來不及刪除就會殘留（YYDS 約 24 小時後隨 `expiresAt` 過期，MoeMail 按 1 小時 TTL 過期）。
   因此 **`MINT_BATCH` 在 Worker 上是「單輪上限」而不是「保證值」**：單輪可能鑄不滿。
@@ -131,14 +133,20 @@ Agnes 帳號、登入、鑄出一把 API key 寫入池子。註冊過程需要�
     仍被平台中止，那次的臨時信箱會殘留。擔心這一種就按上面「理論最差」的公式把
     `MINT_BATCH` 調到 1~2，或調小 `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`。
 - **`CODE_TIMEOUT_MS` 別調得過大。** `CODE_TIMEOUT_MS × 通道數` 一旦超過單輪預算
-  （牆鐘的 87%），Worker 形態下**一次嘗試都無法開始**，補池會持續零產出。有兩條日誌：
-  - **啟動時**印出一條**警告**（`console.warn`），形如
-    `[registrar] CODE_TIMEOUT_MS×通道数(...) 超过 Worker 单轮墙钟预算(...)`。
-    它**不會阻止閘道啟動**——這一點與「缺憑證啟動即報錯」不同：Node/Docker 沒有平台
-    牆鐘上限，同一份設定在那邊完全合法，所以兩種形態都會印這條警告，但只有 Worker
-    真正受影響。
-  - **Worker 每一輪補池**再印一條**錯誤**（`console.error`），形如
-    `[registrar] 单次铸 key 的最坏耗时(...ms = CODE_TIMEOUT_MS×通道数)已超过本轮墙钟预算`。
+  （牆鐘的 87%），Worker 形態下**一次嘗試都無法開始**，補池會持續零產出。有兩條日誌，
+  按**事件名** grep（見下面「疑難排解」一節——比按中文文案 grep 更可靠，措辭怎麼調整
+  都不會失配）：
+  - **啟動時**印出一條**警告**（`console.warn`），事件名 `registrar.attempt_exceeds_worker_budget`
+    （`grep 'registrar.attempt_exceeds_worker_budget'`），形如
+    `[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道數超過
+    Worker 單輪牆鐘預算 codeTimeoutMs=... chainLength=... worstAttemptMs=...
+    workerRoundBudgetMs=...`。它**不會阻止閘道啟動**——這一點與「缺憑證啟動即報錯」
+    不同：Node/Docker 沒有平台牆鐘上限，同一份設定在那邊完全合法，所以兩種形態都會
+    印這條警告，但只有 Worker 真正受影響。
+  - **Worker 每一輪補池**（連第一次嘗試都開始不了時）再印一條**錯誤**（`console.error`），
+    事件名 `registrar.round_budget_impossible`（`grep 'registrar.round_budget_impossible'`），
+    形如 `[registrar] registrar.round_budget_impossible 單次鑄 key 的最壞耗時已超過
+    本輪牆鐘預算，一次嘗試都無法開始 worstAttemptMs=... roundBudgetMs=...`。
     每輪都會出現，可據此確認這是持續狀態而非偶發。
 - **在調大 `MINT_BATCH`、`CODE_TIMEOUT_MS` 或 `MAX_DOMAIN_ATTEMPTS` 之前，請自行依上述
   兩個公式核算。** 頂到上限時，本次 Cron 呼叫會被平台中止。
@@ -161,7 +169,10 @@ Agnes 帳號、登入、鑄出一把 API key 寫入池子。註冊過程需要�
 
 - **啟用後若缺憑證，啟動即報錯並指明缺少哪一項設定**：註冊機採用 fail-closed 策略，缺
   憑證不會靜默降級，而是讓閘道明確失敗，方便排查。
-- 補池過程中的日誌一律帶 `[registrar]` 前綴，可據此過濾查看註冊機相關的執行狀態。
+- 補池過程中的日誌一律帶 `[registrar]` 前綴，可據此過濾查看註冊機相關的執行狀態。每條
+  日誌的第二個欄位是穩定的機器可讀**事件名**（如 `registrar.round_budget_impossible`），
+  按事件名 `grep` 比按中文文案 `grep` 更可靠：文案是給人看的，可能因措辭調整而變化；
+  事件名是這套日誌唯一對外穩定的契約，不會變。
 - **一輪裡有名額沒鑄出來時，收尾會多打一條帶 `reasons=` 的告警**，形如
   `reasons=yyds:register_failed×3 moemail:code_timeout×1`。先看這一行判斷故障在哪一層：
   `code_timeout` = 這條通道收不到 Agnes 的信（網域 MX／郵件轉發規則）；

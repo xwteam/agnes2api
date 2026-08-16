@@ -5,6 +5,7 @@ import type { RegistrarConfig, Channel } from "./config.js";
 import { requirePrimary } from "./config.js";
 import { isAvailable } from "../keypool.js";
 import { mintOne, type MintOutcome } from "./mint.js";
+import type { Logger } from "../../ports/logger.js";
 
 /**
  * 一次铸 key 失败的归因：`mintOne` 给出的所有 reason，外加 `provider_missing`
@@ -63,6 +64,8 @@ export interface TendDeps {
    * 引入它之前完全一致；给 Node 硬编码一个预算反而是错的。
    */
   roundBudgetMs?: number;
+  /** 事件日志 sink，由调用方注入——core 不直接碰 console。 */
+  logger: Logger;
 }
 
 /**
@@ -126,17 +129,18 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
         // 且措辞必须与下面那条区分开：failures 是空的（没尝试过就没有失败），
         // `minted < attempted` 是 `0 < 0` 为假，两个入口的归因日志一条都不会打，
         // 这里是唯一能说破它的地方。
-        console.error(
-          `[registrar] 单次铸 key 的最坏耗时(${worstAttemptMs}ms = CODE_TIMEOUT_MS×通道数)已超过`
-            + `本轮墙钟预算(${deps.roundBudgetMs}ms)，一次尝试都无法开始，补池将持续零产出——`
-            + `这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS 或去掉备通道`,
-        );
+        deps.logger.log({
+          level: "error", event: "registrar.round_budget_impossible",
+          msg: "单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始，补池将持续零产出"
+            + "——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS 或去掉备通道",
+          fields: { worstAttemptMs, roundBudgetMs: deps.roundBudgetMs },
+        });
       } else {
-        console.warn(
-          `[registrar] 本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾（剩余名额留给下次调度）：`
-            + `已用 ${elapsedMs}ms，预算 ${deps.roundBudgetMs}ms，单次最坏 ${worstAttemptMs}ms，`
-            + `本轮 attempted=${attempted} minted=${minted}（上限 ${rounds}）`,
-        );
+        deps.logger.log({
+          level: "warn", event: "registrar.round_budget_exhausted",
+          msg: "本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾（剩余名额留给下次调度）",
+          fields: { elapsedMs, budgetMs: deps.roundBudgetMs, worstAttemptMs, attempted, minted, rounds },
+        });
       }
       break;
     }
@@ -169,6 +173,7 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
         maxDomainAttempts: deps.config.maxDomainAttempts,
         sleep: deps.sleep,
         rand: deps.rand,
+        logger: deps.logger,
       });
 
       if (out.ok) {

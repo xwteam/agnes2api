@@ -11,6 +11,7 @@ import { FileStorage } from "../../src/adapters/storage-file.js";
 import { buildApp } from "../../src/http/wire.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import type { Storage } from "../../src/ports/storage.js";
+import { recordingLogger } from "../helpers/recording-logger.js";
 
 function tmpDir(): string {
   return mkdtempSync(join(tmpdir(), "a2a-storage-health-"));
@@ -103,20 +104,18 @@ describe("probeWritable", () => {
   // M-RM9：可写性的结论只看 put。原实现把 put+delete 一起 try，于是「写得进、删不掉」
   // 既误报 degraded、又把探针键留在存储里，两个后果同时发生。
   it("put 成功而 delete 失败时仍判为可写，只记日志，不误报 degraded", async () => {
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    try {
-      const health = createStorageHealth();
-      const inner = new UndeletableStorage();
-      const watched = watchStorage(inner, health, () => 5);
+    // console.* 已经被换成注入的 Logger（probeWritable 第 4 个可选参数）：spy console
+    // 只会看到空 mock，必须改成 recordingLogger 断言事件名。
+    const logger = recordingLogger();
+    const health = createStorageHealth();
+    const inner = new UndeletableStorage();
+    const watched = watchStorage(inner, health, () => 5);
 
-      expect(await probeWritable(watched, health, () => 5)).toBeNull();
-      expect(health.status().writable).toBe(true);
-      expect(logged).toHaveBeenCalled();
-      // 探针键删不掉只能留着，但它不以 `key:` 开头，不会被当成一把 key。
-      expect(await inner.list("key:")).toEqual([]);
-    } finally {
-      logged.mockRestore();
-    }
+    expect(await probeWritable(watched, health, () => 5, logger)).toBeNull();
+    expect(health.status().writable).toBe(true);
+    expect(logger.has("storage.probe_cleanup_failed")).toBe(true);
+    // 探针键删不掉只能留着，但它不以 `key:` 开头，不会被当成一把 key。
+    expect(await inner.list("key:")).toEqual([]);
   });
 });
 

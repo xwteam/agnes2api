@@ -1,4 +1,5 @@
 import type { Storage } from "../ports/storage.js";
+import { NULL_LOGGER, type Logger } from "../ports/logger.js";
 
 /**
  * 存储可写性的健康状态。
@@ -109,6 +110,7 @@ export async function probeWritable(
   storage: Storage,
   health?: StorageHealth,
   now: () => number = () => Date.now(),
+  logger: Logger = NULL_LOGGER,
 ): Promise<Error | null> {
   try {
     await storage.put(PROBE_KEY, { at: now() });
@@ -119,9 +121,11 @@ export async function probeWritable(
   try {
     await storage.delete(PROBE_KEY);
   } catch (err) {
-    console.error(
-      `[agnes2api] 健康探针键 ${PROBE_KEY} 清理失败（不影响「存储可写」的结论）：${toError(err).message}`,
-    );
+    logger.log({
+      level: "error", event: "storage.probe_cleanup_failed",
+      msg: "健康探针键清理失败（不影响「存储可写」的结论）",
+      fields: { key: PROBE_KEY, err: toError(err).message },
+    });
     // storage 若是 watchStorage 包过的那层，上面这次失败已经被它记成不可写；
     // 按 put 的结论纠正回来，否则 /health 会因为一次删除失败而误报 degraded。
     health?.record(true, now());

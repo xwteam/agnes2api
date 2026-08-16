@@ -1,4 +1,5 @@
 import { WORKER_ROUND_BUDGET_MS } from "./types.js";
+import { NULL_LOGGER, type Logger } from "../../ports/logger.js";
 
 export type Channel = "yyds" | "moemail";
 
@@ -68,16 +69,19 @@ function posInt(env: Env, envName: string, field: string, stored: unknown, fallb
 }
 
 /**
- * `strict=false`（注册机未启用）时格式非法只 `console.warn` 并当作未设置（`null`），
- * 不抛错：一个被显式关闭的子系统的脏配置不该让整个网关起不来。`strict=true`
- * （已启用）时维持原有的抛错行为，因为这时通道值真的要被使用。
+ * `strict=false`（注册机未启用）时格式非法只记一条 `registrar.config_ignored` 事件并
+ * 当作未设置（`null`），不抛错：一个被显式关闭的子系统的脏配置不该让整个网关起不来。
+ * `strict=true`（已启用）时维持原有的抛错行为，因为这时通道值真的要被使用。
  */
-function channel(raw: string | undefined, envName: string, strict: boolean): Channel | null {
+function channel(raw: string | undefined, envName: string, strict: boolean, logger: Logger): Channel | null {
   if (raw === undefined || raw === "") return null;
   if (raw !== "yyds" && raw !== "moemail") {
     const msg = `${envName} 只能是 yyds 或 moemail: ${raw}`;
     if (strict) throw new Error(msg);
-    console.warn(`[registrar] 注册机未启用，忽略格式非法的 ${envName}: ${raw}`);
+    logger.log({
+      level: "warn", event: "registrar.config_ignored",
+      msg: "注册机未启用，忽略格式非法的通道值", fields: { source: "env", name: envName, raw },
+    });
     return null;
   }
   return raw;
@@ -89,14 +93,17 @@ function channel(raw: string | undefined, envName: string, strict: boolean): Cha
  * 静默流入一个类型上声明为 `"yyds" | "moemail"` 的字段，后续按通道分支的代码
  * （例如"选哪个 MailProvider 适配器"）就会拿到既不匹配 yyds 也不匹配 moemail 的值。
  *
- * 同 `channel()`：`strict=false`（未启用）时只 warn 不抛错，见上面注释。
+ * 同 `channel()`：`strict=false`（未启用）时只记事件不抛错，见上面注释。
  */
-function storedChannel(raw: unknown, field: string, strict: boolean): Channel | null {
+function storedChannel(raw: unknown, field: string, strict: boolean, logger: Logger): Channel | null {
   if (raw === undefined || raw === null) return null;
   if (raw !== "yyds" && raw !== "moemail") {
     const msg = `存储中的 ${field} 只能是 yyds 或 moemail: ${String(raw)}`;
     if (strict) throw new Error(msg);
-    console.warn(`[registrar] 注册机未启用，忽略存储中格式非法的 ${field}: ${String(raw)}`);
+    logger.log({
+      level: "warn", event: "registrar.config_ignored",
+      msg: "注册机未启用，忽略存储中格式非法的通道值", fields: { source: "stored", name: field, raw: String(raw) },
+    });
     return null;
   }
   return raw;
@@ -117,13 +124,17 @@ function creds(env: Env, stored: Partial<RegistrarConfig>, ch: Channel): Channel
   return { baseUrl, apiKey };
 }
 
-export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): RegistrarConfig {
+export function registrarFromEnv(
+  env: Env,
+  stored: Partial<RegistrarConfig>,
+  logger: Logger = NULL_LOGGER,
+): RegistrarConfig {
   const enabled = (env.REGISTRAR_ENABLED ?? String(stored.enabled ?? false)) === "true";
-  // 通道格式校验受 enabled 门控：未启用时脏数据只 warn，见 channel()/storedChannel() 注释。
-  const primary = channel(env.REGISTRAR_PRIMARY, "REGISTRAR_PRIMARY", enabled)
-    ?? storedChannel(stored.primary, "primary", enabled);
-  const fallback = channel(env.REGISTRAR_FALLBACK, "REGISTRAR_FALLBACK", enabled)
-    ?? storedChannel(stored.fallback, "fallback", enabled);
+  // 通道格式校验受 enabled 门控：未启用时脏数据只记事件，见 channel()/storedChannel() 注释。
+  const primary = channel(env.REGISTRAR_PRIMARY, "REGISTRAR_PRIMARY", enabled, logger)
+    ?? storedChannel(stored.primary, "primary", enabled, logger);
+  const fallback = channel(env.REGISTRAR_FALLBACK, "REGISTRAR_FALLBACK", enabled, logger)
+    ?? storedChannel(stored.fallback, "fallback", enabled, logger);
 
   if (enabled && !primary) {
     throw new Error("注册机已启用但未指定 REGISTRAR_PRIMARY（yyds 或 moemail，两者平级需显式选择）");
@@ -171,11 +182,11 @@ export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): Re
   const chainLength = cfg.fallback ? 2 : 1;
   const worstRoundMs = cfg.mintBatch * cfg.codeTimeoutMs * chainLength;
   if (enabled && cfg.tendIntervalMs < worstRoundMs) {
-    console.warn(
-      `[registrar] TEND_INTERVAL_MS(${cfg.tendIntervalMs}) 小于单轮最坏耗时 ` +
-        `MINT_BATCH×CODE_TIMEOUT_MS×通道数(${cfg.mintBatch}×${cfg.codeTimeoutMs}×${chainLength}=${worstRoundMs})，` +
-        `补池轮次可能重叠并被跳过`,
-    );
+    logger.log({
+      level: "warn", event: "registrar.interval_shorter_than_worst_round",
+      msg: "TEND_INTERVAL_MS 小于单轮最坏耗时 MINT_BATCH×CODE_TIMEOUT_MS×通道数，补池轮次可能重叠并被跳过",
+      fields: { tendIntervalMs: cfg.tendIntervalMs, mintBatch: cfg.mintBatch, codeTimeoutMs: cfg.codeTimeoutMs, chainLength, worstRoundMs },
+    });
   }
 
   // CODE_TIMEOUT_MS 没有上界（posInt 只管正整数），而 Worker 形态的轮级预算是个
@@ -188,12 +199,15 @@ export function registrarFromEnv(env: Env, stored: Partial<RegistrarConfig>): Re
   // 抛错会让一个正当的 Node 部署起不来。文案里点明形态差异。
   const worstAttemptMs = cfg.codeTimeoutMs * chainLength;
   if (enabled && worstAttemptMs > WORKER_ROUND_BUDGET_MS) {
-    console.warn(
-      `[registrar] CODE_TIMEOUT_MS×通道数(${cfg.codeTimeoutMs}×${chainLength}=${worstAttemptMs}) ` +
-        `超过 Worker 单轮墙钟预算(${WORKER_ROUND_BUDGET_MS})：Cloudflare Worker 形态下补池会` +
-        `一把 key 都铸不出来（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。` +
-        `Node/Docker 没有平台墙钟上限，不受此限制。`,
-    );
+    logger.log({
+      level: "warn", event: "registrar.attempt_exceeds_worker_budget",
+      msg: "CODE_TIMEOUT_MS×通道数超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来"
+        + "（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。Node/Docker 没有平台墙钟上限，不受此限制。",
+      fields: {
+        codeTimeoutMs: cfg.codeTimeoutMs, chainLength, worstAttemptMs,
+        workerRoundBudgetMs: WORKER_ROUND_BUDGET_MS,
+      },
+    });
   }
 
   if (!enabled) return cfg;

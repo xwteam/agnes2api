@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { tendOnce, type TendFailureReason, type TendDeps } from "../../../src/core/registrar/tender.js";
 import { KeyPoolRepo } from "../../../src/core/dispatcher.js";
@@ -6,6 +6,8 @@ import { MemoryStorage } from "../../helpers/fake-storage.js";
 import { FakeMailProvider } from "../../helpers/fake-mailbox.js";
 import type { MailProvider } from "../../../src/ports/mailbox.js";
 import type { Channel, RegistrarConfig } from "../../../src/core/registrar/config.js";
+import { recordingLogger } from "../../helpers/recording-logger.js";
+import { NULL_LOGGER } from "../../../src/ports/logger.js";
 
 // 显式标注 RegistrarConfig：brief 给的字面量没有类型注解，`fallback: null` 会被
 // 收窄成字面量类型 null 而非 Channel | null，下面按测试用例覆盖成 "moemail" 时
@@ -42,10 +44,14 @@ async function makeDeps(over: Partial<RegistrarConfig> = {}, provider: MailProvi
   // （roundBudgetMs）赋值会被 tsc 拒绝，而 vitest 的 esbuild 转换不做类型检查，
   // 只有 `pnpm typecheck` 会揪出来——这也是发版清单必须把 typecheck 与 test
   // 并列为必跑项的原因。
+  // logger: NULL_LOGGER 而不是共享一个 recordingLogger() 实例——后者会在全文件所有用例
+  // 间共享同一个 entries 数组，不检查日志内容的用例也会悄悄往里面塞条目。下面两条关心
+  // 预算日志的用例会各自局部覆盖成一个新的 recordingLogger()。
   const deps: TendDeps = {
     repo, config: { ...CFG, ...over },
     providers,
     agnes: agnesOk(), now: () => 1000, sleep: async () => {}, rand: () => 0.5,
+    logger: NULL_LOGGER,
   };
   return { repo, deps };
 }
@@ -427,73 +433,62 @@ describe("tendOnce", () => {
     expect(order).toEqual(["create:yyds-u0@a.test", "delete:yyds-u0@a.test"]);
   });
 
-  it("I-1 预算连一次尝试都装不下时，走 error 且措辞与「本轮提前收尾」区分开", async () => {
+  it("I-1 预算连一次尝试都装不下时，记 registrar.round_budget_impossible 且级别是 error（与「本轮提前收尾」区分开）", async () => {
     // 这是永久停摆而不是瞬时状况：每一轮都 attempted=0 / minted=0 / failures=[]，
     // 两个入口的归因日志走 `minted < attempted`（0<0 为假）一条都不打，这条 error
-    // 是唯一能说破它的地方。断言的是**运维在日志里实际拿到的那句话**——既要能和
-    // 「本轮提前收尾」区分开（否则用户会当成等一会儿就好），也要带上可执行的处置。
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      let t = 0;
-      const order: string[] = [];
-      const provider = clockedProvider("yyds", () => { t += 5000; }, order);
-      const { repo, deps } = await makeDeps({ targetKeys: 5, mintBatch: 5, codeTimeoutMs: 5000 }, provider);
-      deps.now = () => t;
-      deps.sleep = async (ms: number) => { t += ms; };
-      deps.roundBudgetMs = 4_000; // < 单次最坏 5000，第一次就开不了
+    // 是唯一能说破它的地方。断言的是**事件名与级别**——console.* 已经被换成注入的
+    // Logger，spy console 只会看到空 mock，必须改成 recordingLogger 断言真实效果。
+    const logger = recordingLogger();
+    let t = 0;
+    const order: string[] = [];
+    const provider = clockedProvider("yyds", () => { t += 5000; }, order);
+    const { repo, deps } = await makeDeps({ targetKeys: 5, mintBatch: 5, codeTimeoutMs: 5000 }, provider);
+    deps.now = () => t;
+    deps.sleep = async (ms: number) => { t += ms; };
+    deps.roundBudgetMs = 4_000; // < 单次最坏 5000，第一次就开不了
+    deps.logger = logger;
 
-      const out = await tendOnce(deps);
+    const out = await tendOnce(deps);
 
-      expect(out.attempted).toBe(0);
-      expect(out.minted).toBe(0);
-      // 零副作用：一个邮箱都不该建出来（不能"先建了再发现预算不够"）。
-      expect(order).toEqual([]);
-      expect(await repo.all()).toHaveLength(0);
+    expect(out.attempted).toBe(0);
+    expect(out.minted).toBe(0);
+    // 零副作用：一个邮箱都不该建出来（不能"先建了再发现预算不够"）。
+    expect(order).toEqual([]);
+    expect(await repo.all()).toHaveLength(0);
 
-      const errMsg = String(errSpy.mock.calls[0]?.[0]);
-      expect(errMsg).toContain("一次尝试都无法开始");
-      expect(errMsg).toContain("CODE_TIMEOUT_MS");
-      // 五语言排障小节把这条的开头原样给出来供 grep（旧的那条 warn 一直是这么给的，
-      // 而说破「永久停摆」的这条此前一个字都没进文档——用户反而 grep 不到它）。
-      // 这里把文档给的片段与代码真实输出钉在一起：改文案就必须同步改五语言。
-      const FRAGMENT = "[registrar] 单次铸 key 的最坏耗时";
-      expect(errMsg.startsWith(FRAGMENT)).toBe(true);
-      for (const lang of ["zh-CN", "zh-TW", "en", "ja", "ko"]) {
-        expect(readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8"), `${lang} 没给这条 error 的可 grep 片段`)
-          .toContain(FRAGMENT);
-      }
-      // 不能退化成那条读起来像瞬时状况的 warn。
-      expect(warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("提前收尾")))
-        .toBeUndefined();
-    } finally {
-      warnSpy.mockRestore();
-      errSpy.mockRestore();
+    const e = logger.entries.find((x) => x.event === "registrar.round_budget_impossible");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.level).toBe("error");
+    expect(e?.fields?.worstAttemptMs).toBe(5000);
+    expect(e?.fields?.roundBudgetMs).toBe(4_000);
+    // 五语言排障小节按事件名给出可 grep 的锚点（旧的那条按中文文案 grep，英日韩用户
+    // 永远搜不到；改成事件名之后措辞怎么调整都不会失配）。这里把事件名与文档钉在一起。
+    for (const lang of ["zh-CN", "zh-TW", "en", "ja", "ko"]) {
+      expect(readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8"), `${lang} 没给这条 error 的可 grep 事件名`)
+        .toContain("registrar.round_budget_impossible");
     }
+    // 不能退化成「本轮提前收尾」那条 warn（那条是 registrar.round_budget_exhausted）。
+    expect(logger.has("registrar.round_budget_exhausted")).toBe(false);
   });
 
-  it("I-1 成对：预算装得下至少一次时走的是 warn 而不是 error（别把正常收尾报成配置错误）", async () => {
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      let t = 0;
-      const order: string[] = [];
-      const provider = clockedProvider("yyds", () => { t += 5000; }, order);
-      const { deps } = await makeDeps({ targetKeys: 5, mintBatch: 5, codeTimeoutMs: 5000 }, provider);
-      deps.now = () => t;
-      deps.sleep = async (ms: number) => { t += ms; };
-      deps.roundBudgetMs = 12_000;
+  it("I-1 成对：预算装得下至少一次时记 registrar.round_budget_exhausted 且级别是 warn（别把正常收尾报成配置错误）", async () => {
+    const logger = recordingLogger();
+    let t = 0;
+    const order: string[] = [];
+    const provider = clockedProvider("yyds", () => { t += 5000; }, order);
+    const { deps } = await makeDeps({ targetKeys: 5, mintBatch: 5, codeTimeoutMs: 5000 }, provider);
+    deps.now = () => t;
+    deps.sleep = async (ms: number) => { t += ms; };
+    deps.roundBudgetMs = 12_000;
+    deps.logger = logger;
 
-      const out = await tendOnce(deps);
+    const out = await tendOnce(deps);
 
-      expect(out.attempted).toBe(2);
-      expect(errSpy).not.toHaveBeenCalled();
-      expect(warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("提前收尾")))
-        .toBeDefined();
-    } finally {
-      warnSpy.mockRestore();
-      errSpy.mockRestore();
-    }
+    expect(out.attempted).toBe(2);
+    expect(logger.has("registrar.round_budget_impossible")).toBe(false);
+    const e = logger.entries.find((x) => x.event === "registrar.round_budget_exhausted");
+    expect(e).toBeDefined();
+    expect(e?.level).toBe("warn");
   });
 
   it("通道缺 provider 时记录一条失败，而不是静默空转", async () => {

@@ -1,6 +1,7 @@
 import type { MailProvider } from "../../ports/mailbox.js";
 import type { Mailbox } from "./types.js";
 import { sendCode, register, login, createKey, randomPassword, type AgnesDeps } from "./agnes.js";
+import type { Logger } from "../../ports/logger.js";
 
 export type MintOutcome =
   | { ok: true; key: string }
@@ -28,6 +29,12 @@ export interface MintDeps {
   sleep: (ms: number) => Promise<void>;
   /** 随机源，可选，默认 `Math.random`。注入后域名洗牌与密码生成都可确定性断言。 */
   rand?: () => number;
+  /** 事件日志 sink，由调用方注入——core 不直接碰 console。 */
+  logger: Logger;
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -54,7 +61,10 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
   try {
     domains = await deps.provider.listDomains();
   } catch (err) {
-    console.warn("[registrar] 列域名失败", err);
+    deps.logger.log({
+      level: "warn", event: "registrar.list_domains_failed",
+      msg: "列域名失败", fields: { err: errMsg(err) },
+    });
     return { ok: false, reason: "provider_error" };
   }
   if (domains.length === 0) return { ok: false, reason: "provider_error" };
@@ -83,7 +93,10 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
     try {
       mailbox = await deps.provider.createMailbox(domain);
     } catch (err) {
-      console.warn(`[registrar] 建临时邮箱失败，换下一个域名：${domain}`, err);
+      deps.logger.log({
+        level: "warn", event: "registrar.create_mailbox_failed",
+        msg: "建临时邮箱失败，换下一个域名", fields: { domain, err: errMsg(err) },
+      });
       continue; // 这个域名建不出邮箱，换下一个
     }
     createdAny = true;
@@ -101,7 +114,10 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       }
       if (status < 200 || status >= 300) {
         sawUpstreamError = true;
-        console.warn(`[registrar] 发验证码遇到非 2xx 非域名屏蔽的状态码，换下一个域名：${domain} status=${status}`);
+        deps.logger.log({
+          level: "warn", event: "registrar.send_code_bad_status",
+          msg: "发验证码遇到非 2xx 非域名屏蔽的状态码，换下一个域名", fields: { domain, status },
+        });
         continue;
       }
 
@@ -111,30 +127,38 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       // 变了——不留痕就只能靠猜。
       const code = await deps.provider.pollCode(mailbox, deps.codeTimeoutMs);
       if (!code) {
-        console.warn(
-          `[registrar] 等待验证码超时，这条邮箱通道收不到 Agnes 的信：${mailbox.address} ` +
-            `codeTimeoutMs=${deps.codeTimeoutMs}`,
-        );
+        deps.logger.log({
+          level: "warn", event: "registrar.code_timeout",
+          msg: "等待验证码超时，这条邮箱通道收不到 Agnes 的信",
+          fields: { address: mailbox.address, codeTimeoutMs: deps.codeTimeoutMs },
+        });
         return { ok: false, reason: "code_timeout" };
       }
 
       const password = randomPassword(rand);
       if (!(await register(deps.agnes, mailbox.address, password, code))) {
-        console.warn(`[registrar] Agnes 注册被拒（验证码已正常收到）：${mailbox.address}`);
+        deps.logger.log({
+          level: "warn", event: "registrar.register_rejected",
+          msg: "Agnes 注册被拒（验证码已正常收到）", fields: { address: mailbox.address },
+        });
         return { ok: false, reason: "register_failed" };
       }
       const token = await login(deps.agnes, mailbox.address, password);
       if (!token) {
-        console.warn(`[registrar] Agnes 登录未返回令牌（账号已注册成功）：${mailbox.address}`);
+        deps.logger.log({
+          level: "warn", event: "registrar.login_no_token",
+          msg: "Agnes 登录未返回令牌（账号已注册成功）", fields: { address: mailbox.address },
+        });
         return { ok: false, reason: "login_failed" };
       }
 
       const key = await createKey(deps.agnes, token, deps.tokenName);
       if (!key) {
-        console.warn(
-          `[registrar] Agnes 建 key 未返回 key（注册与登录都成功）：${mailbox.address} ` +
-            `tokenName=${deps.tokenName}`,
-        );
+        deps.logger.log({
+          level: "warn", event: "registrar.key_not_returned",
+          msg: "Agnes 建 key 未返回 key（注册与登录都成功）",
+          fields: { address: mailbox.address, tokenName: deps.tokenName },
+        });
         return { ok: false, reason: "key_failed" };
       }
 
@@ -147,7 +171,10 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       // `TendResult` 也拿不到（P3 面板要展示的就是它）。而单次铸 key 光轮询验证码
       // 就要打约 40 次请求，120 秒窗口内撞一次瞬时网络错误是常态，不该是"整轮报废"
       // 级别的事件。收敛成一个 reason 交回给 tender，由它决定怎么退避。
-      console.warn(`[registrar] 铸 key 过程中出现网络层错误，本次作废：${domain}`, err);
+      deps.logger.log({
+        level: "warn", event: "registrar.network_error",
+        msg: "铸 key 过程中出现网络层错误，本次作废", fields: { domain, err: errMsg(err) },
+      });
       return { ok: false, reason: "network_error" };
     } finally {
       // 用完即删：YYDS 免费档最多同时存在 15 个邮箱，中途任何一步失败都必须把
@@ -157,7 +184,11 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       try {
         await deps.provider.deleteMailbox(mailbox);
       } catch (err) {
-        console.warn(`[registrar] 删临时邮箱失败（残留不影响已拿到的结果）：${mailbox.address}`, err);
+        deps.logger.log({
+          level: "warn", event: "registrar.delete_mailbox_failed",
+          msg: "删临时邮箱失败（残留不影响已拿到的结果）",
+          fields: { address: mailbox.address, err: errMsg(err) },
+        });
       }
     }
   }
@@ -166,9 +197,11 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
     // 一个邮箱都没建出来，说明连「让 Agnes 看一眼这个域名」的机会都没有过，
     // 谈不上域名被屏蔽。这条日志要能把运维引向邮箱通道（凭据/配额/服务），
     // 而不是域名。
-    console.warn(
-      `[registrar] ${candidates.length} 个候选域名上都建不出临时邮箱，按通道级失败处理（可降级到备通道）`,
-    );
+    deps.logger.log({
+      level: "warn", event: "registrar.no_mailbox_on_any_domain",
+      msg: "候选域名上都建不出临时邮箱，按通道级失败处理（可降级到备通道）",
+      fields: { candidates: candidates.length },
+    });
     return { ok: false, reason: "provider_error" };
   }
 

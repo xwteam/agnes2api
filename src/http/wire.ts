@@ -10,6 +10,8 @@ import type { MailProvider } from "../ports/mailbox.js";
 import type { TendDeps } from "../core/registrar/tender.js";
 import { YydsProvider } from "../adapters/mailbox-yyds.js";
 import { MoeMailProvider } from "../adapters/mailbox-moemail.js";
+import { ConsoleLogger } from "../adapters/logger-console.js";
+import type { Logger } from "../ports/logger.js";
 
 export interface BuildOptions {
   /**
@@ -37,12 +39,13 @@ export async function buildApp(
   options: BuildOptions = {},
 ) {
   const storageHealth = createStorageHealth();
+  const logger: Logger = new ConsoleLogger();
   // 包一层之后，后续所有写操作（key 池状态回写、启动探测）的成败都会自动反映到
   // /health 上，健康检查自身不需要再写盘。
   const watched = watchStorage(storage, storageHealth, () => Date.now());
 
   if (options.probeStorage) {
-    const err = await probeWritable(watched, storageHealth, () => Date.now());
+    const err = await probeWritable(watched, storageHealth, () => Date.now(), logger);
     if (err) {
       console.error(
         `[agnes2api] 数据目录不可写，key 池无法持久化，/health 将报告 degraded：${err.message}`,
@@ -54,7 +57,7 @@ export async function buildApp(
     }
   }
 
-  const config = await loadConfig(env, watched);
+  const config = await loadConfig(env, watched, logger);
   return createApp({
     version: VERSION,
     config,
@@ -80,7 +83,8 @@ export async function buildTendDeps(
   env: Record<string, string | undefined>,
   storage: Storage,
 ): Promise<TendDeps | null> {
-  const config = await loadConfig(env, storage);
+  const logger: Logger = new ConsoleLogger();
+  const config = await loadConfig(env, storage, logger);
   const reg = config.registrar;
   if (!reg.enabled) return null;
 
@@ -89,8 +93,8 @@ export async function buildTendDeps(
   const now = () => Date.now();
 
   const providers: Partial<Record<Channel, MailProvider>> = {};
-  if (reg.yyds) providers.yyds = new YydsProvider({ fetcher, ...reg.yyds, sleep, now });
-  if (reg.moemail) providers.moemail = new MoeMailProvider({ fetcher, ...reg.moemail, sleep, now });
+  if (reg.yyds) providers.yyds = new YydsProvider({ fetcher, ...reg.yyds, sleep, now, logger });
+  if (reg.moemail) providers.moemail = new MoeMailProvider({ fetcher, ...reg.moemail, sleep, now, logger });
 
   return {
     repo: new KeyPoolRepo(storage),
@@ -100,5 +104,6 @@ export async function buildTendDeps(
     now,
     sleep,
     rand: Math.random,
+    logger,
   };
 }

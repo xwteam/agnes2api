@@ -1,6 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { mintOne } from "../../../src/core/registrar/mint.js";
 import { FakeMailProvider } from "../../helpers/fake-mailbox.js";
+import { recordingLogger } from "../../helpers/recording-logger.js";
+import { NULL_LOGGER } from "../../../src/ports/logger.js";
 
 function agnesStub(plan: {
   sendCode?: (email: string) => number;
@@ -36,9 +38,12 @@ function agnesStub(plan: {
   };
 }
 
+// logger: NULL_LOGGER 而不是共享一个 recordingLogger() 实例——后者会在全文件所有用例间
+// 共享同一个 entries 数组，不检查日志内容的用例也会悄悄往里面塞条目，污染真正关心日志的
+// 那几条用例（下面几条会各自局部覆盖成一个新的 recordingLogger()）。
 const BASE = {
   tokenName: "auto", codeTimeoutMs: 5000, maxDomainAttempts: 8,
-  sleep: async () => {}, rand: () => 0.5,
+  sleep: async () => {}, rand: () => 0.5, logger: NULL_LOGGER,
 };
 
 describe("mintOne", () => {
@@ -271,84 +276,65 @@ describe("mintOne", () => {
     expect(provider.deleted).toHaveLength(1);
   });
 
-  // === M2：四种此前完全静默的 reason 必须各留一条 warn ===
+  // === M2：四种此前完全静默的 reason 必须各留一条日志事件 ===
   //
   // 这四条 return 是「注册机停摆但日志里查不出原因」的直接成因：收尾日志只有
   // minted=0，而这四种的处置完全不同（换通道 / 等 Agnes 恢复 / 改配置）。
-  // 每条都断言 warn 里带得出**定位信息**（邮箱地址、超时值、tokenName），
-  // 而不是只断言「warn 被调用过」——后者一句笼统的日志也能通过。
+  // 每条都断言事件的 fields 里带得出**定位信息**（邮箱地址、超时值、tokenName），
+  // 而不是只断言「事件被记过」——后者一个空字段的事件也能通过。改成 recordingLogger
+  // 断言事件名 + fields，而不是 spy console 断言文案子串：console.* 已经被换成
+  // 注入的 Logger，spy console 只会看到空 mock。
 
-  it("验证码超时时留一条 warn，带上邮箱地址与 codeTimeoutMs", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const provider = new FakeMailProvider({ domains: ["only.test"], code: null });
-      const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
-      await mintOne({ provider, agnes, ...BASE, codeTimeoutMs: 7777 });
-      const msgs = warnSpy.mock.calls.map((c) => String(c[0]));
-      const hit = msgs.find((m) => m.includes("验证码超时"));
-      expect(hit, `实际日志：${JSON.stringify(msgs)}`).toBeDefined();
-      expect(hit).toContain(provider.created[0]!);
-      expect(hit).toContain("7777");
-    } finally {
-      warnSpy.mockRestore();
-    }
+  it("验证码超时时记一条 registrar.code_timeout 事件，带上邮箱地址与 codeTimeoutMs", async () => {
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({ domains: ["only.test"], code: null });
+    const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
+    await mintOne({ provider, agnes, ...BASE, logger, codeTimeoutMs: 7777 });
+    const e = logger.entries.find((x) => x.event === "registrar.code_timeout");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.fields?.address).toBe(provider.created[0]!);
+    expect(e?.fields?.codeTimeoutMs).toBe(7777);
   });
 
-  it("注册被拒时留一条 warn，带上邮箱地址", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const provider = new FakeMailProvider({ domains: ["only.test"] });
-      const { agnes } = agnesStub({ register: false });
-      await mintOne({ provider, agnes, ...BASE });
-      const hit = warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("注册被拒"));
-      expect(hit).toBeDefined();
-      expect(hit).toContain(provider.created[0]!);
-    } finally {
-      warnSpy.mockRestore();
-    }
+  it("注册被拒时记一条 registrar.register_rejected 事件，带上邮箱地址", async () => {
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const { agnes } = agnesStub({ register: false });
+    await mintOne({ provider, agnes, ...BASE, logger });
+    const e = logger.entries.find((x) => x.event === "registrar.register_rejected");
+    expect(e).toBeDefined();
+    expect(e?.fields?.address).toBe(provider.created[0]!);
   });
 
-  it("登录拿不到令牌时留一条 warn，带上邮箱地址", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const provider = new FakeMailProvider({ domains: ["only.test"] });
-      const { agnes } = agnesStub({ login: null });
-      await mintOne({ provider, agnes, ...BASE });
-      const hit = warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("登录未返回令牌"));
-      expect(hit).toBeDefined();
-      expect(hit).toContain(provider.created[0]!);
-    } finally {
-      warnSpy.mockRestore();
-    }
+  it("登录拿不到令牌时记一条 registrar.login_no_token 事件，带上邮箱地址", async () => {
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const { agnes } = agnesStub({ login: null });
+    await mintOne({ provider, agnes, ...BASE, logger });
+    const e = logger.entries.find((x) => x.event === "registrar.login_no_token");
+    expect(e).toBeDefined();
+    expect(e?.fields?.address).toBe(provider.created[0]!);
   });
 
-  it("建 key 失败时留一条 warn，带上邮箱地址与 tokenName", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const provider = new FakeMailProvider({ domains: ["only.test"] });
-      const { agnes } = agnesStub({ login: "tok", key: null });
-      await mintOne({ provider, agnes, ...BASE, tokenName: "my-token-name" });
-      const hit = warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes("建 key 未返回 key"));
-      expect(hit).toBeDefined();
-      expect(hit).toContain(provider.created[0]!);
-      expect(hit).toContain("my-token-name");
-    } finally {
-      warnSpy.mockRestore();
-    }
+  it("建 key 失败时记一条 registrar.key_not_returned 事件，带上邮箱地址与 tokenName", async () => {
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const { agnes } = agnesStub({ login: "tok", key: null });
+    await mintOne({ provider, agnes, ...BASE, logger, tokenName: "my-token-name" });
+    const e = logger.entries.find((x) => x.event === "registrar.key_not_returned");
+    expect(e).toBeDefined();
+    expect(e?.fields?.address).toBe(provider.created[0]!);
+    expect(e?.fields?.tokenName).toBe("my-token-name");
   });
 
-  it("成功铸出 key 的路径不产生这四条 warn（不是无条件乱打日志）", async () => {
-    // 与上面四条成对：只有「失败才 warn」才能同时通过这五条。若实现改成无条件
-    // 打日志，这条会红。
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const provider = new FakeMailProvider({ domains: ["only.test"] });
-      const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
-      expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: true, key: "sk-ok" });
-      expect(warnSpy).not.toHaveBeenCalled();
-    } finally {
-      warnSpy.mockRestore();
-    }
+  it("成功铸出 key 的路径不产生这四条事件（不是无条件乱记日志）", async () => {
+    // 与上面四条成对：只有「失败才记」才能同时通过这五条。若实现改成无条件
+    // 记日志，这条会红。
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
+    expect(await mintOne({ provider, agnes, ...BASE, logger })).toEqual({ ok: true, key: "sk-ok" });
+    expect(logger.entries).toEqual([]);
   });
 
   it("不传 rand 时按 Math.random 兜底也能正常出 key", async () => {

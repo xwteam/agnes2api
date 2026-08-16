@@ -132,8 +132,12 @@ Worker에 배포하는 경우, 보충은 Cron 트리거에 의해 시작됩니�
   커버하지만 "이론상 최악"은 커버하지 않습니다). 발급을 한 번 시작하기 전마다 "남은 월클록으로
   이번 한 번을 끝까지 돌릴 수 있는가"를 먼저 계산하고(판정식은 `CODE_TIMEOUT_MS × 채널 수` +
   시도 간격), 부족하면 **아예 시작하지 않습니다**. 라운드를 일찍 끝내고
-  `本轮墙钟预算不足以再完整跑完一次铸 key，提前收尾` 한 줄을 남기며, 이미 발급된 key는 그대로
+  `registrar.round_budget_exhausted` 경고 이벤트를 기록합니다("이번 라운드 월클록 예산으로는
+  발급을 한 번 더 완주할 수 없어 조기 종료합니다"라는 내용). 이미 발급된 key는 그대로
   저장되고 남은 슬롯은 다음 스케줄로 넘어갑니다.
+  (첫 번째 시도조차 들어가지 않는다면 다른 이벤트 `registrar.round_budget_impossible`
+  (레벨은 error)이 기록됩니다. 자세한 내용은 아래 "`CODE_TIMEOUT_MS`를 너무 크게 잡지 마세요"
+  참고.)
   핵심은 "중간에 잘리는" 것이 아니라 "시작하지 않는" 것입니다. 플랫폼에 중단되면 그 순간
   사용 중이던 임시 메일함이 삭제되지 못한 채 남습니다(YYDS는 약 24시간 후 `expiresAt`로,
   MoeMail은 1시간 TTL로 만료).
@@ -152,15 +156,26 @@ Worker에 배포하는 경우, 보충은 Cron 트리거에 의해 시작됩니�
     `MAX_DOMAIN_ATTEMPTS`를 줄이세요.
 - **`CODE_TIMEOUT_MS`를 너무 크게 잡지 마세요.** `CODE_TIMEOUT_MS × 채널 수`가 라운드 예산
   (월클록의 87%)을 넘으면 Worker에서는 **시도를 한 번도 시작할 수 없어** 보충이 매 라운드
-  아무것도 만들어내지 못합니다. 로그는 두 군데에 남습니다.
-  - **시작 시**에는 **경고**(`console.warn`)가 다음과 같이 한 줄 남습니다:
-    `[registrar] CODE_TIMEOUT_MS×通道数(...) 超过 Worker 单轮墙钟预算(...)`.
+  아무것도 만들어내지 못합니다. 로그는 두 군데에 남습니다. 중국어 문구보다 **이벤트 이름**으로
+  grep하는 편이 더 확실합니다(아래 "문제 해결" 참고 — 문구는 표현 조정으로 바뀔 수 있지만
+  이벤트 이름은 바뀌지 않으며, 지금까지의 예시는 중국어라 중국어를 모르는 운영자는애초에
+  grep할 수 없었습니다).
+  - **시작 시**에는 **경고**(`console.warn`)가 남습니다. 이벤트 이름은
+    `registrar.attempt_exceeds_worker_budget`(`grep 'registrar.attempt_exceeds_worker_budget'`)이며,
+    대략 다음과 같은 형태입니다:
+    `[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×채널 수가 Worker
+    라운드 월클록 예산을 초과했습니다 codeTimeoutMs=... chainLength=... worstAttemptMs=...
+    workerRoundBudgetMs=...`.
     이 경고는 **게이트웨이 시작을 막지 않습니다** — "자격 증명이 없으면 시작 시점에 오류가
     나서 뜨지 않는다"와는 다릅니다. Node/Docker에는 플랫폼 월클록 상한이 없어 같은 설정도
     완전히 정상이므로, 두 런타임 모두 이 경고를 남기지만 실제로 영향을 받는 것은 Worker
     뿐입니다.
-  - **Worker의 보충 라운드마다** **오류**(`console.error`)가 남습니다:
-    `[registrar] 单次铸 key 的最坏耗时(...ms = CODE_TIMEOUT_MS×通道数)已超过本轮墙钟预算`.
+  - **Worker의 보충 라운드마다**(첫 번째 시도조차 시작할 수 없을 때) **오류**
+    (`console.error`)가 남습니다. 이벤트 이름은 `registrar.round_budget_impossible`
+    (`grep 'registrar.round_budget_impossible'`)이며, 대략 다음과 같은 형태입니다:
+    `[registrar] registrar.round_budget_impossible 한 번의 발급에 걸리는 최악 소요 시간이
+    이미 이번 라운드 월클록 예산을 넘어, 단 한 번도 시작할 수 없습니다
+    worstAttemptMs=... roundBudgetMs=...`.
     매 라운드 반복되므로 일시적인 상황이 아니라 지속 상태임을 확인할 수 있습니다.
 - **`MINT_BATCH`, `CODE_TIMEOUT_MS`, `MAX_DOMAIN_ATTEMPTS`를 늘리기 전에 위 두 공식으로
   직접 계산해 보세요.** 상한에 닿으면 해당 Cron 호출은 플랫폼에 의해 중단됩니다.
@@ -189,7 +204,10 @@ Worker에 배포하는 경우, 보충은 Cron 트리거에 의해 시작됩니�
   알려줍니다.** 레지스트라는 페일클로즈(fail-closed) 정책을 따르므로, 자격 증명 누락
   이 조용히 무시되지 않고 게이트웨이가 명확하게 실패해 문제를 쉽게 찾을 수 있습니다.
 - 보충 과정의 로그에는 일관되게 `[registrar]` 접두사가 붙으므로, 이를 기준으로 필터
-  링해 볼 수 있습니다.
+  링해 볼 수 있습니다. 각 로그 줄의 두 번째 필드는 안정적인 기계 판독용 **이벤트
+  이름**(예: `registrar.round_budget_impossible`)입니다. 이벤트 이름으로 grep하는 편이
+  사람이 읽는 문구로 grep하는 것보다 확실합니다 — 문구는 표현 조정으로 바뀔 수 있지만,
+  이벤트 이름은 이 로그의 유일하게 안정적인 대외 계약이며 바뀌지 않습니다.
 - **한 라운드에서 발급되지 않은 슬롯이 있으면 마무리 로그에 `reasons=`가 붙은 경고가 한
   줄 더 남습니다**(예: `reasons=yyds:register_failed×3 moemail:code_timeout×1`). 먼저 이
   줄로 어느 계층의 장애인지 판단하세요. `code_timeout` = 이 채널이 Agnes의 메일을 받지
