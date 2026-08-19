@@ -452,6 +452,11 @@ On Docker this means deleting the `"key:<id>"` entry from `./data/store.json` an
 recommended.
 
 Isolates and processes that already loaded an older snapshot stop selecting the key after at most
-one `POOL_CACHE_TTL_MS`, **but it will never be written back**: before persisting any state
-change the gateway first confirms the record still exists, and drops the write (refreshing its
-own snapshot immediately) when it does not.
+one `POOL_CACHE_TTL_MS`; on the Worker, add one KV propagation window (about 60 seconds) on top,
+since that is how long a delete takes to become visible in every colo.
+
+**It will not be written back during that window either**: before persisting any state change the
+gateway first confirms the record still exists, and drops the write — refreshing its own snapshot
+immediately — when it does not. The one exception is that same propagation window: if the
+confirming read is served by KV's edge cache, this colo still believes the record is there.
+Docker (file storage) has no such cache, so there the guarantee is exact.

@@ -389,6 +389,9 @@ npx wrangler kv key put --binding=POOL "pool:index" '{"v":1,"ids":["剩下的id"
 Docker 形态就是在 `./data/store.json` 里删掉 `"key:<id>"` 那个键，并把 `"pool:index"` 的
 `ids` 数组改好，建议先 `docker compose stop`。
 
-已经装载了旧快照的 isolate / 进程最多再等一个 `POOL_CACHE_TTL_MS` 才会停止选中这把 key，
-**但它不会被写回来**：网关在落盘任何状态变更之前都会先确认记录还在，读不到就丢弃这次写，
-并立刻刷新自己的快照。
+已经装载了旧快照的 isolate / 进程最多再等一个 `POOL_CACHE_TTL_MS` 才会停止选中这把 key；
+Worker 上还要再加一个 KV 的传播窗口（约 60 秒），因为删除要这么久才对所有 colo 可见。
+
+**这段窗口里它也不会被写回来**：网关在落盘任何状态变更之前都会先确认记录还在，读不到就
+丢弃这次写并立刻刷新自己的快照。唯一的例外同样是那个传播窗口——确认用的那次读若被 KV
+的边缘缓存挡下，本 colo 会以为记录还在。Docker（文件存储）没有这层缓存，那里是精确的。
