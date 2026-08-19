@@ -20,6 +20,35 @@ describe("wrangler.toml 的 KV id 必须仍是占位符", () => {
   });
 });
 
+/**
+ * Task 8 复验登记的缺口：占位符门禁只查 id，不查 binding 名——把 `[[kv_namespaces]]`
+ * 的 `binding = "POOL"` 改成别的名字，占位符检查照样通过，契约测试的 miniflare
+ * `kvNamespaces: ["POOL"]` 也不读 wrangler.toml 所以照样通过，唯独真机部署时
+ * `env.POOL`（`src/entry/worker.ts`）会是 `undefined`，运行时才炸。
+ * 这里做真变异（改坏 binding 名喂给脚本），不是只读代码。
+ */
+describe("wrangler.toml 的 KV binding 名必须与代码期望的 env.POOL 一致", () => {
+  it("当前仓库的 binding 是 \"POOL\"，与 src/entry/worker.ts 的 env.POOL 一致", () => {
+    execFileSync("node", ["scripts/check-wrangler-placeholder.mjs"], { stdio: "pipe" });
+  });
+
+  it("binding 被改名后门禁 exit 1，而不是静默放行", () => {
+    const renamed = readFileSync("wrangler.toml", "utf8")
+      .replace('binding = "POOL"', 'binding = "KV_POOL"');
+    expect(() => execFileSync("node", ["scripts/check-wrangler-placeholder.mjs"], {
+      input: renamed, env: { ...process.env, WRANGLER_TOML_FROM_STDIN: "1" }, stdio: "pipe",
+    })).toThrow();
+  });
+
+  it("缺少 binding 声明时也 exit 1（不是把 undefined 当成通过）", () => {
+    const stripped = readFileSync("wrangler.toml", "utf8")
+      .replace(/^\s*binding\s*=\s*"POOL"\s*$/m, "");
+    expect(() => execFileSync("node", ["scripts/check-wrangler-placeholder.mjs"], {
+      input: stripped, env: { ...process.env, WRANGLER_TOML_FROM_STDIN: "1" }, stdio: "pipe",
+    })).toThrow();
+  });
+});
+
 describe("体积预算门禁", () => {
   it("当前资源在预算内", () => {
     execFileSync("node", ["scripts/check-ui-budget.mjs"], { stdio: "pipe" });

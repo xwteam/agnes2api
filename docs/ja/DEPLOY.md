@@ -200,20 +200,20 @@ agnes2api は同一のコードベースとリクエスト処理ロジックか�
    pnpm install
    ```
 
-2. key プール用の KV ネームスペースを作成し、`POOL` としてバインドします。
+2. key プール用の KV ネームスペースを作成し、`wrangler.toml` に書き戻します。
 
    ```bash
-   npx wrangler kv namespace create POOL
+   node scripts/setup-worker.mjs
    ```
 
-   返された namespace の `id` を `wrangler.toml` に貼り付け、
-   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID` を置き換えます。
-
-   ```toml
-   [[kv_namespaces]]
-   binding = "POOL"
-   id = "your-namespace-id"
-   ```
+   リポジトリの `wrangler.toml` に入っている `id` は常にプレースホルダーです
+   （公開リポジトリには実際のデプロイ情報を一切含めません）ので、この手順は
+   必須です。このスクリプトは手動で `npx wrangler kv namespace create POOL` を
+   実行し、返ってきた `id` を `[[kv_namespaces]]` ブロックの
+   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID` に貼り付けるのと同じことをします。
+   **実行後、この `wrangler.toml` への変更はコミットしないでください**——
+   `check-wrangler-placeholder.mjs` の CI ゲートが誤ってコミットされた実際の
+   id を検出して止めます。
 
 3. ゲートウェイトークンを Worker の secret として設定します（絶対に
    `wrangler.toml` にコミットしないでください）。
@@ -374,3 +374,12 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 レジストラを使わない場合でも `wrangler.toml` の `[triggers]` を削除しないでください。
 この cron は `pool:index` と実際の `key:` レコードを突き合わせて修復する唯一の経路であり、
 `REGISTRAR_ENABLED` の値とは無関係に実行されます。
+
+**この cron の発火タイミングは公式に保証されていません。** Cloudflare は Cron
+Trigger が `crons` の式どおりに発火する信頼性について文書化していません（スキップ
+されない保証も、遅延の上限も明記されていません）。これは配額計算にとっては安全
+な方向です——対帳の発火回数が減れば KV の読み書き消費も予測より減るだけで、
+増えることはありません。ただし**孤立レコードやゴースト索引項目が索引に回収され
+るまでの時間には保証がありません**。最悪の場合、想定していた「最長 30 分」より
+長くかかることがあります。その待機中は対象の key が一時的に使えないだけで、
+データが失われたり壊れたりすることはありません。

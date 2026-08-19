@@ -173,20 +173,17 @@ key——這兩種狀態被視為「這把 key 已失效」，重試沒有意義
    pnpm install
    ```
 
-2. 為 key 池建立一個 KV 命名空間並綁定為 `POOL`：
+2. 為 key 池建立一個 KV 命名空間並寫回 `wrangler.toml`：
 
    ```bash
-   npx wrangler kv namespace create POOL
+   node scripts/setup-worker.mjs
    ```
 
-   把回傳的命名空間 `id` 填入 `wrangler.toml`，取代
-   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`：
-
-   ```toml
-   [[kv_namespaces]]
-   binding = "POOL"
-   id = "your-namespace-id"
-   ```
+   倉庫裡 `wrangler.toml` 的 `id` 永遠是佔位符（公開倉不放任何真實部署細節），
+   這一步必不可少。腳本內部做的事等同於手動執行 `npx wrangler kv namespace
+   create POOL` 後把回傳的 `id` 填進 `[[kv_namespaces]]` 段取代
+   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`。**跑完不要提交這次對 `wrangler.toml`
+   的改動**——`check-wrangler-placeholder.mjs` 那道 CI 門禁會擋下誤提交的真實 id。
 
 3. 把閘道權杖設定為 Worker secret（絕對不要提交進 `wrangler.toml`）：
 
@@ -325,3 +322,9 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 
 **即使你完全不用註冊機，也不要刪掉 `wrangler.toml` 裡的 `[triggers]`**：那個 cron 是
 `pool:index` 與實際 `key:` 記錄之間唯一的對帳修復路徑，且與 `REGISTRAR_ENABLED` 無關。
+
+**這個 cron 的觸發時機沒有官方保證。** Cloudflare 沒有文件化 Cron Trigger 按
+`crons` 表達式觸發的可靠性承諾（不保證不跳過、不保證延遲上界）。這對配額帳
+是安全的——對帳觸發得越少，實際消耗的 KV 讀寫只會比預估更少，不會更多；但
+**孤兒記錄／幽靈索引項被撿回索引的時間沒有保證**，極端情況下可能比預期的
+「最長 30 分鐘」更晚。這段等待期間該 key 只是暫時用不上，不會造成資料損壞。

@@ -198,20 +198,20 @@ key 교체 필요), `upstream_error`(key 자체는 정상이나 업스트림이 
    pnpm install
    ```
 
-2. key 풀을 위한 KV 네임스페이스를 만들고 `POOL`로 바인딩합니다.
+2. key 풀을 위한 KV 네임스페이스를 만들고 `wrangler.toml`에 다시 씁니다.
 
    ```bash
-   npx wrangler kv namespace create POOL
+   node scripts/setup-worker.mjs
    ```
 
-   반환된 네임스페이스 `id`를 `wrangler.toml`에 붙여넣어
-   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`를 대체합니다.
-
-   ```toml
-   [[kv_namespaces]]
-   binding = "POOL"
-   id = "your-namespace-id"
-   ```
+   저장소의 `wrangler.toml`에 들어 있는 `id`는 항상 자리표시자입니다
+   (공개 저장소에는 실제 배포 정보를 전혀 넣지 않습니다), 그래서 이 단계는
+   필수입니다. 이 스크립트는 수동으로 `npx wrangler kv namespace create
+   POOL`을 실행하고 반환된 `id`를 `[[kv_namespaces]]` 블록의
+   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID` 자리에 붙여넣는 것과 같은 일을
+   합니다. **실행 후 이 `wrangler.toml` 변경 사항은 커밋하지 마세요**——
+   `check-wrangler-placeholder.mjs` CI 게이트가 실수로 커밋된 실제 id를
+   막습니다.
 
 3. 게이트웨이 토큰을 Worker secret으로 설정합니다(`wrangler.toml`에
    절대 커밋하지 마세요).
@@ -369,3 +369,13 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 레지스트라를 쓰지 않더라도 `wrangler.toml`의 `[triggers]` 블록을 지우지 마십시오.
 이 cron은 `pool:index`와 실제 `key:` 레코드를 대조해 고치는 유일한 경로이며,
 `REGISTRAR_ENABLED` 값과 무관하게 실행됩니다.
+
+**이 cron의 트리거 시점은 공식적으로 보장되지 않습니다.** Cloudflare는 Cron
+Trigger가 `crons` 표현식대로 정확히 발동한다는 신뢰성을 문서화하지 않았습니다
+(건너뛰지 않는다는 보장도, 지연 상한도 명시되어 있지 않습니다). 이는 할당량
+계산에는 안전한 방향입니다 —— 대사(對帳) 트리거가 줄어들수록 실제 KV 읽기/쓰기
+소비량은 예상보다 줄어들 뿐, 늘어나지 않습니다. 다만 **고아 레코드나 유령
+색인 항목이 색인으로 회수되기까지 걸리는 시간은 보장되지 않습니다**. 최악의
+경우 예상했던 "최대 30분"보다 더 오래 걸릴 수 있습니다. 그 대기 시간 동안
+해당 key는 일시적으로 사용할 수 없을 뿐이며, 데이터가 손실되거나 손상되지는
+않습니다.

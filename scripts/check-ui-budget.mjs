@@ -5,12 +5,20 @@
  * 原始字节的上限已经在 build-ui.mjs 生成时强制过一次（MAX_RAW_BYTES = 1 MiB，
  * 超了直接 fail 生成），这里的 raw 检查是防御性的第二道。这个脚本真正新增的是
  * gzip 后的上限——Worker 脚本的部署体积上限是 gzip 后的值，而约 500 KB 的字符串
- * 常量会整个进脚本。上限数字见待复核项 U1/U2，复核完之前这两个阈值按保守值取。
+ * 常量会整个进脚本。
  *
- * ⚠️ **刻意不 import `../src/ui/assets.generated.js`**：那是 .ts 生成物，纯 node
- * （没有 tsx/ts-node）下 import 不了。改为直接读 admin-ui/ 源目录算字节——这样门禁
- * 与生成物解耦，不依赖任何 TS 运行时；生成物是否与源一致，交给门禁 3
- * （`git diff --exit-code src/ui/assets.generated.ts`）负责，这里只管体积。
+ * MAX_GZIP 的取值（Task 9，已核实，见设计文档 §17 U2）：
+ * Cloudflare Worker 免费档脚本上限是 gzip 后 **3 MiB**（付费档 10 MiB）。这个
+ * 3 MiB 是**整个 Worker 脚本**（路由、dispatcher、注册机等业务代码 + 这里管的
+ * UI 资源）共用的一个预算，不能把它整个划给 UI 资源，否则业务代码一涨就没有
+ * 余量。这里取 **3 MiB 的 1/8 ≈ 384 KiB（393216 字节）**：
+ *   - 真机部署实测 UI 资源当前是 **49.76 KiB gzip**（3 MiB 的约 1.6%），
+ *     384 KiB 相当于给它留了约 **7.7 倍**的增长空间（P3b 起还要加 i18n 字典、
+ *     更多板块），不会「刚好够用」就报警；
+ *   - 同时把 UI 这一项死死摁在 3 MiB 预算的 1/8 以内，**给脚本其余 7/8
+ *     （业务逻辑、依赖）留足空间**，UI 资源一旦失控增长（例如不小心内联了
+ *     一份大字典或误提交了非文本内容）会在离 3 MiB 上限还很远的地方就被拦下，
+ *     而不是等到接近 Cloudflare 的硬上限才发现。
  */
 import { gzipSync } from "node:zlib";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -21,7 +29,7 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SRC = join(ROOT, "admin-ui");
 
 const MAX_RAW = Number(process.env.UI_MAX_RAW_BYTES ?? 1024 * 1024);
-const MAX_GZIP = Number(process.env.UI_MAX_GZIP_BYTES ?? 400 * 1024);
+const MAX_GZIP = Number(process.env.UI_MAX_GZIP_BYTES ?? (3 * 1024 * 1024) / 8);
 
 function walk(dir) {
   const out = [];

@@ -173,20 +173,17 @@ key——这两种状态被视为「这个 key 已失效」，重试没有意义
    pnpm install
    ```
 
-2. 为 key 池创建一个 KV 命名空间并绑定为 `POOL`：
+2. 为 key 池创建一个 KV 命名空间并写回 `wrangler.toml`：
 
    ```bash
-   npx wrangler kv namespace create POOL
+   node scripts/setup-worker.mjs
    ```
 
-   把返回的命名空间 `id` 填入 `wrangler.toml`，替换掉
-   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`：
-
-   ```toml
-   [[kv_namespaces]]
-   binding = "POOL"
-   id = "your-namespace-id"
-   ```
+   仓库里 `wrangler.toml` 的 `id` 永远是占位符（公开仓不放任何真实部署细节），
+   这一步必不可少。脚本内部做的事等价于手动执行 `npx wrangler kv namespace
+   create POOL` 后把返回的 `id` 填进 `[[kv_namespaces]]` 段替换掉
+   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`。**跑完不要提交这次对 `wrangler.toml`
+   的改动**——`check-wrangler-placeholder.mjs` 那道 CI 门禁会拦下误提交的真实 id。
 
 3. 把网关令牌设置为 Worker secret（绝不要提交进 `wrangler.toml`）：
 
@@ -323,3 +320,9 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 
 **即使你完全不用注册机，也不要删掉 `wrangler.toml` 里的 `[triggers]`**：那个 cron 是
 `pool:index` 与实际 `key:` 记录之间唯一的对账修复路径，且与 `REGISTRAR_ENABLED` 无关。
+
+**这个 cron 的触发时机没有官方保证。** Cloudflare 没有文档化 Cron Trigger 按
+`crons` 表达式触发的可靠性承诺（不保证不跳过、不保证延迟上界）。这对配额账
+是安全的——对账触发得越少，实际消耗的 KV 读写只会比预估更少，不会更多；但
+**孤儿记录 / 幽灵索引项被捡回索引的时间没有保证**，极端情况下可能比预期的
+「最长 30 分钟」更晚。这段等待期间该 key 只是暂时用不上，不会造成数据损坏。

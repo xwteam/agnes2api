@@ -198,20 +198,19 @@ and **KV namespace** steps below afterward — the button does not set those up.
    pnpm install
    ```
 
-2. Create a KV namespace for the key pool and bind it as `POOL`:
+2. Create a KV namespace for the key pool and write it back into `wrangler.toml`:
 
    ```bash
-   npx wrangler kv namespace create POOL
+   node scripts/setup-worker.mjs
    ```
 
-   Copy the returned namespace `id` into `wrangler.toml`, replacing
-   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`:
-
-   ```toml
-   [[kv_namespaces]]
-   binding = "POOL"
-   id = "your-namespace-id"
-   ```
+   The `id` in the repo's `wrangler.toml` is always a placeholder (the public repo
+   ships no real deployment details), so this step is mandatory. The script does the
+   same thing as manually running `npx wrangler kv namespace create POOL` and then
+   pasting the returned `id` into the `[[kv_namespaces]]` block in place of
+   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`. **Do not commit this change to
+   `wrangler.toml`** afterward — the `check-wrangler-placeholder.mjs` CI gate blocks
+   an accidentally committed real id.
 
 3. Set the gateway token as a Worker secret (never commit it to `wrangler.toml`):
 
@@ -364,3 +363,12 @@ that the index does not know about is picked up and back-filled automatically.
 Do not delete the `[triggers]` block in `wrangler.toml`, even if you never enable the
 registrar: that cron is the only path that reconciles `pool:index` against the actual
 `key:` records, and it runs regardless of `REGISTRAR_ENABLED`.
+
+**This cron's trigger timing is not officially guaranteed.** Cloudflare does not
+document any reliability commitment for Cron Triggers firing on the `crons`
+schedule (no guarantee against skipped runs, no documented delay bound). This is
+safe for the quota accounting — fewer reconciliation runs only ever reduce actual
+KV read/write usage, never increase it — but it means **there is no guarantee on
+how long an orphaned record or ghost index entry takes to be reclaimed**; in the
+worst case it can take longer than the expected "up to 30 minutes". During that
+wait the affected key is simply unusable, not lost or corrupted.
