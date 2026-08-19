@@ -17,6 +17,8 @@ import { NULL_LOGGER } from "../../src/ports/logger.js";
 const TTL = 30_000;
 
 interface Freshness {
+  /** 闸门要卡住的那一把 key——必须是**承载被读值**的那个键，不是装载过程里第一个被读到的键。 */
+  gatedKey(k: string): boolean;
   read(): Promise<string>;
   writeUnderlying(v: string): Promise<void>;
   ensureFresh(): Promise<void>;
@@ -33,13 +35,33 @@ function clock() {
  *
  * 真 KV 的一次读就是这个形态（一次网络往返），而「装载途中世界变了」这条竞态
  * 只有在这个窗口里才造得出来。`put` 不入闸——它模拟的是「另一个实例/面板此刻改了」。
+ *
+ * ⚠️ **闸门必须按键匹配。** 原来是「关上之后第一次 get 就卡住」，而 `KeyPoolRepo.loadAll()`
+ * 的第一次 get 是 `pool:index`、**承载被读值的是紧随其后的 `key:<id>` 那次**——
+ * 于是记录那次 get 发生在开闸之后，取到的已经是改动后的新值，
+ * 「在途那次带回旧值」这个前提根本没被造出来，整格是**空断言**。
+ * 评审实测：把 refreshable.ts 的代数保护删掉，只有 ConfigHolder 那格变红（1 failed / 9 passed）。
+ * 改成按键匹配之后，同一条变异让**两格**都变红（2 failed / 8 passed）。
+ *
+ * `blocked()` 是为了去掉竞态：不等这个信号就往下走，写入与取样谁先谁后取决于
+ * 微任务调度，用例会时红时绿——那比空断言更糟。
  */
 class GatedStorage extends MemoryStorage {
   private release: (() => void) | null = null;
   private gate: Promise<void> | null = null;
+  private match: (key: string) => boolean = () => true;
+  private arrived: (() => void) | null = null;
+  private arrival: Promise<void> | null = null;
 
-  block(): void {
+  block(match: (key: string) => boolean): void {
+    this.match = match;
     this.gate = new Promise<void>((r) => { this.release = r; });
+    this.arrival = new Promise<void>((r) => { this.arrived = r; });
+  }
+
+  /** 解析于「一次匹配的 get 已经取完样、正卡在交付前」。 */
+  blocked(): Promise<void> {
+    return this.arrival ?? Promise.resolve();
   }
 
   open(): void {
@@ -50,7 +72,11 @@ class GatedStorage extends MemoryStorage {
 
   override async get<T>(key: string): Promise<T | null> {
     const sampled = await super.get<T>(key);
-    if (this.gate) await this.gate;
+    if (this.gate && this.match(key)) {
+      this.arrived?.();
+      this.arrived = null;
+      await this.gate;
+    }
     return sampled;
   }
 }
@@ -59,6 +85,7 @@ async function configSubject(c: ReturnType<typeof clock>, s: GatedStorage): Prom
   await s.put("config", { gatewayToken: "v0" });
   const h = await createConfigHolder({ env: {}, storage: s, logger: NULL_LOGGER, now: c.now, ttlMs: TTL });
   return {
+    gatedKey: (k) => k === "config",
     read: async () => h.current().gatewayToken,
     writeUnderlying: async (v) => s.put("config", { gatewayToken: v }),
     ensureFresh: () => h.ensureFresh(),
@@ -75,6 +102,7 @@ async function poolSubject(c: ReturnType<typeof clock>, s: GatedStorage): Promis
   });
   const rec = await repo.add("sk-freshness-subject-aaa");
   return {
+    gatedKey: (k) => k.startsWith(KEY_PREFIX),
     read: async () => String((await repo.all())[0]?.cooldownReason ?? "v0"),
     // 绕过 repo 直接改存储，模拟「另一个实例改了」。
     writeUnderlying: async (v) => s.put(KEY_PREFIX + rec.id, { ...rec, cooldownReason: v }),
@@ -145,8 +173,9 @@ for (const [name, make] of SUBJECTS) {
       expect(await f.read()).toBe("v0");
 
       c.advance(TTL);           // 让下面这次 ensureFresh 真的触发重载
-      s.block();                // 闸门关上：取样完成，卡在交付前
+      s.block(f.gatedKey);      // 只卡住承载被读值的那把 key
       const inflight = f.ensureFresh();
+      await s.blocked();        // 确定性地等到「取样完成、卡在交付前」
 
       // 世界在这次装载的中途变了，而且调用方**明确**调了 invalidate。
       await f.writeUnderlying("v1");
