@@ -35,6 +35,11 @@ automatically cools down or evicts misbehaving upstream keys.
   (file-backed storage); both run the exact same request-handling logic.
 - **Self-healing key pool** — upstream `429`/`402` responses cool a key down, `401`/`403`
   evict it permanently, repeated transient failures accumulate strikes until eviction.
+- **Storage access decoupled from traffic** — the key pool is cached per isolate/process and
+  updates that only touch telemetry fields are elided, so in steady state neither storage reads
+  nor writes grow with request volume. How much headroom that leaves on Cloudflare's free KV
+  tier depends on how many isolates stay active — see the quota section in
+  [DEPLOY.md](DEPLOY.md) for the formula and the two tunables.
 - **Four accepted credential formats** — `Authorization: Bearer`, `x-api-key`,
   `x-goog-api-key`, and the `?key=` query parameter are all accepted, matching what each
   protocol's official SDK sends by default.

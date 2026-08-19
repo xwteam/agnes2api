@@ -209,6 +209,64 @@ describe("Refreshable", () => {
     expect(r.current()).toBe("fresh");
   });
 
+  /**
+   * **这条用例守的是一个「看起来像 bug 的正确选择」，改之前先读完。**
+   *
+   * `invalidate()` 递增失效代数而 `set()` **不**递增。这个不对称很容易被当成疏漏，
+   * 顺手加一行 `this.gen++` 就「修」掉了——而那才是缺陷。理由：
+   *
+   * 写穿透最密集的时刻恰恰是上游出事的时刻（429 突发 ⇒ 一批 key 同时进冷却 ⇒
+   * 一批 `save()` + `set()`）。`set()` 若递增代数，每一次写穿透都会作废掉正在途中的
+   * 那次装载并立刻重来 ⇒ **在最需要缓存的时候引发 reload 风暴**，把「读取次数与请求数
+   * 解耦」这条结论整个打掉。
+   *
+   * 代价是本用例第一条断言的那个：在途装载落地时会盖掉刚写穿透的那份。边界是清楚的
+   * ——该状态在**本 isolate 的快照**里最多晚一个 TTL 可见（**存储里始终是对的**），
+   * 而「跨 isolate 最多晚一个 TTL 才看到别人判的冷却/剔除」这条上界本来就已被接受并
+   * 写进文档。也就是说这个取舍没有把已承诺的上界变松，只是让本 isolate 在极窄的竞态
+   * 窗口里退化到与跨 isolate 相同的水平。
+   *
+   * 两者承诺强度不同才是根据：`invalidate()` 的「下一次一定重载」是**硬保证**，
+   * 写穿透只是「我自己写的我立刻看得见」的尽力优化。只有硬保证值得付那个代价。
+   */
+  it("写穿透被在途 reload 盖掉是**刻意取舍**：set() 不递增代数，否则上游抖动时会引发 reload 风暴", async () => {
+    const c = clock();
+    let loads = 0;
+    let release!: () => void;
+    const r = new Refreshable<string>({
+      load: async () => {
+        const n = ++loads;
+        // **只卡住第二次**：第三次也卡住的话，变异后的表现是挂起而不是失败，
+        // 而挂起给不出任何归因（本项目已登记的第三类假阳性）。
+        if (n === 2) await new Promise<void>((res) => { release = res; });
+        return `v${n}`;
+      },
+      ttlMs: 1000, now: c.now,
+    });
+
+    await r.ensureFresh();              // loads=1 → "v1"
+    c.advance(1001);
+    const inflight = r.ensureFresh();   // loads=2，取样完成、卡在交付前
+
+    r.set("write-through");             // 装载途中写穿透
+    expect(r.current()).toBe("write-through");
+
+    release();
+    await inflight;
+
+    // ① 代价：在途那份把写穿透盖掉了。这是被接受的，不是缺陷。
+    expect(r.current(), "在途装载落地会盖掉写穿透——存储里仍然是对的，只是本 isolate 的快照旧了")
+      .toBe("v2");
+
+    // ② 收益：TTL 计时照常推进，写穿透**不会**引发额外装载。
+    //    时钟一动不动，所以再读一次必须命中缓存。
+    await r.ensureFresh();
+    expect(
+      loads,
+      "set() 递增代数的话这里会再装载一次 ⇒ 429 突发时一批写穿透就是一轮 reload 风暴",
+    ).toBe(2);
+  });
+
   it("ttlMs=0 时每次都重载——这是用户的逃生口，必须真的关掉缓存", async () => {
     const c = clock();
     let loads = 0;
