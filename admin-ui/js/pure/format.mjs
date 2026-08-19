@@ -51,6 +51,16 @@ export function fmtDuration(ms) {
 }
 
 /**
+ * 字节数 → MB，一位小数。**只用于概览页的 RSS 展示**，`0` 与「没有值」必须分得开：
+ * 一个刚起的进程 RSS 确实可能非常小，但绝不会是 0——把「没有值」渲染成 `0 MB`
+ * 会让运维误读成「进程占用真的是零」。
+ */
+export function fmtBytesMb(bytes) {
+  if (bytes === null || bytes === undefined || typeof bytes !== "number" || !Number.isFinite(bytes)) return "—";
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
  * 时刻。`offsetMs` 是要渲染的时区相对 UTC 的偏移（毫秒），由调用方算好传进来。
  * 尾巴上的 `UTC+N` **必须有**：不标时区的时间戳在多 colo 部署里毫无意义。
  */

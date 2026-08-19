@@ -2,6 +2,7 @@ import { buildApp, buildTendDeps } from "../http/wire.js";
 import { KvStorage } from "../adapters/storage-kv.js";
 import { KeyPoolRepo } from "../core/keypool-repo.js";
 import { ConsoleLogger } from "../adapters/logger-console.js";
+import { workerRuntime } from "../adapters/runtime-worker.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import { WORKER_CRON_WALL_CLOCK_MS, WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
 import type { Hono } from "hono";
@@ -32,7 +33,9 @@ export default {
     // 而 env 在一个 deployment 内不会变，这个判断本来也从没真正触发过。
     if (!app) {
       try {
-        ({ app } = await buildApp(env as Record<string, string | undefined>, new KvStorage(env.POOL)));
+        ({ app } = await buildApp(
+          env as Record<string, string | undefined>, new KvStorage(env.POOL), workerRuntime(),
+        ));
       } catch (err) {
         // **不回显 err.message**：这是未鉴权路径，异常信息里可能带存储键名、
         // 内部路径与栈帧。与 app.onError 刻意不回显、/health 刻意不回显底层错误

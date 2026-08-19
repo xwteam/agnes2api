@@ -5,6 +5,10 @@ import { recordingLogger } from "../helpers/recording-logger.js";
 import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
+import { createStorageHealth } from "../../src/core/storage-health.js";
+import { fixedConfigHolder } from "../../src/http/config-holder.js";
+import { nodeRuntime } from "../../src/adapters/runtime-node.js";
+import { TEST_CONFIG } from "../helpers/make-app.js";
 
 const TOKEN = "session-probe-admin-token-01234";
 
@@ -24,6 +28,11 @@ function adminApp(version: string) {
     // 但**必须真给**：`adminRouter` 现在会用它注册 keys 端点。
     repo: new KeyPoolRepo(new MemoryStorage(), { now: () => 1000, logger: NULL_LOGGER, cacheTtlMs: 0 }),
     now: () => 1000,
+    // capabilities/overview 要的三样。本文件只测 session，给最小可用的夹具即可。
+    configHolder: fixedConfigHolder(TEST_CONFIG),
+    storageHealth: createStorageHealth(),
+    runtime: nodeRuntime(),
+    envLocked: [],
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");
   const app = new Hono();

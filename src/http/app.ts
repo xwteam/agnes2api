@@ -14,6 +14,8 @@ import type { ConfigHolder } from "./config-holder.js";
 import type { DispatchDeps } from "../core/dispatcher.js";
 import type { StorageHealth } from "../core/storage-health.js";
 import type { Logger } from "../ports/logger.js";
+import type { RuntimeInfo } from "../ports/runtime.js";
+import { nodeRuntime } from "../adapters/runtime-node.js";
 
 export interface AppDeps extends Omit<DispatchDeps, "config"> {
   version: string;
@@ -30,6 +32,17 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
   adminToken?: string;
   /** 见 `clientIp`：设了才信 `X-Forwarded-For`。默认 false。 */
   trustProxy?: boolean;
+  /**
+   * 双运行时差异的唯一注入点（`GET /admin/api/capabilities` 与 `overview` 的来源）。
+   *
+   * **这里可选、默认 `nodeRuntime()`**——与 `wire.ts` 里 `buildApp` 那个必填参数
+   * 刻意不同：那里是两个**生产入口**唯一装配 app 的地方，忘传就是真实的双运行时
+   * 失配；这里是被海量既有测试直接调用的底层装配函数，给它一个安全的默认值
+   * 换来的是不必为一个与 runtime 无关的测试改动去牵连几十个调用点。
+   */
+  runtime?: RuntimeInfo;
+  /** 被环境变量锁定的字段清单（`envLockedFields` 的结果）。默认空数组，理由同 `runtime`。 */
+  envLocked?: readonly string[];
 }
 
 /**
@@ -122,6 +135,11 @@ export function createApp(deps: AppDeps): Hono {
     // 面板轮询才不会各自去读一遍存储（设计文档 §2.4 第 1、2 条）。
     repo: deps.repo,
     now: deps.now,
+    configHolder: deps.configHolder,
+    storageHealth: deps.storageHealth,
+    // 双运行时差异的唯一注入点，见 AppDeps.runtime 的说明。
+    runtime: deps.runtime ?? nodeRuntime(),
+    envLocked: deps.envLocked ?? [],
   });
   if (admin) app.route("/", admin);
   return app;

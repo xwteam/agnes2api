@@ -5,6 +5,7 @@ import { buildApp, buildTendDeps } from "../http/wire.js";
 import { FileStorage } from "../adapters/storage-file.js";
 import { KeyPoolRepo } from "../core/keypool-repo.js";
 import { ConsoleLogger } from "../adapters/logger-console.js";
+import { nodeRuntime } from "../adapters/runtime-node.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import type { TendDeps } from "../core/registrar/tender.js";
 import { loadConfig } from "../core/config.js";
@@ -20,7 +21,7 @@ export async function main(env: Record<string, string | undefined> = process.env
   const logger = new ConsoleLogger();
   // 数据目录是绑定挂载，属主不匹配就整个网关不可用（写不进 store.json），
   // 必须在启动那一刻探出来并让 /health 如实报告，不能等到第一个请求失败才发现。
-  const { app, configHolder } = await buildApp(env, storage, { probeStorage: true });
+  const { app, configHolder } = await buildApp(env, storage, nodeRuntime(), { probeStorage: true });
   const port = Number(env.PORT ?? 8080);
 
   // 在途守卫。递归 setTimeout **天然不会重叠**（下一轮的定时器要等本轮 resolve 之后

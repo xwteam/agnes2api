@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fmtDuration, fmtInstant, fmtCount, fmtPercent, fmtDash } from "../../admin-ui/js/pure/format.mjs";
+import { fmtDuration, fmtInstant, fmtCount, fmtPercent, fmtDash, fmtBytesMb } from "../../admin-ui/js/pure/format.mjs";
 
 /**
  * 格式化是「面板不撒谎」的第一道关口：**接口失败显示 —，绝不伪造 0**。
@@ -46,6 +46,17 @@ describe("fmtCount / fmtPercent", () => {
     expect(fmtPercent(0, 10)).toBe("0.0%");
     expect(fmtPercent(1, 3)).toBe("33.3%");
     expect(fmtPercent(10, 10)).toBe("100.0%");
+  });
+});
+
+describe("fmtBytesMb：概览页 RSS 展示，0 与没有值必须分得开", () => {
+  it("没有值时是 —，不是 0 MB——刚起的进程 RSS 确实可能很小但绝不会是 0", () => {
+    for (const v of [null, undefined, Number.NaN]) expect(fmtBytesMb(v)).toBe("—");
+  });
+  it("字节数换算成 MB，一位小数", () => {
+    expect(fmtBytesMb(0)).toBe("0.0 MB");
+    expect(fmtBytesMb(1024 * 1024)).toBe("1.0 MB");
+    expect(fmtBytesMb(123_456_789)).toBe("117.7 MB");
   });
 });
 

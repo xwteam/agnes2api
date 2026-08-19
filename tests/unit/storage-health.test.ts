@@ -12,6 +12,7 @@ import { buildApp } from "../../src/http/wire.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import type { Storage } from "../../src/ports/storage.js";
 import { recordingLogger } from "../helpers/recording-logger.js";
+import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 
 function tmpDir(): string {
   return mkdtempSync(join(tmpdir(), "a2a-storage-health-"));
@@ -127,7 +128,9 @@ const notRoot = typeof process.getuid !== "function" || process.getuid() !== 0;
 describe.skipIf(!notRoot)("真实文件系统上的可写性", () => {
   it("数据目录可写时 /health 报 ok", async () => {
     const dir = tmpDir();
-    const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, new FileStorage(dir), { probeStorage: true });
+    const { app } = await buildApp(
+      { GATEWAY_TOKEN: "t" }, new FileStorage(dir), nodeRuntime(), { probeStorage: true },
+    );
 
     const res = await app.request("/health");
     expect(res.status).toBe(200);
@@ -139,7 +142,7 @@ describe.skipIf(!notRoot)("真实文件系统上的可写性", () => {
     try {
       const dir = tmpDir();
       chmodSync(dir, 0o500); // r-x：读得到、写不进
-      const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, new FileStorage(dir), {
+      const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, new FileStorage(dir), nodeRuntime(), {
         probeStorage: true,
       });
 

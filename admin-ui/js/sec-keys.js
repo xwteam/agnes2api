@@ -20,6 +20,11 @@ import {
   keysQuery, cooldownRemaining, lastErrorParts, usageParts, lastUsedParts,
   pagerState, listMessageKey, itemsOf,
 } from "./pure/keys.mjs";
+// **carry-forward（Task 4 → Task 5）**：`{ttl}` / `{touch}` / `{poolTtl}` 三个占位符
+// 在 Task 4 交付时没有数据源，暂用「点名旋钮 + 括注默认值」。`poolKnobs()` 是
+// `GET /admin/api/overview` 的 `freshness` 块（Task 5）投影出来的这两个旋钮当前
+// 生效值，与概览板块共用同一份取值决策（admin-ui/README.md 硬规则 1）。
+import { poolKnobs } from "./pure/overview.mjs";
 
 const PAGE_SIZE = 20;
 /** 搜索防抖。每敲一个字符打一次接口的话，大池子下每次都要重投影 + 序列化整池。 */
@@ -34,6 +39,13 @@ let searchTimer = null;
 let abort = null;
 let data = null;
 let loadError = false;
+/**
+ * `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` 的当前生效值。**只拉一次**——
+ * 这两个旋钮是建 app 时读一次的部署期常量，不随 `ConfigHolder` 刷新（见 wire.ts），
+ * 没必要跟着每次 `load()` / 自动刷新重新去问。默认 null（渲染成 —），
+ * 拿到之前不假装知道旧的硬编码默认值。
+ */
+let knobs = { ttl: null, touch: null };
 
 /** 汇总卡与筛选下拉里的条数。**没有数据时 fmtCount(null) 给出 `—`，不是 0。** */
 function syncCounts(shown) {
@@ -48,7 +60,7 @@ function syncCounts(shown) {
 
 /** `≈` 标记。它是产品不变式的一部分（近似值必须打标），由后端的 `approximate` 驱动。 */
 function approxMark() {
-  return el("span", { class: "approx", title: t("keys.approxTip") }, "≈");
+  return el("span", { class: "approx", title: t("keys.approxTip", { touch: fmtDuration(knobs.touch) }) }, "≈");
 }
 
 function usageCell(v, approximate) {
@@ -67,7 +79,9 @@ function lastUsedCell(v, approximate, offset) {
   if (l.approx) {
     // 「最后使用」与计数是同一份 staleness（同一次落盘一起带下去），tooltip 单独一条：
     // 它说的是「时刻粗到一个触达间隔」，与计数那条「少计 + 晚落盘」不是同一句话。
-    cell.appendChild(el("span", { class: "approx", title: t("keys.approxLastUsedTip") }, "≈"));
+    cell.appendChild(el("span", {
+      class: "approx", title: t("keys.approxLastUsedTip", { touch: fmtDuration(knobs.touch) }),
+    }, "≈"));
     cell.appendChild(el("span", null, ` ${fmtInstant(l.at, offset)}`));
   } else {
     cell.appendChild(el("span", null, l.at === null ? fmtDash(null) : fmtInstant(l.at, offset)));
@@ -98,6 +112,12 @@ function render() {
   // 的话，下一次改动很容易只改其中两处（评审 N4）。
   const shown = loadError ? null : data;
   syncCounts(shown);
+
+  // 两个旋钮的当前生效值可能比首次 render() 晚到（异步拉 /overview），
+  // 每次 render() 都用 `knobs` 现有的值重写这两句——拿到之后立刻生效，没拿到时
+  // fmtDuration(null) 给出 —，不假装知道旧的硬编码默认值。
+  nodes.autoNote.textContent = t("keys.autoNote", { ttl: fmtDuration(knobs.ttl) });
+  nodes.freshnessNote.textContent = t("keys.freshness", { poolTtl: fmtDuration(knobs.ttl) });
 
   // 分页控件先复位：读失败 / 空列表时留着上一次的「第 1/2 页 · 共 3 条」，
   // 等于在展示一份已经不存在的数据。
@@ -131,6 +151,21 @@ function render() {
   const offset = -new Date().getTimezoneOffset() * 60000;
   for (const v of items) table.appendChild(row(v, shown.generatedAt, offset, shown.approximate));
   host.appendChild(table);
+}
+
+/**
+ * 拉一次 `/overview` 取两个旋钮的当前生效值。**只拉一次**（见 `knobs` 的说明），
+ * 拿到之后重渲一次让文案立刻换上真实值；拿不到就保持 —，不重试到下一次 onShow。
+ */
+async function loadKnobs() {
+  if (knobs.ttl !== null || knobs.touch !== null) return;
+  try {
+    const body = await api.get("/overview");
+    knobs = poolKnobs(body);
+  } catch (e) {
+    // 读失败：knobs 保持 { ttl: null, touch: null }，文案渲染成 —。
+  }
+  render();
 }
 
 async function load() {
@@ -220,7 +255,10 @@ export const keysSection = {
     section.appendChild(tb.bar);
     // 自动刷新的开销**如实写**：这个板块与转发共用同一份 isolate 快照，确实不额外
     // 烧存储配额。这里不抄一个吓人的估算数字——那同样是撒谎。
-    section.appendChild(elI18n("p", "keys.autoNote", { class: "muted note" }));
+    // 文案含 `{ttl}` 占位符，不用 elI18n（那是给静态、无插值文案用的）——
+    // 由 render() 每次用当前的 `knobs.ttl` 重写 textContent。
+    const autoNote = el("p", { class: "muted note" });
+    section.appendChild(autoNote);
 
     const cardRow = el("div", { class: "card-row" });
     const cardValues = {};
@@ -250,17 +288,20 @@ export const keysSection = {
     section.appendChild(pager);
 
     // 新鲜度提示：与概览页共用同一份文案（设计文档 §10.1 / §10.2 的「新鲜度提示条」）。
-    section.appendChild(elI18n("p", "keys.freshness", { class: "muted note" }));
+    // 同样含插值占位符，理由同上面的 autoNote。
+    const freshnessNote = el("p", { class: "muted note" });
+    section.appendChild(freshnessNote);
 
     nodes = {
       body, pageInfo, prev, next,
       options: tb.options, autoOptions: tb.autoOptions,
-      cardValues, cardLabels,
+      cardValues, cardLabels, autoNote, freshnessNote,
     };
   },
 
   onShow() {
     load();
+    loadKnobs();
     restartTimer();
   },
 

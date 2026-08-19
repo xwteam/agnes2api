@@ -1,10 +1,15 @@
 import { Hono } from "hono";
 import type { Logger } from "../../ports/logger.js";
 import type { KeyPoolRepo } from "../../core/keypool-repo.js";
+import type { ConfigHolder } from "../config-holder.js";
+import type { StorageHealth } from "../../core/storage-health.js";
+import type { RuntimeInfo } from "../../ports/runtime.js";
 import { adminAuth, checkAdminToken, checkAdminTokenShape, ADMIN_TOKEN_MIN_LENGTH } from "./auth.js";
 import type { AdminTokenCheck } from "./auth.js";
 import { sessionHandler } from "./handlers/session.js";
 import { keysHandler } from "./handlers/keys.js";
+import { capabilitiesHandler } from "./handlers/capabilities.js";
+import { overviewHandler } from "./handlers/overview.js";
 import { uiRoutes } from "../../ui/serve.js";
 
 export interface AdminRouterDeps {
@@ -28,6 +33,14 @@ export interface AdminRouterDeps {
    */
   repo: KeyPoolRepo;
   now: () => number;
+  /** 见 `overviewHandler`：`config` 块需要现读一次当前生效配置。 */
+  configHolder: ConfigHolder;
+  /** 见 `capabilitiesHandler` / `overviewHandler`：存储可写性的内存状态，零额外 I/O。 */
+  storageHealth: StorageHealth;
+  /** 双运行时差异的唯一注入点，见 `src/ports/runtime.ts`。 */
+  runtime: RuntimeInfo;
+  /** 被环境变量锁定的字段清单（`envLockedFields` 的结果），装配时算好，不逐请求重算。 */
+  envLocked: readonly string[];
 }
 
 /**
@@ -116,6 +129,13 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.use("/admin/api/*", adminAuth(token, deps.currentGatewayToken, deps.logger, deps.trustProxy));
   admin.get("/admin/api/session", sessionHandler(deps.version));
   admin.get("/admin/api/keys", keysHandler(deps.repo, deps.now));
+  admin.get("/admin/api/capabilities", capabilitiesHandler({
+    runtime: deps.runtime, storageHealth: deps.storageHealth, version: deps.version,
+  }));
+  admin.get("/admin/api/overview", overviewHandler({
+    repo: deps.repo, configHolder: deps.configHolder, storageHealth: deps.storageHealth,
+    runtime: deps.runtime, envLocked: deps.envLocked, version: deps.version, now: deps.now,
+  }));
 
   // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
   // 串起来跑，`/admin/*` 这条兜底若排在前面会先返回 404，**整套管理 API 直接消失**

@@ -9,6 +9,8 @@ import { registrarFromEnv } from "../../src/core/registrar/config.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 import { recordingLogger } from "./recording-logger.js";
 import type { Storage } from "../../src/ports/storage.js";
+import type { RuntimeInfo } from "../../src/ports/runtime.js";
+import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 
 /**
  * 夹具的管理口令。27 位（≥ ADMIN_TOKEN_MIN_LENGTH），且与 `TEST_CONFIG.gatewayToken`
@@ -31,6 +33,15 @@ export interface MakeAppOptions {
    * 验证的永远是抄件不是原件（P3a Task 4 已实测过这个陷阱）。
    */
   storage?: Storage;
+  /**
+   * 双运行时差异的唯一注入点。**默认 `nodeRuntime()`**——契约测试里 workerd 那一侧
+   * 需要显式注入 `workerRuntime()` 的用例另外传（见 admin-capabilities/admin-overview
+   * 契约测试），不能靠默认值蒙混过关：那正是「两个适配器返回同一份东西」这种实现
+   * 完全无感的第 1 种假阳性。
+   */
+  runtime?: RuntimeInfo;
+  /** 被环境变量锁定的字段清单。默认空数组。 */
+  envLocked?: readonly string[];
 }
 
 export const TEST_CONFIG: GatewayConfig = {
@@ -84,6 +95,8 @@ export async function makeApp(
     logger,
     adminToken: "adminToken" in options ? options.adminToken : TEST_ADMIN_TOKEN,
     trustProxy: options.trustProxy ?? false,
+    runtime: options.runtime ?? nodeRuntime(),
+    envLocked: options.envLocked ?? [],
   });
   return { app, fetcher, repo, storageHealth, logger, storage };
 }

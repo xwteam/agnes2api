@@ -117,6 +117,9 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 逐条确认过：纯函数、无配置、无数据，公开可取没有问题。
       "/admin/js/pure/keys.mjs",
       "/admin/js/pure/mask.mjs",
+      // Task 5（P3b）新增：概览板块的取值决策，同一条硬规则、同一份理由，
+      // 由 tests/ui/overview.test.ts 跑着。纯函数、无配置、无数据。
+      "/admin/js/pure/overview.mjs",
       "/admin/js/sec-events.js",
       "/admin/js/sec-keys.js",
       "/admin/js/sec-overview.js",

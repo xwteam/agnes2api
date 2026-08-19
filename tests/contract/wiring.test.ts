@@ -9,16 +9,17 @@ import { FakeFetcher } from "../helpers/fake-fetcher.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 import type { Storage } from "../../src/ports/storage.js";
 import { makeApp, TEST_CONFIG } from "../helpers/make-app.js";
+import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 
 describe("buildApp", () => {
   it("从环境变量与存储装配出可用的 app", async () => {
-    const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, new MemoryStorage());
+    const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, new MemoryStorage(), nodeRuntime());
     const res = await app.request("/health");
     expect(res.status).toBe(200);
   });
 
   it("缺少 GATEWAY_TOKEN 时装配失败并给出明确错误", async () => {
-    await expect(buildApp({}, new MemoryStorage())).rejects.toThrow(/GATEWAY_TOKEN/);
+    await expect(buildApp({}, new MemoryStorage(), nodeRuntime())).rejects.toThrow(/GATEWAY_TOKEN/);
   });
 
   /**
@@ -97,7 +98,7 @@ class PoolIoCountingStorage extends MemoryStorage {
 async function appWithPool(env: Record<string, string>) {
   const s = new PoolIoCountingStorage();
   await new KeyPoolRepo(s, { now: () => Date.now(), logger: NULL_LOGGER, cacheTtlMs: 0 }).add("k1");
-  const { repo } = await buildApp({ GATEWAY_TOKEN: "t", ...env }, s);
+  const { repo } = await buildApp({ GATEWAY_TOKEN: "t", ...env }, s, nodeRuntime());
   s.poolReads = 0;
   s.poolWrites = 0;
   return { repo, s };
@@ -140,7 +141,7 @@ class CountingStorage implements Storage {
 describe("buildApp 的存储可写性探测", () => {
   it("开启探测时只写一次探针键并删掉，之后 /health 不再产生任何写入", async () => {
     const s = new CountingStorage();
-    const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, s, { probeStorage: true });
+    const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, s, nodeRuntime(), { probeStorage: true });
 
     expect(s.puts).toBe(1);
     expect(s.deletes).toBe(1);
@@ -155,7 +156,7 @@ describe("buildApp 的存储可写性探测", () => {
 
   it("不开启探测时装配完全不写存储（Worker/KV 形态不消耗写配额）", async () => {
     const s = new CountingStorage();
-    const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, s);
+    const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, s, nodeRuntime());
 
     expect(s.puts).toBe(0);
     expect(s.deletes).toBe(0);
@@ -168,7 +169,7 @@ describe("buildApp 的存储可写性探测", () => {
     try {
       const s = new CountingStorage();
       s.writable = false;
-      const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, s, { probeStorage: true });
+      const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, s, nodeRuntime(), { probeStorage: true });
 
       const res = await app.request("/health");
       expect(res.status).toBe(503);
@@ -232,7 +233,7 @@ it("buildApp 会把 logger 接到配置层：脏的存储 registrar 配置产生
   try {
     const s = new MemoryStorage();
     await s.put("config", { registrar: { primary: "garbage" } });
-    await buildApp({ GATEWAY_TOKEN: "t" }, s);
+    await buildApp({ GATEWAY_TOKEN: "t" }, s, nodeRuntime());
     const lines = spy.mock.calls.map((c) => String(c[0]));
     expect(lines.some((l) => l.startsWith("[registrar] registrar.config_ignored"))).toBe(true);
   } finally {
@@ -253,7 +254,7 @@ const WIRE_ADMIN_TOKEN = "wire-admin-token-0123456789ab";
 describe("buildApp 对管理端的接线", () => {
   it("ADMIN_TOKEN 真的接到了 /admin 上（两个方向都断言）", async () => {
     const { app } = await buildApp(
-      { GATEWAY_TOKEN: "t", ADMIN_TOKEN: WIRE_ADMIN_TOKEN }, new MemoryStorage(),
+      { GATEWAY_TOKEN: "t", ADMIN_TOKEN: WIRE_ADMIN_TOKEN }, new MemoryStorage(), nodeRuntime(),
     );
     // 正向：env 里的那把口令确实能开门（硬编码成别的常量会在这里红）。
     const ok = await app.request("/admin/api/session", { headers: { "x-admin-key": WIRE_ADMIN_TOKEN } });
@@ -261,7 +262,7 @@ describe("buildApp 对管理端的接线", () => {
     expect((await app.request("/admin/api/session")).status, "配了口令时缺凭据是 401").toBe(401);
 
     // 反向：没配就整棵树不注册（接线被删时，上面那条会掉进这个 404）。
-    const { app: bare } = await buildApp({ GATEWAY_TOKEN: "t" }, new MemoryStorage());
+    const { app: bare } = await buildApp({ GATEWAY_TOKEN: "t" }, new MemoryStorage(), nodeRuntime());
     expect((await bare.request("/admin/api/session")).status, "没配 ADMIN_TOKEN 就该 404").toBe(404);
   });
 
@@ -273,7 +274,7 @@ describe("buildApp 对管理端的接线", () => {
       const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         const { app } = await buildApp(
-          { GATEWAY_TOKEN: "t", ADMIN_TOKEN: WIRE_ADMIN_TOKEN, ...env }, new MemoryStorage(),
+          { GATEWAY_TOKEN: "t", ADMIN_TOKEN: WIRE_ADMIN_TOKEN, ...env }, new MemoryStorage(), nodeRuntime(),
         );
         await app.request("/admin/api/session", {
           headers: { "x-admin-key": "wrong", "x-forwarded-for": "203.0.113.7, 10.0.0.1" },

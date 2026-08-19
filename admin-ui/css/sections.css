@@ -46,3 +46,12 @@ tr:last-child td { border-bottom: 0; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 /* `≈` 标记：它是产品不变式的一部分（近似值必须打标），不是排版装饰。 */
 .approx { color: var(--muted); cursor: help; }
+
+/* 概览板块（Task 5）：常驻红色横幅（config.degraded 时）+ 内容块卡片。 */
+.banner-danger {
+  padding: var(--gap-sm) var(--gap); margin-bottom: var(--gap-sm);
+  color: var(--danger-fg); background: var(--danger); border-radius: var(--radius);
+}
+.block { margin-top: var(--gap); }
+.block h3 { margin: 0 0 var(--gap-sm); font-size: 14px; }
+.block p { margin: 4px 0; }

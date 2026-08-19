@@ -224,3 +224,36 @@ export async function loadConfig(
     degraded: flags.degraded,
   };
 }
+
+/**
+ * 环境变量 → 面板字段路径。**这张表就是「哪些字段面板改了也不生效」的唯一依据。**
+ *
+ * `loadConfig` 的优先级是 env > 存储 > 默认值，而 env 在运行中不会变，
+ * 所以「被锁定」这件事在装配时算一次就够，不必每请求重算。
+ *
+ * ⚠️ 注册机那一族（`REGISTRAR_*`）**不在这里**：它们由 `registrarFromEnv` 处理，
+ * 面板要编辑它们是 P3c 的设置页。加进来会得到一份现在没人消费、将来没人记得更新的清单。
+ */
+const ENV_LOCK_MAP: Readonly<Record<string, string>> = {
+  GATEWAY_TOKEN: "gatewayToken",
+  AGNES_BASE_URL: "agnesBaseUrl",
+  UPSTREAM_TIMEOUT_MS: "upstreamTimeoutMs",
+  UPSTREAM_SYNC_TIMEOUT_MS: "upstreamSyncTimeoutMs",
+  MAX_STRIKES: "maxStrikes",
+  COOLDOWN_RATE_LIMIT_MS: "cooldownRateLimitMs",
+  COOLDOWN_PAYMENT_MS: "cooldownPaymentMs",
+  COOLDOWN_STRIKE_MS: "cooldownStrikeMs",
+  POOL_CACHE_TTL_MS: "poolCacheTtlMs",
+  POOL_TOUCH_INTERVAL_MS: "poolTouchIntervalMs",
+};
+
+/**
+ * 哪些字段被环境变量锁住了。
+ * **判据是「这个键在 env 里存在」，不是「值合法」**：`MAX_STRIKES=` 这种空串同样会走进
+ * `num()` 的 env 分支（然后抛错），面板必须显示它是锁定的，否则用户会一直改存储、一直没效果。
+ */
+export function envLockedFields(env: Record<string, string | undefined>): string[] {
+  return Object.entries(ENV_LOCK_MAP)
+    .filter(([k]) => env[k] !== undefined)
+    .map(([, field]) => field);
+}

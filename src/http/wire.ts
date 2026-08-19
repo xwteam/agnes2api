@@ -1,8 +1,9 @@
 import type { Hono } from "hono";
 import { createApp } from "./app.js";
 import { createConfigHolder, type ConfigHolder } from "./config-holder.js";
-import { loadConfig } from "../core/config.js";
+import { loadConfig, envLockedFields } from "../core/config.js";
 import { KeyPoolRepo } from "../core/keypool-repo.js";
+import type { RuntimeInfo } from "../ports/runtime.js";
 import { NativeFetcher } from "../adapters/fetcher-native.js";
 import { createStorageHealth, probeWritable, watchStorage } from "../core/storage-health.js";
 import { VERSION } from "../version.js";
@@ -61,6 +62,12 @@ export interface BuiltApp {
 export async function buildApp(
   env: Record<string, string | undefined>,
   storage: Storage,
+  /**
+   * **必填，不给默认值。** 默认值会让某个入口忘了传时静默退化成另一种运行时形态，
+   * 而那正是「双运行时对等」（硬约束 1）最难查的失效形态——两个入口各自
+   * `nodeRuntime()` / `workerRuntime()` 显式传入。
+   */
+  runtime: RuntimeInfo,
   options: BuildOptions = {},
 ): Promise<BuiltApp> {
   const storageHealth = createStorageHealth();
@@ -107,6 +114,9 @@ export async function buildApp(
     // 只有部署者显式声明自己在反代后面才信 X-Forwarded-For：这个值会写进登录失败
     // 事件，无脑信任等于允许任何人把爆破痕迹嫁祸给别人。
     trustProxy: env.TRUST_PROXY === "1",
+    runtime,
+    // env 在运行中不会变，装配时算一次即可（见 envLockedFields 的说明）。
+    envLocked: envLockedFields(env),
   });
   return { app, configHolder, repo };
 }
