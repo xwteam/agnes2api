@@ -1,0 +1,53 @@
+import { describe, it, expect } from "vitest";
+import { Hono } from "hono";
+import { adminRouter } from "../../src/http/admin/router.js";
+import { recordingLogger } from "../helpers/recording-logger.js";
+
+const TOKEN = "session-probe-admin-token-01234";
+
+/**
+ * 直接装一个只有 /admin 的 app。
+ *
+ * 不走 `makeApp` 是因为那里的 `version` 写死成 "0.1.0"，而本文件要证明的恰恰是
+ * 「version 是注进来的、不是 handler 里抄的常数」——用一个和任何默认值都不像的
+ * 版本号，把「返回硬编码字符串」这种实现直接判死。
+ */
+function adminApp(version: string) {
+  const logger = recordingLogger();
+  const admin = adminRouter({
+    adminToken: TOKEN, gatewayToken: "gateway-token-not-the-admin-one",
+    version, logger, trustProxy: false,
+  });
+  if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");
+  const app = new Hono();
+  app.route("/", admin);
+  return { app, logger };
+}
+
+describe("GET /admin/api/session", () => {
+  it("鉴权通过时返回 { ok: true, version }，version 来自注入而非硬编码", async () => {
+    const { app } = adminApp("9.9.9-probe");
+    const res = await app.request("/admin/api/session", { headers: { "x-admin-key": TOKEN } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, version: "9.9.9-probe" });
+  });
+
+  /**
+   * 它是登录闸背后的第一个端点，越薄越好：**不返回任何配置或池子信息**。
+   * 断言「只有这两个键」而不是「包含这两个键」——后者对「顺手把 gatewayToken
+   * 也塞进去」这种实现完全无感。
+   */
+  it("响应体只有 ok 与 version 两个键，不泄漏任何配置或池子信息", async () => {
+    const { app } = adminApp("9.9.9-probe");
+    const res = await app.request("/admin/api/session", { headers: { "x-admin-key": TOKEN } });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["ok", "version"]);
+  });
+
+  it("鉴权不通过时不返回任何响应体信息，也不泄漏版本号", async () => {
+    const { app } = adminApp("9.9.9-probe");
+    const res = await app.request("/admin/api/session");
+    expect(res.status).toBe(401);
+    expect(await res.text()).not.toContain("9.9.9-probe");
+  });
+});

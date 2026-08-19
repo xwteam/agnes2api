@@ -238,3 +238,51 @@ it("buildApp 会把 logger 接到配置层：脏的存储 registrar 配置产生
     spy.mockRestore();
   }
 });
+
+// ── ADMIN_TOKEN / TRUST_PROXY 的接线 ────────────────────────────────────────
+//
+// 这两行只存在于 wire.ts，而 /admin 的全部行为测试都走 makeApp（直接调 createApp）。
+// 不钉这两条的话，把 wire.ts 里的 `adminToken: env.ADMIN_TOKEN` 删掉，全套测试照样
+// 全绿——后果是 `.env.example` 里白纸黑字写着的 ADMIN_TOKEN **根本不起作用**，
+// 面板永远打不开而且没有任何日志提示。POOL_CACHE_TTL_MS 已经在同一个坑里栽过一次。
+
+/** 与 GATEWAY_TOKEN 不同、且够长；刻意不复用夹具常量，才能证明值是从 env 流过来的。 */
+const WIRE_ADMIN_TOKEN = "wire-admin-token-0123456789ab";
+
+describe("buildApp 对管理端的接线", () => {
+  it("ADMIN_TOKEN 真的接到了 /admin 上（两个方向都断言）", async () => {
+    const { app } = await buildApp(
+      { GATEWAY_TOKEN: "t", ADMIN_TOKEN: WIRE_ADMIN_TOKEN }, new MemoryStorage(),
+    );
+    // 正向：env 里的那把口令确实能开门（硬编码成别的常量会在这里红）。
+    const ok = await app.request("/admin/api/session", { headers: { "x-admin-key": WIRE_ADMIN_TOKEN } });
+    expect(ok.status, "配了 ADMIN_TOKEN 就该能进").toBe(200);
+    expect((await app.request("/admin/api/session")).status, "配了口令时缺凭据是 401").toBe(401);
+
+    // 反向：没配就整棵树不注册（接线被删时，上面那条会掉进这个 404）。
+    const { app: bare } = await buildApp({ GATEWAY_TOKEN: "t" }, new MemoryStorage());
+    expect((await bare.request("/admin/api/session")).status, "没配 ADMIN_TOKEN 就该 404").toBe(404);
+  });
+
+  it("TRUST_PROXY 真的接到了客户端 IP 上（两个方向都断言）", async () => {
+    for (const [label, env, expected] of [
+      ["未设 TRUST_PROXY：不信 XFF，如实记 null", {}, "ip=null"],
+      ["TRUST_PROXY=1：取 XFF 首段", { TRUST_PROXY: "1" }, "ip=203.0.113.7"],
+    ] as Array<[string, Record<string, string>, string]>) {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { app } = await buildApp(
+          { GATEWAY_TOKEN: "t", ADMIN_TOKEN: WIRE_ADMIN_TOKEN, ...env }, new MemoryStorage(),
+        );
+        await app.request("/admin/api/session", {
+          headers: { "x-admin-key": "wrong", "x-forwarded-for": "203.0.113.7, 10.0.0.1" },
+        });
+        const line = spy.mock.calls.map((c) => String(c[0])).find((l) => l.includes("admin.login_failed"));
+        expect(line, `${label}：应当有一条 admin.login_failed`).toBeDefined();
+        expect(line, label).toContain(expected);
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  });
+});

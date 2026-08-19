@@ -8,6 +8,7 @@ import { geminiRoutes } from "./routes/gemini.js";
 import { responsesRoutes } from "./routes/responses.js";
 import { mediaRoutes } from "./routes/media.js";
 import { auth } from "./middleware/auth.js";
+import { adminRouter } from "./admin/router.js";
 import { configRefresh } from "./config-refresh.js";
 import type { ConfigHolder } from "./config-holder.js";
 import type { DispatchDeps } from "../core/dispatcher.js";
@@ -19,6 +20,16 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
   configHolder: ConfigHolder;
   storageHealth: StorageHealth;
   logger: Logger;
+  /**
+   * 管理口令。**只从环境变量读、不从存储读**（设计文档 §8.1 规则 2）——这一刀同时
+   * 切掉了「面板改自己的钥匙 + 配置缓存陈旧 + 把自己锁在外面」这一整类问题。
+   *
+   * 未设置（或不合规）时**整棵 /admin 树都不注册**，访问得到 404 而不是 401，
+   * 不泄漏「这里有个后台」；网关转发不受任何影响。
+   */
+  adminToken?: string;
+  /** 见 `clientIp`：设了才信 `X-Forwarded-For`。默认 false。 */
+  trustProxy?: boolean;
 }
 
 /**
@@ -63,5 +74,19 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/", geminiRoutes(dd));
   app.route("/", responsesRoutes(dd));
   app.route("/", mediaRoutes(dd));
+
+  // /admin 挂在最后不要紧：它的鉴权 use 收在子 app 内部的第一行，外层 route 的
+  // 位置对它无关紧要（已实测，见 admin/router.ts 的说明）。
+  //
+  // `gatewayToken` 在这里取的是**装配时刻**的快照，用途只有一个：拒绝
+  // ADMIN_TOKEN == GATEWAY_TOKEN 这种配置。它不参与逐次请求的鉴权判定。
+  const admin = adminRouter({
+    adminToken: deps.adminToken,
+    gatewayToken: deps.configHolder.current().gatewayToken,
+    version: deps.version,
+    logger: deps.logger,
+    trustProxy: deps.trustProxy ?? false,
+  });
+  if (admin) app.route("/", admin);
   return app;
 }

@@ -7,6 +7,23 @@ import { FakeFetcher } from "./fake-fetcher.js";
 import type { GatewayConfig } from "../../src/core/config.js";
 import { registrarFromEnv } from "../../src/core/registrar/config.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
+import { recordingLogger } from "./recording-logger.js";
+
+/**
+ * 夹具的管理口令。27 位（≥ ADMIN_TOKEN_MIN_LENGTH），且与 `TEST_CONFIG.gatewayToken`
+ * 不同——两条硬规则都得满足，否则 /admin 根本不会被注册。
+ */
+export const TEST_ADMIN_TOKEN = "test-admin-token-0123456789";
+
+export interface MakeAppOptions {
+  /**
+   * **显式传 `undefined` 表示「没配 ADMIN_TOKEN」**，与「不传这个键」是两回事：
+   * 后者取默认值 `TEST_ADMIN_TOKEN`。所以下面用 `in` 判断而不是 `??`——P1 那次
+   * 实际发生的鉴权绕过，成因正是 `??` 对空串/undefined 的下坠语义。
+   */
+  adminToken?: string | undefined;
+  trustProxy?: boolean;
+}
 
 export const TEST_CONFIG: GatewayConfig = {
   gatewayToken: "t", agnesBaseUrl: "https://upstream.test/v1",
@@ -24,12 +41,16 @@ export const TEST_CONFIG: GatewayConfig = {
 /**
  * `now` 默认是固定的 1000，好让断言能写死 `cooldownUntil` 这类绝对时刻。
  * 需要「时间真的在走」的用例（同步档的跨 key 整体 deadline）传 `() => Date.now()`。
+ *
+ * **默认就带一棵 /admin 树**（`adminToken` 默认 `TEST_ADMIN_TOKEN`）。这是想要的：
+ * 枚举式鉴权矩阵正是要在**默认夹具**上跑，才守得住「新加的端点忘了挂鉴权」。
  */
 export async function makeApp(
   outcomes: ConstructorParameters<typeof FakeFetcher>[0] = [],
   keys = ["k1"],
   configOverride: Partial<GatewayConfig> = {},
   now: () => number = () => 1000,
+  options: MakeAppOptions = {},
 ) {
   const config = { ...TEST_CONFIG, ...configOverride };
   // 与 wire.ts 同一条接线：两个旋钮从配置来，而不是各写各的默认值。
@@ -42,11 +63,17 @@ export async function makeApp(
   for (const k of keys) await repo.add(k);
   const fetcher = new FakeFetcher(outcomes);
   const storageHealth = createStorageHealth();
+  // app 用 recordingLogger（而不是 NULL_LOGGER）：`admin.login_failed` 这类事件
+  // 是鉴权唯一对外可断言的行为，静默掉就没法验。repo 仍旧静默——它的日志与本组
+  // 断言无关，混进来只会让 entries 变吵。
+  const logger = recordingLogger();
   const app = createApp({
     version: "0.1.0",
     configHolder: fixedConfigHolder(config),
     repo, fetcher, now, storageHealth,
-    logger: NULL_LOGGER,
+    logger,
+    adminToken: "adminToken" in options ? options.adminToken : TEST_ADMIN_TOKEN,
+    trustProxy: options.trustProxy ?? false,
   });
-  return { app, fetcher, repo, storageHealth };
+  return { app, fetcher, repo, storageHealth, logger };
 }

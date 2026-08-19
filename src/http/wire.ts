@@ -101,6 +101,12 @@ export async function buildApp(
     now: () => Date.now(),
     storageHealth,
     logger,
+    // **只从环境变量读、不从存储读**：面板不该能改自己的钥匙。没配就整棵 /admin
+    // 树不注册（404），但网关照常转发——注册机默认关闭时不让网关起不来是同一条规矩。
+    adminToken: env.ADMIN_TOKEN,
+    // 只有部署者显式声明自己在反代后面才信 X-Forwarded-For：这个值会写进登录失败
+    // 事件，无脑信任等于允许任何人把爆破痕迹嫁祸给别人。
+    trustProxy: env.TRUST_PROXY === "1",
   });
   return { app, configHolder, repo };
 }
