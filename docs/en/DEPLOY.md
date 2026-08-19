@@ -63,7 +63,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
 | `ADMIN_TOKEN` | no | none (panel disabled) | Token for the admin endpoints. **Must differ from `GATEWAY_TOKEN`**, and must be at least 24 characters. Unset or non-compliant ⇒ the whole `/admin` tree is never registered. |
-| `TRUST_PROXY` | no | unset (do **not** trust `X-Forwarded-For`) | Set to `1` **only** if the gateway really sits behind a reverse proxy you control. When set, the first segment of `X-Forwarded-For` is recorded as the client IP in login-failure events. |
+| `TRUST_PROXY` | no | unset (**no** forwarded header is trusted) | Set to `1` **only** if the gateway really sits behind a proxy — that includes the Cloudflare Worker form, where you should set it. When set, the client IP recorded in login-failure events comes from `CF-Connecting-IP`, falling back to the first segment of `X-Forwarded-For`. |
 
 **Not set ⇒ the panel is simply unavailable, and the gateway keeps forwarding.** Requests to
 `/admin/...` then get **`404`, not `401`**: the tree is never registered, so nothing leaks the
@@ -95,10 +95,30 @@ rotate its own key. To rotate it, run `npx wrangler secret put ADMIN_TOKEN` and 
 Worker, or edit `.env` and recreate the container on Docker.
 
 **`TRUST_PROXY` is a security switch, which is why it defaults to off.** The client IP it decides
-ends up in the `admin.login_failed` event, so trusting `X-Forwarded-For` blindly would let anyone
-pin brute-force traces on an arbitrary IP. With it off, `CF-Connecting-IP` is used instead
-(injected by the platform on Cloudflare; clients cannot forge it). If neither is available the
-field is recorded as `null` — never a fabricated `"unknown"`, which would read as a real source.
+ends up in the `admin.login_failed` event, so trusting a client-supplied header blindly would let
+anyone pin brute-force traces on an arbitrary IP.
+
+**With it off, no forwarded header is trusted and the field is recorded as `null` — including
+`CF-Connecting-IP`.** That header is often described as unforgeable, but the property only holds
+*while the request really goes through Cloudflare*. On a directly exposed Node/Docker deployment
+nothing overwrites it, so a client can simply send `CF-Connecting-IP: 1.2.3.4` and be believed —
+and direct exposure is the default Docker shape.
+
+**With it on, `CF-Connecting-IP` wins and `X-Forwarded-For` is only the fallback.** The two are
+not equally forgeable:
+
+- `CF-Connecting-IP` is written by the Cloudflare edge, which **overwrites** any same-named header
+  the client sent — so it cannot be forged as long as the request really goes through Cloudflare.
+- `X-Forwarded-For` is a chain any middlebox can append to, and a client can send a fake one, so
+  how much of it you can believe depends entirely on what your proxy chain looks like.
+
+**On the Worker, set `TRUST_PROXY=1`.** Cloudflare is by definition in front there, which makes
+`CF-Connecting-IP` the authoritative value; preferring `X-Forwarded-For` in that shape would be
+wrong, because the chain may carry whatever the client stuffed into it. Without the switch the
+field is simply recorded as `null`.
+
+If nothing usable is available the field is recorded as `null` — never a fabricated `"unknown"`,
+which would read as a real source.
 
 ### Registrar variables (optional, disabled by default)
 

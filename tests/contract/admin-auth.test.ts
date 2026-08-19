@@ -173,34 +173,57 @@ describe("adminAuth", () => {
 });
 
 describe("客户端 IP", () => {
-  it("默认不信 X-Forwarded-For——无脑信任等于允许把爆破痕迹嫁祸给任意 IP", async () => {
-    const { app, logger } = await makeApp();
-    await app.request("/admin/api/session", {
-      headers: { "x-admin-key": "wrong", "x-forwarded-for": "203.0.113.7, 10.0.0.1" },
-    });
-    expect(logger.entries.find((x) => x.event === "admin.login_failed")?.fields?.ip).toBeNull();
+  /** 打一次失败登录，把事件里记下来的 ip 取出来。 */
+  async function loggedIp(
+    headers: Record<string, string>,
+    options: Parameters<typeof makeApp>[4] = {},
+  ) {
+    const { app, logger } = await makeApp([], ["k1"], {}, undefined, options);
+    await app.request("/admin/api/session", { headers: { "x-admin-key": "wrong", ...headers } });
+    return logger.entries.find((x) => x.event === "admin.login_failed")?.fields?.ip;
+  }
+
+  // ── 门控之外：两个头**都**不可信 ────────────────────────────────────────
+  // 这个值会写进爆破痕迹，信错了等于允许任何人把痕迹嫁祸给任意 IP。
+
+  it("默认不信 X-Forwarded-For", async () => {
+    expect(await loggedIp({ "x-forwarded-for": "203.0.113.7, 10.0.0.1" })).toBeNull();
   });
 
-  it("TRUST_PROXY=1 时取 XFF 首段", async () => {
-    const { app, logger } = await makeApp([], ["k1"], {}, undefined, { trustProxy: true });
-    await app.request("/admin/api/session", {
-      headers: { "x-admin-key": "wrong", "x-forwarded-for": "203.0.113.7, 10.0.0.1" },
-    });
-    expect(logger.entries.find((x) => x.event === "admin.login_failed")?.fields?.ip).toBe("203.0.113.7");
-  });
-
-  it("有 CF-Connecting-IP 时用它（平台注入，不可伪造）", async () => {
-    const { app, logger } = await makeApp();
-    await app.request("/admin/api/session", {
-      headers: { "x-admin-key": "wrong", "cf-connecting-ip": "198.51.100.9" },
-    });
-    expect(logger.entries.find((x) => x.event === "admin.login_failed")?.fields?.ip).toBe("198.51.100.9");
+  it("默认**也不信 CF-Connecting-IP**——Node 直连形态下没人覆盖它，客户端自己发一个就成立", async () => {
+    expect(await loggedIp({ "cf-connecting-ip": "198.51.100.9" })).toBeNull();
   });
 
   it("什么都拿不到时如实记 null，不伪造一个 \"unknown\" 冒充 IP", async () => {
-    const { app, logger } = await makeApp();
-    await app.request("/admin/api/session", { headers: { "x-admin-key": "wrong" } });
-    expect(logger.entries.find((x) => x.event === "admin.login_failed")?.fields?.ip).toBeNull();
+    expect(await loggedIp({})).toBeNull();
+  });
+
+  // ── 门控之内：CF-Connecting-IP 优先，XFF 只作兜底 ────────────────────────
+  // 两个头的**可伪造性根本不同**：CF-Connecting-IP 由 Cloudflare 边缘写入，且会覆盖
+  // 客户端传来的同名头，请求真的经过 CF 时伪造不了；XFF 是任何中间件都能追加的链，
+  // 客户端可以自己发一个假的。Worker 形态下 CF 定义上就在前面，那里优先 XFF 是错的。
+
+  it("TRUST_PROXY=1 且两个头同时在场时取 CF-Connecting-IP，**不**取伪造的 XFF", async () => {
+    // 两个头刻意给**不同的值**：给同一个值的话谁赢都通过，是这个项目的第 1 种假阳性。
+    const ip = await loggedIp(
+      { "cf-connecting-ip": "198.51.100.9", "x-forwarded-for": "203.0.113.7, 10.0.0.1" },
+      { trustProxy: true },
+    );
+    expect(ip).toBe("198.51.100.9");
+  });
+
+  it("TRUST_PROXY=1 且只有 CF-Connecting-IP 时用它", async () => {
+    expect(await loggedIp({ "cf-connecting-ip": "198.51.100.9" }, { trustProxy: true }))
+      .toBe("198.51.100.9");
+  });
+
+  it("TRUST_PROXY=1 且 CF-Connecting-IP 缺席时，退到 XFF 首段", async () => {
+    expect(await loggedIp({ "x-forwarded-for": "203.0.113.7, 10.0.0.1" }, { trustProxy: true }))
+      .toBe("203.0.113.7");
+  });
+
+  it("TRUST_PROXY=1 但两个头都没有时仍是 null", async () => {
+    expect(await loggedIp({}, { trustProxy: true })).toBeNull();
   });
 });
 
