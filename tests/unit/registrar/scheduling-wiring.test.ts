@@ -27,17 +27,24 @@ vi.mock("../../../src/core/registrar/tender.js", async (importOriginal) => {
 });
 
 /**
- * 捕获 Node 入口注册的定时器。只替换 `setInterval`，其余照搬真实模块——入口是
+ * 捕获 Node 入口注册的定时器。只替换 `setTimeout`，其余照搬真实模块——入口是
  * 显式从 `node:timers` 具名导入的（为了拿到带 `unref()` 的 Node 版本）。
+ *
+ * I4 修复后调度循环是**自重排的 setTimeout 递归**（`src/core/tend-scheduler.ts`），
+ * 不再是启动时注册一次、之后固定不变的 `setInterval`——每一轮结束（含重新读一次
+ * 间隔）之后才会 push 新的一项，因此 `timers` 是一条随轮次增长的队列，不是「注册
+ * 一次、以后复用同一个 fn」。取用时一律要显式等这一轮的重排落地（`timers.length`
+ * 变化），不能假定它与 `tendOnceMock` 的调用计数同步——两者中间隔着一次真实的
+ * `loadConfig` 存储读取。
  */
-const intervals: Array<{ fn: () => void; ms: number }> = [];
+const timers: Array<{ fn: () => void; ms: number }> = [];
 
 vi.mock("node:timers", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:timers")>();
   return {
     ...actual,
-    setInterval: (fn: () => void, ms: number) => {
-      intervals.push({ fn, ms });
+    setTimeout: (fn: () => void, ms: number) => {
+      timers.push({ fn, ms });
       return { unref: () => undefined } as unknown as NodeJS.Timeout;
     },
   };
@@ -153,11 +160,11 @@ function fakeCtx(): { ctx: ExecutionContext; waited: Array<Promise<unknown>> } {
 
 beforeEach(() => {
   tendOnceMock.mockReset();
-  intervals.length = 0;
+  timers.length = 0;
 });
 
 describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
-  it("Node 侧：启动立即跑一轮，并按 TEND_INTERVAL_MS 注册定时器，回调也确实调到 tendOnce", async () => {
+  it("Node 侧：启动立即跑一轮，并按 TEND_INTERVAL_MS 重排定时器，回调也确实调到 tendOnce", async () => {
     tendOnceMock.mockResolvedValue(RESULT);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const server = await main(nodeEnv({ TEND_INTERVAL_MS: "1800000" }));
@@ -165,13 +172,17 @@ describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
       // ① 冷启动立即跑一轮：否则要空等满一个间隔（默认 30 分钟）才开始补池。
       await waitFor(() => tendOnceMock.mock.calls.length === 1);
 
-      // ② 定时器真的注册了，且用的是配置里的间隔（不是硬编码的常量）。
-      expect(intervals).toHaveLength(1);
-      expect(intervals[0]!.ms).toBe(1_800_000);
+      // ② 重排的定时器要等这一轮真正走完（含重新读一次间隔的真实存储读取）才会
+      // 出现，不能假定它与上面那次 tendOnce 调用同步落地，两者之间隔着一次 IO。
+      await waitFor(() => timers.length === 1);
+      expect(timers[0]!.ms).toBe(1_800_000);
 
       // ③ 定时器回调不是空壳：到点确实会再跑一轮。
-      intervals[0]!.fn();
+      timers[0]!.fn();
       await waitFor(() => tendOnceMock.mock.calls.length === 2);
+      // 等第二轮自己也重排完再收尾——不然它残留的 tick() 链会在下一个用例的
+      // `beforeEach` 清空 timers/tendOnceMock 之后才落地，污染下一条用例的计数。
+      await waitFor(() => timers.length === 2);
 
       // 传进去的确实是装配好的补池依赖，不是随便一个对象。
       const deps = tendOnceMock.mock.calls[0]![0] as { config: { enabled: boolean }; providers: Record<string, unknown> };
@@ -183,17 +194,16 @@ describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
     }
   });
 
-  it("Node 侧：TEND_INTERVAL_MS 改了，定时器的间隔跟着改（间隔不是写死的）", async () => {
+  it("Node 侧：TEND_INTERVAL_MS 改了，重排的间隔跟着改（间隔不是写死的）", async () => {
     tendOnceMock.mockResolvedValue(RESULT);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     // 60 秒远小于单轮最坏耗时，会触发配置告警，这里只关心间隔取值。
     const server = await main(nodeEnv({ TEND_INTERVAL_MS: "60000" }));
     try {
-      expect(intervals).toHaveLength(1);
-      expect(intervals[0]!.ms).toBe(60_000);
-      // 等启动那一轮跑完再收尾，否则它会拖到下一个用例里去调 spy。
       await waitFor(() => tendOnceMock.mock.calls.length === 1);
+      await waitFor(() => timers.length === 1);
+      expect(timers[0]!.ms).toBe(60_000);
     } finally {
       warnSpy.mockRestore();
       logSpy.mockRestore();
@@ -210,10 +220,12 @@ describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
       GATEWAY_TOKEN: "t", PORT: "0", DATA_DIR: mkdtempSync(join(tmpdir(), "a2a-sched-off-")),
     });
     try {
-      await settle();
+      await waitFor(() => timers.length === 1);
       expect(tendOnceMock).not.toHaveBeenCalled();
-      intervals[0]?.fn();
-      await settle();
+      timers[0]!.fn();
+      // 等第二轮自己重排完（而不是盲等 settle）：既让断言更确定，也避免这一轮
+      // 残留的 tick() 链在下一条用例重置 timers/tendOnceMock 之后才落地。
+      await waitFor(() => timers.length === 2);
       expect(tendOnceMock).not.toHaveBeenCalled();
     } finally {
       await close(server);
@@ -283,21 +295,21 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
       // 启动即跑的那一轮：注册机关着，但对账照做。
       await waitFor(() => listSpy.mock.calls.some(([prefix]) => prefix === "key:"));
       expect(tendOnceMock, "注册机确实是关着的").not.toHaveBeenCalled();
+      // 冷启动那一轮的重排要等它真正落地（含重新读一次间隔），再取用那个定时器
+      // ——`timers[0]` 在它出现之前是 undefined，直接调用会抛，不能假定它与上面
+      // 那次对账同步出现。
+      await waitFor(() => timers.length === 1);
 
       // 下一次定时触发**再**对一次账——挡住「把对账挪到 main() 里只在启动时做一次」
       // 这个变异（那样挪完启动那条断言照样绿）。
-      //
-      // 反复触发而不是只触发一次：启动那一轮可能还没跑完，此时定时器回调会被
-      // `inFlight` 重入守卫合法地挡掉（设计如此，见 node.ts）。轮询到真跑起来为止，
-      // 比"睡固定时长再触发一次"稳。
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const listsOfKeys = () => listSpy.mock.calls.filter(([p]) => p === "key:").length;
       const before = listsOfKeys();
       try {
-        await waitFor(() => {
-          intervals[0]!.fn();
-          return listsOfKeys() > before;
-        });
+        timers[0]!.fn();
+        await waitFor(() => listsOfKeys() > before);
+        // 等第二轮自己也重排完再收尾，避免它残留的 tick() 链污染下一条用例。
+        await waitFor(() => timers.length === 2);
       } finally {
         warnSpy.mockRestore();
       }
@@ -322,8 +334,9 @@ describe("I4 Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）
     const storage = new FileStorage(dir);
     const server = await main({ GATEWAY_TOKEN: "t", PORT: "0", DATA_DIR: dir });
     try {
-      // 启动时未启用：一轮都不该跑。
-      await settle();
+      // 启动时未启用：一轮都不该跑，但重排仍会发生——定时器必须在关闭状态下
+      // 也继续存在（这正是本条要守的行为：不然存储怎么改都打不开）。
+      await waitFor(() => timers.length === 1);
       expect(tendOnceMock).not.toHaveBeenCalled();
 
       // 面板（这里直接写存储）把注册机打开。
@@ -333,15 +346,62 @@ describe("I4 Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）
           yyds: { baseUrl: "https://y.test", apiKey: "k" },
         },
       });
-      intervals[0]!.fn();
+      timers[timers.length - 1]!.fn();
       await waitFor(() => tendOnceMock.mock.calls.length === 1);
+      // 等这一轮自己的重排也落地，再取「当前」那一个定时器去关闭注册机——
+      // 用固定下标 `timers[0]` 会重新触发已经跑过的那一轮。
+      await waitFor(() => timers.length === 2);
 
       // 再从存储关掉，下一轮就该停——不必重启进程。
       await storage.put("config", { registrar: { enabled: false } });
-      intervals[0]!.fn();
-      await settle();
+      timers[timers.length - 1]!.fn();
+      // 等第三轮（关闭后那一轮）也重排完再断言收尾，避免它残留的 tick() 链
+      // 污染下一条用例的 timers/tendOnceMock 计数。
+      await waitFor(() => timers.length === 3);
       expect(tendOnceMock).toHaveBeenCalledTimes(1);
     } finally {
+      logSpy.mockRestore();
+      await close(server);
+    }
+  });
+
+  it("从存储把 TEND_INTERVAL_MS 本身改掉，下一轮重排就跟着用新值——I4 不能只挡住 enabled/disabled 这一半", async () => {
+    // 上面那条只验证了「关/开」会热更新，没验证「间隔本身」会热更新——这正是
+    // I4 要修的缺陷本体：此前间隔冻结在启动时刻，其余配置项每一轮都重读。
+    // 用 mutation 实测过：把 node.ts 里 readIntervalMs 换回返回启动快照
+    // （`registrar.tendIntervalMs`），上面那条「打开/关掉」用例照样全绿——
+    // 只测 enabled/disabled 逃不出这个变异，必须单独测间隔值本身。
+    tendOnceMock.mockResolvedValue(RESULT);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const dir = mkdtempSync(join(tmpdir(), "a2a-sched-interval-"));
+    const storage = new FileStorage(dir);
+    // 刻意不设 TEND_INTERVAL_MS 环境变量：env 优先级高于存储（见 registrarFromEnv/
+    // posInt），设了就测不出「从存储改」这条路径，间隔会被 env 钉死。
+    const server = await main({
+      GATEWAY_TOKEN: "t", PORT: "0", DATA_DIR: dir,
+      REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k",
+    });
+    try {
+      await waitFor(() => tendOnceMock.mock.calls.length === 1);
+      await waitFor(() => timers.length === 1);
+      expect(timers[0]!.ms, "冷启动用的是默认值").toBe(1_800_000);
+
+      // 面板（这里直接写存储）把间隔改掉。新旧值刻意不同——都给同一个值的话，
+      // 把实现改回读启动快照也会通过，是无冲突 fixture（测试质量清单第 1 类）。
+      await storage.put("config", {
+        registrar: {
+          enabled: true, primary: "yyds",
+          yyds: { baseUrl: "https://y.test", apiKey: "k" },
+          tendIntervalMs: 60_000,
+        },
+      });
+      timers[0]!.fn();
+      await waitFor(() => tendOnceMock.mock.calls.length === 2);
+      await waitFor(() => timers.length === 2);
+      expect(timers[1]!.ms, "第二次重排必须用新读到的值，不是启动时那份快照").toBe(60_000);
+    } finally {
+      warnSpy.mockRestore();
       logSpy.mockRestore();
       await close(server);
     }
@@ -470,28 +530,53 @@ describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
 });
 
 describe("C4 补池轮次不可并发重入", () => {
-  it("Node 侧：上一轮还没结束时，定时器再次到点会被跳过并留痕", async () => {
+  it("Node 侧：上一轮还没结束时，同一回调被并发触发会被跳过并留痕", async () => {
+    // 递归 setTimeout 天然不会自己和自己重叠——下一轮的定时器要等本轮 resolve
+    // 之后才排上，这正是它与 setInterval 的本质差别（见下面另一条用例）。
+    // I4 修复后 inFlight 守卫防的不再是「定时器自己撞自己」，而是「同一个回调
+    // 被并发触发两次」——生产里对应 P3c 面板的『立即补池』按钮与定时轮本身
+    // 撞在一起（两者都会调用 runOnce）。这里用手动把同一个 fn 连续调用两次来
+    // 模拟这种撞车。
     const gate = deferred();
-    tendOnceMock.mockImplementation(() => gate.promise);
+    tendOnceMock.mockResolvedValueOnce(RESULT).mockImplementation(() => gate.promise);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const server = await main(nodeEnv());
     try {
-      // 启动时立即跑的那一轮还挂着（gate 没 resolve）。
+      // 冷启动那一轮先放行、正常收尾，拿到它重排出来的定时器。
       await waitFor(() => tendOnceMock.mock.calls.length === 1);
+      await waitFor(() => timers.length === 1);
+      const fire = timers[0]!.fn;
 
-      const tick = intervals[0]!.fn;
-      tick();
+      // 第二轮：到点触发，tendOnce 卡在 gate 上，本轮仍在进行中。
+      fire();
+      await waitFor(() => tendOnceMock.mock.calls.length === 2);
+
+      // 同一个回调再触发一次：inFlight 已经在第一次同步执行里被置 true
+      // （`runTend` 的 `await` 之前就设置），第二次调用的 runOnce 必须被挡住
+      // ——但注意 `tick()` 自己的重排（readIntervalMs + setTimer）不受 inFlight
+      // 影响，两次触发各自独立完成自己的重排，所以此后 `timers` 会独立多出
+      // 不止一条记录。下面不再假定"一次触发对应一条新记录"，只认 tendOnce
+      // 的调用计数——这才是 inFlight 守卫真正承诺的东西。
+      fire();
       await settle();
-      // 重入被挡住：仍然只有第一轮在跑。
-      expect(tendOnceMock).toHaveBeenCalledTimes(1);
+      expect(tendOnceMock).toHaveBeenCalledTimes(2);
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("上一轮补池仍在进行"));
 
-      // 上一轮结束后，下一次触发必须恢复正常——守卫不能把定时器永久卡死。
+      // 放行卡住的那一轮：守卫必须自己解开，不能把补池永久卡死。持续触发新
+      // 出现的定时器直到 tendOnce 真的又被调用一次——被挡住那次触发自己的
+      // 重排会先落地但不会推进调用计数（它的 runOnce 从未真正跑过 tendOnce），
+      // 只有"卡在 gate 上那一轮"自己重排出来的那一条才会。不追踪具体下标，
+      // 只认结果，两者都会被这个循环覆盖到。
       gate.resolve(RESULT);
+      let fired = timers.length;
+      await waitFor(() => {
+        while (fired < timers.length) timers[fired++]!.fn();
+        return tendOnceMock.mock.calls.length === 3;
+      });
+      // 让促成第三次调用的那条 tick() 链自己也重排完再收尾，避免残留的
+      // 异步链拖到下一条用例（如果以后这条不再是文件里最后一个用例）才落地。
       await settle();
-      tick();
-      await waitFor(() => tendOnceMock.mock.calls.length === 2);
     } finally {
       warnSpy.mockRestore();
       logSpy.mockRestore();

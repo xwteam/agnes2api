@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { setInterval as nodeSetInterval } from "node:timers";
+import { setTimeout as nodeSetTimeout } from "node:timers";
 import { pathToFileURL } from "node:url";
 import { buildApp, buildTendDeps } from "../http/wire.js";
 import { FileStorage } from "../adapters/storage-file.js";
@@ -7,6 +7,8 @@ import { KeyPoolRepo } from "../core/keypool-repo.js";
 import { ConsoleLogger } from "../adapters/logger-console.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import type { TendDeps } from "../core/registrar/tender.js";
+import { loadConfig } from "../core/config.js";
+import { startTendScheduler } from "../core/tend-scheduler.js";
 
 /**
  * node 运行时的真实启动路径：选存储实现（FileStorage）、装配 app、监听端口。
@@ -21,11 +23,10 @@ export async function main(env: Record<string, string | undefined> = process.env
   const { app, configHolder } = await buildApp(env, storage, { probeStorage: true });
   const port = Number(env.PORT ?? 8080);
 
-  // 在途守卫。`setInterval` 不等上一轮 resolve，而单轮最坏耗时
-  //（MINT_BATCH × CODE_TIMEOUT_MS，默认 5×120 秒）轻易就能超过 TEND_INTERVAL_MS，
-  // 于是补池轮次会重叠着跑。这正是「顺序铸、不并发」这条**功能性**约束要防的
-  // 事：并发会同时撞邮箱服务的建号限流与 Agnes 的注册风控。tender 在**轮内**
-  // 严防 Promise.all，轮间的重叠只能在调度接线这一层挡住。
+  // 在途守卫。递归 setTimeout **天然不会重叠**（下一轮的定时器要等本轮 resolve 之后
+  // 才排上），所以它现在防的不是定时器自己，而是「P3c 的面板『立即补池』按钮与定时
+  // 轮撞车」——那是第三次把并发放进来的机会，前两次分别是 setInterval 不等 resolve
+  // （C4）和 Worker 的 Cron 重叠。P3c 还要与存储级短锁共用同一把锁，不能各拿各的。
   let inFlight = false;
 
   const runTend = async () => {
@@ -91,23 +92,37 @@ export async function main(env: Record<string, string | undefined> = process.env
     }
   };
 
-  // 定时器的**间隔**仍取自启动时的配置：改间隔要重启进程，改 enabled 及其余配置
-  // 项则每一轮都会生效。这里不再单独调 loadConfig——那是本文件此前的一处独立存储
-  // 读取，且没有传 logger（配置告警会静默落到 NULL_LOGGER），复用 buildApp 已经
-  // primed 过的 configHolder：它是用真实 ConsoleLogger 建的，同一份告警只会打印
-  // 一次而不是消失。未启用时 buildTendDeps 返回 null、拿不到 tendIntervalMs，而
-  // 定时器必须先存在，之后从存储打开注册机才有东西可触发。
+  // 初始间隔只取 buildApp 已经 primed 过的 configHolder：它是用真实 ConsoleLogger
+  // 建的、只读一次存储，不再像此前那样为了拿 tendIntervalMs 单独调一次 loadConfig
+  // （那是本文件此前的一处独立存储读取，且没有传 logger，配置告警会静默落到
+  // NULL_LOGGER——tests/unit/entry-node-tend-failure.test.ts 的「启动时只读一次
+  // config 键」防回归用例钉着这一条）。未启用时 buildTendDeps 返回 null、拿不到
+  // tendIntervalMs，而定时器必须先存在，之后从存储打开注册机才有东西可触发。
   const { registrar } = configHolder.current();
 
-  // 立即跑一轮：否则冷启动后要空等满一个间隔（默认 30 分钟）才开始补池。
-  void runTend();
-
-  // 显式用 node:timers 的 setInterval（而非全局 setInterval）：这个项目的
-  // tsconfig 同时装了 @cloudflare/workers-types 和 node 的类型，全局
-  // setInterval 的重载在两者间不保证解析到带 unref() 的 Node 版本。unref
-  // 让定时器不阻止进程退出，否则容器收到停止信号后要等到下一次触发才肯退，
-  // 测试里也会因为悬挂的 timer handle 导致 vitest 进程不退出。
-  nodeSetInterval(runTend, registrar.tendIntervalMs).unref();
+  startTendScheduler({
+    runOnce: runTend,
+    // **每一轮重排都重新读一次配置**（而不是复用 configHolder 的 30 秒 TTL 缓存），
+    // 与 buildTendDeps 每轮都重新 loadConfig 的口径对齐，也是本次要修的缺陷
+    // 本身——I4 之前这里读的是启动时那份快照，永远不变。不能用 buildTendDeps 取
+    // 间隔：它在注册机未启用时返回 null，而定时器必须在关闭状态下也继续存在。
+    readIntervalMs: async () => (await loadConfig(env, storage, logger)).registrar.tendIntervalMs,
+    // 显式用 node:timers 的 setTimeout（而非全局 setTimeout）：这个项目的
+    // tsconfig 同时装了 @cloudflare/workers-types 和 node 的类型，全局
+    // setTimeout 的重载在两者间不保证解析到带 unref() 的 Node 版本。unref
+    // 让定时器不阻止进程退出，否则容器收到停止信号后要等到下一次触发才肯退，
+    // 测试里也会因为悬挂的 timer handle 导致 vitest 进程不退出。
+    setTimer: (fn, ms) => { nodeSetTimeout(fn, ms).unref(); },
+    initialIntervalMs: registrar.tendIntervalMs,
+    onError: (kind, err) => {
+      console.error(
+        kind === "run"
+          ? "[registrar] 补池轮出现未捕获异常，已重排下一轮"
+          : "[registrar] 重排时读配置失败，沿用上一次已知的合法间隔",
+        err,
+      );
+    },
+  });
 
   return serve({ fetch: app.fetch, port }, (info) => {
     console.log(`agnes2api listening on :${info.port}`);
