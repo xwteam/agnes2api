@@ -8,6 +8,8 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # 给 P3b 留话：接上 check-i18n.mjs 之后是 10 道，不是新增一条这么简单——下面每个
+    # `name:` 里的 `N/9` 都要跟着改成 `N/10`，新门禁插进哪个位置也要一起定下来。
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -15,11 +17,47 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - name: 凭据扫描
+      - name: 1/9 凭据扫描
         run: bash scripts/scan-secrets.sh
-      - name: 类型检查
+      - name: 2/9 生成面板资源
+        run: node scripts/build-ui.mjs
+      - name: 3/9 生成物一致性（仓库里那份必须与 admin-ui/ 一致）
+        run: git diff --exit-code src/ui/assets.generated.ts
+      - name: 4/9 面板体积预算
+        run: node scripts/check-ui-budget.mjs
+      - name: 5/9 KV namespace id 仍是占位符
+        run: node scripts/check-wrangler-placeholder.mjs
+      - name: 6/9 类型检查
         run: pnpm typecheck
-      - name: 单元与契约测试（Node 运行时）
-        run: pnpm test
-      - name: 契约测试（workerd 运行时）
-        run: pnpm test:workers
+      # 7/9、8/9 的 `pnpm test 2>&1` / `pnpm test:workers 2>&1` 这两处**不得**追加任何
+      # 文件路径过滤器（如 `pnpm test tests/foo.test.ts`）。tests/global-setup.ts 里
+      # 的收集门禁按「带没带过滤器」分档，一旦 CI 带了过滤器，门禁会在**不报错、不提示**
+      # 的情况下静默跳过——这个前提由 tests/unit/scripts-guard.test.ts 钉住，改这两行前
+      # 先去看那份测试。
+      #
+      # 门禁本身是否真的跑过，光看 `pnpm test` 的退出码看不出来（静默跳过时退出码同样是
+      # 0）。所以下面用 tee 把输出落一份日志，再 grep 收集门禁自己打的成功横幅
+      # `[collection-guard] ✅`——横幅缺失就说明门禁没跑，即使测试全绿也要让这一步失败。
+      #
+      # 这里**不**在 CI 层重新做一遍「磁盘清单 vs 实际收集」的比对：那套比对已经在
+      # tests/global-setup.ts 里逐配置（node 一份、workerd 一份，各自独立核对，不取并集）
+      # 实现过一次，CI 只需要确认它被跑到——重新实现一遍等于多一处可能出现同一类并集
+      # 语义盲区的地方。
+      - name: 7/9 单元 / 契约 / 前端纯函数测试（Node 运行时）
+        shell: bash
+        run: |
+          pnpm test 2>&1 | tee /tmp/test-node.log
+          grep -qF '[collection-guard] ✅' /tmp/test-node.log || {
+            echo "::error::收集门禁没有跑过（日志里没见到 [collection-guard] ✅），它可能被静默跳过了"
+            exit 1
+          }
+      - name: 8/9 契约测试（workerd 运行时）
+        shell: bash
+        run: |
+          pnpm test:workers 2>&1 | tee /tmp/test-workers.log
+          grep -qF '[collection-guard] ✅' /tmp/test-workers.log || {
+            echo "::error::收集门禁没有跑过（日志里没见到 [collection-guard] ✅），它可能被静默跳过了"
+            exit 1
+          }
+      - name: 9/9 构建
+        run: pnpm build

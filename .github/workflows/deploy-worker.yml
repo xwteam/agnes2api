@@ -36,6 +36,11 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - name: 生成面板资源
+        # wrangler-action 用的是 `command: deploy`，**绕过一切 npm script**，
+        # 所以这一步必须显式插在它前面。生成物虽然已入仓，这一步保证即使某次提交
+        # 忘了跑生成器，部署出去的也是与 admin-ui/ 一致的那份。
+        run: node scripts/build-ui.mjs
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

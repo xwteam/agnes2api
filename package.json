@@ -12,7 +12,10 @@
     "build": "tsc -p tsconfig.build.json",
     "ui:build": "node scripts/build-ui.mjs",
     "dev:node": "node scripts/build-ui.mjs && pnpm build && node dist/entry/node.js",
-    "dev:worker": "node scripts/build-ui.mjs && wrangler dev"
+    "dev:worker": "node scripts/build-ui.mjs && wrangler dev",
+    "setup:worker": "node scripts/setup-worker.mjs",
+    "check:ui": "node scripts/check-ui-budget.mjs",
+    "check:wrangler": "node scripts/check-wrangler-placeholder.mjs"
   },
   "keywords": [],
   "author": "",
