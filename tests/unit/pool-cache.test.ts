@@ -533,7 +533,14 @@ describe("Tier-1 计数不许被写消除吃掉", () => {
     return (await st.inner.get<KeyRecord>(KEY_PREFIX + again.id))?.stats;
   }
 
-  /** 重新导入之后**唯一**该看到的东西：只有那次探针失败，一条旧账都没有。手写字面量。 */
+  /**
+   * 重新导入之后**唯一**该看到的东西：只有那次探针失败，一条旧账都没有。手写字面量。
+   *
+   * ⚠️ **这个期望值依赖一个前提：那条记录从 `add()` 到这次探针之间没走过任何一次
+   * 同 id 落盘。** 同 id 落盘一律写一份归一化后的 stats，`requests: 1` 这种精确期望
+   * 才成立。P3c 若给导入路径加了任何会 touch 记录的步骤，这里要重新算一遍期望值
+   * ——否则它会静默地测不到「旧账有没有还魂」这件事。
+   */
   const CLEAN_AFTER_REIMPORT = (at: number) => ({
     requests: 1, success: 0, failed: 1, clientErrors: 0, lastErrorAt: at, lastErrorKind: "probe",
   });
@@ -553,6 +560,11 @@ describe("Tier-1 计数不许被写消除吃掉", () => {
   ) {
     await st.inner.put(KEY_PREFIX + rec.id, rec);   // rec 是 add() 刚返回的那份：零计数
     const seen = (await repo.all()).find((x) => x.id === rec.id)!;
+    // ⚠️ 这个前置**依赖「`add()` 返回的那份从没走过同 id 落盘」**：走过的话它会带上
+    // 一份归一化后的全零 stats，`toBeUndefined()` 就会红。今天成立（`add()` 走的是
+    // `prev === undefined` 那条，原样写 next）。P3c 若加了会 touch 记录的路径，
+    // 这里要改成断言全零而不是 undefined——**别只是把这行删掉**，它是这条用例
+    // 「旧账确实没跟过来」的唯一对照。
     expect(seen.stats, "前置条件：重建出来的那份必须是干净的").toBeUndefined();
     const next = withOutcome(
       applyStrike(seen, at, { maxStrikes: 99, cooldownStrikeMs: 1 }, "probe"), "failed", at, "probe",
@@ -791,6 +803,72 @@ describe("Tier-1 计数不许被写消除吃掉", () => {
       await outOfBandRebuildAndFlush(repo, st, rec, t),
       "delete() 没清旧账，记录被重建之后它从基线里回来了",
     ).toEqual(CLEAN_AFTER_REIMPORT(t));
+  });
+
+  /**
+   * **调用方的视图「超前于」基线时，不许把未落盘的那一段算进基线。**（评审 N1）
+   *
+   * C2 修掉的是「视图落后于存储 ⇒ 计数被回退」。它的镜像是：调用方每次都把 next
+   * 回写进自己的视图（`records[at] = updated`），于是被消除的那几次之后，`prev`
+   * 里含着**仍攒在 `delta` 里、尚未落盘**的计数。`trackBaseline` 若无条件取大，
+   * 就把它顶成新基线 ⇒ 落盘写 `base + 2×delta + 本次` ⇒ **计数虚高**。
+   *
+   * 虚高比少计更糟：面板已经对用户承诺过「并发下会**少计**」（`keys.approxTip`
+   * 与五语言 DEPLOY.md），虚高是在说一句它自己不再保证的话。
+   *
+   * ⚠️ 关键在于**中途不重读 `repo.all()`**——重读的话 `prev` 恒等于存储里那份，
+   * 「超前」这个状态压根不出现，两种实现数学等价（第 5 种假阳性）。
+   */
+  it("调用方的视图超前于基线时不许把未落盘的那段算进基线（否则计数虚高）", async () => {
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const cfg = { maxStrikes: 99, cooldownStrikeMs: 1 };
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 21_600_000 });
+    const rec = await repo.add("sk-tier1-aheadview-kkkkkk");
+    const { rec: primedRec, putsBefore } = await primed(repo, st, rec.id, t);
+
+    // 2 次成功被消除；**视图自己往前推**，不重读。
+    let view = primedRec;
+    for (let i = 0; i < 2; i++) {
+      t += 100;
+      const next = withOutcome(applySuccess(view, t), "success", t, null);
+      await repo.save(next, view);
+      view = next;
+    }
+    expect(st.puts - putsBefore, "前置条件：这 2 次必须真的被消除").toBe(0);
+
+    // 一次失败 ⇒ 真落盘。真值：2 次成功 + 1 次失败。
+    t += 100;
+    await repo.save(withOutcome(applyStrike(view, t, cfg, "x"), "failed", t, "x"), view);
+
+    const stored = await st.inner.get<KeyRecord>(KEY_PREFIX + rec.id);
+    // 手写字面量。无条件取大时这里是 5 / 4（那 2 次被同时算进基线和增量）。
+    expect(stored?.stats, "把未落盘的那段算进基线了 ⇒ 计数虚高").toEqual({
+      requests: 3, success: 2, failed: 1, clientErrors: 0, lastErrorAt: t, lastErrorKind: "x",
+    });
+  });
+
+  /**
+   * **什么都没变的 save 一次盘都不该落。**（评审 N2）
+   *
+   * 这是 `pendingIsStale` 里 `isZeroDelta(entry.delta)` 那半**真正**守住的场景。
+   * 注释第一版说的是「只有 `lastUsedAt` 在动的 key」，实测那句是假的：那种情形下
+   * `shouldElide` 自己的 `n - p < touchIntervalMs` 已经在同一个节拍上强制落盘，
+   * 带不带这个短路都是 2 次 put。而 no-op save 上这个短路是唯一的闸：去掉它 2 次 put。
+   */
+  it("什么都没变的 save 一次盘都不该落，哪怕攒过了一个触达间隔", async () => {
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 20_000 });
+    const rec = await repo.add("sk-tier1-noopsave-llllll");
+    const { rec: cur, putsBefore } = await primed(repo, st, rec.id, t);
+
+    // 10 次完全相同的 save，跨 50 秒（= 2.5 个触达间隔）。
+    for (let i = 0; i < 10; i++) {
+      t += 5_000;
+      await repo.save({ ...cur }, cur);
+    }
+    expect(st.puts - putsBefore, "什么都没变却落了盘——白烧写配额").toBe(0);
   });
 
   /**

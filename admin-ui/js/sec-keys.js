@@ -18,7 +18,7 @@ import { fmtCount, fmtDash, fmtDuration, fmtInstant, fmtPercent } from "./pure/f
 import {
   CARDS, AUTO_SECONDS, cardCounts, badgeClass, bucketLabelKey, autoLabelKey,
   keysQuery, cooldownRemaining, lastErrorParts, usageParts, lastUsedParts,
-  pagerState, listMessageKey,
+  pagerState, listMessageKey, itemsOf,
 } from "./pure/keys.mjs";
 
 const PAGE_SIZE = 20;
@@ -36,8 +36,8 @@ let data = null;
 let loadError = false;
 
 /** 汇总卡与筛选下拉里的条数。**没有数据时 fmtCount(null) 给出 `—`，不是 0。** */
-function syncCounts() {
-  const c = cardCounts(loadError ? null : data);
+function syncCounts(shown) {
+  const c = cardCounts(shown);
   for (const b of CARDS) {
     nodes.cardValues[b].textContent = fmtCount(c[b]);
     nodes.cardLabels[b].textContent = t(bucketLabelKey(b));
@@ -94,11 +94,14 @@ function row(v, now, offset, approximate) {
 }
 
 function render() {
-  syncCounts();
+  // **读失败一律当「没有数据」，且只判这一次**：三处各写一份 `loadError ? ... : data`
+  // 的话，下一次改动很容易只改其中两处（评审 N4）。
+  const shown = loadError ? null : data;
+  syncCounts(shown);
 
   // 分页控件先复位：读失败 / 空列表时留着上一次的「第 1/2 页 · 共 3 条」，
   // 等于在展示一份已经不存在的数据。
-  const pager = pagerState(loadError ? null : data);
+  const pager = pagerState(shown);
   nodes.prev.disabled = pager.prevDisabled;
   nodes.next.disabled = pager.nextDisabled;
   nodes.pageInfo.textContent = pager.info === null
@@ -107,12 +110,15 @@ function render() {
 
   const host = nodes.body;
   host.textContent = "";
-  const messageKey = listMessageKey(data, loadError);
+  const messageKey = listMessageKey(shown, loadError);
   if (messageKey !== null) {
     host.appendChild(elI18n("p", messageKey, { class: "muted" }));
     return;
   }
-  if (!data) return;
+  // 没有可渲染的条目就到此为止——判据与上面两处**共用同一个 itemsOf**，
+  // 畸形响应（items 不是数组）不会走到下面那个 for 里去抛异常。
+  const items = itemsOf(shown);
+  if (items === null) return;
 
   const table = el("table");
   const head = el("tr");
@@ -123,7 +129,7 @@ function render() {
   table.appendChild(head);
   // 时区必须从参数进 fmtInstant，不许它去读运行环境的本地时区（见 pure/format.mjs）。
   const offset = -new Date().getTimezoneOffset() * 60000;
-  for (const v of data.items) table.appendChild(row(v, data.generatedAt, offset, data.approximate));
+  for (const v of items) table.appendChild(row(v, shown.generatedAt, offset, shown.approximate));
   host.appendChild(table);
 }
 

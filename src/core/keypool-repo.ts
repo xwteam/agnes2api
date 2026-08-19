@@ -526,11 +526,27 @@ export class KeyPoolRepo {
   }
 
   /**
-   * 取出这把 key 的记账状态，并用调用方交上来的那份**只增不减**地校准基线。
+   * 取出这把 key 的记账状态，并**只在还没有未落盘增量时**用调用方交上来的那份校准基线。
    *
-   * `maxStats` 的两个方向见 pendingStats 的说明：调用方的视图可能比存储**旧**
-   * （`dispatch` 回写的是未合并的 next），也可能比存储**新**（快照过 TTL 之后带回了
-   * 别的 isolate 写得更高的值）。取大同时处理这两种，且不必分辨是哪一种。
+   * 校准要处理的是「别的 isolate 把计数写得更高」：快照过 TTL 之后带回对方的值，
+   * 取大就把它吸收进来，本实例不会再把它压回去。
+   *
+   * ⚠️ **但只能在 `delta` 为零时吸收（N1）。** `delta` 非零时 `seen` 里含着的正是
+   * **仍攒在 `delta` 里、尚未落盘**的那一段（调用方每次都把 next 回写进自己的视图），
+   * 把它顶成新基线 ⇒ 落盘写成 `base + 2×delta + 本次` ⇒ **计数虚高**。
+   * 实测：2 次成功被消除 + 1 次失败落盘，真值 `requests:3 / success:2`，
+   * 不加这个条件落盘写出 `5 / 4`。
+   *
+   * 虚高比少计更糟：面板已经对用户承诺过「并发下会**少计**」（`keys.approxTip`
+   * 与五语言 DEPLOY.md），虚高是在说一句它自己不再保证的话。
+   *
+   * 「`delta` 为零」恰好就是唯一需要吸收的那个窗口：落盘之后 delta 清零，
+   * 下一次 save 的 `trackBaseline` 先于 `stashPending` 跑，此时 `seen` 若更高，
+   * 只可能来自存储（快照刷新），不可能来自本实例未落盘的那一段。
+   *
+   * 今天 `dispatch` 走不到虚高那条路（两个可消除终态都紧跟 `return done(...)`，
+   * 其余终态必改调度字段 ⇒ 必真落盘），但**判据必须自洽，不能靠调用方的形态免责**
+   * ——这与 `next.id !== prev.id` 那条的处置是同一把尺子。
    */
   private trackBaseline(id: string, seen: KeyStats, at: number): PendingStats {
     const cur = this.pendingStats.get(id);
@@ -539,7 +555,7 @@ export class KeyPoolRepo {
       this.pendingStats.set(id, created);
       return created;
     }
-    cur.base = maxStats(cur.base, seen);
+    if (isZeroDelta(cur.delta)) cur.base = maxStats(cur.base, seen);
     return cur;
   }
 
@@ -554,8 +570,15 @@ export class KeyPoolRepo {
    * 攒得比一个触达间隔还久 ⇒ 强制落盘，见 pendingStats 的说明。
    *
    * **空增量一律不算陈旧**：落盘之后 `delta` 清零而条目留着（基线要留），
-   * 不判这一条的话，一把只有 `lastUsedAt` 在动的 key 会每个触达间隔被强制写一次，
-   * 等于把写消除的收益还回去。
+   * `since` 却还停在旧时刻，不判这一条的话它会把「压根没有计数要落」的 save
+   * 也判成陈旧、白写一次盘。
+   *
+   * ⚠️ **真正被它挡住的是「什么都没变」的 no-op save，不是「只有 `lastUsedAt` 在动」
+   * 的那种**——这句话第一版写反了，是实测订正的（N2）：只有 `lastUsedAt` 在动时，
+   * `shouldElide` 自己的 `n - p < touchIntervalMs` 已经在同一个节拍上强制落盘了，
+   * 带不带这个短路都是 2 次 put（10 次触达、间隔 5s、`touchIntervalMs=20s`）。
+   * 而完全 no-op 的 save：带它 **0 次 put**，去掉它 **2 次**。
+   * 那条差异由 `tests/unit/pool-cache.test.ts` 的「什么都没变的 save 一次盘都不该落」钉着。
    */
   private pendingIsStale(entry: PendingStats, at: number): boolean {
     if (this.touchIntervalMs <= 0 || isZeroDelta(entry.delta)) return false;

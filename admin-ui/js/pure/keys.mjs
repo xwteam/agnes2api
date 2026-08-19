@@ -119,11 +119,24 @@ export function lastUsedParts(view, approximate) {
 }
 
 /**
+ * 「这份响应里有没有可渲染的条目」——**全模块唯一的判据**。
+ *
+ * 存在的理由：分页复位、列表消息、要不要建表这三处以前各写各的，
+ * 其中「`items` 不是数组」一处当空列表、一处放行去建表，一份畸形响应就会走到
+ * `for (const v of data.items)` 抛异常。今天后端恒返回数组、走不到，
+ * 但三处判据并存本身就是下一次改动的绊子。
+ */
+export function itemsOf(data) {
+  return data && typeof data === "object" && Array.isArray(data.items) ? data.items : null;
+}
+
+/**
  * 分页控件的状态。**两条早退分支（读失败 / 空列表）必须一并复位**，
  * 否则读失败之后下面还挂着上一次的「第 1/2 页 · 共 3 条」，那是在展示一份已经不存在的数据。
  */
 export function pagerState(data) {
-  if (!data || typeof data !== "object" || !Array.isArray(data.items) || data.items.length === 0) {
+  const items = itemsOf(data);
+  if (items === null || items.length === 0) {
     return { prevDisabled: true, nextDisabled: true, info: null };
   }
   const page = typeof data.page === "number" ? data.page : 1;
@@ -144,8 +157,8 @@ export function pagerState(data) {
  */
 export function listMessageKey(data, loadError) {
   if (loadError) return "common.loadFailed";
-  if (!data || !Array.isArray(data.items)) return null;
-  if (data.items.length > 0) return null;
+  const items = itemsOf(data);
+  if (items === null || items.length > 0) return null;
   const c = cardCounts(data);
   return c.all === 0 ? "keys.empty" : "keys.noMatch";
 }

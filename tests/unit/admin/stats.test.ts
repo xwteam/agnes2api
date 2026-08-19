@@ -57,6 +57,20 @@ describe("maxStats：基线只增不减", () => {
     expect(maxStats(a, b).lastErrorKind).toBe("new");
     expect(maxStats(b, a).lastErrorKind, "参数顺序不该改变结果").toBe("new");
   });
+  /**
+   * **同毫秒时它不可交换——这条不对称是有意的，钉住免得后人「顺手修对称」。**
+   * 判据是严格大于，所以同刻保留左侧（= 已有基线）那条 kind。
+   * 计数四项仍然是真正的 max（可交换），下面顺带一并断言。
+   */
+  it("两条错误同毫秒时保留左侧的 kind：maxStats(a,b) 与 maxStats(b,a) 的 kind 不同", () => {
+    const a: KeyStats = { ...EMPTY_STATS, requests: 2, lastErrorAt: 100, lastErrorKind: "left" };
+    const b: KeyStats = { ...EMPTY_STATS, requests: 5, lastErrorAt: 100, lastErrorKind: "right" };
+    expect(maxStats(a, b).lastErrorKind).toBe("left");
+    expect(maxStats(b, a).lastErrorKind).toBe("right");
+    // 计数那几项**与顺序无关**，两个方向都取到 5。
+    expect(maxStats(a, b).requests).toBe(5);
+    expect(maxStats(b, a).requests).toBe(5);
+  });
   it("一边没有最近错误时取另一边的", () => {
     const withErr: KeyStats = { ...EMPTY_STATS, lastErrorAt: 7, lastErrorKind: "x" };
     expect(maxStats(EMPTY_STATS, withErr).lastErrorAt).toBe(7);

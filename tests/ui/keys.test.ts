@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CARDS, AUTO_SECONDS, cardCounts, badgeClass, bucketLabelKey, autoLabelKey,
   keysQuery, cooldownRemaining, lastErrorParts, usageParts, lastUsedParts,
-  pagerState, listMessageKey,
+  pagerState, listMessageKey, itemsOf,
 } from "../../admin-ui/js/pure/keys.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 
@@ -118,6 +118,12 @@ describe("≈ 由 approximate 驱动", () => {
   it("响应里没带这个字段时按近似处理——保守方向是宁可多打一个 ≈", () => {
     expect(usageParts(view, undefined).approx).toBe(true);
   });
+  it("条目缺 stats 时两个数都是 null（渲染成 ≈ —），不是 0", () => {
+    // 存量记录没有 stats（P1 时期写下的）。后端投影会补零，但**前端不许自己假设**：
+    // 拿不到就是拿不到，伪造 0 会让运维以为这把 key 一次都没成功过。
+    expect(usageParts({}, true)).toEqual({ approx: true, requests: null, success: null });
+    expect(usageParts({ stats: {} }, true)).toEqual({ approx: true, requests: null, success: null });
+  });
   it("「最后使用」与计数是同一份不确定性，同样跟着 approximate 打 ≈", () => {
     expect(lastUsedParts(view, true)).toEqual({ at: 2000, approx: true });
     expect(lastUsedParts(view, false)).toEqual({ at: 2000, approx: false });
@@ -141,6 +147,24 @@ describe("pagerState：两条早退分支都要复位", () => {
       expect(pagerState(empty), String(empty))
         .toEqual({ prevDisabled: true, nextDisabled: true, info: null });
     }
+  });
+});
+
+/**
+ * **三处判据统一到 `itemsOf`**（评审 N4）：畸形响应（`items` 不是数组）以前一处当空列表、
+ * 一处放行去建表，板块就会走到 `for (const v of data.items)` 抛异常。
+ */
+describe("itemsOf：全模块唯一的「有没有条目」判据", () => {
+  it("items 不是数组时一律 null——分页、列表消息、要不要建表三处共用这一个答案", () => {
+    for (const bad of [null, undefined, {}, { items: null }, { items: "oops" }, { items: 3 }]) {
+      expect(itemsOf(bad), String(bad)).toBeNull();
+      expect(pagerState(bad), String(bad)).toEqual({ prevDisabled: true, nextDisabled: true, info: null });
+      expect(listMessageKey(bad, false), String(bad)).toBeNull();
+    }
+  });
+  it("正常响应里原样交出那个数组", () => {
+    expect(itemsOf(body)).toBe(body.items);
+    expect(itemsOf({ ...body, items: [] })).toEqual([]);
   });
 });
 
