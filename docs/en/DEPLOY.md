@@ -93,14 +93,26 @@ Below it the panel is not enabled and an `admin.token_rejected` line goes to the
 entire key pool, switch the registrar off, and repoint the registration backend at their own
 server — harvesting the mailbox, password and verification code of every account minted from then on.
 
-This rule is enforced at startup **and re-checked on every admin request**. If the two become
-equal while the gateway is running — for example because `gatewayToken` was written into storage
-by hand with `wrangler kv key put`, or by editing `store.json` — the admin endpoints start
-returning **`503` immediately**, and an `admin.token_conflict` line is logged at error level.
-**Gateway forwarding is unaffected.** Change either token back and the admin endpoints recover on
-their own: editing the stored `gatewayToken` takes effect once the configuration cache next
-refreshes, with no restart needed. Changing `ADMIN_TOKEN` instead is an environment variable, so
-it needs a redeploy (Worker) or a container recreate (Docker).
+This rule is **re-checked on every admin request, and deliberately not enforced at startup**. If
+the two are equal — for example because `gatewayToken` was written into storage by hand with
+`wrangler kv key put`, or by editing `store.json` — the admin endpoints return **`503`**, and an
+`admin.token_conflict` line is logged at error level (if the conflict is already present at boot,
+the same line appears in the startup log so you see the reason immediately). **Gateway forwarding
+is unaffected.** Change either token back and the admin endpoints recover on their own: editing
+the stored `gatewayToken` takes effect once the configuration cache next refreshes, with **no
+restart needed**. Changing `ADMIN_TOKEN` instead is an environment variable, so it needs a
+redeploy (Worker) or a container recreate (Docker).
+
+**Why this one rule is not enforced at startup.** `gatewayToken` can change while the gateway
+runs, and a startup decision never gets a second evaluation: if the whole `/admin` tree were
+withheld there, every isolate that cold-starts during the conflict — and every Docker container
+started during it — would be **permanently `404`**, unrecoverable by fixing the configuration and
+only curable by a restart, while isolates built before the conflict merely return `503` and
+recover as soon as you change the value back. Same configuration, same instant, two different
+answers — and the "no restart needed" sentence above would be half a lie. The two rules that
+concern `ADMIN_TOKEN` alone (leading/trailing whitespace, minimum length) do not have this
+problem: their only input is an environment variable that cannot change at runtime, so they are
+still enforced at startup and their failure mode remains `404`.
 
 `ADMIN_TOKEN` is read **from environment variables only, never from storage**: the panel cannot
 rotate its own key. To rotate it, run `npx wrangler secret put ADMIN_TOKEN` and redeploy on the

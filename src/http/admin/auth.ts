@@ -47,6 +47,25 @@ export interface AdminTokenCheck {
 }
 
 /**
+ * 三条硬规则里**只看 `ADMIN_TOKEN` 自己**的那两条（⓪ 首尾空白、① 长度下限）。
+ *
+ * 单独拆出来是因为「装配期能查什么」这件事有一条硬判据：
+ * **装配期的结论会被永久冻结（不注册就是永久 404，没法反注册回来），所以它只能建立在
+ * 运行中不会变的输入上。** `ADMIN_TOKEN` 只从环境变量读，整个 isolate / 进程的生命周期
+ * 里都是同一个值，因此这两条查一次就是永远的答案。
+ *
+ * 第三条（不得等于 `GATEWAY_TOKEN`）不满足这条判据——`gatewayToken` 是
+ * `env.GATEWAY_TOKEN ?? stored.gatewayToken`，运行中会变——所以它**只**在
+ * `adminAuth` 的每请求复查里生效，见 `adminRouter` 里那段说明。
+ */
+export function checkAdminTokenShape(token: string): AdminTokenCheck {
+  // 空串不走这里（`"".trim() === ""`），它归 too_short，与 adminRouter 的 `!token` 一致。
+  if (token.trim() !== token) return { ok: false, reason: "whitespace_padded" };
+  if (token.length < ADMIN_TOKEN_MIN_LENGTH) return { ok: false, reason: "too_short" };
+  return { ok: true };
+}
+
+/**
  * 管理口令的三条硬规则。
  *
  * ⓪ 首尾不得有空白。**这条纯粹为了可诊断性，方向仍是 fail closed。** HTTP 请求头的值
@@ -68,9 +87,8 @@ export interface AdminTokenCheck {
  * 放在长度前面则更糟——两条都不满足时报的是「与网关口令相同」，运维改完口令还是进不去。
  */
 export function checkAdminToken(token: string, gatewayToken: string): AdminTokenCheck {
-  // 空串不走这里（`"".trim() === ""`），它归 too_short，与 adminRouter 的 `!token` 一致。
-  if (token.trim() !== token) return { ok: false, reason: "whitespace_padded" };
-  if (token.length < ADMIN_TOKEN_MIN_LENGTH) return { ok: false, reason: "too_short" };
+  const shape = checkAdminTokenShape(token);
+  if (!shape.ok) return shape;
   if (token === gatewayToken) return { ok: false, reason: "same_as_gateway_token" };
   return { ok: true };
 }

@@ -108,10 +108,6 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
       gatewayToken: TEST_CONFIG.gatewayToken, reason: "too_short", msgContains: "长度",
     },
     {
-      name: "与网关口令相同", token: LONG, gatewayToken: LONG,
-      reason: "same_as_gateway_token", msgContains: "GATEWAY_TOKEN",
-    },
-    {
       name: "全是空白（24 个空格，长度够也不等于网关口令）", token: " ".repeat(24),
       gatewayToken: TEST_CONFIG.gatewayToken, reason: "whitespace_padded", msgContains: "空白",
     },
@@ -135,6 +131,33 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
       expect(JSON.stringify(e)).not.toContain(token);
     });
   }
+
+  /**
+   * ⚠️ **「与网关口令相同」刻意不在上面那张表里，它的失效形态是 503 而不是 404。**
+   *
+   * 上面两条只取决于 `ADMIN_TOKEN` 这一个环境变量，整个进程/isolate 生命周期里都是
+   * 同一个答案，所以在装配期把整棵树反注册掉（永久 404）是安全的。第三条的另一个
+   * 输入 `gatewayToken` 运行中会变（`env.GATEWAY_TOKEN ?? stored.gatewayToken`），
+   * 在装配期拦它 = 把结论永久冻结 = 分裂脑（见本文件末尾那组用例）。
+   */
+  it("与网关口令相同：/admin 树照常注册，管理接口 503（不是 404），且启动日志里就有原因", async () => {
+    const { app, logger } = await makeApp(
+      [], ["k1"], { gatewayToken: LONG }, undefined, { adminToken: LONG },
+    );
+    expect((await app.request("/admin/api/session")).status).toBe(503);
+    const ok = await app.request("/v1/models", { headers: { authorization: `Bearer ${LONG}` } });
+    expect(ok.status, "转发能力与管理能力相互独立").toBe(200);
+
+    // 装配期这一条**只报不拦**：不打这条日志的话，启动时就撞上冲突的部署者要等到
+    // 第一个管理请求才拿到一个不说原因的 503。
+    const e = logger.entries.find((x) => x.event === "admin.token_conflict");
+    expect(e?.level).toBe("error");
+    expect(e?.fields?.reason).toBe("same_as_gateway_token");
+    expect(String(e?.msg)).toContain("GATEWAY_TOKEN");
+    expect(JSON.stringify(e)).not.toContain(LONG);
+    // 装配期不该再报 token_rejected：那个事件的语义是「面板没注册」。
+    expect(logger.has("admin.token_rejected")).toBe(false);
+  });
 });
 
 describe("adminAuth", () => {
@@ -412,6 +435,64 @@ describe("运行期复查：gatewayToken 在运行中变成 ADMIN_TOKEN 时管�
     await h.app.request("/admin/api/session", { headers: { "x-admin-key": "wrong" } });
     expect(h.logger.has("admin.login_failed")).toBe(false);
     expect(h.logger.has("admin.token_conflict")).toBe(true);
+  });
+});
+
+// ── 分裂脑：装配时机不许改变管理端的可达性 ─────────────────────────────────
+//
+// 上面那组只建**一个**在冲突之前装配好的 app，因此对「冲突期间冷启动的那一批」
+// 完全不可观测——正是台账里第 5 类假阳性（测试覆盖的状态让被测的选择不可观测）。
+// 生产上这两批同时存在：Worker 的 isolate 是逐请求随机回收/新建的，Docker 那边
+// DEPLOY.md 教的恰恰是「停容器 → 编辑 store.json → 起容器」，最容易撞上装配期冲突。
+//
+// 装配期若拦「两把钥匙相同」，冲突期间冷启动的 isolate 会**永久 404**（装配期检查
+// 没有第二次求值的机会），而冲突之前建好的只是 503、改回去立刻恢复：同一份配置、
+// 同一时刻两种结果，且 DEPLOY.md 承诺的「改回去不需要重启」对前一半是假话。
+describe("同一份配置下，装配时机不改变管理端返回的状态码", () => {
+  /** 同一个存储上按当前配置现建一个 app —— 相当于一次 isolate 冷启动。 */
+  function coldStart(storage: MemoryStorage, now: () => number) {
+    return (async () => {
+      const logger = recordingLogger();
+      const configHolder = await createConfigHolder({ env: {}, storage, logger, now });
+      const repo = new KeyPoolRepo(storage, { now, logger: NULL_LOGGER, cacheTtlMs: 0 });
+      await repo.add("k1");
+      return createApp({
+        version: "0.1.0", configHolder, repo,
+        fetcher: new FakeFetcher([]), now,
+        storageHealth: createStorageHealth(), logger,
+        adminToken: TEST_ADMIN_TOKEN, trustProxy: false,
+      });
+    })();
+  }
+
+  const withKey = { headers: { "x-admin-key": TEST_ADMIN_TOKEN } };
+
+  it("冲突前冷启动的与冲突中冷启动的，冲突期间同为 503、改回去之后同为 200", async () => {
+    let t = 0;
+    const now = () => t;
+    const storage = new MemoryStorage();
+    await storage.put("config", { gatewayToken: "gateway-token-differs-from-admin" });
+
+    const before = await coldStart(storage, now);            // 冲突之前建好的 isolate
+
+    await storage.put("config", { gatewayToken: TEST_ADMIN_TOKEN });   // 运维手滑
+    t += CONFIG_TTL_MS * 2;
+    const during = await coldStart(storage, now);            // 冲突期间冷启动的 isolate
+
+    expect(
+      [(await before.request("/admin/api/session", withKey)).status,
+       (await during.request("/admin/api/session", withKey)).status],
+      "冲突期间两批 isolate 必须给出同一个状态码",
+    ).toEqual([503, 503]);
+
+    await storage.put("config", { gatewayToken: "gateway-token-differs-again" });   // 按文档改回去
+    t += CONFIG_TTL_MS * 2;
+
+    expect(
+      [(await before.request("/admin/api/session", withKey)).status,
+       (await during.request("/admin/api/session", withKey)).status],
+      "DEPLOY.md 承诺「改回去不需要重启」，那就必须对两批都成立",
+    ).toEqual([200, 200]);
   });
 });
 
