@@ -64,6 +64,44 @@ function discoverConfigs(): string[] {
   return readdirSync(ROOT).filter((f) => /^vitest(\..+)?\.config\.ts$/.test(f)).sort();
 }
 
+const NODE = "vitest.config.ts";
+const WORKERS = "vitest.workers.config.ts";
+
+/**
+ * **哪个目录要求被哪几份配置收集——显式声明，不隐含在 glob 里。**
+ *
+ * ⚠️ 这张表是为了修掉一个**并集语义**的盲区。原先的判定是「这个文件被**某**份配置
+ * 收集到就算过」，于是 `vitest.workers.config.ts` 的 include 被**收窄**（不是清空）
+ * 对它完全不可见。已复现：把 workers 的 include 收窄成两个文件后——
+ *
+ *     node 侧   [collection-guard] ✅ 51 个测试文件 × 2 份配置，无漏收集   ← 假阳性
+ *     workers   Test Files  2 passed (2)                                  ← 15 个契约测试静默消失
+ *
+ * **两个入口都是绿的，零红色信号**，而消失的正是 admin 的 CSP / nosniff / 资产伺服
+ * 在 **workerd 侧**的覆盖——设计文档 §4.2 的整个立论（pool 会丢弃 `[assets]` 的
+ * directory，所以必须双运行时验证）就靠那一份。
+ *
+ * 所以判定改成**逐配置**：`tests/contract/**` 的每个文件必须**同时**出现在两份配置
+ * **各自的**收集结果里，出现在并集里不算过。
+ */
+const POLICY: ReadonlyArray<{ dir: string; configs: readonly string[]; why: string }> = [
+  {
+    dir: "tests/contract/",
+    configs: [NODE, WORKERS],
+    why: "契约测试要求**双运行时对等**：同一份断言在 node 与 workerd 下各跑一遍",
+  },
+  {
+    dir: "tests/unit/",
+    configs: [NODE],
+    why: "单测要用 node:fs / child_process，workerd 里没有",
+  },
+  {
+    dir: "tests/ui/",
+    configs: [NODE],
+    why: "前端纯函数，不碰任何运行时能力，跑两遍只是浪费",
+  },
+];
+
 /** 问 vitest 自己：这份配置会收集哪些文件。 */
 function collectedBy(config: string): string[] {
   const out = execFileSync(
@@ -141,21 +179,51 @@ export default function setup(project?: MaybeProject): void {
   const configs = discoverConfigs();
   if (configs.length === 0) throw new Error("[collection-guard] 一份 vitest 配置都没扫到");
 
-  const collected = new Set(configs.flatMap(collectedBy));
-
-  const missing = onDisk.filter((f) => !collected.has(f));
-  if (missing.length > 0) {
+  // 磁盘上的配置与 POLICY 引用的配置必须**双向一致**。加了一份新配置却没在 POLICY
+  // 里表过态，它收集什么、该收集什么都没人管——那是下一个并集盲区的入口。
+  const referenced = [...new Set(POLICY.flatMap((r) => r.configs))].sort();
+  const unreferenced = configs.filter((c) => !referenced.includes(c));
+  const dangling = referenced.filter((c) => !configs.includes(c));
+  if (unreferenced.length > 0 || dangling.length > 0) {
     throw new Error(
-      "[collection-guard] 这些测试文件躺在仓库里，但没有任何一份 vitest 配置会跑它们"
-      + `（查了 ${configs.join("、")}）：\n  ${missing.join("\n  ")}\n`
-      + "要么把它们纳入某份配置的 include，要么删掉——留着一份不会跑的测试比没有更糟。",
+      "[collection-guard] POLICY 与磁盘上的 vitest 配置对不上。\n"
+      + (unreferenced.length ? `  磁盘上有但 POLICY 没提：${unreferenced.join("、")}\n` : "")
+      + (dangling.length ? `  POLICY 提了但磁盘上没有：${dangling.join("、")}\n` : "")
+      + "  新增配置必须在 POLICY 里声明它负责哪些目录。",
+    );
+  }
+
+  /** 每份配置**各自**收集到什么。逐配置比对，不取并集。 */
+  const byConfig = new Map(configs.map((c) => [c, new Set(collectedBy(c))]));
+
+  const problems: string[] = [];
+  for (const f of onDisk) {
+    // 总函数：分不出归属就报错，逼新目录在 POLICY 里表态，不允许「这个不用管」的空格。
+    const rule = POLICY.find((r) => f.startsWith(r.dir));
+    if (!rule) {
+      problems.push(`${f}：不在任何已声明的目录下，请在 POLICY 里说明它该被哪几份配置收集`);
+      continue;
+    }
+    for (const cfg of rule.configs) {
+      if (!byConfig.get(cfg)?.has(f)) {
+        problems.push(`${f}：应当被 ${cfg} 收集，实际没有（${rule.why}）`);
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      "[collection-guard] 测试文件的收集范围与声明不符：\n  "
+      + problems.join("\n  ")
+      + "\n要么修好 include，要么改 POLICY 并在评审里说明——留着一份不会跑的测试比没有更糟。",
     );
   }
 
   const onDiskSet = new Set(onDisk);
-  const ghosts = [...collected].filter((f) => !onDiskSet.has(f));
-  if (ghosts.length > 0) {
-    throw new Error(`[collection-guard] 收集结果里有磁盘上不存在的文件：\n  ${ghosts.join("\n  ")}`);
+  for (const [cfg, files] of byConfig) {
+    const ghosts = [...files].filter((f) => !onDiskSet.has(f));
+    if (ghosts.length > 0) {
+      throw new Error(`[collection-guard] ${cfg} 收集到了磁盘上不存在的文件：\n  ${ghosts.join("\n  ")}`);
+    }
   }
 
   /*
@@ -164,5 +232,9 @@ export default function setup(project?: MaybeProject): void {
    * process.argv，于是每次调用都被判成带过滤器，门禁再也不跑而 CI 全绿。
    * 那种情况下这行**不会出现**，Task 8 的 CI 断言 grep 它即可发现。
    */
-  console.log(`[collection-guard] ✅ ${onDisk.length} 个测试文件 × ${configs.length} 份配置，无漏收集`);
+  const dual = onDisk.filter((f) => (POLICY.find((r) => f.startsWith(r.dir))?.configs.length ?? 0) > 1);
+  console.log(
+    `[collection-guard] ✅ ${onDisk.length} 个测试文件 × ${configs.length} 份配置逐一核对，`
+    + `其中 ${dual.length} 个要求双运行时`,
+  );
 }
