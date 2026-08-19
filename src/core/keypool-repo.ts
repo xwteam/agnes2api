@@ -101,8 +101,18 @@ export const READ_PATH_LIST_BACKOFF_MS = 600_000;
  * 只有一个长窗口时，**一次**瞬时 list 抖动会把那份异常粘住整整 10 分钟：期间
  * 一个**真的是空的**池子会报 500「list 配额耗尽」而不是 503 `pool_empty`——
  * 把运维指向完全相反的方向（真相是「你还没导 key」）。
- * 头 `LIST_FAIL_ESCALATE_AFTER` 次连续失败用这个短窗口，之后才升到长退避。
- * 上界：3 × (86400/60) 只发生在最初三分钟，此后回到 ≤144/天。
+ *
+ * ⚠️ **时序要按秒对齐，别凭直觉数「头几次」。** 判据是
+ * `failures > 0 && failures < LIST_FAIL_ESCALATE_AFTER`（`LIST_FAIL_ESCALATE_AFTER = 3`），
+ * 门槛看的是**已经失败的次数**，不是**尝试的序号**：第 1 次尝试（`t0`）没有上一次
+ * `lastReadListAt` 可比，压根不过这道闸；真正被快窗口挡住、因而要多等 60 秒的只有
+ * 第 2 次（挡在 `t0+60s`）与第 3 次（挡在 `t0+120s`）尝试，第 3 次失败后
+ * `consecutiveListFailures` 达到 3、不再满足 `< LIST_FAIL_ESCALATE_AFTER`，
+ * 第 4 次才被换成 600 秒的长窗口（落在 `t0+720s`）。
+ * **一共只有 2 个快窗口、累计 2 分钟**，不是 3 个、3 分钟——`tests/unit/keypool-repo.test.ts`
+ * 的「连续失败三次之后升到长退避」按这个时序实测钉住：三次真实尝试恰好落在
+ * `t0`、`t0+60s`、`t0+120s`。此后长期持续故障维持在 ≤144 次/天（另加最初这 2 次
+ * 快窗口带来的 2 次额外尝试，全天上界 147 次，不影响配额账里的量级）。
  */
 export const LIST_FAIL_FAST_RETRY_MS = 60_000;
 
@@ -147,7 +157,13 @@ export interface KeyPoolRepoOptions {
    * 也就是说默认值在推荐配置处已经临界；预期 isolate 更多就要把本值调大
    * （20 把 key、5 个 isolate 需要约 120 秒）。
    *
-   * 代价：别的 isolate 判定的冷却/剔除，本 isolate 最多晚这么久才看到。
+   * 代价：别的 isolate 判定的冷却/剔除，本 isolate 最多晚**本值 + 约 60 秒**才看到
+   * （后者是 KV 边缘缓存的默认 `cacheTtl`，已核实：见 `config-holder.ts` 的
+   * `CONFIG_TTL_MS` 注释与其引用的出处）。默认 60000 时上界约 **120 秒**。
+   *
+   * **而且不只是「看得晚」**：陈旧快照上的任意一次调度写会把整条记录覆写回去，
+   * **抹掉**别的 isolate 在这个窗口里刚写下的 `evicted` / `cooldownUntil`——那次判定
+   * 要重新发生一遍。这条代价已写进五语言 DEPLOY.md，别只留在这里。
    */
   cacheTtlMs?: number;
   /**
@@ -662,6 +678,13 @@ export class KeyPoolRepo {
     return idsFromKeyNames(await this.storage.list(KEY_PREFIX));
   }
 
+  /**
+   * ⚠️ **P3c 的批量导入不许循环调 `add()`。**
+   * `add()` 是「一次记录 put + 一次索引读 + 一次索引 put」，循环 M 次就是 `3M` 次操作，
+   * 而写桶只有 1,000/天。批量路径必须是「一次读索引 → 内存合并 → 一次写索引 → M 次记录 put」。
+   * 另外在 FileStorage 形态下 `pool:index` 是**纯成本**（读侧零收益、每次 put 都重写整个
+   * `store.json`），循环 add 会把全文写放大到 `3M` 次，几百把 key 的导入能卡住整个进程。
+   */
   private async indexAdd(id: string): Promise<void> {
     const idx = await this.readIndex();
     if (idx === null) {

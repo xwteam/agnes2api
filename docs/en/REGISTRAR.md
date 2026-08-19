@@ -92,8 +92,16 @@ gateway refuses to start otherwise.
 | Cloudflare Worker | Cron under `[triggers]` in `wrangler.toml` (default `*/30 * * * *`, every 30 minutes) | Edit the cron expression in `wrangler.toml` |
 | Node / Docker | An in-process timer | `TEND_INTERVAL_MS` (default `1800000` ms) |
 
-Both runtimes ultimately call the same refill function with the exact same configuration — the
-only difference is who is responsible for triggering it on time.
+Both runtimes ultimately call **the same refill function**. The difference is **who is
+responsible for triggering it on time**, and **where the trigger interval comes from**:
+
+| | Trigger | Interval source | Effect of changing it |
+|---|---|---|---|
+| Node / Docker | An in-process self-rescheduling timer | `TEND_INTERVAL_MS` (env var > stored config > default `1800000`) | Takes effect **next round** (the current round finishes on the old interval first — up to 30 minutes by default). **No restart needed** |
+| Cloudflare Worker | The platform's Cron Trigger | `[triggers].crons` in `wrangler.toml` | **Changing the config has no effect** — you must edit `wrangler.toml` and redeploy |
+
+Every refill setting other than the trigger interval (`TARGET_KEYS`, `MINT_BATCH`, channel
+credentials, …) really is identical between the two runtimes.
 
 ### Cloudflare Cron Trigger's wall-clock limit (read before tuning the numbers)
 

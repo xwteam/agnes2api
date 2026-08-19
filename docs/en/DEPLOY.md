@@ -18,7 +18,7 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 | `COOLDOWN_RATE_LIMIT_MS` | no | `60000` | Cooldown duration applied to a key after an upstream `429`. |
 | `COOLDOWN_PAYMENT_MS` | no | `3600000` | Cooldown duration applied to a key after an upstream `402`. |
 | `COOLDOWN_STRIKE_MS` | no | `1800000` | Cooldown duration applied once a key reaches `MAX_STRIKES`. The key recovers automatically when it expires. |
-| `POOL_CACHE_TTL_MS` | no | `60000` | Each isolate/process keeps an in-memory snapshot of the key pool; this is how long that snapshot lives. `0` disables the cache. **KV reads are independent of request count** — they depend only on the refresh rate; see the quota section below for the formula. Cost: cooldowns/evictions decided by another isolate take up to this long to become visible here. |
+| `POOL_CACHE_TTL_MS` | no | `60000` | Each isolate/process keeps an in-memory snapshot of the key pool; this is how long that snapshot lives. `0` disables the cache. **KV reads are independent of request count** — they depend only on the refresh rate; see the quota section below for the formula. Cost: cooldowns/evictions decided by another isolate take up to **this value + about 60 seconds** to become visible here (the extra 60s is KV's default edge-cache `cacheTtl`) — with the default 60000 that ceiling is about **120 seconds**. And it isn't just "seen late": any scheduling write made against a stale snapshot overwrites the whole record, **erasing** whatever `evicted` / `cooldownUntil` another isolate had just written within that window — that decision has to happen all over again. |
 | `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted. `0` persists it on every successful request. It is a display-only field that no scheduling logic reads; writing it per request would burn the free tier's 1,000 writes/day and leave no budget for cooldowns and evictions. Cost: "last used" is only accurate to within this interval. |
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
@@ -59,16 +59,33 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   bookkeeping. Each key also costs one one-off write the first time it is used.
 - **`list` and `delete` are two further buckets, 1,000/day each**, separate from the read and
   write buckets. Steady-state forwarding never issues a `list` — that is exactly why the
-  `pool:index` key exists. Only two things consume it: the 48–96 daily index reconciliations,
-  and the **empty-pool rescan** (when the index parses fine yet not a single live record can be
-  read, the gateway issues one `list` to check whether a hand-imported record is missing from
-  the index). The rescan backs off for a built-in **10 minutes** (a fixed constant, not an
-  environment variable), so an empty pool costs at most 144 `list` calls per isolate per day.
+  `pool:index` key exists. **Three** things consume it: the 48–96 daily index reconciliations
+  (a separate, independently scheduled job); the **empty-pool rescan** (when the index parses
+  fine yet not a single live record can be read, the gateway issues one `list` to check whether
+  a hand-imported record is missing from the index); and the **missing-index fallback** (when
+  `pool:index` itself cannot be read or fails to parse, the gateway likewise issues one `list`
+  and tries to rebuild the index — usually because the write bucket got exhausted and the index
+  could never be built). The latter two **share the same** built-in **10-minute** backoff (a
+  fixed constant, not an environment variable) — they draw on the same `list` bucket, so opening
+  a separate window for each would be pointless — so an empty or broken-index pool costs at most
+  144 `list` calls per isolate per day, with headroom left over the 48–96 from reconciliation.
 - **Exhausting the `list` bucket disables the gateway rather than degrading it.** When the pool
   is empty and `list` fails, the gateway returns `500` with the real reason in the log; it does
   **not** disguise the failure as `503 pool_empty`, because reconciliation draws on the same
   bucket and is failing too — both self-healing paths described in this document are gone until
   the quota resets at UTC midnight.
+
+**The read formula above assumes "an isolate outlives the TTL."** At low traffic, or once
+traffic is spread across enough Cloudflare edge locations, isolates are often recycled before a
+single TTL elapses; each isolate then loads the pool at least once in its lifetime, so the read
+count is driven by **cold-start count**, not the TTL, with a ceiling around
+`100000 ÷ (keys in the pool + 2)` cold starts/day (the `+2` accounts for one read each for the
+index and the config). **Raising `POOL_CACHE_TTL_MS` saves zero reads in this regime** — it only
+saves repeated loads within the same isolate.
+
+By the same logic, the `list` backoff for the empty-pool and missing-index states is also
+**per instance**: every cold isolate pays its own cost, and the total scales linearly with the
+number of isolates.
 
 ### Admin panel variables (P3, disabled by default)
 

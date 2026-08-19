@@ -225,12 +225,17 @@ describe("硬约束：src/core 零 IO", () => {
   });
 });
 
-// ── ② src/http 与 src/ui 的裸 console ────────────────────────────────────
+// ── ② src/adapters、src/http、src/ports、src/ui 的裸 console ─────────────
 
 /**
  * `src/core` 那半边由 `tests/unit/registrar/log-prefix.test.ts` 守着（那里还连带守
- * 五语言 REGISTRAR.md 承诺的 `[registrar]` 前缀契约）。这里补的是 Task 5/6 新增的
- * 两棵树：`src/http/**`（含 `admin/`）与 `src/ui/**`。
+ * 五语言 REGISTRAR.md 承诺的 `[registrar]` 前缀契约）。这里守的是 Task 5/6 新增的
+ * `src/http/**`（含 `admin/`）与 `src/ui/**`，以及 Task 2（本轮）新加进来的
+ * `src/adapters/**` 与 `src/ports/**`。
+ *
+ * 为什么要扩到 adapters/ports：`storage-kv` / `storage-file` / `fetcher-native` /
+ * `mailbox-*` 直接面对 IO 故障，是最容易出现「绕过 sink 的 `console.warn`」的地方，
+ * 而原来的扫描范围只有 http 与 ui，一处没扫到。
  *
  * 为什么要守：Task 1 把裸 `console.*` 归零的理由是「事件要能落库」——P3b 的事件板块
  * 要消费的是注入 Logger 打出来的结构化事件，绕过 sink 直接 `console.warn` 的那条
@@ -242,25 +247,49 @@ describe("硬约束：src/core 零 IO", () => {
  * 教训）。`globalThis.console.warn(` 抓得住（没有 lookbehind）；`const c = console;
  * c.warn(…)` 这类间接引用抓不住，留给评审。
  *
- * **不扫 `src/entry/**` 与 `src/adapters/logger-console.ts`**，这是有理由的边界而不是
- * 遗漏：前者是组装根（装配失败时连 logger 都还没建起来），后者就是 sink 本身——
- * 对它们而言 console 是职责，不是违规。
+ * ⚠️ **动态属性访问也抓不住**，且这不是假设——`src/adapters/logger-console.ts` 自己
+ * 就用 `console[METHOD[e.level]](line)` 按日志级别分发到对应的 console 方法，
+ * 这份正则要求字面的 `console.xxx(`，对方括号动态访问束手无策。**这不算漏报进
+ * 豁免清单**：实测扫描该文件命中数是 `0`（见下面「边界自检」），所以它压根不出现在
+ * `CONSOLE_EXEMPTIONS` 里——豁免清单只登记「扫描抓到、但有理由放行」的调用点，
+ * 这一条连「抓到」都没有。之所以能接受，是因为它就是 sink 本身：对它而言 console
+ * 是职责，不是绕过；真正要防的是**其他文件**用同样的动态分发去逃避这条门禁，
+ * 那种情形与已经登记的「间接引用」是同一类已知盲点，留给评审。
+ *
+ * **只有 `src/entry/**` 仍整棵树排除**，这是有理由的边界而不是遗漏：那是组装根，
+ * 装配失败时连 logger 都还没建起来，此时的诊断输出没有 sink 可走。
+ * `src/adapters/logger-console.ts` **不**在这条整树排除名单里——它就在
+ * `CONSOLE_SCAN_DIRS` 覆盖的目录内，只是恰好这份正则抓不住它内部那一行。
  */
 const CONSOLE_CALL = /console\.(log|warn|error|info|debug)\(/g;
+
+/** 扫描目录。**恰好四条，手写字面量**——见下面的绊线用例，删掉其中任何一条都会变红。 */
+const CONSOLE_SCAN_DIRS = ["src/adapters", "src/http", "src/ports", "src/ui"] as const;
 
 /**
  * **手写的豁免清单。** `wire.ts` 那两处打的是「数据目录不可写」的启动诊断：它跑在
  * `buildApp` 里、`/health` 的可写性探测那一步，而那时输出必须无条件可见（Docker 绑定
  * 挂载属主不匹配是最常见的部署事故）。其余一处都不该有。
+ *
+ * `src/adapters/logger-console.ts` 不在这张表里——理由见上面 `CONSOLE_CALL` 那段注释：
+ * 它的调用点是动态属性访问，这份正则本来就抓不到它，加一条「豁免」进来只会让
+ * 下面那条相等断言变红（实际扫描结果里根本没有这一行）。
  */
-const HTTP_UI_CONSOLE_EXEMPTIONS: readonly string[] = [
+const CONSOLE_EXEMPTIONS: readonly string[] = [
   "src/http/wire.ts :: console ×2",
 ];
 
-describe("src/http 与 src/ui 里的裸 console", () => {
+describe("src/adapters、src/http、src/ports、src/ui 里的裸 console", () => {
+  it("扫描目录恰好等于手写的四条字面量", () => {
+    // **绊线**：把 CONSOLE_SCAN_DIRS 里任何一条删掉，这条用例立刻变红——即使那个
+    // 目录今天一个裸 console 都没有（下面那条相等断言不会因为「少扫一个空目录」
+    // 而变红，必须单独钉住扫描范围本身）。
+    expect([...CONSOLE_SCAN_DIRS]).toEqual(["src/adapters", "src/http", "src/ports", "src/ui"]);
+  });
+
   it("调用点恰好等于手写的豁免清单——绕过注入 Logger 的事件永远进不了面板", () => {
     const hits: string[] = [];
-    for (const dir of ["src/http", "src/ui"]) {
+    for (const dir of CONSOLE_SCAN_DIRS) {
       for (const p of walkTs(dir)) {
         const src = stripComments(readFileSync(p, "utf8"));
         for (const _ of src.matchAll(CONSOLE_CALL)) hits.push(`${p.split("\\").join("/")} :: console`);
@@ -268,16 +297,20 @@ describe("src/http 与 src/ui 里的裸 console", () => {
     }
     expect(
       tally(hits),
-      "src/http / src/ui 出现了新的裸 console。事件要能被 P3b 的面板消费就必须走注入的 "
-      + "Logger（`logger.log({ level, event, msg, fields })`）；确实需要 console 的话，"
-      + "把它连同理由加进 HTTP_UI_CONSOLE_EXEMPTIONS",
-    ).toEqual([...HTTP_UI_CONSOLE_EXEMPTIONS]);
+      "src/adapters / src/http / src/ports / src/ui 出现了新的裸 console。事件要能被 "
+      + "P3b 的面板消费就必须走注入的 Logger（`logger.log({ level, event, msg, fields })`）；"
+      + "确实需要 console 的话，把它连同理由加进 CONSOLE_EXEMPTIONS",
+    ).toEqual([...CONSOLE_EXEMPTIONS]);
   });
 
-  it("边界自检：带 globalThis 前缀的抓得住，注释里的提及不算，间接引用抓不住", () => {
+  it("边界自检：带 globalThis 前缀的抓得住，注释里的提及不算，间接引用与动态属性访问抓不住", () => {
     const count = (s: string) => [...stripComments(s).matchAll(CONSOLE_CALL)].length;
     expect(count('globalThis.console.warn("x");'), "globalThis 前缀").toBe(1);
     expect(count("// 这里刻意不用 console.warn(…)"), "注释里的提及").toBe(0);
     expect(count('const c = console;\nc.warn("x");'), "间接引用：已知盲点，留给评审").toBe(0);
+    // 与 src/adapters/logger-console.ts 里真实的那一行同形：按日志级别动态选方法。
+    // 这条确认「它是盲点」不是散文断言——它变红就意味着有人换了更聪明的正则，
+    // 到时候上面 CONSOLE_CALL 的边界注释与 CONSOLE_EXEMPTIONS 的说明要一起改。
+    expect(count("console[METHOD[e.level]](line);"), "动态属性访问：已知盲点，留给评审").toBe(0);
   });
 });

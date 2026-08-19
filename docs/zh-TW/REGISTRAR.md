@@ -83,8 +83,16 @@ Agnes 帳號、登入、鑄出一把 API key 寫入池子。註冊過程需要�
 | Cloudflare Worker | `wrangler.toml` 的 `[triggers]` Cron（預設 `*/30 * * * *`，即每 30 分鐘一次） | 修改 `wrangler.toml` 中的 cron 表達式 |
 | Node / Docker | 行程內計時器 | `TEND_INTERVAL_MS`（預設 `1800000` 毫秒） |
 
-兩種執行時最終都會呼叫同一個補池函式，設定項目完全相同，差異只在「由誰負責準時觸
-發」。
+兩種執行時最終都會呼叫**同一個補池函式**，差異在於**由誰負責準時觸發**，以及**觸發
+間隔從哪裡來**：
+
+| | 觸發者 | 間隔來自 | 改了之後 |
+|---|---|---|---|
+| Node / Docker | 行程內自重排計時器 | `TEND_INTERVAL_MS`（環境變數 > 儲存 > 預設 `1800000`） | **下一輪生效**（要等目前這一輪的舊間隔走完，預設最長 30 分鐘）。**不需要重啟** |
+| Cloudflare Worker | 平台的 Cron Trigger | `wrangler.toml` 的 `[triggers].crons` | **改設定不生效**，必須改 `wrangler.toml` 並重新部署 |
+
+除觸發間隔之外的補池設定項（`TARGET_KEYS` / `MINT_BATCH` / 通道憑證……）兩種執行時確實
+完全相同。
 
 ### Cloudflare Cron 觸發器的牆鐘上限（務必讀完再調整參數）
 

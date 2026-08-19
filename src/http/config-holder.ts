@@ -28,8 +28,17 @@ export interface ConfigHolder {
  * **不给 KV 的 get 传 cacheTtl**（走默认值），把 holder 的 TTL 和它对齐可以避免
  * 「holder 比边缘缓存还快，于是快出来的那部分毫无意义」。
  *
- * 用户可见的总生效上界 = 本 TTL + KV 边缘缓存与传播时间。后者的确切秒数是
- * 待复核项 U3，**在复核完成之前不许把任何具体秒数写进 UI 文案或用户文档**。
+ * **用户可见的总生效上界 = 本 TTL(30s) + KV 边缘缓存默认 60s ≈ 90 秒。**
+ * 待复核项 U3 已核实：Cloudflare KV 的 `cacheTtl` 最小值 30、默认值 60（官方文档
+ * https://developers.cloudflare.com/kv/api/read-key-value-pairs/ ，"cacheTtl... minimum:
+ * 30"、"60 is the default"，2026-08-19 复核），与本文件上面那句「miniflare 写死 30」
+ * 一致，因此这个数字**可以**写进 UI 文案与用户文档，并且**必须**写——设计文档 §5.2
+ * 明说「面板文案必须写这个数，不许写『立即生效』」。
+ *
+ * ⚠️ 别把它和 `POOL_CACHE_TTL_MS` 那条上界搞混：那条是「别的 isolate 判的冷却/剔除
+ * 多久能看到」，= `POOL_CACHE_TTL_MS + 约 60 秒`（默认约 120 秒），是另一个数，
+ * 见 `keypool-repo.ts` 的 `KeyPoolRepoOptions.cacheTtlMs` 注释。
+ * **面板要把两个数都显示出来**，只显示一个就是又一个「面板不撒谎」的破口。
  */
 export const CONFIG_TTL_MS = 30_000;
 
