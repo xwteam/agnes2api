@@ -238,6 +238,43 @@ describe("空结果兜底：权威的空索引不许让手工导入的 key 隐�
     expect(s.counts()).toEqual({ list: 1, get: 1, put: 0, delete: 0 });
   });
 
+  /**
+   * **混合场景：索引里同时有幽灵 id 和一条索引不知道的新记录。**
+   *
+   * 这条是「只增不减」唯一真正的守门人，别删。上下两条各自只覆盖单一状态，
+   * 而在单一状态下「写 merged」与「写 actual」根本产生不了可观测差异：
+   *   - 纯幽灵：actual=[]，merged=indexed ⇒ sameIdSet 为真 ⇒ **一个字都不写**，两者同效
+   *   - 纯手工导入：indexed=[]，merged=actual ⇒ 两个参数**数学上就是同一个值**
+   * 于是「把 writeIndexBestEffort 的实参从 merged 换成 actual」——正是「读路径剪枝」
+   * 这件被反复强调绝不能做的事——在只有那两条用例时能完整逃逸（实测 568/568 全绿）。
+   * 只有幽灵与新记录**同时存在**，merged=[幽灵,新] 与 actual=[新] 才分得开。
+   */
+  it("混合场景：既有幽灵 id 又有索引不知道的新记录——补新的，但**不剪**旧的", async () => {
+    const s = new CountingStorage();
+    const { repo } = makeRepo(s);
+
+    // ① 造一个幽灵索引项：add 之后只删记录，索引里把 id 留着。
+    const ghost = await repo.add("sk-ghost-key-aaaaaaaa");
+    s.m.delete(KEY_PREFIX + ghost.id);
+    // ② 再塞一条索引不知道的记录（手工导入，或将来 P3c 面板新增）。
+    const manual = orphanRecord();
+    s.m.set(KEY_PREFIX + manual.id, JSON.stringify(manual));
+    s.reset();
+
+    // 索引里只有幽灵 ⇒ 活记录数为 0 ⇒ 触发空结果兜底。
+    expect((await repo.all()).map((r) => r.id)).toEqual([manual.id]);
+
+    const ids: string[] = JSON.parse(s.m.get(POOL_INDEX_KEY)!).ids;
+    // **两条必须同时断言**：只断言前者，写 actual（剪枝）照样绿；
+    // 只断言后者，什么都不写也照样绿。
+    expect(ids, "索引不知道的新记录要被补进去").toContain(manual.id);
+    expect(ids, "幽灵 id 不许在读路径上被剪掉——剪枝只由对账做").toContain(ghost.id);
+    expect([...ids].sort(), "而且只有这两个").toEqual([ghost.id, manual.id].sort());
+
+    // 代价钉死：1 次 list + 3 次 get（索引 + 幽灵 + 新记录）+ 1 次补写。
+    expect(s.counts()).toEqual({ list: 1, get: 3, put: 1, delete: 0 });
+  });
+
   it("空结果的回落**只增不减**：整池都成了幽灵索引项时也不在读路径上剪枝", async () => {
     const s = new CountingStorage();
     const { repo } = makeRepo(s);
