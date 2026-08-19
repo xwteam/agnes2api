@@ -1,39 +1,29 @@
-import type { Storage } from "../ports/storage.js";
+/**
+ * ── 硬约束 2（`src/core/` 零 IO）的既定豁免清单 ──────────────────────────────
+ *
+ * 本文件保留两处「看起来违反」的写法，各有理由，**清单不许再变长**
+ *（tests/unit/registrar/log-prefix.test.ts 的源码扫描会盯着 console；
+ *  下面两条由这段注释 + 评审 checklist 守住）：
+ *
+ * 1. `setTimeout(() => controller.abort(), timeoutMs)`
+ *    改成注入的 timer 端口只有这一个消费者，纯增抽象；换成 `AbortSignal.timeout()`
+ *    则会丢掉「首字节到达后立刻 clearTimeout 让响应体自由流动」这个语义——流式响应
+ *    会在 8 秒时被拦腰 abort。**这是热路径上一次真实的行为退化，不划算。**
+ *
+ * 2. 模块级 `let cursor`
+ *    Worker 上每个 isolate 各一份，轮询起点因此不全局一致。已登记 P4；
+ *    在修掉之前，**面板不许展示「下一把 key / 轮换顺序」**——展示了就是给一个
+ *    与实际不符的值。
+ *
+ * `crypto.subtle` 已随 keyId() 迁到 keypool-repo.ts，豁免理由见那里；
+ * `KeyPoolRepo.add()` 里原来那个裸 `Date.now()` 也随之换成了注入的 `now`。
+ */
 import type { KeyRecord } from "./types.js";
+import type { KeyPoolRepo } from "./keypool-repo.js";
 import { selectKey, applySuccess, applyCooldown, applyStrike, applyEvict, poolHealth } from "./keypool.js";
 import { classifyStatus, classifyThrown } from "./errors.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import type { GatewayConfig } from "./config.js";
-
-const KEY_PREFIX = "key:";
-
-async function keyId(key: string): Promise<string> {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
-  return [...new Uint8Array(buf)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-export class KeyPoolRepo {
-  constructor(private readonly storage: Storage) {}
-
-  async all(): Promise<KeyRecord[]> {
-    const names = await this.storage.list(KEY_PREFIX);
-    const rs = await Promise.all(names.map((n) => this.storage.get<KeyRecord>(n)));
-    return rs.filter((r): r is KeyRecord => r !== null);
-  }
-
-  async save(r: KeyRecord): Promise<void> {
-    await this.storage.put(KEY_PREFIX + r.id, r);
-  }
-
-  async add(key: string): Promise<KeyRecord> {
-    const r: KeyRecord = {
-      id: await keyId(key), key, addedAt: Date.now(), lastUsedAt: null,
-      cooldownUntil: 0, cooldownReason: null, strikes: 0, evicted: false, evictedReason: null,
-    };
-    await this.save(r);
-    return r;
-  }
-}
 
 export interface DispatchDeps {
   repo: KeyPoolRepo;

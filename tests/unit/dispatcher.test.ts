@@ -4,6 +4,10 @@ import { configFromEnv } from "../../src/core/config.js";
 import { registrarFromEnv } from "../../src/core/registrar/config.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { FakeFetcher } from "../helpers/fake-fetcher.js";
+// KeyPoolRepo 静态 import：它已经搬到 keypool-repo.ts，不再持有需要重置的模块级状态。
+// 下面那个动态 import 只为重置 dispatcher.ts 的模块级 `cursor`，保持原样。
+import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
 
 // dispatcher.ts 按简报把游标设计为模块级变量，用于在不同请求之间维持轮询位置——
 // 这在生产环境下是正确的（否则每次请求都会从第一把 key 开始，起不到轮询作用）。
@@ -12,11 +16,10 @@ import { FakeFetcher } from "../helpers/fake-fetcher.js";
 // 让每个用例都拿到一份全新的模块（游标重新从 0 开始），
 // 不改动 dispatcher.ts 本身的设计，只做测试隔离。
 let dispatch: typeof DispatcherModule.dispatch;
-let KeyPoolRepo: typeof DispatcherModule.KeyPoolRepo;
 
 beforeEach(async () => {
   vi.resetModules();
-  ({ dispatch, KeyPoolRepo } = await import("../../src/core/dispatcher.js"));
+  ({ dispatch } = await import("../../src/core/dispatcher.js"));
 });
 
 const CONFIG = {
@@ -33,7 +36,7 @@ const CONFIG = {
 
 async function makeRepo(keys: string[]) {
   const s = new MemoryStorage();
-  const repo = new KeyPoolRepo(s);
+  const repo = new KeyPoolRepo(s, { now: () => 1000, logger: NULL_LOGGER });
   for (const k of keys) await repo.add(k);
   return repo;
 }

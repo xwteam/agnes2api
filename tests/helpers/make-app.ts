@@ -1,6 +1,6 @@
 import { createApp } from "../../src/http/app.js";
 import { fixedConfigHolder } from "../../src/http/config-holder.js";
-import { KeyPoolRepo } from "../../src/core/dispatcher.js";
+import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { createStorageHealth } from "../../src/core/storage-health.js";
 import { MemoryStorage } from "./fake-storage.js";
 import { FakeFetcher } from "./fake-fetcher.js";
@@ -26,7 +26,7 @@ export async function makeApp(
   configOverride: Partial<GatewayConfig> = {},
   now: () => number = () => 1000,
 ) {
-  const repo = new KeyPoolRepo(new MemoryStorage());
+  const repo = new KeyPoolRepo(new MemoryStorage(), { now, logger: NULL_LOGGER });
   for (const k of keys) await repo.add(k);
   const fetcher = new FakeFetcher(outcomes);
   const storageHealth = createStorageHealth();

@@ -3,7 +3,7 @@ import { makeApp, TEST_CONFIG } from "../helpers/make-app.js";
 import { createApp } from "../../src/http/app.js";
 import { fixedConfigHolder } from "../../src/http/config-holder.js";
 import { createStorageHealth } from "../../src/core/storage-health.js";
-import { KeyPoolRepo } from "../../src/core/dispatcher.js";
+import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { FakeFetcher } from "../helpers/fake-fetcher.js";
 import type { Storage } from "../../src/ports/storage.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
@@ -53,7 +53,7 @@ describe("预料之外的异常也落到 JSON 错误信封里", () => {
   it("存储读失败时返回 JSON 500，且不回显内部异常细节", async () => {
     const app = createApp({
       version: "0.1.0", configHolder: fixedConfigHolder(TEST_CONFIG),
-      repo: new KeyPoolRepo(new BrokenStorage()),
+      repo: new KeyPoolRepo(new BrokenStorage(), { now: () => 1000, logger: NULL_LOGGER }),
       fetcher: new FakeFetcher([]), now: () => 1000,
       storageHealth: createStorageHealth(),
       logger: NULL_LOGGER,

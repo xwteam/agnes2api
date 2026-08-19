@@ -1,5 +1,7 @@
 import { buildApp, buildTendDeps } from "../http/wire.js";
 import { KvStorage } from "../adapters/storage-kv.js";
+import { KeyPoolRepo } from "../core/keypool-repo.js";
+import { ConsoleLogger } from "../adapters/logger-console.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import { WORKER_CRON_WALL_CLOCK_MS, WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
 import type { Hono } from "hono";
@@ -56,6 +58,20 @@ export default {
    */
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const storage = new KvStorage(env.POOL);
+
+    // key 池索引对账。**必须在「注册机是否启用」的判断之前**——下面是 `if (!deps) return`，
+    // 放在后面等于注册机关着时永不对账，而索引残留（孤儿记录 / 幽灵索引项）恰恰不挑
+    // 注册机开没开：手工导入、面板删除、以及任何一次中途失败的写都会产生它。
+    // 成本：一次 list + 一次 get（每 30 分钟一次 ⇒ 48 次/天，占免费档 list 配额 4.8%），
+    // 只有真不一致时才多一次 put。
+    try {
+      const repo = new KeyPoolRepo(storage, { now: () => Date.now(), logger: new ConsoleLogger() });
+      await repo.reconcileIndex();
+    } catch (err) {
+      // 对账失败不该影响补池：索引残留是 fail-safe 的（key 不被用，而不是坏 key 被用）。
+      console.error("[agnes2api] key 池索引对账失败", err);
+    }
+
     let deps;
     try {
       deps = await buildTendDeps(env as Record<string, string | undefined>, storage);

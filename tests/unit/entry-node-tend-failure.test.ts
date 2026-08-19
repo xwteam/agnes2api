@@ -33,6 +33,19 @@ function close(server: Awaited<ReturnType<typeof main>>): Promise<void> {
   });
 }
 
+/**
+ * 等待某个条件成立。`main()` 里那一轮 `runTend()` 是 `void` 出去的后台链路，
+ * 且开头夹着索引对账的真实文件读——`main()` 返回时它未必已经走到 buildTendDeps。
+ * 断言"某件事迟早会发生"必须轮询，不能靠 `main()` 返回这个时刻碰巧够晚。
+ */
+async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error("等待条件超时");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 describe("node 入口: buildTendDeps 装配失败不影响网关启动", () => {
   it("buildTendDeps 抛错时 main() 仍正常监听端口并响应 /health，只记日志不崩溃", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -41,7 +54,10 @@ describe("node 入口: buildTendDeps 装配失败不影响网关启动", () => {
       const port = (server.address() as AddressInfo).port;
       const res = await fetch(`http://127.0.0.1:${port}/health`);
       expect(res.status).toBe(200);
-      expect(buildTendDepsMock).toHaveBeenCalled();
+      await waitFor(() => buildTendDepsMock.mock.calls.length > 0);
+      await waitFor(() =>
+        errSpy.mock.calls.some(([m]) => m === "[registrar] 装配补池依赖失败"),
+      );
       expect(errSpy).toHaveBeenCalledWith("[registrar] 装配补池依赖失败", expect.any(Error));
     } finally {
       errSpy.mockRestore();

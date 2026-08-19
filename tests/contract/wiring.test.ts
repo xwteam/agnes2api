@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { buildApp } from "../../src/http/wire.js";
 import { createApp } from "../../src/http/app.js";
 import { createConfigHolder, CONFIG_TTL_MS } from "../../src/http/config-holder.js";
-import { KeyPoolRepo } from "../../src/core/dispatcher.js";
+import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { createStorageHealth } from "../../src/core/storage-health.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { FakeFetcher } from "../helpers/fake-fetcher.js";
@@ -123,7 +123,7 @@ describe("configRefresh 对 /health 的例外", () => {
     const s = new GetCountingStorage();
     await s.put("config", { gatewayToken: "t" });
     const configHolder = await createConfigHolder({ env: {}, storage: s, logger: NULL_LOGGER, now });
-    const repo = new KeyPoolRepo(s);
+    const repo = new KeyPoolRepo(s, { now, logger: NULL_LOGGER });
     const app = createApp({
       version: "0.1.0", configHolder, repo,
       fetcher: new FakeFetcher([]), now, storageHealth: createStorageHealth(), logger: NULL_LOGGER,

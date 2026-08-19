@@ -93,22 +93,34 @@ function close(server: Awaited<ReturnType<typeof main>>): Promise<void> {
   });
 }
 
-/** 只实现 KvStorage 用到的四个方法，行为对齐真实 KV（存字符串、按 json 取回）。 */
-function fakeKv(): Env["POOL"] {
+interface KvCounts { list: number; get: number; put: number; delete: number }
+
+/**
+ * 只实现 KvStorage 用到的四个方法，行为对齐真实 KV（存字符串、按 json 取回）。
+ * 四种操作全数上：只数其中几种的计数桩，关于漏掉那几种的断言就是假的（Task 2 的教训）。
+ */
+function fakeKv(counts: KvCounts = { list: 0, get: 0, put: 0, delete: 0 }): Env["POOL"] {
   const store = new Map<string, string>();
   return {
     async get(key: string) {
+      counts.get++;
       const raw = store.get(key);
       return raw === undefined ? null : JSON.parse(raw);
     },
     async put(key: string, value: string) {
+      counts.put++;
       store.set(key, value);
     },
     async delete(key: string) {
+      counts.delete++;
       store.delete(key);
     },
-    async list() {
-      return { keys: [], list_complete: true, cacheStatus: null };
+    async list({ prefix }: { prefix?: string } = {}) {
+      counts.list++;
+      const keys = [...store.keys()]
+        .filter((k) => prefix === undefined || k.startsWith(prefix))
+        .map((name) => ({ name }));
+      return { keys, list_complete: true, cacheStatus: null };
     },
   } as unknown as Env["POOL"];
 }
@@ -225,12 +237,76 @@ describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
     }
   });
 
-  it("Worker 侧：REGISTRAR_ENABLED 未开时不调 tendOnce（零副作用）", async () => {
+  it("Worker 侧：REGISTRAR_ENABLED 未开时不调 tendOnce（不触达邮箱/Agnes）", async () => {
+    // 注意口径：这里承诺的是**不产生外部副作用**（不触达邮箱服务、不触达 Agnes），
+    // 而不是「一次存储访问都没有」——loadConfig 本来就要读一次配置，P3a Task 3
+    // 起索引对账也会读一次存储，见下面那条用例。
     tendOnceMock.mockResolvedValue(RESULT);
     const { ctx, waited } = fakeCtx();
     await worker.scheduled!(controller(), workerEnv({ REGISTRAR_ENABLED: undefined, REGISTRAR_PRIMARY: undefined }), ctx);
     expect(tendOnceMock).not.toHaveBeenCalled();
     expect(waited).toHaveLength(0);
+  });
+});
+
+describe("key 池索引对账接在「注册机是否启用」的判断之前", () => {
+  // 两个入口都是 `if (!deps) return`，对账放在它后面等于**注册机关着时永不对账**，
+  // 而索引残留（孤儿记录 / 幽灵索引项）恰恰不挑注册机开没开。挪到后面这两条即变红。
+
+  it("Worker 侧：REGISTRAR_ENABLED 未开，scheduled() 仍然对账一次（产生 list）", async () => {
+    tendOnceMock.mockResolvedValue(RESULT);
+    const counts: KvCounts = { list: 0, get: 0, put: 0, delete: 0 };
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const { ctx, waited } = fakeCtx();
+    try {
+      await worker.scheduled!(
+        controller(),
+        workerEnv({ POOL: fakeKv(counts), REGISTRAR_ENABLED: undefined, REGISTRAR_PRIMARY: undefined }),
+        ctx,
+      );
+      expect(tendOnceMock, "注册机确实是关着的").not.toHaveBeenCalled();
+      expect(waited).toHaveLength(0);
+      expect(counts.list, "对账必须发生在「注册机是否启用」的判断之前").toBe(1);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it("Node 侧：REGISTRAR_ENABLED 未开，每一轮仍然对账一次（产生 list）", async () => {
+    tendOnceMock.mockResolvedValue(RESULT);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const listSpy = vi.spyOn(FileStorage.prototype, "list");
+    const server = await main({
+      GATEWAY_TOKEN: "t", PORT: "0", DATA_DIR: mkdtempSync(join(tmpdir(), "a2a-sched-recon-")),
+    });
+    try {
+      // 启动即跑的那一轮：注册机关着，但对账照做。
+      await waitFor(() => listSpy.mock.calls.some(([prefix]) => prefix === "key:"));
+      expect(tendOnceMock, "注册机确实是关着的").not.toHaveBeenCalled();
+
+      // 下一次定时触发**再**对一次账——挡住「把对账挪到 main() 里只在启动时做一次」
+      // 这个变异（那样挪完启动那条断言照样绿）。
+      //
+      // 反复触发而不是只触发一次：启动那一轮可能还没跑完，此时定时器回调会被
+      // `inFlight` 重入守卫合法地挡掉（设计如此，见 node.ts）。轮询到真跑起来为止，
+      // 比"睡固定时长再触发一次"稳。
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const listsOfKeys = () => listSpy.mock.calls.filter(([p]) => p === "key:").length;
+      const before = listsOfKeys();
+      try {
+        await waitFor(() => {
+          intervals[0]!.fn();
+          return listsOfKeys() > before;
+        });
+      } finally {
+        warnSpy.mockRestore();
+      }
+      expect(tendOnceMock).not.toHaveBeenCalled();
+    } finally {
+      listSpy.mockRestore();
+      infoSpy.mockRestore();
+      await close(server);
+    }
   });
 });
 

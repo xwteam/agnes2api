@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { tendOnce, type TendFailureReason, type TendDeps } from "../../../src/core/registrar/tender.js";
-import { KeyPoolRepo } from "../../../src/core/dispatcher.js";
+import { KeyPoolRepo } from "../../../src/core/keypool-repo.js";
 import { MemoryStorage } from "../../helpers/fake-storage.js";
 import { FakeMailProvider } from "../../helpers/fake-mailbox.js";
 import type { MailProvider } from "../../../src/ports/mailbox.js";
@@ -38,7 +38,7 @@ function agnesOk() {
 }
 
 async function makeDeps(over: Partial<RegistrarConfig> = {}, provider: MailProvider = new FakeMailProvider()) {
-  const repo = new KeyPoolRepo(new MemoryStorage());
+  const repo = new KeyPoolRepo(new MemoryStorage(), { now: () => 1000, logger: NULL_LOGGER });
   const providers: Partial<Record<Channel, MailProvider>> = { yyds: provider };
   // 显式标注 TendDeps：不标的话推断出的是这个字面量的形状，用例里给可选字段
   // （roundBudgetMs）赋值会被 tsc 拒绝，而 vitest 的 esbuild 转换不做类型检查，

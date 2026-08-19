@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createApp } from "../../src/http/app.js";
 import { createConfigHolder, CONFIG_TTL_MS } from "../../src/http/config-holder.js";
-import { KeyPoolRepo } from "../../src/core/dispatcher.js";
+import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { createStorageHealth } from "../../src/core/storage-health.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { FakeFetcher } from "../helpers/fake-fetcher.js";
@@ -13,7 +13,7 @@ describe("网关口令能被撤销（没设 GATEWAY_TOKEN 环境变量的部署�
     const now = () => t;
     const s = new MemoryStorage();
     await s.put("config", { gatewayToken: "old-token-aaaa" });
-    const repo = new KeyPoolRepo(s);
+    const repo = new KeyPoolRepo(s, { now, logger: NULL_LOGGER });
     const configHolder = await createConfigHolder({ env: {}, storage: s, logger: NULL_LOGGER, now });
     const app = createApp({
       version: "0.1.0", configHolder, repo,
@@ -47,7 +47,7 @@ describe("dispatch() 内部读到的配置同样能被撤销（不止 gatewayTok
     const now = () => t;
     const s = new MemoryStorage();
     await s.put("config", { gatewayToken: "t", agnesBaseUrl: "https://old.test/v1" });
-    const repo = new KeyPoolRepo(s);
+    const repo = new KeyPoolRepo(s, { now, logger: NULL_LOGGER });
     await repo.add("k1");
     const configHolder = await createConfigHolder({ env: {}, storage: s, logger: NULL_LOGGER, now });
     const fetcher = new FakeFetcher([{ status: 200, body: "{}" }, { status: 200, body: "{}" }]);

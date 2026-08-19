@@ -1,4 +1,4 @@
-import type { KeyPoolRepo } from "../dispatcher.js";
+import type { KeyPoolRepo } from "../keypool-repo.js";
 import type { MailProvider } from "../../ports/mailbox.js";
 import type { AgnesDeps } from "./agnes.js";
 import type { RegistrarConfig, Channel } from "./config.js";

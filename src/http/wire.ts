@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import { createApp } from "./app.js";
 import { createConfigHolder, type ConfigHolder } from "./config-holder.js";
 import { loadConfig } from "../core/config.js";
-import { KeyPoolRepo } from "../core/dispatcher.js";
+import { KeyPoolRepo } from "../core/keypool-repo.js";
 import { NativeFetcher } from "../adapters/fetcher-native.js";
 import { createStorageHealth, probeWritable, watchStorage } from "../core/storage-health.js";
 import { VERSION } from "../version.js";
@@ -75,7 +75,7 @@ export async function buildApp(
   const app = createApp({
     version: VERSION,
     configHolder,
-    repo: new KeyPoolRepo(watched),
+    repo: new KeyPoolRepo(watched, { now: () => Date.now(), logger }),
     fetcher: new NativeFetcher(),
     now: () => Date.now(),
     storageHealth,
@@ -113,7 +113,7 @@ export async function buildTendDeps(
   if (reg.moemail) providers.moemail = new MoeMailProvider({ fetcher, ...reg.moemail, sleep, now, logger });
 
   return {
-    repo: new KeyPoolRepo(storage),
+    repo: new KeyPoolRepo(storage, { now, logger }),
     config: reg,
     providers,
     agnes: { fetcher, platformUrl: reg.agnesPlatformUrl },

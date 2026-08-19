@@ -3,6 +3,8 @@ import { setInterval as nodeSetInterval } from "node:timers";
 import { pathToFileURL } from "node:url";
 import { buildApp, buildTendDeps } from "../http/wire.js";
 import { FileStorage } from "../adapters/storage-file.js";
+import { KeyPoolRepo } from "../core/keypool-repo.js";
+import { ConsoleLogger } from "../adapters/logger-console.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import type { TendDeps } from "../core/registrar/tender.js";
 
@@ -13,6 +15,7 @@ import type { TendDeps } from "../core/registrar/tender.js";
  */
 export async function main(env: Record<string, string | undefined> = process.env) {
   const storage = new FileStorage(env.DATA_DIR ?? "/app/data");
+  const logger = new ConsoleLogger();
   // 数据目录是绑定挂载，属主不匹配就整个网关不可用（写不进 store.json），
   // 必须在启动那一刻探出来并让 /health 如实报告，不能等到第一个请求失败才发现。
   const { app, configHolder } = await buildApp(env, storage, { probeStorage: true });
@@ -34,6 +37,17 @@ export async function main(env: Record<string, string | undefined> = process.env
     }
     inFlight = true;
     try {
+      // key 池索引对账。**必须在「注册机是否启用」的判断之前**——下面是 `if (!deps) return`，
+      // 放在后面等于注册机关着时永不对账，而索引残留（孤儿记录 / 幽灵索引项）恰恰不挑
+      // 注册机开没开。与 Worker 的 scheduled() 同一份口径，见那里的说明。
+      try {
+        const repo = new KeyPoolRepo(storage, { now: () => Date.now(), logger });
+        await repo.reconcileIndex();
+      } catch (err) {
+        // 对账失败不该影响补池：索引残留是 fail-safe 的（key 不被用，而不是坏 key 被用）。
+        console.error("[agnes2api] key 池索引对账失败", err);
+      }
+
       // **每一轮都重新读一次配置**（环境变量 + 存储），与 Worker 侧每次 Cron 都
       // 重新 buildTendDeps 的行为对齐。此前只在启动时装配一次、之后一直复用那份
       // 快照：P3 的面板是这份配置的编辑器（设计 §11），同一个面板操作在 Worker
