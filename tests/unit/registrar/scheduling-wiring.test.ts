@@ -27,8 +27,8 @@ vi.mock("../../../src/core/registrar/tender.js", async (importOriginal) => {
 });
 
 /**
- * 捕获 Node 入口注册的定时器。只替换 `setTimeout`，其余照搬真实模块——入口是
- * 显式从 `node:timers` 具名导入的（为了拿到带 `unref()` 的 Node 版本）。
+ * 捕获 Node 入口注册的定时器。入口是显式从 `node:timers` 具名导入的
+ * （为了拿到带 `unref()` 的 Node 版本），其余照搬真实模块。
  *
  * I4 修复后调度循环是**自重排的 setTimeout 递归**（`src/core/tend-scheduler.ts`），
  * 不再是启动时注册一次、之后固定不变的 `setInterval`——每一轮结束（含重新读一次
@@ -36,8 +36,15 @@ vi.mock("../../../src/core/registrar/tender.js", async (importOriginal) => {
  * 一次、以后复用同一个 fn」。取用时一律要显式等这一轮的重排落地（`timers.length`
  * 变化），不能假定它与 `tendOnceMock` 的调用计数同步——两者中间隔着一次真实的
  * `loadConfig` 存储读取。
+ *
+ * `setInterval` 也一并拦下（而不是让 `...actual` 透传真实实现）：一是防止「回退
+ * 成 setInterval」这个回归在测试进程里悄悄起一个真的、每 30 分钟才触发一次的后台
+ * 定时器；二是让下面「确实用的是 setTimeout」那条用例能直接断言 `intervalCalls`
+ * 是空的，不必靠某个 `waitFor` 熬满 2 秒超时才发现回退——那种失败形态慢且不说明
+ * 原因，见那条用例上方的说明。
  */
 const timers: Array<{ fn: () => void; ms: number }> = [];
+const intervalCalls: Array<{ fn: () => void; ms: number }> = [];
 
 vi.mock("node:timers", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:timers")>();
@@ -45,6 +52,10 @@ vi.mock("node:timers", async (importOriginal) => {
     ...actual,
     setTimeout: (fn: () => void, ms: number) => {
       timers.push({ fn, ms });
+      return { unref: () => undefined } as unknown as NodeJS.Timeout;
+    },
+    setInterval: (fn: () => void, ms: number) => {
+      intervalCalls.push({ fn, ms });
       return { unref: () => undefined } as unknown as NodeJS.Timeout;
     },
   };
@@ -69,6 +80,16 @@ const flush = () => new Promise<void>((r) => setTimeout(r, 0));
 /**
  * 等待某个条件成立。补池一轮里夹着真实的文件读（每轮重读配置），不是纯微任务，
  * 单靠一拍 `flush()` 不保证跑完；轮询到条件成立即可，超时就当失败。
+ *
+ * 本文件下面大多数 `waitFor(() => timers.length === N)` 用它的 2 秒超时兜底
+ * ——如果 `node.ts` 回退成 `nodeSetInterval`，`timers` 永远不会变化，这些调用
+ * 会各自等满 2 秒才报「等待条件超时」。这是已知的、**刻意接受**的次要信号：
+ * 真正快、且给出明确断言消息的检测已经单独放在 C3 描述块最前面那条用例里
+ * （拦 `setInterval` 单独计数，断言它恒为空，不依赖任何超时）。没有把这个模式
+ * 铺开到本文件其余每一处 `waitFor` 调用，是因为那些调用各自还承担着别的、与
+ * 这条回归无关的主要职责（等某一轮补池跑完、等某个存储写生效……），硬塞一条
+ * 「或者 setInterval 也被调了」的旁路条件会让每一处的意图变得更难读，而收益
+ * 只是把一个本来就有专门用例覆盖的次要信号从「慢」变成「更快一点点」。
  */
 async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
   const start = Date.now();
@@ -161,9 +182,39 @@ function fakeCtx(): { ctx: ExecutionContext; waited: Array<Promise<unknown>> } {
 beforeEach(() => {
   tendOnceMock.mockReset();
   timers.length = 0;
+  intervalCalls.length = 0;
 });
 
 describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
+  it("确实用 setTimeout 自重排，不是 setInterval——回退成 setInterval 要能被一句断言快速抓住，不必靠某个 waitFor 熬满 2 秒超时", async () => {
+    // 简报变异表最后一行原判定「回退到 nodeSetInterval 需人工核对，单测覆盖不到」
+    // 已经不成立——本文件其余每一条依赖 `timers.length` 的 waitFor 事实上都会在
+    // 回退发生时超时变红（`timers` 永远拿不到东西）。但「等待条件超时」这个失败
+    // 形态慢（每条 2 秒，CI 里会连环拖慢）且不说明原因；这里把同一件事收敛成一条
+    // 立即、明确的断言：`node:timers` 的 setInterval 与 setTimeout 被同一个 mock
+    // 一起拦下并分别计数，冷启动那一轮走的是 `void tick()` 直接调用（不经过任何
+    // 定时器），所以 `tendOnceMock` 的调用信号在「对/错」两条实现下同样快、同样
+    // 可靠，可以拿来当"重排该发生了"的锚点，而不必赌 timers 会不会变化。
+    tendOnceMock.mockResolvedValue(RESULT);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const server = await main(nodeEnv());
+    try {
+      await waitFor(() => tendOnceMock.mock.calls.length === 1);
+      // 重排还要经过一次真实的 loadConfig 读取，给它一点异步余量；但等的是
+      // 「两条 mock 合计至少一条」，不偏向哪一条实现，所以两条路径收敛的时间
+      // 量级相同，不会因为走了错误分支反而更快满足条件、抢跑掉后面的断言。
+      await waitFor(() => timers.length + intervalCalls.length >= 1);
+      expect(
+        intervalCalls,
+        "回退成 setInterval 会让补池间隔重新冻结在启动时刻——这正是 I4 要修的缺陷",
+      ).toHaveLength(0);
+      expect(timers).toHaveLength(1);
+    } finally {
+      logSpy.mockRestore();
+      await close(server);
+    }
+  });
+
   it("Node 侧：启动立即跑一轮，并按 TEND_INTERVAL_MS 重排定时器，回调也确实调到 tendOnce", async () => {
     tendOnceMock.mockResolvedValue(RESULT);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -448,6 +499,10 @@ describe("轮级墙钟预算只装在有平台墙钟上限的那个入口上", (
     try {
       await waitFor(() => tendOnceMock.mock.calls.length === 1);
       expect(budgetOf()).toBeUndefined();
+      // 等冷启动那一轮自己的重排也落地再收尾——不然它残留的 tick() 链会在后面
+      // 某条用例的 `beforeEach` 清空 timers 之后才落地，往里面塞一条不属于那条
+      // 用例的幽灵记录（`timers.length` 被污染，后续用例里下标全部错位）。
+      await waitFor(() => timers.length === 1);
     } finally {
       logSpy.mockRestore();
       await close(server);
@@ -486,6 +541,10 @@ describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
       const line = reasonsLine(warnSpy)!;
       expect(line).toContain("yyds:register_failed×3");
       expect(line).toContain("moemail:code_timeout×1");
+      // warn 落地时这一轮的 tick() 还没走到重排那一步——等它自己也重排完再
+      // 收尾，否则残留的 tick() 链会在后面某条用例重置 timers 之后才落地，
+      // 往里面塞一条幽灵记录（本任务复验时实测抓到过：C4 用例因此间歇性超时）。
+      await waitFor(() => timers.length === 1);
     } finally {
       warnSpy.mockRestore();
       logSpy.mockRestore();
