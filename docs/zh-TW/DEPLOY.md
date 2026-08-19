@@ -108,6 +108,21 @@ agnes2api 提供兩種部署形態，建構自同一套程式碼與請求處理�
 在這種形態下優先 `X-Forwarded-For` 是錯的——那條鏈裡可能裝著用戶端自己塞的東西。不設這個開關的話，
 該欄位就只是記成 `null`。
 
+**通用反向代理（nginx / Caddy / Traefik）後面打開 `TRUST_PROXY=1` 時，請在反向代理上把
+`CF-Connecting-IP` 剝掉。** 那種拓撲裡沒有任何東西會覆蓋這個標頭，而閘道按「Cloudflare 在前面」
+優先採信它，於是攻擊者自帶一個就會**壓過**反向代理剛寫好的 `X-Forwarded-For`。nginx 加一行即可：
+
+```nginx
+proxy_set_header CF-Connecting-IP "";
+```
+
+Caddy 用 `header_up CF-Connecting-IP ""`，Traefik 用中介軟體的 `customRequestHeaders`。
+
+**兩個標頭都會先過一遍形態檢查**：只有 IPv4 點分十進位與 IPv6 形態（十六進位、冒號，以及
+`::ffff:` 映射裡的點）能進事件，其餘一律記 `null`。這條不是鑑權防線（這個值全倉只有登入失敗
+事件一個消費點），它防的是「未鑑權的呼叫方往稽核欄位裡塞任意文字」——管理面板的事件區塊
+要按這個欄位做篩選與顯示。
+
 什麼都拿不到時該欄位如實記 `null`，**絕不偽造一個 `"unknown"`**——那會被當成一個真實來源。
 
 ### 註冊機相關變數（可選，預設關閉）

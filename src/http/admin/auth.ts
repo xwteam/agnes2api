@@ -30,6 +30,17 @@ export function constantTimeEqual(a: string, b: string): boolean {
 
 export const ADMIN_TOKEN_MIN_LENGTH = 24;
 
+/**
+ * 审计行里的 `path` 最多留这么长。
+ *
+ * `admin.use("/admin/api/*", adminAuth)` 对**任意** `/admin/api/` 子路径生效，全程
+ * 零凭据、零限速，而 Node 的请求行上限约 8 KB ⇒ **每个未鉴权请求都能往日志里塞
+ * 约 8 KB 攻击者文本**。`ConsoleLogger` 的 logfmt 引用已经保证这段文本撕不开字段，
+ * 但撕不开不等于该让它无限长：日志按体积计费、按行读，而这个字段的用途只是
+ * 「运维/面板看得出被扫的是哪条路径」，200 字符绰绰有余。
+ */
+export const AUDIT_PATH_MAX = 200;
+
 export interface AdminTokenCheck {
   ok: boolean;
   reason?: "whitespace_padded" | "too_short" | "same_as_gateway_token";
@@ -64,6 +75,11 @@ export function checkAdminToken(token: string, gatewayToken: string): AdminToken
   return { ok: true };
 }
 
+/** 审计字段不该原样承载请求数据，见 AUDIT_PATH_MAX。 */
+function auditPath(path: string): string {
+  return path.length > AUDIT_PATH_MAX ? path.slice(0, AUDIT_PATH_MAX) : path;
+}
+
 /**
  * `currentGatewayToken` 是个 **getter，每请求现读**（与 `middleware/auth.ts` 的
  * `getToken: () => string` 同一套做法），不是装配时拷下来的值。理由见下面的运行期复查。
@@ -95,7 +111,7 @@ export function adminAuth(
             + "中转口令是发给每一个下游用户的，复用它当面板口令等于把整池 key 交出去；"
             + "改掉其中一把即可恢复"
           : "ADMIN_TOKEN 不再满足管理口令的硬规则，管理接口已停用（网关转发不受影响）",
-        fields: { reason: state.reason ?? null, path: c.req.path },
+        fields: { reason: state.reason ?? null, path: auditPath(c.req.path) },
       });
       // **响应体不说原因**。这个分支跑在验证凭据之前，任何未鉴权的调用方都拿得到
       // 它；说出「两把口令相同」，等于告诉一个手里已经有中转口令的人「管理口令就是
@@ -114,7 +130,7 @@ export function adminAuth(
       // 记进日志。只记「带没带这个头」，够面板区分「扫描」与「猜口令」了。
       logger.log({
         level: "warn", event: "admin.login_failed", msg: "管理接口凭据无效",
-        fields: { ip: clientIp(c, trustProxy), path: c.req.path, hasHeader: provided.length > 0 },
+        fields: { ip: clientIp(c, trustProxy), path: auditPath(c.req.path), hasHeader: provided.length > 0 },
       });
       return c.json({ error: { type: "unauthorized", message: "未授权" } }, 401);
     }

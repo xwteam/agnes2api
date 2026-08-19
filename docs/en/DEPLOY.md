@@ -129,6 +129,23 @@ not equally forgeable:
 wrong, because the chain may carry whatever the client stuffed into it. Without the switch the
 field is simply recorded as `null`.
 
+**Behind a generic reverse proxy (nginx / Caddy / Traefik), strip `CF-Connecting-IP` at the proxy
+when you turn `TRUST_PROXY=1` on.** In that topology nothing overwrites the header, yet the gateway
+prefers it on the assumption that Cloudflare is in front — so an attacker who sends one **outranks**
+the `X-Forwarded-For` your proxy just wrote. One line for nginx:
+
+```nginx
+proxy_set_header CF-Connecting-IP "";
+```
+
+Caddy uses `header_up CF-Connecting-IP ""`; Traefik uses a middleware's `customRequestHeaders`.
+
+**Both headers are shape-checked first**: only dotted-quad IPv4 and IPv6 shapes (hex digits, colons,
+and the dots inside `::ffff:` mappings) reach the event; anything else is recorded as `null`. This
+is not an authentication boundary — the value has exactly one consumer in the whole repo, the
+login-failure event — it exists so that an unauthenticated caller cannot write arbitrary text into
+an audit field that the admin panel's events view will filter and display.
+
 If nothing usable is available the field is recorded as `null` — never a fabricated `"unknown"`,
 which would read as a real source.
 

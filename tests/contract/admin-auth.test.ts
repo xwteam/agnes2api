@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_ADMIN_TOKEN, TEST_CONFIG } from "../helpers/make-app.js";
 import {
-  constantTimeEqual, checkAdminToken, ADMIN_TOKEN_MIN_LENGTH,
+  constantTimeEqual, checkAdminToken, ADMIN_TOKEN_MIN_LENGTH, AUDIT_PATH_MAX,
 } from "../../src/http/admin/auth.js";
 import { createApp } from "../../src/http/app.js";
 import { createConfigHolder, CONFIG_TTL_MS } from "../../src/http/config-holder.js";
@@ -258,6 +258,55 @@ describe("客户端 IP", () => {
 
   it("TRUST_PROXY=1 但两个头都没有时仍是 null", async () => {
     expect(await loggedIp({}, { trustProxy: true })).toBeNull();
+  });
+
+  // ── 门控之内也要过形态校验 ──────────────────────────────────────────────
+  //
+  // 「门控之内 ⇒ 值一定干净」是错的。`TRUST_PROXY=1` 的另一种常见形态是网关挂在
+  // 自建 nginx / Caddy 后面，那里**没有任何人会覆盖 `CF-Connecting-IP`**，攻击者
+  // 自己带一个就会优先于反代写的 XFF 胜出，而这个值原样进 `admin.login_failed`
+  // 的 `ip=` 字段——P3b 的事件板块正要按它做筛选、聚合、展示。
+
+  it("形态不合法的 CF-Connecting-IP 一律记 null，而不是把任意文本写进审计行", async () => {
+    for (const bogus of [
+      "not-an-ip-at-all <img src=x>",
+      "8.8.8.8 evil=1",
+      "1.2.3.4.5",
+      "999.1.1.1",
+      "'; DROP TABLE",
+      // 「拿不到就记 null，绝不伪造一个 unknown 冒充 IP」——反代自己写的这种也要挡。
+      "unknown",
+    ]) {
+      expect(await loggedIp({ "cf-connecting-ip": bogus }, { trustProxy: true }), bogus).toBeNull();
+    }
+  });
+
+  it("CF-Connecting-IP 形态不合法时**退到 XFF**，而不是整条放弃", async () => {
+    expect(await loggedIp(
+      { "cf-connecting-ip": "garbage", "x-forwarded-for": "203.0.113.7" },
+      { trustProxy: true },
+    )).toBe("203.0.113.7");
+  });
+
+  it("XFF 首段形态不合法时同样记 null", async () => {
+    expect(await loggedIp({ "x-forwarded-for": "garbage, 203.0.113.7" }, { trustProxy: true }))
+      .toBeNull();
+  });
+
+  it("合法 IPv6（含 ::ffff: 映射形态）照常记下来——校验的是形态，不是「只认 IPv4」", async () => {
+    for (const ip of ["2001:db8::1", "::1", "::ffff:192.0.2.1"]) {
+      expect(await loggedIp({ "cf-connecting-ip": ip }, { trustProxy: true }), ip).toBe(ip);
+    }
+  });
+});
+
+describe("审计字段不原样承载请求数据", () => {
+  it("path 被截断到 200 字符——未鉴权请求能往日志里塞约 8 KB 攻击者文本", async () => {
+    const { app, logger } = await makeApp();
+    await app.request(`/admin/api/${"a".repeat(4000)}`);
+    const path = logger.entries.find((x) => x.event === "admin.login_failed")?.fields?.path;
+    expect(typeof path).toBe("string");
+    expect((path as string).length).toBe(AUDIT_PATH_MAX);
   });
 });
 
