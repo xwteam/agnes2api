@@ -57,6 +57,18 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 - **Writes**: in steady state about `pool size × 4` per day (`lastUsedAt` is touched every 6
   hours) — 80 with 20 keys, 8% of the write quota, leaving the rest for cooldown and eviction
   bookkeeping. Each key also costs one one-off write the first time it is used.
+- **`list` and `delete` are two further buckets, 1,000/day each**, separate from the read and
+  write buckets. Steady-state forwarding never issues a `list` — that is exactly why the
+  `pool:index` key exists. Only two things consume it: the 48–96 daily index reconciliations,
+  and the **empty-pool rescan** (when the index parses fine yet not a single live record can be
+  read, the gateway issues one `list` to check whether a hand-imported record is missing from
+  the index). The rescan backs off for a built-in **10 minutes** (a fixed constant, not an
+  environment variable), so an empty pool costs at most 144 `list` calls per isolate per day.
+- **Exhausting the `list` bucket disables the gateway rather than degrading it.** When the pool
+  is empty and `list` fails, the gateway returns `500` with the real reason in the log; it does
+  **not** disguise the failure as `503 pool_empty`, because reconciliation draws on the same
+  bucket and is failing too — both self-healing paths described in this document are gone until
+  the quota resets at UTC midnight.
 
 ### Admin panel variables (P3, disabled by default)
 

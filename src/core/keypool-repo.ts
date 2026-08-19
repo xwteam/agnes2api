@@ -67,6 +67,28 @@ function schedulingEqual(a: KeyRecord, b: KeyRecord): boolean {
 export const INDEX_WRITE_RETRY_MS = 60_000;
 
 /**
+ * 空池态下两次 `list` 兜底之间的最小间隔。**这个数是拿 KV 的 list 配额倒推出来的，
+ * 不是拍的。**
+ *
+ * `list` 是**独立于读配额的第四个桶**，免费档 1,000 次/天（§17 U1 已核实）。
+ * 加这条退避之前，空池态每个快照 TTL 就烧一次 list ⇒ 默认 60 秒 TTL 下
+ * 86400/60 = **1,440 次/天/isolate**，一个全新的、还没导 key 的部署光靠客户端
+ * 的重试循环就能在几小时内把桶打穿；桶穿了之后用户这才导入 key，`list` 抛错、
+ * `Refreshable` 吞掉只记一条 `pool.load_failed`、`current()` 继续沿用 `[]`，
+ * 而被文档指定为修复者的 `reconcileIndex()` 读同一个桶**同样抛**——两条自愈路径
+ * 一起死，当天剩余时间全部 503 且查不出原因。
+ *
+ * 取 10 分钟 ⇒ 86400/600 = **≤144 次/天/isolate**，与文档「配额账」那一节
+ * 用的同一套 isolate 计数口径（3 个活跃 isolate ⇒ 432 次）叠上对账的 48~96 次
+ * 仍有余量。
+ *
+ * **代价（写进五语言 DEPLOY.md，别只留在这里）**：池子为空时手工导入的 key
+ * 不再是「下一个请求即生效」，而是最多等本值 + 一个 `POOL_CACHE_TTL_MS`。
+ * 想立刻生效就同时更新 `pool:index`（文档给了命令）。
+ */
+export const EMPTY_POOL_RESCAN_MS = 600_000;
+
+/**
  * key 的 id = SHA-256 的前 8 字节。
  *
  * 全局 `crypto.subtle` 是**既定豁免**（硬约束 2）：WebCrypto 在 Cloudflare Workers
@@ -147,6 +169,18 @@ export class KeyPoolRepo {
   /** 见 INDEX_WRITE_RETRY_MS。null 表示「上一次索引写是成功的」。 */
   private indexWriteFailedAt: number | null = null;
 
+  /** 见 EMPTY_POOL_RESCAN_MS。null 表示「本实例还没做过空池 list 兜底」。 */
+  private emptyRescanAt: number | null = null;
+  /**
+   * 空池态最近一次 `list` 兜底抛出来的真实异常。null = 上一次是成功的。
+   *
+   * 存它是因为 `Refreshable.reload` 会把异常吞掉并沿用上一份快照，而空池态的
+   * 上一份快照恰恰是 `[]`——于是「存储读不出来」和「池子真的是空的」在 `all()`
+   * 的返回值里**完全无法区分**，网关照报 503 `pool_empty`，运维手上只有一条
+   * `pool.load_failed`。留下这份异常，`all()` 才能把它如实抛成 500 + 真实原因。
+   */
+  private emptyRescanError: unknown = null;
+
   private readonly cacheTtlMs: number;
   private readonly touchIntervalMs: number;
   /**
@@ -190,6 +224,11 @@ export class KeyPoolRepo {
     // 异常**（哪个文件、哪个键）交到运维手上比省一次注定失败的读重要得多。
     // 只要成功装载过一次，就再也走不到这里（失败会沿用上一份快照）。
     if (cur === undefined) return await this.loadAll();
+    // 空池态的 `list` 兜底失败了：**绝不许把「存储读不出来」伪装成「池子是空的」**。
+    // 沿用 `[]` 的话调用方得到的是 503 `pool_empty`——一条把运维指向「你还没导 key」
+    // 的错误结论，而真相是 list 配额打穿 / 存储故障，且此时 `reconcileIndex()`
+    // 读同一个桶同样在抛，文档指定的两条自愈路径都已经死了。抛出去 ⇒ 500 + 真实原因。
+    if (cur.length === 0 && this.emptyRescanError !== null) throw this.emptyRescanError;
     // **浅拷贝**：dispatch 的 commit 会 `records[at] = updated` 就地改数组元素，
     // 直接把缓存数组交出去等于让一次请求的中间状态污染 isolate 级缓存。
     // （记录对象本身永不被就地修改——keypool.ts 的 apply* 全部返回新对象。）
@@ -206,7 +245,9 @@ export class KeyPoolRepo {
     // 索引缺失那条路径刚刚已经 list 过一次，下面的空结果兜底不必再来一次。
     const indexed = idx !== null ? idx.ids : await this.bootstrapFromList();
     const alive = await this.loadRecords(indexed);
-    if (alive.length > 0 || idx === null) return alive;
+    // 走到这里说明这一趟没经过空池兜底，上一次兜底失败的记忆就此作废，
+    // 否则一次陈年的失败会永远把 all() 钉在抛异常上。
+    if (alive.length > 0 || idx === null) { this.emptyRescanError = null; return alive; }
     return await this.rescanEmptyResult(indexed);
   }
 
@@ -225,15 +266,46 @@ export class KeyPoolRepo {
    * 永远不会走缺失回落，`all()` 恒返回 0 条，网关一直 503 pool_empty。
    * 改造前 `all()` 直接 `list("key:")`，导入即刻生效——这是本次改造引入的回退。
    *
-   * 代价可控：正常非空池一步都不会走到这里（`alive.length > 0` 就返回了）；
-   * 池子真空时本来每个请求都在返 503，这次 `list` 不吃有效配额。
+   * 代价**不**可控，这一点原来这里写错了（原文是「池子真空时本来每个请求都在返
+   * 503，这次 `list` 不吃有效配额」）：`list` 是独立于读配额的第四个桶，免费档
+   * 1,000 次/天，而快照缓存只把它压到「每个 TTL 一次」= 1,440 次/天/isolate，
+   * **本身就超配额**。所以这里按 `EMPTY_POOL_RESCAN_MS` 再退避一层（见那里的账）。
+   * 正常非空池一步都不会走到这里（`alive.length > 0` 就返回了）。
+   *
+   * **退避窗口内失败也要记得住**：`list` 抛错时把真实异常留给 `all()` 抛出去，
+   * 不许让「读不出来」退化成一个静默的 `[]`。窗口是在**发起尝试之前**就打上的，
+   * 因此存储持续故障时也只是每 `EMPTY_POOL_RESCAN_MS` 重试一次，不会每请求都撞。
    *
    * **写回只增不减**：只把 `list` 发现而索引不知道的 id 补进去，绝不从索引里删。
    * 删（剪枝）一律交给 `reconcileIndex()`，理由见 all() 里那段注释。于是
-   * 「整池都成了幽灵索引项」时这里不写、不剪，只是每个请求多一次 list，直到对账。
+   * 「整池都成了幽灵索引项」时这里不写、不剪，只是每个退避窗口多一次 list，直到对账。
    */
   private async rescanEmptyResult(indexed: readonly string[]): Promise<KeyRecord[]> {
-    const actual = idsFromKeyNames(await this.storage.list(KEY_PREFIX));
+    const at = this.o.now();
+    if (this.emptyRescanAt !== null) {
+      const since = at - this.emptyRescanAt;
+      // `since < 0` = 时钟回拨（NTP）。与 writeIndexBestEffort 同一条处理：
+      // 回拨之后立刻恢复尝试，而不是被抑制到回拨量走完。
+      if (since >= 0 && since < EMPTY_POOL_RESCAN_MS) {
+        // 上一次兜底是**失败**的：退避窗口内也要如实抛。不抛的话，冷启动那条
+        // （`all()` 里 `cur === undefined` ⇒ 再走一次 loadAll）会正好落进这个分支，
+        // 于是真实异常被一个静默的 `[]` 吃掉，又变回「503 pool_empty，原因不明」。
+        if (this.emptyRescanError !== null) throw this.emptyRescanError;
+        return [];
+      }
+    }
+    this.emptyRescanAt = at;
+
+    let names: string[];
+    try {
+      names = await this.storage.list(KEY_PREFIX);
+    } catch (err) {
+      this.emptyRescanError = err;
+      throw err;
+    }
+    this.emptyRescanError = null;
+
+    const actual = idsFromKeyNames(names);
     const merged = [...new Set([...indexed, ...actual])];
     if (!sameIdSet(merged, indexed)) {
       await this.writeIndexBestEffort(
