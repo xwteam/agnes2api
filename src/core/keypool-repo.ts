@@ -262,15 +262,76 @@ export class KeyPoolRepo {
   /**
    * 落盘一条记录。
    *
-   * @param prev 上一份（`dispatch` 传 `records[at]`）。给了它才能做**写消除**：
-   *   若两份之间只有 `lastUsedAt` 不同、且距上次落盘不到 `touchIntervalMs`，
-   *   **整个丢弃这次更新**（存储不写、缓存也不动）。不给 prev 就一定落盘——
-   *   写消除是可选优化，缺少对照时必须保守。
+   * @param prev 上一份（`dispatch` 传 `records[at]`）。它有**两个**作用，别只记住第一个：
+   *   ① **写消除**：若两份之间只有 `lastUsedAt` 不同、且距上次落盘不到 `touchIntervalMs`，
+   *      整个丢弃这次更新（存储不写、缓存也不动）。不给 prev 就一定落盘——
+   *      写消除是可选优化，缺少对照时必须保守。
+   *   ② **区分「更新」与「新建」**：给了 prev 就意味着「我手上有一份旧的，要把它改成
+   *      新的」，于是要先确认那份旧的还在（见 stillExists）；`add()` 不给 prev，
+   *      因为它写的是一条**本来就不存在**的记录。
    */
   async save(next: KeyRecord, prev?: KeyRecord): Promise<void> {
-    if (prev !== undefined && this.shouldElide(prev, next)) return;
+    if (prev !== undefined) {
+      if (this.shouldElide(prev, next)) return;
+      // **只在「改的就是手上这一份」时确认存在性。** `next.id !== prev.id` 时调用方写的
+      // 是一个**全新的键**（prev 只是拿来做写消除对照的另一把 key），那条路径上「记录
+      // 还不存在」本来就是正常状态，拿存在性去卡它等于把一次新建吃掉——
+      // `tests/unit/pool-cache.test.ts` 的「只有 id 不同的两份之间不许消除」正钉这件事。
+      // 今天生产上产生不出 id 不同的 next（`keypool.ts` 的 apply* 全部原样透传 id），
+      // 但这条判据必须自洽，不能靠「那条路径走不到」来免责。
+      if (next.id === prev.id && !(await this.stillExists(next.id))) return;
+    }
     await this.storage.put(KEY_PREFIX + next.id, next);
     this.replaceInSnapshot(next);
+  }
+
+  /**
+   * 更新落盘前确认记录还在。**这是「删除不许被陈旧写回撤销」这条不变量的全部实现。**
+   *
+   * 缺它时的失效链（评审实测复现，Worker 与单副本 Docker 都中招）：
+   * Task 4 之后 `all()` 交出的是一份最长 `poolCacheTtlMs` 的 isolate 级快照，
+   * 而运维吊销一把泄漏的 key 只有一种姿势——`wrangler kv key delete "key:<id>"`
+   * 或直接编辑 `store.json`。记录没了，可**本 isolate 的快照里它还在**：下一个
+   * 落到这里的请求照样选中它，上游一报错就 `applyStrike` ⇒ 调度字段变了 ⇒
+   * 无条件 `put` 把整条记录原样写回去 ⇒ **被吊销的凭据复活**。更糟的是它此后不会
+   * 自愈：手工删除不动 `pool:index`，索引里那个 id 还在，复活的记录立刻重新可用；
+   * 就算走的是 `delete()`（索引已摘掉），复活出来的孤儿记录也会被 `reconcileIndex()`
+   * **以 list() 为准捡回索引**——那正是本文件开头写序那一段说的「等于把一次删除
+   * 悄悄撤销了」，只是这次是从另一扇门进来的。
+   *
+   * **为什么选「写回前确认存在」，而不是墓碑法或让对账不再收养孤儿**（三条都评估过）：
+   * · **墓碑法**（delete 先写 `evicted:true` 的墓碑再摘索引，物理删交给对账）只护得住
+   *   `delete()` 这一条路径。而 P3a 还没有面板，**今天唯一存在的吊销姿势恰恰是绕过
+   *   `delete()` 的裸存储删除**——它压根不会写下墓碑。修的是还不存在的路径，漏的是
+   *   正在用的那条。何况墓碑里仍然躺着 key 材料，对「吊销一把泄漏的 key」而言是反效果。
+   * · **对账不再无条件收养孤儿**要求一份「已删 id」的持久集合，同样在裸存储删除下拿不到；
+   *   而且孤儿收养这条路是 `add()` 崩在①②之间时**唯一**的补救（那时 Agnes 侧已经真实
+   *   建号、key 材料只在这条孤儿记录里，丢了对账也修不回来——本文件开头把它定性为
+   *   数据丢失）。为了修 A 去拆掉 B 的唯一救生索，不划算。
+   * · 本条改在**写侧**，因而对上面三种删除路径一视同仁，且不碰对账语义。
+   *
+   * **代价（老实算）**：每次真正要落盘的更新多一次 `get`。稳态下调度字段变化很稀疏，
+   * 写侧全天只有 `key 数 × 4` 次（`lastUsedAt` 触达），多这一次读在 100,000/天的读桶
+   * 里可以忽略；`POOL_TOUCH_INTERVAL_MS=0`（关掉写消除）时每次成功转发都会多一次读，
+   * 那个配置本来就写在「会打爆写配额」的逃生口一档里，与它一致。
+   *
+   * **残余风险（同样老实算）**：KV 的 `get` 走边缘缓存（默认 60 秒，§17 U3），
+   * 所以刚删掉的记录在**本 colo** 可能还能被读到，这一窗口内确认仍会通过。也就是说
+   * 在 KV 上它把「永久复活且不自愈」压成「最多一个 KV 传播窗口内可能复活」，
+   * 不是零。FileStorage（Docker）没有这层缓存，那里是精确的。要彻底消掉那个窗口，
+   * 得等 P3c 的面板删除按钮落地后再叠一层墓碑——两者不冲突。
+   */
+  private async stillExists(id: string): Promise<boolean> {
+    if ((await this.storage.get<KeyRecord>(KEY_PREFIX + id)) !== null) return true;
+    this.o.logger.log({
+      level: "warn", event: "pool.stale_write_dropped",
+      msg: "记录已被删除，丢弃这次基于陈旧快照的写回（删除不会被撤销），并立刻刷新快照",
+      fields: { id },
+    });
+    // 记录确实没了，而本 isolate 的快照里还留着它——不失效的话它会继续被选中整整
+    // 一个 TTL，等于「删了还在用」。与 delete() 里那次 invalidate 是同一条理由。
+    this.invalidate();
+    return false;
   }
 
   private shouldElide(prev: KeyRecord, next: KeyRecord): boolean {
