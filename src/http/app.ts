@@ -45,6 +45,7 @@ function dispatchDeps(deps: AppDeps): DispatchDeps {
     repo: deps.repo,
     fetcher: deps.fetcher,
     now: deps.now,
+    logger: deps.logger,
     get config() { return deps.configHolder.current(); },
   };
 }

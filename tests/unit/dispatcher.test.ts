@@ -6,8 +6,10 @@ import { MemoryStorage } from "../helpers/fake-storage.js";
 import { FakeFetcher } from "../helpers/fake-fetcher.js";
 // KeyPoolRepo 静态 import：它已经搬到 keypool-repo.ts，不再持有需要重置的模块级状态。
 // 下面那个动态 import 只为重置 dispatcher.ts 的模块级 `cursor`，保持原样。
-import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
+import { KeyPoolRepo, keyId } from "../../src/core/keypool-repo.js";
+import { KEY_PREFIX } from "../../src/core/pool-index.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
+import type { Storage } from "../../src/ports/storage.js";
 
 // dispatcher.ts 按简报把游标设计为模块级变量，用于在不同请求之间维持轮询位置——
 // 这在生产环境下是正确的（否则每次请求都会从第一把 key 开始，起不到轮询作用）。
@@ -403,6 +405,71 @@ describe("dispatch", () => {
       deps: { repo, fetcher: fetcher as any, config: CONFIG, now: () => 1 } });
     expect(seen!.body).toBeUndefined();
     expect(seen!.method).toBe("GET");
+  });
+});
+
+// ── 记账失败仍要推进本请求内的视图 ──────────────────────────────────────────
+//
+// Step 1 把 commit() 包了一层 try/catch（记账失败不许把成功的转发变成 500），
+// 但 `records[at] = updated` 必须留在 try/catch **外面**：commit() 抛错时，
+// 这次调度的中间状态（例如「刚被判过冷却」）也必须推进到本请求内存里的
+// `records` 数组，否则同一个请求里换下一把 key 时 selectKey 读到的还是
+// 陈旧状态，可能把刚判过冷却的那把 key 在同一个请求里重新选中一次。
+//
+// 这条不是靠单纯的「换下一把 key」类用例（如「429 后换下一把 key」）测出来的
+// ——那些用例里 selectKey 天然不会绕回第一把被冷却的 key（池子刚好够走一轮）。
+// 要造出「commit 抛错后，同一个请求里 selectKey 需要绕回那把刚被冷却的 key」
+// 这个场景，必须让**另一把 key 也不可用**，逼 selectKey 在本次 selectKey 调用内部
+// 环绕回来重新检查第一把——这正是本用例的构造方式。
+describe("commit 抛错后仍要推进本请求内的视图", () => {
+  /** 只在指定的存储键上、且是「第二次」读取时才抛错——第一次读取（dispatch 开头
+   * 加载整个池子）必须放行，否则连测试场景都搭不起来；第二次读取正是
+   * commit() 的 stillExists() 确认存在性那次，模拟它在这一刻撞上瞬时读失败。 */
+  class ThrowOnSecondGet implements Storage {
+    private readonly inner = new MemoryStorage();
+    private hits = 0;
+    constructor(private readonly target: string) {}
+    async get<T>(k: string): Promise<T | null> {
+      if (k === this.target) {
+        this.hits++;
+        if (this.hits >= 2) throw new Error("KV read quota exhausted");
+      }
+      return this.inner.get<T>(k);
+    }
+    async put<T>(k: string, v: T): Promise<void> { return this.inner.put(k, v); }
+    async delete(k: string): Promise<void> { return this.inner.delete(k); }
+    async list(p: string): Promise<string[]> { return this.inner.list(p); }
+  }
+
+  it("429 记账失败后，同一个请求不许把刚被判冷却的那把 key 再选一次", async () => {
+    const k1Id = await keyId("k1");
+    const storage = new ThrowOnSecondGet(KEY_PREFIX + k1Id);
+    const repo = new KeyPoolRepo(storage, {
+      now: () => 1000, logger: NULL_LOGGER,
+      cacheTtlMs: CONFIG.poolCacheTtlMs, touchIntervalMs: CONFIG.poolTouchIntervalMs,
+    });
+    // 用 add() 的返回值直接拿到 k2 的记录，**不额外调 repo.all()**——那会连带
+    // 读一遍 k1 的记录，提前吃掉 ThrowOnSecondGet 的「第一次放行」额度，
+    // 让节流点错位到 dispatch() 自己的初次加载上，测试搭都搭不起来。
+    await repo.add("k1");
+    const k2 = await repo.add("k2");
+    // 逼 selectKey 在本次调用内部环绕：k2 必须不可用，这样第二次尝试才会绕回 k1。
+    await repo.save({ ...k2, cooldownUntil: 999_999 }, k2);
+
+    // 只给一个 outcome：k1 若被重新选中并再发一次请求，拿到的只能是
+    // FakeFetcher 的默认兜底（200），从而把「重新选中」这件事暴露成响应体的差异。
+    const f = new FakeFetcher([{ status: 429 }]);
+    const res = await dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: f, config: CONFIG, now: () => 1000 },
+    });
+
+    // 行为断言，不是形状断言：状态码与实际发起的请求次数都要对。
+    // 正确实现：k1 被判冷却后，即使记账失败，records[at] 仍然推进；k2 本就在冷却，
+    // selectKey 第二次调用内部环绕回 k1 时看到的是「已冷却」，选不出任何 key，
+    // dispatch 直接把 429 那份 lastError 交还，k1 全程只被尝试一次。
+    expect(res.status, "记账失败让本请求内的视图没推进，k1 被当成还能用又选了一次").toBe(429);
+    expect(f.usedKeys, "k1 不许在同一个请求里被选中两次").toEqual(["k1"]);
   });
 });
 

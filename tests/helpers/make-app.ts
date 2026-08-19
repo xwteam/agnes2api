@@ -8,6 +8,7 @@ import type { GatewayConfig } from "../../src/core/config.js";
 import { registrarFromEnv } from "../../src/core/registrar/config.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 import { recordingLogger } from "./recording-logger.js";
+import type { Storage } from "../../src/ports/storage.js";
 
 /**
  * 夹具的管理口令。27 位（≥ ADMIN_TOKEN_MIN_LENGTH），且与 `TEST_CONFIG.gatewayToken`
@@ -23,6 +24,13 @@ export interface MakeAppOptions {
    */
   adminToken?: string | undefined;
   trustProxy?: boolean;
+  /**
+   * 注入的存储。默认 `new MemoryStorage()`。
+   * 存在的理由：好几条不变量（记账失败不影响响应、overview 逐块降级、事件落库）
+   * 只有在「存储会在指定时机抛错」时才可观测，而照抄一遍 wire.ts 的装配去验证，
+   * 验证的永远是抄件不是原件（P3a Task 4 已实测过这个陷阱）。
+   */
+  storage?: Storage;
 }
 
 export const TEST_CONFIG: GatewayConfig = {
@@ -53,9 +61,10 @@ export async function makeApp(
   options: MakeAppOptions = {},
 ) {
   const config = { ...TEST_CONFIG, ...configOverride };
+  const storage = options.storage ?? new MemoryStorage();
   // 与 wire.ts 同一条接线：两个旋钮从配置来，而不是各写各的默认值。
   // 不这么接的话 TEST_CONFIG 里那两个 0 是**死字段**，夹具以为关了缓存其实开着。
-  const repo = new KeyPoolRepo(new MemoryStorage(), {
+  const repo = new KeyPoolRepo(storage, {
     now, logger: NULL_LOGGER,
     cacheTtlMs: config.poolCacheTtlMs,
     touchIntervalMs: config.poolTouchIntervalMs,
@@ -75,5 +84,5 @@ export async function makeApp(
     adminToken: "adminToken" in options ? options.adminToken : TEST_ADMIN_TOKEN,
     trustProxy: options.trustProxy ?? false,
   });
-  return { app, fetcher, repo, storageHealth, logger };
+  return { app, fetcher, repo, storageHealth, logger, storage };
 }

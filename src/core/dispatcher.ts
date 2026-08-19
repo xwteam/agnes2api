@@ -38,12 +38,20 @@ import { selectKey, applySuccess, applyCooldown, applyStrike, applyEvict, poolHe
 import { classifyStatus, classifyThrown } from "./errors.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import type { GatewayConfig } from "./config.js";
+import { NULL_LOGGER, type Logger } from "../ports/logger.js";
 
 export interface DispatchDeps {
   repo: KeyPoolRepo;
   fetcher: Fetcher;
   config: GatewayConfig;
   now: () => number;
+  /**
+   * 记账失败要留痕。**可选 + 默认静默**是刻意的：`DispatchDeps` 有三十多处测试构造点，
+   * 改成必填只会换来一次机械 sed。代价（忘了在生产接线上传它）由
+   * `tests/contract/wiring.test.ts` 那条「记账失败必须落一条可筛选的事件」
+   * **行为**断言钉住——它走真 `createApp`，抄一份装配骗不过它。
+   */
+  logger?: Logger;
 }
 
 let cursor = 0;
@@ -211,6 +219,7 @@ export async function dispatch(args: {
   deps: DispatchDeps;
 }): Promise<Response> {
   const { repo, fetcher, config, now } = args.deps;
+  const logger = args.deps.logger ?? NULL_LOGGER;
   const profile: TimeoutProfile = args.timeout ?? "firstByte";
   const records = await repo.all();
   if (records.length === 0) return fail("pool_empty", "key 池为空，请先导入 key");
@@ -230,10 +239,23 @@ export async function dispatch(args: {
   const timedOutSlots: number[] = [];
 
   const commit = async (at: number, updated: KeyRecord) => {
-    // 传上一份：save() 据此判断「这次改动是不是只动了 lastUsedAt」，只动了就不落盘。
-    // 不传的话每次成功转发都要写一次 KV，而免费档写配额是 1,000/天——
-    // 天花板一步都抬不动（见计划的 §配额账）。
-    await repo.save(updated, records[at]);
+    try {
+      // 传上一份：save() 据此判断「这次改动是不是只动了 lastUsedAt」，只动了就不落盘。
+      // 不传的话每次成功转发都要写一次 KV，而免费档写配额是 1,000/天。
+      await repo.save(updated, records[at]);
+    } catch (err) {
+      // **必须吞掉。** 这里是成功分支上的最后一步，异常会一路冒到 app.onError，
+      // 把一次已经成功的上游转发变成 500——客户端拿不到那份它本该拿到的响应体。
+      // 「记账失败」的正确后果是「这次调度状态没记住」，下一次请求会重新观测到
+      // 同样的上游行为并重试记账；把它升级成「请求失败」是拿一次成功去换一条日志。
+      logger.log({
+        level: "error", event: "pool.commit_failed",
+        msg: "key 状态回写失败：本次请求的结果不受影响，但这一次调度记账丢了",
+        fields: { id: updated.id, err: err instanceof Error ? err.message : String(err) },
+      });
+    }
+    // **无论落盘成不成都要推进本请求内的视图**：同一个请求里换下一把 key 时
+    // selectKey 读的就是这个数组，不推进会把刚判过冷却的那把再选一遍。
     records[at] = updated;
   };
 

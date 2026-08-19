@@ -8,6 +8,7 @@ import { MemoryStorage } from "../helpers/fake-storage.js";
 import { FakeFetcher } from "../helpers/fake-fetcher.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 import type { Storage } from "../../src/ports/storage.js";
+import { makeApp, TEST_CONFIG } from "../helpers/make-app.js";
 
 describe("buildApp", () => {
   it("从环境变量与存储装配出可用的 app", async () => {
@@ -284,5 +285,65 @@ describe("buildApp 对管理端的接线", () => {
         spy.mockRestore();
       }
     }
+  });
+});
+
+/**
+ * 「记账失败」与「请求失败」是两回事。
+ *
+ * M1（写回前确认记录还在）给 save() 加了一次 storage.get，写路径的失败面因此从
+ * 「1 次 put」变成「1 次 get + 1 次 put」。而 dispatch 的成功分支是
+ * `await commit(...)` 紧接着 `return done(...)`——commit 抛错会一路冒到
+ * app.onError，**把一次已经成功的上游转发变成 500**，客户端拿不到那份它本该
+ * 拿到的响应体。（已实测：让确认读抛 "KV read quota exhausted"，dispatch() 抛错、
+ * 不返回任何 Response。）
+ *
+ * 正确后果是「这次调度状态没记住」，下一次请求会重新观测到同样的上游行为并重试记账。
+ */
+class GetThrowsAfterWarmup implements Storage {
+  private armed = false;
+  constructor(private readonly inner: Storage = new MemoryStorage()) {}
+  arm(): void { this.armed = true; }
+  async get<T>(k: string): Promise<T | null> {
+    if (this.armed) throw new Error("KV read quota exhausted");
+    return this.inner.get<T>(k);
+  }
+  put<T>(k: string, v: T) { return this.inner.put(k, v); }
+  delete(k: string) { return this.inner.delete(k); }
+  list(p: string) { return this.inner.list(p); }
+}
+
+describe("记账失败不许把成功的转发变成 500", () => {
+  it("上游 200 而 key 状态回写抛错时，客户端仍拿到那份 200 与原样的响应体", async () => {
+    const storage = new GetThrowsAfterWarmup();
+    const { app, repo, logger } = await makeApp(
+      [{ status: 200, body: '{"ok":1}' }],
+      ["k1"],
+      // 打开快照缓存：这样第一次 all() 之后的读全命中缓存，
+      // 唯一还会真去读存储的就是 save() 里那次「确认记录还在」——变异点与不变量精确对齐。
+      { poolCacheTtlMs: 60_000, poolTouchIntervalMs: 0 },
+      () => 1000,
+      { storage },
+    );
+    // 预热快照（这一次允许真读），然后武装存储：此后任何 get 都抛。
+    //
+    // ⚠️ 用 `repo.all()` 预热，不要拿 `GET /v1/models` 当预热请求——
+    // 已核实 `src/http/routes/openai.ts:9`：那条路由只返回一张编译期的静态模型表
+    //（`modelListResponse`），根本不碰 repo，拿它预热等于没预热，
+    // 于是真正那次请求会在 `all()` 里就抛，测到的是另一条链。
+    await repo.all();
+    storage.arm();
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${TEST_CONFIG.gatewayToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "agnes-2.0-flash", messages: [{ role: "user", content: "hi" }] }),
+    });
+
+    // 行为断言，不是形状断言：状态码 **和** 响应体都要对。
+    expect(res.status, "记账失败被当成了请求失败").toBe(200);
+    expect(await res.text()).toContain('"ok"');
+    // 而且这件事必须留下痕迹——P3b 的事件板块要按事件名筛选。
+    expect(logger.events(), "记账失败必须落一条可筛选的事件").toContain("pool.commit_failed");
   });
 });
