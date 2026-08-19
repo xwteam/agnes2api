@@ -78,11 +78,12 @@ export function createApp(deps: AppDeps): Hono {
   // /admin 挂在最后不要紧：它的鉴权 use 收在子 app 内部的第一行，外层 route 的
   // 位置对它无关紧要（已实测，见 admin/router.ts 的说明）。
   //
-  // `gatewayToken` 在这里取的是**装配时刻**的快照，用途只有一个：拒绝
-  // ADMIN_TOKEN == GATEWAY_TOKEN 这种配置。它不参与逐次请求的鉴权判定。
+  // `currentGatewayToken` 传 **getter 而不是值**（与 dispatchDeps 的 config getter
+  // 同一个理由）：「ADMIN_TOKEN 不得等于 GATEWAY_TOKEN」这条规则要在每个管理请求上
+  // 复查，而 gatewayToken 可以在运行中被改（见 admin/auth.ts 的运行期复查说明）。
   const admin = adminRouter({
     adminToken: deps.adminToken,
-    gatewayToken: deps.configHolder.current().gatewayToken,
+    currentGatewayToken: () => deps.configHolder.current().gatewayToken,
     version: deps.version,
     logger: deps.logger,
     trustProxy: deps.trustProxy ?? false,

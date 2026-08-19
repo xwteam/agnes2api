@@ -15,7 +15,7 @@ const TOKEN = "session-probe-admin-token-01234";
 function adminApp(version: string) {
   const logger = recordingLogger();
   const admin = adminRouter({
-    adminToken: TOKEN, gatewayToken: "gateway-token-not-the-admin-one",
+    adminToken: TOKEN, currentGatewayToken: () => "gateway-token-not-the-admin-one",
     version, logger, trustProxy: false,
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");

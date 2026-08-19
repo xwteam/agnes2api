@@ -58,6 +58,48 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   hours) — 80 with 20 keys, 8% of the write quota, leaving the rest for cooldown and eviction
   bookkeeping. Each key also costs one one-off write the first time it is used.
 
+### Admin panel variables (P3, disabled by default)
+
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `ADMIN_TOKEN` | no | none (panel disabled) | Token for the admin endpoints. **Must differ from `GATEWAY_TOKEN`**, and must be at least 24 characters. Unset or non-compliant ⇒ the whole `/admin` tree is never registered. |
+| `TRUST_PROXY` | no | unset (do **not** trust `X-Forwarded-For`) | Set to `1` **only** if the gateway really sits behind a reverse proxy you control. When set, the first segment of `X-Forwarded-For` is recorded as the client IP in login-failure events. |
+
+**Not set ⇒ the panel is simply unavailable, and the gateway keeps forwarding.** Requests to
+`/admin/...` then get **`404`, not `401`**: the tree is never registered, so nothing leaks the
+fact that there is a panel here. This mirrors the registrar being disabled by default — a missing
+or bad `ADMIN_TOKEN` must never stop the gateway from forwarding.
+
+**Why the 24-character minimum.** The Worker form has no distributed login rate limiting.
+Building one would mean using KV as the counting window, which hands an attacker a lever to burn
+your write quota — widening the attack from "guess the password" to "kill the key pool's state
+writes". Token entropy is therefore the only defense here, and the minimum is not a suggestion.
+Below it the panel is not enabled and an `admin.token_rejected` line goes to the container log.
+
+**Why it must differ from `GATEWAY_TOKEN`.** `GATEWAY_TOKEN` is the relay token you hand to
+**every downstream user**. Reusing it as the panel token means anyone holding it can read your
+entire key pool, switch the registrar off, and repoint the registration backend at their own
+server — harvesting the mailbox, password and verification code of every account minted from then on.
+
+This rule is enforced at startup **and re-checked on every admin request**. If the two become
+equal while the gateway is running — for example because `gatewayToken` was written into storage
+by hand with `wrangler kv key put`, or by editing `store.json` — the admin endpoints start
+returning **`503` immediately**, and an `admin.token_conflict` line is logged at error level.
+**Gateway forwarding is unaffected.** Change either token back and the admin endpoints recover on
+their own: editing the stored `gatewayToken` takes effect once the configuration cache next
+refreshes, with no restart needed. Changing `ADMIN_TOKEN` instead is an environment variable, so
+it needs a redeploy (Worker) or a container recreate (Docker).
+
+`ADMIN_TOKEN` is read **from environment variables only, never from storage**: the panel cannot
+rotate its own key. To rotate it, run `npx wrangler secret put ADMIN_TOKEN` and redeploy on the
+Worker, or edit `.env` and recreate the container on Docker.
+
+**`TRUST_PROXY` is a security switch, which is why it defaults to off.** The client IP it decides
+ends up in the `admin.login_failed` event, so trusting `X-Forwarded-For` blindly would let anyone
+pin brute-force traces on an arbitrary IP. With it off, `CF-Connecting-IP` is used instead
+(injected by the platform on Cloudflare; clients cannot forge it). If neither is available the
+field is recorded as `null` — never a fabricated `"unknown"`, which would read as a real source.
+
 ### Registrar variables (optional, disabled by default)
 
 The registrar is an optional auto-refill component, disabled by default, and does not affect

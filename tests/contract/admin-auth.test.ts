@@ -3,6 +3,14 @@ import { makeApp, TEST_ADMIN_TOKEN, TEST_CONFIG } from "../helpers/make-app.js";
 import {
   constantTimeEqual, checkAdminToken, ADMIN_TOKEN_MIN_LENGTH,
 } from "../../src/http/admin/auth.js";
+import { createApp } from "../../src/http/app.js";
+import { createConfigHolder, CONFIG_TTL_MS } from "../../src/http/config-holder.js";
+import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
+import { createStorageHealth } from "../../src/core/storage-health.js";
+import { MemoryStorage } from "../helpers/fake-storage.js";
+import { FakeFetcher } from "../helpers/fake-fetcher.js";
+import { recordingLogger } from "../helpers/recording-logger.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
 
 describe("constantTimeEqual", () => {
   it("相等返回 true，任一位不同返回 false", () => {
@@ -193,6 +201,111 @@ describe("客户端 IP", () => {
     const { app, logger } = await makeApp();
     await app.request("/admin/api/session", { headers: { "x-admin-key": "wrong" } });
     expect(logger.entries.find((x) => x.event === "admin.login_failed")?.fields?.ip).toBeNull();
+  });
+});
+
+// ── 运行期复查：两把钥匙在**运行中**变成同一把 ─────────────────────────────
+//
+// 装配期那次 checkAdminToken 挡不住这个：`loadConfig` 是
+// `env.GATEWAY_TOKEN ?? stored.gatewayToken`，部署者**没设**环境变量、改由存储提供时
+// （文档里教的 `wrangler kv key put` / 直接编辑 store.json，以及将来 P3c 的面板，
+// 都能写这个键），gatewayToken 可以在运行中被改成等于 ADMIN_TOKEN——而中转口令是发给
+// **每一个下游用户**的，届时任何下游用户都能开后台，直到重启 / isolate 回收为止。
+//
+// 这不是「留给 P3c 在写入路径上拒绝」能解决的：手工改存储绕得过写入路径校验。
+describe("运行期复查：gatewayToken 在运行中变成 ADMIN_TOKEN 时管理端 fail closed", () => {
+  /** 配置**只从存储来**（env 不设 GATEWAY_TOKEN）——这正是这个洞可达的部署形态。 */
+  async function appWithStoredConfig(gatewayToken: string) {
+    let t = 0;
+    const now = () => t;
+    const storage = new MemoryStorage();
+    await storage.put("config", { gatewayToken });
+    const logger = recordingLogger();
+    const configHolder = await createConfigHolder({ env: {}, storage, logger, now });
+    const repo = new KeyPoolRepo(storage, { now, logger: NULL_LOGGER, cacheTtlMs: 0 });
+    await repo.add("k1");
+    const app = createApp({
+      version: "0.1.0", configHolder, repo,
+      fetcher: new FakeFetcher([]), now,
+      storageHealth: createStorageHealth(), logger,
+      adminToken: TEST_ADMIN_TOKEN, trustProxy: false,
+    });
+    return {
+      app, logger,
+      /** 改存储 + 把假时钟拨过 TTL，下一个请求的 configRefresh 就会真的重载。 */
+      async setStoredGatewayToken(v: string) {
+        await storage.put("config", { gatewayToken: v });
+        t += CONFIG_TTL_MS * 2;
+      },
+    };
+  }
+
+  const withKey = { headers: { "x-admin-key": TEST_ADMIN_TOKEN } };
+
+  it("装配时两把钥匙不同 ⇒ 管理端正常可用（前置条件）", async () => {
+    const { app } = await appWithStoredConfig("gateway-token-differs-from-admin");
+    expect((await app.request("/admin/api/session", withKey)).status).toBe(200);
+  });
+
+  it("运行中把 gatewayToken 改成等于 ADMIN_TOKEN ⇒ 管理端从 200 变成 503", async () => {
+    const h = await appWithStoredConfig("gateway-token-differs-from-admin");
+    expect((await h.app.request("/admin/api/session", withKey)).status, "变更前应当可用").toBe(200);
+
+    await h.setStoredGatewayToken(TEST_ADMIN_TOKEN);
+
+    // 拿着**正确的**管理口令也进不去：fail closed 不是「换个凭据就行」。
+    expect((await h.app.request("/admin/api/session", withKey)).status).toBe(503);
+    // 缺凭据同样是 503 而不是 401——复查跑在验证凭据之前。
+    expect((await h.app.request("/admin/api/session")).status).toBe(503);
+  });
+
+  it("停用管理端的同时，/v1 转发照常——转发能力与管理能力相互独立", async () => {
+    const h = await appWithStoredConfig("gateway-token-differs-from-admin");
+    await h.setStoredGatewayToken(TEST_ADMIN_TOKEN);
+
+    expect((await h.app.request("/admin/api/session", withKey)).status).toBe(503);
+    const fwd = await h.app.request("/v1/models", {
+      headers: { authorization: `Bearer ${TEST_ADMIN_TOKEN}` },
+    });
+    expect(fwd.status, "网关不该因为管理口令配错而停摆").toBe(200);
+  });
+
+  it("原因只进日志，**响应体一个字都不说**", async () => {
+    const h = await appWithStoredConfig("gateway-token-differs-from-admin");
+    await h.setStoredGatewayToken(TEST_ADMIN_TOKEN);
+    const res = await h.app.request("/admin/api/session");
+    const body = await res.text();
+
+    // 这个检查跑在验证凭据之前，任何未鉴权的调用方都能拿到这个响应。说出原因，
+    // 等于告诉一个手里已经有中转口令的人「管理口令就是你手上那把」。
+    for (const leak of ["GATEWAY_TOKEN", "ADMIN_TOKEN", TEST_ADMIN_TOKEN, "相同"]) {
+      expect(body, `响应体不该出现 ${leak}`).not.toContain(leak);
+    }
+
+    const e = h.logger.entries.find((x) => x.event === "admin.token_conflict");
+    expect(e?.level, "运维必须看得见，且要 error 级").toBe("error");
+    expect(e?.fields?.reason).toBe("same_as_gateway_token");
+    expect(String(e?.msg), "日志里要讲清楚怎么修").toContain("GATEWAY_TOKEN");
+    // 日志常被转发到第三方，同样不许带口令本身。
+    expect(JSON.stringify(e)).not.toContain(TEST_ADMIN_TOKEN);
+  });
+
+  it("把 gatewayToken 改回去，管理端立刻恢复——复查是每请求的，不是一次性锁死", async () => {
+    const h = await appWithStoredConfig("gateway-token-differs-from-admin");
+    await h.setStoredGatewayToken(TEST_ADMIN_TOKEN);
+    expect((await h.app.request("/admin/api/session", withKey)).status).toBe(503);
+
+    await h.setStoredGatewayToken("gateway-token-differs-again");
+    expect((await h.app.request("/admin/api/session", withKey)).status).toBe(200);
+  });
+
+  it("冲突期间不记 admin.login_failed——那是爆破痕迹，配置问题别往里掺", async () => {
+    const h = await appWithStoredConfig("gateway-token-differs-from-admin");
+    await h.setStoredGatewayToken(TEST_ADMIN_TOKEN);
+    h.logger.clear();
+    await h.app.request("/admin/api/session", { headers: { "x-admin-key": "wrong" } });
+    expect(h.logger.has("admin.login_failed")).toBe(false);
+    expect(h.logger.has("admin.token_conflict")).toBe(true);
   });
 });
 
