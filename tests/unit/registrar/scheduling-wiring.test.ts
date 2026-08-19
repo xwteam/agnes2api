@@ -635,7 +635,11 @@ describe("C4 补池轮次不可并发重入", () => {
       });
       // 让促成第三次调用的那条 tick() 链自己也重排完再收尾，避免残留的
       // 异步链拖到下一条用例（如果以后这条不再是文件里最后一个用例）才落地。
-      await settle();
+      // 用条件等待而不是固定 settle()：`fired` 在上面那个 waitFor 的最后一次
+      // 成功轮询里已经推进到与当时的 `timers.length` 相等，所以"新出现一条"
+      // 就是"促成第三次调用的那条链自己也 push 完了"——固定等待正是本任务
+      // 复验时抓到的那一类 flaky 根源，这里不该是唯一的例外。
+      await waitFor(() => timers.length > fired);
     } finally {
       warnSpy.mockRestore();
       logSpy.mockRestore();
