@@ -92,9 +92,31 @@ for (const p of files) {
   // `-` 与 `s` 之间是成立的 ⇒ `<script data-src="x">alert(1)</script>` 骗过门禁、
   // payload 进包，**而浏览器只在真的有 src 属性时才忽略内联体**（已复现）。
   // `(^|\s)` 要求 src 前面是属性分隔符；`i` 是因为 HTML 属性名大小写不敏感。
+  //
+  // ⚠️ **正则整体必须带 `i`，结束标签必须放宽。** 上一版只在里面那条 `src=` 上加了 `i`
+  // （说明作者只想到了属性名的大小写），外层是 `/<script\b…<\/script>/g`：没有 `i`、
+  // 结束标签写死成字面量 `</script>`。而 HTML 分词器在 `</script` 之后遇到空白 / `/` /
+  // `>` 都判定为结束标签。任何一处不匹配 ⇒ 整个块**根本不进循环**，一条告警都没有。
+  // 评审逐个实测过五种绕过写法（`<SCRIPT>`、`<Script>`、`</script >`、`</script\n>`、
+  // `</script/>`），全部 exit 0 且 payload 入包，在浏览器里全部会执行。
+  //
+  // ⚠️ **放宽之后仍然要有计数守卫。** 上面那条链的要害不是「哪几种写法漏了」，而是
+  // **「没匹配上」被静默当成「没问题」**——列举写法永远列不全，下一种照样静默放过。
+  // 所以数一遍 `<script` 开标签，与真正解析出来的块数对不上就硬失败：把这个门禁的
+  // 默认答案从「放行」改成「拒绝生成」。误报的代价只是让人把 HTML 写规整，
+  // 漏报的代价是公开仓里唯一自动化的那层形同虚设。
   if (ext === ".html") {
-    for (const m of body.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+    let matched = 0;
+    for (const m of body.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script[\s/>]/gi)) {
+      matched++;
       if (!/(^|\s)src\s*=/i.test(m[1]) && m[2].trim().length > 0) fail(`${rel}: 禁止内联脚本`);
+    }
+    const opens = (body.match(/<script\b/gi) ?? []).length;
+    if (opens !== matched) {
+      fail(
+        `${rel}: 有 ${opens} 处 <script 开标签，却只解析出 ${matched} 个脚本块。`
+        + "解析不了的 <script> 一律拒绝生成——「没匹配上」不等于「没问题」",
+      );
     }
   }
 

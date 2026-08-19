@@ -261,6 +261,51 @@ describe("生成器对违规输入 exit 1", () => {
   );
 
   /**
+   * **HTML 分词器认得的写法，门禁也必须认得。**
+   *
+   * 上一版的外层正则是 `/<script\b…<\/script>/g`：没有 `i`、结束标签写死成字面量
+   * `</script>`。而分词器在 `</script` 之后遇到空白 / `/` / `>` 都判定为结束标签，
+   * 标签名本身也大小写不敏感。任何一处不匹配 ⇒ 整个块根本不进循环 ⇒ **exit 0 且
+   * payload 入包**（五种写法逐个实测过，在浏览器里全部会执行）。
+   *
+   * 上一版的夹具全是「小写 `<script` + 标准 `</script>`」，另一组「不许误伤」倒是
+   * 覆盖了大写**属性**——正是这个不对称暴露了盲区：被测的维度（标签名大小写、
+   * 结束标签形态）在夹具里根本不出现。
+   */
+  it.each([
+    ["大写标签名", "<SCRIPT>alert(1)</SCRIPT>"],
+    ["混合大小写标签名", "<Script>alert(1)</Script>"],
+    ["结束标签带空格", "<script>alert(1)</script >"],
+    ["结束标签带换行", "<script>alert(1)</script\n>"],
+    ["结束标签自闭合斜杠", "<script>alert(1)</script/>"],
+  ])("HTML 合法但非标准的写法照样被拦，且诊断成「内联脚本」：%s", (_name, tag) => {
+    const r = runWithMutation((ui) => append(join(ui, "index.html"), `\n${tag}\n`));
+    expect(r.code, `${tag}\n${r.stderr}`).toBe(1);
+    // **必须断言原因。** 只断言 exit 1 的话，把正则退回「无 `i` + 结束标签写死」
+    // 这条变异**照样绿**——下面那道计数守卫会把它们当成「解析不出来的 <script>」
+    // 兜住。两道防线合起来确实拦得住，但那样这一组用例守的就不是它自称守的那件事了。
+    // 判据钉在「解析器认得它，并认出里面是内联体」上，退回旧正则时这里报的是
+    // 「拒绝生成」而不是「内联脚本」，立刻变红。
+    expect(r.stderr, tag).toContain("内联脚本");
+  });
+
+  /**
+   * **计数守卫：解析不了的 `<script` 一律硬失败。**
+   *
+   * 上面那条链的要害不是「哪几种写法漏了」——列举永远列不全，下一种照样静默放过。
+   * 要害是**「没匹配上」被当成「没问题」**。所以门禁的默认答案必须是「拒绝生成」：
+   * 数一遍 `<script` 开标签，与真正解析出来的块数对不上就 exit 1。
+   *
+   * 夹具用一个**根本没有结束标签**的开标签：它匹配不上任何一种结束形态，
+   * 因此只有计数守卫拦得住它。放宽正则那一步救不了这一条。
+   */
+  it("有 <script 开标签却解析不出脚本块 ⇒ exit 1（不是静默放过）", () => {
+    const r = runWithMutation((ui) => append(join(ui, "index.html"), "\n<script>alert(1)\n"));
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("拒绝生成");
+  });
+
+  /**
    * 反方向：真的带 `src` 的外链脚本**不许误伤**。
    *
    * ⚠️ 每个夹具的 `<script>` 体**必须非空**。第一版全写成 `<script src="x"></script>`
@@ -274,6 +319,9 @@ describe("生成器对违规输入 exit 1", () => {
     ['大写 SRC（HTML 属性名大小写不敏感）', '<script SRC="/admin/js/x.js">ignored</script>'],
     ['等号两侧带空格', '<script type="module" src = "/admin/js/x.js">ignored</script>'],
     ['属性换行', '<script\n  src="/admin/js/x.js">ignored</script>'],
+    // 下面两格是**放宽正则**买到的东西：判据严回去时它们会被计数守卫误杀成 exit 1。
+    ['大写标签名', '<SCRIPT src="/admin/js/x.js">ignored</SCRIPT>'],
+    ['结束标签带空格', '<script src="/admin/js/x.js">ignored</script >'],
   ])("真的带 src 的外链脚本不误伤：%s", (_name, tag) => {
     const r = runWithMutation((ui) => append(join(ui, "index.html"), `\n${tag}\n`));
     expect(r.code, `${tag}\n${r.stderr}`).toBe(0);
