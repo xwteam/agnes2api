@@ -512,6 +512,55 @@ describe("Tier-1 计数不许被写消除吃掉", () => {
    * 于是「攒起来」「攒太久强制落盘」这些被测的选择在那个状态下**根本不可观测**
    * （本项目登记的第 5 种假阳性）。与本文件上面那个 `used()` 是同一条纪律。
    */
+  /**
+   * 重新导入同一把 key，再触发一次**真落盘**，返回落盘后的 `stats`。
+   *
+   * ⚠️ **观测点必须在这次真落盘之后，不能只看 `add()` 刚写下的那份。**
+   * 变异实测（M24）：`add()` 走的是 `prev === undefined` 那条路径，它原样写 `next`、
+   * 压根不合并增量，所以「删完直接重新导入」这一步**看不出**旧账有没有被清。
+   * 真正的还魂发生在**下一次真落盘**——那时 `trackBaseline` 会拿旧 `base` 与新记录的
+   * 零计数取大，把旧计数重新写回去。三条删除路径的用例因此都收在这里。
+   */
+  async function reimportAndFlush(
+    repo: KeyPoolRepo, st: SharedCountingStorage, key: string, at: number,
+  ) {
+    const again = await repo.add(key);
+    const fresh = (await repo.all()).find((x) => x.id === again.id)!;
+    const next = withOutcome(
+      applyStrike(fresh, at, { maxStrikes: 99, cooldownStrikeMs: 1 }, "probe"), "failed", at, "probe",
+    );
+    await repo.save(next, fresh);
+    return (await st.inner.get<KeyRecord>(KEY_PREFIX + again.id))?.stats;
+  }
+
+  /** 重新导入之后**唯一**该看到的东西：只有那次探针失败，一条旧账都没有。手写字面量。 */
+  const CLEAN_AFTER_REIMPORT = (at: number) => ({
+    requests: 1, success: 0, failed: 1, clientErrors: 0, lastErrorAt: at, lastErrorKind: "probe",
+  });
+
+  /**
+   * **别的实例**把这条记录重建了——直接写存储，**绕过本实例的 `add()`**——
+   * 本实例随后读到它并落一次盘，返回落盘后的 `stats`。
+   *
+   * 这个形态是 `stillExists` / `delete()` 两条清账路径**唯一**的可观测通道：
+   * 经过本实例 `add()` 的那条已经被 `prev === undefined` 那一行无条件兜住了
+   * （变异实测：只去掉 `stillExists` 或 `delete()` 里的清账，走 add() 的用例照样绿）。
+   * 而这条路在生产里是实打实的：Worker 上补池与转发是两个 repo 实例，
+   * 一个实例删掉/另一个重建，本实例只是过一个 TTL 之后重新读到它。
+   */
+  async function outOfBandRebuildAndFlush(
+    repo: KeyPoolRepo, st: SharedCountingStorage, rec: KeyRecord, at: number,
+  ) {
+    await st.inner.put(KEY_PREFIX + rec.id, rec);   // rec 是 add() 刚返回的那份：零计数
+    const seen = (await repo.all()).find((x) => x.id === rec.id)!;
+    expect(seen.stats, "前置条件：重建出来的那份必须是干净的").toBeUndefined();
+    const next = withOutcome(
+      applyStrike(seen, at, { maxStrikes: 99, cooldownStrikeMs: 1 }, "probe"), "failed", at, "probe",
+    );
+    await repo.save(next, seen);
+    return (await st.inner.get<KeyRecord>(KEY_PREFIX + rec.id))?.stats;
+  }
+
   async function primed(repo: KeyPoolRepo, st: SharedCountingStorage, id: string, at: number) {
     const r0 = (await repo.all()).find((x) => x.id === id)!;
     await repo.save({ ...r0, lastUsedAt: at }, r0);
@@ -599,9 +648,86 @@ describe("Tier-1 计数不许被写消除吃掉", () => {
 
     // 攒着的那笔增量必须**一并丢掉**：重新导入同一把 key 之后计数得是干净的，
     // 否则一把被吊销的 key 的用量会跟着新记录一起还魂。
-    const again = await repo.add(KEY);
-    const stored = await st.inner.get<KeyRecord>(KEY_PREFIX + again.id);
-    expect(stored?.stats, "删除时没清掉的增量，被合并进了重新导入的那条记录").toBeUndefined();
+    t += 100;
+    expect(
+      await reimportAndFlush(repo, st, KEY, t),
+      "删除时没清掉的增量，被合并进了重新导入的那条记录",
+    ).toEqual(CLEAN_AFTER_REIMPORT(t));
+  });
+
+  /**
+   * **已经落盘的累计计数，绝不许被同一次请求里的第二次提交往回退。**（评审 C2）
+   *
+   * 要害在 `prev` 的来源：`dispatch` 的 `commit()` 落盘之后写回 `records[at] = updated`
+   * ——那是**未合并的 next**，比存储里刚写下的那份**旧**。所以这条用例刻意
+   * **不重读 `repo.all()`**，而是把上一次交给 `save()` 的那份原样当成下一次的 `prev`，
+   * 复刻 dispatcher 的视图推进方式。
+   *
+   * 本文件其它用例每次 save 之后都重读快照，于是「基线取调用方视图」与「基线自己记账」
+   * 两种实现在那些状态下**数学上等价**（第 5 种假阳性）——它们结构上不可能抓到这条。
+   *
+   * 可达性不是假想：池里 ≥2 把 key 而只剩 1 把可用时，`selectKey` 会在同一次 dispatch
+   * 内反复选中它（`attempts = records.length`，cursor 绕回同一槽），而「只剩一把可用」
+   * 恰恰是剔除/冷却之后的常态；`applyStrike` 每次都改调度字段 ⇒ 每次都真落盘。
+   */
+  it("同一次请求里同一把 key 连提交两次时，先前攒着的计数不许被第二次写抹掉", async () => {
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 21_600_000 });
+    const cfg = { maxStrikes: 99, cooldownStrikeMs: 1 };
+    const rec = await repo.add("sk-tier1-twocommits-ffffff");
+    const { rec: cur, putsBefore } = await primed(repo, st, rec.id, t);
+
+    // 20 次成功被消除，攒在 pending 里（第 21 次成功是 primed 之外的那一次，见下）。
+    for (let i = 0; i < 20; i++) {
+      t += 100;
+      await repo.save(withOutcome(applySuccess(cur, t), "success", t, null), cur);
+    }
+    expect(st.puts - putsBefore, "前置条件：这 20 次必须真的被消除").toBe(0);
+
+    // 同一次请求内：第一次 500 ⇒ 真落盘，把 20 次成功一起带下去。
+    let inReq = (await repo.all()).find((x) => x.id === rec.id)!;
+    t += 100;
+    const s1 = withOutcome(applyStrike(inReq, t, cfg, "upstream 500"), "failed", t, "upstream 500");
+    await repo.save(s1, inReq);
+    const afterFirst = await st.inner.get<KeyRecord>(KEY_PREFIX + rec.id);
+    expect(afterFirst?.stats?.success, "前置条件：第一次落盘要把攒着的 20 次带下去").toBe(20);
+
+    // **不重读**：dispatcher 就是这么推进 records[at] 的。
+    inReq = s1;
+    t += 100;
+    const s2 = withOutcome(applyStrike(inReq, t, cfg, "upstream 500"), "failed", t, "upstream 500");
+    await repo.save(s2, inReq);
+
+    const stored = await st.inner.get<KeyRecord>(KEY_PREFIX + rec.id);
+    // 手写字面量：20 次成功一次都不许少，两次失败都要在，requests = 22。
+    expect(stored?.stats?.success, "第二次写把已经落盘的 20 次成功抹掉了").toBe(20);
+    expect(stored?.stats?.failed).toBe(2);
+    expect(stored?.stats?.requests).toBe(22);
+  });
+
+  it("裸存储删除之后**没有任何后续 save**、直接重新导入，旧计数也不许还魂", async () => {
+    // 与下面那条「走 delete()」、以及上面那条「被 stillExists 拦下」是**三条不同的路径**：
+    // 这一条既不经过 delete()、也不经过 stillExists（压根没有下一次 save），
+    // 唯一的闸是 `save()` 里 `prev === undefined` 那半。
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 21_600_000 });
+    const KEY = "sk-tier1-rawdelete-gggggg";
+    const rec = await repo.add(KEY);
+    const { rec: cur, putsBefore } = await primed(repo, st, rec.id, t);
+
+    t += 100;
+    await repo.save(withOutcome(applySuccess(cur, t), "success", t, null), cur);   // 被消除，攒起来
+    expect(st.puts - putsBefore, "前置条件：这一次必须真的被消除").toBe(0);
+
+    await st.inner.delete(KEY_PREFIX + rec.id);   // 裸存储删除，之后一次 save 都没有
+
+    t += 100;
+    expect(
+      await reimportAndFlush(repo, st, KEY, t),
+      "被吊销那把 key 的用量跟着重新导入的记录还魂了",
+    ).toEqual(CLEAN_AFTER_REIMPORT(t));
   });
 
   it("走 delete() 删除时同样丢弃攒着的增量（两条删除路径都要清）", async () => {
@@ -620,9 +746,51 @@ describe("Tier-1 计数不许被写消除吃掉", () => {
     expect(st.puts - putsBefore, "前置条件：这一次必须真的被消除").toBe(0);
 
     await repo.delete(rec.id);
-    const again = await repo.add(KEY);
-    const stored = await st.inner.get<KeyRecord>(KEY_PREFIX + again.id);
-    expect(stored?.stats, "delete() 没清掉增量，它跟着重新导入的那条记录还魂了").toBeUndefined();
+
+    t += 100;
+    expect(
+      await reimportAndFlush(repo, st, KEY, t),
+      "delete() 没清掉增量，它跟着重新导入的那条记录还魂了",
+    ).toEqual(CLEAN_AFTER_REIMPORT(t));
+  });
+
+  it("被 stillExists 拦下时清掉的旧账，在记录被别的实例重建之后也不许回来", async () => {
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 21_600_000 });
+    const rec = await repo.add("sk-tier1-stillexists-hhhhh");
+    const { rec: cur } = await primed(repo, st, rec.id, t);
+
+    t += 100;
+    await repo.save(withOutcome(applySuccess(cur, t), "success", t, null), cur);   // 被消除，攒起来
+    await st.inner.delete(KEY_PREFIX + rec.id);                                     // 裸存储删除
+    t += 100;
+    const strick = withOutcome(applyStrike(cur, t, { maxStrikes: 99, cooldownStrikeMs: 1 }, "x"), "failed", t, "x");
+    await repo.save(strick, cur);   // ⇒ stillExists 为假，这一步必须把旧账丢掉
+
+    t += 100;
+    expect(
+      await outOfBandRebuildAndFlush(repo, st, rec, t),
+      "stillExists 那道闸没清旧账，记录被重建之后它从基线里回来了",
+    ).toEqual(CLEAN_AFTER_REIMPORT(t));
+  });
+
+  it("走 delete() 清掉的旧账，在记录被别的实例重建之后也不许回来", async () => {
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 21_600_000 });
+    const rec = await repo.add("sk-tier1-repodelete2-iiiii");
+    const { rec: cur } = await primed(repo, st, rec.id, t);
+
+    t += 100;
+    await repo.save(withOutcome(applySuccess(cur, t), "success", t, null), cur);   // 被消除，攒起来
+    await repo.delete(rec.id);
+
+    t += 100;
+    expect(
+      await outOfBandRebuildAndFlush(repo, st, rec, t),
+      "delete() 没清旧账，记录被重建之后它从基线里回来了",
+    ).toEqual(CLEAN_AFTER_REIMPORT(t));
   });
 
   it("落盘抛错时攒着的增量必须留着，下一次成功的写要把它一起带下去", async () => {

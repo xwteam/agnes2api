@@ -7,120 +7,112 @@
  * 的 showSection。**板块内不许监听 langchange**——框架层会 apply(document) 之后
  * 重跑一次 onShow()。
  *
- * 两条纪律：①一切来自接口的内容一律 textContent；②所有需要测试的纯逻辑都在
- * `js/pure/*.mjs` 里，这个文件只做 DOM 拼装与网络调用（见 admin-ui/README.md）。
+ * 两条纪律：①一切来自接口的内容一律 textContent；②**取值决策一律不写在这里**，
+ * 全在 `js/pure/keys.mjs` 里由 `tests/ui/keys.test.ts` 跑着（admin-ui/README.md
+ * 硬规则 1）。这个文件只剩 DOM 拼装、事件绑定与网络调用。
  */
 import { api } from "./api.js";
 import { t } from "./i18n.js";
 import { el, elI18n } from "./ui.js";
 import { fmtCount, fmtDash, fmtDuration, fmtInstant, fmtPercent } from "./pure/format.mjs";
+import {
+  CARDS, AUTO_SECONDS, cardCounts, badgeClass, bucketLabelKey, autoLabelKey,
+  keysQuery, cooldownRemaining, lastErrorParts, usageParts, lastUsedParts,
+  pagerState, listMessageKey,
+} from "./pure/keys.mjs";
 
-const BUCKETS = ["all", "fresh", "cooling", "evicted"];
-/** 自动刷新档位（秒）。**默认是 0 = 关**：面板不替用户决定去轮询。 */
-const AUTO_SECONDS = [0, 30, 60];
 const PAGE_SIZE = 20;
+/** 搜索防抖。每敲一个字符打一次接口的话，大池子下每次都要重投影 + 序列化整池。 */
+const SEARCH_DEBOUNCE_MS = 250;
 
-const state = { bucket: "all", q: "", page: 1, autoSec: 0 };
+const state = { bucket: "all", q: "", page: 1, size: PAGE_SIZE, autoSec: 0 };
 
 let nodes = null;
 let timer = null;
+let searchTimer = null;
 /** 在飞请求的取消闸。离开板块 / 发起下一次请求时作废上一次，避免旧响应盖掉新数据。 */
 let abort = null;
 let data = null;
 let loadError = false;
 
-/**
- * 分档名。**四条各写一次、参数是字面量**，不拼 `"keys.bucket." + b`：
- * i18n 门禁（scripts/check-i18n.mjs 与 tests/unit/i18n-dict.test.ts）扫的是字面量，
- * 拼出来的键它看不见，缺一种语言不会有任何信号。
- */
-function bucketLabel(b) {
-  if (b === "fresh") return t("keys.bucket.fresh");
-  if (b === "cooling") return t("keys.bucket.cooling");
-  if (b === "evicted") return t("keys.bucket.evicted");
-  return t("keys.bucket.all");
-}
-
-function autoLabel(sec) {
-  if (sec === 30) return t("keys.auto.30");
-  if (sec === 60) return t("keys.auto.60");
-  return t("keys.auto.off");
-}
-
-function badgeClass(bucket) {
-  if (bucket === "evicted") return "badge badge-danger";
-  if (bucket === "cooling") return "badge badge-warn";
-  return "badge badge-ok";
-}
-
-/** 浏览器时区相对 UTC 的偏移。**时区必须从参数进 fmtInstant**，见 pure/format.mjs。 */
-function tzOffsetMs() {
-  return -new Date().getTimezoneOffset() * 60000;
-}
-
-function counts() {
-  return (data && data.counts) || { all: 0, fresh: 0, cooling: 0, evicted: 0 };
-}
-
-/** 汇总卡 + 筛选下拉里的实时条数。 */
+/** 汇总卡与筛选下拉里的条数。**没有数据时 fmtCount(null) 给出 `—`，不是 0。** */
 function syncCounts() {
-  const c = counts();
-  for (const b of BUCKETS) {
+  const c = cardCounts(loadError ? null : data);
+  for (const b of CARDS) {
     nodes.cardValues[b].textContent = fmtCount(c[b]);
-    nodes.cardLabels[b].textContent = bucketLabel(b);
-    nodes.options[b].textContent = `${bucketLabel(b)}（${fmtCount(c[b])}）`;
+    nodes.cardLabels[b].textContent = t(bucketLabelKey(b));
+    nodes.options[b].textContent = `${t(bucketLabelKey(b))}（${fmtCount(c[b])}）`;
   }
-  for (const sec of AUTO_SECONDS) nodes.autoOptions[sec].textContent = autoLabel(sec);
+  for (const sec of AUTO_SECONDS) nodes.autoOptions[sec].textContent = t(autoLabelKey(sec));
 }
 
-function usageCell(stats) {
+/** `≈` 标记。它是产品不变式的一部分（近似值必须打标），由后端的 `approximate` 驱动。 */
+function approxMark() {
+  return el("span", { class: "approx", title: t("keys.approxTip") }, "≈");
+}
+
+function usageCell(v, approximate) {
   const cell = el("td");
-  // `≈` 不是装饰：计数在并发下少计、且最多晚一个触达间隔才落盘，见 tooltip。
-  const mark = el("span", { class: "approx", title: t("keys.approxTip") }, "≈");
-  cell.appendChild(mark);
-  cell.appendChild(el("span", null, ` ${fmtCount(stats.requests)}`));
+  const u = usageParts(v, approximate);
+  if (u.approx) cell.appendChild(approxMark());
+  cell.appendChild(el("span", null, `${u.approx ? " " : ""}${fmtCount(u.requests)}`));
   // 分母为 0 时 fmtPercent 返回 —，不是 0.0%：「一次都没跑过」与「成功率 0%」是两回事。
-  cell.appendChild(el("span", { class: "muted" }, ` · ${fmtPercent(stats.success, stats.requests)}`));
+  cell.appendChild(el("span", { class: "muted" }, ` · ${fmtPercent(u.success, u.requests)}`));
   return cell;
 }
 
-function row(v, now, offset) {
+function lastUsedCell(v, approximate, offset) {
+  const cell = el("td");
+  const l = lastUsedParts(v, approximate);
+  if (l.approx) {
+    // 「最后使用」与计数是同一份 staleness（同一次落盘一起带下去），tooltip 单独一条：
+    // 它说的是「时刻粗到一个触达间隔」，与计数那条「少计 + 晚落盘」不是同一句话。
+    cell.appendChild(el("span", { class: "approx", title: t("keys.approxLastUsedTip") }, "≈"));
+    cell.appendChild(el("span", null, ` ${fmtInstant(l.at, offset)}`));
+  } else {
+    cell.appendChild(el("span", null, l.at === null ? fmtDash(null) : fmtInstant(l.at, offset)));
+  }
+  return cell;
+}
+
+function row(v, now, offset, approximate) {
   const tr = el("tr");
   tr.appendChild(el("td", null, `#${v.seq}`));
   tr.appendChild(el("td", { class: "mono" }, v.masked));
   const bucketCell = el("td");
-  bucketCell.appendChild(el("span", { class: badgeClass(v.bucket) }, bucketLabel(v.bucket)));
+  bucketCell.appendChild(el("span", { class: badgeClass(v.bucket) }, t(bucketLabelKey(v.bucket))));
   tr.appendChild(bucketCell);
   tr.appendChild(el("td", null, fmtInstant(v.addedAt, offset)));
-  tr.appendChild(el("td", null, v.lastUsedAt === null ? fmtDash(null) : fmtInstant(v.lastUsedAt, offset)));
-  // 冷却剩余按**服务端那一刻**（generatedAt）算，不按浏览器时钟：两者不同源，
-  // 用浏览器的 now 去减服务端的 cooldownUntil 会在时钟有偏差时算出负数或虚高。
-  tr.appendChild(el("td", null, v.bucket === "cooling" ? fmtDuration(v.cooldownUntil - now) : fmtDash(null)));
+  tr.appendChild(lastUsedCell(v, approximate, offset));
+  const left = cooldownRemaining(v, now);
+  tr.appendChild(el("td", null, left === null ? fmtDash(null) : fmtDuration(left)));
   tr.appendChild(el("td", null, fmtCount(v.strikes)));
-  tr.appendChild(usageCell(v.stats));
-  const err = v.stats.lastErrorKind === null
-    ? fmtDash(null)
-    : `${v.stats.lastErrorKind}（${fmtInstant(v.stats.lastErrorAt, offset)}）`;
-  tr.appendChild(el("td", null, err));
+  tr.appendChild(usageCell(v, approximate));
+  const err = lastErrorParts(v);
+  tr.appendChild(el("td", null, err === null ? fmtDash(null) : `${err.kind}（${fmtInstant(err.at, offset)}）`));
   return tr;
 }
 
 function render() {
   syncCounts();
+
+  // 分页控件先复位：读失败 / 空列表时留着上一次的「第 1/2 页 · 共 3 条」，
+  // 等于在展示一份已经不存在的数据。
+  const pager = pagerState(loadError ? null : data);
+  nodes.prev.disabled = pager.prevDisabled;
+  nodes.next.disabled = pager.nextDisabled;
+  nodes.pageInfo.textContent = pager.info === null
+    ? ""
+    : t("keys.pageInfo", { page: pager.info.page, pages: pager.info.pages, total: pager.info.total });
+
   const host = nodes.body;
   host.textContent = "";
-
-  if (loadError) {
-    host.appendChild(elI18n("p", "common.loadFailed", { class: "muted" }));
+  const messageKey = listMessageKey(data, loadError);
+  if (messageKey !== null) {
+    host.appendChild(elI18n("p", messageKey, { class: "muted" }));
     return;
   }
   if (!data) return;
-
-  if (data.items.length === 0) {
-    host.appendChild(elI18n("p", counts().all === 0 ? "keys.empty" : "keys.noMatch", { class: "muted" }));
-    nodes.pageInfo.textContent = "";
-    return;
-  }
 
   const table = el("table");
   const head = el("tr");
@@ -129,45 +121,38 @@ function render() {
     "keys.col.cooldown", "keys.col.strikes", "keys.col.usage", "keys.col.lastError",
   ]) head.appendChild(elI18n("th", key));
   table.appendChild(head);
-  const offset = tzOffsetMs();
-  for (const v of data.items) table.appendChild(row(v, data.generatedAt, offset));
+  // 时区必须从参数进 fmtInstant，不许它去读运行环境的本地时区（见 pure/format.mjs）。
+  const offset = -new Date().getTimezoneOffset() * 60000;
+  for (const v of data.items) table.appendChild(row(v, data.generatedAt, offset, data.approximate));
   host.appendChild(table);
-
-  nodes.pageInfo.textContent = t("keys.pageInfo", { page: data.page, pages: data.pages, total: data.total });
-  nodes.prev.disabled = data.page <= 1;
-  nodes.next.disabled = data.page >= data.pages;
 }
 
 async function load() {
   if (abort) abort.abort();
   abort = new AbortController();
-  const params = [
-    `page=${state.page}`,
-    `size=${PAGE_SIZE}`,
-    state.bucket === "all" ? "" : `bucket=${state.bucket}`,
-    state.q === "" ? "" : `q=${encodeURIComponent(state.q)}`,
-  ].filter((s) => s !== "").join("&");
   try {
-    const body = await api.get(`/keys?${params}`, { signal: abort.signal });
+    const body = await api.get(`/keys?${keysQuery(state)}`, { signal: abort.signal });
     data = body;
     loadError = false;
     // 服务端把越界页号回落到第 1 页，本地状态跟上，否则翻页按钮会与实际显示的页对不上。
     state.page = body.page;
   } catch (e) {
-    // **不伪造 0**：读失败就说读失败，显示上一次的数据会让运维以为它是新的。
     if (e && e.name === "AbortError") return;
+    // **不伪造 0，也不留着上一次的数据**：读失败就说读失败，
+    // 显示上一次的数字会让运维以为它是新的。
     loadError = true;
     data = null;
   }
   render();
 }
 
-function stopTimer() {
+function stopTimers() {
   if (timer !== null) { clearInterval(timer); timer = null; }
+  if (searchTimer !== null) { clearTimeout(searchTimer); searchTimer = null; }
 }
 
 function restartTimer() {
-  stopTimer();
+  if (timer !== null) { clearInterval(timer); timer = null; }
   if (state.autoSec > 0) timer = setInterval(() => { load(); }, state.autoSec * 1000);
 }
 
@@ -176,12 +161,21 @@ function buildToolbar() {
 
   const search = el("input", { type: "search", "data-i18n-ph": "keys.search" });
   search.setAttribute("placeholder", t("keys.search"));
-  search.addEventListener("input", () => { state.q = search.value; state.page = 1; load(); });
+  search.addEventListener("input", () => {
+    state.q = search.value;
+    state.page = 1;
+    if (searchTimer !== null) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { searchTimer = null; load(); }, SEARCH_DEBOUNCE_MS);
+  });
   bar.appendChild(search);
 
   const select = el("select", { "data-i18n-title": "keys.filter" });
+  // 初始 title / aria-label 必须在这里写死一次：`apply(document)` 在 boot 时就跑完了，
+  // 而这棵子树是之后才建的，只挂 data-i18n-title 的话要等一次切语言才有无障碍标签。
+  select.setAttribute("title", t("keys.filter"));
+  select.setAttribute("aria-label", t("keys.filter"));
   const options = {};
-  for (const b of BUCKETS) {
+  for (const b of CARDS) {
     const o = el("option", { value: b });
     select.appendChild(o);
     options[b] = o;
@@ -225,7 +219,7 @@ export const keysSection = {
     const cardRow = el("div", { class: "card-row" });
     const cardValues = {};
     const cardLabels = {};
-    for (const b of BUCKETS) {
+    for (const b of CARDS) {
       const card = el("div", { class: "card" });
       cardLabels[b] = el("div", { class: "label" });
       cardValues[b] = el("div", { class: "value" });
@@ -249,7 +243,7 @@ export const keysSection = {
     pager.appendChild(next);
     section.appendChild(pager);
 
-    // 新鲜度提示：与概览页共用同一份文案（progress.md:232 登记的那条）。
+    // 新鲜度提示：与概览页共用同一份文案（设计文档 §10.1 / §10.2 的「新鲜度提示条」）。
     section.appendChild(elI18n("p", "keys.freshness", { class: "muted note" }));
 
     nodes = {
@@ -265,7 +259,7 @@ export const keysSection = {
   },
 
   onHide() {
-    stopTimer();
+    stopTimers();
     // **作废在飞请求**：不作废的话切回来时旧响应可能盖掉新数据（板块契约 §9.3）。
     if (abort) { abort.abort(); abort = null; }
   },

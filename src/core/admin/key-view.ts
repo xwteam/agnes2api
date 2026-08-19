@@ -45,24 +45,31 @@ export interface KeyView {
   stats: KeyStats;
 }
 
+/**
+ * 投影成面板要的形状，**并按 `seq` 的顺序返回**。
+ *
+ * ⚠️ **返回顺序不是「顺手排一下好看」，分页的正确性建立在它上面。**
+ * 传入顺序来自 `pool:index`，而 `pool-index.ts` 明写「顺序无语义」——`reconcileIndex()`
+ * 会拿 `list()` 的结果整体重排它。只算 `seq` 却按传入顺序返回，后果有三层：
+ * ①面板上出现 `#7 / #2 / #19`；②一次索引对账之后整个列表重排，而什么都没增删；
+ * ③**分页在两次请求之间不稳定**，翻页会重复或漏掉条目。
+ */
 export function toKeyViews(records: readonly KeyRecord[], now: number): KeyView[] {
-  const order = [...records]
+  return [...records]
     .sort((a, b) => (a.addedAt - b.addedAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    .map((r) => r.id);
-  const seqOf = new Map(order.map((id, i) => [id, i + 1]));
-  return records.map((r) => ({
-    id: r.id,
-    masked: maskKey(r.key),
-    seq: seqOf.get(r.id) ?? 0,
-    bucket: keyBucket(r, now),
-    addedAt: r.addedAt,
-    lastUsedAt: r.lastUsedAt,
-    cooldownUntil: r.cooldownUntil,
-    cooldownReason: r.cooldownReason,
-    evictedReason: r.evictedReason,
-    strikes: r.strikes,
-    stats: normalizeStats(r.stats),
-  }));
+    .map((r, i) => ({
+      id: r.id,
+      masked: maskKey(r.key),
+      seq: i + 1,
+      bucket: keyBucket(r, now),
+      addedAt: r.addedAt,
+      lastUsedAt: r.lastUsedAt,
+      cooldownUntil: r.cooldownUntil,
+      cooldownReason: r.cooldownReason,
+      evictedReason: r.evictedReason,
+      strikes: r.strikes,
+      stats: normalizeStats(r.stats),
+    }));
 }
 
 export function bucketCounts(views: readonly KeyView[]) {

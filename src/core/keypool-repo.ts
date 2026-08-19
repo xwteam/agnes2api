@@ -2,7 +2,21 @@ import type { Storage } from "../ports/storage.js";
 import type { Logger } from "../ports/logger.js";
 import type { KeyRecord } from "./types.js";
 import { Refreshable } from "./refreshable.js";
-import { statsDelta, addDelta, applyDelta, isZeroDelta, type StatsDelta } from "./admin/stats.js";
+import {
+  statsDelta, addDelta, applyDelta, isZeroDelta, maxStats, normalizeStats, ZERO_DELTA,
+  type StatsDelta,
+} from "./admin/stats.js";
+import type { KeyStats } from "./types.js";
+
+/** 见 `KeyPoolRepo.pendingStats`。 */
+interface PendingStats {
+  /** 本实例认为**已经在存储里**的那份计数。落盘成功时更新成刚写下去的值。 */
+  base: KeyStats;
+  /** 自 `base` 之后观测到、但还没落盘的增量。 */
+  delta: StatsDelta;
+  /** 当前这批 `delta` 里最早那一条的时刻。`delta` 清零时这个值没有意义。 */
+  since: number;
+}
 import {
   KEY_PREFIX, POOL_INDEX_KEY,
   makePoolIndex, parsePoolIndex, idsFromKeyNames, sameIdSet,
@@ -249,24 +263,38 @@ export class KeyPoolRepo {
   private readonly snapshot: Refreshable<KeyRecord[]>;
 
   /**
-   * **未落盘的 Tier-1 增量，按 key id 攒着。**
+   * **每把 key 的 Tier-1 记账状态：一份落盘基线 + 一笔未落盘的增量。**
    *
    * 存在的理由（实测）：成功路径上的写会被写消除整个丢弃，连带把计数丢掉，
    * 于是 `stats.requests` 永远停在 1。把增量攒起来、在**下一次本来就要发生的那次写**
    * 上一起带下去，写配额一次不增，而计数的误差收敛成
    * 「最多晚一个 `touchIntervalMs` 落盘 + isolate 在落盘前被回收时丢这一段」。
    *
-   * `since` 是这批增量**最早**那一条的时刻：只靠 `lastUsedAt` 的间隔判据的话，
+   * ⚠️ **为什么必须存 `base` 而不只是 `delta`（C2，评审实测）**：只存 delta 时，
+   * 落盘写的是「调用方交上来的 `next.stats` + 攒着的」，而这**默认了调用方的视图
+   * 不落后于存储**。`dispatch` 的 `commit()` 恰恰打破这条：它 `records[at] = updated`
+   * 存的是**未合并的 next**，于是同一次请求里第二次提交同一把 key 时，
+   * `prev` 比存储旧、`pending` 又已在第一次落盘时清空 ⇒ 第二次写把已经落盘的累计
+   * **往回退**（实测：21 次成功落盘后被抹成 1）。而「同一次请求里连着提交同一把 key」
+   * 不是假想——池里只剩一把可用时 `selectKey` 会在一次 dispatch 内反复选中它。
+   *
+   * 所以基线由**本实例自己记账**、与调用方视图彻底解耦：落盘之后 `base` 就是刚写下去
+   * 的那份，`delta` 清零；调用方之后交上来的 `prev` 只用来算**差值**，以及经
+   * `maxStats` **只增不减**地吸收「别的 isolate 写得更高」的情形。
+   *
+   * `since` 是当前这批增量**最早**那一条的时刻：只靠 `lastUsedAt` 的间隔判据的话，
    * 上游 4xx 直通（既不改调度字段也不改 `lastUsedAt`）会让 `n - p === 0` 恒成立，
    * 一个只被打 4xx 的 key 的计数**永远不会落盘**。
    *
-   * 三条不变量各自的守护者（都在 tests/unit/pool-cache.test.ts 的
+   * 四条不变量各自的守护者（都在 tests/unit/pool-cache.test.ts 的
    * 「Tier-1 计数不许被写消除吃掉」一组里，跑 `pnpm test tests/unit/pool-cache.test.ts` 即见）：
    * 计数不丢 → 「50 次成功之后落盘的 requests 是 50」；
    * 写配额不增 → 同一条里那句 `st.puts - putsAfterAdd === 2`；
-   * 删掉的 key 不被复活 → 「记录被删掉时攒着的增量一并丢弃」。
+   * 删掉的 key 不被复活 → 「记录被删掉时攒着的增量一并丢弃」+「走 delete() 删除时同样丢弃」
+   *   +「裸存储删除之后直接重新导入」；
+   * 已落盘的不被回退 → 「同一次请求里同一把 key 连提交两次」。
    */
-  private readonly pendingStats = new Map<string, { delta: StatsDelta; since: number }>();
+  private readonly pendingStats = new Map<string, PendingStats>();
 
   constructor(
     private readonly storage: Storage,
@@ -442,51 +470,96 @@ export class KeyPoolRepo {
    */
   async save(next: KeyRecord, prev?: KeyRecord): Promise<void> {
     const at = this.o.now();
-    if (prev !== undefined) {
-      // 攒得比一个触达间隔还久就别再消除了，否则只被打 4xx 的 key 永远落不了盘。
-      if (this.shouldElide(prev, next) && !this.pendingIsStale(next.id, at)) {
-        // 这次写整个被丢弃了，但它带的**计数**不能跟着丢：攒起来，等下一次本来
-        // 就要发生的那次写一起带下去。
-        if (next.id === prev.id) this.stashPending(next.id, statsDelta(prev.stats, next.stats), at);
-        return;
-      }
-      // **只在「改的就是手上这一份」时确认存在性。** `next.id !== prev.id` 时调用方写的
-      // 是一个**全新的键**（prev 只是拿来做写消除对照的另一把 key），那条路径上「记录
-      // 还不存在」本来就是正常状态，拿存在性去卡它等于把一次新建吃掉——
-      // `tests/unit/pool-cache.test.ts` 的「只有 id 不同的两份之间不许消除」正钉这件事。
-      // 今天生产上产生不出 id 不同的 next（`keypool.ts` 的 apply* 全部原样透传 id），
-      // 但这条判据必须自洽，不能靠「那条路径走不到」来免责。
-      if (next.id === prev.id && !(await this.stillExists(next.id))) {
-        // 记录已经不在了，攒着的增量没有归属——**留着它就等于给复活留了一条路**：
-        // 同一把 key 被重新导入时 `add()` 那次写会把它合并进新记录。
-        this.pendingStats.delete(next.id);
-        return;
-      }
+
+    // ── 新建（`add()`）：写的是一条**本来就不存在**的记录 ────────────────────
+    // 上一世攒着的增量绝不许跟过来。裸存储删除之后**没有任何后续 save**、直接重新
+    // 导入同一把 key 时，这一行是唯一的闸：不清的话 `add()` 这次写会把已经被吊销的
+    // 那把 key 的用量合并进新记录（只涉及遥测、不涉及凭据，但仍是「删掉的 key 用
+    // 增量复活」的一种）。
+    if (prev === undefined) {
+      this.pendingStats.delete(next.id);
+      await this.storage.put(KEY_PREFIX + next.id, next);
+      this.replaceInSnapshot(next);
+      return;
     }
-    // `next.stats` 已经含本次这一笔（它是调用方基于 prev 算出来的），`pending` 里
-    // 是**先前被消除掉的那些**，两者相加恰好是「上次落盘之后发生的全部」。
-    // 本次这一笔刻意**不**先 stash：stash 完再加一次就是把它算两遍。
-    const pending = this.pendingStats.get(next.id);
-    const merged = pending ? { ...next, stats: applyDelta(next.stats, pending.delta) } : next;
+
+    // ── `next.id !== prev.id`：写的是**另一个键** ───────────────────────────
+    // prev 只是拿来做写消除对照的另一把 key。那条路径上「记录还不存在」本来就是正常
+    // 状态，拿存在性去卡它等于把一次新建吃掉——`tests/unit/pool-cache.test.ts` 的
+    // 「只有 id 不同的两份之间不许消除」正钉这件事。今天生产上产生不出 id 不同的 next
+    // （`keypool.ts` 的 apply* 全部原样透传 id），但这条判据必须自洽，不能靠
+    // 「那条路径走不到」来免责。两份属于不同的 key，谈不上计数增量，直接落盘。
+    if (next.id !== prev.id) {
+      if (this.shouldElide(prev, next)) return;   // `FIELD_ROLE.id` 是 scheduling ⇒ 恒为 false
+      await this.storage.put(KEY_PREFIX + next.id, next);
+      this.replaceInSnapshot(next);
+      return;
+    }
+
+    // ── 更新同一条记录 ─────────────────────────────────────────────────────
+    const entry = this.trackBaseline(next.id, normalizeStats(prev.stats), at);
+    const delta = statsDelta(prev.stats, next.stats);
+
+    // 攒得比一个触达间隔还久就别再消除了，否则只被打 4xx 的 key 永远落不了盘。
+    if (this.shouldElide(prev, next) && !this.pendingIsStale(entry, at)) {
+      // 这次写整个被丢弃了，但它带的**计数**不能跟着丢：攒起来，等下一次本来
+      // 就要发生的那次写一起带下去。
+      this.stashPending(entry, delta, at);
+      return;
+    }
+    if (!(await this.stillExists(next.id))) {
+      // 记录已经不在了，攒着的增量没有归属——**留着它就等于给复活留了一条路**。
+      this.pendingStats.delete(next.id);
+      return;
+    }
+
+    // 落盘 = **本实例记的基线** + 先前被消除掉的那些 + 本次这一笔。
+    // 刻意**不**用 `next.stats` 当基数：那是调用方的视图，它可能落后于存储（C2）。
+    const stats = applyDelta(entry.base, addDelta(entry.delta, delta));
+    const merged: KeyRecord = { ...next, stats };
     await this.storage.put(KEY_PREFIX + merged.id, merged);
-    // **put 成功之后才清**：put 抛错时增量必须留着，下一次再合并一遍。
-    this.pendingStats.delete(next.id);
+    // **put 成功之后才推进基线**：put 抛错时增量必须留着，下一次再合并一遍。
+    entry.base = stats;
+    entry.delta = ZERO_DELTA;
+    entry.since = at;
     this.replaceInSnapshot(merged);
   }
 
-  /** 把一笔被消除掉的增量攒进去。空增量不攒——攒了会平白启动下面那条「攒太久」的计时。 */
-  private stashPending(id: string, delta: StatsDelta, at: number): void {
-    if (isZeroDelta(delta)) return;
+  /**
+   * 取出这把 key 的记账状态，并用调用方交上来的那份**只增不减**地校准基线。
+   *
+   * `maxStats` 的两个方向见 pendingStats 的说明：调用方的视图可能比存储**旧**
+   * （`dispatch` 回写的是未合并的 next），也可能比存储**新**（快照过 TTL 之后带回了
+   * 别的 isolate 写得更高的值）。取大同时处理这两种，且不必分辨是哪一种。
+   */
+  private trackBaseline(id: string, seen: KeyStats, at: number): PendingStats {
     const cur = this.pendingStats.get(id);
-    if (cur) cur.delta = addDelta(cur.delta, delta);
-    else this.pendingStats.set(id, { delta, since: at });
+    if (!cur) {
+      const created: PendingStats = { base: seen, delta: ZERO_DELTA, since: at };
+      this.pendingStats.set(id, created);
+      return created;
+    }
+    cur.base = maxStats(cur.base, seen);
+    return cur;
   }
 
-  /** 攒得比一个触达间隔还久 ⇒ 强制落盘，见 pendingStats 的说明。 */
-  private pendingIsStale(id: string, at: number): boolean {
-    const cur = this.pendingStats.get(id);
-    if (!cur || this.touchIntervalMs <= 0) return false;
-    const age = at - cur.since;
+  /** 把一笔被消除掉的增量攒进去。空增量不攒——攒了会平白启动下面那条「攒太久」的计时。 */
+  private stashPending(entry: PendingStats, delta: StatsDelta, at: number): void {
+    if (isZeroDelta(delta)) return;
+    if (isZeroDelta(entry.delta)) entry.since = at;   // 这批的第一条，计时从这里起算
+    entry.delta = addDelta(entry.delta, delta);
+  }
+
+  /**
+   * 攒得比一个触达间隔还久 ⇒ 强制落盘，见 pendingStats 的说明。
+   *
+   * **空增量一律不算陈旧**：落盘之后 `delta` 清零而条目留着（基线要留），
+   * 不判这一条的话，一把只有 `lastUsedAt` 在动的 key 会每个触达间隔被强制写一次，
+   * 等于把写消除的收益还回去。
+   */
+  private pendingIsStale(entry: PendingStats, at: number): boolean {
+    if (this.touchIntervalMs <= 0 || isZeroDelta(entry.delta)) return false;
+    const age = at - entry.since;
     return age < 0 || age >= this.touchIntervalMs;   // `age < 0` = 时钟回拨，老实落盘
   }
 

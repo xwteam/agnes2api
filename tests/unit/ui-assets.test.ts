@@ -112,6 +112,10 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       "/admin/js/i18n.js",
       "/admin/js/pure/bucket.mjs",
       "/admin/js/pure/format.mjs",
+      // Task 4（P3b）新增：Key 池板块的取值决策。admin-ui/README.md 硬规则 1 要求
+      // 需要测试的逻辑必须落在 js/pure/ 下，它由 tests/ui/keys.test.ts 跑着。
+      // 逐条确认过：纯函数、无配置、无数据，公开可取没有问题。
+      "/admin/js/pure/keys.mjs",
       "/admin/js/pure/mask.mjs",
       "/admin/js/sec-events.js",
       "/admin/js/sec-keys.js",

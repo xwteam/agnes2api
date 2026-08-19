@@ -25,15 +25,43 @@ const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) &
 /**
  * 存量记录没有 `stats`，存储也可能被写坏。**逐字段补零而不是整块丢弃**：
  * 整块丢弃会让一次坏写把已经攒了几天的计数清零，而面板上看不出发生过这件事。
+ *
+ * 形参是 `unknown` **不是** `KeyStats | undefined`：真实输入来自 `JSON.parse`
+ * （`storage.get` 的返回值），运行期什么形状都可能是。写成 `KeyStats | undefined`
+ * 就是在签名上撒谎——证据是测试当时必须靠 `as unknown as KeyStats` 强转才写得出
+ * 「存储被写坏」那几格，而**需要强转才能表达的输入，正说明签名把它排除在外了**。
  */
-export function normalizeStats(raw: KeyStats | undefined): KeyStats {
+export function normalizeStats(raw: unknown): KeyStats {
   if (!raw || typeof raw !== "object") return { ...EMPTY_STATS };
-  const at = typeof raw.lastErrorAt === "number" && Number.isFinite(raw.lastErrorAt) ? raw.lastErrorAt : null;
+  const r = raw as Partial<Record<keyof KeyStats, unknown>>;
+  const at = typeof r.lastErrorAt === "number" && Number.isFinite(r.lastErrorAt) ? r.lastErrorAt : null;
   return {
-    requests: n(raw.requests), success: n(raw.success),
-    failed: n(raw.failed), clientErrors: n(raw.clientErrors),
+    requests: n(r.requests), success: n(r.success),
+    failed: n(r.failed), clientErrors: n(r.clientErrors),
     lastErrorAt: at,
-    lastErrorKind: typeof raw.lastErrorKind === "string" ? raw.lastErrorKind : null,
+    lastErrorKind: typeof r.lastErrorKind === "string" ? r.lastErrorKind : null,
+  };
+}
+
+/**
+ * 逐字段取较大者。**计数只会涨，所以「取大」等价于「绝不回退」。**
+ *
+ * 它是 `KeyPoolRepo` 那份落盘基线（`pendingStats[].base`）唯一的更新方式，
+ * 存在的理由是 C2 那条缺陷的两半：
+ * · 调用方（`dispatch` 的 `commit`）把**未合并的 next** 写回 `records[at]`，
+ *   于是它下一次交上来的 `prev` 比存储**旧**——直接采信就会把已落盘的计数往回写；
+ * · 而快照过了 TTL 之后又可能带回**别的 isolate 写得更高**的值，那时该采信它。
+ * 一个 `max` 同时处理这两个方向，且不需要知道是哪一种。
+ */
+export function maxStats(a: KeyStats, b: KeyStats): KeyStats {
+  const newer = b.lastErrorAt !== null && (a.lastErrorAt === null || b.lastErrorAt > a.lastErrorAt);
+  return {
+    requests: Math.max(a.requests, b.requests),
+    success: Math.max(a.success, b.success),
+    failed: Math.max(a.failed, b.failed),
+    clientErrors: Math.max(a.clientErrors, b.clientErrors),
+    lastErrorAt: newer ? b.lastErrorAt : a.lastErrorAt,
+    lastErrorKind: newer ? b.lastErrorKind : a.lastErrorKind,
   };
 }
 

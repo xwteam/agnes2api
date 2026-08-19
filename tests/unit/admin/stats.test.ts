@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   EMPTY_STATS, ZERO_DELTA, normalizeStats, withOutcome,
-  statsDelta, addDelta, applyDelta, sumStats,
+  statsDelta, addDelta, applyDelta, sumStats, maxStats,
 } from "../../../src/core/admin/stats.js";
 import type { KeyRecord, KeyStats } from "../../../src/core/types.js";
 
@@ -15,16 +15,52 @@ describe("normalizeStats", () => {
     expect(normalizeStats(undefined)).toEqual(EMPTY_STATS);
   });
   it("字段缺一半时逐字段补零，**不整块丢弃已有的计数**", () => {
-    const partial = { requests: 5, success: 5 } as unknown as KeyStats;
+    // ⚠️ 这里**不再**写 `as unknown as KeyStats`：真实输入来自 JSON.parse，
+    // 形参因此是 `unknown`。以前要靠强转才写得出这一格，那本身就是签名在撒谎的证据（评审 Minor 5）。
+    const partial = { requests: 5, success: 5 };
     expect(normalizeStats(partial)).toEqual({
       requests: 5, success: 5, failed: 0, clientErrors: 0, lastErrorAt: null, lastErrorKind: null,
     });
   });
   it("非数字（存储被写坏）当成 0，不让 NaN 进面板", () => {
-    const bad = { requests: "5", success: null, failed: Number.NaN, clientErrors: 1 } as unknown as KeyStats;
+    const bad = { requests: "5", success: null, failed: Number.NaN, clientErrors: 1 };
     expect(normalizeStats(bad)).toEqual({
       requests: 0, success: 0, failed: 0, clientErrors: 1, lastErrorAt: null, lastErrorKind: null,
     });
+  });
+
+  it("整块不是对象（存储里存了字符串 / null）时退回全零，而不是抛", () => {
+    for (const bad of [null, undefined, "oops", 42, []]) {
+      expect(normalizeStats(bad), String(bad)).toEqual(EMPTY_STATS);
+    }
+  });
+});
+
+/**
+ * `maxStats` 是 C2 那条缺陷的修复面：落盘基线**只增不减**。
+ * 它同时要处理两个方向——调用方视图比存储旧（dispatcher 回写未合并的 next），
+ * 以及比存储新（快照过 TTL 之后带回别的 isolate 写得更高的值）。
+ */
+describe("maxStats：基线只增不减", () => {
+  it("逐字段取大，不是整块二选一", () => {
+    const a: KeyStats = { requests: 10, success: 9, failed: 1, clientErrors: 0, lastErrorAt: 5, lastErrorKind: "a" };
+    const b: KeyStats = { requests: 7, success: 7, failed: 0, clientErrors: 3, lastErrorAt: 4, lastErrorKind: "b" };
+    // 手写字面量：requests/success/failed 取 a 的，clientErrors 取 b 的，
+    // 最近错误按**时刻**取 a 的（5 > 4）——整块二选一给不出这个组合。
+    expect(maxStats(a, b)).toEqual({
+      requests: 10, success: 9, failed: 1, clientErrors: 3, lastErrorAt: 5, lastErrorKind: "a",
+    });
+  });
+  it("最近错误按时刻取新的那条（连同它的 kind）", () => {
+    const a: KeyStats = { ...EMPTY_STATS, lastErrorAt: 100, lastErrorKind: "old" };
+    const b: KeyStats = { ...EMPTY_STATS, lastErrorAt: 200, lastErrorKind: "new" };
+    expect(maxStats(a, b).lastErrorKind).toBe("new");
+    expect(maxStats(b, a).lastErrorKind, "参数顺序不该改变结果").toBe("new");
+  });
+  it("一边没有最近错误时取另一边的", () => {
+    const withErr: KeyStats = { ...EMPTY_STATS, lastErrorAt: 7, lastErrorKind: "x" };
+    expect(maxStats(EMPTY_STATS, withErr).lastErrorAt).toBe(7);
+    expect(maxStats(withErr, EMPTY_STATS).lastErrorAt).toBe(7);
   });
 });
 
