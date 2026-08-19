@@ -793,6 +793,113 @@ describe("Tier-1 计数不许被写消除吃掉", () => {
     ).toEqual(CLEAN_AFTER_REIMPORT(t));
   });
 
+  /**
+   * **这一条钉的是「已知代价」，不是缺陷。别把它当 bug 修掉——先读完再动。**
+   *
+   * `base + delta` 让基线由本实例自己记账（C2 的修法）。代价是反方向的一格：
+   * 运维手工把存储里的 `stats` **改小**（例如清零，一个合理的「重置统计」动作）时，
+   * 还活着的实例记着自己的落盘基线，`maxStats` 取大 ⇒ 下一次落盘会把旧值顶回去。
+   *
+   * 之所以接受：①`stats` 是**遥测**，不是凭据，顶回去不产生安全后果
+   *（P3a 那条 M1 之所以是 Critical，恰恰因为复活的是**凭据**且**不自愈**）；
+   * ②它**会自愈**——实例一回收基线就没了，下面后半段把这一点也钉住了，
+   * 五语言 DEPLOY.md 的 `POOL_TOUCH_INTERVAL_MS` 那一格写的就是这句话；
+   * ③P3c 会给「重置统计」一条经过 repo 的正式路径，那时顺手清 `pendingStats` 即可。
+   *
+   * 留这条用例的理由：将来谁把 `trackBaseline` 改成「采信存储里的新值」，
+   * 这条会变红——提醒他那是一个**语义选择**（会把 C2 那条 Critical 放回来），
+   * 不是随手改。这个项目栽过七次的形状正是「合理的判断没有留下可执行的痕迹」。
+   */
+  it("存储侧被外部改小时，本实例在 isolate 存活期内仍按自己的基线上报——这是 base+delta 的已知代价，不是 bug", async () => {
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const opts = { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 21_600_000 };
+    const cfg = { maxStrikes: 99, cooldownStrikeMs: 1 };
+    const repo = new KeyPoolRepo(st, opts);
+    const rec = await repo.add("sk-tier1-extreset-jjjjjj");
+    const { rec: cur } = await primed(repo, st, rec.id, t);
+
+    // 4 次成功被消除，再用一次 strike 把它们一起落盘 ⇒ 存储里 requests = 5。
+    for (let i = 0; i < 4; i++) {
+      t += 100;
+      await repo.save(withOutcome(applySuccess(cur, t), "success", t, null), cur);
+    }
+    t += 100;
+    await repo.save(withOutcome(applyStrike(cur, t, cfg, "x"), "failed", t, "x"), cur);
+    const flushed = await st.inner.get<KeyRecord>(KEY_PREFIX + rec.id);
+    expect(flushed?.stats?.requests, "前置条件：先攒出一份非零的落盘基线").toBe(5);
+
+    // 运维手工重置统计：直接改 store.json / `wrangler kv key put`，绕过 repo。
+    await st.inner.put(KEY_PREFIX + rec.id, { ...flushed!, stats: undefined });
+    t += 60_000;   // 过一个 TTL，本实例的快照重新读到这份被清零的记录
+    const seen = (await repo.all()).find((x) => x.id === rec.id)!;
+    expect(seen.stats, "前置条件：快照确实读到了被清零的那份").toBeUndefined();
+
+    t += 100;
+    await repo.save(withOutcome(applyStrike(seen, t, cfg, "probe"), "failed", t, "probe"), seen);
+    expect(
+      (await st.inner.get<KeyRecord>(KEY_PREFIX + rec.id))?.stats?.requests,
+      "已知代价：本实例把自己的基线顶了回去（5 + 这次探针 = 6）。"
+      + "若这里读到 1，说明有人把 trackBaseline 改成了采信存储的新值——那会把 C2 放回来",
+    ).toBe(6);
+
+    // **后半段：实例一回收就自愈。** 这是「最迟到实例回收后一致」那句文档的可执行依据，
+    // 也是把这条代价判为可接受的全部理由。
+    await st.inner.put(KEY_PREFIX + rec.id, { ...flushed!, stats: undefined });
+    const recycled = new KeyPoolRepo(st, opts);
+    const seen2 = (await recycled.all()).find((x) => x.id === rec.id)!;
+    t += 100;
+    await recycled.save(withOutcome(applyStrike(seen2, t, cfg, "probe"), "failed", t, "probe"), seen2);
+    expect(
+      (await st.inner.get<KeyRecord>(KEY_PREFIX + rec.id))?.stats?.requests,
+      "新实例没有那份基线，必须如实按存储里的值继续记——不自愈的话这条代价就不可接受了",
+    ).toBe(1);
+  });
+
+  /**
+   * `next.id !== prev.id` 那条路径**不碰任何一方的基线**。
+   *
+   * 今天生产上走不到它（`keypool.ts` 的 apply* 全部原样透传 id），但判据必须自洽
+   * ——这条以前只被「只有 id 不同的两份之间不许消除」**间接**守着，那条断言的是
+   * 「会不会落盘」，完全不覆盖「有没有顺手动了基线」。评审登记的边界 3，转成直接断言。
+   */
+  it("prev 是另一把 key 时既不消耗也不污染基线（这条路径今天走不到，但判据必须自洽）", async () => {
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const cfg = { maxStrikes: 99, cooldownStrikeMs: 1 };
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 21_600_000 });
+    const a = await repo.add("sk-tier1-crossid-aaaaaaaa");
+    const b = await repo.add("sk-tier1-crossid-bbbbbbbb");
+    const { rec: curA } = await primed(repo, st, a.id, t);
+
+    for (let i = 0; i < 3; i++) {
+      t += 100;
+      await repo.save(withOutcome(applySuccess(curA, t), "success", t, null), curA);   // 攒 3 次
+    }
+    const curB = (await repo.all()).find((x) => x.id === b.id)!;
+
+    // 跨 key 的一次写：next 是 A，prev 是 B。
+    t += 100;
+    await repo.save({ ...curA, lastUsedAt: t }, curB);
+    // 它把 `next` **原样**写下去（next 带什么 stats 就是什么），既不合并 A 攒着的
+    // 3 次，也不推进 A 的基线。这里 next 来自 primed 之后重读的那份，因此是一份
+    // 归一化后的全零——**手写字面量**，不从被测对象反推。
+    expect(
+      (await st.inner.get<KeyRecord>(KEY_PREFIX + a.id))?.stats,
+      "跨 key 的那次写把 A 攒着的增量顺手合并进去了——它拿的是另一把 key 的视图，没有资格动 A 的账",
+    ).toEqual({ requests: 0, success: 0, failed: 0, clientErrors: 0, lastErrorAt: null, lastErrorKind: null });
+
+    // A 自己的下一次真落盘，攒着的 3 次一次不少（既没被消耗，也没被污染）。
+    const seenA = (await repo.all()).find((x) => x.id === a.id)!;
+    t += 100;
+    await repo.save(withOutcome(applyStrike(seenA, t, cfg, "probe"), "failed", t, "probe"), seenA);
+    const stored = await st.inner.get<KeyRecord>(KEY_PREFIX + a.id);
+    expect(stored?.stats?.success, "A 攒着的 3 次成功被跨 key 的那次写弄丢了").toBe(3);
+    expect(stored?.stats?.requests).toBe(4);
+    // B 那边一个字都不该动。
+    expect((await st.inner.get<KeyRecord>(KEY_PREFIX + b.id))?.stats, "B 的账被那次跨 key 的写碰了").toBeUndefined();
+  });
+
   it("落盘抛错时攒着的增量必须留着，下一次成功的写要把它一起带下去", async () => {
     // 变异表里「把 pendingStats.delete 挪到 put 之前」原本没有任何用例守着，这条补上。
     const st = new SharedCountingStorage();
