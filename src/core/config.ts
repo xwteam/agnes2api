@@ -36,6 +36,15 @@ export interface GatewayConfig {
   /** 见 `KeyPoolRepoOptions.touchIntervalMs`。0 = 关闭写消除。生效时机同上。 */
   poolTouchIntervalMs: number;
   registrar: RegistrarConfig;
+  /**
+   * 本次装载有没有降级（存储的 config 键读不出来 / 某些字段回落了默认值）。
+   * **写这句时还没有消费者**：将来 `GET /admin/api/overview`（P3b 的概览板块）
+   * 会直接把它交给面板，顶部渲染红色横幅——「保存了却没生效」是这个项目最高频
+   * 的用户困惑，不让它可见就等于让面板撒谎。在那条路径接上之前，这里只是把
+   * 信号立起来，全仓还没有任何代码读它（见 tests/unit/source-guards.test.ts
+   * 之类的门禁不会因为这一点变红，这只是老实交代当前状态，不是缺陷）。
+   */
+  degraded: boolean;
 }
 
 const DEFAULTS = {
@@ -78,6 +87,12 @@ function num(
    * 这个有意义的取值，是用户的逃生口。
    */
   min = 1,
+  /**
+   * 字段级降级要能被上层观测到（`GatewayConfig.degraded`）。**用传入的标记打点，
+   * 不要改成让调用方去解析日志**——那是把可观测性建在文案上，日志措辞一改就断。
+   * 可选：`configFromEnv` 从不传，因为它没有「存储」这个降级来源，恒为 false。
+   */
+  flags?: { degraded: boolean },
 ): number {
   const raw = env[envName];
   if (raw !== undefined) {
@@ -100,6 +115,7 @@ function num(
         msg: "存储中的配置值非法，本字段回落到默认值",
         fields: { field: fieldName, source: "stored", raw: String(stored), fallback },
       });
+      if (flags) flags.degraded = true;
       return fallback;
     }
     return stored;
@@ -128,31 +144,83 @@ export function configFromEnv(env: Env, logger: Logger = NULL_LOGGER): GatewayCo
     poolCacheTtlMs: num(env, "POOL_CACHE_TTL_MS", "poolCacheTtlMs", undefined, DEFAULTS.poolCacheTtlMs, logger, 0),
     poolTouchIntervalMs: num(env, "POOL_TOUCH_INTERVAL_MS", "poolTouchIntervalMs", undefined, DEFAULTS.poolTouchIntervalMs, logger, 0),
     registrar: registrarFromEnv(env, {}, logger),
+    // 恒为 false：这条路径没有「存储」这个降级来源，纯 env + 内置默认值不存在
+    // 「保存了却没生效」这种可能，没有什么好提示的。
+    degraded: false,
   };
 }
 
-export async function loadConfig(env: Env, storage: Storage, logger: Logger = NULL_LOGGER): Promise<GatewayConfig> {
-  // 逃生口：存储里的 config 键被写坏到连降级都救不回来时（例如 registrar 那侧仍会抛错），
-  // 用 RESET_CONFIG=1 启动即可完全忽略它。**只忽略不删**——删了用户就再也拿不回原值了。
-  const stored = env.RESET_CONFIG === "1"
-    ? {}
-    : ((await storage.get<Partial<GatewayConfig>>("config")) ?? {});
+export async function loadConfig(
+  env: Env,
+  storage: Storage,
+  logger: Logger = NULL_LOGGER,
+  opts: {
+    /**
+     * 存储读不出来时要不要降级到 env + 默认值。**默认 false（严格：如实抛）。**
+     *
+     * `loadConfig` 有**两个**调用身份，而它们要的是相反的行为：
+     * ① `ConfigHolder` 的 `Refreshable.load`——热实例每 `CONFIG_TTL_MS` 就会
+     *    调一次。这条路径上 `Refreshable.reload()` 本来就有**严格更好**的兜底：
+     *    抛错时原样保留上一份合法快照（见 refreshable.ts）。若这里自己把
+     *    「读不出来」吞成「降级」，热路径上一次瞬时读抖动就会把面板保存的配置
+     *    **静默**换成内置默认值——而且免费档读桶按 UTC 天重置，这不是几十秒
+     *    的抖动，是剩下的一整天（评审实测复现：`maxStrikes` 9→3、
+     *    `cooldownStrikeMs` 7,777,000→1,800,000、`registrar.enabled` true→false，
+     *    补池被静默关掉）。**这条路径必须传 false（或不传），让异常原样冒给
+     *    `Refreshable.reload()` 处理**，不许在这里截胡。
+     * ② `createConfigHolder` 的 `prime()`（冷启动）与两个入口各自的
+     *    `buildTendDeps`——这里没有「上一份合法快照」可退，抛出去的后果是
+     *    Worker 冷 isolate 全部 500 / Node 重启循环，而 GATEWAY_TOKEN 通常就在
+     *    环境变量里，存储那份只是覆盖层，读不出来不该让整个网关起不来。
+     *    **只有这条路径才该传 true。**
+     */
+    degradeOnUnreadable?: boolean;
+  } = {},
+): Promise<GatewayConfig> {
+  const degradeOnUnreadable = opts.degradeOnUnreadable ?? false;
+  // 逃生口：存储里的 config 键被写坏到连降级都救不回来时，RESET_CONFIG=1 完全忽略它。
+  // **只忽略不删**——删了用户就再也拿不回原值了。
+  let stored: Partial<GatewayConfig> = {};
+  let storageUnreadable = false;
+  if (env.RESET_CONFIG !== "1") {
+    try {
+      stored = (await storage.get<Partial<GatewayConfig>>("config")) ?? {};
+    } catch (err) {
+      // 热路径（degradeOnUnreadable=false）：如实抛，交给 Refreshable.reload()
+      // 的既有兜底（保留上一份合法快照）——见上面 degradeOnUnreadable 的说明。
+      if (!degradeOnUnreadable) throw err;
+      // 只有冷启动这条路径才走到这里：**读不出来 ⇒ 降级到 env + 默认值，
+      // 不是让网关起不来。** 与 §5.4「存储非法值字段级降级」同一条原则：
+      // 存储**读不出来**比存储值非法更轻，不该得到更重的处置。
+      // 唯一保留 fatal 的仍然是「两边都没有 gatewayToken」，见下。
+      storageUnreadable = true;
+      logger.log({
+        level: "error", event: "config.storage_unreadable",
+        msg: "读取存储中的 config 键失败，本次装载只用环境变量与内置默认值（面板里保存的配置本次不生效）",
+        fields: { err: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
 
   const gatewayToken = env.GATEWAY_TOKEN ?? stored.gatewayToken;
   // 唯一保留 fatal 的一条：没有口令就无法鉴权，继续跑比停下来更危险。
   if (!gatewayToken) throw new Error("缺少 GATEWAY_TOKEN，网关无法启动");
 
+  // 字段级降级也要计入 degraded：`num()` 走 config.invalid 分支时会往这里打标记。
+  const flags = { degraded: storageUnreadable };
+
   return {
     gatewayToken,
     agnesBaseUrl: env.AGNES_BASE_URL ?? stored.agnesBaseUrl ?? DEFAULTS.agnesBaseUrl,
-    upstreamTimeoutMs: num(env, "UPSTREAM_TIMEOUT_MS", "upstreamTimeoutMs", stored.upstreamTimeoutMs, DEFAULTS.upstreamTimeoutMs, logger),
-    upstreamSyncTimeoutMs: num(env, "UPSTREAM_SYNC_TIMEOUT_MS", "upstreamSyncTimeoutMs", stored.upstreamSyncTimeoutMs, DEFAULTS.upstreamSyncTimeoutMs, logger),
-    maxStrikes: num(env, "MAX_STRIKES", "maxStrikes", stored.maxStrikes, DEFAULTS.maxStrikes, logger),
-    cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", stored.cooldownRateLimitMs, DEFAULTS.cooldownRateLimitMs, logger),
-    cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", stored.cooldownPaymentMs, DEFAULTS.cooldownPaymentMs, logger),
-    cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", stored.cooldownStrikeMs, DEFAULTS.cooldownStrikeMs, logger),
-    poolCacheTtlMs: num(env, "POOL_CACHE_TTL_MS", "poolCacheTtlMs", stored.poolCacheTtlMs, DEFAULTS.poolCacheTtlMs, logger, 0),
-    poolTouchIntervalMs: num(env, "POOL_TOUCH_INTERVAL_MS", "poolTouchIntervalMs", stored.poolTouchIntervalMs, DEFAULTS.poolTouchIntervalMs, logger, 0),
+    upstreamTimeoutMs: num(env, "UPSTREAM_TIMEOUT_MS", "upstreamTimeoutMs", stored.upstreamTimeoutMs, DEFAULTS.upstreamTimeoutMs, logger, 1, flags),
+    upstreamSyncTimeoutMs: num(env, "UPSTREAM_SYNC_TIMEOUT_MS", "upstreamSyncTimeoutMs", stored.upstreamSyncTimeoutMs, DEFAULTS.upstreamSyncTimeoutMs, logger, 1, flags),
+    maxStrikes: num(env, "MAX_STRIKES", "maxStrikes", stored.maxStrikes, DEFAULTS.maxStrikes, logger, 1, flags),
+    cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", stored.cooldownRateLimitMs, DEFAULTS.cooldownRateLimitMs, logger, 1, flags),
+    cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", stored.cooldownPaymentMs, DEFAULTS.cooldownPaymentMs, logger, 1, flags),
+    cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", stored.cooldownStrikeMs, DEFAULTS.cooldownStrikeMs, logger, 1, flags),
+    poolCacheTtlMs: num(env, "POOL_CACHE_TTL_MS", "poolCacheTtlMs", stored.poolCacheTtlMs, DEFAULTS.poolCacheTtlMs, logger, 0, flags),
+    poolTouchIntervalMs: num(env, "POOL_TOUCH_INTERVAL_MS", "poolTouchIntervalMs", stored.poolTouchIntervalMs, DEFAULTS.poolTouchIntervalMs, logger, 0, flags),
     registrar: registrarFromEnv(env, stored.registrar ?? {}, logger),
+    degraded: flags.degraded,
   };
 }

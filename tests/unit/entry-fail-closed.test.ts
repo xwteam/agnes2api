@@ -60,6 +60,7 @@ describe("Entry fail-closed 行为", () => {
         poolCacheTtlMs: 60_000,
         poolTouchIntervalMs: 21_600_000,
         registrar: DEFAULT_REGISTRAR,
+        degraded: false,
       });
     });
 
@@ -91,6 +92,7 @@ describe("Entry fail-closed 行为", () => {
         poolCacheTtlMs: 0,
         poolTouchIntervalMs: 0,
         registrar: DEFAULT_REGISTRAR,
+        degraded: false,
       });
     });
   });

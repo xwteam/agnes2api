@@ -44,6 +44,7 @@ export const TEST_CONFIG: GatewayConfig = {
   poolCacheTtlMs: 0, poolTouchIntervalMs: 0,
   // 注册机默认关闭，测试夹具无需凭据。
   registrar: registrarFromEnv({}, {}),
+  degraded: false,
 };
 
 /**

@@ -40,8 +40,16 @@ export async function createConfigHolder(deps: {
   now: () => number;
   ttlMs?: number;
 }): Promise<ConfigHolder> {
+  // **只有 prime() 那一次装载**才允许「存储读不出来」降级到 env + 默认值——
+  // 那时没有上一份合法快照可退，不降级的后果是冷启动直接把整个网关拒之门外。
+  // 之后每一次 ensureFresh() 触发的例行刷新都必须严格：抛错交给下面的
+  // Refreshable 自己的兜底（保留上一份合法快照），不许在 loadConfig 内部
+  // 把一次热路径上的瞬时读抖动悄悄换成默认值——完整理由见 loadConfig 里
+  // degradeOnUnreadable 那段注释。这个标记只在闭包里活一次，prime() 成功之后
+  // 就再也用不上（同一个 Refreshable 实例的 load 之后只会被 reload() 调用）。
+  let primed = false;
   const r = new Refreshable<GatewayConfig>({
-    load: () => loadConfig(deps.env, deps.storage, deps.logger),
+    load: () => loadConfig(deps.env, deps.storage, deps.logger, { degradeOnUnreadable: !primed }),
     ttlMs: deps.ttlMs ?? CONFIG_TTL_MS,
     now: deps.now,
     onError: (err) => deps.logger.log({
@@ -52,6 +60,7 @@ export async function createConfigHolder(deps: {
   });
   // 首次装载**失败必须抛**：缺 GATEWAY_TOKEN 拒绝服务是 P1 的三条不变量之一。
   await r.prime();
+  primed = true;
   return {
     // prime 成功过，current() 一定有值。
     current: () => r.current() as GatewayConfig,

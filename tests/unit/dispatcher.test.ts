@@ -38,6 +38,7 @@ const CONFIG = {
   // 等于让这些断言测的是缓存而不是记账。两者由 pool-cache / quota-account 覆盖。
   poolCacheTtlMs: 0, poolTouchIntervalMs: 0,
   registrar: registrarFromEnv({}, {}),
+  degraded: false,
 };
 
 async function makeRepo(keys: string[]) {

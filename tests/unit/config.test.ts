@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { loadConfig } from "../../src/core/config.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { recordingLogger } from "../helpers/recording-logger.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
+import type { Storage } from "../../src/ports/storage.js";
 
 describe("loadConfig", () => {
   it("无任何来源时用内置默认值", async () => {
@@ -55,6 +57,61 @@ describe("loadConfig", () => {
 
   it("缺少 GATEWAY_TOKEN 时抛错", async () => {
     await expect(loadConfig({}, new MemoryStorage())).rejects.toThrow(/GATEWAY_TOKEN/);
+  });
+
+  /**
+   * 防住的真实故障：KV 读配额打穿（或存储临时不可用）时，**冷 isolate 起不来**——
+   * `loadConfig` 抛 → `prime()` 抛 → `buildApp` 抛 → Worker 全部流量 500 / Node 重启循环。
+   * 而 GATEWAY_TOKEN 明明就在环境变量里，存储那份 config 键只是覆盖层。
+   * 设计文档 §5.4 定的是「env 非法 fail-fast，存储非法字段级降级」——
+   * 存储**读不出来**比存储值非法更轻，不该得到更重的处置。
+   *
+   * ⚠️ **这条降级只在 `degradeOnUnreadable: true` 时才生效，且只该由冷启动那条
+   * 路径（`createConfigHolder` 的 `prime()`）传它。** `loadConfig` 同时是
+   * `ConfigHolder` 的 `Refreshable.load`，热实例每个 TTL 都会调它——那条路径上
+   * `Refreshable.reload()` 本来就有严格更好的兜底（抛错时保留上一份合法快照），
+   * 若默认就在这里降级，热路径上一次瞬时读抖动会把面板保存的配置静默换成默认值
+   * （评审实测复现，见 tests/unit/config-holder.test.ts 那条「热实例上一次读
+   * 抖动」用例）。所以默认（不传 opts）是**严格**的，见下面单独一条用例。
+   */
+  it("degradeOnUnreadable=true 时，存储的 config 键读不出来降级到 env + 默认值", async () => {
+    const logger = recordingLogger();
+    const storage: Storage = {
+      get: async () => { throw new Error("read quota exhausted"); },
+      put: async () => {}, delete: async () => {}, list: async () => [],
+    };
+    const cfg = await loadConfig(
+      { GATEWAY_TOKEN: "env-token", MAX_STRIKES: "7" }, storage, logger, { degradeOnUnreadable: true },
+    );
+    expect(cfg.gatewayToken).toBe("env-token");
+    // 让「env 覆盖」与「内置默认」在同一条用例里都出现：只验其中一个的话，
+    // 「降级时把整份配置换成默认值」这种实现也能过（假阳性形态 1）。
+    expect(cfg.maxStrikes).toBe(7);
+    expect(cfg.cooldownRateLimitMs).toBe(60_000);
+    expect(logger.has("config.storage_unreadable"), "降级必须留痕，否则运维查不出为什么面板里的配置没生效").toBe(true);
+  });
+
+  it("degradeOnUnreadable=true 时，存储读不出来**且** env 没给 gatewayToken 仍然 fail-closed", async () => {
+    const storage: Storage = {
+      get: async () => { throw new Error("read quota exhausted"); },
+      put: async () => {}, delete: async () => {}, list: async () => [],
+    };
+    await expect(
+      loadConfig({}, storage, NULL_LOGGER, { degradeOnUnreadable: true }),
+    ).rejects.toThrow("缺少 GATEWAY_TOKEN");
+  });
+
+  it("默认（不传 opts）是严格的：存储读不出来直接如实抛，不降级——热路径靠这个", async () => {
+    const storage: Storage = {
+      get: async () => { throw new Error("read quota exhausted"); },
+      put: async () => {}, delete: async () => {}, list: async () => [],
+    };
+    // 即使 env 里有合法的 GATEWAY_TOKEN（换句话说，"降级"本可以拼出一份看起来
+    // 合法的配置），默认也不许把读失败吞掉——必须原样抛出去，交给调用方
+    // （Refreshable.reload()）决定怎么兜底。
+    await expect(
+      loadConfig({ GATEWAY_TOKEN: "env-token" }, storage, NULL_LOGGER),
+    ).rejects.toThrow("read quota exhausted");
   });
 
   it("数值型配置为非法值时抛错而不是静默取 NaN", async () => {
