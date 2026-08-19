@@ -15,7 +15,8 @@
     "dev:worker": "node scripts/build-ui.mjs && wrangler dev",
     "setup:worker": "node scripts/setup-worker.mjs",
     "check:ui": "node scripts/check-ui-budget.mjs",
-    "check:wrangler": "node scripts/check-wrangler-placeholder.mjs"
+    "check:wrangler": "node scripts/check-wrangler-placeholder.mjs",
+    "check:i18n": "node scripts/check-i18n.mjs"
   },
   "keywords": [],
   "author": "",

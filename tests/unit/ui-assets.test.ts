@@ -63,12 +63,21 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
   });
 
   /**
+   * 下限绊线：防「walk 扫了个空目录也全绿」。上面那条「源目录 == 生成物」在两边
+   * 一起变空时同样成立，是这个项目第 1 类假阳性的经典形态——所以单独钉一个
+   * 与磁盘扫描无关的下限。17 是本期（Task 3）落地后源文件的实际数量，手写字面量。
+   */
+  it("源文件数量不低于 17——防扫描本身坏成空目录", () => {
+    expect(SOURCES.length, "扫描本身坏了").toBeGreaterThanOrEqual(17);
+  });
+
+  /**
    * **资产清单是显式快照，加一个文件就必须在这里表态。**
    *
    * 丢进 `admin-ui/` 的任何东西都会变成一条**免鉴权的公网端点**——白名单里有
    * `.json`，将来谁放一个 `config.json` 或一份调试笔记进去，它就静默地公开可取，
    * 而唯一的网只有 scan-secrets 那 5 条正则。这是公开 MIT 仓、卖点是「裸克隆即
-   * deploy」，趁资产集合只有 5 个文件时钉住成本最低。
+   * deploy」，趁资产集合还没长大时钉住成本最低。
    *
    * 上面那条只保证「生成物 == 源目录」，两边一起长的时候它不会红；这条才拦得住。
    *
@@ -81,14 +90,34 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
    * `.gitattributes` 特意不加 `-diff`，理由正是「手工往生成物里塞脚本恰恰最该被
    * 评审看见」——两处是同一个决定的两半。想把它自动化，需要的是别的东西
    * （出网域名白名单 / CSP 的 connect-src 收紧到自身），不是把这条快照写得更长。
+   *
+   * Task 3（前端基础设施 + i18n 门禁）一次加了 12 个文件：`css/shell.css`、
+   * `css/sections.css`、`js/api.js`、`js/i18n-dict.js`、`js/i18n.js`、`js/theme.js`、
+   * `js/ui.js`、`js/pure/format.mjs`、`js/pure/bucket.mjs`、以及三个空板块桩
+   * `js/sec-overview.js` / `js/sec-keys.js` / `js/sec-events.js`。逐个确认过：
+   * 全部是面板自己的 HTML/CSS/JS，没有配置、没有笔记、没有任何含数据的文件，
+   * 都该是公开可取的。清单**手写**，不是从测试跑出来的实际值粘回去的
+   * （那是本项目登记的第 6 种假阳性：期望值从被测对象自己推导出来）。
    */
   it("资产清单与显式快照一致——admin-ui/ 里多一个文件就是多一个公网端点", () => {
     expect(Object.keys(UI_ASSETS).sort()).toEqual([
       "/admin",
       "/admin/css/base.css",
+      "/admin/css/sections.css",
+      "/admin/css/shell.css",
+      "/admin/js/api.js",
       "/admin/js/app.js",
       "/admin/js/boot.js",
+      "/admin/js/i18n-dict.js",
+      "/admin/js/i18n.js",
+      "/admin/js/pure/bucket.mjs",
+      "/admin/js/pure/format.mjs",
       "/admin/js/pure/mask.mjs",
+      "/admin/js/sec-events.js",
+      "/admin/js/sec-keys.js",
+      "/admin/js/sec-overview.js",
+      "/admin/js/theme.js",
+      "/admin/js/ui.js",
     ]);
   });
 
@@ -323,6 +352,46 @@ describe("生成器对违规输入 exit 1", () => {
     ['大写标签名', '<SCRIPT src="/admin/js/x.js">ignored</SCRIPT>'],
     ['结束标签带空格', '<script src="/admin/js/x.js">ignored</script >'],
   ])("真的带 src 的外链脚本不误伤：%s", (_name, tag) => {
+    const r = runWithMutation((ui) => append(join(ui, "index.html"), `\n${tag}\n`));
+    expect(r.code, `${tag}\n${r.stderr}`).toBe(0);
+  });
+
+  /**
+   * **M5 的第四类绕过：`src=` 藏在引号包裹的属性值内部。**
+   *
+   *   <script data-x="foo src=bar">payload</script>
+   *
+   * `/(^|\s)src\s*=/i` 在整个属性串上找 `src=`，而这里的 `src=` 出现在**属性值
+   * 内部**（被 `"..."` 包着）——浏览器只认真正的 `src` 属性，会执行 payload，
+   * 门禁却因为正则看到了 `src=` 就把它归类成外链脚本放行（评审实测 exit 0 + payload
+   * 入包）。修法是先把引号包裹的属性值抠掉再判 `src` 的位置。
+   *
+   * **必须断言原因，不是只断言 exit 1**：只断言 exit 1 的话，把判据改回「看到 src=
+   * 就放行」这个旧版本在这四格上依旧是 exit 0（旧版本本身就会放行），但如果换一种
+   * 退化——比如让 `stripQuoted` 变成误伤一切从而 exit 1——诊断信息不对时这条测试
+   * 也该能分辨出来（诊断必须是「禁止内联脚本」，不是别的失败原因）。
+   */
+  it.each([
+    ["属性值里藏 src=", '<script data-x="foo src=bar">alert(1)</script>'],
+    ["单引号属性值里藏 src=", "<script data-x='foo src=bar'>alert(1)</script>"],
+    ["大写标签名 + 属性值里藏 src=", '<SCRIPT DATA-X="src=bar">alert(1)</SCRIPT>'],
+    ["属性值里藏 src= 且结束标签放宽", '<script data-x="src=bar">alert(1)</script >'],
+  ])("引号包裹的属性值里藏 src= 仍然拦得住：%s", (_name, tag) => {
+    const r = runWithMutation((ui) => append(join(ui, "index.html"), `\n${tag}\n`));
+    expect(r.code, `${tag}\n${r.stderr}`).toBe(1);
+    expect(r.stderr, tag).toContain("内联脚本");
+  });
+
+  /**
+   * 反方向：**这两格才是「抠掉引号」单独买到的东西**——真外链脚本即便带着别的
+   * 引号属性也不许被误伤。判据严回去（不抠引号）时它们照样是 exit 0，所以这组
+   * 本身不区分新旧判据；真正区分新旧判据的是上面那组 BYPASS 用例。这两格防的是
+   * 「抠引号」这个修法本身矫枉过正——比如把 `stripQuoted` 写成整串清空。
+   */
+  it.each([
+    ["普通外链", '<script src="/admin/js/app.js"></script>'],
+    ["外链 + 别的带引号属性", '<script type="module" src="/admin/js/app.js"></script>'],
+  ])("真外链脚本不因为带别的引号属性被误伤：%s", (_name, tag) => {
     const r = runWithMutation((ui) => append(join(ui, "index.html"), `\n${tag}\n`));
     expect(r.code, `${tag}\n${r.stderr}`).toBe(0);
   });

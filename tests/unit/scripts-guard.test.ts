@@ -121,3 +121,44 @@ describe("pnpm build 在 CI 门禁列表里", () => {
     expect(ci).toMatch(/run:\s*pnpm build\s*$/m);
   });
 });
+
+/**
+ * CI 步骤编号。**它不是装饰**：门禁靠人一眼数得清「跑了几道」来发现「少跑了一道」，
+ * 而少跑一道的形态恰恰是静默的（那一步被删掉之后没有任何东西会红）。
+ * 期望值是**手写字面量**，不是从 yml 里数出来再回填。
+ */
+it("CI 恰好十道门，编号 1/10 到 10/10 各出现一次", () => {
+  const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+  for (let i = 1; i <= 10; i++) {
+    const n = ci.split(`name: ${i}/10 `).length - 1;
+    expect(n, `编号 ${i}/10 出现了 ${n} 次`).toBe(1);
+  }
+  // 反向：不许还剩下旧编号。
+  expect(ci, "还有步骤写着 N/9").not.toMatch(/name: \d+\/9 /);
+});
+
+/**
+ * CI 第 8/10、9/10 两步的退出码**全靠 `shell: bash` 提供的 pipefail**：
+ * 它们是 `pnpm test 2>&1 | tee ... ; grep ...`，没有 pipefail 时管道的退出码取最后一条命令，
+ * **测试失败会被 tee/grep 的成功退出码吃掉，CI 全绿**。
+ * 上面那组断言了这两步的裸命令、grep 次数、pnpm build——**唯独没断言它**。
+ * 今天它在位（P3a Task 8 评审核过），所以这是「护栏的护栏」，不是现存缺陷。
+ */
+it("跑测试的两步显式声明 shell: bash（pipefail 的唯一来源）", () => {
+  const yml = readFileSync(".github/workflows/ci.yml", "utf8");
+  // 期望值手写字面量：断言这两步各自的 name 与**下一个 `- name:`（或文件末尾）
+  // 之间**出现 `shell: bash`。
+  //
+  // ⚠️ **不能用固定长度的窗口**——已实测踩过：切成 400 字符的窗口会越界吃到
+  // 紧挨着的下一步。把 8/10 那一行 `shell: bash` 真的删掉后，这条断言当时依旧
+  // 全绿，因为窗口滑进了 9/10 自己的 `shell: bash`，「变异点与被守护的不变量」
+  // 没对齐。判据必须锚在**这一步自己的 YAML 块**，用下一个 `- name:` 当右边界，
+  // 而不是一个跟内容脱钩的字符数。
+  for (const name of ["8/10 单元 / 契约 / 前端纯函数测试（Node 运行时）", "9/10 契约测试（workerd 运行时）"]) {
+    const i = yml.indexOf(`name: ${name}`);
+    expect(i, `找不到步骤 ${name}`).toBeGreaterThan(0);
+    const nextStep = yml.indexOf("\n      - name:", i);
+    const chunk = yml.slice(i, nextStep === -1 ? yml.length : nextStep);
+    expect(chunk, `${name} 缺 shell: bash，管道里的失败会被 tee/grep 吃掉`).toContain("shell: bash");
+  }
+});

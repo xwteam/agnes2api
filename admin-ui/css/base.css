@@ -1,42 +1,51 @@
 /* 所有颜色一律引用变量，零硬编码色值。主色用 indigo（不是 kiro2api 的 emerald）：
-   同一个运维会同时开着两个结构一模一样的面板，颜色是最快最可靠的区分信号。 */
+   同一个运维会同时开着两个结构一模一样的面板，颜色是最快最可靠的区分信号。
+
+   本文件只放**组件原语 token** + 跨页面共用的基础重置/控件样式。外壳布局
+   （侧栏、登录闸、toast、modal）在 shell.css；业务内容（表格、卡片、徽章）
+   在 sections.css。两份都只覆盖 :root 的 token，不重复定义组件规则
+   （见两个文件各自的文件头）。 */
 :root {
-  --bg: #f7f8fa; --panel: #ffffff; --text: #1c1f26; --muted: #6b7280;
-  --border: #e3e6ec; --primary: #4f46e5; --primary-fg: #ffffff; --danger: #dc2626;
-  --radius: 10px; --gap: 16px;
+  --bg: #f7f8fa; --panel: #ffffff; --panel-2: #f0f1f5; --text: #1c1f26; --muted: #6b7280;
+  --border: #e3e6ec; --primary: #4f46e5; --primary-fg: #ffffff;
+  --danger: #dc2626; --danger-fg: #ffffff; --warn: #b45309; --warn-fg: #ffffff;
+  --ok: #15803d; --ok-fg: #ffffff;
+  --radius: 10px; --radius-sm: 6px; --gap: 16px; --gap-sm: 8px;
+  --shadow: rgba(15, 18, 24, 0.12);
 }
 :root[data-theme="dark"] {
-  --bg: #14161a; --panel: #1c1f26; --text: #e7e9ee; --muted: #9aa1ad;
-  --border: #2b303a; --primary: #818cf8; --primary-fg: #14161a; --danger: #f87171;
+  --bg: #14161a; --panel: #1c1f26; --panel-2: #23262f; --text: #e7e9ee; --muted: #9aa1ad;
+  --border: #2b303a; --primary: #818cf8; --primary-fg: #14161a;
+  --danger: #f87171; --danger-fg: #14161a; --warn: #fbbf24; --warn-fg: #14161a;
+  --ok: #4ade80; --ok-fg: #14161a;
+  --shadow: rgba(0, 0, 0, 0.4);
 }
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-.gate { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: var(--gap); }
-.gate-card {
-  width: 100%; max-width: 380px; padding: 28px; background: var(--panel);
-  border: 1px solid var(--border); border-radius: var(--radius);
-}
-.gate-card h1 { margin: 0 0 4px; font-size: 20px; }
-.gate-card p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+a { color: var(--primary); }
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* 输入 / 按钮的原语样式：登录闸的表单与 modal 的操作栏共用同一套。 */
 label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
-input[type="password"] {
-  width: 100%; padding: 10px 12px; margin-bottom: 14px; color: var(--text);
+input[type="password"], input[type="text"], select {
+  width: 100%; padding: 10px 12px; color: var(--text); font: inherit;
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
 }
 button {
-  width: 100%; padding: 10px 12px; font: inherit; cursor: pointer;
+  padding: 10px 12px; font: inherit; cursor: pointer;
   color: var(--primary-fg); background: var(--primary); border: 0; border-radius: var(--radius);
 }
 button[disabled] { opacity: .6; cursor: progress; }
-.err { min-height: 20px; margin-top: 10px; color: var(--danger); font-size: 13px; }
-.shell { display: none; padding: var(--gap); }
-.shell.on { display: block; }
-/* 登录成功后隐藏登录闸。用类而不是 el.style.display：
-   ⚠️ 理由**不是** CSP——`style-src` 管的是标记里的 `style="…"` 属性与 <style> 元素，
-   **CSSOM 写入（el.style.x = y）不受 CSP 约束**，简报那版其实也跑得通。
-   真正的理由是表现归样式表：`.gate` 的显示方式（现在是 flex）只写在这一个地方，
-   将来改布局不必回头去找 JS 里那句写死的 display 值。 */
-.gate.off { display: none; }
+button.danger { background: var(--danger); color: var(--danger-fg); }
+
+/* 图标按钮：侧栏与业务板块共用（svgIcon() 生成的 <svg> 直接放在里面）。 */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; padding: 0;
+  color: var(--text); background: transparent; border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.icon-btn:hover { background: var(--panel-2); }

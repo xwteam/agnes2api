@@ -17,6 +17,26 @@ import type { Logger } from "../../ports/logger.js";
  */
 export type TendFailureReason = Extract<MintOutcome, { ok: false }>["reason"] | "provider_missing";
 
+/**
+ * `TendFailureReason` 的运行期表。类型是编译期的，枚举不出来，而 P3 的面板要按它
+ * ① 渲染失败归因、② 校验 i18n 键齐全，两件事都发生在运行期。
+ *
+ * 双向穷尽：`satisfies` 保证每个元素都是合法成员，下面那个类型体操保证**没有遗漏**。
+ * 于是 `MintOutcome` 新增 reason 时 `tsc` 会在这里报错，逼加 reason 的人表态——
+ * 与 `FIELD_ROLE` 用 `Record<keyof KeyRecord, …>` 逼人表态是同一招。
+ */
+export const TEND_FAILURE_REASONS = [
+  "domain_blocked_all", "upstream_error", "code_timeout", "register_failed",
+  "login_failed", "key_failed", "provider_error", "network_error",
+  "rate_limited", "provider_missing",
+] as const satisfies readonly TendFailureReason[];
+
+type _NoMissingReason =
+  Exclude<TendFailureReason, (typeof TEND_FAILURE_REASONS)[number]> extends never ? true : never;
+/** 少列一个成员时这一行会 `tsc` 报错。它不是死代码，是编译期断言。 */
+const _reasonsExhaustive: _NoMissingReason = true;
+void _reasonsExhaustive;
+
 export interface TendResult {
   skipped: boolean;
   available: number;

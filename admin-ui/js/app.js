@@ -1,82 +1,157 @@
-/*
- * 登录闸。P3a 只有它——面板本体在 P3b。
+/**
+ * 面板入口：登录闸 + 板块注册表 + `showSection`。
  *
- * 两条约束在这里就定死，后面所有板块沿用：
- * ① 口令走 localStorage + `x-admin-key` **请求头**，禁止 Cookie 会话、禁止 `?key=`。
- *    现有鉴权无 Cookie 无 Session ⇒ CSRF 天然不成立；引入 Cookie 就必须同时
- *    加 SameSite=Strict 与 CSRF token，不能只加一半。口令进 URL 会落进浏览器历史、
- *    Referer 与各级访问日志，所以查询参数也一并禁掉。
- * ② 一切来自接口的内容一律 textContent，不用 innerHTML。
+ * 板块契约（设计文档 §9.3）：`A.sections.<name> = { init?, onShow?, onHide? }`。
+ * `showSection` 负责：切 .active、首次 init()、每次 onShow()、
+ * 离开时上一个板块 onHide()（**停轮询、作废在飞请求**）、把板块名写 localStorage。
+ * **没有 URL 路由、没有 hash**（放弃深链接，换与 kiro2api 一致的刷新复原行为）。
+ *
+ * ⚠️ **板块内不许各自监听 langchange**：框架层在这里统一 apply(document) +
+ * 重跑当前板块的 onShow()。板块自己再监听一次就是 kiro2api 那 4 处冗余监听。
  */
-import { maskKey } from "./pure/mask.mjs";
+import { t, apply, setLang, currentLang, LANGS } from "./i18n.js";
+import { getTheme, toggleTheme, setTheme } from "./theme.js";
+import { onUnauthorized } from "./api.js";
+import { overviewSection } from "./sec-overview.js";
+import { keysSection } from "./sec-keys.js";
+import { eventsSection } from "./sec-events.js";
 
 const KEY_STORE = "agnes2api_admin_key";
+const SECTION_STORE = "agnes2api_section";
+const SECTIONS = { overview: overviewSection, keys: keysSection, events: eventsSection };
+
 const gate = document.getElementById("gate");
 const shell = document.getElementById("shell");
 const form = document.getElementById("gate-form");
 const input = document.getElementById("gate-key");
 const err = document.getElementById("gate-err");
-const who = document.getElementById("shell-key");
-const ver = document.getElementById("shell-version");
 
-/** localStorage 在隐私模式下会抛，读写一律包起来——它不该能挡住登录。 */
 function store(op, value) {
   try {
     if (op === "get") return localStorage.getItem(KEY_STORE);
     if (op === "set") localStorage.setItem(KEY_STORE, value);
     if (op === "del") localStorage.removeItem(KEY_STORE);
-  } catch (e) {
-    // 存不下就存不下：本次会话照常可用，只是刷新后要重新输入。
-  }
+  } catch (e) { /* 隐私模式：本次会话照常可用，刷新后要重新输入 */ }
   return null;
 }
 
-async function probe(key) {
-  const res = await fetch("/admin/api/session", { headers: { "x-admin-key": key } });
-  if (res.status === 401) return { ok: false, reason: "unauthorized" };
-  // 403 **不当会话失效**：将来某个操作被拒绝时把人踢出后台并告知「密钥无效」，
-  // 是 kiro2api 踩过的坑。这里只有 401 才算登录失败。
-  if (!res.ok) return { ok: false, reason: "http_" + res.status };
-  return { ok: true, body: await res.json() };
+/**
+ * 口令里有浏览器**发不出去**的字符时，本地就拦下并说清楚。
+ *
+ * 后端的 checkAdminTokenShape 只查首尾空白与长度，于是一个含汉字/emoji/零宽空格的
+ * ADMIN_TOKEN 会装出一棵「200 但永远进不去」的面板：`fetch` 在设置非 Latin-1 请求头时
+ * 直接抛 TypeError，用户看到的是「网络错误」，而服务端日志里连 login_failed 都没有。
+ * 后端那半在 Task 7 一起改（多一条 reason），前端这半在这里——两边都要，
+ * 因为后端只在启动时看得到自己的口令，看不到用户在输入框里粘了什么。
+ */
+function sendable(s) {
+  return /^[\x21-\x7e]+$/.test(s);
 }
 
-function enter(key, body) {
+let current = null;
+
+function showSection(name) {
+  if (!SECTIONS[name]) name = "overview";
+  if (current === name) { SECTIONS[name].onShow && SECTIONS[name].onShow(); return; }
+  if (current && SECTIONS[current] && SECTIONS[current].onHide) SECTIONS[current].onHide();
+  for (const btn of document.querySelectorAll(".nav-item")) {
+    btn.classList.toggle("active", btn.getAttribute("data-section") === name);
+  }
+  for (const sec of document.querySelectorAll(".section")) {
+    sec.classList.toggle("active", sec.id === `sec-${name}`);
+  }
+  const s = SECTIONS[name];
+  if (!s.__inited) { s.init && s.init(document.getElementById(`sec-${name}`)); s.__inited = true; }
+  s.onShow && s.onShow();
+  current = name;
+  try { localStorage.setItem(SECTION_STORE, name); } catch (e) { /* ignore */ }
+}
+
+function enter() {
   gate.classList.add("off");
   shell.classList.add("on");
-  // 掩码后再显示：明文口令留在页面上，一次截图就泄漏了。
-  who.textContent = maskKey(key);
-  ver.textContent = String(body && body.version ? body.version : "—");
+  let saved = "overview";
+  try { saved = localStorage.getItem(SECTION_STORE) || "overview"; } catch (e) { /* ignore */ }
+  showSection(saved);
+}
+
+function leave(reason) {
+  if (current && SECTIONS[current] && SECTIONS[current].onHide) SECTIONS[current].onHide();
+  current = null;
+  store("del");
+  shell.classList.remove("on");
+  gate.classList.remove("off");
+  input.value = "";
+  err.textContent = reason ? t(reason) : "";
+}
+
+async function probe(key) {
+  const res = await fetch("/admin/api/session", { headers: { "x-admin-key": key }, credentials: "omit" });
+  if (res.status === 401) return { ok: false, reason: "gate.invalid" };
+  // 403 **不当会话失效**：将来某个操作被拒绝时把人踢出后台并告知「密钥无效」，
+  // 是 kiro2api 踩过的坑。这里只有 401 才算登录失败。
+  if (!res.ok) return { ok: false, reason: "gate.httpError", status: res.status };
+  return { ok: true, body: await res.json() };
 }
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const key = input.value.trim();
   err.textContent = "";
-  if (!key) { err.textContent = "请输入管理口令"; return; }
+  if (!key) { err.textContent = t("gate.empty"); return; }
+  if (!sendable(key)) { err.textContent = t("gate.badShape"); return; }
   const submit = form.querySelector("button");
   submit.disabled = true;
   try {
     const r = await probe(key);
     if (!r.ok) {
       // 失败**绝不**写入 localStorage，也不显示「已登录」。
-      err.textContent = r.reason === "unauthorized" ? "口令无效" : "接口异常：" + r.reason;
+      err.textContent = r.reason === "gate.invalid" ? t("gate.invalid") : t("gate.httpError", { status: r.status });
       return;
     }
     store("set", key);
-    enter(key, r.body);
+    enter();
   } catch (e2) {
-    err.textContent = "网络错误，请稍后重试";
+    err.textContent = t("gate.network");
   } finally {
     submit.disabled = false;
   }
 });
+
+// 会话失效由 api.js 统一上报：任何一个 401 都把人送回登录闸，并说清原因。
+onUnauthorized(() => leave("common.sessionExpired"));
+
+document.getElementById("logout-btn").addEventListener("click", () => leave(null));
+document.getElementById("theme-btn").addEventListener("click", () => toggleTheme());
+
+const langSel = document.getElementById("lang-select");
+for (const l of LANGS) {
+  const o = document.createElement("option");
+  o.value = l; o.textContent = l;
+  langSel.appendChild(o);
+}
+langSel.value = currentLang();
+langSel.addEventListener("change", () => setLang(langSel.value));
+
+// **框架层的兜底：切语言时整页重绘。** 板块自己不许再监听这个事件。
+document.addEventListener("langchange", () => {
+  apply(document);
+  if (current && SECTIONS[current] && SECTIONS[current].onShow) SECTIONS[current].onShow();
+});
+
+for (const btn of document.querySelectorAll(".nav-item")) {
+  btn.addEventListener("click", () => showSection(btn.getAttribute("data-section")));
+}
+
+apply(document);
+setTheme(getTheme());
 
 // 已经存过口令就直接验一次；**验不过要清掉**，否则用户会卡在一个永远进不去的页面。
 // 只有 401 才清：接口 500 或断网时清掉等于让一次运维事故顺手把人锁在外面。
 const saved = store("get");
 if (saved) {
   probe(saved).then((r) => {
-    if (r.ok) enter(saved, r.body);
-    else if (r.reason === "unauthorized") store("del");
+    if (r.ok) enter();
+    else if (r.reason === "gate.invalid") store("del");
   }).catch(() => {});
 }

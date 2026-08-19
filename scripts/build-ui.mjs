@@ -105,11 +105,25 @@ for (const p of files) {
   // 所以数一遍 `<script` 开标签，与真正解析出来的块数对不上就硬失败：把这个门禁的
   // 默认答案从「放行」改成「拒绝生成」。误报的代价只是让人把 HTML 写规整，
   // 漏报的代价是公开仓里唯一自动化的那层形同虚设。
+  /**
+   * 属性串里被引号包裹的值先抠掉再判 src。
+   *
+   * 绕过形态（评审实测 exit 0 + payload 入包）：
+   *   <script data-x="foo src=bar">payload</script>
+   * `src=` 出现在**属性值内部**，而浏览器只认真正的 src 属性 ⇒ 它会执行 payload，
+   * 门禁却把它归类成外链脚本放行。判据必须建立在**属性名的位置**上，不是整串文本上。
+   *
+   * ⚠️ 这仍然不是一个 HTML 分词器，**边界写在这里**：属性值里嵌套同种引号、
+   * 或者不加引号的属性值里出现空格，这条抠除都会判错。那一档由下面的计数守卫
+   * 与代码评审兜——列举写法永远列不全，所以门禁的默认答案是「拒绝生成」而不是「放行」。
+   */
+  const stripQuoted = (attrs) => attrs.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+
   if (ext === ".html") {
     let matched = 0;
     for (const m of body.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script[\s/>]/gi)) {
       matched++;
-      if (!/(^|\s)src\s*=/i.test(m[1]) && m[2].trim().length > 0) fail(`${rel}: 禁止内联脚本`);
+      if (!/(^|\s)src\s*=/i.test(stripQuoted(m[1])) && m[2].trim().length > 0) fail(`${rel}: 禁止内联脚本`);
     }
     const opens = (body.match(/<script\b/gi) ?? []).length;
     if (opens !== matched) {

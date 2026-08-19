@@ -1,0 +1,32 @@
+/* 表格、卡片、徽章。业务板块（Task 4 概览 / Task 5 Key 池 / Task 6 事件）的公共
+   内容原语，**只覆盖 base.css 的 token，不重复定义颜色/圆角等原语规则**。
+   Task 3 本身不产出任何业务板块，这份文件先把三类原语定好，供后续任务直接引用。 */
+
+.card {
+  padding: var(--gap); background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.card + .card { margin-top: var(--gap-sm); }
+.card-row { display: flex; flex-wrap: wrap; gap: var(--gap); }
+.card-row > .card { flex: 1; min-width: 180px; }
+.card .label { color: var(--muted); font-size: 12px; }
+.card .value { margin-top: 4px; font-size: 22px; font-weight: 600; }
+
+table {
+  width: 100%; border-collapse: collapse; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+}
+th, td {
+  padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+th { color: var(--muted); font-weight: 500; background: var(--panel-2); }
+tr:last-child td { border-bottom: 0; }
+
+.badge {
+  display: inline-block; padding: 2px 8px; font-size: 12px; border-radius: 999px;
+  color: var(--muted); background: var(--panel-2); border: 1px solid var(--border);
+}
+.badge-ok { color: var(--ok-fg); background: var(--ok); border-color: var(--ok); }
+.badge-warn { color: var(--warn-fg); background: var(--warn); border-color: var(--warn); }
+.badge-danger { color: var(--danger-fg); background: var(--danger); border-color: var(--danger); }

@@ -291,6 +291,23 @@ describe("src/adapters、src/http、src/ports、src/ui 里的裸 console", () =>
     const hits: string[] = [];
     for (const dir of CONSOLE_SCAN_DIRS) {
       for (const p of walkTs(dir)) {
+        // ⚠️ **`src/ui/assets.generated.ts` 是范畴错误意义上的排除，不是遗漏。**
+        //
+        // 这个文件由 scripts/build-ui.mjs 逐字节生成：它把 admin-ui/ 下每个前端源文件
+        // 的整份文本原样塞进一个字符串字面量。Task 3 的 admin-ui/js/i18n.js 里有一处
+        // **浏览器控制台**的开发期告警（`localStorage["agnes2api_debug"]` 为真时才打，
+        // 生产期不打扰），字面文本 `console.warn(` 随之被逐字节烧进这份生成物。
+        //
+        // 这条门禁要防的是「服务端事件绕过注入的 Logger、进不了 P3b 事件面板」——
+        // 前端自己在用户浏览器里打的 console 是完全不同的东西，与「事件能不能落库」
+        // 毫无关系（浏览器控制台从来就不通向服务端事件流）。拿同一份正则去扫一份
+        // **内嵌前端字符串**的生成物，抓到的是文本巧合，不是违规调用点。
+        //
+        // 不把它列进 CONSOLE_EXEMPTIONS：那张表的语义是「真的是一次调用点，但有理由
+        // 放行」，而这里连调用点都不是（是字符串数据）——列进去反而会让后人误以为
+        // src/ui/assets.generated.ts 里存在一次需要被追认的服务端 console 调用。
+        // 前端自己的 console 用法边界写在 admin-ui/README.md，归代码评审管。
+        if (p.endsWith("assets.generated.ts")) continue;
         const src = stripComments(readFileSync(p, "utf8"));
         for (const _ of src.matchAll(CONSOLE_CALL)) hits.push(`${p.split("\\").join("/")} :: console`);
       }
@@ -301,6 +318,21 @@ describe("src/adapters、src/http、src/ports、src/ui 里的裸 console", () =>
       + "P3b 的面板消费就必须走注入的 Logger（`logger.log({ level, event, msg, fields })`）；"
       + "确实需要 console 的话，把它连同理由加进 CONSOLE_EXEMPTIONS",
     ).toEqual([...CONSOLE_EXEMPTIONS]);
+  });
+
+  /**
+   * 上面那条 `continue` 是不是在排除一个空气？**探针钉住它不是死代码**：
+   * `src/ui/assets.generated.ts` 里此刻确实含着 admin-ui/js/i18n.js 那一处
+   * `console.warn(`（字面文本，见上）。哪天这处前端调试告警被删掉、生成物里
+   * 不再出现这个子串，这条会变红——提醒来改的人重新评估那条 `continue` 还要不要留。
+   */
+  it("排除 assets.generated.ts 不是排除了个空目标——它确实内嵌着前端那处 console.warn", () => {
+    const generated = readFileSync("src/ui/assets.generated.ts", "utf8");
+    expect(
+      [...generated.matchAll(CONSOLE_CALL)].length,
+      "生成物里应当至少有一处字面 console.warn(——来自 admin-ui/js/i18n.js 的开发期告警；"
+      + "为 0 说明上面那条 continue 已经排除了个空目标，该重新评估是否还需要它",
+    ).toBeGreaterThan(0);
   });
 
   it("边界自检：带 globalThis 前缀的抓得住，注释里的提及不算，间接引用与动态属性访问抓不住", () => {

@@ -1,0 +1,69 @@
+/* 外壳、侧栏、登录闸、toast、modal。**只覆盖 base.css 里的 token，不重复定义
+   颜色/圆角等原语规则**——[data-theme="dark"] 在 base.css 里已经整体覆盖过一次，
+   这里的组件规则对亮暗两套主题都通用。 */
+
+/* ── 登录闸 ─────────────────────────────────────────────── */
+.gate { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: var(--gap); }
+.gate-card {
+  width: 100%; max-width: 380px; padding: 28px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.gate-card h1 { margin: 0 0 4px; font-size: 20px; }
+.gate-card p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+.gate-card input { margin-bottom: 14px; }
+.gate-card button { width: 100%; }
+.err { min-height: 20px; margin-top: 10px; color: var(--danger); font-size: 13px; }
+/* 登录成功后隐藏登录闸。用类而不是 el.style.display：
+   ⚠️ 理由**不是** CSP——`style-src` 管的是标记里的 `style="…"` 属性与 <style> 元素，
+   **CSSOM 写入（el.style.x = y）不受 CSP 约束**，简报那版其实也跑得通。
+   真正的理由是表现归样式表：`.gate` 的显示方式（现在是 flex）只写在这一个地方，
+   将来改布局不必回头去找 JS 里那句写死的 display 值。 */
+.gate.off { display: none; }
+
+/* ── 外壳（侧栏 + 主内容） ───────────────────────────────── */
+.shell { display: none; }
+.shell.on { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+.side {
+  display: flex; flex-direction: column; gap: var(--gap);
+  padding: var(--gap); background: var(--panel); border-right: 1px solid var(--border);
+}
+.side .brand { font-weight: 600; font-size: 16px; }
+.side nav { display: flex; flex-direction: column; gap: 4px; }
+.nav-item {
+  text-align: left; padding: 8px 10px; color: var(--text);
+  background: transparent; border: 0; border-radius: var(--radius-sm);
+}
+.nav-item:hover { background: var(--panel-2); }
+.nav-item.active { background: var(--primary); color: var(--primary-fg); }
+.side-foot { margin-top: auto; display: flex; align-items: center; gap: var(--gap-sm); }
+.side-foot select { width: auto; flex: 1; padding: 6px 8px; }
+
+.main { padding: var(--gap); overflow: auto; }
+.section { display: none; }
+.section.active { display: block; }
+
+/* ── toast ──────────────────────────────────────────────── */
+.toast-host {
+  position: fixed; right: var(--gap); bottom: var(--gap); z-index: 100;
+  display: flex; flex-direction: column; gap: var(--gap-sm);
+}
+.toast {
+  padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px;
+  color: var(--primary-fg); background: var(--primary); box-shadow: 0 4px 12px var(--shadow);
+}
+.toast-warn { background: var(--warn); color: var(--warn-fg); }
+.toast-err { background: var(--danger); color: var(--danger-fg); }
+.toast-ok { background: var(--ok); color: var(--ok-fg); }
+
+/* ── modal ──────────────────────────────────────────────── */
+.modal-back {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--shadow);
+}
+.modal {
+  width: 100%; max-width: 420px; padding: 20px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.modal h2 { margin: 0 0 12px; font-size: 16px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: var(--gap-sm); margin-top: 16px; }

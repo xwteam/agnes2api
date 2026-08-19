@@ -3,10 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f7f8fa">
 <title>agnes2api 管理后台</title>
 <!-- 唯一的经典脚本，必须同步、必须在 CSS 之前：防闪白 / 闪错语言。 -->
 <script src="/admin/js/boot.js"></script>
 <link rel="stylesheet" href="/admin/css/base.css">
+<link rel="stylesheet" href="/admin/css/shell.css">
+<link rel="stylesheet" href="/admin/css/sections.css">
 </head>
 <body>
 <div class="gate" id="gate">
@@ -20,12 +23,29 @@
     <div class="err" id="gate-err" role="alert"></div>
   </form>
 </div>
+
 <div class="shell" id="shell">
-  <h1 data-i18n="shell.title">agnes2api 管理后台</h1>
-  <p data-i18n="shell.placeholder">地基已就绪，功能板块在 P3b 起陆续上线。</p>
-  <p><span data-i18n="shell.key">当前口令</span>：<code id="shell-key"></code></p>
-  <p><span data-i18n="shell.version">网关版本</span>：<code id="shell-version"></code></p>
+  <aside class="side">
+    <div class="brand">agnes2api</div>
+    <nav>
+      <button class="nav-item" data-section="overview" data-i18n="nav.overview">概览</button>
+      <button class="nav-item" data-section="keys" data-i18n="nav.keys">Key 池</button>
+      <button class="nav-item" data-section="events" data-i18n="nav.events">事件</button>
+    </nav>
+    <div class="side-foot">
+      <select id="lang-select" data-i18n-title="shell.lang"></select>
+      <button id="theme-btn" class="icon-btn" data-i18n-title="shell.theme"></button>
+      <button id="logout-btn" class="icon-btn" data-i18n-title="shell.logout"></button>
+    </div>
+  </aside>
+  <main class="main">
+    <section class="section" id="sec-overview"></section>
+    <section class="section" id="sec-keys"></section>
+    <section class="section" id="sec-events"></section>
+  </main>
 </div>
+
+<div id="toast-host" class="toast-host" aria-live="polite"></div>
 <script type="module" src="/admin/js/app.js"></script>
 </body>
 </html>
