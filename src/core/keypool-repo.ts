@@ -2,6 +2,7 @@ import type { Storage } from "../ports/storage.js";
 import type { Logger } from "../ports/logger.js";
 import type { KeyRecord } from "./types.js";
 import { Refreshable } from "./refreshable.js";
+import { statsDelta, addDelta, applyDelta, isZeroDelta, type StatsDelta } from "./admin/stats.js";
 import {
   KEY_PREFIX, POOL_INDEX_KEY,
   makePoolIndex, parsePoolIndex, idsFromKeyNames, sameIdSet,
@@ -47,6 +48,17 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
   addedAt: "telemetry",
   /** 纯遥测，见上。有 touchIntervalMs 兜底，不会永远不落盘。 */
   lastUsedAt: "telemetry",
+  /**
+   * Tier-1 用量埋点。**telemetry**：调度逻辑一个字段都不读它
+   *（`isAvailable` / `selectKey` / `apply*` / `poolHealth` 全都不碰）。
+   *
+   * ⚠️ 判为 telemetry 的**后果与 `lastUsedAt` 完全不同**，别把两者并列理解：
+   * `lastUsedAt` 被消除只是「面板上的最后使用时间粗一点」，而计数被消除是
+   * **计数直接不涨**（实测：50 次成功之后落盘的 requests 是 1）。
+   * 所以写消除那条路径上必须把增量攒起来（见 pendingStats），
+   * 而不是像 `lastUsedAt` 那样直接丢。
+   */
+  stats: "telemetry",
 };
 
 const SCHEDULING_FIELDS = (Object.keys(FIELD_ROLE) as Array<keyof KeyRecord>)
@@ -236,6 +248,26 @@ export class KeyPoolRepo {
    */
   private readonly snapshot: Refreshable<KeyRecord[]>;
 
+  /**
+   * **未落盘的 Tier-1 增量，按 key id 攒着。**
+   *
+   * 存在的理由（实测）：成功路径上的写会被写消除整个丢弃，连带把计数丢掉，
+   * 于是 `stats.requests` 永远停在 1。把增量攒起来、在**下一次本来就要发生的那次写**
+   * 上一起带下去，写配额一次不增，而计数的误差收敛成
+   * 「最多晚一个 `touchIntervalMs` 落盘 + isolate 在落盘前被回收时丢这一段」。
+   *
+   * `since` 是这批增量**最早**那一条的时刻：只靠 `lastUsedAt` 的间隔判据的话，
+   * 上游 4xx 直通（既不改调度字段也不改 `lastUsedAt`）会让 `n - p === 0` 恒成立，
+   * 一个只被打 4xx 的 key 的计数**永远不会落盘**。
+   *
+   * 三条不变量各自的守护者（都在 tests/unit/pool-cache.test.ts 的
+   * 「Tier-1 计数不许被写消除吃掉」一组里，跑 `pnpm test tests/unit/pool-cache.test.ts` 即见）：
+   * 计数不丢 → 「50 次成功之后落盘的 requests 是 50」；
+   * 写配额不增 → 同一条里那句 `st.puts - putsAfterAdd === 2`；
+   * 删掉的 key 不被复活 → 「记录被删掉时攒着的增量一并丢弃」。
+   */
+  private readonly pendingStats = new Map<string, { delta: StatsDelta; since: number }>();
+
   constructor(
     private readonly storage: Storage,
     private readonly o: KeyPoolRepoOptions,
@@ -409,18 +441,53 @@ export class KeyPoolRepo {
    *      因为它写的是一条**本来就不存在**的记录。
    */
   async save(next: KeyRecord, prev?: KeyRecord): Promise<void> {
+    const at = this.o.now();
     if (prev !== undefined) {
-      if (this.shouldElide(prev, next)) return;
+      // 攒得比一个触达间隔还久就别再消除了，否则只被打 4xx 的 key 永远落不了盘。
+      if (this.shouldElide(prev, next) && !this.pendingIsStale(next.id, at)) {
+        // 这次写整个被丢弃了，但它带的**计数**不能跟着丢：攒起来，等下一次本来
+        // 就要发生的那次写一起带下去。
+        if (next.id === prev.id) this.stashPending(next.id, statsDelta(prev.stats, next.stats), at);
+        return;
+      }
       // **只在「改的就是手上这一份」时确认存在性。** `next.id !== prev.id` 时调用方写的
       // 是一个**全新的键**（prev 只是拿来做写消除对照的另一把 key），那条路径上「记录
       // 还不存在」本来就是正常状态，拿存在性去卡它等于把一次新建吃掉——
       // `tests/unit/pool-cache.test.ts` 的「只有 id 不同的两份之间不许消除」正钉这件事。
       // 今天生产上产生不出 id 不同的 next（`keypool.ts` 的 apply* 全部原样透传 id），
       // 但这条判据必须自洽，不能靠「那条路径走不到」来免责。
-      if (next.id === prev.id && !(await this.stillExists(next.id))) return;
+      if (next.id === prev.id && !(await this.stillExists(next.id))) {
+        // 记录已经不在了，攒着的增量没有归属——**留着它就等于给复活留了一条路**：
+        // 同一把 key 被重新导入时 `add()` 那次写会把它合并进新记录。
+        this.pendingStats.delete(next.id);
+        return;
+      }
     }
-    await this.storage.put(KEY_PREFIX + next.id, next);
-    this.replaceInSnapshot(next);
+    // `next.stats` 已经含本次这一笔（它是调用方基于 prev 算出来的），`pending` 里
+    // 是**先前被消除掉的那些**，两者相加恰好是「上次落盘之后发生的全部」。
+    // 本次这一笔刻意**不**先 stash：stash 完再加一次就是把它算两遍。
+    const pending = this.pendingStats.get(next.id);
+    const merged = pending ? { ...next, stats: applyDelta(next.stats, pending.delta) } : next;
+    await this.storage.put(KEY_PREFIX + merged.id, merged);
+    // **put 成功之后才清**：put 抛错时增量必须留着，下一次再合并一遍。
+    this.pendingStats.delete(next.id);
+    this.replaceInSnapshot(merged);
+  }
+
+  /** 把一笔被消除掉的增量攒进去。空增量不攒——攒了会平白启动下面那条「攒太久」的计时。 */
+  private stashPending(id: string, delta: StatsDelta, at: number): void {
+    if (isZeroDelta(delta)) return;
+    const cur = this.pendingStats.get(id);
+    if (cur) cur.delta = addDelta(cur.delta, delta);
+    else this.pendingStats.set(id, { delta, since: at });
+  }
+
+  /** 攒得比一个触达间隔还久 ⇒ 强制落盘，见 pendingStats 的说明。 */
+  private pendingIsStale(id: string, at: number): boolean {
+    const cur = this.pendingStats.get(id);
+    if (!cur || this.touchIntervalMs <= 0) return false;
+    const age = at - cur.since;
+    return age < 0 || age >= this.touchIntervalMs;   // `age < 0` = 时钟回拨，老实落盘
   }
 
   /**
@@ -533,6 +600,9 @@ export class KeyPoolRepo {
       await this.storage.delete(KEY_PREFIX + id);   // ① 记录先删
       await this.indexRemove(id);                   // ② 再出索引
     } finally {
+      // 记录没了，攒着的增量就没有归属了。理由同 save() 里 stillExists 那条分支：
+      // 留着它等于给「同一把 key 重新导入时把旧计数合并进来」留一条路。
+      this.pendingStats.delete(id);
       // **必须放 finally。** 记录已经删掉了，②失败时若不失效快照，这把（多半是刚
       // 被判定要撤销的）key 还会继续被选中整整一个 TTL——删除看起来生效了其实没有。
       this.invalidate();

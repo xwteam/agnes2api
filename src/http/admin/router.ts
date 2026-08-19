@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import type { Logger } from "../../ports/logger.js";
+import type { KeyPoolRepo } from "../../core/keypool-repo.js";
 import { adminAuth, checkAdminToken, checkAdminTokenShape, ADMIN_TOKEN_MIN_LENGTH } from "./auth.js";
 import type { AdminTokenCheck } from "./auth.js";
 import { sessionHandler } from "./handlers/session.js";
+import { keysHandler } from "./handlers/keys.js";
 import { uiRoutes } from "../../ui/serve.js";
 
 export interface AdminRouterDeps {
@@ -18,6 +20,14 @@ export interface AdminRouterDeps {
   version: string;
   logger: Logger;
   trustProxy: boolean;
+  /**
+   * **与转发路径同一个实例**（`wire.ts` 把 `BuiltApp.repo` 交出来正是为了这个）。
+   * 面板另建一个的话就是另一份 isolate 快照：面板每刷新一次都要真读一遍存储，
+   * 而设计文档 §2.4 第 1、2 条那笔「面板轮询不额外烧配额」的账全靠共用这一份。
+   * tests/contract/quota-panel.test.ts 数着 get/list 次数钉这件事。
+   */
+  repo: KeyPoolRepo;
+  now: () => number;
 }
 
 /**
@@ -105,6 +115,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // **新增任何 /admin/api/* 端点都必须挂在这一行之后。**
   admin.use("/admin/api/*", adminAuth(token, deps.currentGatewayToken, deps.logger, deps.trustProxy));
   admin.get("/admin/api/session", sessionHandler(deps.version));
+  admin.get("/admin/api/keys", keysHandler(deps.repo, deps.now));
 
   // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
   // 串起来跑，`/admin/*` 这条兜底若排在前面会先返回 404，**整套管理 API 直接消失**

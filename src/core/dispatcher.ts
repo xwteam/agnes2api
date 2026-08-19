@@ -35,6 +35,7 @@
 import type { KeyRecord } from "./types.js";
 import type { KeyPoolRepo } from "./keypool-repo.js";
 import { selectKey, applySuccess, applyCooldown, applyStrike, applyEvict, poolHealth } from "./keypool.js";
+import { withOutcome } from "./admin/stats.js";
 import { classifyStatus, classifyThrown } from "./errors.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import type { GatewayConfig } from "./config.js";
@@ -260,6 +261,17 @@ export async function dispatch(args: {
   };
 
   /**
+   * 记一次终态并落盘。**记账与调度分两步叠加**：`apply*` 先算调度状态，再叠 Tier-1。
+   *
+   * 分两步而不是把计数并进 `apply*`：调度那套是「丢一次就是事故」的，
+   * 而 Tier-1 是明说了会少计的近似值，两套语义混在一个函数里迟早互相拖累。
+   */
+  const commitOutcome = async (
+    at: number, updated: KeyRecord,
+    outcome: "success" | "failed" | "clientError", errKind: string | null,
+  ) => { await commit(at, withOutcome(updated, outcome, now(), errKind)); };
+
+  /**
    * 同步档超时的归因：只有当**同一次请求里**另一把 key 真的成功了，才把先前那些超时
    * 记到对应 key 头上。
    *
@@ -275,7 +287,7 @@ export async function dispatch(args: {
     for (const at of new Set(timedOutSlots)) {
       // 同一把 key 先超时后成功（第二次尝试变快了）时不惩罚它：它刚刚自证还活着。
       if (at === successSlot) continue;
-      await commit(at, applyStrike(records[at]!, now(), config, "sync timeout"));
+      await commitOutcome(at, applyStrike(records[at]!, now(), config, "sync timeout"), "failed", "sync timeout");
     }
     timedOutSlots.length = 0;
   };
@@ -340,7 +352,7 @@ export async function dispatch(args: {
         continue;
       }
 
-      await commit(slot, applyStrike(record, now(), config, reason));
+      await commitOutcome(slot, applyStrike(record, now(), config, reason), "failed", reason);
       continue;
     }
     // 首字节已到，解除超时，让响应体自由流动。
@@ -352,7 +364,7 @@ export async function dispatch(args: {
       if (args.expectJson) {
         const text = await res.text().catch(() => null);
         if (text === null || !isJson(text)) {
-          await commit(slot, applyStrike(record, now(), config, "upstream non-JSON body"));
+          await commitOutcome(slot, applyStrike(record, now(), config, "upstream non-JSON body"), "failed", "upstream non-JSON body");
           await discard(lastError);
           lastError = jsonBody(502, {
             error: { reason: "upstream_bad_body", message: "上游返回了非 JSON 的成功响应" },
@@ -360,14 +372,24 @@ export async function dispatch(args: {
           continue;
         }
         await attributeSyncTimeouts(slot);
-        await commit(slot, applySuccess(record, now()));
+        await commitOutcome(slot, applySuccess(record, now()), "success", null);
         return done(new Response(text, { status: res.status, headers: safeHeaders(res) }));
       }
       await attributeSyncTimeouts(slot);
-      await commit(slot, applySuccess(record, now()));
+      await commitOutcome(slot, applySuccess(record, now()), "success", null);
       return done(sanitize(res));
     }
     if (action.kind === "passthrough") {
+      // 上游 4xx 直通。**这是 Tier-1 唯一新增的记账点，而它不按次数新增写**：
+      // 它既不改调度字段也不动 `lastUsedAt` ⇒ `schedulingEqual` 为真且 `n - p === 0`
+      // ⇒ 被写消除吃掉、只进 `pendingStats`，等攒满一个 `touchIntervalMs`
+      // （默认 6 小时）才随那次强制落盘一起下去。
+      //
+      // 「不按次数新增写」这句是可证伪的，别当散文读：`tests/unit/pool-cache.test.ts`
+      // 的「只有 4xx 直通……攒够一个触达间隔也会落盘」数着 put 次数——10 次 4xx 只落 2 次盘
+      // （跨 2 个触达间隔），而不是 10 次。设计文档 §6.1 说要把它按次计进配额账的
+      // 那半因此不成立，订正见计划的 F1。
+      await commitOutcome(slot, record, "clientError", null);
       return done(sanitize(res));
     }
 
@@ -378,15 +400,18 @@ export async function dispatch(args: {
       // 注意只丢弃这次的 401 响应，不动 lastError：先前某把 key 的真实上游错误
       // （例如 500）仍然是更有信息量的回复，不该被一次凭据失效抹掉。
       await discard(res);
-      await commit(slot, applyEvict(record, action.reason));
+      await commitOutcome(slot, applyEvict(record, action.reason), "failed", action.reason);
       continue;
     }
 
     await discard(lastError);
     lastError = sanitize(res);
 
-    if (action.kind === "cooldown") await commit(slot, applyCooldown(record, now(), action.ms, action.reason));
-    else await commit(slot, applyStrike(record, now(), config, action.reason));
+    if (action.kind === "cooldown") {
+      await commitOutcome(slot, applyCooldown(record, now(), action.ms, action.reason), "failed", action.reason);
+    } else {
+      await commitOutcome(slot, applyStrike(record, now(), config, action.reason), "failed", action.reason);
+    }
   }
 
   return lastError ?? nothingAnswered();

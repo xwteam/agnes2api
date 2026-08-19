@@ -558,6 +558,9 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     "POST /v1/videos",
     "GET /v1/videos/:id",
     "GET /admin/api/session",
+    // Task 4（P3b）的 Key 池只读列表。同样用 `admin.get()` 注册，**不产生 ALL 条目**
+    // ——这正是下面 EXPECTED_MIDDLEWARE 那张快照存在的理由，它因此保持不变。
+    "GET /admin/api/keys",
     // Task 6 的静态资源。**刻意用 get() 而不是 use()**，见 EXPECTED_MIDDLEWARE 的说明。
     "GET /admin",
     "GET /admin/*",

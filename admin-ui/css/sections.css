@@ -30,3 +30,19 @@ tr:last-child td { border-bottom: 0; }
 .badge-ok { color: var(--ok-fg); background: var(--ok); border-color: var(--ok); }
 .badge-warn { color: var(--warn-fg); background: var(--warn); border-color: var(--warn); }
 .badge-danger { color: var(--danger-fg); background: var(--danger); border-color: var(--danger); }
+
+/* 工具条 / 分页 / 说明文字：Task 4 的 Key 池板块起用，事件与概览板块同样直接引用，
+   **不许各板块再各写一份**（kiro2api 正是没有这一层，同一个原语出现了三份不同实现）。 */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-sm); margin: var(--gap-sm) 0; }
+.toolbar input[type="search"] {
+  flex: 1; min-width: 160px; padding: 10px 12px; color: var(--text); font: inherit;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.toolbar select { width: auto; }
+.toolbar .auto { display: inline-flex; align-items: center; gap: var(--gap-sm); margin-bottom: 0; }
+.pager { display: flex; align-items: center; gap: var(--gap-sm); margin-top: var(--gap-sm); }
+.muted { color: var(--muted); }
+.note { margin: 4px 0 var(--gap); font-size: 12px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+/* `≈` 标记：它是产品不变式的一部分（近似值必须打标），不是排版装饰。 */
+.approx { color: var(--muted); cursor: help; }

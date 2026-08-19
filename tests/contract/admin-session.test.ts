@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
 import { adminRouter } from "../../src/http/admin/router.js";
 import { recordingLogger } from "../helpers/recording-logger.js";
+import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
+import { MemoryStorage } from "../helpers/fake-storage.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
 
 const TOKEN = "session-probe-admin-token-01234";
 
@@ -17,6 +20,10 @@ function adminApp(version: string) {
   const admin = adminRouter({
     adminToken: TOKEN, currentGatewayToken: () => "gateway-token-not-the-admin-one",
     version, logger, trustProxy: false,
+    // /admin/api/keys 要的两样。本文件只测 session，给一个空池子就够——
+    // 但**必须真给**：`adminRouter` 现在会用它注册 keys 端点。
+    repo: new KeyPoolRepo(new MemoryStorage(), { now: () => 1000, logger: NULL_LOGGER, cacheTtlMs: 0 }),
+    now: () => 1000,
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");
   const app = new Hono();

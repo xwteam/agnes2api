@@ -118,6 +118,10 @@ export function createApp(deps: AppDeps): Hono {
     version: deps.version,
     logger: deps.logger,
     trustProxy: deps.trustProxy ?? false,
+    // **原样传转发路径那一个 repo**，不新建：面板与转发共用同一份 isolate 快照，
+    // 面板轮询才不会各自去读一遍存储（设计文档 §2.4 第 1、2 条）。
+    repo: deps.repo,
+    now: deps.now,
   });
   if (admin) app.route("/", admin);
   return app;

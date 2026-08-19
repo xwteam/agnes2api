@@ -137,4 +137,39 @@ describe("i18n 字典", () => {
     // `>= 15`（`toBeGreaterThanOrEqual`），15 本身两边都通过。
     expect(used.size, "一个 i18n 引用都没扫到，扫描本身坏了").toBeGreaterThanOrEqual(15);
   });
+
+  /**
+   * 上面那条只认两种形态：`data-i18n*="…"` 属性与字面的 `t("…")` 调用。
+   * **板块把 key 当参数传给 `elI18n()` / `openModal()` 时它看不见**（Task 3 的
+   * `ui.js` 里 `{ labelKey: "common.cancel" }` 就是这一类，check-i18n 只把它报成
+   * 「未被引用」的警告）。于是 Task 4 的 `elI18n("th", "keys.col.seq")` 打错一个字，
+   * 运行时会原样显示那个 key，而两道 i18n 门禁一声不吭。
+   *
+   * 这一条按**命名空间前缀**扫字面量补上那个缺口：admin-ui 的 JS 里凡是长得像
+   * `"<已知命名空间>.<键名>"` 的字符串，都必须真的在字典里。
+   * 前缀表手写，加新命名空间要在这里表态——这与本仓其它「手写清单」是同一套做法。
+   */
+  it("板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里", () => {
+    const NAMESPACES = ["gate", "nav", "shell", "common", "reg", "keys"] as const;
+    const re = new RegExp(`"((?:${NAMESPACES.join("|")})\\.[A-Za-z0-9_.]+)"`, "g");
+    const walk = (d: string): string[] =>
+      readdirSync(d).sort().flatMap((n) => {
+        const p = join(d, n);
+        return statSync(p).isDirectory() ? walk(p) : /\.(js|mjs)$/.test(p) ? [p] : [];
+      });
+    // **先去注释再扫。** 这个仓库的注释极其爱复述代码（本条用例第一版就被
+    // sec-keys.js 里一句「不许拼 `"keys.bucket." + b`」的说明打红），与
+    // pool-cache.test.ts / source-guards.test.ts 用的是同一套处理。
+    const stripComments = (src: string) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    const referenced = new Set<string>();
+    for (const p of walk("admin-ui/js")) {
+      // 字典自己就是这些键的定义处，扫它等于自证。
+      if (p.endsWith("i18n-dict.js")) continue;
+      for (const m of stripComments(readFileSync(p, "utf8")).matchAll(re)) referenced.add(m[1]!);
+    }
+    expect([...referenced].filter((k) => !(k in I18N)).sort(), "板块引用了字典里没有的 key").toEqual([]);
+    // 反向自检：扫描坏成空集时上面那条恒绿。Task 4 的 Key 池板块一家就有 20+ 个。
+    expect(referenced.size, "一个都没扫到，扫描本身坏了").toBeGreaterThanOrEqual(20);
+  });
 });

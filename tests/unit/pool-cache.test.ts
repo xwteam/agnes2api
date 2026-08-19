@@ -6,10 +6,18 @@ import {
   DEFAULT_POOL_CACHE_TTL_MS, DEFAULT_POOL_TOUCH_INTERVAL_MS,
 } from "../../src/core/keypool-repo.js";
 import { KEY_PREFIX } from "../../src/core/pool-index.js";
-import { selectKey, isAvailable, poolHealth } from "../../src/core/keypool.js";
+import { selectKey, isAvailable, poolHealth, applySuccess, applyStrike } from "../../src/core/keypool.js";
+import { withOutcome } from "../../src/core/admin/stats.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 import type { Storage } from "../../src/ports/storage.js";
 import type { KeyRecord } from "../../src/core/types.js";
+/**
+ * ⚠️ **改名导入。** 本文件顶部另有一个同名的本地 `CountingStorage`（只数四种操作、
+ * 内部是一个裸 Map），而 Tier-1 那组用例要的是 `tests/helpers/counting-storage.ts`
+ * 那一份：它带 `inner`（能绕过 repo 直接读写存储，模拟运维的裸存储删除）与
+ * `putFails`（能让一次落盘真的抛错）。两份都留着，只是这里换个名字避免遮蔽。
+ */
+import { CountingStorage as SharedCountingStorage } from "../helpers/counting-storage.js";
 
 /** 四种操作全数上——只数其中几种的计数桩，关于漏掉那几种的断言就是假的。 */
 class CountingStorage implements Storage {
@@ -225,6 +233,7 @@ describe("写消除：只有 lastUsedAt 变化时不落盘", () => {
     evictedReason: { evictedReason: "401" },
     addedAt: { addedAt: 424_242 },
     lastUsedAt: { lastUsedAt: 1_000_001 },
+    stats: { stats: { requests: 1, success: 1, failed: 0, clientErrors: 0, lastErrorAt: null, lastErrorKind: null } },
   };
 
   /**
@@ -243,7 +252,13 @@ describe("写消除：只有 lastUsedAt 变化时不落盘", () => {
   const MUST_PERSIST: Array<keyof KeyRecord> = [
     "id", "key", "cooldownUntil", "cooldownReason", "strikes", "evicted", "evictedReason",
   ];
-  const MAY_ELIDE: Array<keyof KeyRecord> = ["addedAt", "lastUsedAt"];
+  /**
+   * ⚠️ `stats` 在这张表里的含义与另外两个**不同**：它的那次写同样被消除（下面那条
+   * 数 put 次数的断言仍然成立），但**计数不会跟着丢**——它被攒进 `pendingStats`，
+   * 在下一次本来就要发生的写上一起带下去。「攒起来」这半由
+   * 「Tier-1 计数不许被写消除吃掉」那一组守着，这里只守「不为它单独付一次 KV 写」。
+   */
+  const MAY_ELIDE: Array<keyof KeyRecord> = ["addedAt", "lastUsedAt", "stats"];
 
   it("穷尽性：KeyRecord 的每个字段都被上面两张写死的清单认领了", () => {
     // 新增字段时：tsc 先在 FIELD_ROLE 与 MUTATION 报错，这条再逼着把它放进某张清单，
@@ -387,7 +402,22 @@ describe("前提：lastUsedAt 不参与调度（写消除的合法性全靠它�
    * 数量正是这个原因）。行注释的正则要求 `//` 前面不是冒号，免得把 `https://…`
    * 之后的半行代码一起吃掉。
    */
-  it("src/core 里除 keypool-repo.ts 外，`lastUsedAt` 只许被写、不许被读", () => {
+  /**
+   * **手写的读点豁免清单。** 每一条都要能一句话说清「它读了，但调度仍然不依赖它」：
+   *
+   * - `keypool-repo.ts`：写消除自己的判据（`shouldElide`）。
+   * - `admin/key-view.ts`：面板投影，把它原样搬进 `KeyView.lastUsedAt` 供展示。
+   *   它**只被管理读路径调用**（`src/http/admin/handlers/keys.ts`），返回值进的是
+   *   HTTP 响应体，不回流到 `selectKey` / `apply*`；下面那条依赖关系断言钉着这一点。
+   *
+   * 清单变长 = 有人在 core 里多了一处读 `lastUsedAt` 的地方，**必须在评审里表态**。
+   */
+  const LAST_USED_AT_READERS = [
+    join("src/core", "keypool-repo.ts"),
+    join("src/core", "admin", "key-view.ts"),
+  ];
+
+  it("src/core 里除手写清单上那几个文件外，`lastUsedAt` 只许被写、不许被读", () => {
     const stripComments = (src: string) =>
       src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
     const walk = (dir: string): string[] =>
@@ -398,8 +428,7 @@ describe("前提：lastUsedAt 不参与调度（写消除的合法性全靠它�
 
     const offenders: string[] = [];
     for (const p of walk("src/core")) {
-      // 唯一的合法读点：写消除自己的判据（shouldElide）。
-      if (p === join("src/core", "keypool-repo.ts")) continue;
+      if (LAST_USED_AT_READERS.includes(p)) continue;
       const src = stripComments(readFileSync(p, "utf8"));
       // 允许 `lastUsedAt:` 与 `lastUsedAt?:`（写入 / 类型声明），其余一律算读。
       for (const m of src.matchAll(/\blastUsedAt\b(.?.?)/g)) {
@@ -411,6 +440,24 @@ describe("前提：lastUsedAt 不参与调度（写消除的合法性全靠它�
       "有人开始读 lastUsedAt 了。它一旦参与调度，KeyPoolRepo 的写消除就会静默吃掉调度状态，"
       + "必须同时把 FIELD_ROLE 里的 lastUsedAt 改成 scheduling（或整个废掉写消除）",
     ).toEqual([]);
+  });
+
+  /**
+   * 上面给 `admin/key-view.ts` 开的那条豁免，理由是「它只服务管理读路径」。
+   * **这句话必须是一条会变红的断言，不是一句注释**——哪天有人从 `dispatcher.ts` /
+   * `keypool.ts` 里 import 它（比如顺手拿 `KeyView.lastUsedAt` 排个序），
+   * 那条豁免的前提就没了，这里立刻变红。
+   */
+  it("key-view.ts 只服务管理读路径：src/core 里 admin/ 之外没有任何模块 import 它", () => {
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((n) => {
+        const p = join(dir, n);
+        return statSync(p).isDirectory() ? walk(p) : p.endsWith(".ts") ? [p] : [];
+      });
+    const importers = walk("src/core")
+      .filter((p) => !p.startsWith(join("src/core", "admin")))
+      .filter((p) => /from\s+"[^"]*key-view\.js"/.test(readFileSync(p, "utf8")));
+    expect(importers, "调度侧开始依赖面板投影模块了，lastUsedAt 的读点豁免不再成立").toEqual([]);
   });
 });
 
@@ -442,6 +489,174 @@ describe("两个旋钮的默认值", () => {
     expect(s.puts, "默认间隔内不写").toBe(0);
     await repo.save({ ...r, lastUsedAt: 1000 + DEFAULT_POOL_TOUCH_INTERVAL_MS }, r);
     expect(s.puts, "到了默认间隔写一次").toBe(1);
+  });
+});
+
+/**
+ * **写消除会把 Tier-1 的计数整个吃掉——这是实测出来的，不是推理。**
+ *
+ * 默认 POOL_TOUCH_INTERVAL_MS=21600000（6 小时）+ POOL_CACHE_TTL_MS=60000 下，
+ * 50 次成功转发**只落盘 1 次**（第 1 次因为 prev.lastUsedAt === null、差值是
+ * Infinity 而必定落盘），此后每一次都读到快照里的 1、算出 2、然后被消除，
+ * 快照也不推进（save 提前 return，不走 replaceInSnapshot）。
+ * ⇒ 不做增量累加的话 `stats.requests` **永远停在 1**，那不是「少计」，
+ * 是这个功能读出来的数字基本上永远是 1。设计文档 §6.1「几乎是免费的」那段推论
+ * 写在写消除落地之前，已被本计划订正（F1）。
+ */
+describe("Tier-1 计数不许被写消除吃掉", () => {
+  /**
+   * 造一条 `lastUsedAt` 已经是具体数字、且已经落过盘的记录。
+   *
+   * ⚠️ **这一步不能省，省了整组用例就是假阳性。** `lastUsedAt` 两边都是 `null` 时
+   * `shouldElide` 里的差值是 `NaN`，判据恒为 false ⇒ **每一次 save 都会落盘**，
+   * 于是「攒起来」「攒太久强制落盘」这些被测的选择在那个状态下**根本不可观测**
+   * （本项目登记的第 5 种假阳性）。与本文件上面那个 `used()` 是同一条纪律。
+   */
+  async function primed(repo: KeyPoolRepo, st: SharedCountingStorage, id: string, at: number) {
+    const r0 = (await repo.all()).find((x) => x.id === id)!;
+    await repo.save({ ...r0, lastUsedAt: at }, r0);
+    const r = (await repo.all()).find((x) => x.id === id)!;
+    expect(r.lastUsedAt, "前置条件：写消除的判据必须真的生效").toBe(at);
+    return { rec: r, putsBefore: st.puts };
+  }
+
+  it("50 次成功之后落盘的 requests 是 50，而不是 1", async () => {
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const repo = new KeyPoolRepo(st, {
+      now: () => t, logger: NULL_LOGGER,
+      cacheTtlMs: 60_000, touchIntervalMs: 21_600_000,
+    });
+    const rec = await repo.add("sk-tier1-elision-aaaaaaaa");
+    const putsAfterAdd = st.puts;
+
+    let cur = (await repo.all())[0]!;
+    for (let i = 0; i < 50; i++) {
+      t += 100;
+      const next = withOutcome(applySuccess(cur, t), "success", t, null);
+      await repo.save(next, cur);
+      cur = (await repo.all()).find((x) => x.id === rec.id)!;
+    }
+    // 触发一次真落盘（调度字段变化），把攒着的增量带下去。
+    t += 100;
+    const strick = withOutcome(applyStrike(cur, t, { maxStrikes: 99, cooldownStrikeMs: 1 }, "x"), "failed", t, "x");
+    await repo.save(strick, cur);
+
+    const stored = await st.inner.get<KeyRecord>("key:" + rec.id);
+    // 51 = 50 次成功 + 1 次失败。手写字面量。
+    expect(stored?.stats?.requests, "写消除把计数吃掉了").toBe(51);
+    expect(stored?.stats?.success).toBe(50);
+    expect(stored?.stats?.failed).toBe(1);
+    // **写配额一次不增**：50 次成功只应产生 1 次落盘（第一次），加上最后那次状态变更。
+    expect(st.puts - putsAfterAdd, "增量累加器把写放大重新引入了").toBe(2);
+  });
+
+  it("只有 4xx 直通（不改调度字段、不动 lastUsedAt）时，攒够一个触达间隔也会落盘", async () => {
+    // 防的是累加器自己的一个死角：4xx 直通既不改调度字段也不改 lastUsedAt，
+    // `n - p === 0 < touchIntervalMs` 恒成立 ⇒ 不加「攒太久就强制落盘」这条，
+    // 一个只被打 4xx 的 key 的计数**永远不会落盘**。
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    // 触达间隔取 20 秒、每次 4xx 间隔 5 秒：10 次跨 50 秒 ⇒ 第 5 次与第 10 次各
+    // 强制落盘一次。（计划给的 100_000 在 10 次里一次都攒不满，那条断言测不到东西。）
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 20_000 });
+    const rec = await repo.add("sk-tier1-passthrough-bbbb");
+    let { rec: cur, putsBefore } = await primed(repo, st, rec.id, t);
+
+    for (let i = 0; i < 10; i++) {
+      t += 5_000;
+      const next = withOutcome(cur, "clientError", t, null);
+      await repo.save(next, cur);
+      cur = (await repo.all()).find((x) => x.id === rec.id)!;
+    }
+    const stored = await st.inner.get<KeyRecord>("key:" + rec.id);
+    expect(stored?.stats?.clientErrors, "只被打 4xx 的 key 计数永远落不了盘").toBe(10);
+    // 手写字面量：兜底把「永远不落盘」改成「每个触达间隔一次」，**不是每次都写**。
+    expect(st.puts - putsBefore, "强制落盘退化成了每次都写，写消除的收益没了").toBe(2);
+  });
+
+  it("记录被删掉时攒着的增量一并丢弃，不许把删掉的 key 用增量复活", async () => {
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 21_600_000 });
+    const KEY = "sk-tier1-deleted-cccccccc";
+    const rec = await repo.add(KEY);
+    const { rec: cur, putsBefore } = await primed(repo, st, rec.id, t);
+
+    t += 100;
+    await repo.save(withOutcome(applySuccess(cur, t), "success", t, null), cur);   // 被消除，攒起来
+    expect(st.puts - putsBefore, "前置条件：这一次必须真的被消除").toBe(0);
+
+    // 运维吊销一把泄漏的 key 的姿势就是裸存储删除（`wrangler kv key delete` /
+    // 直接改 store.json），它绕过 `delete()`，所以清增量不能只挂在 delete() 上。
+    await st.inner.delete(KEY_PREFIX + rec.id);
+
+    // 一次调度字段变化本该落盘 ⇒ 走到 stillExists 那道闸上被拦下。
+    t += 100;
+    const strick = withOutcome(applyStrike(cur, t, { maxStrikes: 99, cooldownStrikeMs: 1 }, "x"), "failed", t, "x");
+    await repo.save(strick, cur);
+    expect(await st.inner.get(KEY_PREFIX + rec.id), "删掉的记录被增量写回复活了").toBe(null);
+
+    // 攒着的那笔增量必须**一并丢掉**：重新导入同一把 key 之后计数得是干净的，
+    // 否则一把被吊销的 key 的用量会跟着新记录一起还魂。
+    const again = await repo.add(KEY);
+    const stored = await st.inner.get<KeyRecord>(KEY_PREFIX + again.id);
+    expect(stored?.stats, "删除时没清掉的增量，被合并进了重新导入的那条记录").toBeUndefined();
+  });
+
+  it("走 delete() 删除时同样丢弃攒着的增量（两条删除路径都要清）", async () => {
+    // 上一条走的是**裸存储删除**（被 stillExists 拦下）。`delete()` 这条路径压根
+    // 不经过 stillExists，各清各的；变异实测：只去掉 delete() 里那一行，
+    // 上一条照样绿——所以这一条不能省。
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 21_600_000 });
+    const KEY = "sk-tier1-repodelete-eeeeee";
+    const rec = await repo.add(KEY);
+    const { rec: cur, putsBefore } = await primed(repo, st, rec.id, t);
+
+    t += 100;
+    await repo.save(withOutcome(applySuccess(cur, t), "success", t, null), cur);   // 被消除，攒起来
+    expect(st.puts - putsBefore, "前置条件：这一次必须真的被消除").toBe(0);
+
+    await repo.delete(rec.id);
+    const again = await repo.add(KEY);
+    const stored = await st.inner.get<KeyRecord>(KEY_PREFIX + again.id);
+    expect(stored?.stats, "delete() 没清掉增量，它跟着重新导入的那条记录还魂了").toBeUndefined();
+  });
+
+  it("落盘抛错时攒着的增量必须留着，下一次成功的写要把它一起带下去", async () => {
+    // 变异表里「把 pendingStats.delete 挪到 put 之前」原本没有任何用例守着，这条补上。
+    const st = new SharedCountingStorage();
+    let t = 1000;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 21_600_000 });
+    const rec = await repo.add("sk-tier1-putfails-dddddddd");
+    const { rec: cur, putsBefore } = await primed(repo, st, rec.id, t);
+
+    for (let i = 0; i < 3; i++) {
+      t += 100;
+      await repo.save(withOutcome(applySuccess(cur, t), "success", t, null), cur);
+    }
+    expect(st.puts - putsBefore, "前置条件：这三次必须真的被消除").toBe(0);
+
+    // 一次调度字段变化本该落盘，但存储把写打回来了（写配额耗尽 / KV 抖动）。
+    st.putFails = true;
+    t += 100;
+    const strike1 = withOutcome(applyStrike(cur, t, { maxStrikes: 99, cooldownStrikeMs: 1 }, "x"), "failed", t, "x");
+    await expect(repo.save(strike1, cur)).rejects.toThrow(/write quota/);
+
+    // 再来一次，这次写得进去。
+    st.putFails = false;
+    t += 100;
+    const strike2 = withOutcome(applyStrike(cur, t, { maxStrikes: 99, cooldownStrikeMs: 1 }, "y"), "failed", t, "y");
+    await repo.save(strike2, cur);
+
+    const stored = await st.inner.get<KeyRecord>(KEY_PREFIX + rec.id);
+    // 手写字面量：3 次被消除的成功 + 这一次失败。第一次抛错的那次失败确实丢了
+    //（整条记录都没写进去），这与 dispatcher 对「记账失败」的既有处置一致。
+    expect(stored?.stats?.success, "put 抛错时把增量清掉了，那三次成功再也回不来").toBe(3);
+    expect(stored?.stats?.requests).toBe(4);
+    expect(stored?.stats?.failed).toBe(1);
   });
 });
 
