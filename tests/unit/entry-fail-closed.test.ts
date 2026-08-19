@@ -57,6 +57,8 @@ describe("Entry fail-closed 行为", () => {
         cooldownRateLimitMs: 60_000,
         cooldownPaymentMs: 3_600_000,
         cooldownStrikeMs: 1_800_000,
+        poolCacheTtlMs: 60_000,
+        poolTouchIntervalMs: 21_600_000,
         registrar: DEFAULT_REGISTRAR,
       });
     });
@@ -71,6 +73,10 @@ describe("Entry fail-closed 行为", () => {
         COOLDOWN_RATE_LIMIT_MS: "30000",
         COOLDOWN_PAYMENT_MS: "7200000",
         COOLDOWN_STRIKE_MS: "900000",
+        // 两个池子旋钮**取 0**：0 对它们是「关闭」这个合法取值，顺带证明
+        // configFromEnv 这条路径也把 min 传成了 0（传 1 的话这里直接抛）。
+        POOL_CACHE_TTL_MS: "0",
+        POOL_TOUCH_INTERVAL_MS: "0",
       };
       const config = configFromEnv(env);
       expect(config).toEqual({
@@ -82,6 +88,8 @@ describe("Entry fail-closed 行为", () => {
         cooldownRateLimitMs: 30000,
         cooldownPaymentMs: 7200000,
         cooldownStrikeMs: 900000,
+        poolCacheTtlMs: 0,
+        poolTouchIntervalMs: 0,
         registrar: DEFAULT_REGISTRAR,
       });
     });

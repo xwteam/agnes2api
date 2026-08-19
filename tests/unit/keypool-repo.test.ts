@@ -34,9 +34,20 @@ class CountingStorage implements Storage {
   counts() { return { list: this.lists, get: this.gets, put: this.puts, delete: this.deletes }; }
 }
 
+/**
+ * **本文件一律关掉快照缓存**（`cacheTtlMs: 0`）。
+ *
+ * 这里量的是「一次 all() 到底碰了存储几次、碰了哪些键」——索引回落、空结果兜底、
+ * 写失败退避，全都是**存储层**的语义。开着缓存的话第二次 all() 根本不碰存储，
+ * 这些断言就变成在测缓存而不是在测它们各自要守的那条防线（实测：开着缓存时
+ * 「回落照常 list」那两条会绿得莫名其妙，因为它压根没去读）。
+ *
+ * 缓存本身由 `tests/unit/pool-cache.test.ts` 专门覆盖，两边不互相冒充。
+ * 默认值（不传 cacheTtlMs 时是 60 秒）由下面「默认值」那条用例单独钉住。
+ */
 function makeRepo(s: Storage = new CountingStorage(), now = () => 1000) {
   const logger = recordingLogger();
-  return { repo: new KeyPoolRepo(s, { now, logger }), logger };
+  return { repo: new KeyPoolRepo(s, { now, logger, cacheTtlMs: 0 }), logger };
 }
 
 function orphanRecord(): KeyRecord {

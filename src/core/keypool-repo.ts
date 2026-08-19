@@ -1,11 +1,53 @@
 import type { Storage } from "../ports/storage.js";
 import type { Logger } from "../ports/logger.js";
 import type { KeyRecord } from "./types.js";
+import { Refreshable } from "./refreshable.js";
 import {
   KEY_PREFIX, POOL_INDEX_KEY,
   makePoolIndex, parsePoolIndex, idsFromKeyNames, sameIdSet,
   type PoolIndex,
 } from "./pool-index.js";
+
+export const DEFAULT_POOL_CACHE_TTL_MS = 60_000;
+export const DEFAULT_POOL_TOUCH_INTERVAL_MS = 21_600_000; // 6 小时
+
+/**
+ * `KeyRecord` 每个字段的角色。**这张表是写消除唯一的合法性依据，也是它唯一的钉子。**
+ *
+ * - `scheduling`：变化会改变「这把 key 还能不能用、什么时候能用」，**丢一次就是事故**
+ *   （吃掉一次 strike ⇒ 坏 key 被无限重试，而且测试全绿——这是本模块最危险的失败形态）。
+ * - `telemetry`：纯展示，任何调度逻辑都不读它，因此只有它变化的那次写可以整个丢弃。
+ *
+ * 类型写成 `Record<keyof KeyRecord, …>` 不是为了好看：**给 `KeyRecord` 加字段时
+ * `tsc` 会在这里报错**，逼着加字段的人显式表态，而不是让新字段被 `schedulingEqual`
+ * 默默忽略掉。`schedulingEqual` 直接从这张表推导，两者不可能漂移。
+ *
+ * `lastUsedAt` 判为 telemetry 的依据（每次改动都请重新核一遍，别信这行注释）：
+ * 全仓只有 `applySuccess` 写它，`isAvailable` / `selectKey` / `applyStrike` /
+ * `applyCooldown` / `applyEvict` / `poolHealth` 一个都不读。这条前提由
+ * `tests/unit/pool-cache.test.ts` 的「调度完全不读 lastUsedAt」用例与那条源码扫描
+ * 一起钉住——**将来谁拿 lastUsedAt 做 LRU 选 key，那两条会先变红**，而不是靠这段注释。
+ */
+export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
+  id: "scheduling",
+  key: "scheduling",
+  cooldownUntil: "scheduling",
+  cooldownReason: "scheduling",
+  strikes: "scheduling",
+  evicted: "scheduling",
+  evictedReason: "scheduling",
+  /** 建号时刻，写一次之后再也不变。 */
+  addedAt: "telemetry",
+  /** 纯遥测，见上。 */
+  lastUsedAt: "telemetry",
+};
+
+const SCHEDULING_FIELDS = (Object.keys(FIELD_ROLE) as Array<keyof KeyRecord>)
+  .filter((k) => FIELD_ROLE[k] === "scheduling");
+
+function schedulingEqual(a: KeyRecord, b: KeyRecord): boolean {
+  return SCHEDULING_FIELDS.every((k) => a[k] === b[k]);
+}
 
 /**
  * 索引重建写失败之后的静默窗口。
@@ -32,11 +74,30 @@ export async function keyId(key: string): Promise<string> {
 export interface KeyPoolRepoOptions {
   /**
    * 注入的时钟。`add()` 用它填 `addedAt`（原来是裸 `Date.now()`）。
-   * Task 4 的快照缓存 TTL 与写消除的触达间隔也用同一个——**三处必须共用一个时间源**，
+   * 快照缓存的 TTL 与写消除的触达间隔也用同一个——**三处必须共用一个时间源**，
    * 否则测试里给了假时钟而缓存用真时钟，就是这个项目最容易出的那类假阳性。
    */
   now: () => number;
   logger: Logger;
+  /**
+   * isolate 级快照缓存的存活时长。**0 = 关闭缓存**（每次 all() 都真读存储）。
+   *
+   * 它直接决定每天的 KV 读取次数：
+   *   读取次数/天 = 活跃 isolate 数 × (86400 / 本值秒数) × (1 + 池中 key 数)
+   * 与请求数**无关**。要压在免费档 100,000 以下，取值需满足
+   *   TTL(秒) ≥ 0.864 × isolate 数 × (1 + key 数)
+   * 代价：别的 isolate 判定的冷却/剔除，本 isolate 最多晚这么久才看到。
+   */
+  cacheTtlMs?: number;
+  /**
+   * `lastUsedAt` 最多多久落盘一次。**0 = 关闭写消除**（每次都落盘）。
+   *
+   * 改造前每个成功请求写一次 KV，而免费档写配额是 1,000 次/天 ⇒ 与 list 一起
+   * 把转发数卡死在约 1,000/天。`lastUsedAt` 是纯遥测字段，为它付一次写不划算。
+   * 代价：面板「最后使用」的精度最粗到这个间隔；但**任何其他状态变更的落盘都会
+   * 顺带刷新它**，所以有故障发生时它反而是新的。
+   */
+  touchIntervalMs?: number;
 }
 
 export interface ReconcileResult {
@@ -68,18 +129,65 @@ export class KeyPoolRepo {
   /** 见 INDEX_WRITE_RETRY_MS。null 表示「上一次索引写是成功的」。 */
   private indexWriteFailedAt: number | null = null;
 
+  private readonly cacheTtlMs: number;
+  private readonly touchIntervalMs: number;
+  /**
+   * isolate 级池快照。**与 `ConfigHolder` 建在同一个 `Refreshable` 上**，不是为了省
+   * 代码：两者回答的是同一个问题——「面板刚改完，多久能看见？」——而面板上写的那个
+   * 生效时间只有一份。各写一份实现必然漂移出两套语义，那个数字就开始骗人。
+   * `tests/contract/freshness.test.ts` 用同一组断言分别跑两者，分叉立刻变红。
+   */
+  private readonly snapshot: Refreshable<KeyRecord[]>;
+
   constructor(
     private readonly storage: Storage,
     private readonly o: KeyPoolRepoOptions,
-  ) {}
+  ) {
+    this.cacheTtlMs = o.cacheTtlMs ?? DEFAULT_POOL_CACHE_TTL_MS;
+    this.touchIntervalMs = o.touchIntervalMs ?? DEFAULT_POOL_TOUCH_INTERVAL_MS;
+    this.snapshot = new Refreshable<KeyRecord[]>({
+      load: () => this.loadAll(),
+      ttlMs: this.cacheTtlMs,
+      now: o.now,
+      onError: (err) => o.logger.log({
+        level: "error", event: "pool.load_failed",
+        msg: "读取 key 池失败，继续沿用上一份快照",
+        fields: { err: err instanceof Error ? err.message : String(err) },
+      }),
+    });
+  }
 
   async all(): Promise<KeyRecord[]> {
+    if (this.cacheTtlMs <= 0) return await this.loadAll();
+    await this.snapshot.ensureFresh();
+    const cur = this.snapshot.current();
+    // 从未成功装载过（冷启动就撞上存储故障）：再走一次真加载把**真实异常**抛出来，
+    // 保持 P1「存储读失败 → app.onError → JSON 500」的既有行为，
+    // 而不是换成一句自造的、排障时毫无信息量的错误。
+    if (cur === undefined) return await this.loadAll();
+    // **浅拷贝**：dispatch 的 commit 会 `records[at] = updated` 就地改数组元素，
+    // 直接把缓存数组交出去等于让一次请求的中间状态污染 isolate 级缓存。
+    // （记录对象本身永不被就地修改——keypool.ts 的 apply* 全部返回新对象。）
+    return [...cur];
+  }
+
+  /**
+   * 真正去存储读一遍。原来的 `all()` 就是它，**一个字都不许精简**：
+   * 「索引缺失回落 list」与「空结果兜底」两条防线都在这里面，后者正是「对账在空池
+   * 写下权威空索引之后，手工导入的 key 永远隐身」那个 503 场景唯一的解药。
+   */
+  private async loadAll(): Promise<KeyRecord[]> {
     const idx = await this.readIndex();
     // 索引缺失那条路径刚刚已经 list 过一次，下面的空结果兜底不必再来一次。
     const indexed = idx !== null ? idx.ids : await this.bootstrapFromList();
     const alive = await this.loadRecords(indexed);
     if (alive.length > 0 || idx === null) return alive;
     return await this.rescanEmptyResult(indexed);
+  }
+
+  /** 面板写 key 之后调用（P3c）。与 `ConfigHolder.invalidate()` 是两把独立的钥匙，不互相代劳。 */
+  invalidate(): void {
+    this.snapshot.invalidate();
   }
 
   /**
@@ -126,8 +234,44 @@ export class KeyPoolRepo {
     return await this.storage.get<KeyRecord>(KEY_PREFIX + id);
   }
 
-  async save(r: KeyRecord): Promise<void> {
-    await this.storage.put(KEY_PREFIX + r.id, r);
+  /**
+   * 落盘一条记录。
+   *
+   * @param prev 上一份（`dispatch` 传 `records[at]`）。给了它才能做**写消除**：
+   *   若两份之间只有 `lastUsedAt` 不同、且距上次落盘不到 `touchIntervalMs`，
+   *   **整个丢弃这次更新**（存储不写、缓存也不动）。不给 prev 就一定落盘——
+   *   写消除是可选优化，缺少对照时必须保守。
+   */
+  async save(next: KeyRecord, prev?: KeyRecord): Promise<void> {
+    if (prev !== undefined && this.shouldElide(prev, next)) return;
+    await this.storage.put(KEY_PREFIX + next.id, next);
+    this.replaceInSnapshot(next);
+  }
+
+  private shouldElide(prev: KeyRecord, next: KeyRecord): boolean {
+    if (this.touchIntervalMs <= 0) return false;
+    // **刻意不再单独判 `prev.id !== next.id`**：`id` 在 FIELD_ROLE 里就是 scheduling，
+    // `schedulingEqual` 已经比过它了。变异实测确认那一行永远改变不了结果（去掉它
+    // 全绿），而写一行永远改变不了行为的代码等于给后人留一条不可证伪的注释。
+    // 「prev 是另一把 key 时不许消除」这条不变量由 FIELD_ROLE.id 守着，有用例钉。
+    if (!schedulingEqual(prev, next)) return false;
+    // 从未用过（null）⇒ 差值是 Infinity ⇒ 首次使用一定落盘，
+    // 否则面板永远显示「从未使用」。
+    const p = prev.lastUsedAt ?? Number.NEGATIVE_INFINITY;
+    const n = next.lastUsedAt ?? Number.NEGATIVE_INFINITY;
+    if (n < p) return false;   // 时钟回拨：老实写，不当成「没变化」
+    return n - p < this.touchIntervalMs;
+  }
+
+  /** 写穿透：同一 isolate 内下一次 all() 立刻看到刚写下去的状态，不必等 TTL。 */
+  private replaceInSnapshot(r: KeyRecord): void {
+    const cur = this.snapshot.current();
+    if (cur === undefined) return;
+    const i = cur.findIndex((x) => x.id === r.id);
+    if (i < 0) return;   // 不在当前快照里（刚 add 的）：交给 invalidate 后的下一次刷新
+    const next = [...cur];
+    next[i] = r;
+    this.snapshot.set(next);
   }
 
   async add(key: string): Promise<KeyRecord> {
@@ -135,14 +279,27 @@ export class KeyPoolRepo {
       id: await keyId(key), key, addedAt: this.o.now(), lastUsedAt: null,
       cooldownUntil: 0, cooldownReason: null, strikes: 0, evicted: false, evictedReason: null,
     };
-    await this.save(r);          // ① 记录先写
-    await this.indexAdd(r.id);   // ② 再进索引
+    try {
+      await this.save(r);          // ① 记录先写
+      await this.indexAdd(r.id);   // ② 再进索引
+    } finally {
+      // 补池刚铸出来的 key 必须**下一个请求**就能被选中，等一个 TTL 是错的。
+      // 放 finally 而不是紧跟在成功之后：②失败留下的是孤儿记录，而孤儿在
+      // 「空结果兜底」那条路径上是**看得见**的，快照不刷新就与存储对不上了。
+      this.invalidate();
+    }
     return r;
   }
 
   async delete(id: string): Promise<void> {
-    await this.storage.delete(KEY_PREFIX + id);   // ① 记录先删
-    await this.indexRemove(id);                   // ② 再出索引
+    try {
+      await this.storage.delete(KEY_PREFIX + id);   // ① 记录先删
+      await this.indexRemove(id);                   // ② 再出索引
+    } finally {
+      // **必须放 finally。** 记录已经删掉了，②失败时若不失效快照，这把（多半是刚
+      // 被判定要撤销的）key 还会继续被选中整整一个 TTL——删除看起来生效了其实没有。
+      this.invalidate();
+    }
   }
 
   /**
@@ -162,6 +319,10 @@ export class KeyPoolRepo {
 
     if (repaired) {
       await this.storage.put(POOL_INDEX_KEY, makePoolIndex(actual));
+      // 对账刚刚改变了「all() 会返回哪些 id」（把孤儿捡回来、把幽灵剪掉），
+      // 与 add()/delete() 是同一类写操作，**同样必须自己失效快照**。不失效的话
+      // 刚被捡回来的孤儿要等满一个 TTL 才会被选中，而对账 30 分钟才跑一次。
+      this.invalidate();
       this.o.logger.log({
         level: cur === null ? "info" : "warn",
         event: cur === null ? "pool.index_bootstrapped" : "pool.index_repaired",

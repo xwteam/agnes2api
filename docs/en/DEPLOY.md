@@ -18,12 +18,20 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 | `COOLDOWN_RATE_LIMIT_MS` | no | `60000` | Cooldown duration applied to a key after an upstream `429`. |
 | `COOLDOWN_PAYMENT_MS` | no | `3600000` | Cooldown duration applied to a key after an upstream `402`. |
 | `COOLDOWN_STRIKE_MS` | no | `1800000` | Cooldown duration applied once a key reaches `MAX_STRIKES`. The key recovers automatically when it expires. |
+| `POOL_CACHE_TTL_MS` | no | `60000` | Each isolate/process keeps an in-memory snapshot of the key pool; this is how long that snapshot lives. `0` disables the cache. **KV reads per day = active isolates × (86400 ÷ this value in seconds) × (1 + pool size), independent of request count.** Cost: cooldowns/evictions decided by another isolate take up to this long to become visible here. |
+| `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted. `0` persists it on every successful request. It is a display-only field that no scheduling logic reads; writing it per request would burn the free tier's 1,000 writes/day and leave no budget for cooldowns and evictions. Cost: "last used" is only accurate to within this interval. |
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
 
 `COOLDOWN_RATE_LIMIT_MS` and `COOLDOWN_PAYMENT_MS` aren't listed in `.env.example` by
 default, but both are read from the environment and can be set for either deployment target.
-Every numeric variable above must be a positive integer; the gateway refuses to start otherwise.
+Every numeric variable above must be an integer; all of them must be greater than `0` except
+`POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS`, whose lower bound is `0` (meaning
+"disabled"). The gateway refuses to start otherwise.
+
+`POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS` are read **once, when the app is built**.
+Changing them requires restarting the container or waiting for isolates to be recycled — unlike
+every other setting, they do not take effect per request.
 
 ### Registrar variables (optional, disabled by default)
 

@@ -216,7 +216,10 @@ export async function dispatch(args: {
   const timedOutSlots: number[] = [];
 
   const commit = async (at: number, updated: KeyRecord) => {
-    await repo.save(updated);
+    // 传上一份：save() 据此判断「这次改动是不是只动了 lastUsedAt」，只动了就不落盘。
+    // 不传的话每次成功转发都要写一次 KV，而免费档写配额是 1,000/天——
+    // 天花板一步都抬不动（见计划的 §配额账）。
+    await repo.save(updated, records[at]);
     records[at] = updated;
   };
 

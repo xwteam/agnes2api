@@ -18,12 +18,18 @@ agnes2api 提供兩種部署形態，建構自同一套程式碼與請求處理�
 | `COOLDOWN_RATE_LIMIT_MS` | 否 | `60000` | 上游回傳 `429` 後，對應 key 的冷卻時長。 |
 | `COOLDOWN_PAYMENT_MS` | 否 | `3600000` | 上游回傳 `402` 後，對應 key 的冷卻時長。 |
 | `COOLDOWN_STRIKE_MS` | 否 | `1800000` | key 的瞬時故障累積到 `MAX_STRIKES` 後的冷卻時長，到期自動恢復。 |
+| `POOL_CACHE_TTL_MS` | 否 | `60000` | 每個 isolate／行程在記憶體裡快取一份 key 池快照，本值是它的存活時長；`0` = 關閉快取。**每天的 KV 讀取次數 = 活躍 isolate 數 × (86400 ÷ 本值秒數) × (1 + 池中 key 數)，與請求數無關。** 代價：其他 isolate 判定的冷卻／剔除，本 isolate 最多晚這麼久才看到。 |
+| `POOL_TOUCH_INTERVAL_MS` | 否 | `21600000` | key 的「最後使用時間」最多多久寫入一次；`0` = 每次成功請求都寫入。它是純展示欄位、不參與排程，為它每次請求寫一次 KV 會把免費方案 1,000 次／天的寫入配額吃光，連冷卻與剔除都寫不進去。代價：面板「最後使用」的精度最粗到這個間隔。 |
 | `PORT` | 否（僅 Node/Docker） | `8080` | Node 執行時的監聽埠，Worker 不使用此變數。 |
 | `DATA_DIR` | 否（僅 Node/Docker） | `/app/data` | 檔案儲存寫入 `store.json` 的目錄，Worker 不使用此變數。 |
 
 `COOLDOWN_RATE_LIMIT_MS` 與 `COOLDOWN_PAYMENT_MS` 預設沒有寫在 `.env.example` 中，但
-兩種部署形態都會讀取這兩個環境變數，可依需求設定。以上數值型變數都必須是正整數，
-否則閘道拒絕啟動。
+兩種部署形態都會讀取這兩個環境變數，可依需求設定。以上數值型變數都必須是整數；除
+`POOL_CACHE_TTL_MS` 與 `POOL_TOUCH_INTERVAL_MS` 的下界是 `0`（`0` 表示「關閉」）之外，
+其餘都必須大於 `0`，否則閘道拒絕啟動。
+
+`POOL_CACHE_TTL_MS` 與 `POOL_TOUCH_INTERVAL_MS` 是**建立 app 時讀取一次**的，改了要重啟
+容器／等 isolate 回收才生效，不像其餘設定項那樣逐次生效。
 
 ### 註冊機相關變數（可選，預設關閉）
 

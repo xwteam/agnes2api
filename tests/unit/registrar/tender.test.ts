@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { tendOnce, type TendFailureReason, type TendDeps } from "../../../src/core/registrar/tender.js";
 import { KeyPoolRepo } from "../../../src/core/keypool-repo.js";
+import { KEY_PREFIX } from "../../../src/core/pool-index.js";
 import { MemoryStorage } from "../../helpers/fake-storage.js";
 import { FakeMailProvider } from "../../helpers/fake-mailbox.js";
 import type { MailProvider } from "../../../src/ports/mailbox.js";
@@ -536,5 +537,93 @@ describe("tendOnce", () => {
     const all = await repo.all();
     expect(all).toHaveLength(1);
     expect(all[0]!.key).toBe("sk-first");
+  });
+});
+
+/**
+ * 本轮有产出时的收尾对账。
+ *
+ * `indexAdd` 是没有 CAS 的读-改-写，KV 的边缘读缓存可能让它读到「对账刚修好之前」
+ * 的索引并把修复覆盖回去；孤儿不被 `all()` 看到 ⇒ 可用数偏小 ⇒ 缺口高估 ⇒
+ * **超额补铸**，而每一次补铸都是一次真实的 Agnes 建号。收尾再对一次账把窗口从
+ * 「一整轮」压到「一轮之内」。
+ */
+describe("tendOnce 收尾对账", () => {
+  /** 只数 list，用来区分「对账跑了」与「碰巧没跑」。 */
+  class ListCountingStorage extends MemoryStorage {
+    lists = 0;
+    override async list(prefix: string): Promise<string[]> {
+      this.lists++;
+      return super.list(prefix);
+    }
+  }
+
+  async function withStorage(s: MemoryStorage, over: Partial<RegistrarConfig> = {}) {
+    const repo = new KeyPoolRepo(s, { now: () => 1000, logger: NULL_LOGGER, cacheTtlMs: 0 });
+    const logger = recordingLogger();
+    const deps: TendDeps = {
+      repo, config: { ...CFG, ...over }, providers: { yyds: new FakeMailProvider() },
+      agnes: agnesOk(), now: () => 1000, sleep: async () => {}, rand: () => 0.5, logger,
+    };
+    return { repo, deps, logger, s };
+  }
+
+  const ORPHAN_ID = "0123456789abcdef";
+
+  /**
+   * 造一条**真正隐身**的孤儿：记录在存储里，索引不知道它。
+   *
+   * 池子里必须先有一把正常的 key——孤儿只在「索引非空且至少读到一条活记录」时才
+   * 隐身。池子空着的话 `all()` 会走「索引缺失回落」或「空结果兜底」，两条都会
+   * `list()` 一次并把孤儿捞出来，于是「对账之前看不见」这个前提根本不成立，
+   * 整条用例就在测一个空判据。
+   */
+  async function plantOrphan(s: MemoryStorage, repo: KeyPoolRepo) {
+    await repo.add("sk-existing-key-aaaaaa");
+    await s.put(KEY_PREFIX + ORPHAN_ID, {
+      id: ORPHAN_ID, key: "sk-orphan-orphan-orph", addedAt: 1, lastUsedAt: null,
+      cooldownUntil: 0, cooldownReason: null, strikes: 0, evicted: false, evictedReason: null,
+    });
+    expect((await repo.all()).map((r) => r.id), "前置条件：对账之前它必须是隐身的")
+      .not.toContain(ORPHAN_ID);
+  }
+
+  it("铸出 key 之后，本轮里被覆盖掉的孤儿立刻被捡回来（而不是等 30 分钟后的下一轮）", async () => {
+    const s = new ListCountingStorage();
+    // targetKeys 2、池里已有 1 把 ⇒ 缺口 1 ⇒ 本轮真会铸出东西。
+    const { repo, deps } = await withStorage(s, { targetKeys: 2, mintBatch: 1 });
+    await plantOrphan(s, repo);
+
+    const out = await tendOnce(deps);
+    expect(out.minted).toBe(1);
+    // 收尾对账把孤儿加回索引 ⇒ 现在是「原有的 + 刚铸的 + 捡回来的」三把。
+    expect((await repo.all()).map((r) => r.id)).toContain(ORPHAN_ID);
+    expect(await repo.all()).toHaveLength(3);
+  });
+
+  it("一把都没铸出来时不对账——没有产出就没有覆盖窗口，不该白付一次 list", async () => {
+    const s = new ListCountingStorage();
+    // 目标数已满 ⇒ need <= 0 ⇒ 直接返回，minted=0。
+    const { repo, deps } = await withStorage(s, { targetKeys: 1, mintBatch: 1 });
+    await repo.add("sk-already-enough-aaaa");
+    s.lists = 0;
+
+    const out = await tendOnce(deps);
+    expect(out.minted).toBe(0);
+    expect(s.lists, "零产出的那一轮一次 list 都不该有").toBe(0);
+  });
+
+  it("收尾对账失败只记一条 warn，不把一轮已经成功铸出 key 的 tend 变成异常", async () => {
+    const s = new ListCountingStorage();
+    const { repo, deps, logger } = await withStorage(s, { targetKeys: 2, mintBatch: 1 });
+    // 先放一把正常 key：池子非空，`all()` 就不会走那两条会 list 的回落路径，
+    // 于是下面那个 throw 只可能被**收尾对账**触发，归因才是干净的。
+    await repo.add("sk-existing-key-aaaaaa");
+    // stub 必须真的 throw——返回空数组测的是「池子是空的」，是另一回事。
+    s.list = async () => { throw new Error("KV list 挂了"); };
+
+    const out = await tendOnce(deps);
+    expect(out.minted, "key 已经落盘了，不许因为对账失败就报补池失败").toBe(1);
+    expect(logger.has("registrar.post_mint_reconcile_failed")).toBe(true);
   });
 });

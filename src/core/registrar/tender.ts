@@ -250,5 +250,39 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
     if (abortRound) break;
   }
 
+  if (minted > 0) await reconcileAfterMint(deps);
+
   return { skipped: false, available, attempted, minted, failures };
+}
+
+/**
+ * 本轮真的铸出 key 之后，**再对一次账**。成本是一次 `list`（外加一次 `get`），
+ * 只在有产出的那些轮次付。
+ *
+ * 为什么非做不可：`KeyPoolRepo.indexAdd` 是**没有 CAS 的读-改-写**，而 KV 的边缘
+ * 读缓存可能让它读到「对账刚修好之前」的那份索引，于是它把修复结果整个覆盖回去——
+ * 同一轮里刚被捡回来的孤儿转眼又成了孤儿。
+ *
+ * 连带后果比「索引脏了」严重得多：孤儿不被 `all()` 看到 ⇒ 上面第 86 行算出的可用数
+ * 偏小 ⇒ 缺口被高估 ⇒ **超额补铸**，而每铸一把都是一次真实的 Agnes 建号，同时撞
+ * 注册风控与邮箱建号限流（YYDS 15 个 / MoeMail 30 个上限）。补铸出来的 key 还会
+ * 再次触发同一条覆盖，一轮一轮地滚。
+ *
+ * 这一步不消灭那个窗口（没有 CAS 就消灭不了），只把它从「一整轮」压到「一轮之内」：
+ * 两个入口的下一次对账要等 30 分钟，而这里是立刻。
+ *
+ * 失败只记一条 warn 就算了：索引残留是 fail-safe 的（key 不被用，而不是坏 key 被用），
+ * 让它把一轮**已经成功铸出了 key** 的 tend 变成异常，只会让两个入口打出误导性的
+ * 「补池失败」，而实际上 key 已经落盘了。
+ */
+async function reconcileAfterMint(deps: TendDeps): Promise<void> {
+  try {
+    await deps.repo.reconcileIndex();
+  } catch (err) {
+    deps.logger.log({
+      level: "warn", event: "registrar.post_mint_reconcile_failed",
+      msg: "本轮铸出了 key，但收尾对账失败；索引可能仍缺项，下一轮调度开头的对账会再修一次",
+      fields: { err: err instanceof Error ? err.message : String(err) },
+    });
+  }
 }

@@ -1,6 +1,11 @@
 import type { Storage } from "../ports/storage.js";
 import { registrarFromEnv, type RegistrarConfig } from "./registrar/config.js";
 import { NULL_LOGGER, type Logger } from "../ports/logger.js";
+// 从 KeyPoolRepo 借默认值而不是在这里再抄一遍两个魔数：抄一遍就有两个真源，
+// 而「面板上写的生效时间」与「实际行为」对不上正是本期最不能出的那类问题。
+import {
+  DEFAULT_POOL_CACHE_TTL_MS, DEFAULT_POOL_TOUCH_INTERVAL_MS,
+} from "./keypool-repo.js";
 
 export interface GatewayConfig {
   gatewayToken: string;
@@ -20,6 +25,16 @@ export interface GatewayConfig {
   cooldownRateLimitMs: number;
   cooldownPaymentMs: number;
   cooldownStrikeMs: number;
+  /**
+   * 见 `KeyPoolRepoOptions.cacheTtlMs`。**0 = 关闭缓存。**
+   *
+   * **建 app 时读一次**，不是逐次生效：它绑定的是部署形态（活跃 isolate 数 ×
+   * 池大小），不是逐次可调的策略。改它要重启容器 / 等 isolate 回收，
+   * `.env.example` 与五语言 DEPLOY.md 都写明了这一点，面板文案不许写「立即生效」。
+   */
+  poolCacheTtlMs: number;
+  /** 见 `KeyPoolRepoOptions.touchIntervalMs`。0 = 关闭写消除。生效时机同上。 */
+  poolTouchIntervalMs: number;
   registrar: RegistrarConfig;
 }
 
@@ -33,6 +48,8 @@ const DEFAULTS = {
   cooldownRateLimitMs: 60_000,
   cooldownPaymentMs: 3_600_000,
   cooldownStrikeMs: 1_800_000,
+  poolCacheTtlMs: DEFAULT_POOL_CACHE_TTL_MS,
+  poolTouchIntervalMs: DEFAULT_POOL_TOUCH_INTERVAL_MS,
 } as const;
 
 type Env = Record<string, string | undefined>;
@@ -40,10 +57,12 @@ type Env = Record<string, string | undefined>;
 /**
  * 读取一个数值配置项，优先级：环境变量 > 存储 > 内置默认值。
  *
- * 这里的每一项都是「时长（毫秒）」或「次数」，取值必须是正整数：
- * `UPSTREAM_TIMEOUT_MS=-1` 会让 setTimeout 立刻触发，一个请求就能把整池打成
- * strike；`MAX_STRIKES=0` 更糟——`strikes >= maxStrikes` 在第一次失败时即成立
+ * 这里的每一项都是「时长（毫秒）」或「次数」，取值必须是不小于 `min`（默认 1）
+ * 的整数：`UPSTREAM_TIMEOUT_MS=-1` 会让 setTimeout 立刻触发，一个请求就能把整池
+ * 打成 strike；`MAX_STRIKES=0` 更糟——`strikes >= maxStrikes` 在第一次失败时即成立
  * （`1 >= 0`），等于跳过了整个容错机制。故只校验 Number.isFinite 是不够的。
+ *
+ * 两个池子旋钮显式传 `min = 0`：对它们来说 0 不是越界值而是「关闭」，见 min 的说明。
  */
 function num(
   env: Env,
@@ -52,18 +71,27 @@ function num(
   stored: unknown,
   fallback: number,
   logger: Logger,
+  /**
+   * 允许的最小值。**默认 1**——`UPSTREAM_TIMEOUT_MS=-1` 会让 setTimeout 立刻触发，
+   * `MAX_STRIKES=0` 更糟（`1 >= 0` 在第一次失败时即成立，等于跳过整个容错机制）。
+   * 只有 `poolCacheTtlMs` / `poolTouchIntervalMs` 传 0：对它们来说 0 是「关闭」
+   * 这个有意义的取值，是用户的逃生口。
+   */
+  min = 1,
 ): number {
   const raw = env[envName];
   if (raw !== undefined) {
     const n = Number(raw);
     // **环境变量的非法值继续 fail-fast**：那是部署时错误，运维必须立刻看得见，
     // 而且它不可能是面板写坏的——面板永远碰不到环境变量。
-    if (!isPositiveInt(n)) throw new Error(`环境变量 ${envName} 必须是正整数: ${raw}`);
+    if (!isIntAtLeast(n, min)) {
+      throw new Error(`环境变量 ${envName} 必须是不小于 ${min} 的整数: ${raw}`);
+    }
     return n;
   }
 
   if (stored !== undefined && stored !== null) {
-    if (!isPositiveInt(stored)) {
+    if (!isIntAtLeast(stored, min)) {
       // **存储的非法值改为字段级降级**（设计文档 §5.4 第 2 条）。
       // 抛错的后果是 Node 侧 process.exit(1) 进入重启循环，而且**没有面板可以进去改回来**；
       // Worker 侧则是全部转发流量挂掉。一次误操作把网关砖掉是不可接受的。
@@ -80,8 +108,8 @@ function num(
   return fallback;
 }
 
-function isPositiveInt(n: unknown): n is number {
-  return typeof n === "number" && Number.isInteger(n) && n >= 1;
+function isIntAtLeast(n: unknown, min: number): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n >= min;
 }
 
 export function configFromEnv(env: Env, logger: Logger = NULL_LOGGER): GatewayConfig {
@@ -97,6 +125,8 @@ export function configFromEnv(env: Env, logger: Logger = NULL_LOGGER): GatewayCo
     cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", undefined, DEFAULTS.cooldownRateLimitMs, logger),
     cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", undefined, DEFAULTS.cooldownPaymentMs, logger),
     cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", undefined, DEFAULTS.cooldownStrikeMs, logger),
+    poolCacheTtlMs: num(env, "POOL_CACHE_TTL_MS", "poolCacheTtlMs", undefined, DEFAULTS.poolCacheTtlMs, logger, 0),
+    poolTouchIntervalMs: num(env, "POOL_TOUCH_INTERVAL_MS", "poolTouchIntervalMs", undefined, DEFAULTS.poolTouchIntervalMs, logger, 0),
     registrar: registrarFromEnv(env, {}, logger),
   };
 }
@@ -121,6 +151,8 @@ export async function loadConfig(env: Env, storage: Storage, logger: Logger = NU
     cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", stored.cooldownRateLimitMs, DEFAULTS.cooldownRateLimitMs, logger),
     cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", stored.cooldownPaymentMs, DEFAULTS.cooldownPaymentMs, logger),
     cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", stored.cooldownStrikeMs, DEFAULTS.cooldownStrikeMs, logger),
+    poolCacheTtlMs: num(env, "POOL_CACHE_TTL_MS", "poolCacheTtlMs", stored.poolCacheTtlMs, DEFAULTS.poolCacheTtlMs, logger, 0),
+    poolTouchIntervalMs: num(env, "POOL_TOUCH_INTERVAL_MS", "poolTouchIntervalMs", stored.poolTouchIntervalMs, DEFAULTS.poolTouchIntervalMs, logger, 0),
     registrar: registrarFromEnv(env, stored.registrar ?? {}, logger),
   };
 }

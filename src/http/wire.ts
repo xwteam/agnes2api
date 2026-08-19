@@ -31,6 +31,17 @@ export interface BuildOptions {
 export interface BuiltApp {
   app: Hono;
   configHolder: ConfigHolder;
+  /**
+   * app 实际在用的那个 key 池仓储。
+   *
+   * 交出来的理由有两个，都不是「为了测试方便」：
+   * ① P3c 的面板写完 key 之后要调 `repo.invalidate()`，而它必须是**这一个**实例
+   *    ——另建一个实例调 invalidate 是纯粹的空操作，快照仍然是旧的。
+   * ② 不交出来的话，「两个池子旋钮有没有真的接到 app 的 repo 上」就只能靠在测试里
+   *    照抄一遍 wire.ts 的装配来验证，而照抄的那份永远验证不了原件（变异实测：
+   *    把这两行删掉，全套测试逃逸）。
+   */
+  repo: KeyPoolRepo;
 }
 
 /**
@@ -72,16 +83,26 @@ export async function buildApp(
   }
 
   const configHolder = await createConfigHolder({ env, storage: watched, logger, now: () => Date.now() });
+  // **这两个旋钮是建 app 时读一次的**，不随 ConfigHolder 每次刷新而变：它们绑定的是
+  // 部署形态（活跃 isolate 数 × 池大小），不是逐次生效的策略。改了要重启容器 /
+  // 等 isolate 回收——`.env.example` 与五语言 DEPLOY.md 都写明了，面板文案同样不许
+  // 写「立即生效」。
+  const cfg = configHolder.current();
+  const repo = new KeyPoolRepo(watched, {
+    now: () => Date.now(), logger,
+    cacheTtlMs: cfg.poolCacheTtlMs,
+    touchIntervalMs: cfg.poolTouchIntervalMs,
+  });
   const app = createApp({
     version: VERSION,
     configHolder,
-    repo: new KeyPoolRepo(watched, { now: () => Date.now(), logger }),
+    repo,
     fetcher: new NativeFetcher(),
     now: () => Date.now(),
     storageHealth,
     logger,
   });
-  return { app, configHolder };
+  return { app, configHolder, repo };
 }
 
 /**
@@ -113,7 +134,15 @@ export async function buildTendDeps(
   if (reg.moemail) providers.moemail = new MoeMailProvider({ fetcher, ...reg.moemail, sleep, now, logger });
 
   return {
-    repo: new KeyPoolRepo(storage, { now, logger }),
+    repo: new KeyPoolRepo(storage, {
+      now, logger,
+      // **补池必须看当前真实的可用数**：读一份最多一个 TTL 前的快照会把缺口算错，
+      // 别的实例（或面板）刚加进去的 key 还没进本进程的快照 ⇒ 重复补池 ⇒ 白烧邮箱
+      // 配额（YYDS 15 个 / MoeMail 30 个上限），而每一次补池都是一次真实的 Agnes
+      // 建号，同时撞注册风控与建号限流。它每 30 分钟才跑一次，多付 1+N 次读完全
+      // 不是问题。
+      cacheTtlMs: 0,
+    }),
     config: reg,
     providers,
     agnes: { fetcher, platformUrl: reg.agnesPlatformUrl },

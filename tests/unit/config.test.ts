@@ -132,4 +132,74 @@ describe("loadConfig", () => {
       expect(c.upstreamTimeoutMs).toBe(1);
     });
   });
+
+  /**
+   * 两个池子旋钮是**唯一**下界为 0 的配置项：0 对它们不是越界值，而是「关闭」这个
+   * 有意义的取值，是用户在 KV 配额上的逃生口（关缓存 / 关写消除）。其余数值项的
+   * 下界仍然是 1，不许被这两项顺带放宽——`MAX_STRIKES=0` 等于跳过整个容错机制。
+   */
+  describe("key 池的两个旋钮", () => {
+    it("默认 60 秒缓存 + 6 小时触达间隔", async () => {
+      const c = await loadConfig({ GATEWAY_TOKEN: "t" }, new MemoryStorage());
+      expect(c.poolCacheTtlMs).toBe(60_000);
+      expect(c.poolTouchIntervalMs).toBe(21_600_000);
+    });
+
+    it("取 0 是合法的（关闭），**不**抛错", async () => {
+      const c = await loadConfig(
+        { GATEWAY_TOKEN: "t", POOL_CACHE_TTL_MS: "0", POOL_TOUCH_INTERVAL_MS: "0" },
+        new MemoryStorage(),
+      );
+      expect(c.poolCacheTtlMs).toBe(0);
+      expect(c.poolTouchIntervalMs).toBe(0);
+    });
+
+    it("负数与小数仍然抛错——下界放宽到 0，不是取消校验", async () => {
+      for (const [name, value] of [
+        ["POOL_CACHE_TTL_MS", "-1"],
+        ["POOL_CACHE_TTL_MS", "1.5"],
+        ["POOL_CACHE_TTL_MS", "abc"],
+        ["POOL_TOUCH_INTERVAL_MS", "-1"],
+        ["POOL_TOUCH_INTERVAL_MS", "2.5"],
+      ] as Array<[string, string]>) {
+        await expect(
+          loadConfig({ GATEWAY_TOKEN: "t", [name]: value }, new MemoryStorage()),
+          `${name}=${value}`,
+        ).rejects.toThrow(new RegExp(name));
+      }
+    });
+
+    it("走同一套优先级：env > 存储 > 默认", async () => {
+      const s = new MemoryStorage();
+      await s.put("config", { poolCacheTtlMs: 5_000, poolTouchIntervalMs: 600_000 });
+      const stored = await loadConfig({ GATEWAY_TOKEN: "t" }, s);
+      expect(stored.poolCacheTtlMs).toBe(5_000);
+      expect(stored.poolTouchIntervalMs).toBe(600_000);
+
+      const env = await loadConfig(
+        { GATEWAY_TOKEN: "t", POOL_CACHE_TTL_MS: "9000", POOL_TOUCH_INTERVAL_MS: "900000" }, s,
+      );
+      expect(env.poolCacheTtlMs).toBe(9_000);
+      expect(env.poolTouchIntervalMs).toBe(900_000);
+    });
+
+    it("存储里的越界值回落默认值而不是把网关砖掉", async () => {
+      const s = new MemoryStorage();
+      await s.put("config", { poolCacheTtlMs: -5 });
+      const logger = recordingLogger();
+      const c = await loadConfig({ GATEWAY_TOKEN: "t" }, s, logger);
+      expect(c.poolCacheTtlMs).toBe(60_000);
+      expect(logger.entries.find((x) => x.event === "config.invalid")?.fields?.field)
+        .toBe("poolCacheTtlMs");
+    });
+
+    it("存储里的 0 是合法值，不该被当成「非法」回落成 60 秒", async () => {
+      const s = new MemoryStorage();
+      await s.put("config", { poolCacheTtlMs: 0 });
+      const logger = recordingLogger();
+      // 面板把缓存关掉之后重启，值必须还是 0——回落成默认值等于面板上的开关是假的。
+      expect((await loadConfig({ GATEWAY_TOKEN: "t" }, s, logger)).poolCacheTtlMs).toBe(0);
+      expect(logger.events()).toEqual([]);
+    });
+  });
 });

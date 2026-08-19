@@ -31,12 +31,19 @@ const CONFIG = {
   cooldownRateLimitMs: 60_000,
   cooldownPaymentMs: 3_600_000,
   cooldownStrikeMs: 1_800_000,
+  // 本文件量的是 dispatch 的**记账语义**（谁被记 strike、谁进冷却），一律通过
+  // 「改完再 all() 读回来」断言。快照缓存与写消除都会挡在这条读回路上，开着它们
+  // 等于让这些断言测的是缓存而不是记账。两者由 pool-cache / quota-account 覆盖。
+  poolCacheTtlMs: 0, poolTouchIntervalMs: 0,
   registrar: registrarFromEnv({}, {}),
 };
 
 async function makeRepo(keys: string[]) {
   const s = new MemoryStorage();
-  const repo = new KeyPoolRepo(s, { now: () => 1000, logger: NULL_LOGGER });
+  const repo = new KeyPoolRepo(s, {
+    now: () => 1000, logger: NULL_LOGGER,
+    cacheTtlMs: CONFIG.poolCacheTtlMs, touchIntervalMs: CONFIG.poolTouchIntervalMs,
+  });
   for (const k of keys) await repo.add(k);
   return repo;
 }
