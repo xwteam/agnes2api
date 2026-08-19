@@ -18,6 +18,12 @@ const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "x-frame-options": "DENY",
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
+  // 强 ETag + 每次回源校验。资源随部署变化，长缓存会让用户升级后看到旧面板。
+  //
+  // **301 与 404 也必须带**，所以它在这里而不是只挂在 200 分支上：301 会被浏览器
+  // 近乎永久地缓存，P3b 若改成让 `/admin/` 直接发内容，老客户端手里会是一条
+  // **拔不掉**的永久跳转。
+  "cache-control": "no-cache",
 };
 
 /**
@@ -44,9 +50,17 @@ export function uiRoutes(): Hono {
     }
 
     // 直接用注册路径本身查表：Hono 已经把 query 剥掉了。
+    //
+    // **`/admin/index.html` 是 404，这是有意的**：一份内容一个规范 URL，键就是
+    // `/admin`。admin-ui/README.md 让贡献者**用浏览器直接打开**那个文件（`file://`），
+    // 不是走 HTTP 取它，所以这条不影响调试流程。要改的话就和 `/admin/` 一样走 301，
+    // 别再加一个发同样内容的第二个键（两条缓存两个 ETag，升级后会不同步）。
     const asset = UI_ASSETS[c.req.path];
 
-    // **404 也要带安全头**：漏在错误分支上等于在同一个源下放了一个没有 CSP 的页面。
+    // **uiRoutes 自己的 404 带全套安全头**：漏在错误分支上等于在同一个源下放了
+    // 一条没有 CSP 的页面。（注意范围：这只管 /admin 这棵树命中 handler 之后的 404。
+    // 没配 ADMIN_TOKEN 时整棵树不注册，那时的 404 是 Hono 的默认响应，走不到这里
+    // ——它由 app.ts 的全局 nosniff 兜底。）
     // 404 只给固定文案，**不回显有哪些键**。
     if (!asset) {
       return new Response("Not Found", {
@@ -55,12 +69,7 @@ export function uiRoutes(): Hono {
       });
     }
 
-    const headers: Record<string, string> = {
-      ...SECURITY_HEADERS,
-      etag: asset.etag,
-      // 强 ETag + 每次回源校验。资源随部署变化，长缓存会让用户升级后看到旧面板。
-      "cache-control": "no-cache",
-    };
+    const headers: Record<string, string> = { ...SECURITY_HEADERS, etag: asset.etag };
     // 强比较，且只认完全相等：这里刻意不解析 `If-None-Match` 的列表形态与 `W/` 前缀
     // ——判错的方向是「多发一次全量」，不是「回一个错内容的 304」。
     if (c.req.header("if-none-match") === asset.etag) {

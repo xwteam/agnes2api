@@ -34,7 +34,12 @@ const TYPES = {
   ".js": "text/javascript; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
+  // ⚠️ **刻意没有 `.svg`。** 独立的 .svg 文件以 image/svg+xml 挂在 /admin/ 下，
+  // 直接导航过去就是一个**同源文档**，里面的 <script> / on* / javascript: 都会执行
+  // ——而下面的脚本校验只对 .html 生效，等于开了一个绕过 CSP 审查的后门。
+  // admin-ui/README.md 的硬规则第 2 条本来就写着「图标一律**内联** SVG」（写在
+  // HTML/JS 里，不落单独文件），两者现在一致。要放独立 SVG 就必须先给它补上
+  // 脚本 / on* / javascript: 三类校验，别只是把扩展名加回来。
 };
 
 function fail(msg) {
@@ -44,8 +49,9 @@ function fail(msg) {
 
 function walk(dir) {
   const out = [];
-  // 排序保证产物确定性：目录读取顺序在不同文件系统上不一样，不排序的话
-  // 「重新生成一遍应当逐字节相同」这条漂移门禁会随机变红。
+  // 排序保证**多处违规时先报哪一条是确定的**。
+  //（原先这里写的是「保证产物确定性」——那个理由已被实测推翻：渲染那步的
+  // `Object.keys(assets).sort()` 独立排过一次序，去掉这里的 .sort() 后产物逐字节不变。）
   for (const name of readdirSync(dir).sort()) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) out.push(...walk(p));
@@ -81,9 +87,14 @@ for (const p of files) {
   }
 
   // 规则：零内联脚本（CSP script-src 'self'）。
+  //
+  // ⚠️ 判据必须是**属性边界**匹配。曾经写的是 `/\bsrc=/`，而 `\b` 在 `data-src=` 的
+  // `-` 与 `s` 之间是成立的 ⇒ `<script data-src="x">alert(1)</script>` 骗过门禁、
+  // payload 进包，**而浏览器只在真的有 src 属性时才忽略内联体**（已复现）。
+  // `(^|\s)` 要求 src 前面是属性分隔符；`i` 是因为 HTML 属性名大小写不敏感。
   if (ext === ".html") {
     for (const m of body.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
-      if (!/\bsrc=/.test(m[1]) && m[2].trim().length > 0) fail(`${rel}: 禁止内联脚本`);
+      if (!/(^|\s)src\s*=/i.test(m[1]) && m[2].trim().length > 0) fail(`${rel}: 禁止内联脚本`);
     }
   }
 

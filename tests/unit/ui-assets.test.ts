@@ -63,6 +63,26 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
   });
 
   /**
+   * **资产清单是显式快照，加一个文件就必须在这里表态。**
+   *
+   * 丢进 `admin-ui/` 的任何东西都会变成一条**免鉴权的公网端点**——白名单里有
+   * `.json`，将来谁放一个 `config.json` 或一份调试笔记进去，它就静默地公开可取，
+   * 而唯一的网只有 scan-secrets 那 5 条正则。这是公开 MIT 仓、卖点是「裸克隆即
+   * deploy」，趁资产集合只有 5 个文件时钉住成本最低。
+   *
+   * 上面那条只保证「生成物 == 源目录」，两边一起长的时候它不会红；这条才拦得住。
+   */
+  it("资产清单与显式快照一致——admin-ui/ 里多一个文件就是多一个公网端点", () => {
+    expect(Object.keys(UI_ASSETS).sort()).toEqual([
+      "/admin",
+      "/admin/css/base.css",
+      "/admin/js/app.js",
+      "/admin/js/boot.js",
+      "/admin/js/pure/mask.mjs",
+    ]);
+  });
+
+  /**
    * etag 必须是**内容**的哈希。
    *
    * 这一条单靠「互不相同 + 304 能工作」区分不出来：把 etag 改成路径的哈希，
@@ -130,27 +150,18 @@ describe("生成器的硬规则", () => {
     expect(bad).toEqual([]);
   });
 
-  it("js/pure 下禁止 import、禁止碰浏览器全局——保证 vitest 里 import 一定不炸", () => {
-    const pure = walk(join(SRC_DIR, "js", "pure"));
-    expect(pure.length, "js/pure 空了，下面的循环一格不跑").toBeGreaterThan(0);
-    for (const p of pure) {
-      const src = readFileSync(p, "utf8");
-      expect(src, `${p} 不许有 import`).not.toMatch(/^\s*import\s/m);
-      // 校验是纯文本匹配（生成器不解析注释），所以这几个词连注释里都不许出现。
-      // 规则全文在 admin-ui/README.md，那里不受这条约束。
-      expect(src, `${p} 不许出现 DOM 全局`).not.toMatch(/\bdocument\b/);
-      expect(src, `${p} 不许出现浏览器窗口全局`).not.toMatch(/\bwindow\b/);
-    }
-  });
-
-  it("零内联脚本——CSP 的 script-src 'self' 要求的", () => {
-    const html = readFileSync(join(SRC_DIR, "index.html"), "utf8");
-    // <script src=...></script> 允许；<script>…代码…</script> 不允许。
-    const inline = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
-      .filter(([, attrs, body]) => !/\bsrc=/.test(attrs!) && body!.trim().length > 0);
-    expect(inline).toEqual([]);
-  });
-
+  /**
+   * ⚠️ 这里**刻意不再复述生成器的那几条正则**。
+   *
+   * 原先这一组把 `/\bsrc=/`、`/^\s*import\s/m`、`/\bdocument\b/` 原样抄了一遍，
+   * 于是期望侧与实际侧**共享同一个盲区，永远不可能不一致**——`\b` 在 `data-src=`
+   * 的 `-` 与 `s` 之间是成立的，`<script data-src="x">alert(1)</script>` 同时骗过
+   * 生成器和这条测试（已复现：EXIT=0 且 payload 入包）。这是第 6 种假阳性的新形态。
+   *
+   * 「当前的源合规」由漂移门禁隐含保证（生成器一旦拒绝当前源就 exit 1，
+   * 那条重跑生成器的用例会直接抛）。「生成器拦得住违规」由下面那组**真的跑一遍
+   * 生成器**的用例保证。两件事都不需要在这里复制一份正则。
+   */
   it("文案里不出现「数字IP:端口」——scan-secrets.sh 的第五条正则会把 CI 打红", () => {
     const all = walk(SRC_DIR);
     expect(all.length).toBeGreaterThan(0);
@@ -213,10 +224,61 @@ describe("生成器对违规输入 exit 1", () => {
     expect(r.code).toBe(1);
   });
 
+  it("js/pure 下碰 window 全局 ⇒ exit 1", () => {
+    const r = runWithMutation((ui) => append(join(ui, "js/pure/mask.mjs"), "\nexport const w = window.name;\n"));
+    expect(r.code).toBe(1);
+  });
+
   it("index.html 里出现内联脚本 ⇒ exit 1", () => {
     const r = runWithMutation((ui) => append(join(ui, "index.html"), "\n<script>alert(1)</script>\n"));
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("内联脚本");
+  });
+
+  /**
+   * `data-src=` / `x-src=` 这类**假 src** 必须照样被拦。
+   * 判据写成 `/\bsrc=/` 时它们能骗过门禁（`\b` 在 `-` 与 `s` 之间成立），
+   * **而浏览器只在真的有 `src` 属性时才忽略内联体** ⇒ payload 照常执行。
+   */
+  it.each(["data-src", "x-src", "SRC-fake", "datasrc"])(
+    "用假属性 %s= 伪装成外链脚本 ⇒ 仍然 exit 1",
+    (attr) => {
+      const r = runWithMutation((ui) =>
+        append(join(ui, "index.html"), `\n<script ${attr}="x">alert(1)</script>\n`));
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("内联脚本");
+    },
+  );
+
+  /**
+   * 反方向：真的带 `src` 的外链脚本**不许误伤**。
+   *
+   * ⚠️ 每个夹具的 `<script>` 体**必须非空**。第一版全写成 `<script src="x"></script>`
+   * 空体，而判定是 `!hasSrc && body.trim().length > 0` ——空体那半边先短路，
+   * **`src` 认没认出来根本不可观测**，于是把判据收紧成 `/^ src=/`（漏掉大小写与
+   * 空格形态）时这条照样绿。这正是本项目第 5 种假阳性：被测的那个选择，
+   * 在测试覆盖的状态下看不见。
+   */
+  it.each([
+    ['小写紧贴', '<script src="/admin/js/x.js">ignored</script>'],
+    ['大写 SRC（HTML 属性名大小写不敏感）', '<script SRC="/admin/js/x.js">ignored</script>'],
+    ['等号两侧带空格', '<script type="module" src = "/admin/js/x.js">ignored</script>'],
+    ['属性换行', '<script\n  src="/admin/js/x.js">ignored</script>'],
+  ])("真的带 src 的外链脚本不误伤：%s", (_name, tag) => {
+    const r = runWithMutation((ui) => append(join(ui, "index.html"), `\n${tag}\n`));
+    expect(r.code, `${tag}\n${r.stderr}`).toBe(0);
+  });
+
+  /**
+   * 独立 `.svg` 会以 `image/svg+xml` 挂出去，**直接导航过去就是一个同源文档**，
+   * 里面的 `<script>` 会执行——而脚本校验只对 `.html` 生效。扩展名白名单里
+   * 因此没有 `.svg`（与 README「图标一律内联 SVG」一致），这条守着它别被加回来。
+   */
+  it("独立 .svg ⇒ exit 1（它是能执行脚本的同源文档，不是图片）", () => {
+    const r = runWithMutation((ui) =>
+      writeFileSync(join(ui, "logo.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'));
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(".svg");
   });
 
   it("出现「数字IP:端口」形态 ⇒ exit 1", () => {

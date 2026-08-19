@@ -508,6 +508,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    */
   const EXPECTED_MIDDLEWARE = [
     "ALL /*",              // configRefresh
+    "ALL /*",              // 全局 nosniff（两条同名条目；少一条这里立刻变红）
     "ALL /v1/*",           // 网关鉴权
     "ALL /v1beta/*",       // 网关鉴权
     "ALL /admin/api/*",    // 管理鉴权

@@ -34,6 +34,9 @@ button[disabled] { opacity: .6; cursor: progress; }
 .err { min-height: 20px; margin-top: 10px; color: var(--danger); font-size: 13px; }
 .shell { display: none; padding: var(--gap); }
 .shell.on { display: block; }
-/* 登录成功后隐藏登录闸。用类而不是 style 属性：CSP 的 style-src 'self' 不放行
-   HTML 里的 style="…"，把「隐藏」这件事留在样式表里，将来加板块时不会踩到。 */
+/* 登录成功后隐藏登录闸。用类而不是 el.style.display：
+   ⚠️ 理由**不是** CSP——`style-src` 管的是标记里的 `style="…"` 属性与 <style> 元素，
+   **CSSOM 写入（el.style.x = y）不受 CSP 约束**，简报那版其实也跑得通。
+   真正的理由是表现归样式表：`.gate` 的显示方式（现在是 flex）只写在这一个地方，
+   将来改布局不必回头去找 JS 里那句写死的 display 值。 */
 .gate.off { display: none; }

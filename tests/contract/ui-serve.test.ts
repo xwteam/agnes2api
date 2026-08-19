@@ -49,12 +49,39 @@ describe("静态资源伺服", () => {
     }
   });
 
-  it("404 也带安全头——漏在错误分支上等于给了一条无 CSP 的同源页面", async () => {
+  /**
+   * 范围说准：这管的是 **uiRoutes 自己**命中 handler 之后的 404。
+   * 没配 `ADMIN_TOKEN` 时整棵树不注册，那时 `/admin` 落到 Hono 的默认 404，
+   * 走不到这里——它只有 app.ts 的全局 nosniff（见 security-headers.test.ts）。
+   */
+  it("uiRoutes 自己的 404 也带全套安全头——漏在错误分支上等于给了一条无 CSP 的同源页面", async () => {
     const { app } = await makeApp();
     const res = await app.request("/admin/js/does-not-exist.js");
     expect(res.status).toBe(404);
     expect(res.headers.get("content-security-policy")).toBe(CSP);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  /**
+   * `cache-control: no-cache` **四个分支都要有**。
+   *
+   * 301 是这里的要害：不带缓存指令的永久跳转会被浏览器近乎无限期地缓存，
+   * P3b 若改成让 `/admin/` 直接发内容，老客户端手里就是一条**拔不掉**的跳转。
+   */
+  it("200 / 304 / 301 / 404 四个分支都带 cache-control: no-cache", async () => {
+    const { app } = await makeApp();
+    const etag = (await app.request("/admin")).headers.get("etag")!;
+    const cases: Array<[string, RequestInit, number]> = [
+      ["/admin", {}, 200],
+      ["/admin", { headers: { "if-none-match": etag } }, 304],
+      ["/admin/", {}, 301],
+      ["/admin/js/does-not-exist.js", {}, 404],
+    ];
+    for (const [path, init, status] of cases) {
+      const res = await app.request(path, init);
+      expect(res.status, path).toBe(status);
+      expect(res.headers.get("cache-control"), `${path} -> ${status}`).toBe("no-cache");
+    }
   });
 
   it("带匹配的 If-None-Match 返回 304 且无响应体", async () => {

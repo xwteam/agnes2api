@@ -18,7 +18,12 @@ CI 的漂移门禁同样会红。
    只允许有 DOM 拼装与网络调用。
    ⚠️ 校验是**纯文本匹配、不解析注释**，所以 `document` / `window` 这两个词连注释里
    都不能写——要说明这条规则请链接到本文件，别在 `js/pure/` 里复述。
-2. **零二进制资源**（图标一律内联 SVG）；**零内联脚本**（CSP 的 `script-src 'self'`）。
+2. **零二进制资源**；**零内联脚本**（CSP 的 `script-src 'self'`）。
+   图标一律**内联** SVG（写在 HTML/JS 里）。**独立的 `.svg` 文件同样被拒**——
+   它会以 `image/svg+xml` 挂在 `/admin/` 下，直接导航过去就是一个**同源文档**，
+   里面的 `<script>` / `on*` / `javascript:` 都会执行，而脚本校验只对 `.html` 生效。
+   「零内联脚本」的判据是**属性边界**匹配：`<script data-src="x">payload</script>`
+   这类假 `src` 伪装拦得住（浏览器只在真有 `src` 时才忽略内联体）。
 3. 文案与占位符里不许出现「数字IP:端口」形态，会被 `scripts/scan-secrets.sh` 打红。
    一律写 `localhost:8080` 或 `https://your-gateway.example.com`。
 
