@@ -1,0 +1,9 @@
+# src/ui/assets.generated.ts 由 scripts/build-ui.mjs 生成（源在 admin-ui/）。
+# 标成 generated 让 GitHub 默认折叠它、并把它排除在语言统计之外。
+#
+# ⚠️ **刻意不加 `-diff`。** 设计文档 §4.2 建议连 `-diff` 一起加以降低 diff 噪音，
+# 但那会让 git 把它当二进制、评审时只显示「Binary files differ」——而这是一个
+# **入仓且会被直接部署**的文件，手工往里塞一段脚本恰恰是最该被评审看见的改动。
+# 漂移门禁（tests/unit/ui-assets.test.ts + CI）抓得住内容不一致，但评审的眼睛
+# 不该被关掉。折叠可以展开，二进制展不开。
+src/ui/assets.generated.ts linguist-generated=true

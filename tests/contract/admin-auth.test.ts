@@ -388,6 +388,14 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * 它们只投递编译期常量表 `UI_ASSETS`（src/ui/serve.ts），**不读任何运行时状态**
    *（tests/contract/ui-serve.test.ts 有一条用例守着「页面里没有版本号也没有口令」）。
    * 除此之外这张表不许再长。
+   *
+   * **关于 `/admin/`（尾斜杠 301 跳 `/admin`）的表态：三张表都不增长。**
+   * 它不是一条新注册的路由，而是 `GET /admin/*` 这个 handler 内部的一个分支
+   *（`app.routes` 里查不到它），安全域已经由 `/admin/*` 这条表过了态。
+   * 刻意**不**把它写进 `PUBLIC_PATHS`：下面那条「免鉴权路径不带凭据也是 200」
+   * 断言的是 200，而它返回 301——为了塞进一个条目就把那条断言放宽成「不是 401」，
+   * 是拿整张表的强度换一格覆盖，不划算。它的免鉴权与 301 由
+   * tests/contract/ui-serve.test.ts 三条专门的用例守着。
    */
   const PUBLIC_PATHS: readonly string[] = ["/health", "/admin", "/admin/*"];
 

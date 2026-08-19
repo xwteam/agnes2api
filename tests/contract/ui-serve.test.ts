@@ -82,6 +82,28 @@ describe("静态资源伺服", () => {
     expect(await res.text()).toBe(UI_ASSETS["/admin/js/boot.js"]!.body);
   });
 
+  it("GET /admin/ 尾斜杠 301 跳到 /admin——手输带斜杠是最自然的两种写法之一", async () => {
+    const { app } = await makeApp();
+    const res = await app.request("/admin/");
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("/admin");
+    expect(await res.text()).toBe("");
+    // 跳转也免鉴权（否则登录闸打不开），且跟着 /admin 一起存在或消失。
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("尾斜杠跳转不回显请求内容——不是开放重定向", async () => {
+    const { app } = await makeApp();
+    const res = await app.request("/admin/?next=https://evil.example.com");
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("/admin");
+  });
+
+  it("未设 ADMIN_TOKEN 时 /admin/ 也是 404，不该靠跳转泄漏「这里有个后台」", async () => {
+    const { app } = await makeApp([], ["k1"], {}, undefined, { adminToken: undefined });
+    expect((await app.request("/admin/")).status).toBe(404);
+  });
+
   it("未知路径 404，且**不泄漏**生成物里有哪些键", async () => {
     const { app } = await makeApp();
     const res = await app.request("/admin/js/does-not-exist.js");

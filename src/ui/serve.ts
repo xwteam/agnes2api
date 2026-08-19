@@ -33,6 +33,16 @@ export function uiRoutes(): Hono {
   const app = new Hono();
 
   const handler = (c: Context) => {
+    // `/admin/` 规范化到 `/admin`。查表命中制下尾斜杠不在表里，不处理就是 404
+    // ——而这是访问面板最自然的两种手输写法之一，部署完第一眼就会撞上。
+    //
+    // 用 301 而不是「两个 URL 各发一份」：同一份内容挂两个键会有两条缓存、两个
+    // ETag，升级后其中一条先失效另一条还是旧的。跳转目标是**硬编码字面量**，
+    // 不回显请求里的任何东西，所以不构成开放重定向。
+    if (c.req.path === "/admin/") {
+      return new Response(null, { status: 301, headers: { ...SECURITY_HEADERS, location: "/admin" } });
+    }
+
     // 直接用注册路径本身查表：Hono 已经把 query 剥掉了。
     const asset = UI_ASSETS[c.req.path];
 
