@@ -277,6 +277,33 @@ describe("Refreshable", () => {
     expect(loads).toBe(3);
   });
 
+  /**
+   * 防住的真实故障：NTP 把时钟往回拨 T 毫秒之后，`now() - loadedAt` 变成负数，
+   * 判据 `< ttlMs` 恒成立 ⇒ **这个 Refreshable 在 T + ttl 这段时间里再也不刷新**。
+   * 对 ConfigHolder 是「口令撤销不掉」在回拨期间复活，对 KeyPoolRepo 是
+   * 「别的实例判的冷却/剔除一直看不见」。只咬 Node 常驻进程（Worker 的 isolate 活不了那么久）。
+   *
+   * 同一个模块家族里 `writeIndexBestEffort` / `listOnReadPath` 都显式挡了 `since < 0`，
+   * 这里没挡——**同一份代码库里两套时钟语义**本身就是缺陷。
+   */
+  it("时钟回拨之后立刻恢复刷新，而不是冻结到回拨量走完", async () => {
+    let t = 1_000_000;
+    let loaded = 0;
+    const r = new Refreshable<number>({
+      load: async () => ++loaded,
+      ttlMs: 30_000,
+      now: () => t,
+    });
+    await r.prime();
+    expect(r.current()).toBe(1);
+
+    t -= 3_600_000;                    // NTP 往回拨一小时
+    await r.ensureFresh();
+    // 期望值 2 是手写字面量。断言的是**加载真的又发生了一次**（行为），
+    // 不是「没抛错」（形状）。
+    expect(r.current(), "时钟回拨把刷新冻住了").toBe(2);
+  });
+
   it("onError 自己抛错不会影响主流程——sink 故障不许拖垮网关", async () => {
     const c = clock();
     const r = new Refreshable<string>({

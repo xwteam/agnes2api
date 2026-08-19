@@ -21,7 +21,12 @@ export class Refreshable<T> {
   private value: T | undefined;
   /** 曾经成功装载过（或被 set 过）。与 loadedAt 分开，因为 invalidate 只重置后者。 */
   private everLoaded = false;
-  /** 上一次**真加载**的时刻。invalidate 把它设成 -Infinity 以强制下次重载。 */
+  /**
+   * 上一次**真加载**的时刻。invalidate 把它设成 -Infinity 以强制下次重载。
+   * `-Infinity` 同时是让 `ensureFresh()` 的时钟回拨判据（`age >= 0`）放行冷启动的
+   * 关键：`now() - (-Infinity) = +Infinity`，恒 `>= 0` 且恒 `>= ttlMs`，不会被
+   * 误判成「回拨」。
+   */
   private loadedAt = Number.NEGATIVE_INFINITY;
   private inFlight: Promise<void> | null = null;
   /**
@@ -58,7 +63,15 @@ export class Refreshable<T> {
    * 正是本计划 §配额账最怕的形态（也是「读取次数与请求数解耦」这条结论的前提）。
    */
   async ensureFresh(): Promise<void> {
-    if (this.everLoaded && this.o.now() - this.loadedAt < this.o.ttlMs) return;
+    // `age < 0` = 时钟回拨（NTP）。不挡的话判据恒成立，这个 Refreshable 会冻结
+    // 「回拨量 + 一个 TTL」那么久。回拨后立刻恢复刷新，与本仓 writeIndexBestEffort /
+    // listOnReadPath 的处理保持同一套语义——同一份代码库里不许有两套时钟语义。
+    //
+    // `loadedAt` 的初值是 Number.NEGATIVE_INFINITY（见下方字段声明），
+    // `now() - (-Infinity) = +Infinity`，`age >= 0` 成立、`age < ttlMs` 不成立
+    // ⇒ 冷启动（从未装载过）照常触发真加载，不受这条新判据影响。
+    const age = this.o.now() - this.loadedAt;
+    if (this.everLoaded && age >= 0 && age < this.o.ttlMs) return;
     if (!this.inFlight) {
       const clear = () => { this.inFlight = null; };
       // reload() 内部已全量 try/catch，理论上不会 reject；两个回调都挂上是为了
@@ -75,7 +88,11 @@ export class Refreshable<T> {
     this.loadedAt = this.o.now();
   }
 
-  /** 下一次 ensureFresh() 一定真的重载。面板写操作成功后调用。 */
+  /**
+   * 下一次 ensureFresh() 一定真的重载。面板写操作成功后调用。
+   * 设成 `-Infinity` 同样绕开了 `ensureFresh()` 的回拨判据（`age >= 0` 恒成立），
+   * 不会被误判成时钟回拨而跳过重载——两处用的是同一个哨兵值，行为不变。
+   */
   invalidate(): void {
     this.loadedAt = Number.NEGATIVE_INFINITY;
     // 递增代数：在途的那次 reload 落地时会发现自己已经过期，从而不推进 loadedAt。
