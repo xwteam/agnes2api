@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { loadConfig } from "../../src/core/config.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
+import { recordingLogger } from "../helpers/recording-logger.js";
 
 describe("loadConfig", () => {
   it("无任何来源时用内置默认值", async () => {
@@ -62,10 +63,15 @@ describe("loadConfig", () => {
     ).rejects.toThrow(/UPSTREAM_TIMEOUT_MS/);
   });
 
-  it("存储中的数值型配置为非法值时抛错", async () => {
+  it("存储里的 upstreamTimeoutMs 非法时回落默认值而不是让网关起不来", async () => {
     const s = new MemoryStorage();
     await s.put("config", { upstreamTimeoutMs: "abc" as any });
-    await expect(loadConfig({ GATEWAY_TOKEN: "t" }, s)).rejects.toThrow(/upstreamTimeoutMs/);
+    const logger = recordingLogger();
+    const c = await loadConfig({ GATEWAY_TOKEN: "t" }, s, logger);
+    // 断言具体默认值而不是「是个数」：回落到别的值一样是错的。
+    expect(c.upstreamTimeoutMs).toBe(8000);
+    expect(logger.entries.find((x) => x.event === "config.invalid")?.fields?.field)
+      .toBe("upstreamTimeoutMs");
   });
 
   it("默认包含 30 分钟的 strike 冷却时长", async () => {
@@ -108,10 +114,13 @@ describe("loadConfig", () => {
       });
     }
 
-    it("存储中的越界数值同样抛错", async () => {
+    it("存储中的越界数值回落默认值而不是抛错", async () => {
       const s = new MemoryStorage();
       await s.put("config", { maxStrikes: 0 });
-      await expect(loadConfig({ GATEWAY_TOKEN: "t" }, s)).rejects.toThrow(/maxStrikes/);
+      const logger = recordingLogger();
+      const c = await loadConfig({ GATEWAY_TOKEN: "t" }, s, logger);
+      expect(c.maxStrikes).toBe(3);
+      expect(logger.entries.find((x) => x.event === "config.invalid")?.fields?.field).toBe("maxStrikes");
     });
 
     it("下界之内的合法值照常接受", async () => {

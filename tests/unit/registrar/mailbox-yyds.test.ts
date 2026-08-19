@@ -261,6 +261,9 @@ describe("YydsProvider", () => {
     expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
     expect(e?.fields?.provider).toBe("yyds");
     expect(e?.fields?.guessed).toBe("uaaaaaaaaaa@a.test");
+    // 与 MoeMail 侧的 ttlMinutes 对称：过期时机是同一类「诚实告警」的事实点，
+    // 不该只留在文案里、不带可断言的字段。
+    expect(e?.fields?.expiresAfterHours).toBe(24);
   });
 
   it("RM3 createMailbox 响应 2xx 但正文非 JSON 时同样只告警、不发兜底 DELETE", async () => {

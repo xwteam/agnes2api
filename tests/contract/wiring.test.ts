@@ -1,11 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
 import { buildApp } from "../../src/http/wire.js";
+import { createApp } from "../../src/http/app.js";
+import { createConfigHolder, CONFIG_TTL_MS } from "../../src/http/config-holder.js";
+import { KeyPoolRepo } from "../../src/core/dispatcher.js";
+import { createStorageHealth } from "../../src/core/storage-health.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
+import { FakeFetcher } from "../helpers/fake-fetcher.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
 import type { Storage } from "../../src/ports/storage.js";
 
 describe("buildApp", () => {
   it("从环境变量与存储装配出可用的 app", async () => {
-    const app = await buildApp({ GATEWAY_TOKEN: "t" }, new MemoryStorage());
+    const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, new MemoryStorage());
     const res = await app.request("/health");
     expect(res.status).toBe(200);
   });
@@ -52,7 +58,7 @@ class CountingStorage implements Storage {
 describe("buildApp 的存储可写性探测", () => {
   it("开启探测时只写一次探针键并删掉，之后 /health 不再产生任何写入", async () => {
     const s = new CountingStorage();
-    const app = await buildApp({ GATEWAY_TOKEN: "t" }, s, { probeStorage: true });
+    const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, s, { probeStorage: true });
 
     expect(s.puts).toBe(1);
     expect(s.deletes).toBe(1);
@@ -67,7 +73,7 @@ describe("buildApp 的存储可写性探测", () => {
 
   it("不开启探测时装配完全不写存储（Worker/KV 形态不消耗写配额）", async () => {
     const s = new CountingStorage();
-    const app = await buildApp({ GATEWAY_TOKEN: "t" }, s);
+    const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, s);
 
     expect(s.puts).toBe(0);
     expect(s.deletes).toBe(0);
@@ -80,7 +86,7 @@ describe("buildApp 的存储可写性探测", () => {
     try {
       const s = new CountingStorage();
       s.writable = false;
-      const app = await buildApp({ GATEWAY_TOKEN: "t" }, s, { probeStorage: true });
+      const { app } = await buildApp({ GATEWAY_TOKEN: "t" }, s, { probeStorage: true });
 
       const res = await app.request("/health");
       expect(res.status).toBe(503);
@@ -91,6 +97,48 @@ describe("buildApp 的存储可写性探测", () => {
     }
   });
 
+});
+
+/** 记账用的存储：只统计 get 次数，用来证明 /health 不触发任何存储读取。 */
+class GetCountingStorage implements Storage {
+  gets = 0;
+  private readonly inner = new MemoryStorage();
+  async get<T>(key: string): Promise<T | null> {
+    this.gets++;
+    return this.inner.get<T>(key);
+  }
+  async put<T>(key: string, value: T): Promise<void> { return this.inner.put(key, value); }
+  async delete(key: string): Promise<void> { return this.inner.delete(key); }
+  async list(prefix: string): Promise<string[]> { return this.inner.list(prefix); }
+}
+
+// configRefresh 对 /health 的例外：既有的 CountingStorage 用例只统计 put/delete，
+// 观测不到 ensureFresh() 内部的 storage.get；而 TTL=30s 的真实 Date.now() 在单测
+// 的执行窗口里根本不会过期，即使统计了 get 也测不出差别。这里用注入的假时钟把
+// TTL 直接拨到过期，才能真正区分「/health 被免检」与「TTL 恰好没到」。
+describe("configRefresh 对 /health 的例外", () => {
+  it("TTL 早已过期时，/health 仍不触发存储读取；其它路由会", async () => {
+    let t = 0;
+    const now = () => t;
+    const s = new GetCountingStorage();
+    await s.put("config", { gatewayToken: "t" });
+    const configHolder = await createConfigHolder({ env: {}, storage: s, logger: NULL_LOGGER, now });
+    const repo = new KeyPoolRepo(s);
+    const app = createApp({
+      version: "0.1.0", configHolder, repo,
+      fetcher: new FakeFetcher([]), now, storageHealth: createStorageHealth(), logger: NULL_LOGGER,
+    });
+
+    const getsAfterPrime = s.gets; // createConfigHolder 的 prime() 已经读过一次
+    t += CONFIG_TTL_MS * 10; // TTL 早已过期
+
+    await app.request("/health");
+    await app.request("/health");
+    expect(s.gets, "/health 不该触发任何存储读取").toBe(getsAfterPrime);
+
+    await app.request("/v1/models", { headers: { authorization: "Bearer t" } });
+    expect(s.gets, "非 /health 路由要在 TTL 过期后触发重载").toBeGreaterThan(getsAfterPrime);
+  });
 });
 
 // wire.ts 忘了把 logger 传给 loadConfig 时，注册机的配置告警会静默消失——

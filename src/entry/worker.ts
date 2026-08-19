@@ -11,7 +11,6 @@ export interface Env {
 }
 
 let cachedApp: Hono | null = null;
-let cachedToken: string | undefined;
 
 /** 补池轮次的重入锁，落在与 key 池同一个 KV 命名空间里（不新增依赖）。 */
 const TEND_LOCK_KEY = "registrar_tend_lock";
@@ -25,19 +24,25 @@ const TEND_LOCK_TTL_MS = WORKER_CRON_WALL_CLOCK_MS;
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     let app = cachedApp;
-
-    // token 变化或还未初始化时才重新装配；装配失败绝不复用旧缓存
-    // （旧 token 对应的旧 app 可能已经不该再服务当前请求）。
-    if (!app || cachedToken !== env.GATEWAY_TOKEN) {
+    // **app 现在可以无条件缓存**：它自己不再持有任何配置值，配置全部走 ConfigHolder
+    // 每请求读一次（TTL 内命中缓存）。原来那个 `cachedToken !== env.GATEWAY_TOKEN`
+    // 的判断在「没设 GATEWAY_TOKEN 环境变量」时恒为 false，是「口令撤销不掉」的直接成因；
+    // 而 env 在一个 deployment 内不会变，这个判断本来也从没真正触发过。
+    if (!app) {
       try {
-        app = await buildApp(env as Record<string, string | undefined>, new KvStorage(env.POOL));
+        ({ app } = await buildApp(env as Record<string, string | undefined>, new KvStorage(env.POOL)));
       } catch (err) {
-        return new Response((err as Error).message, { status: 500 });
+        // **不回显 err.message**：这是未鉴权路径，异常信息里可能带存储键名、
+        // 内部路径与栈帧。与 app.onError 刻意不回显、/health 刻意不回显底层错误
+        // 是同一条策略——原实现在这里自相矛盾。
+        console.error("[agnes2api] 装配失败", err);
+        return new Response(
+          JSON.stringify({ error: { type: "internal_error", message: "网关内部错误" } }),
+          { status: 500, headers: { "content-type": "application/json" } },
+        );
       }
       cachedApp = app;
-      cachedToken = env.GATEWAY_TOKEN;
     }
-
     return app.fetch(req);
   },
 

@@ -1,10 +1,12 @@
 import { createApp } from "../../src/http/app.js";
+import { fixedConfigHolder } from "../../src/http/config-holder.js";
 import { KeyPoolRepo } from "../../src/core/dispatcher.js";
 import { createStorageHealth } from "../../src/core/storage-health.js";
 import { MemoryStorage } from "./fake-storage.js";
 import { FakeFetcher } from "./fake-fetcher.js";
 import type { GatewayConfig } from "../../src/core/config.js";
 import { registrarFromEnv } from "../../src/core/registrar/config.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
 
 export const TEST_CONFIG: GatewayConfig = {
   gatewayToken: "t", agnesBaseUrl: "https://upstream.test/v1",
@@ -29,6 +31,11 @@ export async function makeApp(
   const fetcher = new FakeFetcher(outcomes);
   const storageHealth = createStorageHealth();
   const config = { ...TEST_CONFIG, ...configOverride };
-  const app = createApp({ version: "0.1.0", config, repo, fetcher, now, storageHealth });
+  const app = createApp({
+    version: "0.1.0",
+    configHolder: fixedConfigHolder(config),
+    repo, fetcher, now, storageHealth,
+    logger: NULL_LOGGER,
+  });
   return { app, fetcher, repo, storageHealth };
 }

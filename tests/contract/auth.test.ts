@@ -4,7 +4,7 @@ import { auth } from "../../src/http/middleware/auth.js";
 
 function appWith(token: string) {
   const app = new Hono();
-  app.use("/v1/*", auth(token));
+  app.use("/v1/*", auth(() => token));
   app.all("/v1/ping", (c) => c.json({ ok: true }));
   return app;
 }

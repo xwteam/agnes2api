@@ -8,14 +8,34 @@ import { geminiRoutes } from "./routes/gemini.js";
 import { responsesRoutes } from "./routes/responses.js";
 import { mediaRoutes } from "./routes/media.js";
 import { auth } from "./middleware/auth.js";
-import type { GatewayConfig } from "../core/config.js";
+import { configRefresh } from "./config-refresh.js";
+import type { ConfigHolder } from "./config-holder.js";
 import type { DispatchDeps } from "../core/dispatcher.js";
 import type { StorageHealth } from "../core/storage-health.js";
+import type { Logger } from "../ports/logger.js";
 
-export interface AppDeps extends DispatchDeps {
+export interface AppDeps extends Omit<DispatchDeps, "config"> {
   version: string;
-  config: GatewayConfig;
+  configHolder: ConfigHolder;
   storageHealth: StorageHealth;
+  logger: Logger;
+}
+
+/**
+ * 把 AppDeps 变成 dispatch 要的 DispatchDeps。
+ *
+ * `config` 用 **getter** 而不是拷值：路由工厂在建 app 那一刻就把 deps 闭包捕获了，
+ * 拷值等于把配置永久冻结在启动时刻——这正是缺陷 D2 的成因。getter 让每次属性读取
+ * 都取当前值；而 dispatch() 在请求开头解构一次（dispatcher.ts:209），
+ * 因此**单个请求内部仍是一份一致的快照**，这正是想要的语义。
+ */
+function dispatchDeps(deps: AppDeps): DispatchDeps {
+  return {
+    repo: deps.repo,
+    fetcher: deps.fetcher,
+    now: deps.now,
+    get config() { return deps.configHolder.current(); },
+  };
 }
 
 export function createApp(deps: AppDeps): Hono {
@@ -29,13 +49,19 @@ export function createApp(deps: AppDeps): Hono {
     return errorResponse(500, "internal_error", "网关内部错误");
   });
 
+  // ★ 顺序敏感（已实测 Hono 4.13.2）：把 route 写在 use 之前，中间件会**静默失效
+  // 且不报错**（实测 200 handler 而不是 401）。任何新增的 use 都必须写在这一段里，
+  // 不许混进下面那堆 route 中间。
+  app.use("*", configRefresh(deps.configHolder));
+
+  const dd = dispatchDeps(deps);
   app.route("/", healthRoutes(deps.version, deps.storageHealth));
-  app.use("/v1/*", auth(deps.config.gatewayToken));
-  app.use("/v1beta/*", auth(deps.config.gatewayToken));
-  app.route("/", openaiRoutes(deps));
-  app.route("/", anthropicRoutes(deps));
-  app.route("/", geminiRoutes(deps));
-  app.route("/", responsesRoutes(deps));
-  app.route("/", mediaRoutes(deps));
+  app.use("/v1/*", auth(() => deps.configHolder.current().gatewayToken));
+  app.use("/v1beta/*", auth(() => deps.configHolder.current().gatewayToken));
+  app.route("/", openaiRoutes(dd));
+  app.route("/", anthropicRoutes(dd));
+  app.route("/", geminiRoutes(dd));
+  app.route("/", responsesRoutes(dd));
+  app.route("/", mediaRoutes(dd));
   return app;
 }

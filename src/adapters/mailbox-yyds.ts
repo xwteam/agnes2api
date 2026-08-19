@@ -88,7 +88,7 @@ export class YydsProvider implements MailProvider {
         level: "warn", event: "registrar.mailbox_create_unparseable",
         msg: "YYDS 建邮箱响应无法解析或缺少 data.address / data.id：邮箱可能已在上游创建但拿不到 id，"
           + "无法主动删除，约 24 小时后随 expiresAt 自动过期；活跃邮箱配额会被它占住，可按 guessed 人工核对",
-        fields: { provider: "yyds", domain, guessed },
+        fields: { provider: "yyds", domain, guessed, expiresAfterHours: 24 },
       });
       throw new Error("YYDS 建邮箱响应无法解析或缺少 data.address / data.id");
     }

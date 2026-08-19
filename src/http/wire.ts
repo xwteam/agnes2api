@@ -1,4 +1,6 @@
+import type { Hono } from "hono";
 import { createApp } from "./app.js";
+import { createConfigHolder, type ConfigHolder } from "./config-holder.js";
 import { loadConfig } from "../core/config.js";
 import { KeyPoolRepo } from "../core/dispatcher.js";
 import { NativeFetcher } from "../adapters/fetcher-native.js";
@@ -24,6 +26,13 @@ export interface BuildOptions {
   probeStorage?: boolean;
 }
 
+/** buildApp 的返回值。两个入口都需要 configHolder：node.ts 用它取 registrar.tendIntervalMs
+ * 建定时器，不必为此再单独读一次存储（见下面 buildApp 的说明）。 */
+export interface BuiltApp {
+  app: Hono;
+  configHolder: ConfigHolder;
+}
+
 /**
  * 从环境变量与存储装配出完整的 app。两个入口（worker/node）都调用它，
  * 只在“用哪种 Storage 实现”上有区别，其余装配逻辑完全共用。
@@ -32,12 +41,17 @@ export interface BuildOptions {
  * 总是已经有一个 Storage 实例，loadConfig 能在 env 未显式设置时回退到
  * storage 中持久化的配置（例如未来的管理接口写入的覆盖值），是 configFromEnv
  * 的严格超集；没有理由在有 storage 可用时退化成只读 env 的版本。
+ *
+ * 返回值带上 `configHolder`（而不只是 `app`）：调用方若还需要读一次配置
+ * （目前只有 node.ts 的定时器要取 `registrar.tendIntervalMs`），复用这一份
+ * 而不是自己再调一次 loadConfig——那样会产生第二次独立的存储读取，且很容易
+ * 忘记传 logger，导致配置告警在生产里静默消失（P3a Task 1 评审登记的隐患）。
  */
 export async function buildApp(
   env: Record<string, string | undefined>,
   storage: Storage,
   options: BuildOptions = {},
-) {
+): Promise<BuiltApp> {
   const storageHealth = createStorageHealth();
   const logger: Logger = new ConsoleLogger();
   // 包一层之后，后续所有写操作（key 池状态回写、启动探测）的成败都会自动反映到
@@ -57,15 +71,17 @@ export async function buildApp(
     }
   }
 
-  const config = await loadConfig(env, watched, logger);
-  return createApp({
+  const configHolder = await createConfigHolder({ env, storage: watched, logger, now: () => Date.now() });
+  const app = createApp({
     version: VERSION,
-    config,
+    configHolder,
     repo: new KeyPoolRepo(watched),
     fetcher: new NativeFetcher(),
     now: () => Date.now(),
     storageHealth,
+    logger,
   });
+  return { app, configHolder };
 }
 
 /**

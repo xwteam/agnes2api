@@ -2,7 +2,6 @@ import { serve } from "@hono/node-server";
 import { setInterval as nodeSetInterval } from "node:timers";
 import { pathToFileURL } from "node:url";
 import { buildApp, buildTendDeps } from "../http/wire.js";
-import { loadConfig } from "../core/config.js";
 import { FileStorage } from "../adapters/storage-file.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import type { TendDeps } from "../core/registrar/tender.js";
@@ -16,7 +15,7 @@ export async function main(env: Record<string, string | undefined> = process.env
   const storage = new FileStorage(env.DATA_DIR ?? "/app/data");
   // 数据目录是绑定挂载，属主不匹配就整个网关不可用（写不进 store.json），
   // 必须在启动那一刻探出来并让 /health 如实报告，不能等到第一个请求失败才发现。
-  const app = await buildApp(env, storage, { probeStorage: true });
+  const { app, configHolder } = await buildApp(env, storage, { probeStorage: true });
   const port = Number(env.PORT ?? 8080);
 
   // 在途守卫。`setInterval` 不等上一轮 resolve，而单轮最坏耗时
@@ -78,10 +77,12 @@ export async function main(env: Record<string, string | undefined> = process.env
   };
 
   // 定时器的**间隔**仍取自启动时的配置：改间隔要重启进程，改 enabled 及其余配置
-  // 项则每一轮都会生效。这里单独读一次配置，是因为未启用时 buildTendDeps 返回
-  // null、拿不到 tendIntervalMs，而定时器必须先存在，之后从存储打开注册机才有
-  // 东西可触发。
-  const { registrar } = await loadConfig(env, storage);
+  // 项则每一轮都会生效。这里不再单独调 loadConfig——那是本文件此前的一处独立存储
+  // 读取，且没有传 logger（配置告警会静默落到 NULL_LOGGER），复用 buildApp 已经
+  // primed 过的 configHolder：它是用真实 ConsoleLogger 建的，同一份告警只会打印
+  // 一次而不是消失。未启用时 buildTendDeps 返回 null、拿不到 tendIntervalMs，而
+  // 定时器必须先存在，之后从存储打开注册机才有东西可触发。
+  const { registrar } = configHolder.current();
 
   // 立即跑一轮：否则冷启动后要空等满一个间隔（默认 30 分钟）才开始补池。
   void runTend();

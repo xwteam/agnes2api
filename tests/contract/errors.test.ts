@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_CONFIG } from "../helpers/make-app.js";
 import { createApp } from "../../src/http/app.js";
+import { fixedConfigHolder } from "../../src/http/config-holder.js";
 import { createStorageHealth } from "../../src/core/storage-health.js";
 import { KeyPoolRepo } from "../../src/core/dispatcher.js";
 import { FakeFetcher } from "../helpers/fake-fetcher.js";
 import type { Storage } from "../../src/ports/storage.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
 
 // I3：app.ts 原本没有 onError，`c.req.json()` 与 `res.json()` 的异常直接冒泡，
 // 五条路由实测全部返回 `500 Internal Server Error`（text/plain）：
@@ -50,10 +52,11 @@ describe("预料之外的异常也落到 JSON 错误信封里", () => {
 
   it("存储读失败时返回 JSON 500，且不回显内部异常细节", async () => {
     const app = createApp({
-      version: "0.1.0", config: TEST_CONFIG,
+      version: "0.1.0", configHolder: fixedConfigHolder(TEST_CONFIG),
       repo: new KeyPoolRepo(new BrokenStorage()),
       fetcher: new FakeFetcher([]), now: () => 1000,
       storageHealth: createStorageHealth(),
+      logger: NULL_LOGGER,
     });
     const res = await app.request("/v1/chat/completions", {
       method: "POST",

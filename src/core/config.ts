@@ -49,19 +49,30 @@ function num(
   env: Env,
   envName: string,
   fieldName: string,
-  stored: number | undefined,
+  stored: unknown,
   fallback: number,
+  logger: Logger,
 ): number {
   const raw = env[envName];
   if (raw !== undefined) {
     const n = Number(raw);
+    // **环境变量的非法值继续 fail-fast**：那是部署时错误，运维必须立刻看得见，
+    // 而且它不可能是面板写坏的——面板永远碰不到环境变量。
     if (!isPositiveInt(n)) throw new Error(`环境变量 ${envName} 必须是正整数: ${raw}`);
     return n;
   }
 
-  if (stored !== undefined) {
+  if (stored !== undefined && stored !== null) {
     if (!isPositiveInt(stored)) {
-      throw new Error(`存储中的 ${fieldName} 必须是正整数: ${stored}`);
+      // **存储的非法值改为字段级降级**（设计文档 §5.4 第 2 条）。
+      // 抛错的后果是 Node 侧 process.exit(1) 进入重启循环，而且**没有面板可以进去改回来**；
+      // Worker 侧则是全部转发流量挂掉。一次误操作把网关砖掉是不可接受的。
+      logger.log({
+        level: "warn", event: "config.invalid",
+        msg: "存储中的配置值非法，本字段回落到默认值",
+        fields: { field: fieldName, source: "stored", raw: String(stored), fallback },
+      });
+      return fallback;
     }
     return stored;
   }
@@ -80,31 +91,36 @@ export function configFromEnv(env: Env, logger: Logger = NULL_LOGGER): GatewayCo
   return {
     gatewayToken,
     agnesBaseUrl: env.AGNES_BASE_URL ?? DEFAULTS.agnesBaseUrl,
-    upstreamTimeoutMs: num(env, "UPSTREAM_TIMEOUT_MS", "upstreamTimeoutMs", undefined, DEFAULTS.upstreamTimeoutMs),
-    upstreamSyncTimeoutMs: num(env, "UPSTREAM_SYNC_TIMEOUT_MS", "upstreamSyncTimeoutMs", undefined, DEFAULTS.upstreamSyncTimeoutMs),
-    maxStrikes: num(env, "MAX_STRIKES", "maxStrikes", undefined, DEFAULTS.maxStrikes),
-    cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", undefined, DEFAULTS.cooldownRateLimitMs),
-    cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", undefined, DEFAULTS.cooldownPaymentMs),
-    cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", undefined, DEFAULTS.cooldownStrikeMs),
+    upstreamTimeoutMs: num(env, "UPSTREAM_TIMEOUT_MS", "upstreamTimeoutMs", undefined, DEFAULTS.upstreamTimeoutMs, logger),
+    upstreamSyncTimeoutMs: num(env, "UPSTREAM_SYNC_TIMEOUT_MS", "upstreamSyncTimeoutMs", undefined, DEFAULTS.upstreamSyncTimeoutMs, logger),
+    maxStrikes: num(env, "MAX_STRIKES", "maxStrikes", undefined, DEFAULTS.maxStrikes, logger),
+    cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", undefined, DEFAULTS.cooldownRateLimitMs, logger),
+    cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", undefined, DEFAULTS.cooldownPaymentMs, logger),
+    cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", undefined, DEFAULTS.cooldownStrikeMs, logger),
     registrar: registrarFromEnv(env, {}, logger),
   };
 }
 
 export async function loadConfig(env: Env, storage: Storage, logger: Logger = NULL_LOGGER): Promise<GatewayConfig> {
-  const stored = (await storage.get<Partial<GatewayConfig>>("config")) ?? {};
+  // 逃生口：存储里的 config 键被写坏到连降级都救不回来时（例如 registrar 那侧仍会抛错），
+  // 用 RESET_CONFIG=1 启动即可完全忽略它。**只忽略不删**——删了用户就再也拿不回原值了。
+  const stored = env.RESET_CONFIG === "1"
+    ? {}
+    : ((await storage.get<Partial<GatewayConfig>>("config")) ?? {});
 
   const gatewayToken = env.GATEWAY_TOKEN ?? stored.gatewayToken;
+  // 唯一保留 fatal 的一条：没有口令就无法鉴权，继续跑比停下来更危险。
   if (!gatewayToken) throw new Error("缺少 GATEWAY_TOKEN，网关无法启动");
 
   return {
     gatewayToken,
     agnesBaseUrl: env.AGNES_BASE_URL ?? stored.agnesBaseUrl ?? DEFAULTS.agnesBaseUrl,
-    upstreamTimeoutMs: num(env, "UPSTREAM_TIMEOUT_MS", "upstreamTimeoutMs", stored.upstreamTimeoutMs, DEFAULTS.upstreamTimeoutMs),
-    upstreamSyncTimeoutMs: num(env, "UPSTREAM_SYNC_TIMEOUT_MS", "upstreamSyncTimeoutMs", stored.upstreamSyncTimeoutMs, DEFAULTS.upstreamSyncTimeoutMs),
-    maxStrikes: num(env, "MAX_STRIKES", "maxStrikes", stored.maxStrikes, DEFAULTS.maxStrikes),
-    cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", stored.cooldownRateLimitMs, DEFAULTS.cooldownRateLimitMs),
-    cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", stored.cooldownPaymentMs, DEFAULTS.cooldownPaymentMs),
-    cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", stored.cooldownStrikeMs, DEFAULTS.cooldownStrikeMs),
+    upstreamTimeoutMs: num(env, "UPSTREAM_TIMEOUT_MS", "upstreamTimeoutMs", stored.upstreamTimeoutMs, DEFAULTS.upstreamTimeoutMs, logger),
+    upstreamSyncTimeoutMs: num(env, "UPSTREAM_SYNC_TIMEOUT_MS", "upstreamSyncTimeoutMs", stored.upstreamSyncTimeoutMs, DEFAULTS.upstreamSyncTimeoutMs, logger),
+    maxStrikes: num(env, "MAX_STRIKES", "maxStrikes", stored.maxStrikes, DEFAULTS.maxStrikes, logger),
+    cooldownRateLimitMs: num(env, "COOLDOWN_RATE_LIMIT_MS", "cooldownRateLimitMs", stored.cooldownRateLimitMs, DEFAULTS.cooldownRateLimitMs, logger),
+    cooldownPaymentMs: num(env, "COOLDOWN_PAYMENT_MS", "cooldownPaymentMs", stored.cooldownPaymentMs, DEFAULTS.cooldownPaymentMs, logger),
+    cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", stored.cooldownStrikeMs, DEFAULTS.cooldownStrikeMs, logger),
     registrar: registrarFromEnv(env, stored.registrar ?? {}, logger),
   };
 }
