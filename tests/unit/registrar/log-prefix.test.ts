@@ -64,6 +64,12 @@ it("这些文件里一个 console 调用点都没有——core 零 IO 与「事�
   }
 });
 
+/**
+ * ⚠️ 这条只扫 `src/core`。Task 5/6 新增的 `src/http/**`、`src/ui/**` 两棵树由
+ * `tests/unit/source-guards.test.ts` 扫（那里还有 `src/core` 零 IO 的源码门禁）。
+ * 分成两处不是遗漏：这一条的存在理由是五语言 REGISTRAR.md 的 `[registrar]` 前缀契约，
+ * 与它下面那几条行为断言同源；那一条守的是「事件要能被 P3b 的面板消费」。
+ */
 it("src/core 全目录零 console——只列白名单会漏掉将来新增的文件", () => {
   const offenders: string[] = [];
   for (const rel of walkTs("src/core")) {

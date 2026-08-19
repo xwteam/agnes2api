@@ -1,9 +1,15 @@
 /**
  * ── 硬约束 2（`src/core/` 零 IO）的既定豁免清单 ──────────────────────────────
  *
- * 本文件保留两处「看起来违反」的写法，各有理由，**清单不许再变长**
- *（tests/unit/registrar/log-prefix.test.ts 的源码扫描会盯着 console；
- *  下面两条由这段注释 + 评审 checklist 守住）：
+ * 本文件保留两处「看起来违反」的写法，各有理由，**清单不许再变长**。
+ * 谁在守它，说准（此前这里含糊带过，而台账把它写成了「有源码断言钉着」——那句是假的）：
+ *   · 第 1 条 `setTimeout`：**有源码断言**，`tests/unit/source-guards.test.ts` 的
+ *     零 IO 扫描把全 `src/core` 的时间/随机/定时/网络/环境使用点与一份**手写**清单
+ *     逐条比对，多一处（哪怕是同一个文件里的第二处）立刻变红。
+ *   · 第 2 条模块级 `let cursor`：**没有断言，只有这段注释 + 评审 checklist**。
+ *     它是可变模块状态，不是某个可 grep 的全局 API，扫描抓不住它。
+ *   · 裸 `console`：`tests/unit/registrar/log-prefix.test.ts` 扫 `src/core` 全目录，
+ *     `tests/unit/source-guards.test.ts` 扫 `src/http` 与 `src/ui`。
  *
  * 1. `setTimeout(() => controller.abort(), timeoutMs)`
  *    改成注入的 timer 端口只有这一个消费者，纯增抽象；换成 `AbortSignal.timeout()`
