@@ -9,14 +9,10 @@ const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
  * 查词的教训：P3a 查对等时用简体「保证」grep，漏掉了繁体「保證」，于是报告说
  * 「五语言齐全」而实际上有一份不齐。数字不随语言变，是唯一跨五种语言稳定的锚。
  *
- * 期望值全部**手写字面量**：从某一份文档里 grep 出来再拿去比另外四份，
- * 那条断言恒等于「这五份互相一致」，**而五份一起错的时候它照样绿**——
- * 这正是本项目登记的第 6 种假阳性。
- *
  * ⚠️ **这条门禁的边界要写清楚，别再宣称成「五语言对等由测试保证」**：它只能证明
- * 「五份都提到了这个数」，**不能**证明「五份说的是同一件事」——同一个数字完全可能
- * 出现在语义不同的句子里（例如 en 版把 `120` 用在了别的上下文）。这条门禁只挡「某
- * 一份漏翻、漏写」这一类回归，句子层面是否同义、译文是否准确，留给评审。
+ * 「五份提到这个数的次数彼此一致」，**不能**证明「五份说的是同一件事」——同一个
+ * 数字完全可能出现在语义不同的句子里。这条门禁只挡「某一份漏翻、漏写、或翻译时
+ * 抄错一位数字」这一类回归，句子层面是否同义、译文是否准确，留给评审。
  *
  * ⚠️ **数字要写成文档里实际出现的字面样子，不是数值本身**——这条踩过坑：
  * `100000` / `1000` 这两个无逗号写法在五份文档里其实**从未出现**，免费档配额的
@@ -33,25 +29,55 @@ const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
  * 默认值 `120000`、isolate 扩容建议的 `120000`、`33,120` 次/天读取量），跟本任务
  * K4 新增的那句「上界约 120 秒」毫无关系。用裸 `token: "120", times: 1` 去核对，
  * 就算把 K4 那句整段删掉，计数依然是 4 ≥ 1，**这条门禁永远不会因为这个删除变红**
- * ——刚好是本文件计划里那条「从 docs/ja/DEPLOY.md 里删掉 120 那一段应变红」的
- * mutation 假设本身不成立。修法：锚定我这次实际写下的字面样式
- * `**120`（五语言在这句都用了 markdown 加粗包住数字，且只有这一句这样写），
- * 而不是裸数字——变异测试实测：删掉 K4 那句之后，五语言里 `**120` 的计数都会
- * 归零，`120`（裸数字）计数则原地不动，后者证明了为什么不能用它做锚。
+ * ——修法：锚定实际写下的字面样式 `**120`（五语言在这句都用了 markdown 加粗
+ * 包住数字，且只有这一句这样写），而不是裸数字。
+ *
+ * ⚠️⚠️ **第一版在这里又踩了一次同类的坑，而且是控制端复验时抓到的**：判据当时写的是
+ * 「每种语言各自至少出现 `times` 次」（`toBeGreaterThanOrEqual`）。`100,000` 在
+ * ja/DEPLOY.md 里本来就出现 **3 次**（第 39、44、57 行一带），把其中一处悄悄改成
+ * `999,999`（模拟翻译时抄错一位数字）之后，计数从 3 掉到 2，**仍然 ≥ 1**，
+ * 门禁**完全没有反应**，15 个用例照样全绿。名字叫「关键数字对等」，实际只检查
+ * 「存在」，抓不住「改错」——而「某语言改了一位数字、其余没同步改」正是五语言
+ * 文档最常见的漂移形态，恰恰是这条门禁最该抓的那一种。
+ *
+ * 修法：**从「各自 ≥ N 次」改成「五种语言的出现次数彼此相等」。** 期望值不是手写
+ * 常数，而是来自**其余四份独立文档**——这不算本文件登记的第 6 种假阳性（期望值
+ * 从被测对象本身 grep 回填）：五份 DEPLOY.md 是五个独立维护的文件，一份被改坏就
+ * 会与另外四份的计数分叉，跨语言互相校验挡得住「改错一处」，也挡得住「整段删掉」
+ * （计数变成 0，同样和其余四份不一致）。**唯一挡不住的是「五份被同一个错误值
+ * 同步污染」**——这与手写字面量方案的边界完全一样，本身就是「五份一起错」问题，
+ * 不是这道门禁能力范围内的事。
  */
 describe("五语言 DEPLOY.md 的关键数字对等", () => {
-  const NUMBERS: ReadonlyArray<{ token: string; why: string; times: number }> = [
-    { token: "**120", why: "POOL_CACHE_TTL_MS 的真实上界（60s TTL + 60s 边缘缓存），加粗标记只在这句出现", times: 1 },
-    { token: "100,000", why: "免费档每天读配额", times: 1 },
-    { token: "1,000", why: "免费档每天写 / 删除 / list 配额", times: 1 },
+  const NUMBERS: ReadonlyArray<{ token: string; why: string }> = [
+    { token: "**120", why: "POOL_CACHE_TTL_MS 的真实上界（60s TTL + 60s 边缘缓存），加粗标记只在这句出现" },
+    { token: "100,000", why: "免费档每天读配额" },
+    { token: "1,000", why: "免费档每天写 / 删除 / list 配额" },
   ];
-  for (const lang of LANGS) {
-    for (const { token, why, times } of NUMBERS) {
-      it(`${lang}/DEPLOY.md 至少出现 ${times} 次 ${token}（${why}）`, () => {
-        const src = readFileSync(`docs/${lang}/DEPLOY.md`, "utf8");
-        const n = src.split(token).length - 1;
-        expect(n, `${lang} 缺了 ${token}：${why}`).toBeGreaterThanOrEqual(times);
-      });
-    }
+
+  for (const { token, why } of NUMBERS) {
+    it(`五语言 DEPLOY.md 里「${token}」（${why}）的出现次数彼此一致`, () => {
+      const counts = Object.fromEntries(
+        LANGS.map((lang) => {
+          const src = readFileSync(`docs/${lang}/DEPLOY.md`, "utf8");
+          return [lang, src.split(token).length - 1] as const;
+        }),
+      ) as Record<(typeof LANGS)[number], number>;
+
+      // 先挡住「五份都是 0」这种平凡相等——那不叫对等，叫这个锚点压根没写进任何
+      // 一份文档（token 本身打错，或该数字被整体换了写法）。
+      const total = Object.values(counts).reduce((a, b) => a + b, 0);
+      expect(total, `「${token}」（${why}）在五语言里一次都没出现，先检查 token 是否还匹配文档里的真实写法`)
+        .toBeGreaterThan(0);
+
+      // 期望值来自其余语言，不是手写常数：任何一种语言的计数与其余四份不一致，
+      // 下面这个对象级 toEqual 会把完整的五语言计数摊开显示，一眼看出是哪一种偏了。
+      const reference = counts[LANGS[0]];
+      const expected = Object.fromEntries(LANGS.map((lang) => [lang, reference])) as Record<(typeof LANGS)[number], number>;
+      expect(
+        counts,
+        `「${token}」（${why}）在五语言里的出现次数不一致——可能有语言漏翻、漏改，或翻译时抄错了数字`,
+      ).toEqual(expected);
+    });
   }
 });
