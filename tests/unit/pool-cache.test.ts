@@ -128,7 +128,17 @@ describe("isolate 级快照缓存", () => {
     expect(after.find((r) => r.id === target.id)!.strikes).toBe(2);
   });
 
-  it("add() / delete() 立刻失效缓存——补池刚铸出来的 key 必须下一个请求就能被选中", async () => {
+  /**
+   * ⚠️ **这条守的是「同一个实例」的语义，不是「补池铸出来的 key 下一个请求就能用」。**
+   *
+   * 后者在生产接线上不成立：补池用的是 `buildTendDeps` 另建的 repo（`wire.ts:143`），
+   * 与 app 的那个（`wire.ts:91`）是两个实例，而 `Refreshable` 是实例私有状态。
+   * 这条用例在同一个实例上 add 再 all，因此对「生产是两个实例」这件事**完全不可观测**
+   * ——正是第 5 类假阳性。它今天真实的用途是钉住 P3c 的前提：面板跟转发路径共用
+   * `BuiltApp.repo`，写完 key 不失效就等于「加了 key，一分钟内没反应」。
+   * 补池那条路径的真实上界（≤ 一个 POOL_CACHE_TTL_MS）写在 wire.ts 与 REGISTRAR.md。
+   */
+  it("add() / delete() 立刻失效**本实例**的缓存——同一个 repo 上下一次 all() 就看得到", async () => {
     const { repo } = await setup(2);
     expect(await repo.all()).toHaveLength(2);
     const added = await repo.add("sk-brand-new-key-aaaaaaaa");

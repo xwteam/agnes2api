@@ -186,6 +186,22 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
   as soon as it's minted, so an interrupted round is simply incomplete; the next scheduled round
   picks up where it left off.
 
+## How soon a freshly minted key reaches the forwarding path
+
+**At most one `POOL_CACHE_TTL_MS` (60 seconds by default) — not "the next request".**
+
+Top-up and forwarding use two independent key-pool repository instances. The top-up one really
+reads storage every round (it has to see the true current availability, otherwise it would
+re-mint and burn mailbox quota for nothing); the forwarding one holds an isolate/process-level
+snapshot. Each keeps its own cache, so after top-up writes a key, the forwarding path only sees
+it once **its own** snapshot expires. On the Worker this is per active isolate, each with its own
+TTL.
+
+**This is easiest to misread when the pool has been drained**: the log already says
+`[registrar] … minted=1` while the gateway keeps returning `503 pool_empty` for up to one TTL.
+That does not mean the top-up failed — wait one `POOL_CACHE_TTL_MS`. Lower the value to shorten
+the window (see the quota budget in [DEPLOY.md](DEPLOY.md) for the cost).
+
 ## Why keys are minted sequentially, not concurrently
 
 A refill round mints keys **sequentially** within the round, with a random delay between

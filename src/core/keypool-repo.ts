@@ -441,9 +441,22 @@ export class KeyPoolRepo {
       await this.save(r);          // ① 记录先写
       await this.indexAdd(r.id);   // ② 再进索引
     } finally {
-      // 补池刚铸出来的 key 必须**下一个请求**就能被选中，等一个 TTL 是错的。
+      // 失效**本实例**的快照，于是同一个实例上下一次 all() 立刻看得到这把新 key。
       // 放 finally 而不是紧跟在成功之后：②失败留下的是孤儿记录，而孤儿在
       // 「空结果兜底」那条路径上是**看得见**的，快照不刷新就与存储对不上了。
+      //
+      // ⚠️ **别把它读成「补池刚铸出来的 key 下一个请求就能被选中」——生产上不成立。**
+      // 那句话曾经写在这里，而它假设补池与转发用的是同一个实例。实际接线是两个：
+      // `buildApp` 给 app 建一个（`wire.ts:91`，TTL = poolCacheTtlMs），
+      // `buildTendDeps` 给补池另建一个（`wire.ts:143`，cacheTtlMs = 0）。
+      // `Refreshable` 是实例私有状态，所以这次 invalidate 对转发路径毫无影响，
+      // **真实可见上界是转发 isolate 自己的一个 `POOL_CACHE_TTL_MS`**
+      // （Worker 上还要 × 每个活跃 isolate 各自的 TTL）。为什么不去改接线：见 wire.ts
+      // 的 `buildTendDeps` 注释——那里说明了「共用一个实例」会踩到哪三条。
+      //
+      // 那这一行还有什么用？**P3c 的面板**：它跟转发路径共用 `BuiltApp.repo`
+      // （wire.ts 为此把 repo 交了出来），面板写完 key 之后不失效就等于「加了 key，
+      // 一分钟内没反应」。今天守它的是同实例的用例，那正是它今天唯一真实的用法。
       this.invalidate();
     }
     return r;
