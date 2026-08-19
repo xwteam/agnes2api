@@ -68,6 +68,16 @@ describe("sameIdSet", () => {
   it("空集合相同", () => {
     expect(sameIdSet([], [])).toBe(true);
   });
+
+  it("含重复元素时**两个方向都**判不同——比长度加单向包含会在这里说谎", () => {
+    // 原实现（长度相等 + 单向包含）对这组入参返回 true：两边长度都是 2，
+    // 而 ["x","x"] 的每个元素都在 {"x","y"} 里。当前两个调用点的入参都已 dedupe
+    // 因而触发不到，但它的表现形式是「对账认为一致因而不修」——最难查的那种沉默。
+    expect(sameIdSet(["x", "y"], ["x", "x"])).toBe(false);
+    expect(sameIdSet(["x", "x"], ["x", "y"])).toBe(false);
+    // 只是重复、集合本身相同的，仍然算相同。
+    expect(sameIdSet(["x", "x", "y"], ["y", "x"])).toBe(true);
+  });
 });
 
 describe("makePoolIndex", () => {

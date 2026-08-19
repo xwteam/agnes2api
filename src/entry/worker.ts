@@ -79,7 +79,7 @@ export default {
       console.error("[registrar] 装配补池依赖失败", err);
       return;
     }
-    if (!deps) return; // 注册机未启用：零副作用
+    if (!deps) return; // 注册机未启用：不触达邮箱/Agnes（对账已在上面做过）
 
     // 重入保护。Cloudflare **不会**串行化重叠的 Cron 调用：单轮最坏耗时
     //（MINT_BATCH × CODE_TIMEOUT_MS）超过 Cron 间隔时，上一轮还在跑就会又起一轮，

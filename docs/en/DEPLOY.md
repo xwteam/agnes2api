@@ -260,3 +260,12 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 
 Omit `--remote` to write into the local namespace used by `wrangler dev` instead of
 production.
+
+Keys imported this way take effect on the very next request — the gateway keeps a
+`pool:index` key listing the pool's ids (so that forwarding never spends a KV `list`
+operation, whose free-tier quota is only 1,000/day), and a manually imported record
+that the index does not know about is picked up and back-filled automatically.
+
+Do not delete the `[triggers]` block in `wrangler.toml`, even if you never enable the
+registrar: that cron is the only path that reconciles `pool:index` against the actual
+`key:` records, and it runs regardless of `REGISTRAR_ENABLED`.

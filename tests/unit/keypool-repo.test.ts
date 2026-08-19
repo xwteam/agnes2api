@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { KeyPoolRepo, keyId } from "../../src/core/keypool-repo.js";
+import { KeyPoolRepo, keyId, INDEX_WRITE_RETRY_MS } from "../../src/core/keypool-repo.js";
 import { KEY_PREFIX, POOL_INDEX_KEY } from "../../src/core/pool-index.js";
 import { recordingLogger } from "../helpers/recording-logger.js";
 import type { Storage } from "../../src/ports/storage.js";
@@ -151,11 +151,15 @@ describe("all()：热路径零 list", () => {
   it("索引结构脏（版本不认识）时同样回落重建", async () => {
     const s = new CountingStorage();
     const { repo } = makeRepo(s);
-    await repo.add("sk-test-a");
-    s.m.set(POOL_INDEX_KEY, JSON.stringify({ v: 99, ids: ["nope"] }));
+    const a = await repo.add("sk-test-a");
+    // 脏索引里放**真实存在**的 id：否则活记录数为 0，会被「空结果兜底」那条路径
+    // 顺带救回来，于是「版本判断被删掉」这个变异照样绿——断言就成了同义反复。
+    // 放真 id 之后，版本判断没生效的话 alive 非空、根本不会回落，lists 与 v 两条
+    // 断言同时变红。
+    s.m.set(POOL_INDEX_KEY, JSON.stringify({ v: 99, ids: [a.id] }));
     s.reset();
     expect(await repo.all()).toHaveLength(1);
-    expect(s.lists).toBe(1);
+    expect(s.lists, "版本不认识 ⇒ 当作缺失 ⇒ 回落 list 重建").toBe(1);
     // 脏索引被就地覆盖成认识的版本，而不是与它共存。
     expect(JSON.parse(s.m.get(POOL_INDEX_KEY)!).v).toBe(1);
   });
@@ -189,6 +193,184 @@ describe("all()：热路径零 list", () => {
     const orphan = orphanRecord();
     s.m.set(KEY_PREFIX + orphan.id, JSON.stringify(orphan));
     expect((await repo.all()).map((r) => r.id)).toEqual([a.id]);
+  });
+});
+
+describe("空结果兜底：权威的空索引不许让手工导入的 key 隐身", () => {
+  /**
+   * 评审用真 KV 复现的回退场景，逐步跑一遍。
+   * P3a 还没有面板、注册机默认关闭 ⇒ 手工导入就是 Worker 用户装 key 的**唯一**路径，
+   * 而改造前 `all()` 直接 list("key:")，导入即刻生效。
+   */
+  it("对账在空池写下权威空索引之后，手工导入的 key 仍然看得见", async () => {
+    const s = new CountingStorage();
+    const { repo } = makeRepo(s);
+
+    // ① 全新部署：cron 在空 KV 上跑一次对账，写下**合法的**空索引。
+    await repo.reconcileIndex();
+    expect(JSON.parse(s.m.get(POOL_INDEX_KEY)!), "索引是合法的，永远不会走缺失回落")
+      .toEqual({ v: 1, ids: [] });
+
+    // ② 用户按 DEPLOY.md 直接写一条 key: 记录（不经过 add()，因此不进索引）。
+    const manual = orphanRecord();
+    s.m.set(KEY_PREFIX + manual.id, JSON.stringify(manual));
+    s.reset();
+
+    // ③ 立刻转发：必须看得到这把 key，而不是 503 pool_empty。
+    expect((await repo.all()).map((r) => r.id)).toEqual([manual.id]);
+    expect(s.lists, "空结果时回落一次 list").toBe(1);
+
+    // ④ 索引被补上，之后回到零 list 的热路径。
+    expect(JSON.parse(s.m.get(POOL_INDEX_KEY)!).ids).toEqual([manual.id]);
+    s.reset();
+    expect(await repo.all()).toHaveLength(1);
+    expect(s.counts(), "补完之后不该再 list、也不该再写").toEqual({
+      list: 0, get: 2, put: 0, delete: 0,
+    });
+  });
+
+  it("池子真空时回落 list 但**不写**索引——空池每个请求本来就在返 503，不能顺带吃写配额", async () => {
+    const s = new CountingStorage();
+    const { repo } = makeRepo(s);
+    await repo.reconcileIndex();
+    s.reset();
+    expect(await repo.all()).toEqual([]);
+    expect(s.counts()).toEqual({ list: 1, get: 1, put: 0, delete: 0 });
+  });
+
+  it("空结果的回落**只增不减**：整池都成了幽灵索引项时也不在读路径上剪枝", async () => {
+    const s = new CountingStorage();
+    const { repo } = makeRepo(s);
+    const a = await repo.add("sk-test-a");
+    s.m.delete(KEY_PREFIX + a.id);   // 记录没了，索引里还留着 ⇒ 活记录数为 0
+    s.reset();
+
+    expect(await repo.all()).toEqual([]);
+    expect(s.lists, "空结果照样回落一次").toBe(1);
+    // 剪枝会在热路径上加一次 put，那正是本模块要消灭的东西；一律交给对账。
+    expect(JSON.parse(s.m.get(POOL_INDEX_KEY)!).ids, "读路径绝不从索引里删").toEqual([a.id]);
+    expect(s.puts).toBe(0);
+  });
+});
+
+describe("pool:index 存了非 JSON 字节", () => {
+  /**
+   * `KvStorage.get(k, "json")` 对坏字节是**先抛**的，`parsePoolIndex` 的
+   * 「结构脏 ⇒ 当作缺失 ⇒ 重建」那条防线根本没机会执行。下面这个计数桩的 `get`
+   * 就是 `JSON.parse(raw)`，与 KvStorage 同形；真 KV 上的等价验证在
+   * tests/contract/pool-index-corrupt.test.ts。
+   */
+  const BAD = '{"v":1,"ids":["a",';
+
+  it("all() 不许抛，且顺手把坏值覆盖掉", async () => {
+    const s = new CountingStorage();
+    const { repo, logger } = makeRepo(s);
+    const a = await repo.add("sk-test-a");
+    s.m.set(POOL_INDEX_KEY, BAD);
+    logger.clear();
+
+    expect((await repo.all()).map((r) => r.id), "读路径照常工作").toEqual([a.id]);
+    expect(logger.has("pool.index_unreadable")).toBe(true);
+    // 自愈：坏值已被合法索引覆盖，下一次不再需要 list。
+    expect(JSON.parse(s.m.get(POOL_INDEX_KEY)!)).toEqual({ v: 1, ids: [a.id] });
+    s.reset();
+    expect(await repo.all()).toHaveLength(1);
+    expect(s.lists).toBe(0);
+  });
+
+  it("reconcileIndex() 也不许抛——它被指定为修复者，被同一份输入打死就永远修不好", async () => {
+    const s = new CountingStorage();
+    const { repo } = makeRepo(s);
+    const a = await repo.add("sk-test-a");
+    s.m.set(POOL_INDEX_KEY, BAD);
+
+    const r = await repo.reconcileIndex();
+    expect(r.repaired).toBe(true);
+    expect(r.added).toEqual([a.id]);
+    expect(JSON.parse(s.m.get(POOL_INDEX_KEY)!)).toEqual({ v: 1, ids: [a.id] });
+  });
+
+  it("delete() 也不许被坏索引打死", async () => {
+    const s = new CountingStorage();
+    const { repo } = makeRepo(s);
+    const a = await repo.add("sk-test-a");
+    s.m.set(POOL_INDEX_KEY, BAD);
+    await expect(repo.delete(a.id)).resolves.toBeUndefined();
+    expect(s.m.has(KEY_PREFIX + a.id)).toBe(false);
+  });
+
+  it("存储是真挂了（不止索引这一个键坏）时，错误照旧浮出来——不许被这层 try/catch 吞掉", async () => {
+    class BrokenStorage implements Storage {
+      async get<T>(): Promise<T | null> { throw new Error("磁盘挂了"); }
+      async put(): Promise<void> { throw new Error("磁盘挂了"); }
+      async delete(): Promise<void> { throw new Error("磁盘挂了"); }
+      async list(): Promise<string[]> { throw new Error("磁盘挂了"); }
+    }
+    const { repo } = makeRepo(new BrokenStorage());
+    await expect(repo.all()).rejects.toThrow(/磁盘挂了/);
+  });
+});
+
+describe("索引写连续失败时的退避", () => {
+  it("只读存储下不该每个请求都白扔一次 put 加一条 warn", async () => {
+    const s = new CountingStorage();
+    let t = 1000;
+    const { repo, logger } = makeRepo(s, () => t);   // 递进假时钟，不用真实时间
+    await repo.add("sk-test-a");
+    s.m.delete(POOL_INDEX_KEY);
+    s.failPutOn = [POOL_INDEX_KEY];
+    s.reset();
+    logger.clear();
+
+    expect(await repo.all(), "读路径始终照常工作").toHaveLength(1);
+    expect(s.puts, "第一次照常尝试").toBe(1);
+    expect(logger.has("pool.index_write_failed")).toBe(true);
+
+    s.reset();
+    logger.clear();
+    expect(await repo.all()).toHaveLength(1);
+    expect(s.puts, "窗口内不再重试——put 失败也照样计入写配额").toBe(0);
+    expect(s.lists, "但 list 回落照常，读路径行为一个字都不变").toBe(1);
+    expect(logger.events(), "也不再刷 warn").toEqual([]);
+
+    t += INDEX_WRITE_RETRY_MS;
+    s.reset();
+    logger.clear();
+    expect(await repo.all()).toHaveLength(1);
+    expect(s.puts, "窗口过后重新尝试一次").toBe(1);
+
+    // 存储恢复可写之后要真的写进去。
+    t += INDEX_WRITE_RETRY_MS;
+    s.failPutOn = [];
+    s.reset();
+    logger.clear();
+    expect(await repo.all()).toHaveLength(1);
+    expect(logger.has("pool.index_bootstrapped")).toBe(true);
+    s.reset();
+    expect(await repo.all()).toHaveLength(1);
+    expect(s.lists, "索引终于写进去了，回到零 list").toBe(0);
+  });
+
+  it("时钟被回拨时立刻恢复尝试，而不是被抑制到回拨量走完", async () => {
+    // 退避窗口是拿「当前时刻 - 上次失败时刻」算的，NTP 回拨会让这个差变成负数。
+    // 不显式挡住的话，回拨 1 小时就等于停写索引 1 小时——每个请求多一次 list。
+    const s = new CountingStorage();
+    let t = 1_000_000;
+    const { repo } = makeRepo(s, () => t);
+    await repo.add("sk-test-a");
+    s.m.delete(POOL_INDEX_KEY);
+    s.failPutOn = [POOL_INDEX_KEY];
+    s.reset();
+
+    await repo.all();
+    expect(s.puts, "先失败一次，进入退避").toBe(1);
+
+    t -= 3_600_000;                 // 时钟回拨一小时
+    s.failPutOn = [];
+    s.reset();
+    await repo.all();
+    expect(s.puts, "回拨之后必须重新尝试").toBe(1);
+    expect(JSON.parse(s.m.get(POOL_INDEX_KEY)!).ids).toHaveLength(1);
   });
 });
 

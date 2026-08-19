@@ -58,12 +58,18 @@ export function idsFromKeyNames(names: readonly string[]): string[] {
 
 /**
  * 集合相等。**顺序无语义**——按顺序比会让对账在「顺序碰巧不同」时产生一次无谓的
- * KV 写，而写配额恰恰是最紧的那个桶。两边都应先经过 dedupe（本模块的构造函数都做了）。
+ * KV 写，而写配额恰恰是最紧的那个桶。
+ *
+ * **两边各自先 dedupe 再比**，不图省事先比长度：原实现（比长度 + 单向包含）对含
+ * 重复元素的入参不对称，`sameIdSet(["x","y"], ["x","x"])` 会返回 true。当前两个
+ * 调用点的入参都已经过 dedupe，触发不到，但把这个陷阱留给未来的调用方不值当——
+ * 它的表现形式会是「对账认为一致因而不修」，正好是最难查的那种沉默。
  */
 export function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  const s = new Set(a);
-  for (const x of b) if (!s.has(x)) return false;
+  const sa = new Set(a);
+  const sb = new Set(b);
+  if (sa.size !== sb.size) return false;
+  for (const x of sb) if (!sa.has(x)) return false;
   return true;
 }
 

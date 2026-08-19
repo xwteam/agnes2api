@@ -268,3 +268,12 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 
 `--remote`를 생략하면 프로덕션이 아니라 `wrangler dev`가 사용하는 로컬
 네임스페이스에 기록됩니다.
+
+이렇게 가져온 key는 바로 다음 요청부터 적용됩니다. 게이트웨이는 풀의 id 목록을
+`pool:index` 키에 보관하며(전달 요청마다 KV `list`를 쓰지 않기 위해서입니다. 무료
+등급의 list 할당량은 하루 1,000회뿐입니다), 색인이 모르는 수동 가져오기 레코드는
+자동으로 감지되어 색인에 채워집니다.
+
+레지스트라를 쓰지 않더라도 `wrangler.toml`의 `[triggers]` 블록을 지우지 마십시오.
+이 cron은 `pool:index`와 실제 `key:` 레코드를 대조해 고치는 유일한 경로이며,
+`REGISTRAR_ENABLED` 값과 무관하게 실행됩니다.

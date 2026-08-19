@@ -4,7 +4,18 @@ import type { KeyRecord } from "./types.js";
 import {
   KEY_PREFIX, POOL_INDEX_KEY,
   makePoolIndex, parsePoolIndex, idsFromKeyNames, sameIdSet,
+  type PoolIndex,
 } from "./pool-index.js";
+
+/**
+ * 索引重建写失败之后的静默窗口。
+ *
+ * 存储只读（Docker 绑定挂载属主不匹配）或写配额耗尽时，索引一次都写不进去，
+ * 而重建走的是读路径 ⇒ **每个转发请求都会多一次注定失败的 `put` 加一条 warn**。
+ * put 失败也照样计入 KV 的写配额，等于用配额去买日志噪音。记住上次失败的时刻，
+ * 窗口内只跳过「写」这一步，`list` 回落照常，读路径的行为完全不变。
+ */
+export const INDEX_WRITE_RETRY_MS = 60_000;
 
 /**
  * key 的 id = SHA-256 的前 8 字节。
@@ -54,17 +65,60 @@ export interface ReconcileResult {
  * 两条都有测试守着（tests/unit/keypool-repo.test.ts 里的「先写记录」「先删记录」两条）。
  */
 export class KeyPoolRepo {
+  /** 见 INDEX_WRITE_RETRY_MS。null 表示「上一次索引写是成功的」。 */
+  private indexWriteFailedAt: number | null = null;
+
   constructor(
     private readonly storage: Storage,
     private readonly o: KeyPoolRepoOptions,
   ) {}
 
   async all(): Promise<KeyRecord[]> {
-    const ids = await this.readIndexIds();
+    const idx = await this.readIndex();
+    // 索引缺失那条路径刚刚已经 list 过一次，下面的空结果兜底不必再来一次。
+    const indexed = idx !== null ? idx.ids : await this.bootstrapFromList();
+    const alive = await this.loadRecords(indexed);
+    if (alive.length > 0 || idx === null) return alive;
+    return await this.rescanEmptyResult(indexed);
+  }
+
+  /**
+   * 索引解析成功、却一条活记录都没读到时，回落一次 `list()` 兜底。
+   *
+   * **不加这一步会出人命的场景**（评审实测，真 KV 复现）：全新部署的 Worker 上
+   * cron 先在空 KV 上跑了一次对账，写下**权威的空索引** `{"v":1,"ids":[]}`；用户
+   * 随后按 DEPLOY.md 手工 `wrangler kv key put` 导入 key——而 P3a 还没有面板、
+   * 注册机默认关闭，手工导入就是 Worker 用户装 key 的唯一路径。此时索引「合法」，
+   * 永远不会走缺失回落，`all()` 恒返回 0 条，网关一直 503 pool_empty。
+   * 改造前 `all()` 直接 `list("key:")`，导入即刻生效——这是本次改造引入的回退。
+   *
+   * 代价可控：正常非空池一步都不会走到这里（`alive.length > 0` 就返回了）；
+   * 池子真空时本来每个请求都在返 503，这次 `list` 不吃有效配额。
+   *
+   * **写回只增不减**：只把 `list` 发现而索引不知道的 id 补进去，绝不从索引里删。
+   * 删（剪枝）一律交给 `reconcileIndex()`，理由见 all() 里那段注释。于是
+   * 「整池都成了幽灵索引项」时这里不写、不剪，只是每个请求多一次 list，直到对账。
+   */
+  private async rescanEmptyResult(indexed: readonly string[]): Promise<KeyRecord[]> {
+    const actual = idsFromKeyNames(await this.storage.list(KEY_PREFIX));
+    const merged = [...new Set([...indexed, ...actual])];
+    if (!sameIdSet(merged, indexed)) {
+      await this.writeIndexBestEffort(
+        merged, "pool.index_backfilled",
+        "索引说池子是空的，但 list 找到了记录（多半是手工导入），已把它们补进索引",
+      );
+    }
+    return await this.loadRecords(actual);
+  }
+
+  private async loadRecords(ids: readonly string[]): Promise<KeyRecord[]> {
     const rs = await Promise.all(ids.map((id) => this.storage.get<KeyRecord>(KEY_PREFIX + id)));
-    // 幽灵索引项在这里被丢掉。**刻意不顺手把它从索引里剪掉**：`add` 的写序天然存在
-    // 「索引已更新、记录尚未可见」的窗口（KV 是最终一致的），在读路径剪枝会把一把刚
-    // 铸出来的新 key 从池子里悄悄抹掉。剪枝一律交给 reconcileIndex()。
+    // 幽灵索引项在这里被丢掉。**刻意不顺手把它从索引里剪掉**，硬理由是：
+    // 剪枝要写索引，而那是**热路径上多出来的一次 `put`**——写配额恰恰是最紧的桶，
+    // 这一下就把本模块存在的全部意义抵消掉了。
+    // 次要理由：`add` 的写序天然存在「索引已更新、记录尚未可见」的窗口（KV 是最终
+    // 一致的），在读路径剪枝会把一把刚铸出来的新 key 打成孤儿（仍是 fail-safe 态、
+    // 对账捡得回来，但白白多绕一圈）。剪枝一律交给 reconcileIndex()。
     return rs.filter((r): r is KeyRecord => r !== null);
   }
 
@@ -100,7 +154,7 @@ export class KeyPoolRepo {
    */
   async reconcileIndex(): Promise<ReconcileResult> {
     const actual = idsFromKeyNames(await this.storage.list(KEY_PREFIX));
-    const cur = parsePoolIndex(await this.storage.get<unknown>(POOL_INDEX_KEY));
+    const cur = await this.readIndex();
     const indexed = cur?.ids ?? [];
     const added = actual.filter((x) => !indexed.includes(x));
     const removed = indexed.filter((x) => !actual.includes(x));
@@ -121,41 +175,91 @@ export class KeyPoolRepo {
   }
 
   /**
-   * 读索引。读不到合法索引就回落 `list()` 并重建——**这是热路径上唯一可能出现
-   * `list()` 的地方，且只在索引缺失/结构不认识时走一次**。
+   * 读索引。**读取本身抛错也一律当成「索引缺失」**，返回 null。
+   *
+   * 这一层 try/catch 不是防御性编程，是补一条真实的防线漏洞（评审用真 KV 实测）：
+   * `parsePoolIndex` 的「结构脏 ⇒ 当作缺失 ⇒ 重建」架在 **JSON 之上**，而
+   * `KvStorage.get(k, "json")` 遇到坏字节是**先抛**的，`parsePoolIndex` 根本没机会
+   * 执行。后果是每个转发请求 500，**并且被指定为修复者的 `reconcileIndex()` 读同一个
+   * 键同样抛**——两个入口的 try/catch 只吞掉记一条日志，于是它每 30 分钟徒劳地挂
+   * 一次，永远修不好，只能人工删键。
+   *
+   * 抛了就当缺失 ⇒ 调用方回落 `list()` 并**顺手把坏值覆盖掉**，自愈。
+   * 存储是真挂了（不止这一个键坏）的话，紧接着那次 `list()` 照样会抛，错误仍然
+   * 如实浮到 500 上——这里放行的只有「索引这一个值坏了」这一种情形。
    */
-  private async readIndexIds(): Promise<string[]> {
-    const idx = parsePoolIndex(await this.storage.get<unknown>(POOL_INDEX_KEY));
-    if (idx !== null) return idx.ids;
+  private async readIndex(): Promise<PoolIndex | null> {
+    let raw: unknown;
+    try {
+      raw = await this.storage.get<unknown>(POOL_INDEX_KEY);
+    } catch (err) {
+      this.o.logger.log({
+        level: "warn", event: "pool.index_unreadable",
+        msg: "key 池索引读取失败（多半是存了非 JSON 字节），按索引缺失处理并重建",
+        fields: { err: err instanceof Error ? err.message : String(err) },
+      });
+      return null;
+    }
+    return parsePoolIndex(raw);
+  }
 
+  /**
+   * 索引缺失/不可读时的回落：`list()` 一次并尽力重建。
+   * **这是热路径上唯一可能出现 `list()` 的地方之一**（另一处见 rescanEmptyResult）。
+   */
+  private async bootstrapFromList(): Promise<string[]> {
     const ids = idsFromKeyNames(await this.storage.list(KEY_PREFIX));
-    // **尽力而为**：存储只读时，原来的 all() 是能工作的，不能因为写索引失败就把
-    // 读路径也弄挂。写不进去的后果只是下次还要再 list 一遍。
+    await this.writeIndexBestEffort(
+      ids, "pool.index_bootstrapped", "key 池索引缺失，已按 list 结果重建",
+    );
+    return ids;
+  }
+
+  /**
+   * 写索引，**尽力而为**：存储只读时，原来的 all() 是能工作的，不能因为写索引失败
+   * 就把读路径也弄挂。写不进去的后果只是下次还要再 list 一遍。
+   * 连续失败时按 INDEX_WRITE_RETRY_MS 退避，避免每个请求都白扔一次 put。
+   *
+   * **成功之后刻意不把 `indexWriteFailedAt` 清回 null**：那行代码是死的，不是省略。
+   * 证明——一次尝试能发生，前提就是 `at - failedAt >= RETRY`；时钟单调，之后的每次
+   * 调用只会让 `at` 更大，因而同样不被抑制。清不清，结果一个字都不差。写一行永远
+   * 改变不了行为的代码，等于给后人留一条不可证伪的注释。
+   *
+   * 时钟**不**单调那一种情形（NTP 回拨）确实观测得到，所以下面显式挡了 `since < 0`：
+   * 回拨之后立刻恢复尝试，而不是被抑制到回拨量走完。
+   */
+  private async writeIndexBestEffort(
+    ids: readonly string[], event: string, msg: string,
+  ): Promise<void> {
+    const at = this.o.now();
+    if (this.indexWriteFailedAt !== null) {
+      const since = at - this.indexWriteFailedAt;
+      if (since >= 0 && since < INDEX_WRITE_RETRY_MS) return;
+    }
     try {
       await this.storage.put(POOL_INDEX_KEY, makePoolIndex(ids));
-      this.o.logger.log({
-        level: "info", event: "pool.index_bootstrapped",
-        msg: "key 池索引缺失，已按 list 结果重建", fields: { ids: ids.length },
-      });
+      this.o.logger.log({ level: "info", event, msg, fields: { ids: ids.length } });
     } catch (err) {
+      this.indexWriteFailedAt = at;
       this.o.logger.log({
         level: "warn", event: "pool.index_write_failed",
         msg: "重建 key 池索引时写入失败，本次仍按 list 结果工作",
         fields: { err: err instanceof Error ? err.message : String(err) },
       });
     }
-    return ids;
   }
 
   private async indexAdd(id: string): Promise<void> {
-    const ids = await this.readIndexIds();
+    const idx = await this.readIndex();
+    const ids = idx !== null ? idx.ids : await this.bootstrapFromList();
     if (ids.includes(id)) return;   // 已在索引里：不写，省一次 put
+    // 这一次**必须**抛：调用方 add() 靠它把「索引没进去」如实告诉注册机。
     await this.storage.put(POOL_INDEX_KEY, makePoolIndex([...ids, id]));
   }
 
   private async indexRemove(id: string): Promise<void> {
-    const cur = parsePoolIndex(await this.storage.get<unknown>(POOL_INDEX_KEY));
-    if (cur === null) return;       // 没索引就没什么可摘的，对账会建
+    const cur = await this.readIndex();
+    if (cur === null) return;       // 没索引/索引不可读就没什么可摘的，对账会建
     if (!cur.ids.includes(id)) return;
     await this.storage.put(POOL_INDEX_KEY, makePoolIndex(cur.ids.filter((x) => x !== id)));
   }

@@ -241,3 +241,10 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 ```
 
 不加 `--remote` 則寫入 `wrangler dev` 使用的本機命名空間，而非正式環境。
+
+這樣匯入的 key 從下一個請求起立即生效：閘道用一個 `pool:index` 鍵保存池內的 id 清單
+（這樣每次轉發都不必消耗 KV 的 `list` 操作——免費方案的 list 配額只有每天 1,000 次），
+而索引不知道的手動匯入記錄會被自動發現並補進索引。
+
+**即使你完全不用註冊機，也不要刪掉 `wrangler.toml` 裡的 `[triggers]`**：那個 cron 是
+`pool:index` 與實際 `key:` 記錄之間唯一的對帳修復路徑，且與 `REGISTRAR_ENABLED` 無關。

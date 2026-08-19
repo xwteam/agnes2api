@@ -55,9 +55,10 @@ export async function main(env: Record<string, string | undefined> = process.env
       // 根本没有定时器，此后怎么改存储都打不开，而启动时 enabled=true 则从存储
       // 关也关不掉。
       //
-      // 未启用时 buildTendDeps 在构造任何 provider 之前就返回 null：这一轮除了
-      // 读一次配置不产生任何副作用，不会触达邮箱或 Agnes——与 Worker 侧
-      // REGISTRAR_ENABLED=false 时 Cron 空转的语义完全一致。
+      // 未启用时 buildTendDeps 在构造任何 provider 之前就返回 null：这一轮**不会
+      // 触达邮箱或 Agnes**，与 Worker 侧 REGISTRAR_ENABLED=false 时 Cron 空转的语义
+      // 完全一致。注意口径是「无外部副作用」而不是「零副作用」——这一轮仍然会读一次
+      // 配置，上面那次索引对账也照做（索引不存在时还会写一次）。
       let deps: TendDeps | null;
       try {
         deps = await buildTendDeps(env, storage);
@@ -67,7 +68,7 @@ export async function main(env: Record<string, string | undefined> = process.env
         console.error("[registrar] 装配补池依赖失败", err);
         return;
       }
-      if (!deps) return; // 注册机未启用：零副作用
+      if (!deps) return; // 注册机未启用：不触达邮箱/Agnes（对账已在上面做过）
 
       try {
         const r = await tendOnce(deps);

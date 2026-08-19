@@ -11,8 +11,16 @@ binding = "POOL"
 id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 
 # 注册机（P2，默认关闭）的补池调度：每 30 分钟触发一次 scheduled()，与
-# TEND_INTERVAL_MS 的默认值（1_800_000ms）一致。REGISTRAR_ENABLED=false 时
-# scheduled() 会在 buildTendDeps 里提前返回 null，触发器空转不产生副作用。
+# TEND_INTERVAL_MS 的默认值（1_800_000ms）一致。
+#
+# ⚠ **不用注册机也不要删掉这个触发器。** scheduled() 在判断「注册机是否启用」
+# **之前**先做一次 key 池索引对账（src/entry/worker.ts），那是索引残留（孤儿记录 /
+# 幽灵索引项）唯一的修复路径，与 REGISTRAR_ENABLED 无关。删掉之后残留永远修不好，
+# 而且没有任何日志会提示你。
+#
+# REGISTRAR_ENABLED=false 时 scheduled() 仍会读一次配置、再读一次存储做对账
+#（索引不存在时还会写一次），但不会触达邮箱服务或 Agnes——「空转」指的是
+# **不产生外部副作用**，不是一次存储访问都没有。
 #
 # 墙钟预算：受 Cloudflare Cron Trigger 单次调用 15 分钟（900s）墙钟上限约束——
 # `ctx.waitUntil()` 不会延长这个上限（那个宽限只对 HTTP 请求有效）。CPU 时间上限
