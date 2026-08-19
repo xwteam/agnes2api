@@ -396,10 +396,31 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 Omit `--remote` to write into the local namespace used by `wrangler dev` instead of
 production.
 
-Keys imported this way take effect on the very next request — the gateway keeps a
-`pool:index` key listing the pool's ids (so that forwarding never spends a KV `list`
-operation, whose free-tier quota is only 1,000/day), and a manually imported record
-that the index does not know about is picked up and back-filled automatically.
+The gateway keeps a `pool:index` key listing the pool's ids so that forwarding never spends a
+KV `list` operation (the free-tier `list` quota is only 1,000/day and is a separate bucket from
+reads and writes). **Writing a record by hand does not touch that index**, so how soon the new
+key gets used depends on the state of the pool at that moment:
+
+- **When the pool is empty**: the index says the pool is empty and indeed not a single record can
+  be read, so the gateway falls back to one `list` scan that discovers the hand-imported record
+  and back-fills it into the index. That scan has a built-in 10-minute backoff (see the quota
+  budget above), so the visibility bound is **≤10 minutes + one `POOL_CACHE_TTL_MS`**.
+- **When the pool is not empty**: the forwarding path only fetches records the index knows about,
+  so a record the index has never heard of is **completely invisible** — with no error anywhere.
+  It has to wait for the next cron reconciliation to repair the index (30 minutes by default, and
+  **the trigger timing carries no official guarantee**, see below), then for up to one more
+  `POOL_CACHE_TTL_MS`.
+
+**To make a hand import take effect immediately, add the id to `pool:index` at the same time:**
+
+```bash
+npx wrangler kv key get --binding=POOL "pool:index" --remote
+# append the new id to the ids array and write the whole value back (v is always 1)
+npx wrangler kv key put --binding=POOL "pool:index" \
+  '{"v":1,"ids":["existing-id","1a2b3c4d5e6f7a8b"]}' --remote
+```
+
+Once the index is written, every isolate picks the key up after at most one `POOL_CACHE_TTL_MS`.
 
 Do not delete the `[triggers]` block in `wrangler.toml`, even if you never enable the
 registrar: that cron is the only path that reconciles `pool:index` against the actual
@@ -413,3 +434,24 @@ KV read/write usage, never increase it — but it means **there is no guarantee 
 how long an orphaned record or ghost index entry takes to be reclaimed**; in the
 worst case it can take longer than the expected "up to 30 minutes". During that
 wait the affected key is simply unusable, not lost or corrupted.
+
+## Revoking a key
+
+**Delete the record, then remove its id from `pool:index` — do both steps.** Deleting only the
+record is not an error (unreadable records are simply filtered out), but the id stays in the
+index, costing one wasted read on every refresh until the next reconciliation prunes it.
+
+```bash
+npx wrangler kv key delete --binding=POOL "key:1a2b3c4d5e6f7a8b" --remote
+# drop that id from the ids array and write the whole value back
+npx wrangler kv key put --binding=POOL "pool:index" '{"v":1,"ids":["remaining-id"]}' --remote
+```
+
+On Docker this means deleting the `"key:<id>"` entry from `./data/store.json` and fixing the
+`ids` array under `"pool:index"`; stopping the container first (`docker compose stop`) is
+recommended.
+
+Isolates and processes that already loaded an older snapshot stop selecting the key after at most
+one `POOL_CACHE_TTL_MS`, **but it will never be written back**: before persisting any state
+change the gateway first confirms the record still exists, and drops the write (refreshing its
+own snapshot immediately) when it does not.

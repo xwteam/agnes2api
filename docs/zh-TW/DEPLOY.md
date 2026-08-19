@@ -346,9 +346,27 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 
 不加 `--remote` 則寫入 `wrangler dev` 使用的本機命名空間，而非正式環境。
 
-這樣匯入的 key 從下一個請求起立即生效：閘道用一個 `pool:index` 鍵保存池內的 id 清單
-（這樣每次轉發都不必消耗 KV 的 `list` 操作——免費方案的 list 配額只有每天 1,000 次），
-而索引不知道的手動匯入記錄會被自動發現並補進索引。
+閘道用一個 `pool:index` 鍵保存池內的 id 清單，這樣每次轉發都不必消耗 KV 的 `list` 操作
+（免費方案的 `list` 配額只有每天 1,000 次，是獨立於讀、寫之外的另一個桶）。**手動寫記錄不會
+動這個索引**，所以新 key 多久能被用上，取決於池子當時的狀態：
+
+- **池子為空時**：索引說池子是空的、記錄也確實一條都讀不到，閘道會回落一次 `list` 掃描把
+  手動匯入的記錄發現並補進索引。這條掃描有內建的 10 分鐘退避（見上文「配額帳」），因此
+  可見上界是 **≤10 分鐘 + 一個 `POOL_CACHE_TTL_MS`**。
+- **池子非空時**：轉發路徑只按索引取記錄，索引不知道的記錄**完全隱身**，而且沒有任何報錯。
+  它要等下一次 Cron 對帳把索引修好（預設 30 分鐘，且**觸發時機沒有官方保證**，見下），
+  之後再等最多一個 `POOL_CACHE_TTL_MS`。
+
+**想讓手動匯入立刻生效，就在寫記錄的同時把 id 補進 `pool:index`：**
+
+```bash
+npx wrangler kv key get --binding=POOL "pool:index" --remote
+# 把新 id 追加進 ids 陣列再整個寫回（v 固定為 1）
+npx wrangler kv key put --binding=POOL "pool:index" \
+  '{"v":1,"ids":["已有的id","1a2b3c4d5e6f7a8b"]}' --remote
+```
+
+索引寫完之後，各 isolate 最多再等一個 `POOL_CACHE_TTL_MS` 就會用上這把 key。
 
 **即使你完全不用註冊機，也不要刪掉 `wrangler.toml` 裡的 `[triggers]`**：那個 cron 是
 `pool:index` 與實際 `key:` 記錄之間唯一的對帳修復路徑，且與 `REGISTRAR_ENABLED` 無關。
@@ -358,3 +376,21 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 是安全的——對帳觸發得越少，實際消耗的 KV 讀寫只會比預估更少，不會更多；但
 **孤兒記錄／幽靈索引項被撿回索引的時間沒有保證**，極端情況下可能比預期的
 「最長 30 分鐘」更晚。這段等待期間該 key 只是暫時用不上，不會造成資料損壞。
+
+## 吊銷一把 key
+
+**刪記錄、再把 id 從 `pool:index` 裡摘掉，兩步都要做。** 只刪記錄不會出錯（讀不到的記錄會被
+直接過濾掉），但索引裡那個 id 還在，每次重新整理都白付一次讀，要等下一次對帳才會被剪掉。
+
+```bash
+npx wrangler kv key delete --binding=POOL "key:1a2b3c4d5e6f7a8b" --remote
+# 把該 id 從 ids 陣列裡去掉再整個寫回
+npx wrangler kv key put --binding=POOL "pool:index" '{"v":1,"ids":["剩下的id"]}' --remote
+```
+
+Docker 形態就是在 `./data/store.json` 裡刪掉 `"key:<id>"` 那個鍵，並把 `"pool:index"` 的
+`ids` 陣列改好，建議先 `docker compose stop`。
+
+已經裝載了舊快照的 isolate／行程最多再等一個 `POOL_CACHE_TTL_MS` 才會停止選中這把 key，
+**但它不會被寫回來**：閘道在落盤任何狀態變更之前都會先確認記錄還在，讀不到就丟棄這次寫，
+並立刻重新整理自己的快照。
