@@ -66,16 +66,24 @@ export function processCells(body) {
 /**
  * 累计用量卡的五个数。**`poolStats` 为 null 时全部 null**（绝不伪造 0），
  * 成功率交给调用方用 `fmtPercent` 现算——这里只投影原始计数，不重复实现百分比逻辑。
+ *
+ * **`approx` 由响应的 `approximate` 字段驱动**（产品不变式 10：近似值必须带 `≈`）。
+ * 这是 Task 4 评审 I4 的原样复发——那一次的裁定是「一个没有消费者的响应字段迟早会
+ * 漂」，第一版的 `usageStats()` 就是又一次没有消费者的字段：写了「由 approximate
+ * 驱动」的注释，却没有真的读它，`sec-overview.js` 把 `（≈）` 硬编码进了标题。
+ * 响应里没带这个字段（block 缺失）时按**近似**处理——保守方向是宁可多打一个 ≈，
+ * 不是悄悄宣称精确，与 `pure/keys.mjs` 的 `usageParts()` 同一条哲学。
  */
 export function usageStats(body) {
   const s = body && typeof body === "object" ? body.poolStats : null;
   const numOrNull = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
   if (!s || typeof s !== "object") {
-    return { requests: null, success: null, failed: null, clientErrors: null };
+    return { requests: null, success: null, failed: null, clientErrors: null, approx: true };
   }
   return {
     requests: numOrNull(s.requests), success: numOrNull(s.success),
     failed: numOrNull(s.failed), clientErrors: numOrNull(s.clientErrors),
+    approx: s.approximate !== false,
   };
 }
 

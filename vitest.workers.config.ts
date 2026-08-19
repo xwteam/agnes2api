@@ -15,5 +15,9 @@ export default defineConfig({
     // 被察觉的那类改动。（globalSetup 跑在主 node 进程里，不进 workerd，
     // 所以它用 node:fs / child_process 没问题。已实测。）
     globalSetup: ["tests/global-setup.ts"],
+    // **只在这份配置里注册**：反向钉住 IS_WORKERD 判据本身没有失灵
+    // （tests/helpers/is-workerd.ts 的说明）。setupFiles 跑在每个测试文件自己的
+    // workerd 运行时环境内，与 globalSetup 跑在外层 Node 宿主进程不是同一层。
+    setupFiles: ["tests/workers-setup.ts"],
   },
 });

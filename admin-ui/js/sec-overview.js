@@ -25,9 +25,13 @@ import {
 
 let nodes = null;
 let abort = null;
-/** 最近一次成功的 `/overview` 响应；null 表示「还没有过一次成功」。 */
+/**
+ * 最近一次成功的 `/overview` 响应；`null` 表示「还没有过一次成功」——
+ * 唯一状态源，不另设 `loadError` 标记：本板块所有渲染函数只按 `data === null`
+ * 分支（不像 Key 池板块要区分「空列表」与「读失败」两种不同文案），
+ * 两份状态各写各的只会漂移。
+ */
 let data = null;
-let loadError = false;
 /**
  * `/capabilities` 只拉一次（静态数据：版本号、colo、quota model 这些在一个
  * isolate/进程的生命周期里不会变），不跟着每次刷新重新拉——它的**零存储读**特性
@@ -123,13 +127,23 @@ function renderFreshness() {
     });
 }
 
+/** `≈` 标记。它是产品不变式的一部分（近似值必须打标），由后端的 `approximate` 驱动。 */
+function approxMark() {
+  return el("span", { class: "approx", title: t("ov.usage.approxTip") }, "≈ ");
+}
+
 function renderUsage() {
   const u = usageStats(data);
-  nodes.usage.requests.textContent = fmtCount(u.requests);
-  nodes.usage.success.textContent = fmtCount(u.success);
-  nodes.usage.failed.textContent = fmtCount(u.failed);
-  nodes.usage.clientErrors.textContent = fmtCount(u.clientErrors);
-  nodes.usage.successRate.textContent = fmtPercent(u.success, u.requests);
+  const fillTile = (node, text) => {
+    node.textContent = "";
+    if (u.approx) node.appendChild(approxMark());
+    node.appendChild(el("span", null, text));
+  };
+  fillTile(nodes.usage.requests, fmtCount(u.requests));
+  fillTile(nodes.usage.success, fmtCount(u.success));
+  fillTile(nodes.usage.failed, fmtCount(u.failed));
+  fillTile(nodes.usage.clientErrors, fmtCount(u.clientErrors));
+  fillTile(nodes.usage.successRate, fmtPercent(u.success, u.requests));
 }
 
 function renderConfig() {
@@ -173,9 +187,12 @@ function renderStorageCard() {
 }
 
 function render() {
-  // 读失败一律当「没有数据」：所有子渲染函数都要能安全处理 data === null
-  // （逐块降级来自后端，这里再叠一层「整段响应都没读到」的兜底）。
-  if (loadError) data = null;
+  // **只读，不改状态**：`data` 由 `load()` 的 try/catch 单独维护，
+  // `render()` 从两条路进来（`load()` 与 `loadCapabilities()` 之后的重渲），
+  // 把「读失败 ⇒ data 置空」这种状态修改留在这里会让 render() 变成一个
+  // 「谁调用它、状态就跟着变」的函数，两条调用路径互相踩脚。所有子渲染函数
+  // 都要能安全处理 data === null（逐块降级来自后端，这里再叠一层
+  // 「整段响应都没读到」的兜底）。
   renderPoolCards();
   renderRuntimeTiles();
   renderFreshness();
@@ -199,10 +216,10 @@ async function load() {
   try {
     const body = await api.get("/overview", { signal: abort.signal });
     data = body;
-    loadError = false;
   } catch (e) {
     if (e && e.name === "AbortError") return;
-    loadError = true;
+    // **不伪造上一次的数据**：读失败就把 data 清空，不留着旧值以为它是新的。
+    data = null;
   }
   render();
 }

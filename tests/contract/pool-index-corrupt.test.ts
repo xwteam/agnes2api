@@ -5,6 +5,7 @@ import { NULL_LOGGER } from "../../src/ports/logger.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import type { Storage } from "../../src/ports/storage.js";
 import type { KeyRecord } from "../../src/core/types.js";
+import { IS_WORKERD } from "../helpers/is-workerd.js";
 
 /**
  * `pool:index` 存了非 JSON 字节时的契约，**在真 KV 上跑一遍**。
@@ -81,7 +82,7 @@ runCorruptIndexContract("MemoryStorage", () => {
 // 这一个值坏了」在文件形态下压根不是一个能存在的状态——真把那一段写坏，坏掉的是
 // 整份存储，`get`/`list`/`put` 全都抛，那是另一个（P1 遗留的）问题，不是这条契约。
 // 硬把它塞进来只会得到一条断言了假命题的用例。
-if (typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers") {
+if (IS_WORKERD) {
   const { env } = await import("cloudflare:test");
   const { KvStorage } = await import("../../src/adapters/storage-kv.js");
   runCorruptIndexContract("KvStorage（miniflare 真 KV）", () => {

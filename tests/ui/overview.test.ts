@@ -80,15 +80,28 @@ describe("processCells：判据是 process === null，不是 runtime.name", () =
   });
 });
 
-describe("usageStats：poolStats 为 null 时全部 null，不是 0", () => {
-  it("poolStats 缺失/畸形时四项全是 null", () => {
+/**
+ * **I1（评审必修，Task 4 I4 的原样复发）**：`≈` 必须由后端的 `approximate` 字段
+ * 驱动，不许硬编码。第一版 `usageStats()` 丢掉了这个字段、注释却写着「由
+ * approximate 驱动」——那句话当时是假的，`sec-overview.js` 把 `（≈）` 焊死在标题里。
+ */
+describe("usageStats：poolStats 为 null 时全部 null，不是 0；approx 由响应的 approximate 驱动", () => {
+  it("poolStats 缺失/畸形时四项计数全是 null，approx 按保守方向给 true", () => {
     for (const empty of [null, undefined, {}]) {
-      expect(usageStats({ ...body, poolStats: empty }))
-        .toEqual({ requests: null, success: null, failed: null, clientErrors: null });
+      expect(usageStats({ ...body, poolStats: empty }), String(empty))
+        .toEqual({ requests: null, success: null, failed: null, clientErrors: null, approx: true });
     }
   });
-  it("有数据时逐项透传（不含 approximate——那由响应的 approximate 字段单独驱动）", () => {
-    expect(usageStats(body)).toEqual({ requests: 100, success: 90, failed: 8, clientErrors: 2 });
+  it("有数据时逐项透传，approximate: true ⇒ approx: true", () => {
+    expect(usageStats(body)).toEqual({ requests: 100, success: 90, failed: 8, clientErrors: 2, approx: true });
+  });
+  it("approximate: false ⇒ approx: false，不打 ≈（真正驱动的地方，不是形状断言）", () => {
+    const b = { ...body, poolStats: { ...body.poolStats, approximate: false } };
+    expect(usageStats(b).approx).toBe(false);
+  });
+  it("poolStats 存在但没带 approximate 字段时按近似处理——宁可多打一个 ≈", () => {
+    const { approximate, ...rest } = body.poolStats;
+    expect(usageStats({ ...body, poolStats: rest }).approx).toBe(true);
   });
 });
 

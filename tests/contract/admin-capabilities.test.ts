@@ -3,6 +3,7 @@ import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { CountingStorage } from "../helpers/counting-storage.js";
 import { workerRuntime } from "../../src/adapters/runtime-worker.js";
 import { nodeRuntime } from "../../src/adapters/runtime-node.js";
+import { IS_WORKERD } from "../helpers/is-workerd.js";
 
 /**
  * **contract ⇒ node 与 workerd 各跑一遍**（两份 vitest 配置的 include 都收 tests/contract）。
@@ -101,7 +102,7 @@ describe("GET /admin/api/capabilities", () => {
   it("colo 字段的真实行为（node 与 workerd 侧，未显式提供 cf 时均为 null）", async () => {
     const { app } = await makeApp();
     const body = await getCapabilities(app);
-    if (typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers") {
+    if (IS_WORKERD) {
       expect(body.runtime.colo, "workerd 侧：miniflare 不为 app.request() 合成 cf").toBeNull();
     } else {
       expect(body.runtime.colo, "node 侧：cf 这个属性根本不存在").toBeNull();
@@ -127,7 +128,7 @@ describe("GET /admin/api/capabilities", () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json() as CapabilitiesBody;
-    if (typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers") {
+    if (IS_WORKERD) {
       expect(body.runtime.colo, "workerd 的 Request 支持 cf 扩展，证明 handler 的读取逻辑是对的").toBe("SIN");
     } else {
       expect(body.runtime.colo, "node 侧 fetch/undici 的 Request 不支持 cf 这个扩展属性").toBeNull();

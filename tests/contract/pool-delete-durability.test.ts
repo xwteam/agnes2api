@@ -4,6 +4,7 @@ import { KEY_PREFIX } from "../../src/core/pool-index.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import type { Storage } from "../../src/ports/storage.js";
+import { IS_WORKERD } from "../helpers/is-workerd.js";
 
 /**
  * **删除不许被陈旧快照的写回撤销。**
@@ -101,7 +102,7 @@ runDeleteDurabilityContract({ name: "MemoryStorage", make: () => new MemoryStora
 // workerd 下再跑一遍真 KV（与 pool-index-corrupt.test.ts 同款的运行时分流）。
 // 真 KV 上这条契约多验一件事：`storage.get` 走的是适配器里那次真实的 KV 读，
 // 而不是 Map 查表。
-if (typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers") {
+if (IS_WORKERD) {
   const { env } = await import("cloudflare:test");
   const { KvStorage } = await import("../../src/adapters/storage-kv.js");
   runDeleteDurabilityContract({

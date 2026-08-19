@@ -36,38 +36,73 @@ export function overviewHandler(deps: {
     const at = deps.now();
 
     const records = await block(() => deps.repo.all());
-    const cfg = await block(() => deps.configHolder.current());
+    /**
+     * **刻意不包 `block()`。** `ConfigHolder.current()` 的接口契约（见
+     * `src/http/config-holder.ts`）逐字写着「同步读，**永不抛**」——它只读内存里
+     * 最近一次成功装载的快照，从不直接碰存储；装载失败的处理发生在 `ConfigHolder`
+     * 内部（`Refreshable.reload()` 保留上一份合法快照并只打一条 error 日志），
+     * 不会冒泡到这里。包一层 `block()` 会让 `config` 看起来像是在跟 `pool`/
+     * `poolStats` 一样参与逐块降级、有个「读失败 ⇒ null」的分支，而那个分支
+     * 实际上**永远走不到**——评审用 `BrokenStorage`（每个方法都真抛）实测过，
+     * `body.config` 仍是一个完整对象，不是 `null`。
+     */
+    const cfg = deps.configHolder.current();
 
-    const poolTtl = cfg?.poolCacheTtlMs ?? null;
-    const touch = cfg?.poolTouchIntervalMs ?? null;
+    /** 存储可写性只读一次，`writable` 与 `checkedAt` 保证来自同一份快照。 */
+    const storageStatus = deps.storageHealth.status();
+    /**
+     * **`process()` 包 `block()`**：`nodeRuntime().process()` 内部调用
+     * `process.memoryUsage()`，理论上可抛（V8 罕见故障）；不包的话一次这样的抖动
+     * 会让整个 `overview` 请求 500，与「逐块降级」的立意矛盾。类型上与「Worker
+     * 恒 null」天然复用同一个 `ProcessMetrics | null`——block() 失败与「本来就是
+     * serverless」在前端渲染成同一句「Serverless · 无常驻进程」，这个简化是可接受的：
+     * 两者对用户来说都是「这里没有可看的进程指标」。
+     */
+    const processMetrics = await block(() => deps.runtime.process());
+
+    const poolTtl = cfg.poolCacheTtlMs;
+    const touch = cfg.poolTouchIntervalMs;
 
     return c.json({
       version: deps.version,
       serverTime: at,
       runtime: { name: deps.runtime.name },
-      /** **Worker 恒 null**，前端见 null 渲染「Serverless · 无常驻进程」。 */
-      process: deps.runtime.process(),
+      process: processMetrics,
       storage: {
         backend: deps.runtime.storageBackend,
-        writable: deps.storageHealth.status().writable,
-        checkedAt: deps.storageHealth.status().checkedAt,
+        writable: storageStatus.writable,
+        checkedAt: storageStatus.checkedAt,
       },
       pool: records === null ? null : poolHealth(records, at),
-      /** Tier-1 池级聚合。**近似值**，前端必须打 ≈。 */
-      poolStats: records === null ? null : { ...sumStats(records.map((r) => r.stats)), approximate: true },
+      /**
+       * Tier-1 池级聚合。**近似值**，前端必须打 ≈（`poolStats.approximate` 驱动，
+       * 见 `pure/overview.mjs` 的 `usageStats()`）。**只挑用得上的四个计数字段**，
+       * 不整段 `...sumStats(...)` 展开——`sumStats()` 还带着 `lastErrorAt`/
+       * `lastErrorKind`，概览面板不消费这两个字段（错误面正经的归宿是 Task 6
+       * 的事件板块，那里有完整上下文），挂两个没人看的字段在响应里只会造成
+       * 「这大概有用吧」的误会，且没有消费者的响应字段迟早会漂（Task 4 I4）。
+       */
+      poolStats: records === null ? null : (() => {
+        const s = sumStats(records.map((r) => r.stats));
+        return {
+          requests: s.requests, success: s.success, failed: s.failed, clientErrors: s.clientErrors,
+          approximate: true,
+        };
+      })(),
       /**
        * 两个 TTL **都要给**（progress.md:232 登记的那条）：只显示一个就是又一个
        * 「面板不撒谎」的破口。两个上界都把 KV 边缘缓存算进去——池快照那条原来漏了。
+       * `cfg` 恒有值，这两个数因此恒是数字，不再是 `number | null`。
        */
       freshness: {
         poolCacheTtlMs: poolTtl,
-        poolVisibilityUpperBoundMs: poolTtl === null ? null : poolTtl + KV_EDGE_CACHE_MS,
+        poolVisibilityUpperBoundMs: poolTtl + KV_EDGE_CACHE_MS,
         poolTouchIntervalMs: touch,
         configTtlMs: CONFIG_TTL_MS,
         configVisibilityUpperBoundMs: CONFIG_TTL_MS + KV_EDGE_CACHE_MS,
         kvEdgeCacheMs: KV_EDGE_CACHE_MS,
       },
-      config: cfg === null ? null : {
+      config: {
         registrarEnabled: cfg.registrar.enabled,
         primary: cfg.registrar.primary ?? null,
         fallback: cfg.registrar.fallback ?? null,
@@ -88,5 +123,6 @@ export function overviewHandler(deps: {
  *
  * ⚠️ 「今日用量」本期改成「累计用量」（F9）：Tier-1 的 `KeyRecord.stats` 是自这把
  * key 加入以来的累计值，没有任何时间维度；按天切分需要 Tier-2 时间序列（P3d）。
- * 把累计值标成「今日」是撒谎，面板标题写「累计（≈）」。
+ * 把累计值标成「今日」是撒谎，面板标题写「累计」，`≈` 由 `poolStats.approximate`
+ * 逐格驱动渲染（不是焊死在标题文案里，见 pure/overview.mjs 的 usageStats()）。
  */

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import type { Storage } from "../../src/ports/storage.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
+import { IS_WORKERD } from "../helpers/is-workerd.js";
 
 export function runStorageContract(name: string, make: () => Storage) {
   describe(`Storage 契约: ${name}`, () => {
@@ -90,10 +91,9 @@ export function runStorageContract(name: string, make: () => Storage) {
 
 runStorageContract("MemoryStorage", () => new MemoryStorage());
 
-// 仅在 workerd 下运行：真实 KV。navigator.userAgent === "Cloudflare-Workers"
-// 是 workerd 官方约定的运行时标识（Hono 自身的 getRuntimeKey() 也用同一探测方式），
-// 在 Node 下 navigator 要么不存在要么 userAgent 不是这个值，因此该分支互斥可靠。
-if (typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers") {
+// 仅在 workerd 下运行：真实 KV。判据见 tests/helpers/is-workerd.ts（唯一实现，
+// 反向防线在 tests/workers-setup.ts）。
+if (IS_WORKERD) {
   const { env } = await import("cloudflare:test");
   const { KvStorage } = await import("../../src/adapters/storage-kv.js");
   runStorageContract("KvStorage", () => new KvStorage((env as { POOL: KVNamespace }).POOL));
