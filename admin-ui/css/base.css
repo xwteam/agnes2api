@@ -1,0 +1,39 @@
+/* 所有颜色一律引用变量，零硬编码色值。主色用 indigo（不是 kiro2api 的 emerald）：
+   同一个运维会同时开着两个结构一模一样的面板，颜色是最快最可靠的区分信号。 */
+:root {
+  --bg: #f7f8fa; --panel: #ffffff; --text: #1c1f26; --muted: #6b7280;
+  --border: #e3e6ec; --primary: #4f46e5; --primary-fg: #ffffff; --danger: #dc2626;
+  --radius: 10px; --gap: 16px;
+}
+:root[data-theme="dark"] {
+  --bg: #14161a; --panel: #1c1f26; --text: #e7e9ee; --muted: #9aa1ad;
+  --border: #2b303a; --primary: #818cf8; --primary-fg: #14161a; --danger: #f87171;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.gate { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: var(--gap); }
+.gate-card {
+  width: 100%; max-width: 380px; padding: 28px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.gate-card h1 { margin: 0 0 4px; font-size: 20px; }
+.gate-card p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
+input[type="password"] {
+  width: 100%; padding: 10px 12px; margin-bottom: 14px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+}
+button {
+  width: 100%; padding: 10px 12px; font: inherit; cursor: pointer;
+  color: var(--primary-fg); background: var(--primary); border: 0; border-radius: var(--radius);
+}
+button[disabled] { opacity: .6; cursor: progress; }
+.err { min-height: 20px; margin-top: 10px; color: var(--danger); font-size: 13px; }
+.shell { display: none; padding: var(--gap); }
+.shell.on { display: block; }
+/* 登录成功后隐藏登录闸。用类而不是 style 属性：CSP 的 style-src 'self' 不放行
+   HTML 里的 style="…"，把「隐藏」这件事留在样式表里，将来加板块时不会踩到。 */
+.gate.off { display: none; }

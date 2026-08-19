@@ -10,8 +10,9 @@
     "test": "vitest run --config vitest.config.ts",
     "test:workers": "vitest run --config vitest.workers.config.ts",
     "build": "tsc -p tsconfig.build.json",
-    "dev:node": "pnpm build && node dist/entry/node.js",
-    "dev:worker": "wrangler dev"
+    "ui:build": "node scripts/build-ui.mjs",
+    "dev:node": "node scripts/build-ui.mjs && pnpm build && node dist/entry/node.js",
+    "dev:worker": "node scripts/build-ui.mjs && wrangler dev"
   },
   "keywords": [],
   "author": "",

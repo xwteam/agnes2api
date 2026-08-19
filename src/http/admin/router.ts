@@ -3,6 +3,7 @@ import type { Logger } from "../../ports/logger.js";
 import { adminAuth, checkAdminToken, ADMIN_TOKEN_MIN_LENGTH } from "./auth.js";
 import type { AdminTokenCheck } from "./auth.js";
 import { sessionHandler } from "./handlers/session.js";
+import { uiRoutes } from "../../ui/serve.js";
 
 export interface AdminRouterDeps {
   /** **只从环境变量读，不从存储读**：不该让面板能改自己的钥匙。 */
@@ -73,7 +74,14 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // **新增任何 /admin/api/* 端点都必须挂在这一行之后。**
   admin.use("/admin/api/*", adminAuth(token, deps.currentGatewayToken, deps.logger, deps.trustProxy));
   admin.get("/admin/api/session", sessionHandler(deps.version));
-  // Task 6 在这里追加静态资源路由（**必须在上面这些 api 路由之后注册**，
-  // 否则 /admin/* 的兜底会先匹配上并把 API 变成 404）。
+
+  // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
+  // 串起来跑，`/admin/*` 这条兜底若排在前面会先返回 404，**整套管理 API 直接消失**
+  // ——拿着正确口令也是 404，没有任何报错。（已实测；tests/contract/ui-serve.test.ts
+  // 有一条用例专门守这件事。）**新增任何 /admin/api/* 端点都必须加在这一行之前。**
+  //
+  // 静态资源**免鉴权**（登录闸得先能打开），但它整棵树跟着 /admin 一起存在或消失：
+  // 没配 ADMIN_TOKEN 时上面已经 return null，连这几行都不会执行。
+  admin.route("/", uiRoutes());
   return admin;
 }

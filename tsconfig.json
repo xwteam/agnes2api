@@ -9,7 +9,21 @@
     "noUncheckedIndexedAccess": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    // 前端纯函数（admin-ui/js/pure/*.mjs）要能被 tests/ui 直接 import。没有这条时
+    // `tsc --noEmit` 报 TS7016（找不到声明文件）——**默认配置下 typecheck 会红**，
+    // 所以这条工装必须和第一个前端测试同时落地，不能等发现了再补。
+    // 只开 allowJs 不开 checkJs：那些 .mjs 由 tests/ui 的行为断言守着，不做类型检查。
+    "allowJs": true
   },
-  "include": ["src", "tests"]
+  // ⚠️ 这一条**不是** TS7016 的解药（那是 allowJs 单独解决的，已实测：只去掉 include
+  // 而留着 allowJs，typecheck 仍然退出 0）。它守的是另一件事：让 tsc 也去解析
+  // **还没有人 import 的** pure 文件——已实测，放一个语法坏掉的 __probe.mjs 进去，
+  // 有这条时 typecheck 报 TS8017/TS1005，没有这条时静默退出 0。
+  // 新写的纯函数往往先落地、测试后补，那段窗口里它就是唯一的防线。
+  //
+  // admin-ui 只放进 `js/pure`：其余前端文件碰 DOM 全局，而这份 tsconfig 的 lib 里
+  // 没有 DOM（加 DOM 会把 Worker/Node 侧的全局也一起污染）。
+  // tsconfig.build.json 的 include 是 ["src"]，覆盖了这一条，所以 dist/ 不受影响。
+  "include": ["src", "tests", "admin-ui/js/pure"]
 }

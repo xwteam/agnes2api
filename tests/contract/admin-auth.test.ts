@@ -383,9 +383,13 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
 
   /**
    * 免鉴权路径。**显式常量**，改动它必须在评审里被看见。
-   * Task 6 会往里加 /admin 与静态资源，除此之外不许再长。
+   *
+   * `/admin` 与 `/admin/*` 是 Task 6 加的静态资源：登录闸得先能打开，否则没法登录。
+   * 它们只投递编译期常量表 `UI_ASSETS`（src/ui/serve.ts），**不读任何运行时状态**
+   *（tests/contract/ui-serve.test.ts 有一条用例守着「页面里没有版本号也没有口令」）。
+   * 除此之外这张表不许再长。
    */
-  const PUBLIC_PATHS: readonly string[] = ["/health"];
+  const PUBLIC_PATHS: readonly string[] = ["/health", "/admin", "/admin/*"];
 
   /**
    * 路径 → 安全域。**总函数**：分不出来就抛，逼新端点在这里表态，
@@ -416,12 +420,18 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     "POST /v1/videos",
     "GET /v1/videos/:id",
     "GET /admin/api/session",
+    // Task 6 的静态资源。**刻意用 get() 而不是 use()**，见 EXPECTED_MIDDLEWARE 的说明。
+    "GET /admin",
+    "GET /admin/*",
   ] as const;
 
   /** 路由模式 → 一条能真的打到那个 handler 的具体路径。 */
   const PROBE: Record<string, string> = {
     "/v1beta/models/:rest{.+}": "/v1beta/models/agnes-2.0-flash:generateContent",
     "/v1/videos/:id": "/v1/videos/abc123",
+    // 静态兜底：拿 `/admin/*` 当字面路径请求只会得到 404（查表命中制），
+    // 那样这一格什么都没验到，必须换成一条真的在 UI_ASSETS 里的路径。
+    "/admin/*": "/admin/css/base.css",
   };
 
   const GATEWAY = TEST_CONFIG.gatewayToken;
@@ -480,7 +490,13 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * 就得到一个无鉴权、能读出内容的 /admin 端点，而这个文件当时 40 条全绿。
    *
    * 所以改为**把 ALL 条目也列成显式快照**：任何新增的 use()（无论中间件还是通配
-   * handler）都会让这条变红，必须在评审里表态。Task 6 加静态资源时同理。
+   * handler）都会让这条变红，必须在评审里表态。
+   *
+   * **Task 6 的表态：这张表不增长。** 静态资源用 `app.get("/admin", h)` +
+   * `app.get("/admin/*", h)` 注册（src/ui/serve.ts），产生的是两条 `GET` 条目，
+   * 已列进上面的 `EXPECTED`、并逐格跑过矩阵。刻意不用 Hono 那个
+   * `app.use("/admin/*", serveStatic(...))` 的惯用写法——那会产生一条 `ALL /admin/*`
+   * 通配 handler，正是这张快照存在的理由。将来谁改回 use()，这条会立刻变红。
    */
   const EXPECTED_MIDDLEWARE = [
     "ALL /*",              // configRefresh
@@ -555,7 +571,8 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
   it("免鉴权路径不带任何凭据也是 200（否则白名单本身就是错的）", async () => {
     const { app } = await makeApp();
     for (const p of PUBLIC_PATHS) {
-      expect((await app.request(p)).status, p).toBe(200);
+      // 通配条目要换成一条真的存在的路径，否则拿到的 404 什么都没证明。
+      expect((await app.request(PROBE[p] ?? p)).status, p).toBe(200);
     }
   });
 
