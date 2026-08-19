@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
+import { FileStorage } from "../../src/adapters/storage-file.js";
 
 // buildTendDeps 抛错时，node 入口的装配阶段必须吞掉这个异常并只打日志——不能让
 // buildApp() 已经成功之后，整个 main() 因为补池装配失败而跟着 reject。当前这条
@@ -43,6 +44,34 @@ describe("node 入口: buildTendDeps 装配失败不影响网关启动", () => {
       expect(buildTendDepsMock).toHaveBeenCalled();
       expect(errSpy).toHaveBeenCalledWith("[registrar] 装配补池依赖失败", expect.any(Error));
     } finally {
+      errSpy.mockRestore();
+      await close(server);
+    }
+  });
+});
+
+// ── 防回归：main() 启动时只读一次 "config" 键 ────────────────────────────────
+//
+// 此前 main() 里除了 buildApp() 内部（现为 configHolder 的 prime()）那次，还单独
+// 调了一次 loadConfig(env, storage) 只为取 registrar.tendIntervalMs 建定时器，且
+// 没传 logger（配置告警会静默落到 NULL_LOGGER）。修复是让定时器直接复用 buildApp
+// 返回的 configHolder，删掉那次独立调用——但这只消除了缺陷的当前实例，没有堵上
+// 复发通道：日后有人（很自然地）想清理这处「看起来多余」的存储读取，或者不小心
+// 在 main() 里加回一次独立的 loadConfig，都不会被任何测试拦住。这里补上。
+//
+// 本文件已经把 buildTendDeps mock 成立刻 throw（见文件顶部），因此 runTend() 的
+// 异步链路永远不会真的调用 loadConfig/storage.get("config")——用它天然隔离掉
+// 「每轮补池都重新读一次配置」这条*设计如此*的独立读取，让计数只反映启动路径。
+describe("node 入口: 防回归 —— 启动时只读一次 config 键", () => {
+  it("main() 从构造 storage 到监听端口，期间只 get(\"config\") 一次", async () => {
+    const getSpy = vi.spyOn(FileStorage.prototype, "get");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const server = await main({ GATEWAY_TOKEN: "t", PORT: "0", DATA_DIR: tmpDataDir() });
+    try {
+      const configGets = getSpy.mock.calls.filter(([key]) => key === "config");
+      expect(configGets.length).toBe(1);
+    } finally {
+      getSpy.mockRestore();
       errSpy.mockRestore();
       await close(server);
     }
