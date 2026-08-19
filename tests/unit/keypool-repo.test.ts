@@ -1,7 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { KeyPoolRepo, keyId, INDEX_WRITE_RETRY_MS } from "../../src/core/keypool-repo.js";
+import {
+  KeyPoolRepo, keyId, INDEX_WRITE_RETRY_MS, READ_PATH_LIST_BACKOFF_MS,
+  LIST_FAIL_FAST_RETRY_MS, DEFAULT_POOL_CACHE_TTL_MS,
+} from "../../src/core/keypool-repo.js";
 import { KEY_PREFIX, POOL_INDEX_KEY } from "../../src/core/pool-index.js";
 import { recordingLogger } from "../helpers/recording-logger.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
+// 别名：本文件已有一个同名的本地 `CountingStorage`（下方，prefix 级 failPutOn），
+// 两者形状不同（这个是全局 putFails/listFails 布尔开关 + 暴露 inner），不能合并，
+// 用别名避免与本地类撞名。
+import { CountingStorage as QuotaStorage } from "../helpers/counting-storage.js";
+import { MemoryStorage } from "../helpers/fake-storage.js";
 import type { Storage } from "../../src/ports/storage.js";
 import type { KeyRecord } from "../../src/core/types.js";
 
@@ -120,6 +129,44 @@ describe("add / get / save", () => {
     expect(JSON.parse(s.m.get(POOL_INDEX_KEY)!).ids).toHaveLength(1);
     // 第二次只写记录、不重写索引：id 已在索引里就该省下那次 put。
     expect(s.counts()).toEqual({ list: 0, get: 1, put: 1, delete: 0 });
+  });
+
+  /**
+   * `list()` 在 KV 上是最终一致的——这个文件自己在 `loadRecords` 的注释里就写着
+   * 「`add` 的写序天然存在『索引已更新、记录尚未可见』的窗口」。`indexAdd` 索引
+   * 整个缺失那条分支不能想当然地信「`save()` 刚写完，`list()` 必然读得到它」，
+   * 必须显式把这次的 `id` 并进去，而不是原样写 `list()` 看到的结果。
+   *
+   * 用一个「`list()` 滞后一拍」的存储桩复现：紧跟在 `put` 后面的那次 `list`
+   * 看不到刚写的键，要再等下一次 `list` 才揭晓——这正是评审实测复现的形态。
+   */
+  class LaggingListStorage implements Storage {
+    private readonly inner = new MemoryStorage();
+    private visible = new Set<string>();
+    private pending: string[] = [];
+    async get<T>(k: string): Promise<T | null> { return this.inner.get<T>(k); }
+    async put<T>(k: string, v: T): Promise<void> {
+      await this.inner.put(k, v);
+      this.pending.push(k);
+    }
+    async delete(k: string): Promise<void> { return this.inner.delete(k); }
+    async list(prefix: string): Promise<string[]> {
+      const result = [...this.visible].filter((k) => k.startsWith(prefix));
+      // 这次 list 揭晓的是**上一批**已经落地的写，这次调用之前刚 put 的还要再等
+      // 下一次 list 才看得见——与真实 KV「最终一致」的滞后同形。
+      this.visible = new Set([...this.visible, ...this.pending]);
+      this.pending = [];
+      return result;
+    }
+  }
+
+  it("索引整个缺失时首次 add()，即使 list() 滞后看不到刚写的记录，索引也不许漏掉这把 key", async () => {
+    const s = new LaggingListStorage();
+    const repo = new KeyPoolRepo(s, { now: () => 1000, logger: NULL_LOGGER, cacheTtlMs: 0, touchIntervalMs: 0 });
+    const r = await repo.add("sk-lagging-list-aaaaaaaaaa");
+    const idx = await s.get<{ v: number; ids: string[] }>(POOL_INDEX_KEY);
+    // 行为断言：索引里必须包含这把刚建的 key，不是「写了点什么」这种形状断言。
+    expect(idx?.ids, "list() 滞后不许把刚建的 key 漏出索引，它会变成孤儿").toContain(r.id);
   });
 });
 
@@ -360,7 +407,22 @@ describe("pool:index 存了非 JSON 字节", () => {
 });
 
 describe("索引写连续失败时的退避", () => {
-  it("只读存储下不该每个请求都白扔一次 put 加一条 warn", async () => {
+  /**
+   * ⚠️ **本用例在 Step 2 之后被改写过，别用旧版本的数字类比新版本。**
+   *
+   * 旧版本假设「索引缺失那扇门的 list 完全不节流，只有 put 节流」，于是能单独
+   * 观测 `INDEX_WRITE_RETRY_MS` 的退避。Step 2 之后 list 本身也走 `listOnReadPath`
+   * 的退避闸（`READ_PATH_LIST_BACKOFF_MS = 600_000`），而它比 `INDEX_WRITE_RETRY_MS`
+   * (300_000) 更长——`writeIndexBestEffort` 只会在 list 真的重新发起时才被调用，
+   * 而那一刻距上次写尝试必然已经过了至少 600_000ms，早就超过它自己的 300_000ms
+   * 窗口。也就是说对这两个调用点（`bootstrapFromListThrottled` /
+   * `rescanEmptyResult`）而言，`INDEX_WRITE_RETRY_MS` 自己的退避判据永远不会
+   * 成为限制因素——外层的 list 退避已经更严格。这不是本次改动引入的死代码
+   * （`writeIndexBestEffort` 仍然正确、仍然被 `reconcileIndex()` 之外的路径共用，
+   * 只是在这两个调用点上从「主要防线」退化成「用不上但无害的第二道保险」），
+   * 所以本用例改为验证**实际会发生什么**：list 与 put 都被外层的 list 退避闸罩住。
+   */
+  it("list 退避窗口内，索引重建连 list 都不再发起，遑论 put", async () => {
     const s = new CountingStorage();
     let t = 1000;
     const { repo, logger } = makeRepo(s, () => t);   // 递进假时钟，不用真实时间
@@ -377,18 +439,24 @@ describe("索引写连续失败时的退避", () => {
     s.reset();
     logger.clear();
     expect(await repo.all()).toHaveLength(1);
-    expect(s.puts, "窗口内不再重试——put 失败也照样计入写配额").toBe(0);
-    expect(s.lists, "但 list 回落照常，读路径行为一个字都不变").toBe(1);
+    // list 本身现在也在退避窗口内（READ_PATH_LIST_BACKOFF_MS，比 put 自己的
+    // INDEX_WRITE_RETRY_MS 更长）：窗口内连 list 都不会重新发起，写更不会尝试。
+    expect(s.puts, "list 退避窗口内不会重试，写更不会尝试").toBe(0);
+    expect(s.lists, "list 也在退避窗口内，一次都不该有").toBe(0);
     expect(logger.events(), "也不再刷 warn").toEqual([]);
 
-    t += INDEX_WRITE_RETRY_MS;
+    t += READ_PATH_LIST_BACKOFF_MS;   // 跨过 list 的退避窗口（比 put 的更长，以它为准）
     s.reset();
     logger.clear();
     expect(await repo.all()).toHaveLength(1);
-    expect(s.puts, "窗口过后重新尝试一次").toBe(1);
+    expect(s.lists, "list 窗口过后重新尝试一次").toBe(1);
+    // put 自己的退避窗口（300_000）远小于这次跨越的 600_000，
+    // 所以这次 list 之后写照常尝试（且仍失败）。
+    expect(s.puts, "put 自己的退避窗口早就过了，这次照常尝试").toBe(1);
+    expect(logger.has("pool.index_write_failed")).toBe(true);
 
-    // 存储恢复可写之后要真的写进去。
-    t += INDEX_WRITE_RETRY_MS;
+    // 存储恢复可写之后要真的写进去：再跨一个 list 窗口。
+    t += READ_PATH_LIST_BACKOFF_MS;
     s.failPutOn = [];
     s.reset();
     logger.clear();
@@ -522,5 +590,160 @@ describe("keyId", () => {
     expect(await keyId("sk-x")).toBe(await keyId("sk-x"));
     expect(await keyId("sk-x")).not.toBe(await keyId("sk-y"));
     expect(await keyId("sk-x")).toHaveLength(16);
+  });
+});
+
+describe("索引缺失那扇门不许每个 TTL 烧一次 list", () => {
+  /**
+   * 防住的真实故障：全新 Worker 上索引被删/写不进去（写桶打穿是最常见的复合故障），
+   * 读路径每个快照 TTL 回落一次 list ⇒ 默认 60 秒 TTL 下 **1440 次/天/isolate**，
+   * 而免费档 list 桶只有 1,000 次/天、且与网关转发共用。
+   * 桶穿之后 all() 抛、reconcileIndex() 读同一个桶同样抛，两条自愈路径一起死。
+   *
+   * 期望值 **2** 是手写字面量，不是从 86400/BACKOFF 算出来的：第 0 秒一次，
+   * 跨过 600 秒退避窗口之后（第 600 秒那一批请求）再一次。
+   *
+   * ⚠️ **循环要跑 11 轮，不是 10 轮**：`t` 在每轮末尾才 `+= 60_000`，所以 10 轮
+   * 循环里 `repo.all()` 实际只在 `t = 0, 60000, …, 540000` 这 10 个点上被调用，
+   * 从未真正到达 `t = 600000`——那样只会观测到 1 次 list（本计划初稿在这里算错了，
+   * 自查时实测才发现：10 轮时是 1 次，不是 2 次）。跑满 11 轮才会让最后一批请求
+   * 落在 `t = 600000`，退避窗口在那一刻恰好走完，第 2 次 list 才会真的发生。
+   */
+  it("索引缺失 + 索引写不进去时，跨过 600 秒退避窗口只回落 2 次 list（不是每 TTL 一次）", async () => {
+    const st = new QuotaStorage();
+    const seed = new KeyPoolRepo(st, { now: () => 0, logger: NULL_LOGGER, cacheTtlMs: 0, touchIntervalMs: 0 });
+    await seed.add("sk-index-door-aaaaaaaaaaaa");
+    await st.inner.delete("pool:index");        // 索引缺失
+    st.putFails = true;                          // 写桶打穿：索引重建不进去
+
+    let t = 0;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 0 });
+    const before = st.lists;
+    for (let i = 0; i <= 10; i++) {
+      for (let r = 0; r < 20; r++) await repo.all();   // 一个 TTL 内 20 个请求
+      t += 60_000;
+    }
+    // 11 轮请求横跨 t = 0..600000；退避窗口 600 秒 ⇒ t=0 与 t=600000 各一次。
+    expect(st.lists - before, "索引缺失那扇门又开始每个 TTL 烧一次 list 了").toBe(2);
+  });
+
+  it("池子始终能读出来——退避省的是 list，不是正确性", async () => {
+    const st = new QuotaStorage();
+    const seed = new KeyPoolRepo(st, { now: () => 0, logger: NULL_LOGGER, cacheTtlMs: 0, touchIntervalMs: 0 });
+    await seed.add("sk-index-door-bbbbbbbbbbbb");
+    await st.inner.delete("pool:index");
+    st.putFails = true;
+    let t = 0;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 0 });
+    for (let i = 0; i < 10; i++) {
+      expect((await repo.all()).length, `第 ${i} 个 TTL`).toBe(1);
+      t += 60_000;
+    }
+  });
+});
+
+describe("一次瞬时 list 失败不许粘住十分钟", () => {
+  /**
+   * 防住的真实故障：池子**真的是空的** + 一次瞬时 list 抖动 ⇒ 退避窗口被武装，
+   * 此后十分钟内每个请求都拿着那份**陈旧的**异常报 500 `list quota exhausted`，
+   * 而真相是「你还没导 key」。运维被指向完全相反的方向。
+   *
+   * 修法：失败按**连续次数**分档——头三次用快重试窗口（60 秒），第三次之后才升到
+   * 完整的 600 秒。一次抖动最多误导 60 秒；持续故障仍然只有 ≤147 次 list/天。
+   */
+  it("一次失败之后，过了快重试窗口就重新尝试，不必等满长退避", async () => {
+    const st = new QuotaStorage();
+    let t = 0;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 0, touchIntervalMs: 0 });
+    await st.inner.put("pool:index", { v: 1, ids: [] });   // 权威空索引 ⇒ 走空池兜底
+
+    st.listFails = true;
+    await expect(repo.all()).rejects.toThrow("list quota exhausted");
+    const afterFirst = st.lists;
+
+    st.listFails = false;
+    t += LIST_FAIL_FAST_RETRY_MS;                          // 只等快重试窗口
+    // 不再抛，且真的重新 list 了一次——两条都要断言：只断言「不抛」的话，
+    // 「退避窗口内返回空数组」这种实现也能过（那正是 M2 要修掉的伪装）。
+    expect(await repo.all()).toEqual([]);
+    expect(st.lists, "快重试窗口过后必须真的重试 list").toBe(afterFirst + 1);
+  });
+
+  it("连续失败三次之后升到长退避——持续故障不许每分钟烧一次 list", async () => {
+    const st = new QuotaStorage();
+    let t = 0;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 0, touchIntervalMs: 0 });
+    await st.inner.put("pool:index", { v: 1, ids: [] });
+    st.listFails = true;
+
+    for (let i = 0; i < 3; i++) {
+      await expect(repo.all(), `第 ${i + 1} 次`).rejects.toThrow();
+      t += LIST_FAIL_FAST_RETRY_MS;
+    }
+    const afterThree = st.lists;
+    // 第 4 次：只过了快重试窗口，此时应当已经升到长退避 ⇒ 不再真 list，但仍如实抛。
+    await expect(repo.all()).rejects.toThrow("list quota exhausted");
+    expect(st.lists, "连续失败之后仍在每分钟烧一次 list").toBe(afterThree);
+  });
+});
+
+describe("索引写失败的退避常数不许是死条件", () => {
+  /**
+   * 实测过的真实缺陷：INDEX_WRITE_RETRY_MS 与 DEFAULT_POOL_CACHE_TTL_MS **都是 60_000**，
+   * 而判据是 `since < RETRY`——两次尝试恰好间隔一个 TTL 时 `since === 60_000`，
+   * 不小于，于是**一次都不被抑制**。跨 10 个 TTL 实测 puts=10。
+   *
+   * 这条是**行为**断言（数 put 次数），下面那条常数关系只是给读代码的人一个绊线。
+   */
+  it("索引写一直失败时，跨 10 个 TTL 的 put 尝试次数远少于 10", async () => {
+    const st = new QuotaStorage();
+    const seed = new KeyPoolRepo(st, { now: () => 0, logger: NULL_LOGGER, cacheTtlMs: 0, touchIntervalMs: 0 });
+    await seed.add("sk-dead-backoff-cccccccccccc");
+    await st.inner.delete("pool:index");
+    st.putFails = true;
+    let t = 0;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 60_000, touchIntervalMs: 0 });
+    const before = st.puts;
+    for (let i = 0; i < 10; i++) { await repo.all(); t += 60_000; }
+    expect(st.puts - before, "索引写退避是死条件").toBeLessThanOrEqual(2);
+  });
+
+  it("常数关系：索引写退避必须显著大于快照 TTL，否则那条判据永远不成立", () => {
+    // 字面量与关系**都**断言：字面量防「悄悄改小」，关系解释「为什么是这个数」。
+    expect(INDEX_WRITE_RETRY_MS).toBe(300_000);
+    expect(DEFAULT_POOL_CACHE_TTL_MS).toBe(60_000);
+    expect(INDEX_WRITE_RETRY_MS).toBeGreaterThanOrEqual(5 * DEFAULT_POOL_CACHE_TTL_MS);
+    expect(READ_PATH_LIST_BACKOFF_MS).toBe(600_000);
+    expect(LIST_FAIL_FAST_RETRY_MS).toBe(60_000);
+  });
+});
+
+describe("listOnReadPath 的退避窗口也要挡住时钟回拨", () => {
+  /**
+   * 同一个模块家族里 `writeIndexBestEffort` 早就显式挡了 `since < 0`
+   *（NTP 回拨），`listOnReadPath` 的判据是同一个形状，必须挡同一件事，
+   * 否则 NTP 把时钟往回拨 T 毫秒之后，`since` 变成一个很大的负数，恒小于
+   * 退避窗口，这扇闸会在「回拨量 + 一个退避窗口」那么久里一直判定「还在
+   * 窗口内」，把索引缺失回落的 list 冻结住——比 K9 冻结 Refreshable 更隐蔽，
+   * 因为退避窗口内沿用 `lastKnownIds` 仍然给得出一份看起来正确的结果，
+   * 唯一能观测到的只有「list 该发生却没发生」这件事本身。
+   */
+  it("索引缺失回落 list 之后，时钟回拨不许把重试冻结住", async () => {
+    const st = new QuotaStorage();
+    const seed = new KeyPoolRepo(st, { now: () => 0, logger: NULL_LOGGER, cacheTtlMs: 0, touchIntervalMs: 0 });
+    await seed.add("sk-clock-rollback-aaaaaaaaaa");
+    await st.inner.delete("pool:index");
+    st.putFails = true;   // 索引重建写不进去，逼后续每次都还得走 bootstrapFromListThrottled
+
+    let t = 1_000_000;
+    const repo = new KeyPoolRepo(st, { now: () => t, logger: NULL_LOGGER, cacheTtlMs: 0, touchIntervalMs: 0 });
+    expect((await repo.all()).length, "第一次照常回落 list").toBe(1);
+    const afterFirst = st.lists;
+
+    t -= 3_600_000;   // NTP 往回拨一小时
+    expect((await repo.all()).length, "回拨之后仍要能读出正确的池子").toBe(1);
+    // 期望值是行为断言：真的又发起了一次 list，不是「结果还对」这种形状断言
+    //（沿用 lastKnownIds 也能凑出正确的返回值，掩盖了「list 被冻结」这件事）。
+    expect(st.lists, "回拨之后必须立刻恢复尝试，不能被负的 since 卡死").toBe(afterFirst + 1);
   });
 });

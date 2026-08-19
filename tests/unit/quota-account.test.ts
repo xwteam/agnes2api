@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { dispatch } from "../../src/core/dispatcher.js";
-import { KeyPoolRepo, EMPTY_POOL_RESCAN_MS } from "../../src/core/keypool-repo.js";
+import { KeyPoolRepo, READ_PATH_LIST_BACKOFF_MS } from "../../src/core/keypool-repo.js";
 import { KEY_PREFIX, POOL_INDEX_KEY } from "../../src/core/pool-index.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 import { TEST_CONFIG } from "../helpers/make-app.js";
@@ -239,7 +239,7 @@ describe("配额账（改造后：list 与 put 都归零，get 与请求数解�
  * 与此同时被文档指定为唯一修复者的 `reconcileIndex()` 读同一个桶同样抛。
  * 于是「用户这才导入 key」的那一刻，两条自愈路径已经一起死了。
  *
- * 下面这组用例把这笔账钉成可执行的：**次数**由 EMPTY_POOL_RESCAN_MS 决定，
+ * 下面这组用例把这笔账钉成可执行的：**次数**由 READ_PATH_LIST_BACKOFF_MS 决定，
  * **失败**必须如实抛而不是退化成空池。
  */
 describe("空池态的 list 配额", () => {
@@ -256,7 +256,7 @@ describe("空池态的 list 配额", () => {
     return { s, repo };
   }
 
-  it(`空池连打一整天：list 次数由 ${EMPTY_POOL_RESCAN_MS / 60_000} 分钟的退避决定，不由 TTL 决定`, async () => {
+  it(`空池连打一整天：list 次数由 ${READ_PATH_LIST_BACKOFF_MS / 60_000} 分钟的退避决定，不由 TTL 决定`, async () => {
     let t = 1000;
     const { s, repo } = await emptyPool(() => t);
 
@@ -268,7 +268,7 @@ describe("空池态的 list 配额", () => {
 
     // 退避前是 86400/60 = 1,440 次/天/isolate，远超免费档的 1,000。
     // 现在是 86400/600 = 144 次（窗口整除 TTL，所以每个窗口正好落一次）。
-    expect(s.lists, "空池态的 list 次数").toBe(DAY / EMPTY_POOL_RESCAN_MS);
+    expect(s.lists, "空池态的 list 次数").toBe(DAY / READ_PATH_LIST_BACKOFF_MS);
     expect(s.lists, "必须留在免费档 1,000 次/天的 list 配额之内").toBeLessThan(1000);
   });
 
@@ -281,7 +281,7 @@ describe("空池态的 list 配额", () => {
 
     // 中间跨过了 9 个快照 TTL：每一个都触发了一次真装载（readIndex 那次 get 照付），
     // 但一次 list 都不许有——这正是退避与快照 TTL 是**两条独立**闸门的证据。
-    t += EMPTY_POOL_RESCAN_MS - TTL;
+    t += READ_PATH_LIST_BACKOFF_MS - TTL;
     await repo.all();
     expect(s.lists, "窗口内不许再 list").toBe(1);
     expect(s.gets, "窗口内该有的索引读一次都没少").toBeGreaterThan(0);
@@ -319,7 +319,7 @@ describe("空池态的 list 配额", () => {
     } satisfies KeyRecord);
 
     s.list = real;
-    t += EMPTY_POOL_RESCAN_MS;
+    t += READ_PATH_LIST_BACKOFF_MS;
     expect((await repo.all()).map((r) => r.id)).toEqual(["deadbeefdeadbeef"]);
   });
 
@@ -333,7 +333,7 @@ describe("空池态的 list 配额", () => {
       cooldownUntil: 0, cooldownReason: null, strikes: 0, evicted: false, evictedReason: null,
     } satisfies KeyRecord);
 
-    t += EMPTY_POOL_RESCAN_MS - TTL;
+    t += READ_PATH_LIST_BACKOFF_MS - TTL;
     expect(await repo.all(), "窗口内还看不见").toEqual([]);
 
     t += TTL;

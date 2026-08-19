@@ -59,34 +59,55 @@ function schedulingEqual(a: KeyRecord, b: KeyRecord): boolean {
 /**
  * 索引重建写失败之后的静默窗口。
  *
- * 存储只读（Docker 绑定挂载属主不匹配）或写配额耗尽时，索引一次都写不进去，
- * 而重建走的是读路径 ⇒ **每个转发请求都会多一次注定失败的 `put` 加一条 warn**。
- * put 失败也照样计入 KV 的写配额，等于用配额去买日志噪音。记住上次失败的时刻，
- * 窗口内只跳过「写」这一步，`list` 回落照常，读路径的行为完全不变。
+ * **必须显著大于 `DEFAULT_POOL_CACHE_TTL_MS`，否则这条退避是一条死条件。**
+ * 曾经两者都是 60_000，而判据是 `since < RETRY`：读路径每个快照 TTL 回落一次，
+ * 两次尝试恰好间隔 60_000，`since === 60_000` 不小于 60_000 ⇒ **一次都不被抑制**
+ *（实测跨 10 个 TTL 有 10 次 put 尝试）。取 5 倍，留出「TTL 被调小一档」的余量。
+ *
+ * ⚠️ **这条注释曾经宣称「有一条数 put 次数的行为用例钉着这个值」，那句话是假的
+ * ——已实测勘误。** 这个常数唯二的两个调用点（`bootstrapFromListThrottled` /
+ * `rescanEmptyResult`）都在写实际尝试之前先过一遍 `listOnReadPath` 的退避闸
+ * （`READ_PATH_LIST_BACKOFF_MS = 600_000`），比这个常数更长；等到那道闸放行时，
+ * 距上一次写尝试必然已经超过本值，`since < INDEX_WRITE_RETRY_MS` 永远不成立。
+ * 把本值改回 60_000 时，实测**只有**下面的常数字面量/关系断言会变红，
+ * `tests/unit/keypool-repo.test.ts` 里那条数 put 次数的行为用例在两个值下都绿
+ * ——这个常数在这两个调用点上已经是**功能性死代码**（无害的第二道保险，
+ * 不是活跃防线）。真正钉住这个值的只有常数用例本身，改小了就靠它变红。
  */
-export const INDEX_WRITE_RETRY_MS = 60_000;
+export const INDEX_WRITE_RETRY_MS = 300_000;
 
 /**
- * 空池态下两次 `list` 兜底之间的最小间隔。**这个数是拿 KV 的 list 配额倒推出来的，
- * 不是拍的。**
+ * **读路径上两次 `list()` 之间的最小间隔。** 空池兜底与索引缺失回落**共用这一个窗口**。
  *
- * `list` 是**独立于读配额的第四个桶**，免费档 1,000 次/天（§17 U1 已核实）。
- * 加这条退避之前，空池态每个快照 TTL 就烧一次 list ⇒ 默认 60 秒 TTL 下
- * 86400/60 = **1,440 次/天/isolate**，一个全新的、还没导 key 的部署光靠客户端
- * 的重试循环就能在几小时内把桶打穿；桶穿了之后用户这才导入 key，`list` 抛错、
- * `Refreshable` 吞掉只记一条 `pool.load_failed`、`current()` 继续沿用 `[]`，
- * 而被文档指定为修复者的 `reconcileIndex()` 读同一个桶**同样抛**——两条自愈路径
- * 一起死，当天剩余时间全部 503 且查不出原因。
+ * `list` 是独立于读配额的第四个桶，免费档 1,000 次/天（设计文档 §17 U1），
+ * 而快照缓存只把它压到「每个 TTL 一次」= 60 秒 TTL 下 1,440 次/天/isolate，**本身就超配额**。
+ * 两扇门都通向同一个桶，所以退避也必须是同一个：
+ *   · 空池兜底（索引合法但一条活记录都读不到）；
+ *   · 索引缺失回落（`readIndex()` 返回 null，多半是写桶打穿导致索引一直建不起来）。
+ * 只堵前者时，后者实测仍是 1,440 次/天/isolate。
  *
- * 取 10 分钟 ⇒ 86400/600 = **≤144 次/天/isolate**，与文档「配额账」那一节
- * 用的同一套 isolate 计数口径（3 个活跃 isolate ⇒ 432 次）叠上对账的 48~96 次
- * 仍有余量。
+ * 取 10 分钟 ⇒ 86400/600 = **≤144 次/天/isolate**，与文档「配额账」用的同一套
+ * isolate 计数口径（3 个活跃 isolate ⇒ 432 次）叠上对账的 48~96 次仍有余量。
  *
- * **代价（写进五语言 DEPLOY.md，别只留在这里）**：池子为空时手工导入的 key
- * 不再是「下一个请求即生效」，而是最多等本值 + 一个 `POOL_CACHE_TTL_MS`。
+ * **代价（写进五语言 DEPLOY.md，别只留在这里）**：池子为空、或索引坏掉时，
+ * 手工导入的 key 不再是「下一个请求即生效」，而是最多等本值 + 一个 `POOL_CACHE_TTL_MS`。
  * 想立刻生效就同时更新 `pool:index`（文档给了命令）。
  */
-export const EMPTY_POOL_RESCAN_MS = 600_000;
+export const READ_PATH_LIST_BACKOFF_MS = 600_000;
+
+/**
+ * **头几次连续失败用的快重试窗口。**
+ *
+ * 只有一个长窗口时，**一次**瞬时 list 抖动会把那份异常粘住整整 10 分钟：期间
+ * 一个**真的是空的**池子会报 500「list 配额耗尽」而不是 503 `pool_empty`——
+ * 把运维指向完全相反的方向（真相是「你还没导 key」）。
+ * 头 `LIST_FAIL_ESCALATE_AFTER` 次连续失败用这个短窗口，之后才升到长退避。
+ * 上界：3 × (86400/60) 只发生在最初三分钟，此后回到 ≤144/天。
+ */
+export const LIST_FAIL_FAST_RETRY_MS = 60_000;
+
+/** 连续失败几次之后升到长退避。取 3：够滤掉抖动，又不至于让持续故障长时间高频重试。 */
+export const LIST_FAIL_ESCALATE_AFTER = 3;
 
 /**
  * key 的 id = SHA-256 的前 8 字节。
@@ -169,17 +190,25 @@ export class KeyPoolRepo {
   /** 见 INDEX_WRITE_RETRY_MS。null 表示「上一次索引写是成功的」。 */
   private indexWriteFailedAt: number | null = null;
 
-  /** 见 EMPTY_POOL_RESCAN_MS。null 表示「本实例还没做过空池 list 兜底」。 */
-  private emptyRescanAt: number | null = null;
+  /** 读路径上最近一次 `list()` 的时刻。null = 本实例还没在读路径上 list 过。 */
+  private lastReadListAt: number | null = null;
+  /** 连续失败次数。成功即归零。见 LIST_FAIL_ESCALATE_AFTER。 */
+  private consecutiveListFailures = 0;
   /**
-   * 空池态最近一次 `list` 兜底抛出来的真实异常。null = 上一次是成功的。
+   * 读路径最近一次 `list()` 抛出来的真实异常。null = 上一次是成功的。
    *
    * 存它是因为 `Refreshable.reload` 会把异常吞掉并沿用上一份快照，而空池态的
    * 上一份快照恰恰是 `[]`——于是「存储读不出来」和「池子真的是空的」在 `all()`
-   * 的返回值里**完全无法区分**，网关照报 503 `pool_empty`，运维手上只有一条
-   * `pool.load_failed`。留下这份异常，`all()` 才能把它如实抛成 500 + 真实原因。
+   * 的返回值里**完全无法区分**，网关照报 503 `pool_empty`。留下这份异常，
+   * `all()` 才能把它如实抛成 500 + 真实原因。
    */
-  private emptyRescanError: unknown = null;
+  private lastReadListError: unknown = null;
+  /**
+   * 本实例最近一次成功 list 得到的 id 清单。**只在索引缺失 + 退避窗口内**用得上：
+   * 那时既拿不到索引、又不许 list，沿用上一次的结果比返回空池诚实得多
+   *（返回空池会让网关报 503 pool_empty，把运维指向「你还没导 key」）。
+   */
+  private lastKnownIds: string[] = [];
 
   private readonly cacheTtlMs: number;
   private readonly touchIntervalMs: number;
@@ -228,7 +257,7 @@ export class KeyPoolRepo {
     // 沿用 `[]` 的话调用方得到的是 503 `pool_empty`——一条把运维指向「你还没导 key」
     // 的错误结论，而真相是 list 配额打穿 / 存储故障，且此时 `reconcileIndex()`
     // 读同一个桶同样在抛，文档指定的两条自愈路径都已经死了。抛出去 ⇒ 500 + 真实原因。
-    if (cur.length === 0 && this.emptyRescanError !== null) throw this.emptyRescanError;
+    if (cur.length === 0 && this.lastReadListError !== null) throw this.lastReadListError;
     // **浅拷贝**：dispatch 的 commit 会 `records[at] = updated` 就地改数组元素，
     // 直接把缓存数组交出去等于让一次请求的中间状态污染 isolate 级缓存。
     // （记录对象本身永不被就地修改——keypool.ts 的 apply* 全部返回新对象。）
@@ -242,13 +271,56 @@ export class KeyPoolRepo {
    */
   private async loadAll(): Promise<KeyRecord[]> {
     const idx = await this.readIndex();
-    // 索引缺失那条路径刚刚已经 list 过一次，下面的空结果兜底不必再来一次。
-    const indexed = idx !== null ? idx.ids : await this.bootstrapFromList();
+    // 索引缺失那条路径刚刚已经（可能）list 过一次，下面的空结果兜底不必再来一次。
+    const indexed = idx !== null ? idx.ids : await this.bootstrapFromListThrottled();
     const alive = await this.loadRecords(indexed);
     // 走到这里说明这一趟没经过空池兜底，上一次兜底失败的记忆就此作废，
     // 否则一次陈年的失败会永远把 all() 钉在抛异常上。
-    if (alive.length > 0 || idx === null) { this.emptyRescanError = null; return alive; }
+    if (alive.length > 0 || idx === null) { this.lastReadListError = null; return alive; }
     return await this.rescanEmptyResult(indexed);
+  }
+
+  /**
+   * 读路径上的 `list()` 唯一入口。**空池兜底与索引缺失回落都必须走这里**——
+   * 它们通向同一个每天 1,000 次的桶，各自开一个窗口等于没开。
+   *
+   * 返回 `null` 表示「退避窗口内，这次不 list」；调用方据此沿用它已有的信息。
+   * 窗口内若上一次是失败的，**如实抛**而不是返回 `null`：把「读不出来」退化成
+   * 一个静默的 `[]` 正是 M2 修掉的那个洞。
+   */
+  private async listOnReadPath(): Promise<string[] | null> {
+    const at = this.o.now();
+    // **默认（0 次连续失败，即"正常工作但受节流"或"从未失败过"）用长退避**——
+    // 这才是这扇闸真正要防的稳态：list 本身一直成功（例如索引缺失但记录都读得到、
+    // 或池子确实是空的），此时没有理由每分钟都去 list 一遍。只有「刚经历过 1~2 次
+    // 连续失败」这个窄窗口才切到快窗口，让一次孤立的抖动不粘住整整 10 分钟；
+    // 连续失败到了 LIST_FAIL_ESCALATE_AFTER 次说明这不是抖动，退回长退避，
+    // 不然持续故障会被误判成"值得每分钟重试"而烧穿 list 配额。
+    const failures = this.consecutiveListFailures;
+    const backoff = failures > 0 && failures < LIST_FAIL_ESCALATE_AFTER
+      ? LIST_FAIL_FAST_RETRY_MS
+      : READ_PATH_LIST_BACKOFF_MS;
+    if (this.lastReadListAt !== null) {
+      const since = at - this.lastReadListAt;
+      // `since < 0` = 时钟回拨（NTP）。与 writeIndexBestEffort 同一条处理：
+      // 回拨之后立刻恢复尝试，而不是被抑制到回拨量走完。
+      if (since >= 0 && since < backoff) {
+        if (this.lastReadListError !== null) throw this.lastReadListError;
+        return null;
+      }
+    }
+    // 窗口**在发起尝试之前**就打上，因此存储持续故障时也只是每个窗口重试一次。
+    this.lastReadListAt = at;
+    try {
+      const names = await this.storage.list(KEY_PREFIX);
+      this.consecutiveListFailures = 0;
+      this.lastReadListError = null;
+      return names;
+    } catch (err) {
+      this.consecutiveListFailures++;
+      this.lastReadListError = err;
+      throw err;
+    }
   }
 
   /** 面板写 key 之后调用（P3c）。与 `ConfigHolder.invalidate()` 是两把独立的钥匙，不互相代劳。 */
@@ -269,43 +341,21 @@ export class KeyPoolRepo {
    * 代价**不**可控，这一点原来这里写错了（原文是「池子真空时本来每个请求都在返
    * 503，这次 `list` 不吃有效配额」）：`list` 是独立于读配额的第四个桶，免费档
    * 1,000 次/天，而快照缓存只把它压到「每个 TTL 一次」= 1,440 次/天/isolate，
-   * **本身就超配额**。所以这里按 `EMPTY_POOL_RESCAN_MS` 再退避一层（见那里的账）。
+   * **本身就超配额**。所以这里走共用的 `listOnReadPath()` 退避闸（见 READ_PATH_LIST_BACKOFF_MS）。
    * 正常非空池一步都不会走到这里（`alive.length > 0` 就返回了）。
    *
    * **退避窗口内失败也要记得住**：`list` 抛错时把真实异常留给 `all()` 抛出去，
-   * 不许让「读不出来」退化成一个静默的 `[]`。窗口是在**发起尝试之前**就打上的，
-   * 因此存储持续故障时也只是每 `EMPTY_POOL_RESCAN_MS` 重试一次，不会每请求都撞。
+   * 不许让「读不出来」退化成一个静默的 `[]`。这一点由 `listOnReadPath()` 统一处理。
    *
    * **写回只增不减**：只把 `list` 发现而索引不知道的 id 补进去，绝不从索引里删。
    * 删（剪枝）一律交给 `reconcileIndex()`，理由见 all() 里那段注释。于是
    * 「整池都成了幽灵索引项」时这里不写、不剪，只是每个退避窗口多一次 list，直到对账。
    */
   private async rescanEmptyResult(indexed: readonly string[]): Promise<KeyRecord[]> {
-    const at = this.o.now();
-    if (this.emptyRescanAt !== null) {
-      const since = at - this.emptyRescanAt;
-      // `since < 0` = 时钟回拨（NTP）。与 writeIndexBestEffort 同一条处理：
-      // 回拨之后立刻恢复尝试，而不是被抑制到回拨量走完。
-      if (since >= 0 && since < EMPTY_POOL_RESCAN_MS) {
-        // 上一次兜底是**失败**的：退避窗口内也要如实抛。不抛的话，冷启动那条
-        // （`all()` 里 `cur === undefined` ⇒ 再走一次 loadAll）会正好落进这个分支，
-        // 于是真实异常被一个静默的 `[]` 吃掉，又变回「503 pool_empty，原因不明」。
-        if (this.emptyRescanError !== null) throw this.emptyRescanError;
-        return [];
-      }
-    }
-    this.emptyRescanAt = at;
-
-    let names: string[];
-    try {
-      names = await this.storage.list(KEY_PREFIX);
-    } catch (err) {
-      this.emptyRescanError = err;
-      throw err;
-    }
-    this.emptyRescanError = null;
-
+    const names = await this.listOnReadPath();
+    if (names === null) return [];
     const actual = idsFromKeyNames(names);
+    this.lastKnownIds = actual;
     const merged = [...new Set([...indexed, ...actual])];
     if (!sameIdSet(merged, indexed)) {
       await this.writeIndexBestEffort(
@@ -543,9 +593,20 @@ export class KeyPoolRepo {
   /**
    * 索引缺失/不可读时的回落：`list()` 一次并尽力重建。
    * **这是热路径上唯一可能出现 `list()` 的地方之一**（另一处见 rescanEmptyResult）。
+   *
+   * **走退避闸**：这扇门与空池兜底通向同一个 list 桶，而它的触发条件恰恰是
+   * 「写桶打穿导致索引一直建不起来」这种复合故障——不退避就是每个快照 TTL 一次
+   * list，60 秒 TTL 下 1,440 次/天/isolate（实测）。
+   *
+   * 退避窗口内返回**上一次已知的 id 清单**（本实例内存里的），一条都没有过就返回空：
+   * 那时 all() 会走到空池兜底，兜底同样在窗口内 ⇒ 返回 `[]`，语义与「池子是空的」一致，
+   * 而这正是索引缺失且 list 不可用时唯一诚实的答案。
    */
-  private async bootstrapFromList(): Promise<string[]> {
-    const ids = idsFromKeyNames(await this.storage.list(KEY_PREFIX));
+  private async bootstrapFromListThrottled(): Promise<string[]> {
+    const names = await this.listOnReadPath();
+    if (names === null) return this.lastKnownIds;
+    const ids = idsFromKeyNames(names);
+    this.lastKnownIds = ids;
     await this.writeIndexBestEffort(
       ids, "pool.index_bootstrapped", "key 池索引缺失，已按 list 结果重建",
     );
@@ -586,12 +647,42 @@ export class KeyPoolRepo {
     }
   }
 
+  /**
+   * 写路径专用：不走读路径的退避闸。
+   *
+   * 理由：`indexAdd` 只在**索引缺失**时才走到这里，而它的调用方是 `add()`
+   *（注册机铸出一把新 key，或 P3c 的面板导入）——那是低频操作，且这次 list 的结果
+   * 会立刻被写成索引。拿一份最多 10 分钟前的陈旧清单去**写索引**，会把窗口内
+   * 别人加进来的 id 从索引里抹掉，那是正确性问题，不是配额问题。
+   *
+   * ⚠️ **P3c 的批量导入不许循环调 `add()`**（K10）：那会是 `M × (1 list + 1 put)`。
+   * 批量路径要「一次读索引 → 内存合并 → 一次写索引」。
+   */
+  private async listForIndexWrite(): Promise<string[]> {
+    return idsFromKeyNames(await this.storage.list(KEY_PREFIX));
+  }
+
   private async indexAdd(id: string): Promise<void> {
     const idx = await this.readIndex();
-    const ids = idx !== null ? idx.ids : await this.bootstrapFromList();
-    if (ids.includes(id)) return;   // 已在索引里：不写，省一次 put
+    if (idx === null) {
+      // 索引整个缺失：`add()` 调 `indexAdd` 之前已经 `save()` 过这条记录，
+      // 但**不能想当然地信这次 list() 一定读得到它**——`list()` 在 KV 上是
+      // 最终一致的（同一条结论 `loadRecords` 的注释里也写着：「索引已更新、
+      // 记录尚未可见」的窗口天然存在，这里是反过来的同一枚硬币：记录已写、
+      // list() 还没看见）。评审用一个「list() 滞后一拍」的存储实测复现：
+      // 全新部署第一次 add() 会写下一份不含这把新 key 的「权威」空索引，
+      // 这把 key 就此隐身，直到下一次 cron 对账（默认 30 分钟）才捡得回来。
+      // 所以这里必须显式把 id 并进去，不能只信 list() 的结果。
+      const ids = await this.listForIndexWrite();
+      // 也不能沿用「ids 已含 id 就不写」那条短路判据（那是下面分支的逻辑）：
+      // 索引缺失时第一次 add() 必须无条件重建并写一次，不然索引永远建不起来。
+      // 这一次**必须**抛：调用方 add() 靠它把「索引没进去」如实告诉注册机。
+      await this.storage.put(POOL_INDEX_KEY, makePoolIndex([...new Set([...ids, id])]));
+      return;
+    }
+    if (idx.ids.includes(id)) return;   // 已在索引里：不写，省一次 put
     // 这一次**必须**抛：调用方 add() 靠它把「索引没进去」如实告诉注册机。
-    await this.storage.put(POOL_INDEX_KEY, makePoolIndex([...ids, id]));
+    await this.storage.put(POOL_INDEX_KEY, makePoolIndex([...idx.ids, id]));
   }
 
   private async indexRemove(id: string): Promise<void> {
