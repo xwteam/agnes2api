@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Logger } from "../../ports/logger.js";
 import { adminAuth, checkAdminToken, ADMIN_TOKEN_MIN_LENGTH } from "./auth.js";
+import type { AdminTokenCheck } from "./auth.js";
 import { sessionHandler } from "./handlers/session.js";
 
 export interface AdminRouterDeps {
@@ -16,6 +17,21 @@ export interface AdminRouterDeps {
   logger: Logger;
   trustProxy: boolean;
 }
+
+/**
+ * 每条拒绝原因对应的运维可读说明。**三条都要能被区分开**——只说「管理面板未启用」
+ * 而不说是哪一条，运维只能靠猜。
+ */
+const REJECT_MESSAGE: Readonly<Record<NonNullable<AdminTokenCheck["reason"]>, string>> = {
+  whitespace_padded:
+    "ADMIN_TOKEN 首尾有空白字符，管理面板未启用（网关转发不受影响）。"
+    + "HTTP 请求头的值在传输层会被去掉首尾空白，而环境变量不会，"
+    + "带空白的口令客户端永远送不出来，留着它只会得到一棵永远进不去的面板",
+  too_short:
+    `ADMIN_TOKEN 长度不足 ${ADMIN_TOKEN_MIN_LENGTH} 位，管理面板未启用（网关转发不受影响）`,
+  same_as_gateway_token:
+    "ADMIN_TOKEN 不得与 GATEWAY_TOKEN 相同，管理面板未启用（网关转发不受影响）",
+};
 
 /**
  * `/admin` 子 app。**返回 null 表示整棵 /admin 树都不注册** ⇒ 访问它得到 404 而不是
@@ -40,9 +56,9 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
     // **事件里不带口令本身**：容器日志常被转发到第三方。
     deps.logger.log({
       level: "error", event: "admin.token_rejected",
-      msg: check.reason === "too_short"
-        ? `ADMIN_TOKEN 长度不足 ${ADMIN_TOKEN_MIN_LENGTH} 位，管理面板未启用（网关转发不受影响）`
-        : "ADMIN_TOKEN 不得与 GATEWAY_TOKEN 相同，管理面板未启用（网关转发不受影响）",
+      // 查表而不是三元：多一条 reason 时三元的 else 分支会把新原因**误报成**旧的那条，
+      // 而运维照着错的原因改是查不出问题的。
+      msg: REJECT_MESSAGE[check.reason ?? "too_short"],
       fields: { reason: check.reason ?? null },
     });
     return null;

@@ -47,6 +47,28 @@ describe("checkAdminToken", () => {
   it("空串也走 too_short 这条，绝不会被判成合规口令", () => {
     expect(checkAdminToken("", "g")).toEqual({ ok: false, reason: "too_short" });
   });
+
+  /**
+   * HTTP 请求头的值在传输层会被去掉首尾空白，环境变量不会——带空白的口令客户端
+   * **永远送不出来**。方向仍是 fail closed，但不在装配期说清楚的话，运维看到的是
+   * 「口令明明对却一直 401」，日志里只有 login_failed，查不出原因。
+   */
+  it("首尾带空白的口令被拒——否则会装出一棵永远进不去的面板", () => {
+    const good = "x".repeat(24);
+    expect(checkAdminToken(`${good} `, "g")).toEqual({ ok: false, reason: "whitespace_padded" });
+    expect(checkAdminToken(` ${good}`, "g")).toEqual({ ok: false, reason: "whitespace_padded" });
+    expect(checkAdminToken(`\t${good}\n`, "g")).toEqual({ ok: false, reason: "whitespace_padded" });
+    // 全空白：长度够、也不等于 GATEWAY_TOKEN，正是最容易漏过去的那一格。
+    expect(checkAdminToken(" ".repeat(24), "g")).toEqual({ ok: false, reason: "whitespace_padded" });
+    // 中间的空白不管：那是口令自己的一部分，客户端送得出来。
+    expect(checkAdminToken("xxxxxxxxxxxx xxxxxxxxxxxx", "g").ok).toBe(true);
+  });
+
+  it("既带空白又太短时先报空白——空白是三条里唯一在配置文件里看不见的那条", () => {
+    // 这一条把 checkAdminToken 里那句「顺序有意义」从注释变成可证伪的断言：
+    // 不写它的话，把两条判断对调没有任何测试会红，而注释仍然写着顺序有意义。
+    expect(checkAdminToken(" x ", "g")).toEqual({ ok: false, reason: "whitespace_padded" });
+  });
   it("等于 GATEWAY_TOKEN 被拒——复用中转口令等于把整池 key 交给每个下游用户", () => {
     const t = "x".repeat(30);
     expect(checkAdminToken(t, t)).toEqual({ ok: false, reason: "same_as_gateway_token" });
@@ -78,15 +100,24 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
   const LONG = "x".repeat(30);
   const CASES: Array<{
     name: string; token: string; gatewayToken: string; reason: string;
+    /** 说明里必须出现的字样：三条原因的**文案要能被区分开**，只说「未启用」等于让运维猜。 */
+    msgContains: string;
   }> = [
     {
       name: "太短（23 位）", token: "x".repeat(23),
-      gatewayToken: TEST_CONFIG.gatewayToken, reason: "too_short",
+      gatewayToken: TEST_CONFIG.gatewayToken, reason: "too_short", msgContains: "长度",
     },
-    { name: "与网关口令相同", token: LONG, gatewayToken: LONG, reason: "same_as_gateway_token" },
+    {
+      name: "与网关口令相同", token: LONG, gatewayToken: LONG,
+      reason: "same_as_gateway_token", msgContains: "GATEWAY_TOKEN",
+    },
+    {
+      name: "全是空白（24 个空格，长度够也不等于网关口令）", token: " ".repeat(24),
+      gatewayToken: TEST_CONFIG.gatewayToken, reason: "whitespace_padded", msgContains: "空白",
+    },
   ];
 
-  for (const { name, token, gatewayToken, reason } of CASES) {
+  for (const { name, token, gatewayToken, reason, msgContains } of CASES) {
     it(`${name}：/admin 404，/v1/models 仍然 200，事件记 reason=${reason}`, async () => {
       const { app, logger } = await makeApp([], ["k1"], { gatewayToken }, undefined, { adminToken: token });
       expect((await app.request("/admin/api/session")).status).toBe(404);
@@ -97,6 +128,9 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
       // 且两种不合规要能被区分开。
       const e = logger.entries.find((x) => x.event === "admin.token_rejected");
       expect(e?.fields?.reason).toBe(reason);
+      // 只断言 reason 的话，把说明文案换成查表之前那个二元三元式（新原因落进 else
+      // 分支、被**误报成**另一条）不会有任何测试变红，而运维照着错的原因改是查不出来的。
+      expect(String(e?.msg), `${name} 的说明要点明原因`).toContain(msgContains);
       // 事件会进容器日志与将来的事件板块，不许把口令本身带出去。
       expect(JSON.stringify(e)).not.toContain(token);
     });
@@ -420,6 +454,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     { name: "管理口令（x-admin-key）", headers: { "x-admin-key": ADMIN }, opens: ["admin"] },
     { name: "管理口令用在网关信道（Bearer）", headers: { authorization: `Bearer ${ADMIN}` }, opens: [] },
     { name: "管理口令用在网关信道（x-api-key）", headers: { "x-api-key": ADMIN }, opens: [] },
+    { name: "管理口令用在网关信道（x-goog-api-key）", headers: { "x-goog-api-key": ADMIN }, opens: [] },
     { name: "管理口令走 ?key= 查询参数", headers: {}, query: `key=${ADMIN}`, opens: [] },
     {
       name: "两把口令各就各位（网关信道给网关口令 + 管理信道给管理口令）",
@@ -435,13 +470,26 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
   }
 
   /**
-   * `app.routes` 里的真实端点。
+   * 全部 `ALL` 条目的快照。**双向钉死，且这一条不能省。**
    *
-   * ⚠️ 已实测：`use()` 注册的中间件也会被列成条目，method 是 `"ALL"`
-   *（`{"m":"ALL","p":"/admin/api/*"}`）。不过滤掉它们，朴素的 for 循环就会拿那条
-   * 中间件条目当路径去请求、轻易得到 401，制造一条**覆盖了但什么都没证明**的断言
-   *（实测：`GET /admin/api/*` 确实返回 401）。
+   * `realRoutes` 把 `method === "ALL"` 的条目滤掉，是为了避开「拿中间件条目当路径去
+   * 请求、轻易得到 401」那种什么都没证明的断言。但 **`ALL` 条目里混得进真 handler**：
+   * Hono 的 serveStatic 惯用注册法就是 `app.use("/admin/*", serveStatic(...))`，产生的
+   * 条目同样是 `ALL /admin/*`。**只断言「路径以 * 结尾」区分不了中间件和通配 handler**
+   * ——实测：在鉴权 use 之前插一行 `admin.use("/admin/assets/*", (c) => c.text("..."))`，
+   * 就得到一个无鉴权、能读出内容的 /admin 端点，而这个文件当时 40 条全绿。
+   *
+   * 所以改为**把 ALL 条目也列成显式快照**：任何新增的 use()（无论中间件还是通配
+   * handler）都会让这条变红，必须在评审里表态。Task 6 加静态资源时同理。
    */
+  const EXPECTED_MIDDLEWARE = [
+    "ALL /*",              // configRefresh
+    "ALL /v1/*",           // 网关鉴权
+    "ALL /v1beta/*",       // 网关鉴权
+    "ALL /admin/api/*",    // 管理鉴权
+  ] as const;
+
+  /** `app.routes` 里的真实端点（滤掉上面那些 ALL 条目，它们由快照单独钉住）。 */
   function realRoutes(app: Awaited<ReturnType<typeof makeApp>>["app"]) {
     return app.routes.filter((r) => r.method !== "ALL");
   }
@@ -452,14 +500,13 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     expect([...new Set(actual)]).toEqual([...EXPECTED].sort());
   });
 
-  it("被过滤掉的 ALL 条目全是通配中间件，没有真端点被这层过滤藏起来", async () => {
+  it("通配中间件条目也双向钉死——use() 注册的通配 handler 不许悄悄绕过枚举", async () => {
     const { app } = await makeApp();
-    const filtered = app.routes.filter((r) => r.method === "ALL");
-    expect(filtered.length).toBeGreaterThan(0);
-    for (const r of filtered) {
-      expect(r.path.endsWith("*"), `ALL ${r.path} 不是通配路径：用 app.all() 注册的真端点会被枚举漏掉`)
-        .toBe(true);
-    }
+    const actual = app.routes
+      .filter((r) => r.method === "ALL")
+      .map((r) => `${r.method} ${r.path}`)
+      .sort();
+    expect(actual).toEqual([...EXPECTED_MIDDLEWARE].sort());
   });
 
   it("三个安全域在矩阵里都真的出现了（否则矩阵是残缺的）", async () => {
@@ -498,6 +545,9 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 逐条断言全都「通过」但其实一格没跑，是这个循环最容易出的假阳性。
     expect(cells, "枚举的格子数必须等于 路由数 × 凭据状态数").toBe(routes.length * STATES.length);
     expect(routes.length).toBe(EXPECTED.length);
+    // 状态表的规模也钉住。删掉一种凭据状态**不会**让别的断言变红（cells 是从这张表
+    // 自己算出来的），只有这条能拦住「悄悄少测一条信道」。它是评审绊线，不是行为断言。
+    expect(STATES.length, "凭据状态表被改过，请在评审里确认这是有意的").toBe(16);
     expect(denied, "必须真的有该拒的格子").toBeGreaterThan(0);
     expect(allowed, "必须真的有该放行的格子").toBeGreaterThan(0);
   });

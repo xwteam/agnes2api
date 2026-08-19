@@ -32,11 +32,18 @@ export const ADMIN_TOKEN_MIN_LENGTH = 24;
 
 export interface AdminTokenCheck {
   ok: boolean;
-  reason?: "too_short" | "same_as_gateway_token";
+  reason?: "whitespace_padded" | "too_short" | "same_as_gateway_token";
 }
 
 /**
- * 管理口令的两条硬规则。
+ * 管理口令的三条硬规则。
+ *
+ * ⓪ 首尾不得有空白。**这条纯粹为了可诊断性，方向仍是 fail closed。** HTTP 请求头的值
+ *    在传输层就被去掉首尾空白，而环境变量不会——于是 `.env` 里口令末尾多敲了一个空格
+ *    时，客户端**永远送不出**那个值，结果是「口令明明是对的却一直 401」，日志里只有
+ *    `login_failed`，运维查不到原因。极端情形是 24 个空格：长度够、也不等于
+ *    GATEWAY_TOKEN，于是装出一棵**永远进不去**的树。在装配期就说清楚，比让人对着
+ *    一串看不见的空格排查便宜得多。
  *
  * ① 长度下限 24：Worker 形态**没有分布式限速**（做它要拿 KV 当窗口，等于给攻击者
  *    一根消耗写配额的杠杆，能把 DoS 面从「猜口令」扩大到「打死 key 池的状态回写」）。
@@ -45,10 +52,13 @@ export interface AdminTokenCheck {
  *    口令 = 任何拿到中转口令的人都能读整池 key、关掉注册机、把 agnesPlatformUrl 改成
  *    自己的服务器从而收走每一次注册的邮箱 + 密码 + 验证码。
  *
- * 顺序有意义：先查长度。反过来的话，两条都不满足时报的是「与网关口令相同」，
- * 而运维改完口令还是进不去。
+ * 顺序有意义：空白最先，长度其次。空白是三条里**唯一在配置文件里看不见**的那条
+ * （长度和「是否与网关口令相同」运维自己一眼能核），先报它最省事；反过来把相同性
+ * 放在长度前面则更糟——两条都不满足时报的是「与网关口令相同」，运维改完口令还是进不去。
  */
 export function checkAdminToken(token: string, gatewayToken: string): AdminTokenCheck {
+  // 空串不走这里（`"".trim() === ""`），它归 too_short，与 adminRouter 的 `!token` 一致。
+  if (token.trim() !== token) return { ok: false, reason: "whitespace_padded" };
   if (token.length < ADMIN_TOKEN_MIN_LENGTH) return { ok: false, reason: "too_short" };
   if (token === gatewayToken) return { ok: false, reason: "same_as_gateway_token" };
   return { ok: true };
