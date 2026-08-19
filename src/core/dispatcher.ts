@@ -4,8 +4,16 @@
  * 本文件保留两处「看起来违反」的写法，各有理由，**清单不许再变长**。
  * 谁在守它，说准（此前这里含糊带过，而台账把它写成了「有源码断言钉着」——那句是假的）：
  *   · 第 1 条 `setTimeout`：**有源码断言**，`tests/unit/source-guards.test.ts` 的
- *     零 IO 扫描把全 `src/core` 的时间/随机/定时/网络/环境使用点与一份**手写**清单
- *     逐条比对，多一处（哪怕是同一个文件里的第二处）立刻变红。
+ *     零 IO 扫描把 `src/core` 里**下列 8 类记号**的使用点与一份**手写**清单逐条比对，
+ *     多一处（哪怕是同一个文件里的第二处）立刻变红：
+ *       `setTimeout` / `setInterval` / `setImmediate`、`new Date`、`Date.*`、
+ *       `performance.*`、`Math.random`、`crypto.*`、裸 `fetch(`、`process.*`
+ *     （`globalThis.` / `self.` / `window.` 前缀与 `?.` 可选链都会先归一再扫）。
+ *     **是「这 8 类」而不是「全部 IO」——别再把它读成后者。** 任何基于 grep 的门禁都
+ *     不可能完备；它覆盖什么、抓不住什么，由那个文件里 `COVERED` / `BLIND_SPOTS`
+ *     两张**可执行**的表钉着，不由这段注释宣称。本注释的第一版正是栽在这里：
+ *     写成「全 src/core 的时间/随机/定时/网络/环境使用点」，而 `globalThis.setTimeout`、
+ *     `new Date()`、`performance.now()` 三种最地道的写法当时全都隐身。
  *   · 第 2 条模块级 `let cursor`：**没有断言，只有这段注释 + 评审 checklist**。
  *     它是可变模块状态，不是某个可 grep 的全局 API，扫描抓不住它。
  *   · 裸 `console`：`tests/unit/registrar/log-prefix.test.ts` 扫 `src/core` 全目录，
