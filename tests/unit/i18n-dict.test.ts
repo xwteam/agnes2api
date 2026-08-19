@@ -35,10 +35,17 @@ describe("i18n 字典", () => {
   });
 
   it("插值 token 在 5 种语言里集合相同", () => {
-    const tokens = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!).sort().join(",");
+    // ⚠️ **`?? ""` 是必须的，不是防御性代码噪音**：某个语言的翻译整个缺失时
+    // （比如被误删），`s` 会是 `undefined`，裸调用 `.matchAll` 直接抛 `TypeError`——
+    // 这条断言仍然会让测试变红（不漏判），但诊断退化成一条与「插值占位符对不上」
+    // 毫无关系的堆栈信息，可读性远不如上面「每个 key 都有全部 5 种语言」那条已经
+    // 给出的明确失败原因。`scripts/check-i18n.mjs` 里同一处逻辑一直是
+    // `String(row[l] ?? "")`，这里之前没对齐，现在补上。
+    const tokens = (s: string | undefined) =>
+      [...String(s ?? "").matchAll(/\{(\w+)\}/g)].map((m) => m[1]!).sort().join(",");
     const bad: string[] = [];
     for (const [k, v] of Object.entries(I18N)) {
-      const sets = LANGS.map((l) => tokens((v as Record<string, string>)[l]!));
+      const sets = LANGS.map((l) => tokens((v as Record<string, string>)[l]));
       if (new Set(sets).size !== 1) bad.push(`${k}: ${sets.join(" | ")}`);
     }
     expect(bad, "同一个键在不同语言里的插值占位符对不上").toEqual([]);
@@ -122,6 +129,12 @@ describe("i18n 字典", () => {
     // 这条会对着当前真实文件常年打红，属于「以为有护栏」的同一种错误，这里核实
     // 后改成 15：仍然远高于「扫描整个坏掉」时的 0，只是不再拿一个未来才成立的
     // 数字卡当前状态。
-    expect(used.size, "一个 i18n 引用都没扫到，扫描本身坏了").toBeGreaterThan(15);
+    //
+    // ⚠️ **比较符与 scripts/check-i18n.mjs 必须是同一条边界**：那边写的是
+    // `used.size < 15` 才报错（15 本身通过）。这里如果写成 `toBeGreaterThan(15)`，
+    // 两份「独立实现」会在 `used.size === 15` 这个精确边界上永久互相矛盾——一份绿
+    // 一份红，恰恰破坏了「两份独立实现互为印证」这个设计意图。所以这里同样用
+    // `>= 15`（`toBeGreaterThanOrEqual`），15 本身两边都通过。
+    expect(used.size, "一个 i18n 引用都没扫到，扫描本身坏了").toBeGreaterThanOrEqual(15);
   });
 });

@@ -43,6 +43,11 @@ for (const p of walk(join(ROOT, "admin-ui"))) {
 // ⚠️ 门槛不是设计文档写的 20：本期（Task 3）只铺框架骨架，字面引用一共 18 处，
 // 见 tests/unit/i18n-dict.test.ts 对应断言的同一条注释。这里改成 15，与那份测试
 // 用同一个数字，避免「同一件事两处写两个门槛」自己先漂移。
+//
+// ⚠️ **比较符也要与那份测试一致，不只是数字一致**：这里是 `< 15` 才报错（15 本身
+// 通过），那份测试对应写的是 `toBeGreaterThanOrEqual(15)`（同样 15 本身通过）。
+// 两处一度分别写成 `< 15` 与 `toBeGreaterThan(15)`，在 `used.size === 15` 这个
+// 精确边界上会永久一绿一红，破坏「两份独立实现互为印证」的设计意图——已订正。
 if (used.size < 15) errors.push(`只扫到 ${used.size} 个 i18n 引用，扫描本身可能坏了`);
 for (const k of [...used].sort()) if (!(k in I18N)) errors.push(`引用了字典里没有的 key: ${k}`);
 
