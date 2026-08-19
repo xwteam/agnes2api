@@ -135,6 +135,80 @@ describe("Refreshable", () => {
     expect(loads).toBe(2);          // set 没有把窗口推后
   });
 
+  /**
+   * `invalidate()` 不许被**在途的**那次 reload 吃掉。
+   *
+   * 上面那条 invalidate 用例是「先失效、再加载」，测不到这个：真存储的一次装载
+   * 跨越 await（先取样、后交付），失效完全可能发生在装载的**中途**。此时那次装载
+   * 带回来的是取样时刻的旧值，若它照旧推进「上次加载时刻」，调用方明确要求的
+   * 「下一次一定重载」就被静默降级成「再等满一个 TTL」。
+   */
+  it("装载途中调 invalidate ⇒ 在途那次不推进 TTL，下一次仍然真的重载", async () => {
+    const c = clock();
+    let loads = 0;
+    let release!: () => void;
+    const r = new Refreshable<number>({
+      load: async () => {
+        const n = ++loads;                                            // 取样
+        // **只卡住第一次**：第二次也卡住的话，缺陷的表现是整条用例挂起而不是失败
+        //（本项目已登记的第三类假阳性），而挂起给不出任何归因。
+        if (n === 1) await new Promise<void>((res) => { release = res; });
+        return n;
+      },
+      ttlMs: 1000, now: c.now,
+    });
+
+    const inflight = r.ensureFresh();
+    r.invalidate();          // 装载**中途**失效
+    release();
+    await inflight;
+    expect(r.current(), "在途那次的值照留作兜底").toBe(1);
+
+    // 时钟一动不动。再读一次必须真的重载，而不是被那次在途结果满足。
+    await r.ensureFresh();
+    expect(loads, "invalidate 被在途 reload 吃掉了").toBe(2);
+    expect(r.current()).toBe(2);
+  });
+
+  /**
+   * 失效之后紧接着撞上一次读失败，**不该被「失败也推进计时」那条退避规则罚等一个 TTL**。
+   *
+   * 那条退避是给「TTL 自然到期后的例行刷新失败」用的（故障期每请求都重试会把存储打爆）。
+   * 但调用方**明确**调过 `invalidate()`，说明底层刚被改过；此时把它和例行刷新一视同仁，
+   * 面板上「保存成功」之后要等满一个 TTL 才生效，而且中间那次失败对用户完全不可见。
+   */
+  it("装载途中 invalidate 且那次装载失败 ⇒ 下一次立刻重试，不被退避罚等一个 TTL", async () => {
+    const c = clock();
+    let loads = 0;
+    let release!: () => void;
+    const r = new Refreshable<string>({
+      load: async () => {
+        const n = ++loads;
+        if (n === 1) return "good";                 // 先成功一次，建立兜底快照
+        // 只有第二次卡住并真的 throw——stub 必须真抛，返回「失败对象」测不出东西。
+        if (n === 2) {
+          await new Promise<void>((res) => { release = res; });
+          throw new Error("KV 挂了");
+        }
+        return "fresh";
+      },
+      ttlMs: 1000, now: c.now,
+    });
+
+    await r.ensureFresh();
+    c.advance(1001);
+    const inflight = r.ensureFresh();   // 第二次装载在途
+    r.invalidate();                     // 途中失效
+    release();
+    await inflight;
+    expect(r.current(), "失败仍保留上一份合法快照").toBe("good");
+
+    // 时钟一动不动：有兜底快照时例行失败会等满一个 TTL，但这次是 invalidate 过的。
+    await r.ensureFresh();
+    expect(loads, "失效后撞上一次读失败，不该再等满一个 TTL").toBe(3);
+    expect(r.current()).toBe("fresh");
+  });
+
   it("ttlMs=0 时每次都重载——这是用户的逃生口，必须真的关掉缓存", async () => {
     const c = clock();
     let loads = 0;

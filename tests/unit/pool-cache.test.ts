@@ -203,13 +203,7 @@ describe("写消除：只有 lastUsedAt 变化时不落盘", () => {
   });
 
   /**
-   * **数据驱动自 `FIELD_ROLE`**：`KeyRecord` 新增字段时 tsc 会先在源码那侧逼着
-   * 加字段的人表态（scheduling 还是 telemetry），这里的 `Record<keyof KeyRecord, …>`
-   * 再逼着他给出一个具体的变异值，于是新字段**自动**被这条用例覆盖。
-   *
-   * 写死四个字段的清单做不到这一点：新增一个参与调度的字段会被 `schedulingEqual`
-   * 悄悄忽略，写消除把它吃掉，而测试全绿——正是本任务被标为「失败形态是静默的」
-   * 那件事。
+   * 每个字段的变异值。`Record<keyof KeyRecord, …>` ⇒ 新增字段时 tsc 逼着这里也表态。
    */
   const MUTATION: Record<keyof KeyRecord, Partial<KeyRecord>> = {
     id: { id: "fedcba9876543210" },
@@ -219,18 +213,49 @@ describe("写消除：只有 lastUsedAt 变化时不落盘", () => {
     evicted: { evicted: true },
     cooldownReason: { cooldownReason: "rate limited" },
     evictedReason: { evictedReason: "401" },
-    // ── 以下是纯遥测字段，变化**可以**被写消除吃掉 ──
     addedAt: { addedAt: 424_242 },
     lastUsedAt: { lastUsedAt: 1_000_001 },
   };
 
-  it("每个参与调度的字段变化都落盘，每个纯遥测字段的变化都被消除", async () => {
-    for (const [field, role] of Object.entries(FIELD_ROLE) as Array<[keyof KeyRecord, string]>) {
+  /**
+   * ── 两张**写死**的清单 ──────────────────────────────────────────────────
+   *
+   * **绝不从 `FIELD_ROLE` 推导。** 上一版这条用例写的是
+   *     `expect(s.puts).toBe(role === "scheduling" ? 1 : 0)`
+   * ——期望值来自被测的那张表本身，改表则期望跟着改，**同义反复**。评审实测：把
+   * `evicted` / `evictedReason` / `cooldownUntil` / `cooldownReason` 任一标成
+   * `"telemetry"`，618 条全绿、零变红。而那正是本任务定义的头号失败形态：
+   * 401 剔除、429 冷却既不落盘也不进缓存 ⇒ 坏 key 被无限重试，测试却什么都不说。
+   *
+   * 「加字段时 tsc 报错」那个类型钉子只逼人**表态**，不保证**表对**。表对与否
+   * 只能由这两张与实现无关的清单来断言。
+   */
+  const MUST_PERSIST: Array<keyof KeyRecord> = [
+    "id", "key", "cooldownUntil", "cooldownReason", "strikes", "evicted", "evictedReason",
+  ];
+  const MAY_ELIDE: Array<keyof KeyRecord> = ["addedAt", "lastUsedAt"];
+
+  it("穷尽性：KeyRecord 的每个字段都被上面两张写死的清单认领了", () => {
+    // 新增字段时：tsc 先在 FIELD_ROLE 与 MUTATION 报错，这条再逼着把它放进某张清单，
+    // 放进去之后下面两条立刻开始断言它的**真实行为**。三步缺一不可。
+    expect([...MUST_PERSIST, ...MAY_ELIDE].sort()).toEqual(Object.keys(FIELD_ROLE).sort());
+  });
+
+  it("MUST_PERSIST 的每个字段变化都落盘——丢一个就是坏 key 被无限重试", async () => {
+    for (const field of MUST_PERSIST) {
       const { repo, s } = await setup(1);
       const r = await used(repo, s);
-      const patch = MUTATION[field];
-      await repo.save({ ...r, ...patch }, r);
-      expect(s.puts, `${field} (${role})`).toBe(role === "scheduling" ? 1 : 0);
+      await repo.save({ ...r, ...MUTATION[field] }, r);
+      expect(s.puts, `${field} 变了却没落盘`).toBe(1);
+    }
+  });
+
+  it("MAY_ELIDE 的每个字段变化都被消除——这才是写消除的全部收益", async () => {
+    for (const field of MAY_ELIDE) {
+      const { repo, s } = await setup(1);
+      const r = await used(repo, s);
+      await repo.save({ ...r, ...MUTATION[field] }, r);
+      expect(s.puts, `${field} 是纯遥测，不值一次 KV 写`).toBe(0);
     }
   });
 
@@ -342,21 +367,35 @@ describe("前提：lastUsedAt 不参与调度（写消除的合法性全靠它�
    * 行为断言只覆盖 `keypool.ts` 里那三个函数；`dispatcher.ts` 完全可以自己就地
    * 挑一把「最久没用的」而不经过 `selectKey`。源码扫描补的正是这个缺口。
    *
-   * 扫的是**属性读取**（`.lastUsedAt`），不是裸子串——`lastUsedAt:` 这种对象字面量
-   * 的写入是允许的（`applySuccess` 就在写它）。裸 grep 会把注释里的提及也算进去，
-   * 那正是 Task 1 数错 console 数量的原因。
+   * **判据是「写」而不是「不读」**：把 `lastUsedAt` 当成标识符找出来，凡是没有紧跟
+   * `:`（对象字面量的键 / 类型声明）的一律算读。上一版扫的是 `/\.lastUsedAt\b/`，
+   * 评审实测能绕过——`r["lastUsedAt"]` 与解构 `const { lastUsedAt } = r` 都不带点，
+   * 于是「dispatcher 自己按 LRU 排序」这个**唯一让这条扫描存在的场景**用中括号写
+   * 就完整逃逸。列举读法永远列不全，只能反过来列举唯一合法的写法。
+   *
+   * 先去掉注释再扫：不去的话注释里提一句 `lastUsedAt` 就误报（Task 1 数错 console
+   * 数量正是这个原因）。行注释的正则要求 `//` 前面不是冒号，免得把 `https://…`
+   * 之后的半行代码一起吃掉。
    */
-  it("src/core 里除 keypool-repo.ts 外，没有任何地方**读** lastUsedAt", () => {
-    const READ = /\.lastUsedAt\b/;
+  it("src/core 里除 keypool-repo.ts 外，`lastUsedAt` 只许被写、不许被读", () => {
+    const stripComments = (src: string) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
     const walk = (dir: string): string[] =>
       readdirSync(dir).flatMap((n) => {
         const p = join(dir, n);
         return statSync(p).isDirectory() ? walk(p) : p.endsWith(".ts") ? [p] : [];
       });
-    const offenders = walk("src/core")
+
+    const offenders: string[] = [];
+    for (const p of walk("src/core")) {
       // 唯一的合法读点：写消除自己的判据（shouldElide）。
-      .filter((p) => p !== join("src/core", "keypool-repo.ts"))
-      .filter((p) => READ.test(readFileSync(p, "utf8")));
+      if (p === join("src/core", "keypool-repo.ts")) continue;
+      const src = stripComments(readFileSync(p, "utf8"));
+      // 允许 `lastUsedAt:` 与 `lastUsedAt?:`（写入 / 类型声明），其余一律算读。
+      for (const m of src.matchAll(/\blastUsedAt\b(.?.?)/g)) {
+        if (!/^\s*\??:/.test(m[1] ?? "")) offenders.push(`${p} → …${m[0]}`);
+      }
+    }
     expect(
       offenders,
       "有人开始读 lastUsedAt 了。它一旦参与调度，KeyPoolRepo 的写消除就会静默吃掉调度状态，"

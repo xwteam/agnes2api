@@ -36,9 +36,16 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
   strikes: "scheduling",
   evicted: "scheduling",
   evictedReason: "scheduling",
-  /** 建号时刻，写一次之后再也不变。 */
+  /**
+   * 建号时刻。**判 telemetry 的理由与 `lastUsedAt` 完全不同，别把两者并列理解**：
+   * `lastUsedAt` 有 `touchIntervalMs` 兜底（最迟每 6 小时一定落一次盘），
+   * `addedAt` **一条兜底都没有**——它变化的那次写会被无条件丢弃。
+   * 之所以安全，是因为这条路径不可达：`addedAt` 只在 `add()` 里赋值一次，
+   * 此后 `keypool.ts` 的 `apply*` 全部原样透传，全仓没有任何代码会产生一个
+   * `addedAt` 不同的 next。**哪天有了「重置建号时刻」这种操作，它必须改成 scheduling。**
+   */
   addedAt: "telemetry",
-  /** 纯遥测，见上。 */
+  /** 纯遥测，见上。有 touchIntervalMs 兜底，不会永远不落盘。 */
   lastUsedAt: "telemetry",
 };
 
@@ -82,10 +89,21 @@ export interface KeyPoolRepoOptions {
   /**
    * isolate 级快照缓存的存活时长。**0 = 关闭缓存**（每次 all() 都真读存储）。
    *
-   * 它直接决定每天的 KV 读取次数：
-   *   读取次数/天 = 活跃 isolate 数 × (86400 / 本值秒数) × (1 + 池中 key 数)
-   * 与请求数**无关**。要压在免费档 100,000 以下，取值需满足
-   *   TTL(秒) ≥ 0.864 × isolate 数 × (1 + key 数)
+   * 它决定每天的 KV 读取次数，而读取次数与请求数**无关**：
+   *
+   *   读取次数/天 = 活跃 isolate 数 × [ (86400 / 本值秒数) × (1 + 池中 key 数)
+   *                                  + 86400 / CONFIG_TTL_MS 秒数 ]
+   *                + 对账（每天 48~96）
+   *
+   * **中括号里第二项是 `ConfigHolder` 的，别漏**：它每 30 秒也刷新一次配置键，
+   * 吃的是同一个 100,000/天的桶，每个 isolate 每天 2,880 次。漏算它会把余量算多
+   * 将近一成——本项目已经栽过一次「把有条件的保证写成无条件」。
+   *
+   * 默认值（本值 60 秒、20 把 key、配置 TTL 30 秒）下每个 isolate 每天
+   *   1440 × 21 + 2880 = 33,120 次，**3 个活跃 isolate 就用掉 99.5%**。
+   * 也就是说默认值在推荐配置处已经临界；预期 isolate 更多就要把本值调大
+   * （20 把 key、5 个 isolate 需要约 120 秒）。
+   *
    * 代价：别的 isolate 判定的冷却/剔除，本 isolate 最多晚这么久才看到。
    */
   cacheTtlMs?: number;
@@ -164,6 +182,13 @@ export class KeyPoolRepo {
     // 从未成功装载过（冷启动就撞上存储故障）：再走一次真加载把**真实异常**抛出来，
     // 保持 P1「存储读失败 → app.onError → JSON 500」的既有行为，
     // 而不是换成一句自造的、排障时毫无信息量的错误。
+    //
+    // **代价要说清楚**：这条分支下每个请求会读两遍存储（`ensureFresh` 内部那次
+    // 异常被吞掉了，这里再来一次），并多打一条 `pool.load_failed`。也就是说
+    // 「冷启动 + 存储彻底不可用」期间是 2× 读放大 + 每请求一条 error 日志。
+    // 接受它的理由：这段时间里网关本来就在返 500、根本没有有效流量，而把**真实
+    // 异常**（哪个文件、哪个键）交到运维手上比省一次注定失败的读重要得多。
+    // 只要成功装载过一次，就再也走不到这里（失败会沿用上一份快照）。
     if (cur === undefined) return await this.loadAll();
     // **浅拷贝**：dispatch 的 commit 会 `records[at] = updated` 就地改数组元素，
     // 直接把缓存数组交出去等于让一次请求的中间状态污染 isolate 级缓存。
@@ -320,8 +345,13 @@ export class KeyPoolRepo {
     if (repaired) {
       await this.storage.put(POOL_INDEX_KEY, makePoolIndex(actual));
       // 对账刚刚改变了「all() 会返回哪些 id」（把孤儿捡回来、把幽灵剪掉），
-      // 与 add()/delete() 是同一类写操作，**同样必须自己失效快照**。不失效的话
-      // 刚被捡回来的孤儿要等满一个 TTL 才会被选中，而对账 30 分钟才跑一次。
+      // 与 add()/delete() 是同一类写操作，**同样自己失效快照**。
+      //
+      // **今天这一行在生产里是空操作，别误以为它在兜什么底**：两个入口的对账都是
+      // 现建一个 repo、调完就扔（快照本来就是空的），`tendOnce` 收尾那次用的又是
+      // `cacheTtlMs: 0` 的实例。真正会用到它的是 P3c——面板上的「立即对账」按钮跟
+      // 转发路径共用同一个 repo 实例，那时不失效就等于「点了对账，池子一分钟内没反应」。
+      // 现在就写对，好过等到那天再想起来。有用例钉着（reconcileIndex 那条）。
       this.invalidate();
       this.o.logger.log({
         level: cur === null ? "info" : "warn",

@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { dispatch } from "../../src/core/dispatcher.js";
 import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
+import { KEY_PREFIX } from "../../src/core/pool-index.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 import { TEST_CONFIG } from "../helpers/make-app.js";
 import type { Storage } from "../../src/ports/storage.js";
 import type { Fetcher } from "../../src/ports/fetcher.js";
+import type { KeyRecord } from "../../src/core/types.js";
 
 /**
  * 这个文件是 §配额账那张表的**可执行版本**。它存在的理由：那张表是本期最大的一条
@@ -137,6 +139,60 @@ describe("配额账（改造后：list 与 put 都归零，get 与请求数解�
     await send();
     expect(s.counts(), "两轮刷新 = 2×(1+N) 次读，与打了三个请求无关")
       .toEqual({ list: 0, get: 2 * (N + 1), put: 0, delete: 0 });
+  });
+
+  /**
+   * ── 端到端探针：调度状态真的到了存储里 ────────────────────────────────────
+   *
+   * 前面那些用例数的是 `put` **次数**，它们答不了「写进去的是不是对的东西」。
+   * 这两条改为在 `dispatch` 跑完之后**直接从存储里把记录读回来**，断言冷却/剔除
+   * 那几个字段确实落了盘。
+   *
+   * 存在的理由很具体：把 `FIELD_ROLE` 里 `cooldownUntil` / `cooldownReason` /
+   * `evicted` / `evictedReason` 任一改成 `"telemetry"`，写消除就会把它整个吃掉
+   * ——存储不写、缓存也不动 ⇒ 坏 key 被无限重试，而这是**静默**的。这两条探针
+   * 与 pool-cache 的 MUST_PERSIST 清单是两条独立的钉子：那条量单次 save 的行为，
+   * 这条量整条转发链路的终态。
+   */
+  it("429 冷却真的落到存储里（端到端探针，生产默认值）", async () => {
+    let t = 1000;
+    const { s, repo } = await poolOf(1, () => t);
+    await warm(repo, t);
+    t += TTL;
+    const id = (await repo.all())[0]!.id;
+    s.reset();
+
+    const rateLimited: Fetcher = { async fetch() { return new Response("{}", { status: 429 }); } };
+    await dispatch({
+      path: "/chat/completions", body: { model: "m" }, stream: false,
+      deps: { repo, fetcher: rateLimited, config: TEST_CONFIG, now: () => t },
+    });
+
+    const persisted = await s.get<KeyRecord>(`${KEY_PREFIX}${id}`);
+    expect(persisted, "记录必须还在").not.toBeNull();
+    expect(persisted!.cooldownUntil, "冷却截止时刻没落盘 ⇒ 限流中的 key 会被立刻重选")
+      .toBeGreaterThan(t);
+    expect(persisted!.cooldownReason).not.toBeNull();
+  });
+
+  it("401 剔除真的落到存储里（端到端探针，生产默认值）", async () => {
+    let t = 1000;
+    const { s, repo } = await poolOf(1, () => t);
+    await warm(repo, t);
+    t += TTL;
+    const id = (await repo.all())[0]!.id;
+    s.reset();
+
+    const unauthorized: Fetcher = { async fetch() { return new Response("{}", { status: 401 }); } };
+    await dispatch({
+      path: "/chat/completions", body: { model: "m" }, stream: false,
+      deps: { repo, fetcher: unauthorized, config: TEST_CONFIG, now: () => t },
+    });
+
+    const persisted = await s.get<KeyRecord>(`${KEY_PREFIX}${id}`);
+    expect(persisted!.evicted, "剔除标记没落盘 ⇒ 凭据已失效的 key 会被无限重试")
+      .toBe(true);
+    expect(persisted!.evictedReason).not.toBeNull();
   });
 
   it("上游 5xx 时仍然会写——写消除只吃遥测，绝不吃调度状态", async () => {

@@ -18,7 +18,7 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 | `COOLDOWN_RATE_LIMIT_MS` | no | `60000` | Cooldown duration applied to a key after an upstream `429`. |
 | `COOLDOWN_PAYMENT_MS` | no | `3600000` | Cooldown duration applied to a key after an upstream `402`. |
 | `COOLDOWN_STRIKE_MS` | no | `1800000` | Cooldown duration applied once a key reaches `MAX_STRIKES`. The key recovers automatically when it expires. |
-| `POOL_CACHE_TTL_MS` | no | `60000` | Each isolate/process keeps an in-memory snapshot of the key pool; this is how long that snapshot lives. `0` disables the cache. **KV reads per day = active isolates × (86400 ÷ this value in seconds) × (1 + pool size), independent of request count.** Cost: cooldowns/evictions decided by another isolate take up to this long to become visible here. |
+| `POOL_CACHE_TTL_MS` | no | `60000` | Each isolate/process keeps an in-memory snapshot of the key pool; this is how long that snapshot lives. `0` disables the cache. **KV reads are independent of request count** — they depend only on the refresh rate; see the quota section below for the formula. Cost: cooldowns/evictions decided by another isolate take up to this long to become visible here. |
 | `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted. `0` persists it on every successful request. It is a display-only field that no scheduling logic reads; writing it per request would burn the free tier's 1,000 writes/day and leave no budget for cooldowns and evictions. Cost: "last used" is only accurate to within this interval. |
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
@@ -32,6 +32,31 @@ Every numeric variable above must be an integer; all of them must be greater tha
 `POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS` are read **once, when the app is built**.
 Changing them requires restarting the container or waiting for isolates to be recycled — unlike
 every other setting, they do not take effect per request.
+
+### Quota budget: how many requests a Worker on the free KV tier can serve
+
+The free KV tier allows 100,000 reads and 1,000 writes per day. Neither the gateway's reads nor
+its writes grow with request count, so the budget is "so many per day", not "so many per request":
+
+- **With the defaults, KV is no longer the bottleneck** — the ceiling becomes the Cloudflare
+  Workers free tier itself, at **100,000 requests/day**. This conclusion is **conditional, not
+  unconditional**: the KV read quota now constrains the *number of concurrently active isolates*
+  instead, and that varies with how your traffic is distributed geographically — it is not
+  something you set. Each active isolate consumes
+
+      (86400 ÷ POOL_CACHE_TTL_MS in seconds) × (1 + pool size)  +  2880
+
+  reads per day. That trailing 2880 is the config holder refreshing every 30 seconds, drawing on
+  the same bucket. With the defaults and 20 keys that is **33,120 reads per isolate**; adding the
+  48–96 daily index reconciliations, **3 active isolates already consume ~99.5%**. In other words
+  the default is already marginal at the recommended settings — if you expect more isolates, raise
+  `POOL_CACHE_TTL_MS` (20 keys across 5 isolates needs roughly `120000`).
+- **With the cache disabled** (`POOL_CACHE_TTL_MS=0`, the escape hatch) reads grow linearly with
+  requests, giving a floor of about `100,000 ÷ (1 + pool size)` ⇒ roughly **4,700 requests/day**
+  with 20 keys.
+- **Writes**: in steady state about `pool size × 4` per day (`lastUsedAt` is touched every 6
+  hours) — 80 with 20 keys, 8% of the write quota, leaving the rest for cooldown and eviction
+  bookkeeping. Each key also costs one one-off write the first time it is used.
 
 ### Registrar variables (optional, disabled by default)
 
