@@ -74,7 +74,54 @@ function collectedBy(config: string): string[] {
   return out.split("\n").map((l) => l.trim()).filter((l) => l.endsWith(".test.ts"));
 }
 
-export default function setup(): void {
+/** globalSetup 拿到的第一个参数（`TestProject`）里我们唯一用得上的那一小块。 */
+interface MaybeProject {
+  vitest?: { filenamePattern?: unknown };
+}
+
+/**
+ * 本次调用带没带**显式的测试文件过滤器**（`vitest run tests/xxx.test.ts` 这种）。
+ *
+ * 取的是 vitest 自己解析好的 `filenamePattern`，**不是手搓 process.argv**：
+ * 裸解析 argv 会把 `--config vitest.config.ts` 里那个 `vitest.config.ts` 当成位置参数，
+ * 于是**每一次调用都被判成"带了过滤器"、门禁永久静默失效**——那比没有门禁更糟。
+ * 已实测这个字段：带过滤器时是 `["tests/ui/mask.test.ts"]`，全量时是 `undefined`，
+ * 且 `--config` / `--reporter=dot` 都不会被误算进去。
+ *
+ * **读不到就当作"没有过滤器"⇒ 照常跑门禁**（fail closed）。将来某个 vitest 版本
+ * 改了这个字段名，代价是门禁多跑几次（慢），而不是门禁静默消失（不安全）。
+ */
+function fileFilters(project?: MaybeProject): readonly string[] | null {
+  const v = project?.vitest;
+  if (!v || typeof v !== "object") return null;
+  const p = v.filenamePattern;
+  if (!Array.isArray(p) || p.length === 0) return null;
+  return p.every((x): x is string => typeof x === "string") ? p : null;
+}
+
+export default function setup(project?: MaybeProject): void {
+  /*
+   * 分档：带文件过滤器就跳过。
+   *
+   * 门禁要防的是「**有人改配置悄悄关掉一整条通道，而 CI 全绿**」。
+   * 带过滤器是开发者的显式局部动作，威胁模型完全不同；而这道门禁要 spawn 两次
+   * `vitest list`（约 5 秒），加在每一次单文件调试上是真摩擦——**摩擦会推着人去
+   * 绕过它**，那就本末倒置了。
+   *
+   * ⚠️ **这条分档依赖一个前提：CI 跑的是全量、不带测试文件过滤器。**
+   * 前提一旦破了（比如有人为了分片把 CI 命令改成按文件名过滤），这道门禁在 CI 上
+   * 就完全不生效，而且**没有任何迹象**。Task 8 的必做项里有一条断言钉这个前提，
+   * 改 CI 命令前先去看那一条。
+   */
+  const filters = fileFilters(project);
+  if (filters) {
+    console.log(
+      `[collection-guard] 本次带了文件过滤器（${filters.join(" ")}），收集门禁已跳过；`
+      + "全量 `pnpm test` 会跑它。门禁本身没有被关掉。",
+    );
+    return;
+  }
+
   if (process.env[REENTRY]) {
     throw new Error(
       "[collection-guard] 检测到递归：`vitest list` 这次跑了 globalSetup（以前不会）。"
@@ -110,4 +157,12 @@ export default function setup(): void {
   if (ghosts.length > 0) {
     throw new Error(`[collection-guard] 收集结果里有磁盘上不存在的文件：\n  ${ghosts.join("\n  ")}`);
   }
+
+  /*
+   * 成功也打一行。**这行不是噪音，是给 CI 的抓手**：
+   * 门禁失效的形态是「静默跳过」——比如有人把上面的过滤器检测改成裸解析
+   * process.argv，于是每次调用都被判成带过滤器，门禁再也不跑而 CI 全绿。
+   * 那种情况下这行**不会出现**，Task 8 的 CI 断言 grep 它即可发现。
+   */
+  console.log(`[collection-guard] ✅ ${onDisk.length} 个测试文件 × ${configs.length} 份配置，无漏收集`);
 }
