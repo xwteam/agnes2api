@@ -183,12 +183,21 @@ export function bufferStatus(body) {
  * **也不含 `malformed`**（本任务，刻意的）：`src/` 里没有任何路径能产出畸形条目，
  * 它恒为 0，挂上来只会让黄条的判据多一条**永远为假**的分支——那是「形状断言
  * 冒充行为断言」在产品面上的等价物。它与 `buffered` 一样走 tooltip。
+ *
+ * ⚠️ **但 `cursorBroken` 进来了（评审 I6）**，而且它比在座任何一条都更该在：
+ * 它意味着**后端此刻正在违约**——`cursor` 既不是有限数字也不是 `null`，于是游标
+ * 推不动、面板可能**永远看不到新事件**。判据里那条 `cursorAhead` 反倒是会自愈的
+ * 时钟纠纷。第一版只把它接进 tooltip，**等于把「面板在撒谎」降级成「面板在小声说」**
+ * ——而上面「黄条是给『现在有问题』用的」这条推理，恰恰要求它上黄条。
+ * 它**不是**恒为假：`src/` 产不出畸形条目，但畸形 `cursor` 的来源是**存储被外部
+ * 写坏**，与 `malformed` 同源、也同样是真实可达的。
  */
 export function shouldWarn(status) {
   return (status.dropped !== null && status.dropped > 0)
     || status.budgetExhausted === true
     || status.truncated === true
-    || status.cursorAhead === true;
+    || status.cursorAhead === true
+    || status.cursorBroken === true;
 }
 
 /**

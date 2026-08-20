@@ -82,9 +82,14 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   `wrangler.toml`, `*/30 * * * *` by default = 48 rounds/day; on Node it is `TEND_INTERVAL_MS`):
     - **Tend lock**: one put + one delete per round. This item already existed before this
       change; it had simply never been written into this account.
-    - **Tend event persistence**: at most one put per round. **It is 0 when every round is
-      healthy** — a healthy round emits no `registrar.*` events at all, and an empty buffer
-      is never flushed.
+    - **Tend event persistence**: at most one put per round. **What decides whether a write
+      happens is whether this round's event buffer is empty** — not what the events are
+      named. A round that is healthy *and* whose configuration is healthy emits no events at
+      all, so it costs 0. ⚠️ **"0 when healthy" has a precondition that must be stated**:
+      `loadConfig` emits one configuration warning **on every single round** when
+      `TEND_INTERVAL_MS` is below `MINT_BATCH × CODE_TIMEOUT_MS × channel count`
+      (by default `5 × 120000 × 1 = 600000`, i.e. 10 minutes). Under that setting **every
+      round writes once**, even a round that mints nothing.
     - **Tend history (`tend:history`)**: one get + one put per round, **unconditionally**.
       Single key, no fan-out.
   ⚠️ **Do not read these three through `EVENT_WRITES_PER_DAY` (12 per isolate per day).**
@@ -109,6 +114,14 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   320 as a ceiling.
   The **`delete` bucket** is counted separately: the tend lock releases 48 times a day, and
   that bucket is nearly idle today.
+
+  ⚠️ **Tightening the tend frequency does not scale these proportionally — it jumps a tier.**
+  All three items are billed per round, and the configuration warning above adds one more
+  per round whenever `TEND_INTERVAL_MS` is under 10 minutes. A **perfectly legal** example:
+  `TEND_INTERVAL_MS=300000` (5 minutes) ⇒ 288 rounds/day ⇒
+  `80 + 96 + 288 + 288 + 288 = 1,040` writes/day — **already past the write quota**.
+  The three rows above all assume the default of one round every 30 minutes; **do not read
+  them as constants independent of the frequency**.
 - **Events board reads (post-C4/C4b-fix figures, more conservative than the earlier draft)**:
   polling no longer depends on an index, so the number of candidate keys is **hard-bounded** —
   no matter how stale `after` is or how many days the deployment has been running, a single

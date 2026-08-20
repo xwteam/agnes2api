@@ -12,7 +12,8 @@ import type { Channel } from "../core/registrar/config.js";
 import type { MailProvider } from "../ports/mailbox.js";
 import type { TendDeps, TendResult } from "../core/registrar/tender.js";
 import {
-  TEND_HISTORY_KEY, appendTendHistory, narrowTendHistory, toTendRecord, type TendTrigger,
+  TEND_HISTORY_KEY, appendTendHistory, narrowTendHistory, toTendRecord, crashedTendRecord,
+  type TendTrigger, type TendRecord,
 } from "../core/admin/tend-history.js";
 import { YydsProvider } from "../adapters/mailbox-yyds.js";
 import { MoeMailProvider } from "../adapters/mailbox-moemail.js";
@@ -161,6 +162,15 @@ export type TendRoundDeps = TendDeps & {
   flush: () => Promise<void>;
   /** 把这一轮的汇总追加进 `tend:history`。 */
   recordRound: (result: TendResult, trigger: TendTrigger) => Promise<void>;
+  /**
+   * 这一轮**抛错了**，补一条如实的记录（评审 C1）。
+   * 与 `recordRound` 分成两个入口而不是让调用方自己拼一个 `TendResult`：
+   * 拼的那一份会漂，而且很容易顺手把 `skipped` 当成"崩了"用——**`skipped` 有且
+   * 只有一个含义**（注册机关着），拿它表示别的就是伪造。
+   */
+  recordCrashedRound: (o: {
+    at: number; channel: string; durationMs: number; trigger: TendTrigger;
+  }) => Promise<void>;
 };
 
 /**
@@ -220,6 +230,33 @@ export async function buildTendDeps(
   if (reg.yyds) providers.yyds = new YydsProvider({ fetcher, ...reg.yyds, sleep, now, logger });
   if (reg.moemail) providers.moemail = new MoeMailProvider({ fetcher, ...reg.moemail, sleep, now, logger });
 
+  /**
+   * 读改写 `tend:history` 一次。**读侧的窄化结果里那个 `malformed` 必须被说出去**
+   *（评审 I4）：这里是 `tend:history` **唯一的窄化点**——事件那一侧读路径每次都会
+   * 独立报出 `malformed`，而这份历史今天只有写侧一个人看得见它。丢掉它意味着
+   * **被外部写坏的那几行在下一次补池时被永久抹掉，无事件、无 warn、无计数**，
+   * 等 Task 6 的读端点建好时证据早就没了。
+   */
+  const appendHistory = async (record: TendRecord): Promise<void> => {
+    try {
+      const narrowed = narrowTendHistory(await storage.get(TEND_HISTORY_KEY));
+      if (narrowed.malformed > 0) {
+        logger.log({
+          level: "warn", event: "registrar.history_malformed",
+          msg: "tend:history 里有读不得的记录，已在这次写回时丢掉（多半是存储被本网关之外的东西写过）",
+          fields: { malformed: narrowed.malformed },
+        });
+      }
+      await storage.put(TEND_HISTORY_KEY, appendTendHistory(narrowed.entries, record));
+    } catch (err) {
+      logger.log({
+        level: "warn", event: "registrar.history_write_failed",
+        msg: "本轮补池已完成，但写 tend:history 失败；面板的补池历史会缺这一轮",
+        fields: { error: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  };
+
   return {
     repo: new KeyPoolRepo(storage, {
       now, logger,
@@ -266,17 +303,7 @@ export async function buildTendDeps(
      * 「补池失败」是误导。**这条 warn 走 `logger`**，所以它会被随后的 `flush()`
      * 一起落盘——前提是入口层把 `flush()` 放在**最后**（见两个入口的 `finally`）。
      */
-    recordRound: async (result, trigger) => {
-      try {
-        const cur = narrowTendHistory(await storage.get(TEND_HISTORY_KEY)).entries;
-        await storage.put(TEND_HISTORY_KEY, appendTendHistory(cur, toTendRecord(result, trigger)));
-      } catch (err) {
-        logger.log({
-          level: "warn", event: "registrar.history_write_failed",
-          msg: "本轮补池已完成，但写 tend:history 失败；面板的补池历史会缺这一轮",
-          fields: { error: err instanceof Error ? err.message : String(err) },
-        });
-      }
-    },
+    recordRound: (result, trigger) => appendHistory(toTendRecord(result, trigger)),
+    recordCrashedRound: (o) => appendHistory(crashedTendRecord(o)),
   };
 }

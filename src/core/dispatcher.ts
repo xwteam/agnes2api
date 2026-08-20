@@ -50,8 +50,14 @@ export interface DispatchDeps {
   /**
    * 记账失败要留痕。**可选 + 默认静默**是刻意的：`DispatchDeps` 有三十多处测试构造点，
    * 改成必填只会换来一次机械 sed。代价（忘了在生产接线上传它）由
-   * `tests/contract/wiring.test.ts` 那条「记账失败必须落一条可筛选的事件」
-   * **行为**断言钉住——它走真 `createApp`，抄一份装配骗不过它。
+   * `tests/contract/wiring.test.ts` 那条
+   * 「上游 200 而 key 状态回写抛错时，客户端仍拿到那份 200 与原样的响应体」
+   * **行为**断言钉住（那一格里 `expect(logger.events()).toContain("pool.commit_failed")`
+   * 就是这条留痕）——它走真 `createApp`，抄一份装配骗不过它。
+   *
+   * ⚠️ **这个锚是 P3c Task 1 改过的**：原文写的是「记账失败必须落一条可筛选的
+   * 事件」，那是那一格里 **`expect` 的失败提示语**，不是任何一条用例的标题。
+   * 旧判据拿整份文件当干草堆，所以它蒙混过关；现在断言性指向必须落在用例标题上。
    */
   logger?: Logger;
 }

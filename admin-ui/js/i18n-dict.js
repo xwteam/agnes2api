@@ -59,6 +59,10 @@ export const I18N = {
   "reg.fail.provider_error":     { "zh-CN": "邮箱通道报错", "zh-TW": "郵箱通道報錯", en: "The mailbox channel returned an error", ja: "メールボックスチャネルがエラーを返しました", ko: "메일박스 채널이 오류를 반환했습니다" },
   "reg.fail.network_error":      { "zh-CN": "网络错误", "zh-TW": "網路錯誤", en: "Network error", ja: "ネットワークエラー", ko: "네트워크 오류" },
   "reg.fail.rate_limited":       { "zh-CN": "被上游限流", "zh-TW": "被上游限流", en: "Rate limited upstream", ja: "上流でレート制限されました", ko: "업스트림에서 속도 제한되었습니다" },
+  // 评审 C1：整轮抛错。它不是一次铸 key 失败，是「这一轮根本没跑完」——
+  // 加它是为了让崩掉的那一轮在补池历史的时间线上**占一格**，而不是与
+  // 「注册机根本没跑」长得一模一样。
+  "reg.fail.round_crashed": { "zh-CN": "整轮补池抛错中断", "zh-TW": "整輪補池拋錯中斷", en: "The whole tend round threw and was aborted", ja: "補充ラウンド全体が例外で中断しました", ko: "보충 라운드 전체가 예외로 중단되었습니다" },
   "reg.fail.provider_missing":   { "zh-CN": "这条通道没有配好凭据，未构造出提供方", "zh-TW": "這條通道沒有配好憑據，未建立提供方", en: "This channel has no credentials configured, so no provider was constructed", ja: "このチャネルは資格情報が未設定のため、プロバイダーが構築されませんでした", ko: "이 채널에 자격 증명이 없어 공급자가 생성되지 않았습니다" },
 
   // ── Key 池板块（只读部分，Task 4）─────────────────────────────────────────
@@ -227,10 +231,7 @@ export const I18N = {
   // 存储被外部写坏过。与 `buffered` 一样只进 tooltip、**不进黄条**——恒为假的
   // 分支挂在告警判据上没有意义（见 pure/events.mjs 的 shouldWarn 说明）。
   "ev.pollStatus.malformedSuffix": { "zh-CN": "（存储里有 {count} 条畸形事件被丢弃，多半是存储被本网关之外的东西写过）", "zh-TW": "（儲存裡有 {count} 條畸形事件被丟棄，多半是儲存被本閘道之外的東西寫過）", en: " ({count} malformed events in storage were discarded — most likely storage was written by something other than this gateway)", ja: "（ストレージ内の不正なイベント {count} 件を破棄しました。本ゲートウェイ以外から書き込まれた可能性が高いです）", ko: "(저장소의 잘못된 이벤트 {count}건을 버렸습니다. 이 게이트웨이 외부에서 기록되었을 가능성이 높습니다)" },
-  // 本任务：后端吐的 `cursor` 既不是有限数字也不是 null ⇒ **后端契约被破坏了**。
-  // 原来这一支与"本页没有新事件"合并，面板把它显示成"一切正常"——那是撒谎，
-  // 而且撒的正是让人查不下去的那种（游标永远推不动，读吞吐 3.9 倍于包线）。
-  "ev.pollStatus.cursorBrokenSuffix": { "zh-CN": "（后端返回的游标不合契约，已保留上一个游标；面板可能看不到新事件）", "zh-TW": "（後端回傳的游標不合契約，已保留上一個游標；面板可能看不到新事件）", en: " (the cursor returned by the backend violates the contract; the previous cursor was kept — new events may not appear)", ja: "（バックエンドが返したカーソルが契約に反しています。直前のカーソルを保持しました。新しいイベントが表示されない可能性があります）", ko: "(백엔드가 반환한 커서가 계약을 위반했습니다. 이전 커서를 유지했으며 새 이벤트가 표시되지 않을 수 있습니다)" },
+
 
   // dropped/budgetExhausted/truncated/cursorAhead 四条黄条文案：**各自独立**，
   // 由响应对应字段各自驱动，不是同一句话的两种措辞（见 pure/events.mjs 的
@@ -242,6 +243,11 @@ export const I18N = {
   // 评审 C6：游标领先于本次请求的时钟（时钟回拨 / isolate 间时钟偏移），空结果
   // 不代表没有新事件。前端已经自动把冻结的游标丢掉重新冷读（见 sec-events.js 的
   // poll()），这条只是如实告诉运维"刚刚发生过一次自动恢复"，不需要手动操作。
+  // 评审 I6：后端吐的 `cursor` 既不是有限数字也不是 null ⇒ **后端契约当场被破坏**。
+  // **上黄条**（不是只进 tooltip）：它意味着游标推不动、面板可能永远看不到新事件，
+  // 而旁边那条会自愈的 `cursorAhead` 反倒在判据里。一个悬停才看得见的提示，
+  // 把「面板在撒谎」降级成了「面板在小声说」。
+  "ev.warnCursorBroken": { "zh-CN": "接口返回的游标不合契约（既不是数字也不是空），面板可能一直看不到新事件。已保留上一个游标；请检查事件存储是否被本网关之外的东西写过。", "zh-TW": "介面回傳的游標不合契約（既不是數字也不是空），面板可能一直看不到新事件。已保留上一個游標；請檢查事件儲存是否被本閘道之外的東西寫過。", en: "The cursor returned by the API violates the contract (neither a number nor null); the board may never show new events. The previous cursor was kept — check whether the event storage was written by something other than this gateway.", ja: "API が返したカーソルが契約に反しています（数値でも null でもありません）。ボードに新しいイベントが今後まったく表示されない可能性があります。直前のカーソルを保持しました。イベントストレージが本ゲートウェイ以外から書き込まれていないか確認してください。", ko: "API가 반환한 커서가 계약을 위반했습니다(숫자도 null도 아님). 보드에 새 이벤트가 계속 표시되지 않을 수 있습니다. 이전 커서를 유지했으니, 이벤트 저장소가 이 게이트웨이 외부에서 기록되지 않았는지 확인하세요.", },
   "ev.warnCursorAhead": { "zh-CN": "检测到游标领先于服务端时钟（可能是时钟回拨或 isolate 间时钟偏移），已自动重新拉取最新数据。", "zh-TW": "偵測到游標領先於服務端時鐘（可能是時鐘回撥或 isolate 間時鐘偏移），已自動重新擷取最新資料。", en: "Detected a cursor ahead of the server clock (possibly a clock rollback or skew between isolates); automatically re-fetched from a fresh cursor.", ja: "カーソルがサーバー時刻より先行していることを検出しました（時刻の巻き戻し、または isolate 間の時刻ずれの可能性）。自動的に新しいカーソルから再取得しました。", ko: "커서가 서버 시계보다 앞서 있는 것을 감지했습니다(시계 롤백 또는 isolate 간 시계 편차 가능성). 새 커서로 자동으로 다시 가져왔습니다." },
 
   "ev.empty":   { "zh-CN": "还没有事件。", "zh-TW": "還沒有事件。", en: "No events yet.", ja: "まだイベントはありません。", ko: "아직 이벤트가 없습니다." },

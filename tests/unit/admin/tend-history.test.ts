@@ -7,8 +7,8 @@ import {
 /** 一条完好的记录。九个字段全部手写字面量，不从被测对象推。 */
 function rec(over: Partial<TendRecord> = {}): TendRecord {
   return {
-    at: 1000, trigger: "cron", channel: "yyds", skipped: false,
-    available: 3, attempted: 2, minted: 1, durationMs: 4500,
+    at: 1000, trigger: "cron", primaryChannel: "yyds", skipped: false,
+    available: 3, attempted: 2, minted: 1, mintedByChannel: { yyds: 1 }, durationMs: 4500,
     failures: [{ reason: "code_timeout", channel: "yyds" }],
     ...over,
   };
@@ -56,11 +56,11 @@ describe("appendTendHistory：环形追加", () => {
 });
 
 describe("toTendRecord：一轮的结果 + 谁触发的", () => {
-  it("TendResult 的九个字段原样透传，只多一个 trigger", () => {
+  it("TendResult 的字段原样透传，只多一个 trigger", () => {
     const result = {
-      skipped: false, available: 3, attempted: 2, minted: 1,
+      skipped: false, available: 3, attempted: 2, minted: 1, mintedByChannel: { yyds: 1 },
       failures: [{ reason: "code_timeout" as const, channel: "yyds" }],
-      at: 1000, channel: "yyds", durationMs: 4500,
+      at: 1000, primaryChannel: "yyds", durationMs: 4500,
     };
     expect(toTendRecord(result, "manual")).toEqual({ ...result, trigger: "manual" });
     expect(toTendRecord(result, "cron").trigger).toBe("cron");
@@ -102,7 +102,10 @@ describe("narrowTendHistory：存储里的东西一律不可信", () => {
       ["at 不是数字", { at: "1000" }],
       ["at 是 NaN", { at: Number.NaN }],
       ["trigger 不在两个取值里", { trigger: "timer" }],
-      ["channel 不是字符串", { channel: 1 }],
+      ["primaryChannel 不是字符串", { primaryChannel: 1 }],
+      ["mintedByChannel 不是对象", { mintedByChannel: "yyds" }],
+      ["mintedByChannel 是数组", { mintedByChannel: [1] }],
+      ["mintedByChannel 的值不是数字", { mintedByChannel: { yyds: "1" } }],
       ["skipped 不是布尔", { skipped: "false" }],
       ["available 不是数字", { available: null }],
       ["attempted 不是数字", { attempted: "2" }],

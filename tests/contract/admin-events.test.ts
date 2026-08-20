@@ -511,8 +511,17 @@ describe("存储里的畸形事件条目：端点必须活着，且游标契约�
     expect(body.malformed).toBe(6);
   });
 
-  it("ts 是 NaN 的条目也被丢掉 —— 它和缺 ts 是同一种不可排序", async () => {
-    const { app } = await withShard([{ ts: Number.NaN, level: "info", event: "nan" }]);
+  /**
+   * ⚠️ **用例名与实际喂进去的输入曾经对不上，如实登记（评审 m3）**：
+   * 这一格原来叫「ts 是 NaN 的条目也被丢掉」，而夹具经 `MemoryStorage` 的
+   * `JSON.stringify` 走了一圈——**JSON 承载不了 `NaN`，它落地时已经是 `null`**。
+   * 也就是说这一格从来没有真的测过 `NaN`。**真的 `NaN` 由
+   * `tests/unit/admin/event-entry.test.ts` 的
+   * 「ts 是 NaN / Infinity / -Infinity 的条目一样被丢掉」在单测层面覆盖**
+   * （那里不经 JSON）。这一格改成如实描述它真正测的那件事。
+   */
+  it("ts 是 null 的条目也被丢掉（JSON 里 NaN 落地就是 null，这是端点侧真正会遇到的形态）", async () => {
+    const { app } = await withShard([{ ts: null, level: "info", event: "null-ts" }]);
     const { body } = await getEvents(app);
     expect(body.items).toEqual([]);
     expect(body.cursor).toBeNull();

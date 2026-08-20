@@ -131,19 +131,63 @@ function nameAnchorAfter(flat, target) {
  * **它不校验省略掉的那一段**，这条边界是有意的：要求逐字全抄会让注释难读，
  * 而这道门禁要防的是"指向一条不存在的用例"，不是"引文不够精确"。
  */
-function anchorMatches(target, anchor) {
+function anchorMatches(target, anchor, mustNameACase) {
   // **比对前把空白全部抠掉。** 注释里的长名字必然被折行，折行处 `flatten` 会留下
   // 一个空格，而源文件里那一处没有——不抠的话，凡是跨行写的锚都会假红，
   // 那就是量具坏了（本仓登记的"判据建在缺陷没采取的那个形态上"的近亲）。
   const squash = (x) => x.replace(/\s+/g, "");
-  const hay = squash(flatten(readFileSync(join(ROOT, target), "utf8")));
-  let at = 0;
-  for (const part of anchor.split(/…+|\.{3,}/).map((p) => squash(p)).filter(Boolean)) {
-    const found = hay.indexOf(part, at);
-    if (found === -1) return false;
-    at = found + part.length;
+  const parts = anchor.split(/…+|\.{3,}/).map((p) => squash(p)).filter(Boolean);
+  const hit = (hay) => {
+    let at = 0;
+    for (const part of parts) {
+      const found = hay.indexOf(part, at);
+      if (found === -1) return false;
+      at = found + part.length;
+    }
+    return true;
+  };
+  // **这一段在断言「某条用例守着某件事」时（规则 B 命中），锚必须落在某一条用例的
+  // 标题里**（评审 I7 的推广，理由见 `testTitles()`）。
+  //
+  // **只对断言性的那一类收紧，是刻意的**：本仓也有大量**描述性**指向
+  //（「观测形态照抄 X 的 `fakeCtx()`」这种），它们指的是一段代码或一段说明，
+  // 不是一条用例，要求它们指向用例标题是把判据用错了地方。
+  // 分界线用的就是规则 B 自己那条——**你声称它守着什么，你就得说出是哪一格。**
+  if (mustNameACase && /\.test\.ts$/.test(target)) {
+    return testTitles(target).some((t) => hit(squash(t)));
   }
-  return true;
+  return hit(squash(flatten(readFileSync(join(ROOT, target), "utf8"))));
+}
+
+/**
+ * 目标测试文件里所有用例/分组的**标题字符串**。
+ *
+ * ⚠️ **为什么不能拿整份文件当干草堆**（评审 I7 的推广，本任务实测）：
+ * `anchorMatches` 原来是在**整文件压平后**做子串匹配，于是**锚只要在目标文件的
+ * 任何地方出现过就算数——包括那个文件自己的注释**。本仓的写法恰恰爱在用例上方
+ * 的说明里把用例名再复述一遍，于是：**把被指向的那条 `it()` 整个改名，门禁照样绿**
+ * （实测两处：`tests/unit/admin/key-view.test.ts` 的「maskKey 的边界」与
+ * `tests/contract/admin-events.test.ts` 的「fetch 路径仍然受最小间隔节流」，
+ * 改名后 `EXIT=0`）。
+ * 那是**形状断言冒充行为断言**：满足了语法、消掉了红，一条腐烂都检测不出。
+ *
+ * 现在锚必须落在 `it(` / `test(` / `describe(` 的标题字面量里——那才是
+ * 「这条断言由那一条用例守着」这句话真正指的东西。
+ *
+ * **它做不到什么，明写**：标题是拼出来的（模板插值、变量拼接）时，插值那一段
+ * 不在字面量里，锚就得避开它；`it.each` 的 `$why` 这类占位符同理。
+ */
+function testTitles(target) {
+  const src = readFileSync(join(ROOT, target), "utf8");
+  const out = [];
+  const re = /\b(?:it|test|describe)(?:\.each\([\s\S]*?\)|\.\w+)?\s*\(\s*(["'`])/g;
+  for (let m = re.exec(src); m !== null; m = re.exec(src)) {
+    const quote = m[1];
+    const from = m.index + m[0].length;
+    const end = closingQuote(src, from, quote);
+    if (end !== -1) out.push(src.slice(from, end));
+  }
+  return out;
 }
 
 function walk(dir) {
@@ -156,11 +200,41 @@ function walk(dir) {
 
 /**
  * 抠出注释块。返回 `{ text, line }`——`line` 是块的起始行号（1 基）。
+ * 第二个返回值 `unterminated` 是「扫到文件尾还没闭合的块注释」的起始行号，
+ * 有值就是**报错**，见下面「为什么它必须报错」。
  *
- * ⚠️ **这是一个很粗的扫描器，边界写在这里**：它认 `/* … *\/` 块与 `//` 行，
- * 并且在判 `//` 之前先把 `://`（URL 里的那个）抠掉。它**不**解析字符串字面量，
- * 所以一个含 `/*` 的字符串会被误当成注释开头。今天仓里没有这种写法
- *（元测试里有一格专门钉住这条边界）。真要写，请在这里说明并调整判据。
+ * ⚠️ **它是逐字符扫的，会跳过字符串字面量（`'` / `"` / 反引号，含跨行模板）。**
+ * 这一条不是锦上添花——**第一版不解析字符串字面量，那是一个会让整道门禁静默失明
+ * 的洞**：`app.get("/admin/*", handler)` 里那个 `"/admin/*"` 含有 `/*`，第一版把它
+ * 当成块注释开头，一路吞到文件尾都没等到 `*\/`，于是**从那一行往下的全部内容
+ * 直接从校验范围里消失，而门禁照常打印 ✅**。实测：同一条坏指向插在
+ * `src/ui/serve.ts` 那一行**之后** ⇒ `EXIT=0` 且打印「281 处全部解析得开」；
+ * 插在**之前** ⇒ `EXIT=1`。
+ *
+ * ⚠️ **第一版的注释还写着「今天仓里没有这种写法」——那句话是假的，仓里有 4 处**
+ * （`tests/contract/auth.test.ts:7` / `src/http/app.ts:175` /
+ * `src/http/admin/router.ts:169` / `src/ui/serve.ts:85`），合计让 **136 行**
+ * 脱离校验。最要命的是 `router.ts` 那一行本身就是
+ * 「新增任何 /admin/api/* 端点都必须挂在这一行之后」——**一句注释里写了那个
+ * 通配符，就把它下面整张路由表从门禁眼前抹掉了**，而后面几个任务要加的端点
+ * 全在那之后。**这正是本仓记了二十余次的「注释里写下一句假断言」，
+ * 而这一次它出现在专治这件事的那道门禁自己身上。**
+ *
+ * **为什么未闭合必须报错而不是静默丢弃**：第一版扫到文件尾时 `buf` 里攒着的东西
+ * 被直接丢掉，没有任何信号。凡是"解析失败就当没看见"的门禁，失效时都长得和通过
+ * 一模一样。现在它 `EXIT=1` 并指出是哪一行开的头。
+ *
+ * ⚠️ **字符串状态刻意只在「一行之内」有效，绝不跨行传递**——这一条是踩出来的：
+ * 第一版的修法带了跨行的模板字面量状态，结果本文件自己第 277 行那个
+ * **正则字面量** `` /`/g `` 里的反引号被当成模板开头，一路吞掉下面 20 行，
+ * 把 `IGNORE_MARKER` 那整段说明（含它的豁免标记）从扫描结果里抹掉了
+ * ——**修一个失明修出另一个失明**。跨行状态要正确就必须区分「除号 / 正则字面量」，
+ * 那要跟踪上一个有效 token，复杂度和出错面都不值。
+ *
+ * ⇒ 现在：引号没在同一行闭合 ⇒ **这一行剩下的当字符串处理，状态到行尾为止清零**。
+ * 代价明写：**跨行的模板字面量内部如果写了 `//`，会被误当成注释**。
+ * 那是**误报**（多校验一段），不是漏报——而这道门禁一旦漏报就长得和通过一模一样，
+ * 两者的代价差一个量级。今天全仓跑下来零误报。
  */
 function commentBlocks(src) {
   const out = [];
@@ -170,31 +244,51 @@ function commentBlocks(src) {
   let start = 0;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
+    let j = 0;
+    // 块注释**跨行**：先把这一行里属于上一个块的部分吃掉。
+    // （只有块注释保留跨行状态，理由见上面那段 ⚠️。）
     if (inBlock) {
-      buf.push(raw);
-      if (raw.includes("*/")) {
-        out.push({ text: buf.join("\n"), line: start });
-        inBlock = false;
-        buf = [];
-      }
-      continue;
+      const end = raw.indexOf("*/");
+      if (end === -1) { buf.push(raw); continue; }
+      buf.push(raw.slice(0, end + 2));
+      out.push({ text: buf.join("\n"), line: start });
+      inBlock = false;
+      buf = [];
+      j = end + 2;
     }
-    if (raw.includes("/*")) {
-      start = i + 1;
-      buf = [raw];
-      if (raw.includes("*/", raw.indexOf("/*") + 2)) {
-        out.push({ text: raw, line: start });
-        buf = [];
-      } else {
-        inBlock = true;
+    for (; j < raw.length; j++) {
+      const c = raw[j];
+      if (c === "'" || c === '"' || c === "`") {
+        const end = closingQuote(raw, j + 1, c);
+        // 没闭合（跨行模板、或正则字面量里的引号）：这一行剩下的都当字符串，
+        // **不往下一行传递任何状态**。
+        if (end === -1) break;
+        j = end;
+        continue;
       }
-      continue;
+      if (c === "/" && raw[j + 1] === "/") {
+        out.push({ text: raw.slice(j), line: i + 1 });
+        break;
+      }
+      if (c === "/" && raw[j + 1] === "*") {
+        const end = raw.indexOf("*/", j + 2);
+        if (end === -1) { inBlock = true; start = i + 1; buf = [raw.slice(j)]; break; }
+        out.push({ text: raw.slice(j, end + 2), line: i + 1 });
+        j = end + 1;
+        continue;
+      }
     }
-    const noUrl = raw.replace(/[a-z]+:\/\//gi, "");
-    const at = noUrl.indexOf("//");
-    if (at !== -1) out.push({ text: noUrl.slice(at), line: i + 1 });
   }
-  return out;
+  return { blocks: out, unterminated: inBlock ? start : null };
+}
+
+/** 从 `from` 起找到第一个未被 `\` 转义的 `quote`，找不到回 -1。 */
+function closingQuote(raw, from, quote) {
+  for (let k = from; k < raw.length; k++) {
+    if (raw[k] === "\\") { k++; continue; }
+    if (raw[k] === quote) return k;
+  }
+  return -1;
 }
 
 /** 连续的 `//` 行合成一段：跨行的断言（"由 X\n// 那一格钉着"）要能被规则 B 看见。 */
@@ -328,7 +422,16 @@ for (const dir of SCAN_DIRS) {
       continue;
     }
 
-    for (const wholeBlock of mergeAdjacent(commentBlocks(src))) {
+    const scanned = commentBlocks(src);
+    // **解析失败必须是红的，不能是静默的。** 未闭合的块注释意味着从那一行到文件尾
+    // 全部脱离校验——第一版把这种情况直接丢掉，失效时和通过长得一模一样。
+    if (scanned.unterminated !== null) {
+      errors.push(
+        `${rel}:${scanned.unterminated} 有一个块注释一直到文件尾都没闭合，`
+        + `从那一行往下的内容全部没有被校验——先把它闭合，或者来改 commentBlocks() 的扫描判据`,
+      );
+    }
+    for (const wholeBlock of mergeAdjacent(scanned.blocks)) {
       // **逐段豁免**：标记只放行它所在的那一段（到下一个空注释行为止），
       // 同一块注释里其余的段照常校验。
       const { runs, markers } = splitByIgnore(wholeBlock);
@@ -348,7 +451,8 @@ for (const dir of SCAN_DIRS) {
         if (lineNo === null) {
           // 名字锚（可选）：`path「某某」`。在**压平后**的文本上找，见 flatten()。
           const anchor = nameAnchorAfter(flat, target);
-          if (anchor !== null && !anchorMatches(target, anchor)) {
+          const claims = CLAIM_MARKERS.some((k) => block.text.includes(k));
+          if (anchor !== null && !anchorMatches(target, anchor, claims)) {
             errors.push(`${where} 指向 ${target}「${anchor}」，但那段文字不在那个文件里`);
           }
           continue;

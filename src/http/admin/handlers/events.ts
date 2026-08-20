@@ -112,6 +112,15 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
     // 276,480 次/天 = 包线 70,560 的 3.9 倍，且默认「全部级别」档位下不会自愈）。
     // 经过 `narrowShard` 之后 `items[0].ts` 必然已经是有限数字，**但契约要被钉住
     // 而不是被推理保证**：这一行与那次窄化是两道独立的闸，删掉任何一道另一道都还在。
+    //
+    // ⚠️ **这里用 `Number.isFinite` 而不是 `typeof === "number"`，实质的那一半在
+    // `isEventEntry` 里，不在这一行**（评审 m2）：把这一行换成 `typeof` 判据，
+    // 端到端**一条用例都不会红**——`NaN`/`±Infinity` 两种写法下都被 `c.json`
+    // 序列化成 `null`，前端看到的东西一模一样。真正让 `NaN` 进不来的是窄化那一侧
+    // （`src/core/admin/event-entry.ts` 的 `isEventEntry` 用的就是 `Number.isFinite`，
+    // 由 `tests/unit/admin/event-entry.test.ts` 的
+    // 「ts 是 NaN / Infinity / -Infinity 的条目一样被丢掉」钉住）。
+    // 这一行保持同一个判据是为了两道闸口径一致，**不是因为它自己抓得住什么**。
     const head = items[0];
     const cursor = head !== undefined && Number.isFinite(head.ts) ? head.ts : null;
 

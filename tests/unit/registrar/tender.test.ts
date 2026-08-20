@@ -220,6 +220,17 @@ describe("tendOnce", () => {
     const all = await repo.all();
     expect(all).toHaveLength(1);
     expect(all[0]!.key).toBe("sk-from-fallback");
+
+    // **战绩必须记在真正铸出来的那条通道名下**（评审 I8）。
+    // 防住的真实故障：`minted` 只有总数，而 `minted++` 发生在 `for (const ch of chain)`
+    // 里——**一轮全靠备通道铸出来时，总数记在谁名下是看不出来的**。没有这个字段，
+    // 面板只能拿 `primaryChannel` 去顶，于是备通道的战绩被持续记到主通道头上，
+    // **与「两条邮箱通道完全平级」那条硬约束正面冲突**。
+    // 变红条件：`mintedByChannel[ch]` 写成 `mintedByChannel[primary]`。
+    expect(out.mintedByChannel, "备通道铸出来的 key 被记到主通道名下了")
+      .toEqual({ moemail: 1 });
+    expect(out.primaryChannel, "主通道字段照常是主通道 —— 它回答的是另一个问题")
+      .toBe("yyds");
   });
 
   it("主通道收不到验证码时不会在通道内换域名死等（单次尝试只烧一份 codeTimeoutMs 的预算）", async () => {

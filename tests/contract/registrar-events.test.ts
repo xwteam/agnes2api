@@ -3,6 +3,9 @@ import workerEntry from "../../src/entry/worker.js";
 import type { Env } from "../../src/entry/worker.js";
 import { TEND_HISTORY_KEY, type TendRecord } from "../../src/core/admin/tend-history.js";
 import { WORKER_ROUND_BUDGET_MS } from "../../src/core/registrar/types.js";
+import { KvStorage } from "../../src/adapters/storage-kv.js";
+import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
 
 /**
  * 防住的真实故障：`registrar.*` 事件产出了、却没落库，于是事件板块里一条补池事件
@@ -92,14 +95,27 @@ function fakeCtx(): { ctx: ExecutionContext; waited: Array<Promise<unknown>> } {
   return { ctx, waited };
 }
 
-/** 跑一轮 Cron，并把 `ctx.waitUntil` 收到的 promise 全部 await 完。 */
-async function runRound(store: Map<string, string>, counts?: KvCounts, extra: Record<string, unknown> = {}) {
+/**
+ * 跑一轮 Cron，并把 `ctx.waitUntil` 收到的 promise 全部 await 完。
+ * `hooks` 用来在替身存储的某个操作上注入故障（`tendOnce` 抛错、`delete` 抛错）。
+ */
+async function runRound(
+  store: Map<string, string>,
+  counts?: KvCounts,
+  extra: Record<string, unknown> = {},
+  hooks: { failDelete?: boolean } = {},
+) {
   const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   try {
     const { ctx, waited } = fakeCtx();
-    await workerEntry.scheduled!(controller(), env(store, counts, extra), ctx);
+    const e = env(store, counts, extra);
+    if (hooks.failDelete) {
+      const kv = e.POOL as unknown as { delete: (k: string) => Promise<void> };
+      kv.delete = async () => { throw new Error("delete 配额用光了"); };
+    }
+    await workerEntry.scheduled!(controller(), e, ctx);
     await Promise.all(waited);
     return { waited };
   } finally {
@@ -179,7 +195,7 @@ describe("注册机事件落库（两种运行时各跑一遍）", () => {
     expect(history.length).toBe(1);
     expect(history[0]!.trigger).toBe("cron");
     expect(history[0]!.skipped).toBe(false);
-    expect(history[0]!.channel).toBe("yyds");
+    expect(history[0]!.primaryChannel).toBe("yyds");
     // 预算连一次尝试都装不下 ⇒ 一次都没开始 ⇒ 三个数都是 0，failures 也是空的。
     // **这正是那条 error 事件存在的全部理由**：光看这份历史看不出哪里不对。
     expect(history[0]!.attempted).toBe(0);
@@ -274,5 +290,157 @@ describe("注册机事件落库（两种运行时各跑一遍）", () => {
       storedEvents(store).map((e) => e.event),
       "这一批事件被静默吞掉了 —— 缓冲先清空、异常才发生",
     ).toContain("registrar.round_budget_impossible");
+  });
+
+  /**
+   * **C1：整轮抛错的那一轮，事件与历史都必须有。**
+   *
+   * 防住的真实故障（评审 C1 实测）：`tendOnce` 一抛，`recordRound` 整个被跳过
+   *（它排在 `try` 里、在 `tendOnce` 之后），而 `catch` 里原来是**裸
+   * `console.error`**、进不了事件缓冲 ⇒ `flush()` 首行就 return。实测结果是
+   * `{"events": [], "history": null, "allKeys": ["pool:index"]}`——
+   * **面板上这一轮什么都没有，与「注册机根本没跑」逐字节不可区分**，
+   * 正是本任务开篇引的那条 P3b「实测为零」的同一形态。
+   *
+   * 变红条件：`catch` 里退回裸 `console.error`（两件事任删其一都红）。
+   *
+   * 造抛错的办法：把 `pool:index` 写成一个会让 `repo.all()` 炸掉的值——
+   * 走的是**真**入口、**真** `tendOnce`，不 mock。
+   */
+  it("整轮抛错时：event: 里有 registrar.round_failed，tend:history 里有一条 round_crashed", async () => {
+    const store = new Map<string, string>();
+    // `reconcileIndex` 那一步会先把索引修好，所以要在它之后才生效的地方下手：
+    // 让 KV 的 get 对 `key:` 前缀抛错 —— `tendOnce` 第一件事就是 `repo.all()`。
+    const counts: KvCounts = { get: 0, put: 0, delete: 0, list: 0 };
+    const e = env(store, counts);
+    // `tendOnce` 第一件事是 `repo.all()`。`buildTendDeps` 建 repo 时
+    // `cacheTtlMs: 0` ⇒ 直接走 `loadAll()`：读 `pool:index`，读不出来时**回落到
+    // `list("key:")`**。两条路都堵上，`all()` 才会真的把异常抛出来。
+    const kv = e.POOL as unknown as {
+      get: (k: string) => Promise<unknown>; list: (o: unknown) => Promise<unknown>;
+    };
+    const origGet = kv.get.bind(kv);
+    kv.get = async (k: string) => {
+      if (k === "pool:index") throw new Error("存储在补池中途炸了");
+      return origGet(k);
+    };
+    kv.list = async () => { throw new Error("list 配额也用光了"); };
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const { ctx, waited } = fakeCtx();
+      await workerEntry.scheduled!(controller(), e, ctx);
+      await Promise.all(waited);
+    } finally {
+      errSpy.mockRestore(); warnSpy.mockRestore(); logSpy.mockRestore();
+    }
+
+    expect(
+      storedEvents(store).map((ev) => ev.event),
+      "抛错那一轮一条事件都没落库 —— 与「注册机根本没跑」不可区分",
+    ).toContain("registrar.round_failed");
+
+    const history = storedHistory(store);
+    expect(history.length, "抛错那一轮在补池历史上没有占一格").toBe(1);
+    expect(history[0]!.failures.map((f) => f.reason)).toEqual(["round_crashed"]);
+    expect(history[0]!.minted).toBe(0);
+    expect(history[0]!.attempted).toBe(0);
+    expect(
+      history[0]!.skipped,
+      "`skipped` 有且只有一个含义（注册机关着），拿它表示「崩了」就是伪造",
+    ).toBe(false);
+  });
+
+  /**
+   * **I5：释放补池锁失败这件事，必须进事件板块。**
+   *
+   * 它意味着下一次 Cron 要空等到锁自然过期（最长 15 分钟）才肯干活——正是运维
+   * 要在事件板块里看到的那类事。原来它走裸 `console.warn`，根本进不了缓冲。
+   *
+   * **这一格同时是 `finally` 里 flush 排在最后的唯一守卫**：这条事件在释放锁
+   * **之后**才产生，flush 排在前面就永远赶不上它。
+   * 变红条件：① `lock_release_failed` 退回裸 `console.warn`；② 把 `await deps.flush()`
+   * 挪到释放锁之前。
+   */
+  it("释放补池锁失败时，那条事件仍然落得了盘（flush 排在释放锁之后）", async () => {
+    const store = new Map<string, string>();
+    await runRound(store, undefined, {}, { failDelete: true });
+    expect(
+      storedEvents(store).map((ev) => ev.event),
+      "释放锁失败只打了 console.warn，或者 flush 排在了释放锁之前",
+    ).toContain("registrar.lock_release_failed");
+  });
+
+  /**
+   * **I4：`tend:history` 里被丢掉的畸形行必须留痕。**
+   *
+   * 这里是 `tend:history` **唯一的窄化点**——事件那一侧读路径每次都会独立报出
+   * `malformed`，而这份历史今天只有写侧一个人看得见它。丢掉它意味着**被外部
+   * 写坏的那几行在下一次补池时被永久抹掉，无事件、无 warn、无计数**，
+   * 等 Task 6 的读端点建好时证据早就没了。
+   * 变红条件：`appendHistory` 里那段 `narrowed.malformed > 0` 的上报被删掉。
+   */
+  it("tend:history 里有畸形行：丢掉它们的同时留下一条带计数的 warn 事件", async () => {
+    const store = new Map<string, string>();
+    store.set(TEND_HISTORY_KEY, JSON.stringify([null, { at: "坏的" }, { at: 1, trigger: "cron" }]));
+    await runRound(store);
+    const ev = storedEvents(store).find((x) => x.event === "registrar.history_malformed");
+    expect(ev, "三条读不得的记录被静默销毁了，一点痕迹都没有").toBeDefined();
+    expect((ev as unknown as { fields: { malformed: number } }).fields.malformed).toBe(3);
+    expect(storedHistory(store).length, "这一轮自己那条照常写进去").toBe(1);
+  });
+});
+
+/**
+ * **「每轮都健康时事件 sink 是 0」——五语言 DEPLOY.md 配额账里那一栏，做成用例。**
+ *
+ * ⚠️ **评审 I2：第一版把这句话写成无条件的，而它是有前提的。**
+ * 真正决定要不要 put 的是**这一轮的事件缓冲空不空**，不是「事件是不是
+ * `registrar.` 前缀」。而 `loadConfig` 有一条**逐轮都会打**的 warn：
+ * `TEND_INTERVAL_MS < MINT_BATCH × CODE_TIMEOUT_MS × 通道数`
+ *（`src/core/registrar/config.ts` 的 `interval_shorter_than_worst_round`，
+ * 默认 `5 × 120000 × 1 = 600000` ⇒ **任何低于 10 分钟的 `TEND_INTERVAL_MS` 都让
+ * 健康的一轮也写一次**）。这不是等量放大而是跳档：`TEND_INTERVAL_MS=300000`
+ * 全天 `80+96+288+288+288 = 1040`，**打穿 1,000**。
+ *
+ * 两格并排放，因为**单独看任何一格都会把那句话读成无条件的**。
+ */
+describe("健康的一轮写几次（配额账那一栏的前提）", () => {
+  /** 先往池子里塞一把 key，让 `need = targetKeys - available <= 0`（真·健康轮）。 */
+  async function seedHealthyPool(store: Map<string, string>) {
+    const repo = new KeyPoolRepo(new KvStorage(delayedKv(store, undefined, 0)), {
+      now: () => Date.now(), logger: NULL_LOGGER,
+    });
+    await repo.add("sk-seeded-key-for-healthy-round");
+  }
+
+  function eventPutCount(store: Map<string, string>) {
+    return [...store.keys()].filter((k) => k.startsWith("event:")).length;
+  }
+
+  it("默认配置下：健康的一轮一次事件都不写（配额账那一栏成立）", async () => {
+    const store = new Map<string, string>();
+    await seedHealthyPool(store);
+    // CODE_TIMEOUT_MS 用默认值 ⇒ 不触发 round_budget_impossible；
+    // TEND_INTERVAL_MS 用默认 1800000 ⇒ 不触发 interval_shorter_than_worst_round。
+    await runRound(store, undefined, { TARGET_KEYS: "1", CODE_TIMEOUT_MS: undefined });
+    expect(storedEvents(store), "健康的一轮不该产出任何事件").toEqual([]);
+    expect(eventPutCount(store), "健康的一轮不该写事件分片").toBe(0);
+    expect(storedHistory(store).length, "但补池历史照写 —— 它是无条件的那一项").toBe(1);
+    expect(storedHistory(store)[0]!.minted).toBe(0);
+  });
+
+  it("TEND_INTERVAL_MS 低于单轮最坏耗时：健康的一轮**也会**写一次（那句话的前提）", async () => {
+    const store = new Map<string, string>();
+    await seedHealthyPool(store);
+    await runRound(store, undefined, {
+      TARGET_KEYS: "1", CODE_TIMEOUT_MS: undefined, TEND_INTERVAL_MS: "300000",
+    });
+    expect(
+      storedEvents(store).map((e) => e.event),
+      "配置警告是逐轮打的，它一样会把缓冲填非空 ⇒ 一次 put",
+    ).toContain("registrar.interval_shorter_than_worst_round");
+    expect(eventPutCount(store), "「健康时是 0」在这个配置下不成立").toBeGreaterThan(0);
   });
 });

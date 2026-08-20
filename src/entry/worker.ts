@@ -129,6 +129,7 @@ export default {
 
     ctx.waitUntil(
       (async () => {
+        const roundStartedAt = Date.now();
         try {
           // 只有 Worker 形态传轮级预算：Cron 被平台中止时 mintOne 的 finally 不跑、
           // 邮箱漏删，必须靠「不启动跑不完的尝试」来避免。预算取值与理由见
@@ -148,22 +149,56 @@ export default {
             }
           }
         } catch (err) {
+          // **抛错的那一轮也必须在面板上占一格**（评审 C1）。
+          // 原来这里只有一行裸 `console.error`：它进不了事件缓冲 ⇒ `flush()` 首行
+          // 就 return；而 `recordRound` 排在 `tendOnce` 之后、一抛就整个跳过
+          // ⇒ **面板上这一轮什么都没有，与「注册机根本没跑」逐字节不可区分**。
+          // 实测：`{"events": [], "history": null}`。两件事都补：
+          // ① 事件走 `deps.logger`（fan-out 到 console + StoreLogger）；
+          // ② 补池历史补一条 `round_crashed`，让时间线上这一格自己说清楚。
+          // **原有的控制台行数一行都不减**：`ConsoleLogger` 那一路是排障的第一
+          // 现场，且 `[registrar]` 前缀由 `tests/unit/registrar/log-prefix.test.ts`
+          // 管着。落库是**加**出来的第二条路，不是替换。
           console.error("[registrar] 补池失败", err);
+          deps.logger.log({
+            level: "error", event: "registrar.round_failed",
+            msg: "补池整轮抛错中断，本轮没有产出；下一次 Cron 会重新开始",
+            fields: { error: err instanceof Error ? err.message : String(err) },
+          });
+          await deps.recordCrashedRound({
+            at: roundStartedAt, channel: deps.config.primary ?? "",
+            durationMs: Date.now() - roundStartedAt, trigger: "cron",
+          });
         } finally {
           // 锁必须释放，否则下一次 Cron 要空等到 TTL 到期才肯干活。释放本身
           // 失败也不能让这个后台任务以异常收场。
           try {
             await storage.delete(TEND_LOCK_KEY);
           } catch (err) {
+            // **走 `deps.logger` 而不是裸 `console.warn`**（评审 I5）：释放锁失败
+            // 恰恰是运维要在事件板块里看到的那类事——它意味着下一次 Cron 要空等
+            // 到锁自然过期（最长 15 分钟）才肯干活。
+            // **这也是下面那行 flush 必须排在最后的唯一真实理由**：这条事件是在
+            // 释放锁之后才产生的，flush 排在前面就永远赶不上它。
             console.warn("[registrar] 释放补池锁失败，最坏情况下要等锁自然过期", err);
+            deps.logger.log({
+              level: "warn", event: "registrar.lock_release_failed",
+              msg: "释放补池锁失败，最坏情况下要等锁自然过期（期间 Cron 触发会被跳过）",
+              fields: { error: err instanceof Error ? err.message : String(err) },
+            });
           }
           // **flush 必须是这个 finally 里的最后一件事。**
           // ⚠️ 计划 Step 6 写的是「先 flush 再释放锁」，理由是「释放锁失败会走
-          // catch，而事件正是要记录这件事」——**那个理由要求的恰恰是相反的顺序**：
-          // 先 flush 的话，flush 之后产生的任何事件（释放锁失败、写 tend:history
-          // 失败）都还留在缓冲里，而这一轮再也没有第二次落盘机会。这里按理由走，
-          // 不按那句话走。释放锁排在前面还有一层好处：它在挡着下一次 Cron，
-          // 早一点放开比晚一点好，而 flush 是一次可能很慢的 KV 写。
+          // catch，而事件正是要记录这件事」——**那个理由要求的恰恰是相反的顺序**。
+          // 按理由走，不按那句话走。
+          //
+          // ⚠️ **评审 I5 二审订正**：这个顺序**在上面那条 `lock_release_failed`
+          // 改走 `logger` 之前是没有东西可守的**——当时"释放锁失败"走裸
+          // `console.warn`（根本进不了缓冲）、"写 tend:history 失败"的
+          // `recordRound` 整个排在 `finally` 之前，两种顺序都赶得上，把 flush 挪回
+          // 释放锁之前**全套用例照样全绿**。现在那条事件是在释放锁之后产生的，
+          // 顺序第一次有了真实后果，并由 `tests/contract/registrar-events.test.ts` 的
+          // 「释放补池锁失败时……那条事件仍然落得了盘」钉住。
           await deps.flush();
         }
       })(),

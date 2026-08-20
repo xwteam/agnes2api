@@ -42,15 +42,16 @@ let view = [];
  * 换筛选级别时归零：那时视图是被整段重拉的，不是被清掉的。
  */
 let cleared = false;
-let lastStatus = {
-  dropped: null, budgetExhausted: null, truncated: null, buffered: null, cursorAhead: null, malformed: null,
-};
 /**
- * 最近一轮里后端吐的 `cursor` 是不是畸形（既不是有限数字也不是 `null`）。
- * **判据不在这里**，来自 `pure/events.mjs` 的 `cursorOutcome`；这个变量只负责把
- * 它带到轮询指示灯的 tooltip 上。
+ * 最近一次成功响应的自述状态。`cursorBroken` 不来自响应字段，来自
+ * `pure/events.mjs` 的 `cursorOutcome`（后端契约有没有被破坏是**前端判出来的**，
+ * 后端自己不会承认），但它与其余几项走同一条渲染路径：都由 `shouldWarn` 决定
+ * 黄条出不出现（评审 I6）。
  */
-let cursorBroken = false;
+let lastStatus = {
+  dropped: null, budgetExhausted: null, truncated: null, buffered: null,
+  cursorAhead: null, malformed: null, cursorBroken: false,
+};
 /** 最近一次成功响应里的本 isolate 分片 id（评审 M2），驱动轮询指示灯的提示文案。 */
 let lastShardId = null;
 /** 最近一次成功响应的生成时刻（评审 N1 [LOW]），同样只驱动轮询指示灯的提示文案。 */
@@ -95,9 +96,18 @@ function renderWarnings() {
   // 它就灭了。持续的跨 isolate 时钟偏移下它会跟着视图一起闪（亮一轮灭一轮），
   // 不是"持续亮着的告警"。**这一行本身没有任何自动化守护**（本仓无 DOM 测试通道，
   // 实测把它改成粘性全套用例照样全绿）；`tests/contract/events-cursor-heal.test.ts`
-  // 的「持续偏移下……黄条」钉住的是它的**输入**——后端 cursorAhead 字段逐轮交替这个根因。
+  // 的「交替命中两个时钟不同步的 isolate……不是永远卡在 15 秒」钉住的是它的**输入**
+  // ——后端 cursorAhead 字段逐轮交替这个根因。
+  // ⚠️ **这个锚是 P3c Task 1 改过的**：原文写的是「持续偏移下……黄条」，
+  // 那个文件里**根本没有**这个标题的用例，旧判据拿整份文件当干草堆才没抓住。
   nodes.warnCursorAhead.style.display = lastStatus.cursorAhead === true ? "" : "none";
   if (lastStatus.cursorAhead === true) nodes.warnCursorAhead.textContent = t("ev.warnCursorAhead");
+
+  // 评审 I6：后端契约被破坏（`cursor` 既不是有限数字也不是 null）。**上黄条，
+  // 不是只进 tooltip**——它意味着后端此刻正在违约、面板可能永远看不到新事件，
+  // 而一个悬停才看得见的提示把「面板在撒谎」降级成了「面板在小声说」。
+  nodes.warnCursorBroken.style.display = lastStatus.cursorBroken === true ? "" : "none";
+  if (lastStatus.cursorBroken === true) nodes.warnCursorBroken.textContent = t("ev.warnCursorBroken");
 }
 
 function renderPollIndicator() {
@@ -119,9 +129,6 @@ function renderPollIndicator() {
   if (lastStatus.malformed !== null && lastStatus.malformed > 0) {
     label += t("ev.pollStatus.malformedSuffix", { count: lastStatus.malformed });
   }
-  // 后端契约被破坏（`cursor` 既不是有限数字也不是 null）。原来这一支与"没有新
-  // 事件"合并，于是面板把它显示成"一切正常"——那是撒谎，而且是让人查不下去的那种。
-  if (cursorBroken) label += t("ev.pollStatus.cursorBrokenSuffix");
   // 评审 N1 [LOW]：`generatedAt` 是响应生成时刻，最小、低风险的消费方式——
   // 让 tooltip 报一句"数据截至几点"，运维不用另外去猜面板有没有卡住。
   if (lastGeneratedAt !== null) {
@@ -200,9 +207,9 @@ async function poll() {
     // 要不要清、把返回的下一轮状态整体收下。一个判据都不许再回到这个文件。
     const outcome = pollOutcome(pollState, items, body && body.cursor, lastStatus.cursorAhead);
     // 后端吐的 `cursor` 不是「有限数字或 null」——**保留游标，但把这件事说出去**。
-    // 判据在 `pure/events.mjs` 的 `cursorOutcome`，这里只是把它接到 tooltip 上
-    // （一个判据都不许回到这个文件，admin-ui/README.md 硬规则 1）。
-    cursorBroken = outcome.cursorBroken;
+    // 判据在 `pure/events.mjs` 的 `cursorOutcome` / `shouldWarn`，这里只是把它
+    // 塞进 `lastStatus`（一个判据都不许回到这个文件，admin-ui/README.md 硬规则 1）。
+    lastStatus = { ...lastStatus, cursorBroken: outcome.cursorBroken };
     if (outcome.resetView) view = [];
     view = mergeIntoView(view, items);
     // 视图里重新有内容了，「已清空」那句话就不再成立（它只描述"空是怎么来的"）。
@@ -342,10 +349,12 @@ export const eventsSection = {
     const warnBudget = el("p");
     const warnTruncated = el("p");
     const warnCursorAhead = el("p");
+    const warnCursorBroken = el("p");
     warnBanner.appendChild(warnDropped);
     warnBanner.appendChild(warnBudget);
     warnBanner.appendChild(warnTruncated);
     warnBanner.appendChild(warnCursorAhead);
+    warnBanner.appendChild(warnCursorBroken);
     section.appendChild(warnBanner);
 
     const tb = buildToolbar();
@@ -354,7 +363,10 @@ export const eventsSection = {
     const body = el("div", { class: "events-body" });
     section.appendChild(body);
 
-    nodes = { body, warnBanner, warnDropped, warnBudget, warnTruncated, warnCursorAhead, pollDot: tb.pollDot };
+    nodes = {
+      body, warnBanner, warnDropped, warnBudget, warnTruncated,
+      warnCursorAhead, warnCursorBroken, pollDot: tb.pollDot,
+    };
   },
 
   onShow() {

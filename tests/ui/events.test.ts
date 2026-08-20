@@ -231,7 +231,10 @@ describe("bufferStatus：dropped / budgetExhausted / truncated / buffered / curs
  * 标记消失"的用例——不是形状断言，是行为断言。
  */
 describe("shouldWarn：黄条是否出现，完全由后端字段驱动", () => {
-  const allClear = { dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: false };
+  const allClear = {
+    dropped: 0, budgetExhausted: false, truncated: false, buffered: 0,
+    cursorAhead: false, malformed: 0, cursorBroken: false,
+  };
 
   it("dropped=0 且 budgetExhausted=false 且 truncated=false 且 cursorAhead=false ⇒ 不警告（字段全为 false，标记消失）", () => {
     expect(shouldWarn(allClear)).toBe(false);
@@ -251,9 +254,25 @@ describe("shouldWarn：黄条是否出现，完全由后端字段驱动", () => 
   it("buffered 单独很大 ⇒ 不警告——单纯缓冲区里有事件是正常运行态，不占用黄条（评审 N1 的取舍）", () => {
     expect(shouldWarn({ ...allClear, buffered: 999 })).toBe(false);
   });
-  it("五项都是 null（没有数据）⇒ 不警告——不知道不等于有问题", () => {
-    expect(shouldWarn({ dropped: null, budgetExhausted: null, truncated: null, buffered: null, cursorAhead: null }))
-      .toBe(false);
+  it("全部是 null（没有数据）⇒ 不警告——不知道不等于有问题", () => {
+    expect(shouldWarn({
+      dropped: null, budgetExhausted: null, truncated: null, buffered: null,
+      cursorAhead: null, malformed: null, cursorBroken: null,
+    })).toBe(false);
+  });
+
+  /**
+   * **`cursorBroken=true` ⇒ 黄条**（评审 I6）。它比在座任何一条都更该在：
+   * 意味着后端**此刻正在违约**，游标推不动、面板可能**永远看不到新事件**；
+   * 而判据里那条 `cursorAhead` 反倒是会自愈的时钟纠纷。
+   * 第一版只把它接进 tooltip —— 等于把「面板在撒谎」降级成「面板在小声说」。
+   */
+  it("cursorBroken=true ⇒ 警告（评审 I6，即使其余项都是 false）", () => {
+    expect(shouldWarn({ ...allClear, cursorBroken: true })).toBe(true);
+  });
+
+  it("malformed 单独很大 ⇒ 不警告 —— 它恒为 0，挂上黄条只会多一条永远为假的分支", () => {
+    expect(shouldWarn({ ...allClear, malformed: 999 })).toBe(false);
   });
 });
 

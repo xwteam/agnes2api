@@ -15,7 +15,20 @@ import type { Logger } from "../../ports/logger.js";
  * `MintOutcome` 新增 reason 时编译期就提醒这里表态；如果对外的 `TendResult` 把
  * 类型信息退化成 string，P3 消费这份结构时就拿不到同样的穷尽保障了。
  */
-export type TendFailureReason = Extract<MintOutcome, { ok: false }>["reason"] | "provider_missing";
+export type TendFailureReason =
+  | Extract<MintOutcome, { ok: false }>["reason"]
+  | "provider_missing"
+  /**
+   * **整轮抛出了异常**（评审 C1）。与上面那些一样不是 `mintOne` 的产物：
+   * 它表示这一轮**根本没跑完**——`tendOnce` 在某处抛了，两个入口的 `catch` 接住。
+   *
+   * 加它的理由是一条实测出来的缺陷：抛错那一轮原来**什么记录都不产生**
+   *（`recordRound` 在 `try` 里、排在 `tendOnce` 之后，一抛就整个跳过；而 `catch`
+   * 里是裸 `console.error`，进不了事件缓冲 ⇒ `flush()` 首行就 return）。
+   * 于是面板上这一轮**与「注册机根本没跑」逐字节不可区分**——正是本任务开篇要
+   * 兑现的那半句验收在最该看见的那一轮上是零，也直接违反「绝不伪造」。
+   */
+  | "round_crashed";
 
 /**
  * `TendFailureReason` 的运行期表。类型是编译期的，枚举不出来，而 P3 的面板要按它
@@ -28,7 +41,7 @@ export type TendFailureReason = Extract<MintOutcome, { ok: false }>["reason"] | 
 export const TEND_FAILURE_REASONS = [
   "domain_blocked_all", "upstream_error", "code_timeout", "register_failed",
   "login_failed", "key_failed", "provider_error", "network_error",
-  "rate_limited", "provider_missing",
+  "rate_limited", "provider_missing", "round_crashed",
 ] as const satisfies readonly TendFailureReason[];
 
 type _NoMissingReason =
@@ -42,6 +55,17 @@ export interface TendResult {
   available: number;
   attempted: number;
   minted: number;
+  /**
+   * **逐通道的铸出数**（评审 I8）。`minted` 只有总数，而 `minted++` 发生在
+   * `for (const ch of chain)` 里——**一轮全靠备通道铸出来时，总数记在哪条通道
+   * 名下是看不出来的**。没有这个字段，面板就只能拿 `primaryChannel` 去顶，
+   * 于是备通道的战绩会被持续记到主通道头上，**与「两条邮箱通道完全平级」
+   * 那条硬约束正面冲突**。`failures` 早就是逐条带 `channel` 的，这里补齐产出侧。
+   *
+   * 没铸出来的通道**不出现在表里**（不是记 0）：`{}` 与 `{yyds: 0}` 的区别是
+   * 「这一轮没走到它」与「走到了但没成」，后者由 `failures` 说。
+   */
+  mintedByChannel: Record<string, number>;
   failures: Array<{ reason: TendFailureReason; channel: string }>;
   /**
    * 这一轮**开始**的时刻（`deps.now()`，不是结束时刻）。
@@ -52,8 +76,14 @@ export interface TendResult {
    * `summarizeFailures()` 当初被提到这里来的全部理由，见那个函数的说明。
    */
   at: number;
-  /** 这一轮走的主通道。`skipped`（注册机关着）时 `primary` 运行期是 `null`，记空串。 */
-  channel: string;
+  /**
+   * 这一轮走的**主**通道。`skipped`（注册机关着）时 `primary` 运行期是 `null`，记空串。
+   *
+   * ⚠️ **名字里的 `primary` 不能省**（评审 I8）：它原来叫 `channel`，而那个名字
+   * 会被下游读成「这一轮是谁干的」——**实际铸出来的可能是备通道**。
+   * 要回答「谁真的铸出来了」请读 `mintedByChannel`。
+   */
+  primaryChannel: string;
   /** 这一轮的墙钟耗时。**面板拿它区分「补池很快就返回了」与「跑满了预算」**。 */
   durationMs: number;
 }
@@ -116,8 +146,8 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   // 与"这一轮没发生"是两件事，前者必须能在时间线上占一格。
   if (!deps.config.enabled) {
     return {
-      skipped: true, available: 0, attempted: 0, minted: 0, failures: [],
-      at: startedAt, channel: "", durationMs: deps.now() - startedAt,
+      skipped: true, available: 0, attempted: 0, minted: 0, mintedByChannel: {}, failures: [],
+      at: startedAt, primaryChannel: "", durationMs: deps.now() - startedAt,
     };
   }
 
@@ -126,8 +156,8 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   const need = deps.config.targetKeys - available;
   if (need <= 0) {
     return {
-      skipped: false, available, attempted: 0, minted: 0, failures: [],
-      at: startedAt, channel: requirePrimary(deps.config), durationMs: deps.now() - startedAt,
+      skipped: false, available, attempted: 0, minted: 0, mintedByChannel: {}, failures: [],
+      at: startedAt, primaryChannel: requirePrimary(deps.config), durationMs: deps.now() - startedAt,
     };
   }
 
@@ -142,6 +172,7 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   const rounds = Math.min(need, deps.config.mintBatch);
   const roundStartedAt = now;
   const failures: TendResult["failures"] = [];
+  const mintedByChannel: Record<string, number> = {};
   let attempted = 0;
   let minted = 0;
 
@@ -221,6 +252,8 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
       if (out.ok) {
         await deps.repo.add(out.key);
         minted++;
+        // **记在真正铸出来的那条通道名下**（评审 I8），不是主通道。
+        mintedByChannel[ch] = (mintedByChannel[ch] ?? 0) + 1;
         break;
       }
 
@@ -295,8 +328,8 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   if (minted > 0) await reconcileAfterMint(deps);
 
   return {
-    skipped: false, available, attempted, minted, failures,
-    at: startedAt, channel: primary, durationMs: deps.now() - startedAt,
+    skipped: false, available, attempted, minted, mintedByChannel, failures,
+    at: startedAt, primaryChannel: primary, durationMs: deps.now() - startedAt,
   };
 }
 

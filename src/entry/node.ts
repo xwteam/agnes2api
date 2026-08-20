@@ -96,6 +96,7 @@ export async function main(env: Record<string, string | undefined> = process.env
       }
       if (!deps) return; // 注册机未启用：不触达邮箱/Agnes（对账已在上面做过）
 
+      const roundStartedAt = Date.now();
       try {
         const r = await tendOnce(deps);
         // 每轮汇总落进 `tend:history`（设计 §7.3）。与 Worker 同一份口径。
@@ -112,7 +113,22 @@ export async function main(env: Record<string, string | undefined> = process.env
         }
       } catch (err) {
         // 补池失败不该让网关进程崩掉——转发能力与补池能力是相互独立的。
+        // **但它必须在面板上占一格**（评审 C1）：原来这里只有一行裸
+        // `console.error`，它进不了事件缓冲 ⇒ `flush()` 首行就 return；而
+        // `recordRound` 排在 `tendOnce` 之后、一抛就整个跳过 ⇒ 面板上这一轮
+        // 什么都没有，**与「注册机根本没跑」逐字节不可区分**。
+        // 与 Worker 侧同一份口径，见那里的说明。
+        // **原有的控制台行数一行都不减**，见 worker.ts 同位置的说明。
         console.error("[registrar] 补池失败", err);
+        deps.logger.log({
+          level: "error", event: "registrar.round_failed",
+          msg: "补池整轮抛错中断，本轮没有产出；下一次调度会重新开始",
+          fields: { error: err instanceof Error ? err.message : String(err) },
+        });
+        await deps.recordCrashedRound({
+          at: roundStartedAt, channel: deps.config.primary ?? "",
+          durationMs: Date.now() - roundStartedAt, trigger: "cron",
+        });
       } finally {
         // **补池事件落盘。必须是这一轮的最后一件事**——上面 catch 里那条
         // 「补池失败」以及 `recordRound` 可能打出的 warn 都要赶上这一次落盘，

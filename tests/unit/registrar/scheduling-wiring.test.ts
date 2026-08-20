@@ -65,9 +65,9 @@ const { main } = await import("../../../src/entry/node.js");
 const worker = (await import("../../../src/entry/worker.js")).default;
 
 const RESULT: TendResult = {
-  skipped: false, available: 0, attempted: 0, minted: 0, failures: [],
-  // 本任务给 TendResult 加的三个字段（`tend:history` 要用）。手写字面量。
-  at: 1000, channel: "yyds", durationMs: 0,
+  skipped: false, available: 0, attempted: 0, minted: 0, mintedByChannel: {}, failures: [],
+  // 本任务给 TendResult 加的四个字段（`tend:history` 要用）。手写字面量。
+  at: 1000, primaryChannel: "yyds", durationMs: 0,
 };
 
 function deferred(): { promise: Promise<TendResult>; resolve: (v: TendResult) => void } {
@@ -432,6 +432,66 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
       tendOnceMock.mockReset();
     }
   });
+
+  /**
+   * **Node 侧那次 flush 必须被 `await`，不能是 fire-and-forget。**
+   *
+   * ⚠️ **这一格是评审替我撤销「登记不修」之后补的，成因如实登记**：上面那格用
+   * `waitFor(() => timers.length === 1)` 当观测点，而 `waitFor` 的轮询间隔足够
+   * 那次 fire-and-forget 的 fs 写完成 ⇒ **把 `await deps.flush()` 改成
+   * `void deps.flush()`，上面那格照样绿**。我当时把它登记成「观测点的时间分辨率
+   * 不够，属固有极限」——**那句话是错的：分辨率是夹具的性质，不是固有极限。**
+   *
+   * 修法是给**事件分片的写**注入一段真实延迟（80ms），比调度器重排那条链长得多。
+   * 于是"重排已经落地"这一刻，只有**真的 await 过**的那条路径才可能已经落盘。
+   *
+   * ⚠️ **不许改成纯顺序断言**（记录 `put` 与重排的先后）：`void flush()` 的
+   * `get→put` 与调度器 `readIntervalMs()` 那次读是同量级的微任务竞速，顺序本身
+   * 不确定，**未变异下会绿、变异下也会绿**。判据必须是**延迟**，不是顺序。
+   *
+   * 这是「双运行时对等——差异必须被断言而非容忍」里 Node 那一半最后一个没被
+   * 断言的口子（Worker 那一半由 `tests/contract/registrar-events.test.ts` 的
+   * 「waitUntil 的 promise 落定时事件已经落盘，不是之后某个时刻（真实异步延迟下可观测）」
+   * 用带 5ms 延迟的替身盖住）。
+   */
+  it("Node 侧：那次 flush 是被 await 的（事件写注入 80ms 延迟后仍然赶在重排之前落盘）", async () => {
+    tendOnceMock.mockImplementation(async (deps: unknown) => {
+      (deps as { logger: { log: (e: unknown) => void } }).logger.log({
+        level: "error", event: "registrar.round_budget_impossible", msg: "探针事件",
+      });
+      return RESULT;
+    });
+    const dir = mkdtempSync(join(tmpdir(), "a2a-sched-await-"));
+    const origPut = FileStorage.prototype.put;
+    const putSpy = vi.spyOn(FileStorage.prototype, "put").mockImplementation(
+      async function (this: FileStorage, k: string, v: unknown, e?: number) {
+        // 只拖慢**事件分片**那一次写：拖慢全部会把索引对账也拖进来，
+        // 那时红的可能是别的东西。
+        if (k.startsWith("event:")) await new Promise((r) => setTimeout(r, 80));
+        return origPut.call(this, k, v, e) as Promise<void>;
+      } as typeof FileStorage.prototype.put,
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const server = await main(nodeEnv({ DATA_DIR: dir }));
+    try {
+      await waitFor(() => tendOnceMock.mock.calls.length === 1);
+      await waitFor(() => timers.length === 1);
+      // **不额外等待**：重排一落地就查。fire-and-forget 的那 80ms 还没走完。
+      const storage = new FileStorage(dir);
+      expect(
+        (await storage.list("event:")).length,
+        "重排落地时事件还没落盘 ⇒ 那次 flush 没有被 await",
+      ).toBeGreaterThan(0);
+    } finally {
+      putSpy.mockRestore();
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      await close(server);
+      tendOnceMock.mockReset();
+    }
+  });
+
 });
 
 describe("I4 Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）", () => {
@@ -579,8 +639,8 @@ describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
   // fixture 刻意用**两种不同的 reason + 两条不同的通道**，且各自次数不同（3 vs 1）：
   // 只打第一条、只打通道、只打 reason、丢掉计数，任何一种偷工都会被抓出来。
   const FAILED: TendResult = {
-    skipped: false, available: 0, attempted: 4, minted: 0,
-    at: 1000, channel: "yyds", durationMs: 0,
+    skipped: false, available: 0, attempted: 4, minted: 0, mintedByChannel: {},
+    at: 1000, primaryChannel: "yyds", durationMs: 0,
     failures: [
       { reason: "register_failed", channel: "yyds" },
       { reason: "register_failed", channel: "yyds" },
@@ -634,8 +694,8 @@ describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
 
   it("名额全部铸出时不打这条 warn（不是无条件噪音）", async () => {
     tendOnceMock.mockResolvedValue({
-      skipped: false, available: 0, attempted: 2, minted: 2, failures: [],
-      at: 1000, channel: "yyds", durationMs: 0,
+      skipped: false, available: 0, attempted: 2, minted: 2, mintedByChannel: { yyds: 2 }, failures: [],
+      at: 1000, primaryChannel: "yyds", durationMs: 0,
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
