@@ -95,10 +95,29 @@ export function toast(message, kind, opts) {
 /** 弹窗容器 `aria-labelledby` 用的 id 前缀，逐个自增，不许两个同时打开的弹窗撞号。 */
 let modalSeq = 0;
 
-/** 一棵子树里"可以拿到键盘焦点"的元素，按 DOM 顺序。焦点陷阱与初始焦点都靠它。 */
+/**
+ * 一棵子树里"可以拿到键盘焦点"的元素，按 DOM 顺序。焦点陷阱与初始焦点都靠它。
+ *
+ * ⚠️⚠️ **第一版写的是 `root.walk()`，那是测试夹具（`tests/helpers/fake-dom.ts`）
+ * 自己发明的方法，真实 `HTMLElement` 上根本没有这个方法**——DOM 垫片里的
+ * `FakeElement` 恰好也实现了 `.walk()`，于是全部 DOM 测试与本文件自己的
+ * `querySelectorAll` 写法看着都对，`pnpm test` 全绿，**但在真实浏览器里一按 Tab
+ * 就在控制台抛 `TypeError: root.walk is not a function`**，焦点陷阱整个不生效
+ * ——这正是 `tests/helpers/fake-dom.ts` 文件头点名的边界②"它不覆盖真实浏览器的
+ * 一切"，人工冒烟（Playwright 打真实浏览器）当场抓到。现在改成只用 `.children` +
+ * `.tagName` 手写递归——这两个是 DOM 标准属性，真实元素与 `FakeElement` 都有；
+ * `tagName` 真实浏览器上恒为大写（`"BUTTON"`），这里统一转小写再比较。
+ */
 function focusableIn(root) {
   const FOCUSABLE_TAGS = new Set(["button", "input", "textarea", "select", "a"]);
-  return root.walk().filter((node) => FOCUSABLE_TAGS.has(node.tagName) && !node.disabled);
+  const out = [];
+  const visit = (node) => {
+    const tag = String(node.tagName || "").toLowerCase();
+    if (FOCUSABLE_TAGS.has(tag) && !node.disabled) out.push(node);
+    for (const child of node.children) visit(child);
+  };
+  visit(root);
+  return out;
 }
 
 /**
