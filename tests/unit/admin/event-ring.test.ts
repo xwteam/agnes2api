@@ -84,10 +84,56 @@ describe("shardKey / candidateKeys：有界且可从时钟直接算出来（C2 �
     expect(keys).toEqual(["event:10:0", "event:10:1", "event:11:0", "event:11:1"]);
   });
 
-  it("暖读的候选键数与 EVENT_WINDOW_RETAIN 无关（这正是稳态成本从随历史深度增长降到常数的证据）", () => {
+  it("after 与 now 在同一个窗口内（暖读稳态、游标新鲜）时只有 EVENT_SLOTS 个候选键", () => {
     const now = 10_000 * EVENT_WINDOW_MS + 1000; // 很晚的一个窗口，模拟部署已经跑了很久
     const after = 10_000 * EVENT_WINDOW_MS + 500; // 仍在同一个窗口
     expect(candidateKeys(now, after).length).toBe(EVENT_SLOTS);
+  });
+
+  /**
+   * **评审 C4/C4b：这是取代原来那条「暖读候选键数与 EVENT_WINDOW_RETAIN 无关」用例
+   * 的版本。原用例是本项目登记的第五种假阳性**——它把 `now` 推到第 10,000 个窗口，
+   * 却把 `after` **钉在同一个窗口里**，唯一能让候选键数增长的自由度（`after` 相对
+   * `now` 的陈旧程度）被按住了，用例名字声称的性质（"与保留窗口数无关"）比用例体
+   * 实际检验的性质（"两者在同一个窗口时是 2 个"）强得多——它只能证明"新鲜游标下
+   * 候选键数很小"，证明不了"陈旧游标下候选键数不会爆炸"，而后者才是 C4/C4b 真正
+   * 要守住的性质。
+   *
+   * 这条改成让 `after` **真的陈旧**（比 `now` 早 100 个窗口，远超 `EVENT_WINDOW_RETAIN`
+   * 的 24），断言候选键数被钳位在 `EVENT_WINDOW_RETAIN × EVENT_SLOTS`，**不会**
+   * 随陈旧程度继续增长——这正是评审实测出"单次请求 99 万次 get"的那个口子，
+   * 也是这条用例现在真正在守的东西。
+   */
+  it("after 严重陈旧（远超保留窗口数）时，候选键数被钳位，不随陈旧程度继续增长（评审 C4/C4b）", () => {
+    const now = 10_000 * EVENT_WINDOW_MS + 1000;
+    const veryStaleAfter = 9_900 * EVENT_WINDOW_MS; // 比 now 早 100 个窗口，远超 RETAIN=24
+    const keys = candidateKeys(now, veryStaleAfter);
+    expect(keys.length).toBe(EVENT_WINDOW_RETAIN * EVENT_SLOTS);
+    expect(keys.length).toBe(48);
+  });
+
+  it("after=0（评审 C4 点名的敌意/极端输入）时，候选键数与冷读完全相同，恰好 48（手写字面量）", () => {
+    const now = 10_000 * EVENT_WINDOW_MS + 1000;
+    expect(candidateKeys(now, 0).length).toBe(48);
+    expect(candidateKeys(now, 0)).toEqual(candidateKeys(now, null));
+  });
+
+  it("after 是很大的负数（评审 C4 点名的敌意输入）时，candidateKeys 自身也钳位安全（不依赖 HTTP 层已经拒绝负数这个前提）", () => {
+    const now = 10_000 * EVENT_WINDOW_MS + 1000;
+    expect(candidateKeys(now, -1e11).length).toBe(48);
+  });
+
+  /**
+   * **评审 C6**：`after` 所在的窗口比 `now` 所在的窗口还晚（时钟回拨 / isolate 间
+   * 时钟偏移写出的未来 `ts` 被当成 cursor）时，扫描区间是空的——这不是一个"读到
+   * 0 条事件"的正常结果，`events.ts` 的 `cursorAhead` 字段就是为了让调用方能把
+   * 这种情况和"确实没有新事件"区分开。这里先钉住 `candidateKeys` 本身的行为：
+   * 空区间不会抛错、也不会因为 `fromWindow > nowWindow` 而反向遍历出奇怪的结果。
+   */
+  it("after 领先于 now（游标在未来）时返回空数组，不抛错、不反向遍历", () => {
+    const now = 10_000 * EVENT_WINDOW_MS;
+    const futureAfter = now + 10 * EVENT_WINDOW_MS;
+    expect(candidateKeys(now, futureAfter)).toEqual([]);
   });
 });
 

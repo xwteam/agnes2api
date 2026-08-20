@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   EVENTS_POLL_MIN_MS, EVENTS_POLL_MAX_MS, LEVELS,
   levelLabelKey, effectiveLevel, eventLevelLabelKey, levelBadgeClass,
-  eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, bufferStatus,
+  eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, generatedAtOf, bufferStatus,
   shouldWarn, nextAfter, nextPollDelayMs, pollIndicatorState, pollIndicatorLabelKey, matchesSearch,
   formatFields, buildDetailText, groupEvents, orderForDisplay, mergeIntoView,
 } from "../../admin-ui/js/pure/events.mjs";
@@ -139,17 +139,42 @@ describe("shardIdOf：本 isolate 的分片 id（评审 M2），绝不伪造", (
   });
 });
 
-describe("bufferStatus：dropped / budgetExhausted / truncated 绝不伪造", () => {
+describe("generatedAtOf：响应生成时刻（评审 N1 [LOW]），绝不伪造", () => {
+  it("缺失/畸形时是 null", () => {
+    for (const bad of [null, undefined, {}, { generatedAt: "4000" }, { generatedAt: NaN }]) {
+      expect(generatedAtOf(bad), String(bad)).toBeNull();
+    }
+  });
+  it("有数据时透传，含真实的 0", () => {
+    expect(generatedAtOf(body)).toBe(4000);
+    expect(generatedAtOf({ generatedAt: 0 })).toBe(0);
+  });
+});
+
+describe("bufferStatus：dropped / budgetExhausted / truncated / buffered / cursorAhead 绝不伪造", () => {
   it("缺失/畸形时逐项 null", () => {
-    for (const bad of [null, undefined, {}, { dropped: "5" }, { budgetExhausted: "yes" }, { truncated: "yes" }]) {
-      expect(bufferStatus(bad), String(bad)).toEqual({ dropped: null, budgetExhausted: null, truncated: null });
+    for (const bad of [
+      null, undefined, {}, { dropped: "5" }, { budgetExhausted: "yes" }, { truncated: "yes" },
+      { buffered: "3" }, { cursorAhead: "yes" },
+    ]) {
+      expect(bufferStatus(bad), String(bad)).toEqual({
+        dropped: null, budgetExhausted: null, truncated: null, buffered: null, cursorAhead: null,
+      });
     }
   });
   it("有数据时逐项透传，含真实的 0/false", () => {
-    expect(bufferStatus({ dropped: 0, budgetExhausted: false, truncated: false }))
-      .toEqual({ dropped: 0, budgetExhausted: false, truncated: false });
-    expect(bufferStatus({ dropped: 50, budgetExhausted: true, truncated: true }))
-      .toEqual({ dropped: 50, budgetExhausted: true, truncated: true });
+    expect(bufferStatus({ dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: false }))
+      .toEqual({ dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: false });
+    expect(bufferStatus({ dropped: 50, budgetExhausted: true, truncated: true, buffered: 7, cursorAhead: true }))
+      .toEqual({ dropped: 50, budgetExhausted: true, truncated: true, buffered: 7, cursorAhead: true });
+  });
+  it("buffered 单独缺失/畸形时只有它是 null，其余字段不受影响（评审 N1）", () => {
+    expect(bufferStatus({ dropped: 0, budgetExhausted: false, truncated: false, buffered: "3", cursorAhead: false }))
+      .toEqual({ dropped: 0, budgetExhausted: false, truncated: false, buffered: null, cursorAhead: false });
+  });
+  it("cursorAhead 单独缺失/畸形时只有它是 null，其余字段不受影响（评审 C6）", () => {
+    expect(bufferStatus({ dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: 1 }))
+      .toEqual({ dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: null });
   });
 });
 
@@ -158,20 +183,29 @@ describe("bufferStatus：dropped / budgetExhausted / truncated 绝不伪造", ()
  * 标记消失"的用例——不是形状断言，是行为断言。
  */
 describe("shouldWarn：黄条是否出现，完全由后端字段驱动", () => {
-  it("dropped=0 且 budgetExhausted=false 且 truncated=false ⇒ 不警告（字段全为 false，标记消失）", () => {
-    expect(shouldWarn({ dropped: 0, budgetExhausted: false, truncated: false })).toBe(false);
+  const allClear = { dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: false };
+
+  it("dropped=0 且 budgetExhausted=false 且 truncated=false 且 cursorAhead=false ⇒ 不警告（字段全为 false，标记消失）", () => {
+    expect(shouldWarn(allClear)).toBe(false);
   });
   it("dropped>0 ⇒ 警告", () => {
-    expect(shouldWarn({ dropped: 1, budgetExhausted: false, truncated: false })).toBe(true);
+    expect(shouldWarn({ ...allClear, dropped: 1 })).toBe(true);
   });
-  it("budgetExhausted=true ⇒ 警告（即使其余两项都是 false）", () => {
-    expect(shouldWarn({ dropped: 0, budgetExhausted: true, truncated: false })).toBe(true);
+  it("budgetExhausted=true ⇒ 警告（即使其余项都是 false）", () => {
+    expect(shouldWarn({ ...allClear, budgetExhausted: true })).toBe(true);
   });
-  it("truncated=true ⇒ 警告（评审 I3，即使其余两项都是 false）", () => {
-    expect(shouldWarn({ dropped: 0, budgetExhausted: false, truncated: true })).toBe(true);
+  it("truncated=true ⇒ 警告（评审 I3，即使其余项都是 false）", () => {
+    expect(shouldWarn({ ...allClear, truncated: true })).toBe(true);
   });
-  it("三项都是 null（没有数据）⇒ 不警告——不知道不等于有问题", () => {
-    expect(shouldWarn({ dropped: null, budgetExhausted: null, truncated: null })).toBe(false);
+  it("cursorAhead=true ⇒ 警告（评审 C6，即使其余项都是 false）", () => {
+    expect(shouldWarn({ ...allClear, cursorAhead: true })).toBe(true);
+  });
+  it("buffered 单独很大 ⇒ 不警告——单纯缓冲区里有事件是正常运行态，不占用黄条（评审 N1 的取舍）", () => {
+    expect(shouldWarn({ ...allClear, buffered: 999 })).toBe(false);
+  });
+  it("五项都是 null（没有数据）⇒ 不警告——不知道不等于有问题", () => {
+    expect(shouldWarn({ dropped: null, budgetExhausted: null, truncated: null, buffered: null, cursorAhead: null }))
+      .toBe(false);
   });
 });
 

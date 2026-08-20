@@ -108,33 +108,62 @@ export function shardIdOf(body) {
 }
 
 /**
+ * 响应生成时刻（后端 `now()`，评审 N1 点名的第二个零消费者字段，[LOW]）。
+ *
+ * 与 `pure/keys.mjs` 的 `generatedAt` 同一条理由（那边用它当 `cooldownRemaining`
+ * 的参照时刻，不用浏览器时钟）：这里没有需要拿它算差值的场景，**最小、低风险的
+ * 消费方式**是让轮询指示灯的 tooltip 报一句"数据截至几点"——运维只要看这个
+ * tooltip 就知道当前显示的是不是刚刚拉到的，不需要另外去猜面板有没有卡住。
+ * 缺失/畸形时是 `null`（渲染成不显示这一段，不是显示一个假时间）。
+ */
+export function generatedAtOf(body) {
+  const v = body && typeof body === "object" ? body.generatedAt : null;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/**
  * 响应自述状态。**没有数据时逐项 null**（不是 0/false）——那几个字面上恰好
  * 也是"一切正常"的值，混进"读不出来"里会把面板变成在撒谎。
  *
- * `truncated`（评审 I3）：`after`+`limit` 组合截掉了一部分本该出现的旧事件。
+ * - `truncated`（评审 I3）：`after`+`limit` 组合截掉了一部分本该出现的旧事件。
+ * - `buffered`（评审 N1）：本 isolate 缓冲里还有多少条事件没有落盘。isolate 在
+ *   下一次成功 flush 之前被回收（Worker 上是常态）时，这些事件会**永久丢失**，
+ *   而 `dropped` 不计它（`dropped` 只统计已经落盘/已经在内存环里明确丢弃的那些，
+ *   还"活在"缓冲区里、尚未有机会落盘或丢弃的不算）。字段消费者审计发现这是
+ *   唯一一个响应里给了但没有任何地方读的字段，这里补上。
+ * - `cursorAhead`（评审 C6）：`after` 领先于本次请求的时钟（时钟回拨 / isolate
+ *   间时钟偏移），`items` 恒为空但这**不代表没有新事件**，前端必须能区分开。
  */
 export function bufferStatus(body) {
   const dropped = body && typeof body === "object" ? body.dropped : null;
   const budgetExhausted = body && typeof body === "object" ? body.budgetExhausted : null;
   const truncated = body && typeof body === "object" ? body.truncated : null;
+  const buffered = body && typeof body === "object" ? body.buffered : null;
+  const cursorAhead = body && typeof body === "object" ? body.cursorAhead : null;
   return {
     dropped: typeof dropped === "number" && Number.isFinite(dropped) ? dropped : null,
     budgetExhausted: typeof budgetExhausted === "boolean" ? budgetExhausted : null,
     truncated: typeof truncated === "boolean" ? truncated : null,
+    buffered: typeof buffered === "number" && Number.isFinite(buffered) ? buffered : null,
+    cursorAhead: typeof cursorAhead === "boolean" ? cursorAhead : null,
   };
 }
 
 /**
  * 顶部黄条要不要出现。**诚实标记必须由后端字段驱动**（Task 4 评审 I4 的裁定，
  * 在 Task 5 隔了一个任务原样复发过一次）：判据只看 `status.dropped` /
- * `status.budgetExhausted` / `status.truncated` 这三个从响应里取出来的值，
- * 不许在这里或调用方硬编码一个 true/false。
- * `null`（没有数据）不触发——不知道不等于"有问题"。
+ * `status.budgetExhausted` / `status.truncated` / `status.cursorAhead` 这几个
+ * 从响应里取出来的值，不许在这里或调用方硬编码一个 true/false。
+ * `null`（没有数据）不触发——不知道不等于"有问题"。**不含 `buffered`**：单纯
+ * "缓冲区里还有事件没落盘"是运行中的正常状态（还没到落盘时机而已），只有搭配
+ * "isolate 可能被回收"这层风险才值得说，这条风险不是靠一个数字大小能判断的，
+ * 交给轮询指示灯的 tooltip 常驻显示（见 `sec-events.js`），不占用黄条。
  */
 export function shouldWarn(status) {
   return (status.dropped !== null && status.dropped > 0)
     || status.budgetExhausted === true
-    || status.truncated === true;
+    || status.truncated === true
+    || status.cursorAhead === true;
 }
 
 /**

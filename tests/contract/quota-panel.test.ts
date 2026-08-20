@@ -92,6 +92,63 @@ describe("面板轮询的配额账", () => {
   });
 
   /**
+   * **评审 C4：单次请求读放大的直接回归测试。**
+   *
+   * 修复前，评审用真实 HTTP 端点实测 `?after=0` 打出约 **992,224** 次 get
+   * （2 秒），`?after=-1e11` 约 **1,047,780** 次（1.7 秒）——`candidateKeys` 没有
+   * 钳位 `fromWindow`，候选键数随"`now` 与 `after` 相差多少个时间窗"线性增长，
+   * 没有上界。修复后（`fromWindow` 钳位在 `nowWindow - EVENT_WINDOW_RETAIN + 1`），
+   * **无论 `after` 多陈旧，单次请求的 get 次数都不超过冷读的 48**——这条用例断言
+   * 的正是这件事：`?after=0`（评审点名的敌意输入）恰好等于冷读的次数，不多不少
+   * （手写字面量 48，不是从 `EVENT_WINDOW_RETAIN × EVENT_SLOTS` 现算的表达式）。
+   */
+  it("?after=0（评审 C4 点名的敌意输入）单次请求的 get 次数恰好为 48，与冷读相同（不再放大）", async () => {
+    const st = new CountingStorage();
+    // **不能用离纪元零点很近的时钟**（例如固定 1000）：那样 `floor` 本身也是负数，
+    // `after=0` 恰好落在候选区间里，钳位这条性质根本没被触发——用一个真实量级的
+    // 时间戳（第 10,000 个时间窗附近，约合 1970 年之后 1 年多），`after=0` 才是
+    // 一个真正"远早于 floor"的陈旧值，钳位才会被真正用到。
+    const now = 10_000 * 3_600_000;
+    const { app } = await makeApp([], ["k1"], {}, () => now, { storage: st });
+    const base = { lists: st.lists, gets: st.gets };
+    const res = await app.request("/admin/api/events?after=0", { headers: { "x-admin-key": TEST_ADMIN_TOKEN } });
+    expect(res.status).toBe(200);
+    expect(st.lists - base.lists).toBe(0);
+    expect(st.gets - base.gets).toBe(48);
+  });
+
+  /**
+   * **评审 C4b：稳态"安静"场景不再随游标陈旧度线性增长。**
+   *
+   * 模拟"某天有过一条事件、之后网关一直健康、面板持续开着轮询"这个评审指出的
+   * 反直觉场景：`after` 冻结在一个很早的时间点，`now` 不断往前走。连打 20 次，
+   * **每一次都应该被钳位在 48**，总数恰好 `20 × 48 = 960`（与"从不带 after"的
+   * 那条用例数值相同，不是巧合——钳位之后"陈旧的 after"与"没有 after"在
+   * `candidateKeys` 眼里是同一件事）。
+   */
+  it("游标冻结在很早以前、之后 20 次轮询 now 持续推进（评审 C4b 的安静场景），get 总数恰好为 960，不随陈旧度增长", async () => {
+    const st = new CountingStorage();
+    // **起点必须已经远早于 floor 会追上的那一刻**：如果从纪元零点附近开始推进，
+    // 前几次轮询 `nowWindow` 还没有超过 `EVENT_WINDOW_RETAIN`，`floor` 本身还是
+    // 非正数，钳位这条性质根本没被触发（第一版这条用例就是这么写砸的，实测
+    // 总数是 460 不是 960——前几次轮询没被钳住，天然就在 48 以下）。这里让起点
+    // 已经是第 30 个时间窗，游标冻结在第 0 个时间窗，从第一次轮询开始就已经
+    // 超过保留期，20 次全部应当被钳位在 48。
+    let t = 30 * 3_600_000;
+    const { app } = await makeApp([], ["k1"], {}, () => t, { storage: st });
+    const frozenAfter = 0; // 一个早于任何一次轮询的、冻结不变的游标
+    const base = { lists: st.lists, gets: st.gets };
+    for (let i = 0; i < 20; i++) {
+      t += 3_600_000; // 每次轮询 now 往前走一个时间窗，模拟"过了很久"
+      const res = await app.request(`/admin/api/events?after=${frozenAfter}`,
+        { headers: { "x-admin-key": TEST_ADMIN_TOKEN } });
+      expect(res.status).toBe(200);
+    }
+    expect(st.lists - base.lists).toBe(0);
+    expect(st.gets - base.gets).toBe(960);
+  });
+
+  /**
    * **面板真实使用模式：从第二次轮询起带上上一次返回的 `cursor`。**
    *
    * 这是"稳态轮询成本从随历史深度增长降到常数"这条设计意图的直接验证：第一次

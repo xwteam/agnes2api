@@ -75,18 +75,37 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   where a cold-started isolate's first flush bypassed throttling entirely — every isolate
   cold start used to send one zero-gate write, and now the first flush after cold start goes
   through the same minimum-interval gate as every other flush.
-- **Events board reads**: polling no longer depends on an index, so the number of candidate
-  keys is **bounded** — the first time the panel is opened (or the view is cleared and
-  reloaded, or the API is called directly without `after`) is a "cold read": scanning 24 time
-  windows × 2 slots = 48 gets; every poll after that is a "warm read", usually needing only 2
-  gets (4 at the moment a poll crosses a time-window boundary), **independent of how long the
-  deployment has been running or how many events have accumulated**. Leaving one tab open and
-  polling continuously, the warm-read ceiling is roughly 23,000/day (about 23% of the read
-  quota; in practice far lower since only a small fraction of polls cross a window boundary).
-  **This is additive to the key-pool read side above**: if your deployment is already tight on
-  pool read quota (see the "3 active isolates already use about 99.5%" scenario above),
-  consider raising `POOL_CACHE_TTL_MS` or keeping fewer panel tabs open at once before opening
-  the events board.
+- **Events board reads (post-C4/C4b-fix figures, more conservative than the earlier draft)**:
+  polling no longer depends on an index, so the number of candidate keys is **hard-bounded** —
+  no matter how stale `after` is or how many days the deployment has been running, a single
+  request scans at most 24 time windows × 2 slots = **48** gets (before the C4 fix, a stale or
+  hostile `after` could push a single request to nearly 1 million gets; see the regression
+  cases in `tests/contract/quota-panel.test.ts`). When `after` falls within a recent time
+  window it's a "warm read", usually needing only 2 gets (4 at the moment a poll crosses a
+  time-window boundary).
+  **"Bounded" does not mean "independent of activity level"** — evaluation C4b surfaced a
+  counter-intuitive result:
+    - **An "active" deployment with a steady stream of new events**: new events keep pushing
+      the poll interval back down to the 15-second minimum, and most polls hit a warm read.
+      Assuming the worst case of 4 gets/poll throughout: `(86400 ÷ 15) × 4 = 23,040` gets/day
+      (about 23% of the read quota; in practice far lower since only a small fraction of polls
+      happen to cross a window boundary).
+    - **A "quiet" deployment with no new events for a long stretch** (including a
+      freshly-deployed instance that hasn't triggered any diagnostic event yet): the `after`
+      cursor never advances, and once the frozen cursor falls out of the 24-hour retention
+      window, **every subsequent poll costs the full 48 gets**; at the same time, with no new
+      content, exponential backoff pushes the poll interval up to the 60-second cap. The
+      steady state is `(86400 ÷ 60) × 48 = 69,120` gets/day (about **69%** of the read
+      quota) — **a deployment healthy enough to produce almost no diagnostic events ends up
+      costing more read quota from a single open panel tab than an "active" one does**. Plan
+      your read-quota headroom around this larger number, not the smaller "active" one,
+      especially when adding it to the key-pool read side above (see the "3 active isolates
+      already use about 99.5%" scenario above).
+    - **The download endpoint** (`GET /admin/api/events/download`) costs a flat 48 gets per
+      click (`readEvents(null)` always does a cold read, no cursor) — this only happens on a
+      manual click and is negligible at that scale; noted here purely for completeness.
+  Both scenarios' ceilings stay **flat regardless of how many days the deployment has been
+  running** — that part of the original claim still holds after the C4 fix.
 - **`list` and `delete` are two further buckets, 1,000/day each**, separate from the read and
   write buckets. Steady-state forwarding never issues a `list` — that is exactly why the
   `pool:index` key exists. **Three** things consume it: the 48–96 daily index reconciliations

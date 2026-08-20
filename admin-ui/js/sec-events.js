@@ -19,8 +19,8 @@ import { el, elI18n, toast } from "./ui.js";
 import { fmtInstant } from "./pure/format.mjs";
 import {
   EVENTS_POLL_MIN_MS, LEVELS, levelLabelKey, effectiveLevel, eventLevelLabelKey, levelBadgeClass,
-  eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, bufferStatus, shouldWarn, nextAfter, nextPollDelayMs,
-  pollIndicatorState, pollIndicatorLabelKey, matchesSearch, buildDetailText,
+  eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, generatedAtOf, bufferStatus, shouldWarn,
+  nextAfter, nextPollDelayMs, pollIndicatorState, pollIndicatorLabelKey, matchesSearch, buildDetailText,
   groupEvents, orderForDisplay, mergeIntoView,
 } from "./pure/events.mjs";
 
@@ -34,9 +34,11 @@ let timer = null;
 let abort = null;
 /** 客户端已攒下的视图（ts 降序，与后端契约一致；渲染前用 orderForDisplay 反转）。 */
 let view = [];
-let lastStatus = { dropped: null, budgetExhausted: null, truncated: null };
+let lastStatus = { dropped: null, budgetExhausted: null, truncated: null, buffered: null, cursorAhead: null };
 /** 最近一次成功响应里的本 isolate 分片 id（评审 M2），驱动轮询指示灯的提示文案。 */
 let lastShardId = null;
+/** 最近一次成功响应的生成时刻（评审 N1 [LOW]），同样只驱动轮询指示灯的提示文案。 */
+let lastGeneratedAt = null;
 let pollDelayMs = EVENTS_POLL_MIN_MS;
 let lastError = false;
 let loadError = false;
@@ -62,14 +64,30 @@ function renderWarnings() {
 
   nodes.warnTruncated.style.display = lastStatus.truncated === true ? "" : "none";
   if (lastStatus.truncated === true) nodes.warnTruncated.textContent = t("ev.warnTruncated");
+
+  // 评审 C6：`cursorAhead` 为 true 时 `poll()` 已经把 `state.after` 自愈成 null
+  // （见下方 poll()），下一轮就会带着新游标重新冷读——这条提示只是让运维知道
+  // "刚刚发生过一次自动恢复"，不是要人手动做什么。
+  nodes.warnCursorAhead.style.display = lastStatus.cursorAhead === true ? "" : "none";
+  if (lastStatus.cursorAhead === true) nodes.warnCursorAhead.textContent = t("ev.warnCursorAhead");
 }
 
 function renderPollIndicator() {
   const kind = pollIndicatorState({ paused: state.paused, lastError });
   nodes.pollDot.className = `poll-dot poll-dot-${kind}`;
-  const label = lastShardId === null
-    ? t(pollIndicatorLabelKey(kind))
-    : t(pollIndicatorLabelKey(kind)) + t("ev.pollStatus.shardSuffix", { shardId: lastShardId });
+  let label = t(pollIndicatorLabelKey(kind));
+  if (lastShardId !== null) label += t("ev.pollStatus.shardSuffix", { shardId: lastShardId });
+  // 评审 N1：`buffered` 是"本 isolate 还没落盘的事件数"——单纯有数字不算异常
+  // （见 pure/events.mjs 的 shouldWarn 注释），但 isolate 随时可能被回收，
+  // 这里没有黄条那么显眼，但至少让愿意看 tooltip 的人看得到这个风险。
+  if (lastStatus.buffered !== null && lastStatus.buffered > 0) {
+    label += t("ev.pollStatus.bufferedSuffix", { count: lastStatus.buffered });
+  }
+  // 评审 N1 [LOW]：`generatedAt` 是响应生成时刻，最小、低风险的消费方式——
+  // 让 tooltip 报一句"数据截至几点"，运维不用另外去猜面板有没有卡住。
+  if (lastGeneratedAt !== null) {
+    label += t("ev.pollStatus.generatedAtSuffix", { time: fmtInstant(lastGeneratedAt, offsetMs()) });
+  }
   nodes.pollDot.title = label;
   nodes.pollDot.setAttribute("aria-label", label);
 }
@@ -134,10 +152,16 @@ async function poll() {
     const items = itemsOf(body) ?? [];
     lastStatus = bufferStatus(body);
     lastShardId = shardIdOf(body);
+    lastGeneratedAt = generatedAtOf(body);
     loadError = false;
     lastError = false;
     view = mergeIntoView(view, items);
     state.after = nextAfter(state.after, body && body.cursor);
+    // 评审 C6：`cursorAhead` 为 true 时 `items` 恒为空、`cursor` 恒为 null，上面这行
+    // `nextAfter` 因此原样保留了旧游标——那正是"面板永久空白"的根：下一轮还带着
+    // 同一个领先于时钟的 `after`，永远拿不到东西。这里显式把它清成 null，让下一轮
+    // 变成冷读（`after` 缺省），自己从这个状态里恢复出来，不需要运维手动干预。
+    if (lastStatus.cursorAhead === true) state.after = null;
     pollDelayMs = nextPollDelayMs(pollDelayMs, state.after !== beforeAfter);
   } catch (e) {
     if (e && e.name === "AbortError") return;
@@ -267,9 +291,11 @@ export const eventsSection = {
     const warnDropped = el("p");
     const warnBudget = el("p");
     const warnTruncated = el("p");
+    const warnCursorAhead = el("p");
     warnBanner.appendChild(warnDropped);
     warnBanner.appendChild(warnBudget);
     warnBanner.appendChild(warnTruncated);
+    warnBanner.appendChild(warnCursorAhead);
     section.appendChild(warnBanner);
 
     const tb = buildToolbar();
@@ -278,7 +304,7 @@ export const eventsSection = {
     const body = el("div", { class: "events-body" });
     section.appendChild(body);
 
-    nodes = { body, warnBanner, warnDropped, warnBudget, warnTruncated, pollDot: tb.pollDot };
+    nodes = { body, warnBanner, warnDropped, warnBudget, warnTruncated, warnCursorAhead, pollDot: tb.pollDot };
   },
 
   onShow() {

@@ -178,14 +178,19 @@ export const I18N = {
   // 顶部常驻说明（两种运行时同一句，见 Task 5 Step 4 的 logs.processLog: false 那条先例）：
   // Serverless 没有常驻进程，逐请求日志流在这里物理上不可能是完整的。
   // **评审 I2**：本期只有 config/pool 索引/管理接口/事件落库自身四类运维诊断事件
-  // （见 src/core/keypool-repo.ts / config.ts / admin/auth.ts / adapters/logger-store.ts
-  // 的 logger.log() 调用点）。**补池（注册机）事件与 key 的冷却/剔除目前都还没有
-  // 产出对应的事件**——前者是 src/http/wire.ts 的 buildTendDeps() 仍用独立的裸
-  // ConsoleLogger（Worker 的 scheduled() 与 fetch() 是两个不同的 isolate 生命周期，
-  // 没有请求/响应边界可挂 logFlush，接上去需要 ctx.waitUntil 一类的独立落盘机制，
-  // 留给 P3c 与注册机板块一起做）；后者是 dispatcher/keypool 目前压根不为这两类
-  // 状态变化打事件。原文案把这四个字都算了进去，是不实的承诺，已改成如实描述。
-  "ev.notice": { "zh-CN": "这里只有低频结构化事件（如配置读取失败、池索引重建、管理接口登录失败等运维诊断事件）。注册机（补池）事件与 key 的冷却/剔除目前还没有产出对应的事件，见 P3c。逐请求日志请看容器 stdout / Cloudflare 控制台的 Workers Logs——Serverless 形态没有常驻进程，逐请求日志流在这里物理上不可能是完整的。", "zh-TW": "這裡只有低頻結構化事件（如設定讀取失敗、池索引重建、管理接口登入失敗等維運診斷事件）。註冊機（補池）事件與 key 的冷卻/剔除目前還沒有產出對應的事件，見 P3c。逐請求日誌請看容器 stdout / Cloudflare 主控台的 Workers Logs——Serverless 形態沒有常駐行程，逐請求日誌流在這裡物理上不可能是完整的。", en: "This shows only low-frequency operational diagnostic events (e.g. config read failures, pool index rebuilds, failed admin logins). Registrar (pool-refill) events and key cooldown/eviction don't produce events yet — that's planned for P3c. For per-request logs, check container stdout or Cloudflare's Workers Logs — the serverless shape has no long-lived process, so a complete per-request log stream is physically impossible here.", ja: "ここには低頻度の運用診断イベント（例：設定読み込み失敗、プール索引の再構築、管理者ログイン失敗など）のみが表示されます。レジストラー（プール補充）イベントと key のクールダウン/除外はまだイベントを出力していません——P3c で対応予定です。リクエストごとのログはコンテナの stdout または Cloudflare コンソールの Workers Logs をご覧ください——サーバーレス形態には常駐プロセスがなく、ここでリクエストごとの完全なログストリームを見ることは物理的に不可能です。", ko: "여기에는 저빈도 운영 진단 이벤트(예: 설정 읽기 실패, 풀 인덱스 재구축, 관리자 로그인 실패 등)만 표시됩니다. 레지스트라(풀 보충) 이벤트와 key의 쿨다운/제외는 아직 이벤트를 생성하지 않습니다——P3c에서 처리할 예정입니다. 요청별 로그는 컨테이너 stdout 또는 Cloudflare 콘솔의 Workers Logs를 확인하세요——서버리스 형태에는 상주 프로세스가 없어 여기서 완전한 요청별 로그 스트림을 보는 것은 물리적으로 불가능합니다." },
+  // 会出现在本面板（见 src/core/keypool-repo.ts / config.ts / admin/auth.ts /
+  // adapters/logger-store.ts 的 logger.log() 调用点）。
+  // **评审 I2b（round 3）修正**：round 2 的文案曾错误地说"注册机（补池）事件还没有
+  // 产出"——这不属实。`src/core/registrar/{mint,config,tender}.ts` 与
+  // `adapters/mailbox-*.ts` 里有二十多处 `registrar.*` logger.log() 调用点，
+  // 这些事件是真实产出的，只是走的是裸 `ConsoleLogger`（src/http/wire.ts 的
+  // buildTendDeps()，Worker 的 scheduled() 与 fetch() 是两个不同的 isolate
+  // 生命周期，没有请求/响应边界可挂 logFlush，接上去需要 ctx.waitUntil 一类的
+  // 独立落盘机制，留给 P3c 与注册机板块一起做），从未接进 `StoreLogger`，因此
+  // 从不落库、也就从不出现在本面板——"产出了但没接线"与"压根没产出"是两件不同
+  // 的事，前一版文案把它们混成了一件。key 的冷却/剔除**确实**目前压根不为这两类
+  // 状态变化打事件，这半句评审确认属实，未改动。
+  "ev.notice": { "zh-CN": "这里只有低频结构化事件（如配置读取失败、池索引重建、管理接口登录失败等运维诊断事件）。注册机（补池）事件已经产出，但还没有接入本面板（未落库，见 P3c）；key 的冷却/剔除目前还没有产出对应的事件。逐请求日志请看容器 stdout / Cloudflare 控制台的 Workers Logs——Serverless 形态没有常驻进程，逐请求日志流在这里物理上不可能是完整的。", "zh-TW": "這裡只有低頻結構化事件（如設定讀取失敗、池索引重建、管理接口登入失敗等維運診斷事件）。註冊機（補池）事件已經產出，但還沒有接入本面板（未寫入，見 P3c）；key 的冷卻/剔除目前還沒有產出對應的事件。逐請求日誌請看容器 stdout / Cloudflare 主控台的 Workers Logs——Serverless 形態沒有常駐行程，逐請求日誌流在這裡物理上不可能是完整的。", en: "This shows only low-frequency operational diagnostic events (e.g. config read failures, pool index rebuilds, failed admin logins). Registrar (pool-refill) events are already produced, but aren't wired into this board yet (not persisted here — see P3c); key cooldown/eviction don't produce events yet. For per-request logs, check container stdout or Cloudflare's Workers Logs — the serverless shape has no long-lived process, so a complete per-request log stream is physically impossible here.", ja: "ここには低頻度の運用診断イベント（例：設定読み込み失敗、プール索引の再構築、管理者ログイン失敗など）のみが表示されます。レジストラー（プール補充）イベントはすでに出力されていますが、まだ本パネルには接続されていません（ここには保存されません。P3c で対応予定）。key のクールダウン/除外はまだイベントを出力していません。リクエストごとのログはコンテナの stdout または Cloudflare コンソールの Workers Logs をご覧ください——サーバーレス形態には常駐プロセスがなく、ここでリクエストごとの完全なログストリームを見ることは物理的に不可能です。", ko: "여기에는 저빈도 운영 진단 이벤트(예: 설정 읽기 실패, 풀 인덱스 재구축, 관리자 로그인 실패 등)만 표시됩니다. 레지스트라(풀 보충) 이벤트는 이미 생성되고 있지만 아직 이 패널에 연결되지 않았습니다(여기에 저장되지 않음, P3c에서 처리 예정). key의 쿨다운/제외는 아직 이벤트를 생성하지 않습니다. 요청별 로그는 컨테이너 stdout 또는 Cloudflare 콘솔의 Workers Logs를 확인하세요——서버리스 형태에는 상주 프로세스가 없어 여기서 완전한 요청별 로그 스트림을 보는 것은 물리적으로 불가능합니다." },
   "ev.search": { "zh-CN": "搜索事件名 / 说明 / 字段…", "zh-TW": "搜尋事件名 / 說明 / 欄位…", en: "Search event / message / fields…", ja: "イベント名／説明／フィールドを検索…", ko: "이벤트명/설명/필드 검색…" },
 
   "ev.level.all":   { "zh-CN": "全部级别", "zh-TW": "全部級別", en: "All levels", ja: "すべてのレベル", ko: "모든 레벨" },
@@ -210,13 +215,25 @@ export const I18N = {
   // 评审 M2：轮询指示灯的提示语接上"本 isolate"到底是哪一个（shardId），
   // 拼在状态文案后面，不是独立一句——避免多语言各自维护一套"状态+分片"的组合句。
   "ev.pollStatus.shardSuffix": { "zh-CN": "（本 isolate：{shardId}）", "zh-TW": "（本 isolate：{shardId}）", en: " (this isolate: {shardId})", ja: "（この isolate：{shardId}）", ko: "(이 isolate: {shardId})" },
+  // 评审 N1：`buffered` 单独不占用黄条（见 pure/events.mjs 的 shouldWarn 说明），
+  // 但 isolate 随时可能被回收、缓冲里的事件会随之永久丢失——这里补一句 tooltip
+  // 常驻提示，愿意看的人看得到，不打扰不关心的人。
+  "ev.pollStatus.bufferedSuffix": { "zh-CN": "（本 isolate 还有 {count} 条事件未落盘，isolate 被回收会丢失）", "zh-TW": "（本 isolate 還有 {count} 條事件未寫入，isolate 被回收會遺失）", en: " ({count} events in this isolate not yet persisted — lost if the isolate is recycled)", ja: "（この isolate にはまだ {count} 件のイベントが未保存です。isolate が回収されると失われます）", ko: "(이 isolate에 아직 저장되지 않은 이벤트 {count}건이 있습니다. isolate가 회수되면 손실됩니다)" },
+  // 评审 N1 [LOW]：`generatedAt` 是响应生成时刻，tooltip 报一句"数据截至几点"，
+  // 运维不用另外去猜面板有没有卡住（同 pure/keys.mjs 用它当参照时刻的理由）。
+  "ev.pollStatus.generatedAtSuffix": { "zh-CN": "（数据截至 {time}）", "zh-TW": "（資料截至 {time}）", en: " (data as of {time})", ja: "（データ基準時刻：{time}）", ko: "(데이터 기준 시각: {time})" },
 
-  // dropped/budgetExhausted 两条黄条文案：**各自独立**，由响应对应字段各自驱动，
-  // 不是同一句话的两种措辞（见 pure/events.mjs 的 shouldWarn 说明）。
+  // dropped/budgetExhausted/truncated/cursorAhead 四条黄条文案：**各自独立**，
+  // 由响应对应字段各自驱动，不是同一句话的两种措辞（见 pure/events.mjs 的
+  // shouldWarn 说明）。
   "ev.warnDropped": { "zh-CN": "本 isolate 的事件缓冲已丢弃 {count} 条最旧的事件（环形缓冲上限 100 条，落盘前被新事件顶掉）。", "zh-TW": "本 isolate 的事件緩衝已丟棄 {count} 條最舊的事件（環形緩衝上限 100 條，寫入前被新事件頂掉）。", en: "This isolate's event buffer has dropped {count} of the oldest events (ring buffer caps at 100 entries; new events pushed them out before they were persisted).", ja: "この isolate のイベントバッファは最も古い {count} 件のイベントを破棄しました（リングバッファの上限は 100 件で、書き込み前に新しいイベントに押し出されました）。", ko: "이 isolate의 이벤트 버퍼가 가장 오래된 이벤트 {count}건을 삭제했습니다(링 버퍼 상한 100건, 저장 전에 새 이벤트에 밀려남)." },
   "ev.warnBudget":  { "zh-CN": "本 isolate 今天的事件写入预算已用完，未落盘的事件仍在容器日志 / Cloudflare 控制台的 Workers Logs 里。", "zh-TW": "本 isolate 今天的事件寫入預算已用完，未寫入的事件仍在容器日誌 / Cloudflare 主控台的 Workers Logs 裡。", en: "This isolate's event-write budget for today is used up. Events that were not persisted are still available in container logs / Cloudflare's Workers Logs.", ja: "この isolate の本日のイベント書き込み予算を使い切りました。書き込まれなかったイベントはコンテナログ／Cloudflare コンソールの Workers Logs に残っています。", ko: "이 isolate의 오늘 이벤트 쓰기 예산을 모두 사용했습니다. 저장되지 않은 이벤트는 컨테이너 로그/Cloudflare 콘솔의 Workers Logs에 남아 있습니다." },
   // 评审 I3：after+limit 组合截掉了一部分本该出现的旧事件，必须如实说，不能悄悄吞掉。
   "ev.warnTruncated": { "zh-CN": "这一页没有显示全部符合条件的事件（超出了每次拉取的上限），更早的一部分被截掉了。", "zh-TW": "這一頁沒有顯示全部符合條件的事件（超出了每次拉取的上限），更早的一部分被截掉了。", en: "This page doesn't show every matching event (the per-fetch limit was exceeded); some older ones were cut off.", ja: "このページには条件に一致するすべてのイベントが表示されていません（取得件数の上限を超えました）。より古い一部が省略されています。", ko: "이 페이지에는 조건에 맞는 모든 이벤트가 표시되지 않습니다(가져오기 상한 초과). 더 오래된 일부가 잘렸습니다." },
+  // 评审 C6：游标领先于本次请求的时钟（时钟回拨 / isolate 间时钟偏移），空结果
+  // 不代表没有新事件。前端已经自动把冻结的游标丢掉重新冷读（见 sec-events.js 的
+  // poll()），这条只是如实告诉运维"刚刚发生过一次自动恢复"，不需要手动操作。
+  "ev.warnCursorAhead": { "zh-CN": "检测到游标领先于服务端时钟（可能是时钟回拨或 isolate 间时钟偏移），已自动重新拉取最新数据。", "zh-TW": "偵測到游標領先於服務端時鐘（可能是時鐘回撥或 isolate 間時鐘偏移），已自動重新擷取最新資料。", en: "Detected a cursor ahead of the server clock (possibly a clock rollback or skew between isolates); automatically re-fetched from a fresh cursor.", ja: "カーソルがサーバー時刻より先行していることを検出しました（時刻の巻き戻し、または isolate 間の時刻ずれの可能性）。自動的に新しいカーソルから再取得しました。", ko: "커서가 서버 시계보다 앞서 있는 것을 감지했습니다(시계 롤백 또는 isolate 간 시계 편차 가능성). 새 커서로 자동으로 다시 가져왔습니다." },
 
   "ev.empty":   { "zh-CN": "还没有事件。", "zh-TW": "還沒有事件。", en: "No events yet.", ja: "まだイベントはありません。", ko: "아직 이벤트가 없습니다." },
   "ev.noMatch": { "zh-CN": "没有符合筛选条件的事件。", "zh-TW": "沒有符合篩選條件的事件。", en: "No events match the current filters.", ja: "現在のフィルター条件に一致するイベントはありません。", ko: "현재 필터 조건에 맞는 이벤트가 없습니다." },

@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { LogLevel } from "../../../ports/logger.js";
 import type { StoreLogger } from "../../../adapters/logger-store.js";
+import { windowIndex } from "../../../core/admin/event-ring.js";
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 500;
@@ -17,18 +18,26 @@ function levelParam(raw: string | undefined): LogLevel | null {
   return (LEVELS as readonly string[]).includes(raw ?? "") ? (raw as LogLevel) : null;
 }
 
+/**
+ * `after` 不是一个可信输入——它是客户端回传给我们的一个数字，任何人都能直接
+ * 拿 curl 打 `?after=` 任意值。**负数一律当缺失处理（评审 C4）**：时间戳没有
+ * 负数这回事，放行负数除了让语义变得含糊之外没有任何好处；`candidateKeys()`
+ * 自身对负数也已经钳位安全（`Math.max(floor, windowIndex(负数))` 恒等于
+ * `floor`），这里拒绝纯粹是让参数语义干净，不是这条安全性质的必要条件。
+ */
 function afterParam(raw: string | undefined): number | null {
   if (raw === undefined) return null;
   const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 /**
  * `GET /admin/api/events`。
  *
  * **零 `list()`、零索引读**：`deps.storeLogger.readEvents(after)` 只按
- * `candidateKeys()` 算出来的候选键各 get 一次（由 `quota-panel.test.ts` 数着次数
- * 钉住，评审 C2 之后候选键数是个有界常数，不再随部署年龄增长）。
+ * `candidateKeys()` 算出来的候选键各 get 一次，且这个次数**对任何 `after` 值都有
+ * 硬上界**（`EVENT_WINDOW_RETAIN × EVENT_SLOTS`，评审 C4/C4b 修复），不随"游标
+ * 陈旧了多久""部署跑了多久"增长——由 `quota-panel.test.ts` 数着次数钉住。
  *
  * `?after=<ts>&level=<lvl>&limit=<n>`：**归并 → 过滤（after / level）→ 截到 limit**，
  * 顺序不能倒过来——先截断再过滤会把本该出现的旧事件漏掉。
@@ -37,6 +46,15 @@ function afterParam(raw: string | undefined): number | null {
  * 这件事在默认参数下天然发生（K 个分片、每片最多 100 条，K≥3 就可能触发默认
  * `limit=200`）。**这本身不是 bug**——环形缓冲的本意就是"新事件比旧事件更值得看"，
  * 但面板必须如实说"这一页不是全部"，不能悄悄吞掉一部分历史却什么都不说。
+ *
+ * **`cursorAhead`（评审 C6）**：`after` 所在的时间窗比 `now` 所在的时间窗还晚时，
+ * `candidateKeys()` 的扫描区间是空的（`fromWindow > nowWindow`，循环一次都不进），
+ * 于是 `items` 恒为空、`cursor` 恒为 `null`——**这与"确实没有新事件"在响应体里
+ * 完全无法区分**，而触发条件不止运维手动改错时钟：任何一个 isolate 的时钟只要
+ * 比当前处理请求的这个 isolate 快，写出的 `ts` 就是"未来值"，一旦被面板当成
+ * `cursor` 存起来，后续所有请求都会撞上这堵墙，面板永久空白直到墙钟追上。
+ * 如实报出来，前端据此把冻结的游标丢掉重新冷读（见 `pure/events.mjs` 的
+ * `bufferStatus`/`sec-events.js` 的 `poll()`）。
  *
  * ⚠️ **`items` 里的字段一律视为完全不可信**：里面会出现上游返回的内容与未鉴权请求的
  * 路径（例如 `admin.login_failed` 的 `fields.path` 就是攻击者能写的值）。这里**不做**
@@ -50,6 +68,7 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
     const after = afterParam(c.req.query("after"));
     const level = levelParam(c.req.query("level"));
     const limit = intParam(c.req.query("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT);
+    const now = deps.now();
 
     const { items: merged } = await deps.storeLogger.readEvents(after);
     const filtered = merged
@@ -72,7 +91,9 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
       budgetExhausted: status.budgetExhausted,
       // 过滤/截断确实丢掉了一部分本该出现的旧事件（评审 I3）。
       truncated: filtered.length > items.length,
-      generatedAt: deps.now(),
+      // 游标领先于本次请求的时钟（评审 C6）：空结果不代表没有事件，是时钟纠纷。
+      cursorAhead: after !== null && windowIndex(after) > windowIndex(now),
+      generatedAt: now,
     });
   };
 }

@@ -10,8 +10,8 @@ import type { Storage } from "../../src/ports/storage.js";
  * 免得下一个人（第三根轴：mailbox provider、未来的 queue 端口……）还要重新踩一次、
  * 重新造一个自己的 `DelayedStorage`。
  *
- * 默认 `0`（不延迟，绝大多数用例不关心时序，走真实 `setTimeout(0)` 队列一次即可，
- * 不给现有测试增加不必要的等待）。
+ * **默认不传（`undefined`），不是 `0`**——两者行为不同，见下面构造函数的说明；
+ * 这不是措辞问题，是本仓已经真实踩过的一次回归（评审 D1）。
  */
 export class MemoryStorage implements Storage {
   private readonly map = new Map<string, string>();

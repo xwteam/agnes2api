@@ -1,7 +1,7 @@
 import type { Logger, LogEntry } from "../ports/logger.js";
 import type { Storage } from "../ports/storage.js";
 import {
-  EVENT_RING_SIZE, EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_WRITES_PER_DAY,
+  EVENT_RING_SIZE, EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_WRITES_PER_DAY, EVENT_WINDOW_RETAIN,
   appendRing, truncatedCount, mergeShards, candidateKeys, windowIndex, slotOf, shardKey,
   FRESH_BUDGET, canWrite, consume, type WriteBudget,
 } from "../core/admin/event-ring.js";
@@ -16,9 +16,13 @@ export interface ReadEventsResult {
  *
  * ⚠️ **存储形态是评审 3 条 Critical 之后的重写版**：不再有 `event:index`。
  * `event:<窗口>:<槽位>`（`src/core/admin/event-ring.ts` 的 `shardKey`/`candidateKeys`）
- * 是一个**有界、可从时钟直接算出来**的键空间——**面板轮询路径 = K 次 get（K 是
- * `candidateKeys()` 算出来的候选键数，稳态下是个小常数），零 `list()`、零 `delete()`、
- * 零索引读改写**。
+ * 是一个键空间——**面板读路径 = K 次 get（K 是 `candidateKeys()` 算出来的候选键数，
+ * 对任何 `after` 都有硬上界，见 C4/C4b 的修法），零 `list()`、零索引读改写**。
+ *
+ * ⚠️ **写路径不再是"零 `delete()`"**（评审 C5）：每次成功落盘会顺手删掉滚出保留期
+ * 的那个旧窗口键，`delete` 是独立于读、写的第四个配额桶（KV 免费档同样 1,000/天），
+ * 目前几乎没有别的消费者在用它——这次新增的开销与写预算 1:1 绑定（每次成功的写
+ * 最多带一次删），不会单独失控。
  *
  * `log()` 是同步的（端口如此），所以这里**只缓冲，不落盘**。
  * 落盘由 `src/http/log-flush.ts` 的中间件在**请求收尾时 await**——
@@ -93,6 +97,19 @@ export class StoreLogger implements Logger {
       const cur = (await this.o.storage.get<LogEntry[]>(key)) ?? [];
       this.persistedDropped += truncatedCount(cur.length, batch.length, EVENT_RING_SIZE);
       await this.o.storage.put(key, appendRing(cur, batch, EVENT_RING_SIZE));
+      // **评审 C5**：读路径的候选键钳位（C4/C4b 修完之后）只保证"这一次请求付出的
+      // get 次数有上限"，不保证"存储里实际驻留的 event:* 键数有上限"——`window`
+      // 是绝对纪元小时数，不取模，旧窗口键如果永远不删就会无限堆积（KV 上白占空间、
+      // Node/FileStorage 上每次任意写都要重新序列化越来越大的 store.json）。
+      // 顺手删掉"刚滚出保留期"的那个窗口键：它是 `candidateKeys()` 的 floor 再往前
+      // 退一格（`floor - 1` = `windowIndex(at) - EVENT_WINDOW_RETAIN`），任何候选键
+      // 范围都不会再碰到它，删掉它不影响任何还在读的东西。
+      // **删除失败不算这次 flush 失败**：数据已经安全写进当前窗口，只是清理没跟上，
+      // 下一次成功的 flush 会对着新的 floor 再试一次——单独包一层 try/catch，
+      // 不让清理失败触发 `onError`（那会让运维误以为这批事件真的没写成功）。
+      try {
+        await this.o.storage.delete(shardKey(windowIndex(at) - EVENT_WINDOW_RETAIN, this.slot));
+      } catch { /* 清理失败不影响本次写已经成功这件事，下一轮再试 */ }
     } catch (err) {
       this.o.onError(err);
     }

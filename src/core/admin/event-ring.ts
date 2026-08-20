@@ -6,13 +6,24 @@ import type { LogEntry } from "../../ports/logger.js";
  *
  * ⚠️ **本文件是评审 3 条 Critical（C1 写预算全局失守 / C2 索引无上限增长 /
  * C3 索引读改写丢更新）之后的重写版**，取代了 Task 6 首轮"每 isolate 一个随机
- * shardId + `event:index` 索引"的形态。裁定见 progress.md：**去掉索引，改用
- * 「有界且可从时钟直接算出来」的分片键空间**——读路径不再需要 `list()` 也不需要
- * 索引，候选键由 `candidateKeys()` 纯计算得出，C2（无上限增长）与 C3（索引读改写）
- * 因此**根除**而不是缓解：没有索引就没有那个唯一需要读改写的键。
+ * shardId + `event:index` 索引"的形态。裁定：**去掉索引，改用「时间窗 + 槽位」的
+ * 分片键空间**——读路径不再需要 `list()` 也不需要索引，候选键由 `candidateKeys()`
+ * 纯计算得出。C3（索引读改写丢更新）因此**根除**：没有索引就没有那个唯一需要
+ * 读改写的键，代价改成了"同槽位真并发覆盖"（见下）。
+ *
+ * ⚠️ **C2（无上限增长）第一版只做对了一半，被下一轮评审（C4/C4b/C5）逮住**：
+ * - `candidateKeys()` 最初没有钳位 `after`，一个陈旧游标能让候选键数随"游标陈旧度"
+ *   线性增长、无上界（C4/C4b）——**这是 C2 换了一根轴复发**：旧设计的增长轴是
+ *   "部署年龄"，新设计换成了"游标陈旧度"，而"游标冻结、系统长期安静"恰恰是本项目
+ *   最常见的稳态（全仓事件白名单清一色是错误诊断事件）。现在 `candidateKeys()`
+ *   把 `fromWindow` 钳位在 `nowWindow - EVENT_WINDOW_RETAIN + 1`，读路径的候选键数
+ *   对任何 `after` 值都有硬上界。
+ * - `window` 索引本身是绝对纪元小时数，不取模、单调递增，读路径钳位不等于"存储里
+ *   实际驻留的键数有界"（C5）——`StoreLogger.maybeFlush()` 现在会在每次成功落盘后
+ *   顺手删除滚出保留期的那个窗口键，存储侧的键数因此也有上限。
  *
  * 代价：两个 isolate 在同一个「时间窗 + 槽位」组合上落盘时会互相覆盖对方那一批
- * （最后写的赢），不再是"永久不可达"（C3 的失效），而是"丢一次交错，下一轮各自
+ * （最后写的赢），不是"永久不可达"（C3 的失效形态），而是"丢一次交错，下一轮各自
  * 继续写自己的"——见 `tests/unit/admin/event-ring.test.ts` 里专门钉住这条代价的用例。
  */
 
@@ -99,7 +110,20 @@ export function slotOf(shardId: string): number {
   return ((h % EVENT_SLOTS) + EVENT_SLOTS) % EVENT_SLOTS;
 }
 
-/** 分片键。`event:<窗口>:<槽位>`，两维都是有界整数，键空间因此整体有界。 */
+/**
+ * 分片键。`event:<窗口>:<槽位>`。
+ *
+ * ⚠️ **评审 C5 订正**：这里原来写着"两维都是有界整数，键空间因此整体有界"——
+ * **不成立，是本项目第十一次「注释里的假断言」**。槽位维确实有界（`EVENT_SLOTS`
+ * 固定为 2），但 `window` 是绝对纪元小时数（`windowIndex` 不取模），**单调递增、
+ * 本身无界**。读路径的候选键数有界（`candidateKeys` 钳位到 `EVENT_WINDOW_RETAIN`）
+ * 不等于"存储里实际驻留的键数有界"——全仓没有任何 delete 路径、`KvStorage.put`
+ * 也不设 `expirationTtl` 之前，滚出保留期的旧窗口键会**永久堆积**（评审实测：
+ * 运行 365 天后 distinct event 键数 4,380，且 100 小时前写的键"仍在存储里但
+ * `readEvents` 已经看不到它"——占空间却读不到，是最坏的一种"有界"）。
+ * 真正让存储里的键数有上界的是 `StoreLogger.maybeFlush()` 里那次顺手删除
+ * （见该文件），不是这个函数本身——这个函数只负责拼出一个字符串。
+ */
 export function shardKey(window: number, slot: number): string {
   return `event:${window}:${slot}`;
 }
@@ -109,18 +133,32 @@ export function shardKey(window: number, slot: number): string {
  * 这次要 get 哪些键。
  *
  * - `after === null`（面板首次加载 / 清空视图后重新拉 / 直接调 API 不带 `after`）：
- *   回看 `EVENT_WINDOW_RETAIN` 个窗口（冷读，开销最大，但只在这类场景发生）。
- * - `after` 有值（增量轮询稳态）：只看 `after` 所在窗口到当前窗口——通常是同一个
- *   窗口（1 个），跨窗口边界的那一刻是 2 个，**不会**随保留窗口数增长。这是把
- *   「稳态轮询成本」从「随历史深度增长」降到「常数」的关键，也是 C2 在读side
- *   被根除的具体机制。
+ *   回看 `EVENT_WINDOW_RETAIN` 个窗口（冷读）。
+ * - `after` 有值（增量轮询）：只看 `after` 所在窗口到当前窗口——通常是同一个窗口
+ *   （1 个），跨窗口边界的那一刻是 2 个。
+ *
+ * ⚠️ **评审 C4/C4b：`fromWindow` 必须钳位在 `floor`（= `nowWindow - EVENT_WINDOW_RETAIN
+ * + 1`）之下不能再往前**。没有这条钳位时，一个陈旧或被构造成极端值的 `after`
+ * （`after=0`、`after=-1e11`，或者单纯是「系统很安静、很久没有新事件、`state.after`
+ * 冻结在很早以前」这种完全合法的稳态）会让 `fromWindow` 远早于 `floor`，候选键数量
+ * 随 `nowWindow - fromWindow` 线性增长、**没有上界**——评审实测 `after=0` 时单次
+ * 请求打出约 **99 万次 get**。**这正是 C2（索引无上限增长）换了一根轴复发**：
+ * 旧设计的增长轴是"部署年龄"（isolate 冷启动次数），新设计换成了"游标陈旧度"，
+ * 而"游标冻结在早期、系统长期安静"恰恰是这个项目里**最常见**的稳态——全仓的事件
+ * 白名单清一色是错误诊断事件，健康的网关产出事件数是 0。
+ *
+ * 钳位之后，`candidateKeys()` 的返回长度**对任何 `after` 值（含负数、含极端未来值）
+ * 都不超过 `EVENT_WINDOW_RETAIN × EVENT_SLOTS`**——这个函数自身现在是这条不变量
+ * 唯一需要守住的地方，`afterParam()`（HTTP 层）额外拒绝负数只是让语义更干净
+ * （负的时间戳不是一个有意义的输入），不是这条安全性质的必要条件。
  *
  * 返回顺序：窗口升序、同窗口内槽位升序（顺序本身没有语义，只是让候选键列表本身
  * 也是确定性的，便于测试断言）。
  */
 export function candidateKeys(now: number, after: number | null): string[] {
   const nowWindow = windowIndex(now);
-  const fromWindow = after === null ? nowWindow - EVENT_WINDOW_RETAIN + 1 : windowIndex(after);
+  const floor = nowWindow - EVENT_WINDOW_RETAIN + 1;
+  const fromWindow = after === null ? floor : Math.max(floor, windowIndex(after));
   const keys: string[] = [];
   for (let w = fromWindow; w <= nowWindow; w++) {
     for (let s = 0; s < EVENT_SLOTS; s++) keys.push(shardKey(w, s));

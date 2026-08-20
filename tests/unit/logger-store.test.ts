@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { StoreLogger } from "../../src/adapters/logger-store.js";
-import { EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_RING_SIZE, windowIndex, slotOf, shardKey, appendRing } from "../../src/core/admin/event-ring.js";
+import {
+  EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_RING_SIZE, EVENT_WINDOW_MS, EVENT_WINDOW_RETAIN,
+  windowIndex, slotOf, shardKey, appendRing,
+} from "../../src/core/admin/event-ring.js";
 import { CountingStorage } from "../helpers/counting-storage.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import type { Storage } from "../../src/ports/storage.js";
@@ -236,6 +239,42 @@ describe("StoreLogger", () => {
     await shared.put(key2, appendRing(c2, [{ ts: 2001, level: "info", event: "seq-b" }], 100));
     const seqResult = (await shared.get<LogEntry[]>(key2)) ?? [];
     expect(seqResult.map((e) => e.event), "顺序执行（get() 不抢跑）时两批都保留，不丢数据").toEqual(["seq-a", "seq-b"]);
+  });
+
+  /**
+   * **评审 C5**：读路径的候选键钳位（C4/C4b）只保证"一次请求付出的 get 次数有
+   * 上限"，不保证"存储里实际驻留的 event:* 键数有上限"——`window` 是绝对纪元
+   * 小时数，不取模，旧窗口键如果永远不删就会无限堆积（评审实测：运行 365 天后
+   * distinct 键数 4,380，且"100 小时前写的键仍在存储里，但 readEvents 已经看不到
+   * 它"——占空间却读不到，是最坏的一种"有界"）。
+   *
+   * 这条用例直接构造"落盘窗口跨过一整个保留期"的场景：第一次落盘写在窗口 W，
+   * 第二次落盘的时刻恰好推进了 `EVENT_WINDOW_RETAIN` 个窗口（落在窗口 `W +
+   * RETAIN`），此时窗口 W 应该已经滚出了候选键范围（`candidateKeys` 的
+   * floor 正好是 `W + 1`），第二次落盘顺手把它删掉。
+   */
+  it("落盘时顺手删掉刚滚出保留期的那个窗口键，存储不再无上限增长（评审 C5）", async () => {
+    const st = new MemoryStorage();
+    const shardId = "s1";
+    const slot = slotOf(shardId);
+    let t = 1000; // windowIndex(1000) = 0
+    const logger = new StoreLogger({ storage: st, now: () => t, shardId, onError: () => {} });
+
+    logger.log({ level: "info", event: "old-event" });
+    t += EVENT_FLUSH_MIN_INTERVAL_MS; // 61000，仍在窗口 0
+    await logger.maybeFlush();
+    const oldKey = shardKey(windowIndex(t), slot); // shardKey(0, slot)
+    expect(await st.get(oldKey), "前置条件：第一次落盘确实写进去了").not.toBeNull();
+
+    // 推进恰好 RETAIN 个窗口：新的当前窗口是 0 + RETAIN，floor 正好是 0 + 1，
+    // 窗口 0（= oldKey 所在的窗口）第一次滚出候选范围。
+    t += EVENT_WINDOW_RETAIN * EVENT_WINDOW_MS;
+    logger.log({ level: "info", event: "new-event" });
+    await logger.maybeFlush(); // 距上次落盘远超过最小间隔，正常触发
+
+    expect(await st.get(oldKey), "滚出保留期的旧窗口键应该被删掉").toBeNull();
+    const newKey = shardKey(windowIndex(t), slot);
+    expect((await st.get<LogEntry[]>(newKey))?.map((e) => e.event)).toEqual(["new-event"]);
   });
 
   it("status() 在没有任何事件时如实报空：buffered=0、dropped=0、budgetExhausted=false", () => {

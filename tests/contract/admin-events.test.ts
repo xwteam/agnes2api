@@ -34,6 +34,7 @@ interface EventsBody {
   dropped: number;
   budgetExhausted: boolean;
   truncated: boolean;
+  cursorAhead: boolean;
   generatedAt: number;
 }
 
@@ -63,6 +64,7 @@ describe("GET /admin/api/events", () => {
     expect(body.dropped).toBe(0);
     expect(body.budgetExhausted).toBe(false);
     expect(body.truncated).toBe(false);
+    expect(body.cursorAhead).toBe(false);
     expect(typeof body.generatedAt).toBe("number");
   });
 
@@ -169,6 +171,46 @@ describe("GET /admin/api/events", () => {
 
     const after = await getEvents(app, `?after=${firstTs}`);
     expect(after.body.items.map((e) => e.event)).toEqual(["new.one"]);
+  });
+
+  /**
+   * **评审 C4**：负数 `after` 是敌意/无意义输入，`afterParam` 直接当缺失处理
+   * （回落成冷读），不是让它原样流进 `candidateKeys`。
+   */
+  it("?after 是负数时当缺失处理（冷读，不 400、不放大）", async () => {
+    let t = 100_000;
+    const { app, storeLogger } = await makeApp([], ["k1"], {}, () => t);
+    storeLogger.log({ level: "info", event: "e.info" });
+    t += 60_000;
+    await storeLogger.maybeFlush();
+    const { status, body } = await getEvents(app, "?after=-100000");
+    expect(status).toBe(200);
+    expect(body.items.map((e) => e.event)).toEqual(["e.info"]);
+  });
+
+  /**
+   * **评审 C6**：`after` 所在的时间窗比当前请求的 `now` 所在的窗口还晚时
+   * （时钟回拨，或者某个 isolate 的时钟偏快、写出的 ts 是"未来值"），
+   * `items` 会是空的——`cursorAhead` 必须如实报出来，不能让调用方把这种情况
+   * 误判成"确实没有新事件"。
+   */
+  it("?after 领先于服务器当前时钟时，items 为空但 cursorAhead 如实报 true", async () => {
+    const { app } = await makeApp([], ["k1"], {}, () => 1_000_000);
+    // 服务器当前时钟是 1,000,000；after 传一个远超过它的未来值。
+    const { status, body } = await getEvents(app, "?after=100000000000");
+    expect(status).toBe(200);
+    expect(body.items).toEqual([]);
+    expect(body.cursorAhead, "游标领先于本次请求的时钟，必须如实报出来").toBe(true);
+  });
+
+  it("cursorAhead 在正常情况下（after 落后于 now）是 false，不是恒 true", async () => {
+    let t = 100_000;
+    const { app, storeLogger } = await makeApp([], ["k1"], {}, () => t);
+    storeLogger.log({ level: "info", event: "e.info" });
+    t += 60_000;
+    await storeLogger.maybeFlush();
+    const { body } = await getEvents(app, "?after=1000"); // 远早于当前时钟，正常的陈旧游标
+    expect(body.cursorAhead).toBe(false);
   });
 
   it("?level=<lvl> 只返回该级别的事件", async () => {
