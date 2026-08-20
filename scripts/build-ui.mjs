@@ -8,7 +8,7 @@
  * file:// 下会解析成 file:///admin/... 而全部 404；而且现代浏览器把 file:// 的源当成
  * null，type="module" 的脚本会被 CORS 挡下。可执行的验收步骤见 admin-ui/README.md。
  * 这是守住硬约束 4（不引入需要构建步骤的前端框架）的全部依据，
- * 由 tests/unit/ui-assets.test.ts 钉死。
+ * 由 `tests/unit/ui-assets.test.ts` 的「源目录里每个文件都在生成物里，且内容一字不差」钉死。
  *
  * 生成物**入仓**：deploy-worker.yml 用 wrangler-action 的 `command: deploy`，
  * 绕过一切 npm script；Cloudflare 的 Deploy 按钮也是从仓库直接部署。
@@ -16,7 +16,7 @@
  *
  * 用法：
  *   node scripts/build-ui.mjs             # 写默认位置 src/ui/assets.generated.ts
- *   node scripts/build-ui.mjs <出口路径>   # 写别处（tests/unit/ui-assets.test.ts 的漂移门禁用它
+ *   node scripts/build-ui.mjs <出口路径>   # 写别处（`tests/unit/ui-assets.test.ts` 的
  *                                          # 生成到临时目录再整文件比对，不碰工作区）
  *
  * 路径一律**按本文件位置**解析，不按 cwd：CI、git hook、编辑器任务都可能从别的目录
@@ -166,7 +166,8 @@ const entries = Object.keys(assets).sort().map((k) => {
 }).join("\n");
 
 const out = `// 由 scripts/build-ui.mjs 生成，**请勿手工编辑**。
-// 源在 admin-ui/，改完那边跑 \`pnpm ui:build\`。产物与源逐字节相同（tests/unit/ui-assets.test.ts 钉死）。
+// 源在 admin-ui/，改完那边跑 \`pnpm ui:build\`。产物与源逐字节相同
+// （tests/unit/ui-assets.test.ts 的「源目录里每个文件都在生成物里，且内容一字不差」钉死）。
 export interface UiAsset {
   readonly body: string;
   readonly type: string;

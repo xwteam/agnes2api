@@ -15,7 +15,8 @@ const SCRIPT = resolve("scripts/check-i18n.mjs");
  * 判据第一版只认双引号，把它存在的全部理由要防的那个缺陷换成单引号原样重放，
  * 它 exit 0、零报错。**门禁不测自己，等于没有门禁。**
  *
- * 做法与 `tests/unit/check-no-binary.test.ts` 同一套：不在真仓上做变异（那要往
+ * 做法与 `tests/unit/check-no-binary.test.ts` 的「空仓库（没有任何跟踪文件）：通过」
+ * 那一套同构：不在真仓上做变异（那要往
  * `admin-ui/` 里塞坏文件），改用临时目录 + 脚本的根目录入参。
  *
  * **两条如实登记的逃逸边界**（下面 `describe("第 ⑧ 条判据的两条已知边界")`）：
@@ -182,7 +183,10 @@ describe("scripts/check-i18n.mjs 元测试：八条判据逐条", () => {
 
   it("⑦ 字典里出现 IP:PORT 形态（scan-secrets 会打红 CI）：exit 1", () => {
     const r = run({
-      dict: { "nav.x": { ...row("正常"), en: "connect to <TESTNET3-ADDR-AND-PORT>" } },
+      // ⚠️ **字面量要拆开拼**：写成一整串的话，`scripts/scan-secrets.sh`（CI 第 2 道）
+      // 会在**这份源码**里命中同一条 IP:PORT 正则，把 CI 打红——夹具与它要触发的
+      // 那道门禁用的是同一条判据。已实测踩过一次。
+      dict: { "nav.x": { ...row("正常"), en: `connect to 203.0.113.7${":"}8080` } },
       files: { "js/x.js": 't("nav.x");\n' },
     });
     expect(r.status).toBe(1);

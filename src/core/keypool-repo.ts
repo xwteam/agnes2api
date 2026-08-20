@@ -40,7 +40,7 @@ export const DEFAULT_POOL_TOUCH_INTERVAL_MS = 21_600_000; // 6 小时
  * `lastUsedAt` 判为 telemetry 的依据（每次改动都请重新核一遍，别信这行注释）：
  * 全仓只有 `applySuccess` 写它，`isAvailable` / `selectKey` / `applyStrike` /
  * `applyCooldown` / `applyEvict` / `poolHealth` 一个都不读。这条前提由
- * `tests/unit/pool-cache.test.ts` 的「调度完全不读 lastUsedAt」用例与那条源码扫描
+ * `tests/unit/pool-cache.test.ts` 的「前提：lastUsedAt 不参与调度……」用例与那条源码扫描
  * 一起钉住——**将来谁拿 lastUsedAt 做 LRU 选 key，那两条会先变红**，而不是靠这段注释。
  */
 export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
@@ -96,7 +96,8 @@ function schedulingEqual(a: KeyRecord, b: KeyRecord): boolean {
  * （`READ_PATH_LIST_BACKOFF_MS = 600_000`），比这个常数更长；等到那道闸放行时，
  * 距上一次写尝试必然已经超过本值，`since < INDEX_WRITE_RETRY_MS` 永远不成立。
  * 把本值改回 60_000 时，实测**只有**下面的常数字面量/关系断言会变红，
- * `tests/unit/keypool-repo.test.ts` 里那条数 put 次数的行为用例在两个值下都绿
+ * `tests/unit/keypool-repo.test.ts` 的「索引写一直失败时，跨 10 个 TTL 的 put 尝试次数远少于 10」
+ * 在两个值下都绿
  * ——这个常数在这两个调用点上已经是**功能性死代码**（无害的第二道保险，
  * 不是活跃防线）。真正钉住这个值的只有常数用例本身，改小了就靠它变红。
  */
@@ -269,7 +270,8 @@ export class KeyPoolRepo {
    * isolate 级池快照。**与 `ConfigHolder` 建在同一个 `Refreshable` 上**，不是为了省
    * 代码：两者回答的是同一个问题——「面板刚改完，多久能看见？」——而面板上写的那个
    * 生效时间只有一份。各写一份实现必然漂移出两套语义，那个数字就开始骗人。
-   * `tests/contract/freshness.test.ts` 用同一组断言分别跑两者，分叉立刻变红。
+   * `tests/contract/freshness.test.ts` 的「新鲜度契约」用同一组断言分别跑两者，
+ * 分叉立刻变红。
    */
   private readonly snapshot: Refreshable<KeyRecord[]>;
 

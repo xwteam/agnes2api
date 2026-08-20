@@ -68,6 +68,8 @@ describe("tests/ui 真的被 vitest 收集了", () => {
 });
 
 /**
+ * @refs-ignore（`tests/foo.test.ts` 是举例说明「带了过滤器」长什么样，不是真实指向）
+ *
  * CI 门禁的前提：`pnpm test` / `pnpm test:workers` 必须是**裸命令**，不带任何文件路径
  * 过滤器（如 `pnpm test tests/foo.test.ts`）。
  *
@@ -141,19 +143,33 @@ describe("pnpm build 在 CI 门禁列表里", () => {
  * 而少跑一道的形态恰恰是静默的（那一步被删掉之后没有任何东西会红）。
  * 期望值是**手写字面量**，不是从 yml 里数出来再回填。
  */
-it("CI 恰好十一道门，编号 1/11 到 11/11 各出现一次", () => {
+it("CI 恰好十二道门，编号 1/12 到 12/12 各出现一次", () => {
   const ci = readFileSync(".github/workflows/ci.yml", "utf8");
-  for (let i = 1; i <= 11; i++) {
-    const n = ci.split(`name: ${i}/11 `).length - 1;
-    expect(n, `编号 ${i}/11 出现了 ${n} 次`).toBe(1);
+  for (let i = 1; i <= 12; i++) {
+    const n = ci.split(`name: ${i}/12 `).length - 1;
+    expect(n, `编号 ${i}/12 出现了 ${n} 次`).toBe(1);
   }
-  // 反向：不许还剩下旧编号（评审 F3 从十道扩到十一道，新增 check-no-binary
-  // 排在第一位，原来的 1/10..10/10 全部要跟着挪一位）。
+  // 反向：不许还剩下旧编号（评审 F3 从十道扩到十一道；全分支评审 B2 又插入
+  // check-comment-refs 作第 8 道，原来的 8/11..11/11 全部跟着挪一位）。
   expect(ci, "还有步骤写着 N/10").not.toMatch(/name: \d+\/10 /);
+  expect(ci, "还有步骤写着 N/11").not.toMatch(/name: \d+\/11 /);
 });
 
 /**
- * CI 第 8/10、9/10 两步的退出码**全靠 `shell: bash` 提供的 pipefail**：
+ * **第 12 道门禁（全分支评审 B2）在 CI 里**：注释里写「这条由某某用例钉着」时，
+ * 那个指向必须解析得开。与上面 `check-no-binary` 那条同一个模式——这里只钉
+ * 「CI 里确实跑了这一步」，脚本自身的正确性由
+ * `tests/unit/check-comment-refs.test.ts` 的「干净的树：exit 0」一带单独验证。
+ */
+describe("check-comment-refs 在 CI 门禁列表里", () => {
+  it("ci.yml 里有一步跑 node scripts/check-comment-refs.mjs", () => {
+    const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+    expect(ci).toMatch(/run:\s*node scripts\/check-comment-refs\.mjs\s*$/m);
+  });
+});
+
+/**
+ * CI 第 10/12、11/12 两步的退出码**全靠 `shell: bash` 提供的 pipefail**：
  * 它们是 `pnpm test 2>&1 | tee ... ; grep ...`，没有 pipefail 时管道的退出码取最后一条命令，
  * **测试失败会被 tee/grep 的成功退出码吃掉，CI 全绿**。
  * 上面那组断言了这两步的裸命令、grep 次数、pnpm build——**唯独没断言它**。
@@ -169,7 +185,7 @@ it("跑测试的两步显式声明 shell: bash（pipefail 的唯一来源）", (
   // 全绿，因为窗口滑进了 9/10 自己的 `shell: bash`，「变异点与被守护的不变量」
   // 没对齐。判据必须锚在**这一步自己的 YAML 块**，用下一个 `- name:` 当右边界，
   // 而不是一个跟内容脱钩的字符数。
-  for (const name of ["9/11 单元 / 契约 / 前端纯函数测试（Node 运行时）", "10/11 契约测试（workerd 运行时）"]) {
+  for (const name of ["10/12 单元 / 契约 / 前端纯函数测试（Node 运行时）", "11/12 契约测试（workerd 运行时）"]) {
     const i = yml.indexOf(`name: ${name}`);
     expect(i, `找不到步骤 ${name}`).toBeGreaterThan(0);
     const nextStep = yml.indexOf("\n      - name:", i);

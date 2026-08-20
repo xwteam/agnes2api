@@ -4,7 +4,7 @@
  * 本文件保留两处「看起来违反」的写法，各有理由，**清单不许再变长**。
  * 谁在守它，说准（此前这里含糊带过，而台账把它写成了「有源码断言钉着」——那句是假的）：
  *   · 第 1 条 `setTimeout`：**有源码断言**，`tests/unit/source-guards.test.ts` 的
- *     零 IO 扫描把 `src/core` 里**下列 8 类记号**的使用点与一份**手写**清单逐条比对，
+ *     「扫描到的使用点恰好等于手写的豁免清单」把 `src/core` 里**下列 8 类记号**的使用点与一份**手写**清单逐条比对，
  *     多一处（哪怕是同一个文件里的第二处）立刻变红：
  *       `setTimeout` / `setInterval` / `setImmediate`、`new Date`、`Date.*`、
  *       `performance.*`、`Math.random`、`crypto.*`、裸 `fetch(`、`process.*`
@@ -16,8 +16,9 @@
  *     `new Date()`、`performance.now()` 三种最地道的写法当时全都隐身。
  *   · 第 2 条模块级 `let cursor`：**没有断言，只有这段注释 + 评审 checklist**。
  *     它是可变模块状态，不是某个可 grep 的全局 API，扫描抓不住它。
- *   · 裸 `console`：`tests/unit/registrar/log-prefix.test.ts` 扫 `src/core` 全目录，
- *     `tests/unit/source-guards.test.ts` 扫 `src/http` 与 `src/ui`。
+ *   · 裸 `console`：`tests/unit/registrar/log-prefix.test.ts` 的「src/core 全目录零 console……」
+ *     扫 `src/core` 全目录，`tests/unit/source-guards.test.ts` 的
+ *     「调用点恰好等于手写的豁免清单……」扫 `src/http` 与 `src/ui`。
  *
  * 1. `setTimeout(() => controller.abort(), timeoutMs)`
  *    改成注入的 timer 端口只有这一个消费者，纯增抽象；换成 `AbortSignal.timeout()`

@@ -4,6 +4,8 @@ import { normalizeStats } from "./stats.js";
 /**
  * 上游 key 的掩码。**全仓唯一的一份实现。**
  *
+ * @refs-ignore（下面要点名那个**已经被删掉**的前端副本，路径按定义解析不开）
+ *
  * ⚠️ 这里原来写着「与 `admin-ui/js/pure/mask.mjs` 是两份实现……由共享夹具一致性
  * 断言钉住（设计文档 §16.1 U4）」。那个前端副本在全分支评审 B3 被删掉了：
  * 它在 `admin-ui/js/` 里**零导入者**——面板显示的 `masked` 就是下面 `toKeyViews()`

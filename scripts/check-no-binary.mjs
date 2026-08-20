@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @refs-ignore（下面举的 `src/x.ts` / `src/hidden.ts` 是虚构的示例路径）
 // 评审 F3 新增的第 11 道门禁：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/` 下
 // 不许存在被 git 判定为二进制的跟踪文件。
 //
@@ -90,6 +91,8 @@ const binaryInScope = inScope.filter(
 );
 
 /**
+ * @refs-ignore（下面举的 `src/hidden.ts` 是虚构的示例路径）
+ *
  * **第二条判据：`.gitattributes` 里的 `-diff`**（评审五审必修 1）。
  *
  * 内容是不是文本、与 git 愿不愿意把它当文本 diff，是**两件事**：给一份纯文本文件

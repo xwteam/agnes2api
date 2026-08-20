@@ -737,7 +737,8 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    *
    * `/admin` 与 `/admin/*` 是 Task 6 加的静态资源：登录闸得先能打开，否则没法登录。
    * 它们只投递编译期常量表 `UI_ASSETS`（src/ui/serve.ts），**不读任何运行时状态**
-   *（tests/contract/ui-serve.test.ts 有一条用例守着「页面里没有版本号也没有口令」）。
+   *（`tests/contract/ui-serve.test.ts` 的「GET /admin 免鉴权返回 index.html，字节与生成物一致」
+   *  守着它——那里断言的是逐字节相等，比「页面里大概没有敏感内容」强得多）。
    * 除此之外这张表不许再长。
    *
    * **关于 `/admin/`（尾斜杠 301 跳 `/admin`）的表态：三张表都不增长。**
@@ -746,7 +747,8 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * 刻意**不**把它写进 `PUBLIC_PATHS`：下面那条「免鉴权路径不带凭据也是 200」
    * 断言的是 200，而它返回 301——为了塞进一个条目就把那条断言放宽成「不是 401」，
    * 是拿整张表的强度换一格覆盖，不划算。它的免鉴权与 301 由
-   * tests/contract/ui-serve.test.ts 三条专门的用例守着。
+   * `tests/contract/ui-serve.test.ts` 的「200 / 304 / 301 / 404 四个分支都带 cache-control: no-cache」
+   * 一带的三条专门用例守着。
    */
   const PUBLIC_PATHS: readonly string[] = ["/health", "/admin", "/admin/*"];
 
@@ -814,7 +816,8 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     /**
      * 这套凭据**应当**能开哪些安全域的门。手写的策略声明：
      * 网关信道 = Authorization: Bearer / x-api-key / x-goog-api-key / ?key=（Gemini 协议兼容，
-     * 见 tests/contract/auth.test.ts 钉住的既有契约）；管理信道 = **仅** x-admin-key。
+     * 见 `tests/contract/auth.test.ts` 的「接受查询参数 key」一带钉住的既有契约）；
+     * 管理信道 = **仅** x-admin-key。
      * 两把钥匙严格隔离，任何一把都不该开另一边的门。
      */
     opens: readonly Domain[];

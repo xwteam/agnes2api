@@ -6,6 +6,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 /**
+ * @refs-ignore（下面提到的 `tests/unit/test-collection.test.ts` 是**已被取代**的第一版，故意留着讲教训）
+ *
  * **测试收集门禁。放在 globalSetup 而不是某个 `*.test.ts` 里，这一点是本文件的全部意义。**
  *
  * 起因：`vitest.config.ts` 的 `include` 里去掉 `"tests/ui/**"`，整条前端纯函数测试
@@ -141,6 +143,8 @@ interface MaybeProject {
 }
 
 /**
+ * @refs-ignore（`tests/xxx.test.ts` 与实测输出里那个文件名都是示例，不是真实指向）
+ *
  * 本次调用带没带**显式的测试文件过滤器**（`vitest run tests/xxx.test.ts` 这种）。
  *
  * 取的是 vitest 自己解析好的 `filenamePattern`，**不是手搓 process.argv**：

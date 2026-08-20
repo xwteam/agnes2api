@@ -16,10 +16,11 @@ function intParam(raw: string | undefined, fallback: number, min: number, max: n
  *
  * **零 `list()`、零额外读**：走 `deps.repo.all()`，与转发路径**共用同一个 isolate 快照**
  *（设计文档 §2.4 第 1、2 条）。面板每刷新一次不产生独立的存储开销——
- * 这条由 tests/contract/quota-panel.test.ts 数着 list/get 次数钉住。
+ * 这条由 `tests/contract/quota-panel.test.ts` 的
+ * 「连打 20 次 /admin/api/keys……get 次数不增加」数着 list/get 次数钉住。
  *
  * **投影永不含明文 key，也没有任何 reveal 端点**：有了它，面板口令泄漏就等于整池泄漏。
- * 这条由 tests/contract/admin-keys.test.ts 断言**整段响应文本**不含明文钉住。
+ * 这条由 `tests/contract/admin-keys.test.ts` 的「响应体整段文本里都找不到明文 key」钉住。
  */
 export function keysHandler(repo: KeyPoolRepo, now: () => number) {
   return async (c: Context) => {

@@ -21,23 +21,29 @@ jobs:
       # 扫凭据的副作用去兜底）；这一步先把"是不是文本"这个前提确认掉，后面的
       # 评审包 diff、代码审计 grep、五语言 grep 核对、scan-secrets 才都建立在
       # 同一个成立的前提上。起因见 scripts/check-no-binary.mjs 文件头。
-      - name: 1/11 跟踪文件不许是二进制
+      - name: 1/12 跟踪文件不许是二进制
         run: node scripts/check-no-binary.mjs
-      - name: 2/11 凭据扫描
+      - name: 2/12 凭据扫描
         run: bash scripts/scan-secrets.sh
-      - name: 3/11 生成面板资源
+      - name: 3/12 生成面板资源
         run: node scripts/build-ui.mjs
-      - name: 4/11 生成物一致性（仓库里那份必须与 admin-ui/ 一致）
+      - name: 4/12 生成物一致性（仓库里那份必须与 admin-ui/ 一致）
         run: git diff --exit-code src/ui/assets.generated.ts
-      - name: 5/11 面板体积预算
+      - name: 5/12 面板体积预算
         run: node scripts/check-ui-budget.mjs
-      - name: 6/11 i18n 完整性
+      - name: 6/12 i18n 完整性
         run: node scripts/check-i18n.mjs
-      - name: 7/11 KV namespace id 仍是占位符
+      - name: 7/12 KV namespace id 仍是占位符
         run: node scripts/check-wrangler-placeholder.mjs
-      - name: 8/11 类型检查
+      # 全分支评审 B2 新增的第 8 道：**注释里指向的位置必须真实存在。**
+      # 排在类型检查之前是有意为之——它只读文本、几百毫秒就跑完，而它抓的那类缺陷
+      # （「这条由 X 用例钉着」指向一条根本不存在的用例）恰恰是**读代码的人会当真、
+      # 而所有其它门禁都看不见**的那一类。本仓台账已为它记了二十余次。
+      - name: 8/12 注释里的指向必须解析得开
+        run: node scripts/check-comment-refs.mjs
+      - name: 9/12 类型检查
         run: pnpm typecheck
-      # 9/11、10/11 的 `pnpm test 2>&1` / `pnpm test:workers 2>&1` 这两处**不得**追加任何
+      # 10/12、11/12 的 `pnpm test 2>&1` / `pnpm test:workers 2>&1` 这两处**不得**追加任何
       # 文件路径过滤器（如 `pnpm test tests/foo.test.ts`）。tests/global-setup.ts 里
       # 的收集门禁按「带没带过滤器」分档，一旦 CI 带了过滤器，门禁会在**不报错、不提示**
       # 的情况下静默跳过——这个前提由 tests/unit/scripts-guard.test.ts 钉住，改这两行前
@@ -51,7 +57,7 @@ jobs:
       # tests/global-setup.ts 里逐配置（node 一份、workerd 一份，各自独立核对，不取并集）
       # 实现过一次，CI 只需要确认它被跑到——重新实现一遍等于多一处可能出现同一类并集
       # 语义盲区的地方。
-      - name: 9/11 单元 / 契约 / 前端纯函数测试（Node 运行时）
+      - name: 10/12 单元 / 契约 / 前端纯函数测试（Node 运行时）
         shell: bash
         run: |
           pnpm test 2>&1 | tee /tmp/test-node.log
@@ -59,7 +65,7 @@ jobs:
             echo "::error::收集门禁没有跑过（日志里没见到 [collection-guard] ✅），它可能被静默跳过了"
             exit 1
           }
-      - name: 10/11 契约测试（workerd 运行时）
+      - name: 11/12 契约测试（workerd 运行时）
         shell: bash
         run: |
           pnpm test:workers 2>&1 | tee /tmp/test-workers.log
@@ -67,5 +73,5 @@ jobs:
             echo "::error::收集门禁没有跑过（日志里没见到 [collection-guard] ✅），它可能被静默跳过了"
             exit 1
           }
-      - name: 11/11 构建
+      - name: 12/12 构建
         run: pnpm build

@@ -380,8 +380,8 @@ export function buildDetailText(item) {
  * 隔着别的事件的两条同名 corr 更可能是巧合，不该被强行拼进同一条时间线。
  *
  * 本期几乎没有事件带 `corr`（P3c 才串进注册机），**无 corr 的每条都是独立的单条组**
- * ——这条函数在"一个 corr 都没有"时必须一样能正确工作（见 `tests/ui/events.test.ts`
- * 的人工冒烟项）。
+ * ——这条函数在"一个 corr 都没有"时必须一样能正确工作
+ * （见 `tests/ui/events.test.ts` 的「groupEvents：按 corr 相邻折叠」那一组）。
  */
 export function groupEvents(items) {
   if (!Array.isArray(items)) return [];

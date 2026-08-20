@@ -41,9 +41,11 @@ import type { LogEntry } from "../../ports/logger.js";
  * 继续写自己的"——见 `tests/unit/logger-store.test.ts:221` 那条专门钉住这条代价的
  * 用例（"架构裁定①的代价：同一时间窗+槽位下真并发落盘会互相覆盖"）。
  *
+ * @refs-ignore（下面这一段的全部意义就是把那条**错误的**旧指向原样留在这里当标本）
+ *
  * ⚠️ **这个指向原来写的是 `tests/unit/admin/event-ring.test.ts`，那个文件里根本
  * 没有这条用例**（全分支评审 A9）。它是本仓"注释指向一条不存在的用例"这个形态的
- * 标本，第十二道门禁（`tests/unit/comment-refs.test.ts`）正是为它加的：
+ * 标本，第十二道门禁（`tests/unit/check-comment-refs.test.ts`）正是为它加的：
  * 从今往后这类指向必须写成 `file:line`，且门禁会校验被指到的位置真的是一条用例。
  */
 

@@ -51,7 +51,8 @@ class CountingStorage implements Storage {
  * 这些断言就变成在测缓存而不是在测它们各自要守的那条防线（实测：开着缓存时
  * 「回落照常 list」那两条会绿得莫名其妙，因为它压根没去读）。
  *
- * 缓存本身由 `tests/unit/pool-cache.test.ts` 专门覆盖，两边不互相冒充。
+ * 缓存本身由 `tests/unit/pool-cache.test.ts` 的「isolate 级快照缓存」专门覆盖，
+ * 两边不互相冒充。
  * 默认值（不传 cacheTtlMs 时是 60 秒）由下面「默认值」那条用例单独钉住。
  */
 function makeRepo(s: Storage = new CountingStorage(), now = () => 1000) {

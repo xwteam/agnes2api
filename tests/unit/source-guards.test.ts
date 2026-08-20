@@ -228,7 +228,8 @@ describe("硬约束：src/core 零 IO", () => {
 // ── ② src/adapters、src/http、src/ports、src/ui 的裸 console ─────────────
 
 /**
- * `src/core` 那半边由 `tests/unit/registrar/log-prefix.test.ts` 守着（那里还连带守
+ * `src/core` 那半边由 `tests/unit/registrar/log-prefix.test.ts` 的
+ * 「src/core 全目录零 console……」守着（那里还连带守
  * 五语言 REGISTRAR.md 承诺的 `[registrar]` 前缀契约）。这里守的是 Task 5/6 新增的
  * `src/http/**`（含 `admin/`）与 `src/ui/**`，以及 Task 2（本轮）新加进来的
  * `src/adapters/**` 与 `src/ports/**`。

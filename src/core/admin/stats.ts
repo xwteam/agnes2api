@@ -58,7 +58,8 @@ export function normalizeStats(raw: unknown): KeyStats {
  * `a` 的那条 kind，`maxStats(x, y)` 与 `maxStats(y, x)` 会给出不同的 kind。
  * 计数那四项是真正的 max（可交换），只有这一项不是。
  * 取严格大于是因为「同毫秒」下没有任何依据判定谁更新，而稳定地保留左侧（= 已有基线）
- * 比让顺序决定结果更可预期。这条不对称由 tests/unit/admin/stats.test.ts 钉着。
+ * 比让顺序决定结果更可预期。这条不对称由 `tests/unit/admin/stats.test.ts`
+ * 的「同毫秒时保留左侧」钉着。
  */
 export function maxStats(a: KeyStats, b: KeyStats): KeyStats {
   const newer = b.lastErrorAt !== null && (a.lastErrorAt === null || b.lastErrorAt > a.lastErrorAt);

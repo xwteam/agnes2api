@@ -1,7 +1,7 @@
 /**
  * 管理口令的字符集判定。**前后端共用同一份定义**（后端那份是
  * `src/http/admin/auth.ts` 的 `SENDABLE` / `isSendable`），由
- * `tests/ui/sendable-parity.test.ts` 的**逐码位行为等价**断言钉着。
+ * `tests/ui/sendable-parity.test.ts` 的「逐码位……行为等价」断言钉着。
  *
  * ── 字符集是 `0x20–0x7E`，理由分三段，性质不同，别再混着说 ────────────────
  *

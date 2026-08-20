@@ -49,7 +49,7 @@ export interface GatewayConfig {
    * `tests/contract/admin-overview.test.ts` 与 `tests/ui/overview.test.ts` 各守一段。
    *
    * 这一处是本仓「注释在写下那一刻是真的，后来被同一期自己的新代码推翻，
-   * 没人回头改」的标本，第十二道门禁（`tests/unit/comment-refs.test.ts`）
+   * 没人回头改」的标本，第十二道门禁（`tests/unit/check-comment-refs.test.ts`）
    * 就是为这个形态加的。
    */
   degraded: boolean;

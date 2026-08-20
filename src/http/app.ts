@@ -141,7 +141,8 @@ export function createApp(deps: AppDeps): Hono {
    * **只提 nosniff，不提 CSP / X-Frame-Options**：后两条防的是「文档被渲染 /
    * 被套进 iframe」，而 `/v1/*` 与 `/health` 从不返回文档，加上去只是仪式感；
    * 面板那棵树该有的全套在 src/ui/serve.ts 里，那里才是真的会被当页面加载的地方。
-   * 这个取舍由 tests/contract/security-headers.test.ts 反向钉住。
+   * 这个取舍由 `tests/contract/security-headers.test.ts` 的
+   * 「网关侧刻意**不**加 CSP / X-Frame-Options」反向钉住。
    *
    * ⚠️ **必须写在 `await next()` 之后。** 已实测（Hono 4.13.2，两个方向都跑过，
    * 见 security-headers.test.ts 末尾那条把这个语义直接钉住的用例）：
@@ -154,9 +155,10 @@ export function createApp(deps: AppDeps): Hono {
    * /admin 那棵树自己也设了 nosniff）」——那句现在是假的，两处都假**
    *（全分支评审 A9）：
    * ① 把这一行**移动**到 `next()` 之前（不是新增一行）之后实测 **2 failed**：
-   *    `tests/contract/admin-events.test.ts`（`/admin/api/events/download` 是裸
-   *    `Response`，且它自己**不**设 nosniff——全靠这条全局的）与
-   *    `tests/contract/media.test.ts`（`/v1/videos/{id}` 的流式转发）；
+   *    `tests/contract/admin-events.test.ts` 的「下载端点是裸 Response，且**仍然**带全局 nosniff」
+   *    （`/admin/api/events/download` 是裸 `Response`，且它自己**不**设 nosniff——
+   *    全靠这条全局的）与 `tests/contract/media.test.ts` 的
+   *    「上游 text/html 经这条真实路由出来时是 application/octet-stream，且 nosniff 还在」；
    * ② 「唯一返回裸 Response 的是 /admin 那棵树」本身也不成立——`routes/media.ts`
    *    在 `/v1` 上就返回裸 `Response`。
    * 所以这条变异**今天就是一个可观测的现存缺陷**，不是"留给下一个 handler 的陷阱"。

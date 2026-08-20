@@ -111,7 +111,7 @@ form.addEventListener("submit", async (e) => {
   err.textContent = "";
   if (!key) { err.textContent = t("gate.empty"); return; }
   // 字符集判定在 `js/pure/sendable.mjs`，**与后端 `SENDABLE` 逐码位等价**
-  //（`tests/ui/sendable-parity.test.ts` 的行为断言钉着，不是源码文本比对）。
+  //（`tests/ui/sendable-parity.test.ts` 的「逐码位……行为等价」断言钉着，不是源码文本比对）。
   // 前端这一半必须有：后端只在启动时看得到自己的口令，看不到用户粘了什么。
   // 判定本身不许在这个文件里再写一遍（admin-ui/README.md 硬规则 1）。
   if (!sendable(key)) { err.textContent = t("gate.badShape"); return; }
