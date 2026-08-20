@@ -179,24 +179,43 @@ describe("i18n 字典", () => {
     // 反向自检：扫描坏成空集时上面那条恒绿。Task 4 的 Key 池板块一家就有 20+ 个。
     expect(referenced.size, "一个都没扫到，扫描本身坏了").toBeGreaterThanOrEqual(20);
     /**
-     * **逐命名空间的反向自检**（全分支评审 I6）。
+     * **反向自检 ②：`NAMESPACES` 这张表本身不许漏掉一个真的在用的命名空间。**
      *
-     * 上面那条"至少 20 个"的总量门槛**拦不住"某个前缀被从表里删掉"**——Key 池板块
-     * 一家就够 20 个，把 `ov`/`ev` 删掉总量照样过关，而那正是这次真实发生的事
-     *（本期新增两个板块，谁也没回来把它们加进表里，整整一期无人发现）。
-     * 判据改成：**"这次扫描一个引用都没扫到的前缀"这个集合，必须等于一份手写清单**。
-     * 两个方向都会红：删掉一个在用的前缀会让它进这个集合；某个今天为空的前缀将来
-     * 真的被 JS 引用了，也会让它离开这个集合、逼人回来重新表态。
+     * ⚠️ **这一格的判据方向是自查改过来的。** 第一版写的是「表里每个前缀都要扫到
+     * 至少一个引用」，拿变异一试就发现它**只挡加错的、挡不住删掉的**：把 `ov`/`ev`
+     * 从表里删掉，那两个前缀连同它们的引用一起从计算里消失，集合纹丝不动、8 条全绿
+     * ——而"本期加了两个板块却没人回来把它们加进表里"**正是这次真实发生的事**。
+     * 判据必须反过来建：**从字典里已有的命名空间出发**，凡是在 `admin-ui/js` 里
+     * 真的被用作 key 前缀的，都必须在表里。
+     */
+    const dictNamespaces = new Set(
+      Object.keys(I18N).map((k) => k.split(".")[0]!).filter((p) => /^[a-z]+$/.test(p)),
+    );
+    const usedNamespaces = new Set<string>();
+    for (const p of walk("admin-ui/js")) {
+      if (p.endsWith("i18n-dict.js")) continue;
+      for (const m of stripComments(readFileSync(p, "utf8")).matchAll(/"([a-z]+)\.[A-Za-z0-9_.]+"/g)) {
+        if (dictNamespaces.has(m[1]!)) usedNamespaces.add(m[1]!);
+      }
+    }
+    expect(
+      [...usedNamespaces].filter((ns) => !(NAMESPACES as readonly string[]).includes(ns)).sort(),
+      "这些命名空间在 admin-ui/js 里真的被用作 key 前缀，却不在 NAMESPACES 表里"
+      + "——那一段 key 打错字时三道 i18n 门禁会全部沉默",
+    ).toEqual([]);
+
+    /**
+     * **反向自检 ③：表里不许有死条目。** 与 ② 是同一件事的另一半
+     *（② 挡"漏了"，③ 挡"多了 / 前缀写错"）。
      *
-     * 今天为空的三个，各有其**如实的**理由（都不是缺陷）：
-     * · `shell` / `nav` —— 壳层的标题与三个导航按钮的文案全部写在 `index.html` 的
+     * 今天为空的三个各有其**如实的**理由，都不是缺陷：
+     * · `shell` / `nav` —— 壳层标题与三个导航按钮的文案全写在 `index.html` 的
      *   `data-i18n` 属性里，而本条扫的是 `admin-ui/js` 下的 `.js`/`.mjs`。那一半由
      *   `scripts/check-i18n.mjs` 的第 ① 条覆盖（它连 `.html` 一起走）。
      * · `reg` —— 注册机板块整个排在 P3c，字典先铺好、还没有任何消费者
      *   （`scripts/check-i18n.mjs` 会把它们报成"未被引用"的**警告**）。
      */
-    const emptyNamespaces = NAMESPACES
-      .filter((ns) => ![...referenced].some((k) => k.startsWith(`${ns}.`)));
+    const emptyNamespaces = NAMESPACES.filter((ns) => !usedNamespaces.has(ns));
     expect(
       [...emptyNamespaces].sort(),
       "一个引用都没扫到的命名空间集合变了——要么前缀写错/该删，要么某个空的前缀"

@@ -4,6 +4,7 @@ import { KEY_STORE, SAVED_AT_STORE } from "../../../admin-ui/js/pure/storage-key
 import {
   EVENTS_POLL_MIN_MS, EVENTS_POLL_MAX_MS,
 } from "../../../admin-ui/js/pure/events.mjs";
+import { I18N } from "../../../admin-ui/js/i18n-dict.js";
 
 /**
  * **B1 目标 ④：事件板块的轮询调度**——它守的是**发货给用户的那条读配额包线**。
@@ -113,6 +114,49 @@ describe("事件板块的轮询间隔：DEPLOY.md 那条读配额包线的分母
     expect(delays[delays.length - 1], "前置条件：先得真的退到上限").toBe(EVENTS_POLL_MAX_MS);
     await tick();
     expect(delays[delays.length - 1], "来了新事件却没回到最短间隔").toBe(EVENTS_POLL_MIN_MS);
+  });
+
+  /**
+   * **「清空」按钮之后列表区那句话必须说真话**（全分支评审 I5 的**行为形态**）。
+   *
+   * ⚠️ **这一格是自查补的：第一轮 B1 做完之后拿这条变异实测，它完整逃逸。**
+   * 把 `clearBtn` 的回调从 `{ view = []; cleared = true; render(); }` 改回
+   * `{ view = []; render(); }`（也就是那个**已经上线**的缺陷原样重放），
+   * 29 条 DOM 用例一条都不红——`pure/events.mjs` 的 `eventsListMessageKey` 被测得
+   * 很细，但**没有任何东西验证板块文件真的把 `cleared` 喂给了它**。
+   * 这正是本仓登记的"我验的是我实现的那条路径，不是文档承诺的那件事"，
+   * 也正是 ESCAPED 的第二种成因（变异对齐了，是**观测点**不对）。
+   *
+   * 观测的是**运维实际读到的那句话**：清空之后不许出现「还没有事件。」——
+   * 服务端明明有事件，那句话与同一个按钮的 tooltip 当场矛盾。
+   */
+  it("点「清空」之后列表区说的是「已清空」，不是「还没有事件」", async () => {
+    const { h } = await openEvents([{ items: [{ ts: NOW, level: "info", event: "x" }], cursor: NOW }]);
+    const section = h.section("events");
+    const empty = I18N["ev.empty"]!["zh-CN"]!;
+    const cleared = I18N["ev.cleared"]!["zh-CN"]!;
+
+    expect(section.textContent, "前置条件：清空之前得真的有事件显示出来").toContain("x");
+
+    section.querySelectorAll("button")
+      .find((b) => b.getAttribute("data-i18n") === "ev.clear")!
+      .click();
+    await settle();
+
+    const text = section.textContent;
+    expect(text, "清空之后面板对运维说「还没有事件」—— 而服务端明明有").not.toContain(empty);
+    expect(text, "清空之后没给出那句说明（含恢复路径）").toContain(cleared);
+  });
+
+  /**
+   * **反向：一个真正全新的部署要说「还没有事件」，不是「已清空」。**
+   * 只写上面那格的话，「一律说已清空」也全绿——那对一个刚部署完的用户同样是假话。
+   */
+  it("从来没点过清空、服务端也确实没有事件时，说的是「还没有事件」", async () => {
+    const { h } = await openEvents([{ items: [], cursor: null }]);
+    const text = h.section("events").textContent;
+    expect(text).toContain(I18N["ev.empty"]!["zh-CN"]!);
+    expect(text).not.toContain(I18N["ev.cleared"]!["zh-CN"]!);
   });
 
   /**
