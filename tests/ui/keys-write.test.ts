@@ -3,8 +3,9 @@ import {
   isDeletable, isMustDisableFirstConflict, canClearCooldown, canUnevict, canClearStrikes,
   toggleDisableLabelKey, rowActionNeedsConfirm, bulkNeedsConfirm,
   selectAllIds, pruneSelection, headerSelectAllChecked, bulkBarVisible,
-  bulkResultSummary, bulkResultKey, importLines, hasImportableContent,
-  importResultCounts, noteToPatch, NOTE_MAX_LENGTH, isOpaqueErrorMessage,
+  toggleSelection, applySelectAll, knobsLoaded, hasNote,
+  bulkResultSummary, bulkResultKey, bulkResultPresentation, importLines, hasImportableContent,
+  importResultCounts, importResultPresentation, noteToPatch, NOTE_MAX_LENGTH, isOpaqueErrorMessage,
 } from "../../admin-ui/js/pure/keys-write.mjs";
 
 /** 一份"正常"的 KeyView，各条用例在它上面改一处。 */
@@ -359,5 +360,132 @@ describe("isOpaqueErrorMessage：内部码不能原样丢给运维", () => {
   it("形似但不是内部码的字符串：不许误伤", () => {
     expect(isOpaqueErrorMessage("http_ 后面没有数字")).toBe(false);
     expect(isOpaqueErrorMessage("httpx_500")).toBe(false);
+  });
+});
+
+/**
+ * **评审第二轮点名的六处例外（除已有测试的批量 toast 组装外），逐一补测试。**
+ * 这批判据原来直接写在 `sec-keys.js` 的事件处理器 / 渲染函数里，评审点名之后
+ * 搬进了本模块，这里是它们第一次被单独测试的地方。
+ */
+describe("toggleSelection：单行勾选的去重加入 / 过滤移除", () => {
+  it("勾选：加入选中集合", () => {
+    expect(toggleSelection(["a"], "b", true)).toEqual(["a", "b"]);
+  });
+  it("勾选一个已经在集合里的 id：不重复加入", () => {
+    expect(toggleSelection(["a", "b"], "a", true)).toEqual(["a", "b"]);
+  });
+  it("取消勾选：从集合里移除", () => {
+    expect(toggleSelection(["a", "b"], "a", false)).toEqual(["b"]);
+  });
+  it("取消勾选一个不在集合里的 id：不报错，集合不变", () => {
+    expect(toggleSelection(["a"], "z", false)).toEqual(["a"]);
+  });
+  it("非法输入：当成空集合处理，不抛异常", () => {
+    expect(toggleSelection(null, "a", true)).toEqual(["a"]);
+    expect(toggleSelection(undefined, "a", false)).toEqual([]);
+  });
+});
+
+describe("applySelectAll：全选 / 取消全选的并集 / 差集", () => {
+  it("全选：当前页 id 并入选中集合，跨页已选的不受影响", () => {
+    expect(applySelectAll(["x"], ["a", "b"], true)).toEqual(["x", "a", "b"]);
+  });
+  it("全选去重：已经选中的当前页 id 不重复出现", () => {
+    expect(applySelectAll(["a"], ["a", "b"], true)).toEqual(["a", "b"]);
+  });
+  it("取消全选：只删当前页的 id，不影响跨页已选的", () => {
+    expect(
+      applySelectAll(["x", "a", "b"], ["a", "b"], false),
+      "取消全选清掉了不该管的、别的页面选中的 id",
+    ).toEqual(["x"]);
+  });
+  it("非法输入：当成空集合处理，不抛异常", () => {
+    expect(applySelectAll(null, ["a"], true)).toEqual(["a"]);
+    expect(applySelectAll(["a"], null, false)).toEqual(["a"]);
+  });
+});
+
+describe("hasNote：备注格显示内容还是显示 —", () => {
+  it("非空字符串：有内容", () => {
+    expect(hasNote({ ...view, note: "换了下游客户" })).toBe(true);
+  });
+  it("空字符串：没有内容（不是「有内容但是空的」）", () => {
+    expect(hasNote({ ...view, note: "" })).toBe(false);
+  });
+  it("null：没有内容", () => {
+    expect(hasNote({ ...view, note: null })).toBe(false);
+  });
+  it("非法输入：没有内容，不抛异常", () => {
+    expect(hasNote(null)).toBe(false);
+    expect(hasNote({ ...view, note: 42 })).toBe(false);
+  });
+});
+
+describe("knobsLoaded：三个旋钮是不是已经拿到过一次生效值", () => {
+  it("三个都是 null：还没拿到", () => {
+    expect(knobsLoaded({ ttl: null, touch: null, edge: null })).toBe(false);
+  });
+  it("任意一个非 null：算拿到过——三个字段来自同一次响应的同一个块", () => {
+    expect(knobsLoaded({ ttl: 60_000, touch: null, edge: null })).toBe(true);
+    expect(knobsLoaded({ ttl: null, touch: 21_600_000, edge: null })).toBe(true);
+    expect(knobsLoaded({ ttl: null, touch: null, edge: 60_000 })).toBe(true);
+  });
+  it("非法输入：还没拿到，不抛异常", () => {
+    expect(knobsLoaded(null)).toBe(false);
+    expect(knobsLoaded(undefined)).toBe(false);
+  });
+});
+
+/**
+ * ⚠️⚠️ **这是「批量里有 3 把被拒」那条交接在"完整投影"层面的钉子**：
+ * `bulkResultPresentation()` 一次性给出拼哪些 key、`kind`、`sticky`，
+ * 三者曾经在 `sec-keys.js` 里分别判断，这里把它们锁在同一个来源上。
+ */
+describe("bulkResultPresentation：批量结果 toast 该拼哪些 key、kind、sticky", () => {
+  it("全部成功：headline 是 allOk，只有一个固定的计数后缀，kind 是 ok，不 sticky", () => {
+    const p = bulkResultPresentation({ total: 2, ok: 2, failed: 0, mustDisableFirst: 0, notFound: 0, otherFailed: 0 });
+    expect(p).toEqual({ messageKeys: ["keys.bulk.allOk", "keys.bulk.countsSuffix"], kind: "ok", sticky: false });
+  });
+  it("部分失败（must_disable_first）：headline 是 partial，多拼一段后缀，kind 是 warn，sticky", () => {
+    const p = bulkResultPresentation({ total: 20, ok: 17, failed: 3, mustDisableFirst: 3, notFound: 0, otherFailed: 0 });
+    expect(p).toEqual({
+      messageKeys: ["keys.bulk.partial", "keys.bulk.countsSuffix", "keys.bulk.mustDisableFirstSuffix"],
+      kind: "warn", sticky: true,
+    });
+  });
+  it("两种失败原因都有：两段后缀都拼上，且顺序是 mustDisableFirst 在前", () => {
+    const p = bulkResultPresentation({ total: 5, ok: 1, failed: 4, mustDisableFirst: 2, notFound: 2, otherFailed: 0 });
+    expect(p.messageKeys).toEqual([
+      "keys.bulk.partial", "keys.bulk.countsSuffix",
+      "keys.bulk.mustDisableFirstSuffix", "keys.bulk.notFoundSuffix",
+    ]);
+  });
+  it("非法输入：退化成「全部成功」的形状，不抛异常", () => {
+    expect(bulkResultPresentation(null)).toEqual({
+      messageKeys: ["keys.bulk.allOk", "keys.bulk.countsSuffix"], kind: "ok", sticky: false,
+    });
+  });
+});
+
+describe("importResultPresentation：导入结果 toast 的插值参数 + 要不要拼不合法的行 + kind", () => {
+  it("没有不合法的行：kind 是 ok，不拼后缀", () => {
+    const p = importResultPresentation({ added: 2, duplicated: 0, invalidLines: [], reset: 0 });
+    expect(p).toEqual({
+      resultParams: { added: 2, duplicated: 0, reset: 0, invalid: 0 },
+      showInvalidSuffix: false, kind: "ok",
+    });
+  });
+  it("有不合法的行：kind 是 warn，要拼后缀", () => {
+    const p = importResultPresentation({ added: 1, duplicated: 0, invalidLines: [3], reset: 0 });
+    expect(p.showInvalidSuffix).toBe(true);
+    expect(p.kind).toBe("warn");
+    expect(p.resultParams.invalid, "invalid 参数要取行号数组的长度，不是原始数组").toBe(1);
+  });
+  it("非法输入：退化成全 0、不 warn，不抛异常", () => {
+    expect(importResultPresentation(null)).toEqual({
+      resultParams: { added: 0, duplicated: 0, reset: 0, invalid: 0 },
+      showInvalidSuffix: false, kind: "ok",
+    });
   });
 });

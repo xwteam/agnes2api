@@ -16,17 +16,24 @@
  * 分别由 `tests/ui/keys.test.ts` 与 `tests/ui/keys-write.test.ts` 跑着
  * （admin-ui/README.md 硬规则 1）。
  *
- * ⚠️⚠️ **「一律不写在这里」这句话被评审证伪过一次，别再说"一律"**：早先的版本
- * 与本文件的一个更早草稿都这么写，而下面这些判据当时确实住在这个文件里：
+ * ⚠️⚠️ **「一律不写在这里」这句话被评审证伪过两轮，别再说"一律"**：早先的版本
+ * 与本文件的一个更早草稿都这么写，而下面这些判据当时确实住在这个文件里，
+ * 逐条搬进了 `pure/keys-write.mjs`（本文件现在只调用）：
  *   · `headerSelectAllChecked` / `bulkBarVisible` / `isMustDisableFirstConflict` /
- *     `isOpaqueErrorMessage` / `NOTE_MAX_LENGTH`
- *     ——**已经搬进 `pure/keys-write.mjs`**，本文件现在调用它们；
- *   · **仍然留在这里、且被判定为可接受的**（同类先例：`state.page > 1` 这条
- *     翻页守卫从 P3b 起一直就在板块文件里，从未被要求搬走）：
- *     `runBulkWithConfirm` 的 `ids.length === 0` 早退——这是"点击时校验参数
- *     非空"这一类事件处理器常规写法，不是一条业务判据，DOM 测试直接覆盖它
- *     （`tests/ui/dom/keys-actions.test.ts` 的「批量条一把都没选中时点击批量按钮：
- *     不发任何请求」）。
+ *     `isOpaqueErrorMessage` / `NOTE_MAX_LENGTH`（第一轮）；
+ *   · `toggleSelection`（单行勾选的去重加入/过滤移除）/ `applySelectAll`
+ *     （全选/取消全选的并集/差集）/ `hasNote`（备注格显示内容还是显示 —）/
+ *     `knobsLoaded`（三个旋钮"只拉一次"的判据）/ `bulkResultPresentation`
+ *     （批量结果 toast 拼哪些 key、`kind`、`sticky`）/ `importResultPresentation`
+ *     （导入结果 toast 的插值参数、要不要拼"不合法的行"、`kind`）（第二轮）。
+ *
+ * **仍然留在这里、且被判定为可接受的唯一一处**（同类先例：`state.page > 1`
+ * 这条翻页守卫从 P3b 起一直就在板块文件里，从未被要求搬走）：
+ * `runBulkWithConfirm` 的 `ids.length === 0` 早退——这是"点击时校验参数非空"
+ * 这一类事件处理器常规写法，不是一条业务判据，DOM 测试直接覆盖它
+ * （`tests/ui/dom/keys-actions.test.ts` 的「批量条一把都没选中时点击批量按钮：
+ * 不发任何请求」）。
+ *
  * 这条纪律的诚实版本是**"取值决策原则上不写在这里，例外必须在这里说清楚是哪些、
  * 为什么留下"**，不是一句无条件的"一律"。
  *
@@ -51,8 +58,9 @@ import {
   isDeletable, isMustDisableFirstConflict, canClearCooldown, canUnevict, canClearStrikes,
   toggleDisableLabelKey, rowActionNeedsConfirm, bulkNeedsConfirm,
   selectAllIds, pruneSelection, headerSelectAllChecked, bulkBarVisible,
-  bulkResultSummary, bulkResultKey, importLines, hasImportableContent,
-  importResultCounts, noteToPatch, NOTE_MAX_LENGTH, isOpaqueErrorMessage,
+  toggleSelection, applySelectAll, knobsLoaded, hasNote,
+  bulkResultSummary, bulkResultPresentation, importLines, hasImportableContent,
+  importResultCounts, importResultPresentation, noteToPatch, NOTE_MAX_LENGTH, isOpaqueErrorMessage,
 } from "./pure/keys-write.mjs";
 
 const PAGE_SIZE = 20;
@@ -129,9 +137,7 @@ function selectCell(v) {
   box.checked = selected.includes(v.id);
   box.setAttribute("aria-label", t("keys.selectRow"));
   box.addEventListener("change", () => {
-    if (box.checked) { if (!selected.includes(v.id)) selected.push(v.id); } else {
-      selected = selected.filter((id) => id !== v.id);
-    }
+    selected = toggleSelection(selected, v.id, box.checked);
     // 单行勾选只影响批量条的可见性与计数、以及表头全选框要不要跟着打勾，
     // 不需要整表重渲（那会打断用户正在连续勾选的动作、也会丢掉刚点开的下拉/焦点）。
     syncBulkBar();
@@ -145,8 +151,7 @@ function selectCell(v) {
  *  回面板"的字段，后端不转义，这一行就是那句话被执行的地方。 */
 function noteCell(v) {
   const cell = el("td");
-  const hasNote = typeof v.note === "string" && v.note.length > 0;
-  cell.appendChild(el("span", null, hasNote ? v.note : fmtDash(null)));
+  cell.appendChild(el("span", null, hasNote(v) ? v.note : fmtDash(null)));
   return cell;
 }
 
@@ -230,14 +235,7 @@ function headerSelectCell(items) {
   box.checked = headerSelectAllChecked(pageIds, selected);
   box.setAttribute("aria-label", t("keys.selectAll"));
   box.addEventListener("change", () => {
-    if (box.checked) {
-      const merged = new Set(selected);
-      for (const id of pageIds) merged.add(id);
-      selected = [...merged];
-    } else {
-      const drop = new Set(pageIds);
-      selected = selected.filter((id) => !drop.has(id));
-    }
+    selected = applySelectAll(selected, pageIds, box.checked);
     render();
   });
   th.appendChild(box);
@@ -323,7 +321,7 @@ function render() {
  * 拿到之后重渲一次让文案立刻换上真实值；拿不到就保持 —，不重试到下一次 onShow。
  */
 async function loadKnobs() {
-  if (knobs.ttl !== null || knobs.touch !== null || knobs.edge !== null) return;
+  if (knobsLoaded(knobs)) return;
   try {
     const body = await api.get("/overview");
     knobs = poolKnobs(body);
@@ -461,7 +459,8 @@ function clearStrikesAction(view) {
  *
  * ⚠️⚠️ **这是 2(a) 那条交接落地的地方**：`bulk` 端点永远 200，「必须先停用才能删」
  * 只活在 `results[i].reason` 里。`bulkResultSummary()` 把它算成 `failed` 这个数，
- * 只要它大于 0，`bulkResultKey()` 就必须选中 `keys.bulk.partial` 而不是
+ * `bulkResultPresentation()` 把它再投影成"拼哪些 key、`kind`、`sticky`"——
+ * 只要 `failed` 大于 0，headline 就必须选中 `keys.bulk.partial` 而不是
  * `keys.bulk.allOk`，且 `mustDisableFirst` 的具体数字要被拼进提示文案——
  * 拿 `res.status` 当唯一判据的写法在这条路径上永远走不到这一段。
  *
@@ -479,10 +478,9 @@ async function runBulk(op, ids) {
   try {
     const body = await api.post("/keys/bulk", { op, ids });
     const summary = bulkResultSummary(body && body.results);
-    let text = t(bulkResultKey(summary)) + t("keys.bulk.countsSuffix", summary);
-    if (summary.mustDisableFirst > 0) text += t("keys.bulk.mustDisableFirstSuffix", summary);
-    if (summary.notFound > 0) text += t("keys.bulk.notFoundSuffix", summary);
-    toast(text, summary.failed > 0 ? "warn" : "ok", summary.failed > 0 ? { sticky: true } : undefined);
+    const presentation = bulkResultPresentation(summary);
+    const text = presentation.messageKeys.map((key) => t(key, summary)).join("");
+    toast(text, presentation.kind, presentation.sticky ? { sticky: true } : undefined);
   } catch (e) {
     toast(errorMessage(e), "err", { sticky: true });
   } finally {
@@ -560,13 +558,12 @@ function openImport() {
         api.post("/keys", { keys: lines, resetExisting: resetBox.checked })
           .then((res) => {
             const c = importResultCounts(res);
-            let text = t("keys.import.result", {
-              added: c.added, duplicated: c.duplicated, reset: c.reset, invalid: c.invalidLines.length,
-            });
-            if (c.invalidLines.length > 0) {
+            const presentation = importResultPresentation(c);
+            let text = t("keys.import.result", presentation.resultParams);
+            if (presentation.showInvalidSuffix) {
               text += t("keys.import.invalidLines", { lines: c.invalidLines.join(", ") });
             }
-            toast(text, c.invalidLines.length > 0 ? "warn" : "ok");
+            toast(text, presentation.kind);
             close();
             load();
           })

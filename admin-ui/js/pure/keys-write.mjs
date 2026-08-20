@@ -133,6 +133,37 @@ export function pruneSelection(selectedIds, items) {
 }
 
 /**
+ * 单行勾选框变化之后，选中集合该变成什么样。
+ *
+ * ⚠️ **评审第二轮点名的例外之一**：这条去重加入 / 过滤移除的逻辑原来直接写在
+ * `sec-keys.js` 的 `selectCell()` 事件处理器里，没有任何测试钉着——`selected`
+ * 是不是真的去重了（同一个 id 被两次 `change` 事件加进去两次）、移除是不是真的
+ * 精确匹配 id，都只能靠代码评审信。搬到这里，`selected.includes(id)` 那道
+ * 去重闸与 `filter` 的移除都能单独测。
+ */
+export function toggleSelection(selectedIds, id, checked) {
+  const list = Array.isArray(selectedIds) ? selectedIds : [];
+  if (checked) return list.includes(id) ? list : [...list, id];
+  return list.filter((x) => x !== id);
+}
+
+/**
+ * 表头「全选本页」复选框变化之后，选中集合该变成什么样（并集 / 差集）。
+ *
+ * ⚠️ **评审第二轮点名的例外之一**：并集/差集这两步原来直接写在 `headerSelectCell()`
+ * 的事件处理器里。**并集用 `Set` 去重，差集只删当前页的 id**——后者尤其要紧：
+ * 取消全选时如果直接把 `selected` 清空，会把"用户在别的页面手动勾过的行"也
+ * 一起清掉，那不是这个复选框该管的范围（它只代表"当前页"）。
+ */
+export function applySelectAll(selectedIds, pageIds, checked) {
+  const selected = Array.isArray(selectedIds) ? selectedIds : [];
+  const ids = Array.isArray(pageIds) ? pageIds : [];
+  if (checked) return [...new Set([...selected, ...ids])];
+  const drop = new Set(ids);
+  return selected.filter((id) => !drop.has(id));
+}
+
+/**
  * 表头「全选本页」复选框该不该打勾。
  *
  * **空页（`pageIds.length === 0`）恒不打勾**，即使 `every()` 对空数组恒真——
@@ -148,6 +179,21 @@ export function headerSelectAllChecked(pageIds, selectedIds) {
 /** 批量条该不该出现。设计文档 §10.2：「选中才出现」。 */
 export function bulkBarVisible(selectedCount) {
   return typeof selectedCount === "number" && selectedCount > 0;
+}
+
+/**
+ * 三个旋钮（`ttl` / `touch` / `edge`）是不是已经拿到过一次生效值——`loadKnobs()`
+ * 用它决定要不要再打一次 `/overview`。
+ *
+ * ⚠️ **评审第二轮点名的例外之一**：这条判据原来是 `sec-keys.js` 里一个内联的
+ * 三元 `||` 判断。**只要有一个非 null 就算"已经拿到过"**，不要求三个都非
+ * null——三个旋钮来自同一次响应的同一个块（`overview.freshness`），只要那次
+ * 响应成功过，三个字段要么一起有值、要么一起是 null（同一次 `poolKnobs()`
+ * 投影），检查任意一个就够，写成"三个都要非 null"反而会在响应体只給出
+ * 部分字段的畸形情形下误判成"还没拿到"、重复发请求。
+ */
+export function knobsLoaded(knobs) {
+  return !!(knobs && (knobs.ttl !== null || knobs.touch !== null || knobs.edge !== null));
 }
 
 /**
@@ -180,6 +226,40 @@ export function bulkResultSummary(results) {
  */
 export function bulkResultKey(summary) {
   return summary && summary.failed > 0 ? "keys.bulk.partial" : "keys.bulk.allOk";
+}
+
+/**
+ * `bulkResultSummary()` 的输出再投影成 toast 要用的全部东西：拼哪几个 i18n key
+ * （按顺序）、`kind` 是 `"ok"` 还是 `"warn"`、要不要 `sticky`。
+ *
+ * ⚠️⚠️ **评审第二轮点名的例外**：这三件事原来分散写在 `sec-keys.js` 的
+ * `runBulk()` 里——三段字符串拼接、`summary.failed > 0 ? "warn" : "ok"`、
+ * `summary.failed > 0 ? {sticky:true} : undefined`，三处判据各写各的，容易
+ * 有的改了、有的忘了改（例如把 sticky 的条件改对了，却漏改 kind）。**这里
+ * 不能直接拼出文案本身**——那需要 `t()`，而 `t()` 要 `import "./i18n.js"`，
+ * `js/pure/` 下禁止 import（admin-ui/README.md 硬规则 1）。这个函数返回的是
+ * "拼哪些 key、以什么顺序"，真正调 `t()` 插值仍然在 `sec-keys.js`。
+ *
+ * ⚠️ **每个候选 key 都是数组的独立元素、都带着尾逗号**——不是风格洁癖：
+ * `scripts/check-i18n.mjs` 第 ⑧ 条的判据是"这个带占位符的 key 字面量后面
+ * 紧跟的是不是逗号"，写成 `x ? "key" : null` 的话字面量后面紧跟的是空格加
+ * `:`，会被那道门禁误判成"当裸标签用"。用 `条件 && "key"` 让字面量后面直接
+ * 是数组的逗号分隔符，天然满足门禁——数组元素带尾逗号是这个文件已有的写法
+ * （`sec-keys.js` 的 `for (const key of [...])` 那几处同样在最后一个元素后
+ * 留了尾逗号），不是为了糊弄门禁去构造一个巧合写法。
+ */
+export function bulkResultPresentation(summary) {
+  const s = summary || {};
+  const conditional = [
+    s.mustDisableFirst > 0 && "keys.bulk.mustDisableFirstSuffix",
+    s.notFound > 0 && "keys.bulk.notFoundSuffix",
+  ].filter((k) => typeof k === "string");
+  const messageKeys = [
+    bulkResultKey(s),
+    "keys.bulk.countsSuffix",
+    ...conditional,
+  ];
+  return { messageKeys, kind: s.failed > 0 ? "warn" : "ok", sticky: s.failed > 0 };
 }
 
 /**
@@ -223,6 +303,26 @@ export function importResultCounts(body) {
 }
 
 /**
+ * `importResultCounts()` 的输出再投影成 toast 要用的东西：`keys.import.result`
+ * 的插值参数、要不要再拼一段"不合法的行"、`kind` 是 `"ok"` 还是 `"warn"`。
+ *
+ * ⚠️⚠️ **评审第二轮点名的例外**：`invalidLines.length > 0` 这条判据原来在
+ * `sec-keys.js` 的 `openImport()` 里被问了两次（一次决定要不要拼后缀、一次
+ * 决定 `kind`），两处各写一份布尔表达式——这正是"同一件事两处判断，容易改
+ * 一处漏一处"的形状。这里只算一次。
+ */
+export function importResultPresentation(counts) {
+  const c = counts || {};
+  const invalidLines = Array.isArray(c.invalidLines) ? c.invalidLines : [];
+  const hasInvalid = invalidLines.length > 0;
+  return {
+    resultParams: { added: c.added ?? 0, duplicated: c.duplicated ?? 0, reset: c.reset ?? 0, invalid: invalidLines.length },
+    showInvalidSuffix: hasInvalid,
+    kind: hasInvalid ? "warn" : "ok",
+  };
+}
+
+/**
  * 一条错误 `message` 是不是"内部码"，不该原样丢给运维看。
  *
  * ⚠️⚠️ **这条判据存在的理由是 `sec-keys.js` 一句被评审探针证伪的注释**：
@@ -236,8 +336,9 @@ export function importResultCounts(body) {
  * note 超长时的「note 最长 200 个字符」），没有配套的机器可读 `reason` 字段
  * （不像 409 `must_disable_first` 那样），这条判据拦不住它——那句中文会被
  * 直接投到 ja/en/ko 的面板上。这是全面板第一处把后端原始 message 渲染给
- * 用户的地方，机制性修法（后端补机器可读 code、前端按 code 查五语言字典）
- * 超出本任务范围，如实登记，不在这里假装解决。
+ * 用户的地方。**归属定死：这条破口归 P3e（五语言与收尾）**——机制解是后端
+ * 只回错误码、前端查五语言字典，或后端按 `Accept-Language` 返回，两条路各有
+ * 代价，留给 P3e 裁，本任务不在这里假装解决。
  */
 export function isOpaqueErrorMessage(message) {
   if (typeof message !== "string" || message === "") return true;
@@ -256,6 +357,19 @@ export function isOpaqueErrorMessage(message) {
  * 一样被钉住。这里的对应测试见 `tests/ui/keys-write.test.ts`「是 200，不是别的数字」。
  */
 export const NOTE_MAX_LENGTH = 200;
+
+/**
+ * 备注格该显示内容还是显示 `—`。
+ *
+ * ⚠️ **评审第二轮点名的例外之一**：这条判据原来直接写在 `sec-keys.js` 的
+ * `noteCell()` 里。**空字符串算"没有内容"，不是"有内容但是空的"**——后端把
+ * `note: ""` 与 `note: null` 都投影成不同的值（`KeyView.note` 恒是
+ * `string | null`），但对运维来说"这一格能不能读出字来"只有一个答案，
+ * 空字符串与 `null` 应该显示成同一个 `—`。
+ */
+export function hasNote(view) {
+  return !!(view && typeof view.note === "string" && view.note.length > 0);
+}
 
 /**
  * 备注编辑框的内容转成 PATCH 请求体里的 `note` 字段。
