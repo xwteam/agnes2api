@@ -78,6 +78,10 @@ tr:last-child td { border-bottom: 0; }
 .poll-dot-paused { background: var(--muted); }
 .poll-dot-error { background: var(--danger-fg); }
 
+/* Key 池板块（P3c Task 4）：批量条复用 .toolbar 布局，行内动作列的按钮组换行。 */
+.bulk-bar { background: var(--panel-2); padding: var(--gap-sm); border-radius: var(--radius); }
+.row-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+
 .events-body { max-height: 60vh; overflow-y: auto; }
 .ev-group-header td { padding-top: var(--gap-sm); font-size: 12px; }
 /* 分组内的行左边一条细线，视觉上把同一条时间线的几行连起来。 */

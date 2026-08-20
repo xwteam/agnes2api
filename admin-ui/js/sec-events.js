@@ -23,6 +23,10 @@ import {
   initialPollState, resumePollState, pollOutcome, pollIndicatorState, pollIndicatorLabelKey,
   matchesSearch, buildDetailText, groupEvents, orderForDisplay, mergeIntoView,
 } from "./pure/events.mjs";
+// P3b 待办第 8 条：本地时区偏移三个板块共用同一个函数，见 pure/overview.mjs
+// 的 offsetMs() 文件头——事件板块并不比它更"是概览板块的事"，只是那个函数
+// 已经是三个板块公认的共用取值落脚点。
+import { offsetMs } from "./pure/overview.mjs";
 
 const LIMIT = 200;
 
@@ -71,8 +75,6 @@ let loadError = false;
  * 离开本板块时 `onHide` 已经把 timer 清成了 null，页面从别的 tab 切回来会
  * 误判成"因为隐藏而停了"，把本该保持停着的轮询重新点起来。 */
 let sectionActive = false;
-
-function offsetMs() { return -new Date().getTimezoneOffset() * 60000; }
 
 function renderWarnings() {
   const banner = nodes.warnBanner;

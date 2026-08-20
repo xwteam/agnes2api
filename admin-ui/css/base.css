@@ -30,10 +30,11 @@ a { color: var(--primary); }
 
 /* 输入 / 按钮的原语样式：登录闸的表单与 modal 的操作栏共用同一套。 */
 label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
-input[type="password"], input[type="text"], select {
+input[type="password"], input[type="text"], select, textarea {
   width: 100%; padding: 10px 12px; color: var(--text); font: inherit;
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
 }
+textarea { resize: vertical; }
 button {
   padding: 10px 12px; font: inherit; cursor: pointer;
   color: var(--primary-fg); background: var(--primary); border: 0; border-radius: var(--radius);

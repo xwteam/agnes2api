@@ -125,6 +125,11 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 同一条硬规则、同一份理由，由 tests/ui/events.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/events.mjs",
       "/admin/js/pure/format.mjs",
+      // Task 4（P3c）新增：Key 池板块**写操作**的取值决策（按钮可用性、确认文案、
+      // 批量选择边界、导入行拆分、bulk 结果汇总）。同一条硬规则、同一份理由，
+      // 由 tests/ui/keys-write.test.ts 跑着。纯函数、无配置、无数据。
+      // `-` 的字符码比 `.` 小，字典序排在 keys.mjs 之前。
+      "/admin/js/pure/keys-write.mjs",
       // Task 4（P3b）新增：Key 池板块的取值决策。admin-ui/README.md 硬规则 1 要求
       // 需要测试的逻辑必须落在 js/pure/ 下，它由 tests/ui/keys.test.ts 跑着。
       // 逐条确认过：纯函数、无配置、无数据，公开可取没有问题。

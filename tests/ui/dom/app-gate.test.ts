@@ -193,4 +193,31 @@ describe("已存会话：绝对上限与 401 登出", () => {
       expect(c.headers["x-admin-key"], `${c.url} 送出去的口令头不对`).toBe(TOKEN);
     }
   });
+
+  /**
+   * **P3b 待办第 6 条 / M3：`app.js` 的 `leave()` 退出登录时必须清空 `#gate-key`。**
+   *
+   * ⚠️ **这是 P3b 唯一仍逃逸的瞄准缺陷**：`app.js:82` 的 `input.value = "";`
+   * 那一行本身在这次任务开工前就已经是对的，缺的只是一格会红的测试——账本
+   * `progress.md` 记着当时实测「删掉这一行，1438 条全绿」。变红条件：删掉
+   * `leave()` 里那一行 `input.value = "";`。
+   *
+   * 不清空的后果不是好看：同一台机器给别人用时，上一个管理员的口令原样留在
+   * 输入框里，下一个人一眼就能看见。
+   */
+  it("退出登录之后 #gate-key 是空的（不清空的话上一个人的口令原样留在输入框里）", async () => {
+    const h = await bootPanel({ now: NOW });
+    h.input.value = TOKEN;
+    h.form.submit();
+    await settle();
+    expect(h.shell.classList.contains("on"), "前置条件：先得真的登录成功").toBe(true);
+    expect(h.input.value, "前置条件：输入框里现在确实还留着口令").toBe(TOKEN);
+
+    h.dom.byId("logout-btn").click();
+    await settle();
+
+    expect(h.shell.classList.contains("on")).toBe(false);
+    expect(h.gate.classList.contains("off")).toBe(false);
+    expect(h.input.value, "退出登录之后输入框里还留着上一个人的口令").toBe("");
+  });
 });

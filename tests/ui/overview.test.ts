@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   poolCounts, processCells, usageStats, configSummary, storageInfo,
-  freshnessValues, poolKnobs, kvReadEstimatePerIsolatePerDay,
+  freshnessValues, poolKnobs, kvReadEstimatePerIsolatePerDay, offsetMs,
   POOL_CARDS, poolCardLabelKey, runtimeNameLabelKey, storageBackendLabelKey,
 } from "../../admin-ui/js/pure/overview.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
@@ -189,16 +189,37 @@ describe("freshnessValues", () => {
 });
 
 /**
- * **carry-forward（Task 4 → Task 5）**：Key 池板块的 `{ttl}` / `{touch}` 占位符
- * 在 Task 4 交付时没有数据源，暂用「点名旋钮 + 括注默认值」。这个函数是它们现在
- * 唯一的数据源——两个板块共用同一份取值，不许各写各的。
+ * **carry-forward（Task 4 → Task 5 → P3c Task 4）**：Key 池板块的 `{ttl}` /
+ * `{touch}` 占位符在 P3b Task 4 交付时没有数据源，暂用「点名旋钮 + 括注默认值」。
+ * 这个函数是它们现在唯一的数据源——两个板块共用同一份取值，不许各写各的。
+ *
+ * ⚠️ **`edge` 是 P3c Task 4 加的第三个旋钮**（P3b 待办第 4 条的收尾）：
+ * `keys.freshness` 那句文案曾经把「约 60 秒」的 KV 边缘缓存耗时硬编码进
+ * 五语言字典，现在与 `ov.freshness.pool` 一样由 `kvEdgeCacheMs` 驱动。
  */
-describe("poolKnobs：Key 池板块与概览板块共用的两个旋钮当前值", () => {
-  it("正常响应：从 freshness 里取出 ttl 与 touch", () => {
-    expect(poolKnobs(body)).toEqual({ ttl: 60_000, touch: 21_600_000 });
+describe("poolKnobs：Key 池板块与概览板块共用的三个旋钮当前值", () => {
+  it("正常响应：从 freshness 里取出 ttl / touch / edge", () => {
+    expect(poolKnobs(body)).toEqual({ ttl: 60_000, touch: 21_600_000, edge: 60_000 });
   });
-  it("freshness 缺失时两者都是 null（渲染成 —，不是旧的硬编码默认值）", () => {
-    expect(poolKnobs({ ...body, freshness: null })).toEqual({ ttl: null, touch: null });
+  it("freshness 缺失时三者都是 null（渲染成 —，不是旧的硬编码默认值）", () => {
+    expect(poolKnobs({ ...body, freshness: null })).toEqual({ ttl: null, touch: null, edge: null });
+  });
+});
+
+/**
+ * **offsetMs：P3b 待办第 8 条**——概览 / Key 池 / 事件三个板块曾经各自手抄同一行
+ * `-new Date().getTimezoneOffset() * 60000`，现在只有这一份。
+ */
+describe("offsetMs：三个板块共用的本地时区偏移", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("UTC+8（getTimezoneOffset 返回 -480）时给出 28,800,000 毫秒", () => {
+    vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(-480);
+    expect(offsetMs()).toBe(28_800_000);
+  });
+  it("UTC-5（getTimezoneOffset 返回 300）时给出 -18,000,000 毫秒", () => {
+    vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(300);
+    expect(offsetMs()).toBe(-18_000_000);
   });
 });
 

@@ -85,7 +85,11 @@ export const I18N = {
   "keys.autoNote":    { "zh-CN": "这个板块与网关转发共用同一份 isolate 内的池子快照，所以自动刷新不额外产生存储读写。你看到的数据最多晚一个 POOL_CACHE_TTL_MS（当前 {ttl}）。", "zh-TW": "這個板塊與網關轉發共用同一份 isolate 內的池子快照，所以自動重新整理不額外產生儲存讀寫。你看到的資料最多晚一個 POOL_CACHE_TTL_MS（目前 {ttl}）。", en: "This section shares the same in-isolate pool snapshot as request forwarding, so auto refresh costs no extra storage reads or writes. What you see can lag by up to one POOL_CACHE_TTL_MS (currently {ttl}).", ja: "このセクションはゲートウェイの転送と同じ isolate 内プールスナップショットを共有するため、自動更新でストレージの読み書きが増えることはありません。表示は最大で POOL_CACHE_TTL_MS ぶん（現在の値: {ttl}）遅れることがあります。", ko: "이 섹션은 게이트웨이 전달과 동일한 isolate 내 풀 스냅숏을 공유하므로 자동 새로고침이 스토리지 읽기/쓰기를 추가로 발생시키지 않습니다. 보이는 데이터는 최대 POOL_CACHE_TTL_MS(현재 값 {ttl})만큼 늦을 수 있습니다." },
   // 新鲜度提示条：与概览页共用同一份文案（组织方式不同——概览页的 ov.freshness.pool
   // 还多了 configTtl 那一半，键池板块本来就没有配置卡，只留池子那一半）。
-  "keys.freshness":   { "zh-CN": "别的实例判定的冷却 / 剔除，这里最多晚 {poolTtl} + 约 60 秒（KV 边缘缓存）才看到；而且这个窗口里本实例的写会覆盖对方刚写下的调度状态。", "zh-TW": "別的實例判定的冷卻 / 剔除，這裡最多晚 {poolTtl} + 約 60 秒（KV 邊緣快取）才看得到；而且這個視窗裡本實例的寫入會覆蓋對方剛寫下的排程狀態。", en: "Cooldowns and evictions decided by another instance take up to {poolTtl} plus about 60 seconds (KV edge cache) to show up here. Within that window, writes from this instance also overwrite the scheduling state the other one just wrote.", ja: "他のインスタンスが判定したクールダウン／除外がここに反映されるまで、最大で {poolTtl} + 約 60 秒（KV のエッジキャッシュ）かかります。しかもその間、このインスタンスの書き込みは相手が書いたばかりのスケジューリング状態を上書きします。", ko: "다른 인스턴스가 판정한 쿨다운/제외가 여기에 보이기까지 최대 {poolTtl} + 약 60초(KV 엣지 캐시)가 걸립니다. 게다가 그 구간에서는 이 인스턴스의 쓰기가 상대가 방금 기록한 스케줄링 상태를 덮어씁니다." },
+  //
+  // ⚠️ **P3b 待办第 4 条的收尾**：`{edge}` 原来是硬编码的「约 60 秒」，现在与
+  // `ov.freshness.pool` 一样由响应的 `kvEdgeCacheMs` 驱动（两个板块共用
+  // `pure/overview.mjs` 的 `poolKnobs()` 取同一个数字，见该函数的说明）。
+  "keys.freshness":   { "zh-CN": "别的实例判定的冷却 / 剔除，这里最多晚 {poolTtl} + {edge}（KV 边缘缓存）才看到；而且这个窗口里本实例的写会覆盖对方刚写下的调度状态。", "zh-TW": "別的實例判定的冷卻 / 剔除，這裡最多晚 {poolTtl} + {edge}（KV 邊緣快取）才看得到；而且這個視窗裡本實例的寫入會覆蓋對方剛寫下的排程狀態。", en: "Cooldowns and evictions decided by another instance take up to {poolTtl} plus {edge} (KV edge cache) to show up here. Within that window, writes from this instance also overwrite the scheduling state the other one just wrote.", ja: "他のインスタンスが判定したクールダウン／除外がここに反映されるまで、最大で {poolTtl} + {edge}（KV のエッジキャッシュ）かかります。しかもその間、このインスタンスの書き込みは相手が書いたばかりのスケジューリング状態を上書きします。", ko: "다른 인스턴스가 판정한 쿨다운/제외가 여기에 보이기까지 최대 {poolTtl} + {edge}(KV 엣지 캐시)가 걸립니다. 게다가 그 구간에서는 이 인스턴스의 쓰기가 상대가 방금 기록한 스케줄링 상태를 덮어씁니다." },
   "keys.approxTip":   { "zh-CN": "近似值：并发请求下会少计（KV 没有 CAS）；且计数最多晚一个 POOL_TOUCH_INTERVAL_MS（当前 {touch}）才落盘，isolate 在此之前被回收时这一段会丢。", "zh-TW": "近似值：並發請求下會少計（KV 沒有 CAS）；且計數最多晚一個 POOL_TOUCH_INTERVAL_MS（目前 {touch}）才寫入，isolate 在此之前被回收時這一段會遺失。", en: "Approximate: concurrent requests undercount it (KV has no CAS), and counters are persisted up to one POOL_TOUCH_INTERVAL_MS late (currently {touch}) — whatever has not been persisted is lost if the isolate is recycled first.", ja: "概算値: 同時リクエスト下では少なく数えられます（KV に CAS がないため）。またカウンターの永続化は最大で POOL_TOUCH_INTERVAL_MS ぶん（現在の値: {touch}）遅れ、その前に isolate が回収されるとその分は失われます。", ko: "근사값: 동시 요청에서는 적게 집계됩니다(KV에 CAS가 없음). 또한 카운터는 최대 POOL_TOUCH_INTERVAL_MS(현재 값 {touch})만큼 늦게 저장되며, 그 전에 isolate가 회수되면 그 구간은 사라집니다." },
   // 「最后使用」与计数是**同一份** staleness（同一次落盘一起带下去），所以它同样打 ≈。
   // 这条与 keys.approxTip 说的不是一句话：那条讲「少计 + 晚落盘」，这条讲「时刻本身粗」。
@@ -109,6 +113,70 @@ export const I18N = {
   "keys.pageInfo":    { "zh-CN": "第 {page}/{pages} 页 · 共 {total} 条", "zh-TW": "第 {page}/{pages} 頁 · 共 {total} 筆", en: "Page {page} of {pages} · {total} in total", ja: "{pages} ページ中 {page} ページ目 · 全 {total} 件", ko: "{pages} 페이지 중 {page} 페이지 · 총 {total}개" },
   "keys.prev":        { "zh-CN": "上一页", "zh-TW": "上一頁", en: "Previous", ja: "前へ", ko: "이전" },
   "keys.next":        { "zh-CN": "下一页", "zh-TW": "下一頁", en: "Next", ja: "次へ", ko: "다음" },
+
+  // ── Key 池板块：写操作（P3c Task 4）─────────────────────────────────────────
+  // 行内动作列。**停用/启用/清冷却/解除剔除/删除**，与后端 `PATCH /admin/api/keys/:id`
+  // 的五个字段里除 `clearStrikes` 外的四个逐一对应（`clearStrikes` 不在本期简报
+  // 点名的范围内，见 `js/pure/keys-write.mjs` 与本任务报告的裁定）。
+  "keys.action.disable":      { "zh-CN": "停用", "zh-TW": "停用", en: "Disable", ja: "無効化", ko: "정지" },
+  "keys.action.enable":       { "zh-CN": "启用", "zh-TW": "啟用", en: "Enable", ja: "有効化", ko: "활성화" },
+  "keys.action.clearCooldown":{ "zh-CN": "清冷却", "zh-TW": "清冷卻", en: "Clear cooldown", ja: "クールダウン解除", ko: "쿨다운 해제" },
+  "keys.action.unevict":      { "zh-CN": "解除剔除", "zh-TW": "解除剔除", en: "Unevict", ja: "除外解除", ko: "제외 해제" },
+  "keys.action.note":         { "zh-CN": "备注", "zh-TW": "備註", en: "Note", ja: "備考", ko: "비고" },
+  "keys.action.delete":       { "zh-CN": "删除", "zh-TW": "刪除", en: "Delete", ja: "削除", ko: "삭제" },
+  "keys.col.note":            { "zh-CN": "备注", "zh-TW": "備註", en: "Note", ja: "備考", ko: "비고" },
+  "keys.col.actions":         { "zh-CN": "操作", "zh-TW": "操作", en: "Actions", ja: "操作", ko: "작업" },
+
+  // 批量选择：**全选只选当前页**（照抄 kiro2api 的安全约束，设计 §10.2：
+  // 一键选中一千个看不见的行再批量删除，后果不可挽回）。判据在
+  // `js/pure/keys-write.mjs` 的 `selectAllIds()`。
+  "keys.selectAll":  { "zh-CN": "全选本页", "zh-TW": "全選本頁", en: "Select all on this page", ja: "このページを全選択", ko: "이 페이지 전체 선택" },
+  "keys.selectRow":  { "zh-CN": "选择这一行", "zh-TW": "選擇這一行", en: "Select this row", ja: "この行を選択", ko: "이 행 선택" },
+  "keys.bulk.selectedCount": { "zh-CN": "已选中 {count} 把", "zh-TW": "已選中 {count} 把", en: "{count} selected", ja: "{count} 件選択中", ko: "{count}개 선택됨" },
+  "keys.bulk.disable":        { "zh-CN": "批量停用", "zh-TW": "批量停用", en: "Bulk disable", ja: "一括無効化", ko: "일괄 정지" },
+  "keys.bulk.clearCooldown":  { "zh-CN": "批量清冷却", "zh-TW": "批量清冷卻", en: "Bulk clear cooldown", ja: "一括クールダウン解除", ko: "일괄 쿨다운 해제" },
+  "keys.bulk.delete":         { "zh-CN": "批量删除", "zh-TW": "批量刪除", en: "Bulk delete", ja: "一括削除", ko: "일괄 삭제" },
+  "keys.bulk.confirmTitle":   { "zh-CN": "确认批量操作", "zh-TW": "確認批次操作", en: "Confirm bulk action", ja: "一括操作の確認", ko: "일괄 작업 확인" },
+  "keys.bulk.confirmDelete":  { "zh-CN": "确定要删除选中的 {count} 把 key 吗？此操作不可撤销。", "zh-TW": "確定要刪除選中的 {count} 把 key 嗎？此操作不可復原。", en: "Delete the selected {count} key(s)? This cannot be undone.", ja: "選択した {count} 件の key を削除しますか？この操作は取り消せません。", ko: "선택한 key {count}개를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다." },
+
+  // 批量结果提示。⚠️⚠️ **`keys.bulk.allOk` / `keys.bulk.partial` 刻意不带占位符**：
+  // `js/pure/keys-write.mjs` 的 `bulkResultKey()` 把它们当裸字符串 `return`，
+  // 若这两个 key 带 `{}` 占位符，`scripts/check-i18n.mjs` 第 ⑧ 条会在那一行报错
+  // （字面量后面跟的是 `;` 不是 `,`）。实际的数字由 `keys.bulk.countsSuffix` /
+  // `mustDisableFirstSuffix` / `notFoundSuffix` 三个**始终带参数调用**的 key 承载
+  // ——**「批量里有 3 把被拒、前端必须显示出来」这条判据落在这三个 key 上**。
+  "keys.bulk.allOk":  { "zh-CN": "批量操作已完成：全部成功。", "zh-TW": "批次操作已完成：全部成功。", en: "Bulk action completed: all succeeded.", ja: "一括操作が完了しました：すべて成功しました。", ko: "일괄 작업 완료: 모두 성공했습니다." },
+  "keys.bulk.partial":{ "zh-CN": "批量操作已完成，但不是全部成功。", "zh-TW": "批次操作已完成，但不是全部成功。", en: "Bulk action completed, but not all succeeded.", ja: "一括操作は完了しましたが、すべては成功していません。", ko: "일괄 작업이 완료되었지만 전부 성공하지는 않았습니다." },
+  "keys.bulk.countsSuffix":           { "zh-CN": "（{ok}/{total} 把成功）", "zh-TW": "（{ok}/{total} 把成功）", en: " ({ok}/{total} succeeded)", ja: "（{ok}/{total} 件成功）", ko: " ({ok}/{total}개 성공)" },
+  "keys.bulk.mustDisableFirstSuffix": { "zh-CN": "；{mustDisableFirst} 把未停用/未剔除，需要先停用才能删除。", "zh-TW": "；{mustDisableFirst} 把未停用/未剔除，需要先停用才能刪除。", en: "; {mustDisableFirst} key(s) are neither disabled nor evicted and must be disabled before deletion.", ja: "；{mustDisableFirst} 件は無効化も除外もされていないため、削除には先に無効化が必要です。", ko: "; {mustDisableFirst}개는 정지되지도 제외되지도 않아 삭제 전에 먼저 정지해야 합니다." },
+  "keys.bulk.notFoundSuffix":         { "zh-CN": "；{notFound} 把已经不存在。", "zh-TW": "；{notFound} 把已經不存在。", en: "; {notFound} key(s) no longer exist.", ja: "；{notFound} 件はすでに存在しません。", ko: "; {notFound}개는 이미 존재하지 않습니다." },
+
+  // 导入弹窗。⚠️ **导入框必须原样按行发（空行也发）**：`js/pure/keys-write.mjs`
+  // 的 `importLines()` 与后端 `src/core/keypool-repo.ts` 的 `addMany()` 共用同一个
+  // 口径——位置（1 基）就是行号，前端先过滤空行会让报给运维的行号错位。
+  "keys.import.open":       { "zh-CN": "导入", "zh-TW": "匯入", en: "Import", ja: "インポート", ko: "가져오기" },
+  "keys.import.title":      { "zh-CN": "批量导入 Key", "zh-TW": "批量匯入 Key", en: "Import keys", ja: "Key の一括インポート", ko: "Key 일괄 가져오기" },
+  "keys.import.placeholder":{ "zh-CN": "每行一把 key，支持多行粘贴", "zh-TW": "每行一把 key，支援多行貼上", en: "One key per line; multi-line paste supported", ja: "1 行につき 1 つの key。複数行の貼り付けに対応", ko: "한 줄에 하나의 key. 여러 줄 붙여넣기 지원" },
+  "keys.import.resetExisting":    { "zh-CN": "对已存在的 key 也重置冷却 / strikes / 剔除状态", "zh-TW": "對已存在的 key 也重設冷卻 / strikes / 剔除狀態", en: "Also reset cooldown / strikes / eviction for keys that already exist", ja: "既存の key もクールダウン／strikes／除外状態をリセットする", ko: "이미 존재하는 key도 쿨다운/strikes/제외 상태를 재설정" },
+  "keys.import.resetExistingWarn":{ "zh-CN": "这会让一把被剔除的 key 重新可用，请确认这是你想要的。", "zh-TW": "這會讓一把被剔除的 key 重新可用，請確認這是你想要的。", en: "This can bring an evicted key back into service — make sure this is what you want.", ja: "これにより除外済みの key が再び使用可能になります。意図した操作か確認してください。", ko: "이렇게 하면 제외된 key가 다시 사용 가능해집니다. 의도한 작업인지 확인하세요." },
+  "keys.import.submit":     { "zh-CN": "导入", "zh-TW": "匯入", en: "Import", ja: "インポート", ko: "가져오기" },
+  "keys.import.emptyErr":   { "zh-CN": "请至少输入一把 key", "zh-TW": "請至少輸入一把 key", en: "Enter at least one key", ja: "少なくとも 1 つの key を入力してください", ko: "key를 하나 이상 입력하세요" },
+  // ⚠️⚠️ **`reset` 直接取响应字段，不是 `duplicated.length`**（评审 I2）——
+  // 两个数字不是一回事，见 `js/pure/keys-write.mjs` 的 `importResultCounts()`。
+  "keys.import.result":       { "zh-CN": "已添加 {added} 把，{duplicated} 把重复被跳过（其中 {reset} 把已重置状态），{invalid} 行不是合法的 key。", "zh-TW": "已新增 {added} 把，{duplicated} 把重複被跳過（其中 {reset} 把已重設狀態），{invalid} 行不是合法的 key。", en: "Added {added}, skipped {duplicated} duplicate(s) ({reset} of them reset), {invalid} line(s) are not valid keys.", ja: "{added} 件を追加、{duplicated} 件の重複をスキップ（うち {reset} 件をリセット）、{invalid} 行は無効な key です。", ko: "{added}개 추가, 중복 {duplicated}개 건너뜀(그중 {reset}개 재설정), {invalid}줄은 유효한 key가 아닙니다." },
+  "keys.import.invalidLines": { "zh-CN": "不合法的行：{lines}", "zh-TW": "不合法的行：{lines}", en: " Invalid line(s): {lines}", ja: "無効な行：{lines}", ko: " 잘못된 줄: {lines}" },
+
+  "keys.note.title": { "zh-CN": "编辑备注", "zh-TW": "編輯備註", en: "Edit note", ja: "備考を編集", ko: "비고 편집" },
+  "keys.note.save":  { "zh-CN": "保存", "zh-TW": "儲存", en: "Save", ja: "保存", ko: "저장" },
+
+  "keys.deleteConfirmTitle": { "zh-CN": "删除这把 key？", "zh-TW": "刪除這把 key？", en: "Delete this key?", ja: "この key を削除しますか？", ko: "이 key를 삭제하시겠습니까?" },
+  "keys.deleteConfirmMsg":   { "zh-CN": "此操作不可撤销。删除前请确认这把 key 已经停用或已被剔除。", "zh-TW": "此操作不可復原。刪除前請確認這把 key 已經停用或已被剔除。", en: "This cannot be undone. Make sure this key is already disabled or evicted before deleting.", ja: "この操作は取り消せません。削除する前に、この key がすでに無効化または除外されていることを確認してください。", ko: "이 작업은 되돌릴 수 없습니다. 삭제하기 전에 이 key가 이미 정지되었거나 제외되었는지 확인하세요." },
+  // 单条 DELETE 的 409 拒绝文案（HTTP 409 + 顶层 reason，与批量路径的 200 + 逐项
+  // reason 是两种不同的形状，见 `src/http/admin/handlers/keys-write.ts` 的
+  // `keyDeleteHandler` 文件头 ⚠️⚠️ 那一段）。
+  "keys.mustDisableFirst": { "zh-CN": "请先停用这把 key 再删除（删除不可撤销，而停用随时可以撤销）", "zh-TW": "請先停用這把 key 再刪除（刪除不可復原，而停用隨時可以復原）", en: "Disable this key before deleting it (deletion is permanent; disabling can be undone anytime)", ja: "削除する前にこの key を無効化してください（削除は取り消せませんが、無効化はいつでも元に戻せます）", ko: "삭제하기 전에 이 key를 먼저 정지하세요(삭제는 되돌릴 수 없지만 정지는 언제든 되돌릴 수 있습니다)" },
+  "keys.actionOk":     { "zh-CN": "操作成功", "zh-TW": "操作成功", en: "Done", ja: "操作が完了しました", ko: "작업 완료" },
+  "keys.writeFailed":  { "zh-CN": "操作失败，请稍后重试", "zh-TW": "操作失敗，請稍後重試", en: "Action failed, please try again", ja: "操作に失敗しました。しばらくしてから再試行してください", ko: "작업에 실패했습니다. 잠시 후 다시 시도하세요" },
 
   // ── 概览板块（Task 5）──────────────────────────────────────────────────────
   "ov.title":            { "zh-CN": "概览", "zh-TW": "概覽", en: "Overview", ja: "概要", ko: "개요" },

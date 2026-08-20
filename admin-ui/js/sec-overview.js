@@ -20,7 +20,7 @@ import { fmtCount, fmtDash, fmtDuration, fmtInstant, fmtPercent, fmtBytesMb } fr
 import {
   POOL_CARDS, poolCardLabelKey, runtimeNameLabelKey, storageBackendLabelKey,
   poolCounts, processCells, usageStats, configSummary, storageInfo,
-  freshnessValues, kvReadEstimatePerIsolatePerDay,
+  freshnessValues, kvReadEstimatePerIsolatePerDay, offsetMs,
 } from "./pure/overview.mjs";
 
 let nodes = null;
@@ -38,8 +38,6 @@ let data = null;
  * 值得在前端也体现成「零额外网络往返」，而不是每次点刷新都再打一次。
  */
 let caps = null;
-
-function offsetMs() { return -new Date().getTimezoneOffset() * 60000; }
 
 /** 建一张 `.card`（4 张池子卡 / 运行时信息面板复用同一个原语）。 */
 function tile(labelKey) {

@@ -21,8 +21,15 @@ export interface Harness {
   dom: FakeDom;
   /** localStorage 的后备表，测试直接读写它做断言。 */
   store: Record<string, string>;
-  /** 每次 `fetch` 的记录（url + 方法 + 头）。 */
-  calls: Array<{ url: string; method: string; headers: Record<string, string> }>;
+  /**
+   * 每次 `fetch` 的记录（url + 方法 + 头 + 请求体）。
+   *
+   * `body` 是**解析过的 JSON**，不是原始字符串——P3c Task 4 起有断言需要直接核对
+   * 请求体的形状（导入框「原样按行发」那条判据只有从这里才验得到：响应体和
+   * 网络调用记录都不会告诉你请求当初长什么样）。解析失败（非 JSON body，例如
+   * `undefined`）时是 `undefined`，不是抛异常。
+   */
+  calls: Array<{ url: string; method: string; headers: Record<string, string>; body: unknown }>;
   /** 下一次（及之后）`fetch` 的应答，按 url 前缀匹配；缺省 200 + `{}`。 */
   respond(fn: (url: string) => { status: number; body: unknown }): void;
   gate: FakeElement;
@@ -77,10 +84,15 @@ export async function bootPanel(opts: {
     removeItem: (k: string) => { delete store[k]; },
   });
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    let body: unknown;
+    if (init?.body !== undefined) {
+      try { body = JSON.parse(String(init.body)); } catch (e) { body = undefined; }
+    }
     calls.push({
       url: String(url),
       method: String(init?.method ?? "GET"),
       headers: (init?.headers ?? {}) as Record<string, string>,
+      body,
     });
     const r = responder(String(url));
     return new Response(JSON.stringify(r.body), {

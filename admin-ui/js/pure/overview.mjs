@@ -158,17 +158,39 @@ export function freshnessValues(body) {
 }
 
 /**
- * `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` 这两个旋钮的**当前生效值**。
+ * `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` / `kvEdgeCacheMs` 三个旋钮的
+ * **当前生效值**。
  *
  * **两个板块共用这一个函数**：Key 池板块（`sec-keys.js`）的文案曾经（Task 4）只能
  * 「点名旋钮 + 括注默认值」，因为那时没有任何接口报告这两个旋钮的实际值——它们是
  * 建 app 时读一次、此后不随 `ConfigHolder` 刷新的部署期常量（见 `wire.ts`），
  * 只有 `overview.freshness` 报告了它们。两个板块各自 fetch 一次 `/overview`
- * 拿到同一份数据，用这个函数取出同一对数字，不许各写各的取值逻辑。
+ * 拿到同一份数据，用这个函数取出同一组数字，不许各写各的取值逻辑。
+ *
+ * ⚠️ **`edge` 是 P3b 待办第 4 条的收尾**：`keys.freshness` 那句文案曾经把
+ * 「约 60 秒」的 KV 边缘缓存耗时硬编码进五语言字典，与概览页的 `ov.freshness.pool`
+ * （早已经由 `kvEdgeCacheMs` 驱动）各说各的——两处一旦有一处改了默认值就会当场
+ * 发散，而没有任何东西拦得住。现在两个板块从这同一个函数取同一个数字。
  */
 export function poolKnobs(body) {
   const f = freshnessValues(body);
-  return { ttl: f.poolCacheTtlMs, touch: f.poolTouchIntervalMs };
+  return { ttl: f.poolCacheTtlMs, touch: f.poolTouchIntervalMs, edge: f.kvEdgeCacheMs };
+}
+
+/**
+ * 本地时区相对 UTC 的偏移（毫秒），供 `pure/format.mjs` 的 `fmtInstant` 当第二个
+ * 参数用。**三个板块共用这一个函数**（P3b 待办第 8 条）：概览 / Key 池 / 事件
+ * 板块曾经各自手抄同一行 `-new Date().getTimezoneOffset() * 60000`——三份完全
+ * 相同的代码互相之间没有任何约束，改掉其中一份、留下另外两份不动，三个板块的
+ * 时间戳就会用不同的时区偏移渲染同一份数据，而没有任何自动化会发现。
+ *
+ * 放在这个模块而不是 `pure/format.mjs`：`fmtInstant` 的契约是「偏移量由调用方
+ * 算好传进来」，它本身刻意不读运行环境（见该文件的文件头）；这个函数才是那个
+ * 「调用方」，三个板块共用它的道理与上面的 `poolKnobs()` 是同一条——
+ * 这个模块已经是三个板块公认的「共用取值」落脚点。
+ */
+export function offsetMs() {
+  return -new Date().getTimezoneOffset() * 60000;
 }
 
 /**

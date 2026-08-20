@@ -114,9 +114,12 @@ async function json(method, path, body, init) {
 }
 
 export const api = {
-  get:  (p, init) => json("GET", p, undefined, init),
-  post: (p, b, init) => json("POST", p, b, init),
-  put:  (p, b, init) => json("PUT", p, b, init),
-  del:  (p, init) => json("DELETE", p, undefined, init),
+  get:   (p, init) => json("GET", p, undefined, init),
+  post:  (p, b, init) => json("POST", p, b, init),
+  put:   (p, b, init) => json("PUT", p, b, init),
+  // P3c Task 4：Key 池的行内动作（停用/启用/清冷却/解除剔除/备注）都是
+  // `PATCH /admin/api/keys/:id`，此前没有任何调用方需要这个动词。
+  patch: (p, b, init) => json("PATCH", p, b, init),
+  del:   (p, init) => json("DELETE", p, undefined, init),
   raw,
 };

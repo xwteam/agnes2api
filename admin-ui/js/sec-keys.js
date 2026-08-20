@@ -1,36 +1,52 @@
 /**
- * Key 池板块。**本期只做只读部分**（设计文档 §10.2 的骨架）：
- * 状态筛选 → 4 张汇总卡 → 分页列表 → 新鲜度提示。
- * 批量条、添加 Key、以及任何动作按钮都是 P3c 的，这里一个都没有。
+ * Key 池板块。P3b 只做了只读部分（状态筛选 → 4 张汇总卡 → 分页列表 → 新鲜度提示）；
+ * **P3c Task 4 在此之上加写操作**：行内动作（停用/启用/清冷却/解除剔除/删除）、
+ * 批量条（选中才出现）、导入弹窗。
  *
  * 板块契约（设计文档 §9.3）：`{ init?, onShow?, onHide? }`，见 admin-ui/js/app.js
  * 的 showSection。**板块内不许监听 langchange**——框架层会 apply(document) 之后
  * 重跑一次 onShow()。
  *
- * 两条纪律：①一切来自接口的内容一律 textContent；②**取值决策一律不写在这里**，
- * 全在 `js/pure/keys.mjs` 里由 `tests/ui/keys.test.ts` 跑着（admin-ui/README.md
- * 硬规则 1）。这个文件只剩 DOM 拼装、事件绑定与网络调用。
+ * 三条纪律：①一切来自接口的内容一律 textContent；②**取值决策一律不写在这里**，
+ * 全在 `js/pure/keys.mjs`（只读部分）与 `js/pure/keys-write.mjs`（写操作）里，
+ * 分别由 `tests/ui/keys.test.ts` 与 `tests/ui/keys-write.test.ts` 跑着
+ * （admin-ui/README.md 硬规则 1）。这个文件只剩 DOM 拼装、事件绑定与网络调用；
+ * ③ **`note` 是第一个「运维自由输入、又会被投影进面板」的字段**（见
+ * `src/core/admin/key-view.ts` 的 `KeyView.note` 说明）——后端不转义，
+ * 这里必须用 `textContent` 渲染，绝不能拼进 `innerHTML`。本文件全程只用
+ * `el()` / `elI18n()`（两者内部都是 `textContent`），没有任何 `innerHTML`。
  */
 import { api } from "./api.js";
 import { t } from "./i18n.js";
-import { el, elI18n } from "./ui.js";
+import { el, elI18n, toast, openModal, confirmModal } from "./ui.js";
 import { fmtCount, fmtDash, fmtDuration, fmtInstant, fmtPercent } from "./pure/format.mjs";
 import {
   CARDS, AUTO_SECONDS, cardCounts, badgeClass, bucketLabelKey, autoLabelKey,
   keysQuery, cooldownRemaining, lastErrorParts, usageParts, lastUsedParts,
   pagerState, listMessageKey, itemsOf,
 } from "./pure/keys.mjs";
-// **carry-forward（Task 4 → Task 5）**：`{ttl}` / `{touch}` / `{poolTtl}` 三个占位符
-// 在 Task 4 交付时没有数据源，暂用「点名旋钮 + 括注默认值」。`poolKnobs()` 是
-// `GET /admin/api/overview` 的 `freshness` 块（Task 5）投影出来的这两个旋钮当前
-// 生效值，与概览板块共用同一份取值决策（admin-ui/README.md 硬规则 1）。
-import { poolKnobs } from "./pure/overview.mjs";
+// `poolKnobs()` / `offsetMs()` 两个板块共用，见 pure/overview.mjs 各自的说明
+// （硬规则 1：两个板块的取值决策不许各写一份）。
+import { poolKnobs, offsetMs } from "./pure/overview.mjs";
+import {
+  isDeletable, canClearCooldown, canUnevict, toggleDisableLabelKey,
+  rowActionNeedsConfirm, bulkNeedsConfirm, selectAllIds, pruneSelection,
+  bulkResultSummary, bulkResultKey, importLines, hasImportableContent,
+  importResultCounts, noteToPatch,
+} from "./pure/keys-write.mjs";
 
 const PAGE_SIZE = 20;
 /** 搜索防抖。每敲一个字符打一次接口的话，大池子下每次都要重投影 + 序列化整池。 */
 const SEARCH_DEBOUNCE_MS = 250;
+/** 备注框的字符上限，与 `src/http/admin/handlers/keys-write.ts` 的
+ *  `MAX_NOTE_LENGTH` 保持一致——这里只是给 `<textarea>` 一个 `maxlength` 提示，
+ *  真正的边界仍然由后端强制（超长会 400，前端不重复实现那条校验）。 */
+const NOTE_MAX_LENGTH = 200;
 
 const state = { bucket: "all", q: "", page: 1, size: PAGE_SIZE, autoSec: 0 };
+/** 批量条：当前页里被勾选的 id。换页 / 换筛选 / 重新拉取之后由 `pruneSelection()`
+ *  收窄——不在当前页 `items` 里的 id 一律丢弃，理由见 pure/keys-write.mjs。 */
+let selected = [];
 
 let nodes = null;
 let timer = null;
@@ -40,12 +56,12 @@ let abort = null;
 let data = null;
 let loadError = false;
 /**
- * `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` 的当前生效值。**只拉一次**——
- * 这两个旋钮是建 app 时读一次的部署期常量，不随 `ConfigHolder` 刷新（见 wire.ts），
- * 没必要跟着每次 `load()` / 自动刷新重新去问。默认 null（渲染成 —），
- * 拿到之前不假装知道旧的硬编码默认值。
+ * `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` / `kvEdgeCacheMs` 的当前生效值。
+ * **只拉一次**——前两个是建 app 时读一次的部署期常量（见 wire.ts），不随
+ * `ConfigHolder` 刷新，没必要跟着每次 `load()` / 自动刷新重新去问；`kvEdgeCacheMs`
+ * 同样是常量。默认 null（渲染成 —），拿到之前不假装知道旧的硬编码默认值。
  */
-let knobs = { ttl: null, touch: null };
+let knobs = { ttl: null, touch: null, edge: null };
 
 /** 汇总卡与筛选下拉里的条数。**没有数据时 fmtCount(null) 给出 `—`，不是 0。** */
 function syncCounts(shown) {
@@ -89,8 +105,75 @@ function lastUsedCell(v, approximate, offset) {
   return cell;
 }
 
+/** 选择框列。每次 render() 整表重建，`.checked` 直接从 `selected` 现算，
+ *  不需要另外维护一份 DOM 引用表。 */
+function selectCell(v) {
+  const cell = el("td");
+  const box = el("input", { type: "checkbox" });
+  box.checked = selected.includes(v.id);
+  box.setAttribute("aria-label", t("keys.selectRow"));
+  box.addEventListener("change", () => {
+    if (box.checked) { if (!selected.includes(v.id)) selected.push(v.id); } else {
+      selected = selected.filter((id) => id !== v.id);
+    }
+    // 单行勾选只影响批量条的可见性与计数，不需要整表重渲（那会打断用户正在
+    // 连续勾选的动作、也会丢掉刚点开的下拉/焦点）。
+    syncBulkBar();
+  });
+  cell.appendChild(box);
+  return cell;
+}
+
+/** 备注列。**恒 textContent**——note 是整份响应里唯一"运维自由输入、又被投影
+ *  回面板"的字段，后端不转义，这一行就是那句话被执行的地方。 */
+function noteCell(v) {
+  const cell = el("td");
+  const hasNote = typeof v.note === "string" && v.note.length > 0;
+  cell.appendChild(el("span", null, hasNote ? v.note : fmtDash(null)));
+  return cell;
+}
+
+/**
+ * 行内动作列：停用/启用、清冷却、解除剔除、备注、删除。
+ *
+ * **按钮可用性判据全部来自 `pure/keys-write.mjs`**，这里只把返回值接到
+ * `.disabled` 上——`isDeletable` 尤其要紧：判据错一个字符，运维就会看到一颗
+ * 永远点不动、或者永远点得动却总是 409 的删除按钮。
+ */
+function actionsCell(v) {
+  const cell = el("td", { class: "row-actions" });
+
+  const toggle = elI18n("button", toggleDisableLabelKey(v), { type: "button" });
+  toggle.addEventListener("click", () => patchAction(v.id, { disabled: !v.disabled }));
+  cell.appendChild(toggle);
+
+  const clearCooldown = elI18n("button", "keys.action.clearCooldown", { type: "button" });
+  clearCooldown.disabled = !canClearCooldown(v);
+  clearCooldown.addEventListener("click", () => patchAction(v.id, { clearCooldown: true }));
+  cell.appendChild(clearCooldown);
+
+  const unevict = elI18n("button", "keys.action.unevict", { type: "button" });
+  unevict.disabled = !canUnevict(v);
+  unevict.addEventListener("click", () => patchAction(v.id, { unevict: true }));
+  cell.appendChild(unevict);
+
+  const noteBtn = elI18n("button", "keys.action.note", { type: "button" });
+  noteBtn.addEventListener("click", () => editNote(v));
+  cell.appendChild(noteBtn);
+
+  const del = elI18n("button", "keys.action.delete", { type: "button", class: "danger" });
+  del.disabled = !isDeletable(v);
+  del.addEventListener("click", () => deleteOne(v));
+  cell.appendChild(del);
+
+  return cell;
+}
+
 function row(v, now, offset, approximate) {
-  const tr = el("tr");
+  // `data-key-id` 不是渲染需要的东西——它只给测试当挂钩用，好在整表重建之后仍能
+  // 按 id 而不是按行序号找到某一行（`tests/ui/dom/keys-actions.test.ts` 用它)。
+  const tr = el("tr", { "data-key-id": v.id });
+  tr.appendChild(selectCell(v));
   tr.appendChild(el("td", null, `#${v.seq}`));
   tr.appendChild(el("td", { class: "mono" }, v.masked));
   const bucketCell = el("td");
@@ -104,7 +187,39 @@ function row(v, now, offset, approximate) {
   tr.appendChild(usageCell(v, approximate));
   const err = lastErrorParts(v);
   tr.appendChild(el("td", null, err === null ? fmtDash(null) : `${err.kind}（${fmtInstant(err.at, offset)}）`));
+  tr.appendChild(noteCell(v));
+  tr.appendChild(actionsCell(v));
   return tr;
+}
+
+/** 表头的全选复选框。**只对当前页 `items` 生效**（`selectAllIds`），
+ *  勾选/取消都要整表重渲——每一行的 `.checked` 得跟着 `selected` 重算一遍。 */
+function headerSelectCell(items) {
+  const th = el("th");
+  const box = el("input", { type: "checkbox" });
+  const pageIds = selectAllIds(items);
+  box.checked = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
+  box.setAttribute("aria-label", t("keys.selectAll"));
+  box.addEventListener("change", () => {
+    if (box.checked) {
+      const merged = new Set(selected);
+      for (const id of pageIds) merged.add(id);
+      selected = [...merged];
+    } else {
+      const drop = new Set(pageIds);
+      selected = selected.filter((id) => !drop.has(id));
+    }
+    render();
+  });
+  th.appendChild(box);
+  return th;
+}
+
+/** 批量条的可见性与「已选中 N 把」文案。挂在每次 render() 与每次单行勾选之后。 */
+function syncBulkBar() {
+  const n = selected.length;
+  nodes.bulkBar.style.display = n > 0 ? "" : "none";
+  nodes.bulkCount.textContent = t("keys.bulk.selectedCount", { count: n });
 }
 
 function render() {
@@ -112,12 +227,15 @@ function render() {
   // 的话，下一次改动很容易只改其中两处（评审 N4）。
   const shown = loadError ? null : data;
   syncCounts(shown);
+  syncBulkBar();
 
   // 两个旋钮的当前生效值可能比首次 render() 晚到（异步拉 /overview），
   // 每次 render() 都用 `knobs` 现有的值重写这两句——拿到之后立刻生效，没拿到时
   // fmtDuration(null) 给出 —，不假装知道旧的硬编码默认值。
   nodes.autoNote.textContent = t("keys.autoNote", { ttl: fmtDuration(knobs.ttl) });
-  nodes.freshnessNote.textContent = t("keys.freshness", { poolTtl: fmtDuration(knobs.ttl) });
+  nodes.freshnessNote.textContent = t("keys.freshness", {
+    poolTtl: fmtDuration(knobs.ttl), edge: fmtDuration(knobs.edge),
+  });
 
   // 分页控件先复位：读失败 / 空列表时留着上一次的「第 1/2 页 · 共 3 条」，
   // 等于在展示一份已经不存在的数据。
@@ -142,28 +260,31 @@ function render() {
 
   const table = el("table");
   const head = el("tr");
+  head.appendChild(headerSelectCell(items));
   for (const key of [
     "keys.col.seq", "keys.col.key", "keys.col.bucket", "keys.col.addedAt", "keys.col.lastUsedAt",
     "keys.col.cooldown", "keys.col.strikes", "keys.col.usage", "keys.col.lastError",
   ]) head.appendChild(elI18n("th", key));
+  head.appendChild(elI18n("th", "keys.col.note"));
+  head.appendChild(elI18n("th", "keys.col.actions"));
   table.appendChild(head);
   // 时区必须从参数进 fmtInstant，不许它去读运行环境的本地时区（见 pure/format.mjs）。
-  const offset = -new Date().getTimezoneOffset() * 60000;
+  const offset = offsetMs();
   for (const v of items) table.appendChild(row(v, shown.generatedAt, offset, shown.approximate));
   host.appendChild(table);
 }
 
 /**
- * 拉一次 `/overview` 取两个旋钮的当前生效值。**只拉一次**（见 `knobs` 的说明），
+ * 拉一次 `/overview` 取三个旋钮的当前生效值。**只拉一次**（见 `knobs` 的说明），
  * 拿到之后重渲一次让文案立刻换上真实值；拿不到就保持 —，不重试到下一次 onShow。
  */
 async function loadKnobs() {
-  if (knobs.ttl !== null || knobs.touch !== null) return;
+  if (knobs.ttl !== null || knobs.touch !== null || knobs.edge !== null) return;
   try {
     const body = await api.get("/overview");
     knobs = poolKnobs(body);
   } catch (e) {
-    // 读失败：knobs 保持 { ttl: null, touch: null }，文案渲染成 —。
+    // 读失败：knobs 保持默认的三个 null，文案渲染成 —。
   }
   render();
 }
@@ -184,6 +305,9 @@ async function load() {
     loadError = true;
     data = null;
   }
+  // 换页 / 换筛选 / 写操作之后重新拉取，都可能让已选中的某些 id 从当前页消失
+  // ——批量条上的「已选 N 把」不许继续数着几把已经看不见的行。
+  selected = pruneSelection(selected, loadError ? null : itemsOf(data));
   render();
 }
 
@@ -195,6 +319,168 @@ function stopTimers() {
 function restartTimer() {
   if (timer !== null) { clearInterval(timer); timer = null; }
   if (state.autoSec > 0) timer = setInterval(() => { load(); }, state.autoSec * 1000);
+}
+
+/** 写操作失败时给用户看的话。优先用后端 `error.message`（人话），
+ *  拿不到就退回一句通用文案，绝不把裸的 `http_500` 这类内部码丢给运维。 */
+function errorMessage(e) {
+  return e && typeof e.message === "string" && e.message !== "" ? e.message : t("keys.writeFailed");
+}
+
+/** 单条 PATCH（停用/启用/清冷却/解除剔除/备注）的统一收尾：成功/失败都提示一次，
+ *  并且不管成败都重新拉一次列表——写操作没有把最新视图带回来，只有 `{ok:true}`。 */
+function patchAction(id, body) {
+  api.patch(`/keys/${id}`, body)
+    .then(() => toast(t("keys.actionOk"), "ok"))
+    .catch((e) => toast(errorMessage(e), "err"))
+    .finally(() => { load(); });
+}
+
+function editNote(view) {
+  const textarea = el("textarea", { rows: "3", maxlength: String(NOTE_MAX_LENGTH) });
+  textarea.value = view.note ?? "";
+  const body = el("div");
+  body.appendChild(textarea);
+  openModal("keys.note.title", body, [
+    { labelKey: "common.cancel" },
+    {
+      labelKey: "keys.note.save",
+      onClick: () => {
+        api.patch(`/keys/${view.id}`, { note: noteToPatch(textarea.value) })
+          .then(() => toast(t("keys.actionOk"), "ok"))
+          .catch((e) => toast(errorMessage(e), "err"))
+          .finally(() => { load(); });
+      },
+    },
+  ]);
+}
+
+/**
+ * 单条删除。**不可撤销**，所以先弹一次确认（`rowActionNeedsConfirm` 判据）。
+ *
+ * ⚠️⚠️ **409 `must_disable_first` 与批量路径的 200 + 逐项 `reason` 是两种不同的
+ * 形状**（见 `src/http/admin/handlers/keys-write.ts` 的 `keyDeleteHandler` 文件头）
+ * ——这里从 `ApiError.status === 409` 与 `ApiError.body.reason` 两处取信息，
+ * 给出一句比通用错误文案更准的提示；批量路径的对应处理在 `runBulk()`。
+ */
+function deleteOne(view) {
+  if (!isDeletable(view)) return;
+  const run = () => {
+    api.del(`/keys/${view.id}`)
+      .then(() => toast(t("keys.actionOk"), "ok"))
+      .catch((e) => {
+        if (e && e.status === 409 && e.body && e.body.reason === "must_disable_first") {
+          toast(t("keys.mustDisableFirst"), "warn");
+        } else {
+          toast(errorMessage(e), "err");
+        }
+      })
+      .finally(() => { load(); });
+  };
+  if (rowActionNeedsConfirm("delete")) confirmModal("keys.deleteConfirmTitle", "keys.deleteConfirmMsg", run);
+  else run();
+}
+
+/**
+ * 批量操作的落地。
+ *
+ * ⚠️⚠️ **这是 2(a) 那条交接落地的地方**：`bulk` 端点永远 200，「必须先停用才能删」
+ * 只活在 `results[i].reason` 里。`bulkResultSummary()` 把它算成 `failed` 这个数，
+ * 只要它大于 0，`bulkResultKey()` 就必须选中 `keys.bulk.partial` 而不是
+ * `keys.bulk.allOk`，且 `mustDisableFirst` 的具体数字要被拼进提示文案——
+ * 拿 `res.status` 当唯一判据的写法在这条路径上永远走不到这一段。
+ */
+async function runBulk(op, ids) {
+  try {
+    const body = await api.post("/keys/bulk", { op, ids });
+    const summary = bulkResultSummary(body && body.results);
+    let text = t(bulkResultKey(summary)) + t("keys.bulk.countsSuffix", summary);
+    if (summary.mustDisableFirst > 0) text += t("keys.bulk.mustDisableFirstSuffix", summary);
+    if (summary.notFound > 0) text += t("keys.bulk.notFoundSuffix", summary);
+    toast(text, summary.failed > 0 ? "warn" : "ok");
+  } catch (e) {
+    toast(errorMessage(e), "err");
+  } finally {
+    selected = [];
+    load();
+  }
+}
+
+function runBulkWithConfirm(op) {
+  const ids = [...selected];
+  if (ids.length === 0) return;
+  if (!bulkNeedsConfirm(op)) { runBulk(op, ids); return; }
+  const msg = el("p", null, t("keys.bulk.confirmDelete", { count: ids.length }));
+  openModal("keys.bulk.confirmTitle", msg, [
+    { labelKey: "common.cancel" },
+    { labelKey: "common.confirm", danger: true, onClick: () => runBulk(op, ids) },
+  ]);
+}
+
+function buildBulkBar() {
+  const bar = el("div", { class: "toolbar bulk-bar" });
+  const count = el("span", { class: "muted" });
+  bar.appendChild(count);
+
+  const disableBtn = elI18n("button", "keys.bulk.disable", { type: "button" });
+  disableBtn.addEventListener("click", () => runBulkWithConfirm("disable"));
+  bar.appendChild(disableBtn);
+
+  const clearCooldownBtn = elI18n("button", "keys.bulk.clearCooldown", { type: "button" });
+  clearCooldownBtn.addEventListener("click", () => runBulkWithConfirm("clearCooldown"));
+  bar.appendChild(clearCooldownBtn);
+
+  const deleteBtn = elI18n("button", "keys.bulk.delete", { type: "button", class: "danger" });
+  deleteBtn.addEventListener("click", () => runBulkWithConfirm("delete"));
+  bar.appendChild(deleteBtn);
+
+  // 默认藏起来：批量条「选中才出现」（设计文档 §10.2），`syncBulkBar()` 之后接管。
+  bar.style.display = "none";
+  return { bar, count };
+}
+
+/**
+ * 导入弹窗。**textarea 的内容原样按行发给后端**（`importLines()`），不在这里
+ * trim 整段、也不过滤空行——过滤空行会让后端报回来的行号（1 基、按原始下标算）
+ * 与运维在文本框里数到的行号错位，见 `src/core/keypool-repo.ts` 的 `addMany()`。
+ */
+function openImport() {
+  const textarea = el("textarea", { rows: "8", "data-i18n-ph": "keys.import.placeholder" });
+  textarea.setAttribute("placeholder", t("keys.import.placeholder"));
+
+  const resetLabel = el("label", { class: "auto" });
+  const resetBox = el("input", { type: "checkbox" });
+  resetLabel.appendChild(resetBox);
+  resetLabel.appendChild(elI18n("span", "keys.import.resetExisting"));
+
+  const body = el("div");
+  body.appendChild(textarea);
+  body.appendChild(resetLabel);
+  body.appendChild(elI18n("p", "keys.import.resetExistingWarn", { class: "muted note" }));
+
+  openModal("keys.import.title", body, [
+    { labelKey: "common.cancel" },
+    {
+      labelKey: "keys.import.submit",
+      onClick: () => {
+        const lines = importLines(textarea.value);
+        if (!hasImportableContent(lines)) { toast(t("keys.import.emptyErr"), "warn"); return; }
+        api.post("/keys", { keys: lines, resetExisting: resetBox.checked })
+          .then((res) => {
+            const c = importResultCounts(res);
+            let text = t("keys.import.result", {
+              added: c.added, duplicated: c.duplicated, reset: c.reset, invalid: c.invalidLines.length,
+            });
+            if (c.invalidLines.length > 0) {
+              text += t("keys.import.invalidLines", { lines: c.invalidLines.join(", ") });
+            }
+            toast(text, c.invalidLines.length > 0 ? "warn" : "ok");
+          })
+          .catch((e) => toast(errorMessage(e), "err"))
+          .finally(() => { load(); });
+      },
+    },
+  ]);
 }
 
 function buildToolbar() {
@@ -228,6 +514,10 @@ function buildToolbar() {
   const refresh = elI18n("button", "common.refresh", { type: "button" });
   refresh.addEventListener("click", () => { load(); });
   bar.appendChild(refresh);
+
+  const importBtn = elI18n("button", "keys.import.open", { type: "button" });
+  importBtn.addEventListener("click", () => openImport());
+  bar.appendChild(importBtn);
 
   const autoWrap = el("label", { class: "auto" });
   autoWrap.appendChild(elI18n("span", "keys.auto"));
@@ -273,6 +563,10 @@ export const keysSection = {
     }
     section.appendChild(cardRow);
 
+    // 批量条：设计文档 §10.2 排在「4 张汇总卡」与「分页列表」之间，「选中才出现」。
+    const bulk = buildBulkBar();
+    section.appendChild(bulk.bar);
+
     const body = el("div", { class: "keys-body" });
     section.appendChild(body);
 
@@ -296,6 +590,7 @@ export const keysSection = {
       body, pageInfo, prev, next,
       options: tb.options, autoOptions: tb.autoOptions,
       cardValues, cardLabels, autoNote, freshnessNote,
+      bulkBar: bulk.bar, bulkCount: bulk.count,
     };
   },
 
