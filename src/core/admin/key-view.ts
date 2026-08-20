@@ -92,6 +92,13 @@ export interface KeyView {
    * 「改完之后从 `GET /admin/api/keys` 真的读得回来」，那条路必须经过这个字段。
    * 由 `tests/contract/admin-keys-write.test.ts` 的
    * 「只改备注的 PATCH：改完之后 GET 真的读得回来」守着。
+   *
+   * ⚠️⚠️ **给 Task 4 的硬要求：它是本结构里第一个「运维自由输入、又会被投影到面板上」
+   * 的字段，渲染必须走 `textContent`，绝不许拼进 innerHTML。**
+   * 其余字段要么是后端算出来的枚举（`bucket`）、要么是数字、要么是掩码，
+   * **只有它整串来自请求体**。后端刻意不做转义（与事件板块同一条裁定：JSON 响应体的
+   * 字段边界由 JSON 语法本身保证，转义是渲染层的事）——所以这句话必须在渲染那一侧
+   * 被执行，**别以为后端已经洗过了**。
    */
   note: string | null;
   /** Tier-1。**近似值**：并发下少计，且最多晚一个 `POOL_TOUCH_INTERVAL_MS` 落盘。 */

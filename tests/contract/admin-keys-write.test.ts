@@ -55,11 +55,39 @@ async function viewOf(app: App, id: string): Promise<KeyView> {
   return v as KeyView;
 }
 
-interface ImportBody { added: string[]; duplicated: string[]; invalid: string[] }
+/**
+ * ⚠️ **`invalid` 是 `number[]` 不是 `string[]`，这不是笔误**：前两个数组装 id、
+ * 它装的是**输入里的位置**（1 基）。三个都写成 `string[]` 时类型完全一样，
+ * 前端没有任何东西能提醒它「这一个不是 id 数组」（评审 I6）。
+ * `reset` 是**被重置的把数**，与 `duplicated.length` 不是一回事，见下面那一格。
+ */
+interface ImportBody { added: string[]; duplicated: string[]; invalid: number[]; reset: number }
 
 // ───────────────────────────────────────────────────────────────────────────
 // POST /admin/api/keys —— 批量导入
 // ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * **三个边界常量本身就是策略，必须被独立钉住。**
+ *
+ * ⚠️ **评审 I1 实测：把 `MAX_IMPORT_KEYS` 改成 500、`MAX_NOTE_LENGTH` 改成 5000，
+ * tsc=0，全量 1636 条一条不红。** 成因是三处边界用例当时都写成
+ * `MAX_IMPORT_KEYS + 1` —— 输入从被测的那个常量推导出来，**改了常量输入跟着改**，
+ * 于是永远测不到那个数字本身。本仓已有一条同名纪律：
+ * `tests/ui/format.test.ts` 的「边界值写字面量，不写 THRESHOLD ± 1（第 6 种假阳性）」。
+ *
+ * 后果不是洁癖：五份 DEPLOY.md 白纸黑字写着「一次最多 **200** 把 ⇒ 单次点击上界
+ * **201** 次 put，两成日写配额」，而 `docs-parity` 只校验**五份文档彼此一致**、
+ * **不校验文档与代码一致** ⇒ 这三个数一旦改动，那批"实测读数"会在零信号下与代码脱钩。
+ * **这一格就是那个 `201` 在代码这一端的锚。**
+ */
+describe("边界常量", () => {
+  it("三个边界常量写字面量钉死 —— 五语言 DEPLOY.md 的 201 是它的另一端", () => {
+    expect({ MAX_IMPORT_KEYS, MAX_NOTE_LENGTH, MAX_KEY_LENGTH }).toEqual({
+      MAX_IMPORT_KEYS: 200, MAX_NOTE_LENGTH: 200, MAX_KEY_LENGTH: 1024,
+    });
+  });
+});
 
 describe("POST /admin/api/keys（批量导入）", () => {
   /**
@@ -193,6 +221,38 @@ describe("POST /admin/api/keys（批量导入）", () => {
   });
 
   /**
+   * **`resetExisting` 那条分支「不传 prev」的理由，必须有一格会红的东西守着。**
+   *
+   * ⚠️ **评审 I5：那句话第一版是写死在注释里、没人验过的断言，而且当时 ESCAPED**
+   * ——把它改成 `save({...}, existing)`，tsc=0、全量**一条不红**；它自己又不含
+   * 第 12 道门禁词表里的任何一个词 ⇒ 门禁也看不见它。
+   *
+   * 夹具必须是「**干净** + `lastUsedAt` 近期有值」：干净 ⇒ 重置改不动任何 scheduling
+   * 字段 ⇒ `schedulingEqual` 为真；近期用过 ⇒ `lastUsedAt` 没走远。**两条都满足才是
+   * 写消除会咬的那个形态**，这也正是「勾了重置却什么都没落盘」在生产上的样子。
+   */
+  it("resetExisting 对一把干净的 key 也必须真的落盘 —— 传 prev 会被写消除吃掉", async () => {
+    const st = new CountingStorage();
+    const KEY = "sk-reset-clean-target-aa";
+    const { app, repo } = await makeApp(
+      [], [KEY],
+      // 生产默认值。夹具默认的 0 会把写消除整个关掉，那样这一格两种写法都绿。
+      { poolTouchIntervalMs: 21_600_000, poolCacheTtlMs: 0 }, () => NOW, { storage: st },
+    );
+    const r = (await repo.all())[0] as KeyRecord;
+    await repo.save({ ...r, lastUsedAt: NOW }, r);   // 首次落 lastUsedAt 必写盘
+    const base = st.puts;
+
+    const res = await send(app, "POST", "/admin/api/keys", { keys: [KEY], resetExisting: true });
+    expect(res.status).toBe(200);
+    expect((await res.json() as ImportBody).reset, "前置：这一把确实走了重置那条分支").toBe(1);
+    expect(
+      st.puts - base,
+      "重置一把干净的 key 被写消除整个吃掉了 —— 面板会说「已重置 1 把」而存储一个字节没动",
+    ).toBe(1);
+  });
+
+  /**
    * **「被重置了几把」这个数字要说的是「本批之前就已经在池子里」的那些。**
    *
    * 本批刚新建的那把即使被粘了两遍也谈不上重置。夹具把两种重复都摆上：
@@ -216,6 +276,11 @@ describe("POST /admin/api/keys（批量导入）", () => {
       "三个数组必须逐条对应输入：5 行进来，5 条出去",
     ).toEqual({ added: 1, duplicated: 4, invalid: 0 });
     expect(logger.entries.find((x) => x.event === "key.restored")?.fields?.reset).toBe(1);
+    // **同一个数字必须同时出现在响应体里**（评审 I2）：只写进事件的话，面板要么显示
+    // `duplicated.length`（这里是 4，**撒谎**），要么在前端把这条判据再实现一遍。
+    // 一个动作两个数字，正是面板开始撒谎的方式。
+    expect(body.reset, "算出来的那个诚实数字没有交到面板手上").toBe(1);
+    expect(body.duplicated.length, "前置：两个数字确实不相等，否则这一格证明不了什么").toBe(4);
   });
 
   /**
@@ -239,7 +304,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
     // 非法项回报的是**输入里的位置**（1 基）：面板的导入框是逐行粘贴的，
     // 「第 2 行不合法」比一段掩码更能让人直接去改那一行；而且这样一来
     // 「明文出不去」是 `addMany` 的结构性性质，不是响应拼装时的自觉。
-    expect(body.invalid, "非法项要报出它在输入里的位置").toEqual(["2"]);
+    expect(body.invalid, "非法项要报出它在输入里的位置").toEqual([2]);
   });
 
   /**
@@ -253,38 +318,78 @@ describe("POST /admin/api/keys（批量导入）", () => {
    * ⚠️ **不可见字符一律 `String.fromCharCode` 拼**，不往源码里粘裸字符：本仓被
    * 「源文件里的裸 NUL 让整份文件对 git diff / grep / scan-secrets 隐身」咬过一次。
    */
-  it("非法的 key 进 invalid：空行 / 内含空格 / 换行 / 汉字 / 超长，一条都不许落盘", async () => {
+  it("非法的 key 进 invalid：内含空格 / 换行 / NUL / 汉字 / 超长，一条都不许落盘", async () => {
     const st = new CountingStorage();
     const { app } = await makeApp([], ["sk-seed-key-for-index-00"], {}, () => NOW, { storage: st });
     const base = st.puts;
     const cases = [
-      "", "   ",
       "sk-two keys-on-one-line",
       `sk-with${String.fromCharCode(0x0a)}newline`,
       `sk-with${String.fromCharCode(0x00)}nul`,
       "sk-含汉字的-key-aaaaaaaa",
-      "x".repeat(MAX_KEY_LENGTH + 1),
+      // 超长：字面量 1025，不写 `MAX_KEY_LENGTH + 1`（理由见「边界常量」那组）。
+      "x".repeat(1025),
     ];
     const res = await send(app, "POST", "/admin/api/keys", { keys: cases });
     const body = await res.json() as ImportBody;
     expect({ added: body.added, duplicated: body.duplicated }).toEqual({ added: [], duplicated: [] });
     // 位置逐条对上：漏掉中间某一条时，只断言条数是发现不了的。
-    expect(body.invalid).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+    expect(body.invalid).toEqual([1, 2, 3, 4, 5]);
     expect(st.puts - base, "一条都不该进池子，连索引都不该写").toBe(0);
+    // 反向：正好 1024 是放行的那一侧（这一次会真的落盘，所以放在计数断言之后）。
+    expect((await send(app, "POST", "/admin/api/keys", { keys: ["x".repeat(1024)] })).status).toBe(200);
 
     // 反向：首尾空白只是粘贴事故，去掉之后是一把好 key，不许被判成非法。
     const ok = await send(app, "POST", "/admin/api/keys", { keys: ["  sk-padded-but-fine-key  "] });
     expect((await ok.json() as ImportBody).added).toHaveLength(1);
   });
 
-  it(`超过 ${MAX_IMPORT_KEYS} 把一律 400，不静默截断（截断会让人以为全导进去了）`, async () => {
+  /**
+   * **空行整条跳过，不进任何一个数组——这一格把前端的口径定死在这里。**
+   *
+   * ⚠️ **评审 I6：第一版把空行判成非法项，那让 Task 4 只剩两个都不对的选项**：
+   * 原样发 ⇒ 文本框末尾那个换行被报成「第 N 行不合法」，一条**用户没犯过的错误**；
+   * 先过滤空行 ⇒ 位置与运维眼里的行号**错位**，而位置正是它唯一的用途。
+   * 现在两难没了：**前端原样发（一行一个元素，空行也发），位置就是行号。**
+   */
+  it("空行整条跳过：末尾换行不报错，而位置仍是原始行号", async () => {
     const st = new CountingStorage();
     const { app } = await makeApp([], ["sk-seed-key-for-index-00"], {}, () => NOW, { storage: st });
     const base = st.puts;
-    const keys = Array.from({ length: MAX_IMPORT_KEYS + 1 }, (_, i) => `sk-too-many-${i}`);
-    const res = await send(app, "POST", "/admin/api/keys", { keys });
-    expect(res.status).toBe(400);
+    // 这就是一个文本框按行拆出来的样子：中间有空行、末尾有一个换行留下的空元素。
+    const res = await send(app, "POST", "/admin/api/keys", {
+      keys: [
+        "sk-blank-line-good-key-1",   // 1
+        "",                            // 2  空行
+        "sk-two words-bad-line",       // 3  非法
+        "   ",                         // 4  只有空白，等同空行
+        "sk-blank-line-good-key-2",    // 5
+        "",                            // 6  末尾换行留下的
+      ],
+    });
+    const body = await res.json() as ImportBody;
+    expect(body.added, "两把好 key 都该进去").toHaveLength(2);
+    expect(
+      body.invalid,
+      "空行被报成了非法项 ⇒ 面板会显示一条用户没犯过的错误；或者位置没按原始行号算",
+    ).toEqual([3]);
+    // 三个数组加起来 + 空行数 = 输入条数（2 + 0 + 1 + 3 = 6）。
+    expect(body.added.length + body.duplicated.length + body.invalid.length).toBe(3);
+    // 空行不落盘：2 条记录 + 1 次索引。
+    expect(st.puts - base).toBe(3);
+  });
+
+  /** 边界值一律**字面量 200 / 201**，不写 `MAX_IMPORT_KEYS ± 1`（理由见「边界常量」那组）。 */
+  it("正好 200 把放行、201 把一律 400，不静默截断（截断会让人以为全导进去了）", async () => {
+    const st = new CountingStorage();
+    const { app } = await makeApp([], ["sk-seed-key-for-index-00"], {}, () => NOW, { storage: st });
+    const mk = (n: number) => Array.from({ length: n }, (_, i) => `sk-boundary-${i}`);
+
+    const base = st.puts;
+    expect((await send(app, "POST", "/admin/api/keys", { keys: mk(201) })).status).toBe(400);
     expect(st.puts - base, "拒绝之前先写了一半").toBe(0);
+    // 反向那一格：正好 200 把必须放行，否则"上限是 200"这句话只被证了一半。
+    expect((await send(app, "POST", "/admin/api/keys", { keys: mk(200) })).status).toBe(200);
   });
 
   it.each([
@@ -482,8 +587,9 @@ describe("PATCH /admin/api/keys/:id", () => {
     expect((await viewOf(app, r!.id)).note).toBe("先记一笔");
     expect((await send(app, "PATCH", `/admin/api/keys/${r!.id}`, { note: null })).status).toBe(200);
     expect((await viewOf(app, r!.id)).note).toBeNull();
-    const long = await send(app, "PATCH", `/admin/api/keys/${r!.id}`, { note: "x".repeat(MAX_NOTE_LENGTH + 1) });
-    expect(long.status).toBe(400);
+    // 边界值写字面量 200 / 201，不写 `MAX_NOTE_LENGTH ± 1`。
+    expect((await send(app, "PATCH", `/admin/api/keys/${r.id}`, { note: "x".repeat(200) })).status).toBe(200);
+    expect((await send(app, "PATCH", `/admin/api/keys/${r.id}`, { note: "x".repeat(201) })).status).toBe(400);
   });
 
   /**
@@ -658,6 +764,76 @@ describe("POST /admin/api/keys/bulk", () => {
       "1 次索引 put + 5 条记录 delete；循环调 delete() 会是 5 次 put",
     ).toEqual({ gets: 6, puts: 1, deletes: 5, lists: 0 });
     expect((await getKeys(app)).counts.all, "省下的那几次 put 是拿「没真删掉」换来的").toBe(0);
+  });
+
+  /**
+   * **同一条「读当前真值」的判据，落在最常见的那条路上。**
+   *
+   * ⚠️ **评审 I4：把 `bulk` 的 `repo.get(id)` 换成快照查找，全量只红 1 条，
+   * 而且红的是「单把写操作的存储开销」那格计数** ⇒ 这条性质当时靠一条**不相干的
+   * 计数断言偶然接住**，一旦那格计数被调整就彻底裸奔。
+   * 而批量停用比单把 PATCH **更常见**（运维在面板上勾一整页），
+   * 覆盖掉的又是别的 isolate 刚写下的 `evicted` —— **一把上游已经拒绝的凭据
+   * 被一次「批量停用」悄悄复活。**
+   */
+  it("bulk 读的也是存储里的当前真值，不是最多一个 TTL 前的快照", async () => {
+    const { app, repo, storage } = await makeApp(
+      [], ["sk-bulk-truth-vs-snap-a"], { poolCacheTtlMs: 60_000 }, () => NOW,
+    );
+    await getKeys(app);                       // 预热快照
+    const r = (await repo.all())[0] as KeyRecord;
+    // 别的 isolate（或运维手工）刚把它判成 evicted，本 isolate 的快照还不知道。
+    await storage.put(`key:${r.id}`, {
+      ...r, evicted: true, evictedReason: "upstream 401", strikes: 7,
+    });
+    expect(
+      (await repo.all())[0]!.evicted,
+      "本 isolate 的快照没有保持陈旧 ⇒ 本格没有判别力",
+    ).toBe(false);
+
+    expect((await send(app, "POST", "/admin/api/keys/bulk", {
+      op: "disable", ids: [r.id],
+    })).status).toBe(200);
+
+    const v = await viewOf(app, r.id);
+    expect(
+      { evictedReason: v.evictedReason, strikes: v.strikes, disabled: v.disabled },
+      "批量停用基于陈旧快照 ⇒ 别的 isolate 刚写下的 evicted / strikes 被覆盖掉了",
+    ).toEqual({ evictedReason: "upstream 401", strikes: 7, disabled: true });
+  });
+
+  /**
+   * **批量事件要说得出「变的是哪几把」。**
+   *
+   * ⚠️ **评审 I3：单条 `DELETE` 记 `{ id, wasEvicted, wasDisabled }`，而批量只记
+   * `{ count }`** ⇒ 一次删 200 把之后，事件板块只能说「少了 200 把」，
+   * 说不出是哪 200 把——而删除不可撤销，事后追查时那正是唯一要问的问题。
+   * 逐条打 200 条事件会直接撞穿 `EVENT_WRITES_PER_DAY`，所以取中间：
+   * **不超过 20 把（面板一页）就逐个列出，超了就明说自己没列**——
+   * 「面板说不出自己缺了什么」在本仓是被单独裁过的一类缺陷。
+   */
+  it("批量事件列得出 id：不超过 20 把逐个列，超了明说 idsOmitted 而不是悄悄不提", async () => {
+    const small = ["sk-bulk-ids-small-a-aa", "sk-bulk-ids-small-b-bb"];
+    const { app, repo, logger } = await makeApp([], small, {}, () => NOW);
+    const ids = (await repo.all()).map((x) => x.id);
+
+    logger.clear();
+    expect((await send(app, "POST", "/admin/api/keys/bulk", { op: "disable", ids })).status).toBe(200);
+    const e = logger.entries.find((x) => x.event === "key.disabled");
+    expect({ count: e?.fields?.count, ids: e?.fields?.ids, idsOmitted: e?.fields?.idsOmitted })
+      .toEqual({ count: 2, ids: ids.join(","), idsOmitted: false });
+
+    // 超过阈值：**不许静默变成只有 count**，要明确标出「我没列」。
+    const many = Array.from({ length: 21 }, (_, i) => `sk-bulk-ids-many-${String(i).padStart(2, "0")}`);
+    const big = await makeApp([], many, {}, () => NOW);
+    const manyIds = (await big.repo.all()).map((x) => x.id);
+    big.logger.clear();
+    expect((await send(big.app, "POST", "/admin/api/keys/bulk", {
+      op: "disable", ids: manyIds,
+    })).status).toBe(200);
+    const e2 = big.logger.entries.find((x) => x.event === "key.disabled");
+    expect({ count: e2?.fields?.count, ids: e2?.fields?.ids, idsOmitted: e2?.fields?.idsOmitted })
+      .toEqual({ count: 21, ids: null, idsOmitted: true });
   });
 
   it("批量停用 / 批量清冷却各自生效，并各打一条事件", async () => {

@@ -230,6 +230,20 @@ export const MAX_KEY_LENGTH = 1024;
  *
  * `0x80–0xFF` 那一段两边都拒，理由与那边同一条（环境变量按 UTF-8 解、头值按
  * Latin-1 解，两边在这一段并不由规范保证一致；RFC 9110 已把它标为弃用）。
+ *
+ * ⚠️⚠️ **它今天只挂在面板导入这一条路上，而稳态下 key 进池子的主路径不走它**
+ * ——`src/core/registrar/tender.ts` 铸出一把新 key 之后直接 `repo.add(out.key)`，
+ * 既不校验也不 `trim()`。**这个不对称是如实登记的，不是漏掉的**，理由是
+ * **同一个判据在两条路上不能有同一种处置**：
+ *   · **导入**：拒绝是**免费**的——那串东西还在运维的剪贴板里，报一行「第 N 行不合法」
+ *     他改一下再粘一次就是了；
+ *   · **铸号**：拒绝是**销毁凭据**——Agnes 侧账号已经真实建出来了，key 材料只在手上
+ *     这一份，扔掉它就再也找不回来，连对账都修不了（本文件开头把这一类定性为
+ *     数据丢失，`add()` 的写序整个是围绕这条设计的）。
+ * 所以铸号那条路的正解不是「照抄这个判据去拦」，而是「**照存不误、同时把可疑
+ * 如实报出来**」——那要一条新的事件与一个新的失败分支，属于注册机行为，
+ * **已连同这段分析一起交给 Task 5**（见本任务报告）。
+ * **别看到这个函数就以为池子里每一把 key 都过了它。**
  */
 export function isImportableKey(key: string): boolean {
   return key.length <= MAX_KEY_LENGTH && /^[\x21-\x7e]+$/.test(key);
@@ -834,15 +848,17 @@ export class KeyPoolRepo {
    *
    * ── 返回值 ────────────────────────────────────────────────────────────────
    *
-   * 三个数组**逐条对应输入**：`added.length + duplicated.length + invalid.length`
-   * 恒等于 `keys.length`。同一把 key 在同一批里粘两遍 ⇒ 第一条进 `added`（或
-   * `duplicated`），第二条进 `duplicated`——它对用户就是一条重复，不该被悄悄吃掉。
+   * ── 三个数组分别装什么（**类型不同不是随手写的，是口径本身**）────────────
    *
-   * ⚠️ **三个数组里没有一项是明文，而且这是结构上做不到，不是靠调用方自觉**
-   * （约束 11(a)）：`added` / `duplicated` 装的是 **id**（内容哈希），
-   * `invalid` 装的是**输入里的位置**（1 基，十进制字符串）。
+   * `added` / `duplicated` 装 **id**（内容哈希，`string`）；
+   * `invalid` 装**输入里的位置**（1 基，`number`）。
    *
-   * 位置而不是掩码，有两条理由，第二条更硬：
+   * ⚠️ **第一版三个都是 `string[]`，评审判定那会让下一个任务建在流沙上**：
+   * TS 类型完全相同、字段名又都是名词复数，前两个装 id、第三个装行号，
+   * **前端没有任何东西能提醒它「这一个不是 id 数组」**。改成 `number[]` 之后，
+   * 误读在类型上就成立不了——JSON 那一侧同样看得见（`[2]` 不是 `["2"]`）。
+   *
+   * 位置而不是掩码，两条理由，第二条更硬：
    * ① 面板上的导入框是**逐行粘贴**的，「第 2、7 行不是合法的 key」比
    *    「`sk-ab…tail` 不是合法的 key」更能让人直接去改那一行；
    * ② 要掩码就得从 `./admin/key-view.js` 里引入 `maskKey`，而那会让**调度侧的模块
@@ -852,9 +868,24 @@ export class KeyPoolRepo {
    *    `lastUsedAt` 读点豁免的前提，不该为了一个显示口味把它降级。
    *    **返回位置之后，「明文出不去」变成了这个函数自己的性质：
    *    它手上根本没有一条通往明文的返回路径。**
+   *
+   * ── 空行：整条跳过，不进任何一个数组（**这一条定死前端的口径**）───────────
+   *
+   * ⚠️ **第一版把空行判成非法项，那让前端只剩两个都不对的选项**（评审 I6）：
+   * 原样发 ⇒ 文本框末尾那个换行被报成「第 N 行不合法」，一条**不存在的错误**；
+   * 前端先过滤空行 ⇒ 位置与运维眼里的行号**错位**，而位置正是它唯一的用途。
+   * 现在空行整条跳过、**位置仍按原始下标算**，两难就没了：
+   * **前端原样发（一行一个元素，空行也发），位置就是行号。**
+   *
+   * 于是计数关系是 `added + duplicated + invalid + 空行数 === keys.length`
+   * ——**空行不进任何一个数组是刻意的**：它不是一条「候选 key」，
+   * 把它报成任何一种结果都是在替用户发明一个他没做过的动作。
+   *
+   * 同一把 key 在同一批里粘两遍 ⇒ 第一条进 `added`（或 `duplicated`），
+   * 第二条进 `duplicated`——它对用户就是一条重复，不该被悄悄吃掉。
    */
   async addMany(keys: readonly string[], opts: { resetExisting: boolean }): Promise<{
-    added: string[]; duplicated: string[]; invalid: string[];
+    added: string[]; duplicated: string[]; invalid: number[];
   }> {
     // 索引只用来**算这次要写回去的那份**，不参与重复判定（见上面那段 ⚠️）。
     // 缺失时回落一次 `list()`：只写 `added` 会把索引里原有的 id 全部抹掉，
@@ -864,15 +895,18 @@ export class KeyPoolRepo {
 
     const added: string[] = [];
     const duplicated: string[] = [];
-    const invalid: string[] = [];
+    const invalid: number[] = [];
     /** 本批已经处理过的 id：同一把 key 粘第二遍时不许再落一次盘、也不许再探一次存在性。 */
     const seen = new Set<string>();
 
     try {
       for (const [at, raw] of keys.entries()) {
         const key = raw.trim();
+        // **空行整条跳过**：它不是一条候选 key，报成任何一种结果都是替用户发明了一个
+        // 他没做过的动作（见上面那段「空行」）。文本框末尾那个换行走的就是这里。
+        if (key === "") continue;
         // 1 基：面板把它当行号给运维看，而人数行是从 1 开始的。
-        if (!isImportableKey(key)) { invalid.push(String(at + 1)); continue; }
+        if (!isImportableKey(key)) { invalid.push(at + 1); continue; }
         const id = await keyId(key);
         if (seen.has(id)) { duplicated.push(id); continue; }
         seen.add(id);
@@ -889,6 +923,13 @@ export class KeyPoolRepo {
           // 重置一把本来就干净的 key 一个字段都没变 ⇒ 整个被丢弃，
           // 于是「被重置了几把」这个数字会与真正落盘的次数对不上。
           // 同一条理由见 `src/http/admin/handlers/keys-write.ts` 的 PATCH。
+          //
+          // ⚠️ **这句话在第一版里是一条没人验过就写死的断言，评审实测它当时
+          // ESCAPED**（改成 `save({...}, existing)` ⇒ tsc=0、全量一条不红），
+          // 而它自己又不含第 12 道门禁词表里的任何一个词 ⇒ 门禁也看不见。
+          // 现在由 `tests/contract/admin-keys-write.test.ts` 的
+          // 「resetExisting 对一把干净的 key 也必须真的落盘 —— 传 prev 会被写消除吃掉」
+          // 钉着：那一格的夹具是「干净 + lastUsedAt 近期有值」，正是写消除会咬的形态。
           await this.save({
             ...existing,
             cooldownUntil: 0, cooldownReason: null, strikes: 0,

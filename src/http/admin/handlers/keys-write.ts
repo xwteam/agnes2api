@@ -112,6 +112,13 @@ function rejectUnknown(o: Record<string, unknown>, allowed: readonly string[]): 
  * **响应体同时给 `error` 信封与 `reason`**：信封是全仓统一的对外形状
  * （`src/http/errors.ts`），而 `reason` 是设计 §11 逐字定死的机器可读判别字段——
  * 面板要靠它选一句五语言文案，靠解析 `message` 的中文是不行的。
+ *
+ * ⚠️⚠️ **同一条约束在线上有两种形状，Task 4 必须分两支处理**（评审 m8）：
+ *   · 单条 `DELETE /admin/api/keys/:id` ⇒ **HTTP 409** + **顶层** `reason`；
+ *   · `POST /admin/api/keys/bulk` ⇒ **HTTP 200** + 逐项结果里那一项的 `reason`
+ *     （整批 409 会让运维不知道哪几把成功了）。
+ * 拿状态码当唯一判据的前端会在批量路径上**完全看不到这条拒绝**——
+ * 200 一路走过去，而那几把 key 根本没删掉。
  */
 const MUST_DISABLE_FIRST = "must_disable_first";
 
@@ -134,9 +141,16 @@ function paramId(c: Context): string {
 /**
  * `POST /admin/api/keys` —— 批量导入（L4）。
  *
- * 请求 `{ keys: string[], resetExisting?: boolean }` → `{ added, duplicated, invalid }`。
- * 三个数组装的分别是 id / id / **输入里的位置**（1 基），**没有一项是明文**
- * ——那是 `addMany` 的结构性性质，不是这里的自觉，见它的说明。
+ * 请求 `{ keys: string[], resetExisting?: boolean }` → `{ added, duplicated, invalid, reset }`。
+ * 三个数组装的分别是 id / id / **输入里的位置**（1 基、`number[]`），
+ * **没有一项是明文**——那是 `addMany` 的结构性性质，不是这里的自觉，见它的说明。
+ *
+ * ⚠️ **`reset` 必须进响应体，这不是顺手多给一个字段**（评审 I2）：
+ * `duplicated.length` **不等于**被重置的把数（本批新建的那把被粘第二遍时也算重复），
+ * 本文件下面那段计算就是为这件事存在的。只把它写进事件、不写进响应，
+ * 面板要么显示 `duplicated.length`（**撒谎**），要么在前端把这条判据再实现一遍——
+ * 而 `src/core/keypool-repo.ts` 的 `addMany` 里正写着「一个动作两个数字，
+ * 正是面板开始撒谎的方式」。**算出来的那个诚实数字必须交到面板手上。**
  *
  * `keys` 的每一项必须是字符串：**元素类型不对时整体 400，而不是把它算进
  * `invalid`**。两者的区别是「调用方（面板）写错了」与「用户粘错了」，
@@ -184,7 +198,7 @@ export function keysImportHandler(deps: KeysWriteDeps) {
         fields: { reset },
       });
     }
-    return c.json(result);
+    return c.json({ ...result, reset });
   };
 }
 
@@ -248,8 +262,10 @@ const PATCH_FIELDS = ["disabled", "note", "clearCooldown", "clearStrikes", "unev
  * 丢掉（那批计数没落盘）。它换来的是「管理员的每一次写都真的落盘」，而计数本来
  * 就是标了 `≈` 的近似值，且 PATCH 是人点一下才发生的。
  * 另一半代价是绕过了 `stillExists()` 那道「删除不许被陈旧写回撤销」的闸——
- * 这一条**这里不成立**：上面那次 `repo.get(id)` 直接读的就是存储，
- * 它本身就是一次比 `stillExists` 更早、更准的存在性确认。
+ * 这一条**这里不成立**：上面那次 `repo.get(id)` 直接读的就是存储，与 `stillExists`
+ * **问的是同一个问题、读的是同一个键、准确度完全相同，只是更早**。
+ * （⚠️ 这里原来写的是「更早、**更准**」——那个方向是反的：更早的读对「现在还在不在」
+ * 只会**更弱**，不会更强。两者的差是一个窗口，不是一个精度。评审 m4 订正。）
  */
 export function keyPatchHandler(deps: KeysWriteDeps) {
   return async (c: Context) => {
@@ -347,7 +363,8 @@ export function keysBulkHandler(deps: KeysWriteDeps) {
     const results: BulkItemResult[] = [];
     /** 通过了逐项校验、真的要删的那些。**攒起来一次交给 `deleteMany`**，见下。 */
     const toDelete: string[] = [];
-    let changed = 0;
+    /** 真的被改动了的那些 id —— 事件要靠它说清「变的是哪几把」，见 `bulkEvent`。 */
+    const changed: string[] = [];
     for (const id of ids) {
       const r = await deps.repo.get(id);
       if (r === null) { results.push({ id, ok: false, reason: "not_found" }); continue; }
@@ -360,13 +377,13 @@ export function keysBulkHandler(deps: KeysWriteDeps) {
       if (op === "delete") toDelete.push(id);
       else await applyBulk(deps.repo, op, r);
       results.push({ id, ok: true, reason: null });
-      changed++;
+      changed.push(id);
     }
     // **一次索引写**。逐把调 `repo.delete()` 结果完全一样，只是每一把都要重写一次
     // 索引 ⇒ 一次点击最多 200 次 put，见 `KeyPoolRepo.deleteMany` 的说明。
     await deps.repo.deleteMany(toDelete);
 
-    if (changed > 0) deps.logger.log(bulkEvent(op, changed));
+    if (changed.length > 0) deps.logger.log(bulkEvent(op, changed));
     return c.json({ results });
   };
 }
@@ -377,22 +394,45 @@ async function applyBulk(repo: KeyPoolRepo, op: Exclude<BulkOp, "delete">, r: Ke
   await repo.save({ ...r, cooldownUntil: 0, cooldownReason: null });
 }
 
-function bulkEvent(op: BulkOp, count: number) {
+/**
+ * 批量事件里最多逐条列出多少个 id。
+ *
+ * 取 **20**：那是 `GET /admin/api/keys` 的默认每页条数，而批量条操作的正是「当前页」
+ * （设计 §10.2 的全选只选当前页）⇒ **最常见的一次批量恰好装得下**。
+ *
+ * 为什么要有这个上限：`LogEntry.fields` 的值是标量，id 只能拼成一个字符串，
+ * 200 个 16 位 id 就是约 3.4 KB **挂在一条事件上**，而事件是环形缓冲里逐条读出来的。
+ */
+const BULK_EVENT_IDS_MAX = 20;
+
+/**
+ * 批量操作的事件。
+ *
+ * ⚠️ **第一版只记 `count`，评审 I3 指出那与单条路径不对称**：单条 `DELETE` 记
+ * `{ id, wasEvicted, wasDisabled }`，批量删 200 把却只说「少了 200 把」，
+ * 说不出是哪 200 把——而删除不可撤销，事后追查时那正是唯一要问的问题。
+ *
+ * **逐条打 200 条事件不是选项**（会直接撞穿 `EVENT_WRITES_PER_DAY`），所以取中间：
+ * **不超过 `BULK_EVENT_IDS_MAX` 就逐个列出，超了就明说自己没列**
+ * （`idsOmitted: true`，而不是让 `ids: null` 去暗示这件事）——
+ * 「面板说不出自己缺了什么」在本仓是被单独裁过的一类缺陷。
+ */
+function bulkEvent(op: BulkOp, changed: readonly string[]) {
+  const listed = changed.length <= BULK_EVENT_IDS_MAX;
+  const fields = {
+    count: changed.length,
+    ids: listed ? changed.join(",") : null,
+    idsOmitted: !listed,
+  };
   if (op === "delete") {
-    return {
-      level: "warn" as const, event: "key.deleted",
-      msg: "面板批量删除了 key", fields: { count },
-    };
+    return { level: "warn" as const, event: "key.deleted", msg: "面板批量删除了 key", fields };
   }
   if (op === "disable") {
     return {
       level: "warn" as const, event: "key.disabled",
       msg: "面板批量停用了 key（它们仍然占着 targetKeys 的名额，不会触发补池）",
-      fields: { count },
+      fields,
     };
   }
-  return {
-    level: "info" as const, event: "key.restored",
-    msg: "面板批量清掉了冷却", fields: { count },
-  };
+  return { level: "info" as const, event: "key.restored", msg: "面板批量清掉了冷却", fields };
 }
