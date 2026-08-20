@@ -119,15 +119,22 @@ for (const p of walk(join(ROOT, "admin-ui"))) {
   if (p === DICT_FILE) continue;
   const src = readFileSync(p, "utf8");
   for (const k of PLACEHOLDER_KEYS) {
-    const needle = `"${k}"`;
-    for (let i = src.indexOf(needle); i !== -1; i = src.indexOf(needle, i + 1)) {
-      const after = /^\s*(.)/.exec(src.slice(i + needle.length));
-      if (after && after[1] === ",") continue;
-      const line = src.slice(0, i).split("\n").length;
-      errors.push(
-        `${p.slice(ROOT.length)}:${line} 把带占位符的 key「${k}」当成不带参数的标签用了，`
-        + "面板上会出现裸的 {占位符}",
-      );
+    // ⚠️ **两种引号都要扫。** 第一版只认双引号，而仓里没有引号风格门禁：把当初那个
+    // 缺陷原样重放成 `row('ov.config.envLocked')`（单引号）之后，这道门禁 exit 0、
+    // 零报错——**它自己犯了它存在的全部理由要防的那个错**：判据建在了缺陷没采取的
+    // 那个形态上。模板字面量（反引号）不扫：那种写法通常是动态拼 key，
+    // 静态判据本来就管不了，硬扫只会误报。
+    for (const quote of ['"', "'"]) {
+      const needle = `${quote}${k}${quote}`;
+      for (let i = src.indexOf(needle); i !== -1; i = src.indexOf(needle, i + 1)) {
+        const after = /^\s*(.)/.exec(src.slice(i + needle.length));
+        if (after && after[1] === ",") continue;
+        const line = src.slice(0, i).split("\n").length;
+        errors.push(
+          `${p.slice(ROOT.length)}:${line} 把带占位符的 key「${k}」当成不带参数的标签用了，`
+          + "面板上会出现裸的 {占位符}",
+        );
+      }
     }
   }
 }

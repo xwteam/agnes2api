@@ -10,7 +10,10 @@
  * 管理员拒绝一次授权就被踢出后台并被告知「密钥无效」。
  * 两条对称用例进单测，防「修过头」。
  */
+import { sessionExpired } from "./pure/session.mjs";
+
 const KEY_STORE = "agnes2api_admin_key";
+const SAVED_AT_STORE = "agnes2api_admin_key_at";
 const BASE = "/admin/api";
 
 export class ApiError extends Error {
@@ -30,7 +33,36 @@ function readKey() {
   try { return localStorage.getItem(KEY_STORE) || ""; } catch (e) { return ""; }
 }
 
+/**
+ * 会话是不是已经到达绝对上限。判定在 `js/pure/session.mjs`，这里只喂参数。
+ *
+ * ⚠️ **为什么这一判必须在每个请求上做，而不是只在 `app.js` 启动那一次做。**
+ * 面板是**常驻**的：事件在轮询、Key 池有自动刷新，运维把标签页开一整天是常态。
+ * 只在模块加载那一次判的话，12 小时到点后这个标签页照样拿着那把口令继续打接口
+ * ——而五语言 DEPLOY.md 逐字承诺「面板会在 12 小时后要求重新输入口令」，
+ * 那就成了**一句被测试保护起来、却在最常见的路径上不成立的承诺**。
+ * `js/pure/session.mjs` 开头那句「可用期从永远压到最多 12 小时」也要有这一判才成立。
+ *
+ * 放在**发请求之前**：过期就不发，与前端字符集拦截同一个道理——送出去也没用，
+ * 而且会在服务端留下一条无意义的 `admin.login_failed`。
+ */
+function expired() {
+  try {
+    return sessionExpired(Number(localStorage.getItem(SAVED_AT_STORE)), Date.now());
+  } catch (e) {
+    // 隐私模式下 localStorage 抛错：读不到时刻 ⇒ 与 sessionExpired 同一个方向，fail closed。
+    return true;
+  }
+}
+
 export async function raw(method, path, body, init) {
+  // **会话绝对上限，每请求复查一次**（见 expired 的说明）。走的是与 401 完全相同的
+  // 那条通路：`unauthorizedHandler()` 清会话 + 回登录闸，再抛同一个 ApiError ——
+  // 调用方（各板块的轮询/刷新）已经会处理 401，不需要为过期再认一种新错误。
+  if (expired()) {
+    if (unauthorizedHandler) unauthorizedHandler();
+    throw new ApiError(401, "session_expired", null);
+  }
   // 口令只走请求头。**禁止 Cookie 会话、禁止 ?key=**：口令进 URL 会落进浏览器历史、
   // Referer、CF 访问日志、反代日志。这条禁令同时否掉了 EventSource（它设不了请求头）。
   const headers = { "x-admin-key": readKey() };

@@ -135,6 +135,11 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 归给人工冒烟（理由是「碰 localStorage 与 Date」），执行时订正：把两个时刻
       // 都变成参数之后判定是纯函数，于是照硬规则 1 落在这里，由
       // tests/ui/session.test.ts 跑着。纯函数、无配置、无数据。
+      // Task 7（P3b）评审必修 ④ 新增：口令字符集判定。它原本留在
+      // `admin-ui/js/app.js` 里——那违反硬规则 1（纯函数必须落在 js/pure/），
+      // 而直接后果是 `sendable-parity` 只能做源码文本比对、拦不住语义分叉。
+      // 搬过来之后那条用例升级成了逐码位行为等价断言。纯函数、无配置、无数据。
+      "/admin/js/pure/sendable.mjs",
       "/admin/js/pure/session.mjs",
       "/admin/js/sec-events.js",
       "/admin/js/sec-keys.js",

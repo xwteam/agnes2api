@@ -16,6 +16,7 @@ import { overviewSection } from "./sec-overview.js";
 import { keysSection } from "./sec-keys.js";
 import { eventsSection } from "./sec-events.js";
 import { sessionExpired } from "./pure/session.mjs";
+import { sendable } from "./pure/sendable.mjs";
 
 const KEY_STORE = "agnes2api_admin_key";
 /**
@@ -50,25 +51,6 @@ function store(op, value) {
     }
   } catch (e) { /* 隐私模式：本次会话照常可用，刷新后要重新输入 */ }
   return null;
-}
-
-/**
- * 口令里有浏览器**发不出去**的字符时，本地就拦下并说清楚。
- *
- * `fetch` 在设置非 Latin-1 请求头值时直接抛 TypeError，于是一个含汉字 / emoji /
- * 零宽空格的 ADMIN_TOKEN 会装出一棵「200 但永远进不去」的面板：用户看到的是
- * 「网络错误」，而服务端日志里连 login_failed 都没有。后端那半是
- * `src/http/admin/auth.ts` 的 `SENDABLE`，**字符集与这里逐字相同**；两边都要，
- * 因为后端只在启动时看得到自己的口令，看不到用户在输入框里粘了什么。
- *
- * ⚠️ **字符集含空格（0x20）。** 空格送得出去，所以放行——`correct horse battery
- * staple` 那种 passphrase 是更强的密钥形态，拒掉它换一个「复制粘贴可能出错」的担心
- * 不划算（判据与完整理由见 auth.ts 的 SENDABLE：留物理、去口味）。
- * 首尾空白由上面那句 `input.value.trim()` 与后端的 whitespace_padded 一起管，
- * 那条是物理（传输层会去掉首尾空白）而不是口味。
- */
-function sendable(s) {
-  return /^[\x20-\x7e]+$/.test(s);
 }
 
 let current = null;
@@ -122,6 +104,10 @@ form.addEventListener("submit", async (e) => {
   const key = input.value.trim();
   err.textContent = "";
   if (!key) { err.textContent = t("gate.empty"); return; }
+  // 字符集判定在 `js/pure/sendable.mjs`，**与后端 `SENDABLE` 逐码位等价**
+  //（`tests/ui/sendable-parity.test.ts` 的行为断言钉着，不是源码文本比对）。
+  // 前端这一半必须有：后端只在启动时看得到自己的口令，看不到用户粘了什么。
+  // 判定本身不许在这个文件里再写一遍（admin-ui/README.md 硬规则 1）。
   if (!sendable(key)) { err.textContent = t("gate.badShape"); return; }
   const submit = form.querySelector("button");
   submit.disabled = true;

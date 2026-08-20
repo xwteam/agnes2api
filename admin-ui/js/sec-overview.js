@@ -158,7 +158,11 @@ function renderConfig() {
   nodes.config.fallback.textContent = c === null ? fmtDash(null) : (c.fallback === null ? t("ov.config.none") : c.fallback);
   nodes.config.targetKeys.textContent = c === null ? fmtDash(null) : fmtCount(c.targetKeys);
   if (c === null) {
-    nodes.config.envLocked.textContent = fmtDash(null);
+    // ⚠️ **降级态也要带标签。** 这一行不再走 `row()` 之后（见 buildConfigCard），
+    // 直接写 `fmtDash(null)` 会让整段读失败时前四行是「注册机：—」「主通道：—」…、
+    // 第五行变成孤零零一个 `—`：修掉一个 `{count}` 泄漏，换来一处标签丢失。
+    // 整句仍由这一个节点承载，只是把 `{count}` 换成破折号。
+    nodes.config.envLocked.textContent = t("ov.config.envLocked", { count: fmtDash(null) });
     nodes.config.envLocked.removeAttribute("title");
   } else {
     nodes.config.envLocked.textContent = t("ov.config.envLocked", { count: fmtCount(c.envLocked.length) });

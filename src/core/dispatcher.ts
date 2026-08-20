@@ -96,8 +96,14 @@ const SAFE_RESPONSE_HEADERS = ["content-type", "cache-control", "retry-after", "
  * ⚠️ **全局 `nosniff` 挡不住这一半。** `nosniff` 只否掉「按内容嗅探出一个更危险的
  * 类型」，它不阻止浏览器渲染一个**显式声明**为 `text/html` 的响应——直接导航过去
  * 就是一个同源文档，里面的 `<script>` / `on*` / `javascript:` 都会执行。
+ *
+ * ⚠️ **`multipart/x-mixed-replace` 在列，它是 deny-list 最经典的那条绕法**：
+ * 外层类型本身无害，而 Firefox 会按**内层每个 part 自己的 `Content-Type`** 渲染
+ * ——于是一个 `text/html` 的 part 照样变成同源文档，整条 deny-list 被绕过去。
+ * 它与「下一种没预料到的媒体类型」不是一回事：这是**已知**绕法，一个 alternation
+ * 就堵上了，没有理由留着。剩下的未知那一档仍然由上面那段边界说明兜着。
  */
-const DOCUMENT_MIME = /^\s*(text\/html|application\/xhtml\+xml|image\/svg\+xml|text\/xml|application\/xml|text\/javascript|application\/javascript|application\/x-javascript|application\/ecmascript|text\/ecmascript)\b/i;
+const DOCUMENT_MIME = /^\s*(text\/html|application\/xhtml\+xml|image\/svg\+xml|text\/xml|application\/xml|text\/javascript|application\/javascript|application\/x-javascript|application\/ecmascript|text\/ecmascript|multipart\/x-mixed-replace)\b/i;
 
 function clampContentType(v: string): string {
   return DOCUMENT_MIME.test(v) ? "application/octet-stream" : v;
