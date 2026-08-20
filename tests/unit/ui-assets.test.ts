@@ -101,8 +101,11 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
    *
    * Task 3（前端基础设施 + i18n 门禁）一次加了 12 个文件：`css/shell.css`、
    * `css/sections.css`、`js/api.js`、`js/i18n-dict.js`、`js/i18n.js`、`js/theme.js`、
-   * `js/ui.js`、`js/pure/format.mjs`、`js/pure/bucket.mjs`、以及三个空板块桩
+   * `js/ui.js`、`js/pure/format.mjs`，以及三个空板块桩
    * `js/sec-overview.js` / `js/sec-keys.js` / `js/sec-events.js`。逐个确认过：
+   *（Task 3 当时还加了 `js/pure/bucket.mjs`，它与 `js/pure/mask.mjs` 已在全分支
+   *  评审 B3 一并删除——两者在 `admin-ui/js/` 里零导入者，后端的
+   *  `src/core/admin/key-view.ts` 早就把 `masked`/`bucket` 算好放进响应了。）
    * 全部是面板自己的 HTML/CSS/JS，没有配置、没有笔记、没有任何含数据的文件，
    * 都该是公开可取的。清单**手写**，不是从测试跑出来的实际值粘回去的
    * （那是本项目登记的第 6 种假阳性：期望值从被测对象自己推导出来）。
@@ -118,7 +121,6 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       "/admin/js/boot.js",
       "/admin/js/i18n-dict.js",
       "/admin/js/i18n.js",
-      "/admin/js/pure/bucket.mjs",
       // Task 6（P3b）新增：事件板块的取值决策（查询串拼装、分组、轮询退避等），
       // 同一条硬规则、同一份理由，由 tests/ui/events.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/events.mjs",
@@ -127,7 +129,6 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 需要测试的逻辑必须落在 js/pure/ 下，它由 tests/ui/keys.test.ts 跑着。
       // 逐条确认过：纯函数、无配置、无数据，公开可取没有问题。
       "/admin/js/pure/keys.mjs",
-      "/admin/js/pure/mask.mjs",
       // Task 5（P3b）新增：概览板块的取值决策，同一条硬规则、同一份理由，
       // 由 tests/ui/overview.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/overview.mjs",
@@ -286,18 +287,18 @@ describe("生成器对违规输入 exit 1", () => {
   });
 
   it("js/pure 下出现 import ⇒ exit 1", () => {
-    const r = runWithMutation((ui) => append(join(ui, "js/pure/mask.mjs"), '\nimport x from "./y.mjs";\n'));
+    const r = runWithMutation((ui) => append(join(ui, "js/pure/session.mjs"), '\nimport x from "./y.mjs";\n'));
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("import");
   });
 
   it("js/pure 下碰 DOM 全局 ⇒ exit 1", () => {
-    const r = runWithMutation((ui) => append(join(ui, "js/pure/mask.mjs"), "\nexport const q = document.title;\n"));
+    const r = runWithMutation((ui) => append(join(ui, "js/pure/session.mjs"), "\nexport const q = document.title;\n"));
     expect(r.code).toBe(1);
   });
 
   it("js/pure 下碰 window 全局 ⇒ exit 1", () => {
-    const r = runWithMutation((ui) => append(join(ui, "js/pure/mask.mjs"), "\nexport const w = window.name;\n"));
+    const r = runWithMutation((ui) => append(join(ui, "js/pure/session.mjs"), "\nexport const w = window.name;\n"));
     expect(r.code).toBe(1);
   });
 

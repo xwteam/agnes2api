@@ -2,10 +2,17 @@ import type { KeyRecord, KeyStats } from "../types.js";
 import { normalizeStats } from "./stats.js";
 
 /**
- * 上游 key 的掩码。**与 `admin-ui/js/pure/mask.mjs` 是两份实现**（后端投影时用这份，
- * 前端在没有后端的场景里用那份），由 `tests/unit/admin/key-view.test.ts` 的
- * 共享夹具一致性断言钉住——设计文档 §16.1 U4 指定的处置方式。
+ * 上游 key 的掩码。**全仓唯一的一份实现。**
+ *
+ * ⚠️ 这里原来写着「与 `admin-ui/js/pure/mask.mjs` 是两份实现……由共享夹具一致性
+ * 断言钉住（设计文档 §16.1 U4）」。那个前端副本在全分支评审 B3 被删掉了：
+ * 它在 `admin-ui/js/` 里**零导入者**——面板显示的 `masked` 就是下面 `toKeyViews()`
+ * 算好放进 `GET /admin/api/keys` 响应里的那个值。§16.1 U4 处置的是"两边都要"的
+ * 情形，而这里并不需要两边。真要在浏览器侧再算一次，把那个模块与那条一致性断言
+ * 一起加回来。
+ *
  * **绝不返回原值**：返回原值的「掩码」比没有掩码更糟，调用方会以为它安全了。
+ * 边界由 `tests/unit/admin/key-view.test.ts:40` 钉着。
  */
 export function maskKey(key: string): string {
   if (typeof key !== "string" || key.length <= 10) return "…";

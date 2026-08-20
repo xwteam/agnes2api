@@ -28,7 +28,7 @@ describe("静态资源伺服", () => {
     for (const [path, type] of [
       ["/admin/css/base.css", "text/css"],
       ["/admin/js/boot.js", "text/javascript"],
-      ["/admin/js/pure/mask.mjs", "text/javascript"],
+      ["/admin/js/pure/session.mjs", "text/javascript"],
     ] as const) {
       const res = await app.request(path);
       expect(res.status, path).toBe(200);

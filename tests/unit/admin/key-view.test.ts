@@ -23,20 +23,37 @@ describe("KeyView 永不含明文", () => {
       expect(JSON.stringify(val)).not.toContain("WHOLE-SECRET");
     }
   });
-  it("maskKey 与前端那份 pure/mask.mjs 在同一组夹具上结果一致", async () => {
-    // 两边各有一份实现（后端 TS / 前端 .mjs），**共享夹具的一致性断言**是设计文档
-    // §16.1 U4 指定的处置：两边都要时，用同一组输入断言结果相等。
-    const { maskKey: front } = await import("../../../admin-ui/js/pure/mask.mjs");
-    for (const s of ["", "sk", "0123456789", "0123456789a", "sk-abcdefghijklmnop"]) {
-      expect(maskKey(s), s).toBe(front(s));
+  /**
+   * ⚠️ **这里原来还有一格「maskKey 与前端那份 `pure/mask.mjs` 在同一组夹具上结果
+   * 一致」，随 `admin-ui/js/pure/mask.mjs` 一起删掉了**（全分支评审 B3）。
+   *
+   * 理由不是"那条断言不好"，而是**它守的东西没有消费者**：`mask.mjs` 在
+   * `admin-ui/js/` 里零导入者——面板显示的 `masked` 是后端这一份算好之后放进
+   * `GET /admin/api/keys` 响应里的（见下面 `toKeyViews`）。一份没有任何页面会跑
+   * 的实现，加上一条为它写的一致性断言，正是本项目已经裁过三次的那个形态：
+   * **没有消费者的东西迟早会漂，而漂了也没人会发现**。
+   *
+   * 掩码这条硬规则本身**没有失去保护**：上面那格「投影出来的对象里没有 key 字段，
+   * 也没有任何值等于原串」跑在真正发货的这一份上，下面还有一整组 `maskKey` 的
+   * 边界用例。真要在浏览器侧再算一次掩码时，把那个模块与这条一致性断言一起加回来。
+   */
+  it("maskKey 的边界：短串整串隐去、绝不返回原值", () => {
+    for (const s of ["", "sk", "0123456789"]) {
+      expect(maskKey(s), s).toBe("…");
+      expect(maskKey(s), `${s} 不许被原样吐出`).not.toBe(s);
     }
+    expect(maskKey("0123456789a")).toBe("01234…789a");
+    expect(maskKey("sk-abcdefghijklmnop")).toBe("sk-ab…mnop");
   });
 });
 
 /**
- * **分档必须与真实调度语义一致**，后端这一份与 `admin-ui/js/pure/bucket.mjs` 同理。
+ * **分档必须与真实调度语义一致。**
  *
- * ⚠️ **这组 CASES 是从 `tests/ui/bucket.test.ts` 逐格搬过来的，别再"精简"回去。**
+ * ⚠️ **这组 CASES 原本是从 `tests/ui/bucket.test.ts` 逐格搬过来的，别再"精简"回去。**
+ *（那份前端副本与 `admin-ui/js/pure/bucket.mjs` 已在全分支评审 B3 一并删除——
+ *  面板显示的 `bucket` 来自本文件测的这一份，前端那份零导入者。**这里就是这条
+ *  等价关系今天唯一的护栏了**，删一格就没有第二处兜着。）
  * 那边用一整段注释记着一次实测：如果没有一格真的把 `disabled` 设成 `true`，
  * 「给 keyBucket 加一档 disabled 但不改 isAvailable」这个变异**不会被等价关系循环抓住**
  * ——所有 fixture 的 `disabled` 都是 `undefined`，变异后的 keyBucket 对它们仍然走到
