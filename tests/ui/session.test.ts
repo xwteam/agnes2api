@@ -184,9 +184,19 @@ describe("会话上限的生产接线还在（源码文本级绊线，不是行�
     expect(APP_JS).toContain('sessionExpired(Number(store("getAt")), Date.now())');
   });
 
-  /** 两个键必须一起写、一起清——只清一个的话下一次登录前那个时刻还是旧的。 */
+  /**
+   * 两个键必须一起写、一起清——只清一个的话下一次登录前那个时刻还是旧的。
+   *
+   * ⚠️ **这里原来还有一行 `toContain('const SAVED_AT_STORE = "agnes2api_admin_key_at"')`**，
+   * 也就是把键名的字面量在**第三个地方**又抄了一遍。全分支评审 C4 之后键名收进
+   * `js/pure/storage-keys.mjs` 单一真源，那一行随之变成"这个文件确实从真源拿键名"
+   * 这一句——**名字本身长什么样不再是这里的事**，由
+   * `tests/ui/storage-keys.test.ts:52` 那格（除 boot.js 外不许再出现字面量）负责。
+   */
   it("口令与时刻两个键一起写、一起清", () => {
-    expect(APP_JS).toContain('const SAVED_AT_STORE = "agnes2api_admin_key_at"');
+    expect(APP_JS).toMatch(
+      /import\s*\{[^}]*\bSAVED_AT_STORE\b[^}]*\}\s*from\s*"\.\/pure\/storage-keys\.mjs"/,
+    );
     expect(APP_JS).toContain("localStorage.setItem(SAVED_AT_STORE, String(Date.now()))");
     expect(APP_JS).toContain("localStorage.removeItem(SAVED_AT_STORE)");
     expect(APP_JS).toContain("localStorage.removeItem(KEY_STORE)");

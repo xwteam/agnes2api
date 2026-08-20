@@ -67,12 +67,23 @@ describe("事件面板轮询：持续跨 isolate 时钟偏移下的自愈稳态�
    */
   const SKEW_MS = 12 * 3_600_000;
 
-  /** 两个时钟相差 SKEW_MS 的 isolate，共用同一份（会数次数的）存储。 */
+  /**
+   * 两个时钟相差 SKEW_MS 的 isolate，共用同一份（会数次数的）存储。
+   *
+   * ⚠️ **两边都用生产的 `ConfigHolder`**（`realConfigHolder: true`，全分支评审 C2）。
+   * 这一组用例量的是**读配额**，而 `fixedConfigHolder.ensureFresh` 是空函数——
+   * 生产上每请求都要过的 `configRefresh` 在夹具里整个不存在，量出来的 48 次/轮
+   * 是只属于夹具的数字。真 holder 之下每一轮轮询多一次 `storage.get("config")`
+   * （TTL 30 秒 < 稳态轮询间隔 60 秒 ⇒ 每轮恰好一次），这才是文档要承诺的那个量。
+   */
   async function twoSkewedIsolates(clock: { t: number }) {
     const shared = new CountingStorage(new MemoryStorage(undefined, () => clock.t));
-    const { app: appA } = await makeApp([], ["k1"], {}, () => clock.t, { storage: shared, shardId: "isolate-a" });
+    const { app: appA } = await makeApp([], ["k1"], {}, () => clock.t, {
+      storage: shared, shardId: "isolate-a", realConfigHolder: true,
+    });
     const { app: appB, storeLogger: loggerB } = await makeApp(
-      [], ["k1"], {}, () => clock.t + SKEW_MS, { storage: shared, shardId: "isolate-b" },
+      [], ["k1"], {}, () => clock.t + SKEW_MS,
+      { storage: shared, shardId: "isolate-b", realConfigHolder: true },
     );
     // 用领先的 isolate B 写一条真实事件——它的 ts 天然带着 B 的（相对 A 而言"未来"的）
     // 时钟，这正是"游标一旦被 A 处理就会撞上 cursorAhead"的根源。
@@ -169,7 +180,7 @@ describe("事件面板轮询：持续跨 isolate 时钟偏移下的自愈稳态�
 
   /**
    * **评审四审 B2**：稳态吞吐必须落在 C4b 规划、五语言 DEPLOY.md 白纸黑字承诺的
-   * **69,120 次/天**包线内——而三审(a) 的"只遮紧接着一轮"版本只对"严格交替"这
+   * **70,560 次/天**包线内——而三审(a) 的"只遮紧接着一轮"版本只对"严格交替"这
    * 一种负载均衡比例成立。
    *
    * 参数化的是 **k = 平均多少轮才命中一次领先的那个 isolate**（`i % k === 0`）。
@@ -177,28 +188,38 @@ describe("事件面板轮询：持续跨 isolate 时钟偏移下的自愈稳态�
    * 均匀的负载均衡）。
    *
    * 稳态一个周期（k 轮）的形状：**1 轮**撞上 `cursorAhead`（`candidateKeys` 区间
-   * 为空，0 次 get），**k−1 轮**各做一次完整冷读（48 次 get），且退避全程稳定在
-   * 60 秒——于是
+   * 为空，0 次事件 get），**k−1 轮**各做一次完整冷读（48 次事件 get），
+   * **另外每一轮都有 1 次配置 get**（`configRefresh`，TTL 30 秒 < 间隔 60 秒），
+   * 且退避全程稳定在 60 秒——于是
    *
-   *     每天 get 数 = 48 × (k−1) ÷ (60 × k) × 86400 = 69,120 × (k−1) ÷ k
+   *     每天 get 数 = [48 × (k−1) + k] ÷ (60 × k) × 86400
+   *                 = 69,120 × (k−1) ÷ k + 1,440
    *
    * 期望值一律**手写字面量**（上面这个式子是人推的，不是从被测对象反算的）。
-   * k→∞ 就是"没有时钟偏移"那条基准线本身，恰好等于 69,120——**偏移只会让吞吐比
+   * k→∞ 就是"没有时钟偏移"那条基准线本身，恰好等于 70,560——**偏移只会让吞吐比
    * 包线更低，不会更高**，这正是"回到包线内"这句话的准确含义。
    *
-   * 修复前（`healing` 只遮紧接着一轮）同一套量法实测：
+   * ⚠️ **这组数字在全分支评审 C2 之后整体抬高了 1,440**：夹具原来用的是
+   * `fixedConfigHolder`（`ensureFresh` 是空函数），把生产上每轮那次配置读整个漏掉了。
+   * 改用生产 holder 之后逐 k 实测：36,000 / 47,520 / 53,280 / 59,040 / 61,920，
+   * 与上面的式子逐个吻合。
+   *
+   * 修复前（`healing` 只遮紧接着一轮）同一套量法实测（那时还是固定 holder）：
    * k=3 → 78,994、k=4 → 75,404、k=6 → 72,758、k=8 → 71,680，**全部超标**。
    */
   const PER_DAY_BY_K: ReadonlyArray<{ k: number; perDay: number }> = [
-    { k: 2, perDay: 34_560 },
-    { k: 3, perDay: 46_080 },
-    { k: 4, perDay: 51_840 },
-    { k: 6, perDay: 57_600 },
-    { k: 8, perDay: 60_480 },
+    { k: 2, perDay: 36_000 },
+    { k: 3, perDay: 47_520 },
+    { k: 4, perDay: 53_280 },
+    { k: 6, perDay: 59_040 },
+    { k: 8, perDay: 61_920 },
   ];
 
-  /** DEPLOY.md（五语言）承诺的规划上界：`(86400 ÷ 60) × 48`。手写，不从别处算。 */
-  const ENVELOPE_PER_DAY = 69_120;
+  /**
+   * DEPLOY.md（五语言）承诺的规划上界：`(86400 ÷ 60) × (48 + 1)`。手写，不从别处算。
+   * `+1` 是每轮那次 `configRefresh` 的配置读，见 `twoSkewedIsolates` 的说明。
+   */
+  const ENVELOPE_PER_DAY = 70_560;
 
   for (const { k, perDay } of PER_DAY_BY_K) {
     it(`每 ${k} 轮命中一次领先 isolate：稳态吞吐 ${perDay.toLocaleString("en-US")} 次/天，在 ${ENVELOPE_PER_DAY.toLocaleString("en-US")} 包线内`, async () => {
@@ -240,14 +261,17 @@ describe("事件面板轮询：持续跨 isolate 时钟偏移下的自愈稳态�
   }
 
   /**
-   * 包线本身的锚：**没有时钟偏移**时，退避顶到 60 秒的稳态就是每天 69,120 次
-   * get——这正是 DEPLOY.md 五语言里那句 `(86400 ÷ 60) × 48 = 69,120`。上面逐 k
-   * 的数字全部是它乘 `(k−1)/k`，所以这条断言一变红，上面那一整组的立论就塌了。
+   * 包线本身的锚：**没有时钟偏移**时，退避顶到 60 秒的稳态就是每天 70,560 次
+   * get——这正是 DEPLOY.md 五语言里那句 `(86400 ÷ 60) × (48 + 1) = 70,560`。
+   * 上面逐 k 的数字全部是 `69,120 × (k−1)/k + 1,440`，所以这条断言一变红，
+   * 上面那一整组的立论就塌了。
    */
-  it("基准线：没有时钟偏移时稳态就是 69,120 次/天（DEPLOY.md 五语言承诺的那个数）", async () => {
+  it("基准线：没有时钟偏移时稳态就是 70,560 次/天（DEPLOY.md 五语言承诺的那个数）", async () => {
     const clock = { t: 1000 * 3_600_000 };
     const shared = new CountingStorage(new MemoryStorage(undefined, () => clock.t));
-    const { app } = await makeApp([], ["k1"], {}, () => clock.t, { storage: shared, shardId: "solo" });
+    const { app } = await makeApp([], ["k1"], {}, () => clock.t, {
+      storage: shared, shardId: "solo", realConfigHolder: true,
+    });
 
     let state: PollState = initialPollState() as PollState;
     let view: EventsBody["items"] = [];

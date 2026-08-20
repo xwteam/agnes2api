@@ -5,7 +5,7 @@
  * light 时**移除属性**而不是设成 "light"：CSS 里 :root 是亮色全量 token，
  * [data-theme="dark"] 整体覆盖，多一个 light 值只会多一条永远匹配不上的规则。
  */
-const STORE = "agnes2api_theme";
+import { THEME_STORE as STORE } from "./pure/storage-keys.mjs";
 
 export function getTheme() {
   return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";

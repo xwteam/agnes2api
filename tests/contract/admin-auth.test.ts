@@ -308,6 +308,13 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
     expect(e?.level).toBe("error");
     expect(e?.fields?.reason).toBe("same_as_gateway_token");
     expect(String(e?.msg)).toContain("GATEWAY_TOKEN");
+    // **处置建议必须是「轮换 ADMIN_TOKEN」，不许是「改掉任一把」**（全分支评审 C1）。
+    // 改 gatewayToken 只恢复可用性：冲突期间这把管理口令与中转口令是同一个值，
+    // 而中转口令是发给每一个下游用户的。这一格断言的是**运维实际读到的那句话**。
+    expect(String(e?.msg), "没告诉运维要轮换 ADMIN_TOKEN").toContain("轮换");
+    for (const wrong of ["任一把", "其中一把"]) {
+      expect(String(e?.msg), `又把「${wrong}」这种只恢复可用性的说法写回去了`).not.toContain(wrong);
+    }
     expect(JSON.stringify(e)).not.toContain(LONG);
     // 装配期不该再报 token_rejected：那个事件的语义是「面板没注册」。
     expect(logger.has("admin.token_rejected")).toBe(false);
@@ -618,10 +625,21 @@ describe("运行期复查：gatewayToken 在运行中变成 ADMIN_TOKEN 时管�
     expect(e?.level, "运维必须看得见，且要 error 级").toBe("error");
     expect(e?.fields?.reason).toBe("same_as_gateway_token");
     expect(String(e?.msg), "日志里要讲清楚怎么修").toContain("GATEWAY_TOKEN");
+    // 与装配期那条同一条纪律（全分支评审 C1）：怎么修必须说准。
+    expect(String(e?.msg), "没告诉运维要轮换 ADMIN_TOKEN").toContain("轮换");
+    for (const wrong of ["任一把", "其中一把"]) {
+      expect(String(e?.msg), `又把「${wrong}」这种只恢复可用性的说法写回去了`).not.toContain(wrong);
+    }
     // 日志常被转发到第三方，同样不许带口令本身。
     expect(JSON.stringify(e)).not.toContain(TEST_ADMIN_TOKEN);
   });
 
+  /**
+   * ⚠️ **这一格证明的是可用性恢复，不是处置完成。** 冲突一旦发生过，`ADMIN_TOKEN`
+   * 就等于一把发给每个下游用户的中转口令，必须轮换（全分支评审 C1，五语言
+   * DEPLOY.md 与上面两格断言的日志文案都这么写）。这里断言的仅仅是「复查是每请求
+   * 做的、不是一次性锁死」这条机制性质——别把它读成「改回 gatewayToken 就完事了」。
+   */
   it("把 gatewayToken 改回去，管理端立刻恢复——复查是每请求的，不是一次性锁死", async () => {
     const h = await appWithStoredConfig("gateway-token-differs-from-admin");
     await h.setStoredGatewayToken(TEST_ADMIN_TOKEN);

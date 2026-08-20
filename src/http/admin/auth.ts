@@ -238,9 +238,11 @@ export function adminAuth(
       logger.log({
         level: "error", event: "admin.token_conflict",
         msg: state.reason === "same_as_gateway_token"
+          // 与 `router.ts` 的 REJECT_MESSAGE.same_as_gateway_token 同一条纪律：
+          // **不许写「改掉其中一把即可恢复」**，理由见那里那段注释。
           ? "ADMIN_TOKEN 与当前生效的 GATEWAY_TOKEN 相同，管理接口已停用（网关转发不受影响）。"
             + "中转口令是发给每一个下游用户的，复用它当面板口令等于把整池 key 交出去；"
-            + "改掉其中一把即可恢复"
+            + "请把 ADMIN_TOKEN 按已泄漏处置，轮换成一把全新的口令"
           : "ADMIN_TOKEN 不再满足管理口令的硬规则，管理接口已停用（网关转发不受影响）",
         fields: { reason: state.reason ?? null, path: auditPath(c.req.path) },
       });

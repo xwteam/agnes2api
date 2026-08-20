@@ -141,6 +141,11 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 搬过来之后那条用例升级成了逐码位行为等价断言。纯函数、无配置、无数据。
       "/admin/js/pure/sendable.mjs",
       "/admin/js/pure/session.mjs",
+      // 全分支评审 C4 新增：浏览器存储键名的单一真源。原来两个凭据键的名字在
+      // `js/app.js`（写入方）与 `js/api.js`（读取方）各声明一遍，改一处就能让面板
+      // 登录成功之后每请求送空口令头、进登出循环，而全套用例照绿。
+      // 只有六个字符串常量，纯文本、无配置、无数据，公开可取没有问题。
+      "/admin/js/pure/storage-keys.mjs",
       "/admin/js/sec-events.js",
       "/admin/js/sec-keys.js",
       "/admin/js/sec-overview.js",

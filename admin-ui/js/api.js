@@ -1,19 +1,38 @@
 /**
- * 全站唯一网络出口。
+ * 面板**登录之后**的唯一网络出口。
+ *
+ * ⚠️ **这句原来写的是「全站唯一网络出口」，那是假的**（全分支评审 C3）：
+ * 全站一共**两个** `fetch` 调用点，另一个是 `js/app.js` 的登录探针
+ *（`probe()`，`js/app.js:87`）。它**刻意**绕开本模块——那一刻还没有会话可言：
+ * 没有 `expired()` 前置（时刻键还没写）、不该走 `onUnauthorized`（401 在那里
+ * 的意思是「口令不对」，不是「你掉线了」）、也不必包成 `ApiError`。
+ * 说准这件事很要紧：**本模块正是那个把「唯一出口」当成安全论证前提的地方**
+ *（下面「口令只走请求头」那段），顺着假的那句走，审计者会漏掉口令实际离开
+ * 页面的第二条路径。两个出口这件事由 `tests/ui/api-session.test.ts:286`
+ * 那格数着调用点钉住——加第三个出口会让它变红。
  *
  * **两把钥匙严格隔离**（设计文档 §10.5）：
  * 本模块只发 `x-admin-key`、只打 `/admin/api/*`。网关口令与 `/v1` 是 P3d 的
- * Playground 的事，**不许在这里出现**——两条禁令各有一条单测钉着。
+ * Playground 的事，**不许在这里出现**。
+ * 两条禁令各有一条行为用例钉着：`tests/ui/api-session.test.ts:227`（凭据头只有
+ * `x-admin-key`，没有任何 `authorization` / 网关口令头）与 `:239`（出口 URL
+ * 规范化之后落在哪里，含 `..` 那一档的如实登记）。
+ * ⚠️ 这两条原来写的是「各有一条单测钉着」，而当时 `/v1` 那条只有一句附带的 URL
+ * 断言、网关口令那条**一条都没有**（全分支评审 C3）。
  *
  * **401 = 会话失效；403 明确不当会话失效。**
  * 后者是照抄 kiro2api 用中文注释警告过的那个坑：它老写法把业务 403 当掉线，
  * 管理员拒绝一次授权就被踢出后台并被告知「密钥无效」。
- * 两条对称用例进单测，防「修过头」。
+ * 两条对称用例钉着这一对：`tests/ui/api-session.test.ts:187` 与 `:197`。
+ * ⚠️ 这句原来也在宣称「两条对称用例进单测」，而当时是**零条**：把下面
+ * `res.status === 401` 改成 `|| res.status === 403` 之后 1357 条全绿
+ *（全分支评审 C3 实测）。
  */
 import { sessionExpired } from "./pure/session.mjs";
+// 键名的单一真源，见该模块文件头（全分支评审 C4）。**别在这里再声明一遍**：
+// 写入方是 `app.js`，两处分叉会让面板登录成功之后每个请求都送空口令头。
+import { KEY_STORE, SAVED_AT_STORE } from "./pure/storage-keys.mjs";
 
-const KEY_STORE = "agnes2api_admin_key";
-const SAVED_AT_STORE = "agnes2api_admin_key_at";
 const BASE = "/admin/api";
 
 export class ApiError extends Error {

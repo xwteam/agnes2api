@@ -17,18 +17,11 @@ import { keysSection } from "./sec-keys.js";
 import { eventsSection } from "./sec-events.js";
 import { sessionExpired } from "./pure/session.mjs";
 import { sendable } from "./pure/sendable.mjs";
+// **键名不在这里声明**（全分支评审 C4）：写入方在这个文件、读取方在 `api.js`，
+// 各写一份的后果实测过——只改这边一处 ⇒ 登录成功进壳层、随后每请求送空口令头
+// ⇒ 401 ⇒ 登出循环，面板彻底不可用而全套用例照绿。理由全文见那个模块的文件头。
+import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE } from "./pure/storage-keys.mjs";
 
-const KEY_STORE = "agnes2api_admin_key";
-/**
- * 「口令是什么时候存下来的」。会话绝对上限靠它算年龄，判定本身在
- * `js/pure/session.mjs`（`sessionExpired`），这里只负责读写浏览器存储。
- *
- * **两个键必须一起写、一起清**：只清口令不清时刻，下次登录前那个时刻还是旧的；
- * 只写口令不写时刻，`sessionExpired()` 拿不到时刻会把刚登录的会话判成过期
- *（方向是 fail closed，但用户会永远进不去）。
- */
-const SAVED_AT_STORE = "agnes2api_admin_key_at";
-const SECTION_STORE = "agnes2api_section";
 const SECTIONS = { overview: overviewSection, keys: keysSection, events: eventsSection };
 
 const gate = document.getElementById("gate");
@@ -90,6 +83,19 @@ function leave(reason) {
   err.textContent = reason ? t(reason) : "";
 }
 
+/**
+ * 登录探针。**这是全站第二个、也是最后一个网络出口**（另一个是 `js/api.js` 的
+ * `raw()`）——`api.js` 的文件头一度把「全站唯一网络出口」当成它那段安全论证的前提，
+ * 那句是假的（全分支评审 C3），两边现在都说准了。
+ *
+ * **刻意不走 `api.js`**，三条理由缺一不可：
+ * ① 这一刻还没有会话——时刻键要到 `store("set")` 才写下，`api.js` 的 `expired()`
+ *    前置会把每一次登录都判成过期（`Number(null) === 0` ⇒ `savedAt <= 0`）；
+ * ② 这里的 401 意思是「口令不对」，不是「你掉线了」，走 `onUnauthorized()` 会
+ *    在登录闸上再弹一次登录闸；
+ * ③ 口令还没进 `localStorage`，`api.js` 的 `readKey()` 读不到它。
+ * 出口数量由 `tests/ui/api-session.test.ts:286` 数着钉住，加第三个会变红。
+ */
 async function probe(key) {
   const res = await fetch("/admin/api/session", { headers: { "x-admin-key": key }, credentials: "omit" });
   if (res.status === 401) return { ok: false, reason: "gate.invalid" };

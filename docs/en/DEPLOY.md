@@ -48,7 +48,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 
   reads per day. That trailing 2880 is the config holder refreshing every 30 seconds, drawing on
   the same bucket. With the defaults and 20 keys that is **33,120 reads per isolate**; adding the
-  48–96 daily index reconciliations, **3 active isolates already consume ~99.5%**. In other words
+  48–96 daily index reconciliations, **3 active isolates already consume ~99.4%**. In other words
   the default is already marginal at the recommended settings — if you expect more isolates, raise
   `POOL_CACHE_TTL_MS` (20 keys across 5 isolates needs roughly `120000`).
 - **With the cache disabled** (`POOL_CACHE_TTL_MS=0`, the escape hatch) reads grow linearly with
@@ -95,12 +95,18 @@ its writes grow with request count, so the budget is "so many per day", not "so 
       cursor never advances, and once the frozen cursor falls out of the 24-hour retention
       window, **every subsequent poll costs the full 48 gets**; at the same time, with no new
       content, exponential backoff pushes the poll interval up to the 60-second cap. The
-      steady state is `(86400 ÷ 60) × 48 = 69,120` gets/day (about **69%** of the read
-      quota) — **a deployment healthy enough to produce almost no diagnostic events ends up
-      costing more read quota from a single open panel tab than an "active" one does**. Plan
-      your read-quota headroom around this larger number, not the smaller "active" one,
-      especially when adding it to the key-pool read side above (see the "3 active isolates
-      already use about 99.5%" scenario above).
+      steady state is `(86400 ÷ 60) × (48 + 1) = 70,560` gets/day (about **71%** of the read
+      quota). The `+1` is **the configuration read each poll round triggers on its own**: the
+      config-refresh middleware runs ahead of every route and the config cache TTL is 30
+      seconds, shorter than the 60-second poll interval, so every round costs exactly one
+      extra read. It draws on **the same bucket** as the `86400 ÷ config TTL seconds` term in
+      the key-pool account below (that term states the 2,880/day upper bound; an isolate
+      driven only by the panel actually spends 1,440), so **do not count it twice** when you
+      add the two accounts together. **A deployment healthy enough to produce almost no
+      diagnostic events ends up costing more read quota from a single open panel tab than an
+      "active" one does**. Plan your read-quota headroom around this larger number, not the
+      smaller "active" one, especially when adding it to the key-pool read side above (see
+      the "3 active isolates already use about 99.4%" scenario above).
     - **The download endpoint** (`GET /admin/api/events/download`) costs a flat 48 gets per
       click (`readEvents(null)` always does a cold read, no cursor) — this only happens on a
       manual click and is negligible at that scale; noted here purely for completeness.
@@ -164,10 +170,18 @@ the two are equal — for example because `gatewayToken` was written into storag
 `wrangler kv key put`, or by editing `store.json` — the admin endpoints return **`503`**, and an
 `admin.token_conflict` line is logged at error level (if the conflict is already present at boot,
 the same line appears in the startup log so you see the reason immediately). **Gateway forwarding
-is unaffected.** Change either token back and the admin endpoints recover on their own: editing
-the stored `gatewayToken` takes effect once the configuration cache next refreshes, with **no
-restart needed**. Changing `ADMIN_TOKEN` instead is an environment variable, so it needs a
-redeploy (Worker) or a container recreate (Docker).
+is unaffected.**
+
+**Once the conflict has happened, treat `ADMIN_TOKEN` as leaked — there is exactly one way to
+recover: rotate it to a brand-new value.** On Workers run `npx wrangler secret put ADMIN_TOKEN`
+and redeploy; on Docker edit `.env` and recreate the container. **Do not just change the stored
+`gatewayToken` back.** That does bring the admin endpoints back immediately (it takes effect once
+the configuration cache next refreshes, with **no restart needed**), but it restores availability,
+not security: while the conflict lasted, the admin token and the gateway token were the same
+value, and the gateway token is the one you hand to **every downstream user** — anyone who already
+has it (or is about to be given it) can simply open your admin panel. Changing `gatewayToken` back
+is a fine way to restore availability first, but you **still have to rotate `ADMIN_TOKEN`**
+afterwards; the incident is only handled once both steps are done.
 
 **Why this one rule is not enforced at startup.** `gatewayToken` can change while the gateway
 runs, and a startup decision never gets a second evaluation: if the whole `/admin` tree were

@@ -1,5 +1,5 @@
 import { createApp } from "../../src/http/app.js";
-import { fixedConfigHolder } from "../../src/http/config-holder.js";
+import { fixedConfigHolder, createConfigHolder } from "../../src/http/config-holder.js";
 import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { createStorageHealth } from "../../src/core/storage-health.js";
 import { MemoryStorage } from "./fake-storage.js";
@@ -49,6 +49,23 @@ export interface MakeAppOptions {
    * （`event:<shardId>`），不能用生产那种每次随机的 `crypto.randomUUID()`。
    */
   shardId?: string;
+  /**
+   * 用**生产那一个** `ConfigHolder`（`createConfigHolder` + `CONFIG_TTL_MS`），
+   * 而不是 `fixedConfigHolder`。
+   *
+   * ⚠️ **配额类用例必须传它**（全分支评审 C2）。`fixedConfigHolder.ensureFresh`
+   * 是一个空函数，于是**生产上每请求都会经过的那次配置读在夹具里根本不存在**：
+   * `configRefresh` 中间件挂在 `createApp` 的第一位，TTL 是 30 秒，而事件板块稳态
+   * 的轮询间隔是 60 秒 ⇒ 生产上**每一轮轮询恰好多一次 `storage.get("config")`**。
+   * 用固定 holder 量出来的 48 次/轮是**只属于夹具的数字**，五语言 DEPLOY.md 却
+   * 拿它对用户承诺了一条读配额包线——这正是本仓登记的"我验的是我实现的那条路径，
+   * 不是文档承诺的那件事"。
+   *
+   * 代价：这条路径上的配置只从 `env.GATEWAY_TOKEN` + 内置默认值来，`configOverride`
+   * 对**它**无效（`repo` 那两个旋钮跟着 holder 的实际值走，见下面的接线）。
+   * 需要改配置又要真 holder 的用例请直接往 `storage` 里写 `config` 键。
+   */
+  realConfigHolder?: boolean;
 }
 
 export const TEST_CONFIG: GatewayConfig = {
@@ -87,12 +104,23 @@ export async function makeApp(
   // 的真实内部时钟必然"生下来就已经过期"，任何经这条默认路径落盘的事件都会立刻
   // 读不到——已实测过一次（详见 P3b Task 6 报告"评审修复轮 4"）。
   const storage = options.storage ?? new MemoryStorage(undefined, now);
+  // 生产 holder 那一支的 `prime()` 会真的读一次 `config` 键（配额类用例都在
+  // makeApp 返回之后才开始计数，所以这一次落在量测窗口之外）。
+  const configHolder = options.realConfigHolder
+    ? await createConfigHolder({
+      env: { GATEWAY_TOKEN: config.gatewayToken }, storage, logger: NULL_LOGGER, now,
+    })
+    : fixedConfigHolder(config);
   // 与 wire.ts 同一条接线：两个旋钮从配置来，而不是各写各的默认值。
   // 不这么接的话 TEST_CONFIG 里那两个 0 是**死字段**，夹具以为关了缓存其实开着。
+  // **从 holder 现读**而不是从 `config` 拷：走真 holder 那一支时两者并不相同
+  // （真 holder 用的是内置默认值），拷 `config` 会让 repo 与 app 各按一份不同的
+  // 配置跑——那正是本仓反复登记的"测的是抄件不是原件"。
+  const effective = configHolder.current();
   const repo = new KeyPoolRepo(storage, {
     now, logger: NULL_LOGGER,
-    cacheTtlMs: config.poolCacheTtlMs,
-    touchIntervalMs: config.poolTouchIntervalMs,
+    cacheTtlMs: effective.poolCacheTtlMs,
+    touchIntervalMs: effective.poolTouchIntervalMs,
   });
   for (const k of keys) await repo.add(k);
   const fetcher = new FakeFetcher(outcomes);
@@ -111,7 +139,7 @@ export async function makeApp(
   });
   const app = createApp({
     version: "0.1.0",
-    configHolder: fixedConfigHolder(config),
+    configHolder,
     repo, fetcher, now, storageHealth,
     logger: multiLogger(recording, storeLogger),
     adminToken: "adminToken" in options ? options.adminToken : TEST_ADMIN_TOKEN,
