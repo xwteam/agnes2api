@@ -77,7 +77,9 @@ function renderWarnings() {
   // "刚刚发生过一次自动恢复"，不是要人手动做什么。
   // ⚠️ 评审四审：这条黄条**逐轮覆盖、没有粘性**——`cursorAhead=false` 的那一轮
   // 它就灭了。持续的跨 isolate 时钟偏移下它会跟着视图一起闪（亮一轮灭一轮），
-  // 不是"持续亮着的告警"。实测与断言见 tests/contract/events-cursor-heal.test.ts。
+  // 不是"持续亮着的告警"。**这一行本身没有任何自动化守护**（本仓无 DOM 测试通道，
+  // 实测把它改成粘性全套用例照样全绿）；tests/contract/events-cursor-heal.test.ts
+  // 钉住的是它的**输入**——后端 cursorAhead 字段逐轮交替这个根因。
   nodes.warnCursorAhead.style.display = lastStatus.cursorAhead === true ? "" : "none";
   if (lastStatus.cursorAhead === true) nodes.warnCursorAhead.textContent = t("ev.warnCursorAhead");
 }

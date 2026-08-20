@@ -103,6 +103,32 @@ describe("scripts/check-no-binary.mjs", () => {
     expect(result.status, `没有行结束符不等于二进制：${result.stderr}`).toBe(0);
   });
 
+  /**
+   * **评审五审必修 1：`.gitattributes` 的 `-diff` 盲区。**
+   *
+   * 内容是不是文本、与 git 愿不愿意把它当文本 diff 是两件事。标了 `-diff` 的纯
+   * 文本文件在 `git ls-files --eol` 里照样是 `i/lf`，但 `git diff` 只吐一行
+   * `Binary files … differ`——**正是 F3 的原始症状**（评审包里看不见这份代码改了
+   * 什么）。只查字节的门禁会放行它。
+   */
+  it("scope 内的纯文本文件被 .gitattributes 标了 -diff：exit 1，报出文件名与原因", () => {
+    const dir = initTempRepo();
+    addAndTrack(dir, "src/hidden.ts", "export const x = 1;\n");
+    addAndTrack(dir, ".gitattributes", "src/hidden.ts -diff\n");
+    const result = run(dir);
+    expect(result.status, "-diff 让文件在评审包 diff 里隐形，必须报出来").toBe(1);
+    expect(result.stderr).toContain("src/hidden.ts");
+    expect(result.stderr).toContain("-diff");
+  });
+
+  it("`linguist-generated=true` 这类不影响 diff 的属性不误报（本仓 .gitattributes 现状）", () => {
+    const dir = initTempRepo();
+    addAndTrack(dir, "src/gen.ts", "export const x = 1;\n");
+    addAndTrack(dir, ".gitattributes", "src/gen.ts linguist-generated=true\n");
+    const result = run(dir);
+    expect(result.status, `只有 -diff 才该被拦，别把所有属性都当问题：${result.stderr}`).toBe(0);
+  });
+
   it("多个 scope 目录混合、一个二进制一个正常：仍然精确报出那一个", () => {
     const dir = initTempRepo();
     addAndTrack(dir, "src/ok.ts", "export const x = 1;\n");

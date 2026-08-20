@@ -145,8 +145,13 @@ describe("事件面板轮询：持续跨 isolate 时钟偏移下的自愈稳态�
      * ⚠️ **四审 B 组第 1 条：三审时写的"黄条会在每一次撞上时如实亮起（闪烁反而
      * 成了这里持续有问题的信号）"按实测不成立，这里按实测订正。** 黄条的判据是
      * `lastStatus.cursorAhead === true`，逐轮覆盖、**没有粘性**：`ahead=1` 那轮
-     * 亮、`ahead=0` 那轮就灭，所以黄条本身也跟着闪。下面用 `bannerOn` 把这件事
-     * 变成会变红的断言，不再只是一句散文。
+     * 亮、`ahead=0` 那轮就灭，所以黄条本身也跟着闪。
+     *
+     * ⚠️ **五审订正：下面 `bannerOn` 那几条断言钉住的是「后端 `cursorAhead` 字段
+     * 逐轮交替」这个根因，不是生产的黄条渲染。** `renderWarnings()` 在
+     * `sec-events.js` 里，本仓没有 DOM 测试通道——把它改成粘性（亮了就不灭），
+     * 全套 1260 条一条都不红（评审五审实测）。所以别把这几条读成"黄条闪烁这件事
+     * 有守护"：渲染侧仍然零覆盖，被守护的只是它的输入。
      */
     const flickers = viewLens.slice(-10);
     const hasFlicker = flickers.some((v, idx) => idx > 0 && v !== flickers[idx - 1]);

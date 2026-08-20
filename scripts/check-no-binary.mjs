@@ -36,6 +36,10 @@
 //      本地随手删一个跟踪文件再跑门禁就会红——已实测。
 // `git ls-files --eol` 一次消掉这两个洞：空行文件是 `i/lf`，工作树删除的文件
 // 索引侧照样报 `i/lf`（工作树列变成空的 `w/`）。
+//
+// ⚠️ **`--eol` 单独用还剩一个盲区，所以判据是两条不是一条**（评审五审必修 1）：
+// `.gitattributes` 里的 `-diff` 会让一份**纯文本**文件在 `git diff` 里只剩一行
+// `Binary files … differ`，而 `--eol` 照样报 `i/lf`。见下面 `check-attr` 那一段。
 
 import { execFileSync } from "node:child_process";
 
@@ -85,14 +89,60 @@ const binaryInScope = inScope.filter(
   (r) => r.index === BINARY_EOL || r.worktree === BINARY_EOL,
 );
 
-if (binaryInScope.length > 0) {
-  console.error("[check-no-binary] ❌ 以下跟踪文件被 git 判定为二进制，不允许出现在这些目录下：");
-  for (const r of binaryInScope) console.error(`  ${r.path}  (i/${r.index} w/${r.worktree})`);
-  console.error(
-    "[check-no-binary] 多半是某个字符串字面量里混进了不可见/控制字符（例如 NUL），" +
-    "改成转义写法或可打印字符即可回到文本——见本文件头部的说明（评审 F3）。",
-  );
+/**
+ * **第二条判据：`.gitattributes` 里的 `-diff`**（评审五审必修 1）。
+ *
+ * 内容是不是文本、与 git 愿不愿意把它当文本 diff，是**两件事**：给一份纯文本文件
+ * 标上 `-diff`，`git ls-files --eol` 照样报 `i/lf`，而 `git diff` 对它只吐一行
+ * `Binary files a/… and b/… differ`——**这正是 F3 的原始症状**（评审包里没人看得见
+ * 这份代码改了什么）。已复现：`.gitattributes` 写 `src/hidden.ts -diff`，纯文本
+ * 文件，新判据放行、`git diff --stat` 显示 `Bin 7 -> 8 bytes`。
+ *
+ * 这道门禁是因为"文件对文本工具链隐形"才设立的，只查字节就是自述超出了实际覆盖，
+ * 所以判据补齐到两条。判据同样问 git 自己（`git check-attr diff`），不去解析
+ * `.gitattributes` 的匹配规则——`unset` 才是 `-diff`；`set`/具体值（textconv 驱动）
+ * 仍然会产出文本 diff，不算。
+ *
+ * 本仓 `.gitattributes` 现在只有一行 `linguist-generated=true`，且文件头已经写明
+ * "刻意不加 `-diff`"的理由；这条判据就是把那句话变成会变红的东西。
+ */
+let noDiffInScope = [];
+if (inScope.length > 0) {
+  const attrOut = execFileSync("git", ["check-attr", "-z", "--stdin", "diff"], {
+    input: inScope.map((r) => r.path).join("\0") + "\0",
+    encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+  });
+  // `-z` 输出是「路径, 属性名, 值」三元组，全部以 NUL 分隔。
+  const fields = attrOut.split("\0");
+  for (let i = 0; i + 2 < fields.length; i += 3) {
+    if (fields[i + 1] === "diff" && fields[i + 2] === "unset") noDiffInScope.push(fields[i]);
+  }
+}
+
+if (binaryInScope.length > 0 || noDiffInScope.length > 0) {
+  console.error("[check-no-binary] ❌ 以下跟踪文件对文本工具链是隐形的，不允许出现在这些目录下：");
+  for (const r of binaryInScope) {
+    console.error(`  ${r.path}  —— git 判定为二进制 (i/${r.index} w/${r.worktree})`);
+  }
+  for (const p of noDiffInScope) {
+    console.error(`  ${p}  —— .gitattributes 给它标了 -diff，git diff 只会吐 "Binary files … differ"`);
+  }
+  if (binaryInScope.length > 0) {
+    console.error(
+      "[check-no-binary] 二进制那几个多半是某个字符串字面量里混进了不可见/控制字符" +
+      "（例如 NUL），改成转义写法或可打印字符即可回到文本——见本文件头部的说明（评审 F3）。",
+    );
+  }
+  if (noDiffInScope.length > 0) {
+    console.error(
+      "[check-no-binary] `-diff` 那几个请去掉这条属性：降低 diff 噪音的代价是评审再也" +
+      "看不见这些文件改了什么，而这些目录下的文件恰恰是最需要被看见的（见 .gitattributes 里的说明）。",
+    );
+  }
   process.exit(1);
 }
 
-console.log(`[check-no-binary] ✅ ${inScope.length} 个跟踪文件（${SCOPE_PREFIXES.join(", ")}），全部是文本`);
+console.log(
+  `[check-no-binary] ✅ ${inScope.length} 个跟踪文件（${SCOPE_PREFIXES.join(", ")}），`
+  + "全部是文本、且都没有被 `-diff` 从评审包 diff 里屏蔽",
+);
