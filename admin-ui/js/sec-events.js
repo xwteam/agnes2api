@@ -20,7 +20,7 @@ import { fmtInstant } from "./pure/format.mjs";
 import {
   EVENTS_POLL_MIN_MS, LEVELS, levelLabelKey, effectiveLevel, eventLevelLabelKey, levelBadgeClass,
   eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, generatedAtOf, bufferStatus, shouldWarn,
-  nextAfter, nextPollDelayMs, pollIndicatorState, pollIndicatorLabelKey, matchesSearch, buildDetailText,
+  pollOutcome, nextPollDelayMs, pollIndicatorState, pollIndicatorLabelKey, matchesSearch, buildDetailText,
   groupEvents, orderForDisplay, mergeIntoView,
 } from "./pure/events.mjs";
 
@@ -146,7 +146,6 @@ function render() {
 async function poll() {
   if (abort) abort.abort();
   abort = new AbortController();
-  const beforeAfter = state.after;
   try {
     const body = await api.get(`/events?${eventsQuery({ ...state, limit: LIMIT })}`, { signal: abort.signal });
     const items = itemsOf(body) ?? [];
@@ -155,14 +154,15 @@ async function poll() {
     lastGeneratedAt = generatedAtOf(body);
     loadError = false;
     lastError = false;
+    // 评审 C6 二审：after 的自愈、view 要不要跟着清空、退避间隔看不看到"新内容"，
+    // 是同一个纯状态转换的三个面，全部交给 pollOutcome()（admin-ui/README.md
+    // 硬规则 1）——原来在这里手写这三行各自独立判断，是两个联带 bug（游标自愈
+    // 时视图没有跟着清空、"游标变没变"被错当成"来了新事件"）的根。
+    const outcome = pollOutcome(state.after, items, body && body.cursor, lastStatus.cursorAhead);
+    if (outcome.resetView) view = [];
     view = mergeIntoView(view, items);
-    state.after = nextAfter(state.after, body && body.cursor);
-    // 评审 C6：`cursorAhead` 为 true 时 `items` 恒为空、`cursor` 恒为 null，上面这行
-    // `nextAfter` 因此原样保留了旧游标——那正是"面板永久空白"的根：下一轮还带着
-    // 同一个领先于时钟的 `after`，永远拿不到东西。这里显式把它清成 null，让下一轮
-    // 变成冷读（`after` 缺省），自己从这个状态里恢复出来，不需要运维手动干预。
-    if (lastStatus.cursorAhead === true) state.after = null;
-    pollDelayMs = nextPollDelayMs(pollDelayMs, state.after !== beforeAfter);
+    state.after = outcome.nextAfterValue;
+    pollDelayMs = nextPollDelayMs(pollDelayMs, outcome.hadNewItems);
   } catch (e) {
     if (e && e.name === "AbortError") return;
     lastError = true;

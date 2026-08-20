@@ -177,6 +177,36 @@ export function nextAfter(current, cursor) {
 }
 
 /**
+ * 一轮轮询成功之后该怎么处理 `state.after`/`view`/退避间隔的**完整决策**（评审 C6
+ * 二审）。这条判断原来直接摊在 `sec-events.js` 的 `poll()` 里，是纯状态转换却没有
+ * 测试覆盖，两个联带 bug 都是从这个洞里漏出来的——**这不是渲染逻辑，是决策逻辑**，
+ * 与 `admin-ui/README.md` 硬规则 1 管的是同一类东西（之前几次违规都是渲染取值，
+ * 这次是状态转换，是这条规则第四次在本模块被重新发现该管到哪里）：
+ *
+ * - **`nextAfterValue`**：`nextAfter()` 叠加"游标自愈"——`cursorAhead` 为 `true`
+ *   时无条件重置为 `null`，不管 `cursor`/旧值算出来是什么。冻结在未来的游标不能
+ *   继续带下去，下一轮必须变成冷读（`after` 缺省）才能真正恢复。
+ * - **`resetView`**：`cursorAhead` 为 `true` 时，视图必须跟着游标一起清空，不能
+ *   只清游标——`mergeIntoView` 是纯 `[...inc, ...cur]`，不去重；不清视图的话，
+ *   自愈之后下一轮冷读回来的是"最新"的一批，会跟视图里已经卡在"未来"、语义已经
+ *   不可信的那一批拼在一起，造成整页重复（这条是无条件的，单次自愈就会触发，
+ *   不需要连续多轮）。
+ * - **`hadNewItems`**：退避间隔要不要回到最短，**只能看服务端这次真的返回了几条**
+ *   （`items.length > 0`），不能借用"游标变没变"当替身——原来的实现正是用
+ *   `state.after !== beforeAfter` 当替身，自愈本身也会让游标变化（从非 null 变成
+ *   null），于是"游标被清空"被误判成"来了新事件"，退避永远回不到最长间隔（评审
+ *   实测：稳态吞吐从按 C4b 算好的 69,120/天 涨到 138,240/天）。
+ */
+export function pollOutcome(current, items, cursor, cursorAhead) {
+  const healed = cursorAhead === true;
+  return {
+    nextAfterValue: healed ? null : nextAfter(current, cursor),
+    resetView: healed,
+    hadNewItems: Array.isArray(items) && items.length > 0,
+  };
+}
+
+/**
  * 指数退避的下一个轮询间隔。**有新内容 ⇒ 立刻回到最短间隔**（运维正在盯着，
  * 让它尽快看见后续变化）；**没有新内容 ⇒ 翻倍，封顶到 `EVENTS_POLL_MAX_MS`**。
  */

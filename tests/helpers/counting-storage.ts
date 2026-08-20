@@ -12,10 +12,10 @@ export class CountingStorage implements Storage {
   listFails = false;
   constructor(readonly inner: Storage = new MemoryStorage()) {}
   async get<T>(k: string): Promise<T | null> { this.gets++; return this.inner.get<T>(k); }
-  async put<T>(k: string, v: T): Promise<void> {
+  async put<T>(k: string, v: T, expiresAt?: number): Promise<void> {
     this.puts++;
     if (this.putFails) throw new Error("write quota exhausted");
-    return this.inner.put(k, v);
+    return this.inner.put(k, v, expiresAt);
   }
   async delete(k: string): Promise<void> { this.deletes++; return this.inner.delete(k); }
   async list(p: string): Promise<string[]> {

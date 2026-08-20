@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { CountingStorage } from "../helpers/counting-storage.js";
+import { MemoryStorage } from "../helpers/fake-storage.js";
 
 /**
  * **面板的轮询路径不许出现 `list()`，也不许产生额外的读。**
@@ -157,9 +158,14 @@ describe("面板轮询的配额账", () => {
    * 固定时钟下 19 次暖读都落在同一个窗口 ⇒ 总数 **48 + 19×2 = 86**（手写字面量）。
    */
   it("面板轮询模式（第 2 次起带 cursor）：20 次里第 1 次冷读、其余 19 次暖读，get 总数恰好为 86", async () => {
-    const st = new CountingStorage();
     let t = 1000;
     const now = () => t;
+    // 这条用例真的会经 storeLogger 落一条事件（下方 seed）——`st` 的内部
+    // MemoryStorage 必须与 `now` 共用同一个假时钟（评审 C5，理由同
+    // tests/helpers/make-app.ts 的说明），否则 seed 事件的 TTL 相对 MemoryStorage
+    // 默认的真实 Date.now() 会"生下来就已经过期"，读不到它会让下面的游标一直
+    // 停在 null，20 次全变成冷读（960 而不是期望的 86）。
+    const st = new CountingStorage(new MemoryStorage(undefined, now));
     const { app, storeLogger } = await makeApp([], ["k1"], {}, now, { storage: st });
     // 种一条真正落盘的事件：冷启动首刷受节流（构造时 lastFlushAt = now()），
     // 推进过 EVENT_FLUSH_MIN_INTERVAL_MS 再 flush 才会真的写。

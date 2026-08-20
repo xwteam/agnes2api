@@ -7,8 +7,11 @@ export class KvStorage implements Storage {
     return await this.kv.get<T>(key, "json");
   }
 
-  async put<T>(key: string, value: T): Promise<void> {
-    await this.kv.put(key, JSON.stringify(value));
+  async put<T>(key: string, value: T, expiresAt?: number): Promise<void> {
+    // KV 原生 `expiration`：绝对 UNIX 秒（不是 ms）。**零操作开销、不占任何配额桶**
+    // ——过期由 Cloudflare 边缘自己物理清除，不需要我们另外发一次 delete（评审 C5）。
+    const options = expiresAt !== undefined ? { expiration: Math.floor(expiresAt / 1000) } : undefined;
+    await this.kv.put(key, JSON.stringify(value), options);
   }
 
   async delete(key: string): Promise<void> {

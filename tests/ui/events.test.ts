@@ -3,7 +3,7 @@ import {
   EVENTS_POLL_MIN_MS, EVENTS_POLL_MAX_MS, LEVELS,
   levelLabelKey, effectiveLevel, eventLevelLabelKey, levelBadgeClass,
   eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, generatedAtOf, bufferStatus,
-  shouldWarn, nextAfter, nextPollDelayMs, pollIndicatorState, pollIndicatorLabelKey, matchesSearch,
+  shouldWarn, nextAfter, pollOutcome, nextPollDelayMs, pollIndicatorState, pollIndicatorLabelKey, matchesSearch,
   formatFields, buildDetailText, groupEvents, orderForDisplay, mergeIntoView,
 } from "../../admin-ui/js/pure/events.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
@@ -219,6 +219,50 @@ describe("nextAfter：轮询游标推进", () => {
   it("cursor 非法（非数字）时同样保留当前值", () => {
     expect(nextAfter(1000, "oops")).toBe(1000);
     expect(nextAfter(1000, Number.NaN)).toBe(1000);
+  });
+});
+
+/**
+ * **评审 C6 二审**：轮询结果的完整决策（after 自愈 + view 清空 + hadNewItems
+ * 信号），原来摊在 `sec-events.js` 里裸写、零测试覆盖，两个联带 bug（视图重复、
+ * 退避永远回不到最长间隔）都是从这个洞里漏出来的——见 `pure/events.mjs` 的说明。
+ */
+describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空 + hadNewItems）", () => {
+  it("正常情况（cursorAhead 非 true）：after 走 nextAfter 原样推进，不清视图", () => {
+    expect(pollOutcome(1000, [{ ts: 2000 }], 2000, false)).toEqual({
+      nextAfterValue: 2000, resetView: false, hadNewItems: true,
+    });
+  });
+  it("正常情况下 items 为空 ⇒ hadNewItems 为 false，after 保留原值（cursor 为 null）", () => {
+    expect(pollOutcome(1000, [], null, false)).toEqual({
+      nextAfterValue: 1000, resetView: false, hadNewItems: false,
+    });
+  });
+  it("cursorAhead 缺失（null/undefined）时按非自愈处理，不是自愈的默认值", () => {
+    expect(pollOutcome(1000, [], null, null)).toEqual({
+      nextAfterValue: 1000, resetView: false, hadNewItems: false,
+    });
+    expect(pollOutcome(1000, [], null, undefined)).toEqual({
+      nextAfterValue: 1000, resetView: false, hadNewItems: false,
+    });
+  });
+  it("cursorAhead 为 true：无条件把 after 清成 null，不管 cursor 算出来是什么", () => {
+    // 故意给一个"看起来正常"的 cursor（9999），自愈应当无视它，直接清成 null。
+    expect(pollOutcome(1000, [], 9999, true)).toEqual({
+      nextAfterValue: null, resetView: true, hadNewItems: false,
+    });
+  });
+  it("cursorAhead 为 true 时 resetView 恒为 true——这是评审 C6 二审(b) 点名的那条视图重复 bug 的直接防线", () => {
+    expect(pollOutcome(5000, [], null, true).resetView).toBe(true);
+  });
+  it("hadNewItems 只看 items.length，不看 after 有没有变——这是评审 C6 二审(a) 点名的那条退避 bug 的直接防线", () => {
+    // after 从 1000 自愈成 null（明显"变了"），但 items 是空的：hadNewItems 必须是 false，
+    // 不能因为"游标变了"就误判成"来了新内容"。
+    expect(pollOutcome(1000, [], null, true).hadNewItems).toBe(false);
+  });
+  it("items 不是数组（畸形响应）时 hadNewItems 安全地为 false，不抛错", () => {
+    expect(pollOutcome(1000, null, null, false).hadNewItems).toBe(false);
+    expect(pollOutcome(1000, undefined, null, false).hadNewItems).toBe(false);
   });
 });
 

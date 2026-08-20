@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { StoreLogger } from "../../src/adapters/logger-store.js";
 import {
-  EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_RING_SIZE, EVENT_WINDOW_MS, EVENT_WINDOW_RETAIN,
+  EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_RING_SIZE,
   windowIndex, slotOf, shardKey, appendRing,
 } from "../../src/core/admin/event-ring.js";
 import { CountingStorage } from "../helpers/counting-storage.js";
@@ -9,15 +9,22 @@ import { MemoryStorage } from "../helpers/fake-storage.js";
 import type { Storage } from "../../src/ports/storage.js";
 import type { LogEntry } from "../../src/ports/logger.js";
 
-/** 逐 put 调用记一份 key 日志，好断言"分片写了几次"这类精确次数。 */
+/** 逐 put 调用记一份 key 日志（+ 每个 key 最后一次收到的 expiresAt），
+ * 好断言"分片写了几次""带的过期时刻是多少"这类精确次数/值。 */
 class RecordingStorage implements Storage {
   putLog: string[] = [];
+  private readonly expiryLog = new Map<string, number | undefined>();
   constructor(private readonly inner: Storage = new MemoryStorage()) {}
   async get<T>(k: string): Promise<T | null> { return this.inner.get<T>(k); }
-  async put<T>(k: string, v: T): Promise<void> { this.putLog.push(k); return this.inner.put(k, v); }
+  async put<T>(k: string, v: T, expiresAt?: number): Promise<void> {
+    this.putLog.push(k);
+    this.expiryLog.set(k, expiresAt);
+    return this.inner.put(k, v, expiresAt);
+  }
   async delete(k: string): Promise<void> { return this.inner.delete(k); }
   async list(p: string): Promise<string[]> { return this.inner.list(p); }
   putsTo(key: string): number { return this.putLog.filter((k) => k === key).length; }
+  expiryOf(key: string): number | undefined { return this.expiryLog.get(key); }
 }
 
 describe("StoreLogger", () => {
@@ -116,8 +123,11 @@ describe("StoreLogger", () => {
 
   it("缓冲区上限落盘后，分片里首尾两条是第 51 与第 150 条", async () => {
     let t = 1000;
+    // storage 与 now 必须共用同一个假时钟（评审 C5，理由见 tests/helpers/make-app.ts
+    // 的同一条说明：不对齐会让刚落盘的事件相对 MemoryStorage 默认的真实 Date.now()
+    // "生下来就已经过期"，下面的 readEvents(null) 会读到空）。
     const logger = new StoreLogger({
-      storage: new MemoryStorage(), now: () => t, shardId: "s1", onError: () => {},
+      storage: new MemoryStorage(undefined, () => t), now: () => t, shardId: "s1", onError: () => {},
     });
     for (let i = 1; i <= 150; i++) logger.log({ level: "info", event: `e${i}` });
     t += EVENT_FLUSH_MIN_INTERVAL_MS;
@@ -154,8 +164,9 @@ describe("StoreLogger", () => {
   });
 
   it("写失败不吞不重试同一批：onError 被调用，下一轮落盘写的是新攒的那批而不是重发旧批", async () => {
-    const st = new CountingStorage();
     let t = 1000;
+    // 见上一条用例的同一条说明：storage 与 now 必须共用同一个假时钟。
+    const st = new CountingStorage(new MemoryStorage(undefined, () => t));
     const errors: unknown[] = [];
     const logger = new StoreLogger({
       storage: st, now: () => t, shardId: "s1", onError: (e) => errors.push(e),
@@ -178,8 +189,8 @@ describe("StoreLogger", () => {
   });
 
   it("readEvents：零 list、按候选键归并（供 events handler 复用，见契约测试的另一份验证）", async () => {
-    const st = new MemoryStorage();
     let t = 1000;
+    const st = new MemoryStorage(undefined, () => t); // 同一条说明，见上面几条用例
     const logger = new StoreLogger({ storage: st, now: () => t, shardId: "s1", onError: () => {} });
     logger.log({ level: "info", event: "e1" });
     t += EVENT_FLUSH_MIN_INTERVAL_MS;
@@ -242,38 +253,61 @@ describe("StoreLogger", () => {
   });
 
   /**
-   * **评审 C5**：读路径的候选键钳位（C4/C4b）只保证"一次请求付出的 get 次数有
-   * 上限"，不保证"存储里实际驻留的 event:* 键数有上限"——`window` 是绝对纪元
-   * 小时数，不取模，旧窗口键如果永远不删就会无限堆积（评审实测：运行 365 天后
-   * distinct 键数 4,380，且"100 小时前写的键仍在存储里，但 readEvents 已经看不到
-   * 它"——占空间却读不到，是最坏的一种"有界"）。
+   * **评审 C5（第二次修复）**：第一版对策是每次成功落盘顺手 delete 一个按固定
+   * 偏移算出来的旧窗口键，被下一轮评审逐场景实测推翻——稀疏落盘（gap 超过保留
+   * 期）或多 isolate 各写各的随机分片时，那个"按偏移算出来"的键很可能压根不是
+   * "真正该清掉的那个"，清理率能跌到 0。现在改用 `Storage.put()` 的 `expiresAt`
+   * 参数（`eventExpiresAt()`），有界性变成存储自己的性质，`StoreLogger` 只负责
+   * "算对过期时刻、原样传下去"，不再自己动手删任何东西。
    *
-   * 这条用例直接构造"落盘窗口跨过一整个保留期"的场景：第一次落盘写在窗口 W，
-   * 第二次落盘的时刻恰好推进了 `EVENT_WINDOW_RETAIN` 个窗口（落在窗口 `W +
-   * RETAIN`），此时窗口 W 应该已经滚出了候选键范围（`candidateKeys` 的
-   * floor 正好是 `W + 1`），第二次落盘顺手把它删掉。
+   * **评审 T1（同一条教训的推广）**：这里不用 `shardId = "s1"`——`slotOf("s1")`
+   * 恰好是 `0`，如果 `this.slot` 的计算被破坏成硬编码 `0`，用 `slotOf(shardId)`
+   * 反推出来的期望键会与被破坏的 SUT"巧合地"指向同一个键，变异因此不可观测
+   * （复评已实测过一次）。改用 `shardId = "s2"`（`slotOf("s2") === 1`，用
+   * `node -e` 手算/实测过）+ **手写字面量** `"event:0:1"`/`"event:25:1"`，
+   * 不在断言里调用 `slotOf()`/`shardKey()`/`eventExpiresAt()` 反推期望值。
    */
-  it("落盘时顺手删掉刚滚出保留期的那个窗口键，存储不再无上限增长（评审 C5）", async () => {
-    const st = new MemoryStorage();
-    const shardId = "s1";
-    const slot = slotOf(shardId);
+  it("maybeFlush() 传给 storage.put() 的过期时刻精确等于手算的字面量（评审 C5/T1）", async () => {
+    const st = new RecordingStorage();
+    const shardId = "s2"; // slotOf("s2") === 1，手算/实测过，不是巧合的 0
     let t = 1000; // windowIndex(1000) = 0
     const logger = new StoreLogger({ storage: st, now: () => t, shardId, onError: () => {} });
 
-    logger.log({ level: "info", event: "old-event" });
-    t += EVENT_FLUSH_MIN_INTERVAL_MS; // 61000，仍在窗口 0
+    logger.log({ level: "info", event: "e1" });
+    t += EVENT_FLUSH_MIN_INTERVAL_MS;
     await logger.maybeFlush();
-    const oldKey = shardKey(windowIndex(t), slot); // shardKey(0, slot)
+
+    // 手算：windowIndex(1000)=0；(0 + 24) * 3_600_000 + 3_600_000 = 90_000_000
+    // （EVENT_WINDOW_RETAIN=24、EVENT_WINDOW_MS=3_600_000、EVENT_TTL_MARGIN_MS
+    // = EVENT_WINDOW_MS，三个都是本文件之外独立核验过的字面量，这里不再 import
+    // 常量反算，直接手写最终结果，避免"期望值从被测代码自己推导"）。
+    expect(st.expiryOf("event:0:1")).toBe(90_000_000);
+  });
+
+  it("过期之后旧键真的读不到了，新键不受影响——有界性是存储自己的性质（评审 C5）", async () => {
+    let t = 1000; // windowIndex(1000) = 0
+    // storage 与 now 必须共用同一个假时钟——这条用例本身就是在测"时间流逝之后
+    // 过期"，如果 MemoryStorage 走自己默认的真实 Date.now()，`t` 推进到
+    // 90_000_001（约 1970 年 1 月 2 日附近）永远追不上真实的现在，这个断言会
+    // 从"验证 TTL 生效"退化成"验证真实时钟已经过了 1970 年"这种恒真命题。
+    const st = new MemoryStorage(undefined, () => t);
+    const shardId = "s2"; // 见上条说明：slotOf("s2") === 1，不是巧合的 0
+    const logger = new StoreLogger({ storage: st, now: () => t, shardId, onError: () => {} });
+
+    logger.log({ level: "info", event: "old-event" });
+    t += EVENT_FLUSH_MIN_INTERVAL_MS;
+    await logger.maybeFlush();
+    const oldKey = "event:0:1"; // 手写字面量，理由同上一条用例
     expect(await st.get(oldKey), "前置条件：第一次落盘确实写进去了").not.toBeNull();
 
-    // 推进恰好 RETAIN 个窗口：新的当前窗口是 0 + RETAIN，floor 正好是 0 + 1，
-    // 窗口 0（= oldKey 所在的窗口）第一次滚出候选范围。
-    t += EVENT_WINDOW_RETAIN * EVENT_WINDOW_MS;
+    // 推进到明确超过手算的过期时刻（90_000_000ms，见上一条用例）之后。
+    t = 90_000_001;
     logger.log({ level: "info", event: "new-event" });
     await logger.maybeFlush(); // 距上次落盘远超过最小间隔，正常触发
 
-    expect(await st.get(oldKey), "滚出保留期的旧窗口键应该被删掉").toBeNull();
-    const newKey = shardKey(windowIndex(t), slot);
+    expect(await st.get(oldKey), "过期之后旧键应该读不到了").toBeNull();
+    // windowIndex(90_000_001) = 25（90_000_000 / 3_600_000 = 25 整），手写字面量。
+    const newKey = "event:25:1";
     expect((await st.get<LogEntry[]>(newKey))?.map((e) => e.event)).toEqual(["new-event"]);
   });
 

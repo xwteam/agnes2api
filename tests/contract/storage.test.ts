@@ -72,6 +72,46 @@ export function runStorageContract(name: string, make: () => Storage) {
       expect(final!.v).toBeLessThan(n);
     });
 
+    /**
+     * **评审 C5（第二次修复）**：`put()` 的第三个参数 `expiresAt`。
+     *
+     * ⚠️ **`KvStorage` 单独分支，诚实记录一个测不到的角落**：真实 Cloudflare KV
+     * 的 `expiration` 要求至少比当下晚 60 秒，过近或过去的值会被 API 直接拒绝
+     * （不是"存了但没生效"，是 `put()` 本身抛错）——CI 里没有办法真等 60+ 秒去
+     * 验证"过期之后真的读不到"，这里只验证"传了一个合法的未来 `expiration`，
+     * `put()` 不抛错，且立刻可读"，即 API 用法正确；**KV 的实际过期行为不在这条
+     * 契约的覆盖范围内，只能相信 Cloudflare 自己的 TTL 实现**（与本仓其余处「相信
+     * 平台原生机制」的取舍一致，例如从不自测 KV 配额本身是不是真的 1,000/天）。
+     * `MemoryStorage`/`FileStorage` 没有这条 60 秒下限，用真实短等待即可覆盖到
+     * "过期之后真的读不到"这条完整行为——这三个实现里没有一个把 TTL 判定的时钟
+     * 做成可注入的（`FileStorage`/`KvStorage` 都是 IO 边界适配器，直接读各自环境
+     * 的真实时钟，理由见 `storage-file.ts` 的说明），所以这里没有捷径。
+     */
+    if (name === "KvStorage") {
+      it("expiresAt 是合法的未来值：put 不抛错，且立刻可读（KV 的 60 秒下限决定了只能验证到这里）", async () => {
+        await s.put("ttl:kv-future", { v: 1 }, Date.now() + 120_000);
+        expect(await s.get("ttl:kv-future")).toEqual({ v: 1 });
+      });
+    } else {
+      it("expiresAt 早于当下：put 完立刻就读不到了（过期时刻可以是过去）", async () => {
+        await s.put("ttl:already-gone", { v: 1 }, Date.now() - 1000);
+        expect(await s.get("ttl:already-gone")).toBeNull();
+      });
+
+      it("expiresAt 是几百毫秒之后：过期前能读到，过期后读不到（真实短等待）", async () => {
+        await s.put("ttl:soon", { v: 1 }, Date.now() + 300);
+        expect(await s.get("ttl:soon"), "还没到期，应该读得到").toEqual({ v: 1 });
+        await new Promise((r) => setTimeout(r, 500));
+        expect(await s.get("ttl:soon"), "已经过了 expiresAt，应该读不到了").toBeNull();
+      });
+    }
+
+    it("不传 expiresAt 时永不过期（原有行为不变，不会被上面的 TTL 逻辑误伤）", async () => {
+      await s.put("ttl:forever", { v: 1 });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(await s.get("ttl:forever")).toEqual({ v: 1 });
+    });
+
     it("并发的写与删混合执行时，未被删的键不受影响", async () => {
       await s.put("conc:keep", { v: "keep" });
       const ops: Promise<void>[] = [];

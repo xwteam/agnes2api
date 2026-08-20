@@ -11,7 +11,7 @@ import type { LogEntry } from "../../ports/logger.js";
  * 纯计算得出。C3（索引读改写丢更新）因此**根除**：没有索引就没有那个唯一需要
  * 读改写的键，代价改成了"同槽位真并发覆盖"（见下）。
  *
- * ⚠️ **C2（无上限增长）第一版只做对了一半，被下一轮评审（C4/C4b/C5）逮住**：
+ * ⚠️ **C2（无上限增长）前两版都只做对了一半，被后续评审（C4/C4b/C5）逐轮逮住**：
  * - `candidateKeys()` 最初没有钳位 `after`，一个陈旧游标能让候选键数随"游标陈旧度"
  *   线性增长、无上界（C4/C4b）——**这是 C2 换了一根轴复发**：旧设计的增长轴是
  *   "部署年龄"，新设计换成了"游标陈旧度"，而"游标冻结、系统长期安静"恰恰是本项目
@@ -19,8 +19,19 @@ import type { LogEntry } from "../../ports/logger.js";
  *   把 `fromWindow` 钳位在 `nowWindow - EVENT_WINDOW_RETAIN + 1`，读路径的候选键数
  *   对任何 `after` 值都有硬上界。
  * - `window` 索引本身是绝对纪元小时数，不取模、单调递增，读路径钳位不等于"存储里
- *   实际驻留的键数有界"（C5）——`StoreLogger.maybeFlush()` 现在会在每次成功落盘后
- *   顺手删除滚出保留期的那个窗口键，存储侧的键数因此也有上限。
+ *   实际驻留的键数有界"（C5 第一次修复）——第一版对策是 `StoreLogger.maybeFlush()`
+ *   每次成功落盘后顺手 delete "滚出保留期的那个（按固定偏移算出来的）窗口键"，
+ *   **这个方案被下一轮评审逐场景实测推翻**：它只在"同一槽位恰好每 `EVENT_WINDOW_RETAIN`
+ *   个窗口落盘一次"这种规律节奏下才命中；稀疏落盘（gap 超过保留期，例如每 25 小时
+ *   或每周才落一次——而这恰恰是 C4b 论证过的"最常见稳态"）清理率直接归零；生产
+ *   Workers 下 `shardId` 是 `crypto.randomUUID()` 随机生成，各 isolate 各清自己那个
+ *   槽位，清理率同样打对折。**这不是"漏了一个 corner case"，是"有界性绑在了落盘节奏
+ *   上"这个方案本身在结构上就错了**——只要还依赖"多久落一次盘""落在哪个槽位"，
+ *   就永远会被下一个稳态假设推翻。**现在的修法是 TTL**：`Storage.put()` 的第三个参数
+ *   `expiresAt`（见 `src/ports/storage.ts`），把有界性变成**存储自己的性质**，与落盘
+ *   节奏、槽位随机性、isolate 是否被回收**全部无关**——KV 侧零操作开销（原生
+ *   `expiration`，不占任何配额桶），FileStorage 侧读/写时惰性清理（见该适配器）。
+ *   过期时刻由 `eventExpiresAt()` 算出，取"保留期 + 一点余量"，见该函数的说明。
  *
  * 代价：两个 isolate 在同一个「时间窗 + 槽位」组合上落盘时会互相覆盖对方那一批
  * （最后写的赢），不是"永久不可达"（C3 的失效形态），而是"丢一次交错，下一轮各自
@@ -113,19 +124,42 @@ export function slotOf(shardId: string): number {
 /**
  * 分片键。`event:<窗口>:<槽位>`。
  *
- * ⚠️ **评审 C5 订正**：这里原来写着"两维都是有界整数，键空间因此整体有界"——
- * **不成立，是本项目第十一次「注释里的假断言」**。槽位维确实有界（`EVENT_SLOTS`
+ * ⚠️ **评审 C5 两次订正**（第一次：这里原来写着"两维都是有界整数，键空间因此整体
+ * 有界"——不成立，是本项目第十一次「注释里的假断言」；第二次：订正之后写的"真正
+ * 让存储里的键数有上界的是 `StoreLogger.maybeFlush()` 里那次顺手删除"**又是第十二
+ * 次假断言，就写在订正第十一次的同一块注释里**——那次"顺手删除"经下一轮评审逐
+ * 场景实测证明清理率能跌到 0，见文件头的说明）。槽位维确实有界（`EVENT_SLOTS`
  * 固定为 2），但 `window` 是绝对纪元小时数（`windowIndex` 不取模），**单调递增、
- * 本身无界**。读路径的候选键数有界（`candidateKeys` 钳位到 `EVENT_WINDOW_RETAIN`）
- * 不等于"存储里实际驻留的键数有界"——全仓没有任何 delete 路径、`KvStorage.put`
- * 也不设 `expirationTtl` 之前，滚出保留期的旧窗口键会**永久堆积**（评审实测：
- * 运行 365 天后 distinct event 键数 4,380，且 100 小时前写的键"仍在存储里但
- * `readEvents` 已经看不到它"——占空间却读不到，是最坏的一种"有界"）。
- * 真正让存储里的键数有上界的是 `StoreLogger.maybeFlush()` 里那次顺手删除
- * （见该文件），不是这个函数本身——这个函数只负责拼出一个字符串。
+ * 本身无界**，这个函数自己只负责拼字符串，不承载"有没有界"这条性质。**现在真正
+ * 让存储里的键数有上界的是 TTL**（`eventExpiresAt()` + `Storage.put()` 的
+ * `expiresAt` 参数）——把有界性做成存储自己的性质，不再依赖这个函数或调用它的
+ * 那次落盘发生在什么节奏上。
  */
 export function shardKey(window: number, slot: number): string {
   return `event:${window}:${slot}`;
+}
+
+/**
+ * `event:<window>:<slot>` 这把键该在什么时刻过期（评审 C5：`Storage.put()` 的
+ * `expiresAt` 参数）。
+ *
+ * 一把键写在窗口 `w = windowIndex(at)`，它在读路径（`candidateKeys`）里保持可达，
+ * 直到 `now` 的窗口推进到 `w + EVENT_WINDOW_RETAIN` 那一刻（`floor` 那时候第一次
+ * 超过 `w`）——这之后这把键已经**结构性不可达**（不会再出现在任何 `candidateKeys`
+ * 的结果里），继续留着只占空间。TTL 定在这个"结构性不可达"的窗口边界，再加
+ * `EVENT_TTL_MARGIN_MS` 的余量：
+ *   - 余量存在的理由是时钟：判定过期用的时钟（KV 边缘自己的、或 FileStorage 读
+ *     `Date.now()`）与算出 `expiresAt` 时用的 `now()`（`StoreLogger` 注入的时钟）
+ *     不保证逐毫秒同步；没有余量的话，一个恰好卡在窗口边界的请求可能先按"这把键
+ *     还该在"算出候选键，真正 `get` 的时候却已经被物理清掉，读到 `null`——这本身
+ *     不是错误（`readEvents` 对缺失分片当空分片处理），但没有必要制造这种边界竞态。
+ *   - 取一整个 `EVENT_WINDOW_MS`（1 小时）做余量：足够盖掉现实中的时钟偏差，量级
+ *     上不会让"实际保留的历史"与"面板宣称的 24 小时"产生可感知的差别。
+ */
+export const EVENT_TTL_MARGIN_MS = EVENT_WINDOW_MS;
+
+export function eventExpiresAt(at: number): number {
+  return (windowIndex(at) + EVENT_WINDOW_RETAIN) * EVENT_WINDOW_MS + EVENT_TTL_MARGIN_MS;
 }
 
 /**

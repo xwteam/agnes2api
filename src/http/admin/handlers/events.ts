@@ -56,6 +56,20 @@ function afterParam(raw: string | undefined): number | null {
  * 如实报出来，前端据此把冻结的游标丢掉重新冷读（见 `pure/events.mjs` 的
  * `bufferStatus`/`sec-events.js` 的 `poll()`）。
  *
+ * ⚠️ **评审 C6 二审订正：上一段"任何一个 isolate 的时钟只要快"这句话本身写得
+ * 过宽**——判据是 `windowIndex(after) > windowIndex(now)`，**必须跨过一个完整的
+ * 时间窗边界（`EVENT_WINDOW_MS`，1 小时）才会触发**，单纯"快了几分钟但还在
+ * 同一个窗口内"不会。这留了一个真实存在、且**没有任何测试或代码覆盖**的盲区：
+ * `after` 只比 `now` 快、但仍落在同一个窗口时（实测 `after = now + 10min`），
+ * `cursorAhead` 是 `false`，但 `candidateKeys()` 算出来的窗口里没有任何真实事件
+ * 的 `ts` 能大于这个"未来的" `after`（`events.ts` 上面那行 `filter((e) => after
+ * === null || e.ts > after)`），过滤结果照样是空——**与"确实没有新事件"依旧无法
+ * 区分，只是这一段盲区自己会在至多一个窗口宽度（≤ `EVENT_WINDOW_MS`）之内自愈**
+ * （要么真实时间追上 `after` 所在的窗口，`after` 变回过去、`cursorAhead` 判据
+ * 用不上；要么时钟偏移原本就足够大，窗口边界很快被跨过，`cursorAhead` 正常
+ * 触发）。**别让这句订正之前的旧话被后人当成"这个角落已经覆盖"**——它没有，
+ * 只是自限在一个可以接受的小时间窗里。
+ *
  * ⚠️ **`items` 里的字段一律视为完全不可信**：里面会出现上游返回的内容与未鉴权请求的
  * 路径（例如 `admin.login_failed` 的 `fields.path` 就是攻击者能写的值）。这里**不做**
  * 转义或截断——`ConsoleLogger` 的 logfmt 引用是给**控制台**用的，防的是「一个值撕开

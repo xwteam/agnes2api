@@ -65,7 +65,23 @@ describe("GET /admin/api/events", () => {
     expect(body.budgetExhausted).toBe(false);
     expect(body.truncated).toBe(false);
     expect(body.cursorAhead).toBe(false);
-    expect(typeof body.generatedAt).toBe("number");
+    // makeApp() 默认时钟是固定字面量 1000（见 tests/helpers/make-app.ts）——评审
+    // T2：这里原来是 `typeof body.generatedAt === "number"`，形状断言冒充行为断言，
+    // 把 `generatedAt: now` 改成 `Date.now()` 照样全绿存活（已实测）。下面另有一条
+    // 专门的用例（照抄 admin-keys.test.ts 的同名用例）钉死"来自注入的时钟"这条
+    // 行为，这里顺手把手写字面量也钉上，两处不冲突。
+    expect(body.generatedAt).toBe(1000);
+  });
+
+  /**
+   * **评审 T2**：照抄 `tests/contract/admin-keys.test.ts` 同名用例的写法——姊妹端点
+   * 早就这么钉了，事件端点这次才补上。用一个与 `makeApp()` 默认值（1000）不一样
+   * 的字面量，避免"恰好撞上默认值"这种巧合掩盖"其实读的是 handler 自己的墙上
+   * 时间"这类回归。
+   */
+  it("generatedAt 来自注入的时钟，不是 handler 自己读的墙上时间", async () => {
+    const { app } = await makeApp([], ["k1"], {}, () => 424_242);
+    expect((await getEvents(app)).body.generatedAt).toBe(424_242);
   });
 
   /**
@@ -75,8 +91,11 @@ describe("GET /admin/api/events", () => {
    * 只在 node 侧验过就假设 worker 侧一样，正是这个项目栽过的那类「未经核实的前提」。
    */
   it("一次请求之后，存储里确实有事件分片落盘（两种运行时各跑一遍）", async () => {
-    const st = new CountingStorage();
     let t = 0;
+    // `st` 的内部 MemoryStorage 与下面 makeApp 的 `now` 必须共用同一个 `t`
+    // （评审 C5：TTL 判定默认走真实 Date.now()，不对齐会让刚落盘的事件"生下来
+    // 就已经过期"，见 tests/helpers/make-app.ts 的同一条说明）。
+    const st = new CountingStorage(new MemoryStorage(undefined, () => t));
     const { app } = await makeApp([], ["k1"], {}, () => (t += 61_000), { storage: st });
     // 打一个必然产生事件的请求：未鉴权的管理接口 ⇒ admin.login_failed
     await app.request("/admin/api/session");
@@ -94,8 +113,10 @@ describe("GET /admin/api/events", () => {
    * 这时候存储里还没有写完。两种运行时各跑一遍。
    */
   it("响应返回的那一刻（不是之后某个时刻），事件已经落盘（真实异步延迟下可观测）", async () => {
-    const st = new MemoryStorage(5);
     let t = 0;
+    // storage 与 now 必须共用同一个假时钟（评审 C5，理由见 tests/helpers/make-app.ts
+    // 的同一条说明），否则 list() 前置条件本身先假到把这条用例的意义架空。
+    const st = new MemoryStorage(5, () => t);
     const { app } = await makeApp([], ["k1"], {}, () => (t += 61_000), { storage: st });
     await app.request("/admin/api/session");
     await app.request("/admin/api/session"); // 第二次的收尾把第一次攒的落盘
@@ -121,8 +142,9 @@ describe("GET /admin/api/events", () => {
    * 挂在 next() 之前时，flush() 跑的时候缓冲还是空的，这一次事件永远进不去。
    */
   it("只打一次请求，这次请求自己产生的事件就必须自己被落盘（对齐 next() 之前这条变异）", async () => {
-    const st = new MemoryStorage(5);
     let t = 0;
+    // 同一条说明：storage 与 now 必须共用同一个假时钟。
+    const st = new MemoryStorage(5, () => t);
     const { app } = await makeApp([], ["k1"], {}, () => (t += 61_000), { storage: st });
     await app.request("/admin/api/session");
     const keys = await st.list("event:");
@@ -211,6 +233,26 @@ describe("GET /admin/api/events", () => {
     await storeLogger.maybeFlush();
     const { body } = await getEvents(app, "?after=1000"); // 远早于当前时钟，正常的陈旧游标
     expect(body.cursorAhead).toBe(false);
+  });
+
+  /**
+   * **评审 C6 二审（d）：如实记录一个盲区，不是修它。**
+   *
+   * `after` 领先 `now` 但仍落在**同一个时间窗**内时（这里 `after = now + 10min`，
+   * 窗口宽度 `EVENT_WINDOW_MS` 是 1 小时），`cursorAhead` 的判据
+   * `windowIndex(after) > windowIndex(now)` 不成立——`items` 依旧是空的，但
+   * `cursorAhead` 报 `false`，与"确实没有新事件"依旧无法区分。这条用例把这个
+   * 盲区钉成一条断言（不是当作 bug 修掉）：`events.ts` 的 JSDoc 已经订正过这一段，
+   * 这里补上真实证据，不让文字描述空转。
+   */
+  it("after 领先 now 但仍在同一个时间窗内：items 为空、cursorAhead 仍是 false（评审 C6 二审 d，已知盲区，非 bug）", async () => {
+    const now = 1_000_000;
+    const { app } = await makeApp([], ["k1"], {}, () => now);
+    const nearFutureAfter = now + 10 * 60_000; // +10 分钟，仍在同一个 1 小时窗口内
+    const { status, body } = await getEvents(app, `?after=${nearFutureAfter}`);
+    expect(status).toBe(200);
+    expect(body.items).toEqual([]);
+    expect(body.cursorAhead, "同一窗口内的未来 after 不会触发 cursorAhead——这是已知、自限的盲区").toBe(false);
   });
 
   it("?level=<lvl> 只返回该级别的事件", async () => {

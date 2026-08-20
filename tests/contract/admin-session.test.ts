@@ -27,7 +27,7 @@ function adminApp(version: string) {
     version, logger, trustProxy: false,
     // /admin/api/keys 要的两样。本文件只测 session，给一个空池子就够——
     // 但**必须真给**：`adminRouter` 现在会用它注册 keys 端点。
-    repo: new KeyPoolRepo(new MemoryStorage(), { now: () => 1000, logger: NULL_LOGGER, cacheTtlMs: 0 }),
+    repo: new KeyPoolRepo(new MemoryStorage(undefined, () => 1000), { now: () => 1000, logger: NULL_LOGGER, cacheTtlMs: 0 }),
     now: () => 1000,
     // capabilities/overview 要的三样。本文件只测 session，给最小可用的夹具即可。
     configHolder: fixedConfigHolder(TEST_CONFIG),
@@ -37,7 +37,8 @@ function adminApp(version: string) {
     // events 端点要的一样（Task 6）。本文件只测 session，给一个未接入任何日志链路
     // 的独立实例即可——不需要真的落过事件。
     storeLogger: new StoreLogger({
-      storage: new MemoryStorage(), now: () => 1000, shardId: "session-test-shard", onError: () => {},
+      storage: new MemoryStorage(undefined, () => 1000), now: () => 1000, shardId: "session-test-shard",
+      onError: () => {},
     }),
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");

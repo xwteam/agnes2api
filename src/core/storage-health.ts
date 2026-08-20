@@ -69,8 +69,8 @@ class WatchedStorage implements Storage {
     return this.inner.list(prefix);
   }
 
-  async put<T>(key: string, value: T): Promise<void> {
-    await this.track(() => this.inner.put(key, value));
+  async put<T>(key: string, value: T, expiresAt?: number): Promise<void> {
+    await this.track(() => this.inner.put(key, value, expiresAt));
   }
 
   async delete(key: string): Promise<void> {

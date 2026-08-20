@@ -80,7 +80,13 @@ export async function makeApp(
   options: MakeAppOptions = {},
 ) {
   const config = { ...TEST_CONFIG, ...configOverride };
-  const storage = options.storage ?? new MemoryStorage();
+  // **评审 C5 追加**：默认存储与下面的 StoreLogger 必须共用同一个 `now`——
+  // `MemoryStorage` 的 TTL 判定默认走真实 `Date.now()`，本仓测试里的假时钟
+  // 几乎全是贴近纪元零点的小数值（`() => 1000`/`let t = 0` 这类），如果不对齐，
+  // `StoreLogger` 算出来的 `expiresAt`（同样基于这个假时钟）相对于 `MemoryStorage`
+  // 的真实内部时钟必然"生下来就已经过期"，任何经这条默认路径落盘的事件都会立刻
+  // 读不到——已实测过一次（详见 P3b Task 6 报告"评审修复轮 4"）。
+  const storage = options.storage ?? new MemoryStorage(undefined, now);
   // 与 wire.ts 同一条接线：两个旋钮从配置来，而不是各写各的默认值。
   // 不这么接的话 TEST_CONFIG 里那两个 0 是**死字段**，夹具以为关了缓存其实开着。
   const repo = new KeyPoolRepo(storage, {

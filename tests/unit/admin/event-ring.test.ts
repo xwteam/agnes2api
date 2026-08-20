@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   EVENT_RING_SIZE, EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_WRITES_PER_DAY,
-  EVENT_WINDOW_MS, EVENT_SLOTS, EVENT_WINDOW_RETAIN,
-  windowIndex, slotOf, shardKey, candidateKeys,
+  EVENT_WINDOW_MS, EVENT_SLOTS, EVENT_WINDOW_RETAIN, EVENT_TTL_MARGIN_MS,
+  windowIndex, slotOf, shardKey, candidateKeys, eventExpiresAt,
   appendRing, truncatedCount, mergeShards,
   FRESH_BUDGET, canWrite, consume,
 } from "../../../src/core/admin/event-ring.js";
@@ -134,6 +134,50 @@ describe("shardKey / candidateKeys：有界且可从时钟直接算出来（C2 �
     const now = 10_000 * EVENT_WINDOW_MS;
     const futureAfter = now + 10 * EVENT_WINDOW_MS;
     expect(candidateKeys(now, futureAfter)).toEqual([]);
+  });
+});
+
+/**
+ * **评审 C5（第二次修复）**：存储侧的有界性改走 TTL，`eventExpiresAt(at)` 是
+ * `Storage.put()` 第三个参数的来源，见该函数与 `src/adapters/logger-store.ts`
+ * 的说明。
+ */
+describe("eventExpiresAt：TTL 精确到手算字面量（评审 C5）", () => {
+  it("EVENT_TTL_MARGIN_MS 就是 EVENT_WINDOW_MS 本身——钉住这条关系，不是钉住某个具体数值", () => {
+    expect(EVENT_TTL_MARGIN_MS).toBe(EVENT_WINDOW_MS);
+  });
+
+  it("windowIndex(at)=0 时，过期时刻精确等于手算的 90,000,000（=(0+24)×3,600,000+3,600,000）", () => {
+    expect(eventExpiresAt(1000)).toBe(90_000_000);
+    // 同一个窗口内任何 at 值都落在同一个 window，算出同一个过期时刻。
+    expect(eventExpiresAt(0)).toBe(90_000_000);
+    expect(eventExpiresAt(EVENT_WINDOW_MS - 1)).toBe(90_000_000);
+  });
+
+  it("非零窗口下同样精确等于手算字面量（=(10,000+24)×3,600,000+3,600,000）", () => {
+    expect(eventExpiresAt(10_000 * EVENT_WINDOW_MS)).toBe(36_090_000_000);
+  });
+
+  /**
+   * **行为性质，不只是孤立的算式**：TTL 必须晚于这把键在 `candidateKeys` 眼里
+   * "结构性不可达"的那一刻，否则会出现"读路径还认为这把键该在，物理上却已经
+   * 被存储清掉"的边界竞态（`eventExpiresAt` 文档注释里论证过的那条理由）。
+   * 这里直接用 `candidateKeys` 验证这条关系，不是重新抄一遍公式再互相打对号
+   * （那样两边算法一起错也测不出来）。
+   */
+  it("过期时刻晚于这把键结构性不可达的那一刻，TTL 不会抢在读路径前面清掉还该在的键", () => {
+    const at = 5 * EVENT_WINDOW_MS + 1234; // 任意选一个不在窗口边界上的时刻
+    const w = windowIndex(at);
+    const key = shardKey(w, 0);
+    const justBeforeUnreachable = (w + EVENT_WINDOW_RETAIN) * EVENT_WINDOW_MS - 1;
+    const firstUnreachableInstant = (w + EVENT_WINDOW_RETAIN) * EVENT_WINDOW_MS;
+
+    expect(candidateKeys(justBeforeUnreachable, null).includes(key),
+      "前置条件：再晚 1ms 才不可达之前，这把键应该还在候选范围里").toBe(true);
+    expect(candidateKeys(firstUnreachableInstant, null).includes(key),
+      "前置条件：这一刻起这把键确实已经结构性不可达了").toBe(false);
+    expect(eventExpiresAt(at), "TTL 应该比结构性不可达的那一刻更晚，留出余量")
+      .toBeGreaterThan(firstUnreachableInstant);
   });
 });
 

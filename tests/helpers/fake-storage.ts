@@ -15,6 +15,8 @@ import type { Storage } from "../../src/ports/storage.js";
  */
 export class MemoryStorage implements Storage {
   private readonly map = new Map<string, string>();
+  /** 评审 C5：`put(key, value, expiresAt)` 的过期时刻表，key → epoch ms。 */
+  private readonly expiry = new Map<string, number>();
 
   /**
    * **不设默认值、不用 `= 0`**：`delayMs` 缺省时**完全跳过 `setTimeout`**，走原来
@@ -25,27 +27,42 @@ export class MemoryStorage implements Storage {
    * 天荒地老（已实测：加上无条件 `setTimeout` 之后 `dispatcher.test.ts` 7 条超时
    * 用例全部 5 秒超时失败）。`FakeFetcher` 的 `delayMs` 正是同一条判据
    * （`if (o.delayMs !== undefined) await waitOrAbort(...)`），这里照抄。
+   *
+   * `now`：过期判定用的时钟，默认 `Date.now`。**评审 C5** 新增——需要在测试里
+   * 模拟"时间流逝、key 过期"（例如 365 天后旧事件键该消失了）又不想真的等待时，
+   * 传一个假时钟进来（`new MemoryStorage(undefined, () => t)`）。
    */
-  constructor(private readonly delayMs?: number) {}
+  constructor(
+    private readonly delayMs?: number,
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+
+  private isExpired(key: string): boolean {
+    const exp = this.expiry.get(key);
+    return exp !== undefined && exp <= this.now();
+  }
 
   async get<T>(key: string): Promise<T | null> {
     if (this.delayMs !== undefined) await new Promise((r) => setTimeout(r, this.delayMs));
+    if (this.isExpired(key)) return null;
     const raw = this.map.get(key);
     return raw === undefined ? null : (JSON.parse(raw) as T);
   }
 
-  async put<T>(key: string, value: T): Promise<void> {
+  async put<T>(key: string, value: T, expiresAt?: number): Promise<void> {
     if (this.delayMs !== undefined) await new Promise((r) => setTimeout(r, this.delayMs));
     this.map.set(key, JSON.stringify(value));
+    if (expiresAt !== undefined) this.expiry.set(key, expiresAt); else this.expiry.delete(key);
   }
 
   async delete(key: string): Promise<void> {
     if (this.delayMs !== undefined) await new Promise((r) => setTimeout(r, this.delayMs));
     this.map.delete(key);
+    this.expiry.delete(key);
   }
 
   async list(prefix: string): Promise<string[]> {
     if (this.delayMs !== undefined) await new Promise((r) => setTimeout(r, this.delayMs));
-    return [...this.map.keys()].filter((k) => k.startsWith(prefix));
+    return [...this.map.keys()].filter((k) => k.startsWith(prefix) && !this.isExpired(k));
   }
 }
