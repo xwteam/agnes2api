@@ -565,6 +565,10 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 不产生 ALL 条目——EXPECTED_MIDDLEWARE 因此仍然不变。
     "GET /admin/api/capabilities",
     "GET /admin/api/overview",
+    // Task 6（P3b）的事件。同样用 `admin.get()` 注册，不产生 ALL 条目——
+    // 这两条不影响 EXPECTED_MIDDLEWARE，真正让那张表变化的是 logFlush（见下）。
+    "GET /admin/api/events",
+    "GET /admin/api/events/download",
     // Task 6 的静态资源。**刻意用 get() 而不是 use()**，见 EXPECTED_MIDDLEWARE 的说明。
     "GET /admin",
     "GET /admin/*",
@@ -637,15 +641,21 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * 所以改为**把 ALL 条目也列成显式快照**：任何新增的 use()（无论中间件还是通配
    * handler）都会让这条变红，必须在评审里表态。
    *
-   * **Task 6 的表态：这张表不增长。** 静态资源用 `app.get("/admin", h)` +
+   * **Task 6（P3a）的表态：这张表不增长。** 静态资源用 `app.get("/admin", h)` +
    * `app.get("/admin/*", h)` 注册（src/ui/serve.ts），产生的是两条 `GET` 条目，
    * 已列进上面的 `EXPECTED`、并逐格跑过矩阵。刻意不用 Hono 那个
    * `app.use("/admin/*", serveStatic(...))` 的惯用写法——那会产生一条 `ALL /admin/*`
    * 通配 handler，正是这张快照存在的理由。将来谁改回 use()，这条会立刻变红。
+   *
+   * **Task 6（P3b）的表态：这张表加一条。** `src/http/log-flush.ts` 的 `logFlush`
+   * 中间件挂在 `app.use("*", ...)`（挂在 `configRefresh` 之后、其余中间件之前，
+   * 见 `app.ts` 的注释），产生第三条 `ALL /*`。**这张快照红了正是它在起作用**——
+   * 事件要能在响应返回前落盘，这条中间件必须真的挂上；别把它改绿了事。
    */
   const EXPECTED_MIDDLEWARE = [
     "ALL /*",              // configRefresh
-    "ALL /*",              // 全局 nosniff（两条同名条目；少一条这里立刻变红）
+    "ALL /*",              // logFlush（事件落盘，Task 6/P3b）
+    "ALL /*",              // 全局 nosniff（三条同名条目；少一条这里立刻变红）
     "ALL /v1/*",           // 网关鉴权
     "ALL /v1beta/*",       // 网关鉴权
     "ALL /admin/api/*",    // 管理鉴权

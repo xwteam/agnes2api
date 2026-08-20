@@ -4,12 +4,14 @@ import type { KeyPoolRepo } from "../../core/keypool-repo.js";
 import type { ConfigHolder } from "../config-holder.js";
 import type { StorageHealth } from "../../core/storage-health.js";
 import type { RuntimeInfo } from "../../ports/runtime.js";
+import type { StoreLogger } from "../../adapters/logger-store.js";
 import { adminAuth, checkAdminToken, checkAdminTokenShape, ADMIN_TOKEN_MIN_LENGTH } from "./auth.js";
 import type { AdminTokenCheck } from "./auth.js";
 import { sessionHandler } from "./handlers/session.js";
 import { keysHandler } from "./handlers/keys.js";
 import { capabilitiesHandler } from "./handlers/capabilities.js";
 import { overviewHandler } from "./handlers/overview.js";
+import { eventsHandler, eventsDownloadHandler } from "./handlers/events.js";
 import { uiRoutes } from "../../ui/serve.js";
 
 export interface AdminRouterDeps {
@@ -41,6 +43,11 @@ export interface AdminRouterDeps {
   runtime: RuntimeInfo;
   /** 被环境变量锁定的字段清单（`envLockedFields` 的结果），装配时算好，不逐请求重算。 */
   envLocked: readonly string[];
+  /**
+   * 事件落库 sink（Task 6）。`createApp` 已经决定好用调用方传的那个还是默认的
+   * no-op 兜底，这里只管接线，不再做一次「有没有配」的判断。
+   */
+  storeLogger: StoreLogger;
 }
 
 /**
@@ -136,6 +143,8 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
     repo: deps.repo, configHolder: deps.configHolder, storageHealth: deps.storageHealth,
     runtime: deps.runtime, envLocked: deps.envLocked, version: deps.version, now: deps.now,
   }));
+  admin.get("/admin/api/events", eventsHandler({ storeLogger: deps.storeLogger, now: deps.now }));
+  admin.get("/admin/api/events/download", eventsDownloadHandler({ storeLogger: deps.storeLogger }));
 
   // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
   // 串起来跑，`/admin/*` 这条兜底若排在前面会先返回 404，**整套管理 API 直接消失**

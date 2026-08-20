@@ -10,12 +10,15 @@ import { mediaRoutes } from "./routes/media.js";
 import { auth } from "./middleware/auth.js";
 import { adminRouter } from "./admin/router.js";
 import { configRefresh } from "./config-refresh.js";
+import { logFlush } from "./log-flush.js";
 import type { ConfigHolder } from "./config-holder.js";
 import type { DispatchDeps } from "../core/dispatcher.js";
 import type { StorageHealth } from "../core/storage-health.js";
 import type { Logger } from "../ports/logger.js";
 import type { RuntimeInfo } from "../ports/runtime.js";
 import { nodeRuntime } from "../adapters/runtime-node.js";
+import { StoreLogger } from "../adapters/logger-store.js";
+import type { Storage } from "../ports/storage.js";
 
 export interface AppDeps extends Omit<DispatchDeps, "config"> {
   version: string;
@@ -43,6 +46,34 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
   runtime?: RuntimeInfo;
   /** 被环境变量锁定的字段清单（`envLockedFields` 的结果）。默认空数组，理由同 `runtime`。 */
   envLocked?: readonly string[];
+  /**
+   * 事件落库 sink（Task 6）。**可选，默认建一个独立的、与 `deps.logger` 无关的
+   * `StoreLogger`**——与 `runtime`/`envLocked` 同一条理由：这里是被海量既有测试
+   * 直接调用的底层装配函数，给它一个安全默认值换来的是不必为一个与事件持久化无关
+   * 的测试改动去牵连几十个调用点。
+   *
+   * **两个生产入口经 `wire.ts` 的 `buildApp` 总是显式传入与 `deps.logger` fan-out
+   * 到同一个实例的 `StoreLogger`**，那时它才真正接进日志链路。这里的默认值从不被
+   * 任何调用方 `.log()`（没人把它 fan-out 进 `deps.logger`），所以在默认夹具下
+   * `/admin/api/events` 恒是「没有事件」——这是刻意的空转，不是缺陷。
+   */
+  storeLogger?: StoreLogger;
+}
+
+/**
+ * `AppDeps.storeLogger` 缺省时的兜底：一个背后接着「无操作」`Storage` 的
+ * `StoreLogger`。它永远不会被写入任何真实数据（没人把它接进 `deps.logger`），
+ * 存在的唯一理由是让 `logFlush` 中间件与 `/admin/api/events` 两个 handler
+ * 始终有一个可调用的实例，不必在这两处各自判断「有没有配置」。
+ */
+function defaultStoreLogger(now: () => number): StoreLogger {
+  const inertStorage: Storage = {
+    async get() { return null; },
+    async put() { /* 默认 sink 不落任何盘，见 AppDeps.storeLogger 的说明 */ },
+    async delete() { /* 同上 */ },
+    async list() { return []; },
+  };
+  return new StoreLogger({ storage: inertStorage, now, shardId: "unwired", onError: () => {} });
 }
 
 /**
@@ -78,6 +109,17 @@ export function createApp(deps: AppDeps): Hono {
   // 且不报错**（实测 200 handler 而不是 401）。任何新增的 use 都必须写在这一段里，
   // 不许混进下面那堆 route 中间。
   app.use("*", configRefresh(deps.configHolder));
+
+  // 事件落库中间件（Task 6）。**挂在 configRefresh 之后、其余中间件（含下面的全局
+  // nosniff）之前**——它必须在 `await next()` 之后才 flush（本次请求自己产生的事件
+  // 要先进缓冲），这条与全局 nosniff 必须挂在 `next()` 之后是同一条理由的另一面，
+  // 见 `src/http/log-flush.ts` 的说明。
+  //
+  // `deps.storeLogger` 缺省时用 `defaultStoreLogger()`：它的存储是纯内存的
+  // no-op，`maybeFlush()` 在缓冲恒为空的情况下第一行就 `return`，对现存的几十个
+  // 直接调用 `createApp()` 的测试零行为影响。
+  const storeLogger = deps.storeLogger ?? defaultStoreLogger(deps.now);
+  app.use("*", logFlush(() => storeLogger.maybeFlush()));
 
   /**
    * 全应用级 `nosniff`。
@@ -140,6 +182,7 @@ export function createApp(deps: AppDeps): Hono {
     // 双运行时差异的唯一注入点，见 AppDeps.runtime 的说明。
     runtime: deps.runtime ?? nodeRuntime(),
     envLocked: deps.envLocked ?? [],
+    storeLogger,
   });
   if (admin) app.route("/", admin);
   return app;

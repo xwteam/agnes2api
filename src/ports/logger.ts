@@ -13,6 +13,18 @@ export interface LogEntry {
   event: string;
   /** 给人看的一句话。可选。**过滤、i18n、面板筛选一律用 `event`，不许解析这里。** */
   msg?: string;
+  /**
+   * 关联 ID。**同一件事跨越的多条事件用同一个值**，面板据此把它们串成一条时间线。
+   *
+   * 典型场景：一次铸 key 会先后打出 `registrar.list_domains_failed` →
+   * `registrar.code_timeout` → `registrar.delete_mailbox_failed`，三条分开看
+   * 各自都像孤立故障，串起来才看得出是同一轮补池的同一次尝试。
+   *
+   * **本期只定字段并让事件板块按它分组**；把它真正串进注册机那条链是 P3c
+   *（那时才有注册机板块，才有人看得见分组的效果）。**现在定是因为改 sink 的
+   * 存储格式比改一个还没人消费的字段贵得多**——事件一旦开始落库，格式就有了兼容包袱。
+   */
+  corr?: string;
   fields?: Record<string, string | number | boolean | null>;
 }
 

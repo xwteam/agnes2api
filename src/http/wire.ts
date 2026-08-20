@@ -14,6 +14,8 @@ import type { TendDeps } from "../core/registrar/tender.js";
 import { YydsProvider } from "../adapters/mailbox-yyds.js";
 import { MoeMailProvider } from "../adapters/mailbox-moemail.js";
 import { ConsoleLogger } from "../adapters/logger-console.js";
+import { StoreLogger } from "../adapters/logger-store.js";
+import { multiLogger } from "../adapters/logger-multi.js";
 import type { Logger } from "../ports/logger.js";
 
 export interface BuildOptions {
@@ -25,6 +27,13 @@ export interface BuildOptions {
    * 冷启动时都会重新装配一次 app，开着它等于把 KV 的写配额消耗在健康检查上。
    */
   probeStorage?: boolean;
+  /**
+   * 事件落库分片 id 的生成函数。**生产用 `crypto.randomUUID().slice(0, 8)`**
+   * ——每个 isolate/进程装配一次 app 时生成一次，此后终生不变（见
+   * `StoreLogger` 的存储形态说明：`event:<shardId>` 每 isolate 一份）。
+   * 测试注入固定值，好让分片 key 可预测、可断言。
+   */
+  newShardId?: () => string;
 }
 
 /** buildApp 的返回值。两个入口都需要 configHolder：node.ts 用它取 registrar.tendIntervalMs
@@ -71,10 +80,28 @@ export async function buildApp(
   options: BuildOptions = {},
 ): Promise<BuiltApp> {
   const storageHealth = createStorageHealth();
-  const logger: Logger = new ConsoleLogger();
+  const consoleLogger = new ConsoleLogger();
   // 包一层之后，后续所有写操作（key 池状态回写、启动探测）的成败都会自动反映到
   // /health 上，健康检查自身不需要再写盘。
   const watched = watchStorage(storage, storageHealth, () => Date.now());
+
+  /**
+   * 事件落库 sink（Task 6）。`onError` 走 `consoleLogger` 直接打（**通常是
+   * ConsoleLogger**，见 `StoreLogger` 构造参数的说明）而不是 fan-out 之后的
+   * `logger`：sink 自己出故障时把诊断信息再塞回同一个正在故障的 sink 没有意义，
+   * 而 console 这条路径与存储无关，永远打得出来。
+   */
+  const storeLogger = new StoreLogger({
+    storage: watched,
+    now: () => Date.now(),
+    shardId: (options.newShardId ?? (() => crypto.randomUUID().slice(0, 8)))(),
+    onError: (err) => consoleLogger.log({
+      level: "error", event: "storage.event_flush_failed",
+      msg: "事件落盘失败，本轮缓冲已丢弃（不重试同一批，下一轮再攒新的）",
+      fields: { error: err instanceof Error ? err.message : String(err) },
+    }),
+  });
+  const logger: Logger = multiLogger(consoleLogger, storeLogger);
 
   if (options.probeStorage) {
     const err = await probeWritable(watched, storageHealth, () => Date.now(), logger);
@@ -117,6 +144,7 @@ export async function buildApp(
     runtime,
     // env 在运行中不会变，装配时算一次即可（见 envLockedFields 的说明）。
     envLocked: envLockedFields(env),
+    storeLogger,
   });
   return { app, configHolder, repo };
 }

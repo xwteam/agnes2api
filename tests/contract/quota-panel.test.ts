@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { CountingStorage } from "../helpers/counting-storage.js";
+import { EVENT_INDEX_KEY, EVENT_SHARD_PREFIX } from "../../src/adapters/logger-store.js";
+import { makeShardIndex } from "../../src/core/admin/event-ring.js";
 
 /**
  * **面板的轮询路径不许出现 `list()`，也不许产生额外的读。**
@@ -65,5 +67,47 @@ describe("面板轮询的配额账", () => {
     expect(res.status).toBe(200);
     expect(st.lists - base.lists).toBe(0);
     expect(st.gets - base.gets, "面板另开了一份快照：它没有复用转发刚装载的那一份").toBe(0);
+  });
+
+  /**
+   * **事件板块（Task 6）的零 list 断言。**
+   *
+   * `/admin/api/events` 不像 `/admin/api/keys` 那样有 isolate 级缓存——每一次轮询都
+   * 老老实实付「1 次 event:index get + K 次分片 get」，这是设计文档 §7.2 与本任务
+   * 简报明写的存储形态。这一格没有「预热」步骤：从第一次请求开始，每次调用付出的
+   * 代价就是恒定的（没有东西可以被「预热」出缓存命中）。
+   *
+   * 起手没有任何事件落盘过（`event:index` 不存在）⇒ 分片数 = 0 ⇒
+   * 每次请求恰好 1 次 get（只有 index 那一次）。
+   */
+  it("连打 20 次 /admin/api/events（0 个分片时），list 次数为 0，get 次数恰好为 20", async () => {
+    const st = new CountingStorage();
+    const { app } = await makeApp([], ["k1"], {}, () => 1000, { storage: st });
+    const base = { lists: st.lists, gets: st.gets };
+    for (let i = 0; i < 20; i++) {
+      const res = await app.request("/admin/api/events", { headers: { "x-admin-key": TEST_ADMIN_TOKEN } });
+      expect(res.status).toBe(200);
+    }
+    expect(st.lists - base.lists, "events 轮询路径出现了 list()").toBe(0);
+    expect(st.gets - base.gets, "20 次请求 × (1 次 index get + 0 次分片 get)").toBe(20);
+  });
+
+  /**
+   * 有 2 个分片时的同一条账：**手写字面量 60**（不是从 `分片数` 变量现算的表达式），
+   * 好让这条断言与被测代码的实际取数逻辑相互独立。
+   */
+  it("连打 20 次 /admin/api/events（2 个分片时），list 次数为 0，get 次数恰好为 60", async () => {
+    const st = new CountingStorage();
+    const { app } = await makeApp([], ["k1"], {}, () => 1000, { storage: st });
+    await st.put(EVENT_INDEX_KEY, makeShardIndex(["shard-a", "shard-b"]));
+    await st.put(EVENT_SHARD_PREFIX + "shard-a", [{ ts: 1, level: "info", event: "e.a" }]);
+    await st.put(EVENT_SHARD_PREFIX + "shard-b", [{ ts: 2, level: "info", event: "e.b" }]);
+    const base = { lists: st.lists, gets: st.gets };
+    for (let i = 0; i < 20; i++) {
+      const res = await app.request("/admin/api/events", { headers: { "x-admin-key": TEST_ADMIN_TOKEN } });
+      expect(res.status).toBe(200);
+    }
+    expect(st.lists - base.lists, "events 轮询路径出现了 list()").toBe(0);
+    expect(st.gets - base.gets, "20 次请求 × (1 次 index get + 2 次分片 get)").toBe(60);
   });
 });

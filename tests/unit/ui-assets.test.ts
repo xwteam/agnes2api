@@ -111,6 +111,9 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       "/admin/js/i18n-dict.js",
       "/admin/js/i18n.js",
       "/admin/js/pure/bucket.mjs",
+      // Task 6（P3b）新增：事件板块的取值决策（查询串拼装、分组、轮询退避等），
+      // 同一条硬规则、同一份理由，由 tests/ui/events.test.ts 跑着。纯函数、无配置、无数据。
+      "/admin/js/pure/events.mjs",
       "/admin/js/pure/format.mjs",
       // Task 4（P3b）新增：Key 池板块的取值决策。admin-ui/README.md 硬规则 1 要求
       // 需要测试的逻辑必须落在 js/pure/ 下，它由 tests/ui/keys.test.ts 跑着。

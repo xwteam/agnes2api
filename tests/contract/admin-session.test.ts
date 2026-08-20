@@ -9,6 +9,7 @@ import { createStorageHealth } from "../../src/core/storage-health.js";
 import { fixedConfigHolder } from "../../src/http/config-holder.js";
 import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 import { TEST_CONFIG } from "../helpers/make-app.js";
+import { StoreLogger } from "../../src/adapters/logger-store.js";
 
 const TOKEN = "session-probe-admin-token-01234";
 
@@ -33,6 +34,11 @@ function adminApp(version: string) {
     storageHealth: createStorageHealth(),
     runtime: nodeRuntime(),
     envLocked: [],
+    // events 端点要的一样（Task 6）。本文件只测 session，给一个未接入任何日志链路
+    // 的独立实例即可——不需要真的落过事件。
+    storeLogger: new StoreLogger({
+      storage: new MemoryStorage(), now: () => 1000, shardId: "session-test-shard", onError: () => {},
+    }),
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");
   const app = new Hono();

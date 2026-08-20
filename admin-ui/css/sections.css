@@ -52,6 +52,28 @@ tr:last-child td { border-bottom: 0; }
   padding: var(--gap-sm) var(--gap); margin-bottom: var(--gap-sm);
   color: var(--danger-fg); background: var(--danger); border-radius: var(--radius);
 }
+.banner-danger p { margin: 2px 0; }
 .block { margin-top: var(--gap); }
 .block h3 { margin: 0 0 var(--gap-sm); font-size: 14px; }
 .block p { margin: 4px 0; }
+
+/* 事件板块（Task 6）：级别按钮组 + 轮询状态指示灯 + 滚动容器 + 分组时间线。 */
+.btn-group { display: inline-flex; gap: 2px; flex-wrap: wrap; }
+.btn-toggle {
+  padding: 6px 10px; font: inherit; color: var(--muted);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.btn-toggle.active { color: var(--text); border-color: var(--primary); }
+/* 轮询状态指示灯：三态用不同颜色，不用文字（title/aria-label 已经带文字说明）。 */
+.poll-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 999px;
+  background: var(--muted); margin-left: var(--gap-sm);
+}
+.poll-dot-active { background: var(--ok-fg); }
+.poll-dot-paused { background: var(--muted); }
+.poll-dot-error { background: var(--danger-fg); }
+
+.events-body { max-height: 60vh; overflow-y: auto; }
+.ev-group-header td { padding-top: var(--gap-sm); font-size: 12px; }
+/* 分组内的行左边一条细线，视觉上把同一条时间线的几行连起来。 */
+.ev-row-grouped td:first-child { border-left: 2px solid var(--border); }

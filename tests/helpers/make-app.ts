@@ -11,6 +11,8 @@ import { recordingLogger } from "./recording-logger.js";
 import type { Storage } from "../../src/ports/storage.js";
 import type { RuntimeInfo } from "../../src/ports/runtime.js";
 import { nodeRuntime } from "../../src/adapters/runtime-node.js";
+import { StoreLogger } from "../../src/adapters/logger-store.js";
+import { multiLogger } from "../../src/adapters/logger-multi.js";
 
 /**
  * 夹具的管理口令。27 位（≥ ADMIN_TOKEN_MIN_LENGTH），且与 `TEST_CONFIG.gatewayToken`
@@ -42,6 +44,11 @@ export interface MakeAppOptions {
   runtime?: RuntimeInfo;
   /** 被环境变量锁定的字段清单。默认空数组。 */
   envLocked?: readonly string[];
+  /**
+   * 事件落库分片 id（Task 6）。默认固定字符串——测试要断言可预测的存储键
+   * （`event:<shardId>`），不能用生产那种每次随机的 `crypto.randomUUID()`。
+   */
+  shardId?: string;
 }
 
 export const TEST_CONFIG: GatewayConfig = {
@@ -87,16 +94,25 @@ export async function makeApp(
   // app 用 recordingLogger（而不是 NULL_LOGGER）：`admin.login_failed` 这类事件
   // 是鉴权唯一对外可断言的行为，静默掉就没法验。repo 仍旧静默——它的日志与本组
   // 断言无关，混进来只会让 entries 变吵。
-  const logger = recordingLogger();
+  const recording = recordingLogger();
+  // 事件落库 sink（Task 6）。**与 repo 共用同一个 `storage`/`now`**——这样
+  // `tests/contract/admin-events.test.ts` 注入自己的 `CountingStorage` 时，落盘
+  // 真的打在调用方能观测到的那个实例上，不是另一份照抄的装配（同一条理由见
+  // wire.ts 的 buildApp）。`recording` 仍旧是外部看到的 `logger`（保留
+  // `.entries`/`.has()`/`.clear()`），multiLogger 只用在**传给 createApp 那一份**。
+  const storeLogger = new StoreLogger({
+    storage, now, shardId: options.shardId ?? "test-shard", onError: () => {},
+  });
   const app = createApp({
     version: "0.1.0",
     configHolder: fixedConfigHolder(config),
     repo, fetcher, now, storageHealth,
-    logger,
+    logger: multiLogger(recording, storeLogger),
     adminToken: "adminToken" in options ? options.adminToken : TEST_ADMIN_TOKEN,
     trustProxy: options.trustProxy ?? false,
     runtime: options.runtime ?? nodeRuntime(),
     envLocked: options.envLocked ?? [],
+    storeLogger,
   });
-  return { app, fetcher, repo, storageHealth, logger, storage };
+  return { app, fetcher, repo, storageHealth, logger: recording, storage, storeLogger };
 }
