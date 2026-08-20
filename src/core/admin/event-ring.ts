@@ -1,5 +1,3 @@
-import type { LogEntry } from "../../ports/logger.js";
-
 /**
  * 事件持久化的分片键空间、环形缓冲与写预算。**零 IO 纯函数**（硬约束 2）：
  * 时间从参数进，状态进、状态出，不碰 `Date.now()` / `crypto` / 任何计时器。
@@ -214,11 +212,11 @@ export function candidateKeys(now: number, after: number | null): string[] {
 /**
  * 环形追加：超出上限丢**最旧**的。返回新数组，不就地改——`cur`/`add` 都不会被写。
  */
-export function appendRing(
-  cur: readonly LogEntry[],
-  add: readonly LogEntry[],
+export function appendRing<T>(
+  cur: readonly T[],
+  add: readonly T[],
   size: number = EVENT_RING_SIZE,
-): LogEntry[] {
+): T[] {
   const merged = [...cur, ...add];
   return merged.length > size ? merged.slice(merged.length - size) : merged;
 }
@@ -244,8 +242,11 @@ export function truncatedCount(curLen: number, addLen: number, size: number = EV
  * 给出的顺序保证逐字节一致。不这样做的话面板每次轮询顺序都可能在跳
  * ——那正是设计文档要求的「同 ts 稳定破平」的全部理由。
  */
-export function mergeShards(shards: readonly (readonly LogEntry[])[], limit: number): LogEntry[] {
-  const tagged: Array<{ e: LogEntry; shard: number; seq: number }> = [];
+export function mergeShards<T extends { ts: number }>(
+  shards: readonly (readonly T[])[],
+  limit: number,
+): T[] {
+  const tagged: Array<{ e: T; shard: number; seq: number }> = [];
   shards.forEach((shard, si) => {
     shard.forEach((e, seq) => tagged.push({ e, shard: si, seq }));
   });

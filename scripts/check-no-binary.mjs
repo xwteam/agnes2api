@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// @refs-ignore（下面举的 `src/x.ts` / `src/hidden.ts` 是虚构的示例路径）
 // 评审 F3 新增的第 11 道门禁：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/` 下
 // 不许存在被 git 判定为二进制的跟踪文件。
 //
@@ -31,6 +30,7 @@
 //   ① **只含空行的跟踪文件**（例如 `printf '\n\n\n'`）：git 判它是文本
 //      （`i/lf`），但 `git grep -E "."` 一行都匹配不到（`.` 不匹配空行），于是被
 //      算进"二进制"，CI 直接红，还附赠一句"多半是混进了 NUL"的错误诊断；
+//   @refs-ignore（本段举的 `src/x.ts` 是虚构的示例路径）
 //   ② **工作树里被删掉、但仍在索引里的跟踪文件**（`rm src/x.ts` 未 stage）：
 //      `git grep` 搜的是工作树，文件不在了自然匹配不到；第一版的 catch 分支注释
 //      写着"读不到就交给下面的正常流程处理"，而那个"正常流程"就是把它报成二进制。
@@ -91,13 +91,12 @@ const binaryInScope = inScope.filter(
 );
 
 /**
- * @refs-ignore（下面举的 `src/hidden.ts` 是虚构的示例路径）
- *
  * **第二条判据：`.gitattributes` 里的 `-diff`**（评审五审必修 1）。
  *
  * 内容是不是文本、与 git 愿不愿意把它当文本 diff，是**两件事**：给一份纯文本文件
  * 标上 `-diff`，`git ls-files --eol` 照样报 `i/lf`，而 `git diff` 对它只吐一行
  * `Binary files a/… and b/… differ`——**这正是 F3 的原始症状**（评审包里没人看得见
+ * @refs-ignore（本段举的 `src/hidden.ts` 是虚构的示例路径）
  * 这份代码改了什么）。已复现：`.gitattributes` 写 `src/hidden.ts -diff`，纯文本
  * 文件，新判据放行、`git diff --stat` 显示 `Bin 7 -> 8 bytes`。
  *

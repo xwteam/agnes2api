@@ -10,7 +10,10 @@ import { VERSION } from "../version.js";
 import type { Storage } from "../ports/storage.js";
 import type { Channel } from "../core/registrar/config.js";
 import type { MailProvider } from "../ports/mailbox.js";
-import type { TendDeps } from "../core/registrar/tender.js";
+import type { TendDeps, TendResult } from "../core/registrar/tender.js";
+import {
+  TEND_HISTORY_KEY, appendTendHistory, narrowTendHistory, toTendRecord, type TendTrigger,
+} from "../core/admin/tend-history.js";
 import { YydsProvider } from "../adapters/mailbox-yyds.js";
 import { MoeMailProvider } from "../adapters/mailbox-moemail.js";
 import { ConsoleLogger } from "../adapters/logger-console.js";
@@ -150,6 +153,17 @@ export async function buildApp(
 }
 
 /**
+ * `buildTendDeps` 的返回形状：`tendOnce` 要的那一份，外加两个**只有入口层才有
+ * 地方调用**的收尾句柄。
+ */
+export type TendRoundDeps = TendDeps & {
+  /** 把补池这条路的事件缓冲落盘。**入口层必须在 `finally` 里 await 它。** */
+  flush: () => Promise<void>;
+  /** 把这一轮的汇总追加进 `tend:history`。 */
+  recordRound: (result: TendResult, trigger: TendTrigger) => Promise<void>;
+};
+
+/**
  * 为 `tendOnce` 装配依赖。注册机未启用（`registrar.enabled=false`，默认状态）时
  * 在构造任何 provider 之前就返回 `null`——两个入口据此判断要不要起调度
  * （Worker 的 `scheduled` 导出 / Node 的定时器），未启用时不会产生触达邮箱/Agnes
@@ -163,19 +177,37 @@ export async function buildApp(
 export async function buildTendDeps(
   env: Record<string, string | undefined>,
   storage: Storage,
-): Promise<TendDeps | null> {
-  // **评审 I2（已裁定"改文案"，不接线）**：这里仍是裸 `ConsoleLogger`，`registrar.*`
-  // 事件因此进不了 `/admin/api/events`。不接的理由不是偷懒：Worker 的 `scheduled()`
-  // 与 `fetch()` 是**两个独立的 isolate 生命周期**，没有请求/响应边界可以挂
-  // `logFlush` 那种"收尾 await"的中间件，要接就得给 `tendOnce` 单独造一个
-  // `StoreLogger`（自己的 shardId、自己的写预算、自己的 flush 触发点——大概率要用
-  // `ctx.waitUntil`），是一个独立量级的任务，不是顺手改一行。**评审 I2b 纠正**：
-  // `ev.notice` 的文案原先说"补池事件还没有产出"，这不属实——上面这行
-  // `new ConsoleLogger()` 照常把事件打出去了，`registrar.*` 那二十多个调用点一个
-  // 都没少；真实情况是"产出了，但没接进 `StoreLogger`，所以没落库、也就没出现在
-  // 本面板"，文案已改成这句更精确的说法。把真正接线留给 P3c（那时才有注册机
-  // 板块，`corr` 字段也才有地方真正串起来）。
-  const logger: Logger = new ConsoleLogger();
+  opts: {
+    /**
+     * 补池这条路的事件 sink。**缺省仍是裸 `ConsoleLogger`**，不破坏现有调用方；
+     * 两个入口传的是 `multiLogger(console, storeLogger)`——`ConsoleLogger` 那一路
+     * **一条都不许丢**，落库是加出来的第二条路，不是替换。
+     */
+    logger?: Logger;
+    /**
+     * 把上面那个 sink 的缓冲落盘。由**调用方**提供，因为只有它手上有那个
+     * `StoreLogger` 实例。缺省是空操作（没传 logger 的调用方也没有东西要落）。
+     */
+    flush?: () => Promise<void>;
+  } = {},
+): Promise<TendRoundDeps | null> {
+  // **本任务接线之前，这里是裸 `ConsoleLogger`**，`registrar.*` 事件因此进不了
+  // `/admin/api/events`——P3b 阶段验收「看到最近的补池发生了什么」实测为零就是
+  // 这么来的（账本 progress.md:1041-1046）。当时不接的理由记在这里，因为它同时
+  // 解释了现在这个形状：Worker 的 `scheduled()` 与 `fetch()` 是**两个独立的
+  // isolate 生命周期**，没有请求/响应边界可以挂 `logFlush` 那种"收尾 await"的
+  // 中间件 ⇒ 落盘触发点只能由入口层在补池收尾时自己给（Worker 走 `ctx.waitUntil`
+  // 里的 `finally`、Node 走 `runTend` 的 `finally`），所以 `flush` 是参数不是内部行为。
+  //
+  // ⚠️ **写预算这根轴换掉了，不许照抄事件 sink 那一套**（订正 F4）：
+  // `EVENT_WRITES_PER_DAY`（每实例每天 12 次）在 `fetch` 路径上有意义，是因为
+  // 一个 isolate 服务很多请求、预算在一个长寿实例上被反复消费。**`scheduled()`
+  // 那条路上这根轴没了**——每次 Cron 触发很可能是一个新 isolate，一生只有一次
+  // 落盘机会，每次都带着一份全新的预算 ⇒ 那套预算既拦不住什么也不构成上界。
+  // **真正的上界是补池频率本身**（Worker 的 Cron、Node 的 `TEND_INTERVAL_MS`），
+  // 五语言 DEPLOY.md 里就是这么写的。
+  const logger: Logger = opts.logger ?? new ConsoleLogger();
+  const flush = opts.flush ?? (async () => {});
   const config = await loadConfig(env, storage, logger);
   const reg = config.registrar;
   if (!reg.enabled) return null;
@@ -221,5 +253,30 @@ export async function buildTendDeps(
     sleep,
     rand: Math.random,
     logger,
+    flush,
+    /**
+     * 把这一轮的汇总追加进 `tend:history`。
+     *
+     * **放在这里而不是让两个入口各写一遍**：读改写 + 窄化 + 环形追加是四步，
+     * 抄两份必漂，而漂了没人会发现——这与 `summarizeFailures()` 当初被提到
+     * `tender.ts` 去的理由是同一条。Task 5 的「立即补池」按钮会走同一份
+     * （`trigger: "manual"`）。
+     *
+     * 失败只记一条 warn 就算了：补池本身已经成功了，让一次历史写失败把它变成
+     * 「补池失败」是误导。**这条 warn 走 `logger`**，所以它会被随后的 `flush()`
+     * 一起落盘——前提是入口层把 `flush()` 放在**最后**（见两个入口的 `finally`）。
+     */
+    recordRound: async (result, trigger) => {
+      try {
+        const cur = narrowTendHistory(await storage.get(TEND_HISTORY_KEY)).entries;
+        await storage.put(TEND_HISTORY_KEY, appendTendHistory(cur, toTendRecord(result, trigger)));
+      } catch (err) {
+        logger.log({
+          level: "warn", event: "registrar.history_write_failed",
+          msg: "本轮补池已完成，但写 tend:history 失败；面板的补池历史会缺这一轮",
+          fields: { error: err instanceof Error ? err.message : String(err) },
+        });
+      }
+    },
   };
 }

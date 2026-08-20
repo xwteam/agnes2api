@@ -4,7 +4,8 @@
  * 组织成 key-major（一个键下挂五种语言）而不是 lang-major：
  * 「加了一个键但只填了一种语言」在 key-major 的 diff 里一眼就能看见，
  * 而 lang-major 下它散在五个相距几百行的地方。齐全性有 CI 门禁
- *（scripts/check-i18n.mjs 与 tests/unit/i18n-dict.test.ts 两份独立实现），
+ *（`scripts/check-i18n.mjs` 与 `tests/unit/i18n-dict.test.ts` 的
+ * 「每个 key 都有全部 5 种语言且非空」两份独立实现），
  * 这个组织方式只是让人工评审也拦得住。
  *
  * 为什么是 .js 而不是 .json：`scripts/build-ui.mjs` 逐字节复制、**零例外**，
@@ -222,6 +223,14 @@ export const I18N = {
   // 评审 N1 [LOW]：`generatedAt` 是响应生成时刻，tooltip 报一句"数据截至几点"，
   // 运维不用另外去猜面板有没有卡住（同 pure/keys.mjs 用它当参照时刻的理由）。
   "ev.pollStatus.generatedAtSuffix": { "zh-CN": "（数据截至 {time}）", "zh-TW": "（資料截至 {time}）", en: " (data as of {time})", ja: "（データ基準時刻：{time}）", ko: "(데이터 기준 시각: {time})" },
+  // 本任务：`malformed` 恒为 0（`src/` 里没有产出畸形条目的路径），非 0 就说明
+  // 存储被外部写坏过。与 `buffered` 一样只进 tooltip、**不进黄条**——恒为假的
+  // 分支挂在告警判据上没有意义（见 pure/events.mjs 的 shouldWarn 说明）。
+  "ev.pollStatus.malformedSuffix": { "zh-CN": "（存储里有 {count} 条畸形事件被丢弃，多半是存储被本网关之外的东西写过）", "zh-TW": "（儲存裡有 {count} 條畸形事件被丟棄，多半是儲存被本閘道之外的東西寫過）", en: " ({count} malformed events in storage were discarded — most likely storage was written by something other than this gateway)", ja: "（ストレージ内の不正なイベント {count} 件を破棄しました。本ゲートウェイ以外から書き込まれた可能性が高いです）", ko: "(저장소의 잘못된 이벤트 {count}건을 버렸습니다. 이 게이트웨이 외부에서 기록되었을 가능성이 높습니다)" },
+  // 本任务：后端吐的 `cursor` 既不是有限数字也不是 null ⇒ **后端契约被破坏了**。
+  // 原来这一支与"本页没有新事件"合并，面板把它显示成"一切正常"——那是撒谎，
+  // 而且撒的正是让人查不下去的那种（游标永远推不动，读吞吐 3.9 倍于包线）。
+  "ev.pollStatus.cursorBrokenSuffix": { "zh-CN": "（后端返回的游标不合契约，已保留上一个游标；面板可能看不到新事件）", "zh-TW": "（後端回傳的游標不合契約，已保留上一個游標；面板可能看不到新事件）", en: " (the cursor returned by the backend violates the contract; the previous cursor was kept — new events may not appear)", ja: "（バックエンドが返したカーソルが契約に反しています。直前のカーソルを保持しました。新しいイベントが表示されない可能性があります）", ko: "(백엔드가 반환한 커서가 계약을 위반했습니다. 이전 커서를 유지했으며 새 이벤트가 표시되지 않을 수 있습니다)" },
 
   // dropped/budgetExhausted/truncated/cursorAhead 四条黄条文案：**各自独立**，
   // 由响应对应字段各自驱动，不是同一句话的两种措辞（见 pure/events.mjs 的

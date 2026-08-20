@@ -75,6 +75,40 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   where a cold-started isolate's first flush bypassed throttling entirely — every isolate
   cold start used to send one zero-gate write, and now the first flush after cold start goes
   through the same minimum-interval gate as every other flush.
+- **Registrar write side (new in P3c Task 1) — this entire section only exists when
+  `registrar.enabled` is true.** On a default deployment (the registrar is off), the writes
+  added by this section are **0/day**, not "a few less". When it is on, every tend round pays
+  three items, **all hanging off one axis: the tend frequency** (on Worker that is the Cron in
+  `wrangler.toml`, `*/30 * * * *` by default = 48 rounds/day; on Node it is `TEND_INTERVAL_MS`):
+    - **Tend lock**: one put + one delete per round. This item already existed before this
+      change; it had simply never been written into this account.
+    - **Tend event persistence**: at most one put per round. **It is 0 when every round is
+      healthy** — a healthy round emits no `registrar.*` events at all, and an empty buffer
+      is never flushed.
+    - **Tend history (`tend:history`)**: one get + one put per round, **unconditionally**.
+      Single key, no fan-out.
+  ⚠️ **Do not read these three through `EVENT_WRITES_PER_DAY` (12 per isolate per day).**
+  That gate is built for the `fetch` path, where the premise is "one isolate serves many
+  requests, so the budget is consumed repeatedly on a long-lived instance". On the tend path
+  each round is very likely a **brand-new isolate** (Worker's `scheduled()`) that flushes once
+  in its life and carries a fresh budget every time ⇒ **on this axis that gate neither stops
+  anything nor constitutes any upper bound**. The real bound is the tend frequency itself:
+  **tightening the Cron or lowering `TEND_INTERVAL_MS` scales all three items proportionally.**
+- **Write-side totals, in three columns keyed on `registrar.enabled`** (20 keys, 8 concurrent
+  isolates):
+
+  | Scenario | puts/day | share of the write quota |
+  |---|---|---|
+  | **Registrar off (default)**, nobody operating | **176** | **17.6%** |
+  | Registrar on, **every round healthy**, nobody operating | **272** | **27.2%** |
+  | Registrar on, **every round producing failure events**, nobody operating | **320** | **32.0%** |
+
+  ⚠️ **None of these three is an upper bound; each is a current value.** The 96/day item equals
+  `12 × concurrent isolate count`, and that count varies with the geographic distribution of
+  your traffic — **you cannot set it yourself**. Plan headroom accordingly; do not treat 272 or
+  320 as a ceiling.
+  The **`delete` bucket** is counted separately: the tend lock releases 48 times a day, and
+  that bucket is nearly idle today.
 - **Events board reads (post-C4/C4b-fix figures, more conservative than the earlier draft)**:
   polling no longer depends on an index, so the number of candidate keys is **hard-bounded** —
   no matter how stale `after` is or how many days the deployment has been running, a single
@@ -95,6 +129,10 @@ its writes grow with request count, so the budget is "so many per day", not "so 
       cursor never advances, and once the frozen cursor falls out of the 24-hour retention
       window, **every subsequent poll costs the full 48 gets**; at the same time, with no new
       content, exponential backoff pushes the poll interval up to the 60-second cap. The
+      ⚠️ **That figure is a steady-state *idle* envelope, not an upper bound.** It assumes the
+      board is simply left open with nobody touching it. Interactive paths are not in it: every
+      click on a level filter is a full cold read, and returning to this board or making the tab
+      visible again also triggers a round immediately — **none of these are throttled today**.
       steady state is `(86400 ÷ 60) × (48 + 1) = 70,560` gets/day (about **71%** of the read
       quota). The `+1` is **the configuration read each poll round triggers on its own**: the
       config-refresh middleware runs ahead of every route and the config cache TTL is 30

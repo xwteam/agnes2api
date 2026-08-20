@@ -100,18 +100,28 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
     const limit = intParam(c.req.query("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT);
     const now = deps.now();
 
-    const { items: merged } = await deps.storeLogger.readEvents(after);
+    const { items: merged, malformed } = await deps.storeLogger.readEvents(after);
     const filtered = merged
       .filter((e) => after === null || e.ts > after)
       .filter((e) => level === null || e.level === level);
     const items = filtered.slice(0, limit);
 
+    // `cursor` 只有两种合法值：**有限数字，或 `null`。永远不许是 `undefined`**——
+    // `undefined` 会被 `c.json` 整个丢掉，前端的游标判据读到"字段不存在"，
+    // 与"没有新事件"完全无法区分（本计划 W2/W3 实测：游标就此冻结，稳态读吞吐
+    // 276,480 次/天 = 包线 70,560 的 3.9 倍，且默认「全部级别」档位下不会自愈）。
+    // 经过 `narrowShard` 之后 `items[0].ts` 必然已经是有限数字，**但契约要被钉住
+    // 而不是被推理保证**：这一行与那次窄化是两道独立的闸，删掉任何一道另一道都还在。
+    const head = items[0];
+    const cursor = head !== undefined && Number.isFinite(head.ts) ? head.ts : null;
+
     const status = deps.storeLogger.status();
     return c.json({
       items,
       // 归并结果按 ts 降序，`items[0]` 是本页最新的一条；空结果给 null，
-      // 前端据此判断「保留上一次的 after」还是「推进到新值」（见 pure/events.mjs 的 nextAfter）。
-      cursor: items.length > 0 ? items[0]!.ts : null,
+      // 前端据此判断「保留上一次的 after」还是「推进到新值」（见 pure/events.mjs 的
+      // cursorOutcome —— 它把"没有新事件"与"后端契约被破坏了"分成两支）。
+      cursor,
       // **本 isolate** 的自述状态与标识（评审 M2：多 isolate 下相邻两次轮询可能落到
       // 不同 isolate，`buffered`/`dropped`/`budgetExhausted` 因此可能来回跳——
       // 带上 `shardId` 面板才能把"这句话说的是哪一个 isolate"钉清楚）。
@@ -121,6 +131,15 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
       budgetExhausted: status.budgetExhausted,
       // 过滤/截断确实丢掉了一部分本该出现的旧事件（评审 I3）。
       truncated: filtered.length > items.length,
+      // **这次读里被逐条丢掉的畸形条目数。`src/` 里没有任何路径能产出它，所以它
+      // 恒为 0 ——「恒为 0」正是它的价值**：它是那几条 `narrowEntries` 用例在生产
+      // 环境里的对照组。运维手改 KV、KV 值损坏、`store.json` 被写到一半时，它是
+      // **唯一**能把「面板少了几条事件」和「本来就没有事件」区分开的信号。
+      // **刻意不进 `shouldWarn`**：黄条是给「现在有问题」用的，一个恒为 0 的字段
+      // 挂上去只会让判据多一条永远为假的分支——那是「形状断言冒充行为断言」在
+      // 产品面上的等价物。改成接进轮询指示灯的 tooltip（`buffered` 在 P3b 走的
+      // 就是这条路）。**代价明写**：它平时不显眼，出事时要运维去看 tooltip 才发现。
+      malformed,
       // 游标领先于本次请求的时钟（评审 C6）：空结果不代表没有事件，是时钟纠纷。
       cursorAhead: after !== null && windowIndex(after) > windowIndex(now),
       generatedAt: now,
@@ -134,7 +153,8 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
  * **刻意返回裸 `Response` 而不是 `c.text()`**：progress.md 登记的 N2 说「第一个返回
  * 裸 Response 的管理端点一出现，写反的 nosniff 顺序就让它静默少一条头」，而 P3a 的
  * 路由清单下那条变异是**不可观测**的。这里主动把它变成可观测的，并配一条契约断言
- * （见 tests/contract/admin-events.test.ts）。**别顺手改成 `c.text()`**——那会把这条
+ * （见 `tests/contract/admin-events.test.ts` 的
+ * 「下载端点是裸 Response，且**仍然**带全局 nosniff」）。**别顺手改成 `c.text()`**——那会把这条
  * 护栏又变回摆设（变异表已实测：`c.text()` 抓不住这条，两种写法都带 nosniff，
  * 这条差异只能靠注释 + 评审守住）。
  *

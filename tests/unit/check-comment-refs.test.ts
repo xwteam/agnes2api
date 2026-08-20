@@ -165,20 +165,70 @@ describe("scripts/check-comment-refs.mjs 元测试：规则 A（指向必须解�
   });
 });
 
+/**
+ * **规则 B 的词表边界，两张表，都是会变红的断言。**
+ *
+ * 照抄 `tests/unit/source-guards.test.ts` 的 `COVERED` / `BLIND_SPOTS` 形状，
+ * 理由也一样：**任何基于关键词的门禁都不可能完备**，与其在脚本注释里反复宣称
+ * 覆盖范围，不如把「认得哪些、认不得哪些」一起变成断言。
+ * **一道以「不许写成散文」为全部理由的门禁，自己更不能把边界写成散文。**
+ *
+ * ⚠️ 期望值一律手写字面量，不从 `CLAIM_MARKERS` 反算——回填出来的期望值恒等于
+ * 实际值，那条断言永远绿（本仓登记的第 6 种假阳性）。
+ */
+const COVERED: ReadonlyArray<{ claim: string; why: string }> = [
+  { claim: "这条由 `tests/x.test.ts` 钉住。", why: "钉住" },
+  { claim: "这条由 `tests/x.test.ts` 钉着。", why: "钉着" },
+  { claim: "这条由 `tests/x.test.ts` 钉死。", why: "钉死" },
+  { claim: "这条由 `tests/x.test.ts` 守着。", why: "守着" },
+  { claim: "改坏了 `tests/x.test.ts` 会变红。", why: "会变红" },
+  { claim: "改坏了 `tests/x.test.ts` 就变红。", why: "变红" },
+  // ── 本任务新增的五个（V22：原来这五种说法门禁一个都看不见）──
+  { claim: "这条由 `tests/x.test.ts` 保证。", why: "由 X 保证" },
+  { claim: "这条已核实，见 `tests/x.test.ts`。", why: "已核实" },
+  { claim: "已实测：`tests/x.test.ts` 会拦下这个变异。", why: "已实测" },
+  { claim: "这个变异 `tests/x.test.ts` 拦得住。", why: "拦得住" },
+  { claim: "这个变异 `tests/x.test.ts` 抓得住。", why: "抓得住" },
+];
+
+/**
+ * **已知认不得的措辞。** 判据是子串匹配、不是语义判断，所以**换个说法就能绕过去**。
+ * 这不是"还没做完"，是这道门禁的**能力边界**：它给「顺手写下一句断言」加一道摩擦，
+ * 不给「刻意绕开」设一道墙。哪天某一条被覆盖了，这一格会变红，逼人把它从这里删掉
+ * 并挪进 `COVERED`——那是设计，不是故障。
+ */
+const BLIND_SPOTS: ReadonlyArray<{ claim: string; why: string }> = [
+  { claim: "这条逻辑很安全，见 `tests/x.test.ts`。", why: "「很安全」不含任何关键词" },
+  { claim: "改坏了 `tests/x.test.ts` 会失败。", why: "「会失败」是「会变红」的同义说法，词表里没有" },
+  { claim: "`tests/x.test.ts` 覆盖了这条。", why: "「覆盖」是本仓极常用的断言词，刻意没收进去——它同时也大量出现在纯描述句里" },
+  { claim: "这条不会出问题，`tests/x.test.ts` 试过。", why: "「试过」「不会出问题」都不在词表里" },
+];
+
 describe("scripts/check-comment-refs.mjs 元测试：规则 B（带断言性措辞就必须给得出指向）", () => {
-  it.each(["钉住", "钉着", "钉死", "守着", "会变红"])(
-    "写了「%s」却只给裸文件名：exit 1",
-    (marker) => {
-      const r = run({
-        files: {
-          "tests/x.test.ts": TARGET,
-          "src/a.ts": `/** 这条由 \`tests/x.test.ts\` ${marker}。 */\nexport const a = 1;\n`,
-        },
-      });
-      expect(r.status, `「${marker}」没有触发规则 B`).toBe(1);
-      expect(r.stderr).toContain("只给了裸文件名");
-    },
-  );
+  it.each(COVERED)("声称认得的措辞真的触发规则 B：$why", ({ claim, why }) => {
+    const r = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": `/** ${claim} */\nexport const a = 1;\n`,
+      },
+    });
+    expect(r.status, `「${why}」没有触发规则 B`).toBe(1);
+    expect(r.stderr).toContain("只给了裸文件名");
+  });
+
+  it.each(BLIND_SPOTS)("已知认不得的措辞确实不触发规则 B：$why", ({ claim }) => {
+    const r = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": `/** ${claim} */\nexport const a = 1;\n`,
+      },
+    });
+    expect(
+      r.status,
+      "这条措辞现在被认出来了？把它从 BLIND_SPOTS 挪进 COVERED，"
+      + "并去掉 `scripts/check-comment-refs.mjs` 里 CLAIM_MARKERS 那段对应的边界说明",
+    ).toBe(0);
+  });
 
   it("同样的裸文件名，注释里**没有**断言性措辞时不报错（规则 B 不是「提到测试就要给行号」）", () => {
     const r = run({
@@ -306,7 +356,7 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       .map((s) => s.replace("ignored ", "").replace(/:\d+$/, ""))
       .sort();
     expect(used, "有人加了新的 @refs-ignore 豁免——请在这里表态说明理由").toEqual([
-      // 门禁脚本自己：文件头、逐块豁免的说明、整份豁免的说明——三段都要举
+      // 门禁脚本自己：文件头的标本段、逐段豁免的说明、整份豁免的说明——三段都要举
       // 不存在的示例路径，那正是它们在讲的事。
       "scripts/check-comment-refs.mjs",
       "scripts/check-comment-refs.mjs",
@@ -319,7 +369,12 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       // 掩码：要点名 B3 删掉的那个前端副本。
       "src/core/admin/key-view.ts",
       // 收集门禁：讲第一版 `tests/unit/test-collection.test.ts` 的教训；
-      // 以及过滤器判定那一段里的示例文件名。
+      // 以及过滤器判定那一段里的两处示例文件名。
+      // ⚠️ **这里从 2 条变成 3 条是本任务把豁免收窄到「段级」的直接后果**：
+      // 过滤器判定那一块注释里，两个虚构路径分处**两段**，段级豁免下各要一个标记
+      // （块级时一个标记盖住整块）。这正是这份手写清单存在的意义——范围变了，
+      // 清单就得跟着改，改动会出现在评审的 diff 里。
+      "tests/global-setup.ts",
       "tests/global-setup.ts",
       "tests/global-setup.ts",
       // 同样要点名 B3 删掉的两个前端文件。
@@ -330,5 +385,86 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       // 举例说明「带了过滤器」长什么样。
       "tests/unit/scripts-guard.test.ts",
     ]);
+  });
+});
+
+/**
+ * **逐段豁免（本任务把它从逐块收窄到逐段）。**
+ *
+ * 防住的真实故障：「把旧的**错**指向留作标本」和「刚更正的**活**指向」**天然写在
+ * 同一块注释里**——`src/core/admin/event-ring.ts` 与门禁脚本自己的文件头都是这个
+ * 形态。块级豁免把两者一起放行，于是那 13 段豁免块里藏着 19 条今天仍然解析得开的
+ * 活指向，全都不在校验范围内；`src/core/admin/key-view.ts` 那条已经腐烂了 2 行，
+ * 而门禁一声都没吭。
+ */
+describe("scripts/check-comment-refs.mjs 元测试：豁免是「段级」的，不是「块级」", () => {
+  /** 一块注释，两段：第一段带标记（里面的坏指向该放行），第二段不带（该照常校验）。 */
+  const TWO_PARAGRAPHS = `/**
+ * @refs-ignore（本段刻意举一条不存在的指向当标本）
+ * 见 \`tests/gone.test.ts\`。
+ *
+ * 而这一段里的 \`tests/also-gone.test.ts\` 是活指向，必须照常校验。
+ */
+export const a = 1;
+`;
+
+  it("① 同一块注释里，豁免段**之外**的坏指向仍然 exit 1", () => {
+    // 变红条件：把逐段豁免还原成块级（`if (block.text.includes(MARKER)) continue`）
+    const r = run({ files: { "src/a.ts": TWO_PARAGRAPHS } });
+    expect(r.status, r.stdout).toBe(1);
+    expect(r.stderr, "被报出来的必须是豁免段之外那一条").toContain("tests/also-gone.test.ts");
+    expect(r.stderr, "豁免段之内那一条不许被报出来").not.toContain("tests/gone.test.ts");
+  });
+
+  it("② 豁免段**之内**的坏指向仍然放行（收窄不等于把逃生口堵死）", () => {
+    // 变红条件：把豁免整个删掉 ⇒ `tests/gone.test.ts` 也会被报出来
+    const r = run({
+      files: {
+        "src/a.ts": `/**
+ * @refs-ignore（本段刻意举一条不存在的指向当标本）
+ * 见 \`tests/gone.test.ts\`。
+ */
+export const a = 1;
+`,
+      },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("1 段注释用了 @refs-ignore");
+  });
+
+  /**
+   * **段的边界是「空注释行」，这一条要能被读者预测。**
+   * 标记单独成段（后面紧跟一个空注释行）时，它**只**豁免自己那一行——
+   * 想豁免哪几句就得跟那几句写在一起。这不是实现细节，是使用者每次都要做的决定。
+   */
+  it("标记单独成段时只豁免它自己那一行，下一段照常校验", () => {
+    const r = run({
+      files: {
+        "src/a.ts": `/**
+ * @refs-ignore（标记自己单独一段）
+ *
+ * 见 \`tests/gone.test.ts\`。
+ */
+export const a = 1;
+`,
+      },
+    });
+    expect(r.status, "标记与它要豁免的话之间隔了一个空注释行，那一句不该被豁免").toBe(1);
+    expect(r.stderr).toContain("tests/gone.test.ts");
+  });
+
+  it("规则 B 同样按段走：豁免段里的裸文件名 + 断言性措辞不再触发", () => {
+    const r = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": `/**
+ * @refs-ignore（本段刻意用裸文件名当标本）
+ * 这条由 \`tests/x.test.ts\` 钉住。
+ */
+export const a = 1;
+`,
+      },
+    });
+    expect(r.status, r.stderr).toBe(0);
   });
 });

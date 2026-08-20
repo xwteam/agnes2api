@@ -147,6 +147,11 @@ export function generatedAtOf(body) {
  *   唯一一个响应里给了但没有任何地方读的字段，这里补上。
  * - `cursorAhead`（评审 C6）：`after` 领先于本次请求的时钟（时钟回拨 / isolate
  *   间时钟偏移），`items` 恒为空但这**不代表没有新事件**，前端必须能区分开。
+ * - `malformed`（本任务）：这一次读里被逐条丢掉的畸形条目数。`src/` 里没有任何
+ *   路径能产出它，**恒为 0 正是它的价值**——运维手改存储 / KV 值损坏 /
+ *   `store.json` 被写到一半时，它是唯一能把「面板少了几条事件」与「本来就没有
+ *   事件」区分开的信号。**刻意不进 `shouldWarn`**（见那个函数的说明），
+ *   只进轮询指示灯的 tooltip，与 `buffered` 走同一条路。
  */
 export function bufferStatus(body) {
   const dropped = body && typeof body === "object" ? body.dropped : null;
@@ -154,12 +159,14 @@ export function bufferStatus(body) {
   const truncated = body && typeof body === "object" ? body.truncated : null;
   const buffered = body && typeof body === "object" ? body.buffered : null;
   const cursorAhead = body && typeof body === "object" ? body.cursorAhead : null;
+  const malformed = body && typeof body === "object" ? body.malformed : null;
   return {
     dropped: typeof dropped === "number" && Number.isFinite(dropped) ? dropped : null,
     budgetExhausted: typeof budgetExhausted === "boolean" ? budgetExhausted : null,
     truncated: typeof truncated === "boolean" ? truncated : null,
     buffered: typeof buffered === "number" && Number.isFinite(buffered) ? buffered : null,
     cursorAhead: typeof cursorAhead === "boolean" ? cursorAhead : null,
+    malformed: typeof malformed === "number" && Number.isFinite(malformed) ? malformed : null,
   };
 }
 
@@ -172,6 +179,10 @@ export function bufferStatus(body) {
  * "缓冲区里还有事件没落盘"是运行中的正常状态（还没到落盘时机而已），只有搭配
  * "isolate 可能被回收"这层风险才值得说，这条风险不是靠一个数字大小能判断的，
  * 交给轮询指示灯的 tooltip 常驻显示（见 `sec-events.js`），不占用黄条。
+ *
+ * **也不含 `malformed`**（本任务，刻意的）：`src/` 里没有任何路径能产出畸形条目，
+ * 它恒为 0，挂上来只会让黄条的判据多一条**永远为假**的分支——那是「形状断言
+ * 冒充行为断言」在产品面上的等价物。它与 `buffered` 一样走 tooltip。
  */
 export function shouldWarn(status) {
   return (status.dropped !== null && status.dropped > 0)
@@ -181,13 +192,33 @@ export function shouldWarn(status) {
 }
 
 /**
- * 下一次轮询该带的 `after` 游标。
+ * 下一次轮询该带的 `after` 游标，**以及后端契约有没有被破坏**。
  *
- * `cursor` 为 `null`（本页没有新事件）时**保留当前值**，不能回退成 null 或某个
- * 旧值——那会让下一次轮询把已经看过的事件重新拉一遍。`cursor` 是数字时才推进。
+ * 三种输入，三种语义，**不许合并成两种**：
+ * · `cursor` 是有限数字 ⇒ 推进。
+ * · `cursor` 是 `null` ⇒ **本页没有新事件**，保留当前值。不能回退成 null 或某个
+ *   旧值——那会让下一次轮询把已经看过的事件重新拉一遍。
+ * · `cursor` 是别的（缺字段 / `undefined` / `NaN` / 字符串）⇒ **后端契约被破坏了**，
+ *   保留当前值**但把这件事说出去**。
+ *
+ * 原来第三支与第二支是合并的（`nextAfter` 一个三元表达式），于是「后端在吐畸形
+ * 数据」被显示成「一切正常，只是没有新事件」——**面板在撒谎**，而且撒的正是让人
+ * 查不下去的那种谎：游标永远推不动，每一轮都是满额 48 次 get 的冷读，稳态读吞吐
+ * 276,480 次/天（包线 70,560 的 3.9 倍），面板上却什么异常都看不到。
+ */
+export function cursorOutcome(current, cursor) {
+  if (typeof cursor === "number" && Number.isFinite(cursor)) return { after: cursor, broken: false };
+  if (cursor === null) return { after: current, broken: false };
+  return { after: current, broken: true };
+}
+
+/**
+ * 下一次轮询该带的 `after` 游标（只要取值那一半）。
+ * **判据只有 `cursorOutcome` 一份**，这里不重新实现——同一个判据的第二份实现
+ * 正是本仓裁过三次的那一族。
  */
 export function nextAfter(current, cursor) {
-  return typeof cursor === "number" && Number.isFinite(cursor) ? cursor : current;
+  return cursorOutcome(current, cursor).after;
 }
 
 /**
@@ -295,11 +326,19 @@ export function pollOutcome(prev, items, cursor, cursorAhead) {
   const healed = cursorAhead === true;
   const currentAfter = typeof state.after === "number" && Number.isFinite(state.after) ? state.after : null;
   const wasHealing = state.healing === true;
-  const nextAfterValue = healed ? null : nextAfter(currentAfter, cursor);
-  const hadNewItems = wasHealing ? false : (Array.isArray(items) && items.length > 0);
+  const outcome = cursorOutcome(currentAfter, cursor);
+  const nextAfterValue = healed ? null : outcome.after;
+  // **`broken` 时不许把 `hadNewItems` 判成真** —— 那正是 W3 那条 276,480 的直接
+  // 成因：游标畸形 ⇒ 每轮都是冷读 ⇒ `items` 恒非空 ⇒ 退避每轮被顶回 15 秒。
+  // 判据放在这里而不是板块文件里：它是跨轮状态转换，不是渲染（硬规则 1）。
+  const hadNewItems = (wasHealing || outcome.broken)
+    ? false
+    : (Array.isArray(items) && items.length > 0);
   return {
     resetView: healed,
     hadNewItems,
+    /** 后端这一轮吐的 `cursor` 不是「数字或 null」——面板必须说出去，不许显示成"正常"。 */
+    cursorBroken: outcome.broken,
     next: {
       after: nextAfterValue,
       healing: healed ? true : (nextAfterValue !== null ? false : wasHealing),

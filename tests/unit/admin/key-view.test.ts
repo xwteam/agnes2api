@@ -24,8 +24,7 @@ describe("KeyView 永不含明文", () => {
     }
   });
   /**
-   * @refs-ignore（要点名那个已被删掉的前端副本）
-   *
+   * @refs-ignore（本段要点名那个已被删掉的前端副本）
    * ⚠️ **这里原来还有一格「maskKey 与前端那份 `pure/mask.mjs` 在同一组夹具上结果
    * 一致」，随 `admin-ui/js/pure/mask.mjs` 一起删掉了**（全分支评审 B3）。
    *
@@ -50,10 +49,9 @@ describe("KeyView 永不含明文", () => {
 });
 
 /**
- * @refs-ignore（要点名那两个已被删掉的前端文件）
- *
  * **分档必须与真实调度语义一致。**
  *
+ * @refs-ignore（本段要点名那两个已被删掉的前端文件）
  * ⚠️ **这组 CASES 原本是从 `tests/ui/bucket.test.ts` 逐格搬过来的，别再"精简"回去。**
  *（那份前端副本与 `admin-ui/js/pure/bucket.mjs` 已在全分支评审 B3 一并删除——
  *  面板显示的 `bucket` 来自本文件测的这一份，前端那份零导入者。**这里就是这条

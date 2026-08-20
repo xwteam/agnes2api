@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { CountingStorage } from "../helpers/counting-storage.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
+import { shardKey, windowIndex } from "../../src/core/admin/event-ring.js";
 
 const AUTH = { headers: { "x-admin-key": TEST_ADMIN_TOKEN } };
 
@@ -35,6 +36,7 @@ interface EventsBody {
   budgetExhausted: boolean;
   truncated: boolean;
   cursorAhead: boolean;
+  malformed: number;
   generatedAt: number;
 }
 
@@ -102,6 +104,40 @@ describe("GET /admin/api/events", () => {
     await app.request("/admin/api/session"); // 第二次的收尾把第一次攒的落盘
     const keys = await st.inner.list("event:");
     expect(keys.some((k) => k.startsWith("event:")), "事件没有落盘").toBe(true);
+  });
+
+  /**
+   * **`fetch` 路径仍然受最小间隔节流 —— 这条闸不许被顺手拆掉。**
+   *
+   * 本任务给 `StoreLogger` 加了一个**绕过最小间隔**的 `flush()`（补池那条路必须
+   * 用它，否则跑得快的那一轮一条事件都写不出去）。它是个逃生口：`src/http/app.ts`
+   * 里那行 `logFlush(() => storeLogger.maybeFlush())` 一旦被顺手改成 `flush()`，
+   * §8.5 点名的那根杠杆就彻底放开了——白名单里的 `admin.login_failed` 是**任何
+   * 未鉴权请求都能触发**的，等于让攻击者按请求数驱动 KV 写。
+   *
+   * 变异实测（本任务）：把 app.ts 那一行改成 `flush()`，**这一格是全套 1400+
+   * 用例里唯一变红的**——上面几格都在推进 61 秒的时钟，不推时钟的这一格才是
+   * 那道闸的观测点。
+   *
+   * 时钟**刻意不推进**：三次请求落在同一个最小间隔窗口内，只有第一次收尾
+   * （距构造时刻已过 61 秒）会真的写。
+   */
+  it("fetch 路径仍然受最小间隔节流：同一窗口内连打三次请求，事件分片只写一次", async () => {
+    let t = 1000;
+    const st = new CountingStorage(new MemoryStorage(undefined, () => t));
+    // 只在**装配之后**推进一次，之后 now 恒定 ⇒ 后续请求全部落在同一个间隔窗口内。
+    const { app } = await makeApp([], ["k1"], {}, () => t, { storage: st });
+    t += 61_000;
+    await app.request("/admin/api/session"); // 攒一条 admin.login_failed
+    await app.request("/admin/api/session"); // 这一次的收尾把上一条落盘
+    const after2 = st.puts;
+    await app.request("/admin/api/session");
+    await app.request("/admin/api/session");
+    expect(
+      st.puts - after2,
+      "同一个最小间隔窗口内的后续请求不许再落盘——那道闸被拆了",
+    ).toBe(0);
+    expect(after2, "前置条件：第一次收尾确实写了一次，不是整段都没写").toBeGreaterThan(0);
   });
 
   /**
@@ -387,5 +423,183 @@ describe("GET /admin/api/events/download", () => {
     const text = await res.text();
     expect(text).not.toContain(TEST_ADMIN_TOKEN);
     expect(text).not.toContain("guessed-secret-value");
+  });
+});
+
+/**
+ * **W2 那条 Critical 的端点级回归，五种形态逐条穷举（不是抽样）。**
+ *
+ * 触发条件如实写：`src/` 里今天没有产出畸形分片值的代码路径，已知的现实来源是
+ * **存储外部**——运维手改 KV / `store.json`、KV 值损坏、Node 侧进程被杀时
+ * `store.json` 写到一半。**这不是"不可达"，是"不经我们的代码可达"**，
+ * 所以夹具直接往存储里写，而不是去构造一条产出它的代码路径。
+ *
+ * 修复前的实测结果逐行记在每一格里，别把它们读成"现在的行为"。
+ */
+describe("存储里的畸形事件条目：端点必须活着，且游标契约不许破", () => {
+  const AT = 1000;
+  /** 把一个任意值直接摆进第 0 个时间窗的第 0 号槽位。 */
+  async function withShard(value: unknown) {
+    const t = AT;
+    const storage = new MemoryStorage(undefined, () => t);
+    await storage.put(shardKey(windowIndex(t), 0), value);
+    return makeApp([], ["k1"], {}, () => t, { storage });
+  }
+
+  it("单条 [null]：修复前 500，现在 200 且 items 为空、cursor 为 null", async () => {
+    // 变红条件（M1）：narrowShard 退回 `Array.isArray(s) ? s : []`
+    const { app } = await withShard([null]);
+    const { status, body } = await getEvents(app);
+    expect(status, "一条 null 让整个事件板块 500").toBe(200);
+    expect(body.items).toEqual([]);
+    expect(body.cursor).toBeNull();
+    expect(body.malformed, "丢了几条要能被数出来 —— 静默丢弃就是撒谎").toBe(1);
+  });
+
+  it("[null] 且带 ?after=1：修复前同样 500（抛点在 filter 那一行，不是 mergeShards）", async () => {
+    const { app } = await withShard([null]);
+    const { status, body } = await getEvents(app, "?after=1");
+    expect(status).toBe(200);
+    expect(body.items).toEqual([]);
+  });
+
+  it("[null, 好条目]：坏的被丢掉，好的照常返回（不是整片丢掉）", async () => {
+    const { app } = await withShard([null, { ts: 5, level: "info", event: "good" }]);
+    const { status, body } = await getEvents(app);
+    expect(status).toBe(200);
+    expect(body.items.map((e) => e.event)).toEqual(["good"]);
+    expect(body.cursor).toBe(5);
+    expect(body.malformed).toBe(1);
+  });
+
+  /**
+   * **最要命的那两种根本不 500。** 修复前它们一路通过、原样进 `items`，
+   * 并且让 `cursor` 变成 `undefined` ⇒ `c.json` 把该字段**整个丢掉** ⇒
+   * 前端读到"字段不存在" ⇒ 游标永远推不动 ⇒ 稳态读吞吐 276,480 次/天。
+   * 所以这两格除了断言条目被丢掉，**还必须断言 `cursor` 这个字段本身存在**。
+   */
+  it("字符串条目：被丢掉，且响应体里 cursor 字段必须存在（修复前它整个消失）", async () => {
+    // 变红条件（M3）：handler 退回 `cursor: items[0]!.ts`
+    const { app } = await withShard(["evil-string", { ts: 5, level: "info", event: "good" }]);
+    const { status, body } = await getEvents(app);
+    expect(status).toBe(200);
+    expect(body.items.map((e) => e.event)).toEqual(["good"]);
+    expect("cursor" in body, "cursor 字段不许从响应体里消失").toBe(true);
+    expect(body.cursor).toBe(5);
+  });
+
+  it("缺 ts 的对象条目：同上，被丢掉且 cursor 字段还在", async () => {
+    const { app } = await withShard([{ level: "info", event: "no-ts" }, { ts: 5, level: "info", event: "good" }]);
+    const { body } = await getEvents(app);
+    expect(body.items.map((e) => e.event)).toEqual(["good"]);
+    expect("cursor" in body).toBe(true);
+    expect(body.cursor).toBe(5);
+  });
+
+  /**
+   * **`cursor` 只有两种合法值，逐种形态断言一次。** 这是契约本身，
+   * 与"某一种畸形输入被处理掉了"是两回事：即便全部条目都被丢光，
+   * `cursor` 也必须是 `null` 而不是消失、不是 `undefined`、不是 `NaN`。
+   */
+  it("整片都是畸形条目时，cursor 是 null（不是 undefined、不是 NaN）", async () => {
+    const { app } = await withShard(["a", null, 7, { level: "info" }, [], { ts: "5" }]);
+    const { status, body } = await getEvents(app);
+    expect(status).toBe(200);
+    expect(body.items).toEqual([]);
+    expect("cursor" in body).toBe(true);
+    expect(body.cursor).toBeNull();
+    expect(body.malformed).toBe(6);
+  });
+
+  it("ts 是 NaN 的条目也被丢掉 —— 它和缺 ts 是同一种不可排序", async () => {
+    const { app } = await withShard([{ ts: Number.NaN, level: "info", event: "nan" }]);
+    const { body } = await getEvents(app);
+    expect(body.items).toEqual([]);
+    expect(body.cursor).toBeNull();
+  });
+
+  it("整片不是数组（字符串 / 数字 / 对象）：当空分片，且 malformed 计 0 而不是瞎报", async () => {
+    for (const bad of ["abc", 7, { a: 1 }]) {
+      const { app } = await withShard(bad);
+      const { status, body } = await getEvents(app);
+      expect(status, JSON.stringify(bad)).toBe(200);
+      expect(body.items).toEqual([]);
+      expect(body.malformed, "整片不是数组属于「这把键还没被写过」那一类，不是畸形条目").toBe(0);
+    }
+  });
+
+  it("level 畸形的条目**原样保留**（那只是显示问题，归一化在前端）", async () => {
+    const { app } = await withShard([{ ts: 5, level: "loud", event: "kept" }]);
+    const { body } = await getEvents(app);
+    expect(body.items.map((e) => e.event)).toEqual(["kept"]);
+    expect(body.items[0]!.level, "后端一个字都不许改它的 level").toBe("loud");
+    expect(body.malformed, "它没有被丢，所以不计数").toBe(0);
+  });
+
+  /**
+   * **W3 轴 ④ 的代价，明写成用例，别让它变成一句没人验的话。**
+   * 畸形 `level` 的条目在「按级别筛选」时选不中（`e.level === level` 恒假），
+   * 只在「全部级别」下可见。**这是已知限制，登记不修。**
+   */
+  it("已知限制：level 畸形的条目按级别筛选时选不中，只在「全部级别」下可见", async () => {
+    const { app } = await withShard([{ ts: 5, level: "loud", event: "kept" }]);
+    expect((await getEvents(app)).body.items.length, "全部级别下看得到").toBe(1);
+    for (const lvl of ["debug", "info", "warn", "error"]) {
+      expect((await getEvents(app, `?level=${lvl}`)).body.items.length, lvl).toBe(0);
+    }
+  });
+
+  /**
+   * **下载端点不是同样的行为，W2 详表第 2 行**：单条 `[null]` 修复前它返回
+   * **200，正文是字面量 `null`**（`JSON.stringify(null)`），账本里没有这条。
+   * 两条以上时才 500。修复后两种都回空正文。
+   */
+  it("下载端点：畸形条目不再变成正文里的字面量 null，也不再 500", async () => {
+    const one = await withShard([null]);
+    const r1 = await one.app.request("/admin/api/events/download", AUTH);
+    expect(r1.status).toBe(200);
+    expect(await r1.text(), "正文曾经是字面量 null").toBe("");
+
+    const two = await withShard([null, { ts: 5, level: "info", event: "good" }]);
+    const r2 = await two.app.request("/admin/api/events/download", AUTH);
+    expect(r2.status, "两条以上时曾经 500").toBe(200);
+    expect(await r2.text()).toContain("good");
+  });
+
+  it("没有畸形数据时 malformed 恒为 0 —— 这正是它当对照组的全部价值", async () => {
+    const { app } = await withShard([{ ts: 5, level: "info", event: "good" }]);
+    expect((await getEvents(app)).body.malformed).toBe(0);
+  });
+
+  /**
+   * **handler 自己那道闸，单独钉一次。**
+   *
+   * ⚠️ **这一格是变异验证逼出来的，成因如实登记**：M3（`cursor` 退回
+   * `items[0]!.ts`）在**端到端**用例下 **ESCAPED** —— 因为经过 `narrowShard`
+   * 之后 `items[0].ts` 必然已经是有限数字，两种写法在那些状态下**数学上等价**
+   * （本仓登记的第 5 种假阳性：覆盖的状态让被测的选择不可观测）。
+   *
+   * 这**不是**"这条性质不成立"，是"观测点不对"：`events.ts` 那行是**第二道闸**，
+   * 只有在第一道（窄化）不存在时才看得出差别。所以观测点下沉一层——把这一个
+   * `storeLogger`（**app 持有的正是同一个实例**，`makeApp` 交出来的就是它）的
+   * `readEvents` 换掉，让 handler 收到一批畸形条目。跑的仍然是**真的**
+   * `eventsHandler` 与真的路由，只替换了它下面那一层。
+   *
+   * 换掉之后 M3 **CAUGHT**：`cursor` 变成 `undefined` ⇒ `c.json` 把字段整个丢掉。
+   */
+  it("handler 自己保证 cursor 是 number 或 null —— 即便下层交上来的是畸形条目", async () => {
+    const { app, storeLogger } = await makeApp();
+    for (const bad of [
+      [{ level: "info", event: "no-ts" }],
+      [{ ts: "5", level: "info", event: "string-ts" }],
+      [{ ts: Number.NaN, level: "info", event: "nan-ts" }],
+    ]) {
+      // 只替换 readEvents 这一层，handler / 路由 / 序列化全是真的。
+      storeLogger.readEvents = async () => ({ items: bad as never, malformed: 0 });
+      const { status, body } = await getEvents(app);
+      expect(status, JSON.stringify(bad)).toBe(200);
+      expect("cursor" in body, `cursor 字段从响应体里消失了：${JSON.stringify(bad)}`).toBe(true);
+      expect(body.cursor, `cursor 必须是 null 而不是 ${String(body.cursor)}`).toBeNull();
+    }
   });
 });

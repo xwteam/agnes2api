@@ -324,4 +324,170 @@ describe("StoreLogger", () => {
     });
     expect(logger.status().shardId).toBe("distinctive-shard-id");
   });
+
+  /**
+   * **写侧逐条窄化（P3c Task 1）。分片值的五种形态穷举，实测结果逐条记在用例名里。**
+   *
+   * 触发条件如实写：`src/` 里没有产出这些值的代码路径；已知的现实来源是**存储外部**
+   *（运维手改 KV / `store.json`、KV 值损坏、Node 侧进程被杀时 `store.json` 写到一半）。
+   * **这不是"不可达"，是"不经我们的代码可达"。**
+   */
+  describe("写侧：存储里的分片值畸形时（narrowShard 之前的两条真实缺陷）", () => {
+    /** 让 `logger` 在同一个窗口里对着预置值落一次盘，返回落回去的东西。 */
+    async function flushOnto(seed: unknown) {
+      let t = 1000;
+      const st = new MemoryStorage(undefined, () => t);
+      const key = shardKey(windowIndex(t + EVENT_FLUSH_MIN_INTERVAL_MS), slotOf("s1"));
+      await st.put(key, seed);
+      const errs: unknown[] = [];
+      const logger = new StoreLogger({
+        storage: st, now: () => t, shardId: "s1", onError: (e) => errs.push(e),
+      });
+      logger.log({ level: "info", event: "e1" });
+      t += EVENT_FLUSH_MIN_INTERVAL_MS;
+      await logger.maybeFlush();
+      return { stored: await st.get<unknown[]>(key), errs, logger };
+    }
+
+    /**
+     * **上游：字符串被 `[...cur]` 逐字符展开。**
+     * 修复前实测：`stored=["a","b","c",{…}] | errs=0 | dropped=0` ——**不抛、不报、
+     * 不留痕**，而 `"a".ts` 是 `undefined`，**正是让读侧游标冻住的那一种条目**。
+     * 一个标量进来，出去的是三份 Critical 的燃料。
+     * 变红条件（M2 的一半）：写侧 `narrowShard` 退回 `?? []`。
+     */
+    it("分片值是字符串：落回存储的数组里不许出现非对象元素", async () => {
+      const { stored, errs } = await flushOnto("abc");
+      expect(Array.isArray(stored)).toBe(true);
+      for (const e of stored!) {
+        expect(typeof e, "字符串被逐字符展开成单字符条目了").toBe("object");
+        expect(e).not.toBeNull();
+      }
+      expect(stored!.length, "只该有这一轮 log 的那一条").toBe(1);
+      expect(errs.length, "这条路径本来就不抛错，不许靠 onError 兜").toBe(0);
+    });
+
+    /**
+     * **下游：非字符串标量与对象让 `[...cur]` 抛 `TypeError`。**
+     * 修复前实测：`errs=1`、这一批事件**永久丢失**（`this.buffer = []` 在 `try`
+     * 之前），且 `truncatedCount(cur.length, …)` 在抛错前跑、`cur.length` 是
+     * `undefined` ⇒ **`persistedDropped` 变成 `NaN` 并对这个 isolate 终生粘住**
+     * ⇒ `NaN > 0` 是 `false` ⇒ 面板黄条永远不亮；`c.json` 又把 `NaN` 序列化成
+     * `null` ⇒ 面板读到"没有数据"。
+     * **⇒ 事件缺口是一小时的（键每小时换一把），而"面板说不出自己缺了东西"是终生的。**
+     * 变红条件（M2 的另一半）：写侧 `narrowShard` 退回 `?? []`。
+     */
+    it.each([["数字", 12345], ["对象", { a: 1 }], ["布尔", true]] as const)(
+      "分片值是%s：这一批事件照样落得进去，且 status().dropped 恒为有限数（不是 NaN）",
+      async (_why, seed) => {
+        const { stored, errs, logger } = await flushOnto(seed);
+        expect(errs.length, "不该再抛 TypeError").toBe(0);
+        expect(stored, "缓冲先清空、异常才发生 ⇒ 这一批被静默吞掉了")
+          .toEqual([{ ts: 1000, level: "info", event: "e1" }]);
+        const dropped = logger.status().dropped;
+        expect(Number.isFinite(dropped), `dropped 是 ${String(dropped)}，报警器被毒死了`).toBe(true);
+        expect(dropped).toBe(0);
+        // NaN 那条链的终点：面板判据 `dropped > 0` 与 JSON 序列化。
+        expect(JSON.parse(JSON.stringify({ dropped })).dropped, "NaN 会被序列化成 null").toBe(0);
+      },
+    );
+
+    /**
+     * **`undefined` / `null` 不在抛错集合里**，它们是完全正常的路径
+     *（原来那行 `(await get()) ?? []` 就把两者都接住了，实测 `errs=0`）。
+     * ⚠️ 这一格是对**计划自己那条订正**的复核：起草方最初写「`undefined` 会抛」，
+     * 结论来自**直接调 `appendRing(undefined)`——绕过了 `?? []`**（第 7 种假阳性，
+     * 测的是抄件不是原件）。本格打的是真入口。
+     */
+    it("分片值是 null / 键根本不存在：正常路径，不抛错也不计 dropped", async () => {
+      for (const seed of [null, undefined]) {
+        const { stored, errs, logger } = await flushOnto(seed);
+        expect(errs.length, String(seed)).toBe(0);
+        expect(stored).toEqual([{ ts: 1000, level: "info", event: "e1" }]);
+        expect(logger.status().dropped).toBe(0);
+      }
+    });
+
+    it("分片数组里混进坏条目：坏的被丢掉，好的原样留在存储里", async () => {
+      const { stored } = await flushOnto([null, "x", { ts: 1, level: "info", event: "old" }]);
+      expect(stored).toEqual([
+        { ts: 1, level: "info", event: "old" },
+        { ts: 1000, level: "info", event: "e1" },
+      ]);
+    });
+  });
+
+  describe("读侧：畸形条目被逐条丢掉，并且丢了几条要能被数出来", () => {
+    it("readEvents 交出 malformed 计数，且畸形条目不进 items", async () => {
+      const t = 1000;
+      const st = new MemoryStorage(undefined, () => t);
+      await st.put(shardKey(windowIndex(t), 0), [null, "x", { ts: 5, level: "info", event: "good" }]);
+      const logger = new StoreLogger({ storage: st, now: () => t, shardId: "s1", onError: () => {} });
+      const { items, malformed } = await logger.readEvents(null);
+      expect(items.map((e) => e.event)).toEqual(["good"]);
+      expect(malformed).toBe(2);
+    });
+
+    /**
+     * **`malformed` 随每次读返回，不是实例字段。** 这条与上面 `persistedDropped`
+     * 那条 `NaN` 教训是同一件事的两面：实例字段会跨请求粘住，两个并发请求各读一次
+     * 之后，谁的 handler 先读到那个字段就说了算。
+     */
+    it("上一次读到的 malformed 不会粘到下一次读上", async () => {
+      const t = 1000;
+      const st = new MemoryStorage(undefined, () => t);
+      await st.put(shardKey(windowIndex(t), 0), [null, { ts: 5, level: "info", event: "good" }]);
+      const logger = new StoreLogger({ storage: st, now: () => t, shardId: "s1", onError: () => {} });
+      expect((await logger.readEvents(null)).malformed).toBe(1);
+      await st.put(shardKey(windowIndex(t), 0), [{ ts: 5, level: "info", event: "good" }]);
+      expect((await logger.readEvents(null)).malformed, "上一次的 1 粘住了").toBe(0);
+    });
+  });
+
+  /**
+   * **`flush()` 与 `maybeFlush()` 的区别，单独钉一次。**
+   *
+   * 这不是一个可有可无的便利方法：Cron 触发的 `scheduled()` 每次很可能是一个**全新
+   * isolate**，构造那一刻 `lastFlushAt = now()`，而跑得快的那一轮（`need <= 0` 的
+   * 健康稳态、`provider_missing`、`registrar.round_budget_impossible` 都是毫秒级
+   * 返回）收尾时 `since` 远小于最小间隔 ⇒ `maybeFlush()` **一条都不写，而且
+   * `errs=0`、`dropped=0`、不抛不报**。本任务实测：24 个模拟窗口 × 48 次 Cron，
+   * `registrar.*` 写入 432 条、可见 **0** 条，丢失率 **100%**。
+   */
+  describe("flush()：绕过最小间隔闸，给「调用频率本身已有上界」的调用方用", () => {
+    it("构造之后不推进时钟：maybeFlush() 一条不写，flush() 照写", async () => {
+      const stA = new CountingStorage();
+      const a = new StoreLogger({ storage: stA, now: () => 1000, shardId: "s1", onError: () => {} });
+      a.log({ level: "warn", event: "registrar.x" });
+      await a.maybeFlush();
+      expect(stA.puts, "前置条件：最小间隔闸确实拦住了 maybeFlush()").toBe(0);
+
+      const stB = new CountingStorage();
+      const b = new StoreLogger({ storage: stB, now: () => 1000, shardId: "s1", onError: () => {} });
+      b.log({ level: "warn", event: "registrar.x" });
+      await b.flush();
+      expect(stB.puts, "flush() 必须绕过那道闸").toBe(1);
+      expect(b.status().buffered).toBe(0);
+    });
+
+    it("flush() 仍然受每天写预算约束（绕过的只是间隔闸，不是预算）", async () => {
+      const st = new CountingStorage();
+      let t = 1000;
+      const logger = new StoreLogger({ storage: st, now: () => t, shardId: "s1", onError: () => {} });
+      for (let i = 0; i < 13; i++) {
+        t += 1; // 刻意**不**推进过最小间隔：验的就是 flush() 不看它
+        logger.log({ level: "info", event: `e${i}` });
+        await logger.flush();
+      }
+      expect(st.puts, "预算是 12/天，第 13 次不该写").toBe(12);
+      expect(logger.status().budgetExhausted).toBe(true);
+    });
+
+    it("缓冲是空的时候 flush() 不写 —— 健康的那一轮产出 0 条事件，就该是 0 次 put", async () => {
+      const st = new CountingStorage();
+      const logger = new StoreLogger({ storage: st, now: () => 1000, shardId: "s1", onError: () => {} });
+      await logger.flush();
+      expect(st.puts, "空缓冲还去写一次，配额账里「健康时为 0」那一栏就是假的").toBe(0);
+    });
+  });
 });

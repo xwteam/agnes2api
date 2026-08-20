@@ -1,13 +1,14 @@
 import { serve } from "@hono/node-server";
 import { setTimeout as nodeSetTimeout } from "node:timers";
 import { pathToFileURL } from "node:url";
-import { buildApp, buildTendDeps } from "../http/wire.js";
+import { buildApp, buildTendDeps, type TendRoundDeps } from "../http/wire.js";
 import { FileStorage } from "../adapters/storage-file.js";
 import { KeyPoolRepo } from "../core/keypool-repo.js";
 import { ConsoleLogger } from "../adapters/logger-console.js";
+import { StoreLogger } from "../adapters/logger-store.js";
+import { multiLogger } from "../adapters/logger-multi.js";
 import { nodeRuntime } from "../adapters/runtime-node.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
-import type { TendDeps } from "../core/registrar/tender.js";
 import { loadConfig } from "../core/config.js";
 import { startTendScheduler } from "../core/tend-scheduler.js";
 
@@ -61,9 +62,32 @@ export async function main(env: Record<string, string | undefined> = process.env
       // 触达邮箱或 Agnes**，与 Worker 侧 REGISTRAR_ENABLED=false 时 Cron 空转的语义
       // 完全一致。注意口径是「无外部副作用」而不是「零副作用」——这一轮仍然会读一次
       // 配置，上面那次索引对账也照做（索引不存在时还会写一次）。
-      let deps: TendDeps | null;
+      // 补池这条路自己的事件 sink（本任务）。**每一轮新建一个**，理由与
+      // `src/entry/worker.ts` 里同位置那段完全相同（双运行时对等是硬约束）：
+      // Worker 上每次 Cron 本来就很可能是新 isolate，Node 是长寿进程，不新建的话
+      // 写预算（`EVENT_WRITES_PER_DAY` = 12，实例字段）会让第 13 轮之后**静默不写**
+      // ——而那条预算对这根轴本来就不适用（订正 F4：上界是补池频率本身）。
+      const tendStore = new StoreLogger({
+        storage,
+        now: () => Date.now(),
+        shardId: crypto.randomUUID().slice(0, 8),
+        onError: (err) => logger.log({
+          level: "error", event: "storage.event_flush_failed",
+          msg: "补池事件落盘失败，本轮缓冲已丢弃（不重试同一批）",
+          fields: { error: err instanceof Error ? err.message : String(err) },
+        }),
+      });
+
+      let deps: TendRoundDeps | null;
       try {
-        deps = await buildTendDeps(env, storage);
+        deps = await buildTendDeps(env, storage, {
+          // **`ConsoleLogger` 那一路一条都不丢**：落库是 fan-out 出来的第二条路。
+          logger: multiLogger(logger, tendStore),
+          // **`flush()` 不是 `maybeFlush()`** —— 见 worker.ts 同位置的说明与
+          // `StoreLogger.flush()`：跑得快的那一轮会被最小间隔闸整轮吃掉，
+          // 且 errs=0、dropped=0、不抛不报。
+          flush: () => tendStore.flush(),
+        });
       } catch (err) {
         // 装配失败（例如注册机配置被改成非法值）只记日志：转发能力与补池能力
         // 相互独立，不该因为补池装配失败而让整个网关进程停摆。
@@ -74,6 +98,8 @@ export async function main(env: Record<string, string | undefined> = process.env
 
       try {
         const r = await tendOnce(deps);
+        // 每轮汇总落进 `tend:history`（设计 §7.3）。与 Worker 同一份口径。
+        await deps.recordRound(r, "cron");
         if (!r.skipped) {
           console.log(
             `[registrar] 补池完成 available=${r.available} attempted=${r.attempted} minted=${r.minted}`,
@@ -87,6 +113,12 @@ export async function main(env: Record<string, string | undefined> = process.env
       } catch (err) {
         // 补池失败不该让网关进程崩掉——转发能力与补池能力是相互独立的。
         console.error("[registrar] 补池失败", err);
+      } finally {
+        // **补池事件落盘。必须是这一轮的最后一件事**——上面 catch 里那条
+        // 「补池失败」以及 `recordRound` 可能打出的 warn 都要赶上这一次落盘，
+        // 这一轮再没有第二次机会（下一轮是一个全新的 sink 实例）。
+        // 与 Worker 侧 `ctx.waitUntil` 的 `finally` 同一条口径。
+        await deps.flush();
       }
     } finally {
       inFlight = false;

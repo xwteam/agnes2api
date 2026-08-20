@@ -64,7 +64,11 @@ vi.mock("node:timers", async (importOriginal) => {
 const { main } = await import("../../../src/entry/node.js");
 const worker = (await import("../../../src/entry/worker.js")).default;
 
-const RESULT: TendResult = { skipped: false, available: 0, attempted: 0, minted: 0, failures: [] };
+const RESULT: TendResult = {
+  skipped: false, available: 0, attempted: 0, minted: 0, failures: [],
+  // 本任务给 TendResult 加的三个字段（`tend:history` 要用）。手写字面量。
+  at: 1000, channel: "yyds", durationMs: 0,
+};
 
 function deferred(): { promise: Promise<TendResult>; resolve: (v: TendResult) => void } {
   let resolve!: (v: TendResult) => void;
@@ -371,6 +375,63 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
       await close(server);
     }
   });
+
+  /**
+   * **Node 入口的补池事件落库（P3c Task 1）。**
+   *
+   * ⚠️ **这一格是变异验证逼出来的，成因如实登记**：M7 的 Node 那一半
+   * （`src/entry/node.ts` 的 `finally` 里删掉 `await deps.flush()`）在补上这一格
+   * **之前是 ESCAPED 的**——`tests/contract/registrar-events.test.ts` 的
+   * 「一轮补池之后，event: 键空间里确实有 registrar.* 事件」只驱动
+   * **Worker** 入口（契约测试要在 workerd 下也跑一遍，而 `src/entry/node.ts`
+   * 依赖 `@hono/node-server` / `node:timers`，在 workerd 里 import 不进去）。
+   * 于是 Node 侧那条 `finally` **一条测试都没有守着**，删掉它全套用例照样全绿。
+   * 这不是"性质不成立"，是**观测点整个缺失**。
+   *
+   * `tendOnce` 仍然是这个文件统一的 mock（本格不关心补池本身），但它这次**经由
+   * 注入的 logger 打一条 `registrar.*` 事件**——那正是生产里真 `tendOnce` 做的事
+   * （`registrar.round_budget_impossible` 等二十多个调用点）。除它之外，入口、
+   * `buildTendDeps`、`StoreLogger`、`FileStorage` 全都是真的。
+   *
+   * 存储是**真的 `FileStorage`**（真实 fs IO，有不可忽略的异步延迟），所以
+   * "有没有 await 那次 flush" 在这里是可观测的——零延迟替身抓不住这条
+   * （第 8 种候选形态）。
+   */
+  it("Node 侧：一轮补池之后 event: 里有 registrar.*，tend:history 里有一条 trigger=cron", async () => {
+    tendOnceMock.mockImplementation(async (deps: unknown) => {
+      (deps as { logger: { log: (e: unknown) => void } }).logger.log({
+        level: "error", event: "registrar.round_budget_impossible", msg: "探针事件",
+      });
+      return RESULT;
+    });
+    const dir = mkdtempSync(join(tmpdir(), "a2a-sched-tendlog-"));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const server = await main(nodeEnv({ DATA_DIR: dir }));
+    try {
+      await waitFor(() => tendOnceMock.mock.calls.length === 1);
+      // 等这一轮自己重排完 —— 重排落地意味着 runTend 的 finally（含那次 flush）
+      // 已经跑完，不必靠 sleep 猜时机。
+      await waitFor(() => timers.length === 1);
+
+      const storage = new FileStorage(dir);
+      const eventKeys = await storage.list("event:");
+      expect(eventKeys.length, "补池事件一条都没落库").toBeGreaterThan(0);
+      const events = (await Promise.all(
+        eventKeys.map((k) => storage.get<Array<{ event: string }>>(k)),
+      )).flatMap((a) => a ?? []);
+      expect(events.map((e) => e.event)).toContain("registrar.round_budget_impossible");
+
+      const history = await storage.get<Array<{ trigger: string }>>("tend:history");
+      expect(history?.length, "tend:history 里没有这一轮").toBe(1);
+      expect(history?.[0]?.trigger).toBe("cron");
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      await close(server);
+      tendOnceMock.mockReset();
+    }
+  });
 });
 
 describe("I4 Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）", () => {
@@ -519,6 +580,7 @@ describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
   // 只打第一条、只打通道、只打 reason、丢掉计数，任何一种偷工都会被抓出来。
   const FAILED: TendResult = {
     skipped: false, available: 0, attempted: 4, minted: 0,
+    at: 1000, channel: "yyds", durationMs: 0,
     failures: [
       { reason: "register_failed", channel: "yyds" },
       { reason: "register_failed", channel: "yyds" },
@@ -573,6 +635,7 @@ describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
   it("名额全部铸出时不打这条 warn（不是无条件噪音）", async () => {
     tendOnceMock.mockResolvedValue({
       skipped: false, available: 0, attempted: 2, minted: 2, failures: [],
+      at: 1000, channel: "yyds", durationMs: 0,
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);

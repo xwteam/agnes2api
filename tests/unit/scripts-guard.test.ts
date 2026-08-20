@@ -68,8 +68,7 @@ describe("tests/ui 真的被 vitest 收集了", () => {
 });
 
 /**
- * @refs-ignore（`tests/foo.test.ts` 是举例说明「带了过滤器」长什么样，不是真实指向）
- *
+ * @refs-ignore（本段的 `tests/foo.test.ts` 是举例说明「带了过滤器」长什么样，不是真实指向）
  * CI 门禁的前提：`pnpm test` / `pnpm test:workers` 必须是**裸命令**，不带任何文件路径
  * 过滤器（如 `pnpm test tests/foo.test.ts`）。
  *

@@ -4,8 +4,7 @@ import { normalizeStats } from "./stats.js";
 /**
  * 上游 key 的掩码。**全仓唯一的一份实现。**
  *
- * @refs-ignore（下面要点名那个**已经被删掉**的前端副本，路径按定义解析不开）
- *
+ * @refs-ignore（本段要点名那个**已经被删掉**的前端副本，路径按定义解析不开）
  * ⚠️ 这里原来写着「与 `admin-ui/js/pure/mask.mjs` 是两份实现……由共享夹具一致性
  * 断言钉住（设计文档 §16.1 U4）」。那个前端副本在全分支评审 B3 被删掉了：
  * 它在 `admin-ui/js/` 里**零导入者**——面板显示的 `masked` 就是下面 `toKeyViews()`
@@ -14,7 +13,18 @@ import { normalizeStats } from "./stats.js";
  * 一起加回来。
  *
  * **绝不返回原值**：返回原值的「掩码」比没有掩码更糟，调用方会以为它安全了。
- * 边界由 `tests/unit/admin/key-view.test.ts:40` 钉着。
+ * 边界由 `tests/unit/admin/key-view.test.ts` 的「maskKey 的边界」钉着。
+ *
+ * ⚠️ **这里原来写的是 `:40`，而 `:40` 是一行注释——真正的 `it(` 在 `:42`，已腐烂 2 行。**
+ * 改成**名字锚**而不是改成 `:42`，理由是行号会再腐烂一次；而且这条指向原来整个
+ * 落在上面那段豁免标记的**块级**范围里，门禁根本没看过它。本任务把豁免收窄到
+ * 段级（见 `scripts/check-comment-refs.mjs` 的 `IGNORE_MARKER`），这条才第一次
+ * 进入校验范围。**两件事必须都做，只做一件都不够**：只收窄豁免的话，门禁的
+ * `WINDOW = 6` 本来也抓不住这次 2 行的漂移。
+ *
+ * ⚠️ 上一段刻意**不写**那个标记的字面名字——写了这一段自己就会被豁免掉，
+ * 而被豁免掉的正是上面那条刚修好的名字锚。（门禁脚本自己为同一件事把
+ * `IGNORE_FILE_RE` 的标记名拆成两段拼，理由完全一样。）
  */
 export function maskKey(key: string): string {
   if (typeof key !== "string" || key.length <= 10) return "…";

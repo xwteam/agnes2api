@@ -42,7 +42,15 @@ let view = [];
  * 换筛选级别时归零：那时视图是被整段重拉的，不是被清掉的。
  */
 let cleared = false;
-let lastStatus = { dropped: null, budgetExhausted: null, truncated: null, buffered: null, cursorAhead: null };
+let lastStatus = {
+  dropped: null, budgetExhausted: null, truncated: null, buffered: null, cursorAhead: null, malformed: null,
+};
+/**
+ * 最近一轮里后端吐的 `cursor` 是不是畸形（既不是有限数字也不是 `null`）。
+ * **判据不在这里**，来自 `pure/events.mjs` 的 `cursorOutcome`；这个变量只负责把
+ * 它带到轮询指示灯的 tooltip 上。
+ */
+let cursorBroken = false;
 /** 最近一次成功响应里的本 isolate 分片 id（评审 M2），驱动轮询指示灯的提示文案。 */
 let lastShardId = null;
 /** 最近一次成功响应的生成时刻（评审 N1 [LOW]），同样只驱动轮询指示灯的提示文案。 */
@@ -103,6 +111,17 @@ function renderPollIndicator() {
   if (lastStatus.buffered !== null && lastStatus.buffered > 0) {
     label += t("ev.pollStatus.bufferedSuffix", { count: lastStatus.buffered });
   }
+  // 本任务：`malformed` **恒为 0 正是它的价值**——它是那几条 `narrowEntries`
+  // 用例在生产环境里的对照组。非 0 就说明存储被外部写坏过（运维手改 KV /
+  // KV 值损坏 / `store.json` 写到一半），它是唯一能把「面板少了几条事件」与
+  // 「本来就没有事件」区分开的信号。**刻意不上黄条**（见 pure/events.mjs 的
+  // `shouldWarn`）：恒为假的分支挂在告警判据上没有意义。
+  if (lastStatus.malformed !== null && lastStatus.malformed > 0) {
+    label += t("ev.pollStatus.malformedSuffix", { count: lastStatus.malformed });
+  }
+  // 后端契约被破坏（`cursor` 既不是有限数字也不是 null）。原来这一支与"没有新
+  // 事件"合并，于是面板把它显示成"一切正常"——那是撒谎，而且是让人查不下去的那种。
+  if (cursorBroken) label += t("ev.pollStatus.cursorBrokenSuffix");
   // 评审 N1 [LOW]：`generatedAt` 是响应生成时刻，最小、低风险的消费方式——
   // 让 tooltip 报一句"数据截至几点"，运维不用另外去猜面板有没有卡住。
   if (lastGeneratedAt !== null) {
@@ -180,6 +199,10 @@ async function poll() {
     // pollOutcome() 里（admin-ui/README.md 硬规则 1）。这里只剩两件拼装：视图
     // 要不要清、把返回的下一轮状态整体收下。一个判据都不许再回到这个文件。
     const outcome = pollOutcome(pollState, items, body && body.cursor, lastStatus.cursorAhead);
+    // 后端吐的 `cursor` 不是「有限数字或 null」——**保留游标，但把这件事说出去**。
+    // 判据在 `pure/events.mjs` 的 `cursorOutcome`，这里只是把它接到 tooltip 上
+    // （一个判据都不许回到这个文件，admin-ui/README.md 硬规则 1）。
+    cursorBroken = outcome.cursorBroken;
     if (outcome.resetView) view = [];
     view = mergeIntoView(view, items);
     // 视图里重新有内容了，「已清空」那句话就不再成立（它只描述"空是怎么来的"）。

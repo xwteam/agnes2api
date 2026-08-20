@@ -6,14 +6,13 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 /**
- * @refs-ignore（下面提到的 `tests/unit/test-collection.test.ts` 是**已被取代**的第一版，故意留着讲教训）
- *
  * **测试收集门禁。放在 globalSetup 而不是某个 `*.test.ts` 里，这一点是本文件的全部意义。**
  *
  * 起因：`vitest.config.ts` 的 `include` 里去掉 `"tests/ui/**"`，整条前端纯函数测试
  * 通道就被关掉，而**没有任何一条用例变红**（实测总数从 710 静静掉到 705）。
  * 「测试还在、还绿、测的是空气」正是这个项目最怕的形态。
  *
+ * @refs-ignore（本段提到的 `tests/unit/test-collection.test.ts` 是**已被取代**的第一版，故意留着讲教训）
  * 第一版把这条门禁写成了 `tests/unit/test-collection.test.ts`，并在文件头断言
  * 「收集门禁挡不住自己被取消收集，在 vitest 进程内无解」——**那句话是错的**，
  * 已被评审推翻并实测：`globalSetup` **先于且独立于测试文件的收集**运行，
@@ -92,7 +91,8 @@ const WORKERS = "vitest.workers.config.ts";
  * 它校验的是「文件**在哪个目录** ⇒ 该被哪几份配置收集」，
  * **不校验目录归属本身是否合理**。把一个契约测试 `git mv` 进 `tests/unit/`，
  * 它就**合法地**只跑 node 侧，这里不会报错——已实测：把
- * `tests/contract/ui-serve.test.ts`（正是验证 admin 的 CSP/nosniff 在 workerd 侧
+ * `tests/contract/ui-serve.test.ts` 的「每个响应都带全套安全头」
+ * （正是验证 admin 的 CSP/nosniff 在 workerd 侧
  * 覆盖的那个文件）挪进 `tests/unit/`，两个入口全绿，横幅照常打 ✅，
  * 只是双跑计数从 18 静默降到 17。
  *
@@ -105,7 +105,8 @@ const WORKERS = "vitest.workers.config.ts";
  * 而收益已经被上面那条高可见度信号覆盖了。
  *
  * 同一类边界还有两处，是一脉相承的同一个取舍：
- * `tests/unit/ui-assets.test.ts` 的资产快照只锁键集合、不锁已有文件内容；
+ * `tests/unit/ui-assets.test.ts` 的「资产清单与显式快照一致——admin-ui/ 里多一个文件
+ * 就是多一个公网端点」只锁键集合、不锁已有文件内容；
  * `.gitattributes` 特意不加 `-diff`，好让生成物的改动在评审里看得见。
  * ──────────────────────────────────────────────────────────────────────────
  */
@@ -143,13 +144,13 @@ interface MaybeProject {
 }
 
 /**
- * @refs-ignore（`tests/xxx.test.ts` 与实测输出里那个文件名都是示例，不是真实指向）
- *
+ * @refs-ignore（本段的 `tests/xxx.test.ts` 是示例，不是真实指向）
  * 本次调用带没带**显式的测试文件过滤器**（`vitest run tests/xxx.test.ts` 这种）。
  *
  * 取的是 vitest 自己解析好的 `filenamePattern`，**不是手搓 process.argv**：
  * 裸解析 argv 会把 `--config vitest.config.ts` 里那个 `vitest.config.ts` 当成位置参数，
  * 于是**每一次调用都被判成"带了过滤器"、门禁永久静默失效**——那比没有门禁更糟。
+ * @refs-ignore（本段实测输出里那个文件名同样是示例）
  * 已实测这个字段：带过滤器时是 `["tests/ui/mask.test.ts"]`，全量时是 `undefined`，
  * 且 `--config` / `--reporter=dot` 都不会被误算进去。
  *

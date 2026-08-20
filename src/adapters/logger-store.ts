@@ -5,10 +5,19 @@ import {
   appendRing, truncatedCount, mergeShards, candidateKeys, windowIndex, slotOf, shardKey, eventExpiresAt,
   FRESH_BUDGET, canWrite, consume, type WriteBudget,
 } from "../core/admin/event-ring.js";
+import { narrowShard, type EventEntry } from "../core/admin/event-entry.js";
 
 /** `readEvents()` 的返回形状：归并结果，供 events handler 过滤/截断/序列化。 */
 export interface ReadEventsResult {
-  items: LogEntry[];
+  items: EventEntry[];
+  /**
+   * 这一次读里，**分片是数组但里面不是对象/没有可用 `ts`** 的条目有几条。
+   *
+   * **随每次读返回，不做成实例字段**——这是刻意的，与下面 `persistedDropped` 那条
+   * `NaN` 教训是同一件事的两面：实例字段会跨请求粘住，两个并发请求各读一次之后，
+   * 谁的 handler 先读到那个字段就说了算，面板会看到另一个请求的数。
+   */
+  malformed: number;
 }
 
 /**
@@ -83,8 +92,14 @@ export class StoreLogger implements Logger {
   }
 
   /**
-   * 到点就落盘。**由中间件在请求收尾 await**，不是定时器——
+   * 到点就落盘。**由中间件在请求收尾 await**（`src/http/log-flush.ts`），不是定时器——
    * 定时器是 IO 能力，Worker 上也没有常驻进程可挂。
+   *
+   * **`fetch` 路径只许走这一条，不许改成下面的 `flush()`**：这条最小间隔闸是
+   * §8.5 点名的那根杠杆的唯一约束——白名单里的 `admin.login_failed` 是**任何
+   * 未鉴权请求都能触发**的，去掉闸门就等于让攻击者按批驱动 KV 写。
+   * 「两个挨得很近的请求只落盘一次」由 `tests/contract/admin-events.test.ts`
+   * 的「fetch 路径仍然受最小间隔节流」直接钉住。
    */
   async maybeFlush(): Promise<void> {
     const at = this.o.now();
@@ -92,6 +107,37 @@ export class StoreLogger implements Logger {
     const since = at - this.lastFlushAt;
     // `since < 0` = 时钟回拨：立刻恢复，与本仓其余三处同一套语义。
     if (since >= 0 && since < EVENT_FLUSH_MIN_INTERVAL_MS) return;
+    await this.writeBatch(at);
+  }
+
+  /**
+   * **无条件落盘，绕过最小间隔闸**（仍然受每天写预算约束）。
+   *
+   * ⚠️ **只给「调用频率本身已经有上界」的调用方用**，今天只有一处：两个入口的
+   * 补池收尾（`src/entry/worker.ts` / `src/entry/node.ts`）。
+   *
+   * **为什么非有它不可**（本任务实测，Step 6b 的量测顺带打出来的）：Cron 触发的
+   * `scheduled()` 每次**很可能是一个全新 isolate**，它构造 `StoreLogger` 的那一刻
+   * `lastFlushAt = now()`，紧接着这一轮补池如果跑得快（`need <= 0` 的健康稳态、
+   * `provider_missing` 接线错误、`registrar.round_budget_impossible` 这三种都是
+   * **毫秒级返回**），收尾 `maybeFlush()` 时 `since` 远小于
+   * `EVENT_FLUSH_MIN_INTERVAL_MS` ⇒ **一条都写不出去，而且 `errs=0`、`dropped=0`、
+   * 不抛不报**。实测：24 个模拟窗口 × 48 次 Cron，`registrar.*` 写入 432 条、
+   * 可见 **0** 条，丢失率 **100%**；把落盘时刻推到构造时刻之后 60 秒，丢失率降到 0%。
+   * 换句话说，不给这条路径一个绕过闸门的出口，Task 1 交付的「`registrar.*` 落库」
+   * 在最常见的形态下等于什么都没做。
+   *
+   * **它的上界不在这里，在调用方**：补池频率（Worker 的 Cron / Node 的
+   * `TEND_INTERVAL_MS`）。**不许说「与事件 sink 同一套预算所以同样安全」**——
+   * `EVENT_WRITES_PER_DAY` 是每实例的，而这条路径上每一轮都可能是一个新实例，
+   * 那套预算在这根轴上既拦不住什么也不构成上界（订正 F4）。
+   */
+  async flush(): Promise<void> {
+    await this.writeBatch(this.o.now());
+  }
+
+  private async writeBatch(at: number): Promise<void> {
+    if (this.buffer.length === 0) return;
     if (!canWrite(this.budget, at, EVENT_WRITES_PER_DAY)) return;
 
     const batch = this.buffer;
@@ -102,12 +148,33 @@ export class StoreLogger implements Logger {
     this.budget = consume(this.budget, at);
     try {
       const key = shardKey(windowIndex(at), this.slot);
-      const cur = (await this.o.storage.get<LogEntry[]>(key)) ?? [];
+      // **写侧也要逐条窄化**，这里今天连 `Array.isArray` 都没有（读侧至少有）。
+      // 两条真实后果，都由本任务实测：
+      // ① `cur` 是**字符串**时 `appendRing` 的 `[...cur]` 把它**逐字符展开**，
+      //    `"abc"` 变成三条单字符条目原样写回存储 —— `errs=0`、`dropped=0`、
+      //    **不抛不报不留痕**；而 `"a".ts` 是 `undefined`，**正是让读侧游标冻住
+      //    的那一种条目**。一个标量进来，出去的是三份燃料：上游与下游不是并列的
+      //    两个缺陷，是同一条链。
+      // ② `cur` 是**字符串以外的标量或对象**时 `[...cur]` 抛 `TypeError`，而上面
+      //    `this.buffer = []` 已经先执行过 —— **缓冲区先清空、异常才发生 ⇒ 这一批
+      //    永久丢失**；更糟的是下面那行 `truncatedCount(cur.length, …)` 在抛错之前
+      //    跑，`cur.length` 是 `undefined` ⇒ `persistedDropped` 变成 **`NaN` 并对
+      //    这个 isolate 终生粘住** ⇒ `NaN > 0` 是 `false` ⇒ 面板黄条永远不亮，
+      //    `c.json` 又把 `NaN` 序列化成 `null` ⇒ 面板读到"没有数据"。
+      // **精度**：`undefined` / `null` **不在抛错集合里**（原来的 `?? []` 把两者
+      // 都接住了，实测 `errs=0`）；事件缺口限定在**当前时间窗内**（键每小时换一把，
+      // 实测窗口一翻就恢复落盘），而 `NaN` 是实例字段、**终生粘住**。
+      // ⇒ **事件缺口是一小时的，「面板说不出自己缺了东西」是终生的。**
+      const cur = narrowShard(await this.o.storage.get(key)).entries;
       this.persistedDropped += truncatedCount(cur.length, batch.length, EVENT_RING_SIZE);
       // **评审 C5（第二次修复）**：第三个参数是这把键的过期时刻——存储实现自己
       // 保证过期之后 get/list 都不再能看到它，有界性不再依赖"下一次成功的 flush
       // 恰好落在正确的偏移上"这件事（见文件头与 `eventExpiresAt()` 的说明）。
-      await this.o.storage.put(key, appendRing(cur, batch, EVENT_RING_SIZE), eventExpiresAt(at));
+      await this.o.storage.put(
+        key,
+        appendRing<EventEntry>(cur, batch, EVENT_RING_SIZE),
+        eventExpiresAt(at),
+      );
     } catch (err) {
       this.o.onError(err);
     }
@@ -125,14 +192,19 @@ export class StoreLogger implements Logger {
    * 由 `src/http/admin/handlers/events.ts` 在归并结果之上处理——"归并 → 过滤 → 截到
    * limit"的顺序不能倒过来，否则先截断再按 level 过滤会把本该出现的旧事件漏掉。
    *
-   * 缺失/畸形的分片数据（`get` 返回 `null` 或不是数组）当空分片处理，不让一个坏分片
-   * 拖垮整个归并。
+   * ⚠️ **措辞订正（本任务）**：这里原来写的是「缺失/畸形的分片数据（`get` 返回
+   * `null` 或不是数组）当空分片处理」。**那句话没有说错，它做到了它说的那个范围**
+   * ——问题是那个「畸形」的定义太窄，**把最常见的一种漏在外面：分片本身是数组、
+   * 里面的某一条不是**。一条 `null` 让整个端点 500；更糟的是一条字符串或一条缺
+   * `ts` 的对象**根本不 500**，原样进 `items`、把 `cursor` 变成 `undefined`
+   * 被 `c.json` 整个丢掉，前端读到"字段不存在"⇒ 游标永远推不动。
+   * 现在**逐条**走 `narrowShard`，判据与丢弃计数都在 `src/core/admin/event-entry.ts`。
    */
   async readEvents(after: number | null): Promise<ReadEventsResult> {
     const keys = candidateKeys(this.o.now(), after);
-    const rawShards = await Promise.all(keys.map((k) => this.o.storage.get<LogEntry[]>(k)));
-    const shards = rawShards.map((s) => (Array.isArray(s) ? s : []));
-    const items = mergeShards(shards, keys.length * EVENT_RING_SIZE);
-    return { items };
+    const rawShards = await Promise.all(keys.map((k) => this.o.storage.get(k)));
+    const shards = rawShards.map((s) => narrowShard(s));
+    const items = mergeShards(shards.map((s) => s.entries), keys.length * EVENT_RING_SIZE);
+    return { items, malformed: shards.reduce((n, s) => n + s.malformed, 0) };
   }
 }

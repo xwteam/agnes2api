@@ -3,7 +3,7 @@ import {
   EVENTS_POLL_MIN_MS, EVENTS_POLL_MAX_MS, LEVELS,
   levelLabelKey, effectiveLevel, eventLevelLabelKey, levelBadgeClass,
   eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, generatedAtOf, bufferStatus,
-  shouldWarn, nextAfter, initialPollState, resumePollState, pollOutcome, nextPollDelayMs,
+  shouldWarn, nextAfter, cursorOutcome, initialPollState, resumePollState, pollOutcome, nextPollDelayMs,
   pollIndicatorState, pollIndicatorLabelKey, matchesSearch,
   formatFields, buildDetailText, groupEvents, orderForDisplay, mergeIntoView,
 } from "../../admin-ui/js/pure/events.mjs";
@@ -180,30 +180,49 @@ describe("generatedAtOf：响应生成时刻（评审 N1 [LOW]），绝不伪造
   });
 });
 
-describe("bufferStatus：dropped / budgetExhausted / truncated / buffered / cursorAhead 绝不伪造", () => {
+describe("bufferStatus：dropped / budgetExhausted / truncated / buffered / cursorAhead / malformed 绝不伪造", () => {
+  const NONE = {
+    dropped: null, budgetExhausted: null, truncated: null, buffered: null, cursorAhead: null, malformed: null,
+  };
   it("缺失/畸形时逐项 null", () => {
     for (const bad of [
       null, undefined, {}, { dropped: "5" }, { budgetExhausted: "yes" }, { truncated: "yes" },
-      { buffered: "3" }, { cursorAhead: "yes" },
+      { buffered: "3" }, { cursorAhead: "yes" }, { malformed: "2" },
     ]) {
-      expect(bufferStatus(bad), String(bad)).toEqual({
-        dropped: null, budgetExhausted: null, truncated: null, buffered: null, cursorAhead: null,
-      });
+      expect(bufferStatus(bad), String(bad)).toEqual(NONE);
     }
   });
   it("有数据时逐项透传，含真实的 0/false", () => {
-    expect(bufferStatus({ dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: false }))
-      .toEqual({ dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: false });
-    expect(bufferStatus({ dropped: 50, budgetExhausted: true, truncated: true, buffered: 7, cursorAhead: true }))
-      .toEqual({ dropped: 50, budgetExhausted: true, truncated: true, buffered: 7, cursorAhead: true });
+    expect(bufferStatus({
+      dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: false, malformed: 0,
+    })).toEqual({
+      dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: false, malformed: 0,
+    });
+    expect(bufferStatus({
+      dropped: 50, budgetExhausted: true, truncated: true, buffered: 7, cursorAhead: true, malformed: 3,
+    })).toEqual({
+      dropped: 50, budgetExhausted: true, truncated: true, buffered: 7, cursorAhead: true, malformed: 3,
+    });
   });
   it("buffered 单独缺失/畸形时只有它是 null，其余字段不受影响（评审 N1）", () => {
-    expect(bufferStatus({ dropped: 0, budgetExhausted: false, truncated: false, buffered: "3", cursorAhead: false }))
-      .toEqual({ dropped: 0, budgetExhausted: false, truncated: false, buffered: null, cursorAhead: false });
+    expect(bufferStatus({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: "3", cursorAhead: false, malformed: 0 }))
+      .toEqual({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: null, cursorAhead: false, malformed: 0 });
   });
   it("cursorAhead 单独缺失/畸形时只有它是 null，其余字段不受影响（评审 C6）", () => {
-    expect(bufferStatus({ dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: 1 }))
-      .toEqual({ dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: null });
+    expect(bufferStatus({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: 1, malformed: 0 }))
+      .toEqual({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: null, malformed: 0 });
+  });
+  /**
+   * **`malformed` 是本任务加的，它恒为 0 —— 而这一格正是为了让"恒为 0"这句话
+   * 有代价**：`0` 与 `null` 必须分得开。`0` 是「后端说了：一条都没丢」，
+   * `null` 是「读不出来」。混在一起，一个真的丢了条目的部署与一个字段没发过来的
+   * 部署就长得一模一样。
+   */
+  it("malformed 单独缺失/畸形时只有它是 null；真实的 0 与 null 不许混为一谈", () => {
+    expect(bufferStatus({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: false, malformed: "2" }))
+      .toEqual({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: false, malformed: null });
+    expect(bufferStatus({ malformed: 0 }).malformed, "真实的 0 不许被当成「读不出来」").toBe(0);
+    expect(bufferStatus({}).malformed, "字段缺席就是 null，不许兜底成 0").toBeNull();
   });
 });
 
@@ -252,6 +271,38 @@ describe("nextAfter：轮询游标推进", () => {
 });
 
 /**
+ * **本任务的核心前端断言：三种输入，三种语义，不许合并成两种。**
+ *
+ * 防住的真实故障（本计划 W2/W3 实测）：存储里一条畸形事件让后端的 `cursor` 变成
+ * `undefined` ⇒ `c.json` 把该字段整个丢掉 ⇒ 前端读到"字段不存在"。原来这一支
+ * 与「`cursor: null` = 本页没有新事件」**合并**，于是「后端在吐畸形数据」被显示成
+ * 「一切正常」——面板在撒谎，而且撒的正是让人查不下去的那种。
+ */
+describe("cursorOutcome：把「没有新事件」与「后端契约被破坏」分开", () => {
+  it("有限数字 ⇒ 推进，broken 为假", () => {
+    expect(cursorOutcome(1000, 2000)).toEqual({ after: 2000, broken: false });
+    expect(cursorOutcome(null, 0), "真实的 0 是合法游标，不许当成缺失").toEqual({ after: 0, broken: false });
+  });
+  it("恰好是 null ⇒ 保留当前值，broken 为假（这是「本页没有新事件」）", () => {
+    expect(cursorOutcome(1000, null)).toEqual({ after: 1000, broken: false });
+  });
+  /**
+   * **`undefined` 与 `null` 必须分到两支**——这一格是整条设计的要害：
+   * `c.json` 对 `undefined` 的处理是**把字段整个丢掉**，所以前端拿到的正是
+   * `undefined`；把它并进 `null` 那一支，缺陷就再也说不出口了。
+   */
+  it("缺字段 / undefined / NaN / 字符串 / 对象 ⇒ 保留当前值，但 broken 为真", () => {
+    for (const bad of [undefined, Number.NaN, Number.POSITIVE_INFINITY, "2000", {}, [], true]) {
+      expect(cursorOutcome(1000, bad), JSON.stringify(bad) ?? "undefined")
+        .toEqual({ after: 1000, broken: true });
+    }
+  });
+  it("broken 时保留的是「当前值」而不是某个兜底常量（current 是 null 就保留 null）", () => {
+    expect(cursorOutcome(null, undefined)).toEqual({ after: null, broken: true });
+  });
+});
+
+/**
  * **评审 C6 二审**：轮询结果的完整决策（after 自愈 + view 清空 + hadNewItems
  * 信号），原来摊在 `sec-events.js` 里裸写、零测试覆盖，两个联带 bug（视图重复、
  * 退避永远回不到最长间隔）都是从这个洞里漏出来的——见 `pure/events.mjs` 的说明。
@@ -262,13 +313,13 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
 
   it("正常情况（cursorAhead 非 true）：after 走 nextAfter 原样推进，不清视图", () => {
     expect(pollOutcome(idle, [{ ts: 2000 }], 2000, false)).toEqual({
-      resetView: false, hadNewItems: true,
+      resetView: false, hadNewItems: true, cursorBroken: false,
       next: { after: 2000, healing: false, delayMs: 15_000 },
     });
   });
   it("正常情况下 items 为空 ⇒ hadNewItems 为 false，after 保留原值（cursor 为 null），退避翻倍", () => {
     expect(pollOutcome(idle, [], null, false)).toEqual({
-      resetView: false, hadNewItems: false,
+      resetView: false, hadNewItems: false, cursorBroken: false,
       next: { after: 1000, healing: false, delayMs: 30_000 },
     });
   });
@@ -281,7 +332,7 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
   it("cursorAhead 为 true：无条件把 after 清成 null，不管 cursor 算出来是什么", () => {
     // 故意给一个"看起来正常"的 cursor（9999），自愈应当无视它，直接清成 null。
     expect(pollOutcome(idle, [], 9999, true)).toEqual({
-      resetView: true, hadNewItems: false,
+      resetView: true, hadNewItems: false, cursorBroken: false,
       next: { after: null, healing: true, delayMs: 30_000 },
     });
   });
@@ -304,6 +355,62 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
     expect(pollOutcome({ after: "oops", healing: 1, delayMs: "x" }, [], null, false).next).toEqual({
       after: null, healing: false, delayMs: 30_000,
     });
+  });
+
+  /**
+   * **后端吐畸形游标时：`cursorBroken` 为真，且退避不许被顶回 15 秒。**
+   *
+   * 这两件事是同一条链的两端，必须写在同一格里（第 5 种假阳性：分开写的话，
+   * 各自单独覆盖的状态下两种实现数学上等价）。喂进去的是一份**有 items、
+   * 但缺 `cursor` 字段**的响应——那正是 W2 实测出的真实响应体形状。
+   */
+  it("后端吐畸形游标（缺 cursor 字段）：cursorBroken 为真，且退避不回 15 秒", () => {
+    const out = pollOutcome({ after: null, healing: false, delayMs: 15_000 }, [{ ts: 1 }], undefined, false);
+    expect(out.cursorBroken, "缺字段必须被说出去，不能显示成「一切正常」").toBe(true);
+    expect(out.hadNewItems, "畸形游标下这批 items 每轮都是同一批，不算「新内容」").toBe(false);
+    expect(out.next.delayMs, "退避必须继续翻倍，不许被顶回最短间隔").toBe(30_000);
+    expect(out.next.after, "游标保留当前值（这里是 null）").toBeNull();
+  });
+
+  it("反向：游标合法且真的有新条目时，退避照常回到 15 秒（判据不许一律说 broken）", () => {
+    const out = pollOutcome({ after: 1000, healing: false, delayMs: 60_000 }, [{ ts: 2000 }], 2000, false);
+    expect(out.cursorBroken).toBe(false);
+    expect(out.hadNewItems).toBe(true);
+    expect(out.next.delayMs).toBe(15_000);
+  });
+
+  /**
+   * **W3 那条 Critical 的稳态吞吐，做成一条会变红的用例。**
+   *
+   * 量法与 W3 的临时探针同形（直接驱动发货的 `pollOutcome`，不抄一份循环——
+   * 第 7 种假阳性），只是把结论钉住：畸形游标下 `after` 恒为 `null` ⇒ 每一轮都是
+   * **满额冷读**。冷读的候选键数是 `EVENT_WINDOW_RETAIN × EVENT_SLOTS = 24 × 2`，
+   * **手写字面量 48**，不从常量反算（第 6 种假阳性）。
+   *
+   * · 修复前（`broken` 并进「没有新事件」那一支）：`items` 非空 ⇒ `hadNewItems`
+   *   恒为真 ⇒ 退避每轮被顶回 15 秒 ⇒ `(86400 ÷ 15) × 48 = 276,480` 次/天，
+   *   是 DEPLOY.md 承诺的包线 **70,560** 的 **3.9 倍**。
+   * · 修复后：退避正常爬到 60 秒封顶 ⇒ `(86400 ÷ 60) × 48 = 69,120` 次/天，**在包线内**。
+   *
+   * ⚠️ **这条只在默认的「全部级别」档位下成立**（W3 轴 ④）：点任一个级别按钮，
+   * 畸形条目被后端 `e.level === level` 滤掉、游标立刻恢复。**不许写成「永不自愈」。**
+   */
+  it("畸形游标的稳态读吞吐落在 70,560 包线内（修复前是 276,480 = 3.9 倍）", () => {
+    const GETS_PER_COLD_READ = 48;     // 24 个时间窗 × 2 个槽位，手写
+    const ENVELOPE_PER_DAY = 70_560;   // 五语言 DEPLOY.md 承诺的包线，手写
+    let state = { after: null, healing: false, delayMs: 15_000 };
+    let gets = 0;
+    let elapsedMs = 0;
+    // 跑 12 轮，量后 6 轮（前几轮还在退避爬升，不是稳态）。
+    for (let i = 0; i < 12; i++) {
+      const out = pollOutcome(state, [{ ts: 1000 + i }], undefined, false);
+      state = out.next;
+      if (i >= 6) { gets += GETS_PER_COLD_READ; elapsedMs += state.delayMs; }
+    }
+    expect(state.delayMs, "量测窗口应当整段处在退避上限的稳态").toBe(60_000);
+    const perDay = Math.round((gets / (elapsedMs / 1000)) * 86_400);
+    expect(perDay, "畸形游标下的稳态读吞吐").toBe(69_120);
+    expect(perDay).toBeLessThan(ENVELOPE_PER_DAY);
   });
 
   /**

@@ -43,6 +43,19 @@ export interface TendResult {
   attempted: number;
   minted: number;
   failures: Array<{ reason: TendFailureReason; channel: string }>;
+  /**
+   * 这一轮**开始**的时刻（`deps.now()`，不是结束时刻）。
+   *
+   * 下面三个字段是本任务（`tend:history`）加的。**由 `tendOnce` 而不是两个入口
+   * 各自填**：入口有两个（`src/entry/node.ts` / `src/entry/worker.ts`），让它们
+   * 各算一遍就是同一个判据的第二份实现——而"两个入口各写一份口径"正是
+   * `summarizeFailures()` 当初被提到这里来的全部理由，见那个函数的说明。
+   */
+  at: number;
+  /** 这一轮走的主通道。`skipped`（注册机关着）时 `primary` 运行期是 `null`，记空串。 */
+  channel: string;
+  /** 这一轮的墙钟耗时。**面板拿它区分「补池很快就返回了」与「跑满了预算」**。 */
+  durationMs: number;
 }
 
 /**
@@ -98,15 +111,24 @@ export interface TendDeps {
  * 而单次注册光轮询验证码最长就要 `codeTimeoutMs`（默认 120 秒），一轮铸太多会撞墙钟。
  */
 export async function tendOnce(deps: TendDeps): Promise<TendResult> {
+  const startedAt = deps.now();
+  // `skipped` 这一支也要给齐 at/channel/durationMs：面板的补池历史里"这一轮被跳过了"
+  // 与"这一轮没发生"是两件事，前者必须能在时间线上占一格。
   if (!deps.config.enabled) {
-    return { skipped: true, available: 0, attempted: 0, minted: 0, failures: [] };
+    return {
+      skipped: true, available: 0, attempted: 0, minted: 0, failures: [],
+      at: startedAt, channel: "", durationMs: deps.now() - startedAt,
+    };
   }
 
-  const now = deps.now();
+  const now = startedAt;
   const available = (await deps.repo.all()).filter((r) => isAvailable(r, now)).length;
   const need = deps.config.targetKeys - available;
   if (need <= 0) {
-    return { skipped: false, available, attempted: 0, minted: 0, failures: [] };
+    return {
+      skipped: false, available, attempted: 0, minted: 0, failures: [],
+      at: startedAt, channel: requirePrimary(deps.config), durationMs: deps.now() - startedAt,
+    };
   }
 
   // 用 requirePrimary() 而不是裸读 deps.config.primary：后者的类型虽然声明为非空
@@ -272,7 +294,10 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
 
   if (minted > 0) await reconcileAfterMint(deps);
 
-  return { skipped: false, available, attempted, minted, failures };
+  return {
+    skipped: false, available, attempted, minted, failures,
+    at: startedAt, channel: primary, durationMs: deps.now() - startedAt,
+  };
 }
 
 /**

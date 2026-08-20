@@ -2,6 +2,8 @@ import { buildApp, buildTendDeps } from "../http/wire.js";
 import { KvStorage } from "../adapters/storage-kv.js";
 import { KeyPoolRepo } from "../core/keypool-repo.js";
 import { ConsoleLogger } from "../adapters/logger-console.js";
+import { StoreLogger } from "../adapters/logger-store.js";
+import { multiLogger } from "../adapters/logger-multi.js";
 import { workerRuntime } from "../adapters/runtime-worker.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import { WORKER_CRON_WALL_CLOCK_MS, WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
@@ -75,9 +77,37 @@ export default {
       console.error("[agnes2api] key 池索引对账失败", err);
     }
 
+    // 补池这条路自己的事件 sink（本任务）。**每一轮新建一个**，不复用、不缓存：
+    // ① Worker 上每次 `scheduled()` 本来就很可能是新 isolate，Node 上新建一个才能
+    //    与 Worker 行为对齐（双运行时对等是硬约束）；
+    // ② 写预算是实例字段，长寿实例上 48 轮/天会在第 13 轮撞上
+    //    `EVENT_WRITES_PER_DAY`（12）并从此静默不写——而那条预算对这根轴本来就
+    //    不适用（订正 F4：真正的上界是补池频率）。每轮一个新实例让上界回到频率本身。
+    // **`ConsoleLogger` 那一路一条都不丢**：落库是 fan-out 出来的第二条路。
+    const tendConsole = new ConsoleLogger();
+    const tendStore = new StoreLogger({
+      storage,
+      now: () => Date.now(),
+      shardId: crypto.randomUUID().slice(0, 8),
+      onError: (err) => tendConsole.log({
+        level: "error", event: "storage.event_flush_failed",
+        msg: "补池事件落盘失败，本轮缓冲已丢弃（不重试同一批）",
+        fields: { error: err instanceof Error ? err.message : String(err) },
+      }),
+    });
+
     let deps;
     try {
-      deps = await buildTendDeps(env as Record<string, string | undefined>, storage);
+      deps = await buildTendDeps(env as Record<string, string | undefined>, storage, {
+        logger: multiLogger(tendConsole, tendStore),
+        // **`flush()` 不是 `maybeFlush()`**：这一轮如果跑得快（`need <= 0` 的健康
+        // 稳态、`provider_missing`、`round_budget_impossible` 都是毫秒级返回），
+        // 距构造时刻的间隔远小于 `EVENT_FLUSH_MIN_INTERVAL_MS`，`maybeFlush()`
+        // 会**一条都不写、而且 errs=0、dropped=0、不抛不报**（实测：24 个模拟窗口
+        // × 48 次 Cron，写入 432 条、可见 0 条）。这条路径的上界是 Cron 频率本身，
+        // 不需要那道为 `fetch` 路径挡 DoS 的最小间隔闸。见 `StoreLogger.flush()`。
+        flush: () => tendStore.flush(),
+      });
     } catch (err) {
       console.error("[registrar] 装配补池依赖失败", err);
       return;
@@ -104,6 +134,10 @@ export default {
           // 邮箱漏删，必须靠「不启动跑不完的尝试」来避免。预算取值与理由见
           // core/registrar/types.ts 的 WORKER_ROUND_BUDGET_MS。
           const r = await tendOnce({ ...deps, roundBudgetMs: WORKER_ROUND_BUDGET_MS });
+          // 每轮汇总落进 `tend:history`（设计 §7.3）。**事件流水与它是两件事**：
+          // 流水回答"发生了什么"，这份历史回答"每一轮的 available/attempted/minted
+          // 各是多少"，而后者正是运维真正要问的那一句，也是 §15.2 验收要看的那半句。
+          await deps.recordRound(r, "cron");
           if (!r.skipped) {
             console.log(
               `[registrar] 补池完成 available=${r.available} attempted=${r.attempted} minted=${r.minted}`,
@@ -123,6 +157,14 @@ export default {
           } catch (err) {
             console.warn("[registrar] 释放补池锁失败，最坏情况下要等锁自然过期", err);
           }
+          // **flush 必须是这个 finally 里的最后一件事。**
+          // ⚠️ 计划 Step 6 写的是「先 flush 再释放锁」，理由是「释放锁失败会走
+          // catch，而事件正是要记录这件事」——**那个理由要求的恰恰是相反的顺序**：
+          // 先 flush 的话，flush 之后产生的任何事件（释放锁失败、写 tend:history
+          // 失败）都还留在缓冲里，而这一轮再也没有第二次落盘机会。这里按理由走，
+          // 不按那句话走。释放锁排在前面还有一层好处：它在挡着下一次 Cron，
+          // 早一点放开比晚一点好，而 flush 是一次可能很慢的 KV 写。
+          await deps.flush();
         }
       })(),
     );
