@@ -55,14 +55,20 @@ function store(op, value) {
 /**
  * 口令里有浏览器**发不出去**的字符时，本地就拦下并说清楚。
  *
- * 后端的 checkAdminTokenShape 只查首尾空白与长度，于是一个含汉字/emoji/零宽空格的
- * ADMIN_TOKEN 会装出一棵「200 但永远进不去」的面板：`fetch` 在设置非 Latin-1 请求头时
- * 直接抛 TypeError，用户看到的是「网络错误」，而服务端日志里连 login_failed 都没有。
- * 后端那半在 Task 7 一起改（多一条 reason），前端这半在这里——两边都要，
+ * `fetch` 在设置非 Latin-1 请求头值时直接抛 TypeError，于是一个含汉字 / emoji /
+ * 零宽空格的 ADMIN_TOKEN 会装出一棵「200 但永远进不去」的面板：用户看到的是
+ * 「网络错误」，而服务端日志里连 login_failed 都没有。后端那半是
+ * `src/http/admin/auth.ts` 的 `SENDABLE`，**字符集与这里逐字相同**；两边都要，
  * 因为后端只在启动时看得到自己的口令，看不到用户在输入框里粘了什么。
+ *
+ * ⚠️ **字符集含空格（0x20）。** 空格送得出去，所以放行——`correct horse battery
+ * staple` 那种 passphrase 是更强的密钥形态，拒掉它换一个「复制粘贴可能出错」的担心
+ * 不划算（判据与完整理由见 auth.ts 的 SENDABLE：留物理、去口味）。
+ * 首尾空白由上面那句 `input.value.trim()` 与后端的 whitespace_padded 一起管，
+ * 那条是物理（传输层会去掉首尾空白）而不是口味。
  */
 function sendable(s) {
-  return /^[\x21-\x7e]+$/.test(s);
+  return /^[\x20-\x7e]+$/.test(s);
 }
 
 let current = null;

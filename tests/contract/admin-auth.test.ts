@@ -60,13 +60,14 @@ describe("checkAdminToken", () => {
     expect(checkAdminToken(`\t${good}\n`, "g")).toEqual({ ok: false, reason: "whitespace_padded" });
     // 全空白：长度够、也不等于 GATEWAY_TOKEN，正是最容易漏过去的那一格。
     expect(checkAdminToken(" ".repeat(24), "g")).toEqual({ ok: false, reason: "whitespace_padded" });
-    // ⚠️ **这里原来断言的是「中间的空白不管，那是口令自己的一部分」——Task 7 之后
-    // 不再成立，是被**刻意**改掉的策略，不是把测试改绿。** 新的字符集规则排除了空格
-    // （0x20）：空格本身送得出去，排除它是为了「复制粘贴不出错」这个可诊断性取舍
-    // （见 auth.ts 的 SENDABLE ②）。所以这一格现在断言的是**新的**结论——含空格的
-    // 口令归 not_sendable，而不是继续被 whitespace_padded 那条放行。
-    expect(checkAdminToken("xxxxxxxxxxxx xxxxxxxxxxxx", "g"))
-      .toEqual({ ok: false, reason: "not_sendable" });
+    // 中间的空白不管：那是口令自己的一部分，客户端送得出来。
+    //
+    // ⚠️ **这一格在 Task 7 期间被改成过 `not_sendable`，评审裁定后改了回来，
+    // 记在这里免得下一个人再走一遍。** 当时的理由是「中间带空格只会让人在复制粘贴
+    // 时出错」——那是替运维做主，不是物理。判据是**留物理、去口味**：
+    // 送不出去的字符（非 Latin-1 / 控制字符）拦，送得出去的空格放行。
+    // passphrase 是更强的密钥形态，拒掉它不划算。完整理由见 auth.ts 的 SENDABLE。
+    expect(checkAdminToken("xxxxxxxxxxxx xxxxxxxxxxxx", "g").ok).toBe(true);
   });
 
   /**
@@ -92,7 +93,6 @@ describe("checkAdminToken", () => {
       { name: "汉字", token: "管理口令管理口令管理口令管理口令管理口令管理口令" },
       { name: "emoji", token: "admin-token-0123456789-🔑" },
       { name: "零宽空格", token: `admin-token-0123456789${ZWSP}xx` },
-      { name: "内含空格", token: "admin token 0123456789 abcd" },
       // 这一格不在计划的四格里，是执行时补的：裸 NUL 既是控制字符，又正是本仓刚被
       // 咬过一次的那个字符（Task 6：源文件里的裸 NUL 让整份文件对 git diff / grep /
       // scan-secrets 隐身）。它同样是浏览器发不出去的。
@@ -114,7 +114,13 @@ describe("checkAdminToken", () => {
     it.each([
       ["含 ! 与 -", "admin-token-0123456789-ok!"],
       ["base64 风格（含 + / =）", "YWRtaW4rdG9rZW4vMDEyMzQ1Njc4OQ=="],
-      ["全符号边界（0x21 与 0x7e）", "!admin-token-0123456789abc~"],
+      // 两个**端点**都要出现在同一个夹具里：0x20（空格）与 0x7e（`~`）。
+      // 只测中间的字符时，把区间写成 `[\x21-\x7d]` 这类「差一位」的错误看不见。
+      ["字符集两端（0x20 空格 与 0x7e ~）", "admin token 0123456789 abc~"],
+      // **passphrase**：中间带空格是允许的。空格送得出去，而 `correct horse battery
+      // staple` 那种形态在 24 位下限下比随机串更容易被运维用对。拒掉它是替人做主。
+      ["passphrase（中间带空格）", "correct horse battery staple"],
+      ["中间多处空格", "xxxxxxxxxxxx xxxxxxxxxxxx"],
     ])("合法的随机口令不许被误拒：%s", (_name, token) => {
       expect(token.length).toBeGreaterThanOrEqual(24);
       expect(checkAdminToken(token, "g").ok, token).toBe(true);
@@ -222,10 +228,6 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
       name: "零宽空格", token: `admin-token-0123456789${ZWSP}xx`,
       gatewayToken: TEST_CONFIG.gatewayToken, reason: "not_sendable", msgContains: "发不出去",
     },
-    {
-      name: "内含空格", token: "admin token 0123456789 abcd",
-      gatewayToken: TEST_CONFIG.gatewayToken, reason: "not_sendable", msgContains: "发不出去",
-    },
   ];
 
   for (const { name, token, gatewayToken, reason, msgContains } of CASES) {
@@ -260,6 +262,28 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
     const res = await app.request("/admin/api/session", { headers: { "x-admin-key": OK_TOKEN } });
     expect(res.status, "合法的随机口令被误拒了").toBe(200);
     expect(logger.has("admin.token_rejected")).toBe(false);
+  });
+
+  /**
+   * **带空格的 passphrase 必须能真的登录进去，不只是通过形状校验。**
+   *
+   * 形状校验通过不等于口令送得到：HTTP 头值里的内部空格是合法的，但这件事得由一条
+   * **真的把它放进 `x-admin-key` 发一遍**的用例来证明——只断言 `checkAdminToken(...).ok`
+   * 属于形状断言，证明不了「送得出去也送得到」这半（而那正是放行它的全部理由）。
+   *
+   * 这一格同时是「字符集收紧到 0x21」这个回归的护栏：那样改之后这里会 404
+   *（整棵树不注册），而不是 401。
+   */
+  it("passphrase（中间带空格）能真的登录进去——空格送得出去也送得到", async () => {
+    const PASSPHRASE = "correct horse battery staple";
+    expect(PASSPHRASE.length, "夹具长度不足 24，测的会是 too_short").toBeGreaterThanOrEqual(24);
+    const { app, logger } = await makeApp([], ["k1"], {}, undefined, { adminToken: PASSPHRASE });
+    const res = await app.request("/admin/api/session", { headers: { "x-admin-key": PASSPHRASE } });
+    expect(res.status, "带空格的 passphrase 进不去").toBe(200);
+    expect(logger.has("admin.token_rejected")).toBe(false);
+    // 反向：错的口令还是 401（别让「放行空格」顺手放行了别的东西）。
+    const bad = await app.request("/admin/api/session", { headers: { "x-admin-key": "correct horse battery stapl" } });
+    expect(bad.status).toBe(401);
   });
 
   /**
