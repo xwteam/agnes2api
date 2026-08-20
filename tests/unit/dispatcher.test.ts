@@ -356,6 +356,55 @@ describe("dispatch", () => {
   });
 
   /**
+   * ⚠️ **评审 I1：`disabled === 0` 时 message 必须与 P3b 逐字相同。**
+   *
+   * 这一格是**逐字节**断言，不是 `toContain`。理由是评审实测出来的：全仓没有任何
+   * 一条用例断言过 `all_cooling` 的 message 文本，**所以"既有用例一条都没红"在
+   * 这件事上什么都不证明**——无条件拼上「0 把被管理员停用」会让每一条既有 503 都
+   * 多出一句废话，而 1583 条会全绿。
+   *
+   * 两种变体并排放：只钉一种的话，「无条件拼接」与「永远不拼」各能溜过去一个。
+   * **变红条件**：把 `unavailable()` 里那个 `h.disabled > 0 ? … : ""` 拿掉。
+   */
+  it("503 的 message 文本：没有停用的 key 时与 P3b 逐字相同", async () => {
+    const at = 1000;
+    const mkPool = async (disabledCount: number) => {
+      const repo = await makeRepo(["k1", "k2"]);
+      const rs = await repo.all();
+      await repo.save({ ...rs[0]!, cooldownUntil: at + 60_000, cooldownReason: "rate limited" }, rs[0]!);
+      if (disabledCount > 0) await repo.save({ ...rs[1]!, disabled: true }, rs[1]!);
+      else await repo.save({ ...rs[1]!, evicted: true, evictedReason: "upstream 401" }, rs[1]!);
+      const res = await dispatch({
+        path: "/chat/completions", body: {}, stream: false,
+        deps: { repo, fetcher: new FakeFetcher([]), config: CONFIG, now: () => at + 1 },
+      });
+      return (await res.json() as { error: { message: string } }).error.message;
+    };
+
+    // 一把冷却 + 一把剔除、零停用 ⇒ P3b 那句话，一个字都不多。
+    expect(await mkPool(0))
+      .toBe("全部 key 暂不可用：1 把冷却中（到期自动恢复）、1 把已永久剔除");
+    // 一把冷却 + 一把停用 ⇒ 中间多出停用那一段，而且必须真的说出来。
+    expect(await mkPool(1))
+      .toBe("全部 key 暂不可用：1 把冷却中（到期自动恢复）、1 把被管理员停用、0 把已永久剔除");
+  });
+
+  /**
+   * 同一条纪律用在 `all_disabled` 上：整池都是停用时，不许拖一句「0 把因凭据失效被永久剔除」。
+   * **变红条件**：把那个 `h.evicted > 0 ? … : ""` 拿掉。
+   */
+  it("all_disabled 的 message：没有被剔除的 key 时不拖一句「0 把」", async () => {
+    const repo = await makeRepo(["k1", "k2"]);
+    await disable(repo, await allIds(repo));
+    const res = await dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: new FakeFetcher([]), config: CONFIG, now: () => 1000 },
+    });
+    expect((await res.json() as { error: { message: string } }).error.message)
+      .toBe("全部 2 把 key 均不可用且不会自动恢复：2 把被管理员手工停用（在管理面板上重新启用即可）");
+  });
+
+  /**
    * ⚠️ **本组最要紧的一格。** 混合池：一把冷却中 + 一把被停用。
    *
    * 被停用的那把 `cooldownUntil` 是 0（它根本没在冷却）。Retry-After 的取值若把它

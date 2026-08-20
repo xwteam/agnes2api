@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { FAIL_REASONS } from "../../src/core/dispatcher.js";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 
@@ -118,6 +119,34 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
         counts,
         `「${token}」（${why}）在五语言里的出现次数不一致——可能有语言漏翻、漏改，或翻译时抄错了数字`,
       ).toEqual(expected);
+    });
+  }
+});
+
+/**
+ * **503 的 `reason` 是对外 API 契约的一部分，五份 API.md（`docs/zh-CN/API.md` 等）各有一张表列着它们。**
+ *
+ * 上面那组数字对等**结构性地看不见这件事**：五份一样地漏掉一条 reason 时，
+ * 每份的出现次数都是 0，对等照样成立（评审 I3——本任务加 `all_disabled` 时五份就是
+ * 这样一起过时的，没有任何门禁响过）。所以这一组不比"五份彼此一致"，
+ * 而是拿**代码里的那张真表**去比：`FAIL_REASONS` 是 `FailReason` 联合的唯一来源，
+ * 加一条新 reason 却不写文档，这里会逐语言变红。
+ *
+ * ⚠️ 边界同样写清楚：它只证明**那个字面量出现在那份文档里**，不证明那一行说得对、
+ * 也不证明五份说的是同一件事。后者仍然留给评审。
+ */
+describe("五语言 API.md 的 503 reason 表覆盖全部取值", () => {
+  // 反向自检：这张表不许空，否则下面的 for 一格都不跑而整组照绿。
+  it("FAIL_REASONS 本身不是空表，且就是 unavailable() 用的那一份", () => {
+    expect([...FAIL_REASONS]).toEqual([
+      "pool_empty", "all_cooling", "all_disabled", "all_evicted", "upstream_error",
+    ]);
+  });
+
+  for (const reason of FAIL_REASONS) {
+    it(`每一份 API.md 都写了 \`${reason}\``, () => {
+      const missing = LANGS.filter((lang) => !readFileSync(`docs/${lang}/API.md`, "utf8").includes(reason));
+      expect(missing, `这些语言的 API.md 没提到 reason「${reason}」——对外契约少了一条`).toEqual([]);
     });
   }
 });

@@ -48,11 +48,13 @@ If no upstream key is available, the gateway returns `503` before ever calling u
 |---|---|---|
 | `pool_empty` | – | No key has been imported yet. |
 | `all_cooling` | **yes** | Every key is cooling down (rate limit, payment required, or repeated transient failures). A `Retry-After` header gives the earliest recovery time. |
+| `all_disabled` | **no** | Every key was **manually disabled** by an administrator in the admin panel. Re-enable them there — **the credentials are fine, do not replace the keys**. |
 | `all_evicted` | **no** | Every key was permanently evicted because its credentials are invalid (upstream `401`/`403`). Import new keys. |
 | `upstream_error` | **yes** | The keys are fine; the upstream failed on every attempt. |
 
 ```json
 { "error": { "reason": "all_cooling", "message": "全部 key 暂不可用：2 把冷却中（到期自动恢复）、0 把已永久剔除" } }
+{ "error": { "reason": "all_disabled", "message": "全部 3 把 key 均不可用且不会自动恢复：3 把被管理员手工停用（在管理面板上重新启用即可）" } }
 ```
 
 ## Synchronous-endpoint timeout (`504`)

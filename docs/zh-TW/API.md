@@ -47,11 +47,13 @@ Cloudflare Worker 上，換成你的 `*.workers.dev` 網域（或自訂網域）
 |---|---|---|
 | `pool_empty` | – | 尚未匯入任何 key。 |
 | `all_cooling` | **會** | 全部 key 處於冷卻中（限流、欠費或瞬時故障累積）。回應標頭 `Retry-After` 給出最早恢復時刻。 |
+| `all_disabled` | **不會** | 全部 key 被管理員在管理面板上**手動停用**。在面板上重新啟用即可——**憑證本身沒問題，別去更換 key**。 |
 | `all_evicted` | **不會** | 全部 key 因憑證失效（上游 `401`/`403`）被永久剔除，請更換 key。 |
 | `upstream_error` | **會** | key 本身可用，但上游每次嘗試都失敗。 |
 
 ```json
 { "error": { "reason": "all_cooling", "message": "全部 key 暂不可用：2 把冷却中（到期自动恢复）、0 把已永久剔除" } }
+{ "error": { "reason": "all_disabled", "message": "全部 3 把 key 均不可用且不会自动恢复：3 把被管理员手工停用（在管理面板上重新启用即可）" } }
 ```
 
 ## 同步端點逾時（`504`）

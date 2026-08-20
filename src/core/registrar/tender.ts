@@ -3,7 +3,7 @@ import type { MailProvider } from "../../ports/mailbox.js";
 import type { AgnesDeps } from "./agnes.js";
 import type { RegistrarConfig, Channel } from "./config.js";
 import { requirePrimary } from "./config.js";
-import { isAvailable } from "../keypool.js";
+import { countsTowardTarget } from "../keypool.js";
 import { mintOne, type MintOutcome } from "./mint.js";
 import type { Logger } from "../../ports/logger.js";
 
@@ -164,7 +164,11 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   }
 
   const now = startedAt;
-  const available = (await deps.repo.all()).filter((r) => isAvailable(r, now)).length;
+  // **判据是 `countsTowardTarget` 不是 `isAvailable`**，两者只在被停用的 key 上分歧：
+  // 用后者的话「在面板上停用一把 key」就等于「自动注册一个新 Agnes 账号」，而且
+  // 每一轮 Cron 都会重新填满这个缺口（停用不像冷却那样会自己回来）。理由全文见
+  // `src/core/keypool.ts` 的 `countsTowardTarget`。
+  const available = (await deps.repo.all()).filter((r) => countsTowardTarget(r, now)).length;
   const need = deps.config.targetKeys - available;
   if (need <= 0) {
     return {

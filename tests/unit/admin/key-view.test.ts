@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { maskKey, keyBucket, toKeyViews, bucketCounts, matchesQuery, BUCKETS } from "../../../src/core/admin/key-view.js";
+import { maskKey, keyBucket, toKeyViews, bucketCounts, matchesQuery, BUCKETS, type Bucket } from "../../../src/core/admin/key-view.js";
 import { isAvailable } from "../../../src/core/keypool.js";
 import type { KeyRecord } from "../../../src/core/types.js";
 
@@ -19,8 +19,14 @@ describe("KeyView 永不含明文", () => {
     const [v] = toKeyViews([rec], 0);
     expect(Object.keys(v!)).not.toContain("key");
     // 逐个值扫一遍：只断言「没有 key 这个字段名」拦不住「顺手塞进 note 字段」。
+    //
+    // ⚠️ **`?? null` 不是防御性写法，它是这条断言能不能成立的前提**（评审 M-d）：
+    // `JSON.stringify(undefined)` 返回的是 `undefined` 而不是字符串，`.not.toContain`
+    // 会当场抛 TypeError——**那是一次崩溃，不是一次检查**。今天 `KeyView` 的字段
+    // 恰好都不是 undefined 所以无害，但 Task 4 要往这里加 `note`，只要它是
+    // `string | undefined`，这条安全断言就会变成一个莫名其妙的报错而不是真的扫过。
     for (const val of Object.values(v!)) {
-      expect(JSON.stringify(val)).not.toContain("WHOLE-SECRET");
+      expect(JSON.stringify(val ?? null)).not.toContain("WHOLE-SECRET");
     }
   });
   /**
@@ -120,8 +126,39 @@ describe("keyBucket 与 isAvailable 等价（后端这一份同样要钉）", ()
     expect(keyBucket(legacy, NOW)).toBe("fresh");
     expect(keyBucket(JSON.parse(JSON.stringify(legacy)) as KeyRecord, NOW), "JSON 往返之后也一样").toBe("fresh");
   });
-  it("档位集合是手写字面量，加档必须在评审里被看见；**顺序即优先级**", () => {
+  it("档位集合是手写字面量，加档必须在评审里被看见", () => {
     expect([...BUCKETS]).toEqual(["disabled", "evicted", "cooling", "fresh"]);
+  });
+
+  /**
+   * **「顺序即优先级」原来只是一句注释**（评审 M-c）：`BUCKETS` 的字面量那格与
+   * `keyBucket` 的行为那几格**互不相干**——改字面量顺序只红前者，改 `if` 顺序只红后者，
+   * 两边可以各自漂到对方的反面而没有任何东西发现。这一格把两者绑起来。
+   *
+   * 做法：逐对枚举，构造一条**同时满足两档条件**的记录，断言 `keyBucket` 报的是
+   * **在 `BUCKETS` 里更靠前的那一档**。期望值直接从 `BUCKETS` 的下标取，所以
+   * 改字面量顺序、或改 `if` 顺序，**两个方向都会让它变红**。
+   *
+   * `Record<Bucket, …>` 让 `tsc` 在加第五档时逼人来这里补一行。
+   */
+  it("顺序即优先级：任意两档同时成立时，报的是 BUCKETS 里更靠前的那一档", () => {
+    const CONDITION: Record<Bucket, Partial<KeyRecord>> = {
+      disabled: { disabled: true },
+      evicted: { evicted: true, evictedReason: "upstream 401" },
+      cooling: { cooldownUntil: NOW + 1 },
+      fresh: {},                                   // 「什么都不满足」就是 fresh
+    };
+    let pairs = 0;
+    for (let i = 0; i < BUCKETS.length; i++) {
+      for (let j = i + 1; j < BUCKETS.length; j++) {
+        const hi = BUCKETS[i]!, lo = BUCKETS[j]!;
+        const rec = mk({ ...CONDITION[hi], ...CONDITION[lo] });
+        expect(keyBucket(rec, NOW), `${hi} 与 ${lo} 同时成立时应报 ${hi}`).toBe(hi);
+        pairs++;
+      }
+    }
+    // 反向自检：循环真的跑了 C(4,2)=6 对，不是一对都没跑而整格照绿。
+    expect(pairs).toBe(6);
   });
 });
 
@@ -205,10 +242,26 @@ describe("KeyView.disabled 恒是布尔、恒存在", () => {
       .toContain("disabled");
     expect(roundTripped.disabled).toBe(false);
   });
-  it("停用的记录投影出来是 true，并与 bucket 同步", () => {
-    const [v] = toKeyViews([mk({ disabled: true })], 0);
-    expect(v!.disabled).toBe(true);
-    expect(v!.bucket).toBe("disabled");
+  /**
+   * `v.disabled` 与 `v.bucket === "disabled"` 今天**恒等价**，而 Task 4 会
+   * **一边读 `v.disabled` 渲染开关、一边读 `v.bucket` 渲染徽章**（评审 M-b）——
+   * 两个字段一旦漂开，面板就会出现「徽章说已剔除、开关说没停用」这种自相矛盾的行。
+   * 所以夹具里必须有 `disabled + evicted` 那一格：**那正是两者最可能漂开的地方**
+   * （`bucket` 走优先级只报一个，而 `disabled` 是独立的布尔）。
+   */
+  it("投影出来的 disabled 与 bucket 恒同步，含 disabled+evicted 那格", () => {
+    const CASES: ReadonlyArray<{ rec: KeyRecord; disabled: boolean; bucket: string }> = [
+      { rec: mk({ disabled: true }), disabled: true, bucket: "disabled" },
+      { rec: mk({ disabled: true, evicted: true, evictedReason: "401" }), disabled: true, bucket: "disabled" },
+      { rec: mk({ disabled: true, cooldownUntil: 5000 }), disabled: true, bucket: "disabled" },
+      { rec: mk({ evicted: true, evictedReason: "401" }), disabled: false, bucket: "evicted" },
+      { rec: mk({}), disabled: false, bucket: "fresh" },
+    ];
+    for (const { rec, disabled, bucket } of CASES) {
+      const [v] = toKeyViews([rec], 1000);
+      // 手写字面量，不从另一个字段反推——否则「两者恒等价」就成了同义反复。
+      expect({ disabled: v!.disabled, bucket: v!.bucket }, bucket).toEqual({ disabled, bucket });
+    }
   });
   /**
    * 存储被写坏成非布尔时，**投影与调度必须给出同一个答案**——各说各的就是

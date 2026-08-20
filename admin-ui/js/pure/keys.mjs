@@ -43,11 +43,14 @@ export function cardCounts(data) {
 /**
  * 分档徽章的样式。**四档必须互不相同**——两档共用一个样式就等于面板分不出它们。
  *
- * `disabled` 取中性的 muted 而不是红：它**不是故障**，是运维自己按下的开关，
- * 用报警色会让人以为出事了。
+ * `disabled` **不带颜色修饰类**，只有底样式 `badge`（中性灰）：它不是故障，是运维
+ * 自己按下的开关，用报警色会让人以为出事了。曾经给它写过一条 `badge-muted`，
+ * 而那条 CSS 的取值与 `.badge` 逐字相同 ⇒ 是条死规则（评审 M-a 实测：删掉全绿）。
+ * **别为了"看起来对称"再造一个同义类**——那只会让「四档互不相同」这句话在字符串
+ * 上成立、在屏幕上不成立。
  */
 export function badgeClass(bucket) {
-  if (bucket === "disabled") return "badge badge-muted";
+  if (bucket === "disabled") return "badge";
   if (bucket === "evicted") return "badge badge-danger";
   if (bucket === "cooling") return "badge badge-warn";
   return "badge badge-ok";

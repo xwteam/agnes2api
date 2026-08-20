@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { tendOnce, type TendFailureReason, type TendDeps } from "../../../src/core/registrar/tender.js";
 import { KeyPoolRepo } from "../../../src/core/keypool-repo.js";
+import { countsTowardTarget, isAvailable } from "../../../src/core/keypool.js";
 import { KEY_PREFIX } from "../../../src/core/pool-index.js";
 import { MemoryStorage } from "../../helpers/fake-storage.js";
 import { FakeMailProvider } from "../../helpers/fake-mailbox.js";
@@ -113,13 +114,73 @@ describe("tendOnce", () => {
     expect((await tendOnce(deps)).attempted).toBe(2);
   });
 
-  it("已剔除与冷却中的 key 不计入可用数", async () => {
+  /**
+   * 名额判据的**三状态排除清单**。原来只有前两项，`disabled` 落地时差点被顺手加成第三项
+   * ——那是错的，见下面那一格。三种状态**给的是不同的字段组合**，所以这一格能分辨
+   * 「判据看错了字段」与「判据压根没生效」。
+   */
+  it("已剔除与冷却中的 key 不计入可用数，而被停用的**照样计入**", async () => {
     const { repo, deps } = await makeDeps();
     const a = await repo.add("a"); await repo.save({ ...a, evicted: true });
     const b = await repo.add("b"); await repo.save({ ...b, cooldownUntil: 999_999 });
+    const c = await repo.add("c"); await repo.save({ ...c, disabled: true }, c);
     const out = await tendOnce(deps);
-    expect(out.available).toBe(0);
-    expect(out.minted).toBe(3);
+    // 三把里只有被停用的那把占名额 ⇒ available 1、缺口 2。
+    expect(out.available).toBe(1);
+    expect(out.minted).toBe(2);
+  });
+
+  /**
+   * ⚠️ **评审 C1：这一格守的是「停用一把 key 不许触发一次自动注册」。**
+   *
+   * `tendOnce` 拿 `targetKeys - available` 当缺口，**差多少就真的去注册多少个 Agnes 账号**。
+   * 名额判据若用 `isAvailable`（它现在排除被停用的 key），后果实测为：
+   * `available` 3→2、`minted` 0→1、池子 3→4 把。**而且永不自愈**——冷却会自己回来、
+   * 下一轮缺口归零，停用不会，那把只要还停着，**每一轮 Cron 都把缺口重新填满**。
+   * 「全停 20 把以暂停这个池子」就是 20 次注册。
+   *
+   * **变红条件**：`tender.ts` 的 `countsTowardTarget` 换回 `isAvailable`。
+   * 断言分两半，缺一不可：`minted`（这一轮铸没铸）与**池子实际条数**（真落盘没有）。
+   */
+  it("停用一把 key 不触发补池——停用不是「这把死了」，别拿它当缺口", async () => {
+    const { repo, deps } = await makeDeps();          // targetKeys: 3
+    for (const k of ["a", "b", "c"]) await repo.add(k);
+    const steady = await tendOnce(deps);
+    expect(steady.available, "前置条件：稳态三把全占名额").toBe(3);
+    expect(steady.minted, "前置条件：稳态一把都不铸").toBe(0);
+
+    const one = (await repo.all())[0]!;
+    await repo.save({ ...one, disabled: true }, one);
+
+    const after = await tendOnce(deps);
+    expect(after.available, "停用的 key 仍占 targetKeys 名额").toBe(3);
+    expect(after.minted, "停用一把 = 自动注册一个新 Agnes 账号（建邮箱 + 注册 + 建 token）").toBe(0);
+    expect(await repo.all(), "池子不许因为一次停用就长大").toHaveLength(3);
+  });
+
+  /**
+   * 名额判据**对 `cooling` / `evicted` 的语义与 P3b 逐字相同**——本任务只把 `disabled`
+   * 这一项摘出去，不顺手改补池对冷却的既有行为。
+   *
+   * 拿**手写的期望表**比，不从 `isAvailable` 反推（那是同义反复，第 6 种假阳性）：
+   * 四种状态各写一次字面量。`disabled` 那一行正是两个函数今天唯一分歧的地方。
+   */
+  it("补池的名额判据与 P3b 的 isAvailable 逐字等价，只在「已停用」这一项上分歧", () => {
+    const NOW = 1000;
+    const base = {
+      id: "i", key: "k", addedAt: 0, lastUsedAt: null,
+      cooldownReason: null, strikes: 0, evictedReason: null,
+    };
+    const CASES = [
+      { name: "全新", rec: { ...base, cooldownUntil: 0, evicted: false }, counts: true, available: true },
+      { name: "冷却中", rec: { ...base, cooldownUntil: NOW + 1, evicted: false }, counts: false, available: false },
+      { name: "已剔除", rec: { ...base, cooldownUntil: 0, evicted: true }, counts: false, available: false },
+      { name: "已停用", rec: { ...base, cooldownUntil: 0, evicted: false, disabled: true }, counts: true, available: false },
+    ];
+    for (const { name, rec, counts, available } of CASES) {
+      expect(countsTowardTarget(rec, NOW), `${name}：占不占名额`).toBe(counts);
+      expect(isAvailable(rec, NOW), `${name}：能不能拿去打上游`).toBe(available);
+    }
   });
 
   it("单次失败不中断整轮（域名全被拒 domain_blocked_all）", async () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   CARDS, AUTO_SECONDS, cardCounts, badgeClass, bucketLabelKey, autoLabelKey,
   keysQuery, cooldownRemaining, lastErrorParts, usageParts, lastUsedParts,
@@ -58,10 +59,31 @@ describe("cardCounts：没有数据就是没有数据", () => {
 describe("分档与档位的映射", () => {
   it("四档各自的徽章样式互不相同", () => {
     const classes = ["fresh", "cooling", "evicted", "disabled"].map(badgeClass);
-    expect(classes).toEqual([
-      "badge badge-ok", "badge badge-warn", "badge badge-danger", "badge badge-muted",
-    ]);
+    // `disabled` 刻意只有底样式（中性灰），不带颜色修饰类——理由见 keys.mjs。
+    expect(classes).toEqual(["badge badge-ok", "badge badge-warn", "badge badge-danger", "badge"]);
     expect(new Set(classes).size, "两档共用一个样式就等于面板分不出它们").toBe(4);
+  });
+
+  /**
+   * ⚠️ **上面那格只比字符串**：四个不同的字符串完全可能在屏幕上长得一模一样
+   *（评审 M-a：`badge-muted` 曾经就是一条取值与 `.badge` 逐字相同的死规则，
+   * 而那格照绿）。这一格补上它够得着的那一半——**每一个修饰类都得真的在
+   * `admin-ui/css/sections.css` 里定义过**，拼错一个字母、或删了 CSS 却留着类名，
+   * 都会在这里变红。
+   *
+   * **边界写清楚**：它证明"这个类有定义"，**不证明"这四个定义长得不一样"**——
+   * 后者需要一个 CSS 引擎，本仓没有，留给评审看 diff。
+   */
+  it("badgeClass 返回的每一个修饰类都真的在 sections.css 里定义过", () => {
+    const css = readFileSync("admin-ui/css/sections.css", "utf8");
+    const modifiers = ["fresh", "cooling", "evicted", "disabled"]
+      .flatMap((b) => badgeClass(b).split(" "))
+      .filter((c) => c !== "badge");
+    // 反向自检：真的收集到了修饰类，不是空数组让下面的 for 一格都不跑。
+    expect(modifiers.sort()).toEqual(["badge-danger", "badge-ok", "badge-warn"]);
+    for (const c of modifiers) {
+      expect(css, `badgeClass 返回了 .${c}，而 sections.css 里没有这条规则`).toContain(`.${c} {`);
+    }
   });
   it("i18n key 逐档手写，且每一个都真的在字典里", () => {
     expect(CARDS.map(bucketLabelKey)).toEqual([

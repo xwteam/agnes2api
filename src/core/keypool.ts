@@ -7,6 +7,12 @@ import type { KeyRecord } from "./types.js";
  * （`src/core/admin/key-view.ts` 的 `keyBucket`）、投影（同文件 `toKeyViews` 的 `disabled` 字段）。
  * 各写各的后果是「面板显示已停用、调度器照常用它」——本字段最难被发现的失败形态。
  *
+ * ⚠️ **「三个」数的是问这个问题的地方，不是 `isAvailable` 的调用处——后者有四个。**
+ * 这句话原来写成「三个读取处」就收尾了，而**第四个调用处 `tendOnce` 当时正被这次改动
+ * 悄悄改掉语义**（评审 C1）。它刻意**不**问这个问题，理由见下面的 `countsTowardTarget`。
+ * 加一个共享判据的新条件时，**该 grep 的是这个判据的名字，不是新字段的名字**——
+ * 只 grep `\.disabled` 只能查出「谁读记录字段」，查不出「谁受这个判据影响」。
+ *
  * **用真值性而不是 `=== true`**，理由是记录的真实来源：`src/core/keypool-repo.ts`
  * 的 `loadRecords()` 走 `storage.get<KeyRecord>()`，那是**裸 `JSON.parse` 之后的 as
  * 断言，没有任何窄化**，运行期什么形状都可能是。对一个安全开关来说，
@@ -22,8 +28,35 @@ export function isDisabled(r: KeyRecord): boolean {
   return !!r.disabled;
 }
 
+/** 「现在能不能拿这把 key 去打上游」。**只回答这一个问题**，见 `countsTowardTarget`。 */
 export function isAvailable(r: KeyRecord, now: number): boolean {
   return !r.evicted && !isDisabled(r) && r.cooldownUntil <= now;
+}
+
+/**
+ * 「这把 key 还算不算在 `targetKeys` 名额里」——**补池专用，与 `isAvailable` 是两个问题**。
+ *
+ * 两者曾经是同一个函数，而它们**只在被停用的 key 上分歧**，所以那次合并一直没出事。
+ * `disabled` 落地的那一刻它就出事了（评审 C1，实测复现）：
+ * `src/core/registrar/tender.ts` 的 `tendOnce` 拿 `targetKeys - available` 当缺口，
+ * **差多少就真的去注册多少个 Agnes 账号**（建临时邮箱 → 注册 → 建 token）。
+ * 让 `isAvailable` 顺手回答这个问题，等于**「在面板上停用一把 key」＝「自动注册一个新账号」**。
+ *
+ * **而且永不自愈**：`cooling` 会自己回来、下一轮 `need` 随之归零；`disabled` 不会——
+ * 那把只要还停着，**每一轮 Cron 都把缺口重新填满**，每停用 1 把就永久多 1 个账号。
+ * 运维最自然的批量操作（全停以暂停这个池子）会变成代价最高、且铸出来的账号收不回去的
+ * 那一个，正是「邮箱配额自杀」那条链。
+ *
+ * 判据是 `!evicted && 不在冷却`，**刻意不读 `isDisabled`**：只有 `evicted` 才意味着
+ * 「这把死了，去换一把」，而补池就是全仓唯一真的会去换 key 的代码——这与
+ * `all_disabled` 不复用 `all_evicted` 是同一条理由，两处不一致的话本任务的立论自相矛盾。
+ *
+ * ⚠️ **对 `cooling` 的既有语义一个字都没改**：这个式子与 P3b 的 `isAvailable` 逐字相同
+ * （由 `tests/unit/registrar/tender.test.ts「补池的名额判据与 P3b 的 isAvailable 逐字等价」`
+ * 钉着，那一格穷举四种状态比对两个函数）。冷却相关的一条既有缺陷单独登记，不在本任务改。
+ */
+export function countsTowardTarget(r: KeyRecord, now: number): boolean {
+  return !r.evicted && r.cooldownUntil <= now;
 }
 
 export function selectKey(

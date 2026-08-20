@@ -30,8 +30,11 @@ tr:last-child td { border-bottom: 0; }
 .badge-ok { color: var(--ok-fg); background: var(--ok); border-color: var(--ok); }
 .badge-warn { color: var(--warn-fg); background: var(--warn); border-color: var(--warn); }
 .badge-danger { color: var(--danger-fg); background: var(--danger); border-color: var(--danger); }
-/* 人工停用。**刻意用中性色而不是报警色**：它不是故障，是运维自己按下的开关。 */
-.badge-muted { color: var(--muted); background: var(--panel-2); border-color: var(--border); }
+/* 「人工停用」档**刻意不加颜色修饰类**：上面 `.badge` 的底样式本身就是中性灰，
+   而停用不是故障、是运维自己按下的开关，用报警色会让人以为出事了。
+   曾经为它加过一条 `.badge-muted`，取值与 `.badge` 逐字相同 ⇒ 那是条死规则
+   （删掉它 1583 条全绿，评审 M-a 实测）。**别再加回来**——要区分的话得先给它一个
+   真正不同的样式，而不是一个换了名字的同义类。 */
 
 /* 工具条 / 分页 / 说明文字：Task 4 的 Key 池板块起用，事件与概览板块同样直接引用，
    **不许各板块再各写一份**（kiro2api 正是没有这一层，同一个原语出现了三份不同实现）。 */

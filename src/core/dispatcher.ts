@@ -146,7 +146,18 @@ async function discard(res: Response | null): Promise<void> {
   }
 }
 
-type FailReason = "pool_empty" | "all_cooling" | "all_disabled" | "all_evicted" | "upstream_error";
+/**
+ * 池子不可用时的全部 `reason` 取值。**写成运行期数组而不是纯类型联合，是为了让它能被
+ * 断言**：`reason` 是对外 API 契约的一部分，五份 API.md（`docs/zh-CN/API.md` 等）各有一张表列着它们，
+ * 而 `docs-parity` 只比 DEPLOY.md 的数字——**五份一样地漏掉一条时对等仍然成立**
+ * （评审 I3：本任务加 `all_disabled` 时五份就是这样一起过时的，没有任何门禁看得见）。
+ * 现在由 `tests/unit/docs-parity.test.ts「五语言 API.md 的 503 reason 表覆盖全部取值」`
+ * 逐条比对，加一条新 reason 而不写文档会让它变红。
+ */
+export const FAIL_REASONS = [
+  "pool_empty", "all_cooling", "all_disabled", "all_evicted", "upstream_error",
+] as const;
+type FailReason = (typeof FAIL_REASONS)[number];
 
 function fail(reason: FailReason, message: string, retryAfterSec?: number): Response {
   const headers: Record<string, string> = { "content-type": "application/json" };
@@ -171,10 +182,16 @@ function fail(reason: FailReason, message: string, retryAfterSec?: number): Resp
  * 的含义是「凭据都失效了，去换 key」，而这里的真相是「是你自己在面板上关的」。
  * 把后者说成前者，运维会去做一件完全没用的事（设计 §6.2）。
  *
- * ⚠️ **`disabled === 0` 时本函数的四种输出与 P3b 逐字相同**（reason、message、
- * 有没有 Retry-After 都没变），只是判定顺序换了个等价的写法：
- * 旧的「`evicted === total`」等价于新的「fresh/cooling/disabled 三格都是 0」，
- * 旧的兜底 `upstream_error` 等价于新的前置 `fresh > 0`。
+ * ⚠️ **`disabled === 0` 时本函数的输出与 P3b 逐字相同**——reason、**message 文本**、
+ * 有没有 Retry-After，三样都没变。判定顺序换了个等价写法：旧的「`evicted === total`」
+ * 等价于新的「fresh/cooling/disabled 三格都是 0」，旧的兜底 `upstream_error` 等价于
+ * 新的前置 `fresh > 0`。
+ *
+ * **「message 也没变」这半是靠下面那两处条件拼接做到的，不是白来的**：无条件拼上
+ * 「0 把被管理员停用」会让**每一条既有的 503 都多出一句废话**，而全仓没有任何一条
+ * 用例断言过 `all_cooling` 的 message 文本（评审 I1 实测），**全绿在这件事上什么都
+ * 不证明**。现在由 `tests/unit/dispatcher.test.ts「503 的 message 文本：没有停用的 key 时与 P3b 逐字相同」`
+ * 逐字节钉着两种变体。
  */
 function unavailable(records: KeyRecord[], now: number): Response {
   const h = poolHealth(records, now);
@@ -200,7 +217,7 @@ function unavailable(records: KeyRecord[], now: number): Response {
     return fail(
       "all_cooling",
       `全部 key 暂不可用：${h.cooling} 把冷却中（到期自动恢复）、`
-      + `${h.disabled} 把被管理员停用、${h.evicted} 把已永久剔除`,
+      + `${h.disabled > 0 ? `${h.disabled} 把被管理员停用、` : ""}${h.evicted} 把已永久剔除`,
       retryAfterSec,
     );
   }
@@ -210,7 +227,8 @@ function unavailable(records: KeyRecord[], now: number): Response {
     return fail(
       "all_disabled",
       `全部 ${h.total} 把 key 均不可用且不会自动恢复：${h.disabled} 把被管理员手工停用`
-      + `（在管理面板上重新启用即可）、${h.evicted} 把因凭据失效被永久剔除`,
+      + `（在管理面板上重新启用即可）`
+      + `${h.evicted > 0 ? `、${h.evicted} 把因凭据失效被永久剔除` : ""}`,
     );
   }
 

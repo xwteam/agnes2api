@@ -44,11 +44,13 @@ Cloudflare Worker 上，替换成你的 `*.workers.dev` 域名（或自定义域
 |---|---|---|
 | `pool_empty` | – | 尚未导入任何 key。 |
 | `all_cooling` | **会** | 全部 key 处于冷却中（限流、欠费或瞬时故障累计）。响应头 `Retry-After` 给出最早恢复时刻。 |
+| `all_disabled` | **不会** | 全部 key 被管理员在管理面板上**手工停用**。在面板上重新启用即可——**凭据本身没问题，别去换 key**。 |
 | `all_evicted` | **不会** | 全部 key 因凭据失效（上游 `401`/`403`）被永久剔除，请更换 key。 |
 | `upstream_error` | **会** | key 本身可用，但上游每次尝试都失败。 |
 
 ```json
 { "error": { "reason": "all_cooling", "message": "全部 key 暂不可用：2 把冷却中（到期自动恢复）、0 把已永久剔除" } }
+{ "error": { "reason": "all_disabled", "message": "全部 3 把 key 均不可用且不会自动恢复：3 把被管理员手工停用（在管理面板上重新启用即可）" } }
 ```
 
 ## 同步端点超时（`504`）

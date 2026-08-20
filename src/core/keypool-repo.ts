@@ -91,11 +91,20 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
    * 运维备注。**telemetry**：调度逻辑一个字段都不读它（`isAvailable` / `selectKey` /
    * `apply*` / `poolHealth` / `keyBucket` 全都不碰），它只会被显示。
    *
-   * ⚠️ **代价与 `lastUsedAt` 不同，写给 P3c Task 3 的人看**：`lastUsedAt` 被消除只是
-   * 面板上的时刻粗一点，而**只改 `note` 的那次 `PATCH` 会被整个丢弃**——
+   * ⚠️ **代价与 `lastUsedAt` 不同，这段是写给 P3c Task 3 的人看的。**
+   * `lastUsedAt` 被消除只是面板上的时刻粗一点，而**只改 `note` 的那次写会被整个丢弃**：
    * `shouldElide` 的判据是 `schedulingEqual(prev, next)` 且 `lastUsedAt` 没走远，
-   * 一次纯改备注的写两条都满足。**做 `PATCH` 的人必须自己处理这件事**
-   * （比如那条路径不传 `prev`），不能指望本表兜住。本期它没有生产者，还走不到。
+   * 一次纯改备注的写两条都满足（实测：`save({...r, note:"x"}, r)` ⇒ `puts === 0`，
+   * `note` 既不在存储也不在快照）。
+   *
+   * 🔴 **没有任何自动化会在你写错时变红，这句话不许再被写成别的样子。**
+   * 上一版这里写着「等 `PATCH` 落地时那一格会变红」——**那是假的，评审实证**：
+   * `MAY_ELIDE` 那一格恰恰断言「这次写被消除是对的」，所以
+   * ① 修对了（`save(next)` 不传 `prev`）它是绿的；② 写错了（`save(next, prev)`，
+   * 备注静默丢失）它**也是绿的**。它唯一会响的路是有人把本行挪进 `scheduling`
+   * ——也就是只在「你已经理解并选择了全局修法」之后才响。
+   * ⇒ **做 `PATCH` 的人必须自己建护栏**：一格「只改备注的 `PATCH` 之后 `GET` 读得回来」
+   * 的端到端断言。本表兜不住它，本文件也兜不住它。
    */
   note: "telemetry",
 };
