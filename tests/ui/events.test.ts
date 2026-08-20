@@ -3,7 +3,8 @@ import {
   EVENTS_POLL_MIN_MS, EVENTS_POLL_MAX_MS, LEVELS,
   levelLabelKey, effectiveLevel, eventLevelLabelKey, levelBadgeClass,
   eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, generatedAtOf, bufferStatus,
-  shouldWarn, nextAfter, pollOutcome, nextPollDelayMs, pollIndicatorState, pollIndicatorLabelKey, matchesSearch,
+  shouldWarn, nextAfter, initialPollState, resumePollState, pollOutcome, nextPollDelayMs,
+  pollIndicatorState, pollIndicatorLabelKey, matchesSearch,
   formatFields, buildDetailText, groupEvents, orderForDisplay, mergeIntoView,
 } from "../../admin-ui/js/pure/events.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
@@ -227,68 +228,137 @@ describe("nextAfter：轮询游标推进", () => {
  * 信号），原来摊在 `sec-events.js` 里裸写、零测试覆盖，两个联带 bug（视图重复、
  * 退避永远回不到最长间隔）都是从这个洞里漏出来的——见 `pure/events.mjs` 的说明。
  */
-describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空 + hadNewItems）", () => {
+describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空 + hadNewItems + healing）", () => {
+  /** 一个"正常轮询中"的上一轮状态。三个字段都手写，不从被测对象取。 */
+  const idle = { after: 1000, healing: false, delayMs: 15_000 };
+
   it("正常情况（cursorAhead 非 true）：after 走 nextAfter 原样推进，不清视图", () => {
-    expect(pollOutcome(1000, [{ ts: 2000 }], 2000, false)).toEqual({
-      nextAfterValue: 2000, resetView: false, hadNewItems: true,
+    expect(pollOutcome(idle, [{ ts: 2000 }], 2000, false)).toEqual({
+      resetView: false, hadNewItems: true,
+      next: { after: 2000, healing: false, delayMs: 15_000 },
     });
   });
-  it("正常情况下 items 为空 ⇒ hadNewItems 为 false，after 保留原值（cursor 为 null）", () => {
-    expect(pollOutcome(1000, [], null, false)).toEqual({
-      nextAfterValue: 1000, resetView: false, hadNewItems: false,
+  it("正常情况下 items 为空 ⇒ hadNewItems 为 false，after 保留原值（cursor 为 null），退避翻倍", () => {
+    expect(pollOutcome(idle, [], null, false)).toEqual({
+      resetView: false, hadNewItems: false,
+      next: { after: 1000, healing: false, delayMs: 30_000 },
     });
   });
   it("cursorAhead 缺失（null/undefined）时按非自愈处理，不是自愈的默认值", () => {
-    expect(pollOutcome(1000, [], null, null)).toEqual({
-      nextAfterValue: 1000, resetView: false, hadNewItems: false,
-    });
-    expect(pollOutcome(1000, [], null, undefined)).toEqual({
-      nextAfterValue: 1000, resetView: false, hadNewItems: false,
-    });
+    expect(pollOutcome(idle, [], null, null).next.after).toBe(1000);
+    expect(pollOutcome(idle, [], null, null).resetView).toBe(false);
+    expect(pollOutcome(idle, [], null, undefined).next.after).toBe(1000);
+    expect(pollOutcome(idle, [], null, undefined).resetView).toBe(false);
   });
   it("cursorAhead 为 true：无条件把 after 清成 null，不管 cursor 算出来是什么", () => {
     // 故意给一个"看起来正常"的 cursor（9999），自愈应当无视它，直接清成 null。
-    expect(pollOutcome(1000, [], 9999, true)).toEqual({
-      nextAfterValue: null, resetView: true, hadNewItems: false,
+    expect(pollOutcome(idle, [], 9999, true)).toEqual({
+      resetView: true, hadNewItems: false,
+      next: { after: null, healing: true, delayMs: 30_000 },
     });
   });
   it("cursorAhead 为 true 时 resetView 恒为 true——这是评审 C6 二审(b) 点名的那条视图重复 bug 的直接防线", () => {
-    expect(pollOutcome(5000, [], null, true).resetView).toBe(true);
+    expect(pollOutcome({ after: 5000, healing: false, delayMs: 15_000 }, [], null, true).resetView).toBe(true);
   });
   it("hadNewItems 只看 items.length，不看 after 有没有变——这是评审 C6 二审(a) 点名的那条退避 bug 的直接防线", () => {
     // after 从 1000 自愈成 null（明显"变了"），但 items 是空的：hadNewItems 必须是 false，
     // 不能因为"游标变了"就误判成"来了新内容"。
-    expect(pollOutcome(1000, [], null, true).hadNewItems).toBe(false);
+    expect(pollOutcome(idle, [], null, true).hadNewItems).toBe(false);
   });
   it("items 不是数组（畸形响应）时 hadNewItems 安全地为 false，不抛错", () => {
-    expect(pollOutcome(1000, null, null, false).hadNewItems).toBe(false);
-    expect(pollOutcome(1000, undefined, null, false).hadNewItems).toBe(false);
+    expect(pollOutcome(idle, null, null, false).hadNewItems).toBe(false);
+    expect(pollOutcome(idle, undefined, null, false).hadNewItems).toBe(false);
+  });
+  it("上一轮状态畸形/缺失时按初始状态处理，不抛错也不产出 NaN 间隔", () => {
+    expect(pollOutcome(undefined, [], null, false).next).toEqual({
+      after: null, healing: false, delayMs: 30_000,
+    });
+    expect(pollOutcome({ after: "oops", healing: 1, delayMs: "x" }, [], null, false).next).toEqual({
+      after: null, healing: false, delayMs: 30_000,
+    });
   });
 
   /**
-   * **评审 C6 三审(a)**：`justHealed`（第五个参数）为 `true` 时，即使这一轮真的
-   * 拉到了 items，也不算"来了新内容"——那批 items 正是上一轮 resetView 刚扔掉的
-   * 同一批。这条只切一半（只补 hadNewItems 这一个信号）：`nextAfterValue`/
-   * `resetView` 不受 `justHealed` 影响，只由这一轮自己的 `cursorAhead` 决定。
+   * **评审 C6 三审(a) + 四审 B2**：`healing` 是"上一次自愈之后、还没有重新建立起
+   * 游标"的那一整段（不是"刚好上一轮"）。这段里即使真的拉到了 items，也不算
+   * "来了新内容"——那批 items 正是自愈时 resetView 刚扔掉的同一批。
+   *
+   * 三审(a) 的"只遮一轮"版本在 k≥3（负载均衡每 3 轮以上才命中一次领先 isolate）
+   * 时一次都不起作用：冷读状态会持续很多轮，第 2 轮之后 `justHealed` 就已经清了，
+   * 再命中领先 isolate 时退避照样塌回 15 秒。逐 k 的稳态吞吐实测见
+   * `tests/contract/events-cursor-heal.test.ts`。
    */
-  describe("justHealed（第五个参数）：自愈后紧跟着那一轮不把冷读结果误判成新内容", () => {
-    it("justHealed=true 且这一轮真的拉到了 items：hadNewItems 仍然是 false（不是 true）", () => {
-      const outcome = pollOutcome(null, [{ ts: 2000 }, { ts: 1000 }], 2000, false, true);
-      expect(outcome.hadNewItems, "自愈后紧跟着那一轮的冷读结果不算新内容").toBe(false);
+  describe("healing：自愈之后直到重新建立起游标为止，都不把冷读结果误判成新内容", () => {
+    const healing = { after: null, healing: true, delayMs: 60_000 };
+
+    it("healing=true 且这一轮真的拉到了 items：hadNewItems 仍然是 false（不是 true）", () => {
+      const outcome = pollOutcome(healing, [{ ts: 2000 }, { ts: 1000 }], 2000, false);
+      expect(outcome.hadNewItems, "自愈之后拉回来的第一批不算新内容").toBe(false);
       // 但 after 依然要正常推进——只压制 hadNewItems 这一个信号，不影响游标。
-      expect(outcome.nextAfterValue).toBe(2000);
+      expect(outcome.next.after).toBe(2000);
       expect(outcome.resetView).toBe(false);
     });
-    it("justHealed=false（或缺省/undefined）时行为不变，items 有内容就正常算新内容", () => {
-      expect(pollOutcome(null, [{ ts: 2000 }], 2000, false, false).hadNewItems).toBe(true);
-      expect(pollOutcome(null, [{ ts: 2000 }], 2000, false).hadNewItems, "缺省第五参数不应该被当成 justHealed=true").toBe(true);
+    it("healing=false 时行为不变，items 有内容就正常算新内容、退避回到最短", () => {
+      const outcome = pollOutcome({ after: null, healing: false, delayMs: 60_000 }, [{ ts: 2000 }], 2000, false);
+      expect(outcome.hadNewItems).toBe(true);
+      expect(outcome.next.delayMs).toBe(15_000);
     });
-    it("justHealed=true 但 items 本来就是空的：hadNewItems 仍然是 false（结果不变，不是从别的值被压成 false）", () => {
-      expect(pollOutcome(null, [], null, false, true).hadNewItems).toBe(false);
+    it("healing=true 但 items 本来就是空的：hadNewItems 仍然是 false（结果不变，不是从别的值被压成 false）", () => {
+      expect(pollOutcome(healing, [], null, false).hadNewItems).toBe(false);
     });
-    it("justHealed 不影响这一轮自己的 resetView——这一轮又撞上 cursorAhead 时照样清视图", () => {
-      expect(pollOutcome(null, [], null, true, true).resetView).toBe(true);
+    it("healing 不影响这一轮自己的 resetView——这一轮又撞上 cursorAhead 时照样清视图", () => {
+      expect(pollOutcome(healing, [], null, true).resetView).toBe(true);
     });
+
+    /**
+     * **评审四审 B2 的核心三条**：置位 / 保持 / 清位，各钉一条。"保持"那条是
+     * 三审(a) 版本唯一缺的东西——它只有置位与"下一轮自动清位"。
+     */
+    it("置位：自愈那一轮把 healing 置成 true", () => {
+      expect(pollOutcome(idle, [], null, true).next.healing).toBe(true);
+    });
+    it("保持：自愈之后连续多轮冷读（cursor 恒为 null）时 healing 一直是 true，不是只遮一轮", () => {
+      let s: { after: number | null; healing: boolean; delayMs: number } = idle;
+      s = pollOutcome(s, [], null, true).next; // 自愈
+      expect(s.healing, "自愈后立刻置位").toBe(true);
+      for (let i = 0; i < 5; i++) {
+        const o = pollOutcome(s, [], null, false); // 冷读，落后的 isolate 看不见未来窗口
+        expect(o.hadNewItems).toBe(false);
+        s = o.next;
+        expect(s.after, "冷读拿不到游标，after 停在 null").toBe(null);
+        expect(s.healing, `第 ${i + 1} 轮冷读之后 healing 必须仍然是 true`).toBe(true);
+      }
+      // 这一轮才终于命中领先 isolate，拉回旧事件：仍然不算新内容，但游标重新建立，
+      // healing 随之清位。
+      const back = pollOutcome(s, [{ ts: 7777 }], 7777, false);
+      expect(back.hadNewItems, "自愈之后拉回来的第一批仍然不算新内容").toBe(false);
+      expect(back.next.healing, "游标重新建立 ⇒ 清位").toBe(false);
+      expect(back.next.after).toBe(7777);
+      // 再下一轮才是真正的新内容，退避这时才该回到最短。
+      const fresh = pollOutcome(back.next, [{ ts: 8888 }], 8888, false);
+      expect(fresh.hadNewItems).toBe(true);
+      expect(fresh.next.delayMs).toBe(15_000);
+    });
+    it("清位判据是『游标重新建立』而不是『这一轮有 items』——after 非 null 就清位", () => {
+      // 上一轮不是自愈（after 还留着 1000），这一轮 cursor 为 null：after 保持 1000
+      // ⇒ 非 null ⇒ healing 清位。这条区分的是"after 恰好非 null"与"这一轮有内容"。
+      expect(pollOutcome({ after: 1000, healing: true, delayMs: 60_000 }, [], null, false).next.healing).toBe(false);
+    });
+  });
+});
+
+describe("initialPollState / resumePollState：跨轮状态的两种重置（评审四审 B1）", () => {
+  it("initialPollState：游标、自愈、退避全部归零——切换级别相当于换了一条流", () => {
+    expect(initialPollState()).toEqual({ after: null, healing: false, delayMs: 15_000 });
+  });
+  it("resumePollState：保留游标，但把退避与自愈状态归零", () => {
+    expect(resumePollState({ after: 4321, healing: true, delayMs: 60_000 }))
+      .toEqual({ after: 4321, healing: false, delayMs: 15_000 });
+  });
+  it("resumePollState 对畸形/缺失入参安全（游标归 null，不是 undefined 或 NaN）", () => {
+    expect(resumePollState(undefined)).toEqual({ after: null, healing: false, delayMs: 15_000 });
+    expect(resumePollState({ after: "oops" })).toEqual({ after: null, healing: false, delayMs: 15_000 });
+    expect(resumePollState({ after: Number.NaN })).toEqual({ after: null, healing: false, delayMs: 15_000 });
   });
 });
 

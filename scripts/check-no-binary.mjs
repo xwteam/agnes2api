@@ -16,59 +16,78 @@
 // scan-secrets 这一整套质量流程全部建立在"这是文本"这个前提上。
 //
 // 判定方法：借用 git 自己对"是不是文本"的判据，不重新猜"什么样的字节算二进制"
-// ——`git grep -Il` 只会列出能被当文本搜索的跟踪文件，用 `git ls-files` 的全集
-// 减去这个子集就是 git 判定为二进制的那些（空文件单独处理，见下）。这是本仓
-// "反同义反复"的同一条纪律：期望侧从 git 自己的判据来，不在这里重新实现一遍
-// git 的二进制探测算法（重实现的算法判错时给出的是静默的错误答案）。
+// ——`git ls-files --eol` 会**逐个跟踪文件**直接报出 git 对它的判定：
+//     i/-text  → git 判定为二进制（索引侧）
+//     i/lf | i/crlf | i/mixed → 文本
+//     i/none   → 没有任何行结束符（空文件、或整个文件只有一行且不以换行结尾）——是文本
+// 这是本仓"反同义反复"的同一条纪律：期望侧从 git 自己的判据来，不在这里重新实现
+// 一遍 git 的二进制探测算法（重实现的算法判错时给出的是静默的错误答案）。
+//
+// ⚠️ **评审四审 B 组第 2 条：第一版不是这么判的，它有两个已实测的误报，**
+// **两处误报都被当时的注释描述成"不会发生"。** 第一版用的是
+// `git ls-files` 的全集减去 `git grep -Il -E "."` 能匹配到的子集，并在注释里写
+// "匹配『至少一个字符』的正则，对任何非空文本文件必然命中"——那句话是假的：
+//   ① **只含空行的跟踪文件**（例如 `printf '\n\n\n'`）：git 判它是文本
+//      （`i/lf`），但 `git grep -E "."` 一行都匹配不到（`.` 不匹配空行），于是被
+//      算进"二进制"，CI 直接红，还附赠一句"多半是混进了 NUL"的错误诊断；
+//   ② **工作树里被删掉、但仍在索引里的跟踪文件**（`rm src/x.ts` 未 stage）：
+//      `git grep` 搜的是工作树，文件不在了自然匹配不到；第一版的 catch 分支注释
+//      写着"读不到就交给下面的正常流程处理"，而那个"正常流程"就是把它报成二进制。
+//      本地随手删一个跟踪文件再跑门禁就会红——已实测。
+// `git ls-files --eol` 一次消掉这两个洞：空行文件是 `i/lf`，工作树删除的文件
+// 索引侧照样报 `i/lf`（工作树列变成空的 `w/`）。
 
 import { execFileSync } from "node:child_process";
-import { statSync } from "node:fs";
 
 const SCOPE_PREFIXES = ["src/", "tests/", "admin-ui/", "scripts/", "docs/"];
 
-function git(args) {
-  return execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+/** git 判定为二进制的记号。其余（lf / crlf / mixed / none）一律是文本。 */
+const BINARY_EOL = "-text";
+
+/**
+ * `git ls-files --eol -z` 的一条记录：
+ *     `i/lf    w/lf    attr/                 \t<path>`
+ * `-z` 之下路径不做引号转义（带空格/非 ASCII 的路径原样给出），记录之间以 NUL 分隔。
+ * 路径从第一个 TAB 之后开始——前三列（i/ w/ attr/）本身不含 TAB。
+ */
+function parseEolRecord(record) {
+  const tab = record.indexOf("\t");
+  if (tab < 0) return null;
+  const head = record.slice(0, tab);
+  const path = record.slice(tab + 1);
+  const m = /^i\/(\S+)\s+w\/(\S*)\s+attr\//.exec(head);
+  if (!m) return null;
+  return { path, index: m[1], worktree: m[2] };
 }
 
-const allTracked = git(["ls-files", "-z"]).split("\0").filter(Boolean);
-const inScope = allTracked.filter((f) => SCOPE_PREFIXES.some((p) => f.startsWith(p)));
+const out = execFileSync("git", ["ls-files", "--eol", "-z"], {
+  encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+});
+const records = out.split("\0").filter(Boolean).map(parseEolRecord);
 
-// `git grep -Il` 只匹配"至少有一行内容"的文本文件——空文件天然匹配不到任何东西，
-// 但它不是二进制，单独用文件大小排除，不然会被误判成"二进制"。
-const emptyInScope = new Set(
-  inScope.filter((f) => {
-    try {
-      return statSync(f).size === 0;
-    } catch {
-      return false; // 读不到就交给下面的正常流程处理（大概率是已经被删but仍在索引里的边角情况）
-    }
-  }),
+const unparsed = records.filter((r) => r === null).length;
+if (unparsed > 0) {
+  // fail closed：解析不了就报错，不静默当成"全是文本"。
+  console.error(`[check-no-binary] ❌ 有 ${unparsed} 条 \`git ls-files --eol\` 输出解析不了，判定不可信`);
+  process.exit(1);
+}
+
+const inScope = records.filter((r) => SCOPE_PREFIXES.some((p) => r.path.startsWith(p)));
+
+// 索引侧与工作树侧都要看：索引侧是"将来会被提交、会被评审包 diff 到的那份内容"，
+// 工作树侧是 `scan-secrets.sh`（`git grep --untracked`）实际扫的那份。工作树列为空
+// （`w/`）表示文件已在工作树里删掉，索引侧仍然有效，不算问题。
+// ⚠️ 两侧都看的直接后果：把一个二进制文件在工作树里改回文本、但**还没 `git add`**
+// 时，这道门禁仍然报红（索引侧还是二进制）。这是想要的语义——"跟踪文件"指的就是
+// 索引里的那份；CI 上索引与工作树同源，不会出现这个中间态。报错信息里带上
+// `(i/… w/…)` 就是为了让这个中间态一眼可辨，不至于被当成门禁坏了。
+const binaryInScope = inScope.filter(
+  (r) => r.index === BINARY_EOL || r.worktree === BINARY_EOL,
 );
-
-let textInScope = new Set();
-if (inScope.length > 0) {
-  try {
-    // 匹配"至少一个字符"的正则，对任何非空文本文件必然命中；`-z` 让文件名以 NUL
-    // 分隔，避免路径里带空格时被切错。`git grep` 在没有任何匹配时退出码是 1，
-    // 不是错误——用 try/catch 接住，不当异常处理。
-    const out = execFileSync("git", ["grep", "-Ilz", "-E", ".", "--", ...inScope], {
-      encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
-    });
-    textInScope = new Set(out.split("\0").filter(Boolean));
-  } catch (e) {
-    if (e.status === 1) {
-      textInScope = new Set(); // 一个匹配都没有：意味着 inScope 里全是二进制/空文件
-    } else {
-      throw e;
-    }
-  }
-}
-
-const binaryInScope = inScope.filter((f) => !textInScope.has(f) && !emptyInScope.has(f));
 
 if (binaryInScope.length > 0) {
   console.error("[check-no-binary] ❌ 以下跟踪文件被 git 判定为二进制，不允许出现在这些目录下：");
-  for (const f of binaryInScope) console.error(`  ${f}`);
+  for (const r of binaryInScope) console.error(`  ${r.path}  (i/${r.index} w/${r.worktree})`);
   console.error(
     "[check-no-binary] 多半是某个字符串字面量里混进了不可见/控制字符（例如 NUL），" +
     "改成转义写法或可打印字符即可回到文本——见本文件头部的说明（评审 F3）。",

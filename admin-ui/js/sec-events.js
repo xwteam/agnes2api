@@ -18,16 +18,16 @@ import { t } from "./i18n.js";
 import { el, elI18n, toast } from "./ui.js";
 import { fmtInstant } from "./pure/format.mjs";
 import {
-  EVENTS_POLL_MIN_MS, LEVELS, levelLabelKey, effectiveLevel, eventLevelLabelKey, levelBadgeClass,
+  LEVELS, levelLabelKey, effectiveLevel, eventLevelLabelKey, levelBadgeClass,
   eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, generatedAtOf, bufferStatus, shouldWarn,
-  pollOutcome, nextPollDelayMs, pollIndicatorState, pollIndicatorLabelKey, matchesSearch, buildDetailText,
-  groupEvents, orderForDisplay, mergeIntoView,
+  initialPollState, resumePollState, pollOutcome, pollIndicatorState, pollIndicatorLabelKey,
+  matchesSearch, buildDetailText, groupEvents, orderForDisplay, mergeIntoView,
 } from "./pure/events.mjs";
 
 const LIMIT = 200;
 
 /** 板块内部状态。`level` 是 "all" 或 LEVELS 里的一个。 */
-const state = { q: "", level: "all", paused: false, autoScroll: true, after: null };
+const state = { q: "", level: "all", paused: false, autoScroll: true };
 
 let nodes = null;
 let timer = null;
@@ -39,13 +39,16 @@ let lastStatus = { dropped: null, budgetExhausted: null, truncated: null, buffer
 let lastShardId = null;
 /** 最近一次成功响应的生成时刻（评审 N1 [LOW]），同样只驱动轮询指示灯的提示文案。 */
 let lastGeneratedAt = null;
-let pollDelayMs = EVENTS_POLL_MIN_MS;
+/**
+ * 轮询的全部跨轮状态（游标 / 自愈中 / 退避间隔）。**整体来自 `pollOutcome()` 的
+ * `next`，这个文件不再自己算它的任何一个字段**——评审四审 B1：上一版把"上一轮的
+ * 自愈不算这一轮的新内容"这条跨轮规则的一半写在这里（`justHealed = outcome.resetView`），
+ * 而这个文件没有任何自动化覆盖，把那一行改成恒 false 全套用例一条都不红。
+ * 判据全部搬回 pure/events.mjs（admin-ui/README.md 硬规则 1）。
+ */
+let pollState = initialPollState();
 let lastError = false;
 let loadError = false;
-/** 上一轮轮询是不是刚发生过一次 cursorAhead 自愈（评审 C6 三审 a）。自愈后紧跟
- * 着那一轮即使真的拉到了 items，也是上一轮 resetView 刚扔掉的同一批，不算
- * "来了新内容"——见 pure/events.mjs 的 pollOutcome 说明。只在 poll() 里读写。 */
-let justHealed = false;
 /** 本板块当前是不是"正在显示"这一个（`onShow`/`onHide` 之间）。visibilitychange
  * 处理器据此判断"该不该在页面重新可见时把轮询接回去"——不加这一层的话，
  * 离开本板块时 `onHide` 已经把 timer 清成了 null，页面从别的 tab 切回来会
@@ -69,9 +72,12 @@ function renderWarnings() {
   nodes.warnTruncated.style.display = lastStatus.truncated === true ? "" : "none";
   if (lastStatus.truncated === true) nodes.warnTruncated.textContent = t("ev.warnTruncated");
 
-  // 评审 C6：`cursorAhead` 为 true 时 `poll()` 已经把 `state.after` 自愈成 null
-  // （见下方 poll()），下一轮就会带着新游标重新冷读——这条提示只是让运维知道
+  // 评审 C6：`cursorAhead` 为 true 时 `poll()` 已经把 `pollState.after` 自愈成
+  // null（见下方 poll()），下一轮就会带着新游标重新冷读——这条提示只是让运维知道
   // "刚刚发生过一次自动恢复"，不是要人手动做什么。
+  // ⚠️ 评审四审：这条黄条**逐轮覆盖、没有粘性**——`cursorAhead=false` 的那一轮
+  // 它就灭了。持续的跨 isolate 时钟偏移下它会跟着视图一起闪（亮一轮灭一轮），
+  // 不是"持续亮着的告警"。实测与断言见 tests/contract/events-cursor-heal.test.ts。
   nodes.warnCursorAhead.style.display = lastStatus.cursorAhead === true ? "" : "none";
   if (lastStatus.cursorAhead === true) nodes.warnCursorAhead.textContent = t("ev.warnCursorAhead");
 }
@@ -151,26 +157,22 @@ async function poll() {
   if (abort) abort.abort();
   abort = new AbortController();
   try {
-    const body = await api.get(`/events?${eventsQuery({ ...state, limit: LIMIT })}`, { signal: abort.signal });
+    const query = eventsQuery({ ...state, after: pollState.after, limit: LIMIT });
+    const body = await api.get(`/events?${query}`, { signal: abort.signal });
     const items = itemsOf(body) ?? [];
     lastStatus = bufferStatus(body);
     lastShardId = shardIdOf(body);
     lastGeneratedAt = generatedAtOf(body);
     loadError = false;
     lastError = false;
-    // 评审 C6 二审：after 的自愈、view 要不要跟着清空、退避间隔看不看到"新内容"，
-    // 是同一个纯状态转换的三个面，全部交给 pollOutcome()（admin-ui/README.md
-    // 硬规则 1）——原来在这里手写这三行各自独立判断，是两个联带 bug（游标自愈
-    // 时视图没有跟着清空、"游标变没变"被错当成"来了新事件"）的根。
-    // 评审 C6 三审(a)：第五个参数 justHealed 传的是"上一轮"的自愈状态（poll()
-    // 开始处理这一轮之前就已经确定），不是这一轮自己的——自愈后紧跟着那一轮的
-    // 冷读即使真的拉到 items，也不该被当成"来了新内容"。
-    const outcome = pollOutcome(state.after, items, body && body.cursor, lastStatus.cursorAhead, justHealed);
+    // 评审 C6 二审 / 四审 B1：游标自愈、视图要不要跟着清空、退避间隔看不看到
+    // "新内容"、自愈状态什么时候清位——同一个纯状态转换的四个面，**全部**在
+    // pollOutcome() 里（admin-ui/README.md 硬规则 1）。这里只剩两件拼装：视图
+    // 要不要清、把返回的下一轮状态整体收下。一个判据都不许再回到这个文件。
+    const outcome = pollOutcome(pollState, items, body && body.cursor, lastStatus.cursorAhead);
     if (outcome.resetView) view = [];
     view = mergeIntoView(view, items);
-    state.after = outcome.nextAfterValue;
-    pollDelayMs = nextPollDelayMs(pollDelayMs, outcome.hadNewItems);
-    justHealed = outcome.resetView; // 供下一轮 poll() 读取
+    pollState = outcome.next;
   } catch (e) {
     if (e && e.name === "AbortError") return;
     lastError = true;
@@ -185,7 +187,7 @@ async function poll() {
 function scheduleNext() {
   if (timer !== null) { clearTimeout(timer); timer = null; }
   if (state.paused || document.hidden) return;
-  timer = setTimeout(() => { poll(); }, pollDelayMs);
+  timer = setTimeout(() => { poll(); }, pollState.delayMs);
 }
 
 function stopPolling() {
@@ -279,10 +281,10 @@ function buildToolbar() {
     state.level = lvl;
     for (const [k, b] of Object.entries(levelButtons)) b.classList.toggle("active", k === lvl);
     // 切换级别相当于换了一条筛选后的流：已攒的视图是按旧筛选拉来的，继续拼接会让
-    // 「全部/error」两种视图的历史深度不一致。重置游标与视图，从当前时刻重新拉。
+    // 「全部/error」两种视图的历史深度不一致。重置视图与整份轮询状态（游标、
+    // 自愈中、退避一起归零），从当前时刻重新拉。
     view = [];
-    state.after = null;
-    justHealed = false; // 换了一条新的筛选流，不该带着上一条流留下的自愈状态
+    pollState = initialPollState();
     poll();
   }
 
@@ -320,8 +322,9 @@ export const eventsSection = {
     sectionActive = true;
     loadError = false;
     lastError = false;
-    pollDelayMs = EVENTS_POLL_MIN_MS;
-    justHealed = false; // 新开一轮，不该带着上次留下的自愈状态
+    // 保留游标（已经看过的事件不该因为切走又切回来再拉一遍），退避与自愈状态归零。
+    // 这条同样是判据，写在 pure/events.mjs 里，不在这里手写三行赋值。
+    pollState = resumePollState(pollState);
     poll();
   },
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -71,6 +71,36 @@ describe("scripts/check-no-binary.mjs", () => {
     addAndTrack(dir, "src/empty.ts", "");
     const result = run(dir);
     expect(result.status, "空文件不是二进制，不该让这道门禁失败").toBe(0);
+  });
+
+  /**
+   * **评审四审 B 组第 2 条：门禁第一版的两处误报，各钉一条。**
+   *
+   * 两条都不是假想的边角——第一版的判据是"`git grep -Il -E "."` 匹配不到 ⇒ 二进制"，
+   * 而这两种文件 git 自己明明判成文本，只是 `git grep` 匹配不到它们：CI 会红，
+   * 并给出"多半是混进了 NUL"这句错误诊断。
+   */
+  it("只含空行的跟踪文件不被误判成二进制（git 判它是 i/lf，但 `git grep -E \".\"` 匹配不到空行）", () => {
+    const dir = initTempRepo();
+    addAndTrack(dir, "src/blank.ts", "\n\n\n");
+    const result = run(dir);
+    expect(result.status, `只含空行的文件是文本，不该让门禁失败：${result.stderr}`).toBe(0);
+  });
+
+  it("工作树里被删掉但仍在索引里的跟踪文件不被误判成二进制（`git grep` 搜的是工作树，文件已不在）", () => {
+    const dir = initTempRepo();
+    addAndTrack(dir, "src/gone.ts", "export const x = 1;\n");
+    execFileSync("git", ["commit", "-qm", "seed"], { cwd: dir });
+    rmSync(join(dir, "src/gone.ts")); // 只删工作树，不 stage 这次删除
+    const result = run(dir);
+    expect(result.status, `索引里仍是文本，不该因为工作树删除就报二进制：${result.stderr}`).toBe(0);
+  });
+
+  it("单行且不以换行结尾的文件（git 报 i/none，与空文件同一档）不被误判成二进制", () => {
+    const dir = initTempRepo();
+    addAndTrack(dir, "src/nonl.ts", "export const x = 1;");
+    const result = run(dir);
+    expect(result.status, `没有行结束符不等于二进制：${result.stderr}`).toBe(0);
   });
 
   it("多个 scope 目录混合、一个二进制一个正常：仍然精确报出那一个", () => {

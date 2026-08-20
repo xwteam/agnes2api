@@ -177,45 +177,117 @@ export function nextAfter(current, cursor) {
 }
 
 /**
- * 一轮轮询成功之后该怎么处理 `state.after`/`view`/退避间隔的**完整决策**（评审 C6
- * 二审）。这条判断原来直接摊在 `sec-events.js` 的 `poll()` 里，是纯状态转换却没有
- * 测试覆盖，两个联带 bug 都是从这个洞里漏出来的——**这不是渲染逻辑，是决策逻辑**，
- * 与 `admin-ui/README.md` 硬规则 1 管的是同一类东西（之前几次违规都是渲染取值，
- * 这次是状态转换，是这条规则第四次在本模块被重新发现该管到哪里）：
+ * 轮询的**全部跨轮状态**。三个字段合成一个对象是有意为之，见 `pollOutcome()`
+ * 的"为什么是一个状态对象"一段。
  *
- * - **`nextAfterValue`**：`nextAfter()` 叠加"游标自愈"——`cursorAhead` 为 `true`
- *   时无条件重置为 `null`，不管 `cursor`/旧值算出来是什么。冻结在未来的游标不能
- *   继续带下去，下一轮必须变成冷读（`after` 缺省）才能真正恢复。
- * - **`resetView`**：`cursorAhead` 为 `true` 时，视图必须跟着游标一起清空，不能
- *   只清游标——`mergeIntoView` 是纯 `[...inc, ...cur]`，不去重；不清视图的话，
- *   自愈之后下一轮冷读回来的是"最新"的一批，会跟视图里已经卡在"未来"、语义已经
- *   不可信的那一批拼在一起，造成整页重复（这条是无条件的，单次自愈就会触发，
- *   不需要连续多轮）。
+ * - `after`：下一次请求要带的游标（`null` = 冷读）。
+ * - `healing`：正处在一次游标自愈之后、**还没有重新建立起游标**的那一段。
+ * - `delayMs`：下一次轮询的退避间隔。
+ */
+export function initialPollState() {
+  return { after: null, healing: false, delayMs: EVENTS_POLL_MIN_MS };
+}
+
+/**
+ * 重新进入本板块时的状态。**保留 `after`**（已经看过的事件不该因为切走又切回来
+ * 再拉一遍），但把退避与自愈状态归零——这两者描述的是"最近这一段轮询发生了什么"，
+ * 隔了一段时间之后不再成立。
+ *
+ * 这条也是决策，不是拼装：写在板块文件里就又是一处没人测的跨轮规则。
+ */
+export function resumePollState(prev) {
+  const state = prev && typeof prev === "object" ? prev : {};
+  const after = typeof state.after === "number" && Number.isFinite(state.after) ? state.after : null;
+  return { after, healing: false, delayMs: EVENTS_POLL_MIN_MS };
+}
+
+/**
+ * 一轮轮询成功之后的**完整状态转换**（评审 C6 二审 / 三审(a) / 四审 B1）。这条
+ * 判断原来直接摊在 `sec-events.js` 的 `poll()` 里，是纯状态转换却没有测试覆盖，
+ * 两个联带 bug 都是从这个洞里漏出来的——**这不是渲染逻辑，是决策逻辑**，与
+ * `admin-ui/README.md` 硬规则 1 管的是同一类东西。
+ *
+ * **为什么入参/返回值是一个状态对象，而不是把跨轮标记单独传进传出**：三审(a) 的
+ * 第一版把 `justHealed` 做成"第五个入参 + 板块文件在每轮末尾自己用 `resetView`
+ * 更新"，于是"上一轮的自愈不算这一轮的新内容"这条**跨轮规则**有一半落在板块文件
+ * 里——而板块文件没有任何自动化覆盖。四审实测：把板块文件里那一行改成恒 `false`
+ * （并重跑 `scripts/build-ui.mjs`，免得被逐字节漂移门禁冒充抓到），全套 1241 条
+ * 用例**一条都不红**，包括当时专门为这条修复新写的那条端到端用例——因为那条用例
+ * 用自己的局部变量把这半条规则**又抄了一遍**，测的是抄件不是原件。现在整条规则
+ * （置位、清位、保持）都在这个函数里，板块文件只剩一次整体赋值，不再持有判据。
+ *
+ * 返回：
+ * - **`resetView`**：`cursorAhead` 为 `true` 时视图必须跟着游标一起清空，不能只清
+ *   游标——`mergeIntoView` 是纯 `[...inc, ...cur]`，不去重；不清视图的话，自愈之后
+ *   下一轮冷读回来的是"最新"的一批，会跟视图里已经卡在"未来"、语义已经不可信的
+ *   那一批拼在一起，造成整页重复（无条件，单次自愈就会触发）。
  * - **`hadNewItems`**：退避间隔要不要回到最短，**只能看服务端这次真的返回了几条**
  *   （`items.length > 0`），不能借用"游标变没变"当替身——原来的实现正是用
  *   `state.after !== beforeAfter` 当替身，自愈本身也会让游标变化（从非 null 变成
  *   null），于是"游标被清空"被误判成"来了新事件"，退避永远回不到最长间隔（评审
  *   实测：稳态吞吐从按 C4b 算好的 69,120/天 涨到 138,240/天）。
+ * - **`next`**：下一轮的完整状态，见 `initialPollState()` 的字段说明。
+ *   - `after`：`nextAfter()` 叠加"游标自愈"——`cursorAhead` 为 `true` 时无条件重置
+ *     为 `null`，不管 `cursor`/旧值算出来是什么。冻结在未来的游标不能继续带下去，
+ *     下一轮必须变成冷读才能真正恢复。
+ *   - `healing`：自愈时置位，**真正重新建立起游标**（`after` 从 `null` 变回一个
+ *     数字）时清位，其余保持。见下面一段。
+ *   - `delayMs`：`nextPollDelayMs(上一轮的间隔, hadNewItems)`。
  *
- * ⚠️ **评审 C6 三审(a) 追加**：上面这条只切断了一半——`items.length > 0` 本身
- * 没错，但**自愈后紧跟着那一轮的冷读，如果真的返回了 items，这批 items 正是
- * 上一轮 `resetView` 刚刚从视图里扔掉的同一批**（同一份底层数据，只是被自愈清
- * 空视图之后又冷读回来），不是真的"来了新内容"，不该把退避顶回最短。评审实测：
- * 两个 isolate 持续 2 小时时钟偏移的稳态下，"自愈（0 条，恒不算新内容）→ 冷读
- * 恢复（有条数，被旧逻辑误判成新内容）"这个二轮循环让退避永远卡在 15 秒，稳态
- * 吞吐仍有 92,160 次/天（读配额 92%），比 138,240 好但远没回到 C4b 规划的
- * 69,120 包线内。加一个 `justHealed` 入参（"上一轮是不是刚发生过自愈"，由
- * `sec-events.js` 在每轮 `poll()` 结束时用这一轮的 `resetView` 更新，见该文件）：
- * 自愈后紧跟着的那一轮，不管 `items.length` 实际是多少，一律不算"来了新内容"——
- * 已验证退避能真正爬到 60 秒上限并稳住，稳态吞吐 36,864 次/天，回到包线内。
+ * ⚠️ **`healing` 为什么是"自愈之后直到重新建立起游标为止"，不是"刚好上一轮"**
+ * （评审四审 B2）：三审(a) 那一版写的是"只遮紧接着的一轮"，而**冷读状态会持续
+ * 很多轮**——落后的那个 isolate 结构上看不见领先 isolate 写进未来窗口的事件，
+ * 恒返回 `cursor: null`，`nextAfter()` 就把 `after` 一直留在 `null`。于是此后
+ * **每一次**落到领先的 isolate，都会把同一批旧事件当成"新内容"，退避塌回 15 秒。
+ * 四审逐轮实测（负载均衡每 4 轮才命中一次领先 isolate）：
+ *
+ *     0 B ahead=0 items=1 jhIn=0 new=1 gets=48 delay=15s   <- 旧事件被当成新内容
+ *     1 A ahead=1 items=0 jhIn=0 new=0 gets= 0 delay=30s   <- 自愈
+ *     2 A ahead=0 items=0 jhIn=1 new=0 gets=48 delay=60s   <- 旧规则只遮到这一轮
+ *     3 A ahead=0 items=0 jhIn=0 new=0 gets=48 delay=60s
+ *     4 B ahead=0 items=1 jhIn=0 new=1 gets=48 delay=15s   <- 又塌回去
+ *
+ * 稳态吞吐随之**只与"平均多少轮才命中一次领先 isolate"（记作 k）有关**，与"修没修
+ * 三审(a)"几乎无关：旧规则下 k=3 / 4 / 6 / 8 实测 78,994 / 75,404 / 72,758 /
+ * 71,680 次每天（k=2 的严格交替是唯一的例外，34,560，旧规则恰好也够用），
+ * **k≥3 全部超出 C4b 规划、五语言 DEPLOY.md 白纸黑字承诺的 69,120 包线**。改成
+ * "直到重新建立起游标为止"之后，退避在整个 k 轮周期里再也不会被塌回最短，稳态
+ * 吞吐变成 `69,120 × (k−1) ÷ k`：k=2 → 34,560、k=3 → 46,080、k=4 → 51,840、
+ * k=6 → 57,600、k=8 → 60,480，**k 再大也只是从下方逼近 69,120，不会越过**
+ * （k→∞ 就是"没有时钟偏移"那条基准线本身，恰好等于 69,120）。
+ * 这几个数字由 `tests/contract/events-cursor-heal.test.ts` 的"逐 k 实测稳态吞吐"
+ * 用例逐个钉住（连同 69,120 基准线本身），不是只写在这里。
+ *
+ * **代价，明写，并且是可证的上界**：`healing` 为真的那一段里 `after` 恒是 `null`
+ * （自愈把它清成 null，只有拿到非 `null` 的 `cursor` 才会变回数字），而后端契约是
+ * `cursor` 非 `null` **当且仅当** `items` 非空（见 `events.ts` 的
+ * `cursor: items.length > 0 ? items[0].ts : null`）。所以"清位"这件事发生在
+ * **自愈之后第一份非空响应**那一轮上——夹在中间被遮住的那些轮次本来就是空的
+ * （`hadNewItems` 不遮也是 `false`）。换句话说：**一次自愈只会让恰好一批 `items`
+ * 不把退避顶回 15 秒**，与遮了多少轮无关；这批要么本来就是自愈时刚扔掉的那一批
+ * （正是要遮的东西），要么是一批真的新事件——那种情况下代价是它晚一个退避周期
+ * （≤60 秒）才被"盯着看"的人更快刷新到，事件本身该显示的照常显示，不影响正确性。
+ * 这条上界由 `tests/ui/events.test.ts` 的"保持：自愈之后连续多轮冷读……"那条用例
+ * 直接演示（5 轮空冷读全遮住 → 第一批非空也遮住并清位 → 再下一批正常回到 15 秒）。
  */
-export function pollOutcome(current, items, cursor, cursorAhead, justHealed) {
+export function pollOutcome(prev, items, cursor, cursorAhead) {
+  const state = prev && typeof prev === "object" ? prev : {};
   const healed = cursorAhead === true;
-  const rawHadNewItems = Array.isArray(items) && items.length > 0;
+  const currentAfter = typeof state.after === "number" && Number.isFinite(state.after) ? state.after : null;
+  const wasHealing = state.healing === true;
+  const nextAfterValue = healed ? null : nextAfter(currentAfter, cursor);
+  const hadNewItems = wasHealing ? false : (Array.isArray(items) && items.length > 0);
   return {
-    nextAfterValue: healed ? null : nextAfter(current, cursor),
     resetView: healed,
-    hadNewItems: justHealed === true ? false : rawHadNewItems,
+    hadNewItems,
+    next: {
+      after: nextAfterValue,
+      healing: healed ? true : (nextAfterValue !== null ? false : wasHealing),
+      delayMs: nextPollDelayMs(
+        typeof state.delayMs === "number" && Number.isFinite(state.delayMs) ? state.delayMs : EVENTS_POLL_MIN_MS,
+        hadNewItems,
+      ),
+    },
   };
 }
 

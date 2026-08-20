@@ -169,6 +169,22 @@ runStorageContract("MemoryStorage", () => new MemoryStorage());
  * TypeScript 允许一个只声明两个参数的 `put(key, value)` 实现赋值给要求
  * `put(key, value, expiresAt?)` 的接口。补上这条注册，让同一份契约（含上面
  * 新增的 TTL/list 用例）也跑在装饰器这一层，不只是跑在两个叶子实现上。
+ *
+ * ⚠️ **评审四审 B 组第 4 条：上面那句"一共只有三个类"用的核实方法本身不可靠，
+ * 这里明写清楚它的边界。** `grep -rln "implements Storage" src/` **按构造就看不见
+ * 对象字面量**——`src/http/app.ts` 的 `defaultStoreLogger()` 里就有一个：
+ * `const inertStorage: Storage = { async get(){…}, async put(){…}, … }`，它满足
+ * `Storage` 却永远不会被那条 grep 命中。这条发现（"确认契约覆盖了每一个生产实现"）
+ * 的全部要害就是"验证方法要可靠"，而论证本身用了一个不可靠的方法，如实登记。
+ *
+ * 这个对象**有意不进这份契约名册**，理由不是"漏了"：它是一个 no-op sink（`get`
+ * 恒 `null`、`put`/`delete` 什么都不做、`list` 恒空），既不落盘也不持有状态，
+ * 不存在这份契约要守的那类性质（TTL 是否生效、`list` 是否过滤过期键、有界性）。
+ * 它存在的唯一理由是让 `logFlush` 与 `/admin/api/events` 在"没有配置 storeLogger"
+ * 的夹具下有一个可调用的实例——**今天没有有界性后果**（它什么都不写）。
+ * 判据由此从"grep 得到的类名单"改成一句可核对的话：**凡是会真的持有数据的
+ * `Storage` 实现都必须在这份名册里**；`inertStorage` 不持有数据，所以不在。
+ * 将来若有人把它换成会真存东西的东西，这条注释就是那次改动该被拦下的地方。
  */
 runStorageContract(
   "WatchedStorage(MemoryStorage)",

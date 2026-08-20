@@ -65,6 +65,14 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
  * `StoreLogger`。它永远不会被写入任何真实数据（没人把它接进 `deps.logger`），
  * 存在的唯一理由是让 `logFlush` 中间件与 `/admin/api/events` 两个 handler
  * 始终有一个可调用的实例，不必在这两处各自判断「有没有配置」。
+ *
+ * ⚠️ **评审四审 B 组第 4 条**：下面这个 `inertStorage` 是**对象字面量**形式的
+ * `Storage` 实现，因此 `grep -rln "implements Storage" src/`（修复轮 5 用来论证
+ * "`runStorageContract` 覆盖了全部生产实现"的那条命令）**按构造就看不见它**。
+ * 它有意不进那份契约名册——no-op sink，不持有任何数据，没有那份契约要守的性质
+ * （TTL、`list` 过期过滤、有界性），今天也因此没有任何有界性后果。完整理由与
+ * 修订后的判据写在 `tests/contract/storage.test.ts` 的名册注释里；**若有人把它
+ * 换成会真的存东西的实现，那条注释就是该被拦下的地方。**
  */
 function defaultStoreLogger(now: () => number): StoreLogger {
   const inertStorage: Storage = {
