@@ -4,7 +4,8 @@ import type { KeyRecord } from "./types.js";
  * 「这把 key 被管理员手工停用了吗」。**全仓唯一一份判据。**
  *
  * 各写各的后果是「面板显示已停用、调度器照常用它」——本字段最难被发现的失败形态。
- * 所以**问这个问题的地方一处都不许自己判**，全部调它。今天有 **5 处**：
+ * 所以**问这个问题的地方一处都不许自己判**，全部调它。今天有 **7 处**
+ * （`grep -rn "isDisabled(" src/`，2026-08-20 P3c Task 3 收尾时重数）：
  *
  * | 位置 | 干什么 |
  * |---|---|
@@ -13,6 +14,12 @@ import type { KeyRecord } from "./types.js";
  * | `src/core/admin/key-view.ts` 的 `keyBucket` | 面板分档 |
  * | `src/core/admin/key-view.ts` 的 `toKeyViews` | 投影出 `KeyView.disabled` |
  * | `src/core/dispatcher.ts` 的 `unavailable()` | Retry-After 要筛掉停用的 key |
+ * | `src/http/admin/handlers/keys-write.ts` 的 `deletable()` | 「必须先停用才能删」那条安全约束 |
+ * | 同上，`key.deleted` 事件的 `wasDisabled` 字段 | **不是判据**，只是如实记一笔当时的状态 |
+ *
+ * ⚠️ **最后一行刻意留在表里而不是省掉**：它是本表第一个**非判据**的调用处，
+ * 而「表里只列判据」这条规矩没有任何东西守着——省掉它，下一个人重数时会得到
+ * 6 或 7 两个都说得通的答案，然后再写错一次。
  *
  * ⚠️ **这张表是手写的，没有任何门禁校验它的条数**——第 12 道门禁只校验路径解析得开，
  * 校验不了一个数字。**它已经在本任务里错过两次**：先写成「三个读取处」（漏了

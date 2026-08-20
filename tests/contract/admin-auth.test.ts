@@ -8,6 +8,7 @@ import { createConfigHolder, CONFIG_TTL_MS } from "../../src/http/config-holder.
 import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { createStorageHealth } from "../../src/core/storage-health.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
+import { CountingStorage } from "../helpers/counting-storage.js";
 import { FakeFetcher } from "../helpers/fake-fetcher.js";
 import { recordingLogger } from "../helpers/recording-logger.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
@@ -749,6 +750,12 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * 是拿整张表的强度换一格覆盖，不划算。它的免鉴权与 301 由
    * `tests/contract/ui-serve.test.ts` 的「200 / 304 / 301 / 404 四个分支都带 cache-control: no-cache」
    * 一带的三条专门用例守着。
+   *
+   * **Task 3（P3c）的表态：这张表不增长。** 新增的四条 Key 写端点全在
+   * `/admin/api/` 下 ⇒ `domainOf` 判它们进 `admin` 域 ⇒ 除管理口令外每一种凭据
+   * 状态都必须 401。**免鉴权白名单里永远不该出现任何一条写端点**，这句话在这里
+   * 是有护栏的：往这张表里塞一条 `/admin/api/keys`，下面
+   * 「免鉴权路径不带任何凭据也是 200」会立刻红（它拿不到 200，只会拿到 401/400）。
    */
   const PUBLIC_PATHS: readonly string[] = ["/health", "/admin", "/admin/*"];
 
@@ -795,6 +802,22 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // Task 6 的静态资源。**刻意用 get() 而不是 use()**，见 EXPECTED_MIDDLEWARE 的说明。
     "GET /admin",
     "GET /admin/*",
+    // ── Task 3（P3c）的 Key 写端点：这张表**第一次**出现非 GET 条目 ──────────
+    //
+    // 在它们出现之前，`/admin/api/*` 六条全是 `admin.get()`，于是「鉴权挂没挂上」
+    // 这件事唯一的可观测差异是「读得到 / 401」。现在它变成了「**删得掉** / 401」
+    // ——**一个鉴权失效的 GET 泄露数据，一个鉴权失效的 DELETE 销毁数据**。
+    // 矩阵因此多了一维，见本文件末尾
+    // 「鉴权失败的非幂等请求必须零副作用 —— 只断言 401 抓不住『先删了再返回 401』」。
+    //
+    // 四条同样是 `admin.post/delete/patch()` 注册的**具名方法**，不是 `use()`
+    // ⇒ **不产生 ALL 条目，`EXPECTED_MIDDLEWARE` 保持不变**（那张表存在的全部理由
+    // 就是让「有人拿 use() 挂了个通配 handler」变红，所以每一次新增端点都要在这里
+    // 明确表一次态，而不是默认它不变）。
+    "POST /admin/api/keys",
+    "POST /admin/api/keys/bulk",
+    "DELETE /admin/api/keys/:id",
+    "PATCH /admin/api/keys/:id",
   ] as const;
 
   /** 路由模式 → 一条能真的打到那个 handler 的具体路径。 */
@@ -804,6 +827,11 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 静态兜底：拿 `/admin/*` 当字面路径请求只会得到 404（查表命中制），
     // 那样这一格什么都没验到，必须换成一条真的在 UI_ASSETS 里的路径。
     "/admin/*": "/admin/css/base.css",
+    // Task 3 的 `DELETE` / `PATCH` 共用这条模式。**用一个不存在的 id**：
+    // 矩阵会拿正确的管理口令真的打一遍（那些格子断言的是「不该被判 401」），
+    // 一个存在的 id 会让这里真的删掉夹具里的 key。鉴权边界的可观测量只有
+    // 「有没有被判 401」，handler 随后回 404 不影响本矩阵。
+    "/admin/api/keys/:id": "/admin/api/keys/deadbeefdeadbeef",
   };
 
   const GATEWAY = TEST_CONFIG.gatewayToken;
@@ -875,6 +903,12 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * 中间件挂在 `app.use("*", ...)`（挂在 `configRefresh` 之后、其余中间件之前，
    * 见 `app.ts` 的注释），产生第三条 `ALL /*`。**这张快照红了正是它在起作用**——
    * 事件要能在响应返回前落盘，这条中间件必须真的挂上；别把它改绿了事。
+   *
+   * **Task 3（P3c）的表态：这张表同样不增长。** 四条 Key 写端点用
+   * `admin.post/delete/patch()` 注册，产生的是四条具名方法条目（已列进 `EXPECTED`、
+   * 并逐格跑过矩阵）。**这一次的表态比前几次值钱**：写端点是第一次出现，而
+   * `app.use("/admin/api/keys/*", handler)` 这种写法能造出一个**免鉴权的写端点**
+   * ——鉴权 `use` 挂的是 `/admin/api/*`，顺序在它之前的任何 `use` 都跑在鉴权之前。
    */
   const EXPECTED_MIDDLEWARE = [
     "ALL /*",              // configRefresh
@@ -954,6 +988,64 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
       // 通配条目要换成一条真的存在的路径，否则拿到的 404 什么都没证明。
       expect((await app.request(PROBE[p] ?? p)).status, p).toBe(200);
     }
+  });
+
+  /**
+   * ── F9：写端点比读端点多一维 ────────────────────────────────────────────
+   *
+   * **一个鉴权失效的 GET 泄露数据，一个鉴权失效的 DELETE 销毁数据。**
+   * 上面那张笛卡尔积只断言状态码，而状态码抓不住「**先删了再返回 401**」这种顺序
+   * 错误——它在 Hono 上不是假想：`app.route("/", sub)` 写在 `app.use(path, mw)`
+   * 之前时，中间件**静默失效且不报错**（`src/http/admin/router.ts` 那段 ★ 已实测）。
+   * 那种形态下 handler 先跑完、鉴权再"生效"，状态码可能仍然是 401 而副作用已经发生。
+   *
+   * ⇒ 判据换成**存储的 put / delete 计数逐字段相等**。
+   *
+   * ⚠️ **夹具刻意用「鉴权若不存在就一定会成功」的请求**，这是本格判别力的全部来源：
+   *   · `DELETE` 打的是一把**已经停用**的 key（健康的 key 会被 409 拦住，
+   *     那样即使鉴权失效也是 0 次写，本格照绿）；
+   *   · `POST` 带的是一份**合法的导入体**（畸形体会被 400 拦住，同上）；
+   *   · `PATCH` / `bulk` 同理。
+   * 每一条都先断言 401，再断言计数不动——**两条都要**：只断言计数不动的话，
+   * 一个把整棵树 404 掉的改动也能让它通过。
+   */
+  it("鉴权失败的非幂等请求必须零副作用 —— 只断言 401 抓不住『先删了再返回 401』", async () => {
+    const st = new CountingStorage();
+    const { app, repo } = await makeApp(
+      [], ["sk-side-effect-probe-key"], {}, () => 1000, { storage: st },
+    );
+    const target = (await repo.all())[0]!;
+    // 停用它：**这样那次无口令的 DELETE 在鉴权失效时会真的删掉一条记录**。
+    await repo.save({ ...target, disabled: true }, target);
+
+    const snapshot = () => ({ puts: st.puts, deletes: st.deletes });
+    const CASES: ReadonlyArray<{ name: string; path: string; method: string; body?: unknown }> = [
+      { name: "DELETE 一把已停用的 key", path: `/admin/api/keys/${target.id}`, method: "DELETE" },
+      { name: "PATCH 停用", path: `/admin/api/keys/${target.id}`, method: "PATCH", body: { disabled: true } },
+      { name: "POST 导入一把新 key", path: "/admin/api/keys", method: "POST", body: { keys: ["sk-injected-by-attacker"] } },
+      {
+        name: "POST 批量删除", path: "/admin/api/keys/bulk", method: "POST",
+        body: { op: "delete", ids: [target.id] },
+      },
+    ];
+
+    for (const c of CASES) {
+      const before = snapshot();
+      const res = await app.request(c.path, {
+        method: c.method,
+        headers: c.body === undefined ? {} : { "content-type": "application/json" },
+        body: c.body === undefined ? undefined : JSON.stringify(c.body),
+      });
+      expect(res.status, `${c.name}：无口令必须 401`).toBe(401);
+      expect(snapshot(), `${c.name}：鉴权失败了，但存储被动过`).toEqual(before);
+    }
+
+    // 反向自检：这些请求**带上口令就真的会写**——否则上面四个 0 什么都没证明。
+    const ok = await app.request(`/admin/api/keys/${target.id}`, {
+      method: "DELETE", headers: { "x-admin-key": TEST_ADMIN_TOKEN },
+    });
+    expect(ok.status, "夹具本身删不掉 ⇒ 上面那四个「零副作用」是空的").toBe(204);
+    expect(st.deletes, "带对口令的那次 DELETE 也没碰存储").toBeGreaterThan(0);
   });
 
   it("矩阵里「不该 401」的格子不是空口白话：两条路由用对口令确实 200", async () => {

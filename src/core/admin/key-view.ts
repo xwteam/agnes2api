@@ -79,6 +79,21 @@ export interface KeyView {
    * 所以这里过一道 `isDisabled()` 落成布尔，**不许直接写 `disabled: r.disabled`**。
    */
   disabled: boolean;
+  /**
+   * 运维备注。**恒存在、恒是 `string | null`**，理由与上面的 `disabled` 逐字相同：
+   * `KeyRecord.note` 是可选的，`c.json` 会把值为 `undefined` 的字段整个丢掉。
+   *
+   * ⚠️ **它是 P3c Task 3 才进这个结构的，而在那之前不进是对的**：P3c Task 2 建了
+   * `KeyRecord.note` 的槽位但**没有生产者**，一个恒为 `null` 的响应字段正是本仓
+   * 已经裁掉过四次的形态。Task 3 的 `PATCH /admin/api/keys/:id` 是它的第一个
+   * 生产者，**也是它必须同时进这里的原因**：`note` 是 telemetry
+   * （`src/core/keypool-repo.ts` 的 `FIELD_ROLE`），一次只改备注的写会被写消除
+   * 整个吃掉，而**没有任何自动化会在那时变红**——唯一能把它钉住的护栏就是
+   * 「改完之后从 `GET /admin/api/keys` 真的读得回来」，那条路必须经过这个字段。
+   * 由 `tests/contract/admin-keys-write.test.ts` 的
+   * 「只改备注的 PATCH：改完之后 GET 真的读得回来」守着。
+   */
+  note: string | null;
   /** Tier-1。**近似值**：并发下少计，且最多晚一个 `POOL_TOUCH_INTERVAL_MS` 落盘。 */
   stats: KeyStats;
 }
@@ -107,6 +122,8 @@ export function toKeyViews(records: readonly KeyRecord[], now: number): KeyView[
       evictedReason: r.evictedReason,
       strikes: r.strikes,
       disabled: isDisabled(r),
+      // `?? null`：`undefined` 会被 `c.json` 整个丢掉，见 `KeyView.note`。
+      note: r.note ?? null,
       stats: normalizeStats(r.stats),
     }));
 }

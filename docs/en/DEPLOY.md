@@ -99,6 +99,29 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   in its life and carries a fresh budget every time ⇒ **on this axis that gate neither stops
   anything nor constitutes any upper bound**. The real bound is the tend frequency itself:
   **tightening the Cron or lowering `TEND_INTERVAL_MS` scales all three items proportionally.**
+- **Write side of the panel's write operations (new in P3c) — these only happen when a human
+  clicks, so they are not part of the steady-state accounts above.** There is no frequency
+  bound to speak of (the bound is the operator's hand), so what follows is the **unit price of
+  each operation**; every number below is a measured reading (counted cell by cell in
+  `tests/contract/admin-keys-write.test.ts`):
+    - **Importing M new keys**: `M + 1` puts (M records + 1 index), `M + 1` gets, **0 lists**.
+      At most 200 per import (over that it is a 400, **never a silent truncation**) ⇒ the upper
+      bound for a single click is **201 puts**, i.e. 20% of the daily write quota. Splitting the
+      import into several batches is not cheaper (each batch still pays for the index write).
+    - **Re-importing** (pasting the same key again without ticking "reset the state of existing
+      keys"): **0 puts**. Duplicates are skipped, never overwritten, so re-pasting your whole
+      list is cheap and safe.
+    - With "reset the state of existing keys" ticked: 1 put for each key **already in the pool**.
+    - **Changing one key** (disable / enable / note / clear cooldown / clear strikes / un-evict):
+      1 get + 1 put.
+    - **Deleting one key**: 2 gets + 1 put (index) + 1 delete.
+    - **Bulk disable / bulk clear-cooldown of N keys**: N gets + N puts.
+    - **Bulk delete of N keys**: `N + 1` gets + **1** put (the index is written once) + N deletes.
+  ⚠️ These do **not** add up with the three columns below: those say "how many times a day with
+  nobody touching anything", this section says "what each click costs you". The only shape worth
+  watching is **importing several hundred keys at once** — it is the most expensive single click
+  in the panel.
+
 - **Write-side totals, in three columns keyed on `registrar.enabled`** (20 keys, 8 concurrent
   isolates):
 

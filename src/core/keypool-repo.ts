@@ -201,6 +201,40 @@ export async function keyId(key: string): Promise<string> {
   return [...new Uint8Array(buf)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * 单把 key 的长度上限。
+ *
+ * 取 1024：JWT 形态的凭据也就几百字节，而这个值同时是**存储那一侧的保险**——
+ * FileStorage 每次 put 都重写整个 `store.json`，KV 单值上限 25 MB；
+ * 没有上限时一次粘贴就能把整份存储撑成几十 MB，此后每一次 key 池状态回写都要
+ * 重写它。**它挡的不是攻击，是一次手滑**（把整个日志文件粘进导入框）。
+ */
+export const MAX_KEY_LENGTH = 1024;
+
+/**
+ * 这一串能不能当上游 key 用。**判据：可打印 ASCII 且不含空白**（`0x21–0x7E`）。
+ *
+ * 物理那一半（W6：说清是物理还是口味）：key 唯一的用途是拼进
+ * `authorization: Bearer <key>`（`src/core/dispatcher.ts:422`），而请求头的值是
+ * ByteString——码点 > U+00FF 与 NUL/CR/LF 在构造 `Headers` 时**直接抛
+ * TypeError**。放进池子就是一把每次被选中都让转发炸掉的 key，而它看起来完全正常。
+ * **在门口拒掉，比让它进池子之后靠 strike 慢慢冷却下去诚实得多。**
+ *
+ * ⚠️ **这不是 `src/http/admin/auth.ts` 那个 `SENDABLE` 的第二份实现，两条规则
+ * 真的不同，别把它们合并**：那一条的量词是 `*` 且**刻意放行内部空格**
+ * （`correct horse battery staple` 这类 passphrase 是有价值的口令形态，
+ * 拒掉它是替运维做主）。上游 key 是**机器发的 token，不是人记的口令**，
+ * 中间出现空格只有一种可能——粘贴事故（两把 key 挤在一行、或者被编辑器折了行），
+ * 而那种输入放行的后果是存进去一把永远打不通的 key。
+ * 所以这里是 `+`（非空是它自己的职责）且不含空格。
+ *
+ * `0x80–0xFF` 那一段两边都拒，理由与那边同一条（环境变量按 UTF-8 解、头值按
+ * Latin-1 解，两边在这一段并不由规范保证一致；RFC 9110 已把它标为弃用）。
+ */
+export function isImportableKey(key: string): boolean {
+  return key.length <= MAX_KEY_LENGTH && /^[\x21-\x7e]+$/.test(key);
+}
+
 export interface KeyPoolRepoOptions {
   /**
    * 注入的时钟。`add()` 用它填 `addedAt`（原来是裸 `Date.now()`）。
@@ -708,11 +742,26 @@ export class KeyPoolRepo {
     this.snapshot.set(next);
   }
 
-  async add(key: string): Promise<KeyRecord> {
-    const r: KeyRecord = {
-      id: await keyId(key), key, addedAt: this.o.now(), lastUsedAt: null,
+  /**
+   * 一条**全新**记录的初始形状。`add()` 与 `addMany()` 共用这一份。
+   *
+   * 抄两份的代价不是"不好看"：给 `KeyRecord` 加一个必填字段时，`tsc` 会在两处
+   * 各报一次，改对一处、另一处随手补个不同的默认值就成了两种新 key。
+   * **刻意不写 `stats` / `disabled` / `note`**——三者都是可选字段，不写它们
+   * 产出的就是「存量记录」那种形状，而那正是全仓读取处都必须能处理的形状
+   * （`tests/contract/admin-keys.test.ts` 的
+   * 「存量记录（记录里没有 disabled 字段）在响应里也**有** disabled，且是 false」
+   * 钉着这条路径）。
+   */
+  private newRecord(id: string, key: string): KeyRecord {
+    return {
+      id, key, addedAt: this.o.now(), lastUsedAt: null,
       cooldownUntil: 0, cooldownReason: null, strikes: 0, evicted: false, evictedReason: null,
     };
+  }
+
+  async add(key: string): Promise<KeyRecord> {
+    const r = this.newRecord(await keyId(key), key);
     try {
       await this.save(r);          // ① 记录先写
       await this.indexAdd(r.id);   // ② 再进索引
@@ -738,6 +787,135 @@ export class KeyPoolRepo {
     return r;
   }
 
+  /**
+   * 批量导入。**L4「重复导入即解封」那个后门的落点**（设计 §6.3）。
+   *
+   * ── 形态：一次读索引 → M 次存在性探测 → M 次记录 put → 一次写索引 ──────────
+   *
+   * **不许退化成循环调 `add()`**（K10，`listForIndexWrite()` 的注释也写着）：
+   * `add()` 是「1 次记录 put + 1 次索引读 + 1 次索引 put」，循环 M 次就是 `3M` 次
+   * 操作打在一个每天 1,000 次的写桶上；FileStorage 形态下每次 put 都重写整个
+   * `store.json`，几百把 key 的导入能卡住整个进程。
+   * `tests/contract/admin-keys-write.test.ts` 的
+   * 「一次导入 20 把 key 只产生 21 次 put（20 条记录 + 1 次索引），且零 list」
+   * 数着次数钉住这条形态——循环版**结果是对的**，只是贵 3 倍，所以判据只能是计数。
+   *
+   * ── L4：重复项默认跳过、不覆盖 ─────────────────────────────────────────────
+   *
+   * `keyId` 是内容哈希，同一把 key 恒得同一个 id。`add()` 直接 `save()` 覆盖 ⇒
+   * 重复粘贴一次就把 `strikes` / `cooldownUntil` / `evicted` 全清零、`addedAt` 刷新，
+   * **无任何提示** ⇒ 等于给用户一个「重新导入即可解封」的隐藏后门。
+   *
+   * ⚠️ **「这把 key 在不在」的判据是记录本身（`this.get(id)`），不是索引。**
+   * 拿索引当判据在两个方向上都会坏，而两次都坏在最要紧的时刻：
+   *   · **索引缺失/损坏**（多半正是写桶被打穿的时候）⇒ 已知集合是空的 ⇒
+   *     **整池每一把都被当成新 key 覆盖一遍**，L4 那个后门从另一扇门原样回来；
+   *   · **幽灵索引项**（索引里有、记录已被裸存储删除）⇒ 那把 key 会被报成
+   *     「已存在（未改动）」而其实**根本没有导进去**——运维看着成功提示，池子里没有。
+   * 代价是每把 key 一次 `get`（读桶 100,000/天，且这是人点一下才发生的路径），
+   * 换来的是「重复判定与索引健康度**无关**」。
+   *
+   * `resetExisting: true` 是**知情动作**：把后门变成一个要显式勾选的开关（设计 §6.3
+   * 的原话是「另给一个显式勾选框」）。它重置的是**系统判定的失败态**
+   * （`strikes` / `cooldownUntil` / `cooldownReason` / `evicted` / `evictedReason`），
+   * 刻意**不动**这四样：
+   *   · `disabled`——那是运维自己按下的开关（Task 2 的裁定：人的决定，随时可撤销），
+   *     让一次粘贴顺手把它翻回去，就是把「停用一把可疑 key」这个安全动作静默撤销；
+   *     它在面板上看得见、点一下就能开，不需要靠导入来代劳；
+   *   · `addedAt`——设计文档把「`addedAt` 被刷新」列为 L4 缺陷的一部分，重置状态
+   *     不等于抹掉这把 key 的来历；
+   *   · `stats`——用量是历史，不是失败态；
+   *   · `note`——运维写给自己看的话。
+   *
+   * **勾了重置就是每把已存在的 key 各一次 put**（上限由调用方的 `MAX_IMPORT_KEYS`
+   * 兜着），**刻意不做「没变化就不写」的优化**：那会让「被重置了几把」与调用方
+   * 拿到的 `duplicated` 对不上，而面板要拿这两个数说同一件事——一个动作两个数字，
+   * 正是面板开始撒谎的方式。多写几次盘比这个便宜。
+   *
+   * ── 返回值 ────────────────────────────────────────────────────────────────
+   *
+   * 三个数组**逐条对应输入**：`added.length + duplicated.length + invalid.length`
+   * 恒等于 `keys.length`。同一把 key 在同一批里粘两遍 ⇒ 第一条进 `added`（或
+   * `duplicated`），第二条进 `duplicated`——它对用户就是一条重复，不该被悄悄吃掉。
+   *
+   * ⚠️ **三个数组里没有一项是明文，而且这是结构上做不到，不是靠调用方自觉**
+   * （约束 11(a)）：`added` / `duplicated` 装的是 **id**（内容哈希），
+   * `invalid` 装的是**输入里的位置**（1 基，十进制字符串）。
+   *
+   * 位置而不是掩码，有两条理由，第二条更硬：
+   * ① 面板上的导入框是**逐行粘贴**的，「第 2、7 行不是合法的 key」比
+   *    「`sk-ab…tail` 不是合法的 key」更能让人直接去改那一行；
+   * ② 要掩码就得从 `./admin/key-view.js` 里引入 `maskKey`，而那会让**调度侧的模块
+   *    开始依赖面板投影模块** —— `tests/unit/pool-cache.test.ts` 的
+   *    「key-view.ts 只服务管理读路径：src/core 里 admin/ 之外没有任何模块 import 它」
+   *    当场变红（本任务实测撞到过一次，红的就是那一格）。那条断言守的是
+   *    `lastUsedAt` 读点豁免的前提，不该为了一个显示口味把它降级。
+   *    **返回位置之后，「明文出不去」变成了这个函数自己的性质：
+   *    它手上根本没有一条通往明文的返回路径。**
+   */
+  async addMany(keys: readonly string[], opts: { resetExisting: boolean }): Promise<{
+    added: string[]; duplicated: string[]; invalid: string[];
+  }> {
+    // 索引只用来**算这次要写回去的那份**，不参与重复判定（见上面那段 ⚠️）。
+    // 缺失时回落一次 `list()`：只写 `added` 会把索引里原有的 id 全部抹掉，
+    // 那是正确性问题，不是配额问题——与 `indexAdd` 走的是同一条判据。
+    const idx = await this.readIndex();
+    const knownIds = idx === null ? await this.listForIndexWrite() : idx.ids;
+
+    const added: string[] = [];
+    const duplicated: string[] = [];
+    const invalid: string[] = [];
+    /** 本批已经处理过的 id：同一把 key 粘第二遍时不许再落一次盘、也不许再探一次存在性。 */
+    const seen = new Set<string>();
+
+    try {
+      for (const [at, raw] of keys.entries()) {
+        const key = raw.trim();
+        // 1 基：面板把它当行号给运维看，而人数行是从 1 开始的。
+        if (!isImportableKey(key)) { invalid.push(String(at + 1)); continue; }
+        const id = await keyId(key);
+        if (seen.has(id)) { duplicated.push(id); continue; }
+        seen.add(id);
+        const existing = await this.get(id);
+        if (existing === null) {
+          added.push(id);
+          await this.save(this.newRecord(id, key));   // ① 记录先写，索引最后
+          continue;
+        }
+        duplicated.push(id);
+        if (opts.resetExisting) {
+          // **不传 prev**：这次写必须落盘。传了 prev 就要过写消除那道闸
+          // （`shouldElide`），而那道闸的判据是「scheduling 字段有没有变」——
+          // 重置一把本来就干净的 key 一个字段都没变 ⇒ 整个被丢弃，
+          // 于是「被重置了几把」这个数字会与真正落盘的次数对不上。
+          // 同一条理由见 `src/http/admin/handlers/keys-write.ts` 的 PATCH。
+          await this.save({
+            ...existing,
+            cooldownUntil: 0, cooldownReason: null, strikes: 0,
+            evicted: false, evictedReason: null,
+          });
+        }
+      }
+
+      // ② 再进索引。**把 duplicated 也并进去**：记录在、索引里没有（孤儿）时这一步
+      // 顺手把它捡回来，而正常情形下集合不变 ⇒ `sameIdSet` 判等 ⇒ 一次 put 都不写
+      // （「重复导入一次盘都不落」那条断言正是靠这个短路）。
+      // 索引原本就缺失时必须无条件重建一次，否则它永远建不起来——同 `indexAdd`。
+      const merged = [...knownIds, ...added, ...duplicated];
+      if (idx === null || !sameIdSet(merged, knownIds)) {
+        // **这一次必须抛**：记录已经写进去了，索引没跟上就是一批孤儿——报错让调用方
+        // 重试（重试是幂等的：那些 key 这次会被判成重复，索引照样被补上），
+        // 比返回一个「导入成功」而池子看不见它们诚实。
+        await this.storage.put(POOL_INDEX_KEY, makePoolIndex(merged));
+      }
+    } finally {
+      // 与 `add()` 同一条理由，且这里是它今天唯一真实的用法：面板与转发路径共用
+      // `BuiltApp.repo`，不失效就等于「导入完了，一分钟内看不到」。
+      this.invalidate();
+    }
+    return { added, duplicated, invalid };
+  }
+
   async delete(id: string): Promise<void> {
     try {
       await this.storage.delete(KEY_PREFIX + id);   // ① 记录先删
@@ -748,6 +926,46 @@ export class KeyPoolRepo {
       this.pendingStats.delete(id);
       // **必须放 finally。** 记录已经删掉了，②失败时若不失效快照，这把（多半是刚
       // 被判定要撤销的）key 还会继续被选中整整一个 TTL——删除看起来生效了其实没有。
+      this.invalidate();
+    }
+  }
+
+  /**
+   * 批量删除。**与 `addMany` 是同一条判据的另一半**：一次读索引 → M 次记录 delete
+   * → 一次写索引。
+   *
+   * ⚠️ **不许退化成循环调 `delete()`**，理由与批量导入那条逐字相同、而且更常发生：
+   * `delete()` 每一次都要「读索引 + 写索引」，循环 N 次就是 **N 次索引 put** 打在
+   * 每天 1,000 次的写桶上。面板的批量条一次最多勾 200 行（一页），
+   * 也就是**一次点击 200 次 put = 两成日配额**，而它换来的信息量与一次 put 完全相同。
+   * **批量删除比 200 把 key 的导入常见得多**——只给导入那条路做了合并、把这条留在
+   * 循环里，正是「守住了罕见路径、放掉了常见路径」。
+   * `tests/contract/admin-keys-write.test.ts` 的
+   * 「批量删除 5 把 key 只写 1 次索引 —— 循环调 delete() 会写 5 次」数着次数钉住它。
+   *
+   * 写序与 `delete()` 一致：**① 记录先删 → ② 再出索引**。中途失败留下的是幽灵索引项
+   *（读到 null 被 filter 掉，`reconcileIndex()` 以 `list()` 为准剪掉），是 fail-safe 的
+   * 那一侧；反过来先摘索引，中途失败留下的孤儿记录会被对账**加回索引**，
+   * 等于把一次删除悄悄撤销了。
+   */
+  async deleteMany(ids: readonly string[]): Promise<void> {
+    if (ids.length === 0) return;
+    try {
+      const idx = await this.readIndex();
+      for (const id of ids) {
+        await this.storage.delete(KEY_PREFIX + id);   // ① 记录先删
+        // 记录没了，攒着的增量就没有归属了——同 `delete()`，留着它等于给
+        // 「同一把 key 重新导入时把旧计数合并进来」留一条路。
+        this.pendingStats.delete(id);
+      }
+      if (idx === null) return;                       // 没索引就没什么可摘的，对账会建
+      const rest = idx.ids.filter((x) => !ids.includes(x));
+      if (rest.length !== idx.ids.length) {           // ② 再出索引，只写这一次
+        await this.storage.put(POOL_INDEX_KEY, makePoolIndex(rest));
+      }
+    } finally {
+      // **必须放 finally**，同 `delete()`：记录已经删掉了，②失败时若不失效快照，
+      // 这些 key 还会继续被选中整整一个 TTL——删除看起来生效了其实没有。
       this.invalidate();
     }
   }

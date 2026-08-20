@@ -12,6 +12,9 @@ import { keysHandler } from "./handlers/keys.js";
 import { capabilitiesHandler } from "./handlers/capabilities.js";
 import { overviewHandler } from "./handlers/overview.js";
 import { eventsHandler, eventsDownloadHandler } from "./handlers/events.js";
+import {
+  keysImportHandler, keysBulkHandler, keyDeleteHandler, keyPatchHandler,
+} from "./handlers/keys-write.js";
 import { uiRoutes } from "../../ui/serve.js";
 
 export interface AdminRouterDeps {
@@ -181,6 +184,25 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   }));
   admin.get("/admin/api/events", eventsHandler({ storeLogger: deps.storeLogger, now: deps.now }));
   admin.get("/admin/api/events/download", eventsDownloadHandler({ storeLogger: deps.storeLogger }));
+
+  // ── Key 池的写端点（P3c Task 3）─────────────────────────────────────────
+  //
+  // **这是这棵树上第一批非 GET 路由。** 在此之前 `/admin/api/*` 六条全是
+  // `admin.get()`，于是上面那条 `admin.use` 写对写错的可观测差异只有「读得到 / 401」；
+  // 现在它变成了「**删得掉** / 401」。枚举式鉴权矩阵因此多了一维：
+  // `tests/contract/admin-auth.test.ts` 的
+  // 「鉴权失败的非幂等请求必须零副作用 —— 只断言 401 抓不住『先删了再返回 401』」
+  // 数着 put / delete 计数钉住它，而那一格的夹具刻意用**真的会成功**的请求
+  // （已停用的 key + 合法的导入体），否则鉴权失效时它照样是 0 次写。
+  const keysWrite = { repo: deps.repo, logger: deps.logger };
+  admin.post("/admin/api/keys", keysImportHandler(keysWrite));
+  // **`bulk` 必须写在 `:id` 之前**：Hono 按注册顺序匹配，`/admin/api/keys/bulk`
+  // 同样能匹配 `/admin/api/keys/:id`。今天两者方法不同（POST / DELETE、PATCH）
+  // 所以碰不上，但顺序反了之后加一条 `POST /admin/api/keys/:id` 就会静默地
+  // 把 bulk 吃掉——与本文件末尾那条静态兜底是同一个坑。
+  admin.post("/admin/api/keys/bulk", keysBulkHandler(keysWrite));
+  admin.delete("/admin/api/keys/:id", keyDeleteHandler(keysWrite));
+  admin.patch("/admin/api/keys/:id", keyPatchHandler(keysWrite));
 
   // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
   // 串起来跑，`/admin/*` 这条兜底若排在前面会先返回 404，**整套管理 API 直接消失**
