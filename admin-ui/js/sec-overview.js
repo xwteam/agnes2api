@@ -303,13 +303,22 @@ function buildConfigCard(section) {
   const primary = row("ov.config.primary");
   const fallback = row("ov.config.fallback");
   const targetKeys = row("ov.config.targetKeys");
-  const envLocked = row("ov.config.envLocked");
-  for (const r of [registrar, primary, fallback, targetKeys, envLocked]) body.appendChild(r.p);
+  // ⚠️ **`ov.config.envLocked` 不是标签，是一句自带 `{count}` 的完整句子**
+  //（「被环境变量锁定的字段数：{count}」）。用 `row()` 渲染它，标签那半会调
+  // `t(key)` 且**不带参数** ⇒ 面板上出现裸的 `{count}`，紧接着值那半又把整句
+  // 重复一遍。Task 7 的阶段验收人工冒烟在 Node 形态上实测到了这个形态：
+  //   「被环境变量锁定的字段数：{count}: 被环境变量锁定的字段数：1」
+  // 所以它单独占一行，整句由 renderConfigCard 一次性写进这个 <p>。
+  // 这一类回归现在由 `scripts/check-i18n.mjs` 的第 ⑧ 条挡着（带占位符的 key
+  // 不许被当成不带参数的裸标签用）。
+  const envLocked = el("p");
+  for (const r of [registrar, primary, fallback, targetKeys]) body.appendChild(r.p);
+  body.appendChild(envLocked);
   section.appendChild(wrap);
   return {
     banner,
     registrar: registrar.value, primary: primary.value, fallback: fallback.value,
-    targetKeys: targetKeys.value, envLocked: envLocked.value,
+    targetKeys: targetKeys.value, envLocked,
   };
 }
 

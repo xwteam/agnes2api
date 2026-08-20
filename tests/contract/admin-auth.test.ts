@@ -60,8 +60,103 @@ describe("checkAdminToken", () => {
     expect(checkAdminToken(`\t${good}\n`, "g")).toEqual({ ok: false, reason: "whitespace_padded" });
     // 全空白：长度够、也不等于 GATEWAY_TOKEN，正是最容易漏过去的那一格。
     expect(checkAdminToken(" ".repeat(24), "g")).toEqual({ ok: false, reason: "whitespace_padded" });
-    // 中间的空白不管：那是口令自己的一部分，客户端送得出来。
-    expect(checkAdminToken("xxxxxxxxxxxx xxxxxxxxxxxx", "g").ok).toBe(true);
+    // ⚠️ **这里原来断言的是「中间的空白不管，那是口令自己的一部分」——Task 7 之后
+    // 不再成立，是被**刻意**改掉的策略，不是把测试改绿。** 新的字符集规则排除了空格
+    // （0x20）：空格本身送得出去，排除它是为了「复制粘贴不出错」这个可诊断性取舍
+    // （见 auth.ts 的 SENDABLE ②）。所以这一格现在断言的是**新的**结论——含空格的
+    // 口令归 not_sendable，而不是继续被 whitespace_padded 那条放行。
+    expect(checkAdminToken("xxxxxxxxxxxx xxxxxxxxxxxx", "g"))
+      .toEqual({ ok: false, reason: "not_sendable" });
+  });
+
+  /**
+   * ── K7：放行「客户端根本送不出去」的口令 ────────────────────────────────
+   *
+   * 浏览器的 `fetch` 在设置含非 Latin-1 或控制字符的请求头值时**直接抛
+   * TypeError**，于是一个含汉字 / emoji / 零宽空格的 `ADMIN_TOKEN` 会装出一棵
+   * 200 但永远进不去的面板：用户看到「网络错误」，而服务端**连一条 `login_failed`
+   * 都没有**（请求压根没发出来），比 401 难诊断得多。
+   *
+   * ⚠️ **每一格都要长度够 24**，否则测的是 `too_short` 而不是 `not_sendable`
+   *（本项目第 1 种假阳性：夹具无冲突数据，两条规则分不开）。
+   *
+   * ⚠️ **不可见字符一律用 `String.fromCharCode` 拼**，不往源码里粘裸字符：
+   * 本仓刚被「源文件里的裸 NUL 让整份文件对 git diff / grep / scan-secrets 隐身」
+   * 咬过一次（Task 6），审计工具看不见的字符不该出现在源码里。
+   */
+  describe("送不出去的字符：checkAdminTokenShape 只查空白与长度会装出一棵进不去的面板", () => {
+    const ZWSP = String.fromCharCode(0x200b);
+    const NBSP = String.fromCharCode(0x00a0);
+    const NUL = String.fromCharCode(0x00);
+    const CASES: ReadonlyArray<{ name: string; token: string }> = [
+      { name: "汉字", token: "管理口令管理口令管理口令管理口令管理口令管理口令" },
+      { name: "emoji", token: "admin-token-0123456789-🔑" },
+      { name: "零宽空格", token: `admin-token-0123456789${ZWSP}xx` },
+      { name: "内含空格", token: "admin token 0123456789 abcd" },
+      // 这一格不在计划的四格里，是执行时补的：裸 NUL 既是控制字符，又正是本仓刚被
+      // 咬过一次的那个字符（Task 6：源文件里的裸 NUL 让整份文件对 git diff / grep /
+      // scan-secrets 隐身）。它同样是浏览器发不出去的。
+      { name: "内含裸 NUL", token: `admin-token${NUL}0123456789abcd` },
+    ];
+
+    for (const { name, token } of CASES) {
+      it(`${name}：长度够（${token.length} ≥ 24）也要被拒，且报 not_sendable`, () => {
+        expect(token.length, `${name} 的夹具长度不足 24，测的会是 too_short`).toBeGreaterThanOrEqual(24);
+        expect(checkAdminToken(token, "g")).toEqual({ ok: false, reason: "not_sendable" });
+      });
+    }
+
+    /**
+     * **反向**：正则收得太紧，把合法的随机口令也拒了同样是回归。
+     * 随机口令生成器（`openssl rand -base64` / 密码管理器）会吐出 `!`、`-`、`+`、
+     * `/`、`=`、`~` 这类符号，全都是可打印 ASCII，必须放行。
+     */
+    it.each([
+      ["含 ! 与 -", "admin-token-0123456789-ok!"],
+      ["base64 风格（含 + / =）", "YWRtaW4rdG9rZW4vMDEyMzQ1Njc4OQ=="],
+      ["全符号边界（0x21 与 0x7e）", "!admin-token-0123456789abc~"],
+    ])("合法的随机口令不许被误拒：%s", (_name, token) => {
+      expect(token.length).toBeGreaterThanOrEqual(24);
+      expect(checkAdminToken(token, "g").ok, token).toBe(true);
+    });
+
+    /**
+     * **顺序：可送性排在长度之前。**
+     *
+     * 计划点名这条「今天没有用例」——一个「又短又含汉字」的口令同时触发两条，
+     * 报「长度不足」会把人引向加长它，而加长之后照样送不出去。
+     * 把两条判断对调时，只有这一格会红。
+     */
+    it("又短又含汉字时报 not_sendable 而不是 too_short——报长度会把人引向加长它", () => {
+      expect("口令".length).toBeLessThan(24);
+      expect(checkAdminToken("口令", "g")).toEqual({ ok: false, reason: "not_sendable" });
+    });
+
+    /**
+     * **空串仍然归 too_short**，这是刻意的，不是漏网。
+     *
+     * 「不含送不出去的字符」这条性质对空串平凡成立——非空是长度那条的职责，
+     * 所以 `SENDABLE` 的量词写的是 `*` 而不是 `+`（理由写在 auth.ts）。
+     * 对一个空口令，「长度不足 24 位」才是能照着改的那句话。
+     * 上面那条「空串也走 too_short」的用例是同一件事的另一半，两条一起钉住这个取舍。
+     */
+    it("空串不因为新规则改判——它归 too_short（那才是能照着改的那句话）", () => {
+      expect(checkAdminToken("", "g")).toEqual({ ok: false, reason: "too_short" });
+    });
+
+    /**
+     * **不间断空格（U+00A0）归 `whitespace_padded`，不是 `not_sendable`。**
+     *
+     * 这一格是订正：本文件初稿的注释断言过反话——「NBSP 不被 `trim()` 认作空白」。
+     * 实测（node 一次性脚本）`(NBSP + "x" + NBSP).trim() === "x"`：JS 的 `trim()`
+     * 认的是 ECMAScript 的 WhiteSpace 产生式，**U+00A0 在里面**，所以首尾带 NBSP 的
+     * 口令先命中空白那条。两条原因都拒得住它，但对运维说的话不一样，别再写反。
+     */
+    it("首尾不间断空格归 whitespace_padded——trim() 认得 U+00A0（已实测）", () => {
+      const padded = `${NBSP}admin-token-0123456789${NBSP}`;
+      expect(padded.trim()).toBe("admin-token-0123456789");
+      expect(checkAdminToken(padded, "g")).toEqual({ ok: false, reason: "whitespace_padded" });
+    });
   });
 
   it("既带空白又太短时先报空白——空白是三条里唯一在配置文件里看不见的那条", () => {
@@ -98,9 +193,11 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
   // 拿夹具那个一位的 "t" 来试，命中的其实是 too_short，两条规则就分不开了。
   // 长度一律写字面量（理由见 checkAdminToken 那组用例的说明）。
   const LONG = "x".repeat(30);
+  // 不可见字符一律拼出来，不往源码里粘裸字符（理由见上面那组的说明）。
+  const ZWSP = String.fromCharCode(0x200b);
   const CASES: Array<{
     name: string; token: string; gatewayToken: string; reason: string;
-    /** 说明里必须出现的字样：三条原因的**文案要能被区分开**，只说「未启用」等于让运维猜。 */
+    /** 说明里必须出现的字样：四条原因的**文案要能被区分开**，只说「未启用」等于让运维猜。 */
     msgContains: string;
   }> = [
     {
@@ -110,6 +207,24 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
     {
       name: "全是空白（24 个空格，长度够也不等于网关口令）", token: " ".repeat(24),
       gatewayToken: TEST_CONFIG.gatewayToken, reason: "whitespace_padded", msgContains: "空白",
+    },
+    // ── K7：送不出去的字符（四格，每格长度都 ≥ 24）───────────────
+    // 长度不够的话测的是 too_short，两条规则就分不开了（第 1 种假阳性）。
+    {
+      name: "汉字（24 位，长度够）", token: "管理口令管理口令管理口令管理口令管理口令管理口令",
+      gatewayToken: TEST_CONFIG.gatewayToken, reason: "not_sendable", msgContains: "发不出去",
+    },
+    {
+      name: "emoji", token: "admin-token-0123456789-🔑",
+      gatewayToken: TEST_CONFIG.gatewayToken, reason: "not_sendable", msgContains: "发不出去",
+    },
+    {
+      name: "零宽空格", token: `admin-token-0123456789${ZWSP}xx`,
+      gatewayToken: TEST_CONFIG.gatewayToken, reason: "not_sendable", msgContains: "发不出去",
+    },
+    {
+      name: "内含空格", token: "admin token 0123456789 abcd",
+      gatewayToken: TEST_CONFIG.gatewayToken, reason: "not_sendable", msgContains: "发不出去",
     },
   ];
 
@@ -131,6 +246,21 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
       expect(JSON.stringify(e)).not.toContain(token);
     });
   }
+
+  /**
+   * **反向那格：正则收得太紧，把合法的随机口令也拒了，是同一个方向的回归。**
+   *
+   * 上面那张表只证明「不合规的会被拒」；把 `SENDABLE` 收成 `/^[a-z0-9]+$/`
+   * （不许符号）时那张表**照样全绿**，而这一格会红——面板从此拒绝一切
+   * `openssl rand -base64` 风格的口令，运维只会看到一棵莫名其妙的 404 树。
+   */
+  it("含 ! 与 - 的合法口令：/admin 树照常注册，带对口令能进，且不打 token_rejected", async () => {
+    const OK_TOKEN = "admin-token-0123456789-ok!";
+    const { app, logger } = await makeApp([], ["k1"], {}, undefined, { adminToken: OK_TOKEN });
+    const res = await app.request("/admin/api/session", { headers: { "x-admin-key": OK_TOKEN } });
+    expect(res.status, "合法的随机口令被误拒了").toBe(200);
+    expect(logger.has("admin.token_rejected")).toBe(false);
+  });
 
   /**
    * ⚠️ **「与网关口令相同」刻意不在上面那张表里，它的失效形态是 503 而不是 404。**
@@ -324,12 +454,61 @@ describe("客户端 IP", () => {
 });
 
 describe("审计字段不原样承载请求数据", () => {
-  it("path 被截断到 200 字符——未鉴权请求能往日志里塞约 8 KB 攻击者文本", async () => {
+  /** 串里有没有落单的代理码元（被劈开的代理对的一半）。 */
+  function hasLoneSurrogate(s: string): boolean {
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff) {
+        const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+        if (next >= 0xdc00 && next <= 0xdfff) { i++; continue; }
+        return true;
+      }
+      if (c >= 0xdc00 && c <= 0xdfff) return true;
+    }
+    return false;
+  }
+
+  /** 未鉴权打一发，把落进 `admin.login_failed` 的 `path` 字段取回来。 */
+  async function loggedPath(suffix: string): Promise<string> {
     const { app, logger } = await makeApp();
-    await app.request(`/admin/api/${"a".repeat(4000)}`);
+    await app.request(`/admin/api/${suffix}`);
     const path = logger.entries.find((x) => x.event === "admin.login_failed")?.fields?.path;
     expect(typeof path).toBe("string");
-    expect((path as string).length).toBe(AUDIT_PATH_MAX);
+    return path as string;
+  }
+
+  it("path 被截断到 200 字符——未鉴权请求能往日志里塞约 8 KB 攻击者文本", async () => {
+    const path = await loggedPath("a".repeat(4000));
+    expect(path.length).toBe(AUDIT_PATH_MAX);
+    // 这一格同时是孤代理那条的**反向**：截断点落在普通字符上时**不许**多砍一个。
+    expect(hasLoneSurrogate(path)).toBe(false);
+  });
+
+  /**
+   * ── Minor ⑥：截断点正好落在一个代理对中间 ──────────────────────────────
+   *
+   * `slice()` 按 UTF-16 码元切，正好切在代理对中间就留下一个**孤代理**。
+   * 实测（node v24）：`JSON.stringify` 会把它转义成 `\ud83d`（这一步无损），
+   * 而 `TextEncoder` 把它编成 `ef bf bd`（U+FFFD）——事件下载的 `.txt` 与任何
+   * 走 UTF-8 的日志采集都经过那一步。面板要按这个字段做筛选与聚合，
+   * 留半个字符迟早变成一个替换字符。
+   *
+   * 夹具算过：`/admin/api/` 是 11 个码元，再补 188 个 `a` 正好 199 个，
+   * 于是那个 emoji 的**高代理**落在下标 199——切 200 个码元的最后一个就是它。
+   */
+  it("截断点落在代理对中间时，把孤代理一起截掉（不留半个字符）", async () => {
+    const emoji = String.fromCodePoint(0x1f511);
+    const prefixLen = "/admin/api/".length;
+    const fill = AUDIT_PATH_MAX - 1 - prefixLen;
+    expect(fill, "夹具算错了，emoji 的高代理没落在截断点上").toBe(188);
+
+    const path = await loggedPath(`${"a".repeat(fill)}${emoji}${"b".repeat(50)}`);
+    // 孤代理被砍掉 ⇒ 比上限短一个码元。
+    expect(path.length).toBe(AUDIT_PATH_MAX - 1);
+    expect(hasLoneSurrogate(path), "留下了半个代理对").toBe(false);
+    // 而且砍掉的确实是 emoji 那一半，不是把一个正常字符也带走了。
+    expect(path.endsWith("a")).toBe(true);
+    expect(path).not.toContain(emoji);
   });
 });
 

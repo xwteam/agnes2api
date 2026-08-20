@@ -45,6 +45,56 @@ describe("视频两段式", () => {
   });
 });
 
+/**
+ * ── K5：这个 origin 上不许出现一个下游用户影响得了的**同源文档** ──────────────
+ *
+ * `GET /v1/videos/:id` 是一条 GET 路由，而 `/v1` 的鉴权**接受 `?key=` 查询参数**
+ *（Gemini 协议兼容）⇒ 拿着网关口令的下游用户能构造一条**可以直接导航过去**的同源
+ * URL。上游的 `content-type` 又在 `SAFE_RESPONSE_HEADERS` 里被逐字透传，于是那条
+ * URL 能返回 `text/html` / `image/svg+xml` —— 直接导航过去就是一个同源文档，
+ * 里面的 `<script>` / `on*` / `javascript:` 都会执行，而面板把 `ADMIN_TOKEN` 原样
+ * 放在**这个 origin** 的 localStorage 里（作用域是 origin 而不是 path）。
+ * 全局 `nosniff` 只否掉「按内容嗅探」，挡不住「显式声明成 text/html」。
+ *
+ * ⚠️ **为什么这一条在契约层再测一遍**（dispatcher 的单测已经覆盖夹紧本身）：
+ * 单测证明的是 `sanitize()` 会夹紧，证明不了**这条真实路由的响应真的经过它**，
+ * 也证明不了后面没有别的中间件把 content-type 改回去。Task 6 刚栽过一次
+ * 「测的是抄件不是原件」，这一格走的是真 `createApp` + 真路由 + 真 `?key=`。
+ */
+describe("GET /v1/videos/{id}：上游 content-type 不许把本源变成同源文档", () => {
+  it("上游 text/html 经这条真实路由出来时是 application/octet-stream，且 nosniff 还在", async () => {
+    const { app } = await makeApp([{
+      status: 200, body: "<html><script>alert(1)</script></html>",
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }]);
+    // **用 `?key=` 发**：这正是「能直接导航过去」的那条形态，请求头是带不上的。
+    const res = await app.request("/v1/videos/task-1?key=t");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("image/svg+xml 同样被夹紧——独立 SVG 也是能执行脚本的同源文档", async () => {
+    const { app } = await makeApp([{
+      status: 200, body: '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+      headers: { "content-type": "image/svg+xml" },
+    }]);
+    const res = await app.request("/v1/videos/task-1?key=t");
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+  });
+
+  /** 反向：真正的媒体类型必须原样透传，否则媒体路由整个坏掉（比不修更糟）。 */
+  it("video/mp4 原样透传，content-disposition 也还在", async () => {
+    const { app } = await makeApp([{
+      status: 200, body: "not-really-a-video",
+      headers: { "content-type": "video/mp4", "content-disposition": 'attachment; filename="a.mp4"' },
+    }]);
+    const res = await app.request("/v1/videos/task-1?key=t");
+    expect(res.headers.get("content-type")).toBe("video/mp4");
+    expect(res.headers.get("content-disposition")).toBe('attachment; filename="a.mp4"');
+  });
+});
+
 // I1：{id} 原样拼进上游路径 = 已鉴权客户端可以拿池中的真实上游 key 打上游任意路径。
 // 这些用例除了断言 400，还必须断言**一次上游请求都没发出**——只要发出去了，
 // 携带的就是池里的真实 key。

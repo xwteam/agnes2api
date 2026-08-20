@@ -314,6 +314,53 @@ describe("dispatch", () => {
     expect(res.headers.get("content-type")).toBe("video/mp4");
   });
 
+  /**
+   * ── K5：上游 content-type 不许把本源变成一个可渲染的同源文档 ───────────────
+   *
+   * `GET /v1/videos/:id` 是一条接受 `?key=` 的 GET 路由（Gemini 协议兼容），而
+   * content-type 是上游**逐字透传**的 ⇒ 拿着网关口令的下游用户能构造一条同源 URL
+   * 让它返回 `text/html` / `image/svg+xml`，**直接导航过去就是一个同源文档**，
+   * 里面的 `<script>` / `on*` / `javascript:` 都会执行——而面板把 `ADMIN_TOKEN`
+   * 原样放在这个 origin 的 localStorage 里（作用域是 origin 而不是 path）。
+   * 全局 `nosniff` 只否掉「按内容嗅探」，挡不住「显式声明成 text/html」。
+   *
+   * **正反两组缺一不可。** 只有正向那组时，把 `clampContentType` 改成「一律
+   * 返回 octet-stream」照样全绿，而那会让媒体路由整个坏掉（图片/视频/SSE 全变下载）
+   * ——修过头比不修更糟，所以反向那组同样是被守护的性质。
+   */
+  describe("上游 content-type 不许把本源变成一个可渲染的同源文档", () => {
+    /** 上游声明成这个 content-type 时，网关最终回给客户端的那个值。 */
+    async function forwarded(upstreamType: string): Promise<string | null> {
+      const repo = await makeRepo(["k1"]);
+      const f = new FakeFetcher([{
+        status: 200, body: "<html>whatever</html>",
+        headers: { "content-type": upstreamType },
+      }]);
+      const res = await dispatch({
+        // 用真实那条可达路由的形态：GET /videos/{id}，非流式、无请求体。
+        path: "/videos/abc", body: undefined, stream: false, method: "GET",
+        deps: { repo, fetcher: f, config: CONFIG, now: () => 1000 },
+      });
+      return res.headers.get("content-type");
+    }
+
+    for (const bad of ["text/html", "text/html; charset=utf-8", "IMAGE/SVG+XML", "application/javascript"]) {
+      it(`上游返回 ${bad} 时改写成 application/octet-stream`, async () => {
+        expect(await forwarded(bad)).toBe("application/octet-stream");
+      });
+    }
+
+    // **反向一组**：把常用类型全打成下载是「修过头」，比不修更糟（媒体路由整个坏掉）。
+    for (const ok of [
+      "application/json", "text/event-stream", "image/png",
+      "video/mp4", "audio/mpeg", "text/plain; charset=utf-8",
+    ]) {
+      it(`${ok} 原样透传`, async () => {
+        expect(await forwarded(ok)).toBe(ok);
+      });
+    }
+  });
+
   it("上游 401 的错误体绝不透传给客户端（那是最可能回显 key 片段的地方）", async () => {
     const repo = await makeRepo(["k1"]);
     const leak = '{"error":"invalid api key: sk-live-ABCDEF0123456789"}';

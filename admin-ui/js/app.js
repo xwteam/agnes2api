@@ -15,8 +15,18 @@ import { onUnauthorized } from "./api.js";
 import { overviewSection } from "./sec-overview.js";
 import { keysSection } from "./sec-keys.js";
 import { eventsSection } from "./sec-events.js";
+import { sessionExpired } from "./pure/session.mjs";
 
 const KEY_STORE = "agnes2api_admin_key";
+/**
+ * 「口令是什么时候存下来的」。会话绝对上限靠它算年龄，判定本身在
+ * `js/pure/session.mjs`（`sessionExpired`），这里只负责读写浏览器存储。
+ *
+ * **两个键必须一起写、一起清**：只清口令不清时刻，下次登录前那个时刻还是旧的；
+ * 只写口令不写时刻，`sessionExpired()` 拿不到时刻会把刚登录的会话判成过期
+ *（方向是 fail closed，但用户会永远进不去）。
+ */
+const SAVED_AT_STORE = "agnes2api_admin_key_at";
 const SECTION_STORE = "agnes2api_section";
 const SECTIONS = { overview: overviewSection, keys: keysSection, events: eventsSection };
 
@@ -29,8 +39,15 @@ const err = document.getElementById("gate-err");
 function store(op, value) {
   try {
     if (op === "get") return localStorage.getItem(KEY_STORE);
-    if (op === "set") localStorage.setItem(KEY_STORE, value);
-    if (op === "del") localStorage.removeItem(KEY_STORE);
+    if (op === "getAt") return localStorage.getItem(SAVED_AT_STORE);
+    if (op === "set") {
+      localStorage.setItem(KEY_STORE, value);
+      localStorage.setItem(SAVED_AT_STORE, String(Date.now()));
+    }
+    if (op === "del") {
+      localStorage.removeItem(KEY_STORE);
+      localStorage.removeItem(SAVED_AT_STORE);
+    }
   } catch (e) { /* 隐私模式：本次会话照常可用，刷新后要重新输入 */ }
   return null;
 }
@@ -148,10 +165,19 @@ setTheme(getTheme());
 
 // 已经存过口令就直接验一次；**验不过要清掉**，否则用户会卡在一个永远进不去的页面。
 // 只有 401 才清：接口 500 或断网时清掉等于让一次运维事故顺手把人锁在外面。
+//
+// 但在验之前先过一道**会话绝对上限**：存下来超过 12 小时（或者压根没存时刻——
+// 旧版本存的）就当场清掉、回登录闸，连这一次 probe 都不发。判定在
+// `js/pure/session.mjs`，这里只负责把浏览器存储与时钟喂给它。
 const saved = store("get");
 if (saved) {
-  probe(saved).then((r) => {
-    if (r.ok) enter();
-    else if (r.reason === "gate.invalid") store("del");
-  }).catch(() => {});
+  if (sessionExpired(Number(store("getAt")), Date.now())) {
+    store("del");
+    err.textContent = t("common.sessionExpired");
+  } else {
+    probe(saved).then((r) => {
+      if (r.ok) enter();
+      else if (r.reason === "gate.invalid") store("del");
+    }).catch(() => {});
+  }
 }

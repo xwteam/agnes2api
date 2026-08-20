@@ -44,9 +44,17 @@ const SOURCES = walk(SRC_DIR).filter((p) => !p.endsWith("README.md"));
 describe("生成物与 admin-ui/ 源逐字节相同", () => {
   /**
    * 设计文档 §4.2 守住硬约束 4（不引入需要构建步骤的前端框架）的**全部依据**是这一句：
-   * 生成器不转译、不打包、不压缩，产物字节与源文件逐字节相同，因此 admin-ui/index.html
-   * 用浏览器直接打开仍然是一个完整可调试的面板——它是投递方式，不是构建管线。
+   * 生成器不转译、不打包、不压缩，产物字节与源文件逐字节相同，因此把 admin-ui/ 原样当
+   * 静态文件挂出去就是一个完整可调试的面板——它是投递方式，不是构建管线。
    * 这句话必须由断言钉死，不能靠自觉。
+   *
+   * ⚠️ **这段原来的措辞是「admin-ui/index.html 用浏览器直接打开（file://）仍然是一个
+   * 完整可调试的面板」，那句是假的**（P3b Task 7 的阶段验收实测推翻；同一句假话在三处
+   * 出现，本文件、scripts/build-ui.mjs 的文件头、admin-ui/README.md，一起订正）。
+   * index.html 的资源引用是绝对路径（`/admin/js/app.js` 等），file:// 下解析成
+   * `file:///admin/...` 而全部 404；且现代浏览器把 file:// 文档的源当成 null，
+   * `type="module"` 的脚本会被 CORS 挡下。**「逐字节相同」这条性质本身没变，
+   * 变的只是「怎么打开它」**——可执行的验收步骤写在 admin-ui/README.md。
    */
   it("源目录里每个文件都在生成物里，且内容一字不差", () => {
     expect(SOURCES.length, "源目录空了，下面的循环会一格不跑却全绿").toBeGreaterThan(0);
@@ -123,6 +131,11 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // Task 5（P3b）新增：概览板块的取值决策，同一条硬规则、同一份理由，
       // 由 tests/ui/overview.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/overview.mjs",
+      // Task 7（P3b）新增：会话绝对上限的判定（`sessionExpired`）。计划原本把它
+      // 归给人工冒烟（理由是「碰 localStorage 与 Date」），执行时订正：把两个时刻
+      // 都变成参数之后判定是纯函数，于是照硬规则 1 落在这里，由
+      // tests/ui/session.test.ts 跑着。纯函数、无配置、无数据。
+      "/admin/js/pure/session.mjs",
       "/admin/js/sec-events.js",
       "/admin/js/sec-keys.js",
       "/admin/js/sec-overview.js",

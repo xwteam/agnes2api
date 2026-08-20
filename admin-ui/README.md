@@ -1,6 +1,31 @@
 # admin-ui
 
-人手编辑的面板源码。**零构建**：用浏览器直接打开 `index.html` 就是完整可调试的面板。
+人手编辑的面板源码。**零构建**：把这个目录原样当静态文件挂在 `/admin/` 下就是完整可调试的
+面板，不需要任何转译 / 打包 / 安装步骤。
+
+> ⚠️ **这里原来写的是「用浏览器直接打开 `index.html`（`file://`）就是完整可调试的面板」，
+> 那句是假的**——P3b Task 7 的阶段验收实测推翻了它。两条原因各自都是致命的：
+> ① `index.html` 里的资源引用是**绝对路径**（`/admin/js/boot.js`、`/admin/css/base.css`、
+> `/admin/js/app.js`）。实测 `new URL("/admin/js/boot.js", "file:///…/admin-ui/index.html")`
+> 得到 `file:///admin/js/boot.js`，那个路径在任何机器上都不存在 ⇒ CSS 与 JS 全部 404，
+> 只剩一张没有样式、没有行为的裸 HTML。
+> ② 就算把它们改成相对路径也救不回来：现代浏览器把 `file://` 文档的源当成 `null`，
+> `<script type="module">` 会被 CORS 挡下。
+>
+> **绝对路径本身是对的，所以不改 `index.html`**：生产上 `/admin` 这条路由没有尾斜杠，
+> 用相对路径反而会解析到 `/js/app.js` 而 404。
+>
+> **可执行的替代验收步骤**（Task 7 已实测通过）：
+>
+> ```bash
+> mkdir -p /tmp/rawserve && ln -s "$PWD/admin-ui" /tmp/rawserve/admin
+> (cd /tmp/rawserve && python3 -m http.server 8097)
+> # 浏览器打开 http://localhost:8097/admin/
+> ```
+>
+> 期望：登录闸**带样式**渲染出来、语言下拉框被 `app.js` 填了 5 项（说明整条 ESM 模块图
+> 都解析成功）、控制台除 `favicon.ico` 的 404 外没有别的错误。这一步用的是**原始源目录**、
+> 没经过生成器，所以它证明的正是「零构建」这件事。
 
 `scripts/build-ui.mjs` 只是把这些文件**逐字节**烧进 `src/ui/assets.generated.ts`，
 不转译、不打包、不压缩。它是投递方式，不是构建管线——这是本项目守住

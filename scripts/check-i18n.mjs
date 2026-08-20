@@ -7,6 +7,12 @@
  *
  * 与那份测试**故意是两份独立实现**：CI 第 5 道跑这个脚本、第 8 道跑那份测试，
  * 两者用不同代码路径回答同一批问题，其中一份写错时另一份会不同意。
+ *
+ * ⚠️ **第 ⑧ 条（带占位符的 key 不许当裸标签用）是 P3b Task 7 新加的，设计文档
+ * §9.1 里没有它，而且它今天**只有这一份实现**（tests/unit/i18n-dict.test.ts 里
+ * 没有对应的一条）。** 之所以还是加上：它是阶段验收的人工冒烟真抓出来的一个
+ * 已上线缺陷（详见下面第 ⑧ 条的说明），而前六条一条都拦不住。
+ * 单实现这件事如实写在这里，别读成「和前六条一样有两份互为印证」。
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -85,9 +91,53 @@ for (const [k, row] of Object.entries(I18N)) {
   for (const lang of LANGS) if (IP_PORT.test(String(row[lang] ?? ""))) errors.push(`${k}/${lang} 出现 IP:PORT 形态`);
 }
 
+// ⑧ 带 `{占位符}` 的 key 不许被当成「不带参数的裸标签」用
+//
+// **这一条是 P3b Task 7 的阶段验收人工冒烟抓出来的，不是凭空加的门禁。**
+// `sec-overview.js` 把 `ov.config.envLocked`（一句自带 `{count}` 的完整句子）
+// 传给了 `row()`，而 `row()` 内部调的是 `t(labelKey)` —— **不带参数**。
+// 面板上于是长这样：
+//     被环境变量锁定的字段数：{count}: 被环境变量锁定的字段数：1
+// 裸的模板记号直接展示给运维看。前六条断言全绿，因为它们查的是「key 齐不齐」
+// 「占位符集合各语言一不一致」，没有一条查「用的时候给没给参数」。
+//
+// ⚠️ **判据建在「这个 key 的字符串字面量后面紧跟着什么」上，不是建在 `t(` 上。**
+// 上面那处的调用点是 `row("ov.config.envLocked")`，压根不是 `t(` 开头——只扫
+// `t("…")` 的话这条门禁抓不到当初那个缺陷，那就是一道自称管用的假门禁。
+// 规则：带占位符的 key 每一次以字符串字面量出现时，后面必须紧跟一个 `,`
+//（也就是「还有第二个参数」）。`data-i18n="…"` 这种属性形态同样会被拦下——
+// `apply()` 走的也是不带参数的 `t()`，是同一个缺陷。
+//
+// **边界**：把这种 key 塞进数组（`["ev.timeline", …]`）时后面也是 `,`，会漏过去；
+// 放在数组末尾则会误报。今天 admin-ui/ 下没有这两种写法（实测：唯一的命中就是
+// 上面那一处）。真要写，请在这里说明并调整判据，别把这条门禁删掉。
+const DICT_FILE = join(ROOT, "admin-ui/js/i18n-dict.js");
+const PLACEHOLDER_KEYS = Object.keys(I18N)
+  .filter((k) => LANGS.some((l) => /\{\w+\}/.test(String(I18N[k][l] ?? ""))));
+for (const p of walk(join(ROOT, "admin-ui"))) {
+  // 字典自己是**定义处**，`"key": { … }` 后面跟的是 `:`，不是调用点。
+  if (p === DICT_FILE) continue;
+  const src = readFileSync(p, "utf8");
+  for (const k of PLACEHOLDER_KEYS) {
+    const needle = `"${k}"`;
+    for (let i = src.indexOf(needle); i !== -1; i = src.indexOf(needle, i + 1)) {
+      const after = /^\s*(.)/.exec(src.slice(i + needle.length));
+      if (after && after[1] === ",") continue;
+      const line = src.slice(0, i).split("\n").length;
+      errors.push(
+        `${p.slice(ROOT.length)}:${line} 把带占位符的 key「${k}」当成不带参数的标签用了，`
+        + "面板上会出现裸的 {占位符}",
+      );
+    }
+  }
+}
+
 for (const w of warnings) console.warn(`[check-i18n] ⚠️ ${w}`);
 if (errors.length) {
   for (const e of errors) console.error(`[check-i18n] ❌ ${e}`);
   process.exit(1);
 }
-console.log(`[check-i18n] ✅ ${Object.keys(I18N).length} 个 key × ${LANGS.length} 种语言，${used.size} 处引用，全部对得上`);
+console.log(
+  `[check-i18n] ✅ ${Object.keys(I18N).length} 个 key × ${LANGS.length} 种语言，`
+  + `${used.size} 处引用，${PLACEHOLDER_KEYS.length} 个带占位符的 key 全都带着参数用，全部对得上`,
+);

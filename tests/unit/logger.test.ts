@@ -122,6 +122,26 @@ describe("ConsoleLogger", () => {
       expect(line).toContain("FAKE");
     });
 
+    /**
+     * U+2028 / U+2029 **不在 C0/C1 区间里**，所以「清掉全部控制字符」那条挡不住它们，
+     * 而按行读日志的工具（`docker logs`、`tail`、日志采集 agent）照样会把一条撕成两条
+     * ——后续行拿不到 `[agnes2api]` 前缀，那半条审计记录等于丢了。
+     *
+     * ⚠️ **断言的是渲染出来的整行，而且必须是这一行的字面量。** 只断言
+     * `not.toContain(LS)` 是不够的：`\s` 在 JS 正则里**本来就匹配** U+2028/U+2029
+     *（已实测），所以即使不压平，`quote()` 也照样会给这个值加引号，
+     * 「字段没被撕开」这条性质在这里不可观测（第 5 种假阳性）。
+     * 把整行钉成 `a b c`，去掉 CONTROL_CHARS 里那两个码点时这条立刻变红。
+     */
+    it("U+2028 / U+2029 被压平——它们不是控制字符，但按行读日志的工具照样会断行", () => {
+      const ls = String.fromCharCode(0x2028);
+      const ps = String.fromCharCode(0x2029);
+      const line = render({ path: `/admin/api/a${ls}b${ps}c` });
+      expect(line).toBe('[agnes2api] admin.login_failed path="/admin/api/a b c"');
+      expect(line).not.toContain(ls);
+      expect(line).not.toContain(ps);
+    });
+
     it("空串加引号——`k=` 与「这个字段不存在」在 logfmt 里长得一样", () => {
       expect(render({ path: "" })).toBe('[agnes2api] admin.login_failed path=""');
     });

@@ -41,13 +41,44 @@ export const ADMIN_TOKEN_MIN_LENGTH = 24;
  */
 export const AUDIT_PATH_MAX = 200;
 
+/**
+ * 口令的字符集：**可打印 ASCII（0x21–0x7E），不含空格。**
+ *
+ * 这一条由**两半**组成，理由不同，别把它们说成一件事：
+ *
+ * ① **0x21–0x7E 之外的字符浏览器真的送不出去。** `fetch` 在设置含非 Latin-1
+ *    或控制字符的请求头值时**直接抛 TypeError**，于是一个含汉字 / emoji /
+ *    零宽空格的 ADMIN_TOKEN 会装出一棵 200 但永远进不去的面板：用户看到
+ *    「网络错误」，而服务端**连一条 `login_failed` 都没有**（请求压根没发出来）。
+ *    在装配期就说清楚，比让人对着一串看不见的字符排查便宜得多。
+ *
+ * ② **空格（0x20）本身是送得出去的，排除它是刻意的取舍，不是「送不出去」。**
+ *    HTTP 头值里的空格合法；但**首尾空格会在传输层被去掉**（那正是
+ *    whitespace_padded 那条挡的东西），而中间带空格的口令只会让人在复制粘贴时出错。
+ *    代价说清楚：**带空格的 passphrase 式口令会被拒**，运维得改成不带空格的。
+ *    `not_sendable` 这个 reason 名对这一半是个近似说法，`REJECT_MESSAGE` 的文案里
+ *    把两半分开讲了，别只照着 reason 名去理解它。
+ *
+ * 前端 `admin-ui/js/app.js` 的 `sendable()` 用**同一个字符集**，两边一致。
+ *
+ * ⚠️ **量词是 `*` 不是 `+`，这一处与前端刻意不同，理由要说准。** 这条规则说的是
+ * 「不含送不出去的字符」，**不是**「非空」——非空是长度那条的职责。写成 `+` 的话
+ * 空串会先命中这一条，`checkAdminToken("")` 报的就是 `not_sendable` 而不是
+ * `too_short`，而对一个空口令「长度不足 24 位」才是能照着改的那句话。
+ * 前端那半写 `+` 是安全的：`app.js` 在调用 `sendable()` 之前先用 `if (!key)` 挡掉了
+ * 空输入并显示 `gate.empty`，空串在那里根本到不了这条判断。
+ * 两个量词只在空串这一个输入上有分歧，而两边各自都已经先把空串接走了。
+ */
+const SENDABLE = /^[\x21-\x7e]*$/;
+
 export interface AdminTokenCheck {
   ok: boolean;
-  reason?: "whitespace_padded" | "too_short" | "same_as_gateway_token";
+  reason?: "whitespace_padded" | "not_sendable" | "too_short" | "same_as_gateway_token";
 }
 
 /**
- * 三条硬规则里**只看 `ADMIN_TOKEN` 自己**的那两条（⓪ 首尾空白、① 长度下限）。
+ * 四条硬规则里**只看 `ADMIN_TOKEN` 自己**的那三条
+ *（⓪ 首尾空白、① 字符集可送性、② 长度下限）。
  *
  * 单独拆出来是因为「装配期能查什么」这件事有一条硬判据：
  * **装配期的结论会被永久冻结（不注册就是永久 404，没法反注册回来），所以它只能建立在
@@ -61,12 +92,15 @@ export interface AdminTokenCheck {
 export function checkAdminTokenShape(token: string): AdminTokenCheck {
   // 空串不走这里（`"".trim() === ""`），它归 too_short，与 adminRouter 的 `!token` 一致。
   if (token.trim() !== token) return { ok: false, reason: "whitespace_padded" };
+  // 顺序：空白 → 可送性 → 长度。可送性排在长度前面，因为「一串汉字口令」同时
+  // 触发两条时，报「长度不足」会把人引向加长它——加长之后照样送不出去。
+  if (!SENDABLE.test(token)) return { ok: false, reason: "not_sendable" };
   if (token.length < ADMIN_TOKEN_MIN_LENGTH) return { ok: false, reason: "too_short" };
   return { ok: true };
 }
 
 /**
- * 管理口令的三条硬规则。
+ * 管理口令的四条硬规则。
  *
  * ⓪ 首尾不得有空白。**这条纯粹为了可诊断性，方向仍是 fail closed。** HTTP 请求头的值
  *    在传输层就被去掉首尾空白，而环境变量不会——于是 `.env` 里口令末尾多敲了一个空格
@@ -75,16 +109,26 @@ export function checkAdminTokenShape(token: string): AdminTokenCheck {
  *    GATEWAY_TOKEN，于是装出一棵**永远进不去**的树。在装配期就说清楚，比让人对着
  *    一串看不见的空格排查便宜得多。
  *
- * ① 长度下限 24：Worker 形态**没有分布式限速**（做它要拿 KV 当窗口，等于给攻击者
+ * ① 字符集：只允许可打印 ASCII（0x21–0x7E），不含空格。两半的理由不同，见 SENDABLE。
+ *
+ * ② 长度下限 24：Worker 形态**没有分布式限速**（做它要拿 KV 当窗口，等于给攻击者
  *    一根消耗写配额的杠杆，能把 DoS 面从「猜口令」扩大到「打死 key 池的状态回写」）。
  *    因此口令熵就是唯一的防线，下限不是建议值。
- * ② 不得等于 GATEWAY_TOKEN：后者是发给**每一个下游用户**的中转口令，复用它当面板
+ * ③ 不得等于 GATEWAY_TOKEN：后者是发给**每一个下游用户**的中转口令，复用它当面板
  *    口令 = 任何拿到中转口令的人都能读整池 key、关掉注册机、把 agnesPlatformUrl 改成
  *    自己的服务器从而收走每一次注册的邮箱 + 密码 + 验证码。
  *
- * 顺序有意义：空白最先，长度其次。空白是三条里**唯一在配置文件里看不见**的那条
- * （长度和「是否与网关口令相同」运维自己一眼能核），先报它最省事；反过来把相同性
- * 放在长度前面则更糟——两条都不满足时报的是「与网关口令相同」，运维改完口令还是进不去。
+ * **顺序有意义：空白 → 字符集 → 长度 → 相同性。**
+ *
+ * 空白最先：它是四条里**唯一在配置文件里看不见**的那条（长度、字符集、「是否与网关
+ * 口令相同」运维自己一眼能核），先报它最省事。
+ *
+ * 字符集排在长度前面：一串汉字口令同时触发两条，报「长度不足」会把人引向加长它
+ * ——加长之后照样送不出去。（`tests/contract/admin-auth.test.ts` 里「又短又含汉字」
+ * 那一格把这句话变成可证伪的断言；把两条判断对调，只有那一格会红。）
+ *
+ * 相同性最后：反过来把它放在长度前面更糟——两条都不满足时报的是「与网关口令相同」，
+ * 运维改完口令还是进不去。
  */
 export function checkAdminToken(token: string, gatewayToken: string): AdminTokenCheck {
   const shape = checkAdminTokenShape(token);
@@ -95,7 +139,20 @@ export function checkAdminToken(token: string, gatewayToken: string): AdminToken
 
 /** 审计字段不该原样承载请求数据，见 AUDIT_PATH_MAX。 */
 function auditPath(path: string): string {
-  return path.length > AUDIT_PATH_MAX ? path.slice(0, AUDIT_PATH_MAX) : path;
+  if (path.length <= AUDIT_PATH_MAX) return path;
+  const cut = path.slice(0, AUDIT_PATH_MAX);
+  const last = cut.charCodeAt(cut.length - 1);
+  // 0xD800–0xDBFF 是高代理：按 UTF-16 码元截断会把一个代理对劈开，留下一个**孤代理**。
+  //
+  // ⚠️ **计划说「JSON 序列化之后是 U+FFFD」，实测不是那一步。** 本机 node v24 实测：
+  //   · `JSON.stringify("abc" + 孤高代理)` → `"abc\ud83d"`（ES2019 的 well-formed
+  //     JSON.stringify 把它转义掉了，这一步**无损**）；
+  //   · `new TextEncoder().encode(...)` → 末尾三字节 `ef bf bd`，也就是 **U+FFFD**。
+  // 也就是说替换字符是在**把响应体编成 UTF-8 字节**那一步产生的（事件下载的
+  // `.txt` 与任何走 UTF-8 的日志采集都经过它），不是 JSON 序列化那一步。
+  // 结论不变（面板要按这个字段做筛选与聚合，留一个孤代理迟早变成替换字符），
+  // 但成因要说准。截掉它比留一个半个字符干净。
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 
 /**

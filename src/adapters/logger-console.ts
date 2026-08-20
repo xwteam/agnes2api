@@ -22,8 +22,13 @@ const METHOD: Readonly<Record<LogLevel, "debug" | "info" | "warn" | "error">> = 
  * `docker logs` / `tail` 直接被操纵（清屏、变色，也能盖掉前面的行）；`%00` 同样穿透。
  * 审计行必须对着「值由攻击者书写」这个前提来建模，所以这里清的是整个控制字符集，
  * 不是几个已知的坏字符。
+ *
+ * **U+2028 / U+2029 也在里面，尽管它们不属于 C0/C1 控制字符。** 它们是 Unicode 的
+ * 行分隔符与段分隔符：不在控制字符区间里，但在**按行读日志的工具**里同样会把一条
+ * 撕成两条（后续行拿不到 `[registrar]` / `[agnes2api]` 前缀，那半条等于丢了），
+ * 而 `admin.login_failed` 的 `path` 装的正是任意未鉴权请求的路径。
  */
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]+/g;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 
 /**
  * 把字段值压成单行。多行内容（异常栈、上游返回的 HTML）会把一条日志撕成多条，

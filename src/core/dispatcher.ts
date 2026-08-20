@@ -78,11 +78,37 @@ let cursor = 0;
  */
 const SAFE_RESPONSE_HEADERS = ["content-type", "cache-control", "retry-after", "content-disposition"];
 
+/**
+ * 会被浏览器当成**同源可执行 / 可渲染文档**的 MIME。上游返回这些时改写成
+ * `application/octet-stream`，让浏览器只能下载、不能渲染也不能执行。
+ *
+ * **为什么是 deny-list 而不是 allow-list**：媒体路由承诺「上游返回什么就原样转发」，
+ * allow-list 会把没预料到的媒体类型（新的图片/视频容器）打成下载，那是真的功能退化。
+ * **边界写清楚**：deny-list 永远列不全，这里的目标是把「同源文档」这一类关掉，
+ * 不是做完备的 MIME 治理。剩下的由 CSP、`nosniff` 与两把钥匙的隔离一起兜。
+ *
+ * 为什么需要它：`script-src 'self'` 的隐含前提是「本源只有面板脚本」，
+ * 而 `/v1/videos/:id` 是一条接受 `?key=` 的 GET 路由（见 src/http/middleware/auth.ts
+ * 对查询参数的兼容），响应的 content-type 又是上游逐字透传的 —— 于是这个源上可以
+ * 出现一个攻击者影响得了的同源文档，而 `ADMIN_TOKEN` 就存在这个 origin 的
+ * localStorage 里（localStorage 的作用域是 **origin 而不是 path**）。
+ *
+ * ⚠️ **全局 `nosniff` 挡不住这一半。** `nosniff` 只否掉「按内容嗅探出一个更危险的
+ * 类型」，它不阻止浏览器渲染一个**显式声明**为 `text/html` 的响应——直接导航过去
+ * 就是一个同源文档，里面的 `<script>` / `on*` / `javascript:` 都会执行。
+ */
+const DOCUMENT_MIME = /^\s*(text\/html|application\/xhtml\+xml|image\/svg\+xml|text\/xml|application\/xml|text\/javascript|application\/javascript|application\/x-javascript|application\/ecmascript|text\/ecmascript)\b/i;
+
+function clampContentType(v: string): string {
+  return DOCUMENT_MIME.test(v) ? "application/octet-stream" : v;
+}
+
 function safeHeaders(res: Response): Headers {
   const headers = new Headers();
   for (const name of SAFE_RESPONSE_HEADERS) {
     const v = res.headers.get(name);
-    if (v !== null) headers.set(name, v);
+    if (v === null) continue;
+    headers.set(name, name === "content-type" ? clampContentType(v) : v);
   }
   return headers;
 }
