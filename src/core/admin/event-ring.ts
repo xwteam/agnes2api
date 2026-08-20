@@ -1,16 +1,22 @@
 import type { LogEntry } from "../../ports/logger.js";
 
 /**
- * 事件持久化的环形缓冲与写预算。**零 IO 纯函数**（硬约束 2）：时间从参数进，
- * 状态进、状态出，不碰 `Date.now()` / `crypto` / 任何计时器。
+ * 事件持久化的分片键空间、环形缓冲与写预算。**零 IO 纯函数**（硬约束 2）：
+ * 时间从参数进，状态进、状态出，不碰 `Date.now()` / `crypto` / 任何计时器。
  *
- * 设计文档 §7.2 的存储形态：`event:index` 单键索引 + 每个 isolate 一个
- * `event:<shardId>` 分片，分片内是最多 `EVENT_RING_SIZE` 条的环形数组。
- * 落盘节流（`EVENT_FLUSH_MIN_INTERVAL_MS` + `EVENT_WRITES_PER_HOUR`）与实际的
- * 存储读写在 `src/adapters/logger-store.ts` 的 `StoreLogger` 里，那里才有 IO。
+ * ⚠️ **本文件是评审 3 条 Critical（C1 写预算全局失守 / C2 索引无上限增长 /
+ * C3 索引读改写丢更新）之后的重写版**，取代了 Task 6 首轮"每 isolate 一个随机
+ * shardId + `event:index` 索引"的形态。裁定见 progress.md：**去掉索引，改用
+ * 「有界且可从时钟直接算出来」的分片键空间**——读路径不再需要 `list()` 也不需要
+ * 索引，候选键由 `candidateKeys()` 纯计算得出，C2（无上限增长）与 C3（索引读改写）
+ * 因此**根除**而不是缓解：没有索引就没有那个唯一需要读改写的键。
+ *
+ * 代价：两个 isolate 在同一个「时间窗 + 槽位」组合上落盘时会互相覆盖对方那一批
+ * （最后写的赢），不再是"永久不可达"（C3 的失效），而是"丢一次交错，下一轮各自
+ * 继续写自己的"——见 `tests/unit/admin/event-ring.test.ts` 里专门钉住这条代价的用例。
  */
 
-/** 单个分片最多留多少条。超了丢**最旧**的。 */
+/** 单个分片键最多留多少条。超了丢**最旧**的。 */
 export const EVENT_RING_SIZE = 100;
 
 /**
@@ -22,48 +28,104 @@ export const EVENT_RING_SIZE = 100;
  * `/admin/api/` 子路径生效，零凭据零限速），于是攻击者可以按 20 条一批地驱动 KV 写
  * —— **这正是 §8.5 拒绝做分布式登录限速时点名不肯给出去的那根杠杆**
  *（「反复发失败登录就能消耗写配额，把 DoS 面从『猜口令』扩大到『打死 key 池的状态回写』」）。
+ *
+ * ⚠️ **评审 C1 的另一半**：只有这条闸不够——`StoreLogger` 原来在冷启动那一刻
+ * `lastFlushAt === null`，第一次 `maybeFlush()` 跳过这条闸直接写，等于每次 isolate
+ * 冷启动送一次零门槛写。修法在 `logger-store.ts` 的构造函数里：`lastFlushAt` 初值
+ * 给 `now()` 而不是 `null`，让冷启动首刷也受这条闸约束。
  */
 export const EVENT_FLUSH_MIN_INTERVAL_MS = 60_000;
 
 /**
- * 每个 isolate **每小时**最多落盘几次。
+ * 每个 isolate **每天**最多落盘几次。
  *
- * 只有最小间隔的话上界是 1,440 次/天/isolate，而写桶只有 1,000 且与 key 状态回写共用。
- * 12 次/小时 ⇒ **≤288 次/天/isolate**，与设计文档给 Tier-2 定的
- * `USAGE_FLUSH_INTERVAL_MS=300s`（同样是 288/天）是同一个数量级和同一套心智。
+ * ⚠️ **改成按天算，不再按小时**：写预算是 `WriteBudget` 一个实例字段，只在**单个
+ * isolate 内部**生效——评审实测默认配置下 4 个 isolate 各自独立按小时计数，
+ * 汇总到共享的 KV 写桶（每天 1,000 次）就变成 `4 × 12 × 24 = 1,152`，**已超配额**。
+ * KV 写配额本身是**按 UTC 天**重置的（见本仓其余处对这一点的核实），把闸也定义成
+ * 按天算更贴近这个真实的重置节奏，也让下面的「M 个并发 isolate」算式不必再乘一次
+ * 「一天有几个这样的窗口」。
+ *
+ * **这不是本地能解决的问题**——单个 isolate 无法知道其他 isolate 用了多少预算
+ * （没有 CAS、没有跨 isolate 协调机制），所以这条闸只能保证「单个 isolate 不超发」，
+ * 全局配额是否安全取决于**这个值本身选得够保守**，乘以「现实的并发 isolate 数」之后
+ * 仍在预算内。取值与算式见 DEPLOY.md「配额账」小节以及 P3b progress.md 的裁定记录：
+ * `12/isolate/天 × 8 个并发 isolate = 96/天`（9.6% 的写配额），与 key 池写侧的
+ * `key 数 × 4`（20 把 key 时 80/天，8%）相加约 17.6%，留有余量。
  * 预算用完时**不写**，缓冲区继续接（满了丢最旧的并计数），
  * 并让 `/admin/api/events` 如实报 `budgetExhausted`。
  * **`ConsoleLogger` 那一路一条都不丢**，排障能力不受影响。
  */
-export const EVENT_WRITES_PER_HOUR = 12;
+export const EVENT_WRITES_PER_DAY = 12;
 
-const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
 
-function dedupe(xs: readonly string[]): string[] {
-  return [...new Set(xs)];
-}
+/**
+ * 时间窗长度。分片键的第一维（`event:<窗口>:<槽位>`）。1 小时是权衡：太短则冷启动
+ * 回看整个保留期要扫的窗口数（下面的 `EVENT_WINDOW_RETAIN`）会涨，太长则「稳态轮询
+ * 跨过窗口边界」的那一刻要多扫一个窗口的频率会跌不下去。
+ */
+export const EVENT_WINDOW_MS = 3_600_000;
 
-export interface EventShardIndex {
-  readonly v: 1;
-  readonly shards: readonly string[];
-}
+/**
+ * 每个时间窗内的槽位数。分片键的第二维。多个 isolate 落进同一个「窗口+槽位」组合时
+ * 会互相覆盖对方那一批（见文件头的说明），槽位数越大越能分散并发 isolate、代价越小，
+ * 但读路径的候选键数 = 窗口数 × 槽位数，涨槽位数就是涨每次轮询的 get 次数。
+ * 取 2：在「读预算」与「碰撞代价」之间选了一个都不极端的点，见 DEPLOY.md 的配额账。
+ */
+export const EVENT_SLOTS = 2;
 
-export function makeShardIndex(shards: readonly string[]): EventShardIndex {
-  return { v: 1, shards: dedupe(shards) };
+/**
+ * 冷启动/首次加载最多回看多少个时间窗（= 面板上能看到的最老历史深度）。
+ * 24 个窗口 × `EVENT_WINDOW_MS`（1 小时）= 24 小时可见历史。
+ * 这个值只影响"冷"读（`after === null`）的开销，稳态轮询走增量范围（见 `candidateKeys`），
+ * 不随这个值增长。
+ */
+export const EVENT_WINDOW_RETAIN = 24;
+
+/** `at`（毫秒时间戳）落在第几个时间窗。 */
+export function windowIndex(at: number): number {
+  return Math.floor(at / EVENT_WINDOW_MS);
 }
 
 /**
- * 从存储读回来的东西一律当 `unknown` 窄化（硬要求 D：新代码禁止 `Record<string, any>`）。
- * 与 `src/core/pool-index.ts` 的 `parsePoolIndex` 同一套判据：结构级错误（不是对象 /
- * 版本不对 / shards 不是数组）返回 `null`，让调用方走「索引缺失」那条重建路径；
- * 元素级脏数据（非字符串、空串）就地剔掉，不让一条脏数据把整个索引作废。
+ * 稳定的字符串 → 槽位映射。**纯函数、确定性**：同一个 `shardId` 任何时候算出来的
+ * 槽位都一样，这样同一个 isolate 的连续多次落盘会稳定落在同一把 key 上（`appendRing`
+ * 的环形语义才有意义——落在不同 key 上就退化成每次只有一条，起不到环形累积的作用）。
  */
-export function parseShardIndex(raw: unknown): EventShardIndex | null {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
-  const o = raw as { v?: unknown; shards?: unknown };
-  if (o.v !== 1) return null;
-  if (!Array.isArray(o.shards)) return null;
-  return makeShardIndex(o.shards.filter((x): x is string => typeof x === "string" && x.length > 0));
+export function slotOf(shardId: string): number {
+  let h = 0;
+  for (let i = 0; i < shardId.length; i++) h = (h * 31 + shardId.charCodeAt(i)) | 0;
+  return ((h % EVENT_SLOTS) + EVENT_SLOTS) % EVENT_SLOTS;
+}
+
+/** 分片键。`event:<窗口>:<槽位>`，两维都是有界整数，键空间因此整体有界。 */
+export function shardKey(window: number, slot: number): string {
+  return `event:${window}:${slot}`;
+}
+
+/**
+ * 读路径要扫的候选键——**这就是「零索引」的全部依据**：不查任何存储就能算出
+ * 这次要 get 哪些键。
+ *
+ * - `after === null`（面板首次加载 / 清空视图后重新拉 / 直接调 API 不带 `after`）：
+ *   回看 `EVENT_WINDOW_RETAIN` 个窗口（冷读，开销最大，但只在这类场景发生）。
+ * - `after` 有值（增量轮询稳态）：只看 `after` 所在窗口到当前窗口——通常是同一个
+ *   窗口（1 个），跨窗口边界的那一刻是 2 个，**不会**随保留窗口数增长。这是把
+ *   「稳态轮询成本」从「随历史深度增长」降到「常数」的关键，也是 C2 在读side
+ *   被根除的具体机制。
+ *
+ * 返回顺序：窗口升序、同窗口内槽位升序（顺序本身没有语义，只是让候选键列表本身
+ * 也是确定性的，便于测试断言）。
+ */
+export function candidateKeys(now: number, after: number | null): string[] {
+  const nowWindow = windowIndex(now);
+  const fromWindow = after === null ? nowWindow - EVENT_WINDOW_RETAIN + 1 : windowIndex(after);
+  const keys: string[] = [];
+  for (let w = fromWindow; w <= nowWindow; w++) {
+    for (let s = 0; s < EVENT_SLOTS; s++) keys.push(shardKey(w, s));
+  }
+  return keys;
 }
 
 /**
@@ -76,6 +138,19 @@ export function appendRing(
 ): LogEntry[] {
   const merged = [...cur, ...add];
   return merged.length > size ? merged.slice(merged.length - size) : merged;
+}
+
+/**
+ * 这一次 `appendRing` 会截掉多少条**已经在存储里**的旧事件。
+ *
+ * **评审 I1**：`appendRing` 本身会静默丢弃超限的最旧条目，而 `StoreLogger.dropped`
+ * 原来只在**内存缓冲**溢出时计数——分片键攒满 100 条之后，**每一次落盘都在这里
+ * 静默丢弃**，是任何有持续流量部署的稳态，而面板此时显示 `dropped: 0`。
+ * 这个函数让调用方（`StoreLogger.maybeFlush`）能把这类丢弃也计入同一个 `dropped`
+ * 总数——它是纯粹的算术，不重新实现 `appendRing` 的逻辑，只是把"截了多少"算出来。
+ */
+export function truncatedCount(curLen: number, addLen: number, size: number = EVENT_RING_SIZE): number {
+  return Math.max(0, curLen + addLen - size);
 }
 
 /**
@@ -101,34 +176,34 @@ export function mergeShards(shards: readonly (readonly LogEntry[])[], limit: num
 
 /** 写预算。纯函数：状态进、状态出，时间从参数进。 */
 export interface WriteBudget {
-  hourStart: number;
+  dayStart: number;
   used: number;
 }
 
 /**
- * 全新的预算。`hourStart: 0` 只是一个哨兵起点——真实的 `at`（无论是测试里从 0 起步
- * 的假时钟，还是生产的 `Date.now()`）第一次调用 `consume` 时都会把 `hourStart` 换成
+ * 全新的预算。`dayStart: 0` 只是一个哨兵起点——真实的 `at`（无论是测试里从 0 起步
+ * 的假时钟，还是生产的 `Date.now()`）第一次调用 `consume` 时都会把 `dayStart` 换成
  * 那次调用的真实 `at`，所以这个初值本身不承载语义，只是「还没有任何窗口」的记号。
  */
-export const FRESH_BUDGET: WriteBudget = { hourStart: 0, used: 0 };
+export const FRESH_BUDGET: WriteBudget = { dayStart: 0, used: 0 };
 
 /**
- * `at` 是否仍落在 `b` 记录的那个小时窗口内。
+ * `at` 是否仍落在 `b` 记录的那一天窗口内。
  *
- * `at < b.hourStart`（时钟回拨）与 `at - b.hourStart >= HOUR_MS`（正常跨过整点）
- * **都**判定为「不在窗口内」——两者都按「新的一小时」处理，与本仓其余三处
+ * `at < b.dayStart`（时钟回拨）与 `at - b.dayStart >= DAY_MS`（正常跨过一天）
+ * **都**判定为「不在窗口内」——两者都按「新的一天」处理，与本仓其余三处
  * （`Refreshable` / `listOnReadPath` / `KeyPoolRepo` 的 `age < 0` 判据）同一套语义：
  * 回拨立刻恢复可写，不会把预算冻结到「回拨量走完」才解封，也不会缓存出负的 `used`。
  */
 function inWindow(b: WriteBudget, at: number): boolean {
-  return at >= b.hourStart && at - b.hourStart < HOUR_MS;
+  return at >= b.dayStart && at - b.dayStart < DAY_MS;
 }
 
-export function canWrite(b: WriteBudget, at: number, perHour: number = EVENT_WRITES_PER_HOUR): boolean {
+export function canWrite(b: WriteBudget, at: number, perDay: number = EVENT_WRITES_PER_DAY): boolean {
   const used = inWindow(b, at) ? b.used : 0;
-  return used < perHour;
+  return used < perDay;
 }
 
 export function consume(b: WriteBudget, at: number): WriteBudget {
-  return inWindow(b, at) ? { hourStart: b.hourStart, used: b.used + 1 } : { hourStart: at, used: 1 };
+  return inWindow(b, at) ? { dayStart: b.dayStart, used: b.used + 1 } : { dayStart: at, used: 1 };
 }

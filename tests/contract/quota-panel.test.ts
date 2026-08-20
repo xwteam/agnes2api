@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { CountingStorage } from "../helpers/counting-storage.js";
-import { EVENT_INDEX_KEY, EVENT_SHARD_PREFIX } from "../../src/adapters/logger-store.js";
-import { makeShardIndex } from "../../src/core/admin/event-ring.js";
 
 /**
  * **面板的轮询路径不许出现 `list()`，也不许产生额外的读。**
@@ -70,17 +68,18 @@ describe("面板轮询的配额账", () => {
   });
 
   /**
-   * **事件板块（Task 6）的零 list 断言。**
+   * **事件板块（评审 C2 修完之后的重写版）的零 list 断言。**
    *
-   * `/admin/api/events` 不像 `/admin/api/keys` 那样有 isolate 级缓存——每一次轮询都
-   * 老老实实付「1 次 event:index get + K 次分片 get」，这是设计文档 §7.2 与本任务
-   * 简报明写的存储形态。这一格没有「预热」步骤：从第一次请求开始，每次调用付出的
-   * 代价就是恒定的（没有东西可以被「预热」出缓存命中）。
+   * `/admin/api/events` 没有 isolate 级缓存——每一次轮询都老老实实按
+   * `candidateKeys()` 算出来的候选键各 get 一次。它不再有"索引"，候选键数**有界**
+   * 且只取决于 `after` 参数：`after` 缺失（裸调用 API，从不复用返回的 cursor）时是
+   * "冷读"，回看 `EVENT_WINDOW_RETAIN`（24）个窗口 × `EVENT_SLOTS`（2）槽位 = **48**
+   * 次 get；这是没有任何缓存效应时的**每次固定代价**。
    *
-   * 起手没有任何事件落盘过（`event:index` 不存在）⇒ 分片数 = 0 ⇒
-   * 每次请求恰好 1 次 get（只有 index 那一次）。
+   * **手写字面量 48/960**（不是从 `EVENT_WINDOW_RETAIN × EVENT_SLOTS` 现算的表达式），
+   * 好让这条断言与被测代码的实际取数逻辑相互独立。
    */
-  it("连打 20 次 /admin/api/events（0 个分片时），list 次数为 0，get 次数恰好为 20", async () => {
+  it("连打 20 次 /admin/api/events（从不带 after，模拟裸调用 API），list 次数为 0，get 次数恰好为 960（20×48）", async () => {
     const st = new CountingStorage();
     const { app } = await makeApp([], ["k1"], {}, () => 1000, { storage: st });
     const base = { lists: st.lists, gets: st.gets };
@@ -89,25 +88,40 @@ describe("面板轮询的配额账", () => {
       expect(res.status).toBe(200);
     }
     expect(st.lists - base.lists, "events 轮询路径出现了 list()").toBe(0);
-    expect(st.gets - base.gets, "20 次请求 × (1 次 index get + 0 次分片 get)").toBe(20);
+    expect(st.gets - base.gets, "20 次请求 × 48（EVENT_WINDOW_RETAIN × EVENT_SLOTS 的冷读代价）").toBe(960);
   });
 
   /**
-   * 有 2 个分片时的同一条账：**手写字面量 60**（不是从 `分片数` 变量现算的表达式），
-   * 好让这条断言与被测代码的实际取数逻辑相互独立。
+   * **面板真实使用模式：从第二次轮询起带上上一次返回的 `cursor`。**
+   *
+   * 这是"稳态轮询成本从随历史深度增长降到常数"这条设计意图的直接验证：第一次
+   * （`after` 为空）是冷读 48 次 get；此后只要 `after` 与 `now` 落在同一个时间窗内，
+   * 每次只需要 `EVENT_SLOTS`（2）次 get，与保留了多少历史窗口无关。
+   * 固定时钟下 19 次暖读都落在同一个窗口 ⇒ 总数 **48 + 19×2 = 86**（手写字面量）。
    */
-  it("连打 20 次 /admin/api/events（2 个分片时），list 次数为 0，get 次数恰好为 60", async () => {
+  it("面板轮询模式（第 2 次起带 cursor）：20 次里第 1 次冷读、其余 19 次暖读，get 总数恰好为 86", async () => {
     const st = new CountingStorage();
-    const { app } = await makeApp([], ["k1"], {}, () => 1000, { storage: st });
-    await st.put(EVENT_INDEX_KEY, makeShardIndex(["shard-a", "shard-b"]));
-    await st.put(EVENT_SHARD_PREFIX + "shard-a", [{ ts: 1, level: "info", event: "e.a" }]);
-    await st.put(EVENT_SHARD_PREFIX + "shard-b", [{ ts: 2, level: "info", event: "e.b" }]);
+    let t = 1000;
+    const now = () => t;
+    const { app, storeLogger } = await makeApp([], ["k1"], {}, now, { storage: st });
+    // 种一条真正落盘的事件：冷启动首刷受节流（构造时 lastFlushAt = now()），
+    // 推进过 EVENT_FLUSH_MIN_INTERVAL_MS 再 flush 才会真的写。
+    storeLogger.log({ level: "info", event: "seed" });
+    t += 60_000;
+    await storeLogger.maybeFlush();
+    // 之后 20 次轮询固定在同一时刻（`t` 不再推进），确保全部落在同一个时间窗内，
+    // 「暖读只需要 EVENT_SLOTS 次 get」这条性质才可观测，不被"恰好跨窗口"干扰。
+
     const base = { lists: st.lists, gets: st.gets };
+    let after: number | null = null;
     for (let i = 0; i < 20; i++) {
-      const res = await app.request("/admin/api/events", { headers: { "x-admin-key": TEST_ADMIN_TOKEN } });
+      const qs = after === null ? "" : `?after=${after}`;
+      const res = await app.request(`/admin/api/events${qs}`, { headers: { "x-admin-key": TEST_ADMIN_TOKEN } });
       expect(res.status).toBe(200);
+      const body = (await res.json()) as { cursor: number | null };
+      if (body.cursor !== null) after = body.cursor;
     }
     expect(st.lists - base.lists, "events 轮询路径出现了 list()").toBe(0);
-    expect(st.gets - base.gets, "20 次请求 × (1 次 index get + 2 次分片 get)").toBe(60);
+    expect(st.gets - base.gets, "1 次冷读(48) + 19 次暖读(2×19=38) = 86").toBe(86);
   });
 });

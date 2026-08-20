@@ -15,12 +15,13 @@
  */
 import { api } from "./api.js";
 import { t } from "./i18n.js";
-import { el, elI18n } from "./ui.js";
+import { el, elI18n, toast } from "./ui.js";
 import { fmtInstant } from "./pure/format.mjs";
 import {
-  LEVELS, levelLabelKey, levelBadgeClass, eventsQuery, itemsOf,
-  bufferStatus, shouldWarn, nextAfter, nextPollDelayMs, pollIndicatorState, pollIndicatorLabelKey,
-  matchesSearch, formatFields, groupEvents, orderForDisplay, mergeIntoView,
+  EVENTS_POLL_MIN_MS, LEVELS, levelLabelKey, effectiveLevel, eventLevelLabelKey, levelBadgeClass,
+  eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, bufferStatus, shouldWarn, nextAfter, nextPollDelayMs,
+  pollIndicatorState, pollIndicatorLabelKey, matchesSearch, buildDetailText,
+  groupEvents, orderForDisplay, mergeIntoView,
 } from "./pure/events.mjs";
 
 const LIMIT = 200;
@@ -33,11 +34,11 @@ let timer = null;
 let abort = null;
 /** 客户端已攒下的视图（ts 降序，与后端契约一致；渲染前用 orderForDisplay 反转）。 */
 let view = [];
-let lastStatus = { dropped: null, budgetExhausted: null };
-let pollDelayMs = 15_000; // 与 pure/events.mjs 的 EVENTS_POLL_MIN_MS 保持一致的初值
+let lastStatus = { dropped: null, budgetExhausted: null, truncated: null };
+/** 最近一次成功响应里的本 isolate 分片 id（评审 M2），驱动轮询指示灯的提示文案。 */
+let lastShardId = null;
+let pollDelayMs = EVENTS_POLL_MIN_MS;
 let lastError = false;
-/** 读失败一次都没成功过时 view 保持空，渲染成 loadFailed 而不是 empty。 */
-let everLoaded = false;
 let loadError = false;
 /** 本板块当前是不是"正在显示"这一个（`onShow`/`onHide` 之间）。visibilitychange
  * 处理器据此判断"该不该在页面重新可见时把轮询接回去"——不加这一层的话，
@@ -49,36 +50,36 @@ function offsetMs() { return -new Date().getTimezoneOffset() * 60000; }
 
 function renderWarnings() {
   const banner = nodes.warnBanner;
-  const show = shouldWarn(lastStatus);
-  banner.style.display = show ? "" : "none";
+  banner.style.display = shouldWarn(lastStatus) ? "" : "none";
+
   nodes.warnDropped.style.display = lastStatus.dropped !== null && lastStatus.dropped > 0 ? "" : "none";
   if (lastStatus.dropped !== null && lastStatus.dropped > 0) {
     nodes.warnDropped.textContent = t("ev.warnDropped", { count: lastStatus.dropped });
   }
+
   nodes.warnBudget.style.display = lastStatus.budgetExhausted === true ? "" : "none";
   if (lastStatus.budgetExhausted === true) nodes.warnBudget.textContent = t("ev.warnBudget");
+
+  nodes.warnTruncated.style.display = lastStatus.truncated === true ? "" : "none";
+  if (lastStatus.truncated === true) nodes.warnTruncated.textContent = t("ev.warnTruncated");
 }
 
 function renderPollIndicator() {
   const kind = pollIndicatorState({ paused: state.paused, lastError });
   nodes.pollDot.className = `poll-dot poll-dot-${kind}`;
-  const label = t(pollIndicatorLabelKey(kind));
+  const label = lastShardId === null
+    ? t(pollIndicatorLabelKey(kind))
+    : t(pollIndicatorLabelKey(kind)) + t("ev.pollStatus.shardSuffix", { shardId: lastShardId });
   nodes.pollDot.title = label;
   nodes.pollDot.setAttribute("aria-label", label);
-}
-
-function buildDetailText(item) {
-  const msg = item && typeof item.msg === "string" ? item.msg : "";
-  const fields = item && typeof item.fields === "object" ? formatFields(item.fields) : "";
-  return [msg, fields].filter((s) => s !== "").join(" · ");
 }
 
 function eventRow(item, grouped) {
   const tr = el("tr", { class: grouped ? "ev-row ev-row-grouped" : "ev-row" });
   tr.appendChild(el("td", { class: "mono" }, fmtInstant(item && item.ts, offsetMs())));
   const levelCell = el("td");
-  const level = item && typeof item.level === "string" ? item.level : "info";
-  levelCell.appendChild(el("span", { class: levelBadgeClass(level) }, t(levelLabelKey(level))));
+  const level = effectiveLevel(item);
+  levelCell.appendChild(el("span", { class: levelBadgeClass(level) }, t(eventLevelLabelKey(level))));
   tr.appendChild(levelCell);
   tr.appendChild(el("td", { class: "mono" }, item && typeof item.event === "string" ? item.event : ""));
   tr.appendChild(el("td", null, buildDetailText(item)));
@@ -100,14 +101,10 @@ function render() {
   const host = nodes.body;
   host.textContent = "";
 
-  if (loadError && !everLoaded) {
-    host.appendChild(elI18n("p", "common.loadFailed", { class: "muted" }));
-    return;
-  }
-
   const filtered = view.filter((item) => matchesSearch(item, state.q));
-  if (filtered.length === 0) {
-    host.appendChild(elI18n("p", view.length === 0 ? "ev.empty" : "ev.noMatch", { class: "muted" }));
+  const messageKey = eventsListMessageKey(loadError, view.length, filtered.length);
+  if (messageKey !== null) {
+    host.appendChild(elI18n("p", messageKey, { class: "muted" }));
     return;
   }
 
@@ -136,7 +133,7 @@ async function poll() {
     const body = await api.get(`/events?${eventsQuery({ ...state, limit: LIMIT })}`, { signal: abort.signal });
     const items = itemsOf(body) ?? [];
     lastStatus = bufferStatus(body);
-    everLoaded = true;
+    lastShardId = shardIdOf(body);
     loadError = false;
     lastError = false;
     view = mergeIntoView(view, items);
@@ -188,7 +185,9 @@ async function download() {
     a.remove();
     URL.revokeObjectURL(url);
   } catch (e) {
-    // 下载失败就是失败，不装作成功——按钮本身不需要额外反馈，浏览器不会触发下载。
+    // 下载失败要让用户看得见——按钮点了没反应、又没有任何提示，是本仓已经踩过的
+    // 那类"看起来什么都没发生"的坑，本仓已经有 toast 这个组件，直接用。
+    toast(t("ev.downloadFailed"), "err");
   }
 }
 
@@ -267,8 +266,10 @@ export const eventsSection = {
     warnBanner.style.display = "none";
     const warnDropped = el("p");
     const warnBudget = el("p");
+    const warnTruncated = el("p");
     warnBanner.appendChild(warnDropped);
     warnBanner.appendChild(warnBudget);
+    warnBanner.appendChild(warnTruncated);
     section.appendChild(warnBanner);
 
     const tb = buildToolbar();
@@ -277,15 +278,14 @@ export const eventsSection = {
     const body = el("div", { class: "events-body" });
     section.appendChild(body);
 
-    nodes = { body, warnBanner, warnDropped, warnBudget, pollDot: tb.pollDot };
+    nodes = { body, warnBanner, warnDropped, warnBudget, warnTruncated, pollDot: tb.pollDot };
   },
 
   onShow() {
     sectionActive = true;
-    everLoaded = false;
     loadError = false;
     lastError = false;
-    pollDelayMs = 15_000;
+    pollDelayMs = EVENTS_POLL_MIN_MS;
     poll();
   },
 

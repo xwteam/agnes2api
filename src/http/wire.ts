@@ -164,6 +164,14 @@ export async function buildTendDeps(
   env: Record<string, string | undefined>,
   storage: Storage,
 ): Promise<TendDeps | null> {
+  // **评审 I2（已裁定"改文案"，不接线）**：这里仍是裸 `ConsoleLogger`，`registrar.*`
+  // 事件因此进不了 `/admin/api/events`。不接的理由不是偷懒：Worker 的 `scheduled()`
+  // 与 `fetch()` 是**两个独立的 isolate 生命周期**，没有请求/响应边界可以挂
+  // `logFlush` 那种"收尾 await"的中间件，要接就得给 `tendOnce` 单独造一个
+  // `StoreLogger`（自己的 shardId、自己的写预算、自己的 flush 触发点——大概率要用
+  // `ctx.waitUntil`），是一个独立量级的任务，不是顺手改一行。已把 `ev.notice`
+  // 的文案改成如实描述"补池事件还没有产出"，把真正接线留给 P3c（那时才有注册机
+  // 板块，`corr` 字段也才有地方真正串起来）。
   const logger: Logger = new ConsoleLogger();
   const config = await loadConfig(env, storage, logger);
   const reg = config.registrar;

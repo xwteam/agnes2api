@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  EVENT_RING_SIZE, EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_WRITES_PER_HOUR,
-  appendRing, mergeShards, parseShardIndex, makeShardIndex,
+  EVENT_RING_SIZE, EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_WRITES_PER_DAY,
+  EVENT_WINDOW_MS, EVENT_SLOTS, EVENT_WINDOW_RETAIN,
+  windowIndex, slotOf, shardKey, candidateKeys,
+  appendRing, truncatedCount, mergeShards,
   FRESH_BUDGET, canWrite, consume,
 } from "../../../src/core/admin/event-ring.js";
 import type { LogEntry } from "../../../src/ports/logger.js";
@@ -14,7 +16,78 @@ describe("常量", () => {
   it("字面量本身是策略，独立钉死", () => {
     expect(EVENT_RING_SIZE).toBe(100);
     expect(EVENT_FLUSH_MIN_INTERVAL_MS).toBe(60_000);
-    expect(EVENT_WRITES_PER_HOUR).toBe(12);
+    expect(EVENT_WRITES_PER_DAY).toBe(12);
+    expect(EVENT_WINDOW_MS).toBe(3_600_000);
+    expect(EVENT_SLOTS).toBe(2);
+    expect(EVENT_WINDOW_RETAIN).toBe(24);
+  });
+});
+
+describe("windowIndex", () => {
+  it("按 EVENT_WINDOW_MS 整除取窗口号（手写字面量）", () => {
+    expect(windowIndex(0)).toBe(0);
+    expect(windowIndex(3_599_999)).toBe(0);
+    expect(windowIndex(3_600_000)).toBe(1);
+    expect(windowIndex(7_199_999)).toBe(1);
+    expect(windowIndex(7_200_000)).toBe(2);
+  });
+});
+
+describe("slotOf：确定性、稳定，值域在 [0, EVENT_SLOTS)", () => {
+  it("同一个 shardId 任何时候算出来的槽位都一样", () => {
+    const a = slotOf("shard-abc");
+    const b = slotOf("shard-abc");
+    expect(a).toBe(b);
+  });
+  it("值域落在 [0, EVENT_SLOTS)", () => {
+    for (const id of ["a", "shard-1", "shard-2", "xyz789", "", "长一点的一个字符串id"]) {
+      const s = slotOf(id);
+      expect(s, id).toBeGreaterThanOrEqual(0);
+      expect(s, id).toBeLessThan(EVENT_SLOTS);
+    }
+  });
+  it("不同输入允许落在不同槽位（不是恒返回同一个值——反形状断言）", () => {
+    const slots = new Set(["a", "b", "c", "d", "e", "f", "g", "h"].map(slotOf));
+    expect(slots.size, "8 个不同输入至少要分散到不止 1 个槽位").toBeGreaterThan(1);
+  });
+});
+
+describe("shardKey / candidateKeys：有界且可从时钟直接算出来（C2 根治的依据）", () => {
+  it("shardKey 格式（手写字面量）", () => {
+    expect(shardKey(0, 0)).toBe("event:0:0");
+    expect(shardKey(5, 1)).toBe("event:5:1");
+  });
+
+  it("after === null（冷读）：回看 EVENT_WINDOW_RETAIN 个窗口 × EVENT_SLOTS 槽位（手写字面量总数）", () => {
+    const now = 100 * EVENT_WINDOW_MS; // 第 100 个窗口
+    const keys = candidateKeys(now, null);
+    expect(keys.length).toBe(EVENT_WINDOW_RETAIN * EVENT_SLOTS);
+    expect(keys.length).toBe(48);
+    // 首尾窗口号：从 (100 - 24 + 1) 到 100。
+    expect(keys[0]).toBe("event:77:0");
+    expect(keys[keys.length - 1]).toBe("event:100:1");
+  });
+
+  it("after 与 now 同一个窗口内（暖读稳态）：只有 EVENT_SLOTS 个候选键", () => {
+    const now = 10 * EVENT_WINDOW_MS + 1000;
+    const after = 10 * EVENT_WINDOW_MS + 500; // 同一个窗口
+    const keys = candidateKeys(now, after);
+    expect(keys.length).toBe(EVENT_SLOTS);
+    expect(keys).toEqual(["event:10:0", "event:10:1"]);
+  });
+
+  it("after 落在上一个窗口（跨窗口边界那一刻）：EVENT_SLOTS × 2 个候选键，不随保留窗口数增长", () => {
+    const now = 11 * EVENT_WINDOW_MS + 10;
+    const after = 10 * EVENT_WINDOW_MS + EVENT_WINDOW_MS - 10; // 上一个窗口的尾巴
+    const keys = candidateKeys(now, after);
+    expect(keys.length).toBe(EVENT_SLOTS * 2);
+    expect(keys).toEqual(["event:10:0", "event:10:1", "event:11:0", "event:11:1"]);
+  });
+
+  it("暖读的候选键数与 EVENT_WINDOW_RETAIN 无关（这正是稳态成本从随历史深度增长降到常数的证据）", () => {
+    const now = 10_000 * EVENT_WINDOW_MS + 1000; // 很晚的一个窗口，模拟部署已经跑了很久
+    const after = 10_000 * EVENT_WINDOW_MS + 500; // 仍在同一个窗口
+    expect(candidateKeys(now, after).length).toBe(EVENT_SLOTS);
   });
 });
 
@@ -32,7 +105,6 @@ describe("appendRing：超限时丢最旧的", () => {
     const add = Array.from({ length: 40 }, (_, i) => entry(`a${i + 1}`, 80 + i + 1));
     const out = appendRing(cur, add);
     expect(out.length).toBe(100);
-    // 前 80 条是 c1..c80，加 40 条 a1..a40 后总共 120 条，丢最旧的 20 条（c1..c20）。
     expect(out[0]!.event).toBe("c21");
     expect(out[out.length - 1]!.event).toBe("a40");
   });
@@ -57,6 +129,25 @@ describe("appendRing：超限时丢最旧的", () => {
     const add = [entry("e1", 1), entry("e2", 2), entry("e3", 3)];
     const out = appendRing([], add, 2);
     expect(out.map((e) => e.event)).toEqual(["e2", "e3"]);
+  });
+});
+
+describe("truncatedCount：算出 appendRing 这一次会截掉多少条已落盘的旧事件（评审 I1）", () => {
+  it("不超限时是 0", () => {
+    expect(truncatedCount(50, 30, 100)).toBe(0);
+    expect(truncatedCount(0, 100, 100)).toBe(0);
+  });
+  it("超限时精确等于超出的条数（手写字面量）", () => {
+    expect(truncatedCount(80, 40, 100)).toBe(20);
+    expect(truncatedCount(100, 1, 100)).toBe(1);
+  });
+  it("与 appendRing 的实际截断行为一致（关系断言：两条独立实现互相印证）", () => {
+    const cur = Array.from({ length: 70 }, (_, i) => entry(`c${i}`, i));
+    const add = Array.from({ length: 50 }, (_, i) => entry(`a${i}`, 100 + i));
+    const merged = appendRing(cur, add, 100);
+    const actualDropped = cur.length + add.length - merged.length;
+    expect(truncatedCount(cur.length, add.length, 100)).toBe(actualDropped);
+    expect(actualDropped).toBe(20);
   });
 });
 
@@ -92,29 +183,8 @@ describe("mergeShards：按 ts 降序，同 ts 用 (shard, 序号) 稳定破平"
   });
 });
 
-describe("parseShardIndex / makeShardIndex", () => {
-  it("makeShardIndex 去重", () => {
-    expect(makeShardIndex(["a", "b", "a"])).toEqual({ v: 1, shards: ["a", "b"] });
-  });
-
-  it("parseShardIndex 结构级错误一律 null（当作索引缺失，逼调用方重建）", () => {
-    for (const bad of [null, undefined, "oops", 3, [], { v: 2, shards: ["a"] }, { v: 1, shards: "a" }]) {
-      expect(parseShardIndex(bad), String(bad)).toBeNull();
-    }
-  });
-
-  it("元素级脏数据就地剔掉，不整体作废", () => {
-    expect(parseShardIndex({ v: 1, shards: ["a", 3, "", "b", null] })).toEqual({ v: 1, shards: ["a", "b"] });
-  });
-
-  it("往返一致", () => {
-    const idx = makeShardIndex(["shard-1", "shard-2"]);
-    expect(parseShardIndex(idx)).toEqual(idx);
-  });
-});
-
-describe("canWrite / consume：写预算", () => {
-  it("同一小时内：第 12 次可写、第 13 次不可写（边界值手写字面量）", () => {
+describe("canWrite / consume：写预算（按天，不再按小时——见 EVENT_WRITES_PER_DAY 的说明）", () => {
+  it("同一天内：第 12 次可写、第 13 次不可写（边界值手写字面量）", () => {
     let b = FRESH_BUDGET;
     for (let i = 0; i < 11; i++) b = consume(b, 1000);
     expect(canWrite(b, 1000), "用了 11 次之后，第 12 次应当可写").toBe(true);
@@ -122,37 +192,61 @@ describe("canWrite / consume：写预算", () => {
     expect(canWrite(b, 1000), "用了 12 次之后，第 13 次应当不可写").toBe(false);
   });
 
-  it("perHour 参数可覆盖默认值", () => {
+  it("perDay 参数可覆盖默认值", () => {
     let b = FRESH_BUDGET;
     b = consume(b, 0);
-    expect(canWrite(b, 0, 1), "perHour=1 时用掉 1 次即耗尽").toBe(false);
-    expect(canWrite(b, 0, 2), "perHour=2 时用掉 1 次仍可写").toBe(true);
+    expect(canWrite(b, 0, 1), "perDay=1 时用掉 1 次即耗尽").toBe(false);
+    expect(canWrite(b, 0, 2), "perDay=2 时用掉 1 次仍可写").toBe(true);
   });
 
-  it("小时边界跨越时归零：at 落在下一个整点之后", () => {
+  it("跨过一天时归零：at 落在 24 小时之后", () => {
     let b = FRESH_BUDGET;
     for (let i = 0; i < 12; i++) b = consume(b, 1000);
-    expect(canWrite(b, 1000), "本小时用满").toBe(false);
-    const nextHour = 1000 + 3_600_000;
-    expect(canWrite(b, nextHour), "跨过一小时后应当归零").toBe(true);
-    const b2 = consume(b, nextHour);
-    expect(b2).toEqual({ hourStart: nextHour, used: 1 });
+    expect(canWrite(b, 1000), "本日用满").toBe(false);
+    const nextDay = 1000 + 86_400_000;
+    expect(canWrite(b, nextDay), "跨过一天后应当归零").toBe(true);
+    const b2 = consume(b, nextDay);
+    expect(b2).toEqual({ dayStart: nextDay, used: 1 });
   });
 
-  it("时钟回拨：at 比 hourStart 小时按「新的一小时」处理，不许算出负 used 或永远拒绝写", () => {
-    const exhausted = { hourStart: 100_000, used: 12 };
+  it("时钟回拨：at 比 dayStart 小时按「新的一天」处理，不许算出负 used 或永远拒绝写", () => {
+    const exhausted = { dayStart: 100_000, used: 12 };
     expect(canWrite(exhausted, 100_000), "前置条件：这个窗口已经用满").toBe(false);
-    const rolledBack = 50_000; // 比 hourStart 小 = 时钟回拨
+    const rolledBack = 50_000; // 比 dayStart 小 = 时钟回拨
     expect(canWrite(exhausted, rolledBack), "回拨后不许永远拒绝写").toBe(true);
     const after = consume(exhausted, rolledBack);
     expect(after.used, "不许算出负的 used").toBe(1);
-    expect(after.hourStart).toBe(rolledBack);
+    expect(after.dayStart).toBe(rolledBack);
   });
 
   it("consume 不改动传入的对象（纯函数）", () => {
-    const before = { hourStart: 0, used: 0 };
+    const before = { dayStart: 0, used: 0 };
     const snapshot = { ...before };
     consume(before, 1000);
     expect(before).toEqual(snapshot);
+  });
+});
+
+describe("M=8 并发 isolate 下的写预算算式（DEPLOY.md 配额账依据，见报告 ③）", () => {
+  it("单个 isolate 全天写满：EVENT_WRITES_PER_DAY 次，不多不少（手写字面量 12）", () => {
+    let b = FRESH_BUDGET;
+    const at = 5000;
+    let writes = 0;
+    for (let i = 0; i < 20; i++) {
+      if (canWrite(b, at)) { b = consume(b, at); writes++; }
+    }
+    expect(writes).toBe(12);
+  });
+
+  it("8 个独立 isolate（各自独立的 WriteBudget 实例）合计写次数恰好是 12 × 8 = 96（手写字面量）", () => {
+    const at = 5000;
+    let total = 0;
+    for (let isolate = 0; isolate < 8; isolate++) {
+      let b = FRESH_BUDGET;
+      for (let i = 0; i < 20; i++) {
+        if (canWrite(b, at)) { b = consume(b, at); total++; }
+      }
+    }
+    expect(total).toBe(96);
   });
 });

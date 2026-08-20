@@ -26,11 +26,17 @@ function afterParam(raw: string | undefined): number | null {
 /**
  * `GET /admin/api/events`。
  *
- * **零 `list()`**：`deps.storeLogger.readEvents()` 只做 1 次 `event:index` get +
- * K 次分片 get（由 `quota-panel.test.ts` 数着次数钉住）。
+ * **零 `list()`、零索引读**：`deps.storeLogger.readEvents(after)` 只按
+ * `candidateKeys()` 算出来的候选键各 get 一次（由 `quota-panel.test.ts` 数着次数
+ * 钉住，评审 C2 之后候选键数是个有界常数，不再随部署年龄增长）。
  *
  * `?after=<ts>&level=<lvl>&limit=<n>`：**归并 → 过滤（after / level）→ 截到 limit**，
  * 顺序不能倒过来——先截断再过滤会把本该出现的旧事件漏掉。
+ *
+ * **`truncated`（评审 I3）**：`after` + `limit` 组合会让"被截掉的较旧事件永远拉不回来"
+ * 这件事在默认参数下天然发生（K 个分片、每片最多 100 条，K≥3 就可能触发默认
+ * `limit=200`）。**这本身不是 bug**——环形缓冲的本意就是"新事件比旧事件更值得看"，
+ * 但面板必须如实说"这一页不是全部"，不能悄悄吞掉一部分历史却什么都不说。
  *
  * ⚠️ **`items` 里的字段一律视为完全不可信**：里面会出现上游返回的内容与未鉴权请求的
  * 路径（例如 `admin.login_failed` 的 `fields.path` 就是攻击者能写的值）。这里**不做**
@@ -45,11 +51,11 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
     const level = levelParam(c.req.query("level"));
     const limit = intParam(c.req.query("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT);
 
-    const { items: merged, shardCount } = await deps.storeLogger.readEvents();
-    const items = merged
+    const { items: merged } = await deps.storeLogger.readEvents(after);
+    const filtered = merged
       .filter((e) => after === null || e.ts > after)
-      .filter((e) => level === null || e.level === level)
-      .slice(0, limit);
+      .filter((e) => level === null || e.level === level);
+    const items = filtered.slice(0, limit);
 
     const status = deps.storeLogger.status();
     return c.json({
@@ -57,10 +63,15 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
       // 归并结果按 ts 降序，`items[0]` 是本页最新的一条；空结果给 null，
       // 前端据此判断「保留上一次的 after」还是「推进到新值」（见 pure/events.mjs 的 nextAfter）。
       cursor: items.length > 0 ? items[0]!.ts : null,
-      shards: shardCount,
+      // **本 isolate** 的自述状态与标识（评审 M2：多 isolate 下相邻两次轮询可能落到
+      // 不同 isolate，`buffered`/`dropped`/`budgetExhausted` 因此可能来回跳——
+      // 带上 `shardId` 面板才能把"这句话说的是哪一个 isolate"钉清楚）。
+      shardId: status.shardId,
       buffered: status.buffered,
       dropped: status.dropped,
       budgetExhausted: status.budgetExhausted,
+      // 过滤/截断确实丢掉了一部分本该出现的旧事件（评审 I3）。
+      truncated: filtered.length > items.length,
       generatedAt: deps.now(),
     });
   };
@@ -76,13 +87,18 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
  * 护栏又变回摆设（变异表已实测：`c.text()` 抓不住这条，两种写法都带 nosniff，
  * 这条差异只能靠注释 + 评审守住）。
  *
+ * **同样clamp 到 `MAX_LIMIT`（评审 M3）**：候选键空间在 C2 修完之后已经结构性有界
+ * （`EVENT_WINDOW_RETAIN × EVENT_SLOTS`，不再随部署年龄增长），但单次归并结果的
+ * 理论上限仍是"候选键数 × 每键 100 条"，直接全量序列化没有必要——与列表端点用
+ * 同一个上限，行为可预期。
+ *
  * 内容是归并结果**逐行 JSON.stringify**（不是一个 JSON 数组）：这是给人在终端里
  * `grep`/逐行处理用的格式，不是给程序反序列化用的 API。
  */
 export function eventsDownloadHandler(deps: { storeLogger: StoreLogger }) {
   return async (c: Context) => {
-    const { items } = await deps.storeLogger.readEvents();
-    const text = items.map((e) => JSON.stringify(e)).join("\n");
+    const { items } = await deps.storeLogger.readEvents(null);
+    const text = items.slice(0, MAX_LIMIT).map((e) => JSON.stringify(e)).join("\n");
     return new Response(text, {
       status: 200,
       headers: {

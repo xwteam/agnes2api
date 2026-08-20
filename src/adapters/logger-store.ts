@@ -1,27 +1,24 @@
 import type { Logger, LogEntry } from "../ports/logger.js";
 import type { Storage } from "../ports/storage.js";
 import {
-  EVENT_RING_SIZE, EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_WRITES_PER_HOUR,
-  appendRing, mergeShards, parseShardIndex, makeShardIndex,
+  EVENT_RING_SIZE, EVENT_FLUSH_MIN_INTERVAL_MS, EVENT_WRITES_PER_DAY,
+  appendRing, truncatedCount, mergeShards, candidateKeys, windowIndex, slotOf, shardKey,
   FRESH_BUDGET, canWrite, consume, type WriteBudget,
 } from "../core/admin/event-ring.js";
 
-export const EVENT_INDEX_KEY = "event:index";
-export const EVENT_SHARD_PREFIX = "event:";
-
-/** `readEvents()` 的返回形状：归并结果 + 参与归并的分片数（面板据此算配额账）。 */
+/** `readEvents()` 的返回形状：归并结果，供 events handler 过滤/截断/序列化。 */
 export interface ReadEventsResult {
   items: LogEntry[];
-  shardCount: number;
 }
 
 /**
  * 事件落库 sink。
  *
- * 存储形态（设计文档 §7.2，避开 §2.4 第 1 条）：
- *   `event:index`      单键：`{ v:1, shards: string[] }` —— 只在出现新分片时写（每 isolate 一生一次）
- *   `event:<shardId>`  单键：`LogEntry[]`（环形，最多 EVENT_RING_SIZE 条）
- * **面板轮询路径 = 1 次 get + K 次 get，零 `list()`、零 `delete()`。**
+ * ⚠️ **存储形态是评审 3 条 Critical 之后的重写版**：不再有 `event:index`。
+ * `event:<窗口>:<槽位>`（`src/core/admin/event-ring.ts` 的 `shardKey`/`candidateKeys`）
+ * 是一个**有界、可从时钟直接算出来**的键空间——**面板轮询路径 = K 次 get（K 是
+ * `candidateKeys()` 算出来的候选键数，稳态下是个小常数），零 `list()`、零 `delete()`、
+ * 零索引读改写**。
  *
  * `log()` 是同步的（端口如此），所以这里**只缓冲，不落盘**。
  * 落盘由 `src/http/log-flush.ts` 的中间件在**请求收尾时 await**——
@@ -30,10 +27,14 @@ export interface ReadEventsResult {
  */
 export class StoreLogger implements Logger {
   private buffer: LogEntry[] = [];
-  private lastFlushAt: number | null = null;
+  private lastFlushAt: number;
   private budget: WriteBudget = FRESH_BUDGET;
-  private indexWritten = false;
-  private dropped = 0;
+  /** 内存缓冲溢出丢的条数（`log()` 那一侧）。 */
+  private bufferDropped = 0;
+  /** 落盘时分片环形截断丢的条数（`maybeFlush()` 那一侧，见 I1）。 */
+  private persistedDropped = 0;
+  /** 这个 isolate 稳定落在哪个槽位，构造时算一次，终生不变（见 `slotOf` 的说明）。 */
+  private readonly slot: number;
 
   constructor(private readonly o: {
     storage: Storage;
@@ -41,21 +42,30 @@ export class StoreLogger implements Logger {
     shardId: string;
     /** sink 自身故障绝不许拖垮主流程；出错走这里（通常是 ConsoleLogger）。 */
     onError: (err: unknown) => void;
-  }) {}
+  }) {
+    this.slot = slotOf(o.shardId);
+    // **评审 C1 的另一半：冷启动首刷必须受最小间隔节流。**
+    // 原来这里是 `null`，`maybeFlush()` 判到 `lastFlushAt === null` 就跳过间隔检查，
+    // 等于每次 isolate 冷启动送一次零门槛写（评审实测「每次冷启动 = 2 次 KV 写」）。
+    // 初值给 `now()`：冷启动那一刻的时间戳，之后的第一次 `maybeFlush()` 与它做差，
+    // 和任何一次后续的 flush 走同一套间隔判断，不再有特殊豁免。
+    this.lastFlushAt = o.now();
+  }
 
   log(e: Omit<LogEntry, "ts">): void {
     this.buffer.push({ ...e, ts: this.o.now() });
     if (this.buffer.length > EVENT_RING_SIZE) {
       // 丢**最旧**的。丢掉的条数要能被面板看见——静默丢弃就是撒谎。
       this.buffer.shift();
-      this.dropped++;
+      this.bufferDropped++;
     }
   }
 
-  /** 面板要看的自述状态。 */
+  /** 面板要看的自述状态。`dropped` 是缓冲侧与落盘侧两类丢弃的**总数**（评审 I1）。 */
   status(): { shardId: string; buffered: number; dropped: number; budgetExhausted: boolean } {
     return {
-      shardId: this.o.shardId, buffered: this.buffer.length, dropped: this.dropped,
+      shardId: this.o.shardId, buffered: this.buffer.length,
+      dropped: this.bufferDropped + this.persistedDropped,
       budgetExhausted: !canWrite(this.budget, this.o.now()),
     };
   }
@@ -67,12 +77,10 @@ export class StoreLogger implements Logger {
   async maybeFlush(): Promise<void> {
     const at = this.o.now();
     if (this.buffer.length === 0) return;
-    if (this.lastFlushAt !== null) {
-      const since = at - this.lastFlushAt;
-      // `since < 0` = 时钟回拨：立刻恢复，与本仓其余三处同一套语义。
-      if (since >= 0 && since < EVENT_FLUSH_MIN_INTERVAL_MS) return;
-    }
-    if (!canWrite(this.budget, at, EVENT_WRITES_PER_HOUR)) return;
+    const since = at - this.lastFlushAt;
+    // `since < 0` = 时钟回拨：立刻恢复，与本仓其余三处同一套语义。
+    if (since >= 0 && since < EVENT_FLUSH_MIN_INTERVAL_MS) return;
+    if (!canWrite(this.budget, at, EVENT_WRITES_PER_DAY)) return;
 
     const batch = this.buffer;
     this.buffer = [];
@@ -81,46 +89,35 @@ export class StoreLogger implements Logger {
     this.lastFlushAt = at;
     this.budget = consume(this.budget, at);
     try {
-      const key = EVENT_SHARD_PREFIX + this.o.shardId;
+      const key = shardKey(windowIndex(at), this.slot);
       const cur = (await this.o.storage.get<LogEntry[]>(key)) ?? [];
+      this.persistedDropped += truncatedCount(cur.length, batch.length, EVENT_RING_SIZE);
       await this.o.storage.put(key, appendRing(cur, batch, EVENT_RING_SIZE));
-      if (!this.indexWritten) {
-        const idx = parseShardIndex(await this.o.storage.get<unknown>(EVENT_INDEX_KEY));
-        const shards = idx ? idx.shards : [];
-        if (!shards.includes(this.o.shardId)) {
-          await this.o.storage.put(EVENT_INDEX_KEY, makeShardIndex([...shards, this.o.shardId]));
-        }
-        // 索引一生只写一次：**写成功之后才置位**，失败时下一轮还会再试。
-        this.indexWritten = true;
-      }
     } catch (err) {
       this.o.onError(err);
     }
   }
 
   /**
-   * 面板读路径。**1 次 `event:index` get + K 次分片 get，零 `list()`、零 `delete()`**
-   * ——这是本任务的第一条硬要求（KV 免费档 list 桶与写桶同样只有 1,000 次/天，
-   * 面板 15 秒轮询一次若走 list 就是 5,760 次/天，5 倍超配额）。
+   * 面板读路径。**候选键由 `candidateKeys()` 从时钟直接算出来，零 `list()`、零索引读**
+   * ——这是本任务的第一条硬要求，也是评审 C2/C3 的根治方式（详见
+   * `src/core/admin/event-ring.ts` 文件头）。
    *
-   * **不做任何过滤/截断，只做归并**：`after` / `level` / `limit` 由
-   * `src/http/admin/handlers/events.ts` 在归并结果之上过滤——「归并 → 过滤 → 截到
-   * limit」的顺序不能倒过来，否则先截断再按 level 过滤会把本该出现的旧事件漏掉。
-   * `mergeShards` 的 `limit` 这里给「理论最大条数」（分片数 × 环形上限），
-   * 相当于「不截断」，真正的截断交给调用方。
+   * `after`：`null` 时是"冷读"（回看 `EVENT_WINDOW_RETAIN` 个窗口），有值时是"暖读"
+   * （只看 `after` 所在窗口到当前窗口，通常 1~2 个）——见 `candidateKeys` 的说明。
+   *
+   * **不做任何过滤/截断，只做归并**：`after` 的过滤、`level` 的过滤、`limit` 的截断
+   * 由 `src/http/admin/handlers/events.ts` 在归并结果之上处理——"归并 → 过滤 → 截到
+   * limit"的顺序不能倒过来，否则先截断再按 level 过滤会把本该出现的旧事件漏掉。
    *
    * 缺失/畸形的分片数据（`get` 返回 `null` 或不是数组）当空分片处理，不让一个坏分片
-   * 拖垮整个归并——这与 `parseShardIndex` 对脏索引的「结构错就整体重建」不同：索引
-   * 脏了没有别的数据源可用，分片脏了别的分片仍然有效数据，值得保留。
+   * 拖垮整个归并。
    */
-  async readEvents(): Promise<ReadEventsResult> {
-    const idx = parseShardIndex(await this.o.storage.get<unknown>(EVENT_INDEX_KEY));
-    const shardIds = idx ? idx.shards : [];
-    const rawShards = await Promise.all(
-      shardIds.map((id) => this.o.storage.get<LogEntry[]>(EVENT_SHARD_PREFIX + id)),
-    );
+  async readEvents(after: number | null): Promise<ReadEventsResult> {
+    const keys = candidateKeys(this.o.now(), after);
+    const rawShards = await Promise.all(keys.map((k) => this.o.storage.get<LogEntry[]>(k)));
     const shards = rawShards.map((s) => (Array.isArray(s) ? s : []));
-    const items = mergeShards(shards, shardIds.length * EVENT_RING_SIZE);
-    return { items, shardCount: shardIds.length };
+    const items = mergeShards(shards, keys.length * EVENT_RING_SIZE);
+    return { items };
   }
 }

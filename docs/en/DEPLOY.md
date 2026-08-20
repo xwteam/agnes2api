@@ -57,6 +57,36 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 - **Writes**: in steady state about `pool size × 4` per day (`lastUsedAt` is touched every 6
   hours) — 80 with 20 keys, 8% of the write quota, leaving the rest for cooldown and eviction
   bookkeeping. Each key also costs one one-off write the first time it is used.
+- **Events board (Task 6) writes**: each isolate persists at most `EVENT_WRITES_PER_DAY`
+  (**12**) times per day; past that, `budgetExhausted` is reported honestly, with no silent
+  drop and no retry. **This gate only holds within a single isolate** — whether it's globally
+  safe depends on whether "concurrent isolate count × this value" still fits the budget, since
+  one isolate has no way to know how much budget the others have used (no CAS, no
+  cross-isolate coordination). Estimating with **8 concurrent isolates** (more conservative
+  than the 3 used elsewhere in this section — even a lightly-trafficked personal gateway can
+  land on many different Cloudflare edge locations, and you don't fully control how many
+  concurrent isolates that produces): `12 × 8 = 96` writes/day, **9.6%** of the write quota.
+  Added to the key-pool write side above (80/day, 8%), the total is about 176/day
+  (**17.6%**), leaving roughly 82% headroom. **This accounting exists because review caught
+  a real problem**: an earlier version budgeted per hour with each isolate counting
+  independently up to 12/hour, so 4 isolates alone could blow through the write quota
+  (`4 × 12 × 24 = 1,152`, over 1,000). The fix was to switch the budget window from
+  "per hour" to "per day" and write this account down here; the same round also closed a gap
+  where a cold-started isolate's first flush bypassed throttling entirely — every isolate
+  cold start used to send one zero-gate write, and now the first flush after cold start goes
+  through the same minimum-interval gate as every other flush.
+- **Events board reads**: polling no longer depends on an index, so the number of candidate
+  keys is **bounded** — the first time the panel is opened (or the view is cleared and
+  reloaded, or the API is called directly without `after`) is a "cold read": scanning 24 time
+  windows × 2 slots = 48 gets; every poll after that is a "warm read", usually needing only 2
+  gets (4 at the moment a poll crosses a time-window boundary), **independent of how long the
+  deployment has been running or how many events have accumulated**. Leaving one tab open and
+  polling continuously, the warm-read ceiling is roughly 23,000/day (about 23% of the read
+  quota; in practice far lower since only a small fraction of polls cross a window boundary).
+  **This is additive to the key-pool read side above**: if your deployment is already tight on
+  pool read quota (see the "3 active isolates already use about 99.5%" scenario above),
+  consider raising `POOL_CACHE_TTL_MS` or keeping fewer panel tabs open at once before opening
+  the events board.
 - **`list` and `delete` are two further buckets, 1,000/day each**, separate from the read and
   write buckets. Steady-state forwarding never issues a `list` — that is exactly why the
   `pool:index` key exists. **Three** things consume it: the 48–96 daily index reconciliations

@@ -15,19 +15,48 @@ export const EVENTS_POLL_MAX_MS = 60_000;
 /** 四个日志级别，顺序即级别按钮组的渲染顺序。不含 "all"（那是"不筛"，另处理）。 */
 export const LEVELS = ["debug", "info", "warn", "error"];
 
+/**
+ * 级别按钮组用的 i18n key——**只用于工具栏的筛选按钮**，入参恒是 `LEVELS` 里的
+ * 一个（调用方 `for (const lvl of LEVELS)` 保证）。"全部级别" 按钮的文案由调用方
+ * 直接写字面量 `"ev.level.all"`，不经过这个函数。
+ */
 export function levelLabelKey(level) {
   if (level === "debug") return "ev.level.debug";
   if (level === "info") return "ev.level.info";
   if (level === "warn") return "ev.level.warn";
-  if (level === "error") return "ev.level.error";
-  return "ev.level.all";
+  return "ev.level.error";
 }
 
-/** 级别徽章颜色。与 `pure/keys.mjs` 的 `badgeClass` 同一套配色语义。 */
+/**
+ * **评审 I4**：一条事件真实的 `level` 字段来自接口响应，可能缺失/畸形——
+ * 原来 `eventRow` 里 `typeof item.level === "string" ? item.level : "info"` 会把
+ * 这类数据**伪装成 info**（绿色徽章），与"绝不伪造"的产品不变式矛盾。这里给出
+ * 唯一的判据：四个已知级别原样透传，其余（含 `undefined`/数字/畸形字符串）一律
+ * 归到显式的 `"unknown"` 档，不冒充任何一个已知级别。
+ */
+export function effectiveLevel(item) {
+  const level = item && typeof item === "object" ? item.level : undefined;
+  return (LEVELS.includes(level)) ? level : "unknown";
+}
+
+/** `effectiveLevel()` 的结果 → i18n key，与 `levelLabelKey` 分开：这个要接受 "unknown"。 */
+export function eventLevelLabelKey(level) {
+  if (level === "debug") return "ev.level.debug";
+  if (level === "info") return "ev.level.info";
+  if (level === "warn") return "ev.level.warn";
+  if (level === "error") return "ev.level.error";
+  return "ev.level.unknown";
+}
+
+/**
+ * 级别徽章颜色。与 `pure/keys.mjs` 的 `badgeClass` 同一套配色语义。
+ * **`"unknown"` 单独一档**（灰色/muted），不落进任何一个"看起来正常"的颜色。
+ */
 export function levelBadgeClass(level) {
   if (level === "error") return "badge badge-danger";
   if (level === "warn") return "badge badge-warn";
-  return "badge badge-ok"; // debug / info
+  if (level === "debug" || level === "info") return "badge badge-ok";
+  return "badge"; // unknown：不给任何一种"正常/异常"的颜色暗示
 }
 
 /**
@@ -49,33 +78,63 @@ export function itemsOf(body) {
   return body && typeof body === "object" && Array.isArray(body.items) ? body.items : null;
 }
 
-/** 参与归并的分片数。**没有数据时是 null，不是 0**——那是「不知道」，不是「确实零个」。 */
-export function shardsCount(body) {
-  const v = body && typeof body === "object" ? body.shards : null;
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
+/**
+ * 事件列表区该显示哪条消息（`null` = 显示表格）。与 `pure/keys.mjs` 的
+ * `listMessageKey` 同一个模式（判据一律不写在 `sec-events.js` 里，见硬规则 1）。
+ *
+ * **评审 M5**：原来 `sec-events.js` 用一个模块级的 `everLoaded` 标记（"这次进入
+ * 本板块之后有没有成功过一次"），`onShow()` 每次都把它重置成 `false`——于是重新
+ * 进入本板块时，只要第一轮轮询恰好失败，就会把 `view` 里明明还留着的历史事件
+ * 整段换成"读取失败"，即使数据一直都在，只是这一轮没刷新成功。
+ *
+ * 判据改成只看 `viewLength`（视图里有没有数据）而不是"这一次有没有成功过"：
+ * 只要视图里还有数据，哪怕最新一轮轮询失败了，也继续显示已有数据（轮询指示灯
+ * 会转成"出错"提示这件事，不需要靠替换整个列表区来提示）；只有视图本身是空的
+ * 且这一轮又失败了，才说"读取失败"。
+ */
+export function eventsListMessageKey(loadError, viewLength, filteredLength) {
+  if (loadError && viewLength === 0) return "common.loadFailed";
+  if (filteredLength === 0) return viewLength === 0 ? "ev.empty" : "ev.noMatch";
+  return null;
 }
 
 /**
- * 环形缓冲的自述状态。**没有数据时逐项 null**（不是 0/false）——那两个字面上恰好
+ * 本 isolate 的分片 id（评审 M2）。**没有数据时是 null**，不是空串——
+ * 空串会被当成"有值但恰好是空"，与"读不出来"混在一起。
+ */
+export function shardIdOf(body) {
+  const v = body && typeof body === "object" ? body.shardId : null;
+  return typeof v === "string" && v !== "" ? v : null;
+}
+
+/**
+ * 响应自述状态。**没有数据时逐项 null**（不是 0/false）——那几个字面上恰好
  * 也是"一切正常"的值，混进"读不出来"里会把面板变成在撒谎。
+ *
+ * `truncated`（评审 I3）：`after`+`limit` 组合截掉了一部分本该出现的旧事件。
  */
 export function bufferStatus(body) {
   const dropped = body && typeof body === "object" ? body.dropped : null;
   const budgetExhausted = body && typeof body === "object" ? body.budgetExhausted : null;
+  const truncated = body && typeof body === "object" ? body.truncated : null;
   return {
     dropped: typeof dropped === "number" && Number.isFinite(dropped) ? dropped : null,
     budgetExhausted: typeof budgetExhausted === "boolean" ? budgetExhausted : null,
+    truncated: typeof truncated === "boolean" ? truncated : null,
   };
 }
 
 /**
  * 顶部黄条要不要出现。**诚实标记必须由后端字段驱动**（Task 4 评审 I4 的裁定，
- * 在 Task 5 隔了一个任务原样复发过一次）：判据只看 `status.dropped` / `budgetExhausted`
- * 这两个从响应里取出来的值，不许在这里或调用方硬编码一个 true/false。
+ * 在 Task 5 隔了一个任务原样复发过一次）：判据只看 `status.dropped` /
+ * `status.budgetExhausted` / `status.truncated` 这三个从响应里取出来的值，
+ * 不许在这里或调用方硬编码一个 true/false。
  * `null`（没有数据）不触发——不知道不等于"有问题"。
  */
 export function shouldWarn(status) {
-  return status.dropped !== null && status.dropped > 0 || status.budgetExhausted === true;
+  return (status.dropped !== null && status.dropped > 0)
+    || status.budgetExhausted === true
+    || status.truncated === true;
 }
 
 /**
@@ -137,6 +196,18 @@ export function matchesSearch(item, q) {
 export function formatFields(fields) {
   if (!fields || typeof fields !== "object") return "";
   return Object.entries(fields).map(([k, v]) => `${k}=${v === null ? "null" : String(v)}`).join(" ");
+}
+
+/**
+ * 一条事件"说明 / 字段"列要显示的文本（评审 I4：原来这是 `sec-events.js` 里的
+ * 纯取值函数，零测试覆盖，搬进来）。`msg` 与格式化后的 `fields` 用 `·` 连接，
+ * 缺一段就不留多余的分隔符。
+ */
+export function buildDetailText(item) {
+  const msg = item && typeof item === "object" && typeof item.msg === "string" ? item.msg : "";
+  const fields = item && typeof item === "object" && item.fields && typeof item.fields === "object"
+    ? formatFields(item.fields) : "";
+  return [msg, fields].filter((s) => s !== "").join(" · ");
 }
 
 /**

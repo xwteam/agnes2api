@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   EVENTS_POLL_MIN_MS, EVENTS_POLL_MAX_MS, LEVELS,
-  levelLabelKey, levelBadgeClass, eventsQuery, itemsOf, shardsCount, bufferStatus,
+  levelLabelKey, effectiveLevel, eventLevelLabelKey, levelBadgeClass,
+  eventsQuery, itemsOf, eventsListMessageKey, shardIdOf, bufferStatus,
   shouldWarn, nextAfter, nextPollDelayMs, pollIndicatorState, pollIndicatorLabelKey, matchesSearch,
-  formatFields, groupEvents, orderForDisplay, mergeIntoView,
+  formatFields, buildDetailText, groupEvents, orderForDisplay, mergeIntoView,
 } from "../../admin-ui/js/pure/events.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 
@@ -14,7 +15,8 @@ const body = {
     { ts: 2000, level: "info", event: "pool.key_added", msg: "已导入", fields: { id: "abc" } },
     { ts: 1000, level: "error", event: "registrar.mint_failed" },
   ],
-  cursor: 3000, shards: 1, buffered: 0, dropped: 0, budgetExhausted: false, generatedAt: 4000,
+  cursor: 3000, shardId: "shard-1", buffered: 0, dropped: 0, budgetExhausted: false,
+  truncated: false, generatedAt: 4000,
 };
 
 describe("常量", () => {
@@ -27,18 +29,43 @@ describe("常量", () => {
   });
 });
 
-describe("levelLabelKey / levelBadgeClass：每条级别在字典里都有对应键", () => {
-  it("四个级别 + all 各自映射不同的 i18n key，且都在字典里", () => {
+describe("levelLabelKey：工具栏筛选按钮专用，四个级别各自映射不同的 i18n key", () => {
+  it("四个级别各自映射不同的 key，且都在字典里", () => {
     const keys = new Set();
-    for (const level of [...LEVELS, "all", "not-a-level"]) {
+    for (const level of LEVELS) {
       const k = levelLabelKey(level);
       keys.add(k);
       expect(I18N[k], `${level} → ${k} 应当在字典里`).toBeDefined();
     }
-    // "not-a-level" 与 "all" 应当落在同一个兜底键上（"不认识就当不筛"）。
-    expect(levelLabelKey("not-a-level")).toBe(levelLabelKey("all"));
+    expect(keys.size).toBe(4);
   });
+});
 
+/**
+ * **评审 I4**：`effectiveLevel` 是"一条事件真实显示成哪个级别"的唯一判据——
+ * 四个已知级别透传，其余一律显式归到 "unknown"，不冒充任何已知级别（尤其不冒充
+ * "info"，那会让脏数据顶着绿色徽章蒙混过去）。
+ */
+describe("effectiveLevel / eventLevelLabelKey：缺失或畸形的 level 显式归为 unknown，不冒充已知级别", () => {
+  it("四个已知级别原样透传", () => {
+    for (const lvl of LEVELS) expect(effectiveLevel({ level: lvl })).toBe(lvl);
+  });
+  it("缺失/畸形/不认识的字符串一律是 unknown，不是 info（不伪造成看起来正常的级别）", () => {
+    for (const bad of [{ level: undefined }, {}, { level: 123 }, { level: "not-a-level" }, null, undefined]) {
+      expect(effectiveLevel(bad), JSON.stringify(bad)).toBe("unknown");
+    }
+  });
+  it("eventLevelLabelKey 对五种输出（四个已知 + unknown）各自映射到字典里存在的 key", () => {
+    const keys = new Set([...LEVELS, "unknown"].map(eventLevelLabelKey));
+    expect(keys.size).toBe(5);
+    for (const k of keys) expect(I18N[k], k).toBeDefined();
+  });
+  it("levelBadgeClass 对 unknown 不给任何看起来正常/异常的颜色（不含 badge-ok/-warn/-danger）", () => {
+    const cls = levelBadgeClass("unknown");
+    expect(cls).not.toContain("badge-ok");
+    expect(cls).not.toContain("badge-warn");
+    expect(cls).not.toContain("badge-danger");
+  });
   it("error/warn 与 debug/info 使用不同颜色的徽章", () => {
     expect(levelBadgeClass("error")).toContain("badge-danger");
     expect(levelBadgeClass("warn")).toContain("badge-warn");
@@ -75,29 +102,54 @@ describe("itemsOf：全模块唯一的\"有没有可渲染条目\"判据", () =>
   });
 });
 
-describe("shardsCount：绝不伪造 0", () => {
-  it("缺失/畸形时是 null，不是 0", () => {
-    for (const bad of [null, undefined, {}, { shards: "1" }, { shards: null }]) {
-      expect(shardsCount(bad), String(bad)).toBeNull();
-    }
+/**
+ * **评审 M5**：判据必须是"视图里有没有数据"，不是"这一次有没有成功过"——后者
+ * 会让重新进入本板块时，只要第一轮轮询恰好失败，就把已经攒下的历史事件整个
+ * 换成"读取失败"。
+ */
+describe("eventsListMessageKey：列表区该显示哪条消息", () => {
+  it("视图为空且读取失败 ⇒ loadFailed", () => {
+    expect(eventsListMessageKey(true, 0, 0)).toBe("common.loadFailed");
   });
-  it("真实的 0 照样是 0——没有数据与数出来是零必须分得开", () => {
-    expect(shardsCount({ shards: 0 })).toBe(0);
+  it("视图有数据，即使这一轮读取失败，也不显示 loadFailed——继续显示已有数据（评审 M5 的核心断言）", () => {
+    expect(eventsListMessageKey(true, 3, 3)).toBeNull();
   });
-  it("有数据时透传", () => {
-    expect(shardsCount(body)).toBe(1);
+  it("视图有数据、读取失败、但搜索过滤后恰好一条都不剩 ⇒ noMatch（不是 loadFailed）", () => {
+    expect(eventsListMessageKey(true, 3, 0)).toBe("ev.noMatch");
+  });
+  it("没有读取失败、视图本身是空的 ⇒ empty", () => {
+    expect(eventsListMessageKey(false, 0, 0)).toBe("ev.empty");
+  });
+  it("没有读取失败、视图有数据但过滤后没有匹配 ⇒ noMatch", () => {
+    expect(eventsListMessageKey(false, 5, 0)).toBe("ev.noMatch");
+  });
+  it("有数据可显示时返回 null（显示表格）", () => {
+    expect(eventsListMessageKey(false, 5, 5)).toBeNull();
   });
 });
 
-describe("bufferStatus：dropped / budgetExhausted 绝不伪造", () => {
+describe("shardIdOf：本 isolate 的分片 id（评审 M2），绝不伪造", () => {
+  it("缺失/畸形时是 null，不是空串", () => {
+    for (const bad of [null, undefined, {}, { shardId: 1 }, { shardId: "" }, { shardId: null }]) {
+      expect(shardIdOf(bad), String(bad)).toBeNull();
+    }
+  });
+  it("有数据时透传", () => {
+    expect(shardIdOf(body)).toBe("shard-1");
+  });
+});
+
+describe("bufferStatus：dropped / budgetExhausted / truncated 绝不伪造", () => {
   it("缺失/畸形时逐项 null", () => {
-    for (const bad of [null, undefined, {}, { dropped: "5" }, { budgetExhausted: "yes" }]) {
-      expect(bufferStatus(bad), String(bad)).toEqual({ dropped: null, budgetExhausted: null });
+    for (const bad of [null, undefined, {}, { dropped: "5" }, { budgetExhausted: "yes" }, { truncated: "yes" }]) {
+      expect(bufferStatus(bad), String(bad)).toEqual({ dropped: null, budgetExhausted: null, truncated: null });
     }
   });
   it("有数据时逐项透传，含真实的 0/false", () => {
-    expect(bufferStatus({ dropped: 0, budgetExhausted: false })).toEqual({ dropped: 0, budgetExhausted: false });
-    expect(bufferStatus({ dropped: 50, budgetExhausted: true })).toEqual({ dropped: 50, budgetExhausted: true });
+    expect(bufferStatus({ dropped: 0, budgetExhausted: false, truncated: false }))
+      .toEqual({ dropped: 0, budgetExhausted: false, truncated: false });
+    expect(bufferStatus({ dropped: 50, budgetExhausted: true, truncated: true }))
+      .toEqual({ dropped: 50, budgetExhausted: true, truncated: true });
   });
 });
 
@@ -106,17 +158,20 @@ describe("bufferStatus：dropped / budgetExhausted 绝不伪造", () => {
  * 标记消失"的用例——不是形状断言，是行为断言。
  */
 describe("shouldWarn：黄条是否出现，完全由后端字段驱动", () => {
-  it("dropped=0 且 budgetExhausted=false ⇒ 不警告（字段为 false，标记消失）", () => {
-    expect(shouldWarn({ dropped: 0, budgetExhausted: false })).toBe(false);
+  it("dropped=0 且 budgetExhausted=false 且 truncated=false ⇒ 不警告（字段全为 false，标记消失）", () => {
+    expect(shouldWarn({ dropped: 0, budgetExhausted: false, truncated: false })).toBe(false);
   });
   it("dropped>0 ⇒ 警告", () => {
-    expect(shouldWarn({ dropped: 1, budgetExhausted: false })).toBe(true);
+    expect(shouldWarn({ dropped: 1, budgetExhausted: false, truncated: false })).toBe(true);
   });
-  it("budgetExhausted=true ⇒ 警告（即使 dropped=0）", () => {
-    expect(shouldWarn({ dropped: 0, budgetExhausted: true })).toBe(true);
+  it("budgetExhausted=true ⇒ 警告（即使其余两项都是 false）", () => {
+    expect(shouldWarn({ dropped: 0, budgetExhausted: true, truncated: false })).toBe(true);
   });
-  it("两者都是 null（没有数据）⇒ 不警告——不知道不等于有问题", () => {
-    expect(shouldWarn({ dropped: null, budgetExhausted: null })).toBe(false);
+  it("truncated=true ⇒ 警告（评审 I3，即使其余两项都是 false）", () => {
+    expect(shouldWarn({ dropped: 0, budgetExhausted: false, truncated: true })).toBe(true);
+  });
+  it("三项都是 null（没有数据）⇒ 不警告——不知道不等于有问题", () => {
+    expect(shouldWarn({ dropped: null, budgetExhausted: null, truncated: null })).toBe(false);
   });
 });
 
@@ -207,6 +262,30 @@ describe("formatFields", () => {
   });
   it("null 值渲染成字面量 null，不是空串（区分「没给」与「给了个 null」）", () => {
     expect(formatFields({ reason: null })).toBe("reason=null");
+  });
+});
+
+/**
+ * **评审 I4**：这个函数原来是 `sec-events.js` 里的纯取值逻辑，零测试覆盖，
+ * 搬进 pure 之后由这里的用例跑到。
+ */
+describe("buildDetailText：说明 / 字段列的文本拼装", () => {
+  it("只有 msg 时就是 msg", () => {
+    expect(buildDetailText({ msg: "管理接口凭据无效" })).toBe("管理接口凭据无效");
+  });
+  it("只有 fields 时就是格式化后的 fields", () => {
+    expect(buildDetailText({ fields: { ip: "203.0.113.7" } })).toBe("ip=203.0.113.7");
+  });
+  it("两者都有时用 · 连接", () => {
+    expect(buildDetailText({ msg: "管理接口凭据无效", fields: { hasHeader: false } }))
+      .toBe("管理接口凭据无效 · hasHeader=false");
+  });
+  it("两者都没有时是空串，不留多余的分隔符", () => {
+    expect(buildDetailText({})).toBe("");
+  });
+  it("畸形输入不抛", () => {
+    expect(buildDetailText(null)).toBe("");
+    expect(buildDetailText(undefined)).toBe("");
   });
 });
 
