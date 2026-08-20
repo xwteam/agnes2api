@@ -186,6 +186,77 @@ describe("2(a)：批量删除 20 把、3 把被拒 —— 前端必须显示出�
   });
 });
 
+/**
+ * **顾虑 4 的裁定落地**：批量部分失败这条信息必须手动关闭，不许 4 秒自动消失。
+ * `js/ui.js` 的 `toast()` 现在支持 `opts.sticky`——sticky 时不排 `setTimeout`、
+ * 改挂一颗 `.toast-close` 按钮；这一组直接断言 DOM 结构上的这个差异，
+ * 不去跟真实的 4 秒计时器打交道（那是"要不要等"的问题，不是"对不对"的问题）。
+ */
+describe("顾虑 4：批量部分失败的提示必须手动关闭，全部成功的提示仍然自动消失", () => {
+  async function openWithBulkResults(results: Array<{ id: string; ok: boolean; reason: string | null }>) {
+    const items = results.map((r, i) => keyView({ id: r.id, seq: i + 1, disabled: true, bucket: "disabled" }));
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/bulk")) return { status: 200, body: { results } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    section.querySelectorAll('input[type="checkbox"]')[0]!.checked = true;
+    section.querySelectorAll('input[type="checkbox"]')[0]!.change();
+    await settle();
+    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.bulk.delete")!.click();
+    await settle();
+    h.dom.document.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+    return h;
+  }
+
+  it("2 把里 1 把被拒：提示带一颗手动关闭按钮，且不会被 setTimeout 自动清掉", async () => {
+    const setTimeoutCalls: number[] = [];
+    const realSetTimeout = setTimeout;
+    vi.stubGlobal("setTimeout", (fn: () => void, ms: number) => {
+      setTimeoutCalls.push(ms);
+      return realSetTimeout(fn, ms);
+    });
+
+    const h = await openWithBulkResults([
+      { id: "a", ok: true, reason: null },
+      { id: "b", ok: false, reason: "must_disable_first" },
+    ]);
+
+    const closeButtons = h.dom.byId("toast-host").querySelectorAll(".toast-close");
+    expect(closeButtons.length, "部分失败的提示没有挂手动关闭按钮，会在 4 秒后自动消失").toBe(1);
+    expect(
+      setTimeoutCalls,
+      "sticky 的 toast 不该排一个 4000ms 的自动移除计时器",
+    ).not.toContain(4000);
+
+    // 点一下关闭按钮，提示真的会消失（不是挂了个装饰性的按钮）。
+    closeButtons[0]!.click();
+    expect(h.dom.byId("toast-host").querySelectorAll(".toast-close").length).toBe(0);
+  });
+
+  it("全部成功：提示仍然是普通的、会自动消失的那种，没有手动关闭按钮", async () => {
+    const setTimeoutCalls: number[] = [];
+    const realSetTimeout = setTimeout;
+    vi.stubGlobal("setTimeout", (fn: () => void, ms: number) => {
+      setTimeoutCalls.push(ms);
+      return realSetTimeout(fn, ms);
+    });
+
+    const h = await openWithBulkResults([
+      { id: "a", ok: true, reason: null },
+      { id: "b", ok: true, reason: null },
+    ]);
+
+    expect(
+      h.dom.byId("toast-host").querySelectorAll(".toast-close").length,
+      "全部成功不该出现手动关闭按钮——不需要留痕的信息没必要多一次点击",
+    ).toBe(0);
+    expect(setTimeoutCalls, "全部成功的提示必须照常排 4 秒自动移除").toContain(4000);
+  });
+});
+
 describe("2(a) 的另一半：单条 DELETE 是 409 + 顶层 reason", () => {
   it("单条删除撞上 must_disable_first：提示的是那句专门文案，不是通用错误", async () => {
     const items = [keyView({ id: "solo", disabled: true, bucket: "disabled" })];
@@ -376,5 +447,59 @@ describe("M6：本地时区偏移只有一份实现（admin-ui/js/pure/overview.
       const named = m![1]!.split(",").map((s) => s.trim().split(/\s+as\s+/)[0]!.trim());
       expect(named, `${f} 没有拿 offsetMs`).toContain("offsetMs");
     }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 顾虑 1 的裁定落地：「清连续失败」——设计 §10.2 有、后端已支持，简报动作
+// 清单第一版漏列，控制端追加要求补上。
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("清连续失败：按钮可用性 + 确认文案必须把它与「清冷却」的区别说清楚", () => {
+  it("strikes > 0 时按钮可用，strikes === 0 时禁用", async () => {
+    const items = [
+      keyView({ id: "has-strikes", strikes: 3 }),
+      keyView({ id: "no-strikes", strikes: 0 }),
+    ];
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody(items) }
+      : { status: 200, body: {} }));
+    const section = h.section("keys");
+
+    expect(rowButton(section, "has-strikes", "keys.action.clearStrikes").disabled).toBe(false);
+    expect(rowButton(section, "no-strikes", "keys.action.clearStrikes").disabled, "strikes 是 0，点了什么都不会变，按钮不该可用").toBe(true);
+  });
+
+  it("点击之后先弹确认，文案必须点名「清冷却」与它的区别，不是一句空泛的「确定吗」", async () => {
+    const items = [keyView({ id: "strikey", strikes: 5 })];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/strikey")) return { status: 200, body: { ok: true } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+
+    rowButton(section, "strikey", "keys.action.clearStrikes").click();
+    await settle();
+
+    const dialogText = h.dom.document.body.textContent;
+    expect(dialogText, "确认弹窗压根没有出现——点一下就直接发请求，等于没有确认").toContain(
+      I18N["keys.clearStrikesConfirmTitle"]!["zh-CN"]!,
+    );
+    expect(
+      dialogText,
+      "确认文案没有点名「清冷却」——运维会分不清点的是这两个动作里的哪一个",
+    ).toContain("清冷却");
+    expect(dialogText).toContain(I18N["keys.clearStrikesConfirmMsg"]!["zh-CN"]!);
+
+    // 点确定之前不该发任何写请求。
+    expect(h.calls.find((c) => c.method === "PATCH"), "没点确认就已经发出了 PATCH").toBeUndefined();
+
+    h.dom.document.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+
+    const patchCall = h.calls.find((c) => c.method === "PATCH" && c.url === "/admin/api/keys/strikey");
+    expect(patchCall, "确认之后没有真的发出 PATCH").toBeDefined();
+    expect((patchCall?.body as { clearStrikes: boolean })?.clearStrikes).toBe(true);
   });
 });

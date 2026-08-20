@@ -48,12 +48,20 @@
   display: flex; flex-direction: column; gap: var(--gap-sm);
 }
 .toast {
+  display: flex; align-items: center; gap: var(--gap-sm);
   padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px;
   color: var(--primary-fg); background: var(--primary); box-shadow: 0 4px 12px var(--shadow);
 }
 .toast-warn { background: var(--warn); color: var(--warn-fg); }
 .toast-err { background: var(--danger); color: var(--danger-fg); }
 .toast-ok { background: var(--ok); color: var(--ok-fg); }
+/* `sticky` 提示需要手动关闭（P3c Task 4）：批量操作里一部分被拒绝这类信息
+   藏在 HTTP 200 的响应体里，4 秒自动消失等于把一条诚实信号做成了看不见的信号。 */
+.toast-close {
+  flex: none; padding: 0 2px; font-size: 16px; line-height: 1;
+  color: inherit; background: transparent; border: 0; border-radius: var(--radius-sm);
+}
+.toast-close:hover { background: rgba(0, 0, 0, 0.15); }
 
 /* ── modal ──────────────────────────────────────────────── */
 .modal-back {

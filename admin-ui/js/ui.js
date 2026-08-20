@@ -54,13 +54,31 @@ export function iconBtn(d, i18nTitleKey, onClick) {
   return b;
 }
 
-/** toast。`kind` ∈ {"ok","warn","err"}。**文案一律 textContent**。 */
-export function toast(message, kind) {
+/**
+ * toast。`kind` ∈ {"ok","warn","err"}。**文案一律 textContent**。
+ *
+ * `opts.sticky: true` 时**不自动消失**，改成挂一颗「×」按钮手动关闭。
+ * **只给"运维必须看见、看漏了会造成误判"的那类信息用**——例如批量操作里有一部分
+ * 被后端拒绝（P3c Task 4 追加裁定）：那类信息藏在 HTTP 200 的响应体里，4 秒一闪
+ * 而过等于把一条诚实信号做成了几乎看不见的信号。**其余提示保持 4 秒自动消失**，
+ * 不然每一次「已复制」都要用户自己去点掉，那是给不需要留痕的操作加了摩擦。
+ * 默认（不传 `opts` 或 `sticky` 为假）与此前完全一致，所有既有调用点不受影响。
+ */
+export function toast(message, kind, opts) {
   const host = document.getElementById("toast-host");
   if (!host) return;
-  const node = el("div", { class: `toast toast-${kind || "ok"}`, role: "status" }, message);
+  const sticky = !!(opts && opts.sticky);
+  const node = el("div", { class: `toast toast-${kind || "ok"}${sticky ? " toast-sticky" : ""}`, role: "status" });
+  node.appendChild(el("span", null, message));
+  if (sticky) {
+    const close = el("button", { type: "button", class: "toast-close", "aria-label": t("common.dismiss") });
+    close.textContent = "×";
+    close.addEventListener("click", () => node.remove());
+    node.appendChild(close);
+  } else {
+    setTimeout(() => node.remove(), 4000);
+  }
   host.appendChild(node);
-  setTimeout(() => node.remove(), 4000);
 }
 
 export function openModal(titleKey, bodyNode, actions) {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  isDeletable, canClearCooldown, canUnevict, toggleDisableLabelKey,
+  isDeletable, canClearCooldown, canUnevict, canClearStrikes, toggleDisableLabelKey,
   rowActionNeedsConfirm, bulkNeedsConfirm, selectAllIds, pruneSelection,
   bulkResultSummary, bulkResultKey, importLines, hasImportableContent,
   importResultCounts, noteToPatch,
@@ -58,17 +58,37 @@ describe("行内动作的可用性判据", () => {
   });
 });
 
-describe("确认文案要不要出现：只有删除不可撤销", () => {
-  it("行内动作：只有 delete 需要确认", () => {
+/**
+ * ⚠️ **控制端追加裁定**：`clearStrikes` 补进行内动作之后，`rowActionNeedsConfirm`
+ * 从「只认不可撤销」扩成两条理由（见该函数的说明）——`delete` 与 `clearStrikes`
+ * 各自成立的理由完全不同，这一组把两条都测到，不许只测其中一条就说"改对了"。
+ */
+describe("确认文案要不要出现：两条不同的理由（不可撤销 / 容易与相邻动作混淆）", () => {
+  it("行内动作：delete（不可撤销）与 clearStrikes（易与清冷却混淆）都需要确认，其余不需要", () => {
     expect(rowActionNeedsConfirm("delete")).toBe(true);
+    expect(rowActionNeedsConfirm("clearStrikes")).toBe(true);
     expect(rowActionNeedsConfirm("disable")).toBe(false);
     expect(rowActionNeedsConfirm("clearCooldown")).toBe(false);
     expect(rowActionNeedsConfirm("unevict")).toBe(false);
   });
-  it("批量动作：三个动作里只有 delete 需要确认", () => {
+  it("批量动作：三个动作里只有 delete 需要确认（bulk 没有 clearStrikes 这个动作）", () => {
     expect(bulkNeedsConfirm("delete")).toBe(true);
     expect(bulkNeedsConfirm("disable")).toBe(false);
     expect(bulkNeedsConfirm("clearCooldown")).toBe(false);
+  });
+});
+
+describe("canClearStrikes：只在确实有连续失败计数时才有意义", () => {
+  it("strikes > 0 时可用", () => {
+    expect(canClearStrikes({ ...view, strikes: 1 })).toBe(true);
+    expect(canClearStrikes({ ...view, strikes: 7 })).toBe(true);
+  });
+  it("strikes === 0 时不可用（点了也什么都不会变）", () => {
+    expect(canClearStrikes({ ...view, strikes: 0 })).toBe(false);
+  });
+  it("非法输入：不可用，不抛异常", () => {
+    expect(canClearStrikes(null)).toBe(false);
+    expect(canClearStrikes({ ...view, strikes: "7" })).toBe(false);
   });
 });
 

@@ -35,20 +35,40 @@ export function canUnevict(view) {
   return !!(view && view.evicted === true);
 }
 
+/**
+ * 「清 strikes」按钮只在这把 key 确实有连续失败计数时才有意义
+ * （`view.strikes > 0`）——零 strikes 时点它什么都不会变，按钮亮着只是噪音。
+ *
+ * ⚠️ **这不是「清冷却」的同义词，两者的可用性判据也刻意不同**：`canClearCooldown`
+ * 看的是 `bucket === "cooling"`（会随时间自动过期），`strikes` 不会自动清零、
+ * 只能靠这个动作或者一次成功请求把它降下来。控制端裁定（追加）：这是设计
+ * §10.2 行内动作清单里本来就有、后端 PATCH 也已经支持的第五个动作，第一版的
+ * 简报动作清单漏列了它——补的是遗漏，不是新范围。
+ */
+export function canClearStrikes(view) {
+  return !!(view && typeof view.strikes === "number" && view.strikes > 0);
+}
+
 /** 停用/启用那颗按钮该显示哪个 i18n key，取决于当前是不是已经停用。 */
 export function toggleDisableLabelKey(view) {
   return view && view.disabled === true ? "keys.action.enable" : "keys.action.disable";
 }
 
 /**
- * 哪些单条行内动作在执行前需要一次确认弹窗。
+ * 哪些单条行内动作在执行前需要一次确认弹窗。**两种不同的理由触发它，别混成一条：**
  *
- * **只有删除不可撤销**：停用/启用/清冷却/解除剔除随时可以再点一次撤回，
- * 弹窗只会让运维在这几个动作上多点一次没有实际保护作用的确认——那不是谨慎，
- * 是让人对真正需要谨慎的那个动作（删除）变得麻木。
+ * ① **不可撤销**——只有删除符合。停用/启用/清冷却/解除剔除随时可以再点一次撤回，
+ *    弹窗只会让运维在这几个动作上多点一次没有实际保护作用的确认——那不是谨慎，
+ *    是让人对真正需要谨慎的那个动作（删除）变得麻木。
+ * ② **语义容易与相邻动作混淆**——`clearStrikes` 符合。它与「清冷却」长得像
+ *    "清空某个数字"，但清冷却只是让这把 key **现在**能用，它离下一次被剔除仍然
+ *    只差一次失败；`clearStrikes` 才会把连续失败计数真正清零，给它一次干净的
+ *    机会。这里的确认弹窗保护的不是"能不能撤销"（它本身也能撤销——strikes 会
+ *    随后续失败重新累积），是"点的时候知不知道自己点的是哪一个"——运维容易
+ *    以为点了「清冷却」就等于清空了账本。
  */
 export function rowActionNeedsConfirm(action) {
-  return action === "delete";
+  return action === "delete" || action === "clearStrikes";
 }
 
 /** 同一条判据用在批量动作上。三个批量动作里只有 `delete` 需要确认。 */

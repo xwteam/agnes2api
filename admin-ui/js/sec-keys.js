@@ -1,7 +1,11 @@
 /**
  * Key 池板块。P3b 只做了只读部分（状态筛选 → 4 张汇总卡 → 分页列表 → 新鲜度提示）；
- * **P3c Task 4 在此之上加写操作**：行内动作（停用/启用/清冷却/解除剔除/删除）、
- * 批量条（选中才出现）、导入弹窗。
+ * **P3c Task 4 在此之上加写操作**：行内动作（停用/启用/清冷却/清连续失败/解除剔除/
+ * 删除）、批量条（选中才出现）、导入弹窗。
+ *
+ * ⚠️ **「清连续失败」是控制端追加裁定补的**：设计 §10.2 的行内动作清单本来就有
+ * 「清 strikes」，后端 `PATCH` 的 `clearStrikes` 字段 Task 3 也已经实现全，
+ * 是本任务简报第一版的动作清单漏列了它。
  *
  * 板块契约（设计文档 §9.3）：`{ init?, onShow?, onHide? }`，见 admin-ui/js/app.js
  * 的 showSection。**板块内不许监听 langchange**——框架层会 apply(document) 之后
@@ -29,7 +33,7 @@ import {
 // （硬规则 1：两个板块的取值决策不许各写一份）。
 import { poolKnobs, offsetMs } from "./pure/overview.mjs";
 import {
-  isDeletable, canClearCooldown, canUnevict, toggleDisableLabelKey,
+  isDeletable, canClearCooldown, canUnevict, canClearStrikes, toggleDisableLabelKey,
   rowActionNeedsConfirm, bulkNeedsConfirm, selectAllIds, pruneSelection,
   bulkResultSummary, bulkResultKey, importLines, hasImportableContent,
   importResultCounts, noteToPatch,
@@ -134,7 +138,8 @@ function noteCell(v) {
 }
 
 /**
- * 行内动作列：停用/启用、清冷却、解除剔除、备注、删除。
+ * 行内动作列：停用/启用、清冷却、清连续失败、解除剔除、备注、删除
+ * （顺序与设计文档 §10.2 的行内动作清单一致）。
  *
  * **按钮可用性判据全部来自 `pure/keys-write.mjs`**，这里只把返回值接到
  * `.disabled` 上——`isDeletable` 尤其要紧：判据错一个字符，运维就会看到一颗
@@ -151,6 +156,11 @@ function actionsCell(v) {
   clearCooldown.disabled = !canClearCooldown(v);
   clearCooldown.addEventListener("click", () => patchAction(v.id, { clearCooldown: true }));
   cell.appendChild(clearCooldown);
+
+  const clearStrikes = elI18n("button", "keys.action.clearStrikes", { type: "button" });
+  clearStrikes.disabled = !canClearStrikes(v);
+  clearStrikes.addEventListener("click", () => clearStrikesAction(v));
+  cell.appendChild(clearStrikes);
 
   const unevict = elI18n("button", "keys.action.unevict", { type: "button" });
   unevict.disabled = !canUnevict(v);
@@ -382,6 +392,22 @@ function deleteOne(view) {
 }
 
 /**
+ * 「清连续失败」。**先弹一次确认**，但理由与删除那颗不一样——不是「不可撤销」
+ * （strikes 后续失败还会重新累积），是「容易与『清冷却』混淆」（`rowActionNeedsConfirm`
+ * 的说明）：清冷却只让这把 key 现在能用，离下一次被剔除仍只差一次失败；这颗才
+ * 是真的清账。确认文案（`keys.clearStrikesConfirmMsg`）必须把这句话点名说出来。
+ */
+function clearStrikesAction(view) {
+  if (!canClearStrikes(view)) return;
+  const run = () => patchAction(view.id, { clearStrikes: true });
+  if (rowActionNeedsConfirm("clearStrikes")) {
+    confirmModal("keys.clearStrikesConfirmTitle", "keys.clearStrikesConfirmMsg", run);
+  } else {
+    run();
+  }
+}
+
+/**
  * 批量操作的落地。
  *
  * ⚠️⚠️ **这是 2(a) 那条交接落地的地方**：`bulk` 端点永远 200，「必须先停用才能删」
@@ -389,6 +415,11 @@ function deleteOne(view) {
  * 只要它大于 0，`bulkResultKey()` 就必须选中 `keys.bulk.partial` 而不是
  * `keys.bulk.allOk`，且 `mustDisableFirst` 的具体数字要被拼进提示文案——
  * 拿 `res.status` 当唯一判据的写法在这条路径上永远走不到这一段。
+ *
+ * ⚠️⚠️ **`summary.failed > 0` 时这条 toast 是 `sticky`（控制端追加裁定）**：
+ * 它藏在 HTTP 200 的响应体里，本来就是最容易被忽略的那类信息，4 秒自动消失
+ * 等于把一条诚实信号做成了几乎看不见的信号。全部成功时仍是普通的 4 秒 toast
+ * ——不需要留痕的信息没必要多一次点击。
  */
 async function runBulk(op, ids) {
   try {
@@ -397,7 +428,7 @@ async function runBulk(op, ids) {
     let text = t(bulkResultKey(summary)) + t("keys.bulk.countsSuffix", summary);
     if (summary.mustDisableFirst > 0) text += t("keys.bulk.mustDisableFirstSuffix", summary);
     if (summary.notFound > 0) text += t("keys.bulk.notFoundSuffix", summary);
-    toast(text, summary.failed > 0 ? "warn" : "ok");
+    toast(text, summary.failed > 0 ? "warn" : "ok", summary.failed > 0 ? { sticky: true } : undefined);
   } catch (e) {
     toast(errorMessage(e), "err");
   } finally {

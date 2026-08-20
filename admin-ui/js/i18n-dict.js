@@ -47,6 +47,9 @@ export const I18N = {
   "common.copyFailed":{ "zh-CN": "复制失败", "zh-TW": "複製失敗", en: "Copy failed", ja: "コピーに失敗しました", ko: "복사에 실패했습니다" },
   "common.cancel":    { "zh-CN": "取消", "zh-TW": "取消", en: "Cancel", ja: "キャンセル", ko: "취소" },
   "common.confirm":   { "zh-CN": "确定", "zh-TW": "確定", en: "Confirm", ja: "確認", ko: "확인" },
+  // 需要手动关闭的 toast 上那颗「×」按钮的无障碍标签（P3c Task 4：批量操作部分
+  // 失败这类信息不自动消失，见 js/ui.js 的 toast() 说明）。
+  "common.dismiss":   { "zh-CN": "关闭提示", "zh-TW": "關閉提示", en: "Dismiss", ja: "閉じる", ko: "닫기" },
   "common.sessionExpired": { "zh-CN": "会话已过期，请重新输入管理口令", "zh-TW": "工作階段已過期，請重新輸入管理口令", en: "Session expired, please sign in again", ja: "セッションが失効しました。再度サインインしてください", ko: "세션이 만료되었습니다. 다시 로그인하세요" },
 
   // ── 补池失败归因（P3c 的注册机板块才渲染；本期先把键写齐，好让门禁从第一天就是活的）──
@@ -121,6 +124,11 @@ export const I18N = {
   "keys.action.disable":      { "zh-CN": "停用", "zh-TW": "停用", en: "Disable", ja: "無効化", ko: "정지" },
   "keys.action.enable":       { "zh-CN": "启用", "zh-TW": "啟用", en: "Enable", ja: "有効化", ko: "활성화" },
   "keys.action.clearCooldown":{ "zh-CN": "清冷却", "zh-TW": "清冷卻", en: "Clear cooldown", ja: "クールダウン解除", ko: "쿨다운 해제" },
+  // ⚠️ 控制端追加裁定（评审前）：设计 §10.2 的行内动作清单本来就有「清 strikes」，
+  // 后端 PATCH 的 clearStrikes 字段 Task 3 也已经实现全，是简报的动作清单第一版
+  // 漏列了它——补的是遗漏，不是新范围。命名跟着 keys.col.strikes（「连续失败」）
+  // 走，不叫「清 strikes」：面板上不该出现只有开发者认得的英文字段名。
+  "keys.action.clearStrikes": { "zh-CN": "清连续失败", "zh-TW": "清連續失敗", en: "Clear strikes", ja: "連続失敗をクリア", ko: "연속 실패 초기화" },
   "keys.action.unevict":      { "zh-CN": "解除剔除", "zh-TW": "解除剔除", en: "Unevict", ja: "除外解除", ko: "제외 해제" },
   "keys.action.note":         { "zh-CN": "备注", "zh-TW": "備註", en: "Note", ja: "備考", ko: "비고" },
   "keys.action.delete":       { "zh-CN": "删除", "zh-TW": "刪除", en: "Delete", ja: "削除", ko: "삭제" },
@@ -171,6 +179,11 @@ export const I18N = {
 
   "keys.deleteConfirmTitle": { "zh-CN": "删除这把 key？", "zh-TW": "刪除這把 key？", en: "Delete this key?", ja: "この key を削除しますか？", ko: "이 key를 삭제하시겠습니까?" },
   "keys.deleteConfirmMsg":   { "zh-CN": "此操作不可撤销。删除前请确认这把 key 已经停用或已被剔除。", "zh-TW": "此操作不可復原。刪除前請確認這把 key 已經停用或已被剔除。", en: "This cannot be undone. Make sure this key is already disabled or evicted before deleting.", ja: "この操作は取り消せません。削除する前に、この key がすでに無効化または除外されていることを確認してください。", ko: "이 작업은 되돌릴 수 없습니다. 삭제하기 전에 이 key가 이미 정지되었거나 제외되었는지 확인하세요." },
+  // 「清连续失败」的确认弹窗：**它保护的不是"能不能撤销"，是"点的时候知不知道
+  // 点的是哪一个"**——清冷却只让 key 现在就能用，离下一次被剔除仍只差一次失败；
+  // 清连续失败才是真的清账。两句话必须点名对方，不能只说"这是一个危险操作"。
+  "keys.clearStrikesConfirmTitle": { "zh-CN": "清空连续失败计数？", "zh-TW": "清空連續失敗計數？", en: "Clear the strike count?", ja: "連続失敗回数をクリアしますか？", ko: "연속 실패 횟수를 초기화하시겠습니까?" },
+  "keys.clearStrikesConfirmMsg":   { "zh-CN": "这与「清冷却」不是一回事：清冷却只是让这把 key 现在就能用，它离下一次被剔除仍然只差一次失败；清连续失败才会把失败计数真正清零，给它一次干净的机会。", "zh-TW": "這與「清冷卻」不是一回事：清冷卻只是讓這把 key 現在就能用，它離下一次被剔除仍然只差一次失敗；清連續失敗才會把失敗計數真正清零，給它一次乾淨的機會。", en: "This is not the same as clearing the cooldown: clearing the cooldown only lets this key work right now — it is still just one more failure away from eviction. Clearing strikes actually zeroes the failure count, giving it a genuinely clean slate.", ja: "「クールダウン解除」とは別物です。クールダウン解除はこの key を今すぐ使えるようにするだけで、次に 1 回失敗すれば依然として除外されます。連続失敗回数のクリアは、その回数を実際にゼロへ戻し、本当の意味でやり直させます。", ko: "「쿨다운 해제」와는 다릅니다. 쿨다운 해제는 이 key를 지금 당장 사용할 수 있게 할 뿐, 여전히 한 번만 더 실패하면 제외됩니다. 연속 실패 초기화는 실패 횟수를 실제로 0으로 되돌려 진짜 깨끗한 기회를 줍니다." },
   // 单条 DELETE 的 409 拒绝文案（HTTP 409 + 顶层 reason，与批量路径的 200 + 逐项
   // reason 是两种不同的形状，见 `src/http/admin/handlers/keys-write.ts` 的
   // `keyDeleteHandler` 文件头 ⚠️⚠️ 那一段）。
