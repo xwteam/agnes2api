@@ -491,6 +491,64 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
       tendOnceMock.mockReset();
     }
   });
+  /**
+   * **C1 的 Node 那一半。**
+   *
+   * ⚠️ **成因如实登记**：`7687ec0` 只给 Worker 侧补了覆盖，Node 侧那两段
+   *（`logger.log(round_failed)` + `recordCrashedRound`）**整个删掉，全量 1541 全绿**
+   * ——M6node / M7node / M13node 三条都补了 Node 侧，唯独这个 **Critical** 没补，
+   * 直接违反「双运行时对等：差异必须被**断言**而非被容忍」。
+   *
+   * 防住的真实故障与 Worker 侧同一条：`tendOnce` 一抛，`recordRound` 整个被跳过
+   *（它排在 `try` 里、在 `tendOnce` 之后），而 `catch` 里若只有裸 `console.error`
+   * 就进不了事件缓冲 ⇒ `flush()` 首行就 return ⇒ **面板上这一轮什么都没有，
+   * 与「注册机根本没跑」逐字节不可区分**。
+   */
+  it("Node 侧：整轮抛错时 event: 里有 registrar.round_failed，tend:history 里有 round_crashed", async () => {
+    tendOnceMock.mockImplementation(async () => {
+      throw new Error("补池在中途炸了");
+    });
+    const dir = mkdtempSync(join(tmpdir(), "a2a-sched-crash-"));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const server = await main(nodeEnv({ DATA_DIR: dir }));
+    try {
+      await waitFor(() => tendOnceMock.mock.calls.length === 1);
+      // 等这一轮重排落地 ⇒ runTend 的 finally（含那次 flush）已经跑完。
+      await waitFor(() => timers.length === 1);
+
+      const storage = new FileStorage(dir);
+      const eventKeys = await storage.list("event:");
+      const events = (await Promise.all(
+        eventKeys.map((k) => storage.get<Array<{ event: string }>>(k)),
+      )).flatMap((a) => a ?? []);
+      expect(
+        events.map((e) => e.event),
+        "抛错那一轮一条事件都没落库 —— 与「注册机根本没跑」不可区分",
+      ).toContain("registrar.round_failed");
+
+      const history = await storage.get<Array<{
+        trigger: string; skipped: boolean; minted: number; attempted: number;
+        failures: Array<{ reason: string }>;
+      }>>("tend:history");
+      expect(history?.length, "抛错那一轮在补池历史上没有占一格").toBe(1);
+      expect(history?.[0]?.failures.map((f) => f.reason)).toEqual(["round_crashed"]);
+      expect(history?.[0]?.minted).toBe(0);
+      expect(history?.[0]?.attempted).toBe(0);
+      expect(
+        history?.[0]?.skipped,
+        "`skipped` 有且只有一个含义（注册机关着），拿它表示「崩了」就是伪造",
+      ).toBe(false);
+      // 控制台那一路一行不减（`log-prefix` 那条契约）。
+      expect(errSpy).toHaveBeenCalledWith("[registrar] 补池失败", expect.any(Error));
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      await close(server);
+      tendOnceMock.mockReset();
+    }
+  });
+
 
 });
 

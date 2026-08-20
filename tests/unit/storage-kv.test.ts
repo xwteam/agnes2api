@@ -3,7 +3,8 @@ import { KvStorage } from "../../src/adapters/storage-kv.js";
 
 /**
  * **评审 F1**：`KvStorage.put()` 里"把 `expiresAt` 转成 KV 的 `expiration`"这一行
- * 之前**零测试守护**——`tests/contract/storage.test.ts` 跑的是真实（miniflare 模拟
+ * 之前**零测试守护**——`tests/contract/storage.test.ts` 的
+ * 「expiresAt 是合法的未来值：put 不抛错，且立刻可读」跑的是真实（miniflare 模拟
  * 的）KV，只验证了"合法调用不抛错、立刻可读"这个功能性结果，没有验证**我们的
  * 适配器代码本身**有没有真的把 `expiration` 传出去、单位换算对不对。复评把
  * `storage-kv.ts` 那一行整个变异成丢弃 `expiresAt`（相当于永不过期）之后，

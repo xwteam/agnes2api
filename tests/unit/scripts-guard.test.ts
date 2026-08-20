@@ -117,7 +117,7 @@ describe("CI 的测试命令不带文件过滤器（收集门禁分档的前提�
  * 下不许存在被 git 判为二进制的跟踪文件，理由与起因见
  * `scripts/check-no-binary.mjs` 文件头。这里只钉"CI 里确实跑了这一步"（与下面
  * "pnpm build 在门禁列表里"那条同一个模式），脚本自身的正确性由
- * `tests/unit/check-no-binary.test.ts` 单独验证。
+ * `tests/unit/check-no-binary.test.ts` 的「空仓库（没有任何跟踪文件）：通过」一组单独验证。
  */
 describe("check-no-binary 在 CI 门禁列表里", () => {
   it("ci.yml 里有一步跑 node scripts/check-no-binary.mjs", () => {

@@ -195,6 +195,10 @@ const COVERED: ReadonlyArray<{ claim: string; why: string }> = [
   { claim: "已实测：`tests/x.test.ts` 会拦下这个变异。", why: "已实测" },
   { claim: "这个变异 `tests/x.test.ts` 拦得住。", why: "拦得住" },
   { claim: "这个变异 `tests/x.test.ts` 抓得住。", why: "抓得住" },
+  // ── 第三轮补的三个：每一个当时都是**正在漏**的活口子，不是预防性扩容 ──
+  { claim: "四条不变量各自的守护者见 `tests/x.test.ts`。", why: "守护（原来只认「守着」）" },
+  { claim: "`tests/x.test.ts` 正钉这件事。", why: "正钉 —— 由新加的 `钉` 单字接住" },
+  { claim: "把两条判断对调，只有 `tests/x.test.ts` 那一格会红。", why: "会红（原来只认「会变红」）" },
 ];
 
 /**
@@ -435,6 +439,71 @@ describe("scripts/check-comment-refs.mjs 元测试：豁免标记与它的边界
     expect(r.status, "反引号开了一个跨行的假字符串，把后面的注释吞了").toBe(1);
     expect(r.stderr).toContain("tests/nope.test.ts");
   });
+  /**
+   * **同一行里，未闭合的引号之后的注释也必须被看见。**
+   *
+   * ⚠️ **这一整组是第三轮补的，成因如实登记**：上面那几格把坏指向放在**下一行**，
+   * 于是只证明了"跨行传染治好了"。**同一行的残留没有任何断言**——把同一条坏指向
+   * 挪到**同一行**，`EXIT` 当场从 1 翻成 0。当时那段自述写的是「代价是**误报**
+   * 不是漏报」，**那句话是假的**：`if (end === -1) break` 丢的是这一行剩下的
+   * 全部内容，**包括后面的整条注释**，而门禁照常打印 ✅。
+   *
+   * 变红条件：把那个 `continue` 改回 `break`。
+   */
+  it.each([
+    ["字符类正则里的引号", "const RE = /['\"]/;  // 见 `tests/nope.test.ts`。\n"],
+    ["正则里的撇号", "const RE = /don't/; // 见 `tests/nope.test.ts`。\n"],
+    ["单个未闭合的双引号", "const s = \"开头没结尾; // 见 `tests/nope.test.ts`。\n"],
+  ])("同一行里 %s 之后的坏指向仍然被抓住（漏报方向）", (_why, line) => {
+    const r = run({ files: { "src/a.ts": line } });
+    expect(r.status, "未闭合的引号把同一行剩下的内容整个吞掉了").toBe(1);
+    expect(r.stderr).toContain("tests/nope.test.ts");
+  });
+
+  it("同一行未闭合引号之后，规则 B 也照样看得见（不是只有规则 A）", () => {
+    const r = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": "const RE = /['\"]/;  // 这条由 `tests/x.test.ts` 钉住。\n",
+      },
+    });
+    expect(r.status, "规则 B 跟着一起瞎了").toBe(1);
+    expect(r.stderr).toContain("只给了裸文件名");
+  });
+
+  /**
+   * **同一块注释里的第二个及以后的锚，也必须逐个校验。**
+   *
+   * ⚠️ **这是第三轮抓到的另一条静默漏报**：`nameAnchorAfter` 每个「注释块 × 目标
+   * 文件」**只取第一个锚**，同块里第二个从不校验。于是**同一段话，锚的先后决定
+   * 查不查**——实测本仓当时有 2 条带断言性措辞的活逃逸
+   *（`src/core/dispatcher.ts` 与 `tests/contract/admin-auth.test.ts` 各一条）。
+   *
+   * 变红条件：`nameAnchorsAfter` 退回只返回第一个。
+   */
+  it("同一块里第一个锚真、第二个锚编造：仍然 exit 1", () => {
+    const r = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": "/** 见 `tests/x.test.ts` 的「被指向的那一格」，"
+          + "另见 `tests/x.test.ts` 的「完全编造的名字」。 */\nexport const a = 1;\n",
+      },
+    });
+    expect(r.status, "同块第二个锚从不校验 —— 锚的先后决定查不查").toBe(1);
+    expect(r.stderr).toContain("完全编造的名字");
+  });
+
+  it("顺序对调（编造在前、真的在后）结论必须一致", () => {
+    const r = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": "/** 见 `tests/x.test.ts` 的「完全编造的名字」，"
+          + "另见 `tests/x.test.ts` 的「被指向的那一格」。 */\nexport const a = 1;\n",
+      },
+    });
+    expect(r.status, "位置不该改变结论").toBe(1);
+  });
+
 
   /**
    * **门禁不许把自己整份豁免掉。** 已实测踩过一次：`IGNORE_FILE_RE` 那一行原来把

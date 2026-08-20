@@ -90,7 +90,9 @@ describe("GET /admin/api/capabilities", () => {
   });
 
   /**
-   * ⚠️ 这条用例的作用是**把一个未验证的外部行为钉成已知事实**，不是验证我们自己的逻辑。
+   * ⚠️ 本文件 `tests/contract/admin-capabilities.test.ts` 的
+   * 「colo 字段的真实行为（node 与 workerd 侧，未显式提供 cf 时均为 null）」，
+   * 作用是**把一个未验证的外部行为钉成已知事实**，不是验证我们自己的逻辑。
    *
    * **实测结果（2026-08-19，`@cloudflare/vitest-pool-workers` 0.21.3，本条用例本身
    * 就是复现步骤——`pnpm test:workers tests/contract/admin-capabilities.test.ts` 可

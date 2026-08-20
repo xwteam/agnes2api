@@ -31,7 +31,9 @@ export interface AdminRouterDeps {
    * **与转发路径同一个实例**（`wire.ts` 把 `BuiltApp.repo` 交出来正是为了这个）。
    * 面板另建一个的话就是另一份 isolate 快照：面板每刷新一次都要真读一遍存储，
    * 而设计文档 §2.4 第 1、2 条那笔「面板轮询不额外烧配额」的账全靠共用这一份。
-   * tests/contract/quota-panel.test.ts 数着 get/list 次数钉这件事。
+   * `tests/contract/quota-panel.test.ts` 的
+   * 「转发先预热之后，面板请求零存储访问——两边不是各自一份快照」
+   * 数着 get/list 次数钉这件事。
    */
   repo: KeyPoolRepo;
   now: () => number;

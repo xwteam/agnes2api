@@ -115,13 +115,24 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   The **`delete` bucket** is counted separately: the tend lock releases 48 times a day, and
   that bucket is nearly idle today.
 
-  ⚠️ **Tightening the tend frequency does not scale these proportionally — it jumps a tier.**
-  All three items are billed per round, and the configuration warning above adds one more
-  per round whenever `TEND_INTERVAL_MS` is under 10 minutes. A **perfectly legal** example:
-  `TEND_INTERVAL_MS=300000` (5 minutes) ⇒ 288 rounds/day ⇒
+  ⚠️ **All three items are billed per round, and "rounds per day" has two independent axes.
+  Do not conflate them:**
+    - **Frequency axis**: tightening the tend frequency scales all three **proportionally**
+      (that is the sentence above). **On Worker the knob is the Cron in `wrangler.toml`**;
+      on Node it is `TEND_INTERVAL_MS`. `TEND_INTERVAL_MS` is **consumed only by the Node
+      scheduler** — changing it on Worker adds **not a single round**. Conversely the
+      `registrar_tend_lock` put/delete pair **exists only in the Worker entry**; the Node
+      side has no such lock today.
+    - **Threshold axis**: when `TEND_INTERVAL_MS` drops below
+      `MINT_BATCH × CODE_TIMEOUT_MS × channel count`, the event item **jumps from "0 on a
+      healthy round" to "1 every round"** — that jump is independent of frequency and is
+      caused by the per-round configuration warning described above.
+  **The worst case is both axes at once.** This section is about Worker + the free KV tier,
+  so here is an example that is **perfectly legal in that shape**: change the Cron to
+  `*/5 * * * *` ⇒ 288 rounds/day, each producing events ⇒
   `80 + 96 + 288 + 288 + 288 = 1,040` writes/day — **already past the write quota**.
-  The three rows above all assume the default of one round every 30 minutes; **do not read
-  them as constants independent of the frequency**.
+  The three rows above all assume the default Cron (one round every 30 minutes); **do not
+  read them as constants independent of the frequency**.
 - **Events board reads (post-C4/C4b-fix figures, more conservative than the earlier draft)**:
   polling no longer depends on an index, so the number of candidate keys is **hard-bounded** —
   no matter how stale `after` is or how many days the deployment has been running, a single

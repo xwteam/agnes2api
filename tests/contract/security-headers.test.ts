@@ -62,8 +62,10 @@ describe("全应用级 nosniff", () => {
    * 陷阱」——那已经不成立了**（全分支评审 A9）。P3b 之后确实加了返回裸
    * `Response` 的端点，而它正是那句话预言的东西。重新实测（**移动**这一行，
    * 不是新增）：**2 failed** ——
-   * `tests/contract/admin-events.test.ts`（`/admin/api/events/download`）与
-   * `tests/contract/media.test.ts`（`/v1/videos/{id}` 的流式转发）。
+   * `tests/contract/admin-events.test.ts` 的
+   * 「下载端点是裸 Response，且**仍然**带全局 nosniff」（`/admin/api/events/download`）与
+   * `tests/contract/media.test.ts` 的
+   * 「上游 text/html 经这条真实路由出来时是 application/octet-stream」（流式转发那条）。
    * 顺带订正：「唯一返回裸 Response 的是 /admin 那棵树」本身也是假的，
    * `src/http/routes/media.ts` 在 `/v1` 上就返回裸 `Response`。
    *

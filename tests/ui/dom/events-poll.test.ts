@@ -175,3 +175,77 @@ describe("事件板块的轮询间隔：DEPLOY.md 那条读配额包线的分母
     expect(delays.length, "暂停之后还在排下一轮轮询").toBe(before);
   });
 });
+
+/**
+ * **黄条的接线：判据在 `pure/`，但"真的挂上去了"这件事只有 DOM 通道验得了。**
+ *
+ * ⚠️ **这一组是第三轮补的，成因如实登记**：`shouldWarn` 收下 `cursorBroken`（评审 I6）
+ * 之后，**判据被钉住了、接线没有**——把 `sec-events.js` 里那两行
+ * `nodes.warnCursorBroken.style.display = …` 改成永不显示（并重跑 `build-ui.mjs`），
+ * 全量 1541 一条都不红。
+ *
+ * ⚠️ 而当时 `sec-events.js` 与 `events-cursor-heal.test.ts` 里都写着
+ * 「**本仓无 DOM 测试通道**」——**那句话早就不成立了**（本目录有 harness + 四份用例，
+ * `events-poll.test.ts` 就在真点导航按钮、真驱动事件板块）。
+ * 一句写下时为真、后来被同一个仓自己的新代码推翻的断言，正是本仓记了二十余次的那一种。
+ */
+describe("事件板块的黄条：后端字段 → 真的显示出来", () => {
+  const TOKEN2 = "admin-token-0123456789-ok!";
+  const AT = 1_700_000_000_000;
+
+  /** 进壳层、切到事件板块，用给定的响应体驱动一轮。 */
+  async function openWith(body: Record<string, unknown>) {
+    const h = await bootPanel({
+      now: AT,
+      store: { [KEY_STORE]: TOKEN2, [SAVED_AT_STORE]: String(AT - 1000) },
+      respond: (url) => (url.startsWith("/admin/api/events")
+        ? { status: 200, body: { items: [], shardId: "s", generatedAt: AT, ...body } }
+        : { status: 200, body: {} }),
+    });
+    await settle();
+    h.dom.document.querySelectorAll(".nav-item")
+      .find((b) => b.getAttribute("data-section") === "events")!
+      .click();
+    await settle();
+    return h;
+  }
+
+  /** 事件板块里当前**可见**的全部文本（`display: none` 的不算）。 */
+  function visible(h: Awaited<ReturnType<typeof openWith>>): string {
+    const out: string[] = [];
+    const walk = (el: { children: unknown[]; textContent: string; style: { display: string } }) => {
+      if (el.style.display === "none") return;
+      if (el.children.length === 0) out.push(el.textContent);
+      for (const c of el.children) walk(c as never);
+    };
+    walk(h.section("events") as never);
+    return out.join(" | ");
+  }
+
+  /**
+   * **反向自检先行**：契约正常时那条黄条必须**不**显示。少了它，
+   * 「一律显示」也能让下面那格全绿——而常驻的假告警比没有告警更糟。
+   */
+  it("cursor 合法（数字）时，契约破坏那条黄条不显示", async () => {
+    const h = await openWith({ cursor: AT, cursorAhead: false, dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, malformed: 0 });
+    expect(visible(h)).not.toContain(I18N["ev.warnCursorBroken"]["zh-CN"]);
+  });
+
+  it("cursor 合法（null = 本页没有新事件）时同样不显示", async () => {
+    const h = await openWith({ cursor: null, cursorAhead: false, dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, malformed: 0 });
+    expect(visible(h)).not.toContain(I18N["ev.warnCursorBroken"]["zh-CN"]);
+  });
+
+  /**
+   * **后端契约被破坏（响应体里根本没有 `cursor` 字段）⇒ 黄条必须真的出现在页面上。**
+   * 这正是 W2 实测到的那个响应体形状：`c.json` 把 `undefined` 整个丢掉。
+   * 变红条件：`sec-events.js` 里那两行 `warnCursorBroken` 的接线被删/改成永不显示。
+   */
+  it("响应体缺 cursor 字段时，契约破坏那条黄条真的显示出来", async () => {
+    const h = await openWith({ cursorAhead: false, dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, malformed: 0 });
+    expect(
+      visible(h),
+      "判据（shouldWarn）钉住了，但接线没有 —— 黄条压根没挂上去",
+    ).toContain(I18N["ev.warnCursorBroken"]["zh-CN"]);
+  });
+});

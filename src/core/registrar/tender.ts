@@ -62,8 +62,20 @@ export interface TendResult {
    * 于是备通道的战绩会被持续记到主通道头上，**与「两条邮箱通道完全平级」
    * 那条硬约束正面冲突**。`failures` 早就是逐条带 `channel` 的，这里补齐产出侧。
    *
-   * 没铸出来的通道**不出现在表里**（不是记 0）：`{}` 与 `{yyds: 0}` 的区别是
-   * 「这一轮没走到它」与「走到了但没成」，后者由 `failures` 说。
+   * 没铸出来的通道**不出现在表里**（不是记 0）。
+   *
+   * ⚠️ **`{}` 有四个产出者，消费方必须靠别的字段把它们分开——单看这个字段分不出来。**
+   * Task 6 要渲染「哪条通道真的铸出来了」，这张表就是判据，所以语义写全：
+   *
+   * | `{}` 的来源 | 怎么认出来 |
+   * |---|---|
+   * | 注册机关着 | `skipped === true`（**它有且只有这一个含义**） |
+   * | 健康轮，缺口 `need <= 0` | `skipped === false && attempted === 0 && failures 为空` |
+   * | 整轮抛错 | `attempted === 0 && failures` 里是 `round_crashed` |
+   * | 尝试了但全失败 | `attempted > 0 && failures` 非空 |
+   *
+   * 也就是：**`skipped` + `attempted` + `failures` 三个字段合读**才分得清。
+   * 别拿 `mintedByChannel` 的空表去推断「这一轮发生了什么」。
    */
   mintedByChannel: Record<string, number>;
   failures: Array<{ reason: TendFailureReason; channel: string }>;

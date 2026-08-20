@@ -82,12 +82,22 @@ const TEST_ANCHORS = ["it(", "it.each", "test(", "describe(", "expect("];
  * 不是给「刻意绕开」设一道墙。
  */
 const CLAIM_MARKERS = [
-  "钉住", "钉着", "钉死", "守着", "会变红", "变红",
+  // ⚠️ **`钉` 单字放在最前，它把 `钉住`/`钉着`/`钉死`/`正钉`/`钉成` 一网打尽。**
+  // 下面那三个更长的词留着不是因为需要，是因为 `COVERED` 表逐条点名它们——
+  // 词表与那张表是**互为对照**的两份，删一边就少一份印证。
+  "钉", "钉住", "钉着", "钉死", "守着", "会变红", "变红",
   // 本任务新增。`保证` 收的是「由 X 保证」这一族——不写成带通配的「由 * 保证」是
   // 因为判据是子串匹配，`保证` 已经把那一族全包住，而多一条更窄的规则只会多一处
   // 会漂的东西。误报面由规则 B 自身的前提兜着：**只有同一段里还提到了某个
   // `tests/**.test.ts` 才会触发**。
   "保证", "已核实", "已实测", "拦得住", "抓得住",
+  // ⚠️ **第三轮补的三个，每一个都是当时正在漏的活口子**（不是预防性扩容）：
+  // `守护` ← `src/core/keypool-repo.ts` 的「四条不变量各自的守护者」；
+  // `会红`（词表里原本只有 `会变红`）← `src/http/admin/auth.ts` 的「只有那一格会红」；
+  // `正钉` 由上面的 `钉` 单字接住 ← `src/core/keypool-repo.ts` 的「正钉这件事」。
+  // 三条都带着名字锚、语法上合规，**但因为词表看不见它们，锚一律按整文件匹配**
+  // ⇒ 被指向的用例改名不红。**「换个措辞就绕过去」不是理论风险，它当时就在咬。**
+  "守护", "会红",
 ];
 
 const PATH_RE = new RegExp(
@@ -111,15 +121,22 @@ const NAME_ANCHOR_RE = new RegExp(
 const TEST_FILE_RE = /(tests\/[A-Za-z0-9_./-]*\.test\.ts)(:\d+)?/g;
 
 /**
- * `flat` 里 `target` 后面紧跟的那个 `「…」`（可能有多处提及，任一处带锚即算数）。
- * 返回锚里的文字，没有则 `null`。
+ * `flat` 里 `target` 后面紧跟的那些 `「…」`，**全部返回**（同一块注释里可能提到
+ * 同一个文件好几次，每一次都可能带自己的锚）。
+ *
+ * ⚠️ **第一版只返回第一个，那是一条静默漏报**：同块里第二个及以后的锚**从不校验**。
+ * 最小复现——同一块注释里两次提同一个测试文件，第一个锚真、第二个锚**完全编造**
+ * ⇒ `EXIT=0`；两者顺序对调 ⇒ `EXIT=1`。**同一段话，锚的先后决定查不查**。
+ * 实测本仓当时就有 2 条带断言性措辞的活逃逸（`src/core/dispatcher.ts` 与
+ * `tests/contract/admin-auth.test.ts` 各一条）。
  */
-function nameAnchorAfter(flat, target) {
+function nameAnchorsAfter(flat, target) {
+  const out = [];
   for (let i = flat.indexOf(target); i !== -1; i = flat.indexOf(target, i + 1)) {
     const m = NAME_ANCHOR_RE.exec(flat.slice(i + target.length).replace(/^:\d+/, ""));
-    if (m) return m[1];
+    if (m) out.push(m[1]);
   }
-  return null;
+  return out;
 }
 
 /**
@@ -174,8 +191,11 @@ function anchorMatches(target, anchor, mustNameACase) {
  * 现在锚必须落在 `it(` / `test(` / `describe(` 的标题字面量里——那才是
  * 「这条断言由那一条用例守着」这句话真正指的东西。
  *
- * **它做不到什么，明写**：标题是拼出来的（模板插值、变量拼接）时，插值那一段
- * 不在字面量里，锚就得避开它；`it.each` 的 `$why` 这类占位符同理。
+ * **它做不到什么，明写**：
+ * · 标题是拼出来的（模板插值、变量拼接）时，插值那一段不在字面量里，锚就得避开它；
+ *   `it.each` 的 `$why` 这类占位符同理。
+ * · **锚不能跨 `describe` + `it` 两层标题**——判据是"落在**某一条**标题里"，
+ *   写成「某组名……某格名」会假红。今天全仓没有这种写法，但这条边界原来没写下来。
  */
 function testTitles(target) {
   const src = readFileSync(join(ROOT, target), "utf8");
@@ -260,9 +280,22 @@ function commentBlocks(src) {
       const c = raw[j];
       if (c === "'" || c === '"' || c === "`") {
         const end = closingQuote(raw, j + 1, c);
-        // 没闭合（跨行模板、或正则字面量里的引号）：这一行剩下的都当字符串，
-        // **不往下一行传递任何状态**。
-        if (end === -1) break;
+        // **没闭合就只跳过这一个字符，继续往下扫这一行**，不 `break`。
+        //
+        // ⚠️ **`break` 是一个静默漏报，而且它就长在这道门禁自己身上**：
+        // 第一版在这里 `break`，于是**这一行剩下的全部内容直接从校验范围里消失**。
+        // 实测四条全部 `EXIT=0` 且照常打印 ✅：
+        //   `const RE = /['"]/;  // 见 …`（字符类正则里的引号）
+        //   `const RE = /don't/; // 见 …`（正则里的撇号）
+        //   跨行模板的收尾行 `` `; // 见 … ``
+        //   以及带断言性措辞的同一形状 ⇒ **规则 B 也一起瞎**。
+        // 我当时把这条边界写成「代价是**误报**不是漏报」——**那句话是假的**：
+        // 跨行传染是治好了，**同行残留没有**。
+        //
+        // 现在把没闭合的引号当成普通字符跳过去。代价（真·跨行模板的**首行**内容
+        // 会被当代码扫，里面若有 `//` 会误当注释）是**误报**——这一次是真的误报：
+        // 它多校验一段、会响；而漏报是静默的，两者代价差一个量级。
+        if (end === -1) continue;
         j = end;
         continue;
       }
@@ -338,8 +371,8 @@ function flatten(text) {
  * 紧跟一个空注释行）只会豁免掉标记那一行自己。
  *
  * **这是个逃生口，所以它自己要被看住**：脚本会报出用了几次，
- * `tests/unit/check-comment-refs.test.ts` 里有一格把"用在哪些文件的哪一行"钉成
- * 手写清单——想多用一次，就得在评审里被看见。
+ * `tests/unit/check-comment-refs.test.ts` 的「豁免清单与手写的这份一致」
+ * 把"用在哪些文件的哪一行"钉成手写清单——想多用一次，就得在评审里被看见。
  */
 const IGNORE_MARKER = "@refs-ignore";
 
@@ -450,10 +483,12 @@ for (const dir of SCAN_DIRS) {
         checked++;
         if (lineNo === null) {
           // 名字锚（可选）：`path「某某」`。在**压平后**的文本上找，见 flatten()。
-          const anchor = nameAnchorAfter(flat, target);
+          // **同一段话里对同一个文件的每一个锚都要校验**，不是只查第一个。
           const claims = CLAIM_MARKERS.some((k) => block.text.includes(k));
-          if (anchor !== null && !anchorMatches(target, anchor, claims)) {
-            errors.push(`${where} 指向 ${target}「${anchor}」，但那段文字不在那个文件里`);
+          for (const anchor of nameAnchorsAfter(flat, target)) {
+            if (!anchorMatches(target, anchor, claims)) {
+              errors.push(`${where} 指向 ${target}「${anchor}」，但那段文字不在那个文件里`);
+            }
           }
           continue;
         }
@@ -479,7 +514,7 @@ for (const dir of SCAN_DIRS) {
       for (const m of block.text.matchAll(TEST_FILE_RE)) {
         claimChecked++;
         if (m[2]) continue;                       // 已经带了行号
-        if (nameAnchorAfter(flat, m[1]) !== null) continue;          // 带了名字锚
+        if (nameAnchorsAfter(flat, m[1]).length > 0) continue;       // 带了名字锚
         errors.push(
           `${rel}:${block.line} 这段注释写了「${CLAIM_MARKERS.find((k) => block.text.includes(k))}」`
           + `却只给了裸文件名 ${m[1]}。指向必须写成 ${m[1]}:行号 或 ${m[1]}「用例名」`

@@ -76,7 +76,8 @@ describe("GET /admin/api/events", () => {
   });
 
   /**
-   * **评审 T2**：照抄 `tests/contract/admin-keys.test.ts` 同名用例的写法——姊妹端点
+   * **评审 T2**：照抄 `tests/contract/admin-keys.test.ts` 的
+   * 「generatedAt 来自注入的时钟，不是 handler 自己读的墙上时间」——姊妹端点
    * 早就这么钉了，事件端点这次才补上。用一个与 `makeApp()` 默认值（1000）不一样
    * 的字面量，避免"恰好撞上默认值"这种巧合掩盖"其实读的是 handler 自己的墙上
    * 时间"这类回归。

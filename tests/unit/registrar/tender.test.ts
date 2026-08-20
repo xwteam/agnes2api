@@ -84,6 +84,22 @@ describe("tendOnce", () => {
     expect(await repo.all()).toHaveLength(3);
   });
 
+  /**
+   * **主通道铸出来时，`mintedByChannel` 记的是主通道名。**
+   *
+   * ⚠️ **成因如实登记**：上一轮只补了「备通道铸出时不记到主通道名下」那一半，
+   * 变异「主通道铸出来的一律不记」（`if (ch !== primary) …`）**1541 全绿、ESCAPED**。
+   * **而生产上绝大多数轮次就是主通道铸出来的**——那正是 Task 6 每天要渲染的那一栏。
+   * 两格必须并排放：单独任何一格都留着一半可以随便改。
+   */
+  it("主通道铸出来时 mintedByChannel 记在主通道名下（不是空表）", async () => {
+    const { deps } = await makeDeps();
+    const out = await tendOnce(deps);
+    // 手写字面量：三把全由主通道 yyds 铸出。
+    expect(out.mintedByChannel).toEqual({ yyds: 3 });
+    expect(out.primaryChannel).toBe("yyds");
+  });
+
   it("已达目标数时不铸", async () => {
     const { repo, deps } = await makeDeps();
     for (const k of ["a", "b", "c"]) await repo.add(k);
