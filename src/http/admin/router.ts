@@ -77,8 +77,10 @@ const REJECT_MESSAGE: Readonly<Record<NonNullable<AdminTokenCheck["reason"]>, st
     + "② 除 TAB 外的其余控制字符（0x01–0x08、0x0B、0x0C、0x0E–0x1F、0x7F）"
     + "浏览器送得出去，但会被 HTTP 解析器判成 400 Bad Request；"
     + "③ TAB 与 é / £ / 不间断空格这类 0x80–0xFF 的字符**其实送得出去也能用**，"
-    + "拦它是本网关的稳健性取舍（环境变量按 UTF-8 解、HTTP 头值按 Latin-1 解，"
-    + "两边的口径在这一段并不由规范保证一致；RFC 9110 也已把这段标为弃用），"
+    + "拦它们是本网关的稳健性取舍、不是物理限制，而且两者的理由不同："
+    + "TAB 是不可见字符，粘进配置里没人看得见；"
+    + "0x80–0xFF 则是编码口径问题（环境变量按 UTF-8 解、HTTP 头值按 Latin-1 解，"
+    + "两边在这一段并不由规范保证一致；RFC 9110 也已把这段标为弃用）。"
     + "请改用纯 ASCII 口令。"
     + "中间带空格是允许的（passphrase 式口令送得出去，也送得到），"
     + "首尾空白另有 whitespace_padded 那条管着",
