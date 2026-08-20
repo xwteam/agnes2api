@@ -61,7 +61,7 @@
   flex: none; padding: 0 2px; font-size: 16px; line-height: 1;
   color: inherit; background: transparent; border: 0; border-radius: var(--radius-sm);
 }
-.toast-close:hover { background: rgba(0, 0, 0, 0.15); }
+.toast-close:hover { background: var(--overlay-hover); }
 
 /* ── modal ──────────────────────────────────────────────── */
 .modal-back {

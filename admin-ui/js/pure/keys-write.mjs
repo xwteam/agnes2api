@@ -25,9 +25,35 @@ export function isDeletable(view) {
   return !!(view && (view.disabled === true || view.evicted === true));
 }
 
-/** 「清冷却」按钮只在这把 key 确实处于冷却档时才有意义。 */
-export function canClearCooldown(view) {
-  return !!(view && view.bucket === "cooling");
+/**
+ * 单条 `DELETE` 的 409 拒绝是不是「必须先停用」这一种。
+ *
+ * ⚠️ **它与批量路径的判据是同一件事的两种形状**：单条是 HTTP 409 + 顶层
+ * `reason`，批量是 HTTP 200 + 逐项 `reason`（`bulkResultSummary()` 判的就是
+ * 后一种，见该函数的说明）。两条路径各自读自己那种形状，但「reason 字符串
+ * 是不是等于 `must_disable_first`」这条比较本身只应该有一份实现——原来它
+ * 直接写在 `sec-keys.js` 的 `deleteOne()` 里，评审指出这与文件头「取值决策
+ * 一律不写在这里」的说法矛盾（它确实是一条判据，只是恰好也有测试守着），
+ * 现在搬到这里，两边都不用再各自比较字符串。
+ */
+export function isMustDisableFirstConflict(status, reason) {
+  return status === 409 && reason === "must_disable_first";
+}
+
+/**
+ * 「清冷却」按钮只在这把 key 确实处在冷却期时才有意义。
+ *
+ * ⚠️⚠️ **判据是 `cooldownUntil > now`，不是 `bucket === "cooling"`**（评审实测抓到
+ * 的一个真缺陷）：`bucket` 是 `src/core/admin/key-view.ts` 的 `keyBucket()` 按
+ * `disabled > evicted > cooling > fresh` 算出来的**优先级投影**，一把「已停用
+ * 且仍在冷却」的 key 的 `bucket` 是 `"disabled"`，不是 `"cooling"`——但它的
+ * `cooldownUntil` 确实还没到，后端的 `PATCH { clearCooldown: true }` 照样接受、
+ * 照样清得掉。拿 `bucket` 当判据会让这把 key 的「清冷却」按钮永远禁用，即使
+ * 运维刚把它启用回来——**按钮说「不能」，后端说「能」，两边对不上**。
+ */
+export function canClearCooldown(view, now) {
+  return !!(view && typeof view.cooldownUntil === "number" && typeof now === "number"
+    && view.cooldownUntil > now);
 }
 
 /** 「解除剔除」按钮只在这把 key 确实被剔除时才有意义。 */
@@ -107,6 +133,24 @@ export function pruneSelection(selectedIds, items) {
 }
 
 /**
+ * 表头「全选本页」复选框该不该打勾。
+ *
+ * **空页（`pageIds.length === 0`）恒不打勾**，即使 `every()` 对空数组恒真——
+ * 这不是数学上的边界情形，是一条产品判据：读失败 / 空列表时那一列没有任何
+ * 一行，勾选框打上勾等于在向运维宣称"我选中了点东西"，而屏幕上什么都没有。
+ */
+export function headerSelectAllChecked(pageIds, selectedIds) {
+  const ids = Array.isArray(pageIds) ? pageIds : [];
+  const selected = Array.isArray(selectedIds) ? selectedIds : [];
+  return ids.length > 0 && ids.every((id) => selected.includes(id));
+}
+
+/** 批量条该不该出现。设计文档 §10.2：「选中才出现」。 */
+export function bulkBarVisible(selectedCount) {
+  return typeof selectedCount === "number" && selectedCount > 0;
+}
+
+/**
  * `POST /admin/api/keys/bulk` 的逐项结果汇总成面板要显示的四个数。
  *
  * ⚠️⚠️ **这个函数存在的全部理由**：`bulk` 端点的 HTTP 状态码永远是 200
@@ -177,6 +221,41 @@ export function importResultCounts(body) {
     reset: typeof b.reset === "number" && Number.isFinite(b.reset) ? b.reset : 0,
   };
 }
+
+/**
+ * 一条错误 `message` 是不是"内部码"，不该原样丢给运维看。
+ *
+ * ⚠️⚠️ **这条判据存在的理由是 `sec-keys.js` 一句被评审探针证伪的注释**：
+ * 原来那句「绝不把裸的 `http_500` 这类内部码丢给运维」只判断了"是不是非空
+ * 字符串"，而 `js/api.js` 的 `json()` 在响应体没有 `error.message` 时把
+ * message 落成 `` `http_${res.status}` ``（如 `"http_500"`），401/会话过期时
+ * 落成字面量 `"unauthorized"` / `"session_expired"`——三种都是非空字符串，
+ * 会原样出现在 toast 里。
+ *
+ * **这不是全部破口**：后端校验类 400 的 `error.message` 是中文散文（例如
+ * note 超长时的「note 最长 200 个字符」），没有配套的机器可读 `reason` 字段
+ * （不像 409 `must_disable_first` 那样），这条判据拦不住它——那句中文会被
+ * 直接投到 ja/en/ko 的面板上。这是全面板第一处把后端原始 message 渲染给
+ * 用户的地方，机制性修法（后端补机器可读 code、前端按 code 查五语言字典）
+ * 超出本任务范围，如实登记，不在这里假装解决。
+ */
+export function isOpaqueErrorMessage(message) {
+  if (typeof message !== "string" || message === "") return true;
+  return /^http_\d+$/.test(message) || message === "unauthorized" || message === "session_expired";
+}
+
+/**
+ * 备注框的字符上限，与 `src/http/admin/handlers/keys-write.ts` 的
+ * `MAX_NOTE_LENGTH` 保持一致——这个常量只用来给 `<textarea>` 一个 `maxlength`
+ * 提示，真正的边界仍然由后端强制（超长会 400，前端不重复实现那条校验）。
+ *
+ * ⚠️ **它原来是 `sec-keys.js` 里一个本地常量，没有任何测试钉着它的值**——
+ * 改成 20 也不会有任何东西变红，而 200 这个数字本身是一条与后端契约对齐的
+ * 判据（不是随手选的），理应像 `MAX_IMPORT_KEYS` / `MAX_NOTE_LENGTH` 在
+ * `tests/contract/admin-keys-write.test.ts`「三个边界常量写字面量钉死」那格
+ * 一样被钉住。这里的对应测试见 `tests/ui/keys-write.test.ts`「是 200，不是别的数字」。
+ */
+export const NOTE_MAX_LENGTH = 200;
 
 /**
  * 备注编辑框的内容转成 PATCH 请求体里的 `note` 字段。

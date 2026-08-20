@@ -11,10 +11,25 @@
  * 的 showSection。**板块内不许监听 langchange**——框架层会 apply(document) 之后
  * 重跑一次 onShow()。
  *
- * 三条纪律：①一切来自接口的内容一律 textContent；②**取值决策一律不写在这里**，
- * 全在 `js/pure/keys.mjs`（只读部分）与 `js/pure/keys-write.mjs`（写操作）里，
+ * 三条纪律：①一切来自接口的内容一律 textContent；②**取值决策原则上不写在这里**，
+ * 绝大多数在 `js/pure/keys.mjs`（只读部分）与 `js/pure/keys-write.mjs`（写操作）里，
  * 分别由 `tests/ui/keys.test.ts` 与 `tests/ui/keys-write.test.ts` 跑着
- * （admin-ui/README.md 硬规则 1）。这个文件只剩 DOM 拼装、事件绑定与网络调用；
+ * （admin-ui/README.md 硬规则 1）。
+ *
+ * ⚠️⚠️ **「一律不写在这里」这句话被评审证伪过一次，别再说"一律"**：早先的版本
+ * 与本文件的一个更早草稿都这么写，而下面这些判据当时确实住在这个文件里：
+ *   · `headerSelectAllChecked` / `bulkBarVisible` / `isMustDisableFirstConflict` /
+ *     `isOpaqueErrorMessage` / `NOTE_MAX_LENGTH`
+ *     ——**已经搬进 `pure/keys-write.mjs`**，本文件现在调用它们；
+ *   · **仍然留在这里、且被判定为可接受的**（同类先例：`state.page > 1` 这条
+ *     翻页守卫从 P3b 起一直就在板块文件里，从未被要求搬走）：
+ *     `runBulkWithConfirm` 的 `ids.length === 0` 早退——这是"点击时校验参数
+ *     非空"这一类事件处理器常规写法，不是一条业务判据，DOM 测试直接覆盖它
+ *     （`tests/ui/dom/keys-actions.test.ts` 的「批量条一把都没选中时点击批量按钮：
+ *     不发任何请求」）。
+ * 这条纪律的诚实版本是**"取值决策原则上不写在这里，例外必须在这里说清楚是哪些、
+ * 为什么留下"**，不是一句无条件的"一律"。
+ *
  * ③ **`note` 是第一个「运维自由输入、又会被投影进面板」的字段**（见
  * `src/core/admin/key-view.ts` 的 `KeyView.note` 说明）——后端不转义，
  * 这里必须用 `textContent` 渲染，绝不能拼进 `innerHTML`。本文件全程只用
@@ -33,19 +48,16 @@ import {
 // （硬规则 1：两个板块的取值决策不许各写一份）。
 import { poolKnobs, offsetMs } from "./pure/overview.mjs";
 import {
-  isDeletable, canClearCooldown, canUnevict, canClearStrikes, toggleDisableLabelKey,
-  rowActionNeedsConfirm, bulkNeedsConfirm, selectAllIds, pruneSelection,
+  isDeletable, isMustDisableFirstConflict, canClearCooldown, canUnevict, canClearStrikes,
+  toggleDisableLabelKey, rowActionNeedsConfirm, bulkNeedsConfirm,
+  selectAllIds, pruneSelection, headerSelectAllChecked, bulkBarVisible,
   bulkResultSummary, bulkResultKey, importLines, hasImportableContent,
-  importResultCounts, noteToPatch,
+  importResultCounts, noteToPatch, NOTE_MAX_LENGTH, isOpaqueErrorMessage,
 } from "./pure/keys-write.mjs";
 
 const PAGE_SIZE = 20;
 /** 搜索防抖。每敲一个字符打一次接口的话，大池子下每次都要重投影 + 序列化整池。 */
 const SEARCH_DEBOUNCE_MS = 250;
-/** 备注框的字符上限，与 `src/http/admin/handlers/keys-write.ts` 的
- *  `MAX_NOTE_LENGTH` 保持一致——这里只是给 `<textarea>` 一个 `maxlength` 提示，
- *  真正的边界仍然由后端强制（超长会 400，前端不重复实现那条校验）。 */
-const NOTE_MAX_LENGTH = 200;
 
 const state = { bucket: "all", q: "", page: 1, size: PAGE_SIZE, autoSec: 0 };
 /** 批量条：当前页里被勾选的 id。换页 / 换筛选 / 重新拉取之后由 `pruneSelection()`
@@ -120,9 +132,10 @@ function selectCell(v) {
     if (box.checked) { if (!selected.includes(v.id)) selected.push(v.id); } else {
       selected = selected.filter((id) => id !== v.id);
     }
-    // 单行勾选只影响批量条的可见性与计数，不需要整表重渲（那会打断用户正在
-    // 连续勾选的动作、也会丢掉刚点开的下拉/焦点）。
+    // 单行勾选只影响批量条的可见性与计数、以及表头全选框要不要跟着打勾，
+    // 不需要整表重渲（那会打断用户正在连续勾选的动作、也会丢掉刚点开的下拉/焦点）。
     syncBulkBar();
+    syncHeaderCheckbox();
   });
   cell.appendChild(box);
   return cell;
@@ -145,7 +158,7 @@ function noteCell(v) {
  * `.disabled` 上——`isDeletable` 尤其要紧：判据错一个字符，运维就会看到一颗
  * 永远点不动、或者永远点得动却总是 409 的删除按钮。
  */
-function actionsCell(v) {
+function actionsCell(v, now) {
   const cell = el("td", { class: "row-actions" });
 
   const toggle = elI18n("button", toggleDisableLabelKey(v), { type: "button" });
@@ -153,7 +166,7 @@ function actionsCell(v) {
   cell.appendChild(toggle);
 
   const clearCooldown = elI18n("button", "keys.action.clearCooldown", { type: "button" });
-  clearCooldown.disabled = !canClearCooldown(v);
+  clearCooldown.disabled = !canClearCooldown(v, now);
   clearCooldown.addEventListener("click", () => patchAction(v.id, { clearCooldown: true }));
   cell.appendChild(clearCooldown);
 
@@ -198,17 +211,23 @@ function row(v, now, offset, approximate) {
   const err = lastErrorParts(v);
   tr.appendChild(el("td", null, err === null ? fmtDash(null) : `${err.kind}（${fmtInstant(err.at, offset)}）`));
   tr.appendChild(noteCell(v));
-  tr.appendChild(actionsCell(v));
+  tr.appendChild(actionsCell(v, now));
   return tr;
 }
 
+/** 当前页的 id 列表。`render()` 每次重算，`selectCell` 的单行勾选处理器靠它
+ *  同步表头全选框（那时手上只有一个 `v`，够不到 `items`）。 */
+let currentPageIds = [];
+
 /** 表头的全选复选框。**只对当前页 `items` 生效**（`selectAllIds`），
- *  勾选/取消都要整表重渲——每一行的 `.checked` 得跟着 `selected` 重算一遍。 */
+ *  勾选/取消都要整表重渲——每一行的 `.checked` 得跟着 `selected` 重算一遍。
+ *  同时把这颗复选框记进 `nodes.selectAllBox`，好让单行勾选也能同步它
+ *  （见 `syncHeaderCheckbox`）。 */
 function headerSelectCell(items) {
   const th = el("th");
   const box = el("input", { type: "checkbox" });
   const pageIds = selectAllIds(items);
-  box.checked = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
+  box.checked = headerSelectAllChecked(pageIds, selected);
   box.setAttribute("aria-label", t("keys.selectAll"));
   box.addEventListener("change", () => {
     if (box.checked) {
@@ -222,14 +241,26 @@ function headerSelectCell(items) {
     render();
   });
   th.appendChild(box);
+  if (nodes) nodes.selectAllBox = box;
   return th;
 }
 
 /** 批量条的可见性与「已选中 N 把」文案。挂在每次 render() 与每次单行勾选之后。 */
 function syncBulkBar() {
   const n = selected.length;
-  nodes.bulkBar.style.display = n > 0 ? "" : "none";
+  nodes.bulkBar.style.display = bulkBarVisible(n) ? "" : "none";
   nodes.bulkCount.textContent = t("keys.bulk.selectedCount", { count: n });
+}
+
+/**
+ * 表头「全选本页」复选框要不要跟着打勾。**单行勾选之后必须同步它**——不然
+ * 运维手动把当前页的每一行都勾完，表头那颗复选框还显示着"未全选"，看起来
+ * 像是漏了一行没勾上（评审可改项）。
+ */
+function syncHeaderCheckbox() {
+  if (nodes && nodes.selectAllBox) {
+    nodes.selectAllBox.checked = headerSelectAllChecked(currentPageIds, selected);
+  }
 }
 
 function render() {
@@ -238,6 +269,8 @@ function render() {
   const shown = loadError ? null : data;
   syncCounts(shown);
   syncBulkBar();
+  // 先归零，读失败 / 空列表时表头全选框不该记着上一次页面的 id 集合。
+  currentPageIds = [];
 
   // 两个旋钮的当前生效值可能比首次 render() 晚到（异步拉 /overview），
   // 每次 render() 都用 `knobs` 现有的值重写这两句——拿到之后立刻生效，没拿到时
@@ -267,6 +300,7 @@ function render() {
   // 畸形响应（items 不是数组）不会走到下面那个 for 里去抛异常。
   const items = itemsOf(shown);
   if (items === null) return;
+  currentPageIds = selectAllIds(items);
 
   const table = el("table");
   const head = el("tr");
@@ -331,10 +365,19 @@ function restartTimer() {
   if (state.autoSec > 0) timer = setInterval(() => { load(); }, state.autoSec * 1000);
 }
 
-/** 写操作失败时给用户看的话。优先用后端 `error.message`（人话），
- *  拿不到就退回一句通用文案，绝不把裸的 `http_500` 这类内部码丢给运维。 */
+/**
+ * 写操作失败时给用户看的话。优先用后端 `error.message`（人话），拿不到、
+ * 或者它是 `isOpaqueErrorMessage()` 判出来的内部码时退回一句通用文案。
+ *
+ * ⚠️ 这句原来写着"绝不把裸的 http_500 这类内部码丢给运维"，而当时的判据只看
+ * "是不是非空字符串"——那句话是假的（评审探针实测：500 无 message、401、
+ * 备注超长的中文 message 三种都会原样进 toast）。现在判据搬进了
+ * `pure/keys-write.mjs` 的 `isOpaqueErrorMessage()`，这里只调用它；那个函数的
+ * 说明里也如实登记了"后端中文校验 message 直投非中文面板"这个仍未关掉的破口。
+ */
 function errorMessage(e) {
-  return e && typeof e.message === "string" && e.message !== "" ? e.message : t("keys.writeFailed");
+  const raw = e && typeof e.message === "string" ? e.message : "";
+  return isOpaqueErrorMessage(raw) ? t("keys.writeFailed") : raw;
 }
 
 /** 单条 PATCH（停用/启用/清冷却/解除剔除/备注）的统一收尾：成功/失败都提示一次，
@@ -346,6 +389,11 @@ function patchAction(id, body) {
     .finally(() => { load(); });
 }
 
+/**
+ * 备注编辑。**`keepOpen: true`**——保存失败（网络 / 后端校验，例如超长）时
+ * 不关弹窗，运维刚打的字还在文本框里，不用重新点开再打一遍。只有真的存成功
+ * 才调用 `close()`。
+ */
 function editNote(view) {
   const textarea = el("textarea", { rows: "3", maxlength: String(NOTE_MAX_LENGTH) });
   textarea.value = view.note ?? "";
@@ -355,11 +403,11 @@ function editNote(view) {
     { labelKey: "common.cancel" },
     {
       labelKey: "keys.note.save",
-      onClick: () => {
+      keepOpen: true,
+      onClick: (close) => {
         api.patch(`/keys/${view.id}`, { note: noteToPatch(textarea.value) })
-          .then(() => toast(t("keys.actionOk"), "ok"))
-          .catch((e) => toast(errorMessage(e), "err"))
-          .finally(() => { load(); });
+          .then(() => { toast(t("keys.actionOk"), "ok"); close(); load(); })
+          .catch((e) => toast(errorMessage(e), "err"));
       },
     },
   ]);
@@ -370,8 +418,9 @@ function editNote(view) {
  *
  * ⚠️⚠️ **409 `must_disable_first` 与批量路径的 200 + 逐项 `reason` 是两种不同的
  * 形状**（见 `src/http/admin/handlers/keys-write.ts` 的 `keyDeleteHandler` 文件头）
- * ——这里从 `ApiError.status === 409` 与 `ApiError.body.reason` 两处取信息，
- * 给出一句比通用错误文案更准的提示；批量路径的对应处理在 `runBulk()`。
+ * ——这里从 `ApiError.status` 与 `ApiError.body.reason` 两处取信息，交给
+ * `isMustDisableFirstConflict()` 判，给出一句比通用错误文案更准的提示；
+ * 批量路径的对应处理在 `runBulk()`。
  */
 function deleteOne(view) {
   if (!isDeletable(view)) return;
@@ -379,7 +428,7 @@ function deleteOne(view) {
     api.del(`/keys/${view.id}`)
       .then(() => toast(t("keys.actionOk"), "ok"))
       .catch((e) => {
-        if (e && e.status === 409 && e.body && e.body.reason === "must_disable_first") {
+        if (e && isMustDisableFirstConflict(e.status, e.body && e.body.reason)) {
           toast(t("keys.mustDisableFirst"), "warn");
         } else {
           toast(errorMessage(e), "err");
@@ -420,6 +469,11 @@ function clearStrikesAction(view) {
  * 它藏在 HTTP 200 的响应体里，本来就是最容易被忽略的那类信息，4 秒自动消失
  * 等于把一条诚实信号做成了几乎看不见的信号。全部成功时仍是普通的 4 秒 toast
  * ——不需要留痕的信息没必要多一次点击。
+ *
+ * ⚠️ **`catch` 分支（整批请求都没打成，例如网络中断 / 500）同样 `sticky`**
+ * ——它与"200 但一部分被拒"是同一类"不看见就会误判"的信息，评审指出第一版
+ * 漏了这一半：只有响应体里带 `results` 的那种失败被认真对待，请求本身失败
+ * 时反而退回普通的 4 秒 toast，两种"失败"里更严重的那种被更轻地对待了。
  */
 async function runBulk(op, ids) {
   try {
@@ -430,7 +484,7 @@ async function runBulk(op, ids) {
     if (summary.notFound > 0) text += t("keys.bulk.notFoundSuffix", summary);
     toast(text, summary.failed > 0 ? "warn" : "ok", summary.failed > 0 ? { sticky: true } : undefined);
   } catch (e) {
-    toast(errorMessage(e), "err");
+    toast(errorMessage(e), "err", { sticky: true });
   } finally {
     selected = [];
     load();
@@ -474,6 +528,12 @@ function buildBulkBar() {
  * 导入弹窗。**textarea 的内容原样按行发给后端**（`importLines()`），不在这里
  * trim 整段、也不过滤空行——过滤空行会让后端报回来的行号（1 基、按原始下标算）
  * 与运维在文本框里数到的行号错位，见 `src/core/keypool-repo.ts` 的 `addMany()`。
+ *
+ * ⚠️⚠️ **`keepOpen: true`，评审抓到的一个真缺陷**：`openModal` 原来的 `onClick`
+ * 无条件先关弹窗再跑回调，于是校验失败（空提交）或网络/后端失败时，弹窗已经
+ * 关掉、粘进去的最多 200 行原文全部丢失，运维只看到一句 toast、没有机会照着
+ * 报错改正再重试。现在只有**真的拿到成功响应**才调用 `close()`；校验失败与
+ * 请求失败都让弹窗留在原地，文本框里的内容原封不动。
  */
 function openImport() {
   const textarea = el("textarea", { rows: "8", "data-i18n-ph": "keys.import.placeholder" });
@@ -493,7 +553,8 @@ function openImport() {
     { labelKey: "common.cancel" },
     {
       labelKey: "keys.import.submit",
-      onClick: () => {
+      keepOpen: true,
+      onClick: (close) => {
         const lines = importLines(textarea.value);
         if (!hasImportableContent(lines)) { toast(t("keys.import.emptyErr"), "warn"); return; }
         api.post("/keys", { keys: lines, resetExisting: resetBox.checked })
@@ -506,9 +567,10 @@ function openImport() {
               text += t("keys.import.invalidLines", { lines: c.invalidLines.join(", ") });
             }
             toast(text, c.invalidLines.length > 0 ? "warn" : "ok");
+            close();
+            load();
           })
-          .catch((e) => toast(errorMessage(e), "err"))
-          .finally(() => { load(); });
+          .catch((e) => toast(errorMessage(e), "err"));
       },
     },
   ]);

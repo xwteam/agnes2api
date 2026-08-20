@@ -44,18 +44,30 @@ export interface FakeEvent {
   preventDefault(): void;
   defaultPrevented: boolean;
   target: FakeElement | null;
+  /** 只有键盘事件（`keydown`）会带这两个字段，P3c Task 4 的焦点管理测试要用。 */
+  key?: string;
+  shiftKey?: boolean;
 }
 
-function makeEvent(type: string, detail?: unknown): FakeEvent {
+function makeEvent(type: string, detail?: unknown, extra?: { key?: string; shiftKey?: boolean }): FakeEvent {
   const ev: FakeEvent = {
     type,
     detail,
     defaultPrevented: false,
     target: null,
     preventDefault() { ev.defaultPrevented = true; },
+    ...(extra || {}),
   };
   return ev;
 }
+
+/**
+ * **模块级的"当前聚焦元素"。**不挂在某一棵 FakeDom 树上——`createFakeDom()`
+ * 每次调用都建一棵新树，但测试里同一时刻只会有一棵树被 `installFakeDom`
+ * 装成全局 `document`，所以模块级状态足够，不需要每个 FakeElement 都持一份
+ * 指回自己所属文档的引用（那会让构造函数签名到处改）。
+ */
+let activeElement: FakeElement | null = null;
 
 export class FakeClassList {
   private readonly set = new Set<string>();
@@ -167,6 +179,23 @@ export class FakeElement {
     return ev;
   }
 
+  /**
+   * **P3c Task 4 新增**：真实 DOM 的 `focus()`/`blur()` 会移动
+   * `document.activeElement`，本仓的焦点管理（modal 焦点陷阱、toast 关闭按钮
+   * 拿到初始焦点）第一次需要用得到这件事——之前 24 个 API 里没有它。
+   * 不派发 `focus`/`blur` 事件：目前没有任何板块代码监听这两个事件，加了
+   * 也验证不到什么，只会多一处要维护的假设。
+   */
+  focus(): void { activeElement = this; }
+  blur(): void { if (activeElement === this) activeElement = null; }
+
+  /** 键盘事件。`key` 是 `"Tab"` / `"Escape"` 这类值，`opts.shiftKey` 给 Shift+Tab 用。 */
+  keydown(key: string, opts?: { shiftKey?: boolean }): FakeEvent {
+    const ev = makeEvent("keydown", undefined, { key, shiftKey: !!(opts && opts.shiftKey) });
+    this.dispatchEvent(ev);
+    return ev;
+  }
+
   /** 深度优先的全部后代（含自己）。 */
   walk(): FakeElement[] {
     return [this, ...this.children.flatMap((c) => c.walk())];
@@ -215,6 +244,8 @@ export interface FakeDom {
     documentElement: FakeElement;
     body: FakeElement;
     hidden: boolean;
+    /** 当前聚焦的元素（`FakeElement.focus()`/`blur()` 挪动它），无聚焦时 `null`。 */
+    readonly activeElement: FakeElement | null;
     createElement(tag: string): FakeElement;
     createElementNS(ns: string, tag: string): FakeElement;
     getElementById(id: string): FakeElement | null;
@@ -235,6 +266,9 @@ export interface FakeDom {
  * 免得夹具与 `admin-ui/index.html` 悄悄分叉时测试仍然全绿（那正是第 1 种假阳性）。
  */
 export function createFakeDom(): FakeDom {
+  // 每次"新开一个页面"都重置聚焦——不重置的话，上一个用例留下的 FakeElement
+  // 会作为"当前聚焦元素"泄漏进下一个用例，而两者的 DOM 树毫无关系。
+  activeElement = null;
   const html = new FakeElement("html");
   const body = html.appendChild(new FakeElement("body"));
   const ids = new Map<string, FakeElement>();
@@ -244,6 +278,7 @@ export function createFakeDom(): FakeDom {
     documentElement: html,
     body,
     hidden: false,
+    get activeElement() { return activeElement; },
     createElement: (tag) => new FakeElement(tag),
     createElementNS: (ns, tag) => new FakeElement(tag, ns),
     getElementById: (id) => ids.get(id) ?? null,

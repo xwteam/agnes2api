@@ -12,6 +12,11 @@
   --ok: #15803d; --ok-fg: #ffffff;
   --radius: 10px; --radius-sm: 6px; --gap: 16px; --gap-sm: 8px;
   --shadow: rgba(15, 18, 24, 0.12);
+  /* 有色背景（toast/badge 这类不跟 --panel 走的元素）上的 hover 遮罩。
+     只有一份定义、不按主题分叉：它是"在当前背景上压暗一层"的相对效果，
+     深色主题下 toast 背景同样是饱和/浅色（见 --danger 等在 dark 里的取值），
+     压暗一样成立，不需要为亮暗各写一份。 */
+  --overlay-hover: rgba(0, 0, 0, 0.15);
 }
 :root[data-theme="dark"] {
   --bg: #14161a; --panel: #1c1f26; --panel-2: #23262f; --text: #e7e9ee; --muted: #9aa1ad;

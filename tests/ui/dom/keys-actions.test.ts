@@ -138,6 +138,164 @@ describe("M2：全选只能选中当前页，不是全部筛选结果", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
+// 评审必改①：简报点名的四个行内/批量动作，原来全部"可以被改坏而不变红"。
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️ **这一组是评审探针实测出来的一等公民缺口**：本文件此前对这四个动作
+ * 只测了"按钮存不存在、可用性对不对"，从没断言过**点击之后到底发了什么**。
+ * 评审实测四种变异全部逃逸：
+ *   · 停用/启用发 `{ disabled: v.disabled }`（开关变成空操作）；
+ *   · 清冷却/解除剔除两颗按钮的可用性判据对调；
+ *   · 「批量停用」按钮实际发 `op: "clearCooldown"`；
+ *   · 备注保存发裸 `textarea.value`，绕过 `noteToPatch` 的"清空⇒null"。
+ * 唯一有请求体断言的是后来单独追加的 `clearStrikes`——原因很直接：追加它时
+ * 专门为它写了一格测试，而原本就在清单里的这四个只做了 UI、没做请求体断言。
+ * 下面逐条补齐，全部照抄 `clearStrikes` 那格的做法：`h.calls.find(c => c.method
+ * === "PATCH" / "POST")` 断言真正发出去的请求体。
+ */
+describe("评审必改①：四个行内/批量动作都必须有请求体断言，不能只测按钮渲染", () => {
+  it("停用/启用：请求体必须是当前状态取反，不许原样发一遍（开关变成空操作的变异）", async () => {
+    const items = [keyView({ id: "toggle-me", disabled: false })];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/toggle-me")) return { status: 200, body: { ok: true } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+
+    rowButton(section, "toggle-me", "keys.action.disable").click();
+    await settle();
+
+    const call = h.calls.find((c) => c.method === "PATCH" && c.url === "/admin/api/keys/toggle-me");
+    expect(call, "停用按钮没有真的发出 PATCH").toBeDefined();
+    expect(
+      (call?.body as { disabled: boolean })?.disabled,
+      "请求体里的 disabled 应该是 true（当前状态取反），原样发 false 就是把开关点成了空操作",
+    ).toBe(true);
+  });
+
+  /**
+   * **同一个夹具里放两把 key，两颗按钮的可用性与点击后的请求体都断到**——
+   * 只测一颗按钮"可用/禁用对不对"抓不住"两颗按钮的判据被整体对调"这种变异
+   * （两颗都测、都测反了，形状断言照样全绿；这里额外验证点击后确实发对了
+   * 字段名，把"判据对调"与"点击发错请求体"两种变异都堵上）。
+   */
+  it("清冷却 / 解除剔除：两颗按钮的可用性判据不能对调，点击后请求体字段名要对上", async () => {
+    const items = [
+      keyView({ id: "cooling-only", bucket: "cooling", cooldownUntil: NOW + 60_000, evicted: false }),
+      keyView({ id: "evicted-only", bucket: "evicted", cooldownUntil: 0, evicted: true }),
+    ];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/cooling-only")) return { status: 200, body: { ok: true } };
+      if (url.startsWith("/admin/api/keys/evicted-only")) return { status: 200, body: { ok: true } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+
+    expect(rowButton(section, "cooling-only", "keys.action.clearCooldown").disabled, "冷却中的 key，清冷却按钮应该可用").toBe(false);
+    expect(rowButton(section, "cooling-only", "keys.action.unevict").disabled, "没被剔除的 key，解除剔除按钮应该禁用——判据对调会让这里可用").toBe(true);
+    expect(rowButton(section, "evicted-only", "keys.action.clearCooldown").disabled, "没在冷却的 key，清冷却按钮应该禁用——判据对调会让这里可用").toBe(true);
+    expect(rowButton(section, "evicted-only", "keys.action.unevict").disabled, "被剔除的 key，解除剔除按钮应该可用").toBe(false);
+
+    rowButton(section, "cooling-only", "keys.action.clearCooldown").click();
+    await settle();
+    const clearCall = h.calls.find((c) => c.method === "PATCH" && c.url === "/admin/api/keys/cooling-only");
+    expect((clearCall?.body as { clearCooldown?: boolean })?.clearCooldown, "点了清冷却，请求体却不是 clearCooldown:true").toBe(true);
+
+    rowButton(section, "evicted-only", "keys.action.unevict").click();
+    await settle();
+    const unevictCall = h.calls.find((c) => c.method === "PATCH" && c.url === "/admin/api/keys/evicted-only");
+    expect((unevictCall?.body as { unevict?: boolean })?.unevict, "点了解除剔除，请求体却不是 unevict:true").toBe(true);
+  });
+
+  it("批量停用：op 必须是 disable，不许被换成同一批次里的另一个动作", async () => {
+    const items = [keyView({ id: "bulk-op-a" })];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/bulk")) {
+        return { status: 200, body: { results: [{ id: "bulk-op-a", ok: true, reason: null }] } };
+      }
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    const box = section.querySelectorAll('input[type="checkbox"]')[0]!;
+    box.checked = true;
+    box.change();
+    await settle();
+
+    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.bulk.disable")!.click();
+    await settle();
+    const call = h.calls.find((c) => c.url.startsWith("/admin/api/keys/bulk"));
+    expect((call?.body as { op?: string })?.op, "点的是「批量停用」，op 却不是 disable").toBe("disable");
+  });
+
+  it("批量清冷却：op 必须是 clearCooldown，不许被换成 disable", async () => {
+    const items = [keyView({ id: "bulk-op-b" })];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/bulk")) {
+        return { status: 200, body: { results: [{ id: "bulk-op-b", ok: true, reason: null }] } };
+      }
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    const box = section.querySelectorAll('input[type="checkbox"]')[0]!;
+    box.checked = true;
+    box.change();
+    await settle();
+
+    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.bulk.clearCooldown")!.click();
+    await settle();
+    const call = h.calls.find((c) => c.url.startsWith("/admin/api/keys/bulk"));
+    expect((call?.body as { op?: string })?.op, "点的是「批量清冷却」，op 却不是 clearCooldown").toBe("clearCooldown");
+  });
+
+  it("备注保存：清空文本框必须发 note: null，不许绕过 noteToPatch 发裸的空字符串", async () => {
+    const items = [keyView({ id: "note-target", note: "旧备注" })];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/note-target")) return { status: 200, body: { ok: true } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    rowButton(section, "note-target", "keys.action.note").click();
+    await settle();
+
+    const textarea = h.dom.document.querySelectorAll("textarea")[0]!;
+    textarea.value = "";
+    h.dom.document.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.note.save")!.click();
+    await settle();
+
+    const call = h.calls.find((c) => c.method === "PATCH" && c.url === "/admin/api/keys/note-target");
+    expect(
+      call?.body,
+      "清空文本框却发了裸的空字符串——绕过了 noteToPatch 的「清空⇒null」规则",
+    ).toEqual({ note: null });
+  });
+
+  /**
+   * 批量条空选择时点击不该发任何请求——这是 `runBulkWithConfirm` 里那条
+   * `ids.length === 0` 早退的行为覆盖（见 sec-keys.js 文件头关于"哪些判据
+   * 仍然合理地留在板块文件里"的说明）。
+   */
+  it("批量条一把都没选中时点击批量按钮：不发任何请求", async () => {
+    const items = [keyView({ id: "unselected" })];
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody(items) }
+      : { status: 200, body: {} }));
+    const before = h.calls.length;
+    // 批量条本来就因为没有选中项而隐藏，但按钮仍然存在于 DOM 里——
+    // 直接找到它触发点击，验证守卫本身，不依赖 CSS 可见性。
+    const bar = h.section("keys").querySelectorAll(".bulk-bar")[0]!;
+    bar.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.bulk.delete")!.click();
+    await settle();
+    expect(h.calls.length, "空选择时点击批量删除仍然发出了请求").toBe(before);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 // 2(a)：must_disable_first 的两种形状 —— 批量路径 200 + 逐项 reason
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -309,14 +467,38 @@ describe("2(b)：备注是第一个「运维自由输入又投影回面板」的
     expect(row.textContent, "备注没有以纯文本原样出现——很可能被当成 innerHTML 处理了、内容整个消失").toContain(payload);
   });
 
-  it("备注为 null 时显示 —，不是空字符串或字面 null", async () => {
+  /**
+   * ⚠️⚠️ **评审抓到的假阳性，已订正**：第一版断的是 `row.textContent`——但同一行
+   * 的冷却列 / 最后使用列在这份夹具下**同样**渲染 `—`，把备注格清空成空字符串
+   * 照样绿（判据看的是「这一行里有没有 —」，不是「备注格是不是 —」）。现在直接
+   * 取备注那一个 `<td>`（第 11 列，索引 10——按渲染顺序依次是 select / # / key /
+   * 状态 / 加入时间 / 最后使用 / 冷却剩余 / 连续失败 / 请求数 / 最近错误 / 备注 /
+   * 操作），断言精确到那一格。
+   */
+  it("备注为 null 时那一格显示 —，不是空字符串或字面 null", async () => {
     const items = [keyView({ id: "blank", note: null })];
     const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
       ? { status: 200, body: listBody(items) }
       : { status: 200, body: {} }));
     const row = h.section("keys").querySelectorAll('[data-key-id="blank"]')[0]!;
-    expect(row.textContent).toContain("—");
-    expect(row.textContent).not.toContain("null");
+    const cells = row.querySelectorAll("td");
+    const noteCell = cells[10]!;
+    expect(noteCell.textContent, "备注格没有渲染出 —").toBe("—");
+    expect(noteCell.textContent).not.toContain("null");
+  });
+
+  /**
+   * 反向自检（与上面那格互相印证）：**有真实备注时那一格必须是那段文字，
+   * 不是恒为 —**。少了这一格，"备注格恒显示 —" 这种实现也会让上面那格通过。
+   */
+  it("反向自检：备注有内容时那一格显示的是内容，不是恒为 —", async () => {
+    const items = [keyView({ id: "has-note", note: "换了下游客户" })];
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody(items) }
+      : { status: 200, body: {} }));
+    const row = h.section("keys").querySelectorAll('[data-key-id="has-note"]')[0]!;
+    const noteCell = row.querySelectorAll("td")[10]!;
+    expect(noteCell.textContent).toBe("换了下游客户");
   });
 });
 

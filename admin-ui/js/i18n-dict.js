@@ -118,9 +118,9 @@ export const I18N = {
   "keys.next":        { "zh-CN": "下一页", "zh-TW": "下一頁", en: "Next", ja: "次へ", ko: "다음" },
 
   // ── Key 池板块：写操作（P3c Task 4）─────────────────────────────────────────
-  // 行内动作列。**停用/启用/清冷却/解除剔除/删除**，与后端 `PATCH /admin/api/keys/:id`
-  // 的五个字段里除 `clearStrikes` 外的四个逐一对应（`clearStrikes` 不在本期简报
-  // 点名的范围内，见 `js/pure/keys-write.mjs` 与本任务报告的裁定）。
+  // 行内动作列。**停用/启用/清冷却/清连续失败/解除剔除/删除**，与后端
+  // `PATCH /admin/api/keys/:id` 支持的五个字段逐一对应（见下面 `keys.action.clearStrikes`
+  // 那条注释——它是控制端追加裁定补的，简报第一版的动作清单漏列了它）。
   "keys.action.disable":      { "zh-CN": "停用", "zh-TW": "停用", en: "Disable", ja: "無効化", ko: "정지" },
   "keys.action.enable":       { "zh-CN": "启用", "zh-TW": "啟用", en: "Enable", ja: "有効化", ko: "활성화" },
   "keys.action.clearCooldown":{ "zh-CN": "清冷却", "zh-TW": "清冷卻", en: "Clear cooldown", ja: "クールダウン解除", ko: "쿨다운 해제" },
