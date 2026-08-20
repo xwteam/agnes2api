@@ -91,10 +91,24 @@ export function itemsOf(body) {
  * 只要视图里还有数据，哪怕最新一轮轮询失败了，也继续显示已有数据（轮询指示灯
  * 会转成"出错"提示这件事，不需要靠替换整个列表区来提示）；只有视图本身是空的
  * 且这一轮又失败了，才说"读取失败"。
+ *
+ * ⚠️ **`cleared` 这一档是全分支评审 I5，修的是一个已经上线的、面板对运维说假话的
+ * 缺陷。** 点"清空"之后 `view` 变成 `[]`，而原来这里只看 `viewLength === 0`，
+ * 于是列表区显示**「还没有事件。」**——与同一个按钮的 tooltip（"只清前端当前显示的
+ * 列表，不影响服务端已落盘的事件"）当场自相矛盾，而且它说的那件事是假的：服务端
+ * 明明有事件。运维照着这句话会得出"这个部署从来没出过事"的结论。
+ *
+ * **"清空"的语义刻意保持不变**（游标不回退，被清掉的不会自动回来）：这个按钮的
+ * 用途就是"把噪音清掉、从此刻起盯着新的"。把游标一起重置的话，下一轮冷读会立刻
+ * 把同一批事件原样拉回来——按钮看上去等于没生效。所以这里修的是**措辞**，
+ * 并由 `ev.cleared` 把恢复路径（下载 / 刷新页面）一并说清楚。
  */
-export function eventsListMessageKey(loadError, viewLength, filteredLength) {
+export function eventsListMessageKey(loadError, viewLength, filteredLength, cleared) {
   if (loadError && viewLength === 0) return "common.loadFailed";
-  if (filteredLength === 0) return viewLength === 0 ? "ev.empty" : "ev.noMatch";
+  if (filteredLength === 0) {
+    if (viewLength > 0) return "ev.noMatch";
+    return cleared === true ? "ev.cleared" : "ev.empty";
+  }
   return null;
 }
 

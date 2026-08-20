@@ -18,7 +18,24 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const ROOT = fileURLToPath(new URL("../", import.meta.url));
+/**
+ * 用法：
+ *   node scripts/check-i18n.mjs            # 查本仓的 admin-ui/
+ *   node scripts/check-i18n.mjs <根目录>    # 查别处的 admin-ui/
+ *
+ * 第二种形态**只给 tests/unit/check-i18n.test.ts 那份元测试用**（全分支评审 I2）。
+ * 在它出现之前，这道门禁自己**零覆盖**：八条判据里任何一条被写坏（正则打错一个
+ * 字符、循环 `continue` 错一层、`errors.push` 忘了写），门禁都会安静地 exit 0，
+ * 而"门禁绿了"恰恰是所有人赖以放心的那个信号。不能拿真仓做变异——那要往
+ * `admin-ui/` 里塞坏文件；给一个根目录入参，元测试就能在临时目录里造八种坏法，
+ * 逐条确认它真的报错、且报的是对的那一条。
+ *
+ * 路径一律按这个 ROOT 解析、**不按 cwd**：CI、git hook、编辑器任务都可能从别的
+ * 目录发起调用，按 cwd 解析会静默地检查一个空目录然后报"全部对得上"。
+ */
+const ROOT = process.argv[2]
+  ? fileURLToPath(pathToFileURL(join(process.argv[2], "/")))
+  : fileURLToPath(new URL("../", import.meta.url));
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"];
 const BANNED = [
   "推荐", "推薦", "建议", "建議", "默认", "預设", "預設", "主流", "首选", "首選", "优先", "優先",

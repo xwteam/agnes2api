@@ -148,9 +148,16 @@ describe("i18n 字典", () => {
    * 这一条按**命名空间前缀**扫字面量补上那个缺口：admin-ui 的 JS 里凡是长得像
    * `"<已知命名空间>.<键名>"` 的字符串，都必须真的在字典里。
    * 前缀表手写，加新命名空间要在这里表态——这与本仓其它「手写清单」是同一套做法。
+   *
+   * ⚠️ **`ov` 与 `ev` 是全分支评审 I6 补进来的，补之前它们不在表里**——
+   * 而那正是 P3b 本期新增的两个板块（概览、事件）。"加新命名空间要在这里表态"
+   * 这句话就写在上面一行，本期加了两个板块却没人回来表态。
+   * 评审实测：把 `sec-overview.js` 的 `elI18n("h2", "ov.title")` 改成 `"ov.titel"`，
+   * **三道 i18n 门禁全部沉默**，概览页的主标题在五种语言下原样显示 `ov.titel`。
+   * 下面那条"至少 20 个"的反向自检也拦不住它：Key 池板块一家就够 20 个。
    */
   it("板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里", () => {
-    const NAMESPACES = ["gate", "nav", "shell", "common", "reg", "keys"] as const;
+    const NAMESPACES = ["gate", "nav", "shell", "common", "reg", "keys", "ov", "ev"] as const;
     const re = new RegExp(`"((?:${NAMESPACES.join("|")})\\.[A-Za-z0-9_.]+)"`, "g");
     const walk = (d: string): string[] =>
       readdirSync(d).sort().flatMap((n) => {
@@ -171,5 +178,29 @@ describe("i18n 字典", () => {
     expect([...referenced].filter((k) => !(k in I18N)).sort(), "板块引用了字典里没有的 key").toEqual([]);
     // 反向自检：扫描坏成空集时上面那条恒绿。Task 4 的 Key 池板块一家就有 20+ 个。
     expect(referenced.size, "一个都没扫到，扫描本身坏了").toBeGreaterThanOrEqual(20);
+    /**
+     * **逐命名空间的反向自检**（全分支评审 I6）。
+     *
+     * 上面那条"至少 20 个"的总量门槛**拦不住"某个前缀被从表里删掉"**——Key 池板块
+     * 一家就够 20 个，把 `ov`/`ev` 删掉总量照样过关，而那正是这次真实发生的事
+     *（本期新增两个板块，谁也没回来把它们加进表里，整整一期无人发现）。
+     * 判据改成：**"这次扫描一个引用都没扫到的前缀"这个集合，必须等于一份手写清单**。
+     * 两个方向都会红：删掉一个在用的前缀会让它进这个集合；某个今天为空的前缀将来
+     * 真的被 JS 引用了，也会让它离开这个集合、逼人回来重新表态。
+     *
+     * 今天为空的三个，各有其**如实的**理由（都不是缺陷）：
+     * · `shell` / `nav` —— 壳层的标题与三个导航按钮的文案全部写在 `index.html` 的
+     *   `data-i18n` 属性里，而本条扫的是 `admin-ui/js` 下的 `.js`/`.mjs`。那一半由
+     *   `scripts/check-i18n.mjs` 的第 ① 条覆盖（它连 `.html` 一起走）。
+     * · `reg` —— 注册机板块整个排在 P3c，字典先铺好、还没有任何消费者
+     *   （`scripts/check-i18n.mjs` 会把它们报成"未被引用"的**警告**）。
+     */
+    const emptyNamespaces = NAMESPACES
+      .filter((ns) => ![...referenced].some((k) => k.startsWith(`${ns}.`)));
+    expect(
+      [...emptyNamespaces].sort(),
+      "一个引用都没扫到的命名空间集合变了——要么前缀写错/该删，要么某个空的前缀"
+      + "终于有了 JS 消费者，回来把上面那段说明改准",
+    ).toEqual(["nav", "reg", "shell"]);
   });
 });

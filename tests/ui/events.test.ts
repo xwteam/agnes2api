@@ -127,6 +127,34 @@ describe("eventsListMessageKey：列表区该显示哪条消息", () => {
   it("有数据可显示时返回 null（显示表格）", () => {
     expect(eventsListMessageKey(false, 5, 5)).toBeNull();
   });
+
+  /**
+   * **全分支评审 I5：面板对运维说假话（这是一个已经上线的缺陷）。**
+   *
+   * 点「清空」之后 `view` 变成 `[]`，原来只看 `viewLength === 0` ⇒ 列表区显示
+   * 「还没有事件。」——与同一个按钮的 tooltip（「不影响服务端已落盘的事件」）
+   * 当场自相矛盾，而且它说的那件事是假的：服务端明明有事件。运维照着这句话会
+   * 得出「这个部署从来没出过事」的结论，而那正是事件板块存在的全部理由。
+   *
+   * **两个方向都断言**：只写正向那格（清空后 ⇒ ev.cleared）的话，把判据改成
+   * 「一律返回 ev.cleared」也能全绿——而那会让一个真正全新的部署被告知
+   * 「已清空本页显示」，同样是假话，只是方向反过来。
+   */
+  it("点过清空 ⇒ ev.cleared（不是 ev.empty —— 服务端明明有事件）", () => {
+    expect(eventsListMessageKey(false, 0, 0, true)).toBe("ev.cleared");
+  });
+  it("没点过清空、视图本来就是空的 ⇒ 仍然是 ev.empty（反向：判据不许一律说『已清空』）", () => {
+    expect(eventsListMessageKey(false, 0, 0, false)).toBe("ev.empty");
+  });
+  it("cleared 缺省（调用方没传）等同于 false —— 旧调用点不会被静默改语义", () => {
+    expect(eventsListMessageKey(false, 0, 0, undefined)).toBe("ev.empty");
+  });
+  it("清空之后遇上读取失败：仍然先报 loadFailed（那是更要紧的那件事）", () => {
+    expect(eventsListMessageKey(true, 0, 0, true)).toBe("common.loadFailed");
+  });
+  it("清空之后又拉到了新事件、但被搜索框滤空 ⇒ noMatch（不是 ev.cleared）", () => {
+    expect(eventsListMessageKey(false, 3, 0, true)).toBe("ev.noMatch");
+  });
 });
 
 describe("shardIdOf：本 isolate 的分片 id（评审 M2），绝不伪造", () => {

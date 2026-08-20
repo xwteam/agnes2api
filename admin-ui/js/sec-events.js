@@ -34,6 +34,14 @@ let timer = null;
 let abort = null;
 /** 客户端已攒下的视图（ts 降序，与后端契约一致；渲染前用 orderForDisplay 反转）。 */
 let view = [];
+/**
+ * 「视图是被『清空』按钮清掉的，不是本来就没有事件」（全分支评审 I5）。
+ *
+ * 只影响列表区那句话该怎么写（判据在 `pure/events.mjs` 的 `eventsListMessageKey`），
+ * 不影响游标——被清掉的事件**刻意**不会自动回来，理由见那个函数的说明。
+ * 换筛选级别时归零：那时视图是被整段重拉的，不是被清掉的。
+ */
+let cleared = false;
 let lastStatus = { dropped: null, budgetExhausted: null, truncated: null, buffered: null, cursorAhead: null };
 /** 最近一次成功响应里的本 isolate 分片 id（评审 M2），驱动轮询指示灯的提示文案。 */
 let lastShardId = null;
@@ -132,7 +140,7 @@ function render() {
   host.textContent = "";
 
   const filtered = view.filter((item) => matchesSearch(item, state.q));
-  const messageKey = eventsListMessageKey(loadError, view.length, filtered.length);
+  const messageKey = eventsListMessageKey(loadError, view.length, filtered.length, cleared);
   if (messageKey !== null) {
     host.appendChild(elI18n("p", messageKey, { class: "muted" }));
     return;
@@ -174,6 +182,8 @@ async function poll() {
     const outcome = pollOutcome(pollState, items, body && body.cursor, lastStatus.cursorAhead);
     if (outcome.resetView) view = [];
     view = mergeIntoView(view, items);
+    // 视图里重新有内容了，「已清空」那句话就不再成立（它只描述"空是怎么来的"）。
+    if (view.length > 0) cleared = false;
     pollState = outcome.next;
   } catch (e) {
     if (e && e.name === "AbortError") return;
@@ -261,7 +271,10 @@ function buildToolbar() {
 
   const clearBtn = elI18n("button", "ev.clear", { type: "button", "data-i18n-title": "ev.clearTip" });
   clearBtn.title = t("ev.clearTip");
-  clearBtn.addEventListener("click", () => { view = []; render(); });
+  // **清空之后必须置位 `cleared`**（全分支评审 I5）：不置位的话列表区会显示
+  // 「还没有事件。」，与这个按钮自己的 tooltip 当场矛盾，而且那是假话——服务端
+  // 明明有事件。游标刻意不回退（理由见 pure/events.mjs 的 eventsListMessageKey）。
+  clearBtn.addEventListener("click", () => { view = []; cleared = true; render(); });
   bar.appendChild(clearBtn);
 
   const downloadBtn = elI18n("button", "ev.download", { type: "button" });
@@ -286,6 +299,7 @@ function buildToolbar() {
     // 「全部/error」两种视图的历史深度不一致。重置视图与整份轮询状态（游标、
     // 自愈中、退避一起归零），从当前时刻重新拉。
     view = [];
+    cleared = false;
     pollState = initialPollState();
     poll();
   }
