@@ -264,6 +264,32 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
     expect(pollOutcome(1000, null, null, false).hadNewItems).toBe(false);
     expect(pollOutcome(1000, undefined, null, false).hadNewItems).toBe(false);
   });
+
+  /**
+   * **评审 C6 三审(a)**：`justHealed`（第五个参数）为 `true` 时，即使这一轮真的
+   * 拉到了 items，也不算"来了新内容"——那批 items 正是上一轮 resetView 刚扔掉的
+   * 同一批。这条只切一半（只补 hadNewItems 这一个信号）：`nextAfterValue`/
+   * `resetView` 不受 `justHealed` 影响，只由这一轮自己的 `cursorAhead` 决定。
+   */
+  describe("justHealed（第五个参数）：自愈后紧跟着那一轮不把冷读结果误判成新内容", () => {
+    it("justHealed=true 且这一轮真的拉到了 items：hadNewItems 仍然是 false（不是 true）", () => {
+      const outcome = pollOutcome(null, [{ ts: 2000 }, { ts: 1000 }], 2000, false, true);
+      expect(outcome.hadNewItems, "自愈后紧跟着那一轮的冷读结果不算新内容").toBe(false);
+      // 但 after 依然要正常推进——只压制 hadNewItems 这一个信号，不影响游标。
+      expect(outcome.nextAfterValue).toBe(2000);
+      expect(outcome.resetView).toBe(false);
+    });
+    it("justHealed=false（或缺省/undefined）时行为不变，items 有内容就正常算新内容", () => {
+      expect(pollOutcome(null, [{ ts: 2000 }], 2000, false, false).hadNewItems).toBe(true);
+      expect(pollOutcome(null, [{ ts: 2000 }], 2000, false).hadNewItems, "缺省第五参数不应该被当成 justHealed=true").toBe(true);
+    });
+    it("justHealed=true 但 items 本来就是空的：hadNewItems 仍然是 false（结果不变，不是从别的值被压成 false）", () => {
+      expect(pollOutcome(null, [], null, false, true).hadNewItems).toBe(false);
+    });
+    it("justHealed 不影响这一轮自己的 resetView——这一轮又撞上 cursorAhead 时照样清视图", () => {
+      expect(pollOutcome(null, [], null, true, true).resetView).toBe(true);
+    });
+  });
 });
 
 describe("nextPollDelayMs：指数退避", () => {

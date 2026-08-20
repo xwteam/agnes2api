@@ -27,7 +27,10 @@ export interface ReadEventsResult {
  * 现在改用 `Storage.put()` 的 `expiresAt` 参数（`eventExpiresAt()` 算出来的绝对
  * 过期时刻）：有界性变成存储自己的性质，与这里的落盘节奏、槽位选择、isolate 是否
  * 被回收全部无关——KV 侧零操作开销（原生 `expiration`，不占任何配额桶），
- * FileStorage 侧读/写时惰性清理（见该适配器）。
+ * FileStorage 侧**读时跳过、写时顺手清掉**（评审 F2 订正：这里原来写的"读/写时
+ * 惰性清理"不准确——`get`/`list` 只是逻辑上把过期键当不存在，从不物理删除；
+ * 真正的物理清理只发生在 `put`/`delete` 里，措辞已与 `src/ports/storage.ts` 的
+ * 端口文档对齐，见该适配器）。
  *
  * `log()` 是同步的（端口如此），所以这里**只缓冲，不落盘**。
  * 落盘由 `src/http/log-flush.ts` 的中间件在**请求收尾时 await**——

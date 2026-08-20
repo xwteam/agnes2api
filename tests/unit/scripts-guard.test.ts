@@ -112,6 +112,20 @@ describe("CI 的测试命令不带文件过滤器（收集门禁分档的前提�
 });
 
 /**
+ * **评审 F3 新增的第 11 道门禁**：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/`
+ * 下不许存在被 git 判为二进制的跟踪文件，理由与起因见
+ * `scripts/check-no-binary.mjs` 文件头。这里只钉"CI 里确实跑了这一步"（与下面
+ * "pnpm build 在门禁列表里"那条同一个模式），脚本自身的正确性由
+ * `tests/unit/check-no-binary.test.ts` 单独验证。
+ */
+describe("check-no-binary 在 CI 门禁列表里", () => {
+  it("ci.yml 里有一步跑 node scripts/check-no-binary.mjs", () => {
+    const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+    expect(ci).toMatch(/run:\s*node scripts\/check-no-binary\.mjs\s*$/m);
+  });
+});
+
+/**
  * `pnpm build` 必须在 CI 门禁里——它此前不在（现状：CI 只有 5 道，没有 build），
  * 与本地跑的六道门禁不一致，属于这个任务存在的理由之一。
  */
@@ -127,14 +141,15 @@ describe("pnpm build 在 CI 门禁列表里", () => {
  * 而少跑一道的形态恰恰是静默的（那一步被删掉之后没有任何东西会红）。
  * 期望值是**手写字面量**，不是从 yml 里数出来再回填。
  */
-it("CI 恰好十道门，编号 1/10 到 10/10 各出现一次", () => {
+it("CI 恰好十一道门，编号 1/11 到 11/11 各出现一次", () => {
   const ci = readFileSync(".github/workflows/ci.yml", "utf8");
-  for (let i = 1; i <= 10; i++) {
-    const n = ci.split(`name: ${i}/10 `).length - 1;
-    expect(n, `编号 ${i}/10 出现了 ${n} 次`).toBe(1);
+  for (let i = 1; i <= 11; i++) {
+    const n = ci.split(`name: ${i}/11 `).length - 1;
+    expect(n, `编号 ${i}/11 出现了 ${n} 次`).toBe(1);
   }
-  // 反向：不许还剩下旧编号。
-  expect(ci, "还有步骤写着 N/9").not.toMatch(/name: \d+\/9 /);
+  // 反向：不许还剩下旧编号（评审 F3 从十道扩到十一道，新增 check-no-binary
+  // 排在第一位，原来的 1/10..10/10 全部要跟着挪一位）。
+  expect(ci, "还有步骤写着 N/10").not.toMatch(/name: \d+\/10 /);
 });
 
 /**
@@ -154,7 +169,7 @@ it("跑测试的两步显式声明 shell: bash（pipefail 的唯一来源）", (
   // 全绿，因为窗口滑进了 9/10 自己的 `shell: bash`，「变异点与被守护的不变量」
   // 没对齐。判据必须锚在**这一步自己的 YAML 块**，用下一个 `- name:` 当右边界，
   // 而不是一个跟内容脱钩的字符数。
-  for (const name of ["8/10 单元 / 契约 / 前端纯函数测试（Node 运行时）", "9/10 契约测试（workerd 运行时）"]) {
+  for (const name of ["9/11 单元 / 契约 / 前端纯函数测试（Node 运行时）", "10/11 契约测试（workerd 运行时）"]) {
     const i = yml.indexOf(`name: ${name}`);
     expect(i, `找不到步骤 ${name}`).toBeGreaterThan(0);
     const nextStep = yml.indexOf("\n      - name:", i);

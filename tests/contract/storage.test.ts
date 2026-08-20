@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import type { Storage } from "../../src/ports/storage.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { IS_WORKERD } from "../helpers/is-workerd.js";
+import { watchStorage, createStorageHealth } from "../../src/core/storage-health.js";
 
 export function runStorageContract(name: string, make: () => Storage) {
   describe(`Storage 契约: ${name}`, () => {
@@ -112,6 +113,33 @@ export function runStorageContract(name: string, make: () => Storage) {
       expect(await s.get("ttl:forever")).toEqual({ v: 1 });
     });
 
+    /**
+     * **评审 F4**：`src/ports/storage.ts` 的端口文档明写"过期之后 `get`/`list`
+     * 都不再能看到它"——`list()` 那一半此前没有任何用例守护（删掉
+     * `FileStorage.list()`/`MemoryStorage.list()` 里的过期过滤，`pnpm test` +
+     * `pnpm test:workers` 全绿存活，已实测）。这里补上，与 `KvStorage` 分支同一条
+     * "60 秒下限测不了真实过期"的理由（见上面那段说明），只验证"未过期的键在
+     * `list()` 结果里"，不额外重复"过期之后消失"这条已经由 `get()` 系列用例
+     * 覆盖过的行为；非 KV 分支两条都验。
+     */
+    if (name === "KvStorage") {
+      it("list()：expiresAt 是合法的未来值时，键正常出现在结果里", async () => {
+        await s.put("ttl-list:kv-future", { v: 1 }, Date.now() + 120_000);
+        expect(await s.list("ttl-list:")).toEqual(["ttl-list:kv-future"]);
+      });
+    } else {
+      it("list()：过期之前，键出现在结果里", async () => {
+        await s.put("ttl-list:soon", { v: 1 }, Date.now() + 300);
+        expect(await s.list("ttl-list:")).toEqual(["ttl-list:soon"]);
+      });
+
+      it("list()：过期之后，键从结果里消失（真实短等待）", async () => {
+        await s.put("ttl-list:gone", { v: 1 }, Date.now() + 300);
+        await new Promise((r) => setTimeout(r, 500));
+        expect(await s.list("ttl-list:")).toEqual([]);
+      });
+    }
+
     it("并发的写与删混合执行时，未被删的键不受影响", async () => {
       await s.put("conc:keep", { v: "keep" });
       const ops: Promise<void>[] = [];
@@ -130,6 +158,22 @@ export function runStorageContract(name: string, make: () => Storage) {
 }
 
 runStorageContract("MemoryStorage", () => new MemoryStorage());
+
+/**
+ * **结构性隐患，评审要求确认**：`src/` 下一共只有三个类 `implements Storage`
+ * （`grep -rln "implements Storage" src/` 核实过）——`FileStorage`/`KvStorage`
+ * 已经在下面注册，`WatchedStorage`（`src/core/storage-health.ts` 的
+ * `watchStorage()`）此前没有被这份契约测过。它是个纯转发的装饰器（把
+ * `put`/`delete` 的成败喂给 `StorageHealth`，其余原样转发），但"纯转发"本身
+ * 正是"漏传第三个参数会编译通过、静默解除有界性"这条隐患最容易发生的地方——
+ * TypeScript 允许一个只声明两个参数的 `put(key, value)` 实现赋值给要求
+ * `put(key, value, expiresAt?)` 的接口。补上这条注册，让同一份契约（含上面
+ * 新增的 TTL/list 用例）也跑在装饰器这一层，不只是跑在两个叶子实现上。
+ */
+runStorageContract(
+  "WatchedStorage(MemoryStorage)",
+  () => watchStorage(new MemoryStorage(), createStorageHealth(), () => Date.now()),
+);
 
 // 仅在 workerd 下运行：真实 KV。判据见 tests/helpers/is-workerd.ts（唯一实现，
 // 反向防线在 tests/workers-setup.ts）。

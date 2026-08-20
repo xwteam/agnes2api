@@ -59,7 +59,15 @@ function afterParam(raw: string | undefined): number | null {
  * ⚠️ **评审 C6 二审订正：上一段"任何一个 isolate 的时钟只要快"这句话本身写得
  * 过宽**——判据是 `windowIndex(after) > windowIndex(now)`，**必须跨过一个完整的
  * 时间窗边界（`EVENT_WINDOW_MS`，1 小时）才会触发**，单纯"快了几分钟但还在
- * 同一个窗口内"不会。这留了一个真实存在、且**没有任何测试或代码覆盖**的盲区：
+ * 同一个窗口内"不会。
+ *
+ * ⚠️ **评审 F5：上面这句"1 小时"极易被读错，专门澄清一次——这条判据看的是
+ * 「有没有跨过窗口边界」，与偏移量的绝对大小无关，"1 小时"只是窗口宽度这个
+ * 参照系，不是"至少要偏移这么多"的门槛。** 反例两组，都已实测：偏移仅
+ * **2 毫秒**、但恰好跨在窗口边界上（例如 `now` 在窗口末尾前 1ms、`after` 在
+ * 下一个窗口的第 1ms）⇒ `cursorAhead: true`；偏移足足 **59 分钟**、但两者仍在
+ * 同一个窗口内 ⇒ `cursorAhead: false`。这留了一个真实存在、且**没有任何测试或
+ * 代码覆盖**的盲区：
  * `after` 只比 `now` 快、但仍落在同一个窗口时（实测 `after = now + 10min`），
  * `cursorAhead` 是 `false`，但 `candidateKeys()` 算出来的窗口里没有任何真实事件
  * 的 `ts` 能大于这个"未来的" `after`（`events.ts` 上面那行 `filter((e) => after

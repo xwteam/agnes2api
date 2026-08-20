@@ -196,13 +196,26 @@ export function nextAfter(current, cursor) {
  *   `state.after !== beforeAfter` 当替身，自愈本身也会让游标变化（从非 null 变成
  *   null），于是"游标被清空"被误判成"来了新事件"，退避永远回不到最长间隔（评审
  *   实测：稳态吞吐从按 C4b 算好的 69,120/天 涨到 138,240/天）。
+ *
+ * ⚠️ **评审 C6 三审(a) 追加**：上面这条只切断了一半——`items.length > 0` 本身
+ * 没错，但**自愈后紧跟着那一轮的冷读，如果真的返回了 items，这批 items 正是
+ * 上一轮 `resetView` 刚刚从视图里扔掉的同一批**（同一份底层数据，只是被自愈清
+ * 空视图之后又冷读回来），不是真的"来了新内容"，不该把退避顶回最短。评审实测：
+ * 两个 isolate 持续 2 小时时钟偏移的稳态下，"自愈（0 条，恒不算新内容）→ 冷读
+ * 恢复（有条数，被旧逻辑误判成新内容）"这个二轮循环让退避永远卡在 15 秒，稳态
+ * 吞吐仍有 92,160 次/天（读配额 92%），比 138,240 好但远没回到 C4b 规划的
+ * 69,120 包线内。加一个 `justHealed` 入参（"上一轮是不是刚发生过自愈"，由
+ * `sec-events.js` 在每轮 `poll()` 结束时用这一轮的 `resetView` 更新，见该文件）：
+ * 自愈后紧跟着的那一轮，不管 `items.length` 实际是多少，一律不算"来了新内容"——
+ * 已验证退避能真正爬到 60 秒上限并稳住，稳态吞吐 36,864 次/天，回到包线内。
  */
-export function pollOutcome(current, items, cursor, cursorAhead) {
+export function pollOutcome(current, items, cursor, cursorAhead, justHealed) {
   const healed = cursorAhead === true;
+  const rawHadNewItems = Array.isArray(items) && items.length > 0;
   return {
     nextAfterValue: healed ? null : nextAfter(current, cursor),
     resetView: healed,
-    hadNewItems: Array.isArray(items) && items.length > 0,
+    hadNewItems: justHealed === true ? false : rawHadNewItems,
   };
 }
 

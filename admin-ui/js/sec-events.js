@@ -42,6 +42,10 @@ let lastGeneratedAt = null;
 let pollDelayMs = EVENTS_POLL_MIN_MS;
 let lastError = false;
 let loadError = false;
+/** 上一轮轮询是不是刚发生过一次 cursorAhead 自愈（评审 C6 三审 a）。自愈后紧跟
+ * 着那一轮即使真的拉到了 items，也是上一轮 resetView 刚扔掉的同一批，不算
+ * "来了新内容"——见 pure/events.mjs 的 pollOutcome 说明。只在 poll() 里读写。 */
+let justHealed = false;
 /** 本板块当前是不是"正在显示"这一个（`onShow`/`onHide` 之间）。visibilitychange
  * 处理器据此判断"该不该在页面重新可见时把轮询接回去"——不加这一层的话，
  * 离开本板块时 `onHide` 已经把 timer 清成了 null，页面从别的 tab 切回来会
@@ -158,11 +162,15 @@ async function poll() {
     // 是同一个纯状态转换的三个面，全部交给 pollOutcome()（admin-ui/README.md
     // 硬规则 1）——原来在这里手写这三行各自独立判断，是两个联带 bug（游标自愈
     // 时视图没有跟着清空、"游标变没变"被错当成"来了新事件"）的根。
-    const outcome = pollOutcome(state.after, items, body && body.cursor, lastStatus.cursorAhead);
+    // 评审 C6 三审(a)：第五个参数 justHealed 传的是"上一轮"的自愈状态（poll()
+    // 开始处理这一轮之前就已经确定），不是这一轮自己的——自愈后紧跟着那一轮的
+    // 冷读即使真的拉到 items，也不该被当成"来了新内容"。
+    const outcome = pollOutcome(state.after, items, body && body.cursor, lastStatus.cursorAhead, justHealed);
     if (outcome.resetView) view = [];
     view = mergeIntoView(view, items);
     state.after = outcome.nextAfterValue;
     pollDelayMs = nextPollDelayMs(pollDelayMs, outcome.hadNewItems);
+    justHealed = outcome.resetView; // 供下一轮 poll() 读取
   } catch (e) {
     if (e && e.name === "AbortError") return;
     lastError = true;
@@ -274,6 +282,7 @@ function buildToolbar() {
     // 「全部/error」两种视图的历史深度不一致。重置游标与视图，从当前时刻重新拉。
     view = [];
     state.after = null;
+    justHealed = false; // 换了一条新的筛选流，不该带着上一条流留下的自愈状态
     poll();
   }
 
@@ -312,6 +321,7 @@ export const eventsSection = {
     loadError = false;
     lastError = false;
     pollDelayMs = EVENTS_POLL_MIN_MS;
+    justHealed = false; // 新开一轮，不该带着上次留下的自愈状态
     poll();
   },
 

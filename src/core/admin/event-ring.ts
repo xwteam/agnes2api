@@ -30,7 +30,10 @@ import type { LogEntry } from "../../ports/logger.js";
  *   就永远会被下一个稳态假设推翻。**现在的修法是 TTL**：`Storage.put()` 的第三个参数
  *   `expiresAt`（见 `src/ports/storage.ts`），把有界性变成**存储自己的性质**，与落盘
  *   节奏、槽位随机性、isolate 是否被回收**全部无关**——KV 侧零操作开销（原生
- *   `expiration`，不占任何配额桶），FileStorage 侧读/写时惰性清理（见该适配器）。
+ *   `expiration`，不占任何配额桶），FileStorage 侧**读时跳过、写时顺手清掉**
+ *   （评审 F2 订正：这里原来写的"读/写时惰性清理"不准确——`get`/`list` 只是
+ *   逻辑上把过期键当不存在，从不物理删除；真正的物理清理只发生在 `put`/`delete`
+ *   里，措辞已与 `src/ports/storage.ts` 的端口文档对齐）。
  *   过期时刻由 `eventExpiresAt()` 算出，取"保留期 + 一点余量"，见该函数的说明。
  *
  * 代价：两个 isolate 在同一个「时间窗 + 槽位」组合上落盘时会互相覆盖对方那一批
