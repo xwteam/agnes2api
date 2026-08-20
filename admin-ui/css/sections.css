@@ -82,6 +82,24 @@ tr:last-child td { border-bottom: 0; }
 .bulk-bar { background: var(--panel-2); padding: var(--gap-sm); border-radius: var(--radius); }
 .row-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 
+/* 「添加 Key」分组下拉（设计 §10.2）：触发按钮 + 一个绝对定位的分组菜单。
+   两组（自动注册 / 手动）用组内小标题分开，不用分割线——标题本身已经在做
+   这件事，多一条线只是重复信息。 */
+.dropdown { position: relative; display: inline-block; }
+.dropdown-menu {
+  position: absolute; top: 100%; left: 0; z-index: 50; margin-top: 4px;
+  min-width: 220px; padding: var(--gap-sm) 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 4px 12px var(--shadow);
+}
+.dropdown-group + .dropdown-group { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
+.dropdown-group-label { padding: 4px var(--gap-sm); font-size: 12px; color: var(--muted); }
+.dropdown-menu button {
+  display: block; width: 100%; padding: 8px var(--gap-sm); text-align: left;
+  color: var(--text); background: transparent; border: 0; border-radius: 0;
+}
+.dropdown-menu button:not([disabled]):hover { background: var(--panel-2); }
+
 .events-body { max-height: 60vh; overflow-y: auto; }
 .ev-group-header td { padding-top: var(--gap-sm); font-size: 12px; }
 /* 分组内的行左边一条细线，视觉上把同一条时间线的几行连起来。 */

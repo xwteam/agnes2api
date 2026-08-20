@@ -75,6 +75,18 @@ function toastTexts(h: Awaited<ReturnType<typeof openKeys>>): string[] {
   return h.dom.byId("toast-host").querySelectorAll("div").map((d) => d.textContent);
 }
 
+/**
+ * 打开导入弹窗：先点「添加 Key」触发下拉，再点【手动】组里的「批量导入」项——
+ * 两个手动入口（粘贴单个 / 批量导入）复用同一个弹窗，见 `sec-keys.js` 的
+ * `buildAddKeyMenu()` 说明。
+ */
+async function openImportModal(section: FakeElement): Promise<void> {
+  section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.addMenu.open")!.click();
+  await settle();
+  section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.addMenu.bulkImport")!.click();
+  await settle();
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // M1：删除按钮的可用性 —— 判据必须同时看 disabled 与 evicted
 // ───────────────────────────────────────────────────────────────────────────
@@ -513,8 +525,7 @@ describe("2(c)：导入框必须原样按行发给后端 —— 位置=行号的
       : { status: 200, body: {} }));
     const section = h.section("keys");
 
-    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.import.open")!.click();
-    await settle();
+    await openImportModal(section);
 
     const textarea = h.dom.document.querySelectorAll("textarea")[0]!;
     // 第 1 行好 key、第 2 行空行、第 3 行好 key、第 4 行是末尾换行留下的空元素。
@@ -544,8 +555,7 @@ describe("2(d)：导入结果里「重置了几把」显示的是 reset，不是
       return { status: 200, body: {} };
     });
     const section = h.section("keys");
-    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.import.open")!.click();
-    await settle();
+    await openImportModal(section);
     const textarea = h.dom.document.querySelectorAll("textarea")[0]!;
     textarea.value = "sk-whatever-the-user-typed";
 
@@ -683,5 +693,336 @@ describe("清连续失败：按钮可用性 + 确认文案必须把它与「清�
     const patchCall = h.calls.find((c) => c.method === "PATCH" && c.url === "/admin/api/keys/strikey");
     expect(patchCall, "确认之后没有真的发出 PATCH").toBeDefined();
     expect((patchCall?.body as { clearStrikes: boolean })?.clearStrikes).toBe(true);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 裁定：「添加 Key」分组下拉容器现在就建，先填【手动】两项，【自动注册】占位禁用
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("裁定：添加 Key 分组下拉——容器与两组平级结构现在定死", () => {
+  it("菜单默认收起，点触发按钮才展开；两组各自的项都在", async () => {
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody([]) }
+      : { status: 200, body: {} }));
+    const section = h.section("keys");
+    const trigger = section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.addMenu.open")!;
+    const menu = section.querySelectorAll(".dropdown-menu")[0]!;
+
+    expect(menu.style.display, "菜单默认应该是收起的").toBe("none");
+    trigger.click();
+    expect(menu.style.display, "点了触发按钮，菜单应该展开").not.toBe("none");
+
+    const itemKeys = menu.querySelectorAll("button").map((b) => b.getAttribute("data-i18n"));
+    expect(itemKeys, "自动注册组的两项不见了").toEqual(expect.arrayContaining([
+      "keys.addMenu.autoMoemail", "keys.addMenu.autoYyds",
+    ]));
+    expect(itemKeys, "手动组的两项不见了").toEqual(expect.arrayContaining([
+      "keys.addMenu.pasteSingle", "keys.addMenu.bulkImport",
+    ]));
+  });
+
+  /**
+   * **【自动注册】两项现在必须是禁用的占位符**——Task 6 才接线到注册机端点。
+   * 禁用不是"藏起来"：运维现在就能看到这两条通道的存在与名字（设计 §10.3
+   * "两条邮箱通道完全平级"这条约束的结构性表达），只是还点不动。
+   */
+  it("自动注册两项现在是禁用占位符，不会真的发起任何请求", async () => {
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody([]) }
+      : { status: 200, body: {} }));
+    const section = h.section("keys");
+    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.addMenu.open")!.click();
+
+    const moemail = section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.addMenu.autoMoemail")!;
+    const yyds = section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.addMenu.autoYyds")!;
+    expect(moemail.disabled, "MoeMail 通道应该是禁用的占位符").toBe(true);
+    expect(yyds.disabled, "YYDS 通道应该是禁用的占位符").toBe(true);
+
+    const before = h.calls.length;
+    moemail.click();
+    yyds.click();
+    await settle();
+    expect(h.calls.length, "点了占位符却真的发出了请求").toBe(before);
+  });
+
+  it("手动组「粘贴单个 Key」与「批量导入」都能打开同一个导入弹窗", async () => {
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody([]) }
+      : { status: 200, body: {} }));
+    const section = h.section("keys");
+    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.addMenu.open")!.click();
+    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.addMenu.pasteSingle")!.click();
+    await settle();
+
+    const dialogTitle = h.dom.document.body.textContent;
+    expect(dialogTitle, "「粘贴单个 Key」没有打开导入弹窗").toContain(I18N["keys.import.title"]!["zh-CN"]!);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 评审应改⑤：openModal 焦点管理
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("评审应改⑤：openModal 补齐焦点管理——初始焦点、Tab 陷阱、Escape、aria-labelledby", () => {
+  it("弹窗打开时焦点落在弹窗容器本身，不是停在触发它的那颗按钮上", async () => {
+    const items = [keyView({ id: "solo-focus", disabled: true, bucket: "disabled" })];
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody(items) }
+      : { status: 200, body: {} }));
+    const section = h.section("keys");
+
+    rowButton(section, "solo-focus", "keys.action.delete").click();
+    await settle();
+
+    const dialog = h.dom.document.body.querySelectorAll('[role="dialog"]')[0]!;
+    expect(
+      h.dom.document.activeElement,
+      "打开弹窗之后焦点没有落在弹窗容器上——键盘用户下一次 Tab 仍然停在背后的页面里",
+    ).toBe(dialog);
+  });
+
+  it("<h2> 与 role=dialog 容器之间有 aria-labelledby 关联，读屏器能报出弹窗标题", async () => {
+    const items = [keyView({ id: "solo-aria", disabled: true, bucket: "disabled" })];
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody(items) }
+      : { status: 200, body: {} }));
+    const section = h.section("keys");
+    rowButton(section, "solo-aria", "keys.action.delete").click();
+    await settle();
+
+    const dialog = h.dom.document.body.querySelectorAll('[role="dialog"]')[0]!;
+    const labelledBy = dialog.getAttribute("aria-labelledby");
+    expect(labelledBy, "role=dialog 的容器没有 aria-labelledby").not.toBeNull();
+    const heading = dialog.querySelectorAll("h2")[0]!;
+    expect(heading.getAttribute("id"), "<h2> 的 id 与 aria-labelledby 对不上").toBe(labelledBy);
+  });
+
+  it("Escape 直接关闭弹窗，不跑任何 onClick（等同取消）", async () => {
+    const items = [keyView({ id: "solo-esc", disabled: true, bucket: "disabled" })];
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody(items) }
+      : { status: 200, body: {} }));
+    const section = h.section("keys");
+    rowButton(section, "solo-esc", "keys.action.delete").click();
+    await settle();
+    expect(h.dom.document.body.querySelectorAll('[role="dialog"]').length, "前置条件：弹窗真的开着").toBe(1);
+
+    const dialog = h.dom.document.body.querySelectorAll('[role="dialog"]')[0]!;
+    dialog.keydown("Escape");
+    await settle();
+
+    expect(h.dom.document.body.querySelectorAll('[role="dialog"]').length, "Escape 没有关掉弹窗").toBe(0);
+    expect(h.calls.find((c) => c.method === "DELETE"), "Escape 不该等同确认——不许真的发出删除请求").toBeUndefined();
+  });
+
+  /**
+   * **焦点陷阱**：Tab 到弹窗内最后一个可聚焦元素之后再按 Tab，焦点必须回到
+   * 第一个，不许跳出弹窗去够背后的表格。这里用「确认删除」弹窗（固定两颗按钮：
+   * 取消 / 确定）验证，边界最简单、不依赖弹窗内容有几个输入框。
+   */
+  it("Tab 焦点陷阱：从最后一个可聚焦元素再 Tab，回到第一个，不跳出弹窗", async () => {
+    const items = [keyView({ id: "solo-trap", disabled: true, bucket: "disabled" })];
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody(items) }
+      : { status: 200, body: {} }));
+    const section = h.section("keys");
+    rowButton(section, "solo-trap", "keys.action.delete").click();
+    await settle();
+
+    const dialog = h.dom.document.body.querySelectorAll('[role="dialog"]')[0]!;
+    const buttons = dialog.querySelectorAll("button"); // [取消, 确定]
+    const last = buttons[buttons.length - 1]!;
+    last.focus();
+    dialog.keydown("Tab");
+    expect(
+      h.dom.document.activeElement,
+      "在最后一个可聚焦元素上按 Tab，焦点应该回到第一个，而不是跳出弹窗",
+    ).toBe(buttons[0]);
+
+    // 反向：在第一个元素上 Shift+Tab，应该绕到最后一个。
+    buttons[0]!.focus();
+    dialog.keydown("Tab", { shiftKey: true });
+    expect(h.dom.document.activeElement, "Shift+Tab 在第一个元素上应该绕到最后一个").toBe(last);
+  });
+});
+
+/**
+ * **评审应改⑤连带的真缺陷**：`openModal` 原来无条件先关弹窗再跑 `onClick`，
+ * 导入弹窗校验失败/网络失败时粘进去的最多 200 行原文全部丢失。`keepOpen`
+ * 修完之后，这一组验证两种失败路径都不再丢内容。
+ */
+describe("评审应改⑤连带的真缺陷：导入弹窗失败时不许把粘进去的内容丢掉", () => {
+  it("空提交（校验失败）：弹窗留在原地，不是悄悄关掉", async () => {
+    const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
+      ? { status: 200, body: listBody([]) }
+      : { status: 200, body: {} }));
+    const section = h.section("keys");
+    await openImportModal(section);
+    expect(h.dom.document.body.querySelectorAll('[role="dialog"]').length, "前置条件：弹窗已经打开").toBe(1);
+
+    h.dom.document.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.import.submit")!.click();
+    await settle();
+
+    expect(
+      h.dom.document.body.querySelectorAll('[role="dialog"]').length,
+      "空提交校验失败，弹窗却被关掉了——粘进去的内容会丢",
+    ).toBe(1);
+  });
+
+  it("网络/后端失败：弹窗留在原地，文本框内容原样还在", async () => {
+    const h = await openKeys((url) => {
+      if (url === "/admin/api/keys") return { status: 500, body: { error: { message: "boom" } } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody([]) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    await openImportModal(section);
+
+    const textarea = h.dom.document.querySelectorAll("textarea")[0]!;
+    const PASTED = "sk-two-hundred-lines-worth-of-effort";
+    textarea.value = PASTED;
+    h.dom.document.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.import.submit")!.click();
+    await settle();
+
+    expect(
+      h.dom.document.body.querySelectorAll('[role="dialog"]').length,
+      "请求失败，弹窗却被关掉了——粘进去的内容会丢，运维只剩一句 toast",
+    ).toBe(1);
+    expect(
+      h.dom.document.querySelectorAll("textarea")[0]!.value,
+      "弹窗虽然没关，但文本框内容不是原来那份了",
+    ).toBe(PASTED);
+  });
+
+  it("反向自检：真正成功之后弹窗确实会关掉，不是从此再也关不掉", async () => {
+    const h = await openKeys((url) => {
+      if (url === "/admin/api/keys") return { status: 200, body: { added: ["x"], duplicated: [], invalid: [], reset: 0 } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody([]) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    await openImportModal(section);
+    const textarea = h.dom.document.querySelectorAll("textarea")[0]!;
+    textarea.value = "sk-this-one-should-succeed";
+    h.dom.document.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.import.submit")!.click();
+    await settle();
+
+    expect(
+      h.dom.document.body.querySelectorAll('[role="dialog"]').length,
+      "真正成功之后弹窗应该关掉",
+    ).toBe(0);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 评审应改④：sticky toast 的关闭按钮拿到初始焦点，不是整页最后一个 Tab 停靠点
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("评审应改④：sticky toast 出现时关闭按钮直接拿到焦点", () => {
+  it("批量部分失败的 sticky toast 出现后，关闭按钮就是当前焦点", async () => {
+    const items = Array.from({ length: 2 }, (_, i) => keyView({ id: `focus-bulk-${i}`, seq: i + 1 }));
+    const results = [
+      { id: "focus-bulk-0", ok: true, reason: null },
+      { id: "focus-bulk-1", ok: false, reason: "must_disable_first" },
+    ];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/bulk")) return { status: 200, body: { results } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    const box = section.querySelectorAll('input[type="checkbox"]')[0]!;
+    box.checked = true;
+    box.change();
+    await settle();
+    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.bulk.delete")!.click();
+    await settle();
+    h.dom.document.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+
+    const closeBtn = h.dom.byId("toast-host").querySelectorAll(".toast-close")[0]!;
+    expect(
+      h.dom.document.activeElement,
+      "sticky toast 出现之后关闭按钮没有拿到焦点——键盘用户还是要 Tab 过一整页才够得到它",
+    ).toBe(closeBtn);
+  });
+
+  it("关闭按钮上按 Escape 也能关掉 sticky toast，不必只靠鼠标点 ×", async () => {
+    const items = Array.from({ length: 2 }, (_, i) => keyView({ id: `esc-toast-${i}`, seq: i + 1 }));
+    const results = [
+      { id: "esc-toast-0", ok: true, reason: null },
+      { id: "esc-toast-1", ok: false, reason: "must_disable_first" },
+    ];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/bulk")) return { status: 200, body: { results } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    const box = section.querySelectorAll('input[type="checkbox"]')[0]!;
+    box.checked = true;
+    box.change();
+    await settle();
+    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.bulk.delete")!.click();
+    await settle();
+    h.dom.document.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+
+    expect(h.dom.byId("toast-host").querySelectorAll(".toast-close").length, "前置条件：sticky toast 真的出现了").toBe(1);
+    const closeBtn = h.dom.byId("toast-host").querySelectorAll(".toast-close")[0]!;
+    closeBtn.keydown("Escape");
+
+    expect(
+      h.dom.byId("toast-host").querySelectorAll(".toast-close").length,
+      "在关闭按钮上按 Escape 没有关掉 sticky toast",
+    ).toBe(0);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 建议（评审）：结构性测试防住"把 pure 判据复制回板块文件"这个方向
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️ **这一组是评审探针实测出来的方向性缺口**：`admin-ui/README.md` 硬规则 1
+ * 今天只有 `scripts/build-ui.mjs` 守住"`pure/*.mjs` 里不许出现 `import`/
+ * `document`/`window`"这一个方向——它拦得住"pure 模块自己违规"，拦不住
+ * "把 pure 模块已经导出的判据原样抄一份回板块文件、pure 里的那份留成死代码"。
+ * 评审实测：`pure/keys-write.mjs` 新增的全部函数抄回 `sec-keys.js`，138/138
+ * 全绿。这里补一条 M6 同款的结构性扫描：**任何 `admin-ui/js/sec-*.js` 文件里
+ * 都不许出现与 `pure/keys-write.mjs` 已导出函数同名的 `function` 声明**——
+ * 抄一份回去就是在板块文件里重新声明那个名字，这条扫描抓的就是这个动作本身，
+ * 不关心抄回去的实现对不对。
+ */
+describe("建议：sec-*.js 不许重新声明 pure/keys-write.mjs 已导出的函数名", () => {
+  function exportedFunctionNames(pureFile: string): string[] {
+    const src = readFileSync(pureFile, "utf8");
+    return [...src.matchAll(/^export function (\w+)\(/gm)].map((m) => m[1]!);
+  }
+
+  function walkJs(dir: string): string[] {
+    return readdirSync(dir).sort().flatMap((n) => {
+      const p = join(dir, n);
+      return statSync(p).isDirectory() ? walkJs(p) : /^sec-.*\.js$/.test(n) ? [p] : [];
+    });
+  }
+
+  it("keys-write.mjs 导出的函数名一个都不能在 sec-*.js 里被重新声明", () => {
+    const names = exportedFunctionNames("admin-ui/js/pure/keys-write.mjs");
+    expect(names.length, "反向自检：扫描本身得先找到点什么，否则下面的循环恒绿").toBeGreaterThan(5);
+
+    const offenders: string[] = [];
+    for (const p of walkJs("admin-ui/js")) {
+      const rel = p.split("\\").join("/");
+      const src = readFileSync(p, "utf8");
+      for (const name of names) {
+        if (new RegExp(`\\bfunction\\s+${name}\\s*\\(`).test(src)) offenders.push(`${rel}: ${name}`);
+      }
+    }
+    expect(
+      offenders,
+      "pure/keys-write.mjs 里已经导出的判据被复制回了板块文件——硬规则 1 只守「pure 自己别违规」这一个方向，守不住「抄回板块文件、pure 里留死代码」这个方向，这条扫描就是补那一半",
+    ).toEqual([]);
   });
 });

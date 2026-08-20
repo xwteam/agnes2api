@@ -576,6 +576,68 @@ function openImport() {
   ]);
 }
 
+/**
+ * 「添加 Key」分组下拉。**设计文档 §10.2 定死的结构，控制端裁定现在就建**：
+ * 【自动注册】（MoeMail / YYDS 两条通道，§10.3 要求"完全平级"）与【手动】
+ * （粘贴单个 / 批量导入）。**本任务只填【手动】那两项的内容**——它们复用同一个
+ * `openImport()`（后端只有一个 `POST /admin/api/keys`，接受 1..200 把，"单个"
+ * 与"批量"在这条端点上没有分叉，硬造两个入口只会多一份要维护的弹窗）；
+ * 【自动注册】那两项**先占位、禁用、挂一句说明性 tooltip**，留给 Task 6 接线
+ * 到注册机端点。**容器与两组平级的结构现在定死，Task 6 只需要把这两颗按钮的
+ * `disabled` 摘掉、接上真实的 onClick**，不必回头重构这个工具栏——那正是
+ * 「现在不建容器，Task 5/6 就要拿掉一颗按钮重新长出一个菜单」这条风险的解法。
+ *
+ * ⚠️ **"批量导入（多行 / JSON 数组）"这句设计原文没有照抄**：本仓的导入框
+ * 只按行拆（`importLines()`），不解析 JSON 数组——照抄那句话等于承诺一个
+ * 没有实现的能力，一个把 `["sk-a","sk-b"]` 粘进去的运维会得到一条"不合法的
+ * key"而不是两把导入成功的 key。菜单文案改成如实描述现在的行为
+ * （`keys.addMenu.bulkImport`：「批量导入（每行一把）」）。
+ */
+function buildAddKeyMenu() {
+  const wrap = el("div", { class: "dropdown" });
+  const trigger = elI18n("button", "keys.addMenu.open", {
+    type: "button", "aria-haspopup": "true", "aria-expanded": "false",
+  });
+  const menu = el("div", { class: "dropdown-menu" });
+  menu.style.display = "none";
+
+  const closeMenu = () => { menu.style.display = "none"; trigger.setAttribute("aria-expanded", "false"); };
+  const openMenu = () => { menu.style.display = ""; trigger.setAttribute("aria-expanded", "true"); };
+  trigger.addEventListener("click", () => {
+    if (menu.style.display === "none") openMenu(); else closeMenu();
+  });
+  // Escape 关菜单，不吞给页面上别的 Escape 监听器（比如同时开着的弹窗——
+  // 两者不会同时存在，菜单打开时不会有弹窗，弹窗打开时菜单早就该被这次点击关掉了）。
+  wrap.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeMenu(); });
+
+  const autoGroup = el("div", { class: "dropdown-group" });
+  autoGroup.appendChild(elI18n("div", "keys.addMenu.autoGroup", { class: "dropdown-group-label" }));
+  for (const key of ["keys.addMenu.autoMoemail", "keys.addMenu.autoYyds"]) {
+    const btn = elI18n("button", key, { type: "button" });
+    // `.disabled` 是属性赋值，不是 el() 的 attrs——与本文件其余按钮
+    // （`clearCooldown.disabled = ...` 那些）同一个写法，别改成 `disabled: true`
+    // 塞进 attrs：那只会落成 HTML 属性 `disabled=""`，不会同步 `.disabled` 属性。
+    btn.disabled = true;
+    btn.title = t("keys.addMenu.autoPlaceholder");
+    btn.setAttribute("aria-label", `${t(key)}：${t("keys.addMenu.autoPlaceholder")}`);
+    autoGroup.appendChild(btn);
+  }
+  menu.appendChild(autoGroup);
+
+  const manualGroup = el("div", { class: "dropdown-group" });
+  manualGroup.appendChild(elI18n("div", "keys.addMenu.manualGroup", { class: "dropdown-group-label" }));
+  for (const key of ["keys.addMenu.pasteSingle", "keys.addMenu.bulkImport"]) {
+    const btn = elI18n("button", key, { type: "button" });
+    btn.addEventListener("click", () => { closeMenu(); openImport(); });
+    manualGroup.appendChild(btn);
+  }
+  menu.appendChild(manualGroup);
+
+  wrap.appendChild(trigger);
+  wrap.appendChild(menu);
+  return wrap;
+}
+
 function buildToolbar() {
   const bar = el("div", { class: "toolbar" });
 
@@ -608,9 +670,7 @@ function buildToolbar() {
   refresh.addEventListener("click", () => { load(); });
   bar.appendChild(refresh);
 
-  const importBtn = elI18n("button", "keys.import.open", { type: "button" });
-  importBtn.addEventListener("click", () => openImport());
-  bar.appendChild(importBtn);
+  bar.appendChild(buildAddKeyMenu());
 
   const autoWrap = el("label", { class: "auto" });
   autoWrap.appendChild(elI18n("span", "keys.auto"));

@@ -159,10 +159,28 @@ export const I18N = {
   "keys.bulk.mustDisableFirstSuffix": { "zh-CN": "；{mustDisableFirst} 把未停用/未剔除，需要先停用才能删除。", "zh-TW": "；{mustDisableFirst} 把未停用/未剔除，需要先停用才能刪除。", en: "; {mustDisableFirst} key(s) are neither disabled nor evicted and must be disabled before deletion.", ja: "；{mustDisableFirst} 件は無効化も除外もされていないため、削除には先に無効化が必要です。", ko: "; {mustDisableFirst}개는 정지되지도 제외되지도 않아 삭제 전에 먼저 정지해야 합니다." },
   "keys.bulk.notFoundSuffix":         { "zh-CN": "；{notFound} 把已经不存在。", "zh-TW": "；{notFound} 把已經不存在。", en: "; {notFound} key(s) no longer exist.", ja: "；{notFound} 件はすでに存在しません。", ko: "; {notFound}개는 이미 존재하지 않습니다." },
 
+  // 「添加 Key」分组下拉（设计 §10.2，控制端裁定现在就建容器）。
+  // 【自动注册】两项先占位禁用，留给 Task 6 接线到注册机端点；容器与两组
+  // 平级的结构现在定死，Task 6 只需要摘掉 disabled、接上真实 onClick。
+  "keys.addMenu.open":          { "zh-CN": "添加 Key", "zh-TW": "新增 Key", en: "Add key", ja: "Key を追加", ko: "Key 추가" },
+  "keys.addMenu.autoGroup":     { "zh-CN": "自动注册", "zh-TW": "自動註冊", en: "Auto-register", ja: "自動登録", ko: "자동 등록" },
+  "keys.addMenu.autoMoemail":   { "zh-CN": "通过 MoeMail 通道立即补池", "zh-TW": "透過 MoeMail 通道立即補池", en: "Mint via the MoeMail channel now", ja: "MoeMail チャネルで今すぐ補充", ko: "MoeMail 채널로 즉시 보충" },
+  "keys.addMenu.autoYyds":      { "zh-CN": "通过 YYDS 通道立即补池", "zh-TW": "透過 YYDS 通道立即補池", en: "Mint via the YYDS channel now", ja: "YYDS チャネルで今すぐ補充", ko: "YYDS 채널로 즉시 보충" },
+  // 这句 tooltip 只说"还没有接入"，**不许用推荐/默认这类偏好词**——check-i18n
+  // 的第 ⑥ 条本来只查 reg.* 命名空间，这条虽然不在那个命名空间里，一样刻意
+  // 不写"暂不推荐使用"这类措辞，纯描述状态。
+  "keys.addMenu.autoPlaceholder": { "zh-CN": "这个通道还没有接入本面板", "zh-TW": "這個通道還沒有接入本面板", en: "This channel is not wired up in this panel yet", ja: "このチャネルはまだこのパネルに接続されていません", ko: "이 채널은 아직 이 패널에 연결되지 않았습니다" },
+  "keys.addMenu.manualGroup":   { "zh-CN": "手动", "zh-TW": "手動", en: "Manual", ja: "手動", ko: "수동" },
+  "keys.addMenu.pasteSingle":   { "zh-CN": "粘贴单个 Key", "zh-TW": "貼上單一 Key", en: "Paste a single key", ja: "単一の key を貼り付け", ko: "단일 key 붙여넣기" },
+  // ⚠️ **不照抄设计原文"批量导入（多行 / JSON 数组）"**：导入框只按行拆
+  // （`js/pure/keys-write.mjs` 的 `importLines()`），不解析 JSON 数组——照抄那句
+  // 等于承诺一个没有实现的能力，粘一个 `["sk-a","sk-b"]` 进去只会得到"不合法
+  // 的 key"，不是两把导入成功的 key。这句话如实描述现在的行为。
+  "keys.addMenu.bulkImport":    { "zh-CN": "批量导入（每行一把）", "zh-TW": "批量匯入（每行一把）", en: "Bulk import (one per line)", ja: "一括インポート（1 行に 1 つ）", ko: "일괄 가져오기(한 줄에 하나)" },
+
   // 导入弹窗。⚠️ **导入框必须原样按行发（空行也发）**：`js/pure/keys-write.mjs`
   // 的 `importLines()` 与后端 `src/core/keypool-repo.ts` 的 `addMany()` 共用同一个
   // 口径——位置（1 基）就是行号，前端先过滤空行会让报给运维的行号错位。
-  "keys.import.open":       { "zh-CN": "导入", "zh-TW": "匯入", en: "Import", ja: "インポート", ko: "가져오기" },
   "keys.import.title":      { "zh-CN": "批量导入 Key", "zh-TW": "批量匯入 Key", en: "Import keys", ja: "Key の一括インポート", ko: "Key 일괄 가져오기" },
   "keys.import.placeholder":{ "zh-CN": "每行一把 key，支持多行粘贴", "zh-TW": "每行一把 key，支援多行貼上", en: "One key per line; multi-line paste supported", ja: "1 行につき 1 つの key。複数行の貼り付けに対応", ko: "한 줄에 하나의 key. 여러 줄 붙여넣기 지원" },
   "keys.import.resetExisting":    { "zh-CN": "对已存在的 key 也重置冷却 / strikes / 剔除状态", "zh-TW": "對已存在的 key 也重設冷卻 / strikes / 剔除狀態", en: "Also reset cooldown / strikes / eviction for keys that already exist", ja: "既存の key もクールダウン／strikes／除外状態をリセットする", ko: "이미 존재하는 key도 쿨다운/strikes/제외 상태를 재설정" },
