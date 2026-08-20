@@ -52,6 +52,19 @@ void _reasonsExhaustive;
 
 export interface TendResult {
   skipped: boolean;
+  /**
+   * 本轮开始时**占着 `targetKeys` 名额**的 key 数（判据是 `countsTowardTarget`）。
+   *
+   * ⚠️ **不要读成「能打上游的 key 数」，两者从 P3c Task 2 起就不是一回事了**：
+   * **被管理员停用的 key 计入这个数**（它占名额，见 `keypool.ts` 的 `countsTowardTarget`），
+   * 而它恰恰是不能打上游的。停用 1 把时这个数会说 3，实际能服务的是 2。
+   * 名字没改是因为它已经落进 `tend:history` 持久化、也进了运维日志
+   * （`[registrar] 补池完成 available=N`），改名会让存量历史条目对不上。
+   *
+   * ⚠️ **给 Task 4/5 建补池历史板块的人**：这一栏**不许按「可用」渲染**——那会撞上
+   * 「诚实标记由后端字段驱动」。要么如实标成「占名额数」，要么另外给一个真正的
+   * 可用数字段（那需要 `tendOnce` 多数一遍，本任务没有加）。
+   */
   available: number;
   attempted: number;
   minted: number;

@@ -40,7 +40,11 @@ export type Bucket = (typeof BUCKETS)[number];
  *
  * 第四档（人工停用）在 P3c Task 2 与 `isAvailable` / `poolHealth` 一起落地——
  * 那两者是热路径（`poolHealth` 正被 `unavailable()` 用来决定 503 的四条 reason），
- * 所以三处的 `disabled` 判据是**同一个函数** `isDisabled`（见它的文件头）。
+ * 所以每一处的 `disabled` 判据都是**同一个函数** `isDisabled`。
+ * **完整的调用处清单只在 `src/core/keypool.ts` 的 `isDisabled` 文件头维护一份**，
+ * 这里刻意不复述条数：本任务已经因为「在两个地方各写一个数」而写错两次
+ * （一次写成「三个读取处」、一次写成「`isAvailable` 有四个调用处」），
+ * 而没有任何门禁校验得了注释里的数字。
  * `keyBucket(...) === "fresh"` 与 `isAvailable(...)` 的等价关系由
  * `tests/unit/admin/key-view.test.ts「keyBucket === "fresh" 当且仅当 isAvailable」`
  * 那一组用例钉着：**加档而不改调度会让它变红**（P3b 预埋的 `disabled: true` 夹具

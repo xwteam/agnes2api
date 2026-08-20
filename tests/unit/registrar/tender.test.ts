@@ -141,8 +141,12 @@ describe("tendOnce", () => {
    *
    * **变红条件**：`tender.ts` 的 `countsTowardTarget` 换回 `isAvailable`。
    * 断言分两半，缺一不可：`minted`（这一轮铸没铸）与**池子实际条数**（真落盘没有）。
+   *
+   * 🔴 **保证是有条件的，用例名里的「不在冷却」三个字不许去掉**（定向复评②）：
+   * 判据不读 `isDisabled`，所以 `disabled + cooling` 的 key **仍然不占名额、仍然会
+   * 触发补池**。那条残留由下面那一格如实钉着，不在本任务修（已裁给 Task 5）。
    */
-  it("停用一把 key 不触发补池——停用不是「这把死了」，别拿它当缺口", async () => {
+  it("停用一把**不在冷却**的 key 不触发补池——停用不是「这把死了」，别拿它当缺口", async () => {
     const { repo, deps } = await makeDeps();          // targetKeys: 3
     for (const k of ["a", "b", "c"]) await repo.add(k);
     const steady = await tendOnce(deps);
@@ -156,6 +160,51 @@ describe("tendOnce", () => {
     expect(after.available, "停用的 key 仍占 targetKeys 名额").toBe(3);
     expect(after.minted, "停用一把 = 自动注册一个新 Agnes 账号（建邮箱 + 注册 + 建 token）").toBe(0);
     expect(await repo.all(), "池子不许因为一次停用就长大").toHaveLength(3);
+  });
+
+  /**
+   * 🔴 **如实登记的残留，不是护栏——这一格断言的是一个「今天还错着」的行为**（定向复评②）。
+   *
+   * `countsTowardTarget` 刻意不读 `isDisabled`，所以判据落在 `cooldownUntil > now`
+   * 这一支上：**停用一把正在冷却的 key，照样触发一次补池**，而且冷却到期后
+   * `available` 反而变大、`need` 转负，**多铸出来的那一把再也不会退掉**。
+   *
+   * **这条落在常见路径上**：运维最可能去停用一把 key 的起因，正是面板上显示它
+   * 「冷却中」（被限流 / 异常）。上一格用的是 `repo.add()` 出来的 fresh key，
+   * 四态等价那格的「已停用」也是 `cooldownUntil: 0`——**这个组合原来一格都没有**，
+   * 于是那条保证被写成了无条件的。
+   *
+   * ⚠️ **Task 5 修 `cooling` 判据时这一格会变红，那是预期**：把期望从
+   * 「铸了 1 把」改成「一把都不铸」，并把这段注释连同上一格用例名里的
+   * 「不在冷却」一起删掉。
+   */
+  it("【已知残留】停用一把**正在冷却**的 key 仍会触发补池，且多铸的那把不会退掉", async () => {
+    let t = 1000;
+    const repo = new KeyPoolRepo(new MemoryStorage(), { now: () => t, logger: NULL_LOGGER });
+    const deps: TendDeps = {
+      repo, config: { ...CFG },
+      providers: { yyds: new FakeMailProvider() },
+      agnes: agnesOk(), now: () => t, sleep: async () => {}, rand: () => 0.5, logger: NULL_LOGGER,
+    };
+    for (const k of ["a", "b", "c"]) await repo.add(k);
+    expect((await tendOnce(deps)).minted, "前置条件：稳态一把都不铸").toBe(0);
+
+    // 先冷却，再停用——这正是运维在面板上会做的顺序。
+    const one = (await repo.all())[0]!;
+    await repo.save({ ...one, cooldownUntil: t + 60_000, cooldownReason: "rate limited" }, one);
+    const cooled = (await repo.all()).find((r) => r.id === one.id)!;
+    await repo.save({ ...cooled, disabled: true }, cooled);
+
+    const out = await tendOnce(deps);
+    expect(out.available, "冷却这一支先命中 ⇒ 它不占名额").toBe(2);
+    expect(out.minted, "残留：这里本该是 0").toBe(1);
+    expect(await repo.all(), "池子被这次停用推大了一把").toHaveLength(4);
+
+    // 冷却到期之后也退不回去——铸出来的账号没有回收路径。
+    t += 120_000;
+    const after = await tendOnce(deps);
+    expect(after.minted).toBe(0);
+    expect(await repo.all(), "多出来的那一把永久留在池子里").toHaveLength(4);
   });
 
   /**
@@ -176,6 +225,10 @@ describe("tendOnce", () => {
       { name: "冷却中", rec: { ...base, cooldownUntil: NOW + 1, evicted: false }, counts: false, available: false },
       { name: "已剔除", rec: { ...base, cooldownUntil: 0, evicted: true }, counts: false, available: false },
       { name: "已停用", rec: { ...base, cooldownUntil: 0, evicted: false, disabled: true }, counts: true, available: false },
+      // 🔴 已知残留：`counts` 在这一格是 **false**，因为判据不读 `isDisabled`、
+      // 冷却那一支先命中。**这一行写的是今天的真实行为，不是期望的行为**
+      // ——把它写成 true 才是把边界说宽（定向复评②）。Task 5 修 cooling 判据时它会变红。
+      { name: "已停用且冷却中（残留）", rec: { ...base, cooldownUntil: NOW + 1, evicted: false, disabled: true }, counts: false, available: false },
     ];
     for (const { name, rec, counts, available } of CASES) {
       expect(countsTowardTarget(rec, NOW), `${name}：占不占名额`).toBe(counts);
