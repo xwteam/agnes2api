@@ -94,9 +94,17 @@ for (const [k, row] of Object.entries(I18N)) {
   if (new Set(sets).size !== 1) errors.push(`${k} 的插值占位符在各语言间不一致: ${sets.join(" | ")}`);
 }
 
-// ⑥ reg.* 禁用词（含繁体变体）
+// ⑥ reg.* 与 keys.addMenu.auto* 禁用词（含繁体变体）
+//
+// ⚠️ **`keys.addMenu.auto*` 是复评追加的范围，原来只扫 `reg.*`**：P3c Task 4
+// 新增的「添加 Key」下拉里，【自动注册】那两项占位文案（`keys.addMenu.autoGroup`
+// / `autoMoemail` / `autoYyds` / `autoPlaceholder`）与 `reg.*`（P2 注册机）
+// 说的是同一类事——"这条通道有没有被暗示成比别的通道更好"——但原来的判据
+// 只认命名空间前缀 `reg.`，这几个 key 完全不在扫描范围内，复评实测：给
+// `keys.addMenu.autoMoemail` 塞一句「推荐使用」，八条断言全绿。这条门禁
+// 必须在 Task 6 真正给这两条通道接线、写更多面向运维的文案之前先扩到这里。
 for (const [k, row] of Object.entries(I18N)) {
-  if (!k.startsWith("reg.")) continue;
+  if (!k.startsWith("reg.") && !k.startsWith("keys.addMenu.auto")) continue;
   for (const lang of LANGS) {
     const s = String(row[lang] ?? "").toLowerCase();
     for (const w of BANNED) if (s.includes(w.toLowerCase())) errors.push(`${k}/${lang} 出现偏好词「${w}」`);

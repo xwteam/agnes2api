@@ -173,12 +173,42 @@ describe("scripts/check-i18n.mjs 元测试：八条判据逐条", () => {
     }
   });
 
-  it("⑥ 只管 reg.*：同样的词出现在别的命名空间不报错", () => {
+  /**
+   * ⚠️⚠️ **复评实测的真缺口，这里补一条正向用例**：`keys.addMenu.auto*`
+   * （P3c Task 4 「添加 Key」下拉里【自动注册】两条占位）原来完全不在扫描
+   * 范围内——给 `keys.addMenu.autoMoemail` 塞一句「推荐使用」，门禁 exit 0。
+   * 下面这格钉住扩展之后的范围：这个命名空间也要被拦住。
+   */
+  it("⑥ keys.addMenu.auto* 现在也在扫描范围内（复评追加）", () => {
+    for (const [lang, word] of [["zh-TW", "推薦"], ["en", "recommended"], ["ko", "권장"]] as const) {
+      const r = run({
+        dict: { "keys.addMenu.autoMoemail": { ...row("中性说法"), [lang]: word } },
+        files: { "js/x.js": 't("keys.addMenu.autoMoemail");\n' },
+      });
+      expect(r.status, `${lang}/${word} 没被拦住`).toBe(1);
+      expect(r.stderr).toContain("偏好词");
+    }
+  });
+
+  it("⑥ 只管 reg.* 与 keys.addMenu.auto*：同样的词出现在别的命名空间不报错", () => {
     const r = run({
       dict: { "nav.x": { ...row("中性"), en: "recommended" } },
       files: { "js/x.js": 't("nav.x");\n' },
     });
     expect(r.status, "这条禁令的范围被扩大了").toBe(0);
+  });
+
+  /**
+   * 反向自检：`keys.addMenu` 命名空间下**不带 `auto` 前缀**的 key（比如
+   * 【手动】那两项 `keys.addMenu.pasteSingle`）不该被误伤——扩展的前缀是
+   * `keys.addMenu.auto`，不是整个 `keys.addMenu.*`。
+   */
+  it("⑥ keys.addMenu.pasteSingle（非 auto 前缀）不在扩展范围内，不报错", () => {
+    const r = run({
+      dict: { "keys.addMenu.pasteSingle": { ...row("中性"), en: "recommended" } },
+      files: { "js/x.js": 't("keys.addMenu.pasteSingle");\n' },
+    });
+    expect(r.status, "扩展前缀不该把整个 keys.addMenu.* 都纳入进来").toBe(0);
   });
 
   it("⑦ 字典里出现 IP:PORT 形态（scan-secrets 会打红 CI）：exit 1", () => {

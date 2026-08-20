@@ -188,6 +188,34 @@ describe("评审必改①：四个行内/批量动作都必须有请求体断言
   });
 
   /**
+   * ⚠️⚠️ **复评点名的镜像缺口**：上一格只测了"未停用 → 点击 → 发 true"这一个方向，
+   * `patchAction(v.id, { disabled: true })`（把取反写死成常量 `true`，不管当前状态）
+   * 这种变异在只有上一格的情况下是绿的——夹具恰好停在 `disabled: false`，写死 `true`
+   * 与真的取反在这一格看起来一样。这里补对称的另一半：已停用的 key 点同一颗按钮
+   * （这时按钮文案是「启用」），请求体必须是 `disabled: false`，写死 `true` 在这一格
+   * 会红。两格合起来才拦得住"取反"被换成"写死常量"。
+   */
+  it("启用：请求体必须是当前状态取反（false），不许写死成 true", async () => {
+    const items = [keyView({ id: "toggle-me-2", disabled: true, bucket: "disabled" })];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/toggle-me-2")) return { status: 200, body: { ok: true } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+
+    rowButton(section, "toggle-me-2", "keys.action.enable").click();
+    await settle();
+
+    const call = h.calls.find((c) => c.method === "PATCH" && c.url === "/admin/api/keys/toggle-me-2");
+    expect(call, "启用按钮没有真的发出 PATCH").toBeDefined();
+    expect(
+      (call?.body as { disabled: boolean })?.disabled,
+      "请求体里的 disabled 应该是 false（当前状态取反），写死发 true 就不是真的取反",
+    ).toBe(false);
+  });
+
+  /**
    * **同一个夹具里放两把 key，两颗按钮的可用性与点击后的请求体都断到**——
    * 只测一颗按钮"可用/禁用对不对"抓不住"两颗按钮的判据被整体对调"这种变异
    * （两颗都测、都测反了，形状断言照样全绿；这里额外验证点击后确实发对了
@@ -222,8 +250,21 @@ describe("评审必改①：四个行内/批量动作都必须有请求体断言
     expect((unevictCall?.body as { unevict?: boolean })?.unevict, "点了解除剔除，请求体却不是 unevict:true").toBe(true);
   });
 
-  it("批量停用：op 必须是 disable，不许被换成同一批次里的另一个动作", async () => {
-    const items = [keyView({ id: "bulk-op-a" })];
+  /**
+   * ⚠️⚠️ **复评点名的数据丢失级缺口**：这一格原来只勾一行、一共也只有一行
+   * （`items` 只放了一把 key），`ids` 是不是"只发被勾中的那些"与"发了当前页
+   * 全部 id"在这种夹具下**看起来一样**——两种取法算出来的都是长度为 1 的数组。
+   * 现在改成 3 行只勾 1 行：`runBulkWithConfirm` 里 `const ids = [...selected]`
+   * 若被换成 `[...currentPageIds]`（当前页全部 id），这里会送出 3 个 id 而不是
+   * 1 个，断言会红。原来"只测 op 字段"的写法对这条变异完全没有判别力——
+   * op 字段两种取法都不影响，只有 ids 数组的内容能拦住它。
+   */
+  it("批量停用：op 必须是 disable，ids 必须只含被勾中的那一行，不是当前页全部", async () => {
+    const items = [
+      keyView({ id: "bulk-op-a" }),
+      keyView({ id: "bulk-op-a-sibling-1", seq: 2 }),
+      keyView({ id: "bulk-op-a-sibling-2", seq: 3 }),
+    ];
     const h = await openKeys((url) => {
       if (url.startsWith("/admin/api/keys/bulk")) {
         return { status: 200, body: { results: [{ id: "bulk-op-a", ok: true, reason: null }] } };
@@ -232,7 +273,11 @@ describe("评审必改①：四个行内/批量动作都必须有请求体断言
       return { status: 200, body: {} };
     });
     const section = h.section("keys");
-    const box = section.querySelectorAll('input[type="checkbox"]')[0]!;
+    // ⚠️ **只勾第一行的行内选择框，不是表头「全选本页」那颗**——`querySelectorAll`
+    // 按 DOM 先后顺序返回，表头的全选框排在最前面（index 0），行选择框从 index 1
+    // 起。这里特意按 `data-key-id` 定位到具体那一行，避免像上面注释里描述的
+    // 那样，误点成表头全选、把 3 行全选中却只看起来像 1 行。
+    const box = section.querySelectorAll('[data-key-id="bulk-op-a"]')[0]!.querySelectorAll('input[type="checkbox"]')[0]!;
     box.checked = true;
     box.change();
     await settle();
@@ -241,10 +286,18 @@ describe("评审必改①：四个行内/批量动作都必须有请求体断言
     await settle();
     const call = h.calls.find((c) => c.url.startsWith("/admin/api/keys/bulk"));
     expect((call?.body as { op?: string })?.op, "点的是「批量停用」，op 却不是 disable").toBe("disable");
+    expect(
+      (call?.body as { ids?: string[] })?.ids,
+      "只勾了 1 行却送出了不止 1 个 id——很可能把当前页全部 id 都发了出去，这是数据丢失级的缺陷",
+    ).toEqual(["bulk-op-a"]);
   });
 
-  it("批量清冷却：op 必须是 clearCooldown，不许被换成 disable", async () => {
-    const items = [keyView({ id: "bulk-op-b" })];
+  it("批量清冷却：op 必须是 clearCooldown，ids 必须只含被勾中的那一行，不是当前页全部", async () => {
+    const items = [
+      keyView({ id: "bulk-op-b" }),
+      keyView({ id: "bulk-op-b-sibling-1", seq: 2 }),
+      keyView({ id: "bulk-op-b-sibling-2", seq: 3 }),
+    ];
     const h = await openKeys((url) => {
       if (url.startsWith("/admin/api/keys/bulk")) {
         return { status: 200, body: { results: [{ id: "bulk-op-b", ok: true, reason: null }] } };
@@ -253,7 +306,8 @@ describe("评审必改①：四个行内/批量动作都必须有请求体断言
       return { status: 200, body: {} };
     });
     const section = h.section("keys");
-    const box = section.querySelectorAll('input[type="checkbox"]')[0]!;
+    // 同上一格：定位到具体行的选择框，不是表头全选框。
+    const box = section.querySelectorAll('[data-key-id="bulk-op-b"]')[0]!.querySelectorAll('input[type="checkbox"]')[0]!;
     box.checked = true;
     box.change();
     await settle();
@@ -262,6 +316,49 @@ describe("评审必改①：四个行内/批量动作都必须有请求体断言
     await settle();
     const call = h.calls.find((c) => c.url.startsWith("/admin/api/keys/bulk"));
     expect((call?.body as { op?: string })?.op, "点的是「批量清冷却」，op 却不是 clearCooldown").toBe("clearCooldown");
+    expect(
+      (call?.body as { ids?: string[] })?.ids,
+      "只勾了 1 行却送出了不止 1 个 id——很可能把当前页全部 id 都发了出去，这是数据丢失级的缺陷",
+    ).toEqual(["bulk-op-b"]);
+  });
+
+  /**
+   * 「批量删除」需要确认弹窗，`ids` 是在**打开确认弹窗时**就已经从 `selected`
+   * 复制定死的（`runBulkWithConfirm` 里 `const ids = [...selected]` 在弹窗打开
+   * 之前就跑了），点确定之后送出的必须仍然是那份定死的 1 个 id，不是确认框
+   * 弹出期间又被重新算了一遍、混进别的行。
+   */
+  it("批量删除：确认之后 ids 仍然只含点击时被勾中的那一行", async () => {
+    const items = [
+      keyView({ id: "bulk-op-c", disabled: true, bucket: "disabled" }),
+      keyView({ id: "bulk-op-c-sibling-1", seq: 2, disabled: true, bucket: "disabled" }),
+      keyView({ id: "bulk-op-c-sibling-2", seq: 3, disabled: true, bucket: "disabled" }),
+    ];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/bulk")) {
+        return { status: 200, body: { results: [{ id: "bulk-op-c", ok: true, reason: null }] } };
+      }
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    // 同上：定位到具体行的选择框，不是表头全选框。
+    const box = section.querySelectorAll('[data-key-id="bulk-op-c"]')[0]!.querySelectorAll('input[type="checkbox"]')[0]!;
+    box.checked = true;
+    box.change();
+    await settle();
+
+    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.bulk.delete")!.click();
+    await settle();
+    h.dom.document.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+
+    const call = h.calls.find((c) => c.url.startsWith("/admin/api/keys/bulk"));
+    expect((call?.body as { op?: string })?.op).toBe("delete");
+    expect(
+      (call?.body as { ids?: string[] })?.ids,
+      "只勾了 1 行、走完确认弹窗之后，送出的 ids 却不止 1 个",
+    ).toEqual(["bulk-op-c"]);
   });
 
   it("备注保存：清空文本框必须发 note: null，不许绕过 noteToPatch 发裸的空字符串", async () => {
@@ -288,11 +385,47 @@ describe("评审必改①：四个行内/批量动作都必须有请求体断言
   });
 
   /**
-   * 批量条空选择时点击不该发任何请求——这是 `runBulkWithConfirm` 里那条
-   * `ids.length === 0` 早退的行为覆盖（见 sec-keys.js 文件头关于"哪些判据
-   * 仍然合理地留在板块文件里"的说明）。
+   * ⚠️⚠️ **复评点名的镜像缺口**：上一格只测了"清空文本框 ⇒ 发 null"这个罕见方向
+   * （`noteToPatch("")` 恒返回 `null` 这条变异，只有上一格的话，把 `noteToPatch`
+   * 整个换成"恒返回 null，不管传进来什么"照样是绿的——上一格的输入本来就是空
+   * 字符串，看不出这条变异）。这里补常见方向：文本框里是**真实内容**时，请求体
+   * 必须原样带着那段文字，不是被"恒 null"的变异吃掉。
    */
-  it("批量条一把都没选中时点击批量按钮：不发任何请求", async () => {
+  it("备注保存：有实际内容时必须原样发那段文字，不许被「恒发 null」的变异吃掉", async () => {
+    const items = [keyView({ id: "note-target-2", note: "旧备注" })];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/note-target-2")) return { status: 200, body: { ok: true } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    rowButton(section, "note-target-2", "keys.action.note").click();
+    await settle();
+
+    const textarea = h.dom.document.querySelectorAll("textarea")[0]!;
+    textarea.value = "换了下游客户，价格更新";
+    h.dom.document.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.note.save")!.click();
+    await settle();
+
+    const call = h.calls.find((c) => c.method === "PATCH" && c.url === "/admin/api/keys/note-target-2");
+    expect(
+      call?.body,
+      "文本框里明明有实际内容，请求体却不是那段文字——很可能被「清空⇒null」的判据误吞了",
+    ).toEqual({ note: "换了下游客户，价格更新" });
+  });
+
+  /**
+   * ⚠️⚠️ **复评点名的错误归因，这里订正**：这一格原来用的是「批量删除」——但
+   * `bulkNeedsConfirm("delete")` 恒真，点击「批量删除」只会打开一个确认弹窗，
+   * 这一格从没点确认按钮，所以"没有发出请求"这件事实际上是**确认弹窗没被确认**
+   * 挡住的，跟 `runBulkWithConfirm` 里 `ids.length === 0` 那条早退守卫毫无关系——
+   * 把守卫整个删掉（甚至让它在 `ids` 非空时也照样直接 `return`），只要点的是
+   * 「批量删除」，这一格照样绿，因为确认弹窗根本没打开过、`common.confirm`
+   * 从来没被点过。换成「批量清冷却」——`bulkNeedsConfirm("clearCooldown")` 恒假，
+   * 点击后**没有中间弹窗**，唯一能拦住请求的就是那条 `ids.length === 0` 早退，
+   * 这样才是真的在测这条守卫本身。
+   */
+  it("批量条一把都没选中时点击批量清冷却：不发任何请求（真正覆盖 ids.length===0 早退）", async () => {
     const items = [keyView({ id: "unselected" })];
     const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
       ? { status: 200, body: listBody(items) }
@@ -301,9 +434,15 @@ describe("评审必改①：四个行内/批量动作都必须有请求体断言
     // 批量条本来就因为没有选中项而隐藏，但按钮仍然存在于 DOM 里——
     // 直接找到它触发点击，验证守卫本身，不依赖 CSS 可见性。
     const bar = h.section("keys").querySelectorAll(".bulk-bar")[0]!;
-    bar.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.bulk.delete")!.click();
+    bar.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.bulk.clearCooldown")!.click();
     await settle();
-    expect(h.calls.length, "空选择时点击批量删除仍然发出了请求").toBe(before);
+    expect(h.calls.length, "空选择时点击批量清冷却仍然发出了请求").toBe(before);
+    // 反向自检：确认弹窗确实没有被打开过——排除"守卫其实没生效、只是被
+    // 一个意外弹出的确认框挡住了"这种可能。
+    expect(
+      h.dom.document.body.querySelectorAll('[role="dialog"]').length,
+      "批量清冷却不该需要确认弹窗——如果这里非零，说明测的其实是弹窗而不是守卫本身",
+    ).toBe(0);
   });
 });
 
@@ -977,6 +1116,93 @@ describe("评审应改④：sticky toast 出现时关闭按钮直接拿到焦点
       h.dom.byId("toast-host").querySelectorAll(".toast-close").length,
       "在关闭按钮上按 Escape 没有关掉 sticky toast",
     ).toBe(0);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 复评必改②：errorMessage() 真的调用了 isOpaqueErrorMessage()，不是只有纯函数
+// 自己的 8 格单测在守着一个从未被板块文件接线的判据
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️ **复评实测：`sec-keys.js` 的 `errorMessage()` 退回成评审①订正之前的
+ * 老实现（`raw === "" ? t(...) : raw`，不调用 `isOpaqueErrorMessage()`）之后，
+ * 566/566 全绿**——`isOpaqueErrorMessage()` 自己在 `tests/ui/keys-write.test.ts`
+ * 里的 8 格单测测的是那个纯函数本身对不对，从没有任何一格 DOM 用例真的走一遍
+ * "板块文件确实调用了它"这条接线。这里补一格：让某个写操作拿到一个
+ * `error.message` 缺失的 500（`js/api.js` 会把它落成 `"http_500"` 这个内部码），
+ * 断言面板上出现的是通用文案 `keys.writeFailed`，屏幕上**绝不能**出现裸的
+ * `http_500`——这格红的时候，红的必须是接线本身，不是纯函数的判据。
+ */
+describe("复评必改②：写操作失败时 errorMessage() 必须真的调用 isOpaqueErrorMessage()", () => {
+  it("PATCH 500 且响应体没有 error.message：toast 显示通用文案，绝不出现裸的 http_500", async () => {
+    const items = [keyView({ id: "opaque-500" })];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/opaque-500")) return { status: 500, body: {} };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    rowButton(section, "opaque-500", "keys.action.disable").click();
+    await settle();
+
+    const combined = toastTexts(h).join(" | ");
+    expect(
+      combined,
+      "500 且没有 error.message 时，屏幕上出现了裸的内部码 http_500——errorMessage() 没有真的调用 isOpaqueErrorMessage()",
+    ).not.toContain("http_500");
+    expect(
+      combined,
+      "500 且没有 error.message 时，应该显示 keys.writeFailed 这句通用文案",
+    ).toContain(I18N["keys.writeFailed"]!["zh-CN"]!);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 复评强烈建议⑤：runBulk() 的 catch 分支（整批请求本身失败）同样必须 sticky
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️ **复评实测：`runBulk()` 的 `catch` 分支 `toast(errorMessage(e), "err",
+ * { sticky: true })` 里的 `{ sticky: true }` 删掉、退回普通 4 秒 toast，
+ * 全部测试仍然绿**——「顾虑 4」那一组只测了"200 但响应体里 `results` 部分失败"
+ * 这一条路径的 sticky，没有任何一格测过"请求本身就没打成"（网络中断 / 500）
+ * 这条路径。这两条路径在 `sec-keys.js` 的文件头被明确点名为"同一类不看见就会
+ * 误判的信息"，只测了其中一条。这里补另一条：让 `/keys/bulk` 直接 500，
+ * 断言 toast 同样带 `.toast-close` 按钮、同样不排 4000ms 的自动移除计时器。
+ */
+describe("复评强烈建议⑤：批量请求本身失败（catch 分支）同样是 sticky，不是普通 4 秒 toast", () => {
+  it("POST /keys/bulk 直接 500：提示带手动关闭按钮，且不排 4000ms 自动移除", async () => {
+    const setTimeoutCalls: number[] = [];
+    const realSetTimeout = setTimeout;
+    vi.stubGlobal("setTimeout", (fn: () => void, ms: number) => {
+      setTimeoutCalls.push(ms);
+      return realSetTimeout(fn, ms);
+    });
+
+    const items = [keyView({ id: "bulk-catch-fail" })];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys/bulk")) return { status: 500, body: {} };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    });
+    const section = h.section("keys");
+    const box = section.querySelectorAll('input[type="checkbox"]')[0]!;
+    box.checked = true;
+    box.change();
+    await settle();
+    section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.bulk.clearCooldown")!.click();
+    await settle();
+
+    const closeButtons = h.dom.byId("toast-host").querySelectorAll(".toast-close");
+    expect(
+      closeButtons.length,
+      "整批请求本身失败（catch 分支）没有挂手动关闭按钮——会在 4 秒后自动消失，运维很可能没看见这次失败",
+    ).toBe(1);
+    expect(
+      setTimeoutCalls,
+      "catch 分支的 sticky toast 不该排一个 4000ms 的自动移除计时器",
+    ).not.toContain(4000);
   });
 });
 
