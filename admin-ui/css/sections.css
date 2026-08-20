@@ -30,6 +30,8 @@ tr:last-child td { border-bottom: 0; }
 .badge-ok { color: var(--ok-fg); background: var(--ok); border-color: var(--ok); }
 .badge-warn { color: var(--warn-fg); background: var(--warn); border-color: var(--warn); }
 .badge-danger { color: var(--danger-fg); background: var(--danger); border-color: var(--danger); }
+/* 人工停用。**刻意用中性色而不是报警色**：它不是故障，是运维自己按下的开关。 */
+.badge-muted { color: var(--muted); background: var(--panel-2); border-color: var(--border); }
 
 /* 工具条 / 分页 / 说明文字：Task 4 的 Key 池板块起用，事件与概览板块同样直接引用，
    **不许各板块再各写一份**（kiro2api 正是没有这一层，同一个原语出现了三份不同实现）。 */

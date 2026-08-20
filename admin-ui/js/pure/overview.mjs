@@ -8,14 +8,24 @@
  * 规则全文见 admin-ui/README.md。
  */
 
-/** 4 张池子卡。顺序即渲染顺序。 */
-export const POOL_CARDS = ["total", "fresh", "cooling", "evicted"];
+/**
+ * 5 张池子卡。顺序即渲染顺序。
+ *
+ * ⚠️ **第五格（已停用）是 P3c Task 2 加的，它不是可选的装饰**：`poolHealth()` 的四格
+ * 互斥且穷尽，少显示一格就意味着 `总数 ≠ 可用 + 冷却中 + 已剔除`，而屏幕上没有任何
+ * 东西解释那几把 key 去哪了。设计 §10.1 写的是「+ 有 disabled 时第五格」，
+ * 这里**恒显示**：一个真实的 `0` 本来就是真话（读不出来时 `fmtCount(null)` 给 `—`，
+ * 「绝不伪造 0」那条仍然由 `poolCounts` 守着），而按条件显隐要多一份判据、
+ * 多一条只有它自己会走的渲染分支。
+ */
+export const POOL_CARDS = ["total", "fresh", "cooling", "evicted", "disabled"];
 
-/** 池子卡的 i18n key。**四条各写一次字面量**，好让 i18n 门禁扫得到（同 keys.mjs 的 bucketLabelKey）。 */
+/** 池子卡的 i18n key。**五条各写一次字面量**，好让 i18n 门禁扫得到（同 keys.mjs 的 bucketLabelKey）。 */
 export function poolCardLabelKey(card) {
   if (card === "fresh") return "ov.pool.fresh";
   if (card === "cooling") return "ov.pool.cooling";
   if (card === "evicted") return "ov.pool.evicted";
+  if (card === "disabled") return "ov.pool.disabled";
   return "ov.pool.total";
 }
 
@@ -30,15 +40,17 @@ export function storageBackendLabelKey(backend) {
 }
 
 /**
- * 4 张池子卡的取数。**没有数据（`pool` 为 null）时逐项返回 `null`，绝不返回 0。**
+ * 5 张池子卡的取数。**没有数据（`pool` 为 null）时逐项返回 `null`，绝不返回 0。**
  * 判据只看 `body.pool` 存不存在、形状对不对，不看别的块——`overview` 是逐块降级的，
  * 池子块坏了不该连累别的卡。
+ *
+ * 取数用的是 `POOL_CARDS` 本身，**不再另写一份键名清单**：两份清单曾经并排放着，
+ * 加第五格时只改一份就会得到一张永远是 `—` 的卡。
  */
 export function poolCounts(body) {
   const p = body && typeof body === "object" ? body.pool : null;
-  const keys = ["total", "fresh", "cooling", "evicted"];
   const out = {};
-  for (const k of keys) {
+  for (const k of POOL_CARDS) {
     const v = p && typeof p === "object" ? p[k] : null;
     out[k] = typeof v === "number" && Number.isFinite(v) ? v : null;
   }

@@ -275,6 +275,123 @@ describe("dispatch", () => {
     expect((await repo.all()).every((r) => r.evicted)).toBe(true);
   });
 
+  // ── P3c Task 2：第四条 reason `all_disabled` ────────────────────────────
+  //
+  // **全部是行为断言**：构造真实的池子状态，打真 `dispatch`，断言响应体里的
+  // reason **字面量**与 Retry-After 头，不去看 `poolHealth` 返回了什么。
+
+  /** 走 `repo.save`——将来面板的 `PATCH` 也走这条，不另造一条只有测试会走的路。 */
+  async function disable(repo: KeyPoolRepo, ids: readonly string[]): Promise<void> {
+    for (const r of await repo.all()) {
+      if (ids.includes(r.id)) await repo.save({ ...r, disabled: true }, r);
+    }
+  }
+  const allIds = async (repo: KeyPoolRepo) => (await repo.all()).map((r) => r.id);
+
+  /**
+   * **这一格守的是常见路径，不是罕见路径**：运维停用池子里的一把 key，是这个功能
+   * 最普通的用法，而网关必须照常服务。
+   * **变红条件**：`poolHealth` 把 disabled 计进 `evicted`（则 `h.evicted === h.total`
+   * 不成立但 `fresh` 少了一把……），或 `selectKey` 之外任何一处把「有 disabled」
+   * 当成整池不可用。
+   */
+  it("停用一把、其余仍可用时照常 200，且被停用的那把一次都没被发出去", async () => {
+    const repo = await makeRepo(["k1", "k2"]);
+    const [first] = await allIds(repo);
+    await disable(repo, [first!]);
+    const f = new FakeFetcher([{ status: 200, body: '{"ok":true}' }]);
+    const res = await dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: f, config: CONFIG, now: () => 1000 },
+    });
+    expect(res.status).toBe(200);
+    expect(f.usedKeys, "只有没被停用的那把上过场").toEqual(["k2"]);
+  });
+
+  it("整池被管理员停用时报 all_disabled（不是 all_evicted），不带 Retry-After，且一次上游都不打", async () => {
+    const repo = await makeRepo(["k1", "k2"]);
+    await disable(repo, await allIds(repo));
+    const f = new FakeFetcher([{ status: 200, body: '{"ok":true}' }]);
+    const res = await dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: f, config: CONFIG, now: () => 1000 },
+    });
+    expect(res.status).toBe(503);
+    const body = await res.json() as { error: { reason: string; message: string } };
+    // 字面量断言：`all_disabled` 退回复用 `all_evicted` 时这一行变红。
+    expect(body.error.reason).toBe("all_disabled");
+    expect(body.error.message, "说成「凭据失效，请更换 key」会让运维去做一件完全没用的事")
+      .toContain("被管理员手工停用");
+    expect(res.headers.get("retry-after"), "停用不会自己恢复，给 Retry-After 等于让客户端空转").toBeNull();
+    expect(f.usedKeys, "被停用的 key 一把都不许被发出去").toEqual([]);
+  });
+
+  /**
+   * 混合池：`disabled` + `evicted`，一把冷却中的都没有。
+   * 两条路都不会自愈，但**运维该做的事不同**——一个点面板、一个换 key。
+   * reason 取「最先能让池子重新可用的那一类」，所以是 `all_disabled`；
+   * 精确的两个数在 message 里给全。
+   */
+  it("停用 + 剔除混合、无冷却时报 all_disabled，message 把两个数都说出来", async () => {
+    const repo = await makeRepo(["k1", "k2"]);
+    const f = new FakeFetcher([{ status: 401 }]);
+    // k1 先被 401 打成 evicted。
+    await dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: f, config: CONFIG, now: () => 1000 },
+    });
+    const evictedIds = (await repo.all()).filter((r) => r.evicted).map((r) => r.id);
+    expect(evictedIds, "前置条件：恰好一把被剔除").toHaveLength(1);
+    await disable(repo, (await repo.all()).filter((r) => !r.evicted).map((r) => r.id));
+
+    const res = await dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: new FakeFetcher([]), config: CONFIG, now: () => 1000 },
+    });
+    expect(res.status).toBe(503);
+    const body = await res.json() as { error: { reason: string; message: string } };
+    expect(body.error.reason).toBe("all_disabled");
+    expect(body.error.message).toContain("1 把被管理员手工停用");
+    expect(body.error.message).toContain("1 把因凭据失效被永久剔除");
+  });
+
+  /**
+   * ⚠️ **本组最要紧的一格。** 混合池：一把冷却中 + 一把被停用。
+   *
+   * 被停用的那把 `cooldownUntil` 是 0（它根本没在冷却）。Retry-After 的取值若把它
+   * 算进去，`Math.min` 会取到 0 ⇒ **`Retry-After: 1`，客户端每秒重试一次，而池子
+   * 要等半小时才回来**。这不是显示问题，是网关对着每一个下游用户说了一句假话。
+   * **变红条件**：`unavailable()` 的 `records.filter(...)` 里去掉 `!isDisabled(r)`。
+   */
+  it("冷却 + 停用混合时报 all_cooling，Retry-After 取真正冷却那把的，不被停用的 0 污染", async () => {
+    const repo = await makeRepo(["k1", "k2"]);
+    const at = 1000;
+    // 池子状态**直接构造**：上一格已经用真 503 走过 strike ⇒ 冷却那条路，这一格要测的
+    // 是 Retry-After 的**取值**，让两把 key 各自处在一个确定的状态比绕一圈更清楚。
+    // 两个状态在生产上都可达（`applyCooldown` 写 cooldownUntil、面板写 disabled）。
+    const [a, b] = await repo.all();
+    await repo.save({ ...a!, cooldownUntil: at + 1_800_000, cooldownReason: "rate limited" }, a!);
+    await repo.save({ ...b!, disabled: true }, b!);
+
+    const after = await repo.all();
+    const cooling = after.filter((r) => r.cooldownUntil > at);
+    expect(cooling, "前置条件：恰好一把在冷却").toHaveLength(1);
+    expect(after.find((r) => r.disabled)!.cooldownUntil, "前置条件：被停用那把的 cooldownUntil 是 0").toBe(0);
+
+    const res = await dispatch({
+      path: "/chat/completions", body: {}, stream: false,
+      deps: { repo, fetcher: new FakeFetcher([]), config: CONFIG, now: () => at + 1 },
+    });
+    expect(res.status).toBe(503);
+    const body = await res.json() as { error: { reason: string; message: string } };
+    expect(body.error.reason).toBe("all_cooling");
+    // 手写字面量：冷却到 at+1_800_000，而 now 是 at+1 ⇒ 还剩 1_799_999ms ⇒ 向上取整 1800 秒。
+    // 漏筛 disabled 时这里会变成 1（`Math.min` 取到那把停用 key 的 0）。
+    expect(Number(res.headers.get("retry-after"))).toBe(1800);
+    expect(body.error.message, "三个数都要说出来，否则运维看不出那 1 把去哪了")
+      .toContain("1 把被管理员停用");
+  });
+
   // ── I2：上游响应头与 401 错误体绝不外泄 ─────────────────────────────────
 
   it("上游响应头不原样转发（set-cookie / x-* 一律剥掉）", async () => {

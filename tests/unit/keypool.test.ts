@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  isAvailable, selectKey, applySuccess, applyCooldown, applyStrike, applyEvict, poolHealth,
+  isAvailable, isDisabled, selectKey, applySuccess, applyCooldown, applyStrike, applyEvict, poolHealth,
 } from "../../src/core/keypool.js";
 import type { KeyRecord } from "../../src/core/types.js";
 
@@ -19,6 +19,49 @@ describe("isAvailable", () => {
   it("已剔除的不可用", () => expect(isAvailable(rec({ evicted: true }), NOW)).toBe(false));
   it("冷却未到期的不可用", () => expect(isAvailable(rec({ cooldownUntil: NOW + 1 }), NOW)).toBe(false));
   it("冷却刚好到期的可用", () => expect(isAvailable(rec({ cooldownUntil: NOW }), NOW)).toBe(true));
+  /**
+   * 这一条是本字段存在的全部理由：停用了却还在被调度，等于面板上那个开关是假的。
+   * **变红条件**：把 `isAvailable` 里的 `!isDisabled(r)` 去掉。
+   */
+  it("被管理员停用的不可用——哪怕它既没剔除也不在冷却", () => {
+    expect(isAvailable(rec({ disabled: true }), NOW)).toBe(false);
+  });
+  /**
+   * **存量记录**：`add()` 从来不写 `disabled`，所以线上绝大多数记录里压根没有这个
+   * 字段。夹具刻意用 `rec()`（对象里**真的没有这个键**），而不是
+   * `rec({ disabled: undefined })`——后者在 TS 里能过，但 JSON 往返之后与前者
+   * 不等价，**测的就成了抄件不是原件**。
+   */
+  it("存量记录（压根没有 disabled 这个字段）照常可用——加字段不许把整池停掉", () => {
+    const legacy = rec();
+    expect("disabled" in legacy, "前置条件：夹具必须是一条真的不带该字段的旧记录").toBe(false);
+    expect(isAvailable(legacy, NOW)).toBe(true);
+  });
+});
+
+/**
+ * `isDisabled` 是**全仓唯一一份**「这把 key 停用了吗」的判据，`isAvailable` /
+ * `keyBucket` / `toKeyViews` 三处都问它。记录来自 `storage.get<KeyRecord>()` 的裸
+ * `JSON.parse`（没有任何窄化），所以这里连非布尔值一起钉。
+ */
+describe("isDisabled 的取值边界", () => {
+  it("缺字段 / undefined / null / false 一律不算停用", () => {
+    expect(isDisabled(rec())).toBe(false);
+    expect(isDisabled(rec({ disabled: undefined }))).toBe(false);
+    expect(isDisabled(rec({ disabled: null as unknown as boolean }))).toBe(false);
+    expect(isDisabled(rec({ disabled: false }))).toBe(false);
+  });
+  /**
+   * 存储被手工写坏时**倒向「停用」**：那一侧是安全的——key 停了、面板也如实显示
+   * 成已停用，运维看得见、点一下就能改回来；反过来（判成没停用）则是运维明明关了
+   * 它、网关继续拿它发请求，而面板还说它可用。
+   * **变红条件**：把 `!!r.disabled` 改成 `r.disabled === true`。
+   */
+  it("存储被写坏成非布尔真值时倒向「停用」，且返回的仍是真布尔", () => {
+    const broken = rec({ disabled: "true" as unknown as boolean });
+    expect(isDisabled(broken)).toBe(true);
+    expect(isAvailable(broken, NOW)).toBe(false);
+  });
 });
 
 describe("selectKey", () => {
@@ -42,6 +85,16 @@ describe("selectKey", () => {
   it("跳过不可用的记录", () => {
     const rs = [rec({ id: "a", evicted: true }), rec({ id: "b" })];
     expect(selectKey(rs, 0, NOW)!.record.id).toBe("b");
+  });
+  /**
+   * **行为断言**：不是问 `isAvailable` 怎么说，而是问轮询真的会不会把它发出去。
+   * 夹具里被停用的那把**既没剔除也不在冷却**，所以它是不是被跳过，唯一的决定者
+   * 就是 `disabled`。**变红条件**：`isAvailable` 去掉 `!isDisabled(r)`。
+   */
+  it("被管理员停用的 key 不会被 selectKey 选中——面板上的那个开关必须是真的", () => {
+    const rs = [rec({ id: "a", disabled: true }), rec({ id: "b" })];
+    expect(selectKey(rs, 0, NOW)!.record.id).toBe("b");
+    expect(selectKey([rec({ id: "a", disabled: true })], 0, NOW), "整池都停用时无人可选").toBeNull();
   });
   it("返回的 nextCursor 指向被选中项的下一位", () => {
     const rs = [rec({ id: "a" }), rec({ id: "b" })];
@@ -96,12 +149,43 @@ describe("状态迁移", () => {
 });
 
 describe("poolHealth", () => {
-  it("分别统计可用、冷却中与已剔除", () => {
+  it("分别统计可用、冷却中、已剔除与已停用", () => {
     const rs = [
       rec({ id: "a" }),
       rec({ id: "b", cooldownUntil: NOW + 1000 }),
       rec({ id: "c", evicted: true }),
+      rec({ id: "d", disabled: true }),
     ];
-    expect(poolHealth(rs, NOW)).toEqual({ total: 3, fresh: 1, cooling: 1, evicted: 1 });
+    // 手写字面量，不从被测对象反推（第 6 种假阳性）。
+    expect(poolHealth(rs, NOW)).toEqual({ total: 4, fresh: 1, cooling: 1, evicted: 1, disabled: 1 });
+  });
+  /**
+   * 设计 §6.2 逐字：**被停用的 key 既不算 `fresh` 也不算 `evicted`**。
+   * 两格都要单独钉：算进 `fresh` ⇒ `unavailable()` 以为池子还有得用、退回
+   * `upstream_error`；算进 `evicted` ⇒ 503 让运维「去换 key」，而其实是他自己关的。
+   * **变红条件**：把 `poolHealth` 里的 `disabled++` 换成 `fresh++` 或 `evicted++`。
+   */
+  it("停用的 key 既不算 fresh 也不算 evicted，且四格之和恒等于 total", () => {
+    const h = poolHealth([rec({ id: "a", disabled: true }), rec({ id: "b" })], NOW);
+    // 算进 fresh 的话 fresh 会是 2；算进 evicted 的话 evicted 会是 1。两格各钉一次。
+    expect(h).toEqual({ total: 2, fresh: 1, cooling: 0, evicted: 0, disabled: 1 });
+    expect(h.fresh + h.cooling + h.evicted + h.disabled).toBe(h.total);
+  });
+  /**
+   * 优先级必须与 `keyBucket` 同序（`disabled > evicted > cooling > fresh`）：
+   * 两处不同序就会出现「概览卡说 1 把冷却中、Key 池列表一把冷却中的都没有」。
+   * 三格给的是**不同的**字段组合（第 1 种假阳性防护：不能都设成 true 就完事）。
+   */
+  it("同时命中多档时按优先级只计一次：disabled > evicted > cooling", () => {
+    const rs = [
+      rec({ id: "a", disabled: true, evicted: true, cooldownUntil: NOW + 1000 }),
+      rec({ id: "b", disabled: true, evicted: false, cooldownUntil: NOW + 1000 }),
+      rec({ id: "c", disabled: false, evicted: true, cooldownUntil: NOW + 1000 }),
+    ];
+    expect(poolHealth(rs, NOW)).toEqual({ total: 3, fresh: 0, cooling: 0, evicted: 1, disabled: 2 });
+  });
+  it("存量记录（没有 disabled 字段）一条都不进 disabled 格", () => {
+    expect(poolHealth([rec({ id: "a" }), rec({ id: "b" })], NOW))
+      .toEqual({ total: 2, fresh: 2, cooling: 0, evicted: 0, disabled: 0 });
   });
 });

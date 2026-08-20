@@ -15,7 +15,7 @@ const view = {
 };
 const body = {
   items: [view], total: 1, page: 1, size: 20, pages: 1,
-  counts: { all: 3, fresh: 1, cooling: 1, evicted: 1 },
+  counts: { all: 4, fresh: 1, cooling: 1, evicted: 1, disabled: 1 },
   approximate: true, generatedAt: 3000,
 };
 
@@ -27,33 +27,46 @@ const body = {
  * 字典里 `common.loadFailed` 逐字写着「读取失败，显示为 —」，面板不能一边这么说一边显示 0。
  */
 describe("cardCounts：没有数据就是没有数据", () => {
-  it("读失败 / 还没加载时四项全是 null，不是 0", () => {
+  it("读失败 / 还没加载时五项全是 null，不是 0", () => {
     for (const empty of [null, undefined, {}, { counts: null }]) {
-      expect(cardCounts(empty), String(empty)).toEqual({ all: null, fresh: null, cooling: null, evicted: null });
+      expect(cardCounts(empty), String(empty))
+        .toEqual({ all: null, fresh: null, cooling: null, evicted: null, disabled: null });
     }
   });
   it("有数据时逐项透传（**真的取到了数字**，否则上面那条在恒 null 的实现下也绿）", () => {
-    expect(cardCounts(body)).toEqual({ all: 3, fresh: 1, cooling: 1, evicted: 1 });
+    expect(cardCounts(body)).toEqual({ all: 4, fresh: 1, cooling: 1, evicted: 1, disabled: 1 });
   });
   it("counts 里某一项坏掉（非数字）只让那一项变 null，不整块丢弃", () => {
-    const broken = { counts: { all: 3, fresh: "1", cooling: null, evicted: 1 } };
-    expect(cardCounts(broken)).toEqual({ all: 3, fresh: null, cooling: null, evicted: 1 });
+    const broken = { counts: { all: 3, fresh: "1", cooling: null, evicted: 1, disabled: 1 } };
+    expect(cardCounts(broken)).toEqual({ all: 3, fresh: null, cooling: null, evicted: 1, disabled: 1 });
   });
   it("真实的 0 照样是 0——「没有数据」与「数出来是零」必须分得开", () => {
-    expect(cardCounts({ counts: { all: 0, fresh: 0, cooling: 0, evicted: 0 } }))
-      .toEqual({ all: 0, fresh: 0, cooling: 0, evicted: 0 });
+    expect(cardCounts({ counts: { all: 0, fresh: 0, cooling: 0, evicted: 0, disabled: 0 } }))
+      .toEqual({ all: 0, fresh: 0, cooling: 0, evicted: 0, disabled: 0 });
+  });
+  /**
+   * 后端加了第四档、前端 `CARDS` 忘了跟上时，这一档的条数在面板上**根本不存在**
+   * ——不是显示成 `—`，而是那张卡压根没有，运维看不出 `all` 与另外几格为什么对不上。
+   * **变红条件**：从 `CARDS` 里删掉 `"disabled"`。
+   */
+  it("后端给了 disabled 这一档，前端就必须取得到它", () => {
+    expect(cardCounts({ counts: { all: 5, fresh: 1, cooling: 1, evicted: 1, disabled: 2 } }))
+      .toEqual({ all: 5, fresh: 1, cooling: 1, evicted: 1, disabled: 2 });
   });
 });
 
 describe("分档与档位的映射", () => {
-  it("三档各自的徽章样式互不相同", () => {
-    const classes = ["fresh", "cooling", "evicted"].map(badgeClass);
-    expect(classes).toEqual(["badge badge-ok", "badge badge-warn", "badge badge-danger"]);
-    expect(new Set(classes).size, "两档共用一个样式就等于面板分不出它们").toBe(3);
+  it("四档各自的徽章样式互不相同", () => {
+    const classes = ["fresh", "cooling", "evicted", "disabled"].map(badgeClass);
+    expect(classes).toEqual([
+      "badge badge-ok", "badge badge-warn", "badge badge-danger", "badge badge-muted",
+    ]);
+    expect(new Set(classes).size, "两档共用一个样式就等于面板分不出它们").toBe(4);
   });
   it("i18n key 逐档手写，且每一个都真的在字典里", () => {
     expect(CARDS.map(bucketLabelKey)).toEqual([
       "keys.bucket.all", "keys.bucket.fresh", "keys.bucket.cooling", "keys.bucket.evicted",
+      "keys.bucket.disabled",
     ]);
     for (const k of CARDS.map(bucketLabelKey)) expect(I18N, k).toHaveProperty(k);
   });

@@ -52,7 +52,7 @@ const FULL = {
     serverTime: NOW,
     runtime: { name: "node" },
     process: { rssBytes: 42_000_000, uptimeMs: 3_600_000, pid: 7 },
-    pool: { total: 4, fresh: 2, cooling: 1, evicted: 1 },
+    pool: { total: 5, fresh: 2, cooling: 1, evicted: 1, disabled: 1 },
     poolStats: { requests: 100, success: 90, failed: 7, clientErrors: 3, approximate: true },
     storage: { backend: "file", writable: true, checkedAt: NOW },
     freshness: {
@@ -67,7 +67,9 @@ const FULL = {
   },
 };
 
-const POOL_LABELS = ["ov.pool.total", "ov.pool.fresh", "ov.pool.cooling", "ov.pool.evicted"];
+const POOL_LABELS = [
+  "ov.pool.total", "ov.pool.fresh", "ov.pool.cooling", "ov.pool.evicted", "ov.pool.disabled",
+];
 const USAGE_LABELS = ["ov.usage.requests", "ov.usage.success", "ov.usage.failed", "ov.usage.clientErrors"];
 
 describe("概览板块：读不出来时显示破折号，绝不伪造 0", () => {
@@ -75,11 +77,12 @@ describe("概览板块：读不出来时显示破折号，绝不伪造 0", () =>
    * **反向自检必须在最前**：有数据时那四张卡显示的必须是真实的数字。
    * 少了它，「一律显示 —」也能让下面每一格全绿，而那样面板就永远不报数了。
    */
-  it("有数据时四张池子卡显示真实数字（不是一律破折号）", async () => {
+  it("有数据时五张池子卡显示真实数字（不是一律破折号）", async () => {
     const h = await openOverview(FULL);
     const c = cards(h.section("overview"));
-    expect([c["ov.pool.total"], c["ov.pool.fresh"], c["ov.pool.cooling"], c["ov.pool.evicted"]])
-      .toEqual(["4", "2", "1", "1"]);
+    expect(POOL_LABELS.map((l) => c[l])).toEqual(["5", "2", "1", "1", "1"]);
+    // 五格里的后四格之和必须等于总数——少渲染一格的话，屏幕上那几把 key 就凭空消失了。
+    expect(["2", "1", "1", "1"].reduce((a, b) => a + Number(b), 0)).toBe(Number(c["ov.pool.total"]));
   });
 
   it("有数据时四张汇总卡也显示真实数字", async () => {
@@ -99,7 +102,7 @@ describe("概览板块：读不出来时显示破折号，绝不伪造 0", () =>
    * 变异：`renderPoolCards()` 里把 `fmtCount(c[card])` 换成 `c[card] ?? 0`
    *（或 `fmtCount` 对 `null` 返回 `"0"`）⇒ 这一格变红。
    */
-  it("接口 500：四张池子卡 + 四张汇总卡全是破折号", async () => {
+  it("接口 500：五张池子卡 + 四张汇总卡全是破折号", async () => {
     const h = await openOverview({ status: 500, body: { error: { message: "boom" } } });
     const c = cards(h.section("overview"));
     for (const label of [...POOL_LABELS, ...USAGE_LABELS]) {

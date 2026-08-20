@@ -13,7 +13,7 @@ const body = {
   runtime: { name: "node" },
   process: { pid: 4242, rssBytes: 123456789, uptimeMs: 987654 },
   storage: { backend: "file", writable: true, checkedAt: 4000 },
-  pool: { total: 5, fresh: 2, cooling: 1, evicted: 2 },
+  pool: { total: 5, fresh: 2, cooling: 1, evicted: 2, disabled: 0 },
   poolStats: { requests: 100, success: 90, failed: 8, clientErrors: 2, approximate: true },
   freshness: {
     poolCacheTtlMs: 60_000, poolVisibilityUpperBoundMs: 120_000,
@@ -28,24 +28,35 @@ const body = {
 
 /**
  * **产品不变式：绝不伪造 0。**（同 keys.mjs 的 cardCounts，评审 C1 在那一侧栽过一次，
- * 这里从第一天就照着写。）`pool` 块失败（`null`）时四张汇总卡必须显示 `—`。
+ * 这里从第一天就照着写。）`pool` 块失败（`null`）时五张汇总卡必须显示 `—`。
  */
 describe("poolCounts：没有数据就是没有数据", () => {
-  it("pool 为 null / 缺失 / 畸形时四项全是 null，不是 0", () => {
+  it("pool 为 null / 缺失 / 畸形时五项全是 null，不是 0", () => {
     for (const empty of [null, undefined, {}, { pool: null }, { pool: "oops" }]) {
-      expect(poolCounts(empty), String(empty)).toEqual({ total: null, fresh: null, cooling: null, evicted: null });
+      expect(poolCounts(empty), String(empty))
+        .toEqual({ total: null, fresh: null, cooling: null, evicted: null, disabled: null });
     }
   });
   it("有数据时逐项透传", () => {
-    expect(poolCounts(body)).toEqual({ total: 5, fresh: 2, cooling: 1, evicted: 2 });
+    expect(poolCounts(body)).toEqual({ total: 5, fresh: 2, cooling: 1, evicted: 2, disabled: 0 });
   });
   it("某一项坏掉（非数字）只让那一项变 null，不整块丢弃", () => {
-    const broken = { pool: { total: 5, fresh: "2", cooling: null, evicted: 2 } };
-    expect(poolCounts(broken)).toEqual({ total: 5, fresh: null, cooling: null, evicted: 2 });
+    const broken = { pool: { total: 5, fresh: "2", cooling: null, evicted: 2, disabled: 1 } };
+    expect(poolCounts(broken)).toEqual({ total: 5, fresh: null, cooling: null, evicted: 2, disabled: 1 });
   });
   it("真实的 0 照样是 0——「没有数据」与「数出来是零」必须分得开", () => {
-    expect(poolCounts({ pool: { total: 0, fresh: 0, cooling: 0, evicted: 0 } }))
-      .toEqual({ total: 0, fresh: 0, cooling: 0, evicted: 0 });
+    expect(poolCounts({ pool: { total: 0, fresh: 0, cooling: 0, evicted: 0, disabled: 0 } }))
+      .toEqual({ total: 0, fresh: 0, cooling: 0, evicted: 0, disabled: 0 });
+  });
+  /**
+   * `poolHealth()` 的四格互斥且穷尽，所以概览上少显示一格就意味着
+   * `总数 ≠ 可用 + 冷却中 + 已剔除`，而屏幕上没有任何东西解释那几把 key 去哪了。
+   * **变红条件**：从 `POOL_CARDS` 里删掉 `"disabled"`（取数与渲染共用它这一份）。
+   */
+  it("后端给了 disabled 计数，概览就必须取得到它——否则五格之和对不上总数", () => {
+    // 夹具里 2 + 1 + 1 + 2 === 6：取不到 disabled 这一格时，屏幕上那 2 把 key 凭空消失。
+    expect(poolCounts({ pool: { total: 6, fresh: 2, cooling: 1, evicted: 1, disabled: 2 } }))
+      .toEqual({ total: 6, fresh: 2, cooling: 1, evicted: 1, disabled: 2 });
   });
 });
 
@@ -218,9 +229,9 @@ describe("kvReadEstimatePerIsolatePerDay", () => {
 });
 
 describe("分档与形态标签的映射（同 keys.mjs 的 bucketLabelKey 那一套）", () => {
-  it("四张池子卡的 i18n key 逐档手写，且每一个都真的在字典里", () => {
+  it("五张池子卡的 i18n key 逐档手写，且每一个都真的在字典里", () => {
     expect(POOL_CARDS.map(poolCardLabelKey)).toEqual([
-      "ov.pool.total", "ov.pool.fresh", "ov.pool.cooling", "ov.pool.evicted",
+      "ov.pool.total", "ov.pool.fresh", "ov.pool.cooling", "ov.pool.evicted", "ov.pool.disabled",
     ]);
     for (const k of POOL_CARDS.map(poolCardLabelKey)) expect(I18N, k).toHaveProperty(k);
   });

@@ -52,6 +52,20 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
   evicted: "scheduling",
   evictedReason: "scheduling",
   /**
+   * 管理员手工停用。**scheduling**，且这一格是本表最容易填错、填错后最难被发现的一格。
+   *
+   * `isAvailable` 读它（`src/core/keypool.ts` 的 `isDisabled`）⇒ 它改变「这把 key 还能
+   * 不能用」⇒ 按本表开头那条判据就是 scheduling，没有第二种读法。
+   *
+   * ⚠️ **填成 telemetry 的后果**：`schedulingEqual(prev, next)` 会判两份相等，
+   * 于是「停用一把 key」这次写**被写消除整个吃掉**——面板显示已停用、调度器照常用它。
+   * 而且它只在「这把 key 的 `lastUsedAt` 距今不足 `touchIntervalMs`（默认 6 小时）」时
+   * 发生，也就是**只对正在被使用的那些 key 发生**——恰恰是最需要能停下来的那些。
+   * 由 `tests/unit/pool-cache.test.ts「停用一把刚用过的 key 必须真的落盘」` 钉着：
+   * 把这一行挪进 telemetry 会让它变红。
+   */
+  disabled: "scheduling",
+  /**
    * 建号时刻。**判 telemetry 的理由与 `lastUsedAt` 完全不同，别把两者并列理解**：
    * `lastUsedAt` 有 `touchIntervalMs` 兜底（最迟每 6 小时一定落一次盘），
    * `addedAt` **一条兜底都没有**——它变化的那次写会被无条件丢弃。
@@ -73,6 +87,17 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
    * 而不是像 `lastUsedAt` 那样直接丢。
    */
   stats: "telemetry",
+  /**
+   * 运维备注。**telemetry**：调度逻辑一个字段都不读它（`isAvailable` / `selectKey` /
+   * `apply*` / `poolHealth` / `keyBucket` 全都不碰），它只会被显示。
+   *
+   * ⚠️ **代价与 `lastUsedAt` 不同，写给 P3c Task 3 的人看**：`lastUsedAt` 被消除只是
+   * 面板上的时刻粗一点，而**只改 `note` 的那次 `PATCH` 会被整个丢弃**——
+   * `shouldElide` 的判据是 `schedulingEqual(prev, next)` 且 `lastUsedAt` 没走远，
+   * 一次纯改备注的写两条都满足。**做 `PATCH` 的人必须自己处理这件事**
+   * （比如那条路径不传 `prev`），不能指望本表兜住。本期它没有生产者，还走不到。
+   */
+  note: "telemetry",
 };
 
 const SCHEDULING_FIELDS = (Object.keys(FIELD_ROLE) as Array<keyof KeyRecord>)

@@ -15,7 +15,7 @@ interface OverviewBody {
   runtime: { name: "node" | "worker" };
   process: { pid: number; rssBytes: number; uptimeMs: number } | null;
   storage: { backend: "file" | "kv"; writable: boolean; checkedAt: number | null };
-  pool: { total: number; fresh: number; cooling: number; evicted: number } | null;
+  pool: { total: number; fresh: number; cooling: number; evicted: number; disabled: number } | null;
   /**
    * **不含 `lastErrorAt`/`lastErrorKind`**（评审裁定，见 overview.ts 的说明）：
    * 概览面板不消费这两个字段，错误面正经的归宿是 Task 6 的事件板块。
@@ -87,6 +87,26 @@ describe("GET /admin/api/overview", () => {
    * （第 4 种假阳性）。**`config` 现在恒有值**（`ConfigHolder.current()` 不碰存储，
    * 见 overview.ts I2 的说明），这里显式断言它也没被存储故障连累。
    */
+  /**
+   * `pool` 块的**字段集合**是契约：概览的五张卡直接按这几个键取数
+   * （`admin-ui/js/pure/overview.mjs` 的 `POOL_CARDS`），少一个键就是一张永远显示
+   * `—` 的卡。断言的是 `Object.keys(...)`，不是逐个字段有值——后者对
+   * 「少给一个键」这种实现无感。
+   */
+  it("pool 块给全五个键，且四格之和恒等于 total", async () => {
+    const { app, repo } = await makeApp([], ["k1", "k2", "k3"], {}, () => 1000);
+    const all = await repo.all();
+    await repo.save({ ...all[0]!, disabled: true }, all[0]!);
+    await repo.save({ ...all[1]!, evicted: true, evictedReason: "upstream 401" }, all[1]!);
+
+    const body = await getOverview(app);
+    expect(Object.keys(body.pool!).sort()).toEqual(["cooling", "disabled", "evicted", "fresh", "total"]);
+    // 手写字面量，不从 repo 反推。
+    expect(body.pool).toEqual({ total: 3, fresh: 1, cooling: 0, evicted: 1, disabled: 1 });
+    const p = body.pool!;
+    expect(p.fresh + p.cooling + p.evicted + p.disabled).toBe(p.total);
+  });
+
   it("存储读取全部抛错时：res 仍 200，pool/poolStats 严格 null，version/runtime/config 不受影响", async () => {
     const { app } = await makeApp([], [], {}, () => 1000, { storage: new BrokenStorage() });
     const body = await getOverview(app);

@@ -1,4 +1,5 @@
 import type { KeyRecord, KeyStats } from "../types.js";
+import { isDisabled } from "../keypool.js";
 import { normalizeStats } from "./stats.js";
 
 /**
@@ -31,17 +32,22 @@ export function maskKey(key: string): string {
   return `${key.slice(0, 5)}…${key.slice(-4)}`;
 }
 
-export const BUCKETS = ["evicted", "cooling", "fresh"] as const;
+export const BUCKETS = ["disabled", "evicted", "cooling", "fresh"] as const;
 export type Bucket = (typeof BUCKETS)[number];
 
 /**
- * 分档。**顺序即优先级。** 只有三档——第四档（人工停用）要求 `KeyRecord.disabled`
- * 与 `isAvailable` / `poolHealth` 一起改，而后两者是热路径（`poolHealth` 正被
- * `unavailable()` 用来决定 503 的三条 reason），设计文档 §12 已排在写操作那一期。
- * `keyBucket(...) === "fresh"` 与 `isAvailable(...)` 的等价关系由用例钉着：
- * **加档而不改调度会让它变红。**
+ * 分档。**顺序即优先级**（`disabled > evicted > cooling > fresh`，设计文档 §10.2）。
+ *
+ * 第四档（人工停用）在 P3c Task 2 与 `isAvailable` / `poolHealth` 一起落地——
+ * 那两者是热路径（`poolHealth` 正被 `unavailable()` 用来决定 503 的四条 reason），
+ * 所以三处的 `disabled` 判据是**同一个函数** `isDisabled`（见它的文件头）。
+ * `keyBucket(...) === "fresh"` 与 `isAvailable(...)` 的等价关系由
+ * `tests/unit/admin/key-view.test.ts「keyBucket === "fresh" 当且仅当 isAvailable」`
+ * 那一组用例钉着：**加档而不改调度会让它变红**（P3b 预埋的 `disabled: true` 夹具
+ * 实测能抓住，本任务开工前又复跑了一次：2 条红）。
  */
 export function keyBucket(r: KeyRecord, now: number): Bucket {
+  if (isDisabled(r)) return "disabled";
   if (r.evicted) return "evicted";
   if (r.cooldownUntil > now) return "cooling";
   return "fresh";
@@ -60,6 +66,15 @@ export interface KeyView {
   cooldownReason: string | null;
   evictedReason: string | null;
   strikes: number;
+  /**
+   * 管理员手工停用。**恒是布尔、恒存在**，即使记录里压根没有 `disabled` 字段。
+   *
+   * `KeyRecord.disabled` 是可选的（存量记录没有它），而 `c.json` 会把值为
+   * `undefined` 的字段**整个丢掉** ⇒ 前端拿到的是「字段不存在」而不是 `false`，
+   * 分不清「没停用」和「读不出来」，违反约束 10（诚实标记由后端字段驱动）。
+   * 所以这里过一道 `isDisabled()` 落成布尔，**不许直接写 `disabled: r.disabled`**。
+   */
+  disabled: boolean;
   /** Tier-1。**近似值**：并发下少计，且最多晚一个 `POOL_TOUCH_INTERVAL_MS` 落盘。 */
   stats: KeyStats;
 }
@@ -87,18 +102,24 @@ export function toKeyViews(records: readonly KeyRecord[], now: number): KeyView[
       cooldownReason: r.cooldownReason,
       evictedReason: r.evictedReason,
       strikes: r.strikes,
+      disabled: isDisabled(r),
       stats: normalizeStats(r.stats),
     }));
 }
 
+/**
+ * 汇总卡的条数。**判据只看 `v.bucket`**，不再各自重算一遍 `disabled` / `evicted`——
+ * 重算就是同一条优先级规则的第二份实现，两份迟早会漂。
+ */
 export function bucketCounts(views: readonly KeyView[]) {
-  let fresh = 0, cooling = 0, evicted = 0;
+  let fresh = 0, cooling = 0, evicted = 0, disabled = 0;
   for (const v of views) {
-    if (v.bucket === "evicted") evicted++;
+    if (v.bucket === "disabled") disabled++;
+    else if (v.bucket === "evicted") evicted++;
     else if (v.bucket === "cooling") cooling++;
     else fresh++;
   }
-  return { all: views.length, fresh, cooling, evicted };
+  return { all: views.length, fresh, cooling, evicted, disabled };
 }
 
 /**

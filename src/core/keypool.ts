@@ -1,7 +1,29 @@
 import type { KeyRecord } from "./types.js";
 
+/**
+ * 「这把 key 被管理员手工停用了吗」。**全仓唯一一份判据。**
+ *
+ * 三个读取处必须问同一个问题：调度（下面的 `isAvailable`）、分档
+ * （`src/core/admin/key-view.ts` 的 `keyBucket`）、投影（同文件 `toKeyViews` 的 `disabled` 字段）。
+ * 各写各的后果是「面板显示已停用、调度器照常用它」——本字段最难被发现的失败形态。
+ *
+ * **用真值性而不是 `=== true`**，理由是记录的真实来源：`src/core/keypool-repo.ts`
+ * 的 `loadRecords()` 走 `storage.get<KeyRecord>()`，那是**裸 `JSON.parse` 之后的 as
+ * 断言，没有任何窄化**，运行期什么形状都可能是。对一个安全开关来说，
+ * 「读不懂就当停用」是安全的那一侧：key 停用了、面板也如实显示成已停用，运维看得见、
+ * 点一下就能改回来；反过来（`=== true`，`"true"` 判成没停用）则是运维明明关了它、
+ * 网关继续拿它发请求，而面板还说它是可用的。
+ *
+ * **刻意不做成 `normalizeFlags(r)` 那样返回对象的形态**：`isAvailable` 在 `selectKey`
+ * 的循环里，逐条记录新建一个对象只为读一个布尔，是热路径上白付的代价；而返回布尔
+ * 同样满足「所有读取处走同一份实现」这条真正要保的性质。
+ */
+export function isDisabled(r: KeyRecord): boolean {
+  return !!r.disabled;
+}
+
 export function isAvailable(r: KeyRecord, now: number): boolean {
-  return !r.evicted && r.cooldownUntil <= now;
+  return !r.evicted && !isDisabled(r) && r.cooldownUntil <= now;
 }
 
 export function selectKey(
@@ -57,12 +79,24 @@ export function applyEvict(r: KeyRecord, reason: string): KeyRecord {
   return { ...r, evicted: true, evictedReason: reason };
 }
 
+/**
+ * 四格计数。**判定顺序即优先级，且与 `keyBucket` 逐档同序**
+ * （`disabled > evicted > cooling > fresh`，设计文档 §10.2）——两处不同序就会出现
+ * 「概览卡说 3 把冷却中、Key 池列表一把冷却中的都没有」这种自相矛盾。
+ *
+ * **被停用的 key 既不算 `fresh` 也不算 `evicted`**（设计文档 §6.2 逐字）：算进
+ * `fresh` 会让 `unavailable()` 以为池子还有得用、退回 `upstream_error`；算进
+ * `evicted` 会让 503 告诉运维「去换 key」，而其实是他自己在面板上关的。
+ *
+ * 四格互斥且穷尽 ⇒ `total === fresh + cooling + evicted + disabled` 恒成立。
+ */
 export function poolHealth(records: KeyRecord[], now: number) {
-  let fresh = 0, cooling = 0, evicted = 0;
+  let fresh = 0, cooling = 0, evicted = 0, disabled = 0;
   for (const r of records) {
-    if (r.evicted) evicted++;
+    if (isDisabled(r)) disabled++;
+    else if (r.evicted) evicted++;
     else if (r.cooldownUntil > now) cooling++;
     else fresh++;
   }
-  return { total: records.length, fresh, cooling, evicted };
+  return { total: records.length, fresh, cooling, evicted, disabled };
 }

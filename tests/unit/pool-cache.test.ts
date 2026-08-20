@@ -234,6 +234,8 @@ describe("写消除：只有 lastUsedAt 变化时不落盘", () => {
     addedAt: { addedAt: 424_242 },
     lastUsedAt: { lastUsedAt: 1_000_001 },
     stats: { stats: { requests: 1, success: 1, failed: 0, clientErrors: 0, lastErrorAt: null, lastErrorKind: null } },
+    disabled: { disabled: true },
+    note: { note: "换了下游客户，先停着" },
   };
 
   /**
@@ -251,14 +253,22 @@ describe("写消除：只有 lastUsedAt 变化时不落盘", () => {
    */
   const MUST_PERSIST: Array<keyof KeyRecord> = [
     "id", "key", "cooldownUntil", "cooldownReason", "strikes", "evicted", "evictedReason",
+    // 管理员手工停用：`isAvailable` 读它 ⇒ 丢一次就是「面板显示已停用、调度器照常用它」。
+    "disabled",
   ];
   /**
    * ⚠️ `stats` 在这张表里的含义与另外两个**不同**：它的那次写同样被消除（下面那条
    * 数 put 次数的断言仍然成立），但**计数不会跟着丢**——它被攒进 `pendingStats`，
    * 在下一次本来就要发生的写上一起带下去。「攒起来」这半由
    * 「Tier-1 计数不许被写消除吃掉」那一组守着，这里只守「不为它单独付一次 KV 写」。
+   *
+   * ⚠️ **`note` 的含义又与 `stats` 不同，这段是写给 P3c Task 3 的人看的**：它没有
+   * `pendingStats` 那样的攒存机制，**一次「只改备注」的写就是真的丢了**。本期它还
+   * 没有生产者（写它的 `PATCH /admin/api/keys/:id` 在 Task 3），所以这条路径今天走
+   * 不到；等那条路径落地时，它必须自己保证备注写得下去（例如不传 `prev`），而**这
+   * 一格会在那时变红**——那是设计不是故障，它逼着改的人当场看见这个代价。
    */
-  const MAY_ELIDE: Array<keyof KeyRecord> = ["addedAt", "lastUsedAt", "stats"];
+  const MAY_ELIDE: Array<keyof KeyRecord> = ["addedAt", "lastUsedAt", "stats", "note"];
 
   it("穷尽性：KeyRecord 的每个字段都被上面两张写死的清单认领了", () => {
     // 新增字段时：tsc 先在 FIELD_ROLE 与 MUTATION 报错，这条再逼着把它放进某张清单，
@@ -282,6 +292,40 @@ describe("写消除：只有 lastUsedAt 变化时不落盘", () => {
       await repo.save({ ...r, ...MUTATION[field] }, r);
       expect(s.puts, `${field} 是纯遥测，不值一次 KV 写`).toBe(0);
     }
+  });
+
+  /**
+   * 上面那条循环已经覆盖了 `disabled`，**这一格仍然要单独写**，两个理由：
+   *
+   * ① 循环用的是「字段变了 ⇒ put 计数是 1」这个通用判据，而本字段真正要保的是一句
+   *    领域里的话：**「运维在面板上停用一把正在被使用的 key，这次停用不许消失」**。
+   *    P3c 计划点名要求这一格（Task 2 Step 2 的 M2）。
+   * ② 循环只数 put **次数**，不看**写下去的内容**，也不看**快照**。而转发路径读的是
+   *    快照不是存储（`replaceInSnapshot`）——只落盘不进快照的话，这把 key 在本
+   *    isolate 上还要继续被选中整整一个 TTL。**「只补了一半」正是本仓反复栽的那条。**
+   *
+   * 前置条件是「刚用过」：`lastUsedAt` 距今为 0 而 `touchIntervalMs` 是 6 小时，
+   * 所以写消除那道闸在这一格上是**真的张着**的（否则断言测的是一个空判据，
+   * 第 5 种假阳性）。
+   */
+  it("停用一把刚用过的 key 必须真的落盘、且当场对调度生效", async () => {
+    const { repo, s } = await setup(1);
+    const r = await used(repo, s);
+    // 前置条件：这是一条**没有 disabled 字段**的存量形态记录（`add()` 不写它）。
+    expect("disabled" in r, "前置条件：存量记录里压根没有这个字段").toBe(false);
+    expect(isAvailable(r, 1_000_000), "前置条件：停用之前它是可用的").toBe(true);
+
+    await repo.save({ ...r, disabled: true }, r);
+
+    expect(s.puts, "把 disabled 记成 telemetry ⇒ 这次停用被写消除整个吃掉").toBe(1);
+    const stored = JSON.parse(s.m.get(KEY_PREFIX + r.id)!) as KeyRecord;
+    expect(stored.disabled, "put 发生了，但写下去的是没停用的那份，等于没停用").toBe(true);
+
+    // 另一半：转发路径读快照，不读存储。
+    const fromSnapshot = (await repo.all()).find((x) => x.id === r.id)!;
+    expect(fromSnapshot.disabled, "落了盘却没进快照 ⇒ 本 isolate 还要继续用它一个 TTL").toBe(true);
+    expect(isAvailable(fromSnapshot, 1_000_000)).toBe(false);
+    expect(selectKey([fromSnapshot], 0, 1_000_000), "停用的 key 不许再被选中").toBeNull();
   });
 
   /**

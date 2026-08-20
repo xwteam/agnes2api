@@ -35,7 +35,7 @@
  */
 import type { KeyRecord } from "./types.js";
 import type { KeyPoolRepo } from "./keypool-repo.js";
-import { selectKey, applySuccess, applyCooldown, applyStrike, applyEvict, poolHealth } from "./keypool.js";
+import { selectKey, applySuccess, applyCooldown, applyStrike, applyEvict, poolHealth, isDisabled } from "./keypool.js";
 import { withOutcome } from "./admin/stats.js";
 import { classifyStatus, classifyThrown } from "./errors.js";
 import type { Fetcher } from "../ports/fetcher.js";
@@ -146,7 +146,7 @@ async function discard(res: Response | null): Promise<void> {
   }
 }
 
-type FailReason = "pool_empty" | "all_cooling" | "all_evicted" | "upstream_error";
+type FailReason = "pool_empty" | "all_cooling" | "all_disabled" | "all_evicted" | "upstream_error";
 
 function fail(reason: FailReason, message: string, retryAfterSec?: number): Response {
   const headers: Record<string, string> = { "content-type": "application/json" };
@@ -160,32 +160,64 @@ function fail(reason: FailReason, message: string, retryAfterSec?: number): Resp
  * `reason` 必须让客户端能区分「会自愈」与「不会自愈」（设计 §7.2.1）：原实现把网络
  * 全失败也报成 `all_cooling`，而 message 却写「全部 key 均已尝试且失败」，自相矛盾，
  * 且暗示会自愈——在 strike 即永久剔除的旧语义下它永远不会自愈。
+ *
+ * ── 四条 reason 的排序判据（P3c Task 2 加了 `all_disabled` 这一条）─────────────
+ * 池子里一把可用的都没有时，成因可能同时有三类（冷却 / 停用 / 剔除），而 `reason`
+ * 只有一个位置。**取「最先能让池子重新可用的那一类」**，因为运维读到 reason 之后
+ * 要做的正是那件事：冷却会自己好（等）→ 停用是他自己关的（点一下）→ 剔除要换 key（买）。
+ * 精确的三个数一律在 `message` 里给全，reason 只负责把人指向该做的那件事。
+ *
+ * **`all_disabled` 不复用 `all_evicted`，理由是物理不是口味**：`all_evicted` 对运维
+ * 的含义是「凭据都失效了，去换 key」，而这里的真相是「是你自己在面板上关的」。
+ * 把后者说成前者，运维会去做一件完全没用的事（设计 §6.2）。
+ *
+ * ⚠️ **`disabled === 0` 时本函数的四种输出与 P3b 逐字相同**（reason、message、
+ * 有没有 Retry-After 都没变），只是判定顺序换了个等价的写法：
+ * 旧的「`evicted === total`」等价于新的「fresh/cooling/disabled 三格都是 0」，
+ * 旧的兜底 `upstream_error` 等价于新的前置 `fresh > 0`。
  */
 function unavailable(records: KeyRecord[], now: number): Response {
   const h = poolHealth(records, now);
   if (h.total === 0) return fail("pool_empty", "key 池为空，请先导入 key");
 
-  if (h.evicted === h.total) {
-    return fail(
-      "all_evicted",
-      `全部 ${h.total} 把 key 均因凭据失效被永久剔除，不会自动恢复，请更换 key`,
-    );
+  // 还有可用的 key ⇒ 走到这里只可能是「每一把都试过、上游都失败」。
+  if (h.fresh > 0) {
+    return fail("upstream_error", "已尝试池中每一把 key，上游均返回失败；key 本身仍可用");
   }
 
-  if (h.fresh === 0) {
+  if (h.cooling > 0) {
     // 冷却是有期限的，把最早恢复的时刻折成 Retry-After，客户端就不必盲目轮询。
+    //
+    // ⚠️ **过滤条件里的 `!isDisabled(r)` 不是顺手加的**：被停用的 key 的
+    // `cooldownUntil` 通常是 0（它根本没在冷却），漏掉它会让 `Math.min` 取到 0 ⇒
+    // `Retry-After: 1` ⇒ 客户端每秒重试一次，而那把 key 永远不会自己回来。
+    // 这一段与 `poolHealth` 的 `cooling` 计数**必须筛出同一批记录**，否则
+    // `h.cooling > 0` 却 `Math.min()` 于空集 ⇒ `Infinity` ⇒ 一个非法的响应头。
     const earliest = Math.min(
-      ...records.filter((r) => !r.evicted).map((r) => r.cooldownUntil),
+      ...records.filter((r) => !r.evicted && !isDisabled(r)).map((r) => r.cooldownUntil),
     );
     const retryAfterSec = Math.max(1, Math.ceil((earliest - now) / 1000));
     return fail(
       "all_cooling",
-      `全部 key 暂不可用：${h.cooling} 把冷却中（到期自动恢复）、${h.evicted} 把已永久剔除`,
+      `全部 key 暂不可用：${h.cooling} 把冷却中（到期自动恢复）、`
+      + `${h.disabled} 把被管理员停用、${h.evicted} 把已永久剔除`,
       retryAfterSec,
     );
   }
 
-  return fail("upstream_error", "已尝试池中每一把 key，上游均返回失败；key 本身仍可用");
+  // 到这里只剩 disabled 与 evicted 两类，**都不会自动恢复 ⇒ 一律不带 Retry-After**。
+  if (h.disabled > 0) {
+    return fail(
+      "all_disabled",
+      `全部 ${h.total} 把 key 均不可用且不会自动恢复：${h.disabled} 把被管理员手工停用`
+      + `（在管理面板上重新启用即可）、${h.evicted} 把因凭据失效被永久剔除`,
+    );
+  }
+
+  return fail(
+    "all_evicted",
+    `全部 ${h.total} 把 key 均因凭据失效被永久剔除，不会自动恢复，请更换 key`,
+  );
 }
 
 /**

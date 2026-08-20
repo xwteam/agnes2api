@@ -11,8 +11,14 @@
  * 规则全文见 admin-ui/README.md。
  */
 
-/** 四个分档。顺序即渲染顺序（汇总卡与筛选下拉共用）。 */
-export const CARDS = ["all", "fresh", "cooling", "evicted"];
+/**
+ * 五个分档。顺序即渲染顺序（汇总卡与筛选下拉共用）。
+ *
+ * ⚠️ **`disabled` 这一档不是装饰**：后端的 `bucket` 白名单来自 `BUCKETS`，这里漏掉它
+ * 的话，运维在筛选下拉里根本选不到「已停用」，而汇总卡也会少一格
+ * ——`all` 与另外四格之和对不上，运维看不出那几把 key 去哪了。
+ */
+export const CARDS = ["all", "fresh", "cooling", "evicted", "disabled"];
 
 /** 自动刷新档位（秒）。**首项是 0 = 关**：面板不替用户决定去轮询。 */
 export const AUTO_SECONDS = [0, 30, 60];
@@ -34,17 +40,25 @@ export function cardCounts(data) {
   return out;
 }
 
+/**
+ * 分档徽章的样式。**四档必须互不相同**——两档共用一个样式就等于面板分不出它们。
+ *
+ * `disabled` 取中性的 muted 而不是红：它**不是故障**，是运维自己按下的开关，
+ * 用报警色会让人以为出事了。
+ */
 export function badgeClass(bucket) {
+  if (bucket === "disabled") return "badge badge-muted";
   if (bucket === "evicted") return "badge badge-danger";
   if (bucket === "cooling") return "badge badge-warn";
   return "badge badge-ok";
 }
 
-/** 分档名的 i18n key。**四条各写一次字面量**，好让 i18n 门禁扫得到。 */
+/** 分档名的 i18n key。**五条各写一次字面量**，好让 i18n 门禁扫得到。 */
 export function bucketLabelKey(bucket) {
   if (bucket === "fresh") return "keys.bucket.fresh";
   if (bucket === "cooling") return "keys.bucket.cooling";
   if (bucket === "evicted") return "keys.bucket.evicted";
+  if (bucket === "disabled") return "keys.bucket.disabled";
   return "keys.bucket.all";
 }
 

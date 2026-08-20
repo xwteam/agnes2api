@@ -14,7 +14,7 @@ const AUTH = { headers: { "x-admin-key": TEST_ADMIN_TOKEN } };
 interface KeysBody {
   items: KeyView[];
   total: number; page: number; size: number; pages: number;
-  counts: { all: number; fresh: number; cooling: number; evicted: number };
+  counts: { all: number; fresh: number; cooling: number; evicted: number; disabled: number };
   approximate: boolean;
   generatedAt: number;
 }
@@ -57,7 +57,7 @@ describe("GET /admin/api/keys", () => {
    * `{all:3, fresh:3, cooling:0, evicted:0}`——筛选器旁边那几个「切换过去能看到几条」
    * 的提示全变成 0，面板等于在撒谎。
    */
-  it("counts 按整池算：请求 ?bucket=fresh 时另外两档的条数照样是真的", async () => {
+  it("counts 按整池算：请求 ?bucket=fresh 时另外几档的条数照样是真的", async () => {
     const { app, repo } = await makeApp([], ["k1", "k2", "k3", "k4", "k5"], {}, () => NOW);
     const all = await repo.all();
     await repo.save({ ...all[3]!, cooldownUntil: NOW + 10_000, cooldownReason: "rate limited" });
@@ -65,10 +65,51 @@ describe("GET /admin/api/keys", () => {
 
     const body = await getKeys(app, "?bucket=fresh");
     // 手写字面量，不从 items 反推。
-    expect(body.counts).toEqual({ all: 5, fresh: 3, cooling: 1, evicted: 1 });
+    expect(body.counts).toEqual({ all: 5, fresh: 3, cooling: 1, evicted: 1, disabled: 0 });
     // 而 items 本身确实被筛过了——否则上面那条在「筛选压根没生效」时也会绿。
     expect(body.total).toBe(3);
     expect(body.items.map((v) => v.bucket)).toEqual(["fresh", "fresh", "fresh"]);
+  });
+
+  /**
+   * **约束 10（诚实标记由后端字段驱动）在这个字段上的端到端那一半。**
+   *
+   * `KeyRecord.disabled` 是可选的，线上绝大多数记录里压根没有它（`add()` 从不写它）。
+   * 投影时若直接写 `disabled: r.disabled`，值就是 `undefined`，而 `c.json` 会把这个键
+   * **整个删掉** ⇒ 前端拿到的是「字段不存在」而不是 `false`，分不清「没停用」和
+   * 「读不出来」。**判据是字段在不在**，不只是值等不等于 false。
+   *
+   * 这一格刻意打真端点、读**响应文本**：`toKeyViews` 的单测拿到的是内存对象，
+   * 那里 `undefined` 与 `false` 的区别测不出来——**序列化才是会咬人的那一步**。
+   */
+  it("存量记录（记录里没有 disabled 字段）在响应里也**有** disabled，且是 false", async () => {
+    const { app, repo } = await makeApp([], ["sk-legacy-shaped-record-a"], {}, () => NOW);
+    expect("disabled" in (await repo.all())[0]!, "前置条件：add() 造出来的就是一条不带该字段的记录")
+      .toBe(false);
+
+    const res = await app.request("/admin/api/keys", AUTH);
+    const body = JSON.parse(await res.text()) as KeysBody;
+    expect(Object.keys(body.items[0]!), "字段缺失 ⇒ 前端分不清「没停用」和「读不出来」")
+      .toContain("disabled");
+    expect(body.items[0]!.disabled).toBe(false);
+    expect(body.items[0]!.bucket).toBe("fresh");
+    expect(body.counts).toEqual({ all: 1, fresh: 1, cooling: 0, evicted: 0, disabled: 0 });
+  });
+
+  /**
+   * 第四档是**能被筛的**：`bucket` 白名单直接来自 `BUCKETS`，加档忘了同步的话
+   * `?bucket=disabled` 会被当成垃圾值而「当没筛」，运维在面板上选「已停用」
+   * 却看到整池。
+   */
+  it("?bucket=disabled 筛得出被停用的那一把，counts 仍按整池算", async () => {
+    const { app, repo } = await makeApp([], ["k1", "k2", "k3"], {}, () => NOW);
+    const all = await repo.all();
+    await repo.save({ ...all[2]!, disabled: true }, all[2]!);
+
+    const body = await getKeys(app, "?bucket=disabled");
+    expect(body.total, "选「已停用」却看到整池 ⇒ 白名单没跟着 BUCKETS 走").toBe(1);
+    expect(body.items.map((v) => [v.bucket, v.disabled])).toEqual([["disabled", true]]);
+    expect(body.counts).toEqual({ all: 3, fresh: 2, cooling: 0, evicted: 0, disabled: 1 });
   });
 
   it("?bucket= 传垃圾值时当没筛（不是返回空列表）", async () => {
