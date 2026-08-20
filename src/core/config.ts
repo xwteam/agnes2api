@@ -38,11 +38,19 @@ export interface GatewayConfig {
   registrar: RegistrarConfig;
   /**
    * 本次装载有没有降级（存储的 config 键读不出来 / 某些字段回落了默认值）。
-   * **写这句时还没有消费者**：将来 `GET /admin/api/overview`（P3b 的概览板块）
-   * 会直接把它交给面板，顶部渲染红色横幅——「保存了却没生效」是这个项目最高频
-   * 的用户困惑，不让它可见就等于让面板撒谎。在那条路径接上之前，这里只是把
-   * 信号立起来，全仓还没有任何代码读它（见 tests/unit/source-guards.test.ts
-   * 之类的门禁不会因为这一点变红，这只是老实交代当前状态，不是缺陷）。
+   *
+   * ⚠️ **这段注释原来写着「全仓还没有任何代码读它」，那句已经过期了**
+   *（全分支评审 A9）：消费链在**同一期**（P3b Task 5）就接上了，三级——
+   * `src/http/admin/handlers/overview.ts:112`（放进响应的 `config.degraded`）
+   * → `admin-ui/js/pure/overview.mjs:107`（取值并窄化成 `boolean | null`）
+   * → `admin-ui/js/sec-overview.js:154`（`=== true` 时把红色横幅显示出来）。
+   * 「保存了却没生效」是这个项目最高频的用户困惑，不让它可见就等于让面板撒谎，
+   * 而现在它是可见的。**这条链一断，面板会安静地不再报降级**——
+   * `tests/contract/admin-overview.test.ts` 与 `tests/ui/overview.test.ts` 各守一段。
+   *
+   * 这一处是本仓「注释在写下那一刻是真的，后来被同一期自己的新代码推翻，
+   * 没人回头改」的标本，第十二道门禁（`tests/unit/comment-refs.test.ts`）
+   * 就是为这个形态加的。
    */
   degraded: boolean;
 }

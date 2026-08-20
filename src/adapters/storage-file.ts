@@ -115,11 +115,16 @@ export class FileStorage implements Storage {
   }
 
   /**
-   * 过期判定用真实墙钟——本文件里唯一读 `Date.now()` 的地方。**这是 IO 边界适配器，
-   * 不是核心业务逻辑**（与本文件已有的 `randomUUID()` 同一个层级）：判定"是否已经
-   * 过期"天然需要跟"活的现在"比较，这与 KV 侧由 Cloudflare 边缘自己拿它自己的
-   * 时钟判定过期是同一件事，不属于"核心模块零 Date.now()"那条规矩管的范围
+   * 过期判定用真实墙钟。**这是 IO 边界适配器，不是核心业务逻辑**（与本文件已有的
+   * `randomUUID()` 同一个层级）：判定"是否已经过期"天然需要跟"活的现在"比较，
+   * 这与 KV 侧由 Cloudflare 边缘自己拿它自己的时钟判定过期是同一件事，
+   * 不属于"核心模块零 Date.now()"那条规矩管的范围
    * （那条规矩管 `src/core/`；这里是 `src/adapters/`）。
+   *
+   * ⚠️ **这里原来写着「本文件里唯一读 `Date.now()` 的地方」，那是假的**
+   *（全分支评审 A9）：本文件有**两处**调用点——这个 `isExpired()`，以及
+   * `pruneExpired()`（写路径上顺手清过期键的那个）。两处用的是同一个墙钟、
+   * 同一条理由，说成"唯一"只会让下一个读到这句话的人以为写路径不碰时钟。
    */
   private isExpired(all: Record<string, unknown>, key: string): boolean {
     const exp = readTtlTable(all)[key];

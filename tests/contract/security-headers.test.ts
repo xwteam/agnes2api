@@ -55,13 +55,21 @@ describe("全应用级 nosniff", () => {
   /**
    * **把 app.ts 里那句「必须写在 await next() 之后」变成可证伪的断言。**
    *
-   * 这条测的是我们**依赖的 Hono 语义**，不是我们自己的路由——因为在本仓当前的路由
-   * 清单下，把 `c.header` 挪到 next() 之前是**不可观测的**：唯一返回裸 `new Response`
-   * 的是 /admin 那棵树，而它自己也设了 nosniff（已实测：挪到之前，全套测试照绿）。
+   * 这条测的是我们**依赖的 Hono 语义**，不是我们自己的路由。
    *
-   * 也就是说那个变异今天不是缺陷，是留给**下一个** handler 的陷阱。等 P3b 加一个
-   * 返回裸 Response 的管理端点，写反的顺序会让它静默地少一条头。所以这里直接把
-   * 语义本身钉住：谁想"顺手简化"成写在前面，先看这条用例说的是什么。
+   * ⚠️ **这段注释原来接着写「因为在本仓当前的路由清单下，把 `c.header` 挪到
+   * next() 之前是不可观测的……那个变异今天不是缺陷，是留给下一个 handler 的
+   * 陷阱」——那已经不成立了**（全分支评审 A9）。P3b 之后确实加了返回裸
+   * `Response` 的端点，而它正是那句话预言的东西。重新实测（**移动**这一行，
+   * 不是新增）：**2 failed** ——
+   * `tests/contract/admin-events.test.ts`（`/admin/api/events/download`）与
+   * `tests/contract/media.test.ts`（`/v1/videos/{id}` 的流式转发）。
+   * 顺带订正：「唯一返回裸 Response 的是 /admin 那棵树」本身也是假的，
+   * `src/http/routes/media.ts` 在 `/v1` 上就返回裸 `Response`。
+   *
+   * 这条用例仍然值得留着，但**理由变了**：它钉的是 Hono 的行为本身（与本仓路由
+   * 清单无关，路由怎么改它都成立），而不再是"唯一能观测到这件事的地方"。
+   * 谁想"顺手简化"成写在前面，先看这条用例说的是什么。
    */
   it("Hono 语义：next() **之前**写的头只对 Hono 自己构造的响应生效，裸 Response 会丢", async () => {
     const build = (when: "before" | "after") => {

@@ -21,9 +21,17 @@ function levelParam(raw: string | undefined): LogLevel | null {
 /**
  * `after` 不是一个可信输入——它是客户端回传给我们的一个数字，任何人都能直接
  * 拿 curl 打 `?after=` 任意值。**负数一律当缺失处理（评审 C4）**：时间戳没有
- * 负数这回事，放行负数除了让语义变得含糊之外没有任何好处；`candidateKeys()`
- * 自身对负数也已经钳位安全（`Math.max(floor, windowIndex(负数))` 恒等于
- * `floor`），这里拒绝纯粹是让参数语义干净，不是这条安全性质的必要条件。
+ * 负数这回事，放行负数除了让语义变得含糊之外没有任何好处。这里拒绝纯粹是让参数
+ * 语义干净，**不是**候选键数有上界那条安全性质的必要条件——那条性质来自
+ * `candidateKeys()` 里的 `Math.max(floor, …)` 本身：`fromWindow` 恒 `>= floor`，
+ * 于是候选窗口数恒 `<= EVENT_WINDOW_RETAIN`，与 `after` 是什么值无关。
+ *
+ * ⚠️ **这里原来写的是「`Math.max(floor, windowIndex(负数))` 恒等于 `floor`」，
+ * 那句只在真实纪元时钟下成立**（全分支评审 A9）：生产上 `now` 是真实时间戳，
+ * `floor = nowWindow - 23` 是个很大的正数，任何负数都被它盖过去 ⇒ 确实恒等于
+ * `floor`。但在贴近纪元零点的假时钟下（本仓不少用例用 `() => 1000`），
+ * `floor` 自己就是 `-23`，`after = -1` 时 `Math.max(-23, -1) === -1 ≠ floor`。
+ * **安全性质不受影响**（上界仍然成立，见上一段），但"恒等于 floor"这句话是假的。
  */
 function afterParam(raw: string | undefined): number | null {
   if (raw === undefined) return null;

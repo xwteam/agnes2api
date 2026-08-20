@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   KeyPoolRepo, keyId, INDEX_WRITE_RETRY_MS, READ_PATH_LIST_BACKOFF_MS,
-  LIST_FAIL_FAST_RETRY_MS, DEFAULT_POOL_CACHE_TTL_MS,
+  LIST_FAIL_FAST_RETRY_MS, LIST_FAIL_ESCALATE_AFTER, DEFAULT_POOL_CACHE_TTL_MS,
 } from "../../src/core/keypool-repo.js";
 import { KEY_PREFIX, POOL_INDEX_KEY } from "../../src/core/pool-index.js";
 import { recordingLogger } from "../helpers/recording-logger.js";
@@ -678,11 +678,21 @@ describe("一次瞬时 list 失败不许粘住十分钟", () => {
     await st.inner.put("pool:index", { v: 1, ids: [] });
     st.listFails = true;
 
+    const before = st.lists;
     for (let i = 0; i < 3; i++) {
       await expect(repo.all(), `第 ${i + 1} 次`).rejects.toThrow();
       t += LIST_FAIL_FAST_RETRY_MS;
     }
     const afterThree = st.lists;
+    /**
+     * ⚠️ **「恰好三次」这一条以前没有被断言过**（全分支评审 A9）：这一格原来只
+     * 检查第 4 次之后 `st.lists` 不再增长，而 `keypool-repo.ts` 的注释却写着
+     * 「按这个时序实测钉住：三次真实尝试恰好落在 t0 / t0+60s / t0+120s」。
+     * 把 `LIST_FAIL_ESCALATE_AFTER` 从 3 改成 2 或 5，那句话就不成立了，
+     * 而这一格照样全绿。期望值 **3 手写**，不是 `LIST_FAIL_ESCALATE_AFTER`
+     * 现算的——从被测常数自己推导出期望值是本仓登记的第 6 种假阳性。
+     */
+    expect(afterThree - before, "快窗口里的真实尝试次数不是三次").toBe(3);
     // 第 4 次：只过了快重试窗口，此时应当已经升到长退避 ⇒ 不再真 list，但仍如实抛。
     await expect(repo.all()).rejects.toThrow("list quota exhausted");
     expect(st.lists, "连续失败之后仍在每分钟烧一次 list").toBe(afterThree);
@@ -717,6 +727,13 @@ describe("索引写失败的退避常数不许是死条件", () => {
     expect(INDEX_WRITE_RETRY_MS).toBeGreaterThanOrEqual(5 * DEFAULT_POOL_CACHE_TTL_MS);
     expect(READ_PATH_LIST_BACKOFF_MS).toBe(600_000);
     expect(LIST_FAIL_FAST_RETRY_MS).toBe(60_000);
+    // ⚠️ **LIST_FAIL_ESCALATE_AFTER 以前不在这张表里**（全分支评审 A9）——它是
+    // keypool-repo.ts 里**唯一一个缺席常数表的导出常数**，而 keypool-repo.ts 的
+    // 注释恰恰拿"三次"当它整段时序论证的支点。
+    expect(LIST_FAIL_ESCALATE_AFTER).toBe(3);
+    // 关系：门槛必须 ≥ 2，否则一次瞬时抖动就直接升到 10 分钟长退避，
+    // "快窗口滤抖动"这条设计意图整个失效（那正是 LIST_FAIL_FAST_RETRY_MS 存在的理由）。
+    expect(LIST_FAIL_ESCALATE_AFTER).toBeGreaterThanOrEqual(2);
   });
 });
 

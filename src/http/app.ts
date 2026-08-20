@@ -150,9 +150,18 @@ export function createApp(deps: AppDeps): Hono {
    * 的形态（流式转发、dispatcher 的错误响应、uiRoutes 的 200/301/304/404）
    * **整条头会被静默丢掉**。写在之后则五种形态全部生效。
    *
-   * 今天这条变异**在本仓是不可观测的**（唯一返回裸 Response 的 /admin 那棵树
-   * 自己也设了 nosniff），所以它是留给下一个 handler 的陷阱，不是现存缺陷——
-   * 那条语义用例就是为此存在的。
+   * ⚠️ **这里原来写着「今天这条变异在本仓是不可观测的（唯一返回裸 Response 的
+   * /admin 那棵树自己也设了 nosniff）」——那句现在是假的，两处都假**
+   *（全分支评审 A9）：
+   * ① 把这一行**移动**到 `next()` 之前（不是新增一行）之后实测 **2 failed**：
+   *    `tests/contract/admin-events.test.ts`（`/admin/api/events/download` 是裸
+   *    `Response`，且它自己**不**设 nosniff——全靠这条全局的）与
+   *    `tests/contract/media.test.ts`（`/v1/videos/{id}` 的流式转发）；
+   * ② 「唯一返回裸 Response 的是 /admin 那棵树」本身也不成立——`routes/media.ts`
+   *    在 `/v1` 上就返回裸 `Response`。
+   * 所以这条变异**今天就是一个可观测的现存缺陷**，不是"留给下一个 handler 的陷阱"。
+   * 那条语义用例照旧有价值（它把 Hono 的行为本身钉住，与本仓路由清单无关），
+   * 但它不再是唯一的护栏。
    */
   app.use("*", async (c, next) => {
     await next();

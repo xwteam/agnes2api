@@ -136,10 +136,14 @@ describe("GET /admin/api/capabilities", () => {
   });
 
   /**
-   * ⚠️ **今天没有用例守 `deps.storageHealth` 真的被读了**（Step 9 变异表点名）。
-   * 把 `capabilitiesHandler` 里的 `deps.storageHealth.status().writable` 改成硬编码
-   * `true` 的话，没有任何既有用例会变红。让 `storageHealth` 报告不可写，
-   * 断言 `capabilities.storage.writable === false` 补上这条防线。
+   * ⚠️ **下面这一格就是补上那条防线的那一格——别把这段读成"现在还缺"**
+   *（全分支评审 A9：原文用现在时写着"今天没有用例守…"，而它描述的是**它自己
+   * 已经修好**的那个旧状态）。
+   *
+   * 补之前的实测（Step 9 变异表点名）：把 `capabilitiesHandler` 里的
+   * `deps.storageHealth.status().writable` 改成硬编码 `true`，没有任何既有用例
+   * 会变红。现在让 `storageHealth` 报告不可写、断言
+   * `capabilities.storage.writable === false`，那个变异会被这一格抓住。
    */
   it("storageHealth 报告不可写时，capabilities.storage.writable 跟着变 false", async () => {
     const { app, storageHealth } = await makeApp();
