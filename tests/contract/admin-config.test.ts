@@ -399,31 +399,42 @@ describe("F7：保存之后同一个进程立刻回读到新值", () => {
   /**
    * **回读是从存储读的，不是把 handler 手上那份 `next` 换个形状交回去。**
    *
-   * 判据：**绕过端点**直接改存储，然后只发一次 `PUT`（改的是**另一个**字段）。
-   * 回执里那个被绕过端点改掉的字段必须是**存储里的新值**——handler 手上那份
-   * `next` 是从 `PUT` 之前读的那一份合并出来的，压根不知道它变过。
+   * ⚠️⚠️ **这一格的第一版被变异 M12 完整逃逸（17/17 全绿），成因值得记下来。**
+   * 那一版的做法是「PUT 之前先绕过端点改一次存储，再断言回执里有那个新值」——
+   * 而 handler 在这次 `PUT` 里**本来就会读一遍存储**（校验要拿它做合并），
+   * 于是 `verdict.next` 里同样带着那个值 ⇒ **投影实现与回读实现给出一模一样的
+   * 响应体，被测的选择完全不可观测**（第 5 种假阳性）。
    *
-   * ⚠️ 这一格与上一格是**两件事**：上一格证明「同一个进程看得到」，这一格证明
-   * 「回读的数据源是存储」。少了这一格，把回执改成 `fieldsOf(verdict.next)`
-   * 不会有任何东西变红。
+   * 判别力必须来自「**落盘之后**存储里的东西与 handler 手上那份 `next` 不同」。
+   * 夹具因此用一个**写进去与读出来不一致**的存储：它模拟的是一次真实的多副本
+   * 竞争（我们 `put` 之后、回读之前，另一个副本又写了一次），也模拟了任何
+   * 「中间层改写了这次写入」的形态。**回读实现看得到那个差，投影实现看不到。**
    */
   it("PUT 的回执来自存储，不是 handler 自己算出来的那份 next", async () => {
-    const { app, storage } = await realApp({ stored: { maxStrikes: 3, cooldownStrikeMs: 1_800_000 } });
-    // 绕过端点，直接改存储：handler 在这次 PUT 里读到的 `stored` 会包含它，
-    // 但**它不在 patch 里**，所以「自报」的那种实现同样会带上它……
-    // ⇒ 判别力靠的是**第二次**改：在 PUT 已经把 `next` 算好之后再改是做不到的，
-    // 所以这里换一个能分开的判据：回执里的 `effective` 必须与紧随其后的
-    // `GET /admin/api/config` 逐字节一致（两者都从存储读）。
-    await storage.put("config", { maxStrikes: 3, cooldownStrikeMs: 7_777_000 });
+    const inner = new MemoryStorage();
+    await inner.put("config", { maxStrikes: 3, cooldownStrikeMs: 1_800_000 });
+    /** 落盘之后又被别人改了一手的存储。**只对 `config` 这个键动手。** */
+    const racing = {
+      async get<T>(k: string): Promise<T | null> { return inner.get<T>(k); },
+      async put<T>(k: string, v: T, expiresAt?: number): Promise<void> {
+        if (k !== "config") return inner.put(k, v, expiresAt);
+        // 另一个副本紧接着写了一次：它把 `cooldownStrikeMs` 改成了别的值。
+        return inner.put(k, { ...(v as object), cooldownStrikeMs: 4_242_000 }, expiresAt);
+      },
+      async delete(k: string): Promise<void> { return inner.delete(k); },
+      async list(p: string): Promise<string[]> { return inner.list(p); },
+    };
 
+    const { app } = await realApp({ storage: racing as unknown as MemoryStorage });
     const res = await put(app, { upstreamTimeoutMs: 5_000 });
     expect(res.status).toBe(200);
     const putBody = await res.json() as { fields: Record<string, { effective: unknown }> };
     expect(
       putBody.fields.cooldownStrikeMs!.effective,
-      "回执没有反映存储里的当前值 —— 它是 handler 自己那份 next 的投影",
-    ).toBe(7_777_000);
+      "回执给的是 handler 手上那份 next 的投影，不是存储里现在真正的样子",
+    ).toBe(4_242_000);
 
+    // 再补一道：回执与紧随其后的一次 `GET` 逐字节一致（两者都从存储读）。
     const getBody = await (await getConfig(app)).json() as { fields: Record<string, unknown> };
     expect(putBody.fields, "回执与随后一次 GET 不一致 —— 两者读的不是同一个数据源")
       .toEqual(getBody.fields);
