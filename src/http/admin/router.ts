@@ -23,6 +23,9 @@ import {
   configGetHandler, configPutHandler, configValidateHandler, configClearSecretHandler,
   type ConfigWiring,
 } from "./handlers/config.js";
+import {
+  keyUsageHandler, usageHandler, usageDateHandler, type UsageWiring,
+} from "./handlers/usage.js";
 import type { TendGate } from "./tend-lock.js";
 import { uiRoutes } from "../../ui/serve.js";
 
@@ -79,8 +82,25 @@ export interface AdminRouterDeps {
    * Tier-2 到底有没有在记账（P3d Task 3）。**`createApp` 传的是
    * `deps.usageSink !== undefined`，不是配置里那个开关现读的值**——完整理由见
    * `capabilitiesHandler` 的同名参数。
+   *
+   * ⚠️ **它与下面的 `usage` 必须同真同假，而这件事今天靠的是「`createApp` 里
+   * 两行都从同一个 `usageSink` 变量算出来」，不是一条约束**（P3d Task 4 登记）。
+   * 分叉的后果是三态混一里最难查的一种：`capabilities` 说 Tier-2 开着、面板于是
+   * 画图表，而 `GET /admin/api/usage` 回 `tier: "off"`。
+   * 由 `tests/contract/admin-usage.test.ts` 的
+   * 「capabilities 的 tier2Enabled 与 usage 的 tier 说的是同一件事 —— 两边不许分叉」
+   * 在**默认夹具与开着 Tier-2 的真装配两侧**各钉一格。
    */
   usageStatsEnabled: boolean;
+  /**
+   * Tier-2 读侧的接线（P3d Task 4）。**`null` = 这个 app 没建 sink，也就是关着。**
+   *
+   * 与 `registrar` / `config` 那两处「`null` = 没接，端点仍然注册但回 503」刻意**不同**：
+   * 这一条的 `null` 不是「装配不全」，而是**一个正常且默认的部署形态**（Tier-2 默认关），
+   * 所以三条端点在 `null` 时照常回 200，只是如实说 `tier: "off"`。
+   * 回 503 会让面板把「运维没打开统计」渲染成「后端坏了」。
+   */
+  usage: UsageWiring | null;
   /**
    * 生效的落盘间隔（P3d Task 3）。**由 `wire.ts` 从 `USAGE_FLUSH_INTERVAL_MS` 与
    * `runtime.quotaModel` 算出来**，`capabilities` 原样发给面板——面板据它算
@@ -255,6 +275,16 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.post("/admin/api/keys/bulk", keysBulkHandler(keysWrite));
   admin.delete("/admin/api/keys/:id", keyDeleteHandler(keysWrite));
   admin.patch("/admin/api/keys/:id", keyPatchHandler(keysWrite));
+  // **单把 key 的 Tier-1 计数（P3d Task 4）。挂在上面那两条 `:id` 之后。**
+  // 今天它们碰不上：这一条是**四段**（`keys/:id/usage`）而上面两条是三段
+  // （`keys/:id`），形状上不可能重叠，而且方法也各不相同。
+  // ⚠️ **会出事的是将来有人加一条 `GET /admin/api/keys/:id` 或
+  // `/admin/api/keys/:id/:something` 这种更宽的模式**——Hono 按注册顺序匹配，
+  // 那时它必须排在本条之后，否则本条会被静默吃掉。这与上面 `bulk` vs `:id`、
+  // 以及注册机那段 `channels/:c/test` vs `tend` 是同一个坑的第三次出现。
+  //
+  // **它与 Tier-2 完全无关**：走 `deps.repo`，Tier-2 关着时照样可用（设计 §10.6）。
+  admin.get("/admin/api/keys/:id/usage", keyUsageHandler(deps.repo, deps.now));
 
   // ── 注册机（P3c Task 5 的「立即补池」+ Task 6 的板块取数与通道测试，风险 L6）──
   //
@@ -327,6 +357,29 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   //   它探的是 `/admin/api/session` 那一条，与本端点的注册位置无关。
   //   ⇒ **本端点被静态兜底吃掉这件事，今天唯一的护栏是 `admin-models` 那三格。**
   admin.get("/admin/api/models", modelsHandler());
+
+  // ── Tier-2 用量（P3d Task 4）────────────────────────────────────────────
+  //
+  // 两条都是只读的。**唯一会烧配额的是读扇出**：`30d` 那一档一次请求发
+  // `30 × USAGE_SLOTS = 60` 次 get（计划 §配额账「读侧」那张表），
+  // 而 `src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方记着 U-H 的裁定
+  // ——**Cloudflare 的两页官方文档在这个数上互相对不上，在 P3e 真机了结之前
+  // 不许把 60 写成「安全的」**。所以那一档必须失败得诚实，见 `usageHandler`。
+  //
+  // ⚠️ **`/admin/api/usage` 与 `/admin/api/usage/:date` 不会互相吃掉**：
+  // Hono 按注册顺序匹配，而两者段数不同（三段 vs 四段），形状上不可能重叠。
+  // **但新增 `/admin/api/usage/:something` 这类同为四段的单段通配时立刻成立**
+  // ——真要加，请把它排在 `:date` 之后，并想清楚两个通配谁先匹配。
+  // 同一个坑在本文件里这是第四处（`bulk` vs `:id`、`channels/:c/test` vs `tend`、
+  // `keys/:id/usage`），措辞刻意一致。
+  //
+  // **两条都无条件注册，不看 Tier-2 开没开**：路由表随运行时配置变化的话，
+  // `tests/contract/admin-auth.test.ts` 的枚举式鉴权矩阵会因为默认夹具恰好关着
+  // Tier-2 而让这两条**静默地从整个矩阵里消失**。「Tier-2 没开」是响应体里的
+  // `tier: "off"`，不是「这条路由不存在」——与注册机那三条同一条规矩。
+  const usage = { usage: deps.usage, now: deps.now };
+  admin.get("/admin/api/usage", usageHandler(usage));
+  admin.get("/admin/api/usage/:date", usageDateHandler(usage));
 
   // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
   // 串起来跑，`/admin/*` 这条兜底若排在前面会先返回 404，**整套管理 API 直接消失**

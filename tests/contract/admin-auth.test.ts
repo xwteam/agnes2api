@@ -756,6 +756,18 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * 状态都必须 401。**免鉴权白名单里永远不该出现任何一条写端点**，这句话在这里
    * 是有护栏的：往这张表里塞一条 `/admin/api/keys`，下面
    * 「免鉴权路径不带任何凭据也是 200」会立刻红（它拿不到 200，只会拿到 401/400）。
+   *
+   * **Task 4（P3d）的表态：这张表同样不增长。** 新增的三条用量端点全在
+   * `/admin/api/` 下 ⇒ `domainOf` 判它们进 `admin` 域。三条**都**是 GET，
+   * 其中两条在 Tier-2 关着时连存储都不读，看上去比协议目录那条更像
+   * 「反正没什么可泄漏的」——**仍然不许**：
+   * ① `keys/:id/usage` 吐的是某一把 key 的请求数 / 成功数 / 失败数 / 最近一次错误的
+   *    类型与时刻，那是一份「这台网关的哪把凭据在被怎么用」的画像；
+   * ② `usage` / `usage/:date` 吐的是整台网关的流量曲线与按模型、按协议的分解
+   *    ——一份现成的「这个部署有多大、在跑什么模型」的情报；
+   * ③ 结构上的理由与协议目录那条完全相同：`adminAuth` 挂在 `/admin/api/*` 上，
+   *    要让它们免鉴权就得挪到那行 `use` 之前，而**那个位置上的任何后续新增端点
+   *    都会跟着免鉴权**。
    */
   const PUBLIC_PATHS: readonly string[] = ["/health", "/admin", "/admin/*"];
 
@@ -893,6 +905,25 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 往 `PUBLIC_PATHS` 里塞它的话，下面「免鉴权路径不带任何凭据也是 200」
     // 那一格拿到的会是 401，当场变红。
     "GET /admin/api/models",
+    // ── Task 4（P3d）的用量三条 ───────────────────────────────────────────────
+    //
+    // 三条都用 `admin.get()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
+    // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
+    // 而不是默认它不变。
+    //
+    // ⚠️ **三条的注册都没有任何条件，不看 Tier-2 开没开**——理由与
+    // `POST /admin/api/registrar/tend` 那条逐字相同：做成条件注册的话这张快照会随
+    // 夹具配置变化，而**默认夹具恰好关着 Tier-2**，于是这两条 `usage` 端点会
+    // 静默地从整个鉴权矩阵里消失。「Tier-2 没开」是响应体里的 `tier: "off"`，
+    // 不是"这条路由不存在"。
+    //
+    // ⚠️ **`GET /admin/api/keys/:id/usage` 挂在 `DELETE` / `PATCH /admin/api/keys/:id`
+    // 之后**：今天段数不同（四段 vs 三段）碰不上，但顺序反了之后加一条更宽的
+    // `/admin/api/keys/:id/:something` 就会静默把它吃掉——与 `bulk` vs `:id`
+    // 是同一个坑（见 `src/http/admin/router.ts` 里那两段注释）。
+    "GET /admin/api/keys/:id/usage",
+    "GET /admin/api/usage",
+    "GET /admin/api/usage/:date",
   ] as const;
 
   /** 路由模式 → 一条能真的打到那个 handler 的具体路径。 */
@@ -920,6 +951,12 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 构造任何 provider 之前就返回 `409 registrar_disabled`。矩阵里那 16 次请求
     // 因此一次外部调用都不产生（否则整个鉴权矩阵会变成一个会打网络的测试）。
     "/admin/api/registrar/channels/:channel/test": "/admin/api/registrar/channels/moemail/test",
+    // Task 4（P3d）的逐 key 用量。**用一个不存在的 id**，与上面 `keys/:id` 同一条
+    // 理由：矩阵那一格断言的是「拿对口令时不该被判 401」，而它会如实 404。
+    "/admin/api/keys/:id/usage": "/admin/api/keys/deadbeefdeadbeef/usage",
+    // Task 4（P3d）的单日下钻。**必须用一个真的解析得开的 UTC 日期串**：
+    // 占位串会在 handler 第一行就被 400 挡掉——那样这一格验的是参数校验，不是鉴权。
+    "/admin/api/usage/:date": "/admin/api/usage/2024-10-04",
   };
 
   const GATEWAY = TEST_CONFIG.gatewayToken;
@@ -1005,6 +1042,20 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    *
    * **Task 1（P3d）的表态：这张表同样不增长。** `GET /admin/api/models` 用
    * `admin.get()` 注册，产生的是一条具名方法条目（已列进 `EXPECTED`、并逐格跑过矩阵）。
+   *
+   * **Task 4（P3d）的表态：这张表同样不增长。** 用量三条同样用 `admin.get()` 注册，
+   * 产生的是三条具名方法条目（已列进 `EXPECTED`、并逐格跑过矩阵）。
+   * ⚠️ **这里有一个真实的诱惑要点名**：`/admin/api/usage` 与 `/admin/api/usage/:date`
+   * 是同一个前缀下的两条，写成 `admin.use("/admin/api/usage/*", handler)` 一条通配
+   * 看上去更省事——而那正是这张快照存在的理由：`use()` 挂的通配 handler 会跑在
+   * `/admin/api/*` 那行鉴权**之前**（顺序在它之前的话），造出一个**免鉴权的**用量端点。
+   *
+   * ⚠️ **`usageFlush` 中间件不在这张表里，这一条要说清楚免得下一个人以为漏了**：
+   * `src/http/app.ts` 只在 `deps.usageSink !== undefined` 时才挂它，而**默认夹具
+   * 关着 Tier-2** ⇒ 它在这张快照上不出现。那是刻意的（全局约束 16：「关」不是一个
+   * `if`，是这条路径压根不存在），由 `tests/contract/usage-tier2.test.ts` 的
+   * 「USAGE_STATS_ENABLED 不为 true 时：连打 50 次 /v1，usage: 前缀的 put 计数一次都不涨……」
+   * 数着 put 计数守着，不由这张表守。
    */
   const EXPECTED_MIDDLEWARE = [
     "ALL /*",              // configRefresh

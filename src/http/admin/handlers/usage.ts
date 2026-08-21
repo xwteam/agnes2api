@@ -1,0 +1,484 @@
+import type { Context } from "hono";
+import type { Storage } from "../../../ports/storage.js";
+import type { KeyPoolRepo } from "../../../core/keypool-repo.js";
+import type { UsageSink } from "../../usage-sink.js";
+import { normalizeStats } from "../../../core/admin/stats.js";
+import { httpError } from "../../errors.js";
+import {
+  USAGE_DAY_MS, USAGE_DAY_RETAIN,
+  usageDayIndex, usageCandidateKeys, mergeDayShards,
+  type UsageBucket,
+} from "../../../core/admin/usage-stats.js";
+
+/**
+ * Tier-2 读侧的接线。**`null` = 这个 app 没建 sink，也就是 Tier-2 关着。**
+ *
+ * ⚠️ **`storage` 与 `sink` 必须是同一份存储上的读与写**，所以 `createApp` 传的是
+ * `usageSink.storage`（那个 getter 交出来的正是 sink 自己落盘用的那一个实例），
+ * **不是另外注入一个 `Storage`**。另给一份的后果不是「读到旧数据」而是**读到空**：
+ * `wire.ts` 手上同时有 `storage` 与 `watched` 两个引用，随手传错一个，面板上
+ * 「这段时间没有任何请求」会长期为真而没有任何东西会红——那正好是全局约束 9
+ * 点名的「三件事在面板上长得一模一样」里最难发现的那一件。
+ *
+ * ⚠️ **整块可空，而不是「存储恒在 + 一个 enabled 布尔」**（全局约束 16）：
+ * 关闭时读路径**在结构上不存在**，不是一个 `if` 挡着。一个「反正 enabled 是 false」
+ * 的读路径迟早会被某次改动接上。代价明写：**「关着时不读存储」这条性质因此
+ * 不是一行可以被变异掉的代码** —— 要证伪它得先把这个接线本身改成两格，
+ * 本任务的变异表照实记了这件事（M1）。
+ */
+export interface UsageWiring {
+  storage: Storage;
+  sink: UsageSink;
+}
+
+/**
+ * `note` 的取值全集。**是 code 不是句子**：面板是五语言的，自由文本没法 i18n，
+ * 前端拿它去查字典。写成运行期数组（不是纯类型联合）的理由与
+ * `src/core/dispatcher.ts` 的 `FAIL_REASONS` 逐字相同——一个只存在于类型系统里的
+ * 联合，测试没法穷举它，加一条新 code 而忘了在面板字典里补五种语言时没有任何东西会红。
+ *
+ * ⚠️ **这张表由 `tests/contract/admin-usage.test.ts` 的
+ * 「USAGE_NOTES 里每一条 code 都真的被某一条端点产出过 —— 一条永远产不出来的 code
+ * 会让面板字典里多一条永远用不上的文案，而少一条会让面板拿到一个查不到的 key」
+ * 穷尽**：那一格把七条 code 各自摆出来跑一遍，再与这张表双向比对。
+ *
+ * ⚠️ **`note` 是**摘要**，不是第二个真源**：每一条 code 的判据全部来自同一份响应体
+ * 里的其它字段（`tier` / `range.clamped` / `days === null` / `shards === 0`），
+ * 由同一个 handler 在同一处算出。前端读 note 还是读那些字段都行，**但两者不许打架**
+ * ——`no_shards` 与 `days !== null && shards === 0` 的等价性由那份契约测试里
+ * 「note 与它自己的判据字段恒一致 —— note 是摘要不是第二个真源」一格钉着。
+ */
+export const USAGE_NOTES = [
+  /** `tier === "off"`：`USAGE_STATS_ENABLED` 没打开，这个部署根本没在记账。 */
+  "tier2_off",
+  /** 服务端时钟给不出有限数字：区间与保留期都算不出来，**这不是「没有数据」**。 */
+  "clock_unavailable",
+  /** 读存储那一块抛了：`days` / `hours` 整块是 `null`，面板显示 `—` 而不是 0。 */
+  "read_failed",
+  /** 请求的区间被夹到了保留期起点或 `now`，`range` 回读的是服务端真正用的那一对。 */
+  "range_clamped",
+  /** 单日下钻要的那一天整个落在保留期之外：**不是那天没有请求，是那天已经不在了**。 */
+  "date_out_of_retention",
+  /** 读成功了，但这段区间里一个分片都没有 ⇒ 真的没有记录到用量。 */
+  "no_shards",
+  /** 单日下钻的常态：**没有逐请求流水**（设计 §10.6），面板据它渲染那句指路的话。 */
+  "no_request_detail",
+] as const;
+
+export type UsageNote = (typeof USAGE_NOTES)[number];
+
+/**
+ * 单把 key 的 Tier-1 计数。**与 Tier-2 完全无关**，Tier-2 关着时它照样可用
+ * （设计 §10.6：「Tier-1 的按 key 用量在 Tier-2 关闭时也仍然可用」）。
+ *
+ * **零额外读**：走 `repo.all()`，与转发路径共用同一个 isolate 快照。
+ * 这条由 `tests/contract/admin-usage.test.ts` 的
+ * 「连打 20 次逐 key 用量：get / list 计数一次都不增加 —— 面板轮询不许各自去读一遍存储」
+ * 数着计数钉住。
+ */
+export function keyUsageHandler(repo: KeyPoolRepo, now: () => number) {
+  return async (c: Context) => {
+    // `?? ""` 与 `handlers/keys-write.ts` 的 `paramId` 同一条理由：`c.req.param()`
+    // 的静态类型是 `string | undefined`，而**刻意不写 `as string`**。落到空串时
+    // 下面那次查找如实 404；写成 `as string` 的话 `undefined` 会一路进响应体的 `id`，
+    // 而 `c.json` 会把 undefined 的字段**整个丢掉** —— 前端读到「字段不存在」。
+    const id = c.req.param("id") ?? "";
+    const rec = (await repo.all()).find((r) => r.id === id);
+    if (!rec) return c.json({ error: { type: "not_found", message: "没有这把 key" } }, 404);
+    return c.json({
+      id,
+      stats: normalizeStats(rec.stats),
+      /** Tier-1 是近似值：并发下少计，且最多晚一个 POOL_TOUCH_INTERVAL_MS 落盘。 */
+      approximate: true,
+      generatedAt: now(),
+    });
+  };
+}
+
+/**
+ * `from` / `to` 的解析结果。**三种结局分得开**，这是本文件存在的头等理由。
+ *
+ * ⚠️ **`usageCandidateKeys` 对「`from`/`to` 是 `NaN`」与「`nowMs` 不是有限数」
+ * 两种入参都返回空数组，而空数组与「这段时间真的没有数据」在它的返回值上
+ * 完全不可区分**（`src/core/admin/usage-stats.ts` 的 `usageCandidateKeys` 上方
+ * 那两道护栏的说明）。那不是它的缺陷——它是纯函数，本来就只该回答「取哪些键」。
+ * **把这三件事分开是入参解析这一层的职责**，也就是这里：
+ * · 客户端把参数写错 ⇒ **400**，让前端立刻知道自己发错了；
+ * · 服务端时钟坏了 ⇒ `clock_unavailable`；
+ * · 参数与时钟都好、区间里就是没有分片 ⇒ `no_shards`。
+ * 三者混成一句「这段时间没有数据」正是全局约束 9 点名的那件事。
+ */
+type RangeParse =
+  | { kind: "ok"; from: number; to: number; fromDay: number; toDay: number; clamped: boolean }
+  | { kind: "clock" };
+
+/**
+ * 单个 epoch 毫秒参数。**缺席返回 `null`，非法直接抛 400，不做「善意纠正」。**
+ *
+ * ⚠️ **判据是 `Number.isSafeInteger` 而不是 `Number.isInteger`**，这一条不是洁癖：
+ * `Number.isInteger(1e24)` 是 **true**，而 `usageDayIndex(1e24)` 已经远超 `2**53`，
+ * 在那个量级上 `d + 1 === d` 可能成立（`usageCandidateKeys` 上方那张四行实测表逐项
+ * 记着它，成因是相邻可表示浮点数的间距已经大于 1）。那道结构性计数闸挡住了
+ * 「循环不终止」，**但挡不住「回一个语义上莫名其妙的区间」**。在入口就把这一档
+ * 判成客户端错误，比让它走到底再解释便宜得多。
+ *
+ * ⚠️ **负数一律 400，不当成缺失**：epoch 毫秒没有负数这回事，而「悄悄纠正」会让
+ * 前端把参数发成 `-1` 这件事永远不被发现（`handlers/events.ts` 的 `afterParam`
+ * 对 `after` 取的是另一个口径——那一条是客户端回传的游标，容错是它的语义的一部分；
+ * 这两条是人点按钮选出来的时间范围，发错就是 bug）。
+ */
+function msParam(c: Context, name: string): number | null {
+  const raw = c.req.query(name);
+  if (raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < 0) {
+    throw httpError(
+      400, "invalid_request_error",
+      `${name} 必须是不小于 0 的整数（epoch 毫秒），收到的是：${raw}`,
+    );
+  }
+  return n;
+}
+
+/**
+ * 把查询串解析成服务端真正会用的那一对时刻。
+ *
+ * | 参数 | 类型 | 单位 | 缺省 | 越界处理 |
+ * |---|---|---|---|---|
+ * | `from` | 整数 | **epoch 毫秒** | `to - 86400000` | 早于保留期的夹到保留期起点，`clamped` 为真 |
+ * | `to` | 整数 | **epoch 毫秒** | 服务端 `now()` | 晚于 `now()` 的夹到 `now()`，`clamped` 为真 |
+ *
+ * **`days` 不是参数**：它是前端按钮的档位，服务端不认。前端只发 `from` / `to`。
+ *
+ * ── 三处顺序是有讲究的，写下来免得后人以为可以换 ─────────────────────────────
+ * ① **先校验客户端真的发了的那两个值**（`msParam`）——它不需要时钟，所以时钟坏了
+ *    也不该把一个格式错误报成 `clock_unavailable`；
+ * ② **再查时钟**——`to` 的缺省值是 `now()`，时钟不可用时下面每一步都算不出来；
+ * ③ **`from > to` 用夹逼之前的那一对判**。夹逼之后再判会把「客户端发了一个自洽的
+ *    未来区间」误报成 400：`to` 被夹到 `now` 之后确实 `from > to`，但那不是客户端的错。
+ *    夹完之后区间为空是允许的，它走 `no_shards` 那条（`range` 里回读得到 `clamped: true`）。
+ *
+ * ── 滚动窗口 vs UTC 日键的错位，在这里一并裁掉 ────────────────────────────────
+ * `now − 30 天` 是一个**滚动**时刻，而日桶是 **UTC 日**，滚动 30 天会横跨 **31** 个
+ * UTC 日，最老那一个只有一部分落在区间内。⇒ **服务端一律按「`from` 所在的 UTC 日」
+ * 到「`to` 所在的 UTC 日」取整天**，并在 `range` 里回读**取整之后**的那一对
+ * （`from` = 起始日的零点，`to` = 结束日的最后一毫秒）。
+ * **日桶的粒度就是天，装作能给出半天是撒谎。**
+ *
+ * ⚠️ **取整本身不算 `clamped`**：它是无条件适用的口径（每一次请求都会发生），
+ * 而 `clamped` 要回答的是「服务端有没有因为拿不到而缩小了你要的窗口」——那句话
+ * 面板要拿去说「这段时间早于保留期，只显示了能拿到的部分」。两者混成一个布尔，
+ * 面板就会对每一次正常请求都说那句话，说到运维不再看它。取整之后的真实窗口
+ * 由 `range` 那一对如实回读，一个字都没有藏。
+ */
+function parseRange(c: Context, nowMs: number): RangeParse {
+  const rawFrom = msParam(c, "from");
+  const rawTo = msParam(c, "to");
+  if (!Number.isFinite(nowMs)) return { kind: "clock" };
+
+  const to = rawTo ?? nowMs;
+  const from = rawFrom ?? to - USAGE_DAY_MS;
+  if (from > to) {
+    throw httpError(
+      400, "invalid_request_error",
+      `from 不得晚于 to（from=${from}, to=${to}）`,
+    );
+  }
+
+  // 夹逼。**两个方向各自记一笔**，合起来才是 `clamped`。
+  const clampedTo = Math.min(to, nowMs);
+  const oldestAllowedDay = usageDayIndex(nowMs) - USAGE_DAY_RETAIN + 1;
+  const askedFromDay = usageDayIndex(Math.max(0, from));
+  const fromDay = Math.max(askedFromDay, oldestAllowedDay);
+  const toDay = usageDayIndex(clampedTo);
+  return {
+    kind: "ok",
+    from, to,
+    fromDay, toDay,
+    clamped: clampedTo !== to || fromDay !== askedFromDay,
+  };
+}
+
+/** UTC 日序号 → `YYYY-MM-DD`。**日期一律 UTC**（设计 §7.1 末条：Worker 是多 colo 的）。 */
+function utcDateString(day: number): string {
+  return new Date(day * USAGE_DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * `YYYY-MM-DD` → UTC 日序号。**认不出来返回 `null`。**
+ *
+ * ⚠️ **必须回读一遍再比对**，不能只判 `Date.parse` 有没有给出数字：
+ * `Date.parse("2026-02-31T00:00:00Z")` 在 V8 上是 `NaN`，但 `"2026-13-01"` 这类
+ * 在别的实现上可能被宽容地滚进下一年。回读比对之后，「解析出来的那一天再格式化
+ * 回去必须逐字等于客户端给的串」是一条与实现无关的判据。
+ */
+function parseUtcDate(raw: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const ms = Date.parse(`${raw}T00:00:00.000Z`);
+  if (!Number.isFinite(ms)) return null;
+  const day = Math.floor(ms / USAGE_DAY_MS);
+  return utcDateString(day) === raw ? day : null;
+}
+
+/**
+ * 逐块读回来的那一块。**成功与失败是两种形状，不是「失败给个空的」**（全局约束 9）。
+ *
+ * ⚠️ **失败时 `shards` / `malformed` 也必须是 `null`，不许留 0**：一个「读失败但
+ * 分片数写着 0」的响应体，面板照着渲染就是「这段时间有 0 个分片贡献了数据」
+ * ——**那正是伪造 0**。三个字段同生同死。
+ */
+type ReadBlock =
+  | { ok: true; merged: ReturnType<typeof mergeDayShards> }
+  | { ok: false };
+
+/**
+ * 把候选键一次性读回来并合并。
+ *
+ * ⚠️ **一个键都不许吞**：任何一次 `get` 抛错都让整块失败（返回 `{ ok: false }`），
+ * **绝不把读到的那部分当成全份交出去**。设计 §10.6 的原话是「不许把一段不完整的
+ * 30 天显示成完整的」，而 30 天那一档正是本仓第一个会一次发出 60 次子请求的读扇出
+ * ——`src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方记着 U-H 的裁定：
+ * **Cloudflare 的两页官方文档在「一次调用能发多少次子请求」上互相对不上**
+ * （Workers limits 页免费档 50，KV limits 页 1,000，而前者没有定义 KV 算哪一行），
+ * 所以在 P3e 的真机验收把它了结之前，**这里不许写成「60 次是安全的」**。
+ * 能写下来的只有一句：**它在 Worker 上失败的时候要失败得诚实。**
+ *
+ * `Promise.all` 而不是逐个 `await`：60 次串行往返在 KV 上是秒级的。
+ * ⚠️ **它不改变 get 的次数**（`Promise.all` 不做去重也不短路），
+ * 所以读扇出那四格数出来的仍然是 `天数 × USAGE_SLOTS`。
+ */
+async function readShards(storage: Storage, keys: readonly string[]): Promise<ReadBlock> {
+  try {
+    const raw = await Promise.all(keys.map((k) => storage.get<unknown>(k)));
+    return { ok: true, merged: mergeDayShards(raw) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * sink 的自述状态，原样转成响应里的 `pending` 块。
+ *
+ * ⚠️⚠️ **`pendingMs` 数的是「距上一次落盘*尝试*多久」，不是「距上一次写成功多久」**
+ * （`src/http/usage-sink.ts` 的 `status()` 上方写着全文）。⇒ **`count > 0 && ms ≈ 0`
+ * 要读作「刚试过、没写成」，不是「没有尾巴」**。判别未落盘尾巴的字段是 `count`，
+ * **不是 `ms`**；`ms` 只回答「这条尾巴最长可能有多旧」。
+ *
+ * ⚠️ **`budgetExhausted` 必须一起发出去**：那两种失败态（预算耗尽 / 存储抛错）
+ * 在 `count` + `ms` 上长得一模一样，把它砍掉面板就只能猜。它是全局约束 10 的原话
+ * 「诚实标记由后端字段驱动」在这个板块的落点。
+ * 这两条由 `tests/contract/admin-usage.test.ts` 的
+ * 「落盘失败之后 pending.count 仍然大于 0 而 pending.ms 是 0 —— 刚试过没写成，不是没有尾巴」
+ * 钉着。
+ */
+function pendingBlock(sink: UsageSink): { count: number; ms: number; budgetExhausted: boolean } {
+  const s = sink.status();
+  return { count: s.pending, ms: s.pendingMs, budgetExhausted: s.budgetExhausted };
+}
+
+/**
+ * `days` 里那些「读到了，就是没有」的日子用的零桶。
+ *
+ * ⚠️ **这不是「伪造 0」**（全局约束 9），差别要说清楚：这一天的两个候选键都**真的
+ * 被读过**、都返回了 `null`，「没有记录」就是这次读的真实结果。真正被禁止的是
+ * 「读失败了却报 0」，而那一档由 `days === null` 整块承担，不会落到这里。
+ * 边界上唯一的含糊是 TTL 过期与「本来就没写过」在 KV 上不可区分，而整段区间已经
+ * 被夹进保留期内（`range.clamped` 会把这件事说出来），所以那一档也不会落到这里。
+ *
+ * **冻起来**：它被塞进每一个空日子，写成可变对象的话任何一处误改都会串味。
+ */
+const EMPTY_DAY: UsageBucket = Object.freeze({
+  requests: 0, success: 0, errors: 0, tokensIn: 0, tokensOut: 0,
+  streamingRequests: 0, latencySum: 0, latencyCount: 0,
+});
+
+/**
+ * `GET /admin/api/usage`（Tier-2 汇总）。
+ *
+ * ── 六种状态必须在响应字段上分得开（全局约束 9 在本期的主战场）───────────────
+ *
+ * | # | 状态 | HTTP | `tier` | `range` | `days` / `total` | `shards` | `pending` | `note` |
+ * |---|---|---|---|---|---|---|---|---|
+ * | ① | 参数发错了（非整数 / 负数 / `from > to`） | **400** | — | — | — | — | — | — |
+ * | ② | 服务端时钟给不出有限数字 | 200 | 有 | **null** | **null** | **null** | 有 | `clock_unavailable` |
+ * | ③ | Tier-2 没开 | 200 | **`"off"`** | 有 | **null** | **null** | **null** | `tier2_off` |
+ * | ④ | 读不出来 | 200 | `"tier2"` | 有 | **null** | **null** | 有 | `read_failed` |
+ * | ⑤ | 区间里一个分片都没有 | 200 | `"tier2"` | 有 | 每天一格、全是 0 桶 | **0** | 有 | `no_shards` |
+ * | ⑥ | 有分片，只是请求数是 0 | 200 | `"tier2"` | 有 | 有 | **> 0** | 有 | **null** |
+ *
+ * ⑤ 与 ⑥ 是两件事，第一版会把它们压成同一个「今日请求数 0」：前者说「这段时间
+ * 这个部署没有记下任何东西」（可能是没流量，也可能是 isolate 没活到一次落盘），
+ * 后者说「有实例落过盘，那些盘里的请求数就是 0」。**判据是 `shards`，不是 `total`。**
+ *
+ * ⚠️ **`days` 恒是「每天一格」，不是「只列有数据的那几天」**：一个 30 天的区间
+ * 恒给 30 格，缺数据的那天是 0 桶（见 `EMPTY_DAY` 上方对「这不是伪造 0」的论证）。
+ * 让面板去补缺口等于把「哪些天该出现」这条知识复制一份到前端。
+ *
+ * ⚠️ **`range.clamped` 为真时 `note` 是 `range_clamped`，它压过 `no_shards`**：
+ * 「你要的窗口被缩小了」比「窗口里没东西」更该先说——后者往往正是前者的后果。
+ * 两条信息都没丢：`clamped` 自己在 `range` 里，`shards` 自己在响应里。
+ *
+ * ⚠️ **`tier` 那一格永远不许是 `null`**（Step 5）：它是「统计开没开」，来自内存里的
+ * 接线，读不出来是不可能的。写成可空会让前端多一条永远走不到的分支，
+ * 而那条分支迟早会被误用来兜别的 null。
+ *
+ * ⚠️ **`tokensCoverage` 不在这里**（评审 I20）：它只从 `GET /admin/api/capabilities`
+ * 发。同一份知识两个出口，前端就要面对「读哪一个」这个不该存在的问题。
+ * 这一条由 `tests/contract/admin-usage.test.ts` 的
+ * 「用量端点不带 tokensCoverage —— 同一份知识只许有一个出口」钉着。
+ *
+ * ⚠️ **关着的时候一次存储访问都不许有**（全局约束 16）。这条在本文件里是**结构性**的：
+ * `deps.usage` 为 `null` 时压根没有 `Storage` 可读。见 `UsageWiring` 上方那段。
+ */
+export function usageHandler(deps: { usage: UsageWiring | null; now: () => number }) {
+  return async (c: Context) => {
+    const at = deps.now();
+    const wiring = deps.usage;
+    const tier = wiring === null ? "off" : "tier2";
+    // ★ 参数校验排在最前：客户端发错了参数，无论 Tier-2 开没开、时钟好不好，
+    //   都该立刻拿到 400。这一步只看客户端真的发了的那两个串，不碰时钟。
+    const parsed = parseRange(c, at);
+
+    const base = {
+      tier,
+      /** 日期一律 UTC，并且**在响应里说出来**（设计 §7.1 末条）。 */
+      timezone: "UTC" as const,
+      approximate: true as const,
+      generatedAt: at,
+    };
+
+    if (parsed.kind === "clock") {
+      // ② 时钟坏了：区间与保留期都算不出来。**这不是「没有数据」**，所以
+      //    `range` 与 `days` 一起是 null，note 单独有一条 code。
+      return c.json({
+        ...base,
+        range: null, days: null, total: null, shards: null, malformed: null,
+        pending: wiring === null ? null : pendingBlock(wiring.sink),
+        note: (wiring === null ? "tier2_off" : "clock_unavailable") satisfies UsageNote,
+      });
+    }
+
+    const range = {
+      from: parsed.fromDay * USAGE_DAY_MS,
+      // 结束日的**最后一毫秒**：回读的是服务端真正覆盖到的那一段，不是 `to` 那一天的零点。
+      to: (parsed.toDay + 1) * USAGE_DAY_MS - 1,
+      clamped: parsed.clamped,
+    };
+
+    if (wiring === null) {
+      // ③ Tier-2 没开。**`range` 照常回读**（参数是好的），`pending` 是 null
+      //    （没有 sink 就没有「未落盘的尾巴」这件事，报 0 是伪造）。
+      return c.json({
+        ...base, range,
+        days: null, total: null, shards: null, malformed: null, pending: null,
+        note: "tier2_off" satisfies UsageNote,
+      });
+    }
+
+    const keys = usageCandidateKeys(at, parsed.from, parsed.to);
+    const block = await readShards(wiring.storage, keys);
+    const pending = pendingBlock(wiring.sink);
+
+    if (!block.ok) {
+      // ④ 读不出来。三个字段同生同死（见 `ReadBlock`）。**不是 500**：
+      //    `tier` / `range` / `pending` 这三块都还是真的，整条 500 会把它们一起丢掉。
+      return c.json({
+        ...base, range,
+        days: null, total: null, shards: null, malformed: null, pending,
+        note: "read_failed" satisfies UsageNote,
+      });
+    }
+
+    const { byDay, total, shards, malformed } = block.merged;
+    const days: Array<{ date: string; total: UsageBucket }> = [];
+    for (let d = parsed.fromDay; d <= parsed.toDay; d++) {
+      // ⚠️ **`byDay` 是无原型对象**（`mergeDayShards` 的硬契约）：这里只做下标取值 +
+      // `?? null`，**不许调 `.hasOwnProperty()` / `.toString()` 这类 `Object.prototype`
+      // 上的方法**——那条原型链上什么都没有，调用会直接 `TypeError`。
+      days.push({ date: utcDateString(d), total: byDay[String(d)] ?? EMPTY_DAY });
+    }
+
+    return c.json({
+      ...base, range, days, shards, malformed, pending,
+      /** 区间里一个分片都没有。**判据是 `shards`，与 `total.requests` 无关**（⑤ vs ⑥）。 */
+      note: (parsed.clamped ? "range_clamped" : shards === 0 ? "no_shards" : null) satisfies UsageNote | null,
+      /** 整段区间的合计。面板拿它当分母，不必自己把 `days` 再加一遍。 */
+      total,
+    });
+  };
+}
+
+/**
+ * `GET /admin/api/usage/:date`（单日下钻，`date` 是 UTC 的 `YYYY-MM-DD`）。
+ *
+ * **没有逐请求流水**（设计 §10.6）⇒ 常态下 `note` 恒是 `no_request_detail`，
+ * 让面板能渲染那句「需要逐请求粒度请看容器 stdout / Cloudflare Workers Logs」，
+ * **而不是给一张永远空着的表**。
+ * ⚠️ **代价明写**：`note` 只有一格，出问题时它会被 `read_failed` 这类占掉，
+ * 那句指路的话就不显示了。这是刻意的取舍——**出问题的时候先说出问题**，
+ * 而「这里本来就没有流水」是一句任何时候都成立的静态说明，面板可以自己常驻。
+ *
+ * ⚠️ **只把那一天的分片喂进 `mergeDayShards`**：那个函数把每个分片的 `hours`
+ * 无差别地加在一起，多日区间下 `hours["13"]` 是**「区间里所有天的 13 点之和」**
+ * ——`src/core/admin/usage-stats.ts` 的 `mergeDayShards` 上方把这条列成了硬契约。
+ * 拿多日区间的返回值去画单日小时图是错的。
+ *
+ * ⚠️ **`hours` / `byModel` / `byProtocol` 原样交出去，一个都不重建**：
+ * 它们是 `mergeDayShards` 交出来的**无原型对象**，键来自客户端填的模型名
+ * （`__proto__` / `toString` / `constructor` 都造得出来）。往普通 `{}` 里搬一遍
+ * 会让 `__proto__` 那一条**彻底消失**、`toString` 那一格**变成一堆 `NaN`**。
+ * 由 `tests/contract/admin-usage.test.ts` 的
+ * 「模型名叫 __proto__ / toString / hasOwnProperty / constructor 时，四条都原样出现在响应里」
+ * 钉着。
+ *
+ * ⚠️ **缺席的小时不是「读不出来」**：`hours` 只含有过流量的那些小时。
+ * 「这一天读成功了没有」由 `hours` **整块**是不是 `null` 承担，
+ * 不由某个小时在不在里面承担——面板对缺席的小时画 0 是对的。
+ */
+export function usageDateHandler(deps: { usage: UsageWiring | null; now: () => number }) {
+  return async (c: Context) => {
+    const at = deps.now();
+    const wiring = deps.usage;
+    // `?? ""` 见 `keyUsageHandler` 里同一句的说明。空串走不过下面那道正则 ⇒ 400。
+    const raw = c.req.param("date") ?? "";
+    const day = parseUtcDate(raw);
+    if (day === null) {
+      throw httpError(
+        400, "invalid_request_error",
+        `date 必须是 UTC 的 YYYY-MM-DD，收到的是：${raw}`,
+      );
+    }
+
+    const base = {
+      tier: wiring === null ? "off" : "tier2",
+      timezone: "UTC" as const,
+      date: raw,
+      approximate: true as const,
+      generatedAt: at,
+    };
+    const empty = { hours: null, byModel: null, byProtocol: null, shards: null, malformed: null };
+
+    if (wiring === null) return c.json({ ...base, ...empty, note: "tier2_off" satisfies UsageNote });
+    if (!Number.isFinite(at)) {
+      return c.json({ ...base, ...empty, note: "clock_unavailable" satisfies UsageNote });
+    }
+
+    const nowDay = usageDayIndex(at);
+    if (day > nowDay || day < nowDay - USAGE_DAY_RETAIN + 1) {
+      // 那一天整个落在保留期之外。**不是「那天没有请求」，是那天已经不在了**——
+      // 报成 `no_shards` 会让运维以为那天真的没人用（全局约束 9）。
+      return c.json({ ...base, ...empty, note: "date_out_of_retention" satisfies UsageNote });
+    }
+
+    const dayMs = day * USAGE_DAY_MS;
+    const keys = usageCandidateKeys(at, dayMs, dayMs);
+    const block = await readShards(wiring.storage, keys);
+    if (!block.ok) return c.json({ ...base, ...empty, note: "read_failed" satisfies UsageNote });
+
+    const { hours, byModel, byProtocol, shards, malformed } = block.merged;
+    return c.json({
+      ...base, hours, byModel, byProtocol, shards, malformed,
+      note: "no_request_detail" satisfies UsageNote,
+    });
+  };
+}

@@ -53,6 +53,9 @@ function adminApp(version: string) {
     // 给**默认那一侧**（Tier-2 关着）即可。生产上这一格由 `createApp` 按
     // 「建没建 sink」填，不是从配置现读。
     usageStatsEnabled: false,
+    // 用量那两条端点要的读侧接线（P3d Task 4）。**刻意传 `null`**，与上面那一格
+    // 同真同假：那是 Tier-2 关着的形态，两条端点如实回 `tier: "off"`（不是 503）。
+    usage: null,
     // 同上：本文件只测 session，给后端常量那个默认值即可。
     usageFlushIntervalMs: USAGE_FLUSH_MIN_INTERVAL_MS,
   });

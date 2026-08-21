@@ -19,7 +19,7 @@ import { YydsProvider } from "../adapters/mailbox-yyds.js";
 import { MoeMailProvider } from "../adapters/mailbox-moemail.js";
 import { ConsoleLogger } from "../adapters/logger-console.js";
 import { StoreLogger } from "../adapters/logger-store.js";
-import { UsageSink, resolveUsageFlushInterval } from "./usage-sink.js";
+import { UsageSink, resolveUsageFlushInterval, USAGE_ERROR_REPORT } from "./usage-sink.js";
 import { multiLogger } from "../adapters/logger-multi.js";
 import type { Logger } from "../ports/logger.js";
 import { createTendGate, type TendGate } from "./admin/tend-lock.js";
@@ -214,10 +214,14 @@ export async function buildApp(
       shardId,
       flushIntervalMs: usageFlush.flushIntervalMs,
       budgetPerDay: usageFlush.budgetPerDay,
-      onError: (err) => consoleLogger.log({
-        level: "error", event: "storage.usage_flush_failed",
-        msg: "用量分片落盘失败，这一天的累加器**保留**，下一次落盘会把这一段带上",
-        fields: { error: err instanceof Error ? err.message : String(err) },
+      // ⚠️ **查表，不在这里写三元**（P3d Task 4 认账修正）：两个 phase 的事件名与
+      // 文案住在 `USAGE_ERROR_REPORT` 里，连同「为什么两句话必须分家」「record 那条
+      // 今天到底可不可达」的全文。在这里再写一份三元的后果是加新 phase 时 else
+      // 分支会把它**误报成**旧的那条，而 `tsc` 一个字都不会说。
+      onError: (err, phase) => consoleLogger.log({
+        level: "error",
+        ...USAGE_ERROR_REPORT[phase],
+        fields: { error: err instanceof Error ? err.message : String(err), phase },
       }),
     })
     : undefined;

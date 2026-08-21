@@ -303,6 +303,14 @@ export function createApp(deps: AppDeps): Hono {
     // `usageStatsEnabled`——那个开关是建 app 时读一次的，现读会与事实分叉，
     // 见 `capabilitiesHandler` 的同名参数。
     usageStatsEnabled: usageSink !== undefined,
+    // Tier-2 读侧的接线（P3d Task 4）。**与上面那一行从同一个 `usageSink` 变量算出来**
+    // ——两者必须同真同假，见 `AdminRouterDeps.usageStatsEnabled` 上方那段。
+    //
+    // ⚠️ **`storage` 取自 `usageSink.storage`，不另外注入一个**：`wire.ts` 手上同时有
+    // `storage` 与 `watched` 两个引用，给读侧单独传一个的话，传错的后果不是「读到
+    // 旧数据」而是**「读到空」**，而那在面板上与「这段时间没有请求」一模一样。
+    // 从 sink 上取，读的和写的是同一个实例这件事就是结构性的。
+    usage: usageSink !== undefined ? { storage: usageSink.storage, sink: usageSink } : null,
     usageFlushIntervalMs: deps.usageFlushIntervalMs ?? USAGE_FLUSH_MIN_INTERVAL_MS,
   });
   if (admin) app.route("/", admin);

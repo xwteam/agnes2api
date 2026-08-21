@@ -93,6 +93,50 @@ export interface UsageRecording {
   usageSink?: UsageSink;
 }
 
+/** sink 自己出故障的两个阶段。见 `USAGE_ERROR_REPORT`。 */
+export type UsagePhase = "record" | "flush";
+
+/**
+ * 两个阶段各自该对运维说什么。**写成查表而不是三元**，与
+ * `src/http/admin/router.ts` 的 `REJECT_MESSAGE` 同一条理由：
+ * 类型是 `Readonly<Record<UsagePhase, …>>`，所以给 `UsagePhase` 加一个新阶段时
+ * **`tsc` 会先在这里报错**；写成三元的话 else 分支会把新阶段**误报成**旧的那条，
+ * 而运维照着一句错的诊断去处置是查不出问题的。
+ *
+ * ⚠️⚠️ **两句话的意思是相反的，这正是它们必须分家的全部理由**（P3d Task 4 认账修正）：
+ * · `flush` ⇒ **累加器保留，下一次落盘会把这一段带上** ——数据没丢；
+ * · `record` ⇒ **这一条计数已经永久丢失** ——`record()` 里可能抛的那些步骤全都排在
+ *   任何一次写入累加器**之前**（见 `record()` 上方那段对 `try` 边界的说明），
+ *   所以抛出去之后累加器一个字节都没变、`dirty` 也没被置上，
+ *   **下一次落盘不会、也没法把它补回来**。
+ *
+ * 在这张表出现之前，两者共用 `storage.usage_flush_failed` 与 flush 那句文案
+ * ——**对 record 期那一类，那句承诺是假的**。
+ *
+ * ⚠️ **如实登记它今天的可达性，别把它读成「修了一个正在咬人的缺陷」**：
+ * `record()` 里唯一还够得着的抛点是**注入的时钟**。模型名那一档已经被
+ * `src/core/admin/usage-stats.ts` 里的 `safeString()` 堵死了——本任务实测：
+ * 拿 `JSON.parse('{"toString":1,"valueOf":1}')` 当 `model` 走真装配打一次
+ * `/v1/chat/completions`（空池 ⇒ 503 `pool_empty`，Tier-2 开着），
+ * **`onError` 一次都没被调到**，那一条计数照常记进了累加器。
+ * ⇒ 这条 catch 今天是**一个还没被走到的陷阱**，不是一条活着的缺陷；
+ * 分家是为了让它被走到的那天说的是真话（`safeString` 一旦被谁删掉，
+ * 那一天就是当天——`boundUsageKey` 上方逐字记着删掉它之后的实测结果）。
+ *
+ * 由 `tests/contract/admin-usage.test.ts` 的
+ * 「record 期出错与 flush 期出错走两条不同的事件，文案不许互相冒充」穷尽两个阶段。
+ */
+export const USAGE_ERROR_REPORT: Readonly<Record<UsagePhase, { event: string; msg: string }>> = {
+  record: {
+    event: "usage.record_failed",
+    msg: "记一次用量时出错，**这一条计数已经永久丢失**：累加器没有被改动，下一次落盘也不会把它补上",
+  },
+  flush: {
+    event: "storage.usage_flush_failed",
+    msg: "用量分片落盘失败，这一天的累加器**保留**，下一次落盘会把这一段带上",
+  },
+};
+
 /**
  * 落盘间隔的生效值 + 每天写预算，由 `USAGE_FLUSH_INTERVAL_MS` 与**存储有没有写配额**共同决定。
  *
@@ -304,12 +348,36 @@ export class UsageSink {
    */
   private readonly budgetPerDay: number | null;
 
+  /**
+   * 读侧（`GET /admin/api/usage`）要用的那个存储。**交出去的就是自己落盘用的那一个实例。**
+   *
+   * ⚠️ **它存在的理由是让「读的和写的是同一份存储」变成结构性的**，而不是靠装配
+   * 时记得传对：`src/http/wire.ts` 手上同时有 `storage` 与 `watched` 两个引用，
+   * 给读侧单独注入一个的话，随手传错一个的后果**不是「读到旧数据」而是「读到空」**
+   * ——面板上「这段时间没有任何请求」会长期为真而没有任何东西会红。
+   * 消费者见 `src/http/admin/handlers/usage.ts` 的 `UsageWiring`。
+   *
+   * **只读、不代理**：这里刻意不包一层「只允许读 `usage:` 前缀」的门面。那层门面
+   * 挡不住任何真实的误用（读侧本来就只按 `usageDayKey()` 算出来的键读），
+   * 却会让「读的和写的是同一个实例」这条性质多一层需要自己被验证的中间物。
+   */
+  get storage(): Storage {
+    return this.o.storage;
+  }
+
   constructor(private readonly o: {
     storage: Storage;
     now: () => number;
     shardId: string;
-    /** sink 自身故障绝不许拖垮响应；出错走这里（通常是 ConsoleLogger）。 */
-    onError: (err: unknown) => void;
+    /**
+     * sink 自身故障绝不许拖垮响应；出错走这里（通常是 ConsoleLogger）。
+     *
+     * ⚠️⚠️ **第二个参数 `phase` 不是装饰，它决定这条错误该对运维说什么，
+     * 而两句话的意思是相反的**（P3d Task 4 认账修正）。两句原文、它们为什么必须
+     * 分家、以及**这条 record 通道今天到底可不可达**，全文在 `USAGE_ERROR_REPORT`
+     * 上方——**别在这里复述，同一段推理抄两份改的时候必然只改一份。**
+     */
+    onError: (err: unknown, phase: UsagePhase) => void;
     /** 见 `intervalMs`。缺省 = 后端常量。 */
     flushIntervalMs?: number;
     /** 见 `budgetPerDay`。**缺省 = `USAGE_WRITES_PER_DAY`，即「有写配额」那一侧的行为**。 */
@@ -364,7 +432,9 @@ export class UsageSink {
       this.pending++;
     } catch (err) {
       // 统计是旁路，绝不影响响应。**说一声，不静默吞掉。**
-      this.o.onError(err);
+      // ★ `"record"`：这一条计数**永久丢了**，不会被下一次落盘补上（见 `onError`
+      //   的说明）。共用 flush 那条事件等于对运维说一句假的承诺。
+      this.o.onError(err, "record");
     }
   }
 
@@ -469,7 +539,7 @@ export class UsageSink {
         // **不清这一天的累加器、也不从 dirty 里移除**：写失败时清掉等于把这一段计数
         // 永久丢了，而下一次落盘本来能带上它。**后面那些天也不再试**——同一个存储
         // 大概率一起失败，继续试只是白烧预算。
-        this.o.onError(err);
+        this.o.onError(err, "flush");
         break;
       }
       // ★ **只清「我发起写的那一刻的那个版本」**（定向复评 N3）：`await` 期间若有
