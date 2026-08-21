@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   USAGE_WRITES_PER_DAY, USAGE_FLUSH_MIN_INTERVAL_MS, USAGE_DAY_RETAIN, USAGE_SLOTS,
   USAGE_DAY_MS, usageCandidateKeys, usageExpiresAt, usageDayIndex, usageHourOf,
+  usageSlotOf, usageDayKey,
   emptyBucket, addToBucket, mergeDayShards, canWrite, type WriteBudget,
 } from "../../../src/core/admin/usage-stats.js";
 
@@ -85,6 +86,34 @@ describe("Tier-2 的配额算术", () => {
     expect(usageExpiresAt(10)).toBe((10 + 30) * 86_400_000 + 86_400_000);
   });
 
+  /**
+   * ⚠️ **这一格守的是 `USAGE_SLOTS` 那句「同一天里最多 2 个 isolate 能各写各的而不
+   * 互相覆盖」——在此之前它一个字都没有被守着**（评审 I-2）。
+   * `USAGE_SLOTS = 2` 的手写锚只钉住了读扇出 `30 × 2 = 60`；**散布函数塌成常量之后
+   * 写侧碰撞翻倍、槽位 1 永远不被写，而那个 60 照样绿、配额账照样对。**
+   * 实测：把 `usageSlotOf` 整个写死成 `return 0` ⇒ 本文件当时 `11 passed (11)`，ESCAPED。
+   */
+  it("usageSlotOf 真的把不同 shardId 散到不同槽位 —— 散布塌成常量后写侧碰撞翻倍、"
+     + "槽位 1 永不被写，而读扇出那个 60 照样绿", () => {
+    // ⚠️ **不能只用 "s1" 当样本**：`usageSlotOf("s1")` 恰好就是 0，
+    // 只断言它的话，把整个函数写死成 `return 0` 依然全绿——变异不可观测。
+    // 这条纪律本仓已经用血写过一次，见 `tests/unit/logger-store.test.ts:268`
+    // 那条用例上方的「评审 T1」说明（那里踩的是同一个 `slotOf("s1") === 0`）。
+    expect(usageSlotOf("s1")).toBe(0);   // 手写字面量
+    expect(usageSlotOf("s2")).toBe(1);   // 手写字面量：**这一格才是「没塌成常量」的证据**
+    expect(usageSlotOf("s2")).not.toBe(usageSlotOf("s1"));
+  });
+
+  it("日键的格式钉到手写字面量 —— 键空间撞车是静默的：读写共用同一个函数，"
+     + "格式错了它自己完全自洽，只有别的前缀被覆盖时才会发作", () => {
+    // 变红条件（两条都试过）：把前缀改成 `stat:`；把 day/slot 两个参数颠倒。
+    // 期望值是手写字面量，不由 `usage:${day}:${slot}` 反推（第 6 种假阳性）。
+    expect(usageDayKey(19675, 1)).toBe("usage:19675:1");
+    expect(usageDayKey(0, 0)).toBe("usage:0:0");
+    // 与既有的两个键空间不许撞：事件是 `event:<窗口>:<槽位>`，设计 §7.4 里的旧形态是 `stat:`。
+    expect(usageDayKey(19675, 1).startsWith("usage:")).toBe(true);
+  });
+
   it("小时槽按 UTC 补零 —— 面板的单日下钻直接用它当键，格式错了整列取不到", () => {
     expect(usageHourOf(86_400_000 * 10)).toBe("00");
     expect(usageHourOf(86_400_000 * 10 + 3_600_000 * 7 + 59)).toBe("07");
@@ -105,6 +134,15 @@ describe("Tier-2 的合并", () => {
     expect(r.shards).toBe(1);
     expect(r.total.requests).toBe(3);
     expect(r.byDay["3"]!.requests).toBe(3);
+  });
+
+  it("`total` 是数组的分片算畸形，不许伪装成合法分片 —— "
+     + "`typeof [] === \"object\"` 会让它拿到一个全 0 桶并混进 shards，把那个数一起变假", () => {
+    // 变红条件：把 narrowBucket 里的 `|| Array.isArray(v)` 去掉 ⇒ malformed 掉到 0、shards 涨到 1。
+    const r = mergeDayShards([{ day: 5, total: [] }]);
+    expect(r.malformed).toBe(1);   // 手写字面量
+    expect(r.shards).toBe(0);      // 手写字面量：一个都不许被当成合法的
+    expect(r.total.requests).toBe(0);
   });
 
   it("流式请求进 streamingRequests 但不进 token —— 让 token 的缺口可见", () => {

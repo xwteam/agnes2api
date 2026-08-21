@@ -5,7 +5,10 @@
  *
  * 设计 §7.1 写的是 `stat:<YYYY-MM-DD>:<shardId>` + Cron 压实成 `stat:<date>` + **删掉分片**。
  * **压实那一半必须换掉**：它正是事件分片第一版被评审 C5 推翻的形态
- * （`src/ports/storage.ts:7-10` 与 `src/adapters/logger-store.ts` 文件头记着推翻的理由：
+ * （`src/ports/storage.ts:7-10` 与 `src/adapters/logger-store.ts:31-35` 记着推翻的理由：
+ * ⚠️ 后者**不是文件头**——`logger-store.ts` 第 1 行就是 `import`，那段话在 `StoreLogger`
+ * 的类说明块里；本仓自己区分这两者，`logger-store.ts:35` 的原话就是「详见
+ * `src/core/admin/event-ring.ts` 文件头」。
  * 有界性依赖「落盘节奏恰好规律」这个前提，稀疏落盘或多 isolate 各写各的随机分片时
  * **清理率能跌到 0**）；而 Cron 压实还额外依赖「Cron 按表达式可靠触发」，
  * 设计 §17 U4 自己已经核实过**官方没有文档化任何触发保证**。两个前提叠在一起，没有一端立得住。
@@ -126,7 +129,9 @@ export const USAGE_SLOTS = 2;
  * 实际影响只有一条：`30d` 那一档在 Worker 上可能与 Node 表现不同 ⇒ 由 Task 4 的逐块
  * try/catch 接住，面板显示 `—` 而不是半份数据。
  *
- * ⚠️ **不许拿事件板块的 48 次冷读当佐证**（`docs/zh-CN/DEPLOY.md:172`，今天在生产上跑着）:
+ * ⚠️ **不许拿事件板块的 48 次冷读当佐证**（那个 48 在 `docs/zh-CN/DEPLOY.md:159`，
+ * 「每点一次筛选就是一次满额冷读」在 `docs/zh-CN/DEPLOY.md:172`——**两行合起来才是那句话**，
+ * 单独任何一行都不承载它；今天在生产上跑着）：
  * **48 在上面两种读法下都合规**，所以它对「60 行不行」这个问题一个字都没有说。
  */
 export const USAGE_DAY_RETAIN = 30;
@@ -193,7 +198,18 @@ export function usageHourOf(at: number): string {
   return String(h).padStart(2, "0");
 }
 
-/** 与 `slotOf` 同一套：由 shardId 稳定地散到一个槽位，构造时算一次、终生不变。 */
+/**
+ * 与 `slotOf` 同一套（算法逐字相同，只把 `EVENT_SLOTS` 换成 `USAGE_SLOTS`）：
+ * 由 shardId 稳定地散到一个槽位。
+ *
+ * ⚠️ **「构造时算一次、终生不变」是对 Task 3 的 `UsageSink` 的要求，不是本函数的性质**
+ * ——本函数是纯函数，谁调都一样；**今天没有任何东西能证实或证伪那句话**（评审登记）。
+ * Task 3 必须自己有一格钉住它。
+ *
+ * 散布性本身由 `tests/unit/admin/usage-stats.test.ts` 的
+ * 「usageSlotOf 真的把不同 shardId 散到不同槽位」钉着——**这一格不许只用 `"s1"` 当样本**，
+ * `usageSlotOf("s1")` 恰好是 0，写死成 `return 0` 时它不可观测（评审 I-2 实测 ESCAPED）。
+ */
 export function usageSlotOf(shardId: string): number {
   let h = 0;
   for (let i = 0; i < shardId.length; i++) h = (h * 31 + shardId.charCodeAt(i)) | 0;
@@ -215,8 +231,16 @@ export function usageExpiresAt(day: number): number {
  * 读某个时间区间要取哪些键。
  *
  * **上界是这个函数自身的不变量，不是一句注释**：返回的键数恒
- * `<= USAGE_DAY_RETAIN × USAGE_SLOTS`（= 30 × 2 = 60），
- * 因为起点被 `USAGE_DAY_RETAIN` 夹住了——比这更早的键已经过期，读了也是 null。
+ * `<= USAGE_DAY_RETAIN × USAGE_SLOTS`（= 30 × 2 = 60），因为起点被
+ * `USAGE_DAY_RETAIN` 夹住了——**比这更早的键即使还没过期也不读：上界优先于多读一天。**
+ *
+ * ⚠️ **夹逼的理由就是上面那条上界，不是「反正已经过期」**（评审 I-1，这里原来
+ * 正是那么写的，而它被本文件上方 11 行的 `USAGE_TTL_MARGIN_MS` 直接证伪）：
+ * TTL 刻意多留了一整天余量（`USAGE_TTL_MARGIN_MS = USAGE_DAY_MS`），
+ * `usageExpiresAt(d)` 保留到第 `d + 31` 天零点，而 `oldestAllowed = 今天 − 30 + 1`
+ * ⇒ **`今天 − 30` 那一天的键在任何时刻都还活着，却永远不会被这个函数取到。**
+ * 三组 now 实测过，无一例外（`now` 落在第 100 天时它还剩整整 86_400_000 ms 才过期）。
+ * **别照「反正过期了」去把那天加回来——那会直接打破 60 这条上界。**
  * 由 `tests/unit/admin/usage-stats.test.ts` 的
  * 「区间给一年也不会超过保留期 × 槽位数」钉着。
  */
@@ -271,6 +295,13 @@ function addBuckets(a: UsageBucket, b: UsageBucket): UsageBucket {
  * 那张表五行），其中三行让端点 **500**、两行**原样进了响应体并让游标永远推不动**。
  * 写成 `UsageDayShard[]` 就是在签名上撒谎。
  * **返回值里的 `malformed` 是给面板看的**：静默丢弃就是撒谎。
+ *
+ * ⚠️ **`hours` 是跨天求和的，调用方必须传单日区间**（评审 M-5，这是一条契约不是实现细节）：
+ * 这个函数把每一个分片的 `hours` 无差别地加在一起，所以多日区间下 `hours["13"]`
+ * 是**「区间里所有天的 13 点之和」**（一条 hour-of-day 剖面），**不是某一天的 13 点**。
+ * 而设计 §10.6 要的是「**这一天**按小时 / 按模型 / 按协议的分解」。
+ * ⇒ **单日下钻必须只把那一天的分片喂进来**；拿多日区间的返回值去画单日小时图是错的。
+ * （`byDay` 不受影响，它按 `sh.day` 分了键。）
  */
 export function mergeDayShards(raw: readonly unknown[]): {
   byDay: Record<string, UsageBucket>;
@@ -302,8 +333,15 @@ export function mergeDayShards(raw: readonly unknown[]): {
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.trunc(v) : 0);
 
+/**
+ * ⚠️ **数组要单独拒掉**（评审 M-4）：`typeof [] === "object"` 且 `[]` 是 truthy，
+ * 只判 `typeof` 的话 `{ day: 5, total: [] }` 会拿到一个**全 0 的桶**、被 `narrowShard`
+ * 判成**合法分片**记进 `shards`，而不是记进 `malformed`。
+ * 那正好违反本文件 `mergeDayShards` 上方自己写的口径「静默丢弃就是撒谎」——
+ * 一个畸形分片伪装成合法的，比被丢掉更糟：它还会把 `shards` 那个数一起变假。
+ */
 function narrowBucket(v: unknown): UsageBucket | null {
-  if (!v || typeof v !== "object") return null;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const r = v as Record<string, unknown>;
   return {
     requests: num(r.requests), success: num(r.success), errors: num(r.errors),
