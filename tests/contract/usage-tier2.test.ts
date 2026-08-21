@@ -228,7 +228,13 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
     for (const enabled of [false, true]) {
       let t = DAY0_MS;
       const g = await gateway({ enabled, now: () => t });
-      for (const path of ["/v1/messages", "/v1/responses"]) {
+      // ⚠️ **四条协议路由一条都不许漏**（末轮复评 F1/F2）：上一版这个数组只有
+      // `/v1/messages` 与 `/v1/responses` 两条——**恰好漏掉了 `openai.ts`，
+      // 而那条的强转还在，于是同一个缺陷原样活着，只是换了条路由**。
+      // 漏的原因很具体：上一轮的问题清单写的是「那两条路由缺 String()」，
+      // 裁定变成「删掉那两道」之后，注意力就停在那份清单上，没回头看第三条。
+      // ⇒ **这个数组必须是「四条协议路由」的全集，不是「上一轮被点名的那几条」。**
+      for (const path of ["/v1/chat/completions", "/v1/messages", "/v1/responses"]) {
         const res = await g.app.request(path, {
           method: "POST",
           headers: { authorization: "Bearer t", "content-type": "application/json" },
@@ -300,10 +306,22 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
     //
     // ⚠️ **它有预算，不是「多久都能等」**（收口复评 M2，上一版那句是假的）：
     // 循环上界 `WAIT_ROUNDS` 轮 × 每轮一次被钳到约 1 毫秒的 `setTimeout(0)`
-    // ⇒ 这一格实际能等到的时间约 `WAIT_ROUNDS` 毫秒，而下面 `timeout` 又给了它
-    // 一个上限。**超出预算时它的失效方式是「响亮地超时红掉」，不是「静默变绿」**
+    // ⇒ 这一格实际能等到的时间约 `WAIT_ROUNDS` 毫秒，而 `WAIT_TIMEOUT_MS` 又给了它
+    // 一个上限。**超出预算时它的失效方式是「响亮地红掉」，不是「静默变绿」**
     // ——这正是它比上一版（约 70 毫秒之后静默逃逸）强的地方，也是这里不再改机制、
-    // 只把话说准的理由。实测天花板落在链上单个挂起点 400–600 毫秒之间。
+    // 只把话说准的理由。
+    //
+    // ⭐ **实测天花板 + 装置一起写下来**（末轮复评 F7；上一版写的「400–600 毫秒」
+    // 是抄了评审探针的数字而**没抄它的装置** —— 换一套装置那个数就是假的，
+    // 这正是「凡写实测 X 就把入参一起写下」那条规矩）：
+    // · **装置**：本用例 + `WAIT_ROUNDS = 3000` + `WAIT_TIMEOUT_MS = 15000`，
+    //   把 `gateway()` 夹具里 `MemoryStorage` 的 `delayMs` 依次改成下列值，跑**正确实现**；
+    // · **结果**：900 / 1000 / 1100 通过，**1200 / 1500 / 2000 失败**
+    //   ⇒ 天花板在 **(1100, 1200]**；
+    // · **失效方式**：不是 vitest 超时，是下面那句显式护栏
+    //   「链上其它存储操作没有结清，下面那条断言等早了」自己红掉（`expected 1 to be +0`）；
+    // · 天花板随 `WAIT_ROUNDS` 线性走，而且它要盖住的是这条链上**若干次串行**
+    //   存储操作的**总和**，不是单个挂起点的长度。
     let quiet = 0;
     for (let i = 0; i < WAIT_ROUNDS && quiet < 5; i++) {
       await new Promise((r) => setTimeout(r, 0));
@@ -822,11 +840,17 @@ describe("UsageSink 的落盘契约", () => {
     let t = DAY0_MS;
     const storage = new UsagePutCounter(new MemoryStorage(undefined, () => t));
     const sink = new UsageSink({ storage, now: () => t, shardId: SHARD, onError: () => {} });
-    const one = (protocol: string) => sink.record({
-      protocol, model: "m", ok: true, stream: false, latencyMs: 1, tokensIn: 0, tokensOut: 0,
+    // ⚠️ **alpha 与 beta 必须是同一条协议、不同的模型**（末轮复评 F6）。
+    // 上一版 beta 用的是另一条协议（`anthropic`）⇒ `byProtocol.openai` 那一格的数
+    // **根本不会变** ⇒ 「把原地改只施加在 byProtocol 桶值上」那条变异**31 格全绿逃逸**，
+    // 而 M3 加的那个 `openai: 1` 字面量只是看着像有牙。
+    // 同协议之后：`byProtocol.openai.requests` 在「没有快照」与「原地改桶值」两种
+    // 实现下都会变成 2；不同模型则让 `byModel` 那一维照旧钉住「多出一个键」那一支。
+    const one = (model: string) => sink.record({
+      protocol: "openai", model, ok: true, stream: false, latencyMs: 1, tokensIn: 0, tokensOut: 0,
     });
 
-    one("openai");                       // alpha
+    one("m-alpha");                      // alpha
     t += USAGE_FLUSH_MIN_INTERVAL_MS + 1;
 
     // 把这次写卡在闸门上，**在它挂起期间**再记一条。
@@ -838,7 +862,7 @@ describe("UsageSink 的落盘契约", () => {
 
     const flushing = sink.maybeFlush();
     await enteredP;                      // 确证已经挂在写上了（事件驱动，不是等毫秒）
-    one("anthropic");                    // ★ beta：await 期间到达
+    one("m-beta");                       // ★ beta：await 期间到达（同协议、不同模型）
     release();
     await flushing;
 
@@ -850,11 +874,13 @@ describe("UsageSink 的落盘契约", () => {
     expect(
       {
         total: first.total.requests,
-        byProtocol: Object.keys(first.byProtocol).sort(),
+        byModel: Object.keys(first.byModel).sort(),
+        // ★ **这一格才是「变的是键指向的那个数」那条变异的牙**（末轮复评 F6）：
+        // 键表在同协议下不会变，只有桶里的数会。
         openai: first.byProtocol.openai!.requests,
       },
-      "落下去的分片自相矛盾 —— total 是旧的而 byProtocol 蹭进了 await 期间那一条",
-    ).toEqual({ total: 1, byProtocol: ["openai"], openai: 1 });
+      "落下去的分片自相矛盾 —— total 是旧的而 byModel/byProtocol 蹭进了 await 期间那一条",
+    ).toEqual({ total: 1, byModel: ["m-alpha"], openai: 1 });
 
     // ② 那一天**必须还是脏的**，`pending` 也不许归零（版本比对的作用）。
     expect(
@@ -867,11 +893,15 @@ describe("UsageSink 的落盘契约", () => {
     await sink.maybeFlush();
     expect(storage.usagePuts.length, "第二轮应当真的又写了一次").toBe(2);
     const second = (await storage.get<UsageDayShard>(KEY_DAY0))!;
-    // 手写字面量：2 条、两条协议各一。
+    // 手写字面量：2 条、同一条协议、两个模型。
     expect(
-      { total: second.total.requests, byProtocol: Object.keys(second.byProtocol).sort() },
+      {
+        total: second.total.requests,
+        byModel: Object.keys(second.byModel).sort(),
+        openai: second.byProtocol.openai!.requests,
+      },
       "下一轮没有把 await 期间那一条补上 —— 它永久消失了",
-    ).toEqual({ total: 2, byProtocol: ["anthropic", "openai"] });
+    ).toEqual({ total: 2, byModel: ["m-alpha", "m-beta"], openai: 2 });
   });
 
   /**
@@ -879,8 +909,14 @@ describe("UsageSink 的落盘契约", () => {
    *
    * 请求体的类型是**纯编译期**的（`c.req.json<T>()`），运行时什么都可能来。
    * `boundUsageKey()` 里那个 `raw.slice(...)` 对 `123` / `{}` / `true` 直接抛，
-   * 而 `record()` 一路**没有 try/catch** ⇒ 打开统计就等于给网关多出一条
-   * **普通客户端就能触发**的 500。
+   * ⚠️ **`record()` 现在有 try/catch 了**（末轮复评 F5：上一版这里写的是「一路没有
+   * try/catch ⇒ 打开统计就等于多一条 500」，**那句话被同一个提交里加的兜底改成了假的**）。
+   * ⇒ 今天缺了 `safeString` 的后果不是 500，是**那一条计数被 catch 静默吞掉、永久消失**
+   *（实测：删掉 `safeString` 打 `{"model":123}`，开着关着都是 503）。
+   *
+   * ⚠️ **连带说明：下面那句 `.not.toThrow()` 已经退化成恒真断言**，留着只是文档作用
+   *（`record()` 现在不可能抛）。**这一格真正的牙是后面两条**：键表必须完整
+   *（少一个就说明那一条被吞了）、`total.requests` 必须是 5。
    *
    * ⚠️ **`[1,2]` 必须一起测**：数组恰好有 `.slice`，是这一族里唯一侥幸不抛的，
    * 只挑它做样本的话这条变异不可观测（第 5 种假阳性）。
@@ -899,7 +935,9 @@ describe("UsageSink 的落盘契约", () => {
           protocol: "openai", model: bad as string, ok: true, stream: false,
           latencyMs: 1, tokensIn: 0, tokensOut: 0,
         }),
-        `model = ${JSON.stringify(bad)} 把 record() 打抛了 —— 而 record() 一路没有 try/catch`,
+        // ⚠️ 这一条今天恒真（`record()` 有兜底），保留是为了让「它不该抛」这件事
+        // 在用例里看得见；**真正的牙在下面的键表与 total**（末轮复评 F5）。
+        `model = ${JSON.stringify(bad)} 把 record() 打抛了`,
       ).not.toThrow();
     }
     r.pastInterval();

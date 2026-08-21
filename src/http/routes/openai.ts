@@ -25,7 +25,13 @@ export function openaiRoutes(deps: DispatchDeps & UsageRecording): Hono {
     // sink 缺席时（`USAGE_STATS_ENABLED` 不为 true）`recordUsage` 第一行就 return，
     // 不建累加器、不碰存储（P3d 计划全局约束 16）。
     recordUsage(deps, {
-      protocol: "openai", model: String(body.model ?? ""),
+      // ⚠️ **这里刻意不做 `String(...)` 强转**（末轮复评 F1）：这一段在 handler 顶层，
+      // **无条件求值**，比 anthropic/responses 那两条（在 `record` 闭包体里）还早
+      // ——而 `recordUsage()` 的「sink 缺席就 return」在它之后 ⇒ 一个
+      // `{"model":{"toString":1,"valueOf":1}}` 的请求体会让 `String()` 自己抛，
+      // 把**关着统计的部署**也打成 500（全局约束 16：关必须是零成本）。
+      // 归一化只在 `boundUsageKey()` 里做一次，那一侧只有开着才跑。
+      protocol: "openai", model: (body.model ?? "") as string,
       ok: res.ok, stream, latencyMs: deps.now() - startedAt,
       // ⚠️ **OpenAI 这一条的 token 恒 0，而且这不是「忘了取」**（订正 F1）：
       // 本文件是四条协议路由里唯一**不传 `expectJson`** 的一条，`dispatch()` 因此走
