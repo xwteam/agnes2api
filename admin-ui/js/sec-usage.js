@@ -95,10 +95,15 @@ function tile(labelKey, tipKey, tipParams) {
 /** 一个内容块：标题 + 空的 body 容器。 */
 function block(titleKey) {
   const wrap = el("div", { class: "card block" });
-  wrap.appendChild(elI18n("h3", titleKey));
+  // **标题节点要交出去**：`≈` 得真的挂在标题上，而不是挂在整张表下面
+  //（P3d Task 5 收口复评 G2：上一版 append 到 `wrap` ⇒ 子节点序是
+  // `h3, div, span.approx`，`≈` 落在表格**下面**，与注释和用例名都对不上，
+  // 而用例只数个数 ⇒ 改 append 目标那一行**不会红**）。
+  const head = elI18n("h3", titleKey);
+  wrap.appendChild(head);
   const body = el("div");
   wrap.appendChild(body);
-  return { wrap, body };
+  return { wrap, body, head };
 }
 
 /**
@@ -287,9 +292,9 @@ function honestyMarks(resp) {
     // 「这份数据是全的」这个印象，而全局约束 9 禁的伪造不只是伪造 `0`。
     // `all` 那一档**不走这里**：那时一个数字都没有（整块是 `unavailable`），
     // 说「下面这些数字缺了几块」是在描述一堆不存在的数字（定向复评 N7）。
-    incompleteOf: malformedKind(resp) === "partial"
-      ? (typeof resp.malformed === "number" ? resp.malformed : null)
-      : null,
+    // `malformedKind` 判成 `"partial"` 时 `malformed` 已经被 `finite()` 验过是数字，
+    // 所以这里不再叠一层 `typeof` 兜底（收口复评 G6：那是一条走不到的支）。
+    incompleteOf: malformedKind(resp) === "partial" ? resp.malformed : null,
   };
 }
 
@@ -301,7 +306,17 @@ function honestyMarks(resp) {
  * 六张卡写 `≈ 100`、紧挨着的日表写 `100`，**同一个数字两种说法**，
  * 而那个不一致是沉默的——没有任何注释说过表里为什么不出）。
  * 逐格出的话 30 天档是 7 列 × 30 行 = 210 个 `≈`，那时它是装饰不是信号。
- * ⇒ **一张表出一个，挂在标题上**，tooltip 与卡片上那个逐字相同（同一个 `approxTitle()`）。
+ * ⇒ **一张表出一个，挂在标题节点上**，tooltip 与卡片上那个逐字相同（同一个 `approxTitle()`）。
+ *
+ * ⚠️⚠️ **调用点必须先确认这一块真的出了数字**（收口复评 F1）：上一版在
+ * 「这张表是空的」那条早退**之前**就无条件挂了它，实测（`days: null` /
+ * `note: "read_failed"` / `approximate: true`）得到一张写着「这段区间的按天数据
+ * 读不出来」的表、**下面挂着一个 `≈`**；而那一档下六张卡的 `≈` 反而都不出
+ *（`fillCell` 的 `"unknown"` 支提前 return）⇒ **全页唯一一个 `≈` 就挂在
+ * 那张说「读不出来」的表上**。
+ * ⭐⭐ 记一条形状，它是本任务最贵的一条：**我在同一个提交里立了 N7 的裁定
+ *（「下面一个数字都没有，就不许说『下面这些数字…』」），然后在另一处违反了它。**
+ * ⇒ **立完一条裁定，回头 grep 一遍自己这一轮碰过的所有同型位置。**
  */
 function approxTitleMark(marks) {
   if (marks === null || !marks.approx) return null;
@@ -409,16 +424,18 @@ function keyCell(text) {
  * ——**对那些天它是一句假话**。上一版自己的注释还承认「我们并不知道具体哪一格短了」，
  * 却对每一格都下了断言。⭐ 记一条形状：**「我们不知道是哪一个」推不出
  * 「所以每一个都标上」，它只推得出「只能对整体说」。**
- * ⇒ 「缺了几块」只由**整块**那一处说：汇总这边是 `partial_malformed` 那条红条
- *（`usage.note.partialMalformed`，`render()` 里由 `note` 驱动），
- * 下钻那边是 `buildDetail()` 里那一句。
+ * ⇒ 「缺了几块」**不在表格里逐行说**。它在哪里说，逐处列全（收口复评 G3：
+ * 上一版这里写「只由整块那一处说」而**漏掉了六张卡**，同一提交的用例
+ * 第 ② 句正面断言「六张卡带标记」、`fillCell()` 也确实挂）：
+ * · 汇总侧 = **1 条红条**（`usage.note.partialMalformed`，`render()` 里由 `note` 驱动）
+ *   **+ 六张汇总卡各一个「不完整」标记**（它们是整段区间的合计，说它不完整是准确的）；
+ * · 下钻侧 = `buildDetail()` 里那一句单日口径的话。
+ * **两张表格的行：一个都不挂。**
  *
  * ⚠️ `≈` 也只出一个，挂在表标题上（`approxTitleMark`，定向复评 N5）。
  */
 function buildDayTable(state, marks) {
-  const { wrap, body } = block("usage.table.title");
-  const mark = approxTitleMark(marks);
-  if (mark !== null) wrap.appendChild(mark);
+  const { wrap, body, head } = block("usage.table.title");
   const rows = dayRows(data);
   if (rows.length === 0) {
     // ⚠️ **「读不出来」与「这段区间里没有可以列出的日子」是两句话。**
@@ -434,6 +451,10 @@ function buildDayTable(state, marks) {
     ));
     return wrap;
   }
+  // ⚠️ **`≈` 挂在早退之后**（收口复评 F1）：上面那条早退意味着这张表一个数字都没有，
+  //    而 `≈` 是一句关于「下面那些数字」的话。挂在**标题节点**上（G2）。
+  const mark = approxTitleMark(marks);
+  if (mark !== null) head.appendChild(mark);
   const table = el("table");
   table.appendChild(headRow([
     "usage.table.date", "usage.table.requests", "usage.table.success", "usage.table.errors",
@@ -545,7 +566,9 @@ function buildDetail() {
 
   // 缺了几块这件事在这条端点上只有字段说得出来（它不发畸形 code）。
   const marks = honestyMarks(detailData);
-  const mark = approxTitleMark(marks);
+  // ⚠️ **同 F1：这一天读不出来时三张表一个数字都没有，那时不许挂 `≈`。**
+  //    `readSucceeded(state)` 与两张表决定「空表说哪一句」用的是同一个判据。
+  const mark = readSucceeded(state) ? approxTitleMark(marks) : null;
   if (mark !== null) head.appendChild(mark);
   // ⚠️⚠️ **只在 `partial` 那一档说，`all` 不说**（定向复评 N7）：
   //    `all` 时整块是 `unavailable`、下面三张表**一个数字都没有**，

@@ -76,6 +76,15 @@ function dayRowCells(section: FakeElement): string[] {
   return out;
 }
 
+/** 板块里 `.approx`（`≈`）节点的个数。**位置断言另写**，见 G2 那一段。 */
+function approxCount(section: FakeElement): number {
+  let n = 0;
+  for (const sp of section.querySelectorAll("span")) {
+    if (sp.classList.contains("approx")) n++;
+  }
+  return n;
+}
+
 /** 板块里全部横幅的 class（顺序即 DOM 顺序）。 */
 function banners(section: FakeElement): string[] {
   const out: string[] = [];
@@ -332,9 +341,14 @@ describe("三态在六张卡上必须长得不一样", () => {
    * **`partial_malformed`：数字是真的，只是不全。**
    * 全局约束 9 禁的伪造**不只是伪造 `0`，还有伪造「这份数据是全的」这个印象**。
    *
-   * **变红条件**：把 `buildCards` 里 `const incompleteOf = c.complete ? null : c.malformed;`
-   * 改成 `const incompleteOf = null;` ⇒ 缺了两个分片的数字被渲染成完整的
-   * ⇒ 第一句断言红。
+   * **变红条件**：把 `honestyMarks()` 的 `incompleteOf` 判据换成常量 `null`
+   * ⇒ 缺了两个分片的数字被渲染成完整的 ⇒ 第一句断言红。
+   * ⚠️ **这条指向订正过一次**（收口复评 F4）：上一版写的是
+   * 「把 `buildCards` 里 `const incompleteOf = c.complete ? null : c.malformed;` 改成…」
+   * ——那个串 `grep -F` 在 `admin-ui/` 下**零命中**，`buildCards` 里也压根没有
+   * `incompleteOf`。它**一开始就没对过**（真身在另一个函数里、而且是对象属性），
+   * 后来那一行又被整体换掉。⭐ **一条从没对过的「变红条件」比没有更糟：
+   * 它让人以为这一格被验证过。**
    */
   it("一部分分片畸形时每一张卡都带「不完整」标记 —— 不许把缺了几块的数字渲染成完整的", async () => {
     const h = await openUsage(respondWith(usageBody({ shards: 3, malformed: 2, note: "partial_malformed" })));
@@ -844,22 +858,73 @@ describe("单日下钻", () => {
    *
    * **变红条件**：把 `buildDayTable()` 里那两行 `approxTitleMark` 删掉。
    */
-  it("`≈` 在表上出一次、挂在标题旁 —— 卡片带而表里沉默，是同一个数字两种说法", async () => {
+  it("`≈` 在表上出一次、且真的挂在标题节点里 —— 卡片带而表里沉默，是同一个数字两种说法", async () => {
     const h = await openUsage(respondWith(usageBody({ approximate: true })));
     const sec = h.section("usage");
-    let approxCount = 0;
-    for (const sp of sec.querySelectorAll("span")) {
-      if (sp.classList.contains("approx")) approxCount++;
+    expect(approxCount(sec), "`≈` 的个数变了 —— 表上应当只出一个，卡片各一个").toBe(7);
+    // ⚠️ **位置也要断言，不能只数个数**（收口复评 G2）：上一版 append 到块容器
+    //    ⇒ 子节点序是 `h3, div, span.approx`，`≈` 落在表格**下面**，
+    //    而注释与用例名都写着「挂在标题上」——**改 append 目标那一行不会红**。
+    let inHead = 0;
+    for (const h3 of sec.querySelectorAll("h3")) {
+      for (const sp of h3.querySelectorAll("span")) if (sp.classList.contains("approx")) inHead++;
     }
-    // 六张卡各一个 + 日表标题一个 = 7。**手写字面量**，多挂一遍就红。
-    expect(approxCount, "`≈` 的个数变了 —— 表上应当只出一个，卡片各一个").toBe(7);
+    expect(inHead, "`≈` 没挂在标题节点里 —— 注释和用例名说的是「挂在标题上」").toBe(1);
     // 反向锚：后端说这份数字不是近似值时，一个都不许出。
     const off = await openUsage(respondWith(usageBody({ approximate: false })));
-    let n = 0;
-    for (const sp of off.section("usage").querySelectorAll("span")) {
-      if (sp.classList.contains("approx")) n++;
-    }
-    expect(n, "approximate 为假时还在打 ≈").toBe(0);
+    expect(approxCount(off.section("usage")), "approximate 为假时还在打 ≈").toBe(0);
+  });
+
+  /**
+   * ⚠️⚠️⚠️ **收口复评 F1：`≈` 挂到了一张「一个数字都没有」的表上，
+   * 而这正是同一个提交里 N7 裁定禁止的事。**
+   *
+   * 上一版 `buildDayTable()` 在「这张表是空的」那条早退**之前**就无条件挂了 `≈`。
+   * 实测（`days: null` / `note: "read_failed"` / `approximate: true`）：一张写着
+   * 「这段区间的按天数据读不出来」的表，**下面挂着一个 `≈`**；
+   * 而那一档下六张卡的 `≈` 反而都不出（`fillCell` 的 `"unknown"` 支提前 return）
+   * ⇒ **全页唯一一个 `≈` 就挂在那张说「读不出来」的表上**（实测个数 = 1）。
+   *
+   * ⭐⭐ **立完一条裁定，回头 grep 一遍自己这一轮碰过的所有同型位置。**
+   *
+   * **变红条件**：把 `buildDayTable()` 里那两行 `approxTitleMark` 挪回早退之前。
+   */
+
+  it("读不出来的那一档：全页一个 `≈` 都没有 —— `≈` 是一句关于「下面那些数字」的话，而下面一个数字都没有", async () => {
+    const h = await openUsage(respondWith(usageBody({
+      days: null, total: null, shards: null, malformed: null,
+      note: "read_failed", approximate: true,
+    })));
+    const sec = h.section("usage");
+    // 前置条件：这一档确实是「读不出来」那一档。
+    expect(sec.textContent).toContain("按天数据读不出来");
+    expect(cards(sec)["usage.card.requests"], "前置条件：六张卡是 EM DASH").toBe(EM);
+    expect(approxCount(sec), "全页唯一的 `≈` 挂在了一张说「读不出来」的表上").toBe(0);
+  });
+
+  /**
+   * ⚠️⚠️ **收口复评 G1：下钻那处 `≈` 上一轮零用例。**
+   * 变异删掉 `buildDetail()` 里那两行 ⇒ **58/58 全绿**——N5 的变红条件只写了
+   * `buildDayTable` 那两行，`.approx` 计数用例又只开汇总页。
+   * ⇒ F1 修完如果不补这一格，改完仍然无人守。
+   *
+   * **变红条件**：把 `buildDetail()` 里的 `approxTitleMark(marks)` 那两行删掉
+   * ⇒ 第二句断言红。
+   */
+  it("下钻页也出一个 `≈`，而「这一天读不出来」时一个都不出 —— 上一轮这处零用例，删掉两行 58/58 全绿", async () => {
+    const ok = await drill(detailBody());
+    const secOk = ok.section("usage");
+    // 汇总页 7 个（六卡 + 日表标题）+ 下钻标题 1 个 = 8。**手写字面量。**
+    expect(approxCount(secOk), "下钻页的 `≈` 没出来（或多出来了）").toBe(8);
+
+    // 那一天读不出来时：下钻那一个不许出，汇总那 7 个照旧。
+    const gone = await drill(detailBody({
+      hours: null, byModel: null, byProtocol: null,
+      shards: null, malformed: null, note: "date_out_of_retention",
+    }));
+    const secGone = gone.section("usage");
+    expect(secGone.textContent, "前置条件：三张表确实说了读不出来").toContain("这一天的分解读不出来");
+    expect(approxCount(secGone), "这一天一个数字都没有，却还挂着 `≈`").toBe(7);
   });
 });
 
