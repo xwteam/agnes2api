@@ -173,6 +173,10 @@ describe("worker 入口: fetch 把 ExecutionContext 一路传给 app", () => {
       TARGET_KEYS: "1",
       // 比 Worker 单轮墙钟预算还大 ⇒ tendOnce 一次尝试都不开始 ⇒ 零网络、毫秒级返回。
       CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1),
+      // 零网络的**第二道保险**：上面那条成立与否取决于被测代码真的传了 roundBudgetMs
+      //（变异实测：把那一行删掉，同形的契约用例当场打了 YYDS 的线上接口）。
+      // `.invalid` 是 RFC 6761 的保留 TLD，永不解析。
+      YYDS_BASE_URL: "https://yyds.invalid",
     } as unknown as Env;
 
     const waited: Array<Promise<unknown>> = [];

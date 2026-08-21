@@ -540,6 +540,14 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
       TARGET_KEYS: "1",
       // 比 WORKER_ROUND_BUDGET_MS 大 ⇒ 一次尝试都开不了，零网络。
       CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1),
+      // ⚠️ **第二道保险，不是装饰**：本夹具"零网络"的第一道保险是生产代码真的传了
+      // `roundBudgetMs`（`tendOnce` 一次尝试都不开始）。**变异测试 M8 把那一行删掉之后，
+      // 这条用例当场打了 YYDS 的线上接口**（拿到真实域名与 HTTP 403/429）——
+      // 也就是说第一道保险成立与否取决于被测代码本身。把 baseUrl 指到保留 TLD
+      // `.invalid`（RFC 6761，永不解析），即使那道保险失效也只会 DNS 失败，
+      // 不会触达任何真实服务。
+      YYDS_BASE_URL: "https://yyds.invalid",
+
       ...extra,
     };
     const { app } = await buildApp(env, storage, workerRuntime());
@@ -626,6 +634,8 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
       REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k",
       // 目标 2、池里 1 ⇒ 缺口 1 ⇒ 真的走进补池循环（而不是 `need <= 0` 提前返回）。
       TARGET_KEYS: "2", CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1),
+      // 零网络的第二道保险，理由见 `realApp()` 里同名字段那一段。
+      YYDS_BASE_URL: "https://yyds.invalid",
     };
     const { app } = await buildApp(env, st, workerRuntime());
     st.lists = 0;
