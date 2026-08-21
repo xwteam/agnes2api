@@ -116,3 +116,22 @@ tr:last-child td { border-bottom: 0; }
 .ev-group-header td { padding-top: var(--gap-sm); font-size: 12px; }
 /* 分组内的行左边一条细线，视觉上把同一条时间线的几行连起来。 */
 .ev-row-grouped td:first-child { border-left: 2px solid var(--border); }
+
+/* 设置页（P3c Task 7）。
+   ⚠️ **锁定与「本次变化」两种状态必须有各自的视觉信号，而且不能只靠颜色**：
+   一个只用颜色区分的状态对色觉障碍用户等于不存在，而这两个状态一个说
+   「你改了也不会生效」、一个说「这一格真的变了」，两句都是运维保存之后唯一
+   能读到的反馈。锁定那一格另外还有一行文字说明（`.cfg-lock`），
+   变化那一格另外还有底部那一行回读汇总（`.cfg-readback`）。 */
+.cfg-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--gap-sm); }
+.cfg-field .cfg-label { font-size: 13px; color: var(--muted); }
+.cfg-field input, .cfg-field select { max-width: 420px; }
+.cfg-field p { margin: 2px 0; }
+.cfg-field.locked input, .cfg-field.locked select { opacity: 0.6; }
+.cfg-field.locked { border-left: 2px solid var(--border); padding-left: var(--gap-sm); }
+.cfg-field.changed { border-left: 2px solid var(--ok); padding-left: var(--gap-sm); }
+.cfg-field.invalid { border-left: 2px solid var(--danger); padding-left: var(--gap-sm); }
+.cfg-advanced { margin-top: var(--gap-sm); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--gap-sm); }
+.cfg-advanced summary { cursor: pointer; color: var(--text); }
+.cfg-errors p { margin: 2px 0; }
+.danger-text { color: var(--danger); }

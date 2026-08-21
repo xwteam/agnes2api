@@ -16,6 +16,7 @@ import { overviewSection } from "./sec-overview.js";
 import { keysSection } from "./sec-keys.js";
 import { registrarSection } from "./sec-registrar.js";
 import { eventsSection } from "./sec-events.js";
+import { settingsSection } from "./sec-settings.js";
 import { sessionExpired } from "./pure/session.mjs";
 import { sendable } from "./pure/sendable.mjs";
 // **键名不在这里声明**（全分支评审 C4）：写入方在这个文件、读取方在 `api.js`，
@@ -25,6 +26,7 @@ import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE } from "./pure/storage-keys.mj
 
 const SECTIONS = {
   overview: overviewSection, keys: keysSection, registrar: registrarSection, events: eventsSection,
+  settings: settingsSection,
 };
 
 const gate = document.getElementById("gate");

@@ -30,7 +30,7 @@ import { FIELD_EXPOSURE, type Env, type Exposure } from "../config-provenance.js
  * ① **可编辑字段清单从 `FIELD_EXPOSURE` 派生**（见 `EDITABLE` 上面那段），
  *    `GatewayConfig` 加字段时那张表编译不过 ⇒ 这里也跑不掉；
  * ② `tests/unit/admin/config-validate.test.ts` 的
- *    「校验放行的 patch，`loadConfigWithProvenance` 必须真的装载得起来」
+ *    「防漂：validateConfigPatch 放行的，loadConfigWithProvenance 必须装载得起来」
  *    **拿真的装载函数**去跑每一个「校验说合法」的样本——漂移会在那里变红，
  *    而不是等到某个运维保存一次设置页把网关砖掉。
  *
@@ -53,7 +53,7 @@ export interface ConfigError {
  *
  * `admin-ui/js/pure/settings.mjs` 里那张 `errorMessageKey()` 表逐条对应它，
  * 而 `tests/ui/settings.test.ts` 的
- * 「每个后端错误码都有一条 set.err.<code> 文案 —— 加一个码不补文案就变红」
+ * 「后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红」
  * 拿这张表去比对字典：**加一个码而不补五语言，那一格当场红**（设计 §10.4 要求的
  * 那条 CI 断言）。
  */

@@ -213,7 +213,7 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
 
   /**
    * ⚠️ **已知盲点，写成断言而不是散文**（做法抄 `tests/unit/source-guards.test.ts`
-   * 的 `BLIND_SPOTS`）：`ExposureMap<T>` 的判据是 `extends object`，而**数组也满足它**
+   * 的「已知抓不住的写法确实抓不住（边界是断言，不是散文）」那一族）：`ExposureMap<T>` 的判据是 `extends object`，而**数组也满足它**
    * ⇒ 将来给 `GatewayConfig` 加一个数组字段时，那张表会要求为它写一张「子表」，
    * 而不是一格 `Exposure`。`GatewayConfig` 今天没有数组字段，所以这条今天不咬人。
    *

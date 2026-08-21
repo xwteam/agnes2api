@@ -127,7 +127,7 @@ export const FIELD_EXPOSURE: ExposureMap<GatewayConfig> = {
  * ——那正是设计 §5.3 开头点名的最高频形态。
  *
  * **这 16 个名字不是手抄的**：`tests/unit/config-provenance.test.ts` 的
- * 「registrarFromEnv 读到的 env 名字并集恰好是手写的这 16 个」用 Proxy 在
+ * 「四种配置的并集恰好是手写的这 16 个名字」用 Proxy 在
  * **四种配置**（关 / 开×yyds 主 / 开×moemail 主 / 开×双通道）下各追踪一次
  * 并取并集——单跑一种配置只摸得到 12 个，`creds()` 那 4 个会静默逃逸。
  */

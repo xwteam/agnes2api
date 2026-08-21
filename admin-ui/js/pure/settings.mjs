@@ -1,0 +1,408 @@
+/**
+ * 设置页的**全部取值决策**。板块文件（`js/sec-settings.js`）只剩 DOM 拼装、
+ * 网络调用与 i18n 查表（admin-ui/README.md 硬规则 1）。
+ *
+ * 这个目录下的文件受三条硬规则约束（禁 import、禁浏览器全局、纯文本校验），
+ * 规则全文见 admin-ui/README.md。
+ *
+ * ⚠️ **本模块承载设计 §5.3 / §5.4 / §8.6 / §10.4 里属于前端的那几条**：
+ * · 四元组怎么读、锁定字段怎么判（§5.3）；
+ * · 前端只做四条最轻量的即时提示，其余全靠渲染后端错误码（§10.4）；
+ * · 凭据字段「留空则不修改」，清空走单独的动作（§8.6）；
+ * · `agnesPlatformUrl` 折进高级区（§8.6 第二行）。
+ */
+
+/**
+ * 三张卡各自的字段，**顺序即渲染顺序**（设计 §10.4 卡 1/2/3）。
+ *
+ * ⚠️ **`registrar.agnesPlatformUrl` 不在这三张表里**，它在下面的 `ADVANCED_FIELDS`。
+ * 设计 §8.6 逐字：它是**注册凭据的去向**——改成自己的服务器就能收走每次注册的
+ * 邮箱 + 密码 + 验证码 ⇒ 折进「高级」折叠区 + 红色警告 + 二次确认，**不放主表单**。
+ * `tests/ui/settings.test.ts` 的
+ * 「agnesPlatformUrl 只在高级区，主表单三张卡一格都不许有它」正面钉着这一条。
+ */
+export const CARD_AUTH = ["gatewayToken"];
+
+export const CARD_UPSTREAM = [
+  "agnesBaseUrl",
+  "upstreamTimeoutMs",
+  "upstreamSyncTimeoutMs",
+  "maxStrikes",
+  "cooldownRateLimitMs",
+  "cooldownPaymentMs",
+  "cooldownStrikeMs",
+  // ⚠️ **这两个旋钮设计 §10.4 卡 2 的清单里没有，是本任务补进来的。**
+  // 后端的 `EDITABLE` 里有它们（存储里本来就能改），不在面板上给入口的话，
+  // `GET /admin/api/config` 会返回一份「说能改、却没有任何地方能改」的字段清单
+  // ——那正是本仓反复裁过的「面板说一件事、实际是另一件事」。
+  // **它们与别的字段有一条真实差异**：建 app 时读一次，改了要重启容器 / 等 isolate
+  // 回收才生效，卡 2 底下那句 `set.card.upstreamNote` 就是说这件事的。
+  "poolCacheTtlMs",
+  "poolTouchIntervalMs",
+];
+
+/**
+ * 注册机卡里**与通道无关**的那些旋钮。两条通道各自的凭据由 `channelFields()` 给，
+ * 而那个函数对两条通道**返回同构的清单**——「两张子卡完全对称」（§10.3 第 2 条）
+ * 因此是结构上的，不是靠两处写得一样来维持的。
+ */
+export const CARD_REGISTRAR = [
+  "registrar.enabled",
+  "registrar.primary",
+  "registrar.fallback",
+  "registrar.targetKeys",
+  "registrar.mintBatch",
+  "registrar.tendIntervalMs",
+  "registrar.codeTimeoutMs",
+  "registrar.mintDelayMinMs",
+  "registrar.mintDelayMaxMs",
+  "registrar.maxDomainAttempts",
+  "registrar.tokenName",
+];
+
+/** 折进「高级」折叠区的字段。见 `CARD_AUTH` 上面那段。 */
+export const ADVANCED_FIELDS = ["registrar.agnesPlatformUrl"];
+
+/**
+ * 两条邮箱通道，**顺序固定为字母序**（设计 §10.3 第 3 条）。
+ *
+ * ⚠️ **这里不重新声明一份，从 `registrar.mjs` 那份来**——它是顺序的唯一真源，
+ * 而 `tests/ui/pure-boundary.test.ts` 那道结构门禁只拦「函数被抄回板块文件」，
+ * **拦不住值常量被拷贝**（它自己的 `KNOWN_BLIND_SPOTS` 第二条逐字写着这件事）。
+ * pure 模块之间不许 import（硬规则 1），所以由**板块文件**把 `CHANNELS` 传进来，
+ * 本模块只负责按传入的顺序产出同构的字段清单。
+ */
+export function channelFields(channel) {
+  // **两条通道返回的清单逐字同构**：同字段数、同顺序、同类型。
+  // 加一行给某一条通道就必须加给另一条，否则「完全对称」当场破。
+  return [`registrar.${channel}.baseUrl`, `registrar.${channel}.apiKey`];
+}
+
+/**
+ * 字段路径 → 标签 i18n key。
+ *
+ * **两条通道的凭据字段共用 `set.field.channel.*` 两个 key**（不按通道各写一套）：
+ * 那正是「两张子卡完全对称」在文案层面的落点——各写一套的话，某天有人给其中一条
+ * 多写半句说明，对称就没了，而没有任何门禁看得见。
+ */
+export function fieldLabelKey(path) {
+  const m = /^registrar\.(moemail|yyds)\.(baseUrl|apiKey)$/.exec(path);
+  if (m !== null) return m[2] === "baseUrl" ? "set.field.channel.baseUrl" : "set.field.channel.apiKey";
+  return `set.field.${path}`;
+}
+
+/**
+ * 后端错误码 → i18n key。**逐条列出，表外的返回 `null`。**
+ *
+ * ⚠️ **表外返回 `null` 而不是一句「保存失败」**：`null` 让调用方有机会**把那个码
+ * 原样显示出来**（`set.err.unknown`，带上码本身），而一句写死的「保存失败」会把
+ * 一条本来能被运维 grep 到的线索抹掉——与 `registrar.mjs` 的 `failureReasonKey()`
+ * 同一条纪律。
+ *
+ * `tests/ui/settings.test.ts` 的
+ * 「后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红」
+ * 拿 `ConfigErrorCode` 那个联合类型的手写镜像来比对本表，是设计 §10.4 要求的那条
+ * CI 断言。
+ */
+/**
+ * ⚠️ **写成查表而不是 `switch` + `return`，是被门禁逼出来的，记在这里。**
+ *
+ * `scripts/check-i18n.mjs` 第 ⑧ 条（带占位符的 key 不许当不带参数的裸标签用）的
+ * 判据是「这个 key 的字符串字面量后面必须紧跟一个 `,`」。`switch` 里
+ * 那种写法后面跟的是 `;` ⇒ 本表里 5 个带占位符的 key **全部被报成违规**，
+ * 而它们在调用点其实是带着参数用的（`errorRows()` 交出 `params`，板块文件
+ * 调的是带第二个参数的翻译）——那是一次**误报**。
+ *
+ * 该门禁自己的边界注释写着「今天 admin-ui/ 下没有会漏过 / 会误报的那两种写法」，
+ * **本任务写出了第三种**。处置：改成查表（每个字面量后面天然是 `,`），
+ * 而不是去动门禁——查表本身也不比 `switch` 差，且这条边界如实登记在这里，
+ * 下一个人写 `switch` + 带占位符的 key 时会再撞上同一条。
+ */
+const ERROR_KEYS = {
+  unknown_field: "set.err.unknown_field",
+  locked_by_env: "set.err.locked_by_env",
+  not_an_integer: "set.err.not_an_integer",
+  below_min: "set.err.below_min",
+  not_a_string: "set.err.not_a_string",
+  not_a_boolean: "set.err.not_a_boolean",
+  empty: "set.err.empty",
+  too_long: "set.err.too_long",
+  not_a_url: "set.err.not_a_url",
+  not_a_channel: "set.err.not_a_channel",
+  primary_required: "set.err.primary_required",
+  fallback_equals_primary: "set.err.fallback_equals_primary",
+  delay_min_gt_max: "set.err.delay_min_gt_max",
+  channel_credentials_missing: "set.err.channel_credentials_missing",
+};
+
+export function errorMessageKey(code) {
+  return Object.prototype.hasOwnProperty.call(ERROR_KEYS, code) ? ERROR_KEYS[code] : null;
+}
+
+/** 有限数字才算数，别的（含 `null` / 字符串 / NaN）一律 `null`。**绝不伪造 0**。 */
+function finite(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function obj(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v) ? v : null;
+}
+
+/**
+ * 一个公开字段的四元组视图。
+ *
+ * **整段读不到时逐格 `null`**——「这一格是空的」与「没读到」必须分得开，
+ * 前者渲染成空输入框，后者渲染成 `—` 并禁用保存。
+ */
+export function fieldView(body, path) {
+  const b = obj(body);
+  const all = b === null ? null : obj(b.fields);
+  const one = all === null ? null : obj(all[path]);
+  if (one === null) {
+    return { present: false, stored: null, env: null, effective: null, lockedBy: null, locked: false };
+  }
+  const lockedBy = typeof one.lockedBy === "string" ? one.lockedBy : null;
+  return {
+    present: true,
+    // `stored` / `effective` 是**任意 JSON 值**（数字 / 字符串 / 布尔 / null），
+    // 这里原样交出去，渲染那一层再决定怎么显示。
+    stored: one.stored === undefined ? null : one.stored,
+    env: typeof one.env === "string" ? one.env : null,
+    effective: one.effective === undefined ? null : one.effective,
+    lockedBy,
+    /** `lockedBy` 非空 ⇒ 输入框置灰 + 锁徽标 + 一句怎么轮换的说明（设计 §5.3 UI 规则）。 */
+    locked: lockedBy !== null,
+  };
+}
+
+/** 一把凭据的视图。**永远没有明文**（设计 §8.6），只有「配没配」与末 4 位。 */
+export function credentialView(body, path) {
+  const b = obj(body);
+  const all = b === null ? null : obj(b.credentials);
+  const one = all === null ? null : obj(all[path]);
+  if (one === null) {
+    return { present: false, configured: null, hint: null, lockedBy: null, locked: false };
+  }
+  const lockedBy = typeof one.lockedBy === "string" ? one.lockedBy : null;
+  return {
+    present: true,
+    configured: typeof one.configured === "boolean" ? one.configured : null,
+    hint: typeof one.hint === "string" ? one.hint : null,
+    lockedBy,
+    locked: lockedBy !== null,
+  };
+}
+
+/** 这条路径是不是凭据。判据取**后端给的那份清单**，前端不另写一份（写两份必漂）。 */
+export function isSecret(body, path) {
+  const b = obj(body);
+  const list = b === null || !Array.isArray(b.secrets) ? [] : b.secrets;
+  return list.includes(path);
+}
+
+/**
+ * 这一次保存要送的 patch。
+ *
+ * @param raw    `{ 路径: 输入框里的字符串 }`（下拉框与开关也先归一成字符串 / 布尔）。
+ * @param body   最近一次 `GET /admin/api/config` 的响应，用来判类型与「变没变」。
+ *
+ * 三条规则：
+ * ① **锁定的字段一律不送**（送了会被后端 `locked_by_env` 拒，而那次拒绝会把整份
+ *    patch 一起打回来——运维改的另外五格也保存不上）；
+ * ② **凭据留空 = 不送**（设计 §8.6：缺席或空串 = 不改）；
+ * ③ **值没变的字段不送**：少送一格就少一次「其实没改却被算成改了」的高亮。
+ */
+export function buildPatch(raw, body) {
+  const patch = {};
+  for (const path of Object.keys(raw)) {
+    const value = raw[path];
+    if (isSecret(body, path)) {
+      const cred = credentialView(body, path);
+      if (cred.locked) continue;
+      if (typeof value !== "string" || value === "") continue;
+      patch[path] = value;
+      continue;
+    }
+    const view = fieldView(body, path);
+    if (view.locked) continue;
+    const next = coerce(value, view.stored === null ? view.effective : view.stored);
+    if (next === undefined) continue;
+    // **比的是 `stored`（面板真正在改的那一层），不是 `effective`。**
+    // 比 `effective` 的话，一个被 env 压过的字段永远显示成「有改动」。
+    const current = view.stored === undefined ? null : view.stored;
+    if (sameScalar(current, next)) continue;
+    patch[path] = next;
+  }
+  return patch;
+}
+
+/**
+ * 把输入框里的字符串归一成后端要的类型。
+ *
+ * **参照的是这一格当前的值的类型**，而不是一张手写的「哪些字段是数字」表——
+ * 后者会与后端的 `EDITABLE` 漂移，而漂了之后的症状是「保存一个数字被当成字符串
+ * 拒掉」，运维完全看不出为什么。
+ *
+ * 拿不准（当前值也是 `null`、看不出类型）时**按字符串送**，让后端的权威校验去判：
+ * 那正是设计 §10.4 的取舍——规则只有一份，前端不复刻。
+ */
+function coerce(value, reference) {
+  if (typeof value === "boolean") return value;
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  if (typeof reference === "number") {
+    if (value.trim() === "") return undefined;
+    const n = Number(value);
+    // **`NaN` 不送**：送过去只会得到一条 `not_an_integer`，而前端本来就有
+    // 「是数字」这条即时提示（见 `localErrors`）。
+    return Number.isNaN(n) ? undefined : n;
+  }
+  if (typeof reference === "boolean") return value === "true";
+  return value;
+}
+
+function sameScalar(a, b) {
+  return Object.is(a, b);
+}
+
+/**
+ * 前端**只做四条最轻量的即时提示**（设计 §10.4）：
+ * 必填 / 是数字 / 非负 / `fallback ≠ primary`。**其余全靠渲染后端错误码。**
+ *
+ * ⚠️⚠️ **第四条只在注册机启用时拦（V21）。**
+ * 后端 `registrarFromEnv` 里那条 `fallback === primary` 的抛错写在
+ * `if (enabled && …)` 里，关着的注册机它一条都不抛 ⇒ 前端无条件拦截的后果是
+ * **「关着注册机时连下拉框都改不了」**，而后端明明会收下。
+ * **两边判据必须同源**，这一条由 `tests/ui/settings.test.ts` 的
+ * 「注册机关着时前端不拦 fallback === primary —— 与后端同源」钉着。
+ *
+ * @param raw   `{ 路径: 值 }`，与 `buildPatch` 同一份输入。
+ * @param body  最近一次 `GET /admin/api/config` 的响应（判「哪些是凭据」与当前类型）。
+ */
+export function localErrors(raw, body) {
+  const out = [];
+  for (const path of Object.keys(raw)) {
+    if (isSecret(body, path)) continue;
+    const view = fieldView(body, path);
+    if (view.locked) continue;
+    const value = raw[path];
+    const reference = view.stored === null ? view.effective : view.stored;
+    if (typeof reference !== "number") continue;
+    if (typeof value !== "string") continue;
+    // ① 必填：数值格不许留空。
+    if (value.trim() === "") { out.push({ field: path, code: "empty" }); continue; }
+    const n = Number(value);
+    // ② 是数字。
+    if (Number.isNaN(n)) { out.push({ field: path, code: "not_an_integer" }); continue; }
+    // ③ 非负。**只到「非负」为止**——具体下界（1 还是 0）是后端的事，
+    //    在这里复刻一份会与 `EDITABLE` 漂移，而那正是 §10.4 要避免的。
+    if (n < 0) out.push({ field: path, code: "below_min" });
+  }
+
+  // ④ `fallback ≠ primary`，**只在启用时**。
+  const enabled = pickBool(raw, body, "registrar.enabled");
+  const primary = pickText(raw, body, "registrar.primary");
+  const fallback = pickText(raw, body, "registrar.fallback");
+  if (enabled === true && fallback !== "" && fallback !== null && fallback === primary) {
+    out.push({ field: "registrar.fallback", code: "fallback_equals_primary" });
+  }
+  return out;
+}
+
+/** 表单里有就用表单的，没有就用当前四元组里那一格。 */
+function pickBool(raw, body, path) {
+  const v = raw[path];
+  if (typeof v === "boolean") return v;
+  if (v === "true" || v === "false") return v === "true";
+  const view = fieldView(body, path);
+  const cur = view.stored === null ? view.effective : view.stored;
+  return typeof cur === "boolean" ? cur : null;
+}
+
+function pickText(raw, body, path) {
+  const v = raw[path];
+  if (typeof v === "string") return v;
+  const view = fieldView(body, path);
+  const cur = view.stored === null ? view.effective : view.stored;
+  return typeof cur === "string" ? cur : null;
+}
+
+/**
+ * 一次保存的回执里，哪些字段的**生效值**真的变了。
+ *
+ * 设计 §5.3 UI 规则：**保存后不弹「已保存并生效」**，而是回读 `effective` 并把
+ * 变化的字段高亮。这份清单就是「高亮哪几格」的依据，**由后端给**——前端自己
+ * 拿保存前后两份响应去 diff 也做得到，但那样「高亮」与「真的落盘了什么」
+ * 就成了两件可以不一致的事。
+ */
+export function changedFields(body) {
+  const b = obj(body);
+  return b !== null && Array.isArray(b.changed) ? b.changed.filter((x) => typeof x === "string") : [];
+}
+
+/** 这次动过的凭据路径（**只有路径，没有值**）。 */
+export function changedSecrets(body) {
+  const b = obj(body);
+  return b !== null && Array.isArray(b.credentialsChanged)
+    ? b.credentialsChanged.filter((x) => typeof x === "string") : [];
+}
+
+/**
+ * 「别的副本多久能看见」。
+ *
+ * **必须显示，不许写「立即生效」**（设计 §5.2）：本进程确实立刻生效，
+ * 别的 isolate 要等 `configTtlMs` + KV 边缘缓存。读不到就 `null` ⇒ 那一行不渲染，
+ * **不伪造一个 0**（「0 秒生效」正好是被禁的那句话）。
+ */
+export function propagationView(body) {
+  const b = obj(body);
+  const p = b === null ? null : obj(b.propagation);
+  return {
+    configTtlMs: p === null ? null : finite(p.configTtlMs),
+    kvEdgeCacheMs: p === null ? null : finite(p.kvEdgeCacheMs),
+    visibilityUpperBoundMs: p === null ? null : finite(p.visibilityUpperBoundMs),
+  };
+}
+
+/**
+ * 后端返回的逐字段错误 → 渲染用的清单。
+ *
+ * `key` 为 `null` 时调用方**把那个码原样显示出来**（`set.err.unknown`），
+ * 不冒充任何一档已知原因。
+ */
+export function errorRows(errBody) {
+  const b = obj(errBody);
+  const list = b !== null && Array.isArray(b.errors) ? b.errors : [];
+  return list.filter((e) => obj(e) !== null).map((e) => ({
+    field: typeof e.field === "string" ? e.field : "",
+    code: typeof e.code === "string" ? e.code : "",
+    key: errorMessageKey(e.code),
+    params: obj(e.params) === null ? {} : e.params,
+  }));
+}
+
+/**
+ * 清空一把凭据之后，网关还有没有口令。
+ * `gatewayTokenMissing === true` ⇒ **下一次冷启动会起不来**，面板必须把这句话
+ * 显示出来（热实例靠上一份快照还在跑，所以这件事本来是看不见的）。
+ */
+export function clearResultView(body) {
+  const b = obj(body);
+  if (b === null) return { cleared: null, stillConfigured: null, gatewayTokenMissing: null };
+  return {
+    cleared: typeof b.cleared === "string" ? b.cleared : null,
+    stillConfigured: typeof b.stillConfigured === "boolean" ? b.stillConfigured : null,
+    gatewayTokenMissing: typeof b.gatewayTokenMissing === "boolean" ? b.gatewayTokenMissing : null,
+  };
+}
+
+/**
+ * 这一格该显示成什么（四元组的「生效值」那一列）。
+ * 布尔与 `null` 都要有确定的显示形态，**`null` 不许显示成空白**——空白读起来像
+ * 「没读到」，而 `null` 在这里的意思是「这一格没有值」。
+ */
+export function displayValue(v) {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return String(v);
+}

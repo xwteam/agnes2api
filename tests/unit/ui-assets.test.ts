@@ -154,6 +154,7 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 搬过来之后那条用例升级成了逐码位行为等价断言。纯函数、无配置、无数据。
       "/admin/js/pure/sendable.mjs",
       "/admin/js/pure/session.mjs",
+      "/admin/js/pure/settings.mjs",
       // 全分支评审 C4 新增：浏览器存储键名的单一真源。原来两个凭据键的名字在
       // `js/app.js`（写入方）与 `js/api.js`（读取方）各声明一遍，改一处就能让面板
       // 登录成功之后每请求送空口令头、进登出循环，而全套用例照绿。
@@ -166,6 +167,7 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 与其余三个板块文件同一性质：**没有任何机密**，它拿到的每一个数字都来自
       // 一次鉴权后的接口调用，文件自身只有结构与 i18n 键。
       "/admin/js/sec-registrar.js",
+      "/admin/js/sec-settings.js",
       "/admin/js/theme.js",
       "/admin/js/ui.js",
     ]);

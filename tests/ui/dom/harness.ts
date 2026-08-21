@@ -14,8 +14,10 @@ import { createFakeDom, installFakeDom, type FakeDom, type FakeElement } from ".
 export const SKELETON_IDS = [
   "gate", "gate-form", "gate-key", "gate-err",
   "shell", "lang-select", "theme-btn", "logout-btn",
-  "sec-overview", "sec-keys", "sec-registrar", "sec-events", "toast-host",
+  "sec-overview", "sec-keys", "sec-registrar", "sec-events", "sec-settings", "toast-host",
 ] as const;
+
+type Resp = { status: number; body: unknown };
 
 export interface Harness {
   dom: FakeDom;
@@ -30,14 +32,23 @@ export interface Harness {
    * `undefined`）时是 `undefined`，不是抛异常。
    */
   calls: Array<{ url: string; method: string; headers: Record<string, string>; body: unknown }>;
-  /** 下一次（及之后）`fetch` 的应答，按 url 前缀匹配；缺省 200 + `{}`。 */
-  respond(fn: (url: string) => { status: number; body: unknown }): void;
+  /**
+   * 下一次（及之后）`fetch` 的应答，按 url 前缀匹配；缺省 200 + `{}`。
+   *
+   * ⚠️ **应答可以返回一个 Promise**（P3c Task 7 加的）。加它是因为
+   * 「成功提示不得早于回读」这条产品不变式**在零延迟下整个不可观测**：
+   * 请求与响应落在同一条微任务链里，「早于」这件事没有可以插进去断言的缝。
+   * 本仓在 storage 轴上为同一形态栽过一次（第 8 种候选假阳性）。
+   * 返回非 Promise 的老写法**行为逐字不变**（`await` 一个非 Promise 只多一个微任务，
+   * 而这里本来就在 async 函数里）。
+   */
+  respond(fn: (url: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }>): void;
   gate: FakeElement;
   shell: FakeElement;
   form: FakeElement;
   input: FakeElement;
   err: FakeElement;
-  section(name: "overview" | "keys" | "registrar" | "events"): FakeElement;
+  section(name: "overview" | "keys" | "registrar" | "events" | "settings"): FakeElement;
 }
 
 export function buildDom(): { dom: FakeDom; nav: FakeElement[] } {
@@ -51,7 +62,7 @@ export function buildDom(): { dom: FakeDom; nav: FakeElement[] } {
   dom.byId("gate-form").appendChild(dom.byId("gate-err"));
 
   const nav: FakeElement[] = [];
-  for (const name of ["overview", "keys", "registrar", "events"]) {
+  for (const name of ["overview", "keys", "registrar", "events", "settings"]) {
     const btn = dom.document.createElement("button");
     btn.classList.add("nav-item");
     btn.setAttribute("data-section", name);
@@ -71,7 +82,7 @@ export async function bootPanel(opts: {
   /** 预置的 localStorage 内容（模拟"上次登录留下的会话"）。 */
   store?: Record<string, string>;
   now?: number;
-  respond?: (url: string) => { status: number; body: unknown };
+  respond?: (url: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }>;
 } = {}): Promise<Harness> {
   const { dom } = buildDom();
   const store: Record<string, string> = { ...(opts.store ?? {}) };
@@ -94,7 +105,15 @@ export async function bootPanel(opts: {
       headers: (init?.headers ?? {}) as Record<string, string>,
       body,
     });
-    const r = responder(String(url));
+    // ⚠️ **同步应答不许多走一个微任务。** 第一版无条件 `await responder(...)`，
+    // 而 `await` 一个非 Promise 同样要排一个微任务 ⇒ 既有用例里那些 `settle(6)`
+    // 的深度当场不够用，**3 格实测变红**（`keys-actions.test.ts` 里 toast 与
+    // 确认弹窗那几格：断言跑在渲染之前，读到的是空字符串）。
+    // 只有真的返回了 thenable 才 await，同步那条路径逐字保持原来的时序。
+    const pending = responder(String(url));
+    const r = pending !== null && typeof pending === "object" && typeof (pending as Promise<Resp>).then === "function"
+      ? await pending
+      : pending as Resp;
     return new Response(JSON.stringify(r.body), {
       status: r.status,
       headers: { "content-type": "application/json" },

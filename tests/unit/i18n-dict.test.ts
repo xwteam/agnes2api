@@ -157,7 +157,8 @@ describe("i18n 字典", () => {
    * 下面那条"至少 20 个"的反向自检也拦不住它：Key 池板块一家就够 20 个。
    */
   it("板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里", () => {
-    const NAMESPACES = ["gate", "nav", "shell", "common", "reg", "keys", "ov", "ev"] as const;
+    // `set` 是 P3c Task 7 的设置页。**加新板块必须回来表态**，理由见上面那段 ⚠️。
+    const NAMESPACES = ["gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set"] as const;
     const re = new RegExp(`"((?:${NAMESPACES.join("|")})\\.[A-Za-z0-9_.]+)"`, "g");
     const walk = (d: string): string[] =>
       readdirSync(d).sort().flatMap((n) => {

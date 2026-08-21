@@ -38,6 +38,9 @@ export const I18N = {
   // 而那道门禁管的是「两条邮箱通道有没有被暗示成有高下」，与一个板块名无关。
   "nav.registrar":    { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
   "nav.events":       { "zh-CN": "事件", "zh-TW": "事件", en: "Events", ja: "イベント", ko: "이벤트" },
+  // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `set.*`：命名空间在这里
+  // 表示的是「壳层导航」，与板块内部的文案分开。
+  "nav.settings":     { "zh-CN": "设置", "zh-TW": "設定", en: "Settings", ja: "設定", ko: "설정" },
   "shell.logout":     { "zh-CN": "退出登录", "zh-TW": "登出", en: "Sign out", ja: "ログアウト", ko: "로그아웃" },
   "shell.theme":      { "zh-CN": "切换主题", "zh-TW": "切換主題", en: "Toggle theme", ja: "テーマ切り替え", ko: "테마 전환" },
   "shell.lang":       { "zh-CN": "语言", "zh-TW": "語言", en: "Language", ja: "言語", ko: "언어" },
@@ -492,4 +495,96 @@ export const I18N = {
 
   // 分组时间线的组头文案（P-1：按 corr 相邻折叠）。
   "ev.timeline": { "zh-CN": "时间线 · {count} 条 · {corr}", "zh-TW": "時間線 · {count} 條 · {corr}", en: "Timeline · {count} events · {corr}", ja: "タイムライン · {count} 件 · {corr}", ko: "타임라인 · {count}건 · {corr}" },
+
+  // ── 设置页（P3c Task 7，设计 §10.4 的前三张卡）────────────────────────────
+  //
+  // ⚠️ **命名空间刻意用 `set.*` 而不是 `reg.*`**，两条理由：
+  // ① `reg.*` 是禁用词门禁（`scripts/check-i18n.mjs` 第 ⑥ 条）的作用域，而那道门禁
+  //    管的是「两条邮箱通道有没有被暗示成有高下」；设置页里绝大多数文案（超时、
+  //    冷却、口令）与通道毫无关系，塞进 `reg.*` 只会让那道门禁的作用域失焦。
+  // ② **真正与通道有关的那几处，本任务用的是结构性做法而不是词表**：两条通道的
+  //    凭据字段**共用同一对 key**（`set.field.channel.baseUrl` / `…apiKey`），
+  //    通道名与地址事实那两句仍然走 `reg.channel.*`（在门禁作用域内）。
+  //    共用一对 key 比词表强：想给某一条通道多写半句话，得先造出第二个 key，
+  //    而那一步在评审里看得见。
+  //
+  // ⚠️⚠️ **`set.field.*` 这一整族对三道 i18n 门禁是隐身的**：`fieldLabelKey()`
+  // 返回的是**模板字面量** `` `set.field.${path}` ``，而三道门禁只认
+  // data-i18n 属性与字面的翻译函数调用两种形态（`reg.fail.*` 那一族因为在 switch 里
+  // 直接 return 字面量，已经踩过同一个坑，见 P3c Task 6 报告 §2.4）。
+  // ⚠️ 这段说明**刻意不把那两种形态写成代码片段**：门禁第 ① 条不去注释，
+  // 注释里写一个长得像调用点的片段会被它当成一次真实引用（本任务实测踩过一次，
+  // 当时报的是「引用了字典里没有的 key」）。
+  // ⇒ **补一道自己的**：`tests/ui/settings.test.ts` 的
+  // 「后端 EDITABLE_FIELDS 的每条路径都有一条 set.field.* 文案」从后端那份
+  // 编译期强制的清单出发反查字典，加字段不补文案当场红。
+  "set.title": { "zh-CN": "设置", "zh-TW": "設定", en: "Settings", ja: "設定", ko: "설정" },
+  "set.save": { "zh-CN": "保存", "zh-TW": "儲存", en: "Save", ja: "保存", ko: "저장" },
+  "set.card.auth": { "zh-CN": "认证密钥", "zh-TW": "認證密鑰", en: "Credentials", ja: "認証キー", ko: "인증 키" },
+  "set.card.upstream": { "zh-CN": "上游与冷却", "zh-TW": "上游與冷卻", en: "Upstream & cooldowns", ja: "上流とクールダウン", ko: "업스트림 및 쿨다운" },
+  "set.card.registrar": { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
+  "set.card.upstreamNote": { "zh-CN": "池快照缓存与写消除间隔是建实例时读一次的：改了要重启容器 / 等 isolate 回收才生效，不是下一个请求就变。", "zh-TW": "池快照快取與寫入消除間隔是建立實例時讀一次的：改了要重啟容器 / 等 isolate 回收才生效，不是下一個請求就變。", en: "The pool snapshot cache and the write-elision interval are read once when the instance is built: changing them takes effect after a container restart or isolate recycle, not on the next request.", ja: "プールスナップショットのキャッシュと書き込み省略の間隔は、インスタンス構築時に一度だけ読まれます。変更は次のリクエストではなく、コンテナ再起動または isolate の再生成後に反映されます。", ko: "풀 스냅숏 캐시와 쓰기 생략 간격은 인스턴스를 만들 때 한 번만 읽습니다. 변경은 다음 요청이 아니라 컨테이너 재시작 또는 isolate 회수 이후에 반영됩니다." },
+  "set.adminTokenNote": { "zh-CN": "管理口令（ADMIN_TOKEN）只从环境变量读，面板改不了自己的钥匙；要轮换请改部署那一侧的环境变量并重启。", "zh-TW": "管理口令（ADMIN_TOKEN）只從環境變數讀，面板改不了自己的鑰匙；要輪換請改部署那一側的環境變數並重啟。", en: "The admin token (ADMIN_TOKEN) is read from the environment only — the panel cannot change its own key. To rotate it, change the environment variable on the deployment side and restart.", ja: "管理トークン（ADMIN_TOKEN）は環境変数からのみ読み込まれ、パネルが自分の鍵を変更することはできません。ローテーションするにはデプロイ側の環境変数を変更して再起動してください。", ko: "관리 토큰(ADMIN_TOKEN)은 환경 변수에서만 읽으며, 패널이 자신의 키를 바꿀 수는 없습니다. 교체하려면 배포 쪽 환경 변수를 바꾸고 재시작하세요." },
+  "set.secretPlaceholder": { "zh-CN": "留空则不修改", "zh-TW": "留空則不修改", en: "Leave blank to keep unchanged", ja: "空欄のままにすると変更されません", ko: "비워 두면 변경되지 않습니다" },
+  "set.secretSet": { "zh-CN": "已配置", "zh-TW": "已設定", en: "configured", ja: "設定済み", ko: "설정됨" },
+  "set.secretUnset": { "zh-CN": "未配置", "zh-TW": "未設定", en: "not configured", ja: "未設定", ko: "설정 안 됨" },
+  "set.clearSecret": { "zh-CN": "清空", "zh-TW": "清空", en: "Clear", ja: "クリア", ko: "지우기" },
+  "set.meta.secret": { "zh-CN": "{state} · 末 4 位 {hint}", "zh-TW": "{state} · 末 4 位 {hint}", en: "{state} · last 4: {hint}", ja: "{state} · 末尾 4 桁 {hint}", ko: "{state} · 마지막 4자리 {hint}" },
+  "set.meta.quad": { "zh-CN": "存储 {stored} · 环境变量 {env} · 生效 {effective}", "zh-TW": "儲存 {stored} · 環境變數 {env} · 生效 {effective}", en: "stored {stored} · env {env} · effective {effective}", ja: "保存値 {stored} · 環境変数 {env} · 実効値 {effective}", ko: "저장값 {stored} · 환경 변수 {env} · 실효값 {effective}" },
+  "set.meta.unreadable": { "zh-CN": "这一格没读到", "zh-TW": "這一格沒讀到", en: "Could not read this field", ja: "この項目は取得できませんでした", ko: "이 항목을 읽지 못했습니다" },
+  "set.lockedBy": { "zh-CN": "由环境变量 {env} 锁定，面板改了不会生效；要改请改部署那一侧的 {env} 并重启。", "zh-TW": "由環境變數 {env} 鎖定，面板改了不會生效；要改請改部署那一側的 {env} 並重啟。", en: "Locked by the environment variable {env}; editing it here has no effect. Change {env} on the deployment side and restart.", ja: "環境変数 {env} によりロックされています。ここで編集しても反映されません。デプロイ側の {env} を変更して再起動してください。", ko: "환경 변수 {env}로 잠겨 있어 여기서 수정해도 반영되지 않습니다. 배포 쪽 {env}를 바꾸고 재시작하세요." },
+  "set.propagation": { "zh-CN": "本实例已经生效；别的副本 / isolate 最长 {bound} 之后才看得到这次改动。", "zh-TW": "本實例已經生效；別的副本 / isolate 最長 {bound} 之後才看得到這次改動。", en: "This instance already picked it up; other replicas/isolates may take up to {bound} to see the change.", ja: "このインスタンスには既に反映されています。他のレプリカ／isolate には最大 {bound} かかります。", ko: "이 인스턴스에는 이미 반영되었습니다. 다른 복제본/isolate는 최대 {bound} 걸릴 수 있습니다." },
+  "set.readback": { "zh-CN": "已回读生效值，{count} 个字段发生了变化（已高亮）。", "zh-TW": "已回讀生效值，{count} 個欄位發生了變化（已標示）。", en: "Read back the effective values: {count} field(s) changed (highlighted).", ja: "実効値を読み戻しました。{count} 個の項目が変化しました（ハイライト済み）。", ko: "실효값을 다시 읽었습니다. {count}개 항목이 변경되었습니다(강조 표시)." },
+  "set.readback.none": { "zh-CN": "已回读生效值，没有字段发生变化。", "zh-TW": "已回讀生效值，沒有欄位發生變化。", en: "Read back the effective values: nothing changed.", ja: "実効値を読み戻しました。変化した項目はありません。", ko: "실효값을 다시 읽었습니다. 변경된 항목이 없습니다." },
+  "set.nothingToSave": { "zh-CN": "没有要保存的改动", "zh-TW": "沒有要儲存的改動", en: "Nothing to save", ja: "保存する変更はありません", ko: "저장할 변경 사항이 없습니다" },
+  "set.saveFailed": { "zh-CN": "保存失败", "zh-TW": "儲存失敗", en: "Save failed", ja: "保存に失敗しました", ko: "저장에 실패했습니다" },
+  "set.degraded": { "zh-CN": "本次装载有字段回落到了内置取值（存储里的值读不出来或不合法）。面板上「生效」那一列才是真的在用的值。", "zh-TW": "本次載入有欄位回落到了內建取值（儲存裡的值讀不出來或不合法）。面板上「生效」那一列才是真的在用的值。", en: "Some fields fell back to their built-in values on this load (the stored value was unreadable or invalid). The \\u201ceffective\\u201d column is what is actually in use.", ja: "今回の読み込みで一部の項目が組み込み値にフォールバックしました（保存値が読めないか不正）。実際に使われているのは「実効値」の列です。", ko: "이번 로드에서 일부 항목이 내장값으로 폴백했습니다(저장값을 읽을 수 없거나 올바르지 않음). 실제로 쓰이는 값은 「실효값」 열입니다." },
+  "set.advanced.title": { "zh-CN": "高级（改动前请读一遍说明）", "zh-TW": "進階（改動前請讀一遍說明）", en: "Advanced (read the note first)", ja: "詳細設定（先に説明をお読みください）", ko: "고급(먼저 설명을 읽으세요)" },
+  "set.advanced.warn": { "zh-CN": "这里填的地址是每一次自动注册的去向：换成别的服务器，那台服务器就能收到本网关注册时用的邮箱、密码与验证码。只有你自己搭了同样的注册后端时才改它。", "zh-TW": "這裡填的位址是每一次自動註冊的去向：換成別的伺服器，那台伺服器就能收到本網關註冊時用的信箱、密碼與驗證碼。只有你自己搭了同樣的註冊後端時才改它。", en: "This address is where every automated registration goes. Point it elsewhere and that server receives the mailbox, password and verification code used for each registration. Change it only if you run an equivalent registration backend yourself.", ja: "ここに入れるアドレスは、すべての自動登録の送信先です。別のサーバーに変えると、そのサーバーが各登録に使うメールアドレス・パスワード・認証コードを受け取ります。同等の登録バックエンドを自分で運用している場合にのみ変更してください。", ko: "여기에 넣는 주소는 모든 자동 가입의 전송 대상입니다. 다른 서버로 바꾸면 그 서버가 각 가입에 쓰이는 메일 주소·비밀번호·인증 코드를 받게 됩니다. 동일한 가입 백엔드를 직접 운영하는 경우에만 변경하세요." },
+  "set.advanced.confirmTitle": { "zh-CN": "确认修改注册去向", "zh-TW": "確認修改註冊去向", en: "Confirm the registration endpoint change", ja: "登録先の変更を確認", ko: "가입 대상 변경 확인" },
+  "set.advanced.save": { "zh-CN": "保存高级设置", "zh-TW": "儲存進階設定", en: "Save advanced settings", ja: "詳細設定を保存", ko: "고급 설정 저장" },
+  "set.clear.title": { "zh-CN": "清空凭据", "zh-TW": "清空憑據", en: "Clear credential", ja: "資格情報をクリア", ko: "자격 증명 지우기" },
+  "set.clear.warn": { "zh-CN": "要把「{field}」从存储里删掉吗？这一步不可撤销。", "zh-TW": "要把「{field}」從儲存裡刪掉嗎？這一步不可撤銷。", en: "Delete \\u201c{field}\\u201d from storage? This cannot be undone.", ja: "「{field}」をストレージから削除しますか？この操作は取り消せません。", ko: "「{field}」을(를) 저장소에서 삭제할까요? 되돌릴 수 없습니다." },
+  "set.clear.gatewayWarn": { "zh-CN": "如果环境变量里也没有 GATEWAY_TOKEN：当前进程靠上一份快照还能继续跑，但下一次重启 / isolate 回收会起不来。清完请立刻在这一页写一把新的网关口令。", "zh-TW": "如果環境變數裡也沒有 GATEWAY_TOKEN：當前行程靠上一份快照還能繼續跑，但下一次重啟 / isolate 回收會起不來。清完請立刻在這一頁寫一把新的網關口令。", en: "If GATEWAY_TOKEN is not in the environment either: this process keeps running on the last good snapshot, but the next restart or isolate recycle will fail to start. Set a new gateway token on this page right away.", ja: "GATEWAY_TOKEN が環境変数にもない場合: 現在のプロセスは直前の有効なスナップショットで動き続けますが、次の再起動や isolate の再生成で起動できなくなります。すぐにこのページで新しいゲートウェイトークンを設定してください。", ko: "GATEWAY_TOKEN이 환경 변수에도 없다면: 현재 프로세스는 마지막 정상 스냅숏으로 계속 동작하지만, 다음 재시작이나 isolate 회수 시 기동에 실패합니다. 이 페이지에서 즉시 새 게이트웨이 토큰을 설정하세요." },
+  "set.clear.gatewayMissing": { "zh-CN": "网关口令已经被清空，而环境变量里也没有：请立刻在这一页写一把新的，否则下一次重启会起不来。", "zh-TW": "網關口令已經被清空，而環境變數裡也沒有：請立刻在這一頁寫一把新的，否則下一次重啟會起不來。", en: "The gateway token has been cleared and there is none in the environment either. Set a new one on this page now, or the next restart will fail.", ja: "ゲートウェイトークンがクリアされ、環境変数にもありません。今すぐこのページで新しいものを設定してください。さもないと次回の起動に失敗します。", ko: "게이트웨이 토큰이 지워졌고 환경 변수에도 없습니다. 지금 이 페이지에서 새로 설정하지 않으면 다음 재시작에 실패합니다." },
+  "set.clear.done": { "zh-CN": "「{field}」已从存储里清空", "zh-TW": "「{field}」已從儲存裡清空", en: "\\u201c{field}\\u201d cleared from storage", ja: "「{field}」をストレージからクリアしました", ko: "「{field}」을(를) 저장소에서 지웠습니다" },
+  "set.err.unknown_field": { "zh-CN": "这个字段后端不认识", "zh-TW": "這個欄位後端不認識", en: "The backend does not recognize this field", ja: "このフィールドはバックエンドが認識しません", ko: "백엔드가 인식하지 못하는 항목입니다" },
+  "set.err.locked_by_env": { "zh-CN": "被环境变量 {env} 锁定，改不了", "zh-TW": "被環境變數 {env} 鎖定，改不了", en: "Locked by the environment variable {env}", ja: "環境変数 {env} によりロックされています", ko: "환경 변수 {env}로 잠겨 있습니다" },
+  "set.err.not_an_integer": { "zh-CN": "必须是整数", "zh-TW": "必須是整數", en: "Must be an integer", ja: "整数である必要があります", ko: "정수여야 합니다" },
+  "set.err.below_min": { "zh-CN": "不能小于 {min}", "zh-TW": "不能小於 {min}", en: "Must be at least {min}", ja: "{min} 以上である必要があります", ko: "{min} 이상이어야 합니다" },
+  "set.err.not_a_string": { "zh-CN": "必须是文本", "zh-TW": "必須是文字", en: "Must be text", ja: "文字列である必要があります", ko: "문자열이어야 합니다" },
+  "set.err.not_a_boolean": { "zh-CN": "必须是开或关", "zh-TW": "必須是開或關", en: "Must be on or off", ja: "オンまたはオフである必要があります", ko: "켜기 또는 끄기여야 합니다" },
+  "set.err.empty": { "zh-CN": "这一格不能留空", "zh-TW": "這一格不能留空", en: "This field cannot be empty", ja: "この項目は空にできません", ko: "이 항목은 비울 수 없습니다" },
+  "set.err.too_long": { "zh-CN": "最长 {max} 个字符", "zh-TW": "最長 {max} 個字元", en: "At most {max} characters", ja: "最大 {max} 文字です", ko: "최대 {max}자입니다" },
+  "set.err.not_a_url": { "zh-CN": "必须是 http:// 或 https:// 开头的地址", "zh-TW": "必須是 http:// 或 https:// 開頭的位址", en: "Must be an http:// or https:// URL", ja: "http:// または https:// で始まる URL が必要です", ko: "http:// 또는 https:// 로 시작하는 주소여야 합니다" },
+  "set.err.not_a_channel": { "zh-CN": "只能选列表里的通道", "zh-TW": "只能選清單裡的通道", en: "Pick one of the listed channels", ja: "一覧にあるチャネルから選んでください", ko: "목록에 있는 채널 중에서 선택하세요" },
+  "set.err.primary_required": { "zh-CN": "注册机开着时必须选一条主通道", "zh-TW": "註冊機開著時必須選一條主通道", en: "A primary channel is required while the registrar is on", ja: "レジストラーが有効なときは主チャネルの選択が必要です", ko: "등록기가 켜져 있을 때는 주 채널을 선택해야 합니다" },
+  "set.err.fallback_equals_primary": { "zh-CN": "备用通道不能与主通道是同一条", "zh-TW": "備用通道不能與主通道是同一條", en: "The fallback channel cannot be the same as the primary one", ja: "フォールバックチャネルは主チャネルと同じにできません", ko: "대체 채널은 주 채널과 같을 수 없습니다" },
+  "set.err.delay_min_gt_max": { "zh-CN": "最小间隔 {min} 不能大于最大间隔 {max}", "zh-TW": "最小間隔 {min} 不能大於最大間隔 {max}", en: "The minimum delay {min} cannot exceed the maximum {max}", ja: "最小間隔 {min} は最大間隔 {max} を超えられません", ko: "최소 간격 {min}은 최대 간격 {max}보다 클 수 없습니다" },
+  "set.err.channel_credentials_missing": { "zh-CN": "{channel} 这条通道还差凭据，注册机开着时它必须配全", "zh-TW": "{channel} 這條通道還差憑據，註冊機開著時它必須配全", en: "The {channel} channel is missing credentials, which are required while the registrar is on", ja: "{channel} チャネルの資格情報が不足しています。レジストラーが有効な間は必須です", ko: "{channel} 채널의 자격 증명이 없습니다. 등록기가 켜져 있는 동안에는 필수입니다" },
+  "set.err.unknown": { "zh-CN": "后端返回了这个面板版本不认识的错误码：{code}", "zh-TW": "後端回傳了這個面板版本不認識的錯誤碼：{code}", en: "The backend returned an error code this panel build does not know: {code}", ja: "このパネルのビルドが認識しないエラーコードが返されました: {code}", ko: "이 패널 빌드가 알지 못하는 오류 코드가 반환되었습니다: {code}" },
+  "set.field.gatewayToken": { "zh-CN": "网关口令", "zh-TW": "網關口令", en: "Gateway token", ja: "ゲートウェイトークン", ko: "게이트웨이 토큰" },
+  "set.field.agnesBaseUrl": { "zh-CN": "上游地址", "zh-TW": "上游位址", en: "Upstream base URL", ja: "上流ベース URL", ko: "업스트림 기본 URL" },
+  "set.field.upstreamTimeoutMs": { "zh-CN": "上游超时（毫秒）", "zh-TW": "上游逾時（毫秒）", en: "Upstream timeout (ms)", ja: "上流タイムアウト（ミリ秒）", ko: "업스트림 타임아웃(ms)" },
+  "set.field.upstreamSyncTimeoutMs": { "zh-CN": "同步端点超时（毫秒）", "zh-TW": "同步端點逾時（毫秒）", en: "Sync endpoint timeout (ms)", ja: "同期エンドポイントのタイムアウト（ミリ秒）", ko: "동기 엔드포인트 타임아웃(ms)" },
+  "set.field.maxStrikes": { "zh-CN": "连续失败上限", "zh-TW": "連續失敗上限", en: "Max consecutive failures", ja: "連続失敗の上限", ko: "연속 실패 상한" },
+  "set.field.cooldownRateLimitMs": { "zh-CN": "限流冷却（毫秒）", "zh-TW": "限流冷卻（毫秒）", en: "Rate-limit cooldown (ms)", ja: "レート制限クールダウン（ミリ秒）", ko: "속도 제한 쿨다운(ms)" },
+  "set.field.cooldownPaymentMs": { "zh-CN": "欠费冷却（毫秒）", "zh-TW": "欠費冷卻（毫秒）", en: "Payment-required cooldown (ms)", ja: "支払い必要時のクールダウン（ミリ秒）", ko: "결제 필요 쿨다운(ms)" },
+  "set.field.cooldownStrikeMs": { "zh-CN": "失败冷却（毫秒）", "zh-TW": "失敗冷卻（毫秒）", en: "Strike cooldown (ms)", ja: "失敗クールダウン（ミリ秒）", ko: "실패 쿨다운(ms)" },
+  "set.field.poolCacheTtlMs": { "zh-CN": "池快照缓存（毫秒，0 = 关闭）", "zh-TW": "池快照快取（毫秒，0 = 關閉）", en: "Pool snapshot cache (ms, 0 = off)", ja: "プールスナップショットのキャッシュ（ミリ秒、0 = 無効）", ko: "풀 스냅숏 캐시(ms, 0 = 끔)" },
+  "set.field.poolTouchIntervalMs": { "zh-CN": "写消除间隔（毫秒，0 = 关闭）", "zh-TW": "寫入消除間隔（毫秒，0 = 關閉）", en: "Write-elision interval (ms, 0 = off)", ja: "書き込み省略の間隔（ミリ秒、0 = 無効）", ko: "쓰기 생략 간격(ms, 0 = 끔)" },
+  "set.field.registrar.enabled": { "zh-CN": "启用注册机", "zh-TW": "啟用註冊機", en: "Enable the registrar", ja: "レジストラーを有効にする", ko: "등록기 사용" },
+  "set.field.registrar.primary": { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary channel", ja: "主チャネル", ko: "주 채널" },
+  "set.field.registrar.fallback": { "zh-CN": "备用通道", "zh-TW": "備用通道", en: "Fallback channel", ja: "フォールバックチャネル", ko: "대체 채널" },
+  "set.field.registrar.targetKeys": { "zh-CN": "目标 key 数", "zh-TW": "目標 key 數", en: "Target key count", ja: "目標キー数", ko: "목표 key 수" },
+  "set.field.registrar.mintBatch": { "zh-CN": "单轮最多铸几把", "zh-TW": "單輪最多鑄幾把", en: "Max keys minted per round", ja: "1 ラウンドあたりの最大発行数", ko: "라운드당 최대 발급 수" },
+  "set.field.registrar.tendIntervalMs": { "zh-CN": "补池间隔（毫秒）", "zh-TW": "補池間隔（毫秒）", en: "Refill interval (ms)", ja: "補充間隔（ミリ秒）", ko: "보충 간격(ms)" },
+  "set.field.registrar.codeTimeoutMs": { "zh-CN": "等验证码超时（毫秒）", "zh-TW": "等驗證碼逾時（毫秒）", en: "Verification-code timeout (ms)", ja: "認証コード待機のタイムアウト（ミリ秒）", ko: "인증 코드 대기 타임아웃(ms)" },
+  "set.field.registrar.mintDelayMinMs": { "zh-CN": "两次铸 key 的最小间隔（毫秒）", "zh-TW": "兩次鑄 key 的最小間隔（毫秒）", en: "Minimum delay between mints (ms)", ja: "発行間の最小間隔（ミリ秒）", ko: "발급 간 최소 간격(ms)" },
+  "set.field.registrar.mintDelayMaxMs": { "zh-CN": "两次铸 key 的最大间隔（毫秒）", "zh-TW": "兩次鑄 key 的最大間隔（毫秒）", en: "Maximum delay between mints (ms)", ja: "発行間の最大間隔（ミリ秒）", ko: "발급 간 최대 간격(ms)" },
+  "set.field.registrar.maxDomainAttempts": { "zh-CN": "换域名重试次数上限", "zh-TW": "換網域重試次數上限", en: "Max domain retries", ja: "ドメイン再試行の上限", ko: "도메인 재시도 상한" },
+  "set.field.registrar.tokenName": { "zh-CN": "铸出的 key 在上游后台的显示名", "zh-TW": "鑄出的 key 在上游後台的顯示名", en: "Display name for minted keys upstream", ja: "発行したキーの上流での表示名", ko: "발급된 key의 업스트림 표시 이름" },
+  "set.field.registrar.agnesPlatformUrl": { "zh-CN": "注册后端地址", "zh-TW": "註冊後端位址", en: "Registration backend URL", ja: "登録バックエンドの URL", ko: "가입 백엔드 URL" },
+  "set.field.channel.baseUrl": { "zh-CN": "服务地址", "zh-TW": "服務位址", en: "Service URL", ja: "サービス URL", ko: "서비스 URL" },
+  "set.field.channel.apiKey": { "zh-CN": "API Key", "zh-TW": "API Key", en: "API key", ja: "API キー", ko: "API 키" },
 };
