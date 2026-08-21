@@ -113,6 +113,58 @@ function endpointsOf(row: FakeElement): string[] {
   return out;
 }
 
+/**
+ * 一条**永不落地**的读的 resolver 表。`hungRead()` 每次重置它，
+ * 用例自己决定哪一条什么时候落地、按什么顺序落地
+ *（**顺序是那几格的全部内容**，见「晚到的失败不许盖掉新的成功」那一格里的告诫）。
+ *
+ * ⚠️ 替身带真实挂起点是刻意的（第 8 种假阳性：零延迟的替身让时序性质整个不可观测）。
+ */
+let hung: Array<(r: { status: number; body: unknown }) => void> = [];
+
+/**
+ * 启动板块，让 `/admin/api/models` 那条读**挂住不落地**，然后切走再切回来
+ * ——切回来这一步是为了触发一次 `render()`，让「读不出来」那张卡（连同那颗
+ * 「再读一次」）出现在屏幕上。
+ */
+async function hungRead(): Promise<Harness> {
+  hung = [];
+  const h = await bootPanel({
+    now: NOW,
+    store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000), [SECTION_STORE]: "models" },
+    respond: (url: string) => {
+      if (!url.startsWith("/admin/api/models")) return { status: 200, body: {} };
+      return new Promise<{ status: number; body: unknown }>((resolve) => { hung.push(resolve); });
+    },
+  });
+  await settle(12);
+  navTo(h, "overview");
+  await settle(12);
+  navTo(h, "models");
+  await settle(12);
+  return h;
+}
+
+/** 这一轮一共往 `/admin/api/models` 发了几条。 */
+function modelCalls(h: Harness): number {
+  return h.calls.filter((c) => c.url.startsWith("/admin/api/models")).length;
+}
+
+/**
+ * 一份**只有一个模型**的合成目录。用途只有一个：让「被抢占的那条晚到的成功」
+ * 与真源那一份**内容不同** —— 两份都成功时，只有内容不同才分得开谁生效了
+ *（第 1 种假阳性：夹具 A/B 同值时谁赢都通过）。
+ */
+const ONE_MODEL_CATALOG = {
+  protocols: [{ id: "alpha", label: "Alpha Protocol" }],
+  models: [{
+    id: "probe-stale",
+    modality: "chat",
+    protocols: ["alpha"],
+    endpoints: [{ method: "POST", path: "/probe/stale" }],
+  }],
+};
+
 /** 点侧栏上那颗**真的**导航按钮（走整条 `showSection` 接线，不直接调板块方法）。 */
 function navTo(h: Harness, name: string): void {
   for (const btn of h.dom.document.querySelectorAll(".nav-item")) {
@@ -330,8 +382,10 @@ describe("按协议筛选（工具栏）", () => {
    * 实测：把 `buildTable()` 里那个三元的两支都改成 `"models.empty"` ⇒ **全绿**，
    * 而 `grep -rn 'filterEmpty' tests/` 当时命中 **0**。
    *
-   * ⚠️⚠️ **这一支今天用真源根本走不到**：`agnes-2.0-flash` 四条协议全占 ⇒ 每一档
-   * 都恰好筛出 1 行，永远不为空。**所以它的可达性只能靠合成夹具证明**——
+   * ⚠️⚠️ **这一支今天用真源根本走不到**：`agnes-2.0-flash` 四条协议全占 ⇒ **每一条协议
+   * 那一档**都恰好筛出 1 行，永远不为空（复评 F6：上一版写的是「每一档」，
+   * 而按本板块自己的词汇「全部」也是一档、它筛出 4 行 —— 结论成立，措辞不成立）。
+   * **所以这一支的可达性只能靠合成夹具证明**——
    * `bootPanel` 的 `respond` 收任意 body，这里喂一份「协议里有 delta、
    * 而没有任何模型占它」的合成目录。
    * ⚠️ **不许因为「今天走不到」就把那一支删掉、或者把话说软成一句通用文案**：
@@ -406,8 +460,10 @@ describe("按协议筛选（工具栏）", () => {
     await settle();
     expect(dataRows(sec).length).toBe(4);
     // 选中态跟着回到「全部」那一档（同 m1：整排一起断言）。
-    expect(filterButtons(sec).map((b) => b.classList.contains("active")))
-      .toEqual([true, false, false, false, false]);
+    expect(
+      filterButtons(sec).map((b) => b.classList.contains("active")),
+      "点回「全部」之后分段选择器还停在上一档上",
+    ).toEqual([true, false, false, false, false]);
   });
 });
 
@@ -550,6 +606,127 @@ describe("网络行为", () => {
       h.section("models").querySelectorAll(".models-unknown").length,
       "晚到的失败把一张正确的表换成了「读不出来」",
     ).toBe(0);
+  });
+
+  /**
+   * ── **P3d Task 6 定向复评 F1：一条永不落地的读，把板块变成一片空白** ─────────
+   *
+   * `admin-ui/js/api.js` 这条链**没有超时**（`raw()` 的 `signal` 只透传调用方给的），
+   * 所以一条读可以永远飞着（连接卡死 / 黑洞代理 / 睡眠唤醒）。
+   * 上一轮我加的 `if (inFlight) return;` 是**裸早退、不调 `render()`**
+   * ⇒ 此后每一次 `onShow()` 都什么都不画。复评实测（3ce3a7e）：
+   * `calls=1 rows=0 banner=0 retry=0 unknown=0`
+   * ——**只剩标题和副标题的空板块：没有表、没有红条、没有「再读一次」、连那根破折号都没有**，
+   * 而我在文件头承诺的恢复动作（「切走再切回来」）此时已经失效。
+   *
+   * **变红条件**：把 `load()` 里 `if (inFlight) { render(); return; }` 改回裸 `return`。
+   */
+  it("读挂住之后切回来不是一片空白 —— 至少要看得见「读不出来」和那颗「再读一次」", async () => {
+    const h = await hungRead();
+    const sec = h.section("models");
+    // ① 「只许一条在飞」这条不变量**不许为了自救被放弃**。
+    expect(modelCalls(h), "为了自救又把两条链放回来了").toBe(1);
+    // ② 但必须有东西可看、有路可走 —— 否则用户对着一片空白，无从下手。
+    expect(sec.querySelectorAll(".models-unknown").length, "挂住之后连那根破折号都没有").toBe(1);
+    expect(sec.querySelectorAll(".models-retry").length, "挂住之后没有任何自救入口").toBe(1);
+    expect(sec.querySelectorAll(".banner-danger").length, "挂住之后没有任何信号").toBe(1);
+  });
+
+  /**
+   * ── **F1 的另一半：那颗「再读一次」必须真的能抢占一条挂住的读** ───────────────
+   *
+   * 裁定：**显式的用户动作有权抢占**（`inFlight` 时 abort 掉旧的再发）。
+   * 这样「只许一条在飞」与「挂死可自救」两条都保住。
+   *
+   * ⚠️⚠️ **abort 那一半在测试里天然不可观测，如实写明**（复评提醒）：
+   * 全仓只有 `admin-ui/js/api.js` 一处把 `signal` 交给 `fetch`，
+   * 而 `tests/ui/dom/harness.ts` 的 `fetch` 替身与 `tests/helpers/fake-dom.ts` **零处**看 `signal`
+   * ⇒ 被 abort 的那条链在测试里**照样会落地**。
+   * **所以这一格钉的不是 `abort()`，是「被抢占的那条链的结果不许生效」那个世代号。**
+   * 真实浏览器里 abort 会让它以 `AbortError` 拒绝，世代号同样把它挡在外面——
+   * 两种环境走的是同一条判据，只是触发路径不同。
+   *
+   * **变红条件**：把 `retry` 的 `load(true)` 改回 `load()`（抢不动，按了没反应）；
+   * 或者删掉 `load()` 里两处 `if (mine !== seq) return;`（被抢占的那条会生效）。
+   */
+  it("读挂住时点「再读一次」：旧的那条被抢占，它晚到的失败不许盖掉新的成功", async () => {
+    const h = await hungRead();
+    const sec = h.section("models");
+    expect(sec.querySelectorAll(".models-retry").length, "前置条件：得先有那颗按钮可按").toBe(1);
+
+    sec.querySelectorAll(".models-retry")[0]!.click();
+    await settle(12);
+    expect(modelCalls(h), "「再读一次」抢不动那条挂住的读 —— 按了没有任何事发生").toBe(2);
+
+    // 新发的那一条**先**成功回来：表画出来。
+    hung[1]!({ status: 200, body: catalogPayload() });
+    await settle(12);
+    expect(dataRows(sec).length, "前置条件：新发的那一条得先把表画出来").toBe(4);
+
+    // ⚠️⚠️ **被抢占的那条要在这之后才落地 —— 顺序就是这一格的全部内容。**
+    //    上一版把它放在前面 resolve，于是新那条的成功紧随其后把一切覆盖掉
+    //    ⇒ 删掉 catch 里的世代号守卫**照样全绿**（第 5 种假阳性：
+    //    覆盖的状态让被测的选择不可观测），而用例名里写着「晚到」。
+    //    **名字说「晚到」，body 就必须真的让它晚到。**
+    hung[0]!({ status: 500, body: {} });
+    await settle(12);
+
+    expect(dataRows(sec).length, "被抢占的那条晚到的失败把表抹掉了 —— catch 里的世代号没挡住它").toBe(4);
+    expect(sec.querySelectorAll(".models-unknown").length, "表被换成了「读不出来」").toBe(0);
+  });
+
+  /**
+   * 同一条判据的**成功那一侧**：被抢占的那条**晚到的成功**同样不许生效。
+   * 少了这一格，`try` 里那句 `if (mine !== seq) return;` 零覆盖（实测：删掉它全绿）。
+   *
+   * **变红条件**：删掉 `load()` 的 `try` 里那句 `if (mine !== seq) return;`。
+   */
+  it("被抢占的那条晚到的**成功**同样不许生效 —— 否则面板会退回一份更旧的目录", async () => {
+    const h = await hungRead();
+    const sec = h.section("models");
+    sec.querySelectorAll(".models-retry")[0]!.click();
+    await settle(12);
+
+    // 新发的那条交出**真源**那一份（四个模型）。
+    hung[1]!({ status: 200, body: catalogPayload() });
+    await settle(12);
+    expect(dataRows(sec).length, "前置条件：新发的那一条得先把表画出来").toBe(4);
+
+    // 被抢占的那条晚到，**而且它交出的是一份内容不同的目录**（只有一个模型）。
+    // 两份都「成功」⇒ 只有世代号分得开它们（夹具 A/B 必须不同值，第 1 种假阳性）。
+    hung[0]!({ status: 200, body: ONE_MODEL_CATALOG });
+    await settle(12);
+
+    expect(
+      dataRows(sec).map((tr) => tr.getAttribute("data-model")),
+      "被抢占的那条晚到的成功生效了 —— 面板退回了一份更旧的目录",
+    ).toEqual(["agnes-2.0-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash", "agnes-video-v2.0"]);
+  });
+
+  /**
+   * 被抢占的那条落地时**不许替还在飞的那条把在飞标记清掉**。
+   * 清掉之后，下一次隐式的 `onShow()` 会发出**第三条**链——
+   * 「只许一条在飞」那条不变量从抢占这条路上漏掉。
+   *
+   * **变红条件**：把 `finally` 里的 `if (mine === seq) { … }` 改成无条件执行。
+   */
+  it("被抢占的那条落地不会替还在飞的那条清掉在飞标记 —— 否则下一次切回来会发出第三条链", async () => {
+    const h = await hungRead();
+    const sec = h.section("models");
+    sec.querySelectorAll(".models-retry")[0]!.click();
+    await settle(12);
+    expect(modelCalls(h), "前置条件：抢占那一下得真的发出去了").toBe(2);
+
+    // 被抢占的那条先落地（新发的那条**仍然挂着**）。
+    hung[0]!({ status: 500, body: {} });
+    await settle(12);
+
+    // 此刻仍有一条在飞 ⇒ 隐式入口不许再发。
+    navTo(h, "overview");
+    await settle(12);
+    navTo(h, "models");
+    await settle(12);
+    expect(modelCalls(h), "在飞标记被那条被抢占的链清掉了 —— 又多发了一条").toBe(2);
   });
 
   /**
