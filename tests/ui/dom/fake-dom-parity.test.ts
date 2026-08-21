@@ -23,13 +23,25 @@ import { join } from "node:path";
  * `FakeElement` 同时也实现了大量**名字是真的、只是行为或返回类型跟真实 DOM
  * 不完全一致**的成员（`querySelectorAll()`/`children` 返回真数组而不是
  * `NodeList`/`HTMLCollection`、`submit()` 会派发事件而真实 `HTMLFormElement.submit()`
- * 不会、`.disabled` 挂在每一个元素而不只是表单控件），这些**按名字扫描天生
- * 抓不到**——名字本身没有问题，问题在语义。这道门禁明写自己的边界，不假装
- * 覆盖这一半（见下面 `KNOWN_BLIND_SPOTS`），那一半仍然只能靠代码评审 + 真机冒烟。
+ * 不会、`.disabled` 挂在每一个元素而不只是表单控件）。**光按名字扫描这一半是抓不到的**
+ * ——名字本身没有问题，问题在语义。
+ *
+ * ⚠️ **但"抓不到"不等于"没法抓"**（全分支评审 m3）：前两个的**具体危险写法**
+ *（返回值后面紧跟一个数组方法）是可以按形态扫的，本轮已经把这两条形态加进上面那张表
+ * ——`querySelectorAll(...).map(…)` 与 `.children.map(…)` 现在会被判成违规。
+ * 剩下的（`submit()` 语义相反、`.disabled` 挂错宿主、把返回值先存进变量再调数组方法）
+ * 仍然抓不到，如实记在下面的 `KNOWN_BLIND_SPOTS` 里，那一半只能靠代码评审 + 真机冒烟。
  */
 
-/** 只在真实 DOM 上不存在、且这份夹具用了容易被误认成"真实 API"名字的成员。 */
-const FAKE_ONLY_MEMBERS: Array<{ pattern: RegExp; label: string; why: string }> = [
+/**
+ * 只在真实 DOM 上不存在、且这份夹具用了容易被误认成"真实 API"名字的成员。
+ *
+ * `fixtureName`：反向自检去 `fake-dom.ts` 里找的那个名字。**只有在从 `label` 推不出来
+ * 的时候才给**（`label` 的推导规则是「去掉开头的 `.` 与结尾的 `()`」，对
+ * `querySelectorAll()` / `.children` 这种"名字真、返回类型假"的条目够用，
+ * 但如果哪天有人把 `label` 写成一句话就推不出来了）。
+ */
+const FAKE_ONLY_MEMBERS: Array<{ pattern: RegExp; label: string; why: string; fixtureName?: string }> = [
   {
     pattern: /\.walk\(/g,
     label: ".walk()",
@@ -70,17 +82,66 @@ const FAKE_ONLY_MEMBERS: Array<{ pattern: RegExp; label: string; why: string }> 
     why: "真实 DOMTokenList 没有 .reset() 方法。要整体替换 class 列表，真实 DOM "
       + "的写法是 el.className = \"...\" 或者重新 setAttribute(\"class\", ...)。",
   },
+  /**
+   * ⚠️⚠️ **下面两条是全分支评审 m3 补的，形态与上面六条不同：名字是真的，
+   * 被当成假的用的是它的返回值类型。**
+   *
+   * 账本在 Task 4 复评时把这两个列为「九个残余里最危险的两个，因为写法最自然」，
+   * 而它们当时**不在这张表里**。评审已核实**今天一处都没踩**（`admin-ui/js/` 下
+   * `querySelectorAll` 的 6 处全是 `for…of`、`.children` 的 1 处也是 `for…of`），
+   * 所以这是**补护栏缺口，不是修活缺陷**。
+   *
+   * **真实 DOM 上到底有什么，我拿真浏览器（Chromium）逐个 `typeof` 探过，
+   * 不是从记忆里写的**：
+   * · `NodeList`（`querySelectorAll` 的返回值）：有 `forEach`/`entries`/`keys`/`values`/
+   *   `item`/`length`/`Symbol.iterator`；**没有** `map`/`filter`/`find`/`findIndex`/
+   *   `some`/`every`/`reduce`/`reduceRight`/`slice`/`sort`/`flatMap`/`indexOf`/
+   *   `includes`/`concat`/`join`/`at`/`reverse`/`push`/`pop`/`shift`/`splice`。
+   * · `HTMLCollection`（`.children`）：**只有** `item`/`length`/`Symbol.iterator`
+   *   —— 连 `forEach`/`entries`/`keys`/`values` 都没有。
+   * ⇒ 所以两条正则的词表**不一样**：`forEach` 只在 `.children` 那一条里算违规。
+   *
+   * 而 `tests/helpers/fake-dom.ts` 两处都返回**原生数组**
+   *（`querySelectorAll(): FakeElement[]`、`readonly children: FakeElement[]`），
+   * 数组方法一个不缺 ⇒ 所有 DOM 用例都会绿，只有真机浏览器才会炸。
+   */
+  {
+    // 形如 `x.querySelectorAll(".a").map(…)`。允许跨行（`\s*`），
+    // 括号内不许再出现 `)`（选择器是字面量字符串，够用；嵌套调用不在覆盖内，
+    // 这条边界记在下面的 KNOWN_BLIND_SPOTS 里）。
+    pattern: /querySelectorAll\([^)]*\)\s*\.\s*(?:map|filter|find|findIndex|some|every|reduce|reduceRight|slice|sort|flatMap|indexOf|includes|concat|join|at|reverse|push|pop|shift|splice)\b/g,
+    label: "querySelectorAll()",
+    fixtureName: "querySelectorAll",
+    why: "方法名是真的，返回值类型不是：真实 DOM 回的是 NodeList，"
+      + "真机 Chromium 上逐个 typeof 探过——它只有 forEach/entries/keys/values/item/length，"
+      + "map/filter/find/slice/sort 这些数组方法一个都没有（forEach 有，所以不在这条词表里）。"
+      + "FakeElement 却回一个原生数组 ⇒ 写成 .map(…) 时全套 DOM 用例照绿、真机 TypeError。"
+      + "要转成数组请显式写 Array.from(...) 或 [...nodeList]。",
+  },
+  {
+    // 形如 `node.children.map(…)`。`\b` 排除 `.childrenFoo`。
+    // ⚠️ `forEach` **在这一条里算违规**：HTMLCollection 连 forEach 都没有。
+    pattern: /\.children\s*\.\s*(?:map|filter|find|findIndex|some|every|forEach|reduce|reduceRight|slice|sort|flatMap|indexOf|includes|concat|join|at|entries|keys|values|reverse|push|pop|shift|splice)\b/g,
+    label: ".children",
+    fixtureName: "children",
+    why: "属性名是真的，返回值类型不是：真实 DOM 回的是 HTMLCollection，"
+      + "真机 Chromium 上逐个 typeof 探过——它只有 item/length 和 Symbol.iterator，"
+      + "连 forEach/entries/keys/values 都没有，更没有 map/filter/find。"
+      + "FakeElement 却把它做成原生数组 ⇒ 同上，只有真机才会炸。"
+      + "for…of 是安全的（HTMLCollection 可迭代），要数组请显式 Array.from(...)。",
+  },
 ];
 
 /**
  * **这道门禁明写自己拦不住什么**——按名字扫描的天生盲区，全部记在这里，
  * 不假装"扫描绿了就等于替身与真实 DOM 处处一致"：
  *
- * · `querySelectorAll()` / `children`：**方法名和属性名都是真的**，但
- *   `FakeElement` 让它们返回原生数组（带 `.map`/`.find`/`.filter`），真实 DOM
- *   返回的是 `NodeList` / `HTMLCollection`（没有这些数组方法）。板块代码今天
- *   没有对这两者的返回值调用数组方法，但这道门禁**没有能力**验证"以后也不会"
- *   ——按名字扫描只能确认"用没用这个名字"，确认不了"返回值当成了什么类型来用"。
+ * · `querySelectorAll()` / `children` 的返回值**被存进变量之后**再调数组方法：
+ *   上面那两条形态正则要求「调用/属性紧跟着 `.map(`」，所以
+ *   `const els = root.querySelectorAll(".a"); els.map(…)` **它抓不到**，
+ *   `foo(root.children)` 之后在 `foo` 里调数组方法同样抓不到。
+ *   ⚠️ 这条不再是"整类盲区"，只是"这一类里的间接写法"——直接写法已经被扫描覆盖，
+ *   而账本点名的那两个「最自然的写法」正是直接写法。
  * · `submit()`：名字是真的（`HTMLFormElement.prototype.submit` 确实存在），
  *   但语义相反——真实浏览器的 `.submit()` **不会**派发 `submit` 事件，
  *   `FakeElement.submit()` 会。名字匹配拦不住语义不匹配。
@@ -97,7 +158,7 @@ const FAKE_ONLY_MEMBERS: Array<{ pattern: RegExp; label: string; why: string }> 
  * 这几条今天没有对应的自动化门禁，需要代码评审 + `wrangler dev` 真机冒烟兜底。
  */
 const KNOWN_BLIND_SPOTS = [
-  "querySelectorAll()/children 返回真数组而不是 NodeList/HTMLCollection",
+  "querySelectorAll()/children 的返回值先存进变量或传进函数之后再调数组方法（直接写法已被扫描覆盖）",
   "submit() 语义相反（真实 DOM 不派发 submit 事件，夹具会）",
   ".disabled 在夹具里挂在每个元素上，真实 DOM 只有表单控件才有",
 ];
@@ -124,8 +185,8 @@ describe("复评必改④：替身能力扫描——发货代码不许用到 fak
   it("反向自检：清单本身不是空的，且能在夹具源码里找到这些名字（否则清单本身就是废的）", () => {
     const fixtureSrc = readFileSync("tests/helpers/fake-dom.ts", "utf8");
     expect(FAKE_ONLY_MEMBERS.length).toBeGreaterThan(3);
-    for (const { label } of FAKE_ONLY_MEMBERS) {
-      const bareName = label.replace(/^\.|\(\)$/g, "").replace(/^classList\./, "");
+    for (const { label, fixtureName } of FAKE_ONLY_MEMBERS) {
+      const bareName = fixtureName ?? label.replace(/^\.|\(\)$/g, "").replace(/^classList\./, "");
       expect(fixtureSrc.includes(bareName), `${label} 在 fake-dom.ts 里都找不到，这条清单项是不是写错了`).toBe(true);
     }
   });
