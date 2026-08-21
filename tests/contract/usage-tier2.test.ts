@@ -69,6 +69,16 @@ class UsagePutCounter implements Storage {
   allPuts = 0;
   /** 置真之后每一次 put 都**真的 throw**（第 2 种假阳性：stub 从不真抛）。 */
   putFails = false;
+  /**
+   * **非 `usage:` 的存储操作里，此刻还有几个没返回。**
+   *
+   * ⚠️ **它是「链上其它挂起点跑完了没有」的事件驱动信号**（定向复评 N6）：
+   * 上一版那格时序用例靠「50 轮宏任务 + 一次 20ms」去等，**那不是摆脱了时序依赖，
+   * 只是把阈值从约 1 毫秒抬到了约 70 毫秒** —— 把 `MemoryStorage` 的 `delayMs`
+   * 调到 200，那条 fire-and-forget 变异就又逃逸了，**我点名要消灭的失效形态原样保留**。
+   * 数在途数之后，判据变成「等到它归零并稳住」，**与任何一个挂起点有多长无关**。
+   */
+  otherInFlight = 0;
   /** 最近一次 put 收到的 `expiresAt`（`undefined` = 调用方压根没传第三参）。 */
   lastExpiresAt: number | undefined;
   /**
@@ -83,23 +93,33 @@ class UsagePutCounter implements Storage {
    * 它会静默退回第 9 种假阳性**。
    *
    * 闸门没有这个问题：正确实现（`await flush()`）**在闸门放开之前永远回不了响应**，
-   * 所以用例想等多久都行——等得越久结论越强；而 fire-and-forget 的实现会**立刻**
-   * 返回响应。判别力来自「有没有被挡住」，不是「谁比谁快」。
+   * 所以用例想等多久都行——等得越久结论越强；而 fire-and-forget 的实现**不会被闸门挡住**
+   *（它照样要等完链上其它挂起点，所以**不是「立刻」返回**——上一版这里写的正是「立刻」，
+   * 而 `delayMs = 200` 时它要等 `logFlush` 跑完才返回，那句话是假的）。
+   * 判别力来自「有没有被闸门挡住」，不是「谁比谁快」；
+   * 「其它挂起点跑完了没有」由 `otherInFlight` 事件驱动地判，不数毫秒。
    */
   usagePutGate: (() => Promise<void>) | null = null;
   constructor(readonly inner: Storage) {}
-  async get<T>(k: string): Promise<T | null> { return this.inner.get<T>(k); }
+  async get<T>(k: string): Promise<T | null> {
+    this.otherInFlight++;
+    try { return await this.inner.get<T>(k); } finally { this.otherInFlight--; }
+  }
   async put<T>(k: string, v: T, expiresAt?: number): Promise<void> {
     const isUsage = k.startsWith("usage:");
     this.allPuts++;
     if (isUsage) { this.usagePuts.push(k); this.lastExpiresAt = expiresAt; }
     if (this.putFails) throw new Error("write quota exhausted");
     if (isUsage && this.usagePutGate !== null) await this.usagePutGate();
-    await this.inner.put(k, v, expiresAt);
+    if (!isUsage) this.otherInFlight++;
+    try { await this.inner.put(k, v, expiresAt); } finally { if (!isUsage) this.otherInFlight--; }
     if (isUsage) this.usagePutsDone++;
   }
   async delete(k: string): Promise<void> { return this.inner.delete(k); }
-  async list(p: string): Promise<string[]> { return this.inner.list(p); }
+  async list(p: string): Promise<string[]> {
+    this.otherInFlight++;
+    try { return await this.inner.list(p); } finally { this.otherInFlight--; }
+  }
 }
 
 /**
@@ -226,10 +246,17 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
       return r;
     })();
 
-    // **等多久都行，等得越久结论越强**：正确实现在闸门放开之前永远回不了响应。
-    // 这里刻意等到「链上任何顺带的 I/O 都早已跑完」为止（50 轮宏任务 + 一次 20ms）。
-    for (let i = 0; i < 50; i++) await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 20));
+    // ★ **等到链上其它挂起点确证跑完，而不是数毫秒**（定向复评 N6）。
+    // 判据：非 `usage:` 的存储操作在途数归零，**并且连续若干轮都还是零**（静默）。
+    // 这与任何一个挂起点有多长完全无关——把 `MemoryStorage` 的 `delayMs` 调到
+    // 200 也好 2000 也好，这个循环会一直等到它们真的结清为止。
+    // 正确实现在闸门放开之前永远回不了响应，所以等得越久这条断言越强。
+    let quiet = 0;
+    for (let i = 0; i < 5000 && quiet < 5; i++) {
+      await new Promise((r) => setTimeout(r, 0));
+      quiet = g.storage.otherInFlight === 0 ? quiet + 1 : 0;
+    }
+    expect(g.storage.otherInFlight, "链上其它存储操作没有结清，下面那条断言等早了").toBe(0);
 
     expect(
       responded,
@@ -725,6 +752,150 @@ describe("UsageSink 的落盘契约", () => {
   });
 
   /**
+   * **`record()` 与落盘的 `await` 重叠时，那一条计数不许丢**（定向复评 N3）。
+   *
+   * `maybeFlush()` 挂在 `await put` 上的那段时间里，`record()` 照样在跑（同一个
+   * isolate 里的另一个并发请求）。发起写之前那道间隔闸只挡得住 **flush 与 flush**
+   * 的重叠；**record 与 flush 的重叠**要靠「快照 + 版本比对」。
+   *
+   * 少了它，两种形态都坏，而且都很难从面板上看出来：
+   * · KV（`JSON.stringify` 在 await 前同步求值）⇒ 那一条**永久消失**：
+   *   落盘里没有它、`dirty` 又被清了 ⇒ 再过一整个间隔重跑 flush 仍然只有 1 次 put，
+   *   而 `status()` 报 `pending: 0`（「没有未落盘的尾巴」）；
+   * · 文件存储 / 延迟序列化 ⇒ 它蹭进了 `hours`/`byModel`/`byProtocol` 而 `total` 是旧的
+   *   ⇒ **落盘的分片自己和自己对不上**。
+   */
+  it("落盘挂起期间到达的那一条计数不许丢：写第一条的 await 还没回来时又来一条，那一天必须仍然是脏的，下一轮把两条一起写出去，且落下去的分片自己和自己对得上", async () => {
+    let t = DAY0_MS;
+    const storage = new UsagePutCounter(new MemoryStorage(undefined, () => t));
+    const sink = new UsageSink({ storage, now: () => t, shardId: SHARD, onError: () => {} });
+    const one = (protocol: string) => sink.record({
+      protocol, model: "m", ok: true, stream: false, latencyMs: 1, tokensIn: 0, tokensOut: 0,
+    });
+
+    one("openai");                       // alpha
+    t += USAGE_FLUSH_MIN_INTERVAL_MS + 1;
+
+    // 把这次写卡在闸门上，**在它挂起期间**再记一条。
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let entered!: () => void;
+    const enteredP = new Promise<void>((r) => { entered = r; });
+    storage.usagePutGate = () => { entered(); return gate; };
+
+    const flushing = sink.maybeFlush();
+    await enteredP;                      // 确证已经挂在写上了（事件驱动，不是等毫秒）
+    one("anthropic");                    // ★ beta：await 期间到达
+    release();
+    await flushing;
+
+    // ① 落下去的那一份**自己和自己对得上**（快照的作用）。
+    const first = (await storage.get<UsageDayShard>(KEY_DAY0))!;
+    expect(
+      { total: first.total.requests, byProtocol: Object.keys(first.byProtocol).sort() },
+      "落下去的分片自相矛盾 —— total 是旧的而 byProtocol 蹭进了 await 期间那一条",
+    ).toEqual({ total: 1, byProtocol: ["openai"] });
+
+    // ② 那一天**必须还是脏的**，`pending` 也不许归零（版本比对的作用）。
+    expect(
+      sink.status().pending,
+      "await 期间到达的那一条被当成已落盘了 —— 它既不在分片里、也不会被下一轮补上",
+    ).toBe(2);
+
+    // ③ 下一轮把两条一起写出去。
+    t += USAGE_FLUSH_MIN_INTERVAL_MS + 1;
+    await sink.maybeFlush();
+    expect(storage.usagePuts.length, "第二轮应当真的又写了一次").toBe(2);
+    const second = (await storage.get<UsageDayShard>(KEY_DAY0))!;
+    // 手写字面量：2 条、两条协议各一。
+    expect(
+      { total: second.total.requests, byProtocol: Object.keys(second.byProtocol).sort() },
+      "下一轮没有把 await 期间那一条补上 —— 它永久消失了",
+    ).toEqual({ total: 2, byProtocol: ["anthropic", "openai"] });
+  });
+
+  /**
+   * **`model` 不是字符串时不许把网关打成 500**（定向复评 N1，本轮引入的缺陷）。
+   *
+   * 请求体的类型是**纯编译期**的（`c.req.json<T>()`），运行时什么都可能来。
+   * `boundUsageKey()` 里那个 `raw.slice(...)` 对 `123` / `{}` / `true` 直接抛，
+   * 而 `record()` 一路**没有 try/catch** ⇒ 打开统计就等于给网关多出一条
+   * **普通客户端就能触发**的 500。
+   *
+   * ⚠️ **`[1,2]` 必须一起测**：数组恰好有 `.slice`，是这一族里唯一侥幸不抛的，
+   * 只挑它做样本的话这条变异不可观测（第 5 种假阳性）。
+   */
+  it("model 不是字符串时不许把网关打成 500：123 / 对象 / 布尔 / 数组四种都要照常记账，键退化成它们的字符串形式", async () => {
+    const r = rig();
+    for (const bad of [123, { a: 1 }, true, [1, 2]] as unknown[]) {
+      expect(
+        () => r.sink.record({
+          protocol: "openai", model: bad as string, ok: true, stream: false,
+          latencyMs: 1, tokensIn: 0, tokensOut: 0,
+        }),
+        `model = ${JSON.stringify(bad)} 把 record() 打抛了 —— 而 record() 一路没有 try/catch`,
+      ).not.toThrow();
+    }
+    r.pastInterval();
+    await r.sink.maybeFlush();
+    const shard = (await r.storage.get<UsageDayShard>(KEY_DAY0))!;
+    // 手写字面量：四条各自的字符串形式，一条都不许丢。
+    expect(Object.keys(shard.byModel).sort()).toEqual(["1,2", "123", "[object Object]", "true"]);
+    expect(shard.total.requests).toBe(4);
+  });
+
+  /**
+   * **满桶之后，已经存在的键仍然认得出来**（定向复评 N4）。
+   *
+   * ⚠️ **这一格是补上来的，因为上一版那个上界用例钉不住它**：那里 200 个模型名
+   * **各只出现一次**，满桶之后从不复用旧键 ⇒ 把 `boundUsageKey()` 里那句
+   * `hasOwnProperty` 早返回删掉，**全量 2182 全绿**。
+   * 而它防的是一条真危害：同一个模型会因为 map 满了而在两次请求之间被分到
+   * 两个不同的格子，**计数直接错位**。
+   */
+  it("满桶之后再打一次早期的模型名，它仍然进自己那一格 —— 而不是被并进 __other__", async () => {
+    const r = rig();
+    for (let i = 0; i < 40; i++) r.one({ model: `m${i}` });   // 40 > 32，桶已经满了
+    r.one({ model: "m0" });                                    // ★ 再打一次最早那个
+    r.pastInterval();
+    await r.sink.maybeFlush();
+    const shard = (await r.storage.get<UsageDayShard>(KEY_DAY0))!;
+    // 手写字面量 2：删掉那句早返回之后这里会是 1（第二次被并进了 __other__）。
+    expect(
+      shard.byModel["m0"]!.requests,
+      "满桶之后同一个模型被分到了另一个格子 —— 它的计数从此错位",
+    ).toBe(2);
+  });
+
+  /**
+   * **预算在发起写之前就扣，失败不回滚**（定向复评 N5）。
+   *
+   * ⚠️ **这一格是补上来的**：上一版把 `consume()` 原样挪回 `await` 之后
+   *（只留 `lastFlushAt` 在前面）⇒ **全量 2182 全绿**，预算那一半根本没被钉住。
+   * 而「失败会白扣一格」正是 `maybeFlush()` 注释里写着的那条代价——
+   * 一条写下来的代价必须有一格看得见它。
+   */
+  it("落盘失败也照样扣掉那一格预算：预算是在发起写之前扣的，失败不回滚 —— 回滚等于让一个正在故障的存储无限重试", async () => {
+    const r = rig();
+    // 先把预算用掉 12 格（12 个待落盘的日，一次写完）。
+    for (let i = 0; i < 12; i++) { r.one(); r.advance(DAY_MS); }
+    r.pastInterval();
+    await r.sink.maybeFlush();
+    expect(r.storage.usagePuts.length, "夹具前提：这一次写满 12 个键").toBe(12);
+    expect(r.sink.status().budgetExhausted, "夹具前提：12 格时还没耗尽").toBe(false);
+
+    // 第 13 次写**失败**。预算仍然要被扣掉 ⇒ 当天从此耗尽。
+    r.storage.putFails = true;
+    r.one();
+    r.pastInterval();
+    await r.sink.maybeFlush();
+    expect(
+      r.sink.status().budgetExhausted,
+      "落盘失败之后预算没被扣 —— 预算是在 await 之后才扣的，一个一直失败的存储可以无限重试",
+    ).toBe(true);
+  });
+
+  /**
    * **没有未落盘增量时是 no-op，一次写都不产生**（设计 §7.1 原话）。
    *
    * 少了这一条，一个开着 Tier-2 但**零流量**的部署每 2 小时照样写一次盘
@@ -796,6 +967,24 @@ describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 run
       .toEqual({ flushIntervalMs: 300_000, budgetPerDay: null });
   });
 
+  /**
+   * **空串与「没设」同等对待**（定向复评 N2，本轮引入的缺陷）。
+   *
+   * `.env.example` 是给 `cp .env.example .env` + `docker-compose` 的 `env_file:` 直接用的，
+   * 一个留空的键会以**空字符串**（不是 unset）进到环境里。`Number("") = 0` 过不了
+   * 「不小于 1 的整数」这一关 ⇒ **全新的 Docker 部署直接起不来**。
+   * 本仓那份文件里另外 9 个留空项全部容忍空串，这一个不该是例外。
+   */
+  it("USAGE_FLUSH_INTERVAL_MS= （空串）与没设它完全一样 —— .env.example 里留空的键是以空字符串进环境的，抛的话全新 Docker 部署直接起不来", () => {
+    // 手写字面量，两种存储形态各一次；与「没设」逐字相同。
+    expect(resolveUsageFlushInterval("", true))
+      .toEqual({ flushIntervalMs: 7_200_000, budgetPerDay: 13 });
+    expect(resolveUsageFlushInterval("", false))
+      .toEqual({ flushIntervalMs: 7_200_000, budgetPerDay: null });
+    // 走真装配再验一遍：空串不许让 buildApp 抛。
+    expect(resolveUsageFlushInterval("", true)).toEqual(resolveUsageFlushInterval(undefined, true));
+  });
+
   /** 环境变量的非法值继续 fail-fast：部署时错误，运维必须立刻看得见。 */
   it("非法值一律抛，不降级：abc / 0 / -1 / 1.5 四种写法都要被拒", () => {
     for (const bad of ["abc", "0", "-1", "1.5"]) {
@@ -841,6 +1030,14 @@ describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 run
    * 这里用 `nodeRuntime()`（`quotaModel: "file"` ⇒ 没有写配额）才调得动 300 秒，
    * **而这正是那条判据的意思**：能不能调小取决于存储有没有写配额。
    */
+  it("空串走 buildApp 也不许抛：模拟 `cp .env.example .env` 之后那份配置", async () => {
+    const { app } = await buildApp(
+      { GATEWAY_TOKEN: "t", USAGE_FLUSH_INTERVAL_MS: "" },
+      new UsagePutCounter(new MemoryStorage()), workerRuntime(), { newShardId: () => SHARD },
+    );
+    expect((await app.request("/health")).status, "全新部署起不来了").toBe(200);
+  });
+
   it("走 buildApp 的接线证据：USAGE_FLUSH_INTERVAL_MS 同时改变了落盘节奏与 capabilities 报出去的那个数", async () => {
     let t = DAY0_MS;
     const storage = new UsagePutCounter(new MemoryStorage(1, () => t));

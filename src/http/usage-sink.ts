@@ -73,14 +73,28 @@ export interface UsageRecording {
  * ── 为什么判据是「存储能力」而不是「在哪个运行时上跑」 ──────────────────────
  * ⚠️ **这不是运行时嗅探。** 入参 `hasWriteQuota` 的唯一来源是
  * `RuntimeInfo.quotaModel`（`src/ports/runtime.ts` 明写「KV 有四个每天的配额桶；
- * 文件存储没有配额」），也就是本仓**双运行时差异的唯一注入点**；面板那一侧读的同样是
- * `GET /admin/api/capabilities` 的 `quota.model`，**不是 `runtime.name`**。
- * 与 `POOL_CACHE_TTL_MS` 完全同构：那个值也只在 KV 形态下要紧，
- * 而它同样不按运行时分叉。
+ * 文件存储没有配额」）。`RuntimeInfo` 是本仓**双运行时差异的唯一注入点**，
+ * `quotaModel` 是它里面的一格——**不是说这个接口里只有这一格**（同一个接口里还有
+ * `name` 与 `storageBackend`；上一版把「唯一注入点」写到了 `quotaModel` 头上，
+ * 而下半句又拿 `runtime.name` 当被否掉的替代方案点名，两句话互相矛盾，定向复评 F6）。
+ * 面板那一侧读的同样是 `GET /admin/api/capabilities` 的 `quota.model`，**不是 `runtime.name`**。
  *
- * **默认值两种形态逐字相同**（`USAGE_FLUSH_MIN_INTERVAL_MS`，且都带 `USAGE_WRITES_PER_DAY`
- * 那道闸）⇒ 没设这个环境变量的部署，两边行为一个字节都不差。分叉只发生在
- * **运维显式设了它**的时候，那是一次知情选择。
+ * ⚠️ **与 `POOL_CACHE_TTL_MS` 只在一点上同构，别读成「完全同构」**（定向复评 F7）：
+ * 同构的那一点是「这个值只在 KV 形态下要紧，而它不按运行时分叉」。
+ * **在配置面上两者完全不同**：那个值走 `num()`、进 `DEFAULTS`、进 `ENV_LOCK_MAP`、
+ * 进 `config-validate`，因此出现在 `GET /admin/api/config` 的四元组里；
+ * 而 `USAGE_FLUSH_INTERVAL_MS` **一个都没进**，全仓只在 `src/http/wire.ts` 裸读一次。
+ * 那个取舍与它的代价记在下面「为什么它不走 config-provenance」那一段。
+ *
+ * ⚠️ **「默认值相同」说的就只是默认值，不是「两边行为一个字节都不差」**
+ *（定向复评 F1，上一版那句是假的，而且**被同一个提交里自己写的用例正面证伪**——
+ * 「budgetPerDay 真的接到了 sink 上」那一格断言的正是 20 vs 13）：
+ * 没设这个环境变量时，两种形态的**落盘间隔**逐字相同（`USAGE_FLUSH_MIN_INTERVAL_MS`），
+ * 但**预算那道闸本来就只有「有写配额」的一侧才有** —— 同样 20 个待落盘的日、
+ * 同样一次 flush，文件存储写 20 个键、KV 写 13 个。
+ * **那不是分叉，那就是这个设计本身**：闸是为写配额存在的，没有配额的一侧没有它可守。
+ * 分叉的判据是**存储能力**（`quotaModel`），不是运行时；而「不做运行时嗅探」这条
+ * 由此被遵守——`.env.example` 里那句只说「默认值相同」，照它的口径来。
  *
  * ── 两侧各自的规则 ───────────────────────────────────────────────────────
  * · **没有写配额**（FileStorage / Docker）：任意正整数放行，**并且不设每天的写预算**
@@ -95,13 +109,38 @@ export interface UsageRecording {
  * ⚠️ **非法值一律抛，不降级**：这是部署时错误，运维必须立刻看得见，
  * 而且它不可能是面板写坏的（面板永远碰不到环境变量）——与 `num()` 对
  * 环境变量那一支的处置逐字相同。
+ *
+ * ── 为什么它不走 config-provenance（定向复评 N7 要求把这个决定和代价写下来）──────
+ * `USAGE_FLUSH_INTERVAL_MS` **只从环境变量读，一个字都不从存储读**，因此它
+ * 不进 `GatewayConfig`、不进 `FIELD_EXPOSURE`、不进 `ENV_LOCK_MAP`、不进 `EDITABLE`，
+ * 也就不出现在 `GET /admin/api/config` 的四元组里。**判据沿用上一轮 U-C 那一整节，
+ * 结论相反，因为前提不同**：
+ * · `usageStatsEnabled` 进 `ENV_LOCK_MAP` 的理由是**它存储里就能改** ⇒ 不进表的话
+ *   四元组会自相矛盾（`stored: true` / `env: null` / `effective: false`），那是撒谎；
+ * · 这一个**存储里根本改不了** ⇒ **没有 `stored` 这一格可以撒谎**，
+ *   四元组不存在，也就不存在「面板改了不生效」这个形态。
+ *   与 `ADMIN_TOKEN` / `TRUST_PROXY` / `RESET_CONFIG` 同一类：env-only，不进配置面。
+ *
+ * **代价，明写两条**：
+ * ① 运维在面板上**看不到**这个旋钮当前是多少——缓解是 `GET /admin/api/capabilities`
+ *    的 `stats.flushIntervalMs` 报的就是**生效值**（面板据它算「尾巴最长多久」），
+ *    所以「现在生效的是几」在面板上答得出来，只是不在设置页那张表里；
+ * ② 哪天有人想让它可存储 / 可编辑，**必须同时补齐 `ENV_LOCK_MAP` 那一行**，
+ *    否则立刻掉进上面第一条描述的那个四元组撒谎形态。这句话没有机器守着，
+ *    只能靠评审——**所以它写在这里，不写在报告里**。
  */
 export function resolveUsageFlushInterval(
   raw: string | undefined,
   hasWriteQuota: boolean,
 ): { flushIntervalMs: number; budgetPerDay: number | null } {
   const budgetPerDay = hasWriteQuota ? USAGE_WRITES_PER_DAY : null;
-  if (raw === undefined) {
+  // ⚠️ **空串与「没设」同等对待**（定向复评 N2）。理由**不是**「迁就一个坏值」，
+  // 而是与 `.env.example` 其余 9 个留空项的既有约定一致：那份文件是给
+  // `cp .env.example .env` + `env_file:` 直接用的，一个留空的键会以**空字符串**
+  // （不是 unset）进到环境里，而本仓其余每一个留空项都容忍它。
+  // 少了这一行，`USAGE_FLUSH_INTERVAL_MS=` 会走进下面的 `Number("") = 0` 而抛，
+  // **全新的 Docker 部署直接起不来**——那是本仓唯一一个被喂给严格整数校验器的空值项。
+  if (raw === undefined || raw === "") {
     return { flushIntervalMs: USAGE_FLUSH_MIN_INTERVAL_MS, budgetPerDay };
   }
   const n = Number(raw);
@@ -188,6 +227,20 @@ export class UsageSink {
   private readonly days = new Map<number, DayAcc>();
   /** 有未落盘增量的日序号。落盘成功一个就删一个。 */
   private readonly dirty = new Set<number>();
+  /**
+   * UTC 日序号 → 这一天被 `record()` 改过多少次。**只用来判「我发起写的那一刻之后，
+   * 有没有新的增量进来」**（定向复评 N3），不参与任何计数。
+   *
+   * ⚠️ **为什么非有它不可**：`maybeFlush()` 在 `await put` 上挂起期间，`record()`
+   * 照样在跑（同一个 isolate 里的另一个并发请求）。挂起之前那道间隔闸只挡得住
+   * **flush 与 flush** 的重叠，**挡不住 record 与 flush 的重叠** —— 而后者会让
+   * `await` 之后那句 `dirty.delete(day)` 把**这期间新到的增量**的脏标记一起清掉：
+   * 那条计数从此既不在已落盘的分片里、也不会被下一轮补上，**永久消失**，
+   * 而 `status()` 会报 `pending: 0`（「没有未落盘的尾巴」）。
+   * 由 `tests/contract/usage-tier2.test.ts` 的
+   * 「落盘挂起期间到达的那一条计数不许丢……」钉着。
+   */
+  private readonly version = new Map<number, number>();
   private pending = 0;
   private lastFlushAt: number;
   private budget: WriteBudget = FRESH_BUDGET;
@@ -234,7 +287,11 @@ export class UsageSink {
     this.slot = usageSlotOf(o.shardId);
     this.lastFlushAt = o.now();
     this.intervalMs = o.flushIntervalMs ?? USAGE_FLUSH_MIN_INTERVAL_MS;
-    // `?? ` 而不是 `||`：`null` 是一个有意义的取值（没有闸），不能被下坠成默认值。
+    // ⚠️ **判据必须是 `=== undefined`，不能写成 `??`**（定向复评 F8：上一版这句注释
+    // 写的是「`??` 而不是 `||`」，而代码用的正是 `=== undefined`——**照那句注释的字面
+    // 去改就会踩雷**：`null` 在 `??` 下会被下坠成默认值，而 `null` 恰恰是一个有意义的
+    // 取值（「没有闸」，给没有写配额的存储）。三者要分清：`||` 连 `0` 都吃掉，
+    // `??` 吃掉 `null`，只有 `=== undefined` 恰好只认「没传」。）
     this.budgetPerDay = o.budgetPerDay === undefined ? USAGE_WRITES_PER_DAY : o.budgetPerDay;
   }
 
@@ -256,6 +313,7 @@ export class UsageSink {
     acc.byProtocol[u.protocol] = addToBucket(acc.byProtocol[u.protocol] ?? emptyBucket(), arg);
     this.days.set(day, acc);
     this.dirty.add(day);
+    this.version.set(day, (this.version.get(day) ?? 0) + 1);
     this.pending++;
   }
 
@@ -326,7 +384,9 @@ export class UsageSink {
     // `since < 0` = 时钟回拨：立刻恢复，与本仓其余四处同一套语义。
     if (since >= 0 && since < this.intervalMs) return;
     // ★ **在任何 `await` 之前就把闸关上**（评审 C1）。到这一行为止全都是同步代码，
-    // 所以后来的并发调用一定会在上面那道间隔闸前掉头，不会与本次重叠。
+    // 所以后来的并发 **flush** 一定会在上面那道间隔闸前掉头，不会与本次重叠。
+    // ⚠️ **它只挡 flush 与 flush，挡不住 `record()` 与 flush 的重叠**（定向复评 N3）——
+    // 那一半由循环体里的「快照 + 版本比对」负责，两者合起来才是完整的。
     this.lastFlushAt = at;
 
     // 从最早的那天开始写：预算不够时先落旧的，新的那天下一轮还有机会。
@@ -335,9 +395,20 @@ export class UsageSink {
       if (this.budgetPerDay !== null && !canWrite(this.budget, at, this.budgetPerDay)) break;
       const acc = this.days.get(day);
       if (!acc) { this.dirty.delete(day); continue; }
+      // ★ **发起写之前先取一份快照**（定向复评 N3）。
+      // 三个 record 都要浅拷：`record()` 往它们里面**赋新键**（`acc.hours[h] = …`），
+      // 而 `acc.total` 是整体重新赋值的。不拷的话，`await` 期间到达的那一条会
+      // **只蹭进 `hours`/`byModel`/`byProtocol` 而不进 `total`**
+      //（KV 那边 `JSON.stringify` 在 await 前同步求值，则是干脆整条丢掉）
+      // ⇒ 落下去的分片**自己和自己对不上**：`total.requests = 1` 而
+      // `byProtocol.openai.requests = 2`。
+      // **浅拷就够**：桶对象本身从不被原地改（`addToBucket` 是纯函数，每次返回新对象），
+      // 变的只是这三个 map 里的引用。
+      const version = this.version.get(day) ?? 0;
       const shard: UsageDayShard = {
         shardId: this.o.shardId, day, updatedAt: at,
-        total: acc.total, hours: acc.hours, byModel: acc.byModel, byProtocol: acc.byProtocol,
+        total: acc.total,
+        hours: { ...acc.hours }, byModel: { ...acc.byModel }, byProtocol: { ...acc.byProtocol },
       };
       // ★ 预算同样**在发起写之前**扣，理由同上（失败不回滚）。
       this.budget = consume(this.budget, at);
@@ -350,7 +421,10 @@ export class UsageSink {
         this.o.onError(err);
         break;
       }
-      this.dirty.delete(day);
+      // ★ **只清「我发起写的那一刻的那个版本」**（定向复评 N3）：`await` 期间若有
+      // 新的 `record()` 落在同一天，版本号已经变了 ⇒ 这一天**继续留在 `dirty` 里**，
+      // 下一轮把它整份重写一遍（那个键是覆写的，所以补一遍就是对的）。
+      if ((this.version.get(day) ?? 0) === version) this.dirty.delete(day);
       // ⚠️ **`days` 里那一天的累加器不清零**：它是「这一天的累计值」，
       // 同一天的下一次落盘要把它整份再写一遍（覆写同一个键）。
       // **只有 `dirty` 被清**，它表示的是「有没有新增量要落」。

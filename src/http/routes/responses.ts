@@ -22,7 +22,8 @@ export function responsesRoutes(deps: DispatchDeps & UsageRecording): Hono {
     // 里同位置那段（三条协议这一段是逐字同构的，那里写一遍就够）。
     const latencyMs = deps.now() - startedAt;
     const record = (tokensIn: number, tokensOut: number) => recordUsage(deps, {
-      protocol: "responses", model: req.model ?? "",
+      // 同 `routes/anthropic.ts`：请求体的类型是编译期的，运行时什么都可能来（N1）。
+      protocol: "responses", model: String(req.model ?? ""),
       ok: res.ok, stream: internal.stream, latencyMs, tokensIn, tokensOut,
     });
 

@@ -210,9 +210,13 @@ export function createApp(deps: AppDeps): Hono {
   // ⚠️ **别把「注册在后面」读成「落盘在后面」**：中间件的收尾段是**由内向外**跑的，
   // 注册得越晚，`await next()` 之后那一半反而越早执行 ⇒ 今天是**用量先落、事件后落**。
   // 本任务实测吃过这个亏：一条「用量 flush 没 await」的变异之所以逃逸，正是因为
-  // 紧随其后的事件 flush 那次存储 I/O 顺手把它带完了（现在那一格靠一个足够长的
-  // 挂起点摆脱了对排序的依赖，见 `tests/contract/usage-tier2.test.ts` 的
-  // 「落盘在响应返回之前就完成：把那次写卡在闸门上，响应就出不来 ——……」）。
+  // 紧随其后的事件 flush 那次存储 I/O 顺手把它带完了。**现在那一格靠的是一道
+  // 由用例亲手放开的闸门 + 一个「其它挂起点是否已结清」的事件驱动信号**，
+  // 与谁先谁后、与任何一个挂起点有多长都无关
+  //（上一版这里写的是「靠一个足够长的挂起点」，那是 m4 改掉之前的机制，
+  // 而紧挨着的下一行锚已经换成了闸门那一格——两行自相矛盾，定向复评 F2）。
+  // 见 `tests/contract/usage-tier2.test.ts` 的
+  // 「落盘在响应返回之前就完成：把那次写卡在闸门上，响应就出不来 ——……」。
   const usageSink = deps.usageSink;
   if (usageSink !== undefined) app.use("*", usageFlush(() => usageSink.maybeFlush()));
 

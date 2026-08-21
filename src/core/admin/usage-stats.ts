@@ -191,12 +191,22 @@ export const USAGE_WRITES_PER_DAY = 13;
  * · **有写配额的存储**（KV / Worker）：预算恒为 `USAGE_WRITES_PER_DAY`，
  *   而间隔必须满足下面那条乘法关系，破了就**启动即抛**并给出最小可用值。
  *
- * ⚠️ **这不是运行时嗅探**：判据是**存储有没有写配额**（`RuntimeInfo.quotaModel`，
- * 本仓双运行时差异的唯一注入点），不是 `runtime.name`；而且**默认值两种形态逐字相同**
- * ——没设这个环境变量的部署，两边行为一个字节都不差，分叉只发生在运维显式设了它的时候。
- * 与 `POOL_CACHE_TTL_MS` 完全同构（那个值同样只在 KV 形态下要紧，`.env.example:30`
- * 那一行的小节标题逐字写着「Cloudflare Worker + KV 免费档才需要关心」，
- * 而它也不按运行时分叉）。
+ * ⚠️ **这不是运行时嗅探**：判据是**存储有没有写配额**（`RuntimeInfo` 的 `quotaModel`
+ * 那一格——`RuntimeInfo` 是本仓双运行时差异的唯一注入点，`quotaModel` 是它里面的一格，
+ * 不是说这个接口只有这一格），不是 `runtime.name`。
+ *
+ * ⚠️ **「相同」只到默认值为止，别写成「两边行为一个字节都不差」**（定向复评 F1，
+ * 上一版这里就是那么写的，而它是假的）：没设这个环境变量时两边的**落盘间隔**逐字相同，
+ * 但**预算那道闸本来就只有「有写配额」的一侧才有** —— 同样 20 个待落盘的日，
+ * 文件存储一次写 20 个键、KV 写 13 个。**那不是分叉，那就是这个设计本身**：
+ * 闸是为写配额存在的，没有配额的一侧没有它可守。
+ *
+ * 与 `POOL_CACHE_TTL_MS` **只在一点上同构**（定向复评 F7，上一版写的是「完全同构」）：
+ * 「这个值只在 KV 形态下要紧、而它不按运行时分叉」这一点相同；
+ * **配置面上完全不同** —— 那个走 `num()` / `DEFAULTS` / `ENV_LOCK_MAP` / `config-validate`
+ * 并出现在 `GET /admin/api/config` 的四元组里，而这一个全仓只在 `src/http/wire.ts`
+ * 裸读一次。（`.env.example:30` 那一行的小节标题逐字写着
+ * 「Cloudflare Worker + KV 免费档才需要关心」。）
  * 设计 §7.1「默认在两种运行时相同……不做运行时嗅探」这一句因此**被遵守，不是被绕过**。
  *
  * ⚠️ **这一段有过一次「从假前提推出的论证」，如实记着**（P3d Task 3 评审 I1）：
@@ -240,9 +250,17 @@ export function usageDayKey(day: number, slot: number): string {
 }
 
 /**
- * `byModel` 的键最长多少个字符。**模型名由客户端在请求体里随便填**
- *（`src/http/routes/openai.ts` 的 `String(body.model ?? "")`），不截断就是把
+ * `byModel` 的键最长多少个字符。**模型名由客户端在请求体里随便填**，不截断就是把
  * 一个无上界的字符串原样搬进要落盘的值里。
+ *
+ * ⚠️ **佐证要点名真正没有强转的那两条路由**（P3d Task 3 定向复评 N1：上一版这里举的是
+ * `src/http/routes/openai.ts`，而**那恰好是唯一一条做了 `String(...)` 强转的**，
+ * 等于把危害所在的另外两条挡在了视线外）。真正裸传的是
+ * `src/http/routes/anthropic.ts` 与 `src/http/routes/responses.ts` 的 `req.model`：
+ * 那个 `req` 来自 `src/http/errors.ts` 的 `c.req.json<T>()`，**泛型是纯编译期的，
+ * 运行时零校验** ⇒ `{"model": 123}` 这种请求体在那两条路上会把一个 `number` 交到这里。
+ * 两条路由现在也各自补了 `String(...)`，与本函数首行的强转**互为冗余，是刻意的**：
+ * 少任何一道，一次「打开统计」就等于给网关多出一条普通客户端就能触发的 500。
  */
 export const USAGE_MODEL_KEY_MAX_LEN = 64;
 
@@ -271,14 +289,31 @@ export const USAGE_OTHER_KEY = "__other__";
 /**
  * 把一个外部可控的桶键收进上界内。
  *
+ * ⚠️ **首行的 `String(raw)` 不是防御性代码，删掉会让网关 500**（定向复评 N1）：
+ * 入参一路来自请求体，运行时**什么类型都可能**（`c.req.json<T>()` 的泛型是纯编译期的）。
+ * `123` / `{}` / `true` 都没有 `.slice`，而 `record()` 一路**没有 try/catch**
+ *（`maybeFlush()` 那句「统计是旁路，绝不影响响应」**不覆盖 `record()`**）
+ * ⇒ 一个 `{"model": 123}` 的请求体就能把响应从 503 变成 500，**而且只在 Tier-2 开着时**。
+ * 实测四种取值：`123` / `{a:1}` / `true` 全部 500，`[1,2]` 侥幸没事（数组恰好有 `.slice`）。
+ * 由 `tests/contract/usage-tier2.test.ts` 的
+ * 「model 不是字符串时不许把网关打成 500……」钉着。
+ *
  * 先截长度、再判格数：**已经存在的键永远认得出来**（否则同一个模型会因为
  * map 满了而在两次请求之间被分到两个不同的格子，计数直接错位）。
+ * ⚠️ 这一条也有一格钉着（定向复评 N4：上一版删掉那句早返回**全量 2182 全绿**，
+ * 因为那格用例里 200 个模型名各只出现一次，满桶之后从不复用旧键）——
+ * 见「满桶之后再打一次早期的模型名，它仍然进自己那一格……」。
  *
  * ⚠️ **上界是 `USAGE_MODEL_MAX_KEYS + 1`，那多出来的一格是 `USAGE_OTHER_KEY` 自己。**
  * 明写出来，免得下一个人按 32 去断言然后发现是 33。
+ *
+ * ⚠️ **已知边界，如实登记（定向复评 N10）**：客户端可以把 `model` 直接填成
+ * `__other__` 去抢占那个溢出格。后果**只是「其它」那一格里混进了一个真实模型**——
+ * 总数一条不丢、上界照旧成立、别的格子不受影响。不为它换一个「客户端猜不到的」键名：
+ * 那是把正确性建在一个秘密上，而这里根本没有正确性依赖它。
  */
 export function boundUsageKey(existing: Readonly<Record<string, unknown>>, raw: string): string {
-  const k = raw.slice(0, USAGE_MODEL_KEY_MAX_LEN);
+  const k = String(raw).slice(0, USAGE_MODEL_KEY_MAX_LEN);
   if (Object.prototype.hasOwnProperty.call(existing, k)) return k;
   if (Object.keys(existing).length >= USAGE_MODEL_MAX_KEYS) return USAGE_OTHER_KEY;
   return k;

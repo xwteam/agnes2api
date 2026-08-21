@@ -40,7 +40,9 @@ export function anthropicRoutes(deps: DispatchDeps & UsageRecording): Hono {
      */
     const latencyMs = deps.now() - startedAt;
     const record = (tokensIn: number, tokensOut: number) => recordUsage(deps, {
-      protocol: "anthropic", model: req.model ?? "",
+      // `String(...)` 不是多余的：`req` 来自 `c.req.json<T>()`，**泛型是纯编译期的，
+      // 运行时零校验** ⇒ `{"model": 123}` 会把一个 number 交下去（定向复评 N1）。
+      protocol: "anthropic", model: String(req.model ?? ""),
       ok: res.ok, stream: internal.stream, latencyMs, tokensIn, tokensOut,
     });
 
