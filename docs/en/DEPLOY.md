@@ -398,7 +398,7 @@ secret. Treat the data directory / KV namespace as credential material.
 ⚠️ **If you clear the gateway token while `GATEWAY_TOKEN` is not in the environment either**, the
 current process keeps running, but **the next restart or isolate recycle will fail to start**. The
 panel says so in a red notice at that moment; recover by setting a new gateway token on the same page
-right away.
+right away. **Clearing is safe when the environment does supply the value**: only the stored copy goes away and the effective value falls back to the environment variable, unchanged. The panel says two different things in these two states rather than leaving you to guess.
 
 ⚠️ **The registration backend URL (`AGNES_PLATFORM_URL`) inside the *Advanced* disclosure is not an
 ordinary setting.** It is **where every automated registration goes**: point it elsewhere and that
