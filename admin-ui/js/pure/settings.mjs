@@ -407,6 +407,46 @@ export function errorRows(errBody) {
 }
 
 /**
+ * 清空这一把凭据之前，**必须对运维说的那一句话**。
+ *
+ * ⚠️⚠️ **一句通用红字在这几种状态下，有的是救命、有的是吓人。**
+ * 面板手上有分辨它们的全部数据（`lockedBy` 说 env 里有没有；注册机开没开、这条通道
+ * 在不在主/备链上都在四元组里），**所以不许让运维自己猜**。
+ * 第一版给的是一句带「如果……」的条件句——那等于把判断推回给读的人，而他手上
+ * 恰恰没有比面板更多的信息。
+ *
+ * 四种状态，每一种都是**确定句**，没有「如果」：
+ *
+ * | 状态 | 说什么 | 轻重 |
+ * |---|---|---|
+ * | env 里也有这一项（`lockedBy` 非空） | 清空之后**回落到环境变量里的值**，生效值不变 | info |
+ * | `gatewayToken`，env 里没有 | 清空之后**下一次冷启动会失败** | danger |
+ * | 通道 key，env 里没有，且注册机开着 + 这条通道在链上 | 同上：**下一次冷启动会失败** | danger |
+ * | 通道 key，env 里没有，且注册机关着或这条通道不在链上 | 现在不影响任何东西；**把这条通道接上链之前必须重新填** | info |
+ *
+ * 第三行不是过度警告：`registrarFromEnv` 的 `creds()` 在「启用 + 这条通道在链上 +
+ * 缺凭据」时是**抛错**，与 `gatewayToken` 缺失是同一类 fail-closed，
+ * 只是触发条件多两个。第四行也不是轻描淡写——那时它真的什么都不影响。
+ *
+ * `kind` 一起返回：**红不红是取值决策，不该由板块文件自己拍。**
+ */
+export function clearWarning(body, path) {
+  const cred = credentialView(body, path);
+  if (cred.lockedBy !== null) return { key: "set.clear.effect.env", kind: "info" };
+  if (path === "gatewayToken") return { key: "set.clear.effect.gatewayMissing", kind: "danger" };
+
+  const enabled = fieldView(body, "registrar.enabled").effective === true;
+  const channel = /^registrar\.(moemail|yyds)\.apiKey$/.exec(path);
+  const onChain = channel !== null && (
+    fieldView(body, "registrar.primary").effective === channel[1]
+    || fieldView(body, "registrar.fallback").effective === channel[1]
+  );
+  return enabled && onChain
+    ? { key: "set.clear.effect.channelBreaks", kind: "danger" }
+    : { key: "set.clear.effect.channelIdle", kind: "info" };
+}
+
+/**
  * 清空一把凭据之后，网关还有没有口令。
  * `gatewayTokenMissing === true` ⇒ **下一次冷启动会起不来**，面板必须把这句话
  * 显示出来（热实例靠上一份快照还在跑，所以这件事本来是看不见的）。

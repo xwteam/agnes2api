@@ -254,9 +254,8 @@ describe("凭据只写不读（设计 §8.6）", () => {
 
   /**
    * **清空是一条显式动作，且带二次确认**（设计 §8.6）。
-   * `gatewayToken` 那一支还要多一句「清完可能起不来」的红色警告。
    */
-  it("清空凭据要二次确认，gatewayToken 那一支另有一句 fail-closed 警告", async () => {
+  it("清空凭据要二次确认，且确认之前一次网络调用都不发", async () => {
     const h = await openSettings(() => ok(configBody()));
     const section = h.section("settings");
     const clear = fieldNode(section, "gatewayToken").children.find((c) => c.classList.contains("cfg-clear"))!;
@@ -268,6 +267,78 @@ describe("凭据只写不读（设计 §8.6）", () => {
     expect(modal!.textContent).toContain("起不来");
     // **确认之前一次网络调用都不许发出去。**
     expect(h.calls.some((c) => c.url.includes("secrets/clear")), "还没确认就发出去了").toBe(false);
+  });
+
+  /** 弹窗里那句按状态分岔的警告，取出它的文本。 */
+  async function warningTextFor(
+    over: Record<string, unknown>, path: string,
+  ): Promise<{ text: string; danger: boolean; disabled: boolean }> {
+    const h = await openSettings(() => ok(configBody(over)));
+    const section = h.section("settings");
+    const clear = fieldNode(section, path).children.find((c) => c.classList.contains("cfg-clear"))!;
+    const disabled = clear.disabled;
+    clear.click();
+    await settle();
+    const modal = h.dom.document.querySelectorAll(".modal")[0]!;
+    const lines = modal.querySelectorAll("p");
+    const last = lines[lines.length - 1]!;
+    return { text: last.textContent, danger: last.classList.contains("danger-text"), disabled };
+  }
+
+  /**
+   * ⚠️⚠️ **判据是「两种状态给出的文案不同」，不是「有警告」。**
+   *
+   * 只断「弹窗里有一句红字」的话，退回那句带「如果环境变量里也没有……」的通用条件句
+   * 照样全绿——而那正是要修的东西：**同一句通用红字，在这两种状态下一句是救命、
+   * 一句是吓人**，而面板手上有分辨它们的数据。
+   * 分岔判据本身在 `tests/ui/settings.test.ts` 的
+   * 「四种状态给出四条互不相同的 key，且轻重分成两档」，这里验的是它真的接上了 DOM。
+   */
+  it("env 里有 / 没有这一项，弹窗里那句话必须不同（不是两处都弹同一句红字）", async () => {
+    const noEnv = await warningTextFor({}, "gatewayToken");
+    const withEnv = await warningTextFor({
+      credentials: {
+        ...configBody().credentials,
+        gatewayToken: { configured: true, hint: "wxyz", lockedBy: "env:GATEWAY_TOKEN" },
+      },
+    }, "gatewayToken");
+
+    expect(
+      withEnv.text,
+      "env 里有没有这一项，面板说的是同一句话 —— 那等于让运维自己猜",
+    ).not.toBe(noEnv.text);
+    // 各自说的是那件确定的事，而不是一句「如果……」。
+    expect(noEnv.text, "env 里没有时没说清后果是冷启动失败").toContain("起不来");
+    expect(withEnv.text, "env 里有时没说清生效值不变").toContain("生效值不变");
+    // 轻重也要分开：救命的那句红，回落那句不红。
+    expect(noEnv.danger).toBe(true);
+    expect(withEnv.danger).toBe(false);
+  });
+
+  /**
+   * ⚠️ **env 锁定时那颗清空按钮不许被禁用**，否则上面那格里「env 里有」的分支
+   * 在真实面板上**根本够不着**——而后端从来没拦过它
+   * （`configClearSecretHandler` 里 `stillConfigured` 那一支就是专门为这个状态写的），
+   * `src/core/admin/config-validate.ts` 的 `clearSecret` 上写的理由也正是
+   * 「环境变量提供口令的部署想清掉存储里那份多余的旧口令时无路可走」。
+   * **变红条件**：把清空按钮改回跟着 `locked` 一起禁用。
+   */
+  it("env 锁定时清空按钮仍然可点 —— 清的是存储那一份，那恰恰是最安全的状态", async () => {
+    const withEnv = await warningTextFor({
+      credentials: {
+        ...configBody().credentials,
+        gatewayToken: { configured: true, hint: "wxyz", lockedBy: "env:GATEWAY_TOKEN" },
+      },
+    }, "gatewayToken");
+    expect(withEnv.disabled, "env 锁定把清空按钮禁用了 —— 存储里那份旧口令从此没有入口能删").toBe(false);
+  });
+
+  /** 没配过的凭据没有东西可清 ⇒ 按钮禁用（点它是纯粹的空操作）。 */
+  it("没配过的凭据：清空按钮禁用", async () => {
+    const h = await openSettings(() => ok(configBody()));
+    const clear = fieldNode(h.section("settings"), "registrar.yyds.apiKey")
+      .children.find((c) => c.classList.contains("cfg-clear"))!;
+    expect(clear.disabled).toBe(true);
   });
 });
 

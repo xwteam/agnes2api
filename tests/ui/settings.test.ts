@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CARD_AUTH, CARD_UPSTREAM, CARD_REGISTRAR, ADVANCED_FIELDS,
   channelFields, fieldLabelKey, errorMessageKey, fieldView, credentialView,
-  buildPatch, localErrors, changedFields, propagationView, errorRows, displayValue,
+  buildPatch, localErrors, changedFields, propagationView, errorRows, displayValue, clearWarning,
 } from "../../admin-ui/js/pure/settings.mjs";
 import { CHANNELS } from "../../admin-ui/js/pure/registrar.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
@@ -381,5 +381,114 @@ describe("errorRows：表外的码原样带出来", () => {
   it("响应体不是那个形状时返回空数组，不抛", () => {
     expect(errorRows(null)).toEqual([]);
     expect(errorRows({ errors: "nope" })).toEqual([]);
+  });
+});
+
+describe("清空凭据前那句警告：按状态分岔，每一条都是确定句", () => {
+  /**
+   * ⚠️⚠️ **同一句通用红字，在这几种状态下有的是救命、有的是吓人。**
+   *
+   * 面板手上有分辨它们的全部数据（`lockedBy` 说 env 里有没有；注册机开没开、
+   * 这条通道在不在主/备链上都在四元组里）——**所以不许让运维自己猜**。
+   * 第一版给的是一句带「如果……」的条件句，那等于把判断推回给读的人，
+   * 而他手上恰恰没有比面板更多的信息。
+   *
+   * ⚠️ **判据不是「有没有警告」，是「四种状态给出四条互不相同的文案」。**
+   * 只断「有警告」的话，退回那句通用条件句照样全绿。
+   */
+  const base = (over: Record<string, unknown> = {}) => ({
+    fields: {
+      "registrar.enabled": { stored: null, env: null, effective: false, lockedBy: null },
+      "registrar.primary": { stored: null, env: null, effective: null, lockedBy: null },
+      "registrar.fallback": { stored: null, env: null, effective: null, lockedBy: null },
+      ...(over.fields as Record<string, unknown> ?? {}),
+    },
+    credentials: {
+      gatewayToken: { configured: true, hint: "wxyz", lockedBy: null },
+      "registrar.yyds.apiKey": { configured: true, hint: "9900", lockedBy: null },
+      ...(over.credentials as Record<string, unknown> ?? {}),
+    },
+    secrets: ["gatewayToken", "registrar.yyds.apiKey"],
+  });
+
+  const ON_CHAIN = base({
+    fields: {
+      "registrar.enabled": { stored: true, env: null, effective: true, lockedBy: null },
+      "registrar.primary": { stored: "yyds", env: null, effective: "yyds", lockedBy: null },
+      "registrar.fallback": { stored: null, env: null, effective: null, lockedBy: null },
+    },
+  });
+
+  const CASES: ReadonlyArray<{ name: string; body: unknown; path: string; key: string; kind: string }> = [
+    {
+      name: "env 里也有 ⇒ 回落到环境变量，生效值不变",
+      body: base({ credentials: { gatewayToken: { configured: true, hint: "wxyz", lockedBy: "env:GATEWAY_TOKEN" } } }),
+      path: "gatewayToken", key: "set.clear.effect.env", kind: "info",
+    },
+    {
+      name: "gatewayToken 且 env 里没有 ⇒ 下一次冷启动会失败",
+      body: base(), path: "gatewayToken", key: "set.clear.effect.gatewayMissing", kind: "danger",
+    },
+    {
+      name: "通道 key、env 里没有、注册机开着且这条通道在链上 ⇒ 同样是冷启动失败",
+      body: ON_CHAIN, path: "registrar.yyds.apiKey", key: "set.clear.effect.channelBreaks", kind: "danger",
+    },
+    {
+      name: "通道 key、env 里没有、但这条通道不在链上 ⇒ 现在什么都不影响",
+      body: base(), path: "registrar.yyds.apiKey", key: "set.clear.effect.channelIdle", kind: "info",
+    },
+  ];
+
+  for (const c of CASES) {
+    it(c.name, () => {
+      expect(clearWarning(c.body, c.path)).toEqual({ key: c.key, kind: c.kind });
+    });
+  }
+
+  /**
+   * **四条互不相同**——退回一句通用文案时这一格立刻红。
+   * 顺带把「红不红」也钉住：两条 danger、两条 info，全都不许是同一个值。
+   */
+  it("四种状态给出四条互不相同的 key，且轻重分成两档", () => {
+    const keys = CASES.map((c) => clearWarning(c.body, c.path).key);
+    expect(new Set(keys).size, "有两种状态给出了同一句话 —— 那就是在让运维自己猜").toBe(4);
+    const kinds = CASES.map((c) => clearWarning(c.body, c.path).kind);
+    expect(new Set(kinds).size, "轻重没有分档 —— 救命的那句与不影响的那句一样红").toBe(2);
+  });
+
+  /**
+   * ⚠️ **`registrar.enabled` 与链上判定必须都参与**：只看 `enabled`（不看这条通道
+   * 在不在链上）会把「开着注册机、但用的是另一条通道」误报成冷启动会失败——
+   * 那正是「吓人」的那一半。
+   */
+  it("注册机开着、但这条通道不在链上 ⇒ 仍然是「现在不影响」", () => {
+    const other = base({
+      fields: {
+        "registrar.enabled": { stored: true, env: null, effective: true, lockedBy: null },
+        "registrar.primary": { stored: "moemail", env: null, effective: "moemail", lockedBy: null },
+        "registrar.fallback": { stored: null, env: null, effective: null, lockedBy: null },
+      },
+    });
+    expect(clearWarning(other, "registrar.yyds.apiKey").key).toBe("set.clear.effect.channelIdle");
+    // 反向：把它设成备通道 ⇒ 立刻升级成 danger。
+    const asFallback = base({
+      fields: {
+        "registrar.enabled": { stored: true, env: null, effective: true, lockedBy: null },
+        "registrar.primary": { stored: "moemail", env: null, effective: "moemail", lockedBy: null },
+        "registrar.fallback": { stored: "yyds", env: null, effective: "yyds", lockedBy: null },
+      },
+    });
+    expect(clearWarning(asFallback, "registrar.yyds.apiKey").key).toBe("set.clear.effect.channelBreaks");
+  });
+
+  it("四条文案五语言齐备（这一族同样是三道 i18n 门禁看不见的）", () => {
+    for (const c of CASES) {
+      const row = dict[c.key];
+      expect(row, `${c.key} 不在字典里`).toBeDefined();
+      for (const lang of LANGS) {
+        expect(typeof row![lang], `${c.key}/${lang}`).toBe("string");
+        expect(row![lang]!.trim(), `${c.key}/${lang} 是空的`).not.toBe("");
+      }
+    }
   });
 });

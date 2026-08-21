@@ -32,7 +32,7 @@ import {
   CARD_AUTH, CARD_UPSTREAM, CARD_REGISTRAR, ADVANCED_FIELDS,
   channelFields, fieldLabelKey, fieldView, credentialView,
   buildPatch, localErrors, changedFields, changedSecrets, propagationView,
-  errorRows, clearResultView, displayValue,
+  errorRows, clearResultView, displayValue, clearWarning,
 } from "./pure/settings.mjs";
 
 let nodes = null;
@@ -142,7 +142,15 @@ function renderOne(built) {
     setLock(built, v.locked, v.lockedBy);
     // **凭据框永远是空的**：它没有明文可回填（设计 §8.6），占位符说「留空则不修改」。
     built.input.value = "";
-    if (built.clear !== null) built.clear.disabled = v.locked === true;
+    // ⚠️ **清空按钮不跟着 `locked` 一起禁用，这一行是订正。**
+    // 它清的是**存储里那一份**，而 env 锁定恰恰是「清掉存储那份最安全」的状态
+    //（生效值回落到环境变量，纹丝不动）。第一版跟着 `locked` 禁用，
+    // 与 `src/core/admin/config-validate.ts` 的 `clearSecret` 里写着的理由
+    //（「环境变量提供口令的部署想清掉存储里那份多余的旧口令时无路可走」）自相矛盾——
+    // 后端从来没拦过它，`configClearSecretHandler` 里那个 `stillConfigured` 分支
+    // 就是专门为这个状态写的，只有前端把它挡死了。
+    // 判据改成「有东西可清才让点」：`configured` 为假时清空是纯粹的空操作。
+    if (built.clear !== null) built.clear.disabled = v.configured !== true;
     return;
   }
 
@@ -318,10 +326,10 @@ function confirmAdvanced() {
 function confirmClear(path) {
   const body = el("div");
   body.appendChild(el("p", null, t("set.clear.warn", { field: t(fieldLabelKey(path)) })));
-  if (path === "gatewayToken") {
-    // 清掉它而环境变量里也没有 ⇒ **下一次冷启动起不来**（热实例看不出来）。
-    body.appendChild(elI18n("p", "set.clear.gatewayWarn", { class: "danger-text" }));
-  }
+  // **按状态分岔的那一句**，取值决策全在 `clearWarning()` 里（含红不红）。
+  // 同一句通用红字在这几种状态下有的是救命、有的是吓人，而面板手上有分辨它们的数据。
+  const effect = clearWarning(data, path);
+  body.appendChild(elI18n("p", effect.key, { class: effect.kind === "danger" ? "danger-text" : "muted note" }));
   openModal("set.clear.title", body, [
     { labelKey: "common.cancel" },
     { labelKey: "common.confirm", danger: true, onClick: () => { doClear(path); } },
