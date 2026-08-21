@@ -23,6 +23,23 @@ import { WORKER_CRON_WALL_CLOCK_MS } from "../../core/registrar/types.js";
  * 不是互斥原语**；它挡的是「上一轮明明还在跑」这种最常见的重叠，不是纳秒级竞态。
  * 同一个限定在 `src/entry/worker.ts` 的 Cron 路径上从第一天就写着，本文件只是把它
  * 抽出来给两种运行时共用。
+ *
+ * ── ⚠️ 它为什么住在 `src/http/admin/`（这个位置是别扭的，别以为是随手放的）─────
+ *
+ * **它的两个消费者里有一个与 admin / http 毫无关系**：`src/entry/worker.ts` 的
+ * `scheduled()` 与 `src/entry/node.ts` 的定时轮都 import 这个文件，而那条路上既没有
+ * 请求也没有面板。按职责它更该住在 `src/core/registrar/`。
+ *
+ * **进不去的原因是一条硬约束，不是偷懒**：`acquireTendLock` / `releaseTendLock` 真的做
+ * IO（`storage.get/put/delete`），而 `src/core/` 有零 IO 门禁
+ *（`tests/unit/source-guards.test.ts` 的
+ * 「调用点恰好等于手写的豁免清单——绕过注入 Logger 的事件永远进不了面板」那一组扫的就是
+ * 这一类）。`src/adapters/` 也不合适：那一层是「隔离某个具体运行时能力」的适配器，
+ * 而这里是**业务判据**（谁能开始下一轮补池），只是恰好要读写存储。
+ *
+ * ⇒ **现状是在「零 IO 门禁」与「分层直觉」之间选了前者**，代价就是这个别扭的路径。
+ * 真要挪，`src/core/registrar/` 之外还有一个候选是新开一层（例如 `src/services/`），
+ * 但那是全仓性的分层决定，不该由一个锁文件顺手带出来。**改名成本很低，随时可以重来。**
  */
 
 /** 补池轮次的重入锁，落在与 key 池同一个存储命名空间里（不新增依赖）。 */
