@@ -708,6 +708,10 @@ export const I18N = {
   "usage.table.streaming": { "zh-CN": "流式", "zh-TW": "串流", en: "Streaming", ja: "ストリーミング", ko: "스트리밍" },
   "usage.table.latency":   { "zh-CN": "平均延迟（毫秒）", "zh-TW": "平均延遲（毫秒）", en: "Avg latency (ms)", ja: "平均レイテンシ（ミリ秒）", ko: "평균 지연(밀리초)" },
   "usage.table.empty":     { "zh-CN": "这段区间里没有可以列出的日子。", "zh-TW": "這段區間裡沒有可以列出的日子。", en: "There are no days to list in this range.", ja: "この期間に一覧できる日はありません。", ko: "이 구간에 나열할 날짜가 없습니다." },
+  // ⚠️ **「读不出来」与「没有可以列出的日子」是两句话**（P3d Task 5 评审 C1）：
+  //    `read_failed` 那一档 `days` 是 null ⇒ 行数也是 0，照上面那句渲染
+  //    等于把一次读取失败说成「这段时间本来就没有日子」。
+  "usage.table.unavailable": { "zh-CN": "这段区间的按天数据读不出来，所以这里是空的——不是这段时间没有日子。", "zh-TW": "這段區間的按天資料讀不出來，所以這裡是空的——不是這段時間沒有日子。", en: "The per-day data for this range could not be read, so this is empty — it is not that the range has no days.", ja: "この期間の日次データを取得できなかったため空になっています。期間に日がないという意味ではありません。", ko: "이 구간의 일별 데이터를 읽지 못해 비어 있습니다. 구간에 날짜가 없다는 뜻이 아닙니다." },
   "usage.table.drill":     { "zh-CN": "下钻", "zh-TW": "下鑽", en: "Drill down", ja: "詳細", ko: "자세히" },
   "usage.detail.title":    { "zh-CN": "{date} 的分解", "zh-TW": "{date} 的分解", en: "Breakdown for {date}", ja: "{date} の内訳", ko: "{date} 분해" },
   "usage.detail.hours":    { "zh-CN": "按小时（UTC）", "zh-TW": "按小時（UTC）", en: "By hour (UTC)", ja: "時間別（UTC）", ko: "시간별(UTC)" },
@@ -718,6 +722,10 @@ export const I18N = {
   "usage.detail.protocol": { "zh-CN": "协议", "zh-TW": "協定", en: "Protocol", ja: "プロトコル", ko: "프로토콜" },
   "usage.detail.close":    { "zh-CN": "收起", "zh-TW": "收起", en: "Collapse", ja: "閉じる", ko: "접기" },
   "usage.detail.empty":    { "zh-CN": "这一天没有可以分解的记录。", "zh-TW": "這一天沒有可以分解的記錄。", en: "There is nothing to break down for this day.", ja: "この日は内訳を表示できる記録がありません。", ko: "이 날짜에는 분해할 기록이 없습니다." },
+  // ⚠️ 与 `usage.table.unavailable` 同一条理由，C1 点名的「第三屏」：分片全坏 /
+  //    读取失败 / 落在保留期外时三个 map 合出来都是空的，照上面那句渲染就是
+  //    把「我们什么都不知道」说成「这一天没有记录」。
+  "usage.detail.unavailable": { "zh-CN": "这一天的分解读不出来，所以这里是空的——不是这一天没有记录。", "zh-TW": "這一天的分解讀不出來，所以這裡是空的——不是這一天沒有記錄。", en: "The breakdown for this day could not be read, so this is empty — it is not that the day has no records.", ja: "この日の内訳を取得できなかったため空になっています。この日に記録がないという意味ではありません。", ko: "이 날짜의 분해를 읽지 못해 비어 있습니다. 이 날짜에 기록이 없다는 뜻이 아닙니다." },
 
   // ── 未落盘的尾巴（`pending` 块）───────────────────────────────────────────
   // ⚠️ 判据是 `count`，**不是 `ms`**：`ms` 数的是「距上一次落盘*尝试*多久」，

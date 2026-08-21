@@ -32,7 +32,8 @@ import { fmtCount, fmtDash, fmtDuration, fmtInstant, fmtPercent } from "./pure/f
 import { offsetMs } from "./pure/overview.mjs";
 import {
   RANGES, DEFAULT_RANGE, rangeLabelKey, rangeToQuery,
-  usageState, summaryCards, malformedKind, usageNoteKey, noteSeverity,
+  usageState, detailState, rowState, summaryCards, bucketCells,
+  malformedKind, usageNoteKey, noteSeverity,
   dayRows, breakdownRows, tokensCoverageLabels, pendingTail, cellKind, ratioKind,
 } from "./pure/usage.mjs";
 
@@ -48,8 +49,9 @@ let nodes = null;
 let abort = null;
 /**
  * 在飞请求的世代号。**`AbortController` 一个人守不住这件事**：
- * `fetch` 的 abort 在真实浏览器里是异步的，而在 `tests/helpers/fake-dom.ts`
- * 那套替身下 `fetch` 压根不看 signal ⇒ 只靠 `e.name === "AbortError"` 分支的话，
+ * `fetch` 的 abort 在真实浏览器里是异步的，而 DOM 用例里那个 `fetch` 替身
+ *（`tests/ui/dom/harness.ts` 的 `bootPanel()` 用 `vi.stubGlobal("fetch", …)` 装的那一个）
+ * **压根不看 signal** ⇒ 只靠 `e.name === "AbortError"` 分支的话，
  * 「切走再回来，上一次的响应把新数据覆盖掉」这件事**在两种环境里都可能发生，
  * 而在测试里恒不可观测**（第 8 / 第 9 两种假阳性合起来的形态）。
  * 世代号是同步的、两种环境里行为逐字相同，由
@@ -59,6 +61,13 @@ let abort = null;
 let seq = 0;
 /** 下钻的世代号。**与 `seq` 分开**，理由见 `openDay()` 上方那段。 */
 let detailSeq = 0;
+/**
+ * 板块现在是不是显示着。**`loadStatic()` 那条链唯一的作废判据**（评审 M5）：
+ * 它不经 `load()`，所以拿不到世代号；切走之后它回来重绘一个不可见的板块，
+ * 今天没有用户可见的后果，但那是「一条没有作废条件的异步链」——
+ * 本板块另外两条都有，这一条没有理由是例外。
+ */
+let shown = false;
 /** 最近一次成功的 `/usage` 响应；`null` = 还没有过一次成功（或上一次失败了）。 */
 let data = null;
 /** `/capabilities` 与 `/models` 各拉一次（都是零存储读的静态数据）。 */
@@ -224,7 +233,7 @@ function buildRangeBar() {
  * 那一格的名字自己就把边界说清了。表外的 code 走 `usage.note.unknown`
  * **把原码照实显示出来**，绝不退回一句「加载失败」。
  */
-function buildNoteBanner(note) {
+function buildNoteBanner(note, onRetry) {
   const key = usageNoteKey(note);
   const severity = noteSeverity(note);
   if (severity === null) return null;
@@ -235,25 +244,40 @@ function buildNoteBanner(note) {
   } else {
     banner.appendChild(elI18n("span", key));
   }
-  if (severity === "error") banner.appendChild(retryButton());
+  if (severity === "error") banner.appendChild(retryButton(onRetry));
   return banner;
 }
 
-function retryButton() {
+/**
+ * 重试按钮。**`onRetry` 是必填的**：上一版无参数、一律调 `load()`，
+ * 于是单日下钻那条错误横幅上的「刷新」重拉的是**汇总**而不是那一天
+ * ——一颗按了不解决问题的按钮（P3d Task 5 评审 M1）。
+ */
+function retryButton(onRetry) {
   const btn = elI18n("button", "common.refresh", { type: "button", class: "usage-retry" });
-  btn.addEventListener("click", () => { load(); });
+  btn.addEventListener("click", () => { onRetry(); });
   return btn;
 }
 
+/**
+ * 这一份响应上的两个诚实标记。**算一次，六张卡与两张表共用。**
+ *
+ * ⚠️ 两个都由后端字段驱动（全局约束 10）：`≈` 看 `approximate`，
+ * 「不完整」看 `malformedKind`。**一个都不许在前端硬编码。**
+ */
+function honestyMarks(resp) {
+  const c = summaryCards(resp);
+  return {
+    approx: resp !== null && typeof resp === "object" && resp.approximate === true,
+    // `partial` 那一档的数字是真的、只是不全 —— 渲染成完整的就是伪造
+    // 「这份数据是全的」这个印象，而全局约束 9 禁的伪造不只是伪造 `0`。
+    incompleteOf: c.complete ? null : c.malformed,
+  };
+}
+
 /** 六张汇总卡（设计 §10.6）。 */
-function buildCards(state) {
+function buildCards(state, marks) {
   const c = summaryCards(data);
-  // `≈` 由后端的 `approximate` 驱动，**不在前端硬编码 true**（全局约束 10）。
-  const approx = data !== null && typeof data === "object" && data.approximate === true;
-  // 「不完整」由 `malformedKind` 驱动 —— `partial` 那一档的数字是真的，只是不全，
-  // 渲染成完整的就是伪造「这份数据是全的」这个印象。
-  const incompleteOf = c.complete ? null : c.malformed;
-  const marks = { approx, incompleteOf };
 
   const row = el("div", { class: "card-row" });
   const specs = [];
@@ -303,12 +327,62 @@ function headRow(keys) {
   return tr;
 }
 
+/**
+ * 往一行里塞那六个数字格。**日汇总表与三张分解表共用它。**
+ *
+ * ⚠️⚠️ **`state` 是整块的状态，不是这一行自己看出来的** —— 这是 P3d Task 5
+ * 评审 C1 的根因那一句话在代码里的样子。上一版两张表各自写
+ * `row.total === null ? "unavailable" : "data"`（**完全不看整块状态**），
+ * 于是 `usageState` 判出来的 `unavailable` 一步都没往下传：
+ * `all_malformed` 时六张卡正确地全是 EM DASH，**而紧挨着的日表把同一段区间
+ * 写成「请求 0 次」**、延迟格还写着 EN DASH（= 「读成功了只是没样本」）。
+ * 判据现在收在 `pure/usage.mjs` 的 `rowState()` 里，两张表都必须过它。
+ */
+function numberCells(tr, state, bucket, marks) {
+  const st = rowState(state, bucket);
+  const b = bucketCells(bucket);
+  const cells = [
+    [cellKind(st, b.requests), fmtCount(b.requests)],
+    [cellKind(st, b.success), fmtCount(b.success)],
+    [cellKind(st, b.errors), fmtCount(b.errors)],
+    [cellKind(st, b.tokensIn), `${fmtCount(b.tokensIn)} / ${fmtCount(b.tokensOut)}`],
+    [cellKind(st, b.streamingRequests), fmtCount(b.streamingRequests)],
+    [cellKind(st, b.latencyMs), fmtCount(b.latencyMs)],
+  ];
+  for (const [kind, text] of cells) {
+    const td = el("td", { class: "mono" });
+    fillCell(td, kind, text, marks);
+    tr.appendChild(td);
+  }
+}
+
+/**
+ * 表格里那个「键」格（日期 / 小时 / 模型名）。
+ *
+ * ⚠️ **「不完整」标记挂在这一格上，一行只挂一个**（评审 I1）：
+ * 上一版表格行**一个标记都没有**，而表里那些数字与卡片上的是同一份
+ * 「缺了几块的数字」。挂在键格上而不是每个数字格上，是因为
+ * `malformed` 是**整段区间**的计数——我们并不知道具体哪一格短了，
+ * 只知道这一行的数字不能当成全的。挂七遍会让人以为那是七条独立的信号。
+ */
+function keyCell(text, marks) {
+  const td = el("td", { class: "mono" });
+  fillCell(td, "value", text, marks && marks.incompleteOf !== null ? { incompleteOf: marks.incompleteOf } : null);
+  return td;
+}
+
 /** 日汇总表。点「下钻」展开那一天的分解。 */
-function buildDayTable() {
+function buildDayTable(state, marks) {
   const { wrap, body } = block("usage.table.title");
   const rows = dayRows(data);
   if (rows.length === 0) {
-    body.appendChild(elI18n("p", "usage.table.empty", { class: "muted note" }));
+    // ⚠️ **「读不出来」与「这段区间里没有可以列出的日子」是两句话。**
+    //    `read_failed` 那一档 `days` 是 null ⇒ 行数也是 0，照后一句渲染
+    //    等于把一次读取失败说成「这段时间本来就没有日子」。
+    body.appendChild(elI18n(
+      "p", state === "unavailable" ? "usage.table.unavailable" : "usage.table.empty",
+      { class: "muted note" },
+    ));
     return wrap;
   }
   const table = el("table");
@@ -317,24 +391,9 @@ function buildDayTable() {
     "usage.table.tokens", "usage.table.streaming", "usage.table.latency", "usage.table.drill",
   ]));
   for (const row of rows) {
-    // 这一行的桶读不出来时整行按 `unavailable` 渲染（EM DASH），**不补一行 0**。
-    const rowState = row.total === null ? "unavailable" : "data";
-    const b = summaryCards({ total: row.total, shards: 0, malformed: 0 });
     const tr = el("tr");
-    tr.appendChild(el("td", { class: "mono" }, row.date));
-    const cells = [
-      [cellKind(rowState, b.requests), fmtCount(b.requests)],
-      [cellKind(rowState, b.success), fmtCount(b.success)],
-      [cellKind(rowState, b.errors), fmtCount(b.errors)],
-      [cellKind(rowState, b.tokensIn), `${fmtCount(b.tokensIn)} / ${fmtCount(b.tokensOut)}`],
-      [cellKind(rowState, b.streamingRequests), fmtCount(b.streamingRequests)],
-      [cellKind(rowState, b.latencyMs), fmtCount(b.latencyMs)],
-    ];
-    for (const [kind, text] of cells) {
-      const td = el("td", { class: "mono" });
-      fillCell(td, kind, text, null);
-      tr.appendChild(td);
-    }
+    tr.appendChild(keyCell(row.date, marks));
+    numberCells(tr, state, row.total, null);
     const actions = el("td");
     const drill = elI18n("button", "usage.table.drill", { type: "button", class: "usage-drill" });
     drill.addEventListener("click", () => { openDay(row.date); });
@@ -347,12 +406,16 @@ function buildDayTable() {
 }
 
 /** 分解表的一张（小时 / 模型 / 协议共用）。 */
-function breakdownTable(titleKey, keyLabelKey, map, numeric) {
+function breakdownTable(titleKey, keyLabelKey, map, numeric, state, marks) {
   const wrap = el("div", { class: "usage-breakdown" });
   wrap.appendChild(elI18n("h4", titleKey));
   const rows = breakdownRows(map, numeric);
   if (rows.length === 0) {
-    wrap.appendChild(elI18n("p", "usage.detail.empty", { class: "muted note" }));
+    // 同上：**这一天读不出来**与**这一天没有记录**是两句话。C1 点名的「第三屏」。
+    wrap.appendChild(elI18n(
+      "p", state === "data" ? "usage.detail.empty" : "usage.detail.unavailable",
+      { class: "muted note" },
+    ));
     return wrap;
   }
   const table = el("table");
@@ -361,24 +424,10 @@ function breakdownTable(titleKey, keyLabelKey, map, numeric) {
     "usage.table.tokens", "usage.table.streaming", "usage.table.latency",
   ]));
   for (const row of rows) {
-    const rowState = row.total === null ? "unavailable" : "data";
-    const b = summaryCards({ total: row.total, shards: 0, malformed: 0 });
     const tr = el("tr");
     // ⚠️ **键来自客户端填的模型名，一律 textContent**（`el()` 走的就是它）。
-    tr.appendChild(el("td", { class: "mono" }, row.key));
-    const cells = [
-      [cellKind(rowState, b.requests), fmtCount(b.requests)],
-      [cellKind(rowState, b.success), fmtCount(b.success)],
-      [cellKind(rowState, b.errors), fmtCount(b.errors)],
-      [cellKind(rowState, b.tokensIn), `${fmtCount(b.tokensIn)} / ${fmtCount(b.tokensOut)}`],
-      [cellKind(rowState, b.streamingRequests), fmtCount(b.streamingRequests)],
-      [cellKind(rowState, b.latencyMs), fmtCount(b.latencyMs)],
-    ];
-    for (const [kind, text] of cells) {
-      const td = el("td", { class: "mono" });
-      fillCell(td, kind, text, null);
-      tr.appendChild(td);
-    }
+    tr.appendChild(keyCell(row.key, marks));
+    numberCells(tr, state, row.total, null);
     table.appendChild(tr);
   }
   wrap.appendChild(table);
@@ -410,19 +459,34 @@ function buildDetail() {
   head.appendChild(close);
   wrap.appendChild(head);
 
+  // ⚠️ 这颗重试按钮重拉的是**这一天**，不是汇总（评审 M1）。
+  const retryDay = () => { openDay(detailDate); };
+
   if (detailFailed) {
     const banner = el("div", { class: "banner-danger", role: "status" });
     banner.appendChild(elI18n("span", "common.loadFailed"));
+    banner.appendChild(retryButton(retryDay));
     wrap.appendChild(banner);
     return wrap;
   }
   if (detailData === null) return wrap;
 
+  const state = detailState(detailData);
   const note = typeof detailData.note === "string" ? detailData.note : null;
-  const banner = buildNoteBanner(note);
+  const banner = buildNoteBanner(note, retryDay);
   if (banner !== null) wrap.appendChild(banner);
+  // ⚠️ **这里刻意没有 `render()` 那一支的红色兜底横幅，理由不是「忘了对称」。**
+  //    ① 三张分解表在 `unavailable` 下已经各自说了「这一天的分解读不出来」，
+  //       兜底那句会是第四遍；
+  //    ② 更要紧的是它会**说错话**：`date_out_of_retention` 那一档
+  //       `hours` 是 null（⇒ `unavailable`）而 note 是 info 档，
+  //       套上「读取失败，显示为 —」就是把「那天的记录已经过期了」
+  //       说成「这次读挂了」——那是一次 retry 永远解决不了的事，
+  //       而横幅上还挂着一颗重试按钮。**两句都不真，比只说一句更糟。**
+  //    ⇒ 兜底放在表那一层（每张表自己说自己空的原因），不放在这一层。
 
   // 缺了几块这件事在这条端点上只有字段说得出来。
+  const marks = honestyMarks(detailData);
   const kind = malformedKind(detailData);
   if (kind === "partial" || kind === "all") {
     const warn = el("p", { class: "muted note usage-incomplete" });
@@ -430,9 +494,9 @@ function buildDetail() {
     wrap.appendChild(warn);
   }
 
-  wrap.appendChild(breakdownTable("usage.detail.hours", "usage.detail.hour", detailData.hours, true));
-  wrap.appendChild(breakdownTable("usage.detail.models", "usage.detail.model", detailData.byModel, false));
-  wrap.appendChild(breakdownTable("usage.detail.protocols", "usage.detail.protocol", detailData.byProtocol, false));
+  wrap.appendChild(breakdownTable("usage.detail.hours", "usage.detail.hour", detailData.hours, true, state, marks));
+  wrap.appendChild(breakdownTable("usage.detail.models", "usage.detail.model", detailData.byModel, false, state, marks));
+  wrap.appendChild(breakdownTable("usage.detail.protocols", "usage.detail.protocol", detailData.byProtocol, false, state, marks));
   return wrap;
 }
 
@@ -456,14 +520,19 @@ function render() {
   host.appendChild(buildRangeBar());
 
   const note = data !== null && typeof data === "object" && typeof data.note === "string" ? data.note : null;
-  const banner = buildNoteBanner(note);
+  const banner = buildNoteBanner(note, load);
   if (banner !== null) host.appendChild(banner);
-  if (banner === null && state === "unavailable") {
-    // 整条响应都没拿到（网络断了 / 解析失败）：后端没有 note 可读，
-    // 但**六张卡已经全是 EM DASH**，顶部必须把「这是读取失败」说出来。
+  // ⚠️⚠️ **判据是「有没有人用 error 档说过『读不出来』」，不是「有没有横幅」**
+  //（评审 M2）。上一版写的是 `banner === null`，于是 `range_clamped`（warn 档）
+  // 配上 `days: null` 时：六张卡全是 EM DASH，而页面上只有一条温和的黄条
+  // ——**没有任何一句说「读不出来」**。
+  // ⚠️ 今天后端发不出这个组合，但本文件 `buildNoteBanner` 上方刚论证过
+  //「不许假设 `note` 只可能是表内的值」；**同一条纪律在「字段组合」这一维上
+  // 一样要落实**：面板不该假设后端只会发出今天见过的那些组合。
+  if (state === "unavailable" && noteSeverity(note) !== "error") {
     const fail = el("div", { class: "banner-danger", role: "status" });
     fail.appendChild(elI18n("span", "common.loadFailed"));
-    fail.appendChild(retryButton());
+    fail.appendChild(retryButton(load));
     host.appendChild(fail);
   }
   // 「这段时间真的是 0」要有自己的一句话。`note` 已经用 info 档说过同一件事时
@@ -474,7 +543,11 @@ function render() {
     host.appendChild(empty);
   }
 
-  host.appendChild(buildCards(state));
+  // ⚠️ **两个诚实标记算一次，卡片与日表共用同一份**（评审 C1 / I1）：
+  //    各算各的迟早分叉，而分叉的那一边正好是「表」时，后果就是
+  //    卡片说「不完整」而紧挨着的表把同一份数字写成完整的。
+  const marks = honestyMarks(data);
+  host.appendChild(buildCards(state, marks));
 
   // 未落盘的尾巴。判据是 `count`，**不是 `ms`**（见 `pendingTail` 的说明）。
   const tail = pendingTail(data);
@@ -486,7 +559,7 @@ function render() {
     host.appendChild(p);
   }
 
-  host.appendChild(buildDayTable());
+  host.appendChild(buildDayTable(state, marks));
   if (detailDate !== null) host.appendChild(buildDetail());
 }
 
@@ -570,15 +643,17 @@ export const usageSection = {
   },
 
   onShow() {
-    loadStatic().then(() => { if (nodes !== null) render(); });
+    shown = true;
+    loadStatic().then(() => { if (shown && nodes !== null) render(); });
     load();
   },
 
   onHide() {
-    // **两件事都要做**：abort 省掉真实网络往返，世代号保证回来的那份被丢掉。
-    // **两个世代号都要 +1**：切走板块时汇总与下钻都不该再落地。
+    // **三件事都要做**：abort 省掉真实网络往返，两个世代号保证汇总与下钻
+    // 回来的那份都被丢掉，`shown` 作废 `loadStatic()` 那条链（评审 M5）。
     if (abort) { abort.abort(); abort = null; }
     seq++;
     detailSeq++;
+    shown = false;
   },
 };

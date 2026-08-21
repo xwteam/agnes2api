@@ -50,6 +50,32 @@ function cards(section: FakeElement): Record<string, string> {
   return out;
 }
 
+/**
+ * **日汇总表里每一行的 `<td>` 文本**，用 `|` 拼起来。
+ *
+ * ⚠️⚠️ **这个 helper 是评审 C1 逼出来的，成因记下**：上面那个 `cards()` **只收集
+ * 带 `.label` + `.value` 子节点的 `.card`**，而日表活在 `.card.block` 里、
+ * 两个子节点都没有 ⇒ **日表对它完全不可见**。于是「六张卡对了」与「日表也对」
+ * 被当成了同一件事，而它们不是（第 5 种假阳性：覆盖的状态让被测的选择不可观测）。
+ * 凡是断言表格内容的用例，观测点必须落在 `<td>` 上。
+ *
+ * 只取**带下钻按钮**的那些行（= 日汇总表的数据行），把表头与分解表排除掉。
+ */
+function dayRowCells(section: FakeElement): string[] {
+  const out: string[] = [];
+  for (const tr of section.querySelectorAll("tr")) {
+    let hasDrill = false;
+    for (const b of tr.querySelectorAll("button")) {
+      if (b.classList.contains("usage-drill")) { hasDrill = true; break; }
+    }
+    if (!hasDrill) continue;
+    const cells: string[] = [];
+    for (const td of tr.querySelectorAll("td")) cells.push(td.textContent);
+    out.push(cells.join("|"));
+  }
+  return out;
+}
+
 /** 板块里全部横幅的 class（顺序即 DOM 顺序）。 */
 function banners(section: FakeElement): string[] {
   const out: string[] = [];
@@ -231,6 +257,78 @@ describe("三态在六张卡上必须长得不一样", () => {
   });
 
   /**
+   * ⚠️⚠️⚠️ **P3d Task 5 评审 C1：结论没往下传，同一份 `0` 挪到了下一屏。**
+   *
+   * `usageState` 为了让 ⑦ 别在卡片上写 `0` 而加了一句早退，**但那个结论只走到
+   * `buildCards()`**：`days` 数组（每天一格全 0 桶）被原样交给日汇总表，
+   * 于是评审实跑出来的两份 `<td>` 文本**逐字节相同**：
+   * ```
+   * ③ no_shards     : 2026-08-21|0|0|0|0 / 0|0|–|下钻
+   * ⑦ all_malformed : 2026-08-21|0|0|0|0 / 0|0|–|下钻
+   * ```
+   * 顶部六张卡在 ⑦ 下正确地全是 EM DASH，**而紧挨着的表把同一段区间写成
+   * 「请求 0 次」**；延迟格还是 EN DASH（=「读成功了只是没样本」）——同一行里第二句假话。
+   * 这正是后端评审 C1 判过的那件事（⑦ 报成 ③「是一句假话」）在前端下一屏又造了一遍。
+   *
+   * **观测点必须在 `<td>` 上**：既有那 18 格全查 `cards()`，而那个 helper 看不见日表。
+   *
+   * **变红条件**：把 `numberCells()` 里的 `rowState(state, bucket)` 换回
+   * `bucket === null ? "unavailable" : "data"`（= 不看整块状态）⇒ 两份行文本
+   * 又变成逐字节相同 ⇒ 最后那句对照断言红。
+   */
+  it("日汇总表：no_shards 那一行写 0、all_malformed 那一行写 EM DASH —— 两行逐字节相同就是把「读到的全是坏分片」说成「一次都没跑过」", async () => {
+    const zero = {
+      requests: 0, success: 0, errors: 0, tokensIn: 0, tokensOut: 0,
+      streamingRequests: 0, latencySum: 0, latencyCount: 0,
+    };
+    const days = [{ date: "2026-08-21", total: zero }];
+
+    // ③ 区间里一个分片都没有：读成功了，答案真的是零。
+    const noShards = await openUsage(respondWith(usageBody({
+      days, total: zero, shards: 0, malformed: 0, note: "no_shards",
+    })));
+    const rowsNoShards = dayRowCells(noShards.section("usage"));
+
+    // ⑦ 分片都在、但每一个都是畸形的：我们对这段时间一无所知。
+    const allMalformed = await openUsage(respondWith(usageBody({
+      days, total: zero, shards: 0, malformed: 5, note: "all_malformed",
+    })));
+    const rowsAllMalformed = dayRowCells(allMalformed.section("usage"));
+
+    // 装置自检：两边都真的渲染出了那一行，否则下面的 not.toEqual 恒成立。
+    expect(rowsNoShards.length, "③ 没渲染出日表行，装置本身坏了").toBe(1);
+    expect(rowsAllMalformed.length, "⑦ 没渲染出日表行，装置本身坏了").toBe(1);
+
+    // ③：期望值手写字面量，逐格列全（日期 | 请求 | 成功 | 错误 | Token | 流式 | 延迟 | 下钻）。
+    expect(rowsNoShards[0], "③ 读成功了、答案就是零 ⇒ 计数格写 0、延迟格写 EN DASH")
+      .toBe(`2026-08-21|0|0|0|0 / 0|0|${EN}|下钻`);
+    // ⑦：六个数字格**全部**是 EM DASH。一个 `0` 都不许出现。
+    expect(rowsAllMalformed[0], "⑦ 的日表行把「读到的全是坏分片」写成了「请求 0 次」")
+      .toBe(`2026-08-21|${EM}|${EM}|${EM}|${EM}|${EM}|${EM}|下钻`);
+    // ⚠️ **这一句才是这一格的全部理由。**
+    expect(rowsAllMalformed[0], "③ 与 ⑦ 的日表行逐字节相同 —— 卡片改对了，假话只是挪到了下一屏")
+      .not.toBe(rowsNoShards[0]);
+  });
+
+  /**
+   * **`read_failed`：`days` 是 null ⇒ 一行都没有。**
+   * 那时表里那句话不许是「这段区间里没有可以列出的日子」——那是把一次读取失败
+   * 说成「这段时间本来就没有日子」，与 C1 同一族。
+   *
+   * **变红条件**：把 `buildDayTable()` 里那个三元换回无条件的 `"usage.table.empty"`。
+   */
+  it("read_failed 时日表那句话是「读不出来」而不是「没有可以列出的日子」—— 后者是把读取失败说成本来就没有", async () => {
+    const h = await openUsage(respondWith(usageBody({
+      days: null, total: null, shards: null, malformed: null, note: "read_failed",
+    })));
+    const sec = h.section("usage");
+    expect(dayRowCells(sec), "days 是 null 却渲染出了行").toEqual([]);
+    expect(sec.textContent).toContain("按天数据读不出来");
+    expect(sec.textContent, "把一次读取失败说成「这段时间本来就没有日子」")
+      .not.toContain("没有可以列出的日子");
+  });
+
+  /**
    * **`partial_malformed`：数字是真的，只是不全。**
    * 全局约束 9 禁的伪造**不只是伪造 `0`，还有伪造「这份数据是全的」这个印象**。
    *
@@ -246,6 +344,29 @@ describe("三态在六张卡上必须长得不一样", () => {
     // 反向锚：没有畸形分片时**不许**出现这个标记，否则「恒带标记」也全绿。
     const ok = await openUsage(respondWith(usageBody()));
     expect(cards(ok.section("usage"))["usage.card.requests"]).not.toContain("不完整");
+  });
+
+  /**
+   * **评审 I1：日汇总表那一行也要带「不完整」标记，与 C1 同根因。**
+   *
+   * 上一版实测的日表行是 `2026-08-21|100|90|10|4,000 / 2,500|30|300|下钻`
+   * ——**一个「不完整」都没有**，而表里那些数字与卡片上的是同一份
+   *「缺了几块的数字」。报告当时自述「每一张卡都带标记」，对卡成立、对表不成立。
+   *
+   * 标记挂在**日期那一格**、一行只挂一个：`malformed` 数的是**整段区间**的畸形分片，
+   * 我们并不知道具体哪一格短了。挂七遍会让人以为那是七条独立的信号。
+   *
+   * **变红条件**：把 `buildDayTable()` 传给 `keyCell()` 的 `marks` 改成 `null`。
+   */
+  it("partial_malformed 时日汇总表那一行也带「不完整」标记 —— 表里那些数字与卡片上的是同一份缺了几块的数字", async () => {
+    const h = await openUsage(respondWith(usageBody({ shards: 3, malformed: 2, note: "partial_malformed" })));
+    const rows = dayRowCells(h.section("usage"));
+    expect(rows.length, "没渲染出日表行，装置本身坏了").toBe(1);
+    expect(rows[0], "日表行没有「不完整」标记 —— 卡片带了、表没带").toContain("不完整");
+    expect(rows[0], "数字本身还得在（它们是真的，只是不全）").toContain("100");
+    // 反向锚：没有畸形分片时那一行**不许**带标记。
+    const ok = await openUsage(respondWith(usageBody()));
+    expect(dayRowCells(ok.section("usage"))[0]).not.toContain("不完整");
   });
 
   /**
@@ -298,6 +419,30 @@ describe("横幅：判据全部来自响应字段", () => {
     expect(sec.textContent, "被抹成了一句通用失败提示").not.toContain("读取失败，显示为");
     // 读不懂的 code 归 warn：不当成常态，也不把面板染成一片红。
     expect(banners(sec).join("|")).toContain("banner-warn");
+  });
+
+  /**
+   * **评审 M2：判据是「有没有人用 error 档说过『读不出来』」，不是「有没有横幅」。**
+   *
+   * 上一版写的是 `banner === null`，于是 `range_clamped`（warn 档）配上 `days: null` 时：
+   * 六张卡全是 EM DASH，而页面上**只有一条温和的黄条，没有任何一句说「读不出来」**。
+   * 今天后端发不出这个组合，**但本板块自己刚论证过「不许假设 note 只可能是表内的值」
+   * ——同一条纪律在「字段组合」这一维上一样要落实。**
+   *
+   * **变红条件**：把 `render()` 里的 `noteSeverity(note) !== "error"` 换回
+   * `banner === null` ⇒ 黄条把红条挤掉 ⇒ 第二句断言红。
+   */
+  it("温和的 note 配上读不出来的 days：黄条之外必须另有一句「读取失败」—— 六卡全是破折号而页面上没人解释就是沉默", async () => {
+    const h = await openUsage(respondWith(usageBody({
+      days: null, total: null, shards: null, malformed: null,
+      range: { from: 1_697_500_800_000, to: 1_700_006_399_999, clamped: true },
+      note: "range_clamped",
+    })));
+    const sec = h.section("usage");
+    expect(cards(sec)["usage.card.requests"], "前置条件：六卡确实是 EM DASH").toBe(EM);
+    const b = banners(sec).join("|");
+    expect(b, "只有一条温和黄条，没有任何一句说读不出来").toContain("banner-danger");
+    expect(b, "那条 range_clamped 的黄条也还得在（两件事都要说）").toContain("banner-warn");
   });
 
   /**
@@ -486,6 +631,41 @@ describe("单日下钻", () => {
   });
 
   /**
+   * **评审 M1：下钻那条错误横幅上的「刷新」要重拉那一天，不是重拉汇总。**
+   * 上一版 `retryButton()` 无参数、一律调 `load()` ⇒ 一颗按了不解决问题的按钮。
+   *
+   * **变红条件**：把 `buildDetail()` 里的 `retryButton(retryDay)` 换回
+   * `retryButton(load)` ⇒ 点下去发的是 `/admin/api/usage?...` 而不是
+   * `/admin/api/usage/2026-08-21` ⇒ 最后那句断言红。
+   */
+  it("下钻失败时那颗「刷新」重拉的是那一天，不是汇总 —— 按了不解决问题的按钮比没有按钮更糟", async () => {
+    let fail = true;
+    const h = await openUsage((url) => {
+      if (url.startsWith("/admin/api/capabilities")) return { status: 200, body: CAPS };
+      if (url.startsWith("/admin/api/models")) return { status: 200, body: MODELS };
+      if (url.startsWith("/admin/api/usage/")) {
+        return fail ? { status: 500, body: {} } : { status: 200, body: detailBody() };
+      }
+      if (url.startsWith("/admin/api/usage")) return { status: 200, body: usageBody() };
+      return { status: 200, body: {} };
+    });
+    h.section("usage").querySelector(".usage-drill")!.click();
+    await settle(12);
+    const before = h.calls.filter((c) => c.url.startsWith("/admin/api/usage/")).length;
+    expect(before, "下钻没失败，装置本身坏了").toBe(1);
+
+    fail = false;
+    const retry = h.section("usage").querySelector(".usage-retry");
+    expect(retry, "下钻失败了却没有重试按钮").not.toBe(null);
+    retry!.click();
+    await settle(12);
+
+    const after = h.calls.filter((c) => c.url.startsWith("/admin/api/usage/")).length;
+    expect(after, "那颗「刷新」重拉的是汇总，不是这一天").toBe(2);
+    expect(h.section("usage").textContent, "重试成功了却没渲染出来").toContain("没有逐请求流水");
+  });
+
+  /**
    * ⚠️⚠️ **下钻有自己的世代号，不共用汇总那一个。**
    *
    * 第一版共用 `seq`，而那会在一个很常见的操作序列上把下钻卡成空的：
@@ -528,6 +708,57 @@ describe("单日下钻", () => {
     await settle(12);
     expect(h.section("usage").textContent, "刷新一下就把还有效的下钻丢掉了")
       .toContain("没有逐请求流水");
+  });
+
+  /**
+   * ⚠️⚠️⚠️ **C1 点名的「第三屏」：分解表也不许把「读不出来」说成「没有记录」。**
+   *
+   * 那一天的分片全坏时 `mergeDayShards` 什么都合不出来 ⇒ 三个 map 都是空的
+   * ⇒ 三张分解表都会说「这一天没有可以分解的记录」——**而事实是那一天的分片
+   * 全坏了，我们什么都不知道**。与 ③/⑦ 在日表上撞车是同一个形状，只是换了一屏。
+   *
+   * **变红条件**：把 `breakdownTable()` 里那个三元换回无条件的 `"usage.detail.empty"`，
+   * 或者把 `buildDetail()` 里的 `detailState(detailData)` 换成常量 `"data"`。
+   */
+  it("那一天的分片全坏时三张分解表说的是「读不出来」而不是「这一天没有记录」—— 第三屏不许再造一次同一句假话", async () => {
+    const empty: Record<string, unknown> = Object.create(null);
+    const h = await drill(detailBody({
+      hours: empty, byModel: empty, byProtocol: empty, shards: 0, malformed: 4,
+    }));
+    const sec = h.section("usage");
+    expect(sec.textContent).toContain("这一天的分解读不出来");
+    expect(sec.textContent, "把「分片全坏了」说成「这一天没有记录」")
+      .not.toContain("这一天没有可以分解的记录");
+    // 反向锚：读成功了、这一天真的没有流量时，说的**必须**是另一句。
+    const clean = await drill(detailBody({
+      hours: empty, byModel: empty, byProtocol: empty, shards: 0, malformed: 0,
+    }));
+    expect(clean.section("usage").textContent).toContain("这一天没有可以分解的记录");
+    expect(clean.section("usage").textContent).not.toContain("这一天的分解读不出来");
+  });
+
+  /**
+   * **`date_out_of_retention`：三张表是空的，但那不是「读取失败」。**
+   *
+   * 这一格钉的是一个**刻意的不对称**：`render()` 在 `unavailable` 且 note 不是
+   * error 档时会补一条红色的「读取失败」兜底横幅（评审 M2），
+   * 而 `buildDetail()` **刻意没有那一支** —— 套在这一档上它会把
+   *「那天的记录已经过期了」说成「这次读挂了」，而横幅上还挂着一颗
+   * 永远解决不了问题的重试按钮。**两句都不真，比只说一句更糟。**
+   *
+   * **变红条件**：在 `buildDetail()` 里照 `render()` 抄一份那条兜底横幅
+   * ⇒ 第三句断言红。
+   */
+  it("落在保留期外的那一天：说的是「记录已经不在了」而不是「读取失败」—— 一次 retry 永远解决不了的事不许配一颗重试按钮", async () => {
+    const h = await drill(detailBody({
+      hours: null, byModel: null, byProtocol: null,
+      shards: null, malformed: null, note: "date_out_of_retention",
+    }));
+    const sec = h.section("usage");
+    expect(sec.textContent).toContain("那天的记录已经不在了");
+    // 三张表照样要说清自己为什么是空的。
+    expect(sec.textContent).toContain("这一天的分解读不出来");
+    expect(sec.textContent, "把「记录已经过期」说成了「读取失败」").not.toContain("读取失败，显示为");
   });
 
   /**

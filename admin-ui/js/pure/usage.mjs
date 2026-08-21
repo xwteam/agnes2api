@@ -65,9 +65,25 @@ function obj(v) {
  * P3d 全局约束 12）：
  * `scripts/check-i18n.mjs` 的第 ④ 条把动态拼出来的 key 一律看成「未被引用」，
  * 而那一条**只报警告、从不 exit 1**。
- * ⚠️⚠️ **别把这句读成「所以有门禁在守」**：那道门禁连本仓主流的
- * `elI18n(tag, key, attrs)` 写法都看不见（352 个 key 里只认得 95 个），
- * **新增 key 的拼写没有任何机器在守**，靠的是评审 + 人工冒烟。
+ * ⚠️⚠️ **别把这句读成「所以第 6 道门禁在守它」**：那道门禁只认两种形态
+ * ——把 key 当字符串字面量直接写进 `t(…)` 调用里，或者写进 HTML 的 `data-i18n`
+ * 系列属性里；**本仓主流的 `elI18n(tag, key, attrs)` 它一个都看不见**
+ *（本板块 62 个新 key 里绝大多数正是这种）。
+ *
+ * ⚠️ **但「门禁看不见」不等于「没人守」——这两句差得很远，别再合成一句。**
+ * 守它的是 `tests/unit/i18n-dict.test.ts` 的
+ * 「板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里」那一格：
+ * 它按**命名空间前缀**扫 `admin-ui/js` 下的 `.js`/`.mjs`，要求形如
+ * `"<已知命名空间>.<键名>"` 的字面量都在字典里，而且它还有一条反向自检
+ *（凡是真的被用作 key 前缀的命名空间都必须在它那张 `NAMESPACES` 表里）
+ * ⇒ **新板块想跳过它是做不到的**。
+ * ⚠️ **实测记下装置**（本任务变异 M-N）：把下面 `usage.title` 改成 `usage.titel`
+ * ⇒ `node scripts/check-i18n.mjs` **exit=0**（门禁确实瞎），
+ * 而那一格**当场变红**。⭐ 记一条形状：**「某道门禁看不见它」是一句关于那道门禁的话，
+ * 不是一句关于「有没有护栏」的话**；把前者写成后者，下一个人会以为这里可以随便写。
+ *
+ * 它仍然守不住的：动态拼出来的 key、命名空间本身写成字典里没有的前缀、
+ * 以及只写在 `.html` 里而拼错的 `data-i18n`。那几类靠评审 + 人工冒烟。
  *
  * 表外返回 `null`，与 `admin-ui/js/pure/registrar.mjs` 的 `failureReasonKey`
  * 同一条纪律：**调用方拿到 `null` 时把原值照实显示出来，绝不冒充任何一档已知档位。**
@@ -158,6 +174,16 @@ export function malformedKind(resp) {
  * 顶部横幅照 `note` 说 `all_malformed`（「去查存储」），两件事都说准了。
  * ⇒ **`partial_malformed` 不归这里**：那一档确实读到了好分片，数字是真的，
  * 只是不全 —— 由 `malformedKind` 交给板块打「不完整」标记（见 `summaryCards`）。
+ *
+ * ⚠️⚠️⚠️ **这个结论必须往下传到每一张表，否则同一份 `0` 只是挪到了下一屏。**
+ * P3d Task 5 评审 C1 实测：上面那句 `all_malformed` 早退**只作用于六张卡**，
+ * 而 `days` 数组（每天一格全 0 桶）被原样交给日汇总表 ⇒
+ * `no_shards`（③）与 `all_malformed`（⑦）的日表行**逐字节相同**
+ *（`2026-08-21|0|0|0|0 / 0|0|–|下钻`）——顶部六张卡刚说完「我们不知道」，
+ * 紧挨着的表就把同一段区间写成「请求 0 次」。
+ * ⭐ **根因是「上一处修复」本身**：为了让卡片别写 `0` 而加的早退，
+ * 把那份 `0` 留给了下一个消费者。⇒ 每一个渲染数字的地方都要走 `rowState()`，
+ * **不许自己按行判**（本文件 `rowState` 上方有它的全文）。
  */
 export function usageState(resp) {
   const r = obj(resp);
@@ -169,6 +195,51 @@ export function usageState(resp) {
   const requests = total === null ? null : finite(total.requests);
   if (requests === null) return "unavailable";
   return requests > 0 ? "data" : "empty";
+}
+
+/**
+ * 单日下钻那一份的整块状态。**判据与 `usageState` 同源，只是字段不同。**
+ *
+ * @returns {"off"|"unavailable"|"data"}
+ *
+ * ⚠️ **没有 `empty` 这一档**：这条端点的三个 map 只含**有过流量**的那些键
+ *（`src/http/admin/handlers/usage.ts` 的 `usageDateHandler` 上方：「缺席的小时
+ * 不是『读不出来』」），所以「表是空的」在读成功时就是「这一天没有记录」，
+ * 不需要再分一档。
+ *
+ * ⚠️⚠️ **它存在的理由与 `usageState` 的 `all_malformed` 早退完全相同，
+ * 而且是同一次评审（C1）点名的「第三屏」**：`all_malformed` 时
+ * `mergeDayShards` 什么都合不出来 ⇒ 三个 map 都是空的 ⇒ 三张分解表都会说
+ * 「这一天没有可以分解的记录」——**而事实是那一天的分片全坏了，我们什么都不知道**。
+ * 那句话与 ③/⑦ 在日表上撞车是同一个形状，只是换了一屏。
+ * `date_out_of_retention` 同样归 `unavailable`：那天的记录已经不在了，
+ * **不是那天没有请求**，具体是哪一种由 `note` 那条横幅说。
+ */
+export function detailState(resp) {
+  const r = obj(resp);
+  if (r === null) return "unavailable";
+  if (r.tier === "off") return "off";
+  // `hours` 整块是 `null` = 读不出来（`read_failed` / 落在保留期外 / 时钟坏了）。
+  // 空对象 `{}` **不算**——那是「读成功了，这一天没有流量」。
+  if (obj(r.hours) === null) return "unavailable";
+  if (malformedKind(r) === "all") return "unavailable";
+  return "data";
+}
+
+/**
+ * 表格里一行该按哪一种状态渲染。
+ *
+ * ⚠️⚠️ **整块读不出来时每一行都读不出来 —— 这就是 C1 的根因那一句话的落点。**
+ * 上一版这两张表各自写了 `row.total === null ? "unavailable" : "data"`
+ *（**完全不看整块状态**），于是 `usageState` 判出来的 `unavailable`
+ * 一步都没往下传。判据收进这一个函数之后，再加第三张表时它是**必经之路**。
+ *
+ * 第二个参数是这一行自己的桶：整块读成功了、而这一行的桶读不回来（形状不对），
+ * 那也是「这一行我们不知道」，**不是这一行是 0**。
+ */
+export function rowState(state, bucket) {
+  if (state === "off" || state === "unavailable") return "unavailable";
+  return obj(bucket) === null ? "unavailable" : "data";
 }
 
 /**
@@ -223,6 +294,31 @@ export function ratioKind(state, den) {
 }
 
 /**
+ * 一个桶里那六个数。**六张汇总卡、日汇总表、三张分解表共用它。**
+ *
+ * ⚠️⚠️ **它是从 `summaryCards` 里拆出来的，而拆它的理由是一个真缺陷**
+ *（P3d Task 5 评审 C1 / 全局约束 10）：两张表原来这样取数——
+ * `summaryCards({ total: row.total, shards: 0, malformed: 0 })`
+ * ——**那两个 `0` 是前端凭空写死的诚实信号**。响应里 `shards`/`malformed`
+ * 是什么与这一行的桶无关，捏一对出来只是为了骗过 `summaryCards` 的入参形状。
+ * ⇒ 把「取哪六个数」与「这份数据完不完整」拆成两件事：**前者对着一个桶问，
+ * 后者只能对着整份响应问**（`malformedKind`），谁都不必再捏一个假响应。
+ */
+export function bucketCells(bucket) {
+  const b = obj(bucket);
+  const pick = (name) => (b === null ? null : finite(b[name]));
+  return {
+    requests: pick("requests"),
+    success: pick("success"),
+    errors: pick("errors"),
+    tokensIn: pick("tokensIn"),
+    tokensOut: pick("tokensOut"),
+    streamingRequests: pick("streamingRequests"),
+    latencyMs: avgLatency(b),
+  };
+}
+
+/**
  * 六张汇总卡要的那几个数（设计 §10.6：
  * `总请求数 / 成功率 / 平均延迟 / 错误率 / Token（仅非流式）/ 流式请求数`）。
  *
@@ -243,15 +339,8 @@ export function summaryCards(resp) {
   const r = obj(resp);
   const total = r === null ? null : obj(r.total);
   const kind = malformedKind(r);
-  const pick = (name) => (total === null ? null : finite(total[name]));
   return {
-    requests: pick("requests"),
-    success: pick("success"),
-    errors: pick("errors"),
-    tokensIn: pick("tokensIn"),
-    tokensOut: pick("tokensOut"),
-    streamingRequests: pick("streamingRequests"),
-    latencyMs: avgLatency(total),
+    ...bucketCells(total),
     complete: total === null ? true : kind !== "partial",
     malformed: r === null ? null : finite(r.malformed),
   };

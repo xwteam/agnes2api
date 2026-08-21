@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   RANGES, DEFAULT_RANGE, rangeLabelKey, rangeToQuery,
-  usageState, avgLatency, cellKind, ratioKind, summaryCards,
+  usageState, detailState, rowState, avgLatency, cellKind, ratioKind,
+  summaryCards, bucketCells,
   malformedKind, usageNoteKey, noteSeverity, dayRows, breakdownRows,
   tokensCoverageLabels, pendingTail,
 } from "../../admin-ui/js/pure/usage.mjs";
@@ -131,6 +132,94 @@ describe("四态判定：三件事不许揉成一件", () => {
     const body = okBody({ days: [{ date: "2026-08-21", total: ZERO }], total: BUCKET });
     expect(summaryCards(body).requests, "卡片读的是顶层 total").toBe(100);
     expect(usageState(body), "状态也必须读同一个 total").toBe("data");
+  });
+});
+
+describe("整块的结论必须往下传到每一张表（评审 C1 的根因）", () => {
+  /**
+   * ⚠️⚠️⚠️ **两张表原来各自写 `row.total === null ? "unavailable" : "data"`
+   * ——完全不看整块状态**，于是 `usageState` 判出来的 `unavailable`
+   * 一步都没往下传：`all_malformed` 时六张卡全是 EM DASH，
+   * 而紧挨着的日表把同一段区间写成「请求 0 次」。
+   *
+   * ⭐ **根因是上一处修复本身**：为了让卡片别写 `0` 而加的早退，
+   * 把那份 `0` 留给了下一个消费者。判据收进 `rowState()` 之后，
+   * 再加第三张表时它是必经之路。
+   *
+   * **变红条件**：把 `rowState` 的第一行
+   * `if (state === "off" || state === "unavailable") return "unavailable";` 删掉
+   * ⇒ 整块读不出来时每一行又变回 `"data"` ⇒ 第一句断言红。
+   */
+  it("整块读不出来时每一行都读不出来 —— 结论不往下传，同一份 0 只是挪到了下一屏", () => {
+    const zeroBucket = { ...ZERO };
+    // ⚠️ **同一个桶、两种整块状态，必须给出不同的行状态**：`all_malformed`
+    //    那一档的桶就是一个货真价实的 0 桶，光看桶分不出来。
+    expect(rowState("unavailable", zeroBucket)).toBe("unavailable");
+    expect(rowState("empty", zeroBucket)).toBe("data");
+    expect(rowState("unavailable", zeroBucket)).not.toBe(rowState("empty", zeroBucket));
+    expect(rowState("off", zeroBucket)).toBe("unavailable");
+    // 整块读成功了、而这一行的桶读不回来：那也是「这一行我们不知道」，不是 0。
+    expect(rowState("data", null)).toBe("unavailable");
+    expect(rowState("data", zeroBucket)).toBe("data");
+
+    // 串起来：同一个 0 桶在两种整块状态下渲染成两种结局。
+    expect(cellKind(rowState("unavailable", zeroBucket), 0)).toBe("unknown");
+    expect(cellKind(rowState("empty", zeroBucket), 0)).toBe("value");
+  });
+
+  /**
+   * **单日下钻那一份的整块状态（C1 点名的「第三屏」）。**
+   *
+   * 分片全坏时 `mergeDayShards` 什么都合不出来 ⇒ 三个 map 都是空的
+   * ⇒ 三张分解表都会说「这一天没有可以分解的记录」，而事实是我们什么都不知道。
+   *
+   * **变红条件**：把 `detailState` 里的
+   * `if (malformedKind(r) === "all") return "unavailable";` 删掉。
+   */
+  it("单日下钻：分片全坏 / 读不出来 / 落在保留期外都是 unavailable —— 空 map 不许被说成「这一天没有记录」", () => {
+    const emptyMaps = { hours: {}, byModel: {}, byProtocol: {} };
+    const base = { tier: "tier2", date: "2026-08-21", shards: 2, malformed: 0, ...emptyMaps };
+    // 读成功了、这一天真的没有流量：空 map **不是**读不出来。
+    expect(detailState(base)).toBe("data");
+    // 分片全坏：map 同样是空的，但我们一无所知。
+    expect(detailState({ ...base, shards: 0, malformed: 4, note: "all_malformed" })).toBe("unavailable");
+    // 读不出来 / 落在保留期外：三个 map 整块是 null。
+    expect(detailState({
+      ...base, hours: null, byModel: null, byProtocol: null,
+      shards: null, malformed: null, note: "read_failed",
+    })).toBe("unavailable");
+    expect(detailState({
+      ...base, hours: null, byModel: null, byProtocol: null,
+      shards: null, malformed: null, note: "date_out_of_retention",
+    })).toBe("unavailable");
+    expect(detailState({ ...base, tier: "off", hours: null, note: "tier2_off" })).toBe("off");
+    expect(detailState(null)).toBe("unavailable");
+    // ⚠️ **空 map 与 null map 必须分得开**，否则上面第一句与第三句会撞在一起。
+    expect(detailState(base)).not.toBe(detailState({ ...base, hours: null }));
+  });
+
+  /**
+   * **`bucketCells` 是从 `summaryCards` 里拆出来的，拆它的理由是一个真缺陷。**
+   *
+   * 两张表原来这样取数：`summaryCards({ total: row.total, shards: 0, malformed: 0 })`
+   * ——**那两个 `0` 是前端凭空写死的诚实信号**（全局约束 10）。
+   * 拆开之后「取哪六个数」对着一个桶问、「完不完整」只能对着整份响应问，
+   * 谁都不必再捏一个假响应。
+   */
+  it("bucketCells 只回答「取哪六个数」，一个诚实信号都不产出 —— 捏一份假响应去骗过入参形状就是写死诚实信号", () => {
+    const b = bucketCells(BUCKET);
+    expect(Object.keys(b).sort()).toEqual([
+      "errors", "latencyMs", "requests", "streamingRequests", "success", "tokensIn", "tokensOut",
+    ]);
+    // 期望值手写字面量。
+    expect(b.requests).toBe(100);
+    expect(b.latencyMs).toBe(300);
+    expect(bucketCells(null).requests).toBe(null);
+    // `summaryCards` 在同一个桶上给出逐格相同的六个数（它就是拿 bucketCells 算的）。
+    const c = summaryCards(okBody());
+    for (const k of ["requests", "success", "errors", "tokensIn", "tokensOut", "streamingRequests", "latencyMs"]) {
+      expect((c as Record<string, unknown>)[k], `${k} 两处对不上`).toBe((b as Record<string, unknown>)[k]);
+    }
   });
 });
 
