@@ -650,6 +650,56 @@ describe("C1/C2：清掉一条在链上的通道凭据", () => {
     expect(JSON.stringify(e), "凭据的值进了日志").not.toContain("on-chain-key-7777");
   });
 
+
+  /**
+   * ⚠️⚠️ **审计先落、再回读——而这条排序只在「回读真的会抛」时才有可观测差异。**
+   *
+   * 第一版的审计用例测的是「装载不起来的那一支有没有审计」，而诊断视图落地之后
+   * `readAll` 在那一支**不再抛**了 ⇒ 把 `logger.log` 挪到 `readAll` 之后照样绿
+   *（变异 M19 实测逃逸 25/25）。**排序保证真正保护的是另一种情况**：
+   * 存储在 `put` 成功之后坏掉 ⇒ 回读抛 ⇒ 整条请求 500，
+   * **而那次清空已经发生了**——这时那条审计是运维唯一的痕迹。
+   *
+   * **变红条件**：把 `deps.logger.log({ … event: "config.secret_cleared" … })`
+   * 挪到 `const after = await readAll(...)` 之后。
+   */
+  it("审计先落再回读 —— 回读抛错时那条审计仍然必须在（500 也要留痕）", async () => {
+    const inner = new MemoryStorage();
+    await inner.put("config", { gatewayToken: GW, registrar: { yyds: { apiKey: "doomed-key-1234" } } });
+    let reads = 0;
+    const flaky = {
+      async get<T>(k: string): Promise<T | null> {
+        // 第一次读（`clearSecret` 要拿存储原件）放行；之后一律抛——模拟 put 成功
+        // 之后存储才坏掉，那正是「审计已经该落、而回读注定失败」的那个窗口。
+        if (k === "config" && ++reads > 1) throw new Error("KV 在 put 之后坏了");
+        return inner.get<T>(k);
+      },
+      put: <T>(k: string, v: T) => inner.put(k, v),
+      delete: (k: string) => inner.delete(k),
+      list: (pfx: string) => inner.list(pfx),
+    } as unknown as MemoryStorage;
+
+    const { makeApp } = await import("../helpers/make-app.js");
+    const { app, logger } = await makeApp([], [], {}, () => 1000, {
+      storage: flaky, config: { storage: flaky, env: {} },
+    });
+    const res = await app.request("/admin/api/config/secrets/clear", {
+      method: "POST",
+      headers: { ...withKey, "content-type": "application/json" },
+      body: JSON.stringify({ path: "registrar.yyds.apiKey" }),
+    });
+    // 回读真的抛了 ⇒ 这一条请求确实是 500（**存储坏了就该报 500**，不许假装成功）。
+    expect(res.status, "前置条件：这一格要的就是「回读抛错」那个窗口").toBe(500);
+    // 而清空**已经落盘了** —— 所以那条审计必须在。
+    expect(await inner.get<Record<string, unknown>>("config").then(
+      (c) => (c?.registrar as { yyds?: { apiKey?: string } })?.yyds?.apiKey,
+    )).toBeUndefined();
+    const e = logger.entries.find((x) => x.event === "config.secret_cleared");
+    expect(e, "清空落盘了、请求 500 了，而事件板块里一条痕迹都没有").toBeDefined();
+    expect(e?.fields?.path).toBe("registrar.yyds.apiKey");
+    expect(JSON.stringify(e), "凭据的值进了日志").not.toContain("doomed-key-1234");
+  });
+
   /**
    * ⚠️⚠️ **C2 的核心：清完之后运维必须有出路。**
    *
@@ -702,9 +752,19 @@ describe("C1/C2：清掉一条在链上的通道凭据", () => {
    * **变红条件**：把那句 `if (blockers.length === 0) throw err;` 去掉。
    */
   it("真的存储故障不许被吞成诊断视图 —— 没有 blocker 就原样抛", async () => {
+    /**
+     * ⚠️⚠️ **这个替身只在「第一次」读 `config` 时抛，第二次正常返回。这一行是本格
+     * 判别力的全部来源，第一版没有它 ⇒ 变异 M18 完整逃逸（25/25 全绿）。**
+     *
+     * 第一版的替身**每次**读 `config` 都抛，于是 `readAll` 的 `catch` 里那次
+     * 「再读一遍算 blockers」也抛、直接冒出去 ⇒ 这一格**从头到尾没走到被测的那条
+     * 分支**（`if (blockers.length === 0) throw err`），把那一行删掉照样绿。
+     * 让第二次读成功，`blockers` 才算得出来（这里是空的 ⇒ 必须原样抛）。
+     */
+    let firstRead = true;
     const broken: Storage = {
       async get<T>(k: string): Promise<T | null> {
-        if (k === "config") throw new Error("KV 抖了一下");
+        if (k === "config" && firstRead) { firstRead = false; throw new Error("KV 抖了一下"); }
         return null;
       },
       async put() {}, async delete() {}, async list() { return []; },
