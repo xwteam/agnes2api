@@ -356,6 +356,63 @@ an audit field that the admin panel's events view will filter and display.
 If nothing usable is available the field is recorded as `null` — never a fabricated `"unknown"`,
 which would read as a real source.
 
+### What the settings page can change (P3c)
+
+The panel's **Settings** page has three cards: **Credentials**, **Upstream & cooldowns**, and
+**Registrar** (which holds the two fully equal mailbox-channel sub-cards plus an *Advanced*
+disclosure). It writes to the `config` key **in storage**, never to environment variables.
+
+**Every field shows three values, not one.** The line "stored X · env Y · effective Z" separates
+"what you saved", "what the deployment supplies", and "what the gateway is actually using".
+The precedence is always **environment variable > storage > built-in value**.
+
+**Fields locked by an environment variable cannot take effect from the panel, so the panel
+refuses to edit them.** The input is greyed out and a note names the variable and says the change
+has to happen on the deployment side. `PUT /admin/api/config` answers `400 locked_by_env` for those
+fields and **writes nothing**: writing would produce "saved successfully, effective value unchanged",
+and the operator would blame a stale cache and wait for two refresh cycles for nothing.
+
+⚠️ **From P3c the registrar family is in that lock table too** (`REGISTRAR_ENABLED`,
+`REGISTRAR_PRIMARY`, `REGISTRAR_FALLBACK`, `TARGET_KEYS`, `MINT_BATCH`, `TEND_INTERVAL_MS`,
+`CODE_TIMEOUT_MS`, `MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `MAX_DOMAIN_ATTEMPTS`,
+`REGISTRAR_TOKEN_NAME`, `AGNES_PLATFORM_URL`, `YYDS_BASE_URL`, `YYDS_API_KEY`,
+`MOEMAIL_BASE_URL`, `MOEMAIL_API_KEY`). Before that they were not: with `TARGET_KEYS=30` in
+`docker-compose.yml`, changing it to 20 in the panel saved fine while the effective value stayed 30
+**even across restarts**, and the panel said nothing about it.
+
+**Credentials are write-only.** The gateway token and both channel API keys are **never returned in
+plaintext**; the API returns only "configured or not" and the **last 4 characters** (and not even
+those if the secret is shorter than 5 — showing them would be showing all of it). Therefore:
+
+- the inputs are always empty and the placeholder reads **leave blank to keep unchanged**;
+- on save, an absent or blank credential field **means "do not change"**, not "clear". Implementing
+  blank as "clear" would wipe the gateway token the first time an operator saves the settings page —
+  and **the running process would keep going on its last good snapshot**, so nothing would look wrong
+  until the next restart;
+- clearing is only possible through the dedicated "Clear" button, which asks for confirmation.
+
+⚠️ **Credentials written from the panel are stored in plaintext** in KV / `store.json`, at the same
+level as P1's "keys are stored in plaintext". Do not assume what you type here is an encrypted
+secret. Treat the data directory / KV namespace as credential material.
+
+⚠️ **If you clear the gateway token while `GATEWAY_TOKEN` is not in the environment either**, the
+current process keeps running, but **the next restart or isolate recycle will fail to start**. The
+panel says so in a red notice at that moment; recover by setting a new gateway token on the same page
+right away.
+
+⚠️ **The registration backend URL (`AGNES_PLATFORM_URL`) inside the *Advanced* disclosure is not an
+ordinary setting.** It is **where every automated registration goes**: point it elsewhere and that
+server receives the mailbox, password and verification code used for each registration. That is why
+it lives behind a disclosure, carries a red warning, and has its own confirmation button instead of
+riding along with the main Save.
+
+**After saving, the panel does not claim "saved and in effect".** It **reads the effective values
+back**, highlights the fields that actually changed, and states **how long other replicas/isolates
+may take to see the change**: the config holder's TTL is 30 seconds and the KV edge cache defaults to
+60 seconds, so the upper bound is about **90 seconds**. This instance is immediate (saving
+invalidates its local cache); other instances are not. **Panel copy must never say "takes effect
+immediately".**
+
 ### Registrar variables (optional, disabled by default)
 
 The registrar is an optional auto-refill component, disabled by default, and does not affect

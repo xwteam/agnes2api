@@ -7,6 +7,16 @@
   border: 1px solid var(--border); border-radius: var(--radius);
 }
 .card + .card { margin-top: var(--gap-sm); }
+/* ⚠️⚠️ **上面那条是给「竖着摞起来的卡」用的，横排的一行里必须取消掉。**
+   P3c Task 7 的真机冒烟量出来的：`.card-row` 是 flex 行，第二张及以后的卡命中
+   `.card + .card` 拿到 8px 的 `margin-top` ⇒ 它比第一张**矮 8px、而且整体下沉 8px**
+   （实测 moemail 367px / top 2766，yyds 359px / top 2774）。
+   两张通道卡因此**不等高、不对齐**——而设计 §10.3 第 2 条要的是「两张卡片布局完全
+   对称」，高度差同样会被读成「这条更重要」。
+   **这是 P3b/Task 6 就已经上线的缺陷**（注册机板块那两张卡、以及概览与注册机的四格
+   数字瓦片都在同一条规则下），不是本任务引入的；横排的间距本来就由 `.card-row` 的
+   `gap` 给，这条竖排规则在行里是纯多余。 */
+.card-row > .card + .card { margin-top: 0; }
 .card-row { display: flex; flex-wrap: wrap; gap: var(--gap); }
 .card-row > .card { flex: 1; min-width: 180px; }
 .card .label { color: var(--muted); font-size: 12px; }
@@ -131,6 +141,11 @@ tr:last-child td { border-bottom: 0; }
 .cfg-field.locked { border-left: 2px solid var(--border); padding-left: var(--gap-sm); }
 .cfg-field.changed { border-left: 2px solid var(--ok); padding-left: var(--gap-sm); }
 .cfg-field.invalid { border-left: 2px solid var(--danger); padding-left: var(--gap-sm); }
+/* ⚠️ **清空按钮必须缩到内容宽度，不许铺满整格。**
+   `.cfg-field` 是 column 方向的 flex 容器，按钮默认被拉成整行宽——真机截图上那是
+   一条**横贯整张卡的红色大条**，于是整页视觉上最抢眼的东西是三颗**销毁凭据**的按钮。
+   与 `.channel-card .channel-test` 用的是同一条处置（`align-self: flex-start`）。 */
+.cfg-field .cfg-clear { align-self: flex-start; }
 .cfg-advanced { margin-top: var(--gap-sm); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--gap-sm); }
 .cfg-advanced summary { cursor: pointer; color: var(--text); }
 .cfg-errors p { margin: 2px 0; }

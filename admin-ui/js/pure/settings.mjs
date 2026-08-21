@@ -225,11 +225,27 @@ export function buildPatch(raw, body) {
     }
     const view = fieldView(body, path);
     if (view.locked) continue;
+    // ⚠️⚠️ **空框 + 存储里本来就没有这一格 ⇒ 这次不改它。**
+    //
+    // 真机冒烟量出来的第二半：输入框回填的是**存储层**那个值，而全新部署下存储层
+    // 是空的 ⇒ 一整页空框。数值格那一半由 `coerce()` 挡住了（空串→`undefined`），
+    // **字符串格没有**：`agnesBaseUrl` / `registrar.tokenName` 会被原样当成 `""`
+    // 送出去，然后吃一条后端的 `empty` ——运维一个字都没改，却被告知两格不能留空。
+    // 「空且原本就没有」与「用户把一个有值的格清空了」是两件事，后者照常送出去、
+    // 照常被后端拒（那是一句该说的话），前者什么都不做。`localErrors` 同源。
+    if (value === "" && (view.stored === null || view.stored === undefined)) continue;
     const next = coerce(value, view.stored === null ? view.effective : view.stored);
     if (next === undefined) continue;
-    // **比的是 `stored`（面板真正在改的那一层），不是 `effective`。**
-    // 比 `effective` 的话，一个被 env 压过的字段永远显示成「有改动」。
-    const current = view.stored === undefined ? null : view.stored;
+    // **「变没变」比的是 `stored ?? effective`。**
+    //
+    // ⚠️ 第一版只比 `stored`，真机冒烟量出来的后果是：全新部署下存储层是空的，
+    // 而注册机那个开关（checkbox）读出来恒是 `false` ⇒ `sameScalar(null, false)`
+    // 为假 ⇒ **每一次保存都会把 `registrar.enabled: false` 写进存储**，哪怕运维
+    // 一个字都没改。那既是一次白花的写配额，也把一个内置取值**固化**进了存储
+    //（以后改内置默认值就再也传播不到这个部署）。
+    // ⚠️ **拿 `effective` 兜底不会让被 env 压过的字段永远显示成「有改动」**：
+    // 那种字段在上面 `view.locked` 那一行就已经整个跳过了。
+    const current = view.stored === null || view.stored === undefined ? view.effective : view.stored;
     if (sameScalar(current, next)) continue;
     patch[path] = next;
   }
@@ -289,8 +305,17 @@ export function localErrors(raw, body) {
     const reference = view.stored === null ? view.effective : view.stored;
     if (typeof reference !== "number") continue;
     if (typeof value !== "string") continue;
-    // ① 必填：数值格不许留空。
-    if (value.trim() === "") { out.push({ field: path, code: "empty" }); continue; }
+    // ① 必填。
+    //
+    // ⚠️⚠️ **判据是「用户把一个原本有值的格清空了」，不是「这一格是空的」。**
+    // 真机冒烟量出来的：全新部署下存储里一个字段都没有 ⇒ 每个数值格的输入框都是空的
+    //（框里回填的是**存储层**那个值，生效值在下面那行四元组里写着）⇒ 第一版的
+    // 「空就报错」让运维**点一次保存收到 12 条「这一格不能留空」**，而他一个字都没改。
+    // 空且存储里本来就没有 ⇒ 「这次不改这一格」，`buildPatch` 也是这么处理的，两边同源。
+    if (value.trim() === "") {
+      if (view.stored !== null && view.stored !== undefined) out.push({ field: path, code: "empty" });
+      continue;
+    }
     const n = Number(value);
     // ② 是数字。
     if (Number.isNaN(n)) { out.push({ field: path, code: "not_an_integer" }); continue; }

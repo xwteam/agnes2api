@@ -164,6 +164,10 @@ function renderOne(built) {
     built.input.checked = v.stored === true || (v.stored === null && v.effective === true);
   } else {
     built.input.value = v.stored === null || v.stored === undefined ? "" : String(v.stored);
+    // **框里空着的时候，占位符显示当前生效值**：框里回填的是存储层那个值，而全新
+    // 部署下存储层是空的 ⇒ 一整页空框。占位符把「现在实际在用的是什么」放回框里，
+    // 而它**不是**一个会被提交的值（留空 = 这次不改这一格，见 `buildPatch`）。
+    built.input.setAttribute("placeholder", displayValue(v.effective));
   }
   setLock(built, v.locked, v.lockedBy);
 }

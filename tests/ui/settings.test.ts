@@ -222,9 +222,63 @@ describe("buildPatch：三条规则", () => {
     expect(buildPatch({ "registrar.yyds.apiKey": "k" }, body)).toEqual({});
   });
 
+  /**
+   * ⚠️⚠️ **真机冒烟抓出来的两条缺陷之一（P3b 说的「把验收当一等交付物」）。**
+   *
+   * 输入框回填的是**存储层**那个值，而全新部署下存储层是空的 ⇒ 一整页空框。
+   * 第一版对**字符串格**没有任何处置：`agnesBaseUrl` / `registrar.tokenName` 会被
+   * 原样当成 `""` 送出去，运维**一个字都没改、点一次保存收到两条「不能留空」**。
+   * 数值格那一半由 `coerce()` 挡着（空串 ⇒ `undefined`），这一格补的是另一半。
+   */
+  it("空框 + 存储里本来就没有 ⇒ 这次不改它（字符串格与数值格两边都要）", () => {
+    const fresh = {
+      fields: {
+        agnesBaseUrl: { stored: null, env: null, effective: "https://built-in.example.com/v1", lockedBy: null },
+        "registrar.tokenName": { stored: null, env: null, effective: "auto", lockedBy: null },
+        maxStrikes: { stored: null, env: null, effective: 3, lockedBy: null },
+      },
+      credentials: {}, secrets: [],
+    };
+    expect(
+      buildPatch({ agnesBaseUrl: "", "registrar.tokenName": "", maxStrikes: "" }, fresh),
+      "空框被当成一次「把它改成空串」送了出去 —— 运维一个字都没改却被后端拒",
+    ).toEqual({});
+    // **另一半：用户把一个原本有值的格清空了，那是一次真实的意图，照常送出去。**
+    const hasStored = {
+      ...fresh,
+      fields: { ...fresh.fields, agnesBaseUrl: { stored: "https://old.example.com", env: null, effective: "https://old.example.com", lockedBy: null } },
+    };
+    expect(buildPatch({ agnesBaseUrl: "" }, hasStored)).toEqual({ agnesBaseUrl: "" });
+  });
+
   it("值没变的字段不送", () => {
     expect(buildPatch({ "registrar.targetKeys": "20", agnesBaseUrl: "https://a.example.com" }, body))
       .toEqual({});
+  });
+
+  /**
+   * ⚠️⚠️ **真机冒烟抓出来的两条缺陷之二。**
+   *
+   * 全新部署下存储层是空的，而注册机那个开关（checkbox）读出来恒是 `false`
+   * ⇒ 只比 `stored` 的话 `sameScalar(null, false)` 为假 ⇒ **每一次保存都会把
+   * `registrar.enabled: false` 写进存储**，哪怕运维一个字都没改：一次白花的写配额，
+   * 外加把一个内置取值**固化**进存储（以后改内置默认值再也传播不到这个部署）。
+   */
+  it("存储里没有、而当前值就等于生效值 ⇒ 不送（否则每次保存都白写一次）", () => {
+    const fresh = {
+      fields: {
+        "registrar.enabled": { stored: null, env: null, effective: false, lockedBy: null },
+        maxStrikes: { stored: null, env: null, effective: 3, lockedBy: null },
+      },
+      credentials: {}, secrets: [],
+    };
+    expect(
+      buildPatch({ "registrar.enabled": false, maxStrikes: "3" }, fresh),
+      "一次「什么都没改」的保存把内置取值固化进了存储",
+    ).toEqual({});
+    // 反向：真的改了当然要送。
+    expect(buildPatch({ "registrar.enabled": true, maxStrikes: "9" }, fresh))
+      .toEqual({ "registrar.enabled": true, maxStrikes: 9 });
   });
 
   it("数值按当前那一格的类型归一，布尔按开关归一", () => {
@@ -247,6 +301,7 @@ describe("前端只做四条最轻量的即时提示（设计 §10.4）", () => 
   };
 
   it("必填 / 是数字 / 非负，三条各一格", () => {
+    // 「必填」的判据是**用户把一个原本有值的格清空了**（`body` 里 `maxStrikes.stored` 是 3）。
     expect(localErrors({ maxStrikes: "" }, body)).toEqual([{ field: "maxStrikes", code: "empty" }]);
     expect(localErrors({ maxStrikes: "abc" }, body)).toEqual([{ field: "maxStrikes", code: "not_an_integer" }]);
     expect(localErrors({ maxStrikes: "-1" }, body)).toEqual([{ field: "maxStrikes", code: "below_min" }]);
@@ -261,6 +316,19 @@ describe("前端只做四条最轻量的即时提示（设计 §10.4）", () => 
    */
   it("下界不在前端判：maxStrikes 填 0 前端放行，交给后端的 below_min", () => {
     expect(localErrors({ maxStrikes: "0" }, body)).toEqual([]);
+  });
+
+  /**
+   * ⚠️ **「空」不等于「必填没填」**——同一次真机冒烟抓出来的那条（见 `buildPatch`
+   * 那一族的说明）：全新部署下每个数值格的输入框都是空的（框里回填的是存储层，
+   * 而存储层是空的），第一版让运维点一次保存**收到 12 条「这一格不能留空」**。
+   */
+  it("空框 + 存储里本来就没有 ⇒ 不报「不能留空」（与 buildPatch 同源）", () => {
+    const fresh = {
+      ...body,
+      fields: { ...body.fields, maxStrikes: { stored: null, env: null, effective: 3, lockedBy: null } },
+    };
+    expect(localErrors({ maxStrikes: "" }, fresh)).toEqual([]);
   });
 
   it("注册机开着时，fallback === primary 前端就拦（设计 §10.3 第 7 条）", () => {
