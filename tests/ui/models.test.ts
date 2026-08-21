@@ -79,10 +79,18 @@ describe("协议可用性矩阵", () => {
   });
 
   /**
-   * 与上一格**合起来**才说明这个函数真的在看 `model`：
-   * 单独看上一格的话，一个恒返回 `available: false` 的实现同样能通过它。
+   * ⚠️ **这一格是冗余的，如实登记（P3d Task 6 评审 m5）。**
+   * 它原来的名字与注释写着「与上一格合起来才说明这个函数真的在看 model」——
+   * 那句在**纯函数这一侧**不成立：它能抓到的坏实现（恒 `false`）
+   * **是下面「只占一条协议」那一格捕获集的真子集**，那一格一条用例里同时放进了
+   * `true` 与 `false` 两种状态，恒真 / 恒假 / 过滤三种一次全挡。
+   * ⇒ 留着它是因为**冗余但无害、且读起来最直白**，不是因为它补上了什么缺口。
+   * **真正互补的那一对在 DOM 侧**（`tests/ui/dom/models-section.test.ts` 的
+   * 「图片模型那一行上四个协议徽章一个都不少，且全部标着不可用 —— 空白的一格与「读不出来」长得一样」
+   * 与「对话模型那一行四个徽章全部标着可用 —— 与上一格合起来才说明徽章真的在看模型」）：
+   * 真源里**没有**只占部分协议的模型，所以 DOM 那一侧拿不到对照行，只能靠这一对。
    */
-  it("对话模型的四个徽章 available 全 true —— 与上一格合起来才说明这个函数真的在看 model", () => {
+  it("对话模型的四个徽章 available 全 true（冗余格：捕获集是下面那格的真子集，见注释）", () => {
     const badges = protocolBadges(CHAT_MODEL, FOUR_PROTOCOLS) as Badge[];
     expect(badges.length).toBe(4);
     expect(badges.map((b) => b.available)).toEqual([true, true, true, true]);

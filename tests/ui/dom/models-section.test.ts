@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { bootPanel, settle } from "./harness.js";
+import { bootPanel, settle, type Harness } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { catalogPayload } from "../../../src/core/admin/protocol-catalog.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
@@ -66,14 +66,27 @@ function dataRows(section: FakeElement): FakeElement[] {
   return out;
 }
 
-/** 某一行上的四个徽章：`「展示名 → 可用与否」`。 */
-function badgesOf(row: FakeElement): Array<{ label: string; available: string | null; protocol: string | null }> {
-  const out: Array<{ label: string; available: string | null; protocol: string | null }> = [];
+/**
+ * 某一行上的四个徽章。
+ *
+ * ⚠️ **`title` 必须一起收**（P3d Task 6 评审 Important 3，实测）：上一版只收
+ * `textContent` / `data-available` / `data-protocol` ⇒ **删掉徽章上的 `title` 全绿**，
+ * 而「可用 / 不可用」这件事**不只靠颜色**这条承诺全靠那句 tooltip 兑现，
+ * `models.badge.yes` / `models.badge.no` 两个 key 的渲染当时零覆盖。
+ * `tests/ui/dom/usage-section.test.ts` 早就断言了 title，这里是往回补一课。
+ */
+function badgesOf(row: FakeElement): Array<{
+  label: string; available: string | null; protocol: string | null; title: string | null;
+}> {
+  const out: Array<{
+    label: string; available: string | null; protocol: string | null; title: string | null;
+  }> = [];
   for (const span of row.querySelectorAll(".badge")) {
     out.push({
       label: span.textContent,
       available: span.getAttribute("data-available"),
       protocol: span.getAttribute("data-protocol"),
+      title: span.getAttribute("title"),
     });
   }
   return out;
@@ -98,6 +111,13 @@ function endpointsOf(row: FakeElement): string[] {
   const out: string[] = [];
   for (const div of row.querySelectorAll(".models-endpoint")) out.push(div.textContent);
   return out;
+}
+
+/** 点侧栏上那颗**真的**导航按钮（走整条 `showSection` 接线，不直接调板块方法）。 */
+function navTo(h: Harness, name: string): void {
+  for (const btn of h.dom.document.querySelectorAll(".nav-item")) {
+    if (btn.getAttribute("data-section") === name) btn.click();
+  }
 }
 
 /** 工具栏上那一排分段按钮的 `data-protocol`（空串 = 「全部」那一档）。 */
@@ -125,12 +145,22 @@ describe("读不出来 ≠ 一个模型都没有", () => {
     // ② 工具栏也不许出现：一份读不出来的目录没有什么可筛的，
     //    而一排能点的按钮会让人以为「筛完就没了」。
     expect(filterButtons(sec).length, "读不出来却画了一排筛选按钮").toBe(0);
-    // ③ 必须有一条红色横幅说清是读取失败。
-    expect(sec.querySelectorAll(".banner-danger").length, "读取失败却没有任何红色信号").toBe(1);
+    // ③ 必须有一条红色横幅说清是读取失败，**且它对读屏是一条状态播报**
+    //    （评审 m2：`role="status"` 原来零覆盖 —— 删掉它对视觉用户没有任何变化，
+    //    而读屏用户会完全收不到「读取失败」这条信号）。
+    const banners = sec.querySelectorAll(".banner-danger");
+    expect(banners.length, "读取失败却没有任何红色信号").toBe(1);
+    expect(banners[0]!.getAttribute("role"), "红条没有 role=status，读屏用户收不到这条信号").toBe("status");
     // ④ **那一根 EM DASH**：它就是「我们不知道」这句话本身。
     const unknown = sec.querySelectorAll(".models-unknown");
     expect(unknown.length, "没有那一根表示「我们不知道」的破折号").toBe(1);
     expect(unknown[0]!.textContent).toBe(EM);
+    // ④b **那根破折号上的 `title` 是它的全部解释**（评审 Important 3：删掉它全绿）。
+    //     CSS 还给它配了 `cursor: help` ⇒ 没有 title 就是一个指向空处的 affordance。
+    expect(
+      unknown[0]!.getAttribute("title"),
+      "破折号上没有解释它是「读不出来」而不是「一个模型都没有」的那句话",
+    ).toBe("模型目录读不出来，所以这里是一根破折号——不是这个网关一个模型都没有。");
     // ⑤ 横幅里那颗按钮是「再读一次」——少了它，一次网络抖动会把这个板块
     //    在本次会话里钉死在错误页上（用户得先猜到「切走再切回来」这个动作）。
     expect(sec.querySelectorAll(".models-retry").length, "错误横幅上没有再读一次的入口").toBe(1);
@@ -187,6 +217,14 @@ describe("四模型 × 四协议矩阵", () => {
       "OpenAI Chat Completions", "Anthropic Messages", "OpenAI Responses", "Google Gemini generateContent",
     ]);
     expect(badges.map((b) => b.protocol)).toEqual(["openai", "anthropic", "responses", "gemini"]);
+    // **状态不只靠颜色**：灰徽章那句 tooltip 必须把「不可用」写成字（评审 Important 3）。
+    // 期望值手写整句，不是 `toContain("不可用")` —— 后者在「可用」那句里也是子串。
+    expect(badges.map((b) => b.title)).toEqual([
+      "OpenAI Chat Completions — 这个模型在这条协议上不可用",
+      "Anthropic Messages — 这个模型在这条协议上不可用",
+      "OpenAI Responses — 这个模型在这条协议上不可用",
+      "Google Gemini generateContent — 这个模型在这条协议上不可用",
+    ]);
   });
 
   /**
@@ -198,6 +236,14 @@ describe("四模型 × 四协议矩阵", () => {
     const sec = h.section("models");
     const row = dataRows(sec).find((tr) => tr.getAttribute("data-model") === "agnes-2.0-flash");
     expect(badgesOf(row!).map((b) => b.available)).toEqual(["yes", "yes", "yes", "yes"]);
+    // 与上一格的 tooltip 成对：两句必须是**不同**的话，否则 `models.badge.yes` /
+    // `models.badge.no` 写成同一句也没人红（第 1 种假阳性：夹具 A/B 同值）。
+    expect(badgesOf(row!).map((b) => b.title)).toEqual([
+      "OpenAI Chat Completions — 这个模型在这条协议上可用",
+      "Anthropic Messages — 这个模型在这条协议上可用",
+      "OpenAI Responses — 这个模型在这条协议上可用",
+      "Google Gemini generateContent — 这个模型在这条协议上可用",
+    ]);
   });
 
   it("四个模型各一行，类型那一列画的是译名不是裸英文词", async () => {
@@ -267,6 +313,63 @@ describe("按协议筛选（工具栏）", () => {
 
     expect(dataRows(sec).map((tr) => tr.getAttribute("data-model")), "媒体模型混进了对话协议的筛选结果")
       .toEqual(["agnes-2.0-flash"]);
+
+    // ⚠️ **选中态也要画出来**（评审 m1：删掉两行 `classList.toggle("active", …)` 原来全绿）
+    //    ——表筛过了，而没有任何东西保证用户看得出**当前停在哪一档**。
+    //    期望值是**整排**档位的选中态，不是只看被点的那一颗：只看那一颗的话，
+    //    「每一颗都 active」这种实现同样能通过（第 5 种假阳性）。
+    expect(
+      filterButtons(sec).map((b) => b.classList.contains("active")),
+      "分段选择器上看不出当前停在哪一档",
+    ).toEqual([false, false, true, false, false]);
+  });
+
+  /**
+   * ── **P3d Task 6 评审 Important 2：`filterEmpty` 那一支原来零覆盖** ────────────
+   *
+   * 实测：把 `buildTable()` 里那个三元的两支都改成 `"models.empty"` ⇒ **全绿**，
+   * 而 `grep -rn 'filterEmpty' tests/` 当时命中 **0**。
+   *
+   * ⚠️⚠️ **这一支今天用真源根本走不到**：`agnes-2.0-flash` 四条协议全占 ⇒ 每一档
+   * 都恰好筛出 1 行，永远不为空。**所以它的可达性只能靠合成夹具证明**——
+   * `bootPanel` 的 `respond` 收任意 body，这里喂一份「协议里有 delta、
+   * 而没有任何模型占它」的合成目录。
+   * ⚠️ **不许因为「今天走不到」就把那一支删掉、或者把话说软成一句通用文案**：
+   * 那一支在代码里存在，而且**下一个只占部分协议的模型进来它当天就可达**。
+   *
+   * **变红条件**：`buildTable()` 里 `filter === "" ? "models.empty" : "models.filterEmpty"`
+   * 的两支取同一个 key。
+   */
+  it("某条协议上一个模型都没有时说的是「这条协议上没有」，不是「这份目录里一个模型都没有」", async () => {
+    // 合成目录：两条协议，而唯一那个模型只占其中一条。
+    // **`delta` 这个 id 是编的**，不是真源里的协议——本板块不认识任何真实协议 id，
+    // 它只渲染响应给了什么，所以编一个反而更能说明这一点。
+    const synthetic = {
+      protocols: [
+        { id: "alpha", label: "Alpha Protocol" },
+        { id: "delta", label: "Delta Protocol" },
+      ],
+      models: [{
+        id: "probe-chat",
+        modality: "chat",
+        protocols: ["alpha"],
+        endpoints: [{ method: "POST", path: "/probe/chat" }],
+      }],
+    };
+    const h = await openModels(respondWithCatalog(200, synthetic));
+    const sec = h.section("models");
+    expect(dataRows(sec).length, "前置条件：默认档下那一行得在").toBe(1);
+
+    filterButtons(sec).find((b) => b.getAttribute("data-protocol") === "delta")!.click();
+    await settle();
+
+    expect(dataRows(sec).length, "前置条件：这一档得真的筛成空的，否则这一支不可观测").toBe(0);
+    expect(sec.textContent).toContain("这条协议上没有可用的模型");
+    // ⚠️ **这一句才是这一格的全部理由**：两句话说的是两件事
+    //（「这条协议上没有」vs「这份目录里一个模型都没有」），
+    // 合成一句就是把一次筛选的结果说成了整个网关的状态。
+    expect(sec.textContent, "把「这条协议上没有」说成了「这份目录里一个模型都没有」")
+      .not.toContain("这份目录里一个模型都没有");
   });
 
   /**
@@ -302,6 +405,9 @@ describe("按协议筛选（工具栏）", () => {
     filterButtons(sec).find((b) => b.getAttribute("data-protocol") === "")!.click();
     await settle();
     expect(dataRows(sec).length).toBe(4);
+    // 选中态跟着回到「全部」那一档（同 m1：整排一起断言）。
+    expect(filterButtons(sec).map((b) => b.classList.contains("active")))
+      .toEqual([true, false, false, false, false]);
   });
 });
 
@@ -318,13 +424,9 @@ describe("网络行为", () => {
     expect(before, "前置条件：第一次显示时得真的发过一次").toBe(1);
 
     // 切到概览再切回来（走的是真 `.nav-item` 按钮，不是直接调板块方法）。
-    for (const btn of h.dom.document.querySelectorAll(".nav-item")) {
-      if (btn.getAttribute("data-section") === "overview") btn.click();
-    }
+    navTo(h, "overview");
     await settle(12);
-    for (const btn of h.dom.document.querySelectorAll(".nav-item")) {
-      if (btn.getAttribute("data-section") === "models") btn.click();
-    }
+    navTo(h, "models");
     await settle(12);
 
     expect(h.calls.filter((c) => c.url.startsWith("/admin/api/models")).length, "重复读了一份静态目录")
@@ -343,13 +445,9 @@ describe("网络行为", () => {
     expect(h.section("models").querySelectorAll(".models-unknown").length, "前置条件：先得真的失败一次").toBe(1);
 
     h.respond(respondWithCatalog());
-    for (const btn of h.dom.document.querySelectorAll(".nav-item")) {
-      if (btn.getAttribute("data-section") === "overview") btn.click();
-    }
+    navTo(h, "overview");
     await settle(12);
-    for (const btn of h.dom.document.querySelectorAll(".nav-item")) {
-      if (btn.getAttribute("data-section") === "models") btn.click();
-    }
+    navTo(h, "models");
     await settle(12);
 
     expect(dataRows(h.section("models")).length, "失败之后再也没有重试过").toBe(4);
@@ -372,6 +470,86 @@ describe("网络行为", () => {
     expect(h.calls.filter((c) => c.url.startsWith("/admin/api/models")).length, "按了却没有再读一次")
       .toBe(before + 1);
     expect(dataRows(sec).length).toBe(4);
+  });
+
+  /**
+   * ── **P3d Task 6 评审 Important 1：两条读并存，而晚到的失败会抹掉已经画好的表** ──
+   *
+   * `load()` 有**两个**入口：`onShow()`（`catalog === null` 时）与错误横幅上那颗
+   * 「再读一次」。第一条读**还在飞着**的时候切走再切回来，`catalog` 仍然是 `null`
+   * ⇒ 第二条链就发出去了。评审探针实测（修复前）：
+   * `calls=2 rowsAfterSuccess=4 rowsAfterLateFailure=0`
+   * ——**表已经正确画出 4 行，晚到的那条失败链走 catch 把它抹成了「读不出来」。**
+   *
+   * 治的是根因：**在飞时不许再发出第二条链**（`inFlight` 早退）。
+   * **变红条件**：删掉 `load()` 开头那两行 `if (inFlight) return; inFlight = true;`。
+   */
+  it("在飞的读还没回来就切走再切回来：不许发出第二条读 —— 两条链并存正是那条晚到失败的来源", async () => {
+    const pending: Array<(r: { status: number; body: unknown }) => void> = [];
+    const h = await bootPanel({
+      now: NOW,
+      store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000), [SECTION_STORE]: "models" },
+      respond: (url: string) => {
+        if (!url.startsWith("/admin/api/models")) return { status: 200, body: {} };
+        // **替身带一个真实的挂起点**（第 8 种假阳性：零延迟的替身让时序性质
+        // 整个不可观测）——这条读要一直飞着，直到用例自己把它放回来。
+        return new Promise<{ status: number; body: unknown }>((resolve) => { pending.push(resolve); });
+      },
+    });
+    await settle(12);
+    expect(pending.length, "前置条件：第一条读得真的还在飞着").toBe(1);
+
+    navTo(h, "overview");
+    await settle(12);
+    navTo(h, "models");
+    await settle(12);
+
+    expect(
+      h.calls.filter((c) => c.url.startsWith("/admin/api/models")).length,
+      "在飞时又发出了第二条读 —— 两条链并存",
+    ).toBe(1);
+  });
+
+  /**
+   * 上一格的**后果那一半**：把「晚到的失败」直接喂进去，已经画好的表必须原样留着。
+   *
+   * ⚠️ **这一格刻意不断言 `pending.length`**：它要在修复前后**两种实现下都跑得动**
+   * ——修复前第二条链存在、它的失败会把表抹掉（红）；修复后第二条链根本不存在，
+   * `pending.slice(1)` 是空的、表原样留着（绿）。
+   *
+   * ⚠️⚠️ **「回来晚了的那份不会是过期数据」这句只对成功响应成立**：`catch` 分支把
+   * `catalog` 清成 `null`，那一步在原推理里整个缺失。这一格钉的就是它。
+   */
+  it("晚到的失败不许把已经画好的表抹掉 —— 表已经画好了，那次失败什么新东西都没说", async () => {
+    const pending: Array<(r: { status: number; body: unknown }) => void> = [];
+    const h = await bootPanel({
+      now: NOW,
+      store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000), [SECTION_STORE]: "models" },
+      respond: (url: string) => {
+        if (!url.startsWith("/admin/api/models")) return { status: 200, body: {} };
+        return new Promise<{ status: number; body: unknown }>((resolve) => { pending.push(resolve); });
+      },
+    });
+    await settle(12);
+    navTo(h, "overview");
+    await settle(12);
+    navTo(h, "models");
+    await settle(12);
+
+    // 先发的那一条**成功**回来：表画出来。
+    pending[0]!({ status: 200, body: catalogPayload() });
+    await settle(12);
+    expect(dataRows(h.section("models")).length, "前置条件：成功的那一条得先把表画出来").toBe(4);
+
+    // 再把所有**晚到的**那些喂成失败。修复后这里一条都没有。
+    for (const resolve of pending.slice(1)) resolve({ status: 500, body: {} });
+    await settle(12);
+
+    expect(dataRows(h.section("models")).length, "晚到的失败把已经画好的表抹掉了").toBe(4);
+    expect(
+      h.section("models").querySelectorAll(".models-unknown").length,
+      "晚到的失败把一张正确的表换成了「读不出来」",
+    ).toBe(0);
   });
 
   /**
