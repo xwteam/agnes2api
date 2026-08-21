@@ -89,7 +89,8 @@ export interface AdminRouterDeps {
    * 画图表，而 `GET /admin/api/usage` 回 `tier: "off"`。
    * 由 `tests/contract/admin-usage.test.ts` 的
    * 「capabilities 的 tier2Enabled 与 usage 的 tier 说的是同一件事 —— 两边不许分叉」
-   * 在**默认夹具与开着 Tier-2 的真装配两侧**各钉一格。
+   * 钉着。**那是一格用例，它在自己体内用一个 `for` 把开着与关着两侧各跑一遍**
+   *（上一版这里写「两侧各钉一格」，读起来像两格，实为一格）。
    */
   usageStatsEnabled: boolean;
   /**
@@ -376,17 +377,32 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // ⚠️ **「被静态兜底吃掉」这个方向，今天唯一的护栏是 `tests/contract/admin-usage.test.ts`
   // 整个文件，这是实测出来的、不是推出来的**（本任务变异 M6：把这三条一并挪到
   // 下面 `admin.route("/", uiRoutes())` 之后）：
-  // · `tests/contract/admin-usage.test.ts` ⇒ **49 格红**（三条端点全变 404）；
-  // · `tests/contract/ui-serve.test.ts` ⇒ **17 格全绿**——它探的是
-  //   `/admin/api/session` 那一条，与这三条的注册位置无关；
-  // · `tests/contract/admin-auth.test.ts` ⇒ **68 格全绿**——鉴权矩阵那一格只断言
-  //   「拿对口令时不该被判 401」，而被兜底吃掉之后拿到的是 **404，照过**。
+  // · `tests/contract/admin-usage.test.ts` 的
+  //   「Tier-2 关着时照样交出这把 key 的 Tier-1 计数 —— 两者本来就是两套账」
+  //   一带**大面积变红**（三条端点全变 404）；
+  // · `tests/contract/ui-serve.test.ts` 的
+  //   「**/admin/api/* 不会被静态兜底吃掉**——注册顺序错了会让整套管理 API 变成 404」
+  //   **不红**——它探的是 `/admin/api/session` 那一条，与这三条的注册位置无关；
+  // · `tests/contract/admin-auth.test.ts` 的「每一条路由 × 每一种凭据状态，逐格断言」
+  //   **不红**——它只断言「拿对口令时不该被判 401」，而被兜底吃掉之后拿到的是
+  //   **404，照过**。
+  // ⚠️ **刻意不写死「几格红」**：那个数每加一条用例就过期一次（本任务实测吃过一次，
+  // 一个补用例的提交让上一版写下的「49 格红」当场变成 51）。**「不红」不会过期**，
+  // 而它才是这条记录真正承载的那半。
   // 与 `GET /admin/api/models` 上方那段记的是同一个形态、同一个结论。
   //
   // **两条都无条件注册，不看 Tier-2 开没开**：路由表随运行时配置变化的话，
   // `tests/contract/admin-auth.test.ts` 的枚举式鉴权矩阵会因为默认夹具恰好关着
-  // Tier-2 而让这两条**静默地从整个矩阵里消失**。「Tier-2 没开」是响应体里的
-  // `tier: "off"`，不是「这条路由不存在」——与注册机那三条同一条规矩。
+  // Tier-2 而让这两条从矩阵里消失。「Tier-2 没开」是响应体里的 `tier: "off"`，
+  // 不是「这条路由不存在」——与注册机那三条同一条规矩。
+  //
+  // ⚠️ **措辞订正：不是「静默地」消失**（评审实测：真把这两条改成条件注册之后
+  // `admin-auth.test.ts` **2 格红**，因为那张 `EXPECTED` 快照少了两条）。
+  // **但那道绊线只在「改成条件注册而没动快照」时才响**——照着红提示把 `EXPECTED`
+  // 里那两行删掉，两条端点就真的从整个矩阵里消失了，而且从此一路全绿。
+  // `admin-auth.test.ts` 里 `POST /admin/api/registrar/tend` 那段把这一步写全了，
+  // 这里上一版漏了它，读起来像是「快照拦得住」——**它拦的是「忘了改快照」，
+  // 不是「有意把端点做成条件注册」。**
   const usage = { usage: deps.usage, now: deps.now };
   admin.get("/admin/api/usage", usageHandler(usage));
   admin.get("/admin/api/usage/:date", usageDateHandler(usage));

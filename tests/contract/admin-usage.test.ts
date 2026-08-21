@@ -198,7 +198,8 @@ describe("GET /admin/api/keys/:id/usage（Tier-1 逐 key）", () => {
    * （设计 §2.4 第 1、2 条）。面板把它接到某个「按 id 读一次存储」的实现上，
    * 20 次轮询就是 20 次 KV 读——而它与网关转发共用同一个每天的读桶。
    *
-   * ⚠️ **反向自检在下一格**：这里的 0 若是因为请求压根没打到 handler
+   * ⚠️ **反向自检在「反向自检：冷启动那一次是真读了存储的（否则上面那个 0 毫无意义）」那一格**：
+   * 这里的 0 若是因为请求压根没打到 handler
    * （被静态兜底吃成 404、或者鉴权拦在外面），同样是 0。
    */
   it("连打 20 次逐 key 用量：get / list 计数一次都不增加 —— 面板轮询不许各自去读一遍存储", async () => {
@@ -323,7 +324,8 @@ describe("GET /admin/api/usage 的查询参数契约", () => {
   });
 
   /**
-   * 设计 §10.6 要防的正是「把一段不完整的 30 天显示成完整的」。
+   * 「不许把一段不完整的 30 天显示成完整的」是**本期计划**的话（评审 I8 订正：
+   * 它不在设计 §10.6 里，设计那一段的原话是「接口失败显示 `—`，绝不伪造 `0`」）。
    * `clamped` 为真时面板要说「这段时间早于保留期，只显示了能拿到的部分」。
    */
   it("早于保留期的 from 被夹到保留期起点：clamped 为真，note 说明被夹过", async () => {
@@ -341,7 +343,7 @@ describe("GET /admin/api/usage 的查询参数契约", () => {
    * **30 这个数手写死**，不写成 `USAGE_DAY_RETAIN`（第 6 种假阳性）。
    *
    * ⚠️ **它不是那个 `n < USAGE_DAY_RETAIN` 计数闸的护栏**——把那道闸删掉，本文件
-   * **53 格全绿**（本任务变异 M15 实测）。那道闸今天走不到，理由算在
+   * **整份全绿**（本任务变异 M15 实测）。那道闸今天走不到，理由算在
    * `src/http/admin/handlers/usage.ts` 那个循环上方。**别把这两件事读成一件。**
    */
   it("要一整年的区间也只回 30 格 days —— 上界来自夹逼，不许随请求的区间涨", async () => {
@@ -409,6 +411,69 @@ describe("GET /admin/api/usage 的查询参数契约", () => {
     expect(body.range.clamped).toBe(false);
   });
 
+  /**
+   * **档位 → `(from, to)` 的映射是一份契约，两边必须对上**（评审 I3）。
+   * 服务端不认 `days` 这个参数，但「30d 这个按钮从哪天算起」如果前后端各说各的，
+   * 后果**不是「多一天数据」而是那句警告永久常驻**：差一天会让每一次点 30d 都
+   * `clamped: true`，面板每一次都说「这段时间早于保留期，只显示了能拿到的部分」
+   * ——说到运维不再看它。映射与理由写在 `parseRange` 上方那张表。
+   *
+   * ⚠️ **两个方向都断言，缺一不可**（第 5 种假阳性）：只写正向的话，
+   * 一个「`clamped` 恒为 false」的实现照样全绿；只写反向的话，
+   * 「恒为 true」的实现照样全绿。**`N` 与期望的格数全部手写字面量。**
+   */
+  it("四个档位按 from = to − (N−1) 天 发：clamped 全是 false；按 N 天发：30d 那一档恒为 true", async () => {
+    const { get } = await tier2On({ now: () => NOW });
+    // ── 正向：契约里那个映射。四档全部 clamped: false，且格数就是 N。
+    for (const [label, n, days] of [
+      ["24h", 1, 1], ["3d", 3, 3], ["7d", 7, 7], ["30d", 30, 30],
+    ] as const) {
+      const body = await (await get(
+        `/admin/api/usage?from=${NOW - (n - 1) * DAY}&to=${NOW}`,
+      )).json() as { range: { clamped: boolean }; days: unknown[] };
+      expect(body.range.clamped, `${label}：按契约发不该被夹`).toBe(false);
+      expect(body.days.length, `${label}：格数就是 N`).toBe(days);
+    }
+    // ── 反向：差一天。**只有 30d 那一档会撞上保留期起点**，另外三档差一天也还在期内。
+    const off1 = await (await get(
+      `/admin/api/usage?from=${NOW - 30 * DAY}&to=${NOW}`,
+    )).json() as { range: { clamped: boolean }; days: unknown[] };
+    expect(off1.range.clamped, "30d 发成 30 天回退 ⇒ 每一次都被夹，那句警告就永久常驻").toBe(true);
+    expect(off1.days.length, "被夹之后仍然只有 30 格 —— 多要的那一天根本拿不到").toBe(30);
+    const stillFine = await (await get(
+      `/admin/api/usage?from=${NOW - 7 * DAY}&to=${NOW}`,
+    )).json() as { range: { clamped: boolean } };
+    expect(stillFine.range.clamped, "7d 差一天还在保留期内 ⇒ 不该被夹（否则上面那个 true 只是「一律 true」）")
+      .toBe(false);
+  });
+
+  /**
+   * **有效窗口为空时 `range.from > range.to`，那不是编出来的一对。**
+   * 上一版只在 `parseRange` 上方写了这件事，**一格用例都没有**（评审 Minor）：
+   * 一句只活在注释里的行为描述，改坏了没有任何东西会红。
+   *
+   * ⚠️ 判别状态取「整段区间都在未来」：`to` 被夹到 `now` ⇒ `toDay = 今天`，
+   * 而 `fromDay = 今天 + 40` ⇒ 窗口为空、`days` 是空数组。
+   * **不把它「修正」成一段非空区间**——那样面板会照着那段区间说「这几天没有请求」，
+   * 而那是一句关于根本没被查过的日子的断言。
+   */
+  it("整段区间都在未来时：range.from 大于 range.to、days 是空数组 —— 空窗口如实回读，不许被修正成一段非空的", async () => {
+    const { get } = await tier2On({ now: () => NOW });
+    const body = await (await get(
+      `/admin/api/usage?from=${NOW + 40 * DAY}&to=${NOW + 41 * DAY}`,
+    )).json() as {
+      range: { from: number; to: number; clamped: boolean };
+      days: unknown[]; shards: number; note: string;
+    };
+    expect(body.range.from, "起始日就是客户端要的那一天（今天 + 40）").toBe(NOW + 40 * DAY);
+    expect(body.range.to, "结束日被夹到今天 ⇒ 今天的最后一毫秒").toBe(DAY0_END_MS);
+    expect(body.range.from).toBeGreaterThan(body.range.to);
+    expect(body.range.clamped).toBe(true);
+    expect(body.days, "一天都没查过 ⇒ 一格都不许有").toEqual([]);
+    expect(body.shards).toBe(0);
+    expect(body.note).toBe("range_clamped");
+  });
+
   it("timezone 恒是 UTC 并且写在响应里 —— Worker 是多 colo 的，硬编码 CST 是自托管单地域的假设", async () => {
     const { get } = await tier2On({ now: () => NOW });
     const body = await (await get("/admin/api/usage")).json() as { timezone: string };
@@ -457,9 +522,39 @@ describe("读扇出（计划 §配额账「读侧」那张表）", () => {
     });
 
   /**
-   * 反向自检：上面四格数的是**同一条真路由**，而不是一条被 404 掉的路径。
-   * 一条 404 的路由同样是 0 次 `usage:` 读，那时 `24h` 那一格会红、
-   * 但**如果四档全都退化成 0，四格里只有 `24h` 那一格的 2 能拦住它**——把这件事
+   * ⚠️⚠️ **「读了哪些天」与「画了哪些天」是两套各算各的推导，而它们必须一致**
+   *（评审 I2）：
+   * · **读**的那一套在 `usageCandidateKeys(now, from, to)` 里（`src/core/admin/usage-stats.ts`）；
+   * · **画**的那一套在 `parseRange()` 算出来的 `fromDay` / `toDay` 里（handler 自己）。
+   * 两边各自对 `now` / `from` / `to` 做一遍夹逼，**谁也没有引用谁**。散了的后果是
+   * 「画的天」与「读的天」错位：面板上某一天有格子却永远是 0（那天根本没被读），
+   * 或者读回来的分片落在区间外被整份丢掉。**两种都长得像「那天没人用」。**
+   *
+   * 这一格把两套绑起来：从计数器里拿到**真正被 get 过的那些键**，
+   * 解析出它们覆盖的 UTC 日集合，与 `days` 里那些日期逐一比对。
+   * ⚠️ **区间刻意取 3 天而不是 1 天**：1 天时两套推导都只可能给出一个日子，
+   * 「有没有错位」这一维不可观测（第 5 种假阳性）。
+   */
+  it("读回来的那些键覆盖的 UTC 日，与 days 里列出的那些天逐一对上 —— 那两套日子是各算各的", async () => {
+    const { get, storage } = await tier2On({ now: () => NOW });
+    await get("/admin/api/usage");                         // 预热
+    storage.usageGets.length = 0;
+    const body = await (await get(`/admin/api/usage?from=${NOW - 2 * DAY}&to=${NOW}`)).json() as {
+      days: Array<{ date: string }>;
+    };
+    // `usage:<日序号>:<槽位>` → 日序号 → `YYYY-MM-DD`（手写换算，不调被测代码）。
+    const readDays = [...new Set(storage.usageGets.map((k) => Number(k.split(":")[1])))]
+      .sort((a, b) => a - b)
+      .map((d) => new Date(d * DAY).toISOString().slice(0, 10));
+    expect(readDays, "读的那三天").toEqual(["2024-10-02", "2024-10-03", DAY0_DATE]);
+    expect(body.days.map((d) => d.date), "画的那三天，必须与读的逐一对上").toEqual(readDays);
+  });
+
+  /**
+   * 反向自检：`读 %s 的用量：usage: 前缀的 get 次数恰好 %i 天 × 2 槽位 = %i` 那一组
+   * 数的是**同一条真路由**，而不是一条被 404 掉的路径。
+   * 一条 404 的路由同样是 0 次 `usage:` 读，那时那一组会红、
+   * 但**如果四档全都退化成 0，只有 `24h` 那一格的 2 能拦住它**——把这件事
    * 单独钉一格，比指望某一格顺手接住可靠。
    */
   it("反向自检：这四格数的是真路由 —— 端点返回 200 且 usage: 读次数不是 0", async () => {
@@ -474,7 +569,7 @@ describe("读扇出（计划 §配额账「读侧」那张表）", () => {
 // ④ 六种状态必须在响应字段上分得开（全局约束 9 的主战场）
 // ───────────────────────────────────────────────────────────────────────────
 
-describe("六种状态在响应字段上分得开", () => {
+describe("七种状态在响应字段上分得开", () => {
   it("① 统计没开：tier 是 off，days 与 pending 都是 null，而且一次存储读都没有", async () => {
     const { get, storage } = await tier2Off({ now: () => NOW });
     await get("/admin/api/usage");                         // 预热
@@ -513,7 +608,7 @@ describe("六种状态在响应字段上分得开", () => {
     expect(body.note).toBe("read_failed");
   });
 
-  it("③ 区间里一个分片都没有：days 每天一格全是 0 桶，shards 是 0，note 是 no_shards", async () => {
+  it("③ 区间里一个分片都没有：shards 与 malformed 都是 0，note 是 no_shards", async () => {
     const { get } = await tier2On({ now: () => NOW });
     const res = await get(`/admin/api/usage?from=${NOW}&to=${NOW}`);
     const body = await res.json() as {
@@ -577,24 +672,87 @@ describe("六种状态在响应字段上分得开", () => {
   });
 
   /**
+   * ── ⑦ 评审 C1 抓出来的第七种状态 ────────────────────────────────────────
+   *
+   * **分片明明在，只是每一个都坏了。** 在 `all_malformed` 这条 code 出现之前，
+   * 它与 ③ 的响应体**逐字相同**（`shards` 都是 0、`days` 都是每天一格的 0 桶），
+   * 于是面板会把「读到了 N 个分片、但每一个都坏」渲染成「这段时间一个分片都没有」
+   * ——**`note: "no_shards"` 在那一刻是一句假话**，而两者的处置完全不同：
+   * 前者「没人用这台网关」，后者「存储里的东西坏了，去查是谁写的」。
+   *
+   * ⚠️ **夹具必须让两个槽位都畸形**：留一个好的就变成「有好有坏」（`shards > 0`），
+   * 摆不出 `shards === 0 && malformed > 0` 这个判别状态。
+   * ⚠️ **两条畸形数据刻意用不同的坏法**（`total: []` 与 `total: "nope"`）：
+   * 前者是「数组冒充桶」那一档（`typeof [] === "object"` 且 truthy，只判 `typeof`
+   * 的窄化会把它记成合法分片），后者是纯粹的类型不对。同一种坏法写两遍，
+   * 「窄化只挡住了其中一种」这件事就不可观测。
+   *
+   * ⚠️ **反向那一半在同一格里**：同样这两条畸形分片，`③` 那一格用的是空存储。
+   * 只写本格的话，一个「`shards === 0` 一律报 `all_malformed`」的实现也全绿
+   * ——而那会让一个真正没流量的部署被告知「数据坏了」。
+   */
+  it("⑦ 分片都在、但每一个都是畸形的：note 是 all_malformed 而不是 no_shards —— 后者是假话", async () => {
+    const st = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+    const { get } = await tier2On({ now: () => NOW, storage: st });
+    await seed(st, DAY0, 0, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
+    await seed(st, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":"nope"}`);
+
+    const body = await (await get(`/admin/api/usage?from=${NOW}&to=${NOW}`)).json() as {
+      shards: number; malformed: number; note: string; days: unknown[];
+    };
+    expect(body.shards, "一个合法分片都没有").toBe(0);
+    expect(body.malformed, "但确实读到了两条，而且都是坏的").toBe(2);
+    expect(body.note, "报成 no_shards 就是对运维说「没人用」，而真相是「数据坏了」")
+      .toBe("all_malformed");
+    // 反向：同一个 note 判据下，真正的空区间必须仍然是 no_shards。
+    const empty = await tier2On({ now: () => NOW });
+    const b2 = await (await empty.get(`/admin/api/usage?from=${NOW}&to=${NOW}`)).json() as {
+      malformed: number; note: string;
+    };
+    expect(b2.malformed).toBe(0);
+    expect(b2.note, "没有畸形分片就不许报 all_malformed").toBe("no_shards");
+  });
+
+  /**
    * ── 这一组的命门 ────────────────────────────────────────────────────────
    *
-   * 上面六格各自只看自己那一种状态，而**「六种状态两两不同」这条性质，
+   * `describe("七种状态在响应字段上分得开")` 里那七格各自只看自己那一种状态，
+   * 而**「它们两两不同」这条性质，
    * 单独看任何一格都验不出来**（第 5 种假阳性：几条测试各自只覆盖单一状态，
    * 而在那些状态下两个候选实现数学上等价）。
-   * 这一格把六份响应放在一起两两比对：任何两种被压成同一份响应体就红。
+   * 这一格把七份响应放在一起两两比对：任何两种被压成同一份响应体就红。
+   *
+   * ⚠️⚠️⚠️ **这一格证明的是「**已列出的这七种**互不相同」，
+   * 它证明不了「没有第八种」—— 这条限制必须写在这里，因为它已经真的咬过一次。**
+   * 上一版这一格断言的是 `size === 6`，而**第七种（分片都在但全是畸形的）
+   * 就落在那六格之外、签名与「一个分片都没有」逐字相同**，评审 C1 抓到了它，
+   * 而这一格当时全绿。⇒ **一个「所有已知状态互不相同」的断言，对未知状态一言不发。**
+   * 加一种状态的时候，**先在上面补一格，再把这里的期望数一起加**——
+   * 光改这个数字不会让任何东西变红。
+   *
+   * ⚠️⚠️ **它也拦不住「note 说了假话」，这条同样是实测出来的**（本任务变异 C1-M：
+   * 把 `no_shards` 的判据退回「只看 `shards`」，也就是评审 C1 之前的那个写法）：
+   * **这一格照绿**——因为 `malformed` 在签名里，③ 与 ⑦ 仍然是两份不同的签名，
+   * 只是其中一份的 `note` 变成了假话。红的是另外 3 格
+   *（「⑦ 分片都在、但每一个都是畸形的：note 是 all_malformed 而不是 no_shards —— 后者是假话」、
+   * 「USAGE_NOTES 里每一条 code 都真的被某一条端点产出过 ——……」、
+   * 「note 与它自己的判据字段恒一致 —— note 是摘要不是第二个真源」）。
+   * ⇒ **「两两不同」与「每一句都是真话」是两条独立的性质，各由各的格子守。**
    *
    * ⚠️ **比对的是「面板真正会拿去分支的那几格」**，不是整份响应体：
    * `generatedAt` 之类的字段天然各不相同，拿整份去比会让这一格恒绿。
+   * ⚠️ **`malformed` 必须进签名**（评审 C1 的另一半）：③ 与 ⑦ 在被夹过的那一档下
+   * `note` 相同，那时全靠这一格分。
    *
-   * ⚠️⚠️ **它守的是「两两不同」，不是任何一种状态自己的形状 —— 这条边界是实测出来的，
-   * 别把它读成「这一格兜住了六种状态的全部性质」**（本任务变异 M8：把
-   * `parseRange` 里那道时钟有限性闸删掉）：删掉之后 `nowMs = NaN` 会一路算出
-   * `range: { from: null, to: null, clamped: true }` + `days: []` + `note: "range_clamped"`
-   * ——**那仍然是一份与另外五种都不同的签名，所以这一格照绿**，
-   * 红的是上面那格「⑤ 时钟给不出有限数字……」。**两格各守一半，缺一不可。**
+   * ⚠️⚠️ **它守的是「两两不同」，不是任何一种状态自己的形状 —— 这条边界是实测出来的**
+   *（本任务变异 M8：把 `parseRange` 里那道时钟有限性闸删掉）：删掉之后 `nowMs = NaN`
+   * 会一路算出 `range: { from: null, to: null, clamped: true }` + `days: []`
+   * + `note: "range_clamped"` ——**那仍然是一份与其余几种都不同的签名，所以这一格照绿**。
+   * **M8 实测红的是 2 格**（上一版这里写「红的是上面那格」，只数了一格，评审 I12）：
+   * 「⑤ 时钟给不出有限数字：range 与 days 一起是 null，note 是 clock_unavailable」
+   * 与「USAGE_NOTES 里每一条 code 都真的被某一条端点产出过 ——……」。
    */
-  it("六种状态两两不同 —— 面板不用猜，也不该猜", async () => {
+  it("七种状态两两不同 —— 面板不用猜，也不该猜（但这一格证明不了没有第八种）", async () => {
     const probe = async (): Promise<Array<{ name: string; sig: string }>> => {
       const out: Array<{ name: string; sig: string }> = [];
       const sig = async (name: string, res: Response) => {
@@ -608,6 +766,9 @@ describe("六种状态在响应字段上分得开", () => {
             range: b.range === null ? null : "有",
             days: b.days === null ? null : (b.days as unknown[]).length === 0 ? "空" : "有",
             shards: b.shards,
+            // ★ **`malformed` 必须在签名里**（评审 C1）：③「一个分片都没有」与
+            //   ⑦「分片都在但全是畸形的」在被夹过的那一档下 `note` 相同，全靠它分。
+            malformed: b.malformed,
             pending: pending === null ? null : "有",
             note: b.note,
           }),
@@ -637,16 +798,24 @@ describe("六种状态在响应字段上分得开", () => {
 
       const g5 = await tier2On({ now: () => NOW });
       await sig("参数发错了", await g5.get("/admin/api/usage?from=abc"));
+
+      // ⑦ 分片都在，但每一个都是畸形的（评审 C1）。**两个槽位都放畸形的**，
+      //    留一个好的就变成「有好有坏」那种，摆不出 `shards === 0 && malformed > 0`。
+      const broken = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+      const g6 = await tier2On({ now: () => NOW, storage: broken });
+      await seed(broken, DAY0, 0, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
+      await seed(broken, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":"nope"}`);
+      await sig("分片都在但全是畸形的", await g6.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));
       return out;
     };
 
     const rows = await probe();
-    expect(rows.length, "六种状态一种都不许少").toBe(6);
+    expect(rows.length, "七种状态一种都不许少").toBe(7);
     const sigs = rows.map((r) => r.sig);
     expect(
       new Set(sigs).size,
       `有两种状态被压成了同一份响应体：\n${rows.map((r) => `  ${r.name} → ${r.sig}`).join("\n")}`,
-    ).toBe(6);
+    ).toBe(7);
   });
 });
 
@@ -810,12 +979,12 @@ describe("GET /admin/api/usage/:date（单日下钻）", () => {
    *
    * 两个方向都由这一格接住，**而第二个方向只对一半，写清楚**（本任务变异实测）：
    * · handler 在那三个 map 上调 `Object.prototype` 的方法（`.hasOwnProperty(k)` /
-   *   `.toString()`）⇒ **直接 `TypeError`** ⇒ 这条端点 500，本格红（变异 M11：6 格红）；
+   *   `.toString()`）⇒ **直接 `TypeError`** ⇒ 这条端点 500，本格红（变异 M11 ⇒ 多格红，含本格）；
    * · handler **逐键赋值**搬进普通 `{}`（`out[k] = m[k]`）⇒ `__proto__` 那一条
-   *   **彻底消失**，本格红（变异 M10'：1 格红，就是本格）。
+   *   **彻底消失**，本格红（变异 M10' ⇒ **只有本格红**）。
    * ⚠️ **但用展开搬（`{ ...m }`）不会坏，本格也抓不住**——展开走
    *   `CreateDataPropertyOrThrow`，绕过 `Object.prototype.__proto__` 那个访问器，
-   *   四个键一个不少（变异 M10 实测：**51 格全绿，完整逃逸**）。
+   *   四个键一个不少（变异 M10 实测：**整份全绿，完整逃逸**）。
    *   那不是漏网，是**那个写法本来就不是缺陷**；记在这里免得下一个人拿它当反例
    *   去证明这一格没用。
    *
@@ -869,7 +1038,7 @@ describe("GET /admin/api/usage/:date（单日下钻）", () => {
     };
     expect(outside.note).toBe("date_out_of_retention");
     expect(outside.hours, "拿不到就如实说拿不到").toBeNull();
-    // 紧挨着的那一天（保留期最老的一天）必须是正常那一支——否则上面那格只是
+    // 紧挨着的那一天（保留期最老的一天）必须是正常那一支——否则上一句断言只是
     // 「随便一个日期都 out_of_retention」，什么都没证明。
     const inside = await (await get(`/admin/api/usage/${OLDEST_DATE}`)).json() as { note: string };
     expect(inside.note).toBe("no_request_detail");
@@ -968,6 +1137,11 @@ describe("note 是 code 不是句子", () => {
     await take(await g2.get("/admin/api/usage/2024-09-04"));                // date_out_of_retention
     await take(await g2.get(`/admin/api/usage/${DAY0_DATE}`));              // no_request_detail
 
+    const corrupt = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+    const g3 = await tier2On({ now: () => NOW, storage: corrupt });
+    await seed(corrupt, DAY0, 0, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
+    await take(await g3.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));     // all_malformed
+
     expect([...seen].sort()).toEqual([...USAGE_NOTES].sort());
   });
 
@@ -996,20 +1170,34 @@ describe("note 是 code 不是句子", () => {
     await seed(seeded, DAY0, 0, shardJson(DAY0, { requests: 9 }));
     cases.push(() => g3.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));
 
+    // ⑦ 分片都在但全是畸形的（评审 C1）。**必须进这一组**：少了它，
+    //    `all_malformed` 那条双条件的右半永远是 false，等于没验。
+    const broken = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+    const g4 = await tier2On({ now: () => NOW, storage: broken });
+    await seed(broken, DAY0, 0, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
+    cases.push(() => g4.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));
+
     for (const run of cases) {
       const b = await (await run()).json() as {
         tier: string; range: { clamped: boolean } | null;
-        days: unknown[] | null; shards: number | null; note: string | null;
+        days: unknown[] | null; shards: number | null; malformed: number | null;
+        note: string | null;
       };
       const label = JSON.stringify(b.note);
+      const clamped = b.range?.clamped ?? false;
       expect(b.note === "tier2_off", `${label}：tier2_off ⟺ tier === "off"`)
         .toBe(b.tier === "off");
       expect(b.note === "read_failed", `${label}：read_failed ⟺ tier2 开着而 days 是 null`)
         .toBe(b.tier === "tier2" && b.days === null && b.range !== null);
       expect(b.note === "range_clamped", `${label}：range_clamped ⟺ range.clamped`)
-        .toBe(b.range !== null && b.range.clamped);
-      expect(b.note === "no_shards", `${label}：no_shards ⟺ 读成功了而 shards 是 0`)
-        .toBe(b.days !== null && b.shards === 0 && !(b.range?.clamped ?? false));
+        .toBe(b.range !== null && clamped);
+      // ⚠️ 这两条的右半带着 `!clamped`，那是优先级 `range_clamped > all_malformed >
+      //    no_shards` 的直接后果（判据写在 `usageHandler` 上方那张表底下）。
+      //    优先级一改，这两条会当场红——那正是想要的。
+      expect(b.note === "all_malformed", `${label}：all_malformed ⟺ 读成功了、shards 是 0、而 malformed 大于 0`)
+        .toBe(b.days !== null && b.shards === 0 && (b.malformed ?? 0) > 0 && !clamped);
+      expect(b.note === "no_shards", `${label}：no_shards ⟺ 读成功了、shards 与 malformed 都是 0`)
+        .toBe(b.days !== null && b.shards === 0 && b.malformed === 0 && !clamped);
     }
   });
 
@@ -1036,8 +1224,9 @@ describe("note 是 code 不是句子", () => {
    * 各走一条 `AdminRouterDeps`（`usageStatsEnabled` 与 `usage`）。
    * 两者同真同假靠的是 `createApp` 里两行都从同一个 `usageSink` 变量算出来，
    * **那不是一条约束**（`src/http/admin/router.ts` 的 `usageStatsEnabled` 上方登记着）。
-   * ⇒ **两侧各钉一格**：分叉的后果是面板照 capabilities 画了图表，
-   * 而用量端点回 `tier: "off"`。
+   * ⇒ **本格在自己体内把开着与关着两侧各跑一遍**（一格用例、两个状态，不是两格
+   * ——只跑一侧的话「`tier` 恒等于某个常量」的实现照样全绿）：分叉的后果是
+   * 面板照 capabilities 画了图表，而用量端点回 `tier: "off"`。
    */
   it("capabilities 的 tier2Enabled 与 usage 的 tier 说的是同一件事 —— 两边不许分叉", async () => {
     for (const [label, make] of [
@@ -1115,10 +1304,12 @@ describe("record 期出错与 flush 期出错说的不是同一句话", () => {
   });
 
   /**
-   * 上一格钉的是 `phase` 传得对不对；**这一格钉的是它被翻译成哪一条事件、
+   * 「record 期出错时那条计数永久丢了：phase 是 record，且 pending 一点都没涨」
+   * 钉的是 `phase` 传得对不对；**这一格钉的是它被翻译成哪一条事件、
    * 哪一句文案**——那才是运维真正读到的东西。
    *
-   * ⚠️ **两个阶段都要断言，而 record 那一条今天在端到端上不可达**（见上一格的实测），
+   * ⚠️ **两个阶段都要断言，而 record 那一条今天在端到端上不可达**
+   *（实测见「record 期出错时那条计数永久丢了：phase 是 record，且 pending 一点都没涨」），
    * 所以判据落在那张查表上（`USAGE_ERROR_REPORT`，与 `router.ts` 的 `REJECT_MESSAGE`
    * 同一套做法），并**另外证明这张表真的被装配层用上了**——只验表不验接线的话，
    * 一个把 wire.ts 改回写死文案的改动照样绿。

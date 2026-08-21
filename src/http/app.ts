@@ -306,10 +306,12 @@ export function createApp(deps: AppDeps): Hono {
     // Tier-2 读侧的接线（P3d Task 4）。**与上面那一行从同一个 `usageSink` 变量算出来**
     // ——两者必须同真同假，见 `AdminRouterDeps.usageStatsEnabled` 上方那段。
     //
-    // ⚠️ **`storage` 取自 `usageSink.storage`，不另外注入一个**：`wire.ts` 手上同时有
-    // `storage` 与 `watched` 两个引用，给读侧单独传一个的话，传错的后果不是「读到
-    // 旧数据」而是**「读到空」**，而那在面板上与「这段时间没有请求」一模一样。
-    // 从 sink 上取，读的和写的是同一个实例这件事就是结构性的。
+    // ⚠️ **`storage` 取自 `usageSink.storage`，不另外注入一个。两条理由，都不是
+    // 「否则会读到空」**——上一版那么写过，而那句话是假的（评审 I6，详细实测与
+    // 订正全文在 `src/http/admin/handlers/usage.ts` 的 `UsageWiring` 上方，
+    // **这里不复述，同一段推理抄两份改的时候必然只改一份**）：
+    // ① `createApp` 手上根本没有 `Storage`，为读侧单开一格要牵动装配与几十个夹具；
+    // ② 从 sink 上取，「读的和写的是同一个实例」就是结构性的，而不是靠这里记得传对。
     usage: usageSink !== undefined ? { storage: usageSink.storage, sink: usageSink } : null,
     usageFlushIntervalMs: deps.usageFlushIntervalMs ?? USAGE_FLUSH_MIN_INTERVAL_MS,
   });

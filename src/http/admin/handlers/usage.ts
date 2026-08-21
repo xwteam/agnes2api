@@ -13,12 +13,29 @@ import {
 /**
  * Tier-2 读侧的接线。**`null` = 这个 app 没建 sink，也就是 Tier-2 关着。**
  *
- * ⚠️ **`storage` 与 `sink` 必须是同一份存储上的读与写**，所以 `createApp` 传的是
+ * ⚠️ **`storage` 与 `sink` 是同一份存储上的读与写**，所以 `createApp` 传的是
  * `usageSink.storage`（那个 getter 交出来的正是 sink 自己落盘用的那一个实例），
- * **不是另外注入一个 `Storage`**。另给一份的后果不是「读到旧数据」而是**读到空**：
- * `wire.ts` 手上同时有 `storage` 与 `watched` 两个引用，随手传错一个，面板上
- * 「这段时间没有任何请求」会长期为真而没有任何东西会红——那正好是全局约束 9
- * 点名的「三件事在面板上长得一模一样」里最难发现的那一件。
+ * **不是另外注入一个 `Storage`**。
+ *
+ * ⚠️⚠️ **这个决定的理由订正过一次，因为上一版给的危害场景是假的（评审 I6）。**
+ * 上一版写「`wire.ts` 手上同时有 `storage` 与 `watched` 两个引用，传错一个就会**读到空**」
+ * ——**那是从一个不成立的前提推出来的**：`WatchedStorage` 的 `get` / `list`
+ * 都是**直通**，只有 `put` / `delete` 被观测（`src/core/storage-health.ts` 的类说明
+ * 逐字写着「只观测 `put`/`delete`：读操作在数据目录只读时照样成功」），
+ * 而 `wire.ts` 里 `watched` 包的就是同一个 `storage`
+ * ⇒ **两个引用读出来逐字节相同**，传错的真实后果只是 `/health` 少一路可写性信号，
+ * **不可能「读到空」**。
+ * ⭐ 本仓已经登记过同型的一次（`src/core/admin/usage-stats.ts` 的
+ * `USAGE_FLUSH_MIN_INTERVAL_MS` 上方那段「从假前提推出的论证」，P3d Task 3 评审 I1），
+ * 这是同一期的第二次。**结论不变，被换掉的是理由。**
+ *
+ * ⇒ **真正的两条理由**：
+ * ① **省掉往 `AppDeps` 里加一格 `Storage` 的接线** —— `createApp` 今天手上没有存储
+ *    （`repo` / `storeLogger` 各自私有地持有它），为读侧单开一格要牵动装配与几十个夹具；
+ * ② **让「读的和写的是同一个实例」成为结构性的，而不是靠装配时记得传对。**
+ *    ⚠️ **如实说明：这条性质今天没有任何可观测后果**（见上，两个引用读出来一样），
+ *    它是零成本地买了一份将来的保险——任何一个「读侧另有一层」的改动
+ *    （只读副本、读缓存、换命名空间）都会让它立刻有后果。
  *
  * ⚠️ **整块可空，而不是「存储恒在 + 一个 enabled 布尔」**（全局约束 16）：
  * 关闭时读路径**在结构上不存在**，不是一个 `if` 挡着。一个「反正 enabled 是 false」
@@ -26,9 +43,12 @@ import {
  *
  * ⚠️ **代价明写，并且是实测过的**（本任务变异 M1b，**装置一并记下否则复现不出来**）：
  * 「关着时不读存储」这条性质**不是一行可以被变异掉的代码**——要证伪它得先把接线
- * 本身改回「存储恒在」。实测那一次动了 **7 处**（给 `StoreLogger` 加一个 `storage`
- * getter、`createApp` 把它当 `usageProbe` 传下来、`AdminRouterDeps` 多一格、
- * `usageHandler` 多一个 `probe` 参数、off 分支里加一次 `readShards`），
+ * 本身改回「存储恒在」。实测那一次动了 **7 处，逐条列全**（上一版只列了 5 条却写着 7，
+ * 评审 I9）：① `StoreLogger` 加一个 `storage` getter；② `AdminRouterDeps` 多一格
+ * `usageProbe: Storage`；③ `router.ts` 顶部多一行 `import type { Storage }`；
+ * ④ `createApp` 把 `storeLogger.storage` 当 `usageProbe` 传下来；
+ * ⑤ `router.ts` 把它塞进那个 `usage` 参数对象；⑥ `usageHandler` 的 deps 多一个 `probe`；
+ * ⑦ off 分支里加一次 `readShards`。
  * 之后 `tests/contract/admin-usage.test.ts` 的
  * 「① 统计没开：tier 是 off，days 与 pending 都是 null，而且一次存储读都没有」
  * 那一格**当场变红**。⇒ 那条断言有牙，只是牙咬的是「谁把接线改回两格」，
@@ -67,8 +87,24 @@ export const USAGE_NOTES = [
   "range_clamped",
   /** 单日下钻要的那一天整个落在保留期之外：**不是那天没有请求，是那天已经不在了**。 */
   "date_out_of_retention",
-  /** 读成功了，但这段区间里一个分片都没有 ⇒ 真的没有记录到用量。 */
+  /**
+   * 读成功了，区间里**一个分片都没有**（合法的没有、畸形的也没有）⇒ 真的没有记录到用量。
+   * ⚠️ **判据是 `shards === 0 && malformed === 0` 两个一起**，见下面 `all_malformed`。
+   */
   "no_shards",
+  /**
+   * 读成功了，**读到了分片，但每一个都是畸形的**（`shards === 0 && malformed > 0`）。
+   *
+   * ⚠️⚠️ **这一条是评审 C1 抓出来的第七种状态，而它在这条 code 出现之前
+   * 与 `no_shards` 的响应体逐字相同** —— `shards` 都是 0、`days` 都是每天一格的 0 桶
+   * ⇒ 面板会把「读到了 N 个分片、但每一个都坏」渲染成「这段时间一个分片都没有」，
+   * **而后者是一句假话**：分片明明有，只是全坏了。两者的处置也完全不同
+   *（前者「没人用」，后者「存储里的东西坏了，去看是谁写的」）。
+   * 由 `tests/contract/admin-usage.test.ts` 的
+   * 「⑦ 分片都在、但每一个都是畸形的：note 是 all_malformed 而不是 no_shards —— 后者是假话」
+   * 钉着。
+   */
+  "all_malformed",
   /** 单日下钻的常态：**没有逐请求流水**（设计 §10.6），面板据它渲染那句指路的话。 */
   "no_request_detail",
 ] as const;
@@ -92,7 +128,16 @@ export function keyUsageHandler(repo: KeyPoolRepo, now: () => number) {
     // 而 `c.json` 会把 undefined 的字段**整个丢掉** —— 前端读到「字段不存在」。
     const id = c.req.param("id") ?? "";
     const rec = (await repo.all()).find((r) => r.id === id);
-    if (!rec) return c.json({ error: { type: "not_found", message: "没有这把 key" } }, 404);
+    // ⚠️ **走 `httpError`，不自己拼 `c.json({error}, 404)`**（评审 I4）：
+    // `src/http/admin/handlers/keys-write.ts` 那两条同语义的 404 用的就是它
+    //（逐字同一句「没有这把 key」）。
+    // ⚠️⚠️ **这个改动今天一格用例都不会红，如实登记**（本任务变异 I4-M 实测：
+    // 改回自己拼 `c.json` ⇒ **整份全绿、完整逃逸**）——两种写法产出的信封
+    // **今天逐字节相同**。留着它的理由因此不是「防住了什么」，而是
+    // **别绕开 `errorResponse()` 这个唯一出口**：哪天信封要加一个字段
+    //（`request_id` 之类），绕开的那一条会静默地少那一格，而那时同样没有东西会红。
+    // **别把这条注释读成「有护栏」。**
+    if (!rec) throw httpError(404, "not_found", "没有这把 key");
     return c.json({
       id,
       stats: normalizeStats(rec.stats),
@@ -108,8 +153,13 @@ export function keyUsageHandler(repo: KeyPoolRepo, now: () => number) {
  *
  * ⚠️ **`usageCandidateKeys` 对「`from`/`to` 是 `NaN`」与「`nowMs` 不是有限数」
  * 两种入参都返回空数组，而空数组与「这段时间真的没有数据」在它的返回值上
- * 完全不可区分**（`src/core/admin/usage-stats.ts` 的 `usageCandidateKeys` 上方
- * 那两道护栏的说明）。那不是它的缺陷——它是纯函数，本来就只该回答「取哪些键」。
+ * 完全不可区分。**
+ * ⚠️ **两种的成因不同，别都记到那两道护栏头上（评审 I10 订正）**：
+ * `src/core/admin/usage-stats.ts` 的 `usageCandidateKeys` 上方那两道护栏
+ * **从头到尾只讲 `nowMs`**（有限性闸 + 结构性计数闸），
+ * **一个字都没提 `from`/`to` 是 `NaN` 的情形**；后者返回空数组靠的是另一件事——
+ * `NaN` 参与的比较恒为 `false`，于是 `d <= newest` 一上来就不成立、循环一次都不进。
+ * 那不是它的缺陷——它是纯函数，本来就只该回答「取哪些键」。
  * **把这三件事分开是入参解析这一层的职责**，也就是这里：
  * · 客户端把参数写错 ⇒ **400**，让前端立刻知道自己发错了；
  * · 服务端时钟坏了 ⇒ `clock_unavailable`；
@@ -157,6 +207,29 @@ function msParam(c: Context, name: string): number | null {
  * | `to` | 整数 | **epoch 毫秒** | 服务端 `now()` | 晚于 `now()` 的夹到 `now()`，`clamped` 为真 |
  *
  * **`days` 不是参数**：它是前端按钮的档位，服务端不认。前端只发 `from` / `to`。
+ *
+ * ── 档位 → `(from, to)` 的映射，**在这里钉死**（评审 I3）───────────────────────
+ * 服务端不认档位，**但两边必须对同一个映射有共识**，否则「30d」这个按钮到底从哪天
+ * 算起，前后端各说各的。设计 §10.6 的按钮组是 `24h / 3d / 7d / 30d`，对应：
+ *
+ * | 按钮 | `N` | `to` | `from` |
+ * |---|---|---|---|
+ * | `24h` | 1 | `now` | `now − 0 × 86400000` |
+ * | `3d` | 3 | `now` | `now − 2 × 86400000` |
+ * | `7d` | 7 | `now` | `now − 6 × 86400000` |
+ * | `30d` | 30 | `now` | `now − 29 × 86400000` |
+ *
+ * ⇒ **`from = to − (N − 1) × 86400000`**，因为服务端按**整 UTC 天**取，
+ * 而「N 天」含今天。
+ *
+ * ⚠️⚠️ **差一天的后果不是「多一天数据」，是那句警告永久常驻**：发
+ * `from = now − 30 × 86400000` 的话 `askedFromDay = 今天 − 30`，而保留期起点是
+ * `今天 − 29` ⇒ **每一次点 30d 都 `clamped: true`**，面板于是每一次都说
+ * 「这段时间早于保留期，只显示了能拿到的部分」——**说到运维不再看它**，
+ * 而那正是 `clamped` 这个字段上方刚论证过要避免的形态。
+ * 两个方向都由 `tests/contract/admin-usage.test.ts` 的
+ * 「四个档位按 from = to − (N−1) 天 发：clamped 全是 false；按 N 天发：30d 那一档恒为 true」
+ * 钉着（**两边都断言**，只写正向的话「clamped 恒为 false」的实现也全绿）。
  *
  * ── 三处顺序是有讲究的，写下来免得后人以为可以换 ─────────────────────────────
  * ① **先校验客户端真的发了的那两个值**（`msParam`）——它不需要时钟，所以时钟坏了
@@ -221,10 +294,22 @@ function utcDateString(day: number): string {
 /**
  * `YYYY-MM-DD` → UTC 日序号。**认不出来返回 `null`。**
  *
- * ⚠️ **必须回读一遍再比对**，不能只判 `Date.parse` 有没有给出数字：
- * `Date.parse("2026-02-31T00:00:00Z")` 在 V8 上是 `NaN`，但 `"2026-13-01"` 这类
- * 在别的实现上可能被宽容地滚进下一年。回读比对之后，「解析出来的那一天再格式化
- * 回去必须逐字等于客户端给的串」是一条与实现无关的判据。
+ * ⚠️⚠️ **必须回读一遍再比对，而理由恰好与「直觉」相反 —— 这一段订正过一次，
+ * 上一版把两个例子写反了（评审 I5）**。逐项实测（node v24 / V8）：
+ *
+ * | 入参 | `Date.parse(…T00:00:00.000Z)` | 谁挡下它 |
+ * |---|---|---|
+ * | `"2026-02-31"`（日历上不存在的一天） | **`1772496000000`（= 2026-03-03，滚过去了）** | **只有回读比对** |
+ * | `"2024-02-31"`（同上，本仓夹具用的那个） | **`1709337600000`（= 2024-03-02）** | **只有回读比对** |
+ * | `"2026-13-01"`（月份越界） | **`NaN`** | 上面那句 `Number.isFinite` |
+ *
+ * ⇒ **「日历上不存在的一天」拿得到一个正常数字，「月份越界」才是 `NaN`。**
+ * 上一版写的正好是反的，而那会让人以为回读那一步是可有可无的冗余——
+ * **恰恰相反，`2024-02-31` 这一档今天完全靠它挡着**
+ *（`tests/contract/admin-usage.test.ts` 的「date %s ⇒ 400，不做善意纠正」那一组
+ * 里 `["日历上不存在的一天", "2024-02-31"]` 那一行就是这一档）。
+ * 「解析出来的那一天再格式化回去必须逐字等于客户端给的串」同时也是一条
+ * **与实现无关**的判据：别的 JS 实现在这两档上宽容到什么程度都不影响结论。
  */
 function parseUtcDate(raw: string): number | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
@@ -249,15 +334,22 @@ type ReadBlock =
  * 把候选键一次性读回来并合并。
  *
  * ⚠️ **一个键都不许吞**：任何一次 `get` 抛错都让整块失败（返回 `{ ok: false }`），
- * **绝不把读到的那部分当成全份交出去**。设计 §10.6 的原话是「不许把一段不完整的
- * 30 天显示成完整的」，而 30 天那一档正是本仓第一个会一次发出 60 次子请求的读扇出
+ * **绝不把读到的那部分当成全份交出去**。
+ * ⚠️ **出处订正（评审 I8）**：「不许把一段不完整的 30 天显示成完整的」这句话
+ * **不在设计 §10.6 里**（全仓 grep 只命中
+ * `docs/design/2026-08-21-agnes2api-p3d-usage-playground-plan.md`），它是**本期计划**的话。
+ * 设计 §10.6 自己那一段的原话是**「接口失败显示 `—`，绝不伪造 `0`」**（精度纪律那一条），
+ * 结论同源、措辞不同。**上一版把计划的话记在了设计头上。**
+ * 而 30 天那一档正是本仓第一个会一次发出 60 次子请求的读扇出
  * ——`src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方记着 U-H 的裁定：
  * **Cloudflare 的两页官方文档在「一次调用能发多少次子请求」上互相对不上**
  * （Workers limits 页免费档 50，KV limits 页 1,000，而前者没有定义 KV 算哪一行），
  * 所以在 P3e 的真机验收把它了结之前，**这里不许写成「60 次是安全的」**。
  * 能写下来的只有一句：**它在 Worker 上失败的时候要失败得诚实。**
  *
- * `Promise.all` 而不是逐个 `await`：60 次串行往返在 KV 上是秒级的。
+ * `Promise.all` 而不是逐个 `await`：串行 60 次要付 60 个往返，并发只付 1 个。
+ * ⚠️ **刻意不写「串行要几秒」**：本仓对 KV 的往返延迟没有任何量测，
+ * 那个数会是一句编出来的话（上一版写的正是「串行在 KV 上是秒级的」）。
  * ⚠️ **它不改变 get 的次数**（`Promise.all` 不做去重也不短路），
  * 所以读扇出那四格数出来的仍然是 `天数 × USAGE_SLOTS`。
  */
@@ -309,28 +401,47 @@ const EMPTY_DAY: UsageBucket = Object.freeze({
 /**
  * `GET /admin/api/usage`（Tier-2 汇总）。
  *
- * ── 六种状态必须在响应字段上分得开（全局约束 9 在本期的主战场）───────────────
+ * ── 七种状态必须在响应字段上分得开（全局约束 9 在本期的主战场）───────────────
  *
- * | # | 状态 | HTTP | `tier` | `range` | `days` / `total` | `shards` | `pending` | `note` |
- * |---|---|---|---|---|---|---|---|---|
- * | ① | 参数发错了（非整数 / 负数 / `from > to`） | **400** | — | — | — | — | — | — |
- * | ② | 服务端时钟给不出有限数字 | 200 | 有 | **null** | **null** | **null** | 有 | `clock_unavailable` |
- * | ③ | Tier-2 没开 | 200 | **`"off"`** | 有 | **null** | **null** | **null** | `tier2_off` |
- * | ④ | 读不出来 | 200 | `"tier2"` | 有 | **null** | **null** | 有 | `read_failed` |
- * | ⑤ | 区间里一个分片都没有 | 200 | `"tier2"` | 有 | 每天一格、全是 0 桶 | **0** | 有 | `no_shards` |
- * | ⑥ | 有分片，只是请求数是 0 | 200 | `"tier2"` | 有 | 有 | **> 0** | 有 | **null** |
+ * ⚠️ **编号与 `tests/contract/admin-usage.test.ts` 里那一组的编号逐字一致**，
+ * 改一边就要改另一边——上一版两处各编各的，读的人要在两套编号之间换算。
  *
- * ⑤ 与 ⑥ 是两件事，第一版会把它们压成同一个「今日请求数 0」：前者说「这段时间
+ * | # | 状态 | HTTP | `tier` | `range` | `days` / `total` | `shards` | `malformed` | `pending` | `note` |
+ * |---|---|---|---|---|---|---|---|---|---|
+ * | ① | Tier-2 没开 | 200 | **`"off"`** | 有 | **null** | **null** | **null** | **null** | `tier2_off` |
+ * | ② | 读不出来 | 200 | `"tier2"` | 有 | **null** | **null** | **null** | 有 | `read_failed` |
+ * | ③ | 区间里一个分片都没有 | 200 | `"tier2"` | 有 | 每天一格、全是 0 桶 | **0** | **0** | 有 | `no_shards` |
+ * | ④ | 有分片，只是请求数是 0 | 200 | `"tier2"` | 有 | 有 | **> 0** | 0 | 有 | **null** |
+ * | ⑤ | 时钟给不出有限数字 | 200 | 有 | **null** | **null** | **null** | **null** | 有 | `clock_unavailable` |
+ * | ⑥ | 参数发错了（非整数 / 负数 / `from > to`） | **400** | — | — | — | — | — | — | — |
+ * | ⑦ | 分片都在，但**每一个都是畸形的** | 200 | `"tier2"` | 有 | 每天一格、全是 0 桶 | **0** | **> 0** | 有 | `all_malformed` |
+ *
+ * ③ 与 ④ 是两件事，第一版会把它们压成同一个「今日请求数 0」：前者说「这段时间
  * 这个部署没有记下任何东西」（可能是没流量，也可能是 isolate 没活到一次落盘），
  * 后者说「有实例落过盘，那些盘里的请求数就是 0」。**判据是 `shards`，不是 `total`。**
+ *
+ * ⚠️⚠️ **⑦ 是评审 C1 抓出来的，而在 `all_malformed` 这条 code 出现之前，
+ * 它与 ③ 的响应体逐字相同** —— 两者 `shards` 都是 0、`days` 都是每天一格的 0 桶，
+ * 于是面板会把「读到了 N 个分片、但每一个都坏」渲染成「这段时间一个分片都没有」，
+ * **而 `note: "no_shards"` 在那一刻是一句假话**。⇒ `no_shards` 的判据从此是
+ * **`shards === 0 && malformed === 0` 两个一起**，`malformed > 0` 那一支走 `all_malformed`。
  *
  * ⚠️ **`days` 恒是「每天一格」，不是「只列有数据的那几天」**：一个 30 天的区间
  * 恒给 30 格，缺数据的那天是 0 桶（见 `EMPTY_DAY` 上方对「这不是伪造 0」的论证）。
  * 让面板去补缺口等于把「哪些天该出现」这条知识复制一份到前端。
  *
- * ⚠️ **`range.clamped` 为真时 `note` 是 `range_clamped`，它压过 `no_shards`**：
- * 「你要的窗口被缩小了」比「窗口里没东西」更该先说——后者往往正是前者的后果。
- * 两条信息都没丢：`clamped` 自己在 `range` 里，`shards` 自己在响应里。
+ * ── `note` 只有一格，所以要定优先级；下面这个顺序是有判据的 ──────────────────
+ * `read_failed` > `range_clamped` > `all_malformed` > `no_shards` > `null`。
+ * · **`range_clamped` 压过后两条**：「你要的窗口被缩小了」比「窗口里的东西怎么样」
+ *   更该先说——后两者往往正是前者的后果。代价是**被夹过的那一档里，
+ *   ③ 与 ⑦ 的 `note` 相同**，那时它们靠 `malformed` 这个字段分（它一直都在响应里，
+ *   而且进了下面那格命门的签名）。
+ * · **`all_malformed` 压过 `no_shards`**：前者是「存储里的东西坏了」，后者是「没人用」，
+ *   处置完全不同，而只有前者需要有人去查。
+ * ⚠️ **这个顺序让每一条 code 的判据仍然是一个干净的双条件**，由
+ * `tests/contract/admin-usage.test.ts` 的
+ * 「note 与它自己的判据字段恒一致 —— note 是摘要不是第二个真源」逐条钉着；
+ * 顺序一改，那一格里的双条件就会红。
  *
  * ⚠️ **`tier` 那一格永远不许是 `null`**（Step 5）：它是「统计开没开」，来自内存里的
  * 接线，读不出来是不可能的。写成可空会让前端多一条永远走不到的分支，
@@ -362,8 +473,12 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
     };
 
     if (parsed.kind === "clock") {
-      // ② 时钟坏了：区间与保留期都算不出来。**这不是「没有数据」**，所以
+      // ⑤ 时钟坏了：区间与保留期都算不出来。**这不是「没有数据」**，所以
       //    `range` 与 `days` 一起是 null，note 单独有一条 code。
+      // ⚠️ **`generatedAt` 与 `pending.ms` 这一档下是 `null`，而那是 wire 级的**：
+      //    两者都由 `NaN` 算出，`JSON.stringify` 把 `NaN` 序列化成 `null`
+      //    （`c.json` 走的就是它）。**不是 handler 显式写的 null**，但对前端来说
+      //    形状一样，所以照样是「拿不到就如实说拿不到」。由那一格用例正面钉着。
       return c.json({
         ...base,
         range: null, days: null, total: null, shards: null, malformed: null,
@@ -380,7 +495,7 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
     };
 
     if (wiring === null) {
-      // ③ Tier-2 没开。**`range` 照常回读**（参数是好的），`pending` 是 null
+      // ① Tier-2 没开。**`range` 照常回读**（参数是好的），`pending` 是 null
       //    （没有 sink 就没有「未落盘的尾巴」这件事，报 0 是伪造）。
       return c.json({
         ...base, range,
@@ -394,7 +509,7 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
     const pending = pendingBlock(wiring.sink);
 
     if (!block.ok) {
-      // ④ 读不出来。三个字段同生同死（见 `ReadBlock`）。**不是 500**：
+      // ② 读不出来。三个字段同生同死（见 `ReadBlock`）。**不是 500**：
       //    `tier` / `range` / `pending` 这三块都还是真的，整条 500 会把它们一起丢掉。
       return c.json({
         ...base, range,
@@ -413,7 +528,8 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
     //
     // ⚠️⚠️ **那个计数闸今天是一条走不到的路，这是实测 + 算出来的，别读成「它在挡着什么」**
     // （本任务先照 `usageCandidateKeys` 的形状加了它，再变异 M15 把它删掉 ⇒
-    // **53 格全绿、完整逃逸**，回头才算清楚为什么）：
+    // **整份全绿、完整逃逸**（刻意不写死格数，那个数每加一条用例就过期一次）,
+    // 回头才算清楚为什么）：
     // 那边那道闸挡的是「`d++` 原地打转」（`d >= 2**53 = 9007199254740992` 时 ULP 超过 1），
     // 而**这个循环体里排在最前的 `utcDateString(d)` 会先抛**——`toISOString()`
     // 只在 `|d × 86_400_000| <= 8.64e15` 即 **`d <= 1e8`** 时成功（两个数都实测过）。
@@ -439,8 +555,20 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
 
     return c.json({
       ...base, range, days, shards, malformed, pending,
-      /** 区间里一个分片都没有。**判据是 `shards`，与 `total.requests` 无关**（⑤ vs ⑥）。 */
-      note: (parsed.clamped ? "range_clamped" : shards === 0 ? "no_shards" : null) satisfies UsageNote | null,
+      /**
+       * ⚠️ **`no_shards` 的判据是 `shards === 0 && malformed === 0` 两个一起，
+       * 不是只看 `shards`**（评审 C1）：只看 `shards` 的话，「读到了 N 个分片、
+       * 但每一个都坏」会被报成「一个分片都没有」——**那是一句假话**，而两者的处置
+       * 完全不同。优先级 `range_clamped > all_malformed > no_shards` 的判据写在
+       * 本函数上方那张表底下。
+       * ⚠️ 与 `total.requests` 无关（③ vs ④）：有分片而请求数是 0 是**第四种**状态。
+       */
+      note: (
+        parsed.clamped ? "range_clamped"
+          : shards === 0 && malformed > 0 ? "all_malformed"
+            : shards === 0 ? "no_shards"
+              : null
+      ) satisfies UsageNote | null,
       /**
        * 整段区间的合计。面板拿它当分母，不必自己把 `days` 再加一遍。
        *
@@ -479,10 +607,11 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
  * （本任务变异实测，**别把它简写成一句**）：
  * · **逐键赋值**（`for (const k of Object.keys(m)) out[k] = m[k]`，`out = {}`）
  *   ⇒ `out["__proto__"] = 桶` 命中 `Object.prototype` 上那个**访问器**，
- *   改的是原型而不是加一个键 ⇒ **那一条彻底消失**。实测：变异 M10' 让下面那一格变红；
+ *   改的是原型而不是加一个键 ⇒ **那一条彻底消失**。实测：变异 M10' 让
+ *   「模型名叫 __proto__ / toString / hasOwnProperty / constructor 时，四条都原样出现在响应里」变红；
  * · **展开**（`{ ...m }`）⇒ **不会坏**。展开走的是 `CreateDataPropertyOrThrow`，
  *   绕过访问器，四个键一个不少。实测：变异 M10（把三处都改成 `{ ...m }`）
- *   **51 格全绿、完整逃逸**。
+ *   **整份全绿、完整逃逸**。
  * ⇒ **写「搬一遍就坏」是一句会被人一试就证伪的话**，而代价是他从此不信这一整段。
  * 这里仍然选「一个都不重建」：两种写法里只有一种是安全的，而记住「哪一种」
  * 比记住「都别搬」贵，且下一个人多半只会记住结论、记不住条件。
