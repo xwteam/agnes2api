@@ -7,6 +7,7 @@ import type { RegistrarWiring, ChannelProbe } from "../../src/http/admin/handler
 import {
   MANUAL_GUARD_KEY, MANUAL_TENDS_PER_DAY, type ManualGuard,
 } from "../../src/core/admin/tend-guard.js";
+import { EVENT_WRITES_PER_DAY } from "../../src/core/admin/event-ring.js";
 import { TEND_LOCK_KEY } from "../../src/http/admin/tend-lock.js";
 import { TEND_HISTORY_KEY, type TendRecord } from "../../src/core/admin/tend-history.js";
 import { buildApp } from "../../src/http/wire.js";
@@ -329,7 +330,7 @@ describe("GET /admin/api/registrar/status", () => {
    * 数三个桶而不是一个「操作次数」：`put` / `list` / `delete` 在 KV 上是**独立**的
    * 每日配额桶，混着数会让这条断言恰好丢掉最要紧的那条信息。
    */
-  it("status 与通道测试都不写存储、也不 list —— 面板刷得再勤也不烧写配额", async () => {
+  it("status 与通道测试在稳态下都不写存储、也不 list —— 索引正常时面板刷得再勤也不烧写配额", async () => {
     const st = new CountingStorage(new MemoryStorage(undefined, () => NOW));
     // 注册机**开着**（`fixture` 缺省就是 `BOTH_CHANNELS`）：关着的话通道测试在
     // 第一行 409 就返回了，这一格量到的「零写」有一半根本没走到执行体那一侧。
@@ -351,6 +352,96 @@ describe("GET /admin/api/registrar/status", () => {
     // 第一版写的是 `st.gets > before.puts`（gets 对 puts 的基线）——那是拿两根不同的
     // 轴比大小，即使这三次请求一次读都没发生，它照样成立。
     expect(st.gets - before.gets, "读一次都没发生 —— 那上面那个「零写」是空的").toBeGreaterThan(0);
+  });
+
+  /**
+   * ⚠️⚠️ **上一格的夹具是 `probe: ok:true` —— 它只量了成功那一支（全分支评审 I3）。**
+   *
+   * `channelTestHandler` 的 `catch` 会打一条 `registrar.channel_test_failed`
+   *（`src/http/admin/handlers/registrar.ts` 那条 `deps.logger.log`），而生产装配里
+   * `logger` 是 `multiLogger(ConsoleLogger, StoreLogger)`，`logFlush` 中间件在每个
+   * 非 `/health` 请求收尾调 `maybeFlush()` ⇒ **失败那一支不是无条件零写**。
+   *
+   * **下面每个数字都是本格自己量出来的**（不是从常量推的，也不是从别处抄的）：
+   * · 失败请求**自己**这一次：**0 次 put** —— 事件只进内存缓冲，
+   *   `maybeFlush()` 被 `EVENT_FLUSH_MIN_INTERVAL_MS`（60 秒，`lastFlushAt` 在 sink
+   *   构造时就置成 `now()`）挡住；
+   * · 紧接着 60 秒内再失败 9 次：**还是 0 次 put** —— 同一条闸，这一段是**批量**的，
+   *   不是「每次失败一次写」；
+   * · 跨过 60 秒之后的那一次请求：**1 次 put + 1 次 get**（读旧分片 + 写回环）；
+   * · 之后每次都跨 60 秒再来 100 次：**只多 11 次 put** —— 撞上
+   *   `EVENT_WRITES_PER_DAY`（每 isolate 每天 12 次）**这条已经在配额账里记过的预算**，
+   *   合计恰好 12。
+   *
+   * ⇒ **失败支吃的不是一笔新账，是事件 sink 那笔旧账**；真正没有上界的是
+   * **可观测性**：`EVENT_RING_SIZE = 100`，连点失败的连通性测试会把事件板块里
+   * 别的诊断挤出环，而运维点这颗按钮的时候正是他最需要那些事件的时候。
+   *
+   * **成功那一支拿同一套跑法做对照**（下面最后一段）：51 次成功、跨 50 分钟，
+   * put 增量恒为 0 —— 两支真的不一样，上一格量到的「零写」只对成功支成立。
+   */
+  it("通道测试失败那一支不是无条件零写：请求内 0 次 put，事件在之后的落盘里合并，且被每日 12 次封顶", async () => {
+    let t = NOW;
+    const now = () => t;
+    const st = new CountingStorage(new MemoryStorage(undefined, now));
+    const wiring: RegistrarWiring = {
+      storage: st,
+      tend: async () => {},
+      // 失败夹具：这正是上一格没有的那一半。
+      probeChannel: async () => { throw new Error("上游不可达"); },
+    };
+    const { app } = await makeApp(
+      [], [], { registrar: BOTH_CHANNELS }, now, { storage: st, registrar: wiring },
+    );
+    const hit = () => app.request(
+      "/admin/api/registrar/channels/yyds/test", { method: "POST", headers: withKey },
+    );
+
+    // ① 第一次失败：走到了 catch（200 + ok:false），而 put 一次都没发生。
+    const b1 = { puts: st.puts, gets: st.gets };
+    const first = await hit();
+    expect(first.status, "没走到失败那一支 —— 这一格量的是别的东西").toBe(200);
+    expect(await first.json()).toMatchObject({ ok: false, reason: "upstream_error" });
+    expect(st.puts - b1.puts, "失败请求自己这一次就写了盘").toBe(0);
+
+    // ② 60 秒内再失败 9 次：仍然 0 —— 这一段是批量的，不是每次一写。
+    const b2 = st.puts;
+    for (let i = 0; i < 9; i++) await hit();
+    expect(st.puts - b2, "60 秒最小间隔内的连续失败没有被合并成一次落盘").toBe(0);
+
+    // ③ 跨过最小间隔之后的那一次请求：恰好 1 次 put + 1 次 get。
+    t += 60_001;
+    const b3 = { puts: st.puts, gets: st.gets };
+    await hit();
+    expect(st.puts - b3.puts, "跨过 60 秒之后那一次没落盘").toBe(1);
+    expect(st.gets - b3.gets, "落盘是读旧分片 + 写回环，get 那一半没发生").toBe(1);
+
+    // ④ 之后每次都跨 60 秒再来 100 次：只多 11 次，合计 12 —— 被每日预算截住。
+    const b4 = st.puts;
+    for (let i = 0; i < 100; i++) { t += 60_001; await hit(); }
+    expect(st.puts - b4, "每日写预算没有截住它 —— 那这条路径就是无上界的").toBe(11);
+    expect(st.puts - b1.puts, "110 次失败一共落了几次盘").toBe(12);
+    // 反向自检：上面那个 12 就是这条常量本身（手写字面量，两边都改也拦得住）。
+    expect(EVENT_WRITES_PER_DAY, "每 isolate 每天 12 次这条预算被改了").toBe(12);
+    // 全程一次 list、一次 delete 都不该有（红线 1 在失败支上同样成立）。
+    expect({ lists: st.lists, deletes: st.deletes }).toEqual({ lists: 0, deletes: 0 });
+
+    // ⑤ **对照组**：同一套跑法，只把夹具换成成功支 ⇒ put 增量恒为 0。
+    //    没有这一段的话，上面那些数字证明不了「两支不一样」。
+    let t2 = NOW;
+    const st2 = new CountingStorage(new MemoryStorage(undefined, () => t2));
+    const okApp = await makeApp([], [], { registrar: BOTH_CHANNELS }, () => t2, {
+      storage: st2,
+      registrar: { storage: st2, tend: async () => {}, probeChannel: async () => ({ ok: true, domains: 1 }) },
+    });
+    const b5 = st2.puts;
+    for (let i = 0; i < 51; i++) {
+      t2 += 60_001;
+      expect((await okApp.app.request(
+        "/admin/api/registrar/channels/yyds/test", { method: "POST", headers: withKey },
+      )).status).toBe(200);
+    }
+    expect(st2.puts - b5, "成功那一支也写了盘 —— 那上一格的「零写」本身就是假的").toBe(0);
   });
 });
 
@@ -759,5 +850,29 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
     expect(res.status).toBe(200);
     expect({ puts: st.puts, deletes: st.deletes }, "真装配那一截顺手写了存储").toEqual(before);
     expect(st.gets - before.puts >= 0).toBe(true);
+  });
+
+  /**
+   * **上一格的夹具是 200 —— 它同样只量了成功那一支（全分支评审 I3 的镜像另一半）。**
+   *
+   * 真装配这一侧要单独量的是：`buildTendDeps` 那一截 + 真 `StoreLogger` 合起来，
+   * 失败请求**自己**这一次到底写不写。量出来是 **0**：事件进缓冲，
+   * 落盘由 `logFlush` → `maybeFlush()` 决定，而 sink 的 `lastFlushAt` 在构造时就置成
+   * `now()` ⇒ 同一个 isolate 上紧接着的这次请求隔不到 60 秒，落不了盘。
+   * 「之后什么时候落、落几次」由上面夹具 A 那一格拿假时钟逐格量死
+   *（1 次 put + 1 次 get，每 isolate 每天封顶 12 次），这里不重复。
+   */
+  it("真装配的通道连通性测试失败时：200 + ok:false，且这一次请求自己仍然 0 次 put", async () => {
+    vi.stubGlobal("fetch", async () => { throw new Error("上游不可达"); });
+    const st = new CountingStorage(new MemoryStorage());
+    const { app } = await buildApp(REAL_ENV, st, workerRuntime());
+    const before = { puts: st.puts, deletes: st.deletes };
+    const res = await app.request(
+      "/admin/api/registrar/channels/yyds/test", { method: "POST", headers: withKey },
+    );
+    expect(res.status).toBe(200);
+    // **先确认真的走到了失败那一支**，否则下面那个 0 量的是成功路径。
+    expect(await res.json()).toMatchObject({ ok: false, reason: "upstream_error" });
+    expect({ puts: st.puts, deletes: st.deletes }, "失败请求自己这一次就落了盘").toEqual(before);
   });
 });

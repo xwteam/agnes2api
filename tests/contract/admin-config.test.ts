@@ -337,7 +337,7 @@ describe("写入前校验（设计 §5.4 第 1 条）", () => {
     expect(st.puts).toBe(before + 1);
   });
 
-  it("干跑端点一次写都不产生，且与 PUT 用的是同一套规则", async () => {
+  it("干跑端点一次写都不产生（观测点是 put 计数，不是状态码）", async () => {
     const st = new CountingStorage();
     const { app } = await realApp({ storage: st });
     const before = st.puts;
@@ -353,6 +353,64 @@ describe("写入前校验（设计 §5.4 第 1 条）", () => {
     expect(bad.status).toBe(400);
     expect(await bad.json()).toMatchObject({ errors: [{ field: "maxStrikes", code: "below_min" }] });
     expect(st.puts, "干跑写了存储").toBe(before);
+  });
+
+  /**
+   * ⚠️⚠️ **不变量：干跑与真跑对同一份输入必须给出同一组错误码。**
+   *
+   * 这一格是全分支评审 I1 之后才补的。**旧那一格的用例名声称「与 PUT 用的是同一套
+   * 规则」，而它只跑了 `maxStrikes`** —— 一个与 `adminToken` 毫无关系的字段，
+   * 于是全仓唯一会分叉的那条规则（`same_as_admin_token`）在契约层两端各自都没有一格。
+   * 实测的分叉：干跑 `configValidateHandler` 少传 `adminToken` ⇒
+   * `POST /config/validate` 回 **200 `{ok:true}`**，同一份 patch 的 `PUT` 回 **400
+   * `same_as_admin_token`**。方向是「干跑放行、真跑拒绝」——运维读到的是「面板刚说没问题」。
+   *
+   * **判据是错误码集合，不是状态码**：只比状态码的话，两边各自 400 但错在不同字段
+   * 上照样绿。**两个方向都跑**：
+   * · `gatewayToken = ADMIN_TOKEN` —— 只有真跑拿得到 `adminToken` 时两边才一致，
+   *   这一条就是被测的那个选择（**变红条件**：删掉 `configValidateHandler` 里的
+   *   `adminToken: wiring.adminToken`）；
+   * · `maxStrikes: 0` —— 与 `adminToken` 无关的对照组，证明这套比对本身会说话。
+   *
+   * **`env` 里刻意不给 `GATEWAY_TOKEN`**：给了的话 `gatewayToken` 被判 `locked_by_env`,
+   * 两边都在那一条上提前返回 ⇒ `same_as_admin_token` 又变成不可观测（第 5 种假阳性）。
+   */
+  it("干跑与真跑对同一份输入给出同一组错误码 —— same_as_admin_token 与 maxStrikes 两个方向都验", async () => {
+    const st = new CountingStorage();
+    const { app } = await realApp({ storage: st, env: {}, stored: { gatewayToken: GW, maxStrikes: 3 } });
+    const before = st.puts;
+
+    const dry = async (patch: Record<string, unknown>) => app.request("/admin/api/config/validate", {
+      method: "POST",
+      headers: { ...withKey, "content-type": "application/json" },
+      body: JSON.stringify({ patch }),
+    });
+    /** `field:code` 的有序集合；200 是空集合。 */
+    const codesOf = async (res: Response): Promise<string[]> => {
+      if (res.status === 200) return [];
+      const body = await res.json() as { errors?: Array<{ field: string; code: string }> };
+      return (body.errors ?? []).map((e) => `${e.field}:${e.code}`).sort();
+    };
+
+    const cases: Array<{ patch: Record<string, unknown>; expected: string[] }> = [
+      // ⚠️ `TEST_ADMIN_TOKEN` 是 27 个字符 ≥ MIN_GATEWAY_TOKEN_LENGTH(24)，
+      // 所以它走得到 `same_as_admin_token` 那一条，不会被 `too_short` 提前截住。
+      { patch: { gatewayToken: TEST_ADMIN_TOKEN }, expected: ["gatewayToken:same_as_admin_token"] },
+      { patch: { maxStrikes: 0 }, expected: ["maxStrikes:below_min"] },
+    ];
+    for (const { patch, expected } of cases) {
+      const d = await dry(patch);
+      const p = await put(app, patch);
+      const [dc, pc] = [await codesOf(d), await codesOf(p)];
+      expect(pc, `真跑对 ${JSON.stringify(patch)} 判成了别的`).toEqual(expected);
+      expect(dc, `干跑与真跑对 ${JSON.stringify(patch)} 判决不同：干跑 ${JSON.stringify(dc)}`).toEqual(pc);
+      expect(d.status, `${JSON.stringify(patch)}：状态码也得一样`).toBe(p.status);
+    }
+
+    // **反向自检**：两个方向的错误码真的不同，否则上面那两轮循环在测同一件事。
+    expect(cases[0]!.expected).not.toEqual(cases[1]!.expected);
+    // 全程 400 ⇒ 一次写都不该发生（顺带钉住「干跑真的没写」这条性质在本格也成立）。
+    expect(st.puts, "两轮全是 400，却写了存储").toBe(before);
   });
 
   it("顶层只认 patch 一个键，拼错的字段名一律 400", async () => {
@@ -919,5 +977,82 @@ describe("C1/C2：清掉一条在链上的通道凭据", () => {
     });
     expect(dry.status).toBe(200);
     expect((await put(app, patch)).status).toBe(200);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 全分支评审 I5：「鉴权失败 ⇒ 零副作用」这道护栏的第三处落点
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️ **这一格补的是护栏缺口，不是在修一个活缺陷。**
+ *
+ * **今天它不可达，这一点必须先说清楚**：`tests/contract/admin-auth.test.ts` 的笛卡尔积
+ * 矩阵对每条 admin 路由 × 16 种凭据状态断言 401，`EXPECTED_MIDDLEWARE` 又钉住了中间件
+ * 表，两者合起来让「handler 跑了但仍返回 401」在今天的路由形状下构造不出来
+ * ——全分支评审自己也如实写了这一条（I5，置信度 MEDIUM）。
+ *
+ * **那它为什么还要补**：这道护栏本期建过两次（Task 3 的 Key 写四条 ——
+ * `tests/contract/admin-auth.test.ts` 的「鉴权失败的非幂等请求必须零副作用」；
+ * Task 5 的 `POST /registrar/tend` ——
+ * `tests/contract/manual-tend.test.ts` 的「鉴权失败的『立即补池』必须零副作用」），
+ * **Task 7 的这两条没有** —— 而这两条恰恰是全仓
+ * 危害最大的写：`PUT /admin/api/config` 能改掉 `gatewayToken`，
+ * `secrets/clear` 能删掉凭据（`router.ts` 那句「一个鉴权失效的 `PUT /admin/api/config`
+ * 等于把整台网关交出去」说的就是它）。它防的是 Hono 上那个真实形态：
+ * `app.route("/", sub)` 写在 `app.use(path, mw)` 之前时中间件**静默失效**
+ *（`src/http/admin/router.ts` 那段 ★ 已实测）⇒ handler 先跑完、鉴权再"生效"，
+ * 状态码仍是 401 而副作用已经发生。**只断言 401 对这个形态完全无感。**
+ */
+describe("I5：鉴权失败的两条 config 写端点必须零副作用", () => {
+  /**
+   * ⚠️ **夹具刻意用「鉴权若不存在就一定会成功」的请求**，这是本格判别力的全部来源：
+   * · `PUT` 带的是一份**合法**的 patch（非法的会被 400 拦住，那样即使鉴权失效也是 0 次写）；
+   * · `secrets/clear` 打的是一把**存储里真的有值**的凭据。
+   * 反向自检在最后：同样两条请求**带上口令真的会写**，否则上面那两个「计数不动」是空的。
+   */
+  it("无口令的 PUT /config 与 secrets/clear：401 且 put 计数一动不动", async () => {
+    const st = new CountingStorage();
+    const { app } = await realApp({
+      storage: st, env: {},
+      stored: { gatewayToken: GW, maxStrikes: 3 },
+    });
+
+    const snapshot = () => ({ puts: st.puts, deletes: st.deletes });
+    const CASES: ReadonlyArray<{ name: string; path: string; body: unknown }> = [
+      { name: "PUT /config 改 gatewayToken", path: "/admin/api/config", body: { patch: { gatewayToken: "attacker-planted-gateway-token" } } },
+      { name: "PUT /config 改 maxStrikes", path: "/admin/api/config", body: { patch: { maxStrikes: 9 } } },
+      { name: "secrets/clear 清掉 gatewayToken", path: "/admin/api/config/secrets/clear", body: { path: "gatewayToken" } },
+    ];
+
+    // 三种凭据状态各跑一遍：没有头、错的口令、拿网关口令冒充管理口令。
+    const BAD_HEADERS: ReadonlyArray<Record<string, string>> = [
+      {}, { "x-admin-key": "wrong-admin-key" }, { authorization: `Bearer ${GW}` },
+    ];
+    for (const c of CASES) {
+      for (const h of BAD_HEADERS) {
+        const before = snapshot();
+        const res = await app.request(c.path, {
+          method: c.path.endsWith("/clear") ? "POST" : "PUT",
+          headers: { ...h, "content-type": "application/json" },
+          body: JSON.stringify(c.body),
+        });
+        expect(res.status, `${c.name} / 凭据 ${JSON.stringify(h)}：必须 401`).toBe(401);
+        expect(snapshot(), `${c.name} / 凭据 ${JSON.stringify(h)}：鉴权失败了，但存储被动过`).toEqual(before);
+      }
+    }
+
+    // ── 反向自检：同样这两条请求带上口令**真的会写** ────────────────────────
+    const beforeOk = st.puts;
+    expect((await put(app, { maxStrikes: 9 })).status, "夹具本身就存不上 ⇒ 上面那些「零副作用」是空的").toBe(200);
+    expect(st.puts, "带对口令的 PUT 一次盘都没落").toBe(beforeOk + 1);
+
+    const cleared = await app.request("/admin/api/config/secrets/clear", {
+      method: "POST",
+      headers: { ...withKey, "content-type": "application/json" },
+      body: JSON.stringify({ path: "gatewayToken" }),
+    });
+    expect(cleared.status, "夹具本身清不掉 ⇒ 上面 secrets/clear 那三格是空的").toBe(200);
+    expect(st.puts, "带对口令的 secrets/clear 一次盘都没落").toBe(beforeOk + 2);
   });
 });

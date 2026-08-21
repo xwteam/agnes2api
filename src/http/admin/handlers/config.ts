@@ -410,6 +410,17 @@ export function configPutHandler(deps: ConfigDeps) {
  *
  * **一次存储写都不产生**：它跑的是与 `PUT` **同一个** `validateConfigPatch`，
  * 只是不写。另写一份「轻量版校验」就等于让干跑与真跑给出不同答案，那比没有干跑更坏。
+ *
+ * ⚠️⚠️ **「同一个函数」不等于「同一套判据」——上下文也必须逐字段一样。**
+ * 第一版这里传的是 `{ stored, env }`，**漏了 `adminToken`**，而
+ * `config-validate.ts` 的 `same_as_admin_token` 那一条判的正是
+ * `ctx.adminToken !== undefined`（不给就静默跳过）⇒ 一份
+ * `{ gatewayToken: <ADMIN_TOKEN> }` 的 patch 在干跑上是 **200 `{ok:true}`**、
+ * 在 `PUT` 上是 **400 `same_as_admin_token`**：分叉方向是「干跑放行、真跑拒绝」，
+ * 运维读到的是「面板刚说没问题」。上面那句话禁止的事，正被它自己下面这一行做着。
+ * ⇒ **改这两处中的任何一处的上下文，都要把另一处一起改**；由
+ * `tests/contract/admin-config.test.ts` 的「干跑与真跑对同一份输入给出同一组错误码」
+ * 拿两个方向（`same_as_admin_token` / `maxStrikes`）钉住。
  */
 export function configValidateHandler(deps: ConfigDeps) {
   return async (c: Context) => {
@@ -417,7 +428,9 @@ export function configValidateHandler(deps: ConfigDeps) {
     if (wiring === null) return notWired(c);
     const patch = await readPatch(c);
     const stored = (await wiring.storage.get<unknown>("config")) ?? {};
-    const verdict = validateConfigPatch(patch, { stored, env: wiring.env });
+    const verdict = validateConfigPatch(patch, {
+      stored, env: wiring.env, adminToken: wiring.adminToken,
+    });
     if (!verdict.ok) return invalid(c, verdict.errors);
     return c.json({ ok: true, changed: [...verdict.changed] });
   };
