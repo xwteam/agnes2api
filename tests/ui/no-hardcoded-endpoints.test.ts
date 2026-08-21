@@ -23,11 +23,27 @@ import { join } from "node:path";
  *（形态照抄 `tests/unit/source-guards.test.ts`「已知抓不住的写法确实抓不住（边界是断言，不是散文）」）。
  *
  * **`BLIND_SPOTS` 今天只有一条：字符串拼接**（`"/v1" + "/messages"`）。
- * 抓它需要把判据放宽成「连 `"/v1"` 这个裸前缀也算」，**而那条判据实测有 2 处误报**：
- * `admin-ui/js/api.js:15` 与 `:20` 的注释里各有一个 `` `/v1` `` 行内代码——**是散文，不是端点知识**。
- * 那是一种**系统性**误报（以后任何一段提到 `/v1` 的注释都会踩），
- * 而为它开 `ALLOW` 口子正是本文件下面那段告诫要防的事。
- * ⇒ **不收窄到那一步，登记成盲点。** 拼接形态仍然只能靠评审 +
+ * 处置它有**三条路，不是两条**（⚠️ 我原来在这里写成了二选一，**那是个假二分**，
+ * 而「呈现一个假二分」与「写一句假断言」是同一族问题——下一个人会以为选项已经穷尽）：
+ *
+ * **(A) 放宽判据到「连 `"/v1"` 这个裸前缀也算」。否掉。**
+ * 实测有 **2 处误报**：`admin-ui/js/api.js:15` 与 `:20` 的注释里各有一个 `` `/v1` ``
+ * 行内代码——**是散文，不是端点知识**。而且这是**系统性**误报（以后任何一段提到
+ * `/v1` 的注释都会踩），为它开 `ALLOW` 口子正是下面那段告诫要防的事。
+ *
+ * **(B) 按行扫描 + 跳过 `^\\s*(\\*|//|<!--)` 的注释行。今天不做，但它是可行的。**
+ * 已实跑验证过：全树 `OFFENDERS(code lines) = []`（零误报），
+ * `SKIPPED(comment lines) = ["admin-ui/js/api.js:15","admin-ui/js/api.js:20"]`，
+ * 而 `const u = "/v1" + "/messages";` **CAUGHT** —— 唯一的盲点会被补上。
+ * **三条代价，明写**：① 判据从「一条正则」变成「正则 + 一条注释启发式」，
+ * **启发式本身是一个新的可错判断**；② 块注释里的端点从此不被扫（含
+ * `/* … *\\/` 中间那些不以 `*` 起首的行，判据会误判成代码行、或反之）；
+ * ③ **跳过逻辑自己需要一格自检**，否则「跳过范围悄悄变大」和现在这条 `lastIndex`
+ * 致盲通道是同一类无声失效。
+ * ⇒ **今天不做的理由**：Task 1 已经够长，而这三条代价里的每一条都要各自的实测。
+ * **登记给 P3e，连同上面那组实跑数据一起——不必重量。**
+ *
+ * **(C) 登记成盲点（今天采纳）。** 拼接形态靠评审 +
  * Task 7 / Task 10 各自检查单上那句「端点只许来自 /admin/api/models」。
  *
  * ⚠️ **别把这份文件读成「前端从此不可能硬编码端点」。** 它挡住的是**顺手写下一条路径**，
@@ -60,10 +76,39 @@ const ENDPOINT_RE = /["'`](\/v1(?:beta)?\/[A-Za-z0-9_{}$?=:/.-]*)["'`]/g;
  */
 const ALLOW: readonly string[] = [];
 
-/** 一条样本会不会被 `ENDPOINT_RE` 抓住。**每次重置 `lastIndex`**：它带 `g`，不重置会隔次漏判。 */
+/**
+ * 一条样本会不会被 `ENDPOINT_RE` 抓住。
+ *
+ * ⚠️ **带 `g` 的正则有两侧危害，第一版只看见了「读」那一侧**（评审 HIGH 1，实测）：
+ * · **读**：`.test()` 从 `lastIndex` 起扫，不重置会**隔次漏判**——入口这行 `= 0` 治的是它；
+ * · **写**：`.test()` 命中之后会把 `lastIndex` **留成非零**，而 `scan()` 用的
+ *   `String.matchAll()` **会把当时的 `lastIndex` 复制进它的克隆**
+ *   ⇒ 每个文件开头若干字符被整段跳过。
+ *
+ * 实测过那条致盲通道有多近：在 `admin-ui/index.html` 首行种一条真的硬编码端点
+ * `<!--"/v1/messages"-->`，**只要在 `scan()` 之前多调一次 `hit()`**，
+ * 整个文件从 `1 failed` 变成 `7 passed`——**本期核心约束的唯一机器护栏当场恒绿**。
+ * 当时没炸只靠两个偶然（扫描那格声明在前先跑；最后一次 `.test()` 恰好返回 false
+ * 而引擎顺手把 `lastIndex` 归零），**两个都不是设计出来的、也没写进注释**。
+ *
+ * ⇒ 出口也归零，并且 `matchesIn()` 每次都自己重置一遍（**两道，不是一道**：
+ * 谁将来直接用 `ENDPOINT_RE.test()` 而不走 `hit()`，`matchesIn()` 那道仍然兜得住）。
+ * 由下面「扫描不受上一次 hit() 留下的 lastIndex 影响」那一格常驻钉着。
+ */
 function hit(s: string): boolean {
   ENDPOINT_RE.lastIndex = 0;
-  return ENDPOINT_RE.test(s);
+  const r = ENDPOINT_RE.test(s);
+  ENDPOINT_RE.lastIndex = 0;
+  return r;
+}
+
+/**
+ * 一段源码里所有被抓住的端点。**`scan()` 与那格反向自检走的是同一条路径**——
+ * 自检若另走一条，它证明的就是抄件不是原件（第 7 种假阳性）。
+ */
+function matchesIn(src: string): string[] {
+  ENDPOINT_RE.lastIndex = 0;
+  return [...src.matchAll(ENDPOINT_RE)].map((m) => m[1]!);
 }
 
 /**
@@ -87,13 +132,16 @@ const COVERED: ReadonlyArray<{ probe: string; why: string }> = [
 
 /**
  * 已知抓不住的写法，连同**为什么接受**一起登记。
- * 今天只有一条，理由见文件头那段：抓它要付 2 处系统性误报。
+ * 今天只有一条。**处置它的三条路（A 否掉 / B 可行但今天不做 / C 采纳）见文件头那段**
+ * ——那里是三条，不是二选一。
  */
 const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
   {
     probe: 'const u = "/v1" + "/messages";',
-    why: "字符串拼接 —— 整条路径不在同一对引号里，扫字面量的判据按定义看不见它；"
-      + "抓它要放宽到「裸 `/v1` 前缀也算」，而那条判据在 `admin-ui/js/api.js` 的注释上误报 2 处",
+    why: "字符串拼接 —— 整条路径不在同一对引号里，扫字面量的判据按定义看不见它。"
+      + "处置有三条路：(A) 放宽到「裸 `/v1` 前缀也算」⇒ 实测 2 处系统性误报，否掉；"
+      + "(B) 按行扫描 + 跳过注释行 ⇒ 实测零误报且能抓住它，**可行但今天不做**（三条代价见文件头，登记 P3e）；"
+      + "(C) 登记成盲点 ⇒ 今天采纳",
   },
 ];
 
@@ -102,7 +150,7 @@ function scan(): string[] {
   for (const p of walk("admin-ui")) {
     const rel = p.split("\\").join("/").replace(/^admin-ui\//, "");
     if (ALLOW.includes(rel)) continue;
-    for (const m of readFileSync(p, "utf8").matchAll(ENDPOINT_RE)) offenders.push(`${rel}: ${m[1]}`);
+    for (const found of matchesIn(readFileSync(p, "utf8"))) offenders.push(`${rel}: ${found}`);
   }
   return offenders;
 }
@@ -110,6 +158,40 @@ function scan(): string[] {
 describe("前端不许硬编码网关端点", () => {
   it("前端没有任何文件硬编码网关端点路径 —— 端点只许来自 /admin/api/models", () => {
     expect(scan(), "端点要从 /admin/api/models 的响应里取，别在这些地方再写一遍").toEqual([]);
+  });
+
+  /**
+   * ── **致盲通道的常驻反向自检（评审 HIGH 1）** ──────────────────────────────
+   *
+   * 被守护的性质：**`scan()` 的结果不许依赖「在它之前有没有人调过 `hit()`」。**
+   *
+   * 这不是假想。实测：在 `admin-ui/index.html` 首行种一条真的硬编码端点
+   * `<!--"/v1/messages"-->`，
+   * · 现状 ⇒ `expected [ 'index.html: /v1/messages' ] to deeply equal []`（红，护栏有效）；
+   * · **只在 `scan()` 之前多调一次 `hit()`** ⇒ `Test Files 1 passed / Tests 7 passed`
+   *   ——**端点还躺在文件里，而护栏恒绿。**
+   * 成因是 `String.matchAll()` 把原正则当时的 `lastIndex` 复制进克隆，
+   * 于是每个文件开头若干字符被整段跳过。
+   *
+   * ⚠️ **这一格才是本条修复的重点，不是那两行 `lastIndex = 0`。**
+   * 光把当时那条通道堵上，下一次重排用例、或在前面加一格用 `hit()` 的断言，
+   * 就会把它无声地重新打开。
+   *
+   * **变红条件**：把 `matchesIn()` 里那行 `ENDPOINT_RE.lastIndex = 0;` 删掉。
+   */
+  it("扫描不受上一次 hit() 留下的 lastIndex 影响 —— 这条通道一旦打开，唯一的护栏会静默恒绿", () => {
+    const planted = '<!--"/v1/messages"-->';
+    // 前置条件①：这一条必须真的命中，否则下面弄不脏 `lastIndex`，整格就是空的。
+    expect(hit(COVERED[2]!.probe), "前置条件：这条样本必须命中").toBe(true);
+    // 前置条件②：**把 `lastIndex` 真的弄脏**。`hit()` 出口会归零，所以这里绕过它，
+    // 直接用 `ENDPOINT_RE.test()` —— 那正是「谁将来不走 hit()」的那条路径。
+    ENDPOINT_RE.lastIndex = 0;
+    expect(ENDPOINT_RE.test(COVERED[2]!.probe), "前置条件：裸 test() 也必须命中").toBe(true);
+    expect(ENDPOINT_RE.lastIndex, "前置条件：命中之后 lastIndex 必须非零，否则弄不脏").toBeGreaterThan(
+      planted.length,
+    );
+    // 真正的断言：脏着 `lastIndex` 去扫，仍然要扫得到开头那条端点。
+    expect(matchesIn(planted), "扫描被上一次 test() 留下的 lastIndex 带偏了").toEqual(["/v1/messages"]);
   });
 
   /**

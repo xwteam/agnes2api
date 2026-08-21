@@ -107,11 +107,32 @@ describe("协议目录", () => {
    * ⇒ 后果正是 D1「做两遍必漂，而漂了没人会发现」的原形态，**而且漂在真源自己身上**：
    * 模型表可以静默少告诉用户一条协议入口、或指向一个网关不认的模型名。
    *
-   * **这一格是关系断言不是同义反复**，两个输入各自被独立锚死：
-   * · `pathTemplate` 那一端 —— 由 `tests/contract/protocol-catalog.test.ts`
-   *   「每条协议端点都在 app 上真的注册着」拿 `app.routes` 钉着（改一个字符就红）；
-   * · `m.id` 那一端 —— 由上面「模型 id 与 /v1/models 的来源逐条一致」拿 `MODELS` 钉着。
-   * ⇒ 两端同时改成一致的错值也逃不掉：那会让上面那两格里的某一格先红。
+   * **这一格是关系断言不是同义反复**，两个输入各自被独立锚死。
+   * ⚠️ **锚在哪儿，四条协议不是同一个答案——我原来写成同一个，那两句对 gemini 是假的**
+   *（评审 HIGH 2，逐条实测订正）：
+   *
+   * · **`m.id` 那一端** —— 由上面「模型 id 与 /v1/models 的来源逐条一致」拿 `MODELS` 钉着。
+   * · **`pathTemplate` 那一端，分两种：**
+   *   - **openai / anthropic / responses（静态路径）** —— 由
+   *     `tests/contract/protocol-catalog.test.ts`
+   *     「每条协议端点都在 app 上真的注册着」拿 `app.routes` **逐字比对**钉着，改一个字符就红。
+   *   - **gemini（通配路径）** —— **那一格钉不住它**：它的注册路径是
+   *     `/v1beta/models/:rest{.+}`，那格对 `streamMode === "path"` 走的是**常量分支**
+   *     （断言字面量 `"POST /v1beta/models/:rest{.+}"`），**从头到尾不读 `p.pathTemplate`**。
+   *     实测：只把 gemini 的 `pathTemplate` 改一个字符（`models`→`modelZ`），
+   *     **被点名的那格照绿**；红的是本格 + 单测「Gemini 的流式换的是路径不是请求体字段」
+   *     + 契约「gemini 的 sample() 经真 app 发出去拿到 200」。
+   *     ⇒ **gemini 的 `pathTemplate` 真正的锚是后两格**：前者手写字面量、后者真发一次请求。
+   *
+   * ⇒ 「两端同时改成一致的错值」也逃不掉，但**杀它的不是我原来点名的那两格**：
+   * 实测两端一致改错（`pathTemplate` + 本目录的 endpoints 一起改），
+   * 那两格**全绿**，红的是「Gemini 的流式换的是路径不是请求体字段」与
+   * 契约「gemini 的 sample() 经真 app 发出去拿到 200」。
+   *
+   * ⚠️ **这段话的用处在于告诉下一个重构的人：别把
+   * 「Gemini 的流式换的是路径不是请求体字段」那格的期望值改成从 `pathTemplate` 推导。**
+   * 那看着像消重，实际是把 gemini 这一端的**唯一手写锚**拆掉
+   * ——本格对 gemini 当场退化成真正的同义反复，而全树照绿。
    */
   it("对话模型的 endpoints 与 PROTOCOLS 逐条一致 —— "
      + "endpoints 是 pathTemplate 在真源内的第二份拷贝，没东西绑住就必漂", () => {

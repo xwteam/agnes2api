@@ -16,8 +16,18 @@ function realRoutes(app: Awaited<ReturnType<typeof makeApp>>["app"]) {
 }
 
 describe("协议目录与真实路由表对账", () => {
+  /**
+   * ⚠️ **变红条件对四条协议不是同一句话**（评审 MEDIUM，实测订正；这条是存量假话，
+   * 而上一轮我在单测里引用它时把它读反了，于是同一个错被抄成了两处）：
+   * · **openai / anthropic / responses**：把 `pathTemplate` 改一个字符 ⇒ **红**（逐字比对）；
+   * · **gemini**：把 `pathTemplate` 改一个字符 ⇒ **不红**。它走下面那条 `streamMode === "path"`
+   *   分支，断的是常量 `"POST /v1beta/models/:rest{.+}"`，**从不读 `p.pathTemplate`**
+   *   （实测：`models`→`modelZ`，这一格照绿）。
+   *   gemini 的 `pathTemplate` 由单测「Gemini 的流式换的是路径不是请求体字段」的手写字面量
+   *   与本文件「gemini 的 sample() 经真 app 发出去拿到 200」那格钉着。
+   */
   it("每条协议端点都在 app 上真的注册着 —— 改一个字符就是面板给出一条 404 的示例", async () => {
-    // 变红条件：把 PROTOCOLS 里任一条 pathTemplate 改一个字符
+    // 变红条件：把 PROTOCOLS 里**那三条静态协议**的 pathTemplate 改一个字符（见上，gemini 除外）
     const { app } = await makeApp([], []);
     const routes = realRoutes(app);
     for (const p of PROTOCOLS) {
@@ -35,7 +45,12 @@ describe("协议目录与真实路由表对账", () => {
    * ⚠️ **这一格能证明什么、不能证明什么，逐条写清楚（评审 Important 1，实测订正）**：
    *
    * 它证明的是「目录里列出的每一条非通配端点，在 app 上确实注册着」——
-   * **变红条件是把某条 `path` 改一个字符，或加一条 app 上没有的端点。**
+   * **变红条件是把某条**非通配**`path` 改一个字符，或加一条 app 上没有的**非通配**端点。**
+   * ⚠️ **「加一条 app 上没有的端点」这句要带上「非通配」三个字**（评审 LOW，实测）：
+   * 新增条目若含 `generateContent` 或 `{model}`，会被下面那行 `continue` 跳过，**这一格加了也不红**
+   *（实测：给某个图片模型加一条 `POST /v1beta/models/nonexistent:generateContent`
+   * ⇒ 本文件 `8 passed`，一格没红）。
+   * **接住它的是单测**「媒体模型的 endpoints 逐条手写字面量」（同一条变异 ⇒ 那格红）。
    *
    * 它**不**证明「目录没漏端点」，两条成因都实测过：
    * ① `toContain` 只抓**新增**、抓不到**删除**：少一条只是少循环一次，照绿；
