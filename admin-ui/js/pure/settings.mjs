@@ -415,6 +415,35 @@ export function errorRows(errBody) {
 }
 
 /**
+ * 存储里那份配置**装载不起来**了吗。
+ *
+ * ⚠️⚠️ **诊断态下表单必须仍然可编辑——那是运维唯一的出路。**
+ * 后端在这个状态下把 `fields`/`credentials` 给 `null`（不编一份空配置出来），
+ * 于是 `fieldView()` 对每一格都回 `present: false`。板块文件**不许**据此把输入框
+ * 一律置灰：那会把「关掉注册机 / 把那把 key 填回去」这两条自救路径在 UI 上堵死，
+ * 而后端明明放行（评审 C2 修完的正是这件事，前端跟不上等于白修）。
+ */
+export function isDiagnostic(body) {
+  const b = obj(body);
+  return b !== null && b.fields === null && Array.isArray(b.loadBlocked) && b.loadBlocked.length > 0;
+}
+
+/**
+ * 装载不起来的每一条原因 → 渲染用的行。**判据与 `errorRows()` 是同一份**
+ *（同样的 `code` → 同样的文案），两者的区别只在数据从响应体的哪一格来。
+ */
+export function loadBlockedRows(body) {
+  const b = obj(body);
+  const list = b !== null && Array.isArray(b.loadBlocked) ? b.loadBlocked : [];
+  return list.filter((e) => obj(e) !== null).map((e) => ({
+    field: typeof e.field === "string" ? e.field : "",
+    code: typeof e.code === "string" ? e.code : "",
+    key: errorMessageKey(e.code),
+    params: obj(e.params) === null ? {} : e.params,
+  }));
+}
+
+/**
  * 清空这一把凭据之前，**必须对运维说的那一句话**。
  *
  * ⚠️⚠️ **一句通用红字在这几种状态下，有的是救命、有的是吓人。**

@@ -42,7 +42,7 @@ export interface Harness {
    * 返回非 Promise 的老写法**行为逐字不变**（`await` 一个非 Promise 只多一个微任务，
    * 而这里本来就在 async 函数里）。
    */
-  respond(fn: (url: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }>): void;
+  respond(fn: (url: string, method: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }>): void;
   gate: FakeElement;
   shell: FakeElement;
   form: FakeElement;
@@ -82,7 +82,7 @@ export async function bootPanel(opts: {
   /** 预置的 localStorage 内容（模拟"上次登录留下的会话"）。 */
   store?: Record<string, string>;
   now?: number;
-  respond?: (url: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }>;
+  respond?: (url: string, method: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }>;
 } = {}): Promise<Harness> {
   const { dom } = buildDom();
   const store: Record<string, string> = { ...(opts.store ?? {}) };
@@ -110,7 +110,7 @@ export async function bootPanel(opts: {
     // 的深度当场不够用，**3 格实测变红**（`keys-actions.test.ts` 里 toast 与
     // 确认弹窗那几格：断言跑在渲染之前，读到的是空字符串）。
     // 只有真的返回了 thenable 才 await，同步那条路径逐字保持原来的时序。
-    const pending = responder(String(url));
+    const pending = responder(String(url), String(init?.method ?? "GET"));
     const r = pending !== null && typeof pending === "object" && typeof (pending as Promise<Resp>).then === "function"
       ? await pending
       : pending as Resp;

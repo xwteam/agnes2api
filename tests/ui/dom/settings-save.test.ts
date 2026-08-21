@@ -68,7 +68,7 @@ function configBody(over: Record<string, unknown> = {}) {
 const ok = (body: unknown): Resp => ({ status: 200, body });
 
 /** 进壳层、切到设置板块。 */
-async function openSettings(respond: (url: string) => Resp | Promise<Resp>) {
+async function openSettings(respond: (url: string, method: string) => Resp | Promise<Resp>) {
   const h = await bootPanel({
     now: NOW,
     store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000) },
@@ -441,9 +441,20 @@ describe("两条通道在设置页上完全对称（设计 §10.3 第 1/2/3 条�
 });
 
 describe("错误渲染：逐字段错误码 → 五语言文案", () => {
+  /**
+   * ⚠️⚠️ **这两格的应答闭包原来引用外层的 `const h`，而它在 `openSettings` 返回
+   * 之前就被调用 ⇒ TDZ 抛错 ⇒ `GET /config` 整个失败 ⇒ `data = null`。**
+   * 两格于是一直是「因为错误的原因」在绿：`data` 为 `null` 时 `buildPatch` 恰好
+   * 仍然产出一个非空 patch（每一格的 `stored` 都是 `null`，输入的 "9" 与它不等），
+   * PUT 照样发出去、400 照样渲染——**而那条路径与它声称要测的那条毫无关系**。
+   * 补「诊断态下表单仍可编辑」的对照用例时才暴露出来（那一格让空字段真的被置灰）。
+   * ⇒ 改成一个不依赖 `h` 的标志位。
+   */
   it("后端返回的逐字段错误逐条渲染，并把那一格标红", async () => {
-    const h = await openSettings((url) => {
-      if (url.startsWith("/admin/api/config") && h.calls.some((c) => c.method === "PUT")) {
+    let sawPut = false;
+    const h = await openSettings((url, method) => {
+      if (url.startsWith("/admin/api/config") && method === "PUT") { sawPut = true; }
+      if (url.startsWith("/admin/api/config") && sawPut) {
         return {
           status: 400,
           body: { error: { type: "invalid_request_error", message: "x" }, errors: [{ field: "maxStrikes", code: "below_min", params: { min: 1 } }] },
@@ -467,8 +478,10 @@ describe("错误渲染：逐字段错误码 → 五语言文案", () => {
    * grep 的东西。
    */
   it("这个面板版本不认识的错误码，原样把码显示出来", async () => {
-    const h = await openSettings((url) => {
-      if (url.startsWith("/admin/api/config") && h.calls.some((c) => c.method === "PUT")) {
+    let sawPut = false;
+    const h = await openSettings((url, method) => {
+      if (url.startsWith("/admin/api/config") && method === "PUT") { sawPut = true; }
+      if (url.startsWith("/admin/api/config") && sawPut) {
         return { status: 400, body: { errors: [{ field: "maxStrikes", code: "brand_new_code_2099" }] } };
       }
       return ok(configBody());
@@ -499,5 +512,68 @@ describe("接线：不轮询、传播上界要显示出来", () => {
     expect(screenText(h)).not.toContain("立即生效");
     // 90_000 ms 经 `fmtDuration` 是「1分30秒」。
     expect(screenText(h)).toContain("1分30秒");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 评审 C2 的前端那一半：诊断态下表单必须还能用
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️ **后端修好了、前端跟不上，等于白修。**
+ *
+ * 装载不起来时后端把 `fields`/`credentials` 给 `null`（不编一份空配置），
+ * 于是 `fieldView()` 对每一格都回 `present: false`。第一版的 `renderOne` 据此
+ * **把所有输入框一律置灰** ⇒ 「关掉注册机 / 把那把 key 填回去」这两条自救路径
+ * 在 UI 上被堵死，而后端明明放行——**C2 那个洞会原样重现在前端**。
+ */
+describe("装载不起来时的诊断视图（评审 C2 的前端那一半）", () => {
+  const BLOCKED = {
+    fields: null,
+    credentials: null,
+    configDegraded: true,
+    loadBlocked: [{ field: "registrar.yyds.apiKey", code: "channel_credentials_missing", params: { channel: "yyds" } }],
+    editable: [], secrets: [],
+    propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
+  };
+
+  it("横幅 + 逐条列出缺什么，并把那一格标红", async () => {
+    const h = await openSettings(() => ok(BLOCKED));
+    const section = h.section("settings");
+    const banner = section.querySelectorAll(".cfg-blocked")[0]!;
+    expect(banner.style.display, "装载不起来，面板却什么都没说").not.toBe("none");
+    expect(banner.textContent).toContain("下一次重启");
+    // 逐条那一行要说清是哪一格、缺什么。
+    expect(banner.textContent).toContain("API Key");
+    expect(banner.textContent).toContain("凭据");
+    expect(fieldNode(section, "registrar.yyds.apiKey").classList.contains("invalid")).toBe(true);
+  });
+
+  /**
+   * **变红条件**：把 `renderOne` 里那句 `built.input.disabled = !isDiagnostic(data);`
+   * 改回无条件 `true`。
+   */
+  it("诊断态下表单仍然可编辑 —— 那是运维唯一的出路", async () => {
+    const h = await openSettings(() => ok(BLOCKED));
+    const section = h.section("settings");
+    for (const path of ["registrar.enabled", "registrar.primary", "registrar.yyds.apiKey", "maxStrikes"]) {
+      expect(
+        inputOf(section, path).disabled,
+        `${path} 在诊断态下被置灰了 —— 自救路径在 UI 上被堵死，而后端明明放行`,
+      ).toBe(false);
+    }
+  });
+
+  /**
+   * **对照：单独某一格没读到（而不是整份装载不起来）时，那一格照旧置灰**——
+   * 那时改它没有意义。两种状态必须分得开，否则上一格等于把置灰整个删掉。
+   */
+  it("对照：只是某一格没读到（不是诊断态）时，那一格照旧置灰", async () => {
+    const partial = configBody();
+    delete (partial.fields as Record<string, unknown>).maxStrikes;
+    const h = await openSettings(() => ok(partial));
+    const section = h.section("settings");
+    expect(inputOf(section, "maxStrikes").disabled, "「这一格没读到」与「整份装不起来」被混成了一种").toBe(true);
+    expect(inputOf(section, "cooldownStrikeMs").disabled).toBe(false);
   });
 });

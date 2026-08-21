@@ -32,7 +32,7 @@ import {
   CARD_AUTH, CARD_UPSTREAM, CARD_REGISTRAR, ADVANCED_FIELDS,
   channelFields, fieldLabelKey, fieldView, credentialView,
   buildPatch, localErrors, changedFields, changedSecrets, propagationView,
-  errorRows, clearResultView, displayValue, clearWarning,
+  errorRows, clearResultView, displayValue, clearWarning, isDiagnostic, loadBlockedRows,
 } from "./pure/settings.mjs";
 
 let nodes = null;
@@ -142,6 +142,8 @@ function renderOne(built) {
     setLock(built, v.locked, v.lockedBy);
     // **凭据框永远是空的**：它没有明文可回填（设计 §8.6），占位符说「留空则不修改」。
     built.input.value = "";
+    // 锁定的凭据框不许可编辑（M11）。**由这里显式决定**，见 `setLock` 上面那段。
+    built.input.disabled = v.locked === true;
     // ⚠️ **清空按钮不跟着 `locked` 一起禁用，这一行是订正。**
     // 它清的是**存储里那一份**，而 env 锁定恰恰是「清掉存储那份最安全」的状态
     //（生效值回落到环境变量，纹丝不动）。第一版跟着 `locked` 禁用，
@@ -157,7 +159,11 @@ function renderOne(built) {
   const v = fieldView(data, path);
   if (v.present === false) {
     built.meta.textContent = t("set.meta.unreadable");
-    built.input.disabled = true;
+    // ⚠️⚠️ **诊断态下**（存储里那份配置装载不起来）**不许把输入框置灰**：
+    // 那会把「关掉注册机 / 把那把 key 填回去」这两条自救路径在 UI 上堵死，
+    // 而后端明明放行（评审 C2 修的正是这件事，前端跟不上等于白修）。
+    // 只有「这一格单独没读到」才置灰——那时改它也没有意义。
+    built.input.disabled = !isDiagnostic(data);
     setLock(built, false, null);
     return;
   }
@@ -166,6 +172,8 @@ function renderOne(built) {
     env: displayValue(v.env),
     effective: displayValue(v.effective),
   });
+  // 被 env 锁定的字段置灰（M11）。**由这里显式决定**，见 `setLock` 上面那段。
+  built.input.disabled = v.locked === true;
   // 输入框里回填**存储层**那个值（面板真正在改的就是那一层）；存储里没有就留空，
   // 生效值另在上面那一行里写着。
   if (built.input.getAttribute("type") === "checkbox") {
@@ -187,7 +195,15 @@ function renderOne(built) {
  * 一百遍都不会生效，运维要知道去改的是部署那一侧。
  */
 function setLock(built, locked, lockedBy) {
-  built.input.disabled = locked === true;
+  // ⚠️⚠️ **这个函数不再碰 `disabled`，那一行是死代码，而且它杀过别人。**
+  //
+  // 原来这里写着 `built.input.disabled = locked === true;`，而它**紧跟在调用方
+  // 刚设好的 `disabled` 之后执行** ⇒ 把调用方的决定整个覆盖掉。后果具体：
+  // 「这一格没读到」那一支里的 `built.input.disabled = true` **从落地那天起就没
+  // 生效过**（`setLock(built, false, null)` 立刻把它抹回 `false`）。
+  // 这条是本任务补「诊断态下表单必须还能用」的对照用例时挖出来的——
+  // 一个**看起来在生效、实际从来没生效**的赋值。
+  // ⇒ `disabled` 由**调用方**显式决定（三处各有各的判据），这里只管锁的视觉与说明。
   built.lock.style.display = locked === true ? "" : "none";
   built.lock.textContent = locked === true
     ? t("set.lockedBy", { env: String(lockedBy || "").replace(/^env:/, "") })
@@ -206,6 +222,21 @@ function render() {
 
   const degraded = data !== null && data.configDegraded === true;
   nodes.degraded.style.display = degraded ? "" : "none";
+
+  // 装载不起来时：一条横幅 + 逐条列出缺什么。**表单仍然可编辑**（见 renderOne）。
+  const blocked = loadBlockedRows(data);
+  nodes.blocked.textContent = "";
+  nodes.blocked.style.display = blocked.length === 0 ? "none" : "";
+  if (blocked.length > 0) {
+    nodes.blocked.appendChild(elI18n("p", "set.loadBlocked"));
+    for (const r of blocked) {
+      const label = nodes.fields[r.field] === undefined ? r.field : t(fieldLabelKey(r.field));
+      // 表外的码**原样显示出来**，不冒充任何一档已知原因。
+      const text = r.key === null ? t("set.err.unknown", { code: r.code }) : t(r.key, r.params);
+      nodes.blocked.appendChild(el("p", null, `${label}: ${text}`));
+      if (nodes.fields[r.field] !== undefined) nodes.fields[r.field].wrap.classList.add("invalid");
+    }
+  }
 }
 
 /** 把上一次保存留下的高亮与错误全部清掉。**每次保存前都要清**，否则会越积越多。 */
@@ -216,6 +247,8 @@ function clearMarks() {
   }
   nodes.errors.textContent = "";
   nodes.errors.style.display = "none";
+  // ⚠️ **不清 `nodes.blocked`**：它讲的是「存储里那份配置现在装不装得起来」这个
+  // **当前状态**，不是上一次保存留下的痕迹；由 `render()` 按最新响应重算。
   nodes.readback.textContent = "";
   nodes.readback.style.display = "none";
 }
@@ -342,9 +375,15 @@ async function doClear(path) {
     const view = clearResultView(res);
     // **回读之后**才刷界面（与 `save()` 同一条纪律）。
     if (view.gatewayTokenMissing === true) {
-      // 这一支后端**没有回读**（那一刻装载一定抛），所以只报警、不拿它盖掉当前视图。
       toast(t("set.clear.gatewayMissing"), "warn", { sticky: true });
       load();
+      return;
+    }
+    if (isDiagnostic(res)) {
+      // 清完之后这份配置装载不起来了：**如实显示诊断视图**（横幅 + 逐条缺什么），
+      // 表单仍然可编辑，运维就地改完保存即可恢复。
+      data = res;
+      render();
       return;
     }
     data = res;
@@ -437,6 +476,11 @@ export const settingsSection = {
     advanced.appendChild(advSave);
     reg.body.appendChild(advanced);
     section.appendChild(reg.wrap);
+
+    const blocked = el("div", { class: "cfg-blocked danger-text" });
+    blocked.style.display = "none";
+    section.appendChild(blocked);
+    nodes.blocked = blocked;
 
     const errors = el("div", { class: "cfg-errors danger-text" });
     errors.style.display = "none";
