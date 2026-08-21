@@ -164,7 +164,13 @@ function msParam(c: Context, name: string): number | null {
  * ② **再查时钟**——`to` 的缺省值是 `now()`，时钟不可用时下面每一步都算不出来；
  * ③ **`from > to` 用夹逼之前的那一对判**。夹逼之后再判会把「客户端发了一个自洽的
  *    未来区间」误报成 400：`to` 被夹到 `now` 之后确实 `from > to`，但那不是客户端的错。
- *    夹完之后区间为空是允许的，它走 `no_shards` 那条（`range` 里回读得到 `clamped: true`）。
+ *    ⚠️ **夹完之后有效窗口为空是允许的，而那时回读的 `range.from` 会大于 `range.to`**
+ *    ——例如整段区间都在未来（`from = now + 40 天`、`to = now + 41 天`）。
+ *    那不是编出来的一对，它逐字就是服务端算出来的那个空窗口；`days` 因此是空数组、
+ *    `shards` 是 0，而 `note` 是 **`range_clamped`**（它压过 `no_shards`，
+ *    见 `usageHandler` 上方那张表下面的说明）。**不把它「修正」成一段非空区间**：
+ *    那才是编，而面板会照着那段区间说「这几天没有请求」——一句关于**根本没被查过的
+ *    日子**的断言。
  *
  * ── 滚动窗口 vs UTC 日键的错位，在这里一并裁掉 ────────────────────────────────
  * `now − 30 天` 是一个**滚动**时刻，而日桶是 **UTC 日**，滚动 30 天会横跨 **31** 个
@@ -399,7 +405,32 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
 
     const { byDay, total, shards, malformed } = block.merged;
     const days: Array<{ date: string; total: UsageBucket }> = [];
-    for (let d = parsed.fromDay; d <= parsed.toDay; d++) {
+    // ── 这个循环的上界，以及那个 `n < USAGE_DAY_RETAIN` 到底在守什么 ──────────
+    //
+    // **格数的上界来自夹逼，不来自那个计数闸**：`fromDay >= usageDayIndex(now) − 29`
+    // 且 `toDay <= usageDayIndex(now)` ⇒ 跨度恒 `<= 30`，**对任何有限的 `now` 都成立**。
+    // 由「要一整年的区间也只回 30 格 days ——……」那一格钉着（手写字面量 30）。
+    //
+    // ⚠️⚠️ **那个计数闸今天是一条走不到的路，这是实测 + 算出来的，别读成「它在挡着什么」**
+    // （本任务先照 `usageCandidateKeys` 的形状加了它，再变异 M15 把它删掉 ⇒
+    // **53 格全绿、完整逃逸**，回头才算清楚为什么）：
+    // 那边那道闸挡的是「`d++` 原地打转」（`d >= 2**53 = 9007199254740992` 时 ULP 超过 1），
+    // 而**这个循环体里排在最前的 `utcDateString(d)` 会先抛**——`toISOString()`
+    // 只在 `|d × 86_400_000| <= 8.64e15` 即 **`d <= 1e8`** 时成功（两个数都实测过）。
+    // `1e8 << 2**53` ⇒ **「`d++` 不前进」与「`toISOString()` 还能成功」互斥**，
+    // 循环在打转之前一定已经因为抛而离开了。
+    //
+    // ⇒ **留着它的理由只有一条，写清楚**：上面那个互斥论证**依赖 `utcDateString` 会抛**。
+    // 哪天有人把它改成「抛不出来就回个兜底串」（一个看起来更稳健的改动），互斥当场瓦解，
+    // 而失效形态是**不返回**、不是数字变大——那是挂死 isolate，不是一条错数据。
+    // 一行结构性的闸换掉那个风险是划算的；**但它不是今天的护栏，别在报告里那么写。**
+    //
+    // ⚠️ **另有一条残留，如实登记、不为它加 try/catch**：`now` 大到 `d > 1e8` 时
+    // 这条端点是 **500**（`RangeError`）。它**从 `Date.now()` 到不了**（两个生产入口
+    // 的时钟都是它），而为一条到不了的路加防御正是本仓用 `String()` 那一课换来的教训
+    //（`src/core/admin/usage-stats.ts` 的 `USAGE_MODEL_KEY_MAX_LEN` 上方全文）。
+    // 「它返回 500 而不是挂死」由「时钟是 1e300 这种「有限但荒诞」的数：端点必须返回，不许把 isolate 挂死」那一格如实记着。
+    for (let d = parsed.fromDay, n = 0; d <= parsed.toDay && n < USAGE_DAY_RETAIN; d++, n++) {
       // ⚠️ **`byDay` 是无原型对象**（`mergeDayShards` 的硬契约）：这里只做下标取值 +
       // `?? null`，**不许调 `.hasOwnProperty()` / `.toString()` 这类 `Object.prototype`
       // 上的方法**——那条原型链上什么都没有，调用会直接 `TypeError`。
@@ -410,7 +441,16 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
       ...base, range, days, shards, malformed, pending,
       /** 区间里一个分片都没有。**判据是 `shards`，与 `total.requests` 无关**（⑤ vs ⑥）。 */
       note: (parsed.clamped ? "range_clamped" : shards === 0 ? "no_shards" : null) satisfies UsageNote | null,
-      /** 整段区间的合计。面板拿它当分母，不必自己把 `days` 再加一遍。 */
+      /**
+       * 整段区间的合计。面板拿它当分母，不必自己把 `days` 再加一遍。
+       *
+       * ⚠️ **别把它写成「恒等于 Σ`days`」**（全称量词落笔前先找反例，这里有一个）：
+       * `total` 数的是**读到的每一个分片**，而 `days` 是按分片自报的 `sh.day` 分的键
+       * 并且只列区间内的那些天。一个自报 `day` 与它所在的键对不上的分片
+       *（手改 KV、写到一半的 `store.json`）会进 `total` 而进不了任何一格 `days`
+       * ⇒ 两者相差那一份。**方向是「`total` 只多不少」**，而那正是想要的：
+       * 少报一段真实发生过的流量，比多报一段更难被发现。
+       */
       total,
     });
   };

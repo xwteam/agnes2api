@@ -335,6 +335,53 @@ describe("GET /admin/api/usage 的查询参数契约", () => {
     expect(body.note).toBe("range_clamped");
   });
 
+  /**
+   * **`days` 的格数有硬上界，而那条上界来自夹逼**：`fromDay >= usageDayIndex(now) − 29`
+   * 且 `toDay <= usageDayIndex(now)` ⇒ 跨度恒 `<= 30`，对任何有限的 `now` 都成立。
+   * **30 这个数手写死**，不写成 `USAGE_DAY_RETAIN`（第 6 种假阳性）。
+   *
+   * ⚠️ **它不是那个 `n < USAGE_DAY_RETAIN` 计数闸的护栏**——把那道闸删掉，本文件
+   * **53 格全绿**（本任务变异 M15 实测）。那道闸今天走不到，理由算在
+   * `src/http/admin/handlers/usage.ts` 那个循环上方。**别把这两件事读成一件。**
+   */
+  it("要一整年的区间也只回 30 格 days —— 上界来自夹逼，不许随请求的区间涨", async () => {
+    const { get } = await tier2On({ now: () => NOW });
+    const body = await (await get(`/admin/api/usage?from=0&to=${NOW}`)).json() as {
+      days: Array<{ date: string }>;
+    };
+    expect(body.days.length).toBe(30);
+    expect(body.days[0]!.date, "最老的那一格是保留期起点").toBe(OLDEST_DATE);
+    expect(body.days[29]!.date, "最新的那一格是今天").toBe(DAY0_DATE);
+  });
+
+  /**
+   * **登记一条残留，并且把它变成一个会红的事实而不是一句注释。**
+   *
+   * `1e300` 是有限数（所以过得了 `clock_unavailable` 那道闸），而
+   * `usageDayIndex(1e300) ≈ 1.157e292` 远超 `toISOString()` 能表示的上限
+   * （实测：`d` 超过 **`1e8`** 就抛 `RangeError`）⇒ **这条端点是 500**。
+   * 那条路**从 `Date.now()` 到不了**（两个生产入口的时钟都是它），所以刻意不为它
+   * 加 try/catch——为到不了的路加防御是本仓用 `String()` 那一课换来的教训。
+   *
+   * ⚠️⚠️ **这一格没有对应的变异，如实说明**：它守的不是某一行代码，而是
+   * **「它返回了」这件事本身**——`RangeError` 与「挂死 isolate」在生产上不是一个量级
+   * 的事，而后者今天走不到（那个循环体第一步就抛，`d++` 打不起转来，
+   * 算式见 `src/http/admin/handlers/usage.ts` 那个循环上方）。
+   * 把 `utcDateString` 改成「抛不出来就回个兜底串」的那一天，这一格会先红，
+   * **而那正是该有人停下来看一眼的时刻**。
+   * ⚠️ **别把 `.toBe(500)` 读成「500 是我们想要的行为」**：它是量出来的现状。
+   */
+  it("时钟是 1e300 这种「有限但荒诞」的数：端点必须返回，不许把 isolate 挂死", async () => {
+    let t: number = NOW;
+    const { get } = await tier2On({ now: () => t });
+    t = 1e300;
+    const res = await get("/admin/api/usage");
+    expect(
+      res.status,
+      "它必须返回。500 是登记在案的残留（toISOString 抛 RangeError），挂死不是",
+    ).toBe(500);
+  });
+
   it("晚于 now 的 to 被夹到 now：clamped 为真，不许凭空多出几天未来的格子", async () => {
     const { get } = await tier2On({ now: () => NOW });
     const res = await get(`/admin/api/usage?from=${NOW}&to=${NOW + 30 * DAY}`);
