@@ -41,6 +41,9 @@ export const I18N = {
   // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `usage.*`：命名空间在这里
   // 表示的是「壳层导航」，与板块内部的文案分开。
   "nav.usage":        { "zh-CN": "用量", "zh-TW": "用量", en: "Usage", ja: "使用量", ko: "사용량" },
+  // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `models.*`：命名空间在这里
+  // 表示的是「壳层导航」，与板块内部的文案分开。
+  "nav.models":       { "zh-CN": "模型", "zh-TW": "模型", en: "Models", ja: "モデル", ko: "모델" },
   // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `set.*`：命名空间在这里
   // 表示的是「壳层导航」，与板块内部的文案分开。
   "nav.settings":     { "zh-CN": "设置", "zh-TW": "設定", en: "Settings", ja: "設定", ko: "설정" },
@@ -735,4 +738,32 @@ export const I18N = {
   //    `count > 0 && ms ≈ 0` 要读作「刚试过、没写成」。
   "usage.pending":          { "zh-CN": "还有 {count} 条计数没有落盘，上面的数字少了这一截。", "zh-TW": "還有 {count} 條計數沒有落盤，上面的數字少了這一截。", en: "{count} counter(s) have not been flushed yet; the numbers above are short by that much.", ja: "未書き込みのカウントが {count} 件あります。上の数値はその分少なくなっています。", ko: "아직 기록되지 않은 카운트가 {count}건 있습니다. 위 수치는 그만큼 적습니다." },
   "usage.pendingExhausted": { "zh-CN": "写配额已经耗尽，还有 {count} 条计数暂时写不进存储。这不是「没有尾巴」，是写不进去。", "zh-TW": "寫配額已經耗盡，還有 {count} 條計數暫時寫不進儲存。這不是「沒有尾巴」，是寫不進去。", en: "The write budget is exhausted; {count} counter(s) cannot be written to storage for now. This is not “nothing pending” — the writes are failing.", ja: "書き込み予算を使い切ったため、{count} 件のカウントを当面ストレージへ書き込めません。「未書き込みがない」のではなく、書き込めていません。", ko: "쓰기 예산이 소진되어 {count}건의 카운트를 당분간 스토리지에 기록할 수 없습니다. “대기 중인 것이 없음”이 아니라 기록에 실패하고 있습니다." },
+
+  // ── 模型板块（P3d Task 6，设计 §10.7 / §11）────────────────────────────────
+  // ⚠️⚠️ **这一段里一个端点路径、一个协议 id 都没有，是刻意的**（P3d 全局约束 15）：
+  //    协议的展示名是**专名**，由 `GET /admin/api/models` 的 `protocols[].label` 直接
+  //    给出，翻译它只会制造歧义；端点由响应的 `endpoints[]` 原样渲染。
+  //    ⇒ 字典里只放**要翻译的东西**：列名、三个形态名、两句 tooltip、三句空态说明。
+  // ⚠️ 「类型」是那一列的**显示名**，代码里那个字段一律叫 `modality`（评审 Minor 9）。
+  "models.title":            { "zh-CN": "模型", "zh-TW": "模型", en: "Models", ja: "モデル", ko: "모델" },
+  "models.desc":             { "zh-CN": "本网关认得的模型，以及每个模型在哪几条协议上真的可用。", "zh-TW": "本閘道認得的模型，以及每個模型在哪幾條協定上真的可用。", en: "The models this gateway knows about, and which protocols each one is actually available on.", ja: "このゲートウェイが認識しているモデルと、各モデルが実際に利用できるプロトコルです。", ko: "이 게이트웨이가 인식하는 모델과, 각 모델이 실제로 사용 가능한 프로토콜입니다." },
+  "models.table.title":      { "zh-CN": "模型目录", "zh-TW": "模型目錄", en: "Model catalog", ja: "モデルカタログ", ko: "모델 카탈로그" },
+  "models.filter.label":     { "zh-CN": "按协议筛选", "zh-TW": "依協定篩選", en: "Filter by protocol", ja: "プロトコルで絞り込み", ko: "프로토콜로 필터" },
+  "models.filter.all":       { "zh-CN": "全部", "zh-TW": "全部", en: "All", ja: "すべて", ko: "전체" },
+  "models.col.id":           { "zh-CN": "模型 ID", "zh-TW": "模型 ID", en: "Model ID", ja: "モデル ID", ko: "모델 ID" },
+  "models.col.modality":     { "zh-CN": "类型", "zh-TW": "類型", en: "Type", ja: "種類", ko: "유형" },
+  "models.col.protocols":    { "zh-CN": "协议可用性", "zh-TW": "協定可用性", en: "Protocol availability", ja: "プロトコル対応", ko: "프로토콜 지원" },
+  "models.col.endpoints":    { "zh-CN": "端点", "zh-TW": "端點", en: "Endpoints", ja: "エンドポイント", ko: "엔드포인트" },
+  "models.modality.chat":    { "zh-CN": "对话", "zh-TW": "對話", en: "Chat", ja: "チャット", ko: "대화" },
+  "models.modality.image":   { "zh-CN": "图片", "zh-TW": "圖片", en: "Image", ja: "画像", ko: "이미지" },
+  "models.modality.video":   { "zh-CN": "视频", "zh-TW": "影片", en: "Video", ja: "動画", ko: "동영상" },
+  // ⚠️ 灰徽章那一句必须说「不可用」，**不许说「未知」**：矩阵里的每一格都是从目录里
+  //    读出来的确定答案，把它说成「未知」就把一句确定的话降级成了含糊话。
+  "models.badge.yes":        { "zh-CN": "这个模型在这条协议上可用", "zh-TW": "這個模型在這條協定上可用", en: "This model is available on this protocol", ja: "このモデルはこのプロトコルで利用できます", ko: "이 모델은 이 프로토콜에서 사용할 수 있습니다" },
+  "models.badge.no":         { "zh-CN": "这个模型在这条协议上不可用", "zh-TW": "這個模型在這條協定上不可用", en: "This model is not available on this protocol", ja: "このモデルはこのプロトコルでは利用できません", ko: "이 모델은 이 프로토콜에서 사용할 수 없습니다" },
+  // ⚠️ 三句空态说明**互不重叠**，理由与用量板块那三态是同一条（全局约束 9）：
+  //    「一个模型都没有」「这条协议上没有」「读不出来」在屏幕上必须分得开。
+  "models.empty":            { "zh-CN": "这份目录里一个模型都没有。", "zh-TW": "這份目錄裡一個模型都沒有。", en: "This catalog contains no models.", ja: "このカタログにはモデルが 1 つもありません。", ko: "이 카탈로그에는 모델이 하나도 없습니다." },
+  "models.filterEmpty":      { "zh-CN": "这条协议上没有可用的模型。", "zh-TW": "這條協定上沒有可用的模型。", en: "No models are available on this protocol.", ja: "このプロトコルで利用できるモデルはありません。", ko: "이 프로토콜에서 사용할 수 있는 모델이 없습니다." },
+  "models.unavailable":      { "zh-CN": "模型目录读不出来，所以这里是一根破折号——不是这个网关一个模型都没有。", "zh-TW": "模型目錄讀不出來，所以這裡是一根破折號——不是這個閘道一個模型都沒有。", en: "The model catalog could not be read, so this shows a dash — it is not that the gateway has no models.", ja: "モデルカタログを取得できなかったためダッシュを表示しています。ゲートウェイにモデルがないという意味ではありません。", ko: "모델 카탈로그를 읽지 못해 대시를 표시합니다. 게이트웨이에 모델이 없다는 뜻이 아닙니다." },
 };

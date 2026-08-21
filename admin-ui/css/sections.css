@@ -175,8 +175,20 @@ tr:last-child td { border-bottom: 0; }
   color: var(--text); background: var(--panel-2); border-radius: var(--radius);
 }
 .banner-warn p, .banner-info p { margin: 2px 0; }
-/* 错误横幅里那颗重试按钮：跟在文字后面，别把整条横幅撑成两行。 */
-.usage-retry { margin-left: var(--gap-sm); }
+/* 错误横幅里那颗重试按钮：跟在文字后面，别把整条横幅撑成两行。
+   用量板块与模型板块上那颗是**同一件东西**，所以共用这一条规则、
+   不各写一份取值逐字相同的声明（同 `.badge-danger` 下面那段裁定）。 */
+.usage-retry, .models-retry { margin-left: var(--gap-sm); }
+
+/* 模型板块（P3d Task 6）。 */
+/* 一条端点一行；同一格里的第二条往下挪，别让两段式被读成一条带斜杠的长路径。 */
+.models-endpoint { white-space: nowrap; }
+.models-endpoint + .models-endpoint { margin-top: 2px; }
+/* 矩阵里四个徽章之间的间距。**限定在模型表的行内**，不去动别处的 `.badge`。 */
+.models-row .badge + .badge { margin-left: 4px; }
+/* 「模型目录读不出来」那一根 EM DASH。用报警色 + `cursor: help`（tooltip 里有全文），
+   与 `.usage-unknown` 表达的是同一件事：**我们不知道**，不是「一个模型都没有」。 */
+.models-unknown { color: var(--danger); font-size: 22px; cursor: help; margin: 0; }
 .usage-detail-head { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-sm); }
 .usage-detail-head h3 { margin: 0; font-size: 14px; }
 .usage-breakdown { margin-top: var(--gap); }

@@ -162,7 +162,13 @@ describe("i18n 字典", () => {
     // 62 个新 key 里绝大多数走的正是 `elI18n(tag, key)`（`scripts/check-i18n.mjs`
     // 的第 ① 条只认 `t("…")` 与 `data-i18n="…"`，对它们完全隐身），
     // 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
-    const NAMESPACES = ["gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set", "usage"] as const;
+    // ⚠️ `models` 是 P3d Task 6 的模型板块。它进这张表**不是形式**：那个板块的
+    // 每一个 key 走的都是 `elI18n(tag, key)` 或者当参数传给 `modalityLabelKey()`
+    // 的字面量，`scripts/check-i18n.mjs` 的第 ① 条对它们完全隐身，
+    // 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
+    const NAMESPACES = [
+      "gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set", "usage", "models",
+    ] as const;
     const re = new RegExp(`"((?:${NAMESPACES.join("|")})\\.[A-Za-z0-9_.]+)"`, "g");
     const walk = (d: string): string[] =>
       readdirSync(d).sort().flatMap((n) => {

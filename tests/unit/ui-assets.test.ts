@@ -134,6 +134,13 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 需要测试的逻辑必须落在 js/pure/ 下，它由 tests/ui/keys.test.ts 跑着。
       // 逐条确认过：纯函数、无配置、无数据，公开可取没有问题。
       "/admin/js/pure/keys.mjs",
+      // Task 6（P3d）新增：模型 × 协议可用性矩阵的取值决策（四个徽章恒在、
+      // 按协议筛选、响应窄化的「读不出来 ≠ 空清单」、形态 → 文案 key）。
+      // 同一条硬规则、同一份理由，由 tests/ui/models.test.ts 跑着。
+      // **逐条确认过：纯函数、无配置、无数据**——它连一个协议 id 都不认识
+      //（判据全部以参数形式从 `GET /admin/api/models` 的响应里进来），
+      // 唯一的三个字面量是 chat / image / video 这三个形态名，公开可取没有问题。
+      "/admin/js/pure/models.mjs",
       // Task 5（P3b）新增：概览板块的取值决策，同一条硬规则、同一份理由，
       // 由 tests/ui/overview.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/overview.mjs",
@@ -169,6 +176,11 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       "/admin/js/pure/usage.mjs",
       "/admin/js/sec-events.js",
       "/admin/js/sec-keys.js",
+      // Task 6（P3d）新增：模型板块本体（DOM 拼装 + 一条端点的网络调用）。
+      // 与其余六个板块文件同一性质：**没有任何机密**，它拿到的每一个字段都来自
+      // 一次鉴权后的接口调用，文件自身只有结构与 i18n 键
+      //（**连一条端点路径、一个协议 id 都没有**，见该文件的文件头）。
+      "/admin/js/sec-models.js",
       "/admin/js/sec-overview.js",
       // Task 6（P3c）新增：注册机板块本体（DOM 拼装 + 三条端点的网络调用）。
       // 与其余三个板块文件同一性质：**没有任何机密**，它拿到的每一个数字都来自
