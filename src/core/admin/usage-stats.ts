@@ -234,26 +234,42 @@ export function usageExpiresAt(day: number): number {
 /**
  * 读某个时间区间要取哪些键。
  *
- * **上界是这个函数自身的不变量，不是一句注释**：返回的键数恒
- * `<= USAGE_DAY_RETAIN × USAGE_SLOTS`（= 30 × 2 = 60），因为起点被
- * `USAGE_DAY_RETAIN` 夹住了——**比这更早的键即使还没过期也不读：上界优先于多读一天。**
+ * **上界是这个函数自身的不变量，不是一句注释**：返回的键数**对任意入参**都
+ * `<= USAGE_DAY_RETAIN × USAGE_SLOTS`（= 30 × 2 = 60）。**这句话是全称的，所以下面
+ * 那两道护栏是它的一部分，不是可有可无的防御性代码**（评审 A#1 / B#2）：
+ *
+ * 1. `!Number.isFinite(nowMs)` ⇒ 返回空。`nowMs = ±Infinity` 时 `oldest`/`newest`
+ *    都是 `±Infinity`，而 **`d++` 对 `±Infinity` 是恒等操作**，循环不终止。
+ * 2. 循环额外带一个 `n < USAGE_DAY_RETAIN` 的计数闸。**只有第 1 道不够**——
+ *    `Number.isFinite(1e300)` 是 **`true`**，而 `usageDayIndex(1e300)` 已远超 `2**53`，
+ *    那里 `d++` 同样失去精度、原地打转（实测 `1e24` 与 `1e300` 两组都在第 0 步就
+ *    `d + 1 === d`）。计数闸让上界变成**结构性**的：与入参多大、精度还剩几位无关。
+ *
+ * ⚠️ **失效形态是「不返回」，不是「数字变大」** —— 第一版这段注释宣告了「恒 ≤ 60」
+ * 却没有这两道护栏，评审的第一次探针直接把 v8 跑成 OOM。
+ * **宣告一条不变量的时候，语气越强越该先去找反例。**
  *
  * ⚠️ **夹逼的理由就是上面那条上界，不是「反正已经过期」**（评审 I-1，这里原来
- * 正是那么写的，而它被本文件上方 11 行的 `USAGE_TTL_MARGIN_MS` 直接证伪）：
- * TTL 刻意多留了一整天余量（`USAGE_TTL_MARGIN_MS = USAGE_DAY_MS`），
+ * 正是那么写的，而它被 `USAGE_TTL_MARGIN_MS`（`src/core/admin/usage-stats.ts:228`）
+ * 直接证伪）：TTL 刻意多留了一整天余量（`USAGE_TTL_MARGIN_MS = USAGE_DAY_MS`），
  * `usageExpiresAt(d)` 保留到第 `d + 31` 天零点，而 `oldestAllowed = 今天 − 30 + 1`
  * ⇒ **`今天 − 30` 那一天的键在任何时刻都还活着，却永远不会被这个函数取到。**
- * 三组 now 实测过，无一例外（`now` 落在第 100 天时它还剩整整 86_400_000 ms 才过期）。
+ * 那份余量随一天的推移线性缩小：**落在 `(0, 86_400_000]` 区间内，日初满格、
+ * 日末趋近 0（最坏只剩 1 ms），但恒 `> 0`** —— 只有「恒 > 0」这一半是结论，
+ * 「一整天」只在日初那一瞬成立（评价 A#9：原文写「还剩整整 86_400_000 ms」，
+ * 而该值在一天里 86_399_999/86_400_000 的时刻都不是它）。
  * **别照「反正过期了」去把那天加回来——那会直接打破 60 这条上界。**
  * 由 `tests/unit/admin/usage-stats.test.ts` 的
- * 「区间给一年也不会超过保留期 × 槽位数」钉着。
+ * 「区间给一年也不会超过保留期 × 槽位数」与
+ * 「被夹逼排除掉的那一天其实还没过期」两格钉着。
  */
 export function usageCandidateKeys(nowMs: number, fromMs: number, toMs: number): string[] {
+  if (!Number.isFinite(nowMs)) return [];
   const newest = usageDayIndex(Math.min(toMs, nowMs));
   const oldestAllowed = usageDayIndex(nowMs) - USAGE_DAY_RETAIN + 1;
   const oldest = Math.max(usageDayIndex(fromMs), oldestAllowed);
   const keys: string[] = [];
-  for (let d = oldest; d <= newest; d++) {
+  for (let d = oldest, n = 0; d <= newest && n < USAGE_DAY_RETAIN; d++, n++) {
     for (let s = 0; s < USAGE_SLOTS; s++) keys.push(usageDayKey(d, s));
   }
   return keys;
@@ -343,6 +359,13 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
  * 判成**合法分片**记进 `shards`，而不是记进 `malformed`。
  * 那正好违反本文件 `mergeDayShards` 上方自己写的口径「静默丢弃就是撒谎」——
  * 一个畸形分片伪装成合法的，比被丢掉更糟：它还会把 `shards` 那个数一起变假。
+ *
+ * ⚠️ **它有一处连带变化，明写出来免得下一个人以为只影响 `total`**（评审 L-1）：
+ * `narrowRecord` 也走这个函数，所以 `hours: { "13": [] }` 这种值**从「记成一个全 0 桶」
+ * 变成「`"13"` 这个键静默消失」**（分片本身仍算合法，`malformed` 不加）。
+ * 方向是无害的（少一个假的 0 好过多一个假的 0），**但它确实是一次静默丢弃**，
+ * 与上面那句口径轻微相左：`malformed` today 只数**分片级**的畸形，**不数桶级的**。
+ * 要把桶级也数进去得改返回形状，那属于 Task 4 的显示口径，不在本任务范围内。
  */
 function narrowBucket(v: unknown): UsageBucket | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;

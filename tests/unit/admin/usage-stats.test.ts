@@ -66,11 +66,53 @@ describe("Tier-2 的配额算术", () => {
   });
 
   it("区间给一年也不会超过保留期 × 槽位数 —— 读扇出必须有硬上界，不能随入参涨", () => {
-    // 变红条件：把 usageCandidateKeys 里的 oldestAllowed 夹逼删掉
     const now = 1_700_000_000_000;
     const keys = usageCandidateKeys(now, now - 365 * 86_400_000, now);
     // 期望值手写字面量 60（30 天 × 2 槽位），不写成常量表达式（第 6 种假阳性）
     expect(keys.length).toBeLessThanOrEqual(60);
+    // ⚠️ **光断言长度已经不够了**：加了结构性计数闸（`n < USAGE_DAY_RETAIN`）之后，
+    // **把夹逼整个删掉长度也还是 60** —— 只是内容从「最近 30 天」悄悄变成「最老 30 天」，
+    // 一个静默的错误答案。所以这里必须同时钉住**取的是哪一段**：
+    expect(keys[0]).toBe("usage:19646:0");    // 手写字面量：19675 − 30 + 1
+    expect(keys.at(-1)).toBe("usage:19675:1"); // 手写字面量：now 所在的那一天
+  });
+
+  /**
+   * ⚠️ **这一格是「恒 ≤ 60」那句全称断言的另一半，缺了它那句话就是假的**（评审 A#1 / B#2）。
+   * 失效形态**不是「数字变大」而是「函数不返回」**：`nowMs = ±Infinity` 时
+   * `oldest`/`newest` 都是 `±Infinity`，而 `d++` 对它们是恒等操作；
+   * `nowMs` 有限但超过 `2**53`（`1e24` / `1e300`）时 `d++` 失去精度，同样原地打转。
+   * 评审的第一次探针就是在这里把 v8 跑成了 OOM。
+   * ⚠️ **`Number.isFinite(1e300) === true`**，所以只加 `isFinite` 那道闸**不够**，
+   * 结构性的那道计数闸（`n < USAGE_DAY_RETAIN`）才是让上界与入参大小无关的东西。
+   */
+  it("nowMs 非有限时返回空数组、极大时也不转圈 —— 「恒 ≤ 60」是全称断言，"
+     + "而它的失效形态是函数不返回（评审把 v8 跑成过 OOM），不是数字变大", () => {
+    // 变红条件（两条分别试过）：
+    //   ① 删掉 `if (!Number.isFinite(nowMs)) return [];` ⇒ 下面三个 toEqual([]) 变红；
+    //   ② 删掉循环里的 `n < USAGE_DAY_RETAIN` 计数闸 ⇒ 下面两个极大值断言直接挂死（超时红）。
+    for (const bad of [Infinity, -Infinity, NaN]) {
+      expect(usageCandidateKeys(bad, 0, bad)).toEqual([]);   // 手写字面量：空数组
+    }
+    // 有限但大到 d++ 失去精度：不许转圈，也不许突破上界
+    expect(usageCandidateKeys(1e24, 0, 1e24).length).toBeLessThanOrEqual(60);
+    expect(usageCandidateKeys(1e300, 0, 1e300).length).toBeLessThanOrEqual(60);
+  });
+
+  /**
+   * ⚠️ **这一格把 I-1 那条订正变成可复现的真话**（评审 A#8）：注释里写着「三组 now
+   * 实测过」，而在此之前仓里只有两组有用例（一年那格、30d 那格），
+   * **第 100 天那一组一个字都没有被钉着**。
+   */
+  it("被夹逼排除掉的那一天其实还没过期 —— 夹逼的理由是读扇出上界，不是「反正过期了」；"
+     + "照后者去把那天加回来会直接打破 60", () => {
+    const now = 100 * 86_400_000;                     // 第 100 个 UTC 日的零点
+    const keys = usageCandidateKeys(now, 0, now);
+    expect(keys.length).toBe(60);                     // 手写字面量
+    expect(keys[0]).toBe("usage:71:0");               // 手写字面量：最老只回看到第 71 天
+    // 而第 70 天的键此刻**还活着**（TTL 多留了一整天余量），却永远不会被取到：
+    expect(usageExpiresAt(70)).toBe(8_726_400_000);   // 手写字面量
+    expect(usageExpiresAt(70)).toBeGreaterThan(now);
   });
 
   it("30d 那一档正好 60 或 62 个键 —— 这个数要与配额账读侧那张表逐字对上", () => {
@@ -98,7 +140,8 @@ describe("Tier-2 的配额算术", () => {
     // ⚠️ **不能只用 "s1" 当样本**：`usageSlotOf("s1")` 恰好就是 0，
     // 只断言它的话，把整个函数写死成 `return 0` 依然全绿——变异不可观测。
     // 这条纪律本仓已经用血写过一次，见 `tests/unit/logger-store.test.ts:268`
-    // 那条用例上方的「评审 T1」说明（那里踩的是同一个 `slotOf("s1") === 0`）。
+    // ——那是「评审 T1」那段说明**本身**所在的行（用例在它下面），
+    // 那里踩的是同一个 `slotOf("s1") === 0`。
     expect(usageSlotOf("s1")).toBe(0);   // 手写字面量
     expect(usageSlotOf("s2")).toBe(1);   // 手写字面量：**这一格才是「没塌成常量」的证据**
     expect(usageSlotOf("s2")).not.toBe(usageSlotOf("s1"));
@@ -108,10 +151,9 @@ describe("Tier-2 的配额算术", () => {
      + "格式错了它自己完全自洽，只有别的前缀被覆盖时才会发作", () => {
     // 变红条件（两条都试过）：把前缀改成 `stat:`；把 day/slot 两个参数颠倒。
     // 期望值是手写字面量，不由 `usage:${day}:${slot}` 反推（第 6 种假阳性）。
+    // 与既有的两个键空间不许撞：事件是 `event:<窗口>:<槽位>`，设计 §7.4 里的旧形态是 `stat:`。
     expect(usageDayKey(19675, 1)).toBe("usage:19675:1");
     expect(usageDayKey(0, 0)).toBe("usage:0:0");
-    // 与既有的两个键空间不许撞：事件是 `event:<窗口>:<槽位>`，设计 §7.4 里的旧形态是 `stat:`。
-    expect(usageDayKey(19675, 1).startsWith("usage:")).toBe(true);
   });
 
   it("小时槽按 UTC 补零 —— 面板的单日下钻直接用它当键，格式错了整列取不到", () => {
