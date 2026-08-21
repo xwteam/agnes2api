@@ -2,7 +2,6 @@ import type { Context } from "hono";
 import type { RuntimeInfo } from "../../../ports/runtime.js";
 import type { StorageHealth } from "../../../core/storage-health.js";
 import { PROTOCOLS } from "../../../core/admin/protocol-catalog.js";
-import { USAGE_FLUSH_MIN_INTERVAL_MS } from "../../../core/admin/usage-stats.js";
 
 /**
  * **双运行时差异的唯一出口**（设计文档 §11）。面板启动时调一次，
@@ -27,6 +26,12 @@ export function capabilitiesHandler(deps: {
    * `createApp` 因此传的是 `deps.usageSink !== undefined`——**同一个事实的同一个来源**。
    */
   usageStatsEnabled: boolean;
+  /**
+   * **生效的**落盘间隔，不是那个后端常量（P3d Task 3 评审 I1）。
+   * 运维经 `USAGE_FLUSH_INTERVAL_MS` 调过之后，这里必须报调过的那个值——
+   * 报常量等于面板对「尾巴最长多久」说了一句与实际不符的话。
+   */
+  usageFlushIntervalMs: number;
 }) {
   return (c: Context) => {
     // `cf` 只在 Cloudflare 边缘存在。**取不到就如实 null**，不伪造一个 "unknown"。
@@ -57,7 +62,7 @@ export function capabilitiesHandler(deps: {
          * 面板不许把这个数写死：它是后端常量，写死就会在改常量的那天变成一句假话
          *（P3d 计划全局约束 10：诚实标记由后端字段驱动）。
          */
-        flushIntervalMs: USAGE_FLUSH_MIN_INTERVAL_MS,
+        flushIntervalMs: deps.usageFlushIntervalMs,
         /**
          * 哪几条协议的 token 是网关看得到的（订正 F1）。
          * **不许在前端硬编码这个列表**——它由协议目录的 `usagePath` 是否为 null 决定，

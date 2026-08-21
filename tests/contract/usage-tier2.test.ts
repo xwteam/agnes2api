@@ -4,8 +4,10 @@ import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { UsageSink } from "../../src/http/usage-sink.js";
+import { resolveUsageFlushInterval } from "../../src/http/usage-sink.js";
+import { workerRuntime } from "../../src/adapters/runtime-worker.js";
 import {
-  USAGE_FLUSH_MIN_INTERVAL_MS, mergeDayShards, type UsageDayShard,
+  USAGE_FLUSH_MIN_INTERVAL_MS, USAGE_WRITES_PER_DAY, mergeDayShards, type UsageDayShard,
 } from "../../src/core/admin/usage-stats.js";
 import type { Storage } from "../../src/ports/storage.js";
 
@@ -70,25 +72,29 @@ class UsagePutCounter implements Storage {
   /** 最近一次 put 收到的 `expiresAt`（`undefined` = 调用方压根没传第三参）。 */
   lastExpiresAt: number | undefined;
   /**
-   * `usagePutDelayMs`：**只加在 `usage:` 这一类 put 上的额外挂起**。
+   * `usage:` 那一类 put 的**手动闸门**：设了就在写下去之前 `await` 它。
    *
-   * ⚠️ **它必须明显长于这条中间件链上任何别的 I/O**（本任务变异实测逼出来的）：
-   * 只给存储一个统一的 1 毫秒延迟时，「用量 flush 没 `await`」这条变异**逃逸**了
-   * ——`usageFlush` 的收尾之后紧接着还有 `logFlush` 的收尾，而后者同样要做一次
-   * 带 1 毫秒延迟的存储写，**那 1 毫秒恰好够 fire-and-forget 的用量写完成**。
-   * 换句话说，那次「已经写完」是被邻居的 I/O 顺手带完的，不是被 `await` 保证的。
-   * ⇒ 挂起点要长到「链上任何顺带的等待都盖不住它」，这条性质才不依赖中间件的排序。
+   * ⚠️ **它取代了上一版那个「40 毫秒延迟」的做法，这个替换是评审 m4 要求的，
+   * 而那一版确实是一场时长竞赛**：起初给存储一个统一的 1 毫秒延迟，
+   * 「用量 flush 没 `await`」这条变异**逃逸**了——`usageFlush` 的收尾之后紧接着还有
+   * `logFlush` 的收尾，后者同样要做一次带 1 毫秒延迟的存储写，
+   * **那 1 毫秒恰好够 fire-and-forget 的用量写完成**；换成 40 毫秒之后才红，
+   * 也就是说那一格是靠约 13 倍的时序余量成立的，**哪天链上多一个更慢的挂起点，
+   * 它会静默退回第 9 种假阳性**。
+   *
+   * 闸门没有这个问题：正确实现（`await flush()`）**在闸门放开之前永远回不了响应**，
+   * 所以用例想等多久都行——等得越久结论越强；而 fire-and-forget 的实现会**立刻**
+   * 返回响应。判别力来自「有没有被挡住」，不是「谁比谁快」。
    */
-  constructor(readonly inner: Storage, private readonly usagePutDelayMs = 0) {}
+  usagePutGate: (() => Promise<void>) | null = null;
+  constructor(readonly inner: Storage) {}
   async get<T>(k: string): Promise<T | null> { return this.inner.get<T>(k); }
   async put<T>(k: string, v: T, expiresAt?: number): Promise<void> {
     const isUsage = k.startsWith("usage:");
     this.allPuts++;
     if (isUsage) { this.usagePuts.push(k); this.lastExpiresAt = expiresAt; }
     if (this.putFails) throw new Error("write quota exhausted");
-    if (isUsage && this.usagePutDelayMs > 0) {
-      await new Promise((r) => setTimeout(r, this.usagePutDelayMs));
-    }
+    if (isUsage && this.usagePutGate !== null) await this.usagePutGate();
     await this.inner.put(k, v, expiresAt);
     if (isUsage) this.usagePutsDone++;
   }
@@ -109,7 +115,7 @@ class UsagePutCounter implements Storage {
  * 而 Tier-2 该记的东西（协议、模型、成败、延迟）一样不少（`ok: false` 也是终态）。
  */
 async function gateway(o: { enabled: boolean; now: () => number }) {
-  const storage = new UsagePutCounter(new MemoryStorage(1, o.now), 40);
+  const storage = new UsagePutCounter(new MemoryStorage(1, o.now));
   const env: Record<string, string | undefined> = { GATEWAY_TOKEN: "t" };
   if (o.enabled) env.USAGE_STATS_ENABLED = "true";
   const { app } = await buildApp(env, storage, nodeRuntime(), {
@@ -202,19 +208,40 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
    * 零延迟替身在这里什么都证明不了：两条路径的 Promise 链会在同一个微任务 tick 里
    * 双双「追上」调用方（第 8 种假阳性，`tests/helpers/fake-storage.ts` 文件头原话）。
    */
-  it("落盘在响应返回之前就完成 —— fire-and-forget 在 Worker 上会被响应返回后的 isolate 停摆静默截断", async () => {
+  it("落盘在响应返回之前就完成：把那次写卡在闸门上，响应就出不来 —— fire-and-forget 在 Worker 上会被响应返回后的 isolate 停摆静默截断", async () => {
     let t = DAY0_MS;
     const g = await gateway({ enabled: true, now: () => t });
     await g.hit();
     t += USAGE_FLUSH_MIN_INTERVAL_MS + 1;
-    const res = await g.hit();
-    expect(res.status, "夹具前提：这一次请求本身是走通了的").toBe(503);
-    // **响应已经回来了，此刻那次写必须已经落定**。手写字面量 1。
-    // `void flush()` 的实现在这一刻是 0：写调用发出去了，1 毫秒的挂起还没走完。
+
+    // 把 `usage:` 那次写卡住，闸门由本用例亲手放开。
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    g.storage.usagePutGate = () => gate;
+
+    let responded = false;
+    const inFlight = (async () => {
+      const r = await g.hit();
+      responded = true;
+      return r;
+    })();
+
+    // **等多久都行，等得越久结论越强**：正确实现在闸门放开之前永远回不了响应。
+    // 这里刻意等到「链上任何顺带的 I/O 都早已跑完」为止（50 轮宏任务 + 一次 20ms）。
+    for (let i = 0; i < 50; i++) await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 20));
+
     expect(
-      g.storage.usagePutsDone,
-      "响应返回时那次落盘还没写完 —— 中间件没有 await，Worker 上这次写会被截断",
-    ).toBe(1);
+      responded,
+      "那次落盘还卡在闸门上，响应却已经回来了 —— 中间件没有 await，Worker 上这次写会被响应返回后的 isolate 停摆截断",
+    ).toBe(false);
+    expect(g.storage.usagePutsDone, "闸门还没放开，不可能有写完的").toBe(0);
+
+    release();
+    const res = await inFlight;
+    expect(res.status, "夹具前提：这一次请求跑完了整条中间件链（503 = pool_empty，刻意不打上游）").toBe(503);
+    // 放开之后那次写必须已经落定。手写字面量 1。
+    expect(g.storage.usagePutsDone, "闸门放开、响应也回来了，那次写却没落定").toBe(1);
   });
 
   /**
@@ -295,7 +322,7 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
     });
     expect(tokensOf("anthropic"), "anthropic 这条网关解析过响应体，token 必须记下来").toEqual({ tokensIn: 7, tokensOut: 11 });
     expect(tokensOf("responses")).toEqual({ tokensIn: 7, tokensOut: 11 });
-    expect(tokensOf("gemini"), "拿协议目录的 usagePath（Gemini 那条是 usageMetadata）去取上游对象只会取到 undefined ⇒ 恒 0").toEqual({ tokensIn: 7, tokensOut: 11 });
+    expect(tokensOf("gemini"), "Gemini 这条也必须记到 token —— 若改成拿协议目录的 usagePath（它是 usageMetadata）去取上游那份 OpenAI 格式的对象，取到的是 undefined，这里会变成 0").toEqual({ tokensIn: 7, tokensOut: 11 });
     expect(tokensOf("openai"), "OpenAI 这条没传 expectJson，网关从头到尾没解析过响应体").toEqual({ tokensIn: 0, tokensOut: 0 });
 
     // 而面板拿到的那份「哪几条有 token」必须与上面完全对得上。
@@ -310,7 +337,7 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
 
 /** 与 `gateway()` 相同，只多一个 `ADMIN_TOKEN`（否则 /admin 整棵树不注册）。 */
 async function gatewayWithAdmin(o: { enabled: boolean; now: () => number }) {
-  const storage = new UsagePutCounter(new MemoryStorage(1, o.now), 40);
+  const storage = new UsagePutCounter(new MemoryStorage(1, o.now));
   const env: Record<string, string | undefined> = {
     GATEWAY_TOKEN: "t", ADMIN_TOKEN: TEST_ADMIN_TOKEN,
   };
@@ -584,6 +611,120 @@ describe("UsageSink 的落盘契约", () => {
   });
 
   /**
+   * **`maybeFlush()` 不许可重入**（评审 C1）。
+   *
+   * 它由**每一个请求的收尾**调用，而请求是并发的。`lastFlushAt` 与 `budget` 若在
+   * `await put` **之后**才推进，两个并发的 flush 就会双双通过间隔闸、
+   * **各写一遍同一个键、各扣一格预算**。
+   *
+   * ⚠️ **为什么这是 Critical 而不是「多写一次」**：本仓的
+   * `落盘间隔 × (预算 − 1) = 一天` **两边恰好相等、没有余量，那是刻意的**
+   *（见 `USAGE_FLUSH_MIN_INTERVAL_MS`）⇒ **任何一次重复写都直接击穿当天的覆盖**。
+   * 13 个并发请求撞上同一个 2 小时边界（繁忙网关的常态）⇒ 当天预算在第一次落盘
+   * 就耗尽，此后到下一个 UTC 日一个字不写 ⇒ 五语言 DEPLOY.md 那句「最多旧 2 小时」
+   * 变成最多旧 24 小时；Worker 上 isolate 活不到第二天，那些计数直接消失。
+   *
+   * 对照组在 `src/adapters/logger-store.ts`：它把窗口与预算推到 `await` 之前，
+   * 所以从来没有这个洞。本格把同一条性质钉在用量这一侧。
+   */
+  it("10 个并发请求的收尾 flush 同时撞上落盘间隔：只落 1 次盘 —— lastFlushAt 与预算若在 await 之后才推进，10 个并发就各写一遍同一个键，而「间隔 × (预算 − 1) = 一天」没有余量，一次重复写就击穿当天覆盖", async () => {
+    const r = rig();
+    r.one();
+    r.pastInterval();
+    // **同时**发起 10 次收尾 flush，模拟 10 个并发请求撞上同一个落盘边界。
+    await Promise.all(Array.from({ length: 10 }, () => r.sink.maybeFlush()));
+    // 手写字面量：1 个键、1 次写。可重入的实现在这里是 10 个 `usage:20000:1`。
+    expect(
+      r.storage.usagePuts,
+      "同一个键被并发写了多次 —— 预算跟着被多扣了几格，而这条轴上一格都不能浪费",
+    ).toEqual([KEY_DAY0]);
+  });
+
+  /**
+   * **`status()` 那三个字段各自说得准**（评审 I2 + I3）。
+   *
+   * ⚠️ **这一格存在的直接原因：`sink.status()` 在整个测试目录里一次都没被调用过。**
+   * 后果实测过两条，都是「改了没人红」：
+   * ① `status()` 里的 `canWrite` 漏传第三参 ⇒ 预算静默按 12 计
+   *    ⇒ `budgetExhausted` **提前一格翻真**，而面板据它渲染的「预算耗尽」是一句假话
+   *    （全局约束 10 的原话正是「诚实标记由后端字段驱动」）；
+   * ② `pending` 改回无条件归零 ⇒ 预算耗尽时面板会说「没有未落盘的尾巴」，
+   *    而那时明明还有 7 天没落下去（全局约束 9 点名的「三件事长得一模一样」）。
+   *
+   * ⚠️ **判别状态必须是「已用 12 格」**（第 5 种假阳性）：那一刻 13 与 12 两种实现
+   * 才分叉（13 说还能写、12 说已耗尽）；在「已用 13 格」上两者都说耗尽，
+   * 只测 13 是测不出来的。
+   */
+  it("status() 的三个字段：budgetExhausted 在第 13 次 put 之后才翻真（已用 12 格时必须仍是 false），预算耗尽时 pending 不许归零", async () => {
+    const r = rig();
+    // 攒 12 个互不相同的 UTC 日，一次 flush 恰好写 12 个键（预算 13，够）。
+    for (let i = 0; i < 12; i++) { r.one(); r.advance(DAY_MS); }
+    r.pastInterval();
+    await r.sink.maybeFlush();
+    expect(r.storage.usagePuts.length, "夹具前提：这一次应当写满 12 个键").toBe(12);
+    // ★ **判别点**：已用 12 格。perDay = 13 ⇒ 还能写；perDay = 12 ⇒ 已耗尽。
+    expect(
+      r.sink.status().budgetExhausted,
+      "已用 12 格就说预算耗尽 —— status() 里的 canWrite 用了事件板块的默认值 12",
+    ).toBe(false);
+
+    // 再写 1 个键（同一个 UTC 日内），累计 13 格 ⇒ 这才该翻真。
+    r.one();
+    r.pastInterval();
+    await r.sink.maybeFlush();
+    expect(r.storage.usagePuts.length, "夹具前提：这一次再写 1 个键").toBe(13);
+    expect(r.sink.status().budgetExhausted, "已用满 13 格却还说没耗尽").toBe(true);
+
+    // ── `pending` / `pendingMs`：**预算耗尽、还欠着账的那一刻**三个字段的组合。
+    const r2 = rig();
+    for (let i = 0; i < 20; i++) { r2.one(); r2.advance(DAY_MS); }
+    r2.pastInterval();
+    await r2.sink.maybeFlush();
+    expect(r2.storage.usagePuts.length, "夹具前提：预算把这一次卡在 13 个键").toBe(13);
+    // **三个手写字面量一次断完**，这正是报告里交给 Task 4 的那条读法：
+    // `pending > 0 && pendingMs === 0` 读作「刚试过、没写成」，不是「刚写完」。
+    expect(
+      r2.sink.status(),
+      "预算耗尽、还有 7 天没落下去，status() 却说没有未落盘的尾巴",
+    ).toEqual({ shardId: SHARD, pending: 20, pendingMs: 0, budgetExhausted: true });
+  });
+
+  /**
+   * **`byModel` 的键完全由客户端控制，必须有上界**（评审 I4）。
+   *
+   * 模型名一路来自请求体（`String(body.model ?? "")`），每个不同的串就是一个新桶，
+   * 而那份 map **永不清理、每次落盘整份覆写进一个键**。没有上界的话：
+   * Node 长驻进程内存无上界；**KV 单值 25MB 上限撞上之后 `put` 抛错 ⇒ 那天永远 dirty
+   * ⇒ 每个间隔重试一次、白烧预算**，这一天的数据再也写不出去。
+   *
+   * 两条上界一起验：**格数**（超出并进 `__other__`）与**单个键的长度**。
+   */
+  it("byModel 的键有上界：200 个不同的模型名只留 32 个具名格 + 一个 __other__，且超长模型名被截断 —— 那一维的键完全由客户端控制，无上界就能把单个值撑爆 KV 的 25MB 上限", async () => {
+    const r = rig();
+    for (let i = 0; i < 200; i++) r.one({ model: `m${i}` });
+    r.pastInterval();
+    await r.sink.maybeFlush();
+    const shard = (await r.storage.get<UsageDayShard>(KEY_DAY0))!;
+    const keys = Object.keys(shard.byModel);
+    // 手写字面量 33 = 32 个具名 + `__other__` 自己那一格。
+    expect(keys.length, "byModel 的格数没有上界").toBe(33);
+    expect(keys.includes("__other__"), "超出上界的那些没有被并进 __other__，而是被丢了").toBe(true);
+    // 前 32 个具名格是最先出现的那些；总数一条都不许丢。
+    expect(shard.byModel["m0"]!.requests, "先出现的模型必须保住自己的格子").toBe(1);
+    expect(shard.byModel["__other__"]!.requests, "并进 __other__ 的应当是 200 − 32 = 168 条").toBe(168);
+    expect(shard.total.requests, "上界不许把总数弄丢").toBe(200);
+
+    // 长度截断：64 字符。**两个只在第 65 个字符起不同的模型名会并成同一格**，
+    // 这是截断的代价，明写在这里。
+    const r2 = rig();
+    r2.one({ model: "x".repeat(300) });
+    r2.pastInterval();
+    await r2.sink.maybeFlush();
+    const shard2 = (await r2.storage.get<UsageDayShard>(KEY_DAY0))!;
+    expect(Object.keys(shard2.byModel), "300 字符的模型名原样进了要落盘的值里").toEqual(["x".repeat(64)]);
+  });
+
+  /**
    * **没有未落盘增量时是 no-op，一次写都不产生**（设计 §7.1 原话）。
    *
    * 少了这一条，一个开着 Tier-2 但**零流量**的部署每 2 小时照样写一次盘
@@ -599,5 +740,145 @@ describe("UsageSink 的落盘契约", () => {
     r.pastInterval();
     await r.sink.maybeFlush();
     expect(r.storage.usagePuts.length, "前置条件不成立：这个 sink 压根写不出去").toBe(1);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// ③ USAGE_FLUSH_INTERVAL_MS：判据是「存储有没有写配额」，不是「在哪个运行时上跑」
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 runtime.name）", () => {
+  /**
+   * **默认值两种存储形态逐字相同** —— 这是「双运行时对等」在这个旋钮上的落点。
+   *
+   * 分叉只发生在**运维显式设了它**的时候，那是一次知情选择；没设的部署两边
+   * 一个字节都不差。**这一格必须先立住**，否则下面那两格的差异读起来会像
+   * 「两种运行时天生不一样」，而那正是设计明令禁止的东西。
+   */
+  it("没设这个环境变量时：两种存储形态拿到逐字相同的间隔（2 小时），差别只在「有没有写配额」那道闸", () => {
+    // 手写字面量：常量本身 + 两侧各自的预算。
+    expect(resolveUsageFlushInterval(undefined, true))
+      .toEqual({ flushIntervalMs: 7_200_000, budgetPerDay: 13 });
+    expect(resolveUsageFlushInterval(undefined, false))
+      .toEqual({ flushIntervalMs: 7_200_000, budgetPerDay: null });
+    // 反向自检：上面那两个字面量就是后端常量本身，不是碰巧相等。
+    expect(USAGE_FLUSH_MIN_INTERVAL_MS).toBe(7_200_000);
+    expect(USAGE_WRITES_PER_DAY).toBe(13);
+  });
+
+  /**
+   * **有写配额的那一侧：调小到会让半天没数据的值 ⇒ fail-closed 直接抛。**
+   *
+   * 不许默默接受：`间隔 × (预算 − 1) >= 一天` 破了之后，写量仍然合格
+   * （预算封着顶），**而数据从中午起就是假的** —— 那比起不来更难发现。
+   * 错误消息里必须给出最小可用值，否则运维只知道被拒、不知道该填多少。
+   */
+  it("有写配额的存储上把间隔调到 300 秒：启动就抛，且消息里给出最小可用值 7200000 —— 写量合格而数据从中午起就是假的，比起不来更难发现", () => {
+    expect(() => resolveUsageFlushInterval("300000", true)).toThrow(/7200000/);
+    // 边界两侧各一格（手写字面量）：恰好等于最小值放行，少 1 毫秒就抛。
+    expect(resolveUsageFlushInterval("7200000", true))
+      .toEqual({ flushIntervalMs: 7_200_000, budgetPerDay: 13 });
+    expect(() => resolveUsageFlushInterval("7199999", true)).toThrow(/USAGE_FLUSH_INTERVAL_MS/);
+    // 调大随便。
+    expect(resolveUsageFlushInterval("14400000", true))
+      .toEqual({ flushIntervalMs: 14_400_000, budgetPerDay: 13 });
+  });
+
+  /**
+   * **没有写配额的那一侧：同一个 300 秒放行，而且没有每天的写预算。**
+   *
+   * 留着那道 13 次/天的闸的话，调到 300 秒的结果是「头 65 分钟写满 13 次、
+   * 之后整天不写」——**比默认值更糟**，那正是 `USAGE_FLUSH_MIN_INTERVAL_MS`
+   * 上方已经论证过的形态。⇒ 没有写配额时上界就是间隔本身。
+   */
+  it("没有写配额的存储上：同一个 300 秒放行，且不再设每天的写预算 —— 留着 13 次/天的闸会让「头 65 分钟写满、之后整天不写」，比默认值更糟", () => {
+    expect(resolveUsageFlushInterval("300000", false))
+      .toEqual({ flushIntervalMs: 300_000, budgetPerDay: null });
+  });
+
+  /** 环境变量的非法值继续 fail-fast：部署时错误，运维必须立刻看得见。 */
+  it("非法值一律抛，不降级：abc / 0 / -1 / 1.5 四种写法都要被拒", () => {
+    for (const bad of ["abc", "0", "-1", "1.5"]) {
+      expect(() => resolveUsageFlushInterval(bad, true), `「${bad}」被放行了`)
+        .toThrow(/USAGE_FLUSH_INTERVAL_MS/);
+    }
+  });
+
+  /**
+   * **预算那一格真的接到了 sink 上**（不是算出来就丢掉）。
+   *
+   * 两个方向在同一格里跑（第 1 种假阳性：夹具 A/B 同值）：同样 20 个待落盘的日、
+   * 同样一次 flush，有预算的那一侧被卡在 13，没预算的那一侧 20 个全写出去。
+   */
+  it("budgetPerDay 真的接到了 sink 上：同样 20 个待落盘的日，有写配额的一侧卡在 13 个键，没写配额的一侧 20 个全写", async () => {
+    const run = async (budgetPerDay: number | null) => {
+      let t = DAY0_MS;
+      const storage = new UsagePutCounter(new MemoryStorage(undefined, () => t));
+      const sink = new UsageSink({
+        storage, now: () => t, shardId: SHARD, onError: () => {}, budgetPerDay,
+      });
+      for (let i = 0; i < 20; i++) {
+        sink.record({ protocol: "openai", model: "m", ok: true, stream: false, latencyMs: 1, tokensIn: 0, tokensOut: 0 });
+        t += DAY_MS;
+      }
+      t += USAGE_FLUSH_MIN_INTERVAL_MS + 1;
+      await sink.maybeFlush();
+      return storage.usagePuts.length;
+    };
+    // 手写字面量，两个方向。
+    expect(await run(13), "有写配额的一侧没被预算卡住").toBe(13);
+    expect(await run(null), "没写配额的一侧仍然被一道不该存在的闸卡着").toBe(20);
+  });
+
+  /**
+   * **走真装配的接线证据**：`USAGE_FLUSH_INTERVAL_MS` 从 env 一路生效到
+   * ① sink 的落盘节奏（行为观测）与 ② `capabilities.stats.flushIntervalMs`（面板读的那个数）。
+   *
+   * ⚠️ **两样都要**：只验 capabilities 的话，「读了但没接到 sink 上」照样绿
+   *（那个数就成了 handler 自报）；只验节奏的话，面板可能还在报后端常量，
+   * 而运维据它算出来的「尾巴最长多久」是错的。
+   *
+   * 这里用 `nodeRuntime()`（`quotaModel: "file"` ⇒ 没有写配额）才调得动 300 秒，
+   * **而这正是那条判据的意思**：能不能调小取决于存储有没有写配额。
+   */
+  it("走 buildApp 的接线证据：USAGE_FLUSH_INTERVAL_MS 同时改变了落盘节奏与 capabilities 报出去的那个数", async () => {
+    let t = DAY0_MS;
+    const storage = new UsagePutCounter(new MemoryStorage(1, () => t));
+    const { app } = await buildApp(
+      { GATEWAY_TOKEN: "t", ADMIN_TOKEN: TEST_ADMIN_TOKEN, USAGE_STATS_ENABLED: "true", USAGE_FLUSH_INTERVAL_MS: "300000" },
+      storage, nodeRuntime(), { now: () => t, newShardId: () => SHARD },
+    );
+    const hit = () => app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: "Bearer t", "content-type": "application/json" },
+      body: JSON.stringify({ model: "agnes-2.0-flash", messages: [{ role: "user", content: "ping" }] }),
+    });
+
+    // ① 节奏：**推 300 秒零 1 毫秒**（远小于后端常量的 2 小时）就该落盘。
+    await hit();
+    t += 300_001;
+    await hit();
+    expect(
+      storage.usagePuts,
+      "推过 300 秒还没落盘 —— 那个环境变量没有接到 sink 上，间隔还是后端常量",
+    ).toEqual([KEY_DAY0]);
+
+    // ② 面板读的那个数必须是生效值，不是后端常量。
+    const res = await app.request("/admin/api/capabilities", { headers: { "x-admin-key": TEST_ADMIN_TOKEN } });
+    const body = await res.json() as { stats: { flushIntervalMs: number } };
+    // 手写字面量；顺带反向自检它确实不等于常量。
+    expect(body.stats.flushIntervalMs, "capabilities 报的是后端常量而不是生效值").toBe(300_000);
+    expect(body.stats.flushIntervalMs).not.toBe(USAGE_FLUSH_MIN_INTERVAL_MS);
+  });
+
+  /**
+   * **有写配额的那一侧，同一个值会让装配直接失败** —— 与上一格是同一个环境变量、
+   * 同一个值，只有存储能力这一维不同。两格合起来才说明「判据是存储能力」。
+   */
+  it("同一个 300000，在有写配额的存储形态上 buildApp 直接抛 —— 判据是存储能力（quotaModel），不是 runtime.name", async () => {
+    await expect(buildApp(
+      { GATEWAY_TOKEN: "t", USAGE_STATS_ENABLED: "true", USAGE_FLUSH_INTERVAL_MS: "300000" },
+      new UsagePutCounter(new MemoryStorage()), workerRuntime(), { newShardId: () => SHARD },
+    )).rejects.toThrow(/7200000/);
   });
 });

@@ -13,6 +13,7 @@ import { configRefresh } from "./config-refresh.js";
 import { logFlush } from "./log-flush.js";
 import { usageFlush } from "./usage-flush.js";
 import type { UsageSink, UsageRecording } from "./usage-sink.js";
+import { USAGE_FLUSH_MIN_INTERVAL_MS } from "../core/admin/usage-stats.js";
 import type { ConfigHolder } from "./config-holder.js";
 import type { DispatchDeps } from "../core/dispatcher.js";
 import type { StorageHealth } from "../core/storage-health.js";
@@ -106,6 +107,17 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
    * 直接调 `createApp` 的那几十个测试一律不传 ⇒ 它们的行为一个字节都没变。
    */
   usageSink?: UsageSink;
+  /**
+   * 生效的落盘间隔（P3d Task 3）。**可选，缺省 = 后端常量**
+   *（`USAGE_FLUSH_MIN_INTERVAL_MS`），理由与 `runtime`/`envLocked` 同一条：
+   * 这里是被海量既有测试直接调用的底层装配函数。
+   *
+   * 只有 `wire.ts` 的 `buildApp` 算得出它（要 `env` 与 `runtime.quotaModel` 两样），
+   * 它会经 `GET /admin/api/capabilities` 的 `stats.flushIntervalMs` 发给面板。
+   * **与 `usageSink` 是两件事**：Tier-2 关着的时候这个数照样有意义
+   *（说明卡要说清「打开之后尾巴最长多久」）。
+   */
+  usageFlushIntervalMs?: number;
 }
 
 /**
@@ -200,7 +212,7 @@ export function createApp(deps: AppDeps): Hono {
   // 本任务实测吃过这个亏：一条「用量 flush 没 await」的变异之所以逃逸，正是因为
   // 紧随其后的事件 flush 那次存储 I/O 顺手把它带完了（现在那一格靠一个足够长的
   // 挂起点摆脱了对排序的依赖，见 `tests/contract/usage-tier2.test.ts` 的
-  // 「落盘在响应返回之前就完成 ——……」）。
+  // 「落盘在响应返回之前就完成：把那次写卡在闸门上，响应就出不来 ——……」）。
   const usageSink = deps.usageSink;
   if (usageSink !== undefined) app.use("*", usageFlush(() => usageSink.maybeFlush()));
 
@@ -287,6 +299,7 @@ export function createApp(deps: AppDeps): Hono {
     // `usageStatsEnabled`——那个开关是建 app 时读一次的，现读会与事实分叉，
     // 见 `capabilitiesHandler` 的同名参数。
     usageStatsEnabled: usageSink !== undefined,
+    usageFlushIntervalMs: deps.usageFlushIntervalMs ?? USAGE_FLUSH_MIN_INTERVAL_MS,
   });
   if (admin) app.route("/", admin);
   return app;

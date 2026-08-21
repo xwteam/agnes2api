@@ -11,6 +11,7 @@ import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 import { TEST_CONFIG } from "../helpers/make-app.js";
 import { StoreLogger } from "../../src/adapters/logger-store.js";
 import { createTendGate } from "../../src/http/admin/tend-lock.js";
+import { USAGE_FLUSH_MIN_INTERVAL_MS } from "../../src/core/admin/usage-stats.js";
 
 const TOKEN = "session-probe-admin-token-01234";
 
@@ -52,6 +53,8 @@ function adminApp(version: string) {
     // 给**默认那一侧**（Tier-2 关着）即可。生产上这一格由 `createApp` 按
     // 「建没建 sink」填，不是从配置现读。
     usageStatsEnabled: false,
+    // 同上：本文件只测 session，给后端常量那个默认值即可。
+    usageFlushIntervalMs: USAGE_FLUSH_MIN_INTERVAL_MS,
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");
   const app = new Hono();

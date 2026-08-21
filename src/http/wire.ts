@@ -19,7 +19,7 @@ import { YydsProvider } from "../adapters/mailbox-yyds.js";
 import { MoeMailProvider } from "../adapters/mailbox-moemail.js";
 import { ConsoleLogger } from "../adapters/logger-console.js";
 import { StoreLogger } from "../adapters/logger-store.js";
-import { UsageSink } from "./usage-sink.js";
+import { UsageSink, resolveUsageFlushInterval } from "./usage-sink.js";
 import { multiLogger } from "../adapters/logger-multi.js";
 import type { Logger } from "../ports/logger.js";
 import { createTendGate, type TendGate } from "./admin/tend-lock.js";
@@ -201,11 +201,19 @@ export async function buildApp(
    * 塞一条，下一次请求把它落盘 ⇒ **统计故障自己制造额外的写**，正好打在
    * 存储已经出问题的时候。
    */
+  // 落盘间隔与每天写预算。**判据是存储有没有写配额（`runtime.quotaModel`），
+  // 不是在哪个运行时上跑**——完整论证见 `resolveUsageFlushInterval()` 上方那段。
+  // ⚠️ **无论 Tier-2 开没开都要算一次**：① 非法值必须在启动时就抛（部署时错误，
+  // 不许等到有人打开开关的那天才发现）；② `capabilities` 要如实报出生效的那个间隔，
+  // 而面板拿它算「未落盘的尾巴最长多久」，关着的时候那句说明卡也要说得准。
+  const usageFlush = resolveUsageFlushInterval(env.USAGE_FLUSH_INTERVAL_MS, runtime.quotaModel === "kv");
   const usageSink = cfg.usageStatsEnabled
     ? new UsageSink({
       storage: watched,
       now,
       shardId,
+      flushIntervalMs: usageFlush.flushIntervalMs,
+      budgetPerDay: usageFlush.budgetPerDay,
       onError: (err) => consoleLogger.log({
         level: "error", event: "storage.usage_flush_failed",
         msg: "用量分片落盘失败，这一天的累加器**保留**，下一次落盘会把这一段带上",
@@ -251,6 +259,8 @@ export async function buildApp(
     storeLogger,
     // **缺席（`undefined`）就是 Tier-2 关着**，见上面 `usageSink` 那段。
     usageSink,
+    // 生效的落盘间隔。**面板不许写死这个数**（全局约束 10：诚实标记由后端字段驱动）。
+    usageFlushIntervalMs: usageFlush.flushIntervalMs,
   });
   return { app, configHolder, repo, tendGate };
 }

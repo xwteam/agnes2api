@@ -182,13 +182,28 @@ export const USAGE_WRITES_PER_DAY = 13;
  * 「统计吃掉写配额会连带打死 key 池的状态回写」。
  *
  * 运维可经 `USAGE_FLUSH_INTERVAL_MS` 覆盖它（设计 §7.1 自己就给了这个环境变量名）。
- * **FileStorage 没有写配额**（设计 §2.5：「Node 侧没有配额，但有**吞吐**问题」），
- * 所以 Docker 部署者调回 300s 是合理的。
- * ⚠️ **这不是运行时嗅探**：默认值两种运行时相同，改不改由运维按自己的存储后端定，
+ * **接线在 `src/http/usage-sink.ts` 的 `resolveUsageFlushInterval()`**，判据与代价
+ * 全文在那里，这里只说结论：
+ * · **没有写配额的存储**（FileStorage / Docker）：任意正整数放行，
+ *   **并且不再设每天的写预算**——`USAGE_WRITES_PER_DAY` 那道闸是为写配额存在的，
+ *   留着它的话调到 300s 的结果是「头 65 分钟写满 13 次、之后整天不写」，
+ *   正是本注释上一段刚论证过的那个更糟的形态；
+ * · **有写配额的存储**（KV / Worker）：预算恒为 `USAGE_WRITES_PER_DAY`，
+ *   而间隔必须满足下面那条乘法关系，破了就**启动即抛**并给出最小可用值。
+ *
+ * ⚠️ **这不是运行时嗅探**：判据是**存储有没有写配额**（`RuntimeInfo.quotaModel`，
+ * 本仓双运行时差异的唯一注入点），不是 `runtime.name`；而且**默认值两种形态逐字相同**
+ * ——没设这个环境变量的部署，两边行为一个字节都不差，分叉只发生在运维显式设了它的时候。
  * 与 `POOL_CACHE_TTL_MS` 完全同构（那个值同样只在 KV 形态下要紧，`.env.example:30`
  * 那一行的小节标题逐字写着「Cloudflare Worker + KV 免费档才需要关心」，
  * 而它也不按运行时分叉）。
  * 设计 §7.1「默认在两种运行时相同……不做运行时嗅探」这一句因此**被遵守，不是被绕过**。
+ *
+ * ⚠️ **这一段有过一次「从假前提推出的论证」，如实记着**（P3d Task 3 评审 I1）：
+ * 上一版在**旋钮还没接线**的时候就写着「运维可经 `USAGE_FLUSH_INTERVAL_MS` 覆盖它…
+ * Docker 部署者调回 300s 是合理的」，而当时设了它不起任何作用，
+ * 后面那整段「这不是运行时嗅探」的论证因此**建立在一个不成立的前提上**。
+ * 裁定不是「把话改软」，是**把代码补成配得上这句话**——现在它真的接上了。
  */
 export const USAGE_FLUSH_MIN_INTERVAL_MS = 7_200_000;
 
@@ -222,6 +237,51 @@ export function usageSlotOf(shardId: string): number {
 
 export function usageDayKey(day: number, slot: number): string {
   return `usage:${day}:${slot}`;
+}
+
+/**
+ * `byModel` 的键最长多少个字符。**模型名由客户端在请求体里随便填**
+ *（`src/http/routes/openai.ts` 的 `String(body.model ?? "")`），不截断就是把
+ * 一个无上界的字符串原样搬进要落盘的值里。
+ */
+export const USAGE_MODEL_KEY_MAX_LEN = 64;
+
+/**
+ * `byModel` 最多留几个具名键，**超出的一律并进 `USAGE_OTHER_KEY`**。
+ *
+ * ⚠️ **这条上界不是防御性代码，是有界性本身**（评审 I4）：`byModel` 的键**完全由
+ * 客户端控制**（模型名来自请求体），每个不同的串就是一个新 `UsageBucket`，
+ * 而那份 map **永不清理、每次落盘整份覆写进一个键**。没有上界的三个后果，
+ * 一个比一个糟：
+ * ① Node 长驻进程的内存无上界；
+ * ② **KV 单值 25MB 上限撞上之后 `put` 抛错 ⇒ 那天永远 dirty ⇒ 每个落盘间隔重试一次、
+ *    白烧预算**，而这一天的数据再也写不出去；
+ * ③ 读路径（Task 4）要把最多 60 个这样的分片合并。
+ * 事件侧一直是有界的（`event-ring.ts` 的环形截断），Tier-2 不该打破这个先例。
+ *
+ * **`byProtocol` 刻意不设上界**：那一维的值来自四条路由里的字面量
+ *（`"openai"` / `"anthropic"` / `"responses"` / `"gemini"`），客户端碰不到它。
+ * `hours` 同理（恒 24 格）。**只有 `byModel` 这一维是外部可控的。**
+ */
+export const USAGE_MODEL_MAX_KEYS = 32;
+
+/** 超出 `USAGE_MODEL_MAX_KEYS` 之后的模型都并进这一格。Task 4 要把它渲染成「其它」。 */
+export const USAGE_OTHER_KEY = "__other__";
+
+/**
+ * 把一个外部可控的桶键收进上界内。
+ *
+ * 先截长度、再判格数：**已经存在的键永远认得出来**（否则同一个模型会因为
+ * map 满了而在两次请求之间被分到两个不同的格子，计数直接错位）。
+ *
+ * ⚠️ **上界是 `USAGE_MODEL_MAX_KEYS + 1`，那多出来的一格是 `USAGE_OTHER_KEY` 自己。**
+ * 明写出来，免得下一个人按 32 去断言然后发现是 33。
+ */
+export function boundUsageKey(existing: Readonly<Record<string, unknown>>, raw: string): string {
+  const k = raw.slice(0, USAGE_MODEL_KEY_MAX_LEN);
+  if (Object.prototype.hasOwnProperty.call(existing, k)) return k;
+  if (Object.keys(existing).length >= USAGE_MODEL_MAX_KEYS) return USAGE_OTHER_KEY;
+  return k;
 }
 
 /** TTL 留一个整天的余量盖掉时钟偏差，与 `EVENT_TTL_MARGIN_MS` 同一条理由。 */

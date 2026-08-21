@@ -81,6 +81,12 @@ export interface AdminRouterDeps {
    * `capabilitiesHandler` 的同名参数。
    */
   usageStatsEnabled: boolean;
+  /**
+   * 生效的落盘间隔（P3d Task 3）。**由 `wire.ts` 从 `USAGE_FLUSH_INTERVAL_MS` 与
+   * `runtime.quotaModel` 算出来**，`capabilities` 原样发给面板——面板据它算
+   * 「未落盘的尾巴最长多久」，**不许在前端写死**（全局约束 10）。
+   */
+  usageFlushIntervalMs: number;
 }
 
 /**
@@ -222,6 +228,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.get("/admin/api/capabilities", capabilitiesHandler({
     runtime: deps.runtime, storageHealth: deps.storageHealth, version: deps.version,
     usageStatsEnabled: deps.usageStatsEnabled,
+    usageFlushIntervalMs: deps.usageFlushIntervalMs,
   }));
   admin.get("/admin/api/overview", overviewHandler({
     repo: deps.repo, configHolder: deps.configHolder, storageHealth: deps.storageHealth,
