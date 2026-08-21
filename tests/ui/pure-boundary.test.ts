@@ -50,14 +50,31 @@ function sectionFiles(): string[] {
  * **函数**」，而板块文件里出现一个同名的局部常量（比如把 `CHANNELS` 拷一份）
  * 是另一件事，需要另一套判据（见下面 `KNOWN_BLIND_SPOTS`）。
  */
+const EXPORTED_FN = [
+  /^export function (\w+)\s*\(/gm,
+  /^export async function (\w+)\s*\(/gm,
+  // `export const f = (a) => …` / `= async (a) => …` / `= function …`
+  /^export const (\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)\s*=>|function\b)/gm,
+  // **单参数不带括号**的箭头：`export const f = v => …`。第一版漏了这一种，
+  // 而它是 JS 里最常见的一种写法之一。
+  /^export const (\w+)\s*=\s*(?:async\s+)?\w+\s*=>/gm,
+];
+
 function exportedFunctionNames(pureFile: string): string[] {
   const src = readFileSync(pureFile, "utf8");
   const names = new Set<string>();
-  for (const m of src.matchAll(/^export function (\w+)\s*\(/gm)) names.add(m[1]!);
-  for (const m of src.matchAll(/^export const (\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)\s*=>|function\b)/gm)) {
-    names.add(m[1]!);
+  for (const re of EXPORTED_FN) {
+    re.lastIndex = 0;
+    for (const m of src.matchAll(re)) names.add(m[1]!);
   }
   return [...names].sort();
+}
+
+/** 板块文件里「重新声明了这个名字」的三种形式。判据与上面那张表一一对应。 */
+function redeclares(src: string, name: string): boolean {
+  return new RegExp(`\\bfunction\\s+${name}\\s*\\(`).test(src)
+    || new RegExp(`\\bconst\\s+${name}\\s*=\\s*(?:async\\s*)?\\(`).test(src)
+    || new RegExp(`\\bconst\\s+${name}\\s*=\\s*(?:async\\s+)?\\w+\\s*=>`).test(src);
 }
 
 /**
@@ -79,7 +96,7 @@ const KNOWN_BLIND_SPOTS = [
 ];
 
 describe("硬规则 1 的另一半：sec-*.js 不许重新声明 pure/*.mjs 已导出的函数名", () => {
-  it("扫描范围本身不是空的——八个 pure 模块、四个板块文件都得真的被扫到", () => {
+  it("扫描范围本身不是空的——九个 pure 模块、四个板块文件都得真的被扫到", () => {
     // 反向自检：下面那条相等断言在「一个文件都没扫到」时同样是绿的。
     // 数字手写，改动 admin-ui 的文件结构时必须回来表态。
     expect(pureModules().length, "pure 模块数变了").toBe(9);
@@ -95,10 +112,7 @@ describe("硬规则 1 的另一半：sec-*.js 不许重新声明 pure/*.mjs 已�
       for (const file of sectionFiles()) {
         const src = readFileSync(file, "utf8");
         for (const name of names) {
-          if (new RegExp(`\\bfunction\\s+${name}\\s*\\(`).test(src)
-            || new RegExp(`\\bconst\\s+${name}\\s*=\\s*(?:async\\s*)?\\(`).test(src)) {
-            offenders.push(`${file.split("\\").join("/")}: ${name}（来自 ${pure}）`);
-          }
+          if (redeclares(src, name)) offenders.push(`${file.split("\\").join("/")}: ${name}（来自 ${pure}）`);
         }
       }
     }
@@ -122,25 +136,35 @@ describe("硬规则 1 的另一半：sec-*.js 不许重新声明 pure/*.mjs 已�
     const names = exportedFunctionNames("admin-ui/js/pure/format.mjs");
     expect(names, "前置条件：fmtDash 得真的是 format.mjs 导出的").toContain("fmtDash");
 
-    const declared = 'function fmtDash(v) { return v === null ? "—" : String(v); }';
-    const arrow = 'const fmtDash = (v) => (v === null ? "—" : String(v));';
-    for (const bad of [declared, arrow]) {
-      const hit = names.some((name) => new RegExp(`\\bfunction\\s+${name}\\s*\\(`).test(bad)
-        || new RegExp(`\\bconst\\s+${name}\\s*=\\s*(?:async\\s*)?\\(`).test(bad));
-      expect(hit, `这种写法没被抓到：${bad}`).toBe(true);
+    const forms = [
+      'function fmtDash(v) { return v === null ? "—" : String(v); }',
+      'const fmtDash = (v) => (v === null ? "—" : String(v));',
+      // **单参数不带括号**的箭头。第一版的判据漏了这一种，而它是最省事的抄法。
+      'const fmtDash = v => (v === null ? "—" : String(v));',
+    ];
+    for (const bad of forms) {
+      expect(names.some((name) => redeclares(bad, name)), `这种写法没被抓到：${bad}`).toBe(true);
     }
   });
 
-  it("反向自检：箭头函数形式的导出也被算进「已导出的函数名」里", () => {
+  it("反向自检：三种箭头/async 形式的导出都被算进「已导出的函数名」里，值常量不算", () => {
     // 判据本身的自检：只认 `export function` 的话，任何 `export const f = (…) => …`
     // 都会连同它的名字一起从扫描范围里消失（旧判据正是这样）。
-    const src = "export const alpha = (a) => a;\nexport const beta = async (b) => b;\nexport const GAMMA = [1];\n";
+    const src = [
+      "export const alpha = (a) => a;",
+      "export const beta = async (b) => b;",
+      "export const delta = c => c;",                 // 单参数不带括号
+      "export async function epsilon(d) { return d; }",
+      "export const GAMMA = [1];",                    // 值常量，**不算**
+      "",
+    ].join("\n");
     const names = new Set<string>();
-    for (const m of src.matchAll(/^export function (\w+)\s*\(/gm)) names.add(m[1]!);
-    for (const m of src.matchAll(/^export const (\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)\s*=>|function\b)/gm)) {
-      names.add(m[1]!);
+    for (const re of EXPORTED_FN) {
+      re.lastIndex = 0;
+      for (const m of src.matchAll(re)) names.add(m[1]!);
     }
-    expect([...names].sort()).toEqual(["alpha", "beta"]);
+    // 期望值手写，**不从 EXPORTED_FN 推导**。
+    expect([...names].sort()).toEqual(["alpha", "beta", "delta", "epsilon"]);
   });
 
   it("盲区清单不是空的——如实登记按名字扫拦不住的那几类", () => {

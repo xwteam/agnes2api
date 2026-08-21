@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { bootPanel, settle } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { I18N } from "../../../admin-ui/js/i18n-dict.js";
@@ -11,7 +12,13 @@ import type { FakeElement } from "../../helpers/fake-dom.js";
  * 能替代（Task 4 的 `errorMessage()` 就是这么逃逸的：退回不调用判据的老实现，
  * 566/566 仍然全绿）。
  *
- * **设计 §10.3 八条平级规则里，本文件正面钉住的是第 2 / 3 / 6 / 8 条**，
+ * **设计 §10.3 八条平级规则里，本文件正面钉住的是第 2 / 3 / 8 条，外加第 6 条的
+ * 面板那一半**（「两个等权的按钮各打各的通道、各显示各的数据」）。
+ * ⚠️ **第 6 条的另一半——那个可用域名数是不是真的从上游量出来的——不在这里**，
+ * 它在 `tests/contract/admin-registrar.test.ts` 的
+ * 「通道连通性走的是真 provider：打各自配的 baseUrl、各自的端点、各自的响应形态」。
+ * 两半分开写清楚，是因为本文件这一半**曾经被当成整条第 6 条**，而产出那个数字的
+ * 代码路径当时零覆盖。
  * 外加「第 1 条那条纪律」在本任务唯一拥有的那个下拉上的落点。
  * 第 4 条是 CI 门禁（`scripts/check-i18n.mjs` 第 ⑥ 条）；第 5 条**没有任何变异
  * 抓得住**，如实登记为人工勾选项，它的下界在 `tests/ui/registrar.test.ts` 的
@@ -166,6 +173,27 @@ describe("设计 §10.3 第 2、3 条：两张通道卡", () => {
     expect(channelCard(section, "moemail").textContent).toContain(I18N["reg.role.unused"]!["zh-CN"]!);
     expect(channelCard(section, "moemail").textContent).toContain(I18N["reg.channel.credsNo"]!["zh-CN"]!);
     expect(channelCard(section, "yyds").textContent).toContain(I18N["reg.channel.credsYes"]!["zh-CN"]!);
+  });
+
+  /**
+   * ⚠️⚠️ **样式层的不对称比代码层更难被评审看见**：两张卡在 DOM 上仍然一模一样，
+   * 只是画出来不一样。`admin-ui/css/sections.css` 里那句「刻意没有任何
+   * `[data-channel="…"]` 选择器」原来只是一句注释——现在它是一条会变红的断言。
+   *
+   * **边界明写**：这是纯文本扫描，`.card:nth-child(1)` 这类**按位置**做区分的选择器
+   * 它抓不住（那一类留给评审 + 上面那条标签序列断言）。
+   */
+  it("样式层不许给某一条通道开小灶 —— sections.css 里不许出现按通道名区分的选择器", () => {
+    const css = readFileSync("admin-ui/css/sections.css", "utf8");
+    // **先去注释再扫。** 这个仓库的注释极其爱复述代码——`sections.css` 里那段说明
+    // 自己就写着「刻意没有任何 `[data-channel="…"]` 选择器」，不去注释的话这一格
+    // 会被那句话本身打红（第一次跑就是这样红的），而那时红的是量具不是缺陷。
+    const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const hits = [...stripped.matchAll(/\[data-channel[^\]]*\]/g)].map((m) => m[0]);
+    expect(hits, "给某一条通道单独写了样式 —— 那是设计 §10.3 第 2 条禁止的不对称，而且画出来才看得见")
+      .toEqual([]);
+    // 反向自检：扫的是对的那个文件（它确实含有本板块的样式）。
+    expect(css, "扫错文件了 —— 这份 CSS 里根本没有通道卡的样式").toContain(".channel-card");
   });
 
   /**
@@ -530,21 +558,36 @@ describe("补池历史", () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 describe("接线", () => {
-  it("onShow 只打一次 /registrar/status，且**没有**自动刷新定时器", async () => {
-    const timers: number[] = [];
+  /**
+   * ⚠️ **`setInterval` 与 `setTimeout` **两个都要看**。**
+   * 只 stub `setInterval` 的话，一个**递归 `setTimeout`** 写法的轮询（本仓
+   * `sec-events.js` 用的正是这种形态）会整个绕过这条判据 —— 判据建在了
+   * 缺陷不一定会采取的那个形态上。
+   *
+   * `setTimeout` 那一半**只看长延时**：`toast` 的 4 秒自动消失、以及各种
+   * 微任务收尾都会排短定时器，把它们一起算进来这条会常年假红。
+   * 判据是「有没有排一个 ≥ 5 秒的定时器」——一个刷新间隔短于 5 秒的面板轮询
+   * 本来也不该存在。
+   */
+  it("onShow 只打一次 /registrar/status，且**没有**自动刷新定时器（interval 与递归 timeout 都算）", async () => {
+    const intervals: number[] = [];
+    const longTimeouts: number[] = [];
     const realSetTimeout = globalThis.setTimeout;
     vi.stubGlobal("setInterval", (...args: unknown[]) => {
-      timers.push(Number(args[1]));
+      intervals.push(Number(args[1]));
       return 0 as unknown as ReturnType<typeof setInterval>;
     });
+    vi.stubGlobal("setTimeout", (fn: () => void, ms?: number) => {
+      if (Number(ms) >= 5000) longTimeouts.push(Number(ms));
+      return realSetTimeout(fn, ms);
+    });
     const h = await openRegistrar(defaultRespond());
-    void realSetTimeout;
     const calls = h.calls.filter((c) => c.url.startsWith("/admin/api/registrar/status"));
     expect(calls, "切进板块时应当恰好拉一次状态").toHaveLength(1);
     expect(
-      timers,
+      { intervals, longTimeouts },
       "注册机板块起了轮询定时器 —— 它每刷新一次要付 3 次存储读，配额账把面板的读算成「人点一下才发生」",
-    ).toEqual([]);
+    ).toEqual({ intervals: [], longTimeouts: [] });
   });
 
   it("「刷新」按钮真的再拉一次", async () => {
