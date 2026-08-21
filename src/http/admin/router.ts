@@ -10,6 +10,7 @@ import type { AdminTokenCheck } from "./auth.js";
 import { sessionHandler } from "./handlers/session.js";
 import { keysHandler } from "./handlers/keys.js";
 import { capabilitiesHandler } from "./handlers/capabilities.js";
+import { modelsHandler } from "./handlers/models.js";
 import { overviewHandler } from "./handlers/overview.js";
 import { eventsHandler, eventsDownloadHandler } from "./handlers/events.js";
 import {
@@ -120,6 +121,22 @@ const REJECT_MESSAGE: Readonly<Record<NonNullable<AdminTokenCheck["reason"]>, st
   // **同一个值**，而中转口令是发给每一个下游用户的。运维照着「改任一把」处置，
   // 结果是一把所有下游用户都知道的管理口令继续生效。措辞必须把轮换 ADMIN_TOKEN
   // 说成**必做的那一步**，五语言 DEPLOY.md 同一段也是这么写的。
+  //
+  // ── P3c 交下来的待办第 5 条的处置：**这条 503 不该收敛成 401，建议关掉这条待办** ──
+  //
+  // P3c 计划登记过「把 `admin.token_conflict` 的 503 改成 401」并延后到 P3d。
+  // P3d 的裁定是**不做，而且不再往后传**——它不是「暂时没空」，是这个改动方向本身错了：
+  //
+  // 面板那一侧有一条**刻意写下的**规则（见 `admin-ui/js/api.js` 文件头）：
+  // **401 = 会话失效（清凭据、踢回登录闸）；403 明确不当会话失效。**
+  // 后者是照抄 kiro2api 用中文注释警告过的那个坑：老写法把业务 403 当掉线，
+  // 管理员拒绝一次授权就被踢出后台并被告知「密钥无效」。
+  //
+  // ⇒ 把口令冲突改成 401 的直接后果是：**运维被踢回登录闸，并被告知「口令无效」**
+  // ——而他手里那把管理口令是对的，真正的问题是两把钥匙撞了。他会一遍遍重输同一把
+  // 正确的口令，而面板每次都告诉他这把口令错了。**这正是那条注释在警告的形态。**
+  // 503 + `admin.token_conflict` 事件才是说得清的那一种：面板不清凭据、不踢人，
+  // 而运维在启动日志与事件板块里都能读到下面这段文字。
   same_as_gateway_token:
     "ADMIN_TOKEN 与当前生效的 GATEWAY_TOKEN 相同，管理接口已停用并将持续返回 503"
     + "（网关转发不受影响）。中转口令是发给每一个下游用户的，复用它当面板口令等于把"
@@ -275,6 +292,18 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.put("/admin/api/config", configPutHandler(config));
   admin.post("/admin/api/config/validate", configValidateHandler(config));
   admin.post("/admin/api/config/secrets/clear", configClearSecretHandler(config));
+
+  // ── 协议与模型目录（P3d Task 1）────────────────────────────────────────
+  // 「怎么调这个网关」的单一真源经这条端点交给面板。**零存储读、只读、无副作用**。
+  // 集成示例卡、Playground、模型表三处都从这里取数，一个端点路径都不在前端硬编码。
+  //
+  // 它同样用 `admin.get()` 注册（不是 `use()`）⇒ 不产生 ALL 条目。位置上**必须夹在
+  // 上面那行 `admin.use("/admin/api/*", adminAuth(...))` 与下面那行静态兜底之间**：
+  // 挪到前者之前是一条免鉴权的管理端点，挪到后者之后会被静态兜底吃成 404。
+  // 两个方向各有一格钉着，见 `tests/contract/admin-auth.test.ts`
+  // 「每一条路由 × 每一种凭据状态，逐格断言」与 `tests/contract/ui-serve.test.ts`
+  // 「/admin/api/* 不会被静态兜底吃掉」。
+  admin.get("/admin/api/models", modelsHandler());
 
   // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
   // 串起来跑，`/admin/*` 这条兜底若排在前面会先返回 404，**整套管理 API 直接消失**
