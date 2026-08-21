@@ -93,7 +93,13 @@ const ALLOW: readonly string[] = [];
  *
  * ⇒ 出口也归零，并且 `matchesIn()` 每次都自己重置一遍（**两道，不是一道**：
  * 谁将来直接用 `ENDPOINT_RE.test()` 而不走 `hit()`，`matchesIn()` 那道仍然兜得住）。
- * 由下面「扫描不受上一次 hit() 留下的 lastIndex 影响」那一格常驻钉着。
+ *
+ * ⚠️ **两道里只有一道被用例钉着，明写清楚（评审 MEDIUM 2）**：
+ * · **`matchesIn()` 那道** —— 由下面「scan() 不受任何遗留 lastIndex 影响」常驻钉着，删了就红；
+ * · **`hit()` 出口这道** —— **纯冗余的第二道保险，没有任何用例覆盖它**。
+ *   实测：只删掉本函数出口那行 `ENDPOINT_RE.lastIndex = 0;`，全文件 `8 passed` 全绿。
+ * 留着它是防御纵深（真正的护栏 `scan()` 不该依赖调用顺序），**但别把它读成「被钉住了」**
+ * ——声称被钉住而实际没有，本身就是本任务反复栽的那一类假断言。
  */
 function hit(s: string): boolean {
   ENDPOINT_RE.lastIndex = 0;
@@ -145,12 +151,34 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
   },
 ];
 
-function scan(): string[] {
+interface SourceFile { rel: string; src: string }
+
+/** `admin-ui/` 下所有会被扫的文件。**真实输入**，扫描那一格用它。 */
+function repoFiles(): SourceFile[] {
+  return walk("admin-ui").map((p) => ({
+    rel: p.split("\\").join("/").replace(/^admin-ui\//, ""),
+    src: readFileSync(p, "utf8"),
+  }));
+}
+
+/**
+ * 护栏的本体。
+ *
+ * ⚠️ **`files` 是参数而不是写死的 `walk()`，只为一件事：让那格常驻自检能扫到
+ * `scan()` 本身**（评审 MEDIUM 1）。第一版的自检断言的是 `matchesIn()`，
+ * 于是**把 `scan()` 换成另一种实现，那格照样绿**——实测：把 `scan()` 改回内联的
+ * `matchAll`（`matchesIn()` 与那格原样不动），在 `admin-ui/index.html` 首行种真端点、
+ * 前面放一次裸 `ENDPOINT_RE.test()` ⇒ `Tests 8 passed (8)`，**端点还躺在文件里**。
+ * 那正是本文件下面 `COVERED` 那段自己点名的**第 7 种假阳性「测的是抄件不是原件」**
+ * ——我把它写进了注释，然后那格自检本身犯了它。
+ *
+ * **注入的只是输入，不是逻辑**：`ALLOW` 过滤与 `matchesIn()` 匹配都还是这一份。
+ */
+function scan(files: readonly SourceFile[] = repoFiles()): string[] {
   const offenders: string[] = [];
-  for (const p of walk("admin-ui")) {
-    const rel = p.split("\\").join("/").replace(/^admin-ui\//, "");
-    if (ALLOW.includes(rel)) continue;
-    for (const found of matchesIn(readFileSync(p, "utf8"))) offenders.push(`${rel}: ${found}`);
+  for (const f of files) {
+    if (ALLOW.includes(f.rel)) continue;
+    for (const found of matchesIn(f.src)) offenders.push(`${f.rel}: ${found}`);
   }
   return offenders;
 }
@@ -161,37 +189,59 @@ describe("前端不许硬编码网关端点", () => {
   });
 
   /**
-   * ── **致盲通道的常驻反向自检（评审 HIGH 1）** ──────────────────────────────
+   * ── **致盲通道的常驻反向自检（评审 HIGH 1 建，MEDIUM 1 修正观测对象）** ──────
    *
-   * 被守护的性质：**`scan()` 的结果不许依赖「在它之前有没有人调过 `hit()`」。**
+   * 被守护的性质：**`scan()` 的结果不许依赖「在它之前有没有人动过 `ENDPOINT_RE.lastIndex`」。**
    *
-   * 这不是假想。实测：在 `admin-ui/index.html` 首行种一条真的硬编码端点
+   * 这不是假想。**修复之前**实测：在 `admin-ui/index.html` 首行种一条真的硬编码端点
    * `<!--"/v1/messages"-->`，
-   * · 现状 ⇒ `expected [ 'index.html: /v1/messages' ] to deeply equal []`（红，护栏有效）；
-   * · **只在 `scan()` 之前多调一次 `hit()`** ⇒ `Test Files 1 passed / Tests 7 passed`
+   * · 当时的现状 ⇒ `expected [ 'index.html: /v1/messages' ] to deeply equal []`（红，护栏有效）；
+   * · **只在 `scan()` 之前多调一次 `hit()`** ⇒ 当时是 `Tests 7 passed (7)`
    *   ——**端点还躺在文件里，而护栏恒绿。**
+   * ⚠️ **上面那两个数字是修复前那一刻的量，不是今天的判据**（评审 MEDIUM 3）：
+   * 当时全文件 7 格，今天 8 格。**今天照做（只种端点、不开致盲通道）实测是
+   * `Tests 1 failed | 7 passed (8)`** ——护栏正常工作。别拿修复前那组数去对今天的代码。
    * 成因是 `String.matchAll()` 把原正则当时的 `lastIndex` 复制进克隆，
    * 于是每个文件开头若干字符被整段跳过。
    *
-   * ⚠️ **这一格才是本条修复的重点，不是那两行 `lastIndex = 0`。**
+   * ⚠️ **这一格才是那条修复的重点，不是那两行 `lastIndex = 0`。**
    * 光把当时那条通道堵上，下一次重排用例、或在前面加一格用 `hit()` 的断言，
    * 就会把它无声地重新打开。
    *
-   * **变红条件**：把 `matchesIn()` 里那行 `ENDPOINT_RE.lastIndex = 0;` 删掉。
+   * ⚠️ **观测对象必须是 `scan()` 本身，不能是 `matchesIn()`**（评审 MEDIUM 1）：
+   * 第一版断言的是后者，于是「把 `scan()` 换成另一种实现」这条路完全没被挡住。
+   * 所以这里注入一份合成文件、**对 `scan()` 跑两遍取等**，而不是种文件、也不是调 `matchesIn()`。
+   *
+   * **变红条件（两条都实测过）**：把 `matchesIn()` 里那行 `ENDPOINT_RE.lastIndex = 0;` 删掉；
+   * 或把 `scan()` 换成不经 `matchesIn()` 的内联 `matchAll` 实现。
    */
-  it("扫描不受上一次 hit() 留下的 lastIndex 影响 —— 这条通道一旦打开，唯一的护栏会静默恒绿", () => {
-    const planted = '<!--"/v1/messages"-->';
-    // 前置条件①：这一条必须真的命中，否则下面弄不脏 `lastIndex`，整格就是空的。
-    expect(hit(COVERED[2]!.probe), "前置条件：这条样本必须命中").toBe(true);
-    // 前置条件②：**把 `lastIndex` 真的弄脏**。`hit()` 出口会归零，所以这里绕过它，
-    // 直接用 `ENDPOINT_RE.test()` —— 那正是「谁将来不走 hit()」的那条路径。
+  it("scan() 不受任何遗留 lastIndex 影响 —— 这条通道一旦打开，唯一的护栏会静默恒绿", () => {
+    // 就地写字面量探针，**不复用 `COVERED` 的下标**（评审 LOW 2）：那张表是给
+    // 「声称抓得住的写法」用的，增删条目不该改变这一格的含义。
+    const dirtier = "const url = `/v1beta/models/${model}:generateContent`;";
+    const planted: SourceFile[] = [{ rel: "__probe__.html", src: '<!--"/v1/messages"-->' }];
+
+    // 前置条件①：弄脏用的那条样本必须真的命中，否则下面弄不脏，整格是空的。
+    // **刻意用裸 `ENDPOINT_RE.test()` 而不是 `hit()`**：`hit()` 出口已经归零，
+    // 用它弄不脏——而「谁将来不走 `hit()`」正是这一格要守的那条路径（评审 LOW 1：
+    // 用例名因此说的是「任何遗留」，不是「上一次 hit()」）。
     ENDPOINT_RE.lastIndex = 0;
-    expect(ENDPOINT_RE.test(COVERED[2]!.probe), "前置条件：裸 test() 也必须命中").toBe(true);
-    expect(ENDPOINT_RE.lastIndex, "前置条件：命中之后 lastIndex 必须非零，否则弄不脏").toBeGreaterThan(
-      planted.length,
-    );
-    // 真正的断言：脏着 `lastIndex` 去扫，仍然要扫得到开头那条端点。
-    expect(matchesIn(planted), "扫描被上一次 test() 留下的 lastIndex 带偏了").toEqual(["/v1/messages"]);
+    expect(ENDPOINT_RE.test(dirtier), "前置条件：这条样本必须命中，否则弄不脏 lastIndex").toBe(true);
+    // 前置条件②：脏出来的 `lastIndex` 必须真的越过整条合成文件，否则「跳过开头」不可观测。
+    expect(
+      ENDPOINT_RE.lastIndex,
+      "前置条件：命中之后 lastIndex 必须越过整条探针文件，否则这一格证不了什么",
+    ).toBeGreaterThan(planted[0]!.src.length);
+
+    const dirty = scan(planted);
+    ENDPOINT_RE.lastIndex = 0;
+    const clean = scan(planted);
+
+    // 前置条件③：**非空锚**。少了它，`scan()` 若两遍都返回 `[]`，下面那条 `toEqual`
+    // 会空洞地通过——那就是「覆盖的状态让被测的选择不可观测」（第 5 种假阳性）。
+    expect(clean, "前置条件：种进去的那条端点本来就该被扫到").toEqual(["__probe__.html: /v1/messages"]);
+    // 真正的断言：脏着 `lastIndex` 调 `scan()`，结果必须与干净时逐字相同。
+    expect(dirty, "scan() 被遗留的 lastIndex 带偏了").toEqual(clean);
   });
 
   /**
