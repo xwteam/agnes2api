@@ -64,6 +64,13 @@ describe("四元组：env > 存储 > 内置默认值，逐字段说清是谁赢�
    * 判据是**逐字节相同**（`JSON.stringify` 比对），不是抽查几个字段：抽查漏掉的
    * 那一格正好是两份实现开始漂的地方时，这条会全绿。
    * **变红条件**：在 `loadConfig` 里补任何一条「顺手的」优先级判断。
+   *
+   * ⚠️⚠️ **夹具必须让 env 与存储在同一个字段上给出不同的值，这一行是本格判别力的
+   * 全部来源。** 变异 M3 第一次跑的时候**完整逃逸（14/14 全绿）**：当时夹具里
+   * `maxStrikes` 只有存储那一份，env 没有 ⇒ 「按存储再判一次」这条第二实现是个
+   * 空操作，两边照样逐字节相同。**那正是本项目第 1 种假阳性（夹具无冲突数据），
+   * 而它出现在专门用来抓「有没有第二份实现」的那一格上。**
+   * 加上 `MAX_STRIKES: "9"`（存储里是 4）之后 M3 才真的变红。
    */
   it("loadConfig 与 loadConfigWithProvenance 对同一组输入给出逐字节相同的 config", async () => {
     const { storage, env } = await withStored(
@@ -71,7 +78,7 @@ describe("四元组：env > 存储 > 内置默认值，逐字段说清是谁赢�
         maxStrikes: 4, agnesBaseUrl: "https://stored.example.com/v1",
         registrar: { enabled: true, primary: "moemail", moemail: { baseUrl: "https://m.example.com", apiKey: "mk" } },
       },
-      { GATEWAY_TOKEN: "gw-token-for-provenance", POOL_CACHE_TTL_MS: "0" },
+      { GATEWAY_TOKEN: "gw-token-for-provenance", POOL_CACHE_TTL_MS: "0", MAX_STRIKES: "9" },
     );
     const viaWrapper = await loadConfig(env, storage);
     const { config } = await loadConfigWithProvenance(env, storage);
@@ -79,6 +86,9 @@ describe("四元组：env > 存储 > 内置默认值，逐字段说清是谁赢�
     // 反向自检：夹具本身得真的有内容，否则上面那条在两个空对象上也是绿的。
     expect(config.registrar.enabled).toBe(true);
     expect(config.agnesBaseUrl).toBe("https://stored.example.com/v1");
+    // **冲突数据的前置条件**：存储里是 4、env 里是 9，生效值必须是 9。
+    // 这一行不成立的话，上面那条逐字节比对对「第二份实现」就完全不敏感。
+    expect(config.maxStrikes, "夹具里 env 与存储没冲突 —— 这一格对 M3 会完全无感").toBe(9);
   });
 
   /**
