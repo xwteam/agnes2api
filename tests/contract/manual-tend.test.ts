@@ -139,7 +139,14 @@ describe("护栏 1：两个副本 / 两个并发请求，只有一个真的跑�
     t += MANUAL_TEND_COOLDOWN_MS + 60_000;
     const r2 = await post(b.app);
     expect(r2.status, "第二个副本必须被存储锁拦下").toBe(409);
-    expect(await r2.json()).toMatchObject({ reason: "locked", until: NOW + TEND_LOCK_TTL_MS });
+    // ⚠️ **`until` 写手写字面量，不写 `NOW + TEND_LOCK_TTL_MS`**（评审 I5）：
+    // 那是从被测常量自己推导出来的期望值，把 TTL 改成 24 小时也照样绿（第 6 种假阳性，
+    // 实测 1816/1816 全绿）。而这个数是用户可见的——它就是面板显示的「最晚几点结束」，
+    // 也是「释放锁失败后最长停摆多久」的上界。常量本身另由
+    // `tests/unit/admin/tend-guard.test.ts` 的
+    // 「补池锁的有效期是 15 分钟这个数字本身就是策略，独立钉死」钉着，两边都是字面量
+    // ⇒ 「两边一起改」也拦得住（形态抄 roundBudgetMs 那条双锚）。
+    expect(await r2.json()).toMatchObject({ reason: "locked", until: NOW + 900_000 });
 
     // **两半都要断言**：只看状态码抓不住「409 之后又偷偷跑了一轮」。
     expect(g1.starts(), "第一个副本真的跑起来了").toBe(1);
@@ -306,6 +313,10 @@ describe("护栏 2 与 4：手动冷却 + 每日写预算闸（评审 C2 的读�
     expect(res.status).toBe(429);
     expect(await res.json()).toMatchObject({
       reason: "manual_cooldown", retryAfterMs: 60_000, remaining: MANUAL_TENDS_PER_DAY - 1,
+      // **绝对时刻与相对时长成对给**（评审 m3）：只给相对量的话，面板要显示
+      // 「几点恢复」就只能拿**客户端本地时钟**去加，时钟有偏差时两条路会给出
+      // 两个不一致的倒计时。
+      cooldownUntil: NOW + 60_000,
     });
   });
 
@@ -323,6 +334,8 @@ describe("护栏 2 与 4：手动冷却 + 每日写预算闸（评审 C2 的读�
       remaining: MANUAL_TENDS_PER_DAY - 1,
       resetAt: DAY_END,
       cooldownUntil: NOW + MANUAL_TEND_COOLDOWN_MS,
+      // 成对给（评审 m3）：面板拿相对量做倒计时、拿绝对时刻显示「几点恢复」。
+      retryAfterMs: 600_000,
     });
   });
 

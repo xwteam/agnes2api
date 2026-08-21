@@ -24,22 +24,30 @@ import { WORKER_CRON_WALL_CLOCK_MS } from "../../core/registrar/types.js";
  * 同一个限定在 `src/entry/worker.ts` 的 Cron 路径上从第一天就写着，本文件只是把它
  * 抽出来给两种运行时共用。
  *
- * ── ⚠️ 它为什么住在 `src/http/admin/`（这个位置是别扭的，别以为是随手放的）─────
+ * ── ⚠️ 它为什么住在 `src/http/admin/`：**一条约定，不是一道门禁**───────────────
  *
- * **它的两个消费者里有一个与 admin / http 毫无关系**：`src/entry/worker.ts` 的
- * `scheduled()` 与 `src/entry/node.ts` 的定时轮都 import 这个文件，而那条路上既没有
- * 请求也没有面板。按职责它更该住在 `src/core/registrar/`。
+ * **先说结论，因为上一版这段话在这里写错过一次**：**没有任何门禁拦着它进 `src/core/`。**
+ * 上一版写的是「`acquireTendLock` 做 IO，而 `src/core/` 有零 IO 门禁拦着」——
+ * **那是假的，评审实测**：真把本文件挪进 `src/core/admin/` 并改齐 10 处 import 之后，
+ * `tsc --noEmit` 干净，而 `tests/unit/source-guards.test.ts` 的
+ * 「扫描到的使用点恰好等于手写的豁免清单」**一点反应都没有**（那一组 24/24 全绿）。
+ * 那道门禁的扫描目标是**时间/随机/定时/网络/环境全局**，`storage.get/put/delete`
+ * 一个都不在内；同一个文件里还并排放着一条**正面**断言
+ * 「注入的端口不算数——deps.fetcher.fetch() / this.o.now() 正是零 IO 想要的形态」，
+ * 而 `acquireTendLock(storage, now)` 收的正是「注入端口 + 注入时刻」，
+ * **它是那道门禁祝福的形态，不是它禁止的形态。**
  *
- * **进不去的原因是一条硬约束，不是偷懒**：`acquireTendLock` / `releaseTendLock` 真的做
- * IO（`storage.get/put/delete`），而 `src/core/` 有零 IO 门禁
- *（`tests/unit/source-guards.test.ts` 的
- * 「调用点恰好等于手写的豁免清单——绕过注入 Logger 的事件永远进不了面板」那一组扫的就是
- * 这一类）。`src/adapters/` 也不合适：那一层是「隔离某个具体运行时能力」的适配器，
- * 而这里是**业务判据**（谁能开始下一轮补池），只是恰好要读写存储。
+ * **真正的理由是 `src/core/admin/` 的一条约定**（六个文件无一例外，`grep -n "^import"
+ * src/core/admin/*.ts` 可复核：没有一个 import 过任何 IO 端口，`storage` 只出现在注释里）：
+ * **「键名常量 + 窄化 + 纯判据」进 core，「真的读写存储」的那几行留在外层。**
+ * 同一批里的 `src/core/admin/tend-guard.ts` 就是范例——`MANUAL_GUARD_KEY` 与
+ * `checkManualTend()` 在 core，读写它的那两行在 `handlers/registrar.ts`。
  *
- * ⇒ **现状是在「零 IO 门禁」与「分层直觉」之间选了前者**，代价就是这个别扭的路径。
- * 真要挪，`src/core/registrar/` 之外还有一个候选是新开一层（例如 `src/services/`），
- * 但那是全仓性的分层决定，不该由一个锁文件顺手带出来。**改名成本很低，随时可以重来。**
+ * ⇒ **本文件今天违反了那条约定**：`TEND_LOCK_KEY` / `TEND_LOCK_TTL_MS` /
+ * `narrowTendLock()` 三样按约定该住 `src/core/admin/`，只有 `acquire`/`release`
+ * 该留在这里。**没拆是范围取舍，不是有什么东西拦着**——拆开要动两个入口 + wire + handler
+ * 的 import，而本任务是本期风险最高的一个。**拆分成本很低，随时可以做，
+ * 而且做完之后本段可以整个删掉。**
  */
 
 /** 补池轮次的重入锁，落在与 key 池同一个存储命名空间里（不新增依赖）。 */

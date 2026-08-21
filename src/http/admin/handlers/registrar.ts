@@ -22,9 +22,15 @@ import { acquireTendLock, releaseTendLock, type TendGate } from "../tend-lock.js
  *
  * 第 3 条护栏（确认弹窗明示消耗）在**面板**上，后端做不了；它要的那两个数字
  *（本次最多铸几把 key / 最多消耗几个临时邮箱）来自 `/admin/api/overview` 已有的
- * `pool` 与 `config` 块。⚠️ 设计 §10.2 那句文案后面还写了「YYDS 免费档活跃邮箱上限
- * 15 个；MoeMail 默认上限 30 个」——**这两个数字本仓一次都没有核实过**，
- * 是外部服务的配额，**不许照抄进面板文案或这里的响应体**（面板上的数字会被运维当成事实）。
+ * `pool` 与 `config` 块。
+ *
+ * ⚠️ **设计 §10.2 那句文案后面那两个外部配额数字（YYDS 15 / MoeMail 30）不许照抄进
+ * 面板文案或这里的响应体**，但**理由不是「本仓一次都没核实过」——那句话是我上一版写错的**
+ *（评审 m2）：P2 设计文档的邮箱通道对照表里，MoeMail 那 30 是**追溯得到出处**的
+ *（上游默认 `MAX_ACTIVE_EMAILS`，实例可用 `SITE_CONFIG.MAX_EMAILS` 覆盖，仅 EMPEROR
+ * 角色豁免）。**真正的理由更硬**：那 30 是一个**上游默认值、而且实例可覆盖**，
+ * 对任何一个自建 MoeMail 实例都可能是错的；YYDS 那 15 与账号档位绑定，同样不是常数。
+ * **把一个"当前默认值"印在面板上，运维会把它当成自己部署的事实。**
  *
  * ── 顺序有意义：先读护栏（不写）→ 抢锁 → 才写护栏 ─────────────────────────
  *
@@ -165,6 +171,10 @@ export function manualTendHandler(deps: ManualTendDeps) {
           remaining: verdict.remaining,
           resetAt: verdict.resetAt,
           retryAfterMs: verdict.retryAfterMs,
+          // **绝对时刻与相对时长成对给**（评审 m3）：面板拿相对量做倒计时、拿绝对时刻
+          // 显示「几点恢复」，绝不让客户端自己拿本地时钟去减。冷却那一支的绝对时刻是
+          // `cooldownUntil`，预算那一支的是上面那个 `resetAt`（当日 24:00）。
+          ...(verdict.reason === "manual_cooldown" ? { cooldownUntil: verdict.cooldownUntil } : {}),
         }, 429);
       }
 
@@ -228,7 +238,9 @@ export function manualTendHandler(deps: ManualTendDeps) {
         trigger: "manual",
         remaining: verdict.remaining,
         resetAt: verdict.resetAt,
-        cooldownUntil: verdict.next.cooldownUntil,
+        // 成对给，理由见 `ManualTendVerdict` 上面那段（评审 m3）。
+        cooldownUntil: verdict.cooldownUntil,
+        retryAfterMs: verdict.retryAfterMs,
       }, 202);
     } finally {
       // 任何一条提前返回（429 / 409 / 抛错）都要把守卫还回去，否则这个副本上的

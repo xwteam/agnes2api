@@ -3,6 +3,8 @@ import {
   MANUAL_GUARD_KEY, MANUAL_TEND_COOLDOWN_MS, MANUAL_TENDS_PER_DAY,
   checkManualTend, dayEndsAt, dayIndex, narrowManualGuard, type ManualGuard,
 } from "../../../src/core/admin/tend-guard.js";
+import { TEND_LOCK_KEY, TEND_LOCK_TTL_MS } from "../../../src/http/admin/tend-lock.js";
+import { TEND_HISTORY_KEY } from "../../../src/core/admin/tend-history.js";
 
 /** 某一天的 UTC 零点（day 序号 20000 = 2024-10-04），加上一点偏移当"上午"。 */
 const DAY = 86_400_000;
@@ -22,12 +24,35 @@ describe("手动补池护栏的两个数字本身就是策略，独立钉死", (
   });
 
   /**
-   * **键名逐字钉死。** 它不带 TTL、要长期驻留在存储里，清理路径（手动删键）写进了
-   * 五语言 REGISTRAR.md——改名会让文档教的那条命令删掉一把不存在的键，
-   * 而真正的那把继续挡着运维。
+   * **三把键的键名逐字钉死，一把都不许漏。**
+   *
+   * 它们都不带 TTL、要长期驻留在存储里，清理路径（手动删键）写进了五语言 REGISTRAR.md
+   * ——改名会让文档教的那条 `wrangler kv key delete` 删掉一把不存在的键，而真正的那把
+   * 继续挡着运维。
+   *
+   * ⚠️ **`TEND_LOCK_KEY` 那一行是评审 I4 补的，成因是本期第七次同款**：三把键，
+   * `MANUAL_GUARD_KEY` 与 `TEND_HISTORY_KEY` 都加了锚，**第三把的镜像另一半留着**。
+   * 实测：把 `TEND_LOCK_KEY` 改成 `"registrar_tend_lock_RENAMED"` ⇒ **1816/1816 全绿**。
+   * 而这一把恰恰是**两种运行时的 Cron 与面板三处共用**的那一把。
    */
-  it("护栏键名是 registrar_manual_guard", () => {
+  it("三把键的键名逐字钉死：护栏键 / 补池锁 / 补池历史", () => {
     expect(MANUAL_GUARD_KEY).toBe("registrar_manual_guard");
+    expect(TEND_LOCK_KEY).toBe("registrar_tend_lock");
+    expect(TEND_HISTORY_KEY).toBe("tend:history");
+  });
+
+  /**
+   * **锁的有效期是用户可见的**：它进 `409` 响应体的 `until`（面板显示「最晚几点结束」），
+   * 也是「释放锁失败之后最长停摆多久」的上界，五语言 REGISTRAR.md 写着 15 分钟。
+   *
+   * ⚠️ **评审 I5：这个数往大改可以全仓逃逸。** 改成 `86_400_000`（24 小时）⇒
+   * **1816/1816 全绿**——唯一那个观测点当时写的是 `until: NOW + TEND_LOCK_TTL_MS`，
+   * **期望值从被测对象自己推导**（第 6 种假阳性）。
+   * 修法照 `roundBudgetMs` 那条：**手写字面量 + 常量本身也钉一次**，
+   * 于是「改常量」与「两边一起改」都拦得住。
+   */
+  it("补池锁的有效期是 15 分钟这个数字本身就是策略，独立钉死", () => {
+    expect(TEND_LOCK_TTL_MS).toBe(900_000);
   });
 });
 
@@ -77,6 +102,37 @@ describe("checkManualTend", () => {
   const fresh = (over: Partial<ManualGuard> = {}): ManualGuard =>
     ({ day: dayIndex(MORNING), used: 1, cooldownUntil: 0, ...over });
 
+  /**
+   * ⚠️ **评审 I3：`remaining` 的 ok 分支只在一个数据点（`used = 0`）上被观测过。**
+   * 实测：把 `remaining: remaining - 1` 改成常量 `MANUAL_TENDS_PER_DAY - 1` ⇒ **42 格全绿**
+   *（其余三处 `remaining` 断言都在 429 分支上，表达式不同，约束不到 ok 分支）。
+   * 这是第 5 种假阳性——**而这个字段正是第 3 条护栏「消耗明示」的载体**：
+   * 错误实现下面板会永远显示「还剩 23 次」，恰恰是「让运维毫不知情地撞墙」本身。
+   *
+   * ⚠️ **期望值写手写字面量 `18`，不写 `MANUAL_TENDS_PER_DAY - 6`**：后者从被测常量
+   * 推导，把 K 改成 8 也照样绿（第 6 种假阳性，本仓 `ADMIN_TOKEN_MIN_LENGTH` 栽过一次）。
+   */
+  it("ok 分支的 remaining 真的跟着 used 走：用过 5 次之后还剩 18 次", () => {
+    const v = checkManualTend(fresh({ used: 5, cooldownUntil: 0 }), MORNING);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.remaining, "24 − 5 − 1（含正在处理的这一次）").toBe(18);
+    expect(v.next.used).toBe(6);
+  });
+
+  /**
+   * **绝对时刻与相对时长成对给**（评审 m3）。放行那一支两者说的是同一件事，
+   * 相对量恒等于冷却本身——**显式给出比让面板自己拿本地时钟去减更不容易错**。
+   */
+  it("放行时同时给绝对的 cooldownUntil 与相对的 retryAfterMs，两者说的是同一件事", () => {
+    const v = checkManualTend(null, MORNING);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.cooldownUntil).toBe(MORNING + 600_000);
+    expect(v.retryAfterMs, "手写字面量：10 分钟").toBe(600_000);
+    expect(v.cooldownUntil - MORNING, "两种基准必须自洽").toBe(v.retryAfterMs);
+  });
+
   it("第一次点：放行，`next` 写下今天的 day、used=1、冷却到 10 分钟后", () => {
     const v = checkManualTend(null, MORNING);
     expect(v.ok).toBe(true);
@@ -95,6 +151,10 @@ describe("checkManualTend", () => {
     if (inside.ok) return;
     expect(inside.reason).toBe("manual_cooldown");
     expect(inside.retryAfterMs, "面板要能说「还差多久」，不是只说「不行」").toBe(1);
+    // 成对给（评审 m3）：这一支原来只有相对量，面板要显示「几点恢复」就只能拿本地时钟去减。
+    if (inside.reason === "manual_cooldown") {
+      expect(inside.cooldownUntil).toBe(MORNING + MANUAL_TEND_COOLDOWN_MS);
+    }
     // 边界：`now === cooldownUntil` 就是到点了，不许再多挡一毫秒。
     expect(checkManualTend(cur, MORNING + MANUAL_TEND_COOLDOWN_MS).ok).toBe(true);
   });

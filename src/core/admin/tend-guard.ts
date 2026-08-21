@@ -14,9 +14,17 @@
  * · **读法 B（本文件）**：一把键装 `{ day, used, cooldownUntil }`，
  *   **两个字段各管各的、互不借用**：`day` 判跨天、`cooldownUntil` 判冷却。
  *
- * 读法 A 的错处是让 TTL 去兼任 `day` 的职责。**这把键一律不传 `expiresAt`**
- *（见 `MANUAL_GUARD_KEY`），于是读法 A 在结构上不存在——**把缺陷做成不可表达，
- * 而不是做成可检测**。
+ * 读法 A 的错处是让 TTL 去兼任 `day` 的职责。**这把键一律不传 `expiresAt`**（见
+ * `MANUAL_GUARD_KEY`）。
+ *
+ * ⚠️ **这里原来写着「于是读法 A 在结构上不存在——把缺陷做成不可表达」，那是假的，
+ * 评审实证**：`Storage.put` 的第三个参数是**可选**的，读法 A 距离现状只有一个实参
+ *（`put(key, guard, guard.cooldownUntil)`），`tsc` 全绿、写起来还很自然。
+ * **做成的是「可检测，且检测点唯一」，不是「不可表达」**——唯一那个检测点是
+ * `tests/contract/manual-tend.test.ts` 的
+ * 「点一次 → 等 11 分钟（假时钟）→ 再点：used 必须是 2 不是 1」
+ *（变异 M4 实测 2 红，而第一版计划给的三条判据对它全部无感）。
+ * **「唯一」这件事本身是个风险**：删掉那一格，读法 A 就重新变成一个静默缺陷。
  *
  * ── 有界性挂在哪根轴上（换一根轴自检）────────────────────────────────────
  *
@@ -125,15 +133,46 @@ export function narrowManualGuard(raw: unknown): ManualGuard | null {
  * ⚠️ **不许只在耗尽那一支给 `remaining`**：面板要**如实显示还剩几次**，
  * 等到耗尽才说等于让运维在毫不知情的情况下撞上一堵墙。
  */
+/**
+ * ⚠️ **「什么时候能再点」一律成对给：一个绝对时刻 + 一个相对时长。**
+ *
+ * 评审 m3 抓到的不对称：`202` 只给绝对的 `cooldownUntil`、`429 manual_cooldown` 只给
+ * 相对的 `retryAfterMs` ⇒ **同一个倒计时两种时钟基准**，而面板要拿本地时钟去减那个绝对
+ * 时刻才能显示倒计时——客户端时钟有偏差时，两条路会给出两个不一致的答案。
+ *
+ * 口径定死：**相对量用来做倒计时（免疫客户端时钟偏差），绝对时刻用来显示「几点恢复」
+ *（与面板上其余服务端时间戳同一个基准）。绝不让客户端自己拿本地时钟去减。**
+ * 所以 `ok` 那一支也带 `retryAfterMs`（值恒等于 `MANUAL_TEND_COOLDOWN_MS`，显式给出
+ * 比让调用方自己推更不容易错），`manual_cooldown` 那一支也带 `cooldownUntil`。
+ * `write_budget_exhausted` 的绝对时刻是 `resetAt`（当日 24:00），本来就在。
+ */
 export type ManualTendVerdict =
-  | { ok: true; next: ManualGuard; remaining: number; resetAt: number }
+  | {
+    ok: true;
+    next: ManualGuard;
+    remaining: number;
+    resetAt: number;
+    /** 冷却到期的**绝对**时刻，等于 `next.cooldownUntil`。 */
+    cooldownUntil: number;
+    /** 同一件事的**相对**表达，恒等于 `MANUAL_TEND_COOLDOWN_MS`。 */
+    retryAfterMs: number;
+  }
   | {
     ok: false;
     /** 机器可读判别字段。面板靠它选一句五语言文案，靠解析 `message` 的中文是不行的。 */
-    reason: "write_budget_exhausted" | "manual_cooldown";
+    reason: "write_budget_exhausted";
     remaining: number;
     resetAt: number;
     retryAfterMs: number;
+  }
+  | {
+    ok: false;
+    reason: "manual_cooldown";
+    remaining: number;
+    resetAt: number;
+    retryAfterMs: number;
+    /** 冷却到期的绝对时刻。与 `retryAfterMs` 是同一件事的两种基准，见上面那段。 */
+    cooldownUntil: number;
   };
 
 /**
@@ -169,12 +208,16 @@ export function checkManualTend(cur: ManualGuard | null, now: number): ManualTen
     return {
       ok: false, reason: "manual_cooldown", remaining, resetAt,
       retryAfterMs: cur.cooldownUntil - now,
+      cooldownUntil: cur.cooldownUntil,
     };
   }
+  const cooldownUntil = now + MANUAL_TEND_COOLDOWN_MS;
   return {
     ok: true,
-    next: { day: today, used: used + 1, cooldownUntil: now + MANUAL_TEND_COOLDOWN_MS },
+    next: { day: today, used: used + 1, cooldownUntil },
     remaining: remaining - 1,
     resetAt,
+    cooldownUntil,
+    retryAfterMs: MANUAL_TEND_COOLDOWN_MS,
   };
 }
