@@ -1,6 +1,8 @@
 import type { Context } from "hono";
 import type { RuntimeInfo } from "../../../ports/runtime.js";
 import type { StorageHealth } from "../../../core/storage-health.js";
+import { PROTOCOLS } from "../../../core/admin/protocol-catalog.js";
+import { USAGE_FLUSH_MIN_INTERVAL_MS } from "../../../core/admin/usage-stats.js";
 
 /**
  * **双运行时差异的唯一出口**（设计文档 §11）。面板启动时调一次，
@@ -14,6 +16,17 @@ export function capabilitiesHandler(deps: {
   runtime: RuntimeInfo;
   storageHealth: StorageHealth;
   version: string;
+  /**
+   * Tier-2 到底有没有在记账（P3d Task 3）。
+   *
+   * ⚠️ **它必须来自「这个 app 到底建没建 sink」，不许来自 `configHolder` 现读的
+   * `usageStatsEnabled`。** 两者在一种真实情形下会分叉：那个开关是**建 app 时读一次**的
+   *（见 `GatewayConfig.usageStatsEnabled`），有人往存储里把它改成 true 之后，
+   * 现读会说 true 而这个 isolate 根本没有 sink ⇒ 面板画一张空图表并把它当成
+   * 「这段时间没有流量」，那是三态混一（全局约束 9）。
+   * `createApp` 因此传的是 `deps.usageSink !== undefined`——**同一个事实的同一个来源**。
+   */
+  usageStatsEnabled: boolean;
 }) {
   return (c: Context) => {
     // `cf` 只在 Cloudflare 边缘存在。**取不到就如实 null**，不伪造一个 "unknown"。
@@ -37,8 +50,25 @@ export function capabilitiesHandler(deps: {
         processLog: false,
       },
       stats: {
-        /** Tier-2 时间序列是 P3d。**这里如实报 false**，面板据此渲染说明卡而不是空图表。 */
-        tier2Enabled: false,
+        /** 现在是真值了（P3d Task 3）。为假时面板渲染说明卡而不是空图表（设计 §10.6）。 */
+        tier2Enabled: deps.usageStatsEnabled,
+        /**
+         * 落盘最小间隔，**给面板用来说清「未落盘的尾巴最长多久」**。
+         * 面板不许把这个数写死：它是后端常量，写死就会在改常量的那天变成一句假话
+         *（P3d 计划全局约束 10：诚实标记由后端字段驱动）。
+         */
+        flushIntervalMs: USAGE_FLUSH_MIN_INTERVAL_MS,
+        /**
+         * 哪几条协议的 token 是网关看得到的（订正 F1）。
+         * **不许在前端硬编码这个列表**——它由协议目录的 `usagePath` 是否为 null 决定，
+         * 而那一格记的是「网关这条路径解不解析响应体」（`expectJson`），
+         * 不是「这条协议有没有 usage」。
+         *
+         * ⚠️ **形状是裸 `string[]`（协议 id 的数组），只从这一个出口发。**
+         * `GET /admin/api/usage` **不再重复带它**——同一份知识两个出口，
+         * 下一个任务就要面对「读哪一个」这个不该存在的问题。
+         */
+        tokensCoverage: PROTOCOLS.filter((p) => p.usagePath !== null).map((p) => p.id),
       },
     });
   };

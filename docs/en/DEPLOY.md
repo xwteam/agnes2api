@@ -20,6 +20,7 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 | `COOLDOWN_STRIKE_MS` | no | `1800000` | Cooldown duration applied once a key reaches `MAX_STRIKES`. The key recovers automatically when it expires. |
 | `POOL_CACHE_TTL_MS` | no | `60000` | Each isolate/process keeps an in-memory snapshot of the key pool; this is how long that snapshot lives. `0` disables the cache. **KV reads are independent of request count** — they depend only on the refresh rate; see the quota section below for the formula. Cost: cooldowns/evictions decided by another isolate take up to **this value + about 60 seconds** to become visible here (the extra 60s is KV's default edge-cache `cacheTtl`) — with the default 60000 that ceiling is about **120 seconds**. And it isn't just "seen late": any scheduling write made against a stale snapshot overwrites the whole record, **erasing** whatever `evicted` / `cooldownUntil` another isolate had just written within that window — that decision has to happen all over again. |
 | `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted. `0` persists it on every successful request. It is a display-only field that no scheduling logic reads; writing it per request would burn the free tier's 1,000 writes/day and leave no budget for cooldowns and evictions. Cost: "last used" is only accurate to within this interval. The same interval also governs the panel's usage counters (request count / success rate). **After you shrink `stats` by hand in storage (zeroing it, say), the panel may briefly show the reset value and then flip back to the old one**: the snapshot picks up the zeroed record after one TTL, but a running instance remembers its own persisted baseline and writes it back on its next real persist. They agree for good once that instance is recycled, at the latest. P3c will offer a proper reset path that goes through the repo. |
+| `USAGE_STATS_ENABLED` | no | `false` | Tier-2 time series behind the panel's "Usage" section (by day / hour / model / protocol). **The check is a literal `true`**; `1` or `yes` count as off. **Off by default, and "off" is zero-cost**: no in-memory accumulator is created and not a single storage write happens. Once on, each instance writes at most 13 puts per day (about 10.4% of the write quota; 104 per day across 8 isolates); once exhausted nothing more is written that day and it recovers on the next UTC day. The unflushed tail is at most 2 hours. See the Tier-2 part of "Quota accounting" below. Read once when the app is built: changing it takes effect after a container restart / isolate recycle. |
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
 
@@ -171,6 +172,59 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   320 as a ceiling.
   The **`delete` bucket** is counted separately: the tend lock releases 48 times a day, and
   that bucket is nearly idle today.
+
+- **Write side of Tier-2 usage statistics (new in P3d, `USAGE_STATS_ENABLED`, **off by default**)
+  — it is the only new writer this phase.**
+
+  **While it is off, this line contributes exactly zero writes**: no in-memory accumulator is
+  created and not a single `storage.put` happens. That is not a minor saving: it competes with
+  the 80/day of the key pool above for the **same** bucket of 1,000 writes per day, and letting
+  statistics eat the write quota also kills the key pool's cooldown and eviction bookkeeping.
+
+  Once on: **at most 13 puts per day per instance**, which at 8 concurrent isolates is
+  `13 × 8` = **104** per day, roughly 10.4% of the write quota. Totals for four scenarios:
+
+  | Scenario | puts/day | share of the write quota |
+  |---|---|---|
+  | **Tier-2 off (default)**, registrar off | **176** | 17.6% |
+  | Tier-2 on, registrar off | **280** | 28.0% |
+  | Tier-2 on, registrar on and every round producing failure events | **424** | 42.4% |
+  | Previous row + someone clicking "Tend now" every 10 minutes | **856** | 85.6% |
+
+  ⚠️ **The worst row has no headroom, and like the three columns above this table is not an
+  upper bound.** Read it this way: **the 104 from Tier-2 is the only item in this table with a
+  hard gate** (point ③ below); none of the others has one.
+
+  Those 13 come from the following, and all four points matter:
+
+  ① **12 flushes + 1.** The minimum flush interval is **2 hours**, so a full day holds at most
+     12 of them; the `+1` is not slack, it is the fact that **the flush that crosses UTC
+     midnight writes two keys** (one for the previous day, one for the current day). With 12,
+     exactly one write per 24 hours would be refused by the budget — no data is lost (that day
+     stays marked as pending and is picked up on the next round), but the "at most 2 hours"
+     promise in point ② would become 4 hours.
+
+  ② **The unflushed tail is at most 2 hours, and its two symptoms are one fact, not two**: the
+     "today" figures on the panel can be up to 2 hours stale, and **any instance that lives
+     less than 2 hours** (a short-lived Worker isolate, a fast Docker restart) **loses the
+     counts it accumulated along with itself**. The clock starts when the instance starts, so
+     an isolate that lived 10 minutes stores nothing at all. This is one of the reasons usage
+     figures carry an "≈" throughout; it is not a defect.
+
+  ③ **The 13 puts per day per instance is a hard gate**: once exhausted, nothing more is
+     written that day, it **recovers automatically on the next UTC day**, and the days it owed
+     are written out after recovery (the in-memory accumulator is never cleared).
+     ⚠️ This gate **only applies inside a single instance** — 8 isolates means 8 independent
+     allowances of 13, exactly like the events gate above, with no cross-instance coordination.
+
+  ④ **Both runtimes behave identically; no runtime sniffing is done.** The flush interval is a
+     backend constant: same value on both sides, same code path (the request tail **waits for
+     the write to finish**, it is not a background task — a background task on Workers gets
+     silently truncated when the isolate stops after the response returns). The design document
+     mentions a `USAGE_FLUSH_INTERVAL_MS` environment variable; **it is not wired today and
+     setting it has no effect whatsoever**. Opening it up would require the 13-per-day gate to
+     scale with the interval, otherwise shrinking the interval merely exhausts the budget
+     earlier and writes nothing for the rest of the day — worse than the default.
 
   ⚠️ **All three items are billed per round, and "rounds per day" has two independent axes.
   Do not conflate them:**

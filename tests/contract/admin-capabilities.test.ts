@@ -78,11 +78,18 @@ describe("GET /admin/api/capabilities", () => {
   });
 
   /**
-   * `logs.processLog` 与 `stats.tier2Enabled` 是「本期如实报没有」的承诺。
-   * **断言字面量 `false`**，不是 `toBeFalsy()`：将来打开时这两条会红，
+   * `logs.processLog` 是「本期如实报没有」的承诺。
+   * **断言字面量 `false`**，不是 `toBeFalsy()`：将来打开时这条会红，
    * 逼人来确认面板那边也跟着改了。
+   *
+   * ⚠️ **`stats.tier2Enabled` 从 P3d Task 3 起不再是那一类了，这段说明跟着改**：
+   * 它现在是**真值**，来源是「这个 app 建没建用量 sink」。这里之所以还是 `false`，
+   * 是因为 `makeApp` 默认不传 `usageSink`（= Tier-2 关着，与生产默认值一致）
+   * ——**不是因为它被写死了**。写死那一条由 `tests/contract/usage-tier2.test.ts` 的
+   * 「capabilities.stats.tier2Enabled 两个方向都跟着 USAGE_STATS_ENABLED 走……」
+   * 双向钉着（本任务变异实测：改回写死 `false` ⇒ 那一格红，这一格照绿）。
    */
-  it("logs.processLog 与 stats.tier2Enabled 字面量都是 false", async () => {
+  it("logs.processLog 字面量是 false；tier2Enabled 在默认夹具（没接 sink）下如实报 false", async () => {
     const { app } = await makeApp();
     const body = await getCapabilities(app);
     expect(body.logs.processLog).toBe(false);
