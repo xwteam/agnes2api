@@ -173,6 +173,26 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   The **`delete` bucket** is counted separately: the tend lock releases 48 times a day, and
   that bucket is nearly idle today.
 
+  ⚠️ **All three items are billed per round, and "rounds per day" has two independent axes.
+  Do not conflate them:**
+    - **Frequency axis**: tightening the tend frequency scales all three **proportionally**
+      (that is the sentence above). **On Worker the knob is the Cron in `wrangler.toml`**;
+      on Node it is `TEND_INTERVAL_MS`. `TEND_INTERVAL_MS` is **consumed only by the Node
+      scheduler** — changing it on Worker adds **not a single round**. Conversely the
+      `registrar_tend_lock` put/delete pair **exists in both runtimes** (as of P3c Task 5 the
+      Node side takes the same lock — an in-process boolean is worthless when several
+      containers share one volume).
+    - **Threshold axis**: when `TEND_INTERVAL_MS` drops below
+      `MINT_BATCH × CODE_TIMEOUT_MS × channel count`, the event item **jumps from "0 on a
+      healthy round" to "1 every round"** — that jump is independent of frequency and is
+      caused by the per-round configuration warning described above.
+  **The worst case is both axes at once.** This section is about Worker + the free KV tier,
+  so here is an example that is **perfectly legal in that shape**: change the Cron to
+  `*/5 * * * *` ⇒ 288 rounds/day, each producing events ⇒
+  `80 + 96 + 288 + 288 + 288 = 1,040` writes/day — **already past the write quota**.
+  The three rows above all assume the default Cron (one round every 30 minutes); **do not
+  read them as constants independent of the frequency**.
+
 - **Write side of Tier-2 usage statistics (new in P3d, `USAGE_STATS_ENABLED`, **off by default**)
   — it is the only new writer this phase.**
 
@@ -217,34 +237,35 @@ its writes grow with request count, so the budget is "so many per day", not "so 
      ⚠️ This gate **only applies inside a single instance** — 8 isolates means 8 independent
      allowances of 13, exactly like the events gate above, with no cross-instance coordination.
 
-  ④ **Both runtimes behave identically; no runtime sniffing is done.** The flush interval is a
-     backend constant: same value on both sides, same code path (the request tail **waits for
+  ④ **Both runtimes behave identically; no runtime sniffing is done.** The **default** flush
+     interval is the same on both sides, along the same code path (the request tail **waits for
      the write to finish**, it is not a background task — a background task on Workers gets
-     silently truncated when the isolate stops after the response returns). The design document
-     mentions a `USAGE_FLUSH_INTERVAL_MS` environment variable; **it is not wired today and
-     setting it has no effect whatsoever**. Opening it up would require the 13-per-day gate to
-     scale with the interval, otherwise shrinking the interval merely exhausts the budget
-     earlier and writes nothing for the rest of the day — worse than the default.
+     silently truncated when the isolate stops after the response returns).
+     `USAGE_FLUSH_INTERVAL_MS` can override it, and **the criterion is "does your storage have a
+     write quota", not "which runtime are you on"**:
+     · **File storage (Docker) has no write quota** ⇒ any positive integer is accepted, **and
+       there is no longer a per-day write budget**; the interval itself is the bound. Turning it
+       back down to 300000 (5 minutes) is entirely reasonable.
+     · **KV (Workers) has a write quota** ⇒ the budget stays at 13 per instance per day, and the
+       interval must satisfy `interval × (13 − 1) >= one day`. Violating it **fails at startup**
+       and tells you the smallest usable value (7200000). Refusing silently is deliberate: with
+       such a value the write volume still looks fine **while the data goes wrong from midday
+       onward**, which is harder to notice than a failure to start.
 
-  ⚠️ **All three items are billed per round, and "rounds per day" has two independent axes.
-  Do not conflate them:**
-    - **Frequency axis**: tightening the tend frequency scales all three **proportionally**
-      (that is the sentence above). **On Worker the knob is the Cron in `wrangler.toml`**;
-      on Node it is `TEND_INTERVAL_MS`. `TEND_INTERVAL_MS` is **consumed only by the Node
-      scheduler** — changing it on Worker adds **not a single round**. Conversely the
-      `registrar_tend_lock` put/delete pair **exists in both runtimes** (as of P3c Task 5 the
-      Node side takes the same lock — an in-process boolean is worthless when several
-      containers share one volume).
-    - **Threshold axis**: when `TEND_INTERVAL_MS` drops below
-      `MINT_BATCH × CODE_TIMEOUT_MS × channel count`, the event item **jumps from "0 on a
-      healthy round" to "1 every round"** — that jump is independent of frequency and is
-      caused by the per-round configuration warning described above.
-  **The worst case is both axes at once.** This section is about Worker + the free KV tier,
-  so here is an example that is **perfectly legal in that shape**: change the Cron to
-  `*/5 * * * *` ⇒ 288 rounds/day, each producing events ⇒
-  `80 + 96 + 288 + 288 + 288 = 1,040` writes/day — **already past the write quota**.
-  The three rows above all assume the default Cron (one round every 30 minutes); **do not
-  read them as constants independent of the frequency**.
+  ⑤ **At most 2 instances' data survives for a given day; anything beyond that overwrites.**
+     Usage shards are stored as `usage:<UTC day>:<slot>` and **there are only 2 slots**;
+     each instance hashes into one stably by its shard id. ⇒ the 104/day computed above for 8
+     isolates is a **write volume**, not "all 8 sets of data were kept" — within a slot it is
+     last-write-wins. **This is one of the reasons usage figures carry an "≈"** (the other is
+     the tail in point ②). It does not affect the write quota, only how complete the numbers
+     are; that is exactly what the "≈" means.
+
+  ⑥ **The three media endpoints (image generation, video creation, video polling) are not
+     counted.** They burn the **same** pool of upstream keys as the four chat protocols but
+     record nothing ⇒ the panel's "total requests" is systematically lower than the real
+     forwarded volume. This is a known boundary of this phase, not a defect; judge key
+     consumption from the key-pool side instead.
+
 - **Events board reads (post-C4/C4b-fix figures, more conservative than the earlier draft)**:
   polling no longer depends on an index, so the number of candidate keys is **hard-bounded** —
   no matter how stale `after` is or how many days the deployment has been running, a single
