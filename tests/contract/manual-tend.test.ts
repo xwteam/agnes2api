@@ -668,4 +668,96 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
     await Promise.all(waited);
     expect(st.lists, "手动补池这条路上出现了 list()").toBe(0);
   });
+
+  /**
+   * ⚠️⚠️ **五语言 DEPLOY.md 里「点一次立即补池 = 固定 3 次 put + 1 次 delete」那个数字的锚
+   *（全分支评审 I4）。**
+   *
+   * 在这一格之前，**全仓没有任何一格数过一次成功手动补池的 put**：
+   * `manual-tend.test.ts` 里三格数的都是被拒绝的路径（都该是 0），唯一跑成功路径的那格
+   * 是 `toBeGreaterThan(before.puts)` —— **它对 3、4、13 一视同仁**。而配额账开头那句
+   * 「下面每个数字都是一次实测读数」把整份清单声明成了实测结果。
+   *
+   * **可复现的静默失效**（评审给的、我照着走了一遍）：在 `runManualTendRound` 里加任意
+   * 一条 `deps.logger.log(...)`，或者把 `wire.ts` 里 `if (r.minted < r.attempted)` 那条
+   * 判断删掉 ⇒ 单次点击从 3 次 put 变 4 次，而**全量用例一条不红**，五份文档里那个 3
+   * 静默变成假的。这一格就是补上的那个锚。
+   *
+   * ⚠️⚠️ **本格的 `env` 与本 describe 里其余几格不同，这不是疏忽：**
+   * 那几格用 `CODE_TIMEOUT_MS = WORKER_ROUND_BUDGET_MS + 1` 换「零网络」，
+   * 而那个取值同时踩中**两条逐轮配置警告**（`registrar.interval_shorter_than_worst_round`
+   * 与 `registrar.attempt_exceeds_worker_budget`，`buildTendDeps` 里打）。
+   * **实测**：拿那份 env 量到的是 **4 次 put**（多出来的第 4 次是 `event:` 分片，
+   * 由 `deps.flush()` 无条件落盘），它量的是**一台配错了的部署**，不是配额账说的那个 3。
+   * 本格改用「池子已经到 `targetKeys`」拿零网络：`tendOnce` 在 `need <= 0` 上早退，
+   * 一次尝试都不开始 ⇒ 既没有网络，也没有事件。**下面第 ② 段把那台配错的部署当对照组
+   * 一起量**，证明这个 3 不是一个对多写一次无感的常数。
+   */
+  it("成功一轮的确切代价：3 次 put（抢锁 + 护栏键 + tend:history）+ 1 次 delete，手写字面量", async () => {
+    const SEED = "sk-manual-tend-cost-anchor-key";
+    /** 池子已经满了 ⇒ `need <= 0` ⇒ 零尝试、零网络、零事件。 */
+    async function clickOnce(extra: Record<string, string> = {}) {
+      const st = new CountingStorage(new MemoryStorage());
+      // 先把 key 与索引建好：空池 + 无索引会让 `repo.all()` 回落到一次 list，
+      // 那是空池兜底这条既有路径，不属于被测的这一次点击。
+      const seed = new KeyPoolRepo(st, { now: () => Date.now(), logger: NULL_LOGGER, cacheTtlMs: 0 });
+      await seed.add(SEED);
+      const env: Record<string, string | undefined> = {
+        GATEWAY_TOKEN: "gateway-token-for-manual-tend-fixture",
+        ADMIN_TOKEN: TEST_ADMIN_TOKEN,
+        REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k",
+        // 目标 1、池里 1 ⇒ 缺口 0 ⇒ 第一道零网络保险。
+        TARGET_KEYS: "1",
+        // 第二道保险（与本文件其余几格同一条理由）：保留 TLD `.invalid` 永不解析。
+        YYDS_BASE_URL: "https://yyds.invalid",
+        ...extra,
+      };
+      const { app } = await buildApp(env, st, workerRuntime());
+      const before = { puts: st.puts, deletes: st.deletes, lists: st.lists };
+      const waited: Array<Promise<unknown>> = [];
+      const ctx = { waitUntil: (p: Promise<unknown>) => { waited.push(p); } };
+      const res = await app.request(
+        "/admin/api/registrar/tend", { method: "POST", headers: withKey },
+        undefined, ctx as unknown as ExecutionContext,
+      );
+      await Promise.all(waited);
+      return {
+        st, res,
+        puts: st.puts - before.puts,
+        deletes: st.deletes - before.deletes,
+        lists: st.lists - before.lists,
+      };
+    }
+
+    // ── ① 正常配置下的一次成功点击 ─────────────────────────────────────────
+    const one = await clickOnce();
+    expect(one.res.status, "没走到成功那一支 —— 那下面数的是一条被拒绝的路径").toBe(202);
+
+    // **先证明这一轮真的跑完了**，否则「3」可能是某条提前返回的路径的读数。
+    const history = await one.st.get<TendRecord[]>(TEND_HISTORY_KEY);
+    expect(history?.length, "这一轮压根没进补池历史").toBe(1);
+    expect(history?.[0]?.trigger).toBe("manual");
+    expect(history?.[0]?.skipped, "注册机被判成关着了 —— 那是另一条路径").toBe(false);
+
+    // **确切的数字，手写字面量**（不写成 `FIXED_PUTS` 这类从被测对象推导的常量）。
+    expect(one.puts, "一次成功点击的 put 次数与五语言 DEPLOY.md 的配额账对不上了").toBe(3);
+    expect(one.deletes, "释放锁那一次 delete 没发生（或者多发生了几次）").toBe(1);
+    expect(one.lists, "红线 1：这条路上不许碰 list 桶").toBe(0);
+
+    // **那 3 次分别落在哪三把键上**：只数总数的话，把 `tend:history` 换成别的键
+    // 照样是 3。锁那把在 `finally` 里被删掉，所以它的痕迹是「已经不在了」。
+    expect(await one.st.get(MANUAL_GUARD_KEY), "护栏键那一次 put 没发生").not.toBeNull();
+    expect(await one.st.get(TEND_LOCK_KEY), "跑完之后锁必须被释放").toBeNull();
+
+    // ── ② 对照组：同一次点击，配置换成会打逐轮警告的那一份 ⇒ 4 次 put ──────
+    // 这一段是这个 3 的**判别力来源**：没有它，`toBe(3)` 证明不了计数器对
+    // 「多落一次盘」是敏感的（本仓登记过的「覆盖态让被测的选择不可观测」）。
+    const warned = await clickOnce({ CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1) });
+    expect(warned.res.status).toBe(202);
+    expect(
+      warned.puts,
+      "多一条事件却没多一次 put —— 那上面那个 3 对「多写一次」是无感的",
+    ).toBe(4);
+    expect(warned.deletes, "对照组的 delete 应当还是那一次释放锁").toBe(1);
+  });
 });

@@ -1066,9 +1066,23 @@ export class KeyPoolRepo {
   /**
    * 索引与实际记录对账，**以 `list()` 的结果为准**。
    *
-   * 这是全系统除「索引缺失回落」之外唯一用 `list()` 的地方，且不在热路径上：
-   * 两个入口的补池调度各在开头调一次（Worker Cron 每 30 分钟 ⇒ 48 次/天，
-   * 占免费档 list 配额的 4.8%）。
+   * 这是全系统除「索引缺失回落」之外唯一用 `list()` 的地方，且不在热路径上。
+   *
+   * **今天调用它的一共三处**（全分支评审 I2 重数出来的，原来这里写的是
+   * 「两个入口的补池调度各在开头调一次」，**漏了第三处**）：
+   * · `src/entry/node.ts` —— Node 调度器每一轮开头；
+   * · `src/entry/worker.ts` —— Worker Cron 每一轮开头（每 30 分钟 ⇒ 48 次/天，
+   *   占免费档 list 配额的 4.8%）；
+   * · `src/core/registrar/tender.ts` 的 `reconcileAfterMint()` —— **那一轮真的铸出了 key
+   *   才走**。它本身是 P3b 就有的，但 P3c 把 `POST /admin/api/registrar/tend` 接上了
+   *   同一条路 ⇒ 它从「定时任务的成本」变成了**一次点击的成本**，上界是
+   *   `MANUAL_TENDS_PER_DAY` = 24 次/天。五语言 DEPLOY.md 的 list 消费者清单
+   *   同一批已从「三处」改成「四处」并点名面板。
+   *
+   * ⚠️ **这个「三处」是手写的，没有任何门禁校验它的条数**（第 12 道门禁只校验路径
+   * 解析得开，校验不了一个数字）——形态与 `src/core/keypool.ts` 那张手写表逐字相同，
+   * 而那张表在本仓已经错过两次。**改这段时请当场 `grep -rn "reconcileIndex()" src/`
+   * 重数一遍，别信这段话。**
    */
   async reconcileIndex(): Promise<ReconcileResult> {
     const actual = idsFromKeyNames(await this.storage.list(KEY_PREFIX));

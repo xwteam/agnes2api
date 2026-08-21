@@ -1056,3 +1056,102 @@ describe("I5：鉴权失败的两条 config 写端点必须零副作用", () => 
     expect(st.puts, "带对口令的 secrets/clear 一次盘都没落").toBe(beforeOk + 2);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// 全分支评审 C1：五语言 DEPLOY.md 配额账里那两行的锚
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️ **全局约束 13：凡是新增一个会写存储的代码路径，同一个提交里必须更新五语言
+ * DEPLOY.md 的配额账。** Task 7 新增了 `PUT /admin/api/config` 与
+ * `POST /admin/api/config/secrets/clear` 两条写路径，而那份清单**自称是面板写操作的
+ * 完整枚举**（开头逐字写着「下面每个数字都是一次实测读数」），却一条都没有它们
+ * —— 全分支评审 C1，唯一一条挡住收口的。
+ *
+ * 补进那份账的同时**必须有一格数着它**，否则就是把 I4 那个缺陷（一行没数过的数字
+ * 混在一份自称实测的清单里）在新行上再犯一次。这一格就是那两行的锚。
+ *
+ * **数字全部手写字面量**，不从被测对象推导；**put 与 get 分开数**（KV 上是两个独立的
+ * 每日配额桶，混成一个「操作次数」会让这份账丢掉最要紧的信息）。
+ */
+describe("C1：两条 config 写端点的单价（五语言 DEPLOY.md 配额账那两行）", () => {
+  /** 请求前后的三桶增量。 */
+  function meter(st: CountingStorage) {
+    const b = { puts: st.puts, gets: st.gets, deletes: st.deletes };
+    return () => ({ puts: st.puts - b.puts, gets: st.gets - b.gets, deletes: st.deletes - b.deletes });
+  }
+
+  it("PUT /config：保存一次 1 次 put + 3 次 get；紧接着再保存一次是 4 次 get；校验没过是 0 put + 2 get", async () => {
+    const st = new CountingStorage();
+    const { app } = await realApp({ storage: st, env: {}, stored: { gatewayToken: GW, maxStrikes: 3 } });
+
+    // ① 全新实例上的第一次保存。
+    const m1 = meter(st);
+    expect((await put(app, { maxStrikes: 9 })).status).toBe(200);
+    expect(m1(), "「保存一次设置」的单价与五语言 DEPLOY.md 的配额账对不上了")
+      .toEqual({ puts: 1, gets: 3, deletes: 0 });
+
+    // ② 紧接着再保存一次：上一次的 `invalidate()` 让配置刷新中间件多读一次 ⇒ 4 次 get。
+    //    **put 仍然是 1** —— 账里那个「1 次 put」与保存的次序无关。
+    const m2 = meter(st);
+    expect((await put(app, { maxStrikes: 8 })).status).toBe(200);
+    expect(m2(), "连续保存那一支的读写次数漂了").toEqual({ puts: 1, gets: 4, deletes: 0 });
+
+    // ③ 校验没过：一个字节都不写（这条性质另有一格专门钉着，这里数的是它的确切代价）。
+    //    **紧跟在一次保存之后**，同样因为上一次的 `invalidate()` 多读一次 ⇒ 3 次 get。
+    const m3 = meter(st);
+    expect((await put(app, { maxStrikes: 0 })).status).toBe(400);
+    expect(m3(), "校验失败那一支的代价漂了").toEqual({ puts: 0, gets: 3, deletes: 0 });
+
+    // ④ 同一件事在**全新实例**上是 2 次 get —— 账里写的 `2~3` 两端都在这里量死，
+    //    只钉一端的话「多读一次」与「少读一次」里必有一种不可观测。
+    const fresh = new CountingStorage();
+    const h = await realApp({ storage: fresh, env: {}, stored: { gatewayToken: GW, maxStrikes: 3 } });
+    const m4 = meter(fresh);
+    expect((await put(h.app, { maxStrikes: 0 })).status).toBe(400);
+    expect(m4(), "全新实例上校验失败那一支的代价漂了").toEqual({ puts: 0, gets: 2, deletes: 0 });
+  });
+
+  it("secrets/clear：清一把通道凭据 1 次 put + 2 次 get；清 gatewayToken 那一支 3 次 get", async () => {
+    const clear = (app: Awaited<ReturnType<typeof realApp>>["app"], path: string) =>
+      app.request("/admin/api/config/secrets/clear", {
+        method: "POST",
+        headers: { ...withKey, "content-type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+
+    {
+      // 注册机**关着**：清掉这把 key 之后配置照样装载得起来（`loadBlocked` 为空那一支）。
+      const st = new CountingStorage();
+      const { app } = await realApp({
+        storage: st, env: {},
+        stored: { gatewayToken: GW, registrar: { yyds: { apiKey: "on-chain-key-7777" } } },
+      });
+      const m = meter(st);
+      expect((await clear(app, "registrar.yyds.apiKey")).status).toBe(200);
+      expect(m(), "「清空一把凭据」的单价与五语言 DEPLOY.md 的配额账对不上了")
+        .toEqual({ puts: 1, gets: 2, deletes: 0 });
+    }
+    {
+      // 清掉 `gatewayToken` 且 env 里也没有 ⇒ 清完这份配置就装载不起来，多一次读。
+      const st = new CountingStorage();
+      const { app } = await realApp({ storage: st, env: {}, stored: { gatewayToken: GW } });
+      const m = meter(st);
+      expect((await clear(app, "gatewayToken")).status).toBe(200);
+      expect(m(), "清掉 gatewayToken 那一支的代价漂了").toEqual({ puts: 1, gets: 3, deletes: 0 });
+    }
+  });
+
+  it("干跑校验：0 次 put + 1 次 get（同一份账里最便宜的那一条）", async () => {
+    const st = new CountingStorage();
+    const { app } = await realApp({ storage: st, env: {}, stored: { gatewayToken: GW, maxStrikes: 3 } });
+    const m = meter(st);
+    const res = await app.request("/admin/api/config/validate", {
+      method: "POST",
+      headers: { ...withKey, "content-type": "application/json" },
+      body: JSON.stringify({ patch: { maxStrikes: 9 } }),
+    });
+    expect(res.status).toBe(200);
+    expect(m(), "干跑校验的代价漂了").toEqual({ puts: 0, gets: 1, deletes: 0 });
+  });
+});

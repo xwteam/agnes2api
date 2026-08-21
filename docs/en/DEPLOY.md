@@ -102,8 +102,13 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 - **Write side of the panel's write operations (new in P3c) — these only happen when a human
   clicks, so they are not part of the steady-state accounts above.** There is no frequency
   bound to speak of (the bound is the operator's hand), so what follows is the **unit price of
-  each operation**; every number below is a measured reading (counted cell by cell in
-  `tests/contract/admin-keys-write.test.ts`):
+  each operation**; every number below is a measured reading, **counted cell by cell**:
+  the key write operations in `tests/contract/admin-keys-write.test.ts`, "tend now" in
+  `tests/contract/manual-tend.test.ts`, and the two settings-page endpoints in
+  `tests/contract/admin-config.test.ts`.
+  (This sentence used to name only the first file, while the "tend now" row has nothing to do
+  with it and no cell counted it at all back then — full-branch review I4. The fix is to add
+  that missing cell, not to soften this sentence.)
     - **Importing M new keys**: `M + 1` puts (M records + 1 index), `M + 1` gets, **0 lists**.
       At most 200 per import (over that it is a 400, **never a silent truncation**) ⇒ the upper
       bound for a single click is **201 puts**, i.e. 20% of the daily write quota. Splitting the
@@ -129,6 +134,23 @@ its writes grow with request count, so the budget is "so many per day", not "so 
       budget", it is "there is no headroom"**: with only the 10-minute cooldown the bound is
       `24 × 6 = 144` rounds/day = 432 puts, which on top of 320 is already 75% — and 96 of that
       320 equals `12 × concurrent isolate count`, a number **you cannot tune yourself**.
+    - **Saving the settings once** (`PUT /admin/api/config`): **1 put** + 3–4 gets (one
+      `readAll` plus one raw read before the write, then one `readAll` to read back; when you
+      save again right afterwards the previous `invalidate()` makes the config-refresh
+      middleware read once more, and the diagnostic branch likewise costs one extra).
+      **A save that fails validation is 0 puts + 2–3 gets** — not a single byte is written
+      (right after a successful save it likewise costs one extra read, same reason as above).
+    - **Clearing one credential** (`POST /admin/api/config/secrets/clear`): **1 put** + 2 gets;
+      clearing `gatewayToken` (after which the config no longer loads) costs 3 gets.
+    - **Dry-run validation** (`POST /admin/api/config/validate`): **0 puts** + 1 get.
+  ⚠️⚠️ **"Saving the settings" and "clearing one credential" have no daily cap. That is
+  deliberate, not an oversight.** Both require the admin token and both only happen when a human
+  clicks; no automatic path can trigger them. Putting a storage guardrail on them would itself
+  add a read-modify-write (the guard key) — paying an extra write in order to save one.
+  **The cost is spelled out here rather than left to silence, so nobody assumes some budget is
+  minding them**: a single tuning session running to a few dozen saves is entirely normal
+  operations, a few dozen puts is a few percent of the daily write quota, and the 24-per-day
+  gate on "tend now" **does not cover these two**. Plan your headroom accordingly.
   ⚠️ These do **not** add up with the three columns below: those say "how many times a day with
   nobody touching anything", this section says "what each click costs you". The only shape worth
   watching is **importing several hundred keys at once** — it is the most expensive single click
@@ -212,8 +234,13 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   running** — that part of the original claim still holds after the C4 fix.
 - **`list` and `delete` are two further buckets, 1,000/day each**, separate from the read and
   write buckets. Steady-state forwarding never issues a `list` — that is exactly why the
-  `pool:index` key exists. **Three** things consume it: the 48–96 daily index reconciliations
-  (a separate, independently scheduled job); the **empty-pool rescan** (when the index parses
+  `pool:index` key exists. **Four** things consume it: the 48–96 daily index reconciliations
+  (one at the start of every tending round); **the panel's "tend now" button** (since P3c: when
+  a round actually mints a key, the wrap-up reconciles once more ⇒ at most 24 more per day, the
+  bound being that guardrail itself — this consumer used to be missing from the list, and the
+  sentence used to describe reconciliation as "a separate, independently scheduled job", which
+  since P3c also has an **operator-triggered** consumer; full-branch review I2); the
+  **empty-pool rescan** (when the index parses
   fine yet not a single live record can be read, the gateway issues one `list` to check whether
   a hand-imported record is missing from the index); and the **missing-index fallback** (when
   `pool:index` itself cannot be read or fails to parse, the gateway likewise issues one `list`
@@ -221,7 +248,8 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   could never be built). The latter two **share the same** built-in **10-minute** backoff (a
   fixed constant, not an environment variable) — they draw on the same `list` bucket, so opening
   a separate window for each would be pointless — so an empty or broken-index pool costs at most
-  144 `list` calls per isolate per day, with headroom left over the 48–96 from reconciliation.
+  144 `list` calls per isolate per day, with headroom left over the 48–96 from reconciliation
+  plus the at most 24 from the panel.
 - **Exhausting the `list` bucket disables the gateway rather than degrading it.** When the pool
   is empty and `list` fails, the gateway returns `500` with the real reason in the log; it does
   **not** disguise the failure as `503 pool_empty`, because reconciliation draws on the same
