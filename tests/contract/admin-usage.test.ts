@@ -440,10 +440,16 @@ describe("GET /admin/api/usage 的查询参数契约", () => {
     )).json() as { range: { clamped: boolean }; days: unknown[] };
     expect(off1.range.clamped, "30d 发成 30 天回退 ⇒ 每一次都被夹，那句警告就永久常驻").toBe(true);
     expect(off1.days.length, "被夹之后仍然只有 30 格 —— 多要的那一天根本拿不到").toBe(30);
+    // ⚠️ **这一条守的不是「一律 true」——那件事由上面那个正向循环守着，
+    //    而且它先炸**（定向复评 N5 实测：把 `clamped` 改成恒真之后，
+    //    先红的是同一格里 `24h：按契约发不该被夹` 那句，这一行**根本跑不到**）。
+    //    它真正守的是**「差一天到底会不会撞上保留期起点」这件事取决于 N**：
+    //    `30d` 差一天撞得上（`N = USAGE_DAY_RETAIN`），`7d` 差一天撞不上。
+    //    把保留期缩到 ≤ 7 天的那一天，这一行会响，而上面那个 `off1` 不会。
     const stillFine = await (await get(
       `/admin/api/usage?from=${NOW - 7 * DAY}&to=${NOW}`,
     )).json() as { range: { clamped: boolean } };
-    expect(stillFine.range.clamped, "7d 差一天还在保留期内 ⇒ 不该被夹（否则上面那个 true 只是「一律 true」）")
+    expect(stillFine.range.clamped, "7d 差一天仍在保留期内 ⇒ 不该被夹；撞不撞得上取决于 N 与保留期的关系")
       .toBe(false);
   });
 
@@ -569,7 +575,7 @@ describe("读扇出（计划 §配额账「读侧」那张表）", () => {
 // ④ 六种状态必须在响应字段上分得开（全局约束 9 的主战场）
 // ───────────────────────────────────────────────────────────────────────────
 
-describe("七种状态在响应字段上分得开", () => {
+describe("八种状态在响应字段上分得开", () => {
   it("① 统计没开：tier 是 off，days 与 pending 都是 null，而且一次存储读都没有", async () => {
     const { get, storage } = await tier2Off({ now: () => NOW });
     await get("/admin/api/usage");                         // 预热
@@ -675,10 +681,17 @@ describe("七种状态在响应字段上分得开", () => {
    * ── ⑦ 评审 C1 抓出来的第七种状态 ────────────────────────────────────────
    *
    * **分片明明在，只是每一个都坏了。** 在 `all_malformed` 这条 code 出现之前，
-   * 它与 ③ 的响应体**逐字相同**（`shards` 都是 0、`days` 都是每天一格的 0 桶），
-   * 于是面板会把「读到了 N 个分片、但每一个都坏」渲染成「这段时间一个分片都没有」
-   * ——**`note: "no_shards"` 在那一刻是一句假话**，而两者的处置完全不同：
+   * 它与 ③ **同报 `no_shards`**，于是面板照 `note` 分支就会把
+   * 「读到了 N 个分片、但每一个都坏」说成「这段时间一个分片都没有」
+   * ——**那句话是假的**，而两者的处置完全不同：
    * 前者「没人用这台网关」，后者「存储里的东西坏了，去查是谁写的」。
+   *
+   * ⚠️⚠️ **立案理由订正（定向复评 N1）**：上一版这里写「它与 ③ 的响应体**逐字相同**」
+   * ——**那句是假的**。`malformed` 在 C1 之前就已经在响应体里，
+   * ③ 是 `"malformed":0`、本格是 `"malformed":2`，**一直分得开**。
+   * ⇒ **缺陷只有「`note` 撒谎」这一条，而它本来就够立案了。**
+   * ⭐ **给一个真缺陷编一个更吓人的理由，会把它变成假的**——理由一被证伪，
+   * 缺陷本身也会跟着被人当成没有。
    *
    * ⚠️ **夹具必须让两个槽位都畸形**：留一个好的就变成「有好有坏」（`shards > 0`），
    * 摆不出 `shards === 0 && malformed > 0` 这个判别状态。
@@ -714,19 +727,121 @@ describe("七种状态在响应字段上分得开", () => {
   });
 
   /**
+   * ── ⑧ 定向复评 N2 抓出来的第八种状态 ────────────────────────────────────
+   *
+   * **一部分分片是好的、另一部分坏了 ⇒ 面板上那些数字是不完整的。**
+   * 上一版这一档走的是 `note: null`，也就是**「一切正常」那一支**
+   * ——把一份缺了几个分片的数据渲染成完整的。全局约束 9 禁的「伪造」
+   * **不只是伪造 `0`，还有伪造「这份数据是全的」这个印象**；
+   * 而全局约束 10 的原话是「诚实标记由后端字段驱动」，
+   * `malformed` 那个数字虽然一直在，**但面板不该被要求自己去推**。
+   *
+   * ⚠️ **它逃过了上一轮全部的格子**（定向复评 MUT-H 实测：把这一档改成谎报
+   * `no_shards` —— 即 C1 亲手判定为「一句假话」的那种谎 —— **全仓全绿、完整逃逸**）。
+   * 成因很干净：那格 note 一致性用例给五条 code 各写了双条件，
+   * **唯独没给 `note === null` 定义判据** ⇒ `null` 就是逃逸口。现在补上了。
+   *
+   * ⚠️ **判别状态必须是「一好一坏」**：两个都好 ⇒ ④，两个都坏 ⇒ ⑦，
+   * 只有一好一坏才落在这一档。**同格里带 ④ 的对照**，
+   * 否则「`shards > 0` 一律报 `partial_malformed`」的实现照样全绿。
+   */
+  it("⑧ 一部分分片畸形：note 是 partial_malformed 而不是 null —— null 是在说「这份数据是全的」", async () => {
+    const st = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+    const { get } = await tier2On({ now: () => NOW, storage: st });
+    await seed(st, DAY0, 0, shardJson(DAY0, { requests: 5 }));                       // 好的
+    await seed(st, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":[]}`);    // 坏的
+
+    const body = await (await get(`/admin/api/usage?from=${NOW}&to=${NOW}`)).json() as {
+      shards: number; malformed: number; note: string | null; total: { requests: number };
+    };
+    expect(body.shards, "好的那一个").toBe(1);
+    expect(body.malformed, "坏的那一个").toBe(1);
+    expect(body.total.requests, "交出去的数字只含好的那一份 —— 所以它是不完整的").toBe(5);
+    expect(body.note, "报 null 就是对面板说「这份数据是全的」，而它不是")
+      .toBe("partial_malformed");
+
+    // 对照：两个分片都是好的 ⇒ note 必须回到 null（④）。
+    const clean = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+    const g = await tier2On({ now: () => NOW, storage: clean });
+    await seed(clean, DAY0, 0, shardJson(DAY0, { requests: 5 }));
+    await seed(clean, DAY0, 1, shardJson(DAY0, { requests: 2 }));
+    const ok = await (await g.get(`/admin/api/usage?from=${NOW}&to=${NOW}`)).json() as {
+      shards: number; malformed: number; note: string | null;
+    };
+    expect(ok.shards).toBe(2);
+    expect(ok.malformed).toBe(0);
+    expect(ok.note, "没有畸形分片就不许报 partial_malformed").toBeNull();
+  });
+
+  /**
+   * ── N6 的落点：被夹过**且**有畸形分片时，`note` 归谁 ──────────────────────
+   *
+   * `note` 只有一格，所以要定优先级。上一版把 `range_clamped` 排在畸形那两条**之前**，
+   * 判据是「你要的窗口被缩小了更该先说」。⚠️ **那个顺序与档位差一天那件事叠起来
+   * 会变成永久静音**：面板的 `30d` 按钮只要把 `from` 发成 `now − 30 天`
+   *（`四个档位按 from = to − (N−1) 天 发：clamped 全是 false；按 N 天发：30d 那一档恒为 true`
+   * 正在防的那件事），`clamped` 就**恒为真** ⇒ 存储坏成什么样，
+   * 面板都只会说「这段时间早于保留期」。
+   * ⇒ 判据换成**「谁需要人去查」**：畸形要人去查存储，被夹只是一句提示。
+   *
+   * ⚠️ **这一格是那条优先级唯一的护栏，而它上一版不存在**（定向复评 N6 实测：
+   * 把顺序改回去 ⇒ **整份全绿、完整逃逸**）。成因是**没有任何一格同时摆出
+   * 「被夹」与「有畸形分片」这两个状态** —— 第 5 种假阳性的标准形态：
+   * 几条测试各自只覆盖单一状态，而在那些状态下两种优先级数学上等价。
+   *
+   * ⚠️ **`clamped` 那半信息没有丢**：`range.clamped` 这个布尔一直在响应里，
+   * 面板照样渲染得出来（全局约束 10 要的正是「由字段驱动」）。本格连同它一起断言。
+   */
+  it("被夹过且有畸形分片时 note 归畸形那条 —— 档位差一天会让 clamped 恒真，排在它后面就是永久静音", async () => {
+    const st = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+    const { get } = await tier2On({ now: () => NOW, storage: st });
+    await seed(st, DAY0, 0, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
+    await seed(st, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":"nope"}`);
+
+    // `from=0` ⇒ 夹到保留期起点 ⇒ `clamped` 为真，同时区间里那两个分片全是畸形的。
+    const all = await (await get(`/admin/api/usage?from=0&to=${NOW}`)).json() as {
+      range: { clamped: boolean }; malformed: number; note: string;
+    };
+    expect(all.range.clamped, "前置条件：这一次真的被夹了").toBe(true);
+    expect(all.malformed).toBe(2);
+    expect(all.note, "被夹只是一句提示，分片全坏要人去查存储").toBe("all_malformed");
+
+    // 同理，一好一坏 + 被夹 ⇒ partial_malformed。
+    const half = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+    const g = await tier2On({ now: () => NOW, storage: half });
+    await seed(half, DAY0, 0, shardJson(DAY0, { requests: 5 }));
+    await seed(half, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
+    const part = await (await g.get(`/admin/api/usage?from=0&to=${NOW}`)).json() as {
+      range: { clamped: boolean }; note: string;
+    };
+    expect(part.range.clamped).toBe(true);
+    expect(part.note).toBe("partial_malformed");
+
+    // 反向：被夹但**没有**畸形分片 ⇒ 仍然是 range_clamped（否则上面两条只是「一律畸形」）。
+    const clean = await tier2On({ now: () => NOW });
+    const plain = await (await clean.get(`/admin/api/usage?from=0&to=${NOW}`)).json() as {
+      malformed: number; note: string;
+    };
+    expect(plain.malformed).toBe(0);
+    expect(plain.note).toBe("range_clamped");
+  });
+
+  /**
    * ── 这一组的命门 ────────────────────────────────────────────────────────
    *
-   * `describe("七种状态在响应字段上分得开")` 里那七格各自只看自己那一种状态，
+   * `describe("八种状态在响应字段上分得开")` 里那八格各自只看自己那一种状态，
    * 而**「它们两两不同」这条性质，
    * 单独看任何一格都验不出来**（第 5 种假阳性：几条测试各自只覆盖单一状态，
    * 而在那些状态下两个候选实现数学上等价）。
-   * 这一格把七份响应放在一起两两比对：任何两种被压成同一份响应体就红。
+   * 这一格把八份响应放在一起两两比对：任何两种被压成同一份响应体就红。
    *
-   * ⚠️⚠️⚠️ **这一格证明的是「**已列出的这七种**互不相同」，
-   * 它证明不了「没有第八种」—— 这条限制必须写在这里，因为它已经真的咬过一次。**
-   * 上一版这一格断言的是 `size === 6`，而**第七种（分片都在但全是畸形的）
-   * 就落在那六格之外、签名与「一个分片都没有」逐字相同**，评审 C1 抓到了它，
-   * 而这一格当时全绿。⇒ **一个「所有已知状态互不相同」的断言，对未知状态一言不发。**
+   * ⚠️⚠️⚠️ **这一格证明的是「**已列出的这八种**互不相同」，
+   * 它证明不了「没有第九种」—— 这条限制必须写在这里，因为它已经真的咬过两次。**
+   * · 第一次：这一格断言 `size === 6` 时，**第七种（分片都在但全是畸形的）
+   *   落在那六格之外**，评审 C1 抓到了它，而这一格当时全绿；
+   * · 第二次：改成 `size === 7` 之后，**第八种（一部分分片畸形）又落在七格之外**，
+   *   定向复评 N2 抓到了它，这一格**又是全绿**。
+   * ⇒ **一个「所有已知状态互不相同」的断言，对未知状态一言不发 —— 连续两轮都这样。**
    * 加一种状态的时候，**先在上面补一格，再把这里的期望数一起加**——
    * 光改这个数字不会让任何东西变红。
    *
@@ -752,7 +867,7 @@ describe("七种状态在响应字段上分得开", () => {
    * 「⑤ 时钟给不出有限数字：range 与 days 一起是 null，note 是 clock_unavailable」
    * 与「USAGE_NOTES 里每一条 code 都真的被某一条端点产出过 ——……」。
    */
-  it("七种状态两两不同 —— 面板不用猜，也不该猜（但这一格证明不了没有第八种）", async () => {
+  it("八种状态两两不同 —— 面板不用猜，也不该猜（但这一格证明不了没有第九种）", async () => {
     const probe = async (): Promise<Array<{ name: string; sig: string }>> => {
       const out: Array<{ name: string; sig: string }> = [];
       const sig = async (name: string, res: Response) => {
@@ -800,22 +915,29 @@ describe("七种状态在响应字段上分得开", () => {
       await sig("参数发错了", await g5.get("/admin/api/usage?from=abc"));
 
       // ⑦ 分片都在，但每一个都是畸形的（评审 C1）。**两个槽位都放畸形的**，
-      //    留一个好的就变成「有好有坏」那种，摆不出 `shards === 0 && malformed > 0`。
+      //    留一个好的就变成 ⑧ 那种，摆不出 `shards === 0 && malformed > 0`。
       const broken = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
       const g6 = await tier2On({ now: () => NOW, storage: broken });
       await seed(broken, DAY0, 0, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
       await seed(broken, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":"nope"}`);
       await sig("分片都在但全是畸形的", await g6.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));
+
+      // ⑧ 一部分分片畸形（定向复评 N2）。**一好一坏**，与 ⑦ 只差一个槽位。
+      const partial = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+      const g7 = await tier2On({ now: () => NOW, storage: partial });
+      await seed(partial, DAY0, 0, shardJson(DAY0, { requests: 5 }));
+      await seed(partial, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
+      await sig("一部分分片畸形", await g7.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));
       return out;
     };
 
     const rows = await probe();
-    expect(rows.length, "七种状态一种都不许少").toBe(7);
+    expect(rows.length, "八种状态一种都不许少").toBe(8);
     const sigs = rows.map((r) => r.sig);
     expect(
       new Set(sigs).size,
       `有两种状态被压成了同一份响应体：\n${rows.map((r) => `  ${r.name} → ${r.sig}`).join("\n")}`,
-    ).toBe(7);
+    ).toBe(8);
   });
 });
 
@@ -1142,6 +1264,12 @@ describe("note 是 code 不是句子", () => {
     await seed(corrupt, DAY0, 0, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
     await take(await g3.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));     // all_malformed
 
+    const half = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+    const g4 = await tier2On({ now: () => NOW, storage: half });
+    await seed(half, DAY0, 0, shardJson(DAY0, { requests: 5 }));
+    await seed(half, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
+    await take(await g4.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));     // partial_malformed
+
     expect([...seen].sort()).toEqual([...USAGE_NOTES].sort());
   });
 
@@ -1177,6 +1305,18 @@ describe("note 是 code 不是句子", () => {
     await seed(broken, DAY0, 0, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
     cases.push(() => g4.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));
 
+    // ⑧ 一部分分片畸形（定向复评 N2）。**同理必须进这一组**。
+    const partial = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+    const g5 = await tier2On({ now: () => NOW, storage: partial });
+    await seed(partial, DAY0, 0, shardJson(DAY0, { requests: 5 }));
+    await seed(partial, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
+    cases.push(() => g5.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));
+
+    // **被夹 + 有畸形分片**（定向复评 N6）。**这一条是下面那两行双条件里
+    //「不带 `!clamped`」那一半唯一能被观测到的状态** —— 少了它，畸形族与
+    // `range_clamped` 谁先谁后在数学上等价（第 5 种假阳性）。
+    cases.push(() => g5.get(`/admin/api/usage?from=0&to=${NOW}`));
+
     for (const run of cases) {
       const b = await (await run()).json() as {
         tier: string; range: { clamped: boolean } | null;
@@ -1189,15 +1329,29 @@ describe("note 是 code 不是句子", () => {
         .toBe(b.tier === "off");
       expect(b.note === "read_failed", `${label}：read_failed ⟺ tier2 开着而 days 是 null`)
         .toBe(b.tier === "tier2" && b.days === null && b.range !== null);
-      expect(b.note === "range_clamped", `${label}：range_clamped ⟺ range.clamped`)
-        .toBe(b.range !== null && clamped);
+      // ⚠️ **右半带着 `malformed === 0`，那是优先级订正的直接后果**（定向复评 N6）：
+      //    畸形族排在 `range_clamped` **之上**，所以「被夹了」不再蕴含
+      //    `note === "range_clamped"`。上一版这里写的是干净的
+      //    `⟺ range.clamped`，**改优先级时它当场变红** —— 那正是想要的。
+      expect(b.note === "range_clamped", `${label}：range_clamped ⟺ 被夹了、且没有畸形分片`)
+        .toBe(b.range !== null && clamped && b.malformed === 0);
       // ⚠️ 这两条的右半带着 `!clamped`，那是优先级 `range_clamped > all_malformed >
       //    no_shards` 的直接后果（判据写在 `usageHandler` 上方那张表底下）。
       //    优先级一改，这两条会当场红——那正是想要的。
+      // ⚠️ **畸形那两条的右半刻意**不带** `!clamped`**（定向复评 N6）：
+      //    它们的优先级在 `range_clamped` **之上**，所以被夹过也照样报它们。
+      //    这两行与那条优先级是**同一件事的两种写法**，顺序一改这里就红。
       expect(b.note === "all_malformed", `${label}：all_malformed ⟺ 读成功了、shards 是 0、而 malformed 大于 0`)
-        .toBe(b.days !== null && b.shards === 0 && (b.malformed ?? 0) > 0 && !clamped);
-      expect(b.note === "no_shards", `${label}：no_shards ⟺ 读成功了、shards 与 malformed 都是 0`)
+        .toBe(b.days !== null && b.shards === 0 && (b.malformed ?? 0) > 0);
+      expect(b.note === "partial_malformed", `${label}：partial_malformed ⟺ 读成功了、shards 大于 0、而 malformed 也大于 0`)
+        .toBe(b.days !== null && (b.shards ?? 0) > 0 && (b.malformed ?? 0) > 0);
+      expect(b.note === "no_shards", `${label}：no_shards ⟺ 读成功了、shards 与 malformed 都是 0、且没被夹`)
         .toBe(b.days !== null && b.shards === 0 && b.malformed === 0 && !clamped);
+      // ⚠️⚠️ **`note === null` 也必须有判据 —— 少了这一行就是上一轮 N2 的逃逸口**
+      //    （定向复评 N2 的根因：五条 code 各有双条件，而「一切正常」那一支没有，
+      //    于是任何一种没被列出来的状态都能悄悄落进 `null` 而不被任何东西发现）。
+      expect(b.note === null, `${label}：null ⟺ 读成功了、有好分片、没有畸形分片、且没被夹`)
+        .toBe(b.days !== null && (b.shards ?? 0) > 0 && b.malformed === 0 && !clamped);
     }
   });
 
