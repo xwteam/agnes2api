@@ -470,7 +470,8 @@ export async function dispatch(args: {
     }
     if (action.kind === "passthrough") {
       // 上游 4xx 直通。**这是 Tier-1 唯一新增的记账点，而它不按次数新增写**：
-      // 它既不改调度字段也不动 `lastUsedAt` ⇒ `schedulingEqual` 为真且 `n - p === 0`
+      // 它只动 `stats`（在写消除白名单里）、不动 `lastUsedAt` ⇒ `onlyElidableChanged`
+      // 为真且 `n - p === 0`
       // ⇒ 被写消除吃掉、只进 `pendingStats`，等攒满一个 `touchIntervalMs`
       // （默认 6 小时）才随那次强制落盘一起下去。
       //

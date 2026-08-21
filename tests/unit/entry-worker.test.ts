@@ -141,3 +141,65 @@ describe("worker 入口: app 只装配一次，配置改由 ConfigHolder 每请�
     }
   });
 });
+
+// ── P3c Task 5：`fetch` 必须把 ExecutionContext 一路递给 app ──────────────────
+//
+// **入口那一行在 Task 5 之前是 `return app.fetch(req)`，只有一个参数**——当时全仓
+// 只有 `scheduled()` 用得上 ctx，所以没人发现少了它。
+// 「立即补池」返回 202 之后补池还要继续跑，Worker 形态下那需要 `ctx.waitUntil`；
+// 不递进去的话 handler 里的 `c.executionCtx` 直接抛错 ⇒ 退化成 fire-and-forget ⇒
+// 响应一返回 isolate 就可能停摆、补池被从中间砍断 ⇒ `mintOne` 的 `finally` 不跑 ⇒
+// **临时邮箱漏删**，攒够几个就把活跃邮箱名额吃光。
+//
+// ⚠️ **判据必须是行为，不能是 `fetch.length >= 3` 这种形状断言**：`ctx` 声明成可选
+// 参数，`Function.length` 根本数不到它（可选参数不计入），那条断言在正确实现上就是
+// 假的；更糟的是它对「收了参数但没往下传」完全无感——而那恰恰是最可能发生的写法。
+// 所以这一格走**真实入口 + 真实端点**：`worker.fetch(req, env, ctx)` 打一次
+// 「立即补池」，看那个 ctx 有没有真的收到一个后台任务。
+describe("worker 入口: fetch 把 ExecutionContext 一路传给 app", () => {
+  it("fetch 把 ExecutionContext 一路传给 app —— 不传的话 waitUntil 在生产里根本拿不到", async () => {
+    vi.resetModules();
+    const { default: freshWorker } = await import("../../src/entry/worker.js");
+    const { TEST_ADMIN_TOKEN } = await import("../helpers/make-app.js");
+    const { WORKER_ROUND_BUDGET_MS } = await import("../../src/core/registrar/types.js");
+    const { kv } = fakeKv();
+    const env = {
+      GATEWAY_TOKEN: `ctx-gateway-${crypto.randomUUID()}`,
+      ADMIN_TOKEN: TEST_ADMIN_TOKEN,
+      POOL: kv,
+      REGISTRAR_ENABLED: "true",
+      REGISTRAR_PRIMARY: "yyds",
+      YYDS_API_KEY: "k",
+      TARGET_KEYS: "1",
+      // 比 Worker 单轮墙钟预算还大 ⇒ tendOnce 一次尝试都不开始 ⇒ 零网络、毫秒级返回。
+      CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1),
+    } as unknown as Env;
+
+    const waited: Array<Promise<unknown>> = [];
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => { waited.push(p); },
+      passThroughOnException: () => undefined,
+    } as unknown as ExecutionContext;
+
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const res = await freshWorker.fetch(
+        new Request("http://localhost/admin/api/registrar/tend", {
+          method: "POST", headers: { "x-admin-key": TEST_ADMIN_TOKEN },
+        }),
+        env,
+        ctx,
+      );
+      expect(res.status, "前置条件：这一发必须真的启动了一轮补池").toBe(202);
+      expect(
+        waited.length,
+        "入口把 ExecutionContext 丢在门口了 ⇒ 补池退化成 fire-and-forget，响应返回后会被截断",
+      ).toBe(1);
+      await Promise.all(waited);
+    } finally {
+      errSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+});

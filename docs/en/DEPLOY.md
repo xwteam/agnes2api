@@ -117,6 +117,18 @@ its writes grow with request count, so the budget is "so many per day", not "so 
     - **Deleting one key**: 2 gets + 1 put (index) + 1 delete.
     - **Bulk disable / bulk clear-cooldown of N keys**: N gets + N puts.
     - **Bulk delete of N keys**: `N + 1` gets + **1** put (the index is written once) + N deletes.
+    - **One click on "tend now"**: a fixed **3 puts** (guard key + lock acquisition + tend
+      history) plus 1 delete (releasing the lock, which lives in a different bucket), plus
+      **2 more puts per key actually minted** (record + index). It is the **only panel action
+      with a daily cap**: at most **24** per day (the fourth guardrail, see
+      [REGISTRAR.md](REGISTRAR.md)) ⇒ a sustainable `24 × 3 = 72` puts/day, which on top of
+      the 320 in the third row below gives **392/day (39.2%)**; minting the default
+      `MINT_BATCH = 5` every single time gives an upper bound of `24 × 13 = 312` ⇒
+      **632/day (63.2%)**, and that row is not sustainable — your temporary-mailbox quota and
+      `TARGET_KEYS` hit their limits first. **The reason for this gate is not "it would blow the
+      budget", it is "there is no headroom"**: with only the 10-minute cooldown the bound is
+      `24 × 6 = 144` rounds/day = 432 puts, which on top of 320 is already 75% — and 96 of that
+      320 equals `12 × concurrent isolate count`, a number **you cannot tune yourself**.
   ⚠️ These do **not** add up with the three columns below: those say "how many times a day with
   nobody touching anything", this section says "what each click costs you". The only shape worth
   watching is **importing several hundred keys at once** — it is the most expensive single click
@@ -144,8 +156,9 @@ its writes grow with request count, so the budget is "so many per day", not "so 
       (that is the sentence above). **On Worker the knob is the Cron in `wrangler.toml`**;
       on Node it is `TEND_INTERVAL_MS`. `TEND_INTERVAL_MS` is **consumed only by the Node
       scheduler** — changing it on Worker adds **not a single round**. Conversely the
-      `registrar_tend_lock` put/delete pair **exists only in the Worker entry**; the Node
-      side has no such lock today.
+      `registrar_tend_lock` put/delete pair **exists in both runtimes** (as of P3c Task 5 the
+      Node side takes the same lock — an in-process boolean is worthless when several
+      containers share one volume).
     - **Threshold axis**: when `TEND_INTERVAL_MS` drops below
       `MINT_BATCH × CODE_TIMEOUT_MS × channel count`, the event item **jumps from "0 on a
       healthy round" to "1 every round"** — that jump is independent of frequency and is

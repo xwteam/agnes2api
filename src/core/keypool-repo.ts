@@ -27,15 +27,23 @@ export const DEFAULT_POOL_CACHE_TTL_MS = 60_000;
 export const DEFAULT_POOL_TOUCH_INTERVAL_MS = 21_600_000; // 6 小时
 
 /**
- * `KeyRecord` 每个字段的角色。**这张表是写消除唯一的合法性依据，也是它唯一的钉子。**
+ * `KeyRecord` 每个字段的角色。
  *
  * - `scheduling`：变化会改变「这把 key 还能不能用、什么时候能用」，**丢一次就是事故**
  *   （吃掉一次 strike ⇒ 坏 key 被无限重试，而且测试全绿——这是本模块最危险的失败形态）。
- * - `telemetry`：纯展示，任何调度逻辑都不读它，因此只有它变化的那次写可以整个丢弃。
+ * - `telemetry`：纯展示，任何调度逻辑都不读它。
+ *
+ * ⚠️ **这张表从 P3c Task 5 起不再是写消除的判据**（那句话原来写在这里，
+ * 而它正是 `note` / `addedAt` 被静默丢弃的成因）：写消除的判据是白名单
+ * `MAY_ELIDE_FIELDS`，**`telemetry` 不再自动等于「可以被丢弃」**。
+ * 这张表现在回答的是它本来的那个问题——**这个字段变了要不要紧**——
+ * 它仍然是选白名单成员时的第一道筛子（`scheduling` 一个都不许进白名单），
+ * 但「是 telemetry」只是必要条件，不是充分条件。
  *
  * 类型写成 `Record<keyof KeyRecord, …>` 不是为了好看：**给 `KeyRecord` 加字段时
- * `tsc` 会在这里报错**，逼着加字段的人显式表态，而不是让新字段被 `schedulingEqual`
- * 默默忽略掉。`schedulingEqual` 直接从这张表推导，两者不可能漂移。
+ * `tsc` 会在这里报错**，逼着加字段的人显式表态。新字段默认**不可**消除
+ *（它不在白名单里），要让它可消除必须再去 `MAY_ELIDE_FIELDS` 里加一次——
+ * 两处都要动，是刻意的摩擦。
  *
  * `lastUsedAt` 判为 telemetry 的依据（每次改动都请重新核一遍，别信这行注释）：
  * 全仓只有 `applySuccess` 写它，`isAvailable` / `selectKey` / `applyStrike` /
@@ -57,21 +65,22 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
    * `isAvailable` 读它（`src/core/keypool.ts` 的 `isDisabled`）⇒ 它改变「这把 key 还能
    * 不能用」⇒ 按本表开头那条判据就是 scheduling，没有第二种读法。
    *
-   * ⚠️ **填成 telemetry 的后果**：`schedulingEqual(prev, next)` 会判两份相等，
-   * 于是「停用一把 key」这次写**被写消除整个吃掉**——面板显示已停用、调度器照常用它。
-   * 而且它只在「这把 key 的 `lastUsedAt` 距今不足 `touchIntervalMs`（默认 6 小时）」时
-   * 发生，也就是**只对正在被使用的那些 key 发生**——恰恰是最需要能停下来的那些。
-   * 由 `tests/unit/pool-cache.test.ts「停用一把刚用过的 key 必须真的落盘」` 钉着：
-   * 把这一行挪进 telemetry 会让它变红。
+   * ⚠️ **填错的后果**（Task 5 的白名单翻转之后仍然成立，只是入口换了一个）：
+   * 把 `disabled` 加进 `MAY_ELIDE_FIELDS`，「停用一把 key」这次写就会**被写消除整个
+   * 吃掉**——面板显示已停用、调度器照常用它。而且它只在「这把 key 的 `lastUsedAt`
+   * 距今不足 `touchIntervalMs`（默认 6 小时）」时发生，也就是**只对正在被使用的那些
+   * key 发生**——恰恰是最需要能停下来的那些。
+   * 由 `tests/unit/pool-cache.test.ts「停用一把刚用过的 key 必须真的落盘」` 钉着。
    */
   disabled: "scheduling",
   /**
-   * 建号时刻。**判 telemetry 的理由与 `lastUsedAt` 完全不同，别把两者并列理解**：
-   * `lastUsedAt` 有 `touchIntervalMs` 兜底（最迟每 6 小时一定落一次盘），
-   * `addedAt` **一条兜底都没有**——它变化的那次写会被无条件丢弃。
-   * 之所以安全，是因为这条路径不可达：`addedAt` 只在 `add()` 里赋值一次，
-   * 此后 `keypool.ts` 的 `apply*` 全部原样透传，全仓没有任何代码会产生一个
-   * `addedAt` 不同的 next。**哪天有了「重置建号时刻」这种操作，它必须改成 scheduling。**
+   * 建号时刻。纯展示，调度逻辑一个字段都不读它。
+   *
+   * ✅ **P3c Task 5 之前这里挂着一条「靠路径不可达」的保证**：`addedAt` 变化的那次写
+   * 会被无条件丢弃（它连 `lastUsedAt` 那样的 `touchIntervalMs` 兜底都没有），
+   * 而"安全"的唯一理由是"全仓今天没有任何代码会产生一个 `addedAt` 不同的 next"。
+   * 白名单翻转之后这条保证变成了机制：`addedAt` **不在** `MAY_ELIDE_FIELDS` 里，
+   * 所以哪天真有了「重置建号时刻」这种操作，那次写会照常落盘，不需要任何人记得来改这里。
    */
   addedAt: "telemetry",
   /** 纯遥测，见上。有 touchIntervalMs 兜底，不会永远不落盘。 */
@@ -91,29 +100,64 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
    * 运维备注。**telemetry**：调度逻辑一个字段都不读它（`isAvailable` / `selectKey` /
    * `apply*` / `poolHealth` / `keyBucket` 全都不碰），它只会被显示。
    *
-   * ⚠️ **代价与 `lastUsedAt` 不同，这段是写给 P3c Task 3 的人看的。**
-   * `lastUsedAt` 被消除只是面板上的时刻粗一点，而**只改 `note` 的那次写会被整个丢弃**：
-   * `shouldElide` 的判据是 `schedulingEqual(prev, next)` 且 `lastUsedAt` 没走远，
-   * 一次纯改备注的写两条都满足（实测：`save({...r, note:"x"}, r)` ⇒ `puts === 0`，
-   * `note` 既不在存储也不在快照）。
+   * ✅ **P3c Task 5 之前这一格是全表最危险的一处，成因不在这一行、在判据的方向**：
+   * 当时「telemetry」自动等于「可以被丢弃」，于是一次「只改备注」的写会被写消除
+   * **整个吃掉**（实测：`save({...r, note:"x"}, r)` ⇒ `puts === 0`，`note` 既不在存储
+   * 也不在快照），而当时这段注释只能写下一句「🔴 没有任何自动化会在你写错时变红，
+   * 做 `PATCH` 的人必须自己建护栏」——`tests/unit/pool-cache.test.ts` 里那一格恰恰
+   * 断言「这次写被消除是对的」，所以修对了它绿、写错了它也绿。
    *
-   * 🔴 **没有任何自动化会在你写错时变红，这句话不许再被写成别的样子。**
-   * 上一版这里写着「等 `PATCH` 落地时那一格会变红」——**那是假的，评审实证**：
-   * `MAY_ELIDE` 那一格恰恰断言「这次写被消除是对的」，所以
-   * ① 修对了（`save(next)` 不传 `prev`）它是绿的；② 写错了（`save(next, prev)`，
-   * 备注静默丢失）它**也是绿的**。它唯一会响的路是有人把本行挪进 `scheduling`
-   * ——也就是只在「你已经理解并选择了全局修法」之后才响。
-   * ⇒ **做 `PATCH` 的人必须自己建护栏**：一格「只改备注的 `PATCH` 之后 `GET` 读得回来」
-   * 的端到端断言。本表兜不住它，本文件也兜不住它。
+   * 白名单翻转之后这条变成了机制：`note` **不在** `MAY_ELIDE_FIELDS` 里 ⇒
+   * 只改备注的写一定落盘，`keyPatchHandler` 传不传 `prev` 都不会再丢备注。
+   * 由 `tests/unit/pool-cache.test.ts` 的
+   * 「MUST_PERSIST 的每个字段变化都落盘——丢一个就是坏 key 被无限重试」钉着
+   *（`note` 从 Task 5 起就在那张 `MUST_PERSIST` 清单里）。
    */
   note: "telemetry",
 };
 
-const SCHEDULING_FIELDS = (Object.keys(FIELD_ROLE) as Array<keyof KeyRecord>)
-  .filter((k) => FIELD_ROLE[k] === "scheduling");
+/**
+ * **写消除的白名单：只有这两个字段的变化可以让一次写整个被丢弃。**
+ *
+ * ⚠️ **这是 P3c Task 5 的判据翻转，方向很重要，别再翻回去。**
+ * 在此之前判据是**黑名单式**的——「`scheduling` 字段都没变 ⇒ 可以消除」，
+ * 于是 `telemetry` 那一档里的**每一个**字段都自动获得了「可以被静默丢弃」的许可，
+ * 而其中两个根本不该有：
+ *
+ * · `note`：一次「只改备注」的写两条判据都满足 ⇒ **整个被丢弃**，面板显示保存成功，
+ *   备注既不在存储也不在快照。当时唯一的护栏是"做 PATCH 的人自己记得不传 `prev`"，
+ *   而 `FIELD_ROLE.note` 的注释里明写着「没有任何自动化会在你写错时变红」。
+ * · `addedAt`：**一条兜底都没有**（`lastUsedAt` 至少有 `touchIntervalMs` 强制落盘），
+ *   它变化的那次写会被无条件丢弃。当时安全的唯一理由是「这条路径不可达」——
+ *   一条靠"今天没人这么写"成立的保证。
+ *
+ * 反过来写成白名单之后，**两条都从「靠注释」变成了「靠机制」**：新加的字段默认
+ * **不可**消除，要让它可消除必须显式加进这张表，而加进来的人正对着这段注释。
+ * 代价老实说：只改 `note` 的写从此**一定落盘**（多一次 put，人点一下才发生）。
+ *
+ * 两个成员各自的许可证：
+ * · `lastUsedAt` —— 高频（每次成功转发）、纯展示，且有 `touchIntervalMs` 兜底，
+ *   写消除的**全部收益**就来自它；
+ * · `stats` —— 同样高频，且被消除掉的增量**不会丢**，由 `pendingStats` 攒着补写
+ *  （见那里的说明）。它是唯一一个"消除≠丢弃"的字段。
+ */
+const MAY_ELIDE_FIELDS: ReadonlyArray<keyof KeyRecord> = ["lastUsedAt", "stats"];
 
-function schedulingEqual(a: KeyRecord, b: KeyRecord): boolean {
-  return SCHEDULING_FIELDS.every((k) => a[k] === b[k]);
+/**
+ * 白名单之外的字段全部逐一比对。
+ *
+ * **不再是 `SCHEDULING_FIELDS.every(...)`**：那份清单是从 `FIELD_ROLE` 里筛
+ * `=== "scheduling"` 得来的，等价于「telemetry 一律可消除」。
+ * 现在的判据是 `变化 ⊆ MAY_ELIDE_FIELDS`。
+ *
+ * `stats` 在白名单里，所以这里**永远不会**对它做 `===`（对象引用比较，本来也无意义）；
+ * 其余字段全是标量，`===` 是准确的。
+ */
+const MUST_MATCH_FIELDS = (Object.keys(FIELD_ROLE) as Array<keyof KeyRecord>)
+  .filter((k) => !MAY_ELIDE_FIELDS.includes(k));
+
+function onlyElidableChanged(a: KeyRecord, b: KeyRecord): boolean {
+  return MUST_MATCH_FIELDS.every((k) => a[k] === b[k]);
 }
 
 /**
@@ -231,19 +275,27 @@ export const MAX_KEY_LENGTH = 1024;
  * `0x80–0xFF` 那一段两边都拒，理由与那边同一条（环境变量按 UTF-8 解、头值按
  * Latin-1 解，两边在这一段并不由规范保证一致；RFC 9110 已把它标为弃用）。
  *
- * ⚠️⚠️ **它今天只挂在面板导入这一条路上，而稳态下 key 进池子的主路径不走它**
- * ——`src/core/registrar/tender.ts` 铸出一把新 key 之后直接 `repo.add(out.key)`，
- * 既不校验也不 `trim()`。**这个不对称是如实登记的，不是漏掉的**，理由是
- * **同一个判据在两条路上不能有同一种处置**：
- *   · **导入**：拒绝是**免费**的——那串东西还在运维的剪贴板里，报一行「第 N 行不合法」
- *     他改一下再粘一次就是了；
- *   · **铸号**：拒绝是**销毁凭据**——Agnes 侧账号已经真实建出来了，key 材料只在手上
- *     这一份，扔掉它就再也找不回来，连对账都修不了（本文件开头把这一类定性为
- *     数据丢失，`add()` 的写序整个是围绕这条设计的）。
- * 所以铸号那条路的正解不是「照抄这个判据去拦」，而是「**照存不误、同时把可疑
- * 如实报出来**」——那要一条新的事件与一个新的失败分支，属于注册机行为，
- * **已连同这段分析一起交给 Task 5**（见本任务报告）。
- * **别看到这个函数就以为池子里每一把 key 都过了它。**
+ * ⚠️⚠️ **两条路都用这个判据，但处置不同，而这个不对称是刻意的**
+ *（Task 3 的 m5 裁定，Task 5 落地）。**同一个判据在两条路上不能有同一种处置**：
+ *   · **导入**（本文件 `addMany`）：**拒绝**。那串东西还在运维的剪贴板里，
+ *     报一行「第 N 行不合法」他改一下再粘一次就是了，拒绝是免费的。
+ *   · **铸号**（`src/core/registrar/tender.ts` 的 `repo.add(out.key)`）：**照存不误，
+ *     另打一条 `registrar.minted_key_suspicious` 事件 + 在 `failures` 里记一条
+ *     `key_suspicious`**。那里拒绝是**销毁凭据**——Agnes 侧账号已经真实建出来了，
+ *     key 材料只在手上这一份，扔掉它就再也找不回来，连对账都修不了（本文件开头把
+ *     这一类定性为数据丢失，`add()` 的写序整个是围绕这条设计的）。
+ *
+ * 🔴 **如实登记的残留**：铸号那条路存进去的可疑 key **会进池子、会被 `selectKey`
+ * 选中**，而它每次被选中都会让转发失败（拼进 `authorization` 头时抛 TypeError），
+ * 走的是 strike → 长冷却 → 再来一遍，**不会自己退出池子**；而 `countsTowardTarget`
+ * 现在是 `!evicted`，所以它还会一直占着一个 `targetKeys` 名额。
+ * **处置是人工的**：那条 error 事件 + 补池历史里的 `key_suspicious` 会说出来，
+ * 运维在面板上停用/删除它即可（Task 3 的四条写端点就是干这个的）。
+ * **评估过、没有选的那条**：自动 `evicted` 掉它。那样下一轮就会自动补一把——
+ * 而如果上游正在持续返回坏 key，"自动剔除 + 自动补铸"会变成一个**自动烧邮箱名额**
+ * 的循环，比一把占着名额的死 key 糟得多。
+ *
+ * **别看到这个函数就以为池子里每一把 key 都在门口被拦过。**
  */
 export function isImportableKey(key: string): boolean {
   return key.length <= MAX_KEY_LENGTH && /^[\x21-\x7e]+$/.test(key);
@@ -732,11 +784,11 @@ export class KeyPoolRepo {
 
   private shouldElide(prev: KeyRecord, next: KeyRecord): boolean {
     if (this.touchIntervalMs <= 0) return false;
-    // **刻意不再单独判 `prev.id !== next.id`**：`id` 在 FIELD_ROLE 里就是 scheduling，
-    // `schedulingEqual` 已经比过它了。变异实测确认那一行永远改变不了结果（去掉它
+    // **刻意不再单独判 `prev.id !== next.id`**：`id` 不在 `MAY_ELIDE_FIELDS` 里，
+    // `onlyElidableChanged` 已经比过它了。变异实测确认那一行永远改变不了结果（去掉它
     // 全绿），而写一行永远改变不了行为的代码等于给后人留一条不可证伪的注释。
-    // 「prev 是另一把 key 时不许消除」这条不变量由 FIELD_ROLE.id 守着，有用例钉。
-    if (!schedulingEqual(prev, next)) return false;
+    // 「prev 是另一把 key 时不许消除」这条不变量由那张白名单守着，有用例钉。
+    if (!onlyElidableChanged(prev, next)) return false;
     // 从未用过（null）⇒ 差值是 Infinity ⇒ 首次使用一定落盘，
     // 否则面板永远显示「从未使用」。
     const p = prev.lastUsedAt ?? Number.NEGATIVE_INFINITY;

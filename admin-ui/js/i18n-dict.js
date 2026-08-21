@@ -67,6 +67,11 @@ export const I18N = {
   // 「注册机根本没跑」长得一模一样。
   "reg.fail.round_crashed": { "zh-CN": "整轮补池抛错中断", "zh-TW": "整輪補池拋錯中斷", en: "The whole tend round threw and was aborted", ja: "補充ラウンド全体が例外で中断しました", ko: "보충 라운드 전체가 예외로 중단되었습니다" },
   "reg.fail.provider_missing":   { "zh-CN": "这条通道没有配好凭据，未构造出提供方", "zh-TW": "這條通道沒有配好憑據，未建立提供方", en: "This channel has no credentials configured, so no provider was constructed", ja: "このチャネルは資格情報が未設定のため、プロバイダーが構築されませんでした", ko: "이 채널에 자격 증명이 없어 공급자가 생성되지 않았습니다" },
+  // ⚠️ P3c Task 5：这一条**不是失败**——那一轮真的铸出来了（`minted` 照常 +1，
+  // 上游账号与临时邮箱都真的花掉了），只是发回来的 key 材料含不可打印字符或空白。
+  // 它照常存进池子（拒收 = 销毁凭据），但多半每次被选中都会让转发失败。
+  // 五种语言的措辞都必须说清「已存下来 + 请去处理它」，不许写成「铸失败了」。
+  "reg.fail.key_suspicious": { "zh-CN": "铸出来的 key 材料可疑（已存入池子，请手动停用或删除）", "zh-TW": "鑄出來的 key 材料可疑（已存入池子，請手動停用或刪除）", en: "The minted key material looks malformed (stored in the pool anyway — disable or delete it)", ja: "発行されたキーの内容が不正に見えます（プールには保存済み — 無効化または削除してください）", ko: "발급된 키 내용이 손상된 것으로 보입니다(풀에는 저장되었으니 비활성화하거나 삭제하세요)" },
 
   // ── Key 池板块（只读部分，Task 4）─────────────────────────────────────────
   "keys.title":       { "zh-CN": "Key 池", "zh-TW": "Key 池", en: "Key pool", ja: "キープール", ko: "키 풀" },

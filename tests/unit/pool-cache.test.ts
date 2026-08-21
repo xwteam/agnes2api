@@ -57,11 +57,11 @@ async function setup(n: number, opts: { cacheTtlMs?: number; touchIntervalMs?: n
  *
  * 这一步绝不能省。`lastUsedAt` 还是 `null` 时 `shouldElide` 里的差值是
  * `Infinity`（首次使用）或 `NaN`（两边都是 null），两种情况**都返回 false**，
- * 于是「写消除的判据里那几个字段」根本没机会被求值——把 `schedulingEqual`
+ * 于是「写消除的判据里那几个字段」根本没机会被求值——把 `onlyElidableChanged`
  * 整个删掉，下面那几条「变化必须落盘」的用例照样全绿。
  *
  * 这正是 Task 3 记下的第五类假阳性：**测试覆盖的状态让被测的那个选择变得不可观测。**
- * 先落一次盘把 `lastUsedAt` 变成真数字，之后 `schedulingEqual` 才是唯一的决定者。
+ * 先落一次盘把 `lastUsedAt` 变成真数字，之后那张白名单才是唯一的决定者。
  */
 async function used(repo: KeyPoolRepo, s: CountingStorage, at = 1_000_000): Promise<KeyRecord> {
   const r0 = (await repo.all())[0]!;
@@ -255,6 +255,22 @@ describe("写消除：只有 lastUsedAt 变化时不落盘", () => {
     "id", "key", "cooldownUntil", "cooldownReason", "strikes", "evicted", "evictedReason",
     // 管理员手工停用：`isAvailable` 读它 ⇒ 丢一次就是「面板显示已停用、调度器照常用它」。
     "disabled",
+    // ── P3c Task 5：这两个从 MAY_ELIDE 挪过来 ──────────────────────────────
+    //
+    // **它们不是"变重要了"，是判据翻转了**：写消除原来是黑名单式的
+    //（「scheduling 都没变 ⇒ 可以消除」⇒ telemetry 全员自动获得"可被丢弃"的许可），
+    // 现在是白名单式的（`MAY_ELIDE_FIELDS = ["lastUsedAt", "stats"]`）。
+    //
+    // · `note`：一次「只改备注」的写原来两条判据都满足 ⇒ **整个被丢弃**，
+    //   面板显示保存成功而备注既不在存储也不在快照。原来这里唯一的保护是
+    //   「做 PATCH 的人自己记得不传 `prev`」，而本文件上一版明写着这一格不会替他报警。
+    // · `addedAt`：**一条兜底都没有**（`lastUsedAt` 至少有 `touchIntervalMs` 强制落盘），
+    //   原来"安全"的唯一理由是"今天没有代码会产生一个 addedAt 不同的 next"——
+    //   一条靠路径不可达成立的保证。
+    //
+    // 挪过来之后两条都从"靠注释/靠人记得"变成了"靠机制"，
+    // 而这两行本身现在由上面那条「MUST_PERSIST 的每个字段变化都落盘」正面钉着。
+    "note", "addedAt",
   ];
   /**
    * ⚠️ `stats` 在这张表里的含义与另外两个**不同**：它的那次写同样被消除（下面那条
@@ -262,19 +278,17 @@ describe("写消除：只有 lastUsedAt 变化时不落盘", () => {
    * 在下一次本来就要发生的写上一起带下去。「攒起来」这半由
    * 「Tier-1 计数不许被写消除吃掉」那一组守着，这里只守「不为它单独付一次 KV 写」。
    *
-   * ⚠️ **`note` 的含义又与 `stats` 不同，这段是写给 P3c Task 3 的人看的**：它没有
-   * `pendingStats` 那样的攒存机制，**一次「只改备注」的写就是真的丢了**。本期它还
-   * 没有生产者（写它的 `PATCH /admin/api/keys/:id` 在 Task 3），这条路径今天走不到。
+   * ✅ **`note` / `addedAt` 从这张表里搬走了（P3c Task 5）**，理由见 `MUST_PERSIST`
+   * 里那两行。搬走之前这张表的注释里挂着一整段「🔴 别把这一格读成会替 Task 3 报警的
+   * 绊线——它不会响」：本格断言的是「只改 `note` 的写被消除**是对的**」，所以
+   * 修对了它绿、写错了（备注静默丢失）它**也绿**。那段话现在不需要了，
+   * 因为那条不变量换到了 `MUST_PERSIST` 那一侧，是**正面**断言。
    *
-   * 🔴 **别把这一格读成一条会替 Task 3 报警的绊线——它不会响。** 上一版这里写着
-   * 「等那条路径落地时这一格会变红」，**评审实证那是假的**：本格断言的是
-   * 「只改 `note` 的写被消除**是对的**」，所以修对了（`save(next)` 不传 `prev`）它绿，
-   * **写错了（`save(next, prev)`，备注静默丢失）它也绿**。
-   * 一句假的「有东西守着」比没有更糟：它会让 Task 3 的人不去自己建护栏。
-   * ⇒ **Task 3 必须在写端点那一侧自己写**：「只改备注的 `PATCH` 之后 `GET` 读得回来」。
-   * 那一格红了才说明备注真的落了盘；本格红只说明有人动了 `FIELD_ROLE.note` 的角色。
+   * **这张表现在恰好等于 `src/core/keypool-repo.ts` 的 `MAY_ELIDE_FIELDS`，
+   * 但它是手写的第二份，不许从那里 import** ——从被测对象读出期望值就是同义反复
+   *（第 6 种假阳性），而这两份的差异正是本组用例唯一的判别力来源。
    */
-  const MAY_ELIDE: Array<keyof KeyRecord> = ["addedAt", "lastUsedAt", "stats", "note"];
+  const MAY_ELIDE: Array<keyof KeyRecord> = ["lastUsedAt", "stats"];
 
   it("穷尽性：KeyRecord 的每个字段都被上面两张写死的清单认领了", () => {
     // 新增字段时：tsc 先在 FIELD_ROLE 与 MUTATION 报错，这条再逼着把它放进某张清单，

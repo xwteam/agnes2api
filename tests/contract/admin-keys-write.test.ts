@@ -228,7 +228,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
    * 第 12 道门禁词表里的任何一个词 ⇒ 门禁也看不见它。
    *
    * 夹具必须是「**干净** + `lastUsedAt` 近期有值」：干净 ⇒ 重置改不动任何 scheduling
-   * 字段 ⇒ `schedulingEqual` 为真；近期用过 ⇒ `lastUsedAt` 没走远。**两条都满足才是
+   * 字段 ⇒ 写消除的白名单判据为真；近期用过 ⇒ `lastUsedAt` 没走远。**两条都满足才是
    * 写消除会咬的那个形态**，这也正是「勾了重置却什么都没落盘」在生产上的样子。
    */
   it("resetExisting 对一把干净的 key 也必须真的落盘 —— 传 prev 会被写消除吃掉", async () => {
@@ -530,26 +530,28 @@ describe("DELETE /admin/api/keys/:id", () => {
 
 describe("PATCH /admin/api/keys/:id", () => {
   /**
-   * ⚠️⚠️ **这一格是 P3c Task 2 点名要求 Task 3 自己建的那道护栏，本仓没有第二处
-   * 能替它报警。**
+   * ⚠️⚠️ **端到端那一半照留，但它守的东西在 P3c Task 5 换了个位置——两半都要写清楚。**
    *
-   * `note` 在 `FIELD_ROLE` 里是 **telemetry**，一次「只改备注」的写同时满足写消除的
-   * 两条判据（scheduling 字段没变 + `lastUsedAt` 没走远）⇒ 传 `prev` 的话它会被
-   * **整个丢掉**：面板显示保存成功，备注既不在存储也不在快照。
-   * `tests/unit/pool-cache.test.ts` 的
-   * 「MAY_ELIDE 的每个字段变化都被消除——这才是写消除的全部收益」
-   * **不会替它报警**（Task 2 评审实证）：那一格断言的是「这次写被消除**是对的**」，
-   * 修对了它绿、写错了它也绿。
+   * **Task 3/4 时期**：`note` 在写消除的黑名单式判据下与 `lastUsedAt` 同档，一次
+   * 「只改备注」的写同时满足两条判据（scheduling 字段没变 + `lastUsedAt` 没走远）
+   * ⇒ 传 `prev` 就被**整个丢掉**：面板显示保存成功，备注既不在存储也不在快照。
+   * 那时这一格是全仓唯一能报警的地方，靠的是 `keyPatchHandler` **记得不传 `prev`**。
+   *
+   * **Task 5 起**：写消除的判据翻成白名单（`MAY_ELIDE_FIELDS = ["lastUsedAt","stats"]`），
+   * `note` 不在里面 ⇒ **传不传 `prev` 都不会再丢备注**。所以下面那个对照组的期望
+   * **反过来了**：同一个「写消除会咬」的夹具上，一次传 `prev` 的「只改备注」现在
+   * 必须真的落 1 次盘。
    *
    * **本格的判别力来自三个前置条件，缺一它就是在测空气**：
    *   ① 夹具把 `poolTouchIntervalMs` 开成生产默认值（夹具默认是 `0` = 关掉写消除，
-   *      那样两种写法都会落盘）；
+   *      那样每一次写都落盘，两个方向都测不出来）；
    *   ② 目标 key **最近被用过**（`lastUsedAt` 为 `null` 时差值是 `Infinity`，
    *      写消除根本不触发）——写消除只咬**正在服役**的那些 key；
-   *   ③ 一个对照组：在**同一个夹具**上走一次传 `prev` 的「只改备注」，实测 0 次 put。
-   *      这一条把「夹具有没有判别力」从推理变成了当场的读数。
+   *   ③ **两个方向各一次**：只改 `note` 必须落盘（新机制），只推 `lastUsedAt`
+   *      必须被消除（写消除的全部收益还在）。**只写前者的话，把写消除整个关掉
+   *      也能让它变绿**——那正是"覆盖的状态让被测的选择不可观测"。
    */
-  it("只改备注的 PATCH：改完之后 GET 真的读得回来", async () => {
+  it("只改备注的 PATCH：改完之后 GET 真的读得回来（而只推 lastUsedAt 仍然被消除）", async () => {
     const st = new CountingStorage();
     const { app, repo } = await makeApp(
       [], ["sk-note-target-aaaaaaaa", "sk-note-control-bbbbbbb"],
@@ -562,13 +564,23 @@ describe("PATCH /admin/api/keys/:id", () => {
     await repo.save({ ...target, lastUsedAt: NOW }, target);
     await repo.save({ ...control, lastUsedAt: NOW }, control);
 
-    // 前置条件③（对照组）：同一个夹具上，传 prev 的「只改备注」确实一次盘都不落。
+    // 前置条件③之一（新机制）：同一个夹具上，**传 prev** 的「只改备注」真的落盘。
     const control2 = (await repo.all()).find((x) => x.id === control.id) as KeyRecord;
-    const beforeControl = st.puts;
-    await repo.save({ ...control2, note: "对照组：这次写会被写消除整个吃掉" }, control2);
+    const beforeNote = st.puts;
+    await repo.save({ ...control2, note: "对照组：这次写从 Task 5 起不许被消除" }, control2);
     expect(
-      st.puts - beforeControl,
-      "夹具没能触发写消除 ⇒ 本格没有判别力，改成 save(next, prev) 也不会红",
+      st.puts - beforeNote,
+      "只改备注的写又被写消除吃掉了 —— MAY_ELIDE_FIELDS 里混进了 note？",
+    ).toBe(1);
+
+    // 前置条件③之二（写消除的收益还在）：同一个夹具上，只推 `lastUsedAt` 仍然 0 次写。
+    // **没有这一半，把写消除整个关掉上面那个 1 也照样成立。**
+    const control3 = (await repo.all()).find((x) => x.id === control.id) as KeyRecord;
+    const beforeTouch = st.puts;
+    await repo.save({ ...control3, lastUsedAt: NOW + 1 }, control3);
+    expect(
+      st.puts - beforeTouch,
+      "夹具没能触发写消除 ⇒ 上面那个 1 什么都没证明",
     ).toBe(0);
 
     const NOTE = "换了下游客户，先停着";
@@ -576,8 +588,8 @@ describe("PATCH /admin/api/keys/:id", () => {
     expect(res.status).toBe(200);
 
     expect((await viewOf(app, target.id)).note, "只改备注的写被写消除吃掉了").toBe(NOTE);
-    // 对照组那条确实没落盘——证明上面那个 0 不是因为计数桩坏了。
-    expect((await viewOf(app, control.id)).note).toBeNull();
+    // 对照组那条备注确实也落了盘（新机制的端到端一半）。
+    expect((await viewOf(app, control.id)).note).toBe("对照组：这次写从 Task 5 起不许被消除");
   });
 
   it("note: null 清空备注；备注超长 400", async () => {

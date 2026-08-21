@@ -21,6 +21,9 @@ import { ConsoleLogger } from "../adapters/logger-console.js";
 import { StoreLogger } from "../adapters/logger-store.js";
 import { multiLogger } from "../adapters/logger-multi.js";
 import type { Logger } from "../ports/logger.js";
+import { createTendGate, type TendGate } from "./admin/tend-lock.js";
+import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
+import { WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
 
 export interface BuildOptions {
   /**
@@ -56,6 +59,17 @@ export interface BuiltApp {
    *    把这两行删掉，全套测试逃逸）。
    */
   repo: KeyPoolRepo;
+  /**
+   * 这个进程 / isolate 的补池在途守卫。
+   *
+   * **交出来的理由与 `repo` 完全同源**：Node 入口的定时轮与面板的「立即补池」必须
+   * 共用**这一把**——各拿各的等于同一个进程里两条补池可以同时跑，而「顺序铸、不并发」
+   * 是功能性约束（并发会同时撞邮箱服务的建号限流与上游的注册风控），不是性能取舍。
+   * `src/entry/node.ts` 原来那个 `let inFlight = false` 就是它的前身。
+   *
+   * 它与存储级锁**不是冗余**，作用域不同，对照表见 `src/http/admin/tend-lock.ts`。
+   */
+  tendGate: TendGate;
 }
 
 /**
@@ -131,10 +145,16 @@ export async function buildApp(
     cacheTtlMs: cfg.poolCacheTtlMs,
     touchIntervalMs: cfg.poolTouchIntervalMs,
   });
+  const tendGate = createTendGate();
   const app = createApp({
     version: VERSION,
     configHolder,
     repo,
+    tendGate,
+    // 手动补池的执行体。**只有这里装配得出来**：它要 `env`（`buildTendDeps` 的入参）
+    // 与 `storage`，而 `createApp` 两样都没有。直接调 `createApp` 的调用方拿不到这份
+    // 接线，端点会如实回 503 而不是假装 202——见 `manualTendHandler` 的 `wiring`。
+    manualTend: { storage, run: () => runManualTendRound(env, storage) },
     fetcher: new NativeFetcher(),
     now: () => Date.now(),
     storageHealth,
@@ -150,7 +170,111 @@ export async function buildApp(
     envLocked: envLockedFields(env),
     storeLogger,
   });
-  return { app, configHolder, repo };
+  return { app, configHolder, repo, tendGate };
+}
+
+/**
+ * 跑一轮**手动**补池（面板「立即补池」的执行体）。
+ *
+ * ⚠️ **`roundBudgetMs` 与 Cron 那一份逐字相同（`WORKER_ROUND_BUDGET_MS` = 780_000），
+ * 这一行是本函数最容易被写漏的一行。** 不传的话：点一次「立即补池」，Worker 铸到
+ * 第三把被平台回收，`mintOne` 的 `finally` 不跑，**两个临时邮箱留在上游**；
+ * 点几次占满活跃邮箱名额 ⇒ 注册机彻底铸不出 key，**而面板上没有任何东西会说明原因**。
+ * 由 `tests/contract/manual-tend.test.ts` 的
+ * 「手动补池传的 roundBudgetMs 与 Cron 那一份逐字相同（780_000 手写字面量锚）」钉着
+ * ——那一格的观测点是 `registrar.round_budget_impossible` 事件里的 `roundBudgetMs` 字段，
+ * 所以「不传」与「传另一个值」是两种不同的红，两条变异各自都拦得住。
+ *
+ * ⚠️ **两种运行时传同一个值，这是刻意的。** Node/Docker 没有平台墙钟上限，
+ * Cron 那条路在 Node 上确实不传（`src/entry/node.ts`）；但手动这条路在 Node 上同样
+ * 传，因为「一次点击最多跑多久」是**这颗按钮自己的**性质，不是运行时的性质——
+ * 两侧不同就等于同一颗按钮在两种部署下能铸出不同把数，而那个差异没有任何人会去断言。
+ * 代价：Node 上手动补池可能比定时轮少铸几把（判据是 `codeTimeoutMs × 通道数`），
+ * 下一次定时轮会接着补。
+ *
+ * ⚠️ **残余风险如实登记**：预算把「跑不完的尝试」挡在门外，**它不消灭泄漏，只把概率
+ * 压下来**。平台仍可能在预算窗口之内中止调用，`mintOne` 的 `finally` 仍可能不跑。
+ * 而且 780_000 这个数的出处是 **Cron Trigger 的 15 分钟墙钟**，
+ * `fetch` 路径上 `ctx.waitUntil` 的实际上限本仓**没有核实过**，不许当既定事实用。
+ *
+ * **每一轮新建一个事件 sink 并在 `finally` 里 `flush()`**，理由与两个入口的 Cron 轮
+ * 完全相同（见 `src/entry/worker.ts` 里同位置那段）：`maybeFlush()` 会把毫秒级返回的
+ * 那一轮整轮吃掉，而手动补池恰恰经常是毫秒级返回的（`need <= 0` 的健康池）。
+ * 这里**不能**靠 app 那个 sink 的 `logFlush` 中间件——响应早就返回了。
+ */
+async function runManualTendRound(
+  env: Record<string, string | undefined>,
+  storage: Storage,
+): Promise<void> {
+  const tendConsole = new ConsoleLogger();
+  const tendStore = new StoreLogger({
+    storage,
+    now: () => Date.now(),
+    shardId: crypto.randomUUID().slice(0, 8),
+    onError: (err) => tendConsole.log({
+      level: "error", event: "storage.event_flush_failed",
+      msg: "手动补池事件落盘失败，本轮缓冲已丢弃（不重试同一批）",
+      fields: { error: err instanceof Error ? err.message : String(err) },
+    }),
+  });
+
+  const deps = await buildTendDeps(env, storage, {
+    logger: multiLogger(tendConsole, tendStore),
+    flush: () => tendStore.flush(),
+  });
+  // 端点在起跑前已经查过一次 `registrar.enabled`（走 ConfigHolder）。走到这里还是
+  // `null`，说明存储里的配置在这两步之间被改掉了——**如实说一声，别静默返回**：
+  // 面板已经收到 202，这条事件是运维唯一能看出「按了但没跑」的地方。
+  if (!deps) {
+    tendStore.log({
+      level: "warn", event: "registrar.manual_tend_skipped",
+      msg: "手动补池启动后发现注册机已被关掉，本轮什么都没做（面板已经回过 202）",
+    });
+    await tendStore.flush();
+    return;
+  }
+
+  const roundStartedAt = Date.now();
+  try {
+    const r = await tendOnce({ ...deps, roundBudgetMs: WORKER_ROUND_BUDGET_MS });
+    // `trigger: "manual"` —— 补池历史里这一行必须能与 Cron 那些区分开，
+    // 否则运维看到池子突然多了两把 key 时分不清是自动补的还是有人点的。
+    await deps.recordRound(r, "manual");
+    // ⚠️ **这里刻意没有两个入口那两行裸 `console`**（`补池完成 …` / `本轮有名额未铸出 …`），
+    // 而且这不是省事：
+    // ① 归因那一行只在 `minted < attempted` 时打，**手动这一轮的完整汇总本来就无条件
+    //    落进 `tend:history`**（面板的补池历史），而这颗按钮存在的全部理由就是让人
+    //    在面板上看结果，不是在容器日志里 grep；
+    // ② 换成 `deps.logger.log()` 的话每一次点击都多一条事件 ⇒ **多一次 put**，
+    //    而配额账里手动补池那一栏算的是 3 次（护栏键 + 抢锁 + `tend:history`）。
+    //    健康的一轮不写事件，这条性质与 Cron 那一栏是同一条，不该在这里被打破。
+    // 容器日志里仍然看得见这次点击：`registrar.manual_tend_started` 走的是 app 的
+    // `multiLogger(ConsoleLogger, StoreLogger)`，`ConsoleLogger` 那一路会打出来。
+    if (r.minted < r.attempted) {
+      // 有名额没铸出来是**异常**，不是稳态——它本来就伴随着 `mintOne` 打出的那些
+      // `registrar.*` 失败事件（缓冲已经非空），所以这一条不额外制造 put。
+      deps.logger.log({
+        level: "warn", event: "registrar.manual_tend_partial",
+        msg: "手动补池有名额没铸出来",
+        fields: { attempted: r.attempted, minted: r.minted, reasons: summarizeFailures(r.failures) },
+      });
+    }
+  } catch (err) {
+    // **抛错那一轮也必须在面板上占一格**（与两个入口的 Cron 轮同一条口径，评审 C1）：
+    // `recordRound` 排在 `tendOnce` 之后、一抛就整个跳过 ⇒ 不补这两件事的话，
+    // 面板上这一轮什么都没有，与「压根没点过」逐字节不可区分。
+    deps.logger.log({
+      level: "error", event: "registrar.round_failed",
+      msg: "手动补池整轮抛错中断，本轮没有产出；池子状态没有变化",
+      fields: { error: err instanceof Error ? err.message : String(err) },
+    });
+    await deps.recordCrashedRound({
+      at: roundStartedAt, channel: deps.config.primary ?? "",
+      durationMs: Date.now() - roundStartedAt, trigger: "manual",
+    });
+  } finally {
+    await deps.flush();
+  }
 }
 
 /**

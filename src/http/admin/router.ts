@@ -15,6 +15,8 @@ import { eventsHandler, eventsDownloadHandler } from "./handlers/events.js";
 import {
   keysImportHandler, keysBulkHandler, keyDeleteHandler, keyPatchHandler,
 } from "./handlers/keys-write.js";
+import { manualTendHandler, type ManualTendWiring } from "./handlers/registrar.js";
+import type { TendGate } from "./tend-lock.js";
 import { uiRoutes } from "../../ui/serve.js";
 
 export interface AdminRouterDeps {
@@ -53,6 +55,13 @@ export interface AdminRouterDeps {
    * no-op 兜底，这里只管接线，不再做一次「有没有配」的判断。
    */
   storeLogger: StoreLogger;
+  /**
+   * 手动补池的执行体与存储（P3c Task 5）。**`null` = 这个 app 没接**，
+   * 端点仍然注册、仍然鉴权，但会如实回 `503 not_wired`。见 `manualTendHandler`。
+   */
+  manualTend: ManualTendWiring | null;
+  /** 补池在途守卫（进程/isolate 内）。见 `./tend-lock.ts` 里两把锁的对照表。 */
+  tendGate: TendGate;
 }
 
 /**
@@ -203,6 +212,23 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.post("/admin/api/keys/bulk", keysBulkHandler(keysWrite));
   admin.delete("/admin/api/keys/:id", keyDeleteHandler(keysWrite));
   admin.patch("/admin/api/keys/:id", keyPatchHandler(keysWrite));
+
+  // ── 注册机的「立即补池」（P3c Task 5，风险 L6）───────────────────────────
+  //
+  // **本仓第一条会触发真实上游副作用的写端点**：Key 池那四条只动本地存储，这一条会
+  // 去建临时邮箱、注册 Agnes 账号、领 key。所以它的护栏比那四条多两层（存储锁 +
+  // 每日写预算闸），全部在 `handlers/registrar.ts` 里，**注册在这里没有任何条件**
+  // ——路由表不许随运行时配置变化，否则 `tests/contract/admin-auth.test.ts` 的
+  // 枚举式鉴权矩阵会因为夹具恰好关着注册机而漏掉这条端点。
+  // 「注册机没开」是 handler 里的一条 409，不是"这条路由不存在"。
+  admin.post("/admin/api/registrar/tend", manualTendHandler({
+    wiring: deps.manualTend,
+    now: deps.now,
+    logger: deps.logger,
+    runtime: deps.runtime,
+    configHolder: deps.configHolder,
+    gate: deps.tendGate,
+  }));
 
   // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
   // 串起来跑，`/admin/*` 这条兜底若排在前面会先返回 404，**整套管理 API 直接消失**

@@ -10,6 +10,7 @@ import { fixedConfigHolder } from "../../src/http/config-holder.js";
 import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 import { TEST_CONFIG } from "../helpers/make-app.js";
 import { StoreLogger } from "../../src/adapters/logger-store.js";
+import { createTendGate } from "../../src/http/admin/tend-lock.js";
 
 const TOKEN = "session-probe-admin-token-01234";
 
@@ -40,6 +41,10 @@ function adminApp(version: string) {
       storage: new MemoryStorage(undefined, () => 1000), now: () => 1000, shardId: "session-test-shard",
       onError: () => {},
     }),
+    // 「立即补池」端点要的两样（P3c Task 5）。本文件只测 session，**刻意传 `null`**：
+    // 那正是「这个 app 没接手动补池执行体」的形态，端点会如实回 503 而不是假装 202。
+    manualTend: null,
+    tendGate: createTendGate(),
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");
   const app = new Hono();

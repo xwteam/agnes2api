@@ -56,40 +56,42 @@ export function isAvailable(r: KeyRecord, now: number): boolean {
 /**
  * 「这把 key 还算不算在 `targetKeys` 名额里」——**补池专用，与 `isAvailable` 是两个问题**。
  *
- * 两者曾经是同一个函数，而它们**只在被停用的 key 上分歧**，所以那次合并一直没出事。
+ * 两者曾经是同一个函数，而它们只在**被停用**的 key 上分歧，所以那次合并一直没出事。
  * `disabled` 落地的那一刻它就出事了（评审 C1，实测复现）：
  * `src/core/registrar/tender.ts` 的 `tendOnce` 拿 `targetKeys - available` 当缺口，
  * **差多少就真的去注册多少个 Agnes 账号**（建临时邮箱 → 注册 → 建 token）。
  * 让 `isAvailable` 顺手回答这个问题，等于**「在面板上停用一把 key」＝「自动注册一个新账号」**。
  *
- * **而且不会自己了结**：`disabled` 不像 `cooling` 那样到点就回来，那把只要还停着，
- * **每一轮 Cron 都把缺口重新填满**，每停用 1 把就永久多 1 个账号。运维最自然的批量操作
- * （全停以暂停这个池子）会变成代价最高、且铸出来的账号收不回去的那一个，
- * 正是「邮箱配额自杀」那条链。
+ * ⚠️ **判据是 `!r.evicted`，一个字都不多——`disabled` 与 `cooling` 都占名额。**
+ * P3c Task 2 落地时它写的是 `!evicted && cooldownUntil <= now`（只放过 `disabled`），
+ * 那一版把两条同族缺陷留在了线上，Task 5 一并关掉：
  *
- * 判据是 `!evicted && 不在冷却`，**刻意不读 `isDisabled`**：只有 `evicted` 才意味着
- * 「这把死了，去换一把」，而补池就是全仓唯一真的会去换 key 的代码——这与
- * `all_disabled` 不复用 `all_evicted` 是同一条理由，两处不一致的话本任务的立论自相矛盾。
+ * · **停用一把正在冷却的 key 仍会触发一次补池。** `disabled + cooling` 落在
+ *   `cooldownUntil > now` 那一支上 ⇒ 不占名额 ⇒ 照样铸一把新的。实测（`targetKeys=3`）：
+ *   `available` 3→2、`minted` 1、池子 3→4，**冷却到期后 `need` 转负，多出来的那把
+ *   再也不会退掉**。而**运维最可能去停用一把 key 的起因，恰恰是面板上显示它「冷却中」**
+ *   ——这条残留落在的是最常见的路径，不是边角。
+ * · **冷却导致池子永久膨胀，线性、不封顶。** 实测（`targetKeys=3`）：稳态 3 →
+ *   全池被限流冷却那一轮 `minted=3` ⇒ 池子 **6**；冷却到期 `need=-3` 不再铸
+ *   ⇒ **永久停在 6**；下一次风暴 **9**，再下一次 **12**。每一次全池风暴永久
+ *   `+targetKeys`，而每一把都是一次真实的 Agnes 建号 + 一个临时邮箱。
  *
- * ⚠️ **对 `cooling` 的既有语义一个字都没改**：这个式子与 P3b 的 `isAvailable` 逐字相同
- * （由 `tests/unit/registrar/tender.test.ts「补池的名额判据与 P3b 的 isAvailable 逐字等价」`
- * 钉着，那一格穷举四种状态比对两个函数）。
+ * **改成 `!r.evicted` 之后两条一起消失**：冷却是**会自己回来**的状态，拿它当"缺口"
+ * 去铸新号，铸出来的账号却**不会**自己走——一次瞬时故障换来一份永久成本。
+ * 只有 `evicted` 才意味着「这把死了，去换一把」，而补池是全仓唯一真的会去换 key 的代码。
  *
- * 🔴 **正因为不读 `isDisabled`，上面那条保证在「停用一把正在冷却的 key」上不成立
- * ——这是一条如实登记的残留，别把它读成无条件的**（定向复评②）。
- * `disabled + cooling` 的 key 落在 `cooldownUntil > now` 这一支上 ⇒ **不占名额** ⇒
- * 照样触发一次补池。实测：停用一把冷却中的 key ⇒ `available` 3→2、`minted` 1、
- * 池子 3→4；**冷却到期后 `available` 变 4、`need` 转负、那把多出来的再也不会退掉**。
- * 而**运维最可能去停用一把 key 的起因，恰恰是面板上显示它「冷却中」**（被限流/异常）
- * ——所以这条残留落在的是常见路径，不是边角。
+ * **代价，明写**：整池都在冷却时补池**不会**去铸替补，网关在冷却窗口内持续 503
+ *（最长一个 `COOLDOWN_PAYMENT_MS` / `COOLDOWN_STRIKE_MS`）。这是刻意的取舍——
+ * 那种情况下上游要么在限流、要么在故障，铸新号打的是同一个后端，只会同时撞注册风控
+ * 与邮箱建号限流，而冷却到期本来就会自己恢复。运维想立刻加人手有两条路：
+ * 面板上「清冷却」，或者「立即补池」（它同样受这条判据约束，所以真正的手段是前者）。
  *
- * 不在本任务修：它的正解是把 `cooling` 也算进名额（`!r.evicted`），而那会改变补池在
- * 限流风暴下的行为，牵动 `mintBatch` 与 `roundBudgetMs`，**已裁给 Task 5 一并处理**，
- * 届时这条残留会随之关闭。同一条判据下还有一条同族的既有缺陷（全池风暴每次永久
- * `+targetKeys`，线性增长），一并在那里。
+ * ⚠️ **`now` 参数在 P3c Task 5 去掉了，这不是清理，是判据本身的变化**：这个函数
+ * 现在**与时间无关**，「冷却算不算名额」不再是一个可以被时钟影响的问题。
+ * 加回一个时间参数就是在把上面两条缺陷的入口重新打开。
  */
-export function countsTowardTarget(r: KeyRecord, now: number): boolean {
-  return !r.evicted && r.cooldownUntil <= now;
+export function countsTowardTarget(r: KeyRecord): boolean {
+  return !r.evicted;
 }
 
 export function selectKey(

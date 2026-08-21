@@ -6,7 +6,8 @@ import { StoreLogger } from "../adapters/logger-store.js";
 import { multiLogger } from "../adapters/logger-multi.js";
 import { workerRuntime } from "../adapters/runtime-worker.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
-import { WORKER_CRON_WALL_CLOCK_MS, WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
+import { WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
+import { acquireTendLock, releaseTendLock } from "../http/admin/tend-lock.js";
 import type { Hono } from "hono";
 
 export interface Env {
@@ -17,17 +18,20 @@ export interface Env {
 
 let cachedApp: Hono | null = null;
 
-/** 补池轮次的重入锁，落在与 key 池同一个 KV 命名空间里（不新增依赖）。 */
-const TEND_LOCK_KEY = "registrar_tend_lock";
-/**
- * 锁的有效期。取 Cloudflare Cron Trigger 单次调用的墙钟上限（15 分钟）：超过它，
- * 上一轮要么已经结束、要么已经被平台中止，锁不该再拦住新的一轮——否则一次
- * 被中止的调用会让补池永久停摆。
- */
-const TEND_LOCK_TTL_MS = WORKER_CRON_WALL_CLOCK_MS;
-
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  /**
+   * ⚠️ **`ctx` 必须一路传给 `app.fetch`。** 不传的话 `c.executionCtx` 在 handler 里
+   * 直接抛错 ⇒ `runtime.background()` 拿到 `null` ⇒ 「立即补池」退化成
+   * fire-and-forget ⇒ 响应一返回 isolate 就可能停摆，补池被从中间砍断、
+   * `mintOne` 的 `finally` 不跑、**临时邮箱漏删**。
+   * 这一行**在 P3c Task 5 之前是没有的**（当时全仓只有 `scheduled()` 用得上 ctx），
+   * 由 `tests/unit/entry-worker.test.ts` 的
+   * 「fetch 把 ExecutionContext 一路传给 app —— 不传的话 waitUntil 在生产里根本拿不到」钉着。
+   *
+   * `ctx` 声明成可选：Workers 运行时总是传三个参数，而本仓既有的十几处
+   * `worker.fetch(req, env)` 测试调用与它无关，不该为一个后台载体去牵连它们。
+   */
+  async fetch(req: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     let app = cachedApp;
     // **app 现在可以无条件缓存**：它自己不再持有任何配置值，配置全部走 ConfigHolder
     // 每请求读一次（TTL 内命中缓存）。原来那个 `cachedToken !== env.GATEWAY_TOKEN`
@@ -50,7 +54,7 @@ export default {
       }
       cachedApp = app;
     }
-    return app.fetch(req);
+    return app.fetch(req, env, ctx);
   },
 
   /**
@@ -119,13 +123,15 @@ export default {
     // 而「顺序铸、不并发」是功能性约束（并发同时撞邮箱服务的建号限流与 Agnes 的
     // 注册风控），不是性能取舍。KV 是最终一致的，这把锁只是尽力而为、不是互斥
     // 原语；它挡的是"上一轮明明还在跑"这种最常见的重叠，而不是纳秒级的竞态。
-    const now = Date.now();
-    const lock = await storage.get<{ until?: number }>(TEND_LOCK_KEY);
-    if (lock && typeof lock.until === "number" && lock.until > now) {
+    //
+    // **判据与键名从 P3c Task 5 起抽进 `src/http/admin/tend-lock.ts`**，与 Node 入口
+    // 和面板的「立即补池」共用同一份实现——三处各写各的 `get`→检查→`put`，
+    // 迟早有一处把中间那步省掉（那正是「两个都抢到」）。
+    const lock = await acquireTendLock(storage, Date.now());
+    if (!lock.ok) {
       console.warn("[registrar] 上一轮补池仍在进行，跳过本次 Cron 触发（可调疏 cron 或调小 MINT_BATCH）");
       return;
     }
-    await storage.put(TEND_LOCK_KEY, { until: now + TEND_LOCK_TTL_MS });
 
     ctx.waitUntil(
       (async () => {
@@ -173,7 +179,7 @@ export default {
           // 锁必须释放，否则下一次 Cron 要空等到 TTL 到期才肯干活。释放本身
           // 失败也不能让这个后台任务以异常收场。
           try {
-            await storage.delete(TEND_LOCK_KEY);
+            await releaseTendLock(storage);
           } catch (err) {
             // **走 `deps.logger` 而不是裸 `console.warn`**（评审 I5）：释放锁失败
             // 恰恰是运维要在事件板块里看到的那类事——它意味着下一次 Cron 要空等

@@ -4,6 +4,7 @@ import type { AgnesDeps } from "./agnes.js";
 import type { RegistrarConfig, Channel } from "./config.js";
 import { requirePrimary } from "./config.js";
 import { countsTowardTarget } from "../keypool.js";
+import { isImportableKey } from "../keypool-repo.js";
 import { mintOne, type MintOutcome } from "./mint.js";
 import type { Logger } from "../../ports/logger.js";
 
@@ -28,7 +29,26 @@ export type TendFailureReason =
    * 于是面板上这一轮**与「注册机根本没跑」逐字节不可区分**——正是本任务开篇要
    * 兑现的那半句验收在最该看见的那一轮上是零，也直接违反「绝不伪造」。
    */
-  | "round_crashed";
+  | "round_crashed"
+  /**
+   * **铸出来了，但那串 key 材料本身可疑**（P3c Task 5，Task 3 的 m5 裁定）。
+   *
+   * ⚠️ **这一条是本表唯一「不是失败」的成员，措辞与消费方都要小心**：这一轮的
+   * `minted` 照常 +1、`mintedByChannel` 照常记账，因为**上游那边账号是真的建出来了、
+   * 一个临时邮箱是真的花掉了**，说 0 是伪造。它出现在 `failures` 里是因为
+   * `failures` 是这份结果里**唯一**能逐条带 `channel` 说明「这一轮有什么不对劲」
+   * 的通道，而运维必须在补池历史那一行上看得见它。
+   *
+   * 判据是 `isImportableKey`（`src/core/keypool-repo.ts`）：可打印 ASCII 且不含空白。
+   * 不满足时把它拼进 `authorization: Bearer <key>` 会在构造请求头时抛 TypeError
+   * ——一把**每次被选中都让转发炸掉、而看起来完全正常**的 key。
+   *
+   * **处置是「照存不误 + 如实报可疑」，不是拒收**（同一个判据在两条路上不能有
+   * 同一种处置）：面板导入那条路上拒绝是免费的（东西还在剪贴板里），
+   * 而铸号这条路上拒绝是**销毁凭据**——Agnes 侧账号已经真实建出来了，key 材料只有
+   * 手上这一份，扔掉就再也找不回来，连对账都修不了。
+   */
+  | "key_suspicious";
 
 /**
  * `TendFailureReason` 的运行期表。类型是编译期的，枚举不出来，而 P3 的面板要按它
@@ -41,7 +61,7 @@ export type TendFailureReason =
 export const TEND_FAILURE_REASONS = [
   "domain_blocked_all", "upstream_error", "code_timeout", "register_failed",
   "login_failed", "key_failed", "provider_error", "network_error",
-  "rate_limited", "provider_missing", "round_crashed",
+  "rate_limited", "provider_missing", "round_crashed", "key_suspicious",
 ] as const satisfies readonly TendFailureReason[];
 
 type _NoMissingReason =
@@ -55,9 +75,11 @@ export interface TendResult {
   /**
    * 本轮开始时**占着 `targetKeys` 名额**的 key 数（判据是 `countsTowardTarget`）。
    *
-   * ⚠️ **不要读成「能打上游的 key 数」，两者从 P3c Task 2 起就不是一回事了**：
-   * **被管理员停用的 key 计入这个数**（它占名额，见 `keypool.ts` 的 `countsTowardTarget`），
-   * 而它恰恰是不能打上游的。停用 1 把时这个数会说 3，实际能服务的是 2。
+   * ⚠️ **不要读成「能打上游的 key 数」，两者从 P3c Task 2 起就不是一回事了，
+   * 而 Task 5 又把差距拉大了一档**：**被管理员停用的、以及正在冷却的 key 都计入
+   * 这个数**（它们都占名额，见 `keypool.ts` 的 `countsTowardTarget`），而这两种
+   * 恰恰都是不能打上游的。整池 3 把全在冷却时这个数仍然说 3，实际能服务的是 0。
+   * 判据现在就是 `!evicted` —— **这一栏等于「池子里没被剔除的把数」**。
    * 名字没改是因为它已经落进 `tend:history` 持久化、也进了运维日志
    * （`[registrar] 补池完成 available=N`），改名会让存量历史条目对不上。
    *
@@ -176,12 +198,11 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
     };
   }
 
-  const now = startedAt;
-  // **判据是 `countsTowardTarget` 不是 `isAvailable`**，两者只在被停用的 key 上分歧：
-  // 用后者的话「在面板上停用一把 key」就等于「自动注册一个新 Agnes 账号」，而且
-  // 每一轮 Cron 都会重新填满这个缺口（停用不像冷却那样会自己回来）。理由全文见
-  // `src/core/keypool.ts` 的 `countsTowardTarget`。
-  const available = (await deps.repo.all()).filter((r) => countsTowardTarget(r, now)).length;
+  // **判据是 `countsTowardTarget` 不是 `isAvailable`**，两者在**被停用**与**冷却中**
+  // 的 key 上分歧，而那两种都占名额：用后者的话「在面板上停用一把 key」就等于
+  // 「自动注册一个新 Agnes 账号」，而「整池被限流冷却一次」就等于「池子永久变大一倍」。
+  // 理由全文与两次实测见 `src/core/keypool.ts` 的 `countsTowardTarget`。
+  const available = (await deps.repo.all()).filter((r) => countsTowardTarget(r)).length;
   const need = deps.config.targetKeys - available;
   if (need <= 0) {
     return {
@@ -199,7 +220,7 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   const chain: Channel[] = deps.config.fallback ? [primary, deps.config.fallback] : [primary];
 
   const rounds = Math.min(need, deps.config.mintBatch);
-  const roundStartedAt = now;
+  const roundStartedAt = startedAt;
   const failures: TendResult["failures"] = [];
   const mintedByChannel: Record<string, number> = {};
   let attempted = 0;
@@ -279,10 +300,26 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
       });
 
       if (out.ok) {
+        // **照存不误。** 这一行**刻意不加校验、也不 `trim()`**：到这一步 Agnes 侧的
+        // 账号已经真实建出来、一个临时邮箱已经真实花掉，而 key 材料只有手上这一份。
+        // 在这里拒收 = 销毁凭据 = `keypool-repo.ts` 开头定性的那一类**数据丢失**。
         await deps.repo.add(out.key);
         minted++;
         // **记在真正铸出来的那条通道名下**（评审 I8），不是主通道。
         mintedByChannel[ch] = (mintedByChannel[ch] ?? 0) + 1;
+        // **如实报可疑**（Task 3 的 m5 裁定，Task 5 落地）。`isImportableKey` 此前
+        // 只挂在面板导入这条「人点一下」的路径上，而**稳态下 key 进池子的主路径是
+        // 这一行**——不对称是登记过的，处置不同是刻意的，但"不报"从来不是选项。
+        if (!isImportableKey(out.key)) {
+          failures.push({ reason: "key_suspicious", channel: ch });
+          deps.logger.log({
+            level: "error", event: "registrar.minted_key_suspicious",
+            msg: "上游发回来的 key 含有不可打印字符或空白，已照常存进池子，但它多半每次被选中都会让转发失败"
+              + "（拼进 authorization 头时会抛 TypeError）；请在面板上停用或删除它",
+            // **不带明文**（约束 11(a)）：只报长度与通道，够运维定位、不够泄漏。
+            fields: { channel: ch, keyLength: out.key.length },
+          });
+        }
         break;
       }
 

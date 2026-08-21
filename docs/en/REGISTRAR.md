@@ -194,6 +194,83 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
   as soon as it's minted, so an interrupted round is simply incomplete; the next scheduled round
   picks up where it left off.
 
+## How the gap is computed (which keys occupy a `TARGET_KEYS` slot)
+
+Gap = `TARGET_KEYS` − **the number of keys that have not been evicted**. There is exactly one
+criterion: **if `evicted` is false, it occupies a slot.**
+
+| Key state | Occupies a `TARGET_KEYS` slot? | Usable for upstream calls? |
+|---|---|---|
+| Fresh / available | Yes | Yes |
+| **Cooling down** (rate-limited, consecutive failures) | **Yes** | No |
+| **Disabled by an administrator** | **Yes** | No |
+| Evicted (401/403, credentials dead) | No | No |
+
+**"Cooling counts as occupied" is deliberate.** A cooldown is a state that **comes back on its
+own**; treating it as a gap mints new accounts that **never go away** — one transient failure
+buys you a permanent cost. Measured (`TARGET_KEYS=3`): if cooling did not occupy a slot, one
+round in which the whole pool is rate-limited mints 3 more keys ⇒ pool becomes 6; once the
+cooldown expires the gap goes negative and nothing is reclaimed ⇒ **it stays at 6 forever**;
+the next storm makes it 9, then 12 — linear growth, and every single one of those is a real
+Agnes sign-up plus a real temporary mailbox spent.
+
+**The cost, stated plainly**: when the entire pool is cooling, the registrar will **not** mint
+replacements, and the gateway keeps returning `503` for the duration of the cooldown (at most one
+`COOLDOWN_PAYMENT_MS` / `COOLDOWN_STRIKE_MS`). To recover immediately, use "clear cooldown" on
+those keys in the admin panel rather than expecting the registrar to do it.
+
+## "Tend now" in the admin panel
+
+That's the button in the admin panel (`POST /admin/api/registrar/tend`). A `202` means the round
+**has started**; it keeps running after the response returns. Look at the "tend history" section
+for the outcome — its `trigger` will read `manual`.
+
+It has **four guardrails**; failing any one of them means the round never starts:
+
+| Guardrail | Response when it fails | What it blocks |
+|---|---|---|
+| In-flight guard within the process / isolate | `409 tend_in_flight` | The scheduled round colliding with the button, and two concurrent clicks on one replica |
+| Storage-level short lock (`registrar_tend_lock`) | `409 locked` | Overlap **across replicas** (several containers on a shared volume; the Worker's two isolates) |
+| At least 10 minutes between two manual rounds | `429 manual_cooldown` | Click-spamming through your temporary-mailbox quota |
+| At most **24** times per day | `429 write_budget_exhausted` | Click-spamming through your **storage write quota** (arithmetic in the "quota ledger" of [DEPLOY.md](DEPLOY.md)) |
+
+The `429` body carries `remaining` (how many are left today), `resetAt` (recovers at UTC
+midnight) and `retryAfterMs`. **The `202` body carries `remaining` too**, so the panel can state
+the truth up front instead of waiting until the button stops working. When the registrar is off,
+the endpoint answers `409 registrar_disabled`.
+
+⚠️ **An honest limit — do not read this as "concurrency is solved".** KV is eventually
+consistent, so that storage lock is **best-effort, not a mutual-exclusion primitive**. What it
+blocks is the common case — "the previous round is clearly still running"; two clicks issued in
+the same millisecond can still both take it. The guard key and the tend history are read-modify-write
+as well, so updates can be lost inside a concurrency window — bounded by "the gate lets through at
+most (concurrency − 1) extra rounds, and the tend history misses at most (concurrency − 1) rows".
+
+⚠️ **Residual risk**: a manual round carries **the same per-round wall-clock budget as the
+Worker's Cron (780 s)**. Its job is "never start an attempt that is known not to fit"; it
+**does not eliminate leaks, it only lowers the probability** — the platform can still abort the
+call inside the budget window, and the temporary mailbox being minted at that moment is not
+deleted. Note this differs from the scheduled round: **the Node/Docker timer carries no such
+budget, while the manual round does**, so under the same configuration a manual round may mint
+fewer keys than a scheduled one; the remaining slots go to the next scheduled round.
+
+### These three keys never expire on their own
+
+`registrar_tend_lock`, `registrar_manual_guard` and `tend:history` **all carry no TTL**. Their
+names are fixed literals and there is always exactly one of each; stale values are always decided
+by **comparing values** (an expired lock blocks nobody, yesterday's counter does not count), so
+leaving them behind is harmless.
+
+**The cost, stated plainly**: if you turn the registrar off for good, or delete the deployment but
+keep the KV namespace, they will not disappear. To clean up, delete the keys by hand:
+
+- Worker: `wrangler kv key delete --binding=POOL registrar_manual_guard` (once per key)
+- Node / Docker: edit `DATA_DIR/store.json` and remove those three top-level fields
+
+**You usually want to keep `tend:history`**: it is exactly what you want during a post-mortem, and
+"the tend history vanishes N days after the registrar was turned off" is the worst possible timing —
+operators usually turn the registrar off **because** something went wrong.
+
 ## How soon a freshly minted key reaches the forwarding path
 
 **At most one `POOL_CACHE_TTL_MS` (60 seconds by default) — not "the next request".**
@@ -244,6 +321,13 @@ attempt, whether it succeeded or failed.
   sign-up path; `provider_error` = the mailbox service itself (credentials, active-mailbox
   quota, outage); `provider_missing` = an internal wiring error; it should not appear
   under a normal configuration (missing credentials fail at startup, long before this).
+- **`key_suspicious` shows up in `reasons=`**: the key material the upstream sent back contains
+  non-printable characters or whitespace. **That round really did mint a key** (the Agnes account
+  was really created and a temporary mailbox was really spent), so it **was stored in the pool
+  anyway** — refusing it here would destroy a credential that can never be recovered. But it will
+  most likely make forwarding fail every time it is selected, so disable or delete it from the
+  admin panel. An error event `registrar.minted_key_suspicious` is emitted alongside it (it records
+  only the channel and the length, **never the plaintext**).
 - If a channel keeps failing to register (for example, Agnes has tightened its verification-code
   or CAPTCHA policy), that's an upstream change no amount of code can work around. You can disable
   the registrar and switch to manually importing keys instead (see [DEPLOY.md](DEPLOY.md)).

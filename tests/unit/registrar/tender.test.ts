@@ -39,6 +39,24 @@ function agnesOk() {
   };
 }
 
+/** 与 `agnesOk()` 同形，但 `/api/token` 固定发回指定的那一串 key。 */
+function agnesWithKey(key: string) {
+  return {
+    platformUrl: "https://platform.test",
+    fetcher: {
+      async fetch(url: string) {
+        if (url.includes("/api/user/login")) {
+          return new Response(JSON.stringify({ data: { access_token: "tok" } }), { status: 200 });
+        }
+        if (url.includes("/api/token")) {
+          return new Response(JSON.stringify({ data: { key } }), { status: 200 });
+        }
+        return new Response("{}", { status: 200 });
+      },
+    },
+  };
+}
+
 async function makeDeps(over: Partial<RegistrarConfig> = {}, provider: MailProvider = new FakeMailProvider()) {
   const repo = new KeyPoolRepo(new MemoryStorage(), { now: () => 1000, logger: NULL_LOGGER });
   const providers: Partial<Record<Channel, MailProvider>> = { yyds: provider };
@@ -115,19 +133,18 @@ describe("tendOnce", () => {
   });
 
   /**
-   * 名额判据的**三状态排除清单**。原来只有前两项，`disabled` 落地时差点被顺手加成第三项
-   * ——那是错的，见下面那一格。三种状态**给的是不同的字段组合**，所以这一格能分辨
-   * 「判据看错了字段」与「判据压根没生效」。
+   * 名额判据的**排除清单只有一项：`evicted`**（P3c Task 5 收窄，此前是三项里的两项）。
+   * 三把 key **给的是不同的字段组合**，所以这一格能分辨「判据看错了字段」与
+   * 「判据压根没生效」：只有被剔除的那把腾出名额 ⇒ `available` 2、缺口 1。
    */
-  it("已剔除与冷却中的 key 不计入可用数，而被停用的**照样计入**", async () => {
+  it("只有已剔除的 key 腾出名额，冷却中的与被停用的都**照样计入**", async () => {
     const { repo, deps } = await makeDeps();
     const a = await repo.add("a"); await repo.save({ ...a, evicted: true });
     const b = await repo.add("b"); await repo.save({ ...b, cooldownUntil: 999_999 });
     const c = await repo.add("c"); await repo.save({ ...c, disabled: true }, c);
     const out = await tendOnce(deps);
-    // 三把里只有被停用的那把占名额 ⇒ available 1、缺口 2。
-    expect(out.available).toBe(1);
-    expect(out.minted).toBe(2);
+    expect(out.available).toBe(2);
+    expect(out.minted).toBe(1);
   });
 
   /**
@@ -142,11 +159,11 @@ describe("tendOnce", () => {
    * **变红条件**：`tender.ts` 的 `countsTowardTarget` 换回 `isAvailable`。
    * 断言分两半，缺一不可：`minted`（这一轮铸没铸）与**池子实际条数**（真落盘没有）。
    *
-   * 🔴 **保证是有条件的，用例名里的「不在冷却」三个字不许去掉**（定向复评②）：
-   * 判据不读 `isDisabled`，所以 `disabled + cooling` 的 key **仍然不占名额、仍然会
-   * 触发补池**。那条残留由下面那一格如实钉着，不在本任务修（已裁给 Task 5）。
+   * ✅ **P3c Task 5：这条保证从「有条件」变成无条件了**，用例名里原来那三个字
+   *（「不在冷却」）已经去掉。判据现在是 `!r.evicted`，`disabled + cooling` 的组合
+   * 由下面那一格正面钉着——那一格在 Task 5 之前断言的是相反的行为。
    */
-  it("停用一把**不在冷却**的 key 不触发补池——停用不是「这把死了」，别拿它当缺口", async () => {
+  it("停用一把 key 不触发补池——停用不是「这把死了」，别拿它当缺口", async () => {
     const { repo, deps } = await makeDeps();          // targetKeys: 3
     for (const k of ["a", "b", "c"]) await repo.add(k);
     const steady = await tendOnce(deps);
@@ -163,22 +180,23 @@ describe("tendOnce", () => {
   });
 
   /**
-   * 🔴 **如实登记的残留，不是护栏——这一格断言的是一个「今天还错着」的行为**（定向复评②）。
+   * **同一条不变量的另一半：停用一把**正在冷却**的 key 同样不触发补池。**
    *
-   * `countsTowardTarget` 刻意不读 `isDisabled`，所以判据落在 `cooldownUntil > now`
-   * 这一支上：**停用一把正在冷却的 key，照样触发一次补池**，而且冷却到期后
-   * `available` 反而变大、`need` 转负，**多铸出来的那一把再也不会退掉**。
+   * ⚠️ **这一格在 P3c Task 5 之前断言的是相反的行为**（它当时叫「【已知残留】…仍会
+   * 触发补池」，如实钉着一个错着的行为）。当时的判据是
+   * `!evicted && cooldownUntil <= now`：`disabled + cooling` 落在冷却那一支上 ⇒
+   * 不占名额 ⇒ 照样铸一把新的，而冷却到期之后 `need` 转负、**多铸的那一把再也不会
+   * 退掉**。实测过的数字就是下面这几个，只是当时期望写的是 `available: 2 / minted: 1 /
+   * 池子 4`。
    *
-   * **这条落在常见路径上**：运维最可能去停用一把 key 的起因，正是面板上显示它
+   * **它落在最常见的路径上**：运维最可能去停用一把 key 的起因，正是面板上显示它
    * 「冷却中」（被限流 / 异常）。上一格用的是 `repo.add()` 出来的 fresh key，
    * 四态等价那格的「已停用」也是 `cooldownUntil: 0`——**这个组合原来一格都没有**，
-   * 于是那条保证被写成了无条件的。
+   * 于是上一格那条保证被写成了无条件的。
    *
-   * ⚠️ **Task 5 修 `cooling` 判据时这一格会变红，那是预期**：把期望从
-   * 「铸了 1 把」改成「一把都不铸」，并把这段注释连同上一格用例名里的
-   * 「不在冷却」一起删掉。
+   * **变红条件**：`countsTowardTarget` 加回 `&& r.cooldownUntil <= now`。
    */
-  it("【已知残留】停用一把**正在冷却**的 key 仍会触发补池，且多铸的那把不会退掉", async () => {
+  it("停用一把**正在冷却**的 key 同样不触发补池——两个方向合起来才是完整的那条保证", async () => {
     let t = 1000;
     const repo = new KeyPoolRepo(new MemoryStorage(), { now: () => t, logger: NULL_LOGGER });
     const deps: TendDeps = {
@@ -196,25 +214,70 @@ describe("tendOnce", () => {
     await repo.save({ ...cooled, disabled: true }, cooled);
 
     const out = await tendOnce(deps);
-    expect(out.available, "冷却这一支先命中 ⇒ 它不占名额").toBe(2);
-    expect(out.minted, "残留：这里本该是 0").toBe(1);
-    expect(await repo.all(), "池子被这次停用推大了一把").toHaveLength(4);
+    expect(out.available, "冷却中的、被停用的，两种都占名额").toBe(3);
+    expect(out.minted, "停用一把冷却中的 key = 自动注册一个新 Agnes 账号").toBe(0);
+    expect(await repo.all(), "池子不许因为一次「停用冷却中的 key」就长大").toHaveLength(3);
 
-    // 冷却到期之后也退不回去——铸出来的账号没有回收路径。
+    // 冷却到期之后同样不铸：`need` 从头到尾都是 0，不存在「先铸了再也退不掉」这回事。
     t += 120_000;
     const after = await tendOnce(deps);
     expect(after.minted).toBe(0);
-    expect(await repo.all(), "多出来的那一把永久留在池子里").toHaveLength(4);
+    expect(await repo.all(), "池子在整个过程里一把都没多").toHaveLength(3);
   });
 
   /**
-   * 名额判据**对 `cooling` / `evicted` 的语义与 P3b 逐字相同**——本任务只把 `disabled`
-   * 这一项摘出去，不顺手改补池对冷却的既有行为。
+   * **全池限流风暴不再让池子永久变大。**
+   *
+   * ⚠️ **这一格钉的是 P3c Task 5 修掉的第二条同族缺陷，实测数字如下**
+   *（`targetKeys = 3`，修复前）：稳态 3 → 全池冷却那一轮 `minted = 3` ⇒ 池子 **6**；
+   * 冷却到期 `need = -3` 不再铸 ⇒ **永久停在 6**；下一次风暴 **9**，再下一次 **12**。
+   * **线性，每一次全池风暴永久 `+targetKeys`，不是翻倍，也不会自己退回去**——
+   * 而每一把都是一次真实的 Agnes 建号 + 一个真实花掉的临时邮箱。
+   *
+   * 跑**两轮风暴**而不是一轮：只跑一轮的话「+3」与「+3 再 +3」区分不开，
+   * 而"线性增长"这条性质恰恰要第二轮才看得出来。
+   *
+   * **变红条件**：`countsTowardTarget` 加回 `&& r.cooldownUntil <= now`
+   *（则第一轮风暴后是 6、第二轮后是 9）。
+   */
+  it("整池被限流冷却时不铸替补——否则每一次风暴都让池子永久 +targetKeys（线性、不退回）", async () => {
+    let t = 1000;
+    const repo = new KeyPoolRepo(new MemoryStorage(), { now: () => t, logger: NULL_LOGGER });
+    const deps: TendDeps = {
+      repo, config: { ...CFG },
+      providers: { yyds: new FakeMailProvider() },
+      agnes: agnesOk(), now: () => t, sleep: async () => {}, rand: () => 0.5, logger: NULL_LOGGER,
+    };
+    for (const k of ["a", "b", "c"]) await repo.add(k);
+    expect((await repo.all()).length, "前置条件：稳态三把").toBe(3);
+
+    /** 把整池打进冷却，跑一轮补池，返回这一轮铸了几把。 */
+    const storm = async (): Promise<number> => {
+      for (const r of await repo.all()) {
+        await repo.save({ ...r, cooldownUntil: t + 60_000, cooldownReason: "rate limited" }, r);
+      }
+      const out = await tendOnce(deps);
+      t += 120_000;   // 冷却到期
+      return out.minted;
+    };
+
+    expect(await storm(), "第一次全池风暴：不许铸替补").toBe(0);
+    expect((await repo.all()).length, "第一次风暴后池子仍是 3（修复前实测 6）").toBe(3);
+    expect(await storm(), "第二次全池风暴：同样不许铸").toBe(0);
+    expect((await repo.all()).length, "第二次风暴后仍是 3（修复前实测 9 —— 线性增长）").toBe(3);
+  });
+
+  /**
+   * **名额判据与「能不能打上游」是两个问题，逐格穷举它们的分歧。**
+   *
+   * ⚠️ **P3c Task 5 把判据收成 `!r.evicted`，分歧从一格变成三格**（这一格在 Task 5
+   * 之前叫「…只在『已停用』这一项上分歧」，并且带着一行标了 🔴 的已知残留）。
+   * 现在 `countsTowardTarget` **与时间无关**：占不占名额只看有没有被剔除。
    *
    * 拿**手写的期望表**比，不从 `isAvailable` 反推（那是同义反复，第 6 种假阳性）：
-   * 四种状态各写一次字面量。`disabled` 那一行正是两个函数今天唯一分歧的地方。
+   * 五种状态各写一次字面量，两列各自独立写死。
    */
-  it("补池的名额判据与 P3b 的 isAvailable 逐字等价，只在「已停用」这一项上分歧", () => {
+  it("名额判据只看 evicted：冷却中 / 已停用 / 两者兼有都占名额，而它们都不能打上游", () => {
     const NOW = 1000;
     const base = {
       id: "i", key: "k", addedAt: 0, lastUsedAt: null,
@@ -222,18 +285,72 @@ describe("tendOnce", () => {
     };
     const CASES = [
       { name: "全新", rec: { ...base, cooldownUntil: 0, evicted: false }, counts: true, available: true },
-      { name: "冷却中", rec: { ...base, cooldownUntil: NOW + 1, evicted: false }, counts: false, available: false },
+      // 下面四格里有三格两列不同 —— **那三格正是这个函数存在的全部理由**。
+      { name: "冷却中", rec: { ...base, cooldownUntil: NOW + 1, evicted: false }, counts: true, available: false },
       { name: "已剔除", rec: { ...base, cooldownUntil: 0, evicted: true }, counts: false, available: false },
       { name: "已停用", rec: { ...base, cooldownUntil: 0, evicted: false, disabled: true }, counts: true, available: false },
-      // 🔴 已知残留：`counts` 在这一格是 **false**，因为判据不读 `isDisabled`、
-      // 冷却那一支先命中。**这一行写的是今天的真实行为，不是期望的行为**
-      // ——把它写成 true 才是把边界说宽（定向复评②）。Task 5 修 cooling 判据时它会变红。
-      { name: "已停用且冷却中（残留）", rec: { ...base, cooldownUntil: NOW + 1, evicted: false, disabled: true }, counts: false, available: false },
+      { name: "已停用且冷却中", rec: { ...base, cooldownUntil: NOW + 1, evicted: false, disabled: true }, counts: true, available: false },
+      // **已剔除 + 冷却中**：两条判据在这一格上不许互相盖过——`evicted` 说了算。
+      { name: "已剔除且冷却中", rec: { ...base, cooldownUntil: NOW + 1, evicted: true }, counts: false, available: false },
     ];
     for (const { name, rec, counts, available } of CASES) {
-      expect(countsTowardTarget(rec, NOW), `${name}：占不占名额`).toBe(counts);
+      expect(countsTowardTarget(rec), `${name}：占不占名额`).toBe(counts);
       expect(isAvailable(rec, NOW), `${name}：能不能拿去打上游`).toBe(available);
     }
+    // **反向：判据必须与时间无关。** 同一条冷却中的记录，把时钟拨到冷却到期之后，
+    // 答案不许变——变了就说明 `cooldownUntil` 又爬回判据里去了。
+    const cooling = { ...base, cooldownUntil: NOW + 1, evicted: false };
+    expect(countsTowardTarget(cooling), "冷却期内").toBe(true);
+    expect(isAvailable(cooling, NOW + 999), "前置条件：时钟真的走过了冷却").toBe(true);
+    expect(countsTowardTarget(cooling), "冷却到期后：答案必须与冷却期内逐字相同").toBe(true);
+  });
+
+  /**
+   * **铸号侧的可疑 key：照存不误 + 如实报可疑**（Task 3 的 m5 裁定，Task 5 落地）。
+   *
+   * `isImportableKey` 此前**只挂在面板导入这条「人点一下」的路径上**，而稳态下 key
+   * 进池子的主路径是 `tendOnce` 里那行 `repo.add(out.key)`——既不校验也不 trim。
+   * **同一个判据在两条路上不能有同一种处置**：导入拒绝是免费的（东西还在剪贴板里），
+   * 铸号拒绝是**销毁凭据**（账号已在上游真的建出来、key 只有手上这一份）。
+   *
+   * **两个方向同一格**：可疑的报出来、正常的一个字都不多说。只写前一半的话，
+   * 一个「每一把都报可疑」的实现照样全绿（第 5 种假阳性）。
+   * **变红条件**：把 `isImportableKey` 那个判断整个删掉（前半红）；
+   * 或把它取反（后半红）。
+   */
+  it("上游发回可疑的 key 材料：照存不误，同时 failures 与事件各留一条", async () => {
+    const SUSPICIOUS = "sk-坏掉的key 里面有空格和汉字";
+    const logger = recordingLogger();
+    const { repo, deps } = await makeDeps({ targetKeys: 1 });
+    deps.logger = logger;
+    deps.agnes = agnesWithKey(SUSPICIOUS);
+
+    const out = await tendOnce(deps);
+    expect(out.minted, "上游账号是真的建出来了，说 0 就是伪造").toBe(1);
+    expect(out.mintedByChannel).toEqual({ yyds: 1 });
+    expect(out.failures, "补池历史那一行必须说得出这一轮有什么不对劲")
+      .toEqual([{ reason: "key_suspicious", channel: "yyds" }]);
+
+    const stored = await repo.all();
+    expect(stored, "照存不误：拒收 = 销毁凭据 = 数据丢失").toHaveLength(1);
+    expect(stored[0]!.key, "存进去的必须是原样那一串，不许 trim、不许改写").toBe(SUSPICIOUS);
+
+    const ev = logger.entries.find((e) => e.event === "registrar.minted_key_suspicious");
+    expect(ev?.level, "运维必须看得见，且要 error 级").toBe("error");
+    expect(ev?.fields?.channel).toBe("yyds");
+    expect(ev?.fields?.keyLength).toBe(SUSPICIOUS.length);
+    // 日志常被转发到第三方：只报长度与通道，够定位、不够泄漏（约束 11(a)）。
+    expect(JSON.stringify(ev), "事件里带了明文 key").not.toContain(SUSPICIOUS);
+
+    // ── 镜像另一半：正常的 key 一个字都不多说 ──────────────────────────────
+    const clean = recordingLogger();
+    const { deps: deps2 } = await makeDeps({ targetKeys: 1 });
+    deps2.logger = clean;
+    deps2.agnes = agnesWithKey("sk-perfectly-normal-key-0123456789");
+    const ok = await tendOnce(deps2);
+    expect(ok.minted).toBe(1);
+    expect(ok.failures, "正常的 key 不许被报成可疑").toEqual([]);
+    expect(clean.has("registrar.minted_key_suspicious")).toBe(false);
   });
 
   it("单次失败不中断整轮（域名全被拒 domain_blocked_all）", async () => {

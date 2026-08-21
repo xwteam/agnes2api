@@ -11,6 +11,7 @@ import { nodeRuntime } from "../adapters/runtime-node.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import { loadConfig } from "../core/config.js";
 import { startTendScheduler } from "../core/tend-scheduler.js";
+import { acquireTendLock, releaseTendLock } from "../http/admin/tend-lock.js";
 
 /**
  * node 运行时的真实启动路径：选存储实现（FileStorage）、装配 app、监听端口。
@@ -22,23 +23,26 @@ export async function main(env: Record<string, string | undefined> = process.env
   const logger = new ConsoleLogger();
   // 数据目录是绑定挂载，属主不匹配就整个网关不可用（写不进 store.json），
   // 必须在启动那一刻探出来并让 /health 如实报告，不能等到第一个请求失败才发现。
-  const { app, configHolder } = await buildApp(env, storage, nodeRuntime(), { probeStorage: true });
+  const { app, configHolder, tendGate } = await buildApp(env, storage, nodeRuntime(), { probeStorage: true });
   const port = Number(env.PORT ?? 8080);
 
   // 在途守卫。递归 setTimeout **天然不会重叠**（下一轮的定时器要等本轮 resolve 之后
-  // 才排上），所以它现在防的不是定时器自己，而是「P3c 的面板『立即补池』按钮与定时
-  // 轮撞车」——那是第三次把并发放进来的机会，前两次分别是 setInterval 不等 resolve
-  // （C4）和 Worker 的 Cron 重叠。P3c 还要与存储级短锁共用同一把锁，不能各拿各的。
-  let inFlight = false;
-
+  // 才排上），所以它现在防的不是定时器自己，而是「面板『立即补池』按钮与定时轮撞车」
+  // ——那是第三次把并发放进来的机会，前两次分别是 setInterval 不等 resolve（C4）
+  // 和 Worker 的 Cron 重叠。
+  //
+  // **P3c Task 5 起它不再是本文件的一个局部变量**：那颗按钮跑在同一个进程里，
+  // 各拿各的布尔等于形同虚设，所以这一把由 `buildApp` 建、由 app 与本文件**共用**
+  //（`BuiltApp.tendGate`）。它与下面那把存储级锁**不是冗余**——一把挡同进程重入、
+  // 一把挡跨副本重叠，对照表见 `src/http/admin/tend-lock.ts`。
   const runTend = async () => {
-    if (inFlight) {
+    const leave = tendGate.tryEnter();
+    if (leave === null) {
       console.warn(
         "[registrar] 上一轮补池仍在进行，跳过本次触发（可调大 TEND_INTERVAL_MS 或调小 MINT_BATCH）",
       );
       return;
     }
-    inFlight = true;
     try {
       // key 池索引对账。**必须在「注册机是否启用」的判断之前**——下面是 `if (!deps) return`，
       // 放在后面等于注册机关着时永不对账，而索引残留（孤儿记录 / 幽灵索引项）恰恰不挑
@@ -96,6 +100,16 @@ export async function main(env: Record<string, string | undefined> = process.env
       }
       if (!deps) return; // 注册机未启用：不触达邮箱/Agnes（对账已在上面做过）
 
+      // 存储级短锁。**这在 P3c Task 5 之前是没有的**：Node 侧只有上面那把进程内守卫，
+      // 而 Docker 的多副本共卷部署（同一个 DATA_DIR 挂给两个容器）下它形同虚设
+      //——两个副本各有各的布尔，两轮补池同时跑，同时撞邮箱建号限流与上游注册风控。
+      // 与 Worker 的 Cron 路径**共用同一份实现与同一把键**，见 `tend-lock.ts`。
+      const lock = await acquireTendLock(storage, Date.now());
+      if (!lock.ok) {
+        console.warn("[registrar] 另一个副本正在补池，跳过本次触发（多副本共卷部署下这是正常的）");
+        return;
+      }
+
       const roundStartedAt = Date.now();
       try {
         const r = await tendOnce(deps);
@@ -130,14 +144,27 @@ export async function main(env: Record<string, string | undefined> = process.env
           durationMs: Date.now() - roundStartedAt, trigger: "cron",
         });
       } finally {
+        // 锁必须释放，否则下一轮要空等到 TTL 到期才肯干活。与 Worker 侧同一条口径：
+        // 释放失败走 `deps.logger`（不是裸 console.warn），因为那正是运维要在事件
+        // 板块里看到的那类事——它意味着接下来的触发会被跳过，最长到锁自然过期。
+        try {
+          await releaseTendLock(storage);
+        } catch (err) {
+          console.warn("[registrar] 释放补池锁失败，最坏情况下要等锁自然过期", err);
+          deps.logger.log({
+            level: "warn", event: "registrar.lock_release_failed",
+            msg: "释放补池锁失败，最坏情况下要等锁自然过期（期间补池触发会被跳过）",
+            fields: { error: err instanceof Error ? err.message : String(err) },
+          });
+        }
         // **补池事件落盘。必须是这一轮的最后一件事**——上面 catch 里那条
-        // 「补池失败」以及 `recordRound` 可能打出的 warn 都要赶上这一次落盘，
-        // 这一轮再没有第二次机会（下一轮是一个全新的 sink 实例）。
+        // 「补池失败」、刚才那条 `lock_release_failed`、以及 `recordRound` 可能打出的
+        // warn 都要赶上这一次落盘，这一轮再没有第二次机会（下一轮是一个全新的 sink 实例）。
         // 与 Worker 侧 `ctx.waitUntil` 的 `finally` 同一条口径。
         await deps.flush();
       }
     } finally {
-      inFlight = false;
+      leave();
     }
   };
 

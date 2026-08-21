@@ -1,4 +1,4 @@
-import type { RuntimeInfo } from "../ports/runtime.js";
+import type { RuntimeInfo, BackgroundCtx } from "../ports/runtime.js";
 
 /**
  * Cloudflare Worker 侧。
@@ -18,5 +18,23 @@ export function workerRuntime(): RuntimeInfo {
     storageBackend: "kv",
     quotaModel: "kv",
     process: () => null,
+    /**
+     * **必须交给 `ctx.waitUntil`。** 响应一返回，这个 isolate 就可能立刻停摆，
+     * fire-and-forget 的任务会被从中间砍断——而「立即补池」被砍断的后果不是
+     * "少铸一把"，是 `mintOne` 的 `finally` 不跑、**临时邮箱漏删**，攒够几个就把
+     * 活跃邮箱名额吃光。这与 `src/entry/worker.ts` 的 Cron 路径用 `ctx.waitUntil`
+     * 是同一条理由。
+     *
+     * `ctx` 为 `null` 时退回 fire-and-forget：那说明调用方**没有把
+     * `ExecutionContext` 传进 `app.fetch(req, env, ctx)`**（本仓的 Worker 入口传了，
+     * 由 `tests/unit/entry-worker.test.ts` 的
+     * 「fetch 把 ExecutionContext 一路传给 app —— 不传的话 waitUntil 在生产里根本拿不到」
+     * 钉着）。**这条退路不是等价物，只是不把任务整个丢掉**；它一旦被走到，
+     * 上面那条截断风险就回来了。
+     */
+    background(task: Promise<unknown>, ctx: BackgroundCtx | null): void {
+      if (ctx === null) { void task; return; }
+      ctx.waitUntil(task);
+    },
   };
 }

@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { main } from "../../src/entry/node.js";
+import { FileStorage } from "../../src/adapters/storage-file.js";
+import { TEND_LOCK_KEY, TEND_LOCK_TTL_MS } from "../../src/http/admin/tend-lock.js";
+import { TEND_HISTORY_KEY } from "../../src/core/admin/tend-history.js";
+import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
+import { NULL_LOGGER } from "../../src/ports/logger.js";
 
 function tmpDataDir(): string {
   return mkdtempSync(join(tmpdir(), "a2a-node-entry-"));
@@ -66,6 +71,120 @@ describe.skipIf(!notRoot)("node 入口: 数据目录不可写", () => {
     } finally {
       chmodSync(dir, 0o700);
       logged.mockRestore();
+      await close(server);
+    }
+  });
+});
+
+// ── P3c Task 5（F2）：Node 侧的补池锁是**新建**的，不是复用 ─────────────────
+//
+// 在此之前 Node 只有进程内的 `inFlight`（`main()` 里一个布尔）。**Docker 的多副本
+// 共卷部署下它形同虚设**：同一个 `DATA_DIR` 挂给两个容器，两个副本各有各的布尔，
+// 两轮补池同时跑，同时撞邮箱服务的建号限流与上游的注册风控——而「顺序铸、不并发」
+// 是功能性约束，不是性能取舍（设计 §10.2 第 1 条点名要补的正是这个洞）。
+//
+// 观测形态：**在数据目录里预先放一把没过期的锁**（模拟"另一个副本正在补池"），
+// 起 `main()`，它那一轮必须被跳过。两个方向都验：有锁跳过、无锁真跑。
+//
+// ⚠️⚠️ **夹具必须是「池子已经满了」（`need <= 0` 提前返回），不能用
+// `CODE_TIMEOUT_MS > WORKER_ROUND_BUDGET_MS` 那一招。** 那一招只在**传了轮级预算**的
+// 路径上零网络，而 **Node 的定时轮刻意不传 `roundBudgetMs`**（`src/entry/node.ts`：
+// Node/Docker 没有平台墙钟上限）——实测：照抄那个夹具会让这条用例**真的去打 YYDS 的
+// 线上接口**（拿到 HTTP 403/429 与八个真实域名）。这不是理论风险，是本任务写这两格
+// 时当场撞到的。**「同一个零网络夹具在两个入口上未必都零网络」，这条差异本身就是
+// `roundBudgetMs` 那半边故事的证据。**
+describe("node 入口: 补池的存储级锁（多副本共卷部署）", () => {
+  /** 池子里先放一把 key ⇒ `need = TARGET_KEYS - 1 = 0` ⇒ `tendOnce` 提前返回，零网络。 */
+  async function seedFullPool(dir: string): Promise<FileStorage> {
+    const storage = new FileStorage(dir);
+    const repo = new KeyPoolRepo(storage, { now: () => Date.now(), logger: NULL_LOGGER, cacheTtlMs: 0 });
+    await repo.add("sk-node-lock-fixture-key-aa");
+    return storage;
+  }
+
+  function regEnv(dataDir: string) {
+    return {
+      GATEWAY_TOKEN: "t", PORT: "0", DATA_DIR: dataDir,
+      REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k",
+      // 池子里已经有 1 把 ⇒ 缺口 0 ⇒ 一次都不铸，一个网络请求都不发。
+      TARGET_KEYS: "1",
+      // 定时器只跑一轮就够：把间隔调到很大，免得测试期间又排一轮进来。
+      TEND_INTERVAL_MS: "86400000",
+    };
+  }
+
+  /** 轮询到某个键出现/消失为止——那一轮补池是 `void` 出去的后台链路。 */
+  async function until<T>(read: () => Promise<T>, ok: (v: T) => boolean, ms = 3000): Promise<T> {
+    const start = Date.now();
+    let v = await read();
+    while (!ok(v) && Date.now() - start <= ms) {
+      await new Promise((r) => setTimeout(r, 5));
+      v = await read();
+    }
+    return v;
+  }
+
+  it("数据目录里已经有一把没过期的锁 ⇒ 这一轮被跳过（另一个副本正在补池）", async () => {
+    const dir = tmpDataDir();
+    const storage = await seedFullPool(dir);
+    await storage.put(TEND_LOCK_KEY, { until: Date.now() + TEND_LOCK_TTL_MS });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const server = await main(regEnv(dir));
+    try {
+      await until(
+        async () => warnSpy.mock.calls.some(([m]) => typeof m === "string" && m.includes("另一个副本正在补池")),
+        (v) => v,
+      );
+      expect(
+        warnSpy.mock.calls.some(([m]) => typeof m === "string" && m.includes("另一个副本正在补池")),
+        "Node 侧没有存储锁 ⇒ 多副本共卷部署下两轮补池会同时跑",
+      ).toBe(true);
+      // **锁不许被这一轮释放**：它是别人的锁，释放它等于把并发放进来。
+      expect(await storage.get(TEND_LOCK_KEY), "跳过的那一轮把别人的锁删了").not.toBeNull();
+      // 而且这一轮什么都没做：补池历史里一条记录都不该有。
+      expect(await storage.get(TEND_HISTORY_KEY), "被跳过的那一轮却写了补池历史").toBeNull();
+    } finally {
+      warnSpy.mockRestore();
+      errSpy.mockRestore();
+      logSpy.mockRestore();
+      await close(server);
+    }
+  });
+
+  /**
+   * **镜像另一半：没有锁的时候那一轮必须真的跑，而且跑完把锁还回去。**
+   * 只写上一格的话，一个「Node 侧永远跳过补池」的实现照样全绿。
+   */
+  it("没有锁 ⇒ 这一轮真的跑，跑完锁被释放（不是留到自然过期）", async () => {
+    const dir = tmpDataDir();
+    const storage = await seedFullPool(dir);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const server = await main(regEnv(dir));
+    try {
+      // 补池历史落盘 = 这一轮真的跑完了。
+      const history = await until(
+        () => storage.get<unknown[]>(TEND_HISTORY_KEY),
+        (v) => v !== null,
+      );
+      expect(history, "没有锁的时候那一轮却没跑").not.toBeNull();
+      expect(
+        await until(() => storage.get(TEND_LOCK_KEY), (v) => v === null),
+        "跑完之后锁必须被释放（否则下一轮要空等到自然过期）",
+      ).toBeNull();
+      expect(
+        warnSpy.mock.calls.some(([m]) => typeof m === "string" && m.includes("另一个副本正在补池")),
+        "没有锁却报了「另一个副本正在补池」",
+      ).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+      errSpy.mockRestore();
+      logSpy.mockRestore();
       await close(server);
     }
   });

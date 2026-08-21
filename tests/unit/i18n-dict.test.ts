@@ -92,7 +92,7 @@ describe("i18n 字典", () => {
   it("TendFailureReason 的每个成员都有 reg.fail.<reason> 键", () => {
     const missing = TEND_FAILURE_REASONS.filter((r) => !(`reg.fail.${r}` in I18N));
     expect(missing, "补池失败归因缺 i18n 键").toEqual([]);
-    expect(TEND_FAILURE_REASONS.length, "联合成员数变了，请在评审里确认").toBe(11);
+    expect(TEND_FAILURE_REASONS.length, "联合成员数变了，请在评审里确认").toBe(12);
   });
 
   it("字典全文不命中 scan-secrets.sh 的 IP:PORT 正则", () => {
