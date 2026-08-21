@@ -160,6 +160,13 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 登录成功之后每请求送空口令头、进登出循环，而全套用例照绿。
       // 只有六个字符串常量，纯文本、无配置、无数据，公开可取没有问题。
       "/admin/js/pure/storage-keys.mjs",
+      // Task 5（P3d）新增：用量板块的取值决策（四态判定、两根破折号该用哪一根、
+      // 档位 → `(from, to)`、分片畸形到什么程度、note code → i18n key 的穷尽映射）。
+      // 同一条硬规则、同一份理由，由 tests/ui/usage.test.ts 跑着。
+      // **逐条确认过：纯函数、无配置、无数据**——它一个字节的部署信息都不带
+      //（`RANGES` 那四个档位名与九条 note code 都是本仓写死的枚举值，
+      // 不是这套部署配了什么），公开可取没有问题。
+      "/admin/js/pure/usage.mjs",
       "/admin/js/sec-events.js",
       "/admin/js/sec-keys.js",
       "/admin/js/sec-overview.js",
@@ -168,6 +175,10 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 一次鉴权后的接口调用，文件自身只有结构与 i18n 键。
       "/admin/js/sec-registrar.js",
       "/admin/js/sec-settings.js",
+      // Task 5（P3d）新增：用量板块本体（DOM 拼装 + 三条端点的网络调用）。
+      // 与其余五个板块文件同一性质：**没有任何机密**，它拿到的每一个数字都来自
+      // 一次鉴权后的接口调用，文件自身只有结构与 i18n 键。
+      "/admin/js/sec-usage.js",
       "/admin/js/theme.js",
       "/admin/js/ui.js",
     ]);

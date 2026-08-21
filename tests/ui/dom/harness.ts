@@ -14,8 +14,24 @@ import { createFakeDom, installFakeDom, type FakeDom, type FakeElement } from ".
 export const SKELETON_IDS = [
   "gate", "gate-form", "gate-key", "gate-err",
   "shell", "lang-select", "theme-btn", "logout-btn",
-  "sec-overview", "sec-keys", "sec-registrar", "sec-events", "sec-settings", "toast-host",
+  "sec-overview", "sec-keys", "sec-registrar", "sec-events", "sec-usage", "sec-settings", "toast-host",
 ] as const;
+
+/**
+ * 侧栏导航的顺序，**与真 `index.html` 里 `.nav-item` 的出现顺序逐字一致**。
+ *
+ * ⚠️ **它与 `SKELETON_IDS` 是两份清单，不是一份**：后者含 `gate` / `shell` /
+ * `toast-host` 这些不是板块的 id，而这一份决定 `buildDom()` 造几颗导航按钮、
+ * 以及 `Harness.section()` 认哪几个名字。两者的漂移由
+ * `tests/ui/dom/app-gate.test.ts` 的
+ * 「六个板块按钮的 data-section 与真 index.html 一致（顺序也是导航顺序）」
+ * 那一格扫真 `index.html` 兜着。
+ */
+export const NAV_SECTIONS = [
+  "overview", "keys", "registrar", "events", "usage", "settings",
+] as const;
+
+type SectionName = (typeof NAV_SECTIONS)[number];
 
 type Resp = { status: number; body: unknown };
 
@@ -48,7 +64,7 @@ export interface Harness {
   form: FakeElement;
   input: FakeElement;
   err: FakeElement;
-  section(name: "overview" | "keys" | "registrar" | "events" | "settings"): FakeElement;
+  section(name: SectionName): FakeElement;
 }
 
 export function buildDom(): { dom: FakeDom; nav: FakeElement[] } {
@@ -62,7 +78,7 @@ export function buildDom(): { dom: FakeDom; nav: FakeElement[] } {
   dom.byId("gate-form").appendChild(dom.byId("gate-err"));
 
   const nav: FakeElement[] = [];
-  for (const name of ["overview", "keys", "registrar", "events", "settings"]) {
+  for (const name of NAV_SECTIONS) {
     const btn = dom.document.createElement("button");
     btn.classList.add("nav-item");
     btn.setAttribute("data-section", name);

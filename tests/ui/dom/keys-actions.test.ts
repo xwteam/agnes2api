@@ -770,13 +770,18 @@ describe("M6：本地时区偏移只有一份实现（admin-ui/js/pure/overview.
     ).toEqual([]);
   });
 
-  it("四个板块文件都从 pure/overview.mjs import offsetMs（反向自检：单一真源真的被用到了）", () => {
+  it("五个板块文件都从 pure/overview.mjs import offsetMs（反向自检：单一真源真的被用到了）", () => {
     // P3c Task 6 加了第四个板块（注册机），它同样要渲染服务端时刻（补池历史的
     // 时间列、冷却到期、名额重置）。**清单手写**：新板块忘了列进来时这一格不会红，
     // 但上面那条「getTimezoneOffset 只在 pure/overview.mjs 里出现一次」会——
     // 两条合起来才既挡住"另写一份"、又挡住"这份没被用到"。
+    // P3d Task 5 加了第五个（用量）：它渲染服务端回读的覆盖区间，同一份偏移。
+    // ⚠️ `sec-settings.js` **不在这张清单里，而那是对的**：它一个服务端时刻都不渲染
+    //（`fmtDuration` 渲染的是时长，不是时刻），所以它压根不 import 这个模块。
+    // 这张清单数的是「真的要渲染时刻的板块」，不是「板块文件总数」。
     for (const f of ["admin-ui/js/sec-keys.js", "admin-ui/js/sec-overview.js",
-      "admin-ui/js/sec-events.js", "admin-ui/js/sec-registrar.js"]) {
+      "admin-ui/js/sec-events.js", "admin-ui/js/sec-registrar.js",
+      "admin-ui/js/sec-usage.js"]) {
       const src = readFileSync(f, "utf8");
       const m = /import\s*\{([^}]*)\}\s*from\s*"\.\/pure\/overview\.mjs"/.exec(src);
       expect(m, `${f} 没有从 pure/overview.mjs import`).not.toBeNull();

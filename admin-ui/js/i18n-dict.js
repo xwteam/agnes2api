@@ -38,6 +38,9 @@ export const I18N = {
   // 而那道门禁管的是「两条邮箱通道有没有被暗示成有高下」，与一个板块名无关。
   "nav.registrar":    { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
   "nav.events":       { "zh-CN": "事件", "zh-TW": "事件", en: "Events", ja: "イベント", ko: "이벤트" },
+  // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `usage.*`：命名空间在这里
+  // 表示的是「壳层导航」，与板块内部的文案分开。
+  "nav.usage":        { "zh-CN": "用量", "zh-TW": "用量", en: "Usage", ja: "使用量", ko: "사용량" },
   // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `set.*`：命名空间在这里
   // 表示的是「壳层导航」，与板块内部的文案分开。
   "nav.settings":     { "zh-CN": "设置", "zh-TW": "設定", en: "Settings", ja: "設定", ko: "설정" },
@@ -609,4 +612,116 @@ export const I18N = {
   "set.field.registrar.agnesPlatformUrl": { "zh-CN": "注册后端地址", "zh-TW": "註冊後端位址", en: "Registration backend URL", ja: "登録バックエンドの URL", ko: "가입 백엔드 URL" },
   "set.field.channel.baseUrl": { "zh-CN": "服务地址", "zh-TW": "服務位址", en: "Service URL", ja: "サービス URL", ko: "서비스 URL" },
   "set.field.channel.apiKey": { "zh-CN": "API Key", "zh-TW": "API Key", en: "API key", ja: "API キー", ko: "API 키" },
+
+  // ── 用量板块（P3d Task 5，设计 §10.6）──────────────────────────────────────
+  //
+  // ⚠️ **这一段的每一条文案都在回答「这个数字为什么长这样」，而不是给一个数配一个名字。**
+  // 这个板块的全部难点是「今天真的是 0 次请求」「Tier-2 没开」「读不出来」
+  // 「读到的分片全坏了」在面板上长得一模一样，而它们是四件事。
+  //
+  // ⚠️ **`{占位符}` 的那几条一律只经 `t(key, {…})` 用**（门禁第 ⑧ 条）：
+  // 交给 `elI18n(tag, key)` 会让裸的 `{count}` 直接展示给运维看
+  //（`sec-overview.js` 的 `ov.config.envLocked` 上方记着那次真实事故）。
+  "usage.title":      { "zh-CN": "用量", "zh-TW": "用量", en: "Usage", ja: "使用量", ko: "사용량" },
+  "usage.rangeLabel": { "zh-CN": "时间范围", "zh-TW": "時間範圍", en: "Time range", ja: "期間", ko: "기간" },
+  "usage.range.24h":  { "zh-CN": "24 小时", "zh-TW": "24 小時", en: "24h", ja: "24 時間", ko: "24시간" },
+  "usage.range.3d":   { "zh-CN": "3 天", "zh-TW": "3 天", en: "3d", ja: "3 日", ko: "3일" },
+  "usage.range.7d":   { "zh-CN": "7 天", "zh-TW": "7 天", en: "7d", ja: "7 日", ko: "7일" },
+  "usage.range.30d":  { "zh-CN": "30 天", "zh-TW": "30 天", en: "30d", ja: "30 日", ko: "30일" },
+  // 覆盖区间**渲染服务端回读的那一对**，不是前端自己算的显示区间。
+  "usage.covered":    { "zh-CN": "覆盖区间：{from} — {to}", "zh-TW": "涵蓋區間：{from} — {to}", en: "Covered range: {from} — {to}", ja: "対象期間: {from} — {to}", ko: "대상 구간: {from} — {to}" },
+  // ⚠️ **30 天那一档的说明。写「更早的已过期」是事实（保留期 30 天）；
+  //    而它一次要读满 30 天的分片这件事在 Cloudflare Worker 上还没有真机结论
+  //    ——**这里刻意不写「这些子请求是安全的」**，也不写它一定会失败。
+  "usage.range.retention": { "zh-CN": "最多保留 30 天，更早的数据已经过期。30 天这一档一次要把整段区间的分片全部读回来；它在 Cloudflare Worker 上是否总能完成，尚未在真机上验证过——失败时这里会如实显示为读取失败，不会给出一份看起来完整的数字。", "zh-TW": "最多保留 30 天，更早的資料已經過期。30 天這一檔一次要把整段區間的分片全部讀回來；它在 Cloudflare Worker 上是否總能完成，尚未在真機上驗證過——失敗時這裡會如實顯示為讀取失敗，不會給出一份看起來完整的數字。", en: "At most 30 days are retained; anything older has expired. The 30-day option reads every shard in the whole range in one go; whether that always completes on Cloudflare Workers has not been verified on real infrastructure yet. If it fails, this page reports a read failure rather than showing numbers that look complete.", ja: "保持期間は最長 30 日で、それより古いデータは失効しています。30 日の選択肢は区間全体のシャードを一度に読み出します。これが Cloudflare Workers 上で常に完了するかどうかは実機で未検証です。失敗した場合は、完全に見える数字を出すのではなく読み取り失敗として表示します。", ko: "최대 30일까지만 보관하며 그보다 오래된 데이터는 만료되었습니다. 30일 옵션은 구간 전체의 샤드를 한 번에 읽습니다. 이것이 Cloudflare Workers에서 항상 완료되는지는 실제 환경에서 아직 검증되지 않았습니다. 실패하면 완전해 보이는 숫자를 보여주는 대신 읽기 실패로 표시합니다." },
+
+  // ── 六张汇总卡（设计 §10.6）────────────────────────────────────────────────
+  "usage.card.requests":  { "zh-CN": "总请求数", "zh-TW": "總請求數", en: "Requests", ja: "リクエスト数", ko: "요청 수" },
+  "usage.card.successRate": { "zh-CN": "成功率", "zh-TW": "成功率", en: "Success rate", ja: "成功率", ko: "성공률" },
+  // ⚠️ **单位写进标题，值那一格只放数字**：`format.mjs` 的 `fmtDuration` 只到
+  //    「秒 / 分」两档精度（那是给运行时长设计的），拿它渲染 300 毫秒会写出
+  //    「0秒」——而本模块不许再写第三个格式化函数（评审 I17）。
+  "usage.card.latency":   { "zh-CN": "平均延迟（毫秒）", "zh-TW": "平均延遲（毫秒）", en: "Avg latency (ms)", ja: "平均レイテンシ（ミリ秒）", ko: "평균 지연(밀리초)" },
+  "usage.card.errorRate": { "zh-CN": "错误率", "zh-TW": "錯誤率", en: "Error rate", ja: "エラー率", ko: "오류율" },
+  // 标题里**直接写「仅非流式」**：流式请求的 token 网关根本看不到，
+  // 一个不带这三个字的「Token」会被读成全量。
+  "usage.card.tokens":    { "zh-CN": "Token（仅非流式）", "zh-TW": "Token（僅非串流）", en: "Tokens (non-streaming only)", ja: "トークン（非ストリーミングのみ）", ko: "토큰(비스트리밍만)" },
+  "usage.card.streaming": { "zh-CN": "流式请求数", "zh-TW": "串流請求數", en: "Streaming requests", ja: "ストリーミングリクエスト数", ko: "스트리밍 요청 수" },
+  // 协议名来自 `GET /admin/api/models` 的 `protocols[].label`，**不在前端硬编码**。
+  "usage.card.tokensTip": { "zh-CN": "只统计得到这几条协议的非流式响应：{protocols}。流式响应与其余协议的 token 网关看不到，所以这个数只会偏小。", "zh-TW": "只統計得到這幾條協定的非串流回應：{protocols}。串流回應與其餘協定的 token 網關看不到，所以這個數只會偏小。", en: "Only non-streaming responses of these protocols are counted: {protocols}. Streaming responses and the remaining protocols are invisible to the gateway, so this number can only be an undercount.", ja: "次のプロトコルの非ストリーミング応答のみを集計しています: {protocols}。ストリーミング応答とその他のプロトコルはゲートウェイからは見えないため、この数値は過小になります。", ko: "다음 프로토콜의 비스트리밍 응답만 집계합니다: {protocols}. 스트리밍 응답과 나머지 프로토콜은 게이트웨이에서 볼 수 없으므로 이 값은 실제보다 적게 나옵니다." },
+  "usage.card.tokensTipUnknown": { "zh-CN": "覆盖了哪几条协议这一次没读出来。这个数只统计非流式响应，流式的 token 网关看不到。", "zh-TW": "涵蓋了哪幾條協定這一次沒讀出來。這個數只統計非串流回應，串流的 token 網關看不到。", en: "Could not read which protocols are covered this time. This number counts non-streaming responses only; streaming tokens are invisible to the gateway.", ja: "どのプロトコルが対象かを今回は取得できませんでした。この数値は非ストリーミング応答のみを集計しており、ストリーミングのトークンはゲートウェイからは見えません。", ko: "이번에는 어떤 프로토콜이 포함되는지 읽지 못했습니다. 이 값은 비스트리밍 응답만 집계하며 스트리밍 토큰은 게이트웨이에서 볼 수 없습니다." },
+  "usage.card.streamingTip": { "zh-CN": "单列一栏，好让 Token 那一格缺掉的正是这些请求这件事看得见。", "zh-TW": "單列一欄，好讓 Token 那一格缺掉的正是這些請求這件事看得見。", en: "Listed separately so that the gap in the token count is visible: these are exactly the requests it cannot see.", ja: "トークン数に欠けているのがまさにこれらのリクエストであることが分かるよう、独立した項目にしています。", ko: "토큰 수에서 빠진 것이 바로 이 요청들이라는 사실이 보이도록 별도 항목으로 둡니다." },
+
+  // ── 单元格的两根破折号（P3d Task 5 评审 I15 的裁定）────────────────────────
+  // ⚠️ **`–`（EN DASH）与 `—`（EM DASH）说的是两件事，视觉上必须分得开。**
+  // 前者：这一次读成功了，只是这一格没有样本 / 没有分母；
+  // 后者：整块就没读出来，我们不知道。
+  "usage.cell.noneTip":    { "zh-CN": "这一次读成功了，只是这段时间没有可用的样本。", "zh-TW": "這一次讀成功了，只是這段時間沒有可用的樣本。", en: "The read succeeded; there simply were no samples in this period.", ja: "取得には成功しましたが、この期間にサンプルがありませんでした。", ko: "읽기는 성공했지만 이 기간에 사용할 샘플이 없습니다." },
+  "usage.cell.unknownTip": { "zh-CN": "这一格读不出来。显示的不是 0——我们不知道它是多少。", "zh-TW": "這一格讀不出來。顯示的不是 0——我們不知道它是多少。", en: "This value could not be read. It is not zero — we do not know what it is.", ja: "この値は取得できませんでした。0 ではなく、値が分からないという意味です。", ko: "이 값을 읽지 못했습니다. 0이 아니라 값을 알 수 없다는 뜻입니다." },
+  // `≈` 的 tooltip。落盘间隔那个数**从 capabilities 取，不在前端算死**。
+  "usage.approxTip":        { "zh-CN": "近似值：Tier-1 在并发下会少计；Tier-2 还有一段最长 {flush} 的未落盘窗口。", "zh-TW": "近似值：Tier-1 在並行下會少計；Tier-2 還有一段最長 {flush} 的未落盤窗口。", en: "Approximate: Tier-1 undercounts under concurrency, and Tier-2 has an unflushed window of up to {flush}.", ja: "概算値: Tier-1 は並行時に少なく数え、Tier-2 には最大 {flush} の未書き込み時間があります。", ko: "근사값: Tier-1은 동시 요청에서 적게 세며, Tier-2에는 최대 {flush}의 미기록 구간이 있습니다." },
+  "usage.approxTipUnknown": { "zh-CN": "近似值：Tier-1 在并发下会少计；Tier-2 还有一段未落盘窗口，它有多长这一次没读出来。", "zh-TW": "近似值：Tier-1 在並行下會少計；Tier-2 還有一段未落盤窗口，它有多長這一次沒讀出來。", en: "Approximate: Tier-1 undercounts under concurrency, and Tier-2 has an unflushed window whose length could not be read this time.", ja: "概算値: Tier-1 は並行時に少なく数え、Tier-2 には未書き込み時間がありますが、その長さは今回取得できませんでした。", ko: "근사값: Tier-1은 동시 요청에서 적게 세며, Tier-2에는 미기록 구간이 있으나 그 길이를 이번에는 읽지 못했습니다." },
+  // ⚠️ **「不完整」这个标记本身就是全局约束 9 的一半**：伪造的不只是 `0`，
+  //    还有「这份数据是全的」这个印象。
+  "usage.incomplete":    { "zh-CN": "不完整", "zh-TW": "不完整", en: "Incomplete", ja: "不完全", ko: "불완전" },
+  "usage.incompleteTip": { "zh-CN": "这段区间里有 {malformed} 个分片是畸形的，读不回来。下面这些数字缺了那几块，不是完整的用量。", "zh-TW": "這段區間裡有 {malformed} 個分片是畸形的，讀不回來。下面這些數字缺了那幾塊，不是完整的用量。", en: "{malformed} shard(s) in this range are malformed and could not be read. The numbers below are missing those parts — this is not the complete usage.", ja: "この期間には不正なシャードが {malformed} 件あり、読み取れませんでした。以下の数値はその分が欠けており、完全な使用量ではありません。", ko: "이 구간에 손상된 샤드가 {malformed}개 있어 읽지 못했습니다. 아래 수치는 그만큼 빠져 있어 완전한 사용량이 아닙니다." },
+
+  // ── 九条 note code，各自一句（`src/http/admin/handlers/usage.ts` 的 `USAGE_NOTES`）──
+  // ⚠️ **后端加第十条时这里不会有任何东西红**（那张表的穷举用例证明的是
+  //    「已列出的八种互不相同」，不是「没有第九种」）⇒ 表外的 code 走
+  //    `usage.note.unknown`，把原码照实显示出来。
+  "usage.note.tier2Off":          { "zh-CN": "时间序列统计没有开启，这个部署没有在记账。", "zh-TW": "時間序列統計沒有開啟，這個部署沒有在記帳。", en: "Time-series stats are off; this deployment is not recording usage.", ja: "時系列統計が無効のため、このデプロイでは使用量を記録していません。", ko: "시계열 통계가 꺼져 있어 이 배포는 사용량을 기록하지 않습니다." },
+  "usage.note.clockUnavailable":  { "zh-CN": "服务端时钟给不出有限数字，区间与保留期都算不出来。这不是「没有数据」。", "zh-TW": "伺服器時鐘給不出有限數字，區間與保留期都算不出來。這不是「沒有資料」。", en: "The server clock did not return a finite value, so neither the range nor the retention window can be computed. This is not “no data”.", ja: "サーバー時計が有限の値を返さないため、期間も保持期間も計算できません。これは「データがない」という意味ではありません。", ko: "서버 시계가 유한한 값을 주지 않아 구간과 보관 기간을 계산할 수 없습니다. 이것은 “데이터 없음”이 아닙니다." },
+  "usage.note.readFailed":        { "zh-CN": "读取存储时出错，这段时间的数字整块拿不到。显示的破折号不是 0。", "zh-TW": "讀取儲存時出錯，這段時間的數字整塊拿不到。顯示的破折號不是 0。", en: "Reading storage failed, so none of the numbers for this period are available. The dashes are not zeros.", ja: "ストレージの読み取りに失敗したため、この期間の数値は取得できません。表示のダッシュは 0 ではありません。", ko: "스토리지 읽기에 실패하여 이 기간의 수치를 가져오지 못했습니다. 표시된 대시는 0이 아닙니다." },
+  "usage.note.rangeClamped":      { "zh-CN": "要的区间被夹到了保留期之内，只显示了能拿到的那一段。上面的覆盖区间是服务端真正查过的那一对。", "zh-TW": "要的區間被夾到了保留期之內，只顯示了能拿到的那一段。上面的涵蓋區間是伺服器真正查過的那一對。", en: "The requested range was clamped into the retention window; only the part that could be fetched is shown. The covered range above is what the server actually queried.", ja: "要求した期間は保持期間内に丸められ、取得できた部分のみを表示しています。上の対象期間がサーバーが実際に照会した範囲です。", ko: "요청한 구간이 보관 기간 안으로 조정되어 가져올 수 있는 부분만 표시합니다. 위의 대상 구간이 서버가 실제로 조회한 범위입니다." },
+  "usage.note.dateOutOfRetention": { "zh-CN": "这一天整个落在保留期之外。不是那天没有请求，是那天的记录已经不在了。", "zh-TW": "這一天整個落在保留期之外。不是那天沒有請求，是那天的記錄已經不在了。", en: "This day lies entirely outside the retention window. It is not that there were no requests — that day's records are gone.", ja: "この日は保持期間の外です。リクエストがなかったのではなく、その日の記録がもう残っていません。", ko: "이 날짜는 보관 기간을 완전히 벗어났습니다. 요청이 없었던 것이 아니라 그날의 기록이 남아 있지 않습니다." },
+  "usage.note.noShards":          { "zh-CN": "读成功了，这段区间里一个分片都没有——这个部署确实没有记下任何用量。", "zh-TW": "讀成功了，這段區間裡一個分片都沒有——這個部署確實沒有記下任何用量。", en: "The read succeeded and there were no shards at all in this range — this deployment genuinely recorded no usage.", ja: "読み取りには成功しましたが、この期間にシャードが 1 件もありません。このデプロイは実際に使用量を記録していません。", ko: "읽기는 성공했지만 이 구간에 샤드가 하나도 없습니다. 이 배포는 실제로 사용량을 기록하지 않았습니다." },
+  "usage.note.allMalformed":      { "zh-CN": "读到了分片，但每一个都是畸形的——这段时间的用量我们一无所知。请去查存储里是谁写的。", "zh-TW": "讀到了分片，但每一個都是畸形的——這段時間的用量我們一無所知。請去查儲存裡是誰寫的。", en: "Shards were found but every one of them is malformed — we know nothing about usage in this period. Check what wrote them in storage.", ja: "シャードは見つかりましたが、すべて不正な形式です。この期間の使用量は一切分かりません。ストレージに何が書き込まれたか確認してください。", ko: "샤드를 찾았지만 모두 손상되어 있습니다. 이 기간의 사용량을 전혀 알 수 없습니다. 스토리지에 무엇이 기록되었는지 확인하세요." },
+  "usage.note.partialMalformed":  { "zh-CN": "一部分分片是畸形的，下面这些数字缺了那几块。请去查存储里是谁写的。", "zh-TW": "一部分分片是畸形的，下面這些數字缺了那幾塊。請去查儲存裡是誰寫的。", en: "Some shards are malformed, so the numbers below are missing those parts. Check what wrote them in storage.", ja: "一部のシャードが不正な形式のため、以下の数値はその分が欠けています。ストレージに何が書き込まれたか確認してください。", ko: "일부 샤드가 손상되어 아래 수치에서 그만큼 빠져 있습니다. 스토리지에 무엇이 기록되었는지 확인하세요." },
+  "usage.note.noRequestDetail":   { "zh-CN": "这里没有逐请求流水，只有按小时 / 模型 / 协议的分解。需要逐请求粒度请看容器 stdout 或 Cloudflare Workers Logs。", "zh-TW": "這裡沒有逐請求流水，只有按小時 / 模型 / 協定的分解。需要逐請求粒度請看容器 stdout 或 Cloudflare Workers Logs。", en: "There is no per-request log here, only breakdowns by hour, model and protocol. For per-request detail see the container stdout or Cloudflare Workers Logs.", ja: "ここにはリクエスト単位のログはなく、時間 / モデル / プロトコル別の内訳のみです。リクエスト単位が必要な場合はコンテナの stdout または Cloudflare Workers Logs を参照してください。", ko: "여기에는 요청별 로그가 없고 시간 / 모델 / 프로토콜별 분해만 있습니다. 요청 단위가 필요하면 컨테이너 stdout 또는 Cloudflare Workers Logs를 확인하세요." },
+  // ⚠️ **「这段时间真的是 0」必须有自己的一句话**：后端第 ④ 种状态
+  //（有分片、只是请求数是 0）的 `note` 是 `null`，那一档没有任何 code 可读，
+  //    而它与「读不出来」在数字上都是「什么都没有」——不说出来就是三态混一。
+  "usage.empty":                  { "zh-CN": "这段区间里一次请求都没有。这不是读取失败——我们确实读到了，答案就是零。", "zh-TW": "這段區間裡一次請求都沒有。這不是讀取失敗——我們確實讀到了，答案就是零。", en: "There were no requests at all in this range. This is not a read failure — the read succeeded and the answer is zero.", ja: "この期間にリクエストは 1 件もありませんでした。読み取り失敗ではなく、取得に成功したうえで答えが 0 です。", ko: "이 구간에는 요청이 한 건도 없었습니다. 읽기 실패가 아니라, 읽기에 성공했고 답이 0입니다." },
+  "usage.note.unknown":           { "zh-CN": "服务端给了一个这个面板还不认识的状态码：{code}。原样显示在这里，好让你拿它去查后端。", "zh-TW": "伺服器給了一個這個面板還不認識的狀態碼：{code}。原樣顯示在這裡，好讓你拿它去查後端。", en: "The server returned a status code this panel does not recognise yet: {code}. It is shown verbatim so you can look it up in the backend.", ja: "この画面がまだ認識していないステータスコードがサーバーから返されました: {code}。バックエンドで調べられるよう、そのまま表示しています。", ko: "이 화면이 아직 인식하지 못하는 상태 코드를 서버가 반환했습니다: {code}. 백엔드에서 찾아볼 수 있도록 그대로 표시합니다." },
+
+  // ── Tier-2 关闭时的说明卡（设计 §10.6：不渲染空图表）──────────────────────
+  // ⚠️⚠️ **设计 §10.6 写的是「『开启时间序列统计』按钮（跳设置页）」，本任务
+  //    刻意没有做那颗按钮，理由写在 `admin-ui/js/sec-usage.js` 的说明卡那一段：
+  //    `usageStatsEnabled` 今天不在 `EDITABLE` 里、设置页上没有它的入口
+  //    （`src/core/config.ts` 的 `usageStatsEnabled` 上方逐字写着这一条），
+  //    跳过去只会让运维在一个没有这个开关的页面上找一圈。这里改成写清怎么开。
+  "usage.off.title": { "zh-CN": "时间序列统计没有开启", "zh-TW": "時間序列統計沒有開啟", en: "Time-series stats are off", ja: "時系列統計が無効です", ko: "시계열 통계가 꺼져 있습니다" },
+  "usage.off.body":  { "zh-CN": "这个部署没有在按天记账，所以这里没有可以显示的数字。不画空图表是刻意的——一张全是 0 的图会被读成「这段时间没人用」。", "zh-TW": "這個部署沒有在按天記帳，所以這裡沒有可以顯示的數字。不畫空圖表是刻意的——一張全是 0 的圖會被讀成「這段時間沒人用」。", en: "This deployment is not recording daily usage, so there are no numbers to show. Deliberately no empty chart is drawn: a chart of zeros reads as “nobody used it”.", ja: "このデプロイは日次の使用量を記録していないため、表示できる数値がありません。空のグラフを描かないのは意図的です。0 ばかりのグラフは「誰も使っていない」と読まれてしまいます。", ko: "이 배포는 일별 사용량을 기록하지 않으므로 표시할 수치가 없습니다. 빈 차트를 그리지 않는 것은 의도적입니다. 0으로 채워진 차트는 “아무도 쓰지 않았다”로 읽힙니다." },
+  "usage.off.howto": { "zh-CN": "要开启：把环境变量 USAGE_STATS_ENABLED 设成 true，然后重启容器（Cloudflare Worker 上是等 isolate 回收）。这个开关是建应用时读一次的，设置页上没有它的入口。", "zh-TW": "要開啟：把環境變數 USAGE_STATS_ENABLED 設成 true，然後重啟容器（Cloudflare Worker 上是等 isolate 回收）。這個開關是建應用時讀一次的，設定頁上沒有它的入口。", en: "To enable it: set the environment variable USAGE_STATS_ENABLED to true, then restart the container (on Cloudflare Workers, wait for the isolate to recycle). This switch is read once when the app is built, so the settings page has no control for it.", ja: "有効にするには: 環境変数 USAGE_STATS_ENABLED を true に設定し、コンテナを再起動してください（Cloudflare Workers では isolate の再生成を待ちます）。このスイッチはアプリ構築時に一度だけ読まれるため、設定ページには項目がありません。", ko: "켜려면: 환경 변수 USAGE_STATS_ENABLED를 true로 설정한 뒤 컨테이너를 재시작하세요(Cloudflare Workers에서는 isolate 재생성을 기다립니다). 이 스위치는 앱을 만들 때 한 번만 읽으므로 설정 페이지에는 항목이 없습니다." },
+  "usage.off.cost":  { "zh-CN": "开启的代价：每个实例最长每 {flush} 往存储写一次分片。在 Cloudflare KV 上那是写配额，请对着部署文档里的配额账估一下再开。", "zh-TW": "開啟的代價：每個實例最長每 {flush} 往儲存寫一次分片。在 Cloudflare KV 上那是寫配額，請對著部署文件裡的配額帳估一下再開。", en: "What it costs: each instance writes a shard to storage at most once every {flush}. On Cloudflare KV that is write quota — check the quota budget in the deployment docs before turning it on.", ja: "コスト: 各インスタンスは最短で {flush} ごとにシャードをストレージへ書き込みます。Cloudflare KV では書き込みクォータを消費するため、デプロイ文書のクォータ計算を確認してから有効にしてください。", ko: "비용: 각 인스턴스가 최소 {flush}마다 스토리지에 샤드를 한 번 기록합니다. Cloudflare KV에서는 쓰기 쿼터를 소모하므로 배포 문서의 쿼터 계산을 확인한 뒤 켜세요." },
+  "usage.off.costUnknown": { "zh-CN": "开启的代价：每个实例会定期往存储写一次分片。间隔有多长这一次没读出来（capabilities 没拿到）。", "zh-TW": "開啟的代價：每個實例會定期往儲存寫一次分片。間隔有多長這一次沒讀出來（capabilities 沒拿到）。", en: "What it costs: each instance periodically writes a shard to storage. The interval could not be read this time (capabilities were not available).", ja: "コスト: 各インスタンスは定期的にシャードをストレージへ書き込みます。その間隔は今回取得できませんでした（capabilities を取得できていません）。", ko: "비용: 각 인스턴스가 주기적으로 스토리지에 샤드를 기록합니다. 그 간격은 이번에 읽지 못했습니다(capabilities를 가져오지 못함)." },
+  "usage.off.tier1": { "zh-CN": "顺带一提：Key 池板块里逐把 key 的累计计数与这个开关无关，它在这里关着的时候照样可用。", "zh-TW": "順帶一提：Key 池板塊裡逐把 key 的累計計數與這個開關無關，它在這裡關著的時候照樣可用。", en: "Note: the per-key counters in the key pool section are unrelated to this switch and remain available while it is off.", ja: "補足: キープール画面のキーごとの累計カウントはこのスイッチとは無関係で、無効のままでも利用できます。", ko: "참고: 키 풀 화면의 키별 누적 카운트는 이 스위치와 무관하며, 꺼져 있어도 계속 사용할 수 있습니다." },
+
+  // ── 日汇总表与单日下钻 ─────────────────────────────────────────────────────
+  "usage.table.title":     { "zh-CN": "按天", "zh-TW": "按天", en: "By day", ja: "日別", ko: "일별" },
+  "usage.table.date":      { "zh-CN": "日期（UTC）", "zh-TW": "日期（UTC）", en: "Date (UTC)", ja: "日付（UTC）", ko: "날짜(UTC)" },
+  "usage.table.requests":  { "zh-CN": "请求", "zh-TW": "請求", en: "Requests", ja: "リクエスト", ko: "요청" },
+  "usage.table.success":   { "zh-CN": "成功", "zh-TW": "成功", en: "Success", ja: "成功", ko: "성공" },
+  "usage.table.errors":    { "zh-CN": "错误", "zh-TW": "錯誤", en: "Errors", ja: "エラー", ko: "오류" },
+  "usage.table.tokens":    { "zh-CN": "Token 入 / 出", "zh-TW": "Token 入 / 出", en: "Tokens in / out", ja: "トークン 入 / 出", ko: "토큰 입력 / 출력" },
+  "usage.table.streaming": { "zh-CN": "流式", "zh-TW": "串流", en: "Streaming", ja: "ストリーミング", ko: "스트리밍" },
+  "usage.table.latency":   { "zh-CN": "平均延迟（毫秒）", "zh-TW": "平均延遲（毫秒）", en: "Avg latency (ms)", ja: "平均レイテンシ（ミリ秒）", ko: "평균 지연(밀리초)" },
+  "usage.table.empty":     { "zh-CN": "这段区间里没有可以列出的日子。", "zh-TW": "這段區間裡沒有可以列出的日子。", en: "There are no days to list in this range.", ja: "この期間に一覧できる日はありません。", ko: "이 구간에 나열할 날짜가 없습니다." },
+  "usage.table.drill":     { "zh-CN": "下钻", "zh-TW": "下鑽", en: "Drill down", ja: "詳細", ko: "자세히" },
+  "usage.detail.title":    { "zh-CN": "{date} 的分解", "zh-TW": "{date} 的分解", en: "Breakdown for {date}", ja: "{date} の内訳", ko: "{date} 분해" },
+  "usage.detail.hours":    { "zh-CN": "按小时（UTC）", "zh-TW": "按小時（UTC）", en: "By hour (UTC)", ja: "時間別（UTC）", ko: "시간별(UTC)" },
+  "usage.detail.models":   { "zh-CN": "按模型", "zh-TW": "按模型", en: "By model", ja: "モデル別", ko: "모델별" },
+  "usage.detail.protocols": { "zh-CN": "按协议", "zh-TW": "按協定", en: "By protocol", ja: "プロトコル別", ko: "프로토콜별" },
+  "usage.detail.hour":     { "zh-CN": "小时", "zh-TW": "小時", en: "Hour", ja: "時", ko: "시" },
+  "usage.detail.model":    { "zh-CN": "模型", "zh-TW": "模型", en: "Model", ja: "モデル", ko: "모델" },
+  "usage.detail.protocol": { "zh-CN": "协议", "zh-TW": "協定", en: "Protocol", ja: "プロトコル", ko: "프로토콜" },
+  "usage.detail.close":    { "zh-CN": "收起", "zh-TW": "收起", en: "Collapse", ja: "閉じる", ko: "접기" },
+  "usage.detail.empty":    { "zh-CN": "这一天没有可以分解的记录。", "zh-TW": "這一天沒有可以分解的記錄。", en: "There is nothing to break down for this day.", ja: "この日は内訳を表示できる記録がありません。", ko: "이 날짜에는 분해할 기록이 없습니다." },
+
+  // ── 未落盘的尾巴（`pending` 块）───────────────────────────────────────────
+  // ⚠️ 判据是 `count`，**不是 `ms`**：`ms` 数的是「距上一次落盘*尝试*多久」，
+  //    `count > 0 && ms ≈ 0` 要读作「刚试过、没写成」。
+  "usage.pending":          { "zh-CN": "还有 {count} 条计数没有落盘，上面的数字少了这一截。", "zh-TW": "還有 {count} 條計數沒有落盤，上面的數字少了這一截。", en: "{count} counter(s) have not been flushed yet; the numbers above are short by that much.", ja: "未書き込みのカウントが {count} 件あります。上の数値はその分少なくなっています。", ko: "아직 기록되지 않은 카운트가 {count}건 있습니다. 위 수치는 그만큼 적습니다." },
+  "usage.pendingExhausted": { "zh-CN": "写配额已经耗尽，还有 {count} 条计数暂时写不进存储。这不是「没有尾巴」，是写不进去。", "zh-TW": "寫配額已經耗盡，還有 {count} 條計數暫時寫不進儲存。這不是「沒有尾巴」，是寫不進去。", en: "The write budget is exhausted; {count} counter(s) cannot be written to storage for now. This is not “nothing pending” — the writes are failing.", ja: "書き込み予算を使い切ったため、{count} 件のカウントを当面ストレージへ書き込めません。「未書き込みがない」のではなく、書き込めていません。", ko: "쓰기 예산이 소진되어 {count}건의 카운트를 당분간 스토리지에 기록할 수 없습니다. “대기 중인 것이 없음”이 아니라 기록에 실패하고 있습니다." },
 };

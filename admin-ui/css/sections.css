@@ -150,3 +150,34 @@ tr:last-child td { border-bottom: 0; }
 .cfg-advanced summary { cursor: pointer; color: var(--text); }
 .cfg-errors p { margin: 2px 0; }
 .danger-text { color: var(--danger); }
+
+/* 用量板块（P3d Task 5，设计 §10.6）。
+
+   ⚠️⚠️ **这一段里最要紧的是那两根破折号**：`–`（EN DASH，`.usage-none`）说的是
+   「这一次读成功了，只是没有样本 / 没有分母」，`—`（EM DASH，`.usage-unknown`）
+   说的是「整块就没读出来，我们不知道」。**两者必须视觉可区分**——单靠字宽差
+   太细，所以再加一层颜色差：前者走 `--muted`（与别处的「无数据」同一档），
+   后者走 `--danger`（它是一条要人去看的信号，不是排版留白）。
+   判据不在 CSS 里：哪一格用哪一根由 `admin-ui/js/pure/usage.mjs` 的
+   `cellKind` / `ratioKind` 决定，这里只负责让它们看得出来不一样。 */
+.usage-none { color: var(--muted); cursor: help; }
+.usage-unknown { color: var(--danger); cursor: help; }
+/* 「不完整」标记：`partial_malformed` 那一档的数字是真的、只是缺了几块。
+   它与 `.approx` 是两件事——`≈` 说「有系统性少计」，这个说「这一份缺了几个分片」。 */
+.usage-incomplete { color: var(--warn); cursor: help; font-size: 12px; }
+/* 黄条与中性条。`.banner-danger` 已经在概览板块那一段里定义过，这里只补另两档。 */
+.banner-warn {
+  padding: var(--gap-sm) var(--gap); margin-bottom: var(--gap-sm);
+  color: var(--warn-fg); background: var(--warn); border-radius: var(--radius);
+}
+.banner-info {
+  padding: var(--gap-sm) var(--gap); margin-bottom: var(--gap-sm);
+  color: var(--text); background: var(--panel-2); border-radius: var(--radius);
+}
+.banner-warn p, .banner-info p { margin: 2px 0; }
+/* 错误横幅里那颗重试按钮：跟在文字后面，别把整条横幅撑成两行。 */
+.usage-retry { margin-left: var(--gap-sm); }
+.usage-detail-head { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-sm); }
+.usage-detail-head h3 { margin: 0; font-size: 14px; }
+.usage-breakdown { margin-top: var(--gap); }
+.usage-breakdown h4 { margin: 0 0 var(--gap-sm); font-size: 13px; }

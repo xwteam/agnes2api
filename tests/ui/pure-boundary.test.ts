@@ -96,12 +96,13 @@ const KNOWN_BLIND_SPOTS = [
 ];
 
 describe("硬规则 1 的另一半：sec-*.js 不许重新声明 pure/*.mjs 已导出的函数名", () => {
-  it("扫描范围本身不是空的——十个 pure 模块、五个板块文件都得真的被扫到", () => {
+  it("扫描范围本身不是空的——十一个 pure 模块、六个板块文件都得真的被扫到", () => {
     // 反向自检：下面那条相等断言在「一个文件都没扫到」时同样是绿的。
     // 数字手写，改动 admin-ui 的文件结构时必须回来表态。
-    // P3c Task 7 各加一个（`pure/settings.mjs` 与 `sec-settings.js`）。
-    expect(pureModules().length, "pure 模块数变了").toBe(10);
-    expect(sectionFiles().length, "板块文件数变了").toBe(5);
+    // P3c Task 7 各加一个（`pure/settings.mjs` 与 `sec-settings.js`）⇒ 10 / 5。
+    // P3d Task 5 各再加一个（`pure/usage.mjs` 与 `sec-usage.js`）⇒ **10 → 11、5 → 6**。
+    expect(pureModules().length, "pure 模块数变了").toBe(11);
+    expect(sectionFiles().length, "板块文件数变了").toBe(6);
   });
 
   it("全部 pure 模块的导出函数名，一个都不许在 sec-*.js 里被重新声明", () => {

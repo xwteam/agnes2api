@@ -158,7 +158,11 @@ describe("i18n 字典", () => {
    */
   it("板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里", () => {
     // `set` 是 P3c Task 7 的设置页。**加新板块必须回来表态**，理由见上面那段 ⚠️。
-    const NAMESPACES = ["gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set"] as const;
+    // ⚠️ `usage` 是 P3d Task 5 的用量板块。它进这张表**不是形式**：那个板块的
+    // 62 个新 key 里绝大多数走的正是 `elI18n(tag, key)`（`scripts/check-i18n.mjs`
+    // 的第 ① 条只认 `t("…")` 与 `data-i18n="…"`，对它们完全隐身），
+    // 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
+    const NAMESPACES = ["gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set", "usage"] as const;
     const re = new RegExp(`"((?:${NAMESPACES.join("|")})\\.[A-Za-z0-9_.]+)"`, "g");
     const walk = (d: string): string[] =>
       readdirSync(d).sort().flatMap((n) => {
@@ -210,7 +214,7 @@ describe("i18n 字典", () => {
      *（② 挡"漏了"，③ 挡"多了 / 前缀写错"）。
      *
      * 今天为空的两个各有其**如实的**理由，都不是缺陷：
-     * · `shell` / `nav` —— 壳层标题与四个导航按钮的文案全写在 `index.html` 的
+     * · `shell` / `nav` —— 壳层标题与六个导航按钮的文案全写在 `index.html` 的
      *   `data-i18n` 属性里，而本条扫的是 `admin-ui/js` 下的 `.js`/`.mjs`。那一半由
      *   `scripts/check-i18n.mjs` 的第 ① 条覆盖（它连 `.html` 一起走）。
      *
