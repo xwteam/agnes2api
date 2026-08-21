@@ -310,7 +310,15 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
    */
   it("FIELD_EXPOSURE 里每一格要么可编辑，要么在手写的「刻意只读」清单里", () => {
     // **手写清单。** `degraded` 是装载的产物（本次有没有降级），不是旋钮。
-    const READ_ONLY = ["degraded"];
+    //
+    // `usageStatsEnabled`（P3d Task 3）是这份清单里第一条**理由不同**的：它是个
+    // 真旋钮，只是**本期设置页没有它的入口**。进 `EDITABLE` 而设置页不给入口的话，
+    // `GET /admin/api/config` 会返回一份「说能改、却没有任何地方能改」的字段清单
+    //（`admin-ui/js/pure/settings.mjs` 的 `CARD_UPSTREAM` 上方那段逐字裁过同一形态）。
+    // ⇒ **哪天设置页给了它入口，就把它从这里挪进 `EDITABLE`（`kind: "bool"`），
+    // 而不是两边都留一份。** 它在 `ENV_LOCK_MAP` 里是另一件事，判据见
+    // `GatewayConfig.usageStatsEnabled` 的说明（不进那张表会让四元组自相矛盾）。
+    const READ_ONLY = ["degraded", "usageStatsEnabled"];
     const unaccounted = exposureFields()
       .map((f) => f.field)
       .filter((f) => !EDITABLE_FIELDS.includes(f) && !READ_ONLY.includes(f))

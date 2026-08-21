@@ -91,6 +91,7 @@ export const FIELD_EXPOSURE: ExposureMap<GatewayConfig> = {
   poolCacheTtlMs: "public",
   poolTouchIntervalMs: "public",
   degraded: "public",
+  usageStatsEnabled: "public",
   registrar: {
     enabled: "public",
     primary: "public",
@@ -142,6 +143,13 @@ const ENV_LOCK_MAP: Readonly<Record<string, string>> = {
   COOLDOWN_STRIKE_MS: "cooldownStrikeMs",
   POOL_CACHE_TTL_MS: "poolCacheTtlMs",
   POOL_TOUCH_INTERVAL_MS: "poolTouchIntervalMs",
+  // ⚠️ **这一条今天在 `EDITABLE` 里没有对应项，是本仓第一条这样的锁定项。**
+  // 上面那段说的判据是「有没有消费者」，而它进表的理由**不是**那一条，别混着读：
+  // 这个字段**存储里就能改**（优先级 env > 存储 > 默认值），不进表的话
+  // `GET /admin/api/config` 会对它返回一份自相矛盾的四元组
+  //（`stored: true` / `env: null` / `effective: false`）——**面板对这个字段撒谎，
+  // 与今天有没有人读那一格无关**。判据见 `GatewayConfig.usageStatsEnabled` 的说明。
+  USAGE_STATS_ENABLED: "usageStatsEnabled",
   // ── 注册机（`registrarFromEnv` 直接读的 12 个）────────────────────────────
   REGISTRAR_ENABLED: "registrar.enabled",
   REGISTRAR_PRIMARY: "registrar.primary",
@@ -432,6 +440,13 @@ export async function loadConfigWithProvenance(
     poolTouchIntervalMs: num(env, "POOL_TOUCH_INTERVAL_MS", "poolTouchIntervalMs", stored.poolTouchIntervalMs, DEFAULTS.poolTouchIntervalMs, logger, 0, flags),
     registrar: registrarFromEnv(env, storedRegistrar as Partial<RegistrarConfig>, logger),
     degraded: flags.degraded,
+    // **优先级与判据都照抄 `registrarFromEnv` 里 `enabled` 那一行**
+    //（`src/core/registrar/config.ts` 的 `const enabled = …=== "true"`）：
+    // env 缺席才看存储，存储缺席才是 false。
+    // ⚠️ **不走 `num()`，所以没有「存储值非法 ⇒ 字段级降级」这一支**：布尔没有非法值，
+    // `String(非布尔) !== "true"` 一律落到 false，那正是「默认关」该有的失败方向
+    //（全局约束 16：关是零成本，开才要花钱 ⇒ 读不懂的时候必须往关的方向倒）。
+    usageStatsEnabled: (env.USAGE_STATS_ENABLED ?? String(stored.usageStatsEnabled ?? false)) === "true",
   };
 
   const source: Record<string, FieldSource> = {};

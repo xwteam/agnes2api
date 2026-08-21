@@ -280,7 +280,7 @@ describe("FIELD_EXPOSURE 双向哨兵：标 secret 的不许出现，标 public 
     return { stored, expect: wanted };
   }
 
-  it("27 个叶子逐个种哨兵：3 个 secret 一个都不许出现，24 个 public 一个都不许少", async () => {
+  it("28 个叶子逐个种哨兵：3 个 secret 一个都不许出现，25 个 public 一个都不许少", async () => {
     const { stored, expect: wanted } = sentinels();
     // 口令走存储（env 里没有 GATEWAY_TOKEN），于是 `gatewayToken` 那个哨兵是真的在用的那把。
     const { app } = await realApp({ env: {}, stored });
@@ -306,7 +306,8 @@ describe("FIELD_EXPOSURE 双向哨兵：标 secret 的不许出现，标 public 
     expect(missing, "标了 public 的字段被静默漏掉了 —— 面板上那一格永远是空的").toEqual([]);
     // **反向自检，手写字面量**：两个计数都不许是 0，否则上面两条恒绿。
     expect(secrets, "凭据格数变了").toBe(3);
-    expect(publics, "公开字段格数变了").toBe(24);
+    // P3d Task 3 把 24 抬到 25（新增 `usageStatsEnabled`，公开、不可编辑）。
+    expect(publics, "公开字段格数变了").toBe(25);
   });
 });
 

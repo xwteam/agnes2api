@@ -11,6 +11,8 @@ import { auth } from "./middleware/auth.js";
 import { adminRouter } from "./admin/router.js";
 import { configRefresh } from "./config-refresh.js";
 import { logFlush } from "./log-flush.js";
+import { usageFlush } from "./usage-flush.js";
+import type { UsageSink, UsageRecording } from "./usage-sink.js";
 import type { ConfigHolder } from "./config-holder.js";
 import type { DispatchDeps } from "../core/dispatcher.js";
 import type { StorageHealth } from "../core/storage-health.js";
@@ -88,6 +90,22 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
    * 而后者是一句假话。
    */
   config?: ConfigWiring;
+  /**
+   * Tier-2 用量 sink（P3d Task 3）。**可选，缺省 `undefined` = Tier-2 关着。**
+   *
+   * ⚠️ **缺席时这里一个兜底实例都不建**，与 `storeLogger` 那条刻意相反：
+   * 那一份缺省会 new 一个背后接 no-op `Storage` 的 `StoreLogger`，因为两个 handler
+   * 需要一个总能调的实例；这一份**必须真的不存在**——全局约束 16 的原话是
+   * 「关闭时一次存储访问都不许有、**一个内存累加器都不许建**」，
+   * 一个「反正没写盘」的累加路径迟早会被某次改动接上写。
+   * 缺席的三处后果都是结构性的、不靠 `if` 维持：
+   * ① `usageFlush` 中间件整条不挂；② 四条路由的 `recordUsage()` 第一行就 return；
+   * ③ `GET /admin/api/capabilities` 的 `stats.tier2Enabled` 如实报 false。
+   *
+   * **只有 `wire.ts` 的 `buildApp` 会传它**（它才读得到 `USAGE_STATS_ENABLED`），
+   * 直接调 `createApp` 的那几十个测试一律不传 ⇒ 它们的行为一个字节都没变。
+   */
+  usageSink?: UsageSink;
 }
 
 /**
@@ -121,13 +139,25 @@ function defaultStoreLogger(now: () => number): StoreLogger {
  * 拷值等于把配置永久冻结在启动时刻——这正是缺陷 D2 的成因。getter 让每次属性读取
  * 都取当前值；而 dispatch() 在请求开头解构一次（dispatcher.ts:209），
  * 因此**单个请求内部仍是一份一致的快照**，这正是想要的语义。
+ *
+ * ⚠️ **返回值不许被展开（`{ ...dispatchDeps(deps) }`）。** 展开会**当场求值**那个
+ * getter 并把结果拷成一个普通属性 ⇒ 配置重新冻结在建 app 那一刻，缺陷 D2 原样复活，
+ * 而 `tsc` 一个字都不会说。P3d Task 3 加 `usageSink` 那一格时差点这么写
+ * ——**要加字段就加在下面这个对象字面量里**，别在调用点拼。
  */
-function dispatchDeps(deps: AppDeps): DispatchDeps {
+function dispatchDeps(deps: AppDeps): DispatchDeps & UsageRecording {
   return {
     repo: deps.repo,
     fetcher: deps.fetcher,
     now: deps.now,
     logger: deps.logger,
+    /**
+     * Tier-2 归因（P3d Task 3）。**协议名由路由层传，不改 `dispatch()` 的签名**：
+     * 那个函数的参数里没有「这是哪条协议」这一维（V5），加一维要牵动 30 多处测试
+     * 构造点，而路由层本来就是唯一知道答案的那一层。
+     * 缺席（Tier-2 关着）时四条路由的 `recordUsage()` 第一行就 return。
+     */
+    usageSink: deps.usageSink,
     get config() { return deps.configHolder.current(); },
   };
 }
@@ -158,6 +188,21 @@ export function createApp(deps: AppDeps): Hono {
   // 直接调用 `createApp()` 的测试零行为影响。
   const storeLogger = deps.storeLogger ?? defaultStoreLogger(deps.now);
   app.use("*", logFlush(() => storeLogger.maybeFlush()));
+
+  // Tier-2 用量落盘（P3d Task 3）。**`usageSink` 缺席时整条不挂**——见 `AppDeps.usageSink`
+  // 的说明（全局约束 16：「关」不是一个 if，是这条路径压根不存在）。
+  //
+  // 相对 `logFlush` 的位置**不承载语义**，两个 sink 各有各的键空间、各有各的写预算，
+  // 谁先落都一样（用量 sink 的 `onError` 刻意走 console 而不是事件链路，所以它也不会
+  // 反过来给事件缓冲添东西——见 `wire.ts` 里建它那一段）。
+  // ⚠️ **别把「注册在后面」读成「落盘在后面」**：中间件的收尾段是**由内向外**跑的，
+  // 注册得越晚，`await next()` 之后那一半反而越早执行 ⇒ 今天是**用量先落、事件后落**。
+  // 本任务实测吃过这个亏：一条「用量 flush 没 await」的变异之所以逃逸，正是因为
+  // 紧随其后的事件 flush 那次存储 I/O 顺手把它带完了（现在那一格靠一个足够长的
+  // 挂起点摆脱了对排序的依赖，见 `tests/contract/usage-tier2.test.ts` 的
+  // 「落盘在响应返回之前就完成 ——……」）。
+  const usageSink = deps.usageSink;
+  if (usageSink !== undefined) app.use("*", usageFlush(() => usageSink.maybeFlush()));
 
   /**
    * 全应用级 `nosniff`。
@@ -237,6 +282,11 @@ export function createApp(deps: AppDeps): Hono {
     registrar: deps.registrar ?? null,
     tendGate: deps.tendGate ?? createTendGate(),
     config: deps.config ?? null,
+    // **同一个事实的同一个来源**：面板问的是「Tier-2 有没有在记账」，
+    // 而那件事的全部真相就是「这个 app 建没建 sink」。不从 `configHolder` 现读
+    // `usageStatsEnabled`——那个开关是建 app 时读一次的，现读会与事实分叉，
+    // 见 `capabilitiesHandler` 的同名参数。
+    usageStatsEnabled: usageSink !== undefined,
   });
   if (admin) app.route("/", admin);
   return app;

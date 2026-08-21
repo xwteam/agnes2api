@@ -16,6 +16,7 @@ import { multiLogger } from "../../src/adapters/logger-multi.js";
 import type { RegistrarWiring } from "../../src/http/admin/handlers/registrar.js";
 import type { TendGate } from "../../src/http/admin/tend-lock.js";
 import type { ConfigWiring } from "../../src/http/admin/handlers/config.js";
+import type { UsageSink } from "../../src/http/usage-sink.js";
 
 /**
  * 夹具的管理口令。27 位（≥ ADMIN_TOKEN_MIN_LENGTH），且与 `TEST_CONFIG.gatewayToken`
@@ -95,6 +96,16 @@ export interface MakeAppOptions {
    * 都只从它来，传一个空对象等于把「被环境变量锁定」这整条性质做成不可观测。
    */
   config?: ConfigWiring;
+  /**
+   * Tier-2 用量 sink（P3d Task 3）。**默认不传 ⇒ `createApp` 收到 `undefined`
+   * ⇒ Tier-2 关着**，与生产默认值一致，既有的几百条用例行为一个字节都没变。
+   *
+   * ⚠️ **传它只覆盖「sink 存在之后会发生什么」那一半**：「`USAGE_STATS_ENABLED`
+   * 到底决不决定 sink 建不建」是 `wire.ts` 的事，那一半必须走 `buildApp`
+   *（见 `tests/contract/usage-tier2.test.ts` 里那两组各自的说明）。
+   * **`storage` 必须与用例自己观测的那一个是同一个实例**，否则数的是另一份装配。
+   */
+  usageSink?: UsageSink;
 }
 
 export const TEST_CONFIG: GatewayConfig = {
@@ -109,6 +120,12 @@ export const TEST_CONFIG: GatewayConfig = {
   // 注册机默认关闭，测试夹具无需凭据。
   registrar: registrarFromEnv({}, {}),
   degraded: false,
+  // **Tier-2 默认关，与生产默认值逐字相同**（P3d 计划全局约束 16）。
+  // ⚠️ 把它改成 true 在这里是**无效**的：`createApp` 认的是 `AppDeps.usageSink`
+  // 那一格（建没建 sink），不是配置里这个开关——真正读这个开关的是 `wire.ts`。
+  // ⇒ 要验 Tier-2 的用例走 `buildApp` + `USAGE_STATS_ENABLED`，
+  // 那才是原件（`tests/contract/usage-tier2.test.ts` 全组都这么做）。
+  usageStatsEnabled: false,
 };
 
 /**
@@ -181,6 +198,9 @@ export async function makeApp(
     registrar: options.registrar,
     tendGate: options.tendGate,
     config: options.config,
+    // 原样透传（含 `undefined`）：**缺席就是 Tier-2 关着**，那是生产默认值，
+    // 在这里替它兜底会让「关」这个真实形态在夹具里不可达。
+    usageSink: options.usageSink,
   });
   return { app, fetcher, repo, storageHealth, logger: recording, storage, storeLogger };
 }

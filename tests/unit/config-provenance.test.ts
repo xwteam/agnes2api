@@ -204,7 +204,7 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
     ]);
   });
 
-  it("四元组的键集合就是 FIELD_EXPOSURE 走出来的全部叶子（手写的 27 条）", async () => {
+  it("四元组的键集合就是 FIELD_EXPOSURE 走出来的全部叶子（手写的 28 条）", async () => {
     const { storage, env } = await withStored(undefined, { GATEWAY_TOKEN: "gw-token-for-provenance" });
     const { source } = await loadConfigWithProvenance(env, storage);
     const paths = Object.keys(source).sort();
@@ -217,8 +217,13 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
       "registrar.moemail.baseUrl", "registrar.primary", "registrar.targetKeys",
       "registrar.tendIntervalMs", "registrar.tokenName", "registrar.yyds.apiKey",
       "registrar.yyds.baseUrl", "upstreamSyncTimeoutMs", "upstreamTimeoutMs",
+      // P3d Task 3。**它是四元组里第一条「面板读得到、却改不了」的公开字段**
+      //（`degraded` 也不可改，但那是装载的产物，不是旋钮）。它进四元组正是为了
+      // 让运维在面板上答得出「Tier-2 为什么没开」——`env` / `stored` / `effective`
+      // 三格摆在一起，答案是「环境变量没设」还是「存储里写了 false」一眼可分。
+      "usageStatsEnabled",
     ]);
-    expect(paths.length, "27 这个数是手写的：加字段必须在评审里被看见").toBe(27);
+    expect(paths.length, "28 这个数是手写的：加字段必须在评审里被看见").toBe(28);
   });
 
   /**
@@ -350,12 +355,21 @@ describe("F10：registrarFromEnv 读到的 env 名字，全部进了锁定表", 
     ).toEqual([]);
   });
 
-  /** 锁定表的完整清单（10 个网关 + 16 个注册机）。**手写，加字段必须在评审里被看见。** */
-  it("锁定表恰好是这 26 条字段路径", () => {
+  /**
+   * 锁定表的完整清单（11 个网关 + 16 个注册机）。**手写，加字段必须在评审里被看见。**
+   *
+   * ⚠️ **`USAGE_STATS_ENABLED` 是 P3d Task 3 加的第 27 条，它与前 26 条有一处不同：
+   * 那个字段今天不在 `EDITABLE` 里（设置页没有它的入口）。** 进这张表的理由因此
+   * 不是「面板改了不生效」，而是：它**存储里就能改**，不进表的话
+   * `GET /admin/api/config` 会对它返回一份自相矛盾的四元组
+   *（`stored: true` / `env: null` / `effective: false`）。全文见
+   * `GatewayConfig.usageStatsEnabled` 与 `ENV_LOCK_MAP` 里那一行的说明。
+   */
+  it("锁定表恰好是这 27 条字段路径", () => {
     const all = envLockedFields(Object.fromEntries([
       "GATEWAY_TOKEN", "AGNES_BASE_URL", "UPSTREAM_TIMEOUT_MS", "UPSTREAM_SYNC_TIMEOUT_MS",
       "MAX_STRIKES", "COOLDOWN_RATE_LIMIT_MS", "COOLDOWN_PAYMENT_MS", "COOLDOWN_STRIKE_MS",
-      "POOL_CACHE_TTL_MS", "POOL_TOUCH_INTERVAL_MS",
+      "POOL_CACHE_TTL_MS", "POOL_TOUCH_INTERVAL_MS", "USAGE_STATS_ENABLED",
       ...EXPECTED_ENV_NAMES,
     ].map((n) => [n, "x"]))).sort();
     expect(all).toEqual([
@@ -367,6 +381,7 @@ describe("F10：registrarFromEnv 读到的 env 名字，全部进了锁定表", 
       "registrar.moemail.baseUrl", "registrar.primary", "registrar.targetKeys",
       "registrar.tendIntervalMs", "registrar.tokenName", "registrar.yyds.apiKey",
       "registrar.yyds.baseUrl", "upstreamSyncTimeoutMs", "upstreamTimeoutMs",
+      "usageStatsEnabled",
     ]);
   });
 });

@@ -57,6 +57,11 @@ describe("Entry fail-closed 行为", () => {
         cooldownRateLimitMs: 60_000,
         cooldownPaymentMs: 3_600_000,
         cooldownStrikeMs: 1_800_000,
+        // Tier-2 **默认关**（P3d 计划全局约束 16）。这一格与下面那条
+        // 「覆盖所有默认值」里的 `usageStatsEnabled: true` 是一对：
+        // 两条给的值必须不同，否则「configFromEnv 到底读没读 USAGE_STATS_ENABLED」
+        // 在这两条上是不可观测的（第 1 种假阳性：夹具 A/B 同值）。
+        usageStatsEnabled: false,
         poolCacheTtlMs: 60_000,
         poolTouchIntervalMs: 21_600_000,
         registrar: DEFAULT_REGISTRAR,
@@ -78,6 +83,10 @@ describe("Entry fail-closed 行为", () => {
         // configFromEnv 这条路径也把 min 传成了 0（传 1 的话这里直接抛）。
         POOL_CACHE_TTL_MS: "0",
         POOL_TOUCH_INTERVAL_MS: "0",
+        // **判据是逐字 `=== "true"`**，与 `registrar.enabled` 同一套，不是「非空即真」：
+        // `USAGE_STATS_ENABLED=0` / `=false` 必须仍然是关，那是运维写下「我不要它」
+        // 时最自然的两种写法（另有一格专门钉这三种写法）。
+        USAGE_STATS_ENABLED: "true",
       };
       const config = configFromEnv(env);
       expect(config).toEqual({
@@ -91,9 +100,34 @@ describe("Entry fail-closed 行为", () => {
         cooldownStrikeMs: 900000,
         poolCacheTtlMs: 0,
         poolTouchIntervalMs: 0,
+        usageStatsEnabled: true,
         registrar: DEFAULT_REGISTRAR,
         degraded: false,
       });
+    });
+
+    /**
+     * **`USAGE_STATS_ENABLED` 的判据是逐字 `=== "true"`，不是「非空即真」。**
+     *
+     * 它防的是一个很具体的误配：运维照着 `TRUST_PROXY=1` 的写法写
+     * `USAGE_STATS_ENABLED=1`，以为开了，而实际上没开——**面板会如实说没开**
+     *（`capabilities.stats.tier2Enabled` 走的是「建没建 sink」这一个来源），
+     * 所以这不是静默失败；但反过来若判据松成 `!!raw`，
+     * **`USAGE_STATS_ENABLED=false` 就会把它打开**，那才是真正的静默事故：
+     * 一个写着 `false` 的部署每天多 13 次/isolate 的 put，抢的是 key 池状态回写的桶。
+     *
+     * 三种写法一格里跑完（第 5 种假阳性：分散到三格的话，
+     * 「`=== "true"`」与「`!== "false"`」这两种实现在其中任何一格上都数学等价）。
+     */
+    it("USAGE_STATS_ENABLED 只认逐字的 \"true\"：\"1\" 与 \"false\" 都是关", () => {
+      const on = configFromEnv({ GATEWAY_TOKEN: "secret", USAGE_STATS_ENABLED: "true" });
+      const one = configFromEnv({ GATEWAY_TOKEN: "secret", USAGE_STATS_ENABLED: "1" });
+      const off = configFromEnv({ GATEWAY_TOKEN: "secret", USAGE_STATS_ENABLED: "false" });
+      // 期望值三个手写字面量，不从被测对象反推。
+      expect(
+        { on: on.usageStatsEnabled, one: one.usageStatsEnabled, off: off.usageStatsEnabled },
+        "\"1\" 被当成开 ⇒ 判据松了；\"true\" 被当成关 ⇒ 这个开关根本打不开",
+      ).toEqual({ on: true, one: false, off: false });
     });
   });
 });

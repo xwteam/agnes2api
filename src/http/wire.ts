@@ -19,6 +19,7 @@ import { YydsProvider } from "../adapters/mailbox-yyds.js";
 import { MoeMailProvider } from "../adapters/mailbox-moemail.js";
 import { ConsoleLogger } from "../adapters/logger-console.js";
 import { StoreLogger } from "../adapters/logger-store.js";
+import { UsageSink } from "./usage-sink.js";
 import { multiLogger } from "../adapters/logger-multi.js";
 import type { Logger } from "../ports/logger.js";
 import { createTendGate, type TendGate } from "./admin/tend-lock.js";
@@ -42,6 +43,22 @@ export interface BuildOptions {
    * 测试注入固定值，好让分片 key 可预测、可断言。
    */
   newShardId?: () => string;
+  /**
+   * 这次装配里**所有**组件共用的时钟。**默认 `Date.now`，生产两个入口都不传。**
+   *
+   * 存在的理由与 `newShardId` 完全同源：Tier-2 的落盘间隔是 2 小时
+   *（`USAGE_FLUSH_MIN_INTERVAL_MS`），**真实时钟下任何测试都等不到第一次落盘**
+   * ⇒ 「开着时到底写不写」在真装配上不可观测，只剩「照抄一遍 wire.ts 的装配」
+   * 这一条路，而照抄的那份永远验证不了原件（本文件 `BuiltApp.repo` 上方那段
+   * 已经为同一件事付过一次代价）。
+   *
+   * ⚠️ **一次注入喂给这里的每一个组件**（存储可写性观测、事件 sink、配置持有者、
+   * key 池、用量 sink、`createApp`），**不许只喂其中一个**：不同组件看到不同的
+   * 「现在」是一种自造的假阳性——例如 `MemoryStorage` 的 TTL 按真实时钟判、
+   * 而 sink 按假时钟算 `expiresAt`，落下去的键会「生下来就已经过期」
+   *（P3b Task 6 实测踩过一次）。
+   */
+  now?: () => number;
 }
 
 /** buildApp 的返回值。两个入口都需要 configHolder：node.ts 用它取 registrar.tendIntervalMs
@@ -98,11 +115,25 @@ export async function buildApp(
   runtime: RuntimeInfo,
   options: BuildOptions = {},
 ): Promise<BuiltApp> {
+  // **这次装配的唯一时钟**，见 `BuildOptions.now`：下面每一个要时间的组件都用它，
+  // 不许有第二个时间来源。
+  const now = options.now ?? (() => Date.now());
   const storageHealth = createStorageHealth();
   const consoleLogger = new ConsoleLogger();
   // 包一层之后，后续所有写操作（key 池状态回写、启动探测）的成败都会自动反映到
   // /health 上，健康检查自身不需要再写盘。
-  const watched = watchStorage(storage, storageHealth, () => Date.now());
+  const watched = watchStorage(storage, storageHealth, now);
+
+  /**
+   * 这个 isolate/进程的分片 id。**生成一次，事件 sink 与用量 sink 共用同一个。**
+   *
+   * 共用是想要的：两者都在回答「这份数据是哪个实例写的」，面板上那句
+   * 「这一天有几个分片贡献了数据」跨两个板块指的必须是同一批实例。
+   * 两个键空间互不相干（`event:<窗口>:<槽位>` 与 `usage:<日>:<槽位>`），
+   * 而且**两者的槽位数各自算各的**（`EVENT_SLOTS` / `USAGE_SLOTS`），
+   * 所以同一个 id 在两边可能落在不同槽位——那是对的，不是 bug。
+   */
+  const shardId = (options.newShardId ?? (() => crypto.randomUUID().slice(0, 8)))();
 
   /**
    * 事件落库 sink（Task 6）。`onError` 走 `consoleLogger` 直接打（**通常是
@@ -112,8 +143,8 @@ export async function buildApp(
    */
   const storeLogger = new StoreLogger({
     storage: watched,
-    now: () => Date.now(),
-    shardId: (options.newShardId ?? (() => crypto.randomUUID().slice(0, 8)))(),
+    now,
+    shardId,
     onError: (err) => consoleLogger.log({
       level: "error", event: "storage.event_flush_failed",
       msg: "事件落盘失败，本轮缓冲已丢弃（不重试同一批，下一轮再攒新的）",
@@ -123,7 +154,7 @@ export async function buildApp(
   const logger: Logger = multiLogger(consoleLogger, storeLogger);
 
   if (options.probeStorage) {
-    const err = await probeWritable(watched, storageHealth, () => Date.now(), logger);
+    const err = await probeWritable(watched, storageHealth, now, logger);
     if (err) {
       console.error(
         `[agnes2api] 数据目录不可写，key 池无法持久化，/health 将报告 degraded：${err.message}`,
@@ -135,18 +166,54 @@ export async function buildApp(
     }
   }
 
-  const configHolder = await createConfigHolder({ env, storage: watched, logger, now: () => Date.now() });
+  const configHolder = await createConfigHolder({ env, storage: watched, logger, now });
   // **这两个旋钮是建 app 时读一次的**，不随 ConfigHolder 每次刷新而变：它们绑定的是
   // 部署形态（活跃 isolate 数 × 池大小），不是逐次生效的策略。改了要重启容器 /
   // 等 isolate 回收——`.env.example` 与五语言 DEPLOY.md 都写明了，面板文案同样不许
   // 写「立即生效」。
   const cfg = configHolder.current();
   const repo = new KeyPoolRepo(watched, {
-    now: () => Date.now(), logger,
+    now, logger,
     cacheTtlMs: cfg.poolCacheTtlMs,
     touchIntervalMs: cfg.poolTouchIntervalMs,
   });
   const tendGate = createTendGate();
+
+  /**
+   * Tier-2 用量 sink（P3d Task 3）。**这一行是「默认关」的唯一落点。**
+   *
+   * ⚠️ **开关为假时这里必须是 `undefined`，不是「建好再用一个 if 拦住写」**
+   *（P3d 计划全局约束 16，原话：关闭时一次存储访问都不许有、**一个内存累加器都不许建**）。
+   * 设计 §7.1 给的理由是「统计吃掉写配额会连带打死 key 池的状态回写」——两者抢的是
+   * 同一个每天 1,000 次的写桶。而一条「反正没写盘」的累加路径挂在那里，
+   * **迟早会被某次改动接上写**，那时没有任何东西会响。
+   * 由 `tests/contract/usage-tier2.test.ts` 的
+   * 「USAGE_STATS_ENABLED 不为 true 时：连打 50 次 /v1，usage: 前缀的 put 计数一次都不涨 ——……」
+   * 数着 put 计数钉住（**不是断言「sink 是不是 null」**——那是形状断言）。
+   *
+   * ⚠️ **`cfg` 是建 app 时读的那一份，不逐次刷新**，与上面两个池子旋钮同一条理由：
+   * 它绑定的是部署形态，不是逐次生效的策略。改了要重启容器 / 等 isolate 回收，
+   * `.env.example` 与五语言 DEPLOY.md 都写明了。
+   *
+   * `onError` 走 `consoleLogger` 而不是 fan-out 之后的 `logger`：与上面事件 sink
+   * 完全同源——把 sink 自己的故障再塞回同一个正在故障的存储没有意义。
+   * **而且这里比事件那边更要紧**：用量落盘失败若走 `logger`，就会往事件缓冲里
+   * 塞一条，下一次请求把它落盘 ⇒ **统计故障自己制造额外的写**，正好打在
+   * 存储已经出问题的时候。
+   */
+  const usageSink = cfg.usageStatsEnabled
+    ? new UsageSink({
+      storage: watched,
+      now,
+      shardId,
+      onError: (err) => consoleLogger.log({
+        level: "error", event: "storage.usage_flush_failed",
+        msg: "用量分片落盘失败，这一天的累加器**保留**，下一次落盘会把这一段带上",
+        fields: { error: err instanceof Error ? err.message : String(err) },
+      }),
+    })
+    : undefined;
+
   const app = createApp({
     version: VERSION,
     configHolder,
@@ -169,7 +236,7 @@ export async function buildApp(
     // （写成相等 ⇒ 管理面每请求 503，而改回去的那条 `PUT` 也是 503，面板把自己锁死）。
     config: { storage, env, adminToken: env.ADMIN_TOKEN },
     fetcher: new NativeFetcher(),
-    now: () => Date.now(),
+    now,
     storageHealth,
     logger,
     // **只从环境变量读、不从存储读**：面板不该能改自己的钥匙。没配就整棵 /admin
@@ -182,6 +249,8 @@ export async function buildApp(
     // env 在运行中不会变，装配时算一次即可（见 envLockedFields 的说明）。
     envLocked: envLockedFields(env),
     storeLogger,
+    // **缺席（`undefined`）就是 Tier-2 关着**，见上面 `usageSink` 那段。
+    usageSink,
   });
   return { app, configHolder, repo, tendGate };
 }

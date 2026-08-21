@@ -39,6 +39,9 @@ const CONFIG = {
   poolCacheTtlMs: 0, poolTouchIntervalMs: 0,
   registrar: registrarFromEnv({}, {}),
   degraded: false,
+  // Tier-2 与 `dispatch()` 完全无关：**归因由路由层记，`dispatch` 的签名一个字没改**
+  //（P3d Task 3）。这一格在这里只是让 `GatewayConfig` 完整。
+  usageStatsEnabled: false,
 };
 
 async function makeRepo(keys: string[]) {

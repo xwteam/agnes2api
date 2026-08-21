@@ -75,6 +75,12 @@ export interface AdminRouterDeps {
    * 仍然鉴权，但会如实回 `503 not_wired`。见 `ConfigWiring`。
    */
   config: ConfigWiring | null;
+  /**
+   * Tier-2 到底有没有在记账（P3d Task 3）。**`createApp` 传的是
+   * `deps.usageSink !== undefined`，不是配置里那个开关现读的值**——完整理由见
+   * `capabilitiesHandler` 的同名参数。
+   */
+  usageStatsEnabled: boolean;
 }
 
 /**
@@ -215,6 +221,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.get("/admin/api/keys", keysHandler(deps.repo, deps.now));
   admin.get("/admin/api/capabilities", capabilitiesHandler({
     runtime: deps.runtime, storageHealth: deps.storageHealth, version: deps.version,
+    usageStatsEnabled: deps.usageStatsEnabled,
   }));
   admin.get("/admin/api/overview", overviewHandler({
     repo: deps.repo, configHolder: deps.configHolder, storageHealth: deps.storageHealth,

@@ -58,6 +58,33 @@ export interface GatewayConfig {
    * 就是为这个形态加的。
    */
   degraded: boolean;
+  /**
+   * Tier-2 时间序列统计。**默认 false，且「关」必须是零成本**（P3d 计划全局约束 16）：
+   * 关闭时不建累加器、不挂中间件、一次 `storage.put` 都没有。
+   *
+   * 为什么默认关，两条理由（设计 §7.1 只写了第一条）：
+   * ① 它与 key 池的状态回写抢同一个每天 1,000 次的写桶，
+   *    「统计吃掉写配额会连带打死 key 池的状态回写」；
+   * ② **Worker 形态下存活不足一个落盘间隔（2 小时）的 isolate 一个字都存不下**
+   *    ——sink 构造时 `lastFlushAt = now()`，短命 isolate 攒的计数随它一起消失。
+   *    开着它会得到一份看起来完整、实际残缺的数字。
+   *
+   * ⚠️ **它是「建 app 时读一次」的旋钮，与 `poolCacheTtlMs` / `poolTouchIntervalMs`
+   * 同一类**：`buildApp` 用它决定要不要**构造**那个 sink（`src/http/wire.ts`），
+   * 而全局约束 16 不允许「先建好、再靠一个 if 拦住写」——那条路径迟早会被某次改动
+   * 接上写。⇒ 改了它要重启容器 / 等 isolate 回收才生效。
+   *
+   * ⚠️ **今天它不在 `EDITABLE`（面板改不了），但仍然在 `ENV_LOCK_MAP` 里。**
+   * 两件事各有各的理由，别把其中一条当成另一条的推论：
+   * · 不进 `EDITABLE`，是因为设置页本期没有它的入口——进了就会得到一份
+   *   「说能改、却没有任何地方能改」的字段清单（`admin-ui/js/pure/settings.mjs`
+   *   的 `CARD_UPSTREAM` 上方那段逐字裁过同一形态）；
+   * · 进 `ENV_LOCK_MAP`，是因为它**存储里就能改**（优先级 env > 存储 > 默认值）。
+   *   不进表的话 `GET /admin/api/config` 会对这个字段返回一份**自相矛盾**的四元组
+   *   （`stored: true` / `env: null` / `effective: false`），那是撒谎，
+   *   与「今天有没有消费者」无关。
+   */
+  usageStatsEnabled: boolean;
 }
 
 type Env = Record<string, string | undefined>;
@@ -81,6 +108,11 @@ export function configFromEnv(env: Env, logger: Logger = NULL_LOGGER): GatewayCo
     // 恒为 false：这条路径没有「存储」这个降级来源，纯 env + 内置默认值不存在
     // 「保存了却没生效」这种可能，没有什么好提示的。
     degraded: false,
+    // 这条路径没有存储可读，所以只剩 env 与内置默认值（false）两级。
+    // **判据与 `registrar.enabled` 逐字相同**（`=== "true"`），不是 `!!` 也不是
+    // 「非空即真」：`USAGE_STATS_ENABLED=0` / `=false` 必须是关，那是运维写下
+    // 「我不要它」时最自然的两种写法。
+    usageStatsEnabled: env.USAGE_STATS_ENABLED === "true",
   };
 }
 

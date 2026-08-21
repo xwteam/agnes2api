@@ -48,6 +48,10 @@ function adminApp(version: string) {
     // 配置那四条端点要的接线（P3c Task 7）。同上，**刻意传 `null`**：
     // 那是「这个 app 没接配置读写」的形态，四条端点会如实回 503。
     config: null,
+    // capabilities 的 `stats.tier2Enabled`（P3d Task 3）。本文件只测 session，
+    // 给**默认那一侧**（Tier-2 关着）即可。生产上这一格由 `createApp` 按
+    // 「建没建 sink」填，不是从配置现读。
+    usageStatsEnabled: false,
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");
   const app = new Hono();
