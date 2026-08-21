@@ -160,6 +160,12 @@ export async function buildApp(
       tend: (channel) => runManualTendRound(env, storage, channel),
       probeChannel: (channel) => probeChannel(env, storage, channel),
     },
+    // 配置读写（P3c Task 7）。**与上面的 `registrar` 同一条理由：只有这里有 `env`。**
+    // 传的是 `storage` 而不是 `watched`：写配置失败不该被记进 `/health` 的可写性信号
+    // ——那是转发能力的信号，而一次配置保存失败只影响这一次点击（面板会当场看到 500）。
+    // ⚠️ 这与 `configHolder` 用的是 `watched` 并不矛盾：**读**配置在每个请求的
+    // 热路径上，读不出来确实说明存储出了问题，那条该进 `/health`。
+    config: { storage, env },
     fetcher: new NativeFetcher(),
     now: () => Date.now(),
     storageHealth,

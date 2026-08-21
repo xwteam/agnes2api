@@ -15,6 +15,7 @@ import { StoreLogger } from "../../src/adapters/logger-store.js";
 import { multiLogger } from "../../src/adapters/logger-multi.js";
 import type { RegistrarWiring } from "../../src/http/admin/handlers/registrar.js";
 import type { TendGate } from "../../src/http/admin/tend-lock.js";
+import type { ConfigWiring } from "../../src/http/admin/handlers/config.js";
 
 /**
  * 夹具的管理口令。27 位（≥ ADMIN_TOKEN_MIN_LENGTH），且与 `TEST_CONFIG.gatewayToken`
@@ -84,6 +85,16 @@ export interface MakeAppOptions {
    * 定时轮 × 面板按钮）的用例显式传同一个实例。
    */
   tendGate?: TendGate;
+  /**
+   * 配置读写的接线（P3c Task 7）。**默认不传 ⇒ `createApp` 收到 `undefined`**，
+   * 四条端点会如实回 `503 not_wired`。
+   *
+   * ⚠️ **`storage` 必须与用例自己观测的那一个是同一个实例**：`config` 键就写在
+   * 它上面，另给一份就是「测的是抄件不是原件」。
+   * ⚠️ **`env` 是这条接线判别力的另一半**：`lockedBy` 与 `locked_by_env` 两条
+   * 都只从它来，传一个空对象等于把「被环境变量锁定」这整条性质做成不可观测。
+   */
+  config?: ConfigWiring;
 }
 
 export const TEST_CONFIG: GatewayConfig = {
@@ -169,6 +180,7 @@ export async function makeApp(
     // 会让「没接执行体」这个真实形态在夹具里不可达。
     registrar: options.registrar,
     tendGate: options.tendGate,
+    config: options.config,
   });
   return { app, fetcher, repo, storageHealth, logger: recording, storage, storeLogger };
 }

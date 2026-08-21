@@ -45,6 +45,9 @@ function adminApp(version: string) {
     // 那正是「这个 app 没接注册机执行体」的形态，三条端点会如实回 503 而不是假装。
     registrar: null,
     tendGate: createTendGate(),
+    // 配置那四条端点要的接线（P3c Task 7）。同上，**刻意传 `null`**：
+    // 那是「这个 app 没接配置读写」的形态，四条端点会如实回 503。
+    config: null,
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");
   const app = new Hono();

@@ -5,15 +5,13 @@ import type { StorageHealth } from "../../../core/storage-health.js";
 import type { RuntimeInfo } from "../../../ports/runtime.js";
 import { poolHealth } from "../../../core/keypool.js";
 import { sumStats } from "../../../core/admin/stats.js";
-import { CONFIG_TTL_MS } from "../../config-holder.js";
-
-/**
- * KV 边缘缓存的默认 `cacheTtl`（秒 → 毫秒）。
- * **已核实**：Cloudflare KV 的 `cacheTtl` 最小 30、默认 60（设计文档 §17 U3，2026-08-19）。
- * 面板上的两条「多久能看见」上界都要把它算进去——设计 §5.2 在 config 那条上算了，
- * 池快照那条原来漏了（K4），Task 2 已把五语言文档改准，这里的数字必须与文档一致。
- */
-const KV_EDGE_CACHE_MS = 60_000;
+// **两个数都从 `config-holder.ts` 取，这里一个字面量都没有。**
+// `KV_EDGE_CACHE_MS` 原本是本文件的模块私有常量，P3c Task 7 把它移了过去：
+// `PUT /admin/api/config` 的 `propagation` 块要报同一个上界，而那个数字在五语言
+// DEPLOY.md 里是对用户的承诺——抄成两份就等于允许概览页与保存回执各说一个数。
+// 面板上的两条「多久能看见」上界都要把它算进去：设计 §5.2 在 config 那条上算了，
+// 池快照那条原来漏了（K4），Task 2 已把五语言文档改准。
+import { CONFIG_TTL_MS, KV_EDGE_CACHE_MS } from "../../config-holder.js";
 
 /**
  * 逐块取数，**某块失败就该块返回 `null`**（设计文档 §10.1 的失败降级纪律）。

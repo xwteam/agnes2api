@@ -42,6 +42,19 @@ export interface ConfigHolder {
  */
 export const CONFIG_TTL_MS = 30_000;
 
+/**
+ * KV 边缘缓存的默认 `cacheTtl`（秒 → 毫秒）。
+ *
+ * **已核实**：Cloudflare KV 的 `cacheTtl` 最小 30、默认 60（设计文档 §17 U3，2026-08-19）。
+ *
+ * ⚠️ **它原来是 `src/http/admin/handlers/overview.ts` 里的一个模块私有常量**，
+ * P3c Task 7 把它**移**到这里（不是新增第二份）：`PUT /admin/api/config` 的
+ * `propagation` 块要报同一个「多久能看见」上界，而那个数字在五语言 DEPLOY.md 里
+ * 是对用户的承诺。抄第二份的后果是概览页与保存回执可以给出两个不同的数——
+ * 「面板不撒谎」这条在本仓已经因为同一形态破过一次。
+ */
+export const KV_EDGE_CACHE_MS = 60_000;
+
 export async function createConfigHolder(deps: {
   env: Record<string, string | undefined>;
   storage: Storage;

@@ -18,6 +18,10 @@ import {
 import {
   manualTendHandler, registrarStatusHandler, channelTestHandler, type RegistrarWiring,
 } from "./handlers/registrar.js";
+import {
+  configGetHandler, configPutHandler, configValidateHandler, configClearSecretHandler,
+  type ConfigWiring,
+} from "./handlers/config.js";
 import type { TendGate } from "./tend-lock.js";
 import { uiRoutes } from "../../ui/serve.js";
 
@@ -65,6 +69,11 @@ export interface AdminRouterDeps {
   registrar: RegistrarWiring | null;
   /** 补池在途守卫（进程/isolate 内）。见 `./tend-lock.ts` 里两把锁的对照表。 */
   tendGate: TendGate;
+  /**
+   * 配置读写的接线（P3c Task 7）。**`null` = 这个 app 没接**，四条端点仍然注册、
+   * 仍然鉴权，但会如实回 `503 not_wired`。见 `ConfigWiring`。
+   */
+  config: ConfigWiring | null;
 }
 
 /**
@@ -242,6 +251,30 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // `/admin/api/registrar/:something` 这种单段通配时会立刻成立**——真要加，
   // 请把它排在这两条之后。
   admin.post("/admin/api/registrar/channels/:channel/test", channelTestHandler(registrar));
+
+  // ── 配置读写（P3c Task 7 的设置页前三张卡，设计 §5.3 / §5.4 / §8.6 / §10.4）──
+  //
+  // **这四条是这棵树上唯一会改「网关自己怎么跑」的端点。** Key 池那四条动的是
+  // 池子内容，注册机那三条动的是补池行为，而这四条能把 `gatewayToken` 换掉、
+  // 把注册机打开、把超时调成 1 毫秒。一个鉴权失效的 `PUT /admin/api/config`
+  // 等于把整台网关交出去——它照样只能待在 `adminAuth` 那一行之后。
+  //
+  // ⚠️ **`config/validate` 与 `config/secrets/clear` 都排在 `PUT /admin/api/config`
+  // 之后，但这与 Hono 的匹配顺序无关**：三条路径段数不同（两段 / 三段 / 四段），
+  // 形状上不可能重叠，而且方法也不同。真正会出事的是将来有人加一条
+  // `POST /admin/api/config/:something` 单段通配——那时它必须排在这两条之后。
+  //
+  // `config/reset` 按范围裁定 ② 移到 P3e，本期没有这条端点。
+  const config = {
+    wiring: deps.config,
+    configHolder: deps.configHolder,
+    logger: deps.logger,
+    now: deps.now,
+  };
+  admin.get("/admin/api/config", configGetHandler(config));
+  admin.put("/admin/api/config", configPutHandler(config));
+  admin.post("/admin/api/config/validate", configValidateHandler(config));
+  admin.post("/admin/api/config/secrets/clear", configClearSecretHandler(config));
 
   // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
   // 串起来跑，`/admin/*` 这条兜底若排在前面会先返回 404，**整套管理 API 直接消失**

@@ -851,6 +851,31 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 一个任何人都能驱动的探测器**，所以它同样只能待在 admin 域里。
     "GET /admin/api/registrar/status",
     "POST /admin/api/registrar/channels/:channel/test",
+    // ── Task 7（P3c）的配置读写 ────────────────────────────────────────────────
+    //
+    // **这四条是这张表上第一次出现「能改网关自己怎么跑」的端点**，而且第一次出现
+    // `PUT`。前面的分级还可以接着往下排：一个鉴权失效的 GET 泄露数据、一个鉴权失效
+    // 的 DELETE 销毁数据、一个鉴权失效的 `registrar/tend` 花掉外部配额，
+    // 而**一个鉴权失效的 `PUT /admin/api/config` 直接把整台网关交出去**——
+    // 它能改掉 `gatewayToken`（改完之后原来那把中转口令全部失效、新的那把在攻击者
+    // 手里）、能打开注册机、能把 `agnesPlatformUrl` 指向攻击者自己的服务器
+    // （那样每一次自动注册的邮箱 + 密码 + 验证码都会送过去）。
+    //
+    // 四条都用 `admin.get/put/post()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
+    // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
+    // 而不是默认它不变——那张表存在的全部理由就是让「有人拿 use() 挂了个通配
+    // handler」变红。
+    //
+    // ⚠️ **`GET /admin/api/config` 绝不属于免鉴权白名单**：它吐的是全部配置字段的
+    // 四元组（含 `agnesBaseUrl`、注册机开没开、两条通道各自配没配凭据）。
+    // 明文凭据不在里面（`{ configured, hint }`，见设计 §8.6），但**末 4 位在**，
+    // 而那正好是一份「这个部署接了哪些外部服务、口令长什么样」的清单。
+    // 往 `PUBLIC_PATHS` 里塞它的话，下面「免鉴权路径不带任何凭据也是 200」
+    // 那一格拿到的会是 401，当场变红。
+    "GET /admin/api/config",
+    "PUT /admin/api/config",
+    "POST /admin/api/config/validate",
+    "POST /admin/api/config/secrets/clear",
   ] as const;
 
   /** 路由模式 → 一条能真的打到那个 handler 的具体路径。 */

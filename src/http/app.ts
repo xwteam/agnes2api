@@ -21,6 +21,7 @@ import { StoreLogger } from "../adapters/logger-store.js";
 import type { Storage } from "../ports/storage.js";
 import { createTendGate, type TendGate } from "./admin/tend-lock.js";
 import type { RegistrarWiring } from "./admin/handlers/registrar.js";
+import type { ConfigWiring } from "./admin/handlers/config.js";
 
 export interface AppDeps extends Omit<DispatchDeps, "config"> {
   version: string;
@@ -78,6 +79,15 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
    * isolate 本来就不共享内存，那里各自一把是**正确的**，跨 isolate 由存储锁负责。
    */
   tendGate?: TendGate;
+  /**
+   * 配置读写的接线（P3c Task 7）。**可选，缺省 `undefined`**，理由与 `registrar`
+   * 完全相同：只有 `wire.ts` 的 `buildApp` 手上才有 `env`。
+   *
+   * **缺省时四条端点照常注册、照常鉴权，但如实回 `503 not_wired`**——不假装读到了
+   * 一份空配置。「这个 app 读不到配置」与「配置全是默认值」在面板上会长得一模一样，
+   * 而后者是一句假话。
+   */
+  config?: ConfigWiring;
 }
 
 /**
@@ -226,6 +236,7 @@ export function createApp(deps: AppDeps): Hono {
     // 没接执行体 ⇒ 三条端点如实回 503；没传守卫 ⇒ 这个 app 自己一把（Worker 形态本来就该这样）。
     registrar: deps.registrar ?? null,
     tendGate: deps.tendGate ?? createTendGate(),
+    config: deps.config ?? null,
   });
   if (admin) app.route("/", admin);
   return app;
