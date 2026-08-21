@@ -55,15 +55,6 @@ export interface ConfigError {
 }
 
 /**
- * 全部错误码。**穷尽联合，不是 `string`。**
- *
- * `admin-ui/js/pure/settings.mjs` 里那张 `errorMessageKey()` 表逐条对应它，
- * 而 `tests/ui/settings.test.ts` 的
- * 「后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红」
- * 拿这张表去比对字典：**加一个码而不补五语言，那一格当场红**（设计 §10.4 要求的
- * 那条 CI 断言）。
- */
-/**
  * 全部错误码。**单一真源是下面这个数组，类型从它派生。**
  *
  * ⚠️⚠️ **第一版是手写联合 + 测试里一份 `as const satisfies readonly ConfigErrorCode[]`
@@ -108,6 +99,14 @@ export const CONFIG_ERROR_CODES = [
   "too_short",
   /** 网关口令不得等于 `ADMIN_TOKEN`：中转口令是发给每一个下游用户的。 */
   "same_as_admin_token",
+  /**
+   * **这份配置构造不出来，但说不出是哪一格。**
+   *
+   * ⚠️ 它存在的理由是 `configLoadBlockers` **不完备**（见那个函数上面的说明）：
+   * `posInt()` 对存储里的非数字是**抛错**而不是降级，而那条路径不在逐字段表里。
+   * 这个码是那一类的如实兜底——**不编一个具体字段出来**，具体原因走事件板块。
+   */
+  "config_unloadable",
 ] as const;
 
 export type ConfigErrorCode = (typeof CONFIG_ERROR_CODES)[number];
@@ -403,10 +402,31 @@ export function validateConfigPatch(
   // 「min 不大于 max」这类比较拿到无意义的操作数，报出来的第二条错误只会误导。
   if (errors.length > 0) return { ok: false, errors };
 
-  // **跨字段阶段直接复用「这份配置装载得起来吗」那一份判据**（见 `configLoadBlockers`）。
-  // 两处各写一份的后果很具体：`PUT` 收下一份自己觉得合法、而 `loadConfig` 装不起来的
-  // 配置 ⇒ 下一次冷启动网关起不来，那正是 §5.4 这道校验存在的全部理由。
-  errors.push(...configLoadBlockers(next, ctx.env));
+  /**
+   * **跨字段阶段：只拒**这次补丁**新引入**的 blocker。
+   *
+   * 判据是「补丁前后两份 blocker 清单的差」，而不是「补丁之后还有没有 blocker」。
+   *
+   * ⚠️⚠️ **这个差是评审 F6 的收口点，它把「只修一半」还给了最需要它的那个状态。**
+   * 第一版拿的是「补丁之后还有没有」⇒ 那份配置**本来就**坏掉时，运维想改一个
+   * 无关字段（`PUT {maxStrikes: 7}`）会被 400 拒——而他手上正拿着一份装不起来的
+   * 配置，最需要的恰恰是一步一步修回来。
+   *
+   * ⚠️ **它不会把砖机场景放回来**：本来就存在的 blocker 维持原样（没有新增伤害），
+   * 而**任何一条新引入的**——把注册机打开却不填凭据、把备通道设成主通道、
+   * 把最后一把网关口令清掉——照旧当场 400。
+   * 判据按 `field:code` 比，两份数据 `validateConfigPatch` 手上都有。
+   *
+   * ⚠️ **诚实限定**：`configLoadBlockers` 本身不完备（见它上面那段），所以这道闸
+   * 也随之不完备——它拦得住的是那份清单里说得出的那几类。逐字段校验（`checkLeaf`）
+   * 覆盖了 `posInt` 那一类，两者合起来才是这条路径的全部防线。
+   */
+  const before = new Set(
+    configLoadBlockers(stored, ctx.env).map((b) => `${b.field}:${b.code}`),
+  );
+  errors.push(
+    ...configLoadBlockers(next, ctx.env).filter((b) => !before.has(`${b.field}:${b.code}`)),
+  );
   if (errors.length > 0) return { ok: false, errors };
 
   return { ok: true, next, changed: changed.sort() };
@@ -473,9 +493,20 @@ function checkLeaf(field: string, spec: Exclude<Spec, { kind: "secret" }>, value
  * 换主通道**全是 500**，`GET /admin/api/config` 也是 500，而**干跑 `validate` 回 200**
  * ——干跑说「你这个补丁合法」，真跑 500。冷启动则连 `/admin` 一起消失。
  *
- * **判据逐条对应 `loadConfigWithProvenance` 会抛的地方**，没有第二份推理：
+ * **判据对应 `loadConfigWithProvenance` 会抛的那些地方**：
  * · 两边都没有 `gatewayToken` ⇒ 那里 `if (!gatewayToken) throw`；
  * · 其余五条 ⇒ `registrarFromEnv` / `creds()` 里的 `throw`（`crossFieldErrors`）。
+ *
+ * ⚠️⚠️ **它不完备，这一段是订正——原来这里写着「没有第二份推理」，那是假的。**
+ * 评审当场跑出反例：存储里 `registrar.targetKeys: "abc"` ⇒ 本函数返回 `[]`，
+ * 而 `posInt()` 对存储里的非数字**是抛错不是降级**（本文件开篇正把这件事列为
+ * 本模块存在的理由之一），于是那份配置真的装不起来。
+ * **它就是一份第二实现，只是覆盖面比 `loadConfigWithProvenance` 窄。**
+ *
+ * ⇒ **不许再拿「blockers 为空」当「装得起来」的判据**（`readAll` 曾经这么用，
+ * 后果是这一整类缺陷连诊断视图都拿不到、`GET`/`PUT` 双双 500、面板没有出路）。
+ * 正确的判据是「**存储读得出来吗**」——读得出来而构造失败，那就是配置问题；
+ * 本函数只负责把**说得出是哪一格**的那些列出来，说不出的走 `config_unloadable`。
  *
  * 它有三个消费者，这正是它存在的意义：`validateConfigPatch` 的跨字段阶段、
  * `secrets/clear` 的**写前**预判、以及 `GET`/`PUT` 装载失败时的诊断视图。

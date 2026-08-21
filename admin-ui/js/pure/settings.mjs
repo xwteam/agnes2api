@@ -101,8 +101,14 @@ export function fieldLabelKey(path) {
  *
  * `tests/ui/settings.test.ts` 的
  * 「后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红」
- * 拿 `ConfigErrorCode` 那个联合类型的手写镜像来比对本表，是设计 §10.4 要求的那条
- * CI 断言。
+ * **直接遍历后端的 `CONFIG_ERROR_CODES`**（数组是真源、类型从它派生）来比对本表，
+ * 那是设计 §10.4 要求的那条 CI 断言。
+ *
+ * ⚠️ **这里原来写的是「拿 `ConfigErrorCode` 那个联合类型的手写镜像来比对」——
+ * 那份镜像已经不存在了**（评审 C4：`satisfies` 只做单向可赋值检查，删得住、加不住，
+ * 实测加一个码零信号）。同一个文件下面 `ERROR_KEYS` 上那段是对的，两句一度互相矛盾。
+ * ⚠️ **它逃过了第 12 道门禁**，因为规则 B 查的是「指向存不存在」而不是「那句话真不真」
+ * ——正是本仓登记在 `scripts/check-comment-refs.mjs` 里的那个盲区。
  */
 /**
  * ⚠️ **写成查表而不是 `switch` + `return`，是被门禁逼出来的，记在这里。**
@@ -141,6 +147,7 @@ const ERROR_KEYS = {
   not_sendable: "set.err.not_sendable",
   too_short: "set.err.too_short",
   same_as_admin_token: "set.err.same_as_admin_token",
+  config_unloadable: "set.err.config_unloadable",
 };
 
 export function errorMessageKey(code) {
@@ -220,8 +227,11 @@ export function isSecret(body, path) {
  * ② **凭据留空 = 不送**（设计 §8.6：缺席或空串 = 不改）；
  * ③ **值没变的字段不送**：少送一格就少一次「其实没改却被算成改了」的高亮。
  */
-export function buildPatch(raw, body) {
+export function buildPatch(raw, body, touched) {
   const patch = {};
+  // `touched` = 运维**真的动过**的那些路径（板块文件按 input/change 事件收集）。
+  // 不给就是 `null`，那时「没有基线」的格一律不送，见下面那段 ⚠️⚠️。
+  const dirty = touched === undefined || touched === null ? null : new Set(touched);
   for (const path of Object.keys(raw)) {
     const value = raw[path];
     if (isSecret(body, path)) {
@@ -233,6 +243,23 @@ export function buildPatch(raw, body) {
     }
     const view = fieldView(body, path);
     if (view.locked) continue;
+
+    // ⚠️⚠️ **没有基线的格，只送运维真的动过的那些。**
+    //
+    // `present === false` 意味着这一格**连当前值都读不到**（诊断态下后端把 `fields`
+    // 整个给 `null`，那是它如实的形态）。没有基线 ⇒ **「变没变」这个问题没有答案**，
+    // 而第一版照旧拿 `sameScalar(null, 值)` 去比 ⇒ 注册机那个 checkbox 读出来恒是
+    // `false`、与 `null` 不等 ⇒ **凭空替运维送一个 `registrar.enabled: false`**。
+    //
+    // 后果比「面板说了一件没发生的事」更坏：**面板做了运维没要求的事，然后显示成功**
+    // ——横幅随后消失（恰恰是因为注册机被关掉了配置才装得起来），运维读成「恢复了」，
+    // 而五语言 `set.loadBlocked` 正写着「改完保存即可恢复」。
+    //
+    // ⚠️ **为什么不是「`present === false` 一律不送」**：那样运维就再也没法从诊断态
+    // 里把注册机**打开**（那同样是一条正当的自救路径）。判据必须是「他动没动过」，
+    // 而不是「这一格现在有没有值」。
+    if (view.present === false && (dirty === null || !dirty.has(path))) continue;
+
     // ⚠️⚠️ **空框 + 存储里本来就没有这一格 ⇒ 这次不改它。**
     //
     // 真机冒烟量出来的第二半：输入框回填的是**存储层**那个值，而全新部署下存储层

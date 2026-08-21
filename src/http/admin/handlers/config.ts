@@ -144,6 +144,25 @@ function split(source: Record<string, FieldSource>) {
  * · **没有 blocker ⇒ 这个异常不是配置引起的，原样抛出去**（存储真的坏了该报 500）。
  * 代价：失败那一支多付一次存储读。**顺利那一支仍然是 1 次 get**，配额账不变。
  */
+/**
+ * 把一份**已经读到手**的 `config` 值包成 `Storage`，让 `loadConfigWithProvenance`
+ * 就地再构造一次而不必重读。
+ *
+ * 为什么不直接重读：那样这两步之间的一次写会让「构造失败」与「原件是什么」对不上，
+ * 而这一段的全部意义就是**判断刚才那次失败是谁的锅**——判据必须建在同一份原件上。
+ * 其余的键原样透传（`loadConfigWithProvenance` 今天只读 `config` 这一把）。
+ */
+function frozenConfig(stored: unknown, inner: Storage): Storage {
+  return {
+    async get<T>(key: string): Promise<T | null> {
+      return key === "config" ? ((stored ?? null) as T | null) : inner.get<T>(key);
+    },
+    put: (k, v, e) => inner.put(k, v, e),
+    delete: (k) => inner.delete(k),
+    list: (p) => inner.list(p),
+  };
+}
+
 export interface ConfigSnapshot {
   prov: ConfigProvenance | null;
   fields: Record<string, unknown> | null;
@@ -158,13 +177,56 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
     const prov = await loadConfigWithProvenance(wiring.env, wiring.storage, logger);
     return { prov, ...split(prov.source), configDegraded: prov.config.degraded, loadBlocked: [] };
   } catch (err) {
-    const stored = await wiring.storage.get<unknown>("config");
-    const blockers = configLoadBlockers(stored ?? {}, wiring.env);
-    // **没有 blocker ⇒ 不是配置的锅，原样抛。**
-    if (blockers.length === 0) throw err;
-    return {
-      prov: null, fields: null, credentials: null, configDegraded: true, loadBlocked: blockers,
-    };
+    /**
+     * ⚠️⚠️ **切分是三分，不是二分。这一段被订正过两次，两次都是我判据不完备。**
+     *
+     * · **第一版**：`configLoadBlockers` 为空 ⇒ 原样抛。**不完备**——存储里
+     *   `registrar.targetKeys: "abc"` 时那个函数返回 `[]`，而 `posInt()` 对存储里的
+     *   非数字**是抛错不是降级** ⇒ 那一整类连诊断视图都拿不到，`GET`/`PUT` 双双 500、
+     *   面板没有出路（评审 F2 实测）。
+     * · **第二版**：「存储读得出来 ⇒ 就是配置问题」。**也不完备**——存储只是**瞬时**
+     *   抖了一下（第二次读就好了）时，它会把一份**完全正常**的配置判成配置问题，
+     *   给出一个假的诊断视图。
+     *
+     * 正确的切分要问两个问题，答案三分：
+     * ① **原件读得出来吗**？读不出来 ⇒ 存储真的坏了 ⇒ **原样抛第一个异常**；
+     * ② 读得出来，那就拿**这一份**就地再构造一次：
+     *    · 构造得出来 ⇒ 第一次那下是瞬时抖动，**用这一份，照常返回**；
+     *    · 构造不出来 ⇒ 这才是配置问题 ⇒ 诊断视图。
+     * 第二步用的是**已经读到手的那份原件**（`frozenConfig`），不再多付一次读，
+     * 也不会被两次读之间的变化搅浑。
+     */
+    let stored: unknown;
+    try {
+      stored = await wiring.storage.get<unknown>("config");
+    } catch {
+      // 读不出来 ⇒ 存储真的坏了。**抛第一个异常**（那才是原因），不是这一个。
+      throw err;
+    }
+
+    try {
+      const prov = await loadConfigWithProvenance(
+        wiring.env, frozenConfig(stored, wiring.storage), logger,
+      );
+      // 瞬时抖动：这一份构造得出来，照常返回，不给假的诊断视图。
+      return { prov, ...split(prov.source), configDegraded: prov.config.degraded, loadBlocked: [] };
+    } catch {
+      const blockers = configLoadBlockers(stored ?? {}, wiring.env);
+      // 具体原因（`posInt` 那类）只进事件板块，**不进响应体**：那是一句后端中文
+      // `Error.message`，把它变成对外契约是 P3e 才裁的事。
+      if (blockers.length === 0) {
+        logger.log({
+          level: "error", event: "config.unloadable",
+          msg: "存储里的配置读得出来、却构造不出一份合法配置，而逐字段判据说不出是哪一格"
+            + "（多半是某个数值字段被写成了非数字）。面板已降级成诊断视图。",
+          fields: { err: err instanceof Error ? err.message : String(err) },
+        });
+      }
+      return {
+        prov: null, fields: null, credentials: null, configDegraded: true,
+        loadBlocked: blockers.length > 0 ? blockers : [{ field: "", code: "config_unloadable" as const }],
+      };
+    }
   }
 }
 
@@ -178,7 +240,8 @@ const PROPAGATION = {
 /**
  * `GET /admin/api/config` —— 设置页的唯一取数端点。
  *
- * **一次存储写都不产生**，读侧是 1 次 `get("config")`。
+ * **一次存储写都不产生**，读侧是 1 次 `get("config")`（装载失败那一支多付一次，
+ * 见 `readAll` 里那段三分说明）。
  */
 export function configGetHandler(deps: ConfigDeps) {
   return async (c: Context) => {
@@ -419,7 +482,8 @@ export function configClearSecretHandler(deps: ConfigDeps) {
      * 存储被改了、面板收到 500、事件板块里什么都没有。
      */
     deps.logger.log({
-      level: blockedAfter.length > 0 ? "error" : (stillConfigured ? "warn" : "warn"),
+      // 两支都是 `warn`：清空成功本身不是错误，装载不起来才是 error。
+      level: blockedAfter.length > 0 ? "error" : "warn",
       event: "config.secret_cleared",
       msg: blockedAfter.length > 0
         ? "面板清空了一把凭据，清完之后这份配置已经装载不起来了——当前进程靠上一份快照还能跑，"

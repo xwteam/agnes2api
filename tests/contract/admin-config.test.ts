@@ -753,18 +753,20 @@ describe("C1/C2：清掉一条在链上的通道凭据", () => {
    */
   it("真的存储故障不许被吞成诊断视图 —— 没有 blocker 就原样抛", async () => {
     /**
-     * ⚠️⚠️ **这个替身只在「第一次」读 `config` 时抛，第二次正常返回。这一行是本格
-     * 判别力的全部来源，第一版没有它 ⇒ 变异 M18 完整逃逸（25/25 全绿）。**
+     * **持久故障**——每次读 `config` 都抛。那才是「存储真的坏了」的真实形态，
+     * 也是唯一该报 500 的那一支。
      *
-     * 第一版的替身**每次**读 `config` 都抛，于是 `readAll` 的 `catch` 里那次
-     * 「再读一遍算 blockers」也抛、直接冒出去 ⇒ 这一格**从头到尾没走到被测的那条
-     * 分支**（`if (blockers.length === 0) throw err`），把那一行删掉照样绿。
-     * 让第二次读成功，`blockers` 才算得出来（这里是空的 ⇒ 必须原样抛）。
+     * ⚠️ 这个夹具被改过两轮，两轮都是判据在变，记在这里：
+     * · 第一版（每次都抛）配的是「blockers 为空就抛」那版实现，**变异 M18 完整逃逸**
+     *   ——`catch` 里那次「再读一遍」也抛、直接冒出去，被测分支从头没走到；
+     * · 第二版（只抛一次）配的是「存储读得出来就是配置问题」那版实现，
+     *   而那版把**瞬时抖动**误判成配置问题（评审 F2 之后的自查）。
+     * 现在的判据是三分：**读不出来才抛**，所以这里回到持久故障。
+     * 「瞬时抖动要能自愈」由紧跟着的那一格单独钉住，两格合起来才盖住三个分支。
      */
-    let firstRead = true;
     const broken: Storage = {
       async get<T>(k: string): Promise<T | null> {
-        if (k === "config" && firstRead) { firstRead = false; throw new Error("KV 抖了一下"); }
+        if (k === "config") throw new Error("KV 抖了一下");
         return null;
       },
       async put() {}, async delete() {}, async list() { return []; },
@@ -778,6 +780,96 @@ describe("C1/C2：清掉一条在链上的通道凭据", () => {
     });
     await expect(handler({ json: (x: unknown) => x } as never))
       .rejects.toThrow("KV 抖了一下");
+  });
+
+
+  /**
+   * **瞬时抖动：第一次读抛、第二次好了 ⇒ 照常返回，不许给一个假的诊断视图。**
+   *
+   * ⚠️ 这一格是我自己在 F2 收口时补的：那一版判据写成「存储读得出来 ⇒ 就是配置问题」，
+   * 于是一次 KV 抖动会让一份**完全正常**的配置被报成「装载不起来」——
+   * 与它要修的那条是同一种谎，只是方向相反。
+   * **变红条件**：把 `readAll` 里那次「拿已读到的原件就地再构造一遍」去掉。
+   */
+  it("存储瞬时抖动（第一次读抛、第二次好了）⇒ 照常返回，不给假的诊断视图", async () => {
+    const inner = new MemoryStorage();
+    await inner.put("config", { gatewayToken: GW, maxStrikes: 9 });
+    let first = true;
+    const flaky: Storage = {
+      async get<T>(k: string): Promise<T | null> {
+        if (k === "config" && first) { first = false; throw new Error("KV 抖了一下"); }
+        return inner.get<T>(k);
+      },
+      put: (k, v, e) => inner.put(k, v, e),
+      delete: (k) => inner.delete(k),
+      list: (p) => inner.list(p),
+    };
+    const handler = configGetHandler({
+      wiring: { storage: flaky, env: {} },
+      configHolder: { current: () => ({}) as never, ensureFresh: async () => {}, invalidate: () => {} },
+      logger: NULL_LOGGER,
+      now: () => 0,
+    });
+    const body = await handler({ json: (x: unknown) => x } as never) as unknown as {
+      fields: Record<string, { effective: unknown }> | null; loadBlocked: unknown[];
+    };
+    expect(body.loadBlocked, "一次瞬时抖动被报成了「配置装载不起来」").toEqual([]);
+    expect(body.fields, "抖动之后没有自愈，给了一个假的诊断视图").not.toBeNull();
+    expect(body.fields!.maxStrikes!.effective).toBe(9);
+  });
+
+  /**
+   * ⚠️⚠️ **F2：`configLoadBlockers` 不完备，所以它不能当「装得起来吗」的判据。**
+   *
+   * 复现：存储里 `registrar.targetKeys: "abc"` ⇒ 那个函数返回 `[]`，而 `posInt()`
+   * 对存储里的非数字**是抛错不是降级**（`config-validate.ts` 开篇正把这件事列为
+   * 本模块存在的理由之一）⇒ 第一版的 `blockers.length === 0 ⇒ 原样抛` 把这一整类
+   * 判成了「存储故障」⇒ **`GET` / `PUT` 双双 500、没有诊断视图、没有出路**，
+   * C2 那个形状对它原样幸存。
+   *
+   * 判据换成「**存储读得出来吗**」（完备）：读得出来而构造失败 ⇒ 配置问题。
+   * **变红条件**：把 `readAll` 的判据换回 `blockers.length === 0 ⇒ throw`。
+   */
+  it("逐字段判据说不出是哪一格时，照样给诊断视图（不是 500）", async () => {
+    const { app, storage } = await realApp({ env: {}, stored: { gatewayToken: GW } });
+    // 绕过面板，手工把存储写成 `posInt()` 会抛的形状。
+    await storage.put("config", { gatewayToken: GW, registrar: { targetKeys: "abc" } });
+
+    const res = await getConfig(app);
+    expect(res.status, "这一类缺陷连诊断视图都拿不到 —— C2 的形状原样幸存").toBe(200);
+    const body = await res.json() as { fields: unknown; loadBlocked: Array<{ field: string; code: string }> };
+    expect(body.fields).toBeNull();
+    // **不编一个具体字段出来**：说不出是哪一格就如实说不出。
+    expect(body.loadBlocked).toEqual([{ field: "", code: "config_unloadable" }]);
+
+    // 而且修得回来。
+    expect((await put(app, { "registrar.targetKeys": 20 })).status).toBe(200);
+    await expect(loadConfig({}, storage, NULL_LOGGER)).resolves.toBeDefined();
+  });
+
+  /**
+   * **F6：只拒这次补丁新引入的 blocker。**
+   *
+   * 配置**本来就**坏掉时，运维想改一个无关字段必须放行——他手上正拿着一份装不起来
+   * 的配置，最需要的恰恰是一步一步修回来。**变红条件**：把那个差换回
+   * 「补丁之后还有没有 blocker」。
+   */
+  it("配置本来就坏时，改一个无关字段要放行；而新引入 blocker 照旧拒", async () => {
+    const BROKEN = {
+      gatewayToken: GW,
+      registrar: { enabled: true, primary: "yyds", yyds: { baseUrl: "https://y.invalid" } },
+    };
+    // **先用好配置把 app 建起来，再手工写坏**：坏配置下 `buildApp` 在 `prime()` 就抛，
+    // 整个 app 装不出来（那是冷启动那一半，见报告 §6.9，不是这一格要测的东西）。
+    const { app, storage } = await realApp({ env: {}, stored: { gatewayToken: GW } });
+    await storage.put("config", BROKEN);
+    // ① 无关字段：放行（只修一半）。
+    expect((await put(app, { maxStrikes: 7 })).status, "本来就坏的配置连无关字段都改不了").toBe(200);
+    // ② 新引入一条：照旧拒。
+    const bad = await put(app, { "registrar.fallback": "yyds" });
+    expect(bad.status).toBe(400);
+    expect((await bad.json() as { errors: Array<{ code: string }> }).errors.map((e) => e.code))
+      .toEqual(["fallback_equals_primary"]);
   });
 
   /**

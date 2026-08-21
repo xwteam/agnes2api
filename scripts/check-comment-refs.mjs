@@ -124,8 +124,7 @@ const CLAIM_MARKERS = [
  *    再往表里加五个词，治的是一个已经被判定为脆弱的机制的症状。
  * ⇒ **登记给 P3e**，与「要不要换一种判据」一起评估。上面这些数字都是量过的，不必重量。
  */
-const KNOWN_MARKER_GAPS = ["拦不住", "抓不住", "只拦", "管着", "负责"];
-void KNOWN_MARKER_GAPS;
+
 
 const PATH_RE = new RegExp(
   String.raw`((?:${REPO_PREFIXES.map((p) => p.replace(".", "\\.")).join("|")})[A-Za-z0-9_./-]*`

@@ -390,18 +390,50 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
     // **期望值手写字面量**，不从 `produced` 反推（第 6 种假阳性）。
     expect([...produced].sort()).toEqual([
       "below_min", "channel_credentials_missing", "delay_min_gt_max", "empty",
-      "fallback_equals_primary", "gateway_token_required", "locked_by_env",
+      "fallback_equals_primary", "locked_by_env",
       "not_a_boolean", "not_a_channel", "not_a_string", "not_a_url", "not_an_integer",
       "not_sendable", "primary_required", "same_as_admin_token", "too_long",
       "too_short", "unknown_field", "whitespace_padded",
     ]);
+
     /**
      * **反向：`CONFIG_ERROR_CODES` 里不许有任何一个码是「死成员」。**
      * 上面那份手写清单只说明「这些码被触发过」；这一句说明「**每一个**码都被触发过」
      * ——加一个码而不给它任何产出路径，这里当场红。
+     *
+     * ⚠️ **手写的例外清单，每一条都要说清「它由谁产出」。**
+     * `CONFIG_ERROR_CODES` 是「面板可能需要渲染的全部码」，而本格跑的只有
+     * `validateConfigPatch` 一条路径——两者不是同一个集合。混为一谈的话，
+     * 要么这一格逼着人给一个 handler 层的码硬凑一个校验样本（那是伪造），
+     * 要么就得把它从清单里拿掉（那样它的五语言文案就没人守了）。
      */
-    expect([...CONFIG_ERROR_CODES].filter((c) => !produced.has(c)).sort(),
-      "这些码在整份校验里没有任何一条路径会产出它 —— 死成员").toEqual([]);
+    const NOT_FROM_VALIDATE: ReadonlyArray<{ code: ConfigErrorCode; by: string }> = [
+      {
+        code: "config_unloadable",
+        // 它由 `src/http/admin/handlers/config.ts` 的 `readAll` 在「原件读得出来、
+        // 却构造不出一份合法配置、而逐字段判据说不出是哪一格」那一支产出，
+        // 由 `tests/contract/admin-config.test.ts` 的
+        // 「逐字段判据说不出是哪一格时，照样给诊断视图（不是 500）」钉着。
+        by: "handlers/config.ts 的 readAll 诊断视图",
+      },
+      {
+        code: "gateway_token_required",
+        // ⚠️ **它是 F6（只拒新引入的 blocker）的正确后果，不是回归。**
+        // 一个 patch 没有任何办法**新引入**这一条：凭据分支只会写入、从不删除，
+        // 所以「两边都没有口令」这个状态只可能**本来就**存在 ⇒ 落在 `before` 里
+        // ⇒ 被差集滤掉。它照旧由 `configLoadBlockers` 在 `GET` 的诊断视图与
+        // `secrets/clear` 的写前预判里产出，两处各有契约用例钉着。
+        by: "configLoadBlockers（诊断视图 / secrets 清空的写前预判）",
+      },
+    ];
+    const exempt = new Set(NOT_FROM_VALIDATE.map((x) => x.code));
+    expect(
+      [...CONFIG_ERROR_CODES].filter((c) => !produced.has(c) && !exempt.has(c)).sort(),
+      "这些码在整份校验里没有任何一条路径会产出它 —— 死成员",
+    ).toEqual([]);
+    // 例外清单本身也不许长出死条目：登记为「校验产不出」的，就真的不许被校验产出。
+    expect([...exempt].filter((c) => produced.has(c)),
+      "这个码其实是校验产出的，不该在例外清单里").toEqual([]);
   });
 });
 

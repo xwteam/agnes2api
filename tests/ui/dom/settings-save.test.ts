@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { bootPanel, settle } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import type { FakeElement } from "../../helpers/fake-dom.js";
+import { EDITABLE_FIELDS } from "../../../src/core/admin/config-validate.js";
 
 /**
  * 设置页的**行为**覆盖（P3c Task 7）。纯函数那一半在 `tests/ui/settings.test.ts` 的
@@ -528,14 +529,84 @@ describe("接线：不轮询、传播上界要显示出来", () => {
  * 在 UI 上被堵死，而后端明明放行——**C2 那个洞会原样重现在前端**。
  */
 describe("装载不起来时的诊断视图（评审 C2 的前端那一半）", () => {
+  /**
+   * ⚠️ **`editable` / `secrets` 必须照给，那不是可有可无的装饰**：后端在诊断态下
+   * **一定两份都给**（`configGetHandler` 里它们在 `snap` 之外、不受装载成败影响），
+   * 而第一版夹具写的是两个空数组。**这是本任务第三个「夹具与真实契约偏离」的实例**
+   *（前两个是 M3 的无冲突数据、I1 的两条通道取值全等），而这一族偏离的后果一律是
+   * 「用例在一份生产上不存在的形态上通过」。
+   */
   const BLOCKED = {
     fields: null,
     credentials: null,
     configDegraded: true,
     loadBlocked: [{ field: "registrar.yyds.apiKey", code: "channel_credentials_missing", params: { channel: "yyds" } }],
-    editable: [], secrets: [],
+    editable: [...EDITABLE_FIELDS],
+    secrets: ["gatewayToken", "registrar.moemail.apiKey", "registrar.yyds.apiKey"],
     propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
   };
+
+  /**
+   * ⚠️⚠️ **F1：诊断态下保存，不许凭空替运维送一个他没动过的字段。**
+   *
+   * 复现（改动前，假 DOM + 真 `buildPatch`）：诊断态下**新开**设置页、只填那把 key、
+   * 点保存，实际发出的是
+   * `{"registrar.enabled": false, "registrar.yyds.apiKey": "…"}`
+   * ——`fields: null` ⇒ checkbox 没有基线 ⇒ `sameScalar(null, false)` 为假 ⇒
+   * **凭空替运维把注册机关掉**。而 `changed` 在 `before.prov === null` 时被强制成
+   * `[]` ⇒ **回执结构性地说不出这件事**；横幅随后消失（恰恰是因为注册机被关掉了
+   * 配置才装得起来），运维读成「恢复了」——而五语言正写着「改完保存即可恢复」。
+   *
+   * **这不是「面板说了一件没发生的事」，是「面板做了运维没要求的事，然后显示成功」。**
+   *
+   * ⚠️ 我自己的冒烟看不见它，因为我是**清完立刻重填**，checkbox 还留着
+   * `checked = true`，那次送的是 `true`（无害）——报告 §6.8 记的「1 个字段发生了
+   * 变化」与这条完全吻合。
+   *
+   * **变红条件**：把 `buildPatch` 里那句「没有基线的格只送动过的」去掉。
+   */
+  it("诊断态下只填一格：发出的 patch 里不许有 registrar.enabled", async () => {
+    const h = await openSettings(() => ok(BLOCKED));
+    const section = h.section("settings");
+    // 只动那把 key（真的派发 input 事件，与运维敲键盘同一条路径）。
+    inputOf(section, "registrar.yyds.apiKey").input("refilled-key-8888");
+    saveButton(section).click();
+    await settle(10);
+
+    const put = h.calls.find((c) => c.method === "PUT");
+    expect(put, "保存没发出去").toBeDefined();
+    const patch = (put!.body as { patch: Record<string, unknown> }).patch;
+    expect(
+      Object.keys(patch).sort(),
+      "面板替运维送了他没动过的字段 —— 诊断态下这会把注册机悄悄关掉，而回执说不出来",
+    ).toEqual(["registrar.yyds.apiKey"]);
+  });
+
+  /**
+   * **反向：动过的那些照旧送得出去。**
+   * 只断上一格的话，一个「诊断态下什么都不送」的实现同样绿——而那会让运维再也
+   * 没法从诊断态里把注册机**打开**（那同样是一条正当的自救路径）。
+   */
+  it("诊断态下真的动过的格照旧送得出去（含 checkbox 与下拉）", async () => {
+    const h = await openSettings(() => ok(BLOCKED));
+    const section = h.section("settings");
+    const toggle = inputOf(section, "registrar.enabled");
+    toggle.checked = true;
+    toggle.change();
+    const primary = inputOf(section, "registrar.primary");
+    primary.value = "moemail";
+    primary.change();
+    inputOf(section, "registrar.moemail.apiKey").input("mk-1234");
+    saveButton(section).click();
+    await settle(10);
+
+    const put = h.calls.find((c) => c.method === "PUT");
+    const patch = (put!.body as { patch: Record<string, unknown> }).patch;
+    expect(Object.keys(patch).sort()).toEqual([
+      "registrar.enabled", "registrar.moemail.apiKey", "registrar.primary",
+    ]);
+    expect(patch["registrar.enabled"], "诊断态下把注册机打开这条路被堵死了").toBe(true);
+  });
 
   it("横幅 + 逐条列出缺什么，并把那一格标红", async () => {
     const h = await openSettings(() => ok(BLOCKED));

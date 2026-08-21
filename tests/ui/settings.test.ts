@@ -128,7 +128,7 @@ describe("i18n：门禁看不见的那两族，在这里补上", () => {
     }
     expect(missing).toEqual([]);
     // 反向自检：表本身不是空的。**这个数字是手写的**，加码时必须回来表态。
-    expect(CONFIG_ERROR_CODES.length, "错误码表规模变了，请确认文案与映射都跟上了").toBe(19);
+    expect(CONFIG_ERROR_CODES.length, "错误码表规模变了，请确认文案与映射都跟上了").toBe(20);
   });
 
   /**

@@ -37,6 +37,15 @@ import {
 
 let nodes = null;
 let abort = null;
+/**
+ * 运维**真的动过**的那些字段路径。
+ *
+ * ⚠️ **它只在「这一格没有基线可比」时才起作用**（诊断态下后端把 `fields` 整个给
+ * `null`）。没有基线时「变没变」这个问题没有答案，而凭空替运维送一个值的后果
+ * 是「面板做了他没要求的事，然后显示成功」——见 `buildPatch` 里那段 ⚠️⚠️。
+ * 每次重新渲染都清空：渲染之后表单里的值就是服务端的当前状态，谈不上「动过」。
+ */
+let touched = new Set();
 /** 最近一次成功的 `GET /admin/api/config` 响应；`null` = 还没有过一次成功。 */
 let data = null;
 
@@ -122,6 +131,11 @@ function addField(container, path, kind) {
     : (kind === "toggle" ? buildToggle(path) : buildField(path, kind === "secret"));
   container.appendChild(built.wrap);
   nodes.fields[path] = built;
+  // **两种事件都收**：文本框走 `input`，下拉与开关走 `change`。
+  // 漏掉任一种，那一类控件在诊断态下就再也提交不上去（F1 的反面）。
+  for (const type of ["input", "change"]) {
+    built.input.addEventListener(type, () => { touched.add(path); });
+  }
   return built;
 }
 
@@ -212,6 +226,8 @@ function setLock(built, locked, lockedBy) {
 }
 
 function render() {
+  // 渲染之后表单里的值就是服务端的当前状态，之前那些「动过」的痕迹全部作废。
+  touched = new Set();
   for (const path of Object.keys(nodes.fields)) renderOne(nodes.fields[path]);
 
   const p = propagationView(data);
@@ -302,7 +318,7 @@ async function save() {
     return;
   }
 
-  const patch = buildPatch(raw, data);
+  const patch = buildPatch(raw, data, touched);
   if (Object.keys(patch).length === 0) {
     // **不是成功，也不是失败**：一次「什么都没改」的保存要如实说出来，
     // 弹一句「已保存」是这个面板最不该说的那句话。
