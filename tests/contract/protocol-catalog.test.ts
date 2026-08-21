@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_CONFIG } from "../helpers/make-app.js";
-import { PROTOCOLS, MODEL_CATALOG, endpointFor } from "../../src/core/admin/protocol-catalog.js";
+import {
+  PROTOCOLS, MODEL_CATALOG, endpointFor, SAMPLE_PROMPT,
+} from "../../src/core/admin/protocol-catalog.js";
 
 /**
  * ⚠️ **必须过滤掉 `method === "ALL"` 的条目。** 设计 §13.2 已实测：Hono 4.13.2 的
@@ -81,10 +83,55 @@ describe("协议目录的示例请求真的调得通", () => {
       // `FakeFetcher` 自己就记着出站的 body 与 URL（`sentBodies` / `sentUrls`，
       // `tests/helpers/fake-fetcher.ts:13-18`），**用它现成的，别新造一个钩子。**
       expect(fetcher.sentBodies.join("")).toContain(model);
+      // 样例里那句用户输入必须活着穿过协议转换。四条协议里有三条要被转成内部格式
+      // （Gemini 的 `contents[].parts[].text`、Responses 的 `input` 都在转换里换了形状），
+      // 转丢了的话示例发出去是一条空请求，而面板照样把它印出来教用户怎么调。
+      expect(fetcher.sentBodies.join(""), `${p.id} 的样例文本没活着到上游`)
+        .toContain(SAMPLE_PROMPT);
       // ★ 评审 C3 的落点：观测点在**真实出站 URL**上，不是比对目录自己的两个字段。
       expect(fetcher.sentUrls.at(-1)).toBe(`${TEST_CONFIG.agnesBaseUrl}${p.upstreamPath}`);
     },
   );
+
+  /**
+   * ── 变异 M2 的落点（**本任务实测之后补的一格，计划里没有**）────────────────
+   *
+   * 变异表里 M2 是「把 anthropic 的 `sample()` 去掉 `max_tokens`，期望
+   * 『anthropic 的 sample() 经真 app 发出去拿到 200』那一格变红」。**实测 ESCAPED**：
+   * 上游是 `FakeFetcher`，它无条件回 200；而网关自己**不校验** `max_tokens`
+   *（`src/core/protocol/anthropic.ts:46` 只是原样透传，缺了就是 `undefined`，
+   * `JSON.stringify` 把这个键整个丢掉）⇒ 只有真实的上游才会 400。
+   *
+   * 「示例请求真的能被上游接受」在假上游下按定义就不可观测（见上面那段边界，
+   * 它归 P3e 的真机验收）。**但它可观测的那一半在这里**：目录声称必填的那个字段，
+   * 有没有活着穿过网关的协议转换、真的到达上游。掉了它，示例在生产上就是一条 400，
+   * 而面板照样把它印出来教用户怎么调——这正是 D1「漂了没人会发现」的形态。
+   *
+   * 期望值 `64` 手写字面量，不从 `PROTOCOLS` 推（第 6 种假阳性）。
+   * **两个方向都能分辨**：目录去掉 `max_tokens` 会红；网关的协议转换不再透传它同样会红。
+   */
+  it("anthropic 声称必填的 max_tokens 真的到得了上游 —— 假上游看不出 400，但看得出这个键没了", async () => {
+    const p = PROTOCOLS.find((x) => x.id === "anthropic")!;
+    const model = MODEL_CATALOG[0]!.id;
+    const { app, fetcher } = await makeApp(
+      [{ status: 200, body: JSON.stringify({ id: "x", object: "chat.completion", model,
+        choices: [{ index: 0, message: { role: "assistant", content: "pong" }, finish_reason: "stop" }] }) }],
+      ["sk-catalog-probe-key-0003"],
+      {}, () => 1_000,
+    );
+    const res = await app.request(endpointFor(p, model, false), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TEST_CONFIG.gatewayToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(p.sample(model)),
+    });
+    expect(res.status).toBe(200);
+    // 先钉住「真的发出去了一次」——否则下面那条断言在零次出站时会红成另一种病因。
+    expect(fetcher.sentBodies.length, "上游应当恰好被打了一次").toBe(1);
+    expect(JSON.parse(fetcher.sentBodies[0]!)).toMatchObject({ max_tokens: 64 });
+  });
 
   /**
    * 反向自检：上面那格断言的 `sentUrls.at(-1)` 若是因为**根本没发出去任何一次出站请求**

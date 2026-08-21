@@ -300,9 +300,18 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 它同样用 `admin.get()` 注册（不是 `use()`）⇒ 不产生 ALL 条目。位置上**必须夹在
   // 上面那行 `admin.use("/admin/api/*", adminAuth(...))` 与下面那行静态兜底之间**：
   // 挪到前者之前是一条免鉴权的管理端点，挪到后者之后会被静态兜底吃成 404。
-  // 两个方向各有一格钉着，见 `tests/contract/admin-auth.test.ts`
-  // 「每一条路由 × 每一种凭据状态，逐格断言」与 `tests/contract/ui-serve.test.ts`
-  // 「/admin/api/* 不会被静态兜底吃掉」。
+  //
+  // **两个方向各由哪一格接住，是实测出来的，不是推出来的**（P3d Task 1 Step 7）：
+  // · 挪到 `adminAuth` **之前** ⇒ `tests/contract/admin-auth.test.ts`
+  //   「每一条路由 × 每一种凭据状态，逐格断言」与 `tests/contract/admin-models.test.ts`
+  //   「没带管理口令是 401」两格同时变红。
+  // · 挪到静态兜底**之后** ⇒ **只有** `tests/contract/admin-models.test.ts`
+  //   「把协议目录整份交出去」一带的三格变红。
+  //   ⚠️ **鉴权矩阵接不住这个方向**：`adminAuth` 仍然先跑，无凭据照样 401，
+  //   而带对口令时拿到的是静态兜底的 404——矩阵那一格只断言「不该被判 401」，404 照过。
+  //   `tests/contract/ui-serve.test.ts`「/admin/api/* 不会被静态兜底吃掉」也接不住：
+  //   它探的是 `/admin/api/session` 那一条，与本端点的注册位置无关。
+  //   ⇒ **本端点被静态兜底吃掉这件事，今天唯一的护栏是 `admin-models` 那三格。**
   admin.get("/admin/api/models", modelsHandler());
 
   // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
