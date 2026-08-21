@@ -29,10 +29,10 @@ describe("面板骨架夹具与真 index.html 对齐", () => {
     expect([...SKELETON_IDS].sort(), "骨架与 index.html 的 id 清单漂了").toEqual(real);
   });
 
-  it("三个板块按钮的 data-section 与真 index.html 一致", () => {
+  it("四个板块按钮的 data-section 与真 index.html 一致（顺序也是导航顺序）", () => {
     const html = readFileSync("admin-ui/index.html", "utf8");
     const sections = [...html.matchAll(/data-section="([^"]+)"/g)].map((m) => m[1]!);
-    expect(sections).toEqual(["overview", "keys", "events"]);
+    expect(sections).toEqual(["overview", "keys", "registrar", "events"]);
   });
 });
 

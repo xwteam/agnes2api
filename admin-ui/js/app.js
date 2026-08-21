@@ -14,6 +14,7 @@ import { getTheme, toggleTheme, setTheme } from "./theme.js";
 import { onUnauthorized } from "./api.js";
 import { overviewSection } from "./sec-overview.js";
 import { keysSection } from "./sec-keys.js";
+import { registrarSection } from "./sec-registrar.js";
 import { eventsSection } from "./sec-events.js";
 import { sessionExpired } from "./pure/session.mjs";
 import { sendable } from "./pure/sendable.mjs";
@@ -22,7 +23,9 @@ import { sendable } from "./pure/sendable.mjs";
 // ⇒ 401 ⇒ 登出循环，面板彻底不可用而全套用例照绿。理由全文见那个模块的文件头。
 import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE } from "./pure/storage-keys.mjs";
 
-const SECTIONS = { overview: overviewSection, keys: keysSection, events: eventsSection };
+const SECTIONS = {
+  overview: overviewSection, keys: keysSection, registrar: registrarSection, events: eventsSection,
+};
 
 const gate = document.getElementById("gate");
 const shell = document.getElementById("shell");

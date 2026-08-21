@@ -194,7 +194,8 @@ describe("mintOne", () => {
   it("轮换多个域名全部失败时，每个域名建出的邮箱都被删掉（不是只删最后一个）", async () => {
     // 上一条固定单域名，deleted 恒为 1，删除是不是发生在**每一轮**域名轮换里
     // 看不出来。这条让 3 个域名依次被 400 拒掉，断言 3 个邮箱一个不落地删干净
-    // ——YYDS 免费档同时只能有 15 个活跃邮箱，漏删会直接把配额吃光。
+    // ——两条通道各自都有活跃邮箱上限（数字与出处见 `src/adapters/mailbox-yyds.ts`
+    // 与 `src/adapters/mailbox-moemail.ts` 的文件头），漏删会直接把配额吃光。
     const provider = new FakeMailProvider({ domains: ["a.test", "b.test", "c.test"] });
     const { agnes } = agnesStub({ sendCode: () => 400 });
     expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "domain_blocked_all" });

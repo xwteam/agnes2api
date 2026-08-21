@@ -4,6 +4,28 @@ import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
 import type { Logger } from "../ports/logger.js";
 
+/**
+ * **YYDS 侧「活跃邮箱上限」这件事的唯一出处，全仓只此一处复述数字。**
+ *
+ * · 值：**免费档同时 15 个**。
+ * · 出处：P2 设计文档 `docs/design/2026-08-15-agnes2api-p2-registrar-design.md:110`
+ *   的邮箱通道对照表（该行逐字写着「取决于账号档位（免费档同时 15 个邮箱）」）。
+ * · 复核日期：**2026-08-21（北京时间）**，本次复核只到"设计文档这么记着"为止，
+ *   **没有**去 YYDS 官方文档二次核对。
+ *
+ * ⚠️ **它不是常数，是一个与账号档位绑定的当前取值。** 换个档位就不是 15。
+ * 因此：
+ * · 源码注释里要它，是因为「用完即删」这条功能性前提需要一个量级才说得通；
+ * · **面板文案里一律不许出现这个数字**（P3c Task 6 的取舍，理由与另一半在
+ *   `src/http/admin/handlers/registrar.ts` 的文件头）——运维会把面板上的数字
+ *   当成自己这套部署的事实，而这个数字对他很可能是错的。
+ * 别处（`mint.ts` / `tender.ts` / `wire.ts` / 各测试）只引用本段，不再各写一遍数字。
+ *
+ * **刻意不做成一个导出的常量**：没有任何代码需要在运行期读它（它不是本网关的
+ * 配置，是别人家服务的默认档位），而一个零消费者的导出迟早会漂——本仓已经为
+ * 「没有消费者的东西迟早会漂」裁过四回。它就该是一段注释。
+ */
+
 export interface YydsDeps {
   fetcher: Fetcher;
   baseUrl: string;
@@ -179,10 +201,11 @@ export class YydsProvider implements MailProvider {
         { method: "DELETE", headers: this.headers(), signal: this.signal() },
       );
       // 非 2xx 才是最常见的删除失败路径：404/403/500 都会让 fetch 正常 resolve，
-      // 根本走不到下面的 catch。不在这里留痕的话，「邮箱正在堆积、配额（免费档
-      // 同时 15 个）即将耗尽」这件事一条信号都没有——而用完即删是功能能否持续
-      // 工作的前提（设计 §4.1），不是卫生习惯。带上状态码，便于区分「邮箱早就
-      // 不在了」（404）与「凭据/配额出问题」（403/500）。
+      // 根本走不到下面的 catch。不在这里留痕的话，「邮箱正在堆积、活跃邮箱配额
+      // 即将耗尽」这件事一条信号都没有——而用完即删是功能能否持续工作的前提
+      //（设计 §4.1），不是卫生习惯。**上限的具体数字与出处见本文件头那段**，
+      // 这里不复述。带上状态码，便于区分「邮箱早就不在了」（404）与
+      //「凭据/配额出问题」（403/500）。
       if (!r.ok) {
         this.deps.logger.log({
           level: "warn", event: "registrar.delete_mailbox_failed",

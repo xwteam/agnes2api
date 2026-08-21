@@ -151,8 +151,11 @@ If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware o
   aborts a round, the temporary mailbox in use at that moment is never deleted (it expires ~24h
   later on YYDS via `expiresAt`, or after the 1h TTL on MoeMail).
   So on Worker **`MINT_BATCH` is a per-round ceiling, not a guarantee**: the round may simply not
-  fill it. Node/Docker has no platform wall clock, does not engage this mechanism, and will use
-  `MINT_BATCH` in full.
+  fill it. Node/Docker has no platform wall clock, so the **scheduled** round does not engage this
+  mechanism and uses `MINT_BATCH` in full.
+  ⚠️ **The panel's "Refill now" is the exception: both runtimes carry the same per-round budget.**
+  How long a single click may run is a property of that button, not of the runtime, so a manual
+  refill on Node/Docker can also mint fewer keys; the next scheduled round picks up the rest.
 - **⚠️ The budget is not a blanket guarantee — a residual case remains.** The check only counts
   the dominant term, `CODE_TIMEOUT_MS × number of channels`. It deliberately does **not** include
   the 15-second per-request timeouts or the 403 back-offs: including them would mean no attempt

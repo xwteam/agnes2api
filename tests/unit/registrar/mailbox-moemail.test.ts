@@ -146,8 +146,9 @@ describe("MoeMailProvider", () => {
   });
 
   // 与上一条成对：上一条只覆盖「fetch 抛异常」，而 404/403/500 会正常 resolve、
-  // 进不了 catch，是最常见的失败路径。MoeMail 侧同样有活跃邮箱上限（上游默认 30），
-  // 删不掉照样把配额吃光，必须留痕。
+  // 进不了 catch，是最常见的失败路径。MoeMail 侧同样有活跃邮箱上限（数字与出处见
+  // `src/adapters/mailbox-moemail.ts` 的文件头，那里同时写明它是一个可被实例覆盖
+  // 的上游默认值），删不掉照样把配额吃光，必须留痕。
   it("deleteMailbox 收到非 2xx（不抛错的失败路径）也记事件并带上状态码", async () => {
     const logger = recordingLogger();
     const { fetcher } = stubFetcher(() => ({ status: 500 }));

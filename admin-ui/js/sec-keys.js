@@ -52,6 +52,11 @@
  */
 import { api } from "./api.js";
 import { t } from "./i18n.js";
+// 【自动注册】两项与注册机板块共用同一个确认弹窗与同一条发起路径，见下面
+// buildAddKeyMenu() 里那段说明。**不是循环依赖**：sec-registrar.js 不 import 本文件。
+import { confirmAndTend } from "./sec-registrar.js";
+// 通道顺序的单一真源（字母序），与注册机板块两张卡用的是同一个常量。
+import { CHANNELS } from "./pure/registrar.mjs";
 import { el, elI18n, toast, openModal, confirmModal } from "./ui.js";
 import { fmtCount, fmtDash, fmtDuration, fmtInstant, fmtPercent } from "./pure/format.mjs";
 import {
@@ -597,6 +602,19 @@ function openImport() {
  * 没有实现的能力，一个把 `["sk-a","sk-b"]` 粘进去的运维会得到一条"不合法的
  * key"而不是两把导入成功的 key。菜单文案改成如实描述现在的行为
  * （`keys.addMenu.bulkImport`：「批量导入（每行一把）」）。
+ *
+ * ── P3c Task 6：【自动注册】那两项接上了 ────────────────────────────────────
+ *
+ * 两项各自触发一次**只用这条通道**的手动补池（`POST /admin/api/registrar/tend`
+ * 的 `channel` 参数）。**共用注册机板块那一个确认弹窗**（`confirmAndTend()`），
+ * 不在这里抄第二份——设计 §10.2 第 3 条护栏（确认弹窗必须明示消耗）抄两份的话，
+ * 迟早只剩一份，而少的那一份正好是点击频率更高的这个入口。
+ *
+ * ⚠️ **两项一律可点，不按「这条通道配没配」去禁用其中一条。** 判「配没配」要先
+ * 拉一次 `/registrar/status`，而那意味着每次打开 Key 池板块都多一次请求；更要紧的是
+ * **一条灰掉、一条能点**在视觉上就是一次排名**，而它依赖的是一份可能已经过期的
+ * 配置快照。没配好的那条由后端当场回 `409 channel_not_configured`，面板把那句话
+ * 原样显示出来——**结构上完全平级，差别只出现在真的点下去之后，且那时说的是事实。**
  */
 function buildAddKeyMenu() {
   const wrap = el("div", { class: "dropdown" });
@@ -614,17 +632,26 @@ function buildAddKeyMenu() {
   // Escape 关菜单，不吞给页面上别的 Escape 监听器（比如同时开着的弹窗——
   // 两者不会同时存在，菜单打开时不会有弹窗，弹窗打开时菜单早就该被这次点击关掉了）。
   wrap.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeMenu(); });
+  // ⚠️ **「点菜单外面收起它」这条本任务没有做，理由如实登记在这里。**
+  // 它要求点击事件从被点的元素冒泡到 document，而 `tests/helpers/fake-dom.ts` 的
+  // `dispatchEvent` **刻意不冒泡**（那份夹具的注释逐字写着「板块代码没有依赖冒泡
+  // 的地方，实现它只会多一处猜测」）⇒ 任何写法在那套 DOM 用例里都**跑不到**，
+  // 交付的就会是一段没有任何自动化覆盖的发货代码，而它的失效形态正是
+  // `ui.js` 的 `focusableIn()` 那次真机事故的同一族（在夹具里看着对、真机上不对）。
+  // 要做的话先让夹具支持冒泡，那与 Task 4 记下的「替身方案 B」是同一个量级的改动。
+  // 今天关菜单有两条路：Escape，或者再点一次触发按钮。
 
   const autoGroup = el("div", { class: "dropdown-group" });
   autoGroup.appendChild(elI18n("div", "keys.addMenu.autoGroup", { class: "dropdown-group-label" }));
-  for (const key of ["keys.addMenu.autoMoemail", "keys.addMenu.autoYyds"]) {
+  // **两项完全平级**：同一个循环、同一套属性、同一条发起路径，唯一的差别是那个
+  // 通道名字符串。顺序取自 `pure/registrar.mjs` 的 `CHANNELS`（字母序），
+  // 与注册机板块两张通道卡的顺序是同一个真源——两处各写一份的话，同一个面板上
+  // 会出现两种通道顺序，而任何顺序都会被读成排名。
+  for (const channel of CHANNELS) {
+    const key = channel === "yyds" ? "keys.addMenu.autoYyds" : "keys.addMenu.autoMoemail";
     const btn = elI18n("button", key, { type: "button" });
-    // `.disabled` 是属性赋值，不是 el() 的 attrs——与本文件其余按钮
-    // （`clearCooldown.disabled = ...` 那些）同一个写法，别改成 `disabled: true`
-    // 塞进 attrs：那只会落成 HTML 属性 `disabled=""`，不会同步 `.disabled` 属性。
-    btn.disabled = true;
-    btn.title = t("keys.addMenu.autoPlaceholder");
-    btn.setAttribute("aria-label", `${t(key)}：${t("keys.addMenu.autoPlaceholder")}`);
+    btn.setAttribute("data-channel", channel);
+    btn.addEventListener("click", () => { closeMenu(); confirmAndTend(channel); });
     autoGroup.appendChild(btn);
   }
   menu.appendChild(autoGroup);

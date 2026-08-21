@@ -100,6 +100,18 @@ tr:last-child td { border-bottom: 0; }
 }
 .dropdown-menu button:not([disabled]):hover { background: var(--panel-2); }
 
+/* 注册机板块（P3c Task 6）：两张**完全对称**的通道卡。
+   ⚠️ **这里刻意没有任何 `[data-channel="…"]` 选择器。** 给某一条通道单独一条
+   样式规则，就是在样式层引入设计 §10.3 第 2 条禁止的那种不对称——而它比代码里的
+   不对称更难被评审看见（两张卡在 DOM 上仍然一模一样，只是画出来不一样）。 */
+.channel-card { display: flex; flex-direction: column; gap: 4px; }
+.channel-card .channel-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.channel-card p { margin: 2px 0; }
+.channel-card .channel-test { align-self: flex-start; }
+/* 测试结果行**恒占一行高度**（哪怕还没测过）：不占位的话，一条通道测完之后
+   两张卡会一高一低，而高度差同样会被读成「这条更重要」。 */
+.channel-card .channel-result { min-height: 1.2em; }
+
 .events-body { max-height: 60vh; overflow-y: auto; }
 .ev-group-header td { padding-top: var(--gap-sm); font-size: 12px; }
 /* 分组内的行左边一条细线，视觉上把同一条时间线的几行连起来。 */

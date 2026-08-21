@@ -14,7 +14,7 @@ import { createFakeDom, installFakeDom, type FakeDom, type FakeElement } from ".
 export const SKELETON_IDS = [
   "gate", "gate-form", "gate-key", "gate-err",
   "shell", "lang-select", "theme-btn", "logout-btn",
-  "sec-overview", "sec-keys", "sec-events", "toast-host",
+  "sec-overview", "sec-keys", "sec-registrar", "sec-events", "toast-host",
 ] as const;
 
 export interface Harness {
@@ -37,7 +37,7 @@ export interface Harness {
   form: FakeElement;
   input: FakeElement;
   err: FakeElement;
-  section(name: "overview" | "keys" | "events"): FakeElement;
+  section(name: "overview" | "keys" | "registrar" | "events"): FakeElement;
 }
 
 export function buildDom(): { dom: FakeDom; nav: FakeElement[] } {
@@ -51,7 +51,7 @@ export function buildDom(): { dom: FakeDom; nav: FakeElement[] } {
   dom.byId("gate-form").appendChild(dom.byId("gate-err"));
 
   const nav: FakeElement[] = [];
-  for (const name of ["overview", "keys", "events"]) {
+  for (const name of ["overview", "keys", "registrar", "events"]) {
     const btn = dom.document.createElement("button");
     btn.classList.add("nav-item");
     btn.setAttribute("data-section", name);

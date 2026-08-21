@@ -195,14 +195,24 @@ export function registrarFromEnv(
   // `minted < attempted`（0 < 0 为假）所以一条都不打，用户只看到「本轮墙钟预算
   // 不足」，读起来像瞬时状况，实际是永久停摆。启动期把它说破。
   //
-  // 只 warn 不抛错：Node/Docker 没有平台墙钟上限，同一份配置在那边完全合法，
-  // 抛错会让一个正当的 Node 部署起不来。文案里点明形态差异。
+  // 只 warn 不抛错：Node/Docker 上**定时轮**没有平台墙钟上限，同一份配置在那边的
+  // 定时轮上完全合法，抛错会让一个正当的 Node 部署起不来。文案里点明形态差异。
+  //
+  // ⚠️ **末句的措辞是 P3c Task 6 订正过的，别改回去。** 上一版写的是
+  // 「Node/Docker 没有平台墙钟上限，不受此限制」——**那句话从 Task 5 起就不再准确**：
+  // 面板的「立即补池」在**两种运行时上都**传同一份 `WORKER_ROUND_BUDGET_MS`
+  //（见 `src/http/wire.ts` 的 `runManualTendRound`，那里写着理由：一次点击最多跑多久
+  // 是这颗按钮自己的性质，不是运行时的性质）。于是同一份把 `CODE_TIMEOUT_MS` 调过头的
+  // 配置，在 Node 上**定时轮照常铸、手动补池一把都铸不出来**，而运维照着旧措辞会以为
+  // 自己这边完全不受影响。五语言 REGISTRAR.md 同一段也已一并订正。
   const worstAttemptMs = cfg.codeTimeoutMs * chainLength;
   if (enabled && worstAttemptMs > WORKER_ROUND_BUDGET_MS) {
     logger.log({
       level: "warn", event: "registrar.attempt_exceeds_worker_budget",
       msg: "CODE_TIMEOUT_MS×通道数超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来"
-        + "（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。Node/Docker 没有平台墙钟上限，不受此限制。",
+        + "（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。"
+        + "Node/Docker 的定时轮没有平台墙钟上限、不受此限制，"
+        + "但面板的「立即补池」在两种运行时上都带同一份轮级预算，Node/Docker 上同样铸不出来。",
       fields: {
         codeTimeoutMs: cfg.codeTimeoutMs, chainLength, worstAttemptMs,
         workerRoundBudgetMs: WORKER_ROUND_BUDGET_MS,

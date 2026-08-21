@@ -177,8 +177,11 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       });
       return { ok: false, reason: "network_error" };
     } finally {
-      // 用完即删：YYDS 免费档最多同时存在 15 个邮箱，中途任何一步失败都必须把
-      // 临时邮箱删掉，否则很快就申请不到新邮箱。deleteMailbox 按端口契约本就
+      // 用完即删：两条通道**各自**都有活跃邮箱上限（各自的数字、出处与"它们都不是
+      // 常数"这件事，见 `src/adapters/mailbox-yyds.ts` 与
+      // `src/adapters/mailbox-moemail.ts` 的文件头，本文件不复述数字），中途任何
+      // 一步失败都必须把临时邮箱删掉，否则很快就申请不到新邮箱。
+      // deleteMailbox 按端口契约本就
       // 不应抛错（两家适配器内部已各自吞掉删除失败并只记日志），这里仍防御一
       // 层：cleanup 本身出错不该掩盖 try 块已经产出的返回值或异常。
       try {

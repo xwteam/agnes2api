@@ -4,6 +4,28 @@ import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
 import type { Logger } from "../ports/logger.js";
 
+/**
+ * **MoeMail 侧「活跃邮箱上限」这件事的唯一出处，全仓只此一处复述数字。**
+ *
+ * · 值：**上游默认 30**，超限时建邮箱返回 **403**。
+ * · 出处：P2 设计文档 `docs/design/2026-08-15-agnes2api-p2-registrar-design.md:122`
+ *   一段——上游 `app/config/email.ts` 的 `MAX_ACTIVE_EMAILS` 默认 30，
+ *   **实例可用 `SITE_CONFIG.MAX_EMAILS` 覆盖**，仅 EMPEROR 角色豁免。
+ * · 复核日期：**2026-08-21（北京时间）**，本次复核只到"设计文档追溯到了上游那个
+ *   常量名"为止，**没有**去 MoeMail 上游仓库二次核对那个默认值今天还是不是 30。
+ *
+ * ⚠️ **它不是常数，是一个可被站点配置覆盖的上游默认值。** MoeMail 是**自建**服务，
+ * 每个部署者的实例都可能改过它。因此：
+ * · 源码注释里要它，是因为「用完即删」这条功能性前提需要一个量级才说得通；
+ * · **面板文案里一律不许出现这个数字**（P3c Task 6 的取舍，理由与另一半在
+ *   `src/http/admin/handlers/registrar.ts` 的文件头）——运维会把面板上的数字
+ *   当成自己这套部署的事实，而这个数字对一个自建实例来说尤其可能是错的。
+ * 别处（`mint.ts` / `tender.ts` / `wire.ts` / 各测试）只引用本段，不再各写一遍数字。
+ *
+ * **刻意不做成一个导出的常量**，理由与 `mailbox-yyds.ts` 那段同源：零消费者的导出
+ * 迟早会漂，而它本来就不是本网关的配置。
+ */
+
 export interface MoeMailDeps {
   fetcher: Fetcher;
   baseUrl: string;
@@ -73,8 +95,8 @@ export class MoeMailProvider implements MailProvider {
       // 两家在这条路径上是同一个形态：删除都要**服务端生成的 id**，而 id 恰恰是
       // 解析失败时丢掉的东西，请求侧无从推断，所以谁都做不了兜底删除（YYDS 侧同款
       // 处置见 mailbox-yyds.ts 的对应分支）。这封邮箱若真的建出来了，只能等建邮箱
-      // 时传的 TTL 到期自愈。至少要留痕——活跃邮箱有上限（上游默认 30，超限建邮箱
-      // 返回 403），配额被这种泄漏吃掉时不能毫无信号。
+      // 时传的 TTL 到期自愈。至少要留痕——活跃邮箱有上限（数字、出处与"它可被实例
+      // 覆盖"这件事见本文件头那段），配额被这种泄漏吃掉时不能毫无信号。
       this.deps.logger.log({
         level: "warn", event: "registrar.mailbox_create_unparseable",
         msg: "MoeMail 建邮箱响应无法解析或缺少 id/email：邮箱可能已在上游创建但 handle 丢失，"
@@ -137,7 +159,7 @@ export class MoeMailProvider implements MailProvider {
         { method: "DELETE", headers: this.headers(), signal: this.signal() },
       );
       // 理由同 YYDS 适配器：非 2xx 会正常 resolve、进不了 catch，是最常见的失败
-      // 路径。MoeMail 侧同样有活跃邮箱上限（上游默认 30，超限建邮箱返回 403），
+      // 路径。MoeMail 侧同样有活跃邮箱上限（数字与出处见本文件头那段），
       // 删不掉一样会把配额吃光，必须留痕。
       if (!r.ok) {
         this.deps.logger.log({

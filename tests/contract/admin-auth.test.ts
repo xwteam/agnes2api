@@ -833,6 +833,24 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 于是这条端点会**静默地从整个鉴权矩阵里消失**。「注册机没开」是 handler 里的
     // 一条 409，不是"这条路由不存在"。
     "POST /admin/api/registrar/tend",
+    // ── Task 6（P3c）的注册机板块取数与通道连通性测试 ─────────────────────────
+    //
+    // 两条都用 `admin.get()` / `admin.post()` 注册（不是 `use()`）⇒ 不产生 ALL 条目，
+    // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
+    // 而不是默认它不变——那张表存在的全部理由就是让「有人拿 use() 挂了个通配
+    // handler」变红。
+    //
+    // ⚠️ **`status` 是一条 GET，但它绝不属于免鉴权白名单**：它吐的是补池历史、
+    // 当天还剩几次手动补池、以及两条邮箱通道各自配没配凭据——**一份关于这个部署
+    // 接了哪些外部服务的完整清单**。往 `PUBLIC_PATHS` 里塞它的话，下面
+    // 「免鉴权路径不带任何凭据也是 200」那一格拿到的会是 401，当场变红。
+    //
+    // ⚠️ **`channels/:channel/test` 是这张表上第二条会打到外部服务的端点**：
+    // 它向邮箱服务发一次只读 GET（`listDomains()`），不建邮箱、不注册账号。
+    // 一个鉴权失效的它不销毁数据也不消耗名额，但**会把本网关的出口 IP 变成
+    // 一个任何人都能驱动的探测器**，所以它同样只能待在 admin 域里。
+    "GET /admin/api/registrar/status",
+    "POST /admin/api/registrar/channels/:channel/test",
   ] as const;
 
   /** 路由模式 → 一条能真的打到那个 handler 的具体路径。 */
@@ -852,6 +870,14 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 选择本身保留（换一个夹具、或「必须先停用」那条判据一旦被改坏，它立刻变真），
     // 但**理由要写成真的**：判据是"不依赖夹具状态"，不是"否则会被删掉"。
     "/admin/api/keys/:id": "/admin/api/keys/deadbeefdeadbeef",
+    // Task 6 的通道测试。**用一条真的存在的通道名**（`moemail`），不用占位串：
+    // 矩阵那一格断言的是「拿对口令时不该被判 401」，而一个不认识的通道名会在
+    // handler 第一行就被 400 挡掉——那样这一格验的是参数校验，不是鉴权。
+    //
+    // ⚠️ **这一格不会真的打到上游**：默认夹具的注册机是关着的，handler 在
+    // 构造任何 provider 之前就返回 `409 registrar_disabled`。矩阵里那 16 次请求
+    // 因此一次外部调用都不产生（否则整个鉴权矩阵会变成一个会打网络的测试）。
+    "/admin/api/registrar/channels/:channel/test": "/admin/api/registrar/channels/moemail/test",
   };
 
   const GATEWAY = TEST_CONFIG.gatewayToken;

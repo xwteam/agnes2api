@@ -174,8 +174,10 @@ runPollResilienceContract(
  *
  * 端口文档写的是「失败只应记日志」，而 `fetch` 对 404/403/500 是正常 resolve 的——
  * 只 try/catch 抛出的异常，等于把最常见的那条失败路径变成 100% 静默。而用完即删
- * 是功能能否持续工作的前提（设计 §4.1：YYDS 免费档同时 15 个邮箱、MoeMail 上游
- * 默认 30 个），删不掉又没有信号，就会以"域名全被屏蔽"的假象表现出来。
+ * 是功能能否持续工作的前提（设计 §4.1）——两条通道**各自**都有活跃邮箱上限，
+ * 具体数字、出处与"它们都不是常数"这件事记在 `src/adapters/mailbox-yyds.ts` 与
+ * `src/adapters/mailbox-moemail.ts` 的文件头，这里不复述。
+ * 删不掉又没有信号，就会以"域名全被屏蔽"的假象表现出来。
  */
 function runDeleteFailureContract(
   name: string,

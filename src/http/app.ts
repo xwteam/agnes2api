@@ -20,7 +20,7 @@ import { nodeRuntime } from "../adapters/runtime-node.js";
 import { StoreLogger } from "../adapters/logger-store.js";
 import type { Storage } from "../ports/storage.js";
 import { createTendGate, type TendGate } from "./admin/tend-lock.js";
-import type { ManualTendWiring } from "./admin/handlers/registrar.js";
+import type { RegistrarWiring } from "./admin/handlers/registrar.js";
 
 export interface AppDeps extends Omit<DispatchDeps, "config"> {
   version: string;
@@ -61,13 +61,15 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
    */
   storeLogger?: StoreLogger;
   /**
-   * 手动补池的执行体与它的存储（P3c Task 5）。**可选，缺省 `undefined`**。
+   * 注册机的执行体与它的存储（P3c Task 5 建，Task 6 扩到三样成套）。
+   * **可选，缺省 `undefined`**。
    *
    * 只有 `wire.ts` 的 `buildApp` 装配得出来（它要 `env`），所以直接调 `createApp` 的
-   * 那几十个测试一律不传。**缺省时端点照常注册、照常鉴权，但在注册机确实开着的情况下
-   * 如实回 `503 not_wired`**——不假装 202，见 `manualTendHandler` 的 `wiring`。
+   * 那几十个测试一律不传。**缺省时三条端点照常注册、照常鉴权，但会如实回
+   * `503 not_wired`**——`tend` 不假装 202、`status` 不编造一份空历史，
+   * 见 `RegistrarWiring`。
    */
-  manualTend?: ManualTendWiring;
+  registrar?: RegistrarWiring;
   /**
    * 补池在途守卫。**可选，缺省新建一个只属于这个 app 的**。
    *
@@ -220,9 +222,9 @@ export function createApp(deps: AppDeps): Hono {
     runtime: deps.runtime ?? nodeRuntime(),
     envLocked: deps.envLocked ?? [],
     storeLogger,
-    // 手动补池（P3c Task 5）。两者都可选，缺省的后果各自写在 `AppDeps` 上：
-    // 没接执行体 ⇒ 端点如实回 503；没传守卫 ⇒ 这个 app 自己一把（Worker 形态本来就该这样）。
-    manualTend: deps.manualTend ?? null,
+    // 注册机接线（P3c Task 5/6）。两者都可选，缺省的后果各自写在 `AppDeps` 上：
+    // 没接执行体 ⇒ 三条端点如实回 503；没传守卫 ⇒ 这个 app 自己一把（Worker 形态本来就该这样）。
+    registrar: deps.registrar ?? null,
     tendGate: deps.tendGate ?? createTendGate(),
   });
   if (admin) app.route("/", admin);

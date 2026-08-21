@@ -50,8 +50,13 @@ export const MANUAL_GUARD_KEY = "registrar_manual_guard";
  * 两次手动补池之间的最小间隔（设计 §10.2 第 2 条逐字：10 分钟）。
  *
  * 它挡的是**连点**：一次手动补池最多消耗 `MINT_BATCH` 个临时邮箱，而 YYDS / MoeMail
- * 的活跃邮箱名额是有限的（具体数字见 REGISTRAR.md，本仓**没有**核实过外部服务的配额，
- * 不许把它当既定事实写进代码或面板文案）。
+ * 的活跃邮箱名额是有限的。
+ *
+ * ⚠️ **上一版这里写着「本仓没有核实过外部服务的配额」——那句话不准确，P3c Task 6 订正。**
+ * 两个数字都追溯得到出处（各自记在 `src/adapters/mailbox-yyds.ts` 与
+ * `src/adapters/mailbox-moemail.ts` 的文件头，连同复核日期）。**不许写进面板文案的
+ * 真实理由不是"没核实过"，是它们都不是常数**：一个与账号档位绑定，一个是可被实例
+ * 覆盖的上游默认值。这里同样不复述数字。
  */
 export const MANUAL_TEND_COOLDOWN_MS = 600_000;
 
@@ -127,6 +132,58 @@ export function narrowManualGuard(raw: unknown): ManualGuard | null {
 }
 
 /**
+ * 「今天已经点过几次」。**`day` 对不上就是新的一天 ⇒ 归零，这一处值比较是跨天的
+ * 全部判据**（回拨与前进都算，与本仓其余四处 `age < 0` 立刻恢复同一套语义）。
+ *
+ * ⚠️ **提成具名函数是为了让下面两个消费者用的是同一处判据，不是为了好看**：
+ * `checkManualTend()`（消费一次名额）与 `manualTendQuota()`（只看不动）曾经会各写
+ * 一遍这一行，而两份的分歧只在跨天那一瞬间可观测——面板上显示「今天还剩 24 次」、
+ * 点下去却拿到「今天的额度用完了」。分歧点越窄，越不会有人想到去测它。
+ */
+function usedToday(cur: ManualGuard | null, now: number): number {
+  return cur !== null && cur.day === dayIndex(now) ? cur.used : 0;
+}
+
+/**
+ * **只读的名额视图**：`GET /admin/api/registrar/status` 拿它回答「今天还能点几次、
+ * 什么时候能再点」，**一次写都不产生、一格名额都不消费**。
+ *
+ * ⚠️ **`remaining` 的口径与 `checkManualTend` 的 `ok` 支差 1，这是刻意的**：
+ * 那边给的是「点完这一次之后还剩几次」（`used + 1` 已经落盘），这边给的是
+ * 「现在还剩几次」（什么都没发生）。两个数字都对，但读错就会在面板上少显示一次。
+ * 两者的关系由 `tests/contract/admin-registrar.test.ts` 的
+ * 「点一次之前 status 说 19、点完之后 202 说 18 —— 两个方向的口径各钉一格」
+ * 用手写字面量正面钉住。
+ *
+ * `cooldownUntil` / `retryAfterMs` **成对给，且只在真的冷却中才非空**（评审 m3 的
+ * 口径：相对量做倒计时、绝对时刻显示「几点恢复」，绝不让客户端拿本地时钟去减）。
+ * 不在冷却中时两个都是 `null`——给一个「已经过去的时刻」会让面板渲染出一个
+ * 恒为 0 的倒计时，而那与「现在就能点」长得不一样却是同一件事。
+ */
+export interface ManualTendQuota {
+  used: number;
+  remaining: number;
+  /** 每天的上限本身。面板要说「还剩 19 次（共 24 次）」，而不是只说 19。 */
+  perDay: number;
+  resetAt: number;
+  cooldownUntil: number | null;
+  retryAfterMs: number | null;
+}
+
+export function manualTendQuota(cur: ManualGuard | null, now: number): ManualTendQuota {
+  const used = usedToday(cur, now);
+  const cooling = cur !== null && now < cur.cooldownUntil;
+  return {
+    used,
+    remaining: Math.max(0, MANUAL_TENDS_PER_DAY - used),
+    perDay: MANUAL_TENDS_PER_DAY,
+    resetAt: dayEndsAt(now),
+    cooldownUntil: cooling ? cur.cooldownUntil : null,
+    retryAfterMs: cooling ? cur.cooldownUntil - now : null,
+  };
+}
+
+/**
  * 判定结果。**`remaining` 三支都给**，口径统一为「从现在起今天还能点几次」
  *（不含正在处理的这一次）。
  *
@@ -196,8 +253,8 @@ export type ManualTendVerdict =
 export function checkManualTend(cur: ManualGuard | null, now: number): ManualTendVerdict {
   const today = dayIndex(now);
   const resetAt = dayEndsAt(now);
-  // `day` 对不上就是「新的一天」⇒ 已用次数归零。**这一处值比较是跨天的全部判据。**
-  const used = cur !== null && cur.day === today ? cur.used : 0;
+  // 跨天判据走 `usedToday()`——**与只读的 `manualTendQuota()` 同一处**，见那里的说明。
+  const used = usedToday(cur, now);
   const remaining = Math.max(0, MANUAL_TENDS_PER_DAY - used);
 
   if (used >= MANUAL_TENDS_PER_DAY) {

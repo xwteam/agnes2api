@@ -34,6 +34,9 @@ export const I18N = {
   // ── 外壳 ─────────────────────────────────────────────────
   "nav.overview":     { "zh-CN": "概览", "zh-TW": "概覽", en: "Overview", ja: "概要", ko: "개요" },
   "nav.keys":         { "zh-CN": "Key 池", "zh-TW": "Key 池", en: "Key pool", ja: "キープール", ko: "키 풀" },
+  // ⚠️ 导航项刻意放在 `nav.*` 而不是 `reg.*`：`reg.*` 是禁用词门禁的作用域，
+  // 而那道门禁管的是「两条邮箱通道有没有被暗示成有高下」，与一个板块名无关。
+  "nav.registrar":    { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
   "nav.events":       { "zh-CN": "事件", "zh-TW": "事件", en: "Events", ja: "イベント", ko: "이벤트" },
   "shell.logout":     { "zh-CN": "退出登录", "zh-TW": "登出", en: "Sign out", ja: "ログアウト", ko: "로그아웃" },
   "shell.theme":      { "zh-CN": "切换主题", "zh-TW": "切換主題", en: "Toggle theme", ja: "テーマ切り替え", ko: "테마 전환" },
@@ -72,6 +75,126 @@ export const I18N = {
   // 它照常存进池子（拒收 = 销毁凭据），但多半每次被选中都会让转发失败。
   // 五种语言的措辞都必须说清「已存下来 + 请去处理它」，不许写成「铸失败了」。
   "reg.fail.key_suspicious": { "zh-CN": "铸出来的 key 材料可疑（已存入池子，请手动停用或删除）", "zh-TW": "鑄出來的 key 材料可疑（已存入池子，請手動停用或刪除）", en: "The minted key material looks malformed (stored in the pool anyway — disable or delete it)", ja: "発行されたキーの内容が不正に見えます（プールには保存済み — 無効化または削除してください）", ko: "발급된 키 내용이 손상된 것으로 보입니다(풀에는 저장되었으니 비활성화하거나 삭제하세요)" },
+
+  // ── 注册机板块（P3c Task 6）───────────────────────────────────────────────
+  //
+  // ⚠️⚠️ **整个 `reg.*` 命名空间受禁用词门禁管**（`scripts/check-i18n.mjs` 第 ⑥ 条 +
+  // `tests/unit/i18n-dict.test.ts` 那条同名断言，两份独立实现）：
+  // `推荐/推薦/建议/建議/默认/預设/預設/主流/首选/首選/优先/優先/recommended/
+  // preferred/default/おすすめ/推奨/권장/기본` 一个都不许出现，**繁体变体与
+  // 韩语的「기본」尤其容易误踩**（「기본 채널」= primary channel 的自然译法，
+  // 这里一律改成「주 채널」）。
+  //
+  // ⚠️⚠️ **设计 §10.3 第 5 条给的原句「本就不存在默认地址」自己就踩了第 4 条的
+  // 禁用词表**（「默认」在表里，繁体「預設」同样在表里）。两条设计规则互相打架，
+  // 本任务按第 4 条执行（它是 CI 门禁，第 5 条只能靠评审），语义原样保住、
+  // 换成「没有可以预填的地址」。判据与理由见
+  // `admin-ui/js/pure/registrar.mjs` 的 `channelAddressFactKey()`。
+  "reg.title":        { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
+  "reg.state":        { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
+  "reg.state.on":     { "zh-CN": "已启用", "zh-TW": "已啟用", en: "Enabled", ja: "有効", ko: "사용 중" },
+  "reg.state.off":    { "zh-CN": "已关闭", "zh-TW": "已關閉", en: "Disabled", ja: "無効", ko: "꺼짐" },
+  "reg.primary":      { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary channel", ja: "プライマリチャネル", ko: "주 채널" },
+  "reg.fallback":     { "zh-CN": "备用通道", "zh-TW": "備用通道", en: "Fallback channel", ja: "フォールバックチャネル", ko: "대체 채널" },
+  "reg.none":         { "zh-CN": "未选择", "zh-TW": "未選擇", en: "Not selected", ja: "未選択", ko: "선택 안 됨" },
+  // 设计 §10.3 第 8 条逐字：空状态说「两条通道平级，请选择一条作为主通道」，
+  // **不是**「未选择时使用 X」。
+  "reg.emptyPrimary": { "zh-CN": "两条通道平级，请选择一条作为主通道。", "zh-TW": "兩條通道平級，請選擇一條作為主通道。", en: "The two channels rank equally — pick one as the primary channel.", ja: "2 つのチャネルは対等です。どちらか一方をプライマリチャネルとして選んでください。", ko: "두 채널은 동등합니다. 둘 중 하나를 주 채널로 선택하세요." },
+
+  "reg.pool.target":  { "zh-CN": "目标 key 数", "zh-TW": "目標 key 數", en: "Target key count", ja: "目標 key 数", ko: "목표 key 수" },
+  // ⚠️ **这一格不叫「可用」，理由在 `src/core/registrar/tender.ts` 的 `available` 字段上**：
+  // 判据是 `countsTowardTarget`（`!evicted`），被停用的与正在冷却的 key **都算在里面**，
+  // 而这两种恰恰都不能打上游。旁边那格 `reg.pool.fresh` 才是真正的可用数。
+  "reg.pool.counted": { "zh-CN": "占名额", "zh-TW": "佔名額", en: "Counted toward target", ja: "枠を占有", ko: "정원 차지" },
+  "reg.pool.countedTip": { "zh-CN": "补池算缺口用的就是这个数：判据只有「没被剔除」，所以被停用的 key 与正在冷却的 key 都算在里面——它们都占着目标名额，但都不能打上游。", "zh-TW": "補池算缺口用的就是這個數：判據只有「沒被剔除」，所以被停用的 key 與正在冷卻的 key 都算在裡面——它們都佔著目標名額，但都不能打上游。", en: "This is the number the refill loop uses to compute the gap. The test is only \"not evicted\", so disabled keys and cooling keys are both counted here — they occupy a slot yet cannot serve traffic.", ja: "補充ラウンドが不足数を計算するのに使う値です。判定は「除外されていない」だけなので、無効化済みの key もクールダウン中の key もここに含まれます——どちらも枠を占有しますが、上流には使えません。", ko: "보충 라운드가 부족분을 계산할 때 쓰는 값입니다. 판정은 「제외되지 않음」뿐이라 정지된 key와 쿨다운 중인 key가 모두 포함됩니다 — 둘 다 정원을 차지하지만 업스트림에는 쓸 수 없습니다." },
+  "reg.pool.gap":     { "zh-CN": "缺口", "zh-TW": "缺口", en: "Gap", ja: "不足", ko: "부족분" },
+  "reg.pool.fresh":   { "zh-CN": "可用（能打上游）", "zh-TW": "可用（能打上游）", en: "Available (can serve traffic)", ja: "利用可能（上流に使える）", ko: "사용 가능(업스트림 가능)" },
+
+  "reg.channels.title": { "zh-CN": "邮箱通道", "zh-TW": "郵箱通道", en: "Mailbox channels", ja: "メールボックスチャネル", ko: "메일박스 채널" },
+  "reg.channel.moemail": { "zh-CN": "MoeMail", "zh-TW": "MoeMail", en: "MoeMail", ja: "MoeMail", ko: "MoeMail" },
+  "reg.channel.yyds":    { "zh-CN": "YYDS", "zh-TW": "YYDS", en: "YYDS", ja: "YYDS", ko: "YYDS" },
+  // 设计 §10.3 第 5 条：两条通道之间**唯一**的不对称，必须写成事实而不是偏好。
+  // 「YYDS 开箱即用」是偏好，不许写。
+  "reg.channel.addressFact.moemail": { "zh-CN": "自建服务：每个实例的地址都不一样，本就没有可以预填的地址，必须自己填。", "zh-TW": "自建服務：每個實例的位址都不一樣，本就沒有可以預先填入的位址，必須自己填。", en: "Self-hosted service: every instance lives at a different address, so there is no address to prefill — you provide it.", ja: "セルフホストのサービスです。インスタンスごとにアドレスが異なるため、あらかじめ入れておけるアドレスは存在しません。自分で指定してください。", ko: "직접 호스팅하는 서비스입니다. 인스턴스마다 주소가 달라 미리 채워 둘 주소가 존재하지 않으므로 직접 입력해야 합니다." },
+  "reg.channel.addressFact.yyds":    { "zh-CN": "地址固定的公共服务：内置了一个地址，也可以自己改。", "zh-TW": "位址固定的公共服務：內建了一個位址，也可以自己改。", en: "Public service at a fixed address: one address ships with the gateway, and you can still override it.", ja: "アドレスが固定された公開サービスです。アドレスが 1 つ同梱されており、上書きもできます。", ko: "주소가 고정된 공개 서비스입니다. 주소 하나가 내장되어 있으며 직접 바꿀 수도 있습니다." },
+  "reg.channel.role":     { "zh-CN": "角色", "zh-TW": "角色", en: "Role", ja: "役割", ko: "역할" },
+  "reg.role.primary":     { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary", ja: "プライマリ", ko: "주 채널" },
+  "reg.role.fallback":    { "zh-CN": "备用通道", "zh-TW": "備用通道", en: "Fallback", ja: "フォールバック", ko: "대체 채널" },
+  "reg.role.unused":      { "zh-CN": "本次配置没有用到它", "zh-TW": "本次設定沒有用到它", en: "Not used by the current configuration", ja: "現在の設定では使われていません", ko: "현재 설정에서는 사용되지 않습니다" },
+  "reg.channel.creds":    { "zh-CN": "凭据", "zh-TW": "憑證", en: "Credentials", ja: "資格情報", ko: "자격 증명" },
+  "reg.channel.credsYes": { "zh-CN": "已配好", "zh-TW": "已配好", en: "Configured", ja: "設定済み", ko: "설정됨" },
+  "reg.channel.credsNo":  { "zh-CN": "未配置", "zh-TW": "未設定", en: "Not configured", ja: "未設定", ko: "설정 안 됨" },
+  // 设计 §10.3 第 6 条：用数据代替推荐——两个**等权**的按钮，返回可用域名数。
+  // P2 design §4.5：可用域名多寡是选主通道时唯一值得看的指标，与是哪家服务无关。
+  "reg.channel.test":     { "zh-CN": "测试连接", "zh-TW": "測試連線", en: "Test connection", ja: "接続テスト", ko: "연결 테스트" },
+  "reg.channel.testing":  { "zh-CN": "测试中…", "zh-TW": "測試中…", en: "Testing…", ja: "テスト中…", ko: "테스트 중…" },
+  "reg.channel.testOk":     { "zh-CN": "连通：可用域名 {domains} 个 · 耗时 {latencyMs} ms", "zh-TW": "連通：可用網域 {domains} 個 · 耗時 {latencyMs} ms", en: "Reachable: {domains} usable domain(s) · {latencyMs} ms", ja: "接続できました: 利用可能なドメイン {domains} 件 · {latencyMs} ms", ko: "연결됨: 사용 가능한 도메인 {domains}개 · {latencyMs} ms" },
+  "reg.channel.testFailed": { "zh-CN": "没有连上（耗时 {latencyMs} ms）。详细原因在事件板块里，事件名 registrar.channel_test_failed。", "zh-TW": "沒有連上（耗時 {latencyMs} ms）。詳細原因在事件板塊裡，事件名 registrar.channel_test_failed。", en: "Could not connect ({latencyMs} ms). The details are in the Events section under registrar.channel_test_failed.", ja: "接続できませんでした（{latencyMs} ms）。詳細はイベントセクションの registrar.channel_test_failed を参照してください。", ko: "연결하지 못했습니다({latencyMs} ms). 자세한 내용은 이벤트 섹션의 registrar.channel_test_failed에 있습니다." },
+  "reg.channel.testError":  { "zh-CN": "测试请求本身失败了，没有测到这条通道", "zh-TW": "測試請求本身失敗了，沒有測到這條通道", en: "The test request itself failed, so this channel was never reached", ja: "テストのリクエスト自体が失敗したため、このチャネルには到達していません", ko: "테스트 요청 자체가 실패해 이 채널에는 도달하지 못했습니다" },
+  "reg.channel.testHint":   { "zh-CN": "测试只读取这条通道的可用域名列表，不建邮箱、不注册账号，不消耗任何名额。", "zh-TW": "測試只讀取這條通道的可用網域清單，不建郵箱、不註冊帳號，不消耗任何名額。", en: "The test only reads this channel's list of usable domains: no mailbox is created, no account is registered, no quota is consumed.", ja: "テストはこのチャネルの利用可能ドメイン一覧を読むだけです。メールボックスの作成もアカウント登録も行わず、枠も消費しません。", ko: "테스트는 이 채널의 사용 가능한 도메인 목록만 읽습니다. 메일박스를 만들지도, 계정을 등록하지도, 정원을 소비하지도 않습니다." },
+
+  "reg.tend.button":       { "zh-CN": "立即补池", "zh-TW": "立即補池", en: "Refill now", ja: "今すぐ補充", ko: "지금 보충" },
+  "reg.tend.confirmTitle": { "zh-CN": "确认立即补池", "zh-TW": "確認立即補池", en: "Confirm refill", ja: "補充の確認", ko: "보충 확인" },
+  // 设计 §10.2 第 3 条护栏：确认弹窗必须明示消耗。
+  // ⚠️ **两个外部服务的活跃邮箱上限一律不写数字**：一个与账号档位绑定、一个是可被
+  // 实例覆盖的上游默认值，把当前取值印在面板上，运维会当成自己这套部署的事实。
+  // 完整理由见 `src/http/admin/handlers/registrar.ts` 的文件头。
+  "reg.tend.confirmMsg":   { "zh-CN": "本次最多铸 {keys} 把 key，将消耗最多 {mailboxes} 个临时邮箱。两条通道各自的活跃邮箱上限请查各自服务商的文档。", "zh-TW": "本次最多鑄 {keys} 把 key，將消耗最多 {mailboxes} 個臨時郵箱。兩條通道各自的活躍郵箱上限請查各自服務商的文件。", en: "This run mints at most {keys} key(s) and consumes at most {mailboxes} temporary mailbox(es). For each channel's active-mailbox limit, check that provider's own documentation.", ja: "今回発行する key は最大 {keys} 件、消費する一時メールボックスは最大 {mailboxes} 件です。各チャネルのアクティブなメールボックス上限は、それぞれの提供元のドキュメントを確認してください。", ko: "이번 실행에서 최대 {keys}개의 key를 발급하고 최대 {mailboxes}개의 임시 메일박스를 사용합니다. 각 채널의 활성 메일박스 상한은 해당 제공자의 문서를 확인하세요." },
+  "reg.tend.confirmUnknown": { "zh-CN": "读不到当前的缺口与单轮上限，这次会铸几把 key 说不准。请先刷新，确认状态之后再点。", "zh-TW": "讀不到目前的缺口與單輪上限，這次會鑄幾把 key 說不準。請先重新整理，確認狀態之後再點。", en: "The current gap and per-round ceiling could not be read, so how many keys this run mints is unknown. Refresh first and confirm the state before proceeding.", ja: "現在の不足数と 1 ラウンドの上限が読み取れないため、今回いくつ key を発行するかは不明です。まず更新して状態を確認してから実行してください。", ko: "현재 부족분과 라운드당 상한을 읽지 못해 이번에 key를 몇 개 발급할지 알 수 없습니다. 먼저 새로고침해 상태를 확인한 뒤 진행하세요." },
+  // 通道下拉：**初始为占位符，两条通道都不预选**（设计 §10.3 第 1 条同一条纪律）。
+  "reg.tend.channelLabel": { "zh-CN": "用哪条通道", "zh-TW": "用哪條通道", en: "Which channel", ja: "使用するチャネル", ko: "사용할 채널" },
+  "reg.tend.channelAny":   { "zh-CN": "按当前配置的主 / 备通道", "zh-TW": "按目前設定的主 / 備通道", en: "Follow the configured primary / fallback chain", ja: "設定されているプライマリ／フォールバックの順に従う", ko: "설정된 주/대체 채널 순서를 따름" },
+  "reg.tend.started":      { "zh-CN": "已开始补池。结果会出现在下面的补池历史里——这颗按钮只负责发起，不等它跑完。", "zh-TW": "已開始補池。結果會出現在下面的補池歷史裡——這顆按鈕只負責發起，不等它跑完。", en: "Refill started. The result will show up in the refill history below — this button only kicks it off and does not wait for it to finish.", ja: "補充を開始しました。結果は下の補充履歴に表示されます——このボタンは開始するだけで、完了を待ちません。", ko: "보충을 시작했습니다. 결과는 아래 보충 기록에 표시됩니다 — 이 버튼은 시작만 할 뿐 완료를 기다리지 않습니다." },
+  "reg.tend.failed":       { "zh-CN": "这次补池没有发起成功", "zh-TW": "這次補池沒有發起成功", en: "This refill was not started", ja: "今回の補充は開始できませんでした", ko: "이번 보충을 시작하지 못했습니다" },
+  // 「今天还剩几次」**在点之前就要显示**，不是等到点不动了才说。
+  "reg.tend.quota":        { "zh-CN": "今天还可以点 {remaining} 次（每天上限 {perDay} 次）", "zh-TW": "今天還可以點 {remaining} 次（每天上限 {perDay} 次）", en: "{remaining} more click(s) available today (daily cap {perDay})", ja: "本日はあと {remaining} 回押せます（1 日の上限 {perDay} 回）", ko: "오늘 {remaining}번 더 누를 수 있습니다(하루 상한 {perDay}회)" },
+  "reg.tend.quotaReset":   { "zh-CN": "，{at} 重置", "zh-TW": "，{at} 重置", en: ", resets at {at}", ja: "、{at} にリセット", ko: ", {at}에 초기화" },
+  // ⚠️ **绝对时刻与相对时长成对给**：相对量做倒计时（免疫客户端时钟偏差），
+  // 绝对时刻显示「几点恢复」。绝不让面板拿本地时钟去减一个服务端时刻。
+  "reg.tend.cooldown":     { "zh-CN": "冷却中：{at} 之后可以再点（还有 {left}）", "zh-TW": "冷卻中：{at} 之後可以再點（還有 {left}）", en: "Cooling down: available again at {at} (in {left})", ja: "クールダウン中: {at} 以降に再度実行できます（あと {left}）", ko: "쿨다운 중: {at} 이후 다시 누를 수 있습니다(남은 시간 {left})" },
+  "reg.locked":            { "zh-CN": "有一轮补池正在跑，持锁方声明最晚 {at} 结束", "zh-TW": "有一輪補池正在跑，持鎖方聲明最晚 {at} 結束", en: "A refill round is running; the lock holder declares it ends by {at} at the latest", ja: "補充ラウンドが実行中です。ロック保持側は遅くとも {at} には終わると宣言しています", ko: "보충 라운드가 실행 중입니다. 잠금 보유자는 늦어도 {at}에는 끝난다고 선언했습니다" },
+
+  "reg.history.title":  { "zh-CN": "补池历史", "zh-TW": "補池歷史", en: "Refill history", ja: "補充履歴", ko: "보충 기록" },
+  "reg.history.empty":  { "zh-CN": "还没有补池记录。", "zh-TW": "還沒有補池記錄。", en: "No refill rounds recorded yet.", ja: "補充ラウンドの記録はまだありません。", ko: "아직 보충 라운드 기록이 없습니다." },
+  "reg.history.malformed": { "zh-CN": "存储里有 {count} 条读不得的补池记录被丢弃了，多半是存储被本网关之外的东西写过。", "zh-TW": "儲存裡有 {count} 條讀不得的補池記錄被丟棄了，多半是儲存被本閘道之外的東西寫過。", en: "{count} unreadable refill record(s) in storage were discarded — most likely storage was written by something other than this gateway.", ja: "ストレージ内の読み取れない補充記録 {count} 件を破棄しました。本ゲートウェイ以外から書き込まれた可能性が高いです。", ko: "저장소의 읽을 수 없는 보충 기록 {count}건을 버렸습니다. 이 게이트웨이 외부에서 기록되었을 가능성이 높습니다." },
+  "reg.col.at":       { "zh-CN": "时间", "zh-TW": "時間", en: "Time", ja: "時刻", ko: "시각" },
+  "reg.col.trigger":  { "zh-CN": "触发", "zh-TW": "觸發", en: "Trigger", ja: "トリガー", ko: "트리거" },
+  "reg.col.channel":  { "zh-CN": "这一轮的通道", "zh-TW": "這一輪的通道", en: "Channel this round", ja: "このラウンドのチャネル", ko: "이 라운드의 채널" },
+  "reg.col.result":   { "zh-CN": "结果", "zh-TW": "結果", en: "Result", ja: "結果", ko: "결과" },
+  "reg.col.duration": { "zh-CN": "耗时", "zh-TW": "耗時", en: "Duration", ja: "所要時間", ko: "소요 시간" },
+  "reg.col.failures": { "zh-CN": "失败归因", "zh-TW": "失敗歸因", en: "Failure reasons", ja: "失敗の内訳", ko: "실패 원인" },
+  "reg.trigger.cron":   { "zh-CN": "定时", "zh-TW": "定時", en: "Scheduled", ja: "定期実行", ko: "예약 실행" },
+  "reg.trigger.manual": { "zh-CN": "面板", "zh-TW": "面板", en: "Panel", ja: "パネル", ko: "패널" },
+  // 四种形态的判据来自 `src/core/registrar/tender.ts` 里 `mintedByChannel` 上那张表：
+  // `skipped` + `attempted` + `failures` **三个字段合读**才分得清。
+  "reg.row.skipped":  { "zh-CN": "注册机当时是关闭的，这一轮什么都没做", "zh-TW": "註冊機當時是關閉的，這一輪什麼都沒做", en: "The registrar was off at the time; this round did nothing", ja: "その時点でレジストラーは無効でした。このラウンドは何もしていません", ko: "그 시점에 등록기가 꺼져 있었고 이 라운드는 아무것도 하지 않았습니다" },
+  "reg.row.healthy":  { "zh-CN": "池子已经够用，这一轮不需要铸 key", "zh-TW": "池子已經夠用，這一輪不需要鑄 key", en: "The pool was already full enough; no key needed minting this round", ja: "プールは十分だったため、このラウンドでは key を発行していません", ko: "풀이 이미 충분해 이 라운드에서는 key를 발급하지 않았습니다" },
+  "reg.row.noAttempt": { "zh-CN": "这一轮一次尝试都没开始（不是「跑完了没产出」）", "zh-TW": "這一輪一次嘗試都沒開始（不是「跑完了沒產出」）", en: "This round never started a single attempt (not \"ran and produced nothing\")", ja: "このラウンドは 1 回も試行を開始していません（「実行したが成果ゼロ」ではありません）", ko: "이 라운드는 시도를 한 번도 시작하지 않았습니다(「실행했지만 성과 없음」이 아닙니다)" },
+  "reg.row.minted":   { "zh-CN": "铸出 {minted} / 尝试 {attempted}", "zh-TW": "鑄出 {minted} / 嘗試 {attempted}", en: "{minted} minted / {attempted} attempted", ja: "発行 {minted} / 試行 {attempted}", ko: "발급 {minted} / 시도 {attempted}" },
+  "reg.row.unreadable": { "zh-CN": "这一行读不得", "zh-TW": "這一行讀不得", en: "This row is unreadable", ja: "この行は読み取れません", ko: "이 행은 읽을 수 없습니다" },
+  // ⚠️ 逐通道铸出数**必须显示**：`minted` 只有总数，一轮全靠备通道铸出来时，
+  // 总数记在哪条通道名下是看不出来的——没有这一格，备通道的战绩会被持续记到
+  // 主通道头上，与「两条通道完全平级」正面冲突。
+  "reg.row.byChannel": { "zh-CN": "逐通道：{detail}", "zh-TW": "逐通道：{detail}", en: "By channel: {detail}", ja: "チャネル別: {detail}", ko: "채널별: {detail}" },
+  "reg.fail.unknownReason": { "zh-CN": "这个版本的面板不认识的失败归因：{reason}", "zh-TW": "這個版本的面板不認識的失敗歸因：{reason}", en: "A failure reason this panel build does not know: {reason}", ja: "このパネルのビルドが認識できない失敗理由: {reason}", ko: "이 패널 빌드가 알지 못하는 실패 원인: {reason}" },
+
+  // ── 后端拒绝的八种 reason，各自一句五语言（P3c Task 6）────────────────────
+  //
+  // ⚠️⚠️ **状态码不是判据，`reason` 才是。** `409` 有三种、`429` 有两种，
+  // 而它们的处置毫无共同之处。逐条的语义差别必须在文案里体现出来，尤其：
+  // · `tend_in_flight`（**这个**副本在跑：等一会儿）与 `locked`（**另一个**副本在跑：
+  //   说明你是多副本部署，不是你点错了）；
+  // · `write_budget_exhausted` **不许写成「太频繁」**——它挡的是**存储写配额**、
+  //   不是邮箱名额，而运维看到「太频繁」的第一反应是等一等，正确处置却是等到
+  //   UTC 零点或者调 MANUAL_TENDS_PER_DAY。
+  "reg.refuse.tend_in_flight": { "zh-CN": "这个副本上已经有一轮补池在跑，等它结束就能再点。", "zh-TW": "這個副本上已經有一輪補池在跑，等它結束就能再點。", en: "This replica already has a refill round in flight; you can click again once it finishes.", ja: "このレプリカでは補充ラウンドがすでに実行中です。終了すれば再度実行できます。", ko: "이 복제본에서 이미 보충 라운드가 실행 중입니다. 끝나면 다시 누를 수 있습니다." },
+  "reg.refuse.locked":          { "zh-CN": "另一个副本正在补池，本次没有启动。补池是顺序执行的：并发会同时撞邮箱建号限流与上游注册风控。", "zh-TW": "另一個副本正在補池，本次沒有啟動。補池是順序執行的：並發會同時撞郵箱建號限流與上游註冊風控。", en: "Another replica is refilling, so this run did not start. Refills run one at a time: concurrent rounds hit both the mailbox creation rate limit and the upstream registration risk controls.", ja: "別のレプリカが補充中のため、今回は開始しませんでした。補充は逐次実行です: 同時に走らせるとメールボックス作成のレート制限と上流の登録リスク制御の両方に当たります。", ko: "다른 복제본이 보충 중이어서 이번에는 시작하지 않았습니다. 보충은 순차 실행입니다: 동시에 돌리면 메일박스 생성 속도 제한과 업스트림 가입 위험 관리에 모두 걸립니다." },
+  "reg.refuse.registrar_disabled": { "zh-CN": "注册机没有打开，没有可补的池。请先在设置里打开它，并配好至少一条邮箱通道。", "zh-TW": "註冊機沒有打開，沒有可補的池。請先在設定裡打開它，並配好至少一條郵箱通道。", en: "The registrar is not turned on, so there is nothing to refill. Turn it on in Settings and configure at least one mailbox channel first.", ja: "レジストラーが有効になっていないため、補充する対象がありません。まず設定で有効にし、メールボックスチャネルを少なくとも 1 つ構成してください。", ko: "등록기가 켜져 있지 않아 보충할 대상이 없습니다. 먼저 설정에서 켜고 메일박스 채널을 최소 하나 구성하세요." },
+  "reg.refuse.write_budget_exhausted": { "zh-CN": "今天的手动补池次数已经用完。这道闸挡的是存储写配额，不是邮箱名额——等到重置时刻会自动恢复，也可以调大 MANUAL_TENDS_PER_DAY。", "zh-TW": "今天的手動補池次數已經用完。這道閘擋的是儲存寫配額，不是郵箱名額——等到重置時刻會自動恢復，也可以調大 MANUAL_TENDS_PER_DAY。", en: "Today's manual refill allowance is used up. This gate protects the storage write quota, not the mailbox allowance — it restores itself at the reset time, or you can raise MANUAL_TENDS_PER_DAY.", ja: "本日の手動補充回数を使い切りました。このゲートが守っているのはストレージの書き込み割り当てであり、メールボックスの枠ではありません——リセット時刻に自動で回復します。MANUAL_TENDS_PER_DAY を大きくすることもできます。", ko: "오늘의 수동 보충 횟수를 모두 사용했습니다. 이 게이트가 지키는 것은 스토리지 쓰기 할당량이지 메일박스 정원이 아닙니다 — 초기화 시각에 자동으로 회복되며, MANUAL_TENDS_PER_DAY를 늘릴 수도 있습니다." },
+  "reg.refuse.manual_cooldown": { "zh-CN": "两次手动补池之间要隔一段冷却时间，还没到。", "zh-TW": "兩次手動補池之間要隔一段冷卻時間，還沒到。", en: "Two manual refills must be spaced apart by a cooldown, and it has not elapsed yet.", ja: "手動補充どうしの間にはクールダウンが必要で、まだ経過していません。", ko: "수동 보충 사이에는 쿨다운이 필요하며 아직 지나지 않았습니다." },
+  "reg.refuse.not_wired":      { "zh-CN": "这个部署没有接上注册机的执行体，读不到补池记录也补不了池。这是装配问题，不是运行状态——正常经容器 / Worker 入口启动的部署不会出现。", "zh-TW": "這個部署沒有接上註冊機的執行體，讀不到補池記錄也補不了池。這是裝配問題，不是執行狀態——正常經容器 / Worker 入口啟動的部署不會出現。", en: "This deployment has no registrar executor wired in, so it can neither read refill records nor refill. That is an assembly problem, not a runtime state — it cannot happen for deployments started through the container or Worker entry point.", ja: "このデプロイにはレジストラーの実行体が接続されていないため、補充記録を読むことも補充することもできません。これは組み立ての問題であり実行時の状態ではありません——コンテナや Worker のエントリーポイント経由で起動したデプロイでは発生しません。", ko: "이 배포에는 등록기 실행체가 연결되어 있지 않아 보충 기록을 읽을 수도, 보충할 수도 없습니다. 이는 조립 문제이지 실행 상태가 아닙니다 — 컨테이너나 Worker 진입점으로 기동한 배포에서는 발생하지 않습니다." },
+  "reg.refuse.unknown_channel": { "zh-CN": "通道名不认识，只能是 moemail 或 yyds。", "zh-TW": "通道名不認識，只能是 moemail 或 yyds。", en: "Unknown channel name; it can only be moemail or yyds.", ja: "チャネル名が不明です。moemail か yyds のいずれかである必要があります。", ko: "알 수 없는 채널 이름입니다. moemail 또는 yyds만 가능합니다." },
+  "reg.refuse.channel_not_configured": { "zh-CN": "这条通道在本次部署里没有配好凭据，用不了。请先在设置里把它配上。", "zh-TW": "這條通道在本次部署裡沒有配好憑證，用不了。請先在設定裡把它配上。", en: "This channel has no credentials configured in this deployment, so it cannot be used. Configure it in Settings first.", ja: "このチャネルはこのデプロイで資格情報が設定されていないため使用できません。まず設定で構成してください。", ko: "이 채널은 이 배포에 자격 증명이 설정되어 있지 않아 사용할 수 없습니다. 먼저 설정에서 구성하세요." },
 
   // ── Key 池板块（只读部分，Task 4）─────────────────────────────────────────
   "keys.title":       { "zh-CN": "Key 池", "zh-TW": "Key 池", en: "Key pool", ja: "キープール", ko: "키 풀" },
@@ -171,10 +294,10 @@ export const I18N = {
   "keys.addMenu.autoGroup":     { "zh-CN": "自动注册", "zh-TW": "自動註冊", en: "Auto-register", ja: "自動登録", ko: "자동 등록" },
   "keys.addMenu.autoMoemail":   { "zh-CN": "通过 MoeMail 通道立即补池", "zh-TW": "透過 MoeMail 通道立即補池", en: "Mint via the MoeMail channel now", ja: "MoeMail チャネルで今すぐ補充", ko: "MoeMail 채널로 즉시 보충" },
   "keys.addMenu.autoYyds":      { "zh-CN": "通过 YYDS 通道立即补池", "zh-TW": "透過 YYDS 通道立即補池", en: "Mint via the YYDS channel now", ja: "YYDS チャネルで今すぐ補充", ko: "YYDS 채널로 즉시 보충" },
-  // 这句 tooltip 只说"还没有接入"，**不许用推荐/默认这类偏好词**——check-i18n
-  // 的第 ⑥ 条本来只查 reg.* 命名空间，这条虽然不在那个命名空间里，一样刻意
-  // 不写"暂不推荐使用"这类措辞，纯描述状态。
-  "keys.addMenu.autoPlaceholder": { "zh-CN": "这个通道还没有接入本面板", "zh-TW": "這個通道還沒有接入本面板", en: "This channel is not wired up in this panel yet", ja: "このチャネルはまだこのパネルに接続されていません", ko: "이 채널은 아직 이 패널에 연결되지 않았습니다" },
+  // ⚠️ **`keys.addMenu.autoPlaceholder` 在 P3c Task 6 被删掉了，不是漏了。**
+  // 它是 Task 4 给【自动注册】那两项占位时用的 tooltip（「这个通道还没有接入本面板」），
+  // 本任务把两项真的接上了 ⇒ 那句话变成假话。**留一条零消费者的死文案比删掉它更贵**：
+  // check-i18n 只会把它报成一条警告，而下一个读字典的人会以为面板上还有这么一句提示。
   "keys.addMenu.manualGroup":   { "zh-CN": "手动", "zh-TW": "手動", en: "Manual", ja: "手動", ko: "수동" },
   "keys.addMenu.pasteSingle":   { "zh-CN": "粘贴单个 Key", "zh-TW": "貼上單一 Key", en: "Paste a single key", ja: "単一の key を貼り付け", ko: "단일 key 붙여넣기" },
   // ⚠️ **不照抄设计原文"批量导入（多行 / JSON 数组）"**：导入框只按行拆

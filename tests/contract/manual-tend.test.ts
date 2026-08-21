@@ -10,7 +10,7 @@ import {
 import {
   TEND_LOCK_KEY, TEND_LOCK_TTL_MS, acquireTendLock, createTendGate,
 } from "../../src/http/admin/tend-lock.js";
-import type { ManualTendWiring } from "../../src/http/admin/handlers/registrar.js";
+import type { RegistrarWiring } from "../../src/http/admin/handlers/registrar.js";
 import { buildApp } from "../../src/http/wire.js";
 import { workerRuntime } from "../../src/adapters/runtime-worker.js";
 import { nodeRuntime } from "../../src/adapters/runtime-node.js";
@@ -82,12 +82,19 @@ async function fixtureA(o: {
 } = {}) {
   const now = o.now ?? (() => NOW);
   const storage = o.storage ?? new MemoryStorage(undefined, now);
-  const wiring: ManualTendWiring | undefined = o.wire === false
+  const wiring: RegistrarWiring | undefined = o.wire === false
     ? undefined
-    : { storage, run: o.run ?? (async () => {}) };
+    : {
+      storage,
+      tend: o.run ?? (async () => {}),
+      // 本文件一条都不测通道连通性（那是 tests/contract/admin-registrar.test.ts 的活）。
+      // **刻意抛错而不是返回一个假的成功**：真有哪条用例误打到这条端点上，红的会是
+      // 那条用例，而不是一个悄悄通过的假结果。
+      probeChannel: async () => { throw new Error("本文件的夹具不接通道连通性测试"); },
+    };
   const h = await makeApp(
     [], [], { registrar: REGISTRAR_ON, ...o.config }, now,
-    { storage, manualTend: wiring, runtime: o.runtime, tendGate: o.tendGate },
+    { storage, registrar: wiring, runtime: o.runtime, tendGate: o.tendGate },
   );
   return { ...h, storage };
 }

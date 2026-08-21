@@ -41,9 +41,9 @@ function adminApp(version: string) {
       storage: new MemoryStorage(undefined, () => 1000), now: () => 1000, shardId: "session-test-shard",
       onError: () => {},
     }),
-    // 「立即补池」端点要的两样（P3c Task 5）。本文件只测 session，**刻意传 `null`**：
-    // 那正是「这个 app 没接手动补池执行体」的形态，端点会如实回 503 而不是假装 202。
-    manualTend: null,
+    // 注册机那三条端点要的接线（P3c Task 5/6）。本文件只测 session，**刻意传 `null`**：
+    // 那正是「这个 app 没接注册机执行体」的形态，三条端点会如实回 503 而不是假装。
+    registrar: null,
     tendGate: createTendGate(),
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");

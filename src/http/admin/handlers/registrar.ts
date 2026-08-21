@@ -2,16 +2,34 @@ import type { Context } from "hono";
 import type { Logger } from "../../../ports/logger.js";
 import type { Storage } from "../../../ports/storage.js";
 import type { RuntimeInfo, BackgroundCtx } from "../../../ports/runtime.js";
+import type { KeyPoolRepo } from "../../../core/keypool-repo.js";
 import type { ConfigHolder } from "../../config-holder.js";
+import type { Channel } from "../../../core/registrar/config.js";
+import { countsTowardTarget, poolHealth } from "../../../core/keypool.js";
 import {
-  MANUAL_GUARD_KEY, checkManualTend, narrowManualGuard,
+  MANUAL_GUARD_KEY, checkManualTend, manualTendQuota, narrowManualGuard,
 } from "../../../core/admin/tend-guard.js";
-import { acquireTendLock, releaseTendLock, type TendGate } from "../tend-lock.js";
+import { TEND_HISTORY_KEY, narrowTendHistory } from "../../../core/admin/tend-history.js";
+import {
+  acquireTendLock, releaseTendLock, narrowTendLock, TEND_LOCK_KEY, type TendGate,
+} from "../tend-lock.js";
+import { httpError } from "../../errors.js";
 
 /**
- * `POST /admin/api/registrar/tend` —— 面板的「立即补池」（设计 §10.2 / §10.3，风险 L6）。
+ * 注册机的三条管理端点（设计 §10.2 / §10.3 / §11，风险 L6）：
  *
- * ── 四条护栏，逐条落在这个文件里 ────────────────────────────────────────────
+ * | 方法 | 路径 | 干什么 | 写存储吗 |
+ * |---|---|---|---|
+ * | POST | `/admin/api/registrar/tend` | 「立即补池」，四条护栏 | **是**（护栏键 + 锁 + 历史） |
+ * | GET | `/admin/api/registrar/status` | 补池历史 / 名额 / 锁 / 两条通道的接入状态 | **否，一次都不写** |
+ * | POST | `/admin/api/registrar/channels/:channel/test` | 通道连通性（可用域名数 + 延迟） | **否，一次都不写** |
+ *
+ * 后两条**一次存储写都不产生**，这条性质由 `tests/contract/admin-registrar.test.ts` 的
+ * 「status 与通道测试都不写存储、也不 list —— 面板刷得再勤也不烧写配额」数着
+ * put/delete/list 计数钉住。它不是「碰巧现在这样」：配额账（计划「配额账」一节）
+ * 把面板轮询算成零写，多一次写就要回去改五语言 DEPLOY.md。
+ *
+ * ── 「立即补池」的四条护栏，逐条落在这个文件里 ──────────────────────────────
  *
  * | # | 护栏 | 落点 | 挡什么 |
  * |---|---|---|---|
@@ -21,16 +39,22 @@ import { acquireTendLock, releaseTendLock, type TendGate } from "../tend-lock.js
  * | 4 | 每天 K 次写预算闸 | `checkManualTend()` 的 `day` / `used` | 连点烧 **KV 写配额**（三重护栏挡不住这一条，计划 F11） |
  *
  * 第 3 条护栏（确认弹窗明示消耗）在**面板**上，后端做不了；它要的那两个数字
- *（本次最多铸几把 key / 最多消耗几个临时邮箱）来自 `/admin/api/overview` 已有的
- * `pool` 与 `config` 块。
+ *（本次最多铸几把 key / 最多消耗几个临时邮箱）由 `status` 的 `pool` 块给出
+ *（`gap` 与 `mintBatch`），面板取 `min(gap, mintBatch)`。
  *
- * ⚠️ **设计 §10.2 那句文案后面那两个外部配额数字（YYDS 15 / MoeMail 30）不许照抄进
- * 面板文案或这里的响应体**，但**理由不是「本仓一次都没核实过」——那句话是我上一版写错的**
- *（评审 m2）：P2 设计文档的邮箱通道对照表里，MoeMail 那 30 是**追溯得到出处**的
- *（上游默认 `MAX_ACTIVE_EMAILS`，实例可用 `SITE_CONFIG.MAX_EMAILS` 覆盖，仅 EMPEROR
- * 角色豁免）。**真正的理由更硬**：那 30 是一个**上游默认值、而且实例可覆盖**，
- * 对任何一个自建 MoeMail 实例都可能是错的；YYDS 那 15 与账号档位绑定，同样不是常数。
- * **把一个"当前默认值"印在面板上，运维会把它当成自己部署的事实。**
+ * ⚠️⚠️ **两个外部邮箱配额数字（YYDS 15 / MoeMail 30）不进面板文案，也不进响应体。**
+ * 理由**不是**「本仓没核实过」——那句话上一版写错了（评审 m2）：P2 设计文档的邮箱
+ * 通道对照表里，MoeMail 那 30 追溯得到上游默认 `MAX_ACTIVE_EMAILS`，YYDS 那 15
+ * 追溯得到免费档档位。**真正的理由是它们都不是常数**：MoeMail 那个是**上游默认值、
+ * 实例可用 `SITE_CONFIG.MAX_EMAILS` 覆盖**，YYDS 那个**与账号档位绑定**。
+ * **把一个「当前默认值」印在面板上，运维会把它当成自己这套部署的事实。**
+ *
+ * ⇒ P3c Task 6 的取舍（计划给的二选一里的第 ②「改成不写具体数字」）：
+ * 面板的确认弹窗只说「本次最多铸 N 把 key，将消耗最多 N 个临时邮箱；两条通道各自的
+ * 活跃邮箱上限请查各自服务商的文档」——N 是本仓自己算得出的数，上限交给出处。
+ * 同一次收口也把源码里那几处**当事实用**的注释统一改成「上游默认值 / 与档位绑定」，
+ * 出处集中记在 `src/adapters/mailbox-moemail.ts` 与 `src/adapters/mailbox-yyds.ts`
+ * 各自的文件头（谁的上游谁记），别处一律只引用、不复述数字。
  *
  * ── 顺序有意义：先读护栏（不写）→ 抢锁 → 才写护栏 ─────────────────────────
  *
@@ -53,30 +77,58 @@ import { acquireTendLock, releaseTendLock, type TendGate } from "../tend-lock.js
  */
 
 /**
- * 手动补池真正要用到的两样东西，**成对给或者一个都不给**。
+ * 注册机这条路的执行体与它的存储，**三样成套给或者一个都不给**。
  *
- * 成对是刻意的：只给存储不给执行体，端点会写下护栏与锁然后什么都不跑；
- * 只给执行体不给存储，四条护栏一条都不成立。两者分开成两个可选字段就等于
- * 允许这两种半装配状态存在，而它们都会让面板说一句「已开始」的假话。
+ * 成套是刻意的：只给存储不给执行体，「立即补池」会写下护栏与锁然后什么都不跑；
+ * 只给执行体不给存储，四条护栏一条都不成立；给了前两样却不给 `probeChannel`，
+ * 两颗「测试连接」按钮就得各自有一种「这条通道能不能测」的中间态。
+ * 拆成三个各自可选的字段，就等于允许 2³ 种半装配状态存在，而其中每一种都会让
+ * 面板说一句假话。**只有 `wire.ts` 装配得出来**（三样都要 `env`），直接调
+ * `createApp` 的调用方一律拿不到，端点因此如实回 `503 not_wired`。
+ *
+ * ⚠️ 这个接口 P3c Task 5 叫 `ManualTendWiring`（只有 `storage` + `run`）。
+ * Task 6 加通道测试时**改名而不是新加一个并列的接线**：两者用的是同一个存储、
+ * 同一份 `env`、同一条「这个部署接没接注册机」的判据，分成两个可选字段只会
+ * 制造出「补池接了、测试没接」这种没有任何人想要的状态。
  */
-export interface ManualTendWiring {
-  /** 护栏键与补池锁都落在这里。**与 key 池同一个存储**，不新增依赖。 */
+export interface RegistrarWiring {
+  /** 护栏键、补池锁、补池历史都落在这里。**与 key 池同一个存储**，不新增依赖。 */
   storage: Storage;
   /**
    * 真的跑一轮**手动**补池（装配依赖 → `tendOnce` → 写 `tend:history` → 落盘事件）。
    * 由 `wire.ts` 提供，因为只有它手上有 `env`。
    *
+   * `channel` 为 `null` 时按配置里的主/备通道链跑；给了通道名则**只用那一条**
+   *（面板「添加 Key」菜单里【自动注册】那两项，设计 §10.2）。
+   *
    * **允许抛错**：抛出来由本文件接住并记一条事件，**而锁一定在 `finally` 里释放**。
    */
-  run: () => Promise<void>;
+  tend: (channel: Channel | null) => Promise<void>;
+  /**
+   * 探一条通道的连通性：**只调 `listDomains()`，不建邮箱、不注册账号**。
+   * 返回可用域名数，由本文件加上耗时一起交给面板（设计 §10.3 第 6 条：
+   * 用数据代替推荐）。上游报错时**抛出**，由本文件转成 `ok: false`。
+   */
+  probeChannel: (channel: Channel) => Promise<ChannelProbe>;
 }
 
-export interface ManualTendDeps {
+/**
+ * `probeChannel` 的返回形状。**「探到了」与「这条通道压根没接上」是两件事**，
+ * 不能都用抛错表示：前者是运维要看的数据，后者是一句「你还没配它」。
+ */
+export type ChannelProbe =
+  | { ok: true; domains: number }
+  /** 注册机在「端点查过 enabled」与「真去探」之间被关掉了。 */
+  | { ok: false; reason: "registrar_disabled" }
+  /** 这条通道没有凭据 ⇒ `buildTendDeps` 压根没给它造 provider。 */
+  | { ok: false; reason: "provider_missing" };
+
+export interface RegistrarDeps {
   /**
-   * 手动补池的接线。**`null` = 这个部署压根没接执行体**（只有直接调 `createApp`
-   * 而不经 `wire.ts` 的装配才会这样），此时端点如实回 `503`，不假装 202。
+   * 注册机的接线。**`null` = 这个部署压根没接**（只有直接调 `createApp`
+   * 而不经 `wire.ts` 的装配才会这样），此时三条端点如实回 `503`，不假装。
    */
-  wiring: ManualTendWiring | null;
+  wiring: RegistrarWiring | null;
   now: () => number;
   /**
    * 事件 sink。**用 app 那一个（fan-out 到 `StoreLogger`）**：手动补池是"池子为什么变了"
@@ -89,6 +141,11 @@ export interface ManualTendDeps {
   configHolder: ConfigHolder;
   /** 进程/isolate 内的在途守卫。**与定时轮共用同一把**，见 `tend-lock.ts` 的对照表。 */
   gate: TendGate;
+  /**
+   * **与转发路径同一个实例**（见 `AdminRouterDeps.repo`）。`status` 用它数
+   * 「占名额数」，走的是共用的 isolate 快照 ⇒ 面板刷新不额外读存储。
+   */
+  repo: KeyPoolRepo;
 }
 
 /**
@@ -106,20 +163,86 @@ function backgroundCtx(c: Context): BackgroundCtx | null {
   }
 }
 
-/** 409 的两种形态各自的机器可读判别字段。面板靠它选五语言文案，不靠解析中文 `message`。 */
+/**
+ * 每一条拒绝都带一个**顶层 `reason`**：面板靠它选五语言文案，**不解析中文 `message`**
+ *（与 Task 3 的 `must_disable_first` 同一条口径）。
+ *
+ * ⚠️⚠️ **`409` 有三种、`429` 有两种、`503` 与 `400` 各一种——状态码不是判据。**
+ * 拿状态码当唯一判据的前端会把「另一个副本在跑」（`locked`：你是多副本部署，
+ * 等对面跑完）和「注册机压根没开」（`registrar_disabled`：去设置里打开它）
+ * 当成同一件事，而两者的处置毫无共同之处。这与 Task 3 那条 `must_disable_first`
+ * 在批量路径上「200 一路走过去」是**同一个形状**。
+ * 面板侧的映射在 `admin-ui/js/pure/registrar.mjs` 的 `refuseReasonKey()`，
+ * 那里是一张逐条列出的表，表外的 `reason` 返回 `null` 而不是冒充任何一档。
+ */
 const REASON_IN_FLIGHT = "tend_in_flight";
 const REASON_LOCKED = "locked";
 const REASON_DISABLED = "registrar_disabled";
 const REASON_NOT_WIRED = "not_wired";
+const REASON_UNKNOWN_CHANNEL = "unknown_channel";
+const REASON_CHANNEL_NOT_CONFIGURED = "channel_not_configured";
 
-export function manualTendHandler(deps: ManualTendDeps) {
+/** 两条邮箱通道。**字母序**，理由见 `admin-ui/js/pure/registrar.mjs` 的 `CHANNELS`。 */
+const CHANNELS: readonly Channel[] = ["moemail", "yyds"];
+
+function isChannel(v: unknown): v is Channel {
+  return v === "moemail" || v === "yyds";
+}
+
+/**
+ * 请求体**可以整个缺席**。
+ *
+ * `readJson()`（`src/http/errors.ts`）对空体一律 400，而 `POST /registrar/tend`
+ * 从 Task 5 起就是**不带体**调用的（面板与既有用例都这样），给它加一个必填体
+ * 等于把一条已经上线的端点契约改掉。这里的语义定死：**没有体 ⇒ `{}`**，
+ * 有体但不是 JSON 对象 ⇒ 400（不是静默当成 `{}`——那会让 `{"chanel":"yyds"}`
+ * 这种拼错变成一次「点了、按默认链跑了」的静默误操作）。
+ */
+async function optionalObjectBody(c: Context): Promise<Record<string, unknown>> {
+  const raw = await c.req.text();
+  if (raw.trim() === "") return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw httpError(400, "invalid_request_error", "请求体不是合法的 JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw httpError(400, "invalid_request_error", "请求体必须是一个 JSON 对象");
+  }
+  const o = parsed as Record<string, unknown>;
+  const extra = Object.keys(o).filter((k) => k !== "channel");
+  if (extra.length > 0) {
+    // 与 Key 写端点同一条纪律：拼错的字段名在宽松实现下是一次「点了、什么都没按你
+    // 想的那样发生」，而面板会如实显示「已开始」。
+    throw httpError(400, "invalid_request_error", `不认识的字段：${extra.join(", ")}`);
+  }
+  return o;
+}
+
+/**
+ * 这条通道现在有没有凭据。
+ *
+ * 判据取 `RegistrarConfig` 里那两个 `ChannelCreds | null` 字段——它们**只对
+ * 主/备通道解析**（见 `registrarFromEnv` 末尾那个循环），所以「非 null」正好等于
+ * 「这条通道真的接进了本次部署」，不需要再去比一遍 primary/fallback。
+ */
+function channelConfigured(
+  cfg: { yyds: unknown; moemail: unknown },
+  channel: Channel,
+): boolean {
+  return (channel === "yyds" ? cfg.yyds : cfg.moemail) !== null;
+}
+
+export function manualTendHandler(deps: RegistrarDeps) {
   return async (c: Context) => {
     const now = deps.now();
+    const reg = deps.configHolder.current().registrar;
 
     // 注册机关着时一次写都不产生（配额账那根轴：**默认部署下本任务新增的写是 0**）。
     // 判据取 `configHolder`（本请求已经刷新过）而不是再读一次存储：面板显示的
     // 「注册机：已关闭」用的就是这一份，两处必须是同一个答案。
-    if (!deps.configHolder.current().registrar.enabled) {
+    if (!reg.enabled) {
       return c.json({
         error: {
           type: "conflict",
@@ -127,6 +250,35 @@ export function manualTendHandler(deps: ManualTendDeps) {
         },
         reason: REASON_DISABLED,
       }, 409);
+    }
+
+    // ── 通道参数：**在动任何护栏之前校验完**（校验失败一次写都不产生）──────────
+    //
+    // 给了通道名 = 「只用这一条」（面板「添加 Key」菜单里【自动注册】那两项）。
+    // 不给 = 按配置里的主/备通道链跑，与 Task 5 的行为逐字相同。
+    const body = await optionalObjectBody(c);
+    let channel: Channel | null = null;
+    if (body.channel !== undefined && body.channel !== null) {
+      if (!isChannel(body.channel)) {
+        return c.json({
+          error: { type: "invalid_request_error", message: "channel 只能是 moemail 或 yyds" },
+          reason: REASON_UNKNOWN_CHANNEL,
+        }, 400);
+      }
+      // **没配凭据的通道当场拒绝，不放进去让它跑成一轮 `provider_missing`。**
+      // 那一轮会真的消费一格日预算、起算一次 10 分钟冷却，然后在补池历史里留下
+      // 一行「这一轮什么都没铸出来」——运维付了全部代价，换来的信息还不如这一句。
+      if (!channelConfigured(reg, body.channel)) {
+        return c.json({
+          error: {
+            type: "conflict",
+            message: "这条通道在本次部署里没有配好凭据，没法用它补池；请先在设置里把它配上",
+          },
+          reason: REASON_CHANNEL_NOT_CONFIGURED,
+          channel: body.channel,
+        }, 409);
+      }
+      channel = body.channel;
     }
 
     // 注册机开着、执行体却没接上：这是**装配错误**，不是运行状态。如实回 503 并留一条
@@ -197,7 +349,7 @@ export function manualTendHandler(deps: ManualTendDeps) {
 
       const task = (async () => {
         try {
-          await wiring.run();
+          await wiring.tend(channel);
         } catch (err) {
           deps.logger.log({
             level: "error", event: "registrar.manual_tend_failed",
@@ -228,7 +380,7 @@ export function manualTendHandler(deps: ManualTendDeps) {
       deps.logger.log({
         level: "info", event: "registrar.manual_tend_started",
         msg: "面板触发了一轮手动补池",
-        fields: { remaining: verdict.remaining, cooldownUntil: verdict.next.cooldownUntil },
+        fields: { remaining: verdict.remaining, cooldownUntil: verdict.next.cooldownUntil, channel },
       });
 
       // ⚠️ **`remaining` 必须在这一支也给。** 只在耗尽那一支给它，等于让运维毫不知情地
@@ -236,6 +388,8 @@ export function manualTendHandler(deps: ManualTendDeps) {
       return c.json({
         started: true,
         trigger: "manual",
+        /** 这一轮**实际用哪条通道**：`null` = 按配置的主/备链。面板照实回显。 */
+        channel,
         remaining: verdict.remaining,
         resetAt: verdict.resetAt,
         // 成对给，理由见 `ManualTendVerdict` 上面那段（评审 m3）。
@@ -246,6 +400,206 @@ export function manualTendHandler(deps: ManualTendDeps) {
       // 任何一条提前返回（429 / 409 / 抛错）都要把守卫还回去，否则这个副本上的
       // 补池会被一次被拒的点击永久堵死。真的起跑之后由上面那个 `finally` 负责。
       if (!started) leave();
+    }
+  };
+}
+
+/**
+ * `GET /admin/api/registrar/status` —— 注册机板块的唯一取数端点（设计 §11）。
+ *
+ * **一次存储写都不产生**，读侧是 3 次 `get`（补池历史 + 锁 + 护栏键）加一次共用
+ * isolate 快照的 `repo.all()`。**没有 `list()`**（红线 1）。
+ *
+ * ⚠️ **注册机关着时它照常回 200，不回 409。** 「关着」是这个端点要**报告**的状态，
+ * 不是拒绝它的理由：面板要能显示「注册机：已关闭」，还要能显示关掉之前那些轮次的
+ * 补池历史。这与 `tend` 那条相反的处置是刻意的——那一条会产生真实副作用。
+ *
+ * ⚠️ **没接线时回 `503 not_wired`，与 `tend` 同一条口径。** 补池历史、锁、护栏键
+ * 全都住在 `wiring.storage` 上，没有它这个端点只能编造一份空数据——而「从来没补过池」
+ * 与「这个 app 压根读不到补池记录」在面板上会长得一模一样。生产的两个入口都经
+ * `wire.ts`，走不到这一支。
+ */
+export function registrarStatusHandler(deps: RegistrarDeps) {
+  return async (c: Context) => {
+    const wiring = deps.wiring;
+    if (wiring === null) {
+      return c.json({
+        error: { type: "internal_error", message: "这个部署没有接上注册机的执行体，读不到补池记录" },
+        reason: REASON_NOT_WIRED,
+      }, 503);
+    }
+
+    const now = deps.now();
+    const reg = deps.configHolder.current().registrar;
+
+    /**
+     * 逐块取数，**某块失败就该块返回 `null`**（与 `overviewHandler` 的 `block()` 同一条
+     * 降级纪律）：补池历史读不出来时，「注册机开没开」「还剩几次」不该跟着一起消失。
+     */
+    const block = async <T>(fn: () => Promise<T> | T): Promise<T | null> => {
+      try { return await fn(); } catch { return null; }
+    };
+
+    /**
+     * ⚠️ **两处窄化的结果本身就可能是 `null`（「还没有这把键」），而 `block()` 用
+     * `null` 表示「读失败」——直接混用就是把「今天一次都没点过」与「读不出护栏键」
+     * 渲染成同一句话。** 前者该显示「还剩 24 次」，后者该显示 `—`。
+     * 所以这两块装进一层壳：**壳是 `null` ⇒ 读失败；壳里的值是 `null` ⇒ 真的没有。**
+     */
+    const history = await block(async () => narrowTendHistory(await wiring.storage.get(TEND_HISTORY_KEY)));
+    const lock = await block(async () => ({ v: narrowTendLock(await wiring.storage.get(TEND_LOCK_KEY)) }));
+    const guard = await block(async () => ({ v: narrowManualGuard(await wiring.storage.get(MANUAL_GUARD_KEY)) }));
+    const records = await block(() => deps.repo.all());
+
+    /**
+     * ⚠️ **`counted` 不叫 `available`，这是订正不是重命名洁癖。**
+     *
+     * 设计 §11 那一行写的是 `available`，而 `src/core/registrar/tender.ts` 的
+     * `TendResult.available` 上有一整段警告：判据是 `countsTowardTarget`（`!evicted`），
+     * **被停用的与正在冷却的 key 都算在里面**，而这两种恰恰都不能打上游。
+     * 那段警告逐字点名了「给 Task 4/5 建补池历史板块的人：这一栏**不许按「可用」渲染**」。
+     * 叫它 `available` 就是在把那条警告作废——所以这里叫 `counted`（占名额数），
+     * 并**另外**给一个真正的可用数 `fresh`（`poolHealth` 的那一格，判据是
+     * 「没被停用、没被剔除、不在冷却中」）。两个数字都在，各自的标签各说各的口径。
+     */
+    const counted = records === null ? null : records.filter((r) => countsTowardTarget(r)).length;
+    const fresh = records === null ? null : poolHealth(records, now).fresh;
+
+    return c.json({
+      serverTime: now,
+      enabled: reg.enabled,
+      primary: reg.primary ?? null,
+      fallback: reg.fallback ?? null,
+      /**
+       * 两条通道**各自**的接入状态。顺序在这里没有意义（JSON 对象），
+       * **渲染顺序由面板的 `CHANNELS` 常量定死成字母序**，见那里的理由。
+       *
+       * `configured` 只说「有没有凭据」，不说「哪条更好」——设计 §10.3 第 6 条：
+       * 用数据代替推荐，而「能不能用」是事实，不是偏好。
+       */
+      channels: Object.fromEntries(CHANNELS.map((ch) => [ch, {
+        configured: channelConfigured(reg, ch),
+        /**
+         * 这条通道在**本次配置**里的角色。`null` = 既不是主也不是备。
+         * 面板照实渲染，不做任何加权。
+         */
+        role: reg.primary === ch ? "primary" : (reg.fallback === ch ? "fallback" : null),
+      }])),
+      pool: records === null ? null : {
+        target: reg.targetKeys,
+        counted,
+        /** 缺口 = `tendOnce` 用的那个 `need`，负数夹到 0（池子满了就是 0，不是负几把）。 */
+        gap: Math.max(0, reg.targetKeys - (counted ?? 0)),
+        fresh,
+        /** 面板算「本次最多铸几把」要它：`rounds = min(need, mintBatch)`（`tendOnce`）。 */
+        mintBatch: reg.mintBatch,
+      },
+      /**
+       * 当前持锁方声明的到期时刻。**`null` 有两个含义，面板分不出来也不需要分**：
+       * 没有锁、或者锁已经过期（判据是 `until > now` 这一处值比较，与
+       * `acquireTendLock` 用的是同一条——陈旧的锁拦不住任何人，也不该在面板上
+       * 显示成「正在补池」）。读失败那一支走的是下面的 `undefined ⇒ null`，
+       * 与前两者渲染成同一格 `—`，代价明写在这里。
+       */
+      lockedUntil: lock !== null && lock.v !== null && lock.v.until > now ? lock.v.until : null,
+      /**
+       * 手动补池的名额视图。**只读，一格都不消费**，见 `manualTendQuota()`。
+       * 面板拿 `remaining`/`perDay` 渲染「今天还可以点几次」，拿
+       * `cooldownUntil`（绝对）+ `retryAfterMs`（相对）渲染倒计时。
+       */
+      manual: guard === null ? null : manualTendQuota(guard.v, now),
+      history: history === null ? null : { entries: history.entries, malformed: history.malformed },
+    });
+  };
+}
+
+/**
+ * `POST /admin/api/registrar/channels/:channel/test` —— 通道连通性（设计 §10.3 第 6 条）。
+ *
+ * **两条通道用同一个 handler、同一套返回形状、同一段文案模板**——「完全等权」这件事
+ * 在这里是**结构上的**，不是靠两处代码写得一样来维持的。
+ *
+ * **一次存储写都不产生**；它唯一的副作用是一次**上游 GET**（`listDomains()`），
+ * 不建邮箱、不注册账号、不消耗任何活跃邮箱名额。
+ *
+ * ⚠️ **如实登记：这条端点没有自己的冷却/预算护栏。**
+ * 计划 F6 对「单把 key 验活」立过一条规矩——「一次一发」是一次点击的成本，不是一天的
+ * 上界。同一条推理对本端点成立，本任务**没有**给它上护栏，理由与代价明写：
+ * ① 它打的是**只读**接口，不消耗上游的任何名额，最坏后果是从本网关的出口 IP 对
+ *    邮箱服务发起过量请求；
+ * ② 给它一把存储护栏就要新增写（护栏键是读改写），而配额账把这两条新端点算成
+ *    **零写**，改口径要连着改五语言 DEPLOY.md；
+ * ③ 面板侧在飞期间禁用按钮（`sec-registrar.js`），挡的是手滑连点，**挡不住脚本**。
+ * ⇒ **这是一处已知缺口，不是"已经防住了"**。真要上护栏，该与验活一起做一套共用的。
+ */
+export function channelTestHandler(deps: RegistrarDeps) {
+  return async (c: Context) => {
+    const raw = c.req.param("channel");
+    if (!isChannel(raw)) {
+      return c.json({
+        error: { type: "invalid_request_error", message: "通道只能是 moemail 或 yyds" },
+        reason: REASON_UNKNOWN_CHANNEL,
+      }, 400);
+    }
+
+    const reg = deps.configHolder.current().registrar;
+    if (!reg.enabled) {
+      return c.json({
+        error: { type: "conflict", message: "注册机未启用，两条通道都没有装配，无法测试连通性" },
+        reason: REASON_DISABLED,
+        channel: raw,
+      }, 409);
+    }
+    if (!channelConfigured(reg, raw)) {
+      return c.json({
+        error: { type: "conflict", message: "这条通道在本次部署里没有配好凭据，无法测试连通性" },
+        reason: REASON_CHANNEL_NOT_CONFIGURED,
+        channel: raw,
+      }, 409);
+    }
+
+    const wiring = deps.wiring;
+    if (wiring === null) {
+      return c.json({
+        error: { type: "internal_error", message: "这个部署没有接上注册机的执行体" },
+        reason: REASON_NOT_WIRED,
+        channel: raw,
+      }, 503);
+    }
+
+    // 计时从这里起：**只包住那一次上游调用**，不含上面几条本地判断。
+    const startedAt = deps.now();
+    try {
+      const probe = await wiring.probeChannel(raw);
+      const latencyMs = deps.now() - startedAt;
+      if (!probe.ok) {
+        // 配置在这两步之间被改掉了（注册机被关、或这条通道的凭据被清空）。
+        return c.json({
+          error: { type: "conflict", message: "注册机的配置在这次测试期间被改掉了，本次没有测成" },
+          reason: probe.reason === "registrar_disabled" ? REASON_DISABLED : REASON_CHANNEL_NOT_CONFIGURED,
+          channel: raw,
+        }, 409);
+      }
+      return c.json({ ok: true, channel: raw, domains: probe.domains, latencyMs });
+    } catch (err) {
+      /**
+       * **上游报错不是 HTTP 错误**：`{ ok: false }` + 200。
+       *
+       * 两条理由：① 「测出来不通」正是这颗按钮要回答的问题，把它做成 5xx 会让面板
+       * 的通用错误处理把它当成「面板自己坏了」；② 两条通道必须**同一套返回形状**，
+       * 一条通的、一条不通的时候，两张卡片不该一张走成功分支一张走异常分支。
+       *
+       * ⚠️ **不回显上游的错误文本**：`err.message` 里可能带着请求 URL（含 baseUrl）
+       * 甚至上游原样返回的响应体。面板拿 `reason` 选一句自己的文案，
+       * 详情留在事件里（运维在事件板块看得到，而事件板块是鉴权后的）。
+       */
+      const latencyMs = deps.now() - startedAt;
+      deps.logger.log({
+        level: "warn", event: "registrar.channel_test_failed",
+        msg: "通道连通性测试失败（只调了 listDomains，没有建邮箱也没有注册账号）",
+        fields: { channel: raw, latencyMs, error: err instanceof Error ? err.message : String(err) },
+      });
+      return c.json({ ok: false, channel: raw, reason: "upstream_error", latencyMs });
     }
   };
 }

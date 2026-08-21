@@ -22,6 +22,7 @@ import { StoreLogger } from "../adapters/logger-store.js";
 import { multiLogger } from "../adapters/logger-multi.js";
 import type { Logger } from "../ports/logger.js";
 import { createTendGate, type TendGate } from "./admin/tend-lock.js";
+import type { ChannelProbe } from "./admin/handlers/registrar.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import { WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
 
@@ -151,10 +152,14 @@ export async function buildApp(
     configHolder,
     repo,
     tendGate,
-    // 手动补池的执行体。**只有这里装配得出来**：它要 `env`（`buildTendDeps` 的入参）
+    // 注册机的执行体。**只有这里装配得出来**：三样都要 `env`（`buildTendDeps` 的入参）
     // 与 `storage`，而 `createApp` 两样都没有。直接调 `createApp` 的调用方拿不到这份
-    // 接线，端点会如实回 503 而不是假装 202——见 `manualTendHandler` 的 `wiring`。
-    manualTend: { storage, run: () => runManualTendRound(env, storage) },
+    // 接线，三条端点会如实回 503 而不是假装——见 `RegistrarWiring`。
+    registrar: {
+      storage,
+      tend: (channel) => runManualTendRound(env, storage, channel),
+      probeChannel: (channel) => probeChannel(env, storage, channel),
+    },
     fetcher: new NativeFetcher(),
     now: () => Date.now(),
     storageHealth,
@@ -205,6 +210,19 @@ export async function buildApp(
 async function runManualTendRound(
   env: Record<string, string | undefined>,
   storage: Storage,
+  /**
+   * 只用这一条通道（面板「添加 Key」菜单里【自动注册】那两项，设计 §10.2）。
+   * `null` = 按配置里的主/备通道链跑，与本函数在 Task 5 的行为逐字相同。
+   *
+   * ⚠️ **实现方式是给这一轮换一份 `config`，`src/core/registrar/tender.ts` 一个字都没改。**
+   * `tendOnce` 的通道链就是 `config.fallback ? [primary, fallback] : [primary]`，
+   * 把 `primary` 换成选中的通道、`fallback` 置空，得到的正是「只用这一条」——
+   * 而给核心加一个 `onlyChannel` 参数要在那个函数里多一条分支，那是全仓最热的
+   * 补池路径，本任务不该为一个面板入口去动它。
+   * **代价明写**：`TendResult.primaryChannel` 记的是**这一轮实际用的那条**，
+   * 不是配置里的主通道——补池历史里由 `trigger: "manual"` 那一列把它们分开。
+   */
+  channel: Channel | null,
 ): Promise<void> {
   const tendConsole = new ConsoleLogger();
   const tendStore = new StoreLogger({
@@ -234,9 +252,15 @@ async function runManualTendRound(
     return;
   }
 
+  // 「只用这一条通道」＝换一份 config，理由见上面 `channel` 参数的说明。
+  // **端点已经验过这条通道有凭据**（`channelConfigured`），走到这里 `providers[channel]`
+  // 必然存在；万一配置在这两步之间被改掉，`tendOnce` 会照常记一条 `provider_missing`
+  // 失败——那正是它该做的，不需要在这里再判一次。
+  const config = channel === null ? deps.config : { ...deps.config, primary: channel, fallback: null };
+
   const roundStartedAt = Date.now();
   try {
-    const r = await tendOnce({ ...deps, roundBudgetMs: WORKER_ROUND_BUDGET_MS });
+    const r = await tendOnce({ ...deps, config, roundBudgetMs: WORKER_ROUND_BUDGET_MS });
     // `trigger: "manual"` —— 补池历史里这一行必须能与 Cron 那些区分开，
     // 否则运维看到池子突然多了两把 key 时分不清是自动补的还是有人点的。
     await deps.recordRound(r, "manual");
@@ -269,12 +293,46 @@ async function runManualTendRound(
       fields: { error: err instanceof Error ? err.message : String(err) },
     });
     await deps.recordCrashedRound({
-      at: roundStartedAt, channel: deps.config.primary ?? "",
+      // **崩掉的那一轮记的也是「这一轮实际用的通道」**，与上面 `config` 同一份，
+      // 不是配置里的主通道——否则一次「只用 MoeMail」崩掉之后，补池历史上那一行
+      // 会指着 YYDS 说它崩了。
+      at: roundStartedAt, channel: config.primary ?? "",
       durationMs: Date.now() - roundStartedAt, trigger: "manual",
     });
   } finally {
     await deps.flush();
   }
+}
+
+/**
+ * 探一条通道的连通性（`POST /admin/api/registrar/channels/:channel/test` 的执行体）。
+ *
+ * **只调 `listDomains()`**：不建邮箱、不注册账号、不消耗任何活跃邮箱名额，
+ * 也**一次存储写都不产生**（`buildTendDeps` 里那次 `loadConfig` 是读）。
+ *
+ * ⚠️ **provider 走 `buildTendDeps` 拿，不在这里另建一个**。另建的那份要自己重解一遍
+ * 凭据、自己传一遍 `sleep`/`now`/`logger`——于是这颗按钮测的就是**抄件**，而运维点它
+ * 正是为了确认**原件**（真正补池时用的那个 provider）连不连得上。本仓已经为
+ * 「测的是抄件不是原件」栽过好几次，这里不再造第二份。
+ * 代价：多解析一次配置（1 次存储读）与几个用不到的对象（`KeyPoolRepo` 不发起任何 IO
+ * 直到被调用）。一次人工点击付得起。
+ *
+ * 上游报错**原样抛出**，由 `channelTestHandler` 接住转成 `{ ok: false }` 并记事件——
+ * 这里不吞、也不翻译，翻译发生在唯一知道要给面板什么形状的那一层。
+ */
+async function probeChannel(
+  env: Record<string, string | undefined>,
+  storage: Storage,
+  channel: Channel,
+): Promise<ChannelProbe> {
+  // 这条路只读不写，**不接 `StoreLogger`**：一次连通性测试不该在事件板块里刷屏，
+  // 而真正值得留痕的那一条（测试失败）由 handler 用 app 的 sink 打（那条带 `channel`
+  // 与耗时，比这里的适配器内部日志更贴近运维要看的东西）。
+  const deps = await buildTendDeps(env, storage);
+  if (deps === null) return { ok: false, reason: "registrar_disabled" };
+  const provider = deps.providers[channel];
+  if (provider === undefined) return { ok: false, reason: "provider_missing" };
+  return { ok: true, domains: (await provider.listDomains()).length };
 }
 
 /**
@@ -386,7 +444,9 @@ export async function buildTendDeps(
       now, logger,
       // **补池必须看当前真实的可用数**：读一份最多一个 TTL 前的快照会把缺口算错，
       // 别的实例（或面板）刚加进去的 key 还没进本进程的快照 ⇒ 重复补池 ⇒ 白烧邮箱
-      // 配额（YYDS 15 个 / MoeMail 30 个上限），而每一次补池都是一次真实的 Agnes
+      // 配额（两条通道各自的活跃邮箱上限，数字与出处见
+      // `src/adapters/mailbox-yyds.ts` 与 `src/adapters/mailbox-moemail.ts` 的文件头，
+      // 这里不复述——它们都不是常数），而每一次补池都是一次真实的 Agnes
       // 建号，同时撞注册风控与建号限流。它每 30 分钟才跑一次，多付 1+N 次读完全
       // 不是问题。
       //

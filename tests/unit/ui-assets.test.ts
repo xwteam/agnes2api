@@ -137,6 +137,13 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // Task 5（P3b）新增：概览板块的取值决策，同一条硬规则、同一份理由，
       // 由 tests/ui/overview.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/overview.mjs",
+      // Task 6（P3c）新增：注册机板块的取值决策（通道顺序与两条通道的标签/事实键、
+      // 失败归因与拒绝原因的穷尽映射、补池历史的倒序与逐行归因、确认弹窗要明示的
+      // 消耗、名额与冷却的成对时间字段）。同一条硬规则、同一份理由，由
+      // tests/ui/registrar.test.ts 跑着。**逐条确认过：纯函数、无配置、无数据**
+      // ——它一个字节的部署信息都不带（通道名 `moemail`/`yyds` 是本仓写死的两个
+      // 枚举值，不是这套部署配了什么），公开可取没有问题。
+      "/admin/js/pure/registrar.mjs",
       // Task 7（P3b）新增：会话绝对上限的判定（`sessionExpired`）。计划原本把它
       // 归给人工冒烟（理由是「碰 localStorage 与 Date」），执行时订正：把两个时刻
       // 都变成参数之后判定是纯函数，于是照硬规则 1 落在这里，由
@@ -155,6 +162,10 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       "/admin/js/sec-events.js",
       "/admin/js/sec-keys.js",
       "/admin/js/sec-overview.js",
+      // Task 6（P3c）新增：注册机板块本体（DOM 拼装 + 三条端点的网络调用）。
+      // 与其余三个板块文件同一性质：**没有任何机密**，它拿到的每一个数字都来自
+      // 一次鉴权后的接口调用，文件自身只有结构与 i18n 键。
+      "/admin/js/sec-registrar.js",
       "/admin/js/theme.js",
       "/admin/js/ui.js",
     ]);

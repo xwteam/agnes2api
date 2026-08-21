@@ -770,8 +770,13 @@ describe("M6：本地时区偏移只有一份实现（admin-ui/js/pure/overview.
     ).toEqual([]);
   });
 
-  it("三个板块文件都从 pure/overview.mjs import offsetMs（反向自检：单一真源真的被用到了）", () => {
-    for (const f of ["admin-ui/js/sec-keys.js", "admin-ui/js/sec-overview.js", "admin-ui/js/sec-events.js"]) {
+  it("四个板块文件都从 pure/overview.mjs import offsetMs（反向自检：单一真源真的被用到了）", () => {
+    // P3c Task 6 加了第四个板块（注册机），它同样要渲染服务端时刻（补池历史的
+    // 时间列、冷却到期、名额重置）。**清单手写**：新板块忘了列进来时这一格不会红，
+    // 但上面那条「getTimezoneOffset 只在 pure/overview.mjs 里出现一次」会——
+    // 两条合起来才既挡住"另写一份"、又挡住"这份没被用到"。
+    for (const f of ["admin-ui/js/sec-keys.js", "admin-ui/js/sec-overview.js",
+      "admin-ui/js/sec-events.js", "admin-ui/js/sec-registrar.js"]) {
       const src = readFileSync(f, "utf8");
       const m = /import\s*\{([^}]*)\}\s*from\s*"\.\/pure\/overview\.mjs"/.exec(src);
       expect(m, `${f} 没有从 pure/overview.mjs import`).not.toBeNull();
@@ -862,11 +867,23 @@ describe("裁定：添加 Key 分组下拉——容器与两组平级结构现�
   });
 
   /**
-   * **【自动注册】两项现在必须是禁用的占位符**——Task 6 才接线到注册机端点。
-   * 禁用不是"藏起来"：运维现在就能看到这两条通道的存在与名字（设计 §10.3
-   * "两条邮箱通道完全平级"这条约束的结构性表达），只是还点不动。
+   * ⚠️⚠️ **这一格在 P3c Task 6 换了守的东西，如实登记换的是什么。**
+   *
+   * Task 4 时它守的是「两项是**禁用的占位符**，点了不会发请求」——那是当时的
+   * 正确形态（后端那条端点还没有 `channel` 参数）。Task 6 把两项真的接上了，
+   * 那条断言随之失效。**换掉它的时候不许让它退化成一格什么都不验的形状**，
+   * 所以现在守的是接上之后仍然必须成立的那两件事：
+   * ① **两项在结构上完全平级**——除了通道名与那一条 i18n 键，属性形状逐字相同
+   *   （设计 §10.3「两条邮箱通道完全平级」的结构性表达）；
+   * ② **点下去不会直接发起补池**——它必须先弹确认弹窗（设计 §10.2 第 3 条护栏：
+   *   确认弹窗必须明示消耗）。这一条与 Task 4 那条断言的观测点其实是同一个
+   *   （「点完之后有没有发出请求」），只是理由从"还没接线"换成了"要先确认"。
+   *
+   * 「确认之后真的按那条通道发起」由 `tests/ui/dom/registrar-section.test.ts` 的
+   * 「点【自动注册】里的一项：先弹同一个确认弹窗（明示消耗），确认后按那条通道发起」
+   * 守着——那一格才是接线的正面证明，这一格是它的补集（点了但没确认时的行为）。
    */
-  it("自动注册两项现在是禁用占位符，不会真的发起任何请求", async () => {
+  it("自动注册两项结构上完全平级，且点下去先弹确认、不直接发起补池", async () => {
     const h = await openKeys((url) => (url.startsWith("/admin/api/keys?")
       ? { status: 200, body: listBody([]) }
       : { status: 200, body: {} }));
@@ -875,14 +892,28 @@ describe("裁定：添加 Key 分组下拉——容器与两组平级结构现�
 
     const moemail = section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.addMenu.autoMoemail")!;
     const yyds = section.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "keys.addMenu.autoYyds")!;
-    expect(moemail.disabled, "MoeMail 通道应该是禁用的占位符").toBe(true);
-    expect(yyds.disabled, "YYDS 通道应该是禁用的占位符").toBe(true);
 
-    const before = h.calls.length;
-    moemail.click();
+    // ① 平级：**属性名集合逐字相同**，两者都不许被禁用。只断言「都没被禁用」
+    // 拦不住「一边多挂了个 title 说它更省事」这类不对称。
+    const attrsOf = (b: FakeElement) => [...b.attrs.keys()].sort();
+    expect(attrsOf(moemail), "两项的属性形状不一样了 —— 任何结构差异都会被读成排名")
+      .toEqual(attrsOf(yyds));
+    expect([moemail.disabled, yyds.disabled], "两项里有一项被禁用了").toEqual([false, false]);
+    expect(moemail.getAttribute("data-channel")).toBe("moemail");
+    expect(yyds.getAttribute("data-channel")).toBe("yyds");
+
+    // ② 点下去先弹确认，**没确认之前一次补池请求都不许发出去**。
+    const tendCallsBefore = h.calls.filter((c) => c.url === "/admin/api/registrar/tend").length;
     yyds.click();
     await settle();
-    expect(h.calls.length, "点了占位符却真的发出了请求").toBe(before);
+    expect(
+      h.dom.document.body.textContent,
+      "点了却没有弹确认 —— 那绕过了「确认弹窗必须明示消耗」这条护栏",
+    ).toContain(I18N["reg.tend.confirmTitle"]!["zh-CN"]!);
+    expect(
+      h.calls.filter((c) => c.url === "/admin/api/registrar/tend").length,
+      "没点确认就已经发起了一轮真实补池",
+    ).toBe(tendCallsBefore);
   });
 
   it("手动组「粘贴单个 Key」与「批量导入」都能打开同一个导入弹窗", async () => {
@@ -1203,52 +1234,5 @@ describe("复评强烈建议⑤：批量请求本身失败（catch 分支）同�
       setTimeoutCalls,
       "catch 分支的 sticky toast 不该排一个 4000ms 的自动移除计时器",
     ).not.toContain(4000);
-  });
-});
-
-// ───────────────────────────────────────────────────────────────────────────
-// 建议（评审）：结构性测试防住"把 pure 判据复制回板块文件"这个方向
-// ───────────────────────────────────────────────────────────────────────────
-
-/**
- * ⚠️⚠️ **这一组是评审探针实测出来的方向性缺口**：`admin-ui/README.md` 硬规则 1
- * 今天只有 `scripts/build-ui.mjs` 守住"`pure/*.mjs` 里不许出现 `import`/
- * `document`/`window`"这一个方向——它拦得住"pure 模块自己违规"，拦不住
- * "把 pure 模块已经导出的判据原样抄一份回板块文件、pure 里的那份留成死代码"。
- * 评审实测：`pure/keys-write.mjs` 新增的全部函数抄回 `sec-keys.js`，138/138
- * 全绿。这里补一条 M6 同款的结构性扫描：**任何 `admin-ui/js/sec-*.js` 文件里
- * 都不许出现与 `pure/keys-write.mjs` 已导出函数同名的 `function` 声明**——
- * 抄一份回去就是在板块文件里重新声明那个名字，这条扫描抓的就是这个动作本身，
- * 不关心抄回去的实现对不对。
- */
-describe("建议：sec-*.js 不许重新声明 pure/keys-write.mjs 已导出的函数名", () => {
-  function exportedFunctionNames(pureFile: string): string[] {
-    const src = readFileSync(pureFile, "utf8");
-    return [...src.matchAll(/^export function (\w+)\(/gm)].map((m) => m[1]!);
-  }
-
-  function walkJs(dir: string): string[] {
-    return readdirSync(dir).sort().flatMap((n) => {
-      const p = join(dir, n);
-      return statSync(p).isDirectory() ? walkJs(p) : /^sec-.*\.js$/.test(n) ? [p] : [];
-    });
-  }
-
-  it("keys-write.mjs 导出的函数名一个都不能在 sec-*.js 里被重新声明", () => {
-    const names = exportedFunctionNames("admin-ui/js/pure/keys-write.mjs");
-    expect(names.length, "反向自检：扫描本身得先找到点什么，否则下面的循环恒绿").toBeGreaterThan(5);
-
-    const offenders: string[] = [];
-    for (const p of walkJs("admin-ui/js")) {
-      const rel = p.split("\\").join("/");
-      const src = readFileSync(p, "utf8");
-      for (const name of names) {
-        if (new RegExp(`\\bfunction\\s+${name}\\s*\\(`).test(src)) offenders.push(`${rel}: ${name}`);
-      }
-    }
-    expect(
-      offenders,
-      "pure/keys-write.mjs 里已经导出的判据被复制回了板块文件——硬规则 1 只守「pure 自己别违规」这一个方向，守不住「抄回板块文件、pure 里留死代码」这个方向，这条扫描就是补那一半",
-    ).toEqual([]);
   });
 });

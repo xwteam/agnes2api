@@ -13,7 +13,7 @@ import type { RuntimeInfo } from "../../src/ports/runtime.js";
 import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 import { StoreLogger } from "../../src/adapters/logger-store.js";
 import { multiLogger } from "../../src/adapters/logger-multi.js";
-import type { ManualTendWiring } from "../../src/http/admin/handlers/registrar.js";
+import type { RegistrarWiring } from "../../src/http/admin/handlers/registrar.js";
 import type { TendGate } from "../../src/http/admin/tend-lock.js";
 
 /**
@@ -69,15 +69,15 @@ export interface MakeAppOptions {
    */
   realConfigHolder?: boolean;
   /**
-   * 手动补池的接线（P3c Task 5）。**默认不传 ⇒ `createApp` 收到 `undefined`**，
-   * 端点在注册机确实开着时会如实回 `503 not_wired`。
+   * 注册机的接线（P3c Task 5 建，Task 6 扩到三样成套）。
+   * **默认不传 ⇒ `createApp` 收到 `undefined`**，三条端点会如实回 `503 not_wired`。
    *
    * 需要真的验四条护栏的用例传一个可控的执行体进来（例如一个手动 resolve 的
    * promise，好让「上一轮还在跑」这个状态**在断言的那一刻真的成立**）。
-   * **`storage` 必须与用例自己观测的那一个是同一个实例**——护栏键与补池锁都写在它上面，
-   * 另给一份就是「测的是抄件不是原件」。
+   * **`storage` 必须与用例自己观测的那一个是同一个实例**——护栏键、补池锁与补池历史
+   * 都写在它上面，另给一份就是「测的是抄件不是原件」。
    */
-  manualTend?: ManualTendWiring;
+  registrar?: RegistrarWiring;
   /**
    * 补池在途守卫。默认让 `createApp` 自己建一把（每个 app 一把，与 Worker 的
    * `fetch` isolate 形态一致）。两个 app 要共用同一把（模拟 Node 单进程里
@@ -167,7 +167,7 @@ export async function makeApp(
     storeLogger,
     // 两者都原样透传（含 `undefined`）：`createApp` 自己有兜底，而在这里替它兜底
     // 会让「没接执行体」这个真实形态在夹具里不可达。
-    manualTend: options.manualTend,
+    registrar: options.registrar,
     tendGate: options.tendGate,
   });
   return { app, fetcher, repo, storageHealth, logger: recording, storage, storeLogger };
