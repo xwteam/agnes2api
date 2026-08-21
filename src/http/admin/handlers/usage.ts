@@ -22,9 +22,17 @@ import {
  *
  * ⚠️ **整块可空，而不是「存储恒在 + 一个 enabled 布尔」**（全局约束 16）：
  * 关闭时读路径**在结构上不存在**，不是一个 `if` 挡着。一个「反正 enabled 是 false」
- * 的读路径迟早会被某次改动接上。代价明写：**「关着时不读存储」这条性质因此
- * 不是一行可以被变异掉的代码** —— 要证伪它得先把这个接线本身改成两格，
- * 本任务的变异表照实记了这件事（M1）。
+ * 的读路径迟早会被某次改动接上。
+ *
+ * ⚠️ **代价明写，并且是实测过的**（本任务变异 M1b，**装置一并记下否则复现不出来**）：
+ * 「关着时不读存储」这条性质**不是一行可以被变异掉的代码**——要证伪它得先把接线
+ * 本身改回「存储恒在」。实测那一次动了 **7 处**（给 `StoreLogger` 加一个 `storage`
+ * getter、`createApp` 把它当 `usageProbe` 传下来、`AdminRouterDeps` 多一格、
+ * `usageHandler` 多一个 `probe` 参数、off 分支里加一次 `readShards`），
+ * 之后 `tests/contract/admin-usage.test.ts` 的
+ * 「① 统计没开：tier 是 off，days 与 pending 都是 null，而且一次存储读都没有」
+ * 那一格**当场变红**。⇒ 那条断言有牙，只是牙咬的是「谁把接线改回两格」，
+ * 不是「谁在 handler 里写错了一个 `if`」。
  */
 export interface UsageWiring {
   storage: Storage;
@@ -425,11 +433,23 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
  *
  * ⚠️ **`hours` / `byModel` / `byProtocol` 原样交出去，一个都不重建**：
  * 它们是 `mergeDayShards` 交出来的**无原型对象**，键来自客户端填的模型名
- * （`__proto__` / `toString` / `constructor` 都造得出来）。往普通 `{}` 里搬一遍
- * 会让 `__proto__` 那一条**彻底消失**、`toString` 那一格**变成一堆 `NaN`**。
+ * （`__proto__` / `toString` / `constructor` 都造得出来）。
+ *
+ * ⚠️⚠️ **「往普通 `{}` 里搬一遍就会坏」这句话只对一半，两种写法要分开说**
+ * （本任务变异实测，**别把它简写成一句**）：
+ * · **逐键赋值**（`for (const k of Object.keys(m)) out[k] = m[k]`，`out = {}`）
+ *   ⇒ `out["__proto__"] = 桶` 命中 `Object.prototype` 上那个**访问器**，
+ *   改的是原型而不是加一个键 ⇒ **那一条彻底消失**。实测：变异 M10' 让下面那一格变红；
+ * · **展开**（`{ ...m }`）⇒ **不会坏**。展开走的是 `CreateDataPropertyOrThrow`，
+ *   绕过访问器，四个键一个不少。实测：变异 M10（把三处都改成 `{ ...m }`）
+ *   **51 格全绿、完整逃逸**。
+ * ⇒ **写「搬一遍就坏」是一句会被人一试就证伪的话**，而代价是他从此不信这一整段。
+ * 这里仍然选「一个都不重建」：两种写法里只有一种是安全的，而记住「哪一种」
+ * 比记住「都别搬」贵，且下一个人多半只会记住结论、记不住条件。
+ *
  * 由 `tests/contract/admin-usage.test.ts` 的
  * 「模型名叫 __proto__ / toString / hasOwnProperty / constructor 时，四条都原样出现在响应里」
- * 钉着。
+ * 钉着——**它钉得住逐键赋值那一种，钉不住展开那一种**（后者本来就不是缺陷）。
  *
  * ⚠️ **缺席的小时不是「读不出来」**：`hours` 只含有过流量的那些小时。
  * 「这一天读成功了没有」由 `hours` **整块**是不是 `null` 承担，

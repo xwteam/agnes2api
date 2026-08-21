@@ -130,8 +130,11 @@ export const USAGE_SLOTS = 2;
  * ⚠️⚠️ **控制端已就此裁定（计划 §配额账「U-H 的裁定」）：这个 30 保留，
  * 但在 P3e 的双形态真机验收把 U-H 了结之前，任何注释或文档都不许写成「60 次是安全的」。**
  * 上面那句「占 6%」只是两种读法之一，**不是结论**。
- * 实际影响：`30d` 那一档在 Worker 上可能与 Node 表现不同 ⇒ **Task 4 必须让它失败得诚实**
- * ——读不出来按全局约束 9 显示 `—`，**不许 500、更不许把半份数据当成全份**，且要有用例钉着。
+ * 实际影响：`30d` 那一档在 Worker 上可能与 Node 表现不同 ⇒ **Task 4 让它失败得诚实**
+ * ——读不出来按全局约束 9 显示 `—`，**不许 500、更不许把半份数据当成全份**。
+ * 那一格是 `tests/contract/admin-usage.test.ts` 的
+ * 「读 30 天时第 47 次 get 抛错：整条仍然是 200，days 是 null，绝不把读到的那 46 个当成全份」
+ * ——**它验的是「失败得诚实」，一个字都没验「60 次会不会超」**，那仍然是 P3e 真机的事。
  *
  * ⚠️ **不许拿事件板块的 48 次冷读当佐证**（那个 48 在 `docs/zh-CN/DEPLOY.md:159`，
  * 「每点一次筛选就是一次满额冷读」在 `docs/zh-CN/DEPLOY.md:172`——**两行合起来才是那句话**，
@@ -302,7 +305,12 @@ export const USAGE_MODEL_KEY_MAX_LEN = 64;
  */
 export const USAGE_MODEL_MAX_KEYS = 32;
 
-/** 超出 `USAGE_MODEL_MAX_KEYS` 之后的模型都并进这一格。Task 4 要把它渲染成「其它」。 */
+/**
+ * 超出 `USAGE_MODEL_MAX_KEYS` 之后的模型都并进这一格。
+ * **渲染成「其它」是面板的事（P3d Task 5），不是端点的事**——Task 4 的
+ * `GET /admin/api/usage/:date` 把 `byModel` 原样交出去，这个键在里面就是一个普通的键
+ *（上一版这里写的是「Task 4 要把它渲染成『其它』」，那句话点错了任务）。
+ */
 export const USAGE_OTHER_KEY = "__other__";
 
 /**
@@ -498,9 +506,19 @@ function addBuckets(a: UsageBucket, b: UsageBucket): UsageBucket {
  * `k in m` 或 `Object.keys(m)`。
  * 它们之所以必须无原型，见 `mergeDayShards` 函数体里那段（键来自客户端填的模型名，
  * 普通 `{}` 上 `__proto__` / `toString` 会静默坏掉）。
- * ⚠️ **这条契约今天没有任何机器守着** —— 消费者（Task 4 的用量端点与面板板块）
- * 还不存在，所以既没有类型上的区分（`Record<string, UsageBucket>` 对两者一视同仁），
- * 也没有一格用例。**它只能靠评审，别把这句话读成「有护栏」。**
+ * ⚠️ **这条契约现在有一格守着了，但护栏只盖住其中一半，两半要分开记**
+ * （P3d Task 4 落地时实测；在那之前这里写的是「今天没有任何机器守着」，
+ * 因为消费者还不存在）。类型上仍然没有区分（`Record<string, UsageBucket>`
+ * 对有原型和无原型一视同仁），护栏是行为上的那一条：
+ * `tests/contract/admin-usage.test.ts` 的
+ * 「模型名叫 __proto__ / toString / hasOwnProperty / constructor 时，四条都原样出现在响应里」。
+ * · **调 `Object.prototype` 的方法** ⇒ `TypeError` ⇒ 端点 500 ⇒ 那一格红（实测）；
+ * · **逐键赋值搬进普通 `{}`**（`out[k] = m[k]`）⇒ `__proto__` 那条消失 ⇒ 那一格红（实测）；
+ * · **用展开搬（`{ ...m }`）** ⇒ **不会坏，那一格也不会红**——展开走
+ *   `CreateDataPropertyOrThrow`，绕过 `Object.prototype.__proto__` 那个访问器
+ *   （实测：三处全改成展开之后，那个文件 51 格全绿）。**那不是漏网，是那个写法
+ *   本来就不是缺陷**；写在这里免得下一个人拿它当反例去证明那一格没用。
+ * ⇒ **别把这段读成「无原型这件事已经被类型系统或某道门禁保证了」**，它没有。
  *
  * ⚠️ **`hours` 是跨天求和的，调用方必须传单日区间**（评审 M-5，这是一条契约不是实现细节）：
  * 这个函数把每一个分片的 `hours` 无差别地加在一起，所以多日区间下 `hours["13"]`

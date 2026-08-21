@@ -70,8 +70,11 @@ export function capabilitiesHandler(deps: {
          * 不是「这条协议有没有 usage」。
          *
          * ⚠️ **形状是裸 `string[]`（协议 id 的数组），只从这一个出口发。**
-         * `GET /admin/api/usage` **不再重复带它**——同一份知识两个出口，
-         * 下一个任务就要面对「读哪一个」这个不该存在的问题。
+         * `GET /admin/api/usage` **不带它**——同一份知识两个出口，前端就要面对
+         * 「读哪一个」这个不该存在的问题。P3d Task 4 落地之后这句话有护栏了：
+         * `tests/contract/admin-usage.test.ts` 的
+         * 「用量端点不带 tokensCoverage —— 同一份知识只许有一个出口」
+         * 双向钉着（两条用量端点都不许带，而这一个出口必须真的有）。
          */
         tokensCoverage: PROTOCOLS.filter((p) => p.usagePath !== null).map((p) => p.id),
       },

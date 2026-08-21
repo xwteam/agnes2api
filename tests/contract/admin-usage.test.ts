@@ -263,10 +263,15 @@ describe("GET /admin/api/usage 的查询参数契约", () => {
    * 发的是 `{from,to,days}` 三个字段、单位没说、谁夹逼也没说：两边各说各的，
    * 前端发错参数名也照样绿。
    *
-   * ⚠️ **`1e24` 那一格是最要紧的一格**：`Number.isInteger(1e24)` 是 **true**，
+   * ⚠️ **`1e24` 那两格是最要紧的**：`Number.isInteger(1e24)` 是 **true**，
    * 而 `usageDayIndex(1e24)` 已远超 `2**53`，在那个量级上 `d + 1 === d` 可能成立
    * （`src/core/admin/usage-stats.ts` 的 `usageCandidateKeys` 上方那张四行实测表）。
-   * 判据写成 `Number.isInteger` 的实现在这一格会漏过去。
+   *
+   * ⚠️⚠️ **两格里只有 `to=1e24` 那一格真的在验 `Number.isSafeInteger`，这条差别
+   * 必须写下来**（本任务变异 M7 实测：把判据换成 `Number.isInteger` 之后，
+   * **只有 `to 超出安全整数` 那一格变红**，`from 超出安全整数` 那一格照绿）——
+   * 后者被 `from > to` 那道判据先接住了（`to` 缺省是 `now`，而 `1e24 > now`）。
+   * ⇒ **别把 `from=1e24` 那一格当成这条性质的证据**，它证明的是另一件事。
    */
   it.each([
     ["from 不是数字", "?from=abc"],
@@ -534,6 +539,13 @@ describe("六种状态在响应字段上分得开", () => {
    *
    * ⚠️ **比对的是「面板真正会拿去分支的那几格」**，不是整份响应体：
    * `generatedAt` 之类的字段天然各不相同，拿整份去比会让这一格恒绿。
+   *
+   * ⚠️⚠️ **它守的是「两两不同」，不是任何一种状态自己的形状 —— 这条边界是实测出来的，
+   * 别把它读成「这一格兜住了六种状态的全部性质」**（本任务变异 M8：把
+   * `parseRange` 里那道时钟有限性闸删掉）：删掉之后 `nowMs = NaN` 会一路算出
+   * `range: { from: null, to: null, clamped: true }` + `days: []` + `note: "range_clamped"`
+   * ——**那仍然是一份与另外五种都不同的签名，所以这一格照绿**，
+   * 红的是上面那格「⑤ 时钟给不出有限数字……」。**两格各守一半，缺一不可。**
    */
   it("六种状态两两不同 —— 面板不用猜，也不该猜", async () => {
     const probe = async (): Promise<Array<{ name: string; sig: string }>> => {
@@ -749,11 +761,16 @@ describe("GET /admin/api/usage/:date（单日下钻）", () => {
    * **没有任何机器守着**（该函数上方原话：「消费者还不存在，所以既没有类型上的区分，
    * 也没有一格用例」）。
    *
-   * 两个方向都由这一格接住：
+   * 两个方向都由这一格接住，**而第二个方向只对一半，写清楚**（本任务变异实测）：
    * · handler 在那三个 map 上调 `Object.prototype` 的方法（`.hasOwnProperty(k)` /
-   *   `.toString()`）⇒ **直接 `TypeError`** ⇒ 这条端点 500，本格红；
-   * · handler 把它们往普通 `{}` 里搬一遍 ⇒ `__proto__` 那一条**彻底消失**、
-   *   `toString` 那一格摸到 `Function.prototype.toString` 而变成一堆 `NaN`，本格同样红。
+   *   `.toString()`）⇒ **直接 `TypeError`** ⇒ 这条端点 500，本格红（变异 M11：6 格红）；
+   * · handler **逐键赋值**搬进普通 `{}`（`out[k] = m[k]`）⇒ `__proto__` 那一条
+   *   **彻底消失**，本格红（变异 M10'：1 格红，就是本格）。
+   * ⚠️ **但用展开搬（`{ ...m }`）不会坏，本格也抓不住**——展开走
+   *   `CreateDataPropertyOrThrow`，绕过 `Object.prototype.__proto__` 那个访问器，
+   *   四个键一个不少（变异 M10 实测：**51 格全绿，完整逃逸**）。
+   *   那不是漏网，是**那个写法本来就不是缺陷**；记在这里免得下一个人拿它当反例
+   *   去证明这一格没用。
    *
    * ⚠️ **夹具必须经 `JSON.parse` 造**：`{ "__proto__": x }` 写成对象字面量时
    * JS 去改的是原型而不是加键，那样这一格根本摆不出想验的那个状态。

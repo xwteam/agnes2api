@@ -373,6 +373,16 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 同一个坑在本文件里这是第四处（`bulk` vs `:id`、`channels/:c/test` vs `tend`、
   // `keys/:id/usage`），措辞刻意一致。
   //
+  // ⚠️ **「被静态兜底吃掉」这个方向，今天唯一的护栏是 `tests/contract/admin-usage.test.ts`
+  // 整个文件，这是实测出来的、不是推出来的**（本任务变异 M6：把这三条一并挪到
+  // 下面 `admin.route("/", uiRoutes())` 之后）：
+  // · `tests/contract/admin-usage.test.ts` ⇒ **49 格红**（三条端点全变 404）；
+  // · `tests/contract/ui-serve.test.ts` ⇒ **17 格全绿**——它探的是
+  //   `/admin/api/session` 那一条，与这三条的注册位置无关；
+  // · `tests/contract/admin-auth.test.ts` ⇒ **68 格全绿**——鉴权矩阵那一格只断言
+  //   「拿对口令时不该被判 401」，而被兜底吃掉之后拿到的是 **404，照过**。
+  // 与 `GET /admin/api/models` 上方那段记的是同一个形态、同一个结论。
+  //
   // **两条都无条件注册，不看 Tier-2 开没开**：路由表随运行时配置变化的话，
   // `tests/contract/admin-auth.test.ts` 的枚举式鉴权矩阵会因为默认夹具恰好关着
   // Tier-2 而让这两条**静默地从整个矩阵里消失**。「Tier-2 没开」是响应体里的
