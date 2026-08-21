@@ -36,8 +36,11 @@ describe("GET /admin/api/models", () => {
    *
    * 单测那一格（`tests/unit/admin/protocol-catalog.test.ts`
    * 「过网络那一份不含函数」）用 `JSON.parse(JSON.stringify(...))` 模拟这条路，
-   * **这一格走的是真序列化 + 真 HTTP 响应**——两者不是一件事：
-   * `catalogPayload()` 对了而 handler 用 `c.json(PROTOCOLS)` 的话，只有这一格会红。
+   * **这一格走的是真序列化 + 真 HTTP 响应**——两者不是一件事。
+   * 实测（评审 Minor 1 订正）：把 handler 改成 `c.json(PROTOCOLS)` ⇒
+   * **单测那一格照绿，红的是本文件这一带的两格**
+   *（「把协议目录整份交出去」+ 本格）。
+   * ⇒ 我原来写的「只有这一格会红」实测为假：红的是两格，不是一格。
    */
   it("响应体里 sample 不存在、sampleBody 是真的请求体 —— 函数过不了网络", async () => {
     const { app } = await makeApp();

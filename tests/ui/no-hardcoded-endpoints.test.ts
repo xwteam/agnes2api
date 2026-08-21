@@ -15,6 +15,23 @@ import { join } from "node:path";
  *
  * 形态照抄 `tests/ui/storage-keys.test.ts:52` 那一格——它扫的就是 `["'\`]` 三种引号，
  * 已经证明这种扫描在本仓能落地。
+ *
+ * ── **它抓得住什么、抓不住什么：边界写成两张会红的表，不是散文（评审 Important 2）** ──
+ *
+ * 判据是「**扫字符串字面量**」，所以它天生只看得见「整条路径写在一对引号里」的形态。
+ * 下面 `COVERED` 与 `BLIND_SPOTS` 两张表把这条边界变成可执行的
+ *（形态照抄 `tests/unit/source-guards.test.ts`「已知抓不住的写法确实抓不住（边界是断言，不是散文）」）。
+ *
+ * **`BLIND_SPOTS` 今天只有一条：字符串拼接**（`"/v1" + "/messages"`）。
+ * 抓它需要把判据放宽成「连 `"/v1"` 这个裸前缀也算」，**而那条判据实测有 2 处误报**：
+ * `admin-ui/js/api.js:15` 与 `:20` 的注释里各有一个 `` `/v1` `` 行内代码——**是散文，不是端点知识**。
+ * 那是一种**系统性**误报（以后任何一段提到 `/v1` 的注释都会踩），
+ * 而为它开 `ALLOW` 口子正是本文件下面那段告诫要防的事。
+ * ⇒ **不收窄到那一步，登记成盲点。** 拼接形态仍然只能靠评审 +
+ * Task 7 / Task 10 各自检查单上那句「端点只许来自 /admin/api/models」。
+ *
+ * ⚠️ **别把这份文件读成「前端从此不可能硬编码端点」。** 它挡住的是**顺手写下一条路径**，
+ * 不是**刻意绕开**。
  */
 function walk(dir: string): string[] {
   return readdirSync(dir).sort().flatMap((n) => {
@@ -26,7 +43,13 @@ function walk(dir: string): string[] {
 // ⚠️ **`(?:beta)?` 不是 `beta?`。** 后者的 `?` 只管 `a` ⇒ 它匹配 `/v1beta/` 与 `/v1bet/`，
 // **不匹配 `/v1/`** —— 而本仓五条对外端点里有四条是 `/v1/...`，包括下面反向自检用的
 // 那个探针。这个错在本计划里被重放过三次，第三次才改对。
-const ENDPOINT_RE = /["'`](\/v1(?:beta)?\/[A-Za-z0-9_{}:/.-]*)["'`]/g;
+//
+// ⚠️ **字符类里的 `$` `?` `=` 是评审 Important 2 之后补的，每一个都堵着一条实测逃逸**：
+// 补之前 `` `/v1beta/models/${m}:generateContent` ``（`$` 断在类外）与
+// `"/v1/chat/completions?stream=1"`（`?`/`=` 断在类外）**两种写法都逃得掉**。
+// 前一条最要命：**Task 10 的 Playground 拼 Gemini URL 时最自然的写法就是它**
+// ——护栏原来在它最该守的那个消费者身上有洞。两条的变红实测见下面 COVERED 那一格。
+const ENDPOINT_RE = /["'`](\/v1(?:beta)?\/[A-Za-z0-9_{}$?=:/.-]*)["'`]/g;
 
 /**
  * 豁免名单。**今天是空的，故意留着这个常量而不是删掉**：
@@ -36,6 +59,43 @@ const ENDPOINT_RE = /["'`](\/v1(?:beta)?\/[A-Za-z0-9_{}:/.-]*)["'`]/g;
  * 就是在给「以后总有一天用得上」留台阶。真要加，把理由写在这一行下面。
  */
 const ALLOW: readonly string[] = [];
+
+/** 一条样本会不会被 `ENDPOINT_RE` 抓住。**每次重置 `lastIndex`**：它带 `g`，不重置会隔次漏判。 */
+function hit(s: string): boolean {
+  ENDPOINT_RE.lastIndex = 0;
+  return ENDPOINT_RE.test(s);
+}
+
+/**
+ * 声称抓得住的写法。**每一条都写明它是哪个消费者会写出来的**——
+ * 一条抓不到真实写法的护栏，和没有护栏是一回事。
+ */
+const COVERED: ReadonlyArray<{ probe: string; why: string }> = [
+  {
+    probe: "const url = `/v1beta/models/${model}:generateContent`;",
+    why: "模板插值（**Task 10 拼 Gemini URL 最自然的写法**，字符类缺 `$` 时整条逃掉）",
+  },
+  {
+    probe: 'fetch("/v1/chat/completions?stream=1");',
+    why: "带查询串（字符类缺 `?` / `=` 时整条逃掉）",
+  },
+  {
+    probe: "const p = `/v1/videos/${id}`;",
+    why: "模板插值 + 媒体两段式的第二段（Task 12 会写它）",
+  },
+];
+
+/**
+ * 已知抓不住的写法，连同**为什么接受**一起登记。
+ * 今天只有一条，理由见文件头那段：抓它要付 2 处系统性误报。
+ */
+const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
+  {
+    probe: 'const u = "/v1" + "/messages";',
+    why: "字符串拼接 —— 整条路径不在同一对引号里，扫字面量的判据按定义看不见它；"
+      + "抓它要放宽到「裸 `/v1` 前缀也算」，而那条判据在 `admin-ui/js/api.js` 的注释上误报 2 处",
+  },
+];
 
 function scan(): string[] {
   const offenders: string[] = [];
@@ -64,10 +124,6 @@ describe("前端不许硬编码网关端点", () => {
    * 真正「种一行进 admin-ui/ 再跑一遍」的动作在 Task 1 Step 6b 当场做过一次。
    */
   it("正则认得三种引号下的 /v1 与 /v1beta，且不误伤上游路径 —— 否则上面那个空数组什么都没证明", () => {
-    const hit = (s: string) => {
-      ENDPOINT_RE.lastIndex = 0;
-      return ENDPOINT_RE.test(s);
-    };
     expect(hit('const __probe = "/v1/messages";'), "双引号 + /v1/（Step 6b 的探针形态）").toBe(true);
     expect(hit('path: "/v1/chat/completions"'), "双引号").toBe(true);
     expect(hit("path: '/v1/responses'"), "单引号").toBe(true);
@@ -75,6 +131,29 @@ describe("前端不许硬编码网关端点", () => {
     expect(hit('p = "/v1beta/models/x:generateContent"'), "/v1beta/").toBe(true);
     // **不该命中**：上游路径不带 `/v1` 前缀，它是网关自己拼的，不是前端的事。
     expect(hit('upstreamPath: "/chat/completions"'), "上游路径不该被扫进来").toBe(false);
+  });
+
+  /**
+   * **声称抓得住的写法真的抓得住。**（评审 Important 2 补的两条，都是当时正在漏的活口子）
+   *
+   * 这一格红了只有一种意思：`ENDPOINT_RE` 的字符类又被改窄了，
+   * 而窄回去的那一刻 Task 10 的 Playground 就能免检硬编码 Gemini 的 URL。
+   */
+  it.each(COVERED)("声称抓得住的写法真的抓得住：$why", ({ probe }) => {
+    expect(hit(probe), `这条写法逃掉了：${probe}`).toBe(true);
+  });
+
+  /**
+   * **已知抓不住的写法确实抓不住 —— 边界是断言，不是散文。**
+   *
+   * 形态照抄 `tests/unit/source-guards.test.ts`
+   * 「已知抓不住的写法确实抓不住（边界是断言，不是散文）」。
+   * **这一格变红意味着有人把这个盲点补上了——那是好事**，把对应的 `BLIND_SPOTS` 行删掉即可。
+   * 它存在的理由是：一条只写在注释里的边界，改判据的人不会读到；写成用例才拦得住
+   * 「以为它抓得住」的下一个人。
+   */
+  it.each(BLIND_SPOTS)("已知抓不住的写法确实抓不住（边界是断言，不是散文）：$why", ({ probe }) => {
+    expect(hit(probe), `这条写法现在被抓住了，请把它从 BLIND_SPOTS 里删掉`).toBe(false);
   });
 
   /**

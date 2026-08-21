@@ -91,4 +91,54 @@ describe("协议目录", () => {
       ["agnes-video-v2.0", "video", []],
     ]);
   });
+
+  /**
+   * ── 评审 Important 1：**真源自己内部有一处「做两遍必漂」** ────────────────────
+   *
+   * `MODEL_CATALOG[].endpoints` 与 `PROTOCOLS[].pathTemplate` 是**同一份知识在同一个
+   * 文件里的两份拷贝**，而在这一格出现之前**没有任何东西绑住它们**。三条变异实测全逃：
+   * · 删掉 `agnes-2.0-flash` 的 `{ method:"POST", path:"/v1/messages" }` ⇒ 2130 全绿；
+   * · 把那条 `generateContent` 的模型名改成 `totally-bogus-model` ⇒ 2130 全绿；
+   * · 删掉 `agnes-video-v2.0` 的 `GET /v1/videos/:id` ⇒ 2130 全绿。
+   *
+   * 成因两条，都在契约那一侧：`tests/contract/protocol-catalog.test.ts`
+   * 「模型目录里的媒体端点同样是真路由」把带 `generateContent` 的条目整条跳过，
+   * 而 `toContain` 只抓**新增**、抓不到**删除**（少一条只是少循环一次）。
+   * ⇒ 后果正是 D1「做两遍必漂，而漂了没人会发现」的原形态，**而且漂在真源自己身上**：
+   * 模型表可以静默少告诉用户一条协议入口、或指向一个网关不认的模型名。
+   *
+   * **这一格是关系断言不是同义反复**，两个输入各自被独立锚死：
+   * · `pathTemplate` 那一端 —— 由 `tests/contract/protocol-catalog.test.ts`
+   *   「每条协议端点都在 app 上真的注册着」拿 `app.routes` 钉着（改一个字符就红）；
+   * · `m.id` 那一端 —— 由上面「模型 id 与 /v1/models 的来源逐条一致」拿 `MODELS` 钉着。
+   * ⇒ 两端同时改成一致的错值也逃不掉：那会让上面那两格里的某一格先红。
+   */
+  it("对话模型的 endpoints 与 PROTOCOLS 逐条一致 —— "
+     + "endpoints 是 pathTemplate 在真源内的第二份拷贝，没东西绑住就必漂", () => {
+    const chat = MODEL_CATALOG.filter((m) => m.modality === "chat");
+    // 手写字面量锚：今天只有一个对话模型。多一个而没人在这里表态，这一格先红。
+    expect(chat.map((m) => m.id)).toEqual(["agnes-2.0-flash"]);
+    for (const m of chat) {
+      expect(m.endpoints.map((e) => `${e.method} ${e.path}`), `${m.id} 的 endpoints`).toEqual(
+        PROTOCOLS.map((p) => `${p.method} ${endpointFor(p, m.id, false)}`),
+      );
+    }
+  });
+
+  /**
+   * 媒体模型的 `endpoints` **派生不了**（它们不在 `PROTOCOLS` 里，见 `upstreamPath`
+   * 字段注释里那条边界），所以只能逐条手写字面量钉住。
+   * 漏掉视频那条 `GET` 的后果是面板把一个两段式接口教成一次性接口——
+   * 用户建完任务拿不到成片，而面板上什么异常都看不出来。
+   */
+  it("媒体模型的 endpoints 逐条手写字面量 —— 视频是两段式，漏一条就把用法教错了", () => {
+    expect(
+      MODEL_CATALOG.filter((m) => m.modality !== "chat")
+        .map((m) => [m.id, m.endpoints.map((e) => `${e.method} ${e.path}`)]),
+    ).toEqual([
+      ["agnes-image-2.1-flash", ["POST /v1/images/generations"]],
+      ["agnes-image-2.0-flash", ["POST /v1/images/generations"]],
+      ["agnes-video-v2.0", ["POST /v1/videos", "GET /v1/videos/:id"]],
+    ]);
+  });
 });

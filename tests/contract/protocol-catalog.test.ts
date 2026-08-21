@@ -31,8 +31,25 @@ describe("协议目录与真实路由表对账", () => {
     }
   });
 
-  it("模型目录里的媒体端点同样是真路由 —— 视频那两条是两段式，漏一条面板就教错用法", async () => {
-    // 变红条件：把 agnes-video-v2.0 的 GET /v1/videos/:id 删掉
+  /**
+   * ⚠️ **这一格能证明什么、不能证明什么，逐条写清楚（评审 Important 1，实测订正）**：
+   *
+   * 它证明的是「目录里列出的每一条非通配端点，在 app 上确实注册着」——
+   * **变红条件是把某条 `path` 改一个字符，或加一条 app 上没有的端点。**
+   *
+   * 它**不**证明「目录没漏端点」，两条成因都实测过：
+   * ① `toContain` 只抓**新增**、抓不到**删除**：少一条只是少循环一次，照绿；
+   * ② 下面那行 `continue` 把 Gemini 那条整条跳过（它的注册路径是通配段，模板替换后
+   *    没法直接比对）。
+   * ⇒ 我原来在这里写的「变红条件：把 agnes-video-v2.0 的 GET /v1/videos/:id 删掉」
+   *    **实测为假**（删掉之后 2130 全绿）。**已改成真话。**
+   *
+   * 「目录没漏端点、模型名没写错」现在由单测那两格钉着：
+   * `tests/unit/admin/protocol-catalog.test.ts`
+   * 「对话模型的 endpoints 与 PROTOCOLS 逐条一致」与「媒体模型的 endpoints 逐条手写字面量」。
+   */
+  it("模型目录里的媒体端点同样是真路由 —— 列出来的每一条都得真的在 app 上", async () => {
+    // 变红条件：把 /v1/videos 改成 /v1/video（**不是**「删掉一条」，见上面那段）
     const { app } = await makeApp([], []);
     const routes = realRoutes(app);
     for (const m of MODEL_CATALOG) {
@@ -60,7 +77,13 @@ describe("协议目录的示例请求真的调得通", () => {
       // makeApp 的第 5 参是选项对象。⚠️ 位置参数别传错：签名是
       // (outcomes, keys, configOverride, now, options)，把选项当第 1 参传会静默用另一份默认
       // 存储（P3c 计划在这上面栽过一次，结论从「无缺陷」翻成 Critical）。
-      // ⚠️ **`makeApp` 是 async，必须 await**：仓里的调用点全部带 await，0 处不带。
+      // ⚠️ **`makeApp` 是 async，解构返回值就必须 `await`。**
+      // 实测（评审 Minor 2 订正）：仓里 222 处调用点，**220 处带 `await`**；
+      // 另外 2 处是 `return makeApp(...)` / `return makeApp(...).then(...)`
+      //（在 `tests/contract/admin-events.test.ts` 与 `tests/contract/admin-registrar.test.ts`
+      // 各自的夹具函数里，**不是用例体**，所以这里刻意不给行号），
+      // 把 Promise 直接交出去，等价、不是缺陷。
+      // ⇒ 我原来写的「全部带 await，0 处不带」是从简报承接下来的一句**数据性假话**。
       const { app, fetcher } = await makeApp(
         [{ status: 200, body: JSON.stringify({ id: "x", object: "chat.completion", model,
           choices: [{ index: 0, message: { role: "assistant", content: "pong" }, finish_reason: "stop" }],
