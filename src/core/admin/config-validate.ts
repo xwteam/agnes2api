@@ -470,14 +470,6 @@ function checkLeaf(field: string, spec: Exclude<Spec, { kind: "secret" }>, value
 }
 
 /**
- * 跨字段规则。**每一条都对应 `registrarFromEnv` 里一处会 `throw` 的地方**——
- * 这份清单存在的全部理由就是「别让面板写出一份让网关起不来的配置」。
- *
- * ⚠️ **三条都受 `enabled` 门控**（V21）：注册机关着时 `registrarFromEnv` 一条都不抛
- * （`if (enabled && …)`），面板也就一条都不许拦。**两边判据必须同源**——
- * 前端无条件拦截的后果是「关着注册机时连下拉框都改不了」，而后端明明会收下。
- */
-/**
  * **这份 `config` 装载得起来吗？** 装载不起来的每一条原因，逐字段列出来。
  *
  * ⚠️⚠️ **这个函数是评审 C1/C2 的收口点，它把三处原本各行其是的判断收成一份。**
@@ -522,6 +514,14 @@ export function configLoadBlockers(stored: unknown, env: Env): ConfigError[] {
   return out;
 }
 
+/**
+ * 跨字段规则。**每一条都对应 `registrarFromEnv` 里一处会 `throw` 的地方**——
+ * 这份清单存在的全部理由就是「别让面板写出一份让网关起不来的配置」。
+ *
+ * ⚠️ **三条都受 `enabled` 门控**（V21）：注册机关着时 `registrarFromEnv` 一条都不抛
+ * （`if (enabled && …)`），面板也就一条都不许拦。**两边判据必须同源**——
+ * 前端无条件拦截的后果是「关着注册机时连下拉框都改不了」，而后端明明会收下。
+ */
 function crossFieldErrors(next: Obj, env: Env): ConfigError[] {
   const out: ConfigError[] = [];
   const reg = asObject(next.registrar) ?? {};

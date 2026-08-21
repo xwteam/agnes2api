@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { bootPanel, settle } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import type { FakeElement } from "../../helpers/fake-dom.js";
-import { EDITABLE_FIELDS } from "../../../src/core/admin/config-validate.js";
+import { EDITABLE_FIELDS, SECRET_FIELDS } from "../../../src/core/admin/config-validate.js";
 
 /**
  * 设置页的**行为**覆盖（P3c Task 7）。纯函数那一半在 `tests/ui/settings.test.ts` 的
@@ -521,12 +521,23 @@ describe("接线：不轮询、传播上界要显示出来", () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * ⚠️⚠️ **后端修好了、前端跟不上，等于白修。**
+ * **诊断态下表单必须仍然可编辑——那是运维唯一的出路。**
  *
  * 装载不起来时后端把 `fields`/`credentials` 给 `null`（不编一份空配置），
- * 于是 `fieldView()` 对每一格都回 `present: false`。第一版的 `renderOne` 据此
- * **把所有输入框一律置灰** ⇒ 「关掉注册机 / 把那把 key 填回去」这两条自救路径
- * 在 UI 上被堵死，而后端明明放行——**C2 那个洞会原样重现在前端**。
+ * 于是 `fieldView()` 对每一格都回 `present: false`。板块文件**不许**据此把输入框
+ * 一律置灰：那会把「关掉注册机 / 把那把 key 填回去」这两条自救路径在 UI 上堵死，
+ * 而后端明明放行。
+ *
+ * ⚠️⚠️ **这段说明订正过一次，订正的是史实而不是判据（复评 F5）。**
+ * 原文写的是「第一版的 `renderOne` 据此**把所有输入框一律置灰**……前端跟不上
+ * 等于白修」——**那是假史实**。按 `4048920` 原样核实：`renderOne` 那一支确实写着
+ * `built.input.disabled = true`，但**紧接着**的 `setLock(built, false, null)` 里
+ * 第一行是 `built.input.disabled = locked === true` ⇒ 把它抹回 `false`。
+ * **诊断态下的表单从来没有被置灰过**，这一格当时就是绿的。
+ *
+ * **真正存在的缺陷是反过来那条**：`present === false` 那支的置灰**从落地那天起就
+ * 没生效过**，于是「这一格单独没读到」也从来没灰过（下面那格「对照」正钉着它）。
+ * 修法与这两格用例都是对的，错的只是动机叙述——而叙述会被下一个人当史实读。
  */
 describe("装载不起来时的诊断视图（评审 C2 的前端那一半）", () => {
   /**
@@ -542,7 +553,11 @@ describe("装载不起来时的诊断视图（评审 C2 的前端那一半）", 
     configDegraded: true,
     loadBlocked: [{ field: "registrar.yyds.apiKey", code: "channel_credentials_missing", params: { channel: "yyds" } }],
     editable: [...EDITABLE_FIELDS],
-    secrets: ["gatewayToken", "registrar.moemail.apiKey", "registrar.yyds.apiKey"],
+    // ⚠️ **`secrets` 同样接真源。** 这里原来是手写数组，而 `editable` 已经接了
+    // `EDITABLE_FIELDS` —— **同一个字面量里一半接真源、一半手写，正是这一族偏离的
+    // 下一次入口**（本任务已经栽过三次：M3 的无冲突数据、I1 的两条通道取值全等、
+    // 以及这份夹具第一版的 `editable: []` / `secrets: []`）。
+    secrets: [...SECRET_FIELDS],
     propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
   };
 

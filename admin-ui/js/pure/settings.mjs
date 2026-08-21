@@ -92,25 +92,6 @@ export function fieldLabelKey(path) {
 }
 
 /**
- * 后端错误码 → i18n key。**逐条列出，表外的返回 `null`。**
- *
- * ⚠️ **表外返回 `null` 而不是一句「保存失败」**：`null` 让调用方有机会**把那个码
- * 原样显示出来**（`set.err.unknown`，带上码本身），而一句写死的「保存失败」会把
- * 一条本来能被运维 grep 到的线索抹掉——与 `registrar.mjs` 的 `failureReasonKey()`
- * 同一条纪律。
- *
- * `tests/ui/settings.test.ts` 的
- * 「后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红」
- * **直接遍历后端的 `CONFIG_ERROR_CODES`**（数组是真源、类型从它派生）来比对本表，
- * 那是设计 §10.4 要求的那条 CI 断言。
- *
- * ⚠️ **这里原来写的是「拿 `ConfigErrorCode` 那个联合类型的手写镜像来比对」——
- * 那份镜像已经不存在了**（评审 C4：`satisfies` 只做单向可赋值检查，删得住、加不住，
- * 实测加一个码零信号）。同一个文件下面 `ERROR_KEYS` 上那段是对的，两句一度互相矛盾。
- * ⚠️ **它逃过了第 12 道门禁**，因为规则 B 查的是「指向存不存在」而不是「那句话真不真」
- * ——正是本仓登记在 `scripts/check-comment-refs.mjs` 里的那个盲区。
- */
-/**
  * ⚠️ **写成查表而不是 `switch` + `return`，是被门禁逼出来的，记在这里。**
  *
  * `scripts/check-i18n.mjs` 第 ⑧ 条（带占位符的 key 不许当不带参数的裸标签用）的
@@ -150,6 +131,25 @@ const ERROR_KEYS = {
   config_unloadable: "set.err.config_unloadable",
 };
 
+/**
+ * 后端错误码 → i18n key。**逐条列出，表外的返回 `null`。**
+ *
+ * ⚠️ **表外返回 `null` 而不是一句「保存失败」**：`null` 让调用方有机会**把那个码
+ * 原样显示出来**（`set.err.unknown`，带上码本身），而一句写死的「保存失败」会把
+ * 一条本来能被运维 grep 到的线索抹掉——与 `registrar.mjs` 的 `failureReasonKey()`
+ * 同一条纪律。
+ *
+ * `tests/ui/settings.test.ts` 的
+ * 「后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红」
+ * **直接遍历后端的 `CONFIG_ERROR_CODES`**（数组是真源、类型从它派生）来比对本表，
+ * 那是设计 §10.4 要求的那条 CI 断言。
+ *
+ * ⚠️ **这里原来写的是「拿 `ConfigErrorCode` 那个联合类型的手写镜像来比对」——
+ * 那份镜像已经不存在了**（评审 C4：`satisfies` 只做单向可赋值检查，删得住、加不住，
+ * 实测加一个码零信号）。同一个文件下面 `ERROR_KEYS` 上那段是对的，两句一度互相矛盾。
+ * ⚠️ **它逃过了第 12 道门禁**，因为规则 B 查的是「指向存不存在」而不是「那句话真不真」
+ * ——正是本仓登记在 `scripts/check-comment-refs.mjs` 里的那个盲区。
+ */
 export function errorMessageKey(code) {
   return Object.prototype.hasOwnProperty.call(ERROR_KEYS, code) ? ERROR_KEYS[code] : null;
 }
@@ -448,7 +448,13 @@ export function errorRows(errBody) {
  * 后端在这个状态下把 `fields`/`credentials` 给 `null`（不编一份空配置出来），
  * 于是 `fieldView()` 对每一格都回 `present: false`。板块文件**不许**据此把输入框
  * 一律置灰：那会把「关掉注册机 / 把那把 key 填回去」这两条自救路径在 UI 上堵死，
- * 而后端明明放行（评审 C2 修完的正是这件事，前端跟不上等于白修）。
+ * 而后端明明放行。
+ *
+ * ⚠️ **别把它读成「改动前表单被置灰了」——那是一句被证伪的史实（复评 F5）。**
+ * 改动前 `setLock()` 里一行死代码会把调用方刚设好的 `disabled` 抹回 `false`，
+ * 所以诊断态下的表单**从来没被置灰过**；真正的缺陷是反过来那条
+ *（「这一格单独没读到」该置灰却没灰）。这个函数是**新加的判据**，
+ * 让「诊断态」与「单独一格没读到」两种状态第一次分得开，不是在修一个置灰缺陷。
  */
 export function isDiagnostic(body) {
   const b = obj(body);

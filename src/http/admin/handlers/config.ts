@@ -125,26 +125,6 @@ function split(source: Record<string, FieldSource>) {
 }
 
 /**
- * 一次装载 + 切块，**装载不起来时降级成诊断视图而不是 500**。
- *
- * ⚠️⚠️ **「降级成诊断视图」这件事是评审 C2 的收口点，它是运维唯一的出路。**
- *
- * 在它之前：存储里那份 `config` 一旦装载不起来（缺 `gatewayToken`、或注册机开着却
- * 缺链上通道的凭据），`GET /admin/api/config` 与 `PUT /admin/api/config` **全是 500**
- * ——于是「关掉注册机」「把那把 key 重新填回去」「换一条主通道」这三条自救路径
- * **一条都走不通**（实测三条全 500），而屏幕上五语言正写着「请立刻在这一页写一把新的」。
- * 加重情节：这时 `GET /admin/api/overview` 仍然 200 且 `degraded` 为假
- *（`Refreshable` 保着上一份快照），概览页一片正常。
- *
- * ⚠️ **不是泛泛地 `catch`。** 我自己在 `configClearSecretHandler` 里写过这条禁令：
- * 「泛泛地 catch 会把**真的存储故障**也吞成这一支，于是一次 KV 抖动会被报成
- * 『你把口令删光了』」。所以判据是：抓到之后**先算一遍 `configLoadBlockers`**——
- * · 有 blocker ⇒ 这是**配置问题**，给诊断视图（`fields`/`credentials` 为 `null`，
- *   `loadBlocked` 逐条说清缺什么）；
- * · **没有 blocker ⇒ 这个异常不是配置引起的，原样抛出去**（存储真的坏了该报 500）。
- * 代价：失败那一支多付一次存储读。**顺利那一支仍然是 1 次 get**，配额账不变。
- */
-/**
  * 把一份**已经读到手**的 `config` 值包成 `Storage`，让 `loadConfigWithProvenance`
  * 就地再构造一次而不必重读。
  *
@@ -172,6 +152,27 @@ export interface ConfigSnapshot {
   loadBlocked: readonly ConfigError[];
 }
 
+/**
+ * 一次装载 + 切块，**装载不起来时降级成诊断视图而不是 500**。
+ *
+ * ⚠️⚠️ **「降级成诊断视图」这件事是评审 C2 的收口点，它是运维唯一的出路。**
+ *
+ * 在它之前：存储里那份 `config` 一旦装载不起来（缺 `gatewayToken`、或注册机开着却
+ * 缺链上通道的凭据），`GET /admin/api/config` 与 `PUT /admin/api/config` **全是 500**
+ * ——于是「关掉注册机」「把那把 key 重新填回去」「换一条主通道」这三条自救路径
+ * **一条都走不通**（实测三条全 500），而屏幕上五语言正写着「请立刻在这一页写一把新的」。
+ * 加重情节：这时 `GET /admin/api/overview` 仍然 200 且 `degraded` 为假
+ *（`Refreshable` 保着上一份快照），概览页一片正常。
+ *
+ * ⚠️ **它不是泛泛地 `catch`**，具体怎么切见下面 `catch` 里那段（三分，不是二分）。
+ * 代价：失败那一支多付一次存储读；**顺利那一支仍然是 1 次 get**，配额账不变。
+ *
+ * ⚠️⚠️ **这段说明本身被订正过一次，形态值得记**：它原来停在 `frozenConfig` 头上
+ * 当孤儿（`frozenConfig` 是后加的，插在它与 `readAll` 之间），而正文里还写着
+ * 已被证伪的二分判据「没有 blocker ⇒ 原样抛出去」。**与 F3 删掉的那段孤儿 JSDoc、
+ * 与 `ui-assets.test.ts` 那两段连续 JSDoc 是同一形态，同一轮里第三次。**
+ * 判据很简单：**在两个声明之间插入新声明时，先确认上面那段文档挂的是谁。**
+ */
 async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnapshot> {
   try {
     const prov = await loadConfigWithProvenance(wiring.env, wiring.storage, logger);
@@ -187,6 +188,16 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
      * · **第二版**：「存储读得出来 ⇒ 就是配置问题」。**也不完备**——存储只是**瞬时**
      *   抖了一下（第二次读就好了）时，它会把一份**完全正常**的配置判成配置问题，
      *   给出一个假的诊断视图。
+     *
+     * ⚠️ **承重前提：`env` 那一侧在 boot 时已经被证明可用。**
+     * `loadConfigWithProvenance` 的抛错来源有两个——`env` 与存储——而下面这三分
+     * **只覆盖存储那一侧**，靠的是「`env` 里的非法值在 `buildApp` 那一刻就 fail-fast、
+     * 进程根本起不来」。**「进程已启动」这个前提一旦不成立，三分就不完备**：
+     * 例如 `env` 里 `TARGET_KEYS=abc`，今天它在 boot 就抛、走不到这里。
+     * ⚠️ **而这条前提不是永恒的**：`src/core/registrar/config.ts` 的 `posInt()`
+     * 自己登记着它是「P1 遗留」、与 `num()` 的字段级降级策略并不一致；
+     * **哪天有人去抹平那个不一致、让 boot 侧变宽松，这一类就会变活**，
+     * 到那时这段切分要跟着补一条。
      *
      * 正确的切分要问两个问题，答案三分：
      * ① **原件读得出来吗**？读不出来 ⇒ 存储真的坏了 ⇒ **原样抛第一个异常**；

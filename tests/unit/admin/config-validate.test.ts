@@ -421,8 +421,14 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
         // ⚠️ **它是 F6（只拒新引入的 blocker）的正确后果，不是回归。**
         // 一个 patch 没有任何办法**新引入**这一条：凭据分支只会写入、从不删除，
         // 所以「两边都没有口令」这个状态只可能**本来就**存在 ⇒ 落在 `before` 里
-        // ⇒ 被差集滤掉。它照旧由 `configLoadBlockers` 在 `GET` 的诊断视图与
-        // `secrets/clear` 的写前预判里产出，两处各有契约用例钉着。
+        // ⇒ 被差集滤掉。
+        //
+        // 它照旧由 `configLoadBlockers` 在两条路径上产出，各有一格契约用例：
+        // `tests/contract/admin-config.test.ts` 的
+        // 「两边都没有网关口令时，GET 的诊断视图里报 gateway_token_required」与
+        // 「清空只能走 secrets/clear，且 clear 之后 gatewayToken 缺失会 fail-closed」。
+        // ⚠️ **这两格是复评点名之后才补的**：在那之前这句话是假的——那个码在契约层
+        // **零覆盖**，而这条例外的全部正当性正押在「别处还有人守」上。
         by: "configLoadBlockers（诊断视图 / secrets 清空的写前预判）",
       },
     ];

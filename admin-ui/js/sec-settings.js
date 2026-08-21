@@ -175,8 +175,13 @@ function renderOne(built) {
     built.meta.textContent = t("set.meta.unreadable");
     // ⚠️⚠️ **诊断态下**（存储里那份配置装载不起来）**不许把输入框置灰**：
     // 那会把「关掉注册机 / 把那把 key 填回去」这两条自救路径在 UI 上堵死，
-    // 而后端明明放行（评审 C2 修的正是这件事，前端跟不上等于白修）。
-    // 只有「这一格单独没读到」才置灰——那时改它也没有意义。
+    // 而后端明明放行。只有「这一格单独没读到」才置灰——那时改它也没有意义。
+    //
+    // ⚠️ **史实订正（复评 F5）**：改动前这一行写的是 `disabled = true`，
+    // 但下面那句 `setLock(built, false, null)` 会把它抹回 `false`（那行已删，
+    // 见 `setLock` 上面那段）⇒ **诊断态从来没被置灰过**，真正没生效的是
+    // 「单独一格没读到」那一半。这一行是让两种状态**第一次分得开**，
+    // 不是在修一个「被置灰」的缺陷。
     built.input.disabled = !isDiagnostic(data);
     setLock(built, false, null);
     return;

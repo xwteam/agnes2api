@@ -195,7 +195,15 @@ describe("凭据只写不读（设计 §8.6）", () => {
       body: JSON.stringify({ path: "gatewayToken" }),
     });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ cleared: "gatewayToken", stillConfigured: false });
+    // ⚠️ **`loadBlocked` 里那个码也要断**（复评：这条路径原来只断了 `cleared`/
+    // `stillConfigured`，于是 `gateway_token_required` 在契约层零覆盖，
+    // 而 `config-validate.test.ts` 的例外清单正声称「这里有契约用例钉着」）。
+    expect(await res.json()).toMatchObject({
+      cleared: "gatewayToken",
+      stillConfigured: false,
+      gatewayTokenMissing: true,
+      loadBlocked: [{ field: "gatewayToken", code: "gateway_token_required" }],
+    });
 
     // ① 真的从存储里没了。
     expect((await storage.get<Record<string, unknown>>("config"))?.gatewayToken).toBeUndefined();
@@ -816,6 +824,30 @@ describe("C1/C2：清掉一条在链上的通道凭据", () => {
     expect(body.loadBlocked, "一次瞬时抖动被报成了「配置装载不起来」").toEqual([]);
     expect(body.fields, "抖动之后没有自愈，给了一个假的诊断视图").not.toBeNull();
     expect(body.fields!.maxStrikes!.effective).toBe(9);
+  });
+
+  /**
+   * **`gateway_token_required` 在 `GET` 的诊断视图里也要出得来。**
+   *
+   * ⚠️ 这一格是复评点名补的：那个码此前**只有对 `configLoadBlockers` 的单元直测**，
+   * 契约层一格都没有——而 `config-validate.test.ts` 的例外清单把「校验产不出它」
+   * 的正当性全部押在「别处还有人守」上。**那句话当时是假的，这一格与上面
+   * `secrets/clear` 那格一起把它变成真的。**
+   */
+  it("两边都没有网关口令时，GET 的诊断视图里报 gateway_token_required", async () => {
+    // 先用一份好配置把 app 建起来（坏配置下 `buildApp` 在 `prime()` 就抛），
+    // 再绕过面板把口令从存储里拿掉 —— 这正是 `secrets/clear` 之后的那个状态。
+    const { app, storage } = await realApp({ env: {}, stored: { gatewayToken: GW } });
+    await storage.put("config", {});
+
+    const res = await getConfig(app);
+    expect(res.status, "这一支给了 500，运维连「缺什么」都看不到").toBe(200);
+    const body = await res.json() as { fields: unknown; loadBlocked: Array<{ field: string; code: string }> };
+    expect(body.fields).toBeNull();
+    expect(body.loadBlocked).toEqual([{ field: "gatewayToken", code: "gateway_token_required" }]);
+    // 而且修得回来：写一把新的口令进去，冷启动就装载得起来。
+    expect((await put(app, { gatewayToken: "a-brand-new-gateway-token-2099" })).status).toBe(200);
+    await expect(loadConfig({}, storage, NULL_LOGGER)).resolves.toBeDefined();
   });
 
   /**

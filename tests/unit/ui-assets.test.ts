@@ -492,37 +492,40 @@ describe("生成器对违规输入 exit 1", () => {
  */
 describe("CSS：横排卡片行里不许继承竖排卡的上边距", () => {
   const css = () => readFileSync("admin-ui/css/sections.css", "utf8");
+  const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  /**
+   * **这道扫描本身。提到 `describe` 作用域是为了让下面的盲点探针走的是同一份判据。**
+   *
+   * ⚠️ 第一版把它在两个 `it` 里各写了一遍字面量 ⇒ **探针与被测扫描是两份独立正则**，
+   * 于是那段注释里写死的红条件「哪天有人把某个盲点补上了，对应那格会红」**是假的**
+   *（复评实测：真把盲点 ② 补上，46/46 全绿，探针毫无反应）。
+   * 它还明确援引 `tests/unit/source-guards.test.ts` 的
+   * 「已知抓不住的写法确实抓不住（边界是断言，不是散文）」当范本，
+   * **而那份范本的定义性特征恰恰是探针走共享的 `scanIo()`——援引了却没继承**。
+   */
+  const RULE = /\.card-row\s*>\s*\.card\s*\+\s*\.card\s*\{[^}]*margin-top:\s*0[^}]*\}/;
 
   it("`.card-row > .card + .card` 的 margin-top 归零这条规则还在", () => {
-    const src = css().replace(/\/\*[\s\S]*?\*\//g, "");
-    // 判据：存在一条把 `.card-row` 里相邻卡的 `margin-top` 置零的规则。
-    const rule = /\.card-row\s*>\s*\.card\s*\+\s*\.card\s*\{[^}]*margin-top:\s*0[^}]*\}/;
     expect(
-      rule.test(src),
+      RULE.test(strip(css())),
       "`.card-row > .card + .card { margin-top: 0 }` 没了 —— 两张通道卡会重新变成"
       + "不等高、不对齐，而那是硬约束「两条通道完全平级」在视觉层的破口（P3b 上线过一次）",
     ).toBe(true);
   });
 
   it("反向自检：竖排那条规则确实存在（否则上面那条归零是在归一个空气）", () => {
-    const src = css().replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(/\.card\s*\+\s*\.card\s*\{[^}]*margin-top:\s*var\(--gap-sm\)/.test(src)).toBe(true);
+    expect(/\.card\s*\+\s*\.card\s*\{[^}]*margin-top:\s*var\(--gap-sm\)/.test(strip(css()))).toBe(true);
   });
 
   /**
    * **边界写成会变红的探针，而不是一句散文——更不是断言用例自己刚定义的字面量。**
    *
-   * ⚠️ 第一版这里是 `expect(BLIND_SPOTS.length).toBeGreaterThan(0)`，
-   * 而 `BLIND_SPOTS` 就在上一行由用例自己定义 ⇒ **被测代码怎么改都不会红**，
-   * 它是一段穿了用例外衣的散文，还白占一格绿数（评审 LOW）。
-   * 做法改成抄 `tests/unit/source-guards.test.ts` 的
-   * 「已知抓不住的写法确实抓不住（边界是断言，不是散文）」那一族：
-   * **每一条盲点都给一份探针，断言这道扫描确实抓不住它**。
-   * 哪天有人把某个盲点补上了，对应那格会红——提醒他把这一条删掉。
-   */
-  /**
-   * 每一条盲点都给一份探针，**断言这道扫描对它给出的那个（错的）答案**。
-   * 哪天有人把某个盲点补上了，对应那格会红——提醒他把这一条删掉。
+   * ⚠️ 第一版这里是 `expect(BLIND_SPOTS.length).toBeGreaterThan(0)`，而 `BLIND_SPOTS`
+   * 就在上一行由用例自己定义 ⇒ **被测代码怎么改都不会红**，是一段穿了用例外衣的散文。
+   * 现在每条盲点给一份探针，**走上面那份共享的 `RULE`**，断言这道扫描对它给出的那个
+   *（错的）答案。**哪天有人把某个盲点补上了（改 `RULE`），对应那格就会红**——
+   * 提醒他把这一条连同边界说明一起删掉。这一次那句红条件是真的。
    */
   it.each([
     [
@@ -535,10 +538,9 @@ describe("CSS：横排卡片行里不许继承竖排卡的上边距", () => {
       ".card-row > .card + .card { margin: 0; }",
       false,
     ],
-  ])("已知盲点：「%s」", (_why, css, scanSays) => {
-    const rule = /\.card-row\s*>\s*\.card\s*\+\s*\.card\s*\{[^}]*margin-top:\s*0[^}]*\}/;
+  ])("已知盲点：「%s」", (_why, sample, scanSays) => {
     expect(
-      rule.test(css),
+      RULE.test(sample),
       "这道扫描对这份 CSS 的判断变了 —— 说明盲点被补上了（好事），"
       + "请把这一行连同上面的边界说明一起删掉",
     ).toBe(scanSays);
