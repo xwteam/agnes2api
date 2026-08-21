@@ -32,7 +32,7 @@ import { fmtCount, fmtDash, fmtDuration, fmtInstant, fmtPercent } from "./pure/f
 import { offsetMs } from "./pure/overview.mjs";
 import {
   RANGES, DEFAULT_RANGE, rangeLabelKey, rangeToQuery,
-  usageState, detailState, rowState, summaryCards, bucketCells,
+  usageState, detailState, rowState, readSucceeded, summaryCards, bucketCells,
   malformedKind, usageNoteKey, noteSeverity,
   dayRows, breakdownRows, tokensCoverageLabels, pendingTail, cellKind, ratioKind,
 } from "./pure/usage.mjs";
@@ -260,19 +260,52 @@ function retryButton(onRetry) {
 }
 
 /**
- * 这一份响应上的两个诚实标记。**算一次，六张卡与两张表共用。**
+ * 这一份响应上的两个诚实标记。两个都由后端字段驱动（全局约束 10）：
+ * `≈` 看 `approximate`，「不完整」看 `malformedKind`。**一个都不许在前端硬编码。**
  *
- * ⚠️ 两个都由后端字段驱动（全局约束 10）：`≈` 看 `approximate`，
- * 「不完整」看 `malformedKind`。**一个都不许在前端硬编码。**
+ * ⚠️⚠️ **`incompleteOf` 判据直接走 `malformedKind()`，刻意不经 `summaryCards().complete`**
+ *（P3d Task 5 定向复评 N2）：`complete` 是拿 `total` 算的
+ *（`total === null ? true : …`），而 **`GET /admin/api/usage/:date` 的响应里
+ * 根本没有 `total` 字段**（`src/http/admin/handlers/usage.ts` 的 `usageDateHandler`
+ * 返回的是 `hours` / `byModel` / `byProtocol` / `shards` / `malformed`）
+ * ⇒ 在那条端点上 `complete` **恒为 true**、标记**结构性地永不渲染**。
+ * 实证（node，入参 `{ shards: 4, malformed: 2, hours: {} }`）：
+ * `malformedKind` 是 `"partial"` 而 `complete` 是 `true`。
+ * ⭐ 记一条形状：**一个「只在另一条端点上成立」的判据，在这条端点上不会报错，
+ * 它只是安静地永远为假**——那种失效没有任何一格用例会红，除非有人正面钉住它。
+ * 由 `tests/ui/usage.test.ts` 的
+ * 「summaryCards().complete 在单日下钻那份响应上恒为 true —— 它读的是 total，
+ * 而那条端点没有 total，拿它当「缺没缺块」的判据是结构性错误」正面钉着。
+ *
+ * ⚠️ **这两个标记只给「整块」用**：六张卡是整段区间的合计，说它不完整是准确的；
+ * **表格的每一行不许各自挂标记**，理由见 `buildDayTable` 上方（定向复评 N4）。
  */
 function honestyMarks(resp) {
-  const c = summaryCards(resp);
   return {
     approx: resp !== null && typeof resp === "object" && resp.approximate === true,
     // `partial` 那一档的数字是真的、只是不全 —— 渲染成完整的就是伪造
     // 「这份数据是全的」这个印象，而全局约束 9 禁的伪造不只是伪造 `0`。
-    incompleteOf: c.complete ? null : c.malformed,
+    // `all` 那一档**不走这里**：那时一个数字都没有（整块是 `unavailable`），
+    // 说「下面这些数字缺了几块」是在描述一堆不存在的数字（定向复评 N7）。
+    incompleteOf: malformedKind(resp) === "partial"
+      ? (typeof resp.malformed === "number" ? resp.malformed : null)
+      : null,
   };
+}
+
+/**
+ * 表格标题旁边那一个 `≈`。
+ *
+ * ⚠️ **表格里的数字与卡片上的一样是近似值，但 `≈` 只在这里出一次，不逐格出**
+ *（定向复评 N5：上一版 `numberCells` 的 `marks` 形参恒为 `null` ⇒
+ * 六张卡写 `≈ 100`、紧挨着的日表写 `100`，**同一个数字两种说法**，
+ * 而那个不一致是沉默的——没有任何注释说过表里为什么不出）。
+ * 逐格出的话 30 天档是 7 列 × 30 行 = 210 个 `≈`，那时它是装饰不是信号。
+ * ⇒ **一张表出一个，挂在标题上**，tooltip 与卡片上那个逐字相同（同一个 `approxTitle()`）。
+ */
+function approxTitleMark(marks) {
+  if (marks === null || !marks.approx) return null;
+  return el("span", { class: "approx", title: approxTitle() }, " ≈");
 }
 
 /** 六张汇总卡（设计 §10.6）。 */
@@ -337,8 +370,14 @@ function headRow(keys) {
  * `all_malformed` 时六张卡正确地全是 EM DASH，**而紧挨着的日表把同一段区间
  * 写成「请求 0 次」**、延迟格还写着 EN DASH（= 「读成功了只是没样本」）。
  * 判据现在收在 `pure/usage.mjs` 的 `rowState()` 里，两张表都必须过它。
+ *
+ * ⚠️ **它不收 `marks`，这是刻意的**（定向复评 N5）：上一版留了一个第四形参
+ * 而两个调用点都传 `null` ⇒ **一个恒为死的形参**，看起来像「表里也会出标记」
+ * 而实际上永远不出。`≈` 改成一张表出一个、挂在标题上（见 `approxTitleMark`），
+ * 「不完整」改成整块出一处（见 `buildDayTable` 上方）。**死形参一律删掉，
+ * 不留着当占位**——留着的那个迟早会被人当成「已经接好了」。
  */
-function numberCells(tr, state, bucket, marks) {
+function numberCells(tr, state, bucket) {
   const st = rowState(state, bucket);
   const b = bucketCells(bucket);
   const cells = [
@@ -351,36 +390,46 @@ function numberCells(tr, state, bucket, marks) {
   ];
   for (const [kind, text] of cells) {
     const td = el("td", { class: "mono" });
-    fillCell(td, kind, text, marks);
+    fillCell(td, kind, text, null);
     tr.appendChild(td);
   }
 }
 
-/**
- * 表格里那个「键」格（日期 / 小时 / 模型名）。
- *
- * ⚠️ **「不完整」标记挂在这一格上，一行只挂一个**（评审 I1）：
- * 上一版表格行**一个标记都没有**，而表里那些数字与卡片上的是同一份
- * 「缺了几块的数字」。挂在键格上而不是每个数字格上，是因为
- * `malformed` 是**整段区间**的计数——我们并不知道具体哪一格短了，
- * 只知道这一行的数字不能当成全的。挂七遍会让人以为那是七条独立的信号。
- */
-function keyCell(text, marks) {
-  const td = el("td", { class: "mono" });
-  fillCell(td, "value", text, marks && marks.incompleteOf !== null ? { incompleteOf: marks.incompleteOf } : null);
-  return td;
+/** 表格里那个「键」格（日期 / 小时 / 模型名）。 */
+function keyCell(text) {
+  return el("td", { class: "mono" }, text);
 }
 
-/** 日汇总表。点「下钻」展开那一天的分解。 */
+/**
+ * 日汇总表。点「下钻」展开那一天的分解。
+ *
+ * ⚠️⚠️ **表格的每一行不挂「不完整」标记，这一条是订正过的**（定向复评 N4）：
+ * 上一版给**每一行**的日期格挂了一个，而 `malformed` 数的是**整段区间**的畸形分片
+ * ⇒ 30 天档下 30 行全写「不完整」，其中绝大多数天其实是完整的
+ * ——**对那些天它是一句假话**。上一版自己的注释还承认「我们并不知道具体哪一格短了」，
+ * 却对每一格都下了断言。⭐ 记一条形状：**「我们不知道是哪一个」推不出
+ * 「所以每一个都标上」，它只推得出「只能对整体说」。**
+ * ⇒ 「缺了几块」只由**整块**那一处说：汇总这边是 `partial_malformed` 那条红条
+ *（`usage.note.partialMalformed`，`render()` 里由 `note` 驱动），
+ * 下钻那边是 `buildDetail()` 里那一句。
+ *
+ * ⚠️ `≈` 也只出一个，挂在表标题上（`approxTitleMark`，定向复评 N5）。
+ */
 function buildDayTable(state, marks) {
   const { wrap, body } = block("usage.table.title");
+  const mark = approxTitleMark(marks);
+  if (mark !== null) wrap.appendChild(mark);
   const rows = dayRows(data);
   if (rows.length === 0) {
     // ⚠️ **「读不出来」与「这段区间里没有可以列出的日子」是两句话。**
     //    `read_failed` 那一档 `days` 是 null ⇒ 行数也是 0，照后一句渲染
     //    等于把一次读取失败说成「这段时间本来就没有日子」。
+    // ⚠️⚠️ **判据是白名单，收在 `pure/usage.mjs` 的 `readSucceeded()` 里**
+    //    （定向复评 N6）：上一版这里写的是黑名单
+    //    `state === "unavailable" ? 不可用 : 空`，方向反的；而分解表那一边是白名单。
+    //    同一件事两张表两个方向，本身就是下一次分叉的入口。
     body.appendChild(elI18n(
-      "p", state === "unavailable" ? "usage.table.unavailable" : "usage.table.empty",
+      "p", readSucceeded(state) ? "usage.table.empty" : "usage.table.unavailable",
       { class: "muted note" },
     ));
     return wrap;
@@ -392,8 +441,8 @@ function buildDayTable(state, marks) {
   ]));
   for (const row of rows) {
     const tr = el("tr");
-    tr.appendChild(keyCell(row.date, marks));
-    numberCells(tr, state, row.total, null);
+    tr.appendChild(keyCell(row.date));
+    numberCells(tr, state, row.total);
     const actions = el("td");
     const drill = elI18n("button", "usage.table.drill", { type: "button", class: "usage-drill" });
     drill.addEventListener("click", () => { openDay(row.date); });
@@ -405,15 +454,24 @@ function buildDayTable(state, marks) {
   return wrap;
 }
 
-/** 分解表的一张（小时 / 模型 / 协议共用）。 */
-function breakdownTable(titleKey, keyLabelKey, map, numeric, state, marks) {
+/**
+ * 分解表的一张（小时 / 模型 / 协议共用）。
+ *
+ * ⚠️ **同样不收 `marks`**：与日表同一条理由（定向复评 N2 + N4）——
+ * 我们不知道是哪一个小时 / 哪一个模型短了，就只能对整块说。
+ * 上一版这里有一个 `marks` 形参，而它在这条端点上**结构性地永远是 `null`**
+ *（`honestyMarks` 当时经 `summaryCards().complete`，而那条端点没有 `total`），
+ * 于是它既是死参、又给人一种「已经接好了」的错觉。
+ */
+function breakdownTable(titleKey, keyLabelKey, map, numeric, state) {
   const wrap = el("div", { class: "usage-breakdown" });
   wrap.appendChild(elI18n("h4", titleKey));
   const rows = breakdownRows(map, numeric);
   if (rows.length === 0) {
     // 同上：**这一天读不出来**与**这一天没有记录**是两句话。C1 点名的「第三屏」。
+    // 判据与日表共用同一个 `readSucceeded()`（定向复评 N6）。
     wrap.appendChild(elI18n(
-      "p", state === "data" ? "usage.detail.empty" : "usage.detail.unavailable",
+      "p", readSucceeded(state) ? "usage.detail.empty" : "usage.detail.unavailable",
       { class: "muted note" },
     ));
     return wrap;
@@ -426,8 +484,8 @@ function breakdownTable(titleKey, keyLabelKey, map, numeric, state, marks) {
   for (const row of rows) {
     const tr = el("tr");
     // ⚠️ **键来自客户端填的模型名，一律 textContent**（`el()` 走的就是它）。
-    tr.appendChild(keyCell(row.key, marks));
-    numberCells(tr, state, row.total, null);
+    tr.appendChild(keyCell(row.key));
+    numberCells(tr, state, row.total);
     table.appendChild(tr);
   }
   wrap.appendChild(table);
@@ -485,18 +543,26 @@ function buildDetail() {
   //       而横幅上还挂着一颗重试按钮。**两句都不真，比只说一句更糟。**
   //    ⇒ 兜底放在表那一层（每张表自己说自己空的原因），不放在这一层。
 
-  // 缺了几块这件事在这条端点上只有字段说得出来。
+  // 缺了几块这件事在这条端点上只有字段说得出来（它不发畸形 code）。
   const marks = honestyMarks(detailData);
-  const kind = malformedKind(detailData);
-  if (kind === "partial" || kind === "all") {
+  const mark = approxTitleMark(marks);
+  if (mark !== null) head.appendChild(mark);
+  // ⚠️⚠️ **只在 `partial` 那一档说，`all` 不说**（定向复评 N7）：
+  //    `all` 时整块是 `unavailable`、下面三张表**一个数字都没有**，
+  //    而这句话的主语是「下面这些数字」——那是在描述一堆不存在的数字。
+  //    `all` 那一档由 `note` 那条红条（「每一个都是畸形的……去查存储」）
+  //    与三张表各自的「读不出来」承担。
+  // ⚠️ **文案是单日口径的 `usage.detail.incomplete`，不是区间口径的
+  //    `usage.incompleteTip`**：后者逐字写着「这段区间里」，而这里是一天。
+  if (marks.incompleteOf !== null) {
     const warn = el("p", { class: "muted note usage-incomplete" });
-    warn.textContent = t("usage.incompleteTip", { malformed: fmtCount(detailData.malformed) });
+    warn.textContent = t("usage.detail.incomplete", { malformed: fmtCount(marks.incompleteOf) });
     wrap.appendChild(warn);
   }
 
-  wrap.appendChild(breakdownTable("usage.detail.hours", "usage.detail.hour", detailData.hours, true, state, marks));
-  wrap.appendChild(breakdownTable("usage.detail.models", "usage.detail.model", detailData.byModel, false, state, marks));
-  wrap.appendChild(breakdownTable("usage.detail.protocols", "usage.detail.protocol", detailData.byProtocol, false, state, marks));
+  wrap.appendChild(breakdownTable("usage.detail.hours", "usage.detail.hour", detailData.hours, true, state));
+  wrap.appendChild(breakdownTable("usage.detail.models", "usage.detail.model", detailData.byModel, false, state));
+  wrap.appendChild(breakdownTable("usage.detail.protocols", "usage.detail.protocol", detailData.byProtocol, false, state));
   return wrap;
 }
 

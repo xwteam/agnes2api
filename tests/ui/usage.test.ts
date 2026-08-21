@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   RANGES, DEFAULT_RANGE, rangeLabelKey, rangeToQuery,
-  usageState, detailState, rowState, avgLatency, cellKind, ratioKind,
+  usageState, detailState, rowState, readSucceeded, avgLatency, cellKind, ratioKind,
   summaryCards, bucketCells,
   malformedKind, usageNoteKey, noteSeverity, dayRows, breakdownRows,
   tokensCoverageLabels, pendingTail,
@@ -199,6 +199,33 @@ describe("整块的结论必须往下传到每一张表（评审 C1 的根因）
   });
 
   /**
+   * ⚠️⚠️ **定向复评 N6：两张表「空」的判据必须都写成保守的那一侧。**
+   *
+   * 上一版日表写的是 `state === "unavailable" ? 不可用 : 空`（方向反的），
+   * 分解表写的是 `state === "data" ? 空 : 不可用`（方向对的）。
+   * ⇒ `usageState` 哪天多一档，日表那一档会**默认落到「没有可以列出的日子」**
+   * ——也就是**默认说假话**，而分解表默认说「读不出来」——保守。
+   *
+   * 这一格拿一个**今天不存在的状态**当探针，把「默认往哪边倒」变成可观测的。
+   * ⚠️ 它断言的不是 `usageState` 会产出这个值（它不会），而是
+   * **两张表面对一个不认识的状态时都必须往「我们不知道」那边倒**。
+   */
+  it("readSucceeded 是白名单：不认识的状态一律判成「没读成功」—— 黑名单会让明天新加的那一档默认说假话", () => {
+    // 今天的四档，逐个手写锚死。
+    expect(readSucceeded("data")).toBe(true);
+    expect(readSucceeded("empty")).toBe(true);
+    expect(readSucceeded("unavailable")).toBe(false);
+    expect(readSucceeded("off")).toBe(false);
+    // ⚠️⚠️ **这一句才是它存在的理由**：拿一个今天不存在的状态当探针。
+    //    黑名单实现（`state !== "unavailable"`）在上面四句上**逐句等价**，
+    //    只在这一句上分叉 —— 它会返回 true ⇒ 表会说「没有可以列出的日子」，
+    //    也就是对一个自己都不认识的状态断言「我们知道答案是没有」。
+    expect(readSucceeded("some_state_added_later"), "不认识的状态被当成了「读成功了」").toBe(false);
+    expect(readSucceeded(undefined)).toBe(false);
+    expect(readSucceeded(null)).toBe(false);
+  });
+
+  /**
    * **`bucketCells` 是从 `summaryCards` 里拆出来的，拆它的理由是一个真缺陷。**
    *
    * 两张表原来这样取数：`summaryCards({ total: row.total, shards: 0, malformed: 0 })`
@@ -206,6 +233,44 @@ describe("整块的结论必须往下传到每一张表（评审 C1 的根因）
    * 拆开之后「取哪六个数」对着一个桶问、「完不完整」只能对着整份响应问，
    * 谁都不必再捏一个假响应。
    */
+  /**
+   * ⚠️⚠️⚠️ **定向复评 N2：一个「只在另一条端点上成立」的判据，
+   * 在另一条端点上不会报错，它只是安静地永远为假。**
+   *
+   * `summaryCards().complete` 是拿 `total` 算的（`total === null ? true : …`），
+   * 而 **`GET /admin/api/usage/:date` 的响应里根本没有 `total` 字段**
+   *（`src/http/admin/handlers/usage.ts` 的 `usageDateHandler` 返回的是
+   * `hours` / `byModel` / `byProtocol` / `shards` / `malformed`）
+   * ⇒ 在那条端点上 `complete` **恒为 true**，拿它当「缺没缺块」的判据
+   * 会让下钻的「不完整」标记**结构性地永不渲染**。
+   * 上一轮就是这么写的，而 MUT-B（把 `keyCell(row.key, marks)` 改成 `null`）
+   * **624 全绿完整逃逸**——因为那个 `marks` 本来就是死的。
+   *
+   * ⇒ 这一格**正面把那个陷阱钉下来**：不是「别这么写」的一句注释，
+   * 而是一条「这么写就是错的」的可执行断言。
+   *
+   * **变红条件**：给 `summaryCards` 加一条「`total` 缺席时退回读 `malformedKind`」
+   * 的兜底 ⇒ 第二句断言红。**那正是不该做的修法**——`complete` 的语义就是
+   * 「顶层合计那份数据完不完整」，让它去回答一条没有顶层合计的端点是越界。
+   */
+  it("summaryCards().complete 在单日下钻那份响应上恒为 true —— 它读的是 total，而那条端点没有 total，拿它当「缺没缺块」的判据是结构性错误", () => {
+    // 一份 `:date` 形状的响应：**没有 total**，而分片确实一部分坏了。
+    const detail = {
+      tier: "tier2", date: "2026-08-21", note: "no_request_detail",
+      hours: {}, byModel: {}, byProtocol: {}, shards: 4, malformed: 2,
+    };
+    expect(malformedKind(detail), "字段说得清清楚楚：一部分分片坏了").toBe("partial");
+    expect(summaryCards(detail).complete, "而 complete 说「完整」—— 它读的是不存在的 total").toBe(true);
+    // ⚠️ **两者在这条端点上恒相反**，所以判据只能取前者。
+    expect(summaryCards(detail).complete).not.toBe(malformedKind(detail) === "none");
+
+    // 对照：汇总端点**有** total，那里两者是一致的 —— 说明分歧来自端点形状，
+    // 不是来自 `summaryCards` 写错了。
+    const summary = { ...okBody(), shards: 4, malformed: 2 };
+    expect(malformedKind(summary)).toBe("partial");
+    expect(summaryCards(summary).complete).toBe(false);
+  });
+
   it("bucketCells 只回答「取哪六个数」，一个诚实信号都不产出 —— 捏一份假响应去骗过入参形状就是写死诚实信号", () => {
     const b = bucketCells(BUCKET);
     expect(Object.keys(b).sort()).toEqual([

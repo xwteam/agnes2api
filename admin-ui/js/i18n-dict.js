@@ -725,6 +725,9 @@ export const I18N = {
   // ⚠️ 与 `usage.table.unavailable` 同一条理由，C1 点名的「第三屏」：分片全坏 /
   //    读取失败 / 落在保留期外时三个 map 合出来都是空的，照上面那句渲染就是
   //    把「我们什么都不知道」说成「这一天没有记录」。
+  // ⚠️ **单日口径，不能拿 `usage.incompleteTip` 顶替**（定向复评 N7）：
+  //    后者逐字写着「这段区间里」，而下钻说的是**一天**。
+  "usage.detail.incomplete": { "zh-CN": "这一天有 {malformed} 个分片是畸形的，读不回来。下面这些数字缺了那几块，不是这一天完整的用量。", "zh-TW": "這一天有 {malformed} 個分片是畸形的，讀不回來。下面這些數字缺了那幾塊，不是這一天完整的用量。", en: "{malformed} shard(s) for this day are malformed and could not be read. The numbers below are missing those parts — this is not the complete usage for the day.", ja: "この日は不正なシャードが {malformed} 件あり、読み取れませんでした。以下の数値はその分が欠けており、この日の完全な使用量ではありません。", ko: "이 날짜에 손상된 샤드가 {malformed}개 있어 읽지 못했습니다. 아래 수치는 그만큼 빠져 있어 이 날짜의 완전한 사용량이 아닙니다." },
   "usage.detail.unavailable": { "zh-CN": "这一天的分解读不出来，所以这里是空的——不是这一天没有记录。", "zh-TW": "這一天的分解讀不出來，所以這裡是空的——不是這一天沒有記錄。", en: "The breakdown for this day could not be read, so this is empty — it is not that the day has no records.", ja: "この日の内訳を取得できなかったため空になっています。この日に記録がないという意味ではありません。", ko: "이 날짜의 분해를 읽지 못해 비어 있습니다. 이 날짜에 기록이 없다는 뜻이 아닙니다." },
 
   // ── 未落盘的尾巴（`pending` 块）───────────────────────────────────────────

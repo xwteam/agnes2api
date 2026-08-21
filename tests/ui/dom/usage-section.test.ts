@@ -347,26 +347,43 @@ describe("三态在六张卡上必须长得不一样", () => {
   });
 
   /**
-   * **评审 I1：日汇总表那一行也要带「不完整」标记，与 C1 同根因。**
+   * ⚠️⚠️ **定向复评 N4 把 I1 的落地方式推翻了，这一格是订正后的版本。**
    *
-   * 上一版实测的日表行是 `2026-08-21|100|90|10|4,000 / 2,500|30|300|下钻`
-   * ——**一个「不完整」都没有**，而表里那些数字与卡片上的是同一份
-   *「缺了几块的数字」。报告当时自述「每一张卡都带标记」，对卡成立、对表不成立。
+   * I1 那一轮我给日表的**每一行**挂了一个「不完整」标记。N4 实测指出：
+   * `malformed` 数的是**整段区间**的畸形分片 ⇒ 30 天档下 **30 行全写「不完整」**，
+   * 而其中绝大多数天其实是完整的 —— **对那些天它是一句假话**；
+   * 更难堪的是那一版自己的注释还承认「我们并不知道具体哪一格短了」，
+   * 却对每一格都下了断言。而当时的用例只用 `toContain`，**挂几遍都绿**。
    *
-   * 标记挂在**日期那一格**、一行只挂一个：`malformed` 数的是**整段区间**的畸形分片，
-   * 我们并不知道具体哪一格短了。挂七遍会让人以为那是七条独立的信号。
+   * ⭐ **「我们不知道是哪一个」推不出「所以每一个都标上」，它只推得出「只能对整体说」。**
    *
-   * **变红条件**：把 `buildDayTable()` 传给 `keyCell()` 的 `marks` 改成 `null`。
+   * ⇒ 现在：**整块说一次**（`partial_malformed` 那条红条），**逐行一个都不挂**。
+   * 下面用 `toContain` + 逐行计数**双向**钉住，不给「挂了 N 遍」留空子。
+   *
+   * **变红条件**：把逐行标记加回去（`keyCell(row.date, marks)` 那种）
+   * ⇒ 第三句（逐行零命中）红。
    */
-  it("partial_malformed 时日汇总表那一行也带「不完整」标记 —— 表里那些数字与卡片上的是同一份缺了几块的数字", async () => {
-    const h = await openUsage(respondWith(usageBody({ shards: 3, malformed: 2, note: "partial_malformed" })));
-    const rows = dayRowCells(h.section("usage"));
-    expect(rows.length, "没渲染出日表行，装置本身坏了").toBe(1);
-    expect(rows[0], "日表行没有「不完整」标记 —— 卡片带了、表没带").toContain("不完整");
-    expect(rows[0], "数字本身还得在（它们是真的，只是不全）").toContain("100");
-    // 反向锚：没有畸形分片时那一行**不许**带标记。
-    const ok = await openUsage(respondWith(usageBody()));
-    expect(dayRowCells(ok.section("usage"))[0]).not.toContain("不完整");
+  it("partial_malformed：「不完整」整块只说一次，日表逐行一个都不挂 —— 我们不知道哪一天短，就不许对每一天单独断言", async () => {
+    const days = [
+      { date: "2026-08-19", total: usageBody().total },
+      { date: "2026-08-20", total: usageBody().total },
+      { date: "2026-08-21", total: usageBody().total },
+    ];
+    const h = await openUsage(respondWith(usageBody({
+      days, shards: 3, malformed: 2, note: "partial_malformed",
+    })));
+    const sec = h.section("usage");
+    // ① 整块那一处必须说（红条，由后端 note 驱动）。
+    expect(banners(sec).join("|"), "整块没说「一部分分片是畸形的」").toContain("一部分分片是畸形的");
+    // ② 六张卡带标记（它们是整段区间的合计，说它不完整是准确的）。
+    expect(cards(sec)["usage.card.requests"]).toContain("不完整");
+    // ③ ⚠️ **日表逐行一个都不许挂** —— 装置里刻意放了三天。
+    const rows = dayRowCells(sec);
+    expect(rows.length, "没渲染出三行，装置本身坏了").toBe(3);
+    const marked = rows.filter((r) => r.includes("不完整"));
+    expect(marked, "日表对每一天单独断言了「不完整」，而我们并不知道是哪一天短").toEqual([]);
+    // ④ 数字本身还得在（它们是真的，只是不全）。
+    expect(rows[0]).toContain("100");
   });
 
   /**
@@ -777,6 +794,72 @@ describe("单日下钻", () => {
     // 反向锚：没有畸形分片时不许出现这句话。
     const clean = await drill(detailBody());
     expect(clean.section("usage").textContent).not.toContain("个分片是畸形的");
+  });
+
+  /**
+   * ⚠️⚠️⚠️ **定向复评 N2：那句话必须真的出得来，而且必须是单日口径。**
+   *
+   * 上一轮它经 `summaryCards().complete` 判——而 `:date` 响应没有 `total`
+   * ⇒ `complete` 恒 true ⇒ **标记结构性地永不渲染**，`marks` 是死参
+   *（MUT-B 把它改成 `null`，**624 全绿完整逃逸**）。
+   * 判据现在直接走 `malformedKind()`。
+   *
+   * ⚠️ **顺带钉住 N7 的两条**：
+   * ① 文案是**单日口径**（「这一天有 N 个分片是畸形的」），
+   *    不是区间口径的「这段区间里…」——下钻说的是一天；
+   * ② `all` 那一档**不说这句**：那时下面三张表一个数字都没有，
+   *    而这句话的主语是「下面这些数字」。
+   *
+   * **变红条件**：把 `honestyMarks` 的 `incompleteOf` 判据换回
+   * `summaryCards(resp).complete ? null : …` ⇒ 第二句红。
+   */
+  it("下钻的「不完整」真的渲染得出来，且是单日口径 —— 上一轮它经 summaryCards().complete，而那条端点没有 total ⇒ 永不渲染", async () => {
+    const h = await drill(detailBody({ shards: 2, malformed: 3 }));
+    const sec = h.section("usage");
+    expect(sec.textContent, "单日口径那句话没出来").toContain("这一天有 3 个分片是畸形的");
+    // ⚠️ 不许拿区间口径那句顶替：它逐字写着「这段区间里」，而这里是一天。
+    expect(sec.textContent, "把单日说成了「这段区间」").not.toContain("这段区间里有 3 个分片");
+    // ② `all` 那一档不说这句（下面一个数字都没有）。
+    const empty: Record<string, unknown> = Object.create(null);
+    const all = await drill(detailBody({
+      hours: empty, byModel: empty, byProtocol: empty, shards: 0, malformed: 4,
+    }));
+    expect(all.section("usage").textContent, "一个数字都没有，却说「下面这些数字缺了那几块」")
+      .not.toContain("个分片是畸形的");
+    // ⚠️ 但那一档照样得有人说话。**说话的不是 note** —— 契约 6：这条端点
+    //    根本不发 `all_malformed`，它的 `note` 在这一档下仍然是 `no_request_detail`
+    //    （我第一版在这里断言了「每一个都是畸形的」，**那是我自己编的**，
+    //    被这一格当场证伪）。真正说话的是三张表各自那句「读不出来」。
+    expect(all.section("usage").textContent, "全坏那一档没有任何一句解释为什么表是空的")
+      .toContain("这一天的分解读不出来");
+  });
+
+  /**
+   * **定向复评 N5：`≈` 不许只在卡片上出、在紧挨着的表里沉默。**
+   *
+   * 上一版 `numberCells` 的第四形参恒为 `null` ⇒ 六张卡写 `≈ 100`、
+   * 日表写 `100`，**同一个数字两种说法**，而那个不一致没有任何注释解释过。
+   * 现在改成**一张表出一个、挂在标题上**（逐格出的话 30 天档是 210 个 `≈`，
+   * 那时它是装饰不是信号）。
+   *
+   * **变红条件**：把 `buildDayTable()` 里那两行 `approxTitleMark` 删掉。
+   */
+  it("`≈` 在表上出一次、挂在标题旁 —— 卡片带而表里沉默，是同一个数字两种说法", async () => {
+    const h = await openUsage(respondWith(usageBody({ approximate: true })));
+    const sec = h.section("usage");
+    let approxCount = 0;
+    for (const sp of sec.querySelectorAll("span")) {
+      if (sp.classList.contains("approx")) approxCount++;
+    }
+    // 六张卡各一个 + 日表标题一个 = 7。**手写字面量**，多挂一遍就红。
+    expect(approxCount, "`≈` 的个数变了 —— 表上应当只出一个，卡片各一个").toBe(7);
+    // 反向锚：后端说这份数字不是近似值时，一个都不许出。
+    const off = await openUsage(respondWith(usageBody({ approximate: false })));
+    let n = 0;
+    for (const sp of off.section("usage").querySelectorAll("span")) {
+      if (sp.classList.contains("approx")) n++;
+    }
+    expect(n, "approximate 为假时还在打 ≈").toBe(0);
   });
 });
 
