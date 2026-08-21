@@ -112,7 +112,8 @@ const CLAIM_MARKERS = [
  * **实测过爆炸半径**（把这五个词加进上面那张表再跑一次）：**全仓 9 处**命中，
  * 其中 2 处是 Task 7 自己新写的（已就地改成名字锚），**净剩 7 处**分布在
  * `src/entry/worker.ts`、`tests/ui/dom/app-gate.test.ts`、`tests/unit/ui-assets.test.ts`、
- * `scripts/check-i18n.mjs`、`tests/contract/admin-config.test.ts` 五个文件里。
+ * `scripts/check-i18n.mjs`、`tests/contract/admin-config.test.ts`、
+ * `admin-ui/js/pure/settings.mjs` **六个**文件里。
  *
  * **本轮不做，理由写清楚，不是懒**：
  * ① 那 7 处全在与本期缺陷无关的文件里，为一次词表扩容去改 5 个文件、每处新写一个锚，
