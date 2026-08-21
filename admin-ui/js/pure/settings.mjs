@@ -133,6 +133,14 @@ const ERROR_KEYS = {
   fallback_equals_primary: "set.err.fallback_equals_primary",
   delay_min_gt_max: "set.err.delay_min_gt_max",
   channel_credentials_missing: "set.err.channel_credentials_missing",
+  // 评审 C1/C2/C3 补的五条。**加码就必须补这里 + 补五语言**，由
+  // `tests/ui/settings.test.ts` 的「后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红」
+  // 遍历后端的 `CONFIG_ERROR_CODES`（单一真源）钉着。
+  gateway_token_required: "set.err.gateway_token_required",
+  whitespace_padded: "set.err.whitespace_padded",
+  not_sendable: "set.err.not_sendable",
+  too_short: "set.err.too_short",
+  same_as_admin_token: "set.err.same_as_admin_token",
 };
 
 export function errorMessageKey(code) {

@@ -27,8 +27,14 @@ import { FIELD_EXPOSURE, type Env, type Exposure } from "../config-provenance.js
  *
  * ⇒ 取舍明写：规则在这里**是第二份实现**，代价是它可能与 `loadConfig` 漂移。
  * 用两件事把代价压住：
- * ① **可编辑字段清单从 `FIELD_EXPOSURE` 派生**（见 `EDITABLE` 上面那段），
- *    `GatewayConfig` 加字段时那张表编译不过 ⇒ 这里也跑不掉；
+ * ① **可编辑字段清单与 `FIELD_EXPOSURE` 逐条对账**（见 `EDITABLE` 上面那段）。
+ *    ⚠️ **这里原来写的是「从 `FIELD_EXPOSURE` 派生 ⇒ `tsc` 报错」，那是错的**
+ *    （评审 Minor，我复现属实）：往 `FIELD_EXPOSURE` 加一格而**不**进 `EDITABLE`，
+ *    `tsc` 照常通过——`EDITABLE` 是一张独立的手写表，编译期管不着它。
+ *    真正抓住这件事的是**两条运行期用例**（`tests/unit/admin/config-validate.test.ts`
+ *    的「EDITABLE 的每条路径都在 FIELD_EXPOSURE 里，且 secret 那几格两边口径一致」
+ *    与「FIELD_EXPOSURE 里每一格要么可编辑，要么在手写的「刻意只读」清单里」）。
+ *    **结论成立，机制说错了一层**——编译期强制只管 `FIELD_EXPOSURE` 自己那一层；
  * ② `tests/unit/admin/config-validate.test.ts` 的
  *    「防漂：validateConfigPatch 放行的，loadConfigWithProvenance 必须装载得起来」
  *    **拿真的装载函数**去跑每一个「校验说合法」的样本——漂移会在那里变红，
@@ -57,29 +63,84 @@ export interface ConfigError {
  * 拿这张表去比对字典：**加一个码而不补五语言，那一格当场红**（设计 §10.4 要求的
  * 那条 CI 断言）。
  */
-export type ConfigErrorCode =
+/**
+ * 全部错误码。**单一真源是下面这个数组，类型从它派生。**
+ *
+ * ⚠️⚠️ **第一版是手写联合 + 测试里一份 `as const satisfies readonly ConfigErrorCode[]`
+ * 的镜像，那条护栏实测是假的**（评审 C4，我自己复现过）：`satisfies` 只做**单向
+ * 可赋值检查**——它保证镜像里每一项都是合法的码，**不保证每一个码都在镜像里**。
+ * 给联合加一个新码而不补 `ERROR_KEYS`、不补五语言 ⇒
+ * `tsc exit=0`、`settings.test.ts` 34 passed、`check-i18n exit=0`，**零信号**；
+ * 而反向（从联合里删一个）确实 `TS2322 ×2`。**删得住、加不住。**
+ * 后果是：后端加错误码 ⇒ 面板 `errorMessageKey()` 返回 `null` ⇒ 走 `set.err.unknown`
+ * **把裸码显示给运维**，没有任何东西会红。
+ *
+ * ⇒ 改成**数组是真源、类型是派生**：测试直接遍历 `CONFIG_ERROR_CODES`，
+ * 加一个码而不补文案，`tests/ui/settings.test.ts` 的
+ * 「后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红」当场红。
+ */
+export const CONFIG_ERROR_CODES = [
   /** 请求体里有本表不认识的字段（拼错的字段名在宽松实现下是一次「保存成功、什么都没发生」）。 */
-  | "unknown_field"
+  "unknown_field",
   /** 这个字段被环境变量锁定，写它不会生效——**拒绝而不是静默接受**，见下面 `lockedBy` 那段。 */
-  | "locked_by_env"
-  | "not_an_integer"
-  | "below_min"
-  | "not_a_string"
-  | "not_a_boolean"
-  | "empty"
-  | "too_long"
-  | "not_a_url"
-  | "not_a_channel"
+  "locked_by_env",
+  "not_an_integer",
+  "below_min",
+  "not_a_string",
+  "not_a_boolean",
+  "empty",
+  "too_long",
+  "not_a_url",
+  "not_a_channel",
   /** 注册机开着却没选主通道（后端 `registrarFromEnv` 在这一条上是抛错）。 */
-  | "primary_required"
+  "primary_required",
   /** 备通道等于主通道。**只在 `enabled` 为真时成立**（V21），前端拦截必须同源。 */
-  | "fallback_equals_primary"
-  | "delay_min_gt_max"
+  "fallback_equals_primary",
+  "delay_min_gt_max",
   /** 注册机开着、这条通道在链上，却没有凭据（`creds()` 在这一条上是抛错）。 */
-  | "channel_credentials_missing";
+  "channel_credentials_missing",
+  /** 两边都没有网关口令 ⇒ 冷启动会 fail-closed（`loadConfigWithProvenance` 抛）。 */
+  "gateway_token_required",
+  /** 凭据首尾带空白：HTTP 头值在传输层被 trim，客户端**永远送不出**这个值。 */
+  "whitespace_padded",
+  /** 凭据含送不出去的字符（非可打印 ASCII）。判据与 `ADMIN_TOKEN` 那条同源。 */
+  "not_sendable",
+  "too_short",
+  /** 网关口令不得等于 `ADMIN_TOKEN`：中转口令是发给每一个下游用户的。 */
+  "same_as_admin_token",
+] as const;
+
+export type ConfigErrorCode = (typeof CONFIG_ERROR_CODES)[number];
 
 /** 备注类文本的长度上限。与 `MAX_NOTE_LENGTH` 同一条理由：没有上限的自由文本会挂在热路径上。 */
 export const MAX_TEXT_LENGTH = 200;
+
+/**
+ * 网关口令的长度下限。**与 `ADMIN_TOKEN_MIN_LENGTH` 是同一个数，理由逐字相同。**
+ *
+ * `src/http/admin/auth.ts` 那段写着：「Worker 形态**没有分布式限速**（做它要拿 KV 当
+ * 窗口，等于给攻击者一根消耗写配额的杠杆），因此口令熵就是唯一的防线，下限不是建议值」
+ * ——**那段理由对 `gatewayToken` 逐字成立**：`/v1/*` 同样没有分布式限速，而
+ * `gatewayToken` 是它唯一的凭据。
+ *
+ * ⚠️ **只对 `gatewayToken` 生效，不对两条通道的 `apiKey`**：那两把是**上游签发**的，
+ * 长度不由本网关决定，套一个下限只会把一把合法的 key 拒掉。
+ */
+export const MIN_GATEWAY_TOKEN_LENGTH = 24;
+
+/**
+ * 可打印 ASCII（0x20–0x7E）。**与 `src/http/admin/auth.ts` 的 `SENDABLE` 是同一条判据。**
+ *
+ * 不 import 那一份：本文件在 `src/core/` 下，core 不许依赖 `src/http/`。
+ * 两份一致由 `tests/unit/admin/config-validate.test.ts` 的
+ * 「凭据的形状规则与 ADMIN_TOKEN 那四条逐码位同源」用**全部 256 个码位**跑等价断言钉住
+ * ——做法抄 `tests/ui/sendable-parity.test.ts` 的
+ * 「0x00–0xFF 全 256 个码位，两边给出同一个答案」。
+ *
+ * ⚠️ 量词是 `*` 而不是 `+`：这条规则说的是「不含送不出去的字符」，**非空不是它的职责**
+ *（空串在更早一步就被当成「缺席」了）。与那边保持逐字相同，等价关系才对全部输入成立。
+ */
+const SENDABLE = /^[\x20-\x7e]*$/;
 
 type Spec =
   | { kind: "int"; min: number }
@@ -243,7 +304,15 @@ function isHttpUrl(v: unknown): boolean {
  */
 export function validateConfigPatch(
   patch: unknown,
-  ctx: { stored: unknown; env: Env },
+  ctx: {
+    stored: unknown;
+    env: Env;
+    /**
+     * 当前的 `ADMIN_TOKEN`（只从环境变量来）。**给了才查「网关口令不得等于它」**——
+     * 不给时那一条静默跳过，而不是假装查过。直接调 `createApp` 的装配拿不到它。
+     */
+    adminToken?: string;
+  },
 ): ValidateResult {
   const errors: ConfigError[] = [];
   const body = asObject(patch);
@@ -277,12 +346,48 @@ export function validateConfigPatch(
     }
 
     if (spec.kind === "secret") {
+      if (value === undefined) continue;
+      if (typeof value !== "string") { errors.push({ field, code: "not_a_string" }); continue; }
       // 设计 §8.6：**缺席或空串 = 不改**（不是清空）。清空走
       // `POST /admin/api/config/secrets/clear`。
       // ⚠️ 空串走清空分支的后果：运维保存一次设置页就抹掉 `gatewayToken`，
       // 网关整个停摆（§5.4 的 fail-closed 反噬）。
-      if (value === undefined || value === "") continue;
-      if (typeof value !== "string") { errors.push({ field, code: "not_a_string" }); continue; }
+      //
+      // ⚠️⚠️ **判据是 `trim() === ""` 而不是 `=== ""`**（评审 C3）：一次「粘了几个空格」
+      // 的误操作在 `=== ""` 下会被**收下并落盘**，而 `loadConfigWithProvenance` 里那句
+      // `if (!gatewayToken)` 对 `"   "` 为**真**（非空字符串）⇒ 一次都不 fail-fast，
+      // 面板还显示 `configured: true`。实测：`PUT {"gatewayToken":"   "} → 200`、
+      // 落盘 `"   "`、原口令被抹掉、**所有下游用户从此 401**。
+      const token = value.trim();
+      if (token === "") continue;
+
+      // ── 下面三条与 `ADMIN_TOKEN` 的四条硬规则同源，顺序也一样：
+      //    空白 → 字符集 → 长度 → 相同性（见 `src/http/admin/auth.ts` 的 checkAdminToken）。
+      //
+      // ⚠️⚠️ **这一整段是评审 C3 补的。** `gatewayToken` 在本任务里**第一次变成面板可写**，
+      // 而 `auth.ts` 早就为 `ADMIN_TOKEN` 立了这四条、每条都带着「为什么」——
+      // **那些理由逐字对 `gatewayToken` 同样成立**（`/v1/*` 同样没有分布式限速，
+      // 而 `gatewayToken` 是它唯一的凭据）。第一版一条都没跟过来。
+      if (value !== token) {
+        // HTTP 头值在传输层被 trim，而存储里不会 ⇒ 带空白的口令客户端**永远送不出来**，
+        // 症状是「口令明明是对的却一直 401」。而首尾空格在面板上**根本渲染不出来**。
+        errors.push({ field, code: "whitespace_padded" });
+        continue;
+      }
+      if (!SENDABLE.test(value)) { errors.push({ field, code: "not_sendable" }); continue; }
+      if (field === "gatewayToken") {
+        if (value.length < MIN_GATEWAY_TOKEN_LENGTH) {
+          errors.push({ field, code: "too_short", params: { min: MIN_GATEWAY_TOKEN_LENGTH } });
+          continue;
+        }
+        // ③ 不得等于 `ADMIN_TOKEN`。把它写成相等 ⇒ `adminAuth` 的每请求复查立刻
+        // 把整个管理面判成 503，**而改回去的那条 `PUT` 也是 503** ⇒ 面板把自己锁死。
+        // 实测：设成 ADMIN_TOKEN → 200，之后 `GET /config` 503、想改回去的 `PUT` 也 503。
+        if (ctx.adminToken !== undefined && value === ctx.adminToken) {
+          errors.push({ field, code: "same_as_admin_token" });
+          continue;
+        }
+      }
       next = setAt(next, path, value);
       changed.push(field);
       continue;
@@ -298,7 +403,10 @@ export function validateConfigPatch(
   // 「min 不大于 max」这类比较拿到无意义的操作数，报出来的第二条错误只会误导。
   if (errors.length > 0) return { ok: false, errors };
 
-  errors.push(...crossFieldErrors(next, ctx.env));
+  // **跨字段阶段直接复用「这份配置装载得起来吗」那一份判据**（见 `configLoadBlockers`）。
+  // 两处各写一份的后果很具体：`PUT` 收下一份自己觉得合法、而 `loadConfig` 装不起来的
+  // 配置 ⇒ 下一次冷启动网关起不来，那正是 §5.4 这道校验存在的全部理由。
+  errors.push(...configLoadBlockers(next, ctx.env));
   if (errors.length > 0) return { ok: false, errors };
 
   return { ok: true, next, changed: changed.sort() };
@@ -349,6 +457,40 @@ function checkLeaf(field: string, spec: Exclude<Spec, { kind: "secret" }>, value
  * （`if (enabled && …)`），面板也就一条都不许拦。**两边判据必须同源**——
  * 前端无条件拦截的后果是「关着注册机时连下拉框都改不了」，而后端明明会收下。
  */
+/**
+ * **这份 `config` 装载得起来吗？** 装载不起来的每一条原因，逐字段列出来。
+ *
+ * ⚠️⚠️ **这个函数是评审 C1/C2 的收口点，它把三处原本各行其是的判断收成一份。**
+ *
+ * 在它之前：`configClearSecretHandler` 里只有一条 `nowMissing`，而且**只判
+ * `gatewayToken`**；同构的「清掉一条在链上的通道凭据」一个字都没写 ⇒ 那条路径上
+ * `put` 先发生、随后 `readAll` 抛、被 `app.onError` 吞成 **500**：
+ * **面板说「保存失败」，而那把凭据已经被删掉了。** 而同一个文件里我自己写下的禁令
+ * 逐字是「回读抛出去会变成一个 500，而清空**已经发生了**——『面板说失败、实际做了』
+ * 正是本仓反复裁过的那类谎」。
+ *
+ * 更坏的是**没有出路**（实测）：清完之后 `PUT` 关掉注册机 / 重新填这把 key /
+ * 换主通道**全是 500**，`GET /admin/api/config` 也是 500，而**干跑 `validate` 回 200**
+ * ——干跑说「你这个补丁合法」，真跑 500。冷启动则连 `/admin` 一起消失。
+ *
+ * **判据逐条对应 `loadConfigWithProvenance` 会抛的地方**，没有第二份推理：
+ * · 两边都没有 `gatewayToken` ⇒ 那里 `if (!gatewayToken) throw`；
+ * · 其余五条 ⇒ `registrarFromEnv` / `creds()` 里的 `throw`（`crossFieldErrors`）。
+ *
+ * 它有三个消费者，这正是它存在的意义：`validateConfigPatch` 的跨字段阶段、
+ * `secrets/clear` 的**写前**预判、以及 `GET`/`PUT` 装载失败时的诊断视图。
+ */
+export function configLoadBlockers(stored: unknown, env: Env): ConfigError[] {
+  const next = asObject(stored) ?? {};
+  const out: ConfigError[] = [];
+  // `loadConfigWithProvenance` 唯一保留 fatal 的那一条。
+  if (!nonEmpty(env.GATEWAY_TOKEN ?? next.gatewayToken)) {
+    out.push({ field: "gatewayToken", code: "gateway_token_required" });
+  }
+  out.push(...crossFieldErrors(next, env));
+  return out;
+}
+
 function crossFieldErrors(next: Obj, env: Env): ConfigError[] {
   const out: ConfigError[] = [];
   const reg = asObject(next.registrar) ?? {};

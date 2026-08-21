@@ -165,7 +165,9 @@ export async function buildApp(
     // ——那是转发能力的信号，而一次配置保存失败只影响这一次点击（面板会当场看到 500）。
     // ⚠️ 这与 `configHolder` 用的是 `watched` 并不矛盾：**读**配置在每个请求的
     // 热路径上，读不出来确实说明存储出了问题，那条该进 `/health`。
-    config: { storage, env },
+    // `adminToken` 只用来查一条：面板写进去的 `gatewayToken` 不许等于它
+    // （写成相等 ⇒ 管理面每请求 503，而改回去的那条 `PUT` 也是 503，面板把自己锁死）。
+    config: { storage, env, adminToken: env.ADMIN_TOKEN },
     fetcher: new NativeFetcher(),
     now: () => Date.now(),
     storageHealth,

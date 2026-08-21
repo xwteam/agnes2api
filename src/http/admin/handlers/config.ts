@@ -7,7 +7,8 @@ import {
   loadConfigWithProvenance, type ConfigProvenance, type Env, type FieldSource,
 } from "../../../core/config-provenance.js";
 import {
-  validateConfigPatch, clearSecret, SECRET_FIELDS, EDITABLE_FIELDS, type ConfigError,
+  validateConfigPatch, clearSecret, configLoadBlockers, envNameOf,
+  SECRET_FIELDS, EDITABLE_FIELDS, type ConfigError,
 } from "../../../core/admin/config-validate.js";
 import { httpError, readJson } from "../../errors.js";
 
@@ -73,6 +74,12 @@ export interface ConfigWiring {
    * （取值发生在入口层，`config-provenance.ts` 只是收下一个 `Record`）。
    */
   env: Env;
+  /**
+   * 当前的 `ADMIN_TOKEN`（只从环境变量来）。**只用来查一条**：面板写进去的
+   * `gatewayToken` 不许等于它——写成相等的后果是 `adminAuth` 的每请求复查把整个管理面
+   * 判成 503，**而改回去的那条 `PUT` 也是 503**，面板把自己锁死（评审 C3，已实测）。
+   */
+  adminToken?: string;
 }
 
 export interface ConfigDeps {
@@ -118,16 +125,47 @@ function split(source: Record<string, FieldSource>) {
 }
 
 /**
- * 一次装载 + 切块。**读失败一律如实抛**（由 `app.onError` 转成 500 固定文案）：
- * 这个端点存在的全部意义就是说清「现在到底是什么」，编一份空数据出来比报错更坏。
+ * 一次装载 + 切块，**装载不起来时降级成诊断视图而不是 500**。
+ *
+ * ⚠️⚠️ **「降级成诊断视图」这件事是评审 C2 的收口点，它是运维唯一的出路。**
+ *
+ * 在它之前：存储里那份 `config` 一旦装载不起来（缺 `gatewayToken`、或注册机开着却
+ * 缺链上通道的凭据），`GET /admin/api/config` 与 `PUT /admin/api/config` **全是 500**
+ * ——于是「关掉注册机」「把那把 key 重新填回去」「换一条主通道」这三条自救路径
+ * **一条都走不通**（实测三条全 500），而屏幕上五语言正写着「请立刻在这一页写一把新的」。
+ * 加重情节：这时 `GET /admin/api/overview` 仍然 200 且 `degraded` 为假
+ *（`Refreshable` 保着上一份快照），概览页一片正常。
+ *
+ * ⚠️ **不是泛泛地 `catch`。** 我自己在 `configClearSecretHandler` 里写过这条禁令：
+ * 「泛泛地 catch 会把**真的存储故障**也吞成这一支，于是一次 KV 抖动会被报成
+ * 『你把口令删光了』」。所以判据是：抓到之后**先算一遍 `configLoadBlockers`**——
+ * · 有 blocker ⇒ 这是**配置问题**，给诊断视图（`fields`/`credentials` 为 `null`，
+ *   `loadBlocked` 逐条说清缺什么）；
+ * · **没有 blocker ⇒ 这个异常不是配置引起的，原样抛出去**（存储真的坏了该报 500）。
+ * 代价：失败那一支多付一次存储读。**顺利那一支仍然是 1 次 get**，配额账不变。
  */
-async function readAll(wiring: ConfigWiring, logger: Logger): Promise<{
-  prov: ConfigProvenance;
-  fields: Record<string, unknown>;
-  credentials: Record<string, unknown>;
-}> {
-  const prov = await loadConfigWithProvenance(wiring.env, wiring.storage, logger);
-  return { prov, ...split(prov.source) };
+export interface ConfigSnapshot {
+  prov: ConfigProvenance | null;
+  fields: Record<string, unknown> | null;
+  credentials: Record<string, unknown> | null;
+  configDegraded: boolean;
+  /** 装载不起来的每一条原因。**空数组 = 装得起来**，面板据此决定要不要显示诊断横幅。 */
+  loadBlocked: readonly ConfigError[];
+}
+
+async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnapshot> {
+  try {
+    const prov = await loadConfigWithProvenance(wiring.env, wiring.storage, logger);
+    return { prov, ...split(prov.source), configDegraded: prov.config.degraded, loadBlocked: [] };
+  } catch (err) {
+    const stored = await wiring.storage.get<unknown>("config");
+    const blockers = configLoadBlockers(stored ?? {}, wiring.env);
+    // **没有 blocker ⇒ 不是配置的锅，原样抛。**
+    if (blockers.length === 0) throw err;
+    return {
+      prov: null, fields: null, credentials: null, configDegraded: true, loadBlocked: blockers,
+    };
+  }
 }
 
 /** 传播时间。两个数都从 `config-holder.ts` 取，**这里没有任何字面量**（见那里的说明）。 */
@@ -146,12 +184,18 @@ export function configGetHandler(deps: ConfigDeps) {
   return async (c: Context) => {
     const wiring = deps.wiring;
     if (wiring === null) return notWired(c);
-    const { prov, fields, credentials } = await readAll(wiring, deps.logger);
+    const snap = await readAll(wiring, deps.logger);
     return c.json({
-      fields,
-      credentials,
+      fields: snap.fields,
+      credentials: snap.credentials,
       /** 本次装载有没有降级。红色横幅的依据，与 `GET /admin/api/overview` 同一个值。 */
-      configDegraded: prov.config.degraded,
+      configDegraded: snap.configDegraded,
+      /**
+       * 存储里那份配置**装载不起来**的每一条原因（空数组 = 装得起来）。
+       * 非空时 `fields`/`credentials` 是 `null`——面板据此显示诊断视图，
+       * **而不是一份编出来的空配置**，并且**表单仍然可编辑**（那是唯一的出路）。
+       */
+      loadBlocked: [...snap.loadBlocked],
       /** 面板能改的字段清单。**从后端给**，前端不另写一份（写两份必漂）。 */
       editable: [...EDITABLE_FIELDS],
       /** 哪几条路径是凭据。前端据此渲染「留空则不修改」的占位符与清空按钮。 */
@@ -209,10 +253,17 @@ export function configPutHandler(deps: ConfigDeps) {
     const patch = await readPatch(c);
     // **写之前先把当前状态读出来**：校验要拿它做合并（「缺席 = 不改」），
     // 回执里的 `changed` 也要拿它做对照。这一次读发生在任何写之前。
-    const before = await loadConfigWithProvenance(wiring.env, wiring.storage, deps.logger);
+    //
+    // ⚠️ **走 `readAll` 而不是裸 `loadConfigWithProvenance`**（评审 C2）：存储里那份
+    // 配置已经装载不起来时，裸调用会抛 ⇒ 整条 `PUT` 变成 500 ⇒ **「把那把 key 重新
+    // 填回去」这条自救路径自己也走不通**（实测：关注册机 / 重填 key / 换主通道全 500）。
+    // 校验只需要 `storedBefore`（原始读，永远不抛），所以写这条路完全不依赖装载成功。
+    const before = await readAll(wiring, deps.logger);
     const storedBefore = (await wiring.storage.get<unknown>("config")) ?? {};
 
-    const verdict = validateConfigPatch(patch, { stored: storedBefore, env: wiring.env });
+    const verdict = validateConfigPatch(patch, {
+      stored: storedBefore, env: wiring.env, adminToken: wiring.adminToken,
+    });
     if (!verdict.ok) return invalid(c, verdict.errors);
 
     await wiring.storage.put("config", verdict.next);
@@ -231,9 +282,11 @@ export function configPutHandler(deps: ConfigDeps) {
      * 按 patch 比会说「改了」，而生效值纹丝不动。**面板高亮的必须是真的变了的那些。**
      * 凭据不进这份清单（它们没有可比的公开值），改没改由 `credentialsChanged` 报。
      */
-    const changed = Object.keys(after.prov.source).filter((path) => {
-      const a = before.source[path];
-      const b = after.prov.source[path];
+    // ⚠️ **两侧任一装载不起来时，`changed` 一律是空数组**，而不是编一份差异出来：
+    // 那时根本没有「生效值」这个东西可比。面板靠 `loadBlocked` 说话，不靠高亮。
+    const changed = after.prov === null || before.prov === null ? [] : Object.keys(after.prov.source).filter((path) => {
+      const a = before.prov!.source[path];
+      const b = after.prov!.source[path];
       if (a === undefined || b === undefined) return false;
       if (a.exposure !== "public" || b.exposure !== "public") return false;
       return JSON.stringify(a.effective) !== JSON.stringify(b.effective);
@@ -258,7 +311,8 @@ export function configPutHandler(deps: ConfigDeps) {
     return c.json({
       fields: after.fields,
       credentials: after.credentials,
-      configDegraded: after.prov.config.degraded,
+      configDegraded: after.configDegraded,
+      loadBlocked: [...after.loadBlocked],
       changed,
       credentialsChanged,
       /**
@@ -331,65 +385,69 @@ export function configClearSecretHandler(deps: ConfigDeps) {
     if (!result.ok) throw httpError(400, "invalid_request_error", "这条路径不是凭据");
 
     /**
-     * ⚠️⚠️ **清掉 `gatewayToken` 而环境变量里也没有 ⇒ 下一次装载会抛
-     * 「缺少 GATEWAY_TOKEN」**（§5.4 的 fail-closed 反噬）。
+     * ⚠️⚠️ **清空之后这份配置还装载得起来吗——在写之前算好。**
      *
-     * **这件事必须在写之前算好，而不是靠 try/catch 兜住那次回读。** 两条理由：
-     * ① 回读抛出去会变成一个 500，而清空**已经发生了**——「面板说失败、实际做了」
-     *    正是本仓反复裁过的那类谎，方向还比通常那条更坏；
-     * ② 泛泛地 `catch` 那次回读会把**真的存储故障**也吞成这一支，于是一次
-     *    KV 抖动会被报成「你把口令删光了」，运维照着去重设一把不存在的问题。
+     * 第一版这里只判 `gatewayToken`（`nowMissing`），而**同构的通道凭据一条都没判**：
+     * 清掉一条**在主/备链上**的通道 key 时，`put` 先发生 → 随后 `readAll` 抛
+     *（`creds()`）→ 被 `app.onError` 吞成 **500**，于是**面板说「保存失败」，
+     * 而那把凭据已经被删掉了**（实测逐字：`HTTP 500` + 存储里 `apiKey === undefined`）。
+     * 那正是这段注释下面几行自己写着的禁令：「面板说失败、实际做了」。
      *
-     * 处置：照常清空（这是一条显式动作），**但如实说清后果**，并打一条 `error`
-     * 事件。热实例因为 `Refreshable` 保留上一份合法快照不会当场停摆，所以这件事
-     * 在面板上本来是**看不见**的——`gatewayTokenMissing` 就是让它可见的那一格。
-     * 恢复路径也如实给：这一刻面板还活着（`ADMIN_TOKEN` 只从环境变量来，与它无关），
-     * 直接 `PUT` 一把新的 `gatewayToken` 就行。
+     * ⇒ 判据换成 `configLoadBlockers`（与 `PUT` 的跨字段校验、与诊断视图**同一份**），
+     * 它天然覆盖 `gatewayToken` 与两条通道，将来多一条 `throw` 也只需改那一处。
+     *
+     * **仍然照常清空**（这是一条显式动作，运维自己的网关，不该替他做主），
+     * 但：① 后果**如实进响应体**（`loadBlocked`）；② 审计**先落再回读**；
+     * ③ 回读走降级后的 `readAll` ⇒ 不再有 500。
      */
-    const nowMissing = path === "gatewayToken" && wiring.env.GATEWAY_TOKEN === undefined;
+    const blockedAfter = configLoadBlockers(result.next, wiring.env);
 
     await wiring.storage.put("config", result.next);
     deps.configHolder.invalidate();
 
-    if (nowMissing) {
-      deps.logger.log({
-        level: "error", event: "config.secret_cleared",
-        msg: "面板清空了 gatewayToken，且环境变量里也没有——当前进程靠上一份快照还能跑，"
-          + "但下一次冷启动会起不来。请立刻在设置页里写一把新的网关口令。",
-        // **只记路径**，值一个字都不记。
-        fields: { path, stillConfigured: false, gatewayTokenMissing: true },
-      });
-      // **不回读**：这一刻的装载一定抛（见上）。四元组给 `null`，面板据此显示
-      // 一句「读不回来了」而不是一份编出来的空配置。
-      return c.json({
-        cleared: path,
-        stillConfigured: false,
-        gatewayTokenMissing: true,
-        fields: null,
-        credentials: null,
-        configDegraded: null,
-        propagation: PROPAGATION,
-      });
-    }
+    /**
+     * 清完之后这一格还有没有值——**只看环境变量**（存储里那份刚被删掉）。
+     * 不从回读结果里取：回读在诊断态下 `credentials` 是 `null`，而这件事本身
+     * 与「装不装得起来」无关，用一个可能为 `null` 的东西去推它是自找的。
+     */
+    const envName = envNameOf(path);
+    const stillConfigured = envName !== null && (wiring.env[envName] ?? "") !== "";
 
-    const after = await readAll(wiring, deps.logger);
-    const stillConfigured = (after.credentials[path] as { configured: boolean } | undefined)?.configured === true;
+    /**
+     * ⚠️ **审计先落，再回读。** 第一版把这条事件打在 `readAll` **之后**，
+     * 于是回读抛错的那一支（正是最该留痕的那一支）**一条审计都没有**——
+     * 存储被改了、面板收到 500、事件板块里什么都没有。
+     */
     deps.logger.log({
-      level: stillConfigured ? "warn" : "error",
+      level: blockedAfter.length > 0 ? "error" : (stillConfigured ? "warn" : "warn"),
       event: "config.secret_cleared",
-      msg: stillConfigured
-        ? "面板清空了存储里的一把凭据；环境变量里仍然有一份，生效值不变"
-        : "面板清空了一把凭据，且环境变量里也没有——补池会因此拿不到它",
-      fields: { path, stillConfigured, gatewayTokenMissing: false },
+      msg: blockedAfter.length > 0
+        ? "面板清空了一把凭据，清完之后这份配置已经装载不起来了——当前进程靠上一份快照还能跑，"
+          + "但下一次冷启动会失败。请立刻在设置页里补回来，或把依赖它的那条通道从主/备里去掉。"
+        : (stillConfigured
+          ? "面板清空了存储里的一把凭据；环境变量里仍然有一份，生效值不变"
+          : "面板清空了一把凭据；这份配置仍然装载得起来"),
+      // **只记路径与机器可读的原因码**，值一个字都不记。
+      fields: {
+        path,
+        stillConfigured,
+        blocked: blockedAfter.map((b) => `${b.field}:${b.code}`).join(",") || null,
+      },
     });
 
+    const after = await readAll(wiring, deps.logger);
     return c.json({
       cleared: path,
       stillConfigured,
-      gatewayTokenMissing: false,
+      /**
+       * ⚠️ **保留这个字段名是为了不改前端契约**，但它现在是从 `loadBlocked` 派生的，
+       * 而不是一条只认 `gatewayToken` 的独立判断。
+       */
+      gatewayTokenMissing: blockedAfter.some((b) => b.code === "gateway_token_required"),
+      loadBlocked: [...blockedAfter],
       fields: after.fields,
       credentials: after.credentials,
-      configDegraded: after.prov.config.degraded,
+      configDegraded: after.configDegraded,
       propagation: PROPAGATION,
     });
   };

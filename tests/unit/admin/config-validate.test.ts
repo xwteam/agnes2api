@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   validateConfigPatch, clearSecret, exposureFields, declaredExposure, envNameOf,
-  EDITABLE_FIELDS, SECRET_FIELDS, MAX_TEXT_LENGTH, type ConfigErrorCode,
+  EDITABLE_FIELDS, SECRET_FIELDS, MAX_TEXT_LENGTH, MIN_GATEWAY_TOKEN_LENGTH,
+  configLoadBlockers, CONFIG_ERROR_CODES, type ConfigErrorCode,
 } from "../../../src/core/admin/config-validate.js";
+import { checkAdminTokenShape, ADMIN_TOKEN_MIN_LENGTH } from "../../../src/http/admin/auth.js";
 import { envLockedFields, loadConfigWithProvenance } from "../../../src/core/config-provenance.js";
 import { MemoryStorage } from "../../helpers/fake-storage.js";
 import { NULL_LOGGER } from "../../../src/ports/logger.js";
@@ -141,9 +143,17 @@ describe("凭据：缺席或空串 = 不改（设计 §8.6）", () => {
     expect(r.changed, "空串不该算作一次改动").toEqual([]);
   });
 
+  /**
+   * ⚠️ **夹具从 `"brand-new-secret"`（16 位）换成了 30 位，那不是凑数**：
+   * 评审 C3 之后 `gatewayToken` 吃 24 位下限（与 `ADMIN_TOKEN` 同一个数、同一条理由），
+   * 16 位那把现在会被 `too_short` 正当拦下。**这一格测的是「非空串真的会落盘」，
+   * 不是「长度规则存不存在」**，所以换夹具、不动规则；下限本身由
+   * 「短于 24 位被拒，正好 24 位放行」单独钉着。
+   */
   it("非空串 = 真的改", () => {
-    const r = ok(validateConfigPatch({ gatewayToken: "brand-new-secret" }, { stored, env: NO_GW }));
-    expect(r.next.gatewayToken).toBe("brand-new-secret");
+    const fresh = "brand-new-gateway-token-000999";
+    const r = ok(validateConfigPatch({ gatewayToken: fresh }, { stored, env: NO_GW }));
+    expect(r.next.gatewayToken).toBe(fresh);
     expect(r.changed).toEqual(["gatewayToken"]);
   });
 
@@ -341,7 +351,12 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
    */
   it("每个错误码都至少有一个样本能真的触发它（联合类型不许有死成员）", () => {
     const produced = new Set<ConfigErrorCode>();
-    const SAMPLES: ReadonlyArray<{ patch: Record<string, unknown>; stored: unknown; env: Record<string, string | undefined> }> = [
+    const ADMIN = "the-admin-token-0123456789abc";
+    const LONG = "x".repeat(30);
+    const SAMPLES: ReadonlyArray<{
+      patch: Record<string, unknown>; stored: unknown;
+      env: Record<string, string | undefined>; adminToken?: string;
+    }> = [
       { patch: { nope: 1 }, stored: {}, env: GW },
       { patch: { maxStrikes: 9 }, stored: {}, env: { ...GW, MAX_STRIKES: "3" } },
       { patch: { maxStrikes: 1.5 }, stored: {}, env: GW },
@@ -359,18 +374,34 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
       },
       { patch: { "registrar.mintDelayMinMs": 9_000, "registrar.mintDelayMaxMs": 5_000 }, stored: {}, env: GW },
       { patch: { "registrar.enabled": true, "registrar.primary": "yyds" }, stored: {}, env: GW },
+      // ── 评审 C1/C3 新增的五个码，各配一个能真的触发它的样本 ──────────────
+      // ⚠️ 这五格的 `env` 里刻意**没有** `GATEWAY_TOKEN`：设了的话 `gatewayToken`
+      // 会先吃 `locked_by_env`，测的就不是这五条了（第 1 种假阳性）。
+      { patch: { maxStrikes: 9 }, stored: {}, env: {} },
+      { patch: { gatewayToken: `${LONG} ` }, stored: { gatewayToken: LONG }, env: {} },
+      { patch: { gatewayToken: "网关口令网关口令网关口令网关口令网关口令网关口令" }, stored: { gatewayToken: LONG }, env: {} },
+      { patch: { gatewayToken: "x".repeat(23) }, stored: { gatewayToken: LONG }, env: {} },
+      { patch: { gatewayToken: ADMIN }, stored: { gatewayToken: LONG }, env: {}, adminToken: ADMIN },
     ];
     for (const s of SAMPLES) {
-      const r = validateConfigPatch(s.patch, { stored: s.stored, env: s.env });
+      const r = validateConfigPatch(s.patch, { stored: s.stored, env: s.env, adminToken: s.adminToken });
       if (!r.ok) for (const e of r.errors) produced.add(e.code);
     }
     // **期望值手写字面量**，不从 `produced` 反推（第 6 种假阳性）。
     expect([...produced].sort()).toEqual([
       "below_min", "channel_credentials_missing", "delay_min_gt_max", "empty",
-      "fallback_equals_primary", "locked_by_env", "not_a_boolean", "not_a_channel",
-      "not_a_string", "not_a_url", "not_an_integer", "primary_required",
-      "too_long", "unknown_field",
+      "fallback_equals_primary", "gateway_token_required", "locked_by_env",
+      "not_a_boolean", "not_a_channel", "not_a_string", "not_a_url", "not_an_integer",
+      "not_sendable", "primary_required", "same_as_admin_token", "too_long",
+      "too_short", "unknown_field", "whitespace_padded",
     ]);
+    /**
+     * **反向：`CONFIG_ERROR_CODES` 里不许有任何一个码是「死成员」。**
+     * 上面那份手写清单只说明「这些码被触发过」；这一句说明「**每一个**码都被触发过」
+     * ——加一个码而不给它任何产出路径，这里当场红。
+     */
+    expect([...CONFIG_ERROR_CODES].filter((c) => !produced.has(c)).sort(),
+      "这些码在整份校验里没有任何一条路径会产出它 —— 死成员").toEqual([]);
   });
 });
 
@@ -450,5 +481,163 @@ describe("防漂：validateConfigPatch 放行的，loadConfigWithProvenance 必�
     const storage = new MemoryStorage();
     await storage.put("config", bad);
     await expect(loadConfigWithProvenance(GW, storage, NULL_LOGGER)).rejects.toThrow();
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 评审 C3：gatewayToken 第一次面板可写，ADMIN_TOKEN 的四条硬规则必须跟过来
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️ **`src/http/admin/auth.ts` 早就为 `ADMIN_TOKEN` 立了这四条，每条都带着「为什么」
+ * ——而那些理由逐字对 `gatewayToken` 同样成立**：`/v1/*` 同样没有分布式限速，
+ * 而 `gatewayToken` 是它唯一的凭据。本任务让它第一次变成面板可写，第一版一条都没跟过来。
+ *
+ * 实测过的原样（改动之前）：
+ * ```
+ * 候选="   "                      PUT=200 落盘="   "  原口令被抹掉=true
+ * 候选="tok-with-trailing-space " PUT=200 落盘带尾空格  原口令被抹掉=true
+ * 候选="a"                        PUT=200 → Bearer a -> /v1/models: 200
+ * 把网关口令设成 ADMIN_TOKEN -> 200，之后 GET /config -> 503，想改回去 PUT -> 503
+ * ```
+ */
+describe("C3：面板写 gatewayToken 时的四条硬规则", () => {
+  const stored = { gatewayToken: "original-gateway-token-000666" };
+  const NO_GW: Record<string, string | undefined> = {};
+  const OK_TOKEN = "a-perfectly-fine-gateway-token";
+
+  /**
+   * ⚠️ **纯空白视同缺席，而不是「设成空白」。**
+   * `loadConfigWithProvenance` 那句 `if (!gatewayToken)` 对 `"   "` 为**真**
+   *（它是非空字符串）⇒ 一次都不 fail-fast，而所有下游用户从此 401，
+   * 面板还显示 `configured: true`、hint 里那个空格**在 HTML 里根本渲染不出来**。
+   */
+  it("纯空白视同缺席 —— 原口令一个字都不许被动", () => {
+    for (const blank of ["   ", "\t", " \n "]) {
+      const r = ok(validateConfigPatch({ gatewayToken: blank }, { stored, env: NO_GW }));
+      expect(r.next.gatewayToken, `${JSON.stringify(blank)} 把原口令抹掉了`).toBe(stored.gatewayToken);
+      expect(r.changed).toEqual([]);
+    }
+  });
+
+  it("首尾带空白被拒 —— HTTP 头值在传输层被 trim，那个值客户端永远送不出来", () => {
+    expect(codes(validateConfigPatch({ gatewayToken: `${OK_TOKEN} ` }, { stored, env: NO_GW })))
+      .toEqual(["gatewayToken:whitespace_padded"]);
+    expect(codes(validateConfigPatch({ gatewayToken: ` ${OK_TOKEN}` }, { stored, env: NO_GW })))
+      .toEqual(["gatewayToken:whitespace_padded"]);
+  });
+
+  it("含送不出去的字符被拒（汉字 / emoji / 零宽空格）", () => {
+    const ZWSP = String.fromCharCode(0x200b);
+    for (const bad of ["网关口令网关口令网关口令网关口令网关口令网关口令", `${OK_TOKEN}🔑`, `${OK_TOKEN}${ZWSP}`]) {
+      expect(codes(validateConfigPatch({ gatewayToken: bad }, { stored, env: NO_GW })), bad)
+        .toEqual(["gatewayToken:not_sendable"]);
+    }
+  });
+
+  /**
+   * 下限 **24**，与 `ADMIN_TOKEN_MIN_LENGTH` 同一个数、同一条理由。
+   * ⚠️ 边界值写**字面量 23 / 24**，不写 `MIN_GATEWAY_TOKEN_LENGTH - 1`——
+   * 后者是同义反复，把下限改成 8 也照样全绿（本仓登记的第 6 种假阳性）。
+   */
+  it("短于 24 位被拒，正好 24 位放行", () => {
+    expect(codes(validateConfigPatch({ gatewayToken: "x".repeat(23) }, { stored, env: NO_GW })))
+      .toEqual(["gatewayToken:too_short"]);
+    expect(ok(validateConfigPatch({ gatewayToken: "x".repeat(24) }, { stored, env: NO_GW })).ok).toBe(true);
+    // 那个数字本身是策略，独立钉死，并且与 ADMIN_TOKEN 那条是同一个数。
+    expect(MIN_GATEWAY_TOKEN_LENGTH).toBe(24);
+    expect(MIN_GATEWAY_TOKEN_LENGTH).toBe(ADMIN_TOKEN_MIN_LENGTH);
+  });
+
+  /**
+   * ⚠️ **长度下限只对 `gatewayToken`，不对两条通道的 `apiKey`。**
+   * 那两把是**上游签发**的，长度不由本网关决定，套一个下限只会把合法的 key 拒掉。
+   */
+  it("通道 apiKey 不吃长度下限 —— 那是上游签发的，长度不由本网关决定", () => {
+    const r = validateConfigPatch({ "registrar.yyds.apiKey": "short" }, { stored, env: NO_GW });
+    expect(r.ok, JSON.stringify(codes(r))).toBe(true);
+    // 但空白规则对三把都生效（一把带尾空格的 API key 同样送不出去、同样看不见）。
+    expect(codes(validateConfigPatch({ "registrar.yyds.apiKey": "k " }, { stored, env: NO_GW })))
+      .toEqual(["registrar.yyds.apiKey:whitespace_padded"]);
+  });
+
+  /**
+   * ⚠️⚠️ **等于 `ADMIN_TOKEN` ⇒ 面板把自己锁死。**
+   * `adminAuth` 的每请求复查会立刻把管理面判成 503，**而改回去的那条 `PUT` 也是 503**。
+   * 实测：设成相同 → 200，之后 `GET /config` 503、想改回去的 `PUT` 也 503。
+   */
+  it("等于 ADMIN_TOKEN 被拒 —— 否则面板会把自己锁死，连改回去都做不到", () => {
+    const admin = "the-admin-token-0123456789abc";
+    expect(codes(validateConfigPatch({ gatewayToken: admin }, { stored, env: NO_GW, adminToken: admin })))
+      .toEqual(["gatewayToken:same_as_admin_token"]);
+    // **不给 `adminToken` 时静默跳过**，而不是假装查过（直接调 createApp 的装配拿不到它）。
+    expect(ok(validateConfigPatch({ gatewayToken: admin }, { stored, env: NO_GW })).ok).toBe(true);
+  });
+
+  /**
+   * ⚠️⚠️ **两份判据逐码位同源。**
+   *
+   * `config-validate.ts` 在 `src/core/` 下，不许 import `src/http/admin/auth.ts`
+   *（分层），所以那条 `SENDABLE` 是第二份字面量。**代价押金就是这一格**：
+   * 全部 256 个码位各跑一遍，两边必须给出同一个答案。
+   * 做法抄 `tests/ui/sendable-parity.test.ts` 的
+   * 「0x00–0xFF 全 256 个码位，两边给出同一个答案」。
+   */
+  it("凭据的形状规则与 ADMIN_TOKEN 那四条逐码位同源（全 256 个码位）", () => {
+    const disagree: string[] = [];
+    for (let cp = 0; cp <= 0xff; cp++) {
+      // 垫到 24 位以上，好让「长度」这条不参与——本格比的是**字符集**那一条。
+      const token = `${String.fromCharCode(cp)}${"x".repeat(30)}`;
+      const shape = checkAdminTokenShape(token);
+      const mine = validateConfigPatch({ gatewayToken: token }, { stored, env: {} });
+      const mineReason = mine.ok ? null : mine.errors[0]!.code;
+      // 两边都把「首尾空白」排在「字符集」前面，所以理由也应当一致。
+      const theirs = shape.ok ? null : shape.reason;
+      if (mineReason !== theirs) disagree.push(`U+${cp.toString(16).padStart(4, "0")}: 我=${mineReason} auth=${theirs}`);
+    }
+    expect(disagree, "两份判据在这些码位上给出了不同答案 —— 第二份字面量已经漂了").toEqual([]);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 评审 C1/C2：configLoadBlockers —— 「这份配置装载得起来吗」
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("configLoadBlockers：逐条对应 loadConfigWithProvenance 会抛的地方", () => {
+  it("两边都没有 gatewayToken ⇒ gateway_token_required", () => {
+    expect(configLoadBlockers({}, {}).map((b) => b.code)).toEqual(["gateway_token_required"]);
+    // env 或存储任一提供即可。
+    expect(configLoadBlockers({}, { GATEWAY_TOKEN: "x" })).toEqual([]);
+    expect(configLoadBlockers({ gatewayToken: "x" }, {})).toEqual([]);
+  });
+
+  it("注册机开着、通道在链上却没凭据 ⇒ channel_credentials_missing", () => {
+    const blockers = configLoadBlockers(
+      { gatewayToken: "x", registrar: { enabled: true, primary: "yyds", yyds: { baseUrl: "https://y.invalid" } } },
+      {},
+    );
+    expect(blockers.map((b) => `${b.field}:${b.code}`))
+      .toEqual(["registrar.yyds.apiKey:channel_credentials_missing"]);
+  });
+
+  /**
+   * ⚠️ **这一格是「它真的是那份判据」的反向自检**：拿每一个 `configLoadBlockers`
+   * 说「装得起来」的样本去真的装载一遍，必须不抛；说「装不起来」的必须真的抛。
+   * 光比清单长度证明不了它与 `loadConfigWithProvenance` 是同一件事。
+   */
+  it.each([
+    ["干净配置", { gatewayToken: "x" }, {}, true],
+    ["缺口令", {}, {}, false],
+    ["通道缺凭据", { gatewayToken: "x", registrar: { enabled: true, primary: "yyds" } }, {}, false],
+    ["备通道等于主通道", { gatewayToken: "x", registrar: { enabled: true, primary: "yyds", fallback: "yyds", yyds: { apiKey: "k" } } }, {}, false],
+    ["关着的注册机随便填", { gatewayToken: "x", registrar: { enabled: false, primary: "yyds", fallback: "yyds" } }, {}, true],
+  ])("%s：blockers 为空 ⟺ 真的装载得起来", async (_n, stored, env, loadable) => {
+    const blockers = configLoadBlockers(stored, env as Record<string, string | undefined>);
+    expect(blockers.length === 0, `blockers=${JSON.stringify(blockers)}`).toBe(loadable);
+    const storage = new MemoryStorage();
+    await storage.put("config", stored);
+    const run = loadConfigWithProvenance(env as Record<string, string | undefined>, storage, NULL_LOGGER);
+    if (loadable) await expect(run).resolves.toBeDefined();
+    else await expect(run).rejects.toThrow();
   });
 });

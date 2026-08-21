@@ -6,7 +6,7 @@ import {
 } from "../../admin-ui/js/pure/settings.mjs";
 import { CHANNELS } from "../../admin-ui/js/pure/registrar.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
-import { EDITABLE_FIELDS, type ConfigErrorCode } from "../../src/core/admin/config-validate.js";
+import { EDITABLE_FIELDS, CONFIG_ERROR_CODES } from "../../src/core/admin/config-validate.js";
 
 /**
  * 设置页的纯函数（`admin-ui/js/pure/settings.mjs`）。
@@ -105,20 +105,19 @@ describe("i18n：门禁看不见的那两族，在这里补上", () => {
   /**
    * **设计 §10.4 点名要求的那条 CI 断言：后端产出的每一个错误码都有对应的 i18n 键。**
    *
-   * ⚠️ **这张清单是 `ConfigErrorCode` 的手写镜像**，`satisfies` 那一行让它与联合
-   * 类型逐个成员对上：**后端加一个错误码而这里不补，`tsc` 先报错**；
-   * 补了这里而不补字典，下面那条断言红。两道一起才是完整的。
+   * ⚠️⚠️ **第一版这里是一份手写镜像 + `as const satisfies readonly ConfigErrorCode[]`，
+   * 那条护栏实测是假的**（评审 C4，我自己复现过）：`satisfies` 只做**单向可赋值检查**
+   * ——它保证镜像里每一项都是合法的码，**不保证每一个码都在镜像里**。
+   * 给联合加一个码而不补 `ERROR_KEYS`、不补五语言 ⇒
+   * `tsc exit=0` / 本文件 `34 passed` / `check-i18n exit=0` / `check-comment-refs exit=0`，
+   * **零信号**；而反向（从联合里删一个）确实 `TS2322 ×2`。**删得住、加不住。**
+   *
+   * ⇒ 后端改成「数组是真源、类型从它派生」（`CONFIG_ERROR_CODES`），
+   * 这里**直接遍历那个数组**，不再有第二份清单可以漂。
    */
   it("后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红", () => {
-    const ALL_CODES = [
-      "unknown_field", "locked_by_env", "not_an_integer", "below_min", "not_a_string",
-      "not_a_boolean", "empty", "too_long", "not_a_url", "not_a_channel",
-      "primary_required", "fallback_equals_primary", "delay_min_gt_max",
-      "channel_credentials_missing",
-    ] as const satisfies readonly ConfigErrorCode[];
-
     const missing: string[] = [];
-    for (const code of ALL_CODES) {
+    for (const code of CONFIG_ERROR_CODES) {
       const key = errorMessageKey(code);
       if (key === null) { missing.push(`${code}（errorMessageKey 表里没有）`); continue; }
       const row = dict[key];
@@ -128,8 +127,8 @@ describe("i18n：门禁看不见的那两族，在这里补上", () => {
       }
     }
     expect(missing).toEqual([]);
-    // 反向自检：表本身不是空的。
-    expect(ALL_CODES.length).toBe(14);
+    // 反向自检：表本身不是空的。**这个数字是手写的**，加码时必须回来表态。
+    expect(CONFIG_ERROR_CODES.length, "错误码表规模变了，请确认文案与映射都跟上了").toBe(19);
   });
 
   /**

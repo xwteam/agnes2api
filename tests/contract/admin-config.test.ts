@@ -7,6 +7,8 @@ import { TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { configFromEnv } from "../../src/core/config.js";
 import { loadConfig } from "../../src/core/config.js";
 import { exposureFields } from "../../src/core/admin/config-validate.js";
+import { configGetHandler } from "../../src/http/admin/handlers/config.js";
+import type { Storage } from "../../src/ports/storage.js";
 import { CONFIG_TTL_MS } from "../../src/http/config-holder.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 
@@ -566,5 +568,172 @@ describe("事件：配置被改过要留痕，但一个值都不许进日志", (
     // 反向自检：那把凭据真的落盘了 —— 否则「日志里没有它」是因为压根没改成。
     expect((await storage.get<Record<string, unknown>>("config"))?.gatewayToken)
       .toBe("another-brand-new-token-4242");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 评审 C1 / C2：清空一条「在链上」的通道凭据
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️ **这一组是评审 C1/C2 的护栏。改动之前，这两条路径一格用例都没有**
+ *（现有用例只测了有护栏的那支 `gatewayToken`，与非法 `path`）。
+ *
+ * 缺陷原样（我自己复现过，逐字）：
+ * ```
+ * HTTP 状态: 500   面板看到的: {"error":{"type":"internal_error","message":"网关内部错误"}}
+ * 存储里 yyds.apiKey 现在是: undefined      => 面板说失败，实际删掉了吗? 删掉了
+ * PUT 关掉注册机 -> 500 / PUT 重新填这把 key -> 500 / PUT 换主通道 -> 500
+ * 干跑 validate -> 200      ← 干跑说「你这个补丁合法」，真跑 500
+ * ```
+ */
+describe("C1/C2：清掉一条在链上的通道凭据", () => {
+  /** 注册机开着、yyds 是主通道、凭据只在存储里 —— 那把 key 一清就装载不起来。 */
+  const ON_CHAIN = {
+    gatewayToken: GW,
+    registrar: {
+      enabled: true, primary: "yyds",
+      yyds: { baseUrl: "https://yyds.invalid", apiKey: "on-chain-key-7777" },
+    },
+  };
+
+  const clear = (app: Awaited<ReturnType<typeof realApp>>["app"], path: string) =>
+    app.request("/admin/api/config/secrets/clear", {
+      method: "POST",
+      headers: { ...withKey, "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+
+  /**
+   * **【落盘类】变红条件**：把 `configClearSecretHandler` 里的 `configLoadBlockers`
+   * 换回只判 `gatewayToken` 的那条 `nowMissing`。
+   *
+   * ⚠️ **两半都要断言**：只断「不是 500」的话，一个把清空整个删掉的实现照样绿；
+   * 只断「删掉了」的话，回 500 的旧实现照样绿。**「删掉了」+「如实说」必须同时成立。**
+   */
+  it("清掉在链上的通道凭据：200 + 如实报 loadBlocked，绝不是「说失败、实际做了」", async () => {
+    const { app, storage } = await realApp({ env: {}, stored: ON_CHAIN });
+    const res = await clear(app, "registrar.yyds.apiKey");
+
+    expect(res.status, "面板说失败，而那把凭据已经被删掉了 —— 方向比通常那条谎更坏").toBe(200);
+    const body = await res.json() as { loadBlocked: Array<{ field: string; code: string }> };
+    expect(body.loadBlocked, "清完之后装载不起来，回执里却一个字都没说").toEqual([
+      { field: "registrar.yyds.apiKey", code: "channel_credentials_missing", params: { channel: "yyds" } },
+    ]);
+    // 另一半：它**真的**被删掉了（这条端点的语义就是清空，不是拒绝）。
+    const after = await storage.get<Record<string, unknown>>("config");
+    expect((after?.registrar as { yyds?: { apiKey?: string } })?.yyds?.apiKey).toBeUndefined();
+  });
+
+  /**
+   * ⚠️ **审计先落，再回读。**
+   * 旧实现把 `config.secret_cleared` 打在 `readAll` **之后** ⇒ 回读抛错的那一支
+   *（正是最该留痕的那一支）**一条审计都没有**：存储被改了、面板收到 500、
+   * 事件板块里什么都没有。
+   */
+  it("装载不起来的那一支也必须留下审计，且只记路径与原因码", async () => {
+    const storage = new MemoryStorage();
+    await storage.put("config", ON_CHAIN);
+    const { makeApp } = await import("../helpers/make-app.js");
+    const { app, logger } = await makeApp([], [], {}, () => 1000, {
+      storage, config: { storage, env: {} },
+    });
+    await app.request("/admin/api/config/secrets/clear", {
+      method: "POST",
+      headers: { ...withKey, "content-type": "application/json" },
+      body: JSON.stringify({ path: "registrar.yyds.apiKey" }),
+    });
+    const e = logger.entries.find((x) => x.event === "config.secret_cleared");
+    expect(e, "清空发生了，事件板块里却什么都没有").toBeDefined();
+    expect(e?.level, "装载不起来是 error 级").toBe("error");
+    expect(String(e?.fields?.blocked)).toContain("channel_credentials_missing");
+    expect(JSON.stringify(e), "凭据的值进了日志").not.toContain("on-chain-key-7777");
+  });
+
+  /**
+   * ⚠️⚠️ **C2 的核心：清完之后运维必须有出路。**
+   *
+   * 旧实现下这三条自救路径**全是 500**，而屏幕上五语言正写着「请立刻在这一页
+   * 写一把新的」。**变红条件**：把 `readAll` 的降级分支去掉（改回直接抛）。
+   */
+  it.each([
+    ["关掉注册机", { "registrar.enabled": false }],
+    ["把那把 key 重新填回去", { "registrar.yyds.apiKey": "refilled-key-8888" }],
+    ["换一条主通道", { "registrar.primary": "moemail", "registrar.moemail.baseUrl": "https://m.invalid", "registrar.moemail.apiKey": "mk-9999" }],
+  ])("装载不起来之后，「%s」这条自救路径必须走得通", async (_name, patch) => {
+    const { app, storage, env } = await realApp({ env: {}, stored: ON_CHAIN });
+    await clear(app, "registrar.yyds.apiKey");
+
+    const res = await put(app, patch as Record<string, unknown>);
+    expect(res.status, "自救路径被自己的 500 挡住了 —— 面板从此没有出路").toBe(200);
+    // 真的修好了：这一刻**冷启动**也装载得起来。
+    await expect(loadConfig(env, storage, NULL_LOGGER)).resolves.toBeDefined();
+  });
+
+  /**
+   * **装载不起来时 `GET` 降级成诊断视图，而不是 500。**
+   * `fields`/`credentials` 给 `null`（不编一份空配置），`loadBlocked` 逐条说清缺什么，
+   * 而 `editable` 照给 —— **表单必须还能用，那是唯一的出路。**
+   */
+  it("装载不起来时 GET 给诊断视图：200 + fields=null + loadBlocked 逐条 + editable 照给", async () => {
+    const { app } = await realApp({ env: {}, stored: ON_CHAIN });
+    await clear(app, "registrar.yyds.apiKey");
+
+    const res = await getConfig(app);
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      fields: unknown; credentials: unknown; configDegraded: boolean;
+      loadBlocked: Array<{ code: string }>; editable: string[];
+    };
+    expect(body.fields, "编了一份空配置出来 —— 那与「读不出来」长得一模一样").toBeNull();
+    expect(body.credentials).toBeNull();
+    expect(body.configDegraded).toBe(true);
+    expect(body.loadBlocked.map((b) => b.code)).toEqual(["channel_credentials_missing"]);
+    expect(body.editable.length, "连可编辑清单都不给的话，表单没法用").toBe(26);
+  });
+
+  /**
+   * ⚠️⚠️ **降级不是泛泛地 `catch`。**
+   *
+   * 我自己在这个文件里写过这条禁令：「泛泛地 catch 会把**真的存储故障**也吞成这一支，
+   * 于是一次 KV 抖动会被报成『你把口令删光了』，运维照着去重设一把不存在的问题」。
+   * 判据因此是「抓到之后先算一遍 `configLoadBlockers`，**没有 blocker 就原样抛**」。
+   *
+   * **变红条件**：把那句 `if (blockers.length === 0) throw err;` 去掉。
+   */
+  it("真的存储故障不许被吞成诊断视图 —— 没有 blocker 就原样抛", async () => {
+    const broken: Storage = {
+      async get<T>(k: string): Promise<T | null> {
+        if (k === "config") throw new Error("KV 抖了一下");
+        return null;
+      },
+      async put() {}, async delete() {}, async list() { return []; },
+    };
+    const handler = configGetHandler({
+      // 配置本身没有任何 blocker（env 提供了口令）⇒ 这个异常与配置无关。
+      wiring: { storage: broken, env: { GATEWAY_TOKEN: GW } },
+      configHolder: { current: () => ({}) as never, ensureFresh: async () => {}, invalidate: () => {} },
+      logger: NULL_LOGGER,
+      now: () => 0,
+    });
+    await expect(handler({ json: (x: unknown) => x } as never))
+      .rejects.toThrow("KV 抖了一下");
+  });
+
+  /**
+   * **干跑与真跑必须给同一个答案。** 旧实现下干跑回 200（「你这个补丁合法」）
+   * 而真跑 500，那比没有干跑更坏。
+   */
+  it("干跑与真跑同一个答案 —— 不许出现「干跑说合法、真跑 500」", async () => {
+    const { app } = await realApp({ env: {}, stored: ON_CHAIN });
+    await clear(app, "registrar.yyds.apiKey");
+    const patch = { "registrar.yyds.apiKey": "refilled-key-8888" };
+    const dry = await app.request("/admin/api/config/validate", {
+      method: "POST",
+      headers: { ...withKey, "content-type": "application/json" },
+      body: JSON.stringify({ patch }),
+    });
+    expect(dry.status).toBe(200);
+    expect((await put(app, patch)).status).toBe(200);
   });
 });

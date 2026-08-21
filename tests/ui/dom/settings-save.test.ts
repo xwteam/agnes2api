@@ -375,15 +375,60 @@ describe("agnesPlatformUrl 折在高级区，且有自己的二次确认（设�
 });
 
 describe("两条通道在设置页上完全对称（设计 §10.3 第 1/2/3 条）", () => {
-  it("两张子卡的 DOM 顺序恒为 moemail、yyds（字母序），且字段完全同构", async () => {
-    const h = await openSettings(() => ok(configBody()));
+  /**
+   * ⚠️⚠️ **第一版这一格实测抓不住「把两张卡的字段整个对调」**（评审 I1，我复现属实：
+   * MoeMail 卡里装 `registrar.yyds.*`、标签仍写 MoeMail ⇒ **557 条 UI 用例全绿**）。
+   * 两个成因叠在一起：
+   * ① 判据只比 `data-field` 的**最后一段**（`split(".").pop()`）⇒ **把通道那一段丢了**；
+   * ② 夹具里两条通道的值**恰好全相等** ⇒ 渲染出来的内容也分不出彼此。
+   *
+   * **这是本任务第二个「夹具里两个本该不同的值恰好相等」的实例**（第一个是 M3 那格），
+   * 而它偏偏是硬约束「两条通道完全平级」的名义守护者——我在报告里还替它背了书。
+   *
+   * ⇒ 判据改成**保留完整路径**，并给两条通道种**互不相同**的夹具值，
+   * 连渲染出来的那一行也一起断言。
+   */
+  it("两张子卡的 DOM 顺序恒为 moemail、yyds（字母序），且每张卡装的是自己那条通道的字段", async () => {
+    const h = await openSettings(() => ok(configBody({
+      fields: {
+        ...configBody().fields,
+        "registrar.moemail.baseUrl": { stored: "https://moemail-only.example.com", env: null, effective: "https://moemail-only.example.com", lockedBy: null },
+        "registrar.yyds.baseUrl": { stored: "https://yyds-only.example.com", env: null, effective: "https://yyds-only.example.com", lockedBy: null },
+      },
+      credentials: {
+        ...configBody().credentials,
+        "registrar.moemail.apiKey": { configured: true, hint: "MMMM", lockedBy: null },
+        "registrar.yyds.apiKey": { configured: true, hint: "YYYY", lockedBy: null },
+      },
+    })));
     const cards = h.section("settings").querySelectorAll(".channel-card");
     expect(cards.map((c) => c.getAttribute("data-channel"))).toEqual(["moemail", "yyds"]);
-    const shapes = cards.map((c) => c.walk()
+
+    // ① **完整路径**：每张卡装的必须是自己那条通道的字段。
+    const paths = cards.map((c) => c.walk()
       .filter((n) => n.getAttribute("data-field") !== null)
-      .map((n) => String(n.getAttribute("data-field")).split(".").pop()));
+      .map((n) => String(n.getAttribute("data-field"))));
+    expect(paths[0], "MoeMail 卡里装的不是 moemail 的字段").toEqual([
+      "registrar.moemail.baseUrl", "registrar.moemail.apiKey",
+    ]);
+    expect(paths[1], "YYDS 卡里装的不是 yyds 的字段").toEqual([
+      "registrar.yyds.baseUrl", "registrar.yyds.apiKey",
+    ]);
+
+    // ② **同构**：把通道那一段抠掉之后两边必须逐字相等（这才是「完全对称」那一半）。
+    const shapes = paths.map((ps, i) => ps.map((x) => x.replace(`registrar.${["moemail", "yyds"][i]}.`, "")));
     expect(shapes[0], "两张子卡的字段不一样了 —— 「完全对称」当场破").toEqual(shapes[1]);
     expect(shapes[0]).toEqual(["baseUrl", "apiKey"]);
+
+    // ③ **渲染出来的值也不许串**：夹具里两条通道的值刻意互不相同。
+    const moemailText = cards[0]!.textContent;
+    const yydsText = cards[1]!.textContent;
+    expect(moemailText).toContain("moemail-only.example.com");
+    expect(moemailText).toContain("MMMM");
+    expect(moemailText, "MoeMail 卡上渲染出了 yyds 的数据").not.toContain("yyds-only.example.com");
+    expect(yydsText).toContain("yyds-only.example.com");
+    expect(yydsText).toContain("YYYY");
+    expect(yydsText, "YYDS 卡上渲染出了 moemail 的数据").not.toContain("moemail-only.example.com");
   });
 
   /** **设计 §10.3 第 1 条：主通道下拉无预选值，初始是占位符。** */

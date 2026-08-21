@@ -546,6 +546,12 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       // 扫描器改成逐字符扫、跳过字符串之后，那个假注释消失了。
       "scripts/check-comment-refs.mjs",
       "scripts/check-comment-refs.mjs",
+      // ⚠️ **第三条是 P3c Task 7 加的（`KNOWN_MARKER_GAPS` 上面那段）。**
+      // 那段登记的是词表自己的一个已知漏法（肯定式在表内、否定式全在表外），
+      // 内容有两种规则 B 天生会误报的形态：**扫描结果里的路径清单**（是数据，
+      // 不是指向声明）与**被引用的词表成员**（`拦得住`/`抓得住` 是词，不是断言）。
+      // 段落刻意不拆开，就是为了让豁免区间盖住整段。
+      "scripts/check-comment-refs.mjs",
       // 第 11 道门禁的两段说明里同样举了 `src/x.ts` / `src/hidden.ts` 两个虚构路径。
       "scripts/check-no-binary.mjs",
       "scripts/check-no-binary.mjs",
