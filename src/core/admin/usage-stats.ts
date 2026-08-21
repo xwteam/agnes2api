@@ -253,14 +253,25 @@ export function usageDayKey(day: number, slot: number): string {
  * `byModel` 的键最长多少个字符。**模型名由客户端在请求体里随便填**，不截断就是把
  * 一个无上界的字符串原样搬进要落盘的值里。
  *
- * ⚠️ **佐证要点名真正没有强转的那两条路由**（P3d Task 3 定向复评 N1：上一版这里举的是
+ * ⚠️ **佐证要点名真正没有强转的那两条路由**（定向复评 N1：上一版这里举的是
  * `src/http/routes/openai.ts`，而**那恰好是唯一一条做了 `String(...)` 强转的**，
  * 等于把危害所在的另外两条挡在了视线外）。真正裸传的是
  * `src/http/routes/anthropic.ts` 与 `src/http/routes/responses.ts` 的 `req.model`：
  * 那个 `req` 来自 `src/http/errors.ts` 的 `c.req.json<T>()`，**泛型是纯编译期的，
  * 运行时零校验** ⇒ `{"model": 123}` 这种请求体在那两条路上会把一个 `number` 交到这里。
- * 两条路由现在也各自补了 `String(...)`，与本函数首行的强转**互为冗余，是刻意的**：
- * 少任何一道，一次「打开统计」就等于给网关多出一条普通客户端就能触发的 500。
+ *
+ * ⚠️⚠️ **护栏只有这一道，就在本文件里；两条路由上不许再加第二道**
+ *（收口复评 H1 + M1，这是本任务最贵的一次教训）：
+ * 上一版为了「冗余」在那两条路由的 `record` 闭包里各加了一个 `String(...)`，
+ * 并在这里写下「少任何一道就等于多一条 500」。**那句话两个方向都被实测证伪**：
+ * `{"model":123}` 打 `/v1/messages`，三种组合（都在 / 只去路由那道 / 只去这一道）
+ * **全都是 503**，去掉路由那道再跑全量还是 111/2188 全绿。
+ * 而它的**代价是实打实的**：那两行在 `record` 闭包体里，
+ * 而 `recordUsage()` 的「sink 缺席就 return」**在它之后**
+ * ⇒ `{"model":{"toString":1,"valueOf":1}}` 让 `String()` 自己抛，
+ * **连 Tier-2 关着的部署也被打成 500** —— 一次为修 A 加的防御，
+ * 把影响面从「开了统计的人」扩大成了「所有部署」，正面违反全局约束 16「关是零成本」。
+ * ⇒ **判据记下来：防御要加在「只有开着才跑」的那一侧。** 本文件就是那一侧。
  */
 export const USAGE_MODEL_KEY_MAX_LEN = 64;
 
@@ -289,12 +300,16 @@ export const USAGE_OTHER_KEY = "__other__";
 /**
  * 把一个外部可控的桶键收进上界内。
  *
- * ⚠️ **首行的 `String(raw)` 不是防御性代码，删掉会让网关 500**（定向复评 N1）：
+ * ⚠️ **首行的 `safeString(raw)` 不是防御性代码，删掉会让网关 500**（定向复评 N1）：
  * 入参一路来自请求体，运行时**什么类型都可能**（`c.req.json<T>()` 的泛型是纯编译期的）。
- * `123` / `{}` / `true` 都没有 `.slice`，而 `record()` 一路**没有 try/catch**
- *（`maybeFlush()` 那句「统计是旁路，绝不影响响应」**不覆盖 `record()`**）
- * ⇒ 一个 `{"model": 123}` 的请求体就能把响应从 503 变成 500，**而且只在 Tier-2 开着时**。
- * 实测四种取值：`123` / `{a:1}` / `true` 全部 500，`[1,2]` 侥幸没事（数组恰好有 `.slice`）。
+ * `123` / `{}` / `true` 都没有 `.slice` ⇒ 一个 `{"model": 123}` 的请求体就能把响应
+ * 从 503 变成 500。
+ * ⚠️ **样本必须跨过「`String()` 自己也会抛」那一档**（收口复评 H2）：
+ * `123` / `{a:1}` / `true` / `[1,2]` 这四个只覆盖了「没有 `.slice`」这一层
+ *（其中 `[1,2]` 还侥幸有 `.slice`），**把 `String()` 一换上去它们就全过了** ——
+ * 样本停在缺陷够不到的地方，等于没验。真正还能打穿的是
+ * `{"toString":1,"valueOf":1}`（`JSON.parse` 造得出）：两个转换方法都不是函数，
+ * `String()` 自己抛。现在那一步走 `safeString()`。
  * 由 `tests/contract/usage-tier2.test.ts` 的
  * 「model 不是字符串时不许把网关打成 500……」钉着。
  *
@@ -307,13 +322,43 @@ export const USAGE_OTHER_KEY = "__other__";
  * ⚠️ **上界是 `USAGE_MODEL_MAX_KEYS + 1`，那多出来的一格是 `USAGE_OTHER_KEY` 自己。**
  * 明写出来，免得下一个人按 32 去断言然后发现是 33。
  *
- * ⚠️ **已知边界，如实登记（定向复评 N10）**：客户端可以把 `model` 直接填成
- * `__other__` 去抢占那个溢出格。后果**只是「其它」那一格里混进了一个真实模型**——
- * 总数一条不丢、上界照旧成立、别的格子不受影响。不为它换一个「客户端猜不到的」键名：
- * 那是把正确性建在一个秘密上，而这里根本没有正确性依赖它。
+ * ⚠️ **已知边界，如实登记（定向复评 N10 + 收口复评 H3）**：
+ * · 客户端可以把 `model` 直接填成 `__other__` 去抢占那个溢出格。后果**只是「其它」
+ *   那一格里混进了一个真实模型**——总数一条不丢、上界照旧成立、别的格子不受影响。
+ *   不为它换一个「客户端猜不到的」键名：那是把正确性建在一个秘密上，
+ *   而这里根本没有正确性依赖它。
+ * · **`__proto__` / `toString` 这一类原型链上的名字已经不再是边界，是被修掉的缺陷**：
+ *   装它们的三个 map 现在是 `Object.create(null)`（写侧见 `emptyDay()`，
+ *   读侧见 `mergeDayShards` 与 `narrowRecord`）。在那之前，`__proto__` 会让那一条
+ *   **彻底消失**、`toString` 会让那一格序列化成 `null`，**两种都让落盘分片的
+ *   `total` 与 Σ`byModel` 对不上**。
  */
+/**
+ * 把一个**运行时什么都可能是**的值变成字符串，**并且保证自己不抛**。
+ *
+ * ⚠️ **`String(x)` 自己就会抛，这不是理论**（收口复评 H2）：
+ * `JSON.parse('{"toString":1,"valueOf":1}')` 造得出一个两个转换方法都不是函数的对象，
+ * 对它取原始值会 `TypeError: Cannot convert object to primitive value`。
+ *
+ * ⚠️ **`Symbol` 那一档够不到，理由要写下来而不是省略**（收口复评 LOW-2）：
+ * `String(Symbol())` 同样抛（`TypeError: Cannot convert a Symbol value to a string`），
+ * 但本函数的入参一路来自 `JSON.parse`，**而 JSON 里造不出 Symbol** ⇒ 不可达。
+ * 结论是「不可达」，不是「不会抛」——所以兜底照样包着它，不为这一档单开分支。
+ *
+ * 兜不住时回一个**固定的、看得出是兜底的**字符串，而不是空串：空串会和
+ * 「客户端没填 model」混成同一格，那是把两件事画成一件。
+ */
+function safeString(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  try {
+    return String(raw);
+  } catch {
+    return "[unstringifiable]";
+  }
+}
+
 export function boundUsageKey(existing: Readonly<Record<string, unknown>>, raw: string): string {
-  const k = String(raw).slice(0, USAGE_MODEL_KEY_MAX_LEN);
+  const k = safeString(raw).slice(0, USAGE_MODEL_KEY_MAX_LEN);
   if (Object.prototype.hasOwnProperty.call(existing, k)) return k;
   if (Object.keys(existing).length >= USAGE_MODEL_MAX_KEYS) return USAGE_OTHER_KEY;
   return k;
@@ -444,10 +489,15 @@ export function mergeDayShards(raw: readonly unknown[]): {
   shards: number; malformed: number;
 } {
   let total = emptyBucket();
-  const byDay: Record<string, UsageBucket> = {};
-  const hours: Record<string, UsageBucket> = {};
-  const byModel: Record<string, UsageBucket> = {};
-  const byProtocol: Record<string, UsageBucket> = {};
+  // ⚠️ **四个都必须是无原型的**（收口复评 H3 的读侧一半）：`byModel` 的键来自
+  // 客户端填的模型名，落盘之后会**原样从存储里回来**。普通 `{}` 上
+  // `into["__proto__"] = 桶` 会去改原型而不是加一个键（那一条就此消失），
+  // `into["toString"] ?? emptyBucket()` 又会摸到 `Function.prototype.toString`
+  // 而把桶算成一堆 `NaN`。**写侧堵住了而读侧没堵，等于把同一个洞挪到下一个任务。**
+  const byDay: Record<string, UsageBucket> = Object.create(null);
+  const hours: Record<string, UsageBucket> = Object.create(null);
+  const byModel: Record<string, UsageBucket> = Object.create(null);
+  const byProtocol: Record<string, UsageBucket> = Object.create(null);
   let shards = 0; let malformed = 0;
   const merge = (into: Record<string, UsageBucket>, from: Record<string, UsageBucket>) => {
     for (const [k, v] of Object.entries(from)) into[k] = addBuckets(into[k] ?? emptyBucket(), v);
@@ -492,7 +542,8 @@ function narrowBucket(v: unknown): UsageBucket | null {
 
 function narrowRecord(v: unknown): Record<string, UsageBucket> {
   if (!v || typeof v !== "object") return {};
-  const out: Record<string, UsageBucket> = {};
+  // 无原型，理由同 `mergeDayShards` 里那四个（收口复评 H3 的读侧一半）。
+  const out: Record<string, UsageBucket> = Object.create(null);
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
     const b = narrowBucket(val);
     if (b !== null) out[k] = b;

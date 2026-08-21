@@ -26,8 +26,34 @@ interface DayAcc {
   byProtocol: Record<string, UsageBucket>;
 }
 
+/**
+ * ⚠️ **三个 map 都必须是无原型的（`Object.create(null)`）**（收口复评 H3）。
+ *
+ * `byModel` 的键**完全由客户端控制**（模型名来自请求体），而普通 `{}` 上有两条
+ * 会静默坏掉的路径，实测都不是理论：
+ * · `acc.byModel["__proto__"] = 桶` **不是加一个键，是去改原型** ⇒ 那一条计数
+ *   **彻底消失**（自有键里没有它、`JSON.stringify` 也看不见），同时整个 map 的原型
+ *   被换成一个桶；
+ * · `acc.byModel["toString"] ?? emptyBucket()` 会摸到 **`Function.prototype.toString`**
+ *   ⇒ 拿函数去做加法，那一格序列化成 `{"requests":null,…}`
+ *   （`constructor` / `hasOwnProperty` 同理）。
+ * **两种都让落盘的分片自己和自己对不上（`total` ≠ Σ`byModel`）——正是 N3 那半
+ * 刚消灭掉的失效形态，从另一个入口原样回来。**
+ *
+ * `boundUsageKey()` 用 `Object.prototype.hasOwnProperty.call` 守住了「存在性判断」，
+ * **但取值那一步 `?? emptyBucket()` 防不住原型** ⇒ 一处改 map 的造法，整类关掉。
+ * `JSON.stringify` 与 `{ ...map }`（N3 的快照）对无原型对象都照常工作，已实测。
+ *
+ * `hours` / `byProtocol` 的键今天是闭集（`"00"`…`"23"` 与四条协议的字面量），
+ * **一起改是因为「三个 map 造法一致」比「记住只有一个需要」可靠**。
+ */
 function emptyDay(): DayAcc {
-  return { total: emptyBucket(), hours: {}, byModel: {}, byProtocol: {} };
+  return {
+    total: emptyBucket(),
+    hours: Object.create(null),
+    byModel: Object.create(null),
+    byProtocol: Object.create(null),
+  };
 }
 
 /**
@@ -239,6 +265,11 @@ export class UsageSink {
    * 而 `status()` 会报 `pending: 0`（「没有未落盘的尾巴」）。
    * 由 `tests/contract/usage-tier2.test.ts` 的
    * 「落盘挂起期间到达的那一条计数不许丢……」钉着。
+   *
+   * ⚠️ **上界与 `days` 完全相同，一并写在这里免得两种待遇**（收口复评 LOW-1）：
+   * 它与 `days` 同一个键空间、同样从不清理 ⇒ **上界是这个 isolate 的存活天数**
+   *（Worker 上分钟级、至多一两个键；Node 上跑满一年 365 个数）。
+   * 每格只是一个数字，比 `days` 那边的一份累加器还便宜得多。
    */
   private readonly version = new Map<number, number>();
   private pending = 0;
@@ -295,26 +326,46 @@ export class UsageSink {
     this.budgetPerDay = o.budgetPerDay === undefined ? USAGE_WRITES_PER_DAY : o.budgetPerDay;
   }
 
+  /**
+   * 记一次终态。**永不抛**（收口复评 H1）。
+   *
+   * ⚠️ **兜底放在这里，而不是放在四条路由上**：路由那一侧的表达式在
+   * `recordUsage()` 的「sink 缺席就 return」**之前**求值 ⇒ 放在那里的任何一行
+   * 都会在**Tier-2 关着**时照样跑，一次抛就把「关是零成本」（全局约束 16）打破。
+   * 本方法只有开着才被调到。
+   *
+   * ⚠️ **`try` 的边界是有讲究的，不是把整个方法包起来了事**：
+   * 唯一可能抛的一步（`boundUsageKey`，它要把一个客户端可控的值变成字符串）
+   * **排在任何一次写入 `acc` 之前**。反过来的话，一次抛会留下
+   * 「`total` 加了而 `byModel` 没加」的半截状态 ⇒ 落盘的分片自己和自己对不上，
+   * 正是 N3 那半刚消灭掉的失效形态。
+   */
   record(u: UsageOutcome): void {
-    const at = this.o.now();
-    const day = usageDayIndex(at);
-    const hour = usageHourOf(at);
-    const acc = this.days.get(day) ?? emptyDay();
-    const arg = {
-      ok: u.ok, stream: u.stream, latencyMs: u.latencyMs,
-      tokensIn: u.tokensIn, tokensOut: u.tokensOut,
-    };
-    acc.total = addToBucket(acc.total, arg);
-    acc.hours[hour] = addToBucket(acc.hours[hour] ?? emptyBucket(), arg);
-    // ★ **模型名是客户端随便填的**，收进上界再当键用（评审 I4）。
-    // `byProtocol` 那一行刻意不收：它的值是四条路由里的字面量，外部碰不到。
-    const modelKey = boundUsageKey(acc.byModel, u.model);
-    acc.byModel[modelKey] = addToBucket(acc.byModel[modelKey] ?? emptyBucket(), arg);
-    acc.byProtocol[u.protocol] = addToBucket(acc.byProtocol[u.protocol] ?? emptyBucket(), arg);
-    this.days.set(day, acc);
-    this.dirty.add(day);
-    this.version.set(day, (this.version.get(day) ?? 0) + 1);
-    this.pending++;
+    try {
+      const at = this.o.now();
+      const day = usageDayIndex(at);
+      const hour = usageHourOf(at);
+      const acc = this.days.get(day) ?? emptyDay();
+      // ★ **模型名是客户端随便填的**，收进上界再当键用（评审 I4）。
+      // **这一步排在所有写入之前**，理由见上面那段。
+      // `byProtocol` 刻意不收：它的值是四条路由里的字面量，外部碰不到。
+      const modelKey = boundUsageKey(acc.byModel, u.model);
+      const arg = {
+        ok: u.ok, stream: u.stream, latencyMs: u.latencyMs,
+        tokensIn: u.tokensIn, tokensOut: u.tokensOut,
+      };
+      acc.total = addToBucket(acc.total, arg);
+      acc.hours[hour] = addToBucket(acc.hours[hour] ?? emptyBucket(), arg);
+      acc.byModel[modelKey] = addToBucket(acc.byModel[modelKey] ?? emptyBucket(), arg);
+      acc.byProtocol[u.protocol] = addToBucket(acc.byProtocol[u.protocol] ?? emptyBucket(), arg);
+      this.days.set(day, acc);
+      this.dirty.add(day);
+      this.version.set(day, (this.version.get(day) ?? 0) + 1);
+      this.pending++;
+    } catch (err) {
+      // 统计是旁路，绝不影响响应。**说一声，不静默吞掉。**
+      this.o.onError(err);
+    }
   }
 
   /**

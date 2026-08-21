@@ -38,6 +38,16 @@ import type { Storage } from "../../src/ports/storage.js";
 const DAY0 = 20_000;
 const DAY_MS = 86_400_000;
 const DAY0_MS = DAY0 * DAY_MS;
+/**
+ * 「等链上其它挂起点结清」那一格的预算（收口复评 M2）。
+ *
+ * `WAIT_ROUNDS` 轮 × 每轮一次被钳到约 1 毫秒的 `setTimeout(0)` ⇒ 约 3 秒；
+ * `WAIT_TIMEOUT_MS` 把它连同请求本身一起兜住，**并且刻意留出余量**，
+ * 好让「等不够」以**超时红掉**的形式暴露，而不是悄悄变绿。
+ */
+const WAIT_ROUNDS = 3000;
+const WAIT_TIMEOUT_MS = 15_000;
+
 /** `usageSlotOf("u2")`，手算见文件头。 */
 const SHARD = "u2";
 const SLOT = 1;
@@ -195,6 +205,45 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
   });
 
   /**
+   * **一个「转不成字符串」的 model 不许把网关打成 500 —— 开着关着都不许**
+   *（收口复评 H1，这是上一轮为修 N1 而加的防御自己制造的回归）。
+   *
+   * 成因值得记成一条判据：那两行 `String(req.model ?? "")` 加在了路由的 `record`
+   * **闭包体里**，而 `recordUsage()` 的「sink 缺席就 return」**在它之后** ⇒
+   * 那一行在 **Tier-2 关着**时照样求值 ⇒ 一次抛就把
+   * 「关是零成本」（全局约束 16）打破，**把影响面从「开了统计的人」扩大成「所有部署」**。
+   * ⇒ **防御要加在「只有开着才跑」的那一侧**，本仓那一侧是 `boundUsageKey()`。
+   *
+   * ⚠️ **关着那一侧必须单独验**：只验开着的话，把归一化放回路由里照样绿
+   *（那正是上一轮的形态）。两侧一格里跑完。
+   */
+  it("model 是一个转不成字符串的对象时：Tier-2 开着关着都不许 500 —— 归一化若加在路由的闭包体里，它在「统计关着」时也会跑，一次抛就把「关是零成本」打破", async () => {
+    // `JSON.parse` 完全造得出：两个转换方法都不是函数，`String()` 对它自己抛。
+    const body = {
+      model: JSON.parse('{"toString":1,"valueOf":1}') as unknown,
+      max_tokens: 64,
+      messages: [{ role: "user", content: "ping" }],
+      input: "ping",
+    };
+    for (const enabled of [false, true]) {
+      let t = DAY0_MS;
+      const g = await gateway({ enabled, now: () => t });
+      for (const path of ["/v1/messages", "/v1/responses"]) {
+        const res = await g.app.request(path, {
+          method: "POST",
+          headers: { authorization: "Bearer t", "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        // 手写字面量 503（`pool_empty`，池子刻意留空）。**500 = 网关自己抛了。**
+        expect(
+          res.status,
+          `Tier-2 ${enabled ? "开" : "关"}着，${path} 被一个转不成字符串的 model 打成了 ${res.status}`,
+        ).toBe(503);
+      }
+    }
+  });
+
+  /**
    * **写量不许随请求数走**，那正是设计 §2 拆掉的那根轴：
    * 每请求写一次 KV 的话，免费档 1,000 次/天的写配额几十个请求就见底，
    * 连 key 的冷却与剔除都写不进去。
@@ -246,13 +295,17 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
       return r;
     })();
 
-    // ★ **等到链上其它挂起点确证跑完，而不是数毫秒**（定向复评 N6）。
+    // ★ **等到链上其它挂起点确证跑完，而不是数一个写死的毫秒数**（定向复评 N6）。
     // 判据：非 `usage:` 的存储操作在途数归零，**并且连续若干轮都还是零**（静默）。
-    // 这与任何一个挂起点有多长完全无关——把 `MemoryStorage` 的 `delayMs` 调到
-    // 200 也好 2000 也好，这个循环会一直等到它们真的结清为止。
-    // 正确实现在闸门放开之前永远回不了响应，所以等得越久这条断言越强。
+    //
+    // ⚠️ **它有预算，不是「多久都能等」**（收口复评 M2，上一版那句是假的）：
+    // 循环上界 `WAIT_ROUNDS` 轮 × 每轮一次被钳到约 1 毫秒的 `setTimeout(0)`
+    // ⇒ 这一格实际能等到的时间约 `WAIT_ROUNDS` 毫秒，而下面 `timeout` 又给了它
+    // 一个上限。**超出预算时它的失效方式是「响亮地超时红掉」，不是「静默变绿」**
+    // ——这正是它比上一版（约 70 毫秒之后静默逃逸）强的地方，也是这里不再改机制、
+    // 只把话说准的理由。实测天花板落在链上单个挂起点 400–600 毫秒之间。
     let quiet = 0;
-    for (let i = 0; i < 5000 && quiet < 5; i++) {
+    for (let i = 0; i < WAIT_ROUNDS && quiet < 5; i++) {
       await new Promise((r) => setTimeout(r, 0));
       quiet = g.storage.otherInFlight === 0 ? quiet + 1 : 0;
     }
@@ -269,7 +322,7 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
     expect(res.status, "夹具前提：这一次请求跑完了整条中间件链（503 = pool_empty，刻意不打上游）").toBe(503);
     // 放开之后那次写必须已经落定。手写字面量 1。
     expect(g.storage.usagePutsDone, "闸门放开、响应也回来了，那次写却没落定").toBe(1);
-  });
+  }, WAIT_TIMEOUT_MS);
 
   /**
    * **`capabilities` 说的是真话，而「真话」的来源是「这个 app 建没建 sink」。**
@@ -791,10 +844,17 @@ describe("UsageSink 的落盘契约", () => {
 
     // ① 落下去的那一份**自己和自己对得上**（快照的作用）。
     const first = (await storage.get<UsageDayShard>(KEY_DAY0))!;
+    // ⚠️ **要比桶里的数，不能只比键**（收口复评 M3）：把原地改**只**施加在
+    // `byProtocol` 的桶值上（正是快照那段注释所依赖的那条前提）时，
+    // 只按 `Object.keys` 比的版本 29 格全绿逃逸——键没变，变的是键指向的那个数。
     expect(
-      { total: first.total.requests, byProtocol: Object.keys(first.byProtocol).sort() },
+      {
+        total: first.total.requests,
+        byProtocol: Object.keys(first.byProtocol).sort(),
+        openai: first.byProtocol.openai!.requests,
+      },
       "落下去的分片自相矛盾 —— total 是旧的而 byProtocol 蹭进了 await 期间那一条",
-    ).toEqual({ total: 1, byProtocol: ["openai"] });
+    ).toEqual({ total: 1, byProtocol: ["openai"], openai: 1 });
 
     // ② 那一天**必须还是脏的**，`pending` 也不许归零（版本比对的作用）。
     expect(
@@ -827,7 +887,13 @@ describe("UsageSink 的落盘契约", () => {
    */
   it("model 不是字符串时不许把网关打成 500：123 / 对象 / 布尔 / 数组四种都要照常记账，键退化成它们的字符串形式", async () => {
     const r = rig();
-    for (const bad of [123, { a: 1 }, true, [1, 2]] as unknown[]) {
+    // ⚠️ **最后那个是 `String()` 自己也会抛的那一档**（收口复评 H2）：
+    // `JSON.parse('{"toString":1,"valueOf":1}')` 造得出一个两个转换方法都不是函数的
+    // 对象，对它取原始值直接 `TypeError`。**上一版四个样本全停在「没有 .slice」
+    // 那一层**，把 `raw.slice` 换成 `String(raw).slice` 之后它们就全过了 ——
+    // 样本选在缺陷够不到的地方，等于没验。
+    const unstringifiable: unknown = JSON.parse('{"toString":1,"valueOf":1}');
+    for (const bad of [123, { a: 1 }, true, [1, 2], unstringifiable] as unknown[]) {
       expect(
         () => r.sink.record({
           protocol: "openai", model: bad as string, ok: true, stream: false,
@@ -839,9 +905,69 @@ describe("UsageSink 的落盘契约", () => {
     r.pastInterval();
     await r.sink.maybeFlush();
     const shard = (await r.storage.get<UsageDayShard>(KEY_DAY0))!;
-    // 手写字面量：四条各自的字符串形式，一条都不许丢。
-    expect(Object.keys(shard.byModel).sort()).toEqual(["1,2", "123", "[object Object]", "true"]);
-    expect(shard.total.requests).toBe(4);
+    // 手写字面量：五条各自的字符串形式，一条都不许丢。
+    // 最后那一档转不出来 ⇒ 落到固定的兜底键（**不是空串**：空串会和「客户端没填
+    // model」混成同一格，那是把两件事画成一件）。
+    expect(Object.keys(shard.byModel).sort())
+      .toEqual(["1,2", "123", "[object Object]", "[unstringifiable]", "true"]);
+    expect(shard.total.requests).toBe(5);
+  });
+
+  /**
+   * **原型链上的名字被当成模型名时，那一条计数不许消失、也不许变成 null**
+   *（收口复评 H3）。
+   *
+   * 两种坏法**不一样，所以两种都要验**：
+   * · `__proto__` ⇒ 普通 `{}` 上那次赋值**去改了原型**，自有键里没有它、
+   *   `JSON.stringify` 也看不见 ⇒ **那一条彻底消失**；
+   * · `toString` / `constructor` / `hasOwnProperty` ⇒ `?? emptyBucket()` 摸到了
+   *   `Function.prototype` 上的同名函数，拿函数做加法 ⇒ 那一格序列化成
+   *   `{"requests":null,…}`。
+   *
+   * **两种都让落盘分片自己和自己对不上（`total` ≠ Σ`byModel`）** —— 正是 N3 那半
+   * 刚消灭掉的失效形态，从另一个入口原样回来。判据因此落在**那条等式**上，
+   * 而不只是「键还在不在」。
+   */
+  it("原型链上的名字当模型名：__proto__ 不许让那一条消失、toString 不许让它变成 null，落盘分片的 total 必须等于 byModel 各格之和", async () => {
+    for (const evil of ["__proto__", "toString", "constructor", "hasOwnProperty"]) {
+      const r = rig();
+      r.one({ model: evil });
+      r.one({ model: "gpt-x" });
+      r.pastInterval();
+      await r.sink.maybeFlush();
+      const shard = (await r.storage.get<UsageDayShard>(KEY_DAY0))!;
+      const buckets = Object.entries(shard.byModel);
+      // ① 两个模型各自都在，一个都没消失（`__proto__` 那一档会只剩 gpt-x）。
+      expect(
+        buckets.map(([k]) => k).sort(),
+        `model = ${evil}：它那一条从落盘的分片里消失了`,
+      ).toEqual([evil, "gpt-x"].sort());
+      // ② 每一格的数都是真数字，不是 null（`toString` 那一档会是 null）。
+      for (const [k, b] of buckets) {
+        expect(b.requests, `model = ${evil}：byModel[${k}] 的 requests 不是数字`).toBe(1);
+      }
+      // ③ **那条等式**：total 必须等于各格之和。手写字面量 2。
+      const sum = buckets.reduce((n, [, b]) => n + b.requests, 0);
+      expect(
+        { total: shard.total.requests, sum },
+        `model = ${evil}：落盘分片自己和自己对不上，total ≠ Σ byModel`,
+      ).toEqual({ total: 2, sum: 2 });
+
+      // ④ **读侧也要过一遍**（收口复评 H3 的另一半）：那个键会**原样从存储里回来**，
+      // 而 `mergeDayShards` / `narrowRecord` 里的 map 若是普通 `{}`，同一个洞会在
+      // 读路径上重演一次 —— 写侧堵住而读侧没堵，等于把它挪到下一个任务。
+      const merged = mergeDayShards([shard]);
+      const mergedKeys = Object.keys(merged.byModel).sort();
+      expect(
+        mergedKeys,
+        `model = ${evil}：合并之后那一条消失了 —— 读侧的 map 也得是无原型的`,
+      ).toEqual([evil, "gpt-x"].sort());
+      const mergedSum = Object.values(merged.byModel).reduce((n, b) => n + b.requests, 0);
+      expect(
+        { total: merged.total.requests, sum: mergedSum },
+        `model = ${evil}：合并之后 total ≠ Σ byModel`,
+      ).toEqual({ total: 2, sum: 2 });
+    }
   });
 
   /**
