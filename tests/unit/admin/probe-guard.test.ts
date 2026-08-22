@@ -121,8 +121,57 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
    * **边界两个方向各种一次**（下面 `COVERED` / `BLIND_SPOTS` 两张表都真的跑），
    * 这是本轮评审定的纪律：**每写一条「它抓得住 X / 抓不住 Y」，两边各种一次。**
    */
-  const stripComments = (src: string): string =>
-    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  /**
+   * 去掉注释再扫。**逐字符扫，而且认得字符串/模板字面量**——不是一对正则。
+   *
+   * ⚠️⚠️ **正则版在本轮当场翻车，成因本仓早就登记过。**
+   * 正则版是 `src.replace(/\/\*[\s\S]*?\*\//g, "")…`，而
+   * `src/http/admin/router.ts` 里有一行 `admin.use("/admin/api/*", adminAuth(...))`
+   * ——**字符串字面量里的 `/*` 被当成块注释开头，一路吞到下一个 `*​/`**，
+   * 把中间整段代码（含 `createProbeGuard()` 那次调用）全吃掉 ⇒ 下面那格
+   * 「全 src/ 里只有一处 new 出护栏」当场红成「只找到 1 处」。
+   * **这与 `router.ts` 里那段注释记的是同一个坑**：第 12 道门禁的 `commentBlocks()`
+   * 当年正是这么把整张 `/admin/api/*` 路由表吞掉并照常报绿的，那道门禁后来
+   * **改成了逐字符扫**。这里照同一条路走。
+   *
+   * **边界明写**：它认得 `"…"` / `'…'` / `` `…` `` 与 `//`、`/* … *​/`，
+   * **不认得**正则字面量（`/foo\/*bar/`）——本仓 `src/` 下没有这种写法，
+   * 真出现了下面那格会红，届时把这里一起改。
+   */
+  function stripComments(src: string): string {
+    let out = "";
+    let i = 0;
+    while (i < src.length) {
+      const c = src[i]!;
+      const next = src[i + 1];
+      if (c === "/" && next === "/") {
+        while (i < src.length && src[i] !== "\n") i++;
+        continue;
+      }
+      if (c === "/" && next === "*") {
+        i += 2;
+        while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+        i += 2;
+        continue;
+      }
+      if (c === '"' || c === "'" || c === "`") {
+        const quote = c;
+        out += c;
+        i++;
+        while (i < src.length) {
+          const d = src[i]!;
+          out += d;
+          i++;
+          if (d === "\\") { if (i < src.length) { out += src[i]!; i++; } continue; }
+          if (d === quote) break;
+        }
+        continue;
+      }
+      out += c;
+      i++;
+    }
+    return out;
+  }
 
   /** 一个文件的护栏接线画像。**纯函数**，好让真文件与手写探针走同一条判据。 */
   function guardWiring(src: string, depsField: "guard" | "probeGuard") {
@@ -136,8 +185,21 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
       /** 全文件的 acquire / release 调用点总数 —— 多出来的就是第二把。 */
       totalAcquire: count(/tryAcquire\s*\(/g),
       totalRelease: count(/\brelease\s*\(/g),
-      /** 本地护栏最自然的状态容器。 */
-      maps: count(/new Map\s*\(/g),
+      /**
+       * 本地护栏最自然的状态容器。
+       *
+       * ⚠️⚠️ **判据是 `new Map\b`，不是 `new Map\s*\(`——这一条订正过，而且是同一个错的第三次。**
+       * 上一版写的是 `/new Map\s*\(/g`，**只认无泛型的 `new Map()`**，
+       * 而本仓真实那一行是 `src/http/admin/probe-guard.ts` 的
+       * `const slots = new Map<string, Slot>();`——**带泛型，判据看不见它**。
+       * 实测（定向复评 NEW-1）：逐字照抄真实实现的本地护栏 ⇒ **83/83 全绿、完整逃逸**。
+       * 更糟的是 `COVERED` 那条探针当时写的是无泛型的 `new Map()`，
+       * **探在了会过的那一侧**——与 HIGH-2 的成因逐字同形，就在这个声称已经学到那条
+       * 教训的文件里。
+       * ⇒ 纪律：**写完一条形状判据，先拿仓里真实那一行去喂它**，
+       * 下面「判据认得本仓真实那一行」那一格就是把这条纪律做成会红的断言。
+       */
+      maps: count(/new Map\b/g),
     };
   }
 
@@ -181,8 +243,22 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
       src: "const g = deps.probeGuard.tryAcquire(k, n);\nlocalRelease(k);\nconst s = new Map();\n",
     },
     {
-      why: "本地状态容器：即使一次都不叫 tryAcquire，一个 new Map 也够可疑",
+      why: "本地状态容器（无泛型）：即使一次都不叫 tryAcquire，一个 new Map 也够可疑",
       src: "const g = deps.probeGuard.tryAcquire(k, n);\ndeps.probeGuard.release(k);\nconst s = new Map();\n",
+    },
+    {
+      why: "本地状态容器（**带泛型**）—— NEW-1 逃掉的正是这一种，而上一行那条无泛型的探针"
+        + "当时给了错误的安心感",
+      src: "const g = deps.probeGuard.tryAcquire(k, n);\ndeps.probeGuard.release(k);\n"
+        + "const s = new Map<string, LocalSlot>();\n",
+    },
+    {
+      why: "NEW-1 的完整原形：注入那把留成赋值但弃用、本地那两个函数改名、容器带泛型 —— "
+        + "三条判据当时一条都没碰到",
+      src: "const gIgnored = deps.probeGuard.tryAcquire(k, n);\nvoid gIgnored;\n"
+        + "const g = localGate(k, n);\n"
+        + "deps.probeGuard.release(k);\nlocalFree(k);\n"
+        + "const slots = new Map<string, LocalSlot>();\n",
     },
   ];
 
@@ -199,7 +275,12 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
    */
   const BLIND_SPOTS: ReadonlyArray<{ why: string; src: string }> = [
     {
-      why: "本地实现不叫 tryAcquire/release、状态放模块级对象而不是 Map：三条判据一条都碰不到",
+      // ⚠️ **这一行的措辞订正过**：上一版写「状态放**模块级对象而不是 Map**」，
+      // 读起来像是「放 Map 就会被抓住」——**当时那是假的**（`Map<K,V>` 同样逃得掉，
+      // 见 NEW-1）。修好正则之后这句话才第一次成立，措辞也跟着改准：
+      // **判据认得任何形态的 `new Map`，认不得的是别的容器**（`{}`、`Object.create(null)`、
+      // 两个并行的数组、闭包里几个裸变量……）。
+      why: "本地实现不叫 tryAcquire/release，且状态容器不是 Map（这里用 `{}`）：三条判据一条都碰不到",
       src: "const g = deps.probeGuard.tryAcquire(k, n);\n"
         + "deps.probeGuard.release(k);\n"
         + "const slots = {};\n"
@@ -211,10 +292,57 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
     expect(guardWiring(src, "probeGuard")).toEqual(WIRED);
   });
 
+  /**
+   * ⚠️⚠️ **把「写完一条形状判据，先拿仓里真实那一行去喂它」做成会红的断言。**
+   *
+   * 上面那三条判据全是**形状**判据，而形状判据最容易犯的错就是「照着脑子里的写法写正则，
+   * 从没拿仓里真实那一行喂过它」——本任务连着犯了三次（HIGH-1 死调用 / HIGH-2 模板串 /
+   * NEW-1 带泛型的 `new Map`），**三次都是探针探在了会过的那一侧**。
+   *
+   * 这一格反过来：**拿真实实现自己的容器那一行去喂 `guardWiring()`**。
+   * `src/http/admin/probe-guard.ts` 就是「一份本地护栏」的标准长相——判据若认不出它，
+   * 那么任何人照抄它写一份本地的，判据同样认不出。
+   * ⇒ **哪天有人把那个容器换成别的形态（对象、数组、闭包变量），这一格立刻红**，
+   * 逼下一个人回来把判据一起改，而不是等下一轮评审再抓一次同型。
+   */
+  /**
+   * **剥注释这一步自己的边界，两个方向各种一次。**
+   * 第一条正是本轮当场翻车的那个形态：**字符串字面量里的 `/*`**。
+   */
+  it("剥注释认得字符串字面量里的 /* —— 正则版正是在这里把整段代码吞掉的", () => {
+    // ① 会翻车的那一行（`router.ts` 里真的有这一句）：代码必须活下来。
+    const routerish = 'admin.use("/admin/api/*", adminAuth(t));\nconst probeGuard = createProbeGuard();\n';
+    expect(stripComments(routerish), "字符串里的 /* 被当成注释开头，把后面的代码吞了")
+      .toContain("createProbeGuard()");
+    // ② 真的注释必须被剥掉，否则这一步等于没做。
+    expect(stripComments("/* createProbeGuard() */\nconst x = 1;\n"))
+      .not.toContain("createProbeGuard");
+    expect(stripComments("// createProbeGuard()\nconst x = 1;\n"))
+      .not.toContain("createProbeGuard");
+    // ③ 反斜杠转义不许把结束引号吃掉（否则后面整段代码会被当成字符串继续吞）。
+    expect(stripComments('const a = "x\\"y";\nconst b = new Map<string, S>();\n'))
+      .toContain("new Map<string, S>()");
+  });
+
+  it("判据认得本仓真实那一行 —— 形状判据必须先被真实实现喂过一次（NEW-1 的直接产物）", () => {
+    const real = read("src/http/admin/probe-guard.ts");
+    // 前置条件：那一行真的还在（换了写法就该红，见上面那段）。
+    expect(real, "probe-guard.ts 的状态容器换写法了 —— 请连同 guardWiring 的判据一起改")
+      .toContain("new Map<string, Slot>()");
+    // 真正的断言：把真实实现整份喂进去，`maps` 必须数得出来。
+    expect(guardWiring(real, "probeGuard").maps, "判据看不见真实实现自己的状态容器")
+      .toBeGreaterThan(0);
+  });
+
   it("全 src/ 里只有一处 new 出护栏，一处定义它 —— 第二处 createProbeGuard() 就是第二把闸", () => {
+    // ⚠️ **必须先剥注释**（定向复评 NEW-7）：上一版直接 `read(p).includes(...)`，
+    // 于是**任何 src/ 文件的注释里提一句 `createProbeGuard()` 都会让这一格红**
+    // ——评审做变异时真的撞上过一次。同文件另两格早就剥了，唯独这一格漏了。
+    // 「这个仓库的注释极其爱复述代码」是 `tests/unit/source-guards.test.ts` 的原话，
+    // 而本文件通篇在讲「没有单一真源的东西迟早会漂」，自己却漏了一处，如实记一笔。
     const hits = walkTs("src")
       .map((p) => p.split("\\").join("/"))
-      .filter((p) => read(p).includes("createProbeGuard("));
+      .filter((p) => stripComments(read(p)).includes("createProbeGuard("));
     // 手写字面量快照。多一条 = 有人又建了一把（那时两条端点各限各的速，而
     // 「共用一套」这句话在任何行为断言上都不可观测，见 probe-guard.ts 里那段登记）。
     expect(hits.sort()).toEqual([

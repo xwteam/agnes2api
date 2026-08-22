@@ -214,6 +214,11 @@ describe("明文 key 一个字节都不许回到面板（全局约束 11a）", (
     // 错误体塞进一条自定义响应头（`x-upstream-detail: …`）**照样全绿**——
     // 「一个字节都不许回来」说的是整份响应，不是它的 body 那一半。
     const headerDump = [...res.headers.entries()].map(([k, v]) => `${k}: ${v}`).join("\n");
+    // ⚠️ **非空锚（定向复评 NEW-2）**：把 `headerDump` 换成 `""` ⇒ **24/24 全绿**
+    // ——响应头那一半当时什么都没验。同一个提交里 MED-1 刚立下「必须有非空锚」这条规矩，
+    // 而它在这一格没落地。`content-type` 是每条 `c.json()` 都一定带的那一条。
+    expect(headerDump, "一条响应头都没取到 —— 下面那三条 not.toContain 的响应头那一半是空的")
+      .toContain("content-type");
     const whole = `${headerDump}\n${text}`;
 
     // 前置条件：拿到的确实是那一次 401 的结果（否则下面那些 `not.toContain` 是空的）。

@@ -187,6 +187,16 @@ export function verifyHandler(deps: VerifyDeps) {
         latencyMs: deps.now() - startedAt,
         // **`reason` 是机器可读的 code，不是异常消息**：异常消息里可能带上游 URL
         // 与栈帧，与 `createApp` 的 `app.onError` 刻意不回显 `err.message` 是同一条策略。
+        //
+        // ⚠️ **代价，明写（定向复评 NEW-5）**：把取协议 / 取配置 / 装超时闸挪进 `try`
+        // 是为了堵住护栏那段窗口（见上面那段），但它**同时把这个裸 `catch` 的覆盖面
+        // 扩大了**——`protocolById("openai")!` 或 `MODEL_CATALOG[0]!` 断言失败、
+        // `deps.config()` 抛错这类**网关自己的内部错误**，现在会被吞成
+        // `{ ok: false, reason: "network_error" }` + HTTP 200，面板上读起来像「上游连不上」。
+        // **今天走不到**（前两者是纯查表且目录非空、后者是 `ConfigHolder.current()`，
+        // 那里写着「同步读，永不抛」），但这同样是**「今天不会」而不是「不可能」**。
+        // 真要分开，得把 `err` 接住并按类型分流——**本任务不做**：那要新造一档
+        // 面板文案与一条 `reason`，而今天没有任何一条路径能产出它。
         reason: controller.signal.aborted ? "timeout" : "network_error",
       });
     } finally {
