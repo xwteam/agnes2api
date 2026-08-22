@@ -13,6 +13,7 @@ import { TEND_HISTORY_KEY, narrowTendHistory } from "../../../core/admin/tend-hi
 import {
   acquireTendLock, releaseTendLock, narrowTendLock, TEND_LOCK_KEY, type TendGate,
 } from "../tend-lock.js";
+import type { ProbeGuard } from "../probe-guard.js";
 import { httpError } from "../../errors.js";
 
 /**
@@ -148,6 +149,12 @@ export interface RegistrarDeps {
   configHolder: ConfigHolder;
   /** 进程/isolate 内的在途守卫。**与定时轮共用同一把**，见 `tend-lock.ts` 的对照表。 */
   gate: TendGate;
+  /**
+   * 出站探测的护栏（P3d Task 8）。**与单把 key 验活共用同一份实现、同一个实例**，
+   * 见 `../probe-guard.ts`。只有 `channelTestHandler` 用它——「立即补池」有它自己
+   * 那四条更重的护栏（存储锁 + 10 分钟冷却 + 每日写预算），两套不叠加。
+   */
+  probeGuard: ProbeGuard;
   /**
    * **与转发路径同一个实例**（见 `AdminRouterDeps.repo`）。`status` 用它数
    * 「占名额数」，走的是共用的 isolate 快照 ⇒ 面板刷新不额外读存储。
@@ -558,22 +565,26 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
  * 连点失败的连通性测试会把事件板块里别的诊断挤出环 —— 而运维去点这颗按钮的时候，
  * 恰恰是他最需要那些事件的时候。
  *
- * ⚠️ **如实登记：这条端点没有自己的冷却/预算护栏。**
- * 计划 F6 对「单把 key 验活」立过一条规矩——「一次一发」是一次点击的成本，不是一天的
- * 上界。同一条推理对本端点成立，本任务**没有**给它上护栏，理由与代价明写：
- * ① 它打的是**只读**接口，不消耗上游的任何名额，最坏后果是从本网关的出口 IP 对
- *    邮箱服务发起过量请求；
- * ② 给它一把存储护栏就要新增**一次无条件、每次点击都发生的**写（护栏键是读改写），
- *    而这条端点今天在成功支上是零写、在失败支上只是**摊薄且已被每日 12 次封顶**的
- *    共用事件写；上了护栏就得推翻前者，并回去把这一笔加进五语言 DEPLOY.md 的写侧账。
- *    ⚠️ 这条理由原来的前提是「本任务把这两条端点做成了零写并用一格用例钉住」——
- *    **那个「零写」是无条件的，而它只对成功支成立**（钉住它的那一格夹具是
- *    `probe: ok:true`）。量完之后**处置不变**（一次点击的成本仍然是 0 次自己的写），
- *    改的是理由的前提，不是策略。
- *    ⚠️ 更早那一版写的是「配额账把这两条新端点算成零写」——**那是自己的口径，不是
- *    DEPLOY.md 里写着的东西**（那两条端点是本任务才有的），措辞当时已改准。
- * ③ 面板侧在飞期间禁用按钮（`sec-registrar.js`），挡的是手滑连点，**挡不住脚本**。
- * ⇒ **这是一处已知缺口，不是"已经防住了"**。真要上护栏，该与验活一起做一套共用的。
+ * ── P3d Task 8：那处已知缺口已经补上，护栏与单把 key 验活**共用一套** ──────────
+ *
+ * P3c 收口时这里登记着「本端点没有自己的冷却/预算护栏，这是一处已知缺口，不是
+ * 『已经防住了』；真要上护栏，该与验活一起做一套共用的」。**Task 8 就是那一次。**
+ *
+ * 现在两道闸落在 `deps.probeGuard` 上（`../probe-guard.ts`）：在途去重挡「连点」，
+ * 最小间隔挡「按住不放」。**它是进程/isolate 内的，刻意不是存储级的**——
+ * P3c 当时不上护栏的第 ② 条理由（存储护栏要给一条零写端点新增一次无条件的写，
+ * 并且要回去改五语言 DEPLOY.md 的配额账）**今天仍然成立，所以那条路仍然没走**。
+ * ⇒ **配额账一个字都不用改：本次新增的写是 0。**（全局约束 13 只管「会写存储的
+ * 代码路径」，而这把护栏一次都不写。）
+ *
+ * ⚠️ **这是一次行为变更，明写**：本端点此前连点必成功，现在同一条通道
+ * 在 `PROBE_MIN_INTERVAL_MS` 内的第二次点击会拿到 **429**（顶层
+ * `reason: "probe_cooldown"` / `"probe_in_flight"`）。
+ * 面板侧在飞期间禁用按钮（`admin-ui/js/sec-registrar.js`）挡的是手滑连点、
+ * **挡不住脚本**，那一条没变——护栏补的正是它挡不住的那一半。
+ *
+ * ⚠️ **它挡不住的，同样明写**：跨副本无效（N 个副本各自允许一次），
+ * 与 `createTendGate()` 单独存在时挡不住另一个副本是同一句话。
  */
 export function channelTestHandler(deps: RegistrarDeps) {
   return async (c: Context) => {
@@ -610,6 +621,26 @@ export function channelTestHandler(deps: RegistrarDeps) {
       }, 503);
     }
 
+    // ── 出站探测护栏（P3d Task 8，与单把 key 验活共用）─────────────────────────
+    //
+    // **必须排在上面那四条校验之后、`probeChannel` 之前**，两个方向各有理由：
+    // · 排在校验之前 ⇒ 一次拼错通道名的 400 会把这条通道锁住一个最小间隔
+    //   （**明明什么都没发出去，按钮却点不动了**——与 `manualTendHandler` 里
+    //   「先读护栏再抢锁」那段避开的是同一种形态）；
+    // · 排在 `probeChannel` 之后 ⇒ 护栏就成了摆设，连点照样每次都真打一次外网，
+    //   只是返回值被换成了 429。**判据因此是执行体被调了几次，不是状态码**，见
+    //   `tests/contract/admin-verify.test.ts` 的
+    //   「被 429 挡住的通道测试一次上游探测都不发 —— 判据是执行体被调了几次，不是状态码」。
+    const kind = `channel:${raw}`;
+    const g = deps.probeGuard.tryAcquire(kind, deps.now());
+    if (!g.ok) {
+      return c.json({
+        error: { type: "rate_limit_error", message: g.message },
+        reason: g.reason,
+        channel: raw,
+      }, 429);
+    }
+
     // 计时从这里起：**只包住那一次上游调用**，不含上面几条本地判断。
     const startedAt = deps.now();
     try {
@@ -643,6 +674,12 @@ export function channelTestHandler(deps: RegistrarDeps) {
         fields: { channel: raw, latencyMs, error: err instanceof Error ? err.message : String(err) },
       });
       return c.json({ ok: false, channel: raw, reason: "upstream_error", latencyMs });
+    } finally {
+      // **必须在 `finally` 里**，与 `handlers/verify.ts` 同一条理由（见
+      // `../probe-guard.ts` 的 `ProbeGuard.release`）：放在成功支末尾时，
+      // 一次抛错的探测会让这条通道永久卡在「在飞」——而这个 `catch` 恰恰是
+      // 「上游不可达」的常态支路。
+      deps.probeGuard.release(kind);
     }
   };
 }

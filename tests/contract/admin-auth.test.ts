@@ -924,6 +924,24 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     "GET /admin/api/keys/:id/usage",
     "GET /admin/api/usage",
     "GET /admin/api/usage/:date",
+    // ── Task 8（P3d）的单把 key 验活 ───────────────────────────────────────────
+    //
+    // 它用 `admin.post()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
+    // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
+    // 而不是默认它不变。
+    //
+    // ⚠️ **这是这张表上第三条会打到网关之外的端点，而它比前两条都更贴身**：
+    // `registrar/tend` 花的是外部服务的配额、`channels/:c/test` 借的是本网关的出口 IP，
+    // 而这一条是**本仓第一次让后端拿着某一把具体的明文上游 key 去打上游**——
+    // 请求头里有它，上游 401 的错误体里可能有它的片段。
+    // 一个鉴权失效的它 = 任何人都能拿这台网关逐把探测池子里每一把 key 的死活。
+    // ⇒ 它当然只能待在 admin 域里，`PUBLIC_PATHS` 同样不增长。
+    //
+    // ⚠️ **它挂在 `DELETE` / `PATCH /admin/api/keys/:id` 与 `GET /admin/api/keys/:id/usage`
+    // 之后**：今天段数与方法都对不上（四段 POST vs 三段 DELETE/PATCH vs 四段 GET），
+    // 碰不上；但顺序反了之后加一条更宽的 `/admin/api/keys/:id/:something` 就会静默把它
+    // 吃掉——与 `bulk` vs `:id` 是同一个坑（见 `src/http/admin/router.ts` 里那几段注释）。
+    "POST /admin/api/keys/:id/verify",
   ] as const;
 
   /** 路由模式 → 一条能真的打到那个 handler 的具体路径。 */
@@ -957,6 +975,13 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // Task 4（P3d）的单日下钻。**必须用一个真的解析得开的 UTC 日期串**：
     // 占位串会在 handler 第一行就被 400 挡掉——那样这一格验的是参数校验，不是鉴权。
     "/admin/api/usage/:date": "/admin/api/usage/2024-10-04",
+    // Task 8（P3d）的验活。**必须用一个不存在的 id**，理由比上面那两条更硬：
+    // 矩阵会拿正确的管理口令把每条路由真的打一遍，而这一条打通了就是**一次真的
+    // 出站请求**（默认夹具的 `FakeFetcher` 会收下它，但整个鉴权矩阵不该是一个
+    // 会发出站请求的测试——`channels/:channel/test` 那一格上面记的是同一句话）。
+    // 用不存在的 id ⇒ handler 在 `repo.get()` 那一步就 404，护栏都不会被占。
+    // 404 不是 401，矩阵那一格断言的「不该被判 401」照样成立。
+    "/admin/api/keys/:id/verify": "/admin/api/keys/deadbeefdeadbeef/verify",
   };
 
   const GATEWAY = TEST_CONFIG.gatewayToken;

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Logger } from "../../ports/logger.js";
+import type { Fetcher } from "../../ports/fetcher.js";
 import type { KeyPoolRepo } from "../../core/keypool-repo.js";
 import type { ConfigHolder } from "../config-holder.js";
 import type { StorageHealth } from "../../core/storage-health.js";
@@ -26,7 +27,9 @@ import {
 import {
   keyUsageHandler, usageHandler, usageDateHandler, type UsageWiring,
 } from "./handlers/usage.js";
+import { verifyHandler } from "./handlers/verify.js";
 import type { TendGate } from "./tend-lock.js";
+import { createProbeGuard } from "./probe-guard.js";
 import { uiRoutes } from "../../ui/serve.js";
 
 export interface AdminRouterDeps {
@@ -51,6 +54,15 @@ export interface AdminRouterDeps {
    * 数着 get/list 次数钉这件事。
    */
   repo: KeyPoolRepo;
+  /**
+   * **与转发路径同一个 `Fetcher` 实例**（`createApp` 把 `deps.fetcher` 原样交下来）。
+   * 唯一的消费者是单把 key 验活（P3d Task 8）——它不经 `dispatch()`（那个函数会自己
+   * 选 key，而验活要指定某一把），所以出站能力得在这里单独接一条。
+   *
+   * **不许在 handler 里裸 `fetch`**：没有这个端口，那条端点在测试里桩不掉、
+   * 每跑一次就真打一次外网。见 `handlers/verify.ts` 的约束 3（连同它接不住的那半）。
+   */
+  fetcher: Fetcher;
   now: () => number;
   /** 见 `overviewHandler`：`config` 块需要现读一次当前生效配置。 */
   configHolder: ConfigHolder;
@@ -287,6 +299,36 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // **它与 Tier-2 完全无关**：走 `deps.repo`，Tier-2 关着时照样可用（设计 §10.6）。
   admin.get("/admin/api/keys/:id/usage", keyUsageHandler(deps.repo, deps.now));
 
+  // ── 出站探测的护栏（P3d Task 8）─────────────────────────────────────────────
+  //
+  // **建在这里，一把，交给两处**：单把 key 验活与通道连通性测试。
+  // 全局约束 14 的落点——「按一下就打上游的按钮，必须在同一个任务里连同护栏一起交付」。
+  //
+  // ⚠️ **刻意不做成 `AdminRouterDeps` 的一格可注入依赖**（`tendGate` 是那样的）。
+  // 两者的差别是真的：`tendGate` 要在 Node 侧被**定时轮与面板按钮共用**，所以必须
+  // 由外层装配交进来；探测护栏没有第二个持有者，做成可注入只会多出一种
+  // 「两条端点各拿到一把」的半装配形态——而那种形态在外部**完全不可观测**
+  //（两条端点的 kind 命名空间不相交，见 `./probe-guard.ts` 里那段登记）。
+  // ⇒ 在这里 new 一把，「同一个实例」就是结构性的，装配上造不出走样的形态。
+  const probeGuard = createProbeGuard();
+
+  // **单把 key 的验活（P3d Task 8）。挂在上面那三条 `keys/...` 之后。**
+  // 今天它们碰不上：这一条是**四段**（`keys/:id/verify`）而 `DELETE`/`PATCH` 那两条是
+  // 三段，`keys/:id/usage` 虽然同为四段但方法不同（GET vs POST）。
+  // ⚠️ **会出事的还是那个老坑**：将来有人加一条比它更宽的
+  // `/admin/api/keys/:id/:something`（Hono 按注册顺序匹配），那时它必须排在本条之后。
+  // 这是本文件里同一个坑的第五处（`bulk` vs `:id`、`channels/:c/test` vs `tend`、
+  // `keys/:id/usage`、`usage` vs `usage/:date`），措辞刻意一致。
+  //
+  // **它一次存储写都不产生**（订正 F8：验活是只读探针），所以配额账不用改。
+  admin.post("/admin/api/keys/:id/verify", verifyHandler({
+    repo: deps.repo, fetcher: deps.fetcher, now: deps.now,
+    // **getter 而不是值**：超时档与 `agnesBaseUrl` 都能在运行中被面板改掉，
+    // 与 `app.ts` 的 `dispatchDeps` 里那个 `get config()` 是同一条理由。
+    config: () => deps.configHolder.current(),
+    guard: probeGuard,
+  }));
+
   // ── 注册机（P3c Task 5 的「立即补池」+ Task 6 的板块取数与通道测试，风险 L6）──
   //
   // **本仓第一批会触发真实上游副作用的端点**：Key 池那四条只动本地存储，`tend` 会
@@ -303,6 +345,9 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
     runtime: deps.runtime,
     configHolder: deps.configHolder,
     gate: deps.tendGate,
+    // **与验活同一个引用**（见上面那段）：P3c 账本登记的「通道测试无护栏」缺口，
+    // 补法是共用一套，不是各造一套。
+    probeGuard,
     repo: deps.repo,
   };
   admin.post("/admin/api/registrar/tend", manualTendHandler(registrar));

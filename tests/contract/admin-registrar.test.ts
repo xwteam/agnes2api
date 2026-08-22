@@ -454,6 +454,23 @@ describe("GET /admin/api/registrar/status", () => {
 // POST /admin/api/registrar/channels/:channel/test
 // ───────────────────────────────────────────────────────────────────────────
 
+/**
+ * ⚠️ **P3d Task 8 起这条端点带护栏了，这是一次行为变更**：同一条通道在
+ * `PROBE_MIN_INTERVAL_MS` 内的第二次点击会拿到 **429**（P3c 账本第 799 行登记的
+ * 「通道连通性端点无冷却/预算护栏」那个缺口，补法是与单把 key 验活**共用一套**，
+ * 见 `src/http/admin/probe-guard.ts`）。
+ *
+ * **本文件因此一格都没改，这件事是查过的、不是碰巧**：下面每一格要么各自
+ * `fixture()` 一个新 app（一个 app 一把护栏），要么在两次点击之间把假时钟推过
+ * 6 秒（`>` 3 秒），要么打的是**两条不同**的通道（kind 是 `channel:<name>`）。
+ * ⚠️ **最后那一条顺带是「粒度不能写成全局」的一份旁证**：
+ * 「成功：ok + 可用域名数 + 耗时，两条通道同一套形状」在同一个 app 上连着打
+ * `moemail` 与 `yyds`，护栏若是全局粒度，它当场就红。
+ *
+ * 护栏本身的格子全部在 `tests/contract/admin-verify.test.ts` 的
+ * 「出站探测护栏：与通道测试共用的那一套（全局约束 14）」那一组里，
+ * **刻意不在本文件复制一份**——同一条判据写两处，改的时候必然只改一处。
+ */
 describe("POST /admin/api/registrar/channels/:channel/test", () => {
   it("成功：ok + 可用域名数 + 耗时，两条通道同一套形状", async () => {
     const probes: Channel[] = [];

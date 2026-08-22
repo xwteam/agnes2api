@@ -30,6 +30,10 @@ function adminApp(version: string) {
     // /admin/api/keys 要的两样。本文件只测 session，给一个空池子就够——
     // 但**必须真给**：`adminRouter` 现在会用它注册 keys 端点。
     repo: new KeyPoolRepo(new MemoryStorage(undefined, () => 1000), { now: () => 1000, logger: NULL_LOGGER, cacheTtlMs: 0 }),
+    // 单把 key 验活要的出站端口（P3d Task 8）。本文件只测 session，**给一个会抛错的
+    // 桩**：这个 app 上没有任何 key，那条端点在 `repo.get()` 那一步就 404 了，
+    // 走不到出站。给 `globalThis.fetch` 反而会让「哪天它真的被打到」变成一次真外网请求。
+    fetcher: { fetch: () => { throw new Error("本文件只测 session，不该有任何出站请求"); } },
     now: () => 1000,
     // capabilities/overview 要的三样。本文件只测 session，给最小可用的夹具即可。
     configHolder: fixedConfigHolder(TEST_CONFIG),

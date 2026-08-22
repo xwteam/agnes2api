@@ -286,6 +286,9 @@ export function createApp(deps: AppDeps): Hono {
     // **原样传转发路径那一个 repo**，不新建：面板与转发共用同一份 isolate 快照，
     // 面板轮询才不会各自去读一遍存储（设计文档 §2.4 第 1、2 条）。
     repo: deps.repo,
+    // **原样传转发路径那一个 fetcher**（P3d Task 8）：单把 key 验活不经 `dispatch()`，
+    // 得自己出站，而它必须走注入的端口——见 `admin/handlers/verify.ts` 的约束 3。
+    fetcher: deps.fetcher,
     now: deps.now,
     configHolder: deps.configHolder,
     storageHealth: deps.storageHealth,
