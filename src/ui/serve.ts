@@ -51,10 +51,16 @@ export function uiRoutes(): Hono {
 
     // 直接用注册路径本身查表：Hono 已经把 query 剥掉了。
     //
-    // **`/admin/index.html` 是 404，这是有意的**：一份内容一个规范 URL，键就是
-    // `/admin`。admin-ui/README.md 让贡献者**用浏览器直接打开**那个文件（`file://`），
-    // 不是走 HTTP 取它，所以这条不影响调试流程。要改的话就和 `/admin/` 一样走 301，
-    // 别再加一个发同样内容的第二个键（两条缓存两个 ETag，升级后会不同步）。
+    // **`/admin/index.html` 是 404，这是有意的**：一份内容一个规范 URL，键就是 `/admin`。
+    // ⚠️ **这里原来写着「admin-ui/README.md 让贡献者用浏览器直接打开那个文件（`file://`），
+    // 所以这条不影响调试流程」——那句是假的**（P3d Task 7 定向复评顺手改）：
+    // `admin-ui/README.md` 开头那段已经把「`file://` 直接打开就是完整可调试的面板」
+    // 登记成**实测推翻**了（资源引用是绝对路径，`file://` 下全部 404；
+    // 且现代浏览器把 `file://` 的源当成 null，`type="module"` 会被 CORS 挡下）。
+    // 调试一律走 HTTP（`/admin`），**所以这条 404 影响不到调试流程的真正理由是
+    // 「没人会去取 `/admin/index.html`」，不是「大家都在用 file:// 」。**
+    // 要改的话就和 `/admin/` 一样走 301，别再加一个发同样内容的第二个键
+    //（两条缓存两个 ETag，升级后会不同步）。
     const asset = UI_ASSETS[c.req.path];
 
     // **uiRoutes 自己的 404 带全套安全头**：漏在错误分支上等于在同一个源下放了

@@ -404,7 +404,10 @@ async function loadCatalog() {
   //    不变量与它的出处：`loadCatalog()` 只有 `onShow()` 一个调用方，而
   //    `admin-ui/js/app.js` 的 `showSection` 是**先 init 再 onShow**
   //    （`if (!s.__inited) { s.init(...); s.__inited = true; } s.onShow && s.onShow();`），
-  //    `nodes` 在 `init()` 第一行就被赋值、此后再没有任何地方把它写回 null。
+  //    而 `nodes = { fields: {} }` 是本板块 `init()` 里**紧跟在标题那两行之后**就执行的，
+  //    此后再没有任何地方把它写回 null。
+  //    ⚠️ 上一版这里写的是「`init()` 第一行」——不确切（前面还有清空 section 与加标题两行）。
+  //    一句不确切的位置描述会让下一个人去那一行找、找不到、然后不再信这一整段。
   renderExamples();
 }
 
@@ -573,7 +576,12 @@ async function load() {
     // **不伪造上一次的数据**：读失败就清空，不留着旧值假装它是新的。
     data = null;
   }
-  if (nodes !== null) render();
+  // 与 `loadCatalog()` 结尾同一条裁定：**不判 `nodes !== null`。**
+  // ⚠️ 上一版这里判、那边不判，而两个函数是同一个 `onShow()` 里的兄弟调用、
+  //    读的是同一个变量（P3d Task 7 定向复评 M-4：我上一轮只修了一半，
+  //    新写的那句「一处判空会被下一个人读成这里真的可能是 null」在自己上方十行处被反证）。
+  //    不变量与出处见 `loadCatalog()` 结尾那一段。
+  render();
 }
 
 export const settingsSection = {

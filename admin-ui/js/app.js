@@ -102,9 +102,13 @@ function leave(reason) {
  *    在登录闸上再弹一次登录闸；
  * ③ 口令还没进 `localStorage`，`api.js` 的 `readKey()` 读不到它。
  * 出口数量由 `tests/ui/api-session.test.ts`「恰好两处：api.js 的 raw() 与 app.js 的登录探针」
- * 数着钉住，**照它那张手写枚举表里的四种写法**加第三个会变红。
- * ⚠️ 那张表数不出 `new WebSocket(` / `await import(` / 先存进变量再调的 fetch
- *（P3d Task 7 评审 F-11 实测），边界全文见 `admin-ui/js/api.js` 文件头。
+ * 数着钉住：**照它那张手写枚举表里的四种写法写、并且不在带花括号的插值里**，
+ * 加第三个会变红。
+ * ⚠️ 它沿两条轴各漏一族：那张表数不出 `new WebSocket(` / `await import(` /
+ * 先存进变量再调的 fetch（评审 F-11 实测）；而它抠模板串字面文本那一步会把
+ * **带花括号的插值**整条吃掉——`admin-ui/js/sec-overview.js` 那条渲染「上次检查时间」
+ * 的模板串就是这个形状，往它里面塞一个真 `fetch` 实测全绿（定向复评 H-1）。
+ * 边界全文见 `admin-ui/js/api.js` 文件头。
  */
 async function probe(key) {
   const res = await fetch("/admin/api/session", { headers: { "x-admin-key": key }, credentials: "omit" });
