@@ -124,6 +124,13 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // Task 6（P3b）新增：事件板块的取值决策（查询串拼装、分组、轮询退避等），
       // 同一条硬规则、同一份理由，由 tests/ui/events.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/events.mjs",
+      // Task 7（P3d）新增：设置页第 4 张卡（集成示例）拼那 12 段代码的纯函数。
+      // 同一条硬规则、同一份理由，由 tests/ui/examples.test.ts 跑着。
+      // **逐条确认过：纯函数、无配置、无数据**——它连一条端点路径都不认识
+      //（路径、方法、鉴权头名、最小请求体全部以参数形式从 `GET /admin/api/models`
+      // 的响应里进来），示例里那把 key 恒是 `YOUR_GATEWAY_TOKEN` 占位符，
+      // base URL 由调用方在运行期取，文件里连一个地址字面量都没有，公开可取没有问题。
+      "/admin/js/pure/examples.mjs",
       "/admin/js/pure/format.mjs",
       // Task 4（P3c）新增：Key 池板块**写操作**的取值决策（按钮可用性、确认文案、
       // 批量选择边界、导入行拆分、bulk 结果汇总）。同一条硬规则、同一份理由，

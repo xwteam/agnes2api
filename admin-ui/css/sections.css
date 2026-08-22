@@ -151,6 +151,23 @@ tr:last-child td { border-bottom: 0; }
 .cfg-errors p { margin: 2px 0; }
 .danger-text { color: var(--danger); }
 
+/* 集成示例卡（P3d Task 7，设计 §10.4 第 4 张卡）。
+
+   ⚠️ **`white-space: pre` 而不是 `pre-wrap`**：示例是要照抄去跑的，curl 那几段靠
+   行尾的反斜杠续行，自动折行会在视觉上把一条命令切成好几条、把续行符的位置搞乱。
+   代价是长 URL 要横向滚动，所以这里显式给 `overflow-x: auto`——去掉它的话，
+   窄屏上那段代码会把整张卡撑破。 */
+.examples-code {
+  margin: var(--gap-sm) 0; padding: var(--gap-sm);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+  white-space: pre; overflow-x: auto; font-size: 12px; line-height: 1.5;
+}
+/* 两排分段选择器各占一行：挤在同一行时协议与语言两组按钮会被读成一组。
+   **只作用在本卡自己的那两排上**——`.btn-group` 是事件 / 用量 / 模型三个板块共用的，
+   在它上面改 display 会顺手改掉那三处。 */
+.examples-bar { display: flex; align-items: center; margin-top: var(--gap-sm); }
+.examples-bar .muted { margin-right: var(--gap-sm); }
+
 /* 用量板块（P3d Task 5，设计 §10.6）。
 
    ⚠️⚠️ **这一段里最要紧的是那两根破折号**：`–`（EN DASH，`.usage-none`）说的是

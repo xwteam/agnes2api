@@ -101,7 +101,8 @@ function leave(reason) {
  * ② 这里的 401 意思是「口令不对」，不是「你掉线了」，走 `onUnauthorized()` 会
  *    在登录闸上再弹一次登录闸；
  * ③ 口令还没进 `localStorage`，`api.js` 的 `readKey()` 读不到它。
- * 出口数量由 `tests/ui/api-session.test.ts:286` 数着钉住，加第三个会变红。
+ * 出口数量由 `tests/ui/api-session.test.ts`「恰好两处：api.js 的 raw() 与 app.js 的登录探针」
+ * 数着钉住，加第三个会变红。
  */
 async function probe(key) {
   const res = await fetch("/admin/api/session", { headers: { "x-admin-key": key }, credentials: "omit" });

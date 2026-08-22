@@ -34,6 +34,12 @@ export const NAV_SECTIONS = [
 
 type SectionName = (typeof NAV_SECTIONS)[number];
 
+/**
+ * 假 DOM 里这个面板「部署」在哪个域名下。**导出给用例做逐字断言用。**
+ * 值本身刻意长得像一条探针，理由见下面 `stubGlobal("location", …)` 那段。
+ */
+export const PANEL_ORIGIN = "https://panel-probe.invalid";
+
 type Resp = { status: number; body: unknown };
 
 export interface Harness {
@@ -137,6 +143,18 @@ export async function bootPanel(opts: {
     });
   });
   vi.stubGlobal("navigator", { clipboard: { writeText: async () => {} } });
+  /**
+   * 面板部署在哪个域名下。
+   *
+   * ⚠️ **它必须是一个替身，而且必须与本仓任何真实部署都不像**：设置页第 4 张卡
+   *（集成示例，P3d Task 7）里那条 base URL 是**运行期**从这里取的，
+   * 用例正是靠「渲染出来的地址逐字等于这里这个值」证明它没被写死。
+   * 取一个显然是探针的值，写死的那一版就绝不可能碰巧通过。
+   *
+   * ⚠️ **只给 `origin` 一格，不给整个 Location**（第 9 种假阳性：替身比真实更强）：
+   * 发货代码今天只用得上这一格，多给的每一格都是一条「测试里有、真机上未必一样」的路。
+   */
+  vi.stubGlobal("location", { origin: PANEL_ORIGIN });
   if (opts.now !== undefined) vi.spyOn(Date, "now").mockReturnValue(opts.now);
   installFakeDom((n, v) => vi.stubGlobal(n, v), dom);
 

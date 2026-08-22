@@ -23,8 +23,14 @@
  */
 import { api } from "./api.js";
 import { t } from "./i18n.js";
-import { el, elI18n, toast, openModal } from "./ui.js";
+import { el, elI18n, toast, openModal, copy } from "./ui.js";
 import { fmtDuration } from "./pure/format.mjs";
+// 第 4 张卡（集成示例）。**模型清单直接复用模型板块那份窄化**，不在 examples.mjs 里
+// 再写一遍——同一份响应的同一个字段，两份窄化就是两份会分叉的判据。
+import { catalogModels } from "./pure/models.mjs";
+import {
+  EXAMPLE_LANGS, KEY_PLACEHOLDER, exampleProtocols, allExamples, langLabel,
+} from "./pure/examples.mjs";
 // **顺序的唯一真源在 `registrar.mjs`**，本文件把它传给 `channelFields()`，
 // `settings.mjs` 里不重新声明一份（见那里的说明）。
 import { CHANNELS, channelLabelKey, channelAddressFactKey } from "./pure/registrar.mjs";
@@ -48,6 +54,39 @@ let abort = null;
 let touched = new Set();
 /** 最近一次成功的 `GET /admin/api/config` 响应；`null` = 还没有过一次成功。 */
 let data = null;
+
+// ───────────────────────────────────────────────────────────────────────────
+// 第 4 张卡：集成示例（P3d Task 7，设计 §10.4）的那几格状态
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * 窄化之后的协议目录（`{ protocols, models }`）。`null` = 还没读到 / 读不出来。
+ * **成功读到一次就不再读**：这份目录是静态的（`src/core/admin/protocol-catalog.ts`
+ * 全部是模块级常量），重读一遍只会换来一次「这次可能失败」的机会。
+ */
+let exCatalog = null;
+/**
+ * 这一刻有没有一条目录读在飞。
+ *
+ * ⚠️ **它不是可有可无的**：`onShow()` 是隐式入口，读还没回来时切走再切回来，
+ * `exCatalog` 仍是 `null` ⇒ 没有这条早退就会发出第二条链，而**一条晚到的失败会把
+ * 已经画好的示例卡抹掉**（`admin-ui/js/sec-models.js` 的文件头记着这个缺陷的实测过程，
+ * 那里两条链并存的后果是 `rowsAfterLateFailure=0`）。
+ */
+let exInFlight = false;
+/** 当前选中的协议 id；空串 = 还没选过，渲染时落到真源给的第一条。 */
+let exProto = "";
+/** 当前选中的语言。**默认取 `EXAMPLE_LANGS` 的第一档，不写第二份字面量。** */
+let exLang = EXAMPLE_LANGS[0];
+/**
+ * 示例里的 base URL。
+ *
+ * ⚠️⚠️ **它是运行期读来的，一个字面量都不许写死**（全局约束 4 / 11）：面板部署在哪个
+ * 域名下，示例里的地址就该是哪个。**这一行必须留在板块文件里**——`js/pure/` 下禁止
+ * 出现浏览器那两个顶层全局（`scripts/build-ui.mjs` 的三条静态校验，含注释里的字样），
+ * 所以纯函数只收一个 `origin` 参数，读它是板块文件的活。
+ */
+let exOrigin = "";
 
 /**
  * 一格字段。**公开字段与凭据长得不一样，但都由这一个函数建出来**——
@@ -258,6 +297,108 @@ function render() {
       if (nodes.fields[r.field] !== undefined) nodes.fields[r.field].wrap.classList.add("invalid");
     }
   }
+}
+
+/**
+ * 第 4 张卡的卡内内容，整块重画。
+ *
+ * ── **本函数里没有任何一条端点路径、请求体形状或协议名** ──────────────────────
+ * P3d 核心设计决定（全局约束 15）：四个消费者只许有一份「怎么调这个网关」的知识。
+ * 协议 id 与展示名、方法、路径模板、鉴权头、最小请求体全部来自
+ * `GET /admin/api/models` 的响应，拼代码那一步在 `admin-ui/js/pure/examples.mjs` 里；
+ * 这里只负责选哪一档、把它画出来。
+ * ⚠️ `api.get("/models")` 这条 **admin** 路径不算第二份端点知识，边界与
+ * `admin-ui/js/sec-models.js` 文件头「`api.get("/models")` 这条 admin 路径为什么不算
+ * 第二份端点知识」那一段逐字相同。
+ *
+ * ⚠️ **代码块一律 `textContent`**：示例里全是引号与花括号，而 CSP 的 `script-src 'self'`
+ * 要求零内联脚本（`src/ui/serve.ts`）。`el()` 走的就是 `textContent`。
+ *
+ * ⚠️ **「一条协议都没有」在这张卡上折进「读不出来」那一档，这是明写的取舍**：
+ * 真源里那份协议清单是模块级常量、今天恒有四条，响应里它变成空数组只可能意味着
+ * 这份响应被改过——那正是「读不出来」本身。别把这条推广到别的板块（模型板块的
+ * 「一个模型都没有」是真会发生的一档，它在那里单独有话说）。
+ */
+function renderExamples() {
+  const host = nodes.examples;
+  host.textContent = "";
+  if (exCatalog === null || exCatalog.protocols.length === 0) {
+    host.appendChild(elI18n("p", "set.examples.unavailable", { class: "danger-text" }));
+    return;
+  }
+  // 占位口令的取值来自纯函数模块，**不在文案里再抄一份**。
+  host.appendChild(el("p", { class: "muted note" }, t("set.examples.desc", { key: KEY_PLACEHOLDER })));
+
+  const rows = allExamples(exCatalog.protocols, exCatalog.models, exOrigin);
+  // 选中的协议不在这份目录里（第一次渲染，或目录变了）⇒ 落到真源给的第一条。
+  // **顺序照响应给的顺序，不在这里重排**——重排就是又一份知识。
+  if (!rows.some((r) => r.protocol === exProto)) exProto = exCatalog.protocols[0].id;
+
+  const protoBar = el("div", { class: "btn-group examples-bar" });
+  protoBar.appendChild(elI18n("span", "set.examples.proto", { class: "muted" }));
+  for (const p of exCatalog.protocols) {
+    // 展示名走响应里的 `label`（协议的专名，刻意不进 i18n）。三条都不许走：
+    // 本地再写一张映射、把 id 拼进一个 i18n key、直接渲染裸 id。
+    const btn = el("button", { type: "button", class: "btn-toggle", "data-ex-protocol": p.id }, p.label);
+    btn.classList.toggle("active", exProto === p.id);
+    btn.addEventListener("click", () => { if (exProto !== p.id) { exProto = p.id; renderExamples(); } });
+    protoBar.appendChild(btn);
+  }
+  host.appendChild(protoBar);
+
+  const langBar = el("div", { class: "btn-group examples-bar" });
+  langBar.appendChild(elI18n("span", "set.examples.lang", { class: "muted" }));
+  for (const lang of EXAMPLE_LANGS) {
+    // 表外的语言**照实显示原值**，不冒充任何一档已知语言（`langLabel()` fail-open）。
+    const label = langLabel(lang);
+    const btn = el("button", { type: "button", class: "btn-toggle", "data-ex-lang": lang }, label === null ? lang : label);
+    btn.classList.toggle("active", exLang === lang);
+    btn.addEventListener("click", () => { if (exLang !== lang) { exLang = lang; renderExamples(); } });
+    langBar.appendChild(btn);
+  }
+  host.appendChild(langBar);
+
+  const row = rows.find((r) => r.protocol === exProto && r.lang === exLang);
+  // ⚠️ **`code === null` 绝不能退化成「照拼一段」**：那一档的意思是「这条协议的路径要一个
+  //    模型，而目录里没有任何模型支持它」，硬拼出来的是一条长得像真的、按着抄一定打不通的
+  //    地址。如实说这里没有示例。
+  if (row === undefined || row.code === null) {
+    host.appendChild(elI18n("p", "set.examples.noModel", { class: "muted note" }));
+    return;
+  }
+  host.appendChild(el("pre", { class: "mono examples-code" }, row.code));
+  const copyBtn = elI18n("button", "common.copy", { type: "button", class: "examples-copy" });
+  copyBtn.addEventListener("click", () => { copy(row.code); });
+  host.appendChild(copyBtn);
+}
+
+/**
+ * 拉一次协议目录。**零存储读**（`src/http/admin/handlers/models.ts` 全部来自模块级常量），
+ * 所以它不进配额账，也不违反本板块「没有自动刷新」那条纪律。
+ *
+ * ⚠️ **两个不同的失败落到同一档**：HTTP 失败（`api.get` 抛）与「读得回来但形状不对」
+ * （窄化交出 `null`）在卡上都是「读不出来」。少了后一半的话，一份被中间件改过形状的响应
+ * 会让这张卡画出一段**结构自洽而内容缺斤少两**的示例——而运维会照着它抄。
+ *
+ * ⚠️ **没有「再读一次」按钮，这是刻意的**：`exCatalog` 为 `null` 时每一次 `onShow()`
+ * 都会重来一遍，切走再切回来就是重试入口。代价如实写：**停在设置页不动的话，这张卡
+ * 不会自己好起来**。
+ */
+async function loadCatalog() {
+  if (exCatalog !== null) { renderExamples(); return; }
+  if (exInFlight) return;
+  exInFlight = true;
+  try {
+    const body = await api.get("/models");
+    const protocols = exampleProtocols(body);
+    const models = catalogModels(body);
+    exCatalog = protocols === null || models === null ? null : { protocols, models };
+  } catch (e) {
+    exCatalog = null;
+  } finally {
+    exInFlight = false;
+  }
+  if (nodes !== null) renderExamples();
 }
 
 /** 把上一次保存留下的高亮与错误全部清掉。**每次保存前都要清**，否则会越积越多。 */
@@ -498,6 +639,17 @@ export const settingsSection = {
     reg.body.appendChild(advanced);
     section.appendChild(reg.wrap);
 
+    // ── 卡 4：集成示例（P3d Task 7，设计 §10.4 第 4 张卡）──────────────────────
+    // 板块文件允许碰浏览器全局，**base URL 在这里读一次再传给纯函数**——
+    // `js/pure/` 下禁止出现浏览器那两个顶层全局（`scripts/build-ui.mjs` 的静态校验，
+    // 含注释里的字样），所以纯函数只收一个 `origin` 参数。
+    // ⚠️ **第 5 张卡（危险区）是 P3e 的**，设计订正 D1 把它移过去的理由是
+    // 「重置到底重置了什么本身需要一节设计，而设计文档没有这一节」。别在这里顺手做。
+    const examples = card("set.card.examples");
+    exOrigin = location.origin;
+    nodes.examples = examples.body;
+    section.appendChild(examples.wrap);
+
     const blocked = el("div", { class: "cfg-blocked danger-text" });
     blocked.style.display = "none";
     section.appendChild(blocked);
@@ -520,6 +672,9 @@ export const settingsSection = {
 
   onShow() {
     load();
+    // 目录是静态的：成功读过一次之后这一步只重画（切语言时框架层会重跑 onShow，
+    // 而集成示例卡那段说明带插值参数，`apply(document)` 刷不动它，必须重画）。
+    loadCatalog();
   },
 
   onHide() {

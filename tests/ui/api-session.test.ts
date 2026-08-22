@@ -282,21 +282,81 @@ describe("api.raw()：两把钥匙隔离（凭据头 / URL 前缀两条禁令）
  * 它拦不住一种没被列举的新写法，但拦得住"顺手在某个板块里再开一个 fetch"
  * ——而后者正是这条论证前提唯一现实的失效方式。
  */
+/**
+ * 单行模板串里的**字面文本**抠掉，`${…}` 里那一截原样留下。
+ *
+ * ⚠️ **为什么必须抠**：P3d Task 7 的 `admin-ui/js/pure/examples.mjs` 要生成一段 Node
+ * 客户端示例，那段示例的**文本**里天然有 `fetch(` 两个字——它是给运维照抄去别处跑的
+ * 代码，不是这个面板的网络出口。上一版这里只抠注释、不抠字符串，于是它会被算成第三处。
+ *
+ * ⚠️⚠️ **不是「把整条模板串删掉」**：`${…}` 里那一截是**真的会执行**的代码，
+ * 整条删掉就等于开一条「把 fetch 写进插值里」的免检通道。所以这里把插值的内容
+ * 原样接回去，只丢掉字面文本。这条方向由下面「反向自检」那一格逐条钉着。
+ *
+ * ⚠️ **两条如实登记的边界**：
+ * · **只认单行的模板串**（`[^`\n]*`）——本仓 `admin-ui/js` 下的模板串今天全是单行的；
+ *   跨行模板串里的字面文本仍会被算进去（保守方向：宁可多算，不可少算）。
+ * · **插值里带花括号时那一截会被丢掉**（`${x.map(() => ({}))}` 这种）。今天
+ *   `admin-ui/js` 下零处这样写；哪天有人这么写并且把 fetch 藏在里面，这道扫描看不见它。
+ *   两条都不是「护栏没有」，是「护栏到这里为止」。
+ */
+function stripTemplateText(src: string): string {
+  return src.replace(/`[^`\n]*`/g, (lit) =>
+    [...lit.matchAll(/\$\{([^{}]*)\}/g)].map((m) => ` ${m[1]} `).join(""));
+}
+
+/** 一段源码里的网络出口处数。**注释与模板串字面文本都不算。** */
+function egressSites(src: string): number {
+  const code = stripTemplateText(
+    // 注释里提到这些名字不算出口（本仓注释极爱复述代码）。
+    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1"),
+  );
+  return [...code.matchAll(/\b(?:fetch|XMLHttpRequest|EventSource|sendBeacon)\s*\(/g)].length;
+}
+
 describe("面板的网络出口清单", () => {
   it("恰好两处：api.js 的 raw() 与 app.js 的登录探针", () => {
     // **按文件计数，不按行号**：行号断言会被任何一次无关的注释改动打红，那种
     // 断言过不了三轮就会被人"顺手放宽"，而放宽之后它就什么都不守了。
     const counts: Record<string, number> = {};
     for (const f of walkJs("admin-ui/js")) {
-      const src = readFileSync(f, "utf8")
-        // 注释里提到这些名字不算出口（本仓注释极爱复述代码）。
-        .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-      const n = [...src.matchAll(/\b(?:fetch|XMLHttpRequest|EventSource|sendBeacon)\s*\(/g)].length;
+      const n = egressSites(readFileSync(f, "utf8"));
       if (n > 0) counts[f] = n;
     }
     expect(counts, "网络出口的数量或位置变了——api.js 文件头那段安全论证要跟着重写").toEqual({
       "admin-ui/js/api.js": 1,
       "admin-ui/js/app.js": 1,
     });
+  });
+
+  /**
+   * **反向自检：那条「抠掉模板串字面文本」的处置没有把护栏抠出一个洞。**
+   *
+   * 没有这一格的话，上面那个两条目的 map 有两种成因分不开：「真的只有两处出口」与
+   * 「`stripTemplateText()` 抠得太狠，把真的调用一起抠掉了」。
+   * 三条样本分别钉住三件事，**期望值全部手写**。
+   */
+  it("反向自检：模板串里的字面文本不算出口，而插值里那一截仍然算 —— 抠过头就是开了一条免检通道", () => {
+    expect(egressSites("const u = `x`;\nfetch(u);"), "模板串外的真调用必须还在").toBe(1);
+    expect(egressSites("const s = `await fetch(x)`;"), "模板串里的示例文本不该算出口").toBe(0);
+    expect(egressSites("const s = `${fetch(x)}`;"), "插值里是真会跑的代码，抠掉它就是开洞").toBe(1);
+  });
+
+  /**
+   * **`admin-ui/js/pure/examples.mjs` 那一处 `fetch(` 到底是不是示例文本。**
+   *
+   * 上面那道扫描现在按形态把它排除在外，而「按形态排除」与「这个文件真的没有出口」
+   * 是两句话。这一格把后者变成可观测的：那个文件里 `fetch(` 恰好出现一次，
+   * 且它落在一条 `return \`` 开头的模板串里。
+   * **变红条件**：把它换成真的调用（`return fetch(...)` 不以 `` return ` `` 起头），
+   * 或者在那个文件里再添一处。
+   * ⚠️ 判据锚在源码的书写形态上，**重排那一行的格式也会红**——那是刻意选的方向：
+   * 这个文件里出现 `fetch(` 这件事本身就该有人回来看一眼。
+   */
+  it("examples.mjs 里那一处 fetch( 是示例文本，不是网络出口 —— 换成真的调用当场红", () => {
+    const src = readFileSync("admin-ui/js/pure/examples.mjs", "utf8");
+    const lines = src.split("\n").filter((l) => /\bfetch\s*\(/.test(l));
+    expect(lines, "这个文件里 fetch( 的处数变了").toHaveLength(1);
+    expect(lines[0]!.trimStart().startsWith("return `"), `不是模板串里的示例文本：${lines[0]}`).toBe(true);
   });
 });
