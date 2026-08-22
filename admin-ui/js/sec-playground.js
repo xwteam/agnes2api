@@ -181,9 +181,24 @@ import {
  * ⚠️ **`image` / `video` 这两个字符串同时是真源里 `modality` 的取值**，本文件因此
  * 与真源共享这两个词。它不归全局约束 15 管（那条管的是端点路径 / 请求体形状 / 协议名），
  * 但仍是一处会漂的耦合：真源改了形态名而这里没改，那一档会**变成一个永远没有可用端点
- * 的空档位**，而屏幕上只显示一句「这个形态没有可用的端点」。
+ * 的空档位**。
  * 由 `tests/ui/dom/playground-section.test.ts` 的
  * 「三个模式档都能选中，图片与视频各自真的挑到了自己那条端点 —— 形态名一漂就是一个永远空的档位」钉着。
+ *
+ * ⚠️ **漂了之后屏幕上到底是什么样，逐条数清楚**（上一版这里写的是「只显示一句
+ * 『这个形态没有可用的端点』」，实测**没有这样一句话**，是一句假的描述）。
+ * 下面三条是**把目录里两个 `modality` 全改名之后在 DOM 夹具里量出来的**，不是读代码推的：
+ * · `buildMediaNote()` 的 `buildRequest(null, …)` 交出 `null` ⇒ 端点那一行**只剩标签，
+ *   后面什么都没有**；
+ * · `modelIdsForModality()` 交出空数组 ⇒ 模型下拉 0 个选项，下面多出一句
+ *   `pg.model.noneMedia`「这个形态下没有可用的模型。」；
+ * · `sendBlockedKey()` 走到 `pg.send.blockedNoEndpoint` ⇒ 发送按钮**变灰**，
+ *   它的 tooltip 才是「协议目录里没有这个形态的端点，这一档发不出请求。」。
+ * ⇒ **`pg.model.noneMedia` 与 `pg.send.blockedNoEndpoint` 这两个 key 不是死代码**：
+ * 在**形态名不漂**的前提下它们确实取不到（`MODEL_CATALOG` 钉着 2 个 image + 1 个 video 模型、
+ * `MEDIA_ENDPOINTS` 两档各有一条 `op === "generate"`，两者恒非空），
+ * 但那个前提**正是这一段登记着会漂的东西** —— 它们是形态名漂移那一档的兜底文案，
+ * 别把「结构性不可达」写成无条件的。
  */
 const MODES = [
   { mode: "chat", key: "pg.mode.chat" },

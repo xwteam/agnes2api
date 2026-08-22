@@ -1642,12 +1642,26 @@ describe("媒体模式：地址、链接与不内嵌", () => {
  * 评审在 `.pg-task-id` 那一行与 `.pg-poll` 那一行各种一次口令 ⇒ **905 passed，两次全绿。**
  * ⇒ **纪律落地成这一格**：出口清单**从发货代码里扫出来**（不是我手抄的），
  * 子档跑完之后**逐条比对「扫描真的跑过的出口」与「代码里真的存在的出口」**。
- * **加一个新出口而不给它一个子档，这一格当场红。**
+ *
+ * ⚠️⚠️ **「加一个新出口而不给它一个子档就当场红」这句话，上一版是假的。**
+ * 上一版的判据只认 `class: "字面量"` 一种写法，评审拿**仓里真实存在**的另外三种写法
+ * （模板串 / 三元 / `classList.add`）各种一个带口令的新出口**在一个八个子档都到不了的
+ * 分支上** ⇒ **48/48 全绿**。
+ * 逃的不是口令检测（那道扫描走整棵子树，比出口清单宽），**逃的是这条闭集纪律本身**：
+ * 判据认不出那个出口 ⇒ 它不进清单 ⇒ 没人要求它配一个子档。
+ * ⇒ 现在这句话成立的**准确形态**（两条腿都实测过，见下面那格的变红条件）：
+ * 在这两个函数里新增一个出口，判据要么**解得出**它的 class 名（清单变长 ⇒ 与手写表对不上 ⇒ 红），
+ * 要么**解不出**（当场吵「我看见一个我读不懂的 class 表达式」⇒ 红）——**没有第三条路**。
+ * **射程边界另有一条，写在 `mediaOutputsInSource()` 上方，那条今天仍是盲的。**
  *
  * ⚠️ **为什么不是「手写一张出口表」**：手写表与代码之间没有任何东西绑着，
  * 它会和「我以为覆盖了」一起漂——那正是本格要防的东西。
  * 手写的那一半在别处：下面 `EXPECTED_MEDIA_OUTPUTS` 是**期望的条数与名字**，
- * 它与扫出来的那份互为反向自检（扫描器瞎了 ⇒ 两边都空 ⇒ 非空锚会红）。
+ * 它与扫出来的那份互为对照。**扫描器瞎了不需要另加一条非空锚**：这张表是手写的
+ * 17 项字面量、不从扫描结果推，`expect([]).toEqual(17 项)` 自己就会响亮地红
+ * （上一版在它上面还压着一条 `expect(inSource.length).toBe(17)`，注释写着
+ * 「两边都空 ⇒ 下面那句会空洞地通过」——**那个理由实测为假**，删掉那条之后
+ * 同一个变异照红；留着它只会在别人眼里变成「这里已经接好了」）。
  */
 const EXPECTED_MEDIA_OUTPUTS = [
   "pg-body", "pg-cancelled", "pg-error", "pg-media", "pg-media-bytes", "pg-media-copy",
@@ -1655,27 +1669,143 @@ const EXPECTED_MEDIA_OUTPUTS = [
   "pg-no-task", "pg-poll", "pg-poll-gaveup", "pg-task", "pg-task-copy", "pg-task-id",
 ];
 
+/** 从 `i` 那个引号 / 反引号起，它收尾之后的那一格；没闭合就是 `s.length`。 */
+function afterQuoted(s: string, i: number): number {
+  const quote = s[i]!;
+  for (let j = i + 1; j < s.length; j++) {
+    if (s[j] === "\\") { j++; continue; }
+    if (s[j] === quote) return j + 1;
+  }
+  return s.length;
+}
+
+/**
+ * `class:` 那个冒号之后的表达式原文：读到**同层**的 `,` / `}` / `)` / `;` 为止。
+ * 括号深度与字符串都要认——`class: f(a, b)` 里那个逗号不是分隔符。
+ */
+function classExprAt(body: string, from: number): string {
+  let depth = 0;
+  let i = from;
+  for (; i < body.length; i++) {
+    const c = body[i]!;
+    if (c === '"' || c === "'" || c === "`") { i = afterQuoted(body, i) - 1; continue; }
+    if (c === "(" || c === "[" || c === "{") { depth++; continue; }
+    if (c === ")" || c === "]" || c === "}") { if (depth === 0) break; depth--; continue; }
+    if (depth === 0 && (c === "," || c === ";")) break;
+  }
+  return body.slice(from, i);
+}
+
+/** 三元的两条臂；不是三元就 `null`。**条件那一半整段丢掉**（见 `classNamesOf()`）。 */
+function ternaryArms(s: string): [string, string] | null {
+  let depth = 0;
+  let hook = -1;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]!;
+    if (c === '"' || c === "'" || c === "`") { i = afterQuoted(s, i) - 1; continue; }
+    if (c === "(" || c === "[" || c === "{") { depth++; continue; }
+    if (c === ")" || c === "]" || c === "}") { depth--; continue; }
+    if (depth !== 0 || c !== "?") continue;
+    if (s[i + 1] === "?" || s[i + 1] === ".") { i++; continue; }   // `??` / `?.` 不是三元
+    hook = i;
+    break;
+  }
+  if (hook === -1) return null;
+  let nest = 0;
+  for (let i = hook + 1; i < s.length; i++) {
+    const c = s[i]!;
+    if (c === '"' || c === "'" || c === "`") { i = afterQuoted(s, i) - 1; continue; }
+    if (c === "(" || c === "[" || c === "{") { depth++; continue; }
+    if (c === ")" || c === "]" || c === "}") { depth--; continue; }
+    if (depth !== 0) continue;
+    if (c === "?") { if (s[i + 1] === "?" || s[i + 1] === ".") i++; else nest++; continue; }
+    if (c === ":") { if (nest === 0) return [s.slice(hook + 1, i), s.slice(i + 1)]; nest--; }
+  }
+  return null;
+}
+
+/**
+ * 一段 class 表达式解出来的那些确定的 class 名；**解不出就是 `null`，绝不猜**。
+ *
+ * 解得出的三种（三种都是仓里真实在用的写法）：
+ * · 字符串字面量 —— `class: "muted note pg-poll"`；
+ * · **没有插值**的模板串 —— 与字面量等价（`admin-ui/js/ui.js` 那一族的退化形态）；
+ * · 两条臂都解得出的三元 —— `admin-ui/js/sec-models.js` 的 `b.available ? … : …` 那种。
+ *   ⚠️ **条件那一半整段丢掉**：它里面的字符串是判据、不是 class 名。
+ *   `admin-ui/js/sec-settings.js` 有一行 `effect.kind === "danger" ? "danger-text" : "muted note"`
+ *   ——把 `danger` 也收进来就是「假装解得出」，而那正是本轮要改掉的毛病。
+ *
+ * 其余一律 `null`：**模板插值**（`admin-ui/js/ui.js` 的 `` `toast toast-${kind…}` ``）、
+ * **函数调用返回**（`admin-ui/js/sec-playground.js` 的 `class: hintNoteClass()`，
+ * **就在被扫的这个文件里**，返回 `pg-hint pg-hint-ok` 这一族）、字符串拼接、
+ * 带转义的字面量。这些**在原理上**就解不出确定的 class 名（要跨函数求值），
+ * 所以判据不假装解得出——`null` 在调用处是**红**，不是静静跳过。
+ */
+function classNamesOf(raw: string): string[] | null {
+  const expr = raw.trim();
+  if (expr === "") return null;
+  const quote = expr[0]!;
+  if (quote === '"' || quote === "'" || quote === "`") {
+    if (afterQuoted(expr, 0) !== expr.length) return null;          // 后面还挂着别的（拼接之类）
+    const inner = expr.slice(1, -1);
+    if (inner.includes("${") || inner.includes("\\")) return null;   // 插值 / 转义 ⇒ 解不出
+    return inner.split(/\s+/).filter((c) => c !== "");
+  }
+  const arms = ternaryArms(expr);
+  if (arms === null) return null;
+  const a = classNamesOf(arms[0]);
+  const b = classNamesOf(arms[1]);
+  return a === null || b === null ? null : [...a, ...b];
+}
+
+/**
+ * **不经 `class:` 就把 class 挂上去的那些写法。** 它们在这两个函数体里出现即红——
+ * 判据读不出它们挂的是什么名字，而 `admin-ui/js/app.js` 与 `admin-ui/js/sec-settings.js`
+ * 里各有几处真实调用点，**不是假想写法**。
+ */
+const CLASS_MUTATORS = /\bclassList\b|\bclassName\b|setAttribute\(\s*["']class["']/g;
+
 /**
  * 从**发货代码**里扫出媒体那两个渲染函数真的画出来的 `pg-*` class。
  *
  * ⚠️ `stripComments()` 用 `tests/helpers/strip-comments.ts` 那一份（本仓裁定：不许抄第六份）
  * ——不去注释的话，那两个函数上方的说明文字里也有 `class:` 这样的字样。
  * ⚠️ 函数体按「`function 名(` 起，到下一个顶格 `}` 止」切：这两个函数体里所有的 `}`
- * 都是缩进的，只有函数自己的收尾在第 0 列。**这条前提由下面那格的非空锚兜着**
- * （切错了会切出空串 ⇒ 扫不到任何 class ⇒ 红）。
+ * 都是缩进的，只有函数自己的收尾在第 0 列。**切歪 / 切短不会静默通过**：扫到的 class
+ * 会跟着变，由「与手写清单逐条相等」那条断言兜住。上一版注释把机理写成
+ * 「切错了会切出空串 ⇒ 扫不到任何 class」——**实测不是空串**：往 `buildMediaRow()` 体内
+ * 插一个让第 0 列出现 `}` 的跨行模板串，扫到的是 13 个 class（结论「红」对，机理错）。
+ *
+ * ⚠️⚠️ **射程边界（明写，别读成全称句）**：枚举范围只有 `buildMediaRow` /
+ * `buildMediaResult` 这两个函数名。出口**搬出**这两个函数 ⇒ 扫到的少了 ⇒ 红；
+ * 出口**新增在别处**（`buildTurn()` 的 `turn.mode !== "chat"` 分支，或将来第三个媒体
+ * helper）⇒ **不进清单、这道判据看不见它，也不会吵**。今天那条分支里只有一句
+ * `appendChild(buildMediaResult(turn))`，射程内为空——**这是「今天为空」，
+ * 不是「结构上不可能」**，加第三个媒体 helper 的人必须把它加进上面这张名字表。
  */
 function mediaOutputsInSource(): string[] {
   const src = stripComments(readFileSync("admin-ui/js/sec-playground.js", "utf8"));
   const out = new Set<string>();
+  const unreadable: string[] = [];
   for (const fn of ["buildMediaRow", "buildMediaResult"]) {
     const start = src.indexOf(`function ${fn}(`);
     expect(start, `发货代码里找不到 ${fn}() —— 它被改名了，这一格的判据要跟着改`)
       .toBeGreaterThan(-1);
     const body = src.slice(start, src.indexOf("\n}", start));
-    for (const m of body.matchAll(/class: "([^"]*)"/g)) {
-      for (const cls of m[1]!.split(/\s+/)) if (cls.startsWith("pg-")) out.add(cls);
+    for (const m of body.matchAll(/\bclass\s*:/g)) {
+      const expr = classExprAt(body, m.index! + m[0].length).trim();
+      const names = classNamesOf(expr);
+      if (names === null) unreadable.push(`${fn}(): class: ${expr}`);
+      else for (const cls of names) if (cls.startsWith("pg-")) out.add(cls);
     }
+    for (const m of body.matchAll(CLASS_MUTATORS)) unreadable.push(`${fn}(): ${m[0]}`);
   }
+  // **认不出要吵，不能装没看见。** 这一条就是上一版缺的那道闸：判据读不懂的写法
+  // 会让新出口悄悄不进清单，于是「每个出口都配了子档」这条纪律对它整个失效。
+  expect(unreadable, "媒体那两个渲染函数里有这道判据读不懂的 class 写法 —— "
+    + "它画出来的出口不会进清单、也就没人要求它配一个子档。"
+    + "要么把它写成字面量 / 无插值模板串 / 两臂都是字面量的三元，要么把这道判据教会")
+    .toEqual([]);
   return [...out].sort();
 }
 
@@ -1719,6 +1849,22 @@ describe("媒体渲染路径的口令扫描：按出口数算覆盖面（评审 
    * **变红条件（两处，都是评审当场种过、当时 ESCAPED 的那两处，见 progress note M31/M32）**：
    * · 往 `.pg-task-id` 那一行加 `` title: `task ${turn.taskId} auth=${token}` `` ⇒ 红；
    * · 往 `.pg-poll` 那一行加 `` title: `auth=${token}` `` ⇒ 红。
+   *
+   * **闭集纪律那一半的变红条件（六条，逐条实测，见 progress note 的 M35–M40）**：
+   * 统一落点是往 `buildMediaResult()` 里加一个八个子档都到不了的新出口
+   * （条件 `turn.status !== null && turn.status >= 400`），只换它 class 的写法 ——
+   * · 字面量 `class: "pg-esc-lit"` ⇒ 解得出 ⇒ 清单多一项 ⇒ 与手写表对不上 ⇒ 红；
+   * · 两臂都是字面量的三元 ⇒ 解得出（两项都进）⇒ 红；
+   * · 无插值模板串 ⇒ 解得出 ⇒ 红；
+   * · 模板插值 `` class: `pg-esc-${"t"}` `` ⇒ **解不出** ⇒ 判据吵「读不懂」⇒ 红；
+   * · 函数调用返回 —— **逐字抄仓里真实那一行**：`class: hintNoteClass()` ⇒ 解不出 ⇒ 红，
+   *   失败信息打的就是 `buildMediaResult(): class: hintNoteClass()`；
+   * · `errNode.classList.add("pg-esc-cl")` ⇒ 撞上 `CLASS_MUTATORS` ⇒ 红。
+   * ⚠️⚠️ **这六条落的都是「八个子档一档都到不了」的分支，口令扫描根本看不见它们**
+   * ——控制实测：把上面那条「读不懂」的断言临时拿掉，模板插值那条**带着口令**照样
+   * **48/48 全绿**。⇒ 兜住「两层同时瞎」的只有闭集纪律这一条，不是口令扫描。
+   * ⚠️ **反向两条也实测过**（证明判据不是「见什么都红」）：把已有的
+   * `class: "muted note pg-poll"` 换成同名的三元 / 无插值模板串 ⇒ **48/48 仍绿**。
    */
   it("媒体那条渲染路径的每一个出口都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算（评审 H1）", async () => {
     const seen = new Set<string>();
@@ -1827,9 +1973,11 @@ describe("媒体渲染路径的口令扫描：按出口数算覆盖面（评审 
 
     // ── **收口：扫描真的跑过的出口 === 代码里真的存在的出口。** ────────────────
     const inSource = mediaOutputsInSource();
-    // 反向自检①（非空锚）：扫描器瞎了的话两边都是空数组，下面那句会空洞地通过。
-    expect(inSource.length, "从发货代码里一个媒体出口都没扫到 —— 是切函数体那条前提破了").toBe(17);
-    // 反向自检②：手写的那份与扫出来的那份对得上（两边独立，互为对照）。
+    // 反向自检：手写的那份与扫出来的那份对得上（两边独立，互为对照）。
+    // ⚠️ 上一版这里还压着一条 `expect(inSource.length).toBe(17)`，理由写的是
+    // 「扫描器瞎了 ⇒ 两边都空 ⇒ 下面那句会空洞地通过」——**实测为假**：手写表是
+    // 17 项字面量、不从扫描结果推，`expect([]).toEqual(17 项)` 自己就会红，
+    // 而且它只会抢在前面报一个错的病因（「一个都没扫到」在扫到 18 / 13 时照样打印）。
     expect(inSource, "发货代码里的媒体出口与手写清单对不上 —— 加了新出口就把它加进来，并给它一个子档")
       .toEqual(EXPECTED_MEDIA_OUTPUTS);
     // 真正的断言：**每一个出口都被上面某个子档渲染过、因而被口令扫描跑过。**
