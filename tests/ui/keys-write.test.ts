@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   isDeletable, isMustDisableFirstConflict, canClearCooldown, canUnevict, canClearStrikes,
   toggleDisableLabelKey, rowActionNeedsConfirm, bulkNeedsConfirm,
@@ -6,7 +7,13 @@ import {
   toggleSelection, applySelectAll, knobsLoaded, hasNote,
   bulkResultSummary, bulkResultKey, bulkResultPresentation, importLines, hasImportableContent,
   importResultCounts, importResultPresentation, noteToPatch, NOTE_MAX_LENGTH, isOpaqueErrorMessage,
+  verifyDisabledReason, verifyDisabledTitleKey, verifyResultCode, verifyTransportCode,
+  verifyResultLabelKey, VERIFY_MIN_INTERVAL_MS,
 } from "../../admin-ui/js/pure/keys-write.mjs";
+import { refuseReasonKey } from "../../admin-ui/js/pure/registrar.mjs";
+import { I18N } from "../../admin-ui/js/i18n-dict.js";
+import { PROBE_MIN_INTERVAL_MS } from "../../src/http/admin/probe-guard.js";
+import { stripComments } from "../helpers/strip-comments.js";
 
 /** 一份"正常"的 KeyView，各条用例在它上面改一处。 */
 const view = {
@@ -487,5 +494,428 @@ describe("importResultPresentation：导入结果 toast 的插值参数 + 要不
       resultParams: { added: 0, duplicated: 0, reset: 0, invalid: 0 },
       showInvalidSuffix: false, kind: "ok",
     });
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 单把 key 的验活（P3d Task 9）。端点与出站探测护栏是 Task 8 交付的。
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("verifyDisabledReason：三条 disable 理由各自可区分", () => {
+  const row = { ...view, id: "k1" };
+
+  it("没有可寻址的 id：no_key（这一行点了只会 404）", () => {
+    expect(verifyDisabledReason(null, undefined, 1000)).toBe("no_key");
+    expect(verifyDisabledReason({ ...row, id: "" }, undefined, 1000)).toBe("no_key");
+    expect(verifyDisabledReason({ ...row, id: 7 }, undefined, 1000)).toBe("no_key");
+  });
+
+  /**
+   * ⚠️ **停用 / 被剔除的 key 必须仍然验得动**——「它是不是真的死了」正是运维最想
+   * 验的那一把。把这两种也算进 `no_key` 会把这颗按钮从唯一有用的场景里拿走。
+   * **变红条件**：给 `verifyDisabledReason` 加一句 `if (row.disabled || row.evicted) return "no_key";`
+   */
+  it("已停用 / 已被剔除的 key 照样可以验 —— 那正是最想验的一把", () => {
+    expect(verifyDisabledReason({ ...row, disabled: true }, undefined, 1000)).toBeNull();
+    expect(verifyDisabledReason({ ...row, evicted: true }, undefined, 1000)).toBeNull();
+  });
+
+  it("从没验过（state 是 undefined）：可用", () => {
+    expect(verifyDisabledReason(row, undefined, 1000)).toBeNull();
+  });
+
+  /**
+   * ⚠️⚠️ **这一格是第 5 种假阳性的正面解法：一条用例里同时放进会让两种实现分叉的
+   * 多个状态。** 在飞期间 `lastAt` 恒等于「刚刚」⇒ 两条判据**同时成立**，
+   * 只覆盖单一状态的话「先判冷却」与「先判在飞」两种实现数学上等价。
+   * **变红条件**：把 `verifyDisabledReason` 里 `cooling_down` 那一支挪到
+   * `in_flight` 前面 ⇒ 运维会看到「刚探过，隔一会儿再试」，而真相是那一次还没回来
+   * ——两种处置不同（等它 / 稍后再来），与后端把 429 分成两条 reason 是同一条理由。
+   */
+  it("在飞与冷却同时成立时报的是在飞 —— 顺序反了会把「还没回来」说成「刚探过」", () => {
+    const now = 100_000;
+    expect(verifyDisabledReason(row, { inFlight: true, lastAt: now }, now)).toBe("in_flight");
+  });
+
+  /**
+   * 边界值**手写字面量**，不写成 `VERIFY_MIN_INTERVAL_MS ± 1`（第 6 种假阳性：
+   * 期望值从被测对象自己推导）。3_000 这个数本身由下面「与后端是同一个数」那格钉着。
+   */
+  it("刚探过 2999 毫秒仍是 cooling_down，3000 毫秒放行", () => {
+    expect(verifyDisabledReason(row, { inFlight: false, lastAt: 0 }, 2_999)).toBe("cooling_down");
+    expect(verifyDisabledReason(row, { inFlight: false, lastAt: 0 }, 3_000)).toBeNull();
+  });
+
+  it("lastAt / now 不是有限数时不当成冷却（读不出时刻就别拦人）", () => {
+    expect(verifyDisabledReason(row, { inFlight: false, lastAt: null }, 1)).toBeNull();
+    expect(verifyDisabledReason(row, { inFlight: false, lastAt: Number.NaN }, 1)).toBeNull();
+    expect(verifyDisabledReason(row, { inFlight: false, lastAt: 0 }, undefined)).toBeNull();
+  });
+
+  /**
+   * **前端这个数不是护栏**（真正的护栏在后端且是进程内的），但两处必须相等——
+   * 各写一份的话，改了后端而没改前端时不会有任何信号，运维会一直换回 429。
+   * **变红条件**：把 `VERIFY_MIN_INTERVAL_MS` 改成别的数。
+   */
+  it("前端这个最小间隔与后端 PROBE_MIN_INTERVAL_MS 是同一个数", () => {
+    expect(VERIFY_MIN_INTERVAL_MS).toBe(PROBE_MIN_INTERVAL_MS);
+    // 反向自检：两边同时坏成 undefined 时上面那条恒成立。
+    expect(VERIFY_MIN_INTERVAL_MS, "常量本身没了").toBe(3_000);
+  });
+
+  it("四种 disable 理由各自一条 title 文案，且互不相同、都在字典里", () => {
+    const keys = [null, "in_flight", "cooling_down", "no_key"].map(verifyDisabledTitleKey);
+    expect(keys).toEqual([
+      "keys.verify.hintEnabled",
+      "keys.verify.disabledInFlight",
+      "keys.verify.disabledCoolingDown",
+      "keys.verify.disabledNoKey",
+    ]);
+    expect(new Set(keys).size, "两条理由共用了同一句话 —— 只说「不可用」运维只能猜").toBe(4);
+    for (const k of keys) expect(k in I18N, `${k} 不在字典里`).toBe(true);
+  });
+});
+
+describe("verifyResultCode：200 响应体 → 文案 code", () => {
+  /**
+   * ⚠️ **变红条件**：把 `s === 429` 那一支删掉，让它落进 `upstream_error`。
+   * 401/403 说的是「这把 key 失效了、要换一把」，429 说的是「上游在限流、等一会儿
+   * 就好」——合成一条就是让运维去做一件没用的事。
+   */
+  it("401 与 429 映射成两个不同的 code —— 前者要换 key，后者等一会儿就好，合成一条就是让运维白忙", () => {
+    expect(verifyResultCode({ ok: false, status: 401, reason: null })).toBe("unauthorized");
+    expect(verifyResultCode({ ok: false, status: 403, reason: null })).toBe("unauthorized");
+    expect(verifyResultCode({ ok: false, status: 429, reason: null })).toBe("rate_limited");
+    expect(verifyResultCode({ ok: false, status: 500, reason: null })).toBe("upstream_error");
+    expect(verifyResultCode({ ok: true, status: 200, reason: null })).toBe("ok");
+    expect(verifyResultCode({ ok: true, status: 204, reason: null })).toBe("ok");
+  });
+
+  /**
+   * ⚠️ 超时的那一次**根本没有 status**（后端 catch 分支回 `status: null`）。
+   * 先判 status 的实现会在这里落进 `network_error`，把「上游慢」说成「连不上」。
+   */
+  it("reason 为 timeout 时不看 status —— 超时的那次根本没有 status", () => {
+    expect(verifyResultCode({ ok: false, status: null, reason: "timeout" })).toBe("timeout");
+    expect(verifyResultCode({ ok: false, status: null, reason: "network_error" })).toBe("network_error");
+    // 就算后端将来同时给了两者，reason 仍然优先：它说的是「这次探测有没有发出去」。
+    expect(verifyResultCode({ ok: false, status: 200, reason: "timeout" })).toBe("timeout");
+  });
+
+  /**
+   * ⚠️⚠️ **表外的 reason 必须落进 `unknown_reason`，不许当成 `network_error`。**
+   * 「后端加了一种、面板还不认识」在 P3d Task 8 上真实发生过一次；落进
+   * `network_error` 的后果是面板对运维说一句**确定的假话**（「连不上上游」）。
+   * **变红条件**：把 `verifyBodyReasonCode` 的表外分支改成 `return "network_error"`。
+   */
+  it("表外的 reason 落进 unknown_reason —— 绝不冒充任何一档已知原因", () => {
+    expect(verifyResultCode({ ok: false, status: null, reason: "quota_exhausted" })).toBe("unknown_reason");
+    expect(verifyResultLabelKey("unknown_reason")).toBe("keys.verify.unknownReason");
+  });
+
+  it("整个响应体不是对象时按「没拿到任何响应」处理，不抛异常", () => {
+    expect(verifyResultCode(null)).toBe("network_error");
+    expect(verifyResultCode("ok")).toBe("network_error");
+    expect(verifyResultCode({ ok: true })).toBe("network_error");
+  });
+});
+
+describe("verifyTransportCode：管理层传输错误 → 文案 code（判据是顶层 reason，不是状态码）", () => {
+  /**
+   * ⚠️⚠️ **这是本任务的头等一格。** 探测闸占用返回的 **429** 一次上游请求都没发出去，
+   * 交给 `verifyResultCode` 会落进 `rate_limited`——那句文案是「上游在限流」，
+   * 是一句对运维说的假话（评审 I14）。
+   * **变红条件**：把 429 也交给 `verifyResultCode` 处理（`rate_limited ≠ probe_*`）。
+   */
+  it("429 走 verifyTransportCode，不是 rate_limited —— 探测闸占用时一次上游请求都没发出去，说成「上游在限流」就是对运维撒谎（评审 I14）", () => {
+    const busy = { status: 429, body: { error: { type: "rate_limit_error" }, reason: "probe_in_flight" } };
+    expect(verifyTransportCode(busy)).not.toBe("rate_limited");
+    expect(verifyResultLabelKey(verifyTransportCode(busy))).not.toBe("keys.verify.rateLimited");
+  });
+
+  /**
+   * ⚠️⚠️⚠️ **「两种 429 处置不同」由这一格钉住。**
+   * `probe_in_flight` = 上一次还在飞，**等它回来**；
+   * `probe_cooldown`  = 两次之间要隔一小段，**稍后再试，而且这不是这把 key 的故障**。
+   * 它们的 **HTTP 状态码一模一样**，中文 `message` 也只有中文一种（面板是五语言的）
+   * ⇒ **唯一能分开它们的只有顶层 `reason`**。
+   *
+   * **变红条件（三种，都实测过）**：
+   * ① 把 `verifyTransportCode` 的判据从 `err.body.reason` 换回 `err.status === 429`
+   *    ⇒ 两种落到同一个 code，`new Set(...).size` 从 2 掉到 1；
+   * ② 把两条 `return` 中的任意一条改成另一条的值 ⇒ 同上；
+   * ③ 把 `verifyResultLabelKey` 里 `probe_cooldown` 那一支删掉 ⇒ 它落进
+   *    默认支 `keys.verify.upstreamError`，`EXPECTED` 那两行逐条比较当场红。
+   */
+  it("同一个 429 下的两种拒绝映射成两个不同的 code 与两句不同的文案 —— 一个是「等它回来」，另一个是「稍后再试，而且不是这把 key 的故障」", () => {
+    const EXPECTED: ReadonlyArray<readonly [string, string, string]> = [
+      ["probe_in_flight", "probe_in_flight", "keys.verify.probeInFlight"],
+      ["probe_cooldown", "probe_cooldown", "keys.verify.probeCooldown"],
+    ];
+    for (const [reason, code, labelKey] of EXPECTED) {
+      const err = { status: 429, body: { error: { type: "rate_limit_error" }, reason } };
+      expect(verifyTransportCode(err), reason).toBe(code);
+      expect(verifyResultLabelKey(code), reason).toBe(labelKey);
+      expect(labelKey in I18N, `${labelKey} 不在字典里`).toBe(true);
+    }
+    const labels = EXPECTED.map(([, code]) => verifyResultLabelKey(code));
+    expect(new Set(labels).size, "两种 429 共用了同一句文案 —— 只看状态码的实现就是这样").toBe(2);
+    // 五种语言逐条核：少一种时面板在那个语言下显示裸 key。
+    for (const [, , labelKey] of EXPECTED) {
+      for (const lang of ["zh-CN", "zh-TW", "en", "ja", "ko"] as const) {
+        expect(
+          typeof (I18N as Record<string, Record<string, string>>)[labelKey]![lang],
+          `${labelKey}/${lang}`,
+        ).toBe("string");
+      }
+    }
+  });
+
+  it("404 / 401 各自一条，其余落进通用的 transport_error", () => {
+    expect(verifyTransportCode({ status: 404, body: { error: { message: "没有这把 key" } } })).toBe("key_not_found");
+    expect(verifyTransportCode({ status: 401, body: null })).toBe("unauthorized_admin");
+    expect(verifyTransportCode({ status: 500, body: null })).toBe("transport_error");
+    expect(verifyTransportCode(null)).toBe("transport_error");
+  });
+
+  /**
+   * 表外的 429（今天后端产不出第三种）**不冒充任何一档已知原因**——与
+   * `js/pure/registrar.mjs` 的 `refuseReasonKey()` 表外回 `null` 同一条纪律。
+   * 「今天产不出」正是下面那格源码级对表守着的东西。
+   */
+  it("429 但 reason 不认识：落进 transport_error，不猜成 probe_cooldown", () => {
+    expect(verifyTransportCode({ status: 429, body: { reason: "probe_budget_exhausted" } }))
+      .toBe("transport_error");
+  });
+});
+
+describe("verifyResultLabelKey：code → 文案 key（十二条逐条对，外加一个规模锚）", () => {
+  /**
+   * **手写的完整清单。** 顺序无关，但**每一条都是手写字面量**（第 6 种假阳性：
+   * 期望值不许从被测对象自己推导）。
+   *
+   * ⚠️ **数字与枚举一起改**：简报第一版写「六个 code」，把传输码算进来是十个，
+   * 而本任务把 `probe_busy` 拆成 `probe_in_flight` / `probe_cooldown`（那是本任务
+   * 的头等交接）、又补了一条 `unknown_reason`（「后端加了一种、面板还不认识」的
+   * 诚实出口）⇒ **今天是十二个**。
+   */
+  const EXPECTED_VERIFY_KEY: ReadonlyArray<readonly [string, string]> = [
+    ["ok", "keys.verify.ok"],
+    ["unauthorized", "keys.verify.unauthorized"],
+    ["rate_limited", "keys.verify.rateLimited"],
+    ["upstream_error", "keys.verify.upstreamError"],
+    ["timeout", "keys.verify.timeout"],
+    ["network_error", "keys.verify.networkError"],
+    ["unknown_reason", "keys.verify.unknownReason"],
+    ["probe_in_flight", "keys.verify.probeInFlight"],
+    ["probe_cooldown", "keys.verify.probeCooldown"],
+    ["key_not_found", "keys.verify.keyNotFound"],
+    ["unauthorized_admin", "keys.verify.unauthorizedAdmin"],
+    ["transport_error", "keys.verify.transportError"],
+  ];
+
+  /**
+   * ⚠️ **`t()` 的拼写没有任何机器在守**（全局约束 12 的 ⚠️ 那一段：门禁连
+   * `elI18n(tag, key)` 都看不见）。守这一条的**就是这一格**，
+   * **不许在任何地方把它写成「由 i18n 门禁保证」**。
+   */
+  it("十二个 code 每一个都有对应的五语言字典键，且 key 由 verifyResultLabelKey 给出 —— 少一个面板上会出现裸的 key，而 i18n 门禁对拼出来的 key 是瞎的（评审 I19）", () => {
+    for (const [code, key] of EXPECTED_VERIFY_KEY) {
+      expect(verifyResultLabelKey(code), code).toBe(key);
+      expect(key in I18N, `${key} 不在字典里`).toBe(true);
+      for (const lang of ["zh-CN", "zh-TW", "en", "ja", "ko"] as const) {
+        const s = (I18N as Record<string, Record<string, string>>)[key]![lang];
+        expect(typeof s === "string" && s.trim() !== "", `${key}/${lang} 是空的`).toBe(true);
+      }
+    }
+    // 十二句话必须是十二句话：合并任意两条，运维就会拿到一句与处置对不上的提示。
+    expect(new Set(EXPECTED_VERIFY_KEY.map(([, k]) => k)).size, "有两个 code 共用了同一句文案").toBe(12);
+    // **手写字面量的规模锚**：这张表短一条**不会**让上面那个循环变红（它只遍历表自己），
+    // 只有这一条能拦住「悄悄把某一种从表里删掉」。
+    expect(EXPECTED_VERIFY_KEY.length, "文案 code 表被改过，请在评审里确认这是有意的").toBe(12);
+  });
+
+  /**
+   * ⚠️⚠️ **这一格是源码级的，不能用行为断言代替**：把这个函数改成「前缀字面量 +
+   * `code` 拼起来」之后，只要 code 的写法跟着改，**行为可以逐字节相同**
+   *（第 5 种假阳性：覆盖的状态让被测的选择不可观测）。而拼出来的 key 对
+   * `scripts/check-i18n.mjs` 的 `/\bt\("([^"]+)"/` 与
+   * `tests/unit/i18n-dict.test.ts`「板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里」
+   * 那两条扫描**同时隐身** ⇒ 拼错一个字母，面板显示裸 key、三道 i18n 门禁全绿。
+   *
+   * 判据是**名字锚**（`grep -F` 可验），不是计数：十二条逐条要求那个字面量真的
+   * 出现在源码里。**变红条件**：把任意一条 `return "keys.verify.x";` 改成拼接。
+   */
+  it("十二个 code 的 i18n key 逐条以字面量出现在源码里 —— 拼出来的 key 三道门禁都看不见", () => {
+    const src = readFileSync("admin-ui/js/pure/keys-write.mjs", "utf8");
+    const missing = EXPECTED_VERIFY_KEY
+      .map(([, key]) => key)
+      .filter((key) => !src.includes(`"${key}"`));
+    expect(missing, "这些 key 在 keys-write.mjs 里不是双引号字面量 —— 拼出来的 key 门禁看不见").toEqual([]);
+    // 反向自检：探针本身得能命中。**拿仓里真实那一行去喂它**（本仓纪律：
+    // 写完一条形状判据，先拿真实那一行喂一遍，别探在会过的那一侧）。
+    expect(src.includes('return "keys.verify.probeCooldown";'), "探针连真实那一行都命中不了").toBe(true);
+    expect(src.includes('"keys.verify." +'), "源码里出现了拼 key 的形态").toBe(false);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 「后端加了 reason、前端没跟上」—— 跨 src/ 与 admin-ui/ 的源码级对表（P3d Task 9）
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️⚠️ **这一格存在的全部理由，是 P3d Task 8 自己就是那个案例。**
+ *
+ * Task 8 给出站探测加了护栏，`ProbeAcquire` 因此多出两条顶层 `reason`
+ *（`probe_in_flight` / `probe_cooldown`）——而 `admin-ui/js/pure/registrar.mjs`
+ * 的 `refuseReasonKey()` 表**当时没有跟着加**，于是「刚测过，隔几秒再来」与
+ *「这条通道真的连不上」在面板上长得一模一样，而运维恰恰会在一次失败之后立刻重试。
+ *
+ * **既有的护栏拦不住这件事，两条都实测过**：
+ * · `tests/ui/registrar.test.ts`「每一种 reason 各自一条键，且每条都真的在字典里」
+ *   那一格里 `EXPECTED_REFUSE_KEY` 的规模锚
+ *   （`length === 10`）**只拦删、不拦加**：后端多一条 reason 时那个 10 纹丝不动。
+ * · 行为断言更拦不住：新 reason 落进各自的默认支（`null` / `transport_error`），
+ *   而所有既有用例喂进去的都是它们**认识**的那几条。
+ * ⇒ 唯一拦得住的形状是**从后端源码里把「它可能产出什么」读出来**，
+ *   再要求前端的映射表是它的超集。
+ *
+ * **覆盖边界，明写（别读成「所有后端 reason 都被守住了」）**：
+ * 这一格只读**两个文件**——出站探测护栏 `src/http/admin/probe-guard.ts`
+ * 与验活端点 `src/http/admin/handlers/verify.ts`。
+ * `src/http/admin/handlers/registrar.ts` 自己那一族 reason（`tend_in_flight` /
+ * `locked` / `registrar_disabled` / `write_budget_exhausted` / `manual_cooldown` /
+ * `not_wired` / `unknown_channel` / `channel_not_configured`）**不在这一格的射程内**，
+ * 它们今天仍然只有那个规模锚守着（同样只拦删不拦加）。
+ * 那一半属于注册机板块的归属，本任务不在这里假装解决。
+ */
+describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射表", () => {
+  /**
+   * 从一份 TS 源码里把所有 `reason:` 位置读出来。
+   *
+   * · `literals`：那个位置上出现过的字符串字面量（含联合类型里的多个）；
+   * · `dynamic` ：那个位置上**不是**字面量、也不是 `null` 的表达式原文
+   *   （例如 `g.reason`）——这一族是这道扫描的**盲点**，所以它必须被报出来、
+   *   由下面的用例逐条表态，而不是被静默跳过。
+   *
+   * **必须先去注释**：`handlers/verify.ts` 的注释里逐字写着
+   * `{ ok: false, reason: "network_error" }`，不去注释的话扫描会把一段说明
+   * 当成一条真实的产出。去注释用的是 `tests/helpers/strip-comments.ts` 那**一份**
+   * 逐字符实现（正则版会把字符串里的 `/*` 当块注释开头，本仓踩过）。
+   */
+  function reasonSites(src: string): { literals: string[]; dynamic: string[] } {
+    const literals = new Set<string>();
+    const dynamic: string[] = [];
+    for (const m of stripComments(src).matchAll(/\breason:\s*([^,\n}]*)/g)) {
+      const expr = m[1]!.trim();
+      if (expr === "" || expr === "null") continue;
+      const found = [...expr.matchAll(/"([A-Za-z0-9_]+)"/g)].map((x) => x[1]!);
+      if (found.length === 0) { dynamic.push(expr); continue; }
+      for (const f of found) literals.add(f);
+    }
+    return { literals: [...literals].sort(), dynamic };
+  }
+
+  const GUARD_FILE = "src/http/admin/probe-guard.ts";
+  const VERIFY_FILE = "src/http/admin/handlers/verify.ts";
+
+  /**
+   * ⭐ **写完一条形状判据，先拿仓里真实那一行去喂它。**
+   * 本仓在 P3d Task 8 上连续三次栽在「探针探在了会过的那一侧」，
+   * 所以这一格先证明扫描器在**真文件**上给出的就是手写的那两个集合，
+   * 再用一份手写探针证明它**不是**被写死成两条。
+   */
+  it("扫描器先在真文件上对得上，再证明它不是写死的 —— 探针不许探在会过的那一侧", () => {
+    const guard = reasonSites(readFileSync(GUARD_FILE, "utf8"));
+    expect(guard.literals, `${GUARD_FILE} 里的顶层 reason 变了`).toEqual(["probe_cooldown", "probe_in_flight"]);
+    expect(guard.dynamic, `${GUARD_FILE} 里出现了非字面量的 reason，这道扫描在那一行上是瞎的`).toEqual([]);
+
+    const verify = reasonSites(readFileSync(VERIFY_FILE, "utf8"));
+    expect(verify.literals, `${VERIFY_FILE} 里的顶层 reason 变了`).toEqual(["network_error", "timeout"]);
+    /**
+     * 唯一那处非字面量：429 那一支把护栏给的 `reason` 原样转出去。
+     * 它**不是**盲点，因为它转的正是上面 `guard.literals` 那两条——
+     * 但**必须写在这里逐字锚住**：再多一个动态位置，这道扫描就在那一行上瞎了，
+     * 而那正是「后端加了、前端没跟上」重新长回来的入口。
+     */
+    expect(verify.dynamic, "验活端点多出了一个非字面量的 reason 位置").toEqual(["g.reason"]);
+
+    // 手写探针：证明扫描器认得联合类型里的多条、认得动态位置、且**会去注释**。
+    const probe = reasonSites([
+      "const a = { reason: \"alpha\" };",
+      "type T = { ok: false; reason: \"beta\" | \"gamma\"; message: string };",
+      "const c = { reason: computeIt() };",
+      "const d = { reason: null };",
+      "/* 一段注释，里面写着 reason: \"ghost\" */",
+      "// 行注释里也写着 reason: \"phantom\"",
+    ].join("\n"));
+    expect(probe.literals, "扫描器漏掉了联合类型里的某一条").toEqual(["alpha", "beta", "gamma"]);
+    expect(probe.dynamic, "扫描器没把动态位置报出来").toEqual(["computeIt()"]);
+    expect(probe.literals.includes("ghost"), "注释里的 reason 被当成真实产出了").toBe(false);
+    expect(probe.literals.includes("phantom"), "行注释里的 reason 被当成真实产出了").toBe(false);
+  });
+
+  /**
+   * **护栏那两条：两个消费者都必须认得。**
+   *
+   * 它们是**同一份护栏**服务的两条端点（通道连通性测试 / 单把 key 验活），
+   * 所以两个前端映射表都要跟上——Task 8 当时漏的正是其中一个。
+   *
+   * **变红条件（逐条实测）**：
+   * ① 往 `ProbeAcquire` 的 reason 联合里加第三条（后端一行 diff）而前端不动
+   *    ⇒ 这一格当场红，报出那条没人认得的 reason；
+   * ② 删掉 `verifyTransportCode` 里 `probe_cooldown` 那一支 ⇒ 它落进
+   *    `transport_error`，第一条断言红；
+   * ③ 删掉 `refuseReasonKey` 里任意一支 ⇒ 它回 `null`，第二条断言红。
+   */
+  it("护栏产出的每一条 reason，验活与通道测试两个前端都认得 —— Task 8 就是「后端加了两条、前端没跟上」的那个案例", () => {
+    const { literals } = reasonSites(readFileSync(GUARD_FILE, "utf8"));
+    expect(literals.length, "一条都没扫到，扫描本身坏了").toBeGreaterThanOrEqual(2);
+
+    const unmappedByVerify = literals.filter(
+      (r) => verifyTransportCode({ status: 429, body: { reason: r } }) === "transport_error",
+    );
+    expect(
+      unmappedByVerify,
+      "护栏会产出这些 reason，而 Key 池的验活入口把它们当成一句通用的传输错误"
+      + "——「上一次还在飞」与「刚探过」会说成同一句话",
+    ).toEqual([]);
+
+    const unmappedByRegistrar = literals.filter((r) => refuseReasonKey(r) === null);
+    expect(
+      unmappedByRegistrar,
+      "护栏会产出这些 reason，而注册机板块的通道测试认不出来，会退回一句通用的「测试失败」"
+      + "——「刚测过」与「这条通道真的连不上」会长得一模一样",
+    ).toEqual([]);
+
+    // 认得还不够：**必须各自是一句不同的话**，否则等于没分开。
+    const verifyLabels = literals.map((r) => verifyResultLabelKey(verifyTransportCode({ status: 429, body: { reason: r } })));
+    expect(new Set(verifyLabels).size, "两条 reason 在验活这一侧共用了同一句文案").toBe(literals.length);
+    const registrarLabels = literals.map((r) => refuseReasonKey(r));
+    expect(new Set(registrarLabels).size, "两条 reason 在通道测试那一侧共用了同一句文案").toBe(literals.length);
+    for (const k of [...verifyLabels, ...registrarLabels]) expect(k! in I18N, `${k} 不在字典里`).toBe(true);
+  });
+
+  /**
+   * **验活端点自己那两条（200 响应体里的 `reason`）。**
+   *
+   * **变红条件**：往 `handlers/verify.ts` 的 catch 分支里再加一档 reason
+   *（例如把网关自己的内部错误从 `network_error` 里分出来——那份文件头的
+   * 「代价，明写」那一段正好登记着这条将来可能会做的改动）而前端不动
+   * ⇒ `verifyResultCode` 回 `unknown_reason`，这一格当场红。
+   */
+  it("验活端点 200 响应体里的每一条 reason，面板都认得 —— 认不得的会被诚实地说成「面板还不认识」，而这一格要求根本别走到那里", () => {
+    const { literals } = reasonSites(readFileSync(VERIFY_FILE, "utf8"));
+    expect(literals.length, "一条都没扫到，扫描本身坏了").toBeGreaterThanOrEqual(2);
+
+    const unknown = literals.filter((r) => verifyResultCode({ ok: false, status: null, reason: r }) === "unknown_reason");
+    expect(
+      unknown,
+      "验活端点会产出这些 reason，而面板还没给它们文案 —— 面板会显示「后端给出了还不认识的结果」",
+    ).toEqual([]);
+
+    const labels = literals.map((r) => verifyResultLabelKey(verifyResultCode({ ok: false, status: null, reason: r })));
+    expect(new Set(labels).size, "两条 reason 共用了同一句文案").toBe(literals.length);
+    for (const k of labels) expect(k in I18N, `${k} 不在字典里`).toBe(true);
   });
 });

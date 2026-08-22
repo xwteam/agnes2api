@@ -92,6 +92,14 @@ tr:last-child td { border-bottom: 0; }
 .bulk-bar { background: var(--panel-2); padding: var(--gap-sm); border-radius: var(--radius); }
 .row-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 
+/* 单把 key 的验活（P3d Task 9）：一颗按钮 + 它的行内结果。
+   `flex-basis: 100%` 让这一小块**独占一行**——结果文案是整句话（五语言里最长的
+   那几句能到一百多个字符），跟六颗按钮挤在同一行会把整列撑爆。
+   结果只在这一行就地显示、不落盘（订正 F8），所以这里不需要任何折叠/清除控件。 */
+.verify-wrap { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.verify-result { font-size: 12px; }
+.verify-note { font-size: 12px; }
+
 /* 「添加 Key」分组下拉（设计 §10.2）：触发按钮 + 一个绝对定位的分组菜单。
    两组（自动注册 / 手动）用组内小标题分开，不用分割线——标题本身已经在做
    这件事，多一条线只是重复信息。 */

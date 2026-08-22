@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createProbeGuard, PROBE_MIN_INTERVAL_MS } from "../../../src/http/admin/probe-guard.js";
+import { stripComments } from "../../helpers/strip-comments.js";
 
 /**
  * 出站探测护栏的两道闸（P3d Task 8，全局约束 14）。
@@ -122,56 +123,14 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
    * 这是本轮评审定的纪律：**每写一条「它抓得住 X / 抓不住 Y」，两边各种一次。**
    */
   /**
-   * 去掉注释再扫。**逐字符扫，而且认得字符串/模板字面量**——不是一对正则。
+   * 去掉注释再扫，用的是 `tests/helpers/strip-comments.ts` 那**一份**逐字符实现。
    *
-   * ⚠️⚠️ **正则版在本轮当场翻车，成因本仓早就登记过。**
-   * 正则版是 `src.replace(/\/\*[\s\S]*?\*\//g, "")…`，而
-   * `src/http/admin/router.ts` 里有一行 `admin.use("/admin/api/*", adminAuth(...))`
-   * ——**字符串字面量里的 `/*` 被当成块注释开头，一路吞到下一个 `*​/`**，
-   * 把中间整段代码（含 `createProbeGuard()` 那次调用）全吃掉 ⇒ 下面那格
-   * 「全 src/ 里只有一处 new 出护栏」当场红成「只找到 1 处」。
-   * **这与 `router.ts` 里那段注释记的是同一个坑**：第 12 道门禁的 `commentBlocks()`
-   * 当年正是这么把整张 `/admin/api/*` 路由表吞掉并照常报绿的，那道门禁后来
-   * **改成了逐字符扫**。这里照同一条路走。
-   *
-   * **边界明写**：它认得 `"…"` / `'…'` / `` `…` `` 与 `//`、`/* … *​/`，
-   * **不认得**正则字面量（`/foo\/*bar/`）——本仓 `src/` 下没有这种写法，
-   * 真出现了下面那格会红，届时把这里一起改。
+   * ⚠️⚠️ **本地那份副本在 P3d Task 9 被搬走了，搬走本身就是那条裁定**：
+   * 本仓一度有五份手写的 `stripComments`、实现并不一致（有的是会把字符串里的
+   * `/*` 当块注释开头的正则版），而这个文件正是被那种正则版当场咬过的地方
+   * ——正则版翻车的完整成因、以及这份实现的边界（不认正则字面量），
+   * 都原样跟着搬进了那个 helper 的文件头，**不在这里抄第二遍**。
    */
-  function stripComments(src: string): string {
-    let out = "";
-    let i = 0;
-    while (i < src.length) {
-      const c = src[i]!;
-      const next = src[i + 1];
-      if (c === "/" && next === "/") {
-        while (i < src.length && src[i] !== "\n") i++;
-        continue;
-      }
-      if (c === "/" && next === "*") {
-        i += 2;
-        while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-        i += 2;
-        continue;
-      }
-      if (c === '"' || c === "'" || c === "`") {
-        const quote = c;
-        out += c;
-        i++;
-        while (i < src.length) {
-          const d = src[i]!;
-          out += d;
-          i++;
-          if (d === "\\") { if (i < src.length) { out += src[i]!; i++; } continue; }
-          if (d === quote) break;
-        }
-        continue;
-      }
-      out += c;
-      i++;
-    }
-    return out;
-  }
 
   /** 一个文件的护栏接线画像。**纯函数**，好让真文件与手写探针走同一条判据。 */
   function guardWiring(src: string, depsField: "guard" | "probeGuard") {

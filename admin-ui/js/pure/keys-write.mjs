@@ -388,3 +388,193 @@ export function noteToPatch(text) {
   if (typeof text !== "string" || text.length === 0) return null;
   return text;
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// 单把 key 的验活入口（P3d Task 9）。端点与它的出站探测护栏是 Task 8 交付的。
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * 验活按钮在**前端这一侧**的最小间隔。
+ *
+ * ⚠️⚠️ **它不是护栏，别把它读成护栏。** 真正的护栏在后端
+ * （`src/http/admin/probe-guard.ts` 的 `PROBE_MIN_INTERVAL_MS` + 在途去重），
+ * 而且那一份也只是进程/isolate 内的（多副本部署下上界是「每个间隔 N 次」，
+ * 理由写在那份文件头）。这里这个数只做一件事：**让运维看到一颗变灰的按钮，
+ * 而不是按下去换回一句「请稍后再试」**——他什么错都没犯。
+ * 与 `js/sec-registrar.js` 的 `runChannelTest()` 里那句「前端禁用与后端护栏
+ * 各自还挡住了对方挡不住的那一半」是同一条口径，不是「两者不重叠」。
+ *
+ * **两个数必须相等**，由 `tests/ui/keys-write.test.ts` 的
+ * 「前端这个最小间隔与后端 PROBE_MIN_INTERVAL_MS 是同一个数」那一格钉着
+ * （它直接 import 后端那个常量比较，两处漂了就红）。
+ *
+ * ⚠️ **相等只在「两边各自量一段时长」这个意义上成立**：前端从**发起**那一刻起算，
+ * 后端从**收到**那一刻起算，中间隔着一次网络往返 ⇒ 前端的冷却总是**略早**到期，
+ * 于是边界上仍然可能换回一次 429。那一次由 `verifyTransportCode()` 如实翻译成
+ * `probe_cooldown`，**不是**靠这个常量去消灭它。
+ */
+export const VERIFY_MIN_INTERVAL_MS = 3_000;
+
+/**
+ * 验活按钮的可用性。**返回四种值，其中三种是各自可区分的 disable 理由**——
+ * 只说「不可用」运维只能猜（这与 `canClearCooldown` / `canUnevict` 那一批只回
+ * 布尔的按钮不同：那几颗按钮的不可用理由一眼能从同一行的数据里读出来，
+ * 而「上一次还在飞」与「刚探过」这两种在屏幕上长得一模一样）。
+ *
+ * `state` 是 `js/sec-keys.js` 里那张按 key id 索引的验活状态表里的一项
+ * （`{ inFlight, lastAt, code }`），没有这一项时传 `undefined` —— 那表示这把 key
+ * 这一次进面板以来还没被验过，按钮可用。
+ *
+ * ⚠️ **`in_flight` 必须排在 `cooling_down` 前面。** 在飞期间 `lastAt` 恒等于
+ * 「刚刚」，两条判据**同时成立**；顺序反了的话运维会看到「刚探过，隔一会儿再试」
+ * ——而真相是那一次探测还没回来。两种处置不同（等它 / 稍后再来），这与后端
+ * `probe_in_flight` / `probe_cooldown` 分成两条 reason 是同一条理由。
+ * 由 `tests/ui/keys-write.test.ts` 的「在飞与冷却同时成立时报的是在飞」那一格钉着。
+ *
+ * @returns {null|"in_flight"|"cooling_down"|"no_key"}
+ */
+export function verifyDisabledReason(row, state, now) {
+  // `no_key` 是**结构性**的：这一行根本没有可寻址的 id，`POST /keys//verify` 只会 404。
+  // ⚠️ 它刻意**不**包含「这把 key 已停用 / 已被剔除」——恰恰相反，"它是不是真的死了"
+  // 正是运维最想验的那一把，禁掉它等于把这颗按钮从唯一有用的场景里拿走。
+  if (!row || typeof row.id !== "string" || row.id === "") return "no_key";
+  if (!state || typeof state !== "object") return null;
+  if (state.inFlight === true) return "in_flight";
+  const last = state.lastAt;
+  if (typeof last === "number" && Number.isFinite(last)
+    && typeof now === "number" && Number.isFinite(now)
+    && now - last < VERIFY_MIN_INTERVAL_MS) return "cooling_down";
+  return null;
+}
+
+/**
+ * disable 理由 → 按钮 `title` 的 i18n key。**返回字面量，一个都不许拼**
+ * （全局约束 12：动态拼出来的 key 对 `scripts/check-i18n.mjs` 完全隐身，
+ * 拼错一个字母面板显示裸 key、全部门禁绿）。
+ *
+ * `null`（可用）也有一条：那一句说的是**按下去会发生什么**
+ * （「按一下会真的向上游发一次请求」），属于全局约束 14 那颗按钮该自带的告知。
+ */
+export function verifyDisabledTitleKey(reason) {
+  if (reason === "in_flight") return "keys.verify.disabledInFlight";
+  if (reason === "cooling_down") return "keys.verify.disabledCoolingDown";
+  if (reason === "no_key") return "keys.verify.disabledNoKey";
+  return "keys.verify.hintEnabled";
+}
+
+/**
+ * **200 响应体里那个 `reason` 字段**的已知取值 → 文案 code。
+ * 表外一律 `null`，由 `verifyResultCode()` 翻成 `unknown_reason`。
+ *
+ * ⚠️⚠️ **这张表必须是显式的，不许写成「不认识就当网络错误」。** 后端
+ * `src/http/admin/handlers/verify.ts` 的 catch 分支今天只产出 `timeout` /
+ * `network_error` 两种，但**加一种是一行 diff**，而「面板没跟上」这件事
+ * 在 P3d Task 8 上已经真实发生过一次（护栏加了两条 reason，
+ * `admin-ui/js/pure/registrar.mjs` 的表当时没跟上）。落进 `network_error`
+ * 的后果是面板对运维说「连不上上游」，而真相可能完全不是那回事。
+ * 由 `tests/ui/keys-write.test.ts` 的
+ * 「验活端点 200 响应体里的每一条 reason，面板都认得 —— 认不得的会被诚实地说成
+ * 「面板还不认识」，而这一格要求根本别走到那里」那一格钉着（它直接读
+ * `src/http/admin/handlers/verify.ts` 的源码，把「它可能产出什么」读出来对表）。
+ */
+function verifyBodyReasonCode(reason) {
+  if (reason === "timeout") return "timeout";
+  if (reason === "network_error") return "network_error";
+  return null;
+}
+
+/**
+ * **200 响应体** → 文案 code（**不是句子**：面板是五语言的，自由文本没法翻译）。
+ *
+ * ⚠️ **它只吃 200 的响应体，非 2xx 一律不走这里。**
+ * `admin-ui/js/api.js` 的 `json()` 对任何非 2xx 都 `throw new ApiError(status, msg, parsed)`
+ * ⇒ 面板拿到的是异常，不是 `{ok,status,latencyMs,reason}`。
+ * 把 `ApiError` 塞进这个函数的后果是**面板对运维说假话**：探测闸占用返回的 **429**
+ * 会落进 `rate_limited`，而那个码的文案是「上游在限流……等一会儿就好」——
+ * **一次上游请求都没发出去**；404（这把 key 不存在）会变成 `upstream_error`「上游炸了」。
+ * ⇒ 传输层错误走下面那个 `verifyTransportCode()`，两个函数各管一半。
+ *
+ * ⚠️ **`status` 说的是上游回了什么，`reason` 说的是这次探测有没有发出去**——
+ * `reason` 非空时 `status` 恒为 `null`（后端 catch 分支），所以先判 `reason`。
+ *
+ * @returns {"ok"|"unauthorized"|"rate_limited"|"upstream_error"|"timeout"|"network_error"|"unknown_reason"}
+ */
+export function verifyResultCode(resp) {
+  if (!resp || typeof resp !== "object") return "network_error";
+  if (typeof resp.reason === "string") {
+    const mapped = verifyBodyReasonCode(resp.reason);
+    return mapped === null ? "unknown_reason" : mapped;
+  }
+  const s = resp.status;
+  if (typeof s !== "number") return "network_error";
+  if (s >= 200 && s < 300) return "ok";
+  // ⚠️ **401/403 说的是「这把 key 失效了」，429 说的是「上游在限流」，两者对运维
+  // 是完全不同的两件事**：前者要换 key，后者等一会儿就好。合成一条就是让运维
+  // 去做一件没用的事（与 dispatcher 里 all_disabled 不复用 all_evicted 同一条理由）。
+  if (s === 401 || s === 403) return "unauthorized";
+  if (s === 429) return "rate_limited";
+  return "upstream_error";
+}
+
+/**
+ * **管理层传输错误**（`js/api.js` 的 `ApiError`）→ 文案 code。
+ * 与上面那个函数**严格分开**：这一族说的全是「这次探测根本没发出去」，与上游状态无关。
+ *
+ * ⚠️⚠️ **判据是顶层 `reason`，不是状态码，也不是那句中文 `message`。**
+ * 出站探测护栏（`src/http/admin/probe-guard.ts`）在同一个 **429** 下产出**两种**
+ * 拒绝，它们的处置完全不同：
+ *   · `probe_in_flight` —— 上一次探测还在飞，**等它回来**；
+ *   · `probe_cooldown`  —— 两次之间要隔一小段，**稍后再试**，
+ *     而且它**不是这把 key 的故障**（说成故障运维就会去换一把好 key）。
+ * 只看 429 会把两者合成一句话；解析 `message` 那句中文会在切到别的语言时整个失效
+ * （而后端只有中文一种）。这与 `js/pure/registrar.mjs` 的 `refuseReasonKey()`
+ * 「状态码不是判据」是同一条口径，**两处必须一致**——两条端点共用同一份护栏。
+ *
+ * ⚠️ **表外的 429 落进 `transport_error`，不冒充任何一档已知原因**——与
+ * `refuseReasonKey()` 表外回 `null` 同一条纪律。今天后端产不出第三种，
+ * 而「今天产不出」正是需要那格源码级对表守着的东西。
+ *
+ * @returns {"probe_in_flight"|"probe_cooldown"|"key_not_found"|"unauthorized_admin"|"transport_error"}
+ */
+export function verifyTransportCode(err) {
+  const body = err && typeof err.body === "object" && err.body !== null ? err.body : null;
+  const reason = body === null ? undefined : body.reason;
+  if (reason === "probe_in_flight") return "probe_in_flight";
+  if (reason === "probe_cooldown") return "probe_cooldown";
+  const s = err && typeof err.status === "number" ? err.status : 0;
+  if (s === 404) return "key_not_found";
+  if (s === 401) return "unauthorized_admin";
+  return "transport_error";
+}
+
+/**
+ * code → i18n key。**返回字面量，一个都不许拼**（全局约束 12）。
+ * 形态照抄 `js/pure/events.mjs` 的 `eventLevelLabelKey()`。
+ *
+ * ⚠️ 把前缀字面量与 `code` 拼起来再交给 `t()` 既违反约束 12，又对
+ * `scripts/check-i18n.mjs` 里 `/\bt\("([^"]+)"/` 那条判据**完全隐身**
+ * ⇒ 拼错一个字母面板显示裸 key、全部门禁绿。
+ * ⚠️ **这段说明本身刻意不把那个反例写成可扫描的形态**：写成完整的调用样子时，
+ * 那道门禁会把注释里的前缀当成一次真实引用、当场报「引用了字典里没有的 key」
+ *（本任务实测踩过一次——它不去注释）。由 `tests/ui/keys-write.test.ts` 的
+ * 「十二个 code 的 i18n key 逐条以字面量出现在源码里 —— 拼出来的 key 三道门禁都看不见」
+ * 那一格按名字锚扫源码钉着（`grep -F` 可验），不是靠行为断言——
+ * **拼出来的 key 与写死的 key 在行为上可以逐字节相同。**
+ *
+ * ⚠️ **默认支刻意是 `upstream_error`**：它是「上游回了个我们没细分的状态码」，
+ * 是这一族里最不武断的一句。
+ */
+export function verifyResultLabelKey(code) {
+  if (code === "ok") return "keys.verify.ok";
+  if (code === "unauthorized") return "keys.verify.unauthorized";
+  if (code === "rate_limited") return "keys.verify.rateLimited";
+  if (code === "timeout") return "keys.verify.timeout";
+  if (code === "network_error") return "keys.verify.networkError";
+  if (code === "unknown_reason") return "keys.verify.unknownReason";
+  if (code === "probe_in_flight") return "keys.verify.probeInFlight";
+  if (code === "probe_cooldown") return "keys.verify.probeCooldown";
+  if (code === "key_not_found") return "keys.verify.keyNotFound";
+  if (code === "unauthorized_admin") return "keys.verify.unauthorizedAdmin";
+  if (code === "transport_error") return "keys.verify.transportError";
+  return "keys.verify.upstreamError";
+}

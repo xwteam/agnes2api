@@ -7,6 +7,15 @@
  * 「清 strikes」，后端 `PATCH` 的 `clearStrikes` 字段 Task 3 也已经实现全，
  * 是本任务简报第一版的动作清单漏列了它。
  *
+ * ⚠️ **P3d Task 9 又加了一颗「验活」**，它与上面那六颗**不是同一类东西**：
+ * 那六颗都写存储，它一个字段都不写（`src/http/admin/handlers/verify.ts` 的
+ * 约束 1）。它是这一行里唯一一个**按下去会真的打一次上游**的按钮，
+ * 护栏在后端（`src/http/admin/probe-guard.ts`，与注册机的通道连通性测试共用
+ * 同一份），前端这一侧只负责「一次一发」「结果就地显示」「切走时作废」。
+ * **绝不做批量验活**——按 key 数量真打上游，与「立即补池」是同型的自毁按钮
+ *（设计 §10.2），反向断言在
+ * `tests/ui/dom/keys-verify.test.ts`「批量条里没有验活按钮 —— 批量验活按 key 数量真打上游，是自毁按钮（设计 §10.2）」。
+ *
  * 板块契约（设计文档 §9.3）：`{ init?, onShow?, onHide? }`，见 admin-ui/js/app.js
  * 的 showSection。**板块内不许监听 langchange**——框架层会 apply(document) 之后
  * 重跑一次 onShow()。
@@ -74,6 +83,8 @@ import {
   toggleSelection, applySelectAll, knobsLoaded, hasNote,
   bulkResultSummary, bulkResultPresentation, importLines, hasImportableContent,
   importResultCounts, importResultPresentation, noteToPatch, NOTE_MAX_LENGTH, isOpaqueErrorMessage,
+  verifyDisabledReason, verifyDisabledTitleKey, verifyResultCode, verifyTransportCode,
+  verifyResultLabelKey, VERIFY_MIN_INTERVAL_MS,
 } from "./pure/keys-write.mjs";
 
 const PAGE_SIZE = 20;
@@ -99,6 +110,34 @@ let loadError = false;
  * 同样是常量。默认 null（渲染成 —），拿到之前不假装知道旧的硬编码默认值。
  */
 let knobs = { ttl: null, touch: null, edge: null };
+
+/**
+ * 验活的行内状态，**按 key id 索引**（P3d Task 9）。
+ * 每一项：`{ inFlight, lastAt, code, ctl, timer }`。
+ *
+ * ⚠️⚠️ **它必须活在 `render()` 之外，这不是风格问题。** `render()` 的第一句
+ * 有效动作是 `host.textContent = ""` —— **每次都重建整张表**，而 `load()` → `render()`
+ * 由自动刷新定时器、搜索防抖、每一次行内/批量操作触发。状态若挂在按钮上，
+ * 「这一行在飞时按钮变灰」与「结果就地显示」**都会被任何一次并发 `load()` 抹掉**。
+ * ⇒ `actionsCell()` 每次重建时都从这张表**重放**一遍。
+ * 由 `tests/ui/dom/keys-verify.test.ts` 的
+ * 「验活在飞时打断一次 load()：这一行的按钮仍然禁用、行内结果仍然在」那一格钉着。
+ *
+ * ⚠️ **不清理**：键只可能来自当前页真实存在过的 key id，条目数与运维手点过的
+ * 行数同量级；逐条清理反而要另一个时间轮（与 `src/http/admin/probe-guard.ts`
+ * 那张 Map 的理由同源）。
+ */
+const verifyState = new Map();
+
+/** 取（必要时新建）某一把 key 的验活状态。 */
+function verifyStateFor(id) {
+  let s = verifyState.get(id);
+  if (s === undefined) {
+    s = { inFlight: false, lastAt: null, code: null, ctl: null, timer: null };
+    verifyState.set(id, s);
+  }
+  return s;
+}
 
 /** 汇总卡与筛选下拉里的条数。**没有数据时 fmtCount(null) 给出 `—`，不是 0。** */
 function syncCounts(shown) {
@@ -169,8 +208,113 @@ function noteCell(v) {
 }
 
 /**
- * 行内动作列：停用/启用、清冷却、清连续失败、解除剔除、备注、删除
- * （顺序与设计文档 §10.2 的行内动作清单一致）。
+ * 「验活」那一颗按钮 + 它的行内结果（P3d Task 9）。**整段每次 `render()` 重建，
+ * 状态从 `verifyState` 重放**（见那张 Map 的说明）。
+ *
+ * ⚠️ **`disabled` 落在真的 `<button>` 上，不是落在包裹的 `<span>` / `<td>` 上。**
+ * `tests/helpers/fake-dom.ts` 把 `.disabled` 挂在**每一个**元素实例上
+ *（那份夹具的 `KNOWN_BLIND_SPOTS` 第三条如实登记了这一点），所以把它设在
+ * 一个 `<span>` 上在全套 DOM 用例里照样绿、**在浏览器里毫无作用**。
+ *
+ * ⚠️ **时间取 `Date.now()`，不是 `actionsCell` 那个 `now` 参数。** 那个 `now` 是
+ * `shown.generatedAt` —— **服务端**在上一次列表响应里给的时刻，它不随本地时间
+ * 走动（自动刷新关着时能停在原地好几分钟）。冷却是一段**本地**流逝的时间，
+ * 拿一个不动的时刻去减，按钮要么永远灰、要么永远亮。
+ *
+ * ⚠️ **结果元素只承载一个 i18n key，永远不承载响应体里的任何值**（全局约束 11(a)
+ * 的前端半身）：`elI18n(tag, key)` 之后这段文本的全部来源就是五语言字典。
+ * 想把 `latencyMs` / `status` 显示出来的话，得先想清楚它会不会顺带把别的东西
+ * 也带出来——**别把请求或响应整份塞进 `title` 或任何调试出口**。
+ * 由 `tests/ui/dom/keys-verify.test.ts` 的
+ * 「验活之后这一行的文本与 title 里不出现响应体里的任何值」那一格钉着。
+ */
+function verifyControl(v) {
+  const wrap = el("span", { class: "verify-wrap" });
+  const s = verifyState.get(v && v.id);
+  const reason = verifyDisabledReason(v, s, Date.now());
+
+  const btn = elI18n("button", "keys.action.verify", { type: "button", class: "verify-btn" });
+  btn.disabled = reason !== null;
+  btn.setAttribute("title", t(verifyDisabledTitleKey(reason)));
+  btn.addEventListener("click", () => { verifyOne(v); });
+  wrap.appendChild(btn);
+
+  if (s !== undefined && s.inFlight === true) {
+    wrap.appendChild(elI18n("span", "keys.verify.running", { class: "muted verify-result" }));
+  } else if (s !== undefined && typeof s.code === "string") {
+    wrap.appendChild(elI18n("span", verifyResultLabelKey(s.code), { class: "verify-result" }));
+    // 只读探针那句话与结果**一起**出现：运维恰恰是在看到「验活通过」的那一刻
+    // 以为 strikes 已经被清掉了（订正 F8）。
+    wrap.appendChild(elI18n("span", "keys.verify.readOnlyNote", { class: "muted note verify-note" }));
+  }
+  return wrap;
+}
+
+/**
+ * 跑一次验活。**一次一发是按行算的，不是按板块算的**——后端护栏的粒度就是
+ * `verify:<id>`（`src/http/admin/probe-guard.ts` 里写着为什么不用全局粒度：
+ * 全局粒度下验 A 会把验 B 一起挡掉）。
+ *
+ * ⚠️⚠️ **验活用自己的 `AbortController`，绝不复用模块级那个 `abort`。**
+ * 那一个是列表加载的取消闸，`load()` 每次都会先 `abort.abort()` 再重新赋值。
+ * 复用它的话：发起一次验活会取消在飞的列表加载，而任何一次 `load()`
+ *（自动刷新 / 搜索防抖 / 任何一次行内动作的收尾）都会把在飞的验活作废掉——
+ * 后者尤其阴：结果永远回不来，按钮却已经从「在飞」变回可点。
+ * 由 `tests/ui/dom/keys-verify.test.ts` 的
+ * 「验活在飞时跑一次 load()：验活的结果照样落地 —— 两者各用各的取消闸」那一格钉着。
+ *
+ * ⚠️ **`signal.aborted` 那一判是唯一在测试里可观测的那道闸**：`tests/ui/dom/harness.ts`
+ * 的 `fetch` 替身与 `tests/helpers/fake-dom.ts` **零处**看 `signal`，被 abort 的那条链
+ * 在测试里照样会 resolve（真实浏览器里 abort 也是异步的，同一个竞态存在）。
+ * 这与 `js/sec-usage.js` / `js/sec-models.js` 用世代号守同一件事是同一条判据，
+ * 只是这里的「世代」就是这一次自己的那把 controller。
+ *
+ * ⚠️ **不调 `load()`**（订正 F8）。它是**只读探针**：后端写零个存储字段，
+ * 前端这一侧也不许借着「顺手刷新一下」把这一行的 `strikes` / 分档徽章换掉——
+ * 那会让运维以为是验活改的。由 `tests/ui/dom/keys-verify.test.ts` 的
+ * 「验活成功后这一行的 strikes 与分档徽章一个字都没变」那一格钉着
+ *（那一格让第二次列表响应给出不同的 strikes，所以补一句 `load()` 当场变红）。
+ */
+function verifyOne(view) {
+  const id = view && typeof view.id === "string" ? view.id : "";
+  // 点击时复查一次可用性：`render()` 之后到这一次点击之间状态可能已经变了
+  //（同一条判据、同一个函数，不在这里另写一份比较）。
+  // **拿现有状态查，查完再建**——否则一行点不动的 key（`no_key`）也会在那张表里
+  // 凭空落一项，而那张表的有界性全靠「键只可能来自真实存在过的 key id」。
+  if (verifyDisabledReason(view, verifyState.get(id), Date.now()) !== null) return;
+  const s = verifyStateFor(id);
+
+  const ctl = new AbortController();
+  s.inFlight = true;
+  s.ctl = ctl;
+  s.lastAt = Date.now();
+  s.code = null;
+  render();
+
+  api.post(`/keys/${id}/verify`, undefined, { signal: ctl.signal })
+    .then((body) => { if (!ctl.signal.aborted) s.code = verifyResultCode(body); })
+    .catch((e) => {
+      if (ctl.signal.aborted) return;
+      // 传输层与 200 响应体**严格分开**：护栏占用返回的 429 说的是「这次探测
+      // 根本没发出去」，与上游在不在限流毫无关系（见 pure/keys-write.mjs）。
+      s.code = verifyTransportCode(e);
+    })
+    .finally(() => {
+      if (s.ctl === ctl) { s.ctl = null; s.inFlight = false; }
+      // 冷却到点之后要有一次重渲，否则那颗按钮会一直显示成「刚探过」——
+      // 自动刷新默认是关着的，没有别的东西会把它重画。
+      if (s.timer !== null) clearTimeout(s.timer);
+      s.timer = setTimeout(() => { s.timer = null; render(); }, VERIFY_MIN_INTERVAL_MS);
+      render();
+    });
+}
+
+/**
+ * 行内动作列：验活、停用/启用、清冷却、清连续失败、解除剔除、备注、删除。
+ *
+ * ⚠️ **「验活」刻意排在最前面，不在设计 §10.2 那张清单的顺序里**：那张清单列的
+ * 是六个**写**动作，而验活是这一行里唯一一个只读的探针（后端写零个存储字段）。
+ * 把它混进写动作中间，运维会按位置把它当成又一个会改状态的按钮。
  *
  * **按钮可用性判据全部来自 `pure/keys-write.mjs`**，这里只把返回值接到
  * `.disabled` 上——`isDeletable` 尤其要紧：判据错一个字符，运维就会看到一颗
@@ -178,6 +322,8 @@ function noteCell(v) {
  */
 function actionsCell(v, now) {
   const cell = el("td", { class: "row-actions" });
+
+  cell.appendChild(verifyControl(v));
 
   const toggle = elI18n("button", toggleDisableLabelKey(v), { type: "button" });
   toggle.addEventListener("click", () => patchAction(v.id, { disabled: !v.disabled }));
@@ -369,6 +515,26 @@ async function load() {
 function stopTimers() {
   if (timer !== null) { clearInterval(timer); timer = null; }
   if (searchTimer !== null) { clearTimeout(searchTimer); searchTimer = null; }
+  // 验活冷却到点后的那一次重渲。切走板块之后没人要看这张表，留着只会在
+  // 一个已经不可见的板块上多跑一次 render()。
+  for (const s of verifyState.values()) {
+    if (s.timer !== null) { clearTimeout(s.timer); s.timer = null; }
+  }
+}
+
+/**
+ * 作废所有在飞的验活。**与 `abort`（列表加载）是两条独立的闸**，`onHide()` 里
+ * 两条都要放——少放哪一条，切回来时都会被上一次留下的东西盖住。
+ *
+ * `inFlight` 在这里一并归零：不归零的话那颗按钮会永远停在「上一次探测还在飞」，
+ * 而那一次已经被作废、永远不会回来把它放开（`.finally()` 里的
+ * `if (s.ctl === ctl)` 此时已经不成立）。
+ */
+function abortVerifies() {
+  for (const s of verifyState.values()) {
+    if (s.ctl !== null) { s.ctl.abort(); s.ctl = null; }
+    s.inFlight = false;
+  }
 }
 
 function restartTimer() {
@@ -789,5 +955,7 @@ export const keysSection = {
     stopTimers();
     // **作废在飞请求**：不作废的话切回来时旧响应可能盖掉新数据（板块契约 §9.3）。
     if (abort) { abort.abort(); abort = null; }
+    // 验活那一族有自己的取消闸，见 `abortVerifies()`。
+    abortVerifies();
   },
 };

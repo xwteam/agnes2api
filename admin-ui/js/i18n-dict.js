@@ -348,6 +348,45 @@ export const I18N = {
   "keys.actionOk":     { "zh-CN": "操作成功", "zh-TW": "操作成功", en: "Done", ja: "操作が完了しました", ko: "작업 완료" },
   "keys.writeFailed":  { "zh-CN": "操作失败，请稍后重试", "zh-TW": "操作失敗，請稍後重試", en: "Action failed, please try again", ja: "操作に失敗しました。しばらくしてから再試行してください", ko: "작업에 실패했습니다. 잠시 후 다시 시도하세요" },
 
+  // ── Key 池板块：单把 key 的验活（P3d Task 9）───────────────────────────────
+  //
+  // ⚠️⚠️ **这一整段刻意一个 `{占位符}` 都没有。** 它们全部经
+  // `js/pure/keys-write.mjs` 的 `verifyResultLabelKey()` / `verifyDisabledTitleKey()`
+  // 以**裸标签**的形式返回，再交给 `elI18n(tag, key)`（不带参数的 `t()`）。
+  // 任何一条加上占位符，`scripts/check-i18n.mjs` 第 ⑧ 条会在那两个函数的
+  // `return "…";` 那一行报错（字面量后面跟的是 `;` 不是 `,`）——与
+  // `keys.bulk.allOk` / `keys.bulk.partial` 那两条是同一个约束。
+  //
+  // ⚠️⚠️ **`probeInFlight` 与 `probeCooldown` 是两条键，不许合成一条。**
+  // 后端 `src/http/admin/probe-guard.ts` 在**同一个 429** 下产出这两种拒绝，
+  // 而处置完全不同：前者等上一次回来，后者隔一小段再来，**且后者不是这把 key
+  // 的故障**。合成一条就是让运维去换一把其实完好的 key。这两句与 `reg.refuse.*`
+  // 那两条说的是同一件事的两个入口（通道测试 / 验活共用同一份护栏），文案因此
+  // 只差「向邮箱服务发一次请求」与「向上游发一次请求」这一处。
+  "keys.action.verify": { "zh-CN": "验活", "zh-TW": "驗活", en: "Verify", ja: "疎通確認", ko: "활성 확인" },
+  "keys.verify.running": { "zh-CN": "正在探测…", "zh-TW": "正在探測…", en: "Probing…", ja: "確認中…", ko: "확인 중…" },
+  // 只读探针那句话（订正 F8）。**它必须是可见文本，不是 tooltip**：运维会以为
+  // 「验活成功」就等于把 strikes 清了，而这条端点写零个存储字段。
+  "keys.verify.readOnlyNote": { "zh-CN": "这是一次人造探测，不改变这把 key 的状态：strikes、冷却、用量统计都不会动。", "zh-TW": "這是一次人造探測，不改變這把 key 的狀態：strikes、冷卻、用量統計都不會動。", en: "This is a synthetic probe. It does not change this key's state — strikes, cooldown and usage stats all stay untouched.", ja: "これは人工的なプローブです。この key の状態は変わりません（strikes・クールダウン・利用統計はいずれも動きません）。", ko: "이것은 인위적인 탐지입니다. 이 key의 상태는 바뀌지 않습니다(strikes·쿨다운·사용량 통계 모두 그대로입니다)." },
+  "keys.verify.hintEnabled": { "zh-CN": "按一下会真的向上游发一次请求。", "zh-TW": "按一下會真的向上游發一次請求。", en: "Each click really does send one request upstream.", ja: "クリックするたびに上流へ実際にリクエストを 1 回送ります。", ko: "누를 때마다 업스트림으로 실제 요청을 한 번 보냅니다." },
+  "keys.verify.disabledInFlight": { "zh-CN": "上一次探测还在飞，等它回来。", "zh-TW": "上一次探測還在飛，等它回來。", en: "The previous probe is still in flight; wait for it to come back.", ja: "前回のプローブがまだ実行中です。戻るまでお待ちください。", ko: "이전 탐지가 아직 진행 중입니다. 돌아올 때까지 기다리세요." },
+  "keys.verify.disabledCoolingDown": { "zh-CN": "刚探过，隔一小段时间再试。", "zh-TW": "剛探過，隔一小段時間再試。", en: "Just probed; try again in a moment.", ja: "たった今確認したばかりです。少し待ってから再試行してください。", ko: "방금 탐지했습니다. 잠시 후 다시 시도하세요." },
+  "keys.verify.disabledNoKey": { "zh-CN": "这一行没有可用的 key 标识，点不了。", "zh-TW": "這一行沒有可用的 key 識別碼，點不了。", en: "This row has no usable key id, so the button does nothing.", ja: "この行には利用可能な key の識別子がないため、押せません。", ko: "이 행에는 사용할 수 있는 key 식별자가 없어 누를 수 없습니다." },
+  "keys.verify.ok": { "zh-CN": "验活通过：上游接受了这把 key。", "zh-TW": "驗活通過：上游接受了這把 key。", en: "Verified: upstream accepted this key.", ja: "確認できました：上流はこの key を受け付けました。", ko: "확인 완료: 업스트림이 이 key를 수락했습니다." },
+  "keys.verify.unauthorized": { "zh-CN": "上游拒绝了这把 key（401/403）：它已经失效，需要换一把。", "zh-TW": "上游拒絕了這把 key（401/403）：它已經失效，需要換一把。", en: "Upstream rejected this key (401/403): it is no longer valid — replace it.", ja: "上流がこの key を拒否しました（401/403）：すでに無効です。差し替えてください。", ko: "업스트림이 이 key를 거부했습니다(401/403): 이미 무효이므로 교체해야 합니다." },
+  "keys.verify.rateLimited": { "zh-CN": "上游正在限流（429）：这把 key 本身没问题，等一会儿再用。", "zh-TW": "上游正在限流（429）：這把 key 本身沒問題，等一會兒再用。", en: "Upstream is rate limiting (429): the key itself is fine — wait a while.", ja: "上流がレート制限中です（429）：key 自体に問題はありません。しばらく待ってください。", ko: "업스트림이 속도를 제한하고 있습니다(429): key 자체는 문제없으니 잠시 기다리세요." },
+  "keys.verify.upstreamError": { "zh-CN": "上游回了一个未细分的错误状态码：这次探测没能确认这把 key 是好是坏。", "zh-TW": "上游回了一個未細分的錯誤狀態碼：這次探測沒能確認這把 key 是好是壞。", en: "Upstream returned an error status we do not classify further: this probe could not tell whether the key is good.", ja: "上流が細分していないエラーステータスを返しました：この key が有効かどうかは今回の確認では判断できません。", ko: "업스트림이 세분화하지 않은 오류 상태를 반환했습니다: 이번 탐지로는 이 key의 정상 여부를 알 수 없습니다." },
+  "keys.verify.timeout": { "zh-CN": "探测超时：上游在超时档内没有返回响应头。", "zh-TW": "探測逾時：上游在逾時檔內沒有返回回應標頭。", en: "Probe timed out: upstream did not return response headers within the timeout budget.", ja: "プローブがタイムアウトしました：上流はタイムアウト時間内にレスポンスヘッダーを返しませんでした。", ko: "탐지 시간 초과: 업스트림이 제한 시간 안에 응답 헤더를 반환하지 않았습니다." },
+  "keys.verify.networkError": { "zh-CN": "连不上上游：这次探测没有拿到任何响应。", "zh-TW": "連不上上游：這次探測沒有拿到任何回應。", en: "Cannot reach upstream: this probe got no response at all.", ja: "上流に到達できません：今回のプローブは応答をまったく受け取れませんでした。", ko: "업스트림에 연결할 수 없습니다: 이번 탐지는 어떤 응답도 받지 못했습니다." },
+  // 「后端加了一种、面板还不认识」时的诚实出口。**绝不冒充任何一档已知原因**——
+  // 落进「连不上上游」的话，面板会把一件它其实不懂的事说成一句确定的话。
+  "keys.verify.unknownReason": { "zh-CN": "后端给出了面板还不认识的一种探测结果，请核对两边的版本。", "zh-TW": "後端給出了面板還不認識的一種探測結果，請核對兩邊的版本。", en: "The backend reported a probe outcome this panel does not recognise yet — check that both sides are on the same version.", ja: "この画面がまだ認識できない種類の結果がバックエンドから返りました。両者のバージョンを確認してください。", ko: "이 콘솔이 아직 인식하지 못하는 종류의 결과가 백엔드에서 반환되었습니다. 양쪽 버전을 확인하세요." },
+  "keys.verify.probeInFlight": { "zh-CN": "上一次探测还没有返回，等它结束再试（这颗按钮每按一次都会真的向上游发一次请求）。", "zh-TW": "上一次探測還沒有回來，等它結束再試（這顆按鈕每按一次都會真的向上游發一次請求）。", en: "The previous probe has not returned yet; wait for it to finish before retrying (each click really does send a request upstream).", ja: "前回のプローブがまだ返っていません。終了してから再試行してください（このボタンは押すたびに上流へ実際にリクエストを送ります）。", ko: "이전 탐지가 아직 반환되지 않았습니다. 끝난 뒤에 다시 시도하세요(이 버튼은 누를 때마다 업스트림으로 실제 요청을 보냅니다)." },
+  "keys.verify.probeCooldown": { "zh-CN": "两次探测之间至少要隔一小段时间，请稍后再试。这不是这把 key 的故障。", "zh-TW": "兩次探測之間至少要隔一小段時間，請稍後再試。這不是這把 key 的故障。", en: "There is a minimum interval between two probes; please retry shortly. This is not a fault of the key.", ja: "プローブとプローブの間には最小間隔があります。少し待ってから再試行してください。key の障害ではありません。", ko: "탐지와 탐지 사이에는 최소 간격이 있습니다. 잠시 후 다시 시도하세요. key의 장애가 아닙니다." },
+  "keys.verify.keyNotFound": { "zh-CN": "这把 key 已经不在池子里了，刷新一下列表。", "zh-TW": "這把 key 已經不在池子裡了，重新整理一下列表。", en: "This key is no longer in the pool — refresh the list.", ja: "この key はすでにプールにありません。一覧を再読み込みしてください。", ko: "이 key는 더 이상 풀에 없습니다. 목록을 새로 고치세요." },
+  "keys.verify.unauthorizedAdmin": { "zh-CN": "管理会话已失效，请重新输入管理口令。", "zh-TW": "管理工作階段已失效，請重新輸入管理口令。", en: "The admin session has expired; enter the admin token again.", ja: "管理セッションの有効期限が切れました。管理トークンを入力し直してください。", ko: "관리 세션이 만료되었습니다. 관리 토큰을 다시 입력하세요." },
+  "keys.verify.transportError": { "zh-CN": "这次探测没有发出去：请求本身失败了，与上游状态无关。", "zh-TW": "這次探測沒有發出去：請求本身失敗了，與上游狀態無關。", en: "This probe never left the panel: the request itself failed, which says nothing about upstream.", ja: "今回のプローブは送信されていません：リクエスト自体が失敗しており、上流の状態とは無関係です。", ko: "이번 탐지는 전송되지 않았습니다: 요청 자체가 실패한 것이며 업스트림 상태와는 무관합니다." },
+
   // ── 概览板块（Task 5）──────────────────────────────────────────────────────
   "ov.title":            { "zh-CN": "概览", "zh-TW": "概覽", en: "Overview", ja: "概要", ko: "개요" },
   "ov.pool.total":       { "zh-CN": "总数", "zh-TW": "總數", en: "Total", ja: "総数", ko: "총계" },
