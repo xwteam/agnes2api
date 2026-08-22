@@ -106,21 +106,37 @@ const EXPECTED_REFUSE_KEY: ReadonlyArray<readonly [string, string]> = [
   ["not_wired", "reg.refuse.not_wired"],
   ["unknown_channel", "reg.refuse.unknown_channel"],
   ["channel_not_configured", "reg.refuse.channel_not_configured"],
+  // ── P3d Task 8：出站探测护栏的两种 ────────────────────────────────────────
+  //
+  // ⚠️ **这两条是「后端加了拒绝原因、前端没跟上」的真实形态**：Task 8 给通道测试
+  // 上了护栏（此前连点必成功），而这张表当时**没有跟着加**⇒ `refuseReasonKey`
+  // 返回 `null` ⇒ `sec-registrar.js` 退回通用的 `reg.channel.testError`
+  // ⇒ **「刚测过，隔几秒再来」与「这条通道真的连不上」在面板上一模一样**，
+  // 而运维恰恰会在一次失败之后立刻重试，也就是必然撞上这一格。
+  ["probe_in_flight", "reg.refuse.probe_in_flight"],
+  ["probe_cooldown", "reg.refuse.probe_cooldown"],
 ];
 
 describe("refuseReasonKey：拒绝原因 → 文案（状态码不是判据）", () => {
-  it("八种 reason 各自一条键，且每条都真的在字典里", () => {
+  it("每一种 reason 各自一条键，且每条都真的在字典里", () => {
     for (const [reason, key] of EXPECTED_REFUSE_KEY) {
       expect(refuseReasonKey(reason), reason).toBe(key);
       expect(key in I18N, `${key} 不在字典里`).toBe(true);
     }
+    // 手写字面量的规模锚：这张表短一条**不会**让上面那个循环变红（它只遍历表自己），
+    // 只有这一条能拦住「悄悄把某一种从表里删掉」。
+    expect(EXPECTED_REFUSE_KEY.length, "拒绝原因表被改过，请在评审里确认这是有意的").toBe(10);
   });
 
-  it("同一个状态码下的几种映射到互不相同的键 —— 三种 409、两种 429 不许说成同一句话", () => {
+  it("同一个状态码下的几种映射到互不相同的键 —— 三种 409、四种 429 不许说成同一句话", () => {
     const conflict = ["tend_in_flight", "locked", "registrar_disabled"].map(refuseReasonKey);
     expect(new Set(conflict).size, "三种 409 里有两种共用了同一句文案").toBe(3);
-    const rateLimited = ["manual_cooldown", "write_budget_exhausted"].map(refuseReasonKey);
-    expect(new Set(rateLimited).size, "两种 429 共用了同一句文案").toBe(2);
+    // ⚠️ **429 从两种变成四种了**（P3d Task 8 加了护栏那两种）。
+    // 「今天的额度用完了」「再等几分钟」「上一次还在飞」「刚探过」——四种处置各不相同，
+    // 而它们的状态码**一模一样**。这正是「状态码不是判据」这条规矩的最强证据。
+    const rateLimited = ["manual_cooldown", "write_budget_exhausted", "probe_in_flight", "probe_cooldown"]
+      .map(refuseReasonKey);
+    expect(new Set(rateLimited).size, "四种 429 里有两种共用了同一句文案").toBe(4);
   });
 
   it("表外的 reason 返回 null，调用方退回一句通用文案而不是猜一个", () => {

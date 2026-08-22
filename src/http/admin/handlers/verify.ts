@@ -4,8 +4,10 @@ import type { KeyPoolRepo } from "../../../core/keypool-repo.js";
 import type { GatewayConfig } from "../../../core/config.js";
 import type { ProbeGuard } from "../probe-guard.js";
 import { httpError } from "../../errors.js";
-// ⚠️ **只 import 真的会用到的**：验活用的是 `upstreamPath`，**不是 `endpointFor`**
-// （见下面约束 6）。`noUnusedLocals` 一开，多 import 一个没用上的就是编译失败。
+// ⚠️ **只 import 真的会用到的**：验活用的是 `upstreamPath`，**不是 `endpointFor`**（见下面约束 6）。
+// ⚠️ **本仓没有任何东西会拦住一个没用上的 import**（实测：`grep -n "noUnusedLocals\|noUnusedParameters"
+// tsconfig*.json` 零命中，十二道门禁里也没有 lint）。上一版这里写着「`noUnusedLocals` 一开
+// 就是编译失败」——**那是一句没核过的话**。多 import 一个只会被评审看见，别指望机器。
 import { protocolById, MODEL_CATALOG } from "../../../core/admin/protocol-catalog.js";
 
 /**
@@ -74,7 +76,13 @@ import { protocolById, MODEL_CATALOG } from "../../../core/admin/protocol-catalo
  * ——上游只认 `Authorization: Bearer`，`src/core/dispatcher.ts` 里那一句
  * `authorization: \`Bearer ${record.key}\`` 是无条件的、与协议无关。
  * **这与 `pathTemplate` / `upstreamPath` 是同一个坑的第二个字段**：目录里同时住着
- * 「对外」和「对上游」两种知识，取错一个不会有编译错误，只会让所有 key 一律验失败。
+ * 「对外」和「对上游」两种知识，取错一个不会有编译错误。
+ *
+ * ⚠️ **但别把危害写大了**：本 handler 固定用 `openai` 那一条，而它的
+ * `authHeader` 恰好就是 `"authorization"` ⇒ **今天改成 `proto.authHeader`，出站行为
+ * 逐字节相同、一格用例都不会红**（上一版这里写「只会让所有 key 一律验失败」，那是假的）。
+ * 它今天是一条**没有变红条件**的纪律：只有当探测换成别的协议、或者某条协议的
+ * `authHeader` 变了，它才会真的咬人。**明写这一点，别让下一个人以为有护栏。**
  */
 export interface VerifyDeps {
   repo: KeyPoolRepo;
@@ -129,16 +137,31 @@ export function verifyHandler(deps: VerifyDeps) {
       }, 429);
     }
 
-    // 探测固定用最短的一条协议。**四条协议的 upstreamPath 今天都一样，但仍然经目录取**
-    // ——「今天一样」不是硬编码的理由（评审 C3，约束 6）。
-    const proto = protocolById("openai")!;
-    const model = MODEL_CATALOG[0]!.id;
-    const cfg = deps.config();
+    // ── 从这里到 `finally` 之间不许再有任何会抛的语句 ──────────────────────────
+    //
+    // 护栏已经占住了，而 `release` 在 `finally` 里。**`tryAcquire` 与 `try` 之间的
+    // 每一行都是一段没有 `finally` 覆盖的窗口**：在那里抛一次，这个 kind 就永久卡在
+    // 「在飞」，那颗按钮从此再也点不动。所以取协议、取配置、装超时闸**全都挪进 `try`**。
+    // ⚠️ **诚实限定**：`new AbortController()` 与 `deps.now()` 仍在 `try` 之外。
+    // 两者都不会抛（前者是标准全局构造器，后者是注入的取数函数，生产装配是 `Date.now`），
+    // 但**这是「今天不会」而不是「不可能」**——往那两行之间加任何东西之前先想一遍。
     const controller = new AbortController();
-    // 约束 4：它不经 `dispatch()`，那套超时/中止一样都没有，必须自己带。
-    const timer = setTimeout(() => controller.abort(), cfg.upstreamTimeoutMs);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // 计时起点。**只读这一次**，`latencyMs` 因此恰好是「这一次读」到「收尾那一次读」
+    // 之间的一步，见 `tests/contract/admin-verify.test.ts`
+    // 「latencyMs 恰好是一次注入时钟的步长 —— 用真 Date.now 的话它会是 0，把计时挪到护栏之前会是两步」。
     const startedAt = deps.now();
     try {
+      // 探测固定用 openai 那一条。**四条协议的 upstreamPath 今天完全相同 ⇒ 选哪条对
+      // 出站毫无差别**，选它只因为它是四条的参照系（对外 `/v1/chat/completions` 是
+      // 这台网关的门面）。**仍然经目录取**——「今天一样」不是硬编码的理由（评审 C3，约束 6）。
+      // ⚠️ 上一版这里写的是「最短的一条协议」，**实测为假**：四条 `sample()` 序列化之后
+      // 是 responses 42 < gemini 56 < openai 73 < anthropic 89 字节，**openai 是第三短**。
+      const proto = protocolById("openai")!;
+      const model = MODEL_CATALOG[0]!.id;
+      const cfg = deps.config();
+      // 约束 4：它不经 `dispatch()`，那套超时/中止一样都没有，必须自己带。
+      timer = setTimeout(() => controller.abort(), cfg.upstreamTimeoutMs);
       const res = await deps.fetcher.fetch(`${cfg.agnesBaseUrl}${proto.upstreamPath}`, {
         method: proto.method,
         headers: { "content-type": "application/json", authorization: `Bearer ${rec.key}` },
@@ -167,9 +190,13 @@ export function verifyHandler(deps: VerifyDeps) {
         reason: controller.signal.aborted ? "timeout" : "network_error",
       });
     } finally {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       // **必须在 `finally` 里**，理由见 `ProbeGuard.release` 上方那段：放在 `try` 末尾时
       // 一次抛错的探测会让这个 kind 永久卡在「在飞」。
+      // ⚠️ **同样不许把上面那条 429 的提前返回挪进这个 `try`**：那样被挡住的那一次
+      // 会在 `finally` 里替**正在飞的那一次**把在途标记放掉，于是第三次点击在最小间隔
+      // 之后被放行、上游被并发打第二次。见 `tests/contract/admin-verify.test.ts`
+      // 「上一次还在飞时，即使已经过了最小间隔，第三次仍然被挡 —— 被 429 的那一次绝不许替在飞的那一次 release」。
       deps.guard.release(kind);
     }
   };

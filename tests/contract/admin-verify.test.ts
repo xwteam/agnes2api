@@ -90,7 +90,7 @@ describe("POST /admin/api/keys/:id/verify —— 验的是哪一把、打的是�
     // 手写字面量。误用 `proto.pathTemplate` 会得到 `.../v1/v1/chat/completions`，当场红。
     // ⚠️ **这一格抓不住「handler 里硬编码一份 `/chat/completions`」**——那两种写法
     // 今天产出逐字节相同的 URL。补那个方向的是
-    // `tests/unit/admin/probe-guard.test.ts`「verify.ts 里没有任何写死的上游/对外路径字面量 —— 路径只许来自协议目录（全局约束 15）」。
+    // `tests/unit/admin/probe-guard.test.ts`「verify.ts 里没有任何写死的上游/对外路径 —— 路径只许来自协议目录（全局约束 15）」。
     expect(fetcher.sentUrls).toEqual([UPSTREAM_URL]);
     // 反向自检：这条 URL 真的是「配置里的 base + 目录里的上游路径」，不是我抄错的一个串。
     expect(UPSTREAM_URL.startsWith(TEST_CONFIG.agnesBaseUrl), "夹具的 agnesBaseUrl 变了").toBe(true);
@@ -210,9 +210,17 @@ describe("明文 key 一个字节都不许回到面板（全局约束 11a）", (
 
     const res = await verify(app, await idOf(repo, KEY));
     const text = await res.text();
+    // ⚠️ **响应头也要纳进判据（本轮评审 MED-2）**：上一版只看正文，而把上游那份
+    // 错误体塞进一条自定义响应头（`x-upstream-detail: …`）**照样全绿**——
+    // 「一个字节都不许回来」说的是整份响应，不是它的 body 那一半。
+    const headerDump = [...res.headers.entries()].map(([k, v]) => `${k}: ${v}`).join("\n");
+    const whole = `${headerDump}\n${text}`;
 
     // 前置条件：拿到的确实是那一次 401 的结果（否则下面那些 `not.toContain` 是空的）。
     expect(JSON.parse(text)).toMatchObject({ ok: false, status: 401 });
+    expect(whole, "整把 key 出现在了响应头里").not.toContain(KEY);
+    expect(whole, "key 的前缀片段出现在了响应头里").not.toContain(KEY.slice(0, 14));
+    expect(whole, "上游的错误正文被塞进了响应头").not.toContain("Incorrect API key provided");
     // ⚠️⚠️ **判据是整段响应体文本，不是逐字段查。**
     // 逐字段查在 handler 将来多回一个字段时会静默漏掉，而这条通路漏一次就是
     // 「上游 key 触达客户端」——`src/core/dispatcher.ts` 的 evict 分支管着第一条，
@@ -225,6 +233,65 @@ describe("明文 key 一个字节都不许回到面板（全局约束 11a）", (
     // 反向自检①：这一格的三条 `not.toContain` 不是因为夹具本身就没那段文本。
     expect(upstreamBody, "夹具的上游正文里压根没有 key 片段 —— 这一格失去判别力")
       .toContain(KEY.slice(0, 14));
+  });
+
+  /**
+   * ⚠️ **第二条出口：事件环（本轮评审 MED-1）。**
+   *
+   * 事件板块不但能在面板上读，还能**整份下载**（`GET /admin/api/events/download`）。
+   * `verify.ts` 的文件头声称「`VerifyDeps` 里刻意一格 `Logger` 都没有 ⇒ 这条端点
+   * 在结构上打不出日志」——**那是一句结构声明，而声明本身当时零断言**：
+   * 实测（变异 C2：给 `VerifyDeps` 加一格 logger 并在失败支打一条带 `rec.key` 的事件）
+   * ⇒ **2421/2421 全绿**。这一格就是那句声明的钉子。
+   *
+   * 判据落在**面板真的读得到的那两条端点的整份响应文本**上，不是落在
+   * 「deps 里有没有 logger」这种源码形状上——后者换个写法（模块级 logger、
+   * 从 `c.get()` 里摸一个）就绕过去了，而这一格照样红。
+   */
+  it("验活失败之后，事件板块与事件下载里都找不到这把 key —— 响应体不是唯一的出口，事件环是第二条", async () => {
+    const KEY = "sk-verify-eventring-canary-4d0e";
+    // ⚠️⚠️ **必须用会走的时钟，这一格第一版就栽在这里。**
+    // 事件先进内存缓冲，落盘由 `logFlush` → `maybeFlush()` 决定，而它被
+    // `EVENT_FLUSH_MIN_INTERVAL_MS`（60 秒）挡着 ⇒ **冻结时钟下什么都不会落盘**，
+    // 于是 `GET /admin/api/events` 恒读到空，三条 `not.toContain` 全是空的。
+    // 实测：第一版在变异 C2（给 handler 加 logger 并把 `rec.key` 打进事件）下
+    // **24/24 全绿、完整逃逸**。
+    let t = NOW;
+    const { app, repo } = await makeApp(
+      [
+        { status: 401, body: JSON.stringify({ error: { message: `bad key ${KEY.slice(0, 14)}****` } }) },
+        { throws: new Error(`ECONNREFUSED while sending Bearer ${KEY}`) },
+      ],
+      [KEY], {}, () => t,
+    );
+    const id = await idOf(repo, KEY);
+
+    // ① 先制造一条**已知会出现**的事件（拿错口令敲一次 ⇒ `admin.login_failed`）。
+    //    它是这一格的**非空锚**：没有它，下面那些 `not.toContain` 有两种成因分不开
+    //    ——「真的没泄漏」与「事件根本没落盘，我在扫一个空串」。
+    await app.request("/admin/api/session", { headers: { "x-admin-key": "wrong-value" } });
+
+    // ② 两支失败的验活各来一次（401 正文带 key 片段 / 异常消息带整把 key）。
+    //    中间推过最小间隔，免得第二次被护栏挡掉而根本没走到失败支。
+    expect((await verify(app, id)).status).toBe(200);
+    t = NOW + 3_000;
+    expect((await verify(app, id)).status).toBe(200);
+
+    // ③ 跨过 60 秒的落盘闸，再发一次任意非 /health 请求把缓冲冲下去。
+    t = NOW + 60_001;
+    await app.request("/admin/api/session", { headers: withKey });
+
+    for (const path of ["/admin/api/events", "/admin/api/events/download"]) {
+      const res = await app.request(path, { headers: withKey });
+      expect(res.status, `${path} 没取到 —— 这一格什么都没验`).toBe(200);
+      const dump = await res.text();
+      // **非空锚**：这条通路真的把事件送到了这个端点。
+      expect(dump, `${path} 里连那条已知事件都没有 —— 这一格在扫一个空串`)
+        .toContain("admin.login_failed");
+      expect(dump, `${path} 里出现了整把 key`).not.toContain(KEY);
+      expect(dump, `${path} 里出现了 key 的前缀片段`).not.toContain(KEY.slice(0, 14));
+      expect(dump, `${path} 里出现了上游/异常的原文`).not.toContain("ECONNREFUSED");
+    }
   });
 
   it("出站抛错时 reason 是机器可读的 code，不是异常消息 —— 异常消息里同样可能带着这把 key", async () => {
@@ -359,6 +426,56 @@ describe("出站探测护栏：与通道测试共用的那一套（全局约束 
     // ★ 判据在出站计数上：`tryAcquire` 挪到 `fetcher.fetch` 之后时，
     //   状态码照样是 429，而上游已经被打了第二次。
     expect(fetcher.sentUrls.length, "被 429 的那一次还是打了上游").toBe(afterFirst);
+  });
+
+  /**
+   * ⚠️⚠️ **这一格补的是「在途去重」那道闸在 handler 层唯一的观测点（本轮评审 HIGH-3）。**
+   *
+   * 上面所有格子都是**顺序 `await` + 零延迟替身** ⇒ 第二次点击到达时第一次早就
+   * `release` 过了，**只有「最小间隔」那道闸在响应**。于是「在途去重」在整组契约用例里
+   * 完全不可观测（第 5 种假阳性：覆盖的状态让被测的选择不可观测；第 8 种：瞬时替身
+   * 让时序性质不可观测）。实测代价：变异 NEW-R（**把 429 支也写进 `try/finally`，
+   * 于是被挡住的那一次替正在飞的那一次 `release`**）⇒ **31/31 全绿**。
+   *
+   * ⇒ 判据必须同时满足两条，缺一条都测不出来：
+   * ① **第一次必须真的还在飞**（用 `delayMs` + 假定时器把它钉在半空，
+   *    并在动手之前先断言出站计数已经是 1 —— 没有这条前置，微任务调度稍有不同
+   *    这一格就会静默地什么都没测）；
+   * ② **第三次要跨过最小间隔**再打 —— 不跨的话它会被冷却那道闸挡下，
+   *    两道闸又变得分不开了。
+   */
+  it("上一次还在飞时，即使已经过了最小间隔，第三次仍然被挡 —— 被 429 的那一次绝不许替在飞的那一次 release", async () => {
+    let t = NOW;
+    const { app, repo, fetcher } = await makeApp(
+      // 第一次挂 60 秒（钉在半空）；后面几次若真的被放行，会各自拿到一个 200。
+      [{ status: 200, body: "{}", delayMs: 60_000 }],
+      ["sk-verify-inflight-0001"], { upstreamTimeoutMs: 8_000, upstreamSyncTimeoutMs: 120_000 },
+      () => t,
+    );
+    const id = await idOf(repo, "sk-verify-inflight-0001");
+
+    vi.useFakeTimers();
+    const first = verify(app, id);
+    // 把第一次推到「已经发出去、正挂在 delayMs 上」。**推 0 毫秒只冲微任务，不动时钟**，
+    // 所以下面那个 `t` 仍然是 NOW，最小间隔那道闸的判据没有被这一步污染。
+    await vi.advanceTimersByTimeAsync(0);
+    // 前置条件①：它真的在飞。没有这条，下面两个 429 可能只是冷却闸的功劳。
+    expect(fetcher.sentUrls.length, "第一次还没发出去 —— 这一格没测到「在途」").toBe(1);
+
+    // ② 同一时刻的第二次：两道闸都会拒，这一次**只用来制造那个 `release`**。
+    const second = await verify(app, id);
+    expect(second.status).toBe(429);
+
+    // ③ 跨过最小间隔再来一次。冷却闸此刻**已经放行**，还挡得住只能是因为「在途去重」。
+    t = NOW + 3_000;
+    const third = await verify(app, id);
+    expect(third.status, "上一次还在飞，第三次却被放行了 —— 上游被并发打了第二次").toBe(429);
+    expect(await third.json()).toMatchObject({ reason: "probe_in_flight" });
+    expect(fetcher.sentUrls.length, "在飞期间又发了一次出站").toBe(1);
+
+    // 收尾：让第一次跑完，免得留一个悬着的 promise 影响后面的用例。
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(await (await first).json()).toMatchObject({ ok: false, reason: "timeout" });
   });
 
   it("两把**不同**的 key 连着验，第二把不该被挡 —— 闸的粒度是 verify:<id>（评审 I11）", async () => {

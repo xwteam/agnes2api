@@ -92,7 +92,9 @@ const read = (p: string): string => readFileSync(p, "utf8");
  * 同一个最小间隔边界上各跑一遍」能抓住「两处各拿一个自己的间隔常数」（数一漂就红），
  * **但抓不住「有人在某个 handler 里另起一份行为完全相同的实现」**——那种形态下
  * 所有行为断言照样全绿，而下一次改判据的人只会改其中一处。
- * 「没有单一真源的东西迟早会漂」本仓已经裁过三次，这一组是那条裁定在源码上的落点。
+ * 这一组是「没有单一真源的东西迟早会漂」那条裁定在源码上的落点。
+ * ⚠️ 上一版这里跟着写了「本仓已经裁过三次」——**计数删掉了**：仓里复述它的地方有好几处，
+ * **从来没有人列出过是哪三次**（本轮评审裁定：要么列出来，要么把计数删掉）。
  */
 describe("出站探测：两条端点的单一真源（源码级）", () => {
   const HANDLERS = [
@@ -101,26 +103,112 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
   ] as const;
 
   /**
-   * ⚠️ **判据是「真的调了注入进来的那把」，不是「import 了那个模块」。**
+   * ⚠️⚠️ **这一格的判据被订正过两次，两次都是实测打脸，两次都记在这里。**
    *
-   * 只查 import 的写法**实测抓不住**（本任务变异 M11b：在 `registrar.ts` 里另起一份
-   * 行为完全相同的本地实现，`import type { ProbeGuard }` 因为 `RegistrarDeps` 那一格
-   * 仍然用得着而原样留在文件里 ⇒ 那条断言照绿）。查 `.tryAcquire(` 的调用点才有牙：
-   * 任何本地实现都得换掉这一句。
+   * · **第一版查 `import`** ⇒ 变异 M11b（另起一份行为完全相同的本地实现）**逃逸**：
+   *   `import type { ProbeGuard }` 因为 `RegistrarDeps` 那一格仍然用得着而原样留着。
+   * · **第二版查 `.tryAcquire(` 出现过** ⇒ 本轮评审的 HIGH-1 **逃逸（68/68 全绿）**：
+   *   **把注入那把的调用留成一句死代码**（`void deps.probeGuard.tryAcquire(…)`）
+   *   再另起本地那把，`toContain` 照样命中。当时那段注释写着
+   *   「**任何**本地实现都得换掉这一句」——**已实测证伪**，是本仓被证伪的第 N 条全称句
+   *   （**刻意不写第几条**：那个计数同样没人核得动，见本文件头那段裁定）。
+   *
+   * ⇒ **第三版的判据由三条合成，写成一个纯函数 `guardWiring()` 好让两个方向都能种探针**：
+   *   ① 注入那把必须以**赋值**形态出现恰好一次（死代码 `void …` 当场出局）；
+   *   ② 全文件的 `tryAcquire(` / `release(` 计数各恰好 1（多出来的那一个就是本地那把）；
+   *   ③ 文件里不许出现 `new Map(`（本地护栏最自然的状态容器）。
+   *
+   * **边界两个方向各种一次**（下面 `COVERED` / `BLIND_SPOTS` 两张表都真的跑），
+   * 这是本轮评审定的纪律：**每写一条「它抓得住 X / 抓不住 Y」，两边各种一次。**
    */
+  const stripComments = (src: string): string =>
+    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  /** 一个文件的护栏接线画像。**纯函数**，好让真文件与手写探针走同一条判据。 */
+  function guardWiring(src: string, depsField: "guard" | "probeGuard") {
+    const code = stripComments(src);
+    const count = (re: RegExp): number => (code.match(re) ?? []).length;
+    return {
+      /** 注入那把，**赋值形态**（`const x = deps.<f>.tryAcquire(`）。死代码不算。 */
+      assignedAcquire: count(new RegExp(`=\\s*deps\\.${depsField}\\.tryAcquire\\(`, "g")),
+      /** 注入那把的 release。 */
+      injectedRelease: count(new RegExp(`deps\\.${depsField}\\.release\\(`, "g")),
+      /** 全文件的 acquire / release 调用点总数 —— 多出来的就是第二把。 */
+      totalAcquire: count(/tryAcquire\s*\(/g),
+      totalRelease: count(/\brelease\s*\(/g),
+      /** 本地护栏最自然的状态容器。 */
+      maps: count(/new Map\s*\(/g),
+    };
+  }
+
+  /** 接线正确的画像：注入那把各出现一次，且全文件再没有第二个 acquire/release，也没有 Map。 */
+  const WIRED = { assignedAcquire: 1, injectedRelease: 1, totalAcquire: 1, totalRelease: 1, maps: 0 };
+
   it("两条端点的 handler 都从 probe-guard.js 取护栏 —— 各写一套就是两套判据", () => {
-    const CALLS: ReadonlyArray<readonly [string, string]> = [
-      // deps 上那一格在两处叫法不同（验活叫 `guard`，注册机叫 `probeGuard`），
-      // 手写字面量列全，别写成正则——写成正则就会把本地实现也一起认下。
-      ["src/http/admin/handlers/verify.ts", "deps.guard.tryAcquire("],
-      ["src/http/admin/handlers/registrar.ts", "deps.probeGuard.tryAcquire("],
+    const CASES: ReadonlyArray<readonly [string, "guard" | "probeGuard"]> = [
+      // deps 上那一格在两处叫法不同（验活叫 `guard`，注册机叫 `probeGuard`），手写列全。
+      ["src/http/admin/handlers/verify.ts", "guard"],
+      ["src/http/admin/handlers/registrar.ts", "probeGuard"],
     ];
-    for (const [p, call] of CALLS) {
+    for (const [p, field] of CASES) {
       expect(read(p), `${p} 没有从共用的护栏模块取 ProbeGuard`).toContain('from "../probe-guard.js"');
-      expect(read(p), `${p} 没有真的去调注入进来的那把护栏（另起了一份本地实现？）`).toContain(call);
+      expect(guardWiring(read(p), field), `${p} 的护栏接线画像不对（另起了一份本地实现？）`)
+        .toEqual(WIRED);
     }
-    // 手写字面量快照：`HANDLERS` 与上面这张表必须说同一件事。
-    expect(CALLS.map(([p]) => p)).toEqual([...HANDLERS]);
+    // 手写字面量快照：`HANDLERS` 与这张表必须说同一件事。
+    expect(CASES.map(([p]) => p)).toEqual([...HANDLERS]);
+  });
+
+  /**
+   * **声称抓得住的写法真的抓得住。** 每条探针都是一段**会跑**的源码文本，
+   * 走的是上面那个 `guardWiring()`——与真文件同一条判据，不是另抄一份。
+   */
+  const COVERED: ReadonlyArray<{ why: string; src: string }> = [
+    {
+      why: "本轮评审 HIGH-1 的原形：注入那把留成一句死代码 + 另起本地那把",
+      src: "void deps.probeGuard.tryAcquire(k, n);\n"
+        + "const g = localTryAcquire(k, n);\n"
+        + "deps.probeGuard.release(k);\n"
+        + "localRelease(k);\n"
+        + "const localSlots = new Map();\n",
+    },
+    {
+      why: "M11b 的原形：注入那把整个换掉，只留 import type",
+      src: "const g = localTryAcquire(k, n);\nlocalRelease(k);\nconst s = new Map();\n",
+    },
+    {
+      why: "只把 release 换成本地那把（在飞标记从此落在两张表上）",
+      src: "const g = deps.probeGuard.tryAcquire(k, n);\nlocalRelease(k);\nconst s = new Map();\n",
+    },
+    {
+      why: "本地状态容器：即使一次都不叫 tryAcquire，一个 new Map 也够可疑",
+      src: "const g = deps.probeGuard.tryAcquire(k, n);\ndeps.probeGuard.release(k);\nconst s = new Map();\n",
+    },
+  ];
+
+  it.each(COVERED)("声称抓得住的写法真的抓得住：$why", ({ src }) => {
+    expect(guardWiring(src, "probeGuard")).not.toEqual(WIRED);
+  });
+
+  /**
+   * **已知抓不住的写法确实抓不住 —— 边界是断言，不是散文。**
+   *
+   * 这一格变红意味着**有人把这个盲点补上了**，那是好事：把对应的行删掉即可。
+   * 它存在的理由是不让「边界在哪」重新漂成一句没人验证过的散文——
+   * 本轮评审判掉的两条 HIGH，成因都是**边界只写在散文里，而且写反了**。
+   */
+  const BLIND_SPOTS: ReadonlyArray<{ why: string; src: string }> = [
+    {
+      why: "本地实现不叫 tryAcquire/release、状态放模块级对象而不是 Map：三条判据一条都碰不到",
+      src: "const g = deps.probeGuard.tryAcquire(k, n);\n"
+        + "deps.probeGuard.release(k);\n"
+        + "const slots = {};\n"
+        + "const okLocal = localGate(k, n);\n",
+    },
+  ];
+
+  it.each(BLIND_SPOTS)("已知抓不住的写法确实抓不住（边界是断言，不是散文）：$why", ({ src }) => {
+    expect(guardWiring(src, "probeGuard")).toEqual(WIRED);
   });
 
   it("全 src/ 里只有一处 new 出护栏，一处定义它 —— 第二处 createProbeGuard() 就是第二把闸", () => {
@@ -145,37 +233,69 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
    * 逐字节相同的 URL。而硬编码正是全局约束 15 点名要防的那件事
    *（「四个消费者只许有一份『怎么调这个网关』的知识」）。
    *
-   * ⚠️ **边界明写，别把它读成「这个文件从此不可能硬编码端点」**：判据是扫字符串
-   * 字面量，`"/chat" + "/completions"` 这种拼接它看不见——与
-   * `tests/ui/no-hardcoded-endpoints.test.ts`「已知抓不住的写法确实抓不住（边界是断言，不是散文）」
-   * 登记的那条盲点是同一条，处置也相同（留给评审）。
-   * 它挡的是**顺手写下一条路径**，不是**刻意绕开**。
+   * ⚠️⚠️ **判据订正过一次，而且是「边界写反了」那一种（本轮评审 HIGH-2）。**
+   * 第一版要求**引号紧挨着路径**（`["'`]/chat/completions["'`]`），于是：
+   * · **最自然的那个写法整个逃掉** —— `` `${cfg.agnesBaseUrl}/chat/completions` ``
+   *   （实测：把 handler 改成它 ⇒ **31/31 全绿**）；
+   * · 而当时注释里登记的盲点「字符串拼接」**其实一半是抓得住的** ——
+   *   实测 `cfg.agnesBaseUrl + "/chat/completions"` **CAUGHT**，
+   *   只有把路径**自己**拆开的 `"/chat" + "/completions"` 才 ESCAPED。
+   * · 成因很干净：**反向自检探的是「反引号紧挨路径」**（`` `/chat/completions` ``），
+   *   那个形态确实抓得住，于是给了错误的安心感——**探针没探在会漏的那一侧。**
+   *
+   * ⇒ 判据改成**在剥注释后的代码里扫路径本身这个词**，不再要求引号紧挨：
+   * 引号、反引号、模板串插值之后、字符串加号拼接，四种一网打尽。
+   * 真代码里这个词一次都不该出现（它只能来自 `proto.upstreamPath`），所以零误报。
    */
-  it("verify.ts 里没有任何写死的上游/对外路径字面量 —— 路径只许来自协议目录（全局约束 15）", () => {
-    // 三种引号都要扫：本仓 `tests/ui/no-hardcoded-endpoints.test.ts` 记着一次
-    // 「只认单引号 ⇒ 那条检查恒输出 0 行、恒通过」的翻车。
-    const RE = /["'`](?:\/v1(?:beta)?)?\/chat\/completions["'`]/g;
+  const PATH_TOKEN = /\/chat\/completions/g;
+  const scanPath = (src: string): string[] => stripComments(src).match(PATH_TOKEN) ?? [];
+
+  it("verify.ts 里没有任何写死的上游/对外路径 —— 路径只许来自协议目录（全局约束 15）", () => {
     // **必须先剥注释**（与 `tests/unit/source-guards.test.ts` 的 `stripComments` 同一条
     // 理由，那里的原话是「这个仓库的注释极其爱复述代码」）：verify.ts 的文件头就用
     // 反引号行内代码复述了 `/v1/chat/completions` 与 `/chat/completions` 两条，
     // 不剥的话这一格恒红，而恒红的断言迟早会被人直接删掉。
-    const code = read("src/http/admin/handlers/verify.ts")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/(^|[^:])\/\/.*$/gm, "$1");
-    expect(code.match(RE) ?? [], "verify.ts 的**代码**里出现了写死的路径字面量").toEqual([]);
-
-    // 反向自检①：这条正则真的认得那三种引号，否则上面那个空数组什么都没证明。
-    for (const probe of [
-      'const p = "/chat/completions";',
-      "const p = '/v1/chat/completions';",
-      "const p = `/chat/completions`;",
-    ]) {
-      RE.lastIndex = 0;
-      expect(RE.test(probe), `这条写法逃掉了：${probe}`).toBe(true);
-    }
-    // 反向自检②：**剥注释没有把整个文件剥空**。少了它，剥注释的正则哪天写坏成
+    expect(scanPath(read("src/http/admin/handlers/verify.ts")), "verify.ts 的**代码**里出现了写死的路径")
+      .toEqual([]);
+    // 反向自检：**剥注释没有把整个文件剥空**。少了它，剥注释的正则哪天写坏成
     // 「吃掉全文」时这一格照样绿——那正是「覆盖的状态让被测的选择不可观测」。
-    expect(code, "剥注释之后连 fetcher.fetch 都没剩下 —— 这一格已经在扫一个空串了")
-      .toContain("deps.fetcher.fetch(");
+    expect(
+      stripComments(read("src/http/admin/handlers/verify.ts")),
+      "剥注释之后连 fetcher.fetch 都没剩下 —— 这一格已经在扫一个空串了",
+    ).toContain("deps.fetcher.fetch(");
+  });
+
+  /**
+   * **声称抓得住的写法真的抓得住。**
+   * ⚠️ **第一条就是 HIGH-2 逃掉的那个形态**，它排在最前面不是巧合：
+   * 探针要先探在**会漏的那一侧**，探在已经抓得住的那一侧只会制造安心感。
+   */
+  const PATH_COVERED: ReadonlyArray<{ why: string; src: string }> = [
+    { why: "模板串插值之后紧跟路径（HIGH-2 逃掉的正是这个，也是最自然的写法）", src: "await f(`${cfg.agnesBaseUrl}/chat/completions`, init);" },
+    { why: "加号拼接（实测：这一条第一版就抓得住，当时却被登记成盲点）", src: 'const u = cfg.agnesBaseUrl + "/chat/completions";' },
+    { why: "双引号", src: 'const p = "/chat/completions";' },
+    { why: "单引号（带对外 /v1 前缀）", src: "const p = '/v1/chat/completions';" },
+    { why: "反引号紧挨路径", src: "const p = `/chat/completions`;" },
+    { why: "对象字面量里的一格", src: 'const o = { path: "/v1/chat/completions" };' },
+  ];
+
+  it.each(PATH_COVERED)("声称抓得住的写法真的抓得住：$why", ({ src }) => {
+    expect(scanPath(src).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * **已知抓不住的写法确实抓不住 —— 边界是断言，不是散文。**
+   * 剩下的盲点只有一族：**把路径这个词自己拆开**（拼接、转义、编码）。
+   * 与 `tests/ui/no-hardcoded-endpoints.test.ts`
+   * 「已知抓不住的写法确实抓不住（边界是断言，不是散文）」登记的是同一族，处置也相同
+   *（留给评审）。**它挡的是顺手写下一条路径，不是刻意绕开。**
+   */
+  const PATH_BLIND_SPOTS: ReadonlyArray<{ why: string; src: string }> = [
+    { why: "把路径自己拆成两段再拼", src: 'const p = "/chat" + "/completions";' },
+    { why: "用转义把斜杠藏起来", src: 'const p = "\\u002fchat\\u002fcompletions";' },
+  ];
+
+  it.each(PATH_BLIND_SPOTS)("已知抓不住的写法确实抓不住（边界是断言，不是散文）：$why", ({ src }) => {
+    expect(scanPath(src)).toEqual([]);
   });
 });

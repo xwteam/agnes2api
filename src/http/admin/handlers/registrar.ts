@@ -642,6 +642,10 @@ export function channelTestHandler(deps: RegistrarDeps) {
     }
 
     // 计时从这里起：**只包住那一次上游调用**，不含上面几条本地判断。
+    // ⚠️ **`tryAcquire` 与 `try` 之间只许剩这一行**（与 `handlers/verify.ts` 里
+    // 「从这里到 `finally` 之间不许再有任何会抛的语句」那段是同一条纪律）：
+    // 护栏已经占住而 `release` 在 `finally` 里，中间任何一次抛错都会把这条通道
+    // 永久卡在「在飞」。`deps.now()` 是注入的取数函数、不会抛，往这里加别的之前先想一遍。
     const startedAt = deps.now();
     try {
       const probe = await wiring.probeChannel(raw);

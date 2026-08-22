@@ -104,7 +104,8 @@ export function failureReasonKey(reason) {
  * 后端拒绝时那个**顶层 `reason`** → i18n key。
  *
  * ⚠️⚠️ **状态码不是判据。** `409` 有三种（`tend_in_flight` / `locked` /
- * `registrar_disabled`）、`429` 有两种（`manual_cooldown` / `write_budget_exhausted`）。
+ * `registrar_disabled`）、**`429` 有四种**（`manual_cooldown` / `write_budget_exhausted` /
+ * `probe_in_flight` / `probe_cooldown`——后两种是 P3d Task 8 的出站探测护栏加的）。
  * 拿状态码选文案的前端会把「另一个副本在跑」（等对面跑完）与「注册机压根没开」
  *（去设置里打开它）说成同一句话——两者的处置毫无共同之处。
  * 这与 Key 池那条 `must_disable_first` 在批量路径上「200 一路走过去」是同一个形状。
@@ -121,6 +122,13 @@ export function refuseReasonKey(reason) {
     case "not_wired": return "reg.refuse.not_wired";
     case "unknown_channel": return "reg.refuse.unknown_channel";
     case "channel_not_configured": return "reg.refuse.channel_not_configured";
+    // 出站探测护栏的两种（P3d Task 8）。**两条都必须在这张表里**：漏了的话
+    // `refuseReasonKey` 返回 null，调用方退回通用的 `reg.channel.testError`，
+    // 于是「刚测过，隔几秒再来」与「这条通道真的连不上」在面板上长得一模一样——
+    // 而运维恰恰会在失败之后立刻重试，也就是必然撞上这一格。
+    // 两句文案的处置完全不同（等上一次回来 / 隔几秒再来），所以是两条键不是一条。
+    case "probe_in_flight": return "reg.refuse.probe_in_flight";
+    case "probe_cooldown": return "reg.refuse.probe_cooldown";
     default: return null;
   }
 }
