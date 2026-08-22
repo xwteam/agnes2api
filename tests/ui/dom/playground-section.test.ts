@@ -50,7 +50,9 @@ const NOW = 1_700_000_000_000;
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-type Resp = { status: number; body: unknown };
+// **与 `harness.ts` 的那一份保持同形**：`raw` 是 P3d Task 11 为流式加的
+// （原样送字节，不走 JSON.stringify），理由全文在那个文件里。
+type Resp = { status: number; body: unknown; raw?: string; contentType?: string };
 type Responder = (url: string, method: string) => Resp | Promise<Resp>;
 
 /** 设置页那把网关口令的公开视图：**只有 `configured` 与末几位**（设计 §8.6）。 */
@@ -65,6 +67,7 @@ function configBody(hint: string | null): unknown {
 function respondWith(opts: {
   catalog?: Resp;
   config?: Resp;
+  /** 对外那条请求怎么应答。**返回 `{ raw }` 就是一段原样的 SSE 字节**（流式那一档用）。 */
   gateway?: () => Resp | Promise<Resp>;
 } = {}): Responder {
   return (url: string) => {
@@ -155,6 +158,35 @@ function typePrompt(section: FakeElement, value: string): void {
   one(section, ".pg-prompt").input(value);
 }
 
+/**
+ * 打开流式开关。
+ *
+ * ⚠️ **必须自己先写 `.checked = true` 再触发 `change`**：`tests/helpers/fake-dom.ts`
+ * 的 `.change()` 只派发事件，**不替你翻那个字段**（真实浏览器是先翻再派发）。
+ * 这是替身**弱于**真实的一处，不是强于——所以这么写就是在照真实语义模拟。
+ */
+function turnOnStream(section: FakeElement): void {
+  const box = one(section, ".pg-stream");
+  box.checked = true;
+  box.change();
+}
+
+/**
+ * 三块正文 + `[DONE]` 的一段真实 SSE 字节，**openai 那条协议的形状**
+ *（默认选中的就是它，真源里的第一条）。
+ *
+ * ⚠️ **逐字照着网关真吐出去的样子写**（`src/http/routes/openai.ts` 原样透传上游的
+ * chat 增量块），不是自己编一个形状——编的那份与真字节可能不一样，
+ * 而那正是第 7 种假阳性。这四行由 `tests/contract/stream-parity.test.ts` 的
+ * 「一条真的流式请求，按 streamTextPath 逐块取出来的正是上游那三个字」跑真 app 交叉钉着。
+ */
+const SSE_THREE_CHUNKS = [
+  'data: {"id":"c1","choices":[{"delta":{"content":"甲"}}]}',
+  'data: {"id":"c1","choices":[{"delta":{"content":"乙"}}]}',
+  'data: {"id":"c1","choices":[{"delta":{"content":"丙"}}]}',
+  "data: [DONE]",
+].map((l) => `${l}\n\n`).join("");
+
 /** 这一轮往对外那棵树发了几条。 */
 function gatewayCalls(h: Harness) {
   return h.calls.filter((c) => c.url.startsWith(PANEL_ORIGIN));
@@ -208,11 +240,21 @@ describe("左栏：档位与模型全部来自协议目录", () => {
     expect(modes[0]!.getAttribute("title")).toBe(null);
   });
 
-  it("流式开关就位但按不动，且说清「这里发的是非流式」 —— 能按却什么都不变的开关是一句假话", async () => {
+  /**
+   * **P3d Task 11：这个开关不再是摆设。**
+   *
+   * Task 10 时它是 `disabled` 的（读流那一半还没写），那一格断言的是「按不动」。
+   * **现在它是真的能按的**，而「按下去之后真的发的是流式请求」由下面
+   * 「打开流式开关之后，发出去的请求体里真的带着流式那一格」那一格钉着
+   * ——**只断言这里能按不算数**（第 4 种假阳性：形状断言冒充行为断言）。
+   */
+  it("流式开关能按，且 tooltip 说清它做什么 —— Task 10 时它是摆设，现在不是了", async () => {
     const h = await openPg(respondWith());
     const box = one(h.section("playground"), ".pg-stream");
-    expect(box.disabled).toBe(true);
-    expect(box.getAttribute("title")).toBe("流式还没有接线，暂时按不动；这里发的是非流式请求。");
+    expect(box.disabled, "开关还是按不动的").toBe(false);
+    // 期望值手写整句：`toContain` 在别的文案里也可能是子串。
+    expect(box.getAttribute("title"))
+      .toBe("打开后回答会一块一块地到，右栏边收边显示；这一档不统计 token。");
   });
 
   /**
@@ -229,11 +271,13 @@ describe("左栏：档位与模型全部来自协议目录", () => {
             {
               id: "alpha", label: "Alpha", method: "POST", pathTemplate: "/probe/alpha",
               authHeader: "authorization", streamMode: "body", streamKey: "stream",
+              streamTextPath: ["delta"],
               sampleBody: { model: "m0", input: "ping" },
             },
             {
               id: "delta", label: "Delta", method: "POST", pathTemplate: "/probe/delta",
               authHeader: "x-api-key", streamMode: "body", streamKey: "stream",
+              streamTextPath: ["delta"],
               sampleBody: { model: "m0", input: "ping" },
             },
           ],
@@ -241,6 +285,7 @@ describe("左栏：档位与模型全部来自协议目录", () => {
             { id: "only-alpha", modality: "chat", protocols: ["alpha"], endpoints: [] },
             { id: "only-delta", modality: "chat", protocols: ["delta"], endpoints: [] },
           ],
+          samplePrompt: "ping",
         },
       },
     }));
@@ -369,10 +414,12 @@ describe("网关口令：粘贴、就地校验、绝不外泄", () => {
           protocols: [{
             id: "alpha", label: "Alpha", method: "POST", pathTemplate: "/probe/alpha",
             authHeader: "authorization", streamMode: "body", streamKey: "stream",
+            streamTextPath: ["delta"],
             // 占位文本漂了 ⇒ `withPrompt()` 交出 `null` ⇒ `pg.err.buildFailed`。
             sampleBody: { model: "m0", input: "drifted-sample" },
           }],
           models: [{ id: "m-alpha", modality: "chat", protocols: ["alpha"], endpoints: [] }],
+          samplePrompt: "ping",
         },
       },
     }));
@@ -387,6 +434,24 @@ describe("网关口令：粘贴、就地校验、绝不外泄", () => {
       "构造失败那一档不该发出任何请求",
     ).toEqual([]);
     expectNoTokenAnywhere(drift, "构造失败档");
+
+    // ── 档 ④：**流式**（P3d Task 11 加的第四档）。Task 10 交接明写「流式那条路是新的
+    //    一档 —— 自己加进去」。它是**另一条渲染路径**（不走 `prettyJson`，走增量拼接
+    //    + malformed 计数 + 那句「不统计 token」），三档全绿不代表这一档也绿。 ──
+    vi.unstubAllGlobals();
+    const st = await openPg(respondWith({
+      gateway: () => ({ status: 200, body: null, raw: SSE_THREE_CHUNKS }),
+    }));
+    const stSec = st.section("playground");
+    pasteToken(stSec, GW_TOKEN);
+    typePrompt(stSec, "你好");
+    turnOnStream(stSec);
+    one(stSec, ".pg-send").click();
+    await settle(40);
+    // 前置条件两条：这一次**真的走了流式那条路**，而且口令确实在输入框里。
+    expect(one(stSec, ".pg-stream-text").textContent, "前置条件：流式那一档得真的拼出正文").toBe("甲乙丙");
+    expect(one(stSec, ".pg-token").value, "前置条件：口令确实在输入框里").toBe(GW_TOKEN);
+    expectNoTokenAnywhere(st, "流式档");
   });
 
   /**
@@ -776,5 +841,276 @@ describe("网络面：这个板块到底打了哪几条端点", () => {
 
     expect(count(), "切回来又重读了一遍").toEqual({ models: 1, config: 1 });
     expect(pick(h.section("playground"), "[data-protocol]").length, "切回来之后左栏没了").toBe(4);
+  });
+});
+
+/**
+ * ── **P3d Task 11：流式那条路**（本板块的第二条渲染路径）──────────────────────
+ *
+ * ⚠️ **替身能力核对（第 9 种假阳性，本任务的检查单）**：本组用到的 DOM 成员是
+ * `.checked`（真实 checkbox 有）、`.value`、`.textContent`、`.disabled`、
+ * `querySelectorAll`（只当迭代器用，**不调 `.map/.filter`**）、`.children`（for…of 递归）。
+ * `tests/ui/dom/fake-dom-parity.test.ts` 的 `FAKE_ONLY_MEMBERS` 那 8 条**一条都没用到**。
+ * ⚠️ 踩到的那条盲点写明：`.change()` 在夹具里**不翻 `.checked`**，所以
+ * `turnOnStream()` 自己先写那一格——真实浏览器是先翻再派发，这么写才是照真实语义模拟。
+ */
+describe("Playground 板块：流式", () => {
+  /**
+   * **防住的真实故障**：开关翻了，但请求体里没带流式那一格 ⇒ **静默降级成非流式**。
+   * 请求照样 200、内容照样对，只是一次性全回来，而面板正声称自己在流式渲染。
+   *
+   * ⚠️ **观测点在「发出去的请求体长什么样」上**（第 5 条方法论：不许落在自报的字段上）。
+   *
+   * **变红条件**：把 `sendOnce()` 里那个 `stream` 写死成 `false`。
+   */
+  it("打开流式开关之后，发出去的请求体里真的带着流式那一格 —— 不带就是静默降级成非流式", async () => {
+    const h = await openPg(respondWith({
+      gateway: () => ({ status: 200, body: null, raw: SSE_THREE_CHUNKS }),
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "你好");
+    turnOnStream(sec);
+    one(sec, ".pg-send").click();
+    await settle(40);
+
+    const sent = gatewayCalls(h);
+    expect(sent.length, "这一次没发出去").toBe(1);
+    // 期望值手写字面量：真源里 openai 那条的 `streamKey` 就是这个词。
+    expect((sent[0]!.body as Record<string, unknown>).stream, "请求体里没有流式那一格").toBe(true);
+  });
+
+  /**
+   * **防住的真实故障**：关着开关却发了流式请求（或反过来）。
+   * 上一格只证明「开着的时候带」，**证明不了「关着的时候不带」**——
+   * 一个恒为 true 的实现在上一格上是全绿的（第 5 种假阳性：覆盖的状态让选择不可观测）。
+   */
+  it("开关关着时请求体里没有那一格 —— 只验「开着会带」的话，恒为 true 的实现也全绿", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "你好");
+    // **刻意不碰那个开关。**
+    one(sec, ".pg-send").click();
+    await settle(40);
+
+    const sent = gatewayCalls(h);
+    expect(sent.length).toBe(1);
+    expect((sent[0]!.body as Record<string, unknown>).stream, "没开流式却带上了那一格").toBe(undefined);
+  });
+
+  /**
+   * **防住的真实故障**：正文取不出来 ⇒ 对话框永远是空的（请求 200、字节也到了）。
+   * 这一格走的是**整条真链路**：真目录 → 真 `buildRequest` → 真 `gw-api` 读流 →
+   * 真 `deltaText` 按目录里的 `streamTextPath` 取值 → 渲染。
+   *
+   * **变红条件**：把真源里 openai 那条的 `streamTextPath` 改一格。
+   */
+  it("三块增量被按顺序拼成一段正文画在右栏 —— 顺序错或漏一块，运维读到的就是另一句话", async () => {
+    const h = await openPg(respondWith({
+      gateway: () => ({ status: 200, body: null, raw: SSE_THREE_CHUNKS }),
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "你好");
+    turnOnStream(sec);
+    one(sec, ".pg-send").click();
+    await settle(40);
+
+    // 期望值手写字面量（拼接顺序是这一格的全部内容）。
+    expect(one(sec, ".pg-stream-text").textContent).toBe("甲乙丙");
+    // **流式那一轮不画响应原文**：它没有「原文」可画。
+    expect(pick(sec, ".pg-body").filter((n) => !n.classList.contains("pg-stream-text")).length,
+      "流式那一轮同时画了一份响应原文").toBe(0);
+  });
+
+  /**
+   * ⚠️⚠️ **这一格是文件头「流式那一轮为什么不显示 token 用量」那段话的装置。**
+   *
+   * **防住的真实故障**：谁顺手把「响应里的 usage」画出来。
+   * `src/core/protocol/anthropic.ts` 的 `message_delta` 事件**写死 `output_tokens: 0`**
+   * ⇒ 那一刻面板会显示 **0 个 token**，而那是全局约束 9 明令禁止的伪造 0。
+   *
+   * **夹具用的是真的带着那个 0 的字节**——不是编一段「假装有 usage」的数据：
+   * 用例必须在**缺陷真的会发作**的输入上跑，否则它什么都没守。
+   */
+  it("流式那一轮不显示任何 token 数字 —— Anthropic 的流里带着一个恒为 0 的 usage", async () => {
+    // 逐字照抄 `toAnthropicStream()` 真吐出去的那两行（含那个 0）。
+    const anthropicWire = [
+      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"甲"}}',
+      'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":0}}',
+      'event: message_stop\ndata: {"type":"message_stop"}',
+    ].map((l) => `${l}\n\n`).join("");
+    // 前置条件：夹具里**真的**有那个 0，否则这一格是在一个不会发作的输入上空转。
+    expect(anthropicWire, "夹具里没有那个恒为 0 的 usage，这一格什么都没守").toContain('"output_tokens":0');
+
+    const h = await openPg(respondWith({ gateway: () => ({ status: 200, body: null, raw: anthropicWire }) }));
+    const sec = h.section("playground");
+    // 换到 anthropic 那一档（**按 label 找，不认 id**——本用例同样不该硬编码协议 id）。
+    pick(sec, "[data-protocol]")[1]!.click();
+    await settle();
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "你好");
+    turnOnStream(sec);
+    one(sec, ".pg-send").click();
+    await settle(40);
+
+    expect(one(sec, ".pg-stream-text").textContent, "前置条件：这一轮得真的走了流式并拼出正文").toBe("甲");
+    // **那个 0 一个字都不许出现在屏幕上**，`output_tokens` 那个词也不许。
+    const shown = sec.textContent;
+    expect(shown, "把流里那个恒为 0 的 usage 画出来了").not.toContain("output_tokens");
+    // 而且必须**明说**为什么没有数字 —— 静默地不画等于让人以为是 0。
+    expect(pick(sec, ".pg-no-tokens").length, "没说清流式为什么不显示 token").toBe(1);
+    expect(one(sec, ".pg-no-tokens").textContent)
+      .toBe("流式响应不带 token 用量，所以这里不显示数字——显示 0 会是假的。");
+  });
+
+  /**
+   * **防住的真实故障**：一块读不出来的数据被静默丢弃 ⇒ 面板把一段**缺字**的回答
+   * 当成完整的回答画出去，运维完全看不出来。
+   *
+   * **变红条件**：把 `sendOnce()` 里 `piece === null` 那一档的 `turn.malformed++` 删掉
+   *（只 `return`）——正文照样是「甲丙」，但屏幕上不再有任何东西提到中间掉了一块。
+   */
+  it("中间夹一块读不出来的数据：其余正文照常拼出来，且缺了几块要说出来 —— 静默丢弃就是撒谎", async () => {
+    const wire = [
+      'data: {"id":"c1","choices":[{"delta":{"content":"甲"}}]}',
+      "data: {这一块不是合法 JSON",
+      'data: {"id":"c1","choices":[{"delta":{"content":"丙"}}]}',
+      "data: [DONE]",
+    ].map((l) => `${l}\n\n`).join("");
+
+    const h = await openPg(respondWith({ gateway: () => ({ status: 200, body: null, raw: wire }) }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "你好");
+    turnOnStream(sec);
+    one(sec, ".pg-send").click();
+    await settle(40);
+
+    // ① 一块坏数据**不许**让整轮对话中断。
+    expect(one(sec, ".pg-stream-text").textContent, "一块坏数据把整轮都吃掉了").toBe("甲丙");
+    // ② 但它必须被数出来并说出来。期望值手写整句。
+    expect(pick(sec, ".pg-malformed").length, "掉了一块却什么都没说").toBe(1);
+    expect(one(sec, ".pg-malformed").textContent)
+      .toBe("这条流里有 1 块数据读不出来，已跳过——上面这段回答可能是缺字的。");
+  });
+
+  /**
+   * **「这条流一个字都没有」与「还在收」是两件事**（全局约束 9 的同型）。
+   * 变红条件：把 `buildTurn()` 里那句 `turn.pending !== true` 去掉 ⇒ 还在收的时候
+   * 就会画出「一个字都没有」，而那时候它只是还没到。
+   */
+  it("一条只有 [DONE] 的流：明说「一个字正文都没有」，而不是画一个空白框", async () => {
+    const h = await openPg(respondWith({
+      gateway: () => ({ status: 200, body: null, raw: "data: [DONE]\n\n" }),
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "你好");
+    turnOnStream(sec);
+    one(sec, ".pg-send").click();
+    await settle(40);
+
+    expect(one(sec, ".pg-stream-text").textContent).toBe("");
+    expect(pick(sec, ".pg-stream-empty").length, "空流没被说出来").toBe(1);
+  });
+
+  /**
+   * **上游没 ok 时不许走读流那条路。** 网关的错误响应是 JSON、不是 SSE，
+   * 拿 SSE 解析器去读它会得到零条负载 ⇒ 面板显示一次「什么都没发生」的成功流式，
+   * 而那次其实是 401 / 429。
+   *
+   * **变红条件**：把 `streamFromGateway()` 里那句 `if (!res.ok || !res.body)` 删掉。
+   */
+  it("流式请求撞上 401：画的是那份错误响应体与状态码，不是一条空流", async () => {
+    const h = await openPg(respondWith({
+      gateway: () => ({ status: 401, body: { error: { message: "PROBE-UNAUTHORIZED" } } }),
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "你好");
+    turnOnStream(sec);
+    one(sec, ".pg-send").click();
+    await settle(40);
+
+    expect(one(sec, ".pg-status").textContent).toBe("401");
+    // 走的是非流式那条渲染路径（响应原文），**不是**流式那条。
+    expect(pick(sec, ".pg-stream-text").length, "把一次 401 画成了一条空流").toBe(0);
+    expect(one(sec, ".pg-body").textContent).toContain("PROBE-UNAUTHORIZED");
+  });
+
+  /**
+   * **整块重画之后开关还得是开着的。**
+   *
+   * ⚠️ **这一格是「先把那一行删一次试试」立出来的**（Task 10 交接的那条纪律）：
+   * 我原本在 `buildStreamToggle()` 的注释里声称 `box.checked = streamOn;` 是必需的，
+   * 而当时**没有任何用例守着它**——删掉它全绿。现在有了。
+   *
+   * **失效形态**：每次 `render()` 都重建整个左栏，不回写的话开关在**屏幕上**掉回关闭，
+   * 而模块变量 `streamOn` 仍是 true ⇒ **运维看到的档位与下一次真发出去的请求不一致**。
+   * 那比两边都关掉更糟：他会以为自己在发非流式。
+   *
+   * **变红条件**：删掉 `buildStreamToggle()` 里那句 `box.checked = streamOn;`。
+   */
+  it("发完一轮整块重画之后，流式开关在屏幕上还是开着的 —— 掉回关闭会让屏幕与真发出去的请求不一致", async () => {
+    const h = await openPg(respondWith({
+      gateway: () => ({ status: 200, body: null, raw: SSE_THREE_CHUNKS }),
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "你好");
+    turnOnStream(sec);
+    one(sec, ".pg-send").click();
+    await settle(40);
+
+    // 前置条件：这一轮确实走完了（右栏有正文），也就是说 `render()` 真的重跑过。
+    expect(one(sec, ".pg-stream-text").textContent, "前置条件：这一轮得真的走完").toBe("甲乙丙");
+    expect(one(sec, ".pg-stream").checked, "重画之后开关在屏幕上掉回了关闭").toBe(true);
+
+    // 而且**下一次仍然发流式**（屏幕与行为一致，不是只有屏幕对）。
+    typePrompt(sec, "再来一句");
+    one(sec, ".pg-send").click();
+    await settle(40);
+    const sent = gatewayCalls(h);
+    expect(sent.length).toBe(2);
+    expect((sent[1]!.body as Record<string, unknown>).stream, "第二次掉回了非流式").toBe(true);
+  });
+
+  /**
+   * **取消之后不许再往右栏里写字。**
+   *
+   * ⚠️ **如实登记它钉的是什么**：`tests/ui/dom/harness.ts` 的 `fetch` 替身**零处**看
+   * `signal`（Task 9 交接第 3 条 / Task 10 登记的边界一），所以 `abort()` 本身在这里
+   * **天然不可观测**。这一格钉的是 `onPayload` 里那句 `current !== ctl` 的身份比较
+   * ——真实浏览器里 abort 让那条链以 `AbortError` 拒绝，同一条判据同样把它挡在外面。
+   *
+   * **变红条件**：把 `sendOnce()` 的 `onPayload` 里那句 `if (current !== ctl) return;` 删掉。
+   */
+  it("点了取消之后，后到的那几块不许再落进右栏 —— 钉的是身份比较，不是 abort 本身", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const h = await openPg(respondWith({
+      // 应答挂在闸上：点取消的那一刻，这条流一个字节都还没被读到。
+      gateway: async () => { await gate; return { status: 200, body: null, raw: SSE_THREE_CHUNKS }; },
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "你好");
+    turnOnStream(sec);
+    one(sec, ".pg-send").click();
+    await settle(10);
+
+    // 前置条件：这一刻确实在飞（取消按钮在），而且一个字都还没到。
+    expect(pick(sec, ".pg-cancel").length, "前置条件：这一刻应当有一次在飞").toBe(1);
+    one(sec, ".pg-cancel").click();
+    await settle(10);
+
+    release();
+    await settle(40);
+
+    // 取消之后那三块**一个字都不许**出现在屏幕上。
+    expect(sec.textContent, "取消之后后到的那几块还是落进了右栏").not.toContain("甲乙丙");
+    expect(sec.textContent).not.toContain("甲");
   });
 });

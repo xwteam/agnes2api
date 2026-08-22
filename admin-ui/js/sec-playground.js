@@ -63,17 +63,33 @@
  * 复制按钮 + 在新标签页打开，**不内嵌**；本任务连一个字节的媒体渲染代码都不写，
  * 也**不为将来「顺手」放宽任何东西**。
  *
- * ── 流式开关为什么摆在那儿却按不动 ──────────────────────────────────────────
- * 与媒体那两档同一条理由：控件本任务就位，功能排在后面的任务。
- * `buildRequest()` 的流式两条路（Gemini 换路径、其余三条换请求体字段）**已经写好并被
- * 单测钉着**，缺的只是读流那一半。**摆一个能按但什么都不会变的开关**比按不动更糟——
- * 那是面板对运维说的一句假话。
+ * ── 流式（P3d Task 11）：开关已经接上，而且两种运行时都是真的逐块 ─────────────
+ * Task 10 时这个开关是 `disabled` 的（读流那一半还没写）。**现在它是真的。**
+ * ⚠️ **「真的逐块」这句话是真机量出来的，不是推出来的**：假上游 1 秒/块 × 4 块，
+ * `curl -N` 逐块打时间戳，**Node（`@hono/node-server`）与 Worker（`wrangler dev`
+ * 起的真 workerd）两侧的到达间隔都是约 1 秒**，不是四块一起到 ⇒ 两种形态都逐块透传。
+ * ⇒ **本板块因此没有任何形态分支**：流式在哪种部署上都能用，不需要降级、
+ * 也不需要往 `capabilities` 里加一格「这个形态能不能流」。
+ * ⚠️ **哪天这条前提变了，改的是后端那一格 + 这里读它，不是在这里嗅探运行时**
+ * （全局约束 1：一切形态分支只许读 `GET /admin/api/capabilities`）。
  *
- * ── 右栏为什么展示响应原文，而不是把回答抽成对话气泡 ─────────────────────────
- * 「这条协议的回答那句话在哪一格」是第四份「四条协议长什么样」的知识，而协议目录
- * 今天没有这一格（它只有 `usagePath`，那是给 Tier-2 用的）。硬写一张对照表进来，
- * 正是全局约束 15 要求先问一遍的那种事，而这里的答案是**「它可以来自目录，只是今天
- * 还没有」**。⇒ **登记 P3e**，理由全文在 `js/pure/playground.mjs` 的 `prettyJson()` 上方。
+ * ── 右栏：流式画正文，非流式仍画响应原文 ────────────────────────────────────
+ * **流式没有「原文」可展示**——它天然要一块一块把正文取出来拼。「这条协议的正文在
+ * 哪一格」因此顶到了台面上，而答案是**往协议目录加一格**（`streamTextPath`，
+ * 真源 `src/core/admin/protocol-catalog.ts`），**不是在这里写第四份对照表**
+ * （全局约束 15）。本文件因此仍然不认识任何一个协议 id。
+ * ⚠️ **非流式那一档没有跟着改**：`streamTextPath` 只覆盖流式增量，
+ * 「非流式响应里那句话在哪」是另一格，**今天没有第二个消费者要它**
+ * ⇒ 登记 P3e，理由全文在 `js/pure/playground.mjs` 的 `prettyJson()` 上方。
+ *
+ * ── 流式那一轮为什么不显示 token 用量 ───────────────────────────────────────
+ * **因为网关的流式响应里根本没有真的 token 数**，而其中一条**还带着一个恒为 0 的字段**：
+ * `src/core/protocol/anthropic.ts` 的 `message_delta` 事件写死 `usage: {output_tokens: 0}`。
+ * ⇒ 谁顺手把「响应里的 usage」画出来，Anthropic 那条流就会在面板上显示 **0 个 token**
+ * ——那是全局约束 9 明令禁止的那件事（**伪造 0 比显示「没有」更糟**）。
+ * ⇒ 流式那一轮**一个字节的 usage 都不读**，只画一句「流式响应不带 token 用量」。
+ * 由 `tests/ui/dom/playground-section.test.ts` 的
+ * 「流式那一轮不显示任何 token 数字 —— Anthropic 的流里带着一个恒为 0 的 usage」钉着。
  *
  * ── 两条 admin 路径为什么不算「第二份端点知识」 ──────────────────────────────
  * 全局约束 15 管的是「怎么调**这个网关**」那张对外面（对外路径、请求体形状、鉴权头），
@@ -100,11 +116,11 @@
 import { api } from "./api.js";
 import { t } from "./i18n.js";
 import { el, elI18n } from "./ui.js";
-import { readGatewayToken, writeGatewayToken, sendToGateway } from "./gw-api.js";
+import { readGatewayToken, writeGatewayToken, sendToGateway, streamFromGateway } from "./gw-api.js";
 import { catalogModels } from "./pure/models.mjs";
 import { credentialView } from "./pure/settings.mjs";
 import {
-  playgroundProtocols, modelIdsForProtocol, buildRequest, tokenHintState, prettyJson,
+  playgroundProtocols, modelIdsForProtocol, buildRequest, tokenHintState, prettyJson, deltaText,
 } from "./pure/playground.mjs";
 
 let nodes = null;
@@ -123,6 +139,8 @@ let modelId = "";
 /** 输入框里的两样东西。**re-render 之后从这里回填**，所以整块重建不会丢用户输入。 */
 let promptText = "";
 let token = "";
+/** 流式开关的当前档位（P3d Task 11）。**同样要在 re-render 之后回填。** */
+let streamOn = false;
 /**
  * 右栏那几轮对话。**只进不出**，切走板块也留着（同一次会话里回头对比很常见）。
  *
@@ -239,11 +257,19 @@ function buildModelSelect(proto) {
   return sel;
 }
 
-/** 流式开关。**本任务按不动**，理由见文件头那段。 */
+/**
+ * 流式开关（P3d Task 11 接上）。
+ *
+ * ⚠️ **`.checked` 每次重建都要显式回写**：整块 re-render 之后不写的话，运维打开的
+ * 那一档会静默地掉回关闭，而**下一次发送就是一次非流式请求**——请求照样 200、
+ * 内容照样对，只是一次性全回来，面板上没有任何东西会提到这件事
+ * （与 `buildModelSelect()` 里那句 `sel.value = modelId` 同一条理由）。
+ */
 function buildStreamToggle() {
   const box = el("input", { type: "checkbox", class: "pg-stream" });
-  box.disabled = true;
-  box.setAttribute("title", t("pg.stream.laterTip"));
+  box.setAttribute("title", t("pg.stream.tip"));
+  box.checked = streamOn;
+  box.addEventListener("change", () => { streamOn = box.checked === true; });
   return box;
 }
 
@@ -391,6 +417,34 @@ function buildTurn(turn) {
   }
   wrap.appendChild(foot);
 
+  // ── 流式那一轮：画拼起来的正文，**不画响应原文**（它没有「原文」可画）──────────
+  // ⚠️ **顺序是刻意的**：正文在最上面。这一轮就算最后失败了，运维已经看到的那半句话
+  //    是真的发生过的，把它挪到错误提示下面（或者抹掉）都会让人以为它没到过。
+  if (turn.stream === true && turn.streamed === true) {
+    const body = el("pre", { class: "mono pg-body pg-stream-text" }, turn.text);
+    // 这一轮还在收的话，把这个节点记下来：后续每一块**就地改 textContent**，
+    // 不整块重画（重画会让左栏的输入框丢焦点，而流式一秒能来几十块）。
+    if (turn.pending === true) nodes.streamText = body;
+    wrap.appendChild(body);
+    // **「这条流一个字都没有」与「还在收，只是还没到」是两件事** ——
+    // 后者不许说前者那句话，所以 `pending` 期间不画它（那期间说话的是 pg.sending）。
+    if (turn.text === "" && turn.pending !== true) {
+      wrap.appendChild(elI18n("p", "pg.turn.streamEmpty", { class: "muted note pg-stream-empty" }));
+    }
+    if (turn.malformed > 0) {
+      // **静默丢弃就是撒谎**（与事件板块的 malformed 同一条理由）：读不出来的块数
+      // 必须说出来，不然面板会把一段缺字的回答当成完整的回答画出去。
+      wrap.appendChild(el("p", { class: "muted note pg-malformed" },
+        t("pg.turn.malformed", { count: String(turn.malformed) })));
+    }
+    if (turn.errorKey !== null) {
+      wrap.appendChild(elI18n("p", turn.errorKey, { class: "danger-text pg-error" }));
+    }
+    // ⚠️ 这一句不是可有可无的客套话，理由见文件头「流式那一轮为什么不显示 token 用量」。
+    wrap.appendChild(elI18n("p", "pg.turn.noTokens", { class: "muted note pg-no-tokens" }));
+    return wrap;
+  }
+
   if (turn.errorKey !== null) {
     wrap.appendChild(elI18n("p", turn.errorKey, { class: "danger-text pg-error" }));
     return wrap;
@@ -451,6 +505,9 @@ function render() {
   host.textContent = "";
   nodes.hintNote = null;
   nodes.send = null;
+  // **每次重画都作废**：旧那个节点已经从文档里摘掉了，继续往它上面写字等于把
+  // 后半段回答写进一个没人看得见的对象里。`buildTurn()` 会给还在收的那一轮重新挂上。
+  nodes.streamText = null;
   if (catalog === null) {
     host.appendChild(buildUnavailable());
     return;
@@ -533,9 +590,13 @@ function sendOnce() {
   //    ⇒ **判据只许有一份**：要改在飞去重，改 `sendBlockedKey()` 那一档。
   if (sendBlockedKey() !== null) return;
   const proto = currentProto();
-  const req = buildRequest(proto, { model: modelId, prompt: promptText, stream: false, origin });
+  const stream = streamOn === true;
+  const req = buildRequest(proto, { model: modelId, prompt: promptText, stream, origin });
   if (req === null) {
-    turns.push({ promptText, url: "", method: "", status: null, body: null, errorKey: "pg.err.buildFailed" });
+    turns.push({
+      promptText, url: "", method: "", status: null, body: null, errorKey: "pg.err.buildFailed",
+      stream: false, streamed: false, text: "", malformed: 0, pending: false,
+    });
     render();
     return;
   }
@@ -543,26 +604,69 @@ function sendOnce() {
   current = ctl;
   inFlight = true;
   const sent = promptText;
+
+  /**
+   * 这一轮。**流式那一档在请求发出去之前就进 `turns`**，因为它要一边收一边画；
+   * 非流式那一档仍然是回来之后才进（它在中途没有任何可画的东西）。
+   */
+  const turn = {
+    promptText: sent, url: req.url, method: req.method, status: null, body: null, errorKey: null,
+    stream, streamed: stream, text: "", malformed: 0, pending: stream,
+  };
+  if (stream) turns.push(turn);
   render();
 
-  sendToGateway(req, token, { origin, signal: ctl.signal })
-    .then((r) => {
-      if (current !== ctl) return;
-      turns.push({ promptText: sent, url: req.url, method: req.method, status: r.status, body: r.body, errorKey: null });
+  const done = (r) => {
+    turn.status = r.status;
+    turn.body = r.body;
+    turn.streamed = r.streamed === true;
+    if (!stream) turns.push(turn);
+  };
+  const failed = (e) => {
+    // **只认档位名，不把 `e.message` 画出去**：那条串是本地拼的，别给它机会带上
+    // 任何一段请求内容（全局约束 11(b)）。
+    const code = e && e.code;
+    turn.errorKey = code === "cross_origin"
+      ? "pg.err.crossOrigin"
+      : code === "stream_error" ? "pg.err.stream" : "pg.err.transport";
+    // ⚠️ **流式中途断掉时那一轮已经在 `turns` 里了，不许再 push 一次** ——
+    //    再 push 一次的话，运维会看到同一轮出现两遍，其中一遍带着半截正文。
+    if (!stream) turns.push(turn);
+  };
+
+  const run = stream
+    ? streamFromGateway(req, token, {
+      origin,
+      signal: ctl.signal,
+      onPayload: (payload) => {
+        // ⚠️ **取消之后就不许再往里写**：`current !== ctl` 是本板块统一的作废判据
+        //    （文件头那段 ⚠️⚠️：abort 本身在测试里不可观测，被钉住的是这个比较）。
+        //    少了这一句，一条已经被取消的流会继续把字写进右栏。
+        if (current !== ctl) return;
+        // **正文在哪一格来自协议目录**，本文件不认识任何一个协议 id（全局约束 15）。
+        const piece = deltaText(proto, payload);
+        if (piece === null) {
+          // 读不出来的一块。**数出来、显示出来，但不中断整轮**：
+          // 一块坏数据不该让运维正在读的那段回答整个消失。
+          turn.malformed++;
+          return;
+        }
+        if (piece === "") return;
+        turn.text += piece;
+        // 就地改文字，不整块重画（重画会让左栏输入框丢焦点）。
+        if (nodes.streamText !== null) nodes.streamText.textContent = turn.text;
+      },
     })
-    .catch((e) => {
-      if (current !== ctl) return;
-      // **只认档位名，不把 `e.message` 画出去**：那条串是本地拼的，别给它机会带上
-      // 任何一段请求内容（全局约束 11(b)）。
-      turns.push({
-        promptText: sent, url: req.url, method: req.method, status: null, body: null,
-        errorKey: e && e.code === "cross_origin" ? "pg.err.crossOrigin" : "pg.err.transport",
-      });
-    })
+    : sendToGateway(req, token, { origin, signal: ctl.signal });
+
+  run
+    .then((r) => { if (current === ctl) done(r); })
+    .catch((e) => { if (current === ctl) failed(e); })
     .finally(() => {
       if (current !== ctl) return;
       current = null;
       inFlight = false;
+      turn.pending = false;
       render();
     });
 }
@@ -575,7 +679,7 @@ export const playgroundSection = {
     section.appendChild(elI18n("p", "pg.runtimeNote", { class: "muted note" }));
     const body = el("div");
     section.appendChild(body);
-    nodes = { body, hintNote: null, send: null };
+    nodes = { body, hintNote: null, send: null, streamText: null };
     // 判定在纯函数里，而那个目录下拿不到浏览器的顶层全局，所以在这里读一次传进去。
     origin = location.origin;
     token = readGatewayToken();

@@ -1,0 +1,249 @@
+import { describe, it, expect } from "vitest";
+import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
+import { PROTOCOLS, endpointFor, SAMPLE_PROMPT } from "../../src/core/admin/protocol-catalog.js";
+import { deltaText, sseFrames, playgroundProtocols } from "../../admin-ui/js/pure/playground.mjs";
+
+/**
+ * **P3d Task 11：流式那条路的双运行时契约。**
+ *
+ * ── **这一组能给 U-A 结案吗：不能，而且这句话必须写在最前面** ──────────────────
+ * U-A 问的是「**workerd 的 HTTP 服务层**会不会把一条 SSE 响应整体缓冲」。
+ * 本文件走的是 `app.request()`，**它根本没有经过任何 HTTP 服务层**——请求对象直接
+ * 交给 Hono，响应对象直接拿回来。它能证明的是「Hono / dispatcher / 四条协议转换
+ * 这一段不缓冲」，**证明不了 workerd 那一段**。拿它给 U-A 结案就是本仓登记的
+ * **第 7 种假阳性（测的是抄件不是原件）**，而且踩在本期自评的头号风险上。
+ *
+ * ⇒ **U-A 由真机仪器结案，不由本文件结案**：`wrangler dev` 起真 workerd，
+ * 假上游 1 秒/块 × 4 块，`curl -N` 逐块打时间戳。实测结论（两种运行时各一行，
+ * 到达间隔都约 1 秒 ⇒ 都是逐块透传）写在 Task 11 报告里。
+ * **本文件是那条结论的回归网**，不是它的证据。
+ *
+ * ── **第 8 种假阳性：不许用零延迟替身** ────────────────────────────────────────
+ * 上游若是「一次性 enqueue 完再 close」，**缓冲与不缓冲在观测上完全等价**——
+ * 两种实现都会在同一时刻把全部内容交出来。所以下面那一格用一个由测试控制的
+ * deferred 把第二块**真的卡住**，让「第一块已经到了，而第二块还没被 enqueue」
+ * 成为一个可观测的状态。这条挂起点是那一格全部的支点。
+ */
+
+const encoder = new TextEncoder();
+
+/** 一条上游 SSE 增量行（内部规范格式 = OpenAI chat 增量块）。 */
+function upstreamChunk(text: string): Uint8Array {
+  return encoder.encode(`data: ${JSON.stringify({ id: "c1", choices: [{ delta: { content: text } }] })}\n\n`);
+}
+
+/** 一次性给完的上游流（用于**非时序**断言；时序断言一律用下面那个带闸的）。 */
+function upstreamStream(texts: readonly string[]): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(c) {
+      for (const t of texts) c.enqueue(upstreamChunk(t));
+      c.enqueue(encoder.encode("data: [DONE]\n\n"));
+      c.close();
+    },
+  });
+}
+
+/** 把一条响应体整个读成字符串。 */
+async function readAll(body: ReadableStream<Uint8Array> | null): Promise<string> {
+  if (body === null) return "";
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    out += decoder.decode(value, { stream: true });
+  }
+  return out + decoder.decode();
+}
+
+/** 这条协议开着流式时，客户端该往哪儿发、带什么头、发什么请求体。**全部来自真源。** */
+function streamCall(p: (typeof PROTOCOLS)[number]) {
+  const model = "agnes-2.0-flash";
+  const body: Record<string, unknown> = { ...p.sample(model) };
+  if (p.streamMode === "body") body[p.streamKey] = true;
+  return {
+    path: endpointFor(p, model, true),
+    headers: {
+      [p.authHeader]: p.authHeader === "authorization" ? "Bearer t" : "t",
+      "content-type": "application/json",
+    } as Record<string, string>,
+    body: JSON.stringify(body),
+  };
+}
+
+describe("流式：网关不整体缓冲（U-A 的回归网，不是它的证据）", () => {
+  /**
+   * **防住的真实故障**：网关把整条上游流攒完再一次性吐出去。那样 Playground 的
+   * 「流式」开关就是一句假话——屏幕上仍然是等很久、然后整段一次出现，
+   * 而面板会声称自己在流式渲染。
+   *
+   * **变红条件**：把 `src/core/dispatcher.ts` 的 `sanitize(res)` 改成
+   * 先 `await res.text()` 再用那段文本重建一个 Response。
+   */
+  it("上游第二块还没 enqueue 时客户端已经读到了第一块 —— 被整体缓冲的话 Playground 的流式开关就是假话", async () => {
+    let releaseSecond: () => void = () => {};
+    const gate = new Promise<void>((r) => { releaseSecond = r; });
+    // ⚠️ 第二块**真的**卡在 `gate` 上（第 8 种假阳性的对策）：
+    //    `start` 是 async 的，`await gate` 之前 enqueue 的那一块已经进了队列。
+    const upstream = new ReadableStream<Uint8Array>({
+      async start(c) {
+        c.enqueue(upstreamChunk("a"));
+        await gate;
+        c.enqueue(encoder.encode("data: [DONE]\n\n"));
+        c.close();
+      },
+    });
+    // ⚠️ **`makeApp` 是 async，必须 await**（`tests/helpers/make-app.ts` 的 `export async function`）。
+    // ⚠️ `Outcome.body` 收 `ReadableStream` 是 Task 11 给 `tests/helpers/fake-fetcher.ts` 扩的：
+    //    在那之前它只吃 `string`，于是上游只能一次性给完 ⇒ 本格的挂起点根本不存在。
+    const { app } = await makeApp([{ status: 200, body: upstream }], ["sk-stream-probe-0001"]);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: "Bearer t", "content-type": "application/json" },
+      body: JSON.stringify({ model: "agnes-2.0-flash", stream: true, messages: [{ role: "user", content: "ping" }] }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body, "流式响应必须有一个可读的 body").not.toBe(null);
+
+    const reader = res.body!.getReader();
+    // **赛跑，而不是干等**：被整体缓冲时 `read()` 会一直挂着（闸永远不放），
+    // 干等的话这一格以「超时」形式失败，报错信息说不清是哪条性质坏了。
+    // 让它输给一个计时器，断言就变成一句能读的话。
+    const timer = new Promise<string>((r) => { setTimeout(() => r("整条流被攒完了才吐"), 3000); });
+    const winner = await Promise.race([
+      reader.read().then((step) => new TextDecoder().decode(step.value)),
+      timer,
+    ]);
+    expect(winner, "第二块还没 enqueue，第一块就该已经到了客户端").toContain('"a"');
+
+    releaseSecond();
+    await reader.cancel();
+  });
+});
+
+describe("流式：协议目录的 streamTextPath 与网关真吐出去的字节对得上", () => {
+  /**
+   * ⚠️⚠️ **这一格是新增那一格真源（`streamTextPath`）的立身之本。**
+   *
+   * 观测点落在 **真 app 经真路由吐出去的 SSE 字节**上，**不是**比对
+   * `protocol-catalog.ts` 自己的两个字段（那是同义反复：拿一份数据验它自己）。
+   * 与 `upstreamPath` 那一条守的是同一条纪律，理由写在那个字段上方。
+   *
+   * **防住的真实故障**：四条协议的增量长得都不一样，而三条是本仓自己合成的。
+   * 路径填错的后果是 **Playground 的对话框永远是空的**——请求 200、字节也确实
+   * 一块块到了，只是每一块都取不出正文，面板上没有任何东西会提到这件事。
+   *
+   * **变红条件（逐条实测过，见报告变异表 M3）**：把任意一条协议的
+   * `streamTextPath` 改一格，例如 anthropic 那条改成 `["delta", "content"]`。
+   */
+  it.each(PROTOCOLS.map((p) => [p.id, p] as const))(
+    "%s：一条真的流式请求，按 streamTextPath 逐块取出来的正是上游那三个字",
+    async (_id, p) => {
+      // 手写字面量，**不从上游夹具推导**（第 6 种假阳性）。三个字符各不相同，
+      // 顺序错了、丢了一块、重复了一块都要红。
+      const sent = ["甲", "乙", "丙"];
+      const { app } = await makeApp(
+        [{ status: 200, body: upstreamStream(sent) }],
+        ["sk-stream-probe-0001"],
+      );
+      const call = streamCall(p);
+      const res = await app.request(call.path, { method: "POST", headers: call.headers, body: call.body });
+      expect(res.status, `${p.id} 的流式请求没到 200`).toBe(200);
+
+      const wire = await readAll(res.body);
+      // **用面板那一份 SSE 切分**（`js/pure/playground.mjs` 的 `sseFrames`）——
+      // 用例自己再写一遍分帧，验的就是抄件不是原件。
+      const { payloads } = sseFrames(wire);
+      expect(payloads.length, `${p.id} 一条 data 负载都没有`).toBeGreaterThan(0);
+
+      // **用面板那一份取值**（`deltaText`），入参是真源里那条协议本身。
+      const got = payloads.map((line) => deltaText(p, line));
+      expect(got, `${p.id} 有读不出来的数据行`).not.toContain(null);
+      expect(got.join(""), `${p.id} 的 streamTextPath 取错了格`).toBe(sent.join(""));
+    },
+  );
+
+  /**
+   * **防住的真实故障**：路径「碰巧在事件行上也取得到东西」。
+   *
+   * 上面那格只断言正文拼起来对，**它挡不住一条把非正文事件也算成正文的路径**——
+   * 那种路径会让对话框里混进 `in_progress`、`end_turn` 这类协议内部的词。
+   * ⇒ 这里逐行分档：**取到正文的行数必须恰好等于上游给的块数**，其余行必须是空串
+   * （读得出来、不带正文），**一行都不许是 `null`（读不出来）**。
+   *
+   * ⚠️ **anthropic 与 responses 的流里真的夹着非正文事件行**（`message_start` /
+   * `content_block_start` / `message_delta` / `message_stop`、`response.created` /
+   * `response.completed`），所以这一格对它们不是空转。gemini 那条一行都不夹。
+   */
+  it.each(PROTOCOLS.map((p) => [p.id, p] as const))(
+    "%s：带正文的行恰好三条，其余事件行读得出来但不带正文 —— 混进协议内部的词就是对话框在撒谎",
+    async (_id, p) => {
+      const sent = ["甲", "乙", "丙"];
+      const { app } = await makeApp(
+        [{ status: 200, body: upstreamStream(sent) }],
+        ["sk-stream-probe-0001"],
+      );
+      const call = streamCall(p);
+      const res = await app.request(call.path, { method: "POST", headers: call.headers, body: call.body });
+      const { payloads } = sseFrames(await readAll(res.body));
+      const got = payloads.map((line) => deltaText(p, line));
+
+      expect(got.filter((x) => x === null).length, `${p.id} 有读不出来的行`).toBe(0);
+      // 期望值手写字面量 3，**不是 `sent.length`**：从被测数据推导出来的期望值
+      // 在两边同时改错时照样绿（第 6 种假阳性）。
+      expect(got.filter((x) => x !== "").length, `${p.id} 带正文的行数不对`).toBe(3);
+    },
+  );
+});
+
+describe("协议目录：samplePrompt 这一格（Task 11 加，消掉前端那份副本）", () => {
+  /**
+   * **防住的真实故障**：面板靠「在 `sampleBody` 里找到这句话并把它换成用户输入」
+   * 注入提示词。端点交出来的 `samplePrompt` 与 `sampleBody` 里那句话一旦不是同一个，
+   * 面板**一处都换不掉** ⇒ 它要么整轮判失败，要么（如果哪天有人给它加了退路）
+   * **恒发样例那句话、静默丢弃用户真正输入的内容**。
+   *
+   * ⚠️ 观测点在**端点真吐出去的那份 JSON** 上，不是比对 `protocol-catalog.ts`
+   * 里的两个常量——后者是拿一份数据验它自己。
+   *
+   * **变红条件**：把 `catalogPayload()` 里的 `samplePrompt: SAMPLE_PROMPT`
+   * 改成任何别的字面量（报告变异表 M7）。
+   */
+  it("GET /admin/api/models 交出来的 samplePrompt，在每一条 sampleBody 的 JSON 里恰好出现一次", async () => {
+    const { app } = await makeApp([], []);
+    const res = await app.request("/admin/api/models", { headers: { "x-admin-key": TEST_ADMIN_TOKEN } });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { samplePrompt?: unknown; protocols: Array<{ id: string; sampleBody: unknown }> };
+
+    expect(typeof body.samplePrompt, "端点没有交出 samplePrompt 这一格").toBe("string");
+    const slot = body.samplePrompt as string;
+    expect(slot, "占位文本不许是空串 —— 空串在每份请求体里都能匹配上无数次").not.toBe("");
+
+    // 手写字面量 4：协议少一条的话上面那些 `it.each` 会跟着少跑，而不会红。
+    expect(body.protocols.length, "协议条数变了").toBe(4);
+    for (const proto of body.protocols) {
+      const hits = JSON.stringify(proto.sampleBody).split(JSON.stringify(slot).slice(1, -1)).length - 1;
+      expect(hits, `${proto.id} 的 sampleBody 里那句占位文本出现了 ${hits} 次，不是恰好一次`).toBe(1);
+    }
+  });
+
+  /**
+   * **防住的真实故障**：这一格进不了面板那一侧的窄化 ⇒ `withPrompt()` 拿不到占位文本
+   * ⇒ **整个 Playground 判成「目录读不出来」**，左栏画的是错误横幅。
+   * 这一格与上一格是两件事：上一格验端点给了什么，这一格验面板认不认。
+   *
+   * **变红条件**：把 `playgroundProtocols()` 里那句 `p.samplePrompt` 的窄化删掉
+   * （它会退化成 `undefined`，四条协议的 `samplePrompt` 全成 `undefined`）。
+   */
+  it("面板那一侧窄化之后，四条协议各自带着同一句占位文本 —— 拿不到它 withPrompt 一处都换不掉", async () => {
+    const { app } = await makeApp([], []);
+    const res = await app.request("/admin/api/models", { headers: { "x-admin-key": TEST_ADMIN_TOKEN } });
+    const list = playgroundProtocols(await res.json()) as Array<{ id: string; samplePrompt: string }> | null;
+    expect(list, "真实响应必须窄化得出来").not.toBe(null);
+    expect(list!.length).toBe(4);
+    for (const proto of list!) {
+      expect(proto.samplePrompt, `${proto.id} 没带上占位文本`).toBe(SAMPLE_PROMPT);
+    }
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
-  readGatewayToken, writeGatewayToken, sendToGateway, GatewayError,
+  readGatewayToken, writeGatewayToken, sendToGateway, streamFromGateway, GatewayError,
 } from "../../admin-ui/js/gw-api.js";
 import { KEY_STORE, GW_KEY_STORE } from "../../admin-ui/js/pure/storage-keys.mjs";
 import { playgroundProtocols, buildRequest } from "../../admin-ui/js/pure/playground.mjs";
@@ -168,9 +168,10 @@ describe("两把钥匙隔离：对外这一侧", () => {
       // ⇒ 这道同源自查因此是**真的在守一件做得到的事**，不是装饰。
       pathTemplate: "@exfil.invalid/collect",
       authHeader: "authorization", streamMode: "body", streamKey: "stream",
+      streamTextPath: ["delta"],
       sampleBody: { model: "m0", input: "ping" },
     };
-    const list = playgroundProtocols({ protocols: [hostile] })!;
+    const list = playgroundProtocols({ protocols: [hostile], samplePrompt: "ping" })!;
     const req = buildRequest(list[0], { model: "m9", prompt: "你好", stream: false, origin: ORIGIN });
     // 前置条件：拼出来的地址确实落在另一个源上，否则这一格什么都没验到。
     expect(new URL(req!.url).origin, "前置条件：探针必须真的指向别处").toBe("https://exfil.invalid");
@@ -314,5 +315,178 @@ describe("网关口令的存取", () => {
     });
     expect(readGatewayToken()).toBe("");
     expect(() => writeGatewayToken(GW_TOKEN)).not.toThrow();
+  });
+});
+
+/**
+ * ── **P3d Task 11：流式那条路** ────────────────────────────────────────────────
+ *
+ * ⚠️⚠️ **本组存在的全部理由**：Task 10 把四条安全性质（同源自查、`redirect: "error"`、
+ * `credentials: "omit"`、口令只走请求头）**逐条钉在了非流式那条路上**。
+ * 流式是一条**新的**代码路径 —— 上面那四格**一格都不覆盖它**。
+ * 「两条路共用同一个 `openGateway()`」是实现上的选择，而**选择是会被改掉的**：
+ * 下一个人完全可能为了「流式要特殊处理」把它拆成两份，而拆的那一刻上面四格照样全绿。
+ * ⇒ **同一组判据在两条路上各断言一遍**，别指望共用那件事自己守着自己。
+ */
+describe("流式那条路：与非流式同一组安全判据，逐条各断言一遍", () => {
+  /** 一段最小的 SSE 响应（openai 形状，真源里的第一条协议）。 */
+  const WIRE = 'data: {"id":"c1","choices":[{"delta":{"content":"甲"}}]}\n\ndata: [DONE]\n\n';
+
+  /** 收集这一次流式请求交出来的负载。 */
+  async function streamOnce(req: unknown, opts: Record<string, unknown> = {}) {
+    const seen: string[] = [];
+    const r = await streamFromGateway(req, GW_TOKEN, {
+      origin: ORIGIN, onPayload: (p: string) => seen.push(p), ...opts,
+    });
+    return { seen, r };
+  }
+
+  it("凭据头里没有 x-admin-key —— 管理口令绝不许走上对外那条路（流式这一侧）", async () => {
+    store[KEY_STORE] = ADMIN_TOKEN;
+    responder = () => new Response(WIRE, { status: 200, headers: { "content-type": "text/event-stream" } });
+    await streamOnce(reqFor(0));
+    const headers = headersOf(0);
+    expect(Object.keys(headers).map((k) => k.toLowerCase())).not.toContain("x-admin-key");
+    // 反向：整份请求头里一个字节的管理口令都不许有。
+    expect(JSON.stringify(headers), "管理口令走上了对外那条路").not.toContain(ADMIN_TOKEN);
+  });
+
+  it("口令只在请求头里，URL 上一个字节都没有（流式这一侧）—— 进 URL 就会落进历史与各级访问日志", async () => {
+    responder = () => new Response(WIRE, { status: 200 });
+    await streamOnce(reqFor(0));
+    expect(fetchCalls[0]!.url, "网关口令进了 URL").not.toContain(GW_TOKEN);
+    // 末 8 位同样不许 —— 一条末位旁路同样是旁路。
+    expect(fetchCalls[0]!.url).not.toContain(GW_TOKEN.slice(-8));
+    expect(headersOf(0)["authorization"], "口令没走请求头").toBe(`Bearer ${GW_TOKEN}`);
+  });
+
+  /**
+   * **同源自查在流式这一侧同样有效。**
+   *
+   * **变红条件**：给 `streamFromGateway()` 单独写一次 `fetch`（不走 `openGateway()`）
+   * ——那一刻这一格立刻红，而非流式那四格照样全绿。
+   */
+  it("流式与非流式走同一道同源自查 —— 两条路各写一份的话，漏掉的那份会把口令送去别处", async () => {
+    const hostile = {
+      id: "x", label: "X", method: "POST",
+      // 与非流式那一格同一条探针：`origin + path` 经 `userinfo` 段翻出另一个源。
+      pathTemplate: "@exfil.invalid/collect",
+      authHeader: "authorization", streamMode: "body", streamKey: "stream",
+      streamTextPath: ["delta"],
+      sampleBody: { model: "m0", input: "ping" },
+    };
+    const list = playgroundProtocols({ protocols: [hostile], samplePrompt: "ping" })!;
+    const req = buildRequest(list[0], { model: "m9", prompt: "你好", stream: true, origin: ORIGIN });
+    expect(new URL(req!.url).origin, "前置条件：探针必须真的指向别处").toBe("https://exfil.invalid");
+
+    const err = await streamFromGateway(req, GW_TOKEN, { origin: ORIGIN, onPayload: () => {} }).catch((e) => e);
+    expect(err).toBeInstanceOf(GatewayError);
+    expect((err as GatewayError).code).toBe("cross_origin");
+    // **观测点在「有没有发出去」上**，不在返回值上。
+    expect(fetchCalls, "流式那条路把口令发去了别处").toEqual([]);
+
+    // `origin` 传空同样 fail closed（Task 10 交接第 1 条：`origin` 是硬前提）。
+    const err2 = await streamFromGateway(req, GW_TOKEN, { origin: "", onPayload: () => {} }).catch((e) => e);
+    expect((err2 as GatewayError).code).toBe("cross_origin");
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it("流式同样 redirect: error 且 credentials: omit —— 跨源 302 会把 x-api-key 原样带走", async () => {
+    responder = () => new Response(WIRE, { status: 200 });
+    await streamOnce(reqFor(0));
+    const init = fetchCalls[0]!.init as RequestInit & { credentials?: string };
+    expect(init.redirect, "流式那条路会跟着重定向走").toBe("error");
+    expect(init.credentials).toBe("omit");
+  });
+
+  it("调用方给的 signal 原样透传（流式这一侧）—— 不透传的话取消按钮会变成一颗按了没反应的按钮", async () => {
+    responder = () => new Response(WIRE, { status: 200 });
+    const ctl = new AbortController();
+    await streamOnce(reqFor(0), { signal: ctl.signal });
+    expect(fetchCalls[0]!.init.signal, "signal 没被透传").toBe(ctl.signal);
+  });
+
+  /**
+   * **跨 chunk 的那条 data 行**：这一格是 `sseFrames()` 在**真读流循环里**的接线证明。
+   *
+   * ⚠️ 纯函数那一层由 `tests/ui/playground.test.ts` 的
+   * 「一条 data 行被拆在两个 chunk 里仍被正确重组」钉着；**这一格钉的是
+   * `streamFromGateway()` 有没有把 `rest` 真的接回下一轮**——把那句
+   * `buf = found.rest;` 改成 `buf = "";` 的话，纯函数那一格照样全绿。
+   */
+  it("一条 data 行被真的拆在两个 chunk 里送达时仍被正确重组 —— 读流循环得把尾巴接回去", async () => {
+    const whole = 'data: {"id":"c1","choices":[{"delta":{"content":"跨块的一句话"}}]}\n\n';
+    const cut = 20;
+    expect(whole.slice(0, cut), "前置条件：前半段不许自己就构成一帧").not.toContain("\n\n");
+    responder = () => new Response(new ReadableStream<Uint8Array>({
+      start(c) {
+        const enc = new TextEncoder();
+        // **两次 enqueue**：读者会拿到两个独立的 chunk，切点落在 JSON 中间。
+        c.enqueue(enc.encode(whole.slice(0, cut)));
+        c.enqueue(enc.encode(whole.slice(cut)));
+        c.close();
+      },
+    }), { status: 200 });
+
+    const { seen, r } = await streamOnce(reqFor(0));
+    expect(seen, "跨块那条 data 行没被重组回来").toEqual(['{"id":"c1","choices":[{"delta":{"content":"跨块的一句话"}}]}']);
+    expect(r.streamed).toBe(true);
+  });
+
+  it("最后一帧没有以空行收尾时也不许丢 —— 连接被反代截断时最后一个事件会静默消失", async () => {
+    // **刻意不以 `\n\n` 结尾。**
+    responder = () => new Response('data: {"id":"c1","choices":[{"delta":{"content":"最后一块"}}]}', { status: 200 });
+    const { seen } = await streamOnce(reqFor(0));
+    expect(seen).toEqual(['{"id":"c1","choices":[{"delta":{"content":"最后一块"}}]}']);
+  });
+
+  /**
+   * **上游没 ok 时不走读流那条路。** 网关的错误响应是 JSON、不是 SSE，
+   * 拿 SSE 解析器去读它会得到零条负载 ⇒ 调用方会看到一次「什么都没发生」的成功流式。
+   */
+  it("上游 401 时交出那份错误响应体并标明没走流 —— 拿 SSE 解析器去读 JSON 会得到一次假的空流", async () => {
+    responder = () => new Response('{"error":{"message":"PROBE-401"}}', {
+      status: 401, headers: { "content-type": "application/json" },
+    });
+    const { seen, r } = await streamOnce(reqFor(0));
+    expect(seen, "把一份 JSON 错误体当成 SSE 读了").toEqual([]);
+    expect(r.streamed, "没 ok 却报告说走了流").toBe(false);
+    expect(r.status).toBe(401);
+    expect(r.ok).toBe(false);
+    expect(JSON.stringify(r.body)).toContain("PROBE-401");
+  });
+
+  it("读到一半断掉时抛 GatewayError，且 message 与 code 里都不含口令 —— 错误文案是口令最自然的泄漏口", async () => {
+    // ⚠️ **必须用 `pull` 分两次，不能在同一个 `start` 里先 enqueue 再 error。**
+    //    实测：`controller.error()` 会**清空队列**（Streams 规范如此），
+    //    于是那一块在流那一层就没了、根本到不了被测代码 ⇒ 这一格会以
+    //    「断掉之前那一块被抹掉了」的形式红，而红的原因是**夹具**不对，不是实现不对。
+    //    分两次 pull 才让「先真的交出一块，再断掉」这个时序真的成立。
+    let pulls = 0;
+    responder = () => new Response(new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (pulls++ === 0) {
+          c.enqueue(new TextEncoder().encode('data: {"id":"c1","choices":[{"delta":{"content":"半句"}}]}\n\n'));
+          return;
+        }
+        // **真的 error 掉**（第 2 种假阳性：错误 stub 不许只 resolve 一个失败状态）。
+        c.error(new Error("upstream went away"));
+      },
+    }), { status: 200 });
+
+    const seen: string[] = [];
+    const err = await streamFromGateway(reqFor(0), GW_TOKEN, {
+      origin: ORIGIN, onPayload: (p: string) => seen.push(p),
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(GatewayError);
+    expect((err as GatewayError).code).toBe("stream_error");
+    // **断掉之前已经交出去的那一块留着**：运维看到的半句话是真的发生过的。
+    expect(seen.length, "断掉之前那一块被抹掉了").toBe(1);
+    // 逐段扫（长度 ≥4）：错误对象里一个口令片段都不许有。
+    const text = `${(err as Error).message} ${(err as GatewayError).code}`;
+    for (let i = 0; i + 4 <= GW_TOKEN.length; i++) {
+      expect(text, "错误里带上了口令的一段").not.toContain(GW_TOKEN.slice(i, i + 4));
+    }
   });
 });

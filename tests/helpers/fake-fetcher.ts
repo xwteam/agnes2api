@@ -5,8 +5,22 @@ import type { Fetcher } from "../../src/ports/fetcher.js";
  * 原来的 FakeFetcher 永远瞬时返回，任何超时配置都测不出差别，真机上 8 秒超时套用到
  * 同步端点导致图片生成 100% 失败的缺陷，正是因此在全部单测里都看不见。
  */
+/**
+ * ⚠️ **`body` 收 `ReadableStream`，不只是 `string`**（P3d Task 11 补的）。
+ *
+ * 原来只吃字符串 ⇒ 上游是「一次性给完整段文本」，**缓冲与不缓冲在观测上完全等价**
+ * ——那是第 8 种假阳性（瞬时替身让时序性质不可观测）。要断言「网关没有把整条流攒完
+ * 再吐」，上游必须有一个**由测试控制的、真的挂在那里的挂起点**：
+ * 给一个 `ReadableStream`，第二块卡在测试自己的 deferred 上。
+ * `tests/contract/stream-parity.test.ts` 用的正是这条。
+ */
 type Outcome =
-  | { status: number; body?: string; headers?: Record<string, string>; delayMs?: number }
+  | {
+    status: number;
+    body?: string | ReadableStream<Uint8Array>;
+    headers?: Record<string, string>;
+    delayMs?: number;
+  }
   | { throws: Error };
 
 export class FakeFetcher implements Fetcher {

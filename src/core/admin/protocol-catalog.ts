@@ -80,6 +80,34 @@ export interface ProtocolEntry {
   readonly streamKey: string;
   /** 非流式响应里 usage 的位置。`null` = 这条协议的 usage 网关看不到（见 F1）。 */
   readonly usagePath: readonly string[] | null;
+  /**
+   * **流式响应里「这一块新增的回答文本」在一条 SSE 数据行的哪一格。**
+   * 数字段视为数组下标（`"0"` = 第 0 项），逐层往下走；走不到 / 走到的不是字符串
+   * 就表示**这一行不带正文**（`message_start`、`response.completed` 这类事件行都属于这一档），
+   * 消费方按空串处理。
+   *
+   * ── **这一格为什么在这里，而不是在前端** ──────────────────────────────────────
+   * P3d Task 10 收口时登记过一条：Playground 的右栏只能展示响应体原文，因为
+   * 「这条协议的回答那句话在哪一格」是**第四份「四条协议长什么样」的知识**，而当时
+   * 这份目录没有它。**流式把这件事顶到了台面上**——流式天然没有「原文」可展示，
+   * 它必须一块一块地把正文取出来拼。那一刻只有两条路：往这份真源加一格，
+   * 或者在浏览器里再写一张四行的对照表。**后者正是全局约束 15 禁止的那件事**
+   *（订正 D1 的原话：「它们是同一份知识，做两遍必漂，而漂了没人会发现」）。
+   *
+   * ⚠️⚠️ **这四条路径不是照着协议规范抄的，是照着本网关真正吐出去的字节填的。**
+   * 四条协议里三条的流式事件由本仓自己合成（`src/core/protocol/{anthropic,responses,gemini}.ts`
+   * 的 `to*Stream()`），只有 openai 那条是上游字节原样透传（`src/http/routes/openai.ts`
+   * 不传 `expectJson`，见 `usagePath` 上面那段 F1）。**照规范抄会在合成那三条上漂**。
+   * 绑住它的是 `tests/contract/stream-parity.test.ts` 的
+   * 「一条真的流式请求，按 streamTextPath 逐块取出来的正是上游那三个字」
+   * ——**观测点落在真 app 吐出去的 SSE 字节上**，不是比对本文件自己的两个字段
+   *（那是同义反复，与 `upstreamPath` 那一条守的是同一条纪律）。
+   *
+   * ⚠️ **`readonly string[]`，不是 `| null`**：四条协议全都有正文增量，没有「这条协议
+   * 流式没有正文」这一档。哪天真出现了，加的是一个新档位、不是往这里塞 `null`
+   * ——`null` 会和「路径写错了、取不到」在消费侧长成同一个空串。
+   */
+  readonly streamTextPath: readonly string[];
   /** 最小可跑请求体。**必须真的能跑通**，由 Step 6 的契约用例发一遍验证。 */
   sample(model: string): Record<string, unknown>;
 }
@@ -100,6 +128,9 @@ export const PROTOCOLS: readonly ProtocolEntry[] = [
     // 从头到尾没有 `JSON.parse` 过。usage 确实在响应里、确实到得了客户端（本计划 W7 实测），
     // 只是网关没读它。给它加 `expectJson` 是热路径改动，本期不做。
     usagePath: null,
+    // 上游字节原样透传（本条不传 `expectJson`）⇒ 这里填的是**上游 chat 增量块**的形状。
+    // 真机实测到达客户端的那一行：`{"id":"c1","choices":[{"delta":{"content":"a"}}]}`
+    streamTextPath: ["choices", "0", "delta", "content"],
     sample: (model) => ({ model, messages: [{ role: "user", content: SAMPLE_PROMPT }] }),
   },
   {
@@ -112,6 +143,11 @@ export const PROTOCOLS: readonly ProtocolEntry[] = [
     streamMode: "body",
     streamKey: "stream",
     usagePath: ["usage"],
+    // 由 `src/core/protocol/anthropic.ts` 的 `toAnthropicStream()` 合成。真机实测那一行：
+    // `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"a"}}`
+    // ⚠️ 同一条流里的 `message_delta` 事件也有一格 `delta`（装的是 `stop_reason`），
+    //    它没有 `text` ⇒ 走到底取不到字符串 ⇒ 按「这一行不带正文」处理，正是想要的。
+    streamTextPath: ["delta", "text"],
     // `max_tokens` 是 Anthropic 协议的必填项，少了它上游会 400。
     sample: (model) => ({ model, max_tokens: 64, messages: [{ role: "user", content: SAMPLE_PROMPT }] }),
   },
@@ -125,6 +161,11 @@ export const PROTOCOLS: readonly ProtocolEntry[] = [
     streamMode: "body",
     streamKey: "stream",
     usagePath: ["usage"],
+    // 由 `src/core/protocol/responses.ts` 的 `toResponsesStream()` 合成。真机实测那一行：
+    // `{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"a"}`
+    // ⚠️ **这一条的 `delta` 是字符串本身，不是一个对象**——与 anthropic 那条同名不同形。
+    //    这正是「照协议规范抄」会翻车的地方，也是这四行必须由真机字节钉住的理由。
+    streamTextPath: ["delta"],
     sample: (model) => ({ model, input: SAMPLE_PROMPT }),
   },
   {
@@ -139,6 +180,10 @@ export const PROTOCOLS: readonly ProtocolEntry[] = [
     streamMode: "path",
     streamKey: "/v1beta/models/{model}:streamGenerateContent",
     usagePath: ["usageMetadata"],
+    // 由 `src/core/protocol/gemini.ts` 的 `toGeminiStream()` 合成。真机实测那一行：
+    // `{"candidates":[{"content":{"role":"model","parts":[{"text":"a"}]},"index":0}],"modelVersion":"agnes-2.0-flash"}`
+    // 两个数字段都是数组下标（第 0 个候选、第 0 个 part）。
+    streamTextPath: ["candidates", "0", "content", "parts", "0", "text"],
     sample: () => ({ contents: [{ role: "user", parts: [{ text: SAMPLE_PROMPT }] }] }),
   },
 ];
@@ -199,14 +244,31 @@ export function endpointFor(p: ProtocolEntry, model: string, stream: boolean): s
   return tpl.replace("{model}", model);
 }
 
-/** 序列化给面板的那一份。**函数（`sample`）不能过网络，这里替换成算好的请求体。** */
+/**
+ * 序列化给面板的那一份。**函数（`sample`）不能过网络，这里替换成算好的请求体。**
+ *
+ * ⚠️ **`samplePrompt` 是 Task 11 补上的一格，它消掉的是一份已登记的副本。**
+ * P3d Task 10 在 `admin-ui/js/pure/playground.mjs` 里留了一个 `PROMPT_SLOT_SAMPLE = "ping"`，
+ * 并把它登记成「必然的副本」——理由是「`js/pure/` 禁 `import`，而它不在这份响应里」。
+ * **那个理由的后半句是可以被改掉的，改法就是这一行。** Task 10 报告自己也写了
+ *「下一次有人碰那份真源时，这是该顺手做掉的事」。
+ *
+ * ⚠️ **它必须与 `sampleBody` 里那句话是同一个来源**（都从 `SAMPLE_PROMPT` 来）：
+ * 面板靠「在 `sampleBody` 里找到这句话并把它换成用户输入」注入提示词，两边一旦分叉，
+ * Playground 会**静默丢弃用户输入、恒发样例那句话**。由
+ * `tests/contract/stream-parity.test.ts` 的
+ * 「交出来的 samplePrompt，在每一条 sampleBody 的 JSON 里恰好出现一次」钉着
+ * ——**观测点在端点真吐出去的那份 JSON 上**，不是比对本文件的两个常量。
+ */
 export function catalogPayload(): {
   protocols: Array<Omit<ProtocolEntry, "sample"> & { sampleBody: Record<string, unknown> }>;
   models: readonly ModelEntry[];
+  samplePrompt: string;
 } {
   const defaultModel = MODEL_CATALOG[0]!.id;
   return {
     protocols: PROTOCOLS.map(({ sample, ...rest }) => ({ ...rest, sampleBody: sample(defaultModel) })),
     models: MODEL_CATALOG,
+    samplePrompt: SAMPLE_PROMPT,
   };
 }

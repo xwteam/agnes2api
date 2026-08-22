@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  PROMPT_SLOT_SAMPLE, playgroundProtocols, modelIdsForProtocol, withPrompt, buildRequest,
-  authHeaderValue, tokenHintState, prettyJson,
+  playgroundProtocols, modelIdsForProtocol, withPrompt, buildRequest,
+  authHeaderValue, tokenHintState, prettyJson, deltaText, sseFrames,
 } from "../../admin-ui/js/pure/playground.mjs";
 import { exampleFor, KEY_PLACEHOLDER } from "../../admin-ui/js/pure/examples.mjs";
 import { catalogPayload, SAMPLE_PROMPT } from "../../src/core/admin/protocol-catalog.js";
@@ -21,6 +21,20 @@ import { catalogPayload, SAMPLE_PROMPT } from "../../src/core/admin/protocol-cat
  * 被测模块按定义不认识任何真实协议 id，编一个反而更能说明这一点。
  */
 const ORIGIN = "https://gw-probe.invalid";
+
+/**
+ * 合成目录里那句占位文本。**故意不是真源那个 `"ping"`**（P3d Task 11）。
+ *
+ * Task 10 时面板自己存着一份 `PROMPT_SLOT_SAMPLE = "ping"` 的副本，那份副本
+ * 只能靠一格逐字比对兜着。**Task 11 把它消掉了**：占位文本现在跟着
+ * `GET /admin/api/models` 的响应一起来（真源多了一格 `samplePrompt`）。
+ * ⇒ 合成夹具在这里给一个**真源里根本不存在**的值，被测模块照样得工作——
+ * 那是「它真的从数据里取，而不是内置了那个词」最直接的证据。
+ */
+const SLOT = "PROBE-SLOT-7";
+
+/** 合成目录里那条「正文在哪一格」。同样是编的（真源里没有这条路径）。 */
+const PROBE_TEXT_PATH = ["out", "0", "say"];
 
 /** 真实目录窄化之后那四条协议。**前置条件自己先断言一次**，否则下面每一格都是空的。 */
 function realProtocols() {
@@ -57,19 +71,51 @@ describe("协议目录窄化：读不出来 ≠ 一条协议都没有", () => {
     ["streamMode", { streamMode: "" }],
     ["streamKey", { streamKey: "" }],
     ["sampleBody", { sampleBody: "not an object" }],
+    // ── P3d Task 11 加的那一格（`streamTextPath`），四种坏法各一条 ──────────────
+    // **每一段都得是非空字符串**：一段空串会让 `deltaText()` 去读一格名字为空的属性，
+    // 那一定取不到东西，而「取不到」与「这一行不带正文」在下游长得一模一样
+    // ⇒ 整条协议的正文会**静默地永远为空**。
+    ["streamTextPath 不是数组", { streamTextPath: "delta.text" }],
+    ["streamTextPath 是空数组", { streamTextPath: [] }],
+    ["streamTextPath 里有空串", { streamTextPath: ["delta", ""] }],
+    ["streamTextPath 里有非字符串", { streamTextPath: ["delta", 0] }],
   ])("这一格坏掉就整份读不出来（不是少画一档）：%s", (_name, patch) => {
     const good = {
       id: "alpha", label: "Alpha", method: "POST", pathTemplate: "/probe/alpha",
-      authHeader: "authorization", streamMode: "body", streamKey: "stream", sampleBody: { q: "ping" },
+      authHeader: "authorization", streamMode: "body", streamKey: "stream",
+      streamTextPath: PROBE_TEXT_PATH, sampleBody: { q: SLOT },
     };
     // 前置条件：不打补丁时它必须是读得出来的，否则这一格证不了「是补丁让它坏的」。
-    expect(playgroundProtocols({ protocols: [good] })).not.toBe(null);
-    expect(playgroundProtocols({ protocols: [{ ...good, ...(patch as object) }] })).toBe(null);
+    expect(playgroundProtocols({ protocols: [good], samplePrompt: SLOT })).not.toBe(null);
+    expect(playgroundProtocols({ protocols: [{ ...good, ...(patch as object) }], samplePrompt: SLOT })).toBe(null);
+  });
+
+  /**
+   * **`samplePrompt` 缺席同样是「整份读不出来」，不是「少一格」**（P3d Task 11）。
+   *
+   * 拿不到它 `withPrompt()` 一处都换不掉 ⇒ 每一次发送都判构造失败。
+   * **让它退化成一个静默的空串更糟**：空串在任何一份请求体里都能匹配上无数次，
+   * 那会把「注入用户输入」变成一次随机替换。
+   *
+   * **变红条件**：把 `playgroundProtocols()` 里那句 `p.samplePrompt` 的窄化删掉。
+   */
+  it.each([
+    ["缺席", {}],
+    ["是空串", { samplePrompt: "" }],
+    ["不是字符串", { samplePrompt: 7 }],
+  ])("占位文本这一格 %s 时整份读不出来 —— 拿不到它，用户输入就无处可放", (_name, patch) => {
+    const good = {
+      id: "alpha", label: "Alpha", method: "POST", pathTemplate: "/probe/alpha",
+      authHeader: "authorization", streamMode: "body", streamKey: "stream",
+      streamTextPath: PROBE_TEXT_PATH, sampleBody: { q: SLOT },
+    };
+    expect(playgroundProtocols({ protocols: [good], samplePrompt: SLOT })).not.toBe(null);
+    expect(playgroundProtocols({ protocols: [good], ...(patch as object) })).toBe(null);
   });
 
   it("目录真的是空的时候交出空数组，不是 null —— 「一条协议都没有」与「读不出来」是两句话", () => {
-    expect(playgroundProtocols({ protocols: [] })).toEqual([]);
-    expect(playgroundProtocols({ protocols: "nope" })).toBe(null);
+    expect(playgroundProtocols({ protocols: [], samplePrompt: SLOT })).toEqual([]);
+    expect(playgroundProtocols({ protocols: "nope", samplePrompt: SLOT })).toBe(null);
     expect(playgroundProtocols(null)).toBe(null);
   });
 });
@@ -108,15 +154,16 @@ describe("withPrompt：判据是形状，不是协议 id", () => {
     const fake = {
       id: "unknown-xyz",
       pathTemplate: "/probe/unknown",
+      samplePrompt: SLOT,
       // OpenAI 形状，但 id 是编的。
-      sampleBody: { model: "m0", messages: [{ role: "user", content: PROMPT_SLOT_SAMPLE }] },
+      sampleBody: { model: "m0", messages: [{ role: "user", content: SLOT }] },
     };
     const body = withPrompt(fake, "m9", "你好");
     expect(body, "认了 id 就交不出来").not.toBe(null);
     expect(body.messages[0].content).toBe("你好");
     expect(body.model, "模型那一格没跟着换").toBe("m9");
     // 反向：样例那句话一个字都不许留下。
-    expect(JSON.stringify(body)).not.toContain(PROMPT_SLOT_SAMPLE);
+    expect(JSON.stringify(body)).not.toContain(SLOT);
   });
 
   it("四条真实协议各自把用户输入放进自己那一格 —— 四种形状全不一样，一条都不许漏", () => {
@@ -144,30 +191,53 @@ describe("withPrompt：判据是形状，不是协议 id", () => {
    * **变红条件**：把 `withPrompt()` 的 `if (hits !== 1) return null;` 删掉。
    */
   it("样例里找不到那句占位文本时返回 null —— 退回样例会让用户输入被静默丢弃", () => {
-    const drifted = { id: "x", pathTemplate: "/probe/x", sampleBody: { model: "m", input: "pong" } };
+    const drifted = {
+      id: "x", pathTemplate: "/probe/x", samplePrompt: SLOT,
+      sampleBody: { model: "m", input: "pong" },
+    };
     expect(withPrompt(drifted, "m", "你好"), "占位文本漂了却照样交出一份请求体").toBe(null);
   });
 
   it("占位文本在样例里出现两次时同样返回 null —— 「我不知道该往哪儿放」也是一种不知道", () => {
     const twice = {
-      id: "x", pathTemplate: "/probe/x",
-      sampleBody: { model: "m", a: PROMPT_SLOT_SAMPLE, b: PROMPT_SLOT_SAMPLE },
+      id: "x", pathTemplate: "/probe/x", samplePrompt: SLOT,
+      sampleBody: { model: "m", a: SLOT, b: SLOT },
     };
     expect(withPrompt(twice, "m", "你好")).toBe(null);
   });
 
   /**
-   * **登记项 ③ 的逐字比对。** 这个常量是真源 `SAMPLE_PROMPT` 的一份**必然的**副本
-   * （`js/pure/` 禁止 `import`，而它不在 `GET /admin/api/models` 的响应里）。
-   * 形态与 `js/boot.js` 抄两个存储键名是同一类：结构性重复 + 一格逐字比对。
+   * **登记项 ③ 已经不存在了（P3d Task 11 消掉的），这一格是它的替代品。**
    *
-   * **变红条件**：改真源的 `SAMPLE_PROMPT` 而不改 `PROMPT_SLOT_SAMPLE`（或反过来）。
+   * Task 10 在面板侧存着一份 `PROMPT_SLOT_SAMPLE = "ping"` 的副本，靠一格逐字比对
+   * 兜着两边不漂。**现在占位文本跟着响应一起来**，面板这一侧不再知道它是哪句话。
+   * ⇒ 这一格验的不再是「两个常量相等」，而是**「它真的从数据里取」**：
+   * 喂一个真源里根本不存在的占位文本，被测模块照样得换对地方。
+   *
+   * **变红条件**：把 `withPrompt()` 里那句 `proto.samplePrompt` 换回任何一个字面量
+   * （例如写死 `"ping"`）——那一刻这一格立刻红，因为合成夹具里那句话不是 "ping"。
    */
-  it("占位文本与真源的 SAMPLE_PROMPT 逐字相同 —— 分叉之后 Playground 会静默丢弃用户输入", () => {
-    // 手写字面量锚（第 6 种假阳性）：两边都等于它，而不是「两边彼此相等」。
+  it("占位文本来自数据，不是内置常量 —— 喂一个真源里没有的占位文本，照样得换对地方", () => {
+    // 手写字面量锚（第 6 种假阳性）：真源今天那句话是它，而合成夹具**刻意不是**它。
     expect(SAMPLE_PROMPT, "真源那一侧变了").toBe("ping");
-    expect(PROMPT_SLOT_SAMPLE, "面板这一侧变了").toBe("ping");
-    expect(PROMPT_SLOT_SAMPLE).toBe(SAMPLE_PROMPT);
+    expect(SLOT, "夹具那句占位文本不许等于真源那句，否则这一格证不了任何事").not.toBe(SAMPLE_PROMPT);
+
+    const p = {
+      id: "x", pathTemplate: "/probe/x", samplePrompt: SLOT,
+      sampleBody: { model: "m", input: SLOT },
+    };
+    const body = withPrompt(p, "m9", "你好")!;
+    expect(body, "占位文本没从数据里取").not.toBe(null);
+    expect(body.input).toBe("你好");
+
+    // 反向：**面板不许还认得真源那个 "ping"**。喂一份「占位文本是 SLOT、
+    // 但正文里写着 ping」的样例，它应当判失败（找不到那句占位文本），
+    // 而不是自作聪明地把 ping 换掉。
+    const stale = {
+      id: "x", pathTemplate: "/probe/x", samplePrompt: SLOT,
+      sampleBody: { model: "m", input: SAMPLE_PROMPT },
+    };
+    expect(withPrompt(stale, "m9", "你好"), "面板还认得真源那个占位文本").toBe(null);
   });
 
   /**
@@ -186,7 +256,7 @@ describe("withPrompt：判据是形状，不是协议 id", () => {
       // 反向：**不许两头都有**——那样改一个不改另一个就会发出一条自相矛盾的请求。
       expect(inBody && inPath, `${p.id} 两头都有模型那一格`).toBe(false);
     }
-    const neither = { id: "x", pathTemplate: "/probe/x", sampleBody: { input: PROMPT_SLOT_SAMPLE } };
+    const neither = { id: "x", pathTemplate: "/probe/x", samplePrompt: SLOT, sampleBody: { input: SLOT } };
     expect(withPrompt(neither, "m9", "你好"), "两头都没有还照样交出了请求体").toBe(null);
   });
 });
@@ -206,8 +276,10 @@ describe("buildRequest：URL 全部由 origin + 真源路径拼出", () => {
         id, label: `${id} proto`, method: "POST",
         pathTemplate: `/probe/${id}/talk`,
         authHeader: "authorization", streamMode: "body", streamKey: "stream",
-        sampleBody: { model: "m0", input: PROMPT_SLOT_SAMPLE },
+        streamTextPath: PROBE_TEXT_PATH,
+        sampleBody: { model: "m0", input: SLOT },
       })),
+      samplePrompt: SLOT,
     };
     const list = playgroundProtocols(synthetic)!;
     const urls = list.map((p) => buildRequest(p, { model: "m9", prompt: "你好", stream: false, origin: ORIGIN })!.url);
@@ -306,9 +378,10 @@ describe("buildRequest：URL 全部由 origin + 真源路径拼出", () => {
     const odd = {
       id: "x", label: "X", method: "POST", pathTemplate: "/probe/x",
       authHeader: "authorization", streamMode: "sse-v2", streamKey: "flow",
-      sampleBody: { model: "m0", input: PROMPT_SLOT_SAMPLE },
+      streamTextPath: PROBE_TEXT_PATH,
+      sampleBody: { model: "m0", input: SLOT },
     };
-    const list = playgroundProtocols({ protocols: [odd] })!;
+    const list = playgroundProtocols({ protocols: [odd], samplePrompt: SLOT })!;
     expect(list.length, "前置条件：窄化不许因为表外形态整份判失败").toBe(1);
     expect(buildRequest(list[0], { model: "m9", prompt: "你好", stream: false, origin: ORIGIN }))
       .not.toBe(null);
@@ -410,5 +483,171 @@ describe("响应体的可读形态", () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;
     expect(prettyJson(circular), "循环引用会抛，抛出去就把整块渲染打断了").toBe(null);
+  });
+});
+
+/**
+ * **P3d Task 11：SSE 帧切分。**
+ *
+ * ⚠️⚠️ **这一段的正确性在本机的假上游下几乎不可能自己暴露。** 假上游一次 `write`
+ * 就是一块，一条 `data:` 行永远不会被切开；而在真实网络上（MTU、TLS record、
+ * 反代的缓冲刷新点）它必然会被切开。⇒ **必须有一格故意把一条 data 行拆在两个
+ * chunk 中间**，否则「按 chunk 边界切」这个写法在本仓所有测试下都是绿的。
+ */
+describe("SSE 帧切分：跨 chunk 的那条 data 行", () => {
+  /**
+   * **防住的真实故障**：把 `\n\n` 分帧写成「每个 chunk 各自 split」。
+   * 症状是生产上**偶发地丢字 / 冒出半行 JSON**，本机永远复现不了。
+   *
+   * **变红条件**：把 `sseFrames()` 改成不返回 `rest`（每次从空缓冲开始切）。
+   */
+  it("一条 data 行被拆在两个 chunk 里仍被正确重组 —— 按 chunk 边界切的话生产上会偶发丢字", () => {
+    const whole = 'data: {"say":"完整的一句话"}\n\n';
+    // 切点故意落在 JSON 中间（第 18 个字符），两半各自都不是合法的一帧。
+    const first = whole.slice(0, 18);
+    const second = whole.slice(18);
+    expect(first, "前置条件：前半段不许自己就构成一帧").not.toContain("\n\n");
+
+    // 第一次：只喂前半段 —— **一帧都不许交出来**，全部留在 `rest` 里。
+    const a = sseFrames(first);
+    expect(a.payloads, "半条 data 行被当成一帧交出去了").toEqual([]);
+    expect(a.rest).toBe(first);
+
+    // 第二次：把 `rest` 与后半段接上再喂 —— 这时候才该交出完整的那一条。
+    const b = sseFrames(a.rest + second);
+    expect(b.payloads).toEqual(['{"say":"完整的一句话"}']);
+    expect(b.rest, "凑齐之后缓冲区没被清空，下一轮会重复交出同一条").toBe("");
+  });
+
+  it("一个 chunk 里有好几帧时全部交出来，顺序不变 —— 掉一帧就是掉一段回答", () => {
+    const { payloads, rest, done } = sseFrames('data: {"i":1}\n\ndata: {"i":2}\n\ndata: {"i":3}\n\n');
+    expect(payloads).toEqual(['{"i":1}', '{"i":2}', '{"i":3}']);
+    expect(rest).toBe("");
+    expect(done, "没有 [DONE] 却报了 done").toBe(false);
+  });
+
+  it("event: 行与 [DONE] 各归各位 —— 把 event 行当成正文会让协议内部的词进对话框", () => {
+    // 真实字节：网关对 anthropic / responses 两条协议发的正是这个形状
+    //（`event: X` 与 `data: {...}` 同处一帧）。
+    const wire = 'event: content_block_delta\ndata: {"x":1}\n\ndata: [DONE]\n\n';
+    const { payloads, done } = sseFrames(wire);
+    expect(payloads, "event: 那一行不许被当成负载").toEqual(['{"x":1}']);
+    expect(done).toBe(true);
+  });
+
+  it("非字符串入参当空缓冲处理，绝不抛 —— 一次坏读不该让整条流断掉", () => {
+    expect(sseFrames(null)).toEqual({ payloads: [], rest: "", done: false });
+    expect(sseFrames(undefined)).toEqual({ payloads: [], rest: "", done: false });
+  });
+});
+
+/**
+ * **P3d Task 11：正文在哪一格 —— 这份知识来自协议目录，不在本模块里。**
+ *
+ * ⚠️ **样本全部来自真源 + 本仓协议转换模块真正吐出去的形状**，不是另编一份：
+ * 另编的那份与网关真吐的字节可能不一样，而那正是第 7 种假阳性。
+ * 「这四行确实等于网关真吐出去的字节」由 `tests/contract/stream-parity.test.ts` 的
+ * 「一条真的流式请求，按 streamTextPath 逐块取出来的正是上游那三个字」跑真 app 钉着
+ *（那边的观测点在真实 SSE 字节上）；这边验的是**取值函数本身**。
+ */
+describe("deltaText：三态（读不出来 / 不带正文 / 正文）", () => {
+  /** 四条协议各一条真实增量行。**逐条手写字面量**，不从任何地方推导。 */
+  const REAL_DELTA_LINE: Record<string, string> = {
+    openai: '{"id":"c1","choices":[{"delta":{"content":"a"}}]}',
+    anthropic: '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"a"}}',
+    responses: '{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"a"}',
+    gemini: '{"candidates":[{"content":{"role":"model","parts":[{"text":"a"}]},"index":0}],"modelVersion":"agnes-2.0-flash"}',
+  };
+
+  /**
+   * **防住的真实故障**：取错格 ⇒ **对话框永远是空的**。请求 200、字节也一块块到了，
+   * 只是每一块都取不出正文，而面板上没有任何东西会提到这件事。
+   *
+   * **变红条件**：把真源里任意一条 `streamTextPath` 改一格
+   * （例如 anthropic 那条改成 `["delta","content"]`）。
+   */
+  it("四条协议各喂一条真实的增量行，各自取出 'a' —— 取错字段的话对话框永远是空的", () => {
+    for (const p of realProtocols()) {
+      const line = REAL_DELTA_LINE[p.id];
+      expect(line, `${p.id} 没有对应的真实样本，这一格会空转`).toBeTypeOf("string");
+      expect(deltaText(p, line), `${p.id} 的正文没取出来`).toBe("a");
+    }
+    // 四条都覆盖到了（手写字面量，不是 `realProtocols().length`）。
+    expect(Object.keys(REAL_DELTA_LINE).length).toBe(4);
+  });
+
+  /**
+   * **「这一行不带正文」不是畸形。** 四条协议的流里都夹着纯事件行，
+   * 把它们数进 `malformed` 的话那个计数就等于事件数、彻底没有信息。
+   *
+   * **变红条件**：把 `deltaText()` 里最后那句 `typeof node === "string" ? node : ""`
+   * 改成返回 `null`（即把「走到了但不是字符串」也算成读不出来）。
+   */
+  it("读得出来但不带正文的事件行返回空串，不是 null —— 把它算成畸形会让那个计数彻底没有信息", () => {
+    const [openai, anthropic, responses, gemini] = realProtocols();
+    // 真实字节，逐条手写：这些行在每一条真实的流里都出现。
+    expect(deltaText(anthropic, '{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":0}}'))
+      .toBe("");
+    expect(deltaText(anthropic, '{"type":"message_stop"}')).toBe("");
+    expect(deltaText(responses, '{"type":"response.completed","response":{"id":"resp_1","status":"completed"}}'))
+      .toBe("");
+    expect(deltaText(openai, '{"id":"c1","choices":[{"delta":{"role":"assistant"}}]}')).toBe("");
+    expect(deltaText(gemini, '{"modelVersion":"agnes-2.0-flash"}')).toBe("");
+  });
+
+  /**
+   * **防住的真实故障**：一块读不出来的数据让整轮对话中断——运维正盯着的那半句话
+   * 会当场消失，而面板上只剩一个 transport 错误，看不出是「上游断了」还是
+   * 「有一块读不动」。
+   *
+   * **变红条件**：把 `deltaText()` 里那个 `try/catch` 去掉（让 `JSON.parse` 直接抛）。
+   */
+  it("畸形增量行返回 null 且绝不抛 —— 一块坏数据不该让整个对话中断，但也不许静默丢", () => {
+    const p = realProtocols()[0]!;
+    for (const bad of ["{不是 JSON", "", "undefined", '{"choices":[', "[1,2,3"]) {
+      expect(deltaText(p, bad), `畸形行 ${JSON.stringify(bad)} 没被判成读不出来`).toBe(null);
+    }
+    // 反向：**合法 JSON 但结构不对**是「不带正文」，不是「读不出来」——
+    // 这两档折叠在一起就等于「每一条正常事件行都被数成畸形」。
+    expect(deltaText(p, '{"choices":[]}')).toBe("");
+    expect(deltaText(p, "[1,2,3]")).toBe("");
+  });
+
+  /**
+   * **数组那一段只认非负整数下标。** `Number("")` 会给 0、`Number("1x")` 会给 NaN，
+   * 两者都得挡掉——否则一条写错的路径会**静默地取到第 0 项**，看起来完全正常。
+   *
+   * **变红条件**：把 `deltaText()` 里那个 `/^[0-9]+$/` 的判据换成 `Number(seg)`。
+   */
+  it("数组下标只认十进制整数 —— 裸 Number() 会把 \" 1\" / \"0x2\" / \"1e0\" 静默解析成别的下标", () => {
+    const line = '{"out":[{"say":"甲"},{"say":"乙"},{"say":"丙"}]}';
+    // 正向：正经的十进制下标照常走。
+    expect(deltaText({ streamTextPath: ["out", "0", "say"] }, line)).toBe("甲");
+    expect(deltaText({ streamTextPath: ["out", "1", "say"] }, line)).toBe("乙");
+    expect(deltaText({ streamTextPath: ["out", "9", "say"] }, line), "越界下标没被挡住").toBe("");
+
+    /**
+     * ⚠️⚠️ **这一组输入是变异实测挑出来的，不是想出来的（M13 第一版 ESCAPED）。**
+     *
+     * 第一版只喂了 `"x"`：`Number("x")` 是 `NaN`，而 `NaN < 0` 与 `NaN >= len` **都是 false**，
+     * 于是它落到 `node[NaN]` = `undefined`，**与正则挡下来的结果一模一样** ⇒
+     * 把判据换成裸 `Number(seg)` 这一格照样全绿（第 5 种假阳性：**覆盖的状态让两种实现
+     * 在数学上等价**）。
+     *
+     * 下面这四个才真的把两种实现分开——每一个在裸 `Number()` 下都会**静默取到另一项**：
+     * `" 1"`→1、`"0x2"`→2、`"1e0"`→1、`""`→0。**后果是面板从一条流里读出别人的那半句话。**
+     */
+    for (const [seg, whatNumberWouldGive] of [[" 1", "乙"], ["0x2", "丙"], ["1e0", "乙"], ["", "甲"]] as const) {
+      expect(
+        deltaText({ streamTextPath: ["out", seg, "say"] }, line),
+        `下标 ${JSON.stringify(seg)} 被静默解析成了一个真下标（裸 Number() 会给 ${whatNumberWouldGive}）`,
+      ).toBe("");
+    }
+  });
+
+  it("协议本身没有那一格时返回 null —— 「我不知道去哪儿取」不是「这一行没有正文」", () => {
+    expect(deltaText({}, '{"a":1}')).toBe(null);
+    expect(deltaText(null, '{"a":1}')).toBe(null);
+    expect(deltaText({ streamTextPath: [] }, '{"a":1}')).toBe(null);
   });
 });

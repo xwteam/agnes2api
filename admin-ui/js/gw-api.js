@@ -35,7 +35,7 @@
  * 送出去。全局约束 15：四个消费者只许有一份「怎么调这个网关」的知识。
  */
 import { GW_KEY_STORE } from "./pure/storage-keys.mjs";
-import { authHeaderValue } from "./pure/playground.mjs";
+import { authHeaderValue, sseFrames } from "./pure/playground.mjs";
 
 /** 这次请求为什么没发出去 / 没读回来。**只有档位名，永不含口令或响应体。** */
 export class GatewayError extends Error {
@@ -99,7 +99,7 @@ export function writeGatewayToken(value) {
  * ⚠️ **失败一律抛 `GatewayError`，错误里只带档位名。** 别把 `err.message` 拼成
  * 「请求 X 失败，头是 Y」那种诊断串——那正是口令漏进错误文案的路径（全局约束 11(b)）。
  */
-export async function sendToGateway(req, token, opts) {
+async function openGateway(req, token, opts) {
   const origin = opts && typeof opts.origin === "string" ? opts.origin : "";
   let target = null;
   try {
@@ -113,9 +113,8 @@ export async function sendToGateway(req, token, opts) {
   headers[String(req.headerName)] = authHeaderValue(req.headerName, token);
   headers["content-type"] = "application/json";
 
-  let res;
   try {
-    res = await fetch(target.href, {
+    return await fetch(target.href, {
       method: String(req.method),
       headers,
       body: JSON.stringify(req.body),
@@ -128,13 +127,94 @@ export async function sendToGateway(req, token, opts) {
     // 断网 / 被取消 / CORS 挡下：**这次请求没有拿到任何响应**，与上游的状态无关。
     throw new GatewayError("transport_error");
   }
-  let body = null;
+}
+
+/** 响应体当 JSON 读一遍。**读不出来是 `null`，不是空对象**（后者与「上游回了个空对象」同形）。 */
+async function readJson(res) {
   try {
-    body = await res.json();
+    return await res.json();
   } catch (e) {
-    // 非 JSON 响应（网关自己的 502 页、反代的错误页）：`null` 表示读不出来，
-    // **不是空对象**——后者在屏幕上与「上游回了一个空对象」长得一样。
-    body = null;
+    // 非 JSON 响应（网关自己的 502 页、反代的错误页）。
+    return null;
   }
-  return { status: res.status, ok: res.ok, body };
+}
+
+/**
+ * 发一次**非流式**请求，把整份响应体读回来。
+ *
+ * @param req    `buildRequest()` 交出来的那份（`url` / `method` / `headerName` / `body`）。
+ * @param token  网关口令。**调用方负责拦「还没粘口令」那一档**，见 `buildRequest` 的说明。
+ * @param opts   `{ origin, signal }`。**`origin` 不传就是一个字节都不发**（见 `openGateway`）。
+ */
+export async function sendToGateway(req, token, opts) {
+  const res = await openGateway(req, token, opts);
+  return { status: res.status, ok: res.ok, body: await readJson(res) };
+}
+
+/**
+ * 发一次**流式**请求，一块一块地把 SSE 的 `data:` 负载交给 `opts.onPayload`。
+ *
+ * ⚠️⚠️ **它与 `sendToGateway()` 共用同一个 `openGateway()`，这不是省代码、是安全要求。**
+ * 同源自查、`redirect: "error"`、`credentials: "omit"`、「口令只走请求头」这四条
+ * 全部长在那个函数里。**流式如果自己另写一次 `fetch`，这四条就各有了第二份**，
+ * 而它们里面每一条漏掉的后果都是「把发给每一个下游用户的那把中转口令送去别处」。
+ * 由 `tests/ui/gw-api.test.ts` 的
+ * 「流式与非流式走同一道同源自查 —— 两条路各写一份的话，漏掉的那份会把口令送去别处」
+ * 逐条对着钉（同一组判据在两条路上各断言一遍）。
+ * ⚠️ 顺带：本文件因此仍然**只有一处** `fetch(`，`tests/ui/api-session.test.ts` 的
+ * 「恰好三处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口」那张表
+ * 不必跟着放宽——**那张表一旦开始跟着代码放宽就不再守任何东西**。
+ *
+ * ⚠️ **不用 `EventSource`**：它设不了请求头（设计 §7.2 因此否掉了它），
+ * 而网关口令必须走头、不许进 URL（见文件头那段）。⇒ 手工 `fetch` + `ReadableStream`。
+ *
+ * ⚠️ **跨块切分由 `js/pure/playground.mjs` 的 `sseFrames()` 处理**，本函数只负责
+ * 「攒—切—把尾巴留着」这个循环。判据与理由全文在那个函数上方。
+ *
+ * ⚠️ **上游不 ok 时不进读流那条路**：网关的错误响应是 JSON（不是 SSE），
+ * 拿 SSE 解析器去读它会得到零条负载 ⇒ 面板显示一次「什么都没发生」的成功流式。
+ * 那一档改走 `readJson()`，与非流式同一条渲染路径。
+ *
+ * @param opts `{ origin, signal, onPayload }`。`onPayload` 收到的是**原始负载字符串**，
+ *   **本模块不解析它、也不知道哪条协议的正文在哪一格**——那是协议目录的知识，
+ *   由调用方拿 `deltaText()` 就着 `proto` 取（全局约束 15）。
+ * @returns 与 `sendToGateway()` 同形，外加 `streamed`：
+ *   `true` = 真的走了读流那条路；`false` = 上游没 ok，`body` 里是那份错误响应。
+ */
+export async function streamFromGateway(req, token, opts) {
+  const res = await openGateway(req, token, opts);
+  if (!res.ok || !res.body) {
+    return { status: res.status, ok: res.ok, body: await readJson(res), streamed: false };
+  }
+  const onPayload = opts && typeof opts.onPayload === "function" ? opts.onPayload : () => {};
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const step = await reader.read();
+      if (step.done) break;
+      // **`{ stream: true }`**：一个多字节字符同样可能被拆在两个 chunk 之间。
+      // 不带这个标志的话，中文/emoji 会在切点上变成替换符（U+FFFD），
+      // 而那在本机的 ASCII 假上游下**一个字都看不出来**。
+      buf += decoder.decode(step.value, { stream: true });
+      const found = sseFrames(buf);
+      buf = found.rest;
+      for (const p of found.payloads) onPayload(p);
+      if (found.done) break;
+    }
+    // 流可能不以完整的空行结尾（连接中断、反代截断）。**把解码器里滞留的字节 flush 出来，
+    // 再把剩下的当成最后一帧处理**，否则最后一个事件会被静默丢弃
+    //（网关读上游那一侧 `src/core/protocol/sse.ts` 做的是同一件事，同一条理由）。
+    buf += decoder.decode();
+    for (const p of sseFrames(`${buf}\n\n`).payloads) onPayload(p);
+  } catch (e) {
+    // 读到一半断了。**已经交出去的那几块留着**——运维看到的半句话是真的发生过的，
+    // 抹掉它比留着更不诚实；调用方据这个错误在那一轮后面补一句「这条流没读完」。
+    throw new GatewayError("stream_error");
+  } finally {
+    // 释放上游连接。已经读完时它是个空操作。
+    reader.cancel().catch(() => {});
+  }
+  return { status: res.status, ok: true, body: null, streamed: true };
 }

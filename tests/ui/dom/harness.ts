@@ -41,7 +41,21 @@ type SectionName = (typeof NAV_SECTIONS)[number];
  */
 export const PANEL_ORIGIN = "https://panel-probe.invalid";
 
-type Resp = { status: number; body: unknown };
+/**
+ * `raw`：**不走 `JSON.stringify`，原样当响应体**（P3d Task 11 加的）。
+ *
+ * 存在的理由：流式那条路读的是 `text/event-stream`，而 `JSON.stringify` 出来的
+ * 永远是一段 JSON —— 没有它，**Playground 的流式那一档在 DOM 层一格都测不到**。
+ *
+ * ⚠️ **这不是「替身比真实更强」**（第 9 种假阳性）：底下返回的仍然是**真的**
+ * `Response` 对象，`.body` 是**真的** `ReadableStream`。这一格只决定塞进去的字节
+ * 是什么，不新增任何真实 `fetch` 没有的能力。
+ * ⚠️ **但它有一条真实差异，如实登记**：`new Response(string)` 会把整段字节
+ * **一次性**交给读者，所以「一条 data 行被拆在两个 chunk 里」这件事**在这里不可观测**。
+ * 那条性质由 `tests/ui/playground.test.ts` 的
+ * 「一条 data 行被拆在两个 chunk 里仍被正确重组」在纯函数层钉着。
+ */
+type Resp = { status: number; body: unknown; raw?: string; contentType?: string };
 
 export interface Harness {
   dom: FakeDom;
@@ -66,7 +80,7 @@ export interface Harness {
    * 返回非 Promise 的老写法**行为逐字不变**（`await` 一个非 Promise 只多一个微任务，
    * 而这里本来就在 async 函数里）。
    */
-  respond(fn: (url: string, method: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }>): void;
+  respond(fn: (url: string, method: string) => Resp | Promise<Resp>): void;
   gate: FakeElement;
   shell: FakeElement;
   form: FakeElement;
@@ -106,12 +120,13 @@ export async function bootPanel(opts: {
   /** 预置的 localStorage 内容（模拟"上次登录留下的会话"）。 */
   store?: Record<string, string>;
   now?: number;
-  respond?: (url: string, method: string) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }>;
+  respond?: (url: string, method: string) => Resp | Promise<Resp>;
 } = {}): Promise<Harness> {
   const { dom } = buildDom();
   const store: Record<string, string> = { ...(opts.store ?? {}) };
   const calls: Harness["calls"] = [];
-  let responder = opts.respond ?? (() => ({ status: 200, body: {} }));
+  let responder: (url: string, method: string) => Resp | Promise<Resp> =
+    opts.respond ?? (() => ({ status: 200, body: {} }));
 
   vi.stubGlobal("localStorage", {
     getItem: (k: string) => (k in store ? store[k]! : null),
@@ -138,9 +153,10 @@ export async function bootPanel(opts: {
     const r = pending !== null && typeof pending === "object" && typeof (pending as Promise<Resp>).then === "function"
       ? await pending
       : pending as Resp;
-    return new Response(JSON.stringify(r.body), {
+    // `raw` 那一档原样送字节（流式用），其余仍然走 JSON —— 既有用例逐字不受影响。
+    return new Response(r.raw !== undefined ? r.raw : JSON.stringify(r.body), {
       status: r.status,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": r.contentType ?? (r.raw !== undefined ? "text/event-stream" : "application/json") },
     });
   });
   vi.stubGlobal("navigator", { clipboard: { writeText: async () => {} } });
