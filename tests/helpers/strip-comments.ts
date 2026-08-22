@@ -21,11 +21,42 @@
  *（有的是上面那种会把字符串里的 `/*` 当块注释的正则版），
  * 而「哪一份是对的」只有踩过的人知道。**新的调用点一律 import 这一份，
  * 不许再抄第六份**——两份不同实现的扫描器给出不同答案时，绿的那一份会赢。
- * 今天仍然各持一份本地副本的那几处**没有被本任务一并收编**（改动面远超本任务），
- * 如实登记在这里：`tests/unit/i18n-dict.test.ts`「板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里」
- * 与 `tests/ui/dom/fake-dom-parity.test.ts`「admin-ui/js/ 下的发货代码不许出现 fake-dom.ts 独有的成员名」
- * 里的本地副本仍是正则版，它们扫的是 `admin-ui/`（那里今天没有含 `/*` 的字符串），
- * 不是这条坑的射程内——**但这是「今天不在射程内」，不是「它们是对的」。**
+ *
+ * ── 五份副本今天各自在哪（逐条实测，别再写成一句概括）────────────────────────
+ *
+ * **已经收编成这一份（4 个消费者）**：
+ * · `tests/unit/admin/probe-guard.test.ts`「两条端点的 handler 都从 probe-guard.js 取护栏 —— 各写一套就是两套判据」
+ * · `tests/ui/keys-write.test.ts`「护栏产出的每一条 reason，验活与通道测试两个前端都认得 —— Task 8 就是「后端加了两条、前端没跟上」的那个案例」
+ * · `tests/unit/pool-cache.test.ts`「只许被写、不许被读」那一格（`lastUsedAt` 的读写扫描）
+ * · `tests/unit/source-guards.test.ts`「扫描到的使用点恰好等于手写的豁免清单」
+ *   与同文件「调用点恰好等于手写的豁免清单——绕过注入 Logger 的事件永远进不了面板」
+ *
+ * ⚠️⚠️ **后两个是 P3d Task 9 复评补收编的，而且它们当时各有一个已被实测的活洞
+ *（既存缺陷，不是本轮引入的）**：
+ * · **零 IO 门禁**（全局约束 2 的执行机构，扫 `src/core`）：
+ *   `src/core/admin/config-validate.ts` 第 368 行是一句 `//` 注释，里面写着 `/v1/*`
+ *   ——**块注释正则先跑，`//` 挡不住它**，那个 `/*` 一路吞到第 423 行
+ *   （**56 行、2053 字节真代码**）。金丝雀实测：往被吞区间里插一句
+ *   `const IO_CANARY = Date.now();` ⇒ **正则版 24/24 全绿**，换成这一份后当场红、
+ *   且报的就是 `src/core/admin/config-validate.ts :: Date.now ×1`。
+ * · **console 门禁**（扫 `src/adapters` / `src/http` / `src/ports` / `src/ui`）：
+ *   `src/http/admin/router.ts` 第 258 行是**真代码**
+ *   `admin.use("/admin/api/*", adminAuth(...))`，那个 `/*` 吞到第 429 行
+ *   （**172 行、7852 字节**，其中含 `createProbeGuard()` 与整张 `/admin/api/*` 路由表）。
+ *   金丝雀实测：往被吞区间里插一句 `console.log(...)` ⇒ **正则版全绿**，
+ *   换成这一份后当场红、且报的就是 `src/http/admin/router.ts :: console ×1`。
+ *   ⚠️ 这正是 `src/http/admin/router.ts` 自己那段注释里记着的、第 12 道门禁
+ *   `commentBlocks()` 当年踩过的**同一个坑在另一处复发**。
+ * · **同一次测量顺带证伪了一句**：复评把零 IO 那个洞归给
+ *   `src/core/admin/event-ring.ts`。**实测不是它**——逐文件比对两种实现的输出，
+ *   `src/core` 下今天只有 `config-validate.ts` 一处分叉（`event-ring.ts` 两种实现
+ *   输出等长）。洞是真的，文件说错了。
+ *
+ * **仍然各持一份正则副本、本轮未收编**（改动面超出本任务）：
+ * · `tests/unit/i18n-dict.test.ts`「板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里」
+ * · `tests/ui/dom/fake-dom-parity.test.ts`「admin-ui/js/ 下的发货代码不许出现 fake-dom.ts 独有的成员名」
+ * 两者扫的都是 `admin-ui/`，那里今天没有含 `/*` 的字符串
+ * ——**但这是「今天不在射程内」，不是「它们是对的」。**
  */
 export function stripComments(src: string): string {
   let out = "";

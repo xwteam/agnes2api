@@ -395,6 +395,92 @@ describe("在飞态与并发", () => {
       "那颗按钮永远停在「上一次探测还在飞」—— 那一次已经被作废，永远不会回来把它放开",
     ).toBe(false);
   });
+
+  /**
+   * ⚠️⚠️ **复评 L4：一条已经**回来了**的结果同样不许跨越「离开这个板块」活下来。**
+   *
+   * 「验活通过」这句话**没有任何时间上下文**——它在面板上长得和「这把 key 现在是
+   * 好的」一模一样。切走十分钟再切回来还挂着它，运维读到的就是一个十分钟前的结论
+   * 当成当前状态，而这十分钟里这把 key 完全可能已经被上游吊销。
+   * 这是订正 F8「结果只就地显示、不落盘」那条纪律的另一半。
+   *
+   * ⚠️ **`lastAt` 刻意不清**：后端那道最小间隔闸不会因为切了个板块就重置，
+   * 所以这一格用**冻住的时钟**切回来，断言按钮仍然因为「刚探过」而灰着——
+   * 一并把「别顺手把冷却也清了」钉住。
+   *
+   * **变红条件**：把 `abortVerifies()` 里那句 `s.code = null;` 删掉。
+   */
+  it("已经回来的验活结果不许跨越一次「切走再切回」—— 那句话没有时间上下文，十分钟前的结论会被读成当前状态", async () => {
+    const items = [keyView({ id: "a", seq: 1 })];
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      if (url === "/admin/api/keys/a/verify") {
+        return { status: 200, body: { ok: true, status: 200, latencyMs: 12, reason: null } };
+      }
+      return { status: 200, body: {} };
+    });
+    let sec = h.section("keys");
+
+    verifyButton(sec, "a").click();
+    await settle(12);
+    expect(resultKeys(sec, "a")[0], "前置条件：这一次验活得先真的成功并显示出来").toBe("keys.verify.ok");
+
+    h.dom.document.querySelectorAll(".nav-item")
+      .find((b) => b.getAttribute("data-section") === "overview")!.click();
+    await settle(12);
+    h.dom.document.querySelectorAll(".nav-item")
+      .find((b) => b.getAttribute("data-section") === "keys")!.click();
+    await settle(12);
+    sec = h.section("keys");
+
+    expect(
+      resultKeys(sec, "a"),
+      "切回来还挂着上一次的「验活通过」—— 那句话没有时间上下文，会被读成当前状态",
+    ).toEqual([]);
+    // 时钟没动过 ⇒ 后端那道最小间隔仍然生效，按钮必须还是灰的。
+    expect(
+      verifyButton(sec, "a").disabled,
+      "顺手把 lastAt 也清了 —— 后端那道闸不会因为切了个板块就重置，运维按下去只会换回一句 429",
+    ).toBe(true);
+  });
+
+  /**
+   * ⚠️ **复评 L3：`onHide()` 之后不许留下孤儿定时器，也不许对一个不可见的板块 `render()`。**
+   *
+   * `verifyOne()` 的 `.finally()` 里装的那个 3 秒重渲定时器，**只在这一次没被作废时
+   * 才该装**。上一版是无条件装的 ⇒ 切走之后那次在飞的验活回来时，
+   * 会给一个已经不可见的板块留一个定时器 + 跑一次 `render()`——
+   * 而 `stopTimers()` 的注释逐字写着这正是它要消灭的东西。
+   *
+   * **变红条件**：把 `.finally()` 开头那句 `if (s.ctl !== ctl) return;` 去掉，
+   * 让装定时器与 `render()` 变回无条件。
+   */
+  it("切走之后回来的那次验活不留孤儿定时器，也不对不可见的板块重渲一次", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const items = [keyView({ id: "a", seq: 1 })];
+    const d = deferred();
+    const h = await openKeys((url) => {
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      if (url === "/admin/api/keys/a/verify") return d.promise;
+      return { status: 200, body: {} };
+    });
+
+    verifyButton(h.section("keys"), "a").click();
+    await settle(12);
+    h.dom.document.querySelectorAll(".nav-item")
+      .find((b) => b.getAttribute("data-section") === "overview")!.click();
+    await settle(12);
+
+    const timersAfterHide = vi.getTimerCount();
+    d.release({ status: 200, body: { ok: true, status: 200, latencyMs: 12, reason: null } });
+    await settle(12);
+
+    expect(
+      vi.getTimerCount(),
+      "被作废的那次验活回来之后又装了一个定时器 —— 板块已经切走了，没人要看这张表",
+    ).toBe(timersAfterHide);
+    vi.useRealTimers();
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -472,8 +558,17 @@ describe("它是只读探针", () => {
    *
    * **变红条件**：把 `verifyControl()` 里那个结果节点改成
    * `el("span", { title: JSON.stringify(resp) }, …)` 这类写法。
+   *
+   * ⚠️ **覆盖边界，明写（复评 L5）：这一格只喂了 200 那条路径。**
+   * 非 2xx 走的是 `ApiError`，而 `ApiError.body` 是**整份被解析过的错误响应体**
+   *（`js/api.js` 的 `json()`）——上游 401 的错误体恰恰是各家 API 最爱回显 key 片段
+   * 的地方。今天那条路径**结构上安全**：后端从不把上游正文放进错误体
+   *（Task 8 的约束 2），而前端 `catch` 分支只把 `e` 交给 `verifyTransportCode()`，
+   * 它只读 `e.body.reason` 与 `e.status`、只回一个 code。
+   * **但这是「结构上安全」，不是「有一格诱饵盯着」** —— 有人往那条分支里加一句
+   * `toast(e.message)` 的话，这一格不会红。
    */
-  it("验活之后这一行的文本与 title 里不出现响应体里的任何值 —— 结果节点只承载一个 i18n key", async () => {
+  it("验活之后这一行的文本与 title 里不出现响应体里的任何值 —— 结果节点只承载一个 i18n key（只覆盖 200 那条路径，见上）", async () => {
     const CANARY = "sk-live-LEAKCANARY-0000";
     const LATENCY = 424_242_424;
     const h = await openKeys((url) => {

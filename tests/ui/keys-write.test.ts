@@ -791,7 +791,23 @@ describe("verifyResultLabelKey：code → 文案 key（十二条逐条对，外�
  */
 describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射表", () => {
   /**
-   * 从一份 TS 源码里把所有 `reason:` 位置读出来。
+   * 从一份 TS 源码里把**写成 `reason:` 这一种形态**的位置读出来。
+   *
+   * ⚠️⚠️⚠️ **它读的不是「所有 reason 位置」，只是「`reason:` 后面紧跟着东西」这一种
+   * 书写形态。这句话是 P3d Task 9 复评订正的——上一版的文档写的是「把所有 `reason:`
+   * 位置读出来」，而那句话在两种零成本的合法改法下当场为假**（复评用本任务自己那套
+   * 方法实测：条件恒假、行为逐字节不变，只换书写形态）：
+   * · **shorthand**：`const reason = "..."; return c.json({ …, reason })`
+   *   ⇒ **97/97 全绿**（既不进 `literals` 也不进 `dynamic`，静默通过）；
+   * · **引号键**：`return c.json({ …, "reason": "..." })` ⇒ **97/97 全绿**。
+   * 而 `handlers/verify.ts` 的产出全都在 `c.json({…})` 里，这两种都是**顺手就能写出来**
+   * 的形态 ⇒ **这一格专门为之而生的那个缺陷可以原封不动重新长回来。**
+   *
+   * ⇒ **今天的分工是两条，缺一不可**：
+   * ① 这个函数只认 `reason:` + 双引号字面量 / 三元 / 联合类型这一族；
+   * ② 别的书写形态由下面 `FORBIDDEN_REASON_FORMS` **反向扫描**挡在门外
+   *   （「不许出现」比「读得懂」便宜得多，而且两条加起来才是闭合的）。
+   * **改这个函数之前先看那张表——单独加强任何一条都会留下另一条的缺口。**
    *
    * · `literals`：那个位置上出现过的字符串字面量（含联合类型里的多个）；
    * · `dynamic` ：那个位置上**不是**字面量、也不是 `null` 的表达式原文
@@ -802,6 +818,10 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
    * `{ ok: false, reason: "network_error" }`，不去注释的话扫描会把一段说明
    * 当成一条真实的产出。去注释用的是 `tests/helpers/strip-comments.ts` 那**一份**
    * 逐字符实现（正则版会把字符串里的 `/*` 当块注释开头，本仓踩过）。
+   *
+   * **还有一条边界，方向是安全的那一侧**（复评 L6）：去注释之后**字符串字面量还在**，
+   * 所以一句 `const msg = "reason: xxx";` 会被当成一处产出而误报。
+   * 那是**假红不是假绿**——有人来看一眼就能判掉，代价远小于为它放宽判据。
    */
   function reasonSites(src: string): { literals: string[]; dynamic: string[] } {
     const literals = new Set<string>();
@@ -816,6 +836,31 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
     return { literals: [...literals].sort(), dynamic };
   }
 
+  /**
+   * **`reasonSites()` 读不懂的那几种书写形态，一律不许出现在这两个文件里**（复评 HIGH）。
+   *
+   * 这是上面那个函数的另一半：它读不懂的东西，**不能靠「今天没人这么写」放过去**——
+   * 「今天没人这么写」正是这一格存在的全部理由所要防的那句话。
+   * 每一条都在下面那一格里**各种一次探针**，证明它真的抓得住（正向），
+   * 并且在真文件上是零命中（反向）。
+   */
+  const FORBIDDEN_REASON_FORMS: ReadonlyArray<{ re: RegExp; label: string; why: string }> = [
+    {
+      // `{ ok, reason }` / `{\n  reason,\n}` 都算。`\s` 覆盖换行。
+      re: /[,{]\s*reason\s*[,}]/,
+      label: "shorthand（`{ …, reason }`）",
+      why: "属性名与变量同名时可以省掉 `reason:`，扫描器一个字都读不到"
+        + "——既不进 literals 也不进 dynamic，静默通过。写成 `reason: reason` 即可。",
+    },
+    {
+      // `"reason":` / `'reason':` / `["reason"]:` 与任何把它写成字符串的形态。
+      re: /["'`]reason["'`]/,
+      label: "引号键（`\"reason\":` / `[\"reason\"]:`）",
+      why: "JS 允许把属性名写成字符串字面量，`\\breason:` 那条判据同样看不见它。"
+        + "边界：一句恰好含 `\"reason\"` 的普通字符串也会命中 —— 假红不是假绿，看一眼就能判掉。",
+    },
+  ];
+
   const GUARD_FILE = "src/http/admin/probe-guard.ts";
   const VERIFY_FILE = "src/http/admin/handlers/verify.ts";
 
@@ -824,8 +869,13 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
    * 本仓在 P3d Task 8 上连续三次栽在「探针探在了会过的那一侧」，
    * 所以这一格先证明扫描器在**真文件**上给出的就是手写的那两个集合，
    * 再用一份手写探针证明它**不是**被写死成两条。
+   *
+   * ⚠️⚠️ **复评 HIGH 之后这一格多了后半段：`reasonSites()` 读不懂的两种书写形态
+   * 必须被反向扫描挡住，而且那两条判据自己也要各种一次探针。**
+   * 「我读得懂的部分对得上」与「我读不懂的部分不存在」是两件事，
+   * 上一版只做了前一件，于是那条边界连散文都没写。
    */
-  it("扫描器先在真文件上对得上，再证明它不是写死的 —— 探针不许探在会过的那一侧", () => {
+  it("扫描器先在真文件上对得上；它读不懂的两种书写形态一律不许出现 —— 探针不许探在会过的那一侧", () => {
     const guard = reasonSites(readFileSync(GUARD_FILE, "utf8"));
     expect(guard.literals, `${GUARD_FILE} 里的顶层 reason 变了`).toEqual(["probe_cooldown", "probe_in_flight"]);
     expect(guard.dynamic, `${GUARD_FILE} 里出现了非字面量的 reason，这道扫描在那一行上是瞎的`).toEqual([]);
@@ -853,6 +903,35 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
     expect(probe.dynamic, "扫描器没把动态位置报出来").toEqual(["computeIt()"]);
     expect(probe.literals.includes("ghost"), "注释里的 reason 被当成真实产出了").toBe(false);
     expect(probe.literals.includes("phantom"), "行注释里的 reason 被当成真实产出了").toBe(false);
+
+    // ── 后半段：反向扫描 —— 扫描器读不懂的两种书写形态一律不许出现 ────────────
+    //
+    // ⚠️ **每一条先证明它抓得住（正向探针），再断言真文件上零命中。**
+    // 只做后半句的话，一条永远匹配不上的死正则会给出一模一样的绿——
+    // 那正是本仓「探针探在了会过的那一侧」栽过三次的形态。
+    const POSITIVE_PROBES: ReadonlyArray<readonly [string, string]> = [
+      ["shorthand（`{ …, reason }`）", 'const reason = "x";\nreturn c.json({ ok: false, status: null, reason });'],
+      ["引号键（`\"reason\":` / `[\"reason\"]:`）", 'return c.json({ ok: false, "reason": "x" });'],
+      ["引号键（`\"reason\":` / `[\"reason\"]:`）", 'return c.json({ ok: false, ["reason"]: "x" });'],
+    ];
+    for (const [label, bad] of POSITIVE_PROBES) {
+      const form = FORBIDDEN_REASON_FORMS.find((f) => f.label === label)!;
+      expect(form.re.test(stripComments(bad)), `这条判据连它自己点名的写法都抓不住：${label}`).toBe(true);
+      // 这两种形态对 `reasonSites()` 是**完全隐身**的 —— 这就是它们必须被反向扫描
+      // 挡住的全部理由（复评实测：只换书写形态，97/97 全绿）。
+      const blind = reasonSites(bad);
+      expect(
+        blind.literals.length === 0 && blind.dynamic.length === 0,
+        `${label} 居然被 reasonSites 读到了，那这条反向判据的理由就不成立了，回来重写这一段`,
+      ).toBe(true);
+    }
+
+    for (const file of [GUARD_FILE, VERIFY_FILE]) {
+      const code = stripComments(readFileSync(file, "utf8"));
+      for (const { re, label, why } of FORBIDDEN_REASON_FORMS) {
+        expect(re.test(code), `${file} 里出现了 ${label} —— ${why}`).toBe(false);
+      }
+    }
   });
 
   /**

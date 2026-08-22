@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { stripComments } from "../helpers/strip-comments.js";
 import {
   KeyPoolRepo, FIELD_ROLE,
   DEFAULT_POOL_CACHE_TTL_MS, DEFAULT_POOL_TOUCH_INTERVAL_MS,
@@ -482,8 +483,6 @@ describe("前提：lastUsedAt 不参与调度（写消除的合法性全靠它�
   ];
 
   it("src/core 里除手写清单上那几个文件外，`lastUsedAt` 只许被写、不许被读", () => {
-    const stripComments = (src: string) =>
-      src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
     const walk = (dir: string): string[] =>
       readdirSync(dir).flatMap((n) => {
         const p = join(dir, n);

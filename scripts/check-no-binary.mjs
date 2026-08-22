@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // 评审 F3 新增的第 11 道门禁：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/` 下
-// 不许存在被 git 判定为二进制的跟踪文件。
+// 不许存在被 git 判定为二进制的文件。
+// ⚠️ 范围含**未跟踪**的新文件（P3d Task 9 复评补，理由见下面 `--others` 那一段）。
 //
 // 起因：`storage-file.ts` 的一个保留键常量第一版写成了字面 NUL 字节而不是转义
 // 写法，git 因此把整份文件判成二进制——后果不是风格问题：
@@ -54,18 +55,38 @@ const BINARY_EOL = "-text";
  *     `i/lf    w/lf    attr/                 \t<path>`
  * `-z` 之下路径不做引号转义（带空格/非 ASCII 的路径原样给出），记录之间以 NUL 分隔。
  * 路径从第一个 TAB 之后开始——前三列（i/ w/ attr/）本身不含 TAB。
+ *
+ * ⚠️ **索引列写成 `(\S*)`（可为空），不是 `(\S+)`**：`--others` 列出的**未跟踪**
+ * 文件没有索引条目，git 那一列吐的是空的 `i/`（实测：`i/      w/-text attr/…`）。
+ * 写成 `(\S+)` 的话这条记录解析不了，会掉进下面 fail-closed 那一支，
+ * 报一句与真实原因毫无关系的「输出解析不了」——那不是护栏，是噪音。
  */
 function parseEolRecord(record) {
   const tab = record.indexOf("\t");
   if (tab < 0) return null;
   const head = record.slice(0, tab);
   const path = record.slice(tab + 1);
-  const m = /^i\/(\S+)\s+w\/(\S*)\s+attr\//.exec(head);
+  const m = /^i\/(\S*)\s+w\/(\S*)\s+attr\//.exec(head);
   if (!m) return null;
   return { path, index: m[1], worktree: m[2] };
 }
 
-const out = execFileSync("git", ["ls-files", "--eol", "-z"], {
+/**
+ * ⚠️⚠️ **`--others --exclude-standard` 是 P3d Task 9 复评补的，别把它删回去。**
+ *
+ * 原来只列 `--cached`（跟踪文件）⇒ **一个新增文件在 `git add` 之前完全不在扫描
+ * 范围内**。这不是理论风险，是本仓实测踩过的一次：P3d Task 9 新增的
+ * `tests/ui/dom/keys-verify.test.ts` 里一个字符串分隔符落盘成了字面 NUL 字节，
+ * 作者在 `git add` **之前**跑这道门禁，它报的是「288 个文件全部是文本 ✅」——
+ * **不是「没问题」，是「没看」**，直到 `git add` 之后才红。
+ * 它的失效模式恰恰是这道门禁存在的全部理由：**整份文件从评审包 diff 里消失，
+ * 而十二道门禁照样全绿。**
+ *
+ * `--exclude-standard` 让 `.gitignore` 继续生效（`node_modules/` / `dist/` /
+ * `.superpowers/` 不会被拖进来）；`--cached` 必须显式写出来——`--others` 一旦出现，
+ * git 就不再默认列出索引里的那些。
+ */
+const out = execFileSync("git", ["ls-files", "--eol", "-z", "--cached", "--others", "--exclude-standard"], {
   encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
 });
 const records = out.split("\0").filter(Boolean).map(parseEolRecord);
@@ -122,7 +143,7 @@ if (inScope.length > 0) {
 }
 
 if (binaryInScope.length > 0 || noDiffInScope.length > 0) {
-  console.error("[check-no-binary] ❌ 以下跟踪文件对文本工具链是隐形的，不允许出现在这些目录下：");
+  console.error("[check-no-binary] ❌ 以下文件（跟踪的 + 未跟踪但不被 .gitignore 排除的）对文本工具链是隐形的，不允许出现在这些目录下：");
   for (const r of binaryInScope) {
     console.error(`  ${r.path}  —— git 判定为二进制 (i/${r.index} w/${r.worktree})`);
   }
@@ -145,6 +166,6 @@ if (binaryInScope.length > 0 || noDiffInScope.length > 0) {
 }
 
 console.log(
-  `[check-no-binary] ✅ ${inScope.length} 个跟踪文件（${SCOPE_PREFIXES.join(", ")}），`
+  `[check-no-binary] ✅ ${inScope.length} 个文件（${SCOPE_PREFIXES.join(", ")}，含未跟踪的新文件），`
   + "全部是文本、且都没有被 `-diff` 从评审包 diff 里屏蔽",
 );

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { stripComments } from "../helpers/strip-comments.js";
 
 /**
  * 源码层门禁：**两条硬约束的自动化部分**。
@@ -32,16 +33,6 @@ import { join } from "node:path";
  * ⚠️ 期望值一律手写字面量，绝不从被测对象 grep 出来再回填。回填出来的期望值恒等于
  * 实际值，那条断言永远绿——这是本项目登记在案的第 6 种假阳性形态。
  */
-
-/**
- * 去掉注释再扫。不去的话注释里提一句 `Date.now()` 就误报，而这个仓库的注释**极其**
- * 爱复述代码（`refreshable.ts` 开头就写着「不用 Date.now()/setTimeout」）。
- * 行注释的正则要求 `//` 前面不是冒号，免得把 `https://…` 之后的半行代码一起吃掉。
- * 与 `pool-cache.test.ts` 里那条 `lastUsedAt` 扫描用的是同一套处理。
- */
-function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-}
 
 /**
  * 把 `globalThis.` / `globalThis?.` / `self.` / `window.` 这层前缀**先剥掉再扫**。

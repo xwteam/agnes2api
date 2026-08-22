@@ -115,11 +115,15 @@ let knobs = { ttl: null, touch: null, edge: null };
  * 验活的行内状态，**按 key id 索引**（P3d Task 9）。
  * 每一项：`{ inFlight, lastAt, code, ctl, timer }`。
  *
- * ⚠️⚠️ **它必须活在 `render()` 之外，这不是风格问题。** `render()` 的第一句
- * 有效动作是 `host.textContent = ""` —— **每次都重建整张表**，而 `load()` → `render()`
+ * ⚠️⚠️ **它必须活在 `render()` 之外，这不是风格问题。** `render()` 中间那句
+ * `host.textContent = ""` **把整张表清掉重建**，而 `load()` → `render()`
  * 由自动刷新定时器、搜索防抖、每一次行内/批量操作触发。状态若挂在按钮上，
  * 「这一行在飞时按钮变灰」与「结果就地显示」**都会被任何一次并发 `load()` 抹掉**。
  * ⇒ `actionsCell()` 每次重建时都从这张表**重放**一遍。
+ * ⚠️ **这句话上一版写的是「`render()` 的第一句有效动作是 `host.textContent = ""`」
+ * ——复评实测为假**：第一句是 `syncCounts(shown)`，清表那句排在它后面好几条
+ *（中间还有 `syncBulkBar()`、两条 note 文案、分页控件复位）。**结论不受影响**
+ *（那句清表照样每次都跑），但「第一句」是一个没人核过、也不必要的强断言。
  * 由 `tests/ui/dom/keys-verify.test.ts` 的
  * 「验活在飞时打断一次 load()：这一行的按钮仍然禁用、行内结果仍然在」那一格钉着。
  *
@@ -212,9 +216,14 @@ function noteCell(v) {
  * 状态从 `verifyState` 重放**（见那张 Map 的说明）。
  *
  * ⚠️ **`disabled` 落在真的 `<button>` 上，不是落在包裹的 `<span>` / `<td>` 上。**
- * `tests/helpers/fake-dom.ts` 把 `.disabled` 挂在**每一个**元素实例上
- *（那份夹具的 `KNOWN_BLIND_SPOTS` 第三条如实登记了这一点），所以把它设在
- * 一个 `<span>` 上在全套 DOM 用例里照样绿、**在浏览器里毫无作用**。
+ * `tests/helpers/fake-dom.ts` 把 `.disabled` 挂在**每一个**元素实例上，
+ * 这条盲区登记在 `tests/ui/dom/fake-dom-parity.test.ts`
+ * 「盲区清单不是空的——如实登记按名字扫描拦不住的那几类，别让人以为门禁绿了就等于处处一致」
+ * 那一格的 `KNOWN_BLIND_SPOTS` 第三条
+ *（⚠️ **上一版把这个标识符指到了 `fake-dom.ts`，那个文件里根本没有它**——
+ * 复评实测第 8 道门禁在这种位置上**不校验标识符锚**，把它换成一个不存在的名字
+ * 照样绿，所以这一条只能靠人看）。把 `disabled` 设在一个 `<span>` 上，
+ * 在全套 DOM 用例里照样绿、**在浏览器里毫无作用**。
  *
  * ⚠️ **时间取 `Date.now()`，不是 `actionsCell` 那个 `now` 参数。** 那个 `now` 是
  * `shown.generatedAt` —— **服务端**在上一次列表响应里给的时刻，它不随本地时间
@@ -300,7 +309,13 @@ function verifyOne(view) {
       s.code = verifyTransportCode(e);
     })
     .finally(() => {
-      if (s.ctl === ctl) { s.ctl = null; s.inFlight = false; }
+      // ⚠️ **收尾整段都在这个 `if` 里面**：`s.ctl !== ctl` 只有一种成因——
+      // `onHide()` 已经把这一次作废掉了。此时装定时器与重渲**都是错的**：
+      // 那会给一个已经切走的板块留一个 3 秒的孤儿定时器 + 一次不可见的 `render()`，
+      // 而 `stopTimers()` 的注释逐字写着这正是它要消灭的东西（复评 L3）。
+      if (s.ctl !== ctl) return;
+      s.ctl = null;
+      s.inFlight = false;
       // 冷却到点之后要有一次重渲，否则那颗按钮会一直显示成「刚探过」——
       // 自动刷新默认是关着的，没有别的东西会把它重画。
       if (s.timer !== null) clearTimeout(s.timer);
@@ -523,17 +538,27 @@ function stopTimers() {
 }
 
 /**
- * 作废所有在飞的验活。**与 `abort`（列表加载）是两条独立的闸**，`onHide()` 里
- * 两条都要放——少放哪一条，切回来时都会被上一次留下的东西盖住。
+ * 作废所有在飞的验活，**并把已经显示出来的结果一起清掉**。
+ * **与 `abort`（列表加载）是两条独立的闸**，`onHide()` 里两条都要放——
+ * 少放哪一条，切回来时都会被上一次留下的东西盖住。
  *
  * `inFlight` 在这里一并归零：不归零的话那颗按钮会永远停在「上一次探测还在飞」，
  * 而那一次已经被作废、永远不会回来把它放开（`.finally()` 里的
- * `if (s.ctl === ctl)` 此时已经不成立）。
+ * `if (s.ctl !== ctl) return;` 此时已经生效）。
+ *
+ * ⚠️⚠️ **`code` 也必须清（复评 L4）。** 那句「验活通过」**没有任何时间上下文**——
+ * 面板上它长得和「这把 key 现在是好的」一模一样。不清的话，切走十分钟再切回来
+ * 仍然显示着上一次的结论，而这十分钟里这把 key 完全可能已经被上游吊销。
+ * **结果只在这一行、这一次会话里就地显示**（订正 F8：它不落盘、不进 `stats`），
+ * 那条纪律的另一半就是**它也不许跨越一次「离开这个板块」活下来**。
+ * ⚠️ **`lastAt` 刻意不清**：后端那道最小间隔闸不会因为你切了个板块就重置，
+ * 清掉它只会让运维按下去换回一句 429。
  */
 function abortVerifies() {
   for (const s of verifyState.values()) {
     if (s.ctl !== null) { s.ctl.abort(); s.ctl = null; }
     s.inFlight = false;
+    s.code = null;
   }
 }
 
