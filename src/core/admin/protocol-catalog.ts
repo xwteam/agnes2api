@@ -18,7 +18,7 @@
  * `src/core/protocol/gemini.ts:73-81` 对全部 4 个模型一律声明
  * `supportedGenerationMethods: ["generateContent","streamGenerateContent"]`，
  * **包括那个视频模型**——而视频真正的路径是 `POST /v1/videos` + `GET /v1/videos/:id`
- * 的两段式（`src/http/routes/media.ts:28-42`）。本目录按**真实可用性**填，
+ * 的两段式（见下面的 `MEDIA_ENDPOINTS`）。本目录按**真实可用性**填，
  * 那条对外契约的不实登记给 P4（同一期里既改契约又建面板，出问题时分不清是哪一半）。
  * 别把面板与 `/v1beta/models` 的差异当成本目录算错了。
  */
@@ -63,13 +63,16 @@ export interface ProtocolEntry {
    * 不是比对本文件自己的两个字段**（那是同义反复）。
    *
    * ⚠️ **边界，明写（评审 R3-m3）**：这个字段**只覆盖四条对话协议**。
-   * 媒体那三条的上游路径（`/images/generations` / `/videos` / `/videos/{id}`，
-   * 见 `src/http/routes/media.ts:28-42`）**仍然只住在那个文件里，不在这份真源内**。
-   * **今天不算缺陷**：本期没有任何消费者需要媒体的上游路径——验活固定用对话协议，
-   * Playground 的媒体模式走的是**对外**路径（浏览器发的，用 `pathTemplate`）。
-   * ⇒ **哪天出现第二个需要「网关怎么调上游」的媒体消费者，那三条就必须搬进来**，
-   * 判据与本字段的立项理由完全相同。**别在那之前预先搬**——
-   * 一份没有第二个消费者的真源，本仓已经裁过三次「迟早会漂」。
+   * 媒体那三条住在下面的 `MEDIA_ENDPOINTS` 里，**不在本表内**——两张表的分界不是
+   * 「对话 vs 媒体」这个分类癖，而是**形状真的不同**：对话四条有 `streamMode` /
+   * `streamTextPath` / `usagePath` 三格媒体一格都用不上，媒体那三条有 `op` / `taskSlot`
+   * 两格对话一格都用不上。合成一张表的代价是每一条都带着一半恒为 `null` 的字段，
+   * 而**恒为 null 的字段与「这一条没填」在消费侧长得一模一样**（全局约束 9 的同型）。
+   * ⚠️ **P3d Task 12 之前那三条还只住在 `src/http/routes/media.ts` 里**，
+   * 当时登记的裁定是「哪天出现第二个需要『网关怎么调上游』的媒体消费者就必须搬进来，
+   * 别在那之前预先搬」。**Task 12 就是那一天**：Playground 的媒体模式要拿**对外**路径
+   * 发请求，而那条对外路径与上游路径是同一条路由的两半——把对外那半搬进真源、
+   * 把上游那半留在路由文件里，等于让下一个改动的人只看见一半。
    */
   readonly upstreamPath: string;
   /** 这条协议惯用的鉴权头。四种网关都收（`src/http/middleware/auth.ts:3-22`）。 */
@@ -243,8 +246,112 @@ export const MODEL_CATALOG: readonly ModelEntry[] = [
   },
 ];
 
+/**
+ * 视频任务标识的合法形状。**真源在这里，路由文件 import 它。**
+ *
+ * 原实现把 `:id` 直接拼进上游路径，已鉴权的客户端因此可以拿池中的真实上游 key 打上游
+ * 的任意路径（`..%2F..%2Fadmin` 规范化后落到 `/admin`；`x%3Fsecret%3D1` 是查询参数注入）。
+ * 故先按白名单校验形状（不匹配直接 400），再 `encodeURIComponent` 做纵深防御。
+ *
+ * ⚠️ **它从 `src/http/routes/media.ts` 搬到这里，是因为出现了第二个判它的地方**
+ * （P3d Task 12：面板在发那次轮询之前先自己判一遍，否则运维只会看到一个 400 而不知道
+ * 为什么）。两处各写一份的话，**收紧的那一侧会让另一侧发出注定 400 的请求、
+ * 放宽的那一侧会让面板拦下一个网关其实收的 id**——两个方向都无声。
+ * ⚠️ **它刻意不进 `catalogPayload()`。** 浏览器那一份是
+ * `admin-ui/js/pure/playground.mjs` 里的一条字面量（那里登记成「登记项 ⑤」），
+ * 由 `tests/ui/playground-media.test.ts` 的
+ * 「面板那条任务标识判据与网关那条逐个探针同判」
+ * 逐个探针钉着。**走网络送一条正则过去、在浏览器里 `new RegExp()` 出来**是另一条路，
+ * 否掉的理由是那等于让一份运行期数据决定客户端的一段控制流（正则的回溯代价由发送方决定）。
+ */
+export const VIDEO_TASK_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** 媒体那两种形态。`chat` 不在其中——它走 `PROTOCOLS`。 */
+export type MediaModality = Exclude<Modality, "chat">;
+/** `generate` = 发一次生成请求；`poll` = 拿着任务标识查一次结果。 */
+export type MediaOp = "generate" | "poll";
+
+/**
+ * **媒体那三条端点**（图片一条同步、视频两段式）。
+ *
+ * ⚠️ **两半都在这里：`pathTemplate` 是客户端打的，`upstreamPath` 是网关转手打的。**
+ * 与 `ProtocolEntry` 的那两个字段是同一对概念、同一条理由（见那里）。
+ * 消费者今天有三个：`src/http/routes/media.ts`（**两半都用**：注册路由用前者、
+ * 调 `dispatch()` 用后者）、面板的 Playground 媒体模式（**只用前者**，浏览器发的）、
+ * 以及模型表里那份 `MODEL_CATALOG[].endpoints`（**只用前者**，画给人看的）。
+ *
+ * ⚠️ **`pathTemplate` 里的占位符写成 Hono 的参数语法（`:id`），这是刻意的**：
+ * 同一个字符串因此**既是路由的注册模式、又是浏览器要替换的模板**，
+ * 两者不可能分叉。要替换的那个 token 由 `taskSlot` 交出去，**浏览器不必自己认识它**
+ * ——这与 `pathTemplate` 里 `{model}` 那条的处置刚好相反，理由是那个占位符有
+ * `endpointFor()` 这个真源侧的展开函数兜着，而这一条没有（浏览器是唯一的展开方）。
+ * 由 `tests/ui/playground-media.test.ts` 的
+ * 「轮询 URL 由真实目录拼出来，逐字等于手写的那一条 —— 占位符残留在 URL 里的话网关只会 404」钉着。
+ *
+ * ⚠️ **它与 `MODEL_CATALOG[].endpoints` 是同一批路径的两个视图，会漂。**
+ * 后者按模型分组画给人看，这里按端点分组给机器用。两者的一致由
+ * `tests/unit/admin/protocol-catalog.test.ts` 的
+ * 「媒体端点表与媒体模型的 endpoints 是同一批路径」钉着。
+ */
+export interface MediaEndpointEntry {
+  readonly id: string;
+  readonly modality: MediaModality;
+  readonly op: MediaOp;
+  readonly method: "POST" | "GET";
+  /** **网关对外**的路径。带任务标识的那一条用 `taskSlot` 里那个 token 占位。 */
+  readonly pathTemplate: string;
+  /** **网关对上游**的路径，拼在 `config.agnesBaseUrl` 之后。占位符与上面同一个。 */
+  readonly upstreamPath: string;
+  readonly authHeader: "authorization";
+  /** 两条路径里那个任务标识占位符。`null` = 这一条不带任务标识。 */
+  readonly taskSlot: string | null;
+  /** 最小可跑请求体；`null` = 这一条没有请求体（GET）。 */
+  sample(model: string): Record<string, unknown> | null;
+}
+
+export const MEDIA_ENDPOINTS: readonly MediaEndpointEntry[] = [
+  {
+    id: "image.generate", modality: "image", op: "generate", method: "POST",
+    pathTemplate: "/v1/images/generations", upstreamPath: "/images/generations",
+    authHeader: "authorization", taskSlot: null,
+    sample: (model) => ({ model, prompt: SAMPLE_PROMPT }),
+  },
+  {
+    id: "video.create", modality: "video", op: "generate", method: "POST",
+    pathTemplate: "/v1/videos", upstreamPath: "/videos",
+    authHeader: "authorization", taskSlot: null,
+    sample: (model) => ({ model, prompt: SAMPLE_PROMPT }),
+  },
+  {
+    id: "video.poll", modality: "video", op: "poll", method: "GET",
+    pathTemplate: "/v1/videos/:id", upstreamPath: "/videos/:id",
+    authHeader: "authorization", taskSlot: ":id",
+    // GET 没有请求体。**`null` 不是「忘了填」**：narrow 那一侧据它决定这一条不走
+    // `withPrompt()`，而一个空对象会让它去找那句占位文本、找不到、判成整份读不出来。
+    sample: () => null,
+  },
+];
+
 export function protocolById(id: string): ProtocolEntry | null {
   return PROTOCOLS.find((p) => p.id === id) ?? null;
+}
+
+/**
+ * 媒体端点表里的一条。**找不到就抛**，不是返回 `null`：调用方（路由注册）拿到 `null`
+ * 只能少注册一条路由，而那是一条**部署完才发现的** 404。
+ */
+export function mediaEndpointById(id: string): MediaEndpointEntry {
+  const e = MEDIA_ENDPOINTS.find((x) => x.id === id);
+  if (e === undefined) throw new Error(`媒体端点目录里没有 ${id}`);
+  return e;
+}
+
+/**
+ * 把带任务标识的那条路径展开。**`split`/`join` 而不是 `replace`**：后者会把替换串里的
+ * `$&` 之类当成引用展开（与 `endpointFor()` 那条同一理由，只是这里的替换串来自上游）。
+ */
+export function withTaskId(template: string, slot: string, id: string): string {
+  return template.split(slot).join(id);
 }
 
 /** 把路径模板里的 `{model}` 换掉。**模型名不做 encode**：它已被 `MODEL_CATALOG` 限定成白名单。 */
@@ -271,12 +378,27 @@ export function endpointFor(p: ProtocolEntry, model: string, stream: boolean): s
  */
 export function catalogPayload(): {
   protocols: Array<Omit<ProtocolEntry, "sample"> & { sampleBody: Record<string, unknown> }>;
+  media: Array<Omit<MediaEndpointEntry, "sample"> & { sampleBody: Record<string, unknown> | null }>;
   models: readonly ModelEntry[];
   samplePrompt: string;
 } {
   const defaultModel = MODEL_CATALOG[0]!.id;
+  /**
+   * 这一条媒体端点的样例请求体拿哪个模型算。
+   *
+   * ⚠️ **不能沿用 `defaultModel`（那是第一个**对话**模型）**：样例体里那格 `model`
+   * 会被面板换成运维选中的那个，所以它今天不影响真发出去的请求；但示例值本身是
+   * **画给人看的**，写一个图片端点配对话模型的组合就是在教一条注定 4xx 的调法。
+   * 找不到对应形态的模型时给空串——**不是抛**：模型清单少一个形态是一条运营事实，
+   * 让整个面板的目录请求 500 是把它放大成一次故障。
+   */
+  const modelFor = (modality: MediaModality): string =>
+    MODEL_CATALOG.find((m) => m.modality === modality)?.id ?? "";
   return {
     protocols: PROTOCOLS.map(({ sample, ...rest }) => ({ ...rest, sampleBody: sample(defaultModel) })),
+    media: MEDIA_ENDPOINTS.map(({ sample, ...rest }) => ({
+      ...rest, sampleBody: sample(modelFor(rest.modality)),
+    })),
     models: MODEL_CATALOG,
     samplePrompt: SAMPLE_PROMPT,
   };

@@ -48,7 +48,9 @@ const TOKEN = "admin-token-0123456789-ok!";
 const GW_TOKEN = "gateway-token-0123456789-wxyz";
 const NOW = 1_700_000_000_000;
 
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+// `useRealTimers()` 是 P3d Task 12 加的：视频轮询那几格装假定时器，忘了收就会把
+// 后面每一格的 `setTimeout` 一起冻住（而症状是「某一格莫名超时」，不指向这里）。
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 // **与 `harness.ts` 的那一份保持同形**：`raw` 是 P3d Task 11 为流式加的
 // （原样送字节，不走 JSON.stringify），理由全文在那个文件里。
@@ -67,13 +69,22 @@ function configBody(hint: string | null): unknown {
 function respondWith(opts: {
   catalog?: Resp;
   config?: Resp;
-  /** 对外那条请求怎么应答。**返回 `{ raw }` 就是一段原样的 SSE 字节**（流式那一档用）。 */
-  gateway?: () => Resp | Promise<Resp>;
+  /**
+   * 对外那条请求怎么应答。**返回 `{ raw }` 就是一段原样的 SSE 字节**（流式那一档用）。
+   *
+   * ⚠️ **它收得到 `url`（P3d Task 12 加的）**：视频是两段式，建任务与轮询打的是
+   * **两条不同的对外路径**，而上一版这个回调一个参数都没有 ⇒ 两段只能回同一份东西
+   * ⇒ 「轮询真的打的是带任务标识的那条路径」这件事在 DOM 层根本不可观测。
+   * 老写法（`() => …`）多收一个参数不影响，既有用例逐字不变。
+   */
+  gateway?: (url: string, method: string) => Resp | Promise<Resp>;
 } = {}): Responder {
-  return (url: string) => {
+  return (url: string, method: string) => {
     if (url.startsWith("/admin/api/models")) return opts.catalog ?? { status: 200, body: catalogPayload() };
     if (url.startsWith("/admin/api/config")) return opts.config ?? { status: 200, body: configBody("wxyz") };
-    if (url.startsWith(PANEL_ORIGIN)) return (opts.gateway ?? (() => ({ status: 200, body: { reply: "PONG-FROM-UPSTREAM" } })))();
+    if (url.startsWith(PANEL_ORIGIN)) {
+      return (opts.gateway ?? (() => ({ status: 200, body: { reply: "PONG-FROM-UPSTREAM" } })))(url, method);
+    }
     return { status: 200, body: {} };
   };
 }
@@ -156,6 +167,11 @@ function pasteToken(section: FakeElement, value: string): void {
 /** 写一句提示词。 */
 function typePrompt(section: FakeElement, value: string): void {
   one(section, ".pg-prompt").input(value);
+}
+
+/** 切到某个模式档（走真的按钮点击，不是直接改状态）。 */
+function toMode(section: FakeElement, name: string): void {
+  pick(section, "[data-mode]").find((b) => b.getAttribute("data-mode") === name)!.click();
 }
 
 /**
@@ -267,21 +283,52 @@ describe("左栏：档位与模型全部来自协议目录", () => {
   });
 
   /**
-   * **模式分段本任务就要出现，另两档按不动。**
-   * 变红条件：把那两档的 `btn.disabled = true` 删掉 ⇒ 面板承诺了一个还不存在的功能。
-   * ⚠️ 这一格验的是**属性**，不是「点不动」——见文件头那段 ⚠️（夹具的 `.disabled` 不拦点击）。
+   * ── **P3d Task 12：另两档不再是摆设** ────────────────────────────────────────
+   *
+   * Task 10 时图片 / 视频两档是 `disabled` 的（媒体那一半还没写），那一格断言的是
+   * 「按不动」并逐字比对那句「暂时按不动」的 tooltip。**现在三档都是真的。**
+   *
+   * ⚠️ **只断言「能按」不算数**（第 4 种假阳性：形状断言冒充行为断言）：
+   * 三个 `disabled` 都是 false 这件事，把 `MODES` 那张表里的 `mode` 全写成同一个词
+   * 也照样成立。⇒ 这一格同时断言**换档之后左栏真的换了那条端点**——观测点落在
+   * `.pg-media-endpoint` 那一行的文字上（它是 `buildRequest()` 现拼出来的那条地址，
+   * 不是另拼的一份）。
+   *
+   * **变红条件（三条，逐条实测，见 progress note 的 M8/M9/M10）**：
+   * ① 把 `MODES` 里 `video` 那行的 `mode` 改成 `image` ⇒ 视频档拼出来的是图片那条地址 ⇒ 红；
+   * ② 把 `currentMediaEndpoint()` 里的 `m.op === "generate"` 改成 `m.op === "poll"`
+   *    ⇒ 图片档挑不到端点（图片没有 poll 那一条）、视频档拼出来的是轮询那条 ⇒ 红；
+   * ③ 把 `buildModeBar()` 里那句 `if (mode === m.mode) return;` 之后的 `render()` 删掉
+   *    ⇒ 点了不重画 ⇒ 红。
+   *
+   * ⚠️ 地址期望值**手写整条字面量**（`PANEL_ORIGIN` 是夹具导出的探针值，
+   * 路径那一半是手写的）——从 `catalogPayload()` 里取出来再回填就是第 6 种假阳性。
    */
-  it("模式分段三档就位，图片与视频按不动且各带一句说明 —— 只留一个灰按钮等于让人对着它猜", async () => {
+  it("三个模式档都能选中，图片与视频各自真的挑到了自己那条端点 —— 形态名一漂就是一个永远空的档位", async () => {
     const h = await openPg(respondWith());
     const sec = h.section("playground");
     const modes = pick(sec, "[data-mode]");
     expect(modes.map((b) => b.getAttribute("data-mode"))).toEqual(["chat", "image", "video"]);
-    expect(modes.map((b) => b.disabled)).toEqual([false, true, true]);
-    // 期望值手写整句：`toContain("按不动")` 在别的文案里也是子串。
-    expect(modes[1]!.getAttribute("title")).toBe("这一档还没有接线，暂时按不动。");
-    expect(modes[2]!.getAttribute("title")).toBe("这一档还没有接线，暂时按不动。");
-    // 对话那一档**没有** title：它是唯一能用的一档，给它挂一句「按不动」是假话。
-    expect(modes[0]!.getAttribute("title")).toBe(null);
+    expect(modes.map((b) => b.disabled), "三档里还有按不动的").toEqual([false, false, false]);
+    // 对话档下**不该**出现媒体那一行说明（它是另一档的东西）。
+    expect(pick(sec, ".pg-media-endpoint").length, "对话档下画出了媒体端点那一行").toBe(0);
+
+    for (const [name, wanted] of [
+      ["image", `POST ${PANEL_ORIGIN}/v1/images/generations`],
+      ["video", `POST ${PANEL_ORIGIN}/v1/videos`],
+    ] as const) {
+      pick(sec, "[data-mode]").find((b) => b.getAttribute("data-mode") === name)!.click();
+      await settle();
+      expect(one(sec, ".pg-media-endpoint").textContent, `${name} 档挑到的端点不对`).toBe(wanted);
+      // 换档之后协议分段与流式开关都不该还在：媒体那两条端点不属于任何一条对话协议、
+      // 也没有流式形态，留着它们就是两个按了没用的控件。
+      expect(pick(sec, "[data-protocol]").length, `${name} 档下还画着协议分段`).toBe(0);
+      expect(pick(sec, ".pg-stream").length, `${name} 档下还画着流式开关`).toBe(0);
+      expect(
+        pick(sec, "[data-mode]").find((b) => b.getAttribute("data-mode") === name)!.getAttribute("aria-pressed"),
+        `${name} 档按下去了但 aria-pressed 没跟着走 —— 读屏用户看不出当前在哪一档`,
+      ).toBe("true");
+    }
   });
 
   /**
@@ -329,6 +376,11 @@ describe("左栏：档位与模型全部来自协议目录", () => {
             { id: "only-alpha", modality: "chat", protocols: ["alpha"], endpoints: [] },
             { id: "only-delta", modality: "chat", protocols: ["delta"], endpoints: [] },
           ],
+          // 这一格是 P3d Task 12 加的。**空数组不是「省事」**：这份合成目录里一条媒体
+          // 模型都没有，给它编两条媒体端点会让这一格顺带断言起媒体那一档，
+          // 而它问的是「换协议之后模型下拉跟不跟着重挑」。**缺了这一格整份判成读不出来**
+          // （`mediaEndpoints()` 的约定），所以它必须在，只是内容为空。
+          media: [],
           samplePrompt: "ping",
         },
       },
@@ -463,6 +515,7 @@ describe("网关口令：粘贴、就地校验、绝不外泄", () => {
             sampleBody: { model: "m0", input: "drifted-sample" },
           }],
           models: [{ id: "m-alpha", modality: "chat", protocols: ["alpha"], endpoints: [] }],
+          media: [],
           samplePrompt: "ping",
         },
       },
@@ -550,6 +603,43 @@ describe("网关口令：粘贴、就地校验、绝不外泄", () => {
     expect(pick(dgSec, ".pg-stream-text").length, "前置条件：降级那一档不该走 stream 渲染").toBe(0);
     expect(one(dgSec, ".pg-token").value, "前置条件：口令确实在输入框里").toBe(GW_TOKEN);
     expectNoTokenAnywhere(dg, "流式降级 401 档");
+
+    // ── 档 ⑦：**媒体**（P3d Task 12 加的第七档）。它是**第三条渲染路径**
+    //    （既不走 `prettyJson` 那条对话分支、也不走增量拼接那条流式分支，
+    //    走的是 `buildMediaResult()`：地址行 + 复制按钮 + 链接 + 任务标识 + 轮询进度）。
+    //    ⚠️ **Task 11 的教训写在这里**：档④当时只覆盖流式的**成功**路径，
+    //    失败那半条一格都没扫过，评审在那一段上种口令 ⇒ 103/103 全绿。
+    //    ⇒ **媒体这一档一次把成功与失败两条都走一遍**，不留同样的洞。 ──
+    vi.unstubAllGlobals();
+    const mOk = await openPg(respondWith({
+      gateway: () => ({ status: 200, body: { created: 1, data: [{ url: "https://cdn.invalid/a.png" }] } }),
+    }));
+    const mOkSec = mOk.section("playground");
+    toMode(mOkSec, "image");
+    pasteToken(mOkSec, GW_TOKEN);
+    typePrompt(mOkSec, "一只猫");
+    one(mOkSec, ".pg-send").click();
+    await settle(20);
+    // 三条前置条件：地址行、复制按钮、链接**三种媒体独有的渲染**都真的走到了。
+    expect(one(mOkSec, ".pg-media-url").textContent, "前置条件：媒体成功档得真的画出地址")
+      .toBe("https://cdn.invalid/a.png");
+    expect(pick(mOkSec, ".pg-media-copy").length, "前置条件：复制按钮得真的画出来").toBe(1);
+    expect(pick(mOkSec, ".pg-media-open").length, "前置条件：链接得真的画出来").toBe(1);
+    expect(one(mOkSec, ".pg-token").value, "前置条件：口令确实在输入框里").toBe(GW_TOKEN);
+    expectNoTokenAnywhere(mOk, "媒体成功档");
+
+    vi.unstubAllGlobals();
+    const mBad = await openPg(respondWith({ gateway: () => { throw new Error("boom"); } }));
+    const mBadSec = mBad.section("playground");
+    toMode(mBadSec, "video");
+    pasteToken(mBadSec, GW_TOKEN);
+    typePrompt(mBadSec, "一只猫在跑");
+    one(mBadSec, ".pg-send").click();
+    await settle(20);
+    expect(pick(mBadSec, ".pg-error").length, "前置条件：媒体那一次得真的失败").toBe(1);
+    expect(pick(mBadSec, ".pg-media-url").length, "前置条件：失败那一档不该有任何地址行").toBe(0);
+    expect(one(mBadSec, ".pg-token").value, "前置条件：口令确实在输入框里").toBe(GW_TOKEN);
+    expectNoTokenAnywhere(mBad, "媒体失败档");
   });
 
   /**
@@ -1333,5 +1423,394 @@ describe("Playground 板块：流式", () => {
     // 取消之后那三块**一个字都不许**出现在屏幕上。
     expect(sec.textContent, "取消之后后到的那几块还是落进了右栏").not.toContain("甲乙丙");
     expect(sec.textContent).not.toContain("甲");
+  });
+});
+
+/**
+ * ── **媒体模式（P3d Task 12）：只展示地址，不内嵌远端任何东西** ─────────────────
+ *
+ * ── 替身能力核对（第 9 种假阳性，检查单要求逐条写出来）────────────────────────
+ * 这一组新用到的 DOM 成员逐个对过 `tests/helpers/fake-dom.ts`：
+ * `createElement("a")` / `createElement("img")` / `setAttribute` / `getAttribute` /
+ * `textContent` / `tagName` / `.children` 的 `for…of` 递归
+ * ——**8 条替身独有能力一条都没用到**。
+ * ⚠️ **踩到的盲点仍然只有 `.disabled` 那一条**（夹具把它挂在每个元素上、且点一颗
+ * disabled 的按钮照样会触发监听器），本组只用它读属性、不靠它拦点击，
+ * 与文件头那段同一处置。
+ * ⚠️ **另有一条本组特有的能力缺口，如实登记**：夹具的 a 元素**不会真的导航**，
+ * img 元素**不会真的去取那个地址**。⇒「点开之后发生了什么」「远端图片有没有被真的
+ * 请求」这两件事在这里按定义不可观测；本组能验的只有**画出来的是什么元素、
+ * 带了哪些属性**。「远端地址不可内嵌」那条性质的**判据**由
+ * `tests/ui/playground-media.test.ts` 的
+ * 「面板 CSP 的 img-src 里没有任何远端主机、也没有 media-src」
+ * 在纯函数层钉着，这一组钉的是**渲染真的照着那条判据走**。
+ */
+describe("媒体模式：地址、链接与不内嵌", () => {
+  /** 一份带三种地址的媒体响应：远端可链接、data 图片、以及一条协议不在白名单里的。 */
+  const MIXED = {
+    created: 1,
+    data: [
+      { url: "https://cdn.invalid/a.png" },
+      { url: "data:image/png;base64,iVBORw0KGgo=" },
+      { url: "javascript:alert(1)" },
+    ],
+  };
+
+  /** 会去取远端字节的那几种元素。**闭集**，不是「有没有 img 这个词」。 */
+  const EMBEDDERS = ["IMG", "VIDEO", "AUDIO", "SOURCE", "IFRAME", "EMBED", "OBJECT"];
+
+  async function sendImage(respond: Responder): Promise<{ h: Harness; sec: FakeElement }> {
+    const h = await openPg(respond);
+    const sec = h.section("playground");
+    toMode(sec, "image");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "一只猫");
+    one(sec, ".pg-send").click();
+    await settle(20);
+    return { h, sec };
+  }
+
+  /**
+   * ── **全局约束 17 在渲染这一侧的执行机构** ──────────────────────────────────
+   *
+   * **被守护的性质**：右栏对一条**远端**媒体地址，画出来的只能是「文字 + 复制 + 链接」，
+   * **不许有任何一个会让浏览器去那个远端取字节的元素**。
+   * 那条 CSP 里 img-src 没有任何远端主机、而且**根本没有 media-src** ⇒ 真画出来的话，
+   * 屏幕上是一张永远加载失败的破图 / 一个放不了的播放器，**而运维会以为是结果坏了**。
+   * 更要紧的是：谁看到破图之后最自然的修法就是去 CSP 里加一行——而那条 CSP 是
+   * `ADMIN_TOKEN` 存在这个 origin 的浏览器本地存储里的唯一结构性防线。
+   *
+   * ⚠️ **判据是「元素清单」而不是「没有 img 这个词」**：后者一次
+   * `createElement("video")` 就绕过去了。这里逐个节点看 `tagName`，**闭集**比对。
+   *
+   * **变红条件（三条，逐条实测，见 progress note 的 M4/M5/M11）**：
+   * ① 在 `buildMediaRow()` 里把那句 `if (mediaEmbeddable(url))` 去掉、无条件画 img
+   *    ⇒ 远端那条被内嵌 ⇒ 红；
+   * ② 把内嵌那一行改成 `el("video", …)` ⇒ 闭集里冒出 VIDEO ⇒ 红；
+   * ③ 把 `mediaResultUrls()` 里的白名单去掉 ⇒ `javascript:` 那条会长出一个 a 元素 ⇒
+   *    下面那条「链接的 href 只可能是 http(s)」红。
+   */
+  it("媒体结果只出现地址与链接，一个内嵌远端资源的元素都没有 —— "
+     + "CSP 没有 media-src，img-src 里也没有远端主机", async () => {
+    const { sec } = await sendImage(respondWith({ gateway: () => ({ status: 200, body: MIXED }) }));
+
+    // 前置条件：这一轮真的画出了媒体结果（否则下面全是在一棵空树上断言）。
+    expect(pick(sec, ".pg-media-url").map((n) => n.textContent), "前置条件：两条合法地址都得画出来")
+      .toEqual(["https://cdn.invalid/a.png", "data:image/png;base64,iVBORw0KGgo="]);
+
+    // ① **闭集**：整棵板块子树里出现过的、会去取字节的元素只有一个，
+    //    它是 img、而且拿的是那条 data 地址（CSP 的 img-src 本来就放行它）。
+    // ⚠️⚠️ **标签名必须一起断言，这是实测补上的**（变异 M5）：上一版只比对 `src` 列表，
+    //    于是把那一行内嵌从 img 改成 `el("video", { src: url })` ⇒ **46/46 全绿**
+    //    ——`src` 一模一样，闭集看不出元素换了种。而 CSP 里**根本没有 media-src**，
+    //    一个 video 元素连那条 data 地址都加载不了，屏幕上是个放不了的播放器。
+    //    **写下的覆盖面小于宣称的范围**，这一格自己就犯了一次。
+    const embedders = everyNode(sec).filter((n) => EMBEDDERS.includes(n.tagName.toUpperCase()));
+    expect(
+      embedders.map((n) => [n.tagName.toUpperCase(), n.getAttribute("src")]),
+      "画出了一个会去远端取字节的元素，或者内嵌元素换了种（CSP 里没有 media-src）",
+    ).toEqual([["IMG", "data:image/png;base64,iVBORw0KGgo="]]);
+
+    // ② 那条远端地址**只以文字与链接的形态**出现过，没有任何元素拿它当 src。
+    for (const n of everyNode(sec)) {
+      if (n.getAttribute("src") === null) continue;
+      expect(n.getAttribute("src"), `<${n.tagName}> 拿远端地址当了 src`)
+        .not.toBe("https://cdn.invalid/a.png");
+    }
+
+    // ③ `javascript:` 那条既没有结果行、也没有链接 —— 它在收集那一层就被拦下了。
+    // ⚠️ **这里刻意不断言「整棵子树的文字里没有 javascript:」**：右栏照旧摆着响应原文
+    //    （`.pg-body`），那条字符串**当然**在里面，而且它在那里是安全的
+    //    （`el()` 走的是 textContent，全站三条纪律的第 ①）。要断言的是
+    //    **它没有变成一个可以点的东西、也没有变成任何元素的 src**。
+    expect(pick(sec, ".pg-media-url").map((n) => n.textContent), "javascript: 那条被当成结果地址列出来了")
+      .not.toContain("javascript:alert(1)");
+    expect(pick(sec, ".pg-media-open").map((a) => a.getAttribute("href")), "链接的 href 只可能是 http(s)")
+      .toEqual(["https://cdn.invalid/a.png"]);
+    // 整棵子树里**任何**元素的 href / src 都不许是它 —— 上一条只看了那个 class。
+    for (const n of everyNode(sec)) {
+      for (const name of ["href", "src"]) {
+        const v = n.getAttribute(name);
+        if (v === null) continue;
+        expect(v.toLowerCase().startsWith("javascript:"), `<${n.tagName}> 的 ${name} 是一条 javascript 地址`)
+          .toBe(false);
+      }
+    }
+  });
+
+  /**
+   * ⚠️⚠️ **`rel` 必须是显式写下来的那一份**（评审 I9）。
+   * `target="_blank"` 的 a 元素现代浏览器确实会隐式补 `noopener`，**但那是浏览器的
+   * 默认值、不是这段代码的性质**：一台老浏览器、一次 `rel` 被改写、或者哪天有人把它
+   * 换成 `window.open()`（**它从来不补**），三条路径都会让被打开的那一页拿到 `opener`
+   * 引用，而**这一页的 origin 上存着 `ADMIN_TOKEN`**。
+   * `noreferrer` 是另一件事：不把面板自己的地址（含路径）泄给上游给的那个主机。
+   *
+   * **变红条件（实测，见 progress note 的 M12）**：把 `buildMediaRow()` 里那句
+   * `rel: "noopener noreferrer"` 改成 `rel: "noopener"`、或整个删掉 ⇒ 这一格红。
+   * ⚠️ **期望值写成整条字符串**：`toContain("noopener")` 在漏了 `noreferrer` 的那一版下
+   * 照样通过。
+   */
+  it("结果链接带 rel 的 noopener noreferrer 两条 —— "
+     + "隐式补那一份是浏览器的默认值，不是这段代码的性质（评审 I9）", async () => {
+    const { sec } = await sendImage(respondWith({ gateway: () => ({ status: 200, body: MIXED }) }));
+    const link = one(sec, ".pg-media-open");
+    expect(link.tagName.toUpperCase(), "结果链接不是一个 a 元素").toBe("A");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("href")).toBe("https://cdn.invalid/a.png");
+  });
+
+  /**
+   * **「上游回的是一段字节流」与「这次没有结果」是两句话**（全局约束 9 的同型）。
+   * `src/http/routes/media.ts` 的文件头写着「上游返回什么（地址或字节流）就原样转发」
+   * ——**两种都可能，而且都不是异常**。折叠成一句的话，字节流那一档会被读成
+   * 「这次生成失败了」，而它其实成功了、只是结果是一段字节而面板按 CSP 不内嵌它。
+   *
+   * **变红条件**：把 `buildMediaResult()` 里那句 content-type 判定去掉、
+   * 让两档都落到 `pg.media.none` ⇒ 这一格红。
+   */
+  it("上游直接回字节流时说的是「这次回的是一段字节」，不是「没有结果」 —— 两句话不许折叠", async () => {
+    const { sec } = await sendImage(respondWith({
+      // `raw` + 非 JSON 的 content-type = 一段真的不是 JSON 的响应体。
+      gateway: () => ({ status: 200, body: null, raw: "PNG-NOT-JSON", contentType: "image/png" }),
+    }));
+    expect(pick(sec, ".pg-media-bytes").length, "字节流那一档没被说出来").toBe(1);
+    expect(one(sec, ".pg-media-bytes").textContent, "那句话里得点出它是什么类型").toContain("image/png");
+    expect(pick(sec, ".pg-media-none").length, "字节流被说成了「没有结果」").toBe(0);
+
+    // 反向：JSON 但里面确实没有地址 ⇒ 说的是另一句。
+    vi.unstubAllGlobals();
+    const other = await sendImage(respondWith({ gateway: () => ({ status: 200, body: { created: 1 } }) }));
+    expect(pick(other.sec, ".pg-media-none").length, "「响应里没有地址」那一档没被说出来").toBe(1);
+    expect(pick(other.sec, ".pg-media-bytes").length, "一份 JSON 被说成了字节流").toBe(0);
+  });
+});
+
+/**
+ * ── **视频两段式与轮询的三条护栏（P3d Task 12）** ────────────────────────────
+ *
+ * ⚠️ **假定时器必须在发起那一次**之前**装好**（`tests/ui/dom/keys-verify.test.ts` 的
+ * 「可用 / 在飞 / 刚探过：三种状态的 title 是三句不同的话，冷却到点后按钮自己恢复」
+ * 那一格实测踩过：装晚了定时器排在真实队列上，`advanceTimersByTimeAsync()` 推的是
+ * 另一条队列，用例会红成「轮询没跑」而真正的原因是装置本身）。
+ * **只 fake `setTimeout` / `clearTimeout`**：`Date.now()` 由 `bootPanel` 的 spy 钉死，
+ * 两者混在一起会让「时长上限」与「次数上限」哪一条先到说不清楚。
+ * ⇒ **本组里那个 `elapsedMs` 恒为 0，所以这里量到的一律是次数那条上限**；
+ * 时长那条由 `tests/ui/playground-media.test.ts` 的
+ * 「轮询到达时长上限后停下 —— 只判次数的话把间隔改大就能挂上几个小时」在纯函数层钉着。
+ */
+describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
+  const CREATE = `${PANEL_ORIGIN}/v1/videos`;
+  const POLL = `${PANEL_ORIGIN}/v1/videos/task-1`;
+
+  /** 建任务回一个任务标识；轮询第 `until` 次才给成片，在那之前一直是「进行中」。 */
+  function videoResponder(until: number): Responder {
+    let polls = 0;
+    return respondWith({
+      gateway: (url) => {
+        if (url === CREATE) return { status: 200, body: { id: "task-1", status: "queued" } };
+        polls++;
+        return polls >= until
+          ? { status: 200, body: { id: "task-1", status: "completed", url: "https://cdn.invalid/v.mp4" } }
+          : { status: 200, body: { id: "task-1", status: "processing" } };
+      },
+    });
+  }
+
+  /** 永远给「进行中」：只有上限才停得住它。 */
+  function neverDone(): Responder {
+    return respondWith({
+      gateway: (url) => (url === CREATE
+        ? { status: 200, body: { id: "task-1", status: "queued" } }
+        : { status: 200, body: { id: "task-1", status: "processing" } }),
+    });
+  }
+
+  async function startVideo(respond: Responder): Promise<{ h: Harness; sec: FakeElement }> {
+    const h = await openPg(respond);
+    const sec = h.section("playground");
+    toMode(sec, "video");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "一只猫在跑");
+    one(sec, ".pg-send").click();
+    await settle(20);
+    return { h, sec };
+  }
+
+  /** 推一拍：让排着的那次打点跑完。 */
+  async function tick(): Promise<void> {
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settle(20);
+  }
+
+  const pollCount = (h: Harness): number => h.calls.filter((c) => c.url === POLL).length;
+
+  /**
+   * **两段式真的是两段，而且第二段打的是带任务标识的那条路径。**
+   *
+   * ⚠️ **观测点落在 `h.calls` 上（真的发出去的那几条 URL），不落在屏幕文字上**：
+   * 屏幕上那条地址是被测代码自己渲染的，它只能证明面板说了什么。
+   *
+   * **变红条件（三条，逐条实测，见 progress note 的 M16/M17/M18）**：
+   * ① 把 `startPolling()` 的返回值改成恒 `false` ⇒ 一次轮询都不发 ⇒ 红；
+   * ② 把 `buildPollRequest()` 里的占位符替换去掉 ⇒ 打的是带字面量占位符的那条 ⇒ 红；
+   * ③ 把 `pollOnce()` 里「收到地址就停」那句删掉 ⇒ 会一直轮到上限 ⇒ 调用条数那条红。
+   */
+  it("建任务之后自己去轮询，轮到成片就停 —— 打的是带任务标识的那条路径，不是建任务那条", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { h, sec } = await startVideo(videoResponder(3));
+
+    // 第一段：建任务。**这一刻还一次轮询都没发**。
+    expect(h.calls.filter((c) => c.url.startsWith(PANEL_ORIGIN)).map((c) => c.url)).toEqual([CREATE]);
+    expect(one(sec, ".pg-task-id").textContent, "任务标识没被摆出来 —— 到点之后运维拿什么再查").toBe("task-1");
+    expect(pick(sec, ".pg-poll").length, "没有任何一句在说它正在轮询").toBe(1);
+    // 护栏：轮询期间在飞标记不松开（全局约束 14），取消按钮一直在。
+    expect(one(sec, ".pg-send").disabled, "轮询期间发送按钮还能按 —— 第二条任务会叠着烧配额").toBe(true);
+    expect(pick(sec, ".pg-cancel").length, "轮询期间没有取消按钮 —— 运维停不下来").toBe(1);
+
+    await tick();
+    await tick();
+    await tick();
+    vi.useRealTimers();
+
+    expect(h.calls.filter((c) => c.url.startsWith(PANEL_ORIGIN)).map((c) => c.url))
+      .toEqual([CREATE, POLL, POLL, POLL]);
+    expect(h.calls.filter((c) => c.url === POLL).every((c) => c.method === "GET"), "轮询没走 GET").toBe(true);
+    // 成片到了：地址画出来、轮询那句话没了、在飞标记松开。
+    expect(one(sec, ".pg-media-url").textContent).toBe("https://cdn.invalid/v.mp4");
+    expect(pick(sec, ".pg-poll").length, "已经拿到成片了还在说「正在轮询」").toBe(0);
+    expect(one(sec, ".pg-send").disabled, "轮询结束了发送按钮还灰着").toBe(false);
+  });
+
+  /**
+   * **护栏 ①：有上限。** 一个忘了关的标签页就是一台永动打点机，
+   * 而每一次打点都是一次**真的**上游请求，烧的是运维自己的配额。
+   *
+   * ⚠️ 期望值 `60` **手写字面量**（第 6 种假阳性：不写 `VIDEO_POLL_MAX_ATTEMPTS`）。
+   * **变红条件**：把 `videoPollNext()` 里那句次数判定删掉 ⇒ 打点条数会一直涨 ⇒ 红。
+   */
+  it("轮询到达上限后停下并把任务标识留在屏幕上 —— 无限轮就是一台永动打点机", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { h, sec } = await startVideo(neverDone());
+    for (let i = 0; i < 70; i++) await tick();
+    // **计时器条数要在收假定时器**之前**读**：`useRealTimers()` 之后 `getTimerCount()`
+    // 直接抛「timers APIs are not mocked」，那会红成一个与被测性质无关的病因。
+    const timersLeft = vi.getTimerCount();
+    vi.useRealTimers();
+
+    expect(pollCount(h), "打点次数不等于手写的那个上限").toBe(60);
+    expect(pick(sec, ".pg-poll-gaveup").length, "到点了却什么都不说 —— 屏幕上留下一个永远「进行中」的框").toBe(1);
+    expect(one(sec, ".pg-task-id").textContent, "停下来了却把任务标识收走了 —— 运维拿什么再查").toBe("task-1");
+    expect(one(sec, ".pg-send").disabled, "轮询停了发送按钮还灰着").toBe(false);
+    expect(timersLeft, "停下来了还留着一个定时器").toBe(0);
+  });
+
+  /**
+   * **护栏 ②：页面藏起来时暂停，变回可见时接回去。**
+   *
+   * ⚠️ **边界明写：这道护栏拦的是「排下一拍」，不是「已经排好的那一拍」**
+   * （`js/sec-events.js` 的 `scheduleNext()` 是同一个形态与同一条边界）。
+   * ⇒ 藏起来之后**已经上膛的那一次照样会响**，然后才停。
+   * 这一格因此断言的是 `1 → 2 → 2 → 2`，不是 `1 → 1`。
+   * **把它写成 `1 → 1` 的话，红的原因会是这条边界而不是护栏失效**——
+   * 那正是「ESCAPED 有两种成因」里的第二种（观测点不对）。
+   *
+   * 变红条件（两条，逐条实测，见 progress note 的 M19/M20）：
+   * ① 把 `schedulePoll()` 里那句判页面藏没藏起来的早退删掉 ⇒ 后面两拍照样打点
+   *    ⇒ 「藏起来之后不再排下一拍」那条断言从 2 变成 4 ⇒ 红；
+   * ② 把那个 `visibilitychange` 监听删掉 ⇒ 变回可见之后再也不轮 ⇒ 最后一条红。
+   */
+  it("页面藏起来时不再排下一拍，变回可见时接回去 —— 一个切到后台的标签页不该继续烧配额", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { h } = await startVideo(neverDone());
+    await tick();
+    expect(pollCount(h), "前置条件：可见时它本来是会打点的").toBe(1);
+
+    h.dom.document.hidden = true;
+    await tick();
+    // 已经上膛的那一拍响了（护栏拦不住它，见上面那段边界），**但它没有再排下一拍**。
+    expect(pollCount(h), "上膛的那一拍没响 —— 观测点不对，见上面那段边界").toBe(2);
+    const timersWhileHidden = vi.getTimerCount();
+    await tick();
+    await tick();
+    expect(pollCount(h), "页面藏起来了还在排下一拍").toBe(2);
+    expect(timersWhileHidden, "藏起来之后还留着一个上了膛的定时器").toBe(0);
+
+    h.dom.document.hidden = false;
+    h.dom.document.dispatchEvent(new h.dom.CustomEvent("visibilitychange"));
+    await settle(20);
+    await tick();
+    vi.useRealTimers();
+    expect(pollCount(h), "变回可见之后再也没接回去 —— 那一轮永远停在「进行中」").toBe(3);
+  });
+
+  /**
+   * **护栏 ③：切走板块停轮询**（板块契约，设计 §9.3）。
+   * 变红条件：把 `cancelInFlight()` 里那段清定时器 / 清那一轮的代码删掉
+   * ⇒ 切走之后那台打点机还在跑，而屏幕上已经没有任何东西提到这一轮了。
+   */
+  it("切走板块之后一次都不再打点 —— 屏幕上已经没有这一轮了，它却还在烧配额", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { h } = await startVideo(neverDone());
+    await tick();
+    expect(pollCount(h), "前置条件：切走之前它本来是在打点的").toBe(1);
+
+    navTo(h, "overview");
+    await settle(20);
+    // **切走那一刻定时器就该没了**（`onHide()` → `cancelInFlight()`），
+    // 与上面那道「藏起来」的护栏不同：那一道只拦「排下一拍」，这一道连膛里那发一起卸。
+    const timersAfterHide = vi.getTimerCount();
+    await tick();
+    await tick();
+    vi.useRealTimers();
+    expect(pollCount(h), "切走板块之后还在打点").toBe(1);
+    expect(timersAfterHide, "切走板块之后还留着一个上了膛的定时器").toBe(0);
+  });
+
+  /**
+   * **取不到任务标识时不猜、也不轮。**
+   * 变红条件：把 `videoTaskIdOf()` 改成「随便找一个过得了形状判据的字符串」
+   * ⇒ `"queued"` 会被当成任务标识 ⇒ 面板会去轮一个不存在的任务，直到轮满上限。
+   */
+  it("建任务的响应里没有任务标识时一次都不轮，并且明说是哪一档 —— 猜一个出来只会轮空 60 次", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { h, sec } = await startVideo(respondWith({
+      gateway: () => ({ status: 200, body: { status: "queued", note: "no id here" } }),
+    }));
+    await tick();
+    await tick();
+    vi.useRealTimers();
+
+    expect(
+      h.calls.filter((c) => c.url.startsWith(`${PANEL_ORIGIN}/v1/videos/`)).length,
+      "没有标识却发了轮询",
+    ).toBe(0);
+    expect(pick(sec, ".pg-no-task").length, "没有标识这件事一个字都没说").toBe(1);
+    expect(pick(sec, ".pg-task-id").length, "没有标识却画出了一行任务标识").toBe(0);
+    expect(one(sec, ".pg-send").disabled, "没轮起来却把发送按钮一直灰着").toBe(false);
+  });
+
+  /**
+   * **上游一次就把成片给了的话，一次都不该轮。**
+   * 少了这一格，「收到地址就停」那条判据只在「轮了几次之后」被验过，
+   * 而「第一段就给了」是它的另一条分支。
+   */
+  it("建任务那一次就带回成片时一次都不轮 —— 白轮一次是白烧一次配额", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { h, sec } = await startVideo(respondWith({
+      gateway: () => ({
+        status: 200, body: { id: "task-1", status: "completed", url: "https://cdn.invalid/v.mp4" },
+      }),
+    }));
+    const timersLeft = vi.getTimerCount();
+    await tick();
+    vi.useRealTimers();
+    expect(
+      h.calls.filter((c) => c.url.startsWith(`${PANEL_ORIGIN}/v1/videos/`)).length,
+      "成片已经到了还去轮了一次",
+    ).toBe(0);
+    expect(one(sec, ".pg-media-url").textContent).toBe("https://cdn.invalid/v.mp4");
+    expect(timersLeft, "不该轮却排了一个定时器").toBe(0);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_CONFIG } from "../helpers/make-app.js";
 import {
-  PROTOCOLS, MODEL_CATALOG, endpointFor, SAMPLE_PROMPT,
+  PROTOCOLS, MODEL_CATALOG, endpointFor, SAMPLE_PROMPT, MEDIA_ENDPOINTS, withTaskId,
 } from "../../src/core/admin/protocol-catalog.js";
 
 /**
@@ -14,6 +14,18 @@ import {
 function realRoutes(app: Awaited<ReturnType<typeof makeApp>>["app"]) {
   return app.routes.filter((r) => r.method !== "ALL").map((r) => `${r.method} ${r.path}`);
 }
+
+/**
+ * 媒体三条端点**真正应该打到上游哪条地址**——**逐条手写整串，一个字符都不从
+ * `MEDIA_ENDPOINTS` 推**（第 6 种假阳性，实测见变异 M14）。
+ * 主机那一半是 `tests/helpers/make-app.ts` 里 `TEST_CONFIG.agnesBaseUrl` 的值，
+ * 同样手写——从那个常量拼出来的话，改掉它这几格会跟着变而不红。
+ */
+const MEDIA_UPSTREAM: Readonly<Record<string, string>> = {
+  "image.generate": "https://upstream.test/v1/images/generations",
+  "video.create": "https://upstream.test/v1/videos",
+  "video.poll": "https://upstream.test/v1/videos/task_1-ABC",
+};
 
 describe("协议目录与真实路由表对账", () => {
   /**
@@ -177,6 +189,94 @@ describe("协议目录的示例请求真的调得通", () => {
    * 但反过来「出站 URL 与对外路径长得不一样」这件事本身也要被看见一次，
    * 否则读的人分不清这一组到底证没证明「两条路径是两个东西」。
    */
+  /**
+   * ── **媒体三条搬进真源之后的护栏（P3d Task 12）** ────────────────────────────
+   *
+   * 搬之前那三条路径只住在 `src/http/routes/media.ts` 里，**对外那半与上游那半各写一遍
+   * 字面量**；搬之后它们是 `MEDIA_ENDPOINTS` 的两个字段，而这一格是它们唯一的护栏。
+   *
+   * ⚠️ **观测点在两端各自的真实字节上，不是比对目录自己的两个字段**（与
+   * `upstreamPath` 那一条守的是同一条纪律，评审 C3）：
+   * · 对外那半 —— 用 `app.request(pathTemplate)` **真的打一次**，判 `status !== 404`；
+   * · 上游那半 —— 判 `fetcher.sentUrls.at(-1)`（`FakeFetcher` 自己记的真实出站 URL）。
+   *
+   * ⚠️⚠️ **出站 URL 的期望值必须手写，这一条是实测补上的**（变异 M14）：
+   * 上一版写的是 ``expect(sentUrls.at(-1)).toBe(`${agnesBaseUrl}${m.upstreamPath}`)`` ——
+   * 而 `src/http/routes/media.ts` **自己也是从这张表读 `upstreamPath` 的**
+   * ⇒ 改一个字符两侧一起变，**11/11 全绿**。那正是本文件反复登记的那条：
+   * **期望值从被测对象自己推导 = 同义反复**（第 6 种假阳性）。
+   * 四条对话协议那一格没这个毛病，因为它们的路由文件传的是各自的字面量、
+   * 不读这张表——**同一个写法在两张表上一个成立一个不成立**，这就是「先找反例」。
+   * ⇒ 现在两侧独立：期望值是下面那张手写表，实际值是 `FakeFetcher` 记的真出站 URL。
+   *
+   * **变红条件（三条，逐条实测，见 progress note 的 M13/M14/M15）**：
+   * ① 把某条的 `pathTemplate` 改一个字符 ⇒ 那一行 404 ⇒ 红（路由是按它注册的，
+   *    所以真正被证明的是「注册与浏览器拿到的是同一个字符串」）；
+   * ② 把某条的 `upstreamPath` 改一个字符 ⇒ 出站 URL 与手写表对不上 ⇒ 红；
+   * ③ 把 `media.ts` 里 `dispatch({ path: … })` 换回一个字面量 ⇒ 同上 ⇒ 红。
+   *
+   * ⚠️ **`GET` 那条不能与两条 `POST` 走同一个循环体**：它没有请求体、要拿一个真的任务
+   * 标识去展开 `taskSlot`，而**把它塞进同一个循环并给它一个空 body**，得到的是一次 400
+   * （`VIDEO_TASK_ID_RE` 拦下空标识）——那一格会「因为另一个原因绿」：`status !== 404`
+   * 成立、而上游一次都没被打，`sentUrls.at(-1)` 是 `undefined`，
+   * `toBe()` 会红成一个看不懂的病因。所以这里分成两格，各自带前置条件。
+   */
+  it.each(MEDIA_ENDPOINTS.filter((m) => m.op === "generate").map((m) => [m.id, m] as const))(
+    "媒体端点 %s：对外那条真的注册着、上游那条逐字等于 agnesBaseUrl + upstreamPath —— "
+    + "观测点在真实出站 URL 上，不是比对目录自己的两个字段",
+    async (_id, m) => {
+      const model = MODEL_CATALOG.find((x) => x.modality === m.modality)!.id;
+      const { app, fetcher } = await makeApp(
+        [{ status: 200, body: JSON.stringify({ created: 1, data: [{ url: "https://cdn.invalid/a" }] }) }],
+        ["sk-media-catalog-probe-0001"],
+        {}, () => 1_000,
+      );
+      const res = await app.request(m.pathTemplate, {
+        method: m.method,
+        headers: {
+          authorization: `Bearer ${TEST_CONFIG.gatewayToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(m.sample(model)),
+      });
+      // 前置条件：这条对外路径真的注册着。**判 404 而不是判 200**——上游是桩，
+      // 200 只说明桩回了 200；404 才是「这条路由压根不存在」那个失效形态。
+      expect(res.status, `${m.id} 的对外路径没注册`).not.toBe(404);
+      // 前置条件：真的向上游发出去过一次，否则下面那条断言是在跟 `undefined` 比。
+      expect(fetcher.sentUrls.length, `${m.id} 一次上游都没打`).toBe(1);
+      // **期望值来自手写表**（见上面那段 ⚠️⚠️），不是 `agnesBaseUrl + m.upstreamPath`。
+      expect(MEDIA_UPSTREAM[m.id], `手写表里没有 ${m.id} —— 新增端点要在那张表里表态`).toBeDefined();
+      expect(fetcher.sentUrls.at(-1)).toBe(MEDIA_UPSTREAM[m.id]);
+    },
+  );
+
+  it("媒体轮询那条：对外带任务标识、上游那条同样带着它 —— "
+     + "占位符没被展开的话，网关收到的是一条字面量 :id", async () => {
+    const m = MEDIA_ENDPOINTS.find((x) => x.op === "poll")!;
+    // 手写字面量的任务标识，**不从任何常量推**（第 6 种假阳性）。
+    const taskId = "task_1-ABC";
+    const { app, fetcher } = await makeApp(
+      [{ status: 200, body: JSON.stringify({ status: "processing" }) }],
+      ["sk-media-catalog-probe-0002"],
+      {}, () => 1_000,
+    );
+    const outward = withTaskId(m.pathTemplate, String(m.taskSlot), taskId);
+    expect(outward).toBe("/v1/videos/task_1-ABC");            // 手写字面量锚
+    const res = await app.request(outward, {
+      method: m.method,
+      headers: { authorization: `Bearer ${TEST_CONFIG.gatewayToken}` },
+    });
+    expect(res.status, "轮询那条对外路径没注册（或标识被拦了）").toBe(200);
+    expect(fetcher.sentUrls.length, "轮询一次上游都没打").toBe(1);
+    // **手写整串**（与上面那一格同一条理由：路由自己也读这张表，推出来的期望值是同义反复）。
+    expect(fetcher.sentUrls.at(-1)).toBe(MEDIA_UPSTREAM["video.poll"]);
+    // 反向自检：**出站 URL 里不许还留着那个占位符**。它与上面那句不重复——
+    // 上面那句钉的是「等于哪一条」，这一句钉的是「占位符这件事本身被处理过」，
+    // 而 `taskSlot` 改名（变异 M29）时前者的失败信息看不出是这个原因。
+    expect(fetcher.sentUrls.at(-1), "出站 URL 里还留着未展开的任务标识占位符")
+      .not.toContain(String(m.taskSlot));
+  });
+
   it("同一次真请求里，出站 URL 与客户端打的对外路径确实不是同一个 —— 两端各自可分辨", async () => {
     const p = PROTOCOLS.find((x) => x.id === "anthropic")!;
     const model = MODEL_CATALOG[0]!.id;

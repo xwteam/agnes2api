@@ -55,13 +55,43 @@
  * ⚠️ 口令输入框旁边那句「与设置页那把对不对得上」只画**档位名**，判定在
  * `js/pure/playground.mjs` 的 `tokenHintState()`，它按定义不返回口令的任何一个字节。
  *
- * ── 本任务只做「对话」，媒体那两档是 Task 12 ─────────────────────────────────
- * 模式分段控件**本任务就要出现**（否则 Task 12 要重排整个左栏布局），
- * 图片 / 视频两档 disabled + tooltip 说明。
- * ⚠️ **面板样式与 `src/ui/serve.ts` 的 CSP 一个字都没放宽**（全局约束 17）：
- * 那条 CSP 是 `img-src 'self' data:`、**没有 media-src**。媒体那两档将来只展示 URL +
- * 复制按钮 + 在新标签页打开，**不内嵌**；本任务连一个字节的媒体渲染代码都不写，
- * 也**不为将来「顺手」放宽任何东西**。
+ * ── 媒体两档（P3d Task 12 接上）：只展示地址，**不内嵌远端任何东西** ────────────
+ * ⚠️⚠️ **面板样式与 `src/ui/serve.ts` 的 CSP 一个字都没放宽**（全局约束 17）：
+ * 那条 CSP 是 img-src 只放行本源与 data 两档、**且完全没有 media-src**
+ * （⇒ video 元素落回 default-src none）。⇒ 媒体那两档**只展示地址 + 复制按钮 +
+ * 在新标签页打开**；唯一被内嵌的是 data 开头且 MIME 为图片的那一种（CSP 本来就放行它）。
+ * ⚠️ **不许为了内嵌去放宽 CSP**：那条 CSP 是 `ADMIN_TOKEN` 存在这个 origin 的浏览器
+ * 本地存储里的唯一结构性防线（作用域是 origin 不是 path，
+ * 论证全文在 `src/core/dispatcher.ts` 的 `DOCUMENT_MIME` 那段长注释）。
+ * ⚠️ **「能不能内嵌」「能不能做链接」两条判据都是纯函数，不在本文件里目测**
+ * （`js/pure/playground.mjs` 的 `mediaEmbeddable()` / `mediaLinkable()`）。
+ * 由 `tests/ui/playground-media.test.ts` 的
+ * 「远端 http(s) 地址一律不可内嵌 —— 面板 CSP 的 img-src 里没有任何远端主机（订正 F6）」
+ * 与 `tests/ui/dom/playground-section.test.ts` 的
+ * 「媒体结果只出现地址与链接，一个内嵌远端资源的元素都没有」两格钉着。
+ * ⚠️ **链接元素必须显式带 `rel="noopener noreferrer"`**：`target="_blank"` 的 a 元素
+ * 现代浏览器会隐式补 `noopener`，**但那是浏览器的默认值、不是这段代码的性质**，
+ * 而 `window.open()` 从来不补。由 `tests/ui/dom/playground-section.test.ts` 的
+ * 「结果链接带 rel 的 noopener noreferrer 两条」钉着。
+ *
+ * ── 视频是两段式，而轮询的三条护栏一条都不许省（设计 §10.5）─────────────────
+ * ① **有上限**：判定在 `js/pure/playground.mjs` 的 `videoPollNext()`，次数与时长两条
+ *    同时判。**一个忘了关的标签页就是一台永动打点机**，每一次打点都是一次真的上游请求；
+ * ② **页面藏起来时暂停**（照抄事件板块 `js/sec-events.js` 的 `scheduleNext()` 做法），
+ *    变回可见时接回去；
+ * ③ **`onHide()` 停轮询**（板块契约，设计 §9.3）——与取消按钮走同一个 `cancelInFlight()`。
+ * ⚠️ **轮询期间在飞标记不松开**（全局约束 14）：松开的话运维能同时点起第二条视频任务，
+ * 而两条任务的打点会叠在一起烧配额。代价是那几分钟里发送按钮是灰的，
+ * **取消按钮一直在**，随时可以停。
+ *
+ * ⚠️⚠️ **一次视频任务最多 1 + 60 次上游请求，这条没有进 DEPLOY.md 的配额账，
+ * 登记在这里**（全局约束 13 的触发条件是「新增一个会写存储的代码路径」，
+ * 而本任务一条都没新增——它只是让**已有**的那条路径被按得更频）。
+ * · **上游请求数与 key 的使用次数**：实打实按 61 倍算，这是真实成本；
+ * · **存储写次数**：**不按 61 倍放大**——`lastUsedAt` 与用量计数由
+ *   `src/core/keypool-repo.ts` 的 `touchIntervalMs`（默认 6 小时）那道写消除闸管着，
+ *   一轮轮询打不满一次落盘。冷却 / 剔除那两笔仍按失败次数算。
+ * ⇒ 会打穿的是**上游那边的配额**，不是 KV 的日写配额。别把这两件事混着读。
  *
  * ── 流式（P3d Task 11）：开关已经接上，而且两种运行时都是真的逐块 ─────────────
  * Task 10 时这个开关是 `disabled` 的（读流那一半还没写）。**现在它是真的。**
@@ -134,13 +164,32 @@
  */
 import { api } from "./api.js";
 import { t } from "./i18n.js";
-import { el, elI18n } from "./ui.js";
+import { el, elI18n, copy } from "./ui.js";
 import { readGatewayToken, writeGatewayToken, sendToGateway, streamFromGateway } from "./gw-api.js";
 import { catalogModels } from "./pure/models.mjs";
 import { credentialView } from "./pure/settings.mjs";
+import { fmtDash } from "./pure/format.mjs";
 import {
   playgroundProtocols, modelIdsForProtocol, buildRequest, tokenHintState, prettyJson, deltaText,
+  mediaEndpoints, modelIdsForModality, mediaEmbeddable, mediaLinkable, mediaResultUrls,
+  videoTaskIdOf, buildPollRequest, videoPollNext,
 } from "./pure/playground.mjs";
+
+/**
+ * 三个模式档位。**写成一张本地表，因为它们是这个板块自己的 UI 状态，不是协议知识**
+ * ——`chat` 走 `protocols[]`、另两档走 `media[]` 里 `modality` 与它相等的那些条目。
+ * ⚠️ **`image` / `video` 这两个字符串同时是真源里 `modality` 的取值**，本文件因此
+ * 与真源共享这两个词。它不归全局约束 15 管（那条管的是端点路径 / 请求体形状 / 协议名），
+ * 但仍是一处会漂的耦合：真源改了形态名而这里没改，那一档会**变成一个永远没有可用端点
+ * 的空档位**，而屏幕上只显示一句「这个形态没有可用的端点」。
+ * 由 `tests/ui/dom/playground-section.test.ts` 的
+ * 「三个模式档都能选中，图片与视频各自真的挑到了自己那条端点 —— 形态名一漂就是一个永远空的档位」钉着。
+ */
+const MODES = [
+  { mode: "chat", key: "pg.mode.chat" },
+  { mode: "image", key: "pg.mode.image" },
+  { mode: "video", key: "pg.mode.video" },
+];
 
 let nodes = null;
 /**
@@ -187,6 +236,22 @@ let loadInFlight = false;
 let loadSeq = 0;
 /** 面板自己所在的那个源。`init()` 时读一次——**判定在纯函数里，那里拿不到浏览器全局**。 */
 let origin = "";
+/** 当前模式档位（`chat` / `image` / `video`）。**换档要重挑模型**，与换协议同一条理由。 */
+let mode = "chat";
+/**
+ * 正在轮询的那一轮视频（`null` = 没有在轮）。
+ *
+ * ⚠️ **它与 `current` 是两件事，缺一不可**：`current` 回答「这一次还是不是当前那一次」
+ * （身份比较，与非流式 / 流式共用同一条判据），这一格回答「该往哪一轮里写轮询结果」。
+ * 合成一个的话，取消之后要么够不着那一轮把 `pending` 收干净（流式那一档栽过一次，
+ * 见 `cancelInFlight()` 里那段 ⚠️⚠️），要么身份判据被一个可空的业务对象顶替。
+ */
+let pollTurn = null;
+/** 轮询那一轮的取消令牌。**与 `current` 是同一个对象**，留一份只为在回调里做身份比较。 */
+let pollCtl = null;
+/** 定时器句柄与这一轮开始的时刻（时长上限那一条按它算）。 */
+let pollTimer = null;
+let pollStartedAt = 0;
 
 /** 一个内容块：标题 + 空的 body 容器。 */
 function block(titleKey) {
@@ -206,24 +271,26 @@ function field(labelKey, control) {
 }
 
 /**
- * 模式分段：对话 / 图片 / 视频。**本任务只做对话**，另两档 disabled + tooltip。
- * ⚠️ 三个 key 写成三个字面量，**不许把档位名拼进 key**（全局约束 12）。
+ * 模式分段：对话 / 图片 / 视频。**三档都接上了**（P3d Task 12）。
+ * ⚠️ 三个 key 写成三个字面量（`MODES` 那张表里），**不许把档位名拼进 key**（全局约束 12）。
  */
 function buildModeBar() {
   const bar = el("div", { class: "btn-group" });
   bar.appendChild(elI18n("span", "pg.mode.label", { class: "muted" }));
-
-  const chat = elI18n("button", "pg.mode.chat", {
-    type: "button", class: "btn-toggle active", "data-mode": "chat", "aria-pressed": "true",
-  });
-  bar.appendChild(chat);
-
-  for (const [key, mode] of [["pg.mode.image", "image"], ["pg.mode.video", "video"]]) {
-    const btn = elI18n("button", key, {
-      type: "button", class: "btn-toggle", "data-mode": mode, "aria-pressed": "false",
+  for (const m of MODES) {
+    const btn = elI18n("button", m.key, {
+      type: "button", class: "btn-toggle", "data-mode": m.mode,
+      "aria-pressed": m.mode === mode ? "true" : "false",
     });
-    btn.disabled = true;
-    btn.setAttribute("title", t("pg.mode.laterTip"));
+    btn.classList.toggle("active", m.mode === mode);
+    btn.addEventListener("click", () => {
+      if (mode === m.mode) return;
+      mode = m.mode;
+      // 换档要重挑模型：对话模型与媒体模型是两批完全不相交的 id
+      //（媒体模型的 `protocols` 在真源里是空数组）。
+      modelId = "";
+      render();
+    });
     bar.appendChild(btn);
   }
   return bar;
@@ -255,21 +322,71 @@ function buildProtoBar() {
   return bar;
 }
 
-/** 当前选中的那条协议，没有就是 `null`。 */
+/**
+ * 媒体档里替掉协议分段的那一行：**这一档按一下会打哪条端点**。
+ *
+ * ⚠️ **地址是 `buildRequest()` 现拼出来的那一条，不是这里另拼一份**（全局约束 15）：
+ * 另拼一份的话，屏幕上写着的那条与真发出去的那条可以不一样，而那正是本期核心设计
+ * 决定要防的形态。构造不出来（目录与面板对不上）时这一行整个不画——画一条空地址
+ * 比不画更糟。
+ */
+function buildMediaNote() {
+  const wrap = el("div", { class: "pg-field pg-media-note" });
+  wrap.appendChild(elI18n("span", "pg.media.endpoint", { class: "muted" }));
+  const req = buildRequest(currentMediaEndpoint(), {
+    model: modelId, prompt: promptText, stream: false, origin,
+  });
+  if (req !== null) {
+    wrap.appendChild(el("span", { class: "mono pg-media-endpoint" }, `${req.method} ${req.url}`));
+  }
+  return wrap;
+}
+
+/** 当前选中的那条协议，没有就是 `null`。**只在对话档有意义。** */
 function currentProto() {
   if (catalog === null) return null;
   for (const p of catalog.protocols) if (p.id === protoId) return p;
   return null;
 }
 
+/** 当前媒体档要打的那条**生成**端点，没有就是 `null`。 */
+function currentMediaEndpoint() {
+  if (catalog === null) return null;
+  for (const m of catalog.media) if (m.modality === mode && m.op === "generate") return m;
+  return null;
+}
+
+/** 视频那条**轮询**端点，没有就是 `null`。 */
+function pollEndpoint() {
+  if (catalog === null) return null;
+  for (const m of catalog.media) if (m.modality === "video" && m.op === "poll") return m;
+  return null;
+}
+
 /**
- * 模型下拉。**只列这条协议上真的可用的模型**（判定在 `js/pure/playground.mjs`）。
+ * 这一档要打的那条端点（对话 = 选中的协议；媒体 = 那条生成端点）。
+ * **`buildRequest()` 对两者一视同仁**——它只看 `pathTemplate` / `method` / `authHeader` /
+ * `sampleBody` / `samplePrompt` 这几格，而媒体端点在真源里就是照着同一组字段填的。
+ * ⇒ **本板块因此没有第二条请求构造路径**（全局约束 15 的同一条理由）。
+ */
+function currentTarget() {
+  return mode === "chat" ? currentProto() : currentMediaEndpoint();
+}
+
+/** 这一档下可用的模型 id。**两根轴，两个纯函数**，理由见 `modelIdsForModality()` 上方。 */
+function currentModelIds() {
+  if (catalog === null) return [];
+  return mode === "chat"
+    ? modelIdsForProtocol(currentProto(), catalog.models)
+    : modelIdsForModality(mode, catalog.models);
+}
+
+/**
+ * 模型下拉。**只列这一档上真的可用的模型**（判定在 `js/pure/playground.mjs`）。
  * 一个都没有时下拉是空的，而下面那句提示会说清是哪一档。
  */
-function buildModelSelect(proto) {
+function buildModelSelect(ids) {
   const sel = el("select", { class: "pg-model" });
-  const ids = modelIdsForProtocol(proto, catalog.models);
-  if (modelId === "" && ids.length > 0) modelId = ids[0];
   for (const id of ids) {
     const opt = el("option", { value: id }, id);
     sel.appendChild(opt);
@@ -357,7 +474,14 @@ function buildPromptInput() {
 /** 这一刻能不能按发送；不能的话是哪一档（`null` = 能按）。 */
 function sendBlockedKey() {
   if (inFlight) return "pg.send.blockedInFlight";
-  if (currentProto() === null) return "pg.send.blockedNoProto";
+  // **两档说的不是同一句话**：对话档缺的是「还没选协议」（选得回来），
+  // 媒体档缺的是「目录里根本没有这个形态的端点」（选不回来，是版本对不上）。
+  // 折叠成一句会让运维在媒体档下去找一个屏幕上根本不存在的协议选择器。
+  if (mode === "chat") {
+    if (currentProto() === null) return "pg.send.blockedNoProto";
+  } else if (currentMediaEndpoint() === null) {
+    return "pg.send.blockedNoEndpoint";
+  }
   if (modelId === "") return "pg.send.blockedNoModel";
   if (token === "") return "pg.send.blockedNoToken";
   if (promptText.trim() === "") return "pg.send.blockedNoPrompt";
@@ -384,14 +508,31 @@ function syncSendButton() {
 function buildLeft() {
   const { wrap, body } = block("pg.req.title");
   body.appendChild(buildModeBar());
-  body.appendChild(buildProtoBar());
 
-  const proto = currentProto();
-  body.appendChild(field("pg.model.label", buildModelSelect(proto)));
-  if (proto !== null && modelIdsForProtocol(proto, catalog.models).length === 0) {
-    body.appendChild(elI18n("p", "pg.model.none", { class: "muted note" }));
+  // ⚠️ **默认模型必须在这里定下来，不能留在 `buildModelSelect()` 里**：媒体档那一行
+  //    「这一档打的端点」是 `buildRequest()` 现拼的，而 `buildRequest()` 在模型为空时
+  //    交出 `null` ⇒ 定得比它晚的话，那一行**永远不出现**，而屏幕上看起来只是
+  //    「这一档没有端点」——一个纯粹由渲染顺序造成的假象。
+  const ids = currentModelIds();
+  if (modelId === "" && ids.length > 0) modelId = ids[0];
+
+  // **协议分段只在对话档出现**：媒体那两条端点不属于任何一条对话协议
+  //（真源里它们的模型 `protocols` 是空数组），摆一排选不动的协议按钮只会让人以为
+  // 图片也能挑协议。媒体档换成一行「这一档打的是哪条端点」的说明。
+  if (mode === "chat") {
+    body.appendChild(buildProtoBar());
+  } else {
+    body.appendChild(buildMediaNote());
   }
-  body.appendChild(field("pg.stream.label", buildStreamToggle()));
+
+  body.appendChild(field("pg.model.label", buildModelSelect(ids)));
+  if (ids.length === 0) {
+    body.appendChild(elI18n("p", mode === "chat" ? "pg.model.none" : "pg.model.noneMedia",
+      { class: "muted note" }));
+  }
+  // **流式开关只在对话档出现**：媒体那两条端点没有流式形态（真源里它们连
+  // `streamMode` 这一格都没有）。留一个按不动的开关会让人以为图片也能流式。
+  if (mode === "chat") body.appendChild(field("pg.stream.label", buildStreamToggle()));
 
   const tokenInput = buildTokenInput();
   body.appendChild(field("pg.token.label", tokenInput));
@@ -419,6 +560,97 @@ function buildLeft() {
 }
 
 /**
+ * 一条媒体结果地址那一行：**地址原文 + 复制按钮 +（可链接就）在新标签页打开**。
+ *
+ * ⚠️⚠️ **`rel="noopener noreferrer"` 是显式写的，不是靠浏览器补**（评审 I9）：
+ * `target="_blank"` 的 a 元素现代浏览器确实会隐式补 `noopener`，但那是**浏览器的默认值、
+ * 不是这段代码的性质**——一个 `rel="opener"` 的改动、一台老浏览器、或者哪天有人把这里
+ * 换成 `window.open()`（它从来不补），三条路径都会让被打开的那一页拿到
+ * `opener` 引用，而**这一页的 origin 上存着 `ADMIN_TOKEN`**。
+ * `noreferrer` 是另一件事：不把面板自己的地址（含路径）泄给上游给的那个主机。
+ *
+ * ⚠️ **只有 `mediaEmbeddable()` 为真的那一种才画 img**，判定在纯函数里、不在这里目测。
+ * 远端地址一律不内嵌——CSP 的 img-src 里没有任何远端主机，画出来只会是一张永远
+ * 加载失败的破图，而那比不画更让人以为「结果坏了」。
+ */
+function buildMediaRow(url) {
+  const row = el("div", { class: "pg-media-row" });
+  row.appendChild(el("span", { class: "mono pg-media-url" }, url));
+  const btn = elI18n("button", "pg.media.copy", { type: "button", class: "pg-media-copy" });
+  btn.addEventListener("click", () => { copy(url); });
+  row.appendChild(btn);
+  if (mediaLinkable(url)) {
+    row.appendChild(elI18n("a", "pg.media.open", {
+      class: "pg-media-open", href: url, target: "_blank", rel: "noopener noreferrer",
+    }));
+  }
+  if (mediaEmbeddable(url)) {
+    row.appendChild(el("img", { class: "pg-media-img", src: url, alt: t("pg.media.alt") }));
+  }
+  return row;
+}
+
+/**
+ * 媒体那一轮的结果区。**四种出口，互斥且都说得出自己是哪一档**：
+ * ① 有地址 ⇒ 逐条列出来（不替运维挑哪条是成片，理由见 `mediaResultUrls()`）；
+ * ② 没地址、而且响应根本不是 JSON ⇒ **上游这次回的是字节流**，如实说它是什么类型；
+ * ③ 没地址、响应是 JSON ⇒ 「这次的响应里没有出现任何一条地址」；
+ * ④ 出错 ⇒ 错误档位名。
+ *
+ * ⚠️ **②与③必须分开**（全局约束 9 的同型）：`src/http/routes/media.ts` 的文件头写着
+ * 「上游返回什么（地址或字节流）就原样转发」——**两种都可能，而且都不是异常**。
+ * 折叠成一句「没有结果」的话，字节流那一档会被读成「这次生成失败了」，
+ * 而它其实成功了、只是结果是一段字节而面板按 CSP 不内嵌它。
+ *
+ * ⚠️ **响应原文照旧摆出来**（与非流式对话档同一条）：它是这个调试工具最有用的东西，
+ * 而且**它不会说假话**——上面那四档里任何一档判错了，原文都摆在下面可以自己看。
+ */
+function buildMediaResult(turn) {
+  const box = el("div", { class: "pg-media" });
+  if (turn.errorKey !== null) {
+    box.appendChild(elI18n("p", turn.errorKey, { class: "danger-text pg-error" }));
+  }
+  const urls = mediaResultUrls(turn.body);
+  for (const u of urls) box.appendChild(buildMediaRow(u));
+  if (urls.length === 0 && turn.errorKey === null) {
+    // **判据是响应头，不是猜**（`js/gw-api.js` 的 `sendToGateway()` 把它带回来了）。
+    if (turn.body === null && !/^application\/json/i.test(turn.contentType)) {
+      box.appendChild(el("p", { class: "muted note pg-media-bytes" },
+        t("pg.media.bytes", { type: fmtDash(turn.contentType === "" ? null : turn.contentType) })));
+    } else if (turn.status !== null) {
+      box.appendChild(elI18n("p", "pg.media.none", { class: "muted note pg-media-none" }));
+    }
+  }
+  // ── 视频两段式的进度 ────────────────────────────────────────────────────
+  if (turn.taskId !== null) {
+    const row = el("div", { class: "pg-media-row pg-task" });
+    row.appendChild(elI18n("span", "pg.media.taskId", { class: "muted" }));
+    row.appendChild(el("span", { class: "mono pg-task-id" }, turn.taskId));
+    const btn = elI18n("button", "pg.media.copy", { type: "button", class: "pg-task-copy" });
+    btn.addEventListener("click", () => { copy(turn.taskId); });
+    row.appendChild(btn);
+    box.appendChild(row);
+  }
+  if (turn.pollState === "polling") {
+    box.appendChild(el("p", { class: "muted note pg-poll" },
+      t("pg.media.polling", { count: String(turn.pollAttempt) })));
+  }
+  if (turn.pollState === "gaveUp") {
+    // **到点了要说出来，并且把标识摆着**：静默停下留下的是一个永远「进行中」的框。
+    box.appendChild(elI18n("p", "pg.media.pollGaveUp", { class: "muted note pg-poll-gaveup" }));
+  }
+  if (turn.pollState === "noTaskId") {
+    box.appendChild(elI18n("p", "pg.media.noTaskId", { class: "muted note pg-no-task" }));
+  }
+  if (turn.cancelled === true) {
+    box.appendChild(elI18n("p", "pg.turn.cancelled", { class: "muted note pg-cancelled" }));
+  }
+  const text = turn.body === null ? null : prettyJson(turn.body);
+  if (text !== null) box.appendChild(el("pre", { class: "mono pg-body" }, text));
+  return box;
+}
+
+/**
  * 一轮对话。**上行只画运维自己输入的那句话与这次打的地址，绝不画请求头**
  * ——请求头里正是那把网关口令（全局约束 11(b)）。
  */
@@ -440,6 +672,14 @@ function buildTurn(turn) {
     foot.appendChild(el("span", { class: "mono pg-status" }, String(turn.status)));
   }
   wrap.appendChild(foot);
+
+  // ── 媒体那一轮：**只画地址，不内嵌远端任何东西**（全局约束 17）─────────────────
+  // 它比错误分支更早，因为媒体那一档**出错时也还有话要说**（任务标识、轮询进度），
+  // 而下面那条错误分支是 `return wrap` 的，走到它就什么都不剩了。
+  if (turn.mode !== "chat") {
+    wrap.appendChild(buildMediaResult(turn));
+    return wrap;
+  }
 
   // ── 流式那一轮：画拼起来的正文，**不画响应原文**（它没有「原文」可画）──────────
   // ⚠️ **顺序是刻意的**：正文在最上面。这一轮就算最后失败了，运维已经看到的那半句话
@@ -569,7 +809,13 @@ async function loadCatalog(preempt) {
     const protocols = playgroundProtocols(body);
     // **模型清单直接复用模型板块那份窄化**，不在这里再写一遍（`js/sec-settings.js` 同做法）。
     const models = catalogModels(body);
-    catalog = protocols === null || models === null ? null : { protocols, models };
+    // 媒体端点表（P3d Task 12）。**它读不出来同样是整份读不出来**，不是「媒体档不可用」：
+    // 一个只有对话档能用、另两档静静变空的面板，运维分不出是这个网关不支持媒体、
+    // 还是这份响应我们没读懂（全局约束 9 的同型）。
+    const media = mediaEndpoints(body);
+    catalog = protocols === null || models === null || media === null
+      ? null
+      : { protocols, models, media };
     if (catalog !== null && protoId === "") protoId = catalog.protocols.length > 0 ? catalog.protocols[0].id : "";
   } catch (e) {
     if (mine !== loadSeq) return;
@@ -622,6 +868,130 @@ function cancelInFlight() {
     streamingTurn.cancelled = true;
     streamingTurn = null;
   }
+  /**
+   * ⚠️⚠️ **轮询那一半在这里停，理由与上面那段逐字相同**（护栏 ③，设计 §9.3）：
+   * 定时器不清的话，切走板块 / 按了取消之后**那台打点机还在跑**——每 5 秒一次真的
+   * 上游请求，烧的是运维自己的配额，而屏幕上已经没有任何东西提到这一轮了。
+   * `onHide()` 走的就是这个函数，所以「切走板块停轮询」与「按取消停轮询」是同一份代码。
+   */
+  if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null; }
+  if (pollTurn !== null) {
+    pollTurn.pending = false;
+    pollTurn.cancelled = true;
+    pollTurn.pollState = "stopped";
+    pollTurn = null;
+    pollCtl = null;
+  }
+}
+
+/**
+ * 轮询收尾。**每一条出口都要走它**——它是「把 `pending` 收干净 + 松开在飞标记」
+ * 唯一的地方，散在各条分支里写就会漏掉某一条（流式那一档正是这么栽的）。
+ */
+function finishPolling(state) {
+  if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null; }
+  if (pollTurn !== null) {
+    pollTurn.pollState = state;
+    pollTurn.pending = false;
+  }
+  pollTurn = null;
+  pollCtl = null;
+  current = null;
+  inFlight = false;
+  render();
+}
+
+/**
+ * 排下一次打点。**三条护栏里的第 ① 与第 ② 条都在这里。**
+ *
+ * ⚠️ **`videoPollNext()` 判上限，本函数不自己数**（判定在纯函数里，admin-ui/README.md
+ * 硬规则 1）：写在这里的话它就没有单测，而「轮询会不会停」在屏幕上要几分钟才看得出来。
+ * ⚠️ **页面藏起来时直接返回、不排定时器**（照抄 `js/sec-events.js` 的 `scheduleNext()`）：
+ * 一个被切到后台的标签页不该继续烧配额。变回可见时由下面那个模块级监听接回去。
+ */
+function schedulePoll() {
+  if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null; }
+  if (pollTurn === null) return;
+  if (document.hidden) return;
+  const step = videoPollNext({ attempt: pollTurn.pollAttempt, elapsedMs: Date.now() - pollStartedAt });
+  if (step.action === "giveUp") { finishPolling("gaveUp"); return; }
+  pollTimer = setTimeout(() => { pollOnce(); }, step.delayMs);
+}
+
+/**
+ * 页面从隐藏变回可见时，把因为它而停掉的那台打点机接回去
+ * （**只注册一次的模块级监听**，与 `js/sec-events.js` 同一做法与同一理由）。
+ *
+ * ⚠️ **判据是「这一轮还在轮而且没有定时器在排」**，不是「本板块正在显示」：
+ * 切走板块已经由 `onHide()` → `cancelInFlight()` 把 `pollTurn` 清空了，
+ * 所以这里不需要再问一次板块活没活着——问了反而多一份会漂的状态。
+ */
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && pollTurn !== null && pollTimer === null) schedulePoll();
+});
+
+/**
+ * 打一次点。**每一次都是一次真的上游请求**（全局约束 14 的护栏管的正是它）。
+ *
+ * ⚠️ **停下来的判据是「这次响应里出现了媒体地址」，不是某个 status 字段等于某个词。**
+ * 上游那份状态词表**本仓从来没有核实过**（`src/http/routes/media.ts` 的文件头只承诺
+ * 原样转发），编一张出来的后果是：换一个上游实现，面板会一直轮到上限，
+ * 而那条成片其实第二次打点就回来了。
+ * ⚠️ **一次失败就停，并且说出来**：接着轮的话，那条错误要么被下一次覆盖掉（运维永远
+ * 看不见它），要么和「还在轮」同时画出来（两句话互相矛盾）。停下来之后任务标识还摆着，
+ * 稍后可以自己再查。
+ */
+async function pollOnce() {
+  pollTimer = null;
+  const turn = pollTurn;
+  const ctl = pollCtl;
+  // **身份比较**，与本板块其余三处作废判据是同一条（文件头那段 ⚠️⚠️）。
+  if (turn === null || ctl === null || current !== ctl) return;
+  const req = buildPollRequest(pollEndpoint(), turn.taskId, origin);
+  if (req === null) {
+    turn.errorKey = "pg.err.buildFailed";
+    finishPolling("stopped");
+    return;
+  }
+  turn.pollAttempt++;
+  try {
+    const r = await sendToGateway(req, token, { origin, signal: ctl.signal });
+    if (current !== ctl) return;
+    turn.status = r.status;
+    turn.body = r.body;
+    turn.contentType = typeof r.contentType === "string" ? r.contentType : "";
+    if (mediaResultUrls(turn.body).length > 0) { finishPolling("done"); return; }
+    render();
+    schedulePoll();
+  } catch (e) {
+    if (current !== ctl) return;
+    const code = e && e.code;
+    turn.errorKey = code === "cross_origin" ? "pg.err.crossOrigin" : "pg.err.transport";
+    finishPolling("stopped");
+  }
+}
+
+/**
+ * 建任务那一轮回来之后，要不要接着轮。**返回 true 表示这一轮还没完**
+ * ——调用方据它决定**不要**松开在飞标记（全局约束 14：轮询的每一次打点同样烧配额）。
+ *
+ * 四种「不用轮」各自有自己的出口，**都不是静默的**：不是视频档 / 这次就失败了 /
+ * 目录里没有轮询端点 / 上游一次就把成片给了 / 响应里没有能当任务标识用的那一格。
+ */
+function startPolling(turn, ctl) {
+  if (turn.mode !== "video" || turn.errorKey !== null || turn.status === null) return false;
+  if (pollEndpoint() === null) return false;
+  if (mediaResultUrls(turn.body).length > 0) return false;
+  const id = videoTaskIdOf(turn.body);
+  if (id === null) { turn.pollState = "noTaskId"; return false; }
+  turn.taskId = id;
+  turn.pollState = "polling";
+  turn.pending = true;
+  pollTurn = turn;
+  pollCtl = ctl;
+  pollStartedAt = Date.now();
+  schedulePoll();
+  return true;
 }
 
 /**
@@ -639,12 +1009,16 @@ function sendOnce() {
   //    ⇒ **判据只许有一份**：要改在飞去重，改 `sendBlockedKey()` 那一档。
   if (sendBlockedKey() !== null) return;
   const proto = currentProto();
-  const stream = streamOn === true;
-  const req = buildRequest(proto, { model: modelId, prompt: promptText, stream, origin });
+  const target = currentTarget();
+  // **媒体那两条端点没有流式形态**，所以流式只在对话档才可能为真
+  //（左栏在媒体档下压根不画那个开关，这里是第二道：开关的状态活过一次换档）。
+  const stream = mode === "chat" && streamOn === true;
+  const req = buildRequest(target, { model: modelId, prompt: promptText, stream, origin });
   if (req === null) {
     turns.push({
       promptText, url: "", method: "", status: null, body: null, errorKey: "pg.err.buildFailed",
       stream: false, streamed: false, text: "", malformed: 0, pending: false, cancelled: false,
+      mode, contentType: "", taskId: null, pollState: null, pollAttempt: 0,
     });
     render();
     return;
@@ -661,6 +1035,7 @@ function sendOnce() {
   const turn = {
     promptText: sent, url: req.url, method: req.method, status: null, body: null, errorKey: null,
     stream, streamed: stream, text: "", malformed: 0, pending: stream, cancelled: false,
+    mode, contentType: "", taskId: null, pollState: null, pollAttempt: 0,
   };
   if (stream) {
     turns.push(turn);
@@ -671,6 +1046,8 @@ function sendOnce() {
   const done = (r) => {
     turn.status = r.status;
     turn.body = r.body;
+    // 流式那条路不带这一格（它读的是 SSE，不是一份响应体）⇒ 空串。
+    turn.contentType = typeof r.contentType === "string" ? r.contentType : "";
     turn.streamed = r.streamed === true;
     if (!stream) turns.push(turn);
   };
@@ -717,6 +1094,9 @@ function sendOnce() {
     .finally(() => {
       // 被取消过的话这里早退 —— 收尾已经由 `cancelInFlight()` 做完了（见那里的 ⚠️⚠️）。
       if (current !== ctl) return;
+      // ⚠️ **视频那一档：建任务只是第一段，这一轮还没完。**
+      //    在飞标记与取消令牌都留着不动，理由见文件头「轮询期间在飞标记不松开」。
+      if (startPolling(turn, ctl)) { render(); return; }
       current = null;
       inFlight = false;
       turn.pending = false;

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { MODELS } from "../../../src/core/protocol/openai.js";
 import {
   PROTOCOLS, MODEL_CATALOG, protocolById, endpointFor, catalogPayload, SAMPLE_PROMPT,
+  MEDIA_ENDPOINTS,
 } from "../../../src/core/admin/protocol-catalog.js";
 
 describe("协议目录", () => {
@@ -159,6 +160,83 @@ describe("协议目录", () => {
         PROTOCOLS.map((p) => `${p.method} ${endpointFor(p, m.id, false)}`),
       );
     }
+  });
+
+  /**
+   * ── **媒体端点表本身（P3d Task 12 搬进来的三条）** ──────────────────────────
+   *
+   * 逐条手写字面量，**不从 `MEDIA_ENDPOINTS` 自己推**（第 6 种假阳性）。
+   * 这一格钉的是「这三条端点是哪三条」；它们**真的通**由
+   * `tests/contract/protocol-catalog.test.ts` 的
+   * 「媒体端点 %s：对外那条真的注册着、上游那条逐字等于 agnesBaseUrl + upstreamPath」
+   * 与「媒体轮询那条：对外带任务标识、上游那条同样带着它」两格钉。
+   */
+  it("媒体端点表三条逐条手写字面量 —— 对外与上游两半各写一遍，漏改一半就是一条部署完才发现的 404", () => {
+    expect(
+      MEDIA_ENDPOINTS.map((m) => [m.id, m.method, m.pathTemplate, m.upstreamPath, m.taskSlot]),
+    ).toEqual([
+      ["image.generate", "POST", "/v1/images/generations", "/images/generations", null],
+      ["video.create", "POST", "/v1/videos", "/videos", null],
+      ["video.poll", "GET", "/v1/videos/:id", "/videos/:id", ":id"],
+    ]);
+  });
+
+  /**
+   * **两张表是同一批路径的两个视图，会漂。**
+   * `MODEL_CATALOG[].endpoints` 按模型分组画给人看，`MEDIA_ENDPOINTS` 按端点分组给机器用。
+   * 一边加了端点另一边没加的后果：模型表上列着一条路径，而面板的媒体模式打不到它
+   * （或者反过来，面板打得到的那条从来没被教给用户）。
+   *
+   * ⚠️ **两侧都从各自的数据推，没有一侧是从另一侧推导出来的**（反同义反复）：
+   * 左边是「媒体模型身上挂的全部端点」，右边是「媒体端点表里的全部条目」。
+   */
+  it("媒体端点表与媒体模型的 endpoints 是同一批路径 —— "
+     + "两张表一漂，面板教的调法与它真发的那条就不是一回事", () => {
+    const fromModels = [...new Set(
+      MODEL_CATALOG.filter((m) => m.modality !== "chat")
+        .flatMap((m) => m.endpoints.map((e) => `${e.method} ${e.path}`)),
+    )].sort();
+    const fromEndpoints = [...new Set(
+      MEDIA_ENDPOINTS.map((m) => `${m.method} ${m.pathTemplate}`),
+    )].sort();
+    expect(fromEndpoints).toEqual(fromModels);
+    // 非空锚：两侧同时变成空数组时上面那句会空洞地通过（第 5 种假阳性）。
+    expect(fromEndpoints.length, "两张表同时空了，上面那句什么都没证明").toBe(3);
+  });
+
+  /**
+   * 媒体的样例请求体与四条对话协议守同一条：**那句占位文本恰好出现一次**。
+   * 少一次 ⇒ Playground 的媒体模式**静默丢弃运维输入的提示词、恒发样例那句话**；
+   * 多一次 ⇒ `withPrompt()` 判失败，媒体模式一次请求都发不出去。
+   *
+   * ⚠️ **轮询那条的 `sample()` 必须是 `null` 而不是 `{}`**：GET 没有请求体，
+   * 而一个空对象会让消费侧去里面找那句占位文本、找不到、把**整份目录**判成读不出来。
+   */
+  it("媒体样例体里 SAMPLE_PROMPT 恰好一次，轮询那条没有请求体 —— "
+     + "少一次就是静默丢弃运维输入的提示词", () => {
+    expect(SAMPLE_PROMPT).toBe("ping");                 // 手写字面量锚
+    for (const m of MEDIA_ENDPOINTS.filter((x) => x.op === "generate")) {
+      const json = JSON.stringify(m.sample("agnes-image-2.1-flash"));
+      expect(json.split(SAMPLE_PROMPT).length - 1, `${m.id} 的样例文本`).toBe(1);
+    }
+    expect(MEDIA_ENDPOINTS.find((m) => m.op === "poll")!.sample("x")).toBeNull();
+  });
+
+  /**
+   * 过网络那一份里，**每条媒体端点的样例模型与这条端点的形态对得上**。
+   * 变红条件：把 `catalogPayload()` 里那个 `modelFor(rest.modality)` 换回 `defaultModel`
+   * ⇒ 图片端点的样例体里出现一个**对话**模型 ⇒ 面板照着它教一条注定 4xx 的调法。
+   *
+   * 期望值手写字面量，不从 `MODEL_CATALOG` 里 find 出来再回填（第 6 种假阳性）。
+   */
+  it("过网络那一份里媒体样例体配的是同形态的模型 —— 配错形态就是教一条注定 4xx 的调法", () => {
+    const payload = JSON.parse(JSON.stringify(catalogPayload()));
+    const byId = new Map(payload.media.map((m: { id: string; sampleBody: unknown }) => [m.id, m.sampleBody]));
+    expect(byId.get("image.generate")).toEqual({ model: "agnes-image-2.1-flash", prompt: "ping" });
+    expect(byId.get("video.create")).toEqual({ model: "agnes-video-v2.0", prompt: "ping" });
+    expect(byId.get("video.poll")).toBeNull();
+    // 函数不过网络（与协议那一组同一条）。
+    for (const m of payload.media) expect(m.sample).toBeUndefined();
   });
 
   /**

@@ -145,10 +145,20 @@ async function readJson(res) {
  * @param req    `buildRequest()` 交出来的那份（`url` / `method` / `headerName` / `body`）。
  * @param token  网关口令。**调用方负责拦「还没粘口令」那一档**，见 `buildRequest` 的说明。
  * @param opts   `{ origin, signal }`。**`origin` 不传就是一个字节都不发**（见 `openGateway`）。
+ *
+ * ⚠️ **`contentType` 是 P3d Task 12 加的一格，它把一个二义性拆开了。**
+ * 在它之前，`body === null` 同时表示两件事：「响应是 JSON 但解析不了」与
+ * 「响应根本不是 JSON」。对话四条协议下后者不会发生，**媒体那两档下它是常态**
+ * ——`src/http/routes/media.ts` 的文件头写着「上游返回什么（地址或字节流）就原样转发」，
+ * 而字节流那一档在面板上必须说成「这次回的是一段字节，不是一份可展示的结果」，
+ * 不能说成「读不出来」。判据因此建在响应头上，**不是靠猜**。
+ * ⚠️ **读法不变**：仍然无条件走一次 `readJson()`，对话四条协议逐字保持原行为。
  */
 export async function sendToGateway(req, token, opts) {
   const res = await openGateway(req, token, opts);
-  return { status: res.status, ok: res.ok, body: await readJson(res) };
+  // 头缺失时是空串而不是 `null`：下游只拿它做前缀判定，两种「没有」没必要分开。
+  const contentType = res.headers.get("content-type") || "";
+  return { status: res.status, ok: res.ok, contentType, body: await readJson(res) };
 }
 
 /**

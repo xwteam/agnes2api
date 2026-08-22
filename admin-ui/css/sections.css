@@ -253,3 +253,13 @@ tr:last-child td { border-bottom: 0; }
 .pg-unknown { color: var(--danger); }
 /* 错误横幅里那颗「再读一次」，与用量 / 模型板块那两颗是同一件东西。 */
 .pg-retry { margin-left: var(--gap-sm); }
+/* ── 媒体模式（P3d Task 12）────────────────────────────────────────────────
+   一条结果 = 地址原文 + 复制 + （可链接就）在新标签页打开。
+   **地址必须能换行**（`break-all`）：一条带签名的 CDN 地址轻松几百字符，
+   不换行会把整块右栏撑破，而运维连它是什么都看不见。 */
+.pg-media-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--gap-sm); margin-top: var(--gap-sm); }
+.pg-media-url { flex: 1; min-width: 0; word-break: break-all; font-size: 12px; }
+/* **只有 data 形式的图片会走到这里**（判定在 js/pure/playground.mjs 的 mediaEmbeddable）。
+   限高限宽：上游给多大就画多大的话，一张图能把整页顶到看不见别的东西。 */
+.pg-media-img { display: block; width: 100%; max-width: 320px; max-height: 320px; object-fit: contain; border-radius: var(--radius); }
+.pg-media-note > .pg-media-endpoint { flex: 1; min-width: 0; word-break: break-all; font-size: 12px; }

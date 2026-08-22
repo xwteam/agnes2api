@@ -52,6 +52,15 @@
  * 「前端没有任何文件硬编码网关端点路径 —— 端点只许来自 /admin/api/models」
  * 扫的正是「引号紧挨着路径」这个形态，
  * **且不区分代码与注释**（`js/pure/models.mjs` 的文件头记着它当场被咬过一次）。
+ *
+ * ── **⑤ 视频任务标识的合法形状（P3d Task 12 新增的登记项）** ────────────────────
+ * `VIDEO_TASK_ID` 那条正则是 `src/core/admin/protocol-catalog.ts` 里 `VIDEO_TASK_ID_RE`
+ * 的**第二份**。**它是一份刻意留下的副本，不是漏搬**：另一条路是让真源把那条正则
+ * 随响应送过来、浏览器 `new RegExp()` 出来，而那等于让一份运行期数据决定客户端的
+ * 一段控制流（回溯代价由发送方决定）。
+ * **两份不许漂**，由 `tests/ui/playground-media.test.ts` 的
+ * 「面板那条任务标识判据与网关那条逐个探针同判」
+ * 逐个探针对着两条正则跑同一张表钉着。
  */
 
 /** 普通对象，否则 `null`。数组不算。 */
@@ -377,6 +386,272 @@ export function deltaText(proto, dataLine) {
   }
   // 走到底不是字符串 ⇒ 这一行不带正文（**不是畸形**：它 JSON 解得开）。
   return typeof node === "string" ? node : "";
+}
+
+/* ══ 媒体模式（P3d Task 12）══════════════════════════════════════════════════ */
+
+/**
+ * 响应里那份**媒体端点**清单，窄化成媒体模式用得上的那几格。
+ * 与 `playgroundProtocols()` 同一套纪律：**读不出来时是 `null`，不是空数组**；
+ * **任何一条格式不对就整份判成读不出来**，不是把坏的那条跳过（跳过之后视频会少掉
+ * 轮询那一条，而屏幕上看起来完全正常——运维建完任务永远等不到成片）。
+ *
+ * ⚠️ **`sampleBody` 这里允许 `null`，与协议那份不同**：轮询那条是 GET，按定义没有
+ * 请求体。判据因此是「`op` 是 poll 就必须没有请求体、否则必须有」——**双向都判**，
+ * 单向的话「生成端点漏了请求体」会退化成一次发空 body 的请求。
+ *
+ * ⚠️ **`op` / `modality` 这里不做白名单**（与 `streamMode` 同一条理由）：限定成今天这两个值
+ * 等于「真源多一个形态 ⇒ 整个媒体模式读不出来」。表外的形态在**真的要用它那一刻**
+ * 才不匹配任何一档，自然落到「这个形态没有可用端点」那一句上。
+ */
+export function mediaEndpoints(payload) {
+  const p = obj(payload);
+  if (p === null || !Array.isArray(p.media)) return null;
+  if (typeof p.samplePrompt !== "string" || p.samplePrompt === "") return null;
+  const out = [];
+  for (const item of p.media) {
+    const e = obj(item);
+    if (e === null) return null;
+    if (typeof e.id !== "string" || e.id === "") return null;
+    if (typeof e.modality !== "string" || e.modality === "") return null;
+    if (typeof e.op !== "string" || e.op === "") return null;
+    if (typeof e.method !== "string" || e.method === "") return null;
+    if (typeof e.pathTemplate !== "string" || e.pathTemplate === "") return null;
+    if (typeof e.authHeader !== "string" || e.authHeader === "") return null;
+    // 占位符：有就得是非空串，没有就得是 `null`。**`undefined` 不算「没有」**——
+    // 一格拼错名字的字段会静默变成 `undefined`，那与「这条不带任务标识」长得一样。
+    if (e.taskSlot !== null && (typeof e.taskSlot !== "string" || e.taskSlot === "")) return null;
+    const body = obj(e.sampleBody);
+    if (e.op === "poll") {
+      if (e.sampleBody !== null) return null;
+      // 轮询那条必须**带**占位符，否则轮询 URL 恒等于建任务那条的路径。
+      if (typeof e.taskSlot !== "string") return null;
+      if (!e.pathTemplate.includes(e.taskSlot)) return null;
+    } else if (body === null) {
+      return null;
+    }
+    out.push({
+      id: e.id,
+      modality: e.modality,
+      op: e.op,
+      method: e.method,
+      pathTemplate: e.pathTemplate,
+      authHeader: e.authHeader,
+      taskSlot: e.taskSlot,
+      sampleBody: e.sampleBody,
+      samplePrompt: p.samplePrompt,
+    });
+  }
+  return out;
+}
+
+/**
+ * 这个形态（image / video）上可用的模型 id，**按清单里的顺序**。
+ *
+ * ⚠️ 它与 `modelIdsForProtocol()` 是同一件事的另一根轴，**不是同一个函数**：
+ * 对话模型按「这条协议在不在它的 protocols 里」筛，媒体模型的 `protocols` 是**空数组**
+ * （真源里刻意留空），只能按形态筛。合成一个函数要么多一个参数、要么多一个分支，
+ * 而两条路都会让调用点有机会传错轴。
+ */
+export function modelIdsForModality(modality, models) {
+  if (!Array.isArray(models)) return [];
+  if (typeof modality !== "string" || modality === "") return [];
+  const out = [];
+  for (const m of models) {
+    const e = obj(m);
+    if (e === null || typeof e.id !== "string") continue;
+    if (e.modality === modality) out.push(e.id);
+  }
+  return out;
+}
+
+/**
+ * 这个媒体结果能不能**内嵌**进面板。**判据是纯函数，不许目测**（订正 F6）。
+ *
+ * 面板的 CSP 是 img-src 只放行本源与 data 这两档、**而且完全没有 media-src**
+ * （`src/ui/serve.ts` 的 `SECURITY_HEADERS`；没有 media-src 意味着 video 元素落回
+ * default-src none）⇒ **只有 data 开头且 MIME 是图片的那一种能内嵌，远端地址一律不行。**
+ *
+ * ⚠️⚠️ **不许为了内嵌去放宽 CSP**（全局约束 17）：`ADMIN_TOKEN` 就存在这个 origin 的
+ * 浏览器本地存储里，而**它的作用域是 origin 不是 path**；`src/core/dispatcher.ts` 的
+ * `DOCUMENT_MIME` 那段长注释已经论证过「这个源上可以出现一个攻击者影响得了的同源文档」
+ * 这条通路。往 img-src / media-src 里加通配主机是主动把那条通路又开大一格。
+ *
+ * ⚠️ **判据是 MIME，不是协议前缀。** 只判「data 开头」的话，一份
+ * `data:text/html,<script>…` 会被判成可内嵌——那正是上面那条通路的入口。
+ * ⚠️ **`data:image/svg+xml` 落在放行侧，这是已核实的选择不是疏漏**：它只会被塞进
+ * img 元素的 src，而图片上下文里的 SVG 按规范不执行脚本、也发不出请求。
+ * 反过来把 svg 单独挑出去要在这里写一张 MIME 子表，那是第二份判据。
+ *
+ * 由 `tests/ui/playground-media.test.ts` 的
+ * 「远端 http(s) 地址一律不可内嵌 —— 面板 CSP 的 img-src 里没有任何远端主机（订正 F6）」
+ * 与「data 里是图片才可内嵌，是 HTML 不行 —— 判据是 MIME 不是协议前缀」两格钉着。
+ */
+export function mediaEmbeddable(url) {
+  return typeof url === "string" && /^data:image\//i.test(url);
+}
+
+/**
+ * 这个媒体结果能不能**做成一个可以点开的链接**。**裁定的另一半**（评审 I9）。
+ *
+ * 上游返回的地址是**外部可影响的内容**，而它要被渲染进**存着 `ADMIN_TOKEN` 的那个
+ * origin** 的文档里。第一版只守住了「不内嵌」、**没有任何协议白名单**：
+ * `javascript:` 今天靠 CSP 的 script-src self 兜着，但**那是第二道防线在替第一道干活**，
+ * 与本仓「判据要写成纯函数」的惯例不符——CSP 一旦有人放宽，这里就直接漏。
+ *
+ * ⚠️⚠️ **白名单，不是黑名单**：只放行 http/https，其余（javascript: / data: / blob: /
+ * file: / vbscript: / 以及明天才被发明出来的那一种）一律不做链接。
+ * 黑名单写法（`!/^javascript:/i.test(url)`）挡不住任何一个没被列进去的协议，
+ * 而**新协议是会被发明出来的**。
+ *
+ * ⚠️ **`data:image/` 在这里是 false、在 `mediaEmbeddable()` 里是 true，两者不矛盾**：
+ * 内嵌进 img 元素与「点开导航过去」是两件事，后者会得到一个**由上游内容决定的顶层
+ * 文档**，哪怕它是一张图。
+ *
+ * 由 `tests/ui/playground-media.test.ts` 的
+ * 「javascript: / blob: / file: 一律不可做链接，只有 http(s) 可以」钉着。
+ */
+export function mediaLinkable(url) {
+  if (typeof url !== "string") return false;
+  return /^https?:\/\//i.test(url);
+}
+
+/**
+ * 一份媒体响应体里那些**看起来是媒体地址**的字符串，去重、保持出现顺序。
+ *
+ * ⚠️⚠️ **判据建在「这个字符串是不是一条地址」上，不是一张字段对照表。**
+ * 上游到底把成片放在哪一格（data[].url / url / output[].uri / …）**本仓从来没有核实过**
+ * ——`src/http/routes/media.ts` 的文件头写的是「上游返回什么就原样转发」。
+ * 编一张对照表出来的后果是：换一个上游实现，面板会**显示「这次没有结果」而响应里明明
+ * 有一条地址**，且屏幕上没有任何东西提到这件事。
+ * ⇒ 走整棵 JSON、把每一个**可链接或可内嵌**的字符串叶子收上来。
+ *
+ * ⚠️ **代价明写：它会顺带收进响应里任何一条 http(s) 地址**（上游给的文档链接、
+ * 计费页地址之类）。这是刻意选的方向——**多显示一条与结果无关的地址**是看得见的噪音，
+ * **漏掉那条成片**是看不见的失效。右栏因此把它们逐条列出来、不替运维挑哪条是成片。
+ *
+ * ⚠️ **入参一律当 unknown 逐层窄化**：这些字节来自上游，运行期什么形状都可能是。
+ * 环状引用不可能出现（它来自 JSON.parse），但深度可能很大 ⇒ 用显式栈而不是递归，
+ * 免得一份深层嵌套的响应把调用栈打爆（那会让整个板块抛一次没人接的异常）。
+ */
+export function mediaResultUrls(body) {
+  const out = [];
+  const seen = new Set();
+  const stack = [body];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (typeof node === "string") {
+      if ((mediaLinkable(node) || mediaEmbeddable(node)) && !seen.has(node)) {
+        seen.add(node);
+        out.push(node);
+      }
+      continue;
+    }
+    if (Array.isArray(node)) {
+      // **倒着压栈**，弹出来才是原顺序——顺序就是运维在屏幕上看到的顺序。
+      for (let i = node.length - 1; i >= 0; i--) stack.push(node[i]);
+      continue;
+    }
+    const o = obj(node);
+    if (o === null) continue;
+    const keys = Object.keys(o);
+    for (let i = keys.length - 1; i >= 0; i--) stack.push(o[keys[i]]);
+  }
+  return out;
+}
+
+/**
+ * 视频任务标识的合法形状（**登记项 ⑤**，真源那份是
+ * `src/core/admin/protocol-catalog.ts` 的 `VIDEO_TASK_ID_RE`）。
+ *
+ * ⚠️ **前端也要判，理由不是重复保险**：路由端不匹配会 400，而**面板不拦就是让运维
+ * 看一个 400 而不知道为什么**——那条 400 的文案说的是「格式非法」，可运维压根没输入过
+ * 这个标识，它是上游在建任务那一步给的。前端拦下来才说得清「上游给的这个标识本网关
+ * 不认，两段式在这里断了」。
+ */
+export function videoTaskIdOk(id) {
+  return typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(id);
+}
+
+/**
+ * 建任务那次的响应里，可以拿去轮询的那个任务标识。**取不到就是 `null`。**
+ *
+ * ⚠️ **只认顶层那一格 id，而且它必须过形状判据**（本仓 `tests/contract/media.test.ts` 的
+ * 「POST /v1/videos 建任务后返回任务标识」那一格里，上游给的正是这一格）。
+ * **取不到时绝不猜**：往下猜的话（比如「随便找一个过得了形状判据的字符串」）
+ * 一个 `"queued"` 状态值就会被当成任务标识——它完全过得了那条正则——
+ * 于是面板会拿着它去轮一个不存在的任务，直到轮满上限。
+ * ⇒ 取不到就明说「这次的响应里没有能当任务标识用的那一格」，并把原文摆出来。
+ */
+export function videoTaskIdOf(body) {
+  const o = obj(body);
+  if (o === null) return null;
+  return videoTaskIdOk(o.id) ? o.id : null;
+}
+
+/**
+ * 一次轮询请求需要的那几样东西。**构造不出来时返回 `null`。**
+ *
+ * ⚠️ **`body` 是 `undefined` 而不是 `{}`**：这是一条 GET。`js/gw-api.js` 那边
+ * `JSON.stringify(undefined)` 就是 `undefined`，于是 fetch 一个字节的请求体都不带；
+ * 给它一个空对象的话，带 body 的 GET 在浏览器里直接抛。
+ *
+ * ⚠️ **`headerName` 仍然只是头的名字、不含值**（与 `buildRequest()` 同一条结构）：
+ * 网关口令由 `js/gw-api.js` 在发请求那一刻现拼，不进这个返回值。
+ */
+export function buildPollRequest(endpoint, taskId, origin) {
+  if (endpoint === null || endpoint === undefined) return null;
+  const slot = typeof endpoint.taskSlot === "string" && endpoint.taskSlot !== "" ? endpoint.taskSlot : null;
+  if (slot === null) return null;
+  if (!videoTaskIdOk(taskId)) return null;
+  const base = typeof origin === "string" ? origin : "";
+  // **`split`/`join` 而不是 `replace`**（与 `buildRequest()` 里那条同一理由）。
+  const path = String(endpoint.pathTemplate).split(slot).join(taskId);
+  return {
+    url: `${base}${path}`,
+    method: String(endpoint.method),
+    headerName: String(endpoint.authHeader),
+    body: undefined,
+  };
+}
+
+/**
+ * 轮询的两条上限。**手写常量，两条都要有**（护栏 1）。
+ *
+ * ⚠️⚠️ **「最多轮几次」与「最多轮多久」不是同一条**，缺一条都封不住：
+ * · 只有次数上限 ⇒ 间隔被谁改大之后，一个标签页能挂上几个小时；
+ * · 只有时长上限 ⇒ 间隔被谁改小之后，同样的时长里打点次数翻几十倍。
+ * 两条同时判，**先到哪条算哪条**。
+ */
+export const VIDEO_POLL_INTERVAL_MS = 5_000;
+export const VIDEO_POLL_MAX_ATTEMPTS = 60;
+export const VIDEO_POLL_MAX_MS = 300_000;
+
+/**
+ * 下一步该不该再轮一次。**纯判定，不碰时钟**——时间由调用方量好了传进来。
+ *
+ * `state`: `{ attempt, elapsedMs }`。`attempt` = **已经轮过几次**（第一次轮之前是 0）。
+ *
+ * ⚠️⚠️ **必须有上限，而且上限要在这里、不在板块文件里**：一个忘了关的标签页就是一台
+ * 永动打点机——每一次打点都是一次**真的**上游请求，烧的是运维自己的配额。
+ * 判定写在板块文件里的话它就没有单测，而「轮询会不会停」这件事**在屏幕上要几分钟
+ * 才看得出来**，是最不容易被人工冒烟发现的那一类。
+ *
+ * ⚠️ **到点给的是 `giveUp` 而不是静默停下**：停下来什么都不说的话，屏幕上留下的是
+ * 一个永远「进行中」的框。调用方据这一档画出「任务仍在进行，请稍后用任务标识再查」
+ * 并把标识摆出来。
+ *
+ * 由 `tests/ui/playground-media.test.ts` 的
+ * 「轮询到达次数上限后停下 —— 无限轮就是一台永动打点机」与
+ * 「轮询到达时长上限后停下 —— 只判次数的话把间隔改大就能挂上几个小时」两格钉着。
+ */
+export function videoPollNext(state) {
+  const s = obj(state);
+  const attempt = s !== null && typeof s.attempt === "number" && s.attempt >= 0 ? s.attempt : 0;
+  const elapsedMs = s !== null && typeof s.elapsedMs === "number" && s.elapsedMs >= 0 ? s.elapsedMs : 0;
+  if (attempt >= VIDEO_POLL_MAX_ATTEMPTS) return { action: "giveUp" };
+  if (elapsedMs >= VIDEO_POLL_MAX_MS) return { action: "giveUp" };
+  return { action: "poll", delayMs: VIDEO_POLL_INTERVAL_MS };
 }
 
 /**
