@@ -458,6 +458,32 @@ key——这两种状态被视为「这个 key 已失效」，重试没有意义
 给出恢复时刻）、`all_evicted`（全部 key 因凭据失效被永久剔除，**不会**自愈，请更换 key）、
 `upstream_error`（key 本身可用，但上游每次尝试都失败）。
 
+### 超长的非流式请求会不会被平台从中间砍断（两种形态可能不同）
+
+**结论：Worker 那一侧没有可以依赖的平台承诺，所以本文不做承诺，面板也不做承诺。**
+
+已核实的官方口径（Cloudflare Workers 的 limits 页）有两条：HTTP 触发的 Worker
+**没有**墙钟时长上限（"There is no hard limit on duration for HTTP-triggered Workers"），
+单条出站子请求也**没有**时间上限（"There is no set time limit on individual subrequests"），
+两条都以「客户端还连着」为条件。
+
+**但这两条覆盖不到全部**，逐条写明：
+
+- 官方文档里那条 **125 秒回源读超时（错误码 524）** 只写在「经 Cloudflare 反向代理的
+  站点流量」语境下，**从没说过它适不适用于 Worker 自己发出的子请求**——查不到就按
+  「没有平台承诺」处理，不臆测。
+- 同一页还写着运行时每周会更新几次，更新时在飞的请求有 **30 秒**宽限期，超过就被中止。
+  这是低概率事件，但它是**存在的**。
+- `wrangler.toml` 里那个 **15 分钟（900 秒）**是 **Cron Trigger（`scheduled()`）**的墙钟上限，
+  **不是 `fetch()` 的**，别把它搬过来当依据。
+
+⇒ **实际影响两条**：
+① `UPSTREAM_SYNC_TIMEOUT_MS`（默认 120000）级别的非流式请求，在 Worker 与 Docker
+   两种形态下**表现不一定相同**；Node/Docker 那一侧没有平台墙钟，只受你自己配的预算约束。
+② **面板（调试台）的文案不承诺「两种形态一样」**，也不给出任何「多久之内一定不会被中断」
+   的数字。真要跑长请求，把 `UPSTREAM_SYNC_TIMEOUT_MS` 调到你实测能过的范围，
+   或者改用流式端点（首字节档）。
+
 ## Cloudflare Worker
 
 ### 方式一：Deploy to Cloudflare 按钮

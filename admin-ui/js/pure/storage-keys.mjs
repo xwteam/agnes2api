@@ -48,3 +48,22 @@ export const LANG_STORE = "agnes2api_lang";
  * 收进来只是为了让「除 boot.js 外不许再出现 `agnes2api_` 字面量」那条判据能收干净。
  */
 export const DEBUG_STORE = "agnes2api_debug";
+
+/**
+ * **Playground 用的网关口令**（P3d Task 10，设计 §10.5）。
+ *
+ * ⚠️⚠️ **它与上面那把管理口令（`KEY_STORE`）是两把完全不同的钥匙，必须分开存。**
+ * 管理口令走 `x-admin-key` 打 `/admin/api` 那棵树；网关口令是发给**每一个下游用户**
+ * 的那把中转口令，走各协议惯用的鉴权头打对外那棵树。两者共用一个存储键的后果是
+ * 「面板登录一次就等于把中转口令也换掉了」——而它们的泄漏面完全不同。
+ * 隔离由 `tests/ui/gw-api.test.ts` 的
+ * 「凭据头里没有 x-admin-key —— 管理口令绝不许走上对外那条路」与
+ * `tests/ui/api-session.test.ts` 的「凭据头只有 x-admin-key —— 没有任何网关口令头」
+ * 两格**各守一个方向**。
+ *
+ * ⚠️ **这把口令由用户手动粘贴，面板永远拿不到它的明文来源**（全局约束 11(b)、
+ * 设计 §8.6「凭据只写不读」）：`GET /admin/api/config` 对 `gatewayToken` 只回
+ * `{ configured, hint }`。**别想着做「一键填入我的口令」**——那需要在后端开一个
+ * 明文回显口子，而那个口子一旦开了，整条「凭据只写不读」就没了。
+ */
+export const GW_KEY_STORE = "agnes2api_gw_key";

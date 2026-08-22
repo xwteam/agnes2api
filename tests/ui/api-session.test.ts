@@ -273,12 +273,13 @@ describe("api.raw()：两把钥匙隔离（凭据头 / URL 前缀两条禁令）
  * **全站到底有几个网络出口。**
  *
  * `api.js` 的文件头原来写着「全站唯一网络出口」，并把这句话当成
- * 「口令只走请求头、不进 URL」那段安全论证的前提——而实际上有**两个**：
+ * 「口令只走请求头、不进 URL」那段安全论证的前提——而实际上有**三个**：
  * `js/app.js` 的登录探针完全绕开本模块（没有 `expired()` 前置、没有
- * `onUnauthorized`、没有 `ApiError`）。
+ * `onUnauthorized`、没有 `ApiError`），P3d Task 10 又加了 `js/gw-api.js`
+ * （Playground 打对外那棵树，**拿的是另一把钥匙**）。
  *
- * 这一格是**源码文本断言**，弱于行为断言，如实说明：它数的是 `fetch(` /
- * `XMLHttpRequest` / `EventSource` / `sendBeacon` 这几种写法的出现处。
+ * 这一格是**源码文本断言**，弱于行为断言，如实说明：它数的是下面 `EGRESS_FORMS`
+ * 那张手写枚举表里的几种写法的出现处。
  * 它拦不住一种没被列举的新写法，但拦得住"顺手在某个板块里再开一个 fetch"
  * ——而后者正是这条论证前提唯一现实的失效方式。
  */
@@ -323,13 +324,74 @@ function stripTemplateText(src: string): string {
     [...lit.matchAll(/\$\{([^{}]*)\}/g)].map((m) => ` ${m[1]} `).join(""));
 }
 
+/**
+ * **出网写法的枚举表。P3d Task 10 从四种补到七种。**
+ *
+ * ⚠️⚠️ **补进来的后三种是 P3d Task 7 评审 F-11 实测出来的活口子，Task 9 把它们
+ * 原样交接给了 Task 10**（理由：Playground 是本期唯一新写前端出网代码的任务，
+ * 而那三种正是它可能会用到的形态）。当时的实测：三种**各得 0**，
+ * 而 `sendBeacon` / `XMLHttpRequest` 各得 1。
+ *
+ * 三种各自的形状，以及为什么按名字扫得住它们：
+ * · **`new WebSocket(u)`** —— 名字根本不在旧表里。加一条 `WebSocket\s*\(` 即可。
+ * · **`await import(u)`** —— 动态 `import()` 会真的去网上取一段代码。判据要求紧跟 `(`，
+ *   所以静态的 `import { x } from "y"` 不会被误算（它没有括号）。
+ * · **`const f = globalThis.fetch; f(u)`** —— 这一种与前两种**形状不同**：
+ *   它不是「另一个名字」，而是**把 `fetch` 当成值取用**。按名字扫的话，
+ *   看得见的只有那一次取值 ⇒ 判据数的是**别名被造出来的那一刻**
+ *   （`.fetch` 或 `= fetch`，且后面不跟 `(`），不是别名被调用的那一刻——
+ *   后者按定义扫不到（`f(u)` 里没有任何一个表里的名字）。
+ *
+ * ⚠️ **两条 `fetch` 规则互斥，不会重复计数**：调用那条要求紧跟 `(`，
+ * 别名那条要求**不**紧跟 `(`。由下面「反向自检：补进表里的那三种写法，
+ * 每一种都真的被数出来」那一格里的 `fetch(u)` 一条钉着（它必须恰好是 1，不是 2）。
+ *
+ * ── ⚠️⚠️ **两条新规则的第一版在真实文件上当场误报，narrowing 是实测出来的** ────
+ * 第一版写的是 `\bimport\s*\(`（允许空格）与 `\bfetch\b(?!\s*\()`（不限定前一个字符）。
+ * 拿全仓真实文件喂进去 ⇒ **`admin-ui/js/i18n-dict.js` 当场多出 3 处**，
+ * 而那个文件里一行代码都没有，命中的全是**英文文案**：
+ * · `"Bulk import (one per line)"` —— `import` 后面跟空格再跟括号；
+ * · `"the per-fetch limit was exceeded"` 与 `"reload the page to fetch them again"`
+ *   —— 散文里的 `fetch` 这个词。
+ * ⇒ 收窄成 `\bimport\(`（不许空格）与 `(?:\.|=\s*)fetch\b`（前面必须是成员访问点或赋值号）。
+ * **收窄本身造出来的三条盲点逐条登记在下面的 `BLIND_SPOTS` 里**，那是断言不是散文。
+ * ⭐ 记一条形状：**写完一条形状判据，先拿仓里真实那一行去喂它**——
+ * 这三处误报没有任何一条是想出来的，全是喂进去之后蹦出来的。
+ *
+ * ⚠️ **别名那条只覆盖 `fetch`，不覆盖 `XMLHttpRequest` / `WebSocket` / `EventSource`
+ * 的同类写法**——同样登记在下面的 `BLIND_SPOTS` 里。
+ */
+const EGRESS_FORMS: ReadonlyArray<{ label: string; re: RegExp }> = [
+  { label: "fetch(", re: /\bfetch\s*\(/g },
+  { label: "XMLHttpRequest(", re: /\bXMLHttpRequest\s*\(/g },
+  { label: "EventSource(", re: /\bEventSource\s*\(/g },
+  { label: "sendBeacon(", re: /\bsendBeacon\s*\(/g },
+  // ── P3d Task 10 补进来的三种 ──
+  { label: "WebSocket(", re: /\bWebSocket\s*\(/g },
+  // **不许 `import` 与括号之间有空格**，理由见上面那段实测（英文文案误报）。
+  { label: "动态 import(", re: /\bimport\(/g },
+  // **前面必须是成员访问点或赋值号**，理由同上。
+  { label: "fetch 别名（当值取用，后面不跟括号）", re: /(?:\.|=\s*)fetch\b(?!\s*\()/g },
+];
+
 /** 一段源码里的网络出口处数。**注释与模板串字面文本都不算。** */
 function egressSites(src: string): number {
   const code = stripTemplateText(
     // 注释里提到这些名字不算出口（本仓注释极爱复述代码）。
     src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1"),
   );
-  return [...code.matchAll(/\b(?:fetch|XMLHttpRequest|EventSource|sendBeacon)\s*\(/g)].length;
+  let n = 0;
+  for (const { re } of EGRESS_FORMS) {
+    // ⚠️ **每次都归零。** `String.matchAll()` 会把当时的 `lastIndex` 复制进它的克隆
+    // ⇒ 不归零的话，每个文件开头若干字符被整段跳过。
+    // `tests/ui/no-hardcoded-endpoints.test.ts` 的
+    // 「scan() 不受任何遗留 lastIndex 影响 —— 这条通道一旦打开，唯一的护栏会静默恒绿」
+    // 那一格记着这条致盲通道当初有多近。
+    re.lastIndex = 0;
+    n += [...code.matchAll(re)].length;
+    re.lastIndex = 0;
+  }
+  return n;
 }
 
 /**
@@ -417,6 +479,44 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
       + "**那一族只有本表这一条兜着**。",
   },
   {
+    // **P3d Task 10 收窄造出来的一条**：`import` 与括号之间允许空格是合法 JS。
+    probe: 'const m = await import ("./x.js");',
+    why: "**`import` 与括号之间带空格的动态 import 扫不到**。它是合法 JS，"
+      + "但本仓与主流写法都不带空格。**允许空格的代价实测过**："
+      + "`admin-ui/js/i18n-dict.js` 的英文文案 `Bulk import (one per line)` 会被数成一个出口 "
+      + "⇒ 一道会因为「有人写了一句英文说明」而变红的护栏，过不了三轮就会被人放宽。"
+      + "**宁可漏一种没人写的形态，不要一道被噪音逼退的护栏。**",
+  },
+  {
+    // **P3d Task 10 收窄造出来的一条**：成员访问点与名字之间允许空格。
+    probe: "const f = globalThis . fetch; f(u);",
+    why: "**成员访问点与 `fetch` 之间带空格的别名写法扫不到**（`globalThis . fetch`）。"
+      + "同一族还有解构（`const { fetch: f } = globalThis;`）与字符串下标"
+      + "（`globalThis[\"fetch\"]`）。三种都是合法 JS、都没人这么写，"
+      + "而放开前一个字符的限定实测会把 `i18n-dict.js` 里两句含 `fetch` 这个词的"
+      + "英文文案数成出口。**同上：宁可漏，不要噪音。**",
+  },
+  {
+    // **P3d Task 10 新造的一条**：别名那条规则只写了 `fetch` 一个名字。
+    probe: "const X = XMLHttpRequest; new X();",
+    why: "**别名那条规则只覆盖 `fetch`**，`XMLHttpRequest` / `WebSocket` / `EventSource` "
+      + "的同类写法（把构造器当值取用）一个都不覆盖。"
+      + "⚠️ **为什么不顺手都加上**：那三个名字在真实代码里几乎只会以 `new X(` 出现，"
+      + "而 `fetch` 恰恰相反（它本来就是一个可以直接传来传去的函数）——"
+      + "把三条否定先行断言一并加上，收益是三种没人这么写的形态，"
+      + "代价是三条各自可能写反的正则（本表上一条就记着写反的后果）。"
+      + "**今天登记，不今天补。**",
+  },
+  {
+    // **P3d Task 10 新造的一条**：别名**被调用**那一刻按定义扫不到。
+    probe: "sendIt(u);",
+    why: "**别名被调用那一刻扫不到**：`f(u)` 里没有任何一个表里的名字。"
+      + "按名字扫的判据只看得见**别名被造出来**那一刻（`const f = globalThis.fetch;`），"
+      + "而那一刻与调用可以隔着一个文件、一个参数、一个对象字段。"
+      + "⚠️ 这不是「补一条正则就能修」的那一类——修它要的是数据流分析，"
+      + "那已经不是一道文本扫描的射程了。**这条边界是这整道护栏的天花板。**",
+  },
+  {
     // **既有盲点，非本次改动新造**：`egressSites()` 抠注释用的
     // `/(^|[^:])\/\/.*$/gm` 不认得「这个 `//` 住在模板串里」。
     probe: "const s = `a // b`; fetch(u);",
@@ -427,9 +527,14 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
 ];
 
 describe("面板的网络出口清单", () => {
-  it("恰好两处：api.js 的 raw() 与 app.js 的登录探针", () => {
+  it("恰好三处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口", () => {
     // **按文件计数，不按行号**：行号断言会被任何一次无关的注释改动打红，那种
     // 断言过不了三轮就会被人"顺手放宽"，而放宽之后它就什么都不守了。
+    // 第三处是 P3d Task 10 的 Playground 出口：它**拿的是另一把钥匙**（网关口令），
+    // 所以它绕开 `api.js` 是刻意的，不是疏漏。两把钥匙各自的禁令见本文件
+    // 「凭据头只有 x-admin-key —— 没有任何网关口令头」与
+    // `tests/ui/gw-api.test.ts` 的
+    // 「凭据头里没有 x-admin-key —— 管理口令绝不许走上对外那条路」。
     const counts: Record<string, number> = {};
     for (const f of walkJs("admin-ui/js")) {
       const n = egressSites(readFileSync(f, "utf8"));
@@ -438,7 +543,47 @@ describe("面板的网络出口清单", () => {
     expect(counts, "网络出口的数量或位置变了——api.js 文件头那段安全论证要跟着重写").toEqual({
       "admin-ui/js/api.js": 1,
       "admin-ui/js/app.js": 1,
+      "admin-ui/js/gw-api.js": 1,
     });
+  });
+
+  /**
+   * ── **P3d Task 10：补进枚举表的那三种写法，每一种都真的被数出来** ──────────────
+   *
+   * **这一格是「补了一格」与「补了一格会红的」之间那个装置。**
+   * 只把三条正则加进 `EGRESS_FORMS` 的话，写错任何一条（比如 `\bimport\b` 少了括号、
+   * 或者别名那条的否定先行断言方向写反）都不会有任何东西变红——上面那条按文件计数的
+   * 断言在「新规则一条都匹配不上」时**照样是绿的**（真实文件里今天本来就没有这三种写法）。
+   *
+   * ⚠️ **`fetch(u)` 那一条恰好是 1、不是 2**：它同时钉住「两条 `fetch` 规则互斥」。
+   * 少了这一条，把别名那条的先行断言写成肯定式（`(?=\s*\()`）会让每一处真调用被数两遍
+   * ⇒ 上面那条计数断言当场红成 2，而**红的原因会被读成「又多了一个出口」**。
+   *
+   * ⚠️ **静态 `import` 必须是 0**：动态那条要求名字后面跟 `(`，写成 `\bimport\b` 的话
+   * `admin-ui/js` 下每一行 import 语句都会被数成一个出口（实测那是几十处），
+   * 整道护栏当场变成噪音、然后被人放宽。
+   */
+  it.each([
+    ["new WebSocket(u);", 1, "WebSocket：名字根本不在旧表里"],
+    ['const m = await import("./x.js");', 1, "动态 import()：会真的去网上取一段代码"],
+    ["const f = globalThis.fetch; f(u);", 1, "把 fetch 当值取用 —— 按名字扫只看得见造别名那一刻"],
+    ["const f = fetch; f(u);", 1, "别名的另一种写法：直接把裸 fetch 赋给一个变量"],
+    ["fetch(u);", 1, "真调用仍然恰好数一次 —— 两条 fetch 规则互斥，不许重复计数"],
+    ["client.fetch(u);", 1, "成员形态的真调用也恰好一次，不因为前面有个点被数两遍"],
+    ['import { t } from "./i18n.js";', 0, "静态 import 不是出口 —— 数进去会把整道护栏变成噪音"],
+    ["const importantThing = 1;", 0, "`import` 只是另一个标识符的前缀，`\\b` 得挡住它"],
+    ["const prefetch = 1;", 0, "`fetch` 是另一个标识符的后缀，`\\b` 得挡住它"],
+    // ⚠️ **下面两条是实测出来的真实误报样本，逐字取自 `admin-ui/js/i18n-dict.js` 的英文文案。**
+    //    它们不是想象出来的边界：第一版判据在真实文件上就是被这两句打红的。
+    //    ⚠️ 探针刻意写成**裸散文**而不是带引号的字符串字面量——`egressSites()`
+    //    今天**不抠**普通字符串的内容（它只抠注释与模板串字面文本），
+    //    所以「住在字符串里」并不构成豁免，这两句必须靠判据本身的形状挡住。
+    ["Bulk import (one per line)", 0, "英文文案里的 import 加空格加括号 —— 第一版在真实字典上被它打红"],
+    ["the per-fetch limit was exceeded", 0, "英文文案里的 fetch 这个词 —— 第一版在真实字典上被它打红"],
+    ["reload the page to fetch them again", 0, "同上，第二句"],
+  ])("反向自检：补进表里的那三种写法，每一种都真的被数出来：%s", (probe, expected) => {
+    // 期望值手写字面量（第 6 种假阳性：不许从 `EGRESS_FORMS` 推导）。
+    expect(egressSites(probe as string)).toBe(expected as number);
   });
 
   /**

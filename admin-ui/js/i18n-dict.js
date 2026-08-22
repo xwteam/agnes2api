@@ -44,6 +44,9 @@ export const I18N = {
   // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `models.*`：命名空间在这里
   // 表示的是「壳层导航」，与板块内部的文案分开。
   "nav.models":       { "zh-CN": "模型", "zh-TW": "模型", en: "Models", ja: "モデル", ko: "모델" },
+  // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `pg.*`：命名空间在这里
+  // 表示的是「壳层导航」，与板块内部的文案分开。
+  "nav.playground":   { "zh-CN": "调试台", "zh-TW": "偵錯台", en: "Playground", ja: "プレイグラウンド", ko: "플레이그라운드" },
   // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `set.*`：命名空间在这里
   // 表示的是「壳层导航」，与板块内部的文案分开。
   "nav.settings":     { "zh-CN": "设置", "zh-TW": "設定", en: "Settings", ja: "設定", ko: "설정" },
@@ -818,4 +821,59 @@ export const I18N = {
   "models.empty":            { "zh-CN": "这份目录里一个模型都没有。", "zh-TW": "這份目錄裡一個模型都沒有。", en: "This catalog contains no models.", ja: "このカタログにはモデルが 1 つもありません。", ko: "이 카탈로그에는 모델이 하나도 없습니다." },
   "models.filterEmpty":      { "zh-CN": "这条协议上没有可用的模型。", "zh-TW": "這條協定上沒有可用的模型。", en: "No models are available on this protocol.", ja: "このプロトコルで利用できるモデルはありません。", ko: "이 프로토콜에서 사용할 수 있는 모델이 없습니다." },
   "models.unavailable":      { "zh-CN": "模型目录读不出来，所以这里是一根破折号——不是这个网关一个模型都没有。", "zh-TW": "模型目錄讀不出來，所以這裡是一根破折號——不是這個閘道一個模型都沒有。", en: "The model catalog could not be read, so this shows a dash — it is not that the gateway has no models.", ja: "モデルカタログを取得できなかったためダッシュを表示しています。ゲートウェイにモデルがないという意味ではありません。", ko: "모델 카탈로그를 읽지 못해 대시를 표시합니다. 게이트웨이에 모델이 없다는 뜻이 아닙니다." },
+
+  // ── Playground 板块（P3d Task 10）────────────────────────────────────────
+  // ⚠️ **这一段一个 `{占位符}` 都没有，是刻意的**：`scripts/check-i18n.mjs` 的第 ⑧ 条
+  //    要求带占位符的 key 每一次以字面量出现时后面都紧跟一个 `,`，而本板块把大量
+  //    key 交给 `elI18n(tag, key)`（第二个参数后面确实是 `,` 或 `)`），
+  //    形态一旦掺进占位符就要逐处核对。这里用不上参数，那就一个都不写。
+  // ⚠️ **协议名与模型 id 一律不进字典**：它们是专名 / 标识符，来自协议目录的响应。
+  "pg.title":                { "zh-CN": "调试台", "zh-TW": "偵錯台", en: "Playground", ja: "プレイグラウンド", ko: "플레이그라운드" },
+  "pg.desc":                 { "zh-CN": "在面板里直接向这个网关发一次真实请求，用来确认四条协议各自是不是通的。", "zh-TW": "在面板裡直接向這個閘道發一次真實請求，用來確認四條協定各自是不是通的。", en: "Send a real request to this gateway from the panel to confirm each of the four protocols works.", ja: "この画面からゲートウェイへ実際にリクエストを送り、4 つのプロトコルがそれぞれ通るかを確認します。", ko: "콘솔에서 이 게이트웨이로 실제 요청을 보내 네 가지 프로토콜이 각각 동작하는지 확인합니다." },
+  // ⚠️ **这一句是 U-B 的落点，措辞不许放松成「两种形态一样」**：官方文档说 HTTP 触发的
+  //    Worker 没有墙钟上限、单条子请求也没有时间上限，但**没有**说 CDN 那条回源读超时
+  //    适不适用于 Worker 自己发出的子请求 ⇒ 按「没有平台承诺」处理。
+  "pg.runtimeNote":          { "zh-CN": "一次非流式请求要等上游把整段回答生成完才返回，可能很慢。Worker 与 Docker 两种部署形态在超长请求上的表现不一定相同，这里不对「多久之内一定不会被中断」做任何承诺。", "zh-TW": "一次非串流請求要等上游把整段回答產生完才返回，可能很慢。Worker 與 Docker 兩種部署形態在超長請求上的表現不一定相同，這裡不對「多久之內一定不會被中斷」做任何承諾。", en: "A non-streaming request only returns once upstream has finished generating the whole answer, so it can be slow. The Worker and Docker deployments may behave differently on very long requests; nothing here promises how long a request is guaranteed to survive.", ja: "非ストリーミングのリクエストは上流が回答全体を生成し終えるまで返りません。非常に長いリクエストでは Worker と Docker の挙動が同じとは限らず、「何秒までは必ず中断されない」といった保証はここでは一切行いません。", ko: "비스트리밍 요청은 업스트림이 답변 전체를 만들어야 반환되므로 느릴 수 있습니다. 아주 긴 요청에서는 Worker와 Docker의 동작이 같다고 볼 수 없으며, 여기서는 «몇 초까지는 반드시 끊기지 않는다»는 약속을 하지 않습니다." },
+  "pg.req.title":            { "zh-CN": "请求配置", "zh-TW": "請求設定", en: "Request", ja: "リクエスト設定", ko: "요청 설정" },
+  "pg.mode.label":           { "zh-CN": "模式", "zh-TW": "模式", en: "Mode", ja: "モード", ko: "모드" },
+  "pg.mode.chat":            { "zh-CN": "对话", "zh-TW": "對話", en: "Chat", ja: "チャット", ko: "대화" },
+  "pg.mode.image":           { "zh-CN": "图片", "zh-TW": "圖片", en: "Image", ja: "画像", ko: "이미지" },
+  "pg.mode.video":           { "zh-CN": "视频", "zh-TW": "影片", en: "Video", ja: "動画", ko: "동영상" },
+  "pg.mode.laterTip":        { "zh-CN": "这一档还没有接线，暂时按不动。", "zh-TW": "這一檔還沒有接線，暫時按不動。", en: "This mode is not wired up yet, so the button does nothing.", ja: "このモードはまだ接続されていないため、押せません。", ko: "이 모드는 아직 연결되지 않아 누를 수 없습니다." },
+  "pg.proto.label":          { "zh-CN": "协议", "zh-TW": "協定", en: "Protocol", ja: "プロトコル", ko: "프로토콜" },
+  "pg.model.label":          { "zh-CN": "模型", "zh-TW": "模型", en: "Model", ja: "モデル", ko: "모델" },
+  "pg.model.none":           { "zh-CN": "这条协议上没有可用的模型，换一条协议试试。", "zh-TW": "這條協定上沒有可用的模型，換一條協定試試。", en: "No model is available on this protocol; try another one.", ja: "このプロトコルで利用できるモデルがありません。別のプロトコルをお試しください。", ko: "이 프로토콜에서 사용할 수 있는 모델이 없습니다. 다른 프로토콜을 사용해 보세요." },
+  "pg.stream.label":         { "zh-CN": "流式", "zh-TW": "串流", en: "Streaming", ja: "ストリーミング", ko: "스트리밍" },
+  "pg.stream.laterTip":      { "zh-CN": "流式还没有接线，暂时按不动；这里发的是非流式请求。", "zh-TW": "串流還沒有接線，暫時按不動；這裡發的是非串流請求。", en: "Streaming is not wired up yet, so this toggle does nothing; requests here are non-streaming.", ja: "ストリーミングはまだ接続されていないため操作できません。ここから送るのは非ストリーミングのリクエストです。", ko: "스트리밍은 아직 연결되지 않아 사용할 수 없습니다. 여기서 보내는 요청은 비스트리밍입니다." },
+  "pg.token.label":          { "zh-CN": "网关口令", "zh-TW": "閘道口令", en: "Gateway token", ja: "ゲートウェイトークン", ko: "게이트웨이 토큰" },
+  "pg.token.placeholder":    { "zh-CN": "粘贴 GATEWAY_TOKEN", "zh-TW": "貼上 GATEWAY_TOKEN", en: "Paste GATEWAY_TOKEN", ja: "GATEWAY_TOKEN を貼り付け", ko: "GATEWAY_TOKEN 붙여넣기" },
+  // ⚠️ 这句话必须说清「面板拿不到它」，否则运维会一直找那颗并不存在的「填入我的口令」按钮。
+  "pg.token.note":           { "zh-CN": "这把口令由你手动粘贴，只存在这台浏览器里。面板读不到它的明文（凭据只写不读），所以没有「一键填入」。", "zh-TW": "這把口令由你手動貼上，只存在這台瀏覽器裡。面板讀不到它的明文（憑據只寫不讀），所以沒有「一鍵填入」。", en: "You paste this token yourself and it stays in this browser. The panel cannot read its plaintext (credentials are write-only), so there is no auto-fill.", ja: "このトークンはご自身で貼り付け、このブラウザーにのみ保存されます。画面側は平文を読み取れない（資格情報は書き込み専用）ため、自動入力はありません。", ko: "이 토큰은 직접 붙여넣으며 이 브라우저에만 저장됩니다. 콘솔은 평문을 읽을 수 없으므로(자격 증명은 쓰기 전용) 자동 채우기는 없습니다." },
+  "pg.token.stateEmpty":     { "zh-CN": "还没粘口令", "zh-TW": "還沒貼口令", en: "No token pasted yet", ja: "トークン未入力", ko: "토큰이 아직 없습니다" },
+  // ⚠️ 「比不了」与「对不上」是两句话，**不许折叠成一档**：折叠之后运维会去改一把其实没错的口令。
+  "pg.token.stateUnknown":   { "zh-CN": "读不到设置页里的末位提示，这次比不了", "zh-TW": "讀不到設定頁裡的末位提示，這次比不了", en: "Cannot read the stored token hint, so no comparison was made", ja: "設定側の末尾ヒントを取得できないため、照合できません", ko: "설정의 끝자리 힌트를 읽을 수 없어 대조하지 못했습니다" },
+  "pg.token.stateMatch":     { "zh-CN": "末位与设置页里配的那把一致", "zh-TW": "末位與設定頁裡配的那把一致", en: "Last characters match the configured token", ja: "末尾が設定済みのトークンと一致します", ko: "끝자리가 설정된 토큰과 일치합니다" },
+  "pg.token.stateMismatch":  { "zh-CN": "末位与设置页里配的那把对不上", "zh-TW": "末位與設定頁裡配的那把對不上", en: "Last characters do not match the configured token", ja: "末尾が設定済みのトークンと一致しません", ko: "끝자리가 설정된 토큰과 일치하지 않습니다" },
+  "pg.prompt.label":         { "zh-CN": "提示词", "zh-TW": "提示詞", en: "Prompt", ja: "プロンプト", ko: "프롬프트" },
+  "pg.prompt.placeholder":   { "zh-CN": "输入要发给模型的一句话", "zh-TW": "輸入要發給模型的一句話", en: "Type a message to send to the model", ja: "モデルに送る文章を入力", ko: "모델에 보낼 문장을 입력" },
+  "pg.send":                 { "zh-CN": "发送", "zh-TW": "發送", en: "Send", ja: "送信", ko: "보내기" },
+  "pg.cancel":               { "zh-CN": "取消这一次", "zh-TW": "取消這一次", en: "Cancel this request", ja: "このリクエストを中止", ko: "이 요청 취소" },
+  "pg.sending":              { "zh-CN": "正在等上游返回…", "zh-TW": "正在等上游返回…", en: "Waiting for upstream…", ja: "上流からの応答を待っています…", ko: "업스트림 응답을 기다리는 중…" },
+  "pg.send.ready":           { "zh-CN": "按一下会真的向上游发一次请求。", "zh-TW": "按一下會真的向上游發一次請求。", en: "Each click really does send one request upstream.", ja: "クリックするたびに上流へ実際にリクエストを 1 回送ります。", ko: "누를 때마다 업스트림으로 실제 요청을 한 번 보냅니다." },
+  "pg.send.blockedInFlight": { "zh-CN": "上一次请求还在飞，等它回来或者取消它。", "zh-TW": "上一次請求還在飛，等它回來或者取消它。", en: "The previous request is still in flight; wait for it or cancel it.", ja: "前回のリクエストがまだ実行中です。完了を待つか中止してください。", ko: "이전 요청이 아직 진행 중입니다. 완료를 기다리거나 취소하세요." },
+  "pg.send.blockedNoProto":  { "zh-CN": "先选一条协议。", "zh-TW": "先選一條協定。", en: "Pick a protocol first.", ja: "先にプロトコルを選んでください。", ko: "먼저 프로토콜을 선택하세요." },
+  "pg.send.blockedNoModel":  { "zh-CN": "先选一个模型。", "zh-TW": "先選一個模型。", en: "Pick a model first.", ja: "先にモデルを選んでください。", ko: "먼저 모델을 선택하세요." },
+  "pg.send.blockedNoToken":  { "zh-CN": "先粘贴网关口令。", "zh-TW": "先貼上閘道口令。", en: "Paste the gateway token first.", ja: "先にゲートウェイトークンを貼り付けてください。", ko: "먼저 게이트웨이 토큰을 붙여넣으세요." },
+  "pg.send.blockedNoPrompt": { "zh-CN": "先写一句提示词。", "zh-TW": "先寫一句提示詞。", en: "Type a prompt first.", ja: "先にプロンプトを入力してください。", ko: "먼저 프롬프트를 입력하세요." },
+  "pg.conv.title":           { "zh-CN": "对话", "zh-TW": "對話", en: "Conversation", ja: "やり取り", ko: "대화" },
+  "pg.conv.empty":           { "zh-CN": "还没有发过请求。左栏配好之后按「发送」。", "zh-TW": "還沒有發過請求。左欄配好之後按「發送」。", en: "No request has been sent yet. Configure the left column, then press Send.", ja: "まだリクエストを送っていません。左側を設定してから「送信」を押してください。", ko: "아직 요청을 보내지 않았습니다. 왼쪽을 설정한 뒤 «보내기»를 누르세요." },
+  "pg.turn.you":             { "zh-CN": "你发出的", "zh-TW": "你發出的", en: "Sent", ja: "送信内容", ko: "보낸 내용" },
+  // ⚠️ 「网关回的」而不是「模型回的」：中间隔着这个网关的协议转换，说成后者会把
+  //    一次网关侧的错误归到模型头上。
+  "pg.turn.gateway":         { "zh-CN": "网关回的", "zh-TW": "閘道回的", en: "Gateway replied", ja: "ゲートウェイの応答", ko: "게이트웨이 응답" },
+  "pg.turn.unreadable":      { "zh-CN": "这次的响应体读不出来（不是空响应，是解析不了）。", "zh-TW": "這次的回應內容讀不出來（不是空回應，是解析不了）。", en: "This response body could not be read — it is not empty, it could not be parsed.", ja: "今回のレスポンス本文を読み取れませんでした（空ではなく、解析できませんでした）。", ko: "이번 응답 본문을 읽지 못했습니다(비어 있는 것이 아니라 파싱하지 못했습니다)." },
+  "pg.err.buildFailed":      { "zh-CN": "这次请求没能构造出来：协议目录里的样例形状与面板对不上，请核对两边的版本。", "zh-TW": "這次請求沒能構造出來：協定目錄裡的樣例形狀與面板對不上，請核對兩邊的版本。", en: "The request could not be built: the sample shape in the protocol catalog does not match what this panel expects — check that both sides are on the same version.", ja: "リクエストを組み立てられませんでした。プロトコルカタログのサンプル形状がこの画面の想定と合いません。両者のバージョンを確認してください。", ko: "요청을 만들지 못했습니다. 프로토콜 카탈로그의 샘플 형태가 이 콘솔의 기대와 다릅니다. 양쪽 버전을 확인하세요." },
+  "pg.err.crossOrigin":      { "zh-CN": "这次请求一个字节都没发出去：拼出来的地址不在本面板所在的源上。口令不会被送去别处。", "zh-TW": "這次請求一個位元組都沒發出去：拼出來的位址不在本面板所在的來源上。口令不會被送去別處。", en: "Nothing was sent: the assembled address is not on this panel's own origin. The token was not sent anywhere.", ja: "今回は 1 バイトも送信していません。組み立てたアドレスがこの画面のオリジンではありません。トークンはどこにも送られていません。", ko: "이번에는 한 바이트도 보내지 않았습니다. 조립된 주소가 이 콘솔의 출처가 아닙니다. 토큰은 어디로도 전송되지 않았습니다." },
+  "pg.err.transport":        { "zh-CN": "这次请求没有拿到任何响应：可能是断网、被取消，或者请求本身失败了。这与上游的状态无关。", "zh-TW": "這次請求沒有拿到任何回應：可能是斷網、被取消，或者請求本身失敗了。這與上游的狀態無關。", en: "This request got no response at all: the network may be down, it may have been cancelled, or the request itself failed. This says nothing about upstream.", ja: "今回のリクエストは応答をまったく受け取れませんでした。ネットワーク断、中止、あるいはリクエスト自体の失敗が考えられます。上流の状態とは無関係です。", ko: "이번 요청은 아무 응답도 받지 못했습니다. 네트워크 문제, 취소, 또는 요청 자체의 실패일 수 있습니다. 업스트림 상태와는 무관합니다." },
+  "pg.unavailable":          { "zh-CN": "协议目录读不出来，所以这里什么都配不了——不是这个网关一条协议都没有。", "zh-TW": "協定目錄讀不出來，所以這裡什麼都配不了——不是這個閘道一條協定都沒有。", en: "The protocol catalog could not be read, so nothing can be configured here — it is not that the gateway has no protocols.", ja: "プロトコルカタログを取得できなかったため、ここでは何も設定できません。ゲートウェイにプロトコルがないという意味ではありません。", ko: "프로토콜 카탈로그를 읽지 못해 여기서는 아무것도 설정할 수 없습니다. 게이트웨이에 프로토콜이 없다는 뜻이 아닙니다." },
 };

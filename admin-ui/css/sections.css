@@ -218,3 +218,38 @@ tr:last-child td { border-bottom: 0; }
 .usage-detail-head h3 { margin: 0; font-size: 14px; }
 .usage-breakdown { margin-top: var(--gap); }
 .usage-breakdown h4 { margin: 0 0 var(--gap-sm); font-size: 13px; }
+
+/* Playground 板块（P3d Task 10）。
+   ⚠️ **一个字节的 CSP 都没有放宽**（全局约束 17）：这里全是文本与边框，
+   没有任何图片 / 视频 / iframe，也不为将来「顺手」预留。 */
+/* 左右两栏。窄屏下自动落成上下两块——`min-width` 由内容决定，不写媒体查询：
+   面板其余部分（`.card-row`）用的就是同一套 flex + wrap。 */
+.pg-cols { display: flex; flex-wrap: wrap; gap: var(--gap); align-items: flex-start; }
+.pg-cols > .card { flex: 1; min-width: 300px; }
+.pg-field { display: flex; align-items: center; gap: var(--gap-sm); margin-top: var(--gap-sm); }
+.pg-field > span { flex: 0 0 5.5em; }
+.pg-field > select, .pg-field > input[type="password"], .pg-field > textarea { flex: 1; min-width: 0; }
+.pg-field > textarea { font-family: inherit; resize: vertical; }
+/* 口令与设置页 hint 对不对得上那一句。**三档同时靠文字表达**，颜色只是加强
+   （WCAG 1.4.1：不许只靠颜色传达状态）。 */
+.pg-hint { display: block; margin-top: 4px; font-size: 12px; }
+.pg-hint-ok { color: var(--ok-fg); }
+.pg-hint-bad { color: var(--danger-fg); }
+/* 一轮对话。上下两条头部信息 + 中间的内容。 */
+.pg-turn { padding: var(--gap-sm) 0; }
+.pg-turn + .pg-turn { border-top: 1px solid var(--border); }
+.pg-turn-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--gap-sm); font-size: 12px; }
+.pg-turn-prompt { margin: 4px 0; white-space: pre-wrap; word-break: break-word; }
+.pg-endpoint { word-break: break-all; }
+/* 响应体原文。**必须能横向滚**：一行很长的 JSON 会把整块布局撑破。 */
+.pg-body {
+  margin: 4px 0 0; padding: var(--gap-sm); max-height: 320px;
+  overflow: auto; background: var(--panel-2); border-radius: var(--radius);
+  font-size: 12px; white-space: pre;
+}
+/* 「协议目录读不出来」那一档：与模型板块的 `.models-unknown` 表达同一件事
+   ——**我们不知道**，不是「一条协议都没有」。这里没有那根破折号，因为读不出来时
+   整个左栏都配不了，说明文字本身就是那句话。 */
+.pg-unknown { color: var(--danger); }
+/* 错误横幅里那颗「再读一次」，与用量 / 模型板块那两颗是同一件东西。 */
+.pg-retry { margin-left: var(--gap-sm); }

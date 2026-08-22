@@ -96,7 +96,7 @@ const KNOWN_BLIND_SPOTS = [
 ];
 
 describe("硬规则 1 的另一半：sec-*.js 不许重新声明 pure/*.mjs 已导出的函数名", () => {
-  it("扫描范围本身不是空的——十三个 pure 模块、七个板块文件都得真的被扫到", () => {
+  it("扫描范围本身不是空的——十四个 pure 模块、八个板块文件都得真的被扫到", () => {
     // 反向自检：下面那条相等断言在「一个文件都没扫到」时同样是绿的。
     // 数字手写，改动 admin-ui 的文件结构时必须回来表态。
     // P3c Task 7 各加一个（`pure/settings.mjs` 与 `sec-settings.js`）⇒ 10 / 5。
@@ -104,8 +104,13 @@ describe("硬规则 1 的另一半：sec-*.js 不许重新声明 pure/*.mjs 已�
     // P3d Task 6 各再加一个（`pure/models.mjs` 与 `sec-models.js`）⇒ **11 → 12、6 → 7**。
     // P3d Task 7 **只加了 pure 那一侧**（`pure/examples.mjs`）：集成示例是设置页的
     // 第 4 张卡，住在已有的 `sec-settings.js` 里，没有新板块 ⇒ **12 → 13，板块数不变**。
-    expect(pureModules().length, "pure 模块数变了").toBe(13);
-    expect(sectionFiles().length, "板块文件数变了").toBe(7);
+    // P3d Task 10 各再加一个（`pure/playground.mjs` 与 `sec-playground.js`）⇒ **13 → 14、7 → 8**。
+    // ⚠️ 同一个任务还新建了 `admin-ui/js/gw-api.js`，**它两边都不算**：它不是 `sec-*.js`
+    //    （不是板块），也不在 `js/pure/` 下（它要碰 `fetch` 与浏览器存储）。
+    //    这道扫描因此看不见它——它归 `tests/ui/gw-api.test.ts` 与
+    //    `tests/ui/api-session.test.ts` 的出口清单管。
+    expect(pureModules().length, "pure 模块数变了").toBe(14);
+    expect(sectionFiles().length, "板块文件数变了").toBe(8);
   });
 
   it("全部 pure 模块的导出函数名，一个都不许在 sec-*.js 里被重新声明", () => {

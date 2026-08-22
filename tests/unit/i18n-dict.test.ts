@@ -166,8 +166,14 @@ describe("i18n 字典", () => {
     // 每一个 key 走的都是 `elI18n(tag, key)` 或者当参数传给 `modalityLabelKey()`
     // 的字面量，`scripts/check-i18n.mjs` 的第 ① 条对它们完全隐身，
     // 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
+    // ⚠️ `pg` 是 P3d Task 10 的 Playground 板块。它进这张表**不是形式**：那个板块的
+    // 每一个 key 走的都是 `elI18n(tag, key)`、或者当参数传给 `hintNoteKey()` /
+    // `sendBlockedKey()` 的字面量，`scripts/check-i18n.mjs` 的第 ① 条对它们完全隐身，
+    // 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
+    // **这一格就是那个板块 42 个新 key 的拼写的全部机器保障**——
+    // 别在任何地方写成「由 i18n 门禁保证」。
     const NAMESPACES = [
-      "gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set", "usage", "models",
+      "gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set", "usage", "models", "pg",
     ] as const;
     const re = new RegExp(`"((?:${NAMESPACES.join("|")})\\.[A-Za-z0-9_.]+)"`, "g");
     const walk = (d: string): string[] =>

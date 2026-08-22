@@ -576,6 +576,37 @@ this recovers by itself, and a `Retry-After` header tells you when), `all_evicte
 was permanently evicted for invalid credentials — this does **not** recover; import new keys),
 or `upstream_error` (keys are fine, the upstream failed on every attempt).
 
+### Can a very long non-streaming request be severed mid-flight? (the two deployments may differ)
+
+**Bottom line: there is no platform promise we can rely on for the Worker side, so this
+document makes no promise, and neither does the admin panel.**
+
+Two statements from the official Cloudflare Workers limits page have been verified:
+HTTP-triggered Workers have **no** wall-clock duration limit ("There is no hard limit on
+duration for HTTP-triggered Workers"), and individual outbound subrequests have **no**
+time limit either ("There is no set time limit on individual subrequests"). Both are
+conditioned on the client staying connected.
+
+**Those two do not cover everything.** Spelled out:
+
+- The documented **125-second Proxy Read Timeout (error 524)** appears only in the context
+  of zone traffic reverse-proxied through Cloudflare. The docs **never state whether it
+  applies to a Worker's own outbound subrequest** — when it cannot be found, treat it as
+  "no platform promise" rather than guessing.
+- The same page notes the runtime is updated a few times per week, and in-flight requests
+  get a **30-second** grace period before being terminated. Low probability, but it exists.
+- The **15 minutes (900 s)** figure in `wrangler.toml` is the wall-clock limit for
+  **Cron Triggers (`scheduled()`)**, **not for `fetch()`**. Do not carry it over.
+
+⇒ **Two practical consequences:**
+1. A non-streaming request in the `UPSTREAM_SYNC_TIMEOUT_MS` range (120000 by default)
+   **may behave differently** on Worker versus Docker. The Node/Docker side has no platform
+   wall clock and is bounded only by the budget you configure.
+2. **The admin panel (Playground) never claims the two deployments behave the same**, and
+   gives no "guaranteed to survive N seconds" number. If you need long requests, set
+   `UPSTREAM_SYNC_TIMEOUT_MS` to a value you have measured, or switch to a streaming
+   endpoint (the first-byte budget).
+
 ## Cloudflare Worker
 
 ### Option A — Deploy to Cloudflare button

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
-  KEY_STORE, SAVED_AT_STORE, SECTION_STORE, THEME_STORE, LANG_STORE, DEBUG_STORE,
+  KEY_STORE, SAVED_AT_STORE, SECTION_STORE, THEME_STORE, LANG_STORE, DEBUG_STORE, GW_KEY_STORE,
 } from "../../admin-ui/js/pure/storage-keys.mjs";
 
 /**
@@ -20,7 +20,9 @@ import {
  */
 const MODULE_FILE = "admin-ui/js/pure/storage-keys.mjs";
 const BOOT_FILE = "admin-ui/js/boot.js";
-const ALL_KEYS = { KEY_STORE, SAVED_AT_STORE, SECTION_STORE, THEME_STORE, LANG_STORE, DEBUG_STORE };
+const ALL_KEYS = {
+  KEY_STORE, SAVED_AT_STORE, SECTION_STORE, THEME_STORE, LANG_STORE, DEBUG_STORE, GW_KEY_STORE,
+};
 
 function walk(dir: string): string[] {
   return readdirSync(dir).sort().flatMap((n) => {
@@ -34,12 +36,37 @@ describe("面板存储键名：单一真源", () => {
    * 反向自检先行：键名本身必须都还长着 `agnes2api_` 前缀，否则下面那条扫描的
    * needle 就与真实写法脱节，扫不到任何东西也会"全绿"。
    */
-  it("六个键名都带 agnes2api_ 前缀，且互不相同", () => {
+  it("七个键名都带 agnes2api_ 前缀，且互不相同", () => {
     const values = Object.values(ALL_KEYS);
     for (const [name, v] of Object.entries(ALL_KEYS)) {
       expect(v, `${name} 不像一个面板存储键`).toMatch(/^agnes2api_/);
     }
     expect(new Set(values).size, "有两个常量取了同一个键名").toBe(values.length);
+    // **手写的条数锚**：上面那两条断言在「有人把某个常量从 `ALL_KEYS` 里删掉」时
+    // 一样是绿的——少一项，下面那条扫描就少查一个名字，而扫描本身照常报 `[]`。
+    // P3d Task 10 新增 `GW_KEY_STORE` ⇒ **6 → 7**。
+    expect(values.length, "键的条数变了：新增/删除存储键时回来表态").toBe(7);
+  });
+
+  /**
+   * **两把钥匙的存储键必须是两个不同的名字**（P3d Task 10，设计 §10.5）。
+   *
+   * 上面那条「互不相同」已经覆盖了这一对，这一格单独把它拎出来是因为**这两个的
+   * 后果与别的键完全不同级**：管理口令进的是 `x-admin-key` 那条路，网关口令是发给
+   * **每一个下游用户**的那把中转口令。两者共用一个键的话，面板登录一次就会把
+   * Playground 那格里的中转口令覆盖掉（或者反过来），而两条路径都不会报任何错。
+   *
+   * ⚠️ **前缀关系同样不许有**：`agnes2api_admin_key` 与 `agnes2api_admin_key_at`
+   * 已经是一对前缀关系（那一对是刻意的，两个键一起写一起清）。再加一个恰好以
+   * 管理口令键为前缀的名字，将来任何一次「按前缀批量清理」都会把它一起带走。
+   */
+  it("网关口令与管理口令是两个不同的存储键，且互不构成前缀 —— 共用一个键会让登录一次就覆盖掉中转口令", () => {
+    expect(GW_KEY_STORE).not.toBe(KEY_STORE);
+    expect(GW_KEY_STORE.startsWith(KEY_STORE), "网关口令键以管理口令键为前缀").toBe(false);
+    expect(KEY_STORE.startsWith(GW_KEY_STORE), "管理口令键以网关口令键为前缀").toBe(false);
+    // 期望值手写字面量，**不从常量推导**（第 6 种假阳性）。
+    expect(KEY_STORE).toBe("agnes2api_admin_key");
+    expect(GW_KEY_STORE).toBe("agnes2api_gw_key");
   });
 
   /**

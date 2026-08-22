@@ -18,6 +18,7 @@ import { registrarSection } from "./sec-registrar.js";
 import { eventsSection } from "./sec-events.js";
 import { usageSection } from "./sec-usage.js";
 import { modelsSection } from "./sec-models.js";
+import { playgroundSection } from "./sec-playground.js";
 import { settingsSection } from "./sec-settings.js";
 import { sessionExpired } from "./pure/session.mjs";
 import { sendable } from "./pure/sendable.mjs";
@@ -28,7 +29,7 @@ import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE } from "./pure/storage-keys.mj
 
 const SECTIONS = {
   overview: overviewSection, keys: keysSection, registrar: registrarSection, events: eventsSection,
-  usage: usageSection, models: modelsSection, settings: settingsSection,
+  usage: usageSection, models: modelsSection, playground: playgroundSection, settings: settingsSection,
 };
 
 const gate = document.getElementById("gate");
@@ -91,9 +92,12 @@ function leave(reason) {
 }
 
 /**
- * 登录探针。**这是全站第二个、也是最后一个网络出口**（另一个是 `js/api.js` 的
- * `raw()`）——`api.js` 的文件头一度把「全站唯一网络出口」当成它那段安全论证的前提，
- * 那句是假的（全分支评审 C3），两边现在都说准了。
+ * 登录探针。**这是全站第二个网络出口**（另两个是 `js/api.js` 的 `raw()` 与
+ * P3d Task 10 的 `js/gw-api.js`）——`api.js` 的文件头一度把「全站唯一网络出口」
+ * 当成它那段安全论证的前提，那句是假的（全分支评审 C3），两边现在都说准了。
+ * ⚠️ **「也是最后一个」这半句同样活不过一期**：它在 P3d Task 10 被 Playground 的
+ * 对外出口推翻了。⭐ 记一条形状：**一句「到此为止」的话，写下时是真的，
+ * 而推翻它的往往就是同一份计划里排在后面的那个任务。**
  *
  * **刻意不走 `api.js`**，三条理由缺一不可：
  * ① 这一刻还没有会话——时刻键要到 `store("set")` 才写下，`api.js` 的 `expired()`
@@ -101,13 +105,15 @@ function leave(reason) {
  * ② 这里的 401 意思是「口令不对」，不是「你掉线了」，走 `onUnauthorized()` 会
  *    在登录闸上再弹一次登录闸；
  * ③ 口令还没进 `localStorage`，`api.js` 的 `readKey()` 读不到它。
- * 出口数量由 `tests/ui/api-session.test.ts`「恰好两处：api.js 的 raw() 与 app.js 的登录探针」
- * 数着钉住：**照它那张手写枚举表里的四种写法写、并且不在带花括号的插值里**，
- * 加第三个会变红。
- * ⚠️ 它沿两条轴各漏一族：那张表数不出 `new WebSocket(` / `await import(` /
- * 先存进变量再调的 fetch（评审 F-11 实测）；而它抠模板串字面文本那一步会把
- * **带花括号的插值**整条吃掉——`admin-ui/js/sec-overview.js` 那条渲染「上次检查时间」
- * 的模板串就是这个形状，往它里面塞一个真 `fetch` 实测全绿（定向复评 H-1）。
+ * 出口数量由 `tests/ui/api-session.test.ts` 的
+ * 「恰好三处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口」
+ * 数着钉住：**照它那张手写枚举表里的七种写法写、并且不在带花括号的插值里**，
+ * 加第四个会变红。
+ * ⚠️ **那张表原来只有四种写法，P3d Task 10 把漏掉的三种补齐了**
+ * （`new WebSocket(` / 动态 `import(` / 把 fetch 先存进变量再调；评审 F-11 实测各得 0）。
+ * 补齐之后它仍然沿另一条轴漏一族：抠模板串字面文本那一步会把**带花括号的插值**
+ * 整条吃掉——`admin-ui/js/sec-overview.js` 那条渲染「上次检查时间」的模板串就是这个形状，
+ * 往它里面塞一个真 `fetch` 实测全绿（定向复评 H-1）。
  * 边界全文见 `admin-ui/js/api.js` 文件头。
  */
 async function probe(key) {

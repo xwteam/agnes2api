@@ -119,6 +119,13 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       "/admin/js/api.js",
       "/admin/js/app.js",
       "/admin/js/boot.js",
+      // Task 10（P3d）新增：Playground **专用**的对外出口，与 `js/api.js` 严格隔离
+      // （设计 §10.5「两把钥匙」）。**逐条确认过：无配置、无数据、无凭据**——
+      // 它读的那把网关口令由用户手动粘贴、存在浏览器里，源码里一个字节都没有；
+      // 它也不认识任何一条端点路径（整条 URL 由 `js/pure/playground.mjs` 拿
+      // `GET /admin/api/models` 的响应现拼）。公开可取没有问题。
+      // `-` 的字符码比 `.` 小，字典序排在 i18n-dict.js 之前。
+      "/admin/js/gw-api.js",
       "/admin/js/i18n-dict.js",
       "/admin/js/i18n.js",
       // Task 6（P3b）新增：事件板块的取值决策（查询串拼装、分组、轮询退避等），
@@ -151,6 +158,12 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // Task 5（P3b）新增：概览板块的取值决策，同一条硬规则、同一份理由，
       // 由 tests/ui/overview.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/overview.mjs",
+      // Task 10（P3d）新增：Playground 的请求构造（目录 → 一次请求的四样东西）。
+      // 同一条硬规则、同一份理由，由 tests/ui/playground.test.ts 跑着。
+      // **逐条确认过：纯函数、无配置、无数据、不碰凭据**——它连一条端点路径、
+      // 一个协议 id 都不认识（全部以参数形式从 `GET /admin/api/models` 的响应里进来），
+      // 而且它按定义只交出**鉴权头的名字**、不交出值，网关口令进不了它的任何返回值。
+      "/admin/js/pure/playground.mjs",
       // Task 6（P3c）新增：注册机板块的取值决策（通道顺序与两条通道的标签/事实键、
       // 失败归因与拒绝原因的穷尽映射、补池历史的倒序与逐行归因、确认弹窗要明示的
       // 消耗、名额与冷却的成对时间字段）。同一条硬规则、同一份理由，由
@@ -192,6 +205,10 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // Task 6（P3c）新增：注册机板块本体（DOM 拼装 + 三条端点的网络调用）。
       // 与其余三个板块文件同一性质：**没有任何机密**，它拿到的每一个数字都来自
       // 一次鉴权后的接口调用，文件自身只有结构与 i18n 键。
+      // Task 10（P3d）新增：Playground 板块（左栏配请求、右栏看对话）。
+      // 与其余七个板块同一条理由：面板自己的 JS，无配置、无数据。
+      // `-p` 排在 `-r` 之前。
+      "/admin/js/sec-playground.js",
       "/admin/js/sec-registrar.js",
       "/admin/js/sec-settings.js",
       // Task 5（P3d）新增：用量板块本体（DOM 拼装 + 三条端点的网络调用）。

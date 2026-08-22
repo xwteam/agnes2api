@@ -29,15 +29,19 @@ describe("面板骨架夹具与真 index.html 对齐", () => {
     expect([...SKELETON_IDS].sort(), "骨架与 index.html 的 id 清单漂了").toEqual(real);
   });
 
-  it("七个板块按钮的 data-section 与真 index.html 一致（顺序也是导航顺序）", () => {
+  it("八个板块按钮的 data-section 与真 index.html 一致（顺序也是导航顺序）", () => {
     const html = readFileSync("admin-ui/index.html", "utf8");
     const sections = [...html.matchAll(/data-section="([^"]+)"/g)].map((m) => m[1]!);
     // 第五项「用量」是 P3d Task 5 加的，插在「事件」与「设置」之间：
     // 前四项是「看数据」，`settings` 留在最后一项。
     // 第六项「模型」是 P3d Task 6 加的，同一条理由插在「用量」与「设置」之间。
+    // 第七项「调试台」是 P3d Task 10 加的，紧挨着「模型」：模型表回答「有哪些能调」，
+    // 调试台回答「现在真的调得通吗」，两者是同一件事的两半。`settings` 仍然留在最后。
     // **期望值手写字面量，不从 `NAV_SECTIONS` 推导**——夹具那份清单与真
     // `index.html` 漂移正是这一格要抓的东西，拿夹具当期望值就成了同义反复。
-    expect(sections).toEqual(["overview", "keys", "registrar", "events", "usage", "models", "settings"]);
+    expect(sections).toEqual([
+      "overview", "keys", "registrar", "events", "usage", "models", "playground", "settings",
+    ]);
   });
 });
 
