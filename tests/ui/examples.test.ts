@@ -140,6 +140,41 @@ describe("集成示例：一处端点知识都不许在前端再写一遍", () =
     }
   });
 
+  /**
+   * **这张卡上有两条选模规则，而今天没有任何东西绑住它们**（P3d Task 7 评审 F-4）。
+   *
+   * · **路径**那一侧走前端的 `modelForProtocol()`（「第一个真的支持这条协议的模型」）；
+   * · **请求体**那一侧走后端：`src/core/admin/protocol-catalog.ts` 的 `catalogPayload()`
+   *   用 `MODEL_CATALOG[0]!.id` 展开 `sample(model)`，模型名早就烤进 `sampleBody` 了，
+   *   前端一个字都改不了。
+   *
+   * ⚠️ **我改签名时的论证只拆掉了一半危害，这一格补另一半**：我当时说
+   * 「`MODEL_CATALOG[0]` 哪天不是对话模型，面板就会教出一条打不通的 Gemini 地址」，
+   * 于是把**路径**那一侧改成逐协议取模型——**而请求体那一侧仍然是 `MODEL_CATALOG[0]`**。
+   * 两条规则今天恰好给出同一个答案，**这正是全局约束 15 要防的形状**：
+   * 同一个问题两处各答一遍，靠巧合一致。
+   *
+   * 观测点落在**真源交出来的 `sampleBody` 里那个 model 字段**上（不是前端自报），
+   * 判据是它必须逐字等于同一段示例路径里用的那个模型。
+   * **变红条件（实测）**：把 `catalogPayload()` 的 `defaultModel` 换成
+   * `MODEL_CATALOG[1]!.id`（一个图片模型）——那正是我论证里假设的那次改动。
+   */
+  it("路径里那个模型与请求体里那个模型必须是同一个 —— 两条选模规则今天只是恰好相等", () => {
+    const all = allExamples(payload.protocols, payload.models, ORIGIN) as Row[];
+    let checked = 0;
+    for (const e of all) {
+      const proto = payload.protocols.find((p) => p.id === e.protocol)!;
+      const inBody = (proto.sampleBody as Record<string, unknown>).model;
+      // Gemini 的 sampleBody 不带 model（它把模型拼进路径），那三段跳过。
+      if (typeof inBody !== "string") continue;
+      checked += 1;
+      expect(inBody, `${e.protocol}/${e.lang}：请求体里的模型与路径里的模型对不上`).toBe(e.model);
+    }
+    // 反向自检：一条都没检到时上面那个循环恒绿。**手写 9**：三条协议 × 三种语言
+    //（四条里只有 Gemini 的 sampleBody 不带 model），不写 `all.length - 3`。
+    expect(checked, "一条带 model 的 sampleBody 都没检到，这一格什么都没证明").toBe(9);
+  });
+
   it("Gemini 那三段的路径里带着模型名和 :generateContent —— 它是四条里唯一把模型拼进路径的", () => {
     const g = payload.protocols.find((p) => p.id === "gemini")!;
     const code = exampleFor(g, ORIGIN, "curl", "agnes-2.0-flash") as string;
@@ -235,7 +270,14 @@ describe("集成示例：响应窄化", () => {
     expect(exampleProtocols(null), "响应整个读不出来").toBe(null);
   });
 
-  it("语言展示名是专名，表外的值 fail-open 交回 null 由调用方照实显示", () => {
+  /**
+   * ⚠️ **用例名不许替它宣称「由调用方照实显示」**（P3d Task 7 评审 F-9）：
+   * `admin-ui/js/sec-settings.js` 只拿 `EXAMPLE_LANGS` 里的三档去调它，
+   * **`null` 那一支今天没有任何调用方走得到** ⇒ 「调用方会照实显示原值」这句话
+   * 在本轮是**不可观测**的，写进用例名就是又一句没有观测点的断言。
+   * 这一格担保的只有：三档专名逐字正确，表外的值不冒充任何一档已知语言。
+   */
+  it("语言展示名是专名，三档逐字正确；表外的值交回 null，不冒充任何一档已知语言", () => {
     expect(langLabel("curl")).toBe("cURL");
     expect(langLabel("python")).toBe("Python");
     expect(langLabel("node")).toBe("Node.js");

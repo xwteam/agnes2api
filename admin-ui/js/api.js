@@ -10,7 +10,15 @@
  *（下面「口令只走请求头」那段），顺着假的那句走，审计者会漏掉口令实际离开
  * 页面的第二条路径。两个出口这件事由
  * `tests/ui/api-session.test.ts`「恰好两处：api.js 的 raw() 与 app.js 的登录探针」
- * 那格数着调用点钉住——加第三个出口会让它变红。
+ * 那格数着调用点钉住。
+ * ⚠️⚠️ **它数的是一张手写的枚举表，不是「所有出网方式」，别把它读成后者**
+ *（P3d Task 7 评审 F-11，逐条实测）：表里是 `fetch` / `XMLHttpRequest` /
+ * `EventSource` / `sendBeacon` 四个名字，**`new WebSocket(`、`await import(`、
+ * 以及把 fetch 先存进变量再调（`const f = globalThis.fetch; f(u)`）三种，
+ * 它一个都数不出来**（实测这三种各得 0，而 `sendBeacon` / `XMLHttpRequest` 各得 1）。
+ * ⇒ 准确的说法是「**照这四种写法**加第三个出口会让它变红」。
+ * 枚举表本身登记给 P3d Task 10（Playground 是第一个可能要流式的消费者，
+ * `WebSocket` 值得那时补）。
  * ⚠️ **这里原来写的是行号，P3d Task 7 往那个文件里插了几格用例之后它就漂了**
  *（第 8 道门禁当场抓住）。名字锚没有这个毛病，改用名字锚。
  *
