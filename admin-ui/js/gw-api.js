@@ -80,6 +80,19 @@ export function writeGatewayToken(value) {
  * 判失败时**一个字节都不发**。由 `tests/ui/gw-api.test.ts` 的
  * 「目录把路径换成了别的源：一个字节都不发 —— 送出去的是发给每个下游用户的那把口令」钉着。
  *
+ * ⚠️ **同源自查只管「第一条 URL」，跨源重定向必须另外堵**（评审 M1）。
+ * `fetch` 的 `redirect` 默认是 `follow` ⇒ 同源那条路径回一个 302 指向别处时，
+ * 浏览器会**跟过去**，而这一判早在发请求之前就做完了、对它完全不设防。
+ * ⚠️⚠️ **不能指望浏览器替我们剥掉那个头**：Fetch 规范里
+ * **CORS non-wildcard request-header name 只有 `authorization` 一个**，
+ * 跨源重定向时只删它。而四条协议里 **Anthropic 用 `x-api-key`、Gemini 用 `x-goog-api-key`，
+ * 这两个不会被删**，会原样跟着 302 送到新源——**那一刻送出去的仍是发给每一个下游用户的
+ * 那把中转口令**。而且在本模块自己声明的那个威胁模型里
+ * （「管理接口被穿透、或反代插了一手」），**让同源某条路径 302 比篡改协议目录更容易**。
+ * ⇒ **`redirect: "error"`**：本项目对外五条端点没有任何合法重定向，
+ * 一次重定向在这里只可能是异常。由 `tests/ui/gw-api.test.ts` 的
+ * 「重定向一律当错误处理 —— 跟过去的话 x-api-key / x-goog-api-key 会被原样带到新源」钉着。
+ *
  * ⚠️ **`credentials: "omit"`**：本项目没有 Cookie 会话，带上只会扩大攻击面
  * （与 `js/api.js` 同一条）。
  *
@@ -107,6 +120,8 @@ export async function sendToGateway(req, token, opts) {
       headers,
       body: JSON.stringify(req.body),
       credentials: "omit",
+      // **同源自查只管第一条 URL**，跟过去的重定向它管不着 —— 见上面那段 ⚠️。
+      redirect: "error",
       signal: opts && opts.signal,
     });
   } catch (e) {

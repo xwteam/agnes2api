@@ -346,20 +346,38 @@ function stripTemplateText(src: string): string {
  * 别名那条要求**不**紧跟 `(`。由下面「反向自检：补进表里的那三种写法，
  * 每一种都真的被数出来」那一格里的 `fetch(u)` 一条钉着（它必须恰好是 1，不是 2）。
  *
- * ── ⚠️⚠️ **两条新规则的第一版在真实文件上当场误报，narrowing 是实测出来的** ────
- * 第一版写的是 `\bimport\s*\(`（允许空格）与 `\bfetch\b(?!\s*\()`（不限定前一个字符）。
+ * ── ⚠️⚠️ **两条新规则改过两版，两版都是被实测打回来的。逐版留在这里。** ────────
+ *
+ * **第一版**：`\bimport\s*\(`（允许空格）与 `\bfetch\b(?!\s*\()`（不限定前一个字符）。
  * 拿全仓真实文件喂进去 ⇒ **`admin-ui/js/i18n-dict.js` 当场多出 3 处**，
  * 而那个文件里一行代码都没有，命中的全是**英文文案**：
  * · `"Bulk import (one per line)"` —— `import` 后面跟空格再跟括号；
  * · `"the per-fetch limit was exceeded"` 与 `"reload the page to fetch them again"`
  *   —— 散文里的 `fetch` 这个词。
- * ⇒ 收窄成 `\bimport\(`（不许空格）与 `(?:\.|=\s*)fetch\b`（前面必须是成员访问点或赋值号）。
- * **收窄本身造出来的三条盲点逐条登记在下面的 `BLIND_SPOTS` 里**，那是断言不是散文。
- * ⭐ 记一条形状：**写完一条形状判据，先拿仓里真实那一行去喂它**——
- * 这三处误报没有任何一条是想出来的，全是喂进去之后蹦出来的。
+ * ⭐ **写完一条形状判据，先拿仓里真实那一行去喂它** —— 这三处没有一条是想出来的。
  *
- * ⚠️ **别名那条只覆盖 `fetch`，不覆盖 `XMLHttpRequest` / `WebSocket` / `EventSource`
- * 的同类写法**——同样登记在下面的 `BLIND_SPOTS` 里。
+ * **第二版**（收窄成 `(?:\.|=\s*)fetch\b`，要求前面是成员访问点或赋值号）：
+ * ⚠️⚠️ **它把「唯一一族真会被写出来的别名形态」漏掉了，而当时的登记表宣称已穷尽。**
+ * 评审把两版并排跑，**五条**旧版抓得住、收窄后掉到 0 的写法一条都不在登记表里：
+ * `makeClient(fetch);` / `function getF(){ return fetch; }` / `const [f] = [fetch];` /
+ * `send(u, { fetcher: fetch });` / `export default fetch;`
+ * ——**第一条最要命：把 `fetch` 当参数传进去正是本仓自己的主流写法**
+ * （`src/core/` 零 IO、fetcher 一律依赖注入）。
+ * ⚠️ **这与 `1e3e808`「收窄那句全称句时把两条轴都列全」是同一族的第二次发生。**
+ *
+ * **第三版（今天这一版）**：判据从「前面是什么」改成
+ * **「前面不是标识符字符（含 `-`）、而后面紧跟一个结束符」**。
+ * 逐条实测（旧版 → 第二版 → 今天）：
+ * · 上面那五条：`1 → 0 → 1`（**五条全回来了**）；
+ * · `const f = globalThis.fetch; f(u);` 与 `const f = fetch; f(u);`：`1 → 1 → 1`；
+ * · `const f = globalThis . fetch; f(u);`（第二版登记过的一条盲点）：`1 → 0 → **1**`
+ *   ——**顺带被补上了**，那一条已从 `BLIND_SPOTS` 里删掉；
+ * · `fetch(u);` 与 `client.fetch(u);`：恒为 `1`（两条 `fetch` 规则互斥，不重复计数）；
+ * · `const prefetch = 1;`：恒为 `0`；
+ * · **三句真实英文文案**（`Bulk import (one per line)` / `the per-fetch limit was exceeded` /
+ *   `reload the page to fetch them again`）：**今天各得 0**，与第二版一样干净；
+ * · **全仓 `admin-ui/js` 真实文件上，本条规则今天零命中**（真的没有任何别名写法）。
+ * ⇒ **今天仍然漏的写法逐条登记在下面的 `BLIND_SPOTS` 里，一条都不许只写在这段散文里。**
  */
 const EGRESS_FORMS: ReadonlyArray<{ label: string; re: RegExp }> = [
   { label: "fetch(", re: /\bfetch\s*\(/g },
@@ -370,8 +388,10 @@ const EGRESS_FORMS: ReadonlyArray<{ label: string; re: RegExp }> = [
   { label: "WebSocket(", re: /\bWebSocket\s*\(/g },
   // **不许 `import` 与括号之间有空格**，理由见上面那段实测（英文文案误报）。
   { label: "动态 import(", re: /\bimport\(/g },
-  // **前面必须是成员访问点或赋值号**，理由同上。
-  { label: "fetch 别名（当值取用，后面不跟括号）", re: /(?:\.|=\s*)fetch\b(?!\s*\()/g },
+  // **判据：`fetch` 这个名字出现在一个「值的位置」上** —— 前一个字符不是标识符字符
+  //（`\b` 挡不住 `per-fetch` 里那个连字符，所以 `-` 也要排除），
+  //  而后面紧跟的是一个**结束符**（`;` `,` `)` `]` `}` 或串尾）。理由与实测见上面那段。
+  { label: "fetch 别名（当值取用）", re: /(?<![A-Za-z0-9_$-])fetch\s*(?=[;,)\]}]|$)/g },
 ];
 
 /** 一段源码里的网络出口处数。**注释与模板串字面文本都不算。** */
@@ -488,13 +508,32 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
       + "**宁可漏一种没人写的形态，不要一道被噪音逼退的护栏。**",
   },
   {
-    // **P3d Task 10 收窄造出来的一条**：成员访问点与名字之间允许空格。
-    probe: "const f = globalThis . fetch; f(u);",
-    why: "**成员访问点与 `fetch` 之间带空格的别名写法扫不到**（`globalThis . fetch`）。"
-      + "同一族还有解构（`const { fetch: f } = globalThis;`）与字符串下标"
-      + "（`globalThis[\"fetch\"]`）。三种都是合法 JS、都没人这么写，"
-      + "而放开前一个字符的限定实测会把 `i18n-dict.js` 里两句含 `fetch` 这个词的"
-      + "英文文案数成出口。**同上：宁可漏，不要噪音。**",
+    // **今天仍然漏的一条**：解构取值。判据要求名字后面紧跟一个结束符，而这里跟的是 `:`。
+    probe: "const { fetch: f } = globalThis;",
+    why: "**解构取值扫不到**：判据要求 `fetch` 后面紧跟 `;` `,` `)` `]` `}` 之一，"
+      + "而解构里它后面是 `:`。**不把 `:` 收进结束符集合是实测决定的**："
+      + "收进去之后英文文案里任何一句 `… fetch: …`（以及 JSON 风格的示例文本）都会被数成出口，"
+      + "而本仓字典里已经有含 `fetch` 这个词的句子。**宁可漏一种没人写的形态，"
+      + "不要一道被噪音逼退的护栏。**",
+  },
+  {
+    // **今天仍然漏的一条**：字符串下标。
+    probe: 'const f = globalThis["fetch"];',
+    why: "**字符串下标扫不到**（`globalThis[\"fetch\"]`）：名字住在一对引号里，"
+      + "后面紧跟的是 `\"` 不是结束符。按名字扫的判据看不见「这个字符串是一个属性名」。"
+      + "同一族还有 `globalThis[\"fet\" + \"ch\"]` 这种拼出来的下标 —— **那一族属于刻意绕开，"
+      + "本来就不在一道文本扫描的射程里。**",
+  },
+  {
+    // **今天仍然漏的一条**：`fetch` 落在**运算符**位置上（`||` / 三元 / 成员访问）。
+    probe: "const f = fetch || xhr;",
+    why: "**运算符位置扫不到**：判据要求名字后面紧跟一个结束符，而这里跟的是 `|`。"
+      + "同一族实测各得 0 的还有 `const f = cond ? fetch : xhr;`（三元的中间那支，后面是 `:`）"
+      + "与 `const f = fetch.bind(globalThis);`（后面是 `.`）。"
+      + "⚠️ **不把这些字符收进结束符集合是实测决定的**：越收越接近「任何位置的 `fetch` 都算」，"
+      + "而那正是第一版被 `admin-ui/js/i18n-dict.js` 的英文文案打红的那一版。"
+      + "⚠️ **`fetch.bind(...)` 这一条值得单独看一眼**：它是这三条里唯一一个"
+      + "**今天真有人可能顺手写出来**的（给 `fetch` 绑 this 是浏览器里常见的写法）。登记 P3e。",
   },
   {
     // **P3d Task 10 新造的一条**：别名那条规则只写了 `fetch` 一个名字。
@@ -568,6 +607,16 @@ describe("面板的网络出口清单", () => {
     ['const m = await import("./x.js");', 1, "动态 import()：会真的去网上取一段代码"],
     ["const f = globalThis.fetch; f(u);", 1, "把 fetch 当值取用 —— 按名字扫只看得见造别名那一刻"],
     ["const f = fetch; f(u);", 1, "别名的另一种写法：直接把裸 fetch 赋给一个变量"],
+    // ⚠️ **下面五条是评审在第二版判据上实测出来的逃逸（旧版 1 / 第二版 0）**，
+    //    第三版把它们全数补回。**第一条最要命：把 `fetch` 当参数传进去正是本仓自己的
+    //    主流写法**（`src/core/` 零 IO、fetcher 一律依赖注入）。
+    ["makeClient(fetch);", 1, "当参数传进去 —— 本仓自己的主流写法，第二版判据漏的就是它"],
+    ["function getF(){ return fetch; }", 1, "当返回值交出去"],
+    ["const [f] = [fetch];", 1, "放进数组再解构"],
+    ["send(u, { fetcher: fetch });", 1, "当对象字段传进去（`fetcher` 那个词本身不许被误算）"],
+    ["export default fetch;", 1, "整个模块把它 re-export 出去"],
+    // 第二版登记过的一条盲点，第三版顺带补上了 ⇒ 它已从 BLIND_SPOTS 里删掉。
+    ["const f = globalThis . fetch; f(u);", 1, "成员访问点与名字之间带空格"],
     ["fetch(u);", 1, "真调用仍然恰好数一次 —— 两条 fetch 规则互斥，不许重复计数"],
     ["client.fetch(u);", 1, "成员形态的真调用也恰好一次，不因为前面有个点被数两遍"],
     ['import { t } from "./i18n.js";', 0, "静态 import 不是出口 —— 数进去会把整道护栏变成噪音"],

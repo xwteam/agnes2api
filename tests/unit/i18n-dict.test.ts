@@ -166,12 +166,16 @@ describe("i18n 字典", () => {
     // 每一个 key 走的都是 `elI18n(tag, key)` 或者当参数传给 `modalityLabelKey()`
     // 的字面量，`scripts/check-i18n.mjs` 的第 ① 条对它们完全隐身，
     // 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
-    // ⚠️ `pg` 是 P3d Task 10 的 Playground 板块。它进这张表**不是形式**：那个板块的
-    // 每一个 key 走的都是 `elI18n(tag, key)`、或者当参数传给 `hintNoteKey()` /
-    // `sendBlockedKey()` 的字面量，`scripts/check-i18n.mjs` 的第 ① 条对它们完全隐身，
-    // 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
-    // **这一格就是那个板块 42 个新 key 的拼写的全部机器保障**——
-    // 别在任何地方写成「由 i18n 门禁保证」。
+    // ⚠️ `pg` 是 P3d Task 10 的 Playground 板块，**它进这张表的理由比前几个板块更硬**：
+    // 那个板块有整整一族 key **根本不出现在 `t(` 或 `data-i18n=` 里**——
+    // 它们是当**返回值**从 `hintNoteKey()` / `sendBlockedKey()` 交出去、
+    // 再被 `elI18n(tag, key)` 或 `setAttribute("title", t(key))` 消费的字面量。
+    // 实测：`scripts/check-i18n.mjs` 对 `pg.*` 41 个 key 里的 **37 个**只报
+    // 「未被引用」的**警告**（第 ④ 条从不 exit 1）⇒ 打错一个字母，三道 i18n 门禁一起沉默，
+    // 面板上五种语言全部显示裸 key。
+    // **本板块新增 41 个 `pg.*` + 1 个 `nav.playground`（导航项，理由见字典里那一行），
+    // 这一格是它们拼写的全部机器保障。** 别在任何地方写成「由 i18n 门禁保证」。
+    // ⚠️ **它守的是拼写，不是措辞**：「日文那句话通不通顺」没有任何东西在守。
     const NAMESPACES = [
       "gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set", "usage", "models", "pg",
     ] as const;

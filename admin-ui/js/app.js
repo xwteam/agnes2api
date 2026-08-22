@@ -25,7 +25,7 @@ import { sendable } from "./pure/sendable.mjs";
 // **键名不在这里声明**（全分支评审 C4）：写入方在这个文件、读取方在 `api.js`，
 // 各写一份的后果实测过——只改这边一处 ⇒ 登录成功进壳层、随后每请求送空口令头
 // ⇒ 401 ⇒ 登出循环，面板彻底不可用而全套用例照绿。理由全文见那个模块的文件头。
-import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE } from "./pure/storage-keys.mjs";
+import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE, GW_KEY_STORE } from "./pure/storage-keys.mjs";
 
 const SECTIONS = {
   overview: overviewSection, keys: keysSection, registrar: registrarSection, events: eventsSection,
@@ -49,6 +49,10 @@ function store(op, value) {
     if (op === "del") {
       localStorage.removeItem(KEY_STORE);
       localStorage.removeItem(SAVED_AT_STORE);
+      // ⚠️ **网关口令一并清**（P3d Task 10 评审 M2）：它是这块存储里的第二把凭据，
+      //    而它比管理口令还弱（没有年龄上限、后端没有撤销路径）。理由全文与那两处
+      //    缺一不可的接线见 `js/pure/storage-keys.mjs` 的 `GW_KEY_STORE`。
+      localStorage.removeItem(GW_KEY_STORE);
     }
   } catch (e) { /* 隐私模式：本次会话照常可用，刷新后要重新输入 */ }
   return null;

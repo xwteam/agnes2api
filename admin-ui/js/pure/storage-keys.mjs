@@ -65,5 +65,20 @@ export const DEBUG_STORE = "agnes2api_debug";
  * 设计 §8.6「凭据只写不读」）：`GET /admin/api/config` 对 `gatewayToken` 只回
  * `{ configured, hint }`。**别想着做「一键填入我的口令」**——那需要在后端开一个
  * 明文回显口子，而那个口子一旦开了，整条「凭据只写不读」就没了。
+ *
+ * ⚠️⚠️ **登出时必须与上面那两个键一起清掉**（P3d Task 10 评审 M2，控制端裁定）。
+ * 理由不是洁癖，是**别让面板严格变差**：`js/pure/session.mjs` 的文件头把
+ * 「localStorage 里放的是原始 `ADMIN_TOKEN`，无过期、无登出、产品内无撤销路径」
+ * 当成设 `SESSION_MAX_AGE_MS` 的**理由**——也就是说，那把口令的存在方式本身
+ * 已经被这个项目判定成需要缓解的问题。
+ * 而这一把**比它还弱**：没有年龄上限、后端也没有撤销路径。**再往同一块存储里加一把
+ * 更弱的、还不跟着登出清掉的，是严格变差。**
+ * 具体后果很朴素：共享 / 投屏的机器上，登出之后下一个人登录进来，
+ * Playground 的口令框是**预填好的**。
+ * ⚠️ **光清存储不够**：`js/sec-playground.js` 的模块变量在登出后仍然活着
+ * （登出不 reload 页面，板块也不会重新 `init()`），所以那边在 `onShow()` 里
+ * **每次都重新从存储读一遍**。两处缺一不可，由 `tests/ui/dom/playground-section.test.ts` 的
+ * 「退出登录会一并清掉网关口令，重新登录之后那个框是空的 —— 共享机器上它本来是预填好的」
+ * 那一格钉着。
  */
 export const GW_KEY_STORE = "agnes2api_gw_key";

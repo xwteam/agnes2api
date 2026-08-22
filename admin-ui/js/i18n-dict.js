@@ -833,7 +833,7 @@ export const I18N = {
   // ⚠️ **这一句是 U-B 的落点，措辞不许放松成「两种形态一样」**：官方文档说 HTTP 触发的
   //    Worker 没有墙钟上限、单条子请求也没有时间上限，但**没有**说 CDN 那条回源读超时
   //    适不适用于 Worker 自己发出的子请求 ⇒ 按「没有平台承诺」处理。
-  "pg.runtimeNote":          { "zh-CN": "一次非流式请求要等上游把整段回答生成完才返回，可能很慢。Worker 与 Docker 两种部署形态在超长请求上的表现不一定相同，这里不对「多久之内一定不会被中断」做任何承诺。", "zh-TW": "一次非串流請求要等上游把整段回答產生完才返回，可能很慢。Worker 與 Docker 兩種部署形態在超長請求上的表現不一定相同，這裡不對「多久之內一定不會被中斷」做任何承諾。", en: "A non-streaming request only returns once upstream has finished generating the whole answer, so it can be slow. The Worker and Docker deployments may behave differently on very long requests; nothing here promises how long a request is guaranteed to survive.", ja: "非ストリーミングのリクエストは上流が回答全体を生成し終えるまで返りません。非常に長いリクエストでは Worker と Docker の挙動が同じとは限らず、「何秒までは必ず中断されない」といった保証はここでは一切行いません。", ko: "비스트리밍 요청은 업스트림이 답변 전체를 만들어야 반환되므로 느릴 수 있습니다. 아주 긴 요청에서는 Worker와 Docker의 동작이 같다고 볼 수 없으며, 여기서는 «몇 초까지는 반드시 끊기지 않는다»는 약속을 하지 않습니다." },
+  "pg.runtimeNote":          { "zh-CN": "一次非流式请求要等上游把整段回答生成完才返回，可能很慢。Worker 与 Docker 两种部署形态在超长请求上的表现不一定相同，这里不对「多久之内一定不会被中断」做任何承诺。", "zh-TW": "一次非串流請求要等上游把整段回答產生完才返回，可能很慢。Worker 與 Docker 兩種部署形態在超長請求上的表現不一定相同，這裡不對「多久之內一定不會被中斷」做任何承諾。", en: "A non-streaming request only returns once upstream has finished generating the whole answer, so it can be slow. The Worker and Docker deployments may behave differently on very long requests; nothing here promises how long a request is guaranteed to survive.", ja: "非ストリーミングのリクエストは上流が回答全体を生成し終えるまで返りません。非常に長いリクエストでは Worker と Docker の挙動が同じとは限らず、「何秒までは必ず中断されない」といった保証はここでは一切行いません。", ko: "비스트리밍 요청은 업스트림이 답변 전체를 만들어야 반환되므로 느릴 수 있습니다. 아주 긴 요청에서는 Worker와 Docker의 동작이 같다고 볼 수 없으며, 여기서는 「몇 초까지는 반드시 끊기지 않는다」는 약속을 하지 않습니다." },
   "pg.req.title":            { "zh-CN": "请求配置", "zh-TW": "請求設定", en: "Request", ja: "リクエスト設定", ko: "요청 설정" },
   "pg.mode.label":           { "zh-CN": "模式", "zh-TW": "模式", en: "Mode", ja: "モード", ko: "모드" },
   "pg.mode.chat":            { "zh-CN": "对话", "zh-TW": "對話", en: "Chat", ja: "チャット", ko: "대화" },
@@ -866,7 +866,7 @@ export const I18N = {
   "pg.send.blockedNoToken":  { "zh-CN": "先粘贴网关口令。", "zh-TW": "先貼上閘道口令。", en: "Paste the gateway token first.", ja: "先にゲートウェイトークンを貼り付けてください。", ko: "먼저 게이트웨이 토큰을 붙여넣으세요." },
   "pg.send.blockedNoPrompt": { "zh-CN": "先写一句提示词。", "zh-TW": "先寫一句提示詞。", en: "Type a prompt first.", ja: "先にプロンプトを入力してください。", ko: "먼저 프롬프트를 입력하세요." },
   "pg.conv.title":           { "zh-CN": "对话", "zh-TW": "對話", en: "Conversation", ja: "やり取り", ko: "대화" },
-  "pg.conv.empty":           { "zh-CN": "还没有发过请求。左栏配好之后按「发送」。", "zh-TW": "還沒有發過請求。左欄配好之後按「發送」。", en: "No request has been sent yet. Configure the left column, then press Send.", ja: "まだリクエストを送っていません。左側を設定してから「送信」を押してください。", ko: "아직 요청을 보내지 않았습니다. 왼쪽을 설정한 뒤 «보내기»를 누르세요." },
+  "pg.conv.empty":           { "zh-CN": "还没有发过请求。左栏配好之后按「发送」。", "zh-TW": "還沒有發過請求。左欄配好之後按「發送」。", en: "No request has been sent yet. Configure the left column, then press Send.", ja: "まだリクエストを送っていません。左側を設定してから「送信」を押してください。", ko: "아직 요청을 보내지 않았습니다. 왼쪽을 설정한 뒤 「보내기」를 누르세요." },
   "pg.turn.you":             { "zh-CN": "你发出的", "zh-TW": "你發出的", en: "Sent", ja: "送信内容", ko: "보낸 내용" },
   // ⚠️ 「网关回的」而不是「模型回的」：中间隔着这个网关的协议转换，说成后者会把
   //    一次网关侧的错误归到模型头上。

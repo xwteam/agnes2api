@@ -123,7 +123,15 @@ let modelId = "";
 /** 输入框里的两样东西。**re-render 之后从这里回填**，所以整块重建不会丢用户输入。 */
 let promptText = "";
 let token = "";
-/** 右栏那几轮对话。**只进不出**，切走板块也留着（同一次会话里回头对比很常见）。 */
+/**
+ * 右栏那几轮对话。**只进不出**，切走板块也留着（同一次会话里回头对比很常见）。
+ *
+ * ⚠️ **没有上限，如实登记**（评审 L5）：每一轮存着一份响应体，一个开一整天、
+ * 反复发几百次的标签页会把它们全留在内存里。**今天不加上限**——它要么是一个
+ * 需要新 UI 状态的「清空」按钮、要么是一条静默丢弃用户看得见的内容的规则，
+ * 两条都比这个问题本身大；而每一轮都是运维自己按出来的，量级与他的手速同阶。
+ * **登记 P3e**：真要加，做成显式的「清空对话」而不是静默截断。
+ */
 let turns = [];
 /** 这一刻有没有一次对外请求在飞。它就是那道「在飞去重」。 */
 let inFlight = false;
@@ -417,7 +425,15 @@ function buildUnavailable() {
   const banner = el("div", { class: "banner-danger", role: "status" });
   banner.appendChild(elI18n("span", "common.loadFailed"));
   const retry = elI18n("button", "common.refresh", { type: "button", class: "pg-retry" });
-  retry.addEventListener("click", () => { loadCatalog(true); });
+  retry.addEventListener("click", () => {
+    // ⚠️ **hint 那一次也要重问**（评审 L3）：`hintAsked` 是个一次性闸，
+    //    `/config` 失败一次之后它永远为真 ⇒ **整个会话的 hint 校验停在「比不了」，
+    //    按了这颗按钮也不恢复**。这颗按钮的语义是「把这个板块读不到的东西再读一次」，
+    //    而 hint 正是其中之一。
+    hintAsked = false;
+    loadHint();
+    loadCatalog(true);
+  });
   banner.appendChild(retry);
   wrap.appendChild(banner);
   const { wrap: card, body } = block("pg.req.title");
@@ -566,6 +582,13 @@ export const playgroundSection = {
   },
 
   onShow() {
+    // ⚠️⚠️ **每次显示都重新从存储读一遍口令，不能只在 `init()` 里读一次**
+    //（评审 M2）：登出**不会** reload 页面、板块也不会重新 `init()`，
+    //    于是模块变量里那把口令会活过一次登出 ⇒ 下一个人登录进来时口令框是预填好的。
+    //    `js/app.js` 的 `leave()` 清存储、这里重新读存储，**两处缺一不可**。
+    // ⚠️ **代价明写**：隐私模式下 `writeGatewayToken()` 写不进去，于是切走再切回来
+    //    会丢掉刚粘的那把——与那条「刷新后要重新粘」是同一档代价，不是新增的。
+    token = readGatewayToken();
     loadHint();
     if (catalog !== null) { render(); return; }
     loadCatalog(false);

@@ -205,6 +205,36 @@ describe("请求本体", () => {
     });
   });
 
+  /**
+   * ── **M1：跨源重定向（同源自查只管第一条 URL）** ─────────────────────────────
+   *
+   * `fetch` 的 `redirect` 默认是 `follow`，而同源自查在**发请求之前**就做完了
+   * ⇒ 同源某条路径回一个 302 指向别处时，浏览器会跟过去。
+   * ⚠️⚠️ **不能指望浏览器替我们剥掉那个头**：Fetch 规范里 CORS non-wildcard
+   * request-header name **只有 `authorization` 一个**，跨源重定向时只删它；
+   * 而四条协议里 Anthropic 用 `x-api-key`、Gemini 用 `x-goog-api-key`，
+   * **这两个不会被删**，会原样跟到新源——那一刻送出去的仍是发给每个下游用户的那把口令。
+   *
+   * ⚠️ **这一格是形状断言，弱于行为断言，如实说明**：本文件的
+   * `fetch` 替身不实现重定向语义，所以这里验的是**「那一格确实交给了 fetch」**，
+   * 真正拒绝重定向的是浏览器。它拦得住的是「有人顺手把这一格删掉/改成 follow」
+   * ——而那正是这条防线唯一现实的失效方式。
+   *
+   * **变红条件**：把 `sendToGateway()` 里那行 `redirect: "error"` 删掉，
+   * 或改成 `"follow"` / `"manual"`。
+   */
+  it("重定向一律当错误处理 —— 跟过去的话 x-api-key / x-goog-api-key 会被原样带到新源", async () => {
+    await sendToGateway(reqFor(1), GW_TOKEN, { origin: ORIGIN });
+    // 期望值手写字面量。`"follow"`（默认）与 `"manual"` 都不行：前者会跟过去，
+    // 后者交出一个 opaqueredirect 响应，而面板会把它当成一次「读不出来」的正常应答。
+    expect(
+      (fetchCalls[0]!.init as unknown as { redirect?: string }).redirect,
+      "重定向没有被拒绝 —— 这一次带的是 x-api-key，跨源重定向时浏览器不会替我们删它",
+    ).toBe("error");
+    // 前置条件：这一次带的确实是那个**不会被浏览器剥掉**的头，否则这一格证不了什么。
+    expect(headersOf()["x-api-key"], "前置条件：这一次得真的带着 x-api-key").toBe(GW_TOKEN);
+  });
+
   it("调用方给的 signal 原样透传 —— 不透传的话取消按钮会变成一颗按了没反应的按钮", async () => {
     const ctl = new AbortController();
     await sendToGateway(reqFor(0), GW_TOKEN, { origin: ORIGIN, signal: ctl.signal });

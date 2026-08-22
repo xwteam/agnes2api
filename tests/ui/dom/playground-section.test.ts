@@ -30,10 +30,15 @@ import type { FakeElement } from "../../helpers/fake-dom.js";
  * ⚠️ **3 条盲点里踩了一条，明写**：`.disabled`。夹具把它挂在**每一个**元素上，
  * 而且**夹具里点一颗 disabled 的按钮照样会触发监听器**（真实浏览器不会）。
  * ⇒ **「按钮变灰」这件事在这里只能验到属性，验不到「点不动」。**
- * 所以在飞去重那条护栏在发货代码里是**两道**：`btn.disabled = …`（给人看的）
- * **加** `sendOnce()` 开头那句 `if (inFlight) return;`（真正起作用的那一道）。
- * 下面「在飞时再点一次发送：不许发出第二条」那一格钉的是**后者**——
- * 它在夹具里是可观测的，而前者不是。
+ * ⚠️⚠️ **上一版这里写的是「护栏在发货代码里是两道：`btn.disabled` 加 `sendOnce()` 开头那句
+ * `if (inFlight) return;`」——而那一行在同一个提交里已经被删掉了**（变异实测证明它是冗余，
+ * 详见下面「在飞时再点一次发送」那一格的说明）。**同一个文件里两段互相矛盾，
+ * 而文件头是先被读到的那一段。** 这正是那一格里我自己写下的那条 ⭐ 记形要防的事，
+ * 而我当时只改了两处、漏了这一处。
+ * ⇒ 说准：**在飞去重的判据只有一份，就是 `sendBlockedKey()` 的第一档**
+ * （`pg.send.blockedInFlight`）；`btn.disabled` 与 `sendOnce()` 的早退**读的都是它**。
+ * 下面「在飞时再点一次发送：不许发出第二条」那一格钉的是那个判据本身，
+ * 它在夹具里是可观测的（行为那条断言单独就会红），而「灰按钮点不动」那一层不是。
  *
  * ⚠️ 本文件的**测试代码**里遍历子树用的是 `for…of` + `.children` 递归，不调 `.walk()`
  * ——真实 DOM 上 `.children` 是可迭代的 `HTMLCollection`，`.walk()` 根本不存在。
@@ -106,6 +111,38 @@ function everyNode(root: FakeElement): FakeElement[] {
   const out: FakeElement[] = [root];
   for (const c of root.children) out.push(...everyNode(c));
   return out;
+}
+
+/**
+ * ── **H1：「口令一处都不出现」的扫描面与调用点** ────────────────────────────────
+ *
+ * ⚠️⚠️ **上一版这道扫描只扫 `h.section("playground")` 那棵子树，而它的用例名是一句
+ * 全称句（「面板上任何一处」）。评审逐条实测出两条逃逸：**
+ * · **逃逸 A（板块之外）**：把口令拼进 `toast()`（「排查方便点」最自然的写法）⇒ **23/23 全绿**
+ *   ——`#toast-host` 是 `<body>` 的最后一个元素，**根本不在板块子树里**。
+ * · **逃逸 B（没被渲染过的那一档）**：上一版只造了传输失败那一档，而 `buildTurn()` 在
+ *   `turn.errorKey !== null` 时**提前 return** ⇒ **响应体那一档在扫描下一次都没渲染过**，
+ *   注释里那条「在右栏那一轮里把请求头一起渲染出来」的变红条件**放在成功分支上就是假的**。
+ * ⇒ **两处都修**：扫描面提到 `h.dom.document.body`（整页，含 `#toast-host` 与登录闸），
+ * 并把扫描抽成本函数，在**成功 / 传输失败 / 构造失败**三档各调一次。
+ * ⭐ 记一条形状（与本文件那条同族）：**写下一条全称句时，把「它不覆盖哪些」也逐条种一次**
+ * ——H1 与 H3 是同一个毛病的两次发作：**写下的覆盖面小于宣称的范围。**
+ */
+function expectNoTokenAnywhere(h: Harness, where: string): void {
+  // **整页**，不是板块子树：`#toast-host` / 登录闸 / 侧栏都在这棵树上。
+  const root = h.dom.document.body;
+  // ① 整页渲染文本里没有它。
+  expect(root.textContent, `${where}：网关口令被渲染到了屏幕上`).not.toContain(GW_TOKEN);
+  // ② 逐个节点、逐个属性值里都没有它（`title` / `data-*` / `placeholder` / `aria-*` …）。
+  //    **只放过输入框自己的 `.value`**：真实 DOM 里它是 IDL 属性，不进 `attributes`、
+  //    也不进 `textContent`。
+  for (const node of everyNode(root)) {
+    for (const [name, value] of node.attrs) {
+      expect(value, `${where}：<${node.tagName}> 的 ${name} 属性里带上了网关口令`).not.toContain(GW_TOKEN);
+    }
+  }
+  // ③ 连口令的一段（末 8 位）都不许出现 —— 一条末位旁路同样是旁路。
+  expect(root.textContent, `${where}：网关口令的末段被渲染了出来`).not.toContain(GW_TOKEN.slice(-8));
 }
 
 /** 把网关口令粘进那个输入框（走真的 `input` 事件，不是直接改状态）。 */
@@ -287,43 +324,69 @@ describe("网关口令：粘贴、就地校验、绝不外泄", () => {
    * **每一个下游用户**的中转口令。它只许出现在两个地方：那个 `<input>` 的 `.value`，
    * 和 `js/gw-api.js` 拼请求头的那一行。
    *
-   * ⚠️ 这一格逐个节点扫**全部属性值**（`title` / `data-*` / `placeholder` / `aria-*` …）
-   * 与**整块渲染文本**，只放过那个输入框自己的 `.value`
-   * （真实 DOM 里 `.value` 是 IDL 属性，不进 `attributes`，也不进 `textContent`）。
+   * ⚠️ 扫的是**整页**（`h.dom.document.body`）的全部属性值与渲染文本，只放过那个输入框
+   * 自己的 `.value`。**扫描面与三个调用点的理由见 `expectNoTokenAnywhere()` 上方那段。**
    *
-   * **变红条件（逐条都是最自然的写法）**：
-   * · 把 `syncSendButton()` 的 tooltip 写成 `t(key) + token`；
-   * · 给口令输入框加一个 `data-value` / `title` 之类的调试属性；
-   * · 把 `sendOnce()` 的 `catch` 分支改成把 `e.message` 或整份请求头画出来；
-   * · 在右栏那一轮里把请求头一起渲染出来。
+   * **变红条件（逐条都是最自然的写法，且都实测过落在哪一档）**：
+   * · 把 `syncSendButton()` 的 tooltip 写成 `t(key) + token` ⇒ **三档全红**（属性那条）；
+   * · 给口令输入框加一个 `data-value` / `title` 之类的调试属性 ⇒ 三档全红；
+   * · 把 `sendOnce()` 的 `catch` 分支改成把 `e.message` 或整份请求头画出来
+   *   ⇒ **只红「传输失败」那一档**；
+   * · 把请求头渲染进右栏那一轮 ⇒ **只红「成功」那一档**
+   *   （`buildTurn()` 在 `errorKey !== null` 时提前 return，失败那两档根本走不到响应体那一段）；
+   * · 把口令拼进 `toast()` ⇒ 三档全红，**而上一版只扫板块子树时它 23/23 全绿**。
    */
   it("面板上任何一处都不出现网关口令 —— 输入框的值不许漏进标题、属性或任何一句错误文案", async () => {
-    const h = await openPg(respondWith({
-      // 让这一次**失败**：错误路径是口令最自然的泄漏口。
-      gateway: () => { throw new Error("boom"); },
-    }));
-    const sec = h.section("playground");
-    pasteToken(sec, GW_TOKEN);
-    typePrompt(sec, "你好");
-    one(sec, ".pg-send").click();
+    // ── 档 ①：**成功**。响应体那一段只有走到这里才被渲染过。 ──
+    const ok = await openPg(respondWith());
+    const okSec = ok.section("playground");
+    pasteToken(okSec, GW_TOKEN);
+    typePrompt(okSec, "你好");
+    one(okSec, ".pg-send").click();
     await settle(20);
+    expect(pick(okSec, ".pg-body").length, "前置条件：成功那一档得真的把响应体画出来").toBe(1);
+    expect(one(okSec, ".pg-token").value, "前置条件：口令确实在输入框里").toBe(GW_TOKEN);
+    expectNoTokenAnywhere(ok, "成功档");
 
-    // 前置条件①：这一轮必须真的走到了错误那一档，否则这一格扫的是一块空白。
-    expect(pick(sec, ".pg-error").length, "前置条件：这一次得真的失败").toBe(1);
-    // 前置条件②：口令确实在输入框里（少了它，下面的「哪儿都没有」在一个空面板上也成立）。
-    expect(one(sec, ".pg-token").value).toBe(GW_TOKEN);
+    // ── 档 ②：**传输失败**。错误文案是口令最自然的泄漏口。 ──
+    vi.unstubAllGlobals();
+    const bad = await openPg(respondWith({ gateway: () => { throw new Error("boom"); } }));
+    const badSec = bad.section("playground");
+    pasteToken(badSec, GW_TOKEN);
+    typePrompt(badSec, "你好");
+    one(badSec, ".pg-send").click();
+    await settle(20);
+    expect(pick(badSec, ".pg-error").length, "前置条件：这一次得真的失败").toBe(1);
+    expectNoTokenAnywhere(bad, "传输失败档");
 
-    // ① 整块渲染文本里没有它。
-    expect(sec.textContent, "网关口令被渲染到了屏幕上").not.toContain(GW_TOKEN);
-    // ② 逐个节点、逐个属性值里都没有它。
-    for (const node of everyNode(sec)) {
-      for (const [name, value] of node.attrs) {
-        expect(value, `<${node.tagName}> 的 ${name} 属性里带上了网关口令`).not.toContain(GW_TOKEN);
-      }
-    }
-    // ③ 连口令的一段（末 8 位）都不许出现——一条末位旁路同样是旁路。
-    const tail = GW_TOKEN.slice(-8);
-    expect(sec.textContent, "网关口令的末段被渲染了出来").not.toContain(tail);
+    // ── 档 ③：**构造失败**（目录的样例形状与面板对不上）。它连请求都没发出去，
+    //    而那一档的文案同样是本地拼的 —— 同样是一条泄漏口。 ──
+    vi.unstubAllGlobals();
+    const drift = await openPg(respondWith({
+      catalog: {
+        status: 200,
+        body: {
+          protocols: [{
+            id: "alpha", label: "Alpha", method: "POST", pathTemplate: "/probe/alpha",
+            authHeader: "authorization", streamMode: "body", streamKey: "stream",
+            // 占位文本漂了 ⇒ `withPrompt()` 交出 `null` ⇒ `pg.err.buildFailed`。
+            sampleBody: { model: "m0", input: "drifted-sample" },
+          }],
+          models: [{ id: "m-alpha", modality: "chat", protocols: ["alpha"], endpoints: [] }],
+        },
+      },
+    }));
+    const driftSec = drift.section("playground");
+    pasteToken(driftSec, GW_TOKEN);
+    typePrompt(driftSec, "你好");
+    one(driftSec, ".pg-send").click();
+    await settle(20);
+    expect(pick(driftSec, ".pg-error").length, "前置条件：构造失败那一档得真的走到").toBe(1);
+    expect(
+      drift.calls.filter((c) => c.url.startsWith(PANEL_ORIGIN)),
+      "构造失败那一档不该发出任何请求",
+    ).toEqual([]);
+    expectNoTokenAnywhere(drift, "构造失败档");
   });
 
   /**
@@ -337,6 +400,57 @@ describe("网关口令：粘贴、就地校验、绝不外泄", () => {
     await settle();
     expect(h.store[GW_KEY_STORE]).toBe(GW_TOKEN);
     expect(h.store[KEY_STORE], "粘网关口令把管理口令覆盖掉了").toBe(TOKEN);
+  });
+
+  /**
+   * ── **M2：登出必须把网关口令一起清掉（控制端裁定）** ────────────────────────
+   *
+   * `js/pure/session.mjs` 的文件头把「localStorage 里放的是原始 `ADMIN_TOKEN`，
+   * 无过期、无登出、产品内无撤销路径」当成设 `SESSION_MAX_AGE_MS` 的**理由**
+   * ——也就是说，这个项目已经把「一把这样存着的口令」判定成需要缓解的问题。
+   * 而网关口令**比它还弱**（没有年龄上限、后端也没有撤销路径）。
+   * **再往同一块存储里加一把更弱的、还不跟着登出清掉的，是严格变差。**
+   *
+   * 具体后果很朴素：共享 / 投屏的机器上，登出之后下一个人登录进来，
+   * Playground 的口令框是**预填好的**。
+   *
+   * ⚠️ **两处缺一不可，这一格同时钉着两处**：
+   * ① `js/app.js` 的 `store("del")` 要清存储；
+   * ② `js/sec-playground.js` 的 `onShow()` 要**每次重新从存储读**
+   *    ——登出不 reload、板块也不会重新 `init()`，模块变量里那把口令会活过一次登出。
+   *
+   * **变红条件（各打掉一处，各自都会红）**：
+   * · 删掉 `app.js` 里那行 `localStorage.removeItem(GW_KEY_STORE);` ⇒ 第一条断言红；
+   * · 把 `sec-playground.js` 的 `onShow()` 里那句 `token = readGatewayToken();` 删掉
+   *   ⇒ 存储清了、而输入框里那把还在 ⇒ 最后一条断言红。
+   */
+  it("退出登录会一并清掉网关口令，重新登录之后那个框是空的 —— 共享机器上它本来是预填好的", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    await settle();
+    // 前置条件：先得真的存进去、也真的显示出来。
+    expect(h.store[GW_KEY_STORE], "前置条件：口令得先真的存进去").toBe(GW_TOKEN);
+    expect(one(sec, ".pg-token").value).toBe(GW_TOKEN);
+
+    h.dom.byId("logout-btn").click();
+    await settle(20);
+
+    // ① 存储里那一把没了（与管理口令那两个键一起）。
+    expect(h.store[GW_KEY_STORE], "登出之后网关口令还留在浏览器里").toBeUndefined();
+    expect(h.store[KEY_STORE], "前置条件：管理口令那两个键本来就该被清").toBeUndefined();
+    expect(h.store[SAVED_AT_STORE]).toBeUndefined();
+
+    // ② 下一个人登录进来：口令框必须是空的。
+    //    **走完整的重新登录，不是直接调板块方法**——模块变量活过登出正是这一格要抓的东西。
+    h.input.value = TOKEN;
+    h.form.submit();
+    await settle(20);
+    expect(h.shell.classList.contains("on"), "前置条件：得真的重新登录成功").toBe(true);
+    expect(
+      one(h.section("playground"), ".pg-token").value,
+      "登出之后上一个人的网关口令还留在输入框里",
+    ).toBe("");
   });
 
   it("刷新之后口令从浏览器里回填 —— 存了却不读等于每次都要重粘", async () => {
@@ -363,6 +477,35 @@ describe("网关口令：粘贴、就地校验、绝不外泄", () => {
     pasteToken(sec, "gateway-token-0123456789-0000");
     expect(one(sec, ".pg-hint").textContent).toBe("末位与设置页里配的那把对不上");
     expect(one(sec, ".pg-hint").classList.contains("pg-hint-bad")).toBe(true);
+  });
+
+  /**
+   * ── **L3：`/config` 失败一次之后，hint 校验不许在整个会话里永远停在「比不了」** ──
+   *
+   * `hintAsked` 是个一次性闸（目录与 hint 都是这次会话里不会变的东西，不该每次切回来重问）。
+   * 但它一旦在**失败**那一次被置真，`loadHint()` 就再也不会跑
+   * ⇒ **按了「再读一次」也不恢复**，而那颗按钮的语义正是「把这个板块读不到的东西再读一次」。
+   *
+   * **变红条件**：把 `buildUnavailable()` 里 `retry` 那个 handler 里的
+   * `hintAsked = false; loadHint();` 两行删掉。
+   */
+  it("目录与 hint 一起失败时，按「再读一次」两样都重读 —— 否则 hint 校验会在整个会话里停在「比不了」", async () => {
+    const h = await openPg(respondWith({
+      catalog: { status: 500, body: {} },
+      config: { status: 500, body: {} },
+    }));
+    const sec = h.section("playground");
+    const configCalls = () => h.calls.filter((c) => c.url.startsWith("/admin/api/config")).length;
+    expect(configCalls(), "前置条件：第一次显示时问过一次").toBe(1);
+
+    h.respond(respondWith());
+    one(sec, ".pg-retry").click();
+    await settle(20);
+
+    expect(configCalls(), "「再读一次」只重读了目录，hint 那一次没有跟着重问").toBe(2);
+    // 而且它真的恢复了：粘一把末位对得上的口令，说的是「一致」而不是「比不了」。
+    pasteToken(sec, GW_TOKEN);
+    expect(one(sec, ".pg-hint").textContent).toBe("末位与设置页里配的那把一致");
   });
 
   it("读不到设置页的 hint 时说的是「比不了」，不是「对不上」 —— 后者会让人去改一把其实没错的口令", async () => {
