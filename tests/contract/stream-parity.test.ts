@@ -32,11 +32,22 @@ function upstreamChunk(text: string): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify({ id: "c1", choices: [{ delta: { content: text } }] })}\n\n`);
 }
 
-/** 一次性给完的上游流（用于**非时序**断言；时序断言一律用下面那个带闸的）。 */
+/**
+ * 一次性给完的上游流（用于**非时序**断言；时序断言一律用上面那个带闸的）。
+ *
+ * ⚠️ **末尾那一块 `finish_reason` 不是装饰**（评审 F6）：没有它，
+ * **openai 那条协议的「带正文的行恰好三条」是空转的**（3 条 payload、3 条都带正文）。
+ * openai 是唯一一条**原样透传上游字节**的协议，所以只有让**上游**发一块不带
+ * `delta.content` 的块，它下游才会出现一条真正的非正文行。
+ * 真实上游在流末发的正是这个形状（本仓 `tests/unit/anthropic.test.ts` 等的夹具同款）。
+ * 另三条协议会把它跳过（`toAnthropicStream()` 那几个只在有 content 时才 yield），
+ * 它们的非正文行来自各自合成的事件（`message_start` / `response.created` / …）。
+ */
 function upstreamStream(texts: readonly string[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
     start(c) {
       for (const t of texts) c.enqueue(upstreamChunk(t));
+      c.enqueue(encoder.encode(`data: ${JSON.stringify({ id: "c1", choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`));
       c.enqueue(encoder.encode("data: [DONE]\n\n"));
       c.close();
     },
@@ -172,9 +183,15 @@ describe("流式：协议目录的 streamTextPath 与网关真吐出去的字节
    * ⇒ 这里逐行分档：**取到正文的行数必须恰好等于上游给的块数**，其余行必须是空串
    * （读得出来、不带正文），**一行都不许是 `null`（读不出来）**。
    *
-   * ⚠️ **anthropic 与 responses 的流里真的夹着非正文事件行**（`message_start` /
-   * `content_block_start` / `message_delta` / `message_stop`、`response.created` /
-   * `response.completed`），所以这一格对它们不是空转。gemini 那条一行都不夹。
+   * ⚠️ **哪几条协议上这一格不是空转，逐条写清（评审 F6 实测订正）**：
+   * · **anthropic / responses**：流里夹着自己合成的事件行（`message_start` /
+   *   `content_block_start` / `message_delta` / `message_stop`、`response.created` /
+   *   `response.completed`）——**天然不空转**；
+   * · **openai**：它原样透传上游字节，所以只有当**上游**发一块不带 `delta.content`
+   *   的块时才有非正文行。**`upstreamStream()` 末尾那块 `finish_reason` 就是为它加的**
+   *   ——在那之前这一格对 openai 是 3/3 的空转（我原来的注释只点了 gemini，**漏了它**）；
+   * · **gemini**：`toGeminiStream()` 只在有 content 时 yield，一行都不夹
+   *   ⇒ **这一格对 gemini 至今仍是空转**，如实登记。
    */
   it.each(PROTOCOLS.map((p) => [p.id, p] as const))(
     "%s：带正文的行恰好三条，其余事件行读得出来但不带正文 —— 混进协议内部的词就是对话框在撒谎",
@@ -193,6 +210,24 @@ describe("流式：协议目录的 streamTextPath 与网关真吐出去的字节
       // 期望值手写字面量 3，**不是 `sent.length`**：从被测数据推导出来的期望值
       // 在两边同时改错时照样绿（第 6 种假阳性）。
       expect(got.filter((x) => x !== "").length, `${p.id} 带正文的行数不对`).toBe(3);
+
+      /**
+       * **每条协议的行构成逐条钉死**（评审 F6 的落点）。
+       *
+       * 上面那条「带正文恰好 3」**说不出这一格对谁是空转的**——一条协议如果压根
+       * 不发非正文行，那它就只是在重复上一格。这张表把「这条流里有几行、其中几行
+       * 不带正文」写成手写字面量，**顺带把「gemini 至今仍是空转」这件事变成可见的 0**。
+       * 数字全部实测得来（同一装置跑一遍打出来的），不是从被测数据推导的。
+       */
+      const COMPOSITION: Record<string, { payloads: number; blank: number }> = {
+        openai: { payloads: 4, blank: 1 },      // 3 块正文 + 上游那块 finish_reason（原样透传）
+        anthropic: { payloads: 8, blank: 5 },   // + message_start / content_block_start / _stop / message_delta / message_stop
+        responses: { payloads: 5, blank: 2 },   // + response.created / response.completed
+        gemini: { payloads: 3, blank: 0 },      // **一行都不夹 ⇒ 这一格对 gemini 是空转，如实登记**
+      };
+      const want = COMPOSITION[p.id]!;
+      expect(payloads.length, `${p.id} 这条流的行数变了`).toBe(want.payloads);
+      expect(got.filter((x) => x === "").length, `${p.id} 不带正文的行数变了`).toBe(want.blank);
     },
   );
 });

@@ -73,6 +73,15 @@
  * ⚠️ **哪天这条前提变了，改的是后端那一格 + 这里读它，不是在这里嗅探运行时**
  * （全局约束 1：一切形态分支只许读 `GET /admin/api/capabilities`）。
  *
+ * ⚠️⚠️ **而「哪天变了」这件事今天没有任何机器会告诉你（登记 P3e）。**
+ * 那条前提现在是一个**已发货功能的承重墙**，可它**没有回归网**：
+ * `tests/contract/stream-parity.test.ts` 的
+ * 「上游第二块还没 enqueue 时客户端已经读到了第一块 —— 被整体缓冲的话 Playground 的流式开关就是假话」
+ * 走的是进程内的 `app.request()`，它自己的文件头就写着**证明不了 workerd 的 HTTP 服务层**。
+ * ⇒ **workerd 哪天改成缓冲，一格测试都不会红，而这个面板会静默变成一句假话**
+ *（开关照按、正文照出，只是一次性全到）。堵它要一次「起 wrangler dev + curl -N
+ * 量到达间隔」的真机冒烟，那不是单元测试能装下的东西。
+ *
  * ── 右栏：流式画正文，非流式仍画响应原文 ────────────────────────────────────
  * **流式没有「原文」可展示**——它天然要一块一块把正文取出来拼。「这条协议的正文在
  * 哪一格」因此顶到了台面上，而答案是**往协议目录加一格**（`streamTextPath`，
@@ -87,9 +96,19 @@
  * `src/core/protocol/anthropic.ts` 的 `message_delta` 事件写死 `usage: {output_tokens: 0}`。
  * ⇒ 谁顺手把「响应里的 usage」画出来，Anthropic 那条流就会在面板上显示 **0 个 token**
  * ——那是全局约束 9 明令禁止的那件事（**伪造 0 比显示「没有」更糟**）。
- * ⇒ 流式那一轮**一个字节的 usage 都不读**，只画一句「流式响应不带 token 用量」。
+ * ⇒ 流式那一轮**今天一个字节的 usage 都不读**，只画一句「流式响应不带 token 用量」。
  * 由 `tests/ui/dom/playground-section.test.ts` 的
  * 「流式那一轮不显示任何 token 数字 —— Anthropic 的流里带着一个恒为 0 的 usage」钉着。
+ *
+ * ⚠️⚠️ **别把上面那句读成「结构上不可能」——它只是「今天没写」。**（评审 F2 实测）
+ * 我原来在报告里写过「结构性地不读，不是靠自觉」，**那是言过其实**：
+ * 评审在 `onPayload` 里加三行解析 `usage.output_tokens`、在下面多画一行
+ * `` `Tokens: ${…}` `` ⇒ **当时 103/103 全绿**，屏幕上同时出现
+ *「流式响应不带 token 用量…」与「Tokens: 0」。
+ * 当时守着它的只有一条**按字段名**的子串断言（换个标签就绕过）与一条**计数**断言
+ *（只挡替换、不挡新增）。
+ * ⇒ 现在守它的是**闭集**断言：那一格逐条比对这一轮渲染出来的「标签 + class」列表，
+ * **多画任何一行都红**。这仍然是一道测试，不是一条结构性的不可能。
  *
  * ── 两条 admin 路径为什么不算「第二份端点知识」 ──────────────────────────────
  * 全局约束 15 管的是「怎么调**这个网关**」那张对外面（对外路径、请求体形状、鉴权头），
@@ -153,6 +172,11 @@ let streamOn = false;
 let turns = [];
 /** 这一刻有没有一次对外请求在飞。它就是那道「在飞去重」。 */
 let inFlight = false;
+/**
+ * 在飞那一轮的**流式** turn（非流式恒为 `null`）。
+ * 存在的唯一理由是 `cancelInFlight()` 要够得着它把 `pending` 收干净 —— 理由全文在那里。
+ */
+let streamingTurn = null;
 /**
  * 在飞那一次的取消器，**同时是「这一次还是不是当前那一次」的判据**。
  * 见文件头那段 ⚠️⚠️：abort 本身在测试里不可观测，被钉住的是这个身份比较。
@@ -426,10 +450,19 @@ function buildTurn(turn) {
     // 不整块重画（重画会让左栏的输入框丢焦点，而流式一秒能来几十块）。
     if (turn.pending === true) nodes.streamText = body;
     wrap.appendChild(body);
-    // **「这条流一个字都没有」与「还在收，只是还没到」是两件事** ——
-    // 后者不许说前者那句话，所以 `pending` 期间不画它（那期间说话的是 pg.sending）。
-    if (turn.text === "" && turn.pending !== true) {
+    // **「这条流一个字都没有」是一句关于「它读完了」的话，四个前提缺一不可**（评审 F1/F3）：
+    // · `pending` 期间不许说 —— 那时候它只是**还没到**（说话的是 pg.sending）；
+    // · 出错那一档不许说 —— 那条流**根本没开起来 / 没读完**，说「读完了」是假话。
+    //   ⚠️ 这一条是评审实测抓到的：漏掉它，断网那一轮会**同时**画出
+    //   「这条流读完了，但里面一个字的正文都没有」与「这次请求没有拿到任何响应」，
+    //   **两句话互相矛盾，而前一句是编的**；
+    // · 取消那一档不许说 —— 同上，是运维自己把它掐了，不是它读完了。
+    if (turn.text === "" && turn.pending !== true && turn.errorKey === null && turn.cancelled !== true) {
       wrap.appendChild(elI18n("p", "pg.turn.streamEmpty", { class: "muted note pg-stream-empty" }));
+    }
+    if (turn.cancelled === true) {
+      // **取消要说出来**：一个空白框 + 一句「流式不统计 token」什么都没解释。
+      wrap.appendChild(elI18n("p", "pg.turn.cancelled", { class: "muted note pg-cancelled" }));
     }
     if (turn.malformed > 0) {
       // **静默丢弃就是撒谎**（与事件板块的 malformed 同一条理由）：读不出来的块数
@@ -573,6 +606,22 @@ function cancelInFlight() {
   if (current !== null) current.abort();
   current = null;
   inFlight = false;
+  /**
+   * ⚠️⚠️ **在飞那一轮的收尾必须在这里做，不能指望 `.finally()`**（评审 F3）。
+   *
+   * `sendOnce()` 的 `.finally()` 第一句是 `if (current !== ctl) return;`，
+   * 而这个函数刚把 `current` 置空 ⇒ **那条收尾路径走不到**。
+   * 非流式那一档看不出来（它的 turn 压根还没进 `turns`），
+   * **流式那一档看得一清二楚**：turn 早就在右栏里了，`pending` 永远停在 `true`
+   * ⇒ 屏幕上留下一个空白框 + 一句「流式不统计 token」，别的什么都不说
+   *（既不说「一个字都没有」，也不说任何错误）。
+   * ⇒ 这里把它收干净，并**明确标成「被取消」**——那与「读完了但没有正文」是两句话。
+   */
+  if (streamingTurn !== null) {
+    streamingTurn.pending = false;
+    streamingTurn.cancelled = true;
+    streamingTurn = null;
+  }
 }
 
 /**
@@ -595,7 +644,7 @@ function sendOnce() {
   if (req === null) {
     turns.push({
       promptText, url: "", method: "", status: null, body: null, errorKey: "pg.err.buildFailed",
-      stream: false, streamed: false, text: "", malformed: 0, pending: false,
+      stream: false, streamed: false, text: "", malformed: 0, pending: false, cancelled: false,
     });
     render();
     return;
@@ -611,9 +660,12 @@ function sendOnce() {
    */
   const turn = {
     promptText: sent, url: req.url, method: req.method, status: null, body: null, errorKey: null,
-    stream, streamed: stream, text: "", malformed: 0, pending: stream,
+    stream, streamed: stream, text: "", malformed: 0, pending: stream, cancelled: false,
   };
-  if (stream) turns.push(turn);
+  if (stream) {
+    turns.push(turn);
+    streamingTurn = turn;
+  }
   render();
 
   const done = (r) => {
@@ -663,10 +715,12 @@ function sendOnce() {
     .then((r) => { if (current === ctl) done(r); })
     .catch((e) => { if (current === ctl) failed(e); })
     .finally(() => {
+      // 被取消过的话这里早退 —— 收尾已经由 `cancelInFlight()` 做完了（见那里的 ⚠️⚠️）。
       if (current !== ctl) return;
       current = null;
       inFlight = false;
       turn.pending = false;
+      streamingTurn = null;
       render();
     });
 }

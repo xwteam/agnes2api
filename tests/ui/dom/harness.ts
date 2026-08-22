@@ -55,7 +55,17 @@ export const PANEL_ORIGIN = "https://panel-probe.invalid";
  * 那条性质由 `tests/ui/playground.test.ts` 的
  * 「一条 data 行被拆在两个 chunk 里仍被正确重组」在纯函数层钉着。
  */
-type Resp = { status: number; body: unknown; raw?: string; contentType?: string };
+type Resp = {
+  status: number;
+  body: unknown;
+  /**
+   * `string` = 一段固定字节；`ReadableStream` = **由用例自己控制吐法的流**
+   *（P3d Task 11 评审 F1/F4：中途 `controller.error()` 才走得到「读到一半断了」那条路，
+   * 而那条路上的渲染与口令扫描原来一格都没覆盖）。
+   */
+  raw?: string | ReadableStream<Uint8Array>;
+  contentType?: string;
+};
 
 export interface Harness {
   dom: FakeDom;
