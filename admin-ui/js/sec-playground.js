@@ -172,7 +172,7 @@ import { fmtDash } from "./pure/format.mjs";
 import {
   playgroundProtocols, modelIdsForProtocol, buildRequest, tokenHintState, prettyJson, deltaText,
   mediaEndpoints, modelIdsForModality, mediaEmbeddable, mediaLinkable, mediaResultUrls,
-  videoTaskIdOf, buildPollRequest, videoPollNext,
+  videoTaskIdOf, buildPollRequest, videoPollNext, VIDEO_POLL_MAX_ATTEMPTS,
 } from "./pure/playground.mjs";
 
 /**
@@ -488,12 +488,31 @@ function sendBlockedKey() {
   return null;
 }
 
-/** 发送按钮的可用性与 tooltip 就地刷一遍（同 `syncHintNote`，不整块重画）。 */
+/**
+ * 发送按钮的可用性与 tooltip 就地刷一遍（同 `syncHintNote`，不整块重画）。
+ *
+ * ⚠️⚠️ **视频档的那句话不能与另两档共用，这是评审 M2 抓到的一句假话。**
+ * `pg.send.ready` 五语言逐字都写着「按一下会真的向上游发**一次**请求」
+ * （en `one request` / ja `1 回` / ko `한 번`）——**而视频档一次点击是
+ * 1 次建任务 + 最多 `VIDEO_POLL_MAX_ATTEMPTS` 次轮询。**
+ * 这是全局约束 14「按钮与护栏一起交付」的**披露那一半**：护栏（在飞去重、两条上限、
+ * 藏起来暂停、切走即停）我都做了，**而运维在按下之前唯一看得到的那句话没跟着改**。
+ * ⚠️ **次数从常量插值进去，不写死在字典里**：写死的话改常量就会让那句话变成假话，
+ * 而字典没有任何机器在守（W4b）。
+ * 由 `tests/ui/dom/playground-section.test.ts` 的
+ * 「视频档按下之前那句话说的是 1 + 60 次，不是「一次」 —— 它是运维唯一看得到代价的地方（评审 M2）」钉着。
+ */
 function syncSendButton() {
   if (nodes === null || nodes.send === null) return;
   const blocked = sendBlockedKey();
   nodes.send.disabled = blocked !== null;
-  nodes.send.setAttribute("title", t(blocked === null ? "pg.send.ready" : blocked));
+  if (blocked !== null) {
+    nodes.send.setAttribute("title", t(blocked));
+    return;
+  }
+  nodes.send.setAttribute("title", mode === "video"
+    ? t("pg.send.readyVideo", { count: String(VIDEO_POLL_MAX_ATTEMPTS) })
+    : t("pg.send.ready"));
 }
 
 /**
@@ -812,6 +831,11 @@ async function loadCatalog(preempt) {
     // 媒体端点表（P3d Task 12）。**它读不出来同样是整份读不出来**，不是「媒体档不可用」：
     // 一个只有对话档能用、另两档静静变空的面板，运维分不出是这个网关不支持媒体、
     // 还是这份响应我们没读懂（全局约束 9 的同型）。
+    // ⚠️ **代价明写（评审 L3）：媒体那几格漂了，会把整个 Playground（含对话四档）
+    //    一起打死**，右栏变成那条红色横幅。这与 `playgroundProtocols()` / `catalogModels()`
+    //    任何一个读不出来时的处置**逐字一致**（三者同档），**是刻意的一致而不是漏想**：
+    //    「这份响应我们没读懂」时，让一半功能看起来正常才是更坏的那一档。
+    //    真要退化成「媒体档单独不可用」，那是一个新的 UI 状态（第四档），不是把这一行改松。
     const media = mediaEndpoints(body);
     catalog = protocols === null || models === null || media === null
       ? null

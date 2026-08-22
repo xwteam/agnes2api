@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { bootPanel, settle, PANEL_ORIGIN, type Harness } from "./harness.js";
+import { stripComments } from "../../helpers/strip-comments.js";
 import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE, GW_KEY_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { catalogPayload } from "../../../src/core/admin/protocol-catalog.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
@@ -604,42 +606,18 @@ describe("网关口令：粘贴、就地校验、绝不外泄", () => {
     expect(one(dgSec, ".pg-token").value, "前置条件：口令确实在输入框里").toBe(GW_TOKEN);
     expectNoTokenAnywhere(dg, "流式降级 401 档");
 
-    // ── 档 ⑦：**媒体**（P3d Task 12 加的第七档）。它是**第三条渲染路径**
-    //    （既不走 `prettyJson` 那条对话分支、也不走增量拼接那条流式分支，
-    //    走的是 `buildMediaResult()`：地址行 + 复制按钮 + 链接 + 任务标识 + 轮询进度）。
-    //    ⚠️ **Task 11 的教训写在这里**：档④当时只覆盖流式的**成功**路径，
-    //    失败那半条一格都没扫过，评审在那一段上种口令 ⇒ 103/103 全绿。
-    //    ⇒ **媒体这一档一次把成功与失败两条都走一遍**，不留同样的洞。 ──
-    vi.unstubAllGlobals();
-    const mOk = await openPg(respondWith({
-      gateway: () => ({ status: 200, body: { created: 1, data: [{ url: "https://cdn.invalid/a.png" }] } }),
-    }));
-    const mOkSec = mOk.section("playground");
-    toMode(mOkSec, "image");
-    pasteToken(mOkSec, GW_TOKEN);
-    typePrompt(mOkSec, "一只猫");
-    one(mOkSec, ".pg-send").click();
-    await settle(20);
-    // 三条前置条件：地址行、复制按钮、链接**三种媒体独有的渲染**都真的走到了。
-    expect(one(mOkSec, ".pg-media-url").textContent, "前置条件：媒体成功档得真的画出地址")
-      .toBe("https://cdn.invalid/a.png");
-    expect(pick(mOkSec, ".pg-media-copy").length, "前置条件：复制按钮得真的画出来").toBe(1);
-    expect(pick(mOkSec, ".pg-media-open").length, "前置条件：链接得真的画出来").toBe(1);
-    expect(one(mOkSec, ".pg-token").value, "前置条件：口令确实在输入框里").toBe(GW_TOKEN);
-    expectNoTokenAnywhere(mOk, "媒体成功档");
-
-    vi.unstubAllGlobals();
-    const mBad = await openPg(respondWith({ gateway: () => { throw new Error("boom"); } }));
-    const mBadSec = mBad.section("playground");
-    toMode(mBadSec, "video");
-    pasteToken(mBadSec, GW_TOKEN);
-    typePrompt(mBadSec, "一只猫在跑");
-    one(mBadSec, ".pg-send").click();
-    await settle(20);
-    expect(pick(mBadSec, ".pg-error").length, "前置条件：媒体那一次得真的失败").toBe(1);
-    expect(pick(mBadSec, ".pg-media-url").length, "前置条件：失败那一档不该有任何地址行").toBe(0);
-    expect(one(mBadSec, ".pg-token").value, "前置条件：口令确实在输入框里").toBe(GW_TOKEN);
-    expectNoTokenAnywhere(mBad, "媒体失败档");
+    // ── 档 ⑦：**媒体** —— **不在这一格里**，在下面那一格
+    //    「媒体那条渲染路径的每一个出口都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算（评审 H1）」。
+    //    ⚠️⚠️ **它为什么被搬出去，是评审 H1 的落点，写清楚**：媒体那条渲染路径
+    //    （`buildMediaResult()`）有 **17 个出口**，而本格这种「一档一段直写」的写法
+    //    第一版只走到其中 **2** 个（结果行与错误行）——评审往任务标识那一行与轮询进度那一行
+    //    各种一次口令，**905 passed，两次都 ESCAPED**。
+    //    ⚠️ 而 `.pg-poll` 是真实视频任务里**在屏幕上停留最久的那一行（最长 5 分钟）**，
+    //    `.pg-task-id` 是**唯一会被运维复制粘贴出去的那一行** —— 两处正是
+    //    「排查方便点」最容易把口令拼进去的位置。
+    //    ⇒ 搬出去之后那一格按**出口清单**逐个走，而**出口清单本身是从代码里扫出来的**，
+    //    加了新出口却没覆盖会当场红。它还要装假定时器（轮询那几个出口只有推时钟才到得了），
+    //    塞进本格会把本格已有的六档一起拖进假定时器语义里。
   });
 
   /**
@@ -1456,8 +1434,20 @@ describe("媒体模式：地址、链接与不内嵌", () => {
     ],
   };
 
-  /** 会去取远端字节的那几种元素。**闭集**，不是「有没有 img 这个词」。 */
-  const EMBEDDERS = ["IMG", "VIDEO", "AUDIO", "SOURCE", "IFRAME", "EMBED", "OBJECT"];
+  /**
+   * 会去取远端字节的那几种元素。
+   *
+   * ⚠️⚠️ **它不是「所有取字节方式」的闭集，措辞已按评审 L2 改真。**
+   * 上一版这里写的是「**闭集**，不是『有没有 img 这个词』」——**后半句成立、前半句不成立**：
+   * 评审逐条实测出**三条绕得过这张表**的写法：`link[rel=preload]`、
+   * `<svg><image href>`、以及**根本不是元素**的 CSSOM `style.backgroundImage`。
+   * ⇒ 前两条已补进表里；**CSSOM 那条按定义补不进一张元素名单**，登记成本组的已知盲点。
+   * **今天三条都零风险**——评审用真 Chrome 对着 `src/ui/serve.ts` 那条逐字 CSP 量过，
+   * 12 条向量（含这三条）**全部被 img-src / default-src 拦下**。
+   * ⇒ **这张表守的是「渲染代码没打算去取远端字节」，CSP 守的是「就算打算了也取不到」。**
+   * 两道各守一层，别把这一格的绿读成后者。
+   */
+  const EMBEDDERS = ["IMG", "VIDEO", "AUDIO", "SOURCE", "IFRAME", "EMBED", "OBJECT", "LINK", "IMAGE"];
 
   async function sendImage(respond: Responder): Promise<{ h: Harness; sec: FakeElement }> {
     const h = await openPg(respond);
@@ -1498,8 +1488,10 @@ describe("媒体模式：地址、链接与不内嵌", () => {
     expect(pick(sec, ".pg-media-url").map((n) => n.textContent), "前置条件：两条合法地址都得画出来")
       .toEqual(["https://cdn.invalid/a.png", "data:image/png;base64,iVBORw0KGgo="]);
 
-    // ① **闭集**：整棵板块子树里出现过的、会去取字节的元素只有一个，
+    // ① 整棵板块子树里出现过的、会去取字节的元素只有一个，
     //    它是 img、而且拿的是那条 data 地址（CSP 的 img-src 本来就放行它）。
+    //    ⚠️ 「只有一个」这句话的范围是上面 `EMBEDDERS` 那张表，**不是「所有取字节的方式」**
+    //    ——那张表上方那段写着它绕得过哪几条、以及是谁在守剩下的那些。
     // ⚠️⚠️ **标签名必须一起断言，这是实测补上的**（变异 M5）：上一版只比对 `src` 列表，
     //    于是把那一行内嵌从 img 改成 `el("video", { src: url })` ⇒ **46/46 全绿**
     //    ——`src` 一模一样，闭集看不出元素换了种。而 CSP 里**根本没有 media-src**，
@@ -1562,6 +1554,43 @@ describe("媒体模式：地址、链接与不内嵌", () => {
   });
 
   /**
+   * ── **评审 M2：按下之前那句话必须说真话** ────────────────────────────────────
+   *
+   * `pg.send.ready` 五语言逐字都写着「**一次**请求」（en `one request` / ja `1 回` /
+   * ko `한 번`）。**而视频档一次点击 = 1 次建任务 + 最多 60 次轮询。**
+   * 这是全局约束 14「按钮与护栏一起交付」的**披露那一半**——护栏我都做了，
+   * 而**运维在按下之前唯一看得到代价的地方**是这颗按钮的 tooltip。
+   *
+   * ⚠️ **期望值手写整句**：`toContain("60")` 在「已经查过 60 次」之类的别的文案里也成立。
+   * ⚠️ **三档各断言一次**：只断言视频档的话，「把三档都换成这句话」也能过——
+   * 而那会让对话档与图片档说一句同样不真的话（它们确实只发一次）。
+   *
+   * **变红条件（实测，见 progress note 的 M34）**：把 `syncSendButton()` 里那个
+   * `mode === "video"` 分支删掉、三档共用 `pg.send.ready` ⇒ 这一格红。
+   */
+  it("视频档按下之前那句话说的是 1 + 60 次，不是「一次」 —— 它是运维唯一看得到代价的地方（评审 M2）", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "一只猫");
+    await settle(6);
+    // 前置条件：按钮得是能按的，否则 tooltip 说的是「为什么按不了」那一档。
+    expect(one(sec, ".pg-send").disabled, "前置条件：这一刻按钮应当能按").toBe(false);
+
+    const ready = "按一下会真的向上游发一次请求。";
+    expect(one(sec, ".pg-send").getAttribute("title"), "对话档").toBe(ready);
+
+    toMode(sec, "image");
+    await settle(6);
+    expect(one(sec, ".pg-send").getAttribute("title"), "图片档确实只发一次，不该改口").toBe(ready);
+
+    toMode(sec, "video");
+    await settle(6);
+    expect(one(sec, ".pg-send").getAttribute("title"), "视频档还在说「一次」")
+      .toBe("按一下会真的向上游发请求：一次视频任务是 1 次建任务 + 最多 60 次轮询查询。");
+  });
+
+  /**
    * **「上游回的是一段字节流」与「这次没有结果」是两句话**（全局约束 9 的同型）。
    * `src/http/routes/media.ts` 的文件头写着「上游返回什么（地址或字节流）就原样转发」
    * ——**两种都可能，而且都不是异常**。折叠成一句的话，字节流那一档会被读成
@@ -1600,6 +1629,215 @@ describe("媒体模式：地址、链接与不内嵌", () => {
  * 时长那条由 `tests/ui/playground-media.test.ts` 的
  * 「轮询到达时长上限后停下 —— 只判次数的话把间隔改大就能挂上几个小时」在纯函数层钉着。
  */
+/**
+ * ── **评审 H1：媒体那条渲染路径的口令扫描，按出口数算覆盖面** ──────────────────
+ *
+ * **被守护的性质**：`buildMediaResult()` / `buildMediaRow()` 画出来的**每一个**出口，
+ * 都被那道「整页任何一处都不出现网关口令」的扫描真的跑过一次。
+ *
+ * ⚠️⚠️ **这一格存在的理由，是我在同一个毛病上栽的第三次。**
+ * 上一版的 ⑦档写了「成功 + 失败」两个子档，并在报告里写成「成功与失败两条都覆盖」
+ * ——**那句话按用例数算是对的，按出口数算是错的**：两个子档合起来只渲染了
+ * `.pg-media-row` 与 `.pg-error` 两条出口，而这条路径有 17 个。
+ * 评审在 `.pg-task-id` 那一行与 `.pg-poll` 那一行各种一次口令 ⇒ **905 passed，两次全绿。**
+ * ⇒ **纪律落地成这一格**：出口清单**从发货代码里扫出来**（不是我手抄的），
+ * 子档跑完之后**逐条比对「扫描真的跑过的出口」与「代码里真的存在的出口」**。
+ * **加一个新出口而不给它一个子档，这一格当场红。**
+ *
+ * ⚠️ **为什么不是「手写一张出口表」**：手写表与代码之间没有任何东西绑着，
+ * 它会和「我以为覆盖了」一起漂——那正是本格要防的东西。
+ * 手写的那一半在别处：下面 `EXPECTED_MEDIA_OUTPUTS` 是**期望的条数与名字**，
+ * 它与扫出来的那份互为反向自检（扫描器瞎了 ⇒ 两边都空 ⇒ 非空锚会红）。
+ */
+const EXPECTED_MEDIA_OUTPUTS = [
+  "pg-body", "pg-cancelled", "pg-error", "pg-media", "pg-media-bytes", "pg-media-copy",
+  "pg-media-img", "pg-media-none", "pg-media-open", "pg-media-row", "pg-media-url",
+  "pg-no-task", "pg-poll", "pg-poll-gaveup", "pg-task", "pg-task-copy", "pg-task-id",
+];
+
+/**
+ * 从**发货代码**里扫出媒体那两个渲染函数真的画出来的 `pg-*` class。
+ *
+ * ⚠️ `stripComments()` 用 `tests/helpers/strip-comments.ts` 那一份（本仓裁定：不许抄第六份）
+ * ——不去注释的话，那两个函数上方的说明文字里也有 `class:` 这样的字样。
+ * ⚠️ 函数体按「`function 名(` 起，到下一个顶格 `}` 止」切：这两个函数体里所有的 `}`
+ * 都是缩进的，只有函数自己的收尾在第 0 列。**这条前提由下面那格的非空锚兜着**
+ * （切错了会切出空串 ⇒ 扫不到任何 class ⇒ 红）。
+ */
+function mediaOutputsInSource(): string[] {
+  const src = stripComments(readFileSync("admin-ui/js/sec-playground.js", "utf8"));
+  const out = new Set<string>();
+  for (const fn of ["buildMediaRow", "buildMediaResult"]) {
+    const start = src.indexOf(`function ${fn}(`);
+    expect(start, `发货代码里找不到 ${fn}() —— 它被改名了，这一格的判据要跟着改`)
+      .toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf("\n}", start));
+    for (const m of body.matchAll(/class: "([^"]*)"/g)) {
+      for (const cls of m[1]!.split(/\s+/)) if (cls.startsWith("pg-")) out.add(cls);
+    }
+  }
+  return [...out].sort();
+}
+
+describe("媒体渲染路径的口令扫描：按出口数算覆盖面（评审 H1）", () => {
+  /** 把这一轮真的渲染出来的媒体出口收上来。 */
+  function outputsRendered(sec: FakeElement): string[] {
+    const out = new Set<string>();
+    for (const n of everyNode(sec)) {
+      for (const cls of (n.getAttribute("class") || "").split(/\s+/)) {
+        if (cls.startsWith("pg-") && EXPECTED_MEDIA_OUTPUTS.includes(cls)) out.add(cls);
+      }
+    }
+    return [...out];
+  }
+
+  const CREATE_URL = `${PANEL_ORIGIN}/v1/videos`;
+
+  /** 起一轮媒体请求：切档、粘口令、写提示词、按发送。 */
+  async function send(respond: Responder, modeName: string): Promise<{ h: Harness; sec: FakeElement }> {
+    const h = await openPg(respond);
+    const sec = h.section("playground");
+    toMode(sec, modeName);
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "口令扫描探针");
+    one(sec, ".pg-send").click();
+    await settle(20);
+    return { h, sec };
+  }
+
+  /** 建任务成功、之后一直「进行中」的假上游（轮询那几个出口都要靠它）。 */
+  const videoPending: Responder = respondWith({
+    gateway: (url) => (url === CREATE_URL
+      ? { status: 200, body: { id: "task-1", status: "queued" } }
+      : { status: 200, body: { id: "task-1", status: "processing" } }),
+  });
+
+  /**
+   * 八个子档，**每一个都带前置条件**（断言它真的渲染出了它负责的那几个出口），
+   * 然后各跑一次整页口令扫描。
+   *
+   * **变红条件（两处，都是评审当场种过、当时 ESCAPED 的那两处，见 progress note M31/M32）**：
+   * · 往 `.pg-task-id` 那一行加 `` title: `task ${turn.taskId} auth=${token}` `` ⇒ 红；
+   * · 往 `.pg-poll` 那一行加 `` title: `auth=${token}` `` ⇒ 红。
+   */
+  it("媒体那条渲染路径的每一个出口都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算（评审 H1）", async () => {
+    const seen = new Set<string>();
+    const record = (h: Harness, sec: FakeElement, where: string): void => {
+      expect(one(sec, ".pg-token").value, `${where}：前置条件，口令确实在输入框里`).toBe(GW_TOKEN);
+      for (const c of outputsRendered(sec)) seen.add(c);
+      expectNoTokenAnywhere(h, where);
+    };
+
+    // ── ⑦a 图片成功：远端地址 + data 图片 + 一条不在白名单里的
+    //    ⇒ pg-media / pg-media-row / pg-media-url / pg-media-copy / pg-media-open / pg-media-img / pg-body
+    {
+      const { h, sec } = await send(respondWith({
+        gateway: () => ({ status: 200, body: { created: 1, data: [
+          { url: "https://cdn.invalid/a.png" },
+          { url: "data:image/png;base64,iVBORw0KGgo=" },
+          { url: "javascript:alert(1)" },
+        ] } }),
+      }), "image");
+      expect(pick(sec, ".pg-media-open").length, "前置条件：链接那条出口得真的画出来").toBe(1);
+      expect(pick(sec, ".pg-media-img").length, "前置条件：内嵌那条出口得真的画出来").toBe(1);
+      expect(pick(sec, ".pg-body").length, "前置条件：响应原文那条出口得真的画出来").toBe(1);
+      record(h, sec, "媒体·图片成功档");
+    }
+
+    // ── ⑦b 传输失败 ⇒ pg-error
+    vi.unstubAllGlobals();
+    {
+      const { h, sec } = await send(respondWith({ gateway: () => { throw new Error("boom"); } }), "image");
+      expect(pick(sec, ".pg-error").length, "前置条件：错误那条出口得真的画出来").toBe(1);
+      record(h, sec, "媒体·传输失败档");
+    }
+
+    // ── ⑦c 上游直接回字节流 ⇒ pg-media-bytes
+    vi.unstubAllGlobals();
+    {
+      const { h, sec } = await send(respondWith({
+        gateway: () => ({ status: 200, body: null, raw: "PNG-NOT-JSON", contentType: "image/png" }),
+      }), "image");
+      expect(pick(sec, ".pg-media-bytes").length, "前置条件：字节流那条出口得真的画出来").toBe(1);
+      record(h, sec, "媒体·字节流档");
+    }
+
+    // ── ⑦d 一份 JSON 但里面没有地址 ⇒ pg-media-none
+    vi.unstubAllGlobals();
+    {
+      const { h, sec } = await send(respondWith({
+        gateway: () => ({ status: 200, body: { created: 1 } }),
+      }), "image");
+      expect(pick(sec, ".pg-media-none").length, "前置条件：没有地址那条出口得真的画出来").toBe(1);
+      record(h, sec, "媒体·响应里没有地址档");
+    }
+
+    // ── ⑦e 视频建任务但拿不到标识 ⇒ pg-no-task
+    vi.unstubAllGlobals();
+    {
+      const { h, sec } = await send(respondWith({
+        gateway: () => ({ status: 200, body: { status: "queued", note: "no id here" } }),
+      }), "video");
+      expect(pick(sec, ".pg-no-task").length, "前置条件：没有任务标识那条出口得真的画出来").toBe(1);
+      record(h, sec, "媒体·没有任务标识档");
+    }
+
+    // ── ⑦f 视频**正在轮询** ⇒ pg-task / pg-task-id / pg-task-copy / pg-poll
+    //    ⚠️ **这一档是评审两次种植里的第二处，也是屏幕上停留最久的那一档。**
+    vi.unstubAllGlobals();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    {
+      const { h, sec } = await send(videoPending, "video");
+      expect(pick(sec, ".pg-poll").length, "前置条件：轮询进度那条出口得真的画出来").toBe(1);
+      expect(one(sec, ".pg-task-id").textContent, "前置条件：任务标识那条出口得真的画出来").toBe("task-1");
+      expect(pick(sec, ".pg-task-copy").length, "前置条件：任务标识的复制按钮得真的画出来").toBe(1);
+      record(h, sec, "媒体·视频轮询中档");
+    }
+    vi.useRealTimers();
+
+    // ── ⑦g 视频**轮询到点放弃** ⇒ pg-poll-gaveup
+    //    ⚠️ **靠推时钟越过时长上限到达，不是轮 60 次**：既省 60 拍，又顺带让
+    //    「时长那条上限」在 DOM 层第一次变成可观测的（上一版报告把它登记成不可观测）。
+    vi.unstubAllGlobals();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    {
+      const { h, sec } = await send(videoPending, "video");
+      expect(pick(sec, ".pg-poll").length, "前置条件：得先真的轮起来").toBe(1);
+      vi.spyOn(Date, "now").mockReturnValue(NOW + 400_000);   // 越过 300000 那条时长上限
+      await vi.advanceTimersByTimeAsync(5_000);
+      await settle(20);
+      expect(pick(sec, ".pg-poll-gaveup").length, "前置条件：放弃那条出口得真的画出来").toBe(1);
+      expect(pick(sec, ".pg-poll").length, "放弃了却还在说「正在轮询」").toBe(0);
+      record(h, sec, "媒体·视频轮询放弃档");
+    }
+    vi.useRealTimers();
+
+    // ── ⑦h 视频轮询**被取消** ⇒ pg-cancelled
+    vi.unstubAllGlobals();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    {
+      const { h, sec } = await send(videoPending, "video");
+      expect(pick(sec, ".pg-cancel").length, "前置条件：轮询期间得有取消按钮").toBe(1);
+      one(sec, ".pg-cancel").click();
+      await settle(20);
+      expect(pick(sec, ".pg-cancelled").length, "前置条件：取消那条出口得真的画出来").toBe(1);
+      record(h, sec, "媒体·视频取消档");
+    }
+    vi.useRealTimers();
+
+    // ── **收口：扫描真的跑过的出口 === 代码里真的存在的出口。** ────────────────
+    const inSource = mediaOutputsInSource();
+    // 反向自检①（非空锚）：扫描器瞎了的话两边都是空数组，下面那句会空洞地通过。
+    expect(inSource.length, "从发货代码里一个媒体出口都没扫到 —— 是切函数体那条前提破了").toBe(17);
+    // 反向自检②：手写的那份与扫出来的那份对得上（两边独立，互为对照）。
+    expect(inSource, "发货代码里的媒体出口与手写清单对不上 —— 加了新出口就把它加进来，并给它一个子档")
+      .toEqual(EXPECTED_MEDIA_OUTPUTS);
+    // 真正的断言：**每一个出口都被上面某个子档渲染过、因而被口令扫描跑过。**
+    expect([...seen].sort(), "有媒体出口从来没被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算")
+      .toEqual(EXPECTED_MEDIA_OUTPUTS);
+  });
+});
+
 describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
   const CREATE = `${PANEL_ORIGIN}/v1/videos`;
   const POLL = `${PANEL_ORIGIN}/v1/videos/task-1`;

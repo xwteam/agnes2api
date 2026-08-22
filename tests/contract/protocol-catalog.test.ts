@@ -27,6 +27,20 @@ const MEDIA_UPSTREAM: Readonly<Record<string, string>> = {
   "video.poll": "https://upstream.test/v1/videos/task_1-ABC",
 };
 
+/**
+ * 媒体三条端点**客户端该打的对外路径**——同样逐条手写（评审 M1）。
+ *
+ * ⚠️ **这张表是 M14 那条修复漏掉的另一半**：`media.ts` 注册路由用的也是
+ * `MEDIA_ENDPOINTS[].pathTemplate`，所以拿 `m.pathTemplate` 去 `app.request()`
+ * 是在问「你注册的那条你自己打得通吗」——**恒真**。评审实测把 `/v1/videos`
+ * 改成 `/v1/videoz`，那一格照绿。
+ */
+const MEDIA_OUTWARD: Readonly<Record<string, string>> = {
+  "image.generate": "/v1/images/generations",
+  "video.create": "/v1/videos",
+  "video.poll": "/v1/videos/:id",
+};
+
 describe("协议目录与真实路由表对账", () => {
   /**
    * ⚠️ **变红条件对四条协议不是同一句话**（评审 MEDIUM，实测订正；这条是存量假话，
@@ -184,36 +198,31 @@ describe("协议目录的示例请求真的调得通", () => {
   });
 
   /**
-   * 反向自检：上面那格断言的 `sentUrls.at(-1)` 若是因为**根本没发出去任何一次出站请求**
-   * 而恰好为 `undefined`，`toBe()` 会红——所以那一格不会静默通过。
-   * 但反过来「出站 URL 与对外路径长得不一样」这件事本身也要被看见一次，
-   * 否则读的人分不清这一组到底证没证明「两条路径是两个东西」。
-   */
-  /**
    * ── **媒体三条搬进真源之后的护栏（P3d Task 12）** ────────────────────────────
    *
    * 搬之前那三条路径只住在 `src/http/routes/media.ts` 里，**对外那半与上游那半各写一遍
-   * 字面量**；搬之后它们是 `MEDIA_ENDPOINTS` 的两个字段，而这一格是它们唯一的护栏。
+   * 字面量**；搬之后它们是 `MEDIA_ENDPOINTS` 的两个字段。
    *
-   * ⚠️ **观测点在两端各自的真实字节上，不是比对目录自己的两个字段**（与
-   * `upstreamPath` 那一条守的是同一条纪律，评审 C3）：
-   * · 对外那半 —— 用 `app.request(pathTemplate)` **真的打一次**，判 `status !== 404`；
-   * · 上游那半 —— 判 `fetcher.sentUrls.at(-1)`（`FakeFetcher` 自己记的真实出站 URL）。
+   * ⚠️⚠️ **两半的期望值都必须手写，这两条都是实测补上的（变异 M14 + 评审 M1）。**
+   * `src/http/routes/media.ts` **注册路由读 `pathTemplate`、调 `dispatch()` 读 `upstreamPath`**
+   * ——两半都是从这张表读的。⇒ 任何一半只要把期望值写成
+   * ``m.pathTemplate`` / ```${agnesBaseUrl}${m.upstreamPath}` ``，改一个字符两侧一起动、
+   * **这一格照绿**（第 6 种假阳性：期望值从被测对象自己推导）：
+   * · **上游那半**我第一版就是这么写的 ⇒ 变异 M14 实测 **11/11 全绿**；
+   * · **对外那半我修上游那半的时候漏了**，而且**在注释里写了一句「它会红」** ⇒
+   *   评审实测（`/v1/videos` → `/v1/videoz`）**新增的这一格照绿**（红的是另一格）。
+   *   **那句注释是本仓第 36 句实测为假的断言，已改真。**
+   * ⇒ 现在两半各自对着一张**手写整串**的表（`MEDIA_OUTWARD` / `MEDIA_UPSTREAM`）。
    *
-   * ⚠️⚠️ **出站 URL 的期望值必须手写，这一条是实测补上的**（变异 M14）：
-   * 上一版写的是 ``expect(sentUrls.at(-1)).toBe(`${agnesBaseUrl}${m.upstreamPath}`)`` ——
-   * 而 `src/http/routes/media.ts` **自己也是从这张表读 `upstreamPath` 的**
-   * ⇒ 改一个字符两侧一起变，**11/11 全绿**。那正是本文件反复登记的那条：
-   * **期望值从被测对象自己推导 = 同义反复**（第 6 种假阳性）。
-   * 四条对话协议那一格没这个毛病，因为它们的路由文件传的是各自的字面量、
-   * 不读这张表——**同一个写法在两张表上一个成立一个不成立**，这就是「先找反例」。
-   * ⇒ 现在两侧独立：期望值是下面那张手写表，实际值是 `FakeFetcher` 记的真出站 URL。
+   * ⚠️ **四条对话协议那一格没有这个毛病**：它们的路由文件传的是各自的字面量、不读这张表。
+   * **同一个写法在两张表上一个成立一个不成立** —— 这就是「全称句落笔前先找反例」。
    *
-   * **变红条件（三条，逐条实测，见 progress note 的 M13/M14/M15）**：
-   * ① 把某条的 `pathTemplate` 改一个字符 ⇒ 那一行 404 ⇒ 红（路由是按它注册的，
-   *    所以真正被证明的是「注册与浏览器拿到的是同一个字符串」）；
-   * ② 把某条的 `upstreamPath` 改一个字符 ⇒ 出站 URL 与手写表对不上 ⇒ 红；
-   * ③ 把 `media.ts` 里 `dispatch({ path: … })` 换回一个字面量 ⇒ 同上 ⇒ 红。
+   * **变红条件（四条，逐条实测，见 progress note 的 M13/M14/M15/M30）**：
+   * ① 把某条的 `pathTemplate` 改一个字符 ⇒ 与 `MEDIA_OUTWARD` 对不上 ⇒ 红
+   *    （**并且**那条路由按新值注册、手写路径打过去 404，两条断言各红一次）；
+   * ② 把某条的 `upstreamPath` 改一个字符 ⇒ 出站 URL 与 `MEDIA_UPSTREAM` 对不上 ⇒ 红；
+   * ③ 把 `media.ts` 里 `dispatch({ path: … })` 换回一个不同的字面量 ⇒ 同 ② ⇒ 红；
+   * ④ 把 `media.ts` 里 `app.post(image.pathTemplate)` 换成一个不同的字面量 ⇒ 手写路径 404 ⇒ 红。
    *
    * ⚠️ **`GET` 那条不能与两条 `POST` 走同一个循环体**：它没有请求体、要拿一个真的任务
    * 标识去展开 `taskSlot`，而**把它塞进同一个循环并给它一个空 body**，得到的是一次 400
@@ -222,16 +231,25 @@ describe("协议目录的示例请求真的调得通", () => {
    * `toBe()` 会红成一个看不懂的病因。所以这里分成两格，各自带前置条件。
    */
   it.each(MEDIA_ENDPOINTS.filter((m) => m.op === "generate").map((m) => [m.id, m] as const))(
-    "媒体端点 %s：对外那条真的注册着、上游那条逐字等于 agnesBaseUrl + upstreamPath —— "
-    + "观测点在真实出站 URL 上，不是比对目录自己的两个字段",
+    "媒体端点 %s：对外那条真的注册着、上游那条打到了手写表上那一条 —— "
+    + "两半的期望值都手写，从目录自己推就是同义反复",
     async (_id, m) => {
       const model = MODEL_CATALOG.find((x) => x.modality === m.modality)!.id;
+      // **手写表在前**：新增端点没在两张表里表态时，这里先红成「表里没有它」，
+      // 而不是让后面那些断言红成一个看不懂的病因。
+      expect(MEDIA_OUTWARD[m.id], `手写表里没有 ${m.id} 的对外路径`).toBeDefined();
+      expect(MEDIA_UPSTREAM[m.id], `手写表里没有 ${m.id} 的上游地址`).toBeDefined();
+      // **目录里那一格必须等于手写的那一条**（评审 M1：这条断言就是对外那半的独立锚）。
+      expect(m.pathTemplate, `${m.id} 的对外路径与手写表对不上`).toBe(MEDIA_OUTWARD[m.id]);
+
       const { app, fetcher } = await makeApp(
         [{ status: 200, body: JSON.stringify({ created: 1, data: [{ url: "https://cdn.invalid/a" }] }) }],
         ["sk-media-catalog-probe-0001"],
         {}, () => 1_000,
       );
-      const res = await app.request(m.pathTemplate, {
+      // **打的是手写表里那一条，不是 `m.pathTemplate`**：路由是按目录注册的，
+      // 拿目录自己的值去打它，等于问「你注册的那条你自己打得通吗」（恒真）。
+      const res = await app.request(MEDIA_OUTWARD[m.id]!, {
         method: m.method,
         headers: {
           authorization: `Bearer ${TEST_CONFIG.gatewayToken}`,
@@ -244,8 +262,6 @@ describe("协议目录的示例请求真的调得通", () => {
       expect(res.status, `${m.id} 的对外路径没注册`).not.toBe(404);
       // 前置条件：真的向上游发出去过一次，否则下面那条断言是在跟 `undefined` 比。
       expect(fetcher.sentUrls.length, `${m.id} 一次上游都没打`).toBe(1);
-      // **期望值来自手写表**（见上面那段 ⚠️⚠️），不是 `agnesBaseUrl + m.upstreamPath`。
-      expect(MEDIA_UPSTREAM[m.id], `手写表里没有 ${m.id} —— 新增端点要在那张表里表态`).toBeDefined();
       expect(fetcher.sentUrls.at(-1)).toBe(MEDIA_UPSTREAM[m.id]);
     },
   );
@@ -260,6 +276,8 @@ describe("协议目录的示例请求真的调得通", () => {
       ["sk-media-catalog-probe-0002"],
       {}, () => 1_000,
     );
+    // 对外那半的独立锚（与上面那一格同一条理由）。
+    expect(m.pathTemplate, "轮询那条的对外路径与手写表对不上").toBe(MEDIA_OUTWARD["video.poll"]);
     const outward = withTaskId(m.pathTemplate, String(m.taskSlot), taskId);
     expect(outward).toBe("/v1/videos/task_1-ABC");            // 手写字面量锚
     const res = await app.request(outward, {
@@ -277,6 +295,13 @@ describe("协议目录的示例请求真的调得通", () => {
       .not.toContain(String(m.taskSlot));
   });
 
+  /**
+   * 反向自检：上面那几格断言的 `sentUrls.at(-1)` 若是因为**根本没发出去任何一次出站请求**
+   * 而恰好为 `undefined`，`toBe()` 会红——所以那些格子不会静默通过。
+   * 但反过来「出站 URL 与对外路径长得不一样」这件事本身也要被看见一次，
+   * 否则读的人分不清这一组到底证没证明「两条路径是两个东西」。
+   * ⚠️ 这段注释一度被 P3d Task 12 插进来的媒体那两格顶得离它的用例很远，已挪回来。
+   */
   it("同一次真请求里，出站 URL 与客户端打的对外路径确实不是同一个 —— 两端各自可分辨", async () => {
     const p = PROTOCOLS.find((x) => x.id === "anthropic")!;
     const model = MODEL_CATALOG[0]!.id;

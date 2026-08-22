@@ -15,7 +15,7 @@ import { httpError, readJson } from "../errors.js";
 // 一致——**对外路径与上游路径是同一条路由的两半**，把一半搬进真源、另一半留在这里，
 // 等于让下一个改动的人只看见一半。
 // 由 `tests/contract/protocol-catalog.test.ts` 的
-// 「媒体端点 %s：对外那条真的注册着、上游那条逐字等于 agnesBaseUrl + upstreamPath」
+// 「媒体端点 %s：对外那条真的注册着、上游那条打到了手写表上那一条」
 // 钉着（观测点是真出站 URL，不是比对本文件与目录的两个字段，那是同义反复）。
 //
 // 超时档位（`timeout`）在本文件里三条路由上并不一致，这是刻意的：
