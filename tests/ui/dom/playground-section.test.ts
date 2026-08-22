@@ -607,7 +607,7 @@ describe("网关口令：粘贴、就地校验、绝不外泄", () => {
     expectNoTokenAnywhere(dg, "流式降级 401 档");
 
     // ── 档 ⑦：**媒体** —— **不在这一格里**，在下面那一格
-    //    「媒体那条渲染路径的每一个出口都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算（评审 H1）」。
+    //    「媒体那两个渲染函数里这道判据认得出的每一个出口，都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算；认不出的那几条射程写在 mediaOutputsInSource() 上方（评审 H1）」。
     //    ⚠️⚠️ **它为什么被搬出去，是评审 H1 的落点，写清楚**：媒体那条渲染路径
     //    （`buildMediaResult()`）有 **17 个出口**，而本格这种「一档一段直写」的写法
     //    第一版只走到其中 **2** 个（结果行与错误行）——评审往任务标识那一行与轮询进度那一行
@@ -1632,8 +1632,10 @@ describe("媒体模式：地址、链接与不内嵌", () => {
 /**
  * ── **评审 H1：媒体那条渲染路径的口令扫描，按出口数算覆盖面** ──────────────────
  *
- * **被守护的性质**：`buildMediaResult()` / `buildMediaRow()` 画出来的**每一个**出口，
- * 都被那道「整页任何一处都不出现网关口令」的扫描真的跑过一次。
+ * **被守护的性质**：`buildMediaResult()` / `buildMediaRow()` 这两个函数体里
+ * **这道判据认得出**的每一个出口，都被那道「整页任何一处都不出现网关口令」的扫描真的跑过一次。
+ * ⚠️ **「认得出」这三个字是射程，不是修辞**——射程那五条（四条够不着、一条会多认）
+ * 逐条登记在 `mediaOutputsInSource()` 上方，**别把这句读成全称句**。
  *
  * ⚠️⚠️ **这一格存在的理由，是我在同一个毛病上栽的第三次。**
  * 上一版的 ⑦档写了「成功 + 失败」两个子档，并在报告里写成「成功与失败两条都覆盖」
@@ -1650,9 +1652,14 @@ describe("媒体模式：地址、链接与不内嵌", () => {
  * 逃的不是口令检测（那道扫描走整棵子树，比出口清单宽），**逃的是这条闭集纪律本身**：
  * 判据认不出那个出口 ⇒ 它不进清单 ⇒ 没人要求它配一个子档。
  * ⇒ 现在这句话成立的**准确形态**（两条腿都实测过，见下面那格的变红条件）：
- * 在这两个函数里新增一个出口，判据要么**解得出**它的 class 名（清单变长 ⇒ 与手写表对不上 ⇒ 红），
- * 要么**解不出**（当场吵「我看见一个我读不懂的 class 表达式」⇒ 红）——**没有第三条路**。
- * **射程边界另有一条，写在 `mediaOutputsInSource()` 上方，那条今天仍是盲的。**
+ * 在这两个函数体里新增一个出口，**只要 `class` 这个属性名是以字面形式写在那里的**
+ * （裸 `class:` / `"class":` / `'class':` / `["class"]:` 四种，判据都认），
+ * 判据要么**解得出**它的 class 名（清单变长 ⇒ 与手写表对不上 ⇒ 红），
+ * 要么**解不出**（当场吵「我看见一个我读不懂的 class 表达式」⇒ 红）——这两条之外没有第三条。
+ * ⚠️⚠️ **那个前提不成立时它就够不着**：属性名写成计算键 / 属性对象提到函数外 / 出口本身
+ * 新增在这两个函数之外，三条都是**静默逃逸**（三条都实测过：48/48 全绿）。
+ * 连同「函数体切不切得出边界」与一条会多认的，五条逐条登记在 `mediaOutputsInSource()` 上方。
+ * **别把上面那句读成全称句。**
  *
  * ⚠️ **为什么不是「手写一张出口表」**：手写表与代码之间没有任何东西绑着，
  * 它会和「我以为覆盖了」一起漂——那正是本格要防的东西。
@@ -1669,18 +1676,99 @@ const EXPECTED_MEDIA_OUTPUTS = [
   "pg-no-task", "pg-poll", "pg-poll-gaveup", "pg-task", "pg-task-copy", "pg-task-id",
 ];
 
-/** 从 `i` 那个引号 / 反引号起，它收尾之后的那一格；没闭合就是 `s.length`。 */
+/**
+ * 从 `i` 那个引号 / 反引号起，它收尾之后的那一格；没闭合就是 `s.length`。
+ *
+ * ⚠️ **模板串里的 `${…}` 整段跳过**：那里面还能再嵌字符串与模板串
+ * （`` `a${b ? `c` : "d"}e` ``），所以它与 `matchBrace()` 互相递归——
+ * 「读到下一个反引号就算收尾」在嵌套模板串上会提前收尾。
+ */
 function afterQuoted(s: string, i: number): number {
   const quote = s[i]!;
   for (let j = i + 1; j < s.length; j++) {
     if (s[j] === "\\") { j++; continue; }
+    if (quote === "`" && s[j] === "$" && s[j + 1] === "{") {
+      const close = matchBrace(s, j + 1);
+      if (close === -1) return s.length;
+      j = close;
+      continue;
+    }
     if (s[j] === quote) return j + 1;
   }
   return s.length;
 }
 
 /**
- * `class:` 那个冒号之后的表达式原文：读到**同层**的 `,` / `}` / `)` / `;` 为止。
+ * 从 `i` 那个 `{` 起配平出来的那个 `}` 的下标；配不平就是 `-1`。
+ * **字符串 / 模板串里的花括号不算**——这正是 `classExprAt()` 用的同一套字符扫描。
+ */
+function matchBrace(s: string, i: number): number {
+  let depth = 0;
+  for (let j = i; j < s.length; j++) {
+    const c = s[j]!;
+    if (c === '"' || c === "'" || c === "`") { j = afterQuoted(s, j) - 1; continue; }
+    if (c === "{") { depth++; continue; }
+    if (c === "}") { depth--; if (depth === 0) return j; }
+  }
+  return -1;
+}
+
+/**
+ * 一个顶层 `function 名(…) { … }` 的**函数体原文**（从 `function` 那个词起，到配平出来的
+ * 收尾 `}` 之前）。求不出可靠边界时返回 `{ reason }` ——调用处**当场红并打印原因**。
+ *
+ * ⚠️⚠️ **上一版这里是 `src.indexOf("\n}", start)`：用「第 0 列的 `}`」当函数收尾。**
+ * 那是**猜**，而且是会静默破的猜——实测：往 `buildMediaRow()` 的 `return row;` 之前插一段
+ * 跨行模板串，其中一行以第 0 列的 `}` 开头（`` const brk = `line1\n} line2`; ``）⇒ 函数体
+ * 被截断，**再在切点之后放一个带网关口令的新出口 ⇒ 48/48 全绿**（同样的变异把 `}` 缩进两格
+ * 就正常红）。整套闭集纪律架在「函数体切得完整」这个前提上，而那个前提自己会静默地破。
+ * ⇒ 现在边界由**括号配平 + 字符串 / 模板串（含 `${}` 嵌套）识别**求，与读 `class:` 值表达式
+ * 那一步是同一套逻辑，不再看列位置。
+ *
+ * ⚠️ **列位置没有被丢掉，它降级成了旁证**：配平求出来的那个 `}` 如果**不在第 0 列**，
+ * 说明这次扫描被什么东西带偏了（下面那条盲点就是一种）⇒ 当场吵，**不静默截断**。
+ * 两条判据同时说得通才算数（实测：把 `buildMediaRow()` 的收尾 `}` 缩进两格 ⇒ 红在这条旁证上）。
+ * ⚠️⚠️ **这条旁证的前提只对被扫的这两个函数成立，别写成全称句**：它们是多行写法、
+ * 收尾 `}` 在第 0 列。`admin-ui/js/theme.js` 就有一个**单行写法**的顶层函数
+ * （`export function toggleTheme() { … }`），它的收尾根本不在第 0 列——
+ * 哪天这两个函数改成单行写法，这条旁证要跟着改，否则它会误吵。
+ */
+function functionBodyOf(src: string, fn: string): { body: string } | { reason: string } {
+  const head = `function ${fn}(`;
+  const start = src.indexOf(head);
+  if (start === -1) return { reason: `发货代码里找不到 ${head}…) —— 它被改名了，这一格的判据要跟着改` };
+  if (src.indexOf(head, start + 1) !== -1) {
+    return { reason: `${head}…) 在这个文件里出现了不止一次 —— 判据不知道该切哪一个` };
+  }
+  let depth = 0;
+  let i = start + head.length - 1;                      // 就停在那个 `(` 上
+  for (; i < src.length; i++) {
+    const c = src[i]!;
+    if (c === '"' || c === "'" || c === "`") { i = afterQuoted(src, i) - 1; continue; }
+    if (c === "(") { depth++; continue; }
+    if (c === ")") { depth--; if (depth === 0) break; }
+  }
+  if (depth !== 0) return { reason: `${fn}() 的参数表到文件结束都没有配平` };
+  const open = src.indexOf("{", i);
+  if (open === -1 || src.slice(i + 1, open).trim() !== "") {
+    return { reason: `${fn}() 的参数表与函数体之间不是空白 —— 这不是本判据认得的函数形状` };
+  }
+  const close = matchBrace(src, open);
+  if (close === -1) return { reason: `${fn}() 的函数体到文件结束都没有配平` };
+  if (close !== 0 && src[close - 1] !== "\n") {
+    return {
+      reason: `${fn}() 配平求出来的收尾 } 落在行中间`
+        + `（去掉注释之后的第 ${src.slice(0, close).split("\n").length} 行，不是原文件行号）、`
+        + "不在第 0 列 —— 被扫的这两个函数一律顶格收尾，两条判据对不上说明这次扫描被带偏了"
+        + "（例如 stripComments() 不认得的正则字面量把引号配对搞歪），判据不敢当它是函数收尾",
+    };
+  }
+  return { body: src.slice(start, close) };
+}
+
+/**
+ * `class` 那个属性名的冒号之后的表达式原文（属性名的四种写法见 `classKeySites()`）：
+ * 读到**同层**的 `,` / `}` / `)` / `;` 为止。
  * 括号深度与字符串都要认——`class: f(a, b)` 里那个逗号不是分隔符。
  */
 function classExprAt(body: string, from: number): string {
@@ -1727,10 +1815,13 @@ function ternaryArms(s: string): [string, string] | null {
 /**
  * 一段 class 表达式解出来的那些确定的 class 名；**解不出就是 `null`，绝不猜**。
  *
- * 解得出的三种（三种都是仓里真实在用的写法）：
- * · 字符串字面量 —— `class: "muted note pg-poll"`；
- * · **没有插值**的模板串 —— 与字面量等价（`admin-ui/js/ui.js` 那一族的退化形态）；
- * · 两条臂都解得出的三元 —— `admin-ui/js/sec-models.js` 的 `b.available ? … : …` 那种。
+ * 解得出的三种：
+ * · 字符串字面量 —— `class: "muted note pg-poll"`，**仓里到处都是**；
+ * · **没有插值**的模板串 —— 与字面量等价。⚠️ **它今天在 `admin-ui/` 下 0 个调用点**
+ *   （那里唯一一处 `` class: ` `` 是 `admin-ui/js/ui.js` 的 `` `toast toast-${kind || "ok"}…` ``，
+ *   带插值 ⇒ 落在下面「解不出」那一档）。收它不是因为有人在写它，是因为它与字面量等价、
+ *   多认一种不多一条会解错的路；
+ * · 两条臂都解得出的三元 —— `admin-ui/js/sec-models.js` 的 `b.available ? … : …` 那种，**真实在用**。
  *   ⚠️ **条件那一半整段丢掉**：它里面的字符串是判据、不是 class 名。
  *   `admin-ui/js/sec-settings.js` 有一行 `effect.kind === "danger" ? "danger-text" : "muted note"`
  *   ——把 `danger` 也收进来就是「假装解得出」，而那正是本轮要改掉的毛病。
@@ -1738,8 +1829,14 @@ function ternaryArms(s: string): [string, string] | null {
  * 其余一律 `null`：**模板插值**（`admin-ui/js/ui.js` 的 `` `toast toast-${kind…}` ``）、
  * **函数调用返回**（`admin-ui/js/sec-playground.js` 的 `class: hintNoteClass()`，
  * **就在被扫的这个文件里**，返回 `pg-hint pg-hint-ok` 这一族）、字符串拼接、
- * 带转义的字面量。这些**在原理上**就解不出确定的 class 名（要跨函数求值），
- * 所以判据不假装解得出——`null` 在调用处是**红**，不是静静跳过。
+ * 带转义的字面量。`null` 在调用处是**红**，不是静静跳过。
+ *
+ * ⚠️ **这四种「解不出」不是同一个理由，别写成一句**：
+ * · **只有函数调用返回是真的解不出**——它要跨函数求值，而这个判据只看一段文本；
+ * · **模板插值 / 字符串拼接 / 带转义字面量在原理上都是编译期可定的常量**
+ *   （`` `pg-esc-${"t"}` `` 折出来就是 `pg-esc-t`）。不折它们是**保守取舍**：
+ *   多一种解法就多一条会解错的路，而这一格要治的病正是「假装解得出」。
+ *   代价明写：写成这三种的人会被逼着回来把它改成字面量，或者回来教会这道判据。
  */
 function classNamesOf(raw: string): string[] | null {
   const expr = raw.trim();
@@ -1759,47 +1856,99 @@ function classNamesOf(raw: string): string[] | null {
 }
 
 /**
- * **不经 `class:` 就把 class 挂上去的那些写法。** 它们在这两个函数体里出现即红——
+ * **`class` 这个属性名的四种字面写法。** 上一版只认裸 `class:`，于是
+ * `el("p", { "class": "pg-esc-quoted" }, …)` 这种带引号的属性名整条逃掉（实测 48/48 全绿）。
+ * 四种今天在 `admin-ui/` 下都只出现裸 `class:` 这一种，收另外三种是因为它们
+ * **一个字符都不用改语义**就能绕过去，而绕过去是静默的。
+ *
+ * ⚠️⚠️ **每次现 new 一个，不许提到模块级共用。** `/g` 正则带着可变的 `lastIndex`：
+ * `matchAll()` 按规范会克隆、不动原对象，所以今天两处共用是安全的——**但只要将来有人
+ * 对同一个对象来一次 `.test()` / `.exec()`，`lastIndex` 就跨调用串味**。
+ * 本仓已经因为这条吃过一次亏，形态记在 `tests/ui/no-hardcoded-endpoints.test.ts` 的
+ * 「scan() 不受任何遗留 lastIndex 影响 —— 这条通道一旦打开，唯一的护栏会静默恒绿」那一格：
+ * 一次 `.test()` 留下的非零 `lastIndex` 被 `matchAll()` 复制进克隆，扫描从中间起步、
+ * **漏掉开头那一段而照常报绿**。
+ * 现 new 之后这条路根本不存在，代价是每次调用多造一个正则对象。
+ */
+function classKeySites(): RegExp {
+  return /(?:\bclass\b|"class"|'class'|\[\s*(?:"class"|'class')\s*\])\s*:/g;
+}
+
+/**
+ * **不经属性名就把 class 挂上去的那些写法。** 它们在这两个函数体里出现即红——
  * 判据读不出它们挂的是什么名字，而 `admin-ui/js/app.js` 与 `admin-ui/js/sec-settings.js`
  * 里各有几处真实调用点，**不是假想写法**。
+ * 同样每次现 new（理由见 `classKeySites()`）。
  */
-const CLASS_MUTATORS = /\bclassList\b|\bclassName\b|setAttribute\(\s*["']class["']/g;
+function classMutators(): RegExp {
+  return /\bclassList\b|\bclassName\b|setAttribute\(\s*["']class["']/g;
+}
 
 /**
  * 从**发货代码**里扫出媒体那两个渲染函数真的画出来的 `pg-*` class。
  *
  * ⚠️ `stripComments()` 用 `tests/helpers/strip-comments.ts` 那一份（本仓裁定：不许抄第六份）
  * ——不去注释的话，那两个函数上方的说明文字里也有 `class:` 这样的字样。
- * ⚠️ 函数体按「`function 名(` 起，到下一个顶格 `}` 止」切：这两个函数体里所有的 `}`
- * 都是缩进的，只有函数自己的收尾在第 0 列。**切歪 / 切短不会静默通过**：扫到的 class
- * 会跟着变，由「与手写清单逐条相等」那条断言兜住。上一版注释把机理写成
- * 「切错了会切出空串 ⇒ 扫不到任何 class」——**实测不是空串**：往 `buildMediaRow()` 体内
- * 插一个让第 0 列出现 `}` 的跨行模板串，扫到的是 13 个 class（结论「红」对，机理错）。
+ * ⚠️ **函数体边界由 `functionBodyOf()` 求**（括号配平 + 字符串 / 模板串识别），
+ * 不再用「下一个顶格 `}`」猜——那个前提会静默地破，机理与实测写在那个函数上方。
+ * 求不出边界时它给一条 `reason`，下面第一条断言当场把原因打出来，**不静默截断**。
  *
- * ⚠️⚠️ **射程边界（明写，别读成全称句）**：枚举范围只有 `buildMediaRow` /
- * `buildMediaResult` 这两个函数名。出口**搬出**这两个函数 ⇒ 扫到的少了 ⇒ 红；
- * 出口**新增在别处**（`buildTurn()` 的 `turn.mode !== "chat"` 分支，或将来第三个媒体
- * helper）⇒ **不进清单、这道判据看不见它，也不会吵**。今天那条分支里只有一句
- * `appendChild(buildMediaResult(turn))`，射程内为空——**这是「今天为空」，
- * 不是「结构上不可能」**，加第三个媒体 helper 的人必须把它加进上面这张名字表。
+ * ── 射程五条（明写，别把上面那句读成全称句；①–④ 够不着，⑤ 会多认）─────────────
+ * ① **出口新增在这两个函数之外**：`buildTurn()` 的 `turn.mode !== "chat"` 分支、
+ *    或将来第三个媒体 helper ⇒ **不进清单、这道判据看不见它，也不会吵**。今天那条分支里
+ *    只有一句 `appendChild(buildMediaResult(turn))`，射程内为空——**这是「今天为空」，
+ *    不是「结构上不可能」**，加第三个媒体 helper 的人必须把它加进 `EXPECTED_MEDIA_OUTPUTS`。
+ *    实测（往那条分支里加一个带口令的出口）：**48/48 全绿**。
+ *    （出口**搬出**这两个函数是另一回事：扫到的少了 ⇒ 与手写表对不上 ⇒ 红。）
+ * ② **属性名不是字面量**：`el("p", { [K]: "…" }, …)`（`K` 是变量）、`{ ...ATTRS }` 展开
+ *    ⇒ `classKeySites()` 是词法钩子，它只认写死在那里的名字。实测（计算键 + 带口令）：**48/48 全绿**。
+ * ③ **属性对象整个提到这两个函数之外**：`const ESC = { class: "…" };` 写在模块级、
+ *    调用处只写 `el("p", ESC, …)` ⇒ `class:` 那个站点不在被切的函数体里。实测 48/48 全绿。
+ * ④ **含引号的正则字面量**：`stripComments()` 自己登记着「不认得正则字面量」，
+ *    `/["']/` 这种会把引号配对搞歪。**实测这一形态是红的**：往 `buildMediaRow()` 里插一句
+ *    `const q = /["']/.test(url);` 再在它后面加一个带口令的新出口 ⇒ 引号配对一路歪到文件末尾
+ *    ⇒ 「函数体到文件结束都没有配平」⇒ 红。**但这不是全称保证**：若配歪之后恰好仍在某个
+ *    顶格 `}` 上收平，被跳过那段里的出口会静默丢掉——**这一条今天没有构造出来，登记为盲点。**
+ *    被扫的这两个函数里今天唯一的正则字面量是 `buildMediaResult()` 的
+ *    `/^application\/json/i`，**不含引号也不含花括号** ⇒ 射程内为空。
+ *    （`admin-ui/js/` 别处还有一处：`admin-ui/js/sec-settings.js` 的 `/^env:/`，同样不含引号，
+ *    而且本来就不在这道判据的射程里——**这句话原先写成「`admin-ui/js/` 下唯一」，是假的，
+ *    实地数过之后改真**。）
+ * ⑤（反方向的一条，一并登记）**字符串里出现 `class:` 字样**会被当成一个站点。
+ *    方向是保守的：它多半解不出 ⇒ 吵，而不是静默少给。
+ *
+ * ②③④ 今天在**被扫的这两个函数体里**都没有真实写法（逐条 grep 过：admin-ui 下 0 处计算键、
+ * 0 处把 attrs 当变量传的 `el()` 调用、0 处含引号的正则字面量）。
+ * ⚠️ **但别把这句读成「仓里没人这么写」**：`{ ...attrs }` 展开在 `admin-ui/js/ui.js` 的
+ * `elI18n()` 里就是**真实写法**（`el(tag, { ...(attrs || {}), "data-i18n": key })`），
+ * 它只是不在这两个函数体里。带引号的属性名（`"class":` / `'class':` / `["class"]:`）
+ * 上一版也逃得掉，这一版由 `classKeySites()` 收进来了。
  */
 function mediaOutputsInSource(): string[] {
   const src = stripComments(readFileSync("admin-ui/js/sec-playground.js", "utf8"));
   const out = new Set<string>();
   const unreadable: string[] = [];
+  const unsliceable: string[] = [];
   for (const fn of ["buildMediaRow", "buildMediaResult"]) {
-    const start = src.indexOf(`function ${fn}(`);
-    expect(start, `发货代码里找不到 ${fn}() —— 它被改名了，这一格的判据要跟着改`)
-      .toBeGreaterThan(-1);
-    const body = src.slice(start, src.indexOf("\n}", start));
-    for (const m of body.matchAll(/\bclass\s*:/g)) {
+    const sliced = functionBodyOf(src, fn);
+    if ("reason" in sliced) { unsliceable.push(sliced.reason); continue; }
+    const body = sliced.body;
+    for (const m of body.matchAll(classKeySites())) {
       const expr = classExprAt(body, m.index! + m[0].length).trim();
       const names = classNamesOf(expr);
-      if (names === null) unreadable.push(`${fn}(): class: ${expr}`);
+      if (names === null) unreadable.push(`${fn}(): ${m[0]} ${expr}`);
       else for (const cls of names) if (cls.startsWith("pg-")) out.add(cls);
     }
-    for (const m of body.matchAll(CLASS_MUTATORS)) unreadable.push(`${fn}(): ${m[0]}`);
+    for (const m of body.matchAll(classMutators())) unreadable.push(`${fn}(): ${m[0]}`);
   }
+  // **认不出边界要吵，不能静默截断。** 切短了的那一截尾巴是判据看不见也不吵的地方，
+  // 新出口藏进去能带着网关口令一起绿——上一版实测过这条，机理见 `functionBodyOf()`。
+  // ⚠️ **这条闸买的是「病因说得对」，不是「红不红」**（控制实测，别把它写成唯一护栏）：
+  // 把这条 `expect` 临时拿掉、再把 `buildMediaRow()` 的收尾 `}` 缩进两格 ⇒ 那个函数被整个
+  // 跳过 ⇒ **仍然红**，但红在下面「与手写清单对不上」（13 项 vs 17 项），报的是错的病因。
+  expect(unsliceable, "媒体那两个渲染函数的函数体切不出可靠边界 —— "
+    + "在边界求得回来之前，这道闭集纪律对被切掉的那一段整个失效，所以这里宁可红也不猜")
+    .toEqual([]);
   // **认不出要吵，不能装没看见。** 这一条就是上一版缺的那道闸：判据读不懂的写法
   // 会让新出口悄悄不进清单，于是「每个出口都配了子档」这条纪律对它整个失效。
   expect(unreadable, "媒体那两个渲染函数里有这道判据读不懂的 class 写法 —— "
@@ -1859,14 +2008,24 @@ describe("媒体渲染路径的口令扫描：按出口数算覆盖面（评审 
    * · 模板插值 `` class: `pg-esc-${"t"}` `` ⇒ **解不出** ⇒ 判据吵「读不懂」⇒ 红；
    * · 函数调用返回 —— **逐字抄仓里真实那一行**：`class: hintNoteClass()` ⇒ 解不出 ⇒ 红，
    *   失败信息打的就是 `buildMediaResult(): class: hintNoteClass()`；
-   * · `errNode.classList.add("pg-esc-cl")` ⇒ 撞上 `CLASS_MUTATORS` ⇒ 红。
+   * · `errNode.classList.add("pg-esc-cl")` ⇒ 撞上 `classMutators()` ⇒ 红。
    * ⚠️⚠️ **这六条落的都是「八个子档一档都到不了」的分支，口令扫描根本看不见它们**
    * ——控制实测：把上面那条「读不懂」的断言临时拿掉，模板插值那条**带着口令**照样
    * **48/48 全绿**。⇒ 兜住「两层同时瞎」的只有闭集纪律这一条，不是口令扫描。
-   * ⚠️ **反向两条也实测过**（证明判据不是「见什么都红」）：把已有的
-   * `class: "muted note pg-poll"` 换成同名的三元 / 无插值模板串 ⇒ **48/48 仍绿**。
+   *
+   * **第四轮补的两条变红条件（两条都是上一版当场 48/48 全绿的活逃逸）**：
+   * · **带引号的属性名** `el("p", { "class": "pg-esc-quoted" }, …)`（还是那个不可达分支、
+   *   还是带着口令）⇒ 上一版 `\bclass\s*:` 不匹配 ⇒ **48/48 全绿**；这一版由
+   *   `classKeySites()` 收进来 ⇒ **红**；
+   * · **函数体尾巴**：往 `buildMediaRow()` 的 `return row;` 之前插一段跨行模板串、
+   *   其中一行以第 0 列的 `}` 开头，再在切点之后加一个带口令的新出口 ⇒ 上一版函数体被
+   *   截断、**48/48 全绿**；这一版边界由 `functionBodyOf()` 配平求出 ⇒ **红**。
+   * ⚠️ **反向控制四条**（证明判据不是「见什么都红」）：把已有的
+   * `class: "muted note pg-poll"` 换成同名的三元 / 无插值模板串 ⇒ **48/48 仍绿**；
+   * 把已有的 `class: "pg-media-row"` 换成 `"class": "pg-media-row"` / `["class"]: …`
+   * ⇒ **48/48 仍绿**（新收的三种属性名写法是「认得出」，不是「一见就红」）。
    */
-  it("媒体那条渲染路径的每一个出口都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算（评审 H1）", async () => {
+  it("媒体那两个渲染函数里这道判据认得出的每一个出口，都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算；认不出的那几条射程写在 mediaOutputsInSource() 上方（评审 H1）", async () => {
     const seen = new Set<string>();
     const record = (h: Harness, sec: FakeElement, where: string): void => {
       expect(one(sec, ".pg-token").value, `${where}：前置条件，口令确实在输入框里`).toBe(GW_TOKEN);
