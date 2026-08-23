@@ -29,8 +29,9 @@ import { stripComments, stripHtmlComments } from "./lib/strip-comments.mjs";
 
 /**
  * 用法：
- *   node scripts/check-i18n.mjs            # 查本仓的 admin-ui/
- *   node scripts/check-i18n.mjs <根目录>    # 查别处的 admin-ui/
+ *   node scripts/check-i18n.mjs                     # 查本仓的 admin-ui/
+ *   node scripts/check-i18n.mjs <根目录>             # 查别处的 admin-ui/
+ *   node scripts/check-i18n.mjs <根目录> <前缀表>    # 同上，并登记那棵树的拼键前缀
  *
  * 第二种形态**只给 tests/unit/check-i18n.test.ts 那份元测试用**（全分支评审 I2）。
  * 在它出现之前，这道门禁自己**零覆盖**：八条判据里任何一条被写坏（正则打错一个
@@ -45,6 +46,27 @@ import { stripComments, stripHtmlComments } from "./lib/strip-comments.mjs";
 const ROOT = process.argv[2]
   ? fileURLToPath(pathToFileURL(join(process.argv[2], "/")))
   : fileURLToPath(new URL("../", import.meta.url));
+/**
+ * **登记在案的模板拼键前缀表**（P3e Task 4）。下面与实扫结果做**双向**相等比较。
+ *
+ * 前缀覆盖天生有「吞掉」风险：前缀写宽一格，那一族 key 就再也不会被报未被引用，
+ * 而第 ④ 条在本任务里刚升成硬错 ⇒ 被吞掉的那些真死 key 从此**永远不会红**。
+ * 危害档位是量过的：`admin-ui/js/pure/settings.mjs` 里 `fieldLabelKey()` 那条模板
+ * 从 `` `set.field.${path}` `` 放宽成 `` `set.${path}` ``，一次吞掉 `set.*` 底下 85 个 key。
+ * ⚠️ **「前缀变宽」在计数上表现为「警报变少」，与「判据认对了」长得一模一样** ⇒
+ * 分辨它们只能靠一张登记表，靠人读横幅是读不出来的。
+ *
+ * ⚠️ **第三个入参只给 `tests/unit/check-i18n.test.ts` 那份元测试用**，与第二个入参
+ * 同一条理由：夹具树里根本没有 `pure/settings.mjs`，套用真仓这张表的话每一格夹具都会红。
+ * **给了根目录却没给这一项时登记表是空的——那是「这棵树不该有任何拼键前缀」这条断言，
+ * 不是「这一项不检查」**（本仓对"静默放行"的裁定见第 ④ 条那一段）。
+ * 这条判据的两个方向各由 `tests/unit/check-i18n.test.ts` 的
+ * 「拼键前缀：实扫结果与登记表不符」「拼键前缀：登记了但实扫扫不到」两格钉着，
+ * 反向控制是「拼键前缀的反向控制：实扫与登记表一致时不许红」。
+ */
+const EXPECTED_TPL_PREFIXES = process.argv[2] === undefined
+  ? ["set.err.", "set.field."]
+  : (process.argv[3] ?? "").split(",").filter(Boolean);
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"];
 const BANNED = [
   "推荐", "推薦", "建议", "建議", "默认", "預设", "預設", "主流", "首选", "首選", "优先", "優先",
@@ -63,7 +85,11 @@ function walk(dir) {
 }
 
 const errors = [];
-const warnings = [];
+
+/** 一串东西印给人看时的写法；空的那一档必须**说出来**，不能印成一片空白。 */
+function fmtList(items) {
+  return items.length === 0 ? "（无）" : items.join(", ");
+}
 
 /** 字典自己是**定义处**，不是引用点。第 ① / ⑧ 两条判据都要豁免它，所以只算一次。 */
 const DICT_FILE = join(ROOT, "admin-ui/js/i18n-dict.js");
@@ -112,8 +138,9 @@ function stripped(p, src) {
 // ⚠️ **边界（本仓的诚实纪律，别把它读成全称承诺）。这里刻意不写「今天各有几处」**——
 // 本文件族已经为「把计数写死进注释」漂过六次，而**这三条的档位与那个数无关**：
 // 它们**全部是漏报方向**（key 明明有人用，却落进「未被引用」），
-// 而 Task 4 要把「未被引用」升成硬错**并且**安排「处置真 0 命中 key（删 / 改）」
-// ⇒ 漏报在 Task 4 之后就是「删掉活着的文案」。真出现时改写成下面认得的形态，或者扩这里。
+// 而 P3e Task 4 已经把「未被引用」升成硬错、并顺着那份清单处置了真 0 命中的 key
+// ⇒ **漏报今天就是「打红一个正在用的 key，而顺着报文去删就删掉活文案」**。
+// 真出现时改写成下面认得的形态，或者扩这里，**别顺手删 key**。
 // · **按 `+` 拼的 key**（`"a." + b`）不被支持。
 // · **反引号里的纯 key 字面量**（`` elI18n("h2", `usage.title`) ``）不被支持：
 //   反引号那一路只走下面的 `TPL_PREFIX`（拼键前缀），而纯 key 没有 `${…}` ⇒ 两条路都不认它。
@@ -123,10 +150,11 @@ function stripped(p, src) {
 // **它们断言的是「今天就是这样」，不是「这样是对的」**：哪天判据扩到某一条，那一格会红，
 // 而红的地方正是该回来改这段边界的地方。
 //
-// ⚠️ **`/^[a-z]+$/` 那个筛子今天筛掉零条**（实测：521 个 key 的 12 个命名空间全是纯小写），
+// ⚠️ **`/^[a-z]+$/` 那个筛子今天筛掉零条**（实测：字典里每一个命名空间都是纯小写；
+// **这里刻意不写「今天有几个」**——这个文件族已经为「把计数写死进注释」漂过六次），
 // 它在的理由是**正则安全**——命名空间要拼进下面 `KEYLIKE` 的正则里，带元字符的前缀会把
 // 那条正则改写成别的意思。**它失效的方向是吵不是哑**：真出现一个被筛掉的前缀，
-// 那个命名空间底下的 key 会整族落进「未被引用」，Task 4 之后就是整族硬错——
+// 那个命名空间底下的 key 会整族落进「未被引用」，而第 ④ 条今天是硬错 ⇒ 整族打红——
 // 刺眼但不会静默。别把它改成「筛掉就算了」，也别改成不筛。
 const NS = new Set(Object.keys(I18N).map((k) => k.split(".")[0]).filter((p) => /^[a-z]+$/.test(p)));
 
@@ -142,8 +170,8 @@ const NS = new Set(Object.keys(I18N).map((k) => k.split(".")[0]).filter((p) => /
 //     通用配对引号版：直接引用 485 / 拼键覆盖 22 / 未被引用 14  ← **11 条假阳性**
 // 11 条假阳性逐条同因，全是同一行上先出现一个 `""`（`reg.tend.channelAny` / `reg.locked` /
 // `ov.runtime.checkedAt` / `models.empty` / `pg.send.blockedNoModel` …）。
-// 危害档位不是「多报几条」：**Task 4 紧接着要把「未被引用」升成硬错**
-// ⇒ 第 6/12 道门禁会 exit 1 在 **11 个正在用的 key** 上，而 Task 4 同时安排
+// 危害档位不是「多报几条」：**Task 4 紧接着就把「未被引用」升成了硬错**
+// ⇒ 第 6/12 道门禁会 exit 1 在 **11 个正在用的 key** 上，而 Task 4 同时做了
 //「处置真 0 命中 key（删 / 改）」——那条处置一旦被套到这 11 条上，删掉的就是活着的界面文案。
 // 反向也只是运气：配对错位产生的碎片今天恰好都不带命名空间前缀，所以「字典里没有的 key」
 // 仍是空；任何一行里出现 `""` 且其后紧跟一个 `ns.` 开头的片段，就会**凭空造出一条硬错**。
@@ -157,8 +185,8 @@ const KEYLIKE = new RegExp(`["'](${NSALT})\\.[A-Za-z0-9_.]+["']`, "g");
 // ⚠️⚠️ **「首段是不是字典命名空间」回答不了「这个模板在不在拼 i18n key」**——这是 P3e Task 3
 // 复评实测出来的（L1）：`admin-ui/js/pure/settings.mjs` 里 `` `registrar.${channel}.baseUrl` ``
 // 是一条**配置路径**，字典一旦新增 `registrar.*` 命名空间，它立刻进前缀表，把那一族里的
-// 真死 key **静默喂活**。危害档位不是「多一条前缀」：Task 4 安排「处置真 0 命中 key（删 / 改）」，
-// 而被喂活的 key 根本不会出现在那条处置的输入里 ⇒ **漏删，而漏删的表现是「什么事都没有」。**
+// 真死 key **静默喂活**。危害档位不是「多一条前缀」：第 ④ 条今天是硬错，
+// 而被喂活的 key 根本不会出现在那份清单里 ⇒ **漏报，而漏报的表现是「什么事都没有」。**
 // ⇒ 判据收窄成「**整条模板就是一个 key**」：`${…}` 一闭合模板就结束（`` `set.field.${path}` ``），
 // 后面还跟着别的东西（`` `registrar.${channel}.baseUrl` ``）就不是拼键。
 // ⇒ 而「首段是字典命名空间、但形状对不上」这一档**当场吵**，不许当成拼键也不许当没看见：
@@ -238,15 +266,16 @@ for (const k of [...directlyUsed].sort()) if (!(k in I18N)) errors.push(`引用�
 
 // **三个分桶是字典 key 的一个划分**：三个数加起来恒等于字典 key 总数。
 // ⚠️ 「直接引用」数的是**字典里被直接引用的 key**，不是 `directlyUsed.size`——后者含
-// 「字典里没有的 key」，加起来会超出总数，而那个和正是 Task 4 要盯的观测量。
-// ⚠️⚠️ **「拼键覆盖」这一桶等于「永久豁免死 key 检查」，Task 4 读这个数之前先读这一段。**
+// 「字典里没有的 key」，加起来会超出总数，而那个和正是第 ④ 条那条硬错的观测量。
+// ⚠️⚠️ **「拼键覆盖」这一桶等于「永久豁免死 key 检查」，读这个数之前先读这一段。**
 // 落进这一桶的 key，静态判据永远看不出它到底有没有人用——它只知道「有一条模板可能拼出它」。
 // 今天这一桶的构成是实测出来的，**写成事实而不是写成一个会漂的数**：
 // · 覆盖**全部**来自 `set.field.`（`fieldLabelKey()` 那一族）；
 // · `set.err.` 也在前缀表里，但它底下的 key **条条也被直接引用** ⇒ 它对这一桶的贡献是零，
 //   只在横幅的「拼键前缀」那一行露面。别把「前缀表里有两条」读成「两族都被覆盖着」。
-// ⇒ 也就是说：`set.field.*` 里没被直接引用的那一批，是 Task 4 那条「处置真 0 命中 key」
-//   **看不见**的一批。要处置它们得另找路（比如把 `fieldLabelKey()` 的取值域枚举出来对账）。
+// ⇒ 也就是说：`set.field.*` 里没被直接引用的那一批，**第 ④ 条那条硬错看不见它们**——
+//   P3e Task 4 那轮「处置真 0 命中 key」的输入里也没有它们。要处置得另找路
+//   （比如把 `fieldLabelKey()` 的取值域枚举出来对账）。**这一桶不为零就等于有豁免在生效。**
 const coveredByPrefix = Object.keys(I18N).filter(
   (k) => !directlyUsed.has(k) && [...tplPrefixes].some((p) => k.startsWith(p)),
 );
@@ -257,13 +286,13 @@ const directlyReferenced = Object.keys(I18N).filter((k) => directlyUsed.has(k));
 
 // **分桶横幅在这里就打，而且不管后面红不红都打。**
 // 放到最后的成功横幅里的话，门禁一旦 exit 1，三个分桶就看不见了——而
-// Task 4 要把「未被引用」升成硬错，正需要它在**红着的时候**也能读出来。
+// 第 ④ 条已经是硬错（P3e Task 4），正需要它在**红着的时候**也能读出来。
 console.log(
   `[check-i18n] 引用判据：直接引用 ${directlyReferenced.length} / 拼键覆盖 ${coveredByPrefix.length}`
   + ` / 未被引用 ${unreferenced.length}；字典共 ${Object.keys(I18N).length} 个 key`,
 );
-console.log(`[check-i18n] 拼键前缀: ${tplPrefixes.size === 0 ? "（无）" : [...tplPrefixes].sort().join(", ")}`);
-console.log(`[check-i18n] 未被引用: ${unreferenced.length === 0 ? "（无）" : unreferenced.join(", ")}`);
+console.log(`[check-i18n] 拼键前缀: ${fmtList([...tplPrefixes].sort())}`);
+console.log(`[check-i18n] 未被引用: ${fmtList(unreferenced)}`);
 
 // ② 每个 key 都有全部 5 种语言且非空；③ 没有多余语言码
 for (const [k, row] of Object.entries(I18N)) {
@@ -276,13 +305,36 @@ for (const [k, row] of Object.entries(I18N)) {
   }
 }
 
-// ④ 字典里没被引用的 key ⇒ **警告不报错**
+// ④ 字典里没被引用的 key ⇒ **错误，不是警告**（P3e Task 4）。
 //
-// ⚠️ **本任务（P3e Task 3）只换第 ① 条的判据、只改输出，刻意不动这一条的严重级别**，
-// 那是 Task 4 的事。拆成两个任务是有意的：判据换形状与警告升硬错是两件独立会出错的事，
-// 合起来做的话「396 → 0」与「0 才算过」哪个先坏了分不清。
-// 「未被引用」现在读的是上面那个分桶（已扣掉拼键前缀覆盖的那 22 条）。
-for (const k of unreferenced) warnings.push(`字典里有未被引用的 key: ${k}`);
+// ⚠️ 这条在 P3e 之前是 `console.warn`，`errors` 不收它 ⇒ **它永远不会 exit 1**。
+// 当时的理由是「动态拼接的 key 抓不到，报错会误伤」，那条理由随 Task 3 一起失效：
+// 拼键现在由下面那张前缀表认得出来（今天全仓三处模板拼键、**零处 `+` 拼键**），
+// 于是「未被引用」这个集合第一次变得可信。
+// **一个不会自己红的清单不是守卫，是待办**——那是本仓对这种东西的裁定。
+//「未被引用」读的是上面那个分桶（已扣掉被拼键前缀覆盖的那一批）。
+//
+// ⚠️ **升成硬错之后，第 ① 条上面那段「边界」里登记的三种漏报形态就是打红**：
+// 真写出 `"a." + b` / 反引号里的纯 key / HTML 里不带引号的属性值，红的是一个**正在用**
+// 的 key，而顺着报文去「清理未被引用的 key」删掉的就是活着的界面文案。
+// 真出现时请把它改写成判据认得的形态，或者去扩第 ① 条，**别顺手删 key**。
+// 这一条由 `tests/unit/check-i18n.test.ts` 的
+//「④ 字典里谁都不引用的 key ⇒ 当场红」与它的反向控制
+//「④ 反向控制：模板拼键 + 同前缀 key ⇒ 不许红」两格一起钉着（**只做一半等于没做**：
+// 单看前一格，「一律 exit 1」也能让它绿）。
+for (const k of unreferenced) errors.push(`字典里有未被引用的 key: ${k}`);
+
+// **拼键前缀钉成双向断言**（P3e Task 4，理由见上面 `EXPECTED_TPL_PREFIXES`）。
+// 双向是必须的：只查「实扫 ⊆ 登记」的话，一张越写越长的表会静静地把
+// 「这条前缀早就不存在了」变成一条永久豁免，而永久豁免正是第 ④ 条最怕的东西。
+const gotTplPrefixes = [...tplPrefixes].sort();
+if (gotTplPrefixes.join("|") !== [...EXPECTED_TPL_PREFIXES].sort().join("|")) {
+  errors.push(
+    `模板拼键前缀变了：登记的是 ${fmtList(EXPECTED_TPL_PREFIXES)}，实扫是 ${fmtList(gotTplPrefixes)}。`
+    + "前缀写宽一格，那一族 key 就再也不会被报未被引用（`set.field.` 放宽成 `set.` 一次吞掉 85 个）"
+    + "⇒ 改动是有意的就回 scripts/check-i18n.mjs 改 EXPECTED_TPL_PREFIXES，别只改源码",
+  );
+}
 
 // ⑤ 插值 token 在 5 种语言里集合相同
 for (const [k, row] of Object.entries(I18N)) {
@@ -363,7 +415,11 @@ for (const p of walk(join(ROOT, "admin-ui"))) {
   }
 }
 
-for (const w of warnings) console.warn(`[check-i18n] ⚠️ ${w}`);
+// ⚠️ **这里曾经有一行 `for (const w of warnings) console.warn(…)`，P3e Task 4 连同
+// `warnings` 数组一起删了，别加回来。** 那个数组当时**只有第 ④ 条一个供货方**，
+// 而第 ④ 条已经升成硬错 ⇒ 留着它就是留一个「往这儿丢就不会 exit 1」的口子，
+// 而这道门禁刚花一整个任务把那种口子堵上。
+// 真要再加一档非阻断输出时，请先回答「它凭什么不该让 CI 红」。
 if (errors.length) {
   for (const e of errors) console.error(`[check-i18n] ❌ ${e}`);
   process.exit(1);

@@ -107,6 +107,28 @@ function screenText(h: Awaited<ReturnType<typeof openSettings>>): string {
   return h.dom.document.body.textContent;
 }
 
+/**
+ * 按标题 key 找到那张卡。`admin-ui/js/sec-settings.js` 的 `card()` 建出来的形状是
+ * `div.card.block` > `h3[data-i18n=<titleKey>]` + `div`（body），所以标题的父节点就是整张卡。
+ */
+function cardByTitleKey(section: FakeElement, titleKey: string): FakeElement {
+  const title = section.walk()
+    .find((n) => n.tagName === "h3" && n.getAttribute("data-i18n") === titleKey);
+  if (!title?.parent) throw new Error(`找不到标题是 ${titleKey} 的卡`);
+  return title.parent;
+}
+
+/**
+ * 这棵子树里**运维真的看得到**的那些字。`display:none` 的分支整段跳过：
+ * 「渲染了但藏起来了」与「印在屏幕上」是两回事，而本文件断言的一律是后者
+ *（设置页里 `cfg-lock` 那一行默认就是 `display:none`）。
+ */
+function visibleText(node: FakeElement): string {
+  if (node.style.display === "none") return "";
+  if (node.children.length === 0) return node.textContent;
+  return node.children.map(visibleText).join(" ");
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // 设计 §5.3：写操作的成功提示不得早于回读
 // ───────────────────────────────────────────────────────────────────────────
@@ -234,6 +256,42 @@ describe("被 env 锁定的字段（设计 §5.3 UI 规则 / §10.4 卡 1）", (
     const meta = fieldNode(h.section("settings"), "maxStrikes")
       .children.find((c) => c.classList.contains("cfg-meta"))!;
     for (const piece of ["3", "9"]) expect(meta.textContent).toContain(piece);
+  });
+});
+
+/**
+ * **卡 2 底下那句「改了要重启」（P3e Task 4）。**
+ *
+ * `set.card.upstreamNote` 在字典里躺了整整一期没上屏，而
+ * `admin-ui/js/pure/settings.mjs` 的 `CARD_UPSTREAM` 注释一直声称它「就在卡 2 底下」——
+ * 那句注释在本任务之前是假的。它不是一条可有可无的润色：`poolCacheTtlMs` /
+ * `poolTouchIntervalMs` 与卡 2 里别的字段有一条真实差异（建实例时读一次，改了要
+ * 重启容器 / 等 isolate 回收才生效），面板不说这句话，运维改完刷新一看没变化，
+ * 只会得出「这个面板的保存是假的」这个结论。
+ *
+ * ⚠️ 这一格同时是第 6 道门禁「未被引用的 key ⇒ 硬错」（P3e Task 4）的**另一半**：
+ * 那道门禁只能逼人「删掉或者接上」，**它分不出这两条哪条才对**。真正把
+ * `set.card.upstreamNote` 钉在「接上」那一边的是这一格。
+ */
+describe("卡 2 的诚实提示（P3e Task 4）", () => {
+  it("卡 2 底下真的印着那句「改了要重启」——它不是只写在字典和注释里", async () => {
+    const h = await openSettings(() => ok(configBody()));
+    const card = cardByTitleKey(h.section("settings"), "set.card.upstream");
+    // 用**文本内容**断言，不用类名：类名是样式，改样式不该让这格红。
+    expect(
+      visibleText(card),
+      "卡 2 底下那句 `set.card.upstreamNote` 没上屏 —— 面板对「这两个旋钮要重启才生效」保持了沉默",
+    ).toContain("改了要重启容器 / 等 isolate 回收才生效");
+  });
+
+  /**
+   * **反向控制：那句话得在卡 2，不是随便印在页面某处。**
+   * 少了这一格，把 note 挂到卡 1 或者页脚也能让上面那格全绿，而运维改的是卡 2 的旋钮。
+   */
+  it("反向控制：卡 1 底下不许出现那句话（它说的是卡 2 那两个旋钮）", async () => {
+    const h = await openSettings(() => ok(configBody()));
+    const auth = cardByTitleKey(h.section("settings"), "set.card.auth");
+    expect(visibleText(auth)).not.toContain("改了要重启容器");
   });
 });
 

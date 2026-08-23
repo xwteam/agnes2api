@@ -616,6 +616,12 @@ export const settingsSection = {
     // ── 卡 2：上游与冷却 ────────────────────────────────────────────────────
     const upstream = card("set.card.upstream");
     for (const path of CARD_UPSTREAM) addField(upstream.body, path, "text");
+    // 这一句在字典里躺了整整一期没上屏，而 `pure/settings.mjs` 的注释一直声称它「就在卡 2 底下」。
+    // 说的是 `poolCacheTtlMs` / `poolTouchIntervalMs` 与卡 2 里别的字段的那条真实差异：
+    // 建实例时读一次，改了要重启容器 / 等 isolate 回收才生效。面板不说这句话，
+    // 运维改完刷新一看没变化，得出的结论是「这个面板的保存是假的」。**写法与卡 1 对齐。**
+    // 由 tests/ui/dom/settings-save.test.ts 的「卡 2 底下真的印着那句「改了要重启」」钉着。
+    upstream.body.appendChild(elI18n("p", "set.card.upstreamNote", { class: "muted note" }));
     section.appendChild(upstream.wrap);
 
     // ── 卡 3：注册机（两张平级子卡 + 高级折叠区）──────────────────────────────

@@ -37,6 +37,15 @@ interface Fixture {
   dict: Record<string, Record<string, string>>;
   /** 额外文件：相对 admin-ui/ 的路径 -> 内容。 */
   files?: Record<string, string>;
+  /**
+   * 这棵树**登记**的拼键前缀表（脚本的第三个入参，P3e Task 4）。
+   *
+   * ⚠️ **缺省 `[]` 的意思是「这棵树不该有任何拼键前缀」，不是「这一项不检查」。**
+   * 真仓那份登记表（`set.err.` / `set.field.`）写死在脚本里，元测试这一侧必须自己
+   * 带一份——夹具树里根本没有 `pure/settings.mjs`，套用真仓那张表的话每一格都会红。
+   * 于是这个字段本身就是双向断言的一半：夹具里出现了没登记的前缀 ⇒ 那一格会红。
+   */
+  tplPrefixes?: string[];
 }
 
 /**
@@ -59,10 +68,11 @@ function run(fx: Fixture): { status: number; stdout: string; stderr: string } {
     write("js/i18n-dict.js", `export const I18N = ${JSON.stringify(dict, null, 2)};\n`);
     for (const [rel, body] of Object.entries(fx.files ?? {})) write(rel, body);
 
-    // **`spawnSync` 而不是 `execFileSync`**：后者成功时只交出 stdout，把 stderr 扔掉，
-    // 而第 ④ 条（未被引用的 key）恰恰是"exit 0 + 一条 stderr 警告"——用 execFileSync
-    // 的话那一格永远看不见警告，"只警告不报错"这半条就不可观测了。
-    const r = spawnSync("node", [SCRIPT, dir], { encoding: "utf8" });
+    // **`spawnSync` 而不是 `execFileSync`**：后者非零退出时直接抛，而本文件几乎每一格
+    // 断言的都是"它必须 exit 1、且报文点名了那一条"——`status` 与 `stderr` 都要拿在手里
+    // 才问得出话。（P3e Task 4 之前这里写的理由是"第 ④ 条是 exit 0 + 一条 stderr 警告"，
+    // 那条理由随第 ④ 条升成硬错一起作废，`warnings` 数组本身也已删掉。）
+    const r = spawnSync("node", [SCRIPT, dir, (fx.tplPrefixes ?? []).join(",")], { encoding: "utf8" });
     return { status: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -156,13 +166,32 @@ describe("scripts/check-i18n.mjs 元测试：八条判据逐条", () => {
     expect(r.stderr).toContain("zh-Hans");
   });
 
-  it("④ 字典里有没被引用的 key：**只警告不报错**（动态拼的 key 抓不到，报错会误伤）", () => {
+  it("④ 字典里谁都不引用的 key ⇒ 当场红（P3e Task 4 翻转：从警告升成硬错）", () => {
+    // ⚠️⚠️ **这一格的语义在 P3e Task 4 被刻意翻转过，翻转理由必须留在这里。**
+    // 旧断言是「④ 必须是警告，不是错误」，旧理由是「动态拼接的 key 抓不到，报错会误伤」。
+    // 那条理由在 Task 3 之后**不再成立**：拼键现在由「模板拼键前缀」这条路认得出来
+    //（今天全仓三处模板拼键、零处 `+` 拼键），于是「未被引用」这个集合第一次变得可信。
+    // 不翻转的话它永远是一张不会自己红的清单 —— 本仓对那种东西的裁定是「待办，不是守卫」。
     const r = run({
       dict: { "nav.overview": row("概览"), "nav.unused": row("没人用") },
       files: { "js/x.js": 't("nav.overview");\n' },
     });
-    expect(r.status, "这一条必须是警告，不是错误").toBe(0);
-    expect(r.stderr + r.stdout).toContain("nav.unused");
+    expect(r.status, "未被引用的 key 又变回警告了 —— 那是一张不会自己红的清单").toBe(1);
+    expect(r.stderr).toContain("nav.unused");
+  });
+
+  /**
+   * **④ 的反向控制。** 少了它，「一律 exit 1」也能让上面那格全绿，而升成硬错之后
+   * 判据一旦把拼键那一路看丢，整族 `set.field.*` 会当场被报成死 key ——
+   * 而 Task 4 同时做了「处置真 0 命中 key（删 / 改）」，那条处置套上去删掉的是活文案。
+   */
+  it("④ 反向控制：模板拼键 + 同前缀 key ⇒ 不许红（防止升级后把整族误杀）", () => {
+    const r = run({
+      dict: { "set.field.a": row("甲"), "set.field.b": row("乙") },
+      files: { "js/x.js": "const k = `set.field.${path}`;\n" },
+      tplPrefixes: ["set.field."],
+    });
+    expect(r.status, r.stderr).toBe(0);
   });
 
   it("⑤ 插值占位符在各语言间不一致：exit 1", () => {
@@ -374,15 +403,17 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
   });
 
   /**
-   * (d) **本任务仍不改第 ④ 条的严重级别**（那是 Task 4）：没人引用的 key 还是警告。
-   * 但它必须**出现在「未被引用」分桶里**——那是 Task 4 升硬错时的观测点。
+   * (d) **分桶本身要分得对**：没人引用的那个落进「未被引用」、被引用的那个不许也落进来。
+   *
+   * ⚠️ 严重级别那一半在上面「④ 字典里谁都不引用的 key ⇒ 当场红」那一格
+   *（P3e Task 4 把它从警告升成了硬错）。这里只盯**分桶的内容**，
+   * 因为分桶是那条硬错的输入：分错了，红的就是无辜的那个 key。
    */
-  it("(d) 谁都不引用的 key：本任务仍 exit 0，但必须出现在「未被引用」分桶里", () => {
+  it("(d) 谁都不引用的 key 必须出现在「未被引用」分桶里，被引用的那个不许", () => {
     const r = run({
       dict: { "nav.overview": row("概览"), "nav.lonely": row("没人用") },
       files: { "js/x.js": 't("nav.overview");\n' },
     });
-    expect(r.status, "本任务不改第 ④ 条的严重级别").toBe(0);
     expect(unrefList(r)).toContain("nav.lonely");
     expect(unrefList(r), "被引用的那个不许也落进来").not.toContain("nav.overview");
   });
@@ -394,7 +425,7 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
    * 两者在有空串字面量 `""` 的行上会分叉：`"([^"\n]+)"` 要求引号里至少一个字符，
    * 遇到 `""` 时第一个引号匹配失败、引擎前进一格，从**第二个引号**重新开配，
    * **后面那个真 key 整个被吃掉**。真仓实测这一族有 11 条假阳性，
-   * 而 Task 4 紧接着要把「未被引用」升成硬错 ⇒ 会 exit 1 在 11 个正在用的 key 上。
+   * 而 P3e Task 4 紧接着就把「未被引用」升成了硬错 ⇒ 会 exit 1 在 11 个正在用的 key 上。
    *
    * 下面三行取自真仓的三种形态（`sec-registrar.js` / `sec-models.js` / `sec-playground.js`）。
    */
@@ -447,7 +478,7 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
       "三个分桶不是字典 key 的一个划分 ⇒ 「直接引用」里混进了字典里没有的 key",
     ).toBe(b.total);
     expect(r.status, "bogus 引用本身仍然是第 ① 条的硬错").toBe(1);
-    expect(r.stdout, "红的时候也必须先把分桶打出来 —— 那是 Task 4 的观测点").toMatch(BUCKET_RE);
+    expect(r.stdout, "红的时候也必须先把分桶打出来 —— 那是第 ④ 条那条硬错的观测点").toMatch(BUCKET_RE);
   });
 
   /**
@@ -474,6 +505,7 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
     const r = run({
       dict: { "set.field.a": row("甲"), "set.field.b": row("乙") },
       files: { "js/x.js": 'const k = `set.field.${path}`;\n' },
+      tplPrefixes: ["set.field."],
     });
     expect(r.status, r.stderr).toBe(0);
     expect(tplPrefixList(r)).toEqual(["set.field."]);
@@ -485,12 +517,13 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
    * ⚠️⚠️ **这一格是拼键前缀表的绊线**（P3e 计划点名 Task 3 owns）。
    * 前缀是 `set.field.`，**不是 `set.`**：把 `TPL_PREFIX` 放宽成只取第一段、
    * 或者把 `startsWith` 换成命名空间比对，`set.card.x` 会被凭空喂活，
-   * 而它正是 Task 4 要处置的那一族 ⇒ 一条真的死 key 从此永远看不见。
+   * 而它正是 P3e Task 4 处置过的那一族 ⇒ 一条真的死 key 从此永远看不见。
    */
   it("拼键前缀的绊线：前缀是整段 `set.field.`，不许放宽成命名空间 `set.`", () => {
     const r = run({
       dict: { "set.field.a": row("甲"), "set.card.x": row("卡片说明") },
       files: { "js/x.js": 'const k = `set.field.${path}`;\n' },
+      tplPrefixes: ["set.field."],
     });
     expect(tplPrefixList(r)).toEqual(["set.field."]);
     expect(
@@ -498,6 +531,56 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
       "`set.card.x` 被拼键前缀凭空喂活了 ⇒ 前缀被放宽到了命名空间那一档",
     ).toEqual(["set.card.x"]);
     expect(buckets(r).covered).toBe(1);
+  });
+
+  /**
+   * ⚠️⚠️ **登记表与实扫做双向相等比较**（P3e 计划点名 Task 4 owns 这张表）。
+   *
+   * 前缀覆盖天生有「吞掉」风险：前缀写宽一格，那一族 key 就再也不会被报未被引用。
+   * 真仓的落点是 `admin-ui/js/pure/settings.mjs` 里 `fieldLabelKey()` 那条模板——
+   * 它写成 `` `set.${path}` `` 的话，`set.*` 底下整族 key 一口气全进「拼键覆盖」桶，
+   * 而第 ④ 条刚在本任务升成硬错 ⇒ **那一族里的真死 key 从此永远不会红**。
+   * 「前缀变宽」在计数上表现为**警报变少**，与「判据认对了」长得一模一样，
+   * 分辨它们只能靠一张登记表，靠人读横幅是读不出来的。
+   */
+  it("拼键前缀：实扫结果与登记表不符 ⇒ exit 1，且报文点名前缀变了", () => {
+    const r = run({
+      dict: { "set.field.a": row("甲"), "set.card.x": row("卡片说明") },
+      // 登记的是 `set.field.`，源码里却只拼到 `set.` —— 真仓那条变异的最小复现。
+      files: { "js/x.js": 'const k = `set.${path}`;\n' },
+      tplPrefixes: ["set.field."],
+    });
+    expect(r.status, "前缀被放宽了一格，门禁却一声不吭").toBe(1);
+    expect(r.stderr).toContain("模板拼键前缀变了");
+    expect(r.stderr, "报文得同时说出登记的是什么、实扫的是什么").toContain("set.field.");
+  });
+
+  /**
+   * **上面那格的反向控制。** 少了它，「登记表一律判不相等」也能让它全绿，
+   * 而那样的门禁在真仓上永远红着，第一时间会被人加 `|| true` 绕开。
+   */
+  it("拼键前缀的反向控制：实扫与登记表一致时不许红", () => {
+    const r = run({
+      dict: { "set.field.a": row("甲"), "set.card.x": row("卡片说明") },
+      files: { "js/x.js": 'const k = `set.field.${path}`;\nt("set.card.x");\n' },
+      tplPrefixes: ["set.field."],
+    });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  /**
+   * **登记表的另一头：登记了、实扫却扫不到。** 那是「拼键那处代码被删掉或改了名」的形态。
+   * 它同样必须吵——登记表若只查「实扫 ⊆ 登记」，一张越写越长的表会静静地把
+   * 「这条前缀早就不存在了」变成一条永久豁免，而永久豁免正是第 ④ 条最怕的东西。
+   */
+  it("拼键前缀：登记了但实扫扫不到 ⇒ 同样 exit 1（双向相等，不是单向包含）", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "js/x.js": 't("nav.overview");\n' },
+      tplPrefixes: ["set.field."],
+    });
+    expect(r.status, "登记表只做了单向包含 ⇒ 过期的登记会变成永久豁免").toBe(1);
+    expect(r.stderr).toContain("模板拼键前缀变了");
   });
 
   /**
@@ -585,8 +668,8 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
    *
    * 复评在真 `admin-ui/index.html` 上实测：删掉第 8 行那个 `-->` ⇒ 引用数 496 掉到 480
    *（整份文件尾的 `data-i18n=` 全部消失）、门禁**打着 ✅ 横幅 exit 0**。
-   * 也就是说，一个漏写的闭合记号能让一批活着的 key 凭空「变死」，而 Task 4 正要把
-   *「未被引用」升成硬错并据此删 key ⇒ 删掉的是活文案。
+   * 也就是说，一个漏写的闭合记号能让一批活着的 key 凭空「变死」，而 P3e Task 4 紧接着就把
+   *「未被引用」升成了硬错并据此删过 key ⇒ 删掉的会是活文案。
    * 修在真源（`scripts/lib/strip-comments.mjs` 的 `stripHtmlComments`：未闭合就抛），
    * 这一格从门禁这一侧钉住那个后果：**差别只在那三个字符。**
    */
@@ -621,7 +704,7 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
    *   少了它，「一律吵」也能让 ② 全绿，而那样的门禁在真仓上永远红着。
    * · ② 字典一新增那个命名空间，同一条模板立刻变成「分不清」⇒ **必须吵**。
    *   静默当成拼键的代价不是「多一条前缀」：那个前缀底下**所有** key 会被一并喂活，
-   *   其中的真死 key 从此不出现在 Task 4「处置真 0 命中 key」的输入里 ⇒ **漏删，
+   *   其中的真死 key 从此不出现在第 ④ 条那份硬错清单里 ⇒ **漏报，
    *   而漏删的表现是「看起来什么事都没有」。**
    */
   it("拼键前缀：插值之后还跟着别的东西 ⇒ 分不清就吵，不许静默当成拼键", () => {
@@ -652,21 +735,24 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
  * 「夹具本身就坏了」与「这条形态确实看不见」在证据上分辨不出来。
  *
  * ⚠️ **这三格断言的是「今天就是这样」，不是「这样是对的」。**
- * 三条**全部是漏报方向**（key 明明有人用却落进「未被引用」），而 Task 4 要把
- * 「未被引用」升成硬错并据此删 key ⇒ 到那时它们就是「删掉活着的文案」。
- * 哪天判据扩到某一条，这里会红，而红的地方正是该回去改那段边界的地方。
+ * 三条**全部是漏报方向**（key 明明有人用却落进「未被引用」），而 P3e Task 4 已经把
+ * 「未被引用」升成了硬错 ⇒ **今天真写出这三种形态，第 6 道门禁当场打红**，
+ * 而顺着报文去「处置未被引用的 key」删掉的就是活着的文案。
+ * 三格的断言随之从「exit 0 + 落进未被引用」改成「exit 1 + 报文点名那个 key」，
+ * 那正是它们今天的真实后果。哪天判据扩到某一条，这里会红，
+ * 而红的地方正是该回去改 `scripts/check-i18n.mjs` 第 ① 条那段边界说明的地方。
  */
 describe("scripts/check-i18n.mjs 元测试：第 ① 条判据的三条已知漏报形态", () => {
-  it("漏报一：按 `+` 拼的 key 看不见 —— 它会落进「未被引用」", () => {
+  it("漏报一：按 `+` 拼的 key 看不见 —— 它会落进「未被引用」并当场打红", () => {
     const r = run({
       dict: { "nav.overview": row("概览") },
       files: { "js/x.js": 'const k = "nav." + name;\n' },
     });
-    expect(r.status, r.stderr).toBe(0);
     expect(
       unrefList(r),
       "判据认得 `+` 拼键了 —— 请回去改 check-i18n.mjs 第 ① 条那段边界说明",
     ).toEqual(["nav.overview"]);
+    expect(r.status, "第 ④ 条已升成硬错，漏报的后果就是打红").toBe(1);
   });
 
   it("漏报二：反引号里的纯 key 字面量看不见（反引号那一路只走拼键前缀）", () => {
@@ -674,11 +760,11 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据的三条已知漏
       dict: { "nav.overview": row("概览") },
       files: { "js/x.js": "elI18n('h2', `nav.overview`);\n" },
     });
-    expect(r.status, r.stderr).toBe(0);
     expect(
       unrefList(r),
       "判据认得反引号里的纯 key 了 —— 请回去改 check-i18n.mjs 第 ① 条那段边界说明",
     ).toEqual(["nav.overview"]);
+    expect(r.status, "第 ④ 条已升成硬错，漏报的后果就是打红").toBe(1);
     // 反向控制：同一处换成引号形态就必须被认出来（证明夹具本身没坏）。
     const ok = run({
       dict: { "nav.overview": row("概览") },
@@ -692,11 +778,11 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据的三条已知漏
       dict: { "nav.overview": row("概览") },
       files: { "index.html": "<p data-i18n=nav.overview></p>\n" },
     });
-    expect(r.status, r.stderr).toBe(0);
     expect(
       unrefList(r),
       "判据认得不带引号的属性值了 —— 请回去改 check-i18n.mjs 第 ① 条那段边界说明",
     ).toEqual(["nav.overview"]);
+    expect(r.status, "第 ④ 条已升成硬错，漏报的后果就是打红").toBe(1);
     // 反向控制：单引号与双引号两种都必须认得出。
     for (const q of ['"', "'"]) {
       const ok = run({
