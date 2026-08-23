@@ -115,10 +115,15 @@
  *   ⚠️ 这不是假设：P3e Task 1 第一版把两处 CSS 消费者一起改成了 JS 语义，
  *   复评实测「不许给某一条通道开小灶」那格在违规前面加一个 `url(//…)` 就变绿。
  *
- * **三个导出，同一个 `scan()`，只在「注释输出成什么 / 用哪种方言」上分叉：**
+ * **前三个导出共用同一个 `scan()`，只在「注释输出成什么 / 用哪种方言」上分叉：**
  * · `stripComments` —— JS，注释**删掉**。给「按内容扫」的消费者用。
  * · `blankComments` —— JS，注释**逐字符换成空格、换行原样保留**。给「按行号 / 列位置扫」的用。
  * · `stripCssComments` —— CSS，注释**删掉**。
+ *
+ * **第四个导出 `stripHtmlComments` 走的是另一条路，理由写在它自己的注释里**：
+ * HTML 的注释语义与 JS/CSS 都不同，而且 HTML **没有字符串字面量**——正文里一个
+ * 撇号（`it's`）在 `scan()` 眼里就是一个没闭合的字符串。它不共用 `scan()`
+ * 不是偷懒，是因为共用会当场制造假红；这一条的实测落点见那个函数的注释。
  *
  * ⚠️ **它们不许各写一份**：`tests/ui/api-session.test.ts`「插值捞不齐的那些行今天恰好一处
  *  —— 这道扫描在那一行上是瞎的」那一格底下的 `braceInterpLines()` 全部语义是按行数，
@@ -670,4 +675,50 @@ export function blankComments(src) {
  */
 export function stripCssComments(src) {
   return scan(src, () => "", "css");
+}
+
+/**
+ * HTML：注释（`<!-- … -->`）删掉。**不走 `scan()`。**
+ *
+ * ⚠️⚠️ **为什么不共用 `scan()`——这一条是实测出来的，别去"统一"它。**
+ * 把 `admin-ui/index.html` 喂给 `stripComments()`（JS 方言）会当场抛
+ * `unclosedRegex`：`<title>agnes2api 管理后台</title>` 里 `</title>` 的那个 `/`，
+ * 前一个有意义字符是 `<`（在 `REGEX_AFTER_PUNCT` 里）⇒ 被判成正则字面量开头，
+ * 本行内找不到闭合。喂给 `stripCssComments()`（CSS 方言）则相反：HTML 里没有
+ * CSS 那种块注释记号，那一支几乎是恒等变换，**注释一个都抠不掉而且一声不吭**——
+ * 这正是本仓那条「判据用错工具时不会报错，会静静地放行」。
+ * 更根本的是 **HTML 没有字符串字面量**：正文里的撇号（`it's`）、属性值里的引号，
+ * 在 `scan()` 的字符串分支里都会被当成字面量开头，轻则失步重则假红。
+ *
+ * **判据**：逐字符扫，遇到 `<!--` 就一路吃到第一个 `-->`。
+ * ⚠️ **没闭合时吃到文件尾，这是 HTML5 的规定行为，不是兜底**（tokenizer 在
+ * comment 状态遇到 EOF 直接把注释收尾），所以这里**不抛**——抛的话是本实现比
+ * 浏览器更严，那种严格会在一份浏览器照常渲染的页面上把门禁打红。
+ *
+ * **边界明写（由 `tests/unit/source-guards.test.ts` 的
+ * 「stripHtmlComments 的两条已知边界」那两格钉着，不是散文）**：
+ * · **属性值里的 `<!--` 会被误当成注释开头**（`<div title="<!-- x -->">` 在 HTML
+ *   规范里是纯文本）。要认出它得跟标签状态机，那已经是半个解析器了。
+ * · **内联 `<script>` / `<style>` 里的 JS/CSS 注释抠不掉**——那一段的注释语法是
+ *   JS/CSS 的，本函数只认 `<!-- -->`。⚠️ 这一条**不是靠人记得**：
+ *   `scripts/check-i18n.mjs` 里「HTML 里出现内联脚本 / 样式」那条判据会在
+ *   内联内容出现的第一时间把第 6 道门禁打红，逼人回到这里表态。
+ *
+ * @param {string} src
+ * @returns {string}
+ */
+export function stripHtmlComments(src) {
+  const n = src.length;
+  let out = "";
+  let i = 0;
+  while (i < n) {
+    if (src.startsWith("<!--", i)) {
+      const end = src.indexOf("-->", i + 4);
+      i = end === -1 ? n : end + 3;
+      continue;
+    }
+    out += src[i];
+    i += 1;
+  }
+  return out;
 }

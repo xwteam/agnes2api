@@ -74,6 +74,32 @@ function run(fx: Fixture): { status: number; stdout: string; stderr: string } {
   }
 }
 
+/**
+ * 横幅上那三个分桶（P3e Task 3 新增）。**逐字解析，不许各处自己 `toContain` 一个数字**：
+ * 分桶的行文改了，这里一处红，比十处 `toContain` 各自漂过去好。
+ */
+const BUCKET_RE = /\[check-i18n\] 引用判据：直接引用 (\d+) \/ 拼键覆盖 (\d+) \/ 未被引用 (\d+)；字典共 (\d+) 个 key/;
+
+function buckets(r: { stdout: string }): { direct: number; covered: number; unref: number; total: number } {
+  const m = BUCKET_RE.exec(r.stdout);
+  if (m === null) throw new Error(`横幅里没有逐字打印三个分桶：\n${r.stdout}`);
+  return { direct: Number(m[1]), covered: Number(m[2]), unref: Number(m[3]), total: Number(m[4]) };
+}
+
+/** 横幅上「未被引用」那一行列出的 key（`（无）` ⇒ 空数组）。 */
+function unrefList(r: { stdout: string }): string[] {
+  const m = /\[check-i18n\] 未被引用: (.*)/.exec(r.stdout);
+  if (m === null) throw new Error(`横幅里没有「未被引用」那一行：\n${r.stdout}`);
+  return m[1] === "（无）" ? [] : m[1]!.split(", ");
+}
+
+/** 横幅上「拼键前缀」那一行列出的前缀（`（无）` ⇒ 空数组）。 */
+function tplPrefixList(r: { stdout: string }): string[] {
+  const m = /\[check-i18n\] 拼键前缀: (.*)/.exec(r.stdout);
+  if (m === null) throw new Error(`横幅里没有「拼键前缀」那一行：\n${r.stdout}`);
+  return m[1] === "（无）" ? [] : m[1]!.split(", ");
+}
+
 describe("scripts/check-i18n.mjs 元测试：干净的树", () => {
   /**
    * **反向自检，必须在最前。** 少了它，"一律 exit 1"也能让下面每一格全绿——
@@ -262,6 +288,290 @@ describe("scripts/check-i18n.mjs 元测试：八条判据逐条", () => {
       files: { "js/x.js": 't("ov.n", { count: 1 });\n' },
     });
     expect(r.status, "字典的定义处被当成了调用点").toBe(0);
+  });
+});
+
+/**
+ * **第 ① 条判据换形状之后的那一族（P3e Task 3）。**
+ *
+ * 旧判据是两条只认双引号的正则（`data-i18n(?:-ph|-title)?="…"` 与 `t("…"`）。
+ * 真仓实测：字典 521 个 key，它只看得见 125 处引用、报 396 条「未被引用」，
+ * 其中 371 条是**假警报**——那些 key 明明有字面量，只是写法不在那两种里。
+ * **396 条噪音把 3 条真的埋了**，而这正是本仓那条「一个诚实标记出现得太密就不再传递信息」。
+ *
+ * ⚠️⚠️ **下面这一族里「放宽方向」的每一格，都配了一条反向控制。**
+ * 把判据放宽天生会**减少**报警 ⇒ 「警报变少」本身既可能是「认对了」也可能是
+ * 「判据瞎了」的症状，两者在计数上长得一模一样。分辨它们靠的是**正向探针**：
+ * (a)/(b) 往里塞一个拼错的 key，判据必须**吵**；瞎掉的判据什么都不吵。
+ */
+describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（P3e Task 3）", () => {
+  /**
+   * (a)(b) **这是整条判据的存在理由**：`elI18n('h2', 'usage.titel')` 实测能让六道
+   * 脚本门禁 + 全量用例一起全绿，而用量板块主标题在五种语言下显示裸串。
+   * 旧判据两种引号都逃逸（它只认 `t("` 与 `data-i18n="`），所以两种引号各钉一格。
+   */
+  it.each([["'", "单引号"], ['"', "双引号"]])(
+    "(a)(b) elI18n(%s…) 里拼错的 key 被抓住（%s 形态）：exit 1",
+    (q) => {
+      const r = run({
+        dict: { "usage.title": row("用量") },
+        files: { "js/sec-usage.js": `elI18n(${q}h2${q}, ${q}usage.titel${q});\n` },
+      });
+      expect(r.status, `${q} 引号形态没被抓住`).toBe(1);
+      expect(r.stderr).toContain("usage.titel");
+    },
+  );
+
+  /**
+   * **(a)(b) 的反向控制。** 少了它，「一律 exit 1」也能让上面两格全绿。
+   * 拼对时必须安静——否则这道门禁在真仓上永远红着，第一时间会被人加 `|| true` 绕开。
+   */
+  it.each([["'", "单引号"], ['"', "双引号"]])(
+    "(a)(b) 反向控制：同样的写法拼对时不报错（%s ⇒ %s 形态）：exit 0",
+    (q) => {
+      const r = run({
+        dict: { "usage.title": row("用量") },
+        files: { "js/sec-usage.js": `elI18n(${q}h2${q}, ${q}usage.title${q});\n` },
+      });
+      expect(r.status, r.stderr).toBe(0);
+      expect(unrefList(r), "拼对的 key 不许落进「未被引用」").not.toContain("usage.title");
+    },
+  );
+
+  /**
+   * (c) **「先抠注释」是广扫的前置，不是可选项。**
+   * 不抠就广扫会当场自绊：真仓实测多出一条硬错，来自
+   * `admin-ui/js/pure/usage.mjs` 里刻意留着的 `"usage.titel"` 变异样例——
+   * 那是散文，不是引用点。
+   */
+  it("(c) JS 注释里的 data-i18n 不算引用（否则广扫会被注释自绊）：exit 0", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "js/theme.js": '// data-i18n="nav.usageZZZ"\nt("nav.overview");\n' },
+    });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  /**
+   * **(c) 的反向控制：它没变成「见什么都不报」。** 同一行去掉 `//` 就必须红。
+   * ⚠️ 只做 (c) 那一半等于没做——那一半单独看，「判据整个瞎了」也能让它绿。
+   */
+  it("(c) 反向控制：同一行不在注释里时必须报（差别只在那两个斜杠）：exit 1", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "js/theme.js": '<p data-i18n="nav.usageZZZ"></p>\nt("nav.overview");\n' },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("nav.usageZZZ");
+  });
+
+  /**
+   * **HTML 是第三种注释语义。** 广扫要扫 `admin-ui/index.html` 里那 16 处 `data-i18n=`，
+   * 而那份文件的注释是 `<!-- -->`，抠它走真源的第四个出口 `stripHtmlComments`。
+   * ⚠️ 拿 JS 方言去抠这份 HTML 实测当场抛（`</title>` 里那个斜杠被判成正则开头）。
+   */
+  it("(c-html) HTML 注释里的 data-i18n 不算引用：exit 0", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "index.html": '<!-- <h2 data-i18n="nav.usageZZZ"></h2> -->\n<p data-i18n="nav.overview"></p>\n' },
+    });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  it("(c-html) 反向控制：同一段不在 HTML 注释里时必须报：exit 1", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "index.html": '<h2 data-i18n="nav.usageZZZ"></h2>\n<p data-i18n="nav.overview"></p>\n' },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("nav.usageZZZ");
+  });
+
+  /**
+   * (d) **本任务仍不改第 ④ 条的严重级别**（那是 Task 4）：没人引用的 key 还是警告。
+   * 但它必须**出现在「未被引用」分桶里**——那是 Task 4 升硬错时的观测点。
+   */
+  it("(d) 谁都不引用的 key：本任务仍 exit 0，但必须出现在「未被引用」分桶里", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览"), "nav.lonely": row("没人用") },
+      files: { "js/x.js": 't("nav.overview");\n' },
+    });
+    expect(r.status, "本任务不改第 ④ 条的严重级别").toBe(0);
+    expect(unrefList(r)).toContain("nav.lonely");
+    expect(unrefList(r), "被引用的那个不许也落进来").not.toContain("nav.overview");
+  });
+
+  /**
+   * (e) ⚠️⚠️ **这一格钉住的是那条正则的形状，不是它的结果**（CRITICAL）。
+   *
+   * 命名空间前缀必须**写进正则里去锚定引号对**，不许「先通用配对引号、再回头看是不是 key」。
+   * 两者在有空串字面量 `""` 的行上会分叉：`"([^"\n]+)"` 要求引号里至少一个字符，
+   * 遇到 `""` 时第一个引号匹配失败、引擎前进一格，从**第二个引号**重新开配，
+   * **后面那个真 key 整个被吃掉**。真仓实测这一族有 11 条假阳性，
+   * 而 Task 4 紧接着要把「未被引用」升成硬错 ⇒ 会 exit 1 在 11 个正在用的 key 上。
+   *
+   * 下面三行取自真仓的三种形态（`sec-registrar.js` / `sec-models.js` / `sec-playground.js`）。
+   */
+  it("(e) 同一行上的空串字面量不许把后面那个 key 吃掉 —— 通用配对引号版会在这里错位", () => {
+    const r = run({
+      dict: {
+        "reg.zzzChannelAny": row("任意"),
+        "models.zzzEmpty": row("空"),
+        "models.zzzFilterEmpty": row("筛完是空"),
+        "nav.zzzA": row("甲"),
+        "nav.zzzB": row("乙"),
+      },
+      files: {
+        "js/x.js": [
+          'el("option", { value: "" }, t("reg.zzzChannelAny"));',
+          'const k = filter === "" ? "models.zzzEmpty" : "models.zzzFilterEmpty";',
+          "const q = x === '' ? 'nav.zzzA' : 'nav.zzzB';",
+          "",
+        ].join("\n"),
+      },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(
+      unrefList(r),
+      "有 key 被空串字面量吃掉了 ⇒ 那条正则写成了「通用配对引号」版，回去把命名空间前缀写进正则本身",
+    ).toEqual([]);
+    expect(buckets(r).direct, "五个 key 加 18 条填充，一个都不许丢").toBe(23);
+  });
+
+  /**
+   * **横幅上的三个分桶必须是字典 key 的一个划分**——三个数加起来恒等于字典 key 总数。
+   *
+   * ⚠️ 这一格刻意**带一条引用了字典里没有的 key 的坏行**：那条 bogus 引用会让
+   * 「直接引用」这个数按写法分叉——把它算进「直接引用」的实现（`directlyUsed.size`）
+   * 在这里三个数会加出 21，而字典只有 20 个 key。**不带 bogus 的话这一格是恒真的**，
+   * 恒真的断言是待办不是守卫。
+   */
+  it("横幅逐字打印三个分桶，且三个数加起来等于字典 key 总数（有 bogus 引用时也必须成立）", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览"), "nav.unused": row("没人用") },
+      files: { "js/x.js": 't("nav.overview");\nt("nav.typo");\n' },
+    });
+    expect(r.stdout).toMatch(/直接引用 \d+/);
+    expect(r.stdout).toMatch(/拼键覆盖 \d+/);
+    expect(r.stdout).toMatch(/未被引用 \d+/);
+    const b = buckets(r);
+    expect(b.total, "18 条填充 + 夹具里那 2 个").toBe(20);
+    expect(
+      b.direct + b.covered + b.unref,
+      "三个分桶不是字典 key 的一个划分 ⇒ 「直接引用」里混进了字典里没有的 key",
+    ).toBe(b.total);
+    expect(r.status, "bogus 引用本身仍然是第 ① 条的硬错").toBe(1);
+    expect(r.stdout, "红的时候也必须先把分桶打出来 —— 那是 Task 4 的观测点").toMatch(BUCKET_RE);
+  });
+
+  /**
+   * **广扫必须跳过字典自己**（搬运风险 ④）。旧判据没跳它，因为旧判据只认 `t("…"` 与
+   * `data-i18n=`，字典里都没有；换成命名空间广扫之后不跳，字典里每一行
+   * `"key": { … }` 都会让那个 key **自证被引用** ⇒ 第 ④ 条恒绿、判据整个作废。
+   */
+  it("只在字典里出现的 key 必须落进「未被引用」—— 字典自己是定义处，不是引用点", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览"), "nav.onlyInDict": row("只在字典里") },
+      files: { "js/x.js": 't("nav.overview");\n' },
+    });
+    expect(
+      unrefList(r),
+      "字典文件被当成了引用点 ⇒ 每个 key 都自证被引用，第 ④ 条从此恒绿",
+    ).toContain("nav.onlyInDict");
+  });
+
+  /**
+   * **拼键前缀那张表**（`fieldLabelKey()` 返回的 `` `set.field.${path}` `` 这一族）。
+   * 真仓有 22 个 key 只经由模板拼键被引用，静态判据天生看不见它们的完整名字。
+   */
+  it("拼键前缀：模板字面量的前缀认得出，前缀底下的 key 落进「拼键覆盖」", () => {
+    const r = run({
+      dict: { "set.field.a": row("甲"), "set.field.b": row("乙") },
+      files: { "js/x.js": 'const k = `set.field.${path}`;\n' },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(tplPrefixList(r)).toEqual(["set.field."]);
+    expect(buckets(r).covered, "两个 key 都该被前缀覆盖").toBe(2);
+    expect(unrefList(r)).toEqual([]);
+  });
+
+  /**
+   * ⚠️⚠️ **这一格是拼键前缀表的绊线**（P3e 计划点名 Task 3 owns）。
+   * 前缀是 `set.field.`，**不是 `set.`**：把 `TPL_PREFIX` 放宽成只取第一段、
+   * 或者把 `startsWith` 换成命名空间比对，`set.card.x` 会被凭空喂活，
+   * 而它正是 Task 4 要处置的那一族 ⇒ 一条真的死 key 从此永远看不见。
+   */
+  it("拼键前缀的绊线：前缀是整段 `set.field.`，不许放宽成命名空间 `set.`", () => {
+    const r = run({
+      dict: { "set.field.a": row("甲"), "set.card.x": row("卡片说明") },
+      files: { "js/x.js": 'const k = `set.field.${path}`;\n' },
+    });
+    expect(tplPrefixList(r)).toEqual(["set.field."]);
+    expect(
+      unrefList(r),
+      "`set.card.x` 被拼键前缀凭空喂活了 ⇒ 前缀被放宽到了命名空间那一档",
+    ).toEqual(["set.card.x"]);
+    expect(buckets(r).covered).toBe(1);
+  });
+
+  /**
+   * **拼键前缀的反向控制：它不乱收。** 不在字典命名空间里的模板前缀不许进表——
+   * 否则 `` `${base}/admin/api/` `` 这种拼路径的模板也会变成一条「前缀」，
+   * 而一条足够短的前缀能把整本字典一并喂活。
+   */
+  it("拼键前缀的反向控制：不在字典命名空间里的模板前缀不许进表", () => {
+    const r = run({
+      dict: { "set.field.a": row("甲"), "nav.overview": row("概览") },
+      files: { "js/x.js": 'const u = `zzz.${path}`;\nt("nav.overview");\n' },
+    });
+    expect(tplPrefixList(r), "`zzz` 不是字典命名空间，不许进前缀表").toEqual([]);
+    expect(unrefList(r)).toEqual(["set.field.a"]);
+  });
+
+  /**
+   * **广扫的「不乱红」那一半。** 命名空间锚定意味着：第一段不是字典命名空间的字符串
+   * 一律不算 key。少了这一格，把正则放宽成「任何带点的字符串」也能让上面每一格全绿，
+   * 而真仓里会冒出一堆「引用了字典里没有的 key」的假硬错。
+   */
+  it("不乱红：第一段不是字典命名空间的字符串字面量不许被当成 key", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: {
+        "js/x.js": [
+          't("nav.overview");',
+          'const u = "https://example.com/a.b";',
+          'const m = "not.a.namespace";',
+          "const n = 'a.b';",
+          'const f = "sec-usage.js";',
+          "",
+        ].join("\n"),
+      },
+    });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  /**
+   * **射程绊线：HTML 里出现内联脚本 / 样式。**
+   * 抠 HTML 注释走的是只认 `<!-- -->` 的那个出口，它**看不见内联 `<script>` 里的
+   * JS 注释**——那一段里被注释掉的 `data-i18n=` 会当成真引用混进来。
+   * 今天 `admin-ui/index.html` 的两个 `<script>` 都只有 `src=`，零内联内容；
+   * 哪天真写了内联，这条判据必须在第一时间把门禁打红，而不是静静地放行。
+   */
+  it("HTML 里出现内联脚本 / 样式：exit 1（本门禁对 HTML 只抠 `<!-- -->`）", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "index.html": '<p data-i18n="nav.overview"></p>\n<script>\nconsole.log(1);\n</script>\n' },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("内联");
+  });
+
+  it("HTML 里只有外链脚本时不报错（否则这条判据在真仓上永远红着）", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "index.html": '<script src="/admin/js/boot.js"></script>\n<p data-i18n="nav.overview"></p>\n' },
+    });
+    expect(r.status, r.stderr).toBe(0);
   });
 });
 

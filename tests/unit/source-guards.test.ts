@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { stripTypeScriptTypes } from "node:module";
-import { stripComments, blankComments, stripCssComments, FAIL_KINDS } from "../helpers/strip-comments.js";
+import {
+  stripComments, blankComments, stripCssComments, stripHtmlComments, FAIL_KINDS,
+} from "../helpers/strip-comments.js";
 
 /**
  * 源码层门禁：**两条硬约束的自动化部分**。
@@ -708,6 +710,50 @@ describe("抠注释真源的三个出口", () => {
       expect((e as Error).message, "JS 侧删掉这半句就等于把最常见的成因藏起来")
         .toContain("正则字面量");
     }
+  });
+
+  /**
+   * **HTML 是第三种注释语义，而它的消费者是第 6 道门禁**（`scripts/check-i18n.mjs`
+   * 的引用广扫要扫 `admin-ui/index.html` 里那 16 处 `data-i18n=`）。
+   * 下面三格分别钉住：**正向抠得掉**、**前三个导出在 HTML 上各自怎么坏**、
+   * **两条已知边界确实是那个样子**。
+   */
+  it("stripHtmlComments 抠掉 `<!-- -->`，而 HTML 里的斜杠与撇号都不是注释", () => {
+    const html = '<title>a/b</title>\n<!-- 抠掉我 -->\n<p>it\'s fine</p>\n<a href="/x/y">z</a>\n';
+    const got = stripHtmlComments(html);
+    expect(got, "HTML 注释必须被抠掉").not.toContain("抠掉我");
+    expect(got, "`</title>` 里的斜杠不是注释开头").toContain("<title>a/b</title>");
+    expect(got, "正文里的撇号不是字符串开头").toContain("it's fine");
+    expect(got, "属性里的路径不许被吞").toContain('href="/x/y"');
+  });
+
+  /**
+   * **反向控制：前三个导出在同一份 HTML 上都不能用。**
+   * 少了这一格，「HTML 需要第四个方言」就只是一句散文——而本仓已经为
+   * 「拿错方言去抠」栽过一次（P3e Task 1 把两处 CSS 消费者改成 JS 语义）。
+   */
+  it("同一份 HTML 喂给前三个导出：JS 方言当场抛、CSS 方言一声不吭地什么都没抠", () => {
+    const html = '<title>a/b</title>\n<!-- 抠掉我 -->\n';
+    expect(() => stripComments(html), "JS 方言把 `</title>` 的斜杠判成正则开头 ⇒ 必须抛")
+      .toThrow("正则字面量");
+    expect(stripCssComments(html), "CSS 方言在 HTML 上是恒等变换 —— 静静地放行，这正是它不能用的理由")
+      .toContain("抠掉我");
+  });
+
+  /**
+   * **stripHtmlComments 的两条已知边界**（真源那个函数的注释里逐条写着这两句）。
+   * **这两格断言的是「当前实现就是这样」，不是「这样是对的」**：哪天判据被改进，
+   * 这里会红，而红的地方正是该回去改那段注释的地方。
+   */
+  it("stripHtmlComments 的两条已知边界：属性值里的 `<!--` 会误抠；内联 script 里的 JS 注释抠不掉", () => {
+    // 边界一：按 HTML 规范这是纯文本，本实现会把它当注释吃掉。
+    const attr = '<div title="<!-- x -->">留下我</div>';
+    expect(stripHtmlComments(attr), "判据被改进了（认得出标签状态）—— 请回去改真源那段边界说明")
+      .not.toContain("<!-- x -->");
+    // 边界二：内联脚本里的 `//` 行注释不是 HTML 注释，本函数看不见它。
+    const inline = "<script>\n// data-i18n=\"nav.zzz\"\n</script>";
+    expect(stripHtmlComments(inline), "判据被改进了（认得出内联脚本）—— 请回去改真源那段边界说明")
+      .toContain('data-i18n="nav.zzz"');
   });
 });
 

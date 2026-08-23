@@ -18,11 +18,18 @@
  * ⚠️ **但它认得出的只是「那几种拼法」**：它逐条登记了自己抓不住哪些形态（见那一格旁边的
  * `REGEX_STRIP_MISSES` 表），别把它当成「任何第二份实现都躲不掉」。
  *
- * **三个导出，同一个扫描器**：`stripComments`（JS，删注释）、`blankComments`（JS，注释换空格、
+ * **前三个导出共用同一个扫描器**：`stripComments`（JS，删注释）、`blankComments`（JS，注释换空格、
  * 行号列位置不变）、`stripCssComments`（**CSS，只认块注释**）。
  * ⚠️ **抠 CSS 一律用第三个**：CSS 没有 `//` 行注释，拿 JS 语义去抠会把
  * `background: url(//cdn…)` 之后的样式整段吃掉——P3e Task 1 第一版就是这么把两处 CSS
  * 消费者一起弄瞎的（复评实测：违规前面加一个 `url(//…)` 那格就变绿）。
+ *
+ * **第四个导出 `stripHtmlComments`（HTML，只认 `<!-- -->`）不共用那个扫描器**，
+ * 理由与射程写在真源那个函数自己的注释里：HTML 没有字符串字面量，正文里一个撇号
+ * 就够让 `scan()` 的字符串分支失步；而 `admin-ui/index.html` 喂给 `stripComments()`
+ * 实测当场抛 `unclosedRegex`（`</title>` 里那个斜杠被判成正则开头）。
+ * ⚠️ **抠 HTML 一律用第四个，别拿前三个里的任何一个凑合**：拿 CSS 方言凑合的话
+ * 那一支在 HTML 上几乎是恒等变换——**一个注释都抠不掉，而且一声不吭**。
  *
  * **谁在用这一份**：**凡 import 本文件的都算**，一条都不必写在这里。
  * 现场枚举：`grep -rn "^import.*helpers/strip-comments" tests/`。
@@ -31,4 +38,6 @@
  * ⚠️ **这张消费者清单刻意不写计数**：它是**该长大**的（每多一个调用点收编都是好事），
  * 而本文件曾连着三轮在这里写错数字——写死一个数只会换来机械 bump。
  */
-export { stripComments, blankComments, stripCssComments, FAIL_KINDS } from "../../scripts/lib/strip-comments.mjs";
+export {
+  stripComments, blankComments, stripCssComments, stripHtmlComments, FAIL_KINDS,
+} from "../../scripts/lib/strip-comments.mjs";
