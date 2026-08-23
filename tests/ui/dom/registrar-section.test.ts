@@ -4,7 +4,7 @@ import { bootPanel, settle } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { I18N } from "../../../admin-ui/js/i18n-dict.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
-import { stripComments } from "../../helpers/strip-comments.js";
+import { stripComments, stripCssComments } from "../../helpers/strip-comments.js";
 
 /**
  * 注册机板块的**行为**覆盖（P3c Task 6）。纯函数那一半在 `tests/ui/registrar.test.ts` 的
@@ -116,6 +116,17 @@ function tagShape(root: FakeElement): string[] {
 
 describe("设计 §10.3 第 2、3 条：两张通道卡", () => {
   /**
+   * **抠 CSS 的那一档，在 `describe` 作用域里只有这一处。**
+   *
+   * ⚠️⚠️ **必须共享这一个绑定，绝不许绊线自己再写一遍 `stripCssComments`。**
+   * 本文件族在这一点上栽过：`tests/unit/ui-assets.test.ts` 的 CSS 盲点探针第一版
+   * 在两个 `it` 里各写了一遍字面量 ⇒ **探针与被测扫描是两份独立的东西**，
+   * 注释里写死的红条件当场变成假话。本轮变异实测同一件事：把下面那格的抠法换回
+   * `stripComments` 时，一个自己 import `stripCssComments` 的绊线**照样绿**。
+   */
+  const stripCss = stripCssComments;
+
+  /**
    * **第 2 条：同字段数、同控件类型。**
    *
    * 判据是**整棵子树的标签序列逐项相等**，不是「都有一颗按钮」——后者拦不住
@@ -189,14 +200,45 @@ describe("设计 §10.3 第 2、3 条：两张通道卡", () => {
     // **先去注释再扫。** 这个仓库的注释极其爱复述代码——`sections.css` 里那段说明
     // 自己就写着「刻意没有任何 `[data-channel="…"]` 选择器」，不去注释的话这一格
     // 会被那句话本身打红（第一次跑就是这样红的），而那时红的是量具不是缺陷。
-    // 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源（P3e Task 1 收编）。
-    // CSS 侧的边界与 `tests/unit/ui-assets.test.ts` 那两格逐字相同，写在那边。
-    const stripped = stripComments(css);
+    // 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源的 **CSS 方言**出口。
+    // ⚠️⚠️ **不许改成 `stripComments`**：CSS 没有 `//` 行注释，JS 语义会把
+    // `background: url(//cdn…)` 之后的样式整段吃掉。P3e Task 1 第一版正是这么把这一格
+    // 弄瞎的（复评实测：同一条真违规裸写⇒红，前面加一个 `url(//…)` ⇒ 绿）。
+    // ⚠️ **这一格的方向与 `tests/unit/ui-assets.test.ts` 那两格相反**（那两格断言「某条
+    // 规则还在」，被吃掉只会更绿；这一格断言「没有命中」，被吃掉同样更绿）——两边都会瞎，
+    // 但**别再写「边界与那边逐字相同」**：那句交叉引用当初把一个假的安全网继承了过来。
+    // 这一格自己的绊线就在下面。
+    const stripped = stripCss(css);
     const hits = [...stripped.matchAll(/\[data-channel[^\]]*\]/g)].map((m) => m[0]);
     expect(hits, "给某一条通道单独写了样式 —— 那是设计 §10.3 第 2 条禁止的不对称，而且画出来才看得见")
       .toEqual([]);
     // 反向自检：扫的是对的那个文件（它确实含有本板块的样式）。
     expect(css, "扫错文件了 —— 这份 CSS 里根本没有通道卡的样式").toContain(".channel-card");
+  });
+
+  /**
+   * **绊线：上面那格抠 CSS 用的必须是只认块注释的那一档。**
+   *
+   * 上面那格断言的是「一处都没有」，所以**任何把 CSS 吃掉的抠法都只会让它更绿**——
+   * 这类格子自己永远量不出量具坏没坏，必须另立一格。三条：正向（`url(//…)` 之后的
+   * 违规仍看得见）、反向控制（不许退化成什么都不抠）、以及「这个危险不是假想」。
+   */
+  it("绊线：抠 CSS 用的是只认块注释的那一档 —— `url(//…)` 之后的违规仍要看得见", () => {
+    const sample = '.zz{background:url(//cdn.example/x.png)} [data-channel="alpha"] .b{color:blue}';
+    const seen = (s: string) => [...s.matchAll(/\[data-channel[^\]]*\]/g)].map((m) => m[0]);
+    expect(
+      seen(stripCss(sample)),
+      "CSS 侧的抠注释退回 JS 语义了 —— `url(//…)` 之后的违规被当行注释吃掉，上面那格会对着"
+      + "一份残缺的 CSS 报绿。抠 CSS 一律用 stripCssComments",
+    ).toEqual(['[data-channel="alpha"]']);
+    expect(
+      stripCss('/* 抠掉我 */ [data-channel="beta"]'),
+      "CSS 语义退化成了「什么都不抠」—— 那样上面那条正向断言是恒真的",
+    ).toBe(' [data-channel="beta"]');
+    expect(
+      seen(stripComments(sample)),
+      "JS 语义不再把 `url(//…)` 当行注释开头了 —— 那这一格的方言之分就没意义了，回来重新表态",
+    ).toEqual([]);
   });
 
   /**

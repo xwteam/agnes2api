@@ -9,7 +9,7 @@ import { join, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { UI_ASSETS, UI_BUILD_HASH } from "../../src/ui/assets.generated.js";
-import { stripComments } from "../helpers/strip-comments.js";
+import { stripComments, stripCssComments } from "../helpers/strip-comments.js";
 
 /**
  * **只放 node 侧**（vitest.workers.config.ts 的 include 只有 tests/contract）：
@@ -540,12 +540,17 @@ describe("生成器对违规输入 exit 1", () => {
  */
 describe("CSS：横排卡片行里不许继承竖排卡的上边距", () => {
   const css = () => readFileSync("admin-ui/css/sections.css", "utf8");
-  // 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源（P3e Task 1 收编）。
-  // ⚠️ **CSS 没有行注释，而真源会把双斜杠当行注释开头**——今天 `admin-ui/css/` 下
-  // 零处双斜杠（实地数过：`url(//…)` 与协议相对地址一处都没有），所以两种实现在
-  // 这份 CSS 上输出逐字节相同（收编前逐文件比对过）。哪天有人写了一个协议相对 URL，
-  // 下面那两格会红——那时红的是量具，回来在这里表态。
-  const strip = stripComments;
+  // 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源的 **CSS 方言**出口。
+  //
+  // ⚠️⚠️ **P3e Task 1 第一版在这里栽了一次，别再改回 `stripComments`。**
+  // 那一版把 JS 的行注释语义搬进了这两处 CSS 消费者（收编前它们各自那份副本只认块注释，
+  // 对 CSS 恰好是对的）。**CSS 没有 `//` 行注释**，`background: url(//cdn…)` 里的双斜杠
+  // 是地址的一部分 —— 按 JS 语义抠会把那一行其后的样式整段吃掉。
+  // 那一版还在这里写下一句「哪天有人写了一个协议相对 URL，下面那两格会红」，
+  // **复评实测那句是假的**：协议相对 URL 单独写一行、重建生成物之后 83/83 全绿、零信号；
+  // 只有当 `url(//…)` 恰好与被断言的那条规则**同行且在其前面**时才会红。
+  // ⇒ 现在改用只认块注释的那一档，并在下面用一格绊线把这件事钉成断言（不是又一句散文）。
+  const strip = stripCssComments;
 
   /**
    * **这道扫描本身。提到 `describe` 作用域是为了让下面的盲点探针走的是同一份判据。**
@@ -597,5 +602,34 @@ describe("CSS：横排卡片行里不许继承竖排卡的上边距", () => {
       "这道扫描对这份 CSS 的判断变了 —— 说明盲点被补上了（好事），"
       + "请把这一行连同上面的边界说明一起删掉",
     ).toBe(scanSays);
+  });
+
+  /**
+   * **绊线：这两格抠 CSS 用的必须是只认块注释的那一档。**
+   *
+   * 上面那段边界说明原来是散文（而且说了假话，见那里）。现在它是三条断言：
+   * 1. **正向**：`url(//…)` 与被断言的那条规则同行时，CSS 语义必须把规则原样留着。
+   *    有人把 `strip` 改回 `stripComments` ⇒ 这条当场红。
+   * 2. **反向控制**：CSS 语义不许退化成「什么都不抠」—— 真块注释还是要抠掉。
+   *    （少了这条，把 `strip` 写成 `(s) => s` 也能让第 1 条绿。）
+   * 3. **这个危险不是假想**：同一份文本喂 JS 语义确实会被吃掉半行。
+   *    哪天真源把 JS 侧的行注释语义也改了，这条会红 —— 那时回来重新表态。
+   */
+  it("绊线：抠 CSS 用的是只认块注释的那一档 —— `url(//…)` 不许把同一行其后的样式吃掉", () => {
+    const sample = ".zz{background:url(//cdn.example/x.png)} .card-row > .card + .card { margin-top: 0; }";
+    expect(
+      RULE.test(strip(sample)),
+      "CSS 侧的抠注释退回 JS 语义了 —— `url(//…)` 之后的样式被当行注释吃掉，"
+      + "这两格会对着一份残缺的 CSS 报绿。抠 CSS 一律用 stripCssComments",
+    ).toBe(true);
+    expect(
+      strip("/* 抠掉我 */ .kept{color:red}"),
+      "CSS 语义退化成了「什么都不抠」—— 那样上面那条正向断言是恒真的",
+    ).toBe(" .kept{color:red}");
+    expect(
+      RULE.test(stripComments(sample)),
+      "JS 语义不再把 `url(//…)` 当行注释开头了 —— 那这两格的方言之分就没意义了，"
+      + "回来重新评估上面那段边界说明",
+    ).toBe(false);
   });
 });

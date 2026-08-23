@@ -286,5 +286,13 @@ describe("i18n 字典", () => {
     ].join("\n");
     expect(referencedKeysIn(poisoned), "毒刺在场时这道扫描仍必须看得见被当参数传的 key")
       .toContain("models.zzzParamKey");
+    // **反向控制（「我对 X 不乱红」那一半）**：把假 key 那一行拿掉、毒刺与闭合记号原样留着，
+    // 这道扫描不许凭空报出它。少了这条，上面那条 `toContain` 可能只是因为扫描器见谁都报。
+    const poisonOnly = [
+      'const ADMIN_API_GLOB = "/admin/api/*";',
+      "/* 提供闭合记号的普通块注释 */",
+    ].join("\n");
+    expect(referencedKeysIn(poisonOnly), "假 key 不在场时不许报出它 —— 否则上面那条是恒真的")
+      .not.toContain("models.zzzParamKey");
   });
 });

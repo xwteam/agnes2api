@@ -261,6 +261,16 @@ describe("复评必改④：替身能力扫描——发货代码不许用到 fak
     ].join("\n");
     expect(fakeDomOnlyApis(poisoned), "毒刺在场时这道扫描仍必须看得见 NodeList.map()")
       .toContain("querySelectorAll()");
+    // **反向控制（「我对 X 不乱红」那一半）**：把缺陷那一行拿掉、毒刺与闭合记号原样留着，
+    // 这道扫描必须**什么都不报**。少了这条，上面那条 `toContain` 也可能是因为扫描器
+    // 见谁都报——那是一条恒真断言，不是鉴别力。复评量过这一侧成立，但没落成断言，
+    // 现在落成断言。
+    const poisonOnly = [
+      'const ADMIN_API_GLOB = "/admin/api/*";',
+      "/* 一段普通的块注释，它提供了那个闭合记号 */",
+    ].join("\n");
+    expect(fakeDomOnlyApis(poisonOnly), "缺陷不在场时这道扫描不许报 —— 否则上面那条是恒真的")
+      .toEqual([]);
   });
 
   it("盲区清单不是空的——如实登记按名字扫描拦不住的那几类，别让人以为门禁绿了就等于处处一致", () => {
