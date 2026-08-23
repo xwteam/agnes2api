@@ -254,6 +254,81 @@ function gatewayCalls(h: Harness) {
   return h.calls.filter((c) => c.url.startsWith(PANEL_ORIGIN));
 }
 
+/**
+ * ── **「就地更新与整版重建输出逐字相同」的公用装置** ───────────────────────────
+ *
+ * ⚠️ **它在模块顶层，不在某一个 describe 里面**：本文件有**两处**就地更新
+ *（轮询那一拍重填媒体盒子 + 状态码那一格；流式那一轮就地改 `<pre>` + 「掉了几块」那一行），
+ * 两处栽的是**同一个**结构性 bug —— **就地更新的那个节点之外，还有一份会变的状态
+ * 被渲染在别处**（复评 H2 与 G2 逐字同型）。抄第二份判据出来的话，
+ * 两份一漂只有真机上看得见，而这个文件通篇在讲这件事。
+ *
+ * **方法**：把 Playground 板块整棵子树逐节点逐属性序列化
+ *（tag / 全部属性 / `value` / `checked` / `disabled` / 自有文本 / 子树形状），
+ * 再从**同一份模块状态**强制整版重建一次，序列化第二遍，两份逐字比对。
+ *
+ * ⚠️ **强制重建走的是真接线，不是去调一个内部函数**：`js/app.js:65` 写着
+ * `current === name` 时只跑 `onShow()`、**不跑 `onHide()`**，
+ * 而 `playgroundSection.onShow()` 在目录已经读到时就是一次 `render()`
+ * ⇒ **再点一次当前那颗导航按钮** = 一次纯粹的整版重建，且在飞的那条不会被掐。
+ *
+ * ⚠️ **前置条件必须自己断言**：这一格全靠「重建那一下真的发生了」，
+ * 而那件事在序列化结果里是不可见的（重建出来的字长得一样才是要证的东西）。
+ * ⇒ 用**节点身份**当前置条件：重建之后那棵子树必须换成新对象。
+ * 少了它，`navTo` 哪天不再触发 `onShow()`，这一格会静静退化成「自己跟自己比」。
+ * **实测（复评 R-2/R-4）**：把 `js/app.js:65` 改成「不重建」⇒ 六格全红报「前置条件塌了」；
+ * 改成「重建但顺带跑 `onHide()`」⇒ 六格全红在输出 diff 上。两种退化各有一条红线接着。
+ */
+function domShot(root: FakeElement): string {
+  const lines: string[] = [];
+  const walk = (n: FakeElement, path: string): void => {
+    const attrs = [...n.attrs.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+      .join(" ");
+    // **只取自有文本**：子树文本由下面各行自己覆盖，一起取会把每个差异重复计一遍。
+    const own = n.children.length === 0 ? n.textContent : "";
+    lines.push([
+      path, `<${n.tagName}>`, attrs,
+      `value=${JSON.stringify(n.value)}`,
+      `checked=${n.checked}`, `disabled=${n.disabled}`,
+      `text=${JSON.stringify(own)}`,
+    ].join(" | "));
+    n.children.forEach((c, i) => { walk(c, `${path}/${i}:${c.tagName}`); });
+  };
+  walk(root, `0:${root.tagName}`);
+  return lines.join("\n");
+}
+
+/**
+ * 就地更新之后的屏幕 vs 从同一份状态整版重建之后的屏幕。
+ *
+ * ⚠️ **测试代码读 `.attrs` 是允许的**（它是 `fake-dom-parity.test.ts` 登记的 8 条
+ * `FAKE_ONLY_MEMBERS` 之一，那张表管的是 `admin-ui/` 下的**发货代码**，不管测试）。
+ * 排序属性名是为了让 diff 只反映真实差异，不反映插入顺序。
+ */
+function expectSameAsRebuild(h: Harness, sec: FakeElement, where: string): void {
+  const inPlace = domShot(sec);
+  const beforeNodes = pick(sec, ".pg-turn");
+  navTo(h, "playground");   // `showSection` 在 current === name 时只跑 onShow() ⇒ 整版 render()
+  const afterNodes = pick(sec, ".pg-turn");
+  expect(afterNodes.length, `${where}：重建之后右栏一轮都不剩 —— 前置条件塌了`).toBe(beforeNodes.length);
+  expect(beforeNodes.length, `${where}：右栏一轮都没有 —— 这一格什么都没比`).toBeGreaterThan(0);
+  expect(
+    afterNodes[0],
+    `${where}：**前置条件塌了** —— 再点一次当前导航按钮没有触发整版重建，`
+    + "这一格已经退化成自己跟自己比。去看 js/app.js 的 showSection()",
+  ).not.toBe(beforeNodes[0]);
+  expect(
+    domShot(sec),
+    `${where}：**就地更新与整版重建的输出不等价**。`
+    + "轮询那一次正是在这里编出了一个状态码（`.pg-status` 画在 `.pg-media` 盒子外面，"
+    + "就地重填够不着它）；流式那一次是漏说了「掉了几块」（`.pg-malformed` 画在 `<pre>` 外面）。"
+    + "差异那一行的路径直接指出是哪一格 —— "
+    + "要么把那一格也就地更新，要么这一拍别改它对应的那份状态",
+  ).toBe(inPlace);
+}
+
 describe("左栏：档位与模型全部来自协议目录", () => {
   it("四条协议的分段按钮由响应生成，展示名是 label 不是裸 id —— 面板上写 id 等于让运维自己去猜", async () => {
     const h = await openPg(respondWith());
@@ -1477,6 +1552,164 @@ describe("Playground 板块：流式", () => {
 });
 
 /**
+ * ── **P3d 第二轮修复定向复评 G2：流式在途那一拍** ─────────────────────────────
+ *
+ * **它防住的真实故障（复评 S-1 实测，不是设想）**：`onPayload` 每来一块读不出来的
+ * 数据就 `turn.malformed++`，而那句话画出来的 `.pg-malformed` 在那个 `<pre>` **外面**
+ * ⇒ 只就地改 `<pre>` 的 `textContent` **够不着它**。上一版在途期间
+ * `.pg-malformed` **就地 0 / 强制重建 1**，也就是说：**面板把一段缺字的回答
+ * 当成完整的回答画着，一个字都不提**，直到流结束那一次整版 `render()` 才补上。
+ * 长生成是分钟级，流被挂住时无限期。而 `buildTurn()` 里那句
+ * 「**静默丢弃就是撒谎**」正是这个文件自己写的。
+ *
+ * ⚠️ **它与轮询那次（复评 H2，`.pg-status` 编了一个状态码）是同一个结构性 bug**：
+ * **就地更新的那个节点之外，还有一份会变的状态被渲染在别处。**
+ * 所以下面第二格用的是本文件顶层那份**同一个** `expectSameAsRebuild()`，不是抄一份。
+ *
+ * ⚠️ **既有那格「中间夹一块读不出来的数据」看不到这件事**：它 `await settle(40)`
+ * 等到**流结束之后**才断言，而流结束会走 `.finally()` → `render()` 把话补上
+ * ⇒ 那一格看到的是补正之后的屏幕，**在途那一段从来没有被任何一格看过**。
+ * 这一组的夹具因此必须是一条**挂住不结束**的流。
+ */
+describe("流式在途：那一拍的屏幕不许比整版重建少说一句话", () => {
+  /**
+   * 一条**先真的吐几块、然后挂住不结束**的流。
+   *
+   * ⚠️ **分阶段必须靠 `pull`**（与上面 `brokenStream()` 同一条理由：在同一个 `start`
+   * 里先 enqueue 再收尾，那几块在流那一层就没了）。
+   * ⚠️ **挂住那一下是一个永不落定的 Promise，不是 `close()`**：`close()` 会让
+   * `streamFromGateway()` 落地 ⇒ `.finally()` 里那次整版 `render()` 把话补上
+   * ⇒ 要观测的那一拍当场消失。**夹具本身就是这一组的判据的一半。**
+   */
+  function hangingStream(lines: readonly string[]): ReadableStream<Uint8Array> {
+    let i = 0;
+    const enc = new TextEncoder();
+    return new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (i < lines.length) { c.enqueue(enc.encode(lines[i++]!)); return undefined; }
+        return new Promise<void>(() => {});   // 挂住：既不再吐，也不结束
+      },
+    });
+  }
+
+  /** 一块正文 → 两块读不出来的 → 挂住。**两块**是刻意的，理由见下面第二格。 */
+  const WIRE = [
+    'data: {"id":"c1","choices":[{"delta":{"content":"甲"}}]}\n\n',
+    "data: {这一块不是合法 JSON\n\n",
+    "data: {这一块也不是合法 JSON\n\n",
+  ];
+
+  async function startHanging(): Promise<{ h: Harness; sec: FakeElement }> {
+    const h = await openPg(respondWith({
+      gateway: () => ({ status: 200, body: null, raw: hangingStream(WIRE) }),
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "你好");
+    turnOnStream(sec);
+    one(sec, ".pg-send").click();
+    await settle(80);
+    // ── 前置条件三条：这一拍真的是「在途」，不是收尾之后 ────────────────────────
+    expect(one(sec, ".pg-stream-text").textContent, "前置条件：正文那一块得真的到了").toBe("甲");
+    expect(pick(sec, ".pg-cancel").length, "前置条件：这条流得还挂着（在飞），否则测的是收尾那一拍").toBe(1);
+    expect(pick(sec, ".pg-error").length, "前置条件：这条流不许已经出错").toBe(0);
+    return { h, sec };
+  }
+
+  /**
+   * **变红条件（实测）**：把 `onPayload` 里 `turn.malformed++` 之后那一段
+   *（就地改 `.pg-malformed` / `0 → 1` 时 `render()` 一次）删掉 ⇒ 这一格红成
+   * 「掉了 2 块却什么都没说 —— 期望 1，实际 0」。
+   */
+  it("在途就把「掉了几块」说出来 —— 不是等流结束那一次整版重画才补上", async () => {
+    const { sec } = await startHanging();
+    expect(
+      pick(sec, ".pg-malformed").length,
+      "在途期间一个字都不提「掉了几块」——面板正把一段缺字的回答当成完整的画着，"
+      + "而 buildTurn() 里那句「静默丢弃就是撒谎」是这个文件自己写的",
+    ).toBe(1);
+    // 期望值手写整句（与既有那格同一条纪律：不许从 i18n 词典推导）。
+    expect(one(sec, ".pg-malformed").textContent)
+      .toBe("这条流里有 2 块数据读不出来，已跳过——上面这段回答可能是缺字的。");
+  });
+
+  /**
+   * **场景⑦：与轮询那六格共用同一份装置。**
+   *
+   * ⚠️ **夹具里那两块坏数据缺一不可，它们各钉一条路**：
+   * · 第一块（`0 → 1`）钉的是「那一行**长出来**」——它当时还不存在，
+   *   位置由 `buildTurn()` 定，所以那一档走的是整版重建；
+   * · 第二块（`1 → 2`）钉的是「那一行**跟着改**」——它已经在屏幕上，走就地改
+   *   `textContent`，而那句串必须与 `buildTurn()` 里那句 `t("pg.turn.malformed", …)`
+   *   逐字同源。只留一块的话，把就地那一档写坏（比如忘了改数字）这一格照样绿。
+   */
+  it("场景⑦流式在途：就地写字与整版重建输出逐字相同（逐节点逐属性）", async () => {
+    const { h, sec } = await startHanging();
+    expectSameAsRebuild(h, sec, "流式在途");
+  });
+
+  /**
+   * ── **`render()` 里那句 `nodes.streamMalformed = null` 的那条祸事** ────────────
+   *
+   * ⚠️⚠️ **这一格是变异实测倒逼出来的，不是设计出来的。** 上面两格建起来之后我把
+   * `render()` 里那句作废删掉重跑 ⇒ **60 全绿（ESCAPED）**。顺着追一遍才发现那句话
+   * 描述的祸事**今天完全可达**，只是没有任何一格走过「连着两轮流式」：
+   * · 第一轮收到坏块 ⇒ 那一行长出来、被记进 `nodes`；
+   * · 第一轮结束 ⇒ `.finally()` 整版 `render()`，那一轮 `pending` 已经是 false
+   *   ⇒ `buildTurn()` **不再重新挂**，而旧那个节点已经从文档里摘掉了；
+   * · **少了那句作废**，`nodes.streamMalformed` 就一直指着那个摘掉的节点
+   *   ⇒ 第二轮的坏块全部写进一个没人看得见的对象里，
+   *   **第二轮屏幕上那句「掉了几块」根本不长出来**。
+   *
+   * ⇒ 与轮询那一档的 `nodes.pollStatus` 不同（那一句实测是防御性的、今天走不到），
+   * **这一句是有牙的**，牙在这一格。**变红条件**：删掉 `render()` 里那句
+   * `nodes.streamMalformed = null;` ⇒ 这一格红成「第二轮一个字都没说」。
+   */
+  it("连着两轮流式各有坏块：第二轮说的是自己那一句，不是往上一轮那个摘掉的节点上写字", async () => {
+    // 第一轮：一块正文 + 一块坏的，**正常收尾**（走完 `.finally()` 的整版 render()）。
+    const first = [
+      'data: {"id":"c1","choices":[{"delta":{"content":"甲"}}]}',
+      "data: {第一轮这一块不是合法 JSON",
+      "data: [DONE]",
+    ].map((l) => `${l}\n\n`).join("");
+    let call = 0;
+    const h = await openPg(respondWith({
+      gateway: () => (call++ === 0
+        ? { status: 200, body: null, raw: first }
+        : { status: 200, body: null, raw: hangingStream(WIRE) }),
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    turnOnStream(sec);
+
+    typePrompt(sec, "第一句");
+    one(sec, ".pg-send").click();
+    await settle(80);
+    // 前置条件：第一轮真的走完了，而且真的说出了自己那一句。
+    expect(pick(sec, ".pg-cancel").length, "前置条件：第一轮得真的收尾了").toBe(0);
+    expect(pick(sec, ".pg-malformed").length, "前置条件：第一轮那一句得真的画出来").toBe(1);
+
+    typePrompt(sec, "第二句");
+    one(sec, ".pg-send").click();
+    await settle(80);
+    // 前置条件：第二轮真的还挂着（这一格测的就是在途那一拍）。
+    expect(pick(sec, ".pg-cancel").length, "前置条件：第二轮得还挂着").toBe(1);
+
+    const notes = pick(sec, ".pg-malformed");
+    expect(
+      notes.length,
+      "第二轮在途期间没有长出自己那句「掉了几块」——"
+      + "坏块很可能被写进了上一轮那个已经从文档里摘掉的节点（去看 render() 里那句作废）",
+    ).toBe(2);
+    // 两句各说各的：第一轮 1 块、第二轮 2 块。**期望值手写整句。**
+    expect(notes[0]!.textContent, "第一轮那一句被下一轮改写了")
+      .toBe("这条流里有 1 块数据读不出来，已跳过——上面这段回答可能是缺字的。");
+    expect(notes[1]!.textContent)
+      .toBe("这条流里有 2 块数据读不出来，已跳过——上面这段回答可能是缺字的。");
+  });
+});
+
+/**
  * ── **媒体模式（P3d Task 12）：只展示地址，不内嵌远端任何东西** ─────────────────
  *
  * ── 替身能力核对（第 9 种假阳性，检查单要求逐条写出来）────────────────────────
@@ -2575,71 +2808,15 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
    *（tag / 全部属性 / `value` / `checked` / `disabled` / 自有文本 / 子树形状），
    * 再从**同一份模块状态**强制整版重建一次，序列化第二遍，两份逐字比对。
    *
-   * ⚠️ **强制重建走的是真接线，不是去调一个内部函数**：`js/app.js:65` 写着
-   * `current === name` 时只跑 `onShow()`、**不跑 `onHide()`**，
-   * 而 `playgroundSection.onShow()` 在目录已经读到时就是一次 `render()`
-   * ⇒ **再点一次当前那颗导航按钮** = 一次纯粹的整版重建，且轮询不会被掐。
-   *
-   * ⚠️ **前置条件必须自己断言**：这一格全靠「重建那一下真的发生了」，
-   * 而那件事在序列化结果里是不可见的（重建出来的字长得一样才是要证的东西）。
-   * ⇒ 用**节点身份**当前置条件：重建之后那棵子树必须换成新对象。
-   * 少了它，`navTo` 哪天不再触发 `onShow()`，这一格会静静退化成「自己跟自己比」。
+   * ⚠️ **装置（`domShot()` / `expectSameAsRebuild()`）在本文件顶层，不在这里**：
+   * 流式那一档栽的是**同一个** bug（复评 G2），它也要用同一份装置
+   * ——抄第二份出来的话两份一漂只有真机上看得见。方法与前置条件的说明写在那里。
    *
    * **变红条件（实测）**：把 `pollOnce()` 里那句更新 `.pg-status` 的删掉
    * ⇒ 「轮询回非 2xx」那个场景当场红，diff 直指
    * `span.mono pg-status` 就地那份是 `200`、重建那份是 `500`。
    */
   describe("就地重填与整版重建输出逐字相同（六场景逐节点逐属性）", () => {
-    /**
-     * 整棵子树逐节点逐属性序列化。**测试代码，所以可以读 `.attrs`**
-     *（它是 `fake-dom-parity.test.ts` 登记的 8 条 `FAKE_ONLY_MEMBERS` 之一，
-     * 那张表管的是 `admin-ui/` 下的**发货代码**，不管测试）。
-     * 排序属性名是为了让 diff 只反映真实差异，不反映插入顺序。
-     */
-    function domShot(root: FakeElement): string {
-      const lines: string[] = [];
-      const walk = (n: FakeElement, path: string): void => {
-        const attrs = [...n.attrs.entries()]
-          .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-          .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-          .join(" ");
-        // **只取自有文本**：子树文本由下面各行自己覆盖，一起取会把每个差异重复计一遍。
-        const own = n.children.length === 0 ? n.textContent : "";
-        lines.push([
-          path, `<${n.tagName}>`, attrs,
-          `value=${JSON.stringify(n.value)}`,
-          `checked=${n.checked}`, `disabled=${n.disabled}`,
-          `text=${JSON.stringify(own)}`,
-        ].join(" | "));
-        n.children.forEach((c, i) => { walk(c, `${path}/${i}:${c.tagName}`); });
-      };
-      walk(root, `0:${root.tagName}`);
-      return lines.join("\n");
-    }
-
-    /** 就地重填之后的屏幕 vs 从同一份状态整版重建之后的屏幕。 */
-    function expectSameAsRebuild(h: Harness, sec: FakeElement, where: string): void {
-      const inPlace = domShot(sec);
-      const beforeNodes = pick(sec, ".pg-turn");
-      navTo(h, "playground");   // `showSection` 在 current === name 时只跑 onShow() ⇒ 整版 render()
-      const afterNodes = pick(sec, ".pg-turn");
-      expect(afterNodes.length, `${where}：重建之后右栏一轮都不剩 —— 前置条件塌了`).toBe(beforeNodes.length);
-      if (beforeNodes.length > 0) {
-        expect(
-          afterNodes[0],
-          `${where}：**前置条件塌了** —— 再点一次当前导航按钮没有触发整版重建，`
-          + "这一格已经退化成自己跟自己比。去看 js/app.js 的 showSection()",
-        ).not.toBe(beforeNodes[0]);
-      }
-      expect(
-        domShot(sec),
-        `${where}：**就地重填与整版重建的输出不等价**。`
-        + "上一轮正是在这里编出了一个状态码（`.pg-status` 画在 `.pg-media` 盒子外面，"
-        + "就地重填够不着它）。差异那一行的路径直接指出是哪一格 —— "
-        + "要么把那一格也就地更新，要么这一拍别改它对应的那份状态",
-      ).toBe(inPlace);
-    }
-
     it("场景①成功档：轮到第 3 拍给成片", async () => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       const { h, sec } = await startVideo(videoResponder(3));

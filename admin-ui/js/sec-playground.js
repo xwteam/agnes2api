@@ -782,8 +782,20 @@ function buildTurn(turn) {
     if (turn.malformed > 0) {
       // **静默丢弃就是撒谎**（与事件板块的 malformed 同一条理由）：读不出来的块数
       // 必须说出来，不然面板会把一段缺字的回答当成完整的回答画出去。
-      wrap.appendChild(el("p", { class: "muted note pg-malformed" },
-        t("pg.turn.malformed", { count: String(turn.malformed) })));
+      const note = el("p", { class: "muted note pg-malformed" },
+        t("pg.turn.malformed", { count: String(turn.malformed) }));
+      // **还在收的那一轮，把这一格也记下来**（与上面 `nodes.streamText` 同一条理由，
+      // 也与轮询那一档的 `nodes.pollStatus` 同一套写法与生命周期）。
+      // ⚠️⚠️ **它画在那个 `<pre>` 外面**，而 `onPayload` 每来一块读不出来的数据都改
+      //    `turn.malformed` ⇒ 只就地改 `<pre>` 的 `textContent` **够不着这一格**。
+      //    上一版正是如此：流式在途期间屏幕上一个字都不提「掉了几块」，
+      //    **把一段缺字的回答当成完整的回答画着**，直到流结束那一次整版 `render()` 才补上
+      //    （复评 G2 实测：在途 `.pg-malformed` 0 / 强制重建 1）——
+      //    而上面那句「静默丢弃就是撒谎」正是本文件自己写的。
+      //    机理与 `.pg-status` 那一次逐字同型：**就地更新的那个节点之外，
+      //    还有一份会变的状态被渲染在别处。**
+      if (turn.pending === true) nodes.streamMalformed = note;
+      wrap.appendChild(note);
     }
     if (turn.errorKey !== null) {
       wrap.appendChild(elI18n("p", turn.errorKey, { class: "danger-text pg-error" }));
@@ -856,10 +868,28 @@ function render() {
   // **每次重画都作废**：旧那个节点已经从文档里摘掉了，继续往它上面写字等于把
   // 后半段回答写进一个没人看得见的对象里。`buildTurn()` 会给还在收的那一轮重新挂上。
   nodes.streamText = null;
+  // 同上，还在收的那一轮那句「掉了几块」（`buildTurn()` 会在 `malformed > 0` 时重新挂上；
+  // 还是 0 的话它本来就不该存在，留成 null 正好）。
+  // ⚠️⚠️ **这一句是有牙的，祸事今天就可达，别照着上面那句 `pollStatus` 的口径读**
+  //    （变异实测：删掉它 ⇒ `tests/ui/dom/playground-section.test.ts` 的
+  //     「连着两轮流式各有坏块：第二轮说的是自己那一句」当场红）：
+  //    第一轮结束时 `.finally()` 会整版重画，而那一轮 `pending` 已经是 false
+  //    ⇒ `buildTurn()` **不再重新挂** ⇒ 少了这一句，它就一直指着第一轮那个已经摘掉的
+  //    节点，于是**第二轮的坏块全写进一个没人看得见的对象里，第二轮屏幕上那句话
+  //    根本不长出来**——正是「静默丢弃就是撒谎」那一条。
+  nodes.streamMalformed = null;
   // 同上，轮询那一拍要就地重填的那个盒子（`buildMediaResult()` 会重新挂上）。
   nodes.pollBox = null;
-  // 同上，那一轮的状态码那一格（`buildTurn()` 会重新挂上）。**它与盒子必须一起作废**：
-  // 只作废一个的话，另一个会继续往一个已经从文档里摘掉的节点上写字。
+  // 同上，那一轮的状态码那一格（`buildTurn()` 会重新挂上）。
+  // ⚠️ **这一行是防御性的，今天走不到**（复评 R-1 实测：删掉它 2735 全绿）：
+  //    `render()` 只有两条不重建 `pollTurn` 的早退，而**两条对轮询期间都不成立**——
+  //    ① `catalog === null`：`catalog` 只由 `loadCatalog()` 写，而它的两个入口
+  //       （`onShow()` 与错误横幅那颗重试）都只在 `catalog === null` 时才发得出去，
+  //       轮询进行中 `pollEndpoint()` 正读着它 ⇒ 它不会翻回 null；
+  //    ② `buildRight()` 的 `turns.length === 0`：`turns` 全仓只有 push、零处清空，
+  //       而 `pollTurn` 本身就在里面。
+  //    ⇒ 留着它不是因为它防住过什么，是因为多留一道对称的作废没有代价，
+  //      而少一道的代价要等到有人给 `render()` 加第三条早退时才看得见。
   nodes.pollStatus = null;
   if (catalog === null) {
     host.appendChild(buildUnavailable());
@@ -1240,6 +1270,37 @@ function sendOnce() {
           // 读不出来的一块。**数出来、显示出来，但不中断整轮**：
           // 一块坏数据不该让运维正在读的那段回答整个消失。
           turn.malformed++;
+          /**
+           * ⚠️⚠️ **「显示出来」必须现在就发生，不能等到流结束**（复评 G2 实测）：
+           * 这个数画在那个 `<pre>` **外面**，而下面那句就地更新只碰 `<pre>` 的
+           * `textContent` ⇒ 上一版在途期间屏幕上**一个字都不提**，
+           * 把一段缺字的回答当成完整的回答画着，直到 `.finally()` 那一次整版
+           * `render()` 才补上（长生成是分钟级，流被挂住时无限期）。
+           * 与 `.pg-status` 那一次是同一个结构性 bug，只是换到了流式这条路。
+           *
+           * **两档，判据只有一份**：
+           * · 那一行已经在屏幕上 ⇒ 就地改 `textContent`，**串本身与 `buildTurn()` 里
+           *   那句 `t("pg.turn.malformed", …)` 逐字同源**（不是第二套判据）；
+           * · `0 → 1` 那一下它还不存在 ⇒ **整版重建一次**，因为「它插在哪一行之前」
+           *   是 `buildTurn()` 的判据，在这里另写一套插入位置就是第二套渲染判据，
+           *   两套一漂只有真机上看得见。这一档**一轮最多发生一次**（此后 `malformed`
+           *   恒 > 0，那一行一直在），代价与「一秒几十块都重画」不同阶。
+           *
+           * **三格钉着，方向各不相同**：
+           * ① `tests/ui/dom/playground-section.test.ts` 的
+           *    「不是等流结束那一次整版重画才补上」——在途那一拍屏幕上必须有这一行本身；
+           * ② `tests/ui/dom/playground-section.test.ts` 的
+           *    「场景⑦流式在途：就地写字与整版重建输出逐字相同（逐节点逐属性）」
+           *    ——等价性本身，与轮询那六格共用同一份装置；
+           * ③ `tests/ui/dom/playground-section.test.ts` 的
+           *    「连着两轮流式各有坏块：第二轮说的是自己那一句」
+           *    ——`render()` 里那句作废，少了它第二轮的坏块会写进上一轮那个摘掉的节点。
+           */
+          if (nodes.streamMalformed !== null) {
+            nodes.streamMalformed.textContent = t("pg.turn.malformed", { count: String(turn.malformed) });
+          } else {
+            render();
+          }
           return;
         }
         if (piece === "") return;
@@ -1275,7 +1336,11 @@ export const playgroundSection = {
     section.appendChild(elI18n("p", "pg.runtimeNote", { class: "muted note" }));
     const body = el("div");
     section.appendChild(body);
-    nodes = { body, hintNote: null, send: null, streamText: null, pollBox: null, pollStatus: null };
+    nodes = {
+      body, hintNote: null, send: null,
+      streamText: null, streamMalformed: null,
+      pollBox: null, pollStatus: null,
+    };
     // 判定在纯函数里，而那个目录下拿不到浏览器的顶层全局，所以在这里读一次传进去。
     origin = location.origin;
     token = readGatewayToken();
