@@ -724,6 +724,16 @@ function fillMediaResult(box, turn) {
  */
 function buildTurn(turn) {
   const wrap = el("div", { class: "pg-turn" });
+  fillTurn(wrap, turn);
+  return wrap;
+}
+
+/**
+ * 把一轮的内容填进 `wrap`。**`buildTurn()` 与流式那一拍「把掉了几块那一行补出来」
+ * 共用这一份**——理由与 `fillMediaResult()` 上面那段逐字同型：两处各写一遍的话，
+ * 在途那一拍与重画之后就是两套渲染判据，而它们之间的差别只在真机上看得见。
+ */
+function fillTurn(wrap, turn) {
   const head = el("div", { class: "pg-turn-head" });
   head.appendChild(elI18n("span", "pg.turn.you", { class: "muted" }));
   // 地址那一格只在**这次真的构造出了一条请求**时才画：构造失败那一档 `url` 是空串，
@@ -750,10 +760,10 @@ function buildTurn(turn) {
 
   // ── 媒体那一轮：**只画地址，不内嵌远端任何东西**（全局约束 17）─────────────────
   // 它比错误分支更早，因为媒体那一档**出错时也还有话要说**（任务标识、轮询进度），
-  // 而下面那条错误分支是 `return wrap` 的，走到它就什么都不剩了。
+  // 而下面那条错误分支是直接 `return` 的，走到它就什么都不剩了。
   if (turn.mode !== "chat") {
     wrap.appendChild(buildMediaResult(turn));
-    return wrap;
+    return;
   }
 
   // ── 流式那一轮：画拼起来的正文，**不画响应原文**（它没有「原文」可画）──────────
@@ -763,7 +773,16 @@ function buildTurn(turn) {
     const body = el("pre", { class: "mono pg-body pg-stream-text" }, turn.text);
     // 这一轮还在收的话，把这个节点记下来：后续每一块**就地改 textContent**，
     // 不整块重画（重画会让左栏的输入框丢焦点，而流式一秒能来几十块）。
-    if (turn.pending === true) nodes.streamText = body;
+    if (turn.pending === true) {
+      nodes.streamText = body;
+      // **这一轮的外框也记下来，就在这一行旁边**（两句同一个条件，不许分开写：
+      // `onPayload` 那一档靠「`streamText` 非 null ⟺ `streamTurn` 非 null」这条不变量）。
+      // 用处：坏块**第一次**出现那一拍，那一行还不存在，得把它补出来，而
+      // 「它插在哪一行之前」是这个函数的判据 ⇒ 那一拍**重填这一个框**
+      //（`fillTurn()`，与整版重画共用的同一份判据），不是整版 `render()`。
+      // 理由与实测数字见 `onPayload` 里那段 ⚠️⚠️。
+      nodes.streamTurn = wrap;
+    }
     wrap.appendChild(body);
     // **「这条流一个字都没有」是一句关于「它读完了」的话，四个前提缺一不可**（评审 F1/F3）：
     // · `pending` 期间不许说 —— 那时候它只是**还没到**（说话的是 pg.sending）；
@@ -802,21 +821,20 @@ function buildTurn(turn) {
     }
     // ⚠️ 这一句不是可有可无的客套话，理由见文件头「流式那一轮为什么不显示 token 用量」。
     wrap.appendChild(elI18n("p", "pg.turn.noTokens", { class: "muted note pg-no-tokens" }));
-    return wrap;
+    return;
   }
 
   if (turn.errorKey !== null) {
     wrap.appendChild(elI18n("p", turn.errorKey, { class: "danger-text pg-error" }));
-    return wrap;
+    return;
   }
   const text = prettyJson(turn.body);
   if (text === null) {
     // 读不出来 ≠ 空响应（全局约束 9 的同型）。
     wrap.appendChild(elI18n("p", "pg.turn.unreadable", { class: "muted note pg-unreadable" }));
-    return wrap;
+    return;
   }
   wrap.appendChild(el("pre", { class: "mono pg-body" }, text));
-  return wrap;
 }
 
 /** 右栏。 */
@@ -878,6 +896,16 @@ function render() {
   //    节点，于是**第二轮的坏块全写进一个没人看得见的对象里，第二轮屏幕上那句话
   //    根本不长出来**——正是「静默丢弃就是撒谎」那一条。
   nodes.streamMalformed = null;
+  // 同上，还在收的那一轮那个外框（`fillTurn()` 会在 `pending` 时重新挂上）。
+  // ⚠️ **这一行是防御性的，今天走不到，别照着上面那句 `streamMalformed` 的口径读**
+  //    （变异实测：删掉它 `pnpm test` **2768 全绿**）。两者差在**重挂的条件**上：
+  //    那一行只在 `malformed > 0` 时才挂，所以第二轮开头那次重画**不会**把它挂上
+  //    ⇒ 少了作废，指针就一直指着上一轮那个摘掉的节点；
+  //    而这个外框对**每一个还在收的流式轮**都是无条件重挂的，第二轮 `sendOnce()`
+  //    那次 `render()` 当场就把它覆盖成新的了。
+  //    ⇒ 留着它不是因为它防住过什么，是因为多留一道对称的作废没有代价
+  //      （与下面 `pollStatus` 那一行同一条裁定）。
+  nodes.streamTurn = null;
   // 同上，轮询那一拍要就地重填的那个盒子（`buildMediaResult()` 会重新挂上）。
   nodes.pollBox = null;
   // 同上，那一轮的状态码那一格（`buildTurn()` 会重新挂上）。
@@ -1142,7 +1170,9 @@ async function pollOnce() {
      *
      * **三格一起钉着，方向各不相同**：
      * ① `tests/ui/dom/playground-section.test.ts` 的
-     *    「轮询那一拍不整版重画 —— 右栏别的轮次必须还是原来那几个节点对象」——省下来的那件事；
+     *    「轮询那一拍不整版重画 —— 右栏别的轮次与左栏输入框必须还是原来那几个节点对象」
+     *    ——省下来的那件事（**两个方向**：右栏历史轮次 + 左栏那两个输入框，
+     *    后者对应的祸事是焦点，假 DOM 没有焦点语义，只能靠节点身份看见）；
      * ② `tests/ui/dom/playground-section.test.ts` 的
      *    「轮询回非 2xx 时状态码那一格显示的是这一拍的数字 —— 屏幕不许贴着错误正文说 200」
      *    ——上面那条回归本身；
@@ -1278,15 +1308,31 @@ function sendOnce() {
            * `render()` 才补上（长生成是分钟级，流被挂住时无限期）。
            * 与 `.pg-status` 那一次是同一个结构性 bug，只是换到了流式这条路。
            *
-           * **两档，判据只有一份**：
-           * · 那一行已经在屏幕上 ⇒ 就地改 `textContent`，**串本身与 `buildTurn()` 里
+           * **两档，判据只有一份，而且两档都不整版重画**：
+           * · 那一行已经在屏幕上 ⇒ 就地改 `textContent`，**串本身与 `fillTurn()` 里
            *   那句 `t("pg.turn.malformed", …)` 逐字同源**（不是第二套判据）；
-           * · `0 → 1` 那一下它还不存在 ⇒ **整版重建一次**，因为「它插在哪一行之前」
-           *   是 `buildTurn()` 的判据，在这里另写一套插入位置就是第二套渲染判据，
-           *   两套一漂只有真机上看得见。这一档**一轮最多发生一次**（此后 `malformed`
-           *   恒 > 0，那一行一直在），代价与「一秒几十块都重画」不同阶。
+           * · `0 → 1` 那一下它还不存在 ⇒ **重填这一轮那一个 `.pg-turn`**
+           *  （`fillTurn()`，正是整版重画用的那一份）——「它插在哪一行之前」仍然
+           *   只有一份答案，而动的只有这一轮：右栏别的轮次与整个左栏一个节点都不换。
            *
-           * **三格钉着，方向各不相同**：
+           * ⚠️⚠️ **这一档曾经写的是 `render()`，那是一次真的回归**
+           *（第三轮修复定向复评 F-1，实测；写在这里免得有人「为了少写一个函数」改回去）：
+           * `render()` 会把**全部历史轮次 + 整个左栏**从头重建，而**兄弟路径两个提交
+           * 之前刚把这件事从轮询那条路上删掉**（见 `pollOnce()` 里那段 ⚠️⚠️ 与它那格
+           * 身份断言）。代价有两轴，当时那句说明只算了其中一轴：
+           * · **体量**：每一轮一次 `mediaResultUrls()`（整棵 JSON 树）加一次
+           *   `prettyJson()`（**无长度上限**），而 `turn.body` 可能是一张 MB 级 base64 图
+           *   ⇒ 同一个文件实测过：**单次**整版重建在 1 / 5 / 10 轮时是
+           *   **3.0 / 15.0 / 30.0 MB** 临时字符串（**与历史轮数成正比，不是一个定值**）。
+           *   当时那句「一轮最多发生一次，与『一秒几十块都重画』不同阶」——**频率那半句
+           *   是真的**（实测：一轮里 4 块坏数据只重建 1 次），但被比较掉的是错的那个基准。
+           * · **焦点**（当时一个字都没提，而它是更要命的那一轴）：重画会把左栏那两个
+           *   输入框换成新节点 ⇒ **运维正在打的那句话与光标当场没了**（中文输入法的
+           *   候选窗一起崩）。这个文件另外三处逐字写着「重画会让左栏输入框丢焦点」，
+           *   而假 DOM 没有焦点语义 ⇒ **这件事只能靠节点身份看见**（第 ④ 格）。
+           *   实测那一拍：历史轮次被换掉 = true、左栏输入框被换掉 = true。
+           *
+           * **四格钉着，方向各不相同**：
            * ① `tests/ui/dom/playground-section.test.ts` 的
            *    「不是等流结束那一次整版重画才补上」——在途那一拍屏幕上必须有这一行本身；
            * ② `tests/ui/dom/playground-section.test.ts` 的
@@ -1294,12 +1340,23 @@ function sendOnce() {
            *    ——等价性本身，与轮询那六格共用同一份装置；
            * ③ `tests/ui/dom/playground-section.test.ts` 的
            *    「连着两轮流式各有坏块：第二轮说的是自己那一句」
-           *    ——`render()` 里那句作废，少了它第二轮的坏块会写进上一轮那个摘掉的节点。
+           *    ——`render()` 里 `streamMalformed` 那句作废（**只有那一句有牙**，
+           *    旁边 `streamTurn` 那句实测是防御性的，理由写在它自己那里）；
+           * ④ `tests/ui/dom/playground-section.test.ts` 的
+           *    「坏块那一拍不整版重画 —— 右栏别的轮次与左栏输入框必须还是原来那几个节点对象」
+           *    ——省下来的那件事本身（**身份断言**，与轮询那一格对称、两个方向）。
+           *
+           * ⚠️ **`streamTurn` 是 null 时这一拍什么都不做**，与下面那句
+           * `nodes.streamText !== null` 同一条口径：它为 null 只可能是右栏压根没画
+           *（`render()` 唯一那条早退 `catalog === null`，而流式在途走不到它，
+           * 可达性论证与 `render()` 里 `pollStatus` 那段逐字相同）——
+           * 那时屏幕上连这一轮都没有，没有任何一格可以就地改。
            */
           if (nodes.streamMalformed !== null) {
             nodes.streamMalformed.textContent = t("pg.turn.malformed", { count: String(turn.malformed) });
-          } else {
-            render();
+          } else if (nodes.streamTurn !== null) {
+            nodes.streamTurn.textContent = "";
+            fillTurn(nodes.streamTurn, turn);
           }
           return;
         }
@@ -1338,7 +1395,7 @@ export const playgroundSection = {
     section.appendChild(body);
     nodes = {
       body, hintNote: null, send: null,
-      streamText: null, streamMalformed: null,
+      streamText: null, streamMalformed: null, streamTurn: null,
       pollBox: null, pollStatus: null,
     };
     // 判定在纯函数里，而那个目录下拿不到浏览器的顶层全局，所以在这里读一次传进去。

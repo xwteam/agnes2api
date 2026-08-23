@@ -276,8 +276,13 @@ function gatewayCalls(h: Harness) {
  * 而那件事在序列化结果里是不可见的（重建出来的字长得一样才是要证的东西）。
  * ⇒ 用**节点身份**当前置条件：重建之后那棵子树必须换成新对象。
  * 少了它，`navTo` 哪天不再触发 `onShow()`，这一格会静静退化成「自己跟自己比」。
- * **实测（复评 R-2/R-4）**：把 `js/app.js:65` 改成「不重建」⇒ 六格全红报「前置条件塌了」；
- * 改成「重建但顺带跑 `onHide()`」⇒ 六格全红在输出 diff 上。两种退化各有一条红线接着。
+ * **实测（复评 R-2/R-4）**：把 `js/app.js` 那句「当前板块只跑 `onShow()`」改成「不重建」
+ * ⇒ **用到这份装置的每一格**都红在「前置条件塌了」上；
+ * 改成「重建但顺带跑 `onHide()`」⇒ 同样每一格都红，红在输出 diff 上。
+ * 两种退化各有一条红线接着。
+ * ⚠️ **这里刻意不写总格数**（与 `strip-comments.ts`、Task 5 I3 同一条）：
+ * 上一版写着「六格全红」，而复评当天重跑同一条变异已经是**七格**——
+ * 一个写死在共用装置文档里的计数，改的人不会想起来回来改它。
  */
 function domShot(root: FakeElement): string {
   const lines: string[] = [];
@@ -1637,10 +1642,11 @@ describe("流式在途：那一拍的屏幕不许比整版重建少说一句话"
    * **场景⑦：与轮询那六格共用同一份装置。**
    *
    * ⚠️ **夹具里那两块坏数据缺一不可，它们各钉一条路**：
-   * · 第一块（`0 → 1`）钉的是「那一行**长出来**」——它当时还不存在，
-   *   位置由 `buildTurn()` 定，所以那一档走的是整版重建；
+   * · 第一块（`0 → 1`）钉的是「那一行**长出来**」——它当时还不存在，位置由
+   *   `fillTurn()` 定，所以那一档走的是**重填这一轮那个框**（同一份 `fillTurn()`）；
+   *   ⚠️ 上一版这一档走的是整版 `render()`，第四轮已改掉，理由见 `onPayload` 那段 ⚠️⚠️；
    * · 第二块（`1 → 2`）钉的是「那一行**跟着改**」——它已经在屏幕上，走就地改
-   *   `textContent`，而那句串必须与 `buildTurn()` 里那句 `t("pg.turn.malformed", …)`
+   *   `textContent`，而那句串必须与 `fillTurn()` 里那句 `t("pg.turn.malformed", …)`
    *   逐字同源。只留一块的话，把就地那一档写坏（比如忘了改数字）这一格照样绿。
    */
   it("场景⑦流式在途：就地写字与整版重建输出逐字相同（逐节点逐属性）", async () => {
@@ -1706,6 +1712,175 @@ describe("流式在途：那一拍的屏幕不许比整版重建少说一句话"
       .toBe("这条流里有 1 块数据读不出来，已跳过——上面这段回答可能是缺字的。");
     expect(notes[1]!.textContent)
       .toBe("这条流里有 2 块数据读不出来，已跳过——上面这段回答可能是缺字的。");
+  });
+
+  /**
+   * 一条**每一块都由测试手动放行**的流。上面那份 `hangingStream()` 一口气把几块全吐完，
+   * 于是「坏块**那一拍**」与「正文那一拍」在屏幕上分不开——而这两拍正是下面两格要比的东西。
+   *
+   * ⚠️ **`step()` 没上膛就当场抛，不许静默返回**：装置本身是判据的一半。
+   * 少了这一条，一次「前面那一拍还没走完」会让后面的断言在一个**什么都没变过**的
+   * 屏幕上全绿——身份断言尤其如此（没发生的事当然不换节点）。
+   */
+  function steppedStream(lines: readonly string[]): { stream: ReadableStream<Uint8Array>; step: (what: string) => void } {
+    let i = 0;
+    const enc = new TextEncoder();
+    let arm: (() => void) | null = null;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (i >= lines.length) return new Promise<void>(() => {});   // 挂住：既不再吐，也不结束
+        return new Promise<void>((resolve) => {
+          arm = () => { c.enqueue(enc.encode(lines[i++]!)); arm = null; resolve(); };
+        });
+      },
+    });
+    return {
+      stream,
+      step: (what: string) => {
+        if (arm === null) throw new Error(`放行「${what}」时这条流还没上膛 —— 上一拍没走完（settle 不够）`);
+        arm();
+      },
+    };
+  }
+
+  /** 正文一块 → 坏一块（`0 → 1` 就在这一拍） → 正文一块 → 挂住。 */
+  const STEPPED_WIRE = [
+    'data: {"id":"c1","choices":[{"delta":{"content":"甲"}}]}\n\n',
+    "data: {这一块不是合法 JSON\n\n",
+    'data: {"id":"c1","choices":[{"delta":{"content":"乙"}}]}\n\n',
+  ];
+
+  /** 先发一轮图片当**历史轮次**，再发一轮流式对话，逐块放行。 */
+  async function startSteppedAfterImage(): Promise<{
+    h: Harness; sec: FakeElement; step: (what: string) => void;
+  }> {
+    const IMAGE_URL = `${PANEL_ORIGIN}/v1/images/generations`;
+    const { stream, step } = steppedStream(STEPPED_WIRE);
+    const h = await openPg(respondWith({
+      gateway: (url) => (url === IMAGE_URL
+        ? { status: 200, body: { data: [{ url: "https://cdn.invalid/a.png" }] } }
+        : { status: 200, body: null, raw: stream }),
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    // 第一轮：图片。**它就是「历史轮次」**，每一次整版重画都要把它从头重建一遍。
+    toMode(sec, "image");
+    typePrompt(sec, "一只猫");
+    one(sec, ".pg-send").click();
+    await settle(20);
+    // 第二轮：流式对话。
+    toMode(sec, "chat");
+    turnOnStream(sec);
+    typePrompt(sec, "你好");
+    one(sec, ".pg-send").click();
+    await settle(20);
+    return { h, sec, step };
+  }
+
+  /**
+   * ── **第三轮修复定向复评 F-1：坏块那一拍同样不许整版重画** ──────────────────────
+   *
+   * **它防住的真实故障（复评 C-1 实测，不是设想）**：`0 → 1` 那一档上一版走的是
+   * `render()`，于是**一块读不出来的 SSE 数据 = 一次把「全部历史轮次 + 整个左栏」
+   * 从头重建**。实测那一拍：历史轮次被换掉 = true、左栏输入框被换掉 = true。
+   *
+   * ⚠️⚠️ **它与轮询那一格是同一条性质的两个方向，而这一侧原来一格都没有**：
+   * 同一个文件两个提交之前刚把整版重画从轮询那条路上删掉、并配了那一格身份断言
+   *（见上面「轮询那一拍不整版重画 —— 右栏别的轮次与左栏输入框必须还是原来那几个节点对象」），
+   * 流式这条路随后**在修另一件事时把它原样引了回来**。**修一处把别处刚解决的问题搬过来**
+   * ——这份账本上连着几轮栽的都是这一条，所以这一格是常驻的，不是一次性验尸。
+   *
+   * **两个方向，各自对应一件不同的祸事**：
+   * · **右栏**：`render()` 每一轮都要走一次 `mediaResultUrls()`（整棵 JSON 树）加一次
+   *   `prettyJson()`（无长度上限），而 `turn.body` 可能是一张 MB 级 base64 图
+   *   ——同一个文件实测过：**单次**整版重建随历史轮数成正比（1 / 5 / 10 轮 ≈
+   *   3.0 / 15.0 / 30.0 MB 临时字符串）。「一轮最多发生一次」只回答了频率那一轴。
+   * · **左栏**：重画把那两个输入框换成新节点 ⇒ **正在打的那句话与光标当场没了**。
+   *   `sec-playground.js` 三处逐字写着这件事，而**假 DOM 没有焦点语义**
+   *   ⇒ 它只能靠节点身份看见（与轮询那一格同一条理由）。
+   *
+   * ⚠️ **必须先有一轮历史**：只有一轮时「整版重建」与「重填这一个框」同阶，
+   * 这一格也就没有鉴别力 —— 真正被放大的是**前面那些轮次**。
+   *
+   * ⚠️ **配一条反向控制**：那一行必须真的长出来、并且说的是这一拍的数字。
+   * 少了它，把整个 `0 → 1` 那一档删掉（这一拍什么都不做）同样能让身份那几条全绿
+   * ——而那正是「面板把一段缺字的回答当成完整的画着」那条祸事本身。
+   *
+   * **变红条件（都实测过）**：把 `onPayload` 里那一档换回 `render()` ⇒ 这一格红在
+   *「第一轮那个节点被换掉了」上；**把右栏那两条静音再跑一次，左栏那两条同样红**
+   *（一次运行只停在第一条断言上，所以两个方向要各验一次，不能只看一次红就说「四条都有牙」）。
+   * 反向控制那一侧：把 `0 → 1` 那一档整个去掉（这一拍什么都不做）
+   * ⇒ 红的是「那一行根本没长出来」，而身份那几条**照样全绿**——两个方向缺一不可。
+   */
+  it("坏块那一拍不整版重画 —— 右栏别的轮次与左栏输入框必须还是原来那几个节点对象", async () => {
+    const { sec, step } = await startSteppedAfterImage();
+
+    const turnsBefore = pick(sec, ".pg-turn");
+    expect(turnsBefore.length, "前置条件：右栏得真的有两轮，否则这一格没有鉴别力").toBe(2);
+    const tokenBefore = one(sec, ".pg-token");
+    const promptBefore = one(sec, ".pg-prompt");
+
+    // ── 正文那一拍：本来就走就地改 `textContent`，当**对照**用 ──────────────────
+    step("正文那一块");
+    await settle(20);
+    expect(one(sec, ".pg-stream-text").textContent, "前置条件：正文那一块得真的到了").toBe("甲");
+    expect(pick(sec, ".pg-turn")[0], "对照：正文那一拍就把历史轮次换掉了 —— 那是另一个更早的病")
+      .toBe(turnsBefore[0]);
+
+    // ── 坏块那一拍：`0 → 1`，那一行在这一拍**长出来** ─────────────────────────
+    step("那一块坏数据");
+    await settle(20);
+    expect(pick(sec, ".pg-cancel").length, "前置条件：这条流得还挂着，否则测的是收尾那一拍").toBe(1);
+    // 反向控制：这一拍真的发生了，而且说的是这一拍的数字（期望值手写整句）。
+    expect(pick(sec, ".pg-malformed").length, "反向控制：那一行根本没长出来，这一拍什么都没做").toBe(1);
+    expect(one(sec, ".pg-malformed").textContent)
+      .toBe("这条流里有 1 块数据读不出来，已跳过——上面这段回答可能是缺字的。");
+
+    const turnsAfter = pick(sec, ".pg-turn");
+    expect(turnsAfter.length).toBe(2);
+    // **身份比较**：整版重画会把这两个节点全换成新对象。
+    expect(turnsAfter[0], "第一轮那个节点被换掉了 —— 坏块那一拍又整版重画了（去看 onPayload 里那段 ⚠️⚠️）")
+      .toBe(turnsBefore[0]);
+    expect(turnsAfter[1], "正在收的那一轮外壳也被换掉了 —— 重填的应当是这个框本身").toBe(turnsBefore[1]);
+    // **左栏两条**：真机上这一下丢的是焦点，而这个替身只看得见「还是不是同一个对象」。
+    expect(one(sec, ".pg-token"), "左栏口令输入框被换掉了 —— 真机上这一下会让正在粘的那把口令丢焦点")
+      .toBe(tokenBefore);
+    expect(one(sec, ".pg-prompt"), "左栏提示词框被换掉了 —— 真机上一块坏数据就打断了正在打的那句话")
+      .toBe(promptBefore);
+  });
+
+  /**
+   * ── **重填之后，`nodes.streamText` 必须重新挂上** ──────────────────────────────
+   *
+   * 坏块那一拍会把这一轮那个框整个重填，**屏幕上那个 `<pre>` 因此是一个新节点**。
+   * 少了 `fillTurn()` 里那句重新挂（或者哪天有人把它挪走），后半段回答会被写进
+   * 一个**已经从文档里摘掉**的 `<pre>` ——与 `render()` 里那几句作废是同一条祸事
+   *（指针指着一个没人看得见的节点）。
+   *
+   * ⚠️ **既有那格「中间夹一块读不出来的数据」看不到这件事**：它等到流**结束之后**
+   * 才断言，而收尾那一次整版 `render()` 会拿 `turn.text` 从头画一遍
+   * ⇒ 屏幕上照样是完整的「甲乙」，**在途那一段丢没丢字从来没有被任何一格看过**。
+   * 所以这一格必须在流还挂着的时候断言。
+   *
+   * **变红条件（实测）**：把 `fillTurn()` 里那句 `nodes.streamText = body;` 删掉
+   * ⇒ 这一格红成「在途那一段只剩『甲』」。
+   */
+  it("坏块那一拍重填之后，后到的正文还是落在屏幕上那个节点里", async () => {
+    const { sec, step } = await startSteppedAfterImage();
+    step("正文那一块");
+    await settle(20);
+    step("那一块坏数据");
+    await settle(20);
+    const preAfterRefill = one(sec, ".pg-stream-text");
+    expect(preAfterRefill.textContent, "前置条件：重填之后正文一个字都不许丢").toBe("甲");
+
+    step("坏块之后的那一块正文");
+    await settle(20);
+    expect(pick(sec, ".pg-cancel").length, "前置条件：这条流得还挂着").toBe(1);
+    expect(one(sec, ".pg-stream-text").textContent,
+      "在途那一段丢字了 —— 后半段回答很可能写进了重填之前那个已经摘掉的 <pre>").toBe("甲乙");
+    expect(one(sec, ".pg-stream-text"), "屏幕上那个 <pre> 又被换了一次 —— 这一拍本该只改文字")
+      .toBe(preAfterRefill);
   });
 });
 
@@ -2626,10 +2801,17 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
    * 把整个就地重填删掉（一拍什么都不更新）同样能让身份那两条全绿
    * ——那会让屏幕停在「已经查过 1 次」直到五分钟后收尾，而它「看起来」没坏。
    *
+   * ⚠️⚠️ **左栏那两个输入框是第二个方向，它对应的祸事是焦点**（第四轮修复补的）：
+   * `sec-playground.js` 有三处逐字写着「重画会让左栏输入框丢焦点」，
+   * 而**假 DOM 没有焦点语义**（`fake-dom.ts` 的 `focus()` 只挪一个模块变量，
+   * 节点被换掉时它不会告诉你任何事）⇒ **那件祸事在这个替身上只能靠节点身份看见**。
+   * 少了这两条，一次「只重建右栏、顺手把左栏也重画了」的实现照样全绿。
+   *
    * **变红条件（都实测过）**：把 `pollOnce()` 里那段就地重填换回 `render()`
-   * ⇒ 前两条身份断言当场红（右栏整棵被换掉）。
+   * ⇒ 这一格红在右栏那几条上（整棵被换掉）；**把右栏那三条静音再跑一次，
+   * 左栏那两条同样红**——一次运行只停在第一条断言上，所以两个方向各验了一次。
    */
-  it("轮询那一拍不整版重画 —— 右栏别的轮次必须还是原来那几个节点对象", async () => {
+  it("轮询那一拍不整版重画 —— 右栏别的轮次与左栏输入框必须还是原来那几个节点对象", async () => {
     const IMAGE_URL = `${PANEL_ORIGIN}/v1/images/generations`;
     const respond = respondWith({
       gateway: (url) => {
@@ -2658,6 +2840,9 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
     const boxesBefore = pick(sec, ".pg-media");
     expect(pick(sec, ".pg-poll").length, "前置条件：得真的轮起来").toBe(1);
     const pollTextBefore = one(sec, ".pg-poll").textContent;
+    // 左栏那两个输入框：焦点那一轴的观测点（见上面那段 ⚠️⚠️）。
+    const tokenBefore = one(sec, ".pg-token");
+    const promptBefore = one(sec, ".pg-prompt");
 
     await tick();
     await tick();
@@ -2669,6 +2854,11 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
     expect(turnsAfter[0], "第一轮那个节点被换掉了 —— 轮询那一拍又整版重画了").toBe(turnsBefore[0]);
     expect(turnsAfter[1], "正在轮的那一轮外壳也被换掉了 —— 重填的应当只有里面那个盒子").toBe(turnsBefore[1]);
     expect(pick(sec, ".pg-media")[0], "第一轮那个媒体盒子被重建了").toBe(boxesBefore[0]);
+    // **左栏两条**：真机上这一下丢的是焦点，而这个替身只看得见「还是不是同一个对象」。
+    expect(one(sec, ".pg-token"), "左栏口令输入框被换掉了 —— 真机上这一下会让正在粘的那把口令丢焦点")
+      .toBe(tokenBefore);
+    expect(one(sec, ".pg-prompt"), "左栏提示词框被换掉了 —— 真机上这一下会打断正在打的那句话")
+      .toBe(promptBefore);
     // 反向控制：进度那句话真的往前走了（否则「一拍什么都不做」也能让上面几条全绿）。
     expect(one(sec, ".pg-poll").textContent, "轮了两拍，进度那句话一个字都没变").not.toBe(pollTextBefore);
     expect(pollCount(h), "前置条件：这两拍是真的打出去了").toBe(2);
