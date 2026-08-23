@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { stripTypeScriptTypes } from "node:module";
 import { stripComments, blankComments, stripCssComments } from "../helpers/strip-comments.js";
 
 /**
@@ -682,6 +683,31 @@ describe("抠注释真源的三个出口", () => {
     expect(stripComments(css), "JS 语义把双斜杠之后吃到行尾，这正是 CSS 侧不能用它的理由")
       .not.toContain(".b{color:red}");
   });
+
+  /**
+   * **报文也分方言：别给下一个人指一条不存在的路。**
+   *
+   * 「字符串没在本行内闭合」这一档两个方言共用，但**成因不共用**：JS 侧最常见的成因是
+   * 上游某条正则字面量里带了奇数个引号，而 CSS 这一档**压根没有正则字面量**。
+   * 第二轮复评点到的就是这半句。
+   */
+  it("CSS 侧的失步报文不许提正则字面量 —— 那一档在 CSS 里不存在", () => {
+    const brokenCss = '.a{content:"没有闭合\n}';
+    expect(() => stripCssComments(brokenCss)).toThrow("失步");
+    try {
+      stripCssComments(brokenCss);
+    } catch (e) {
+      expect((e as Error).message, "CSS 这一档没有正则字面量，写进报文等于指错路")
+        .not.toContain("正则字面量");
+    }
+    // 反向控制：JS 那一侧的同款报文**必须**仍然点名正则字面量 —— 那确实是它最常见的成因。
+    try {
+      stripComments('const a = "没有闭合\nconst b = 1;');
+    } catch (e) {
+      expect((e as Error).message, "JS 侧删掉这半句就等于把最常见的成因藏起来")
+        .toContain("正则字面量");
+    }
+  });
 });
 
 // ── ④ 抠注释真源的扫描器边界 ────────────────────────────────────────────────
@@ -704,7 +730,64 @@ describe("抠注释真源的三个出口", () => {
  * ⇒ 下面第一格就是那次普查的**复量方法本身**，不是报告里的一次性数字：
  * 它逐文件跑真源，把抛出来的落点收成一张表，期望值是空表。今天它扫 259 个文件、零抛出；
  * 回到上一版实现的话它会红并逐条点名那 14 个文件。
+ *
+ * ⚠️⚠️ **第二轮复评又在同一格上打了一次脸，改这一格之前把这段读完。**
+ * 那一版这一格只有三条不变量（不抛 / 不改长度 / 不改行数 / 不比原文长），
+ * 而它们对**「吞掉真代码」全瞎**：`n++ / 2` 那一族判反之后误开的块注释一路吞到文件尾，
+ * `blankComments` 换等长空格、换行原样保留 ⇒ **三条全过，而真代码没了**
+ *（本轮复量：`src/ports/logger.ts` 上多吞 25 字节，那个裸 `console.log` 一起没了）。
+ * 「判不准就吵」那四档也一档都拦不到——它们拦的是「判不准」，这一族是「判错了但很确信」。
+ * ⇒ 本轮加了两层网：这一格里的第四条不变量 `commentSpanFaults()`（形态层，就近、便宜），
+ * 与下面「全射程与真解析器对拍」那一格（后果层，拿 Node 内置的真解析器当裁判）。
  */
+/**
+ * **被抠掉的每一段，在原文里必须长得像一条形态完整的注释。**
+ *
+ * 这一条是第二轮复评那条 HIGH 的直接产物：那一格原有的三条不变量
+ *（不抛 / `blankComments` 不改长度 / 不改行数 / `stripComments` 不比原文长）
+ * **对「吞掉真代码」是全瞎的**。实测现场：`src/ports/logger.ts` 末尾多一行
+ * `const zzPct = zzN++ / zzTotal;`，那个除法被判成正则开头 ⇒ 同行后面的 `/*` 重开一个
+ * 块注释、一路吞到文件尾，而 `blankComments` 换的是**等长空格、换行原样保留**
+ * ⇒ 三条不变量一条都不红，而真代码（含那个裸 `console.log`）静默消失
+ *（本轮用 BASE 那一版真源在同一个文件上复量：多吞 **25 字节**，`console.log` 不见了）。
+ *
+ * 这一条查的是**后果**：真源只把注释换成等长空格，所以 `blankComments(src)` 与原文
+ * 不同的每一处都必须是一段注释的开头，而且那一段必须**在原文里就闭合得掉**
+ *（双斜杠那一族到行尾为止、斜杠星号那一族到下一个星号斜杠为止）。
+ * 误开的块注释一路吞到文件尾时，这里当场红。
+ * ⚠️ 它不是万能的：块注释误开之后如果后面**碰巧**还有一个闭合记号，这一段的形态就是完整的
+ *（实测过：`n++ / 2` 之后同行跟一个字符串毒刺、再跟一段正常块注释，会静默吞掉中间的
+ * `foo();` 而这一条不红）。**那一族由「全射程与真解析器对拍」那一格接住**——
+ * 两格是两层网，不是重复。
+ */
+/** 块注释的闭合记号，拼出来的：与本文件其余针脚同族纪律，源码里不留裸的注释记号。 */
+const BLOCK_CLOSE = "*" + "/";
+function commentSpanFaults(rel: string, src: string, blanked: string): string[] {
+  const faults: string[] = [];
+  const at = (pos: number): string => `${rel}（第 ${src.slice(0, pos).split("\n").length} 行）`;
+  let i = 0;
+  while (i < src.length) {
+    if (blanked[i] === src[i]) { i += 1; continue; }
+    if (src[i] !== "/") { faults.push(`${at(i)} :: 被抠掉的一段不是以斜杠开头`); break; }
+    let end: number;
+    if (src[i + 1] === "/") {
+      const nl = src.indexOf("\n", i);
+      end = nl === -1 ? src.length : nl;
+    } else if (src[i + 1] === "*") {
+      const close = src.indexOf(BLOCK_CLOSE, i + 2);
+      if (close === -1) { faults.push(`${at(i)} :: 抠掉的这一段是个没有闭合记号的块注释 —— 真代码被吞的现场`); break; }
+      end = close + 2;
+    } else { faults.push(`${at(i)} :: 被抠掉的一段既不是行注释也不是块注释`); break; }
+    for (let k = i; k < end; k += 1) {
+      if (!(blanked[k] === " " || (blanked[k] === "\n" && src[k] === "\n"))) {
+        faults.push(`${at(i)} :: 这一段注释没有被整段抠掉`); break;
+      }
+    }
+    i = end;
+  }
+  return faults;
+}
+
 describe("抠注释真源的扫描器边界", () => {
   it("射程内每个文件都扫得完 —— 一个失步都不许有", () => {
     // 判据与复评那次普查逐字相同：单双引号字符串不许跨行，跨行即失步。
@@ -723,6 +806,8 @@ describe("抠注释真源的扫描器边界", () => {
         if (blanked.length !== src.length) broken.push(`${rel} :: blankComments 改了总长度`);
         if (blanked.split("\n").length !== src.split("\n").length) broken.push(`${rel} :: blankComments 改了行数`);
         if (stripped.length > src.length) broken.push(`${rel} :: stripComments 输出比原文还长`);
+        // 第四条：上面三条对「吞掉真代码」全瞎（见本节 ⚠️⚠️ 那一段的实测）。
+        broken.push(...commentSpanFaults(rel, src, blanked));
       } catch (e) {
         broken.push(`${rel} :: ${(e as Error).message.split("\n")[0]}`);
       }
@@ -774,8 +859,49 @@ describe("抠注释真源的扫描器边界", () => {
       'const s = `a${ f(`b${ g("/admin/api/*") }c`) }d`;\nconst n = 1;\n/* 闭合 */',
       "const n = 1;",
     ],
+    // ↓ 这四条是第二轮复评那条 HIGH 的直接产物：**后缀运算符之后的除法**。
+    //   上一版按单个字符看前一个 token，`+`/`-`/`!` 都在「前缀位 ⇒ 正则开头」那张表里，
+    //   于是这一族整族被判反、静默吞掉真代码（复评实测 `n++ / 2` 那一行吞 20 字节）。
+    //   毒刺 `"/admin/api/*"` 必须在场：判反之后正是它提供那个「重开块注释」的斜杠星号。
+    [
+      "后缀自增之后的斜杠是除法（`i++ / total` 是再普通不过的一行 JS）",
+      'let n = 1;\nconst r = n++ / 2; const GLOB = "/admin/api/*";\nconst keep = 1;\n/* 闭合 */',
+      "const keep = 1;",
+    ],
+    [
+      "后缀自减之后的斜杠是除法",
+      'let n = 2;\nconst r = n-- / 2; const GLOB = "/admin/api/*";\nconst keep = 1;\n/* 闭合 */',
+      "const keep = 1;",
+    ],
+    [
+      "TS 非空断言之后的斜杠是除法（`x! / 2`，`!` 与逻辑非同一个字符）",
+      'const a = { b: 1 };\nconst r = a!.b! / 2; const GLOB = "/admin/api/*";\nconst keep = 1;\n/* 闭合 */',
+      "const keep = 1;",
+    ],
+    [
+      "**反向控制**：前缀位的逻辑非后面仍然是正则开头（`if (!/^a/.test(s))`，仓里 21 处这种写法）",
+      'const s = "x";\nif (!/^a\\/b/.test(s)) { const GLOB = "/admin/api/*"; }\nconst keep = 1;\n/* 闭合 */',
+      "const keep = 1;",
+    ],
   ])("认得出：%s", (_why, src, mustKeep) => {
     expect(stripComments(src as string)).toContain(mustKeep as string);
+  });
+
+  /**
+   * **后缀运算符那一族：逐字节原样，不是「只要留下那句话就算过」。**
+   *
+   * 上面那张表用的是 `toContain`，而**被吞的字节可能落在别处**（复评那三条实测里，
+   * 被吞的是毒刺与它后面的一整段）。这一格把同一族的输入按「零注释 ⇒ 输出必须逐字节等于原文」
+   * 钉死：少一个字节都是致盲。
+   */
+  it.each([
+    ["后缀自增", 'let n = 1; const r = n++ / 2; const GLOB = "/admin/api/*"; const keep = 1;'],
+    ["后缀自减", 'let n = 2; const r = n-- / 2; const GLOB = "/admin/api/*"; const keep = 1;'],
+    ["非空断言", 'const a = { b: 1 }; const r = a!.b! / 2; const GLOB = "/admin/api/*"; const keep = 1;'],
+    ["前缀自增（`++i / 2` 里那个斜杠同样是除法）", 'let i = 0; const r = ++i / 2; const GLOB = "/admin/api/*"; const keep = 1;'],
+    ["比较运算符 `!==` 后面仍是正则位", 'const a = 1; if (a !== /x/.test("y")) { const keep = 1; }'],
+  ])("一个字节都不许吞：%s", (_why, src) => {
+    expect(stripComments(src as string), "这一行里一个注释都没有 ⇒ 输出必须逐字节等于原文").toBe(src as string);
   });
 
   it("反向控制：真注释还是要被抠掉 —— 别把它修成「什么都不抠」", () => {
@@ -784,24 +910,212 @@ describe("抠注释真源的扫描器边界", () => {
   });
 
   /**
-   * **判不准就吵，不许静默按某一种解释走下去。**
+   * **判不准要吵；判错了也要吵 —— 这两件事不是一回事，第二轮复评就栽在这。**
    *
-   * 正则 vs 除法是真歧义，这个扫描器**不假装能完美区分**。判据覆盖不到的那几档一律抛，
-   * 消息里逐字带上原文那一行。⚠️ 这三档今天在射程内**零命中**（上面那格），
-   * 所以它们是绊线不是噪音；哪天真被绊到，请去真源加一档判据。
+   * 正则 vs 除法是真歧义，这个扫描器**不假装能完美区分**。判据覆盖不到的那几档一律抛。
+   * 但**「判不准就吵」拦不住「判错了但很确信」**：`n++ / 2` 那一族被判成正则位时扫描器
+   * 一个字都不吵，静默把真代码当注释吞掉，而当时的四档一档都没资格开口。
+   * ⇒ 下面这张表分两族：**前四条是「我不知道」**（判据够不着），
+   * **后三条是「我刚才那一步不可能对」**（后果层兜底，不按符号列举）。
+   *
+   * ⚠️ **这张表就是清单本身，别再往哪句注释里写「今天会抛的 N 档」**：
+   * 上一版这里写着「这三档」而表里是四条、真源写的是「四档」——本文件族第四次为
+   * 「把计数写死进注释」漂移。**计数只许以断言的形式存在**：下面那一格直接数真源里的抛出点，
+   * 与这张表的行数比对，往真源加一档而不来这里加一行 ⇒ 当场红。
+   *
+   * ⚠️ 这几档在射程内的命中情况**不写死在注释里**：上面「射程内每个文件都扫得完」那一格
+   * 期望空表，它绿着就是零命中，红了就会逐条点名。
    */
-  it.each([
+  const SHOUT_CASES: ReadonlyArray<readonly [string, string, string]> = [
     ["`}` 后面的裸斜杠：块结束是正则位、对象字面量结束是除法位，分不出", "const f = function () {}\n/x/.test(s);", "判不准"],
     ["字符串没在本行内闭合 ⇒ 扫描器已经失步", 'const a = "没有闭合\nconst b = 1;', "失步"],
     ["正则字面量没在本行内闭合 ⇒ 判据把一个除法号当成了正则开头", "const a = (1 + 2);\nconst b = /没有闭合\nconst c = 1;", "没有在本行内闭合"],
     ["前一个有意义字符不在真源那两张判据表里 —— 宁可吵也不许猜", "const a = 1;\n@ /x/;", "两张判据表"],
-  ])("判不准要吵：%s", (_why, src, needle) => {
-    expect(() => stripComments(src as string)).toThrow(needle as string);
+    // ↓ 后果层三条：它们盯的是「真代码被当注释吞掉」这个后果，不是某几个符号。
+    //   第一条是整族的兜底：判成正则之后交给引擎验一遍，`"/admin/api/*"` 里的 `admin`
+    //   落在 flag 位上就当场露馅——下一次判反的位置一定不在今天这张符号表里。
+    [
+      "判成正则之后引擎不认这条正则 ⇒ 判错了（`n++ / 2` 判反之后留下的正是这个现场）",
+      'let n = 1;\nconst r = n + / 2; const GLOB = "/admin/api/*"; const keep = 1;',
+      "引擎不认",
+    ],
+    ["块注释开了没有闭合记号，一路吞到文件尾", "const a = 1;\n/* 没有闭合记号", "吞到文件尾"],
+    ["扫到文件尾模板栈还没平衡（反引号没配对 / `${` 没闭合 / 插值里花括号数不平）", "const s = `abc;\nconst n = 1;", "还没平衡"],
+  ];
+
+  it.each(SHOUT_CASES)("判不准要吵：%s", (_why, src, needle) => {
+    expect(() => stripComments(src)).toThrow(needle);
     // 消息里必须带上原文那一行，否则「吵」了也没人知道吵的是哪一行。
     try {
-      stripComments(src as string);
+      stripComments(src);
     } catch (e) {
       expect((e as Error).message, "抛出来的消息里必须逐字带上原文").toContain("原文：");
     }
+  });
+
+  /**
+   * **反向控制：这几条绊线不许乱红。**
+   *
+   * 「我认得出 X」的断言必须配一条「我对 X 不乱红」的——尤其是后果层那三条：
+   * 它们一旦误伤，代价是每一个含正则/模板/块注释的正当文件都抛，那比没有更糟。
+   * 大反向控制是上面那格（射程 259 个文件零抛出），这里补的是**最容易误伤的那几种形态**。
+   */
+  it.each([
+    ["字符组里的裸斜杠与引号（`/[/*\"]/`）是一条合法正则", 'const re = /[/*"]/;'],
+    ["协议匹配里的转义斜杠（仓里三个文件的真实形态）", "const isAbs = /^https?:\\/\\//.test(u);"],
+    ["Unicode 属性转义要 `u` 标志才合法 —— 带着标志一起验才不会误伤", "const re = /\\p{L}+/u;"],
+    ["带 lookbehind 的真实规则（`IO_PATTERNS` 里那一条的形态）", "const re = /(?<![.\\w])set(?:Timeout|Interval|Immediate)\\s*\\(/g;"],
+    ["块注释正常闭合在文件最后一个字节上", "const a = 1;\n/* 闭合了 */"],
+    ["模板里嵌模板、插值里再嵌模板，栈最终是平的", "const s = `a${ f(`b${ g(1) }c`) }d`;"],
+    ["带标签模板", "const s = tag`a${b}c`;"],
+  ])("不乱红：%s", (_why, src) => {
+    expect(() => stripComments(src)).not.toThrow();
+  });
+
+  /**
+   * **计数只许以断言的形式存在。**
+   *
+   * 真源里每加一档抛出，这里的数就变，而 `SHOUT_CASES` 不跟着加一行就红。
+   * ⚠️ 数的是**调用形态**（`fail` 后面紧跟左括号加 `src, `），函数定义那一处由
+   * `(?<!function )` 排除掉 —— 所以**真源的注释里别写这个调用形态的字面文本**，会被数进来。
+   */
+  it("真源里的抛出点数必须等于上面那张表的行数 —— 加一档而不加一行探针 ⇒ 当场红", () => {
+    const truth = readFileSync(REGEX_STRIP_EXEMPT, "utf8");
+    const sites = truth.match(/(?<!function )\bfail\(src, /g) ?? [];
+    expect(
+      sites.length,
+      "真源的抛出点与「判不准要吵」那张表对不上了：往真源加了一档就必须往那张表加一行探针，"
+      + "否则新那一档是一条**没人验过的绊线**——一条永远不触发的防御和没有防御在证据上要分辨得出来",
+    ).toBe(SHOUT_CASES.length);
+  });
+
+  /**
+   * **已知判反（登记成断言，不是散文）。**
+   *
+   * 与 `REGEX_STRIP_MISSES` 是同一条纪律：**边界写成会变红的断言**，将来谁把它补上了，
+   * 这一条红，把它删掉即可。
+   *
+   * 靠 ASI 断句的 `const a = b` 换行 `!/x/.test(s)`：那个 `!` 前面是一个完整的值，
+   * 真源判成 TS 非空断言（后缀位）⇒ 后面那条正则被当成代码扫。
+   * **危害档位：低，且已实测过方向**——那是「把正则当代码扫」，不吞代码：
+   * 正则里只要有引号或裸斜杠就会撞上别的绊线当场吵（下面这条就是），
+   * 一个字符都不含时输出逐字节原样。射程内这种写法 **0 处**（全仓 21 处 `!` 接斜杠
+   * 全是 `if (!/^…/.test(x))` 这种前缀位）。
+   */
+  it("已知判反：ASI 断句的行首逻辑非被当成非空断言 —— 方向是吵，不是致盲", () => {
+    // 这条变红意味着**有人把这个盲点补上了**——那是好事，把这一格删掉即可。
+    expect(() => stripComments("const a = b\n!/x\\/\\/y/.test(s);")).toThrow("判不准");
+    expect(
+      stripComments("const a = b\n!/x/.test(s);"),
+      "不含引号与裸斜杠时，这一支的后果是逐字节原样 —— 不是吞代码",
+    ).toBe("const a = b\n!/x/.test(s);");
+  });
+});
+
+// ── ⑤ 全射程与真解析器对拍 ──────────────────────────────────────────────────
+
+/**
+ * **这一格是第二轮复评那条 HIGH 的第二层网：拿一个真解析器当常驻裁判。**
+ *
+ * 上一轮与这一轮的两条致命缺陷都是「同一族的第二次」：先是正则字面量整个不认，
+ * 再是后缀运算符之后的除法判反。两次都是**射程内的自查全绿**，两次都靠评审员**临时**
+ * 写一份对拍才现形。⚠️ **一次性的对拍是评审员的运气，不是仓库的资产。**
+ * ⇒ 所以把裁判固化成这一格：下次再把任何位置的斜杠判反，**当场红**，不必等下一个评审员想到。
+ *
+ * **裁判是谁**：Node 内置的 `module.stripTypeScriptTypes(src, { mode: "transform" })`
+ *（Node 自带的 SWC）。它是一个**真解析器**——正则 vs 除法由它自己的表达式上下文判定，
+ * 而 `transform` 模式的输出**不带注释**。**本文件一行解析逻辑都没写**，这一点是这一格的全部价值：
+ * 自写第二实现来对拍，正是本任务要消灭的东西（上一轮评审用的 `oracle.mjs` 就是那样）。
+ *
+ * **对拍口径是「后果」，不是中间量**：抠注释**不许改变程序本身**。
+ *     judge(stripComments(src)) === judge(src)
+ * 真代码被当注释吞掉时，抠完的那份要么解析不了、要么少了几条语句 ⇒ 两边当场不等。
+ * 比「逐字节对拍注释区间」更贴要害：致盲的定义就是「真代码脱离扫描」。
+ * ⚠️ **它看不见反方向**（该抠的没抠掉）：裁判两边都会把注释抠掉。那一族是**多报方向**
+ *（注释文本泄漏进代码 ⇒ 下游门禁红），由「反向控制：真注释还是要被抠掉」那一格钉着。
+ *
+ * **为什么不是 acorn**（第二轮复评那份一次性裁判用的是它）：它不在本仓依赖里，
+ * 而这道断言不值得为它新增依赖；更要紧的是 **acorn 解析不了 `.ts`**，而射程 259 个文件里
+ * 221 个是 `.ts` —— 拿它当裁判还得自己先做一遍类型擦除，**那等于又写一份第二实现**。
+ * Node 内置这一条零依赖、零解析逻辑，`.ts`/`.js`/`.mjs` 一视同仁。
+ * ⚠️ 它是实验 API（跑起来会有一行 `ExperimentalWarning`，那是真的，不是噪音），
+ * 且要 Node ≥ 22.13（CI 用的是 `node-version: 22`，本机与 CI 都实测过）。
+ * **所以下面第一格先验裁判自己**：裁判不在、不再抠注释、或者看不出真代码被吞 ⇒ **红，不是跳过**。
+ * 一个不会判的裁判必须吵出来，否则这一格就是一格恒绿。
+ */
+const judge = (src: string): string => stripTypeScriptTypes(src, { mode: "transform" });
+
+describe("全射程与真解析器对拍", () => {
+  it("先验裁判自己 —— 它抠注释、而且看得出真代码被吞", () => {
+    expect(typeof stripTypeScriptTypes, "Node 太老，没有这个内置裁判 ⇒ 这一格没法判，红着比绿着诚实")
+      .toBe("function");
+    const withComments = "const a: number = 1; // 抠掉我\n/* 也抠掉我 */\nfoo();\n";
+    expect(judge(withComments), "裁判不再抠注释了 ⇒ 下面那格会把「注释没抠干净」也判成一致").not.toContain("抠掉我");
+    expect(judge(withComments), "裁判把真代码也弄丢了 ⇒ 它不能当裁判").toContain("foo()");
+    // 正向：真代码被吞 ⇒ 裁判必须说不等（否则下面那一格是恒绿的）
+    expect(
+      judge("const a = 1;\nfoo();\n") === judge("const a = 1;\n"),
+      "裁判看不出少了一条语句 ⇒ 它没有鉴别力",
+    ).toBe(false);
+    // 反向：只差注释 ⇒ 裁判必须说相等（否则下面那一格会满仓乱红）
+    expect(judge("const a = 1; // c\nfoo();\n"), "只差注释却说不等 ⇒ 这一格会满仓乱红")
+      .toBe(judge("const a = 1;\nfoo();\n"));
+  });
+
+  it("射程内每个文件：抠注释不许改变程序本身", () => {
+    const broken: string[] = [];
+    const files = regexStripScanFiles();
+    for (const rel of files) {
+      const src = readFileSync(rel, "utf8");
+      let ref: string;
+      try {
+        ref = judge(src);
+      } catch (e) {
+        broken.push(`${rel} :: 裁判连原文都解析不了（${(e as Error).message.split("\n")[0]}）`);
+        continue;
+      }
+      for (const [name, fn] of [["stripComments", stripComments], ["blankComments", blankComments]] as const) {
+        let mine: string;
+        try {
+          mine = fn(src);
+        } catch (e) {
+          broken.push(`${rel} :: ${name} 抛出 ${(e as Error).message.split("\n")[0]}`);
+          continue;
+        }
+        try {
+          if (judge(mine) !== ref) broken.push(`${rel} :: ${name} 抠完之后程序变了`);
+        } catch (e) {
+          broken.push(`${rel} :: ${name} 抠完之后裁判解析不了（${(e as Error).message.split("\n")[0]}）`);
+        }
+      }
+    }
+    expect(files.length, "射程扫了个空 —— 这一格会恒绿").toBeGreaterThan(200);
+    expect(
+      broken,
+      "**抠注释改变了程序本身 —— 这就是致盲**：真代码被当成注释吞掉之后，"
+      + "所有按内容扫的下游门禁都会照常报绿。真源那几档绊线拦的是「判不准」，"
+      + "拦不住「判错了但很确信」，所以这一格拿真解析器直接查后果。"
+      + "请去 `scripts/lib/strip-comments.mjs` 的正则/除法判据里补这一档，"
+      + "**别在这里加豁免、也别在调用方 try/catch 把它吞掉**",
+    ).toEqual([]);
+  }, 120_000);
+
+  /**
+   * **反向控制：这一格真的会红。**
+   *
+   * 一条恒等于零的断言与一条坏掉的断言长得一模一样——上面那格期望空表，这里证明它有鉴别力：
+   * 拿第二轮复评那三条实测输入（`++` / `--` / 非空断言之后的除法，判反之后会吞掉真代码），
+   * 各造一份「被吞掉之后的样子」，裁判必须说它与原文不是同一个程序。
+   */
+  it.each([
+    ["后缀自增之后的除法", 'let n = 1; const r = n++ / 2; const GLOB = "/admin/api/*"; console.log(1);'],
+    ["后缀自减之后的除法", 'let n = 2; const r = n-- / 2; const GLOB = "/admin/api/*"; console.log(1);'],
+    ["非空断言之后的除法", 'const a = { b: 1 }; const r = a!.b! / 2; const GLOB = "/admin/api/*"; console.log(1);'],
+  ])("裁判认得出被吞掉的真代码：%s", (_why, src) => {
+    // 「判反之后的样子」：误判出来的正则在毒刺里那个斜杠上闭合，其后一路被吞掉。
+    const swallowed = src.slice(0, src.indexOf('"/admin') + 3);
+    expect(judge(src) === (() => { try { return judge(swallowed); } catch { return "解析不了"; } })(), "裁判看不出这一族 ⇒ 上面那格接不住它")
+      .toBe(false);
+    expect(judge(src), "反向控制：原文本身要能过裁判这一关，否则上面那条不等是白来的").toContain("console.log");
   });
 });
