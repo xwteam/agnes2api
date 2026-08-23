@@ -491,6 +491,13 @@ function braceInterpLinesIn(rel: string, src: string): Array<{ file: string; tex
   // 行数不变是留空版的定义，也是下面按 `i` 对齐的全部前提。**不成立就吵，别静默按某一边走**
   //（全射程那一遍由 `tests/unit/source-guards.test.ts`「射程内每个文件都扫得完 —— 一个失步都不许有」
   // 钉着，这里只是就地复核一次）。
+  // ⚠️⚠️ **按今天 `blankComments()` 的实现，这条分支理论上不可达**：`scan()` 是逐字符扫描器，
+  // 代码区间原样搬运、注释区间只把非换行字符换成空格（换行恒原样保留），这是字符级不变量；
+  // `scan()` 判不准/判错时是直接 `fail()` 抛错，不会吐出一份行数对不上的字符串——
+  // 结论是「行数分毫不差，要么直接抛错，没有第三种结果」，不是猜测。
+  // ⇒ 这里防的是**未来的实现漂移**，不是今天的某种刁钻输入；今天唯一验证过会踩中它的路，
+  // 是把上面这行 `blankComments(src)` 换成 `stripComments(src)`
+  //（删除版把块注释里的换行一并吃掉，抠后的行数就会变少）。
   if (blanked.length !== raw.length) {
     throw new Error(`[braceInterpLinesIn] 抠注释改了行数（${raw.length} → ${blanked.length}）：`
       + "按行数的判据要求逐行对齐，抠法必须是留空版");
