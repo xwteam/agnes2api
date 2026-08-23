@@ -234,12 +234,20 @@ describe("响应窄化：读不出来 ≠ 空清单", () => {
 describe("形态 → 文案 key", () => {
   /**
    * ⚠️ **一律字面量，禁止把形态名拼进 key**（P3d 全局约束 12）。
-   * ⚠️ **别把这句读成「由 i18n 门禁保证」**：第 6 道门禁只认 `t("…")` 与
-   * `data-i18n` 属性两种形态，`elI18n(tag, key)` 它一个都看不见。守着这三个 key
-   * 拼写的是 `tests/unit/i18n-dict.test.ts` 的
+   *
+   * ⚠️⚠️ **上一版这里两句都随 P3e 作废了，订正如下**（Task 4 复评 F1）：
+   * 上一版写着「第 6 道门禁只认 `t("…")` 与 `data-i18n` 属性两种形态，
+   * `elI18n(tag, key)` 它一个都看不见」，用例名还写着「动态拼 key 会让三道 i18n 门禁一起哑」。
+   * · P3e Task 3 起第 ① 条是**抠完注释的命名空间广扫**（单双引号都扫）
+   *   ⇒ `elI18n(tag, key)` 那一族它认得，拼错一个字母当场 exit 1；
+   * · P3e Task 4 起第 ④ 条是**硬错** ⇒ 真把形态名拼进 key，这三个 key 会落进
+   *   「未被引用」并把 CI 打红，**而红的是三个正在用的 key** ——
+   *   顺着报文去「清理未被引用的 key」删掉的就是活文案。
+   * ⇒ **别拼的理由今天比当初更硬，不是更软。** 另一层是
+   * `tests/unit/i18n-dict.test.ts` 的
    * 「板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里」那一格。
    */
-  it("三个已知形态各自映射到一个手写字面量 key —— 动态拼 key 会让三道 i18n 门禁一起哑", () => {
+  it("三个已知形态各自映射到一个手写字面量 key —— 动态拼 key 会把这三个活 key 打成硬错", () => {
     expect(modalityLabelKey("chat")).toBe("models.modality.chat");
     expect(modalityLabelKey("image")).toBe("models.modality.image");
     expect(modalityLabelKey("video")).toBe("models.modality.video");

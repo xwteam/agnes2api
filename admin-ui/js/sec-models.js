@@ -221,7 +221,9 @@ function badgeCell(model) {
   const td = el("td");
   for (const b of protocolBadges(model, catalog.protocols)) {
     // ⚠️ tooltip 的两个 key **写成三元里的两个字面量**，不是拼出来的
-    //（全局约束 12：动态拼 key 会让三道 i18n 门禁一起哑）。
+    //（全局约束 12。⚠️ 上一版这里写的是「动态拼 key 会让三道 i18n 门禁一起哑」，
+    // 那句话在 P3e Task 4 之后是假的：第 ④ 条已升成硬错 ⇒ 拼出来的话这两个
+    // **正在用**的 key 会落进「未被引用」并把 CI 打红，别拼的理由比当初更硬）。
     const tip = b.available ? t("models.badge.yes") : t("models.badge.no");
     // ⚠️ **不可用那一档刻意不加任何修饰类**：`.badge` 的底样式本身就是中性灰，
     //    而 `admin-ui/css/sections.css` 里 `.badge-danger` 下面那段注释逐字裁过
