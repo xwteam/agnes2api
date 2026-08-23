@@ -713,6 +713,77 @@ describe("抠注释真源的三个出口", () => {
 // ── ④ 抠注释真源的扫描器边界 ────────────────────────────────────────────────
 
 /**
+ * `blankComments()` 动过的每一段，在原文里都必须以斜杠开头；返回不合格的那几段。
+ *
+ * **它不解析任何东西**——`blankComments` 保长度，于是「哪些位置被动过」是逐字节比出来的。
+ * 「同一段」的判据：中间只隔着空格或换行（注释里原有的空格换成空格之后与原文相等，
+ * 换行原样保留），隔着别的字节就算两段。**这是刻意的最弱形态**，只认「起点不是斜杠」这一件事，
+ * 因为已删的那条不变量的另外三条分支实测被支配（见下面 describe 的文件头）。
+ */
+function blankedSpanFaults(src: string, blanked: string): string[] {
+  const faults: string[] = [];
+  const n = src.length;
+  let i = 0;
+  while (i < n) {
+    if (blanked[i] === src[i]) { i += 1; continue; }
+    const start = i;
+    let end = i;
+    let k = i;
+    while (k < n) {
+      if (blanked[k] !== src[k]) { end = k; k += 1; continue; }
+      if (src[k] === " " || src[k] === "\n") { k += 1; continue; }
+      break;
+    }
+    if (src[start] !== "/") {
+      const line = src.slice(0, start).split("\n").length;
+      faults.push(`第 ${line} 行抠掉的一段以 ${JSON.stringify(src.slice(start, start + 24))} 开头，那不是注释`);
+    }
+    i = end + 1;
+  }
+  return faults;
+}
+
+/**
+ * 真源里每个 `fail()` **调用点**的档名（取该调用点里第一个字符串字面量），
+ * 外加 `function fail(` 定义点的个数（给「这道守卫扫对地方了吗」当反向自检）。
+ *
+ * **先抠注释再找**（用的就是被守的那份真源自己的 `blankComments`）：散文里怎么写都不算数——
+ * 上上一版数字面文本时，注释里出现那串字符就会假红并指错地方。
+ * **格式无关**：空白 / 换行 / 缩进都不参与判据。
+ */
+function failCallSites(source: string): { sites: Array<string | null>; defs: number } {
+  const code = blankComments(source);
+  const sites: Array<string | null> = [];
+  let defs = 0;
+  const re = /\bfail\s*\(/g;
+  for (let m = re.exec(code); m !== null; m = re.exec(code)) {
+    if (/\bfunction\s+$/.test(code.slice(Math.max(0, m.index - 24), m.index))) { defs += 1; continue; }
+    sites.push(firstStringLiteral(code, m.index + m[0].length - 1));
+  }
+  return { sites, defs };
+}
+
+/** 从 `openParen` 那个左括号起，取这一对括号里的第一个字符串字面量；没有就 `null`。 */
+function firstStringLiteral(code: string, openParen: number): string | null {
+  let depth = 0;
+  for (let i = openParen; i < code.length; i += 1) {
+    const ch = code[i];
+    if (ch === "(") { depth += 1; continue; }
+    if (ch === ")") { depth -= 1; if (depth === 0) return null; continue; }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let lit = "";
+      for (let j = i + 1; j < code.length; j += 1) {
+        if (code[j] === "\\") { j += 1; continue; }
+        if (code[j] === ch) break;
+        lit += code[j];
+      }
+      return lit;
+    }
+  }
+  return null;
+}
+
+/**
  * **这一节是 P3e Task 1 复评那条 CRITICAL 的直接产物，读完再改。**
  *
  * 上一版真源逐字符扫，但**不认正则字面量**，而且它的「边界明写」段把危害判据写错了
@@ -745,11 +816,20 @@ describe("抠注释真源的三个出口", () => {
  * —— 零信号。** 它被真源那条「块注释开了没闭合」完全支配（那一支在 `scan()` 里先抛，
  * 检查器根本拿不到那份 `blanked`），而误开的是 `//` 行注释时它永远不红
  *（行注释「到行尾为止」在原文里恒为形态完整）——第三轮那条端到端正是这一族。
- * ⇒ **本轮把它删掉了**，理由是本仓那条规矩：一条永远不触发的防御和没有防御在证据上要分辨得出来，
- * 而它今天分辨不出来；留着它的唯一后果是下一个人以为「这里已经接好了」。
- * 它原本想接的那个后果，现在由真源里的 `openerLivesInString()`（后果层，不盯符号）
- * 与下面「全射程与真解析器对拍」那一格接。**这一格剩下的三条不变量请当成便宜的形态自检，
- * 不要当成网。**
+ * ⇒ 上一轮**把它整个删掉了**，理由是本仓那条规矩：一条永远不触发的防御和没有防御在证据上
+ * 要分辨得出来，而它当时分辨不出来；留着它的唯一后果是下一个人以为「这里已经接好了」。
+ *
+ * ⚠️⚠️ **第四轮复评在这里又打了一次脸：整个删掉带走了一样东西，而当时那句
+ * 「它原本想接的那个后果，现在由 `openerLivesInString()` 与对拍那一格接」是假的。**
+ * 复评逐条复刻已删的那个函数、与现有各层对拍，量出来的是：它的四条分支里三条确实被支配，
+ * **但第一条（「被抠掉的一段在原文里不是以斜杠开头」）今天没有任何一层接**——
+ * 合成实验（整条 `interface` / `type` 别名 / `import type` 被换成等长空格）实测：
+ * 三条便宜不变量全过、真源不抛、**独立裁判两边逐字节相等（它做类型擦除，看不见）**，
+ * 而已删的那一条会红。⇒ 删掉它，恰好带走了**裁判已登记盲区②的唯一覆盖层**。
+ * ⇒ **本轮把那一条分支单独留回来**，落在下面「抠掉的每一段在原文里都必须以斜杠开头」那一格，
+ * 并且这一次**带正向控制**（合成一份「整条 interface 被吞」的输入，它必须红，同时证明裁判绿）——
+ * 上一版恒绿正是因为没有正向控制。**其余三条分支不要抄回来，它们真的被支配。**
+ * **这一格剩下的三条不变量仍然请当成便宜的形态自检，不要当成网。**
  */
 
 describe("抠注释真源的扫描器边界", () => {
@@ -770,9 +850,11 @@ describe("抠注释真源的扫描器边界", () => {
         if (blanked.length !== src.length) broken.push(`${rel} :: blankComments 改了总长度`);
         if (blanked.split("\n").length !== src.split("\n").length) broken.push(`${rel} :: blankComments 改了行数`);
         if (stripped.length > src.length) broken.push(`${rel} :: stripComments 输出比原文还长`);
-        // ⚠️ 这三条对「吞掉真代码」全瞎，别在这里再加第四条形态自检了（见本节第二段 ⚠️⚠️：
-        // 上一版加过一条，实测是恒绿）。真正接住那一族的是真源的 `openerLivesInString()`
-        // 与下面「射程内每个文件：抠注释不许改变程序本身」那一格。
+        // ⚠️ 这三条对「吞掉真代码」全瞎，别在这里往里塞第四条：真正接住那一族的是
+        // 下面那两格全射程不变量（「抠掉的每一段在原文里都必须以斜杠开头」与
+        // 「射程内每个文件：抠注释不许改变程序本身」），它们各自带着正向控制，
+        // 而这三条只是便宜的形态自检。真源那条 `openerLivesInString()` 是尽力而为的
+        // 概率防线，**它绿着什么都不证明**（理由写在真源那个函数自己的注释里）。
       } catch (e) {
         broken.push(`${rel} :: ${(e as Error).message.split("\n")[0]}`);
       }
@@ -785,6 +867,84 @@ describe("抠注释真源的扫描器边界", () => {
       + "真代码整段脱离扫描而所有下游门禁照常报绿。请去真源的正则/字符串判据里补这一档，"
       + "**别在调用方加 try/catch 把它吞掉**",
     ).toEqual([]);
+  });
+
+  /**
+   * **`blankComments()` 抠掉的每一段，在原文里必须以斜杠开头 —— 这一格接的是裁判看不见的那一族。**
+   *
+   * 判据只看**差异区间**，不看扫描器做过什么判断：`blankComments` 保长度，
+   * 于是「哪些位置被动过」是一个可以逐字节数出来的量。被动过的每一段，
+   * 在原文里的**第一个字节必须是斜杠**（`//` 或斜杠星号的开头）——注释只能这么开头。
+   * 一段真代码被当注释吞掉时，那一段多半不是以斜杠开头 ⇒ 当场红并点名行号。
+   *
+   * ⚠️ **缝隙的口径写在这里，别照抄成「连续区间」**：注释里原本就有的空格
+   * 换成空格之后与原文相等，换行更是原样留着 ⇒ 差异区间天然是碎的。
+   * 所以「同一段」的判据是「中间只隔着空格或换行」；隔着任何别的字节就算两段。
+   *
+   * ⚠️⚠️ **它为什么值得单独一格（这一条是第四轮复评的直接产物）**：
+   * 下面「射程内每个文件：抠注释不许改变程序本身」那一格拿真解析器当裁判，
+   * 而**裁判两边都做类型擦除** ⇒ 整条 `interface` / `type` 别名 / `import type`
+   * 被吞掉时它两边逐字节相等、**完全看不见**（那是它自陈的盲区②）。
+   * 这一格是那一族**今天唯一的覆盖层**，正向控制就在下面那一格里。
+   */
+  it("抠掉的每一段在原文里都必须以斜杠开头 —— 裁判盲区②的唯一覆盖层", () => {
+    const faults: string[] = [];
+    const files = regexStripScanFiles();
+    for (const rel of files) {
+      const src = readFileSync(rel, "utf8");
+      let blanked: string;
+      // `blankComments` 抛出时**这一格刻意让路**：那种失败由上面「射程内每个文件都扫得完」
+      // 那一格逐文件点名，在这里再抛一次只会用一句「以斜杠开头」盖掉真正的报文。
+      try { blanked = blankComments(src); } catch { continue; }
+      for (const f of blankedSpanFaults(src, blanked)) faults.push(`${rel} :: ${f}`);
+    }
+    expect(files.length, "射程扫了个空 —— 这一格会恒绿").toBeGreaterThan(200);
+    expect(
+      faults,
+      "有一段**不以斜杠开头**的东西被抠掉了 ⇒ 那不是注释，是真代码。"
+      + "**这一族正是独立裁判看不见的那一族**（它两边都做类型擦除，整条 `interface` / "
+      + "`type` 别名 / `import type` 被吞掉时它判两边相等）。"
+      + "请去 `scripts/lib/strip-comments.mjs` 找那一段是被哪一档抠掉的，"
+      + "**别在这里加豁免**",
+    ).toEqual([]);
+  });
+
+  /**
+   * **正向 + 反向控制：上面那格真的会红，而且它对正当注释不乱红。**
+   *
+   * 上一轮删掉的那条不变量恒绿，根因就是**没有正向控制**——一条恒等于零的断言与一条
+   * 坏掉的断言长得一模一样。这一格拿第四轮复评实测的那三种形态当输入：
+   * 整条纯类型语句被换成等长空格。三种在真源今天都走不到（**这里验的不是真源判得对**），
+   * 验的是**上面那格有没有鉴别力**，以及**裁判确实看不见它**。
+   */
+  it.each([
+    ["interface 声明", "interface A { x: number }\nfoo();\n"],
+    ["type 别名", "type A = { x: number };\nfoo();\n"],
+    ["import type", 'import type { A } from "./a";\nfoo();\n'],
+  ])("正向控制：整条纯类型语句被吞时上面那格会红，而独立裁判看不见：%s", (_why, src) => {
+    const head = src.indexOf("\n");
+    const swallowed = " ".repeat(head) + src.slice(head);
+    expect(
+      blankedSpanFaults(src, swallowed),
+      "上面那格看不出「一整条纯类型语句被换成了空格」⇒ 它是恒绿的",
+    ).not.toEqual([]);
+    expect(
+      judge(src),
+      "裁判要是看得见这一族，上面那格就不是「唯一覆盖层」——那样的话请把这一条改写成登记",
+    ).toBe(judge(swallowed));
+  });
+
+  it("反向控制：正当的注释不许被判成「不以斜杠开头」", () => {
+    for (const src of [
+      "const a = 1; /* c */\n// x\nfoo();\n",
+      "/* 跨行\n   注释 */\nfoo();\n",
+      'const s = "/*"; // 字符串里的斜杠星号不是注释\n',
+      "const a = 1; /* 前 */  /* 后 */ const b = 2;\n",
+      "#!/usr/bin/env node\n// 首行 hashbang 之后的行注释\nfoo();\n",
+    ]) {
+      expect(blankedSpanFaults(src, blankComments(src)), `这一条是正当注释，不许红：${src.slice(0, 24)}`)
+        .toEqual([]);
+    }
   });
 
   /**
@@ -930,8 +1090,11 @@ describe("抠注释真源的扫描器边界", () => {
     // ↓ 后果层：它们盯的是「真代码被当注释吞掉」这个后果，不是某几个符号。
     //   ⚠️ 前三条**意图对、落地仍然在盯符号**（盯 flag 字母、盯 `/*`、盯反引号），
     //   第三轮复评实测它们对 `>` 那一族**一条都没接住**（端到端：门禁当场变瞎）。
-    //   最后一条 `openerInString` 才是不盯符号的那一条：它只问「这个注释开头，
-    //   按本行引号收支独立重算，是不是住在一个字符串里」。
+    //   最后一条 `openerInString` 是唯一不盯符号的：它只问「这个注释开头，
+    //   按本行双引号收支独立重算，是不是住在一个字符串里」。
+    //   ⚠️⚠️ **但它是一条概率防线，不是不变量**：开不开口由本行双引号的奇偶决定，
+    //   而那个量与「哪个斜杠被判反了」毫无关系（第四轮复评：一个撇号就能让它闭嘴）。
+    //   它的四类漏报钉在下面「已知漏报」那张表里，承重在哪一侧写在真源的文件头。
     [
       "判成正则之后引擎不认这条正则 ⇒ 判错了（`n++ / 2` 判反之后留下的正是这个现场）",
       'let n = 1;\nconst r = n + / 2; const GLOB = "/admin/api/*"; const keep = 1;',
@@ -971,8 +1134,8 @@ describe("抠注释真源的扫描器边界", () => {
    * 「我认得出 X」的断言必须配一条「我对 X 不乱红」的——尤其是后果层那一族：
    * 它们一旦误伤，代价是每一个含正则/模板/块注释的正当文件都抛，那比没有更糟。
    * 大反向控制是上面那格（射程 259 个文件零抛出），这里补的是**最容易误伤的那几种形态**。
-   * ⚠️ 本轮新加的 `openerInString` 那一档**确实有一种会误伤的形态**，它没有藏起来：
-   * 见下面「已知误伤：两条各含奇数个引号的正则夹着一段注释 ⇒ 独立重算会假红」那一格。
+   * ⚠️ `openerInString` 那一档**至今仍有一种会误伤的形态**，它没有藏起来：
+   * 见下面「已知误伤：两条各含奇数个双引号的正则夹着一段注释 ⇒ 独立重算会假红」那一格。
    */
   it.each([
     ["字符组里的裸斜杠与引号（`/[/*\"]/`）是一条合法正则", 'const re = /[/*"]/;'],
@@ -982,11 +1145,20 @@ describe("抠注释真源的扫描器边界", () => {
     ["块注释正常闭合在文件最后一个字节上", "const a = 1;\n/* 闭合了 */"],
     ["模板里嵌模板、插值里再嵌模板，栈最终是平的", "const s = `a${ f(`b${ g(1) }c`) }d`;"],
     ["带标签模板", "const s = tag`a${b}c`;"],
-    // ↓ 这三条专打本轮新加的 `openerInString`：字符串里的双斜杠 + 同行一段正当注释，
+    // ↓ 这三条专打 `openerInString`：字符串里的双斜杠 + 同行一段正当注释，
     //   是本仓最常见的形态（`admin-ui/js/i18n-dict.js` 里成片都是），它一次都不许红。
     ["字符串里的双斜杠之后跟一段正当行注释", 'const U = "https://cdn.example/x"; // 正当注释'],
     ["块注释体内含一个完整的网址", 'const a = 1; /* 见 "https://cdn.example/x" */ const b = 2;'],
     ["同一行上两个字符串夹一段块注释", 'const a = "x"; /* c */ const b = "y";'],
+    // ↓ 这六条是第四轮复评实测到的**假红**（X4 那一族），本轮在真源里修掉了：
+    //   上一版把 `'` 也算成引号、也不看反引号 ⇒ 撇号与模板串会把本行收支算歪。
+    //   **它们全部是完全合法的代码**，一条都不许红。
+    ["注释文本里的撇号（两段注释各一个）", "const a = 1; /* don't */ const b = 2; // it's ok"],
+    ["注释里的撇号 + 一个正当字符串", 'const a = 1; /* it\'s */ const b = "x"; // don\'t'],
+    ["模板串里的撇号（两个模板串各一个）", "const a = `it's`; /* c */ const b = `don't`;"],
+    ["模板串里的双引号（收支被模板算歪的那一支）", "const a = `say \"hi`; /* c */ const b = `bye\" now`;"],
+    ["复评 X4：往真文件里追加的那一行完全合法的 TS", "export const zzA = 1; /* don't */ export const zzB = 2; // it's fine"],
+    ["单引号字符串夹一段块注释（单引号一律不数）", "const a = 'x'; /* c */ const b = 'y';"],
   ])("不乱红：%s", (_why, src) => {
     expect(() => stripComments(src)).not.toThrow();
   });
@@ -1009,13 +1181,17 @@ describe("抠注释真源的扫描器边界", () => {
    *   登记了而不来这张表加一行探针 ⇒ 长度对不上 **且** 那一档没出现在收到的集合里 ⇒ 当场红。
    * ⇒ 加探针而不加档（探针打到了别的档）⇒ 上面那一格的 `err.kind` 断言当场红。
    * **写法、空白、换行、注释里的字面文本，一律与这一格无关。**
-   *（本轮实测：真源里那串字面文本今天出现 11 次而档只有 9 个——旧那一版会当场假红，
-   *  这一版一声不吭；而复评那两条「干净逃逸」的写法在这一版当场红。）
+   * ⚠️ **这里刻意不写「那串字面文本今天出现几次」**：上一版写了个数，而它与自己引用的
+   * 那个旧守卫（正则带着「不数函数定义那一处」）算出来的数对不上——**又一次计数漂移的现场，
+   * 而且漂的正是一句用来说明「别再数文本」的话**。数字只许以断言的形式存在，
+   * 判据本身已经把「有几个抛出点」变成了断言。
    *
    * ⚠️ **它剩下的那个洞，写在这里而不是藏起来**：往真源加一档、**而且那一档永远走不到**、
    * **而且不登记进 `FAIL_KINDS`** ⇒ 这一格看不见它。但那一档在定义上是**死代码**，
    * 且它第一次真的被走到时 `fail()` 当场内部错误（「没有登记进 FAIL_KINDS」）。
-   * 旧那一版的洞是**可达的抛出点**能干净逃逸，两者不是一个量级。
+   * ⚠️ **另一个洞（可达、且能干净逃逸）由下面那一格接**：复用一个已登记的档名开第二个
+   * 抛出点，这一格收到的集合一个字不变。别再把两者写成「不是一个量级」——
+   * 上一版那句对比是**过度声称**，粒度只是从「站点级」退到了「档名级」。
    */
   it("每一档抛出都必须有探针打到 —— 运行期收档名，不数字面文本", () => {
     const seen: string[] = [];
@@ -1038,6 +1214,83 @@ describe("抠注释真源的扫描器边界", () => {
       FAIL_KINDS.length,
       "有两行探针打到了同一档 ⇒ 有一档没人验过（集合相等这一条挡不住重复）",
     ).toBe(SHOUT_CASES.length);
+  });
+
+  /**
+   * **上面那格剩的那个洞：新的可达抛出点只要复用一个已登记的档名，就能干净逃逸。**
+   *
+   * 第四轮复评实测（M-K2）：在真源里新加一个**真的走得到**的抛出点、档名复用
+   * `unknownPunct` ⇒ 运行期收到的档集合一个字没变 ⇒ **103/103 全绿**。
+   * （同一轮的 M-K1 —— 新档名 + 不加探针 —— 上面那格红且指对地方，那一半是好的。）
+   * ⚠️ 上一版在那段注释里写着「旧那一版的洞是**可达的**抛出点能干净逃逸，两者不是一个量级」，
+   * **那句对比是过度声称**：新那一版同样放行可达的新抛出点，只是粒度从「站点级」退到「档名级」。
+   *
+   * ⇒ 这一格把粒度补回站点级，判据是**结构**不是计数：
+   * 先拿真源自己的 `blankComments()` 把注释抠掉（⇒ 散文里写多少个 `fail(` 都不算数，
+   * 那正是上上一版假红的成因），再逐个 `fail(` 调用点取**第一个字符串字面量**当档名，
+   * 要求**互不重复**且**并集恰好等于 `FAIL_KINDS`**。
+   * · 换行写 / 删空格 / 改缩进 ⇒ 与判据无关（复评那两条「干净逃逸」的写法在这里逃不掉）。
+   * · 复用已有档名开第二个调用点 ⇒ 重复 ⇒ **红**。
+   * · 档名用变量传、或者把 `why` 写到档名前面 ⇒ 取到的不是档名 ⇒ **红**（不是漏）。
+   *   这是刻意的：真源那条硬规矩就是「档名必须写成调用点里的第一个字符串字面量」。
+   * ⚠️ **它仍然看不见什么**：把 `fail` 换个名字（比如包一层 `boom()` 再调）——
+   * 那一层包装里的 `fail(` 仍然会被数到，但包装函数自己成了多个抛出点共用的档名出口。
+   * 登记在此，档位 LOW：本仓真源今天没有这种包装，而加一层包装是评审看得见的动作。
+   */
+  it("真源里每个 fail() 调用点的档名互不重复，并集恰好是 FAIL_KINDS", () => {
+    const { sites, defs } = failCallSites(readFileSync(REGEX_STRIP_EXEMPT, "utf8"));
+    expect(defs, "在真源里找不到 `function fail(` 的定义 ⇒ 这道守卫扫错了地方，它会恒绿")
+      .toBeGreaterThan(0);
+    expect(
+      sites.filter((k) => k === null),
+      "有 `fail()` 调用点没把档名写成第一个字符串字面量（用变量传？把 why 写前面了？）"
+      + "⇒ 这道守卫从此看不见那个站点。真源的硬规矩：档名必须是调用点里的第一个字符串字面量",
+    ).toEqual([]);
+    expect(
+      sites.filter((k, i) => sites.indexOf(k) !== i),
+      "有两个 `fail()` 调用点共用同一个档名 ⇒ 其中一个是**没人验过的可达抛出点**："
+      + "运行期那一格只看档名集合，它对「同档名的第二个站点」天然失明（复评 M-K2 实测全绿逃逸）。"
+      + "请给新那一档起一个新名字、登记进 `FAIL_KINDS`，并去「判不准要吵」那张表加一行探针",
+    ).toEqual([]);
+    expect(
+      [...sites].sort(),
+      "真源的抛出站点与 `FAIL_KINDS` 对不上了",
+    ).toEqual([...FAIL_KINDS].sort());
+  });
+
+  /**
+   * **反向控制：上面那格真的会红 —— 三种形态各一条，全部拿合成源码跑，不碰真源。**
+   *
+   * 一条恒等于「干净」的断言与一条坏掉的断言长得一模一样。这三条分别对应它声称能接住的
+   * 三件事：复用档名 / 档名用变量传 / 注释里的散文不算数。
+   */
+  it("反向控制：档名守卫认得出复用与变量传，而注释里的散文不算数", () => {
+    const real = readFileSync(REGEX_STRIP_EXEMPT, "utf8");
+    // ① 复用已有档名的第二个可达抛出点（复评 M-K2 的落点与档名逐字相同）
+    const dup = real.replace(
+      "if (REGEX_AFTER_PUNCT.has(p.ch)) return true;",
+      'if (p.ch === "#") fail(src, pos, "unknownPunct", "复评 M-K2 的落点");\n'
+      + "    if (REGEX_AFTER_PUNCT.has(p.ch)) return true;",
+    );
+    expect(dup, "落点断言：这条变异必须真的落进真源").not.toBe(real);
+    const dupKinds = failCallSites(dup).sites;
+    expect(dupKinds.filter((k, i) => dupKinds.indexOf(k) !== i), "复用档名逃掉了 ⇒ 上面那格没有鉴别力")
+      .toEqual(["unknownPunct"]);
+    // ② 档名用变量传 ⇒ 取到的是 why，不是档名
+    const viaVar = real.replace('fail(src, i, "unclosedBlock"', "fail(src, i, kindFromSomewhere");
+    expect(viaVar, "落点断言：这条变异必须真的落进真源").not.toBe(real);
+    expect(
+      failCallSites(viaVar).sites.some((k) => k !== null && !FAIL_KINDS.includes(k)),
+      "档名用变量传的站点没被认出来 ⇒ 上面那格会放行它",
+    ).toBe(true);
+    // ③ 注释里的散文不算数（上上一版数字面文本时，这一条会假红并指错地方）
+    const prose = real.replace(
+      "const VALUE = { kind: \"value\" };",
+      "// 散文里写一句 fail(src, pos, \"unknownPunct\", …) 不许被数进去\nconst VALUE = { kind: \"value\" };",
+    );
+    expect(prose, "落点断言：这条变异必须真的落进真源").not.toBe(real);
+    expect([...failCallSites(prose).sites].sort(), "注释里的字面文本被数进来了 ⇒ 假红")
+      .toEqual([...FAIL_KINDS].sort());
   });
 
   /**
@@ -1088,22 +1341,75 @@ describe("抠注释真源的扫描器边界", () => {
   /**
    * **已知误伤（登记成断言）：`openerLivesInString()` 会把这一种形态判成判反。**
    *
-   * 独立重算只按引号收支扫本行，认不出「这个引号住在一条正则里」。于是同一行上
-   * **两条各含奇数个引号的正则夹着一段注释**时，它会把两条正则里的引号配成一对，
+   * 独立重算只按双引号收支扫本行，认不出「这个引号住在一条正则里」。于是同一行上
+   * **两条各含奇数个双引号的正则夹着一段注释**时，它会把两条正则里的引号配成一对，
    * 判定那段注释住在字符串里 ⇒ **假红**。
    * · 射程 259 个文件实测 **0 例**（测法：拿真源逐文件跑 `stripComments`/`blankComments`，
    *   数抛出，0 抛出）。
    * · 真撞上时它是一声**响亮的抛**并逐字带上原文那一行，不是静默吞码；改法是把那一行拆开写。
-   * ⇒ 本仓裁定「认不出要吵」，这一档宁可这样误伤，也不要在判反时闭嘴。
+   * ⇒ 这一档宁可留着这一族误伤，也不去猜「这个引号是不是住在正则里」——猜错的方向是致盲。
    * 将来谁把重算做得认得正则了，这一条会红——那是好事，把它删掉即可。
+   *
+   * ⚠️ **第四轮复评量到的另外三类误伤（注释文本 / 模板串 / CSS 里的撇号与引号）
+   * 本轮已经在真源里修掉了**，它们是**合法代码**，判据是「在门禁里跑的东西，
+   * 对合法代码假红比漏报更坏」。那六条现在钉在上面「不乱红」那张表里，CSS 那两条在
+   * 「CSS 侧同样不许对合法样式假红」那一格。
    */
-  it("已知误伤：两条各含奇数个引号的正则夹着一段注释 ⇒ 独立重算会假红", () => {
+  it("已知误伤：两条各含奇数个双引号的正则夹着一段注释 ⇒ 独立重算会假红", () => {
     expect(() => stripComments('const a = /"/.test(s); /* c */ const b = /"/.test(t);'))
       .toThrow("住在一个字符串里");
     // 反向控制：只要那一行的引号收支「没结论」（奇数个），这一档就闭嘴，不许乱红。
     expect(() => stripComments('const a = /"/.test(s); /* c */ const b = 1;')).not.toThrow();
     // 反向控制：正当的「注释里带引号」不许红 —— 偶数个也不行。
     expect(() => stripComments('const s = "a"; /* 里面 " 两个 " 引号 */ const t = 1;')).not.toThrow();
+  });
+
+  /**
+   * **CSS 侧走的是同一条防线，所以同一族假红也要在 CSS 上钉一遍。**
+   *
+   * `stripCssComments` 与 `stripComments` 共用 `guardOpener()`，第四轮复评在 CSS 上
+   * 实测到两条假红（撇号那一族）。CSS 那一侧**今天没有独立裁判**（理由写在
+   * `tests/unit/source-guards.test.ts` 的「先验裁判自己 —— 它抠注释、而且看得出真代码被吞」
+   * 那一节的 ④ 里），所以这几条手写探针就是它全部的护栏，一条都不能省。
+   */
+  it.each([
+    ["选择器之间两段注释各带一个撇号", "a { color: red } /* don't */ b { color: blue } /* won't */"],
+    ["注释里的撇号 + 一个正当的字符串值", 'a { /* it\'s */ content: "x"; } /* don\'t */'],
+    ["url() 里的双斜杠不是行注释（CSS 没有行注释这一档）", "a { background: url(//cdn.example/x.png) } /* c */"],
+    ["两个字符串值夹一段注释", 'a { content: "x" } /* c */ b { content: "y" }'],
+  ])("CSS 侧同样不许对合法样式假红：%s", (_why, src) => {
+    expect(() => stripCssComments(src)).not.toThrow();
+  });
+
+  /**
+   * **已知漏报（登记成断言）：`openerLivesInString()` 闭嘴或答错的那四类。**
+   *
+   * ⚠️⚠️ **这一格存在的全部理由是「别把那条防线当门」。** 它是一条**概率防线**：
+   * 开不开口由**本行双引号的奇偶**决定，而那个量与「哪个斜杠被判反了」毫无关系。
+   * 第四轮复评的 X3 在真文件上量过代价：同一行只多一个撇号 ⇒ 它一个字不吵、
+   * 负责裸 `console` 的门禁重新报绿 —— **只有测试侧那两条全射程不变量还红着**。
+   *
+   * 下面每一条都写死了**吞掉的字节数**：这几条变红意味着有人把某一族补上了（好事，
+   * 把那一行删掉即可），或者危害档位变了（**要重新复量，别抄这里的数字**）。
+   */
+  it.each([
+    ["本行有反引号 ⇒ 直接闭嘴（复评 X3：同一行只多一个撇号）", "const of = 4; const T = `it's`; const half = of / 2; const P = \"/\"; const U = \"https://x\"; console.log(1);", 21],
+    ["毒刺是单引号字符串 ⇒ 单引号一律不数", "const of = 4; const half = of / 2; const P = '/'; const U = 'https://x'; console.log(1);", 21],
+    [
+      "**确信地答错**：本行双引号是偶数，但奇偶被两条正则里的引号整体错位一格",
+      'const of = 4; const R1 = /"/; const half = of / 2; const P = "/"; const U = "https://x"; const R2 = /"/; console.log(1);',
+      37,
+    ],
+  ])("已知漏报：%s", (_why, src, swallowed) => {
+    const out = stripComments(src as string);
+    expect(src.length - out.length, "吞掉的字节数变了 ⇒ 危害档位要重新复量，别抄这里的数字")
+      .toBe(swallowed);
+    expect(out, "**这就是致盲**：真代码被静默吞掉，而这条防线一个字都不吵").not.toContain("console.log");
+    // 反向控制：同一族只要把那个「让它闭嘴 / 让它答错」的东西拿掉，它必须当场红。
+    expect(
+      () => stripComments('const of = 4; const half = of / 2; const P = "/"; const U = "https://x"; console.log(1);'),
+      "反向控制：这一族的裸形态它必须接住，否则上面那几条漏报证明不了任何事",
+    ).toThrow("住在一个字符串里");
   });
 });
 
@@ -1136,15 +1442,27 @@ describe("抠注释真源的扫描器边界", () => {
  *  （测法：`judge("interface A { x: number }\nfoo();")` 与 `judge("foo();")` 逐字节相等。）
  *   今天难以走到：这个扫描器判反之后，泄漏点前面通常会留下一个落单的引号，`mine` 多半
  *   解析不了 ⇒ 裁判照样红。**但那是运气，不是口径**。档位 MEDIUM。
+ *   ⚠️ **这一条不是没人接**（上一轮它确实一层都没有，第四轮复评把那件事量了出来）：
+ *   接它的是上面那一节里的「抠掉的每一段在原文里都必须以斜杠开头」——那一格不看语义，
+ *   只看差异区间的第一个字节，于是整条纯类型语句被换成空格时它当场红。
+ *   **那一格是这一族今天唯一的覆盖层**，动它之前先想清楚这句话。
  * · ③**空白与换行差异看不见**：`transform` 模式会重排格式。
  *  （测法：`judge("foo();")` 与 `judge("\n\n  foo();\n")` 逐字节相等。）
  *   `blankComments` 的行列不变量因此**不能靠这一格**，它靠上面那格的长度/行数两条。
  * · ④**CSS 方言零覆盖**：这一格的射程扩展名表是 `.ts` / `.js` / `.mjs`
  *  （`REGEX_STRIP_SCAN_EXT`），`stripCssComments` 根本没进这一格。
  *   **CSS 那一侧今天没有裁判**——它只有「三个出口」那一节里的手写探针
- *  （`url(//…)` 不许被当行注释、失步报文不许提正则字面量）和 `admin-ui/css` 的体积门禁。
- *   要给它找一个裁判的话得另找一个 CSS 解析器，本仓今天没有，**这里明写「没有」，
- *   别让下一个人以为对拍覆盖了 CSS**。
+ *  （`url(//…)` 不许被当行注释、失步报文不许提正则字面量）、④ 那一节里的
+ *   「CSS 侧同样不许对合法样式假红」那张表，和 `admin-ui/css` 的体积门禁。
+ *   ⚠️⚠️ **本轮显式裁定「不补」，理由写在这里，别读成「还没来得及」**：
+ *   ① 本仓没有任何 CSS 解析器，`node:module` 那个裁判只认 JS/TS 家族；
+ *   ② 补它就得**新增一个生产/开发依赖**，而这道断言不值得为它加依赖——
+ *      这与上面「为什么不是 acorn」是同一条裁定；
+ *   ③ 自己写一个 CSS 解析器来对拍，正是本任务要消灭的东西（第二实现）；
+ *   ④ 曝光面：射程里 CSS 只有 3 个文件、总量以 KB 计，而 CSS 的注释语义只有
+ *      「块注释 + 字符串」两档，比 JS 那一侧窄得多。
+ *   ⇒ **CSS 这一侧的承重是那几条手写探针，不是对拍**。哪天 CSS 侧出第二次事故，
+ *   或者本仓因为别的理由已经引入了 CSS 解析器，就回来把这一条改掉。
  *
  * **为什么不是 acorn**（第二轮复评那份一次性裁判用的是它）：它不在本仓依赖里，
  * 而这道断言不值得为它新增依赖；更要紧的是 **acorn 解析不了 `.ts`**，而射程 259 个文件里
@@ -1155,20 +1473,27 @@ describe("抠注释真源的扫描器边界", () => {
  * **所以下面第一格先验裁判自己**：裁判不再抠注释、或者看不出真代码被吞 ⇒ **红，不是跳过**。
  * 一个不会判的裁判必须吵出来，否则这一格就是一格恒绿。
  *
- * ⚠️ **「Node 太老」这一条够不着，别把它当成防线（复评实测）**：Node 太老时
- * `import { stripTypeScriptTypes } from "node:module"` 在**加载期**就
- * `SyntaxError: … does not provide an export named …`（在 `/usr/bin/node` v18.19.1 上实测到），
- * 于是红的是**整份文件收集失败**，不是那一格，报错文本与「这一格没法判」毫无关系。
- * ⇒ 结果仍然是红（诚实的），但**下面那条 `typeof` 断言永远执行不到**，留着只是文档。
- * 真正把版本钉住的是 `package.json` 的 `engines.node`（本轮补的，`>=22.13`）
- * 与 CI 的 `node-version: 22`；本机 `/usr/bin/node` 就是 v18，换个 shell 就能踩到。
+ * ⚠️ **「Node 太老」这一条够不着，别把它当成防线，而且上一版写的那个现场是错的（第四轮复评实测）**：
+ * 上一版写着「Node 太老时 `import { stripTypeScriptTypes } from "node:module"` 在加载期
+ * SyntaxError ⇒ 整份文件收集失败」。那句话只有**直接用老 node 跑那个模块**时才成立；
+ * **在本仓 `pnpm test` 这条路径上根本走不到它**——实测 `/usr/bin/node` v18.19.1 跑
+ * `node_modules/vitest/vitest.mjs run` ⇒ **`Startup Error`：`rolldown` 里
+ * `import { formatWithOptions, styleText } from "node:util"` 报
+ * `does not provide an export named 'styleText'`，EXIT=1**。
+ * **整个测试运行器先死在启动上**，压根到不了本文件的收集，更到不了下面那条 `typeof` 断言。
+ * ⇒ 结果仍然是红（诚实的），但那条 `typeof` 断言永远执行不到，留着只是文档。
+ * 真正把版本挡在门外的是 `package.json` 的 `engines.node`（`>=22.13`）**加上仓根 `.npmrc`
+ * 里的 `engine-strict=true`**：光有 `engines` 不是门禁——实测 pnpm 默认只打一行
+ * `WARN Unsupported engine` 而 **EXIT=0**，加上那一行之后才是
+ * `ERR_PNPM_UNSUPPORTED_ENGINE` / **EXIT=1**（两种都在本机同一份 lockfile 上跑过）。
+ * CI 那一侧是 `node-version: 22`；本机 `/usr/bin/node` 就是 v18，换个 shell 就能踩到。
  */
 const judge = (src: string): string => stripTypeScriptTypes(src, { mode: "transform" });
 
 describe("全射程与真解析器对拍", () => {
   it("先验裁判自己 —— 它抠注释、而且看得出真代码被吞", () => {
-    // ⚠️ 这一条**够不着**（Node 太老是加载期 SyntaxError，整份文件收集失败）。
-    //    留着是文档，别把它当防线，理由写在本节 ⚠️ 那一段里。
+    // ⚠️ 这一条**够不着**（Node 太老时整个 vitest 先死在启动上，到不了这里）。
+    //    留着是文档，别把它当防线，理由与实测现场写在本节 ⚠️ 那一段里。
     expect(typeof stripTypeScriptTypes, "Node 太老，没有这个内置裁判 ⇒ 这一格没法判，红着比绿着诚实")
       .toBe("function");
     const withComments = "const a: number = 1; // 抠掉我\n/* 也抠掉我 */\nfoo();\n";
