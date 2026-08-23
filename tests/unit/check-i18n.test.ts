@@ -42,26 +42,21 @@ interface Fixture {
 /**
  * 造一棵最小的 `admin-ui/` 树并跑门禁。
  *
- * **门槛：脚本第 ① 条要求至少扫到 15 处引用**，所以每个夹具都自动补足一批
- * `filler.N` 的 key 与对它们的引用——否则每个夹具都会额外撞上那一条，
- * 报出来的就不是被测的那一条了（"测的是别的东西"）。
+ * ⚠️ **夹具里曾经自动补 18 条 `filler.N` 的 key 与引用**，理由是「脚本第 ① 条要求至少
+ * 扫到 15 处引用」。P3e Task 3 复评之后那道门槛已经删掉（死区 97%，且它给自己写的
+ * 耦合理由早就不成立），填充也随之删掉：**夹具里每一条 key 都该是被测的那一条**，
+ * 多出来的十八条只会让「三个分桶加起来等于总数」这类断言里出现一个与被测行为无关的常数。
  */
 function run(fx: Fixture): { status: number; stdout: string; stderr: string } {
   const dir = mkdtempSync(join(tmpdir(), "a2a-i18n-"));
   try {
     const dict: Record<string, Record<string, string>> = { ...fx.dict };
-    const refs: string[] = [];
-    for (let i = 0; i < 18; i++) {
-      dict[`filler.${i}`] = row(`填充 ${i}`);
-      refs.push(`t("filler.${i}");`);
-    }
     const write = (rel: string, body: string) => {
       const full = join(dir, "admin-ui", rel);
       mkdirSync(dirname(full), { recursive: true });
       writeFileSync(full, body, "utf8");
     };
     write("js/i18n-dict.js", `export const I18N = ${JSON.stringify(dict, null, 2)};\n`);
-    write("js/filler.js", `${refs.join("\n")}\n`);
     for (const [rel, body] of Object.entries(fx.files ?? {})) write(rel, body);
 
     // **`spawnSync` 而不是 `execFileSync`**：后者成功时只交出 stdout，把 stderr 扔掉，
@@ -128,21 +123,12 @@ describe("scripts/check-i18n.mjs 元测试：八条判据逐条", () => {
     expect(r.stderr).toContain("nav.missing");
   });
 
-  it("① 引用数掉到门槛以下（扫描本身坏了）：exit 1", () => {
-    // 这一格刻意不走 `run()` 的填充：直接给一棵只有 3 处引用的树。
-    const dir = mkdtempSync(join(tmpdir(), "a2a-i18n-floor-"));
-    try {
-      const dict = { "a.x": row("x"), "a.y": row("y"), "a.z": row("z") };
-      mkdirSync(join(dir, "admin-ui", "js"), { recursive: true });
-      writeFileSync(join(dir, "admin-ui/js/i18n-dict.js"), `export const I18N = ${JSON.stringify(dict)};\n`);
-      writeFileSync(join(dir, "admin-ui/js/x.js"), 't("a.x");t("a.y");t("a.z");\n');
-      const r = spawnSync("node", [SCRIPT, dir], { encoding: "utf8" });
-      expect(r.status).toBe(1);
-      expect(r.stderr).toContain("扫描本身可能坏了");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  // ⚠️ **这里曾经有一格「① 引用数掉到门槛以下（扫描本身坏了）：exit 1」，P3e Task 3
+  // 复评之后连同被测的那道门槛一起删了，别加回来。** 那道门槛在真仓上的死区实测 97%
+  //（判据瞎掉九成七它仍然一声不吭），而它给自己写的理由——「与
+  // `tests/unit/i18n-dict.test.ts`「admin-ui 里引用的每个 key 都在字典里」是同一个量的
+  // 两份实现、必须同边界」——两侧量的根本不是同一个量、那个边界两侧都不可达。
+  // 删门槛的同时删这一格是必须的：留着它会红，而它红的时候指的是一件已经不存在的事。
 
   it("② 某个 key 缺一种语言：exit 1，且报出是哪个 key 缺哪种语言", () => {
     const bad = row("概览");
@@ -435,7 +421,7 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
       unrefList(r),
       "有 key 被空串字面量吃掉了 ⇒ 那条正则写成了「通用配对引号」版，回去把命名空间前缀写进正则本身",
     ).toEqual([]);
-    expect(buckets(r).direct, "五个 key 加 18 条填充，一个都不许丢").toBe(23);
+    expect(buckets(r).direct, "夹具里那五个 key，一个都不许丢").toBe(5);
   });
 
   /**
@@ -443,7 +429,7 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
    *
    * ⚠️ 这一格刻意**带一条引用了字典里没有的 key 的坏行**：那条 bogus 引用会让
    * 「直接引用」这个数按写法分叉——把它算进「直接引用」的实现（`directlyUsed.size`）
-   * 在这里三个数会加出 21，而字典只有 20 个 key。**不带 bogus 的话这一格是恒真的**，
+   * 在这里三个数会加出比字典总数**多一个**。**不带 bogus 的话这一格是恒真的**，
    * 恒真的断言是待办不是守卫。
    */
   it("横幅逐字打印三个分桶，且三个数加起来等于字典 key 总数（有 bogus 引用时也必须成立）", () => {
@@ -455,7 +441,7 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
     expect(r.stdout).toMatch(/拼键覆盖 \d+/);
     expect(r.stdout).toMatch(/未被引用 \d+/);
     const b = buckets(r);
-    expect(b.total, "18 条填充 + 夹具里那 2 个").toBe(20);
+    expect(b.total, "夹具里那 2 个 key").toBe(2);
     expect(
       b.direct + b.covered + b.unref,
       "三个分桶不是字典 key 的一个划分 ⇒ 「直接引用」里混进了字典里没有的 key",
@@ -572,6 +558,153 @@ describe("scripts/check-i18n.mjs 元测试：第 ① 条判据换形状之后（
       files: { "index.html": '<script src="/admin/js/boot.js"></script>\n<p data-i18n="nav.overview"></p>\n' },
     });
     expect(r.status, r.stderr).toBe(0);
+  });
+
+  /**
+   * ⚠️ **上面那条绊线扫的必须是抠完注释的源码，不是原文**（P3e Task 3 复评 F1）。
+   * 扫原文的话，一段**被 HTML 注释掉的**内联 `<script>` 会把第 6 道门禁打成假红，
+   * 而报文还劝人「把它挪进外链文件」——那段脚本本来就是死的，挪它是一件没有意义的活。
+   * 这一格与上面那格「HTML 里出现内联脚本 / 样式」是一对：一格钉住「真内联必须红」，
+   * 一格钉住「死内联不许红」。**只做前一半，判据扫 raw 还是扫 src 就分辨不出来。**
+   */
+  it("被 HTML 注释掉的内联 <script> 不算内联内容（否则门禁假红）", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: {
+        "index.html": '<p data-i18n="nav.overview"></p>\n<!-- <script>console.log(1);</script> 旧写法 -->\n',
+      },
+    });
+    expect(
+      r.status,
+      "被注释掉的内联脚本把门禁打红了 ⇒ 那条绊线扫的是 raw，请改成扫抠完注释的 src",
+    ).toBe(0);
+  });
+
+  /**
+   * ⚠️⚠️ **少一个 `-->` 不许静默吞掉文件尾**（P3e Task 3 复评 F2，这是本轮最要命的一条）。
+   *
+   * 复评在真 `admin-ui/index.html` 上实测：删掉第 8 行那个 `-->` ⇒ 引用数 496 掉到 480
+   *（整份文件尾的 `data-i18n=` 全部消失）、门禁**打着 ✅ 横幅 exit 0**。
+   * 也就是说，一个漏写的闭合记号能让一批活着的 key 凭空「变死」，而 Task 4 正要把
+   *「未被引用」升成硬错并据此删 key ⇒ 删掉的是活文案。
+   * 修在真源（`scripts/lib/strip-comments.mjs` 的 `stripHtmlComments`：未闭合就抛），
+   * 这一格从门禁这一侧钉住那个后果：**差别只在那三个字符。**
+   */
+  it("index.html 少一个 `-->`：门禁必须吵，不许静默吞掉文件尾的引用", () => {
+    const tail = '<p data-i18n="nav.overview"></p>\n';
+    // 反向控制先跑：闭合的注释 + 注释之后的引用 ⇒ 安静，且那个 key 认得出。
+    const closed = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "index.html": `<!-- 说明 -->\n${tail}` },
+    });
+    expect(closed.status, closed.stderr).toBe(0);
+    expect(unrefList(closed), "闭合时那个 key 必须被认出来").toEqual([]);
+    // 同一份文件，只删掉那三个字符。
+    const unclosed = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "index.html": `<!-- 说明\n${tail}` },
+    });
+    expect(
+      unclosed.status,
+      "少一个 `-->` 之后门禁仍然 exit 0 ⇒ 文件尾被静默吞掉了，"
+      + "去 scripts/lib/strip-comments.mjs 的 stripHtmlComments 看「未闭合就抛」那一支",
+    ).not.toBe(0);
+    expect(unclosed.stderr).toContain("HTML 注释开了没有闭合记号");
+  });
+
+  /**
+   * ⚠️⚠️ **「首段是不是字典命名空间」回答不了「这个模板在不在拼 i18n key」**
+   *（P3e Task 3 复评 F4；落点逐字取自 `admin-ui/js/pure/settings.mjs` 那两条配置路径模板）。
+   *
+   * 这一格自带两半，**两半缺一不可**：
+   * · ① 字典里没有那个命名空间时**必须静默**——今天的真仓就是这一格，
+   *   少了它，「一律吵」也能让 ② 全绿，而那样的门禁在真仓上永远红着。
+   * · ② 字典一新增那个命名空间，同一条模板立刻变成「分不清」⇒ **必须吵**。
+   *   静默当成拼键的代价不是「多一条前缀」：那个前缀底下**所有** key 会被一并喂活，
+   *   其中的真死 key 从此不出现在 Task 4「处置真 0 命中 key」的输入里 ⇒ **漏删，
+   *   而漏删的表现是「看起来什么事都没有」。**
+   */
+  it("拼键前缀：插值之后还跟着别的东西 ⇒ 分不清就吵，不许静默当成拼键", () => {
+    const files = { "js/x.js": 'const p = `registrar.${channel}.baseUrl`;\nt("nav.overview");\n' };
+    const quiet = run({ dict: { "nav.overview": row("概览") }, files });
+    expect(quiet.status, quiet.stderr).toBe(0);
+    expect(tplPrefixList(quiet), "`registrar` 不是字典命名空间 ⇒ 与 i18n 无关，不许进表也不许吵").toEqual([]);
+    const loud = run({ dict: { "nav.overview": row("概览"), "registrar.dead": row("没人用") }, files });
+    expect(
+      loud.status,
+      "一条配置路径模板被静默当成了拼键前缀 ⇒ `registrar.*` 底下的真死 key 从此永远看不见",
+    ).toBe(1);
+    expect(loud.stderr).toContain("分不清");
+    expect(
+      unrefList(loud),
+      "既然没被当成拼键，那条真死 key 必须仍然留在「未被引用」里",
+    ).toContain("registrar.dead");
+  });
+});
+
+/**
+ * **第 ① 条判据的三条已知漏报形态。**
+ *
+ * `scripts/check-i18n.mjs` 第 ① 条上面那段「边界」里逐条写着这三种写法不被支持。
+ * 那三句话此前**只是散文**（复评 F7：两条今天零实例、也没有任何东西钉着它们）。
+ * 这里把它们各变成一条会变红的断言，每一格都配一条**反向控制**：
+ * 同一个 key 换成判据认得的形态时必须被认出来——少了反向控制，
+ * 「夹具本身就坏了」与「这条形态确实看不见」在证据上分辨不出来。
+ *
+ * ⚠️ **这三格断言的是「今天就是这样」，不是「这样是对的」。**
+ * 三条**全部是漏报方向**（key 明明有人用却落进「未被引用」），而 Task 4 要把
+ * 「未被引用」升成硬错并据此删 key ⇒ 到那时它们就是「删掉活着的文案」。
+ * 哪天判据扩到某一条，这里会红，而红的地方正是该回去改那段边界的地方。
+ */
+describe("scripts/check-i18n.mjs 元测试：第 ① 条判据的三条已知漏报形态", () => {
+  it("漏报一：按 `+` 拼的 key 看不见 —— 它会落进「未被引用」", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "js/x.js": 'const k = "nav." + name;\n' },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(
+      unrefList(r),
+      "判据认得 `+` 拼键了 —— 请回去改 check-i18n.mjs 第 ① 条那段边界说明",
+    ).toEqual(["nav.overview"]);
+  });
+
+  it("漏报二：反引号里的纯 key 字面量看不见（反引号那一路只走拼键前缀）", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "js/x.js": "elI18n('h2', `nav.overview`);\n" },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(
+      unrefList(r),
+      "判据认得反引号里的纯 key 了 —— 请回去改 check-i18n.mjs 第 ① 条那段边界说明",
+    ).toEqual(["nav.overview"]);
+    // 反向控制：同一处换成引号形态就必须被认出来（证明夹具本身没坏）。
+    const ok = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "js/x.js": "elI18n('h2', 'nav.overview');\n" },
+    });
+    expect(unrefList(ok), "换成引号形态仍然看不见 ⇒ 上面那格红的原因不是反引号").toEqual([]);
+  });
+
+  it("漏报三：HTML 里不带引号的属性值看不见（KEYLIKE 锚的是引号对）", () => {
+    const r = run({
+      dict: { "nav.overview": row("概览") },
+      files: { "index.html": "<p data-i18n=nav.overview></p>\n" },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(
+      unrefList(r),
+      "判据认得不带引号的属性值了 —— 请回去改 check-i18n.mjs 第 ① 条那段边界说明",
+    ).toEqual(["nav.overview"]);
+    // 反向控制：单引号与双引号两种都必须认得出。
+    for (const q of ['"', "'"]) {
+      const ok = run({
+        dict: { "nav.overview": row("概览") },
+        files: { "index.html": `<p data-i18n=${q}nav.overview${q}></p>\n` },
+      });
+      expect(unrefList(ok), `带 ${q} 引号的属性值没被认出来 ⇒ 上面那格红的原因不是缺引号`).toEqual([]);
+    }
   });
 });
 

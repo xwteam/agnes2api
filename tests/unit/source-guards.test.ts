@@ -755,6 +755,42 @@ describe("抠注释真源的三个出口", () => {
     expect(stripHtmlComments(inline), "判据被改进了（认得出内联脚本）—— 请回去改真源那段边界说明")
       .toContain('data-i18n="nav.zzz"');
   });
+
+  /**
+   * ⚠️⚠️ **「没闭合就抛」的反向控制 —— 只做「会抛」那一半等于把一族合法 HTML 打红。**
+   *
+   * P3e Task 3 复评（F2）实测：`admin-ui/index.html` 少一个 `-->` ⇒ 第 6 道门禁的引用数
+   * 从 496 掉到 480（整份文件尾的 `data-i18n=` 被静默吞掉），而门禁打着 ✅ 横幅 exit 0。
+   * 修法是「未闭合就抛」，**而修它的时候最容易顺手搬来的新问题就是把合法注释一起打红**：
+   * HTML5 里 `<!-->` 与 `<!--->` 是 **abrupt-closing-of-empty-comment**，
+   * 也就是**闭合的空注释**（上一版把它们当成未闭合、一路吃到文件尾——那一支恰恰是
+   * 它拿「HTML5 规定行为」给自己背书的方向的反面）；`--!>` 是
+   * **incorrectly-closed-comment**，是 parse error 但注释照样闭合。
+   * 这一格逐形态钉住：**这三种都不许抛，而且注释之后的内容必须原样活着**
+   *（活着才证明它没有一路吃到文件尾）。
+   */
+  it("stripHtmlComments 逐形态认 HTML5 的闭合注释，一条都不许被当成未闭合", () => {
+    const TAIL = '<p data-i18n="nav.tail"></p>';
+    for (const [why, comment] of [
+      ["最常见的形态", "<!-- 抠掉我 -->"],
+      ["空注释：`<!-->`（abrupt-closing-of-empty-comment）", "<!-->"],
+      ["空注释：`<!--->`（同上，多一个连字符）", "<!--->"],
+      ["`<!---->`：走的是正常的 `-->` 那一路", "<!---->"],
+      ["`--!>`（incorrectly-closed-comment，浏览器照样闭合）", "<!-- 抠掉我 --!>"],
+      ["`---!>`：注释结束态里的连字符可以重复", "<!-- 抠掉我 ---!>"],
+    ] as const) {
+      const html = `${comment}\n${TAIL}\n`;
+      expect(() => stripHtmlComments(html), `${why}：这是闭合的注释，不许抛`).not.toThrow();
+      expect(stripHtmlComments(html), `${why}：注释本身必须被抠掉`).not.toContain("抠掉我");
+      expect(
+        stripHtmlComments(html),
+        `${why}：注释之后的内容不见了 ⇒ 它被当成未闭合、一路吃到了文件尾`,
+      ).toContain(TAIL);
+    }
+    // **最大的一条反向控制：真的那份 `admin-ui/index.html`**（第 6 道门禁每次都要抠它）。
+    expect(() => stripHtmlComments(readFileSync(join("admin-ui", "index.html"), "utf8")))
+      .not.toThrow();
+  });
 });
 
 // ── ④ 抠注释真源的扫描器边界 ────────────────────────────────────────────────
@@ -1123,17 +1159,24 @@ describe("抠注释真源的扫描器边界", () => {
    * ⚠️ 这几档在射程内的命中情况**不写死在注释里**：上面「射程内每个文件都扫得完」那一格
    * 期望空表，它绿着就是零命中，红了就会逐条点名。
    */
-  const SHOUT_CASES: ReadonlyArray<readonly [string, string, string, string]> = [
+  /**
+   * ⚠️ **第五列是入口函数，不是装饰**：真源的抛出档**不全在 JS 方言那一路上**。
+   * `unclosedHtmlComment` 只有 `stripHtmlComments()` 走得到，写死用 `stripComments()`
+   * 跑这张表的话，那一档会永远没有探针打到，而下面那格「每一档抛出都必须有探针打到」
+   * 只会报「集合对不上」——指不出是因为入口选错了。**每一行自己带着它该走的那个出口。**
+   */
+  const SHOUT_CASES: ReadonlyArray<readonly [string, string, string, string, (src: string) => string]> = [
     [
       "`>` 后面的裸斜杠：箭头 `=>` 之后是正则位、TS 类型实参表收尾之后是除法位，分不出",
       'const r = f<number> / 2; const GLOB = "/admin/api/*"; const keep = 1;',
       "不是箭头",
       "angleAfterValue",
+      stripComments,
     ],
-    ["`}` 后面的裸斜杠：块结束是正则位、对象字面量结束是除法位，分不出", "const f = function () {}\n/x/.test(s);", "判不准", "braceSlash"],
-    ["字符串没在本行内闭合 ⇒ 扫描器已经失步", 'const a = "没有闭合\nconst b = 1;', "失步", "unclosedString"],
-    ["正则字面量没在本行内闭合 ⇒ 判据把一个除法号当成了正则开头", "const a = (1 + 2);\nconst b = /没有闭合\nconst c = 1;", "没有在本行内闭合", "unclosedRegex"],
-    ["前一个有意义字符不在真源那两张判据表里 —— 宁可吵也不许猜", "const a = 1;\n@ /x/;", "两张判据表", "unknownPunct"],
+    ["`}` 后面的裸斜杠：块结束是正则位、对象字面量结束是除法位，分不出", "const f = function () {}\n/x/.test(s);", "判不准", "braceSlash", stripComments],
+    ["字符串没在本行内闭合 ⇒ 扫描器已经失步", 'const a = "没有闭合\nconst b = 1;', "失步", "unclosedString", stripComments],
+    ["正则字面量没在本行内闭合 ⇒ 判据把一个除法号当成了正则开头", "const a = (1 + 2);\nconst b = /没有闭合\nconst c = 1;", "没有在本行内闭合", "unclosedRegex", stripComments],
+    ["前一个有意义字符不在真源那两张判据表里 —— 宁可吵也不许猜", "const a = 1;\n@ /x/;", "两张判据表", "unknownPunct", stripComments],
     // ↓ 后果层：它们盯的是「真代码被当注释吞掉」这个后果，不是某几个符号。
     //   ⚠️ 前三条**意图对、落地仍然在盯符号**（盯 flag 字母、盯 `/*`、盯反引号），
     //   第三轮复评实测它们对 `>` 那一族**一条都没接住**（端到端：门禁当场变瞎）。
@@ -1147,9 +1190,10 @@ describe("抠注释真源的扫描器边界", () => {
       'let n = 1;\nconst r = n + / 2; const GLOB = "/admin/api/*"; const keep = 1;',
       "引擎不认",
       "badRegex",
+      stripComments,
     ],
-    ["块注释开了没有闭合记号，一路吞到文件尾", "const a = 1;\n/* 没有闭合记号", "吞到文件尾", "unclosedBlock"],
-    ["扫到文件尾模板栈还没平衡（反引号没配对 / `${` 没闭合 / 插值里花括号数不平）", "const s = `abc;\nconst n = 1;", "还没平衡", "tmplUnbalanced"],
+    ["块注释开了没有闭合记号，一路吞到文件尾", "const a = 1;\n/* 没有闭合记号", "吞到文件尾", "unclosedBlock", stripComments],
+    ["扫到文件尾模板栈还没平衡（反引号没配对 / `${` 没闭合 / 插值里花括号数不平）", "const s = `abc;\nconst n = 1;", "还没平衡", "tmplUnbalanced", stripComments],
     [
       // 这一行的输入**没有用任何一个本轮修过的符号**：`of` 是一个完全合法的标识符，
       // 而它同时在真源的 `REGEX_AFTER_WORD` 里（`for (x of y)` 的那个 `of`）
@@ -1160,15 +1204,28 @@ describe("抠注释真源的扫描器边界", () => {
       'const of = 4; const half = of / 2; const P = "/"; const U = "https://x"; console.log(1);',
       "住在一个字符串里",
       "openerInString",
+      stripComments,
+    ],
+    [
+      // 这一行走的是**第四方言**（`stripHtmlComments`），不是上面那个出口。
+      // 上一版这里不抛：`<!--` 没有闭合记号时一路吃到文件尾，理由写的是「这是 HTML5 的
+      // 规定行为」。P3e Task 3 复评实测了那一支的代价：`admin-ui/index.html` 少一个
+      // `-->` ⇒ 第 6 道门禁的引用数从 496 掉到 480、整份文件尾的 `data-i18n=` 全部消失，
+      // 而门禁**打着 ✅ 横幅 exit 0**。⇒ 现在按本仓裁定办：认不出要吵。
+      "HTML 注释开了没有闭合记号，一路吃到文件尾 ⇒ 再抠下去就是静默吞掉半份文件",
+      '<p data-i18n="nav.usage"></p>\n<!-- 没有闭合记号\n<p data-i18n="nav.keys"></p>\n',
+      "HTML 注释开了没有闭合记号",
+      "unclosedHtmlComment",
+      stripHtmlComments,
     ],
   ];
 
-  it.each(SHOUT_CASES)("判不准要吵：%s", (_why, src, needle, kind) => {
-    expect(() => stripComments(src)).toThrow(needle);
+  it.each(SHOUT_CASES)("判不准要吵：%s", (_why, src, needle, kind, entry) => {
+    expect(() => entry(src)).toThrow(needle);
     // 消息里必须带上原文那一行，否则「吵」了也没人知道吵的是哪一行；
     // 档名必须是期望的那一个，否则这条探针验的是另一档（那等于这一档没人验过）。
     try {
-      stripComments(src);
+      entry(src);
     } catch (e) {
       expect((e as Error).message, "抛出来的消息里必须逐字带上原文").toContain("原文：");
       expect((e as { kind?: string }).kind, "这条探针打到的不是它声称的那一档").toBe(kind);
@@ -1242,9 +1299,9 @@ describe("抠注释真源的扫描器边界", () => {
    */
   it("每一档抛出都必须有探针打到 —— 运行期收档名，不数字面文本", () => {
     const seen: string[] = [];
-    for (const [, src] of SHOUT_CASES) {
+    for (const [, src, , , entry] of SHOUT_CASES) {
       try {
-        stripComments(src);
+        entry(src);
         throw new Error(`这条探针没抛：${src.slice(0, 40)}`);
       } catch (e) {
         const kind = (e as { kind?: string }).kind;

@@ -240,6 +240,7 @@ export const FAIL_KINDS = Object.freeze([
   "unclosedBlock",
   "tmplUnbalanced",
   "openerInString",
+  "unclosedHtmlComment",
 ]);
 
 /**
@@ -690,15 +691,31 @@ export function stripCssComments(src) {
  * 更根本的是 **HTML 没有字符串字面量**：正文里的撇号（`it's`）、属性值里的引号，
  * 在 `scan()` 的字符串分支里都会被当成字面量开头，轻则失步重则假红。
  *
- * **判据**：逐字符扫，遇到 `<!--` 就一路吃到第一个 `-->`。
- * ⚠️ **没闭合时吃到文件尾，这是 HTML5 的规定行为，不是兜底**（tokenizer 在
- * comment 状态遇到 EOF 直接把注释收尾），所以这里**不抛**——抛的话是本实现比
- * 浏览器更严，那种严格会在一份浏览器照常渲染的页面上把门禁打红。
+ * **判据**：逐字符扫，遇到 `<!--` 就一路吃到这段注释的闭合处。**闭合形态按 HTML5 认**，
+ * 由 `tests/unit/source-guards.test.ts` 的
+ * 「stripHtmlComments 逐形态认 HTML5 的闭合注释，一条都不许被当成未闭合」那一格钉着：
+ * · `-->`；
+ * · `--!>`（HTML5 的 incorrectly-closed-comment：是 parse error，但注释**闭合**）；
+ * · `<!-->` 与 `<!--->`（HTML5 的 abrupt-closing-of-empty-comment：**闭合的空注释**）。
+ *
+ * ⚠️⚠️ **吃到文件尾都没闭合 ⇒ 当场抛，不许静默返回半份结果。**
+ * 上一版在这里**不抛**，理由写的是「吃到文件尾是 HTML5 的规定行为」。那句话有两处错：
+ * 它把「浏览器怎么解析」与「一个扫描器该不该表态」混成了一件事；而且**它自己就偏离了
+ * HTML5**——上面那两种同形闭合（`<!-->` / `<!--->`）在规范里是闭合的空注释，上一版
+ * 把它们当成未闭合、一路吃到文件尾，**偏离的方向恰恰是静默**。
+ * P3e Task 3 复评在 `admin-ui/index.html` 上把代价量死了：删掉第 8 行那个 `-->`，
+ * 第 6 道门禁（`scripts/check-i18n.mjs`）的引用数从 496 掉到 480 —— 整份文件尾的
+ * `data-i18n=` 全部消失 —— 而门禁**打着 ✅ 横幅、exit 0**。Task 4 把「未被引用」
+ * 升成硬错之后，同一个漏写的 `-->` 会把一批活着的 key 报成死 key。
+ * ⇒ 按本仓裁定办：**认不出要吵**。代价也认下来写在这里：一份注释真的没闭合的 HTML
+ * 会让门禁红，而浏览器会把文件尾当注释、照常渲染前面的部分。**静默吞掉半份文件更贵。**
  *
  * **边界明写（由 `tests/unit/source-guards.test.ts` 的
  * 「stripHtmlComments 的两条已知边界」那两格钉着，不是散文）**：
  * · **属性值里的 `<!--` 会被误当成注释开头**（`<div title="<!-- x -->">` 在 HTML
  *   规范里是纯文本）。要认出它得跟标签状态机，那已经是半个解析器了。
+ *   ⚠️ 这一条与上面那条抛叠在一起时的表现：属性值里出现一个**没有闭合记号**的 `<!--`
+ *   ⇒ 现在是**抛**，不再是静默吃到文件尾。方向是吵，不是哑。
  * · **内联 `<script>` / `<style>` 里的 JS/CSS 注释抠不掉**——那一段的注释语法是
  *   JS/CSS 的，本函数只认 `<!-- -->`。⚠️ 这一条**不是靠人记得**：
  *   `scripts/check-i18n.mjs` 里「HTML 里出现内联脚本 / 样式」那条判据会在
@@ -713,12 +730,46 @@ export function stripHtmlComments(src) {
   let i = 0;
   while (i < n) {
     if (src.startsWith("<!--", i)) {
-      const end = src.indexOf("-->", i + 4);
-      i = end === -1 ? n : end + 3;
+      const end = htmlCommentEnd(src, i);
+      if (end === -1) {
+        fail(src, i, "unclosedHtmlComment",
+          "HTML 注释开了没有闭合记号（`-->` / `--!>`），一路到文件尾 "
+          + "⇒ 再抠下去等于把从这里到文件尾的内容整段静默吞掉，"
+          + "而调用方拿到的是一份看起来正常的半截源码（P3e Task 3 复评实测：`admin-ui/index.html` "
+          + "少一个 `-->`，第 6 道门禁的引用数掉了一大截、横幅照打 ✅、exit 0）。"
+          + "⚠️ 如果这个 `<!--` 其实住在一个属性值里（`<div title=\"<!-- x -->\">`，"
+          + "按 HTML 规范是纯文本），那是本函数已登记的那条边界撞上了这条抛 —— "
+          + "把那段文本改写掉，或者去 `scripts/lib/strip-comments.mjs` 的 `stripHtmlComments` 扩判据");
+      }
+      i = end;
       continue;
     }
     out += src[i];
     i += 1;
   }
   return out;
+}
+
+/**
+ * 一段 `<!--` 注释的闭合处（返回闭合记号**之后**的下标），没闭合返回 `-1`。
+ *
+ * **三种闭合形态都按 HTML5 认**，理由与实测代价写在 `stripHtmlComments` 的注释里：
+ * 空注释同形（`<!-->` / `<!--->`）先判，因为它们的 `>` 落在 `<!--` 紧后面、
+ * 够不到下面那个 `--` 的配对；`--!>` 走 `!` 那一格（规范里是 comment end bang state）。
+ * @param {string} src
+ * @param {number} start `<!--` 里那个 `<` 的下标
+ * @returns {number}
+ */
+function htmlCommentEnd(src, start) {
+  const n = src.length;
+  // HTML5 abrupt-closing-of-empty-comment：`<!-->` 与 `<!--->` 都是**闭合的空注释**。
+  if (src[start + 4] === ">") return start + 5;
+  if (src[start + 4] === "-" && src[start + 5] === ">") return start + 6;
+  for (let i = start + 4; i + 1 < n; i += 1) {
+    if (src[i] !== "-" || src[i + 1] !== "-") continue;
+    let j = i + 2;
+    if (src[j] === "!") j += 1;
+    if (src[j] === ">") return j + 1;
+  }
+  return -1;
 }
