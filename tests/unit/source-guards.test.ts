@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { stripComments } from "../helpers/strip-comments.js";
+import { stripComments, blankComments } from "../helpers/strip-comments.js";
 
 /**
  * 源码层门禁：**两条硬约束的自动化部分**。
@@ -339,102 +339,201 @@ describe("src/adapters、src/http、src/ports、src/ui 里的裸 console", () =>
   });
 });
 
-// ── ③ tests/ 下的 stripComments 副本 ─────────────────────────────────────────
+// ── ③ 用一对正则抠块注释的副本 ───────────────────────────────────────────────
 
 /**
- * **`tests/helpers/strip-comments.ts` 立的那条禁令的执行机构**（P3d 全分支评审 F-5）。
+ * **判据从「按名字」改成「按行为」（P3e Task 1）。**
  *
- * 那个文件写着「新的调用点一律 import 这一份，**不许再抄第六份**」——而在这一格
- * 出现之前，那条禁令**一个机器都没守**，同文件里那张「谁还各持一份正则副本」的清单
- * 也只是散文。**评审实测**：那个文件另一处写着「已经收编成这一份（**4 个消费者**）」，
- * 而当天真实是 **6 个**（Task 12 加了两个）⇒ **通篇讲「会漂」的文件里，漂的正是那个计数。**
+ * 旧判据是 `OWN_STRIP_DEF`：扫「有没有一个叫 `stripComments` 的定义」。
+ * 它**结构上看不见**三份实现同样的东西但取了别的名字的副本（`codeOnly` / `strip` / 匿名内联）
+ * ——P3e 开工勘察实测：真源之外有 5 份，旧守卫只登记了 2 份，另外 3 份**永不可见**。
+ * 而看不见的那三份里，`codeOnly` 是网络出口扫描的底座，也就是本仓
+ * 「面板只打自己 origin」的唯一机器保障。
  *
- * ⚠️⚠️ **本格守的是「不许再抄第六份」，不是「消费者有几个」**（两句话方向相反）：
- * 消费者那一侧**该长大**——每收编一个调用点都是好事，给它配一道绊线只会换来机械 bump，
- * 所以那一侧按 Task 5 I3 的处置**把计数删掉**、改成现场 `grep` 的写法。
- * 这一侧相反：它**只许变短、不许变长**，所以它才配得上一条会红的断言。
+ * 新判据扫的是**那个正则字面量本身**：一个文件里只要出现「用一对正则去抠块注释」
+ * 的那段写法，就是一份新副本。取名叫什么都躲不掉，因为躲不掉的是那个正则。
+ * 它逐字长什么样，只写在真源 `scripts/lib/strip-comments.mjs` 的文件头
+ *（那是全仓唯一允许出现它的地方，理由见下面 `REGEX_STRIP_EXEMPT`）。
  *
- * ⚠️ **判据锚在「这个文件里自己定义了一个叫 stripComments 的东西」上**，
- * 不是「这个文件里出现过 stripComments 这个词」——后者会把每一个**正当的 import
- * 消费者**一起数进来，那正好是反过来守错了方向。
- * ⚠️ **只排除 `tests/helpers/strip-comments.ts` 一个**（它就是真源本体）。
- *
- * ⚠️⚠️ **上一版还按路径排除了「本文件自己」，而那是一个真绕过口，复评实测走通了。**
- * 排除理由当时写的是「它 import 的是真源，不是副本」——**那个理由本身就是错的**：
- * 每一个正当消费者都 import 真源，它们**没有**被排除，它们是被扫过、然后不匹配；
- * 真实理由是「下面反向自检那几条探针串里**逐字**写着 `function stripComments(…)`，
- * 于是本文件会被自己那条判据数成一份副本」
- *（**同一个文件里两处给了两个不同的理由，而先被读到的那个是错的那个**）。
- * ⚠️ **上一版这里写的是「真实理由见同一个文件 `:382` 行内注释」，而那句行内注释
- * 正是同一次提交删掉的那一行 —— 指针在写下它的那一刻就已经悬空了**
- *（第 8 道门禁只校验跨文件的用例名引用，不校验文件内的行号）。
- * ⇒ **处置：把理由直接写在这里，不留跨行号的指针。** 文件内行号是本仓登记过的
- * 那一类「过不了三轮」的引用形态，改注释一律不许再往里写行号。
- * 后果比登记的那句「有人把第六份**藏**在这个文件里」更宽：复评实测在本文件里**嵌一层
- * `describe`、块作用域**手写第六份 —— `npx tsc --noEmit` 通过（块级遮蔽合法，
- * TS 不吵）+ 本文件 32 passed **全绿**。只有写在**模块级**那种才被 `TS2440` 兜住。
- * ⇒ **在一个 `describe` 里写一个 helper 不是「藏」，是这个文件里最自然的写法。**
- *
- * **处置：把那条按路径的排除整条删掉。** 它当初存在的唯一理由是下面反向自检那几条
- * 探针串里**逐字**写着 `function stripComments(…)`；把那几条改成
- * `"function " + "stripComments(…)"` 的拼法之后（探针语义一个字都没变，
- * 因为它们是运行期拼出来的同一个字符串），`OWN_STRIP_DEF` 再也打不到本文件自己，
- * 排除随之不必要，绕过口随之消失。
- * ⚠️ **只拆真的会自伤的那三条**（函数声明 / `const` / `let`）：另外三条（import /
- * 调用 / 注释提及）本来就不含定义形态，拆了只会让人以为那也是必需的。
- *
- * **已知射程**：换个名字抄一份（`function stripCmts(...)`）扫不到——**按名字扫的天花板**，
- * 与本文件上面两道门禁登记的「间接引用抓不住」是同一族边界。
+ * ⚠️ **`OWN_STRIP_DEF` 那条按名字的正则整条删掉了，不留着当第二判据**：
+ * 留着的话 `export { stripComments } from "…"` 这种转导出形态迟早会有人判成副本
+ *（实测它今天不匹配转导出），而**判据一旦有两条，宽的那条会赢**。
  */
-const OWN_STRIP_COPIES: readonly string[] = [
-  // 两者扫的都是 `admin-ui/`，那里今天没有含 `/*` 的字符串 ⇒ 今天不在射程内，
-  // **不是「它们是对的」**。收编它们的改动面超出当时那个任务，逐字理由在真源文件里。
-  "tests/ui/dom/fake-dom-parity.test.ts",
-  "tests/unit/i18n-dict.test.ts",
-];
+// 判据是「这个文件的源码里出现了用一对正则抠块注释的写法」。
+// 用**子串**匹配而不是拿正则去匹配正则 —— 后者极易写歪，而且歪了会静默恒绿。
+//
+// ⚠️⚠️ **这个常量刻意写成双反斜杠的转义形态，不是手滑。** 它在运行期才还原成那条正则的
+// 字面文本，于是**本文件的源码里并不含那段字面文本** ⇒ 本文件不会被自己的判据数成一份副本。
+// 写成裸字面量的话，这一格就只能靠「按路径排除本文件」活着——而本仓登记过：
+// 那种自我排除是一个**真绕过口**（在被排除的文件里嵌一层 `describe`、块作用域手写一份，
+// `tsc --noEmit` 通过 + 门禁全绿）。同一条纪律，下面几条反向自检的探针也全部拼出来。
+const REGEX_STRIP_NEEDLE = "/\\/\\*[\\s\\S]*?\\*\\//";
+const isRegexStripCopy = (src: string): boolean => src.includes(REGEX_STRIP_NEEDLE);
 
-/** 一个文件里有没有**自己定义**一个叫 `stripComments` 的东西（函数声明 / 赋给变量）。 */
-const OWN_STRIP_DEF = /(?:function\s+stripComments\b|(?:const|let|var)\s+stripComments\s*[=:])/;
+/**
+ * **唯一豁免：真源自己。**
+ *
+ * 理由**必须写准**：真源 `scripts/lib/strip-comments.mjs` 的文件头里逐字复述了那条正则，
+ * 用来解释「正则版为什么不行」。那是**注释里的一句史实**，不是一份实现——
+ * 它的实现是逐字符扫描器 `scan()`，一行 `String.prototype.replace` 都没有。
+ *
+ * ⚠️ **不许用「先抠注释再扫」来免掉这条豁免**：那会让这道守卫依赖被测函数自身
+ * ——真源坏掉的那一天，它先把自己的证据抠干净，然后报绿。
+ * ⚠️ **也不许开第二个文件级豁免**：`scripts/check-comment-refs.mjs` 自己写着
+ * 「今天只有一种文件需要文件级豁免」，多开一个就是「开豁免名册比没有规则更糟」。
+ * ⇒ 所以 `tests/helpers/strip-comments.ts` 只留一句「实现在真源、正则版为什么不行写在那边」，
+ * 它原来逐字复述那条正则的那句史实**搬进了真源的文件头**，而不是给它开第二个豁免。
+ */
+const REGEX_STRIP_EXEMPT = "scripts/lib/strip-comments.mjs";
 
-describe("tests/ 下的 stripComments 副本", () => {
-  it("tests/ 下自己手写 stripComments 的文件恰好是登记的那两个 —— 第六份一出现当场红", () => {
+/**
+ * **扫描范围写死在这里，不许写成「全仓」。**
+ *
+ * 四条理由，缺一条这道守卫就是坏的：
+ * 1. **必须跨出 `tests/`**：旧的那一格用的是 `walkTs("tests")`，而 `walkTs` 只收 `.ts`；
+ *    唯一豁免 `scripts/lib/strip-comments.mjs` 是 `.mjs`、在 `scripts/` 下
+ *    ⇒ 不扩范围，那条豁免就是**死代码**，「删掉豁免 ⇒ 红并点名真源」永远不会发生。
+ *    由下面「扫描范围真的走到了真源那一侧 —— 否则唯一豁免就是死代码」那一格钉着。
+ * 2. **必须收 `.mjs` / `.js`**：被收编的五份副本里，`scripts/` 与 `admin-ui/` 那一侧全是
+ *    `.mjs`/`.js`，只收 `.ts` 等于对那半个仓库失明。
+ * 3. **绝不许把 `docs/` 扫进来**：`docs/design/` 下的历史计划文档正当地逐字复述那条正则，
+ *    用来解释「正则版为什么不行」——扫它们等于要求篡改历史记录。
+ *    ⚠️⚠️ **挡住 `docs/` 的其实是上面那张扩展名表，不是这张目录表——逐条变异量过，
+ *    别把功劳记错地方**：只把 `"docs"` 加进本表、扩展名表不动 ⇒ **31/31 全绿、什么都不会发生**
+ *   （历史计划文档是 `.md`，收不进来）。两张表**一起**放宽（本表加 `"docs"` 且扩展名表加
+ *    `".md"`）才当场红，并点名 `docs/design/2026-08-22-agnes2api-p3e-i18n-and-closeout-plan.md`
+ *   （那份文档正文里实测有 5 行含那条正则字面量）。
+ *    ⇒ **想收窄这条边界的人必须同时看住两张表**，下面那格另有一条断言直接钉「射程里
+ *    不许出现 `docs/` 下的文件」，省得下一个人只改一张表就以为安全。
+ * 4. **排除生成物**：`src/ui/assets.generated.ts` 把 admin-ui 整段当字符串嵌进去，
+ *    扫它等于把 admin-ui 重复扫一遍（`scripts/check-comment-refs.mjs` 的 `SKIP` 同款理由）。
+ */
+const REGEX_STRIP_SCAN_DIRS = ["src", "tests", "scripts", "admin-ui"];
+const REGEX_STRIP_SCAN_EXT = [".ts", ".js", ".mjs"];
+const REGEX_STRIP_SKIP = ["src/ui/assets.generated.ts"];
+
+/**
+ * `walkTs()` 只收 `.ts`，而这道守卫的射程必须收三种扩展名。
+ *
+ * ⚠️ **另写一个而不是给 `walkTs()` 加参数**：`walkTs()` 现有的三处调用点
+ *（零 IO 门禁、console 门禁、以及 console 门禁那一格的目录循环）各有自己的射程论证，
+ * 那些论证都建立在「只收 `.ts`」上，动它等于同时改三道门禁的射程。
+ */
+function walkSrc(dir: string): string[] {
+  return readdirSync(dir).sort().flatMap((name) => {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) return walkSrc(p);
+    return REGEX_STRIP_SCAN_EXT.some((e) => p.endsWith(e)) ? [p] : [];
+  });
+}
+
+/** 射程内的全部文件，路径一律用 `/` 分隔。 */
+function regexStripScanFiles(): string[] {
+  return REGEX_STRIP_SCAN_DIRS
+    .flatMap((d) => walkSrc(d))
+    .map((p) => p.split("\\").join("/"))
+    .filter((rel) => !REGEX_STRIP_SKIP.includes(rel));
+}
+
+/**
+ * **这张表只许变短、不许变长。**
+ *
+ * 它记的是「真源之外还有几份用正则抠块注释的实现」。P3e Task 1 之前是 5 份（外加
+ * `tests/helpers/strip-comments.ts` 文件头里那句复述史实），收编之后**恰好为空**。
+ * ⚠️ **空表不等于没有守卫**：下面那一格拿它当期望值逐条比对，抄回第六份当场红并点名。
+ */
+const OWN_STRIP_COPIES: readonly string[] = [];
+
+describe("用正则抠块注释的副本", () => {
+  it("除真源之外，全仓不许再有第二份用正则抠块注释的实现 —— 新抄一份当场红", () => {
     const found: string[] = [];
-    for (const p of walkTs("tests")) {
-      const rel = p.split("\\").join("/");
-      if (rel === "tests/helpers/strip-comments.ts") continue;   // 真源本体
-      // **本文件不排除**（上一版排除了，那是一个真绕过口：块作用域第六份 typecheck + 门禁双绿）。
-      // 它今天不匹配是因为下面那几条探针改成了拼法，不是因为有人替它开了后门。
-      if (OWN_STRIP_DEF.test(stripComments(readFileSync(p, "utf8")))) found.push(rel);
+    for (const rel of regexStripScanFiles()) {
+      if (rel === REGEX_STRIP_EXEMPT) continue;
+      // **不先抠注释**：抠了就等于让这道守卫依赖被测函数自身，真源坏掉那天它会先把
+      // 自己的证据抠干净再报绿。代价是「注释里复述那条正则」也算一份副本 —— 那是刻意的，
+      // 全仓只有真源那一处需要复述它，别处想讲这段历史请指向真源。
+      if (isRegexStripCopy(readFileSync(rel, "utf8"))) found.push(rel);
     }
     expect(
       found.sort(),
-      "tests/ 下手写 stripComments 副本的文件变了。**多出来一个 = 有人抄了第六份**"
-      + "（本仓裁定：新的调用点一律 import tests/helpers/strip-comments.ts）；"
-      + "少了一个 = 收编成功，把 OWN_STRIP_COPIES 与那个文件里那张清单一起改短",
+      "又有人用一对正则去抠块注释了。**那种写法认不出字符串里的斜杠星号**，"
+      + "一行 `admin.use(\"/admin/api/*\", …)` 就能让整道扫描静默变瞎而门禁照常报绿。"
+      + "本仓裁定：一律 import `scripts/lib/strip-comments.mjs`（测试侧可走"
+      + "`tests/helpers/strip-comments.ts` 的转导出）",
     ).toEqual([...OWN_STRIP_COPIES].sort());
   });
 
   /**
-   * **反向自检：这道判据认得出该认的、认不出不该认的。**
-   * 少了它，把 `OWN_STRIP_DEF` 写坏成一个永不匹配的正则，上面那格会红成
-   * 「少了两个」——方向看着像好事（清单变短了），而实际是护栏瞎了。
+   * **反向自检：扫描范围本身不是空的、而且真的走到了真源那一侧。**
+   *
+   * 少了这一格，把 `REGEX_STRIP_SCAN_DIRS` 写成 `[]`（或者 `walkSrc()` 写坏成恒返回空数组）
+   * 时上面那格**照样绿**——期望值本来就是空表。这是本仓登记在案的第 6 种假阳性形态。
+   * 第二条断言另守一件事：**唯一豁免不是死代码**。真源确实命中判据、确实被扫到、
+   * 只是被那条豁免放行 ⇒ 把豁免删掉时上面那格会红并点名真源。
    */
+  it("扫描范围真的走到了真源那一侧 —— 否则唯一豁免就是死代码", () => {
+    const files = regexStripScanFiles();
+    expect(files.length, "射程扫了个空 —— 上面那格会恒绿").toBeGreaterThan(200);
+    expect(files, "真源不在射程内 ⇒ 那条豁免永远不会被用到").toContain(REGEX_STRIP_EXEMPT);
+    expect(
+      isRegexStripCopy(readFileSync(REGEX_STRIP_EXEMPT, "utf8")),
+      "真源的文件头不再复述那条正则了 ⇒ 那条豁免变成了死代码，请把它删掉",
+    ).toBe(true);
+    expect(
+      files.some((f) => f.endsWith(".mjs")) && files.some((f) => f.endsWith(".js")),
+      "射程只收得到 .ts ⇒ 对 scripts/ 与 admin-ui/ 那半个仓库失明",
+    ).toBe(true);
+    expect(
+      files.filter((f) => f.startsWith("docs/")),
+      "`docs/design/` 下的历史计划文档正当地逐字复述那条正则来解释「正则版为什么不行」，"
+      + "扫它们等于要求篡改历史记录 —— 目录表与扩展名表**两张一起**放宽才会走到这里，"
+      + "所以这条断言直接钉射程本身，别只盯着其中一张表",
+    ).toEqual([]);
+  });
+
   /**
-   * ⚠️⚠️ **前三条刻意写成运行期拼接，不是手滑。** 写成字面量的话，**本文件自己**
-   * 就会被 `OWN_STRIP_DEF` 数成一份副本，于是上面那格只能靠「按路径排除本文件」活着
-   * ——而那条排除**就是一个真绕过口**（复评实测：在这个文件里嵌一层 `describe`、
-   * 块作用域手写第六份，`tsc --noEmit` 通过 + 门禁 32 passed 全绿）。
-   * 拼出来的字符串与拆之前**逐字相同**，探针语义一个字没变。
-   * **要改这三条的话，请连同上面那格「本文件不排除」那句一起想清楚。**
+   * **反向自检：这道判据认得出该认的、对不该认的不乱红。**
+   *
+   * ⚠️ **两条探针都在运行期拼出来，不写字面量**，理由与上面 `REGEX_STRIP_NEEDLE`
+   * 那段 ⚠️⚠️ 逐字相同：写成字面量的话本文件就会被自己的判据数成一份副本。
    */
   it.each([
-    ["function " + "stripComments(src: string): string { return src; }", true, "函数声明"],
-    ["const " + "stripComments = (src: string) => src;", true, "赋给 const"],
-    ["let " + "stripComments = (s) => s;", true, "赋给 let"],
-    ['import { stripComments } from "../helpers/strip-comments.js";', false, "正当消费者：import 不算副本"],
-    ["const stripped = stripComments(readFileSync(p));", false, "调用它不算副本"],
-    ["// 这里刻意不再抄一份 stripComments", false, "注释里的提及不算（先抠注释）"],
-  ])("反向自检：%s", (probe, expected) => {
-    expect(OWN_STRIP_DEF.test(stripComments(probe as string))).toBe(expected as boolean);
+    [REGEX_STRIP_NEEDLE, true, "认得出：源码里出现那条正则字面量就是一份副本"],
+    ['import { stripComments } from "../helpers/strip-comments.js";', false,
+      "不乱红：正当的 import 消费者不是副本"],
+    ["const code = stripComments(readFileSync(p, \"utf8\"));", false,
+      "不乱红：调用它不是副本"],
+  ])("反向自检：%s", (fragment, expected) => {
+    const probe = `const strip = (s: string) => s.replace(${fragment as string}g, "");`;
+    expect(isRegexStripCopy(probe)).toBe(expected as boolean);
+  });
+});
+
+/**
+ * **真源交出来的两个出口，各自的语义就是它们分叉的那一件事。**
+ *
+ * `blankComments` 今天在本仓还没有消费者（`tests/ui/api-session.test.ts` 的
+ * `braceInterpLines()` 是 P3e Task 2 的活），**所以它更需要这一格**：一个没有任何断言的
+ * 导出等于一份没人验过的实现，等 Task 2 接上它的时候，错的那一版会安静地赢。
+ */
+describe("抠注释真源的两个出口", () => {
+  const poisoned = [
+    'const ADMIN_API_GLOB = "/admin/api/*";',
+    "const n = 1;",
+    "/* 提供闭合记号的普通块注释 */",
+  ].join("\n");
+
+  it("stripComments 把注释删掉，而字符串里的斜杠星号不是注释", () => {
+    expect(stripComments(poisoned), "毒刺那一行必须原样还在").toContain('"/admin/api/*"');
+    expect(stripComments(poisoned), "中间那行真代码不许被吞").toContain("const n = 1;");
+    expect(stripComments(poisoned), "块注释必须被删掉").not.toContain("提供闭合记号");
+  });
+
+  it("blankComments 保住行号与列位置 —— 注释逐字符换成空格、换行原样留着", () => {
+    const blanked = blankComments(poisoned);
+    expect(blanked.split("\n"), "行数变了就等于行号错位").toHaveLength(3);
+    expect(blanked.split("\n")[0], "非注释行必须逐字节原样").toBe('const ADMIN_API_GLOB = "/admin/api/*";');
+    expect(blanked.split("\n")[2], "注释那一行必须换成等长的空格").toBe(" ".repeat("/* 提供闭合记号的普通块注释 */".length));
+    expect(blanked.length, "总长度必须与原文一致 —— 列位置才不会漂").toBe(poisoned.length);
   });
 });

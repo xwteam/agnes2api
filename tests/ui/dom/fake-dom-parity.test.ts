@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { stripComments } from "../../helpers/strip-comments.js";
 
 /**
  * **复评必改④：替身能力扫描门禁。**
@@ -171,14 +172,31 @@ function walkJs(dir: string): string[] {
 }
 
 /**
- * 去掉块注释与行注释，只留代码本体——否则连本文件、`ui.js` 自己那句"第一版
- * 写的是 `root.walk()`"的历史说明注释都会被误判成"生产代码在用 .walk()"。
- * 逐字符替换成空格而不是整段删掉：保留原文件的行号与列位置，不需要另外算偏移。
+ * 一段源码里命中的 `FAKE_ONLY_MEMBERS` 标签。**这道扫描的全部判据就是这个函数。**
+ *
+ * 抽成纯函数只为一件事：让「毒刺在场时它还看不看得见」那一格能**在内存里拼坏文本**，
+ * 不改真实源文件（与下面那格「反向自检：focusableIn() 退回 root.walk() 的写法，
+ * 这道门禁会抓到并点名 ui.js」同一个先例）。判据本身一个字符都没改。
+ *
+ * ⚠️ **抠注释走 `tests/helpers/strip-comments.ts` 转出去的真源（P3e Task 1 收编）。**
+ * 本文件原来自持一份正则实现，它把注释**逐字符替换成空格**，并在旁边写着
+ * 「保留原文件的行号与列位置，不需要另外算偏移」——**那句话在这里从来没有兑现过**：
+ * 这道扫描只 push 文件名 + 标签，**从不报行列**，所以换成「整段删掉」不是回归。
+ * 真源另有一个 `blankComments` 留给真的按行号扫的消费者。
+ * ⚠️ 换过来还顺手修掉一个活着的洞：旧实现抠行注释用的是一条不带保护的正则
+ *（双斜杠后面吃到行尾），它把 `admin-ui/js/ui.js` 里 `"http://www.w3.org/2000/svg"`
+ * 那种**字符串里的双斜杠**当成行注释开头，本行其后整段脱离扫描
+ *（`admin-ui/js/i18n-dict.js` 同款，被吃掉的是一整段字典条目）。
  */
-function stripComments(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
+function fakeDomOnlyApis(src: string): string[] {
+  const stripped = stripComments(src);
+  const hits: string[] = [];
+  for (const { pattern, label } of FAKE_ONLY_MEMBERS) {
+    pattern.lastIndex = 0;
+    if (pattern.test(stripped)) hits.push(label);
+    pattern.lastIndex = 0;
+  }
+  return hits;
 }
 
 describe("复评必改④：替身能力扫描——发货代码不许用到 fake-dom.ts 独有、真实 DOM 没有的成员", () => {
@@ -195,10 +213,9 @@ describe("复评必改④：替身能力扫描——发货代码不许用到 fak
     const offenders: string[] = [];
     for (const p of walkJs("admin-ui/js")) {
       const rel = p.split("\\").join("/");
-      const stripped = stripComments(readFileSync(p, "utf8"));
-      for (const { pattern, label, why } of FAKE_ONLY_MEMBERS) {
-        pattern.lastIndex = 0;
-        if (pattern.test(stripped)) offenders.push(`${rel}: ${label}（${why}）`);
+      for (const label of fakeDomOnlyApis(readFileSync(p, "utf8"))) {
+        const why = FAKE_ONLY_MEMBERS.find((m) => m.label === label)!.why;
+        offenders.push(`${rel}: ${label}（${why}）`);
       }
     }
     expect(
@@ -220,12 +237,30 @@ describe("复评必改④：替身能力扫描——发货代码不许用到 fak
         return root.walk().filter((el) => FOCUSABLE_TAGS.has(el.tagName.toLowerCase()));
       }
     `;
-    const stripped = stripComments(regressed);
-    const hit = FAKE_ONLY_MEMBERS.find(({ pattern }) => {
-      pattern.lastIndex = 0;
-      return pattern.test(stripped);
-    });
-    expect(hit?.label, "退回 root.walk() 之后，这道扫描应该抓到 .walk() 这一条").toBe(".walk()");
+    expect(fakeDomOnlyApis(regressed), "退回 root.walk() 之后，这道扫描应该抓到 .walk() 这一条")
+      .toEqual([".walk()"]);
+  });
+
+  /**
+   * **第 10 种假阳性：一根长得完全正常的毒刺让整道扫描变瞎（P3e Task 1）。**
+   *
+   * 毒刺是本仓最自然的一行写法——字符串字面量里含 `/` 紧跟 `*`
+   *（`admin.use("/admin/api/*", …)` 这种路由 glob，`src/http/admin/router.ts` 里真有）。
+   * 用一对正则抠块注释的实现会把它当成块注释开头，**一路吞到下一个闭合记号为止**，
+   * 中间那段真代码整段脱离扫描，而门禁照常报绿。
+   *
+   * ⚠️ **三行的顺序是量出来的，不是抄来的**：闭合记号必须写在**目标缺陷之后**。
+   * 把闭合记号夹在毒刺与缺陷之间（第一版就是那么写的）时，被吞掉的只有毒刺自己那半行，
+   * 缺陷仍然看得见 ⇒ **正则版也是绿的**，这一格零鉴别力。
+   */
+  it("字符串里的 /* 不再让这道扫描变瞎 —— 毒刺与真缺陷同时在场时仍要抓到 NodeList.map()", () => {
+    const poisoned = [
+      'const ADMIN_API_GLOB = "/admin/api/*";',
+      'const rows = root.querySelectorAll(".x").map((e) => e.textContent);',
+      "/* 一段普通的块注释，它提供了那个闭合记号 */",
+    ].join("\n");
+    expect(fakeDomOnlyApis(poisoned), "毒刺在场时这道扫描仍必须看得见 NodeList.map()")
+      .toContain("querySelectorAll()");
   });
 
   it("盲区清单不是空的——如实登记按名字扫描拦不住的那几类，别让人以为门禁绿了就等于处处一致", () => {

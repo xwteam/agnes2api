@@ -4,6 +4,7 @@ import { bootPanel, settle } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { I18N } from "../../../admin-ui/js/i18n-dict.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
+import { stripComments } from "../../helpers/strip-comments.js";
 
 /**
  * 注册机板块的**行为**覆盖（P3c Task 6）。纯函数那一半在 `tests/ui/registrar.test.ts` 的
@@ -188,7 +189,9 @@ describe("设计 §10.3 第 2、3 条：两张通道卡", () => {
     // **先去注释再扫。** 这个仓库的注释极其爱复述代码——`sections.css` 里那段说明
     // 自己就写着「刻意没有任何 `[data-channel="…"]` 选择器」，不去注释的话这一格
     // 会被那句话本身打红（第一次跑就是这样红的），而那时红的是量具不是缺陷。
-    const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    // 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源（P3e Task 1 收编）。
+    // CSS 侧的边界与 `tests/unit/ui-assets.test.ts` 那两格逐字相同，写在那边。
+    const stripped = stripComments(css);
     const hits = [...stripped.matchAll(/\[data-channel[^\]]*\]/g)].map((m) => m[0]);
     expect(hits, "给某一条通道单独写了样式 —— 那是设计 §10.3 第 2 条禁止的不对称，而且画出来才看得见")
       .toEqual([]);

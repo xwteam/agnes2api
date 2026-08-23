@@ -9,6 +9,7 @@ import { join, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { UI_ASSETS, UI_BUILD_HASH } from "../../src/ui/assets.generated.js";
+import { stripComments } from "../helpers/strip-comments.js";
 
 /**
  * **只放 node 侧**（vitest.workers.config.ts 的 include 只有 tests/contract）：
@@ -539,7 +540,12 @@ describe("生成器对违规输入 exit 1", () => {
  */
 describe("CSS：横排卡片行里不许继承竖排卡的上边距", () => {
   const css = () => readFileSync("admin-ui/css/sections.css", "utf8");
-  const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "");
+  // 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源（P3e Task 1 收编）。
+  // ⚠️ **CSS 没有行注释，而真源会把双斜杠当行注释开头**——今天 `admin-ui/css/` 下
+  // 零处双斜杠（实地数过：`url(//…)` 与协议相对地址一处都没有），所以两种实现在
+  // 这份 CSS 上输出逐字节相同（收编前逐文件比对过）。哪天有人写了一个协议相对 URL，
+  // 下面那两格会红——那时红的是量具，回来在这里表态。
+  const strip = stripComments;
 
   /**
    * **这道扫描本身。提到 `describe` 作用域是为了让下面的盲点探针走的是同一份判据。**

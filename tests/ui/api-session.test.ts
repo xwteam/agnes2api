@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { raw, api, ApiError, onUnauthorized } from "../../admin-ui/js/api.js";
 import { SESSION_MAX_AGE_MS } from "../../admin-ui/js/pure/session.mjs";
+import { stripComments } from "../helpers/strip-comments.js";
 
 /** `admin-ui/js` 下的全部 JS（含 `pure/`），路径一律用 `/` 分隔好写断言。 */
 function walkJs(dir: string): string[] {
@@ -401,15 +402,17 @@ const EGRESS_FORMS: ReadonlyArray<{ label: string; re: RegExp }> = [
  * 「什么不算」必须逐字相同，否则同一段注释在一道里是豁免、在另一道里是命中，
  * 而那种不一致只有在有人往注释里写代码那天才看得见（本仓注释**极爱复述代码**，
  * 且已有三处注释里逐字写着导航一族的 token）。
- * ⚠️ **边界照旧**：块注释这一步用的是正则，`tests/helpers/strip-comments.ts` 登记着
- * 「字符串里的 `/*` 会被当成块注释开头」那个坑。**今天 `admin-ui/js` 下零处含 `/*`
- * 的字符串**（实地数过），所以这里保持原样不动；哪天有了，两道扫描会一起变瞎。
+ * ⚠️⚠️ **抠注释这一步在 P3e Task 1 收编成了 `scripts/lib/strip-comments.mjs` 那份真源。**
+ * 上一版这里自持一份正则，旁边写着「今天 `admin-ui/js` 下零处含斜杠星号的字符串
+ *（实地数过），所以这里保持原样不动；哪天有了，两道扫描会一起变瞎」——
+ * **那句话描述的正是一条没有机器钉子的休眠洞**，而 P3e 开工勘察当场把它点着了：
+ * 一行 `const ADMIN_API_GLOB = "/admin/api/*";` 就让这道扫描连同另外两道一起变瞎。
+ * 现在由「字符串里的 /* 不再让网络出口扫描变瞎 —— 毒刺与跨源 fetch 同时在场时仍要数到」
+ * 那一格钉着，它是断言，不是散文。
  */
 function codeOnly(src: string): string {
-  return stripTemplateText(
-    // 注释里提到这些名字不算出口（本仓注释极爱复述代码）。
-    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1"),
-  );
+  // 注释里提到这些名字不算出口（本仓注释极爱复述代码）。
+  return stripTemplateText(stripComments(src));
 }
 
 /** 一段源码里的网络出口处数。**注释与模板串字面文本都不算。** */
@@ -570,14 +573,11 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
       + "⚠️ 这不是「补一条正则就能修」的那一类——修它要的是数据流分析，"
       + "那已经不是一道文本扫描的射程了。**这条边界是这整道护栏的天花板。**",
   },
-  {
-    // **既有盲点，非本次改动新造**：`egressSites()` 抠注释用的
-    // `/(^|[^:])\/\/.*$/gm` 不认得「这个 `//` 住在模板串里」。
-    probe: "const s = `a // b`; fetch(u);",
-    why: "单行模板串里出现未被保护的 `//` —— 抠注释那一步会把本行其后的代码整段当成"
-      + "行注释删掉，连真调用一起。**新旧判据都得 0**（所以它不是本次改动造成的），"
-      + "本仓 admin-ui/js 今天零处这样写。登记 P3e。",
-  },
+  // ⚠️ **这里原来还有一条，P3e Task 1 把它修好了，所以整条删掉（不是放宽，是补上了）**：
+  //    `` probe: "const s = `a // b`; fetch(u);" `` —— 单行模板串里出现未被保护的双斜杠，
+  //    旧的抠注释正则会把本行其后的代码整段当成行注释删掉、连真调用一起。
+  //    收编成逐字符真源之后，模板串里的双斜杠不再是注释 ⇒ 那条探针现在数得出 1，
+  //    留在这张表里会让「已知抓不住的写法确实抓不住」那一格红成「它抓得住了」。
 ];
 
 describe("面板的网络出口清单", () => {
@@ -675,6 +675,32 @@ describe("面板的网络出口清单", () => {
       egressSites("const a = `x`; fetch(u); const b = `y`;"),
       "被两条模板串夹住的真调用被抠掉了 —— 反引号配对一旦贪婪，中间那截代码就没了",
     ).toBe(1);
+  });
+
+  /**
+   * **第 10 种假阳性：一根长得完全正常的毒刺让网络出口扫描变瞎（P3e Task 1）。**
+   *
+   * 毒刺是本仓最自然的一行写法——字符串字面量里含 `/` 紧跟 `*`
+   *（`admin.use("/admin/api/*", …)` 这种路由 glob，`src/http/admin/router.ts` 里真有）。
+   * 用一对正则抠块注释的实现会把它当块注释开头一路吞到下一个闭合记号，中间那段真代码
+   * 整段脱离扫描 ⇒ 面板「只打自己 origin」的唯一机器保障当场瞎掉，而门禁照常报绿。
+   *
+   * ⚠️ **三行的顺序是量出来的**：闭合记号必须写在跨源出口**之后**；夹在毒刺与出口之间时
+   * 被吞掉的只有毒刺自己那半行，出口仍然数得到 ⇒ 正则版也绿，这一格零鉴别力。
+   *
+   * ⚠️ **判据用的是 `egressSites()` 本体，不是另写一个返回站点名的扫描器**：
+   * 派发单里写的探针形状是 `egressSitesIn(...)` + `toContain("https://example.invalid")`，
+   * 而本仓今天没有这个函数，`egressSites()` 交出来的是**处数**。
+   * 为了 `toContain` 另造一个返回 URL 的扫描器，等于在本任务里再造一份第二实现
+   *——那正是本任务要消灭的东西。所以这里改成对处数断言，被测的仍是真门禁那一份判据。
+   */
+  it("字符串里的 /* 不再让网络出口扫描变瞎 —— 毒刺与跨源 fetch 同时在场时仍要数到", () => {
+    const poisoned = [
+      'const ADMIN_API_GLOB = "/admin/api/*";',
+      'export function b3Net() { return fetch("https://example.invalid/x"); }',
+      "/* 提供闭合记号的普通块注释 */",
+    ].join("\n");
+    expect(egressSites(poisoned), "毒刺在场时这道扫描仍必须数到那个跨源出口").toBe(1);
   });
 
   /**

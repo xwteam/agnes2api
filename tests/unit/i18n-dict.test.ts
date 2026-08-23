@@ -3,15 +3,69 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 import { TEND_FAILURE_REASONS } from "../../src/core/registrar/tender.js";
+import { stripComments } from "../helpers/strip-comments.js";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 
+// ── 「板块里当参数传的 i18n key」那道广扫的判据本体 ─────────────────────────────
+// **整块从那条用例体里原样搬到模块作用域，判据一个字符没改。** 搬的理由只有一个：
+// 让「毒刺在场时它还看不看得见」那一格能在内存里拼坏文本喂给同一个判据，
+// 而不是另抄一份扫描逻辑（另抄一份的话，探针绿而真扫描瞎，两者永远不会互相揭发）。
+//
+// `set` 是 P3c Task 7 的设置页。**加新板块必须回来表态**，理由见下面那条用例上方的 ⚠️。
+// ⚠️ `usage` 是 P3d Task 5 的用量板块。它进这张表**不是形式**：那个板块的
+// 62 个新 key 里绝大多数走的正是 `elI18n(tag, key)`（`scripts/check-i18n.mjs`
+// 的第 ① 条只认 `t("…")` 与 `data-i18n="…"`，对它们完全隐身），
+// 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
+// ⚠️ `models` 是 P3d Task 6 的模型板块。它进这张表**不是形式**：那个板块的
+// 每一个 key 走的都是 `elI18n(tag, key)` 或者当参数传给 `modalityLabelKey()`
+// 的字面量，`scripts/check-i18n.mjs` 的第 ① 条对它们完全隐身，
+// 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
+// ⚠️ `pg` 是 P3d Task 10 的 Playground 板块，**它进这张表的理由比前几个板块更硬**：
+// 那个板块有整整一族 key **根本不出现在 `t(` 或 `data-i18n=` 里**——
+// 它们是当**返回值**从 `hintNoteKey()` / `sendBlockedKey()` 交出去、
+// 再被 `elI18n(tag, key)` 或 `setAttribute("title", t(key))` 消费的字面量。
+// 实测：`scripts/check-i18n.mjs` 对 `pg.*` 41 个 key 里的 **37 个**只报
+// 「未被引用」的**警告**（第 ④ 条从不 exit 1）⇒ 打错一个字母，三道 i18n 门禁一起沉默，
+// 面板上五种语言全部显示裸 key。
+// **那个板块新增 41 个 `pg.*` + 1 个 `nav.playground`（导航项，理由见字典里那一行），
+// 下面那条用例是它们拼写的全部机器保障。** 别在任何地方写成「由 i18n 门禁保证」。
+// ⚠️ **它守的是拼写，不是措辞**：「日文那句话通不通顺」没有任何东西在守。
+const NAMESPACES = [
+  "gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set", "usage", "models", "pg",
+] as const;
+const NS_KEY_RE = new RegExp(`"((?:${NAMESPACES.join("|")})\\.[A-Za-z0-9_.]+)"`, "g");
+const walkJs = (d: string): string[] =>
+  readdirSync(d).sort().flatMap((n) => {
+    const p = join(d, n);
+    return statSync(p).isDirectory() ? walkJs(p) : /\.(js|mjs)$/.test(p) ? [p] : [];
+  });
+
 /**
- * 字典的结构性断言。**与 `scripts/check-i18n.mjs` 是两份独立实现，这是有意的**：
- * 门禁脚本跑在 CI 的第 5 道，这份跑在 `pnpm test` 里；两者用不同的代码路径回答
- * 同一批问题，其中一份写错时另一份会不同意。
+ * 一段源码里被当字面量写出来的 `"<已知命名空间>.<键名>"`。
+ *
+ * **先去注释再扫。** 这个仓库的注释极其爱复述代码（下面那条用例第一版就被
+ * `admin-ui/js/sec-keys.js` 里一句「不许拼 `"keys.bucket." + b`」的说明打红）。
+ * 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源（P3e Task 1 收编）——
+ * 本文件原来自持一份正则实现，而那一份**认不出字符串里的斜杠星号**，
+ * 一根路由 glob 毒刺就能让整道广扫变瞎。
+ */
+const referencedKeysIn = (src: string): string[] =>
+  [...stripComments(src).matchAll(NS_KEY_RE)].map((m) => m[1]!);
+
+/**
+ * 字典的结构性断言。**与 `scripts/check-i18n.mjs` 用不同的代码路径回答同一批问题**：
+ * 门禁脚本跑在 CI 的第 6 道，这份跑在 `pnpm test` 里，其中一份写错时另一份会不同意。
  * （P3a 的教训是反过来的：CI 只有一份实现、且没人验证它跑没跑过，
  *   于是加了 tee + grep 横幅。这里换一种做法——冗余实现。）
+ *
+ * ⚠️⚠️ **「冗余」的边界从 P3e Task 1 起变窄了，别再宣称「两边处处独立」**：
+ * 本文件的抠注释器已经收编成 `scripts/lib/strip-comments.mjs` 那一份真源，
+ * 而 P3e Task 3 之后 `scripts/check-i18n.mjs` 会 import 同一份 ⇒
+ * **「怎么把注释抠掉」两边将是同一份实现，它错了两边一起错。**
+ * 那是刻意的：两份抠注释器不一致时，瞎掉的那一份才是会报绿的那一份。
+ * **仍然冗余的是另一件事**：本文件手写 `NAMESPACES` 登记表 + 三条反向自检，
+ * 与门禁脚本那边「从字典自动派生」是两条不同的路，那一半没有被收编。
  */
 describe("i18n 字典", () => {
   it("每个 key 都有全部 5 种语言且非空", () => {
@@ -157,44 +211,13 @@ describe("i18n 字典", () => {
    * 下面那条"至少 20 个"的反向自检也拦不住它：Key 池板块一家就够 20 个。
    */
   it("板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里", () => {
-    // `set` 是 P3c Task 7 的设置页。**加新板块必须回来表态**，理由见上面那段 ⚠️。
-    // ⚠️ `usage` 是 P3d Task 5 的用量板块。它进这张表**不是形式**：那个板块的
-    // 62 个新 key 里绝大多数走的正是 `elI18n(tag, key)`（`scripts/check-i18n.mjs`
-    // 的第 ① 条只认 `t("…")` 与 `data-i18n="…"`，对它们完全隐身），
-    // 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
-    // ⚠️ `models` 是 P3d Task 6 的模型板块。它进这张表**不是形式**：那个板块的
-    // 每一个 key 走的都是 `elI18n(tag, key)` 或者当参数传给 `modalityLabelKey()`
-    // 的字面量，`scripts/check-i18n.mjs` 的第 ① 条对它们完全隐身，
-    // 不进表的话打错一个字母三道 i18n 门禁会一起沉默、面板上显示裸 key。
-    // ⚠️ `pg` 是 P3d Task 10 的 Playground 板块，**它进这张表的理由比前几个板块更硬**：
-    // 那个板块有整整一族 key **根本不出现在 `t(` 或 `data-i18n=` 里**——
-    // 它们是当**返回值**从 `hintNoteKey()` / `sendBlockedKey()` 交出去、
-    // 再被 `elI18n(tag, key)` 或 `setAttribute("title", t(key))` 消费的字面量。
-    // 实测：`scripts/check-i18n.mjs` 对 `pg.*` 41 个 key 里的 **37 个**只报
-    // 「未被引用」的**警告**（第 ④ 条从不 exit 1）⇒ 打错一个字母，三道 i18n 门禁一起沉默，
-    // 面板上五种语言全部显示裸 key。
-    // **本板块新增 41 个 `pg.*` + 1 个 `nav.playground`（导航项，理由见字典里那一行），
-    // 这一格是它们拼写的全部机器保障。** 别在任何地方写成「由 i18n 门禁保证」。
-    // ⚠️ **它守的是拼写，不是措辞**：「日文那句话通不通顺」没有任何东西在守。
-    const NAMESPACES = [
-      "gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set", "usage", "models", "pg",
-    ] as const;
-    const re = new RegExp(`"((?:${NAMESPACES.join("|")})\\.[A-Za-z0-9_.]+)"`, "g");
-    const walk = (d: string): string[] =>
-      readdirSync(d).sort().flatMap((n) => {
-        const p = join(d, n);
-        return statSync(p).isDirectory() ? walk(p) : /\.(js|mjs)$/.test(p) ? [p] : [];
-      });
-    // **先去注释再扫。** 这个仓库的注释极其爱复述代码（本条用例第一版就被
-    // sec-keys.js 里一句「不许拼 `"keys.bucket." + b`」的说明打红），与
-    // pool-cache.test.ts / source-guards.test.ts 用的是同一套处理。
-    const stripComments = (src: string) =>
-      src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    // 判据本体（`NAMESPACES` / `NS_KEY_RE` / `referencedKeysIn`）在模块作用域，
+    // 理由见那里的说明：探针必须与真扫描走同一份判据。
     const referenced = new Set<string>();
-    for (const p of walk("admin-ui/js")) {
+    for (const p of walkJs("admin-ui/js")) {
       // 字典自己就是这些键的定义处，扫它等于自证。
       if (p.endsWith("i18n-dict.js")) continue;
-      for (const m of stripComments(readFileSync(p, "utf8")).matchAll(re)) referenced.add(m[1]!);
+      for (const k of referencedKeysIn(readFileSync(p, "utf8"))) referenced.add(k);
     }
     expect([...referenced].filter((k) => !(k in I18N)).sort(), "板块引用了字典里没有的 key").toEqual([]);
     // 反向自检：扫描坏成空集时上面那条恒绿。Task 4 的 Key 池板块一家就有 20+ 个。
@@ -213,7 +236,7 @@ describe("i18n 字典", () => {
       Object.keys(I18N).map((k) => k.split(".")[0]!).filter((p) => /^[a-z]+$/.test(p)),
     );
     const usedNamespaces = new Set<string>();
-    for (const p of walk("admin-ui/js")) {
+    for (const p of walkJs("admin-ui/js")) {
       if (p.endsWith("i18n-dict.js")) continue;
       for (const m of stripComments(readFileSync(p, "utf8")).matchAll(/"([a-z]+)\.[A-Za-z0-9_.]+"/g)) {
         if (dictNamespaces.has(m[1]!)) usedNamespaces.add(m[1]!);
@@ -245,5 +268,23 @@ describe("i18n 字典", () => {
       "一个引用都没扫到的命名空间集合变了——要么前缀写错/该删，要么某个空的前缀"
       + "终于有了 JS 消费者，回来把上面那段说明改准",
     ).toEqual(["nav", "shell"]);
+  });
+
+  /**
+   * **第 10 种假阳性：一根长得完全正常的毒刺让 NAMESPACES 广扫变瞎（P3e Task 1）。**
+   *
+   * 形状与 `tests/ui/dom/fake-dom-parity.test.ts` 的
+   * 「字符串里的 /* 不再让这道扫描变瞎 —— 毒刺与真缺陷同时在场时仍要抓到 NodeList.map()」
+   * 逐字相同，只换了目标缺陷（这里是一个字典里没有的假 key）。
+   * 三行的顺序同样是量出来的：闭合记号必须在缺陷之后，否则正则版也绿、这一格零鉴别力。
+   */
+  it("字符串里的 /* 不再让 NAMESPACES 广扫变瞎 —— 毒刺与假 key 同时在场时仍要抓到", () => {
+    const poisoned = [
+      'const ADMIN_API_GLOB = "/admin/api/*";',
+      'elI18n("h2", "models.zzzParamKey");',
+      "/* 提供闭合记号的普通块注释 */",
+    ].join("\n");
+    expect(referencedKeysIn(poisoned), "毒刺在场时这道扫描仍必须看得见被当参数传的 key")
+      .toContain("models.zzzParamKey");
   });
 });
