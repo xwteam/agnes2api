@@ -2376,10 +2376,14 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
    * `prettyJson()`（无长度上限）。与 Task 12 的「`turn.body` 可能是一张 MB 级 base64 图」
    * 相乘之后，一次视频任务的重建量实测 ≈ 1.8 GB 临时字符串（`turns=10`）。
    *
-   * ⚠️⚠️ **观测点是节点对象的身份，不是屏幕上的文字**：整版重画之后文字长得一模一样
-   *（`render()` 的输出与就地重填逐字相同，那正是这次改动的前提），
+   * ⚠️⚠️ **观测点是节点对象的身份，不是屏幕上的文字**：整版重画之后文字长得一模一样，
    * **只有「还是不是同一个对象」分得开这两种实现**。少了这一条，
    * 把 `pollOnce()` 改回 `render()` 这一格照样全绿。
+   * ⚠️⚠️ **反过来说，这一格证明不了「两条路径输出等价」，别把它读大了**（复评 H2）：
+   * 上一轮就是靠这一格全绿声称「输出逐字不变」的，而那句话**当时是假的**
+   *（`.pg-status` 画在盒子外面，非 2xx 轮询期间屏幕上是上一拍那个数字）。
+   * 等价性由下面那一组「就地重填与整版重建输出逐字相同（六场景逐节点逐属性）」守，
+   * 那是一次输出比对，不是身份比对。**两组缺一不可，方向相反。**
    *
    * ⚠️ **必须先有一轮历史**：只有一轮时「整版重建」与「重填这一个盒子」的代价同阶，
    * 这一格也就没有鉴别力——真正被放大的是**前面那些轮次**。所以这里先发一轮图片、
@@ -2504,5 +2508,223 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
     ).toBe(0);
     expect(one(sec, ".pg-media-url").textContent).toBe("https://cdn.invalid/v.mp4");
     expect(timersLeft, "不该轮却排了一个定时器").toBe(0);
+  });
+
+  /**
+   * ── **P3d 修复定向复评 H2：轮询那一拍显示的状态码必须是这一拍的** ──────────────
+   *
+   * **这一格断的是屏幕上的字，不是节点身份。** 上面那格
+   * 「右栏别的轮次必须还是原来那几个节点对象」只比对象身份，
+   * 而这条回归恰恰是**节点还是那一个、上面写的数字是编的**：
+   * `pollOnce()` 每一拍都写 `turn.status = r.status`，而 `.pg-status` 由 `buildTurn()`
+   * 画在 `foot` 上、**不在那个被就地重填的 `.pg-media` 盒子里** ⇒
+   * 只重填盒子的话它会一直停在建任务那一拍的 `200`，
+   * 而同一屏上贴着的响应原文已经是上游那句 `upstream boom` 了。
+   *
+   * **可达性不是假想**：轮询期间上游回 429 / 500 / 404（限流、任务过期、被回收）
+   * 都走到这里，而**面板不会因为非 2xx 就停**（停下来的判据是「拿到地址」或「传输失败」），
+   * 所以那个编出来的数字最长挂到轮询结束（上限 60 拍）。
+   *
+   * **变红条件（实测）**：把 `pollOnce()` 里那句
+   * `if (nodes.pollStatus !== null) nodes.pollStatus.textContent = String(turn.status);` 删掉
+   * ⇒ 这一格红成 `200 !== 500`。
+   */
+  it("轮询回非 2xx 时状态码那一格显示的是这一拍的数字 —— 屏幕不许贴着错误正文说 200", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { h, sec } = await startVideo(respondWith({
+      gateway: (url) => (url === CREATE
+        ? { status: 200, body: { id: "task-1", status: "queued" } }
+        : { status: 500, body: { error: { message: "upstream boom" } } }),
+    }));
+    expect(one(sec, ".pg-status").textContent, "前置条件：建任务那一次本来就是 200").toBe("200");
+
+    await tick();
+    expect(pollCount(h), "前置条件：这一拍真的打出去了").toBe(1);
+    expect(
+      one(sec, ".pg-status").textContent,
+      "轮询回的是 500，屏幕上却还挂着上一拍的 200 —— 旁边就贴着上游的错误正文，"
+      + "**两句话互相矛盾，而前一句是编的**",
+    ).toBe("500");
+    expect(
+      one(sec, ".pg-body").textContent,
+      "前置条件：那句矛盾的另一半（上游的错误正文）真的在同一屏上，否则这一格没有鉴别力",
+    ).toContain("upstream boom");
+
+    // 反向控制：它不是被写死成 500 的 —— 下一拍回 404 时它得跟着变。
+    h.respond(respondWith({
+      gateway: (url) => (url === CREATE
+        ? { status: 200, body: { id: "task-1", status: "queued" } }
+        : { status: 404, body: { error: { message: "task expired" } } }),
+    }));
+    await tick();
+    vi.useRealTimers();
+    expect(pollCount(h), "非 2xx 之后它本来该接着轮（停的判据是拿到地址 / 传输失败）").toBe(2);
+    expect(one(sec, ".pg-status").textContent, "状态码那一格不跟这一拍走 —— 它被钉死在某个数字上了").toBe("404");
+  });
+
+  /**
+   * ── **P3d 修复定向复评 H2：把「输出逐字相同」这句话变成机器可核的** ─────────────
+   *
+   * 上一轮把轮询那一拍从整版 `render()` 改成就地重填时，注释里写下了三处
+   * 「输出逐字不变 / 逐字相同」，而**没有任何一条断言比对过两条路径的输出**
+   * ——上面那格只比节点身份。复评是靠人工「六场景逐节点逐属性 diff」才抓出
+   * `.pg-status` 那一格不等价的。**这一格就是那次人工 diff 的常驻化**：
+   * 下一次有人再声称「输出不变」，机器替他核。
+   *
+   * **方法**：跑到某一拍之后，先把 Playground 板块整棵子树逐节点逐属性序列化
+   *（tag / 全部属性 / `value` / `checked` / `disabled` / 自有文本 / 子树形状），
+   * 再从**同一份模块状态**强制整版重建一次，序列化第二遍，两份逐字比对。
+   *
+   * ⚠️ **强制重建走的是真接线，不是去调一个内部函数**：`js/app.js:65` 写着
+   * `current === name` 时只跑 `onShow()`、**不跑 `onHide()`**，
+   * 而 `playgroundSection.onShow()` 在目录已经读到时就是一次 `render()`
+   * ⇒ **再点一次当前那颗导航按钮** = 一次纯粹的整版重建，且轮询不会被掐。
+   *
+   * ⚠️ **前置条件必须自己断言**：这一格全靠「重建那一下真的发生了」，
+   * 而那件事在序列化结果里是不可见的（重建出来的字长得一样才是要证的东西）。
+   * ⇒ 用**节点身份**当前置条件：重建之后那棵子树必须换成新对象。
+   * 少了它，`navTo` 哪天不再触发 `onShow()`，这一格会静静退化成「自己跟自己比」。
+   *
+   * **变红条件（实测）**：把 `pollOnce()` 里那句更新 `.pg-status` 的删掉
+   * ⇒ 「轮询回非 2xx」那个场景当场红，diff 直指
+   * `span.mono pg-status` 就地那份是 `200`、重建那份是 `500`。
+   */
+  describe("就地重填与整版重建输出逐字相同（六场景逐节点逐属性）", () => {
+    /**
+     * 整棵子树逐节点逐属性序列化。**测试代码，所以可以读 `.attrs`**
+     *（它是 `fake-dom-parity.test.ts` 登记的 8 条 `FAKE_ONLY_MEMBERS` 之一，
+     * 那张表管的是 `admin-ui/` 下的**发货代码**，不管测试）。
+     * 排序属性名是为了让 diff 只反映真实差异，不反映插入顺序。
+     */
+    function domShot(root: FakeElement): string {
+      const lines: string[] = [];
+      const walk = (n: FakeElement, path: string): void => {
+        const attrs = [...n.attrs.entries()]
+          .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+          .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+          .join(" ");
+        // **只取自有文本**：子树文本由下面各行自己覆盖，一起取会把每个差异重复计一遍。
+        const own = n.children.length === 0 ? n.textContent : "";
+        lines.push([
+          path, `<${n.tagName}>`, attrs,
+          `value=${JSON.stringify(n.value)}`,
+          `checked=${n.checked}`, `disabled=${n.disabled}`,
+          `text=${JSON.stringify(own)}`,
+        ].join(" | "));
+        n.children.forEach((c, i) => { walk(c, `${path}/${i}:${c.tagName}`); });
+      };
+      walk(root, `0:${root.tagName}`);
+      return lines.join("\n");
+    }
+
+    /** 就地重填之后的屏幕 vs 从同一份状态整版重建之后的屏幕。 */
+    function expectSameAsRebuild(h: Harness, sec: FakeElement, where: string): void {
+      const inPlace = domShot(sec);
+      const beforeNodes = pick(sec, ".pg-turn");
+      navTo(h, "playground");   // `showSection` 在 current === name 时只跑 onShow() ⇒ 整版 render()
+      const afterNodes = pick(sec, ".pg-turn");
+      expect(afterNodes.length, `${where}：重建之后右栏一轮都不剩 —— 前置条件塌了`).toBe(beforeNodes.length);
+      if (beforeNodes.length > 0) {
+        expect(
+          afterNodes[0],
+          `${where}：**前置条件塌了** —— 再点一次当前导航按钮没有触发整版重建，`
+          + "这一格已经退化成自己跟自己比。去看 js/app.js 的 showSection()",
+        ).not.toBe(beforeNodes[0]);
+      }
+      expect(
+        domShot(sec),
+        `${where}：**就地重填与整版重建的输出不等价**。`
+        + "上一轮正是在这里编出了一个状态码（`.pg-status` 画在 `.pg-media` 盒子外面，"
+        + "就地重填够不着它）。差异那一行的路径直接指出是哪一格 —— "
+        + "要么把那一格也就地更新，要么这一拍别改它对应的那份状态",
+      ).toBe(inPlace);
+    }
+
+    it("场景①成功档：轮到第 3 拍给成片", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const { h, sec } = await startVideo(videoResponder(3));
+      await tick();
+      expectSameAsRebuild(h, sec, "成功档 @1");
+      await tick();
+      expectSameAsRebuild(h, sec, "成功档 @2");
+      await tick();
+      vi.useRealTimers();
+      expect(one(sec, ".pg-media-url").textContent, "前置条件：第 3 拍该给成片了").toBe("https://cdn.invalid/v.mp4");
+      expectSameAsRebuild(h, sec, "成功档 终局");
+    });
+
+    it("场景②轮询回非 2xx 且接着轮（就是复评抓到那一档）", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const { h, sec } = await startVideo(respondWith({
+        gateway: (url) => (url === CREATE
+          ? { status: 200, body: { id: "task-1", status: "queued" } }
+          : { status: 500, body: { error: { message: "upstream boom" } } }),
+      }));
+      for (const n of [1, 2, 3]) {
+        await tick();
+        expect(pollCount(h), `前置条件：第 ${n} 拍真的打出去了`).toBe(n);
+        expectSameAsRebuild(h, sec, `非 2xx 档 @${n}`);
+      }
+      vi.useRealTimers();
+    });
+
+    it("场景③放弃档：轮到上限停下来", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const { h, sec } = await startVideo(neverDone());
+      await tick();
+      expectSameAsRebuild(h, sec, "放弃档 @1");
+      for (let i = 0; i < 70; i++) await tick();
+      vi.useRealTimers();
+      expect(pick(sec, ".pg-poll-gaveup").length, "前置条件：真的走到放弃那一档了").toBe(1);
+      expectSameAsRebuild(h, sec, "放弃档 终局");
+    });
+
+    it("场景④出错档：某一拍传输失败", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let polls = 0;
+      const { h, sec } = await startVideo(respondWith({
+        gateway: (url) => {
+          if (url === CREATE) return { status: 200, body: { id: "task-1", status: "queued" } };
+          polls++;
+          if (polls >= 2) throw new Error("boom");
+          return { status: 200, body: { id: "task-1", status: "processing" } };
+        },
+      }));
+      await tick();
+      expectSameAsRebuild(h, sec, "出错档 @1");
+      await tick();
+      vi.useRealTimers();
+      expect(pick(sec, ".pg-error").length, "前置条件：真的走到出错那一档了").toBe(1);
+      expectSameAsRebuild(h, sec, "出错档 终局");
+    });
+
+    it("场景⑤取消档：轮到第 2 拍按取消", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const { h, sec } = await startVideo(neverDone());
+      await tick();
+      expectSameAsRebuild(h, sec, "取消档 @1");
+      one(sec, ".pg-cancel").click();
+      await settle(20);
+      vi.useRealTimers();
+      expect(pick(sec, ".pg-cancelled").length, "前置条件：真的取消掉了").toBe(1);
+      expectSameAsRebuild(h, sec, "取消档 终局");
+    });
+
+    it("场景⑥隐藏页 → 变回可见接回去", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const { h, sec } = await startVideo(neverDone());
+      await tick();
+      h.dom.document.hidden = true;
+      await tick();
+      await tick();
+      expectSameAsRebuild(h, sec, "隐藏页");
+      h.dom.document.hidden = false;
+      h.dom.document.dispatchEvent(new h.dom.CustomEvent("visibilitychange"));
+      await settle(20);
+      await tick();
+      vi.useRealTimers();
+      expect(pollCount(h), "前置条件：真的接回去了").toBe(3);
+      expectSameAsRebuild(h, sec, "接回去之后");
+    });
   });
 });

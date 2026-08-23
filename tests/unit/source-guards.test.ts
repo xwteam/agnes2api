@@ -357,8 +357,25 @@ describe("src/adapters、src/http、src/ports、src/ui 里的裸 console", () =>
  * ⚠️ **判据锚在「这个文件里自己定义了一个叫 stripComments 的东西」上**，
  * 不是「这个文件里出现过 stripComments 这个词」——后者会把每一个**正当的 import
  * 消费者**一起数进来，那正好是反过来守错了方向。
- * ⚠️ **本文件自己被排除在外**（它 import 的是真源，不是副本），
- * `tests/helpers/strip-comments.ts` 也排除（它就是真源本体）。
+ * ⚠️ **只排除 `tests/helpers/strip-comments.ts` 一个**（它就是真源本体）。
+ *
+ * ⚠️⚠️ **上一版还按路径排除了「本文件自己」，而那是一个真绕过口，复评实测走通了。**
+ * 排除理由当时写的是「它 import 的是真源，不是副本」——**那个理由本身就是错的**：
+ * 每一个正当消费者都 import 真源，它们**没有**被排除，它们是被扫过、然后不匹配；
+ * 真实理由是同一个文件 `:382` 行内注释里那句「上面那条正则里就写着这个名字」
+ *（**同一个文件里两处给了两个不同的理由，而先被读到的那个是错的那个**）。
+ * 后果比登记的那句「有人把第六份**藏**在这个文件里」更宽：复评实测在本文件里**嵌一层
+ * `describe`、块作用域**手写第六份 —— `npx tsc --noEmit` 通过（块级遮蔽合法，
+ * TS 不吵）+ 本文件 32 passed **全绿**。只有写在**模块级**那种才被 `TS2440` 兜住。
+ * ⇒ **在一个 `describe` 里写一个 helper 不是「藏」，是这个文件里最自然的写法。**
+ *
+ * **处置：把那条按路径的排除整条删掉。** 它当初存在的唯一理由是下面反向自检那几条
+ * 探针串里**逐字**写着 `function stripComments(…)`；把那几条改成
+ * `"function " + "stripComments(…)"` 的拼法之后（探针语义一个字都没变，
+ * 因为它们是运行期拼出来的同一个字符串），`OWN_STRIP_DEF` 再也打不到本文件自己，
+ * 排除随之不必要，绕过口随之消失。
+ * ⚠️ **只拆真的会自伤的那三条**（函数声明 / `const` / `let`）：另外三条（import /
+ * 调用 / 注释提及）本来就不含定义形态，拆了只会让人以为那也是必需的。
  *
  * **已知射程**：换个名字抄一份（`function stripCmts(...)`）扫不到——**按名字扫的天花板**，
  * 与本文件上面两道门禁登记的「间接引用抓不住」是同一族边界。
@@ -379,7 +396,8 @@ describe("tests/ 下的 stripComments 副本", () => {
     for (const p of walkTs("tests")) {
       const rel = p.split("\\").join("/");
       if (rel === "tests/helpers/strip-comments.ts") continue;   // 真源本体
-      if (rel === "tests/unit/source-guards.test.ts") continue;  // 本文件：上面那条正则里就写着这个名字
+      // **本文件不排除**（上一版排除了，那是一个真绕过口：块作用域第六份 typecheck + 门禁双绿）。
+      // 它今天不匹配是因为下面那几条探针改成了拼法，不是因为有人替它开了后门。
       if (OWN_STRIP_DEF.test(stripComments(readFileSync(p, "utf8")))) found.push(rel);
     }
     expect(
@@ -395,10 +413,18 @@ describe("tests/ 下的 stripComments 副本", () => {
    * 少了它，把 `OWN_STRIP_DEF` 写坏成一个永不匹配的正则，上面那格会红成
    * 「少了两个」——方向看着像好事（清单变短了），而实际是护栏瞎了。
    */
+  /**
+   * ⚠️⚠️ **前三条刻意写成运行期拼接，不是手滑。** 写成字面量的话，**本文件自己**
+   * 就会被 `OWN_STRIP_DEF` 数成一份副本，于是上面那格只能靠「按路径排除本文件」活着
+   * ——而那条排除**就是一个真绕过口**（复评实测：在这个文件里嵌一层 `describe`、
+   * 块作用域手写第六份，`tsc --noEmit` 通过 + 门禁 32 passed 全绿）。
+   * 拼出来的字符串与拆之前**逐字相同**，探针语义一个字没变。
+   * **要改这三条的话，请连同上面那格「本文件不排除」那句一起想清楚。**
+   */
   it.each([
-    ["function stripComments(src: string): string { return src; }", true, "函数声明"],
-    ["const stripComments = (src: string) => src;", true, "赋给 const"],
-    ["let stripComments = (s) => s;", true, "赋给 let"],
+    ["function " + "stripComments(src: string): string { return src; }", true, "函数声明"],
+    ["const " + "stripComments = (src: string) => src;", true, "赋给 const"],
+    ["let " + "stripComments = (s) => s;", true, "赋给 let"],
     ['import { stripComments } from "../helpers/strip-comments.js";', false, "正当消费者：import 不算副本"],
     ["const stripped = stripComments(readFileSync(p));", false, "调用它不算副本"],
     ["// 这里刻意不再抄一份 stripComments", false, "注释里的提及不算（先抠注释）"],

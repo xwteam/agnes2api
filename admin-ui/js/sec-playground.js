@@ -238,7 +238,9 @@ let streamOn = false;
  * base64 图，以及给视频档加了一个**每拍都整版 `render()`** 的 60 拍循环。
  * 两件相乘之后，一次视频任务的重建量变成 `60 × 全部轮次 × 每轮 body`
  *（实测 `turns=10` ⇒ ≈ 1.8 GB 临时字符串），**与手速已经不同阶了**。
- * 本轮的处置是把那个 60 倍的乘数拿掉（`pollOnce()` 里那段 ⚠️⚠️，输出逐字不变），
+ * 本轮的处置是把那个 60 倍的乘数拿掉（`pollOnce()` 里那段 ⚠️⚠️；**就地改的那两处
+ * 与整版重建输出逐字相同**，由那段末尾点名的第 ③ 格钉着——上一版这里写的是一句
+ * 没有机器守的「输出逐字不变」，而它当时**是假的**，复评 M-4 实测证伪），
  * ⇒ 重建量回到 `每次运维自己按一下 × 全部轮次`，与这段话原本描述的那一档重新对齐。
  * **仍然没有上限这件事没有变**，只是它不再被一个自动循环放大。
  */
@@ -735,7 +737,14 @@ function buildTurn(turn) {
   const foot = el("div", { class: "pg-turn-head" });
   foot.appendChild(elI18n("span", "pg.turn.gateway", { class: "muted" }));
   if (turn.status !== null) {
-    foot.appendChild(el("span", { class: "mono pg-status" }, String(turn.status)));
+    const status = el("span", { class: "mono pg-status" }, String(turn.status));
+    // **正在轮的那一轮，把这一格也记下来**（与下面 `buildMediaResult()` 记盒子同一条理由）。
+    // ⚠️⚠️ **它画在这里，不在那个媒体盒子里**，而 `pollOnce()` 每一拍都改写 `turn.status`。
+    //    上一版只记了盒子 ⇒ 轮询回 500 时屏幕上这一格还停在上一拍那个 200，
+    //    旁边就贴着 `{"error":…}` 的响应原文——**两句话互相矛盾，而前一句是编的**
+    //    （复评 M-4 逐节点 diff 实测；同型纪律见下面流式那一档的 ⚠️）。
+    if (turn === pollTurn) nodes.pollStatus = status;
+    foot.appendChild(status);
   }
   wrap.appendChild(foot);
 
@@ -849,6 +858,9 @@ function render() {
   nodes.streamText = null;
   // 同上，轮询那一拍要就地重填的那个盒子（`buildMediaResult()` 会重新挂上）。
   nodes.pollBox = null;
+  // 同上，那一轮的状态码那一格（`buildTurn()` 会重新挂上）。**它与盒子必须一起作废**：
+  // 只作废一个的话，另一个会继续往一个已经从文档里摘掉的节点上写字。
+  nodes.pollStatus = null;
   if (catalog === null) {
     host.appendChild(buildUnavailable());
     return;
@@ -1082,17 +1094,32 @@ async function pollOnce() {
      * 一次整版重建在 1 / 5 / 10 轮时是 3.0 / 15.0 / **30.0 MB** 临时字符串，
      * ⇒ `turns=10` 时一次视频任务累计 **≈ 1.8 GB**、主线程占用按机器快慢在 1.5–29 s 之间。
      *
-     * **这一拍在屏幕上唯一会变的东西只有两样**：`pollAttempt` 那句话与这一轮的响应原文
-     * ——两样都在这个盒子里。所以重填这一个盒子与整版重建**输出逐字相同**，
-     * 而代价从 O(全部轮次 × 每轮 body) 降到 O(这一轮 body)，与历史轮数无关。
+     * **这一拍在屏幕上会变的东西是三样**：`pollAttempt` 那句话、这一轮的响应原文，
+     * 以及**这一轮的状态码**。前两样在那个盒子里，**第三样不在**——它由 `buildTurn()`
+     * 画在 `foot` 上（那个 `.pg-status`）。所以下面**两处都要动**。
+     * ⚠️⚠️ **上一版这里只重填了盒子，并且写着「唯一会变的只有两样……输出逐字相同」
+     *    ——那是一句假话，复评 M-4 逐节点 diff 当场证伪**：轮询回 500 时屏幕上那一格
+     *    还是上一拍的 200，而同屏的响应原文已经是 `{"error":…}` 了，
+     *    **两句话互相矛盾，而前一句是编的**，最长挂到轮询结束（上限 5 分钟）。
+     * ⇒ 现在的说法是可核的那一句：**这一拍就地改的两处，与整版重建的输出逐字相同**，
+     *   而代价从 O(全部轮次 × 每轮 body) 降到 O(这一轮 body)，与历史轮数无关。
      * ⚠️ **仍然走同一份 `fillMediaResult()`**，不是在这里另写一套「只改那个数字」的
      * 就地更新——那会是第二套渲染判据，两套一漂只有真机上看得见。
+     * （状态码那一格是一个 `textContent`，不是第二套判据：它与 `buildTurn()` 里那句
+     * `String(turn.status)` 逐字同源，而「同不同源」由下面那格等价断言直接钉着。）
      * ⚠️ **终局那三条出口照旧整版 `render()`**（`finishPolling()` 里那一次）：
      * 成片/放弃/出错时整轮的形状都变了，那一次重建是必要的，而且一次任务只有一次。
      *
-     * 由 `tests/ui/dom/playground-section.test.ts` 的
-     * 「轮询那一拍不整版重画 —— 右栏别的轮次必须还是原来那几个节点对象」钉着。
+     * **三格一起钉着，方向各不相同**：
+     * ① `tests/ui/dom/playground-section.test.ts` 的
+     *    「轮询那一拍不整版重画 —— 右栏别的轮次必须还是原来那几个节点对象」——省下来的那件事；
+     * ② `tests/ui/dom/playground-section.test.ts` 的
+     *    「轮询回非 2xx 时状态码那一格显示的是这一拍的数字 —— 屏幕不许贴着错误正文说 200」
+     *    ——上面那条回归本身；
+     * ③ `tests/ui/dom/playground-section.test.ts` 的
+     *    「就地重填与整版重建输出逐字相同（六场景逐节点逐属性）」——等价性本身。
      */
+    if (nodes.pollStatus !== null) nodes.pollStatus.textContent = String(turn.status);
     if (nodes.pollBox !== null) {
       nodes.pollBox.textContent = "";
       fillMediaResult(nodes.pollBox, turn);
@@ -1248,7 +1275,7 @@ export const playgroundSection = {
     section.appendChild(elI18n("p", "pg.runtimeNote", { class: "muted note" }));
     const body = el("div");
     section.appendChild(body);
-    nodes = { body, hintNote: null, send: null, streamText: null, pollBox: null };
+    nodes = { body, hintNote: null, send: null, streamText: null, pollBox: null, pollStatus: null };
     // 判定在纯函数里，而那个目录下拿不到浏览器的顶层全局，所以在这里读一次传进去。
     origin = location.origin;
     token = readGatewayToken();

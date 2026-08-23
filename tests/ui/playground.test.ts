@@ -576,8 +576,17 @@ describe("两份 SSE 帧解析在 [DONE] 上逐字对齐", () => {
   }
 
   /**
-   * 面板那一份：**逐字照抄 `js/gw-api.js` 的 `streamFromGateway()` 那个循环**
-   *（攒 → 切 → 把尾巴留着 → `found.done` 就 break → 最后把尾巴当一帧再切一次）。
+   * 面板那一份：把整段字节**一次**喂给 `sseFrames()`，再照 `js/gw-api.js` 的
+   * `streamFromGateway()` 收尾那一句把 `rest` 当最后一帧再切一次。
+   *
+   * ⚠️⚠️ **上一版这里写的是「逐字照抄 `streamFromGateway()` 那个循环（含 break 之后
+   * 那句尾巴处理）」——措辞过头，复评点名**：下面这段**没有循环、也没有 break**，
+   * 它是一次单块归约。⇒ **「一帧被拆在两个 chunk 里送达」那一族不由这一组覆盖**，
+   * 它由 `tests/ui/gw-api.test.ts` 的「一条 data 行被真的拆在两个 chunk 里送达」钉着
+   *（那一格走的是真的 `ReadableStream` 多块吐法）。
+   * ⚠️ 覆盖缺口有限，如实说清：复评实测**跨 chunk 到达时 `[DONE]` 那条分叉修前修后
+   * 本来就无差别**（`found.done` 为真 ⇒ `streamFromGateway()` 当场 break，
+   * 第二块根本没被读），所以这一组要守的那条等式落在单块那一档上是够的。
    * ⚠️ 少了最后那一句尾巴处理的话，这一格会漏掉一条真实的收法：
    * `sseFrames()` 就算在 `[DONE]` 处收了尾，调用方那一句仍会拿 `rest` 再切一次
    * ——`rest` 交不空的话，`[DONE]` 之后那一帧会从**那里**被捡回来。

