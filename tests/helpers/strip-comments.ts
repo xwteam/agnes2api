@@ -31,4 +31,4 @@
  * ⚠️ **这张消费者清单刻意不写计数**：它是**该长大**的（每多一个调用点收编都是好事），
  * 而本文件曾连着三轮在这里写错数字——写死一个数只会换来机械 bump。
  */
-export { stripComments, blankComments, stripCssComments } from "../../scripts/lib/strip-comments.mjs";
+export { stripComments, blankComments, stripCssComments, FAIL_KINDS } from "../../scripts/lib/strip-comments.mjs";
