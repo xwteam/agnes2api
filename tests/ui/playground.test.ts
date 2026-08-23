@@ -5,6 +5,7 @@ import {
 } from "../../admin-ui/js/pure/playground.mjs";
 import { exampleFor, KEY_PLACEHOLDER } from "../../admin-ui/js/pure/examples.mjs";
 import { catalogPayload, SAMPLE_PROMPT } from "../../src/core/admin/protocol-catalog.js";
+import { parseSseStream } from "../../src/core/protocol/sse.js";
 
 /**
  * **Playground 的请求构造（P3d Task 10 Step 5）。**
@@ -538,6 +539,87 @@ describe("SSE 帧切分：跨 chunk 的那条 data 行", () => {
   it("非字符串入参当空缓冲处理，绝不抛 —— 一次坏读不该让整条流断掉", () => {
     expect(sseFrames(null)).toEqual({ payloads: [], rest: "", done: false });
     expect(sseFrames(undefined)).toEqual({ payloads: [], rest: "", done: false });
+  });
+});
+
+/**
+ * ── **P3d 全分支评审 F-1：两份 SSE 帧解析在 `[DONE]` 上到底对不对齐** ─────────────
+ *
+ * `js/pure/playground.mjs` 的 `sseFrames()` 文件头一直写着「两份实现共享同一套判据
+ *（`data:` 前缀、`\n\n` 分帧、**`[DONE]` 终止**），是刻意对齐的」，而 Task 11 登记的
+ * 遗留是「**没有任何机器绑住这个对齐**」——**登记的是「没有机器绑住」，没有人去核过
+ * 它们今天到底对不对齐**。全分支评审核了：`[DONE]` 之后那一帧，网关丢掉、面板照收。
+ *
+ * ⚠️⚠️ **这一格 import 的是两份真实现，不是把判据抄一份过来对**（第 7 种假阳性）：
+ * `sseFrames` 来自 `admin-ui/js/pure/playground.mjs`，`parseSseStream` 来自
+ * `src/core/protocol/sse.ts`。**抄件对齐证明不了原件对齐**，而这一整格要守的
+ * 恰恰是原件之间的那条等式。
+ *
+ * ⚠️ **它守的是「同一串负载」，不是「同一份实现」**：两边的形状本来就不同
+ *（一个是同步切缓冲、一个是异步读流），能对账的只有「同一段字节喂进去，
+ * 交出来的负载序列逐字相等」。
+ *
+ * **变红条件（都实测过）**：把 `sseFrames()` 里那句 `return { payloads, rest: "", done: true }`
+ * 改回 `{ done = true; continue; }` ⇒ 第 3、4 条样本当场红
+ *（面板多交出 `[DONE]` 之后那一条）。
+ */
+describe("两份 SSE 帧解析在 [DONE] 上逐字对齐", () => {
+  /** 网关那一份：把一段完整字节喂给 `parseSseStream()`，收集它 yield 出来的负载。 */
+  async function gatewayPayloads(wire: string): Promise<string[]> {
+    const bytes = new TextEncoder().encode(wire);
+    const body = new ReadableStream<Uint8Array>({
+      start(c) { c.enqueue(bytes); c.close(); },
+    });
+    const out: string[] = [];
+    for await (const p of parseSseStream(body)) out.push(p);
+    return out;
+  }
+
+  /**
+   * 面板那一份：**逐字照抄 `js/gw-api.js` 的 `streamFromGateway()` 那个循环**
+   *（攒 → 切 → 把尾巴留着 → `found.done` 就 break → 最后把尾巴当一帧再切一次）。
+   * ⚠️ 少了最后那一句尾巴处理的话，这一格会漏掉一条真实的收法：
+   * `sseFrames()` 就算在 `[DONE]` 处收了尾，调用方那一句仍会拿 `rest` 再切一次
+   * ——`rest` 交不空的话，`[DONE]` 之后那一帧会从**那里**被捡回来。
+   */
+  function panelPayloads(wire: string): string[] {
+    const out: string[] = [];
+    let buf = wire;
+    const found = sseFrames(buf);
+    buf = found.rest;
+    for (const p of found.payloads) out.push(p);
+    // ⚠️ **`found.done` 为真时 `streamFromGateway()` 只是 break，这一句照样跑。**
+    //    所以这里也无条件跑——只跑「没 done」那一半的话，这一格就守不住
+    //    「`rest` 必须交空」那一半，而那正是 F-1 能从后门被捡回来的路径。
+    for (const p of sseFrames(`${buf}\n\n`).payloads) out.push(p);
+    return out;
+  }
+
+  it.each([
+    // ── 反向控制：没有 `[DONE]` 的那几种形态，两边本来就该给同一串（少了它，
+    //    「两边都恒返回空」也能让下面几格全绿）。
+    ['data: {"a":1}\n\ndata: {"b":2}\n\n', ['{"a":1}', '{"b":2}'], "没有 [DONE]：两条都收"],
+    ['event: x\ndata: {"a":1}\n\n', ['{"a":1}'], "event: 行不是负载，两边都不收"],
+    // ── F-1 那一条：`[DONE]` 之后还有一帧带正文的 data。
+    [
+      'data: {"a":1}\n\ndata: [DONE]\n\ndata: {"post":"DONE"}\n\n',
+      ['{"a":1}'],
+      "[DONE] 之后那一帧：网关丢掉，面板从此也丢掉（F-1 修前面板会多收一条）",
+    ],
+    // ── 同一帧里 `[DONE]` 之后还有 data 行（`\n\n` 还没到）。
+    [
+      'data: {"a":1}\n\ndata: [DONE]\ndata: {"same":"frame"}\n\n',
+      ['{"a":1}'],
+      "同一帧里 [DONE] 之后的 data 行同样不收 —— 网关那份是 return，不是 continue",
+    ],
+    // ── `[DONE]` 就是第一帧：两边都一条不收。
+    ['data: [DONE]\n\ndata: {"a":1}\n\n', [], "[DONE] 打头：其后整段一律不收"],
+  ])("同一段字节喂进去必须给出同一串负载：%s", async (wire, expected) => {
+    const gw = await gatewayPayloads(wire as string);
+    const pg = panelPayloads(wire as string);
+    // 期望值手写字面量（第 6 种假阳性：不许拿一边的输出当另一边的期望）。
+    expect(gw, "网关那份变了").toEqual(expected as string[]);
+    expect(pg, "面板那份变了 —— 两份实现又分叉了").toEqual(expected as string[]);
   });
 });
 

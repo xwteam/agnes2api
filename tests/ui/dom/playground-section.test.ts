@@ -607,9 +607,9 @@ describe("网关口令：粘贴、就地校验、绝不外泄", () => {
     expectNoTokenAnywhere(dg, "流式降级 401 档");
 
     // ── 档 ⑦：**媒体** —— **不在这一格里**，在下面那一格
-    //    「媒体那两个渲染函数里这道判据认得出的每一个出口，都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算；认不出的那几条射程写在 mediaOutputsInSource() 上方（评审 H1）」。
+    //    「媒体那几个渲染函数里这道判据认得出的每一个出口，都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算；认不出的那几条射程写在 mediaOutputsInSource() 上方（评审 H1）」。
     //    ⚠️⚠️ **它为什么被搬出去，是评审 H1 的落点，写清楚**：媒体那条渲染路径
-    //    （`buildMediaResult()`）有 **17 个出口**，而本格这种「一档一段直写」的写法
+    //    （`buildMediaResult()` / `fillMediaResult()`）有 **17 个出口**，而本格这种「一档一段直写」的写法
     //    第一版只走到其中 **2** 个（结果行与错误行）——评审往任务标识那一行与轮询进度那一行
     //    各种一次口令，**905 passed，两次都 ESCAPED**。
     //    ⚠️ 而 `.pg-poll` 是真实视频任务里**在屏幕上停留最久的那一行（最长 5 分钟）**，
@@ -1007,6 +1007,78 @@ describe("网络面：这个板块到底打了哪几条端点", () => {
 
     expect(count(), "切回来又重读了一遍").toEqual({ models: 1, config: 1 });
     expect(pick(h.section("playground"), "[data-protocol]").length, "切回来之后左栏没了").toBe(4);
+  });
+
+  /**
+   * ── **P3d 全分支评审 F-4：目录那条读也要能被作废** ─────────────────────────────
+   *
+   * **出处**：`loadCatalog()` 的 `api.get("/models")` 上一版**不传 `signal`**，
+   * 而全面板另外六个板块级读（keys / events / overview / models / registrar / usage）
+   * **全部**带 `AbortController` + `{ signal }`；`api.js` 的 `raw()` 本来就把
+   * `init.signal` 透给 `fetch` ⇒ **不是能力缺失，是这一处少写了一半**。
+   * 更要紧的是 `onHide()` 的注释写着「切走板块 = 作废**在飞的那一次**」——一句全称句，
+   * 而 `cancelInFlight()` 只动 `current`，`current` **只在 `sendOnce()` 里赋值**
+   * ⇒ 目录那一次不在「在飞的那一次」里。
+   *
+   * ⚠️⚠️ **`signal` 那一半在机器上不可观测，如实说明**：`harness.ts` 的 fetch 替身
+   * **不看 `signal`**（账本已登记）⇒ 「abort 了」与「没 abort」在这里长得一模一样。
+   * 这一格能观测的是**另一半**：世代号作废 + 在飞标记归零之后，那条挂住的读不再把
+   * 这个板块永久钉在「读不出来」上。`signal` 那一半由下面
+   * 「`loadCatalog()` 那条读真的把 signal 传下去了」那一格从源码上钉。
+   *
+   * **变红条件（都实测过）**：把 `onHide()` 里那句 `cancelCatalogLoad()` 删掉
+   * ⇒ `loadInFlight` 一直是 `true` ⇒ 切回来只 render 不发请求 ⇒ 第二条断言从 2 变 1。
+   */
+  it("目录那条读挂住时切走再切回来：旧那条被作废、新的一条真的发得出去", async () => {
+    const pending: Array<(r: Resp) => void> = [];
+    const h = await bootPanel({
+      now: NOW,
+      store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000), [SECTION_STORE]: "playground" },
+      respond: (url: string) => {
+        if (url.startsWith("/admin/api/config")) return { status: 200, body: configBody("wxyz") };
+        if (!url.startsWith("/admin/api/models")) return { status: 200, body: {} };
+        // **替身带一个真实的挂起点**（第 8 种假阳性：零延迟替身让时序性质不可观测）。
+        return new Promise<Resp>((resolve) => { pending.push(resolve); });
+      },
+    });
+    await settle(20);
+    const modelCalls = (): number => h.calls.filter((c) => c.url.startsWith("/admin/api/models")).length;
+    expect(pending.length, "前置条件：第一条读得真的还在飞着").toBe(1);
+    expect(modelCalls(), "前置条件：第一次显示时读了一次").toBe(1);
+
+    navTo(h, "overview");
+    await settle(20);
+    navTo(h, "playground");
+    await settle(20);
+
+    expect(modelCalls(), "切回来之后一条都没再发 —— 那条挂住的读把板块永久钉在「读不出来」上了").toBe(2);
+
+    // **后果那一半**：被作废的那条晚到时（成功也好失败也罢）不许影响现在的画面。
+    pending[1]!({ status: 200, body: catalogPayload() });
+    await settle(20);
+    expect(pick(h.section("playground"), "[data-protocol]").length, "新的那条回来了却没画出来").toBe(4);
+    pending[0]!({ status: 500, body: {} });
+    await settle(20);
+    expect(
+      pick(h.section("playground"), "[data-protocol]").length,
+      "被作废的那条晚到之后把已经画好的左栏抹掉了 —— 世代号没拦住它",
+    ).toBe(4);
+  });
+
+  /**
+   * **`signal` 那一半只能从源码上钉**（理由见上一格那段 ⚠️⚠️：替身不看 `signal`）。
+   *
+   * ⚠️ **这一格是源码文本断言，弱于行为断言，如实说明**：它拦不住「传了一个永远不 abort
+   * 的 signal」，拦得住的是「又有人把这条读写回不带 init 的形态」——而后者正是这次
+   * 评审实际抓到的那一种。
+   * ⚠️ 判据锚在 `api.get("/models"` 这个调用点上，**不数全文件的 `signal` 出现次数**：
+   * 那种数法会被同文件里 `sendOnce()` 那几处 `ctl.signal` 顶成绿的。
+   */
+  it("loadCatalog() 那条读真的把 signal 传下去了 —— 全面板七个板块级读只有它曾经没传", () => {
+    const src = stripComments(readFileSync("admin-ui/js/sec-playground.js", "utf8"));
+    const sites = [...src.matchAll(/api\.get\(\s*"\/models"\s*(,[^)]*)?\)/g)];
+    expect(sites.length, "这个板块读目录的调用点不是恰好一处了").toBe(1);
+    expect(sites[0]![1] ?? "", "api.get(\"/models\") 又变回不带 init 的形态了").toContain("signal");
   });
 });
 
@@ -1596,7 +1668,7 @@ describe("媒体模式：地址、链接与不内嵌", () => {
    * ——**两种都可能，而且都不是异常**。折叠成一句的话，字节流那一档会被读成
    * 「这次生成失败了」，而它其实成功了、只是结果是一段字节而面板按 CSP 不内嵌它。
    *
-   * **变红条件**：把 `buildMediaResult()` 里那句 content-type 判定去掉、
+   * **变红条件**：把 `fillMediaResult()` 里那句 content-type 判定去掉、
    * 让两档都落到 `pg.media.none` ⇒ 这一格红。
    */
   it("上游直接回字节流时说的是「这次回的是一段字节」，不是「没有结果」 —— 两句话不许折叠", async () => {
@@ -1632,7 +1704,7 @@ describe("媒体模式：地址、链接与不内嵌", () => {
 /**
  * ── **评审 H1：媒体那条渲染路径的口令扫描，按出口数算覆盖面** ──────────────────
  *
- * **被守护的性质**：`buildMediaResult()` / `buildMediaRow()` 这两个函数体里
+ * **被守护的性质**：`buildMediaResult()` / `fillMediaResult()` / `buildMediaRow()` 这三个函数体里
  * **这道判据认得出**的每一个出口，都被那道「整页任何一处都不出现网关口令」的扫描真的跑过一次。
  * ⚠️ **「认得出」这三个字是射程，不是修辞**——射程那五条（四条够不着、一条会多认）
  * 逐条登记在 `mediaOutputsInSource()` 上方，**别把这句读成全称句**。
@@ -1885,10 +1957,10 @@ function classMutators(): RegExp {
 }
 
 /**
- * 从**发货代码**里扫出媒体那两个渲染函数真的画出来的 `pg-*` class。
+ * 从**发货代码**里扫出媒体那三个渲染函数真的画出来的 `pg-*` class。
  *
  * ⚠️ `stripComments()` 用 `tests/helpers/strip-comments.ts` 那一份（本仓裁定：不许抄第六份）
- * ——不去注释的话，那两个函数上方的说明文字里也有 `class:` 这样的字样。
+ * ——不去注释的话，那几个函数上方的说明文字里也有 `class:` 这样的字样。
  * ⚠️ **函数体边界由 `functionBodyOf()` 求**（括号配平 + 字符串 / 模板串识别），
  * 不再用「下一个顶格 `}`」猜——那个前提会静默地破，机理与实测写在那个函数上方。
  * 求不出边界时它给一条 `reason`，下面第一条断言当场把原因打出来，**不静默截断**。
@@ -1899,7 +1971,12 @@ function classMutators(): RegExp {
  *    只有一句 `appendChild(buildMediaResult(turn))`，射程内为空——**这是「今天为空」，
  *    不是「结构上不可能」**，加第三个媒体 helper 的人必须把它加进 `EXPECTED_MEDIA_OUTPUTS`。
  *    实测（往那条分支里加一个带口令的出口）：**48/48 全绿**。
- *    （出口**搬出**这两个函数是另一回事：扫到的少了 ⇒ 与手写表对不上 ⇒ 红。）
+ *    （出口**搬出**这几个函数是另一回事：扫到的少了 ⇒ 与手写表对不上 ⇒ 红。）
+ *    ⚠️⚠️ **`fillMediaResult` 这个名字就是这么来的，如实记一笔**：P3d 全分支评审 F-2
+ *    的处置把 `buildMediaResult()` 的函数体拆出来给「轮询那一拍就地重填」复用，
+ *    **17 个出口于是整体搬进了新函数**——这一格当场红成「扫到 1 项 vs 手写 17 项」，
+ *    ①那条射程说的正是它。**红了才把名字补进下面那张表，不是先补名字再改代码**：
+ *    先补的话，这道判据在这次搬迁上一次都没有响过，而它存在的全部理由就是响这一次。
  * ② **属性名不是字面量**：`el("p", { [K]: "…" }, …)`（`K` 是变量）、`{ ...ATTRS }` 展开
  *    ⇒ `classKeySites()` 是词法钩子，它只认写死在那里的名字。实测（计算键 + 带口令）：**48/48 全绿**。
  * ③ **属性对象整个提到这两个函数之外**：`const ESC = { class: "…" };` 写在模块级、
@@ -1909,7 +1986,7 @@ function classMutators(): RegExp {
  *    `const q = /["']/.test(url);` 再在它后面加一个带口令的新出口 ⇒ 引号配对一路歪到文件末尾
  *    ⇒ 「函数体到文件结束都没有配平」⇒ 红。**但这不是全称保证**：若配歪之后恰好仍在某个
  *    顶格 `}` 上收平，被跳过那段里的出口会静默丢掉——**这一条今天没有构造出来，登记为盲点。**
- *    被扫的这两个函数里今天唯一的正则字面量是 `buildMediaResult()` 的
+ *    被扫的这三个函数里今天唯一的正则字面量是 `fillMediaResult()` 的
  *    `/^application\/json/i`，**不含引号也不含花括号** ⇒ 射程内为空。
  *    （`admin-ui/js/` 别处还有一处：`admin-ui/js/sec-settings.js` 的 `/^env:/`，同样不含引号，
  *    而且本来就不在这道判据的射程里——**这句话原先写成「`admin-ui/js/` 下唯一」，是假的，
@@ -1929,7 +2006,7 @@ function mediaOutputsInSource(): string[] {
   const out = new Set<string>();
   const unreadable: string[] = [];
   const unsliceable: string[] = [];
-  for (const fn of ["buildMediaRow", "buildMediaResult"]) {
+  for (const fn of ["buildMediaRow", "buildMediaResult", "fillMediaResult"]) {
     const sliced = functionBodyOf(src, fn);
     if ("reason" in sliced) { unsliceable.push(sliced.reason); continue; }
     const body = sliced.body;
@@ -1946,12 +2023,12 @@ function mediaOutputsInSource(): string[] {
   // ⚠️ **这条闸买的是「病因说得对」，不是「红不红」**（控制实测，别把它写成唯一护栏）：
   // 把这条 `expect` 临时拿掉、再把 `buildMediaRow()` 的收尾 `}` 缩进两格 ⇒ 那个函数被整个
   // 跳过 ⇒ **仍然红**，但红在下面「与手写清单对不上」（13 项 vs 17 项），报的是错的病因。
-  expect(unsliceable, "媒体那两个渲染函数的函数体切不出可靠边界 —— "
+  expect(unsliceable, "媒体那几个渲染函数的函数体切不出可靠边界 —— "
     + "在边界求得回来之前，这道闭集纪律对被切掉的那一段整个失效，所以这里宁可红也不猜")
     .toEqual([]);
   // **认不出要吵，不能装没看见。** 这一条就是上一版缺的那道闸：判据读不懂的写法
   // 会让新出口悄悄不进清单，于是「每个出口都配了子档」这条纪律对它整个失效。
-  expect(unreadable, "媒体那两个渲染函数里有这道判据读不懂的 class 写法 —— "
+  expect(unreadable, "媒体那几个渲染函数里有这道判据读不懂的 class 写法 —— "
     + "它画出来的出口不会进清单、也就没人要求它配一个子档。"
     + "要么把它写成字面量 / 无插值模板串 / 两臂都是字面量的三元，要么把这道判据教会")
     .toEqual([]);
@@ -2000,14 +2077,14 @@ describe("媒体渲染路径的口令扫描：按出口数算覆盖面（评审 
    * · 往 `.pg-poll` 那一行加 `` title: `auth=${token}` `` ⇒ 红。
    *
    * **闭集纪律那一半的变红条件（六条，逐条实测，见 progress note 的 M35–M40）**：
-   * 统一落点是往 `buildMediaResult()` 里加一个八个子档都到不了的新出口
+   * 统一落点是往 `fillMediaResult()` 里加一个八个子档都到不了的新出口
    * （条件 `turn.status !== null && turn.status >= 400`），只换它 class 的写法 ——
    * · 字面量 `class: "pg-esc-lit"` ⇒ 解得出 ⇒ 清单多一项 ⇒ 与手写表对不上 ⇒ 红；
    * · 两臂都是字面量的三元 ⇒ 解得出（两项都进）⇒ 红；
    * · 无插值模板串 ⇒ 解得出 ⇒ 红；
    * · 模板插值 `` class: `pg-esc-${"t"}` `` ⇒ **解不出** ⇒ 判据吵「读不懂」⇒ 红；
    * · 函数调用返回 —— **逐字抄仓里真实那一行**：`class: hintNoteClass()` ⇒ 解不出 ⇒ 红，
-   *   失败信息打的就是 `buildMediaResult(): class: hintNoteClass()`；
+   *   失败信息打的就是 `fillMediaResult(): class: hintNoteClass()`；
    * · `errNode.classList.add("pg-esc-cl")` ⇒ 撞上 `classMutators()` ⇒ 红。
    * ⚠️⚠️ **这六条落的都是「八个子档一档都到不了」的分支，口令扫描根本看不见它们**
    * ——控制实测：把上面那条「读不懂」的断言临时拿掉，模板插值那条**带着口令**照样
@@ -2025,7 +2102,7 @@ describe("媒体渲染路径的口令扫描：按出口数算覆盖面（评审 
    * 把已有的 `class: "pg-media-row"` 换成 `"class": "pg-media-row"` / `["class"]: …`
    * ⇒ **48/48 仍绿**（新收的三种属性名写法是「认得出」，不是「一见就红」）。
    */
-  it("媒体那两个渲染函数里这道判据认得出的每一个出口，都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算；认不出的那几条射程写在 mediaOutputsInSource() 上方（评审 H1）", async () => {
+  it("媒体那几个渲染函数里这道判据认得出的每一个出口，都被口令扫描跑过 —— 覆盖面按出口数算，不按用例数算；认不出的那几条射程写在 mediaOutputsInSource() 上方（评审 H1）", async () => {
     const seen = new Set<string>();
     const record = (h: Harness, sec: FakeElement, where: string): void => {
       expect(one(sec, ".pg-token").value, `${where}：前置条件，口令确实在输入框里`).toBe(GW_TOKEN);
@@ -2288,6 +2365,76 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
     await tick();
     vi.useRealTimers();
     expect(pollCount(h), "变回可见之后再也没接回去 —— 那一轮永远停在「进行中」").toBe(3);
+  });
+
+  /**
+   * ── **P3d 全分支评审 F-2：轮询那一拍不许整版重画** ────────────────────────────
+   *
+   * **被守护的性质**：视频轮询最多 60 拍，**每一拍在屏幕上唯一会变的只有正在轮的
+   * 那一个盒子**。上一版每一拍都跑一次 `render()`，而 `render()` 把**全部历史轮次**
+   * 从头重建——每一轮都要走一次 `mediaResultUrls()`（整棵 JSON 树）加一次
+   * `prettyJson()`（无长度上限）。与 Task 12 的「`turn.body` 可能是一张 MB 级 base64 图」
+   * 相乘之后，一次视频任务的重建量实测 ≈ 1.8 GB 临时字符串（`turns=10`）。
+   *
+   * ⚠️⚠️ **观测点是节点对象的身份，不是屏幕上的文字**：整版重画之后文字长得一模一样
+   *（`render()` 的输出与就地重填逐字相同，那正是这次改动的前提），
+   * **只有「还是不是同一个对象」分得开这两种实现**。少了这一条，
+   * 把 `pollOnce()` 改回 `render()` 这一格照样全绿。
+   *
+   * ⚠️ **必须先有一轮历史**：只有一轮时「整版重建」与「重填这一个盒子」的代价同阶，
+   * 这一格也就没有鉴别力——真正被放大的是**前面那些轮次**。所以这里先发一轮图片、
+   * 再发那一轮视频，断言落在**第一轮**那个节点上。
+   *
+   * ⚠️ **配一条反向控制**：进度那句话必须真的往前走。少了它，
+   * 把整个就地重填删掉（一拍什么都不更新）同样能让身份那两条全绿
+   * ——那会让屏幕停在「已经查过 1 次」直到五分钟后收尾，而它「看起来」没坏。
+   *
+   * **变红条件（都实测过）**：把 `pollOnce()` 里那段就地重填换回 `render()`
+   * ⇒ 前两条身份断言当场红（右栏整棵被换掉）。
+   */
+  it("轮询那一拍不整版重画 —— 右栏别的轮次必须还是原来那几个节点对象", async () => {
+    const IMAGE_URL = `${PANEL_ORIGIN}/v1/images/generations`;
+    const respond = respondWith({
+      gateway: (url) => {
+        if (url === IMAGE_URL) return { status: 200, body: { data: [{ url: "https://cdn.invalid/a.png" }] } };
+        if (url === CREATE) return { status: 200, body: { id: "task-1", status: "queued" } };
+        return { status: 200, body: { id: "task-1", status: "processing" } };
+      },
+    });
+    const h = await openPg(respond);
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    // 第一轮：图片。**它就是「历史轮次」**，此后每一次整版重画都要把它重建一遍。
+    toMode(sec, "image");
+    typePrompt(sec, "一只猫");
+    one(sec, ".pg-send").click();
+    await settle(20);
+    // 第二轮：视频，它会起轮询。
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    toMode(sec, "video");
+    typePrompt(sec, "一只猫在跑");
+    one(sec, ".pg-send").click();
+    await settle(20);
+
+    const turnsBefore = pick(sec, ".pg-turn");
+    expect(turnsBefore.length, "前置条件：右栏得真的有两轮，否则这一格没有鉴别力").toBe(2);
+    const boxesBefore = pick(sec, ".pg-media");
+    expect(pick(sec, ".pg-poll").length, "前置条件：得真的轮起来").toBe(1);
+    const pollTextBefore = one(sec, ".pg-poll").textContent;
+
+    await tick();
+    await tick();
+    vi.useRealTimers();
+
+    const turnsAfter = pick(sec, ".pg-turn");
+    expect(turnsAfter.length).toBe(2);
+    // **身份比较**：整版重画会把这两个节点全换成新对象。
+    expect(turnsAfter[0], "第一轮那个节点被换掉了 —— 轮询那一拍又整版重画了").toBe(turnsBefore[0]);
+    expect(turnsAfter[1], "正在轮的那一轮外壳也被换掉了 —— 重填的应当只有里面那个盒子").toBe(turnsBefore[1]);
+    expect(pick(sec, ".pg-media")[0], "第一轮那个媒体盒子被重建了").toBe(boxesBefore[0]);
+    // 反向控制：进度那句话真的往前走了（否则「一拍什么都不做」也能让上面几条全绿）。
+    expect(one(sec, ".pg-poll").textContent, "轮了两拍，进度那句话一个字都没变").not.toBe(pollTextBefore);
+    expect(pollCount(h), "前置条件：这两拍是真的打出去了").toBe(2);
   });
 
   /**

@@ -232,6 +232,15 @@ let streamOn = false;
  * 需要新 UI 状态的「清空」按钮、要么是一条静默丢弃用户看得见的内容的规则，
  * 两条都比这个问题本身大；而每一轮都是运维自己按出来的，量级与他的手速同阶。
  * **登记 P3e**：真要加，做成显式的「清空对话」而不是静默截断。
+ *
+ * ⚠️⚠️ **上面那句「量级与他的手速同阶」在 Task 12 落地后一度不成立，本轮才改回来**
+ *（P3d 全分支评审 F-2）：Task 12 同时做了两件事——让 `turn.body` 可能是一张 MB 级的
+ * base64 图，以及给视频档加了一个**每拍都整版 `render()`** 的 60 拍循环。
+ * 两件相乘之后，一次视频任务的重建量变成 `60 × 全部轮次 × 每轮 body`
+ *（实测 `turns=10` ⇒ ≈ 1.8 GB 临时字符串），**与手速已经不同阶了**。
+ * 本轮的处置是把那个 60 倍的乘数拿掉（`pollOnce()` 里那段 ⚠️⚠️，输出逐字不变），
+ * ⇒ 重建量回到 `每次运维自己按一下 × 全部轮次`，与这段话原本描述的那一档重新对齐。
+ * **仍然没有上限这件事没有变**，只是它不再被一个自动循环放大。
  */
 let turns = [];
 /** 这一刻有没有一次对外请求在飞。它就是那道「在飞去重」。 */
@@ -246,9 +255,20 @@ let streamingTurn = null;
  * 见文件头那段 ⚠️⚠️：abort 本身在测试里不可观测，被钉住的是这个身份比较。
  */
 let current = null;
-/** 目录那条读的在飞标记与世代号（与 `js/sec-models.js` 同一套，理由见那里）。 */
+/**
+ * 目录那条读的在飞标记、世代号与**取消器**（与 `js/sec-models.js` 同一套，理由见那里）。
+ *
+ * ⚠️⚠️ **`loadAbort` 是 P3d 全分支评审 F-4 补的，补之前这里是全面板唯一一个读不可中止的板块。**
+ * 另外六个板块级读（keys / events / overview / models / registrar / usage）**全部**带
+ * `AbortController` + `{ signal }`，而 `api.js` 的 `raw()` 本来就把 `init.signal` 透给 `fetch`
+ * ⇒ **不是能力缺失，是这一处少写了一半**。同一个文件里 `sendOnce()` 用的就是这套写法。
+ * ⚠️ **这一族天然不可测**：`tests/ui/dom/harness.ts` 的 fetch 替身**不看 `signal`**
+ *（账本已登记），⇒ 「六个板块 abort 了」与「Playground 没 abort」在机器上长得一模一样。
+ * 所以这一处的判据只能是**与另外六处写法一致**，不是某一格用例。
+ */
 let loadInFlight = false;
 let loadSeq = 0;
+let loadAbort = null;
 /** 面板自己所在的那个源。`init()` 时读一次——**判定在纯函数里，那里拿不到浏览器全局**。 */
 let origin = "";
 /** 当前模式档位（`chat` / `image` / `video`）。**换档要重挑模型**，与换协议同一条理由。 */
@@ -641,6 +661,19 @@ function buildMediaRow(url) {
  */
 function buildMediaResult(turn) {
   const box = el("div", { class: "pg-media" });
+  // **正在轮的那一轮，把盒子本身记下来**：轮询的每一拍只重填**这一个盒子**，
+  // 不整版 `render()`。理由与实测数字在 `pollOnce()` 里那段 ⚠️⚠️。
+  if (turn === pollTurn) nodes.pollBox = box;
+  fillMediaResult(box, turn);
+  return box;
+}
+
+/**
+ * 把媒体那一轮的内容填进 `box`。**`buildMediaResult()` 与轮询那一拍共用这一份**
+ * ——两处各写一遍的话，轮询期间屏幕上那一格与重画之后那一格会是两套渲染判据，
+ * 而它们之间的差别只在真机上看得见（本仓已登记过同型：两份实现分叉时绿的那份会赢）。
+ */
+function fillMediaResult(box, turn) {
   if (turn.errorKey !== null) {
     box.appendChild(elI18n("p", turn.errorKey, { class: "danger-text pg-error" }));
   }
@@ -681,7 +714,6 @@ function buildMediaResult(turn) {
   }
   const text = turn.body === null ? null : prettyJson(turn.body);
   if (text !== null) box.appendChild(el("pre", { class: "mono pg-body" }, text));
-  return box;
 }
 
 /**
@@ -815,6 +847,8 @@ function render() {
   // **每次重画都作废**：旧那个节点已经从文档里摘掉了，继续往它上面写字等于把
   // 后半段回答写进一个没人看得见的对象里。`buildTurn()` 会给还在收的那一轮重新挂上。
   nodes.streamText = null;
+  // 同上，轮询那一拍要就地重填的那个盒子（`buildMediaResult()` 会重新挂上）。
+  nodes.pollBox = null;
   if (catalog === null) {
     host.appendChild(buildUnavailable());
     return;
@@ -832,13 +866,28 @@ function render() {
  * `preempt` 只由错误横幅上那颗「再读一次」传 `true`：显式的用户动作有权抢占一条挂住
  * 的读，隐式的板块切换没有。隐式入口在飞时**只 render() 不发请求**，否则一条永不落地
  * 的读会让此后每一次 `onShow()` 都什么都不画。
+ *
+ * ⚠️ **「与 `sec-models.js` 同一条裁定」这句话有边界，本轮补写清楚**（评审 F-4）：
+ * 同的是上面那两条（读一次就不再读 / 隐式入口不抢占）。**不同的是切走板块那一下**——
+ * `sec-models.js` 干脆没有 `onHide()`，一条挂住的读会一直挂到标签页关掉；
+ * 这里跟的是 `js/sec-usage.js` 的 `onHide()`（abort + 世代号 `+1`），
+ * 理由是 Playground 的 `onHide()` 本来就要作废发送那一次，
+ * **一个板块里两条在飞的读一条作废一条不作废，才是那句全称注释变假的来源**。
+ * ⚠️ **代价明写**：切走再切回来时目录会**重新读一条**（`sec-models.js` 那边不会）。
+ * 那不是「两条链并存」——旧那条已经被 abort 且世代号已作废，它回来什么都改不了；
+ * 换来的是一条挂住的读不再把这个板块永久钉在「读不出来」上。
  */
 async function loadCatalog(preempt) {
   if (loadInFlight && !preempt) { render(); return; }
+  // 抢占：把上一条的 socket 放掉。**它不是作废判据**，作废判据是下面那个世代号
+  //（与 `js/sec-models.js` 逐字同做法与同一条理由）。
+  if (loadAbort !== null) loadAbort.abort();
+  loadAbort = new AbortController();
+  const signal = loadAbort.signal;
   const mine = ++loadSeq;
   loadInFlight = true;
   try {
-    const body = await api.get("/models");
+    const body = await api.get("/models", { signal });
     if (mine !== loadSeq) return;
     const protocols = playgroundProtocols(body);
     // **模型清单直接复用模型板块那份窄化**，不在这里再写一遍（`js/sec-settings.js` 同做法）。
@@ -860,9 +909,28 @@ async function loadCatalog(preempt) {
     if (mine !== loadSeq) return;
     catalog = null;
   } finally {
-    if (mine === loadSeq) loadInFlight = false;
+    // 被抢占 / 被作废的那条不许替**新**的那条（或者已经没有了的那条）清标记。
+    if (mine === loadSeq) { loadInFlight = false; loadAbort = null; }
   }
   render();
+}
+
+/**
+ * 作废目录那条读。**与 `cancelInFlight()` 是两件事，不能合并**（评审 F-4）：
+ * `cancelInFlight()` 的作废判据是 `current` 的身份比较，而 `current` **只在 `sendOnce()`
+ * 里赋值**——目录那条读用的是另一对模块变量（`loadInFlight` / `loadSeq`），
+ * `current` 从来够不着它。合成一个函数的话，那颗「取消」按钮会顺手把目录读也掐了，
+ * 而那两件事在 UI 上是分开的（目录读不出来时右栏是横幅，压根没有发送按钮）。
+ *
+ * ⚠️ **世代号 `+1` 是作废本体，`abort()` 只是省一次真实往返**（本板块四处作废判据同款）：
+ * 少了 `+1` 的话，一条晚到的失败仍会走进上面那个 `catch` 把 `catalog` 抹掉。
+ * ⚠️ **在这里显式清 `loadInFlight`**：被作废的那条走 `catch` → `mine !== loadSeq` 早退，
+ * 它的 `finally` 那一支也不会碰标记 ⇒ 不清的话此后每一次 `onShow()` 都只 render 不发请求。
+ */
+function cancelCatalogLoad() {
+  if (loadAbort !== null) { loadAbort.abort(); loadAbort = null; }
+  loadSeq++;
+  loadInFlight = false;
 }
 
 /**
@@ -1000,7 +1068,35 @@ async function pollOnce() {
     turn.body = r.body;
     turn.contentType = typeof r.contentType === "string" ? r.contentType : "";
     if (mediaResultUrls(turn.body).length > 0) { finishPolling("done"); return; }
-    render();
+    /**
+     * ⚠️⚠️ **这一拍只重填正在轮的那一个盒子，不整版 `render()`**（P3d 全分支评审 F-2）。
+     *
+     * 上一版这里是 `render()`，而 `render()` 会把**全部历史轮次**从头重建：
+     * 每一轮的媒体档都要走一次 `mediaResultUrls(turn.body)`（整棵 JSON 树）
+     * 再加一次 `prettyJson(turn.body)`（整份 `JSON.stringify`，**无长度上限**）。
+     * 单看它便宜——**它与另外两件事相乘才有牙**：
+     * ① Task 12 让 `turn.body` 可能是一张 base64 图（`mediaEmbeddable()` 放行
+     *    `^data:image/`，1024×1024 那一档 ≈ 1.5 MB/轮）；
+     * ② 视频轮询最多 60 拍（`VIDEO_POLL_MAX_ATTEMPTS`），**每拍一次**。
+     * 实测（`npx tsx` 只 import 仓里的真函数、喂 1.5 MB base64 × N 轮）：
+     * 一次整版重建在 1 / 5 / 10 轮时是 3.0 / 15.0 / **30.0 MB** 临时字符串，
+     * ⇒ `turns=10` 时一次视频任务累计 **≈ 1.8 GB**、主线程占用按机器快慢在 1.5–29 s 之间。
+     *
+     * **这一拍在屏幕上唯一会变的东西只有两样**：`pollAttempt` 那句话与这一轮的响应原文
+     * ——两样都在这个盒子里。所以重填这一个盒子与整版重建**输出逐字相同**，
+     * 而代价从 O(全部轮次 × 每轮 body) 降到 O(这一轮 body)，与历史轮数无关。
+     * ⚠️ **仍然走同一份 `fillMediaResult()`**，不是在这里另写一套「只改那个数字」的
+     * 就地更新——那会是第二套渲染判据，两套一漂只有真机上看得见。
+     * ⚠️ **终局那三条出口照旧整版 `render()`**（`finishPolling()` 里那一次）：
+     * 成片/放弃/出错时整轮的形状都变了，那一次重建是必要的，而且一次任务只有一次。
+     *
+     * 由 `tests/ui/dom/playground-section.test.ts` 的
+     * 「轮询那一拍不整版重画 —— 右栏别的轮次必须还是原来那几个节点对象」钉着。
+     */
+    if (nodes.pollBox !== null) {
+      nodes.pollBox.textContent = "";
+      fillMediaResult(nodes.pollBox, turn);
+    }
     schedulePoll();
   } catch (e) {
     if (current !== ctl) return;
@@ -1152,7 +1248,7 @@ export const playgroundSection = {
     section.appendChild(elI18n("p", "pg.runtimeNote", { class: "muted note" }));
     const body = el("div");
     section.appendChild(body);
-    nodes = { body, hintNote: null, send: null, streamText: null };
+    nodes = { body, hintNote: null, send: null, streamText: null, pollBox: null };
     // 判定在纯函数里，而那个目录下拿不到浏览器的顶层全局，所以在这里读一次传进去。
     origin = location.origin;
     token = readGatewayToken();
@@ -1172,7 +1268,11 @@ export const playgroundSection = {
   },
 
   onHide() {
-    // 切走板块 = 作废在飞的那一次（全局约束 14 的护栏之一）。
+    // 切走板块 = 作废在飞的那**两**条（全局约束 14 的护栏之一）。
+    // ⚠️⚠️ **上一版这里只有 `cancelInFlight()`，而注释写的是「作废在飞的那一次」**
+    //    ——一句全称句，而目录那一次不在其中（评审 F-4，实测）：`cancelInFlight()`
+    //    只动 `current`，`current` 只在 `sendOnce()` 里赋值。⇒ 两条各自的作废器都要调。
     cancelInFlight();
+    cancelCatalogLoad();
   },
 };

