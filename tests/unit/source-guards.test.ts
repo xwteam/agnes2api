@@ -650,9 +650,10 @@ describe("用正则抠注释的副本", () => {
 /**
  * **真源交出来的三个出口，各自的语义就是它们分叉的那一件事。**
  *
- * `blankComments` 今天在本仓还没有消费者（`tests/ui/api-session.test.ts` 的
- * `braceInterpLines()` 是 P3e Task 2 的活），**所以它更需要这一格**：一个没有任何断言的
- * 导出等于一份没人验过的实现，等 Task 2 接上它的时候，错的那一版会安静地赢。
+ * `blankComments` 的生产消费者今天是 `tests/ui/api-session.test.ts` 的 `braceInterpLinesIn()`
+ *（P3e Task 2 接上的）。**这一格不因为有了消费者就可以撤**：它验的是「留空版换出来的是空格、
+ * 不是删掉」这一件事本身，而消费者那边验的是「按行对齐之后数得对」——
+ * 上一版这里写的是「今天还没有消费者」，那句已经不成立，留着就是一条会腐的散文。
  */
 describe("抠注释真源的三个出口", () => {
   const poisoned = [

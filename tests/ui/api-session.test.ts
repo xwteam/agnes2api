@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { raw, api, ApiError, onUnauthorized } from "../../admin-ui/js/api.js";
 import { SESSION_MAX_AGE_MS } from "../../admin-ui/js/pure/session.mjs";
-import { stripComments } from "../helpers/strip-comments.js";
+import { stripComments, blankComments } from "../helpers/strip-comments.js";
 
 /** `admin-ui/js` 下的全部 JS（含 `pure/`），路径一律用 `/` 分隔好写断言。 */
 function walkJs(dir: string): string[] {
@@ -455,38 +455,60 @@ function egressSites(src: string): number {
  * 「带花括号的插值多了/少了一处」。那正是本文件上面「按文件计数，不按行号」
  * 那段告诫的原话，我在同一个文件里犯了它。
  *
- * ⚠️ **不先抠注释，代价明写**：抠注释要么按整文件做、要么另写一套逐行启发式
- *（那本身又是一个可错判断）。所以这里连注释一起数 ⇒ **注释里引一段带花括号的插值同样会红**，
- * 而报错让人「先确认那个插值里没有出口」——**可注释在 `egressSites()` 里是先被抠掉的、
- * 根本藏不住出口**，于是唯一能变绿的做法是把那行注释也塞进下面那格的清单，
- * **清单当场变成假的**。今天 `admin-ui/js` 下有 **3 行**注释含反引号 + `${`
- *（`admin-ui/js/i18n-dict.js`、`admin-ui/js/pure/keys-write.mjs`、`admin-ui/js/sec-playground.js`
- * 各一行），**只因它们的插值里没花括号才侥幸不红**。⇒ **登记 P3e**（修法是先抠注释行再逐行数）。
- * ⚠️ **上一版这里写的是「2 行」并只点了前两个文件**——那个数字从 BASE 就错着，
- * 而本轮的实施报告把它当成新量的复述了一遍。**注释里的计数会漂，这一条自己就是活例**：
- * 复量方法是拿 `blankComments()` 把每行的注释部分切出来，再数「同时含反引号与 `${`」的行。
- * ⚠️⚠️ **这条不是纸面风险，本轮就地撞过一次**：H-1 那段注释在 `admin-ui/js/api.js` 里
- * 按名字锚引用下面那一格时，用例名一旦带上反引号包着的插值起始符，这一格当场变红
- *（`expected [ 'admin-ui/js/api.js', …(1) ] to deeply equal [ 'admin-ui/js/sec-overview.js' ]`）。
- * 唯一不把清单写成假的出路是**改用例名**——所以下面那格叫「插值捞不齐的那些行」，
- * 名字里不带那个 token。**一道会因为「有人写了准确的注释」而变红的护栏，
- * 是在给「把注释写得含糊些」发奖**，这正是 P3e 要修它的理由。
+ * ⚠️ **注释先抠掉再逐行数**（P3e Task 2 修的就是这一条）。上一版连注释一起数，
+ * 于是**注释里复述一段带花括号的插值也会红**，而报错让人「先确认那个插值里没有出口」
+ * ——**可注释在 `egressSites()` 里是先被抠掉的、根本藏不住出口**，
+ * 于是唯一能变绿的做法是把那行注释也塞进下面那格的清单，**清单当场变成假的**。
+ * **一道会因为「有人写了准确的注释」而变红的护栏，是在给「把注释写得含糊些」发奖**，
+ * 而本仓注释极爱复述代码。这条不是纸面风险，BASE 就撞过一次：H-1 那段注释在
+ * `admin-ui/js/api.js` 里按名字锚引用下面那一格时，用例名一旦带上反引号包着的插值起始符，
+ * 那一格当场变红（`expected [ 'admin-ui/js/api.js', …(1) ] to deeply equal […]`），
+ * 当时唯一不把清单写成假的出路是**改用例名**。现在注释怎么写都不影响判据了，
+ * 而下面那格仍叫「插值捞不齐的那些行」——**改回去没有收益，不动它**。
+ * ⚠️ **别顺手把这道扫描「加强」成也扫注释**：它的存在理由是标记
+ * 「`stripTemplateText()` 在这些行上是瞎的」，而注释里的插值一行代码都不会执行。
+ * ⚠️⚠️ **这里原来还写着「今天 admin-ui/js 下有 N 行注释含反引号 + `${`」并逐个点名，
+ * 那个计数是删掉的，不是换了个新值**：抠注释之后「注释里有几行这样写」不再是这道扫描的事，
+ * 而一个不再影响判据的计数只会接着漂——**这一句自己就是活例**：BASE 写的是「2 行」并点名了
+ * 两个文件，P3e 现场复量对不上，同一句话前后两个值，而**两次都没有任何断言会因为它错了而红**。
+ * 要现场量的话（**别把结果抄回注释里**）：`blankComments()` 把每行的注释部分切出来，
+ * 再数「同时含反引号与 `${`」的行。
+ * ⚠️⚠️ **抠注释这件事的承重在下面「只数代码，不数注释」那三格上，不在全仓那一格上**：
+ * 实测抠前抠后全仓命中集合一模一样（那几行注释的插值里都没花括号，本来就不命中）
+ * ⇒ **把抠注释整个拆掉，全仓那一格照样绿**。它红了一定有问题，它绿了什么都不证明。
  *
  * ⚠️ **这里手抄了第二份 `/\$\{[^{}]*\}/`，与 `stripTemplateText()` 不共享同一个常量**
  * ⇒ 改了那边不改这边，本函数会静默地量错。缓解是 `BLIND_SPOTS` 第二条那时会红，
  * **但那是缓解，不是保护**。登记 P3e。
  */
-function braceInterpLines(): Array<{ file: string; text: string }> {
+function braceInterpLinesIn(rel: string, src: string): Array<{ file: string; text: string }> {
   const out: Array<{ file: string; text: string }> = [];
-  for (const f of walkJs("admin-ui/js")) {
-    for (const line of readFileSync(f, "utf8").split("\n")) {
-      if (!line.includes("`") || !line.includes("${")) continue;
-      const opens = (line.match(/\$\{/g) ?? []).length;
-      const simple = (line.match(/\$\{[^{}]*\}/g) ?? []).length;
-      if (opens > simple) out.push({ file: f, text: line.trim() });
-    }
+  const raw = src.split("\n");
+  // **抠注释一律用留空版**：注释逐字符换成空格、换行原样留着 ⇒ 行号与列位置一个都不动。
+  // **不许换成 `stripComments`**：它把块注释里的换行一并删掉，抠后的第 i 行不再是原文的
+  // 第 i 行，而这个函数的全部语义是按行数的 ⇒ 判定与取原文各指一处，处数看着还对。
+  const blanked = blankComments(src).split("\n");
+  // 行数不变是留空版的定义，也是下面按 `i` 对齐的全部前提。**不成立就吵，别静默按某一边走**
+  //（全射程那一遍由 `tests/unit/source-guards.test.ts`「射程内每个文件都扫得完 —— 一个失步都不许有」
+  // 钉着，这里只是就地复核一次）。
+  if (blanked.length !== raw.length) {
+    throw new Error(`[braceInterpLinesIn] 抠注释改了行数（${raw.length} → ${blanked.length}）：`
+      + "按行数的判据要求逐行对齐，抠法必须是留空版");
+  }
+  for (let i = 0; i < raw.length; i += 1) {
+    const line = blanked[i]!;
+    if (!line.includes("`") || !line.includes("${")) continue;
+    const opens = (line.match(/\$\{/g) ?? []).length;
+    const simple = (line.match(/\$\{[^{}]*\}/g) ?? []).length;
+    // 报的是**原文**那一行（含行尾注释），不是抠成空格之后的样子。
+    if (opens > simple) out.push({ file: rel, text: raw[i]!.trim() });
   }
   return out;
+}
+
+/** 上面那个纯函数在 `admin-ui/js` 全射程上的结果。读盘那一半的全部内容就是这一行。 */
+function braceInterpLines(): Array<{ file: string; text: string }> {
+  return walkJs("admin-ui/js").flatMap((f) => braceInterpLinesIn(f, readFileSync(f, "utf8")));
 }
 
 /**
@@ -726,6 +748,56 @@ describe("面板的网络出口清单", () => {
   });
 
   /**
+   * **抠注释这件事的承重全在这三格里，不在下面那格全仓扫描上。**
+   *
+   * 下面那格今天**抠不抠注释都是同一个答案**（实测：全仓注释里含反引号 + `${` 的那些行，
+   * 插值里都没花括号 ⇒ 本来就不命中）。⇒ 把实现里的抠注释整个拆掉，下面那格照样绿。
+   * **它红了一定有问题，它绿了什么都不证明**；真正会因为抠注释被拆掉而变红的是这里第一格。
+   *
+   * 三格各管一件事，一条都不许合并：
+   * · 第一格「不乱红」——注释里复述带花括号的插值不算命中；
+   * · 第二格「认得出」——同一形态写成代码必须命中（没有它，第一格用一个恒空的返回值也能绿）；
+   * · 第三格「抠法不许改行数」——判定按第 i 行做、原文也按第 i 行取，两者必须指同一行。
+   */
+  describe("braceInterpLines() 只数代码，不数注释", () => {
+    it("注释里复述一段带花括号插值的代码 —— 不许因此变红（否则等于奖励把注释写含糊）", () => {
+      const src = [
+        "const a = 1;",
+        "// 时间那一格与概览同款拼法：`${t(\"models.at\", { at: fmtInstant(ts) })}`。",
+        "const b = 2;",
+      ].join("\n");
+      expect(braceInterpLinesIn("fake.js", src)).toEqual([]);
+    });
+
+    it("代码里出现同一形态 —— 必须红（原有鉴别力一个字都不许丢）", () => {
+      const src = [
+        "const a = 1;",
+        "const s = `${t(\"models.at\", { at: fmtInstant(ts) })}`;",
+        "const b = 2;",
+      ].join("\n");
+      expect(braceInterpLinesIn("fake.js", src).map((r) => r.text))
+        .toEqual(['const s = `${t("models.at", { at: fmtInstant(ts) })}`;']);
+    });
+
+    /**
+     * **抠法换成删除版（`stripComments`）时这一格红。**
+     * 删除版把块注释里的换行一并删掉 ⇒ 抠后的第 2 行是原文的第 3 行，
+     * 判定与取原文各指一处：**处数看着还是 1，报出来的却是别人那一行。**
+     * 上面两格都用行注释，行注释不带换行进抠除区间 ⇒ 两个抠法给同一个答案，**它们抓不到这一族**。
+     */
+    it("跨行块注释在场时报出来的还是那一行 —— 抠法不许改行数", () => {
+      const src = [
+        "const a = 1;",
+        "/* 一段跨行的块注释",
+        "   第二行 */",
+        "const s = `${t(\"models.at\", { at: fmtInstant(ts) })}`;",
+      ].join("\n");
+      expect(braceInterpLinesIn("fake.js", src).map((r) => r.text))
+        .toEqual(['const s = `${t("models.at", { at: fmtInstant(ts) })}`;']);
+    });
+  });
+
+  /**
    * **F-1：那条「插值里带花括号就整条丢掉」的盲点，今天在本仓是活的。**
    *
    * ⚠️⚠️ 上一版的注释写着「今天 `admin-ui/js` 下零处这样写」——**那是一句全称假话，
@@ -744,8 +816,9 @@ describe("面板的网络出口清单", () => {
    * `admin-ui/js/sec-overview.js`「ov.runtime.checkedAt」——渲染「上次检查时间」的
    * 三元表达式，插值 `t(…, { at: fmtInstant(…, offsetMs()) })` 带花括号。
    *
-   * **变红条件（都实测过）**：在 `admin-ui/js` 下任何地方再写一个 `${` 数不齐的行；
-   * 或者把 `sec-overview.js` 那一行的内容改掉。**纯排版改动不再让它红。**
+   * **变红条件（都实测过）**：在 `admin-ui/js` 下任何地方**的代码里**再写一个 `${` 数不齐的行；
+   * 或者把 `sec-overview.js` 那一行的内容改掉。**纯排版改动不再让它红；
+   * 写进注释里的同款也不再让它红**（P3e Task 2，实测：插一行注释形态的 ⇒ 这一格仍绿）。
    */
   it("插值捞不齐的那些行今天恰好一处 —— 这道扫描在那一行上是瞎的", () => {
     const found = braceInterpLines();
