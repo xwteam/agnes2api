@@ -47,7 +47,26 @@ const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 const NAMESPACES = [
   "gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set", "usage", "models", "pg",
 ] as const;
-const NS_KEY_RE = new RegExp(`"((?:${NAMESPACES.join("|")})\\.[A-Za-z0-9_.]+)"`, "g");
+// ⚠️ **两种引号都要扫。** 与 `scripts/check-i18n.mjs` 规则 ⑧ 早就补上的那条同源：
+// 实测 `elI18n('h2','usage.titel')`（单引号 + 拼错）能让六道脚本门禁 + 全量用例
+// 一起放行，而用量板块主标题在五种语言下原样显示 `usage.titel`。
+// **模板字面量（反引号）仍不扫**，理由照 `check-i18n.mjs` 已写明的那条：
+// 那种写法通常是动态拼 key，静态判据本来就管不了，硬扫只会误报。
+const NS_KEY_RE = new RegExp(`["']((?:${NAMESPACES.join("|")})\\.[A-Za-z0-9_.]+)["']`, "g");
+
+// ── 另外三条判据同样搬到模块作用域 ────────────────────────────────────────────
+// 搬的理由与上面 `NS_KEY_RE` 那一条**逐字相同**：探针必须喂给**真扫描用的那一份**判据。
+// 另抄一份的话，探针绿而真扫描瞎，两者永远不会互相揭发。
+// **搬运时判据一个字符没改**，改判据是紧接着的下一步、单独一次改动。
+//
+// ⚠️ `ATTR_KEY_RE` / `T_CALL_KEY_RE` 归「admin-ui 里引用的每个 key 都在字典里」那一格，
+// `NS_PREFIX_RE` 归「板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里」
+// 那一格里的**反向自检 ②**。
+// ⚠️ **这三条与上面 `NS_KEY_RE` 同一条理由：两种引号都要扫、反引号仍然不扫。**
+const ATTR_KEY_RE = /data-i18n(?:-ph|-title)?=["']([^"']+)["']/g;
+const T_CALL_KEY_RE = /\bt\(["']([^"']+)["']/g;
+const NS_PREFIX_RE = /["']([a-z]+)\.[A-Za-z0-9_.]+["']/g;
+
 const walkJs = (d: string): string[] =>
   readdirSync(d).sort().flatMap((n) => {
     const p = join(d, n);
@@ -65,6 +84,28 @@ const walkJs = (d: string): string[] =>
  */
 const referencedKeysIn = (src: string): string[] =>
   [...stripComments(src).matchAll(NS_KEY_RE)].map((m) => m[1]!);
+
+/**
+ * 一段源码里 `data-i18n*=` 属性与字面的 `t(…)` 调用首参写出来的 key。
+ *
+ * ⚠️ **这一条刻意不抠注释**，与上面 `referencedKeysIn` 不同。那不是笔误，是一条
+ * **登记在案的遗留**（P3e Task 4 的 L5）：它与同文件那条广扫、以及
+ * `scripts/check-i18n.mjs` 的第 ① 条口径不一致 ⇒ 在 `admin-ui/` 的注释里把这两种
+ * 形态写全、值取一个字典里没有的串，这一格会**假红**而那道门禁 EXIT=0。
+ * **修法是把调用点的 `readFileSync` 包一层 `stripComments`，本任务按界不动**
+ *（本任务只改「认几种引号」，见下面 `attrAndTKeysIn` 那一族探针）。
+ * ⚠️ **在它被修掉之前，`admin-ui/js/i18n-dict.js` 与 `admin-ui/js/pure/usage.mjs`
+ * 两处「别在注释里把形态写全」的纪律必须留着**——本任务把这一条**放宽成引号无关**，
+ * 那条纪律的**射程因此变大了**（单引号写法从此也会踩响），不是变小了。
+ */
+const attrAndTKeysIn = (src: string): string[] => [
+  ...[...src.matchAll(ATTR_KEY_RE)].map((m) => m[1]!),
+  ...[...src.matchAll(T_CALL_KEY_RE)].map((m) => m[1]!),
+];
+
+/** 一段源码里被当字面量写出来的 `"<某个纯小写前缀>.<键名>"` 里的**前缀**。先抠注释，理由同上。 */
+const namespacePrefixesIn = (src: string): string[] =>
+  [...stripComments(src).matchAll(NS_PREFIX_RE)].map((m) => m[1]!);
 
 /**
  * 字典的结构性断言。**与 `scripts/check-i18n.mjs` 用不同的代码路径回答同一批问题**：
@@ -186,9 +227,9 @@ describe("i18n 字典", () => {
       });
     const used = new Set<string>();
     for (const p of walk("admin-ui")) {
-      const src = readFileSync(p, "utf8");
-      for (const m of src.matchAll(/data-i18n(?:-ph|-title)?="([^"]+)"/g)) used.add(m[1]!);
-      for (const m of src.matchAll(/\bt\("([^"]+)"/g)) used.add(m[1]!);
+      // 判据本体（`ATTR_KEY_RE` / `T_CALL_KEY_RE` / `attrAndTKeysIn`）在模块作用域，
+      // 理由见那里的说明：探针必须与真扫描走同一份判据。
+      for (const k of attrAndTKeysIn(readFileSync(p, "utf8"))) used.add(k);
     }
     const missing = [...used].filter((k) => !(k in I18N)).sort();
     expect(missing, "引用了字典里没有的 key，运行时会原样显示 key 本身").toEqual([]);
@@ -197,8 +238,11 @@ describe("i18n 字典", () => {
     // ⚠️⚠️ **别再把这一条读成「与 scripts/check-i18n.mjs 那道门槛是同一条边界」——
     // 那句话 P3e Task 3 之后不成立了，那边的门槛已经删掉。**
     // 上一版在这里写着：两处必须同边界，否则会在「恰好等于 15」上永久一绿一红。
-    // 复评实测两侧量的**根本不是同一个量**：这一条只认 `data-i18n*="…"` 与 `t("…")`
+    // 复评实测两侧量的**根本不是同一个量**：这一条只认 `data-i18n*=` 属性与 `t(` 首参
     // 两种窄形态、不抠注释；那道门禁走的是抠完注释的命名空间广扫，数出来是这里的好几倍。
+    // ⚠️ **「窄」说的是形态窄，不是引号窄**：P3e Task 5 起这两种形态**单双引号都认**
+    //（判据本体见模块作用域的 `ATTR_KEY_RE` / `T_CALL_KEY_RE`）。
+    // 「不抠注释」那一半仍然成立，那是登记在案的遗留（Task 4 的 L5）。
     // 「恰好等于 15」两侧都不可达 ⇒ 那条对齐论证是空转的，而那道门槛在它自己那一侧
     // 有 97% 的死区（判据瞎掉九成七它仍然一声不吭），已按「一条走不到的门槛不是守卫，
     // 是待办」删除。
@@ -212,7 +256,8 @@ describe("i18n 字典", () => {
   });
 
   /**
-   * 上面那条只认两种形态：`data-i18n*="…"` 属性与字面的 `t("…")` 调用。
+   * 上面那条只认两种形态：`data-i18n*=` 属性与字面的 `t(` 调用首参（**单双引号都认**，
+   * P3e Task 5 起；上一版这里把两种形态连同双引号一起写死，那半句今天是假的）。
    * **板块把 key 当参数传给 `elI18n()` / `openModal()` 时它看不见**（Task 3 的
    * `ui.js` 里 `{ labelKey: "common.cancel" }` 就是这一类，check-i18n 当时只把它报成
    * 「未被引用」的警告）。于是 Task 4 的 `elI18n("th", "keys.col.seq")` 打错一个字，
@@ -265,8 +310,9 @@ describe("i18n 字典", () => {
     const usedNamespaces = new Set<string>();
     for (const p of walkJs("admin-ui/js")) {
       if (p.endsWith("i18n-dict.js")) continue;
-      for (const m of stripComments(readFileSync(p, "utf8")).matchAll(/"([a-z]+)\.[A-Za-z0-9_.]+"/g)) {
-        if (dictNamespaces.has(m[1]!)) usedNamespaces.add(m[1]!);
+      // 判据本体（`NS_PREFIX_RE` / `namespacePrefixesIn`）同样在模块作用域，理由同上。
+      for (const ns of namespacePrefixesIn(readFileSync(p, "utf8"))) {
+        if (dictNamespaces.has(ns)) usedNamespaces.add(ns);
       }
     }
     expect(
@@ -322,5 +368,80 @@ describe("i18n 字典", () => {
     ].join("\n");
     expect(referencedKeysIn(poisonOnly), "假 key 不在场时不许报出它 —— 否则上面那条是恒真的")
       .not.toContain("models.zzzParamKey");
+  });
+
+  /**
+   * **B1 的另一半：本文件这四条判据一律引号无关（P3e Task 5）。**
+   *
+   * `scripts/check-i18n.mjs` 的第 ⑧ 条**早就**补了两种引号（它自己的第一版只认双引号，
+   * 把当初那个 `{count}` 泄漏缺陷原样重放成单引号就 exit 0、零报错——
+   *「判据建在了缺陷没采取的那个形态上」），第 ① 条在 P3e Task 3 也换成了两种引号都扫。
+   * **同一份仓里同一个坑，本文件这四条一处都没补**：实测 `elI18n('h2','usage.titel')`
+   * 能让六道脚本门禁 + 全量用例一起放行，而用量板块主标题在五种语言下显示裸串。
+   *
+   * ⚠️ **模板字面量（反引号）刻意仍然不扫**，理由照 `scripts/check-i18n.mjs` 已写明的那条：
+   * 那种写法通常是动态拼 key，静态判据本来就管不了；在这里扫还会与那道门禁的
+   * 拼键前缀路径**重复计算**，并把 `` `set.field.${path}` `` 这类动态拼键当成一个字面
+   * key 报「字典里没有」。
+   *
+   * ⚠️ **放宽判据天生减少漏报、也可能制造误报**，所以下面每一条正向都配了
+   * 「我对 X 不乱红」的那一半。真仓实测（放宽前后逐字对照，四条判据同时换）：
+   * 属性 + `t(` 那一格 125 处引用 → **125 处**，命名空间广扫 481 处 → **481 处**，
+   * 两侧「字典里没有的 key」都是 **0** ⇒ 今天零误报，因为 `admin-ui/` 下
+   * **一处单引号 i18n key 都没有**（`grep -ron "'[a-z]\+\.[A-Za-z0-9_.]\+'" admin-ui/` → 0 行）。
+   * 换句话说这次放宽今天**不改变任何结论**，它防的是明天有人第一次写下单引号那一处。
+   */
+  describe("四条 key 判据一律引号无关", () => {
+    it.each(['"', "'"])("被当参数传的 i18n key，%s 引号写法都必须被扫到", (q) => {
+      const src = `elI18n("h2", ${q}models.zzzParamKey${q});`;
+      expect(referencedKeysIn(src)).toContain("models.zzzParamKey");
+    });
+
+    it.each(['"', "'"])("data-i18n 属性里的 key，%s 引号写法都必须被扫到", (q) => {
+      const src = `<h2 data-i18n=${q}models.zzzAttrKey${q}>x</h2>`;
+      expect(attrAndTKeysIn(src)).toContain("models.zzzAttrKey");
+    });
+
+    it.each(['"', "'"])("t(…) 首参里的 key，%s 引号写法都必须被扫到", (q) => {
+      const src = `const s = t(${q}models.zzzCallKey${q});`;
+      expect(attrAndTKeysIn(src)).toContain("models.zzzCallKey");
+    });
+
+    it.each(['"', "'"])("反向自检 ② 数命名空间前缀时，%s 引号写法都必须被扫到", (q) => {
+      const src = `elI18n("h2", ${q}models.zzzParamKey${q});`;
+      expect(namespacePrefixesIn(src)).toContain("models");
+    });
+
+    /**
+     * **下面三条是「我对 X 不乱红」那一半。** 少了它们，上面八格用「见谁都报」的
+     * 判据（例如把正则放宽成扫一切引号对）同样能全绿，而那正是这次放宽最可能翻的车。
+     */
+    it.each(['"', "'"])("不乱红：第一段不是已知命名空间的 %s 引号字符串不许被当成 key", (q) => {
+      const src = `const route = ${q}router.push.path${q};`;
+      expect(referencedKeysIn(src), "`router` 不在 NAMESPACES 表里").toEqual([]);
+    });
+
+    it("不乱红：放宽之后这两条仍然只认那两种形态，不是通用字符串扫描器", () => {
+      // 同一个 key 字面量，既不在 `data-i18n*=` 属性里、也不是 `t(` 的首参。
+      expect(attrAndTKeysIn("const s = 'models.zzzParamKey';")).toEqual([]);
+      expect(attrAndTKeysIn('const s = "models.zzzParamKey";')).toEqual([]);
+    });
+
+    it.each(['"', "'"])("不乱红：前缀不是纯小写时不算命名空间（%s 引号）", (q) => {
+      expect(namespacePrefixesIn(`const n = ${q}Math.max${q};`)).toEqual([]);
+    });
+
+    /**
+     * **登记在案的边界：放宽之后这几条正则接受「引号不配对」的一对。**
+     *
+     * 形状是刻意与 `scripts/check-i18n.mjs` 的 `KEYLIKE`（`["'](…)["']`）**对齐**的：
+     * 两边收窄得不一样的话，「同一个量的两份实现」会在这一档上永久一绿一红，
+     * 而本文件为「两侧量的根本不是同一个量」已经栽过一次（见上面那段 ⚠️⚠️）。
+     * 今天 `admin-ui/` 下零处这种写法 ⇒ 射程为空。**这一格断言的是「今天就是这样」，
+     * 不是「这样是对的」**：哪天两边一起收窄，红的地方正是该回来改这段边界的地方。
+     */
+    it("边界：引号不配对的一对也会被认成 key（与 check-i18n.mjs 的 KEYLIKE 同形状）", () => {
+      expect(attrAndTKeysIn(`<h2 data-i18n="models.zzzMixed'>x</h2>`)).toContain("models.zzzMixed");
+    });
   });
 });
