@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
+import { blankComments } from "../helpers/strip-comments.js";
 
 const SCRIPT = resolve("scripts/check-comment-refs.mjs");
 
@@ -615,7 +616,11 @@ const COVERED: ReadonlyArray<{ claim: string; why: string }> = [
   { claim: "改名抄这种写法 `tests/x.test.ts` 抓不住。", why: "抓不住（`抓得住` 早在表里，它的否定式不在）" },
   { claim: "`tests/x.test.ts` 那道结构门禁只拦函数被抄回板块文件。", why: "只拦（同一族的限定式写法）" },
   { claim: "`[registrar]` 前缀由 `tests/x.test.ts` 管着。", why: "由 X 管着（与表里早有的「由 X 保证」同型）" },
-  { claim: "那条链由 `tests/x.test.ts` 里那一整份用例负责。", why: "由 X 负责（同上，且是本仓最常用的说法）" },
+  // ⚠️ 上一版这条的理由写着「且是本仓最常用的说法」，**复评当场数了全仓行数、实测为假**
+  //    （实测数留在那一轮的报告里，不写回这里：一个没有消费者的计数迟早会漂）。
+  //    它真正的性质是**误报面最大**——那一条写在门禁源码 `CLAIM_MARKERS` 那一段里，
+  //    代价由下面「按整段连坐」那格钉着。
+  { claim: "那条链由 `tests/x.test.ts` 里那一整份用例负责。", why: "由 X 负责（与「由 X 保证」同型）" },
 ];
 
 /**
@@ -775,37 +780,155 @@ describe("scripts/check-comment-refs.mjs 元测试：规则 B（带断言性措�
     });
     expect(r.status, `「${why}」带了名字锚还是红了 ⇒ 这道门禁变成了「不许写这几个字」`).toBe(0);
   });
+
+  /**
+   * **登记在案的射程边界**（P3e Task 15A 回填当场实测出来的）。
+   *
+   * 规则 B 的「带没带锚」走的是 `nameAnchorsAfter(flat, 文件名)`——它在**整段**里找
+   * 那个文件名的**每一次**出现，把后面跟着的锚全收上来。于是判据实际问的是
+   * 「这一段里这个文件**有没有**带锚的提法」，**不是**「眼下这一次提法带没带锚」。
+   *
+   * ⚠️ **这一格不是在说这样是对的，是在把今天的行为钉住。** 发现它的过程正是本轮
+   * 差点写下的第二句假话：`scripts/check-i18n.mjs` 文件头本来要写「少一个锚当场
+   * exit 1」，实测把那一段第一处的锚删掉 ⇒ **EXIT=0**。
+   * 哪天有人把规则 B 收紧成逐处校验，这一格会当场变红，逼他回来改那两段说明。
+   *
+   * ⚠️ **收紧不是零成本**：本轮实测过，改成逐处校验会当场打红一批今天合规的写法
+   *（实测清单留在那一轮的报告里，不写回这里——一个没有消费者的计数迟早会漂）。
+   * 那是一整个任务，不是顺手改一行。
+   */
+  it("登记在案的射程边界：同一段里同一个文件，有一处带锚就放行其余几处", () => {
+    const bare = " * 另外 `tests/x.test.ts` 也钉着别的事（这一处只有裸文件名）。\n";
+    const anchored = " * 这条由 `tests/x.test.ts` 的「被指向的那一格」钉着。\n";
+    const r = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": `/**\n${anchored}${bare} */\nexport const a = 1;\n`,
+      },
+    });
+    expect(
+      r.status,
+      "规则 B 变成逐处校验了？那是好事，但请回来改 `scripts/check-comment-refs.mjs`"
+      + " 文件头与 `scripts/check-i18n.mjs` 文件头那两段边界说明，别让它们继续说旧话",
+    ).toBe(0);
+
+    // **反向控制**：把那唯一一处锚也拿掉，同一段当场红。
+    // 少了它，一个「这一段整个看不见」的实现同样能让上面那格绿。
+    const noAnchor = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": `/**\n * 这条由 \`tests/x.test.ts\` 钉着。\n${bare} */\nexport const a = 1;\n`,
+      },
+    });
+    expect(noAnchor.status, "一处锚都没有时也放行 ⇒ 上面那格绿得没有意义").toBe(1);
+    expect(noAnchor.stderr).toContain("只给了裸文件名");
+  });
+
+  /**
+   * **规则 B 的报文必须同时给出第二条出路**（P3e Task 15A 复评 [中]）。
+   *
+   * 命中是**按整段**算的，于是一句纯描述性的「本模块只负责 X」会连坐同一段里一条
+   * 纯描述性的指向。上一版报文只给「去把行号或用例名找出来」一条路，撞上连坐的人
+   * 就只剩「给一句描述句硬安一个锚」——**Task 15A 本轮那处假锚正是这么来的**。
+   *
+   * ⚠️ 与 `规则 E 的假红有正当出路：报文必须给出段级豁免` 是同一族、不是同一条：
+   * 那一条的出路是**加豁免标记**，这一条的出路是**改那句描述**（不加豁免）。
+   * 两条都遵守同一句：**报文说的那条路必须真的走得通**，只写在报文里、实际走不通
+   * 比不写更糟。
+   */
+  it("规则 B 的假红有正当出路：报文必须给出「改那句描述」", () => {
+    const desc = "本模块只负责组装报文，形态照抄 `tests/x.test.ts` 的 `fakeCtx()`。";
+    const red = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": `/** ${desc} */\nexport const a = 1;\n`,
+      },
+    });
+    expect(red.status, "这一支现在不连坐了？那就把这一格改成反向控制，并去改「按整段连坐」那段边界说明")
+      .toBe(1);
+    expect(
+      red.stderr,
+      "报文只给「去找一个锚」一条路 ⇒ 撞上连坐的人只剩「给一句描述句硬安一个锚」，"
+      + "而硬安出来的锚指的往往不是它在说的那件事",
+    ).toContain("不要给它硬安一个锚");
+
+    // 报文说的那条路必须真的走得通——把那句描述里的断言性措辞改掉，同一段就不再红。
+    const rewritten = desc.replace("只负责组装", "只组装");
+    expect(rewritten, "夹具没被真的改写").not.toBe(desc);
+    const out = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": `/** ${rewritten} */\nexport const a = 1;\n`,
+      },
+    });
+    expect(out.status, out.stderr).toBe(0);
+  });
 });
 
 /**
  * ── 词表**这张手写清单自己**的守卫（P3e Task 15A）────────────────────────────
  *
  * 上面那两张表钉的是**已经写下来的那几个词**。它们治不了这张清单最典型的死法：
- * **下一个人加了一个新说法，清单照样不会响。** 本轮补否定式一族时，
+ * **下一个人加了一个新说法，清单照样不会响。** Task 15A 补否定式一族时，
  * 缺的正是这一层——`拦得住` / `抓得住` 在表里躺了几期，而 `拦不住` / `抓不住`
  * 一个都不在，**没有任何东西为这件事红过**。
  *
- * ⇒ 加一条**结构不变量**：凡是收了 `X得住`，就必须同时收 `X不住`。
- * 它是从**门禁源码里那张表**逐字抠出来再自己推导的，不是抄一份期望值
+ * ⇒ 这一组守卫，三层，各管各的一件事：
+ * ① **结构不变量**：凡是收了 `X得住`，就必须同时收 `X不住`；
+ * ② **完备性**：每个 marker 都得有一个 `COVERED` 标本，且没有空转的标本
+ *（复评补的：少了它，往词表里加一个新词全仓零红）；
+ * ③ **行为兜底**：抠出来的每个词逐个喂进真门禁跑一遍，认得才算数。
+ * 三层都从**门禁源码里那张表**逐字抠出来再自己推导，不是抄一份期望值
  *（回填出来的期望值恒等于实际值，那条断言永远绿——本仓登记的第 6 种假阳性）。
  *
- * ⚠️ **它能与不能，都在这里说清**：它守的是「肯定式↔否定式」这一种成对关系，
- * **守不了「有人发明了一个既不是 `X得住` 也不是 `X不住` 的新说法」**
- * ——那需要读得懂中文的判据，本仓没有。那一半仍然由评审与变异验证承担。
+ * ⚠️ **它们能与不能，都在这里说清**：①②③ 合起来守的是「这张表内部自洽、
+ * 且真的是门禁在用的那张」，**守不了「有人发明了一个既不是 `X得住` 也不是 `X不住`
+ * 的新说法、而且干脆不往表里加」**——那需要读得懂中文的判据，本仓没有。
+ * 那一半仍然由评审与变异验证承担。
  */
-function claimMarkersFromSource(): string[] {
-  const src = readFileSync(SCRIPT, "utf8");
-  const start = src.indexOf("const CLAIM_MARKERS = [");
+
+/**
+ * 从门禁源码里逐字抠出 `CLAIM_MARKERS`。
+ *
+ * ⚠️⚠️ **第一版「抠到一半」时会静默放行，正是本仓反复裁过的那同一种死法**
+ *（「判据用错工具时不会报错，会静静地放行」。P3e Task 15A 复评实测，
+ * 下面两条真实写法各让封闭不变量假绿一次）：
+ * · 只按「整行以 `//` 开头」过滤注释 ⇒ 行尾注释里的 `"…"` 串被当成表成员
+ *   （`"挡得住", // 与 "挡不住" 成对` ⇒ 凭空多出一个 `挡不住`，封闭不变量绿）；
+ * · 只认双引号 ⇒ 单引号写的成员被漏掉（`'挡得住'` ⇒ 封闭不变量看不见它，
+ *   **而真门禁认得它**，这一半更危险：机器全绿而射程真的变了）。
+ *
+ * 现在三条一起治：
+ * ① **抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源**（行尾注释也抠得掉，
+ *    而且它认得字符串字面量，不会被成员里的斜杠星号带瞎）——**别在这里手写第二份**；
+ * ② 三种引号形态都认（`"` / `'` / 反引号）；
+ * ③ **认不出要吵**：把认出来的成员整段挖掉之后，表体里不许还剩下任何非空白残渣
+ *    ——剩下就说明有一种写法没被认出来（拼接、常量引用、展开另一张表……），
+ *    此时**抛异常，不许当成「今天没有那个词」**。
+ *
+ * ⚠️ **这三条仍然是「文本形状」层面的**。真正把它钉到行为上的是下面那格
+ * 「抠出来的每个词，真门禁当场都认得」——它把抠出来的词逐个喂进真门禁跑一遍。
+ */
+function claimMarkersFromSource(raw: string = readFileSync(SCRIPT, "utf8")): string[] {
+  const src = blankComments(raw);
+  const HEAD = "const CLAIM_MARKERS = [";
+  const start = src.indexOf(HEAD);
   const end = src.indexOf("\n];", start);
-  // **认不出要吵，不能装没看见**：抠不出来时静默返回空表的话，下面两格会一起变绿。
+  // **认不出要吵，不能装没看见**：抠不出来时静默返回空表的话，下面几格会一起变绿。
   if (start === -1 || end === -1) {
     throw new Error("认不出 `CLAIM_MARKERS` 那张表的落点——判据坏了，不许静默当成空表");
   }
-  const body = src.slice(start, end).split("\n")
-    .filter((l) => !l.trim().startsWith("//"))
-    .join("\n");
-  const words = [...body.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+  const body = src.slice(start + HEAD.length, end);
+  const words = [...body.matchAll(/["'`]([^"'`]+)["'`]/g)].map((m) => m[1]!);
   if (words.length === 0) throw new Error("`CLAIM_MARKERS` 一个词都没抠出来——判据坏了");
+  const residue = body.replace(/["'`][^"'`]*["'`]/g, "").replace(/[\s,]/g, "");
+  if (residue !== "") {
+    throw new Error(
+      `\`CLAIM_MARKERS\` 里有一段没被认出来：「${residue}」。`
+      + "抠表判据只认三种引号写的字面量成员，认不出的写法一律抛——"
+      + "静默跳过它就等于封闭不变量与完备性不变量对那个成员集体失明",
+    );
+  }
   return words;
 }
 
@@ -838,8 +961,95 @@ describe("CLAIM_MARKERS 这张手写清单自己的守卫", () => {
   it("反向控制：抠出来的确实是那张词表（认不出会抛，不会静默放行）", () => {
     const words = claimMarkersFromSource();
     expect(words, "抠到的不是 CLAIM_MARKERS").toContain("钉");
-    expect(words, "本轮补的否定式没被抠到").toContain("拦不住");
-    expect(words, "本轮补的归属式没被抠到").toContain("负责");
+    expect(words, "P3e Task 15A 补的否定式没被抠到").toContain("拦不住");
+    expect(words, "P3e Task 15A 补的归属式没被抠到").toContain("负责");
+  });
+
+  /**
+   * **抠表判据自己的三条反向控制**（P3e Task 15A 复评：上一版这三种写法全部假绿）。
+   *
+   * 夹具是**合成的最小表**，不是去改真门禁源码：这一格答的是「抠表这个判据认不认得
+   * 出这几种写法」，与真仓今天写成什么样无关。它与上面那格是两件事——上面那格答的是
+   * 「抠到的是不是真的那张表」。
+   */
+  it("反向控制：抠表判据对三种真实写法都不放行（行尾注释 / 单引号 / 认不出的写法）", () => {
+    const table = (members: string) => `const CLAIM_MARKERS = [\n${members}\n];\n`;
+
+    // ① 行尾注释里的引号串**不是**表成员。上一版按「整行以 // 开头」过滤，于是
+    //    `挡不住` 凭空进了表，封闭不变量当场假绿。
+    expect(
+      claimMarkersFromSource(table('  "挡得住", // 与 "挡不住" 成对，下一轮补')),
+      "行尾注释里的词被当成了表成员 —— 封闭不变量会因此假绿",
+    ).toEqual(["挡得住"]);
+
+    // ② 单引号写的成员**是**表成员（真门禁认得它）。上一版只认双引号，于是这种写法
+    //    在封闭不变量眼里根本不存在，而射程真的变大了。
+    expect(
+      claimMarkersFromSource(table("  '挡得住', \"挡不住\",")),
+      "单引号写的成员没被抠到 —— 真门禁认得它，这张不变量却看不见",
+    ).toEqual(["挡得住", "挡不住"]);
+
+    // ③ 认不出的写法要**吵**，不许静默跳过（跳过 = 对那个成员集体失明）。
+    expect(
+      () => claimMarkersFromSource(table('  "钉", ...LEGACY_MARKERS,')),
+      "认不出的成员写法被静默跳过了 —— 「认不出要吵」只做了一半",
+    ).toThrow(/没被认出来/);
+  });
+
+  /**
+   * **把抠表钉到真门禁的行为上，而不是钉到文本形状上**（P3e Task 15A 复评的建议）。
+   *
+   * 上面几格全部建立在「我从源码里读到的这张表 = 门禁真正在用的那张表」这个假设上。
+   * 那个假设本身没有任何东西守着：`indexOf("const CLAIM_MARKERS = [")` 找错一张表
+   *（比如有人留了一张同名的旧表在前面）、或者抠出一个门禁根本不认的词，
+   * 上面三条不变量照样绿，而它们守的其实是一张幽灵表。
+   *
+   * 这一格把抠出来的**每一个**词各自造一段注释喂进真门禁跑一遍（**一次进程**，
+   * 每个词一个文件），要求**每个文件都被报出来**——报不出来就说明那个词门禁不认得。
+   * ⚠️ 不能改成「按词名断言报文内容」：报文给的是 `CLAIM_MARKERS.find(…)` 命中的
+   * **第一个**词，而 `钉` 是 `钉住`/`钉着`/`钉死` 的子串，那样断言会永远拿到 `钉`。
+   */
+  it("抠出来的每个词，真门禁当场都认得（不是照着文本形状猜的）", () => {
+    const words = claimMarkersFromSource();
+    const files: Record<string, string> = { "tests/x.test.ts": TARGET };
+    words.forEach((w, i) => {
+      files[`src/m${i}.ts`] = `/** 这条由 \`tests/x.test.ts\` ${w}。 */\nexport const a${i} = 1;\n`;
+    });
+    const r = run({ files });
+    expect(r.status, r.stderr).toBe(1);
+    const unseen = words.filter((_, i) => !r.stderr.includes(`src/m${i}.ts`));
+    expect(
+      unseen,
+      "这几个词抠出来了，可真门禁拿它们一句都不报 ⇒ 抠到的不是门禁在用的那张表",
+    ).toEqual([]);
+  });
+
+  /**
+   * **`COVERED` 对词表的完备性**（P3e Task 15A 复评 [中低]）。
+   *
+   * `CLAIM_MARKERS` 上方逐字写着那两张表「逐条钉着它」。复评实测那句话当时是散文：
+   * 往词表里加一个 `"保障"`，全仓 **零红**——`COVERED` 里没有它的标本，而没有标本
+   * 就意味着**没有任何一格证明门禁真的认得它**，也没有任何一格证明「带了锚就不许红」
+   * 对它成立（那张派生表是从 `COVERED` 长出来的）。
+   *
+   * ⇒ 每个 marker 必须至少有一个 `COVERED` 标本。反方向那一半也一起钉：
+   * 一条谁都不命中的 `COVERED` 标本是**空转**的夹具，它跑得再绿也什么都不证明。
+   *
+   * ⚠️ **它守不了「标本写得像不像真的」**：`{ claim: "…钉住。" }` 与本仓真实写法
+   * 长得像不像，仍然只能靠评审。这一格只保证「一个都不许漏、一条都不许空转」。
+   */
+  it("`COVERED` 对词表完备：每个 marker 都得有标本，且没有空转的标本", () => {
+    const markers = claimMarkersFromSource();
+    expect(
+      markers.filter((m) => !COVERED.some((c) => c.claim.includes(m))),
+      "这几个措辞进了词表却没有 COVERED 标本 ⇒ 没有任何一格证明门禁真的认得它们，"
+      + "也没有任何一格证明「带了锚就不许红」对它们成立",
+    ).toEqual([]);
+    expect(
+      COVERED.filter((c) => !markers.some((m) => c.claim.includes(m))).map((c) => c.why),
+      "这几条标本一个 marker 都不命中 ⇒ 它们是空转的夹具（正向那格会当场红，"
+      + "但真正该改的是这里：要么把词收进表，要么把标本删掉）",
+    ).toEqual([]);
   });
 
   /**

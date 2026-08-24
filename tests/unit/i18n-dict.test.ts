@@ -472,6 +472,40 @@ describe("i18n 字典", () => {
   });
 
   /**
+   * **本文件哪一条与 `scripts/check-i18n.mjs` 共用抠注释真源，钉成断言（P3e Task 15A 复评）。**
+   *
+   * 那道门禁的文件头写着「抠注释两边是同一份实现」，而**上一版把这句话锚在了错的那一条**
+   *（锚给了只认 `data-i18n*=` 属性与 `t(` 首参那条，可那条根本不调 `stripComments`）。
+   * 实测坐实：把 `scripts/lib/strip-comments.mjs` 退化成恒返回空串，被它锚住的那一格**照样绿**。
+   * **一句指错了对象的话不会有任何机器为它红**，所以这里把两边的分界线写成会红的断言：
+   * · `referencedKeysIn` 先抠注释 ⇒ 注释里的 key 它看不见；
+   * · `attrAndTKeysIn` 刻意不抠 ⇒ 注释里的 key 它照样报（P3e Task 4 的 L5，登记在案的遗留）。
+   *
+   * ⚠️ **这一格断言的是「今天就是这样」，不是「这样是对的」**：哪天那条遗留被修掉
+   *（把调用点的 `readFileSync` 包一层 `stripComments`），下面第二条当场变红
+   * ——那正是该回来改那道门禁文件头、以及 `attrAndTKeysIn` 上方那段说明的时刻。
+   */
+  it("抠注释这一步两边不同源：广扫走真源，属性与 t 调用那条刻意不走", () => {
+    const src = '// elI18n("h2", "models.zzzCommentKey"); <b data-i18n="models.zzzCommentAttr">x</b>\n';
+    expect(
+      referencedKeysIn(src),
+      "命名空间广扫必须先抠注释 —— 它与 `scripts/check-i18n.mjs` 第 ① 条共用 scripts/lib/strip-comments.mjs",
+    ).not.toContain("models.zzzCommentKey");
+    expect(
+      attrAndTKeysIn(src),
+      "这一条今天刻意不抠注释（Task 4 的 L5）。它不再报注释里的 key 了？"
+      + "那条遗留被修掉了，回去把 scripts/check-i18n.mjs 文件头那段射程说明一起改",
+    ).toContain("models.zzzCommentAttr");
+    // 反向控制：同样两处形态**不写在注释里**时，两条判据都必须看得见
+    // ——否则上面两格可能只是因为判据整个瞎了。
+    const plain = 'elI18n("h2", "models.zzzCommentKey"); const h = \'<b data-i18n="models.zzzCommentAttr">\';';
+    expect(referencedKeysIn(plain), "不在注释里就必须扫得到，否则上面那条是恒真的")
+      .toContain("models.zzzCommentKey");
+    expect(attrAndTKeysIn(plain), "不在注释里就必须扫得到，否则上面那条是恒真的")
+      .toContain("models.zzzCommentAttr");
+  });
+
+  /**
    * **B1 的另一半：本文件这四条判据一律引号无关（P3e Task 5）。**
    *
    * `scripts/check-i18n.mjs` 的第 ⑧ 条**早就**补了两种引号（它自己的第一版只认双引号，
