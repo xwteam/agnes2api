@@ -11,7 +11,7 @@ const SCRIPT = resolve("scripts/check-i18n.mjs");
 /**
  * **第 6 道门禁（`scripts/check-i18n.mjs`）自己的元测试**（全分支评审 I2）。
  *
- * ⚠️ **在这份文件出现之前，这道门禁零覆盖。** 九条判据里任何一条被写坏——正则打错
+ * ⚠️ **在这份文件出现之前，这道门禁零覆盖。** 十条判据里任何一条被写坏——正则打错
  * 一个字符、`continue` 少一层、`errors.push` 那行被删掉——它都会安静地 exit 0，
  * 而"门禁绿了"恰恰是所有人赖以放心的那个信号。本仓已经栽过一次同型的：第 ⑧ 条
  * 判据第一版只认双引号，把它存在的全部理由要防的那个缺陷换成单引号原样重放，
@@ -29,9 +29,35 @@ const SCRIPT = resolve("scripts/check-i18n.mjs");
  * 那正是提醒他回去改注释的地方。
  */
 
-/** 五语言齐全的一行字典。 */
+/**
+ * 五语言齐全的一行字典。
+ *
+ * ⚠️⚠️ **`en` / `ko` 两侧不能是同一段中文，这是 P3e Task 8 之后的硬要求。**
+ * 这个 helper 原来把同一段中文塞进全部五种语言，而第 ⑩ 条判据给「整段没翻译、
+ * 直接把中文抄进别的语言」这一档立了硬错 ⇒ **helper 造出来的每一行本身就是被测的那个缺陷**，
+ * 实测让本文件 25 格断言 `exit 0` 的夹具当场变红。
+ * 修的是 helper，**不是给夹具开豁免**：真要开豁免名册，那册名单第一条就会是「本仓的元测试」。
+ *
+ * · `en` 侧把 CJK 段换成 ASCII（⑩A 查的是「`en` 里有没有 CJK」）；
+ * · `ko` 侧把 CJK 段换成谚文（⑩B 查的是「`ko` 里至少有一个谚文」）；
+ * · **`{占位符}` 原样留着**——第 ⑤ 条要求五种语言的占位符集合逐字相同，
+ *   顺手替换掉的话第 ⑤ 条会抢在被测的那一条前面把夹具打红；
+ * · `text` 本来就不含 CJK 时（`row("Key")` 那类专有名词）**五种语言原样相同**，
+ *   而那正是真仓里 `ov.storage.kv` / `keys.col.key` 那一族的形状。
+ *
+ * ⚠️ 反过来说，本文件里每一格断言 `exit 0` 的夹具**都是第 ⑩ 条的反向控制**：
+ * 判据要是写成「一律红」，那 25 格会一起红。
+ */
+const CJK_RUN = /[㐀-䶿一-鿿぀-ヿ가-힯]+/g;
+
 function row(text: string): Record<string, string> {
-  return { "zh-CN": text, "zh-TW": text, en: text, ja: text, ko: text };
+  return {
+    "zh-CN": text,
+    "zh-TW": text,
+    en: text.replace(CJK_RUN, "x"),
+    ja: text,
+    ko: text.replace(CJK_RUN, "가"),
+  };
 }
 
 interface Fixture {
@@ -113,6 +139,22 @@ function fixtureWith(key: string, lang: string, text: string, extra: Partial<Fix
 }
 
 /**
+ * 上面那个的**两语言**版（P3e Task 8）。第 ⑩ 条判据问的是 `zh-CN` 与 `ko` 的**关系**
+ *（「中文侧是含汉字的句子，韩文侧却一个谚文都没有」），一次只覆盖一种语言问不出这个问题。
+ */
+function fixtureWithPair(
+  key: string,
+  langs: Record<string, string>,
+  extra: Partial<Fixture> = {},
+): Fixture {
+  return {
+    dict: { [key]: { ...row("中性说法"), ...langs } },
+    files: { "js/x.js": `t("${key}");\n` },
+    ...extra,
+  };
+}
+
+/**
  * 横幅上那三个分桶（P3e Task 3 新增）。**逐字解析，不许各处自己 `toContain` 一个数字**：
  * 分桶的行文改了，这里一处红，比十处 `toContain` 各自漂过去好。
  */
@@ -150,7 +192,7 @@ describe("scripts/check-i18n.mjs 元测试：干净的树", () => {
   });
 });
 
-describe("scripts/check-i18n.mjs 元测试：九条判据逐条", () => {
+describe("scripts/check-i18n.mjs 元测试：十条判据逐条", () => {
   it("① 源码引用了字典里没有的 key：exit 1", () => {
     const r = run({ dict: { "nav.overview": row("概览") }, files: { "js/x.js": 't("nav.typo");\n' } });
     expect(r.status).toBe(1);
@@ -487,6 +529,63 @@ describe("scripts/check-i18n.mjs 元测试：九条判据逐条", () => {
       UNVERIFIED_KEYS.filter((k: string) => !(k in I18N)),
       "白名单里这些 key 已经不在字典里了 ⇒ 规则⑨ 对它们空转（改了名就把名字改过来，别删条目）",
     ).toEqual([]);
+  });
+
+  /**
+   * ⚠️⚠️ **第 ⑩ 条：未翻译泄漏（P3e Task 8 新增）。**
+   *
+   * 它拦的是**整段没翻译、直接把中文抄进别的语言**这一档，而且**只拦这一档**：
+   * 它证明「没漏翻」，**一个字也没说译文准不准、句子通不通顺**。
+   * 别在任何文档里把它读成「`pg.*` 的措辞现在有机器核了」——那是本仓登记过二十余次的那类假话。
+   *
+   * ⚠️ **两条反向控制不是可选的，而且它们要防的是一个很具体的写法。**
+   * ⑩A / ⑩B 查的都是**字符集**，而字符集判据天生有两种「扩宽一格」的写法：
+   * 把 ⑩A 写成「`en` 不许有非 ASCII」、把 ⑩B 写成「`ko` 不许有汉字」。
+   * 这两种写法能让上面两格正向全绿，却会在真仓上当场逼出一份豁免名册
+   *（`en` 侧成片的 `—` `…` `·` `“` `”`；韩语正式文书里汉字本来就不罕见）。
+   * **拿真字典条目问的那一族反向控制在文件末尾单独一个 describe 里**——
+   * 自造样本（`"node"` / `"—"`）里根本不出现那两族真正会被误伤的串。
+   */
+  it("⑩A en 值里出现 CJK ⇒ 当场红（整段没翻译直接抄中文）", () => {
+    const r = run(fixtureWith("ov.title", "en", "概览"));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("出现了 CJK 字符");
+  });
+
+  it("⑩A 反向控制：纯 ASCII 的 en 值不许被误伤", () => {
+    // `ov.runtime.node` 的 en 值就是 `node`，`common.dash` 那类符号 key 同理。
+    const r = run(fixtureWith("ov.runtime.node", "en", "node"));
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  it("⑩B zh-CN 含汉字而 ko 不含谚文 ⇒ 当场红", () => {
+    const r = run(fixtureWithPair("ev.title", { "zh-CN": "事件", ko: "事件" }));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("一个谚文都没有");
+  });
+
+  /**
+   * **⑩B 的反向控制，同时是那条 `HAN.test(zh)` 前置的绊线。**
+   * 把前置删掉，这一格立刻红——而它红的是一个完全正当的符号 key。
+   * 真仓里同型的一族（`ov.storage.kv` / `keys.col.key` 那批专有名词）在末尾那个 describe 里。
+   */
+  it("⑩B 反向控制：zh-CN 不含汉字时不判 ko（符号 / 纯数字 key 不许被误伤）", () => {
+    const r = run(fixtureWithPair("common.dash", { "zh-CN": "—", ko: "—" }));
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  /**
+   * **⑩B 的第二条反向控制：判据是「`ko` 至少有一个谚文」，不是「`ko` 不许有汉字」。**
+   *
+   * ⚠️ **这一格钉的是判据的形状，不是某条真条目**，理由如实写在这里：
+   * 今天真仓的 `ko` 侧**一个汉字都没有**（实测），所以把 ⑩B 写成「`ko` 不许有汉字」
+   * 在今天的真仓上**分辨不出来** —— 真仓照样 EXIT=0。少了这一格，那种写法
+   * 要等到第一次有人在韩文里用汉字（韩语正式文书里并不罕见）时才会暴露，
+   * 而那时它表现成「一条正当的译文被门禁打红」，第一反应是去开豁免名册。
+   */
+  it("⑩B 反向控制：ko 里正当地夹着汉字（谚文仍在）⇒ 不许红", () => {
+    const r = run(fixtureWithPair("ov.title", { "zh-CN": "主通道概览", ko: "主 채널 개요" }));
+    expect(r.status, `⑩B 被写成了「ko 不许有汉字」：\n${r.stderr}`).toBe(0);
   });
 });
 
@@ -1016,5 +1115,51 @@ describe("scripts/check-i18n.mjs 元测试：第 ⑧ 条判据的两条已知边
       "第 ⑧ 条判据被改进了（数组末尾不再误报）—— 请回去改 check-i18n.mjs 里那段边界说明",
     ).toBe(1);
     expect(r.stderr).toContain("裸的 {占位符}");
+  });
+});
+
+/**
+ * **第 ⑩ 条的反向控制取自真字典**（P3e Task 8）。
+ *
+ * ⚠️⚠️ **上面那两格反向控制跑的是自造样本（`"node"` / `"—"`），那不够。**
+ * ⑩A / ⑩B 查的都是**字符集**，而字符集判据真正会误伤的两族，在自造样本里根本不出现：
+ *
+ * · **专有名词 / 代码串**在五种语言里原样相同（`KV` / `Cloudflare Workers` / `Key` / `PID`）。
+ *   它们的 `ko` **一个谚文都没有**，而这完全正当 —— ⑩B 不打红它们**只因为**那条
+ *   `HAN.test(zh)` 前置（`zh-CN` 侧同样是 `KV`）。把前置删掉，红的就是这一族真条目。
+ * · **`en` 侧正当的非 ASCII 标点**：`—`（U+2014）`…` `·`（U+00B7）`“` `”` `–` `é` `£`
+ *   在英文文案里成片出现。⑩A 写成「`en` 不许有非 ASCII」会当场把它们全部打红 ——
+ *   所以它查的是 **CJK**，不是非 ASCII。
+ *   ⚠️ 顺带记一条真的近失：全角中点 `・`（U+30FB）落在片假名区里、**会**被 ⑩A 判成 CJK，
+ *   而今天 `en` 侧用的是 U+00B7。哪天有人把它换成 U+30FB，这条判据会红，而它红得对。
+ *
+ * ⚠️ **夹具值直接取自 `admin-ui/js/i18n-dict.js`，不复制字面量**：抄一份出来的话，
+ * 真字典改了这里不会红，守的是它自己那份副本 ——
+ * 与 P3e Task 1 收编抠注释器、Task 7 共用 `unverified-claims.mjs` 是同一条裁定。
+ */
+describe("scripts/check-i18n.mjs 元测试：第 ⑩ 条的反向控制取自真字典", () => {
+  const DICT = I18N as unknown as Record<string, Record<string, string> | undefined>;
+
+  it.each([
+    ["ov.storage.kv", "zh-CN / ko 都是 `KV`：ko 一个谚文都没有，而这完全正当"],
+    ["ov.runtime.worker", "`Cloudflare Workers` 在五种语言里逐字相同"],
+    ["ov.runtime.pid", "`PID` 同上，且中文侧也没有汉字"],
+    ["keys.col.key", "`Key` 这类列名在中韩两侧都原样保留"],
+    ["gate.badShape", "en 里有 `–` / `é` / `£`，还逐字写着 CJK characters 这个词"],
+    ["usage.note.clockUnavailable", "en 里有成对的 “ ”"],
+    ["keys.col.usage", "en 里有 `·`（U+00B7）"],
+    ["common.loadFailed", "en 里有 `—`（U+2014）"],
+  ])("⑩ 反向控制（真字典 %s）：%s ⇒ 不许红", (key) => {
+    const real = DICT[key];
+    expect(
+      real,
+      `字典里已经没有 ${key} 了 ⇒ 这一格的反向控制从此空转，请换一条同型的真 key，别删掉这一格`,
+    ).toBeDefined();
+    const r = run({
+      dict: { [key]: { ...real } },
+      // 末尾那个 `, {}` 是给第 ⑧ 条的：带占位符的 key 后面必须紧跟一个逗号。
+      files: { "js/x.js": `t("${key}", {});\n` },
+    });
+    expect(r.status, r.stderr).toBe(0);
   });
 });
