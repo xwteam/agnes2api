@@ -663,7 +663,9 @@ npx wrangler dev
 ⚠️ このファイルは `pnpm test:workers` によって無条件に workerd の `env` へ読み込まれます
 （`@cloudflare/vitest-pool-workers` は wrangler を呼ぶときに `envFiles` を渡しません）。
 CI 側にはこのファイルがないため、テストの前に `mv .dev.vars .dev.vars.off` してください。
-このファイルが存在する間は、リポジトリ内のアサーションが 1 つその場で赤くなります。
+このファイルが **`env` にバインディング名を 1 つ余計に持ち込んだ時点で**、リポジトリ内の
+アサーションが 1 つその場で赤くなります——判定はキー名の集合なので、空ファイルや、
+KV バインディングと同名の `POOL` だけを書いた場合は赤くなりません。
 
 ## Docker
 

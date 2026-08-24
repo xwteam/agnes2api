@@ -578,6 +578,83 @@ describe("scripts/check-comment-refs.mjs 元测试：豁免标记与它的边界
     expect(r.status, "位置不该改变结论").toBe(1);
   });
 
+  /**
+   * ── 第二种「不止一个锚」的形态：**一条路径后面连着写好几个并列锚**（P3e 阶段 D 补） ──
+   *
+   * 上面那两格治的是「同一块里多次提同一个文件」。**`路径「甲」与「乙」` 这一种一直漏着**：
+   * `NAME_ANCHOR_RE` 带 `^` 锚定，只认紧跟在路径之后的那一个，第二个从不校验
+   * ——而它**看起来是带路径的**，比裸文件名那种漏法更难被人肉发现。
+   *
+   * 实测（阶段 D 回填，本仓真实落点）：把 `admin-ui/js/pure/playground.mjs` 那段
+   * 「`tests/ui/playground.test.ts`「断流那一档：……」与「CRLF：字节分两次喂，……」」里
+   * **第二个**锚指向的用例名改掉 ⇒ 补之前 **EXIT=0、横幅照打**；补之后 **EXIT=1 并点名**。
+   * 反向控制（改**第一个**锚）两版都是 EXIT=1，说明坏的不是门禁本身，是第二个锚的形态。
+   */
+  it("一条路径后面连着两个并列锚：第二个编造 ⇒ exit 1", () => {
+    const r = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": "/** 由 `tests/x.test.ts`「被指向的那一格」"
+          + "与「完全编造的名字」两格钉着。 */\nexport const a = 1;\n",
+      },
+    });
+    expect(r.status, "并列写的第二个锚从不校验 —— 它看起来是带路径的，更难被发现").toBe(1);
+    expect(r.stderr).toContain("完全编造的名字");
+  });
+
+  /**
+   * **反向控制：连接词收得窄，不许把「后面任何一处引文」都当成锚。**
+   *
+   * 下面这条夹具用的是**本仓真实存在的写法**——`tests/contract/admin-auth.test.ts` 的
+   * 鉴权矩阵那一段就是「……那一格**不红**——它只断言「拿对口令时不该被判 401」」，
+   * 后半个引文是**一句话**，不是用例名。把它当锚校验就是一条假红，
+   * 而这道门禁一旦开始误报，下一步就是有人给它开豁免名册。
+   */
+  it("反向控制：`——它只断言「某句话」` 这种散文引文不算锚，不许因此假红", () => {
+    const r = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": "/** 由 `tests/x.test.ts`「被指向的那一格」钉着"
+          + "——它只断言「拿对口令时不该被判 401」，别的什么都没说。 */\nexport const a = 1;\n",
+      },
+    });
+    expect(r.status, "并列连接词之外的引文被误当成锚 ⇒ 这道门禁开始误报").toBe(0);
+  });
+
+  /**
+   * **锚里带反引号：两侧口径必须一致（P3e 阶段 D 订正的量具 bug）。**
+   *
+   * `flatten()` 把注释那一侧的反引号全删了，而干草堆这一侧（`testTitles()` 读源文）留着，
+   * 于是凡是用例名里带反引号的锚一律匹配不上。它一直没发作，只是因为本仓唯一踩中它的
+   * 那一处（`admin-ui/js/gw-api.js` 那段的第二个锚）当时正好无人校验；
+   * 把上面那条连写锚补上的那一刻，它当场变成一条假红。
+   */
+  it("锚里带反引号：注释侧被 flatten 删掉、标题侧留着，两边照样要能对上", () => {
+    const withTick = "import { it, expect } from \"vitest\";\n"
+      + "it(\"传含 `..` 的 path 一律拒收\", () => { expect(1).toBe(1); });\n";
+    const r = run({
+      files: {
+        "tests/x.test.ts": withTick,
+        "src/a.ts": "/** 由 `tests/x.test.ts`「传含 `..` 的 path 一律拒收」钉着。 */\n"
+          + "export const a = 1;\n",
+      },
+    });
+    expect(r.status, "反引号只在一侧被抠掉 ⇒ 带反引号的用例名永远匹配不上（量具坏了）").toBe(0);
+  });
+
+  it("反向控制：同一条锚把 `..` 换成一个那个文件里没有的写法 ⇒ 仍然 exit 1", () => {
+    const withTick = "import { it, expect } from \"vitest\";\n"
+      + "it(\"传含 `..` 的 path 一律拒收\", () => { expect(1).toBe(1); });\n";
+    const r = run({
+      files: {
+        "tests/x.test.ts": withTick,
+        "src/a.ts": "/** 由 `tests/x.test.ts`「传含 `??` 的 path 一律拒收」钉着。 */\n"
+          + "export const a = 1;\n",
+      },
+    });
+    expect(r.status, "抠掉反引号不等于把整条锚放宽成谁都能过").toBe(1);
+  });
+
 
   /**
    * **门禁不许把自己整份豁免掉。** 已实测踩过一次：`IGNORE_FILE_RE` 那一行原来把

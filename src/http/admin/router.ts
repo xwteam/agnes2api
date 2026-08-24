@@ -395,13 +395,20 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // · 挪到 `adminAuth` **之前** ⇒ `tests/contract/admin-auth.test.ts`
   //   「每一条路由 × 每一种凭据状态，逐格断言」与 `tests/contract/admin-models.test.ts`
   //   「没带管理口令是 401」两格同时变红。
-  // · 挪到静态兜底**之后** ⇒ **只有** `tests/contract/admin-models.test.ts`
-  //   「把协议目录整份交出去」一带的三格变红。
+  // · 挪到静态兜底**之后** ⇒ **两处**同时变红：
+  //   ① `tests/contract/admin-models.test.ts`「把协议目录整份交出去」一带的三格；
+  //   ② `tests/contract/admin-auth.test.ts`
+  //   「每一条 /admin/api/* 都注册在 adminAuth 之后、静态兜底之前 —— 位置写错了它会恒 404 而没人拦」
+  //   ——它按 `app.routes` 的下标算，红了会**逐条点名**（实测报文里就是
+  //   `expected [ 'GET /admin/api/models' ] to deeply equal []`）。
   //   ⚠️ **鉴权矩阵接不住这个方向**：`adminAuth` 仍然先跑，无凭据照样 401，
   //   而带对口令时拿到的是静态兜底的 404——矩阵那一格只断言「不该被判 401」，404 照过。
   //   `tests/contract/ui-serve.test.ts`「/admin/api/* 不会被静态兜底吃掉」也接不住：
   //   它探的是 `/admin/api/session` 那一条，与本端点的注册位置无关。
-  //   ⇒ **本端点被静态兜底吃掉这件事，今天唯一的护栏是 `admin-models` 那三格。**
+  //   ⚠️ **上一版这里写的是「今天唯一的护栏是 `admin-models` 那三格」，P3e Task 10
+  //   自己把它变成了假话**（那一期新加的就是上面 ② 那一格），阶段 D 回填时实测订正。
+  //   **「唯一」这种词只要有人补一格网就过期一次**——写「哪几格会红、红了说什么」，
+  //   别写「只有谁会红」。
   admin.get("/admin/api/models", modelsHandler());
 
   // ── Tier-2 用量（P3d Task 4）────────────────────────────────────────────
@@ -414,23 +421,35 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   //
   // ⚠️ **`/admin/api/usage` 与 `/admin/api/usage/:date` 不会互相吃掉**：
   // Hono 按注册顺序匹配，而两者段数不同（三段 vs 四段），形状上不可能重叠。
-  // **但新增 `/admin/api/usage/:something` 这类同为四段的单段通配时立刻成立**
-  // ——真要加，请把它排在 `:date` 之后，并想清楚两个通配谁先匹配。
+  // **但再往这一节里加任何一条同为四段的路径，`:date` 就会把它吃掉**——
+  // ⚠️⚠️ **不管新加的那条是通配（`/usage/:something`）还是字面段（`/usage/summary`），
+  // 只要排在 `:date` 之后就恒不可达**。上一版这里写的是「真要加，请把它排在 `:date`
+  // 之后」——**那句话把人直接推进坑里**，阶段 D 回填时实测订正：
+  // 追加 `admin.get("/admin/api/usage/summary", …)` 之后它恒回
+  // `400 date 必须是 UTC 的 YYYY-MM-DD，收到的是：summary`，而当时四道护栏一格都不红。
+  // ⇒ **规矩是「更窄的排在更宽的之前」**：字面段放 `:date` 上面，通配之间想清楚谁先匹配。
+  // 现在由 `tests/contract/admin-auth.test.ts` 的
+  // 「窗口内更宽的模式不许排在更窄的之前 —— 被吃掉的那一条恒不可达，而它只会回一个看起来合理的 400」
+  // 那一格守着，它从 `app.routes` 现算，不用回来改任何清单。
   // 同一个坑在本文件里这是第四处（`bulk` vs `:id`、`channels/:c/test` vs `tend`、
   // `keys/:id/usage`），措辞刻意一致。
   //
-  // ⚠️ **「被静态兜底吃掉」这个方向，今天唯一的护栏是 `tests/contract/admin-usage.test.ts`
-  // 整个文件，这是实测出来的、不是推出来的**（本任务变异 M6：把这三条一并挪到
-  // 下面 `admin.route("/", uiRoutes())` 之后）：
+  // ⚠️ **「被静态兜底吃掉」这个方向，哪几格会红是实测出来的、不是推出来的**
+  //（本任务变异 M6：把这三条一并挪到下面 `admin.route("/", uiRoutes())` 之后）：
   // · `tests/contract/admin-usage.test.ts` 的
   //   「Tier-2 关着时照样交出这把 key 的 Tier-1 计数 —— 两者本来就是两套账」
   //   一带**大面积变红**（三条端点全变 404）；
   // · `tests/contract/ui-serve.test.ts` 的
   //   「**/admin/api/* 不会被静态兜底吃掉**——注册顺序错了会让整套管理 API 变成 404」
   //   **不红**——它探的是 `/admin/api/session` 那一条，与这三条的注册位置无关；
-  // · `tests/contract/admin-auth.test.ts` 的「每一条路由 × 每一种凭据状态，逐格断言」
-  //   **不红**——它只断言「拿对口令时不该被判 401」，而被兜底吃掉之后拿到的是
-  //   **404，照过**。
+  // · `tests/contract/admin-auth.test.ts` 的
+  //   「每一条 /admin/api/* 都注册在 adminAuth 之后、静态兜底之前 —— 位置写错了它会恒 404 而没人拦」
+  //   **会红并逐条点名**（实测报文 `[ 'GET /admin/api/usage', …(1) ]`）；
+  //   而同一份文件里的「每一条路由 × 每一种凭据状态，逐格断言」**不红**——它只断言
+  //   「拿对口令时不该被判 401」，而被兜底吃掉之后拿到的是 **404，照过**。
+  //   ⚠️ **两格判定相反，别当成一格。**
+  //   ⚠️ **上一版这里写的是「今天唯一的护栏是 `admin-usage.test.ts` 整个文件」，
+  //   P3e Task 10 补的正是上面那一格，它当场把这句话变成了假话**，阶段 D 回填时实测订正。
   // ⚠️ **刻意不写死「几格红」**：那个数每加一条用例就过期一次（本任务实测吃过一次，
   // 一个补用例的提交让上一版写下的「49 格红」当场变成 51）。**「不红」不会过期**，
   // 而它才是这条记录真正承载的那半。

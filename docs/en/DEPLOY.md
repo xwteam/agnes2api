@@ -672,7 +672,9 @@ git-ignored) — do not put secrets directly in `wrangler.toml`.
 ⚠️ This file is read unconditionally into workerd's `env` by `pnpm test:workers`
 (`@cloudflare/vitest-pool-workers` does not pass `envFiles` when it calls wrangler),
 and CI has no such file ⇒ run `mv .dev.vars .dev.vars.off` before the tests. The
-repository has one assertion that turns red on the spot while the file exists.
+repository has one assertion that turns red on the spot once the file brings **an extra
+binding name** into `env` — it compares the set of key names, so an empty file, or one
+that only sets `POOL` (the same name as the KV binding), stays green.
 
 ## Docker
 

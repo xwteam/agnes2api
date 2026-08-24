@@ -1675,3 +1675,102 @@ describe("全射程与真解析器对拍", () => {
     expect(judge(src), "反向控制：原文本身要能过裁判这一关，否则上面那条不等是白来的").toContain("console.log");
   });
 });
+
+/**
+ * ── 两份 `frameEnd()` 的**函数体**必须逐字节相同 ──────────────────────────────
+ *
+ * **它为什么存在（实测，不是预防性扩容）**：P3e Task 11 把两处内联的 `indexOf("\n\n")`
+ * 提炼成了**两个同名同体的 `frameEnd()`**——`src/core/protocol/sse.ts`（网关读上游）
+ * 与 `admin-ui/js/pure/playground.mjs`（面板渲染）。提炼本身是好事，但它把「隐式的重复」
+ * 变成了「显式的、跨运行时边界的、有名字的重复」，而**当时没有任何机器要求这两份一致**：
+ *
+ * | 判据轴 | 单改一份会不会红（阶段 D 收口实测） |
+ * |---|---|
+ * | 认不认 `\r\n\r\n` | **会红**（两侧红名单互不相交，看协议名就知道坏的是哪份） |
+ * | 认不认裸 `\r\r` | **不红** |
+ * | LF 优先 vs 取靠前 | **不红**（穷举 66429 个 token 串证明对外可观测行为等价） |
+ * | `len: 4` vs `len: 2` | 网关侧**不红** / 面板侧会红（不对称） |
+ *
+ * 最强的那条是全量跑出来的：只给**网关那份**加上裸 `\r\r` 支持、面板那份一字不动
+ * ⇒ `pnpm test` 与 `pnpm test:workers` **两个运行时、三千多条断言，零信号**。
+ * ⇒ **四条轴里三条无守卫。** 而 `admin-ui/js/pure/playground.mjs` 里被点名说
+ * 「两份实现共享同一套判据」的那一组（`tests/ui/playground.test.ts` 的
+ * 「同一段字节喂进去必须给出同一串负载」），5 条样本**全是 LF**
+ * ——**被点名的守卫恰好不覆盖新写进去的那条判据。**
+ *
+ * ⚠️ **P3d 的全分支评审已经因为这两份实现在 `[DONE]` 上分叉记过一条 HIGH，这是同一处
+ * 的第二次。** 所以这里不再往行为层补第 N 条样本（那是在追已经想到的那几条轴），
+ * 而是**把「两份必须一样」这件事本身钉成一格**：判据从两个真源现抠，不写第三份实现，
+ * 任何一侧单独漂——不管漂在哪条轴上——都当场红。
+ *
+ * ⚠️ **它接不住什么，明写**：
+ * · **只比函数体**，不比签名（TS 那份带类型标注，本来就不同，见下面那格反向控制）、
+ *   不比上方的说明文字（理由刻意只写一份，见 `playground.mjs` 的 frameEnd docblock）。
+ * · **它不判对错**：两份一起改错、一起漂，它照样绿。那一族由行为用例接。
+ * · **抠法是「签名行上最后一个 `{` 起，大括号配平」**，不解析字符串。今天两份的函数体里
+ *   没有任何含大括号的字符串字面量；哪天有了，抠出来的边界会变——那时这一格会**红**
+ *  （两侧抠法一致，但边界一变，比对的东西就不是函数体了），不会静默。
+ * · 签名写成跨行时抠不到 ⇒ 返回 `null` ⇒ 下面第一条断言当场红，**不是静默跳过**。
+ */
+describe("两份 frameEnd 是跨运行时边界的孪生体", () => {
+  const GATEWAY = "src/core/protocol/sse.ts";
+  const PANEL = "admin-ui/js/pure/playground.mjs";
+
+  /** 签名行（`function frameEnd(...` 那一行）。 */
+  function signatureLine(rel: string): string | null {
+    const src = readFileSync(rel, "utf8");
+    const at = src.indexOf("function frameEnd(");
+    if (at === -1) return null;
+    const eol = src.indexOf("\n", at);
+    return src.slice(at, eol === -1 ? src.length : eol);
+  }
+
+  /**
+   * 函数体（不含签名、不含最外层那对大括号）。
+   * 抠不到一律返回 `null`——调用方必须为此变红，"抠不到就当通过"是这一族门禁最常见的死法。
+   */
+  function frameEndBody(rel: string): string | null {
+    const src = readFileSync(rel, "utf8");
+    const at = src.indexOf("function frameEnd(");
+    if (at === -1) return null;
+    const eol = src.indexOf("\n", at);
+    // 签名行上**最后一个** `{` 才是函数体的开括号：TS 那份的返回类型标注
+    // （`: { idx: number; len: number } | null`）里也有一个 `{`，取第一个会抠错。
+    const open = src.lastIndexOf("{", eol === -1 ? src.length : eol);
+    if (open < at) return null;
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) return src.slice(open + 1, i);
+    }
+    return null;
+  }
+
+  it("两份 frameEnd 的函数体逐字节相同 —— 只改一边的话两个运行时都不会有任何信号", () => {
+    const gw = frameEndBody(GATEWAY);
+    const pg = frameEndBody(PANEL);
+    // 自检：抠不到 / 抠成空的时候，下面那句 `toBe` 会变成 `"" === ""` 的恒真，
+    // 那正是这一格最容易的死法。**先让抠取本身变红。**
+    expect(gw, `在 ${GATEWAY} 里没抠到 frameEnd 的函数体 —— 先来修抠法，别让这一格恒绿`).not.toBeNull();
+    expect(pg, `在 ${PANEL} 里没抠到 frameEnd 的函数体 —— 先来修抠法，别让这一格恒绿`).not.toBeNull();
+    expect(gw!, "抠出来的函数体里没有 indexOf —— 抠错位置了").toContain("indexOf(");
+    expect(pg!, "抠出来的函数体里没有 indexOf —— 抠错位置了").toContain("indexOf(");
+
+    expect(pg, `面板那份 frameEnd 与网关那份分叉了。**两份都得改**：`
+      + `裸 \\r、LF 优先 vs 取靠前、len 取 4 还是 2 —— 这三条轴单改一份时，`
+      + `node 与 workerd 两套用例一条都不会红（阶段 D 收口全量实测）。`
+      + `一份是协议实现、一份是展示端，展示端多说或少说的那几句正是运维最没办法判真伪的`)
+      .toBe(gw);
+  });
+
+  it("反向控制：两份的签名今天本来就不同，这一格不许因此乱红", () => {
+    const gw = signatureLine(GATEWAY);
+    const pg = signatureLine(PANEL);
+    expect(gw, `在 ${GATEWAY} 里没抠到 frameEnd 的签名行`).not.toBeNull();
+    expect(pg, `在 ${PANEL} 里没抠到 frameEnd 的签名行`).not.toBeNull();
+    // 仓里真实存在的合法差异：TS 那份带类型标注，`.mjs` 那份不带。
+    expect(gw!, "网关那份的签名里没有类型标注了？那上面那格的射程说明要回来改").toContain("buf: string");
+    expect(pg!, "面板那份是 .mjs，不该出现 TS 类型标注").not.toContain("buf: string");
+    expect(gw).not.toBe(pg);
+  });
+});

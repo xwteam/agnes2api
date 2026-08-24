@@ -2,7 +2,12 @@ import { it, expect } from "vitest";
 import { IS_WORKERD } from "../helpers/is-workerd.js";
 
 /**
- * **`.dev.vars` 存在时，`pnpm test:workers` 必须当场红。**
+ * **`.dev.vars` 往 workerd 的 `env` 里多带进一个绑定名时，`pnpm test:workers` 必须当场红。**
+ *
+ * ⚠️ **这句话的边界写在这里，别读成「文件存在就红」**（下面「它做不到什么」那段是同一条）：
+ * 判据看的是**键名集合**，所以空 `.dev.vars`、或者里面只写了一个与 KV 绑定同名的
+ * `POOL=x`（撞名覆盖），文件确实存在却**全绿**。五份 DEPLOY.md 上一版写的是
+ * 「会在它**存在**时当场红」，比机器强，阶段 D 回填时五份一起改准了。
  *
  * 成因逐层是这样的：`@cloudflare/vitest-pool-workers` 起 workerd 之前会调
  * `wrangler.unstable_getMiniflareWorkerOptions(...)` 把 `wrangler.toml` 翻译成
@@ -61,9 +66,14 @@ if (IS_WORKERD) {
     const names = all.filter((k) => !k.startsWith(POOL_INTERNAL_PREFIX));
     expect(
       names,
-      "多出来的绑定来自仓库根目录的 `.dev.vars`：@cloudflare/vitest-pool-workers 调 wrangler 时"
-      + "不传 envFiles，那个文件会被无退出口地读进 workerd 的 env，而 CI 上没有这个文件"
-      + " ⇒ 本地绿 / CI 红。出路：跑测试前 `mv .dev.vars .dev.vars.off`。"
+      "env 里出现了不该有的绑定名。**先看仓库根目录有没有 `.dev.vars`：**"
+      + "\n· **有** ⇒ 它被读进来了：@cloudflare/vitest-pool-workers 调 wrangler 时不传 envFiles，"
+      + "那个文件会被无退出口地读进 workerd 的 env，而 CI 上没有这个文件 ⇒ 本地绿 / CI 红。"
+      + "出路：跑测试前 `mv .dev.vars .dev.vars.off`。"
+      + "\n· **没有** ⇒ 出路不在那个文件上（CI 上就是这一支，`.gitignore` 里有它，checkout 里永远没有）。"
+      + "多出来的绑定要么是 wrangler.toml 里新加的合法绑定——回来把这份期望同步一下即可；"
+      + "要么是 pool 升级换了内部绑定的命名——那时下面「前缀豁免不是死条款」那一格会**同时红**，"
+      + "以它那条报文为准，别照着上面那句去改一个不存在的文件。"
       + "\n⚠️ 别把这条断言放宽成「不含某几个名字就行」——那样它就只剩下今天这一个已知形态，"
       + "明天多写一个变量名它照样静默。少掉 POOL 则是另一回事：wrangler.toml 的 KV 绑定被改了名，"
       + "改名是合法动作，回来同步这份期望即可。",
@@ -92,10 +102,16 @@ if (IS_WORKERD) {
   });
 } else {
   it("本文件按设计只在 node 下不跑真断言 —— node 侧读不到 cloudflare:test 的 env", () => {
-    // 这一格不是凑数：没有它，`IS_WORKERD` 写坏时本文件在**两份配置下都一格不跑**，
-    // 而两条 EXIT 都是 0（本仓 `--reporter=basic` 空跑那一族的同型）。
-    // 判据本身的正向防线在 `tests/workers-setup.ts`，那边只在 workerd 侧生效；
-    // 这一格是它在 node 侧的对偶。
+    // 这一格是「本文件在 node 侧也留下一条真断言」，不是凑数——但它**能挡的东西比上一版
+    // 写的窄得多**，阶段 D 回填时订正：
+    // ⚠️ 上一版写的是「没有它，`IS_WORKERD` 写坏时本文件在两份配置下都一格不跑，
+    // 而两条 EXIT 都是 0」——**两句都被实测证伪**：把 `tests/helpers/is-workerd.ts` 的 UA
+    // 判据改坏，workers 侧 `tests/workers-setup.ts` 当场抛错、**EXIT=1**；而造一个没有任何
+    // `it()` 的契约测试文件，vitest 自己就报 `No test suite found in file …`、**EXIT=1**。
+    // 而且那句话与它下一句「正向防线在 `tests/workers-setup.ts`」自相矛盾。
+    // ⇒ 实话是：`IS_WORKERD` 被写坏时**这一格自己是绿的**，对该故障零检出；
+    // 真正的正向防线在 `tests/workers-setup.ts`（只在 workerd 侧生效），这一格是它在
+    // node 侧的对偶——它保证的只是「本文件在 node 侧不是一个空文件」。
     expect(IS_WORKERD).toBe(false);
   });
 }

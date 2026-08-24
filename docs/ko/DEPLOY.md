@@ -650,7 +650,9 @@ npx wrangler dev
 ⚠️ 이 파일은 `pnpm test:workers`가 무조건 workerd의 `env`로 읽어 들입니다
 (`@cloudflare/vitest-pool-workers`가 wrangler를 호출할 때 `envFiles`를 넘기지 않습니다).
 CI에는 이 파일이 없으므로 테스트 전에 `mv .dev.vars .dev.vars.off` 를 실행하세요.
-이 파일이 있는 동안에는 저장소의 어서션 한 칸이 즉시 빨간불이 됩니다.
+이 파일이 **`env`에 바인딩 이름을 하나 더 들여오는 순간** 저장소의 어서션 한 칸이 즉시
+빨간불이 됩니다——판정 기준은 키 이름 집합이므로, 빈 파일이거나 KV 바인딩과 같은 이름인
+`POOL`만 적은 경우에는 빨간불이 되지 않습니다.
 
 ## Docker
 

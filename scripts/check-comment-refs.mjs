@@ -148,20 +148,52 @@ const NAME_ANCHOR_RE = new RegExp(
 const TEST_FILE_RE = /(tests\/[A-Za-z0-9_./-]*\.test\.ts)(:\d+)?/g;
 
 /**
- * `flat` 里 `target` 后面紧跟的那些 `「…」`，**全部返回**（同一块注释里可能提到
- * 同一个文件好几次，每一次都可能带自己的锚）。
+ * 一条路径后面**接着往下连**的锚：`X.test.ts「甲」与「乙」`、`……「甲」、「乙」`。
+ *
+ * ⚠️ **连接词收得很窄，只认纯并列词**（`与` / `和` / `、` / `以及` / `及` / `+`）。
+ * 放宽成「后面任何一处引文」会当场误伤：本仓大量写
+ * `X.test.ts「用例名」——它只断言「不该被判 401」` 这种形态，后半个引文是**一句话**、
+ * 不是用例名，收进来就是假红。**宁可漏一种连写法，也不许让这道门禁开始误报**
+ * ——它一误报，下一步就是有人给它开豁免名册（同 `topLevelLinesInJsdoc` 上方那条口径）。
+ */
+const CHAINED_ANCHOR_RE = new RegExp(
+  `^\\s*(?:与|和|、|以及|及|＋|\\+)\\s*${ANCHOR_CONNECTOR}\\s*[「『"“]([^」』"”]+)[」』"”]`,
+);
+
+/**
+ * `flat` 里 `target` 后面跟着的那些 `「…」`，**全部返回**。
+ *
+ * 两种「不止一个锚」的形态都要收：
+ * · **同一块里多次提同一个文件**，每一次各带自己的锚（外层 `for`）；
+ * · **一次提及后面连着写好几个锚**（`X.test.ts「甲」与「乙」`，内层 `for`）。
  *
  * ⚠️ **第一版只返回第一个，那是一条静默漏报**：同块里第二个及以后的锚**从不校验**。
  * 最小复现——同一块注释里两次提同一个测试文件，第一个锚真、第二个锚**完全编造**
  * ⇒ `EXIT=0`；两者顺序对调 ⇒ `EXIT=1`。**同一段话，锚的先后决定查不查**。
  * 实测本仓当时就有 2 条带断言性措辞的活逃逸（`src/core/dispatcher.ts` 与
  * `tests/contract/admin-auth.test.ts` 各一条）。
+ *
+ * ⚠️⚠️ **第二版（外层 `for`）只治了第一种形态，第二种从 P3e 阶段 D 一直漏着，本轮补上。**
+ * 那一版只校验**紧跟在路径之后**的那一个锚（`NAME_ANCHOR_RE` 带 `^` 锚定），
+ * 于是「一条路径 + 两个并列锚」里第二个锚**无人校验**，而它**看起来是带路径的**
+ * ——比裸文件名那种漏法更阴险。实测（P3e 阶段 D 回填）：把
+ * `admin-ui/js/pure/playground.mjs` 那段里**第二个**锚指向的用例名改掉 ⇒ **EXIT=0，横幅照打**；
+ * 反向控制改**第一个**锚 ⇒ **EXIT=1 并点名**。本仓当时另有 1 条活逃逸
+ *（`admin-ui/js/gw-api.js` 的第二个锚），补完之后它是绿的——绿的原因见 `anchorMatches()`
+ * 里那条反引号订正，那才是它当时真正的问题。
  */
 function nameAnchorsAfter(flat, target) {
   const out = [];
   for (let i = flat.indexOf(target); i !== -1; i = flat.indexOf(target, i + 1)) {
-    const m = NAME_ANCHOR_RE.exec(flat.slice(i + target.length).replace(/^:\d+/, ""));
-    if (m) out.push(m[1]);
+    let rest = flat.slice(i + target.length).replace(/^:\d+/, "");
+    const m = NAME_ANCHOR_RE.exec(rest);
+    if (m === null) continue;
+    out.push(m[1]);
+    rest = rest.slice(m[0].length);
+    for (let c = CHAINED_ANCHOR_RE.exec(rest); c !== null; c = CHAINED_ANCHOR_RE.exec(rest)) {
+      out.push(c[1]);
+      rest = rest.slice(c[0].length);
+    }
   }
   return out;
 }
@@ -179,7 +211,14 @@ function anchorMatches(target, anchor, mustNameACase) {
   // **比对前把空白全部抠掉。** 注释里的长名字必然被折行，折行处 `flatten` 会留下
   // 一个空格，而源文件里那一处没有——不抠的话，凡是跨行写的锚都会假红，
   // 那就是量具坏了（本仓登记的"判据建在缺陷没采取的那个形态上"的近亲）。
-  const squash = (x) => x.replace(/\s+/g, "");
+  //
+  // ⚠️ **反引号也要一起抠掉，而且这一条是补的（P3e 阶段 D）**：`flatten()` 已经把注释
+  // 那一侧的反引号全删了，而干草堆这一侧（`testTitles()` 读的是源文）**留着它们**。
+  // 于是凡是用例名里带反引号的锚一律匹配不上——**两侧口径不一致，那就是量具坏了**。
+  // 它一直没发作，只是因为唯一踩中它的那处正好是一个「第二个锚」、当时无人校验
+  //（`admin-ui/js/gw-api.js` 的「没有任何调用方给 api.* 传含 `..` 或以 http 开头的 path」）。
+  // 把 `nameAnchorsAfter()` 补成认得连写锚的那一刻，它当场变成一条假红。
+  const squash = (x) => x.replace(/[\s`]+/g, "");
   const parts = anchor.split(/…+|\.{3,}/).map((p) => squash(p)).filter(Boolean);
   const hit = (hay) => {
     let at = 0;

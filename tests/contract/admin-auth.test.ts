@@ -1119,8 +1119,16 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * 拷贝，加端点时两处要同步改，迟早分叉。
    *
    * 为什么不是「遍历全量端点打 HTTP 看非 404」：好几条端点对不存在的资源**合法地**
-   * 回 404（`DELETE /admin/api/keys/:id`、`GET /admin/api/usage/:date` —— 上面那张
-   * `PROBE` 表里刻意用不存在的 id 正是这个原因），「非 404」不能当判据。
+   * 回 404（`DELETE /admin/api/keys/:id`、`GET /admin/api/keys/:id/usage` —— 上面那张
+   * `PROBE` 表 `:974` 里刻意用不存在的 id 正是这个原因），「非 404」不能当判据。
+   *
+   * ⚠️ **上一版这里把 `GET /admin/api/usage/:date` 举成 404 的例子，那是假话，
+   * 阶段 D 回填时实测订正**：`src/http/admin/handlers/usage.ts` 的 `usageDateHandler`
+   * 根本没有 404 这条路——日期解析不开是 **400**，解析得开但没数据/超出保留期是
+   * **200 + `note`**。而且它与上面 `PROBE` 表 `:975-976` 自己写的
+   * 「**必须用一个真的解析得开的 UTC 日期串**：占位串会在 handler 第一行就被 400 挡掉」
+   * 正好说反。该文件里真的会 404 的是 `keyUsageHandler`（「没有这把 key」），
+   * 也就是 `GET /admin/api/keys/:id/usage` 这条。
    *
    * 为什么下标算得准：实测 Hono 4.13.2 的 `app.routes` **保序**，下标与注册顺序
    * 逐条对应（本任务把整张表打印出来，与 `src/http/admin/router.ts` 里那串
@@ -1135,6 +1143,12 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * `admin.use("/admin/api/x/*", handler)` 这一格看不见 —— 那个方向由上面
    * `EXPECTED_MIDDLEWARE` 那张快照接（它把全部 `ALL` 条目双向钉死）。
    * 两格合起来才是完整的，各自都不是。
+   *
+   * ⚠️ **filter 的前缀写的是 `" /admin/api"`，没有尾斜杠，这是订正过的**（阶段 D 回填）：
+   * 上一版写成 `" /admin/api/"`，于是一条 `admin.get("/admin/api", …)`（无尾斜杠、
+   * 形状完全合法）**整格不可见**——实测把它挂在静态兜底之后并补进 `EXPECTED`，
+   * 本文件 69 格全绿。去掉尾斜杠之后干净树上的条目数一个都没变，
+   * 覆盖面只增不减。**「它接不住的那一半」上一版只写了 `ALL` 那个方向，漏了这个。**
    *
    * ⚠️ **三条断言的次序与需求书给的相反，理由是实测出来的报文差异，不是口味**：
    * 需求书把「条目数 = 22」那格放在最前。需求书点名的那个失效形态是「在静态兜底
@@ -1155,7 +1169,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
 
     const apis = routes
       .map((r, i) => ({ i, label: `${r.method} ${r.path}` }))
-      .filter((r) => r.label.includes(" /admin/api/") && !r.label.startsWith("ALL "));
+      .filter((r) => r.label.includes(" /admin/api") && !r.label.startsWith("ALL "));
 
     expect(apis.filter((r) => r.i > staticIdx).map((r) => r.label),
       "有 /admin/api/* 端点注册在静态兜底之后 —— 它恒 404").toEqual([]);
@@ -1171,7 +1185,86 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // （`tests/unit/docs-parity.test.ts「第一版在这里又踩了一次同类的坑」` 那段记着它为什么不行）。
     // ⚠️ **Task 31 会新增两条端点 ⇒ 这个数要改成 24。改数字不是削弱，是它在按设计工作。**
     // 它排在上面两格之后的理由见本格上方的 docblock 最后一段。
-    expect(apis.length, "扫到的 /admin/api/* 条目数不对，filter 多半写坏了，或者有人加/删了端点没回来改这个数").toBe(22);
+    //
+    // ⚠️⚠️ **报文里那句「先确认没被前面更宽的模式吃掉」不是客套话，它是一条实测出来的
+    // 死路的出口**（阶段 D 回填，变异 X1）：在 `src/http/admin/router.ts` 的
+    // `usage/:date` **之后**追加 `admin.get("/admin/api/usage/summary", …)`（往一节末尾
+    // 追加是最自然的写法），照本格的两条报文补 `EXPECTED`、把 22 改成 23
+    // ⇒ **本文件当时 69 格全绿**，而那条端点恒回 400
+    //（`date 必须是 UTC 的 YYYY-MM-DD，收到的是：summary`）。三层同时瞎：位置格看的是
+    // 「相对 adminAuth / 静态兜底」，窗口**内部**它无话可说；本格只说「改这个数」；
+    // 鉴权矩阵逐字写着「400 之类不在本矩阵的断言范围内」。
+    // ⇒ 下面新增的那一格（窗口内更宽的模式不许排在更窄的之前）才是真正接住它的网，
+    // 本格的报文只负责**把人指过去**。
+    expect(apis.length,
+      "扫到的 /admin/api/* 条目数不对。**先确认新端点没有被前面更宽的模式吃掉**"
+      + "（下面那格「窗口内更宽的模式不许排在更窄的之前」会逐条点名），"
+      + "再改这个数：filter 写坏了、或者有人加/删了端点没回来改它，都会落到这一句上",
+    ).toBe(22);
+  });
+
+  /**
+   * ── 窗口**内部**的相对顺序：更宽的模式不许排在更窄的之前 ──────────────────────
+   *
+   * **防住的真实故障（实测，不是推的）**：往 `src/http/admin/router.ts` 某一节的末尾
+   * 追加一条形状完全合法的新端点，而那一节前面已经有一条更宽的单段通配把它盖住。
+   * Hono 按注册顺序匹配，于是新端点**永远轮不到**——请求落在前面那条 handler 上，
+   * 表现是一个**看起来合理的 400/200**，不是 404，没有任何一层会说「你放错位置了」。
+   *
+   * **上面那一格接不住这个方向**：它的两个锚点是 `adminAuth` 与静态兜底，
+   * 判的是「有没有落在窗口外」；窗口内部谁先谁后，它一个字都没说。
+   * 鉴权矩阵也接不住：它只断言「不该被判 401」，被吃掉之后拿到的 400 **照过**
+   *（那句边界就写在矩阵那一格的循环里，是有意的，不是漏）。
+   *
+   * **判据同样只从 `app.routes` 派生，不写第二份路由清单**：
+   * 对每一条端点，把它的 `:param` 段换成一个不会与任何字面段相等的探针串，得到一条
+   * 「只有它自己该匹配」的具体路径；再看**排在它前面**的同方法端点里有没有谁的模式
+   * 也能匹配这条路径。有 ⇒ 后者恒不可达。加端点、删端点、改路径都自动跟得上。
+   *
+   * ⚠️ **它接不住的那一半，明写**：
+   * · 只比**同一个方法**的两条。Hono 先按方法分流，`GET` 不会吃掉 `POST`。
+   * · 只看 `/admin/api` 这一族（与上面那格同一个 filter）；网关侧 `/v1/*` 不在射程。
+   * · 只认 `:param` 与 `*` 这两种通配。Hono 还支持正则参数（`:id{[0-9]+}`）与可选段，
+   *   本仓今天一条都没有——真加了，探针串可能凑巧匹配得上而这一格静静放行。
+   * · 它说的是「**不可达**」，不是「顺序不合理」。两条都能被打到、只是优先级不同的
+   *   情形（例如同一条路径注册两次）不在这里判。
+   */
+  it("窗口内更宽的模式不许排在更窄的之前 —— 被吃掉的那一条恒不可达，而它只会回一个看起来合理的 400", async () => {
+    const { app } = await makeApp([], [], {}, () => 1_000);
+    const apis = app.routes
+      .map((r, i) => ({ i, method: r.method, path: r.path, label: `${r.method} ${r.path}` }))
+      .filter((r) => r.label.includes(" /admin/api") && !r.label.startsWith("ALL "));
+
+    // 探针串：一个**不可能**与任何字面段相等的段。用它替换 `:param`，得到的路径
+    // 「除了这条端点自己，谁都不该匹配」——除非前面真有一条更宽的通配。
+    const PROBE_SEG = "__wider_probe__";
+    const concrete = (path: string) =>
+      path.split("/").map((s) => (s.startsWith(":") || s === "*" ? PROBE_SEG : s)).join("/");
+    /** 把注册模式编译成正则：`:param` / `*` 各吃一段，其余按字面。 */
+    const matcher = (path: string) => new RegExp(
+      "^" + path.split("/")
+        .map((s) => (s.startsWith(":") || s === "*" ? "[^/]+" : s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+        .join("/") + "$",
+    );
+
+    const shadowed = apis.flatMap((later, n) =>
+      apis.slice(0, n)
+        .filter((earlier) => earlier.method === later.method
+          && earlier.path !== later.path
+          && matcher(earlier.path).test(concrete(later.path)))
+        .map((earlier) => `${later.label} 被前面的 ${earlier.label} 吃掉`));
+
+    expect(shadowed,
+      "这些端点排在一条更宽的模式之后，Hono 永远轮不到它们 —— 现场表现是"
+      + "「拿对口令、返回一个看起来合理的 400/200」，不是 404，四条现有的护栏一格都不会红。"
+      + "出路：把更窄的那条挪到更宽的那条**之前**（`src/http/admin/router.ts` 里"
+      + "`bulk` vs `:id`、`channels/:c/test` vs `tend` 都是照这个规矩排的）",
+    ).toEqual([]);
+
+    // 自检：探针本身必须真的在干活。窗口里今天就有带 `:param` 的端点，
+    // 少了这一行，`concrete()` 哪天退化成恒等函数、上面那格会静静恒绿。
+    expect(apis.filter((r) => r.path.includes("/:")).length,
+      "窗口里一条带 :param 的端点都没有了 —— 上面那格已经无事可做，回来重新看它").toBeGreaterThan(0);
   });
 
   it("三个安全域在矩阵里都真的出现了（否则矩阵是残缺的）", async () => {

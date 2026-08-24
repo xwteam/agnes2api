@@ -547,7 +547,9 @@ npx wrangler dev
 
 ⚠️ 這個檔案會被 `pnpm test:workers` 無條件讀進 workerd 的 `env`
 （`@cloudflare/vitest-pool-workers` 呼叫 wrangler 時不傳 `envFiles`），而 CI 上沒有它
-⇒ 跑測試前先 `mv .dev.vars .dev.vars.off`。倉庫裡有一格斷言會在它存在時當場紅。
+⇒ 跑測試前先 `mv .dev.vars .dev.vars.off`。倉庫裡有一格斷言會在它**往 `env` 裡多帶進
+一個繫結名**時當場紅——判據看的是鍵名集合，所以空檔案、或者只寫了與 KV 繫結同名的
+`POOL`，都不會紅。
 
 ## Docker
 
