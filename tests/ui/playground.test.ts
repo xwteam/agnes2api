@@ -543,6 +543,93 @@ describe("SSE 帧切分：跨 chunk 的那条 data 行", () => {
 });
 
 /**
+ * ── **P3e Task 11：CRLF 换行下的「增量」** ──────────────────────────────────
+ *
+ * ⚠️⚠️ **单块喂是零鉴别力的，这一整组的支点就是「不许单块喂」。**
+ * 把一整段 CRLF 字节**一次**喂进来的话，`js/gw-api.js` 收尾那句
+ * `sseFrames(`${buf}\n\n`)` 会把整个缓冲区当成最后一帧再切一次，
+ * 而那一帧按 `\n` 拆行、`\r` 由既有的 `.trim()` 吃掉 ⇒ **全部负载照样出得来**，
+ * LF 与 CRLF 的输出**逐字相等、恒绿**。⇒ 往上面那张单块表里加一行 CRLF 样本
+ * 是本仓明令禁止的那种断言：它对这条缺陷一个字都说不出来。
+ *
+ * ⇒ **观测点改成「第几次调用交出了几条」**，也就是把断言建在**增量**上而不是
+ * 单块的总量上。CRLF 下真实的失败形态是三句话（全部实测，见 `sseFrames()` 上方）：
+ * ① 全部内容延迟到流末一次性出现；② 全流无界缓冲；③ **中途断流时丢 100%**。
+ * 前两句都只在「分两次以上喂」时才可观测，第三句只在「收尾那一句不跑」时才可观测。
+ */
+describe("SSE 帧切分：CRLF 换行下的增量", () => {
+  /**
+   * `js/gw-api.js` 的 `streamFromGateway()` 那个读流循环，**去掉收尾那一句**。
+   *
+   * 它模拟的是那个函数的 `catch` 路径：连接被中途掐断时，
+   * `for (const p of sseFrames(`${buf}\n\n`).payloads) onPayload(p);` **根本不跑**
+   *（`throw new GatewayError("stream_error")` 从循环里直接跳出去了）。
+   * ⇒ 这时候「已经交给 `onPayload` 的有几条」就是运维在屏幕上真正看到的东西。
+   *
+   * `chunkSize` 故意取一个会把 data 行拦腰切开的小值：跨块切分与 CRLF 是两件事，
+   * 一起喂才更接近真实网络（MTU / TLS record / 反代刷新点都在乱切）。
+   */
+  function drainWithoutFinalFlush(wire: string, chunkSize = 7): string[] {
+    const out: string[] = [];
+    let buf = "";
+    for (let i = 0; i < wire.length; i += chunkSize) {
+      buf += wire.slice(i, i + chunkSize);
+      const found = sseFrames(buf);
+      buf = found.rest;
+      for (const p of found.payloads) out.push(p);
+      if (found.done) break;
+    }
+    return out;
+  }
+
+  /**
+   * **防住的真实故障**：上游或中间某一层把行尾改写成 CRLF ⇒ 一帧都切不出边界
+   * ⇒ 面板上**等很久、然后整段一次性出现**，而「流式」开关仍然显示开着。
+   *
+   * **变红条件**：把 `sseFrames()` 里认 `\r\n\r\n` 的那一支撤掉（报告变异表 M2）。
+   */
+  it("CRLF：字节分两次喂，第一次调用就必须交出第一条负载 —— 攒到流末才出等于流式退化成一次性", () => {
+    const first = sseFrames('data: {"a":1}\r\n\r\ndata: {"b":2}\r\n');
+    expect(first.payloads.length, "CRLF 下第一拍就该交出第一条（修之前是 0）").toBeGreaterThanOrEqual(1);
+    // 交出来的必须是**第一条**本身，而不是「凑巧有一条」：负载逐字写死。
+    expect(first.payloads, "第一拍交出来的不是第一条负载").toEqual(['{"a":1}']);
+    // 第二条还没凑齐（结尾只有一个 `\r\n`），必须原样留在尾巴里等下一块。
+    expect(first.rest, "没凑齐的第二条被提前交出去、或者被丢了").toBe('data: {"b":2}\r\n');
+  });
+
+  /**
+   * **反向控制**：同一套装置喂 LF **今天就必须绿**。
+   * 少了这一格，上面那一格红了也分不出是「CRLF 真的坏了」还是「这套装置恒红」
+   *（本仓登记的第 4 种假阳性）。**用的是仓里真实在跑的那种字节**，不是自造形状。
+   */
+  it("反向控制：同一套装置喂 LF 今天就必须绿 —— 它证明这套装置不是恒红", () => {
+    const first = sseFrames('data: {"a":1}\n\ndata: {"b":2}\n');
+    expect(first.payloads.length).toBeGreaterThanOrEqual(1);
+    expect(first.payloads).toEqual(['{"a":1}']);
+  });
+
+  /**
+   * **防住的真实故障**：中途断流时 CRLF 丢 100%。
+   * LF 下已经交出去的那两条是运维**真的看见过**的半句话；CRLF 下它们一条都没交出去，
+   * 而收尾那一句在 `catch` 路径上不跑 ⇒ 整段内容凭空消失，面板上只剩一个 transport 错误。
+   *
+   * ⚠️ **锚点那一句 `toBe(2)` 不许省**：只写 `crlf.length === lf.length` 的话，
+   * 两边同时变成 0 也是绿的（拿一边的输出当另一边的期望，第 6 种假阳性）。
+   *
+   * **变红条件**：把 `sseFrames()` 里认 `\r\n\r\n` 的那一支撤掉（报告变异表 M2）。
+   */
+  it("断流那一档：收尾 flush 不跑时 CRLF 已交出的条数必须等于 LF —— 修之前 CRLF 丢 100%", () => {
+    const lf = drainWithoutFinalFlush('data: {"a":1}\n\ndata: {"b":2}\n\n');
+    // 手写字面量 2：这是这一格的非空转锚点，`lf` 自己先得真的交出两条来。
+    expect(lf.length, "LF 那一档就没交出两条，这一格整个是空转的").toBe(2);
+    const crlf = drainWithoutFinalFlush('data: {"a":1}\r\n\r\ndata: {"b":2}\r\n\r\n');
+    expect(crlf.length, "中途断流时 CRLF 丢了 100%").toBe(lf.length);
+    // 顺序与内容也得一样：只对条数的话，交出两条别的东西同样是绿的。
+    expect(crlf, "CRLF 交出来的负载与 LF 不是同一串").toEqual(lf);
+  });
+});
+
+/**
  * ── **P3d 全分支评审 F-1：两份 SSE 帧解析在 `[DONE]` 上到底对不对齐** ─────────────
  *
  * `js/pure/playground.mjs` 的 `sseFrames()` 文件头一直写着「两份实现共享同一套判据
@@ -562,6 +649,13 @@ describe("SSE 帧切分：跨 chunk 的那条 data 行", () => {
  * **变红条件（都实测过）**：把 `sseFrames()` 里那句 `return { payloads, rest: "", done: true }`
  * 改回 `{ done = true; continue; }` ⇒ 第 3、4 条样本当场红
  *（面板多交出 `[DONE]` 之后那一条）。
+ *
+ * ⚠️ **另一种改法只咬得动其中两条，实测记在这里（P3e Task 11 的 M3）**：
+ * 把那句里的 `rest: ""` 换成 `rest`（`[DONE]` 处把尾巴原样交回去）⇒
+ * 红的是「`[DONE]` 之后那一帧」与「`[DONE]` 打头」两条，
+ * **「同一帧里 `[DONE]` 之后还有 data 行」那条是绿的**——那一帧被消费时 `rest`
+ * 已经推到了帧尾，此刻它本来就是空串，这种改法在那条样本上不可观测。
+ * ⇒ **一条样本挡得住哪一种改法，逐条不同**；别拿「有一条红了」当成整张表都醒着。
  */
 describe("两份 SSE 帧解析在 [DONE] 上逐字对齐", () => {
   /** 网关那一份：把一段完整字节喂给 `parseSseStream()`，收集它 yield 出来的负载。 */

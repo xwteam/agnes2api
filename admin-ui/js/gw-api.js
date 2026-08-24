@@ -216,6 +216,14 @@ export async function streamFromGateway(req, token, opts) {
     // 流可能不以完整的空行结尾（连接中断、反代截断）。**把解码器里滞留的字节 flush 出来，
     // 再把剩下的当成最后一帧处理**，否则最后一个事件会被静默丢弃
     //（网关读上游那一侧 `src/core/protocol/sse.ts` 做的是同一件事，同一条理由）。
+    //
+    // ⚠️ **补一个 `\n\n` 对 CRLF 尾巴同样成立**：尾巴是 `…\r\n` 时接上这两个 `\n`
+    // 就凑出了一个 `\n\n` 边界，`\r` 由 `sseFrames()` 里那句 `.trim()` 吃掉。
+    // ⚠️⚠️ **但这一句只在正常读完时才跑**：下面 `catch` 那条路上它根本不跑
+    //（`throw` 从循环里直接跳出去）。P3e Task 11 之前 `sseFrames()` 不认 `\r\n\r\n`，
+    // 于是 CRLF 上游的全部负载都攒在 `buf` 里等着这一句来捞
+    // ⇒ **中途断流时一条都交不出去（实测 LF 2 条 / CRLF 0 条）**。
+    // ⇒ **这一句是兜底，不是分帧**；真正的分帧必须发生在上面那个循环里。
     buf += decoder.decode();
     for (const p of sseFrames(`${buf}\n\n`).payloads) onPayload(p);
   } catch (e) {

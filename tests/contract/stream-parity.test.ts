@@ -133,6 +133,100 @@ describe("流式：网关不整体缓冲（U-A 的回归网，不是它的证据
   });
 });
 
+/**
+ * ── **P3e Task 11：上游把行尾改写成 CRLF 时，流式还是不是流式** ────────────────
+ *
+ * **为什么必须写在 `tests/contract/` 而不是只写 `tests/unit/sse.test.ts`**：
+ * 「网关不整体缓冲」是一条**双运行时**性质，而 `tests/unit/**` 只有 node 那份配置
+ * 收集（`vitest.workers.config.ts` 的 `include` 只有 `tests/contract/**`）。
+ * 只写在 unit 里等于给这条性质**只装了一半网**。
+ *
+ * ⚠️ **这一组同样不给 U-A 结案**（理由见本文件开头那段）：`app.request()` 不经过
+ * 任何 HTTP 服务层。它守的是「Hono / 四条协议转换这一段在 CRLF 上游下仍然逐块交付」。
+ *
+ * ⚠️⚠️ **四条协议的观测对象不是同一个，如实写清**：
+ * · **anthropic / responses / gemini**：网关**解析**上游（`parseSseStream`）再合成
+ *   自己的事件，吐出去的字节恒为 LF ⇒ 这三行验的是**网关那份分帧**；
+ * · **openai**：`src/http/routes/openai.ts` 的 `if (stream && res.ok)` 那条**原样透传
+ *   上游字节**，CRLF 会一路穿到客户端 ⇒ 这一行验的是**面板那份分帧**
+ *  （`sseFrames`，也就是这一格用来观测的那把尺子本身）。
+ *   两份实现在这个任务里一起改，所以这一行照样有鉴别力——**红的时候看协议名就知道
+ *   是哪一份坏了**。
+ */
+describe("流式：上游换成 CRLF 换行时，第一个正文字仍然要在上游第二块之前到达", () => {
+  const TIMED_OUT = "__上游第二块还没来，客户端一个正文字都没拿到__";
+  const CLOSED_EARLY = "__流提前结束了，这一格的挂起点没建起来__";
+
+  /**
+   * 起一条「第一块已到、第二块**真的**卡在闸上、上游也不 close」的上游流，
+   * 返回客户端在**闸放开之前**拿到的第一段正文。
+   *
+   * ⚠️ **上游的行尾由 `nl` 决定，网关自己吐出去的永远是 LF**（`sseEvent()` 写死）。
+   * ⚠️ **赛跑而不是干等**：被整体缓冲时 `read()` 会一直挂着（闸永远不放），
+   * 干等的话这一格以「超时」形式失败，报错信息说不清是哪条性质坏了。
+   */
+  async function firstTextBeforeGate(p: (typeof PROTOCOLS)[number], nl: string): Promise<string> {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const upstream = new ReadableStream<Uint8Array>({
+      async start(c) {
+        // `start` 是 async 的：`await gate` 之前 enqueue 的这一块已经进了队列。
+        c.enqueue(encoder.encode(`data: ${JSON.stringify({ id: "c1", choices: [{ delta: { content: "甲" } }] })}${nl}${nl}`));
+        await gate;
+        c.enqueue(encoder.encode(`data: [DONE]${nl}${nl}`));
+        c.close();
+      },
+    });
+    const { app } = await makeApp([{ status: 200, body: upstream }], ["sk-stream-probe-0001"]);
+    const call = streamCall(p);
+    const res = await app.request(call.path, { method: "POST", headers: call.headers, body: call.body });
+    expect(res.status, `${p.id} 的流式请求没到 200`).toBe(200);
+    expect(res.body, `${p.id} 的流式响应必须有一个可读的 body`).not.toBe(null);
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    const timer = new Promise<string>((r) => { setTimeout(() => r(TIMED_OUT), 2000); });
+    let acc = "";
+    try {
+      for (;;) {
+        const step = await Promise.race([
+          reader.read().then((s) => (s.done ? CLOSED_EARLY : decoder.decode(s.value, { stream: true }))),
+          timer,
+        ]);
+        if (step === TIMED_OUT || step === CLOSED_EARLY) return step;
+        acc += step;
+        // **用面板那一份分帧 + 取值**（第 7 种假阳性：用例自己再写一遍，验的就是抄件）。
+        const { payloads } = sseFrames(acc);
+        const texts = payloads.map((line) => deltaText(p, line)).filter((t) => t !== null && t !== "");
+        if (texts.length > 0) return texts.join("");
+      }
+    } finally {
+      release();
+      await reader.cancel().catch(() => {});
+    }
+  }
+
+  /**
+   * **防住的真实故障**：上游或中间某一层（反代）把行尾改写成 CRLF，四条协议
+   * **全部 200、字节也全都到得了**，只是全都攒到上游关闭那一刻才一次性出现
+   * ——面板上「流式」开关仍然显示开着，而屏幕是空的；中途断流就是 100% 丢失。
+   *
+   * **变红条件（逐条实测过，见报告变异表 M1 / M2）**：把
+   * `src/core/protocol/sse.ts` 或 `admin-ui/js/pure/playground.mjs` 里认
+   * `\r\n\r\n` 的那一支撤掉。
+   */
+  it.each(
+    PROTOCOLS.flatMap((p) => [
+      [`${p.id} · CRLF`, p, "\r\n"] as const,
+      // **反向控制**：同一套闸喂 LF 今天就必须绿。少了它，CRLF 那一行红了
+      // 分不出是「CRLF 真的坏了」还是「这套闸本身让谁都过不去」。
+      [`${p.id} · LF（反向控制）`, p, "\n"] as const,
+    ]),
+  )("%s：上游第二块还没 enqueue，第一个正文字就该已经到了客户端", async (_label, p, nl) => {
+    expect(await firstTextBeforeGate(p, nl)).toBe("甲");
+  });
+});
+
 describe("流式：协议目录的 streamTextPath 与网关真吐出去的字节对得上", () => {
   /**
    * ⚠️⚠️ **这一格是新增那一格真源（`streamTextPath`）的立身之本。**

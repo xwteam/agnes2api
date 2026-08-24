@@ -10,6 +10,34 @@ function extractPayloads(block: string): { payloads: string[]; done: boolean } {
 }
 
 /**
+ * 一帧的边界 = **一个空行**，`\n\n` 与 `\r\n\r\n` 两种都认。
+ *
+ * ⚠️ **为什么必须认 CRLF**：网关自己发的是 `\n\n`，但**上游不归我们管**——
+ * 上游或中间任何一层反代把行尾改写成 CRLF 时，只认 `\n\n` 的话
+ * `indexOf` 永远找不到边界，于是这条流会一路攒到上游关闭，
+ * 由本函数收尾那次 flush 一次性交出全部负载。**失败形态是「退化成一次性 +
+ * 全流无界缓冲」，不是「一条都读不出来」**（实测），而中途断流时收尾那次
+ * flush 根本不跑 ⇒ **已经该交出去的负载 100% 丢失**。
+ *
+ * ⚠️ **只认这两种，不认裸 `\r`**（EventSource 规范里 CR 单独也算换行）：
+ * 本仓至今没有见过只发裸 CR 的上游，而多认一种就要多一条没有真实样本
+ * 支撑的分支。**如实登记，不假装它是完备的 SSE 实现。**
+ *
+ * ⚠️ **取两者里靠前的那一个**，不是「先找 LF 找不到再找 CRLF」：
+ * 同一段缓冲里两种行尾混着出现（换代理、断点续传）时，
+ * 后者会把中间整段当成一帧，帧边界就错位了。
+ *
+ * ⚠️ **行内那个 `\r` 由既有的 `.trim()` 吃掉，不许再加第二次 trim**——
+ * 那会把负载正文里合法的前后空白也一起吃掉。
+ */
+function frameEnd(buf: string): { idx: number; len: number } | null {
+  const lf = buf.indexOf("\n\n");
+  const crlf = buf.indexOf("\r\n\r\n");
+  if (crlf !== -1 && (lf === -1 || crlf < lf)) return { idx: crlf, len: 4 };
+  return lf === -1 ? null : { idx: lf, len: 2 };
+}
+
+/**
  * @param signal 可选。用于带外中断一次正阻塞在 reader.read() 上、上游还没
  *   发下一个字节的读取。不能指望调用方对本函数返回的异步生成器调用
  *   `.return()` 来打断它：`.return()` 会排在已经在飞行中的 `.next()`
@@ -43,10 +71,10 @@ export async function* parseSseStream(
       if (done) break;
       buf += decoder.decode(value, { stream: true });
 
-      let idx: number;
-      while ((idx = buf.indexOf("\n\n")) !== -1) {
-        const block = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
+      let end: { idx: number; len: number } | null;
+      while ((end = frameEnd(buf)) !== null) {
+        const block = buf.slice(0, end.idx);
+        buf = buf.slice(end.idx + end.len);
         const found = extractPayloads(block);
         for (const p of found.payloads) yield p;
         if (found.done) return;

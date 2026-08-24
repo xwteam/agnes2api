@@ -291,6 +291,24 @@ export function tokenHintState(token, hint) {
 }
 
 /**
+ * 一帧的边界 = **一个空行**，`\n\n` 与 `\r\n\r\n` 两种都认。
+ *
+ * ⚠️ **与网关那份（`src/core/protocol/sse.ts` 的 `frameEnd`）逐字同判据**，
+ * 理由全文写在那边，这里不再抄一遍——两处各写一份理由，漂了没人会发现。
+ *
+ * ⚠️ **取两者里靠前的那一个**，不是「先找 LF 找不到再找 CRLF」：
+ * 同一段缓冲里两种行尾混着出现时，后者会把中间整段当成一帧，帧边界就错位了。
+ *
+ * @returns `{ idx, len }`：帧结束的下标与那个空行占几个字符；没凑齐时是 `null`。
+ */
+function frameEnd(buf) {
+  const lf = buf.indexOf("\n\n");
+  const crlf = buf.indexOf("\r\n\r\n");
+  if (crlf !== -1 && (lf === -1 || crlf < lf)) return { idx: crlf, len: 4 };
+  return lf === -1 ? null : { idx: lf, len: 2 };
+}
+
+/**
  * 一条 SSE 帧流的切分。**入参是「到目前为止攒下的字节」，出参带着「还没凑齐的尾巴」。**
  *
  * ⚠️⚠️ **必须自己处理跨块切分，不许拿 chunk 边界当事件边界。**
@@ -301,18 +319,34 @@ export function tokenHintState(token, hint) {
  * 由 `tests/ui/playground.test.ts` 的
  * 「一条 data 行被拆在两个 chunk 里仍被正确重组 —— 按 chunk 边界切的话生产上会偶发丢字」钉着。
  *
- * ⚠️⚠️ **只认 `\n\n`，不认 `\r\n\r\n`——而失败形态是「完全静默」，不是「降级」**（评审 F7）。
- * 网关自己发的是 `\n\n`（同源强制，中间只可能有反代）。**若哪天中间某一层把换行
- * 重写成 CRLF**，本函数会一帧都切不出来 ⇒ `payloads` 恒空 ⇒ **对话框永远空白，
- * 而 `malformed` 恒为 0**——**恰好是 `deltaText()` 那三态刻意要防的那种输出形状**
- *（既不显示内容、也不报告任何异常）。**今天没有已知的反代会重写换行，但这句话是
- * 「没查到反例」而不是「查证过不会」。** 登记 P3e。
+ * ⚠️⚠️ **`\n\n` 与 `\r\n\r\n` 两种边界都认（P3e Task 11 补的）。**
+ * 网关自己发的是 `\n\n`，但 openai 那条协议**原样透传上游字节**
+ *（`src/http/routes/openai.ts` 的 `if (stream && res.ok)`），中间还可能有反代
+ * ——**行尾不归本函数管**。
+ *
+ * ⚠️⚠️ **上一版这里写的失败形态逐字为假，P3e 实测推翻**：原文说「一帧都切不出来
+ * ⇒ `payloads` 恒空 ⇒ 对话框永远空白，而 `malformed` 恒为 0」。
+ * 实测到的是**另外三句话**：
+ * ① **全部内容延迟到流末一次性出现**——`js/gw-api.js` 收尾那句
+ *    `sseFrames(`${buf}\n\n`)` 会把整个缓冲区当成最后一帧再切一次，
+ *    而那一帧按 `\n` 拆行、行尾的 `\r` 由下面那句 `.trim()` 吃掉
+ *    ⇒ **负载一条都不少，只是全都挤在最后一拍**（对话框不是空白，是「等很久然后整段蹦出来」）；
+ * ② **全流无界缓冲**——切不出边界的字节全留在 `rest` 里，一路攒到流末；
+ * ③ **中途断流时丢 100%**——`streamFromGateway()` 的 `catch` 路径上收尾那一句
+ *    根本不跑，于是 LF 下已经交出去的负载（实测 2 条）在 CRLF 下是 **0 条**。
+ * ⇒ 真正被毁掉的是**流式本身**（退化成一次性）和**断流时的已交付内容**，
+ * 不是「显示不出来」。**三句话都由**
+ * `tests/ui/playground.test.ts`「断流那一档：收尾 flush 不跑时 CRLF 已交出的条数必须等于 LF —— 修之前 CRLF 丢 100%」
+ * 与「CRLF：字节分两次喂，第一次调用就必须交出第一条负载 —— 攒到流末才出等于流式退化成一次性」
+ * **两格钉着**（**必须分两次以上喂**：单块喂时 ① 那条收尾语句会把两种行尾的输出捞成逐字相等 ⇒ 恒绿）。
  *
  * ⚠️ **这是本仓第二份 SSE 帧解析**（第一份是 `src/core/protocol/sse.ts` 的
  * `extractPayloads`，那是网关读**上游**用的）。**如实登记，但它不归全局约束 15 管**：
  * 那条约束管的是「怎么调**这个网关**」（端点路径、请求体形状、协议名），
  * 而 SSE 的帧格式是 W3C 那份 EventSource 规范，不是本网关的知识。
- * 两份实现共享同一套判据（`data:` 前缀、`\n\n` 分帧、`[DONE]` 终止），是刻意对齐的。
+ * 两份实现共享同一套判据（`data:` 前缀、`\n\n` / `\r\n\r\n` 分帧、`[DONE]` 终止），是刻意对齐的。
+ * ⚠️ **两份都得改**：P3d 全分支评审已经因为它们在 `[DONE]` 上分叉记过一条 HIGH，
+ * 而 CRLF 这条同样是两边各写一遍的判据——只改一边，分叉就又回来了。
  *
  * ⚠️⚠️ **「`[DONE]` 终止」这句话一度是假的，本轮才改真**（P3d 全分支评审 F-1，实测）。
  * 上一版见到 `[DONE]` 只是 `done = true` 然后 **`continue`**，接着把同一个缓冲区里
@@ -341,14 +375,16 @@ export function tokenHintState(token, hint) {
 export function sseFrames(buffer) {
   const payloads = [];
   let rest = typeof buffer === "string" ? buffer : "";
-  let idx;
-  while ((idx = rest.indexOf("\n\n")) !== -1) {
-    const frame = rest.slice(0, idx);
-    rest = rest.slice(idx + 2);
+  let end;
+  while ((end = frameEnd(rest)) !== null) {
+    const frame = rest.slice(0, end.idx);
+    rest = rest.slice(end.idx + end.len);
     for (const line of frame.split("\n")) {
       // `event:` / `id:` / `retry:` / 注释行（`:` 开头）一律跳过：本模块只要正文。
       if (!line.startsWith("data:")) continue;
       // `.trim()` 顺带吃掉 CRLF 换行下那个尾随的 `\r`（与网关那份逐字同做法）。
+      // ⚠️ **不许在别处再加第二次 trim**：这一次是对 `data:` 之后那一段做的，
+      // 再来一次就会把负载正文里合法的前后空白也吃掉。
       const payload = line.slice(5).trim();
       // **就地收尾，与网关那份逐字同语义**（评审 F-1，理由全文在上方那段 ⚠️⚠️）：
       // 同一帧里 `[DONE]` 之后的 data 行、以及缓冲区里其后的整帧，一律不再收。
