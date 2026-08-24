@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { FAIL_REASONS } from "../../src/core/dispatcher.js";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
+type Lang = (typeof LANGS)[number];
 
 /**
  * 五语言对等的**结构性**判据：不查词，查**数字**。
@@ -190,4 +193,415 @@ describe("五语言 API.md 的 503 reason 表覆盖全部取值", () => {
       expect(missing, `这些语言的 API.md 没提到 reason「${reason}」——对外契约少了一条`).toEqual([]);
     });
   }
+});
+
+/**
+ * ── 派生结构判据 R1–R6：判据从文件本身长出来，不再靠人记得回来加锚点 ──────────
+ *
+ * 上面那组数字锚点每加一段文档就要有人**记得**回来加一个 token，正是本仓
+ * 「一个不会自己红的清单不是守卫，是待办」。证据是决定性的：`docs/ko/DEPLOY.md`
+ * 里那句其余四语言早已删掉的 `POOL_CACHE_TTL_MS` 操作建议**活了 3 天、跨了两期
+ * 评审**，二十余格全绿、十二道门禁全绿，没有任何东西响过一声。
+ *
+ * 下面这一组不比对任何人手写的清单，只比对**从五份文件各自派生出来的结构指纹**：
+ * 文档基名全集（R1）、heading 层级序列（R2）、代码围栏语言标记序列（R3）、
+ * 归一化后的链接目标多重集（R4）、以 `|` 开头的表格行数（R5）、
+ * 标识符型行内 code span 多重集（R6）。加一份新文档、加一段新小节、多一行表格、
+ * 某一份多写一个环境变量名——**没有人需要回来表态**，它自己就红。
+ *
+ * ⚠️ **与上面那组数字锚点是互补不是重复，那些锚点一个都不许删**：数字锚点管
+ * 「同一个数字五份写得一样」，结构判据管「结构对得上」。某一份把 `856` 抄成
+ * `865`，五份的结构指纹**逐字节相同**，R1–R6 全绿。反过来，某一份多一段没翻译
+ * 的小节，数字锚点也可能一个都不动。两组各管各的一半。
+ * ⚠️ 后续任务改 DEPLOY.md 会让锚点计数变动 ⇒ **改文档必须同步改锚点**，这是好事，
+ * 但要预期到。
+ *
+ * ⚠️ **期望值来源沿用本文件既有先例，不是自创**：期望值来自**其余四份独立维护
+ * 的文档**，一份被改坏就会与另外四份分叉。这不算本文件登记的第 6 种假阳性（期望
+ * 值从被测对象自己 grep 回填）——论证与上面「修法：从『各自 ≥ N 次』改成『五种
+ * 语言的出现次数彼此相等』」那一段**逐字相同**，请连同那一段一起读。
+ * **唯一挡不住的仍然是「五份被同一个错误同步污染」**，边界与那一段完全一样。
+ *
+ * ⚠️ **R6 的正则窄到三类（全大写常量 / 斜杠开头的路径 / `agnes-` 开头的模型名），
+ * 一放宽就从守卫变成纯噪声源**：本仓的公式恰恰写在 code span 里，而公式里的名词
+ * 本来就该被翻译（zh-CN `key 数 × 4` / en `pool size × 4` / ko `key 수 × 4`）。
+ * 「为什么不多管一点」这个问题的答案**刻意不写成一句话**，而是两条会自己变红的
+ * 用例：下面「R6 的窄判据不是随手定的」把放宽之后的噪声当场列出来；反向控制那格
+ * 拿这三个真串证明伪公式确实不进判据。
+ * ⭐ 勘察当日曾把「放宽之后多出多少项差异」的计数写进本段当理由，**落地复核时三个
+ * 数一个都没对上**。「注释里抄一份计数」天生会过期，本仓已因此漂过多次（上一个
+ * 提交刚修过一处同类的），所以这里连同复核出来的新数字一起都不留：**能变红的是
+ * 下面那条用例，不是这段话**，要数字就当场自己数一遍，别信注释。
+ *
+ * ⚠️ **不许把它挪成一个独立的门禁脚本 + 新增一道 CI 步骤**：那会让
+ * `tests/unit/scripts-guard.test.ts「CI 恰好十二道门，编号 1/12 到 12/12 各出现一次」` 当场红，
+ * 代价要么是改那条手写字面量（削弱一道现存守卫），要么是把新门禁塞进已有步骤里
+ * 假装不是新的。放进第 10 道的 vitest 里零副作用。
+ *
+ * ── 它做不到什么（明写，别读成「五语言对等由测试保证」）──────────────────────
+ * 它只证明**五份的结构骨架一样**，不证明任何一份说得对：五份同时漏掉一个小节、
+ * 五份把同一个链接一起指错、某一份把整段话翻译反了但一个 `#` 都没动——它全都
+ * 看不见。R6 更是只看标识符：句子里的名词、语气、乃至结论正反，它一概不管。
+ * 译文是否准确、语义是否同义，仍然只能靠评审。
+ */
+
+/** R2：heading 层级序列（只取 # 的个数，不取标题文本——文本本来就该被翻译）。 */
+const headings = (s: string) =>
+  s.split("\n").filter((l) => /^#{1,6} /.test(l)).map((l) => (l.match(/^#+/)?.[0] ?? "").length);
+
+/** R3：代码围栏的语言标记序列。 */
+const fences = (s: string) => [...s.matchAll(/^```(\w*)/gm)].map((m) => m[1] ?? "");
+
+/** R4：归一化后的链接目标多重集（`../<lang>/` → `../LANG/`，锚点归一为 `#`）。 */
+const links = (s: string) =>
+  [...s.matchAll(/\]\(([^)]+)\)/g)]
+    .map((m) => (m[1] ?? "").replace(/\.\.\/(zh-CN|zh-TW|en|ja|ko)\//g, "../LANG/").replace(/#.*$/, "#"))
+    .sort();
+
+/** R5：以 `|` 开头的表格行数。 */
+const tableRows = (s: string) => s.split("\n").filter((l) => l.trimStart().startsWith("|")).length;
+
+/** 行内 code span 的全量多重集——只给下面那条「放宽会变噪声」的用例用，不是判据。 */
+const codeSpans = (s: string) => [...s.matchAll(/`([^`\n]+)`/g)].map((m) => m[1] ?? "").sort();
+
+/** R6 的三类标识符：全大写常量 / 斜杠开头的路径 / `agnes-` 开头的模型名。 */
+const IDENTIFIER = /^(?:[A-Z][A-Z0-9_]{2,}|\/[^\s`]*|agnes-[^\s`]*)$/;
+
+/** R6：标识符型行内 code span 的多重集。 */
+const idents = (s: string) => codeSpans(s).filter((c) => IDENTIFIER.test(c));
+
+/**
+ * 文档基名全集。**它不是手写清单，是从磁盘派生再钉住**：加了新文档不进表 = 红，
+ * 表里有磁盘上没有的 = 红。
+ *
+ * ⚠️ 本任务落地时这张表是五项（不含 `ADMIN`）——`ADMIN.md` 由后续任务创建，
+ * 那时把 `"ADMIN"` 加进来，**R1 的第一条断言会强制那一步**（不加就红）。
+ */
+const DOCS = ["API", "DEPLOY", "README", "REGISTRAR", "USAGE"] as const;
+
+const RULES: ReadonlyArray<readonly [name: string, fingerprint: (s: string) => unknown]> = [
+  ["R2 heading 层级序列", headings],
+  ["R3 代码围栏语言标记序列", fences],
+  ["R4 归一化后的链接目标多重集", links],
+  ["R5 以竖线开头的表格行数", tableRows],
+  ["R6 标识符型 code span 多重集", idents],
+];
+
+const docPath = (root: string, lang: string, doc: string) => join(root, "docs", lang, `${doc}.md`);
+
+/**
+ * R1。返回失败报文或 `null`。
+ * **真扫描与反向控制共用这一份**——探针与被探的东西必须是同一段代码，否则探针绿了
+ * 什么都不证明。
+ */
+function inventoryFailure(root: string, table: readonly string[]): string | null {
+  const onDisk = readdirSync(join(root, "docs", "zh-CN"))
+    .filter((n) => n.endsWith(".md"))
+    .map((n) => n.replace(/\.md$/, ""))
+    .sort();
+  const want = [...table].sort();
+  if (JSON.stringify(onDisk) !== JSON.stringify(want)) {
+    return `R1 docs/zh-CN 下的文档集与 DOCS 表对不上——加了新文档要回来表态：磁盘 ${JSON.stringify(onDisk)}，表 ${JSON.stringify(want)}`;
+  }
+  const missing = table.flatMap((d) => LANGS.filter((l) => !existsSync(docPath(root, l, d))).map((l) => `${l}/${d}.md`));
+  return missing.length ? `R1 这些语言缺同名文档：${missing.join("、")}` : null;
+}
+
+const countBy = (a: readonly unknown[]) => {
+  const m = new Map<string, number>();
+  for (const x of a) {
+    const k = JSON.stringify(x);
+    m.set(k, (m.get(k) ?? 0) + 1);
+  }
+  return m;
+};
+
+const firstDiff = (a: readonly unknown[], b: readonly unknown[]) => {
+  for (let k = 0; k < Math.max(a.length, b.length); k += 1) {
+    if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) return k;
+  }
+  return -1;
+};
+
+/**
+ * 分叉报文：**只摊差异，不摊全集**。
+ *
+ * ⚠️ 第一版把五份指纹整个 `JSON.stringify` 摊进报文，实跑一看是灾难：DEPLOY.md 的
+ * R6 有一百多项，唯一那处分叉（ko 多写了一个 `POOL_CACHE_TTL_MS`）被埋在五坨各
+ * 一百多项的数组里，肉眼根本找不到。**报文是唯一会被看见的护栏**——摊不出差异的
+ * 报文等于没有报文。改成：少数服从多数取参照份，只列出偏的那一份「多出/少掉了
+ * 什么」，再补一个首个不同的下标（heading 与围栏是有序序列，多重集相同而顺序不同
+ * 时只有下标说得清）。
+ */
+function divergenceReport(labels: readonly string[], values: readonly unknown[]): string | null {
+  const rows = values.map((v) => JSON.stringify(v));
+  if (new Set(rows).size === 1) return null;
+  const head = values[0];
+  if (!Array.isArray(head)) return labels.map((l, i) => `  ${l}: ${rows[i]}`).join("\n");
+
+  const tally = countBy(values);
+  const majority = [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? rows[0]!;
+  const refArr = JSON.parse(majority) as unknown[];
+  const ref = countBy(refArr);
+
+  const out: string[] = [];
+  for (let i = 0; i < labels.length; i += 1) {
+    if (rows[i] === majority) continue;
+    const arr = values[i] as unknown[];
+    const mine = countBy(arr);
+    const delta = [...new Set([...ref.keys(), ...mine.keys()])]
+      .sort()
+      .filter((k) => (ref.get(k) ?? 0) !== (mine.get(k) ?? 0))
+      .map((k) => `${k} ${ref.get(k) ?? 0}→${mine.get(k) ?? 0}`);
+    const at = firstDiff(refArr, arr);
+    out.push(
+      `  ${labels[i]}（本份 ${arr.length} 项，参照的 ${tally.get(majority)} 份 ${refArr.length} 项）：` +
+        (delta.length > 0 ? `多出/少掉 ${delta.join("，")}；` : "多重集相同但顺序不同；") +
+        `首个不同的下标 ${at}（参照 ${JSON.stringify(refArr[at])} / 本份 ${JSON.stringify(arr[at])}）`,
+    );
+  }
+  return out.join("\n");
+}
+
+/** R2–R6 的单格：一份文档 × 一条判据。返回失败报文或 `null`。真扫描与反向控制共用这一份。 */
+function parityFailure(root: string, doc: string, name: string, fingerprint: (s: string) => unknown): string | null {
+  const body = divergenceReport(LANGS, LANGS.map((l) => fingerprint(readFileSync(docPath(root, l, doc), "utf8"))));
+  return body === null ? null : `${doc}.md 的「${name}」在五语言之间分叉：\n${body}`;
+}
+
+/** R6 扩展：根 README 与五语言 README 六份。返回失败报文或 `null`。 */
+function rootReadmeFailure(root: string): string | null {
+  const six = [join(root, "README.md"), ...LANGS.map((l) => docPath(root, l, "README"))];
+  const body = divergenceReport(six, six.map((p) => idents(readFileSync(p, "utf8"))));
+  return body === null ? null : `R6 扩展 根 README 与五语言 README 的标识符 code span 分叉：\n${body}`;
+}
+
+/**
+ * 反向控制的唯一入口：R1 + 五条判据 × 全部文档 + 根 README 一次跑完。
+ * R1 不过就直接返回——文件都缺了，再去读它只会 ENOENT，报文反而更差。
+ */
+function allFailures(root: string, table: readonly string[]): string[] {
+  const inv = inventoryFailure(root, table);
+  if (inv) return [inv];
+  const out: string[] = [];
+  for (const doc of table) {
+    for (const [name, f] of RULES) {
+      const m = parityFailure(root, doc, name, f);
+      if (m) out.push(m);
+    }
+  }
+  const rr = rootReadmeFailure(root);
+  if (rr) out.push(rr);
+  return out;
+}
+
+describe("五语言文档的派生结构对等（R1–R6）", () => {
+  it("R1 五个语言目录下同名文件都存在，且 DOCS 表恰好等于 zh-CN 目录的 .md 全集", () => {
+    const failure = inventoryFailure(".", DOCS);
+    expect(failure, failure ?? "").toBeNull();
+  });
+
+  for (const doc of DOCS) {
+    for (const [name, fingerprint] of RULES) {
+      it(`${doc}.md 的「${name}」五份逐份相同`, () => {
+        const failure = parityFailure(".", doc, name, fingerprint);
+        expect(failure, failure ?? "").toBeNull();
+      });
+    }
+  }
+
+  it("R6 扩展：根 README.md 与五语言 README.md 的标识符 code span 多重集六份相同", () => {
+    const failure = rootReadmeFailure(".");
+    expect(failure, failure ?? "").toBeNull();
+  });
+
+  /**
+   * 「为什么不多管一点」的可执行答案之一。这条会自己变红：哪天全量 code span 在
+   * 五语言之间不再分叉了（伪公式被统一成语言无关的写法），说明放宽 `IDENTIFIER`
+   * 的代价没了，那时回来重新评估，别让理由继续挂着。
+   */
+  it("R6 的窄判据不是随手定的：放宽到全量 code span 会立刻变成噪声源", () => {
+    const noisy = DOCS.filter(
+      (doc) => new Set(LANGS.map((l) => JSON.stringify(codeSpans(readFileSync(docPath(".", l, doc), "utf8"))))).size !== 1,
+    );
+    expect(
+      noisy,
+      "全量 code span 判据今天在五语言之间不再分叉了——伪公式看来已经统一写法，回来重新评估 IDENTIFIER 是否还需要这么窄",
+    ).not.toEqual([]);
+  });
+});
+
+/**
+ * ── R1–R6 的反向控制：该红时真的红，只有译文不同时不乱红 ─────────────────────
+ *
+ * 「我认得出 X」的断言必须配一条「我对 X 不乱红」的反向控制，而且**串一律取仓里
+ * 真实存在的那些**——编一个仓里不存在的串等于在测一个不存在的世界。夹具用的四个
+ * 标识符（`GATEWAY_TOKEN` / `POOL_CACHE_TTL_MS` / `/v1/messages` / `agnes-2.0-flash`）
+ * 分别覆盖 `IDENTIFIER` 的三个分支，伪公式那一族取的是五份 DEPLOY.md 里的原句，
+ * 下面第一条用例逐份去真文档里核对它们确实存在。
+ */
+describe("R1–R6 的反向控制（临时目录夹具）", () => {
+  /** 夹具里的译文差异——结构必须完全相同，只有这些串随语言变。 */
+  const PROSE: Record<Lang, { title: string; section: string; note: string; formula: string; link: string }> = {
+    "zh-CN": { title: "网关部署", section: "环境变量", note: "必填", formula: "key 数 × 4", link: "用法" },
+    "zh-TW": { title: "閘道部署", section: "環境變數", note: "必填", formula: "key 數 × 4", link: "用法" },
+    en: { title: "Gateway deployment", section: "Environment variables", note: "required", formula: "pool size × 4", link: "Usage" },
+    ja: { title: "ゲートウェイ配備", section: "環境変数", note: "必須", formula: "key 数 × 4", link: "使い方" },
+    ko: { title: "게이트웨이 배포", section: "환경 변수", note: "필수", formula: "key 수 × 4", link: "사용법" },
+  };
+
+  /** 结构完全相同、只有译文不同的一份假文档。 */
+  function fixtureDoc(lang: Lang, doc: string): string {
+    const p = PROSE[lang];
+    return [
+      `# ${p.title} · ${doc}`,
+      "",
+      `\`GATEWAY_TOKEN\` ${p.note}。`,
+      "",
+      `## ${p.section}`,
+      "",
+      `| ${p.section} | ${p.note} |`,
+      "| --- | --- |",
+      "| `POOL_CACHE_TTL_MS` | `60000` |",
+      "",
+      `### ${p.link}`,
+      "",
+      `\`/v1/messages\` + \`agnes-2.0-flash\`，${p.note} \`${p.formula}\`。`,
+      "",
+      "```bash",
+      "curl http://localhost:8080/v1/messages",
+      "```",
+      "",
+      `[${p.link}](../${lang}/USAGE.md#${p.section})`,
+      "",
+    ].join("\n");
+  }
+
+  type Tree = Record<string, string>;
+
+  function pristineTree(): Tree {
+    const files: Tree = { "README.md": fixtureDoc("zh-CN", "README") };
+    for (const doc of DOCS) for (const l of LANGS) files[`docs/${l}/${doc}.md`] = fixtureDoc(l, doc);
+    return files;
+  }
+
+  /** 路径打错 = 变异没落地 = 这一格控制是空的。当场炸掉，不许静默通过。 */
+  function patch(files: Tree, rel: string, f: (body: string) => string): void {
+    const body = files[rel];
+    if (body === undefined) throw new Error(`夹具里没有 ${rel}——变异没落到任何文件上`);
+    files[rel] = f(body);
+  }
+
+  function drop(files: Tree, rel: string): void {
+    if (files[rel] === undefined) throw new Error(`夹具里没有 ${rel}——删除没落到任何文件上`);
+    delete files[rel];
+  }
+
+  /** 把一棵假文档树落到临时目录，交给上面那批**同款**判据函数去扫。 */
+  function scanFixture(mutate: (files: Tree) => void): string[] {
+    const files = pristineTree();
+    mutate(files);
+    const root = mkdtempSync(join(tmpdir(), "a2a-docs-parity-"));
+    try {
+      for (const [rel, body] of Object.entries(files)) {
+        const full = join(root, rel);
+        mkdirSync(dirname(full), { recursive: true });
+        writeFileSync(full, body, "utf8");
+      }
+      return allFailures(root, DOCS);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it("反向控制用的串必须是仓里真实存在的：五种语言的伪公式逐份能在真 DEPLOY.md 里找到", () => {
+    const missing = LANGS.filter((l) => !readFileSync(docPath(".", l, "DEPLOY"), "utf8").includes(`\`${PROSE[l].formula}\``));
+    expect(missing, "夹具编了仓里不存在的串——造一个不存在的世界，这组控制就什么都没证明").toEqual([]);
+  });
+
+  it("反向控制用的标识符也必须是仓里真实存在的，且三个分支都覆盖到", () => {
+    const used = ["GATEWAY_TOKEN", "POOL_CACHE_TTL_MS", "/v1/messages", "agnes-2.0-flash"];
+    expect(used.filter((c) => !IDENTIFIER.test(c)), "夹具里的标识符没被 IDENTIFIER 认出来").toEqual([]);
+    const absent = used.filter(
+      (c) => !DOCS.some((d) => LANGS.every((l) => readFileSync(docPath(".", l, d), "utf8").includes(`\`${c}\``))),
+    );
+    expect(absent, "这些串在真文档里五语言并不齐全，拿它们当夹具是在测一个不存在的世界").toEqual([]);
+  });
+
+  /**
+   * `hits` 是**报文里必须出现的串**，不是随便一个占位：每条都要求报文同时点名
+   * 「哪一条判据 + 哪一份文档 + 哪一种语言 + 坏掉的那个东西」。只断言"红了"不够
+   * ——**报文是唯一会被看见的护栏**，红了却指不出地方等于把定位成本原样退回给人。
+   */
+  const MUTATIONS: ReadonlyArray<{ why: string; hits: readonly string[]; mutate: (f: Tree) => void }> = [
+    {
+      why: "R1 少一份 docs/ko/USAGE.md",
+      hits: ["R1 这些语言缺同名文档：ko/USAGE.md"],
+      mutate: (f) => drop(f, "docs/ko/USAGE.md"),
+    },
+    {
+      why: "R1 多一份没进 DOCS 表的 docs/zh-CN/GLOSSARY.md",
+      hits: ["R1 docs/zh-CN 下的文档集与 DOCS 表对不上", "GLOSSARY"],
+      mutate: (f) => { f["docs/zh-CN/GLOSSARY.md"] = fixtureDoc("zh-CN", "GLOSSARY"); },
+    },
+    {
+      why: "R1 反方向：表里有磁盘上没有的（五份 USAGE.md 一起删）",
+      hits: ["R1 docs/zh-CN 下的文档集与 DOCS 表对不上", "USAGE"],
+      mutate: (f) => { for (const l of LANGS) drop(f, `docs/${l}/USAGE.md`); },
+    },
+    {
+      why: "R2 某一份多一个 ###",
+      hits: ["API.md 的「R2", "ja"],
+      mutate: (f) => patch(f, "docs/ja/API.md", (b) => `${b}\n### 追加\n`),
+    },
+    {
+      why: "R3 某一份把 bash 围栏写成 sh",
+      hits: ["DEPLOY.md 的「R3", "en", "sh"],
+      mutate: (f) => patch(f, "docs/en/DEPLOY.md", (b) => b.replace("```bash", "```sh")),
+    },
+    {
+      why: "R4 某一份的链接目标被改掉",
+      hits: ["README.md 的「R4", "ko", "API.md#"],
+      mutate: (f) => patch(f, "docs/ko/README.md", (b) => b.replace("USAGE.md#", "API.md#")),
+    },
+    {
+      why: "R5 某一份多一行表格",
+      hits: ["REGISTRAR.md 的「R5", "zh-TW"],
+      mutate: (f) => patch(f, "docs/zh-TW/REGISTRAR.md", (b) => `${b}\n| a | b |\n`),
+    },
+    {
+      why: "R6 某一份把 POOL_CACHE_TTL_MS 多写一次",
+      hits: ["USAGE.md 的「R6", "zh-CN", "POOL_CACHE_TTL_MS"],
+      mutate: (f) => patch(f, "docs/zh-CN/USAGE.md", (b) => `${b}\n再提一次 \`POOL_CACHE_TTL_MS\`。\n`),
+    },
+    {
+      why: "R6 扩展 根 README.md 与五语言 README.md 分叉",
+      hits: ["R6 扩展 根 README 与五语言 README 的标识符 code span 分叉", "README.md", "GATEWAY_TOKEN"],
+      mutate: (f) => patch(f, "README.md", (b) => `${b}\n根上多提一次 \`GATEWAY_TOKEN\`。\n`),
+    },
+  ];
+
+  for (const { why, hits, mutate } of MUTATIONS) {
+    it(`该红时红：${why}`, () => {
+      const failures = scanFixture(mutate);
+      // 恰好一条：变异只该点名它坏掉的那一条判据。多出来的说明判据之间在互相串扰，
+      // 报文会指向错的地方；一条都没有说明这条控制是空的。
+      expect(failures, `变异「${why}」应当只让一条判据变红`).toHaveLength(1);
+      const report = failures[0] ?? "";
+      expect(
+        hits.filter((h) => !report.includes(h)),
+        `变红了但报文没点名这些东西——报文是唯一会被看见的护栏。实际报文：\n${report}`,
+      ).toEqual([]);
+    });
+  }
+
+  it("不乱红：只有译文不同、结构相同的五份文档全绿——被翻译的伪公式 code span 确实不进 R6", () => {
+    // 先自检夹具不是平凡的：五种语言的伪公式真的写得不一样，否则这一格什么都没证明。
+    expect(new Set(LANGS.map((l) => PROSE[l].formula)).size, "夹具里的伪公式五份写法相同，这条控制是空的").toBeGreaterThan(1);
+    expect(
+      LANGS.filter((l) => IDENTIFIER.test(PROSE[l].formula)),
+      "夹具里的伪公式被 IDENTIFIER 认成了标识符，这条控制证明不了「伪公式不进判据」",
+    ).toEqual([]);
+    expect(scanFixture(() => {}), "结构相同、只有译文不同的五份文档不该有任何一条判据变红").toEqual([]);
+  });
 });
