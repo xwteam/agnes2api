@@ -3,13 +3,15 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
+import { I18N } from "../../admin-ui/js/i18n-dict.js";
+import { UNVERIFIED_KEYS, UNVERIFIED_BANNED } from "../../scripts/lib/unverified-claims.mjs";
 
 const SCRIPT = resolve("scripts/check-i18n.mjs");
 
 /**
  * **第 6 道门禁（`scripts/check-i18n.mjs`）自己的元测试**（全分支评审 I2）。
  *
- * ⚠️ **在这份文件出现之前，这道门禁零覆盖。** 八条判据里任何一条被写坏——正则打错
+ * ⚠️ **在这份文件出现之前，这道门禁零覆盖。** 九条判据里任何一条被写坏——正则打错
  * 一个字符、`continue` 少一层、`errors.push` 那行被删掉——它都会安静地 exit 0，
  * 而"门禁绿了"恰恰是所有人赖以放心的那个信号。本仓已经栽过一次同型的：第 ⑧ 条
  * 判据第一版只认双引号，把它存在的全部理由要防的那个缺陷换成单引号原样重放，
@@ -46,6 +48,17 @@ interface Fixture {
    * 于是这个字段本身就是双向断言的一半：夹具里出现了没登记的前缀 ⇒ 那一格会红。
    */
   tplPrefixes?: string[];
+  /**
+   * 这棵树上规则⑨（未核实红线）的 key 白名单（脚本的第四个入参，P3e Task 7）。
+   *
+   * ⚠️ **理由与 `tplPrefixes` 那一条逐字同源**：真仓那张白名单
+   *（`scripts/lib/unverified-claims.mjs` 的 `UNVERIFIED_KEYS`）点的是 `usage.*` / `pg.*` 里
+   * 三个真实存在的 key，而夹具树的字典只有被测的那一两条 ⇒ 套用真仓那张表的话，
+   * 每一格夹具都会被「白名单里有字典中不存在的 key」那条硬错打红。
+   * ⚠️ **缺省 `[]` 的意思是「这棵树上规则⑨ 无事可管」，不是「这一条不检查」**：
+   * 词表仍在，只是交集为空——那正是这条判据「白名单 × 词表」的定义。
+   */
+  unverifiedKeys?: string[];
 }
 
 /**
@@ -72,11 +85,31 @@ function run(fx: Fixture): { status: number; stdout: string; stderr: string } {
     // 断言的都是"它必须 exit 1、且报文点名了那一条"——`status` 与 `stderr` 都要拿在手里
     // 才问得出话。（P3e Task 4 之前这里写的理由是"第 ④ 条是 exit 0 + 一条 stderr 警告"，
     // 那条理由随第 ④ 条升成硬错一起作废，`warnings` 数组本身也已删掉。）
-    const r = spawnSync("node", [SCRIPT, dir, (fx.tplPrefixes ?? []).join(",")], { encoding: "utf8" });
+    const r = spawnSync(
+      "node",
+      [SCRIPT, dir, (fx.tplPrefixes ?? []).join(","), (fx.unverifiedKeys ?? []).join(",")],
+      { encoding: "utf8" },
+    );
     return { status: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * 「某个 key 的某种语言被写成了某段文案」这一档的最小夹具（P3e Task 7）。
+ *
+ * 其余四种语言给一句中性文案，并在源码里留**一处直接引用**——否则第 ④ 条
+ *（字典里未被引用的 key 是硬错）会抢在被测的那一条前面把这一格打红，
+ * 于是 `exit 1` 就不再说明任何事情（本仓那条「判据用错工具时不会报错，会静静地放行」
+ * 的镜像：**红得对不对，和红不红是两件事**）。
+ */
+function fixtureWith(key: string, lang: string, text: string, extra: Partial<Fixture> = {}): Fixture {
+  return {
+    dict: { [key]: { ...row("中性说法"), [lang]: text } },
+    files: { "js/x.js": `t("${key}");\n` },
+    ...extra,
+  };
 }
 
 /**
@@ -117,7 +150,7 @@ describe("scripts/check-i18n.mjs 元测试：干净的树", () => {
   });
 });
 
-describe("scripts/check-i18n.mjs 元测试：八条判据逐条", () => {
+describe("scripts/check-i18n.mjs 元测试：九条判据逐条", () => {
   it("① 源码引用了字典里没有的 key：exit 1", () => {
     const r = run({ dict: { "nav.overview": row("概览") }, files: { "js/x.js": 't("nav.typo");\n' } });
     expect(r.status).toBe(1);
@@ -294,6 +327,42 @@ describe("scripts/check-i18n.mjs 元测试：八条判据逐条", () => {
     expect(r.status, "扩展前缀不该把整个 keys.addMenu.* 都纳入进来").toBe(0);
   });
 
+  /**
+   * ⚠️⚠️ **P3e Task 7：作用域扩到「两条通道平级」直接相关的那几个 `set.*` 前缀。**
+   *
+   * 用户那条硬约束是「YYDS 与 MoeMail 严格同级，不替人选主备」，而在这之前规则⑥ 的
+   * 作用域只有 `reg.*` 与 `keys.addMenu.auto*` —— 两条通道**共用的那对凭据 key**
+   *（`set.field.channel.*`）和主 / 备两个选择器标签（`set.field.registrar.primary`
+   * / `fallback`）**全在门外**，夹具实跑 EXIT=0。
+   *
+   * 下面四格逐个前缀各钉一种语言变体：**新纳入的每一条前缀都要有自己的正向格**，
+   * 少哪一条，那一条就是「登记在表里但没有任何东西证明它生效」的那一档——
+   * 本仓对这种东西的裁定是「一个不会自己红的清单不是守卫，是待办」。
+   */
+  it.each([
+    ["set.field.registrar.primary", "zh-TW", "主通道（推薦）"],
+    ["set.field.registrar.fallback", "en", "Fallback channel (recommended)"],
+    ["set.field.channel.baseUrl", "ko", "서비스 URL (권장)"],
+    ["set.card.registrar", "zh-CN", "注册机（推荐先配这条）"],
+  ])("⑥ %s/%s 出现偏好词 ⇒ 当场红", (key, lang, text) => {
+    const r = run(fixtureWith(key, lang, text));
+    expect(r.status, `${key}/${lang} 没被拦住`).toBe(1);
+    expect(r.stderr).toContain("偏好词");
+  });
+
+  /**
+   * **上面那四格的反向控制：钉住「范围没有被扩大」。**
+   *
+   * 少了它，把作用域写成整个 `set.*` 也能让那四格全绿——而 `set.*` 里有大量与通道
+   * 无关、且**正当地**会出现「默认 / 优先 / 推荐」的运维文案（超时、冷却、口令）。
+   * 扩太宽的代价不是「多报几条」：这道今天零命中的干净门禁会立刻需要一册豁免名单，
+   * 而本仓的裁定是「开豁免名册比没有规则更糟」。
+   */
+  it("⑥ 反向控制：与通道无关的 set.field.upstreamTimeoutMs 里出现同样的词 ⇒ 不红", () => {
+    const r = run(fixtureWith("set.field.upstreamTimeoutMs", "zh-CN", "上游超时（推荐 30 秒）"));
+    expect(r.status, `作用域被扩宽成了整个 set.*：\n${r.stderr}`).toBe(0);
+  });
+
   it("⑦ 字典里出现 IP:PORT 形态（scan-secrets 会打红 CI）：exit 1", () => {
     const r = run({
       // ⚠️ **字面量要拆开拼**：写成一整串的话，`scripts/scan-secrets.sh`（CI 第 2 道）
@@ -345,6 +414,79 @@ describe("scripts/check-i18n.mjs 元测试：八条判据逐条", () => {
       files: { "js/x.js": 't("ov.n", { count: 1 });\n' },
     });
     expect(r.status, "字典的定义处被当成了调用点").toBe(0);
+  });
+
+  /**
+   * ⚠️⚠️ **第 ⑨ 条：未核实事项的红线（P3e Task 7 新增）。**
+   *
+   * 用户点名的一条红线是：真机了结之前，任何文案都不许把「上限是 60 次」写成
+   * 「60 次是安全的」。在这之前这条红线**完全靠人守**——规则⑥ 的作用域不含
+   * `usage.*` / `pg.*`，谁把 `usage.range.retention` 改成「30 天这一档的 60 次子请求
+   * 在 Worker 上没问题」，**十二道门禁一道都不会红**。
+   */
+  it("⑨ usage.range.retention 被软化成「这些子请求是安全的」⇒ 当场红", () => {
+    const r = run(fixtureWith("usage.range.retention", "zh-CN", "这些子请求是安全的", {
+      unverifiedKeys: ["usage.range.retention"],
+    }));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("把一件未核实的事说成了");
+  });
+
+  /**
+   * **反向控制：它是白名单 × 词表的交集，不是全字典扫。**
+   *
+   * 夹具里两个 key 同时在场：白名单里那个是干净的，白名单**外**那个带着同一个词。
+   * 少了这一格，把规则⑨ 写成「拿词表扫整本字典」也能让上面那格全绿——
+   * 而「安全 / 够用 / 没问题」在别的命名空间里是完全正当的用词，
+   * 全字典扫会当场制造第二个「警报淹掉信号」现场（这个仓刚把 396 条噪音降到 0）。
+   */
+  it("⑨ 反向控制：白名单外的 key 出现同样的词 ⇒ 不红（它是白名单×词表的交集，不是全字典扫）", () => {
+    const r = run({
+      dict: {
+        "usage.range.retention": row("最多保留 30 天，是否总能读完尚未在真机上验证过"),
+        "ov.title": { ...row("概览"), "zh-CN": "这些子请求是安全的" },
+      },
+      files: { "js/x.js": 't("usage.range.retention");\nt("ov.title");\n' },
+      unverifiedKeys: ["usage.range.retention"],
+    });
+    expect(r.status, `词表被套到了白名单以外的 key 上 ⇒ 那是全字典扫：\n${r.stderr}`).toBe(0);
+  });
+
+  /**
+   * **白名单里写了一个字典里没有的 key ⇒ 当场红，不许静静地跳过。**
+   *
+   * 这是整条规则空转的那一档：key 被改个名（或者被删掉）之后，静默跳过意味着
+   * 那条红线从此再也没人守，而门禁照样打 ✅ 横幅——本仓对「静默放行」的裁定
+   * 见第 ④ 条那一段。反向控制先跑：同一棵树上白名单指着一个真存在的 key 时必须安静。
+   */
+  it("⑨ 白名单里有字典中不存在的 key ⇒ 当场红（自带反向控制）", () => {
+    const dict = { "nav.overview": row("概览") };
+    const files = { "js/x.js": 't("nav.overview");\n' };
+    const ok = run({ dict, files, unverifiedKeys: ["nav.overview"] });
+    expect(ok.status, `白名单指着一个真存在的 key 时不许红：\n${ok.stderr}`).toBe(0);
+    const bad = run({ dict, files, unverifiedKeys: ["nav.ghost"] });
+    expect(bad.status, "白名单里那个 key 已经不在字典里了，门禁却一声不吭 ⇒ 规则⑨ 在空转").toBe(1);
+    expect(bad.stderr).toContain("⑨ 的白名单里有字典中不存在的 key");
+  });
+
+  /**
+   * ⚠️⚠️ **这一格守的是真仓那两张表本身，不是夹具**（P3e 计划：本期新增的每一张
+   * 手写清单都必须在同一个任务里配一条会让它变红的断言）。
+   *
+   * 上面几格全部跑在临时目录上、白名单由夹具喂进去 ⇒ 它们证明的是「判据的形状对」，
+   * **一个字也没说真仓那张白名单还指着真东西**。把 `UNVERIFIED_KEYS` 里的 key 改个名
+   * （或者把词表清空），上面每一格照样全绿、门禁照样 EXIT=0，而红线已经无人再守。
+   * 这里直接对 `scripts/lib/unverified-claims.mjs` 那份真源发问——**三个消费者共用它，
+   * 所以这一格问的就是真扫描用的那一份**。
+   */
+  it("⑨ 反向自检：白名单非空、词表非空、且白名单里每个 key 都真的在字典里", () => {
+    // 没有这一格的话，把 key 改个名就能让整条规则空转 —— 本仓已栽过 `--reporter=basic` 空跑那一族。
+    expect(UNVERIFIED_KEYS.length).toBeGreaterThan(2);
+    expect(UNVERIFIED_BANNED.length).toBeGreaterThan(5);
+    expect(
+      UNVERIFIED_KEYS.filter((k: string) => !(k in I18N)),
+      "白名单里这些 key 已经不在字典里了 ⇒ 规则⑨ 对它们空转（改了名就把名字改过来，别删条目）",
+    ).toEqual([]);
   });
 });
 

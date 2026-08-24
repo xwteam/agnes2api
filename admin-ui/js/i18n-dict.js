@@ -104,12 +104,12 @@ export const I18N = {
   "reg.state":        { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
   "reg.state.on":     { "zh-CN": "已启用", "zh-TW": "已啟用", en: "Enabled", ja: "有効", ko: "사용 중" },
   "reg.state.off":    { "zh-CN": "已关闭", "zh-TW": "已關閉", en: "Disabled", ja: "無効", ko: "꺼짐" },
-  "reg.primary":      { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary channel", ja: "プライマリチャネル", ko: "주 채널" },
+  "reg.primary":      { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary channel", ja: "主チャネル", ko: "주 채널" },
   "reg.fallback":     { "zh-CN": "备用通道", "zh-TW": "備用通道", en: "Fallback channel", ja: "フォールバックチャネル", ko: "대체 채널" },
   "reg.none":         { "zh-CN": "未选择", "zh-TW": "未選擇", en: "Not selected", ja: "未選択", ko: "선택 안 됨" },
   // 设计 §10.3 第 8 条逐字：空状态说「两条通道平级，请选择一条作为主通道」，
   // **不是**「未选择时使用 X」。
-  "reg.emptyPrimary": { "zh-CN": "两条通道平级，请选择一条作为主通道。", "zh-TW": "兩條通道平級，請選擇一條作為主通道。", en: "The two channels rank equally — pick one as the primary channel.", ja: "2 つのチャネルは対等です。どちらか一方をプライマリチャネルとして選んでください。", ko: "두 채널은 동등합니다. 둘 중 하나를 주 채널로 선택하세요." },
+  "reg.emptyPrimary": { "zh-CN": "两条通道平级，请选择一条作为主通道。", "zh-TW": "兩條通道平級，請選擇一條作為主通道。", en: "The two channels rank equally — pick one as the primary channel.", ja: "2 つのチャネルは対等です。どちらか一方を主チャネルとして選んでください。", ko: "두 채널은 동등합니다. 둘 중 하나를 주 채널로 선택하세요." },
 
   "reg.pool.target":  { "zh-CN": "目标 key 数", "zh-TW": "目標 key 數", en: "Target key count", ja: "目標 key 数", ko: "목표 key 수" },
   // ⚠️ **这一格不叫「可用」，理由在 `src/core/registrar/tender.ts` 的 `available` 字段上**：
@@ -128,7 +128,7 @@ export const I18N = {
   "reg.channel.addressFact.moemail": { "zh-CN": "自建服务：每个实例的地址都不一样，本就没有可以预填的地址，必须自己填。", "zh-TW": "自建服務：每個實例的位址都不一樣，本就沒有可以預先填入的位址，必須自己填。", en: "Self-hosted service: every instance lives at a different address, so there is no address to prefill — you provide it.", ja: "セルフホストのサービスです。インスタンスごとにアドレスが異なるため、あらかじめ入れておけるアドレスは存在しません。自分で指定してください。", ko: "직접 호스팅하는 서비스입니다. 인스턴스마다 주소가 달라 미리 채워 둘 주소가 존재하지 않으므로 직접 입력해야 합니다." },
   "reg.channel.addressFact.yyds":    { "zh-CN": "地址固定的公共服务：内置了一个地址，也可以自己改。", "zh-TW": "位址固定的公共服務：內建了一個位址，也可以自己改。", en: "Public service at a fixed address: one address ships with the gateway, and you can still override it.", ja: "アドレスが固定された公開サービスです。アドレスが 1 つ同梱されており、上書きもできます。", ko: "주소가 고정된 공개 서비스입니다. 주소 하나가 내장되어 있으며 직접 바꿀 수도 있습니다." },
   "reg.channel.role":     { "zh-CN": "角色", "zh-TW": "角色", en: "Role", ja: "役割", ko: "역할" },
-  "reg.role.primary":     { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary", ja: "プライマリ", ko: "주 채널" },
+  "reg.role.primary":     { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary", ja: "主", ko: "주 채널" },
   "reg.role.fallback":    { "zh-CN": "备用通道", "zh-TW": "備用通道", en: "Fallback", ja: "フォールバック", ko: "대체 채널" },
   "reg.role.unused":      { "zh-CN": "本次配置没有用到它", "zh-TW": "本次設定沒有用到它", en: "Not used by the current configuration", ja: "現在の設定では使われていません", ko: "현재 설정에서는 사용되지 않습니다" },
   "reg.channel.creds":    { "zh-CN": "凭据", "zh-TW": "憑證", en: "Credentials", ja: "資格情報", ko: "자격 증명" },
@@ -153,7 +153,7 @@ export const I18N = {
   "reg.tend.confirmUnknown": { "zh-CN": "读不到当前的缺口与单轮上限，这次会铸几把 key 说不准。请先刷新，确认状态之后再点。", "zh-TW": "讀不到目前的缺口與單輪上限，這次會鑄幾把 key 說不準。請先重新整理，確認狀態之後再點。", en: "The current gap and per-round ceiling could not be read, so how many keys this run mints is unknown. Refresh first and confirm the state before proceeding.", ja: "現在の不足数と 1 ラウンドの上限が読み取れないため、今回いくつ key を発行するかは不明です。まず更新して状態を確認してから実行してください。", ko: "현재 부족분과 라운드당 상한을 읽지 못해 이번에 key를 몇 개 발급할지 알 수 없습니다. 먼저 새로고침해 상태를 확인한 뒤 진행하세요." },
   // 通道下拉：**初始为占位符，两条通道都不预选**（设计 §10.3 第 1 条同一条纪律）。
   "reg.tend.channelLabel": { "zh-CN": "用哪条通道", "zh-TW": "用哪條通道", en: "Which channel", ja: "使用するチャネル", ko: "사용할 채널" },
-  "reg.tend.channelAny":   { "zh-CN": "按当前配置的主 / 备通道", "zh-TW": "按目前設定的主 / 備通道", en: "Follow the configured primary / fallback chain", ja: "設定されているプライマリ／フォールバックの順に従う", ko: "설정된 주/대체 채널 순서를 따름" },
+  "reg.tend.channelAny":   { "zh-CN": "按当前配置的主 / 备通道", "zh-TW": "按目前設定的主 / 備通道", en: "Follow the configured primary / fallback chain", ja: "設定されている主／フォールバックの順に従う", ko: "설정된 주/대체 채널 순서를 따름" },
   "reg.tend.started":      { "zh-CN": "已开始补池。结果会出现在下面的补池历史里——这颗按钮只负责发起，不等它跑完。", "zh-TW": "已開始補池。結果會出現在下面的補池歷史裡——這顆按鈕只負責發起，不等它跑完。", en: "Refill started. The result will show up in the refill history below — this button only kicks it off and does not wait for it to finish.", ja: "補充を開始しました。結果は下の補充履歴に表示されます——このボタンは開始するだけで、完了を待ちません。", ko: "보충을 시작했습니다. 결과는 아래 보충 기록에 표시됩니다 — 이 버튼은 시작만 할 뿐 완료를 기다리지 않습니다." },
   "reg.tend.failed":       { "zh-CN": "这次补池没有发起成功", "zh-TW": "這次補池沒有發起成功", en: "This refill was not started", ja: "今回の補充は開始できませんでした", ko: "이번 보충을 시작하지 못했습니다" },
   // 「今天还剩几次」**在点之前就要显示**，不是等到点不动了才说。
@@ -445,7 +445,7 @@ export const I18N = {
   "ov.config.registrar":  { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
   "ov.config.on":         { "zh-CN": "已启用", "zh-TW": "已啟用", en: "Enabled", ja: "有効", ko: "활성화됨" },
   "ov.config.off":        { "zh-CN": "已关闭", "zh-TW": "已關閉", en: "Disabled", ja: "無効", ko: "비활성화됨" },
-  "ov.config.primary":    { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary channel", ja: "プライマリチャネル", ko: "기본 채널" },
+  "ov.config.primary":    { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary channel", ja: "主チャネル", ko: "기본 채널" },
   "ov.config.fallback":   { "zh-CN": "备用通道", "zh-TW": "備用通道", en: "Fallback channel", ja: "フォールバックチャネル", ko: "대체 채널" },
   "ov.config.none":       { "zh-CN": "无", "zh-TW": "無", en: "None", ja: "なし", ko: "없음" },
   "ov.config.targetKeys": { "zh-CN": "目标 key 数", "zh-TW": "目標 key 數", en: "Target key count", ja: "目標 key 数", ko: "목표 key 수" },

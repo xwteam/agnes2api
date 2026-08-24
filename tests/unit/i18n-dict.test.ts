@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 import { TEND_FAILURE_REASONS } from "../../src/core/registrar/tender.js";
 import { stripComments } from "../helpers/strip-comments.js";
+import { UNVERIFIED_KEYS, UNVERIFIED_BANNED } from "../../scripts/lib/unverified-claims.mjs";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 
@@ -160,33 +161,119 @@ describe("i18n 字典", () => {
   });
 
   /**
-   * 设计文档 §10.3 第 4 条：`reg.*` 命名空间禁用词。
+   * 设计文档 §10.3 第 4 条：通道相关命名空间的禁用词。
    * **这比人工评审可靠，是唯一能长期防住「某次改文案顺手写了『推荐使用 X』」的机制。**
    *
    * ⚠️ 禁用词表比设计文档 §9.1 多了**繁体变体**（推薦 / 建議 / 預設 / 首選 / 優先）。
    * 理由是 P3a Task 9 的原样教训：控制端查五语言对等时 grep 用了简体「保证」，
    * 漏掉繁体「保證」，于是报告说齐全而实际不齐。简体表在 zh-TW 上等于没有检查。
    *
+   * ⚠️⚠️ **作用域在 P3e Task 7 从「只有 `reg.*`」扩成了下面那张前缀表，
+   * 而这一份与 `scripts/check-i18n.mjs` 的规则⑥ 是两份独立实现**（那边跑在 CI 第 6 道，
+   * 这边跑在 `pnpm test` 里，各写各的循环）。两件事同时补上：
+   * · 用户那条硬约束「YYDS 与 MoeMail 严格同级，不替人选主备」的落点是**设置页**——
+   *   两条通道共用的那对凭据 key 与主 / 备两个选择器标签在这之前全在门外；
+   * · `keys.addMenu.auto*` 是那道门禁**早就**扩过的范围，而这一份一直没跟上
+   *  （门禁那边扩了、这边没扩 ⇒ 那一族只剩一份实现在守，「两份互为印证」当时是假的）。
+   *
+   * ⚠️ **刻意不是整个 `set.*`**（与门禁那边同一条推理，删了下一个人会顺手扩宽）：
+   * `set.*` 里有大量与通道无关、且**正当地**会出现「默认 / 优先 / 推荐」的运维文案
+   *（超时、冷却、口令）。扩太宽 = 这道今天零命中的干净规则立刻要带一册豁免名单，
+   * 而本仓的裁定是「开豁免名册比没有规则更糟」。
+   *
    * ⚠️ **边界（明写，别宣称成「杜绝一切偏好表述」）**：这是纯词面匹配，
    * 「两条里挑一条的话就用 X」这种不含禁用词的偏好表述它抓不住，那一档留给评审。
-   * 想在 `reg.*` 里合法地说「默认值」时，正确做法是**把那条文案放进别的命名空间**
-   *（例如 `cfg.*`），而不是给这张表开豁免——命名空间就是这条规则的作用域。
+   * 想在作用域内合法地说「默认值」时，正确做法是**把那条文案放进别的命名空间**，
+   * 而不是给这张表开豁免——前缀表就是这条规则的作用域。
    */
-  it("reg.* 命名空间不出现任何偏好词（含繁体变体）", () => {
+  it("通道相关命名空间不出现任何偏好词（含繁体变体）", () => {
     const BANNED = [
       "推荐", "推薦", "建议", "建議", "默认", "預设", "預設", "主流", "首选", "首選", "优先", "優先",
       "recommended", "preferred", "default",
       "おすすめ", "推奨", "권장", "기본",
     ] as const;
+    const PREFIXES = [
+      "reg.",
+      "keys.addMenu.auto",
+      "set.field.registrar.primary",
+      "set.field.registrar.fallback",
+      "set.field.channel.",
+      "set.card.registrar",
+    ] as const;
     const hits: string[] = [];
     for (const [k, v] of Object.entries(I18N)) {
-      if (!k.startsWith("reg.")) continue;
+      if (!PREFIXES.some((p) => k.startsWith(p))) continue;
       for (const lang of LANGS) {
         const s = ((v as Record<string, string>)[lang] ?? "").toLowerCase();
         for (const w of BANNED) if (s.includes(w.toLowerCase())) hits.push(`${k}/${lang}: ${w}`);
       }
     }
     expect(hits, "两条邮箱通道必须完全平级，文案里不许出现偏好词").toEqual([]);
+    /**
+     * **反向自检：这张前缀表不许有死条目。**
+     * 少了它，把某条前缀打错一个字符（`set.card.registar`）就等于把那一族悄悄放行，
+     * 而上面那条 `toEqual([])` 只会更绿。**「警报变少」与「判据认对了」长得一模一样**，
+     * 分辨两者靠的就是这一格。
+     */
+    const dead = PREFIXES.filter((p) => !Object.keys(I18N).some((k) => k.startsWith(p)));
+    expect(dead, "这些前缀在字典里一个 key 都对不上 —— 要么打错了字，要么那一族已经改名").toEqual([]);
+  });
+
+  /**
+   * **未核实的事不许被说成已核实**（P3e Task 7；`scripts/check-i18n.mjs` 规则⑨ 的第二份扫描）。
+   *
+   * 用户点名的红线是：真机了结之前，任何文案都不许把「上限是 60 次」写成「60 次是安全的」。
+   * `usage.range.retention` 那句今天如实写着「尚未在真机上验证过」，
+   * 把它改成「在 Worker 上没问题」是一次纯文案改动，**在这条判据出现之前没有任何机器在看**。
+   *
+   * ⚠️ **两张表与门禁那边共用一份真源**（`scripts/lib/unverified-claims.mjs`），
+   * **扫描是各写各的**：理由写在那份文件头——表抄成三份时，守表的那条自检守的是它自己那份副本。
+   * 表**自身**不空转由 `tests/unit/check-i18n.test.ts` 的
+   * 「⑨ 反向自检：白名单非空、词表非空、且白名单里每个 key 都真的在字典里」那一格钉着。
+   *
+   * ⚠️ **边界：它证明的只是「没有人把未核实的事说成已核实」，不证明译文准确。**
+   */
+  it("未核实的事不许被说成已核实（白名单 × 词表的交集）", () => {
+    const hits: string[] = [];
+    for (const k of UNVERIFIED_KEYS) {
+      const row = (I18N as Record<string, Record<string, string> | undefined>)[k];
+      // 表里指着一个字典里没有的 key ⇒ 那一条红线已经无人再守，当场说出来，不许静默跳过。
+      if (row === undefined) { hits.push(`${k}: 白名单里这个 key 不在字典里`); continue; }
+      for (const lang of LANGS) {
+        const s = (row[lang] ?? "").toLowerCase();
+        for (const w of UNVERIFIED_BANNED) {
+          if (s.includes(w.toLowerCase())) hits.push(`${k}/${lang}: ${w}`);
+        }
+      }
+    }
+    expect(hits, "这几条文案描述的是尚未在真机上核实的事，不许写成已经核实过的口吻").toEqual([]);
+  });
+
+  /**
+   * **同一个概念在 ja 里只许有一个术语**（P3e Task 7 / NEW-7）。
+   *
+   * 勘察实测的那一处：`reg.primary` 写的是 `プライマリチャネル`，
+   * 而 `set.field.registrar.primary` 写的是 `主チャネル`（`docs/ja/REGISTRAR.md` 用的也是后者）——
+   * 同一个东西，面板上两个日文词。真正要命的是**它会被下一次改词坐实**：
+   * G2 那轮若只改 `set.field.*` 一侧而不动 `reg.*`，两个词就从「一次疏漏」变成「两套术语」。
+   *
+   * ⚠️⚠️ **这一格刻意不写死是哪个词**（`toBe("主チャネル")` 那种写法）。
+   * 主 / 备措辞本身还悬着三个候选，将来真换词时**三个 key 会一起换**——
+   * 写死词的断言那时会红在一件完全正确的改动上，而写死"只许有一个"的断言不会：
+   * 它红的时候，红的正是「只改了一半」那一种。
+   */
+  it("同一个概念在 ja 里只有一个术语 —— 主通道那一族", () => {
+    const LABEL_KEYS = ["reg.primary", "set.field.registrar.primary", "ov.config.primary"] as const;
+    const ja = (k: string): string => ((I18N as Record<string, Record<string, string>>)[k] ?? {}).ja ?? "";
+    // 反向自检：这张表不许空转（key 改了名之后下面几条会在空字符串上恒真）。
+    expect(LABEL_KEYS.filter((k) => !(k in I18N)), "表里有字典中不存在的 key").toEqual([]);
+    expect([...new Set(LABEL_KEYS.map(ja))], "同一个概念在 ja 里出现了不止一个术语").toHaveLength(1);
+    const term = ja(LABEL_KEYS[0]);
+    expect(term.length, "ja 值是空的 ⇒ 上面那条 `toHaveLength(1)` 是恒真的").toBeGreaterThan(0);
+    // 整句文案与短标签也必须用同一个词，不许各说各的。
+    expect(ja("reg.emptyPrimary"), "那句「两条通道平级，请选择一条作为主通道」用的是另一个日文词").toContain(term);
+    expect(term, "短标签 reg.role.primary 用的是另一个日文词").toContain(ja("reg.role.primary"));
+    expect(ja("reg.tend.channelAny"), "补池范围那句用的是另一个日文词").toContain(ja("reg.role.primary"));
   });
 
   /**

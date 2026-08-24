@@ -21,20 +21,31 @@
  * 没有对应的一条）。** 之所以还是加上：它是阶段验收的人工冒烟真抓出来的一个
  * 已上线缺陷（详见下面第 ⑧ 条的说明），而前六条一条都拦不住。
  * 单实现这件事如实写在这里，别读成「和前六条一样有两份互为印证」。
+ *
+ * ⚠️ **第 ⑨ 条（未核实事项的红线）是 P3e Task 7 新加的，设计文档 §9.1 里也没有它。**
+ * 它与前六条的冗余形态**又不一样，别混着读**：扫描是两份（这里一份、
+ * tests/unit/i18n-dict.test.ts 一份），但**两份共用同一对表**
+ *（`scripts/lib/unverified-claims.mjs` 的白名单与词表）——理由与 P3e Task 1 收编
+ * 抠注释器逐字相同：那两张表抄成三份时，守表的那条自检守的是它自己那份副本。
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stripComments, stripHtmlComments } from "./lib/strip-comments.mjs";
+import {
+  UNVERIFIED_KEYS as REAL_UNVERIFIED_KEYS,
+  UNVERIFIED_BANNED,
+} from "./lib/unverified-claims.mjs";
 
 /**
  * 用法：
  *   node scripts/check-i18n.mjs                     # 查本仓的 admin-ui/
  *   node scripts/check-i18n.mjs <根目录>             # 查别处的 admin-ui/
  *   node scripts/check-i18n.mjs <根目录> <前缀表>    # 同上，并登记那棵树的拼键前缀
+ *   node scripts/check-i18n.mjs <根目录> <前缀表> <⑨白名单>   # 同上，并指定规则⑨ 的 key 白名单
  *
- * 第二种形态**只给 tests/unit/check-i18n.test.ts 那份元测试用**（全分支评审 I2）。
- * 在它出现之前，这道门禁自己**零覆盖**：八条判据里任何一条被写坏（正则打错一个
+ * 后三种形态**只给 tests/unit/check-i18n.test.ts 那份元测试用**（全分支评审 I2）。
+ * 在它出现之前，这道门禁自己**零覆盖**：九条判据里任何一条被写坏（正则打错一个
  * 字符、循环 `continue` 错一层、`errors.push` 忘了写），门禁都会安静地 exit 0，
  * 而"门禁绿了"恰恰是所有人赖以放心的那个信号。不能拿真仓做变异——那要往
  * `admin-ui/` 里塞坏文件；给一个根目录入参，元测试就能在临时目录里造八种坏法，
@@ -379,17 +390,47 @@ for (const [k, row] of Object.entries(I18N)) {
   if (new Set(sets).size !== 1) errors.push(`${k} 的插值占位符在各语言间不一致: ${sets.join(" | ")}`);
 }
 
-// ⑥ reg.* 与 keys.addMenu.auto* 禁用词（含繁体变体）
+// ⑥ 偏好词：`reg.*` 与 `keys.addMenu.auto*`，**外加与「两条通道平级」直接相关的那几个
+// `set.*` 前缀**（含繁体变体）。
 //
 // ⚠️ **`keys.addMenu.auto*` 是复评追加的范围，原来只扫 `reg.*`**：P3c Task 4
 // 新增的「添加 Key」下拉里，【自动注册】那两项占位文案（`keys.addMenu.autoGroup`
 // / `autoMoemail` / `autoYyds`）与 `reg.*`（P2 注册机）
 // 说的是同一类事——"这条通道有没有被暗示成比别的通道更好"——但原来的判据
 // 只认命名空间前缀 `reg.`，这几个 key 完全不在扫描范围内，复评实测：给
-// `keys.addMenu.autoMoemail` 塞一句「推荐使用」，八条断言全绿。这条门禁
+// `keys.addMenu.autoMoemail` 塞一句「推荐使用」，**当时的八条断言全绿**。这条门禁
 // 必须在 Task 6 真正给这两条通道接线、写更多面向运维的文案之前先扩到这里。
+//
+// ⚠️⚠️ **后三条前缀是 P3e Task 7 追加的**，起因同型、危害更大：用户那条硬约束是
+// 「YYDS 与 MoeMail 严格同级，不替人选主备」，而两条通道**共用的那对凭据 key**
+// （`set.field.channel.*`）与主 / 备两个选择器标签（`set.field.registrar.primary`
+// / `fallback`）、注册机那张卡的标题（`set.card.registrar`）在这之前**全在门外**——
+// 夹具实跑 EXIT=0。设置页正是运维**真的在做那个选择**的地方。
+//
+// ⚠️ **为什么不是整个 `set.*`（这条推理必须留着，删了下一个人会顺手扩宽）**：
+// `set.*` 里有大量与通道无关、且**正当地**会出现「默认」「优先」「推荐」这类词的
+// 运维文案（超时、冷却、口令）。扩到全部 `set.*` 会误伤到与「两条通道平级」毫无
+// 关系的字段说明上去。扩太宽 = 这道今天零命中的干净门禁立刻要带一条豁免名册，
+// 而本仓的裁定是「开豁免名册比没有规则更糟」。
+// ⇒ **按前缀逐条登记，不许写成整个 `set.*`。**
+//
+// ⚠️ **边界：这只管词面。** 「两条里挑一条的话就用 X」这种不含禁用词的表述它抓不住，
+// 那一档留给评审。**别在任何地方把它升格成「杜绝一切偏好表述」。**
+//
+// 这张表的每一条各由 `tests/unit/check-i18n.test.ts` 的
+// 「⑥ %s/%s 出现偏好词 ⇒ 当场红」那一族逐前缀钉着，「范围没有被扩大」那一半由
+// 「⑥ 反向控制：与通道无关的 set.field.upstreamTimeoutMs 里出现同样的词 ⇒ 不红」
+// 钉着（**只做一半等于没做**：单看前一族，作用域写成整个 `set.*` 也全绿）。
+const BANNED_PREFIXES = [
+  "reg.",
+  "keys.addMenu.auto",
+  "set.field.registrar.primary",
+  "set.field.registrar.fallback",
+  "set.field.channel.",
+  "set.card.registrar",
+];
 for (const [k, row] of Object.entries(I18N)) {
-  if (!k.startsWith("reg.") && !k.startsWith("keys.addMenu.auto")) continue;
+  if (!BANNED_PREFIXES.some((p) => k.startsWith(p))) continue;
   for (const lang of LANGS) {
     const s = String(row[lang] ?? "").toLowerCase();
     for (const w of BANNED) if (s.includes(w.toLowerCase())) errors.push(`${k}/${lang} 出现偏好词「${w}」`);
@@ -448,6 +489,50 @@ for (const p of walk(join(ROOT, "admin-ui"))) {
           + "面板上会出现裸的 {占位符}",
         );
       }
+    }
+  }
+}
+
+// ⑨ **未核实事项的红线**（P3e Task 7）。
+//
+// 用户点名的一条红线是：真机了结之前，任何文案都不许把「上限是 60 次」写成「60 次是安全的」。
+// 在这之前这条红线**完全靠人守**——规则⑥ 的作用域不含 `usage.*` / `pg.*`，
+// 谁把 `usage.range.retention` 改成「30 天这一档的 60 次子请求在 Worker 上没问题」，
+// 十二道门禁一道都不会红。
+//
+// ⚠️ **判据是「显式 key 白名单 × 词表」的交集，不是全字典扫。**
+// 词表里的「安全 / 够用 / 没问题」在别的命名空间里是完全正当的用词，
+// 全字典扫会立刻制造第二个「警报淹掉信号」现场（这个仓刚刚才把 396 条噪音降到 0）。
+//
+// ⚠️ **两张表住在 `scripts/lib/unverified-claims.mjs`，不在这里，理由写在那份文件头**：
+// 它有三个消费者（本条判据、`tests/unit/i18n-dict.test.ts` 的
+// 「未核实的事不许被说成已核实（白名单 × 词表的交集）」那份**第二份扫描实现**、
+// 以及 `tests/unit/check-i18n.test.ts` 的
+// 「⑨ 反向自检：白名单非空、词表非空、且白名单里每个 key 都真的在字典里」那格
+// 对两张表**自身**的反向自检）。
+// 抄三份的话，反向自检守的是它自己那一份副本——这与 P3e Task 1 收编抠注释器是同一条裁定。
+// **共用的只是表，扫描仍是两份独立实现**：本条与那份测试各写各的循环。
+// ⚠️ **别把这一条混进文件头「前六条各有两份互为印证」那段里**：它与第 ⑧ 条一样是
+// 设计文档 §9.1 之外新加的，两份实现之间共着表，写在这里如实登记。
+//
+// ⚠️ **第四个入参与第三个同一条理由，只给元测试用**：真仓那张白名单点的是 `usage.*` /
+// `pg.*` 里三个真实存在的 key，而夹具树的字典只有被测的那一两条 ⇒ 套用真仓那张表的话
+// 每一格夹具都会被下面那条「白名单里有字典中不存在的 key」打红。
+// **给了根目录却没给这一项时白名单是空的——那是「这棵树上规则⑨ 无事可管」，
+// 不是「这一条不检查」**（词表仍在，只是交集为空）。
+const UNVERIFIED_KEYS = process.argv[2] === undefined
+  ? REAL_UNVERIFIED_KEYS
+  : (process.argv[4] ?? "").split(",").filter(Boolean);
+for (const k of UNVERIFIED_KEYS) {
+  const row = I18N[k];
+  // **认不出要吵，不许静静地跳过**：key 被改个名或者被删掉之后静默跳过，等于那条红线
+  // 从此再也没人守，而门禁照样打 ✅ 横幅。这一档由 `tests/unit/check-i18n.test.ts` 的
+  // 「⑨ 白名单里有字典中不存在的 key ⇒ 当场红（自带反向控制）」钉着。
+  if (row === undefined) { errors.push(`⑨ 的白名单里有字典中不存在的 key: ${k}`); continue; }
+  for (const lang of LANGS) {
+    const s = String(row[lang] ?? "").toLowerCase();
+    for (const w of UNVERIFIED_BANNED) {
+      if (s.includes(w.toLowerCase())) errors.push(`${k}/${lang} 把一件未核实的事说成了「${w}」`);
     }
   }
 }
