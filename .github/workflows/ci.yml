@@ -35,7 +35,7 @@ jobs:
         run: node scripts/check-i18n.mjs
       - name: 7/12 KV namespace id 仍是占位符
         run: node scripts/check-wrangler-placeholder.mjs
-      # 全分支评审 B2 新增的第 8 道：**注释里指向的位置必须真实存在。**
+      # 全分支评审 B2 新增的这一道：**注释里指向的位置必须真实存在。**
       # 排在类型检查之前是有意为之——它只读文本、几百毫秒就跑完，而它抓的那类缺陷
       # （「这条由 X 用例钉着」指向一条根本不存在的用例）恰恰是**读代码的人会当真、
       # 而所有其它门禁都看不见**的那一类。本仓台账已为它记了二十余次。
@@ -43,7 +43,7 @@ jobs:
         run: node scripts/check-comment-refs.mjs
       - name: 9/12 类型检查
         run: pnpm typecheck
-      # 10/12、11/12 的 `pnpm test 2>&1` / `pnpm test:workers 2>&1` 这两处**不得**追加任何
+      # 下面 `pnpm test 2>&1` / `pnpm test:workers 2>&1` 这两处**不得**追加任何
       # 文件路径过滤器（如 `pnpm test tests/foo.test.ts`）。tests/global-setup.ts 里
       # 的收集门禁按「带没带过滤器」分档，一旦 CI 带了过滤器，门禁会在**不报错、不提示**
       # 的情况下静默跳过——这个前提由 tests/unit/scripts-guard.test.ts 钉住，改这两行前

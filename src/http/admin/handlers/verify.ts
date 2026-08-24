@@ -6,7 +6,7 @@ import type { ProbeGuard } from "../probe-guard.js";
 import { httpError } from "../../errors.js";
 // ⚠️ **只 import 真的会用到的**：验活用的是 `upstreamPath`，**不是 `endpointFor`**（见下面约束 6）。
 // ⚠️ **本仓没有任何东西会拦住一个没用上的 import**（实测：`grep -n "noUnusedLocals\|noUnusedParameters"
-// tsconfig*.json` 零命中，十二道门禁里也没有 lint）。上一版这里写着「`noUnusedLocals` 一开
+// tsconfig*.json` 零命中，CI 的门禁列表里也没有任何一步跑 lint）。上一版这里写着「`noUnusedLocals` 一开
 // 就是编译失败」——**那是一句没核过的话**。多 import 一个只会被评审看见，别指望机器。
 import { protocolById, MODEL_CATALOG } from "../../../core/admin/protocol-catalog.js";
 

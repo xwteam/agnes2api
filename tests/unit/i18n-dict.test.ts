@@ -110,7 +110,8 @@ const namespacePrefixesIn = (src: string): string[] =>
 
 /**
  * 字典的结构性断言。**与 `scripts/check-i18n.mjs` 用不同的代码路径回答同一批问题**：
- * 门禁脚本由 CI 里跑 `scripts/check-i18n.mjs` 那一步跑，这份跑在 `pnpm test` 里，其中一份写错时另一份会不同意。
+ * 门禁脚本在 CI 上是单独一步（`node scripts/check-i18n.mjs`），这份跟着 `pnpm test` 跑，
+ * 两条入口互不遮蔽，其中一份写错时另一份会不同意。
  * （P3a 的教训是反过来的：CI 只有一份实现、且没人验证它跑没跑过，
  *   于是加了 tee + grep 横幅。这里换一种做法——冗余实现。）
  *
@@ -169,8 +170,8 @@ describe("i18n 字典", () => {
    * 漏掉繁体「保證」，于是报告说齐全而实际不齐。简体表在 zh-TW 上等于没有检查。
    *
    * ⚠️⚠️ **作用域在 P3e Task 7 从「只有 `reg.*`」扩成了下面那张前缀表，
-   * 而这一份与 `scripts/check-i18n.mjs` 的规则⑥ 是两份独立实现**（那边由 CI 里跑那个脚本的那一步跑，
-   * 这边跑在 `pnpm test` 里，各写各的循环）。两件事同时补上：
+   * 而这一份与 `scripts/check-i18n.mjs` 的规则⑥ 是两份独立实现**（那边是 CI 上单独一步
+   * `node scripts/check-i18n.mjs`，这边跟着 `pnpm test` 跑，各写各的循环）。两件事同时补上：
    * · 用户那条硬约束「YYDS 与 MoeMail 严格同级，不替人选主备」的落点是**设置页**——
    *   两条通道共用的那对凭据 key 与主 / 备两个选择器标签在这之前全在门外；
    * · `keys.addMenu.auto*` 是那道门禁**早就**扩过的范围，而这一份一直没跟上
