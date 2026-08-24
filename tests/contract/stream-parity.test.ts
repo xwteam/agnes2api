@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { PROTOCOLS, endpointFor, SAMPLE_PROMPT } from "../../src/core/admin/protocol-catalog.js";
+import { toSseStream } from "../../src/core/protocol/sse.js";
 import { deltaText, sseFrames, playgroundProtocols } from "../../admin-ui/js/pure/playground.mjs";
 
 /**
@@ -91,6 +92,26 @@ describe("流式：网关不整体缓冲（U-A 的回归网，不是它的证据
    *
    * **变红条件**：把 `src/core/dispatcher.ts` 的 `sanitize(res)` 改成
    * 先 `await res.text()` 再用那段文本重建一个 Response。
+   *
+   * ── **这一格的射程，三句话（P3e Task 12 改真）** ─────────────────────────────
+   * ① **它只覆盖 openai 纯透传那条路**（`/v1/chat/completions`）。openai 是唯一
+   *    原样透传上游字节的协议，这一格连着的就是那条路。**实测**：把
+   *    `src/core/protocol/sse.ts` 的 `toSseStream` 从逐块 `pull` 改成 `start` 里
+   *    整段缓冲，本仓另有十几格当场红，**这一格纹丝不动**——透传那条路
+   *    根本不经过它（**具体几格不写死**：写死的计数会随任何一次加用例而漂）。
+   * ② **另三条协议的逐块性由各自 unit 那格守**，逐条点名：
+   *    `tests/unit/anthropic.test.ts「首个事件在上游尚未结束时就已产出（真流式）」`、
+   *    `tests/unit/responses.test.ts「首个事件在上游尚未结束时就已产出（真流式）」`、
+   *    `tests/unit/gemini.test.ts「首个事件在上游尚未结束时就已产出（真流式）」`
+   *    （gemini 那格 P3e Task 12 才补上——在那之前它在 unit 侧只有取消那一格）。
+   *    本文件下方 CRLF 那一组另外各带一行，同一个缓冲式变异下那三条协议的
+   *    CRLF / LF 六行全红；**四条协议共用的那个原语**由本文件
+   *    「toSseStream 在生成器仍未结束时就已把第一块交给下游」直接盯着。
+   * ③ **`app.request()` 不经过 workerd 的 HTTP 服务层，也不经过
+   *    `src/entry/worker.ts` 的 `fetch()` 导出**（真机上请求先落在那儿，再由它
+   *    转交 `app.fetch`）。那一层仍然只能靠真机结案（`wrangler dev` 起真 workerd +
+   *    `curl -N` 逐块打时间戳，结论在 P3d Task 11 的报告里），本文件是那条结论的
+   *    回归网、不是它的证据。
    */
   it("上游第二块还没 enqueue 时客户端已经读到了第一块 —— 被整体缓冲的话 Playground 的流式开关就是假话", async () => {
     let releaseSecond: () => void = () => {};
@@ -130,6 +151,103 @@ describe("流式：网关不整体缓冲（U-A 的回归网，不是它的证据
 
     releaseSecond();
     await reader.cancel();
+  });
+});
+
+/**
+ * ── **P3e Task 12：四条协议共用的那个原语本身，逐块性上装一个观测点** ──────────
+ *
+ * 上面那一格与下面 CRLF 那一组都是**整条路**的观测：它们要起 app、要过路由、
+ * 要挂闸，红起来的报文说的是「哪条协议的哪一头坏了」。而 anthropic / responses /
+ * gemini 三条协议的逐块性**全部经由同一个原语** `toSseStream` ——
+ * 它一旦从逐块 `pull` 退化成整段缓冲，那三条协议一起坏，报文却分散在六七个地方。
+ * 这里给那个原语本身留一格**说得出根因**的观测。
+ *
+ * **为什么写在 `tests/contract/` 而不是 `tests/unit/sse.test.ts`**：与上面那一组
+ * 同一个理由——「不整体缓冲」是**双运行时**性质，`tests/unit/**` 只有 node 那份
+ * 配置收集，只写在 unit 里等于只装一半网。这一格在 workerd 下同样要跑得过。
+ *
+ * ⚠️ **纯行为观测，不许改 `toSseStream` 的签名**：不注入时钟、不加回调、不加
+ * 「测试专用」的状态——那会在热路径上留下一份只有测试用得到的东西。这里全部的
+ * 装置就是**一个由用例握着的闸**：生成器 yield 完第一块就卡在闸上不结束，
+ * 于是「第一块已经到了下游、而生成器还没跑完」成为一个可观测的状态。
+ *
+ * ⚠️⚠️ **不许用「数 `next()` 调用次数」那把尺子**（P3e Task 12 实测撞掉的一版）：
+ * 派发单原本写的是「第一块交出来时生成器只被 `next()` 过 1 次」。**node 下它是 1，
+ * workerd 下它是 2 —— 而 `toSseStream` 是同一份逐块实现、一个字没改。**
+ * 两个运行时对「交付第一块之后什么时候再 pull 一次」的调度本来就不一样，
+ * 那把尺子量的是**运行时的 pull 调度**，不是「第一块什么时候交给下游」
+ * ⇒ 它在 workerd 下对**正确实现**恒红（报告变异表 M0）。**判据用错工具，
+ * 这次是恒红；上一次（Task 9 的 M1）是恒绿——两种都得靠实测才看得见。**
+ */
+describe("流式：toSseStream 这个原语自己是逐块的（P3e Task 12）", () => {
+  const TIMED_OUT = "__闸还没放，下游一块都没拿到__";
+  const CLOSED_EARLY = "__流提前结束了，这一格的挂起点没建起来__";
+
+  /**
+   * 起一条生成器，yield 完第一块后（`gatedTail` 为真时）卡在闸上不结束，
+   * 返回下游在**闸放开之前**拿到的第一块，以及那一刻生成器有没有跑完。
+   *
+   * **两格共用同一份观测**（不是各写一遍：用例自己再实现一遍，验的就是抄件）。
+   *
+   * ⚠️ **赛跑而不是干等**：被整段缓冲时 `read()` 会一直挂着（闸永远不放），
+   * 干等的话这一格以「超时」形式失败，报错信息说不清是哪条性质坏了。
+   */
+  async function firstChunkBeforeGate(gatedTail: boolean): Promise<{ chunk: string; ended: boolean }> {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    let ended = false;
+    async function* gen(): AsyncGenerator<string> {
+      yield "data: 甲\n\n";
+      if (gatedTail) {
+        await gate;          // 生成器卡在这儿：它**还没有结束**
+        yield "data: 乙\n\n";
+      }
+      ended = true;
+    }
+    const reader = toSseStream(gen()).getReader();
+    const timer = new Promise<string>((r) => { setTimeout(() => r(TIMED_OUT), 2000); });
+    try {
+      const chunk = await Promise.race([
+        reader.read().then((s) => (s.done ? CLOSED_EARLY : new TextDecoder().decode(s.value))),
+        timer,
+      ]);
+      return { chunk, ended };
+    } finally {
+      release();
+      await reader.cancel().catch(() => {});
+    }
+  }
+
+  /**
+   * **防住的真实故障**：`toSseStream` 改成「先把生成器跑干、再一次性 enqueue」。
+   * 那样 anthropic / responses / gemini 三条协议一起退化成非流式，而**那三条协议的
+   * 「取消」用例照样全绿**（取消验的是上游有没有被释放，不是第一块什么时候到）。
+   *
+   * **变红条件（实测，报告变异表 M1）**：`src/core/protocol/sse.ts` 的
+   * `toSseStream` 里那个 `async pull(controller)` 改成 `async start(controller)`
+   * 加整段缓冲。缓冲式实现要等生成器跑完，而生成器卡在闸上永不结束
+   * ⇒ 下面拿到的是 `TIMED_OUT`。
+   */
+  it("toSseStream 在生成器仍未结束时就已把第一块交给下游", async () => {
+    const { chunk, ended } = await firstChunkBeforeGate(true);
+    expect(chunk, "第一块要等生成器跑完才交出来 —— 那是整段缓冲，不是逐块").toBe("data: 甲\n\n");
+    // 自检：闸没放，生成器就**不可能**已经跑完。这一行红 = 这一格的挂起点没建起来
+    //（比如有人把闸删了），那时上面那句断言就成了一句空话。
+    expect(ended, "生成器居然已经跑完了 —— 闸没起作用，上面那句断言是空转的").toBe(false);
+  });
+
+  /**
+   * **反向控制**：生成器一共只产出一块、随后立刻结束时，「跑完」与「交出第一块」
+   * 在观测上本来就重合，这一格今天必须绿。少了它，上面那格红了分不出是
+   * 「真的退化成缓冲了」还是「这套闸本身让谁都过不去」。
+   *
+   * ⚠️ 它在**缓冲式变异下也必须保持绿**——那正是它的用处：同一次变异里
+   * 上面那格红、这格绿，才说明红的是「逐块性」这一条性质本身。
+   */
+  it("反向控制：生成器只产出一块时也不许误红", async () => {
+    const { chunk } = await firstChunkBeforeGate(false);
+    expect(chunk, "单块生成器上第一块本来就该原样交出来 —— 它红了说明这套闸对谁都红").toBe("data: 甲\n\n");
   });
 });
 

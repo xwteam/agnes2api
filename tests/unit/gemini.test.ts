@@ -102,6 +102,49 @@ describe("toGeminiStream", () => {
     expect(payloads[0].candidates[0].content.parts[0].text).toBe("只有这条");
   });
 
+  /**
+   * 与 `tests/unit/anthropic.test.ts「首个事件在上游尚未结束时就已产出（真流式）」`
+   * **同形的一格**。P3e Task 12 补。
+   *
+   * **在这一格之前 gemini 是四条协议里唯一没有 unit 级逐块性观测的**：把
+   * `src/core/protocol/sse.ts` 的 `toSseStream` 从逐块 `pull` 改成整段缓冲，
+   * 本文件当时只有下面「取消」那一格会红——而那一格红的理由是**上游没被释放**，
+   * 不是「第一块出来得晚」。逐块性只靠取消那一格侧面兜着。
+   *
+   * ⚠️ **夹具不许照抄成别的协议的形状**：gemini 一条自己合成的事件行都不夹
+   * （`tests/contract/stream-parity.test.ts「带正文的行恰好三条……不带正文」`
+   * 那一格里 gemini 的非正文行数钉死为 0，说的就是这件事），所以第一块交出来的
+   * 就是第一条**带正文**的 `candidates` 负载——断言只能落在「甲」上，
+   * 落在 `message_start` 之类事件名上的话这一格恒绿。
+   *
+   * **变红条件（实测，报告变异表 M1）**：`toSseStream` 改成 `start` 里整段
+   * 缓冲后一次 enqueue。缓冲式实现要等生成器跑完，而上游卡在 `gate` 上永不
+   * 结束 ⇒ 下面第一次 `read()` 永久挂起，这一格以超时红。
+   */
+  it("首个事件在上游尚未结束时就已产出（真流式）", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const upstream = new ReadableStream<Uint8Array>({
+      async start(c) {
+        const e = new TextEncoder();
+        c.enqueue(e.encode(`data: ${JSON.stringify({ id: "c1", choices: [{ delta: { content: "甲" } }] })}\n\n`));
+        await gate;                     // 上游卡住不结束
+        c.enqueue(e.encode("data: [DONE]\n\n"));
+        c.close();
+      },
+    });
+
+    const reader = toGeminiStream(upstream, "m").getReader();
+    const first = await reader.read();  // 缓冲式实现会在此永久挂起
+    const wire = new TextDecoder().decode(first.value);
+    const payload = JSON.parse(wire.replace(/^data: /, ""));
+    expect(payload.candidates[0].content, "第一块交出来的必须已经是带正文的 candidates 负载").toEqual({
+      role: "model", parts: [{ text: "甲" }],
+    });
+    release();
+    await reader.cancel();
+  });
+
   it("upstream 正阻塞在 read() 上等下一个 token 时取消：cancel() 必须及时 resolve 且真的释放 upstream（真实断连场景）", async () => {
     let upstreamCancelled = false;
     const upstream = new ReadableStream<Uint8Array>({
