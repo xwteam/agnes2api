@@ -647,6 +647,11 @@ npx wrangler dev
 파일(이미 `.gitignore`에 포함됨)에 작성하세요 —— 비밀 값을 `wrangler.toml`에
 직접 쓰지 마세요.
 
+⚠️ 이 파일은 `pnpm test:workers`가 무조건 workerd의 `env`로 읽어 들입니다
+(`@cloudflare/vitest-pool-workers`가 wrangler를 호출할 때 `envFiles`를 넘기지 않습니다).
+CI에는 이 파일이 없으므로 테스트 전에 `mv .dev.vars .dev.vars.off` 를 실행하세요.
+이 파일이 있는 동안에는 저장소의 어서션 한 칸이 즉시 빨간불이 됩니다.
+
 ## Docker
 
 1. 저장소를 클론하고 환경 변수 파일을 준비합니다.

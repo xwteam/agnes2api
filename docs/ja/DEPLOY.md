@@ -660,6 +660,11 @@ npx wrangler dev
 `.dev.vars` ファイル（すでに `.gitignore` 済み）に書いてください——
 `wrangler.toml` に直接秘密情報を書かないでください。
 
+⚠️ このファイルは `pnpm test:workers` によって無条件に workerd の `env` へ読み込まれます
+（`@cloudflare/vitest-pool-workers` は wrangler を呼ぶときに `envFiles` を渡しません）。
+CI 側にはこのファイルがないため、テストの前に `mv .dev.vars .dev.vars.off` してください。
+このファイルが存在する間は、リポジトリ内のアサーションが 1 つその場で赤くなります。
+
 ## Docker
 
 1. リポジトリをクローンし、環境変数ファイルを準備します。

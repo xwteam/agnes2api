@@ -543,6 +543,10 @@ npx wrangler dev
 把 `GATEWAY_TOKEN` 写进 `wrangler.toml` 同目录下的本地 `.dev.vars` 文件（已加入
 `.gitignore`）——不要把密钥直接写进 `wrangler.toml`。
 
+⚠️ 这个文件会被 `pnpm test:workers` 无条件读进 workerd 的 `env`
+（`@cloudflare/vitest-pool-workers` 调 wrangler 时不传 `envFiles`），而 CI 上没有它
+⇒ 跑测试前先 `mv .dev.vars .dev.vars.off`。仓库里有一格断言会在它存在时当场红。
+
 ## Docker
 
 1. 克隆仓库并准备环境变量文件：

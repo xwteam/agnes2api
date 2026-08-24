@@ -669,6 +669,11 @@ npx wrangler dev
 Put `GATEWAY_TOKEN` into a local `.dev.vars` file next to `wrangler.toml` (already
 git-ignored) — do not put secrets directly in `wrangler.toml`.
 
+⚠️ This file is read unconditionally into workerd's `env` by `pnpm test:workers`
+(`@cloudflare/vitest-pool-workers` does not pass `envFiles` when it calls wrangler),
+and CI has no such file ⇒ run `mv .dev.vars .dev.vars.off` before the tests. The
+repository has one assertion that turns red on the spot while the file exists.
+
 ## Docker
 
 1. Clone the repository and prepare the environment file:
