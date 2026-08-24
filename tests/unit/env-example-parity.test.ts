@@ -1,21 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { envLockedFields } from "../../src/core/config-provenance.js";
+import { envLockedFields, loadConfigWithProvenance } from "../../src/core/config-provenance.js";
+import { MemoryStorage } from "../helpers/fake-storage.js";
 
 /**
- * `.env.example` 必须覆盖真源里全部可配环境变量。
+ * `.env.example` 必须覆盖真源里全部可配环境变量，**并且照它 `cp` 出来的那份 `.env` 真的
+ * 装得起来**，**并且与五语言文档两个方向都对得上**。
  *
  * ── 为什么这件事值一道守卫 ─────────────────────────────────────────────────
  *
- * 五份 `README.md` 教陌生人的第一条命令就是 `cp .env.example .env`。**那份文件缺一个
+ * 每一份 `README.md` 教陌生人的第一条命令都是 `cp .env.example .env`。**那份文件缺一个
  * 变量不是文档瑕疵，是部署事故**：本仓吃过一次真实的亏——`USAGE_FLUSH_INTERVAL_MS`
  * 留空（不是注释掉）时 `cp` 出来的 `.env` 会把**空字符串**（不是「未设置」）喂给
  * 「不小于 1 的整数」校验器，`Number("") = 0` 过不了那一关，全新 Docker 部署直接起不来。
- * 那一次的处置写在 `.env.example` 里那一行的上方。
+ * 那一次的处置写在 `.env.example` 里那一行的上方，以及 `src/http/usage-sink.ts` 的
+ * `resolveUsageFlushInterval` 里那条「空串等同没设」的分支。
  *
- * 而在本文件出现之前，全仓提到 `.env.example` 的地方**全是注释**，没有一格断言它与
- * 真源对齐——又一张不会自己红的清单。
+ * ⚠️ **本文件不是 `.env.example` 上唯一的活断言**（第一版这里写成「全仓提到它的地方
+ * 全是注释」，实测为假）：`tests/unit/registrar/config.test.ts`
+ * 的「M5 .env.example 的凭据注释按……两条通道对称」早就在读它并钉住**凭据注释的措辞**。
+ * 两格射程不同——那一格管**某几句话怎么写**，本文件管**清单齐不齐、值能不能用、
+ * 文档对不对得上**。改 `.env.example` 的人两格都要看。
  *
  * ── 期望值从哪来：三张表，只有第一张是真源 ─────────────────────────────────
  *
@@ -30,15 +36,52 @@ import { envLockedFields } from "../../src/core/config-provenance.js";
  * **别为了「省事」把三张合成一张手写全集**：那就退回成一张不会自己红的清单。
  */
 
-/** `.env.example` 里「声明了一个变量」长什么样。**正反两向共用这一份判据**——
- *  正向（某个名字在不在里面）与反向（里面都有哪些名字）各写一条正则就会漂。 */
-const DECLARATION = String.raw`^#?[ \t]*([A-Z][A-Z0-9_]*)=`;
+/** `.env.example` 里「声明了一个变量」长什么样。**下面每一格共用这一份判据**——
+ *  正向（某个名字在不在里面）、反向（里面都有哪些名字）、以及「`cp` 出来的那份 `.env`
+ *  长什么样」各写一条正则就会漂。三段捕获：注释号（有就是「被注释掉的声明」）、名字、值。 */
+const DECLARATION = String.raw`^(#?)[ \t]*([A-Z][A-Z0-9_]*)=(.*)$`;
 
 const envExample = (): string => readFileSync(".env.example", "utf8");
 
+const declarations = (): Array<{ commented: boolean; name: string; value: string; line: number }> => {
+  const out: Array<{ commented: boolean; name: string; value: string; line: number }> = [];
+  envExample().split("\n").forEach((text, i) => {
+    const m = new RegExp(DECLARATION).exec(text);
+    if (m) out.push({ commented: m[1] === "#", name: m[2]!, value: m[3]!, line: i + 1 });
+  });
+  return out;
+};
+
 /** `.env.example` 里声明过的全部变量名（含被注释掉的那一行）。 */
 function declaredInEnvExample(): string[] {
-  return [...envExample().matchAll(new RegExp(DECLARATION, "gm"))].map((m) => m[1]!);
+  return declarations().map((d) => d.name);
+}
+
+/** 第一条声明**之前**的那段头部。指路那一格只看这里，见它的说明。 */
+function envExampleHeader(): string {
+  const lines = envExample().split("\n");
+  const first = lines.findIndex((l) => new RegExp(DECLARATION).test(l));
+  return lines.slice(0, first === -1 ? lines.length : first).join("\n");
+}
+
+/**
+ * **陌生人 `cp .env.example .env` 之后，docker compose 的 `env_file:` 送进容器的那份环境。**
+ *
+ * 规则与 compose 一致：被注释掉的行不算，**留空的键以空字符串进环境**（不是「未设置」）
+ * ——那正是本仓吃过亏的那条路径，也是 `.env.example` 头部那段警告讲的那件事。
+ */
+function envFromEnvExample(): Record<string, string> {
+  return Object.fromEntries(declarations().filter((d) => !d.commented).map((d) => [d.name, d.value]));
+}
+
+/** 每个声明**上方连续的注释行**有多少行。头部那句「注释详略不一」就靠它守着。 */
+function commentLinesAbove(): Array<{ name: string; lines: number }> {
+  const src = envExample().split("\n");
+  return declarations().map(({ name, line }) => {
+    let n = 0;
+    for (let i = line - 2; i >= 0 && src[i]!.startsWith("#"); i--) n++;
+    return { name, lines: n };
+  });
 }
 
 /**
@@ -175,8 +218,42 @@ describe(".env.example 与真源对齐", () => {
     ).toEqual([]);
   });
 
-  it(".env.example 头部指路到 DEPLOY.md —— 陌生人 cp 完不至于以为这就是全集", () => {
-    expect(envExample().slice(0, 800)).toContain("DEPLOY.md");
+  /**
+   * ⚠️ **第一版的判据是「前 800 字符里含子串 `DEPLOY.md`」，比用例名弱得多**：
+   * 把整块指路删掉、随手在开头写一句「顺带一提：DEPLOY.md 里写了别的东西」照样绿
+   *（复评实测 H1）。现在判据落在**指路本身**上——第一条声明之前的那段头部里，
+   * 必须给得出带路径形态的去处（`docs/<你的语言>/DEPLOY.md`），注册机那一组还要点到
+   * `REGISTRAR.md`。**射程仍然只到「指路存在」，指到的那一节写得对不对不在这里。**
+   */
+  it(".env.example 头部指路到 docs/<语言>/DEPLOY.md 与 REGISTRAR.md —— 陌生人 cp 完不至于以为这就是全集", () => {
+    const header = envExampleHeader();
+    expect(
+      ["DEPLOY.md", "REGISTRAR.md", "docs/"].filter((needle) => !header.includes(needle)),
+      "第一条声明之前的那段头部没有把人指到五语言文档 ⇒ 陌生人只能拿这份文件当全部说明。"
+      + "指路要给得出路径形态（docs/<你的语言>/DEPLOY.md），光提一句文件名不算",
+    ).toEqual([]);
+  });
+
+  /**
+   * 头部那句「注释详略不一：多数变量只有一行，而踩过坑的那几个写满了十几行」**是一句
+   * 会过期的全称句**——它的前身「每个变量最多只有一行注释」写下时就已经是假的
+   *（复评 S1：同文件当时 10 个变量的注释超过一行，最长 20 行），而那句话还被逐字搬进了
+   * 五语言 `DEPLOY.md`。**这一格就是那句话的机器守卫。**
+   *
+   * ⚠️ **刻意不点名「哪几个变量允许写长」**：那是一张只会长大的永久豁免名册（本仓已登记
+   * 的形态）。判据只钉这句话本身的两个可证伪部分——「多数」与「有那么几个很长」——
+   * 所以给某个变量补三行注释不会红，而把注释密度改到这句话不再成立才会红。
+   */
+  it("头部那句「多数变量只有一行、个别写满十几行」是真的 —— 它同时是五语言 DEPLOY.md 里的同一句", () => {
+    const perVar = commentLinesAbove();
+    const brief = perVar.filter((v) => v.lines <= 1);
+    const long = perVar.filter((v) => v.lines >= 10);
+    const advice = "这句话同时写在 .env.example 头部与五语言 docs/<语言>/DEPLOY.md 的环境变量表下方，"
+      + "改注释密度就要回去把那几句一起改（本仓上一次正是让这句话在 6 个位置一起变假的）";
+    expect(brief.length, `「多数变量只有一行」不再成立：${brief.length} 个变量注释不超过一行，`
+      + `${perVar.length - brief.length} 个超过。${advice}`).toBeGreaterThan(perVar.length - brief.length);
+    expect(long.map((v) => v.name), `「个别写满十几行」不再成立：没有任何一个变量的注释达到十行。${advice}`)
+      .not.toEqual([]);
   });
 
   /**
@@ -212,6 +289,168 @@ describe(".env.example 与真源对齐", () => {
     expect(
       WORKER_BINDINGS.filter((k) => !new RegExp(String.raw`^\s*binding\s*=\s*"${k}"`, "m").test(toml)),
       "这些名字被当成 Cloudflare 绑定豁免掉了，而 wrangler.toml 里并没有这么一条绑定 ⇒ 豁免的理由不成立",
+    ).toEqual([]);
+  });
+});
+
+/**
+ * **上面那些格只看名字，一个值都不看。**
+ *
+ * 复评实测：把任何一行数值改成留空（`MAX_STRIKES=`）——**正是本文件开头引用的那次真实
+ * 部署事故的形态**——上面 9 格全绿，而照这份文件 `cp` 出来的新部署当场抛错起不来。
+ * 「少一个名字」被挡住了，「名字在、值空了」这一族没有，而后者才是本仓真正吃过亏的那族。
+ *
+ * ⇒ 这一组不再读文本，而是**把 `.env.example` 按 compose `env_file:` 的规则解析成一份
+ * 真环境，喂给真装配函数 `loadConfigWithProvenance`**。期望值不手写：一律拿「同一份环境
+ * 去掉那个键」的装载结果当对照。
+ *
+ * **射程写明**：它覆盖的是走 `GatewayConfig` 那条路的变量。`PORT` / `DATA_DIR` 不是配置
+ * 字段，看不见——它们的「空串视同没设」由 `tests/unit/entry-node.test.ts` 的
+ * 「DATA_DIR= （空串）回落到 /app/data……」与「PORT= （空串）回落到 8080……」两格管着。
+ */
+describe("照 .env.example cp 出来的那份 .env 真的能起来", () => {
+  /** README 教的最小动作就这一步：填一个 GATEWAY_TOKEN。 */
+  const TOKEN = "unit-test-gateway-token";
+  const baseEnv = (): Record<string, string> => ({ ...envFromEnvExample(), GATEWAY_TOKEN: TOKEN });
+
+  /** 装载结果的**可比较形态**：抛错也是一种结果，两边都要能比。 */
+  async function outcome(env: Record<string, string>): Promise<string> {
+    try {
+      const { config } = await loadConfigWithProvenance(env, new MemoryStorage());
+      return JSON.stringify(config);
+    } catch (err) {
+      return `THROW ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  it("cp + 填一个 GATEWAY_TOKEN ⇒ 装得起来，而且不是降级起来的", async () => {
+    const { config } = await loadConfigWithProvenance(baseEnv(), new MemoryStorage());
+    expect(
+      config.degraded,
+      "照 .env.example cp 出来的配置只能干净地起来 —— degraded 说明有字段回落了，运维看不见",
+    ).toBe(false);
+  });
+
+  /**
+   * **留空的键必须与「没设」等价。** 这正是文件头那段警告承诺的事，也是唯一能把
+   * 「值空了」这一族接住的判据：
+   * · 数值旋钮被清空 ⇒ 一侧抛错、另一侧正常 ⇒ 两个结果不等 ⇒ 红；
+   * · 下界是 0 的那两个池子旋钮被清空 ⇒ 悄悄变成 0（=关闭缓存）⇒ 与默认值不等 ⇒ 红。
+   *
+   * ⚠️ **只比 `config`，不比 `source`**：`envLockedFields` 的判据是「这个键在 env 里存在」，
+   * 与值合不合法无关，所以一个留空的键**本来就**会让面板把那格显示成「被环境变量锁定」
+   *（那是有意的，由 `tests/unit/config-provenance.test.ts` 的
+   * 「空串的环境变量也算锁定 —— 判据是键存在，不是值合法」钉着）。把 `source` 也拉
+   * 进来比，等于把一条**正确**的行为判成漂移。
+   */
+  it("留空的每个键都与「没设它」等价 —— 否则就是本仓吃过亏的那种静默（或起不来）", async () => {
+    const base = baseEnv();
+    const empties = Object.keys(base).filter((k) => base[k] === "");
+    const reference = await outcome(base);
+    const offenders: string[] = [];
+    for (const k of empties) {
+      const without = { ...base };
+      delete without[k];
+      if (await outcome(without) !== reference) offenders.push(k);
+    }
+    expect(
+      offenders,
+      "这些键在 .env.example 里留着空值，而空串与「没设」在代码里不是一回事 ⇒ 照这份文件 cp 的人"
+      + "要么起不来（数值项过不了「不小于 1 的整数」那一关），要么拿到一个自己没设过的值"
+      + "（下界是 0 的旋钮会静默变成「关闭」）。处置：那一行要么给回默认值，要么整行注释掉"
+      + "（末尾 USAGE_FLUSH_INTERVAL_MS 就是这个写法）",
+    ).toEqual([]);
+  });
+
+  it("反向控制：这一组真的在读值 —— 空的键确实存在，不是拿一张空表在空转", () => {
+    const base = baseEnv();
+    expect(
+      Object.keys(base).filter((k) => base[k] === "").length,
+      "一个留空的键都没解析出来 ⇒ 多半是解析器坏了（上面那格于是恒绿），先查 DECLARATION",
+    ).toBeGreaterThan(0);
+  });
+});
+
+// ── 文档侧：五语言 DEPLOY.md / REGISTRAR.md 的环境变量表 ─────────────────────
+
+const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
+
+/**
+ * 两份带环境变量表的文档，各配一个**必然在表里**的锚点变量。
+ *
+ * 锚点是「认不出要吵」那条纪律的落地：下面的表格判据是一条正则，正则一旦与文档的
+ * 真实排版脱节（改了表格样式、变量名不再包在反引号里），它会**一个名字都认不出**，
+ * 而「空集 ⊆ 任何集合」「五份空集彼此相等」两条都会静静地成立。锚点让那种失效变成红。
+ * 选它们的理由都是「这张表里唯一的必填项」：没有它这份文档就没在讲配置。
+ */
+const ENV_TABLE_DOCS = [
+  { doc: "DEPLOY", anchor: "GATEWAY_TOKEN", why: "网关唯一的必填项" },
+  { doc: "REGISTRAR", anchor: "REGISTRAR_PRIMARY", why: "注册机启用后唯一没有默认值的必填项" },
+] as const;
+
+/** 一份文档的环境变量表里点名的变量：表格第一格是一个反引号包住的全大写名字。 */
+function tableVars(lang: string, doc: string): string[] {
+  const md = readFileSync(`docs/${lang}/${doc}.md`, "utf8");
+  return [...new Set([...md.matchAll(/^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|/gm)].map((m) => m[1]!))].sort();
+}
+
+/**
+ * **阶段 C 的那道对等守卫：`.env.example` 与五语言文档，两个方向都要对得上。**
+ *
+ * 起因是十句已发布的文档断言只守住了一个方向。五语言 `DEPLOY.md` / `REGISTRAR.md` 各写着
+ * 「上表里的每个变量在 `.env.example` 里都有一行示例」——**今天为真，但往表里加一行
+ * `.env.example` 里没有的变量，这十句会在五种语言里同时变假而零红**（复评实测 D1）。
+ *
+ * 三格覆盖三种漂移，各自的失败形态不同：
+ * ① **某一种语言漂了**（漏翻一行、多翻一行）⇒ 集合对等那一格红。这是阶段 H 写
+ *    `ADMIN.md × 5` 时唯一能自动发现「某语言漂了」的东西。
+ * ② **文档长出网关不认得的变量** ⇒ 「表里的每个变量都声明过」那一格红。
+ * ③ **网关长出新变量而某种语言没跟上** ⇒ 「每个声明都被五种语言提到」那一格红。
+ *    它连带发现了一个真实缺口：`RESET_CONFIG`（存储写坏时的逃生口）此前**五种语言
+ *    一份都没提**，本轮补进五份 `DEPLOY.md` 的表里。
+ *
+ * ⚠️ **边界**：③ 的判据是「正文里出现过这个名字」，不是「解释清楚了」——它挡的是漏写，
+ * 不是敷衍。译文说得对不对、五份说的是不是同一件事，仍然只能靠评审
+ *（与 `tests/unit/docs-parity.test.ts` 文件头那条边界同一条）。
+ */
+describe(".env.example 与五语言文档对等", () => {
+  for (const { doc, anchor, why } of ENV_TABLE_DOCS) {
+    it(`五语言 ${doc}.md 的环境变量表点名的变量集合完全相同 —— 某一种语言漏翻/多翻一行会红`, () => {
+      const actual = Object.fromEntries(LANGS.map((lang) => [lang, tableVars(lang, doc).join(" ")]));
+      const expected = Object.fromEntries(LANGS.map((lang) => [lang, actual[LANGS[0]]]));
+      expect(
+        actual,
+        `五语言 ${doc}.md 的环境变量表对不上 —— 有语言漏翻了一行、多写了一行，或者表格排版被改成本判据认不出的样子`,
+      ).toEqual(expected);
+    });
+
+    it(`五语言 ${doc}.md 的表里都认得出 ${anchor}（${why}）—— 一个名字都认不出时上面那格会平凡地全绿`, () => {
+      expect(
+        LANGS.filter((lang) => !tableVars(lang, doc).includes(anchor)),
+        `这些语言的 ${doc}.md 里没认出 ${anchor} ⇒ 要么那一行真的没了，要么表格排版变了而本判据已经瞎了`,
+      ).toEqual([]);
+    });
+
+    it(`五语言 ${doc}.md 表里的每个变量都在 .env.example 里声明过 —— 文档不许长出网关不认得的变量`, () => {
+      const declared = new Set(declaredInEnvExample());
+      const stray = LANGS.flatMap((lang) => tableVars(lang, doc).filter((k) => !declared.has(k)).map((k) => `${lang}:${k}`));
+      expect(
+        stray,
+        "文档的环境变量表里有 .env.example 里查不到的变量 ⇒ 要么那一行是拼错/过期的，"
+        + "要么它是真变量而 .env.example 漏了一行（那样陌生人 cp 完拿不到它）",
+      ).toEqual([]);
+    });
+  }
+
+  it(".env.example 里声明的每个变量，五种语言的 DEPLOY.md / REGISTRAR.md 都提到过", () => {
+    const missing = LANGS.flatMap((lang) => {
+      const text = ENV_TABLE_DOCS.map(({ doc }) => readFileSync(`docs/${lang}/${doc}.md`, "utf8")).join("\n");
+      return declaredInEnvExample().filter((k) => !text.includes(k)).map((k) => `${lang}:${k}`);
+    });
+    expect(
+      missing,
+      "这些变量写进了陌生人要 cp 的那份文件，而这些语言的部署文档一个字都没提 ⇒ 要么在那份文档里补一行"
+      + "（五种语言一起补，否则上面的集合对等会红），要么它压根不该出现在 .env.example 里",
     ).toEqual([]);
   });
 });

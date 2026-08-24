@@ -1,14 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
-import { chmodSync, mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import { main } from "../../src/entry/node.js";
+import { main, nodeDataDir, nodePort } from "../../src/entry/node.js";
 import { FileStorage } from "../../src/adapters/storage-file.js";
 import { TEND_LOCK_KEY, TEND_LOCK_TTL_MS } from "../../src/http/admin/tend-lock.js";
 import { TEND_HISTORY_KEY } from "../../src/core/admin/tend-history.js";
 import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
+import { stripComments } from "../helpers/strip-comments.js";
 
 function tmpDataDir(): string {
   return mkdtempSync(join(tmpdir(), "a2a-node-entry-"));
@@ -19,6 +20,51 @@ function close(server: Awaited<ReturnType<typeof main>>): Promise<void> {
     server.close((err) => (err ? reject(err) : resolve()));
   });
 }
+
+/**
+ * **`cp .env.example .env` 之后把某一行的值删空** —— compose 的 `env_file:` 送进来的是
+ * 空字符串（不是「未设置」），而这两个变量在容器那一侧走的是 shell 的 `:-`（把空串当没设）。
+ * 两边不同义时的后果不是报错，是**静默**：`DATA_DIR=` 会让 `store.json` 落到卷外
+ *（容器一重建整池消失）、`PORT=` 会让进程监听随机端口而 compose 照旧发布 8080。
+ * 归一的实现与完整失效链写在 `src/entry/node.ts` 的 `orUnset` 上方。
+ */
+describe("node 入口: 留空的 DATA_DIR / PORT 视同「没设」", () => {
+  it("DATA_DIR= （空串）回落到 /app/data —— 不能变成相对路径 store.json（那会写到卷外）", () => {
+    expect(nodeDataDir({ DATA_DIR: "" })).toBe("/app/data");
+    // 反向控制：没设与真设了值这两头都不许被这条归一改掉。
+    expect(nodeDataDir({})).toBe("/app/data");
+    expect(nodeDataDir({ DATA_DIR: "/mnt/pool" })).toBe("/mnt/pool");
+  });
+
+  it("PORT= （空串）回落到 8080 —— 不能变成 Number('') = 0 的随机端口", () => {
+    expect(nodePort({ PORT: "" })).toBe(8080);
+    expect(nodePort({})).toBe(8080);
+    expect(nodePort({ PORT: "3000" })).toBe(3000);
+    // **显式的 `PORT=0` 仍然是「让内核挑一个」**：本文件其余用例全靠它，
+    // 把它一起归一掉会让整份测试去抢 8080。
+    expect(nodePort({ PORT: "0" })).toBe(0);
+  });
+
+  /**
+   * 上面两格测的是两个纯函数，**而真正会被部署的是 `main()`**：把 `main()` 里那两行改回
+   * `?? "/app/data"` / `?? 8080`，上面两格照样全绿——那时它们守的就是两个没人调用的函数。
+   * 所以这一格盯的是「谁在读这两个变量」：读取点只许出现在归一函数里。
+   * 抠注释走 `tests/helpers/strip-comments.ts` 转导出的真源，否则上方那段讲失效链的注释
+   * 自己会被扫成违规（本仓注释里到处写真代码片段）。
+   */
+  it("main() 必须经这两个函数读 DATA_DIR / PORT —— 直接 ?? 回落会让上面两格变成空谈", () => {
+    const src = stripComments(readFileSync("src/entry/node.ts", "utf8"));
+    const offenders = src.split("\n")
+      .map((line, i) => ({ line: i + 1, text: line.trim() }))
+      .filter(({ text }) => /\benv\.(DATA_DIR|PORT)\b/.test(text) && !text.includes("orUnset"));
+    expect(
+      offenders,
+      "src/entry/node.ts 里这几行绕过了 orUnset 直接读 DATA_DIR / PORT ⇒ compose 里那一行留空时"
+      + "又会走回「空串不当没设」的老路（store.json 落到卷外 / 监听随机端口）。"
+      + "读取点只许留在 nodeDataDir / nodePort 里",
+    ).toEqual([]);
+  });
+});
 
 describe("node 入口: fail-closed", () => {
   it("缺少 GATEWAY_TOKEN 时启动失败（拒绝服务），不会去监听端口", async () => {

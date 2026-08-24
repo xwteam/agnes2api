@@ -14,17 +14,50 @@ import { startTendScheduler } from "../core/tend-scheduler.js";
 import { acquireTendLock, releaseTendLock } from "../http/admin/tend-lock.js";
 
 /**
+ * **空串视同「没设」。** 只用在本文件这两个运行时开关上，不是全局规则。
+ *
+ * 起因是一条 shell 与 JS 对空串**不同义**造成的静默失败：`.env.example` 是给
+ * `cp .env.example .env` + compose 的 `env_file:` 直接用的，那条路径上一个留空的键
+ * 送进来的是**空字符串**（不是「未设置」），而 `??` 只接 `undefined`，接不住空串。
+ * 容器那一侧同一个变量走的却是 shell 的 `${DATA_DIR:-/app/data}`（`docker-entrypoint.sh`）
+ * 与 `${PORT:-8080}`（`docker-compose.yml`）——`:-` 把空串**当未设**。两边一分叉：
+ *
+ * · `DATA_DIR=` ⇒ entrypoint 照旧准备并 chown `/app/data`，而进程这边
+ *   `new FileStorage("")` 让 `join("", "store.json")` 退化成相对路径 `store.json`，
+ *   落在 `WORKDIR /app` 下的 `/app/store.json`。那里**可写**（Dockerfile 的
+ *   `chown -R app:app /app`）⇒ 启动存储探测通过、`/health` 报 healthy、面板一切正常，
+ *   而 `./data:/app/data` 那个卷从头到尾是空的 ⇒ **容器一重建，整池 key 与配置静默消失**。
+ * · `PORT=` ⇒ compose 仍按 `${PORT:-8080}` 发布 8080，容器内 `Number("")` 却是 0
+ *   （监听随机端口）⇒ 端口映射打空；连 Dockerfile 的 HEALTHCHECK 都写的是
+ *   `PORT||8080`（`||` 同样把空串当没设），只有这里从前用 `??`，是四处里唯一不同义的。
+ *
+ * ⚠️ **别把这条推广成「全仓空串都当没设」**：数值型配置项（`MAX_STRIKES` 等）留空
+ * 时抛错是**有意的** fail-fast（`src/core/config-provenance.ts` 的 `num()`：环境变量
+ * 的非法值必须让运维立刻看得见）。这两个之所以归一，是因为它们的失败方向相反——
+ * 不响，而且要等到容器重建那一刻才看得见。
+ */
+const orUnset = (raw: string | undefined): string | undefined => (raw === "" ? undefined : raw);
+
+/** 文件存储的目录。空串视同没设，理由见 `orUnset`。 */
+export const nodeDataDir = (env: Record<string, string | undefined>): string =>
+  orUnset(env.DATA_DIR) ?? "/app/data";
+
+/** 监听端口。空串视同没设；显式的 `PORT=0` 仍然是「让内核挑一个」，测试就靠它。 */
+export const nodePort = (env: Record<string, string | undefined>): number =>
+  Number(orUnset(env.PORT) ?? 8080);
+
+/**
  * node 运行时的真实启动路径：选存储实现（FileStorage）、装配 app、监听端口。
  * 导出成函数是为了让回归测试能直接调用它（而不是只测试它调用的 buildApp），
  * 同时避免测试环境下 import 这个模块就顺带把服务器起在真实端口上。
  */
 export async function main(env: Record<string, string | undefined> = process.env) {
-  const storage = new FileStorage(env.DATA_DIR ?? "/app/data");
+  const storage = new FileStorage(nodeDataDir(env));
   const logger = new ConsoleLogger();
   // 数据目录是绑定挂载，属主不匹配就整个网关不可用（写不进 store.json），
   // 必须在启动那一刻探出来并让 /health 如实报告，不能等到第一个请求失败才发现。
   const { app, configHolder, tendGate } = await buildApp(env, storage, nodeRuntime(), { probeStorage: true });
-  const port = Number(env.PORT ?? 8080);
+  const port = nodePort(env);
 
   // 在途守卫。递归 setTimeout **天然不会重叠**（下一轮的定时器要等本轮 resolve 之后
   // 才排上），所以它现在防的不是定时器自己，而是「面板『立即补池』按钮与定时轮撞车」

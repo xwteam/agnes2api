@@ -11,6 +11,7 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 | Variable | Required | Default | Notes |
 |---|---|---|---|
 | `GATEWAY_TOKEN` | **yes** | – | The token clients must present to call this gateway. |
+| `RESET_CONFIG` | no | – | Escape hatch: set it to `1` and startup **ignores the stored `config` key entirely** (ignores it, does not delete it), using only environment variables and built-in defaults. Use it to recover when the stored config has been corrupted badly enough to keep the gateway from starting; remove the line afterwards, or nothing you save in the panel will ever take effect. |
 | `AGNES_BASE_URL` | no | `https://apihub.agnes-ai.com/v1` | Upstream Agnes API base URL. |
 | `UPSTREAM_TIMEOUT_MS` | no | `8000` | First-byte timeout for **streaming** responses and video polling: abort the upstream call if no first byte arrives within this many milliseconds. |
 | `UPSTREAM_SYNC_TIMEOUT_MS` | no | `120000` | Total timeout budget for **synchronous** endpoints — the ones whose first byte only arrives once the upstream has computed the whole result: image generation, video job creation, and every **non-streaming** chat request. See below. |
@@ -25,8 +26,9 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
 
 Every variable in the table above has its own line in `.env.example`; run `cp .env.example .env`
-and edit what you need. That file carries at most one line of comment per variable — ranges and
-trade-offs live in this table. Every numeric variable above must be an integer; all of them must be greater than `0` except
+and edit what you need. Comments in that file vary in depth — most variables get a single line,
+a few carry a dozen lines or more — so treat this table as the complete reference for ranges and
+trade-offs. Every numeric variable above must be an integer; all of them must be greater than `0` except
 `POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS`, whose lower bound is `0` (meaning
 "disabled"). The gateway refuses to start otherwise.
 
