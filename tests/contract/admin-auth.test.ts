@@ -1111,6 +1111,69 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     expect(actual).toEqual([...EXPECTED_MIDDLEWARE].sort());
   });
 
+  /**
+   * ── 注册位置：`app.routes` 的下标不变式 ────────────────────────────────────
+   *
+   * **判据只许从 `app.routes` 的下标算，禁止出现第二份手写路由名单。**
+   * 顺手再写一张 `/admin/api/*` 路径清单的话，那张清单就是上面 `EXPECTED` 的第二份
+   * 拷贝，加端点时两处要同步改，迟早分叉。
+   *
+   * 为什么不是「遍历全量端点打 HTTP 看非 404」：好几条端点对不存在的资源**合法地**
+   * 回 404（`DELETE /admin/api/keys/:id`、`GET /admin/api/usage/:date` —— 上面那张
+   * `PROBE` 表里刻意用不存在的 id 正是这个原因），「非 404」不能当判据。
+   *
+   * 为什么下标算得准：实测 Hono 4.13.2 的 `app.routes` **保序**，下标与注册顺序
+   * 逐条对应（本任务把整张表打印出来，与 `src/http/admin/router.ts` 里那串
+   * `admin.get/post/put/delete/patch(...)` 逐行核对过，顺序一模一样）。
+   *
+   * 它与 `EXPECTED` / `EXPECTED_MIDDLEWARE` 是**互补不是重复**：那两张管「有没有」，
+   * 这一格管「排第几」。**不许合并**——那两张都在比对前 `.sort()` 过，
+   * 下标信息在那一步就已经没了。
+   *
+   * ⚠️ **它接不住的那一半，明写**：判据只看非 `ALL` 条目，而 `use()` 注册出来的
+   * 通配 handler 一律是 `ALL`。一条挂在静态兜底之后的
+   * `admin.use("/admin/api/x/*", handler)` 这一格看不见 —— 那个方向由上面
+   * `EXPECTED_MIDDLEWARE` 那张快照接（它把全部 `ALL` 条目双向钉死）。
+   * 两格合起来才是完整的，各自都不是。
+   *
+   * ⚠️ **三条断言的次序与需求书给的相反，理由是实测出来的报文差异，不是口味**：
+   * 需求书把「条目数 = 22」那格放在最前。需求书点名的那个失效形态是「在静态兜底
+   * 之后**新注册**一条 `/admin/api/*`」，而那时计数格与位置格**会同时红**——计数格
+   * 在前的话先失败的是它，而它的报文写着「有人加/删了端点没回来改这个数」，
+   * 照着把 22 改成 23 就绿了一半，那条端点仍然恒 404，要再跑一遍才撞上真正的那一格。
+   * 位置格在前则第一眼就是「有 /admin/api/* 端点注册在静态兜底之后」并点名是哪一条。
+   * **两种次序的鉴别力完全相同**（filter 写坏时仍然只有计数格会红，本任务变异 M4
+   * 两种次序各跑过一遍），差的只是运维/评审读到的那句话。
+   */
+  it("每一条 /admin/api/* 都注册在 adminAuth 之后、静态兜底之前 —— 位置写错了它会恒 404 而没人拦", async () => {
+    const { app } = await makeApp([], [], {}, () => 1_000);
+    const routes = app.routes;
+    const authIdx = routes.findIndex((r) => r.method === "ALL" && r.path === "/admin/api/*");
+    const staticIdx = routes.findIndex((r) => r.method === "GET" && r.path === "/admin/*");
+    expect(authIdx, "找不到 adminAuth 中间件").toBeGreaterThanOrEqual(0);
+    expect(staticIdx, "找不到静态兜底").toBeGreaterThanOrEqual(0);
+
+    const apis = routes
+      .map((r, i) => ({ i, label: `${r.method} ${r.path}` }))
+      .filter((r) => r.label.includes(" /admin/api/") && !r.label.startsWith("ALL "));
+
+    expect(apis.filter((r) => r.i > staticIdx).map((r) => r.label),
+      "有 /admin/api/* 端点注册在静态兜底之后 —— 它恒 404").toEqual([]);
+    expect(apis.filter((r) => r.i < authIdx).map((r) => r.label),
+      "tooEarly：这些端点排在 adminAuth 之前 —— 它们免鉴权").toEqual([]);
+
+    // 反向控制：filter 写坏后上面那两格会恒绿（空数组 `toEqual([])` 恒真）。
+    //
+    // ⚠️ **手写字面量等号，不许写成 `toBeGreaterThanOrEqual`**（P3e 回填，评审「可执行性」M3）：
+    // 第一版写的是 `toBeGreaterThanOrEqual(20)` 而今天实测正好 **22** 条
+    // ⇒ **静默丢掉 2 条路由这一格仍然绿**，而这一格存在的全部理由就是「filter 写坏后会恒绿」，
+    // 留 2 条余量把它自己削掉了一半。这正是本计划 §通用纪律「禁止的断言形态」里逐字点名的那一条
+    // （`tests/unit/docs-parity.test.ts「第一版在这里又踩了一次同类的坑」` 那段记着它为什么不行）。
+    // ⚠️ **Task 31 会新增两条端点 ⇒ 这个数要改成 24。改数字不是削弱，是它在按设计工作。**
+    // 它排在上面两格之后的理由见本格上方的 docblock 最后一段。
+    expect(apis.length, "扫到的 /admin/api/* 条目数不对，filter 多半写坏了，或者有人加/删了端点没回来改这个数").toBe(22);
+  });
+
   it("三个安全域在矩阵里都真的出现了（否则矩阵是残缺的）", async () => {
     const { app } = await makeApp();
     const domains = new Set(realRoutes(app).map((r) => domainOf(r.path)));
