@@ -24,8 +24,8 @@ agnes2api 提供两种部署形态，构建自同一套代码与请求处理逻�
 | `PORT` | 否（仅 Node/Docker） | `8080` | Node 运行时的监听端口，Worker 不使用该变量。 |
 | `DATA_DIR` | 否（仅 Node/Docker） | `/app/data` | 文件存储写入 `store.json` 的目录，Worker 不使用该变量。 |
 
-`COOLDOWN_RATE_LIMIT_MS` 与 `COOLDOWN_PAYMENT_MS` 默认没有写在 `.env.example` 里，但两种
-部署形态都会读取这两个环境变量，可按需设置。以上数值型变量都必须是整数；除
+上表里的每个变量在 `.env.example` 里都有一行示例，`cp .env.example .env` 之后按需改即可；
+那份文件每个变量只有一行注释，取值范围与代价以本表为准。以上数值型变量都必须是整数；除
 `POOL_CACHE_TTL_MS` 与 `POOL_TOUCH_INTERVAL_MS` 的下界是 `0`（`0` 表示「关闭」）之外，
 其余都必须大于 `0`，否则网关拒绝启动。
 

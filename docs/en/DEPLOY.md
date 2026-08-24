@@ -24,9 +24,9 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
 
-`COOLDOWN_RATE_LIMIT_MS` and `COOLDOWN_PAYMENT_MS` aren't listed in `.env.example` by
-default, but both are read from the environment and can be set for either deployment target.
-Every numeric variable above must be an integer; all of them must be greater than `0` except
+Every variable in the table above has its own line in `.env.example`; run `cp .env.example .env`
+and edit what you need. That file carries at most one line of comment per variable — ranges and
+trade-offs live in this table. Every numeric variable above must be an integer; all of them must be greater than `0` except
 `POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS`, whose lower bound is `0` (meaning
 "disabled"). The gateway refuses to start otherwise.
 

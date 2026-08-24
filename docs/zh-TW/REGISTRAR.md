@@ -72,9 +72,8 @@ Agnes 帳號、登入、鑄出一把 API key 寫入池子。註冊過程需要�
 | `MOEMAIL_BASE_URL` | 通道為 moemail 時必填 | 空 | 你自己部署的 MoeMail 實例位址，無預設值。 |
 | `MOEMAIL_API_KEY` | 通道為 moemail 時必填 | 空 | 該 MoeMail 實例的 API Key。 |
 
-`MINT_DELAY_MIN_MS`、`MINT_DELAY_MAX_MS`、`REGISTRAR_TOKEN_NAME`、`AGNES_PLATFORM_URL` 預設沒有寫
-在 `.env.example` 中（預設值通常已足夠），但兩種部署形態都會讀取，可依需求設定。以上
-數值型變數皆須為正整數，否則閘道拒絕啟動。
+上表中的每個變數在 `.env.example` 中都有一行範例（預設值通常已足夠，不必逐項修改），
+兩種部署形態都會讀取。以上數值型變數皆須為正整數，否則閘道拒絕啟動。
 
 ## 兩種執行時的排程差異
 

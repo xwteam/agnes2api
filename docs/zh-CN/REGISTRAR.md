@@ -72,9 +72,8 @@ Agnes 账号、登录、铸出一把 API key 写入池子。注册过程需要�
 | `MOEMAIL_BASE_URL` | 通道为 moemail 时必填 | 空 | 你自己部署的 MoeMail 实例地址，无默认值。 |
 | `MOEMAIL_API_KEY` | 通道为 moemail 时必填 | 空 | 该 MoeMail 实例的 API Key。 |
 
-`MINT_DELAY_MIN_MS`、`MINT_DELAY_MAX_MS`、`REGISTRAR_TOKEN_NAME`、`AGNES_PLATFORM_URL` 默认没有
-写在 `.env.example` 里（默认值通常够用），但两种部署形态都会读取，可按需设置。以上数值
-型变量都必须是正整数，否则网关拒绝启动。
+上表里的每个变量在 `.env.example` 里都有一行示例（默认值通常够用，不必逐项改），两种
+部署形态都会读取。以上数值型变量都必须是正整数，否则网关拒绝启动。
 
 ## 两种运行时的调度差异
 

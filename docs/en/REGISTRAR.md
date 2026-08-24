@@ -80,10 +80,9 @@ set `REGISTRAR_FALLBACK`, prepare credentials for that channel as well.
 | `MOEMAIL_BASE_URL` | required if a channel is `moemail` | empty | Address of your own MoeMail instance, no default. |
 | `MOEMAIL_API_KEY` | required if a channel is `moemail` | empty | API key for that MoeMail instance. |
 
-`MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `REGISTRAR_TOKEN_NAME`, and `AGNES_PLATFORM_URL` aren't listed
-in `.env.example` by default (the defaults are usually fine), but both deployment targets read
-them and you can set them if needed. Every numeric variable above must be a positive integer; the
-gateway refuses to start otherwise.
+Every variable in the table above has its own line in `.env.example` (the defaults are usually
+fine, so you rarely need to touch them), and both deployment targets read them. Every numeric
+variable above must be a positive integer; the gateway refuses to start otherwise.
 
 ## Scheduling differences between the two runtimes
 

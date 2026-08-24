@@ -81,10 +81,9 @@
 | `MOEMAIL_BASE_URL` | 채널이 moemail일 때 필수 | 공백 | 직접 배포한 MoeMail 인스턴스 주소. 기본값 없음. |
 | `MOEMAIL_API_KEY` | 채널이 moemail일 때 필수 | 공백 | 해당 MoeMail 인스턴스의 API Key. |
 
-`MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `REGISTRAR_TOKEN_NAME`, `AGNES_PLATFORM_URL`은 기본적으
-로 `.env.example`에 나열되어 있지 않지만(대개 기본값으로 충분하기 때문), 두 배포 대상
-모두 이 값을 읽어 들이므로 필요하면 설정할 수 있습니다. 위의 수치형 변수는 모두 양의
-정수여야 하며, 그렇지 않으면 게이트웨이가 기동을 거부합니다.
+위 표의 모든 변수는 `.env.example`에 한 줄씩 들어 있으며(대개 기본값으로 충분하므로
+따로 고칠 일은 드뭅니다), 두 배포 대상 모두 이 값을 읽어 들입니다. 위의 수치형 변수는
+모두 양의 정수여야 하며, 그렇지 않으면 게이트웨이가 기동을 거부합니다.
 
 ## 두 런타임 간 스케줄링 차이
 

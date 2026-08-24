@@ -24,8 +24,8 @@ agnes2api 提供兩種部署形態，建構自同一套程式碼與請求處理�
 | `PORT` | 否（僅 Node/Docker） | `8080` | Node 執行時的監聽埠，Worker 不使用此變數。 |
 | `DATA_DIR` | 否（僅 Node/Docker） | `/app/data` | 檔案儲存寫入 `store.json` 的目錄，Worker 不使用此變數。 |
 
-`COOLDOWN_RATE_LIMIT_MS` 與 `COOLDOWN_PAYMENT_MS` 預設沒有寫在 `.env.example` 中，但
-兩種部署形態都會讀取這兩個環境變數，可依需求設定。以上數值型變數都必須是整數；除
+上表中的每個變數在 `.env.example` 中都有一行範例，`cp .env.example .env` 之後依需求修改即可；
+那份檔案每個變數只有一行註解，取值範圍與代價以本表為準。以上數值型變數都必須是整數；除
 `POOL_CACHE_TTL_MS` 與 `POOL_TOUCH_INTERVAL_MS` 的下界是 `0`（`0` 表示「關閉」）之外，
 其餘都必須大於 `0`，否則閘道拒絕啟動。
 

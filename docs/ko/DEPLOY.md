@@ -25,9 +25,9 @@ agnes2api는 동일한 코드베이스와 요청 처리 로직으로 만들어�
 | `PORT` | 아니오 (Node/Docker 전용) | `8080` | Node 런타임의 리스닝 포트. Worker에서는 사용되지 않음. |
 | `DATA_DIR` | 아니오 (Node/Docker 전용) | `/app/data` | 파일 저장소가 `store.json`을 쓰는 디렉터리. Worker에서는 사용되지 않음. |
 
-`COOLDOWN_RATE_LIMIT_MS`와 `COOLDOWN_PAYMENT_MS`는 기본적으로
-`.env.example`에 나열되어 있지 않지만, 두 배포 대상 모두 환경 변수로 읽어
-들이므로 필요에 따라 설정할 수 있습니다. 위의 수치형 변수는 모두 정수여야 하며,
+위 표의 모든 변수는 `.env.example`에 한 줄씩 들어 있습니다. `cp .env.example .env` 후
+필요한 항목만 고치면 됩니다. 그 파일에는 변수당 주석이 최대 한 줄뿐이므로, 값의 범위와
+대가는 이 표를 기준으로 하세요. 위의 수치형 변수는 모두 정수여야 하며,
 `POOL_CACHE_TTL_MS`와 `POOL_TOUCH_INTERVAL_MS`는 하한이 `0`("끔"을 의미)이고 나머지는
 모두 `0`보다 커야 합니다. 그렇지 않으면 게이트웨이가 기동을 거부합니다.
 
