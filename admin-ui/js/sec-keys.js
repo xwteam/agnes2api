@@ -22,7 +22,8 @@
  *
  * 三条纪律：①一切来自接口的内容一律 textContent；②**取值决策原则上不写在这里**，
  * 绝大多数在 `js/pure/keys.mjs`（只读部分）与 `js/pure/keys-write.mjs`（写操作）里，
- * 分别由 `tests/ui/keys.test.ts` 与 `tests/ui/keys-write.test.ts` 跑着
+ * 分别由 `tests/ui/keys.test.ts` 的「行内每个格子的取值决策」
+ * 与 `tests/ui/keys-write.test.ts` 的「行内动作的可用性判据」那两族跑着
  * （admin-ui/README.md 硬规则 1）。
  *
  * ⚠️⚠️ **「一律不写在这里」这句话被评审证伪过两轮，别再说"一律"**：早先的版本

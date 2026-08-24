@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 
@@ -609,6 +609,13 @@ const COVERED: ReadonlyArray<{ claim: string; why: string }> = [
   { claim: "四条不变量各自的守护者见 `tests/x.test.ts`。", why: "守护（原来只认「守着」）" },
   { claim: "`tests/x.test.ts` 正钉这件事。", why: "正钉 —— 由新加的 `钉` 单字接住" },
   { claim: "把两条判断对调，只有 `tests/x.test.ts` 那一格会红。", why: "会红（原来只认「会变红」）" },
+  // ── P3e Task 15A 补的两族：**肯定式在表内、它的否定式与归属式全在表外**，
+  //    这条漏法是门禁自己在源码里登记的。逐条都是仓里真实存在的写法，不是造的句子。──
+  { claim: "这个变异 `tests/x.test.ts` 拦不住。", why: "拦不住（`拦得住` 早在表里，它的否定式不在）" },
+  { claim: "改名抄这种写法 `tests/x.test.ts` 抓不住。", why: "抓不住（`抓得住` 早在表里，它的否定式不在）" },
+  { claim: "`tests/x.test.ts` 那道结构门禁只拦函数被抄回板块文件。", why: "只拦（同一族的限定式写法）" },
+  { claim: "`[registrar]` 前缀由 `tests/x.test.ts` 管着。", why: "由 X 管着（与表里早有的「由 X 保证」同型）" },
+  { claim: "那条链由 `tests/x.test.ts` 里那一整份用例负责。", why: "由 X 负责（同上，且是本仓最常用的说法）" },
 ];
 
 /**
@@ -743,6 +750,164 @@ describe("scripts/check-comment-refs.mjs 元测试：规则 B（带断言性措�
     });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("只给了裸文件名");
+  });
+
+  /**
+   * **正向那张表证明「这几个字会红」，这一格证明「它不是『不许写这几个字』」。**
+   *
+   * 少了它，一条把词表当**禁用词名单**的实现（命中就报错，给不给锚都一样）
+   * 会让上面 `COVERED` 整张表全绿——那正是本仓登记过的「判据用错工具时不会报错，
+   * 会静静地放行」的镜像：判据变严到荒谬时，正向表同样一格都不会红。
+   *
+   * ⚠️ **夹具从 `COVERED` 派生，不是第二张手写表**：往 `COVERED` 里加一个词，
+   * 这一格自动跟着覆盖它。派生方式是把裸文件名换成带名字锚的写法，
+   * 判据本身（「带了锚就不许红」）仍是手写的一句话。
+   */
+  it.each(COVERED)("同一句措辞带上名字锚就不许红（它不是禁用词名单）：$why", ({ claim, why }) => {
+    const anchored = claim.replace("`tests/x.test.ts`", "`tests/x.test.ts` 的「被指向的那一格」");
+    expect(anchored, `「${why}」这条夹具没被改成带锚的写法——派生规则和 COVERED 的写法漂了`)
+      .not.toBe(claim);
+    const r = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": `/** ${anchored} */\nexport const a = 1;\n`,
+      },
+    });
+    expect(r.status, `「${why}」带了名字锚还是红了 ⇒ 这道门禁变成了「不许写这几个字」`).toBe(0);
+  });
+});
+
+/**
+ * ── 词表**这张手写清单自己**的守卫（P3e Task 15A）────────────────────────────
+ *
+ * 上面那两张表钉的是**已经写下来的那几个词**。它们治不了这张清单最典型的死法：
+ * **下一个人加了一个新说法，清单照样不会响。** 本轮补否定式一族时，
+ * 缺的正是这一层——`拦得住` / `抓得住` 在表里躺了几期，而 `拦不住` / `抓不住`
+ * 一个都不在，**没有任何东西为这件事红过**。
+ *
+ * ⇒ 加一条**结构不变量**：凡是收了 `X得住`，就必须同时收 `X不住`。
+ * 它是从**门禁源码里那张表**逐字抠出来再自己推导的，不是抄一份期望值
+ *（回填出来的期望值恒等于实际值，那条断言永远绿——本仓登记的第 6 种假阳性）。
+ *
+ * ⚠️ **它能与不能，都在这里说清**：它守的是「肯定式↔否定式」这一种成对关系，
+ * **守不了「有人发明了一个既不是 `X得住` 也不是 `X不住` 的新说法」**
+ * ——那需要读得懂中文的判据，本仓没有。那一半仍然由评审与变异验证承担。
+ */
+function claimMarkersFromSource(): string[] {
+  const src = readFileSync(SCRIPT, "utf8");
+  const start = src.indexOf("const CLAIM_MARKERS = [");
+  const end = src.indexOf("\n];", start);
+  // **认不出要吵，不能装没看见**：抠不出来时静默返回空表的话，下面两格会一起变绿。
+  if (start === -1 || end === -1) {
+    throw new Error("认不出 `CLAIM_MARKERS` 那张表的落点——判据坏了，不许静默当成空表");
+  }
+  const body = src.slice(start, end).split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+  const words = [...body.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+  if (words.length === 0) throw new Error("`CLAIM_MARKERS` 一个词都没抠出来——判据坏了");
+  return words;
+}
+
+/** 收了肯定式却没收对应否定式的那些词。空数组 = 封闭。 */
+function missingNegations(words: readonly string[]): string[] {
+  const set = new Set(words);
+  return words.filter((w) => w.endsWith("得住") && !set.has(w.replace(/得住$/, "不住")));
+}
+
+describe("CLAIM_MARKERS 这张手写清单自己的守卫", () => {
+  it("词表对否定式封闭：收了「X得住」就必须收「X不住」", () => {
+    expect(
+      missingNegations(claimMarkersFromSource()),
+      "这几个肯定式收了、它们的否定式没收。一句「这道扫描拦不住 X」和「拦得住 X」"
+      + "是同等强度的断言，而前者更容易在事实变了之后悄悄变假",
+    ).toEqual([]);
+  });
+
+  /**
+   * **反向控制：这条封闭判据真的推得出缺口。**
+   * 少了它，一个恒返回空数组的 `missingNegations` 也能让上面那格永远绿
+   *（本仓 Task 9 M1 的原形：判据认不出任何东西 ⇒ 真仓全变绿，只有反向控制红）。
+   */
+  it("反向控制：只给肯定式时，封闭判据必须点名它", () => {
+    expect(missingNegations(["钉", "拦得住", "抓不住"])).toEqual(["拦得住"]);
+    expect(missingNegations(["拦得住", "拦不住"]), "成对了就不许乱点名").toEqual([]);
+  });
+
+  /** **反向控制：抠表这一步真的抠到了东西**，而不是抠出一张空表让上面全绿。 */
+  it("反向控制：抠出来的确实是那张词表（认不出会抛，不会静默放行）", () => {
+    const words = claimMarkersFromSource();
+    expect(words, "抠到的不是 CLAIM_MARKERS").toContain("钉");
+    expect(words, "本轮补的否定式没被抠到").toContain("拦不住");
+    expect(words, "本轮补的归属式没被抠到").toContain("负责");
+  });
+
+  /**
+   * **收编了一个词却忘了把它从「已知认不得」那张表里划掉，就是这道门禁自己犯了
+   * 它全部理由所禁的那件事**（把边界写成散文，而散文不会红）。
+   *
+   * ⚠️ 与上面 `已知认不得的措辞确实不触发规则 B` 那一族**不是同一条**：那一族跑的是
+   * 真门禁、答的是「今天放不放行」；这一格是**表与表之间的一致性**，跑不起门禁也会红。
+   */
+  it("「已知认不得」那张表里不许再留已经被收编的措辞", () => {
+    const markers = claimMarkersFromSource();
+    expect(
+      BLIND_SPOTS.filter((b) => markers.some((m) => b.claim.includes(m))).map((b) => b.why),
+      "这几条已经被词表收编了，却还留在「认不得」那张表里 ⇒ 把它们挪进 COVERED",
+    ).toEqual([]);
+  });
+
+  /**
+   * ── 收词的**代价**，两条，都写成会红的断言 ──────────────────────────────────
+   *
+   * `负责` 这种词同时大量出现在纯描述句里，收进来就必然带出这两种形态。
+   * 它们**不是缺陷，是这道门禁刻意选的粗粒度**——但「刻意」这两个字必须有东西钉着，
+   * 否则下一个人会把它当 bug 去「修」，而修法多半是收窄判据或者开一张豁免名册。
+   */
+  it("断言性措辞按整段连坐：同一段里一条纯描述性的指向也跟着被收紧", () => {
+    const target = "function fakeCtx() { return 1; }\n" + TARGET;
+    // 同一段里只有描述性指向时：锚指向用例标题之外的代码，照样放行（既有口径）。
+    const clean = run({
+      files: {
+        "tests/x.test.ts": target,
+        "src/a.ts": "/**\n * 形态照抄 `tests/x.test.ts` 的「function fakeCtx()」。\n */\nexport const a = 1;\n",
+      },
+    });
+    expect(clean.status, clean.stderr).toBe(0);
+    // 同一段里**另一句**写了断言性措辞（而且说的根本不是那份测试）：整段一起收紧。
+    const coupled = run({
+      files: {
+        "tests/x.test.ts": target,
+        "src/a.ts": "/**\n * 形态照抄 `tests/x.test.ts` 的「function fakeCtx()」。\n"
+          + " * 本模块只负责按传入的顺序产出同构的字段清单。\n */\nexport const a = 1;\n",
+      },
+    });
+    expect(
+      coupled.status,
+      "同段里出现断言性措辞之后，那条描述性指向必须被要求指到一条用例上"
+      + "——连坐是刻意的粗粒度，改判据之前先看 `scripts/check-comment-refs.mjs` 里那段说明",
+    ).toBe(1);
+    expect(coupled.stderr).toContain("那段文字不在那个文件里");
+  });
+
+  it("断言「那边没有对应的一条」时门禁照样只要锚 —— 名字锚表达不了不存在", () => {
+    const body = "/**\n * 第 ⑧ 条今天只有这一份实现（`tests/x.test.ts` 里没有对应的一条），\n"
+      + " * 而前六条一条都拦不住它。\n */\nexport const a = 1;\n";
+    const r = run({ files: { "tests/x.test.ts": TARGET, "src/a.ts": body } });
+    expect(r.status, "否定式断言同样触发规则 B").toBe(1);
+    expect(
+      r.stderr,
+      "报文只会要「行号或用例名」，而一条不存在的用例给不出名字"
+      + "——这种句子唯一的出路是把路径去掉、用文字说清是哪一份",
+    ).toContain("只给了裸文件名");
+    // 唯一的出路：把裸路径去掉（措辞照旧，门禁不再有可校验的指向）。
+    const fixed = run({
+      files: {
+        "tests/x.test.ts": TARGET,
+        "src/a.ts": body.replace("（`tests/x.test.ts` 里没有对应的一条）", "（对家那份字典测试里没有对应的一条）"),
+      },
+    });
+    expect(fixed.status, fixed.stderr).toBe(0);
   });
 });
 
@@ -1033,12 +1198,12 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       // 扫描器改成逐字符扫、跳过字符串之后，那个假注释消失了。
       "scripts/check-comment-refs.mjs",
       "scripts/check-comment-refs.mjs",
-      // ⚠️ **第三条是 P3c Task 7 加的（`KNOWN_MARKER_GAPS` 上面那段）。**
-      // 那段登记的是词表自己的一个已知漏法（肯定式在表内、否定式全在表外），
-      // 内容有两种规则 B 天生会误报的形态：**扫描结果里的路径清单**（是数据，
-      // 不是指向声明）与**被引用的词表成员**（`拦得住`/`抓得住` 是词，不是断言）。
-      // 段落刻意不拆开，就是为了让豁免区间盖住整段。
-      "scripts/check-comment-refs.mjs",
+      // ⚠️ **这里从 3 条减回 2 条，是 P3e Task 15A 的直接后果。**
+      // 减掉的那一条是 P3c Task 7 登记「词表漏了否定式一族」时开的：那段里有两种
+      // 规则 B 天生会误报的形态——**一次扫描结果的路径清单**（是数据，不是指向声明）
+      // 与**被引用的词表成员**。Task 15A 把那一族真的收进词表之后，登记段改写成结论，
+      // 路径清单连同它附带的那些一次性计数一起删掉了，**豁免的两个理由同时消失**。
+      // 删通道要趁它空的时候：留着一个不再需要的逃生口，下一个人只会往里填东西。
       // `scripts/check-no-binary.mjs` 的两段说明里同样举了 `src/x.ts` / `src/hidden.ts` 两个虚构路径。
       "scripts/check-no-binary.mjs",
       "scripts/check-no-binary.mjs",

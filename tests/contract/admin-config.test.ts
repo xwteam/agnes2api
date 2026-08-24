@@ -610,7 +610,8 @@ describe("事件：配置被改过要留痕，但一个值都不许进日志", (
    * 换到注入的 sink 上没有削弱判别力：本组两条断言一条是「打了」、一条是
    * **「没带凭据的值」**——后者属于「不出网类」，自报只会让它更容易泄漏、
    * 不会让它更容易隐藏。`registrar.*` 事件真的能进事件板块这条链，由 Task 1 建、
-   * `tests/contract/registrar-events.test.ts` 里那一整份用例负责，不是本任务要重证的东西。
+   * `tests/contract/registrar-events.test.ts` 的「一轮补池之后，event: 键空间里确实有
+   * registrar.* 事件」负责，不是本任务要重证的东西。
    */
   it("config.updated 只记路径，凭据的值一个字都不记", async () => {
     const { makeApp } = await import("../helpers/make-app.js");

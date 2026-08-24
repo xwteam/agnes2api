@@ -163,8 +163,20 @@ export default {
           // ① 事件走 `deps.logger`（fan-out 到 console + StoreLogger）；
           // ② 补池历史补一条 `round_crashed`，让时间线上这一格自己说清楚。
           // **原有的控制台行数一行都不减**：`ConsoleLogger` 那一路是排障的第一
-          // 现场，且 `[registrar]` 前缀由 `tests/unit/registrar/log-prefix.test.ts`
-          // 管着。落库是**加**出来的第二条路，不是替换。
+          // 现场，且它那条 `[registrar]` 前缀由 `tests/unit/logger.test.ts` 的
+          // 「registrar.* 事件渲染成 [registrar] 前缀」按事件名派生出来。
+          // 落库是**加**出来的第二条路，不是替换。
+          // ⚠️ **上一版这里指的是 `tests/unit/registrar/log-prefix.test.ts` 的
+          // 「这些文件里一个 console 调用点都没有」，那是错的**（P3e Task 15A：注释断言
+          // 词表补上归属式那一族之后，这条指向第一次被要求给锚，一给就发现它落不下去）：
+          // 那份测试守的是「几个 core 文件里没有裸 console」与事件名本身，
+          // **前缀怎么从事件名派生**不在它的射程里。
+          // ⚠️ 下面那一行 `console.error` 的前缀是**手写字面量**、不走上面那条派生，
+          // 它另有东西钉着：`tests/unit/registrar/scheduling-wiring.test.ts` 的
+          // 「Worker 侧：补池抛错也会释放锁，下一次 Cron 不会被永久挡住」逐字断言了它。
+          //（这一句是查证出来的：第一版这里写的是「它今天没有任何机器守着」，
+          // 而那句话在写下的当天就是假的——本轮差点在「让注释说真话」的同一次改动里
+          // 写下一句新的假话。）
           console.error("[registrar] 补池失败", err);
           deps.logger.log({
             level: "error", event: "registrar.round_failed",

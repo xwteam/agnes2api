@@ -71,7 +71,8 @@ export const ADVANCED_FIELDS = ["registrar.agnesPlatformUrl"];
  * 两条邮箱通道，**顺序固定为字母序**（设计 §10.3 第 3 条）。
  *
  * ⚠️ **这里不重新声明一份，从 `registrar.mjs` 那份来**——它是顺序的唯一真源，
- * 而 `tests/ui/pure-boundary.test.ts` 那道结构门禁只拦「函数被抄回板块文件」，
+ * 而 `tests/ui/pure-boundary.test.ts` 的「全部 pure 模块的导出函数名，一个都不许在
+ * sec-*.js 里被重新声明」那道结构门禁只拦「函数被抄回板块文件」，
  * **拦不住值常量被拷贝**（它自己的 `KNOWN_BLIND_SPOTS` 第二条逐字写着这件事）。
  * pure 模块之间不许 import（硬规则 1），所以由**板块文件**把 `CHANNELS` 传进来，
  * 本模块只负责按传入的顺序产出同构的字段清单。

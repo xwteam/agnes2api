@@ -48,7 +48,7 @@
  * 对**判定**不成立：把「存下的时刻」与「现在」都变成参数之后，判定本身是纯函数
  *（这正是 admin-ui/README.md 硬规则 1 要求的形态）。碰浏览器全局的那一小段留在
  * `app.js` 里，由冒烟清单第 15/16 条覆盖；判定这一半在这里，由
- * `tests/ui/session.test.ts` 覆盖。
+ * `tests/ui/session.test.ts` 的「sessionExpired：一份 localStorage 里的口令还能用多久」覆盖。
  *
  * 这个目录下的文件受三条硬规则约束，规则全文见 admin-ui/README.md。
  */
