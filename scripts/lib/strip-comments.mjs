@@ -704,7 +704,7 @@ export function stripCssComments(src) {
  * HTML5**——上面那两种同形闭合（`<!-->` / `<!--->`）在规范里是闭合的空注释，上一版
  * 把它们当成未闭合、一路吃到文件尾，**偏离的方向恰恰是静默**。
  * P3e Task 3 复评在 `admin-ui/index.html` 上把代价量死了：删掉第 8 行那个 `-->`，
- * 第 6 道门禁（`scripts/check-i18n.mjs`）的引用数从 496 掉到 480 —— 整份文件尾的
+ * i18n 门禁（`scripts/check-i18n.mjs`）的引用数从 496 掉到 480 —— 整份文件尾的
  * `data-i18n=` 全部消失 —— 而门禁**打着 ✅ 横幅、exit 0**。Task 4 把「未被引用」
  * 升成硬错之后，同一个漏写的 `-->` 会把一批活着的 key 报成死 key。
  * ⇒ 按本仓裁定办：**认不出要吵**。代价也认下来写在这里：一份注释真的没闭合的 HTML
@@ -719,7 +719,7 @@ export function stripCssComments(src) {
  * · **内联 `<script>` / `<style>` 里的 JS/CSS 注释抠不掉**——那一段的注释语法是
  *   JS/CSS 的，本函数只认 `<!-- -->`。⚠️ 这一条**不是靠人记得**：
  *   `scripts/check-i18n.mjs` 里「HTML 里出现内联脚本 / 样式」那条判据会在
- *   内联内容出现的第一时间把第 6 道门禁打红，逼人回到这里表态。
+ *   内联内容出现的第一时间把那道门禁打红，逼人回到这里表态。
  *
  * @param {string} src
  * @returns {string}
@@ -736,7 +736,7 @@ export function stripHtmlComments(src) {
           "HTML 注释开了没有闭合记号（`-->` / `--!>`），一路到文件尾 "
           + "⇒ 再抠下去等于把从这里到文件尾的内容整段静默吞掉，"
           + "而调用方拿到的是一份看起来正常的半截源码（P3e Task 3 复评实测：`admin-ui/index.html` "
-          + "少一个 `-->`，第 6 道门禁的引用数掉了一大截、横幅照打 ✅、exit 0）。"
+          + "少一个 `-->`，`scripts/check-i18n.mjs` 这道门禁的引用数掉了一大截、横幅照打 ✅、exit 0）。"
           + "⚠️ 如果这个 `<!--` 其实住在一个属性值里（`<div title=\"<!-- x -->\">`，"
           + "按 HTML 规范是纯文本），那是本函数已登记的那条边界撞上了这条抛 —— "
           + "把那段文本改写掉，或者去 `scripts/lib/strip-comments.mjs` 的 `stripHtmlComments` 扩判据");

@@ -7,7 +7,7 @@ import { join, resolve, dirname } from "node:path";
 const SCRIPT = resolve("scripts/check-comment-refs.mjs");
 
 /**
- * **第 12 道门禁（`scripts/check-comment-refs.mjs`）自己的元测试**（全分支评审 B2）。
+ * **注释指向门禁（`scripts/check-comment-refs.mjs`）自己的元测试**（全分支评审 B2）。
  *
  * @refs-ignore-file —— **整份文件豁免，理由是构造性的**：这份元测试的**真注释**里
  * 到处点名故意不存在的路径（手写豁免清单要逐条解释每个虚构路径的来历、每组夹具的
@@ -176,7 +176,7 @@ describe("scripts/check-comment-refs.mjs 元测试：规则 A（指向必须解�
  * 两条规则是**同一族缺陷的证明**换来的：注释结构断裂、以及出生即过期的散文行号，
  * **十二道门禁一道都没响**。计划的原则是「本期不新增门禁，除非某条缺陷证明现有
  * 十二道拦不住它」——这两条就是那个证明，所以它们加在**这道门禁内部**，
- * 而不是新增第 13 道。
+ * 而不是新增一道门禁。
  *
  * ⚠️ **正反两张表都写**（照抄规则 B 词表那两张的形状）：只写「该红的红了」的话，
  * 一条「一律 exit 1」的实现也全绿；只写「不该红的没红」的话，
@@ -241,6 +241,156 @@ describe("规则 D：散文里不带路径的绝对行号", () => {
   ])("%s ⇒ 放行（规则 D 不许误伤它）", (_label, body) => {
     const r = run({ files: { "src/a.ts": `${body}export const a = 1;\n` } });
     expect(r.status, r.stderr).toBe(0);
+  });
+});
+
+/**
+ * ── 规则 E：注释里的门禁绝对序号（P3e Task 15）─────────────────────────────
+ *
+ * **判据是「有没有写绝对序号」，不是「序号写得对不对」。** 后者要一份「序号 ↔ 脚本」
+ * 的映射，而那份映射要么手写（第二份真源），要么从 `.github/workflows/ci.yml` 解析
+ * 后跟注释里的脚本路径比对——实测本仓典型的两处（`src/core/admin/usage-stats.ts` 那
+ * 两段）**整段注释里根本没有脚本路径**，比不了。
+ *
+ * ⚠️ **正反两张表都写**：只写「该红的红了」，一条「一律 exit 1」的实现也全绿；
+ * 只写「不该红的没红」，一条「永远不判」的实现同样全绿。
+ * **反向那张表一律抄本仓真实存在的句子**——判据一旦误伤它们，这道规则上线当天
+ * 就要带一份豁免名册，而开豁免名册比没有规则更糟。
+ */
+describe("规则 E：注释里的门禁绝对序号", () => {
+  /** 反向控制①要用到的真脚本，得真的存在，否则红的是规则 A 不是规则 E。 */
+  const SCRIPT_STUB = { "scripts/check-comment-refs.mjs": "// 占位\n" };
+
+  it.each([
+    ["「第 N 道门禁」，本仓最常见的形态", "// 这条由第 12 道门禁当场抓住。\n"],
+    ["中文数字写法", "// 这条由第十二道门禁当场抓住。\n"],
+    ["改成「写对的那个序号」一样不许写", "// 这条由第 8 道门禁当场抓住。\n"],
+    ["分数形态的序号", "// 这条由第 6/12 道门禁当场抓住。\n"],
+    ["「道」后面不跟「门禁」二字，但前面有 CI", "// CI 第 5 道跑这个脚本。\n"],
+    ["「CI 的第 N 道」", "// 门禁脚本跑在 CI 的第 6 道。\n"],
+    ["「CI 第 N/M 道」——这一格是为一处真实的漏网设的", "// 凭据扫描门禁（CI 第 2/11 道）自身的正确性。\n"],
+  ])("%s ⇒ exit 1，且报文给得出「改写成脚本名」这条出路", (_label, body) => {
+    const r = run({ files: { "src/a.ts": `${body}export const a = 1;\n` } });
+    expect(r.status, r.stdout).toBe(1);
+    expect(r.stderr).toContain("门禁序号");
+    expect(
+      r.stderr,
+      "报文只说「不许」而不给出路的话，下一个人会把它改成「写对的序号」——那一样红，"
+      + "而且下次 CI 重排又变假",
+    ).toContain("这道门禁");
+  });
+
+  it("反向控制①：写脚本名的注释不许红", () => {
+    const r = run({
+      files: {
+        ...SCRIPT_STUB,
+        "src/a.ts": "/** `scripts/check-comment-refs.mjs` 这道门禁校验的是注释里的指向。 */\n"
+          + "export const a = 1;\n",
+      },
+    });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  /**
+   * **反向控制②：本仓真实存在的「第 N 道」非门禁用法，一句都不许被误伤。**
+   *
+   * ⚠️ **需求书在这里错了一处，如实登记**：它写的是「第一道防线 / 第二道防线」
+   * 这一族，判据只要一条 `(?!\s*防线)` 负向前瞻就够。**实测不是**——本仓这一族
+   * 今天绝大多数写的是**保险 / 筛子 / 闸 / 关口 / 护栏**，甚至「第二道：」后面
+   * 直接跟冒号，`防线` 只占其中三处。一条只排除「防线」的前瞻会当场制造十几条假红。
+   * 下面每一条都逐字抄自仓里的真句子（去掉了会被规则 A 一起判的仓内路径）。
+   */
+  it.each([
+    ["第二道防线在替第一道干活（`admin-ui/js/pure/playground.mjs`）", "// 那是第二道防线在替第一道干活。\n"],
+    ["第一道筛子（`src/core/keypool-repo.ts`）", "// 它仍然是选白名单成员时的第一道筛子。\n"],
+    ["第二道保险（`src/core/keypool-repo.ts`）", "// 这个常数今天只是无害的第二道保险。\n"],
+    ["第二道闸（`tests/contract/admin-events.test.ts`）", "// 那一行是第二道闸，只有在第一道不存在时才看得出差别。\n"],
+    ["第一道关口（`tests/ui/format.test.ts`）", "// 格式化是「面板不撒谎」的第一道关口。\n"],
+    ["第 1 道（`src/core/admin/usage-stats.ts`）", "// 只有第 1 道不够，还要一个计数闸。\n"],
+    ["「第二道：」后面直接跟冒号（`admin-ui/js/sec-playground.js`）", "// 这里是第二道：开关的状态活过一次换档。\n"],
+    ["防御性的第二道（`scripts/check-ui-budget.mjs`）", "// 这里的 raw 检查是防御性的第二道。\n"],
+  ])("反向控制②：%s ⇒ 放行", (_label, body) => {
+    const r = run({ files: { "src/a.ts": `${body}export const a = 1;\n` } });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  /**
+   * **已知认不得的形态，同样是一张会变红的表。**
+   *
+   * 判据认的是三种**带门禁标记**的写法（后面紧跟「门禁」、前面紧挨着 `CI`、
+   * 或者分数形态）。一个**光秃秃的序号**——上一句给了 CI 上下文、这一句只留序号
+   * ——它看不见，因为把它收进来就必须靠「序号 ≥ 某个数」或者一张「保险/筛子/闸/
+   * 关口/护栏」的名词名册去跟非门禁用法划界，两条都是会漂的东西，而误伤的代价
+   * （有人给这道门禁开豁免名册）比漏掉几种写法大一个量级。
+   *
+   * 这三条今天在本仓**一处都不剩**（Task 15 已逐处改写），留在这里是为了
+   * **把边界钉成断言**：哪天判据被放宽收进了其中一条，这一格会变红，
+   * 逼人把它从这张表里挪走并写清楚新判据是怎么划界的。
+   */
+  it.each([
+    ["光秃秃的「作第 N 道」", "// check-comment-refs 作第 8 道，原来的编号全部跟着挪一位。\n"],
+    ["光秃秃的「第 N 道的 vitest」", "// 放进第 10 道的 vitest 里零副作用。\n"],
+    ["光秃秃的「新增第 N 道」", "// 而不是新增第 13 道。\n"],
+  ])("已知认不得：%s ⇒ 今天放行（边界是断言，不是散文）", (_label, body) => {
+    const r = run({ files: { "src/a.ts": `${body}export const a = 1;\n` } });
+    expect(
+      r.status,
+      "这种形态现在被认出来了？把它从这张表里挪走，并去 `scripts/check-comment-refs.mjs` "
+      + "规则 E 那段把「它认不得什么」改掉",
+    ).toBe(0);
+  });
+});
+
+/**
+ * ── 规则 F：注释里没人能核的裁定计数（P3e Task 15）───────────────────────────
+ *
+ * 仓里已有的裁定原文（`tests/unit/admin/probe-guard.test.ts` 里
+ * 「出站探测：两条端点的单一真源（源码级）」上方那段）：
+ * **「要么列出来，要么把计数删掉」**。那次裁定只落到了两处，其余几处照旧带着计数
+ * 而且互相打架——两处引的是**同一句**话，一个说三次、一个说四回。
+ */
+describe("规则 F：注释里没人能核的裁定计数", () => {
+  it.each([
+    ["中文数字 + 次", "// 那正是本仓已经裁过三次的那个形态。\n"],
+    ["中文数字 + 回", "// 「没有消费者的东西迟早会漂」裁过四回。\n"],
+    ["阿拉伯数字也算", "// 那正是本仓已经裁过 4 次的那个形态。\n"],
+  ])("%s ⇒ exit 1，报文指向仓里已有的那条裁定", (_label, body) => {
+    const r = run({ files: { "src/a.ts": `${body}export const a = 1;\n` } });
+    expect(r.status, r.stdout).toBe(1);
+    expect(r.stderr).toContain("裁定计数");
+    expect(r.stderr, "报文必须把「要么列出来，要么把计数删掉」这条既有裁定说出来").toContain("把计数删掉");
+  });
+
+  it.each([
+    ["不带数字的「反复裁过」（`admin-ui/js/pure/settings.mjs`）", "// 那正是本仓反复裁过的「面板说一件事、实际是另一件事」。\n"],
+    ["「本轮评审刚裁过」（`src/http/admin/auth.ts`）", "// 与「空格」那条的区别（本轮评审刚裁过，写下来免得下次又摇摆）。\n"],
+    ["「逐字裁过同一形态」（`src/core/config.ts`）", "// 那上方那段逐字裁过同一形态。\n"],
+  ])("反向控制：%s ⇒ 放行", (_label, body) => {
+    const r = run({ files: { "src/a.ts": `${body}export const a = 1;\n` } });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  /**
+   * **段级 `@refs-ignore` 对规则 F 有效**——这不是给它开后门，是因为本仓唯一一份
+   * 裁定原文就写在「引用上一版原文 + 说明计数已删」的那两段里，而那两段字面上
+   * 必然带着计数。把它们改干净等于毁掉那份原文。
+   */
+  it("豁免段之内的裁定计数放行，段之外的照样红", () => {
+    const r = run({
+      files: {
+        "src/a.ts": `/**
+ * @refs-ignore（本段引用的是上一版原文，计数是被引用的对象）
+ * 上一版这里写的是「本仓已经裁过三次」——计数删掉了。
+ *
+ * 而这一段里的「本仓已经裁过四次」是本仓在主张一个没人能核的数字。
+ */
+export const a = 1;
+`,
+      },
+    });
+    expect(r.status, r.stdout).toBe(1);
+    expect(r.stderr, "被报出来的必须是豁免段之外那一条").toContain("裁过四次");
+    expect(r.stderr, "豁免段之内那一条不许被报出来").not.toContain("裁过三次");
   });
 });
 
@@ -703,13 +853,17 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       // 不是指向声明）与**被引用的词表成员**（`拦得住`/`抓得住` 是词，不是断言）。
       // 段落刻意不拆开，就是为了让豁免区间盖住整段。
       "scripts/check-comment-refs.mjs",
-      // 第 11 道门禁的两段说明里同样举了 `src/x.ts` / `src/hidden.ts` 两个虚构路径。
+      // `scripts/check-no-binary.mjs` 的两段说明里同样举了 `src/x.ts` / `src/hidden.ts` 两个虚构路径。
       "scripts/check-no-binary.mjs",
       "scripts/check-no-binary.mjs",
       // 事件环：全分支评审 A9 的标本，那条**错误的**旧指向刻意原样留着当反面教材。
       "src/core/admin/event-ring.ts",
       // 掩码：要点名 B3 删掉的那个前端副本。
       "src/core/admin/key-view.ts",
+      // ⚠️ **P3e Task 15 加的一处**：那一段逐字引用上一版原文来记录「要么列出来，
+      // 要么把计数删掉」那次裁定，字面上必然带着计数，而计数在那里是**被引用的对象**。
+      // 它同时被下面那格「裁定计数的豁免逐处列名」单独点名——两份名册各管一半。
+      "src/http/admin/probe-guard.ts",
       // 收集门禁：讲第一版 `tests/unit/test-collection.test.ts` 的教训；
       // 以及过滤器判定那一段里的两处示例文件名。
       // ⚠️ **这里从 2 条变成 3 条是本任务把豁免收窄到「段级」的直接后果**：
@@ -722,10 +876,43 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       // 同样要点名 B3 删掉的两个前端文件。
       "tests/unit/admin/key-view.test.ts",
       "tests/unit/admin/key-view.test.ts",
+      // ⚠️ **P3e Task 15 加的另一处**，与 `src/http/admin/probe-guard.ts` 那一处成对：
+      // 本仓唯一一份裁定原文就是这两段合起来的，删掉计数等于毁掉那份原文。
+      "tests/unit/admin/probe-guard.test.ts",
       // 本文件：**整份**豁免，理由见文件头（夹具按构造就是断链的）。
       "tests/unit/check-comment-refs.test.ts",
       // 举例说明「带了过滤器」长什么样。
       "tests/unit/scripts-guard.test.ts",
+    ]);
+  });
+
+  /**
+   * **规则 F 的豁免是另一份名册，单独钉。**
+   *
+   * 上面那份数的是「用了几处 `@refs-ignore`」，它答不了「哪一处豁免里躺着一个
+   * 裁定计数」——而规则 F 的全部风险就在那里：唯一一份裁定原文必须留着，
+   * 而「留一份原文」与「又新写一个没人能核的数字」在磁盘上长得一模一样。
+   *
+   * 期望值手写字面量，不从扫描结果反算（回填出来的期望值恒等于实际值，永远绿）。
+   */
+  it("裁定计数的豁免逐处列名 —— 多一处就红", () => {
+    const r = spawnSync("node", [SCRIPT], {
+      encoding: "utf8",
+      env: { ...process.env, COMMENT_REFS_LIST_IGNORED: "1" },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const used = (r.stdout.match(/counted-ruling-exempt (\S+)/g) ?? [])
+      .map((s) => s.replace("counted-ruling-exempt ", "").replace(/:\d+$/, ""))
+      .sort();
+    expect(
+      used,
+      "有人给「裁过 N 次」多开了一处豁免——本仓对这个数的裁定是「要么列出来，要么把计数删掉」，"
+      + "豁免只留给「逐字引用上一版原文」这一种",
+    ).toEqual([
+      // 这一对是本仓**唯一**一份裁定原文的所在：它们靠「引用旧措辞 + 说明计数已删」
+      // 来记录那次裁定，字面上必然带着计数，而那个计数是**被引用的对象**。
+      "src/http/admin/probe-guard.ts",
+      "tests/unit/admin/probe-guard.test.ts",
     ]);
   });
 });

@@ -224,7 +224,7 @@ export function cursorOutcome(current, cursor) {
 /**
  * 下一次轮询该带的 `after` 游标（只要取值那一半）。
  * **判据只有 `cursorOutcome` 一份**，这里不重新实现——同一个判据的第二份实现
- * 正是本仓裁过三次的那一族。
+ * 正是本仓反复裁过的那一族。
  */
 export function nextAfter(current, cursor) {
   return cursorOutcome(current, cursor).after;

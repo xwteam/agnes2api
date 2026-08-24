@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 const SCRIPT = resolve("scripts/check-no-binary.mjs");
 
 /**
- * **评审 F3 新增的第 11 道门禁**（`scripts/check-no-binary.mjs`）本身的正确性——
+ * **评审 F3 新增的那道门禁**（`scripts/check-no-binary.mjs`）本身的正确性——
  * 不在真实仓库上做变异（那会真的往仓库里塞一个二进制文件），改用一个独立的临时
  * git 仓库：`execFileSync` 的 `cwd` 选项让被测脚本内部的 `git ls-files`/`git grep`
  * 全部落在这个临时仓库上，不碰真实仓库的索引。

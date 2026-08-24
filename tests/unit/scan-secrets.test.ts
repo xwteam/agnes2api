@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 const SCRIPT = resolve("scripts/scan-secrets.sh");
 
 /**
- * **凭据扫描门禁（CI 第 2/11 道）自身的正确性。**
+ * **凭据扫描门禁（`scripts/scan-secrets.sh`）自身的正确性。**
  *
  * 这个文件存在的直接理由（评审四审 B 组第 5 条）：`scan-secrets.sh` 原来用
  * `set -uo pipefail`（**没有** `-e`）+ `if git grep …; then 命中; fi` 判命中，而

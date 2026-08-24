@@ -978,7 +978,7 @@ export class KeyPoolRepo {
           //
           // ⚠️ **这句话在第一版里是一条没人验过就写死的断言，评审实测它当时
           // ESCAPED**（改成 `save({...}, existing)` ⇒ tsc=0、全量一条不红），
-          // 而它自己又不含第 12 道门禁词表里的任何一个词 ⇒ 门禁也看不见。
+          // 而它自己又不含 `scripts/check-comment-refs.mjs` 那张词表里的任何一个词 ⇒ 门禁也看不见。
           // 现在由 `tests/contract/admin-keys-write.test.ts` 的
           // 「resetExisting 对一把干净的 key 也必须真的落盘 —— 传 prev 会被写消除吃掉」
           // 钉着：那一格的夹具是「干净 + lastUsedAt 近期有值」，正是写消除会咬的形态。
@@ -1079,7 +1079,7 @@ export class KeyPoolRepo {
    *   `MANUAL_TENDS_PER_DAY` = 24 次/天。五语言 DEPLOY.md 的 list 消费者清单
    *   同一批已从「三处」改成「四处」并点名面板。
    *
-   * ⚠️ **这个「三处」是手写的，没有任何门禁校验它的条数**（第 12 道门禁只校验路径
+   * ⚠️ **这个「三处」是手写的，没有任何门禁校验它的条数**（`scripts/check-comment-refs.mjs` 这道门禁只校验路径
    * 解析得开，校验不了一个数字）——形态与 `src/core/keypool.ts` 那张手写表逐字相同，
    * 而那张表在本仓已经错过两次。**改这段时请当场 `grep -rn "reconcileIndex()" src/`
    * 重数一遍，别信这段话。**

@@ -46,7 +46,7 @@ export interface KeyRecord {
    * （`Record<keyof KeyRecord, …>`）要求每个字段都有一次显式表态，而这个表态
    * 放在「正在通盘看 scheduling / telemetry 划分」的这一期做，比放在只顾着写端点的
    * 那一期做更不容易出错。**它今天不进 `KeyView`**——一个没有生产者的响应字段
-   * 恒为 `null`，正是本仓已经裁过四次的那个形态。
+   * 恒为 `null`，正是本仓反复裁过的那个形态。
    */
   note?: string | null;
 }

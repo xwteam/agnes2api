@@ -713,7 +713,7 @@ describe("抠注释真源的三个出口", () => {
   });
 
   /**
-   * **HTML 是第三种注释语义，而它的消费者是第 6 道门禁**（`scripts/check-i18n.mjs`
+   * **HTML 是第三种注释语义，而它的消费者是 i18n 门禁**（`scripts/check-i18n.mjs`
    * 的引用广扫要扫 `admin-ui/index.html` 里那 16 处 `data-i18n=`）。
    * 下面三格分别钉住：**正向抠得掉**、**前三个导出在 HTML 上各自怎么坏**、
    * **两条已知边界确实是那个样子**。
@@ -759,7 +759,7 @@ describe("抠注释真源的三个出口", () => {
   /**
    * ⚠️⚠️ **「没闭合就抛」的反向控制 —— 只做「会抛」那一半等于把一族合法 HTML 打红。**
    *
-   * P3e Task 3 复评（F2）实测：`admin-ui/index.html` 少一个 `-->` ⇒ 第 6 道门禁的引用数
+   * P3e Task 3 复评（F2）实测：`admin-ui/index.html` 少一个 `-->` ⇒ i18n 门禁的引用数
    * 从 496 掉到 480（整份文件尾的 `data-i18n=` 被静默吞掉），而门禁打着 ✅ 横幅 exit 0。
    * 修法是「未闭合就抛」，**而修它的时候最容易顺手搬来的新问题就是把合法注释一起打红**：
    * HTML5 里 `<!-->` 与 `<!--->` 是 **abrupt-closing-of-empty-comment**，
@@ -787,7 +787,7 @@ describe("抠注释真源的三个出口", () => {
         `${why}：注释之后的内容不见了 ⇒ 它被当成未闭合、一路吃到了文件尾`,
       ).toContain(TAIL);
     }
-    // **最大的一条反向控制：真的那份 `admin-ui/index.html`**（第 6 道门禁每次都要抠它）。
+    // **最大的一条反向控制：真的那份 `admin-ui/index.html`**（`scripts/check-i18n.mjs` 这道门禁每次都要抠它）。
     expect(() => stripHtmlComments(readFileSync(join("admin-ui", "index.html"), "utf8")))
       .not.toThrow();
   });
@@ -1210,7 +1210,7 @@ describe("抠注释真源的扫描器边界", () => {
       // 这一行走的是**第四方言**（`stripHtmlComments`），不是上面那个出口。
       // 上一版这里不抛：`<!--` 没有闭合记号时一路吃到文件尾，理由写的是「这是 HTML5 的
       // 规定行为」。P3e Task 3 复评实测了那一支的代价：`admin-ui/index.html` 少一个
-      // `-->` ⇒ 第 6 道门禁的引用数从 496 掉到 480、整份文件尾的 `data-i18n=` 全部消失，
+      // `-->` ⇒ i18n 门禁的引用数从 496 掉到 480、整份文件尾的 `data-i18n=` 全部消失，
       // 而门禁**打着 ✅ 横幅 exit 0**。⇒ 现在按本仓裁定办：认不出要吵。
       "HTML 注释开了没有闭合记号，一路吃到文件尾 ⇒ 再抠下去就是静默吞掉半份文件",
       '<p data-i18n="nav.usage"></p>\n<!-- 没有闭合记号\n<p data-i18n="nav.keys"></p>\n',

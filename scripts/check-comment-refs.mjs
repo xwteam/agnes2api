@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /*
- * 第 12 道门禁：**注释里指向的位置必须真实存在。**
+ * 注释指向门禁（CI 里跑 `scripts/check-comment-refs.mjs` 那一步）：
+ * **注释里指向的位置必须真实存在。**
  *
  * 用法：
  *   node scripts/check-comment-refs.mjs            # 查本仓
@@ -453,11 +454,17 @@ function isBlankCommentLine(raw) {
 
 /**
  * 把一块注释按豁免标记切成「豁免段」与「受检段」，返回受检的那些**连续行段**
- *（`{ text, line }`，`line` 是 1 基真实行号）以及这一块用了几个标记。
+ *（`{ text, line }`，`line` 是 1 基真实行号）、**被豁免掉的那些连续行段**
+ *（`exemptRuns`，同样的形状）以及这一块用了几个标记。
  *
  * 受检行按**连续段**合并而不是逐行交给规则：名字锚在本仓大量跨行写
  *（`「连续失败三次之后升到\n * 长退避」`），逐行匹配会让每一个跨行的锚假红
  * ——那时红的不是缺陷，是量具。
+ *
+ * ⚠️ **`exemptRuns` 不是顺手多返回一个值**：豁免段本来是「扔掉就算」的，
+ * 于是**用掉一次豁免之后，那一段里到底放行了什么，没有任何东西看得见**。
+ * 规则 F 必须逐处报出「哪一段豁免里躺着一个裁定计数」，那份名单才守得住
+ *（否则豁免会悄悄长大，而它长大的样子和没长大一模一样）。
  */
 function splitByIgnore(block) {
   const lines = block.text.split("\n");
@@ -472,13 +479,21 @@ function splitByIgnore(block) {
     }
   }
   const runs = [];
+  const exemptRuns = [];
   let cur = null;
+  let curExempt = null;
   for (let i = 0; i < lines.length; i++) {
-    if (exempt[i]) { cur = null; continue; }
+    if (exempt[i]) {
+      cur = null;
+      if (curExempt === null) exemptRuns.push((curExempt = { text: lines[i], line: block.line + i }));
+      else curExempt.text += `\n${lines[i]}`;
+      continue;
+    }
+    curExempt = null;
     if (cur === null) runs.push((cur = { text: lines[i], line: block.line + i }));
     else cur.text += `\n${lines[i]}`;
   }
-  return { runs, markers };
+  return { runs, exemptRuns, markers };
 }
 
 /**
@@ -562,8 +577,100 @@ function topLevelLinesInJsdoc(block) {
 const PROSE_LINENO_RE =
   /(?:本文件|该文件|那个文件|上面|上文|文件头|[\w.-]+\.(?:ts|mjs|js))[^。；]{0,20}?第\s*([0-9]{1,6})\s*行/g;
 
+/**
+ * ── 规则 E：注释里不许写门禁的绝对序号，一律写脚本名 ────────────────────────
+ *
+ * **它为什么在这里**：同一道门禁在发货注释里曾经有互相矛盾的序号——
+ * `scripts/check-comment-refs.mjs` 这一道被十几处注释叫成一个数、另外几处叫成另一个数，
+ * `src/core/admin/usage-stats.ts` **一个文件里就同时出现两个**；
+ * `scripts/check-i18n.mjs` 的文件头把自己和 vitest 那一步各写了一个序号，**两个都错**，
+ * 它的对家那份字典测试跟着错了第二遍。
+ * ⇒ **当时全仓没有一处序号是可信的**，而这是要推公开仓的源码注释。
+ *
+ * ⚠️ **判据是「有没有写绝对序号」，不是「序号写得对不对」。**
+ * 后者需要一份「序号 ↔ 脚本」的映射：手写就是第二份真源，从
+ * `.github/workflows/ci.yml` 解析出来再跟注释里的脚本路径比对则**在真仓上比不了**
+ * ——实测当时典型的两处（`src/core/admin/usage-stats.ts` 那两段）整段注释里
+ * 根本没有任何脚本路径。两条路都堵死，所以判据换成了更严的那一条：
+ * **一个绝对序号都不许写，门禁的身份一律由脚本名承载**，而脚本名解析得开这件事
+ * 由本文件的规则 A 当场校验——两条规则合起来才是完整的。
+ * 序号本来就是会漂的东西：CI 里增删或重排一步，全仓所有序号一次性变假；脚本名不会。
+ *
+ * ── 判据长这样的理由（正反两侧都是量出来的）────────────────────────────────
+ * 认的是**三种带门禁标记**的写法：
+ *   ① `第 N 道` 后面紧跟「门禁」二字（本仓最常见的形态）；
+ *   ② `第 N 道` 前面紧挨着 `CI`（含 `CI 的第 N 道`）——它抓的是**不带「门禁」二字**
+ *      的那一族（当时 i18n 门禁的文件头与凭据扫描门禁的元测试里各有一处逐字长这样），
+ *      只要求「道」后面跟「门禁」的判据**改没改它们都是绿的**；
+ *   ③ **分数形态** `第 N/M 道`——「几分之几道」按构造只可能是 CI 的步骤编号。
+ *
+ * ⚠️ **反向那一侧不是「防线」两个字就够**（这一条是实测推翻需求书的）：
+ * 本仓「第 N 道」的非门禁用法今天绝大多数写的是**保险 / 筛子 / 闸 / 关口 / 护栏**，
+ * 还有「这里是第二道：」这种后面直接跟冒号的，`防线` 只占其中三处。
+ * 一条只排除「防线」的负向前瞻会当场制造十几条假红——**这道门禁一旦开始误报，
+ * 下一步就是有人给它开豁免名册**，那比没有这条规则更糟。
+ * 现在的判据不靠「排除哪些名词」，而是靠「有没有门禁标记」，方向是反的。
+ *
+ * ⚠️ **它认不得什么，明写**：一个**光秃秃的序号**（上一句给了 CI 上下文、这一句
+ * 只留序号，例如「作第 N 道」「第 N 道的 vitest」「新增第 N 道」）它看不见。
+ * 收进来就必须靠「序号大于某个数」或者一张名词名册去跟非门禁用法划界，两条都是
+ * 会漂的东西。这条边界由 `tests/unit/check-comment-refs.test.ts` 的
+ * 「已知认不得：%s ⇒ 今天放行（边界是断言，不是散文）」那张表钉着，不是散文。
+ *
+ * ⚠️ **`.github/workflows/ci.yml` 自己的 `name: N/12` 不受影响**：`SCAN_DIRS` 不含
+ * `.github/`，而 `tests/unit/scripts-guard.test.ts` 的
+ * 「CI 恰好十二道门，编号 1/12 到 12/12 各出现一次」判的是 `N/12` 那种形态、不带
+ * 「第 … 道」，一格都碰不到。**方向是把注释里的序号换成脚本名，既不是改 CI 去对齐
+ * 注释，也不是把序号改成写对的那个数。**
+ * ⚠️ **`docs/` 刻意不扫**：那些是带日期的历史计划文档（包括本期计划自己），
+ * 改它等于篡改记录。`SCAN_DIRS` 本来就不含 docs。
+ */
+const GATE_ORDINAL_CORE = "第\\s*(?:\\d+\\s*/\\s*\\d+|\\d+|[一二三四五六七八九十]+)\\s*道";
+const GATE_ORDINAL_RE = new RegExp(
+  `${GATE_ORDINAL_CORE}\\s*门禁`
+  + `|CI\\s*的?\\s*${GATE_ORDINAL_CORE}`
+  + "|第\\s*\\d+\\s*/\\s*\\d+\\s*道",
+  "g",
+);
+
+/**
+ * ── 规则 F：注释里不许写没人能核的裁定计数 ─────────────────────────────────
+ *
+ * **它为什么在这里**：本仓复述同一条裁定的地方有好几处，其中两处引的是**同一句**话，
+ * 一个说三次、一个说四回——**2:2 互相打架**。仓里已有的裁定原文写在
+ * `tests/unit/admin/probe-guard.test.ts` 里「出站探测：两条端点的单一真源（源码级）」
+ * 上方那一段：**「从来没有人列出过是哪三次……要么列出来，要么把计数删掉」**。
+ * 那次裁定只落到了两处，剩下几处照旧带着计数。**光改几处不立守卫，下一期还会长回来。**
+ * 一个没人能核的计数比一句过期的话更糟，而它就写在要推公开仓的源码注释里。
+ *
+ * ⚠️ **本期一律「把计数删掉」，不走「列出来」那一支**：那份清单本身又会是一张
+ * 没人守的手写表，等于把同一个病换个地方长。
+ *
+ * ⚠️ **段级豁免标记（`IGNORE_MARKER`）对这条规则有效，而且是必需的**：本仓唯一一份裁定原文
+ * 就写在「引用上一版原文 + 说明计数已删」的那两段里，那两段字面上必然带着计数
+ * （计数在那里是**被引用的对象**，不是本仓在主张一个数字）。把它们改干净等于毁掉
+ * 那份原文。**豁免不许变成一张没人守的名册**：脚本会把「落在豁免段里的裁定计数」
+ * 逐处报出来（`COMMENT_REFS_LIST_IGNORED=1` 时的 `counted-ruling-exempt` 行），
+ * `tests/unit/check-comment-refs.test.ts` 的
+ * 「裁定计数的豁免逐处列名 —— 多一处就红」把它钉成手写清单。
+ *
+ * ⚠️ **上面那句刻意写成 `IGNORE_MARKER` 而不是标记本身**：写成标记本身的话，
+ * **这一段会把自己豁免掉**，连带它里面那条活着的名字锚一起脱离校验
+ * ——本任务实测踩过一次（豁免数从既有的那几处悄悄多出一处，而多出来的那一处
+ * 里躺着一条真指向）。同一条坑本文件在 `IGNORE_FILE_RE` 那一行也踩过。
+ *
+ * ⚠️ **它认不得什么，明写**：判据只认「裁过 + 数量 + 次/回」这一种句式。
+ * 换成「裁定过 N 轮」「判过 N 回合」就绕过去了——与规则 B 上方那句边界同一条口径：
+ * 给「顺手写下一个没人能核的计数」加一道摩擦，不给「刻意绕开」设一道墙。
+ * ⚠️ **`docs/` 同样刻意不动**，与规则 E 是同一条边界。
+ */
+const COUNTED_RULING_SRC = "裁过\\s*(?:\\d+|[一二三四五六七八九十]+)\\s*[次回]";
+const COUNTED_RULING_RE = new RegExp(COUNTED_RULING_SRC, "g");
+
 const errors = [];
 const ignored = [];
+/** 落在**豁免段**里的裁定计数，逐处记名——见规则 F 上方那段「豁免不许变成一张没人守的名册」。 */
+const countedRulingExempt = [];
 let checked = 0;
 let claimChecked = 0;
 
@@ -612,8 +719,13 @@ for (const dir of SCAN_DIRS) {
     for (const wholeBlock of mergeAdjacent(scanned.blocks)) {
       // **逐段豁免**：标记只放行它所在的那一段（到下一个空注释行为止），
       // 同一块注释里其余的段照常校验。
-      const { runs, markers } = splitByIgnore(wholeBlock);
+      const { runs, exemptRuns, markers } = splitByIgnore(wholeBlock);
       for (let n = 0; n < markers; n++) ignored.push(`${rel}:${wholeBlock.line}`);
+      // **豁免掉的裁定计数逐处记名**（规则 F 的配套道具，不是统计）：
+      // 用掉一次豁免之后那一段里放行了什么，本来没有任何东西看得见。
+      for (const ex of exemptRuns) {
+        if (flatten(ex.text).match(COUNTED_RULING_RE)) countedRulingExempt.push(`${rel}:${ex.line}`);
+      }
       for (const block of runs) {
       const flat = flatten(block.text);
       // ── 规则 A ──────────────────────────────────────────────────────────
@@ -667,6 +779,29 @@ for (const dir of SCAN_DIRS) {
         );
       }
 
+      // ── 规则 E ──────────────────────────────────────────────────────────
+      // **必须排在规则 B 之前**：规则 B 那行 `continue` 会把「同段里没有断言性措辞」
+      // 的段整段跳过，而门禁序号最常出现在纯陈述句里——写在它后面等于大半个仓不扫。
+      for (const m of flat.matchAll(GATE_ORDINAL_RE)) {
+        errors.push(
+          `${rel}:${block.line} 注释里写了门禁序号「${m[0].trim()}」。`
+          + `CI 里增删或重排一步，全仓所有序号一次性变假，而脚本名不会`
+          + `——改写成「\`scripts/某个脚本.mjs\` 这道门禁」那种写法（脚本名存不存在由规则 A 当场校验）。`
+          + `⚠️ 改成「写对的那个序号」一样红：判据禁的是绝对序号本身`,
+        );
+      }
+
+      // ── 规则 F ──────────────────────────────────────────────────────────
+      for (const m of flat.matchAll(COUNTED_RULING_RE)) {
+        errors.push(
+          `${rel}:${block.line} 注释里写了一个没人能核的裁定计数「${m[0].trim()}」。`
+          + `本仓已有的裁定是「要么列出来，要么把计数删掉」，本期一律把计数删掉`
+          + `——改写成不带计数的说法（「本仓反复裁过的同一形态」）。`
+          + `确实要逐字引用上一版原文时，给那一段加 ${IGNORE_MARKER} 并在同一段里写明`
+          + `「这里的计数是被引用的对象」，那份豁免会被逐处报出来、由元测试钉成手写清单`,
+        );
+      }
+
       // ── 规则 B ──────────────────────────────────────────────────────────
       if (!CLAIM_MARKERS.some((k) => block.text.includes(k))) continue;
       for (const m of block.text.matchAll(TEST_FILE_RE)) {
@@ -695,4 +830,5 @@ console.log(
 );
 if (process.env.COMMENT_REFS_LIST_IGNORED === "1") {
   for (const w of ignored) console.log(`[check-comment-refs] ignored ${w}`);
+  for (const w of countedRulingExempt) console.log(`[check-comment-refs] counted-ruling-exempt ${w}`);
 }

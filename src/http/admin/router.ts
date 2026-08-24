@@ -477,7 +477,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 的「**/admin/api/* 不会被静态兜底吃掉**——注册顺序错了会让整套管理 API 变成 404」
   // 那一格守着。）**新增任何 /admin/api/* 端点都必须加在这一行之前。**
   //
-  // ⚠️ **这段注释在 P3c Task 1 之前是第 12 道门禁看不见的**：它上面那行里的
+  // ⚠️ **这段注释在 P3c Task 1 之前是 `scripts/check-comment-refs.mjs` 那道门禁看不见的**：它上面那行里的
   // `/admin/api/*` 含有 `/*`，而当时的 `commentBlocks()` 不解析字符串字面量、
   // 也不解析注释里的通配符，把它当成块注释开头一路吞到文件尾 ⇒ **从那里往下
   // 25 行（整张 /admin/api/* 路由表）全部脱离校验，而门禁照常报绿**。

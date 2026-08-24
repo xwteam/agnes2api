@@ -38,7 +38,7 @@ export const CARD_UPSTREAM = [
   // **它们与别的字段有一条真实差异**：建 app 时读一次，改了要重启容器 / 等 isolate
   // 回收才生效，卡 2 底下那句 `set.card.upstreamNote` 就是说这件事的。
   // ⚠️ **上面这句话在 P3e Task 4 之前是假的**：那个 key 在字典里躺了整整一期，
-  // `sec-settings.js` 从来没把它渲染出来（第 6 道门禁把它报成「未被引用」）。
+  // `sec-settings.js` 从来没把它渲染出来（`scripts/check-i18n.mjs` 这道门禁把它报成「未被引用」）。
   // 现在它真的上屏了，并由 tests/ui/dom/settings-save.test.ts 的
   // 「卡 2 底下真的印着那句「改了要重启」」钉着——这一条别再退回成散文。
   "poolCacheTtlMs",
@@ -151,7 +151,7 @@ const ERROR_KEYS = {
  * ⚠️ **这里原来写的是「拿 `ConfigErrorCode` 那个联合类型的手写镜像来比对」——
  * 那份镜像已经不存在了**（评审 C4：`satisfies` 只做单向可赋值检查，删得住、加不住，
  * 实测加一个码零信号）。同一个文件下面 `ERROR_KEYS` 上那段是对的，两句一度互相矛盾。
- * ⚠️ **它逃过了第 12 道门禁**，因为规则 B 查的是「指向存不存在」而不是「那句话真不真」
+ * ⚠️ **它逃过了 `scripts/check-comment-refs.mjs` 这道门禁**，因为规则 B 查的是「指向存不存在」而不是「那句话真不真」
  * ——正是本仓登记在 `scripts/check-comment-refs.mjs` 里的那个盲区。
  */
 export function errorMessageKey(code) {

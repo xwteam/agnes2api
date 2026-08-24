@@ -113,7 +113,7 @@ describe("CI 的测试命令不带文件过滤器（收集门禁分档的前提�
 });
 
 /**
- * **评审 F3 新增的第 11 道门禁**：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/`
+ * **评审 F3 新增的那道门禁**（`scripts/check-no-binary.mjs`）：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/`
  * 下不许存在被 git 判为二进制的跟踪文件，理由与起因见
  * `scripts/check-no-binary.mjs` 文件头。这里只钉"CI 里确实跑了这一步"（与下面
  * "pnpm build 在门禁列表里"那条同一个模式），脚本自身的正确性由
@@ -149,13 +149,13 @@ it("CI 恰好十二道门，编号 1/12 到 12/12 各出现一次", () => {
     expect(n, `编号 ${i}/12 出现了 ${n} 次`).toBe(1);
   }
   // 反向：不许还剩下旧编号（评审 F3 从十道扩到十一道；全分支评审 B2 又插入
-  // check-comment-refs 作第 8 道，原来的 8/11..11/11 全部跟着挪一位）。
+  // check-comment-refs 又插了一步进去，原来的 8/11..11/11 全部跟着挪一位）。
   expect(ci, "还有步骤写着 N/10").not.toMatch(/name: \d+\/10 /);
   expect(ci, "还有步骤写着 N/11").not.toMatch(/name: \d+\/11 /);
 });
 
 /**
- * **第 12 道门禁（全分支评审 B2）在 CI 里**：注释里写「这条由某某用例钉着」时，
+ * **注释指向门禁（`scripts/check-comment-refs.mjs`，全分支评审 B2）在 CI 里**：注释里写「这条由某某用例钉着」时，
  * 那个指向必须解析得开。与上面 `check-no-binary` 那条同一个模式——这里只钉
  * 「CI 里确实跑了这一步」，脚本自身的正确性由
  * `tests/unit/check-comment-refs.test.ts` 的「干净的树：exit 0」一带单独验证。

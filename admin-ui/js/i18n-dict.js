@@ -311,7 +311,7 @@ export const I18N = {
   // 本任务把两项真的接上了 ⇒ 那句话变成假话。**留一条零消费者的死文案比删掉它更贵**：
   // 下一个读字典的人会以为面板上还有这么一句提示。
   // ⚠️ **上一版这里写的理由是「check-i18n 只会把它报成一条警告」，那句话在 P3e Task 4
-  // 之后是假的**：第 ④ 条已升成硬错 ⇒ 真留着它，第 6 道门禁当场 exit 1。
+  // 之后是假的**：第 ④ 条已升成硬错 ⇒ 真留着它，`scripts/check-i18n.mjs` 这道门禁当场 exit 1。
   // 删它的理由因此不再是「门禁拦不住」，而是上面那句——**死文案本身会骗人**。
   "keys.addMenu.manualGroup":   { "zh-CN": "手动", "zh-TW": "手動", en: "Manual", ja: "手動", ko: "수동" },
   "keys.addMenu.pasteSingle":   { "zh-CN": "粘贴单个 Key", "zh-TW": "貼上單一 Key", en: "Paste a single key", ja: "単一の key を貼り付け", ko: "단일 key 붙여넣기" },

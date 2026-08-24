@@ -15,7 +15,7 @@ import { NULL_LOGGER } from "../../src/ports/logger.js";
  * 观测形态照抄 `tests/unit/registrar/scheduling-wiring.test.ts` 的「function fakeCtx()」：
  * ⚠️ 这里**刻意用名字锚而不是行号**——第一版写的是 `:171`（计划里给的那个数），
  * 而本任务给 `TendResult` 加三个字段时那份夹具长了 3 行，行号当场就腐烂了，
- * 第 12 道门禁直接把它拦下。行号会漂，名字不会。
+ * `scripts/check-comment-refs.mjs` 这道门禁直接把它拦下。行号会漂，名字不会。
  * 把 `waitUntil` 收到的 promise 收进数组、用例自己 await 完再断言存储。
  * **不依赖 pool-workers 会不会替我们等**，两种运行时同一份判据。
  *

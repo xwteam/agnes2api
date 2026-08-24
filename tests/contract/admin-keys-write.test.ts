@@ -225,7 +225,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
    *
    * ⚠️ **评审 I5：那句话第一版是写死在注释里、没人验过的断言，而且当时 ESCAPED**
    * ——把它改成 `save({...}, existing)`，tsc=0、全量**一条不红**；它自己又不含
-   * 第 12 道门禁词表里的任何一个词 ⇒ 门禁也看不见它。
+   * `scripts/check-comment-refs.mjs` 那张词表里的任何一个词 ⇒ 门禁也看不见它。
    *
    * 夹具必须是「**干净** + `lastUsedAt` 近期有值」：干净 ⇒ 重置改不动任何 scheduling
    * 字段 ⇒ 写消除的白名单判据为真；近期用过 ⇒ `lastUsedAt` 没走远。**两条都满足才是

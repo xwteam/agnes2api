@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 评审 F3 新增的第 11 道门禁：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/` 下
+// 评审 F3 新增的这道门禁（CI 里跑 `scripts/check-no-binary.mjs` 那一步）：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/` 下
 // 不许存在被 git 判定为二进制的文件。
 // ⚠️ 范围含**未跟踪**的新文件（P3d Task 9 复评补，理由见下面 `--others` 那一段）。
 //

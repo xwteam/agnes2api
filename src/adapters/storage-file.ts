@@ -32,7 +32,7 @@ import type { Storage } from "../ports/storage.js";
  * 扫描凭据，`-I` 的含义就是跳过二进制文件——**这个文件对"仓库零内置凭据"这道门禁
  * 完全失明**（已实测：塞一段能匹配现有正则的假凭据进去，门禁照样放行）。
  * 现在改成前导空格（`0x20`）的写法，把文件带回文本；另见
- * `scripts/check-no-binary.mjs`（评审要求新增的第 11 道门禁：`src/`/`tests/`/
+ * `scripts/check-no-binary.mjs`（评审要求新增的那道门禁：`src/`/`tests/`/
  * `admin-ui/`/`scripts/`/`docs/` 下不许存在被 git 判为二进制的跟踪文件，堵的是
  * "这一类"问题，不是"这一个"字节）。
  *
