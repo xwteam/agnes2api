@@ -417,6 +417,18 @@ for (const [k, row] of Object.entries(I18N)) {
 // ⚠️ **边界：这只管词面。** 「两条里挑一条的话就用 X」这种不含禁用词的表述它抓不住，
 // 那一档留给评审。**别在任何地方把它升格成「杜绝一切偏好表述」。**
 //
+// ⚠️⚠️ **最后两条（`ov.config.primary` / `ov.config.fallback`）是本轮追加的，
+// 起因是韩文实测里 `ov.config.primary` 的 ko 值写成了「기본 채널」（＝默认通道），
+// 而同一概念在 `reg.primary` / `set.field.registrar.primary` 都是「주 채널」（＝主通道）——
+// 概览页把「槽位」说成了「默认值」，正是用户那条硬约束明令禁止的暗示。
+//
+// ⚠️ **这里登记的是两条整 key，不是 `ov.config.` 前缀**：`ov.config.` 底下还有
+// `envLockedTip`（zh-CN/zh-TW/ja 正当地用「优先/優先」描述环境变量优先级）与
+// `degradedBanner`（zh-CN/zh-TW/en/ko 正当地用「默认/預設/default/기본」描述配置
+// 降级回落到默认值）——两者都与「两条通道平级」无关，扩宽前缀会当场把这两条正当
+// 文案一起打红，逼着开豁免名册，而本仓的裁定是「开豁免名册比没有规则更糟」。
+// ⇒ 只登记 `ov.config.primary` / `ov.config.fallback` 这两条整 key。
+//
 // 这张表的每一条各由 `tests/unit/check-i18n.test.ts` 的
 // 「⑥ %s/%s 出现偏好词 ⇒ 当场红」那一族逐前缀钉着，「范围没有被扩大」那一半由
 // 「⑥ 反向控制：与通道无关的 set.field.upstreamTimeoutMs 里出现同样的词 ⇒ 不红」
@@ -428,6 +440,8 @@ const BANNED_PREFIXES = [
   "set.field.registrar.fallback",
   "set.field.channel.",
   "set.card.registrar",
+  "ov.config.primary",
+  "ov.config.fallback",
 ];
 for (const [k, row] of Object.entries(I18N)) {
   if (!BANNED_PREFIXES.some((p) => k.startsWith(p))) continue;

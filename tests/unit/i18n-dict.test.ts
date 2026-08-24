@@ -185,6 +185,17 @@ describe("i18n 字典", () => {
    * 「两条里挑一条的话就用 X」这种不含禁用词的偏好表述它抓不住，那一档留给评审。
    * 想在作用域内合法地说「默认值」时，正确做法是**把那条文案放进别的命名空间**，
    * 而不是给这张表开豁免——前缀表就是这条规则的作用域。
+   *
+   * ⚠️⚠️ **最后两条（`ov.config.primary` / `ov.config.fallback`）是本轮追加的**，
+   * 与 `scripts/check-i18n.mjs` 同一次改动、同一条起因：韩文实测里 `ov.config.primary`
+   * 的 ko 值写成了「기본 채널」（＝默认通道），而同一概念在 `reg.primary` /
+   * `set.field.registrar.primary` 都是「주 채널」（＝主通道）——概览页把「槽位」
+   * 说成了「默认值」，正是用户那条硬约束明令禁止的暗示。
+   * **登记的是两条整 key，不是 `ov.config.` 前缀**：`ov.config.` 底下的
+   * `envLockedTip`（zh-CN/zh-TW/ja 正当地用「优先/優先」描述环境变量优先级）与
+   * `degradedBanner`（zh-CN/zh-TW/en/ko 正当地用「默认/預設/default/기본」描述配置
+   * 降级回落到默认值）都与「两条通道平级」无关，扩宽前缀会把这两条正当文案一起
+   * 打红，逼着开豁免名册——理由与上面「刻意不是整个 `set.*`」同一条。
    */
   it("通道相关命名空间不出现任何偏好词（含繁体变体）", () => {
     const BANNED = [
@@ -199,6 +210,8 @@ describe("i18n 字典", () => {
       "set.field.registrar.fallback",
       "set.field.channel.",
       "set.card.registrar",
+      "ov.config.primary",
+      "ov.config.fallback",
     ] as const;
     const hits: string[] = [];
     for (const [k, v] of Object.entries(I18N)) {
