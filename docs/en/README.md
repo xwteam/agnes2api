@@ -39,13 +39,16 @@ automatically cools down or evicts misbehaving upstream keys.
   updates that only touch telemetry fields are elided, so in steady state neither storage reads
   nor writes grow with request volume. How much headroom that leaves on Cloudflare's free KV
   tier depends on how many isolates stay active — see the quota section in
-  [DEPLOY.md](DEPLOY.md) for the formula and the two tunables.
+  [DEPLOY.md](./DEPLOY.md) for the formula and the two tunables.
 - **Four accepted credential formats** — `Authorization: Bearer`, `x-api-key`,
   `x-goog-api-key`, and the `?key=` query parameter are all accepted, matching what each
   protocol's official SDK sends by default.
 - **Optional auto-refill (disabled by default)** — enable the registrar and it automatically
   registers Agnes accounts to top up the key pool whenever it drops below target, see
-  [REGISTRAR.md](REGISTRAR.md).
+  [REGISTRAR.md](./REGISTRAR.md).
+- **Optional admin panel (disabled by default)** — with no `ADMIN_TOKEN` set the whole
+  `/admin` tree is never registered at all; set one and you get a browser view of the key
+  pool, the registrar, events, usage, and a playground, see [ADMIN.md](./ADMIN.md).
 
 ## Endpoints at a glance
 
@@ -63,7 +66,7 @@ automatically cools down or evicts misbehaving upstream keys.
 | POST | `/v1/videos` | – | create a video task |
 | GET | `/v1/videos/{id}` | – | poll a video task |
 
-Full request/response examples: [API.md](API.md)
+Full request/response examples: [API.md](./API.md)
 
 ## Models
 
@@ -99,12 +102,12 @@ docker compose up -d
 ```
 
 Full deployment guide, environment variables, and how to manually import an upstream key:
-[DEPLOY.md](DEPLOY.md)
+[DEPLOY.md](./DEPLOY.md)
 
 ## Using the gateway
 
 The gateway is a drop-in base URL for the OpenAI SDK, the Anthropic SDK, and the Google
-GenAI SDK — see [USAGE.md](USAGE.md) for copy-pasteable examples in each.
+GenAI SDK — see [USAGE.md](./USAGE.md) for copy-pasteable examples in each.
 
 ## License
 

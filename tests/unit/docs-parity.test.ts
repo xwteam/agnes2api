@@ -2521,3 +2521,217 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     expect(failures[0] ?? "", "红了但报文没写出它在找哪个串——报文是唯一会被看见的护栏").toContain("0x20–0xFF");
   });
 });
+
+/**
+ * ── 根 README 的文档索引 + 两份英文功能表的对账（P3e Task 27）────────────────
+ *
+ * 根 `README.md` 是 GitHub 首屏。它有三处 R1–R6 一条都看不见的东西：
+ *
+ * ① **索引表里的相对路径**。R4 只比五语言之间的链接多重集，**根 README 根本不在
+ *   那五份里**；就算在，「五份一起把同一个链接指错」也照样全绿（那句边界写在
+ *   R1–R6 上方，逐字适用）。首屏那张表指错了，读者第一步就撞墙。
+ * ② **根 README 与 `docs/en/README.md` 的 `## Features` / `## Models` 两节**：逐字节
+ *   相同却是**两份复制**，此前没有任何机器守。
+ *   ⚠️ **不许为了「一致」把两份合并成一份**：两者的结尾**刻意不同**（根那份是文档
+ *   索引表 + 赞助，`docs/en/README.md` 那份是「Using the gateway」），合并会砍掉
+ *   GitHub 首屏的索引表。正确做法就是这里这样——**只对共有的两节逐字节对账**，
+ *   差异段落照旧各写各的（下面那格「不乱红」把这条边界摆成可执行的）。
+ * ③ **六份 README 的版本徽章**：`scripts/set-version.sh` 用一个 `sed` 一次刷六份，
+ *   漏了哪一份、或者谁手改过某一份，只有这一格看得见。
+ *
+ * ── 归一化只做那四条替换，写死在下面，**不许加第五条特例** ────────────────────
+ * 根那份的链接以仓根为基准（`docs/en/DEPLOY.md`），`docs/en/README.md` 那份以自身
+ * 目录为基准（`./DEPLOY.md`），指的是同一个文件，逐字节比之前必须先抹平这一层。
+ * 归一化函数一旦写复杂，改一次链接写法就要跟着调它，最后没人敢让它红。
+ * **链接写法要改就一起改这四条**，别往函数里堆特例。
+ *
+ * ⚠️ **落地实测推翻了需求书里「② 建起来就绿」那一句**：`docs/en/README.md` 当时
+ * 写的是裸 `(DEPLOY.md)` / `(REGISTRAR.md)`，而根那边归一化之后是 `(./DEPLOY.md)`,
+ * 这一格**建起来就是红的**。方向只有一个——让 `docs/en/README.md` 侧写 `./`：
+ * 反过来让根那边写裸文件名的话，那个链接在仓根上指向一个不存在的 `DEPLOY.md`，
+ * ① 当场红。五语言 README 的同目录链接因此一起统一成 `./` 形态（R4 要求五份的
+ * 链接多重集相同，只改 `docs/en/README.md` 一份会让 R4 红）。
+ *
+ * ── 它做不到什么（明写，别读成「首屏从此都是真的」）──────────────────────────
+ * · ① 只查**链接指的文件在不在**，不查**指得对不对**：把 API 那一整列换成
+ *   `docs/en/USAGE.md`，五个文件都在，① 全绿。
+ * · ② 只证明**两份复制没分叉**，不证明任何一份说得对：两份一起说错，它一个字都不吭。
+ * · ③ 只比字符串包含，管不到徽章的颜色与链接目标，也管不到 `package.json` 里那一份
+ *   版本号（那是 `scripts/set-version.sh` 一次刷的另一半）。
+ * · 面板条目里那句话是否属实（`ADMIN_TOKEN` 没设时 `/admin` 真的不注册），这一组
+ *   一无所知——那件事在管理接口的契约测试里，不在文档判据里。
+ */
+describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", () => {
+  /** 两份复制的那几节。下面第一格是它的非空锚：认不出要吵，不许静静给出空串。 */
+  const MIRRORED = ["Features", "Models"] as const;
+
+  /** 六份 README：根那份 + 五语言。`LANGS` 变了它自动跟着变，不手抄第二份名单。 */
+  const SIX = ["README.md", ...LANGS.map((l) => `docs/${l}/README.md`)] as const;
+
+  /** ⚠️ 只做这四条替换，**不许加第五条特例**（理由见上方 docblock）。 */
+  const norm = (s: string) => s
+    .replace(/\(docs\/(zh-CN|zh-TW|en|ja|ko)\//g, "(../$1/")
+    .replace(/\(\.\.\/en\//g, "(./")
+    .replace(/\(LICENSE\)/g, "(../../LICENSE)")
+    .replace(/\(\.\.\/\.\.\/LICENSE\)/g, "(../../LICENSE)");
+
+  /**
+   * 取一节。**认不出返回 `null`，绝不返回空串。**
+   *
+   * 这不是洁癖：写成 `indexOf` + `slice` 的那个直觉版本，标题找不到时 `indexOf`
+   * 返回 `-1`，`slice(-1, j)` 会**静静给出空串**，而两份的空串恰好相等——两份一起
+   * 把 `## Features` 改成别的名字，那一格会装作没事。测法是下面「认不出要吵」那一格。
+   */
+  const sectionOrNull = (body: string, heading: string): string | null => {
+    const lines = body.split("\n");
+    const i = lines.findIndex((l) => l === `## ${heading}`);
+    if (i < 0) return null;
+    let j = i + 1;
+    while (j < lines.length && !lines[j]!.startsWith("## ")) j += 1;
+    return norm(lines.slice(i, j).join("\n")).trim();
+  };
+
+  const sectionOf = (body: string, heading: string, where: string): string => {
+    const s = sectionOrNull(body, heading);
+    if (s === null) {
+      throw new Error(`${where} 里找不到 \`## ${heading}\` 这一节——两份复制的对账认不出小节时当场吵，不装作两份都是空的`);
+    }
+    return s;
+  };
+
+  /** 索引表里的相对路径。**真扫描与反向控制共用这一份。** */
+  const indexTargets = (body: string) =>
+    body.split("\n")
+      .filter((l) => l.trimStart().startsWith("|"))
+      .flatMap((l) => [...l.matchAll(/\]\(([^)]+)\)/g)].map((m) => m[1]!));
+
+  const brokenTargets = (body: string) => indexTargets(body).filter((t) => !t.startsWith("http") && !existsSync(t));
+
+  it("非空锚：两节在两份里都取得出来，且都不是被截断成一两行的残节", () => {
+    expect(MIRRORED.length, "复制节的名单是空的，这一组测的是空气").toBeGreaterThan(0);
+    for (const p of ["README.md", "docs/en/README.md"]) {
+      for (const h of MIRRORED) {
+        const n = sectionOf(readFileSync(p, "utf8"), h, p).split("\n").length;
+        expect(n, `${p} 的「${h}」只取到 ${n} 行——取节的边界判据多半没落对地方`).toBeGreaterThan(3);
+      }
+    }
+  });
+
+  it("认不出要吵：小节被改名时当场抛，不许两份空串相等就算过", () => {
+    const body = readFileSync("docs/en/README.md", "utf8");
+    const renamed = body.replace("\n## Features\n", "\n## Highlights\n");
+    expect(renamed, "变异没落地——没找到 `## Features` 那一行，这一格控制是空的").not.toEqual(body);
+    expect(sectionOrNull(renamed, "Features"), "小节改名之后仍然取出了东西").toBeNull();
+    expect(() => sectionOf(renamed, "Features", "docs/en/README.md")).toThrowError(/找不到/);
+  });
+
+  it("① 根 README 索引表里的每一个相对路径都在磁盘上存在", () => {
+    const body = readFileSync("README.md", "utf8");
+    expect(indexTargets(body).length, "索引表里一个链接都没扫到，正则多半写坏了").toBeGreaterThan(20);
+    const broken = brokenTargets(body);
+    expect(broken, `根 README 的表格里这些相对路径在磁盘上不存在：${broken.join("、")}`).toEqual([]);
+  });
+
+  it("① 该红时红：索引表里某一行指向一个仓里没有的语言目录", () => {
+    const body = readFileSync("README.md", "utf8");
+    const gone = `docs/${"de"}/README.md`;
+    const mutated = body.replace("[README](docs/ja/README.md)", `[README](${gone})`);
+    expect(mutated, "变异没落地——索引表里没有 `[README](docs/ja/README.md)` 这一格").not.toEqual(body);
+    expect(brokenTargets(mutated), "索引表指向了一个不存在的文件，① 却没红").toEqual([gone]);
+  });
+
+  it("④ 索引表覆盖 DOCS × LANGS 的每一格 —— 加了新文档不进索引表就红", () => {
+    const targets = new Set(indexTargets(readFileSync("README.md", "utf8")));
+    const missing = LANGS.flatMap((l) => DOCS.filter((d) => !targets.has(`docs/${l}/${d}.md`)).map((d) => `docs/${l}/${d}.md`));
+    expect(missing, `首屏索引表里进不去这些文档：${missing.join("、")}——文档写了却没有入口，等于没写`).toEqual([]);
+  });
+
+  it("④ 该红时红：索引表里 ADMIN 那一整列被删掉 —— 五格一起点名", () => {
+    const body = readFileSync("README.md", "utf8");
+    const mutated = body.replace(/ \| \[ADMIN\]\(docs\/[A-Za-z-]+\/ADMIN\.md\)/g, "");
+    expect(body.length - mutated.length, "变异没落地——索引表里没找到五格 ADMIN 链接").toBeGreaterThan(0);
+    const targets = new Set(indexTargets(mutated));
+    const missing = LANGS.filter((l) => !targets.has(`docs/${l}/ADMIN.md`));
+    expect(missing, "整列被删掉了，④ 却没逐语言点名").toEqual([...LANGS]);
+  });
+
+  it("② 根 README 与 docs/en/README.md 的 Features / Models 两节逐字节相同", () => {
+    const root = readFileSync("README.md", "utf8");
+    const en = readFileSync("docs/en/README.md", "utf8");
+    for (const h of MIRRORED) {
+      expect(sectionOf(en, h, "docs/en/README.md"), `${h} 两份复制分叉了`).toEqual(sectionOf(root, h, "README.md"));
+    }
+  });
+
+  it("② 该红时红：docs/en/README.md 的 Features 里改一个字", () => {
+    const root = readFileSync("README.md", "utf8");
+    const en = readFileSync("docs/en/README.md", "utf8");
+    const mutated = en.replace("streaming included", "streaming excluded");
+    expect(mutated, "变异没落地——Features 里没找到 `streaming included`").not.toEqual(en);
+    expect(sectionOf(mutated, "Features", "docs/en/README.md"), "改了一个字，② 却没红")
+      .not.toEqual(sectionOf(root, "Features", "README.md"));
+  });
+
+  it("② 该红时红：docs/en/README.md 把 Features 里的 `./DEPLOY.md` 写回裸 `DEPLOY.md`", () => {
+    const root = readFileSync("README.md", "utf8");
+    const en = readFileSync("docs/en/README.md", "utf8");
+    const mutated = en.replace("[DEPLOY.md](./DEPLOY.md)", "[DEPLOY.md](DEPLOY.md)");
+    expect(mutated, "变异没落地——Features 里没找到 `[DEPLOY.md](./DEPLOY.md)`").not.toEqual(en);
+    expect(sectionOf(mutated, "Features", "docs/en/README.md"), "归一化把 `./` 也一起抹掉了——那正是第五条特例在偷偷长出来")
+      .not.toEqual(sectionOf(root, "Features", "README.md"));
+  });
+
+  it("② 不乱红：两份刻意不同的结尾段（根是索引表 + 赞助，另一份是 Using the gateway）不进这一格", () => {
+    const root = `${readFileSync("README.md", "utf8")}\n## Extra\n\nonly at the end of the root README.\n`;
+    const en = readFileSync("docs/en/README.md", "utf8");
+    for (const h of MIRRORED) {
+      expect(sectionOf(en, h, "docs/en/README.md"), `${h}：只在根那份结尾多加一段就让这一格红了，说明取节的右边界没有真的收住`)
+        .toEqual(sectionOf(root, h, "README.md"));
+    }
+  });
+
+  /** 徽章缺失的那几份。**真扫描与反向控制共用这一份**，`read` 是唯一的注入点。 */
+  const badgeMissing = (v: string, read: (p: string) => string) => SIX.filter((p) => !read(p).includes(`version-v${v}`));
+
+  it("③ 六份 README 的版本徽章与 VERSION 一致", () => {
+    const v = readFileSync("VERSION", "utf8").trim();
+    expect(v, "VERSION 是空的，这一格会拿空串去比，测的是空气").not.toEqual("");
+    const missing = badgeMissing(v, (p) => readFileSync(p, "utf8"));
+    expect(missing, `这几份 README 的徽章与 VERSION（v${v}）对不上：${missing.join("、")}`).toEqual([]);
+  });
+
+  it("③ 该红时红：只有 docs/ja/README.md 的徽章停在了另一个版本上 —— 只点名那一份", () => {
+    const v = readFileSync("VERSION", "utf8").trim();
+    const parts = v.split(".");
+    const other = [String(Number(parts[0]) + 1), ...parts.slice(1)].join(".");
+    expect(`version-v${other}`, "构造出来的另一个版本号包含了当前这个，`includes` 会照旧命中，这一格控制是空的")
+      .not.toContain(`version-v${v}`);
+    const missing = badgeMissing(v, (p) => {
+      const body = readFileSync(p, "utf8");
+      if (p !== "docs/ja/README.md") return body;
+      const m = body.replaceAll(`version-v${v}`, `version-v${other}`);
+      if (m.includes(`version-v${v}`)) throw new Error("变异没落地——docs/ja/README.md 里的徽章串没被换干净");
+      return m;
+    });
+    expect(missing, "只有一份的徽章落后，③ 却没有恰好点名它").toEqual(["docs/ja/README.md"]);
+  });
+
+  it("非空锚：六份 README 都写着面板那两个标识符 —— R6 只比多重集，六份一起删掉它不会红", () => {
+    for (const c of ["ADMIN_TOKEN", "/admin"]) {
+      const missing = SIX.filter((p) => !readFileSync(p, "utf8").includes(`\`${c}\``));
+      expect(missing, `这几份 README 里没有 \`${c}\` 这个 code span：${missing.join("、")}——面板条目多半被删了`).toEqual([]);
+    }
+  });
+
+  it("该红时红：某一份 README 的 `/admin` code span 被写成散文 —— 非空锚点名那一份", () => {
+    const victim = "docs/ko/README.md";
+    const missing = SIX.filter((p) => {
+      const body = readFileSync(p, "utf8");
+      if (p !== victim) return !body.includes("`/admin`");
+      const m = body.replace("`/admin`", "the admin tree");
+      if (m === body) throw new Error(`变异没落地——${victim} 里没找到 \`/admin\` 这个 code span`);
+      return !m.includes("`/admin`");
+    });
+    expect(missing, "一份的标识符被写成散文，非空锚却没点名它").toEqual([victim]);
+  });
+});

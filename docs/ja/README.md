@@ -42,14 +42,18 @@ Cloudflare Worker と Docker コンテナの両方の形態でデプロイでき
   キャッシュされ、テレメトリ用フィールドしか変わらない更新は丸ごと破棄されます。その
   結果、定常状態ではストレージの読み取りも書き込みもリクエスト量に比例して増えません。
   Cloudflare の無料枠 KV でどれだけ余裕が残るかは同時にアクティブな isolate 数に依存
-  します——算出式と 2 つの調整項目は [DEPLOY.md](DEPLOY.md) の「クォータの見積もり」を
+  します——算出式と 2 つの調整項目は [DEPLOY.md](./DEPLOY.md) の「クォータの見積もり」を
   参照してください。
 - **4 種類の認証情報を受け付け** —— `Authorization: Bearer`、`x-api-key`、
   `x-goog-api-key`、クエリパラメータ `?key=` のいずれも受け付けます。各プロトコル
   の公式 SDK が既定で送信する形式にちょうど対応しています。
 - **オプションの自動プール補充（デフォルトで無効）** —— レジストラーを有効にすると、
   利用可能な key が目標値を下回った際に Agnes アカウントを自動登録して補充します。
-  [REGISTRAR.md](REGISTRAR.md) を参照してください。
+  [REGISTRAR.md](./REGISTRAR.md) を参照してください。
+- **オプションの管理パネル（デフォルトで無効）** —— `ADMIN_TOKEN` を設定していなければ
+  `/admin` のツリーはそもそも登録されません。設定すればブラウザから key プール・
+  レジストラー・イベント・使用量を確認でき、その場で試せます。
+  [ADMIN.md](./ADMIN.md) を参照してください。
 
 ## エンドポイント一覧
 
@@ -67,7 +71,7 @@ Cloudflare Worker と Docker コンテナの両方の形態でデプロイでき
 | POST | `/v1/videos` | – | 動画タスクの作成 |
 | GET | `/v1/videos/{id}` | – | 動画タスクのポーリング |
 
-完全なリクエスト／レスポンス例は [API.md](API.md) を参照してください。
+完全なリクエスト／レスポンス例は [API.md](./API.md) を参照してください。
 
 ## モデル
 
@@ -102,13 +106,13 @@ cp .env.example .env   # GATEWAY_TOKEN を設定
 docker compose up -d
 ```
 
-デプロイの詳細、環境変数、key の手動インポート方法は [DEPLOY.md](DEPLOY.md) を
+デプロイの詳細、環境変数、key の手動インポート方法は [DEPLOY.md](./DEPLOY.md) を
 参照してください。
 
 ## ゲートウェイの利用
 
 本ゲートウェイは OpenAI SDK、Anthropic SDK、Google GenAI SDK のベース URL として
-そのまま差し替えて使えます。各言語の接続例は [USAGE.md](USAGE.md) を参照して
+そのまま差し替えて使えます。各言語の接続例は [USAGE.md](./USAGE.md) を参照して
 ください。
 
 ## ライセンス

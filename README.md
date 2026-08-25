@@ -46,6 +46,9 @@ automatically cools down or evicts misbehaving upstream keys.
 - **Optional auto-refill (disabled by default)** — enable the registrar and it automatically
   registers Agnes accounts to top up the key pool whenever it drops below target, see
   [REGISTRAR.md](docs/en/REGISTRAR.md).
+- **Optional admin panel (disabled by default)** — with no `ADMIN_TOKEN` set the whole
+  `/admin` tree is never registered at all; set one and you get a browser view of the key
+  pool, the registrar, events, usage, and a playground, see [ADMIN.md](docs/en/ADMIN.md).
 
 ## Endpoints at a glance
 
@@ -99,15 +102,16 @@ docker compose up -d
 ## Documentation
 
 Each language directory below carries the full docs: endpoint reference with request/response
-examples, deployment guide (env vars, KV setup, manual key import), and SDK usage examples.
+examples, deployment guide (env vars, KV setup, manual key import), the optional registrar,
+SDK usage examples, and the admin panel.
 
-| Language | README | API | Deploy | Usage |
-|---|---|---|---|---|
-| English | [README](docs/en/README.md) | [API](docs/en/API.md) | [DEPLOY](docs/en/DEPLOY.md) | [USAGE](docs/en/USAGE.md) |
-| 简体中文 | [README](docs/zh-CN/README.md) | [API](docs/zh-CN/API.md) | [DEPLOY](docs/zh-CN/DEPLOY.md) | [USAGE](docs/zh-CN/USAGE.md) |
-| 繁體中文 | [README](docs/zh-TW/README.md) | [API](docs/zh-TW/API.md) | [DEPLOY](docs/zh-TW/DEPLOY.md) | [USAGE](docs/zh-TW/USAGE.md) |
-| 日本語 | [README](docs/ja/README.md) | [API](docs/ja/API.md) | [DEPLOY](docs/ja/DEPLOY.md) | [USAGE](docs/ja/USAGE.md) |
-| 한국어 | [README](docs/ko/README.md) | [API](docs/ko/API.md) | [DEPLOY](docs/ko/DEPLOY.md) | [USAGE](docs/ko/USAGE.md) |
+| Language | README | API | Deploy | Registrar | Usage | Admin |
+|---|---|---|---|---|---|---|
+| English | [README](docs/en/README.md) | [API](docs/en/API.md) | [DEPLOY](docs/en/DEPLOY.md) | [REGISTRAR](docs/en/REGISTRAR.md) | [USAGE](docs/en/USAGE.md) | [ADMIN](docs/en/ADMIN.md) |
+| 简体中文 | [README](docs/zh-CN/README.md) | [API](docs/zh-CN/API.md) | [DEPLOY](docs/zh-CN/DEPLOY.md) | [REGISTRAR](docs/zh-CN/REGISTRAR.md) | [USAGE](docs/zh-CN/USAGE.md) | [ADMIN](docs/zh-CN/ADMIN.md) |
+| 繁體中文 | [README](docs/zh-TW/README.md) | [API](docs/zh-TW/API.md) | [DEPLOY](docs/zh-TW/DEPLOY.md) | [REGISTRAR](docs/zh-TW/REGISTRAR.md) | [USAGE](docs/zh-TW/USAGE.md) | [ADMIN](docs/zh-TW/ADMIN.md) |
+| 日本語 | [README](docs/ja/README.md) | [API](docs/ja/API.md) | [DEPLOY](docs/ja/DEPLOY.md) | [REGISTRAR](docs/ja/REGISTRAR.md) | [USAGE](docs/ja/USAGE.md) | [ADMIN](docs/ja/ADMIN.md) |
+| 한국어 | [README](docs/ko/README.md) | [API](docs/ko/API.md) | [DEPLOY](docs/ko/DEPLOY.md) | [REGISTRAR](docs/ko/REGISTRAR.md) | [USAGE](docs/ko/USAGE.md) | [ADMIN](docs/ko/ADMIN.md) |
 
 ## License
 

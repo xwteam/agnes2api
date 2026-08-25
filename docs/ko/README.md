@@ -43,13 +43,16 @@ Anthropic, Gemini, OpenAI-Responses라는 4가지 주요 LLM API 프로토콜로
   텔레메트리 필드만 바뀌는 갱신은 통째로 버려집니다. 그래서 정상 상태에서는 저장소
   읽기도 쓰기도 요청량에 비례해 늘어나지 않습니다. Cloudflare 무료 등급 KV에서 여유가
   얼마나 남는지는 동시에 활성인 isolate 수에 달려 있습니다 —— 산식과 두 가지 조정
-  항목은 [DEPLOY.md](DEPLOY.md)의 "할당량 계산" 절을 참고하세요.
+  항목은 [DEPLOY.md](./DEPLOY.md)의 "할당량 계산" 절을 참고하세요.
 - **4가지 인증 정보 전달 방식 수용** —— `Authorization: Bearer`, `x-api-key`,
   `x-goog-api-key`, 쿼리 파라미터 `?key=` 모두 수용됩니다. 각 프로토콜의
   공식 SDK가 기본으로 전송하는 형식과 정확히 일치합니다.
 - **선택적 자동 키 풀 보충(기본값은 비활성화)** —— 레지스트라를 활성화하면 사용
   가능한 key가 목표치 아래로 떨어질 때 Agnes 계정을 자동으로 등록해 보충합니다.
-  [REGISTRAR.md](REGISTRAR.md)를 참고하세요.
+  [REGISTRAR.md](./REGISTRAR.md)를 참고하세요.
+- **선택적 관리 패널(기본값은 비활성화)** —— `ADMIN_TOKEN`을 설정하지 않으면 `/admin`
+  트리 자체가 등록되지 않습니다. 설정하면 브라우저에서 key 풀·레지스트라·이벤트·
+  사용량을 확인하고 바로 시험해 볼 수 있습니다. [ADMIN.md](./ADMIN.md)를 참고하세요.
 
 ## 엔드포인트 한눈에 보기
 
@@ -67,7 +70,7 @@ Anthropic, Gemini, OpenAI-Responses라는 4가지 주요 LLM API 프로토콜로
 | POST | `/v1/videos` | – | 동영상 작업 생성 |
 | GET | `/v1/videos/{id}` | – | 동영상 작업 폴링 |
 
-전체 요청/응답 예시: [API.md](API.md)
+전체 요청/응답 예시: [API.md](./API.md)
 
 ## 모델
 
@@ -102,12 +105,12 @@ cp .env.example .env   # GATEWAY_TOKEN 설정
 docker compose up -d
 ```
 
-전체 배포 가이드, 환경 변수 설명, key 수동 임포트 방법: [DEPLOY.md](DEPLOY.md)
+전체 배포 가이드, 환경 변수 설명, key 수동 임포트 방법: [DEPLOY.md](./DEPLOY.md)
 
 ## 게이트웨이 사용하기
 
 본 게이트웨이는 OpenAI SDK, Anthropic SDK, Google GenAI SDK의 base URL로
-그대로 대체해 사용할 수 있습니다. 각 언어별 접속 예시는 [USAGE.md](USAGE.md)를
+그대로 대체해 사용할 수 있습니다. 각 언어별 접속 예시는 [USAGE.md](./USAGE.md)를
 참고하세요.
 
 ## 라이선스

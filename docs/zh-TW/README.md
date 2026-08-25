@@ -33,12 +33,15 @@ key 池：異常的上游 key 會被自動冷卻或剔除。
 - **儲存存取與流量解耦** —— key 池依 isolate／行程快取，只改遙測欄位的更新會被整個
   丟棄，因此穩態下儲存的讀與寫都不隨請求量成長。這在 Cloudflare 免費方案 KV 上究竟
   留下多少餘量，取決於同時活躍的 isolate 數——完整算法與兩個可調旋鈕見
-  [DEPLOY.md](DEPLOY.md) 的「配額帳」小節。
+  [DEPLOY.md](./DEPLOY.md) 的「配額帳」小節。
 - **接受四種憑證傳遞方式** —— `Authorization: Bearer`、`x-api-key`、
   `x-goog-api-key`、查詢參數 `?key=` 皆可接受，正好對應各協議官方 SDK 預設發送的
   憑證形式。
 - **可選的自動補池（預設關閉）** —— 啟用註冊機後，可用 key 低於目標值時會自動註冊
-  Agnes 帳號補齊，見 [REGISTRAR.md](REGISTRAR.md)。
+  Agnes 帳號補齊，見 [REGISTRAR.md](./REGISTRAR.md)。
+- **可選的管理面板（預設關閉）** —— 沒設 `ADMIN_TOKEN` 時整棵 `/admin` 樹根本不註冊；
+  設了就能在瀏覽器裡看 key 池、註冊機、事件、用量，並直接試調，
+  見 [ADMIN.md](./ADMIN.md)。
 
 ## 端點速查
 
@@ -56,7 +59,7 @@ key 池：異常的上游 key 會被自動冷卻或剔除。
 | POST | `/v1/videos` | – | 建立影片任務 |
 | GET | `/v1/videos/{id}` | – | 輪詢影片任務 |
 
-完整請求／回應範例：[API.md](API.md)
+完整請求／回應範例：[API.md](./API.md)
 
 ## 模型
 
@@ -91,12 +94,12 @@ cp .env.example .env   # 設定 GATEWAY_TOKEN
 docker compose up -d
 ```
 
-完整部署指南、環境變數說明與手動匯入 key 的方法：[DEPLOY.md](DEPLOY.md)
+完整部署指南、環境變數說明與手動匯入 key 的方法：[DEPLOY.md](./DEPLOY.md)
 
 ## 接入閘道
 
 本閘道可作為 OpenAI SDK、Anthropic SDK、Google GenAI SDK 的基底位址直接替換使用，
-各種接入範例見 [USAGE.md](USAGE.md)。
+各種接入範例見 [USAGE.md](./USAGE.md)。
 
 ## 授權條款
 

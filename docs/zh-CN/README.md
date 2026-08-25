@@ -32,12 +32,15 @@ API 协议——OpenAI、Anthropic、Gemini、OpenAI-Responses——并提供图
   永久剔除，连续瞬时故障累计到阈值后同样剔除。
 - **存储访问与流量解耦** —— key 池按 isolate／进程缓存，只改遥测字段的更新会被整个丢弃，
   因此稳态下存储的读与写都不随请求量增长。这在 Cloudflare 免费档 KV 上究竟留下多少余量，
-  取决于同时活跃的 isolate 数——完整算法与两个可调旋钮见 [DEPLOY.md](DEPLOY.md) 的
+  取决于同时活跃的 isolate 数——完整算法与两个可调旋钮见 [DEPLOY.md](./DEPLOY.md) 的
   「配额账」小节。
 - **接受四种凭据传递方式** —— `Authorization: Bearer`、`x-api-key`、`x-goog-api-key`、
   查询参数 `?key=` 均被接受，正好覆盖各协议官方 SDK 默认发送的凭据形式。
 - **可选的自动补池（默认关闭）** —— 启用注册机后，可用 key 低于目标值时会自动注册
-  Agnes 账号补齐，见 [REGISTRAR.md](REGISTRAR.md)。
+  Agnes 账号补齐，见 [REGISTRAR.md](./REGISTRAR.md)。
+- **可选的管理面板（默认关闭）** —— 没设 `ADMIN_TOKEN` 时整棵 `/admin` 树根本不注册；
+  设了就能在浏览器里看 key 池、注册机、事件、用量，并直接试调，
+  见 [ADMIN.md](./ADMIN.md)。
 
 ## 端点速查
 
@@ -55,7 +58,7 @@ API 协议——OpenAI、Anthropic、Gemini、OpenAI-Responses——并提供图
 | POST | `/v1/videos` | – | 创建视频任务 |
 | GET | `/v1/videos/{id}` | – | 轮询视频任务 |
 
-完整请求/响应示例：[API.md](API.md)
+完整请求/响应示例：[API.md](./API.md)
 
 ## 模型
 
@@ -90,12 +93,12 @@ cp .env.example .env   # 设置 GATEWAY_TOKEN
 docker compose up -d
 ```
 
-完整部署指南、环境变量说明与手动导入 key 的方法：[DEPLOY.md](DEPLOY.md)
+完整部署指南、环境变量说明与手动导入 key 的方法：[DEPLOY.md](./DEPLOY.md)
 
 ## 接入网关
 
 本网关可作为 OpenAI SDK、Anthropic SDK、Google GenAI SDK 的基址直接替换使用，各语言的
-接入示例见 [USAGE.md](USAGE.md)。
+接入示例见 [USAGE.md](./USAGE.md)。
 
 ## 许可证
 
