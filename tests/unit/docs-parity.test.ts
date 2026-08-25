@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { FAIL_REASONS } from "../../src/core/dispatcher.js";
+import { UPSTREAM_FACTS, type UpstreamFact } from "../../src/core/admin/upstream-facts.js";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 type Lang = (typeof LANGS)[number];
@@ -249,6 +250,176 @@ describe("五语言 API.md 的 503 reason 表覆盖全部取值", () => {
       expect(missing, `这些语言的 API.md 没提到 reason「${reason}」——对外契约少了一条`).toEqual([]);
     });
   }
+});
+
+/**
+ * ── 五语言 API.md 里那句「这条上游事实没被核实过」（从 `UPSTREAM_FACTS` 派生）──────
+ *
+ * **走的是上面 `FAIL_REASONS` 那条路，不是 `NUMBERS` 那条。** `NUMBERS` 的期望值来自
+ * 其余四份文档，已知边界写在那张表上方：**五份被同一个错误同步污染照样绿**。
+ * 而这一组要防的恰恰是那种形态——「五份一起漏掉那句限定」是它最可能的死法，
+ * 所以期望值必须来自**代码里的那张真表**（`src/core/admin/upstream-facts.ts`），
+ * 加一条新的假设性上游事实却不写文档，这里会逐语言、逐小节变红。
+ *
+ * ── 它做不到什么（明写）────────────────────────────────────────────────────
+ * 它只证明**那句限定逐字出现在那一份文档的那一个小节里**，不证明那句话译得对、
+ * 更不证明这条上游事实本身是真是假。后者只有一次真上游能定案；译文准确与否留给评审。
+ *
+ * ⚠️ **`docSections` 那一栏不是装饰**：判据是**小节内**查找，不是整份文档查找。
+ * 下面「限定句被挪出指名小节」那格就是这句话的测法——把限定句挪到文件末尾之后，
+ * 整份文档照旧 `includes` 得到（那一格里连这件事一起断言了），而小节内查不到 ⇒ 红。
+ */
+
+/** 五份 API.md 的取文口径：真扫描与探针**共用这一份**，探针换掉的只是这个函数。 */
+type ApiDocReader = (lang: Lang) => string;
+
+const realApiDoc: ApiDocReader = (lang) => readFileSync(docPath(".", lang, "API"), "utf8");
+
+/**
+ * `## <heading>` 到下一个 `## ` 之间的正文。**找不到那个小节返回 `null`——认不出要吵，
+ * 不许装没看见**：小节标题写错时若当成「这一份没有这句话」，报文会把人指向
+ * 「去补一句限定」，而真正坏掉的是表里那个标题。
+ */
+function sectionBody(src: string, heading: string): string | null {
+  const at = src.indexOf(`\n## ${heading}\n`);
+  if (at === -1) return null;
+  const from = at + 1;
+  const next = src.indexOf("\n## ", from);
+  return next === -1 ? src.slice(from) : src.slice(from, next);
+}
+
+/** 一条事实 × 五份 API.md。返回失败报文数组。真扫描与探针共用这一份。 */
+function factDocFailures(fact: UpstreamFact, read: ApiDocReader): string[] {
+  const out: string[] = [];
+  for (const lang of LANGS) {
+    const src = read(lang);
+    const hint = fact.docHints[lang];
+    if (hint.trim() === "") {
+      out.push(`${fact.id} 在 ${lang} 下的限定 token 是空串——空串永远查得到，这条断言从此空转`);
+      continue;
+    }
+    const bodies = fact.docSections.map((h) => [h, sectionBody(src, h)] as const);
+    for (const [heading, body] of bodies) {
+      if (body === null) {
+        out.push(`${lang}/API.md 里找不到小节「${heading}」——${fact.id} 的限定句该贴在哪里已经说不清了`);
+      }
+    }
+    if (fact.status === "verified") {
+      if (src.includes(hint)) {
+        out.push(
+          `${lang}/API.md 里还留着 ${fact.id} 的「未核实」限定句「${hint}」`
+          + "——这条事实已经升级成 verified，五份文档里那句限定必须一并删掉，"
+          + "否则文档会继续对读者说一件已经不成立的话",
+        );
+      }
+      continue;
+    }
+    for (const [heading, body] of bodies) {
+      if (body !== null && !body.includes(hint)) {
+        out.push(
+          `${lang}/API.md 的小节「${heading}」里缺 ${fact.id} 的限定句「${hint}」`
+          + "——这条上游事实今天仍是假设，读者必须在他正要照抄的那段示例旁边看见这句话",
+        );
+      }
+    }
+  }
+  return out;
+}
+
+describe("五语言 API.md 逐份写着「这条上游事实未经核实」", () => {
+  // 反向自检：表空了的话下面那圈 `it.each` 一格都不跑，整组照绿。
+  it("UPSTREAM_FACTS 不是空表，且每条事实的 docHints 语言集恰好等于本文件的 LANGS", () => {
+    expect(UPSTREAM_FACTS.length, "登记表空了——下面整组会一格都不跑").toBeGreaterThan(0);
+    // 期望值是本文件那张手写的 LANGS，不是从 docHints 自己数出来再回填：两份独立的
+    // 语言清单互校，某一边少一种语言时这一格当场红，而不是让下面那圈循环静静少跑一种。
+    const want = [...LANGS].sort();
+    for (const fact of UPSTREAM_FACTS) {
+      expect(Object.keys(fact.docHints).sort(), `${fact.id} 的 docHints 语言集与本文件的 LANGS 对不上`)
+        .toEqual(want);
+      expect(fact.docSections.length, `${fact.id} 没写 docSections——那样它的限定句贴在哪里都算数`)
+        .toBeGreaterThan(0);
+    }
+  });
+
+  it.each([...UPSTREAM_FACTS])("$id 的限定句在五份 API.md 的指名小节里逐份出现", (fact) => {
+    const failures = factDocFailures(fact, realApiDoc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  /** 变异只改一种语言的那一份，其余四份照旧走真文档。**改不动就当场炸。** */
+  function readerWith(target: Lang, edit: (s: string) => string): ApiDocReader {
+    return (lang) => {
+      const src = realApiDoc(lang);
+      if (lang !== target) return src;
+      const out = edit(src);
+      if (out === src) throw new Error(`变异没落到 docs/${lang}/API.md 上——这一格控制是空的`);
+      return out;
+    };
+  }
+
+  /**
+   * 探针一律从**真实那条事实**派生，不另造一个仓里不存在的世界。取的是第一条仍是
+   * `assumed` 的事实：哪天有人把它升级成 `verified`，下面几格测的形态就变了，
+   * 所以先有一条非空锚把这件事挑明。
+   */
+  const ASSUMED = UPSTREAM_FACTS.find((f) => f.status === "assumed");
+
+  it("非空锚：表上至少还有一条 assumed 的事实，下面那几格探针才不是空转", () => {
+    expect(ASSUMED, "表上一条 assumed 都没有了——下面几格探针要改测别的形态").toBeDefined();
+  });
+
+  const FIRST = ASSUMED!;
+
+  it("该红时红：某一种语言的限定句被删掉（其余四份不动）", () => {
+    const hint = FIRST.docHints.ja;
+    const failures = factDocFailures(FIRST, readerWith("ja", (s) => s.replace(hint, "")));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["ja/API.md", FIRST.id, FIRST.docSections[0]!]) {
+      expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
+  });
+
+  it("该红时红：限定句被挪出指名小节——整份文档照旧查得到，小节内查不到", () => {
+    const hint = FIRST.docHints.ko;
+    // 挪到**文档标题之下、第一个 `## ` 之上**——那一片不属于任何小节。
+    // 不用「追加到文件末尾」：那等于挪进最后一个小节，某些事实的指名小节恰好就是它。
+    const moved = (s: string) => {
+      const t = s.replace(hint, "");
+      const at = t.indexOf("\n");
+      return `${t.slice(0, at + 1)}\n${hint}\n${t.slice(at + 1)}`;
+    };
+    // 先自证这条变异**不是**「把句子删了」：整份文档里那句话还在，
+    // 换成整文件 `includes` 的判据这一格会当场变绿，而那正是 docSections 那一栏的理由。
+    expect(moved(realApiDoc("ko")), "变异把句子整个删掉了——那测的是上一格，不是本格")
+      .toContain(hint);
+    const failures = factDocFailures(FIRST, readerWith("ko", moved));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("ko/API.md");
+    expect(failures[0] ?? "").toContain(FIRST.docSections[0]!);
+  });
+
+  it("该红时红：小节标题在某一份里对不上时会吵，不装作「这一份没写那句话」", () => {
+    const heading = `## ${FIRST.docSections[0]!}`;
+    const failures = factDocFailures(FIRST, readerWith("en", (s) => s.replace(heading, `${heading} (draft)`)));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "报文没说是「找不到小节」——那会把人指去补一句其实已经在的限定")
+      .toContain("找不到小节");
+  });
+
+  it("该红时红：事实被升级成 verified，而五份文档里那句「未核实」一个都没删", () => {
+    const upgraded: UpstreamFact = { ...FIRST, status: "verified" };
+    const failures = factDocFailures(upgraded, realApiDoc);
+    expect(failures.length, `报文：\n${failures.join("\n")}`).toBe(LANGS.length);
+    expect(failures.join("\n")).toContain("必须一并删掉");
+  });
+
+  it("该红时红：限定 token 是空串时当场判死——空串永远查得到，那条断言会静静空转", () => {
+    const blanked: UpstreamFact = { ...FIRST, docHints: { ...FIRST.docHints, en: "  " } };
+    const failures = factDocFailures(blanked, realApiDoc);
+    expect(failures.join("\n")).toContain("空串");
+    // 反向控制：其余四种语言的 token 没动，它们一条都不许跟着红。
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+  });
 });
 
 /**

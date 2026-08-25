@@ -154,6 +154,9 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 传 `"stream": true` 即可拿到流式响应：`Content-Type: text/event-stream`，标准的
 OpenAI 风格 `data: {...}` 分片，以 `data: [DONE]` 结束。
 
+⚠️ 流式末帧带不带 usage 未经真实上游核实：本网关对这条协议的流式字节原样透传，既不
+解析也不改写；上游若在流末发一块 usage，那些字节会原样到达客户端。
+
 ## `POST /v1/messages`
 
 Anthropic Messages 协议。请求体中的 `system` 与数组形态的 `content` 会在转发上游前被
@@ -327,6 +330,9 @@ curl -X POST http://localhost:8080/v1/videos \
   -d '{ "model": "agnes-video-v2.0", "prompt": "一只猫在跑" }'
 ```
 
+⚠️ 下面这段响应体的形状未经真实上游核实：它照抄的是本仓测试夹具。网关对响应体原样
+透传，不对它的结构做任何假设。
+
 ```json
 { "id": "task-1", "status": "queued" }
 ```
@@ -339,6 +345,9 @@ curl -X POST http://localhost:8080/v1/videos \
 curl http://localhost:8080/v1/videos/task-1 \
   -H "Authorization: Bearer your-gateway-token"
 ```
+
+⚠️ 任务标识的形状判据未经真实上游核实：它照抄的是本仓测试夹具里那个标识。上游真发出
+别的形状时，网关先回一个 400，不会把它转给上游。
 
 ```json
 { "id": "task-1", "status": "completed", "url": "https://example.com/generated-video.mp4" }

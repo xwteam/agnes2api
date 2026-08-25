@@ -173,6 +173,10 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 `Content-Type: text/event-stream`、標準的な OpenAI 形式の `data: {...}` チャンクで、
 `data: [DONE]` で終端します。
 
+⚠️ ストリーム最終チャンクに usage が付くかは実際の上流では未検証です。本ゲートウェイは
+このプロトコルのストリームバイトをそのままパススルーし、解析も書き換えもしません。
+上流がストリーム末尾に usage を送れば、そのバイトはそのままクライアントに届きます。
+
 ## `POST /v1/messages`
 
 Anthropic Messages プロトコルです。リクエスト内の `system` と配列形式の
@@ -355,6 +359,10 @@ curl -X POST http://localhost:8080/v1/videos \
   -d '{ "model": "agnes-video-v2.0", "prompt": "a cat running" }'
 ```
 
+⚠️ 以下のレスポンスボディの形は実際の上流では未検証です。本リポジトリのテスト
+フィクスチャをそのまま写したものです。ゲートウェイはレスポンスボディをそのまま
+パススルーし、その構造について何も仮定しません。
+
 ```json
 { "id": "task-1", "status": "queued" }
 ```
@@ -368,6 +376,10 @@ curl -X POST http://localhost:8080/v1/videos \
 curl http://localhost:8080/v1/videos/task-1 \
   -H "Authorization: Bearer your-gateway-token"
 ```
+
+⚠️ タスク識別子の形状判定は実際の上流では未検証です。本リポジトリのテスト
+フィクスチャにあるあの識別子を写したものです。上流が別の形状を発行した場合、
+ゲートウェイはそれを上流に転送せず 400 を返します。
 
 ```json
 { "id": "task-1", "status": "completed", "url": "https://example.com/generated-video.mp4" }

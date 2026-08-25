@@ -157,6 +157,9 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 傳 `"stream": true` 即可取得串流回應：`Content-Type: text/event-stream`，標準的
 OpenAI 風格 `data: {...}` 分片，以 `data: [DONE]` 結束。
 
+⚠️ 串流末幀帶不帶 usage 未經真實上游核實：本閘道對這條協定的串流位元組原樣透傳，既不
+解析也不改寫；上游若在串流末尾發一塊 usage，那些位元組會原樣到達用戶端。
+
 ## `POST /v1/messages`
 
 Anthropic Messages 協議。請求內的 `system` 與陣列形式的 `content` 會在轉發上游前被
@@ -331,6 +334,9 @@ curl -X POST http://localhost:8080/v1/videos \
   -d '{ "model": "agnes-video-v2.0", "prompt": "一隻貓在跑" }'
 ```
 
+⚠️ 下面這段回應內容的形狀未經真實上游核實：它照抄的是本倉測試夾具。閘道對回應內容
+原樣透傳，不對它的結構做任何假設。
+
 ```json
 { "id": "task-1", "status": "queued" }
 ```
@@ -343,6 +349,9 @@ curl -X POST http://localhost:8080/v1/videos \
 curl http://localhost:8080/v1/videos/task-1 \
   -H "Authorization: Bearer your-gateway-token"
 ```
+
+⚠️ 任務識別碼的形狀判據未經真實上游核實：它照抄的是本倉測試夾具裡那個識別碼。上游
+真發出別的形狀時，閘道先回一個 400，不會把它轉給上游。
 
 ```json
 { "id": "task-1", "status": "completed", "url": "https://example.com/generated-video.mp4" }

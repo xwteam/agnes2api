@@ -166,6 +166,10 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 Set `"stream": true` for a streaming response: `Content-Type: text/event-stream`, standard
 OpenAI-style `data: {...}` chunks, terminated by `data: [DONE]`.
 
+⚠️ Whether the final stream chunk carries usage is not verified against the real upstream.
+The gateway passes this protocol's streaming bytes through unchanged: it neither parses
+nor rewrites them, so a usage chunk from the upstream reaches the client verbatim.
+
 ## `POST /v1/messages`
 
 Anthropic Messages protocol. `system` and array-form `content` blocks are flattened before
@@ -344,6 +348,10 @@ curl -X POST http://localhost:8080/v1/videos \
   -d '{ "model": "agnes-video-v2.0", "prompt": "a cat running" }'
 ```
 
+⚠️ The response body below is not verified against the real upstream — it is copied from
+this repo's test fixtures. The gateway passes response bodies through unchanged and
+assumes nothing about their structure.
+
 ```json
 { "id": "task-1", "status": "queued" }
 ```
@@ -357,6 +365,10 @@ upstream.
 curl http://localhost:8080/v1/videos/task-1 \
   -H "Authorization: Bearer your-gateway-token"
 ```
+
+⚠️ The task-identifier shape check is not verified against the real upstream — it is
+copied from this repo's test fixtures. If the upstream ever issues a different shape, the
+gateway answers 400 instead of forwarding it.
 
 ```json
 { "id": "task-1", "status": "completed", "url": "https://example.com/generated-video.mp4" }

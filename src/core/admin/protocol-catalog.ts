@@ -132,6 +132,11 @@ export interface ProtocolEntry {
    * 与 `admin-ui/js/sec-playground.js` 文件头那一处**各被点名一次**。
    * ⚠️ **别把这段读成「这条边界结案了」**：它仍然只有一次真上游能定案，
    * 状态仍是「未核实」。今天定案能改变的只有一件事——面板要不要**开始读**那块 usage。
+   * ⚠️⚠️ **上面「假上游下量不到」后面紧跟的那半句是一条锚，改写它之前先看
+   * `src/core/admin/upstream-facts.ts`**：那张表里 `openai.streamTrailingUsage` 这条事实的
+   * `anchor` 逐字取自它。选那半句裁定而不是符号名，是因为 `streamTextPath` 这个名字
+   * **挡不住「整段登记被删掉」**（字段还在、登记没了，符号名照样匹配得上）。
+   * 由 `tests/unit/admin/upstream-facts.test.ts` 的「真表逐条的锚都在它说的那个文件里」钉着。
    */
   readonly streamTextPath: readonly string[];
   /** 最小可跑请求体。**必须真的能跑通**，由 Step 6 的契约用例发一遍验证。 */

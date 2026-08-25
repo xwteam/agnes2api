@@ -171,6 +171,11 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 text/event-stream`, 표준 OpenAI 형식의 `data: {...}` 청크가 이어지며
 `data: [DONE]`으로 종료됩니다.
 
+⚠️ 스트림 마지막 청크에 usage가 붙는지는 실제 업스트림에서 검증되지 않았습니다.
+게이트웨이는 이 프로토콜의 스트림 바이트를 변경 없이 패스스루하며 파싱도 재작성도
+하지 않습니다. 업스트림이 스트림 끝에 usage를 보내면 그 바이트는 그대로 클라이언트에
+도달합니다.
+
 ## `POST /v1/messages`
 
 Anthropic Messages 프로토콜입니다. 요청의 `system`과 배열 형태의 `content`는
@@ -354,6 +359,10 @@ curl -X POST http://localhost:8080/v1/videos \
   -d '{ "model": "agnes-video-v2.0", "prompt": "a cat running" }'
 ```
 
+⚠️ 아래 응답 본문의 형태는 실제 업스트림에서 검증되지 않았습니다. 이 저장소의 테스트
+픽스처를 그대로 옮긴 것입니다. 게이트웨이는 응답 본문을 변경 없이 패스스루하며 그
+구조에 대해 아무것도 가정하지 않습니다.
+
 ```json
 { "id": "task-1", "status": "queued" }
 ```
@@ -367,6 +376,10 @@ curl -X POST http://localhost:8080/v1/videos \
 curl http://localhost:8080/v1/videos/task-1 \
   -H "Authorization: Bearer your-gateway-token"
 ```
+
+⚠️ 작업 식별자 형태 판정은 실제 업스트림에서 검증되지 않았습니다. 이 저장소의 테스트
+픽스처에 있는 그 식별자를 옮긴 것입니다. 업스트림이 다른 형태를 발급하면 게이트웨이는
+그것을 업스트림으로 전달하지 않고 400을 돌려줍니다.
 
 ```json
 { "id": "task-1", "status": "completed", "url": "https://example.com/generated-video.mp4" }
