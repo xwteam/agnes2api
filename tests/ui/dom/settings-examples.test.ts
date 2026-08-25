@@ -306,12 +306,23 @@ describe("设置页第 4 张卡：集成示例", () => {
    *   ⇒ ①红成 `expected 1 to be +0`；
    * ② 把 `sec-settings.js` 那条判据改成 `if (true)`（永远不画代码块）
    *   ⇒ ②红成 `expected +0 to be 1`。
+   *
+   * ── **可达性那一半（复评补回来的）** ──────────────────────────────────────────
+   * ⚠️ **「不画代码块」不等于「只把代码块换成那句话」**：noModel 那条分支在
+   * `renderExamples()` 里是一条 `return`，它前面已经画好了协议条与语言条。
+   * 在它前面补一句 `host.textContent = ""`（一个只想「干净地只画那句话」的自然重构）
+   * 的话，**两条标签条会跟着一起消失**——运维点进 Gemini 之后再也点不回另外几条协议，
+   * 而那句解释照旧在屏幕上，看起来一切正常。这正是本阶段点名的那一族
+   *（屏幕上看得见、机器全绿）。**这句不是推的**：复评量到、本轮回填当场原样复现过
+   * ——只有前三条断言时，这个变异下 `pnpm test` 整份跑完零 failed。
+   * 下面 ④⑤ 两条就是补它的，**它们不写死任何个数**
+   *（点进去之前量一次，点进去之后比），所以协议目录增删一条协议不会把它们弄假。
    */
   it("这条协议上一个模型都没有时，示例卡不画任何代码块，只画那句解释", async () => {
-    // 走另一条路（手抄一份夹具）的后果同仓就摆着：`tests/ui/dom/settings-save.test.ts`
-    // 里两份配置夹具，`BLOCKED` 那份已经改成接真源的 `EDITABLE_FIELDS` / `SECRET_FIELDS`，
-    // 而 `configBody()` 那份至今整份手抄、`editable` 写死为空数组。
-    // 那一族「夹具与真实契约偏离」的登记就在那个文件里。
+    // 走另一条路（手抄一份夹具）的后果同仓就摆着：「夹具与真实契约偏离」那一族的登记
+    // 与实例都写在 `tests/ui/dom/settings-save.test.ts` 里，后果一律是
+    //「用例在一份生产上不存在的形态上通过」。**那边逐份夹具眼下是什么状态，这里不复述**
+    //（复述一次就是又一份会悄悄变假的抄件）；这一格自己走的是另一条路：夹具从真源派生。
     const real = catalogPayload();
     const derived = { ...real, models: real.models.map((m) => ({ ...m, protocols: [] })) };
     const h = await openSettings(respondWith(derived));
@@ -321,22 +332,39 @@ describe("设置页第 4 张卡：集成示例", () => {
       "落进了「窄化失败」那一档，说明夹具没走到 noModel 分支").toBe(0);
     // 前置条件 ②：派生只该打掉「要模型」那一条协议，没把整张卡打死。
     // 默认停在真源给的第一条（不要模型），它照旧有代码块。
-    // ⚠️ **两条前置条件的顺序不能对调**：夹具真的落进窄化失败时代码块数恰好是 0
-    //（上面「响应读得回来但形状不对」那格已经量着这一点），②在前就会先红成
-    // 「把整张卡打死了」——**一句会把人引去查夹具、而真因在别处的报文**。
+    // ⚠️ **两条前置条件的顺序不能对调**：夹具真的落进窄化失败那一档时代码块数恰好是 0
+    //（上面「响应读得回来但形状不对」那格量着这一点），②在前就会先红，
+    // **而它的报文只给得出两条猜测、不说是哪一档**；① 的报文逐字点到「窄化失败」那一档
+    //（M4 实测：`落进了「窄化失败」那一档…: expected 1 to be +0`）。
+    // ⚠️ 上一版这里给的理由是「一句会把人引去查夹具、而真因在别处的报文」——
+    // **那句话是假的**：夹具真落进窄化失败时，真因就是夹具。顺序仍照旧，理由换成上面那条。
     expect(section(h).querySelectorAll(".examples-code").length,
-      "派生目录把整张卡打死了，下面测的就不是 noModel 那一档").toBe(1);
+      "默认那一档也没画出代码块：要么派生夹具把整张卡打死了，"
+      + "要么真源里第一条协议也开始要模型了（查 src/core/admin/protocol-catalog.ts 的 pathTemplate）").toBe(1);
 
-    // Gemini 是四条里唯一把模型拼进路径的那条。
+    // 前置条件 ③：进 noModel 之前，协议条上确实不止一条协议、语言条也真画出来了
+    // ——否则下面 ④⑤ 那两条「点进去之后还回得来」会在 0 上白白成立。
+    const protoBefore = tabs(h, "data-ex-protocol").length;
+    const langBefore = tabs(h, "data-ex-lang").length;
+    expect(protoBefore, "协议条上只有一条协议，「回得去」这件事在这份夹具上测不出来").toBeGreaterThan(1);
+    expect(langBefore, "语言条根本没画出来，下面那条比不出东西").toBeGreaterThan(0);
+
+    // Gemini 那条的 `pathTemplate` 带 `{model}`，而这份派生目录里没有任何模型支持它。
     clickTab(h, "data-ex-protocol", "gemini");
 
     expect(section(h).querySelectorAll(".examples-code").length,
-      "一个模型都不支持这条协议，却还是拼出了一段示例").toBe(0);
+      "gemini 那一档还是拼出了一段示例：要么板块没照 `code === null` 那条判据画，"
+      + "要么真源里 gemini 的 pathTemplate 不再带 {model}（查 src/core/admin/protocol-catalog.ts）").toBe(0);
     expect(section(h).querySelectorAll(".examples-copy").length,
       "没有示例可抄，却还画着一颗复制按钮").toBe(0);
     // 文案取自字典真源，**不在这里再抄一遍那句中文**（同 `registrar-section.test.ts` 的写法）。
     expect(section(h).textContent, "那句「这条协议没有可用模型」没画出来")
       .toContain(I18N["set.examples.noModel"]!["zh-CN"]!);
+    // ④⑤ 可达性：noModel 那一档只该换掉代码块那一截，两条标签条必须原样留着。
+    expect(tabs(h, "data-ex-protocol").length,
+      "落进 noModel 那一档时把协议条一起清掉了 —— 另外几条协议再也点不回去").toBe(protoBefore);
+    expect(tabs(h, "data-ex-lang").length,
+      "落进 noModel 那一档时把语言条一起清掉了").toBe(langBefore);
   });
 
   /**
@@ -345,7 +373,7 @@ describe("设置页第 4 张卡：集成示例", () => {
    *
    * ⚠️ **它的射程是量出来的，不是摆样子的**——两条各有一个只红这一格的变异：
    * · 把 `modelForProtocol()` 改成恒返回 `null`（真源原样也说「没有模型」）
-   *   ⇒ 下面第一条红（`expected +0 to be 1`），而**上一格照样全绿**——这正是这一格独有的射程。
+   *   ⇒ 下面第一条红，而**上一格照样全绿**——这正是这一格独有的射程。
    *  （同时红的还有既有那格「四个协议标签页 + 三个语言标签页，点一下代码块跟着换」，
    *   那是它自己的射程，与这一格无关。）
    * · 把那句 `set.examples.noModel` 无条件也 append 一份
@@ -359,7 +387,9 @@ describe("设置页第 4 张卡：集成示例", () => {
   it("反向控制（同格 describe）：真源原样时照旧画出一个代码块", async () => {
     const h = await openSettings(respondWith());
     clickTab(h, "data-ex-protocol", "gemini");
-    expect(section(h).querySelectorAll(".examples-code").length).toBe(1);
+    expect(section(h).querySelectorAll(".examples-code").length,
+      "真源原样，gemini 那一档却没画出代码块：要么目录里不再有任何模型支持这条协议，"
+      + "要么板块把 `code === null` 那条判据放宽成了「一律没有示例」").toBe(1);
     expect(section(h).textContent, "真源原样，却画出了「没有可用模型」那句")
       .not.toContain(I18N["set.examples.noModel"]!["zh-CN"]!);
   });
