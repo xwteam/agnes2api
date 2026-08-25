@@ -192,9 +192,13 @@ function buildRangeBar() {
     const key = rangeLabelKey(r);
     // 表外的档位不该存在（`RANGES` 与 `rangeLabelKey` 同一个文件），
     // 但真出现时**把原值照实显示出来**，不冒充任何一档已知档位。
+    // ⚠️ **`aria-pressed` 两支都要写**：这是一个三元，两支各自是一个创建点。
+    //    只补有 i18n key 的那一支的话，表外档位那颗按钮会成为唯一读不出选中态的按钮
+    //    ——而那正是最需要被读清楚的一颗（它显示的是原值，本来就已经不好理解）。
+    const pressed = r === range ? "true" : "false";
     const btn = key === null
-      ? el("button", { type: "button", class: "btn-toggle", "data-range": r }, r)
-      : elI18n("button", key, { type: "button", class: "btn-toggle", "data-range": r });
+      ? el("button", { type: "button", class: "btn-toggle", "data-range": r, "aria-pressed": pressed }, r)
+      : elI18n("button", key, { type: "button", class: "btn-toggle", "data-range": r, "aria-pressed": pressed });
     btn.classList.toggle("active", r === range);
     btn.addEventListener("click", () => {
       if (range === r) return;

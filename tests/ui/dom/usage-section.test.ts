@@ -1002,3 +1002,37 @@ describe("Token 卡的覆盖范围", () => {
     expect(tip, "拉不到 models 却还是列出了协议名").not.toContain("Anthropic Messages");
   });
 });
+
+/**
+ * ── `aria-pressed`：口径分段的选中态得读得出来（P3e Task 20）─────────────────────
+ *
+ * `.active` 只改颜色（外加一条加粗），读屏用户拿不到。
+ * ⚠️ **这一组的创建点是一个三元的两支**（有 i18n key 的那支走 `elI18n`、
+ * 表外档位那支走 `el` 并照实显示原值）——`aria-pressed` **两支都得有**。
+ * 只补有 key 的那一支的话，最需要被读清楚的那颗（显示原值的那颗）反而成了唯一读不出来的。
+ * 那一族由 `tests/unit/source-guards.test.ts` 的源码扫描拦；这一格拦「值不跟着走」。
+ */
+describe("时间范围分段的 aria-pressed 跟着点击走", () => {
+  it("点 7d 那一颗：默认那一颗转 false、7d 转 true", async () => {
+    const h = await openUsage(respondWith(usageBody()));
+    const pick = (): FakeElement[] => {
+      const out: FakeElement[] = [];
+      for (const b of h.section("usage").querySelectorAll(".btn-toggle")) out.push(b);
+      return out;
+    };
+    const btns = pick();
+    // 期望值手写字面量：四档、顺序照 `RANGES`，默认停在第一档。
+    expect(btns.map((b) => b.getAttribute("data-range")), "档位或顺序变了")
+      .toEqual(["24h", "3d", "7d", "30d"]);
+    expect(btns.map((b) => b.getAttribute("aria-pressed")), "首帧默认停在 24h")
+      .toEqual(["true", "false", "false", "false"]);
+
+    btns.find((b) => b.getAttribute("data-range") === "7d")!.click();
+    await settle(12);
+    // ⚠️ **重新取一次节点**：这一组每次 `render()` 重建按钮，握着旧引用读到的是上一帧。
+    expect(
+      pick().map((b) => b.getAttribute("aria-pressed")),
+      "屏幕上换了档，aria-pressed 没跟着走 —— 读屏用户读到的是假的",
+    ).toEqual(["false", "false", "true", "false"]);
+  });
+});

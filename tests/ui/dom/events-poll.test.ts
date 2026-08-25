@@ -5,6 +5,7 @@ import {
   EVENTS_POLL_MIN_MS, EVENTS_POLL_MAX_MS,
 } from "../../../admin-ui/js/pure/events.mjs";
 import { I18N } from "../../../admin-ui/js/i18n-dict.js";
+import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
  * **B1 目标 ④：事件板块的轮询调度**——它守的是**发货给用户的那条读配额包线**。
@@ -247,5 +248,46 @@ describe("事件板块的黄条：后端字段 → 真的显示出来", () => {
       visible(h),
       "判据（shouldWarn）钉住了，但接线没有 —— 黄条压根没挂上去",
     ).toContain(I18N["ev.warnCursorBroken"]["zh-CN"]);
+  });
+});
+
+/**
+ * ── `aria-pressed`：级别分段的选中态得读得出来（P3e Task 20）─────────────────────
+ *
+ * ⚠️⚠️ **这一组是「就地改状态、不重建按钮」的**：`setLevel()` 握着 `levelButtons`
+ * **就地** `classList.toggle("active", …)`（其余板块每次 `render()` 重建，
+ * 创建时属性对象里那一行就够了）。只补创建处、不补 `setLevel()` 的话，
+ * 首帧那一格照样绿，而屏幕上换了档、读屏读出来的**永远是「全部」**
+ * ——那正是 P3d 那次「就地更新够不着盒子外的节点」的同一个形状。
+ *
+ * `tests/unit/source-guards.test.ts「sec-*.js 里每一个 btn-toggle 创建点都带 aria-pressed」`
+ * 只拦「创建点漏写」，拦不住这一族；这一格就是那一半。
+ * 「就地改的今天只有这一处」由
+ * `tests/unit/source-guards.test.ts「反向控制：就地改 aria-pressed 的只有 sec-events.js 那一处」`
+ * 钉着。
+ */
+describe("事件级别分段的 aria-pressed 跟着点击走", () => {
+  it("点 error 那一颗：「全部」转 false、error 转 true —— setLevel 里漏了这一行就红", async () => {
+    const { h } = await openEvents([{ items: [], cursor: null }]);
+    const sec = h.section("events");
+    const btns: FakeElement[] = [];
+    for (const b of sec.querySelectorAll(".btn-toggle")) btns.push(b);
+    // 「全部」+ 四个级别。期望值手写字面量。
+    expect(btns.length, "前置条件：级别按钮得真的画出来了").toBe(5);
+    expect(btns.map((b) => b.getAttribute("aria-pressed")), "首帧默认停在「全部」")
+      .toEqual(["true", "false", "false", "false", "false"]);
+    expect(btns.map((b) => b.getAttribute("data-i18n")), "按钮顺序变了 —— 下面那条点的就不是 error 了")
+      .toEqual(["ev.level.all", "ev.level.debug", "ev.level.info", "ev.level.warn", "ev.level.error"]);
+
+    // ⚠️ **握着同一批节点断言**：这一组就地改状态、不重建按钮，重新查一次也是同一批。
+    btns[4]!.click();
+    await settle();
+    expect(
+      btns.map((b) => b.getAttribute("aria-pressed")),
+      "屏幕上换了档，aria-pressed 还停在首帧那一档 —— 读屏用户读到的是假的",
+    ).toEqual(["false", "false", "false", "false", "true"]);
+    // 与 `.active` 成对：两条一起才说明这两条腿没有分家。
+    expect(btns.map((b) => b.classList.contains("active")))
+      .toEqual([false, false, false, false, true]);
   });
 });

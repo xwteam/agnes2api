@@ -194,7 +194,12 @@ function buildFilterBar() {
   const bar = el("div", { class: "btn-group" });
   bar.appendChild(elI18n("span", "models.filter.label", { class: "muted" }));
 
-  const all = elI18n("button", "models.filter.all", { type: "button", class: "btn-toggle", "data-protocol": "" });
+  // ⚠️ **`aria-pressed` 与 `.active` 是同一件事的两条腿**：`.active` 只改颜色（外加一条
+  //    加粗），读屏用户拿不到；四个板块的这套控件写法一致，别在这里另发明一种。
+  const all = elI18n("button", "models.filter.all", {
+    type: "button", class: "btn-toggle", "data-protocol": "",
+    "aria-pressed": filter === "" ? "true" : "false",
+  });
   all.classList.toggle("active", filter === "");
   all.addEventListener("click", () => { if (filter !== "") { filter = ""; render(); } });
   bar.appendChild(all);
@@ -203,7 +208,10 @@ function buildFilterBar() {
     // 展示名走响应里的 `label`（协议的专名，**刻意不进 i18n**，理由见
     // `src/core/admin/protocol-catalog.ts` 里 `label` 字段上方那一行）。
     // 三条都不许走：本地再写一张映射、把 id 拼进一个 i18n key、直接渲染裸 id。
-    const btn = el("button", { type: "button", class: "btn-toggle", "data-protocol": p.id }, p.label);
+    const btn = el("button", {
+      type: "button", class: "btn-toggle", "data-protocol": p.id,
+      "aria-pressed": filter === p.id ? "true" : "false",
+    }, p.label);
     btn.classList.toggle("active", filter === p.id);
     btn.addEventListener("click", () => { if (filter !== p.id) { filter = p.id; render(); } });
     bar.appendChild(btn);
@@ -225,12 +233,20 @@ function badgeCell(model) {
     // 那句话在 P3e Task 4 之后是假的：第 ④ 条已升成硬错 ⇒ 拼出来的话这两个
     // **正在用**的 key 会落进「未被引用」并把 CI 打红，别拼的理由比当初更硬）。
     const tip = b.available ? t("models.badge.yes") : t("models.badge.no");
-    // ⚠️ **不可用那一档刻意不加任何修饰类**：`.badge` 的底样式本身就是中性灰，
-    //    而 `admin-ui/css/sections.css` 里 `.badge-danger` 下面那段注释逐字裁过
-    //    「别加一个取值与 `.badge` 逐字相同的同义类」。灰 = 不可用，绿 = 可用。
-    // ⚠️ **状态不只靠颜色**：`title` 里那句话把它写成字，读屏与鼠标悬停都拿得到。
+    // ⚠️ **不可用那一档带的是 `.badge-off`，不是一个换了名字的同义类**：
+    //    `admin-ui/css/sections.css` 里 `.badge-danger` 下面那段注释逐字裁过
+    //    「别加一个取值与 `.badge` 逐字相同的同义类」，所以 `.badge-off` 只声明
+    //    **一条非颜色属性**（删掉它那条 `text-decoration`，models 板块的用例当场红）。
+    // ⚠️ **上一版这里写着「刻意不加任何修饰类，灰 = 不可用、绿 = 可用」，那句话是这条
+    //    WCAG 1.4.1 缺陷本身**：两个徽章的可见文字逐字相同（都是协议专名），
+    //    差别只有颜色 + hover 才出得来的 `title` + 读不出来的 `data-available`
+    //    ⇒ 触屏与色觉障碍用户拿不到状态（P3e Task 20 真机实测：触屏长按 1.2s
+    //    之后 DOM 无任何变化，也没有任何 `[role="tooltip"]` 节点）。
+    // ⚠️ **`textContent` 一个字不许动**：徽章上写的是协议的专名不是状态名，
+    //    而且 `tests/ui/dom/models-section.test.ts` 有一张手写的 label 期望表。
+    // ⚠️ `title` 那句话仍然留着：它是鼠标与读屏那两条路上的状态文本，与这条类不冲突。
     const span = el("span", {
-      class: b.available ? "badge badge-ok" : "badge",
+      class: b.available ? "badge badge-ok" : "badge badge-off",
       "data-protocol": b.id,
       "data-available": b.available ? "yes" : "no",
       title: `${b.label} — ${tip}`,

@@ -339,7 +339,11 @@ function renderExamples() {
   for (const p of exCatalog.protocols) {
     // 展示名走响应里的 `label`（协议的专名，刻意不进 i18n）。三条都不许走：
     // 本地再写一张映射、把 id 拼进一个 i18n key、直接渲染裸 id。
-    const btn = el("button", { type: "button", class: "btn-toggle", "data-ex-protocol": p.id }, p.label);
+    // `aria-pressed` 与 `.active` 同生同死（`.active` 只改颜色 + 一条加粗，读屏拿不到）。
+    const btn = el("button", {
+      type: "button", class: "btn-toggle", "data-ex-protocol": p.id,
+      "aria-pressed": exProto === p.id ? "true" : "false",
+    }, p.label);
     btn.classList.toggle("active", exProto === p.id);
     btn.addEventListener("click", () => { if (exProto !== p.id) { exProto = p.id; renderExamples(); } });
     protoBar.appendChild(btn);
@@ -351,7 +355,10 @@ function renderExamples() {
   for (const lang of EXAMPLE_LANGS) {
     // 表外的语言**照实显示原值**，不冒充任何一档已知语言（`langLabel()` fail-open）。
     const label = langLabel(lang);
-    const btn = el("button", { type: "button", class: "btn-toggle", "data-ex-lang": lang }, label === null ? lang : label);
+    const btn = el("button", {
+      type: "button", class: "btn-toggle", "data-ex-lang": lang,
+      "aria-pressed": exLang === lang ? "true" : "false",
+    }, label === null ? lang : label);
     btn.classList.toggle("active", exLang === lang);
     btn.addEventListener("click", () => { if (exLang !== lang) { exLang = lang; renderExamples(); } });
     langBar.appendChild(btn);

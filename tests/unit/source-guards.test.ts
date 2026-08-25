@@ -1774,3 +1774,334 @@ describe("两份 frameEnd 是跨运行时边界的孪生体", () => {
     expect(gw).not.toBe(pg);
   });
 });
+
+/**
+ * ── 分段选择器（`.btn-toggle`）：每个创建点都要带 `aria-pressed` ─────────────────
+ *
+ * **为什么是源码扫描而不是只写四格 DOM 用例**：DOM 用例只能覆盖它自己点得到的那几组，
+ * 而这个控件今天分布在五个板块文件里、还在长。P3e Task 20 开工时的实测形态是
+ * **调试台那两组带 `aria-pressed` 并且有对应断言，另外四个板块一处都没有**
+ * ——做法早就定下了，只是没铺开，而"没铺开"这件事**在这一格出现之前零信号**。
+ *
+ * ⚠️ **扫的是「创建点」，不是 grep 命中。** 裸 `grep -n 'btn-toggle' admin-ui/js/sec-*.js`
+ * 今天会把三处横向说明的注释一起数进来（models / playground / usage 各一处），
+ * 而"把注释也数进去"正是本期 Task 2 刚拆掉的那个形态。所以先走
+ * `scripts/lib/strip-comments.mjs` 的 `blankComments`（注释换空格、**行号列位置不变**，
+ * 报文才点得准落点），再在**属性对象字面量**这个窗口里判。
+ *
+ * **边界明写（每一条都由下面的断言或抛错钉着，不是散文）**：
+ * · **认得**：`el(…, { …, class: "btn-toggle…", … })` / `elI18n(…, { … })` 这种
+ *   **写在属性对象的 `class` 上**的形态——本仓五个板块今天全是这一种。
+ * · **认不出就抛**，不是放行：`btn-toggle` 出现在别处（例如 `classList.add("btn-toggle")`、
+ *   或者拼在一个更长的 class 串中间）时，`toggleSites()` **抛错并点名 file:line**。
+ *   "认不出当没看见"是这一族门禁最常见的死法。
+ * · **大括号配平也会抛**：窗口靠字符串感知的大括号配对抠出来，扫完还有没闭合的 `{`
+ *   ⇒ 抛错并点名文件。**它不认正则字面量**：一条含引号或含单边大括号的正则会把扫描器带偏，
+ *   而带偏之后配平几乎必然失败 ⇒ 抛错。**「今天仓里有没有这种正则」不写成断言里的一句话**
+ *   ——配平通过本身就是当天的证据，写一句「今天只有某某一条」反而是一句没人守的话。
+ * · **它不判「值对不对」**：`aria-pressed` 恒写死成 `"false"` 它照样绿。那一族由四个板块
+ *   各自的 DOM 用例（点第二颗 ⇒ 第一颗转 false、第二颗转 true）接。
+ */
+describe("分段选择器的每个创建点都带 aria-pressed", () => {
+  const SEC_DIR = "admin-ui/js";
+
+  /** 射程：`admin-ui/js/sec-*.js` 全部。**不开豁免名册**——名册会变成永久的洞。 */
+  function sectionFiles(): string[] {
+    return readdirSync(SEC_DIR).sort()
+      .filter((n) => n.startsWith("sec-") && n.endsWith(".js"))
+      .map((n) => join(SEC_DIR, n));
+  }
+
+  type Pair = { open: number; close: number };
+
+  /**
+   * 字符串感知的大括号配对。引号 / 模板字面量整段跳过（模板里的 `${…}` 一并跳过，
+   * 那对我们要找的属性对象没有影响）。**配不平就抛**，绝不返回一份残缺的配对表。
+   */
+  function bracePairs(src: string, rel: string): Pair[] {
+    const pairs: Pair[] = [];
+    const stack: number[] = [];
+    let i = 0;
+    while (i < src.length) {
+      const c = src[i];
+      if (c === '"' || c === "'" || c === "`") {
+        const quote = c;
+        i++;
+        let closed = false;
+        while (i < src.length) {
+          if (src[i] === "\\") { i += 2; continue; }
+          if (src[i] === quote) { i++; closed = true; break; }
+          i++;
+        }
+        if (!closed) throw new Error(`${rel}: 有一个 ${quote} 没闭合 —— 扫描器已经失步，别信它的结果`);
+        continue;
+      }
+      if (c === "{") { stack.push(i); i++; continue; }
+      if (c === "}") {
+        const open = stack.pop();
+        if (open === undefined) throw new Error(`${rel}: 多出一个 } —— 扫描器已经失步，别信它的结果`);
+        pairs.push({ open, close: i });
+        i++;
+        continue;
+      }
+      i++;
+    }
+    if (stack.length > 0) throw new Error(`${rel}: 还有 ${stack.length} 个 { 没闭合 —— 扫描器已经失步，别信它的结果`);
+    return pairs;
+  }
+
+  /** 落点渲染成 `路径:行号`。行号来自 `blankComments` 的输出，与原文逐行对齐。 */
+  function at(rel: string, blanked: string, idx: number): string {
+    return `${rel}:${blanked.slice(0, idx).split("\n").length}`;
+  }
+
+  /** 一个创建点：写在属性对象 `class` 上的一处 `btn-toggle`。 */
+  function toggleSites(): Array<{ rel: string; where: string; hasAriaPressed: boolean }> {
+    const out: Array<{ rel: string; where: string; hasAriaPressed: boolean }> = [];
+    for (const rel of sectionFiles()) {
+      const blanked = blankComments(readFileSync(rel, "utf8"));
+      const pairs = bracePairs(blanked, rel);
+      for (const m of blanked.matchAll(/btn-toggle/g)) {
+        const idx = m.index ?? -1;
+        if (idx < 0) throw new Error(`${rel}: matchAll 没给出落点 —— 扫描器不许在这种情况下继续`);
+        const where = at(rel, blanked, idx);
+        // 最内层的那一对：属性对象自己。
+        let inner: Pair | null = null;
+        for (const p of pairs) {
+          if (p.open < idx && idx < p.close && (inner === null || p.open > inner.open)) inner = p;
+        }
+        if (inner === null) {
+          throw new Error(`${where}: 这处 btn-toggle 不在任何一对大括号里，扫描器认不出它是什么`);
+        }
+        const before = blanked.slice(inner.open + 1, idx);
+        if (!/\bclass\s*:\s*["'`]$/.test(before)) {
+          throw new Error(
+            `${where}: 这处 btn-toggle 不是写在属性对象的 class 值开头（例如 classList.add(…)`
+            + `、或者拼在一个更长的 class 串中间）。**先回来改判据**，别让它静静放行`,
+          );
+        }
+        const region = blanked.slice(inner.open, inner.close + 1);
+        out.push({ rel, where, hasAriaPressed: /["']aria-pressed["']\s*:/.test(region) });
+      }
+    }
+    return out;
+  }
+
+  it("sec-*.js 里每一个 btn-toggle 创建点都带 aria-pressed", () => {
+    const gaps = toggleSites().filter((s) => !s.hasAriaPressed).map((s) => s.where);
+    expect(
+      gaps,
+      "这几处分段按钮只用 class 表达选中态 —— 读屏用户读不出当前在哪一档。"
+      + "照 sec-playground.js 那两组的写法，在属性对象里补一条 aria-pressed",
+    ).toEqual([]);
+  });
+
+  /**
+   * **反向控制：量具自己有鉴别力。**
+   * 没有这一格的话，上面那格的扫描写坏成「一个都扫不到」时它恒绿——本仓登记在案的
+   * 「判据认不出任何东西 ⇒ 真仓全变绿」那一族。
+   *
+   * ⚠️ **期望值写成逐文件的清单而不是一个总数**（任务书原本写的是 `.length === 10`）：
+   * 总数拦不住「把一颗按钮从这个板块搬到那个板块」，而逐文件的这份连搬家一起拦。
+   * 总数由这份清单相加得出，**刻意不再单写一遍**——两个数迟早会互相说谎。
+   * ⚠️ 加 / 删按钮组时这一格会红，**那是它在按设计工作**：改数字，别删断言。
+   */
+  it("反向控制：今天扫得到的 btn-toggle 创建点逐文件列全", () => {
+    const byFile: Record<string, number> = {};
+    for (const s of toggleSites()) byFile[s.rel] = (byFile[s.rel] ?? 0) + 1;
+    expect(byFile, "扫得到的创建点变了 —— 要么真加/删了按钮组，要么量具坏了").toEqual({
+      "admin-ui/js/sec-events.js": 2,
+      "admin-ui/js/sec-models.js": 2,
+      "admin-ui/js/sec-playground.js": 2,
+      "admin-ui/js/sec-settings.js": 2,
+      "admin-ui/js/sec-usage.js": 2,
+    });
+  });
+
+  /**
+   * **反向控制：「就地改 `aria-pressed`」今天只有一处。**
+   *
+   * 上面那格扫的是**创建点**，拦「漏写」；它拦不住另一族：一个板块**不重建按钮、
+   * 就地改 `.active`**，于是屏幕上换了档而属性还停在首帧
+   *（P3d 那次「就地更新够不着盒子外的节点」的同一个形状）。
+   * `sec-events.js` 的 `setLevel()` 就是这一族，它因此多写了一行 `setAttribute`。
+   * 这一格把「别处没有第二处就地改」变成一条会红的断言 ——
+   * 哪天别的板块也改成就地更新，先在这里被看见，再去补它自己的 DOM 用例。
+   *
+   * ⚠️ **边界明写**：它认得的只有 `setAttribute("aria-pressed"` 这一种写法。
+   * 用 `btn.ariaPressed = …` 之类的写法就地改，它看不见（那一族仍然只有各板块
+   * 自己的 DOM 用例接得住）。
+   */
+  it("反向控制：就地改 aria-pressed 的只有 sec-events.js 那一处", () => {
+    const byFile: Record<string, number> = {};
+    for (const rel of sectionFiles()) {
+      const n = [...blankComments(readFileSync(rel, "utf8"))
+        .matchAll(/setAttribute\(\s*["']aria-pressed["']/g)].length;
+      if (n > 0) byFile[rel] = n;
+    }
+    expect(
+      byFile,
+      "有板块改成了「就地改 aria-pressed」——先回来看一眼它的 .active 与 aria-pressed 是不是同生同死",
+    ).toEqual({ "admin-ui/js/sec-events.js": 1 });
+  });
+
+  /**
+   * **绊线：射程是从盘上枚举出来的，不是一张手抄的文件名表。**
+   * 没有这一格的话，`sectionFiles()` 写坏成「一个文件都枚举不到」时，上面那格的
+   * `toEqual({…})` 会红——但红的原因会被读成"按钮组没了"。这一格先把射程本身钉住。
+   */
+  it("绊线：射程枚举得到 admin-ui/js/sec-*.js，且不含别的文件", () => {
+    const files = sectionFiles();
+    expect(files, "一个板块文件都枚举不到 —— 上面两格在对着空气报绿/报红").not.toEqual([]);
+    expect(files.every((f) => /^admin-ui\/js\/sec-[a-z-]+\.js$/.test(f)), `枚举到了射程外的文件：${files.join(", ")}`).toBe(true);
+    // 仓里真实存在的两个文件：一个有分段选择器、一个没有。两个都得在射程里
+    //（"只枚举有 btn-toggle 的那几个"等于让新板块天生豁免）。
+    expect(files, "sec-models.js 不在射程里").toContain("admin-ui/js/sec-models.js");
+    expect(files, "sec-keys.js 不在射程里 —— 射程不许只收今天有 btn-toggle 的那几个").toContain("admin-ui/js/sec-keys.js");
+  });
+});
+
+/**
+ * ── `.btn-toggle.active` 与 `.badge` 一族：状态不许只由颜色表达（WCAG 1.4.1）──────
+ *
+ * `.btn-toggle.active` 原来只改 `color` 与 `border-color`。P3e Task 20 在真浏览器上
+ * 量过（触屏模拟 `(hover: none)` + `(pointer: coarse)`）：选中与未选中两颗按钮的
+ * `font-weight` 都是 400、`text-decoration` 都是 none、`::before` / `::after` 都没有
+ * ⇒ **差别只有颜色**。这一格钉的就是"至少还有一条非颜色声明"。
+ *
+ * **它接不住什么，明写**：这是纯文本扫描。它不渲染、不算对比度，也不知道那条非颜色
+ * 声明**看不看得出来**（把 `font-weight: 600` 改成 `font-weight: 401` 它照样绿）。
+ * 那一族只能靠真机截图，而截图不是会自己红的守卫——两半分工不同，都不许省。
+ */
+describe("状态不许只由颜色表达", () => {
+  /** 抠 CSS 一律走**只认块注释**的那一档：CSS 没有 `//` 行注释。 */
+  const stripCss = stripCssComments;
+
+  const SECTIONS_CSS = "admin-ui/css/sections.css";
+
+  /** 白名单**逐条手写**：这四条是"看得见而且不是颜色"的那几种。 */
+  const NON_COLOR = ["font-weight", "text-decoration", "box-shadow", "outline"];
+
+  /** 一条规则的声明块。抠不到一律 `null`——"抠不到就当通过"是这一族最常见的死法。 */
+  function ruleBody(css: string, selector: string): string | null {
+    const re = new RegExp(`${selector.replace(/[.\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`);
+    const m = re.exec(css);
+    return m === null ? null : m[1]!;
+  }
+
+  it(".btn-toggle.active 至少有一条非颜色声明 —— 只改颜色的话触屏与色觉障碍用户拿不到选中态", () => {
+    const css = stripCss(readFileSync(SECTIONS_CSS, "utf8"));
+    const body = ruleBody(css, ".btn-toggle.active");
+    expect(body, `${SECTIONS_CSS} 里找不到 .btn-toggle.active 这条规则 —— 先来修抠法`).not.toBeNull();
+    expect(body!.trim(), "抠出来的是空块 —— 抠错了，下面那条会变成恒真").not.toBe("");
+    expect(
+      NON_COLOR.filter((p) => body!.includes(p)),
+      `.btn-toggle.active 只剩颜色声明了（抠到的是 \`${body!.trim()}\`）。`
+      + `这是五个板块共用的类，别只给某一个板块另加新类 —— 那是 sec-models.js 与 sec-usage.js 亲口否掉的做法`,
+    ).not.toEqual([]);
+  });
+
+  /**
+   * **反向控制：同一个量具对着仓里真实存在的另一条规则不许乱报有。**
+   * `.btn-toggle`（未选中的底样式）今天只有间距 / 字体继承 / 颜色 / 边框，
+   * 这四条一条都没有 —— 量具若把 `font: inherit` 读成 `font-weight`、
+   * 或者干脆退化成"在整份 CSS 里找子串"，这一格会红。
+   */
+  it("反向控制：同一个量具对着 .btn-toggle 底样式报「没有非颜色声明」", () => {
+    const css = stripCss(readFileSync(SECTIONS_CSS, "utf8"));
+    const body = ruleBody(css, ".btn-toggle");
+    expect(body, "连底样式都抠不到了 —— 抠法坏了").not.toBeNull();
+    expect(body!, "抠到的不是 .btn-toggle 底样式（它该有 padding）").toContain("padding");
+    expect(
+      NON_COLOR.filter((p) => body!.includes(p)),
+      "量具在 .btn-toggle 底样式上报出了非颜色声明 —— 它多半在整份 CSS 里瞎找，上面那格的绿不算数",
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ── `--muted` 的对比度下限（WCAG 1.4.3 AA，P3e Task 20 真机实测）────────────────
+ *
+ * `--muted` 不只画"次要说明文字"：`.badge` 的底样式、表头 `th`、未选中的 `.btn-toggle`
+ * 全是 `--muted` 画在 `--panel-2` 上，而那是本面板对比度最紧的一对。
+ * 亮色那份原来是 `#6b7280`，在 `#f0f1f5` 上量出来 4.28:1 —— 低于 4.5:1。
+ * 这个读数**不是抄来的**：把 token 改回 `#6b7280`，下面那格会把它算出来的比值逐字打进报文。
+ * 真浏览器五语言 × 两主题冒烟（每格逐板块遍历所有带文字的元素）：
+ * **亮色五格各 38 处不达标、深色五格 0 处**，五种语言的数字逐格相同
+ * ⇒ 是 token 的事，不是文案的事。
+ *
+ * **它接不住什么，明写**：
+ * · 只算 `--muted` 这一个前景色在三种底色上的比值。别的组合（`--warn-fg` 画在
+ *   `--warn` 上之类）不在这一格里 —— 那一族由真机冒烟接，而真机冒烟不会自己红。
+ * · 只认 `#rrggbb`。token 改成 `rgb(…)` / `color-mix(…)` 时**抠不到 ⇒ 断言当场红**，
+ *   不是静默跳过。
+ * · 它不知道**实际画在哪个底色上**：三种底色是手写枚举的，不是从用法里推出来的。
+ */
+describe("--muted 在三种底色上都过 4.5:1", () => {
+  const BASE_CSS = "admin-ui/css/base.css";
+  /** `--muted` 今天真正落在哪几种底色上：面板底、卡片底、次级块底。手写枚举。 */
+  const SURFACES = ["--bg", "--panel", "--panel-2"] as const;
+
+  function tokens(block: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const m of block.matchAll(/(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{6})\s*;/g)) out[m[1]!] = m[2]!.toLowerCase();
+    return out;
+  }
+
+  /** 亮 / 暗两个 `:root` 块各自的 token 表。抠不到一律 `null`。 */
+  function themeTokens(theme: "light" | "dark"): Record<string, string> | null {
+    const css = stripCssComments(readFileSync(BASE_CSS, "utf8"));
+    const head = theme === "light" ? ":root {" : ':root[data-theme="dark"] {';
+    const at = css.indexOf(head);
+    if (at === -1) return null;
+    const end = css.indexOf("}", at);
+    if (end === -1) return null;
+    return tokens(css.slice(at, end));
+  }
+
+  /** WCAG 相对亮度 + 对比度。**公式手写，不引依赖**（全局约束：本期不新增依赖）。 */
+  function luminance(hex: string): number {
+    const ch = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * ch[0]! + 0.7152 * ch[1]! + 0.0722 * ch[2]!;
+  }
+  function contrast(a: string, b: string): number {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi! + 0.05) / (lo! + 0.05);
+  }
+
+  it("量具自证：黑白是 21:1，同色是 1:1", () => {
+    // 手写字面量，不是从被测对象算出来再回填。
+    expect(Math.round(contrast("#000000", "#ffffff"))).toBe(21);
+    expect(contrast("#ffffff", "#ffffff")).toBe(1);
+  });
+
+  it("反向控制：亮暗两块是分开抠的，没有互相串味", () => {
+    const light = themeTokens("light");
+    const dark = themeTokens("dark");
+    expect(light, `${BASE_CSS} 里抠不到亮色 :root 块`).not.toBeNull();
+    expect(dark, `${BASE_CSS} 里抠不到深色 :root 块`).not.toBeNull();
+    // 仓里真实存在的两个取值，各自只属于一块。串味 / 抠成同一块时这两条会红。
+    expect(light!["--panel"], "亮色的 --panel 不是纯白了？那三种底色的枚举要回来重新表态").toBe("#ffffff");
+    expect(dark!["--bg"], "抠到的深色块不对").toBe("#14161a");
+  });
+
+  it("亮暗两套主题下，--muted 画在三种底色上都不低于 4.5:1", () => {
+    for (const theme of ["light", "dark"] as const) {
+      const tk = themeTokens(theme);
+      expect(tk, `${BASE_CSS} 里抠不到 ${theme} 的 token 块`).not.toBeNull();
+      const fg = tk!["--muted"];
+      expect(fg, `${theme}: 抠不到 --muted（改成 rgb()/color-mix() 了？先回来改抠法）`).not.toBe(undefined);
+      for (const surface of SURFACES) {
+        const bg = tk![surface];
+        expect(bg, `${theme}: 抠不到 ${surface}`).not.toBe(undefined);
+        const cr = contrast(fg!, bg!);
+        expect(
+          cr >= 4.5,
+          `${theme} 主题下 --muted(${fg}) 画在 ${surface}(${bg}) 上只有 ${cr.toFixed(2)}:1，低于 WCAG 1.4.3 AA 的 4.5:1。`
+          + `--muted 画的不只是说明文字 —— .badge、表头 th、未选中的 .btn-toggle 全走它`,
+        ).toBe(true);
+      }
+    }
+  });
+});

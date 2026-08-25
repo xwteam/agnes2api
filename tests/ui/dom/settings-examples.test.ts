@@ -394,3 +394,49 @@ describe("设置页第 4 张卡：集成示例", () => {
       .not.toContain(I18N["set.examples.noModel"]!["zh-CN"]!);
   });
 });
+
+/**
+ * ── `aria-pressed`：示例卡那两排分段的选中态得读得出来（P3e Task 20）─────────────
+ *
+ * 这张卡上**有两排**分段选择器（协议一排、语言一排），它们共用 `.btn-group` /
+ * `.btn-toggle`。⚠️ **两排都要断言**：只测一排的话，另一排漏写 `aria-pressed`
+ * 在这一层零信号（源码扫描会拦漏写，但拦不住「值写死成 false」）。
+ */
+describe("示例卡两排分段的 aria-pressed 跟着点击走", () => {
+  it("协议那一排：点第二颗，第一颗转 false、第二颗转 true", async () => {
+    const h = await openSettings(respondWith());
+    const before = tabs(h, "data-ex-protocol");
+    // 期望值手写字面量：真源今天就是这四条协议，顺序照响应给的顺序。
+    expect(before.map((b) => b.getAttribute("data-ex-protocol")))
+      .toEqual(["openai", "anthropic", "responses", "gemini"]);
+    expect(before.map((b) => b.getAttribute("aria-pressed")), "首帧默认停在第一条协议")
+      .toEqual(["true", "false", "false", "false"]);
+
+    clickTab(h, "data-ex-protocol", "anthropic");
+    // ⚠️ **重新取一次节点**：这张卡每次 `renderExamples()` 重建按钮。
+    expect(
+      tabs(h, "data-ex-protocol").map((b) => b.getAttribute("aria-pressed")),
+      "换了协议，aria-pressed 没跟着走",
+    ).toEqual(["false", "true", "false", "false"]);
+  });
+
+  it("语言那一排：与协议那一排各归各的 —— 换协议不许把语言那一排的选中态也搬走", async () => {
+    const h = await openSettings(respondWith());
+    // 期望值手写字面量：`EXAMPLE_LANGS` 今天就是这三档。
+    expect(tabs(h, "data-ex-lang").map((b) => b.getAttribute("data-ex-lang")))
+      .toEqual(["curl", "python", "node"]);
+    expect(tabs(h, "data-ex-lang").map((b) => b.getAttribute("aria-pressed")))
+      .toEqual(["true", "false", "false"]);
+
+    clickTab(h, "data-ex-lang", "node");
+    expect(tabs(h, "data-ex-lang").map((b) => b.getAttribute("aria-pressed")), "换了语言，aria-pressed 没跟着走")
+      .toEqual(["false", "false", "true"]);
+
+    // 换协议之后语言那一排必须原地不动（两排是两个独立的选择）。
+    clickTab(h, "data-ex-protocol", "gemini");
+    expect(tabs(h, "data-ex-lang").map((b) => b.getAttribute("aria-pressed")), "换协议把语言那一排的选中态也搬走了")
+      .toEqual(["false", "false", "true"]);
+    expect(tabs(h, "data-ex-protocol").map((b) => b.getAttribute("aria-pressed")))
+      .toEqual(["false", "false", "false", "true"]);
+  });
+});

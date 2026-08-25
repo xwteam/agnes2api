@@ -5,8 +5,19 @@
    （侧栏、登录闸、toast、modal）在 shell.css；业务内容（表格、卡片、徽章）
    在 sections.css。两份都只覆盖 :root 的 token，不重复定义组件规则
    （见两个文件各自的文件头）。 */
+/* ⚠️ **`--muted` 的取值受一条会变红的下限约束，改它之前先读这一段**（P3e Task 20 真机实测）。
+   `--muted` 不只画"次要说明文字"：`.badge` 的底样式、表头 `th`、未选中的 `.btn-toggle`
+   全都是 `--muted` 画在 `--panel-2` 上，而那是本面板对比度最紧的一对。
+   亮色那份原来是 `#6b7280`，在 `--panel-2`（`#f0f1f5`）上量出来 **4.28:1**，
+   低于 WCAG 1.4.3 AA 对正文的 4.5:1 —— 真浏览器五语言 × 两主题冒烟里
+   **亮色那五格各 38 处不达标、深色那五格 0 处**（语言无关，是 token 的事不是文案的事）。
+   现在改成同一条灰阶上暗一档的 `#4b5563`（在 `--panel-2` 上 6.70:1）。
+   ⚠️ 上面这两个读数**不是抄来的**：下面那条断言用同一条 WCAG 公式现算，
+   把 token 改回去它会把算出来的比值逐字打进报文（本轮变异实测印出来的正是 4.28:1）。
+   **下限由 `tests/unit/source-guards.test.ts` 的「--muted 在三种底色上都过 4.5:1」那一格钉着**，
+   它直接从本文件抠 token 现算，改回任何一个过不了线的值都会当场红。 */
 :root {
-  --bg: #f7f8fa; --panel: #ffffff; --panel-2: #f0f1f5; --text: #1c1f26; --muted: #6b7280;
+  --bg: #f7f8fa; --panel: #ffffff; --panel-2: #f0f1f5; --text: #1c1f26; --muted: #4b5563;
   --border: #e3e6ec; --primary: #4f46e5; --primary-fg: #ffffff;
   --danger: #dc2626; --danger-fg: #ffffff; --warn: #b45309; --warn-fg: #ffffff;
   --ok: #15803d; --ok-fg: #ffffff;

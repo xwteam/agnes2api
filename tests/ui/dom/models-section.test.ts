@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { stripCssComments } from "../../helpers/strip-comments.js";
 import { bootPanel, settle, type Harness } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { catalogPayload } from "../../../src/core/admin/protocol-catalog.js";
@@ -77,9 +79,11 @@ function dataRows(section: FakeElement): FakeElement[] {
  */
 function badgesOf(row: FakeElement): Array<{
   label: string; available: string | null; protocol: string | null; title: string | null;
+  classes: string[];
 }> {
   const out: Array<{
     label: string; available: string | null; protocol: string | null; title: string | null;
+    classes: string[];
   }> = [];
   for (const span of row.querySelectorAll(".badge")) {
     out.push({
@@ -87,6 +91,9 @@ function badgesOf(row: FakeElement): Array<{
       available: span.getAttribute("data-available"),
       protocol: span.getAttribute("data-protocol"),
       title: span.getAttribute("title"),
+      // ⚠️ **class 一起收**（P3e Task 20）：`title` 是 hover-only，`data-available` 读不出来
+      // ⇒ 两态徽章可见文字逐字相同时，class 是唯一还能挂非颜色线索的地方。
+      classes: String(span.getAttribute("class") ?? "").split(/\s+/).filter(Boolean).sort(),
     });
   }
   return out;
@@ -740,5 +747,100 @@ describe("网络行为", () => {
     for (const c of h.calls) urls.add(c.url);
     urls.delete("/admin/api/session");
     expect([...urls]).toEqual(["/admin/api/models"]);
+  });
+});
+
+/**
+ * ── WCAG 1.4.1：状态不许只由颜色表达（P3e Task 20）──────────────────────────────
+ *
+ * 协议矩阵里可用 / 不可用两个徽章的**可见文字逐字相同**（都是协议专名），
+ * 原来的差别只有三样：颜色、hover 才出得来的 `title`、读不出来的 `data-available`。
+ * 真浏览器实测（触屏模拟 `(hover: none)` + `(pointer: coarse)`，长按 1.2s）：
+ * `::before` / `::after` 皆无、`text-decoration` 两边都是 none、`font-weight` 两边都是 400，
+ * 长按之后 DOM 无任何变化、也没有任何 `[role="tooltip"]` 节点
+ * ⇒ **触屏用户拿得到的只有颜色**。
+ *
+ * ⚠️ **解法必须走 class + CSS，`textContent` 一个字不许动**：上面那张手写的
+ * `badges.map(b => b.label)` 期望表钉着徽章上写的是协议专名，动文案会当场打红它
+ * ——而那也该打红，徽章上写状态名是另一回事。
+ */
+describe("徽章的状态不只靠颜色", () => {
+  it("同一张表里，不可用那一档的徽章带一个可用那一档没有的类", async () => {
+    const h = await openModels(respondWithCatalog());
+    const sec = h.section("models");
+    const off = badgesOf(dataRows(sec).find((tr) => tr.getAttribute("data-model") === "agnes-image-2.1-flash")!);
+    const on = badgesOf(dataRows(sec).find((tr) => tr.getAttribute("data-model") === "agnes-2.0-flash")!);
+    expect(off.length, "前置条件：不可用那一行得有徽章").toBe(4);
+    expect(on.length, "前置条件：可用那一行得有徽章").toBe(4);
+    // 期望值手写字面量（不是从被测对象读出来再回填）。
+    for (const b of off) expect(b.classes, "不可用的徽章没带 .badge-off").toEqual(["badge", "badge-off"]);
+    for (const b of on) expect(b.classes, ".badge-off 跑到可用那一侧去了").toEqual(["badge", "badge-ok"]);
+    // 两侧的类集合必须真的不同 —— 相同的话上面两条会一起变成同一句话。
+    expect(off[0]!.classes, "两态徽章的类集合一模一样 —— 状态又只剩颜色了").not.toEqual(on[0]!.classes);
+  });
+
+  /**
+   * **CSS 源码断言：`.badge-off` 必须声明一条非颜色属性。**
+   * 上面那格只管"两侧的类不一样"，一个**取值与 `.badge` 逐字相同的同义类**照样能让它绿
+   * ——而 `sections.css` 里 `.badge-danger` 下面那段注释正为此裁过 `.badge-muted` 一次。
+   *
+   * **它接不住什么，明写**：纯文本扫描，不渲染。`text-decoration: none` 它照样绿。
+   * 那一族只能靠真机截图，而截图不是会自己红的守卫。
+   */
+  it(".badge-off 在 CSS 里声明了 text-decoration —— 删掉这条声明就红", () => {
+    // 抠 CSS 一律走**只认块注释**的那一档：CSS 没有 `//` 行注释，拿 JS 语义去抠
+    // 会把 `background: url(//cdn…)` 之后的样式整段吃掉。
+    const css = stripCssComments(readFileSync("admin-ui/css/sections.css", "utf8"));
+    const block = /\.badge-off\s*\{([^}]*)\}/.exec(css);
+    expect(block, "sections.css 里找不到 .badge-off 这条规则").not.toBeNull();
+    expect(block![1]!, "抠出来的是空块 —— 抠错了").not.toBe("");
+    expect(
+      block![1]!,
+      ".badge-off 只剩颜色声明了 —— 它存在的全部理由就是那条非颜色线索",
+    ).toContain("text-decoration");
+  });
+
+  /**
+   * **反向控制：同一个量具对着仓里真实存在的另一条规则不许乱报有。**
+   * `.badge-ok` 今天只有颜色三件套（`color` / `background` / `border-color`），
+   * 一条 `text-decoration` 都没有。量具若退化成"在整份 CSS 里找子串"，这一格会红。
+   */
+  it("反向控制：同一个量具在 .badge-ok 上报「没有 text-decoration」", () => {
+    const css = stripCssComments(readFileSync("admin-ui/css/sections.css", "utf8"));
+    const block = /\.badge-ok\s*\{([^}]*)\}/.exec(css);
+    expect(block, "sections.css 里找不到 .badge-ok 这条规则").not.toBeNull();
+    expect(block![1]!, "抠到的不是 .badge-ok（它该有 background）").toContain("background");
+    expect(
+      block![1]!,
+      "量具在 .badge-ok 上报出了 text-decoration —— 它多半在整份 CSS 里瞎找，上面那格的绿不算数",
+    ).not.toContain("text-decoration");
+  });
+});
+
+/**
+ * ── `aria-pressed`：分段选择器的选中态得读得出来（P3e Task 20）──────────────────
+ *
+ * `.active` 只改颜色（外加一条加粗），读屏用户拿不到。
+ * **"每个创建点都带 `aria-pressed`"由
+ * `tests/unit/source-guards.test.ts「sec-*.js 里每一个 btn-toggle 创建点都带 aria-pressed」`
+ * 守着；这一格守的是另一半：值真的跟着点击走。** 两格分工不同：那一格拦"漏写"，
+ * 这一格拦"写死成 false"。
+ */
+describe("协议筛选的 aria-pressed 跟着点击走", () => {
+  it("点第二颗：第一颗转 false、第二颗转 true", async () => {
+    const h = await openModels(respondWithCatalog());
+    const sec = h.section("models");
+    const btns = filterButtons(sec);
+    expect(btns.length, "前置条件：分段按钮得真的画出来了").toBe(5);
+    // 首帧：默认停在「全部」（`data-protocol` 是空串那一颗）。
+    expect(btns.map((b) => b.getAttribute("aria-pressed")))
+      .toEqual(["true", "false", "false", "false", "false"]);
+
+    btns.find((b) => b.getAttribute("data-protocol") === "anthropic")!.click();
+    await settle(12);
+    // ⚠️ **重新取一次节点**：这一组每次 `render()` 都重建按钮，握着旧引用会读到已被
+    //    丢弃的那一批（屏幕上换了、断言读的是上一帧）。
+    expect(filterButtons(h.section("models")).map((b) => b.getAttribute("aria-pressed")))
+      .toEqual(["false", "false", "true", "false", "false"]);
   });
 });

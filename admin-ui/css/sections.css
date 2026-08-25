@@ -46,6 +46,23 @@ tr:last-child td { border-bottom: 0; }
    （删掉它 1583 条全绿，评审 M-a 实测）。**别再加回来**——要区分的话得先给它一个
    真正不同的样式，而不是一个换了名字的同义类。 */
 
+/* 「这个模型在这条协议上不可用」那一档（WCAG 1.4.1，P3e Task 20）。
+
+   ⚠️ **它存在的全部理由是「状态不许只由颜色表达」**，所以它必须带一条**非颜色**声明。
+   模型板块的协议矩阵里，可用与不可用两个徽章的**可见文字逐字相同**（都是协议专名），
+   原来的差别只有三样：颜色、hover 才出得来的 `title`、以及读不出来的 `data-available`。
+   真机实测（触屏模拟：`(hover: none)` + `(pointer: coarse)`，长按 1.2s）——
+   `::before` / `::after` 皆无、`text-decoration` 两边都是 `none`、`font-weight` 两边都是 400，
+   长按之后 DOM 没有任何变化、也没有任何 `[role="tooltip"]` 节点 ⇒
+   **触屏用户拿得到的只有颜色**。
+   ⚠️ **不许改可见文字来解决**：`tests/ui/dom/models-section.test.ts` 有一张手写的
+   `badges.map(b => b.label)` 期望表，动 `textContent` 会当场打红它——也应该打红，
+   徽章上写的是协议的专名，不是状态名。
+   ⚠️ **也不许把它写成一个取值与 `.badge` 逐字相同的同义类**：上面那段刚裁过 `.badge-muted`。
+   `text-decoration` 这条声明的存在由 `tests/ui/dom/models-section.test.ts` 的
+   「.badge-off 在 CSS 里声明了 text-decoration」那一格钉着，删掉当场红。 */
+.badge-off { text-decoration: line-through; }
+
 /* 工具条 / 分页 / 说明文字：Task 4 的 Key 池板块起用，事件与概览板块同样直接引用，
    **不许各板块再各写一份**（kiro2api 正是没有这一层，同一个原语出现了三份不同实现）。 */
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-sm); margin: var(--gap-sm) 0; }
@@ -78,7 +95,19 @@ tr:last-child td { border-bottom: 0; }
   padding: 6px 10px; font: inherit; color: var(--muted);
   background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
 }
-.btn-toggle.active { color: var(--text); border-color: var(--primary); }
+/* 选中态。**颜色之外必须再有一条非颜色声明**（WCAG 1.4.1，P3e Task 20）：
+   原来这条只改 `color` 与 `border-color`，真机实测（触屏模拟）里选中与未选中两颗按钮的
+   `font-weight` 都是 400、`text-decoration` 都是 none ⇒ 差别**只有颜色**。
+   ⚠️ **这是事件 / 用量 / 模型 / 设置 / 调试台五个板块共用的类**，
+   只在某一个板块另加一个新类反而制造不一致——那正是 `sec-models.js` 与 `sec-usage.js`
+   两处注释里亲口否掉的做法。
+   非颜色声明的存在由 `tests/unit/source-guards.test.ts` 的
+   「.btn-toggle.active 至少有一条非颜色声明」那一格钉着（白名单在那一格里手写）。
+   ⚠️ **代价如实写在这里，别当它不存在**：加粗会让选中的那颗变宽，它右边的按钮跟着右移。
+   真机量过（宽屏与 380px 窄屏各一轮，逐档切换）：**按钮组的换行行数不变、页面不横向滚动**。
+   位移的具体像素数**刻意不写在这里**——本仓没有布局引擎，写下来就是一个没有测法的数字；
+   要复量的话去 P3e Task 20 的报告，那里记着当时的量法与读数。 */
+.btn-toggle.active { color: var(--text); border-color: var(--primary); font-weight: 600; }
 /* 轮询状态指示灯：三态用不同颜色，不用文字（title/aria-label 已经带文字说明）。 */
 .poll-dot {
   display: inline-block; width: 8px; height: 8px; border-radius: 999px;

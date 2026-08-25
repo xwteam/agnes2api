@@ -287,12 +287,19 @@ function buildToolbar() {
 
   const levelGroup = el("div", { class: "btn-group" });
   const levelButtons = {};
-  const allBtn = elI18n("button", "ev.level.all", { type: "button", class: "btn-toggle active" });
+  // ⚠️ **`aria-pressed` 与 `.active` 必须同生同死**：`.active` 只改颜色（外加一条加粗），
+  //    读屏用户拿不到；这一组的初始档位是「全部」，所以这一颗生下来就是 `true`。
+  //    改这两处的任何一处之前，先看 `setLevel()` ——那里是这一组唯一会改状态的地方。
+  const allBtn = elI18n("button", "ev.level.all", {
+    type: "button", class: "btn-toggle active", "aria-pressed": "true",
+  });
   allBtn.addEventListener("click", () => { setLevel("all"); });
   levelGroup.appendChild(allBtn);
   levelButtons.all = allBtn;
   for (const lvl of LEVELS) {
-    const b = elI18n("button", levelLabelKey(lvl), { type: "button", class: "btn-toggle" });
+    const b = elI18n("button", levelLabelKey(lvl), {
+      type: "button", class: "btn-toggle", "aria-pressed": "false",
+    });
     b.addEventListener("click", () => { setLevel(lvl); });
     levelGroup.appendChild(b);
     levelButtons[lvl] = b;
@@ -334,7 +341,16 @@ function buildToolbar() {
 
   function setLevel(lvl) {
     state.level = lvl;
-    for (const [k, b] of Object.entries(levelButtons)) b.classList.toggle("active", k === lvl);
+    // ⚠️ **本板块的这一组是「就地改状态、不重建按钮」的**（其余板块每次 `render()`
+    //    重建，创建时属性对象里那一行就够了）。这里只改 `.active` 不改 `aria-pressed`
+    //    的话，读屏用户读到的永远是首帧那一档 —— 屏幕上换了、读出来没换。
+    // ⚠️ 「就地改的今天只有这一处」不是一句散文：
+    //    `tests/unit/source-guards.test.ts「反向控制：就地改 aria-pressed 的只有 sec-events.js 那一处」`
+    //    钉着它（那一格只认 `setAttribute("aria-pressed"` 这一种写法，边界写在它自己上面）。
+    for (const [k, b] of Object.entries(levelButtons)) {
+      b.classList.toggle("active", k === lvl);
+      b.setAttribute("aria-pressed", k === lvl ? "true" : "false");
+    }
     // 切换级别相当于换了一条筛选后的流：已攒的视图是按旧筛选拉来的，继续拼接会让
     // 「全部/error」两种视图的历史深度不一致。重置视图与整份轮询状态（游标、
     // 自愈中、退避一起归零），从当前时刻重新拉。
