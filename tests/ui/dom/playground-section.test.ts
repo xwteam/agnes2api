@@ -4,6 +4,7 @@ import { bootPanel, settle, PANEL_ORIGIN, type Harness } from "./harness.js";
 import { stripComments } from "../../helpers/strip-comments.js";
 import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE, GW_KEY_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { catalogPayload } from "../../../src/core/admin/protocol-catalog.js";
+import { I18N } from "../../../admin-ui/js/i18n-dict.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
@@ -544,6 +545,177 @@ describe("左栏：档位与模型全部来自协议目录", () => {
 
     expect(h.calls.filter((c) => c.url.startsWith("/admin/api/models")).length).toBe(before + 1);
     expect(pick(sec, "[data-protocol]").length).toBe(4);
+  });
+});
+
+/**
+ * ── **C4 结案：把「形态名漂移」那个前提立成守卫（P3e Task 18）** ────────────────
+ *
+ * `admin-ui/js/sec-playground.js` 的 `MODES` 上方那段注释用「不是读代码推的，是在 DOM
+ * 夹具里量出来的」这个口吻写下了三条具体行为，并据此裁定 `pg.model.noneMedia` 与
+ * `pg.send.blockedNoEndpoint` **不是死代码**。而在这一格写出来之前，
+ * `grep -rn "noneMedia\|blockedNoEndpoint" tests/` **零命中** ——
+ * 按本仓自己的规矩，那是一份**不会自己红的清单**，也就是待办不是守卫。
+ * ⚠️ 更要命的是**那段话本身就是订正上一版一句假描述的产物**
+ *（上一版写的是「只显示一句『这个形态没有可用的端点』」，实测没有这样一句话），
+ * **第二次变假的代价会更高**：读到它的人会以为这三条已经被量过了。
+ *
+ * ⚠️ **「结构性不可达」这个判断依赖一个没人守的前提。** 这两个 key 在**形态名不漂**
+ * 的前提下确实取不到（`MODEL_CATALOG` 钉着 2 个 image + 1 个 video 模型、
+ * `MEDIA_ENDPOINTS` 两档各有一条 `op === "generate"`，两者恒非空）——而那个前提
+ * 正是 `MODES` 上方那段注释自己登记着**会漂**的东西。这一格守的就是那个前提。
+ *
+ * ── **夹具是派生的，本组里没有一个手写的 media / model 字面量对象** ─────────────
+ * 派生**只把 `media[].modality` 与 `models[].modality` 里的 `image` / `video` 改名**，
+ * `pathTemplate` / `sampleBody` / `authHeader` / `taskSlot` 那些真正会漂的知识
+ * **一个字节都没抄** ⇒ 第 7 种假阳性（测的是抄件不是原件）在这一格上没有立足点。
+ * ⚠️ 走手写目录的代价同仓刚付过一次：那等于把 Task 17 刚从设置页拆掉的抄件风险
+ * 原样搬到 Playground 来。
+ *
+ * ── **为什么改名之后这份目录还读得进来** ───────────────────────────────────────
+ * `mediaEndpoints()` 对 `op` / `modality` **刻意不做白名单**（那个函数上方逐字写着
+ * 理由：限定成今天这两个值等于「真源多一个形态 ⇒ 整个媒体模式读不出来」）
+ * ⇒ 改名后的两条媒体端点照旧窄化得开，只是**不匹配任何一个模式档**。
+ * ⇒ 这一格落在的是「目录读得回来但这一档没有端点」，**不是**「读不出来」那一档
+ *（后者由上面「响应读得回来但形状不对时同样是「读不出来」」那一格守着，两者别混）。
+ */
+describe("形态名一漂，媒体那一档的三处兜底文案逐条上屏", () => {
+  /**
+   * 由真源现派生的一份「形态名漂了」的目录。**零手写目录**：只改两处 `modality` 的取值。
+   * `picture` / `clip` 这两个词是任意选的**表外**形态名，选它们只是为了「真源改了名而
+   * 面板那张 `MODES` 表没跟着改」这件事在夹具里可观测。
+   */
+  const drift = (): unknown => {
+    const real = catalogPayload();
+    const ren = (m: string): string => (m === "image" ? "picture" : m === "video" ? "clip" : m);
+    return {
+      ...real,
+      media: real.media.map((x) => ({ ...x, modality: ren(x.modality) })),
+      models: real.models.map((x) => ({ ...x, modality: ren(x.modality) })),
+    };
+  };
+
+  /**
+   * ⚠️ **断言点必须落在一次稳定 render 之后**：`.pg-send` 的 `title` 与 `disabled`
+   * 由 `syncSendButton()` **就地**刷新（不整块重画），而模式切换走的是整版 `render()`。
+   * 少一次 `await settle()` 这一格就退化成一条**对时序敏感**的断言——本仓刚在 P3d 因
+   *「靠相邻中间件时序侥幸通过」栽过（第 9 种假阳性的近亲）。
+   *
+   * ⚠️ **两句文案手写整句字面量，不从 `I18N` 字典推导**（第 6 种假阳性）：
+   * 从字典取的话，「谁把字典里那句话改坏了」这件事在这一格上恒绿。
+   * 这两句是**逐字**从 `zh-CN` 那一栏量出来的。
+   *
+   * ── **这一格「能」与「不能」，逐条量过（变异实测，不是推的）** ──────────────────
+   * **这一格里每一条断言都有一条只改一行、且红在它自己身上的变异**（落点 → 红在哪一条）：
+   * · 前置条件①：`mediaEndpoints()` 里给 `modality` 加白名单 → 「落进『读不出来』那一档」；
+   * · 前置条件②：`MODES` 删掉 `video` 那行 → 「模式条没画出来」；
+   * · 端点行 0：见下面那条过定性说明（**要两处一起改**）；
+   * · 下拉 0 项：`currentModelIds()` 媒体那一路换成 `catalog.models.map(...)`；
+   * · 发送停用：`syncSendButton()` 里 `nodes.send.disabled` 赋成恒 `false`；
+   * · ① 字典交叉核对：改字典里 `pg.send.blockedNoEndpoint` 的 `zh-CN`（去掉句号即可）；
+   * · ② tooltip：`sendBlockedKey()` 那一路返回 `pg.send.blockedNoProto`；
+   * · ③ `data-i18n`：把媒体档那个 key 折成恒 `pg.model.none`；
+   * · ④ 文案内容：改字典里 `pg.model.noneMedia` 的 `zh-CN`（③ 照旧绿，④ 单独红）。
+   * · ⚠️ **「端点行 0」那一条是过定的（over-determined），明写**：形态名一漂之后
+   *   端点与模型**同时**没了，而 `buildMediaNote()` 里 `buildRequest()` 在**两者任一为空**时
+   *   都交出 `null` ⇒ **只改 `currentMediaEndpoint()` 那一处打不红它**
+   *  （实测：改成兜底返回 `catalog.media[0]` 之后这一条**照旧是 0**，红的是 tooltip 那条）。
+   *   要打红它得**同时**把模型那一路也放开（两处一起改，实测红成 `expected 1 to be +0`）。
+   *   ⇒ **别把这一条读成「它单独守着端点那一行」**——单独守着端点那一行的是
+   *   同格反向控制里的「端点行 1」那条（只改 `m.op === "generate"` 一处就红）。
+   */
+  it("端点行 0（真源为 1）、模型下拉 0 项（真源为 2）、发送按钮停用且两句文案逐字上屏", async () => {
+    const h = await openPg(respondWith({ catalog: { status: 200, body: drift() } }));
+    const sec = h.section("playground");
+    // 前置条件：目录**读得回来**。落进「读不出来」那一档的话，下面四条全都恒成立
+    // 而测的完全是另一件事（那一档连模式条都不画）。
+    expect(pick(sec, ".pg-unknown").length,
+      "落进了「读不出来」那一档 —— 派生把目录改到窄化不过了，下面测的就不是形态名漂移")
+      .toBe(0);
+    expect(pick(sec, "[data-mode]").length, "模式条没画出来，切不了档").toBe(3);
+
+    toMode(sec, "image");
+    await settle();
+
+    expect(pick(sec, ".pg-media-endpoint").length,
+      "形态名漂了却还画着一条端点地址 —— 那条地址指向一个目录里不存在的形态").toBe(0);
+    expect(pick(sec, "option").length,
+      "形态名漂了却还有可选模型 —— 选中它只会换来一次注定失败的请求").toBe(0);
+    const send = one(sec, ".pg-send");
+    expect(send.disabled, "这一档发不出请求，发送按钮却还是能按的").toBe(true);
+
+    // ── **两个 key 的名字必须落在断言上，不能只落在散文里** ───────────────────────
+    // ⚠️ 只断言渲染结果的话，两个 key 名一次都不出现在 `expect(` 上 ⇒
+    // `grep -rn "noneMedia\|blockedNoEndpoint" tests/` 只会命中注释，
+    // 而**一份只在注释里被提到的 key，与本任务开头要修的那个毛病是同一个形态**。
+    // 下面把「屏幕上那一句」与「注释里点名的那个 key」分两步绑住。
+    //
+    // ⚠️⚠️ **两步的顺序不能对调，这是量出来的**：写成「先文案后 key」的话，
+    // 改字典时**先红的永远是文案那条**，key 那条一次都轮不到执行 ⇒ 它变成一条
+    // 被上一层挡住、自己永远量不到自己的死断言（阶段 E 那条「第二层可能替第一层
+    // 挡住变异」的镜像）。现在的顺序下两条各有**只红自己**的变异，见上方清单。
+
+    // ① tooltip 是 `t(blocked)` 直接写进 `title` 的，DOM 上不留 key 的痕迹 ⇒
+    //    只能先钉「这一句 = 这个 key 的 zh-CN 那一栏」。
+    expect(I18N["pg.send.blockedNoEndpoint"]!["zh-CN"],
+      "字典里 pg.send.blockedNoEndpoint 的 zh-CN 改了，而下面那条手写期望没跟着改")
+      .toBe("协议目录里没有这个形态的端点，这一档发不出请求。");
+    // ② 再钉「屏幕 = 这一句」。①+② 合起来才是「屏幕 ← pg.send.blockedNoEndpoint」。
+    expect(send.getAttribute("title"),
+      "发送按钮停用了，但 tooltip 没说清为什么 —— 去看 sec-playground.js 的 sendBlockedKey()")
+      .toBe("协议目录里没有这个形态的端点，这一档发不出请求。");
+
+    // ③ 那一段是 `elI18n()` 画的 ⇒ 它带着 `data-i18n`，这一条直接钉住「屏幕 ← key」。
+    expect(pick(sec, '[data-i18n="pg.model.noneMedia"]').length,
+      "那句话上屏了，但画它的不是 pg.model.noneMedia —— 注释里点名的那个 key 仍然没人用")
+      .toBe(1);
+    // ④ 再钉那一段的**内容**：③ 只证明「这个 key 被用来画了一段」，
+    //    一段空白的 `<p data-i18n=…>` 照样能过 ③。
+    expect(sec.textContent, "模型下拉空了，屏幕上却没有任何一句话解释为什么")
+      .toContain("这个形态下没有可用的模型。");
+  });
+
+  /**
+   * **反向控制（刻意与上一格同一个 describe、同一个模式档、同一组观测点）**：
+   * 上一格证明的是「形态名一漂我认得出来」，这一格证明的是「真源原样时我不乱红」。
+   *
+   * ⚠️ 反向控制**用仓里真实存在的那份目录**（`catalogPayload()` 原样，一个字都没改）
+   * ——改一个字就把它降级成「另一份抄件」，那样它证不了任何关于真源的事。
+   *
+   * ⚠️ **这里不断言 `send.disabled === false`，因为那句话在这一格上是假的**：
+   * 没粘网关口令、没写提示词，`sendBlockedKey()` 会走到 `pg.send.blockedNoToken`
+   * ⇒ 真源原样时这颗按钮**照样是灰的**，只是灰的**理由**不同。
+   * 观测点因此落在「那两句兜底文案一句都没上屏」上，而不是按钮的可用性上。
+   *
+   * ── **这一格四条断言各自的红法（同样是量出来的）** ────────────────────────────
+   * · 端点行 1：`currentMediaEndpoint()` 里 `m.op === "generate"` 改成 `"poll"`
+   *  （这也是**唯一单点就能打红端点那一行**的地方，上一格那条端点断言做不到）；
+   * · 下拉 2 项：`currentModelIds()` 媒体那一路换成 `catalog.models.map(...)`（红成 4）；
+   * · tooltip 不该是那一句：`sendBlockedKey()` 里 `pg.send.blockedNoToken` 那一路
+   *   改成返回 `pg.send.blockedNoEndpoint`（**上一格照旧绿**——这正是这一格独有的射程）；
+   * · `data-i18n` 不该出现：那句 `if (ids.length === 0)` 改成 `if (true)`；
+   * · 那句话不该上屏：`if (true)` **并且**把那段中文硬编码进 `el()`（绕开 key）
+   *   ⇒ **只有这一条红**，`data-i18n` 那条照旧绿——两条不是重复。
+   */
+  it("反向控制（同格 describe）：真源原样时端点行 1、模型下拉 2 项", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    toMode(sec, "image");
+    await settle();
+
+    expect(pick(sec, ".pg-media-endpoint").length,
+      "真源原样，图片档却挑不到那条生成端点").toBe(1);
+    expect(pick(sec, "option").length,
+      "真源原样，图片档却列不出那两个图片模型").toBe(2);
+    expect(one(sec, ".pg-send").getAttribute("title"),
+      "真源原样，却说「目录里没有这个形态的端点」")
+      .not.toBe("协议目录里没有这个形态的端点，这一档发不出请求。");
+    // 与上一格 ③④ 同序、同理由：先「这个 key 没被用来画东西」，再「那句话没上屏」。
+    // 后一条不是前一条的重复——**把那句中文硬编码进来、绕开 key** 时只有它会红。
+    expect(pick(sec, '[data-i18n="pg.model.noneMedia"]').length,
+      "真源原样，却画出了 pg.model.noneMedia 那一段").toBe(0);
+    expect(sec.textContent, "真源原样，却说「这个形态下没有可用的模型」")
+      .not.toContain("这个形态下没有可用的模型。");
   });
 });
 
