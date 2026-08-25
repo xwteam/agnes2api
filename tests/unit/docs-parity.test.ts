@@ -5,6 +5,12 @@ import { dirname, join } from "node:path";
 import { FAIL_REASONS } from "../../src/core/dispatcher.js";
 import { UPSTREAM_FACTS, type UpstreamFact } from "../../src/core/admin/upstream-facts.js";
 import { VIDEO_TASK_ID_SHAPE } from "../../src/core/admin/protocol-catalog.js";
+// ADMIN.md 那一组的期望值一律从这些真源常量派生，不手写字面量。
+import { ADMIN_TOKEN_MIN_LENGTH } from "../../src/http/admin/auth.js";
+import { MAX_IMPORT_KEYS } from "../../src/http/admin/handlers/keys-write.js";
+import { EVENT_WINDOW_MS, EVENT_WINDOW_RETAIN } from "../../src/core/admin/event-ring.js";
+import { USAGE_DAY_RETAIN, USAGE_SLOTS } from "../../src/core/admin/usage-stats.js";
+import { SESSION_MAX_AGE_MS } from "../../admin-ui/js/pure/session.mjs";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 type Lang = (typeof LANGS)[number];
@@ -278,10 +284,16 @@ describe("五语言 API.md 的 503 reason 表覆盖全部取值", () => {
  * 同一件事在下面那格的实现旁边也写着，两处必须一起改。
  */
 
-/** 五份 API.md 的取文口径：真扫描与探针**共用这一份**，探针换掉的只是这个函数。 */
+/** 五份同名文档的取文口径：真扫描与探针**共用这一份**，探针换掉的只是这个函数。 */
 type ApiDocReader = (lang: Lang) => string;
 
-const realApiDoc: ApiDocReader = (lang) => readFileSync(docPath(".", lang, "API"), "utf8");
+/**
+ * 取文口径的唯一工厂。**API.md 与 ADMIN.md 走同一份**——各写一份的话，两组的
+ * 「真扫描读的是什么」会各有各的口径，而其中一份坏了另一份不会响。
+ */
+const realDoc = (doc: string): ApiDocReader => (lang) => readFileSync(docPath(".", lang, doc), "utf8");
+
+const realApiDoc: ApiDocReader = realDoc("API");
 
 /**
  * `## <heading>` 到下一个 `## ` 之间的正文。**找不到那个小节返回 `null`——认不出要吵，
@@ -298,15 +310,17 @@ function sectionBody(src: string, heading: string): string | null {
 
 /**
  * 变异只改一种语言的那一份，其余四份照旧走真文档。**改不动就当场炸。**
- * **两组探针（上游事实的限定句、字符集硬闸）共用这一份**，各写一份的话，两组的
- * 「变异落没落地」会各有各的口径，而其中一份坏了另一份不会响。
+ * **三组探针（上游事实的限定句、字符集硬闸、ADMIN.md 的措辞与数字）共用这一份**，
+ * 各写一份的话，三组的「变异落没落地」会各有各的口径，而其中一份坏了另一份不会响。
+ * `doc` 默认 `"API"`，只有 ADMIN.md 那一组会传别的值。
  */
-function readerWith(target: Lang, edit: (s: string) => string): ApiDocReader {
+function readerWith(target: Lang, edit: (s: string) => string, doc = "API"): ApiDocReader {
+  const base = realDoc(doc);
   return (lang) => {
-    const src = realApiDoc(lang);
+    const src = base(lang);
     if (lang !== target) return src;
     const out = edit(src);
-    if (out === src) throw new Error(`变异没落到 docs/${lang}/API.md 上——这一格控制是空的`);
+    if (out === src) throw new Error(`变异没落到 docs/${lang}/${doc}.md 上——这一格控制是空的`);
     return out;
   };
 }
@@ -699,10 +713,13 @@ const idents = (s: string) => codeSpans(s).filter((c) => IDENTIFIER.test(c));
  * 文档基名全集。**它不是手写清单，是从磁盘派生再钉住**：加了新文档不进表 = 红，
  * 表里有磁盘上没有的 = 红。
  *
- * ⚠️ 本任务落地时这张表是五项（不含 `ADMIN`）——`ADMIN.md` 由后续任务创建，
- * 那时把 `"ADMIN"` 加进来，**R1 的第一条断言会强制那一步**（不加就红）。
+ * ⚠️ Task 9 落地时这张表是五项（不含 `ADMIN`），它当时留下的原话是「`ADMIN.md` 由后续
+ * 任务创建，那时把 `"ADMIN"` 加进来，**R1 的第一条断言会强制那一步**（不加就红）」。
+ * P3e Task 26 落地五份 `ADMIN.md` 时先复现了那条测法：**只把 `"ADMIN"` 加进本表、
+ * 一份文件都不写** ⇒ R1 当场红并逐字点名
+ * 「磁盘 [...] 表 [...ADMIN...]」，`DOCS` 表这一条不是靠人记得回来加。
  */
-const DOCS = ["API", "DEPLOY", "README", "REGISTRAR", "USAGE"] as const;
+const DOCS = ["ADMIN", "API", "DEPLOY", "README", "REGISTRAR", "USAGE"] as const;
 
 const RULES: ReadonlyArray<readonly [name: string, fingerprint: (s: string) => unknown]> = [
   ["R2 heading 层级序列", headings],
@@ -1028,5 +1045,373 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
       "夹具里的伪公式被 IDENTIFIER 认成了标识符，这条控制证明不了「伪公式不进判据」",
     ).toEqual([]);
     expect(scanFixture(() => {}), "结构相同、只有译文不同的五份文档不该有任何一条判据变红").toEqual([]);
+  });
+});
+
+/**
+ * ── 五份 ADMIN.md 的措辞与数字守卫（P3e Task 26）─────────────────────────────
+ *
+ * R1–R6 只证明五份的**结构骨架**一样，句子里说了什么它们一无所知（那段边界写在
+ * R1–R6 上方，别读成别的意思）。这一组管的是 ADMIN.md 特有的三件事。
+ *
+ * ── ① 软化词表 ──────────────────────────────────────────────────────────────
+ * 面板文档最容易犯的错，是把一件**本仓从没量过**的事写成「足够 / 安全」。这不是洁癖：
+ * `admin-ui/js/pure/playground.mjs` 自己登记着「5 分钟 / 60 次对真实的视频生成可能
+ * 偏短……本仓从来没有量过」，`admin-ui/js/pure/usage.mjs` 的 `RANGES` 上方登记着
+ * 「30 天这一档在 Cloudflare Worker 上是否总能完成，真机未验」。⇒ 五份 ADMIN.md 里
+ * 一个软化词都不许有；能写的只有上限本身。词表形态与 `scripts/check-i18n.mjs` 的
+ * `BANNED` 对齐。
+ * **反向控制用的串一律取仓里真实存在的**：这八个词在 `docs/` 下**除 ADMIN.md 之外**
+ * 的文档里各有出处（下面第一格逐词核对），所以词表不是一堆永远匹配不上的死串。
+ *
+ * ── ② 数字必须从代码常量派生 ────────────────────────────────────────────────
+ * ADMIN.md 里写下的每一个运行期数字都在下面那张表上，**期望值来自真源常量**，
+ * **单位词是每语言各一个的手写锚**：常量改了文档必须跟着改，那正是这张表的价值；
+ * 而单位词让它在一份长文档里不会被随便一个 24 或 30 蒙混过去。
+ * ⚠️ **不许退化成 `toContain(String(n))`**：那展开就是「文档里有没有出现过这个数字」，
+ * 一份写着 `24h` / `12 小时` / `30d` 的文档随便哪一句都能满足它，**永远不会红**。
+ * ⚠️⚠️ **正则前面那个 `(?<!\d)` 不是装饰，是落地时实测补的**：没有它时
+ * `2\s?小时` 会在「12 小时」里匹配上（ja 的「2\s?時間」在「12 時間」里同理），
+ * 于是下面「交叉反证」那一格会**静静放行** —— 实测记在本任务报告的变异清单里。
+ *
+ * ── ③ 那句「`404` 而不是 `401`」的两个状态码 ────────────────────────────────
+ * ⚠️ **这一组的期望值来自其余四份文档，不来自代码**，与上面 ② 不是一条路：本仓今天
+ * 没有任何一个导出的常量装着这两个状态码（没配 `ADMIN_TOKEN` 时整棵树不注册，那个
+ * `404` 是 Hono 的默认响应；`401` 由 `src/http/admin/auth.ts` 那条路直接构造）。
+ * ⇒ 它只挡「某一份抄错一位 / 漏写」，**挡不住五份被同一个错误同步污染**——边界与本
+ * 文件 `NUMBERS` 那张表上方那一段逐字相同，请连同那一段一起读。
+ *
+ * ── 它做不到什么（明写）────────────────────────────────────────────────────
+ * 三组加起来也只证明「这些串在那一份里出现过 / 没出现过」。**某一份整段翻译反了、
+ * 五份一起把同一件事说错、或者哪一句该链出去的地方抄了第二份副本，它全都看不见。**
+ * 译文准确性今天仍然只能靠评审。
+ */
+describe("五份 ADMIN.md 的措辞与数字守卫", () => {
+  const ADMIN = "ADMIN";
+  const realAdminDoc: ApiDocReader = realDoc(ADMIN);
+
+  /** 正则元字符转义。单位词今天都不含元字符，但锚是给后来人加的。 */
+  const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  // ── ① 软化词表 ────────────────────────────────────────────────────────────
+
+  const SOFTENERS = ["足够", "够用", "安全", "enough", "safe", "十分", "충분", "問題な"] as const;
+
+  /** 一次扫描 × 五份 ADMIN.md。返回失败报文数组。真扫描与探针**共用这一份**。 */
+  function softenerFailures(read: ApiDocReader): string[] {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const lower = read(lang).toLowerCase();
+      for (const w of SOFTENERS) {
+        if (lower.includes(w.toLowerCase())) {
+          out.push(
+            `${lang}/ADMIN.md 把一件本仓从没量过的事说成了「${w}」`
+            + "——能写下来的只有上限本身，以及「本仓没量过」这句话",
+          );
+        }
+      }
+    }
+    return out;
+  }
+
+  it("反向控制用的词必须是仓里真实存在的：八个软化词在 ADMIN.md 之外的文档里各有出处", () => {
+    expect(SOFTENERS.length, "词表空了——下面整组会一格都不跑").toBeGreaterThan(0);
+    // 射程是 `docs/` 下**除 ADMIN.md 之外**的全部 markdown（含 `docs/design/` 的历史
+    // 计划文档）。⚠️ 只扫五语言那五份是不够的：落地时实测「足够」在那五份里一次都
+    // 没有，只在 `docs/design/` 里出现——照那个窄射程写，这一格会把一个**真实存在
+    // 的**词判成「仓里不存在」，反而把词表往窄里改，正好和它要守的事情相反。
+    const elsewhere = readdirSync(join(".", "docs"), { recursive: true, encoding: "utf8" })
+      .filter((p) => p.endsWith(".md") && !p.endsWith("ADMIN.md"))
+      .map((p) => readFileSync(join(".", "docs", p), "utf8"))
+      .join("\n")
+      .toLowerCase();
+    expect(elsewhere.length, "docs/ 下一份非 ADMIN.md 的文档都没读到——这一格测的是空气").toBeGreaterThan(0);
+    const nowhere = SOFTENERS.filter((w) => !elsewhere.includes(w.toLowerCase()));
+    expect(nowhere, "这些词在真文档里一次都没出现过——拿它们当词表是在挡一个不存在的世界").toEqual([]);
+  });
+
+  it("五份 ADMIN.md 里一个软化词都没有", () => {
+    const failures = softenerFailures(realAdminDoc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  /**
+   * 与 API.md 那两组同一条闸、同一个理由（那里逐字写着**为什么**要有它）：真文档今天
+   * 本身就不过判据时，探针格的报文只会是一句「报文：」，把人往错的方向指。
+   * ⚠️ **这道闸不是照抄来的，是实测补的**：本任务做 M4（往 zh-CN 那份里塞一句
+   * 「60 次足够」）时，**红的是两格**——真扫描那一格是真因，下面这格探针跟着红，
+   * 而它当时的报文里只有两行重复的失败，一个字都没说「真因在哪一格」。
+   */
+  function probeSoftenerBase(): void {
+    const base = softenerFailures(realAdminDoc);
+    if (base.length > 0) {
+      throw new Error(
+        "本格是探针，它的基取自真文档，而真文档今天本身就不过判据 —— "
+        + "别从这一格的报文里找原因，真因在「五份 ADMIN.md 里一个软化词都没有」那一格：\n"
+        + base.join("\n"),
+      );
+    }
+  }
+
+  it("探针自检这道闸本身有牙：真文档不过判据时，探针格报的是「先看真扫描那一格」", () => {
+    // 反向控制：真文档原样跑时它一声不吭（这一格若红，说明真文档本身坏了）。
+    expect(() => probeSoftenerBase()).not.toThrow();
+    // 有牙：把词表里第一个词塞进任意一份，这道闸必须炸，而且报文点名真因那一格。
+    const injected = softenerFailures(readerWith("ko", (s) => `${s}\n${SOFTENERS[0]}\n`, ADMIN));
+    expect(injected, "变异落地了却一格都没红——这道闸的自检是空的").toHaveLength(1);
+  });
+
+  it("该红时红：zh-CN 那份写了「60 次足够」（其余四份不动）", () => {
+    probeSoftenerBase();
+    const failures = softenerFailures(readerWith("zh-CN", (s) => `${s}\n轮询上限 60 次足够。\n`, ADMIN));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["zh-CN/ADMIN.md", "足够"]) {
+      expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
+  });
+
+  it("该红时红：en 那份写了 Safe —— 判据大小写不敏感，首字母大写照样算", () => {
+    probeSoftenerBase();
+    const failures = softenerFailures(readerWith("en", (s) => `${s}\nThose 60 attempts are Safe.\n`, ADMIN));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("en/ADMIN.md");
+    expect(failures[0] ?? "").toContain("safe");
+  });
+
+  // ── ② 数字从代码常量派生 ──────────────────────────────────────────────────
+
+  interface NumRule {
+    readonly id: string;
+    readonly n: number;
+    readonly why: string;
+    /** 每语言各一个的手写单位锚。**空串当场判死**，见 `numberFailures`。 */
+    readonly unit: Record<Lang, string>;
+  }
+
+  const HOURS: Record<Lang, string> = { "zh-CN": "小时", "zh-TW": "小時", en: "hours", ja: "時間", ko: "시간" };
+
+  const ADMIN_NUMBERS: readonly NumRule[] = [
+    {
+      id: "admin-token-min-length",
+      n: ADMIN_TOKEN_MIN_LENGTH,
+      why: "ADMIN_TOKEN 的长度下限",
+      unit: { "zh-CN": "位", "zh-TW": "位", en: "characters", ja: "文字", ko: "자" },
+    },
+    {
+      id: "session-window-hours",
+      n: SESSION_MAX_AGE_MS / 3_600_000,
+      why: "面板口令在 localStorage 里的可用窗口",
+      unit: HOURS,
+    },
+    {
+      id: "import-cap",
+      n: MAX_IMPORT_KEYS,
+      why: "一次导入的把数上限（超了就 400，不静默截断）",
+      unit: { "zh-CN": "把 key", "zh-TW": "把 key", en: "keys", ja: "件の key", ko: "개의 key" },
+    },
+    {
+      id: "event-windows",
+      n: EVENT_WINDOW_RETAIN,
+      why: "事件保留的窗口数",
+      unit: { "zh-CN": "个窗口", "zh-TW": "個視窗", en: "windows", ja: "個のウィンドウ", ko: "개의 창" },
+    },
+    {
+      id: "usage-retain-days",
+      n: USAGE_DAY_RETAIN,
+      why: "用量第二层的保留天数",
+      unit: { "zh-CN": "天", "zh-TW": "天", en: "days", ja: "日", ko: "일" },
+    },
+    {
+      id: "usage-slots",
+      n: USAGE_SLOTS,
+      why: "同一天里的用量分片槽位数（超过这么多副本同写就是后写覆盖）",
+      unit: { "zh-CN": "个槽位", "zh-TW": "個槽位", en: "slots", ja: "つのスロット", ko: "개의 슬롯" },
+    },
+  ];
+
+  const ruleById = (id: string): NumRule => {
+    const r = ADMIN_NUMBERS.find((x) => x.id === id);
+    if (!r) throw new Error(`本表里没有 ${id} 这条规则——这一格测的是空气`);
+    return r;
+  };
+
+  /** 一条规则 × 五份 ADMIN.md。返回失败报文数组。真扫描与探针**共用这一份**。 */
+  function numberFailures(rule: NumRule, read: ApiDocReader): string[] {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const unit = rule.unit[lang];
+      if (unit.trim() === "") {
+        out.push(`${rule.id} 在 ${lang} 下的单位词是空串——锚会退化成裸数字，这条断言从此空转`);
+        continue;
+      }
+      // `(?<!\d)`：见本组上方那段 ⚠️⚠️——没有它时 `2\s?小时` 会在「12 小时」里匹配上。
+      const re = new RegExp(`(?<!\\d)${rule.n}\\s?${escapeRe(unit)}`);
+      if (!re.test(read(lang))) {
+        out.push(
+          `${lang}/ADMIN.md 里找不到「${rule.n}${unit}」（${rule.why}）`
+          + "——要么常量改了而这一份文档没跟着改，要么这一份漏写了这个数",
+        );
+      }
+    }
+    return out;
+  }
+
+  it("非空锚：数字表不是空表，且每条规则的单位词语言集恰好等于本文件的 LANGS", () => {
+    expect(ADMIN_NUMBERS.length, "表空了——下面整组会一格都不跑").toBeGreaterThan(0);
+    const want = [...LANGS].sort();
+    for (const rule of ADMIN_NUMBERS) {
+      expect(Object.keys(rule.unit).sort(), `${rule.id} 的单位词语言集与本文件的 LANGS 对不上`).toEqual(want);
+      expect(Number.isFinite(rule.n) && rule.n > 0, `${rule.id} 的数字不是一个正整数`).toBe(true);
+    }
+  });
+
+  it("事件那条规则的单位是「窗口」而不是「小时」，因为一个窗口恰好一小时 —— 这句话在文档里写着", () => {
+    // 五份 ADMIN.md 都写着「事件按小时分窗口存放，一共留 24 个窗口 —— 也就是整整一天」。
+    // 那句话只有在一个窗口 = 1 小时的时候才是真的，所以把这个前提钉在这里：
+    // `EVENT_WINDOW_MS` 一旦不再是一小时，这一格当场红，逼人回去改那五句话。
+    expect(EVENT_WINDOW_MS, "一个事件窗口不再是一小时了——五份 ADMIN.md 里「按小时分窗口……整整一天」那句话已经不成立")
+      .toBe(3_600_000);
+  });
+
+  it.each([...ADMIN_NUMBERS])("$id：五份 ADMIN.md 都写着「$n + 本语言的单位」", (rule) => {
+    const failures = numberFailures(rule, realAdminDoc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  /** 与上面两组同一条闸、同一个理由：真文档本身不过判据时，别让人从探针的报文里找原因。 */
+  function probeNumberBase(rule: NumRule, read: ApiDocReader = realAdminDoc): void {
+    const base = numberFailures(rule, read);
+    if (base.length > 0) {
+      throw new Error(
+        "本格是探针，它的基取自真文档，而真文档今天本身就不过判据 —— "
+        + `别从这一格的报文里找原因，真因在「${rule.id}：五份 ADMIN.md 都写着…」那一格：\n`
+        + base.join("\n"),
+      );
+    }
+  }
+
+  it("探针自检这道闸本身有牙：真文档不过判据时，探针格报的是「先看真扫描那一格」", () => {
+    const rule = ruleById("session-window-hours");
+    const broken: ApiDocReader = (lang) => realAdminDoc(lang).split(String(rule.n)).join("XX");
+    expect(broken("ja").includes(String(rule.n)), "变异没落地 —— 这一格控制是空的").toBe(false);
+    expect(() => probeNumberBase(rule, broken)).toThrow("本格是探针");
+    expect(() => probeNumberBase(rule, realAdminDoc)).not.toThrow();
+  });
+
+  it.each([...ADMIN_NUMBERS])("$id：常量漂一位（$n → 下一个数）时五份一起红 —— 证明期望值不是手写的", (rule) => {
+    probeNumberBase(rule);
+    const failures = numberFailures({ ...rule, n: rule.n + 1 }, realAdminDoc);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+  });
+
+  /**
+   * **交叉反证**：把某条规则的数字换成本表里**另一条**规则的数字，五份必须全部红。
+   * 这是「同族地雷」那一条的可执行答案：`24` 同时是 `ADMIN_TOKEN` 的长度下限与事件
+   * 窗口数，`12` / `30` / `2` 在同一份文档里也各有别的出处 —— 单位词把它们分开这件事
+   * 必须被证明，不能只写在注释里。数字相同的两条规则跳过（换了等于没换）。
+   */
+  it("交叉反证：把一条规则的数字换成本表里另一条的数字，五份必须全部红", () => {
+    const pairs: string[] = [];
+    for (const rule of ADMIN_NUMBERS) {
+      probeNumberBase(rule);
+      for (const other of ADMIN_NUMBERS) {
+        if (other.n === rule.n) continue;
+        const failures = numberFailures({ ...rule, n: other.n }, realAdminDoc);
+        if (failures.length !== LANGS.length) {
+          pairs.push(
+            `${rule.id} 的数字换成 ${other.n}（${other.id} 的值）之后，只红了 ${failures.length}/${LANGS.length} 份`
+            + " —— 说明某种语言里「另一条规则的数字 + 本条的单位词」也能凑到一次匹配，单位词没把它们分开",
+          );
+        }
+      }
+      // 反向控制：真数字原样传进去时一格都不许红（这一格若红，说明真文档本身坏了）。
+      expect(numberFailures(rule, realAdminDoc), `${rule.id} 用真数字反而红了`).toEqual([]);
+    }
+    expect(pairs, pairs.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：某一份把阿拉伯数字写成了汉字（12 小时 → 十二小时），只点名那一份", () => {
+    const rule = ruleById("session-window-hours");
+    probeNumberBase(rule);
+    const failures = numberFailures(
+      rule,
+      readerWith("zh-CN", (s) => s.split(`${rule.n} 小时`).join("十二小时"), ADMIN),
+    );
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["zh-CN/ADMIN.md", String(rule.n), rule.why]) {
+      expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
+  });
+
+  it("该红时红：数字留着、单位词被换掉（12 小时 → 12 台机器）—— 证明单位词是承重的那一半", () => {
+    const rule = ruleById("session-window-hours");
+    probeNumberBase(rule);
+    const failures = numberFailures(
+      rule,
+      readerWith("zh-CN", (s) => s.split(`${rule.n} 小时`).join(`${rule.n} 台机器`), ADMIN),
+    );
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("zh-CN/ADMIN.md");
+  });
+
+  it("该红时红：单位锚是空串时当场判死——空串会让锚退化成裸数字，那条断言会静静空转", () => {
+    const rule = ruleById("usage-slots");
+    probeNumberBase(rule);
+    const blanked: NumRule = { ...rule, unit: { ...rule.unit, ja: "  " } };
+    const failures = numberFailures(blanked, realAdminDoc);
+    expect(failures.join("\n")).toContain("空串");
+    // 反向控制：其余四种语言的单位词没动，它们一条都不许跟着红。
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+  });
+
+  // ── ③ 那句「404 而不是 401」的两个状态码 ─────────────────────────────────
+
+  const STATUS_TOKENS = ["`404`", "`401`"] as const;
+
+  /** 一个状态码 × 五份 ADMIN.md 的出现次数。真扫描与探针**共用这一份**。 */
+  function statusFailure(token: string, read: ApiDocReader): string | null {
+    const counts = Object.fromEntries(LANGS.map((l) => [l, read(l).split(token).length - 1])) as Record<Lang, number>;
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    if (total === 0) return `「${token}」在五份 ADMIN.md 里一次都没出现——那句「404 而不是 401」被删掉了，或者写法变了`;
+    const reference = counts[LANGS[0]];
+    const bad = LANGS.filter((l) => counts[l] !== reference);
+    return bad.length === 0
+      ? null
+      : `「${token}」在五份 ADMIN.md 里的出现次数不一致（${JSON.stringify(counts)}）`
+        + "——可能有语言漏翻、漏写，或翻译时把状态码抄错了一位";
+  }
+
+  for (const token of STATUS_TOKENS) {
+    it(`五份 ADMIN.md 里「${token}」的出现次数彼此一致`, () => {
+      const failure = statusFailure(token, realAdminDoc);
+      expect(failure, failure ?? "").toBeNull();
+    });
+  }
+
+  /** 同上那道闸，同一个理由：真文档本身不过判据时，别让人从探针的报文里找原因。 */
+  function probeStatusBase(token: string): void {
+    const base = statusFailure(token, realAdminDoc);
+    if (base !== null) {
+      throw new Error(
+        "本格是探针，它的基取自真文档，而真文档今天本身就不过判据 —— "
+        + `别从这一格的报文里找原因，真因在「五份 ADMIN.md 里「${token}」的出现次数彼此一致」那一格：\n`
+        + base,
+      );
+    }
+  }
+
+  it("该红时红：ko 那份把 404 抄成了 403", () => {
+    probeStatusBase("`404`");
+    const failure = statusFailure("`404`", readerWith("ko", (s) => s.replace("`404`", "`403`"), ADMIN));
+    expect(failure, "变异落地了却没红——这一格控制是空的").not.toBeNull();
+    expect(failure ?? "").toContain("ko");
+  });
+
+  it("该红时红：五份一起把那句话删掉时报的是「一次都没出现」，不是装作对等", () => {
+    probeStatusBase("`401`");
+    const gone: ApiDocReader = (lang) => realAdminDoc(lang).split("`401`").join("(删了)");
+    expect(gone("en").includes("`401`"), "变异没落地 —— 这一格控制是空的").toBe(false);
+    const failure = statusFailure("`401`", gone);
+    expect(failure ?? "").toContain("一次都没出现");
   });
 });
