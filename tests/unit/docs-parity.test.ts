@@ -1052,17 +1052,33 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
  * ── 五份 ADMIN.md 的措辞与数字守卫（P3e Task 26）─────────────────────────────
  *
  * R1–R6 只证明五份的**结构骨架**一样，句子里说了什么它们一无所知（那段边界写在
- * R1–R6 上方，别读成别的意思）。这一组管的是 ADMIN.md 特有的三件事。
+ * R1–R6 上方，别读成别的意思）。这一组管的是 ADMIN.md 特有的五件事。
  *
- * ── ① 软化词表 ──────────────────────────────────────────────────────────────
+ * ── ① 软化词表：**概念 × 语言的矩阵**，不是一张平表 ──────────────────────────
  * 面板文档最容易犯的错，是把一件**本仓从没量过**的事写成「足够 / 安全」。这不是洁癖：
  * `admin-ui/js/pure/playground.mjs` 自己登记着「5 分钟 / 60 次对真实的视频生成可能
  * 偏短……本仓从来没有量过」，`admin-ui/js/pure/usage.mjs` 的 `RANGES` 上方登记着
  * 「30 天这一档在 Cloudflare Worker 上是否总能完成，真机未验」。⇒ 五份 ADMIN.md 里
- * 一个软化词都不许有；能写的只有上限本身。词表形态与 `scripts/check-i18n.mjs` 的
- * `BANNED` 对齐。
- * **反向控制用的串一律取仓里真实存在的**：这八个词在 `docs/` 下**除 ADMIN.md 之外**
- * 的文档里各有出处（下面第一格逐词核对），所以词表不是一堆永远匹配不上的死串。
+ * 一个软化词都不许有；能写的只有上限本身。
+ *
+ * ⚠️⚠️ **这张表的形状是复评回填时改的，改的理由是它真的漏了两种语言**：第一版照抄
+ * 需求书，是一张八个词的**平表**（简体「足够/够用」+「安全/enough/safe/十分/충분/
+ * 問題な」）。复评把「這個上限足夠了，也夠用。」塞进 `docs/zh-TW/ADMIN.md`、把
+ * 「이 상한은 안전합니다.」塞进 `docs/ko/ADMIN.md`，**117 格全绿放行**——繁体的
+ * 「足夠/夠用」、韩文的「안전」一个都不在表里。这正是本文件开头登记的 P3a 教训
+ *（简体 grep 漏繁体「保證」）在同一个文件里复发。**需求书也会错**，实测优先。
+ * 修法不是往平表里补两个词（下一个漏的还是没人知道），而是**把表改成「一条软化概念
+ * × 五种语言」的矩阵**，并加一格强制「每条概念五种语言都得有说法」——这样「某种语言
+ * 在某条概念下是瞎的」从可能变成当场红。
+ *
+ * ⚠️ **反向控制也跟着改了口径**：原来那格要求**每一个词**都能在 `docs/` 下（含
+ * `docs/design/`）找到出处。它有两个毛病：① `docs/design/` 里那份需求书**逐字抄着
+ * 这张词表**，于是「这个词是真串」这件事可以被需求书自己满足，等于挡空气；
+ * ② 更要命的是它**把表往窄里推**——「夠用」「no problem」在真文档里确实一次都没出现，
+ * 照那条控制就只能把它们删掉，而「表太窄」正是这一轮出事的根因。改成
+ * **按语言**：每种语言的词里至少有一个真的出现在**那种语言自己的**文档里
+ *（`docs/<lang>/` 下、ADMIN.md 之外、不含 `docs/design/`）。这条控制在「zh-TW 那一列
+ * 只填了简体词」时会当场红，正是这一轮漏掉的那种形态。
  *
  * ── ② 数字必须从代码常量派生 ────────────────────────────────────────────────
  * ADMIN.md 里写下的每一个运行期数字都在下面那张表上，**期望值来自真源常量**，
@@ -1081,10 +1097,36 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
  * ⇒ 它只挡「某一份抄错一位 / 漏写」，**挡不住五份被同一个错误同步污染**——边界与本
  * 文件 `NUMBERS` 那张表上方那一段逐字相同，请连同那一段一起读。
  *
+ * ── ④ 跨文档的**小节名引用**必须在被引的那份文档里逐字找得到 ────────────────
+ * 这一组是复评回填时新加的，因为它挡的是一整类 R1–R6 一个字都看不见的错：
+ * 「…见 [REGISTRAR.md](REGISTRAR.md) 的「X」一节」这种句子**五份各写各的**，
+ * 引号里那个名字漂了，结构判据全绿。复评当场点出三处（ja 引「管理パネルの「今すぐ
+ * 補充」」而真标题是「管理画面の…」、zh-TW 引「管理口令洩漏」而真文是「外洩」、
+ * en 引 "Tend now in the admin panel" 而真标题带着自己的引号），**这一组落地时又
+ * 多抓出两处复评也没看见的**（en 引 "Leaked admin token" 而 DEPLOY.md 写的是
+ * "Leaking the admin token"、ko 引 "관리 패널의 「지금 보충」" 而真标题用的是直引号）。
+ *
+ * 判据怎么认出「这是一条小节名引用」：**引号紧跟着本语言的「节 / 段」标记词**
+ *（zh-CN 一节/那一段、zh-TW 一節/那一段、en section/part、ja の節/の段、ko 절/문단）。
+ * 标记词是每语言各一个的手写锚，**它会不会悄悄失效由跨语言条数对等那一格兜底**：
+ * 五份的结构骨架由 R2 钉死，条数就该一样，某种语言的锚认不出来时它的条数会掉下去。
+ * ⚠️ **「条数一致」单独一条挡不住「五种一起归零」**（锚全坏时五份都是 0，照样一致），
+ * 所以还有一格「每种语言至少认出一条」，两格缺一不可。
+ *
+ * ── ⑤ 两张表的行数从**屏幕的真源**派生 ─────────────────────────────────────
+ * 复评发现文档写「四种警告条」，而屏幕上是 **5** 条独立的 `<p>`、可以同时亮
+ *（`admin-ui/js/sec-events.js` 的 `warnBanner.appendChild(...)`）。文字里的那个数量词
+ * 已经删掉（**能删数字就删数字**），但表本身的行数是有真源的：警告条那张表的行数
+ * 必须等于横幅里挂上去的 `<p>` 条数，板块速查那张表的行数必须等于 `admin-ui/index.html`
+ * 里 `nav-item` 的个数。⇒ 屏幕上多一条黄条 / 多一个板块而五份文档没跟着改，当场红。
+ * ⚠️ **判据靠「行数恰好等于那个数的表**有且只有一张**」来认表**，认不出（0 张或 2 张）
+ * 时**报错而不是放行**——将来 Task 26A 往同一份文档里加表，撞上这两个数量时它会吵。
+ *
  * ── 它做不到什么（明写）────────────────────────────────────────────────────
- * 三组加起来也只证明「这些串在那一份里出现过 / 没出现过」。**某一份整段翻译反了、
- * 五份一起把同一件事说错、或者哪一句该链出去的地方抄了第二份副本，它全都看不见。**
- * 译文准确性今天仍然只能靠评审。
+ * 五组加起来也只证明「这些串在那一份里出现过 / 没出现过」「这些数对得上」。
+ * **某一份整段翻译反了、五份一起把同一件事说错、或者哪一句该链出去的地方抄了第二份
+ * 副本，它全都看不见。** 尤其是 ④ 只核对「引号里的名字在被引文档里找得到」，
+ * **指错小节（名字对得上但说的不是那件事）它认不出来**。译文准确性仍然只能靠评审。
  */
 describe("五份 ADMIN.md 的措辞与数字守卫", () => {
   const ADMIN = "ADMIN";
@@ -1095,17 +1137,76 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
 
   // ── ① 软化词表 ────────────────────────────────────────────────────────────
 
-  const SOFTENERS = ["足够", "够用", "安全", "enough", "safe", "十分", "충분", "問題な"] as const;
+  /** 一条**软化概念**在五种语言里各自的说法。同一条概念可以有多个同义词。 */
+  interface SoftenerConcept {
+    readonly id: string;
+    readonly words: Record<Lang, readonly string[]>;
+  }
 
-  /** 一次扫描 × 五份 ADMIN.md。返回失败报文数组。真扫描与探针**共用这一份**。 */
+  const SOFTENER_CONCEPTS: readonly SoftenerConcept[] = [
+    {
+      id: "enough",
+      words: {
+        "zh-CN": ["足够", "够用"],
+        // ⚠️ 繁体这两个是复评实测逃逸后补的：第一版平表里只有简体，
+        // 「這個上限足夠了，也夠用。」当时 117/117 全绿。
+        "zh-TW": ["足夠", "夠用"],
+        en: ["enough"],
+        ja: ["十分"],
+        ko: ["충분"],
+      },
+    },
+    {
+      id: "safe",
+      // ⚠️ ko 的「안전」同样是复评实测逃逸后补的：「이 상한은 안전합니다.」当时全绿。
+      words: { "zh-CN": ["安全"], "zh-TW": ["安全"], en: ["safe"], ja: ["安全"], ko: ["안전"] },
+    },
+    {
+      id: "no-problem",
+      words: {
+        "zh-CN": ["没问题"],
+        "zh-TW": ["沒問題"],
+        en: ["no problem"],
+        ja: ["問題な"],
+        ko: ["문제없"],
+      },
+    },
+  ];
+
+  /**
+   * 打平：小写词 → 它是「哪条概念的哪种语言说法」（同一个词可能被多条命中，
+   * 比如「安全」同时是 zh-CN / zh-TW / ja 的说法）。**去重是必须的**：不去重的话
+   * 一次命中会产出三条失败，下面那些 `toHaveLength(1)` 会变成在数词表里的重复数。
+   */
+  const SOFTENER_ORIGINS = ((): ReadonlyMap<string, readonly string[]> => {
+    const m = new Map<string, string[]>();
+    for (const c of SOFTENER_CONCEPTS) {
+      for (const lang of LANGS) {
+        for (const w of c.words[lang]) {
+          const key = w.toLowerCase();
+          m.set(key, [...(m.get(key) ?? []), `${c.id}/${lang}`]);
+        }
+      }
+    }
+    return m;
+  })();
+
+  const SOFTENER_WORDS: readonly string[] = [...SOFTENER_ORIGINS.keys()];
+
+  /**
+   * 一次扫描 × 五份 ADMIN.md。返回失败报文数组。真扫描与探针**共用这一份**。
+   * **射程是全部语言的全部词**（不是「这一份只查它自己语言的词」）：一份英文文档里
+   * 冒出一个「충분」同样是错的，按语言分开查会把这类漏掉。
+   */
   function softenerFailures(read: ApiDocReader): string[] {
     const out: string[] = [];
     for (const lang of LANGS) {
       const lower = read(lang).toLowerCase();
-      for (const w of SOFTENERS) {
-        if (lower.includes(w.toLowerCase())) {
+      for (const w of SOFTENER_WORDS) {
+        if (lower.includes(w)) {
           out.push(
             `${lang}/ADMIN.md 把一件本仓从没量过的事说成了「${w}」`
+            + `（软化概念 ${(SOFTENER_ORIGINS.get(w) ?? []).join("、")}）`
             + "——能写下来的只有上限本身，以及「本仓没量过」这句话",
           );
         }
@@ -1114,20 +1215,77 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     return out;
   }
 
-  it("反向控制用的词必须是仓里真实存在的：八个软化词在 ADMIN.md 之外的文档里各有出处", () => {
-    expect(SOFTENERS.length, "词表空了——下面整组会一格都不跑").toBeGreaterThan(0);
-    // 射程是 `docs/` 下**除 ADMIN.md 之外**的全部 markdown（含 `docs/design/` 的历史
-    // 计划文档）。⚠️ 只扫五语言那五份是不够的：落地时实测「足够」在那五份里一次都
-    // 没有，只在 `docs/design/` 里出现——照那个窄射程写，这一格会把一个**真实存在
-    // 的**词判成「仓里不存在」，反而把词表往窄里改，正好和它要守的事情相反。
-    const elsewhere = readdirSync(join(".", "docs"), { recursive: true, encoding: "utf8" })
-      .filter((p) => p.endsWith(".md") && !p.endsWith("ADMIN.md"))
-      .map((p) => readFileSync(join(".", "docs", p), "utf8"))
+  it("软化词表是「概念 × 语言」的矩阵：每条概念五种语言都得有说法，缺一种就是那种语言的盲区", () => {
+    expect(SOFTENER_CONCEPTS.length, "概念表空了——下面整组会一格都不跑").toBeGreaterThan(0);
+    const want = [...LANGS].sort();
+    const holes: string[] = [];
+    for (const c of SOFTENER_CONCEPTS) {
+      expect(Object.keys(c.words).sort(), `${c.id} 的语言集与本文件的 LANGS 对不上`).toEqual(want);
+      for (const lang of LANGS) {
+        if (c.words[lang].filter((w) => w.trim() !== "").length === 0) {
+          holes.push(`软化概念 ${c.id} 在 ${lang} 下一个说法都没有——那种语言在这条概念上是瞎的`);
+        }
+      }
+    }
+    expect(holes, holes.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：把某条概念的某种语言清空 —— 完备性那格必须当场点名概念与语言", () => {
+    const holed = SOFTENER_CONCEPTS.map((c) => (
+      c.id === "enough" ? { ...c, words: { ...c.words, "zh-TW": [] as readonly string[] } } : c
+    ));
+    const holes: string[] = [];
+    for (const c of holed) {
+      for (const lang of LANGS) {
+        if (c.words[lang].filter((w) => w.trim() !== "").length === 0) {
+          holes.push(`软化概念 ${c.id} 在 ${lang} 下一个说法都没有——那种语言在这条概念上是瞎的`);
+        }
+      }
+    }
+    expect(holes, "变异落地了却没红——完备性那一格是空的").toHaveLength(1);
+    for (const h of ["enough", "zh-TW"]) expect(holes[0] ?? "").toContain(h);
+  });
+
+  /** 每种语言在**它自己的**文档（`docs/<lang>/` 下、ADMIN.md 之外）里的全文。 */
+  function ownDocsOf(lang: Lang): string {
+    return readdirSync(join(".", "docs", lang), { encoding: "utf8" })
+      .filter((p) => p.endsWith(".md") && p !== "ADMIN.md")
+      .map((p) => readFileSync(join(".", "docs", lang, p), "utf8"))
       .join("\n")
       .toLowerCase();
-    expect(elsewhere.length, "docs/ 下一份非 ADMIN.md 的文档都没读到——这一格测的是空气").toBeGreaterThan(0);
-    const nowhere = SOFTENERS.filter((w) => !elsewhere.includes(w.toLowerCase()));
-    expect(nowhere, "这些词在真文档里一次都没出现过——拿它们当词表是在挡一个不存在的世界").toEqual([]);
+  }
+
+  /** 某种语言的词表里，真的能在那种语言自己的文档里找到出处的那些。 */
+  function attestedWords(words: readonly string[], lang: Lang): string[] {
+    const own = ownDocsOf(lang);
+    return words.filter((w) => own.includes(w.toLowerCase()));
+  }
+
+  const wordsOf = (lang: Lang): readonly string[] => SOFTENER_CONCEPTS.flatMap((c) => c.words[lang]);
+
+  it("反向控制：每种语言的软化词里至少有一个真的出现在**那种语言自己的**文档里", () => {
+    // ⚠️ 口径见本组上方那段：**不是**「每一个词都要有出处」（那条会把表往窄里推，
+    // 而表太窄正是这一轮逃逸的根因），而是「这一列不是一堆那种语言里根本没人这么写
+    // 的死串」。`docs/design/` 刻意不在射程里——那份需求书逐字抄着这张词表，
+    // 让它来作证等于自己给自己签字。
+    const blind: string[] = [];
+    for (const lang of LANGS) {
+      expect(ownDocsOf(lang).length, `docs/${lang}/ 下一份非 ADMIN.md 的文档都没读到——这一格测的是空气`)
+        .toBeGreaterThan(0);
+      const hit = attestedWords(wordsOf(lang), lang);
+      if (hit.length === 0) blind.push(`${lang} 这一列的词在 docs/${lang}/ 里一次都没出现过：${wordsOf(lang).join("、")}`);
+    }
+    expect(blind, blind.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：zh-TW 那一列只填简体词时，按语言的反向控制必须红 —— 这正是本轮逃逸的形态", () => {
+    // 这是第一版平表在 zh-TW 上的**实际**形态：表里只有简体「足够/够用」，
+    // 而 `docs/zh-TW/` 里当然一次都不会出现它们。
+    const simplifiedOnly = attestedWords(["足够", "够用", "没问题"], "zh-TW");
+    expect(simplifiedOnly, "简体词居然在 docs/zh-TW/ 里找得到——这一格控制是空的").toEqual([]);
+    // 反向控制：今天真表里的繁体词是找得到的（否则上面那格红的是别的原因）。
+    expect(attestedWords(wordsOf("zh-TW"), "zh-TW").length, "繁体词一个都找不到——真表本身坏了")
+      .toBeGreaterThan(0);
   });
 
   it("五份 ADMIN.md 里一个软化词都没有", () => {
@@ -1157,7 +1315,7 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     // 反向控制：真文档原样跑时它一声不吭（这一格若红，说明真文档本身坏了）。
     expect(() => probeSoftenerBase()).not.toThrow();
     // 有牙：把词表里第一个词塞进任意一份，这道闸必须炸，而且报文点名真因那一格。
-    const injected = softenerFailures(readerWith("ko", (s) => `${s}\n${SOFTENERS[0]}\n`, ADMIN));
+    const injected = softenerFailures(readerWith("ko", (s) => `${s}\n${SOFTENER_WORDS[0]}\n`, ADMIN));
     expect(injected, "变异落地了却一格都没红——这道闸的自检是空的").toHaveLength(1);
   });
 
@@ -1176,6 +1334,31 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
     expect(failures[0] ?? "").toContain("en/ADMIN.md");
     expect(failures[0] ?? "").toContain("safe");
+  });
+
+  /**
+   * ⚠️⚠️ **下面两格是复评实测出来的逃逸，一字不改地钉在这里。** 复评往真仓里塞的就是
+   * 这两句，当时 `docs-parity` **117/117 全绿**。它们不是「同族的又一个例子」，
+   * 是这一组第一版**真的放行过**的两句话——删掉任何一格，那个洞就又没人看着了。
+   */
+  it("该红时红（复评实测的逃逸①）：zh-TW 那份写了「這個上限足夠了，也夠用。」", () => {
+    probeSoftenerBase();
+    const failures = softenerFailures(readerWith("zh-TW", (s) => `${s}\n這個上限足夠了，也夠用。\n`, ADMIN));
+    // 一句话踩中同一条概念的两个繁体说法，所以是两条失败，不是一条。
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(2);
+    expect(failures.join("\n")).toContain("zh-TW/ADMIN.md");
+    for (const w of ["足夠", "夠用"]) {
+      expect(failures.join("\n"), "红了但报文没点名这个繁体词——报文是唯一会被看见的护栏").toContain(w);
+    }
+  });
+
+  it("该红时红（复评实测的逃逸②）：ko 那份写了「이 상한은 안전합니다.」", () => {
+    probeSoftenerBase();
+    const failures = softenerFailures(readerWith("ko", (s) => `${s}\n이 상한은 안전합니다.\n`, ADMIN));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["ko/ADMIN.md", "안전", "safe/ko"]) {
+      expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
   });
 
   // ── ② 数字从代码常量派生 ──────────────────────────────────────────────────
@@ -1247,8 +1430,13 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
       // `(?<!\d)`：见本组上方那段 ⚠️⚠️——没有它时 `2\s?小时` 会在「12 小时」里匹配上。
       const re = new RegExp(`(?<!\\d)${rule.n}\\s?${escapeRe(unit)}`);
       if (!re.test(read(lang))) {
+        // ⚠️ 报文要写成**判据真正接受的形状**，不是把数字和单位一拼了事：正则里那个
+        // `\s?` 允许中间有一个空格，而五份文档写的恰恰是「200 keys」这种带空格的写法。
+        // 复评抓到的原报文是「找不到「201keys」」，照它去 grep 一个字都搜不到——
+        // **报文可以亲手把人引进坑**，这是本仓登记过的老教训。
         out.push(
-          `${lang}/ADMIN.md 里找不到「${rule.n}${unit}」（${rule.why}）`
+          `${lang}/ADMIN.md 里找不到「${rule.n}${unit}」或「${rule.n} ${unit}」`
+          + `（中间可以有一个空格；${rule.why}）`
           + "——要么常量改了而这一份文档没跟着改，要么这一份漏写了这个数",
         );
       }
@@ -1413,5 +1601,305 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     expect(gone("en").includes("`401`"), "变异没落地 —— 这一格控制是空的").toBe(false);
     const failure = statusFailure("`401`", gone);
     expect(failure ?? "").toContain("一次都没出现");
+  });
+
+  // ── ④ 跨文档的小节名引用 ─────────────────────────────────────────────────
+
+  /** 五份 ADMIN.md 之外的**同语言兄弟文档**。射程之外的链接（外网、锚点）不参与。 */
+  const SIBLING_DOCS = ["API.md", "DEPLOY.md", "README.md", "REGISTRAR.md", "USAGE.md"] as const;
+
+  /**
+   * 「这是一条小节名引用」的每语言手写锚：**引号闭合之后紧跟着的那个「节 / 段」标记词**。
+   * ⚠️ 锚认不出来时不会有任何一条失败冒出来（它只是少认了一条），所以下面**必须**配
+   * 「五种语言认出的条数彼此一致」+「每种至少认出一条」两格，缺一不可。
+   */
+  const SECTION_MARKER: Record<Lang, string> = {
+    "zh-CN": "(?:一节|那一段)",
+    "zh-TW": "(?:一節|那一段)",
+    en: "(?:section|part)\\b",
+    ja: "の(?:節|段)",
+    ko: "(?:절|문단)",
+  };
+
+  /** 直角引号（允许一层嵌套，如「面板的「立即补池」」）或直引号。 */
+  const QUOTE_RE = "(?:「(?:[^「」]|「[^「」]*」)*」|\"[^\"\\n]+\")";
+
+  /** 取文口径：这一组要同时读 ADMIN.md 与被引的那份兄弟文档，所以比 `ApiDocReader` 宽一格。 */
+  type SiblingReader = (lang: Lang, doc: string) => string;
+  const realSiblings: SiblingReader = (lang, doc) => readFileSync(join(".", "docs", lang, doc), "utf8");
+
+  /**
+   * 被引文档里能充当「小节 / 段落的名字」的那些行：**markdown 标题行**，或**以 `**`
+   * 起首的加粗领句**（本仓那几段「管理口令泄漏 = …」不是标题，是加粗领句，引用句写的是
+   * 「那一段」而不是「一节」）。
+   *
+   * ⚠️⚠️ **这个收窄是落地时被一条真变异逼出来的，不是设计时想到的。** 第一版判据写的是
+   * 「这个名字在被引文档的**全文**里逐字找得到」。实测：把 `docs/zh-CN/REGISTRAR.md:187`
+   * 的 `## 面板的「立即补池」` 改名成「马上补池」（也就是**真的把小节改名了**），
+   * `docs-parity` **135/135 全绿放行** —— 因为同一份文档的第 134 行还有一句散文
+   * 「⚠️ **但面板的「立即补池」是例外……**」，全文 grep 照样命中。**判据当时挡的是
+   * 「这几个字在那份文档里出现过」，而不是「那一节还叫这个名字」**，两者只在没有第二处
+   * 出处时碰巧重合。收窄到「名字所在的那一行本身得是个标题 / 加粗领句」之后同一条变异当场红。
+   */
+  function titleLines(src: string): string[] {
+    return src.split("\n").filter((l) => /^#{1,6}\s/.test(l) || /^\*\*/.test(l));
+  }
+
+  /**
+   * 把 markdown 切成「块」：列表项 / 段落 / 表格行各自成块。**块是判据的射程单位**——
+   * 引用句里那条 `](X.md)` 链接与引号常常分处两行（en 就是这样），按行切会漏；
+   * 按空行切又会把整张列表并成一块，于是隔壁条目里一个无关的引号会被拖进来
+   *（实测：zh-CN 的「几秒前读到的」正是这样被误判过）。
+   */
+  function mdBlocks(src: string): string[] {
+    const out: string[] = [];
+    let cur: string[] = [];
+    for (const line of src.split("\n")) {
+      const opensBlock = /^\s*[-*]\s/.test(line) || /^#{1,6}\s/.test(line) || line.trim() === "" || /^\s*\|/.test(line);
+      if (opensBlock) {
+        if (cur.length > 0) out.push(cur.join("\n"));
+        cur = [line];
+      } else {
+        cur.push(line);
+      }
+    }
+    if (cur.length > 0) out.push(cur.join("\n"));
+    return out;
+  }
+
+  interface XrefScan {
+    readonly counts: Record<Lang, number>;
+    readonly failures: readonly string[];
+  }
+
+  /** 一次扫描 × 五份 ADMIN.md。真扫描与探针**共用这一份**。 */
+  function xrefScan(read: SiblingReader): XrefScan {
+    const counts = Object.fromEntries(LANGS.map((l) => [l, 0])) as Record<Lang, number>;
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const re = new RegExp(`(${QUOTE_RE})\\s*${SECTION_MARKER[lang]}`, "g");
+      for (const block of mdBlocks(read(lang, "ADMIN.md"))) {
+        const targets = [...new Set(
+          [...block.matchAll(/\]\(([A-Za-z_]+\.md)\)/g)].flatMap((m) => (m[1] === undefined ? [] : [m[1]])),
+        )].filter((t) => (SIBLING_DOCS as readonly string[]).includes(t));
+        for (const m of block.matchAll(re)) {
+          counts[lang] += 1;
+          const quoted = m[1];
+          // 第 1 组在 `re` 里是必配组：匹配上了却没有捕获，说明判据本身被改坏了。
+          // **认不出要吵**，不许用 `?? ""` 兜底——那会让一条空名字一路走到「找不到」的报文里。
+          if (quoted === undefined) throw new Error(`${lang}/ADMIN.md：小节名引用的必配捕获组是空的——判据本身坏了`);
+          const name = quoted.slice(1, -1);
+          if (targets.length === 0) {
+            failures.push(
+              `${lang}/ADMIN.md 里「${name}」被说成是某一节，但同一段里没给出通往那份文档的链接`
+              + "——读者点不过去，判据也无从核对它到底在哪一份里",
+            );
+            continue;
+          }
+          if (!targets.some((t) => titleLines(read(lang, t)).some((line) => line.includes(name)))) {
+            failures.push(
+              `${lang}/ADMIN.md 引了「${name}」这一节，但 ${targets.join(" / ")} 里没有哪一条标题 / 加粗领句叫这个名字`
+              + "——要么被引文档那边改名了，要么这一份翻译时把名字改写了"
+              + "（判据只认标题行与 `**` 起首的加粗领句：散文里碰巧提过这几个字**不算**）",
+            );
+          }
+        }
+      }
+    }
+    return { counts, failures };
+  }
+
+  it("五份 ADMIN.md 引的每一个小节名，在被引的那份同语言文档里逐字找得到", () => {
+    const { failures } = xrefScan(realSiblings);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("非空锚：每种语言至少认出一条小节名引用 —— 全都认不出时五份会一起归零，条数对等看不出来", () => {
+    const { counts } = xrefScan(realSiblings);
+    const dead = LANGS.filter((l) => counts[l] === 0);
+    expect(dead, `这些语言一条小节名引用都没认出来（${JSON.stringify(counts)}）——`
+      + "多半是 SECTION_MARKER 里那个语言的标记词已经和文档里的写法对不上了").toEqual([]);
+  });
+
+  it("五种语言认出的小节名引用条数彼此一致 —— 标记词悄悄失效时靠这一格兜底", () => {
+    const { counts } = xrefScan(realSiblings);
+    const reference = counts[LANGS[0]];
+    const bad = LANGS.filter((l) => counts[l] !== reference);
+    expect(bad, `五份 ADMIN.md 认出的小节名引用条数不一致（${JSON.stringify(counts)}）`
+      + "——R2 已经钉死五份的结构骨架，条数就该一样：要么某一份漏写了这条指路，"
+      + "要么那种语言的标记词认不出它自己文档里的写法").toEqual([]);
+  });
+
+  /** 与前三组同一条闸、同一个理由：真文档本身不过判据时，别让人从探针的报文里找原因。 */
+  function probeXrefBase(): void {
+    const base = xrefScan(realSiblings);
+    if (base.failures.length > 0) {
+      throw new Error(
+        "本格是探针，它的基取自真文档，而真文档今天本身就不过判据 —— "
+        + "别从这一格的报文里找原因，真因在「五份 ADMIN.md 引的每一个小节名…」那一格：\n"
+        + base.failures.join("\n"),
+      );
+    }
+  }
+
+  it("探针自检这道闸本身有牙：真文档不过判据时，探针格报的是「先看真扫描那一格」", () => {
+    expect(() => probeXrefBase()).not.toThrow();
+  });
+
+  it("该红时红：被引文档那边把标题改了（zh-CN/REGISTRAR.md 的「面板的「立即补池」」）", () => {
+    probeXrefBase();
+    // ⚠️ **只改那一行标题，散文里那处同名不动** —— 这正是实测里逃逸过的形态：
+    // 判据当时看全文，于是「改了标题」被第 134 行那句散文替它挡了下来（见 titleLines 上方）。
+    const renamed: SiblingReader = (lang, doc) => {
+      const src = realSiblings(lang, doc);
+      if (lang !== "zh-CN" || doc !== "REGISTRAR.md") return src;
+      const out = src.replace("\n## 面板的「立即补池」\n", "\n## 面板的「马上补池」\n");
+      if (out === src) throw new Error("变异没落到 docs/zh-CN/REGISTRAR.md 上——这一格控制是空的");
+      // 落点断言：散文里那处同名还在，判据必须**不**被它蒙混过去。
+      if (!out.includes("但面板的「立即补池」是例外")) {
+        throw new Error("散文里那处同名不见了——这一格就退化成了「全文找不到」，测不出收窄");
+      }
+      return out;
+    };
+    const { failures } = xrefScan(renamed);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["zh-CN/ADMIN.md", "面板的「立即补池」", "REGISTRAR.md"]) {
+      expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
+  });
+
+  it("该红时红（复评实测的三处之一）：ja 那份把被引标题写成了「管理パネルの「今すぐ補充」」", () => {
+    probeXrefBase();
+    // 复评抓到的原文就是这一处：真标题是 `## 管理画面の「今すぐ補充」`。
+    const drifted: SiblingReader = (lang, doc) => {
+      const src = realSiblings(lang, doc);
+      if (lang !== "ja" || doc !== "ADMIN.md") return src;
+      const out = src.split("の「今すぐ補充」の節").join("の「管理パネルの「今すぐ補充」」の節");
+      if (out === src) throw new Error("变异没落到 docs/ja/ADMIN.md 上——这一格控制是空的");
+      return out;
+    };
+    const { counts, failures } = xrefScan(drifted);
+    expect(counts.ja, "变异改掉了条数——那说明这一格红的不是名字对不上").toBe(counts["zh-CN"]);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("管理パネルの「今すぐ補充」");
+  });
+
+  it("该红时红：某一种语言漏掉一条指路时，条数对等那一格红并逐语言报数", () => {
+    probeXrefBase();
+    const dropped: SiblingReader = (lang, doc) => {
+      const src = realSiblings(lang, doc);
+      if (lang !== "ko" || doc !== "ADMIN.md") return src;
+      const out = src.split('"지금 보충" 절에').join('"지금 보충"에');
+      if (out === src) throw new Error("变异没落到 docs/ko/ADMIN.md 上——这一格控制是空的");
+      return out;
+    };
+    const { counts } = xrefScan(dropped);
+    expect(counts.ko, "变异落地了却没少认出一条——这一格控制是空的").toBe(counts["zh-CN"] - 1);
+    // 反向控制：其余四种语言的条数一条都没跟着变。
+    expect(LANGS.filter((l) => l !== "ko").map((l) => counts[l]))
+      .toEqual(LANGS.filter((l) => l !== "ko").map(() => counts["zh-CN"]));
+  });
+
+  // ── ⑤ 两张表的行数从屏幕的真源派生 ───────────────────────────────────────
+
+  /** 每一张 markdown 表的**数据行数**（连续的 `|` 行减去表头与分隔行）。 */
+  function tableSizes(src: string): number[] {
+    const out: number[] = [];
+    let run = 0;
+    for (const line of `${src}\n`.split("\n")) {
+      if (/^\s*\|/.test(line)) { run += 1; continue; }
+      if (run > 0) { out.push(Math.max(0, run - 2)); run = 0; }
+    }
+    return out;
+  }
+
+  interface PanelCounts { readonly nav: number; readonly warn: number; readonly warnKeys: number }
+
+  /** 屏幕那边的三条独立计数。真扫描与探针**共用这一份**。 */
+  function panelCounts(html: string, events: string, dict: string): PanelCounts {
+    return {
+      nav: (html.match(/class="nav-item"/g) ?? []).length,
+      warn: (events.match(/warnBanner\.appendChild\(/g) ?? []).length,
+      warnKeys: new Set([...dict.matchAll(/"ev\.warn[A-Za-z]+"/g)].map((m) => m[0])).size,
+    };
+  }
+
+  const realPanel = (): PanelCounts => panelCounts(
+    readFileSync(join(".", "admin-ui", "index.html"), "utf8"),
+    readFileSync(join(".", "admin-ui", "js", "sec-events.js"), "utf8"),
+    readFileSync(join(".", "admin-ui", "js", "i18n-dict.js"), "utf8"),
+  );
+
+  /**
+   * 一条「表行数 = 屏幕上的某个计数」的规则 × 五份 ADMIN.md。
+   * ⚠️ **认不出要吵**：行数等于 `n` 的表不是恰好一张时（0 张或 2 张）直接判失败，
+   * 不许挑一张凑合——将来往同一份文档里加表撞上这个数量时，它必须响。
+   */
+  function tableRowFailures(n: number, why: string, read: ApiDocReader): string[] {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const sizes = tableSizes(read(lang));
+      const hit = sizes.filter((s) => s === n).length;
+      if (hit !== 1) {
+        out.push(
+          `${lang}/ADMIN.md 里数据行数恰好是 ${n} 的表有 ${hit} 张（本份各表的行数：${JSON.stringify(sizes)}）`
+          + `——${why}。0 张多半是屏幕上多了 / 少了一条而文档没跟着改；2 张是判据认不出该核对哪一张，得先改判据`,
+        );
+      }
+    }
+    return out;
+  }
+
+  it("非空锚：屏幕那三条计数都不是 0，且黄条的两个独立来源彼此认账", () => {
+    const c = realPanel();
+    expect(c.nav, "index.html 里一个 nav-item 都没数到——这一组测的是空气").toBeGreaterThan(0);
+    expect(c.warn, "sec-events.js 里一条 warnBanner.appendChild 都没数到——这一组测的是空气").toBeGreaterThan(0);
+    expect(c.warnKeys, `字典里的 ev.warn* 键数（${c.warnKeys}）与横幅里挂上去的 <p> 条数（${c.warn}）对不上`
+      + "——两条独立派生互相不认了，先回屏幕上核对到底有几条黄条，再改这里").toBe(c.warn);
+    expect(c.nav === c.warn, `板块数与黄条数撞成同一个数（${c.nav}）——`
+      + "下面靠「行数恰好等于那个数的表只有一张」认表，撞上了就认不出来了，得换认法").toBe(false);
+  });
+
+  it("五份 ADMIN.md 的板块速查表行数 = index.html 里 nav-item 的个数", () => {
+    const c = realPanel();
+    const failures = tableRowFailures(c.nav, "板块速查那张表的行数应当等于侧边栏里 nav-item 的个数", realAdminDoc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("五份 ADMIN.md 的警告条表行数 = 事件横幅里挂上去的 <p> 条数", () => {
+    const c = realPanel();
+    const failures = tableRowFailures(c.warn, "警告条那张表的行数应当等于事件横幅里独立黄条的条数", realAdminDoc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：屏幕上多出一条黄条而五份文档没跟着加行 —— 五份一起红", () => {
+    const c = realPanel();
+    expect(tableRowFailures(c.warn, "反向控制", realAdminDoc), "真文档本身就不过判据，先看上面那两格").toEqual([]);
+    const failures = tableRowFailures(c.warn + 1, "屏幕上多了一条黄条", realAdminDoc);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+    expect(failures[0] ?? "").toContain("有 0 张");
+  });
+
+  it("该红时红：只有 ja 那份的警告条表被删掉一行 —— 只点名 ja", () => {
+    const c = realPanel();
+    const oneRowLess = readerWith("ja", (s) => s.replace(/\n\| カーソル先行 \|[^\n]*/, ""), ADMIN);
+    expect(tableSizes(oneRowLess("ja")).includes(c.warn), "变异没落到那张表上——这一格控制是空的").toBe(false);
+    const failures = tableRowFailures(c.warn, "警告条那张表", oneRowLess);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("ja/ADMIN.md");
+  });
+
+  it("该红时红：index.html 里注释掉一个 nav-item —— 板块速查那张表五份一起红", () => {
+    const html = readFileSync(join(".", "admin-ui", "index.html"), "utf8");
+    const mutated = html.replace('class="nav-item" data-section="models"', 'data-section="models"');
+    expect(mutated === html, "变异没落到 index.html 上——这一格控制是空的").toBe(false);
+    const c = panelCounts(
+      mutated,
+      readFileSync(join(".", "admin-ui", "js", "sec-events.js"), "utf8"),
+      readFileSync(join(".", "admin-ui", "js", "i18n-dict.js"), "utf8"),
+    );
+    expect(c.nav, "变异没让 nav-item 少一个").toBe(realPanel().nav - 1);
+    const failures = tableRowFailures(c.nav, "板块速查那张表", realAdminDoc);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
   });
 });

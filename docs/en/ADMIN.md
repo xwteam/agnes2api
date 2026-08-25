@@ -29,7 +29,7 @@ Covered here: how to get in, plus the Overview, Key pool, Registrar, Events and 
 - That limit only shortens the window in which the stored value is usable; it is **not a
   revocation**. The only way to revoke is to change `ADMIN_TOKEN` and redeploy / rebuild the
   container. Put the panel behind TLS and open it only on machines you trust — the full
-  argument is in the "Leaked admin token" part of [DEPLOY.md](DEPLOY.md).
+  argument is in the "Leaking the admin token" part of [DEPLOY.md](DEPLOY.md).
 
 ## The eight boards at a glance
 
@@ -44,8 +44,12 @@ Covered here: how to get in, plus the Overview, Key pool, Registrar, Events and 
 | Playground | Check one protocol end to end with a real request | Calls upstream | – |
 | Settings | What the runtime configuration is now, and which items the environment locked | Writes | – |
 
-"Writes" means **writes to storage**; "calls upstream" means it writes nothing but really
-does send one request to the upstream.
+"Writes" means **the actions you press on that page write to storage**; "calls upstream" means
+it really does send one request to the upstream. ⚠️ **"Calls upstream" does not mean "writes
+nothing"**: the playground sends a real request at this gateway's own forwarding endpoint and
+travels the very same path any forwarded request does — the key that served it is accounted for
+just the same, persisted on exactly the forwarding path's terms (batched the same way), plus one
+more usage record when the second tier is on.
 
 ## Overview
 
@@ -90,8 +94,10 @@ are left in the pool.**
   disabled flag (that is a switch you flipped yourself, and one paste should not silently
   flip it back), the time it was added (provenance is not failure state), usage counters
   (history is not failure state), and the note (that one is what you wrote to yourself).
-- **Delete requires disabling first**: deleting a key that is still in service is refused. On
-  the bulk path this constraint does not fail the whole batch; it reports a reason per item.
+- **To delete a key it has to be disabled or evicted** — either one on its own will do, so a
+  key the system already evicted need not be disabled by hand first. Deleting a key that is
+  still in service is refused. On the bulk path this constraint does not fail the whole batch;
+  it reports a reason per item.
 - **Verifying a single key** really does send one request upstream with it. "Last used" in
   the list and the usage counters are batched before being persisted, so their resolution is
   no finer than the `POOL_TOUCH_INTERVAL_MS` interval.
@@ -112,7 +118,7 @@ channel, which credentials you have to bring, and how to troubleshoot live in
 - **"Tend now" has four guardrails**, and it will not start unless every one of them holds:
   the in-flight guard within one replica, the short storage lock across replicas, the minimum
   interval between two manual refills, and the daily cap on manual runs. The error code,
-  arithmetic and residual risk of each are in the "Tend now in the admin panel" section of
+  arithmetic and residual risk of each are in the "Tend now" section of
   [REGISTRAR.md](REGISTRAR.md).
 - When the registrar is off (`REGISTRAR_ENABLED` is not `true`) the board is still visible,
   only with its state shown as off, and "Tend now" is refused by the backend.
@@ -129,14 +135,16 @@ channel, which credentials you have to bring, and how to troubleshoot live in
   server-side**; to see them again, hit "download" or reload the page.
 - **Events are stored in hourly windows and 24 windows are kept** — a full day. Anything
   older expires on its own and can no longer be found from the panel.
-- Each of the four warning bars is saying something different:
+- Each warning bar is saying something different, and **they are independent bars that can be
+  lit at the same time**:
 
 | Warning bar | What it is saying | What to do about it |
 |---|---|---|
 | Dropped | This replica's event buffer pushed out its oldest entries before they were persisted | Events are produced faster than they persist; look for that stretch in container logs / Workers Logs |
 | Budget | This replica's event-write budget for today is used up | Same as above: what was not persisted is still in the logs |
 | Truncated | This page is not showing every matching event | Narrow the filter, or shorten the time range you are looking at |
-| Cursor | The fetch position violates the contract, or is ahead of the server clock | The panel already re-fetched; if it keeps happening, something other than this gateway has written to the event store |
+| Cursor ahead | The fetch position is ahead of the server clock: a clock rollback, or skew between replicas | The panel already re-fetched from a fresh position; this one heals itself |
+| Cursor broken | The cursor the API returned is neither a number nor null, so the panel kept the previous one — **from here on it may never show new events** | Check whether something other than this gateway has written to the event store |
 
 ## Usage
 
