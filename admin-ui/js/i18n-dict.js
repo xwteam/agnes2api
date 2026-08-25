@@ -879,6 +879,8 @@ export const I18N = {
   "pg.send.blockedNoPrompt": { "zh-CN": "先写一句提示词。", "zh-TW": "先寫一句提示詞。", en: "Type a prompt first.", ja: "先にプロンプトを入力してください。", ko: "먼저 프롬프트를 입력하세요." },
   "pg.conv.title":           { "zh-CN": "对话", "zh-TW": "對話", en: "Conversation", ja: "やり取り", ko: "대화" },
   "pg.conv.empty":           { "zh-CN": "还没有发过请求。左栏配好之后按「发送」。", "zh-TW": "還沒有發過請求。左欄配好之後按「發送」。", en: "No request has been sent yet. Configure the left column, then press Send.", ja: "まだリクエストを送っていません。左側を設定してから「送信」を押してください。", ko: "아직 요청을 보내지 않았습니다. 왼쪽을 설정한 뒤 「보내기」를 누르세요." },
+  "pg.conv.clear":           { "zh-CN": "清空对话", "zh-TW": "清空對話", en: "Clear conversation", ja: "やり取りを消去", ko: "대화 지우기" },
+  "pg.conv.trimmed":         { "zh-CN": "屏幕上最多保留 {max} 轮，最旧的 {count} 轮已经从这里移除。", "zh-TW": "畫面上最多保留 {max} 輪，最舊的 {count} 輪已經從這裡移除。", en: "At most {max} turns are kept on screen; the oldest {count} have been removed from here.", ja: "画面に残すのは最大 {max} 往復までで、古い方の {count} 往復はここから削除されました。", ko: "화면에는 최대 {max}턴까지만 남기며, 가장 오래된 {count}턴은 여기에서 삭제되었습니다." },
   "pg.turn.you":             { "zh-CN": "你发出的", "zh-TW": "你發出的", en: "Sent", ja: "送信内容", ko: "보낸 내용" },
   // ⚠️ 「网关回的」而不是「模型回的」：中间隔着这个网关的协议转换，说成后者会把
   //    一次网关侧的错误归到模型头上。

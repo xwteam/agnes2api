@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   playgroundProtocols, modelIdsForProtocol, withPrompt, buildRequest,
   authHeaderValue, tokenHintState, prettyJson, deltaText, sseFrames,
+  trimTurns, PLAYGROUND_TURNS_MAX,
 } from "../../admin-ui/js/pure/playground.mjs";
 import { exampleFor, KEY_PLACEHOLDER } from "../../admin-ui/js/pure/examples.mjs";
 import { catalogPayload, SAMPLE_PROMPT } from "../../src/core/admin/protocol-catalog.js";
@@ -834,5 +835,115 @@ describe("deltaText：三态（读不出来 / 不带正文 / 正文）", () => {
     expect(deltaText({}, '{"a":1}')).toBe(null);
     expect(deltaText(null, '{"a":1}')).toBe(null);
     expect(deltaText({ streamTextPath: [] }, '{"a":1}')).toBe(null);
+  });
+});
+
+/**
+ * ── **对话轮数上限与截断（P3e Task 19）** ────────────────────────────────────
+ *
+ * 判定住在纯函数里、**不在板块文件里**，理由与 `videoPollNext()` 那一条逐字相同：
+ * 写在板块文件里它就没有单测，而「会不会截断、截掉的是哪几轮」这件事在屏幕上
+ * 要发到第二十几轮才看得出来，是最不容易被人工冒烟发现的那一类。
+ */
+describe("对话轮数上限与截断", () => {
+  /** 造一轮：只有这一族用得上的那两格，别的格子截断按定义不看。 */
+  type Turn = { promptText: string; pending: boolean };
+  const turn = (id: string, pending = false): Turn => ({ promptText: id, pending });
+  /** `trimTurns()` 交出来的那几轮的提示词。**被测模块是无类型的 .mjs**，这里补一次窄化。 */
+  const kept = (out: { kept: readonly Turn[] }): string[] => out.kept.map((t) => t.promptText);
+
+  /**
+   * ⚠️ **这一格锚的是值本身，上面那句注释里的算术在这里写下来。**
+   * `admin-ui/js/sec-playground.js` 那段就地更新的 ⚠️⚠️ 实测记着：**单次**整版重建
+   * 在 1 / 5 / 10 轮时是 3.0 / 15.0 / 30.0 MB 临时字符串（≈ 3.0 MB/轮，与轮数成正比）。
+   * ⇒ 这个上限把「无上界」换成「最坏情形一次整版重建 ≈ 上限 × 3.0 MB」。
+   * **下面第二行就是那道乘法**：改了上限而没回去改常量上方那段说明，这一格当场红。
+   */
+  it("对话轮数上限逐字写死成字面量 —— 改这个数就得回来改注释里那道乘法", () => {
+    expect(PLAYGROUND_TURNS_MAX).toBe(20);
+    // 3.0 MB/轮 × 上限 ⇒ 最坏情形 60 MB 上下。**这是算术，不是第二次实测。**
+    expect(PLAYGROUND_TURNS_MAX * 3).toBe(60);
+  });
+
+  /**
+   * **反向控制**：没到上限时一轮都不许动。
+   * 少了它，一个「每次都砍掉最旧一轮」的实现在下面每一格上都是绿的。
+   */
+  it("没到上限时原样返回、removed 为 0 —— 恒截断的实现在别的格子上照样绿", () => {
+    const list = [turn("a"), turn("b"), turn("c")];
+    expect(trimTurns(list, 5)).toEqual({ kept: list, removed: 0 });
+    // 恰好等于上限那一档同样不许动（差一错误的落点）。
+    expect(trimTurns(list, 3)).toEqual({ kept: list, removed: 0 });
+  });
+
+  /**
+   * **删的一律是最旧的那几轮。**
+   * 删最新的在屏幕上与「后面这几次根本没发出去」长得一模一样，
+   * 而后者会让运维以为是发送坏了。
+   */
+  it("超过上限时删掉的是最旧的那几轮 —— 删最新的在屏幕上与「这几次没发出去」长得一样", () => {
+    const list = [turn("a"), turn("b"), turn("c"), turn("d"), turn("e")];
+    const out = trimTurns(list, 2);
+    expect(kept(out)).toEqual(["d", "e"]);
+    expect(out.removed).toBe(3);
+  });
+
+  /**
+   * ⚠️⚠️ **还在收的那一轮一律留下**，理由全文在 `PLAYGROUND_TURNS_MAX` 上方：
+   * 切掉它 = 把「后半段回答写进一个没人看得见的节点」原样搬回来。
+   *
+   * ⚠️⚠️ **这一格是 `live` 那条过滤器**唯一**的红线，如实写明，别指望 DOM 那一族**：
+   * 变异实测把 `live` 那一段删掉、`done` 改成整个 `turns` ⇒ 射程最近的那一格
+   * `tests/ui/dom/playground-section.test.ts`
+   * 「⑤ 截断安全网：还在收的那一轮永远不许被切掉 —— 切了它就是把后半段写进没人看得见的节点」
+   * **照样是绿的**，红的只有这里。
+   * 成因是板块今天的调用形态：**`pending` 那一轮本来就是最后 push 进去的那一轮**
+   *（在飞去重挡着，它后面 push 不进第二轮）⇒ 「留最后 max 个」与「先挑出 pending
+   * 再留最后几个」**在那条形态上输出完全相同**。第二层替第一层挡住了变异。
+   * ⇒ 下面三档里**后两档是板块今天造不出来的形状**，它们才是这条过滤器的观测点：
+   * · ① `pending` 在末尾：两种实现同解（**这一档不分辨任何东西**，留着是为了写清楚上面那句）；
+   * · ② `pending` 在中间：不保护的话它会被当成最旧的那一批切掉；
+   * · ③ `pending` 的条数就顶过上限：不保护的话它们会被切到只剩最后一条。
+   * **写成不塌的形状是刻意的**：这个函数不依赖「同一时刻只有一轮在飞」这条住在别处的性质。
+   *
+   * ⚠️ ② 顺带钉住那条如实登记过的副作用：**留下的 `pending` 轮会被排到末尾**。
+   */
+  it("还在收的那一轮一律留下，即使它排在中间、或者条数本身就顶过上限", () => {
+    // ① `pending` 在末尾 —— 板块今天唯一造得出来的形状，两种实现同解。
+    const tail = trimTurns([turn("a"), turn("b"), turn("c", true)], 2);
+    expect(kept(tail)).toEqual(["b", "c"]);
+    expect(tail.removed).toBe(1);
+
+    // ② `pending` 在中间 —— 不保护的话它会跟着最旧的那一批一起被切掉。
+    const middle = trimTurns([turn("a"), turn("b", true), turn("c"), turn("d")], 2);
+    expect(kept(middle)).toEqual(["d", "b"]);
+    expect(middle.removed).toBe(2);
+
+    // ③ `pending` 的条数本身就顶过上限 —— 一条都不许切，`removed` 只算 done 那一侧。
+    const allLive = trimTurns([turn("a"), turn("b", true), turn("c", true)], 1);
+    expect(kept(allLive)).toEqual(["b", "c"]);
+    expect(allLive.removed).toBe(1);
+  });
+
+  /**
+   * **`removed` 是这一次删了几轮，不是累计几轮。**
+   * 折叠成累计的话，屏幕上那句披露就得由这里保存状态，而这个目录下不许有状态。
+   * 累计那一份归调用方（清空对话时要跟着归零，而这里看不到那颗按钮）。
+   */
+  it("removed 报的是这一次删了几轮，不是累计 —— 累计那一份归调用方", () => {
+    const first = trimTurns([turn("a"), turn("b"), turn("c")], 2);
+    expect(first.removed).toBe(1);
+    const second = trimTurns([...first.kept, turn("d")], 2);
+    expect(second.removed).toBe(1);
+    expect(kept(second)).toEqual(["c", "d"]);
+  });
+
+  /** 不传上限时用的就是那个常量（板块文件正是这么调的）。 */
+  it("不传上限时用的就是 PLAYGROUND_TURNS_MAX —— 默认值漂了板块那边不会有任何反应", () => {
+    const list = Array.from({ length: PLAYGROUND_TURNS_MAX + 2 }, (_, i) => turn(`t${i}`));
+    const out = trimTurns(list);
+    expect(out.kept.length).toBe(PLAYGROUND_TURNS_MAX);
+    expect(out.removed).toBe(2);
+    expect(kept(out)[0]).toBe("t2");
   });
 });

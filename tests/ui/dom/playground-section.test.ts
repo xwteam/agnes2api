@@ -5,6 +5,7 @@ import { stripComments } from "../../helpers/strip-comments.js";
 import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE, GW_KEY_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { catalogPayload } from "../../../src/core/admin/protocol-catalog.js";
 import { I18N } from "../../../admin-ui/js/i18n-dict.js";
+import { PLAYGROUND_TURNS_MAX } from "../../../admin-ui/js/pure/playground.mjs";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
@@ -253,6 +254,54 @@ function turnShape(sec: FakeElement): string[] {
 /** 这一轮往对外那棵树发了几条。 */
 function gatewayCalls(h: Harness) {
   return h.calls.filter((c) => c.url.startsWith(PANEL_ORIGIN));
+}
+
+/**
+ * ── **「写在屏幕上」这句话的可观测形态（P3e Task 19）** ────────────────────────
+ *
+ * 只取**叶子节点的自有文本**，属性一概不算。
+ * ⚠️ **这条区分不是讲究，是本文件通篇在防的那件事**：一句话进了 `title` / `data-*`
+ * 之后 `root.textContent` 一个字都读不到它，而**反过来不成立**——
+ * 只断言 `textContent` 的话，「渲染在别处」与「渲染在这一格」分不出来。
+ * ⚠️ **它证明不了「肉眼看得见」**：`tests/helpers/fake-dom.ts` 没有布局、没有样式，
+ * `display:none` 的节点在这里与可见节点长得一模一样（登记在案的边界，
+ * 与文件头那段替身能力核对同一条纪律）。**它证明的是「这段文字进了文档树的文本里」。**
+ */
+function visibleTexts(root: FakeElement): string[] {
+  return everyNode(root)
+    .filter((n) => n.children.length === 0)
+    .map((n) => n.textContent)
+    .filter((s) => s !== "");
+}
+
+/**
+ * 连发 n 轮**非流式**请求，每一轮换一句可辨认的提示词。
+ *
+ * ⚠️ **提示词每轮都换是这一族用例的核心装置，不是装饰**：只数 `.pg-turn` 的话，
+ * 「删最旧的那几轮」与「删最新的那几轮」两种实现**计数完全一样**，
+ * 而后者在屏幕上与「后面这几次根本没发出去」长得一模一样。
+ * 换了词之后，留下哪几轮、按什么顺序留，逐条都是可断言的。
+ *
+ * ⚠️ 口令只粘一次：`render()` 会把它从模块状态回填进新的输入框（左栏那两格同理）。
+ */
+async function sendTurns(sec: FakeElement, n: number, from = 0): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    typePrompt(sec, `轮次-${from + i}`);
+    one(sec, ".pg-send").click();
+    await settle(20);
+  }
+}
+
+/** 右栏那几轮**按屏幕顺序**的提示词。 */
+function turnPrompts(sec: FakeElement): string[] {
+  return pick(sec, ".pg-turn-prompt").map((n) => n.textContent);
+}
+
+/** 字典里那句话按给定参数插值之后的样子（**期望值从字典派生，不手抄一份**）。 */
+function say(key: string, params: Record<string, string> = {}): string {
+  let s = String((I18N as Record<string, Record<string, string>>)[key]!["zh-CN"]);
+  for (const [k, v] of Object.entries(params)) s = s.split(`{${k}}`).join(v);
+  return s;
 }
 
 /**
@@ -3491,5 +3540,315 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
       expect(pollCount(h), "前置条件：真的接回去了").toBe(3);
       expectSameAsRebuild(h, sec, "接回去之后");
     });
+  });
+});
+
+/**
+ * ── **对话轮数上限（P3e Task 19）** ──────────────────────────────────────────
+ *
+ * **这一族守的是一条会被运维直接看见的性质**，与本文件上面几族（判据瞎了 / 注释说假话）
+ * 不是同一类失败方式。被守的两句话各有一半：
+ * ① **有上限**——`turns` 在 P3e 之前只进不出，而单次整版重建的临时串量与轮数成正比
+ *    （同一个板块文件里实测记着 1 / 5 / 10 轮 = 3.0 / 15.0 / 30.0 MB）；
+ * ② **截断必须说出来**——静默丢弃用户看得见的内容就是撒谎，那句话是
+ *    `admin-ui/js/sec-playground.js` 的 `buildTurn()` 自己写下的。
+ *
+ * ⚠️⚠️ **只做 ① 不做 ② 比不做更糟**：一个开了一天的标签页会安静地少掉最旧的几十轮，
+ * 而屏幕上没有任何一处提到这件事——运维回头找那一轮时会以为是自己记错了。
+ * 所以下面「披露那一句」的**正反两格是一组**，缺任何一格都不算守住：
+ * 只有正格 ⇒ 无条件渲染那句话也全绿（它变成一句恒真的话）；
+ * 只有反格 ⇒ 压根不渲染也全绿。
+ *
+ * ⚠️ **`.pg-clear` 的「灰」在这里只验得到属性，验不到「点不动」**（文件头那段替身能力
+ * 核对里登记的 3 条盲点之一：`tests/helpers/fake-dom.ts` 里点一颗 disabled 的按钮
+ * 照样会触发监听器）。⇒ 真正起作用的那一道是 `clearTurns()` 开头那句早退，
+ * 下面「在飞时按清空对话」那一格钉的是它，**不是那个灰**。
+ */
+describe("对话轮数上限：截断要可见，清空要显式，还在收的那一轮不许被切掉", () => {
+  /**
+   * ① **有上限，而且丢掉的是最旧的那几轮。**
+   *
+   * **变红条件**：把 `PLAYGROUND_TURNS_MAX` 调大到装不下（例如 999）⇒ 屏幕上剩全部；
+   * 把 `pushTurn()` 里那两句截断删掉 ⇒ 同上。
+   */
+  it("① 连发「上限 + 3」轮：屏幕上恰好剩上限那么多轮，而且留下的是最新的那几轮", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    await sendTurns(sec, PLAYGROUND_TURNS_MAX + 3);
+
+    expect(gatewayCalls(h).length, "前置条件：每一下都真的飞出去了")
+      .toBe(PLAYGROUND_TURNS_MAX + 3);
+    expect(pick(sec, ".pg-turn").length, "屏幕上留下的轮数不等于上限").toBe(PLAYGROUND_TURNS_MAX);
+    // **逐条写出留下的是哪几轮**：只数个数的话，「删最新的」那种实现照样全绿。
+    expect(turnPrompts(sec), "被删掉的不是最旧的那三轮")
+      .toEqual(Array.from({ length: PLAYGROUND_TURNS_MAX }, (_, i) => `轮次-${i + 3}`));
+  });
+
+  /**
+   * ② **被移除了几轮必须写在屏幕上，次数与上限都从常量插值进去。**
+   *
+   * ⚠️ **两个数都不许写死在字典里**：写死之后改常量就会让那句话变成假话，
+   * 而字典没有任何机器在守（同 `pg.send.readyVideo` 那条处置）。
+   *
+   * **变红条件**：把 `trimTurns()` 的 `removed` 恒返回 0；
+   * 或者把那句披露从 `buildRight()` 里删掉。
+   */
+  it("② 被移除了几轮写在屏幕上，次数与上限都从常量插值进去 —— 静默丢弃就是撒谎", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    await sendTurns(sec, PLAYGROUND_TURNS_MAX + 3);
+
+    const expected = say("pg.conv.trimmed", { count: "3", max: String(PLAYGROUND_TURNS_MAX) });
+    expect(one(sec, ".pg-trimmed").textContent, "那句披露不是插值出来的").toBe(expected);
+    // **写在屏幕上**，不是塞进某个属性里（`visibleTexts` 的边界见它上面那段）。
+    expect(visibleTexts(sec).join(" "), "那句披露没有进文档树的文本里").toContain(expected);
+    expect(visibleTexts(sec).join(" "), "被移除的轮数没有上屏").toContain("3");
+    // 字典侧：这两个数是占位符，不是写死的字面量。
+    expect(String(I18N["pg.conv.trimmed"]!["zh-CN"]), "次数被写死进字典了").toContain("{count}");
+    expect(String(I18N["pg.conv.trimmed"]!["zh-CN"]), "上限被写死进字典了").toContain("{max}");
+    // 可达性：它是一条**活区域**，不是一段谁都不会回头再读一遍的静态文字。
+    // ⚠️ **这里验得到的只有这个属性**：读屏器到底念没念，替身答不了（登记在案）。
+    expect(one(sec, ".pg-trimmed").getAttribute("role"), "披露不是活区域，读屏器不会念它")
+      .toBe("status");
+  });
+
+  /**
+   * ③ **反向控制（与 ② 同组）：没删过东西的时候，那句话一个字都不许出现。**
+   *
+   * ⚠️ **反向控制用仓里真实存在的串**：拿字典里那句话去掉占位符之后的**前半段**去扫，
+   * 不是自造一个「大概长这样」的样本。
+   *
+   * ⚠️ **边界走两格（上限 - 1 与恰好上限）**：只走前者的话，
+   * 一个 `>=` 写成 `>` 的差一错误在这一格上是绿的。
+   *
+   * **变红条件**：把 ② 那句披露改成无条件渲染 ⇒ 这一格红（证明它不是恒真的）。
+   */
+  it("③ 反向控制（同组）：不到上限时那句披露一个都不出现 —— 否则它是恒真的", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    const zh = String(I18N["pg.conv.trimmed"]!["zh-CN"]);
+    const head = zh.slice(0, zh.indexOf("{"));
+    expect(head.length, "前置条件：那句话得有一段不含占位符的前缀可以拿来扫").toBeGreaterThan(3);
+
+    await sendTurns(sec, PLAYGROUND_TURNS_MAX - 1);
+    expect(pick(sec, ".pg-turn").length).toBe(PLAYGROUND_TURNS_MAX - 1);
+    expect(pick(sec, ".pg-trimmed").length, "上限 - 1 轮：一轮都没删，却说删了").toBe(0);
+    expect(visibleTexts(sec).join(" "), "上限 - 1 轮：那句披露的措辞出现在了屏幕上")
+      .not.toContain(head);
+
+    await sendTurns(sec, 1, PLAYGROUND_TURNS_MAX - 1);
+    expect(pick(sec, ".pg-turn").length).toBe(PLAYGROUND_TURNS_MAX);
+    expect(pick(sec, ".pg-trimmed").length, "恰好上限：一轮都没删，却说删了").toBe(0);
+    expect(visibleTexts(sec).join(" "), "恰好上限：那句披露的措辞出现在了屏幕上")
+      .not.toContain(head);
+  });
+
+  /**
+   * ③b **边界的另一侧：多出第一轮的那一下，说的必须是「1」。**
+   *
+   * 上面那一格证明「不该说的时候不说」，这一格证明**第一次该说的时候就说，而且数得对**。
+   * 少了它，一个「删两轮才开始报」的实现在 ① ② ③ 三格上全绿。
+   */
+  it("③b 越过上限的第一轮：那句披露当场出现，而且报的是 1 轮", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    await sendTurns(sec, PLAYGROUND_TURNS_MAX + 1);
+
+    expect(pick(sec, ".pg-turn").length).toBe(PLAYGROUND_TURNS_MAX);
+    expect(one(sec, ".pg-trimmed").textContent)
+      .toBe(say("pg.conv.trimmed", { count: "1", max: String(PLAYGROUND_TURNS_MAX) }));
+    expect(turnPrompts(sec)[0], "删掉的不是第 0 轮").toBe("轮次-1");
+  });
+
+  /**
+   * ④ **「清空对话」是一颗显式按钮，按完之后右栏回到「还没有发过请求」那一档。**
+   *
+   * ⚠️ **累计被移除的轮数要跟着归零**：一个 0 轮对话的右栏还挂着「已经移除了 3 轮」，
+   * 是本仓全局约束 9 那一族的同型假话（那 3 轮不是从这个空对话里移除的）。
+   *
+   * ⚠️⚠️ **「清空之后再发一轮」这一段是变异实测逼出来的，别当成凑数的收尾。**
+   * 不走那一步的话，「`trimmedTurns` 归没归零」在屏幕上**完全不可观测**——
+   * 0 轮时 `buildRight()` 在披露那一句之前就早退了。
+   * **实测：把 `clearTurns()` 里那句 `trimmedTurns = 0;` 改成 `trimmedTurns += 0;`
+   * ⇒ 本文件 73/73 全绿**，而那一版会在**下一轮**对话里说「最旧的 3 轮已经从这里移除」，
+   * 那 3 轮并不是从这个新对话里移除的。补上那一段之后它才变红。
+   *
+   * ⚠️ **清空是纯本地动作**：这一格顺带钉住「它一条上游请求都不打」——
+   * 一颗按下去会烧配额的按钮属于全局约束 14，那是另一套护栏。
+   */
+  it("④ 点一下「清空对话」：右栏一轮不剩，那句「还没有发过请求」回来，披露也跟着走", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    await sendTurns(sec, PLAYGROUND_TURNS_MAX + 3);
+    expect(pick(sec, ".pg-trimmed").length, "前置条件：得先真的截断过一次").toBe(1);
+    const before = gatewayCalls(h).length;
+
+    one(sec, ".pg-clear").click();
+    await settle(20);
+
+    expect(pick(sec, ".pg-turn").length, "按了清空却还留着轮次").toBe(0);
+    expect(pick(sec, ".pg-trimmed").length, "0 轮对话里还说着「已经移除了几轮」").toBe(0);
+    expect(visibleTexts(sec).join(" "), "空对话那句话没有回来").toContain(say("pg.conv.empty"));
+    expect(pick(sec, ".pg-clear").length, "一轮都没有了还摆着「清空对话」").toBe(0);
+    expect(gatewayCalls(h).length, "清空对话打了一条上游请求").toBe(before);
+
+    // **清空之后再发一轮**：累计计数归没归零，只有在这一步才看得见（理由见上面那段 ⚠️⚠️）。
+    await sendTurns(sec, 1, 100);
+    expect(pick(sec, ".pg-turn").length, "前置条件：新的这一轮得真的进右栏").toBe(1);
+    expect(pick(sec, ".pg-trimmed").length,
+      "清空之后累计计数没归零：新对话里说着上一段对话移除了几轮").toBe(0);
+  });
+
+  /**
+   * ⑤ **截断安全网：还在收的那一轮永远不许被切掉。**
+   *
+   * ⚠️⚠️ **这一格是为搬运风险设的，不是为完备性设的。** 切掉正在收的那一轮 =
+   * 把「后半段回答写进一个没人看得见的节点」这条 P3d 刚修好的祸事原样搬回来：
+   * 那一轮的 `turn` 对象仍被流那条回调握着，写进去的字节全落在一个已经不在
+   * `turns` 里的对象上，而屏幕上什么都不会提。
+   *
+   * ⚠️ **观测点有两个，缺一不可**：① 那一轮还在屏幕上；
+   * ② `.pg-stream-text` **仍然收得到后续正文**。只验 ① 的话，
+   * 一个「留着框但把节点换掉」的实现照样绿，而那正是 P3d 那次祸事的形态本身。
+   *
+   * ⚠️⚠️ **它钉住的是「结果」，不是 `trimTurns()` 里那条 `live` 过滤器，别写反了。**
+   * 变异实测两条，结论相反：
+   * · **把 `live` 那一段删掉（截断时不挑出 pending 轮）⇒ 这一格是绿的。**
+   *   板块今天永远把 `pending` 那一轮最后 push 进去，「留最后 max 个」与「先挑出 pending」
+   *   在这条形态上输出逐字相同 —— **第二层替第一层挡住了变异。**
+   *   那条过滤器的红线在 `tests/ui/playground.test.ts` 的
+   *   「还在收的那一轮一律留下，即使它排在中间、或者条数本身就顶过上限」上。
+   * · **把 `keepDone` 那一句从「留最新的几轮」改成「留最旧的几轮」⇒ 这一格当场红**，
+   *   而且是照祸事本身的形态红的：那一轮从屏幕上消失、`.pg-stream-text` 一个都不剩。
+   * ⇒ 这一格守的是**运维看得见的那一半**（还在收的那一轮不许从屏幕上消失，
+   * 而且它的正文还得写得进去），过滤器那一半归纯函数那一族。
+   */
+  it("⑤ 截断安全网：还在收的那一轮永远不许被切掉 —— 切了它就是把后半段写进没人看得见的节点", async () => {
+    let ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const enc = new TextEncoder();
+    const held = new ReadableStream<Uint8Array>({ start(c) { ctl = c; } });
+    let streaming = false;
+    const h = await openPg(respondWith({
+      gateway: () => (streaming
+        ? { status: 200, body: null, raw: held }
+        : { status: 200, body: { reply: "PONG-FROM-UPSTREAM" } }),
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    await sendTurns(sec, PLAYGROUND_TURNS_MAX);
+    expect(pick(sec, ".pg-turn").length).toBe(PLAYGROUND_TURNS_MAX);
+    expect(pick(sec, ".pg-trimmed").length, "前置条件：到这里还没有任何一轮被移除").toBe(0);
+
+    // 第「上限 + 1」轮是一条**还在收**的流式轮：它在请求发出去之前就进了 turns。
+    streaming = true;
+    turnOnStream(sec);
+    typePrompt(sec, "流式那一轮");
+    one(sec, ".pg-send").click();
+    await settle(40);
+
+    expect(pick(sec, ".pg-turn").length, "截断没发生或者多切了一轮").toBe(PLAYGROUND_TURNS_MAX);
+    expect(one(sec, ".pg-trimmed").textContent, "被移除的应当恰好是最旧的那一轮")
+      .toBe(say("pg.conv.trimmed", { count: "1", max: String(PLAYGROUND_TURNS_MAX) }));
+    // ① 还在收的那一轮还在屏幕上，而且在最后。
+    expect(turnPrompts(sec).at(-1), "还在收的那一轮被切掉了").toBe("流式那一轮");
+    expect(turnPrompts(sec)[0], "被切掉的不是最旧的那一轮").toBe("轮次-1");
+
+    // ② 后续正文仍然写得进屏幕上那个节点。
+    ctl!.enqueue(enc.encode(`data: ${JSON.stringify({ id: "c1", choices: [{ delta: { content: "甲" } }] })}\n\n`));
+    await settle(40);
+    expect(one(sec, ".pg-stream-text").textContent, "第一块正文没进屏幕").toBe("甲");
+    ctl!.enqueue(enc.encode(`data: ${JSON.stringify({ id: "c1", choices: [{ delta: { content: "乙" } }] })}\n\n`));
+    await settle(40);
+    expect(one(sec, ".pg-stream-text").textContent, "截断之后那个节点就收不到后续正文了").toBe("甲乙");
+    ctl!.close();
+    await settle(40);
+    expect(pick(sec, ".pg-turn").length, "流结束之后轮数不该再变").toBe(PLAYGROUND_TURNS_MAX);
+  });
+
+  /**
+   * ⑥ **在飞时「清空对话」整个早退。**
+   *
+   * ⚠️⚠️ **这一格钉的是 `clearTurns()` 开头那句 `if (inFlight) return;`，不是按钮的灰。**
+   * 替身里点一颗 disabled 的按钮**照样会触发监听器**（文件头那段替身能力核对里
+   * 登记的 3 条盲点之一），所以下面那句 `.disabled` 断言只是给人看的那一半，
+   * **真正起作用的是「点完之后那一轮还在，而且正文还在往里写」**。
+   *
+   * ⚠️ 灰按钮要说明理由：`title` 上那句话与发送按钮在飞那一档**同一个 key**，
+   * 抄第二句话出来只会得到两句会漂的话。
+   */
+  it("⑥ 在飞时按「清空对话」：一轮都不许清掉 —— 清掉正在收的那一轮就是把后半段写进没人看得见的对象", async () => {
+    let ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const enc = new TextEncoder();
+    const held = new ReadableStream<Uint8Array>({ start(c) { ctl = c; } });
+    const h = await openPg(respondWith({
+      gateway: () => ({ status: 200, body: null, raw: held }),
+    }));
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    typePrompt(sec, "还在收的这一轮");
+    turnOnStream(sec);
+    one(sec, ".pg-send").click();
+    await settle(40);
+    expect(pick(sec, ".pg-turn").length, "前置条件：那一轮得先进右栏").toBe(1);
+
+    // 给人看的那一半。
+    expect(one(sec, ".pg-clear").disabled, "在飞时「清空对话」没有变灰").toBe(true);
+    expect(one(sec, ".pg-clear").getAttribute("title"), "灰按钮没说为什么按不动")
+      .toBe(say("pg.send.blockedInFlight"));
+
+    // 真正起作用的那一半。
+    one(sec, ".pg-clear").click();
+    await settle(20);
+    expect(pick(sec, ".pg-turn").length, "在飞时把还在收的那一轮清掉了").toBe(1);
+
+    ctl!.enqueue(enc.encode(`data: ${JSON.stringify({ id: "c1", choices: [{ delta: { content: "丙" } }] })}\n\n`));
+    await settle(40);
+    expect(one(sec, ".pg-stream-text").textContent, "清空之后那一轮的正文写进了没人看得见的对象").toBe("丙");
+
+    ctl!.close();
+    await settle(40);
+    // 落地之后按钮解灰，清空这条路重新走得通。
+    expect(one(sec, ".pg-clear").disabled, "回来之后「清空对话」没有解灰").toBe(false);
+    one(sec, ".pg-clear").click();
+    await settle(20);
+    expect(pick(sec, ".pg-turn").length, "落地之后清空仍然清不掉").toBe(0);
+  });
+
+  /**
+   * ⑦ **`turns` 的写入口只许有一个。**
+   *
+   * ⚠️⚠️ **这一格是上面那六格覆盖不到的那一半，别把它当成锦上添花。**
+   * 发货代码里有**四条** push 路径（构造失败 / 流式那一轮 / 非流式成功 / 非流式失败），
+   * 而上面那几格只走得到其中两条（变异实测：把流式那条与非流式成功那条各自换回
+   * `turns.push(...)` ⇒ ⑤ 与 ①②③b④ 分别变红；**另外两条换回去则一格都不红**）。
+   * 漏掉的那条路径会**只在它自己那一档**上绕过截断与那句披露，
+   * 而屏幕上分辨不出来——少掉的正是最旧的那几轮。
+   * ⇒ 判据因此建在**源码形态**上，一次盖住四条、以及将来任何一条第五条。
+   *
+   * ⚠️ **反向控制在这一格里面**：先断言判据在 `pushTurn()` 里**真的**扫到那一处，
+   * 再断言全文件的处数与它相等。少了前一句，一条什么都认不出来的正则
+   * （`0 === 0`）会让这一格**永远绿**——那正是本仓登记过多次的那种「静静地放行」。
+   */
+  it("⑦ `turns` 全文件只有 pushTurn() 一个写入口 —— 绕过它的那条路径截断与披露都不会发生", () => {
+    const src = stripComments(readFileSync("admin-ui/js/sec-playground.js", "utf8"));
+    const sliced = functionBodyOf(src, "pushTurn");
+    expect("reason" in sliced ? sliced.reason : null,
+      "pushTurn() 的函数体切不出可靠边界 —— 在边界求得回来之前这条纪律整个失效，宁可红也不猜")
+      .toBe(null);
+    const body = (sliced as { body: string }).body;
+    const site = () => /\bturns\s*\.\s*push\s*\(/g;
+    const inside = body.match(site()) ?? [];
+    const all = src.match(site()) ?? [];
+    // **反向控制**：判据认得出仓里真的存在的那一处（恒空的扫描永远是绿的）。
+    expect(inside.length,
+      "判据在 pushTurn() 里一处都没扫到 —— 它多半是瞎的，而瞎了的扫描是绿的").toBe(1);
+    expect(all.length,
+      "有人绕开 pushTurn() 直接往 turns 里塞：那一条路径上截断与「已移除几轮」都不会发生")
+      .toBe(inside.length);
   });
 });

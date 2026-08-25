@@ -173,6 +173,7 @@ import {
   playgroundProtocols, modelIdsForProtocol, buildRequest, tokenHintState, prettyJson, deltaText,
   mediaEndpoints, modelIdsForModality, mediaEmbeddable, mediaLinkable, mediaResultUrls,
   videoTaskIdOf, buildPollRequest, videoPollNext, VIDEO_POLL_MAX_ATTEMPTS,
+  trimTurns, PLAYGROUND_TURNS_MAX,
 } from "./pure/playground.mjs";
 
 /**
@@ -255,26 +256,45 @@ let token = "";
 /** 流式开关的当前档位（P3d Task 11）。**同样要在 re-render 之后回填。** */
 let streamOn = false;
 /**
- * 右栏那几轮对话。**只进不出**，切走板块也留着（同一次会话里回头对比很常见）。
+ * 右栏那几轮对话。切走板块也留着（同一次会话里回头对比很常见）。
  *
- * ⚠️ **没有上限，如实登记**（评审 L5）：每一轮存着一份响应体，一个开一整天、
- * 反复发几百次的标签页会把它们全留在内存里。**今天不加上限**——它要么是一个
- * 需要新 UI 状态的「清空」按钮、要么是一条静默丢弃用户看得见的内容的规则，
- * 两条都比这个问题本身大；而每一轮都是运维自己按出来的，量级与他的手速同阶。
- * **登记 P3e**：真要加，做成显式的「清空对话」而不是静默截断。
+ * ⚠️⚠️ **P3e Task 19 起它有上限了（`PLAYGROUND_TURNS_MAX`），这一段的历史版本
+ * 别照着读**：这里曾经逐字写着「只进不出 / 没有上限 / **今天不加上限**」，
+ * 当时给的理由是「加上限要么是一个需要新 UI 状态的『清空』按钮、要么是一条静默丢弃
+ * 用户看得见的内容的规则，两条都比这个问题本身大；而每一轮都是运维自己按出来的，
+ * 量级与他的手速同阶」。
+ * **那个权衡在 P3d Task 12 之后就不成立了**：`turn.body` 从那时起可能是一张 MB 级的
+ * base64 图，而单次整版重建的临时串量与轮数成正比（`onPayload` 那段 ⚠️⚠️ 实测：
+ * 1 / 5 / 10 轮 = 3.0 / 15.0 / 30.0 MB）——**成本不再与手速同阶，与轮数同阶。**
+ * ⇒ 本轮把当年那两条路**一起**走完，不是二选一：上限住在 `js/pure/playground.mjs`，
+ * 「清空对话」就在右栏，而**被移除了几轮写在屏幕上**（`trimmedTurns` → `pg.conv.trimmed`）
+ * ——静默截断正是当年被否掉的那一条，它今天照样是被否的。
  *
- * ⚠️⚠️ **上面那句「量级与他的手速同阶」在 Task 12 落地后一度不成立，本轮才改回来**
- *（P3d 全分支评审 F-2）：Task 12 同时做了两件事——让 `turn.body` 可能是一张 MB 级的
- * base64 图，以及给视频档加了一个**每拍都整版 `render()`** 的 60 拍循环。
- * 两件相乘之后，一次视频任务的重建量变成 `60 × 全部轮次 × 每轮 body`
- *（实测 `turns=10` ⇒ ≈ 1.8 GB 临时字符串），**与手速已经不同阶了**。
- * 本轮的处置是把那个 60 倍的乘数拿掉（`pollOnce()` 里那段 ⚠️⚠️；**就地改的那两处
- * 与整版重建输出逐字相同**，由那段末尾点名的第 ③ 格钉着——上一版这里写的是一句
- * 没有机器守的「输出逐字不变」，而它当时**是假的**，复评 M-4 实测证伪），
- * ⇒ 重建量回到 `每次运维自己按一下 × 全部轮次`，与这段话原本描述的那一档重新对齐。
- * **仍然没有上限这件事没有变**，只是它不再被一个自动循环放大。
+ * ⚠️ **P3d 那一轮只拿掉了放大它的 60 倍乘数，没有动无上界本身**
+ *（P3d 全分支评审 F-2）：Task 12 给视频档加过一个**每拍都整版 `render()`** 的 60 拍循环，
+ * 一次视频任务的重建量因此是 `60 × 全部轮次 × 每轮 body`（实测 `turns=10` ⇒ ≈ 1.8 GB）。
+ * 处置是把那个乘数拿掉（`pollOnce()` 里那段 ⚠️⚠️；**就地改的那两处与整版重建输出逐字相同**，
+ * 由那段末尾点名的第 ③ 格钉着——上一版这里写的是一句没有机器守的「输出逐字不变」，
+ * 而它当时**是假的**，复评 M-4 实测证伪）⇒ 重建量回到 `每次运维自己按一下 × 全部轮次`。
+ * **本轮封的是后一个因子。**
+ *
+ * ⚠️ **写入口只有 `pushTurn()` 一个**：直接 `turns.push(...)` 会绕过截断，
+ * 而绕过之后屏幕上看起来完全正常——只是内存又变回无界的，且那句披露永远说 0 轮。
+ * ⚠️⚠️ **这句话有机器守着，而它是变异实测逼出来的**：本文件有**四条** push 路径，
+ * 而 DOM 那一族只走得到其中两条（另两条各自换回 `turns.push(...)` ⇒ 一格都不红）。
+ * 覆盖那四条的是 `tests/ui/dom/playground-section.test.ts` 的
+ * 「⑦ `turns` 全文件只有 pushTurn() 一个写入口 —— 绕过它的那条路径截断与披露都不会发生」，
+ * 它扫的是源码形态，一次盖住四条以及将来的第五条。
  */
 let turns = [];
+/**
+ * **累计被截断掉几轮**（`trimTurns()` 每次报的那个 `removed` 加起来）。
+ *
+ * 它是屏幕上那句披露唯一的数据源。**纯函数那一侧刻意不累计**：那个目录下的模块按定义
+ * 没有状态，而且「清空对话」要把这个数连同 `turns` 一起归零——一个 0 轮的对话右栏
+ * 还挂着「已经移除了 3 轮」，那 3 轮并不是从这个空对话里移除的（全局约束 9 的同型）。
+ */
+let trimmedTurns = 0;
 /** 这一刻有没有一次对外请求在飞。它就是那道「在飞去重」。 */
 let inFlight = false;
 /**
@@ -867,12 +887,93 @@ function fillTurn(wrap, turn) {
   wrap.appendChild(el("pre", { class: "mono pg-body" }, text));
 }
 
+/**
+ * 记一轮进右栏。**全文件唯一的写入口**（理由见 `turns` 上面那段末尾那条）。
+ *
+ * ⚠️⚠️ **截断与「被移除了几轮」是同一件事的两半，所以它们在同一个函数里。**
+ * 拆开的话，四条 push 路径里漏掉后一半的那一条就变成了**静默截断**，
+ * 而屏幕上分辨不出来：少掉的正是最旧的那几轮，运维本来就不盯着它们。
+ * 「静默丢弃用户看得见的内容就是撒谎」是 `buildTurn()` 自己写下的那句话。
+ */
+function pushTurn(turn) {
+  turns.push(turn);
+  const { kept, removed } = trimTurns(turns);
+  if (removed === 0) return;
+  turns = kept;
+  trimmedTurns += removed;
+}
+
+/**
+ * 「清空对话」。**显式动作，不是自动行为**——静默截断那条路当年就被否掉了。
+ *
+ * ⚠️⚠️ **在飞时一个字都不动，这句早退是护栏不是客套**：`turns` 里那一轮只要
+ * `pending === true`，流式那条路的 `onPayload` 与轮询那条路的 `pollOnce()` 都还握着
+ * 它的引用。清掉之后它们照写不误，而那个对象已经不在 `turns` 里
+ * ⇒ **后半段回答写进一个没人看得见的对象**——正是 `render()` 里那五句节点作废在防的
+ * 那件事，只是换了一条搬运路径。
+ * ⇒ 在飞时这颗按钮是灰的，而旁边左栏就摆着「取消这一次」：先取消，再清空。
+ * ⚠️ **`disabled` 在测试里挡不住点击**（`tests/helpers/fake-dom.ts` 的登记盲点之一，
+ * 见 `tests/ui/dom/playground-section.test.ts` 文件头那段替身能力核对）
+ * ⇒ 真正起作用的是这里这句早退，按钮的灰只是给人看的那一半。两者由
+ * `tests/ui/dom/playground-section.test.ts` 的
+ * 「⑥ 在飞时按「清空对话」：一轮都不许清掉 —— 清掉正在收的那一轮就是把后半段写进没人看得见的对象」
+ * 一格分开钉着。
+ *
+ * ⚠️⚠️ **累计被移除的轮数跟着归零**，理由见 `trimmedTurns` 上面那段。
+ * **这一句差点没有红线**：0 轮时 `buildRight()` 在披露那一句之前就早退了，
+ * 所以「归没归零」在按完清空的那一刻**完全不可观测**
+ *（变异实测：把它改成 `trimmedTurns += 0;` ⇒ 那个文件当时 73/73 全绿）。
+ * 红线是「清空之后再发一轮」那一段补上的——没归零的那一版会在**下一轮**对话里
+ * 说「最旧的 N 轮已经从这里移除」，而那 N 轮不是从这段新对话里移除的。
+ * 由 `tests/ui/dom/playground-section.test.ts` 的
+ * 「④ 点一下「清空对话」：右栏一轮不剩，那句「还没有发过请求」回来，披露也跟着走」钉着。
+ */
+function clearTurns() {
+  if (inFlight) return;
+  turns = [];
+  trimmedTurns = 0;
+  render();
+}
+
 /** 右栏。 */
 function buildRight() {
   const { wrap, body } = block("pg.conv.title");
   if (turns.length === 0) {
     body.appendChild(elI18n("p", "pg.conv.empty", { class: "muted note" }));
     return wrap;
+  }
+  const bar = el("div", { class: "toolbar" });
+  const clear = elI18n("button", "pg.conv.clear", { type: "button", class: "pg-clear" });
+  clear.disabled = inFlight;
+  // 灰按钮要说明理由，而那句话**与发送按钮在飞那一档同一个 key**：
+  // 抄第二句出来只会得到两句会漂的话，而它们说的是同一件事。
+  if (inFlight) clear.setAttribute("title", t("pg.send.blockedInFlight"));
+  clear.addEventListener("click", () => { clearTurns(); });
+  bar.appendChild(clear);
+  body.appendChild(bar);
+  if (trimmedTurns > 0) {
+    /**
+     * **被移除了几轮必须写在屏幕上**（与 `buildTurn()` 里那句 malformed 同一条理由）。
+     *
+     * ⚠️ **两个数都从常量与状态插值进去，不写死在字典里**（同 `pg.send.readyVideo`）：
+     * 写死之后改 `PLAYGROUND_TURNS_MAX` 就会让这句话变成假话，而字典没有机器在守。
+     * ⇒ 因此这里**不能**用 `elI18n`：那条路挂 `data-i18n`，而 `apply()` 走的是
+     * **不带参数**的 `t()`，屏幕上会出现裸的占位符——i18n 门禁第 ⑧ 条正是为这一族缺陷立的。
+     * 切语言不受影响：框架层在 `apply(document)` 之后还会重跑一次 `onShow()`（见 `js/i18n.js`
+     * 文件头那条兜底机制），而本板块的 `onShow()` 在目录已经读到时就是一次 `render()`。
+     * ⚠️⚠️ **但第 ⑧ 条拦不住 `elI18n` 这种写法，别指望它**（变异实测：把下面这两行换成
+     * `elI18n("p", "pg.conv.trimmed", …)` ⇒ **那道门禁 exit 0**，红的是下面点名的那一格）：
+     * 它的判据是「这个 key 的字符串字面量后面紧不紧跟着一个逗号」，而这里 key 是第二个
+     * 参数、后面本来就跟着逗号——**这条边界那道门禁自己也登记着**。
+     * ⇒ 这条写法唯一的红线是 `tests/ui/dom/playground-section.test.ts` 的
+     * 「② 被移除了几轮写在屏幕上，次数与上限都从常量插值进去 —— 静默丢弃就是撒谎」。
+     *
+     * ⚠️ **`role="status"` 是刻意的**：这句话是**变化**出来的，而不是一段一直摆在那儿的
+     * 说明文字；不标成活区域的话，读屏器用户按下发送之后不会听到任何提示，
+     * 而他丢掉的正是屏幕上刚刚少掉的那几轮。
+     */
+    body.appendChild(el("p", { class: "muted note pg-trimmed", role: "status" },
+      t("pg.conv.trimmed", { count: String(trimmedTurns), max: String(PLAYGROUND_TURNS_MAX) })));
   }
   for (const turn of turns) body.appendChild(buildTurn(turn));
   return wrap;
@@ -944,8 +1045,12 @@ function render() {
   //    ① `catalog === null`：`catalog` 只由 `loadCatalog()` 写，而它的两个入口
   //       （`onShow()` 与错误横幅那颗重试）都只在 `catalog === null` 时才发得出去，
   //       轮询进行中 `pollEndpoint()` 正读着它 ⇒ 它不会翻回 null；
-  //    ② `buildRight()` 的 `turns.length === 0`：`turns` 全仓只有 push、零处清空，
-  //       而 `pollTurn` 本身就在里面。
+  //    ② `buildRight()` 的 `turns.length === 0`：`pollTurn` 本身就在 `turns` 里，
+  //       而轮询期间它 `pending === true` ⇒ `trimTurns()` 按定义留着它，
+  //       「清空对话」在飞时整个早退（轮询期间在飞标记不松开）⇒ 这个长度到不了 0。
+  //    ⚠️ **②的理由在 P3e Task 19 换过一次，别照着旧版读**：旧版写的是
+  //       「`turns` 全仓只有 push、零处清空」，那句话今天**是假的**（既有截断也有清空按钮）。
+  //       结论没变，变的是它靠哪两条撑着——而那两条各自有用例钉着。
   //    ⇒ 留着它不是因为它防住过什么，是因为多留一道对称的作废没有代价，
   //      而少一道的代价要等到有人给 `render()` 加第三条早退时才看得见。
   nodes.pollStatus = null;
@@ -1267,7 +1372,7 @@ function sendOnce() {
   const stream = mode === "chat" && streamOn === true;
   const req = buildRequest(target, { model: modelId, prompt: promptText, stream, origin });
   if (req === null) {
-    turns.push({
+    pushTurn({
       promptText, url: "", method: "", status: null, body: null, errorKey: "pg.err.buildFailed",
       stream: false, streamed: false, text: "", malformed: 0, pending: false, cancelled: false,
       mode, contentType: "", taskId: null, pollState: null, pollAttempt: 0,
@@ -1290,7 +1395,7 @@ function sendOnce() {
     mode, contentType: "", taskId: null, pollState: null, pollAttempt: 0,
   };
   if (stream) {
-    turns.push(turn);
+    pushTurn(turn);
     streamingTurn = turn;
   }
   render();
@@ -1301,7 +1406,7 @@ function sendOnce() {
     // 流式那条路不带这一格（它读的是 SSE，不是一份响应体）⇒ 空串。
     turn.contentType = typeof r.contentType === "string" ? r.contentType : "";
     turn.streamed = r.streamed === true;
-    if (!stream) turns.push(turn);
+    if (!stream) pushTurn(turn);
   };
   const failed = (e) => {
     // **只认档位名，不把 `e.message` 画出去**：那条串是本地拼的，别给它机会带上
@@ -1312,7 +1417,7 @@ function sendOnce() {
       : code === "stream_error" ? "pg.err.stream" : "pg.err.transport";
     // ⚠️ **流式中途断掉时那一轮已经在 `turns` 里了，不许再 push 一次** ——
     //    再 push 一次的话，运维会看到同一轮出现两遍，其中一遍带着半截正文。
-    if (!stream) turns.push(turn);
+    if (!stream) pushTurn(turn);
   };
 
   const run = stream
