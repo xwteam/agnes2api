@@ -169,3 +169,34 @@ const FACTS: readonly UpstreamFact[] = [
  * 不会有人把真表改脏了还以为自己在测探针。
  */
 export const UPSTREAM_FACTS: readonly UpstreamFact[] = Object.freeze(FACTS.map((f) => Object.freeze(f)));
+
+/**
+ * 锚在某个真源符号上的那条事实，**它的限定该贴在哪一节 API.md**。
+ *
+ * ⚠️ **这一栏从 P3e Task 25 回填起多了一个运行期消费者**：`src/http/routes/media.ts`
+ * 那条 400 要把读者指去 API.md 的某一节，而**小节名只许有这一份**。上一版那里手抄着
+ * 同一个串：这一栏改个名字，**报文照旧指着旧名字**，而**盯着报文里那个名字的机器一格
+ * 都没有**（那一栏改名本身另有 `docs-parity` 那一侧管，但它管的是文档，不是报文）。
+ * 这不违反文件头 ⚠️⚠️ 那条「不许长成第三份端点知识」：交出去的是**markdown 里的一行
+ * 标题**，仍然只被拿去定位一节文档，网关一个字节都不拿它去发请求。
+ *
+ * ⚠️ **不是恰好一条就抛，不返回一个「大概对」的值**：0 条 ⇒ 报文指向空气；
+ * 2 条 ⇒ 它随这张表的排序漂。抛的时机是**建应用那一刻**（消费者在路由注册时取一次），
+ * 不是等到某个读者踩中 400 的那一刻——后者会把一个 400 变成 500。
+ * 由 `tests/contract/media.test.ts` 的
+ * 「报文点名的那一节文档取自上游事实登记表 —— 报文里不许有第二份小节名」钉着；
+ * 「这个标题在五份 API.md 里真的存在」另有 `tests/unit/docs-parity.test.ts` 的
+ * 「该红时红：小节标题在某一份里对不上时会吵……」管着，本函数不重复那一层。
+ */
+export function upstreamDocSectionByAnchor(anchor: string): string {
+  const hits = UPSTREAM_FACTS.filter((f) => f.anchor === anchor);
+  const section = hits.length === 1 ? hits[0]!.docSections[0] : undefined;
+  if (section === undefined || section === "") {
+    throw new Error(
+      `上游事实登记表里锚在「${anchor}」上的事实有 ${hits.length} 条（要恰好一条），`
+      + `第一条 docSections 取到的是 ${JSON.stringify(section)}：`
+      + "报文要据它把读者指去 API.md 的某一节，取不到就只能把人指向空气。",
+    );
+  }
+  return section;
+}

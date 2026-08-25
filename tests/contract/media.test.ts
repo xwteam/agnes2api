@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_CONFIG } from "../helpers/make-app.js";
 import {
-  VIDEO_TASK_ID_RE, VIDEO_TASK_ID_SHAPE, videoTaskIdShape,
+  VIDEO_TASK_ID_RE, VIDEO_TASK_ID_SHAPE, mediaEndpointById, videoTaskIdShape,
 } from "../../src/core/admin/protocol-catalog.js";
+import { UPSTREAM_FACTS, upstreamDocSectionByAnchor } from "../../src/core/admin/upstream-facts.js";
 
 describe("POST /v1/images/generations", () => {
   it("把上游图片响应原样返回", async () => {
@@ -147,6 +148,10 @@ describe("GET /v1/videos/{id} 的路径穿越防护", () => {
  */
 describe("GET /v1/videos/{id} 的字符集硬闸：400 说得清", () => {
   const AUTH = { authorization: `Bearer ${TEST_CONFIG.gatewayToken}` };
+  /** 建任务那条端点的真源。**报文里那句「上游在 X 那一步签发的」必须跟着它走。** */
+  const CREATE = mediaEndpointById("video.create");
+  /** 报文该把读者指去哪一节文档，取自上游事实登记表（与 `media.ts` 同一个取法）。 */
+  const DOC_SECTION = upstreamDocSectionByAnchor("VIDEO_TASK_ID_RE");
 
   it("非法形状的任务标识 ⇒ 400，且报文逐字说明接受什么形状", async () => {
     const { app, fetcher } = await makeApp([], ["sk-x"], {}, () => 1_000);
@@ -157,11 +162,66 @@ describe("GET /v1/videos/{id} 的字符集硬闸：400 说得清", () => {
     const body = await res.json() as { error: { message: string } };
     expect(body.error.message, "报文里没有那个形状 —— 读者只知道「不合法」，不知道该改成什么")
       .toContain(VIDEO_TASK_ID_SHAPE);
+    // **右边这一半取自真源，不是同一个字面量抄两遍**（复评 F1）：上一版两边都写死
+    // `"POST /v1/videos"`，于是目录里那条路径改了名、报文把读者指去一条不存在的端点时，
+    // 这一格照样绿。
     expect(
       body.error.message,
       "报文没说这个标识是上游在建任务那一步签发的 —— 那会把人指去改自己的请求参数，而那一定改不出结果",
-    ).toContain("POST /v1/videos");
+    ).toContain(`${CREATE.method} ${CREATE.pathTemplate}`);
     expect(fetcher.usedKeys, "已经 400 了却还拿池里的 key 向上游发过请求").toEqual([]);
+  });
+
+  /**
+   * 上面那格只保证报文与目录**同步**，保证不了目录里那条路径**真的注册着**。
+   * 这一格把路径**从报文正文里抠出来**再真打一次：**报文里那条路径与真正注册的那条
+   * 路由一旦分家**，这一格红在「你让读者去打的那条路径，本网关上根本没有」。
+   * 回填时按两种真实分家形态各跑过一次：①报文里那条路径写错一个字符（**只有这一格红**，
+   * 上一格的 `toContain` 照样绿，因为它是个子串）；②报文退回手抄、同时目录改了名
+   * （两格一起红）。抠不出来时**当场吵**（`.not.toBeNull()`），不装作没看见。
+   */
+  it("报文点名的那条建任务端点真的注册着 —— 不许把读者指去一条 404 的路径", async () => {
+    const { app } = await makeApp(
+      [{ status: 200, body: '{"id":"task-1","status":"queued"}' }], ["sk-x"], {}, () => 1_000,
+    );
+    const res = await app.request("/v1/videos/job.2026.001", { headers: AUTH });
+    const body = await res.json() as { error: { message: string } };
+    const named = /在 ([A-Z]+) (\/\S+) 那一步签发的/.exec(body.error.message);
+    expect(named, `报文里读不出「在 <方法> <路径> 那一步签发的」这句话：${body.error.message}`).not.toBeNull();
+    const probe = await app.request(named![2]!, {
+      method: named![1]!,
+      headers: { ...AUTH, "content-type": "application/json" },
+      body: JSON.stringify({ model: "agnes-video-v2.0", prompt: "一只猫在跑" }),
+    });
+    expect(
+      probe.status,
+      `报文让读者去打 ${named![1]} ${named![2]}，而这条路径在本网关上没有注册`,
+    ).not.toBe(404);
+  });
+
+  it("报文点名的那一节文档取自上游事实登记表 —— 报文里不许有第二份小节名", async () => {
+    const { app } = await makeApp([], ["sk-x"], {}, () => 1_000);
+    const res = await app.request("/v1/videos/job.2026.001", { headers: AUTH });
+    const body = await res.json() as { error: { message: string } };
+    expect(
+      body.error.message,
+      `报文没把读者指去 API.md 的 ${DOC_SECTION} 一节 —— 登记表那一栏与报文已经不是同一份`,
+    ).toContain(DOC_SECTION);
+  });
+
+  /**
+   * 报文里「**已知的未核实假设**」那半句，说的是登记表上 `video.taskIdCharset` 的
+   * `status`。它哪天真被一次真上游核实了，这半句就成了假话，而报文没有任何机器管它 ——
+   * 这一格就是那台机器：翻成 `verified` 的同一次改动会在这里当场红，改的人被逼着
+   * 回头看一眼 `src/http/routes/media.ts` 那句话。
+   */
+  it("报文里那句「未核实」跟着登记表的 status 走", () => {
+    const fact = UPSTREAM_FACTS.find((f) => f.id === "video.taskIdCharset");
+    expect(fact, "登记表上 video.taskIdCharset 这条事实没了 —— 这一格测的是空气").toBeDefined();
+    expect(
+      fact!.status,
+      "这条事实不再是 assumed 了：src/http/routes/media.ts 那条 400 里「一条已知的未核实假设」这半句得跟着改",
+    ).toBe("assumed");
   });
 
   it("反向控制（同格）：合法 id 仍然 200，且出站 URL 逐字对 —— 防「收紧到谁都进不来」空洞满足", async () => {
@@ -253,6 +313,31 @@ describe("VIDEO_TASK_ID_SHAPE 说的是真话", () => {
     expect(VIDEO_TASK_ID_RE.test(s(hi)), `长度 ${hi}（形状说的上界）被拒了`).toBe(true);
     expect(VIDEO_TASK_ID_RE.test(s(lo - 1)), `长度 ${lo - 1} 被收了 —— 形状说的下界不是真的下界`).toBe(false);
     expect(VIDEO_TASK_ID_RE.test(s(hi + 1)), `长度 ${hi + 1} 被收了 —— 形状说的上界不是真的上界`).toBe(false);
+  });
+
+  /**
+   * `protocol-catalog.ts` 里 `VIDEO_TASK_ID_SHAPE` 上方那句「**它必须是纯 ASCII**」
+   * 此前是一张**不会自己红的清单**（复评 F4 实测：把正则字符类改成含非 ASCII、再把
+   * 五份文档同步改，十二道门禁全绿，而 `en`/`ja`/`ko` 三份里真的多出一段中文）。
+   * 这两格就是那句话的机器形态：上一格钉真值、下一格证明这个判据不是瞎的。
+   */
+  const nonAsciiOf = (s: string): string[] => [...s].filter((c) => c.codePointAt(0)! > 0x7f);
+
+  it("形状串必须是纯 ASCII —— en / ja / ko 三份 API.md 逐字带着它", () => {
+    const bad = nonAsciiOf(VIDEO_TASK_ID_SHAPE);
+    expect(
+      bad,
+      `形状串「${VIDEO_TASK_ID_SHAPE}」里有非 ASCII 字符「${bad.join("")}」——`
+      + "它会被原样印进 en / ja / ko 三份 API.md，那三份的读者会看到一段自己看不懂的字符",
+    ).toEqual([]);
+  });
+
+  it("不乱红：判据真认得出非 ASCII —— 字符类被放宽到收中文时当场点名", () => {
+    // 真实的放宽形态：有人为了迁就上游把字符类扩到 CJK 段。形状串跟着变，
+    // 于是那三份文档里凭空多出一段中文 —— 正是上一格要拦的那件事。
+    const widened = videoTaskIdShape("^[A-Za-z0-9_一-龥-]{1,128}$");
+    expect(nonAsciiOf(widened), `放宽成「${widened}」之后判据一个非 ASCII 都没认出来`)
+      .toEqual(["一", "龥"]);
   });
 
   it("认不出 `VIDEO_TASK_ID_RE` 的写法时当场抛，不返回一个「大概对」的形状", () => {

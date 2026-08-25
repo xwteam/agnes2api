@@ -3,6 +3,7 @@ import { dispatch, type DispatchDeps } from "../../core/dispatcher.js";
 import {
   VIDEO_TASK_ID_RE, VIDEO_TASK_ID_SHAPE, mediaEndpointById, withTaskId,
 } from "../../core/admin/protocol-catalog.js";
+import { upstreamDocSectionByAnchor } from "../../core/admin/upstream-facts.js";
 import { httpError, readJson } from "../errors.js";
 
 // 图片：同步转发。视频：建任务 + 轮询的两段式。
@@ -29,6 +30,10 @@ export function mediaRoutes(deps: DispatchDeps): Hono {
   const image = mediaEndpointById("image.generate");
   const create = mediaEndpointById("video.create");
   const poll = mediaEndpointById("video.poll");
+  // 那条 400 要把读者指去 API.md 的哪一节，**取自上游事实登记表那一栏**（P3e Task 25
+  // 回填）：手抄一份的话，那一栏改了名字报文照旧，而读者被指去一节不存在的文档。
+  // 取在这里而不是取在 400 那一刻，是为了**建应用时就抛**（见那个函数的第二条 ⚠️）。
+  const charsetDocSection = upstreamDocSectionByAnchor("VIDEO_TASK_ID_RE");
 
   app.post(image.pathTemplate, async (c) =>
     dispatch({ path: image.upstreamPath, body: await readJson(c), stream: false, timeout: "sync", deps }));
@@ -45,6 +50,14 @@ export function mediaRoutes(deps: DispatchDeps): Hono {
       // **报文要说得清「该怎么改」，不只是「不合法」。** 形状逐字来自
       // `VIDEO_TASK_ID_SHAPE`（真源是 `VIDEO_TASK_ID_RE` 本身，这里不许手抄第二份）。
       //
+      // ⚠️ **报文里那两处「别处的名字」同样一个字都不手抄**（P3e Task 25 回填补的）：
+      // 建任务那条端点的方法与路径取自 `create`（真源 `MEDIA_ENDPOINTS`，与文件头那句
+      // 「三条路径都不再写在本文件里」同一条口径——上一版这里手抄着 `POST /v1/videos`，
+      // 那句话因此是假的），文档小节名取自上面的 `charsetDocSection`。
+      // 「报文点名的那条端点真的注册着」由 `tests/contract/media.test.ts` 的
+      // 「报文点名的那条建任务端点真的注册着 —— 不许把读者指去一条 404 的路径」钉着，
+      // 它是**从报文正文里把路径抠出来**再去打，不是拿目录比目录（那是同义反复）。
+      //
       // ⚠️ **它必须同时说出「你改得动的那一半」和「你改不动的那一半」，否则就是把人
       // 往坑里引**（阶段 D 的教训：报文说「改这个数」，照做了还是恒 400）。标识是
       // **上游在建任务那一步签发的**：读者自己弄脏了它（编码、引号、空白）时照着改就通；
@@ -54,10 +67,10 @@ export function mediaRoutes(deps: DispatchDeps): Hono {
         400, "invalid_request_error",
         `视频任务标识格式非法：本网关只接受 ${VIDEO_TASK_ID_SHAPE} 这个形状`
         + "（前一段是允许的字符集，括号里是长度的下界与上界）。"
-        + "这个标识是上游在 POST /v1/videos 那一步签发的，不是你输入的："
+        + `这个标识是上游在 ${create.method} ${create.pathTemplate} 那一步签发的，不是你输入的：`
         + "把那次响应里的标识原样贴回来（别做 URL 编码、别带引号或空白）通常就能过；"
         + "若上游签发的标识本身就超出这个集合，改请求参数没有用——"
-        + "那是本网关一条已知的未核实假设，见 API.md 的 `GET /v1/videos/{id}` 一节。",
+        + `那是本网关一条已知的未核实假设，见 API.md 的 ${charsetDocSection} 一节。`,
       );
     }
     return dispatch({

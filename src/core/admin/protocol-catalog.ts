@@ -298,9 +298,14 @@ export const VIDEO_TASK_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
  *
  * ⚠️ **认不出就抛，不返回一个「大概对」的串。** 正则被改成本函数不认识的写法时，
  * 静默降级会让报文与文档继续挂着旧形状 —— 那正是「认不出要吵，不能装没看见」
- * 要挡的形态。抛的代价是每一条经过这个模块的用例当场红（契约测试全体都经过它），
- * 它因此不可能带着绿 CI 溜进生产。由 `tests/contract/media.test.ts` 的
- * 「认不出 `VIDEO_TASK_ID_RE` 的写法时当场抛」钉着。
+ * 要挡的形态。抛的代价是**凡 import 到本模块的用例文件当场加载失败** ——
+ * 契约测试里大多数文件都在其中，`tests/contract/media.test.ts` 是其一，
+ * 它因此不可能带着绿 CI 溜进生产。
+ *（复评 F3 订正：上一版这里写的是「契约测试**全体**都经过它」，而 M7 变异实测下
+ * `tests/contract/` 有一部分文件根本不 import 本模块、照样跑得通。具体是多少个文件
+ * 属于一次性实测，本仓没有常跑的机器守着，所以这句话不写数字。）
+ * 常跑的那格是 `tests/contract/media.test.ts` 的
+ * 「认不出 `VIDEO_TASK_ID_RE` 的写法时当场抛」。
  *
  * ⚠️ **它派生的是「形状怎么读」，不是「形状对不对」。** 这条字符集本身是一条
  * **未核实的假设**，登记在 `src/core/admin/upstream-facts.ts` 的 `video.taskIdCharset`：
@@ -324,8 +329,12 @@ export function videoTaskIdShape(source: string): string {
 /**
  * `VIDEO_TASK_ID_RE` 的人读形状，**全仓唯一一份**。取法与理由见 `videoTaskIdShape()`。
  *
- * ⚠️ **它必须是纯 ASCII**：五份 API.md 逐字带着它，写成一句中文的话 `en` / `ja` / `ko`
- * 三份里会凭空出现一段中文。
+ * ⚠️ **它必须是纯 ASCII**：五份 API.md 逐字带着它，字符类哪天被放宽到收非 ASCII，
+ * `en` / `ja` / `ko` 三份里会凭空出现一段中文。
+ * **这句话有机器守着**（P3e Task 25 回填补的；在那之前它是一张不会自己红的清单，
+ * 复评实测把字符类改成含非 ASCII、五份文档同步改，十二道门禁全绿）：
+ * `tests/contract/media.test.ts` 的「形状串必须是纯 ASCII —— en / ja / ko 三份 API.md
+ * 逐字带着它」钉真值，同组「不乱红：判据真认得出非 ASCII……」证明那个判据不是瞎的。
  */
 export const VIDEO_TASK_ID_SHAPE = videoTaskIdShape(VIDEO_TASK_ID_RE.source);
 
