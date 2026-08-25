@@ -41,6 +41,9 @@ export const CARD_UPSTREAM = [
   // `sec-settings.js` 从来没把它渲染出来（`scripts/check-i18n.mjs` 这道门禁把它报成「未被引用」）。
   // 现在它真的上屏了，并由 tests/ui/dom/settings-save.test.ts 的
   // 「卡 2 底下真的印着那句「改了要重启」」钉着——这一条别再退回成散文。
+  // ⚠️ **那一句只是常驻的静态提示，回执那一半在 P3e Task 23 才补上**：
+  // 在那之前保存完一律渲染 `set.propagation`「本实例已经生效」，对这两格是**当面说反话**。
+  // 这两格今天在下面的 `BUILD_TIME_FIELDS` 里，回执按那张表分岔。
   "poolCacheTtlMs",
   "poolTouchIntervalMs",
 ];
@@ -66,6 +69,62 @@ export const CARD_REGISTRAR = [
 
 /** 折进「高级」折叠区的字段。见 `CARD_AUTH` 上面那段。 */
 export const ADVANCED_FIELDS = ["registrar.agnesPlatformUrl"];
+
+/**
+ * **建实例时读一次**的字段。它们与别的字段的差异是一条**性质**，不是一份巧合的名单：
+ * `src/http/wire.ts` 里 `const cfg = configHolder.current()` 之后拿它们建 `KeyPoolRepo`，
+ * 此后不随 ConfigHolder 每次刷新而变 ⇒ 改了要重启容器 / 等 isolate 回收才生效。
+ *
+ * ⚠️ **这张表不是手写清单，是那条性质的交集，而且它会自己红**：
+ * `tests/ui/settings.test.ts` 的
+ * 「BUILD_TIME_FIELDS 就是 wire.ts 建 app 时读的那份快照里、面板又能改的那几格」
+ * 抠掉注释之后从 `src/http/wire.ts` 扫出那份快照被读到的字段名，再与后端的
+ * `EDITABLE` 求交，逐字与本表比对——删一项、多一项、或者哪天 `wire.ts` 又多读一个
+ * 面板改得动的字段而没人回来补，那一格当场红。
+ *
+ * ⚠️ **DOM 层必须从这张表派生**，不许在 `sec-settings.js` 里写
+ * `if (path === "poolCacheTtlMs" || …)` —— 那就是又一份会漂的手写清单，
+ * 本仓已经因为同一形态（`FIELD_EXPOSURE` vs `EDITABLE` 那两张表）加过一整组对账用例。
+ *
+ * ⚠️ **`usageStatsEnabled` 同样是建实例时读一次的，但它不在这里**，理由不是遗漏：
+ * 它压根不在后端的 `EDITABLE` 里 ⇒ 面板改不到它 ⇒ 保存回执里永远不会提到它。
+ * 这条边界由上面那格的反向控制正面钉着（那一格要求它**被扫得出来、却不在本表里**）。
+ */
+export const BUILD_TIME_FIELDS = ["poolCacheTtlMs", "poolTouchIntervalMs"];
+
+/** 这次保存里有没有碰到「建实例时读一次」的字段。 */
+export function touchesBuildTimeField(changedPaths) {
+  return changedPaths.some((p) => BUILD_TIME_FIELDS.includes(p));
+}
+
+/**
+ * 这次保存里有没有碰到逐次生效的字段。
+ *
+ * ⚠️ **它不是 `!touchesBuildTimeField()`。** 两者都为真是**常态**（运维顺手一起改了），
+ * 写成互斥就会在混合保存里吞掉其中一句话——那一档由
+ * `tests/ui/dom/settings-save.test.ts` 的
+ * 「③ 混合保存：同时改一个逐次生效的字段和一个旋钮 ⇒ 两句都出现」钉着。
+ * 两者都为假也有意义：一次「什么都没变」的回读，两句话都不该说。
+ */
+export function touchesLiveField(changedPaths) {
+  return changedPaths.some((p) => !BUILD_TIME_FIELDS.includes(p));
+}
+
+/**
+ * 这份响应是不是**一次保存的回执**（而不是「只是读了一次配置」）。
+ *
+ * 判据是 `changed` 这一格**在不在**，不是它空不空：`PUT /admin/api/config` 的响应
+ * 恒有它（哪怕是空数组），而 `GET /admin/api/config` 与清空凭据那条响应里
+ * **一个字都没有**（`src/http/admin/handlers/config.ts` 三个 handler 的 `c.json(...)` 逐字如此）。
+ *
+ * ⚠️ **有了它，「上一次保存动了什么」就不必在板块文件里另存一份状态**——
+ * 而那份状态正是会忘记清的那种东西（刷新一次、清空一把凭据之后它还留着，
+ * 于是回执里那句话对着一次根本没发生的保存继续说）。**判据跟着数据走，不跟着时间走。**
+ */
+export function isSaveReceipt(body) {
+  const b = obj(body);
+  return b !== null && Array.isArray(b.changed);
+}
 
 /**
  * 两条邮箱通道，**顺序固定为字母序**（设计 §10.3 第 3 条）。
@@ -418,6 +477,12 @@ export function changedSecrets(body) {
  * **必须显示，不许写「立即生效」**（设计 §5.2）：本进程确实立刻生效，
  * 别的 isolate 要等 `configTtlMs` + KV 边缘缓存。读不到就 `null` ⇒ 那一行不渲染，
  * **不伪造一个 0**（「0 秒生效」正好是被禁的那句话）。
+ *
+ * ⚠️ **「本进程确实立刻生效」这半句有一族例外，别再照上一版读**：
+ * `BUILD_TIME_FIELDS` 里那两格是建实例时读一次的，**本进程也没生效**。
+ * 这个函数只负责把上界读出来，「这一次该不该说那句话」的判据在
+ * `touchesLiveField()` / `touchesBuildTimeField()` 那两条，落点在 `sec-settings.js`
+ * 的 `render()`。
  */
 export function propagationView(body) {
   const b = obj(body);

@@ -295,6 +295,119 @@ describe("卡 2 的诚实提示（P3e Task 4）", () => {
   });
 });
 
+// ───────────────────────────────────────────────────────────────────────────
+// P3e Task 23：保存回执不许对「建实例时读一次」的旋钮谎称本实例已生效
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * **`set.propagation` 那句话对这两个旋钮是假的。**
+ *
+ * 它逐字说的是「本实例已经生效；别的副本 / isolate 最长 {bound} 之后才看得到这次改动」，
+ * 而 `poolCacheTtlMs` / `poolTouchIntervalMs` 是**建 app 时读一次**的
+ *（`src/http/wire.ts` 里 `const cfg = configHolder.current()` 之后那两行）：
+ * **本实例根本没生效**，而且等多久都没用——要重启容器 / 等 isolate 回收。
+ * 改动前保存完一律渲染那一句 ⇒ 运维等满一个上界回来一看没变化，
+ * 得出的结论与卡 2 那句沉默时一样：「这个面板的保存是假的」。
+ * **说了但说错，比不说更坏**：不说至少不会有人去等那 90 秒。
+ *
+ * ⚠️ **这一族与卡 2 底下那句 `set.card.upstreamNote`（Task 4）是同一件事的两半**：
+ * 那一句是**常驻**的静态提示（改之前就该看见），这一族是**保存回执**里对
+ * 「这一次到底动了哪一类字段」的表态。只补前者的话，回执照旧当面说反话。
+ *
+ * ⚠️ **判据必须从 `BUILD_TIME_FIELDS` 派生**，`sec-settings.js` 里不许写
+ * `if (path === "poolCacheTtlMs" || …)`——那是又一份会漂的手写清单。
+ * 那张表自己不是靠手写守住的：`tests/ui/settings.test.ts` 的
+ * 「BUILD_TIME_FIELDS 就是 wire.ts 建 app 时读的那份快照里、面板又能改的那几格」
+ * 直接从 `src/http/wire.ts` 反查它。
+ *
+ * ⚠️ **下面两个字段名是手写的，这条边界如实写下来**：它们让「删掉表里一项」当场变红
+ *（本族第一格），但**新增**一个建实例时读一次的字段时本族不会自己长出一格——
+ * 那一半由上面点名的那条派生守卫负责（它会红，逼人回来补）。
+ */
+describe("建实例时读一次的旋钮：保存回执分岔（P3e Task 23）", () => {
+  /** `set.propagation` 里独有的那半句。 */
+  const LIVE_LINE = "本实例已经生效";
+  /** `set.propagation.buildTime` 里独有的那半句——**它必须与上面那句分得开**。 */
+  const BUILD_TIME_LINE = "本实例也还没生效";
+
+  /**
+   * 改这几格 → 点保存 → 回执按后端回读的 `changed` 说话，返回**屏幕上看得到**的字。
+   *
+   * ⚠️ **GET 与 PUT 给的响应形状不同，这不是偷懒**：真后端的 `GET /admin/api/config`
+   * 里**没有** `changed` 这一格（`src/http/admin/handlers/config.ts` 两个 handler 逐字如此），
+   * 而面板正是靠这一格分辨「这份数据是一次保存的回执」还是「只是读了一次」。
+   * 两边都给 `changed` 的话，第 ④ 格（还没保存过）就测不出来了。
+   */
+  async function saveChanging(entries: ReadonlyArray<readonly [string, string]>): Promise<string> {
+    const h = await openSettings((url, method) => {
+      if (!url.startsWith("/admin/api/config")) return ok({});
+      return ok(method === "PUT"
+        ? configBody({ changed: entries.map(([p]) => p), credentialsChanged: [] })
+        : configBody());
+    });
+    const section = h.section("settings");
+    for (const [path, value] of entries) inputOf(section, path).value = value;
+    saveButton(section).click();
+    await settle(10);
+    return visibleText(section);
+  }
+
+  for (const path of ["poolCacheTtlMs", "poolTouchIntervalMs"]) {
+    it(`① 只改 ${path} 时：不许说本实例已经生效，必须说本实例也还没生效`, async () => {
+      const text = await saveChanging([[path, "120000"]]);
+      expect(
+        text,
+        `只改了 ${path} 这个建实例时读一次的旋钮，回执却说「${LIVE_LINE}」——运维会等满一个传播上界，然后发现什么都没变`,
+      ).not.toContain(LIVE_LINE);
+      // **不是只把假话删掉就完了**：删掉之后面板对这次保存整个沉默，
+      // 而沉默正是 Task 4 那一轮判定为「运维会以为保存是假的」的那一档。
+      expect(
+        text,
+        `回执对 ${path} 什么都没说 —— 删掉一句假话不等于说了真话`,
+      ).toContain(BUILD_TIME_LINE);
+      expect(text).toContain("要重启容器 / 等 isolate 回收才看得到");
+    });
+  }
+
+  /**
+   * **反向控制：逐次生效的字段照旧走原来那句。**
+   * 少了这一格，一个「一律只说重启那句」的实现也能让上面两格全绿——
+   * 而 `set.propagation` 那句话是 P3c 花整轮论证出来的（五语言 DEPLOY.md 写着
+   * 面板文案不许写「立即生效」），本任务是**给它加例外分支，不是把它换掉**。
+   */
+  it("② 反向控制：只改 maxStrikes 这类逐次生效的字段时，传播上界照常出现、重启那句不出现", async () => {
+    const text = await saveChanging([["maxStrikes", "9"]]);
+    expect(text, "逐次生效的字段也被说成了「要重启」—— 例外分支扩得太宽").not.toContain(BUILD_TIME_LINE);
+    expect(text, "传播上界那句被一起删掉了 —— 那是 P3c 论证出来的必须显示项").toContain(LIVE_LINE);
+    // 90_000 ms 经 `fmtDuration` 是「1分30秒」。
+    expect(text).toContain("1分30秒");
+  });
+
+  /**
+   * ⚠️⚠️ **这一格是最容易被漏掉的形状，而它恰恰是真实运维最常见的那一次保存。**
+   * 只写 ①② 的话，把实现写成 `if (碰了旋钮) 说重启 else 说传播上界` 也能全绿——
+   * 而那种实现在「顺手一起改了」的那一次保存里，会把逐次生效那半边的话吞掉。
+   * 两句话说的是**两组不同的字段**，不是同一件事的两种档位，所以它们必须能同时出现。
+   */
+  it("③ 混合保存：同时改一个逐次生效的字段和一个旋钮 ⇒ 两句都出现", async () => {
+    const text = await saveChanging([["maxStrikes", "9"], ["poolCacheTtlMs", "120000"]]);
+    expect(text, "混合保存里传播上界那句被吞了 —— 实现多半写成了互斥的 if/else").toContain(LIVE_LINE);
+    expect(text, "混合保存里重启那句被吞了 —— 实现多半写成了互斥的 if/else").toContain(BUILD_TIME_LINE);
+  });
+
+  /**
+   * **还没保存过时不许提前说这次改动的事。**
+   * 这一格钉的是「新加的那句话是**保存回执**，不是又一条常驻说明」：
+   * 常驻的那一句在卡 2 底下（Task 4），这一句只在真的动过旋钮之后才该出现。
+   */
+  it("④ 只是读了一次配置（还没保存过）：重启那句不出现，传播上界照常在", async () => {
+    const h = await openSettings(() => ok(configBody()));
+    const text = visibleText(h.section("settings"));
+    expect(text, "还没保存过就先说上了「这次改动」—— 那是一句无中生有的回执").not.toContain(BUILD_TIME_LINE);
+    expect(text, "传播上界那句在读取态下也不见了").toContain(LIVE_LINE);
+  });
+});
+
 describe("凭据只写不读（设计 §8.6）", () => {
   it("凭据框是 password、永远是空的，占位符说「留空则不修改」", async () => {
     const h = await openSettings(() => ok(configBody()));

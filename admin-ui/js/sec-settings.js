@@ -39,6 +39,7 @@ import {
   channelFields, fieldLabelKey, fieldView, credentialView,
   buildPatch, localErrors, changedFields, changedSecrets, propagationView,
   errorRows, clearResultView, displayValue, clearWarning, isDiagnostic, loadBlockedRows,
+  isSaveReceipt, touchesLiveField, touchesBuildTimeField,
 } from "./pure/settings.mjs";
 
 let nodes = null;
@@ -275,10 +276,24 @@ function render() {
   for (const path of Object.keys(nodes.fields)) renderOne(nodes.fields[path]);
 
   const p = propagationView(data);
-  nodes.propagation.textContent = p.visibilityUpperBoundMs === null
-    ? ""
-    : t("set.propagation", { bound: fmtDuration(p.visibilityUpperBoundMs) });
-  nodes.propagation.style.display = p.visibilityUpperBoundMs === null ? "none" : "";
+  // ── 传播说明：两句话，各自有各自的前提（P3e Task 23）────────────────────────
+  //
+  // `set.propagation` 逐字说的是「**本实例已经生效**；别的副本最长 {bound} 之后才看得到」，
+  // 而 `BUILD_TIME_FIELDS` 那两格是建实例时读一次的（`src/http/wire.ts`）⇒
+  // 只改那两格时这句话是**当面说反话**：本实例没生效，而且等多久都没用。
+  // ⚠️ **判据从 `BUILD_TIME_FIELDS` 派生**，这里不许写 `if (path === "poolCacheTtlMs" || …)`。
+  // ⚠️ **两句不是互斥的**：混合保存时两句都要出现，见 `touchesLiveField()` 上面那段。
+  //
+  // `saved === null` = 这份数据不是保存回执（只是读了一次 / 清空凭据回来的）⇒
+  // 那时 `set.propagation` 讲的是**这个部署的传播上界**这件事实本身，照旧渲染；
+  // 而「这次改动」那句回执**一个字都不说**（无中生有的回执与假回执一样坏）。
+  const saved = isSaveReceipt(data) ? changedFields(data).concat(changedSecrets(data)) : null;
+  const showLive = p.visibilityUpperBoundMs !== null && (saved === null || touchesLiveField(saved));
+  nodes.propagation.textContent = showLive
+    ? t("set.propagation", { bound: fmtDuration(p.visibilityUpperBoundMs) })
+    : "";
+  nodes.propagation.style.display = showLive ? "" : "none";
+  nodes.propagationBuildTime.style.display = saved !== null && touchesBuildTimeField(saved) ? "" : "none";
 
   const degraded = data !== null && data.configDegraded === true;
   nodes.degraded.style.display = degraded ? "" : "none";
@@ -696,6 +711,17 @@ export const settingsSection = {
     const propagation = el("p", { class: "muted note" });
     section.appendChild(propagation);
     nodes.propagation = propagation;
+
+    // 上面那句的**例外分支**（P3e Task 23）：这次保存碰到了建实例时读一次的字段。
+    // ⚠️ **它是保存回执，不是又一条常驻说明**——常驻的那句在卡 2 底下
+    //（`set.card.upstreamNote`，改之前就该看见）。默认藏着，由 `render()` 按
+    // `touchesBuildTimeField()` 打开，见那里那一段。
+    // 走 `elI18n` 而不是 `t()`：它不带占位符 ⇒ 切语言时框架层的 `apply(document)`
+    // 刷得动它（`set.propagation` 带 `{bound}`，刷不动，只能等 `onShow()` 重画）。
+    const propagationBuildTime = elI18n("p", "set.propagation.buildTime", { class: "muted note" });
+    propagationBuildTime.style.display = "none";
+    section.appendChild(propagationBuildTime);
+    nodes.propagationBuildTime = propagationBuildTime;
   },
 
   onShow() {

@@ -169,8 +169,26 @@ export async function buildApp(
   const configHolder = await createConfigHolder({ env, storage: watched, logger, now });
   // **这两个旋钮是建 app 时读一次的**，不随 ConfigHolder 每次刷新而变：它们绑定的是
   // 部署形态（活跃 isolate 数 × 池大小），不是逐次生效的策略。改了要重启容器 /
-  // 等 isolate 回收——`.env.example` 与五语言 DEPLOY.md 都写明了，面板文案同样不许
-  // 写「立即生效」。
+  // 等 isolate 回收——`.env.example` 与五语言 DEPLOY.md 的环境变量表**那两格逐格写明了**，
+  // 面板文案同样不许写「立即生效」。
+  //
+  // ⚠️ **上面那半句在 P3e Task 23 之前是假的，如实登记（勘察当日逐份读过）**：
+  // `.env.example` 里只有 `POOL_CACHE_TTL_MS` 那格写了这件事，`POOL_TOUCH_INTERVAL_MS`
+  // 那格一个字都没有；五份 DEPLOY.md 是环境变量表**下面**的正文段落写了、**表格那两格没写**，
+  // 而那张表的开场白自己声明「完整的取值范围与代价以本表为准」——照着表逐格读参数的人
+  // 一条都看不到。两处补齐之后这句话才成立，而且**不再靠人守**：
+  // `tests/ui/settings.test.ts` 的
+  // 「.env.example 里这两个旋钮各自都写明了改了要重启、面板改它不会立刻生效」
+  // 管 `.env.example` 那一半，同一组里另有一条「逐次生效的字段那一格不许写这句话」的反向控制；
+  // `tests/unit/docs-parity.test.ts` 的「五语言 DEPLOY.md 里……的出现次数彼此一致」
+  // 管五语言那一半，而它选的锚**就是本文件的路径**（那两格里各出现一次）。
+  //
+  // ⚠️ **面板那一半也不再只是一句文案**：`admin-ui/js/pure/settings.mjs` 的
+  // `BUILD_TIME_FIELDS` 就是下面这两行读到的字段与后端 `EDITABLE` 的交集，由
+  // `tests/ui/settings.test.ts` 的
+  // 「BUILD_TIME_FIELDS 就是 wire.ts 建 app 时读的那份快照里、面板又能改的那几格」
+  // 抠掉注释之后从本文件反查着钉住。**在这里多读一个面板能改得动的字段而不回去补那张表，
+  // 那一格当场红**——因为保存回执会对它继续说「本实例已经生效」，而那是假的。
   const cfg = configHolder.current();
   const repo = new KeyPoolRepo(watched, {
     now, logger,

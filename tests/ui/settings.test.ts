@@ -1,12 +1,15 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   CARD_AUTH, CARD_UPSTREAM, CARD_REGISTRAR, ADVANCED_FIELDS,
   channelFields, fieldLabelKey, errorMessageKey, fieldView, credentialView,
   buildPatch, localErrors, changedFields, propagationView, errorRows, displayValue, clearWarning,
+  BUILD_TIME_FIELDS, touchesBuildTimeField, touchesLiveField, isSaveReceipt,
 } from "../../admin-ui/js/pure/settings.mjs";
 import { CHANNELS } from "../../admin-ui/js/pure/registrar.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
-import { EDITABLE_FIELDS, CONFIG_ERROR_CODES } from "../../src/core/admin/config-validate.js";
+import { EDITABLE_FIELDS, CONFIG_ERROR_CODES, envNameOf } from "../../src/core/admin/config-validate.js";
+import { blankComments } from "../helpers/strip-comments.js";
 
 /**
  * 设置页的纯函数（`admin-ui/js/pure/settings.mjs`）。
@@ -89,6 +92,163 @@ describe("字段清单：设计 §10.4 的三张卡 + 高级折叠区", () => {
     expect([...EDITABLE_FIELDS].filter((f) => !shown.has(f)).sort()).toEqual([]);
     // 反向：面板上不许有后端不认识的格子（那一格保存时会吃 `unknown_field`）。
     expect([...shown].filter((f) => !EDITABLE_FIELDS.includes(f)).sort()).toEqual([]);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// P3e Task 23：「建实例时读一次」那两个旋钮，三处说法一起守
+// ───────────────────────────────────────────────────────────────────────────
+
+const WIRE = "src/http/wire.ts";
+/** 建 app 时那份**只读一次**的配置快照是从这一行来的。 */
+const SNAPSHOT_DECL = "const cfg = configHolder.current()";
+/** `.env.example` 里那句话的判据串——与 `POOL_CACHE_TTL_MS` 那格原有的写法逐字相同。 */
+const PANEL_CAVEAT = "面板改它不会立刻生效";
+
+/**
+ * `src/http/wire.ts` 里那份**建 app 时读一次**的快照被读到的字段名。
+ *
+ * ⚠️ **先抠注释再扫**：本仓的注释里成片地写着真代码片段（`cacheTtlMs: cfg.poolCacheTtlMs`
+ * 这一行在同一个文件的说明里就被复述过），裸 `grep` 会把散文当成事实。
+ * 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源，不在这里手写第二份。
+ *
+ * ⚠️ **认不出要吵，不许静静地回空数组**：那一行被改名之后静默返回 `[]` 的话，
+ * 下面那条交集恒空 ⇒ 判据整个作废，而它会一直打绿。
+ */
+function buildTimeCfgReads(src: string): string[] {
+  const code = blankComments(src);
+  const at = code.indexOf(SNAPSHOT_DECL);
+  if (at < 0) throw new Error(`扫不到 \`${SNAPSHOT_DECL}\` —— 判据的落点变了，先回来改判据，别让它静静地放行`);
+  return [...new Set(
+    [...code.slice(at).matchAll(/\bcfg\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]!),
+  )].sort();
+}
+
+/** `.env.example` 里某个环境变量**紧邻上方**那一段 `#` 注释。 */
+function envExampleBlock(src: string, envName: string): string {
+  const lines = src.split("\n");
+  const at = lines.findIndex((l) => l.startsWith(`${envName}=`));
+  if (at < 0) throw new Error(`.env.example 里没有 ${envName}= 这一行`);
+  const out: string[] = [];
+  for (let i = at - 1; i >= 0 && lines[i]!.startsWith("#"); i -= 1) out.unshift(lines[i]!);
+  return out.join("\n");
+}
+
+function envNameFor(field: string): string {
+  const name = envNameOf(field);
+  if (name === null) throw new Error(`${field} 没有对应的环境变量名`);
+  return name;
+}
+
+/**
+ * **一份不会自己红的清单不是守卫，是待办。**
+ *
+ * `BUILD_TIME_FIELDS` 长得像一份手写的字段名清单，而它必须是一条**性质**的产物：
+ * 「`src/http/wire.ts` 建 app 时读一次」∩「后端 `EDITABLE` 说面板能改」。
+ * 下面这一组就是那条性质本身，逐条从真源反查——手写那两个名字的地方只剩一处，
+ * 而它一漂就红。
+ *
+ * ⚠️ **这一组是 `admin-ui/js/pure/settings.mjs` 里 `BUILD_TIME_FIELDS` 那段注释
+ * 点名的那一格**，两边别只改一边。
+ */
+describe("建实例时读一次的那两个旋钮（P3e Task 23）", () => {
+  it("BUILD_TIME_FIELDS 就是 wire.ts 建 app 时读的那份快照里、面板又能改的那几格", () => {
+    const reads = buildTimeCfgReads(readFileSync(WIRE, "utf8"));
+
+    // ① **我认得出**：那三格真的被扫出来了。少了这一条，判据哪天认不出任何东西时
+    //    下面那个交集会变成 `[] === []`——**只有反向控制红，真扫描全绿**。
+    expect(reads, `${WIRE} 里那份建 app 时读一次的快照没被扫出该有的字段 —— 判据瞎了`)
+      .toEqual(expect.arrayContaining(["poolCacheTtlMs", "poolTouchIntervalMs", "usageStatsEnabled"]));
+
+    // ② **我不乱红**：`usageStatsEnabled` 同样是建实例时读一次的，但它不在后端的
+    //    `EDITABLE` 里 ⇒ 面板改不到它 ⇒ 它不该进 `BUILD_TIME_FIELDS`。
+    //    这一条钉的是「交集」那一半真的在起作用：去掉它，判据就退化成「凡是被读到的都算」。
+    expect([...EDITABLE_FIELDS], "usageStatsEnabled 变成面板能改的了 —— 那它得进 BUILD_TIME_FIELDS，回来改这一格")
+      .not.toContain("usageStatsEnabled");
+    expect([...BUILD_TIME_FIELDS]).not.toContain("usageStatsEnabled");
+
+    // ③ 正题：两边逐字相等。删一项、多一项、或者 wire.ts 又多读一个面板改得动的
+    //    字段而没人回来补表，这一行当场红。
+    expect(
+      reads.filter((f) => EDITABLE_FIELDS.includes(f)).sort(),
+      "BUILD_TIME_FIELDS 与 wire.ts 建 app 时读的那份快照对不上了 —— 面板会对某一格谎称「本实例已经生效」",
+    ).toEqual([...BUILD_TIME_FIELDS].sort());
+  });
+
+  /**
+   * **判据的探针，与真扫描共用同一个 `buildTimeCfgReads()`。**
+   * 夹具里那一行**逐字取自真源**，不在这里手抄——手抄的那份会漂，而漂了之后
+   * 探针测的是一个仓里并不存在的世界。
+   */
+  it("判据认得出真源那一行，而同一行躺在注释里时不算数", () => {
+    const real = blankComments(readFileSync(WIRE, "utf8"))
+      .split("\n").map((l) => l.trim()).find((l) => l.includes("cfg.poolCacheTtlMs"));
+    expect(real, `${WIRE} 里找不到读 cfg.poolCacheTtlMs 的那一行`).toBeDefined();
+
+    expect(buildTimeCfgReads(`${SNAPSHOT_DECL};\n${real}\n`)).toEqual(["poolCacheTtlMs"]);
+    // **注释里的同一行不算数**：本仓的注释里成片地写真代码片段，
+    // 不抠注释的话「散文里提过」就会被当成「代码里读了」。
+    expect(
+      buildTimeCfgReads(`${SNAPSHOT_DECL};\n// ${real}\n`),
+      "注释里的那一行被当成了真的读取 —— 抠注释那一步没生效",
+    ).toEqual([]);
+  });
+
+  it(".env.example 里这两个旋钮各自都写明了改了要重启、面板改它不会立刻生效", () => {
+    const src = readFileSync(".env.example", "utf8");
+    const missing = [...BUILD_TIME_FIELDS].filter(
+      (f: string) => !envExampleBlock(src, envNameFor(f)).includes(PANEL_CAVEAT),
+    );
+    expect(
+      missing,
+      "这几格的 .env.example 注释里没写「面板改它不会立刻生效」—— 而 src/http/wire.ts 的注释正声称写了",
+    ).toEqual([]);
+  });
+
+  /**
+   * **反向控制：逐次生效的那些格不许写这句话。**
+   * 少了这一格，一个「整份文件里出现过就算」的判据也能让上面那格全绿，
+   * 而那种判据对「某一格漏写」结构性地看不见。
+   */
+  it("反向控制：逐次生效的字段那一格不许写这句话（拿 maxStrikes 那格核对）", () => {
+    const block = envExampleBlock(readFileSync(".env.example", "utf8"), envNameFor("maxStrikes"));
+    // 先确认判据真的读到了东西——不是因为那一段是空的才没命中。
+    expect(block.length, "maxStrikes 那格上面一行注释都没有 —— 判据没读到东西，下面那句不成立")
+      .toBeGreaterThan(0);
+    expect(block, "maxStrikes 是逐次生效的，那格写「面板改它不会立刻生效」就是一句新的假话")
+      .not.toContain(PANEL_CAVEAT);
+  });
+
+  /**
+   * 两条判据的取值本身。**`touchesLiveField()` 不是 `touchesBuildTimeField()` 的取反**，
+   * 混合保存时两者同时为真——DOM 那一半由 `tests/ui/dom/settings-save.test.ts` 的
+   * 「③ 混合保存：同时改一个逐次生效的字段和一个旋钮 ⇒ 两句都出现」钉着。
+   */
+  it("两条判据在混合保存时同时为真，在空回执上同时为假", () => {
+    expect(touchesBuildTimeField(["poolCacheTtlMs"])).toBe(true);
+    expect(touchesLiveField(["poolCacheTtlMs"])).toBe(false);
+    expect(touchesBuildTimeField(["maxStrikes"])).toBe(false);
+    expect(touchesLiveField(["maxStrikes"])).toBe(true);
+    expect(touchesBuildTimeField(["maxStrikes", "poolTouchIntervalMs"])).toBe(true);
+    expect(touchesLiveField(["maxStrikes", "poolTouchIntervalMs"])).toBe(true);
+    // 一次「什么都没变」的回读：两句话都不该说。
+    expect(touchesBuildTimeField([])).toBe(false);
+    expect(touchesLiveField([])).toBe(false);
+  });
+
+  /**
+   * **「这是不是一次保存的回执」判的是 `changed` 在不在，不是它空不空。**
+   * 判成「空数组 = 不是回执」的话，一次「什么都没改」的保存会被当成读取态，
+   * 于是面板对着它说「本实例已经生效」——又一句无中生有的回执。
+   */
+  it("isSaveReceipt：GET / 清空那两种响应不是回执，空 changed 的 PUT 响应是", () => {
+    expect(isSaveReceipt({ fields: {}, editable: [], secrets: [] })).toBe(false);
+    expect(isSaveReceipt({ cleared: "gatewayToken", stillConfigured: false })).toBe(false);
+    expect(isSaveReceipt({ fields: {}, changed: [], credentialsChanged: [] })).toBe(true);
+    expect(isSaveReceipt({ fields: {}, changed: ["maxStrikes"] })).toBe(true);
+    // 形状不对的一律不算（`changed` 是个字符串 / 整份响应是 null）。
+    expect(isSaveReceipt({ changed: "maxStrikes" })).toBe(false);
+    expect(isSaveReceipt(null)).toBe(false);
   });
 });
 
