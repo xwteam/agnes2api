@@ -243,20 +243,52 @@ function brokenStream(texts: readonly string[]): ReadableStream<Uint8Array> {
  *
  * ⚠️⚠️ **「会让这一格红」这句话本身，P3e Task 22 之前没有任何东西守着。**
  * 一条闭集断言最典型的死法是**判据自己瞎了**（本仓已经在别处踩过：判据认不出任何
- * 东西 ⇒ 真仓五格全变绿，只有反向控制红）。这里的瞎法很具体：`turnShape()` 若哪天
+ * 东西 ⇒ 真仓五格全变绿，只有反向控制红）。这里的瞎法很具体：`rightShape()` 若哪天
  * 被改成只走 `wrap` 的头几个孩子、或者 `everyNode()` 递归被切短，**多画的那一行就
  * 落在射程之外**，而真扫描那一格照样绿——它比对的是同一份被截短的清单。
  * ⇒ 补的是同格反向控制，见下面
  * 「反向控制（同格）：手工往流式那一轮多挂一个 p.pg-tokens —— 闭集判据看不见它就说明它是死断言」。
- * ⚠️ 反向控制**必须与真扫描共用同一份判据**（`turnShape()`）与同一张期望表
- *（`STREAM_TURN_SHAPE`）：另写一份「探针专用」的遍历，证明的是那份探针能看见，
+ * ⚠️ 反向控制**必须与真扫描共用同一份判据**（`rightShape()`）与同一张期望表
+ *（`STREAM_RIGHT_SHAPE`）：另写一份「探针专用」的遍历，证明的是那份探针能看见，
  * 不是真扫描能看见。
+ *
+ * ⚠️⚠️ **射程从 `.pg-turn` 子树放宽到整个右栏，是复评实测逼出来的（P3e Task 22 回填 F3）。**
+ * 上一版只遍历 `.pg-turn`，而**画在那个盒子外面照样在屏幕上**：复评把
+ * `body.appendChild(el("p", { class: "muted note pg-usage" }, "Tokens: 0"))` 插在
+ * `admin-ui/js/sec-playground.js` 里 `for (const turn of turns) body.appendChild(buildTurn(turn));`
+ * 的**后一行**（右栏 `buildRight()` 的 `body` 上、`.pg-turn` 之外）⇒ **那个文件 81/81 全绿**，
+ * 而屏幕上同时出现「本面板……不读 token 用量」与「Tokens: 0」。
+ * 这是 H1 段那条 ⭐（**写下的覆盖面小于宣称的范围**）在本文件里的第三次发作。
+ * ⇒ 判据改成遍历**右栏那整张卡片**（标题 + 工具条 + 那一轮），盒子外那一行落进射程。
+ * **同一次变异在放宽之后重跑（本轮亲手跑的）：4 failed / 78 passed** ——
+ * 真扫描那一格、两条反向控制、取消那一格一起红，报文里带着 `+ "p.muted note pg-usage"` 那行 diff。
+ * 补的反向控制正是那条逃逸的 DOM 形态，见
+ * 「反向控制（同格·盒子外）：把那一行挂到 .pg-turn 外面的右栏上 —— 盒子外照样在屏幕上」。
+ *
+ * ⚠️ **明写它今天仍然覆盖不到哪些**（免得这段自己又变成一句射程大于事实的话）：
+ * · **左栏**（请求表单那张卡片）不在射程里；
+ * · **板块之外**（`#toast-host`、登录闸、侧栏）不在射程里 —— 那一层归 H1 段那道整页扫描，
+ *   但它扫的是口令、不是「多画了一行」。
+ * 两处都不是「已经有别的东西在守」，是**登记在案的空当**——**这句话是量出来的，不是推出来的**：
+ * 把 `body.appendChild(el("p", { class: "muted note pg-usage" }, "Tokens: 0"))` 插进
+ * `admin-ui/js/sec-playground.js` 的 `buildLeft()` 尾巴（`syncSendButton()` 前一行）⇒
+ * **`pnpm test` 只红 2 格**，而那两格是 `tests/unit/ui-assets.test.ts`「源目录里每个文件都在生成物里，且内容一字不差」
+ * 与「重新生成一遍，与仓库里那份逐字节相同」——**动了 `admin-ui/` 却没重跑
+ * `scripts/build-ui.mjs` 就会红的那两格，对任何一次前端改动都红**，不是在守这件事；
+ * **行为用例一格都没红**。
+ * 收得更宽的代价是把请求表单那四十来个节点也抄成一张手写表，而那张表会被左栏任何一次
+ * 无关改动打红 —— 一道开始误报的门禁下一步就是豁免名册。
  */
-function turnShape(sec: FakeElement): string[] {
-  const turns = pick(sec, ".pg-turn");
-  expect(turns.length, "这一格假定右栏恰好只有一轮").toBe(1);
+function rightShape(sec: FakeElement): string[] {
+  const cols = pick(sec, ".pg-cols");
+  expect(cols.length, "这一格假定板块把那两栏画出来了").toBe(1);
+  const right = cols[0]!.children[1];
+  expect(right, "右栏不在了 —— 下面比对的就不是对话那一栏").toBeDefined();
+  // 右栏里恰好只有一轮：多一轮的话下面那张手写表本来就该不相等，
+  // 但报文会变成一长串 diff，不如在这里先把前提说清楚。
+  expect(pick(sec, ".pg-turn").length, "这一格假定右栏恰好只有一轮").toBe(1);
   const out: string[] = [];
-  for (const n of everyNode(turns[0]!)) {
+  for (const n of everyNode(right!)) {
     out.push(`${n.tagName}.${n.getAttribute("class") ?? ""}`);
   }
   return out;
@@ -276,13 +308,25 @@ const ANTHROPIC_WIRE_WITH_ZERO_USAGE = [
 ].map((l) => `${l}\n\n`).join("");
 
 /**
- * **那一轮的闭集**：跑完上面那条流之后，`.pg-turn` 子树里每一个元素的「标签 + class」。
+ * **右栏那张卡片本身**：标题 + 「清空对话」那条工具条。一轮对话画在它后面。
  *
- * ⚠️ **手写字面量，而且是两格共用的同一份**：真扫描那一格 `toEqual` 它，
- * 反向控制那一格 `not.toEqual` 它。分成两份抄的话，多画一行之后**只有一份会被改**，
- * 而反向控制会跟着那一份一起静静变绿。
+ * ⚠️ **它被下面每一张闭集表共用**（P3e Task 22 回填 F5）：这几张表原来是**各抄一份**的，
+ * 而「分两份抄 ⇒ 改动之后只有一份跟着改」正是 `STREAM_RIGHT_SHAPE` 自己写下的理由，
+ * 它对第二份、第三份同样成立。共用之后，右栏卡片哪天多画一行，几张表**一起**红。
  */
-const STREAM_TURN_SHAPE = [
+const RIGHT_FRAME_SHAPE = [
+  "div.card block",
+  "h3.",
+  "div.",
+  "div.toolbar",
+  "button.pg-clear",
+];
+
+/**
+ * **一轮对话开头那几行**：外框 + 「你发出的」那条头（端点） + 提示词 + 「网关回的」那条头。
+ * 流式档与取消档在这几行上逐字相同，**所以它们必须共用同一份**（理由同上）。
+ */
+const TURN_HEAD_SHAPE = [
   "div.pg-turn",
   "div.pg-turn-head",
   "span.muted",
@@ -290,8 +334,34 @@ const STREAM_TURN_SHAPE = [
   "p.pg-turn-prompt",
   "div.pg-turn-head",
   "span.muted",
+];
+
+/**
+ * **流式那一轮跑完之后，整个右栏的闭集**：`rightShape()` 交出来的那张清单。
+ *
+ * ⚠️ **手写字面量，而且是三格共用的同一份**：真扫描那一格 `toEqual` 它，
+ * 两条反向控制 `not.toEqual` 它。分成两份抄的话，多画一行之后**只有一份会被改**，
+ * 而反向控制会跟着那一份一起静静变绿。
+ */
+const STREAM_RIGHT_SHAPE = [
+  ...RIGHT_FRAME_SHAPE,
+  ...TURN_HEAD_SHAPE,
   "span.mono pg-status",
   "pre.mono pg-body pg-stream-text",
+  "p.muted note pg-no-tokens",
+];
+
+/**
+ * **取消那一轮跑完之后，整个右栏的闭集**（F2 同一条纪律，取消这一档同样不许多画）。
+ *
+ * 与 `STREAM_RIGHT_SHAPE` 的两处真差别：取消那一轮**没有状态码那一格**
+ *（这一次根本没等到响应头），而多一句 `.pg-cancelled`。其余逐行共用上面那两张表。
+ */
+const CANCELLED_RIGHT_SHAPE = [
+  ...RIGHT_FRAME_SHAPE,
+  ...TURN_HEAD_SHAPE,
+  "pre.mono pg-body pg-stream-text",
+  "p.muted note pg-cancelled",
   "p.muted note pg-no-tokens",
 ];
 
@@ -1649,11 +1719,14 @@ describe("Playground 板块：流式", () => {
      * ⚠️⚠️ **闭集断言（评审 F2）。** 上面两条**挡不住「多画一行」**：
      * 一条按字段名的子串断言换个标签就绕过，一条 `.pg-no-tokens` 计数只挡替换不挡新增。
      * 评审实测：多画一行 `` `Tokens: ${turn.tokens}` `` ⇒ 103/103 全绿。
-     * ⇒ 这一轮的节点形状必须**逐条**等于 `STREAM_TURN_SHAPE` 那张手写的表，**多一行就红**。
+     * ⇒ **整个右栏**的节点形状必须**逐条**等于 `STREAM_RIGHT_SHAPE` 那张手写的表，**多一行就红**。
+     * ⚠️ **射程是右栏那整张卡片，不是 `.pg-turn` 子树**（P3e Task 22 回填 F3：只扫盒子里的话，
+     * 把 `Tokens: 0` 画在盒子外面 ⇒ 这个文件 81/81 全绿）。它今天覆盖不到左栏与板块之外，
+     * 那两处是登记在案的空当，理由写在 `rightShape()` 上方。
      * ⚠️ **降级之后这一条比降级之前更承重**：文案已经不再声称「上游没有 usage」了，
-     * 「面板不读」这件事**只剩这一格在守**。
+     * 「面板不读」这件事在右栏**只剩这一格在守**。
      */
-    expect(turnShape(sec), "流式那一轮多画了一行 —— 它是从哪儿来的？").toEqual(STREAM_TURN_SHAPE);
+    expect(rightShape(sec), "流式那一轮的右栏多画了一行 —— 它是从哪儿来的？").toEqual(STREAM_RIGHT_SHAPE);
   });
 
   /**
@@ -1661,13 +1734,20 @@ describe("Playground 板块：流式", () => {
    *
    * ⚠️⚠️ **一个不会自己红的清单不是守卫，是待办。** 上面那一格的全部力量都压在
    *「多画一行就红」这句话上，而在本任务之前**没有任何东西验过这句话**——
-   * `turnShape()` 哪天被改瞎（递归切短、只取头几个孩子），真扫描那一格照样全绿，
+   * `rightShape()` 哪天被改瞎（递归切短、只取头几个孩子），真扫描那一格照样全绿，
    * 因为它比对的是同一份被截短的清单。本仓在别处已经踩过这个形状：
    * 判据认不出任何东西 ⇒ 真仓五格全变绿，只有反向控制红。
+   * ⚠️ **「切短」不是理论上的**：把这个函数改成 `return out.slice(0, N)`（N 正好等于
+   * 期望表的长度）⇒ 真扫描那一格**照样绿**，红的只有两条反向控制。
+   * 复评在旧的十行表上实测过一次（`slice(0, 10)` ⇒ 1 failed / 80 passed）；
+   * 本轮表变宽之后**又亲手跑了一次**（`slice(0, 15)` ⇒ **2 failed / 80 passed**，
+   * 红的正是这一格与下面那条盒子外的兄弟格）。
    *
    * **做法**：手工往那一轮的外框上多挂一个 `p.pg-tokens`——这正是评审 F2 当年那条
    * 逃逸在 DOM 上的形态（读 usage、用一个**别的**标签把 `Tokens: 0` 画出来）。
-   * 判据与期望表**都与真扫描那一格共用**（`turnShape()` / `STREAM_TURN_SHAPE`）。
+   * 判据与期望表**都与真扫描那一格共用**（`rightShape()` / `STREAM_RIGHT_SHAPE`）。
+   * ⚠️ **它只证明「盒子里多挂一行看得见」**；盒子**外面**那一档归下面那条兄弟用例
+   *（P3e Task 22 回填 F3 补的），两条各挂各的位置，别拿其中一条当另一条的证明。
    *
    * ⚠️ **判据是逐条 `toEqual`，不是 `/token/i` 子串过滤**：那一轮里本来就有一个
    * `p.muted note pg-no-tokens`，它自己就命中 `/token/i`
@@ -1679,20 +1759,67 @@ describe("Playground 板块：流式", () => {
 
     // 前置条件：动手之前，闭集判据交出的**正是**真扫描那一格钉的那张表。
     // 这一句不成立的话，下面那条「不相等」证明不了任何东西。
-    expect(turnShape(sec), "反向控制的前置条件不成立：动手之前这一轮就已经不是那张表了")
-      .toEqual(STREAM_TURN_SHAPE);
+    expect(rightShape(sec), "反向控制的前置条件不成立：动手之前这一轮就已经不是那张表了")
+      .toEqual(STREAM_RIGHT_SHAPE);
 
     const extra = h.dom.document.createElement("p");
     extra.setAttribute("class", "pg-tokens");
     extra.textContent = "Tokens: 0";
     turnNode.appendChild(extra);
 
-    const after = turnShape(sec);
+    const after = rightShape(sec);
     expect(after, "闭集判据看不见新挂上去的那一行 —— 它是死断言，上面那一格的「多一行就红」是假话")
-      .not.toEqual(STREAM_TURN_SHAPE);
+      .not.toEqual(STREAM_RIGHT_SHAPE);
     // 而且**看见的正是那一行**，不是别处恰好也变了（否则「不相等」可能是另一件事引起的）。
     expect(after, "闭集判据看见了变化，但变的不是新挂上去的那一行")
-      .toEqual([...STREAM_TURN_SHAPE, "p.pg-tokens"]);
+      .toEqual([...STREAM_RIGHT_SHAPE, "p.pg-tokens"]);
+  });
+
+  /**
+   * ── **同格反向控制②：盒子外面那一档（P3e Task 22 回填 F3）** ─────────────────────
+   *
+   * ⚠️⚠️ **这一格存在的理由是复评实测出来的，不是设计出来的。**
+   * 上一版闭集只遍历 `.pg-turn` 子树，而**「本面板不读 token 用量」这句话说的是屏幕，
+   * 不是那个盒子**。复评把 `Tokens: 0` 画在右栏 `body` 上（`.pg-turn` 之外、
+   * `admin-ui/js/sec-playground.js` 里那句
+   * 「for (const turn of turns) body.appendChild(buildTurn(turn));」的后一行）
+   * ⇒ **这个文件 81/81 全绿**，而屏幕上那两句话同时在。
+   *
+   * ⇒ 判据放宽到整个右栏之后，这一格把**那条逃逸本身**钉进仓里：
+   * 挂点是 `turnNode.parent`（右栏卡片的 body，也就是复评那次插入的落点），
+   * 判据与期望表仍与真扫描那一格共用（`rightShape()` / `STREAM_RIGHT_SHAPE`）。
+   *
+   * ⚠️ **它与上一格不是同一件事，别合并**：上一格挂在盒子**里**，只能证明遍历下钻得进去；
+   * 这一格挂在盒子**外**，证明的是射程本身没有停在 `.pg-turn` 上。
+   * **实测**（本轮亲手跑的，不是照抄复评）：把整套射程**整体**回退到上一版
+   *（`rightShape()` 的遍历根换回 `.pg-turn`，两张期望表跟着去掉 `RIGHT_FRAME_SHAPE` 那五行）
+   * ⇒ **1 failed / 81 passed，红的只有这一格**。
+   * ⚠️ **只改判据、不改表**不是这个回退：那样八十来格里凡是用到这两张表的都会红，
+   * 证明不了「这一格是那次回退唯一的红线」。
+   */
+  it("反向控制（同格·盒子外）：把那一行挂到 .pg-turn 外面的右栏上 —— 盒子外照样在屏幕上", async () => {
+    const { h, sec, turnNode } = await streamOneAnthropicTurn();
+
+    // 前置条件①：动手之前就是那张表（同上一格）。
+    expect(rightShape(sec), "反向控制的前置条件不成立：动手之前这一轮就已经不是那张表了")
+      .toEqual(STREAM_RIGHT_SHAPE);
+    // 前置条件②：挂点**真的在 `.pg-turn` 外面**。少了这一句，哪天 `buildTurn()` 改了
+    // 层级，这一格会退化成上一格的复制品（挂在盒子里）而**没有任何提示**。
+    const outside = turnNode.parent;
+    expect(outside, "那一轮没有父节点 —— 挂不到盒子外面去").not.toBeNull();
+    expect(outside!.classList.contains("pg-turn"), "挂点自己就是 .pg-turn —— 这一格没挂到盒子外面")
+      .toBe(false);
+
+    const extra = h.dom.document.createElement("p");
+    extra.setAttribute("class", "muted note pg-usage");
+    extra.textContent = "Tokens: 0";
+    outside!.appendChild(extra);
+
+    const after = rightShape(sec);
+    expect(after, "闭集判据看不见画在 .pg-turn 外面的那一行 —— 射程停在盒子上，屏幕上那两句话会同时在")
+      .not.toEqual(STREAM_RIGHT_SHAPE);
+    expect(after, "闭集判据看见了变化，但变的不是新挂上去的那一行")
+      .toEqual([...STREAM_RIGHT_SHAPE, "p.muted note pg-usage"]);
   });
 
   /**
@@ -1730,9 +1857,17 @@ describe("Playground 板块：流式", () => {
 
     // **反向控制（同判据，用仓里真实存在的串）**：`pg.turn.malformed` 正当地带着 `{count}`，
     // 同一份判据必须在它身上认得出来 —— 认不出来就说明上面那圈断言恒真、什么都没守。
+    //
+    // ⚠️ **报文分两句写，别只写「判据瞎了」**（P3e Task 22 回填 F4）：复评正当地给
+    // `pg.turn.malformed` 加了一个 `{max}` ⇒ 这一格红，而上一版报文只说「它是瞎的」，
+    // 紧挨着的实际值却是 `[ '{max}', '{count}' ]` —— 判据明明认出了两个。
+    // 照那句报文去处置，人会去改判据，而真因是**锚 key 自己变了**。
     for (const lang of langsOf("pg.turn.malformed")) {
       expect(phOf("pg.turn.malformed", lang),
-        `${lang}: 判据在一个真的带着 {count} 的 key 上都认不出占位符 —— 它是瞎的`)
+        `${lang}: 反向控制没成立，先看紧挨着的实际值再决定改哪儿——`
+        + `实际值是空的 ⇒ 判据在一个真的带着 {count} 的 key 上都认不出占位符，它是瞎的，该改判据；`
+        + `实际值多出/换成了别的占位符 ⇒ 是 pg.turn.malformed 这个锚 key 自己被正当地改了，`
+        + `该改的是这条反向控制的期望值（或者换一个仍然只带 {count} 的真 key 来当锚），不是判据`)
         .toEqual(["{count}"]);
     }
   });
@@ -1882,18 +2017,12 @@ describe("Playground 板块：流式", () => {
     // ② **不许**同时谎称「这条流读完了」。
     expect(pick(sec, ".pg-stream-empty").length, "取消的流被说成「读完了但一个字都没有」").toBe(0);
     // ③ 形状闭集：取消那一轮同样不许多画任何一行（F2 同一条纪律）。
-    expect(turnShape(sec)).toEqual([
-      "div.pg-turn",
-      "div.pg-turn-head",
-      "span.muted",
-      "span.mono pg-endpoint",
-      "p.pg-turn-prompt",
-      "div.pg-turn-head",
-      "span.muted",
-      "pre.mono pg-body pg-stream-text",
-      "p.muted note pg-cancelled",
-      "p.muted note pg-no-tokens",
-    ]);
+    // ⚠️ **期望表不再就地手抄**（P3e Task 22 回填 F5）：它现在与流式那一格共用
+    // `RIGHT_FRAME_SHAPE` / `TURN_HEAD_SHAPE`，只把两处真差别留成字面量。
+    // 上一版是整张十行的第二份手抄，而「分两份抄 ⇒ 改动之后只有一份跟着改」正是
+    // 流式那张表自己写下的理由。同轮补上报文：M-A 实测它红的时候只有一串裸 diff。
+    expect(rightShape(sec), "取消那一轮的右栏多画了一行 —— 它是从哪儿来的？")
+      .toEqual(CANCELLED_RIGHT_SHAPE);
   });
 
   /**

@@ -173,4 +173,45 @@ describe("toGeminiStream", () => {
 
     expect(upstreamCancelled).toBe(true);
   });
+
+  /**
+   * ── **这一格是 Playground 那句文案的红线之一（P3e Task 22 回填 F1）** ────────────
+   *
+   * 与 `tests/unit/responses.test.ts` 的
+   * 「toResponsesStream() 吐出去的字节里一个 usage 字段都没有」是**同一句全称句的另一半**：
+   * `admin-ui/js/sec-playground.js` 文件头写着「responses 与 gemini 那两条
+   * **一个 usage 字段都不发**」，而写下的时候两条**都**没有任何东西会为它变红
+   *（复评实测：把 usage 加进 responses 那条流 ⇒ 全仓 3176/3176 全绿）。
+   *
+   * ⚠️ **判据是子串搜 `usage`（转小写之后）**：gemini 那条协议里 token 用量叫
+   * `usageMetadata`，按 key 精确找 `usage` 会**恰好漏掉它自己那个名字**。
+   * 转小写之后的子串既盖得住 `usageMetadata`，也盖得住有人顺手塞进来的 `usage`。
+   *
+   * ⚠️ **反向控制用的是仓里真实存在的东西**：非流式那条（`toGeminiResponse()`）
+   * **真的**带 `usageMetadata` —— 同一份判据必须在它身上认得出来。
+   */
+  it("toGeminiStream() 吐出去的字节里一个 usage 字段都没有", async () => {
+    const upstream = upstreamSse([
+      { id: "c1", choices: [{ delta: { content: "甲" } }] },
+      { id: "c1", choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 2 } },
+    ]);
+    const wire = await new Response(toGeminiStream(upstream, "m")).text();
+
+    // 前置条件：这一条流**真的**跑出了内容（不然下面那句「搜不到」是在空串上成立的）。
+    expect(wire, "这一格没跑出流来，「搜不到 usage」是在空串上成立的").toContain("candidates");
+
+    expect(wire.toLowerCase(),
+      "gemini 那条流吐出了 usage —— Playground 文件头那句「一个 usage 字段都不发」"
+      + "已经变成假话，而面板上那句「本面板不读 token 用量」正靠它撑着射程")
+      .not.toContain("usage");
+
+    // **反向控制（同判据，用仓里真实存在的东西）**：非流式那条真的带 usageMetadata。
+    const nonStream = JSON.stringify(toGeminiResponse({
+      usage: { prompt_tokens: 1, completion_tokens: 2 },
+      choices: [{ finish_reason: "stop", message: { content: "甲" } }],
+    }, "m"));
+    expect(nonStream.toLowerCase(),
+      "判据在一个真的带着 usageMetadata 的负载上都搜不到它 —— 上面那条 not.toContain 是空转的")
+      .toContain("usage");
+  });
 });

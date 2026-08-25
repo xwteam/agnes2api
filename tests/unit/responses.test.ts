@@ -191,4 +191,48 @@ describe("toResponsesStream", () => {
     expect(id1).not.toBe("resp_stream");
     expect(id1).not.toBe(id2);
   });
+
+  /**
+   * ── **这一格是 Playground 那句文案的红线之一（P3e Task 22 回填 F1）** ────────────
+   *
+   * `admin-ui/js/sec-playground.js` 文件头「流式那一轮为什么不显示 token 用量」那段里
+   * 写着一句**全称句**：「responses 与 gemini 那两条**一个 usage 字段都不发**」。
+   * 写下的时候它是真的，而**当时仓里没有任何东西会为它变红**——复评把
+   * `usage: {…}` 加进 `src/core/protocol/responses.ts` 的 `response.completed` 那个事件
+   * ⇒ **`pnpm test` 3176/3176 全绿、i18n 与注释指向两道门禁 EXIT=0**。
+   * 同一句话里 anthropic 那半用的是名字锚（`src/core/protocol/anthropic.ts` 里那两处
+   * 恒为 0 的 usage），改一个字段名当场 EXIT=1 ——**一半有牙一半没有**。
+   *
+   * ⚠️ **判据是「吐出去的字节里一个 `usage` 都搜不到」，不是按 key 递归找**：
+   * 面板那句话防的是「屏幕上冒出一个 token 数字」，而**一个写进字符串值里的 usage
+   * 照样会被顺手渲染出来**。子串比按 key 找**更宽**，宽的那一侧正是这里要的。
+   *
+   * ⚠️ **反向控制用的是仓里真实存在的东西**：非流式那条（`toResponsesResponse()`）
+   * **真的**带 usage —— 同一份判据必须在它身上认得出来。认不出来就说明上面那条
+   * `.not.toContain()` 是在一个永远搜不到东西的判据上空转。
+   */
+  it("toResponsesStream() 吐出去的字节里一个 usage 字段都没有", async () => {
+    const upstream = upstreamSse([
+      { id: "c1", choices: [{ delta: { content: "甲" } }] },
+      { id: "c1", choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 2 } },
+    ]);
+    const wire = await new Response(toResponsesStream(upstream, "m")).text();
+
+    // 前置条件：这一条流**真的**跑起来了（不然下面那句「搜不到」是在空串上成立的）。
+    expect(wire, "这一格没跑出流来，「搜不到 usage」是在空串上成立的").toContain("response.completed");
+
+    expect(wire.toLowerCase(),
+      "responses 那条流吐出了 usage —— Playground 文件头那句「一个 usage 字段都不发」"
+      + "已经变成假话，而面板上那句「本面板不读 token 用量」正靠它撑着射程")
+      .not.toContain("usage");
+
+    // **反向控制（同判据，用仓里真实存在的东西）**。
+    const nonStream = JSON.stringify(toResponsesResponse({
+      id: "c1", usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+      choices: [{ finish_reason: "stop", message: { content: "甲" } }],
+    }, "m"));
+    expect(nonStream.toLowerCase(),
+      "判据在一个真的带着 usage 的负载上都搜不到它 —— 上面那条 not.toContain 是空转的")
+      .toContain("usage");
+  });
 });
