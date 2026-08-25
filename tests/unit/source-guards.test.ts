@@ -5,6 +5,7 @@ import { stripTypeScriptTypes } from "node:module";
 import {
   stripComments, blankComments, stripCssComments, stripHtmlComments, FAIL_KINDS,
 } from "../helpers/strip-comments.js";
+import { declarations, isColorProp, visibleNonColorDecls } from "../helpers/css-decls.js";
 
 /**
  * 源码层门禁：**两条硬约束的自动化部分**。
@@ -1805,11 +1806,34 @@ describe("两份 frameEnd 是跨运行时边界的孪生体", () => {
 describe("分段选择器的每个创建点都带 aria-pressed", () => {
   const SEC_DIR = "admin-ui/js";
 
-  /** 射程：`admin-ui/js/sec-*.js` 全部。**不开豁免名册**——名册会变成永久的洞。 */
+  /**
+   * 射程：`admin-ui/js/sec-*.js` 全部。**板块文件之间不开豁免名册**——名册会变成永久的洞。
+   *
+   * ⚠️ **但 `sec-` 这个前缀本身就是一份隐式名册**：`admin-ui/js/` 下所有**不以 `sec-` 开头**
+   * 的 `.js`、以及 `admin-ui/js/pure/*.mjs`，全都天然在射程外
+   *（那一批不在这里手抄，由下面那条绊线的 `offScopeFiles()` 从盘上枚举）。
+   * P3e Task 20 复评实测：在 `admin-ui/js/app.js` 插一处不带 `aria-pressed` 的
+   * `class: "btn-toggle"` 创建点 ⇒ **全绿，零信号**。而 `app.js` 自己就在管一组
+   * 分段式控件（`.nav-item` + 就地 `classList.toggle("active")`）、`ui.js` 是共用的
+   * `el()/elI18n()` 元素工厂 —— 把共用控件工厂挪进 `ui.js` 是很自然的下一步。
+   * 那个洞现在由下面「绊线：射程外的 admin-ui js 里今天一处 btn-toggle 都没有」堵着：
+   * **它该长大时会红，那是设计，不是故障**——红了就把射程扩到那个文件，别加豁免。
+   */
   function sectionFiles(): string[] {
     return readdirSync(SEC_DIR).sort()
       .filter((n) => n.startsWith("sec-") && n.endsWith(".js"))
       .map((n) => join(SEC_DIR, n));
+  }
+
+  /** 射程外的那一批：面板 JS 里**不是** `sec-*.js` 的全部（含 `pure/*.mjs`）。 */
+  function offScopeFiles(): string[] {
+    const top = readdirSync(SEC_DIR).sort()
+      .filter((n) => n.endsWith(".js") && !n.startsWith("sec-"))
+      .map((n) => join(SEC_DIR, n));
+    const pure = readdirSync(join(SEC_DIR, "pure")).sort()
+      .filter((n) => n.endsWith(".mjs"))
+      .map((n) => join(SEC_DIR, "pure", n));
+    return [...top, ...pure];
   }
 
   type Pair = { open: number; close: number };
@@ -1817,6 +1841,17 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
   /**
    * 字符串感知的大括号配对。引号 / 模板字面量整段跳过（模板里的 `${…}` 一并跳过，
    * 那对我们要找的属性对象没有影响）。**配不平就抛**，绝不返回一份残缺的配对表。
+   *
+   * ⚠️ **登记：这是本仓第二个手写的字符串感知扫描器，比真源弱**（P3e Task 20 复评 F7）。
+   * `scripts/lib/strip-comments.mjs` 里那套 JS 词法扫描认得出正则字面量（`unclosedRegex`），
+   * 这一份不认。**本轮没有改**，理由写在这里而不是在报告里：那份真源今天只导出四个
+   * 抠注释函数与 `FAIL_KINDS`，没有「大括号配对」或「把正则字面量一并抹掉」的入口；
+   * 要共用就得给它加新导出，而那份真源同时供着注释指向门禁（`scripts/check-comment-refs.mjs`）、
+   * i18n 完整性门禁（`scripts/check-i18n.mjs`）与整套测试，自己还带着一格
+   * 「真源里每个 fail() 调用点的档名互不重复，并集恰好是 FAIL_KINDS」的元测试
+   * ——**那是一整个任务，不是顺手改一行**。
+   * 在那之前，这一份靠 **fail-loud** 兜底，两条抛错路径都实测过：
+   * 引号那一支（正则里带引号 ⇒ `有一个 " 没闭合`）与大括号那一支（`/[{]/` ⇒ `还有 N 个 { 没闭合`）。
    */
   function bracePairs(src: string, rel: string): Pair[] {
     const pairs: Pair[] = [];
@@ -1904,12 +1939,22 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
    * ⚠️ **期望值写成逐文件的清单而不是一个总数**（任务书原本写的是 `.length === 10`）：
    * 总数拦不住「把一颗按钮从这个板块搬到那个板块」，而逐文件的这份连搬家一起拦。
    * 总数由这份清单相加得出，**刻意不再单写一遍**——两个数迟早会互相说谎。
-   * ⚠️ 加 / 删按钮组时这一格会红，**那是它在按设计工作**：改数字，别删断言。
+   * ⚠️ 加 / 删按钮组时这一格会红，**那是它在按设计工作**。正确处置是**两件事，不是一件**：
+   *   ① 改这里的数字；
+   *   ② **连它自己的 DOM 行为用例一起补**（「值真的跟着点击走」那一族，每个板块一格）。
+   * **只做 ① 就是把这条覆盖悄悄放掉**：源码扫描不判值，`aria-pressed` 全写死成 `"false"`
+   * 它照样绿。这半句以前只写在被 `.gitignore` 掉的任务报告里，等于不在仓库里 ——
+   * P3e Task 20 复评点名，现在它同时写在 docblock 和下面那条报文里。
    */
   it("反向控制：今天扫得到的 btn-toggle 创建点逐文件列全", () => {
     const byFile: Record<string, number> = {};
     for (const s of toggleSites()) byFile[s.rel] = (byFile[s.rel] ?? 0) + 1;
-    expect(byFile, "扫得到的创建点变了 —— 要么真加/删了按钮组，要么量具坏了").toEqual({
+    expect(
+      byFile,
+      "扫得到的创建点变了 —— 要么真加/删了按钮组，要么量具坏了。"
+      + "真加了的话：**改完数字还要连它的 DOM 行为用例一起补**（点第二颗 ⇒ 第一颗转 false、"
+      + "第二颗转 true），只改数字就是把这条覆盖悄悄放掉 —— 这一格不判 aria-pressed 的值",
+    ).toEqual({
       "admin-ui/js/sec-events.js": 2,
       "admin-ui/js/sec-models.js": 2,
       "admin-ui/js/sec-playground.js": 2,
@@ -1959,6 +2004,41 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
     expect(files, "sec-models.js 不在射程里").toContain("admin-ui/js/sec-models.js");
     expect(files, "sec-keys.js 不在射程里 —— 射程不许只收今天有 btn-toggle 的那几个").toContain("admin-ui/js/sec-keys.js");
   });
+
+  /**
+   * **绊线：射程外的面板 JS 里今天一处 `btn-toggle` 都没有。**
+   *
+   * 这一格补的是 `sec-` 前缀那份**隐式豁免名册**（P3e Task 20 复评 F2）：上面几格全都
+   * 只看 `sec-*.js`，于是 `app.js` / `ui.js` / `pure/*.mjs` 里冒出来的分段按钮**零信号**
+   *（复评实测：在 `app.js` 插一处不带 `aria-pressed` 的创建点 ⇒ 全绿，什么都没说；
+   * 本轮回填后把同一处变异再打一次 ⇒ **这一格红并点名 `admin-ui/js/app.js×1`**）。
+   *
+   * ⚠️ **它红了不等于有 bug，等于射程该长大了**：把那个文件收进 `sectionFiles()`
+   *（或者把控件工厂本身收进来），**别在这里加一行豁免**——豁免名册会变成永久的洞。
+   *
+   * ⚠️ **边界明写**：
+   * · 只扫 `admin-ui/js/*.js` 与 `admin-ui/js/pure/*.mjs`，不扫 CSS（`.btn-toggle` 的样式
+   *   本来就住在 `admin-ui/css/sections.css`）、不扫 `admin-ui/index.html`
+   *  （HTML 喂给 JS 词法扫描器会当场失步，见 `tests/helpers/strip-comments.ts` 文件头）。
+   * · 走 `blankComments` 抠注释，与上面那几格**共用同一份判据**：
+   *   射程外的注释里提一句 `btn-toggle` 不算数，创建点才算。
+   */
+  it("绊线：射程外的 admin-ui js 里今天一处 btn-toggle 都没有", () => {
+    const off = offScopeFiles();
+    expect(off, "射程外一个文件都枚举不到 —— 这一格在对着空气报绿").not.toEqual([]);
+    // 仓里真实存在的两个射程外文件：共用元素工厂，以及自己在管一组分段式导航的那个。
+    expect(off, "ui.js 没被枚举到 —— 共用元素工厂正是最可能长出 btn-toggle 的地方").toContain("admin-ui/js/ui.js");
+    expect(off, "app.js 没被枚举到").toContain("admin-ui/js/app.js");
+    const hits = off
+      .map((rel) => ({ rel, n: [...blankComments(readFileSync(rel, "utf8")).matchAll(/btn-toggle/g)].length }))
+      .filter((x) => x.n > 0)
+      .map((x) => `${x.rel}×${x.n}`);
+    expect(
+      hits,
+      "射程外的面板 JS 里出现了 btn-toggle —— 上面那几格**看不见它**（它们只收 sec-*.js）。"
+      + "把这个文件收进 sectionFiles() 的射程，别在这里加豁免",
+    ).toEqual([]);
+  });
 });
 
 /**
@@ -1972,6 +2052,14 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
  * **它接不住什么，明写**：这是纯文本扫描。它不渲染、不算对比度，也不知道那条非颜色
  * 声明**看不看得出来**（把 `font-weight: 600` 改成 `font-weight: 401` 它照样绿）。
  * 那一族只能靠真机截图，而截图不是会自己红的守卫——两半分工不同，都不许省。
+ *
+ * ⚠️⚠️ **判据是逐条声明的属性名，不是「整块里找子串」**（P3e Task 20 复评实测打穿过一次，
+ * 回填时换掉）：第一版写的是 `body.includes("text-decoration")` / `body.includes("outline")`，
+ * 而 `text-decoration-color` / `outline-color` **本身就是颜色属性**、却逐字包含那两个串
+ * ⇒ 把两条声明分别换成它们，两个测试文件**全绿放行**，真机 computed 退回
+ * `text-decoration-line: none` / `outline-style: none` / `font-weight: 400`，**屏幕与修复前同形**。
+ * 现在的判据住在 `tests/helpers/css-decls.ts`（`visibleNonColorDecls()`），
+ * `-color` 那一族由 `isColorProp()` 剔掉。**别在这里再手写一份**。
  */
 describe("状态不许只由颜色表达", () => {
   /** 抠 CSS 一律走**只认块注释**的那一档：CSS 没有 `//` 行注释。 */
@@ -1979,7 +2067,11 @@ describe("状态不许只由颜色表达", () => {
 
   const SECTIONS_CSS = "admin-ui/css/sections.css";
 
-  /** 白名单**逐条手写**：这四条是"看得见而且不是颜色"的那几种。 */
+  /**
+   * 非颜色线索的**简写名**白名单，逐条手写。判据不是"包含这个串"，而是
+   * 「属性名等于它、或是它的长写（`text-decoration-line` / `outline-style` …）」，
+   * 并且 `-color` 那一族先被剔掉 —— 逐条见 `tests/helpers/css-decls.ts`。
+   */
   const NON_COLOR = ["font-weight", "text-decoration", "box-shadow", "outline"];
 
   /** 一条规则的声明块。抠不到一律 `null`——"抠不到就当通过"是这一族最常见的死法。 */
@@ -1995,8 +2087,9 @@ describe("状态不许只由颜色表达", () => {
     expect(body, `${SECTIONS_CSS} 里找不到 .btn-toggle.active 这条规则 —— 先来修抠法`).not.toBeNull();
     expect(body!.trim(), "抠出来的是空块 —— 抠错了，下面那条会变成恒真").not.toBe("");
     expect(
-      NON_COLOR.filter((p) => body!.includes(p)),
+      visibleNonColorDecls(body!, NON_COLOR).map((d) => d.prop),
       `.btn-toggle.active 只剩颜色声明了（抠到的是 \`${body!.trim()}\`）。`
+      + `⚠️ \`outline-color\` / \`text-decoration-color\` 这一族**不算数**，它们本身就是颜色属性。`
       + `这是五个板块共用的类，别只给某一个板块另加新类 —— 那是 sec-models.js 与 sec-usage.js 亲口否掉的做法`,
     ).not.toEqual([]);
   });
@@ -2013,9 +2106,213 @@ describe("状态不许只由颜色表达", () => {
     expect(body, "连底样式都抠不到了 —— 抠法坏了").not.toBeNull();
     expect(body!, "抠到的不是 .btn-toggle 底样式（它该有 padding）").toContain("padding");
     expect(
-      NON_COLOR.filter((p) => body!.includes(p)),
+      visibleNonColorDecls(body!, NON_COLOR).map((d) => d.prop),
       "量具在 .btn-toggle 底样式上报出了非颜色声明 —— 它多半在整份 CSS 里瞎找，上面那格的绿不算数",
     ).toEqual([]);
+  });
+
+  /**
+   * **反向控制（用仓里真实存在的串）：颜色属性的分类是对的。**
+   * `.btn-toggle.active` 今天逐字是 `color` / `border-color` / `font-weight` 三条 ——
+   * 前两条必须被判成颜色、第三条必须被判成非颜色。
+   * `isColorProp()` 退化成恒 `false` 时这一格红；退化成恒 `true` 时上面第一格红。
+   */
+  it("反向控制：.btn-toggle.active 那三条声明的颜色/非颜色分类逐条对得上", () => {
+    const css = stripCss(readFileSync(SECTIONS_CSS, "utf8"));
+    const body = ruleBody(css, ".btn-toggle.active");
+    expect(body, "抠不到 .btn-toggle.active").not.toBeNull();
+    // 期望值手写字面量，不是从被测对象读出来再回填。
+    expect(
+      declarations(body!).map((d) => `${d.prop}=${isColorProp(d.prop) ? "色" : "非色"}`),
+      "抠出来的声明清单变了 —— 要么这条规则真改了，要么切分/分类坏了",
+    ).toEqual(["color=色", "border-color=色", "font-weight=非色"]);
+  });
+
+  /**
+   * **判据自证：复评实测打穿过的那两条写法，现在会被判成「不算数」。**
+   *
+   * ⚠️ 这两条**不是**仓里存在的串——本仓今天一条 `text-decoration-color` / `outline-color`
+   * 声明都没有（`.btn-toggle.active` 里那条 `border-color` 是另一回事，它由上面那格
+   * 「反向控制：.btn-toggle.active 那三条声明的颜色/非颜色分类逐条对得上」用真串守着）——
+   * 所以它只能是夹具。它守的是**判据本身**：`isColorProp()` 一旦放松，这一格立刻红，
+   * 不必等到有人真去改 `sections.css`。真仓那一侧由上面第一格守着，两层分工不同。
+   * 夹具里的字符串逐字取自 P3e Task 20 复评的 M-G-a / M-G-b 两条变异。
+   */
+  it("判据自证：text-decoration-color / outline-color 不算「非颜色线索」", () => {
+    expect(
+      visibleNonColorDecls("text-decoration-color: red;", NON_COLOR).map((d) => d.prop),
+      "`text-decoration-color` 被当成了非颜色线索 —— 它本身就是颜色属性",
+    ).toEqual([]);
+    expect(
+      visibleNonColorDecls("color: var(--text); border-color: var(--primary); outline-color: red;", NON_COLOR)
+        .map((d) => d.prop),
+      "`outline-color` 被当成了非颜色线索 —— 它本身就是颜色属性",
+    ).toEqual([]);
+    // 同一个夹具换成长写里**不是**颜色的那一支，必须认得出来 —— 否则上面两条会退化成恒真。
+    expect(
+      visibleNonColorDecls("text-decoration-line: line-through; outline-style: solid;", NON_COLOR)
+        .map((d) => d.prop),
+      "长写里不是颜色的那一支也被剔掉了 —— 判据把 `-color` 那一族之外的一起误杀了",
+    ).toEqual(["text-decoration-line", "outline-style"]);
+    // 逐字把自己关掉的取值同样不算数（本仓遗留：`font-weight: 401` 这种它仍然接不住）。
+    expect(
+      visibleNonColorDecls("text-decoration: none; outline: 0; font-weight: normal;", NON_COLOR)
+        .map((d) => d.prop),
+      "`text-decoration: none` 这种「声明还在、逐字把自己关掉」的写法被放行了",
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ── 主题 token 与 WCAG 对比度的**共用量具**（下面两个 describe 各用一半）─────────
+ * 一份实现两个消费者：`--muted` 的正文对比度下限（1.4.3）与轮询状态灯的非文字
+ * 对比度下限（1.4.11）。**别再各写一份**——两份不同实现给出不同答案时绿的那份会赢。
+ */
+const BASE_CSS = "admin-ui/css/base.css";
+
+function tokens(block: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of block.matchAll(/(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{6})\s*;/g)) out[m[1]!] = m[2]!.toLowerCase();
+  return out;
+}
+
+/** 亮 / 暗两个 `:root` 块各自的 token 表。抠不到一律 `null`。 */
+function themeTokens(theme: "light" | "dark"): Record<string, string> | null {
+  const css = stripCssComments(readFileSync(BASE_CSS, "utf8"));
+  const head = theme === "light" ? ":root {" : ':root[data-theme="dark"] {';
+  const at = css.indexOf(head);
+  if (at === -1) return null;
+  const end = css.indexOf("}", at);
+  if (end === -1) return null;
+  return tokens(css.slice(at, end));
+}
+
+/** WCAG 相对亮度 + 对比度。**公式手写，不引依赖**（全局约束：本期不新增依赖）。 */
+function luminance(hex: string): number {
+  const ch = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * ch[0]! + 0.7152 * ch[1]! + 0.0722 * ch[2]!;
+}
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi! + 0.05) / (lo! + 0.05);
+}
+
+/**
+ * ── 轮询状态灯：**非文字**状态指示的对比度下限（WCAG 1.4.11，P3e Task 20 复评 F3）──
+ *
+ * 上一版这里只量了**文字**对比度（下一个 describe），于是同一个板块里的
+ * `.poll-dot` 三态**在两个主题下都看不见**却零信号：`--ok-fg` / `--danger-fg` 是
+ * 「画在有色底上的前景色」，亮色里两个逐字都是 `#ffffff` ⇒ 轮询中那颗是纯白点画在
+ * 纯白卡上，而且「轮询中」与「出错」**同色**。真机复量证实了这一条，本轮把三态改成
+ * `--ok` / `--muted` / `--danger`，并把下限变成会自己红的断言。
+ *
+ * **它接不住什么，明写**：
+ * · 只认 `background: var(--token)` 这一种写法。写成字面色值或 `color-mix(…)`
+ *   ⇒ **抠不到、当场抛**，不是静默放行。
+ * · 底色是**手写枚举**的三种（同下一个 describe 的理由），不是从用法里推出来的。
+ * · 它不判**形状**：三态今天只有颜色差，红绿两态在亮色下几乎等亮度 —— 那一条由本组
+ *   最后一格**登记成断言**（不是散文），修好了它会红。
+ */
+describe("轮询状态灯：非文字状态指示（WCAG 1.4.11）", () => {
+  const SECTIONS_CSS = "admin-ui/css/sections.css";
+  /** 三态各自的类名，逐条手写。 */
+  const DOTS = [".poll-dot-active", ".poll-dot-paused", ".poll-dot-error"] as const;
+  /** 状态灯今天可能落在哪几种底色上。手写枚举，同 `--muted` 那一格的理由。 */
+  const SURFACES = ["--bg", "--panel", "--panel-2"] as const;
+
+  /** 从 `sections.css` 抠出一个类的 `background: var(--x)` 里那个 token 名。抠不到就抛。 */
+  function dotToken(cls: string): string {
+    const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+    const m = new RegExp(`\\${cls}\\s*\\{([^}]*)\\}`).exec(css);
+    if (m === null) throw new Error(`${SECTIONS_CSS} 里找不到 ${cls} 这条规则 —— 先回来改抠法`);
+    const v = /background\s*:\s*var\(\s*(--[a-z0-9-]+)\s*\)/.exec(m[1]!);
+    if (v === null) {
+      throw new Error(
+        `${cls} 的 background 不是 \`var(--token)\` 形态（抠到的是 \`${m[1]!.trim()}\`）——`
+        + "这一格只认那一种写法，**先回来改判据**，别让它静静放行",
+      );
+    }
+    return v[1]!;
+  }
+
+  it("三态的取值在每个主题下互不相同 —— 同色等于少一态", () => {
+    for (const theme of ["light", "dark"] as const) {
+      const tk = themeTokens(theme);
+      expect(tk, `${BASE_CSS} 里抠不到 ${theme} 的 token 块`).not.toBeNull();
+      const seen = DOTS.map((c) => {
+        const name = dotToken(c);
+        const val = tk![name];
+        expect(val, `${theme}: 抠不到 ${c} 用的 ${name}`).not.toBe(undefined);
+        return `${c}=${val}`;
+      });
+      expect(
+        new Set(seen.map((s) => s.split("=")[1]!)).size,
+        `${theme} 主题下轮询状态灯有两态同色（${seen.join(" / ")}）——`
+        + "屏幕上「轮询中」与「出错」长得一模一样",
+      ).toBe(DOTS.length);
+    }
+  });
+
+  it("三态画在三种底色上都不低于 3:1（WCAG 1.4.11 非文字对比度）", () => {
+    for (const theme of ["light", "dark"] as const) {
+      const tk = themeTokens(theme);
+      expect(tk, `${BASE_CSS} 里抠不到 ${theme} 的 token 块`).not.toBeNull();
+      for (const cls of DOTS) {
+        const name = dotToken(cls);
+        const fg = tk![name];
+        expect(fg, `${theme}: 抠不到 ${cls} 用的 ${name}`).not.toBe(undefined);
+        for (const surface of SURFACES) {
+          const bg = tk![surface];
+          expect(bg, `${theme}: 抠不到 ${surface}`).not.toBe(undefined);
+          const cr = contrast(fg!, bg!);
+          expect(
+            cr >= 3,
+            `${theme} 主题下 ${cls}(${name} = ${fg}) 画在 ${surface}(${bg}) 上只有 ${cr.toFixed(2)}:1，`
+            + "低于 WCAG 1.4.11 对非文字指示的 3:1 —— 屏幕上这颗点看不见。"
+            + "⚠️ `--ok-fg` / `--danger-fg` 那一族是**画在有色底上的前景色**，不是拿来画在卡片上的",
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  /**
+   * **反向控制：量具对着旧的那一对取值确实报坏。**
+   * 没有这一格的话，`dotToken()` / `contrast()` 一起退化成"什么都过"时上面两格恒绿。
+   * `--ok-fg` / `--danger-fg` 是仓里**真实存在**的两个 token，正是这次换掉的那一对。
+   */
+  it("反向控制：换回 --ok-fg / --danger-fg 那一对，量具当场报「同色」且「不到 3:1」", () => {
+    for (const theme of ["light", "dark"] as const) {
+      const tk = themeTokens(theme)!;
+      expect(
+        tk["--ok-fg"],
+        `${theme}: --ok-fg 与 --danger-fg 不再是同一个取值了 —— 这一格是用来证明上面那格认得出旧缺陷的，`
+        + "回来换一对新的反例，或者删掉它并写明为什么不再需要",
+      ).toBe(tk["--danger-fg"]);
+      expect(
+        contrast(tk["--ok-fg"]!, tk["--panel"]!) < 3,
+        `${theme}: --ok-fg 画在 --panel 上现在过 3:1 了 —— 同上，回来换反例`,
+      ).toBe(true);
+    }
+  });
+
+  /**
+   * **已登记的欠账（是断言，不是散文）**：三态只有颜色差，而 `--ok` 与 `--danger`
+   * 在亮色主题下**亮度几乎相同** ⇒ 红绿色觉障碍用户分不出「轮询中」与「出错」。
+   * 今天兜底的是 `sec-events.js` 给状态灯挂的 `title` / `aria-label` 文字。
+   * 真修要给三态各一个形状差（圆 / 方 / 菱形），那是结构改动，本轮按搬运风险登记不做。
+   * ⚠️ **这一格红了是好事**：说明有人把它修好了 —— 把它删掉，并把
+   * `admin-ui/css/sections.css` 里那段「仍然欠着」的注释一起删掉。
+   */
+  it("已登记的欠账：亮色下 --ok 与 --danger 几乎等亮度，红绿色觉障碍分不出这两态", () => {
+    const tk = themeTokens("light")!;
+    const cr = contrast(tk["--ok"]!, tk["--danger"]!);
+    expect(
+      cr < 3,
+      `亮色下 --ok(${tk["--ok"]}) 与 --danger(${tk["--danger"]}) 之间已经有 ${cr.toFixed(2)}:1 了 ——`
+      + "这条欠账被修好了，把这一格与 sections.css 里那段登记一起删掉",
+    ).toBe(true);
   });
 });
 
@@ -2027,48 +2324,22 @@ describe("状态不许只由颜色表达", () => {
  * 亮色那份原来是 `#6b7280`，在 `#f0f1f5` 上量出来 4.28:1 —— 低于 4.5:1。
  * 这个读数**不是抄来的**：把 token 改回 `#6b7280`，下面那格会把它算出来的比值逐字打进报文。
  * 真浏览器五语言 × 两主题冒烟（每格逐板块遍历所有带文字的元素）：
- * **亮色五格各 38 处不达标、深色五格 0 处**，五种语言的数字逐格相同
+ * **亮色那五格逐格都量出不达标元素、深色那五格 0 处，五种语言逐格同数**
  * ⇒ 是 token 的事，不是文案的事。
+ * ⚠️ **具体条数刻意不写**（P3e Task 20 复评 F4）：它随当时渲染了几行模型目录漂
+ *（`.badge-off` 是大头），写下来就是一个复现不出来、又没有测法的数。
  *
  * **它接不住什么，明写**：
  * · 只算 `--muted` 这一个前景色在三种底色上的比值。别的组合（`--warn-fg` 画在
  *   `--warn` 上之类）不在这一格里 —— 那一族由真机冒烟接，而真机冒烟不会自己红。
+ *   **例外是 `.poll-dot` 那三态**，本轮已经单独立了一个 describe（上面那组）。
  * · 只认 `#rrggbb`。token 改成 `rgb(…)` / `color-mix(…)` 时**抠不到 ⇒ 断言当场红**，
  *   不是静默跳过。
  * · 它不知道**实际画在哪个底色上**：三种底色是手写枚举的，不是从用法里推出来的。
  */
 describe("--muted 在三种底色上都过 4.5:1", () => {
-  const BASE_CSS = "admin-ui/css/base.css";
   /** `--muted` 今天真正落在哪几种底色上：面板底、卡片底、次级块底。手写枚举。 */
   const SURFACES = ["--bg", "--panel", "--panel-2"] as const;
-
-  function tokens(block: string): Record<string, string> {
-    const out: Record<string, string> = {};
-    for (const m of block.matchAll(/(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{6})\s*;/g)) out[m[1]!] = m[2]!.toLowerCase();
-    return out;
-  }
-
-  /** 亮 / 暗两个 `:root` 块各自的 token 表。抠不到一律 `null`。 */
-  function themeTokens(theme: "light" | "dark"): Record<string, string> | null {
-    const css = stripCssComments(readFileSync(BASE_CSS, "utf8"));
-    const head = theme === "light" ? ":root {" : ':root[data-theme="dark"] {';
-    const at = css.indexOf(head);
-    if (at === -1) return null;
-    const end = css.indexOf("}", at);
-    if (end === -1) return null;
-    return tokens(css.slice(at, end));
-  }
-
-  /** WCAG 相对亮度 + 对比度。**公式手写，不引依赖**（全局约束：本期不新增依赖）。 */
-  function luminance(hex: string): number {
-    const ch = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
-      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-    return 0.2126 * ch[0]! + 0.7152 * ch[1]! + 0.0722 * ch[2]!;
-  }
-  function contrast(a: string, b: string): number {
-    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-    return (hi! + 0.05) / (lo! + 0.05);
-  }
 
   it("量具自证：黑白是 21:1，同色是 1:1", () => {
     // 手写字面量，不是从被测对象算出来再回填。

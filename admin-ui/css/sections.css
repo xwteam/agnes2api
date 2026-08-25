@@ -59,8 +59,12 @@ tr:last-child td { border-bottom: 0; }
    `badges.map(b => b.label)` 期望表，动 `textContent` 会当场打红它——也应该打红，
    徽章上写的是协议的专名，不是状态名。
    ⚠️ **也不许把它写成一个取值与 `.badge` 逐字相同的同义类**：上面那段刚裁过 `.badge-muted`。
-   `text-decoration` 这条声明的存在由 `tests/ui/dom/models-section.test.ts` 的
-   「.badge-off 在 CSS 里声明了 text-decoration」那一格钉着，删掉当场红。 */
+   `text-decoration` 这条声明的存在由
+   `tests/ui/dom/models-section.test.ts「.badge-off 在 CSS 里声明了一条看得见的 text-decoration」`
+   那一格钉着：删掉当场红，**换成 `text-decoration-color` 也当场红**——那一族本身就是颜色属性，
+   算不得非颜色线索（P3e Task 20 复评实测把上一版的子串判据打穿过，判据已换成逐条声明的属性名）。
+   ⚠️ **锚要写成 `路径「用例名」` 紧挨着的那一种**：实测第 8 道门禁只校验这一种形态的锚内容，
+   写成「`路径` 的〈换行〉「用例名」」时用例改名它一声不吭（本轮实测 EXIT=0）。 */
 .badge-off { text-decoration: line-through; }
 
 /* 工具条 / 分页 / 说明文字：Task 4 的 Key 池板块起用，事件与概览板块同样直接引用，
@@ -101,21 +105,39 @@ tr:last-child td { border-bottom: 0; }
    ⚠️ **这是事件 / 用量 / 模型 / 设置 / 调试台五个板块共用的类**，
    只在某一个板块另加一个新类反而制造不一致——那正是 `sec-models.js` 与 `sec-usage.js`
    两处注释里亲口否掉的做法。
-   非颜色声明的存在由 `tests/unit/source-guards.test.ts` 的
-   「.btn-toggle.active 至少有一条非颜色声明」那一格钉着（白名单在那一格里手写）。
+   非颜色声明的存在由
+   `tests/unit/source-guards.test.ts「.btn-toggle.active 至少有一条非颜色声明」`
+   那一格钉着（简写名白名单在那一格里手写，判据本身在 `tests/helpers/css-decls.ts`）。
+   ⚠️ **`outline-color` / `text-decoration-color` 这一族不算数**：它们本身就是颜色属性，
+   上一版的子串判据放行过它们（P3e Task 20 复评实测）。
    ⚠️ **代价如实写在这里，别当它不存在**：加粗会让选中的那颗变宽，它右边的按钮跟着右移。
    真机量过（宽屏与 380px 窄屏各一轮，逐档切换）：**按钮组的换行行数不变、页面不横向滚动**。
    位移的具体像素数**刻意不写在这里**——本仓没有布局引擎，写下来就是一个没有测法的数字；
    要复量的话去 P3e Task 20 的报告，那里记着当时的量法与读数。 */
 .btn-toggle.active { color: var(--text); border-color: var(--primary); font-weight: 600; }
-/* 轮询状态指示灯：三态用不同颜色，不用文字（title/aria-label 已经带文字说明）。 */
+/* 轮询状态指示灯：三态各一个颜色 token，点本身不带文字（文字说明挂在 title/aria-label 上）。
+   ⚠️⚠️ **`--ok-fg` / `--danger-fg` 那一对是坏的，别改回去**（P3e Task 20 复评 F3 真机量出来的）：
+   那一族是「画在有色底上的前景色」，亮色主题里两个逐字都是 `#ffffff`
+   ⇒ 「轮询中」那颗是**纯白点画在纯白卡（`--panel`）上**、深色主题里同样是深色画在深色上，
+   两个主题下都看不见；而且 `--ok-fg` 与 `--danger-fg` 取值逐字相同 ⇒ 「轮询中」与「出错」**同色**。
+   现在三态各走 `--ok` / `--muted` / `--danger`（画在底色上的那一套）。
+   **下限由
+   `tests/unit/source-guards.test.ts「三态画在三种底色上都不低于 3:1（WCAG 1.4.11 非文字对比度）」`
+   那一格钉着**：它从本文件抠 token 名、去 `admin-ui/css/base.css` 现算比值，
+   改回任何一个看不见的取值都会当场红，报文里带算出来的比值。
+   ⚠️ **仍然欠着的那一半，如实写在这里**：三态只有颜色差，而 `--ok` 与 `--danger` 在亮色下
+   亮度几乎相同 ⇒ **红绿色觉障碍用户分不出「轮询中」与「出错」**（今天兜底的是 title/aria-label
+   那句文字）。真修要给三态各一个形状差（圆 / 方 / 菱形），那是结构改动，本轮按搬运风险登记不做。
+   这条欠账本身也是一条会红的断言：
+   `tests/unit/source-guards.test.ts「已登记的欠账：亮色下 --ok 与 --danger 几乎等亮度」`
+   ——哪天有人把它修好，那一格会红并提醒回来删掉这段话。 */
 .poll-dot {
   display: inline-block; width: 8px; height: 8px; border-radius: 999px;
   background: var(--muted); margin-left: var(--gap-sm);
 }
-.poll-dot-active { background: var(--ok-fg); }
+.poll-dot-active { background: var(--ok); }
 .poll-dot-paused { background: var(--muted); }
-.poll-dot-error { background: var(--danger-fg); }
+.poll-dot-error { background: var(--danger); }
 
 /* Key 池板块（P3c Task 4）：批量条复用 .toolbar 布局，行内动作列的按钮组换行。 */
 .bulk-bar { background: var(--panel-2); padding: var(--gap-sm); border-radius: var(--radius); }

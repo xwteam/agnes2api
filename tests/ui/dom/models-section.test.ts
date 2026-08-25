@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { stripCssComments } from "../../helpers/strip-comments.js";
+import { visibleNonColorDecls } from "../../helpers/css-decls.js";
 import { bootPanel, settle, type Harness } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { catalogPayload } from "../../../src/core/admin/protocol-catalog.js";
@@ -786,8 +787,15 @@ describe("徽章的状态不只靠颜色", () => {
    *
    * **它接不住什么，明写**：纯文本扫描，不渲染。`text-decoration: none` 它照样绿。
    * 那一族只能靠真机截图，而截图不是会自己红的守卫。
+   *
+   * ⚠️⚠️ **判据是逐条声明的属性名，不是 `toContain("text-decoration")`**
+   *（P3e Task 20 复评实测打穿过：`text-decoration-color: red` 逐字包含那个串，
+   * 却**本身就是颜色属性** ⇒ 这一格照样绿，而真机 computed 退回 `text-decoration-line: none`）。
+   * 判据住在 `tests/helpers/css-decls.ts` 的 `visibleNonColorDecls()`，与
+   * `tests/unit/source-guards.test.ts「.btn-toggle.active 至少有一条非颜色声明 —— 只改颜色的话触屏与色觉障碍用户拿不到选中态」`
+   * **共用同一份**——别在这里再手写一份。
    */
-  it(".badge-off 在 CSS 里声明了 text-decoration —— 删掉这条声明就红", () => {
+  it(".badge-off 在 CSS 里声明了一条看得见的 text-decoration —— 删掉或换成 -color 就红", () => {
     // 抠 CSS 一律走**只认块注释**的那一档：CSS 没有 `//` 行注释，拿 JS 语义去抠
     // 会把 `background: url(//cdn…)` 之后的样式整段吃掉。
     const css = stripCssComments(readFileSync("admin-ui/css/sections.css", "utf8"));
@@ -795,9 +803,10 @@ describe("徽章的状态不只靠颜色", () => {
     expect(block, "sections.css 里找不到 .badge-off 这条规则").not.toBeNull();
     expect(block![1]!, "抠出来的是空块 —— 抠错了").not.toBe("");
     expect(
-      block![1]!,
-      ".badge-off 只剩颜色声明了 —— 它存在的全部理由就是那条非颜色线索",
-    ).toContain("text-decoration");
+      visibleNonColorDecls(block![1]!, ["text-decoration"]).map((d) => d.prop),
+      ".badge-off 只剩颜色声明了 —— 它存在的全部理由就是那条非颜色线索。"
+      + "⚠️ `text-decoration-color` 不算数，它本身就是颜色属性",
+    ).not.toEqual([]);
   });
 
   /**
@@ -811,9 +820,9 @@ describe("徽章的状态不只靠颜色", () => {
     expect(block, "sections.css 里找不到 .badge-ok 这条规则").not.toBeNull();
     expect(block![1]!, "抠到的不是 .badge-ok（它该有 background）").toContain("background");
     expect(
-      block![1]!,
+      visibleNonColorDecls(block![1]!, ["text-decoration"]).map((d) => d.prop),
       "量具在 .badge-ok 上报出了 text-decoration —— 它多半在整份 CSS 里瞎找，上面那格的绿不算数",
-    ).not.toContain("text-decoration");
+    ).toEqual([]);
   });
 });
 

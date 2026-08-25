@@ -559,6 +559,46 @@ describe("左栏：档位与模型全部来自协议目录", () => {
   });
 
   /**
+   * **`aria-pressed` 的值真的跟着点击走 —— 协议那一排**（P3e Task 20 复评 F6 补的那一组）。
+   *
+   * `tests/unit/source-guards.test.ts「sec-*.js 里每一个 btn-toggle 创建点都带 aria-pressed」`
+   * 只拦「漏写」：八处**全写死成 `"false"`** 它照样绿。拦「写死」的是每个板块自己的这一格，
+   * 而本文件上一版只覆盖了 `[data-mode]` 那一排 —— 同一个文件里的
+   * `buildProtoBar()` 那一排协议按钮**零覆盖**。
+   *
+   * ⚠️ **每次 `render()` 都重建按钮**（不是就地改），所以断言前后各查一次 DOM，
+   * 不许把首帧那批节点存起来复用 —— 存起来的话点完看的是一批已经从树上摘下来的旧节点，
+   * 那正是 P3d 「就地更新够不着盒子外的节点」的镜像形态。
+   */
+  it("点第二条协议：第一条转 false、第二条转 true", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    // 期望值手写字面量：真源目录里的四条对话协议，顺序就是 catalogPayload 里的顺序。
+    const ids = ["openai", "anthropic", "responses", "gemini"];
+    expect(pick(sec, "[data-protocol]").map((b) => b.getAttribute("data-protocol")), "协议分段画出来的档位不对")
+      .toEqual(ids);
+    expect(
+      pick(sec, "[data-protocol]").map((b) => b.getAttribute("aria-pressed")),
+      "首帧默认选中的该是第一条协议",
+    ).toEqual(["true", "false", "false", "false"]);
+
+    pick(sec, "[data-protocol]").find((b) => b.getAttribute("data-protocol") === "responses")!.click();
+    await settle();
+
+    expect(
+      pick(sec, "[data-protocol]").map((b) => b.getAttribute("aria-pressed")),
+      "屏幕上换了协议，aria-pressed 还停在首帧那一档 —— 读屏用户读到的是假的",
+    ).toEqual(["false", "false", "true", "false"]);
+    // `.active` 与 `aria-pressed` 必须同生同死：只对上一半的话，看得见的那条路与
+    // 读得出来的那条路会互相说谎。
+    expect(
+      pick(sec, "[data-protocol]").filter((b) => b.classList.contains("active"))
+        .map((b) => b.getAttribute("data-protocol")),
+      ".active 与 aria-pressed 对不上了",
+    ).toEqual(["responses"]);
+  });
+
+  /**
    * **读不出来 ≠ 一条协议都没有。**
    * 变红条件：把 `loadCatalog()` 的 `catch` 分支改成
    * `catalog = { protocols: [], models: [] };` ⇒ 一排空档位会被读成
