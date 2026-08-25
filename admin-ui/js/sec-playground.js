@@ -172,7 +172,7 @@ import { fmtDash } from "./pure/format.mjs";
 import {
   playgroundProtocols, modelIdsForProtocol, buildRequest, tokenHintState, prettyJson, deltaText,
   mediaEndpoints, modelIdsForModality, mediaEmbeddable, mediaLinkable, mediaResultUrls,
-  videoTaskIdOf, buildPollRequest, videoPollNext, VIDEO_POLL_MAX_ATTEMPTS,
+  videoTaskIdOf, videoTaskIdSlotsText, buildPollRequest, videoPollNext, VIDEO_POLL_MAX_ATTEMPTS,
   trimTurns, PLAYGROUND_TURNS_MAX,
 } from "./pure/playground.mjs";
 
@@ -789,7 +789,22 @@ function fillMediaResult(box, turn) {
     box.appendChild(elI18n("p", "pg.media.pollGaveUp", { class: "muted note pg-poll-gaveup" }));
   }
   if (turn.pollState === "noTaskId") {
-    box.appendChild(elI18n("p", "pg.media.noTaskId", { class: "muted note pg-no-task" }));
+    // ⚠️ **这句话带 `{slots}` 插值，所以走 `t()` + `el()`，不走 `elI18n()` 那条裸标签路径**：
+    // 那条路挂 `data-i18n`，而 `apply()` 走的是**不带参数**的 `t()`，屏幕上会出现裸的占位符。
+    // 写法与上面那句 `pg.media.polling` 同型。
+    //
+    // ⚠️⚠️ **别指望 i18n 门禁第 ⑧ 条替你拦这一族**——它的判据是「key 的字符串字面量后面
+    // 紧不紧跟着一个逗号」，而 `elI18n` 里 key 是第二个参数、后面本来就跟着逗号。
+    // **P3e Task 21 变异实测**：把下面这两行换回 `elI18n` 那条写法 ⇒ 那道门禁 **exit 0**。
+    // 同一条边界 `pg.conv.trimmed` 上方那段已经量过一遍，那道门禁自己的文件头也登记着。
+    // ⇒ 这条写法真正的红线是 `tests/ui/dom/playground-section.test.ts` 的
+    // 「建任务的响应里没有任务标识时一次都不轮，并且明说是哪一档」那一格：
+    // 它把屏幕上这句话与字典那句话逐字比对，占位符漏出来当场红。
+    //
+    // ⚠️ **那几格从 `videoTaskIdSlotsText()` 现渲染，不在字典里手抄一份**：
+    // 手抄的那份会在下一次有人往槽表里加一格时静静变假。
+    box.appendChild(el("p", { class: "muted note pg-no-task" },
+      t("pg.media.noTaskId", { slots: videoTaskIdSlotsText() })));
   }
   if (turn.cancelled === true) {
     box.appendChild(elI18n("p", "pg.turn.cancelled", { class: "muted note pg-cancelled" }));
@@ -1373,7 +1388,9 @@ async function pollOnce() {
  * ——调用方据它决定**不要**松开在飞标记（全局约束 14：轮询的每一次打点同样烧配额）。
  *
  * 四种「不用轮」各自有自己的出口，**都不是静默的**：不是视频档 / 这次就失败了 /
- * 目录里没有轮询端点 / 上游一次就把成片给了 / 响应里没有能当任务标识用的那一格。
+ * 目录里没有轮询端点 / 上游一次就把成片给了 / **本面板认得的那几格里没有可用的标识**。
+ * ⚠️ 最后那一档刻意**不写成**「响应里没有能当任务标识用的那一格」：那是一句关于响应的
+ * 全称断言，而真正成立的只是「我们只读明写在 `VIDEO_TASK_ID_SLOTS` 上的那几格」。
  */
 function startPolling(turn, ctl) {
   if (turn.mode !== "video" || turn.errorKey !== null || turn.status === null) return false;

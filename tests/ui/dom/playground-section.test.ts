@@ -3438,6 +3438,80 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
     expect(pick(sec, ".pg-no-task").length, "没有标识这件事一个字都没说").toBe(1);
     expect(pick(sec, ".pg-task-id").length, "没有标识却画出了一行任务标识").toBe(0);
     expect(one(sec, ".pg-send").disabled, "没轮起来却把发送按钮一直灰着").toBe(false);
+
+    // ── **屏幕上那句话必须是限定句，而且槽表要真的插进去（P3e Task 21）** ────────
+    // 上一版这句话是**关于响应的全称断言**（「响应里没有一格能当任务标识用的 id」），
+    // 而真正成立的只是「我们只看明写的那几格」。**那两句话在这一档上分得开**：
+    // 响应里可以有一个我们不认得的槽，而全称句会把它说成不存在。
+    //
+    // ⚠️ 期望值走 `say()`（从字典派生那句话的骨架），**而插值那一串是手写字面量**：
+    // 拿 `videoTaskIdSlotsText()` 回填的话，槽表改了两边一起动，屏幕上少列一格也不会红。
+    const noTask = one(sec, ".pg-no-task").textContent;
+    expect(noTask, "那句话没按槽表插值 —— 屏幕上会出现裸的占位符")
+      .toBe(say("pg.media.noTaskId", { slots: "id / task_id / taskId / name / data.id / data.task_id" }));
+    expect(noTask.includes("{slots}"), "占位符原样漏到了屏幕上").toBe(false);
+    // ⚠️ **非空锚，别删**：只有上面那条 `say()` 比对的话，字典里那句话哪天被改回
+    // 不带 `{slots}` 的全称句，两边会**一起**变回旧句子而这一格照样全绿
+    //（`say()` 从同一份字典派生）。下面这个手写字面量是唯一不跟着动的那一端。
+    expect(noTask, "屏幕上那句话没有列出面板认得的那几格 —— 它又变回全称句了")
+      .toContain("data.task_id");
+  });
+
+  /**
+   * **`task_id` 这一格也算数 —— 具名候选槽表的行为面（P3e Task 21）。**
+   *
+   * 上一版 `videoTaskIdOf()` 只认顶层 `id`，于是这个响应在屏幕上走的是「没有任务标识」
+   * 那一档：**面板一次都不轮，运维手上什么都没有**，而响应里明明有一个能用的标识。
+   *
+   * ⚠️ **观测点是 `h.calls`（真发出去的那几条 URL），不是屏幕文字**：
+   * 只断言 `.pg-task-id` 的话，「认出来了但没接着轮」这条半截实现照样全绿
+   *（`startPolling()` 里任何一句早退都能造出它），而那正是运维会盯着一个
+   * 永远不动的框等下去的形态。
+   *
+   * **变红条件**：把 `VIDEO_TASK_ID_SLOTS` 缩回只剩 `["id"]`
+   * ⇒ 这一格红在「打点次数 0」与「画的是没有标识那一档」两处。
+   */
+  it("标识放在 task_id 那一格时照样接着轮 —— 认得出却不轮的话，运维盯着一个永远不动的框", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let polls = 0;
+    const { h, sec } = await startVideo(respondWith({
+      gateway: (url) => {
+        if (url === CREATE) return { status: 200, body: { task_id: "task-1", status: "queued" } };
+        polls++;
+        return polls >= 2
+          ? { status: 200, body: { task_id: "task-1", status: "completed", url: "https://cdn.invalid/v.mp4" } }
+          : { status: 200, body: { task_id: "task-1", status: "processing" } };
+      },
+    }));
+
+    expect(one(sec, ".pg-task-id").textContent, "task_id 那一格没被认出来").toBe("task-1");
+    expect(pick(sec, ".pg-no-task").length, "认得出的一格却走了「没有任务标识」那一档").toBe(0);
+
+    await tick();
+    await tick();
+    vi.useRealTimers();
+
+    // 打的是带任务标识的那条路径，**不是**建任务那条。
+    expect(h.calls.filter((c) => c.url.startsWith(PANEL_ORIGIN)).map((c) => c.url))
+      .toEqual([CREATE, POLL, POLL]);
+    expect(one(sec, ".pg-media-url").textContent).toBe("https://cdn.invalid/v.mp4");
+  });
+
+  /**
+   * **搬运风险 ③ 的复核（P3e Task 21）**：`pg.media.noTaskId` 住在 `fillMediaResult()` 里，
+   * 而那个函数同时被「整版重建」和「轮询那一拍就地重填」两条路径调用。
+   * 这一档**不轮**（所以就地那条路径这一档走不到），
+   * 但把这句话改成带插值之后，它仍然必须在两条路径下画出一模一样的一屏
+   * ——哪天有人给「没有任务标识」这一档接上一条就地更新的快路，这一格是接住它的那张网。
+   *
+   * ⚠️ **装置是本文件顶层那份 `expectSameAsRebuild()`，不抄第二份**（理由写在它上方）。
+   */
+  it("没有任务标识那一档：屏幕与整版重建逐字相同 —— 这句话现在带插值，两条路径不许各插各的", async () => {
+    const { h, sec } = await startVideo(respondWith({
+      gateway: () => ({ status: 200, body: { status: "queued", note: "no id here" } }),
+    }));
+    expect(pick(sec, ".pg-no-task").length, "前置条件：没有任务标识那条出口得真的画出来").toBe(1);
+    expectSameAsRebuild(h, sec, "没有任务标识档");
   });
 
   /**

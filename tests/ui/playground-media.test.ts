@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   mediaEndpoints, modelIdsForModality, mediaEmbeddable, mediaLinkable, mediaResultUrls,
-  videoTaskIdOk, videoTaskIdOf, buildPollRequest, buildRequest, videoPollNext,
-  VIDEO_POLL_INTERVAL_MS, VIDEO_POLL_MAX_ATTEMPTS, VIDEO_POLL_MAX_MS,
+  videoTaskIdOk, videoTaskIdOf, videoTaskIdSlotsText, buildPollRequest, buildRequest, videoPollNext,
+  VIDEO_POLL_INTERVAL_MS, VIDEO_POLL_MAX_ATTEMPTS, VIDEO_POLL_MAX_MS, VIDEO_TASK_ID_SLOTS,
 } from "../../admin-ui/js/pure/playground.mjs";
 import { catalogPayload, VIDEO_TASK_ID_RE } from "../../src/core/admin/protocol-catalog.js";
 import { stripComments } from "../helpers/strip-comments.js";
@@ -262,13 +262,76 @@ describe("视频两段式：任务标识与轮询", () => {
    */
   it("建任务的响应里取不到合法 id 时不猜 —— 猜的话一个 queued 状态值就会被当成任务标识", () => {
     expect(videoTaskIdOf({ id: "task-1", status: "queued" })).toBe("task-1");
-    // `id` 在，但它过不了形状判据 ⇒ **不许退而求其次去找别的字段**。
+    // `id` 在，但它过不了形状判据 ⇒ 这一格底下没有第二个**明写的**槽 ⇒ 仍然是 `null`。
     expect(videoTaskIdOf({ id: "..", status: "queued" })).toBeNull();
-    expect(videoTaskIdOf({ id: "a/b", task_id: "task-2" })).toBeNull();
+    // ⚠️ **P3e Task 21 改了这一条的期望值，如实记一笔**：上一版这里断言的是 `null`，
+    // 理由写着「`id` 过不了形状判据就不许退而求其次去找别的字段」。
+    // **具名候选槽表把这句话改了一半**：不许找的是「随便一个过得了正则的字符串」
+    //（那样 `{ status: "queued" }` 会给出 `"queued"`），而 `task_id` 是**明写在表里**的
+    // 下一格——继续往下试它，与「不猜」不矛盾。上一版那个 `null` 的实际后果是：
+    // 上游把标识放在 `task_id`、同时给了一个本网关收不下的 `id` 时，
+    // 屏幕上说的是「一格都没有」，而响应里明明有一个能用的。
+    expect(videoTaskIdOf({ id: "a/b", task_id: "task-2" })).toBe("task-2");
     expect(videoTaskIdOf({ status: "queued" })).toBeNull();
     expect(videoTaskIdOf({ id: 12345 })).toBeNull();
     expect(videoTaskIdOf(null)).toBeNull();
     expect(videoTaskIdOf(["task-1"])).toBeNull();
+  });
+
+  /**
+   * ── **具名候选槽（P3e Task 21）** ──────────────────────────────────────────
+   *
+   * ⚠️⚠️ **正向那一组与反向那一组必须留在同一个 `describe` 里。**
+   * 分开写的话，下一个人只会看见正向那张表（「多认几格」），
+   * 于是「多字段兜底」会被顺手放宽成**值扫描**（整棵树找一个过得了正则的字符串），
+   * 而反向那一组正是那条放宽会当场踩响的地雷。
+   *
+   * ⚠️ **这一组证明不了「上游真的把标识放在这几格」**——本仓没有任何真上游依据，
+   * 依据强度是**假设**（说明写在 `admin-ui/js/pure/playground.mjs` 的
+   * `VIDEO_TASK_ID_SLOTS` 上方）。它证明的只有一件事：
+   * **面板认得的那张表就是明写在那里的这几格，一格不多一格不少。**
+   */
+  describe("建任务响应里的任务标识：只认明写的那几格，其余一律不猜", () => {
+    it.each([
+      [{ id: "task-1" }, "task-1"],
+      [{ task_id: "task-1" }, "task-1"],
+      [{ taskId: "task-1" }, "task-1"],
+      [{ name: "operations-abc123" }, "operations-abc123"],
+      [{ data: { id: "task-1" } }, "task-1"],
+      [{ data: { task_id: "task-1" } }, "task-1"],
+    ])("正向：%j ⇒ 取得到", (body, want) => { expect(videoTaskIdOf(body)).toBe(want); });
+
+    it.each([
+      [{ status: "queued" }], [{ state: "running" }], [{ object: "video" }],
+      [{ model: "agnes-video-v2.0" }], [{ id: 12345 }], [["task-1"]],
+    ])("反向：%j 仍必须是 null（一个 \"queued\" 就会被轮到上限）", (body) => {
+      expect(videoTaskIdOf(body)).toBeNull();
+    });
+
+    /**
+     * **非空锚**：少了它，把槽表清空 ⇒ 上面反向那一组照样全绿
+     *（`videoTaskIdOf()` 恒 `null`），而正向那六条会红在别处、病因指不到表上。
+     * **顺序即语义**：`["id"]` 恒为第一条——`{ id: "a", task_id: "b" }` 这种两格都在的
+     * 响应，面板给出的是哪一个由顺序决定，那是**行为**不是巧合。
+     */
+    it("非空锚 + 顺序即语义：槽表至少两条，且第一条恒为顶层 id 那一格", () => {
+      expect(VIDEO_TASK_ID_SLOTS.length).toBeGreaterThanOrEqual(2);
+      expect(VIDEO_TASK_ID_SLOTS[0]).toEqual(["id"]);
+      expect(videoTaskIdOf({ id: "first-wins", task_id: "second" }), "顺序变了")
+        .toBe("first-wins");
+    });
+
+    /**
+     * **屏幕上那句限定句里的那张表，就是这张表。**
+     *
+     * ⚠️ 期望值**手写整条字面量**，不从 `VIDEO_TASK_ID_SLOTS` 推
+     *（第 6 种假阳性：拿被测物推出期望值，改了表两边一起动，一格都不会红）。
+     * 这一条同时是「文案不再是全称句」那半的执行机构：`pg.media.noTaskId` 说
+     * 「本面板只认这几格 `{slots}`」，而 `{slots}` 里逐字就是下面这串。
+     */
+    it("槽表渲染成给运维看的那一串 —— 屏幕上那句限定句列的就是这几格", () => {
+      expect(videoTaskIdSlotsText()).toBe("id / task_id / taskId / name / data.id / data.task_id");
+    });
   });
 
   /**
