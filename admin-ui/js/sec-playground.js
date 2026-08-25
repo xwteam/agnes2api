@@ -121,12 +121,31 @@
  * 「非流式响应里那句话在哪」是另一格，**今天没有第二个消费者要它**
  * ⇒ 登记 P3e，理由全文在 `js/pure/playground.mjs` 的 `prettyJson()` 上方。
  *
- * ── 流式那一轮为什么不显示 token 用量 ───────────────────────────────────────
- * **因为网关的流式响应里根本没有真的 token 数**，而其中一条**还带着一个恒为 0 的字段**：
- * `src/core/protocol/anthropic.ts` 的 `message_delta` 事件写死 `usage: {output_tokens: 0}`。
- * ⇒ 谁顺手把「响应里的 usage」画出来，Anthropic 那条流就会在面板上显示 **0 个 token**
- * ——那是全局约束 9 明令禁止的那件事（**伪造 0 比显示「没有」更糟**）。
- * ⇒ 流式那一轮**今天一个字节的 usage 都不读**，只画一句「流式响应不带 token 用量」。
+ * ── 流式那一轮为什么不显示 token 用量（**论证按协议分档，P3e Task 22 改写**）──────
+ * ⚠️⚠️ **上一版这里写的是一句全称句：「因为网关的流式响应里根本没有真的 token 数」。
+ * 那句话只对四条里的三条成立，第四条从没量过。** 逐档写清：
+ *
+ * · **anthropic / responses / gemini 这三条流是本仓自己合成的**
+ *   （`src/core/protocol/anthropic.ts`、`src/core/protocol/responses.ts`、
+ *   `src/core/protocol/gemini.ts` 的 `to*Stream()`）⇒ 里面有没有 usage 由本仓说了算。
+ *   实况：responses 与 gemini 那两条**一个 usage 字段都不发**；anthropic 那条**硬写两处
+ *   恒为 0** —— `src/core/protocol/anthropic.ts`「usage: { input_tokens: 0, output_tokens: 0 }」
+ *   （`message_start`）与 `src/core/protocol/anthropic.ts`「usage: { output_tokens: 0 }」
+ *   （`message_delta`）。⇒ 谁顺手把「响应里的 usage」画出来，Anthropic 那条流就会在面板上
+ *   显示 **0 个 token**，那是全局约束 9 明令禁止的那件事（**伪造 0 比显示「没有」更糟**）。
+ *
+ * · **openai 那条是上游字节原样透传，「流末带不带 usage」是上游决定的、本仓未核实。**
+ *   `src/http/routes/openai.ts` 不传 `expectJson` ⇒ 网关从头到尾没有 `JSON.parse` 过它。
+ *   真实上游若在流末发一块 usage（不少 OpenAI 兼容实现会发，或客户端带了
+ *   `stream_options.include_usage`），**那些字节会原样到达浏览器**。
+ *   假上游下量不到，**需要一次真上游才能定案**。这条边界的全文与裁定在
+ *   `src/core/admin/protocol-catalog.ts` 的 `streamTextPath` 上方那段
+ *   「一条今天定不了案的边界」。
+ *
+ * ⇒ **面板那句文案因此只说本面板自己做了什么**：`pg.turn.noTokens` 逐字是
+ *   「本面板在流式这一档不读 token 用量……」——**与上游有没有 usage 无关，恒为真**。
+ *   它替换掉的旧文案「流式响应不带 token 用量」是一句关于上游的全称句，对 openai 可能为假。
+ * ⇒ 流式那一轮**今天一个字节的 usage 都不读**，一条解析分支都没有。
  * 由 `tests/ui/dom/playground-section.test.ts` 的
  * 「流式那一轮不显示任何 token 数字 —— Anthropic 的流里带着一个恒为 0 的 usage」钉着。
  *
@@ -134,11 +153,18 @@
  * 我原来在报告里写过「结构性地不读，不是靠自觉」，**那是言过其实**：
  * 评审在 `onPayload` 里加三行解析 `usage.output_tokens`、在下面多画一行
  * `` `Tokens: ${…}` `` ⇒ **当时 103/103 全绿**，屏幕上同时出现
- *「流式响应不带 token 用量…」与「Tokens: 0」。
+ *「流式响应不带 token 用量…」（**当时的旧文案**，见上一段）与「Tokens: 0」。
  * 当时守着它的只有一条**按字段名**的子串断言（换个标签就绕过）与一条**计数**断言
  *（只挡替换、不挡新增）。
  * ⇒ 现在守它的是**闭集**断言：那一格逐条比对这一轮渲染出来的「标签 + class」列表，
  * **多画任何一行都红**。这仍然是一道测试，不是一条结构性的不可能。
+ * ⚠️ **而「多画一行就红」这句话，P3e Task 22 之前也没有任何东西守着**：闭集判据自己
+ * 被改瞎（遍历切短）的话，真扫描那一格照样全绿。补上的同格反向控制是
+ * `tests/ui/dom/playground-section.test.ts` 的
+ * 「反向控制（同格）：手工往流式那一轮多挂一个 p.pg-tokens —— 闭集判据看不见它就说明它是死断言」。
+ * ⚠️⚠️ **降级让这道闭集比降级之前更承重**：文案已经不再声称「上游没有 usage」，
+ * 「本面板不读」这件事**只剩那一格在守**。别把降级读成「可以顺手加 usage 解析了」
+ * ——降的是**说法**的射程，不是这条纪律。
  *
  * ── 两条 admin 路径为什么不算「第二份端点知识」 ──────────────────────────────
  * 全局约束 15 管的是「怎么调**这个网关**」那张对外面（对外路径、请求体形状、鉴权头），
@@ -890,7 +916,7 @@ function fillTurn(wrap, turn) {
       wrap.appendChild(elI18n("p", "pg.turn.streamEmpty", { class: "muted note pg-stream-empty" }));
     }
     if (turn.cancelled === true) {
-      // **取消要说出来**：一个空白框 + 一句「流式不统计 token」什么都没解释。
+      // **取消要说出来**：一个空白框 + 一句「本面板在流式这一档不读 token 用量」什么都没解释。
       wrap.appendChild(elI18n("p", "pg.turn.cancelled", { class: "muted note pg-cancelled" }));
     }
     if (turn.malformed > 0) {
@@ -1226,7 +1252,7 @@ function cancelInFlight() {
    * 而这个函数刚把 `current` 置空 ⇒ **那条收尾路径走不到**。
    * 非流式那一档看不出来（它的 turn 压根还没进 `turns`），
    * **流式那一档看得一清二楚**：turn 早就在右栏里了，`pending` 永远停在 `true`
-   * ⇒ 屏幕上留下一个空白框 + 一句「流式不统计 token」，别的什么都不说
+   * ⇒ 屏幕上留下一个空白框 + 一句「本面板在流式这一档不读 token 用量」，别的什么都不说
    *（既不说「一个字都没有」，也不说任何错误）。
    * ⇒ 这里把它收干净，并**明确标成「被取消」**——那与「读完了但没有正文」是两句话。
    */

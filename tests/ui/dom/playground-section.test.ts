@@ -236,10 +236,21 @@ function brokenStream(texts: readonly string[]): ReadableStream<Uint8Array> {
  *（`.not.toContain("output_tokens")`）与一条 `.pg-no-tokens` 的**计数**断言。
  * 评审在 `onPayload` 里解析 `usage.output_tokens` 存进 turn、在 stream 分支多画一行
  * `` `Tokens: ${turn.tokens}` `` ⇒ **103/103 全绿**，屏幕上同时出现
- *「流式响应不带 token 用量…」与「**Tokens: 0**」。
+ *「流式响应不带 token 用量…」（**P3e Task 22 之前的旧文案**）与「**Tokens: 0**」。
  * 成因：子串断言只认得那一个字段名（换个标签就绕过），计数断言只挡**替换**、不挡**新增**。
  * ⇒ 判据改成**闭集**：这一轮里每一个元素的「标签 + class」必须逐条等于手写的那张表。
  * **新增任何一行**（不管它叫什么名字）都会让这一格红。
+ *
+ * ⚠️⚠️ **「会让这一格红」这句话本身，P3e Task 22 之前没有任何东西守着。**
+ * 一条闭集断言最典型的死法是**判据自己瞎了**（本仓已经在别处踩过：判据认不出任何
+ * 东西 ⇒ 真仓五格全变绿，只有反向控制红）。这里的瞎法很具体：`turnShape()` 若哪天
+ * 被改成只走 `wrap` 的头几个孩子、或者 `everyNode()` 递归被切短，**多画的那一行就
+ * 落在射程之外**，而真扫描那一格照样绿——它比对的是同一份被截短的清单。
+ * ⇒ 补的是同格反向控制，见下面
+ * 「反向控制（同格）：手工往流式那一轮多挂一个 p.pg-tokens —— 闭集判据看不见它就说明它是死断言」。
+ * ⚠️ 反向控制**必须与真扫描共用同一份判据**（`turnShape()`）与同一张期望表
+ *（`STREAM_TURN_SHAPE`）：另写一份「探针专用」的遍历，证明的是那份探针能看见，
+ * 不是真扫描能看见。
  */
 function turnShape(sec: FakeElement): string[] {
   const turns = pick(sec, ".pg-turn");
@@ -249,6 +260,56 @@ function turnShape(sec: FakeElement): string[] {
     out.push(`${n.tagName}.${n.getAttribute("class") ?? ""}`);
   }
   return out;
+}
+
+/**
+ * **Anthropic 流式的那三行字节，逐字照抄 `toAnthropicStream()` 真吐出去的那几行**
+ *（含 `message_delta` 里那个恒为 0 的 usage）。
+ *
+ * ⚠️ **真扫描那一格与它的反向控制共用这一份**：两边跑的必须是**同一轮**，
+ * 否则「反向控制红了」证明不了「真扫描那一格看得见」。
+ */
+const ANTHROPIC_WIRE_WITH_ZERO_USAGE = [
+  'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"甲"}}',
+  'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":0}}',
+  'event: message_stop\ndata: {"type":"message_stop"}',
+].map((l) => `${l}\n\n`).join("");
+
+/**
+ * **那一轮的闭集**：跑完上面那条流之后，`.pg-turn` 子树里每一个元素的「标签 + class」。
+ *
+ * ⚠️ **手写字面量，而且是两格共用的同一份**：真扫描那一格 `toEqual` 它，
+ * 反向控制那一格 `not.toEqual` 它。分成两份抄的话，多画一行之后**只有一份会被改**，
+ * 而反向控制会跟着那一份一起静静变绿。
+ */
+const STREAM_TURN_SHAPE = [
+  "div.pg-turn",
+  "div.pg-turn-head",
+  "span.muted",
+  "span.mono pg-endpoint",
+  "p.pg-turn-prompt",
+  "div.pg-turn-head",
+  "span.muted",
+  "span.mono pg-status",
+  "pre.mono pg-body pg-stream-text",
+  "p.muted note pg-no-tokens",
+];
+
+/** 跑一轮 Anthropic 流式对话，交出板块与那一轮的外框。 */
+async function streamOneAnthropicTurn(): Promise<{ h: Harness; sec: FakeElement; turnNode: FakeElement }> {
+  const h = await openPg(respondWith({
+    gateway: () => ({ status: 200, body: null, raw: ANTHROPIC_WIRE_WITH_ZERO_USAGE }),
+  }));
+  const sec = h.section("playground");
+  // 换到 anthropic 那一档（**按位置找，不认 id**——本文件同样不该硬编码协议 id）。
+  pick(sec, "[data-protocol]")[1]!.click();
+  await settle();
+  pasteToken(sec, GW_TOKEN);
+  typePrompt(sec, "你好");
+  turnOnStream(sec);
+  one(sec, ".pg-send").click();
+  await settle(40);
+  return { h, sec, turnNode: one(sec, ".pg-turn") };
 }
 
 /** 这一轮往对外那棵树发了几条。 */
@@ -1559,56 +1620,121 @@ describe("Playground 板块：流式", () => {
    * ⚠️⚠️ **这一格是文件头「流式那一轮为什么不显示 token 用量」那段话的装置。**
    *
    * **防住的真实故障**：谁顺手把「响应里的 usage」画出来。
-   * `src/core/protocol/anthropic.ts` 的 `message_delta` 事件**写死 `output_tokens: 0`**
-   * ⇒ 那一刻面板会显示 **0 个 token**，而那是全局约束 9 明令禁止的伪造 0。
+   * `src/core/protocol/anthropic.ts` 的 `message_delta` 事件**写死
+   * `usage: { output_tokens: 0 }`** ⇒ 那一刻面板会显示 **0 个 token**，
+   * 而那是全局约束 9 明令禁止的伪造 0。
    *
    * **夹具用的是真的带着那个 0 的字节**——不是编一段「假装有 usage」的数据：
    * 用例必须在**缺陷真的会发作**的输入上跑，否则它什么都没守。
+   *
+   * ⚠️ **那句文案在 P3e Task 22 被降级了，这一格的期望值跟着改**：从
+   *「流式响应不带 token 用量」（一句关于**上游**的全称句，对 openai 那条透传路径
+   * 今天没人量过）降成「**本面板**在流式这一档不读 token 用量」（一句关于**本面板**
+   * 的话，与上游无关、恒为真）。理由全文在 `admin-ui/js/sec-playground.js` 的文件头。
    */
   it("流式那一轮不显示任何 token 数字 —— Anthropic 的流里带着一个恒为 0 的 usage", async () => {
-    // 逐字照抄 `toAnthropicStream()` 真吐出去的那两行（含那个 0）。
-    const anthropicWire = [
-      'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"甲"}}',
-      'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":0}}',
-      'event: message_stop\ndata: {"type":"message_stop"}',
-    ].map((l) => `${l}\n\n`).join("");
     // 前置条件：夹具里**真的**有那个 0，否则这一格是在一个不会发作的输入上空转。
-    expect(anthropicWire, "夹具里没有那个恒为 0 的 usage，这一格什么都没守").toContain('"output_tokens":0');
+    expect(ANTHROPIC_WIRE_WITH_ZERO_USAGE, "夹具里没有那个恒为 0 的 usage，这一格什么都没守")
+      .toContain('"output_tokens":0');
 
-    const h = await openPg(respondWith({ gateway: () => ({ status: 200, body: null, raw: anthropicWire }) }));
-    const sec = h.section("playground");
-    // 换到 anthropic 那一档（**按 label 找，不认 id**——本用例同样不该硬编码协议 id）。
-    pick(sec, "[data-protocol]")[1]!.click();
-    await settle();
-    pasteToken(sec, GW_TOKEN);
-    typePrompt(sec, "你好");
-    turnOnStream(sec);
-    one(sec, ".pg-send").click();
-    await settle(40);
+    const { sec } = await streamOneAnthropicTurn();
 
     expect(one(sec, ".pg-stream-text").textContent, "前置条件：这一轮得真的走了流式并拼出正文").toBe("甲");
     // 必须**明说**为什么没有数字 —— 静默地不画等于让人以为是 0。
+    // ⚠️ 这一句**只说本面板做了什么**，不许再说上游的流里有没有 usage（Task 22 的全部内容）。
     expect(one(sec, ".pg-no-tokens").textContent)
-      .toBe("流式响应不带 token 用量，所以这里不显示数字——显示 0 会是假的。");
+      .toBe("本面板在流式这一档不读 token 用量，所以这里不显示数字——显示 0 会是假的。");
 
     /**
      * ⚠️⚠️ **闭集断言（评审 F2）。** 上面两条**挡不住「多画一行」**：
      * 一条按字段名的子串断言换个标签就绕过，一条 `.pg-no-tokens` 计数只挡替换不挡新增。
      * 评审实测：多画一行 `` `Tokens: ${turn.tokens}` `` ⇒ 103/103 全绿。
-     * ⇒ 这一轮的节点形状必须**逐条**等于下面这张手写的表，**多一行就红**。
+     * ⇒ 这一轮的节点形状必须**逐条**等于 `STREAM_TURN_SHAPE` 那张手写的表，**多一行就红**。
+     * ⚠️ **降级之后这一条比降级之前更承重**：文案已经不再声称「上游没有 usage」了，
+     * 「面板不读」这件事**只剩这一格在守**。
      */
-    expect(turnShape(sec), "流式那一轮多画了一行 —— 它是从哪儿来的？").toEqual([
-      "div.pg-turn",
-      "div.pg-turn-head",
-      "span.muted",
-      "span.mono pg-endpoint",
-      "p.pg-turn-prompt",
-      "div.pg-turn-head",
-      "span.muted",
-      "span.mono pg-status",
-      "pre.mono pg-body pg-stream-text",
-      "p.muted note pg-no-tokens",
-    ]);
+    expect(turnShape(sec), "流式那一轮多画了一行 —— 它是从哪儿来的？").toEqual(STREAM_TURN_SHAPE);
+  });
+
+  /**
+   * ── **同格反向控制：先证明上面那条闭集断言不是死断言（P3e Task 22）** ────────────
+   *
+   * ⚠️⚠️ **一个不会自己红的清单不是守卫，是待办。** 上面那一格的全部力量都压在
+   *「多画一行就红」这句话上，而在本任务之前**没有任何东西验过这句话**——
+   * `turnShape()` 哪天被改瞎（递归切短、只取头几个孩子），真扫描那一格照样全绿，
+   * 因为它比对的是同一份被截短的清单。本仓在别处已经踩过这个形状：
+   * 判据认不出任何东西 ⇒ 真仓五格全变绿，只有反向控制红。
+   *
+   * **做法**：手工往那一轮的外框上多挂一个 `p.pg-tokens`——这正是评审 F2 当年那条
+   * 逃逸在 DOM 上的形态（读 usage、用一个**别的**标签把 `Tokens: 0` 画出来）。
+   * 判据与期望表**都与真扫描那一格共用**（`turnShape()` / `STREAM_TURN_SHAPE`）。
+   *
+   * ⚠️ **判据是逐条 `toEqual`，不是 `/token/i` 子串过滤**：那一轮里本来就有一个
+   * `p.muted note pg-no-tokens`，它自己就命中 `/token/i`
+   * ——**实测**过：按子串过滤写，「不含 token 节点」那一格在**未变异的真仓**上就红，
+   * 而「多挂一个就必须红」那一格**什么都不挂也照样绿**（一条恒真的空转断言）。
+   */
+  it("反向控制（同格）：手工往流式那一轮多挂一个 p.pg-tokens —— 闭集判据看不见它就说明它是死断言", async () => {
+    const { h, sec, turnNode } = await streamOneAnthropicTurn();
+
+    // 前置条件：动手之前，闭集判据交出的**正是**真扫描那一格钉的那张表。
+    // 这一句不成立的话，下面那条「不相等」证明不了任何东西。
+    expect(turnShape(sec), "反向控制的前置条件不成立：动手之前这一轮就已经不是那张表了")
+      .toEqual(STREAM_TURN_SHAPE);
+
+    const extra = h.dom.document.createElement("p");
+    extra.setAttribute("class", "pg-tokens");
+    extra.textContent = "Tokens: 0";
+    turnNode.appendChild(extra);
+
+    const after = turnShape(sec);
+    expect(after, "闭集判据看不见新挂上去的那一行 —— 它是死断言，上面那一格的「多一行就红」是假话")
+      .not.toEqual(STREAM_TURN_SHAPE);
+    // 而且**看见的正是那一行**，不是别处恰好也变了（否则「不相等」可能是另一件事引起的）。
+    expect(after, "闭集判据看见了变化，但变的不是新挂上去的那一行")
+      .toEqual([...STREAM_TURN_SHAPE, "p.pg-tokens"]);
+  });
+
+  /**
+   * ── **「这一句不许引入插值」那条约束的红线（P3e Task 22）** ───────────────────────
+   *
+   * ⚠️⚠️ **需求书说这条约束的绊线是 `scripts/check-i18n.mjs` 的规则 ⑧，本轮实测为假。**
+   * 变异：给 `pg.turn.noTokens` 五种语言各加一个 `{n}` ⇒ **那道门禁 EXIT=0**，
+   * 成功横幅照打（它甚至把这个 key 数进了「带占位符的 key 全都带着参数用」那一栏），
+   * 而同一次变异下右栏真的画出了「……token 用量（{n}），……」——**裸占位符上了屏幕**，
+   * 正是规则 ⑧ 当初被立出来要防的那一族缺陷。
+   *
+   * **成因是结构性的**：规则 ⑧ 的判据是「这个 key 的字符串字面量后面紧不紧跟着一个逗号」，
+   * 而这一句走的是 `elI18n("p", "pg.turn.noTokens", { … })` —— key 是**第二个参数**，
+   * 后面本来就跟着逗号。`admin-ui/js/ui.js` 的 `elI18n()` 内部调的是**不带参数**的 `t(key)`。
+   * ⚠️ 这条边界仓里早有登记（`admin-ui/js/sec-playground.js` 里 `pg.conv.trimmed`
+   * 上方那段 ⚠️⚠️ 写的是同一件事，那处也是变异实测出来的），本轮只是又撞了一次。
+   * ⇒ **这一格是那条约束自己的红线**，不再借道「整句逐字相等」那条顺手的断言。
+   */
+  it("pg.turn.noTokens 五种语言一个 {占位符} 都不许有 —— 它是 elI18n 裸标签用法，规则 ⑧ 对这种调用点结构性地看不见", () => {
+    const langsOf = (k: keyof typeof I18N) => Object.keys(I18N[k] as Record<string, string>);
+    const phOf = (k: keyof typeof I18N, lang: string) =>
+      String((I18N[k] as Record<string, string>)[lang]).match(/\{\w+\}/g) ?? [];
+
+    // **前置条件**：语言集合非空，而且与另一个真 key 的语言集合相同 —— 否则下面两圈
+    // 循环可能一圈都没跑（「判据认不出任何东西 ⇒ 全绿」是本仓踩过的形状）。
+    expect(langsOf("pg.turn.noTokens"), "两个 key 的语言集合不一样 —— 下面的反向控制与正向断言跑的不是同一批语言")
+      .toEqual(langsOf("pg.turn.malformed"));
+    expect(langsOf("pg.turn.noTokens").length, "语言集合是空的 —— 下面两圈循环都是空转").toBeGreaterThan(0);
+
+    for (const lang of langsOf("pg.turn.noTokens")) {
+      expect(phOf("pg.turn.noTokens", lang),
+        `${lang}: 这一句被加进了插值占位符，而它是 elI18n 裸标签用法 —— 屏幕上会直接出现这个花括号`)
+        .toEqual([]);
+    }
+
+    // **反向控制（同判据，用仓里真实存在的串）**：`pg.turn.malformed` 正当地带着 `{count}`，
+    // 同一份判据必须在它身上认得出来 —— 认不出来就说明上面那圈断言恒真、什么都没守。
+    for (const lang of langsOf("pg.turn.malformed")) {
+      expect(phOf("pg.turn.malformed", lang),
+        `${lang}: 判据在一个真的带着 {count} 的 key 上都认不出占位符 —— 它是瞎的`)
+        .toEqual(["{count}"]);
+    }
   });
 
   /**
@@ -1722,7 +1848,7 @@ describe("Playground 板块：流式", () => {
    *
    * `cancelInFlight()` 把 `current` 置空，而 `.finally()` 第一句就是
    * `if (current !== ctl) return;` ⇒ **`turn.pending = false` 那条路走不到**。
-   * 后果：取消一条一个字都没到的流之后，右栏留下**一个空白框 + 一句「流式不统计 token」**，
+   * 后果：取消一条一个字都没到的流之后，右栏留下**一个空白框 + 一句「本面板……不读 token 用量」**，
    * 既不说「一个字都没有」、也不说任何错误 —— 屏幕上完全看不出发生过什么。
    *
    * ⚠️ 这正是兄弟用例「一条只有 [DONE] 的流：明说『一个字正文都没有』」要防的那件事，
