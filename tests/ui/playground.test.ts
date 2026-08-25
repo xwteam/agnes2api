@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { stripComments } from "../helpers/strip-comments.js";
 import {
   playgroundProtocols, modelIdsForProtocol, withPrompt, buildRequest,
   authHeaderValue, tokenHintState, prettyJson, deltaText, sseFrames,
@@ -945,5 +947,47 @@ describe("对话轮数上限与截断", () => {
     expect(out.kept.length).toBe(PLAYGROUND_TURNS_MAX);
     expect(out.removed).toBe(2);
     expect(kept(out)[0]).toBe("t2");
+  });
+
+  /**
+   * **默认上限得是那个常量本身，不许是一个写死的字面量。**
+   *
+   * ⚠️⚠️ **上面那一格的用例名里写着「用的就是 `PLAYGROUND_TURNS_MAX`」，而它测不到这件事**
+   *（复评 F-7 / M-J 实测）：把默认参数改成 `max = 20`
+   * ⇒ **本文件与 `tests/ui/dom/playground-section.test.ts` 那两份当时合计 134/134 全绿**。
+   * 成因是常量今天恰好也是 20，两条路的**行为**一模一样，行为断言按定义分辨不出来。
+   * ⇒ 这一格判的是**源码形态**，与 DOM 那一族的 ⑦ 同一种做法。
+   *
+   * ⚠️ **写死之后的后果不是「难看」**：板块文件调的是 `trimTurns(turns)`（不传上限），
+   * 于是常量再怎么改都传不到板块那边——而屏幕上那句披露的 `{max}` 仍然从常量插值
+   * ⇒ **屏幕上那两个数会一个真一个假**（说「最多保留 25 轮」而实际留 20 轮）。
+   *
+   * ⚠️ **那个终局今天走不到，如实说清，别把这一格吹成救命的**：**写死成 20 并且把常量
+   * 改成 25** ⇒ 实测 9 格红（本文件 3 格，含这一格；`tests/ui/dom/playground-section.test.ts`
+   * 的「① 连发「上限 + 3」轮：屏幕上恰好剩上限那么多轮，而且留下的是最新的那几轮」在内 6 格）。
+   * ⇒ 除这一格之外的那 8 格是**绕着走**的红线：它们要等有人**先去改常量**才发作，
+   * 而在那之前「默认值已经不是那个常量了」这件事一个字都没人说
+   *（实测：**只**写死、不动常量 ⇒ 那 8 格全绿，只有这一格红）。
+   *
+   * ⚠️ **反向控制两层**：① 切不出那张参数表就当场吵（改名 / 改形状时报文要指对方向）；
+   * ② 断言切出来的**确实是 `trimTurns()` 的那张参数表**（第一个参数逐字是 `turns`）
+   *   ——少了这一层，一条切出空串的正则会让 `toContain` 变成一句永远说不出话的断言。
+   */
+  it("默认上限逐字引用 PLAYGROUND_TURNS_MAX，不是一个写死的字面量 —— 写死之后常量就传不到板块那边", () => {
+    const src = stripComments(readFileSync("admin-ui/js/pure/playground.mjs", "utf8"));
+    const sig = /export\s+function\s+trimTurns\s*\(([^)]*)\)/.exec(src);
+    expect(sig,
+      "发货代码里找不到 export function trimTurns(…) —— 它被改名或者改了形状，这一格的判据要跟着改")
+      .not.toBe(null);
+    const params = sig![1]!;
+    // **反向控制②**：切出来的真是那张参数表，不是空串。
+    expect(params.split(",")[0]!.trim(),
+      `切出来的那张参数表不像 trimTurns() 的（第一个参数应当是 turns，实际切到 ${JSON.stringify(params)}）`)
+      .toBe("turns");
+    expect(params,
+      `trimTurns() 的默认上限不是那个常量：${JSON.stringify(params)}。`
+      + "写死成字面量之后，板块那条 trimTurns(turns) 就再也收不到改过的常量，"
+      + "而屏幕上那句披露的「最多保留 N 轮」仍然从常量插值 —— 两个数会一个真一个假")
+      .toContain("max = PLAYGROUND_TURNS_MAX");
   });
 });

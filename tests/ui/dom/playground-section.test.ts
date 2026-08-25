@@ -2579,12 +2579,12 @@ describe("媒体模式：地址、链接与不内嵌", () => {
  * 逃的不是口令检测（那道扫描走整棵子树，比出口清单宽），**逃的是这条闭集纪律本身**：
  * 判据认不出那个出口 ⇒ 它不进清单 ⇒ 没人要求它配一个子档。
  * ⇒ 现在这句话成立的**准确形态**（两条腿都实测过，见下面那格的变红条件）：
- * 在这两个函数体里新增一个出口，**只要 `class` 这个属性名是以字面形式写在那里的**
+ * 在这三个函数体里新增一个出口，**只要 `class` 这个属性名是以字面形式写在那里的**
  * （裸 `class:` / `"class":` / `'class':` / `["class"]:` 四种，判据都认），
  * 判据要么**解得出**它的 class 名（清单变长 ⇒ 与手写表对不上 ⇒ 红），
  * 要么**解不出**（当场吵「我看见一个我读不懂的 class 表达式」⇒ 红）——这两条之外没有第三条。
  * ⚠️⚠️ **那个前提不成立时它就够不着**：属性名写成计算键 / 属性对象提到函数外 / 出口本身
- * 新增在这两个函数之外，三条都是**静默逃逸**（三条都实测过：48/48 全绿）。
+ * 新增在这三个函数之外，三条都是**静默逃逸**（三条都实测过：48/48 全绿）。
  * 连同「函数体切不切得出边界」与一条会多认的，五条逐条登记在 `mediaOutputsInSource()` 上方。
  * **别把上面那句读成全称句。**
  *
@@ -2655,10 +2655,15 @@ function matchBrace(s: string, i: number): number {
  * ⚠️ **列位置没有被丢掉，它降级成了旁证**：配平求出来的那个 `}` 如果**不在第 0 列**，
  * 说明这次扫描被什么东西带偏了（下面那条盲点就是一种）⇒ 当场吵，**不静默截断**。
  * 两条判据同时说得通才算数（实测：把 `buildMediaRow()` 的收尾 `}` 缩进两格 ⇒ 红在这条旁证上）。
- * ⚠️⚠️ **这条旁证的前提只对被扫的这两个函数成立，别写成全称句**：它们是多行写法、
+ * ⚠️⚠️ **这条旁证的前提只对本文件今天扫的那几个函数成立，别写成全称句**：它们都是多行写法、
  * 收尾 `}` 在第 0 列。`admin-ui/js/theme.js` 就有一个**单行写法**的顶层函数
  * （`export function toggleTheme() { … }`），它的收尾根本不在第 0 列——
- * 哪天这两个函数改成单行写法，这条旁证要跟着改，否则它会误吵。
+ * 哪天它们里有谁改成单行写法，这条旁证要跟着改，否则它会误吵。
+ * ⚠️ **这里刻意不写「哪几个」的那个数**（复评 F-3）：上一版写死成「这两个函数」，
+ * 而调用点在 P3d 就已经是三个（`buildMediaRow` / `buildMediaResult` / `fillMediaResult`）、
+ * P3e Task 19 又加到五个（`pushTurn` / `clearTurns`）——**那个数每加一格就旧一次**。
+ * 要知道今天有几个，`grep -n "functionBodyOf(" ` 这个文件即可；
+ * 而「它们是不是都顶格收尾」不靠这句话保证，靠的就是下面这条旁证自己会当场吵。
  */
 function functionBodyOf(src: string, fn: string): { body: string } | { reason: string } {
   const head = `function ${fn}(`;
@@ -2686,11 +2691,49 @@ function functionBodyOf(src: string, fn: string): { body: string } | { reason: s
     return {
       reason: `${fn}() 配平求出来的收尾 } 落在行中间`
         + `（去掉注释之后的第 ${src.slice(0, close).split("\n").length} 行，不是原文件行号）、`
-        + "不在第 0 列 —— 被扫的这两个函数一律顶格收尾，两条判据对不上说明这次扫描被带偏了"
+        + "不在第 0 列 —— 本判据只认顶格收尾的多行写法（它今天扫的那几个函数都是），"
+        + "两条判据对不上说明这次扫描被带偏了"
         + "（例如 stripComments() 不认得的正则字面量把引号配对搞歪），判据不敢当它是函数收尾",
     };
   }
   return { body: src.slice(start, close) };
+}
+
+/**
+ * **一段（去掉注释之后的）源码里对模块变量 `turns` 的每一次「写」。**
+ * 返回的是逐处的写形态原文，给报文用——只返回个数的话，红了之后还得再读一遍代码才知道是哪一处。
+ *
+ * ⚠️⚠️ **上一版的判据只有 `turns.push(`，而它守的那句话是全称句**（复评 F-1 / M-E）：
+ * `turns = turns.concat([turn])` 从它底下**整条走过去**，屏幕上分辨不出来。
+ * ⇒ 现在四种写形态一起认：
+ * · 赋值与 `+=` 一族（`=` 但不是 `==` / `===` / `=>`）；
+ * · 会改数组自身的方法调用（下面那张表，**读那一族一个都不许进来**：
+ *   `slice` / `filter` / `map` / `concat` 都是返回新数组，它们不是写）；
+ * · `turns[i] = …`（下标里**不许再出现 `]`**，嵌套下标认不出来，已在调用点登记）；
+ * · `turns.length = …`（把数组截短的那种写法）。
+ *
+ * ⚠️ **名字必须逐字是 `turns`**：`\b` 两侧一夹，`trimTurns` / `clearTurns` / `trimmedTurns`
+ * 里的那个 `Turns` 是大写 T，一个都不会被误抓——这也是别名那条逃逸认不出来的同一个原因。
+ */
+const TURNS_MUTATORS = ["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "copyWithin"];
+function turnsWrites(src: string): string[] {
+  const out: string[] = [];
+  const re = /\bturns\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src)) !== null) {
+    const rest = src.slice(m.index + "turns".length);
+    // ① 赋值 / `+=` 一族。`=(?![=>])` 把 `==` `===` 与箭头函数的 `=>` 都挡在外面。
+    const assign = /^\s*(?:\*\*|<<|>>>?|\|\||&&|\?\?|[+\-*/%&|^])?=(?![=>])/.exec(rest);
+    if (assign !== null) { out.push(`turns${assign[0]}`); continue; }
+    // ② 会改数组自身的方法调用。
+    const call = /^\s*\.\s*([A-Za-z_$][\w$]*)\s*\(/.exec(rest);
+    if (call !== null && TURNS_MUTATORS.includes(call[1]!)) { out.push(`turns.${call[1]!}(`); continue; }
+    // ③ `turns.length = …`（同样要挡掉 `turns.length === 0` 这种读）。
+    if (/^\s*\.\s*length\s*=(?![=>])/.test(rest)) { out.push("turns.length="); continue; }
+    // ④ `turns[i] = …`。下标里再出现一个 `]` 就切不出来 —— 那条已在调用点逐字登记。
+    if (/^\s*\[[^\]]*\]\s*=(?![=>])/.test(rest)) { out.push("turns[…]="); }
+  }
+  return out;
 }
 
 /**
@@ -2802,7 +2845,7 @@ function classKeySites(): RegExp {
 }
 
 /**
- * **不经属性名就把 class 挂上去的那些写法。** 它们在这两个函数体里出现即红——
+ * **不经属性名就把 class 挂上去的那些写法。** 它们在这三个函数体里出现即红——
  * 判据读不出它们挂的是什么名字，而 `admin-ui/js/app.js` 与 `admin-ui/js/sec-settings.js`
  * 里各有几处真实调用点，**不是假想写法**。
  * 同样每次现 new（理由见 `classKeySites()`）。
@@ -2821,7 +2864,7 @@ function classMutators(): RegExp {
  * 求不出边界时它给一条 `reason`，下面第一条断言当场把原因打出来，**不静默截断**。
  *
  * ── 射程五条（明写，别把上面那句读成全称句；①–④ 够不着，⑤ 会多认）─────────────
- * ① **出口新增在这两个函数之外**：`buildTurn()` 的 `turn.mode !== "chat"` 分支、
+ * ① **出口新增在这三个函数之外**：`buildTurn()` 的 `turn.mode !== "chat"` 分支、
  *    或将来第三个媒体 helper ⇒ **不进清单、这道判据看不见它，也不会吵**。今天那条分支里
  *    只有一句 `appendChild(buildMediaResult(turn))`，射程内为空——**这是「今天为空」，
  *    不是「结构上不可能」**，加第三个媒体 helper 的人必须把它加进 `EXPECTED_MEDIA_OUTPUTS`。
@@ -2834,7 +2877,7 @@ function classMutators(): RegExp {
  *    先补的话，这道判据在这次搬迁上一次都没有响过，而它存在的全部理由就是响这一次。
  * ② **属性名不是字面量**：`el("p", { [K]: "…" }, …)`（`K` 是变量）、`{ ...ATTRS }` 展开
  *    ⇒ `classKeySites()` 是词法钩子，它只认写死在那里的名字。实测（计算键 + 带口令）：**48/48 全绿**。
- * ③ **属性对象整个提到这两个函数之外**：`const ESC = { class: "…" };` 写在模块级、
+ * ③ **属性对象整个提到这三个函数之外**：`const ESC = { class: "…" };` 写在模块级、
  *    调用处只写 `el("p", ESC, …)` ⇒ `class:` 那个站点不在被切的函数体里。实测 48/48 全绿。
  * ④ **含引号的正则字面量**：`stripComments()` 自己登记着「不认得正则字面量」，
  *    `/["']/` 这种会把引号配对搞歪。**实测这一形态是红的**：往 `buildMediaRow()` 里插一句
@@ -2849,11 +2892,11 @@ function classMutators(): RegExp {
  * ⑤（反方向的一条，一并登记）**字符串里出现 `class:` 字样**会被当成一个站点。
  *    方向是保守的：它多半解不出 ⇒ 吵，而不是静默少给。
  *
- * ②③④ 今天在**被扫的这两个函数体里**都没有真实写法（逐条 grep 过：admin-ui 下 0 处计算键、
+ * ②③④ 今天在**被扫的这三个函数体里**都没有真实写法（逐条 grep 过：admin-ui 下 0 处计算键、
  * 0 处把 attrs 当变量传的 `el()` 调用、0 处含引号的正则字面量）。
  * ⚠️ **但别把这句读成「仓里没人这么写」**：`{ ...attrs }` 展开在 `admin-ui/js/ui.js` 的
  * `elI18n()` 里就是**真实写法**（`el(tag, { ...(attrs || {}), "data-i18n": key })`），
- * 它只是不在这两个函数体里。带引号的属性名（`"class":` / `'class':` / `["class"]:`）
+ * 它只是不在这三个函数体里。带引号的属性名（`"class":` / `'class':` / `["class"]:`）
  * 上一版也逃得掉，这一版由 `classKeySites()` 收进来了。
  */
 function mediaOutputsInSource(): string[] {
@@ -3718,9 +3761,13 @@ describe("对话轮数上限：截断要可见，清空要显式，还在收的�
    *
    * ⚠️⚠️ **它钉住的是「结果」，不是 `trimTurns()` 里那条 `live` 过滤器，别写反了。**
    * 变异实测两条，结论相反：
-   * · **把 `live` 那一段删掉（截断时不挑出 pending 轮）⇒ 这一格是绿的。**
-   *   板块今天永远把 `pending` 那一轮最后 push 进去，「留最后 max 个」与「先挑出 pending」
-   *   在这条形态上输出逐字相同 —— **第二层替第一层挡住了变异。**
+   * · **把 `live` 那一段删掉 ⇒ 这一格是绿的。**
+   *   ⚠️ **「删掉」指的是 `live` 与 `done` 一起改成等价形态**（`live = []` **并且**
+   *   `done = turns`，也就是「留最后 max 个」那种写法）：板块今天永远把 `pending`
+   *   那一轮最后 push 进去，两种实现在这条形态上输出逐字相同
+   *   —— **第二层替第一层挡住了变异。**
+   *   **只改一半不算**（复评 F-5 实测）：只把 `live` 改成 `[]`、不动 `done`
+   *   ⇒ **这一格当场红**，因为那是不等价改写，pending 那一轮会被整条丢掉。
    *   那条过滤器的红线在 `tests/ui/playground.test.ts` 的
    *   「还在收的那一轮一律留下，即使它排在中间、或者条数本身就顶过上限」上。
    * · **把 `keepDone` 那一句从「留最新的几轮」改成「留最旧的几轮」⇒ 这一格当场红**，
@@ -3820,7 +3867,7 @@ describe("对话轮数上限：截断要可见，清空要显式，还在收的�
   });
 
   /**
-   * ⑦ **`turns` 的写入口只许有一个。**
+   * ⑦ **`turns` 的写只许出现在那两个函数与那句声明里。**
    *
    * ⚠️⚠️ **这一格是上面那六格覆盖不到的那一半，别把它当成锦上添花。**
    * 发货代码里有**四条** push 路径（构造失败 / 流式那一轮 / 非流式成功 / 非流式失败），
@@ -3830,25 +3877,151 @@ describe("对话轮数上限：截断要可见，清空要显式，还在收的�
    * 而屏幕上分辨不出来——少掉的正是最旧的那几轮。
    * ⇒ 判据因此建在**源码形态**上，一次盖住四条、以及将来任何一条第五条。
    *
-   * ⚠️ **反向控制在这一格里面**：先断言判据在 `pushTurn()` 里**真的**扫到那一处，
-   * 再断言全文件的处数与它相等。少了前一句，一条什么都认不出来的正则
-   * （`0 === 0`）会让这一格**永远绿**——那正是本仓登记过多次的那种「静静地放行」。
+   * ⚠️⚠️ **上一版这里写的是一句全称句（「全文件只有 `pushTurn()` 一个写入口」），
+   * 而判据只扫 `turns.push(`——赋值形态是一个无人守的真洞。** 复评 M-E 逐字实测：
+   * 把 `failed()` 那条 `pushTurn(turn)` 换成 `turns = turns.concat([turn])`
+   * ⇒ **那一轮 74/74 全绿**，而屏幕上那句披露从此永远说 0 轮。
+   * **这不是一条想象出来的写法**：这个文件自己就在用赋值形态
+   * （`pushTurn()` 里的 `turns = kept;`、`clearTurns()` 里的 `turns = [];`），
+   * `turns = [...turns, turn]` 是这里最自然的下一种写法。
+   * ⇒ 判据改成**把每一次「写」都认出来**（赋值 / `+=` 一族 / 会改数组自身的方法调用 /
+   * `turns[i] =` / `turns.length =`），允许出现的位置只有三处：
+   * 模块顶上那句声明、`pushTurn()` 体内、`clearTurns()` 体内。
+   * ⭐ 这是本文件 H1/H3 那条形状的**第三次发作**（「写下的覆盖面小于宣称的范围」）
+   * ——所以下面把**它今天认不出哪些**也逐条种了一次。
+   *
+   * ⚠️ **用例名里那句「判据认得的四种写形态」是刻意加上去的限定**：上一版栽在
+   * 「写下的覆盖面小于宣称的范围」上，这一版不把话说满——下面这两种写法它就认不出来，
+   * **今天两条都没有红线**，形态上也都不像有人会顺手写出来，但它们不是「不存在」：
+   * · **别名**：`const t = turns; t.push(turn);` —— 判据只认名字叫 `turns` 的那一个。
+   * · **嵌套下标**：`turns[arr[0]] = turn;` —— 下标里再出现一个 `]` 就切不出来了
+   *   （`turns[turns.length - 1] = turn` 这种**不含嵌套方括号**的形态是认得出来的，
+   *   下面那组逃逸样本里有它）。
+   *
+   * ⚠️⚠️ **上一版那条 `inside.length === 1` 已经去掉，这是有意的**（复评 F-2 / M-G）：
+   * 在 `pushTurn()` 体内再加一条**合法**的 `turns.push(` ⇒ 上一版当场红，
+   * 而它印出来的话是「一处都没扫到 —— 它多半是瞎的」，diff 却是 `expected 2 to be 1`
+   * ⇒ 照那句话去处置的人会去查一条根本没瞎的正则。**而那条变异本来就不是缺陷**：
+   * 同一个函数里 push 几次都行，紧跟着的 `trimTurns()` 照样跑、那句披露照样算。
+   * ⇒ 真正的不变式是「写只许出现在那两个函数与那句声明里」，等值断言因此建在**总数**上；
+   * 防瞎扫那一半降成 `toBeGreaterThan(0)`，不再兼职一句它守不住的话。
+   *
+   * ⚠️ **反向控制有三层，缺一不可**：
+   * ① 判据在 `pushTurn()` / `clearTurns()` 里**真的**各扫到写（恒空的扫描永远是绿的）；
+   * ② 把发货代码里那一行 `turns.push(turn);` 逐字改写成各种逃逸形态，判据必须照样算它一次写
+   *   ——**M-E 那条洞的直接回归**；
+   * ③ 拿**发货代码里真实存在的三行读**去打它，判据不许把读吵成写（否则这一格会恒红，
+   *   而恒红的下一步就是有人把它删掉）。
    */
-  it("⑦ `turns` 全文件只有 pushTurn() 一个写入口 —— 绕过它的那条路径截断与披露都不会发生", () => {
+  it("⑦ `turns` 的写只许出现在 pushTurn() / clearTurns() 与那句声明里（判据认得的四种写形态）—— 绕过它们的那条路径截断与披露都不会发生", () => {
     const src = stripComments(readFileSync("admin-ui/js/sec-playground.js", "utf8"));
-    const sliced = functionBodyOf(src, "pushTurn");
-    expect("reason" in sliced ? sliced.reason : null,
-      "pushTurn() 的函数体切不出可靠边界 —— 在边界求得回来之前这条纪律整个失效，宁可红也不猜")
-      .toBe(null);
-    const body = (sliced as { body: string }).body;
-    const site = () => /\bturns\s*\.\s*push\s*\(/g;
-    const inside = body.match(site()) ?? [];
-    const all = src.match(site()) ?? [];
-    // **反向控制**：判据认得出仓里真的存在的那一处（恒空的扫描永远是绿的）。
-    expect(inside.length,
-      "判据在 pushTurn() 里一处都没扫到 —— 它多半是瞎的，而瞎了的扫描是绿的").toBe(1);
+    const slice = (fn: string): string => {
+      const sliced = functionBodyOf(src, fn);
+      expect("reason" in sliced ? sliced.reason : null,
+        `${fn}() 的函数体切不出可靠边界 —— 在边界求得回来之前这条纪律整个失效，宁可红也不猜`)
+        .toBe(null);
+      return (sliced as { body: string }).body;
+    };
+    const push = slice("pushTurn");
+    const clear = slice("clearTurns");
+
+    // 模块顶上那句声明本身也是一次写。**它必须恰好一句**，否则下面那道减法就不成立。
+    const decl = src.match(/\b(?:let|const|var)\s+turns\s*=/g) ?? [];
+    expect(decl.length,
+      "模块顶上那句 `let turns = [];` 找不到了（或者变成了不止一句）—— 这一格的判据要跟着改")
+      .toBe(1);
+
+    // **反向控制①**：判据认得出仓里真的存在的那几处写。
+    expect(turnsWrites(push).length,
+      "判据在 pushTurn() 里一处写都没扫到 —— 它多半是瞎的，而瞎了的扫描是绿的")
+      .toBeGreaterThan(0);
+    expect(turnsWrites(clear).length,
+      "判据在 clearTurns() 里一处写都没扫到 —— 它多半是瞎的，而瞎了的扫描是绿的")
+      .toBeGreaterThan(0);
+
+    // **反向控制②**：M-E 那条洞的回归。逃逸样本是把发货代码那一行逐字改写出来的。
+    for (const escape of [
+      "turns = turns.concat([turn]);",
+      "turns = [...turns, turn];",
+      "turns.unshift(turn);",
+      "turns.splice(0, 0, turn);",
+      "turns[turns.length] = turn;",
+      "turns[turns.length - 1] = turn;",
+      "turns.length = 0;",
+    ]) {
+      expect(turnsWrites(escape).length, `判据认不出这种写法，它会静静地放行：${escape}`).toBe(1);
+    }
+    // **反向控制③**：这三行**逐字抄自发货代码**，它们是读，一次都不许算成写。
+    for (const read of [
+      "const { kept, removed } = trimTurns(turns);",
+      "if (turns.length === 0) {",
+      "for (const turn of turns) body.appendChild(buildTurn(turn));",
+    ]) {
+      expect(turnsWrites(read).length, `判据把一次读吵成了写，这一格会恒红：${read}`).toBe(0);
+    }
+
+    const all = turnsWrites(src);
+    const allowed = turnsWrites(push).length + turnsWrites(clear).length + decl.length;
     expect(all.length,
-      "有人绕开 pushTurn() 直接往 turns 里塞：那一条路径上截断与「已移除几轮」都不会发生")
-      .toBe(inside.length);
+      `全文件扫到 ${all.length} 次对 turns 的写，而 pushTurn() + clearTurns() + 那句声明只占 ${allowed} 次：`
+      + `要么有人绕开这两个函数直接写 turns（那条路径上截断与「已移除几轮」都不会发生），`
+      + `要么这两个函数自己多/少了一次写。扫到的全部：${JSON.stringify(all)}`)
+      .toBe(allowed);
+  });
+
+  /**
+   * ⑧ **登出不清 `turns` / `trimmedTurns` —— 如实钉住今天这条形态。**
+   *
+   * ⚠️⚠️ **这一格不是在说这样是对的。** 它钉的是「`turns` 上方那段登记不许变成假话」：
+   * 下一个登录的人今天**看得见上一个人的整段对话**（每一轮的提示词、状态码、响应体正文），
+   * 外加那句「最旧的 N 轮已经从这里移除」。哪天有人把它清干净了，**这一格会红**
+   * ——那时该做的是回去把那段登记改真，并**确认同族那七个板块一起清了**，
+   * 而不是把这一格删掉。
+   *
+   * ⚠️ **为什么本轮不修**（理由全文在 `admin-ui/js/sec-playground.js` 的 `turns` 上方）：
+   * 板块自己**分辨不出登出与切板块**——两者走的是同一个 `onHide()`，
+   * 而切走再切回来把对话清掉是运维每天都会踩到的倒退。
+   *
+   * ⚠️ **替身差异明写**：这里的重新登录走 `h.form.submit()`，
+   * 而**真实 DOM 上 `.submit()` 不触发 submit 监听器**（文件头那段替身能力核对里
+   * 登记的 3 条盲点之一）。⇒ 这一格验的是「重新进入壳层之后右栏画成什么样」，
+   * 验不到「运维按回车这件事本身」——后者由 `tests/ui/dom/app-gate.test.ts` 的
+   * 「退出登录之后 #gate-key 是空的（不清空的话上一个人的口令原样留在输入框里）」守着，
+   * 那一格正是同一族缺陷（登出之后下一个人不许看见上一个人的东西）**已经修掉的**那一半。
+   */
+  it("⑧ 登出再登录：上一个人的那几轮原样还在右栏 —— 今天的形态，清干净的那天这一格会红", async () => {
+    const h = await openPg(respondWith());
+    const sec = h.section("playground");
+    pasteToken(sec, GW_TOKEN);
+    await sendTurns(sec, PLAYGROUND_TURNS_MAX + 3);
+    expect(pick(sec, ".pg-trimmed").length, "前置条件：得先真的截断过一次").toBe(1);
+    // ⚠️ 用 `pick(...)[0]` 不用 `one(...)`：右栏此刻有上限那么多个 `.pg-body`，
+    //    `one()` 会先在「恰好一个」那句上红掉，而红因与这一格要说的事无关。
+    expect(pick(sec, ".pg-body")[0]!.textContent, "前置条件：响应体正文得真的在屏幕上")
+      .toContain("PONG-FROM-UPSTREAM");
+
+    h.dom.byId("logout-btn").click();
+    await settle(20);
+    expect(h.shell.classList.contains("on"), "前置条件：得真的退出去了").toBe(false);
+
+    h.input.value = TOKEN;
+    h.form.submit();
+    await settle(20);
+    expect(h.shell.classList.contains("on"), "前置条件：得真的重新登录进来了").toBe(true);
+
+    const back = h.section("playground");
+    expect(pick(back, ".pg-turn").length,
+      "登出再登录之后右栏那几轮不见了 —— 有人清了 turns：回去把 `turns` 上方那段登记改真，"
+      + "并确认 sec-keys / sec-usage / sec-events / sec-registrar / sec-settings / sec-models / "
+      + "sec-overview 那七个板块的内存态也一起清了")
+      .toBe(PLAYGROUND_TURNS_MAX);
+    expect(turnPrompts(back)[0], "留下的不再是上一个人最旧的那一轮 —— 形态变了，回去改那段登记")
+      .toBe("轮次-3");
+    expect(pick(back, ".pg-body").map((n) => n.textContent).join(" "),
+      "上一个人的响应体正文不见了 —— 有人清了 turns：回去把那段登记改真")
+      .toContain("PONG-FROM-UPSTREAM");
+    expect(pick(back, ".pg-trimmed").length,
+      "那句「最旧的 N 轮已经从这里移除」不见了 —— 有人清了 trimmedTurns：回去把那段登记改真")
+      .toBe(1);
   });
 });
