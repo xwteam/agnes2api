@@ -399,12 +399,93 @@ describe("建实例时读一次的旋钮：保存回执分岔（P3e Task 23）",
    * **还没保存过时不许提前说这次改动的事。**
    * 这一格钉的是「新加的那句话是**保存回执**，不是又一条常驻说明」：
    * 常驻的那一句在卡 2 底下（Task 4），这一句只在真的动过旋钮之后才该出现。
+   *
+   * ⚠️ **它只覆盖「从没保存过」那一帧，别把它读成「读取态都对」**：保存完再回读一次
+   * 也是读取态，而那一帧上还挂着上一次保存的回读行与高亮——那一档在下面 ⑤ 里
+   *（Task 23 复评发现 1，改动前它是屏幕上一句用户看得见的假话）。
    */
   it("④ 只是读了一次配置（还没保存过）：重启那句不出现，传播上界照常在", async () => {
     const h = await openSettings(() => ok(configBody()));
     const text = visibleText(h.section("settings"));
     expect(text, "还没保存过就先说上了「这次改动」—— 那是一句无中生有的回执").not.toContain(BUILD_TIME_LINE);
     expect(text, "传播上界那句在读取态下也不见了").toContain(LIVE_LINE);
+  });
+
+  /**
+   * ⚠️⚠️ **④ 只钉住了「从没保存过」那一帧，而运维真正会走的下一步是「保存完再回读一次」。**
+   *
+   * 这一格是 Task 23 复评发现 1：保存了一个旋钮之后（屏幕上正确地说「本实例也还没生效」），
+   * 点一下面板自己的「刷新」⇒ `load()` 拿回一份 GET（没有 `changed`）⇒ 回到读取态 ⇒
+   * `set.propagation` 回来。**问题不在这一句本身**（读取态下它必须在，那是 ④ 与 P3c 钉的），
+   * 而在于它**不是一个人站在那里**：改动前 `nodes.readback` 还挂着「已回读生效值，
+   * 1 个字段发生了变化（已高亮）」、那一格还带着 `.changed` 高亮——三个信号一起指向
+   * 刚才那次保存，屏幕上于是编出了一句「你刚改的那格本实例已经生效」，而它是假的。
+   *
+   * ⚠️ **两条路径都要走**：「刷新」按钮与「切板块回来」都落在同一个 `load()` 上，
+   * 但它们是**两个不同的入口**（后者还多走一遍 `onShow()`）。第三条同形态入口是
+   * `admin-ui/js/app.js` 的 `langchange` 兜底（同样 `onShow()` ⇒ `load()`），
+   * 它没有单独一格，如实登记在这里。
+   *
+   * ⚠️ **每条路径先验「保存那一帧确实出现过这两个信号」再验它们消失**——
+   * 少了前半句，判据串哪天与文案对不上时这一格会因为「本来就没匹配上」而全绿。
+   */
+  it("⑤ 保存旋钮之后回到读取态：回读行与高亮一并作废，屏幕上不会同时说「变了 1 格」和「本实例已经生效」", async () => {
+    /** `set.readback` / `set.readback.none` 共有的那半句。 */
+    const READBACK_LINE = "已回读生效值";
+
+    const paths: ReadonlyArray<readonly [string, (h: Awaited<ReturnType<typeof openSettings>>) => void]> = [
+      ["点面板自己的「刷新」按钮", (h) => {
+        const btn = h.section("settings").querySelectorAll("button")
+          .find((b) => b.getAttribute("data-i18n") === "common.refresh");
+        if (!btn) throw new Error("设置页工具条上找不到刷新按钮 —— 这一格的入口变了");
+        btn.click();
+      }],
+      ["切到别的板块再切回来", (h) => {
+        const nav = (name: string) => {
+          const b = h.dom.document.querySelectorAll(".nav-item")
+            .find((x) => x.getAttribute("data-section") === name);
+          if (!b) throw new Error(`导航上找不到 ${name} —— 这一格的入口变了`);
+          b.click();
+        };
+        nav("overview");
+        nav("settings");
+      }],
+    ];
+
+    for (const [label, backToRead] of paths) {
+      const h = await openSettings((url, method) => {
+        if (!url.startsWith("/admin/api/config")) return ok({});
+        return ok(method === "PUT"
+          ? configBody({ changed: ["poolCacheTtlMs"], credentialsChanged: [] })
+          : configBody());
+      });
+      const section = h.section("settings");
+      inputOf(section, "poolCacheTtlMs").value = "120000";
+      saveButton(section).click();
+      await settle(10);
+
+      // ── 前半句：保存那一帧，三个信号确实都在（判据认得出它们）──────────────
+      const saved = visibleText(section);
+      expect(saved, `[${label}] 保存那一帧就没出现回读行 —— 下面那句「它消失了」测的是一个没发生过的状态`)
+        .toContain(READBACK_LINE);
+      expect(saved, `[${label}] 保存那一帧就没说「本实例也还没生效」 —— 这一格测的前提没成立`)
+        .toContain(BUILD_TIME_LINE);
+      expect(section.querySelectorAll(".changed").length, `[${label}] 保存那一帧一格高亮都没有 —— 前提没成立`)
+        .toBeGreaterThan(0);
+
+      // ── 后半句：回到读取态之后，指向那次保存的两个信号必须一起没了 ──────────
+      backToRead(h);
+      await settle(10);
+      const after = visibleText(section);
+      expect(after, `[${label}] 回到读取态之后「${LIVE_LINE}」与回读行同屏 —— 屏幕上编出了「你刚改的那格已经生效」`)
+        .not.toContain(READBACK_LINE);
+      expect(section.querySelectorAll(".changed").length, `[${label}] 回到读取态之后那一格还留着高亮 —— 它会被读成「刚才那次保存」`)
+        .toBe(0);
+      // 反向控制：传播上界那句在读取态下**照旧必须在**（P3c 论证出来的必须显示项，同 ④）。
+      // 少了它，一个「读取态干脆什么都不显示」的实现也能让上面两条全绿。
+      expect(after, `[${label}] 连传播上界那句也一起删掉了 —— 那是 P3c 论证出来的必须显示项`)
+        .toContain(LIVE_LINE);
+    }
   });
 });
 

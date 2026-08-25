@@ -541,6 +541,48 @@ describe("F7：保存之后同一个进程立刻回读到新值", () => {
     const diff = await (await put(app, { maxStrikes: 9 })).json() as { changed: string[] };
     expect(diff.changed).toEqual(["maxStrikes"]);
   });
+
+  /**
+   * **`changed` 这一格在不在，是面板分辨「这是回执」还是「只是读了一次」的唯一判据**
+   *（`admin-ui/js/pure/settings.mjs` 的 `isSaveReceipt()`：判的是它在不在，不是空不空）。
+   *
+   * 那条判据有**两半**前提，改动前只有一半被钉住：`PUT` 恒给它（上面那一格），
+   * 而「`GET` 与 `secrets/clear` **一个字都不给**」在两个运行时都没有任何一格守着
+   *（Task 23 复评发现 3）。后端哪天顺手给 `GET` 也塞一个 `changed: []`，
+   * 面板会把**读取态**当成一次空回执 ⇒ `saved = []` ⇒ `touchesLiveField([]) === false`
+   * ⇒ **传播上界那整句从页面上消失**，而它是 P3c 论证出来的必须显示项
+   *（`tests/ui/dom/settings-save.test.ts` 的
+   * 「④ 只是读了一次配置（还没保存过）：重启那句不出现，传播上界照常在」
+   * 与「⑤ 保存旋钮之后回到读取态：回读行与高亮一并作废」都点名它）。前端那边没有任何东西会响：
+   * 那两格喂的是**替身**响应，替身长什么样是用例自己写的。
+   *
+   * ⚠️ **这一格必须在 `tests/contract/` 里**：它是**后端响应形状**的契约，
+   * 两个运行时都要成立（`vitest.workers.config.ts` 只收 `tests/contract/**`）。
+   */
+  it("GET 与 secrets/clear 的响应里没有 changed —— 面板靠它分辨读取态与保存回执", async () => {
+    const { app } = await realApp({ env: {}, stored: { gatewayToken: GW } });
+
+    // ① **我认得出**：同一个判据在 `PUT` 上确实能看见这一格。少了这一条，
+    //    下面两句「它不在」在一个把 `changed` 整个删掉的后端上也全绿。
+    const putBody = await (await put(app, { maxStrikes: 9 })).json() as Record<string, unknown>;
+    expect(Object.hasOwn(putBody, "changed"), "PUT 的回执里没有 changed —— 面板再也认不出保存回执").toBe(true);
+
+    const getBody = await (await getConfig(app)).json() as Record<string, unknown>;
+    expect(
+      Object.hasOwn(getBody, "changed"),
+      "GET /admin/api/config 给出了 changed —— 面板会把读取态当成一次空回执，传播上界那整句会从页面上消失",
+    ).toBe(false);
+
+    const clearBody = await (await app.request("/admin/api/config/secrets/clear", {
+      method: "POST",
+      headers: { ...withKey, "content-type": "application/json" },
+      body: JSON.stringify({ path: "registrar.yyds.apiKey" }),
+    })).json() as Record<string, unknown>;
+    expect(
+      Object.hasOwn(clearBody, "changed"),
+      "secrets/clear 给出了 changed —— 清一把凭据会被面板当成一次保存回执",
+    ).toBe(false);
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────

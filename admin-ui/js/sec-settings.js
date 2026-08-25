@@ -288,6 +288,34 @@ function render() {
   // 那时 `set.propagation` 讲的是**这个部署的传播上界**这件事实本身，照旧渲染；
   // 而「这次改动」那句回执**一个字都不说**（无中生有的回执与假回执一样坏）。
   const saved = isSaveReceipt(data) ? changedFields(data).concat(changedSecrets(data)) : null;
+
+  // ⚠️⚠️ **回到读取态时，上一次保存的回读行与各格高亮必须一起作废**（Task 23 复评发现 1）。
+  //
+  // 复评实测出来的形状：保存了一个旋钮（屏幕上正确地说「本实例也还没生效」）之后，
+  // 运维**点一下这个面板自己的「刷新」**去看生效没有 ⇒ `load()` 拿回一份 GET（没有
+  // `changed`）⇒ `saved === null` ⇒ 上面那句 buildTime 藏起来、`set.propagation` 回来。
+  // 光是这一句本身讲的是这个部署的传播上界（读取态照旧要显示，见下），**但它不是一个人
+  // 站在那里**：`nodes.readback` 还挂着「已回读生效值，1 个字段发生了变化（已高亮）」、
+  // 那一格还带着 `.changed` —— 三个信号一起指向刚才那次保存，运维读到的就是
+  // 「你刚改的那格本实例已经生效」，而那是假的。P3d 那次「屏幕上编出一个状态码」是同一个形状。
+  // 切板块回来、切语言（`admin-ui/js/app.js` 的 `langchange` 兜底）走的都是同一个 `load()`。
+  //
+  // ⚠️ **修的是放大器，不是那句话本身**：`set.propagation` 的措辞是 P3c 论证出来的、
+  // 五语言 DEPLOY.md 对用户的承诺，本任务不许改（读取态下它必须在，由
+  // `tests/ui/dom/settings-save.test.ts`
+  // 「④ 只是读了一次配置（还没保存过）：重启那句不出现，传播上界照常在」钉着；
+  // 本段这条清理由同文件「⑤ 保存旋钮之后回到读取态：回读行与高亮一并作废」钉着）。
+  //
+  // ⚠️ **边界：这里只清这两样。** 错误行（`nodes.errors`）与 `.invalid` 归 `clearMarks()`
+  // 管（每次保存前清），读取态不动它们——那是**上一次保存失败**留下的东西，与这句
+  // 传播说明不发生任何组合，扩到这里就是一次没被评审过的行为改动。这条边界如实登记在
+  // Task 23 报告的遗留里，别把它读成「读取态会把屏幕清干净」。
+  if (saved === null) {
+    nodes.readback.textContent = "";
+    nodes.readback.style.display = "none";
+    for (const path of Object.keys(nodes.fields)) nodes.fields[path].wrap.classList.remove("changed");
+  }
+
   const showLive = p.visibilityUpperBoundMs !== null && (saved === null || touchesLiveField(saved));
   nodes.propagation.textContent = showLive
     ? t("set.propagation", { bound: fmtDuration(p.visibilityUpperBoundMs) })

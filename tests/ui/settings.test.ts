@@ -106,6 +106,50 @@ const SNAPSHOT_DECL = "const cfg = configHolder.current()";
 const PANEL_CAVEAT = "面板改它不会立刻生效";
 
 /**
+ * **五语言 DEPLOY.md 那两格里，「面板改它不会立刻生效」那句正文的本地化写法。**
+ *
+ * ⚠️ **这张表是补 Task 23 复评发现 2 才有的，它守的是一个实测过的盲点**：
+ * 那一半原来只被 `tests/unit/docs-parity.test.ts` 的
+ * 「五语言 DEPLOY.md 里……的出现次数彼此一致」那条**路径 token 计数**守着，
+ * 而复评的 R8 实测（回填时复跑过一次）——五份**同步**把那句正文删掉、只留
+ * `src/http/wire.ts` 这个路径—— docs-parity 那份 66 格全绿、`check-comment-refs` EXIT=0，
+ * 而 `src/http/wire.ts` 注释里
+ * 那句「五语言 DEPLOY.md 的那两格逐格写明了」当场变假。计数锚挡得住「某一份漏改」
+ * 与「五份连锚一起删」，**挡不住「五份同步改写正文、保留锚」**。
+ *
+ * ⚠️ **这是一张手抄的译文表，它会因为「有人把译文重写了一遍」而变红，那是有意的**：
+ * 变红时的正确动作是回来核对新译文说的是不是同一件事，然后改这张表——
+ * 而不是把这条判据放宽。**放宽它就等于回到 R8 那个盲点。**
+ * 边界同样写清楚：它只证明那句话**出现在那一格里**，不证明整行说得对、
+ * 也不证明五份逐句同义（句子层面仍然留给评审，与 docs-parity 文件头那条边界同源）。
+ *
+ * ⚠️ zh-CN 那一档**直接复用 `PANEL_CAVEAT`**，不另抄一份：`.env.example` 与
+ * zh-CN DEPLOY.md 用的本来就是同一句话，抄两份就是两份会分叉的判据。
+ */
+const PANEL_CAVEAT_BY_LANG: Record<(typeof LANGS)[number], string> = {
+  "zh-CN": PANEL_CAVEAT,
+  "zh-TW": "面板改它不會立刻生效",
+  en: "editing it in the admin panel does not take effect immediately",
+  ja: "パネルで変更しても即座には反映されません",
+  ko: "패널에서 바꿔도 즉시 반영되지 않습니다",
+};
+
+/**
+ * 某份 DEPLOY.md 的环境变量表里，某个变量**那一行**。
+ *
+ * ⚠️ **认不出要吵，不许静默返回空串**：空串会让下面每一条 `includes()` 判据
+ * 静静地失去判别力（`"".includes(x)` 恒假 ⇒ 正题红，但反向控制会绿得毫无意义），
+ * 而表格排版是最容易被顺手改掉的东西。
+ */
+function deployRow(src: string, envName: string): string {
+  const rows = src.split("\n").filter((l) => l.startsWith(`| \`${envName}\``));
+  if (rows.length !== 1) {
+    throw new Error(`环境变量表里 \`${envName}\` 那一行找到 ${rows.length} 条 —— 判据的落点变了，先回来改判据`);
+  }
+  return rows[0]!;
+}
+
+/**
  * `src/http/wire.ts` 里那份**建 app 时读一次**的快照被读到的字段名。
  *
  * ⚠️ **先抠注释再扫**：本仓的注释里成片地写着真代码片段（`cacheTtlMs: cfg.poolCacheTtlMs`
@@ -217,6 +261,85 @@ describe("建实例时读一次的那两个旋钮（P3e Task 23）", () => {
       .toBeGreaterThan(0);
     expect(block, "maxStrikes 是逐次生效的，那格写「面板改它不会立刻生效」就是一句新的假话")
       .not.toContain(PANEL_CAVEAT);
+  });
+
+  /**
+   * **整份 `.env.example` 里写着这句话的，恰好就是 `BUILD_TIME_FIELDS` 那几格。**
+   *
+   * 上面两格是「点名的那格写了」+「点名的那格没写」，**逐格点名的清单挡不住第三格**——
+   * Task 23 复评发现 5 就是这么冒出来的：`USAGE_STATS_ENABLED` 那块注释里也写着这句话，
+   * 而 `usageStatsEnabled` 压根不在后端的 `EDITABLE` 里（面板上根本没有这一格）。
+   * 「面板改它不会立刻生效」这句话**预设了面板能改它**，写在一个面板改不到的旋钮上
+   * 就是一句会把人引去面板里找的假话。
+   *
+   * 判据整份文件扫、期望值从 `BUILD_TIME_FIELDS` 派生，所以它对**第三格**是睁着眼的。
+   */
+  it("整份 .env.example 里写这句话的，恰好就是 BUILD_TIME_FIELDS 那几格（不多不少）", () => {
+    const lines = readFileSync(".env.example", "utf8").split("\n");
+    const withCaveat: string[] = [];
+    for (const [i, line] of lines.entries()) {
+      const m = /^([A-Z][A-Z0-9_]*)=/.exec(line);
+      if (m === null) continue;
+      const block: string[] = [];
+      for (let j = i - 1; j >= 0 && lines[j]!.startsWith("#"); j -= 1) block.unshift(lines[j]!);
+      if (block.join("\n").includes(PANEL_CAVEAT)) withCaveat.push(m[1]!);
+    }
+    // **认得出**：扫描器真的解析出了一批变量名，不是因为正则瞎了才「一个都没匹配」。
+    expect(lines.filter((l) => /^[A-Z][A-Z0-9_]*=/.test(l)).length, ".env.example 里一个 KEY= 都没扫到 —— 判据瞎了")
+      .toBeGreaterThan(10);
+    expect(
+      withCaveat.sort(),
+      "写着「面板改它不会立刻生效」的那几格与 BUILD_TIME_FIELDS 对不上 —— 要么某一格漏写，要么某个面板改不到的旋钮上多写了这句预设「面板能改它」的话",
+    ).toEqual([...BUILD_TIME_FIELDS].map((f: string) => envNameFor(f)).sort());
+  });
+
+  /**
+   * ⚠️⚠️ **五语言那一半：查的是正文，不是路径锚。**
+   *
+   * `src/http/wire.ts` 的注释声称「`.env.example` 与五语言 DEPLOY.md 的环境变量表
+   * 那两格逐格写明了」。上面三格管 `.env.example` 那一半；这一格管五语言那一半。
+   *
+   * **它存在的全部理由是一个实测过的盲点**（Task 23 复评发现 2 / R8）：
+   * 那一半原来只有 `tests/unit/docs-parity.test.ts` 的
+   * 「五语言 DEPLOY.md 里……的出现次数彼此一致」那条**路径 token 计数**守着，
+   * 而「五份同步删掉正文、只留 `src/http/wire.ts` 这个路径」那种改法**全绿**。
+   * 计数锚管的是「五份彼此对等」，管不了「那句话到底还在不在」——**那是两件事**。
+   *
+   * ⚠️ 两条都查：正文（本地化）+ 路径锚。少了后者，把出处删掉也不会红；
+   * 少了前者就是回到 R8。
+   */
+  it("五语言 DEPLOY.md 的那两格里，正文逐格写着「面板改它不会立刻生效」，而且指着出处", () => {
+    const missing: string[] = [];
+    for (const lang of LANGS) {
+      const src = readFileSync(`docs/${lang}/DEPLOY.md`, "utf8");
+      for (const field of BUILD_TIME_FIELDS as readonly string[]) {
+        const row = deployRow(src, envNameFor(field));
+        if (!row.includes(PANEL_CAVEAT_BY_LANG[lang])) missing.push(`${lang}/${envNameFor(field)}: 正文`);
+        if (!row.includes(WIRE)) missing.push(`${lang}/${envNameFor(field)}: 出处`);
+      }
+    }
+    expect(
+      missing,
+      "五语言 DEPLOY.md 的这几格里那句话没了 —— 而 src/http/wire.ts 的注释正声称五份都逐格写明了",
+    ).toEqual([]);
+  });
+
+  /**
+   * **反向控制：逐次生效的那一格，五份都不许写这句话。**
+   *
+   * 少了它，一张**全是空串**的 `PANEL_CAVEAT_BY_LANG`（或者一条「整份文档里出现过就算」
+   * 的判据）也能让上面那格全绿——`"".includes("")` 恒真，而那种判据对
+   * 「某一格漏写」结构性地看不见。形状与 `.env.example` 那条反向控制同源。
+   */
+  it("反向控制：五语言 DEPLOY.md 里逐次生效的那一格不许写这句话（拿 MAX_STRIKES 那格核对）", () => {
+    for (const lang of LANGS) {
+      const row = deployRow(readFileSync(`docs/${lang}/DEPLOY.md`, "utf8"), envNameFor("maxStrikes"));
+      // 先确认判据真的读到了一整行 —— 不是因为那一行是空的才没命中。
+      expect(row.length, `${lang} 的 MAX_STRIKES 那一行几乎是空的 —— 判据没读到东西，下面那句不成立`)
+        .toBeGreaterThan(40);
+      expect(row, `${lang}：maxStrikes 是逐次生效的，那格写这句话就是一句新的假话`)
+        .not.toContain(PANEL_CAVEAT_BY_LANG[lang]);
+    }
   });
 
   /**
