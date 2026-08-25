@@ -115,12 +115,24 @@ export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
  *   「每条错误响应带的 params 与它那个 code 声明的逐字相等」（真 HTTP 侧）。
  * **两侧都是现扫现比，没有任何一张手写的期望表。**
  *
+ * ⚠️⚠️ **「每条」这个词是 Task 22A 复评订正过的。** 真 HTTP 那一侧第一版只跑六条路径，
+ * 于是 `not_a_boolean`（`{field}`）与 `too_many_bulk_ids`（`{max}`）**一侧都没有**：
+ * 复评实测把 `handlers/keys-write.ts` 那两处的实参删掉，**全量套件 EXIT=0**，
+ * 而 ja 面板上画出的是裸的 `{field}` / `{max}`。现在那一侧是一张
+ * `satisfies Record<AdminErrorCode, …>` 的**逐码配方表**（一条码一次真请求，
+ * 新增一条码不给配方就是 tsc 少属性），**没有例外表**——`admin_unavailable` 与
+ * `admin_unauthorized` 也各有一条真请求打得出来。
+ *
  * ⚠️ **`params` 里永不许出现中文**：它会被插进 ja/ko 的字典串里，等于把中文又漏回
  * 屏幕上——正是这次要关掉的那个破口的微缩版。**这一条钉在真 HTTP 响应体上**
  * （`params` 的值只有那一刻才是真的，源码里看到的是表达式）：
  * `tests/contract/admin-keys-write.test.ts` 的
  * 「params 里一个中文字符都不许有 —— 插进 ja/ko 的句子里就是同一个破口」，
  * 自带反向控制那一格。
+ *
+ * ⚠️ **`params` 里放什么、不放什么**（凭据 / 字段的值 / 字段的名各是一条口径，
+ * 其中「`unknown_field` 的 `fields` 会逐字回显调用方送来的字段名」是**刻意的**）
+ * 全文在 `src/http/admin/errors.ts` 的 `AdminErrorParams` 上方，那三条各有一格断言。
  *
  * ⚠️ `satisfies Record<AdminErrorCode, …>` 在这里是**双向**的（少一个键 = 缺属性、
  * 多一个键 = 多余属性），与 `config-validate.ts` 那段警告的「数组 + satisfies 只拦得住删」

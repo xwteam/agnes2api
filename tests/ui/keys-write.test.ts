@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import {
   isDeletable, isMustDisableFirstConflict, canClearCooldown, canUnevict, canClearStrikes,
   toggleDisableLabelKey, rowActionNeedsConfirm, bulkNeedsConfirm,
@@ -1125,9 +1125,81 @@ describe("管理接口错误码 → 面板文案", () => {
   it("板块文件不再自己判 message —— 唯一的出口是 adminErrorText", () => {
     // ⚠️ 判据建在**源码**上：`sec-keys.js` 里只要还留着一条「非空就原样显示」的分支，
     // 上面那些行为断言全绿而屏幕上照旧漏中文（第一版的破口就是这个形状）。
+    // ⚠️ **它是源码文本门禁，得猜缺陷长成什么语法形态**（`tests/helpers/fake-dom.ts` 文件头
+    // 逐字反对只靠这一种）。真正走一遍渲染的那一格在
+    // `tests/ui/dom/keys-actions.test.ts`「复评 F2：ja 面板上写失败画的是日文那句 —— 不是中文原话，也不是裸占位符」。
     const src = stripComments(readFileSync("admin-ui/js/sec-keys.js", "utf8"));
     expect(src).toContain("adminErrorText(adminErrorFields(e), t, \"keys.writeFailed\")");
     // 反向控制：同一份源码里确实还有别的 `t(` 调用 —— 上一格不是在一份空文本上比对。
     expect(src.includes("t(\"keys.actionOk\")")).toBe(true);
+  });
+
+  /**
+   * **「全面板只有一处会碰到后端 `message`」这句话的牙**（复评 F4）。
+   *
+   * ⚠️⚠️ 上一版这句射程声明只是**散文**：新守卫只扫 `sec-keys.js` 一个文件。
+   * 复评实测（N10）把 `admin-ui/js/sec-registrar.js:137` 的 `t("reg.channel.testError")`
+   * 改成回落显示 `e.message` ⇒ **`tests/ui` + `tests/unit` 92 文件 2547 条全绿**，
+   * 而那条路上后端给的正是「注册机未启用……」这种**无 code 的中文**
+   * ——本任务刚关掉的破口，在隔壁板块里零阻力重开。
+   *
+   * ⚠️ **白名单是空的，这不是笔误。** `sec-keys.js` 自己也**不**直接读 `.message`：
+   * 它走 `adminErrorFields(e)`，而摊平那一步住在 `pure/keys-write.mjs`（本判据不扫 `pure/`）。
+   * ⇒ 口径是「**板块文件一个都不许自己读 `.message`**，后端 message 的唯一入口是
+   * `adminErrorFields()`」。开白名单就等于开一个永久的洞，所以一格都不开。
+   *
+   * **边界（登记，不是承诺）**：判据是 `\.message\b`，抠注释之后再扫。
+   * 写成 `e["message"]` / 先解构 `const { message } = e` 躲得掉——今天射程内（`admin-ui/js/sec-*.js`）零处，
+   * 真要躲的人也躲得过任何一条源码文本判据，这一条挡的是「顺手写一行」。
+   */
+  it("板块文件一个都不许自己读 .message —— 隔壁板块一行就能把刚关掉的破口原样重开", () => {
+    const offenders: string[] = [];
+    for (const name of readdirSync("admin-ui/js").sort()) {
+      if (!name.startsWith("sec-") || !name.endsWith(".js")) continue;
+      const src = stripComments(readFileSync(`admin-ui/js/${name}`, "utf8"));
+      for (const line of src.split("\n")) if (/\.message\b/.test(line)) offenders.push(`${name}: ${line.trim()}`);
+    }
+    expect(
+      offenders,
+      "板块文件自己读了后端的 error.message —— 那是一句没有 code 的中文，会直投给 ja/en/ko 用户。"
+      + "唯一的出口是 pure/keys-write.mjs 的 adminErrorFields() + adminErrorText()。\n"
+      + offenders.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("反向控制：同一条判据在真的读了 .message 的那个文件上确实说「有」", () => {
+    // **用仓里真实存在的文件**：`admin-ui/js/api.js` 的 `json()` 就是把
+    // `parsed.error.message` 提到 `e.message` 上的那一处（全面板唯一合法的读点）。
+    const src = stripComments(readFileSync("admin-ui/js/api.js", "utf8"));
+    expect(src.split("\n").filter((l) => /\.message\b/.test(l)).length).toBeGreaterThan(0);
+    // 而 `sec-*.js` 的清单里确实**有文件**被扫到（不是 readdir 一个都没匹配上）。
+    expect(readdirSync("admin-ui/js").filter((n) => n.startsWith("sec-") && n.endsWith(".js")).length)
+      .toBeGreaterThan(1);
+  });
+
+  /**
+   * **`tFor()` 是 `admin-ui/js/i18n.js` 里 `t()` 的手抄副本**（复评 F5）。
+   *
+   * 上面那十格全部经它取词，而真源 `t()` 的插值 / 回落语义改一个字它不跟 ⇒
+   * 十格照样绿而屏幕会变。这里把两者**对拍**：真 `t()` 在 node 里绑到 `zh-CN`
+   *（`readLang()` 读不到 `localStorage` 会走 `FALLBACK`），逐条比较 `err.*` 这一族
+   * 的取词结果，含带 params 的插值与「缺 key 回 key 本身」那一支。
+   */
+  it("tFor 与 admin-ui/js/i18n.js 的真 t() 逐条同结果 —— 手抄副本不许自己漂", async () => {
+    const { t: realT, currentLang } = await import("../../admin-ui/js/i18n.js");
+    expect(currentLang(), "真 t() 在 node 里应当绑在回落语言上").toBe("zh-CN");
+    const mine = tFor("zh-CN");
+    for (const code of ADMIN_ERROR_CODES) {
+      const key = ADMIN_ERROR_TEXT_KEY[code]!;
+      const params = Object.fromEntries([...ADMIN_ERROR_PARAMS[code]].map((n) => [n, `<${n}>`]));
+      expect(mine(key, params), `${key} 的取词与真 t() 不一致`).toBe(realT(key, params));
+    }
+    // **三条边界也对拍**：缺 key 回 key 本身、无 params、params 里有真源不认的名字。
+    expect(mine("zzz.not.a.real.key")).toBe(realT("zzz.not.a.real.key"));
+    expect(mine("err.note_too_long")).toBe(realT("err.note_too_long"));
+    expect(mine("err.note_too_long", { nope: 1 })).toBe(realT("err.note_too_long", { nope: 1 }));
+    // **反向控制**：这组样本里确实有一条会发生插值的（否则上面整圈在「params 恒空」时空转）。
+    expect(mine("err.note_too_long", { max: 7 })).toContain("7");
+    expect(mine("err.note_too_long", { max: 7 })).not.toBe(mine("err.note_too_long"));
   });
 });

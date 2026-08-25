@@ -20,8 +20,27 @@ import type { AdminErrorCode } from "../../core/admin/admin-errors.js";
  * 原样回落展示，并且带一个看得见的标记，见 `admin-ui/js/pure/keys-write.mjs`
  * 的 `adminErrorText`）。
  *
- * `params` 是给字典插值用的（`note 最长 {max} 个字符` 那一族）。**只放数字与短标识**，
- * 永不放用户输入、也永不放凭据：它会被原样画到屏幕上。
+ * `params` 是给字典插值用的（`note 最长 {max} 个字符` 那一族）。**它会被原样画到屏幕上**，
+ * 所以有三条口径，**每条都有一格断言**：
+ *
+ * ① **一个汉字都不许有**——它会被插进 ja/ko 的句子里，那就是这次要关掉的破口的微缩版。由
+ *   `tests/contract/admin-keys-write.test.ts`「params 里一个中文字符都不许有 —— 插进 ja/ko 的句子里就是同一个破口」
+ *   钉着，自带反向控制那一格。
+ * ② **永不放凭据，也永不放请求体里任何字段的值**。由
+ *   `tests/contract/admin-keys-write.test.ts`「params 永不回显请求体里字段的值，而 unknown_field 的 fields 确实逐字回显字段名」
+ *   钉着：一个探针值被塞进若干条路径的值位，**每一条码**的响应 `params` 里都不许回显它。
+ * ③ ⚠️ **但它确实会逐字回显调用方送来的字段名**：`unknown_field` 的 `fields` 就是
+ *   `handlers/keys-write.ts` 的 `rejectUnknown()` 把多余的键名 `join` 出来的
+ *   ——送 `{"<img src=x>": 1}` 就会原样回到 `params.fields`。**这是这条码的用途，不是漏**：
+ *   不说是哪几个字段的话，`unknown_field` 就退化成一句「有个字段不对」。上面那一格的后半段
+ *   反过来要求这个回显**必须在**（它同时是 ② 那条判据的反向控制）。
+ *   它落到屏幕上走 `admin-ui/js/ui.js` 的 `el()`（`textContent`，不是 `innerHTML`），而
+ *   `tests/ui/api-session.test.ts`「admin-ui/js 下零处 innerHTML / insertAdjacentHTML / document.write —— 拼 HTML 那条盲点今天没有入口」
+ *   钉着「`admin-ui/js` 下零处 `innerHTML`」这件事本身。
+ *
+ * ⚠️⚠️ **上一版这里写的是「只放数字与短标识，永不放用户输入」——那是一句假话**
+ *（Task 22A 复评实测：`params.fields` 回显了调用方送进来的字段名逐字原文），
+ * 而且当时零测法。**别再把 ③ 压回 ② 里去。**
  */
 export type AdminErrorParams = Record<string, string | number>;
 

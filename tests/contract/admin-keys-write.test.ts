@@ -5,7 +5,9 @@ import { MAX_IMPORT_KEYS, MAX_NOTE_LENGTH } from "../../src/http/admin/handlers/
 import { MAX_KEY_LENGTH } from "../../src/core/keypool-repo.js";
 import type { KeyView } from "../../src/core/admin/key-view.js";
 import type { KeyRecord } from "../../src/core/types.js";
-import { ADMIN_ERROR_CODES, ADMIN_ERROR_PARAMS } from "../../src/core/admin/admin-errors.js";
+import {
+  ADMIN_ERROR_CODES, ADMIN_ERROR_PARAMS, type AdminErrorCode,
+} from "../../src/core/admin/admin-errors.js";
 
 /**
  * Key 池的四条写端点（P3c Task 3）。
@@ -890,53 +892,140 @@ describe("POST /admin/api/keys/bulk", () => {
  * 契约是 `code`，**不是** `message`——后者的措辞随时可以改而不算破坏兼容。
  */
 describe("写端点的错误体：码在闭集里，message 仍在", () => {
-  /** 一次会失败的请求，连同它的响应体。 */
-  async function failWith(app: App, method: string, path: string, body?: unknown) {
-    const res = await send(app, method, path, body);
-    expect(res.status, `${method} ${path} 本该失败`).toBeGreaterThanOrEqual(400);
+  /** 一次会失败的请求的响应体。 */
+  async function readFailure(res: Response, label: string) {
+    expect(res.status, `${label} 本该失败`).toBeGreaterThanOrEqual(400);
     const parsed = await res.json() as {
       error?: { type?: string; code?: string; message?: string; params?: Record<string, unknown> };
     };
     return { status: res.status, error: parsed.error ?? {} };
   }
 
-  /** 五个真实会走到的失败路径。**每一条都是面板上真按得出来的动作。** */
-  async function allFailures(app: App, id: string) {
-    return {
-      noteTooLong: await failWith(app, "PATCH", `/admin/api/keys/${id}`, { note: "x".repeat(MAX_NOTE_LENGTH + 1) }),
-      unknownField: await failWith(app, "PATCH", `/admin/api/keys/${id}`, { disbaled: true }),
-      emptyPatch: await failWith(app, "PATCH", `/admin/api/keys/${id}`, {}),
-      notFound: await failWith(app, "DELETE", "/admin/api/keys/nope"),
-      badBulkOp: await failWith(app, "POST", "/admin/api/keys/bulk", { op: "nuke", ids: [] }),
-      tooManyImport: await failWith(app, "POST", "/admin/api/keys", {
-        keys: Array.from({ length: MAX_IMPORT_KEYS + 1 }, (_, i) => `sk-code-scan-${i}`),
-      }),
-    };
+  /** 打一条码要用到的现场：常规 app、一个管理端整个停用的 app、一把活着的 key 的 id。 */
+  interface FailCtx { app: App; conflictApp: App; id: string }
+
+  /**
+   * 探针字段的**名**与**值**，刻意长得不一样。
+   *
+   * `src/http/admin/errors.ts` 关于 `params` 的那段口径要靠这两个串验：
+   * 「字段的**值**永不进 `params`」拿 `PROBE_FIELD_VALUE` 验（它被塞进五条路径的值位），
+   * 「`unknown_field` 的 `fields` **确实**逐字回显字段**名**」拿 `PROBE_FIELD_NAME` 验
+   * ——后者同时是前者的反向控制：证明这条判据看得见 `params` 里的调用方原文。
+   */
+  const PROBE_FIELD_NAME = "probeFieldName<img src=x>";
+  const PROBE_FIELD_VALUE = "probe-field-value-must-never-be-echoed";
+
+  /** 送一个**不经 `JSON.stringify`** 的原始请求体——`bad_json` 只有这条路打得出来。 */
+  function rawSend(app: App, method: string, path: string, body: string): Response | Promise<Response> {
+    return app.request(path, { method, headers: JSON_AUTH, body });
+  }
+
+  /**
+   * **一条码一次真 HTTP，以码为键，闭集里一条都不许缺。**
+   *
+   * ⚠️⚠️ **复评 F1 订正的就是这张表。** 上一版是一张手写的六条路径表，而用例名
+   * 与 `src/core/admin/admin-errors.ts` 的两处注释写的是「**每条**错误响应……」
+   * ——那两句全称句当时只对 6/16 成立。实测（复评 N8 / N9）：
+   * `handlers/keys-write.ts:77` 去掉 `{ field: name }`、`:381` 去掉
+   * `{ max: MAX_IMPORT_KEYS }`，**全量 node 套件 EXIT=0**，而 ja 面板上画的是
+   * `項目 {field} は…` 与 `1 回のバッチ操作は最大 {max} 件です` 两个裸占位符
+   * ——`not_a_boolean` 与 `too_many_bulk_ids` 两条码当时一侧都没有。
+   *
+   * ⇒ 改成 `satisfies Record<AdminErrorCode, …>`：**新增一条码而不给它一次真请求
+   * 就是 tsc 少属性**（与 `ADMIN_ERROR_PARAMS` 同一种牙），运行期还有下面那格
+   * 「键集与闭集双向相等」。
+   *
+   * ⚠️ **没有「够不着的码」这一档，也就没有例外表。** 复评建议把
+   * `admin_unavailable` / `admin_unauthorized` 登记成够不着的例外，**实测两条都够得着**：
+   * 前者用「ADMIN_TOKEN 与 GATEWAY_TOKEN 相同 ⇒ 管理端整树 503」那个 app
+   *（同一形态的现成用例在 `tests/contract/admin-auth.test.ts`），
+   * 后者不带 `x-admin-key` 即可。**空的例外表会变成永久的洞**，所以一条都不留。
+   */
+  const FAILURE_RECIPES = {
+    // ── 信封级：鉴权中间件，跑在路由之前 ─────────────────────────────────
+    admin_unavailable: (c) => c.conflictApp.request(`/admin/api/keys/${c.id}`, {
+      method: "PATCH", headers: JSON_AUTH, body: "{}",
+    }),
+    admin_unauthorized: (c) => c.app.request(`/admin/api/keys/${c.id}`, {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: "{}",
+    }),
+    // ── 请求体解析 ──────────────────────────────────────────────────────
+    bad_json: (c) => rawSend(c.app, "PATCH", `/admin/api/keys/${c.id}`, "{not-json"),
+    body_not_an_object: (c) => send(c.app, "PATCH", `/admin/api/keys/${c.id}`, []),
+    unknown_field: (c) => send(c.app, "PATCH", `/admin/api/keys/${c.id}`, {
+      [PROBE_FIELD_NAME]: PROBE_FIELD_VALUE,
+    }),
+    // ── Key 池那四条写端点 ──────────────────────────────────────────────
+    key_not_found: (c) => send(c.app, "DELETE", "/admin/api/keys/nope"),
+    must_disable_first: (c) => send(c.app, "DELETE", `/admin/api/keys/${c.id}`),
+    not_a_boolean: (c) => send(c.app, "PATCH", `/admin/api/keys/${c.id}`, { disabled: PROBE_FIELD_VALUE }),
+    note_not_a_string: (c) => send(c.app, "PATCH", `/admin/api/keys/${c.id}`, { note: 12345 }),
+    note_too_long: (c) => send(c.app, "PATCH", `/admin/api/keys/${c.id}`, {
+      note: "x".repeat(MAX_NOTE_LENGTH + 1),
+    }),
+    empty_patch: (c) => send(c.app, "PATCH", `/admin/api/keys/${c.id}`, {}),
+    keys_not_a_string_array: (c) => send(c.app, "POST", "/admin/api/keys", { keys: PROBE_FIELD_VALUE }),
+    too_many_import_keys: (c) => send(c.app, "POST", "/admin/api/keys", {
+      keys: Array.from({ length: MAX_IMPORT_KEYS + 1 }, (_, i) => `sk-code-scan-${i}`),
+    }),
+    not_a_bulk_op: (c) => send(c.app, "POST", "/admin/api/keys/bulk", { op: PROBE_FIELD_VALUE, ids: [] }),
+    ids_not_a_string_array: (c) => send(c.app, "POST", "/admin/api/keys/bulk", {
+      op: "disable", ids: PROBE_FIELD_VALUE,
+    }),
+    too_many_bulk_ids: (c) => send(c.app, "POST", "/admin/api/keys/bulk", {
+      op: "disable", ids: Array.from({ length: MAX_IMPORT_KEYS + 1 }, (_, i) => `id-bulk-scan-${i}`),
+    }),
+  } satisfies Record<AdminErrorCode, (c: FailCtx) => Response | Promise<Response>>;
+
+  type Failure = Awaited<ReturnType<typeof readFailure>>;
+
+  /**
+   * 闭集里每一条码各打一次真请求，按码归档。
+   *
+   * **全部是失败请求，一条都不改动存储**（`must_disable_first` 那条是 409 挡下的
+   * 删除、`key_not_found` 那条打的是一个不存在的 id）⇒ 顺序无关，可以在同一个 app 上跑完。
+   */
+  async function allFailures(): Promise<Record<AdminErrorCode, Failure>> {
+    const { app, repo } = await makeApp([], ["sk-err-code-target-aaaa"], {}, () => NOW);
+    const [k] = await repo.all() as [KeyRecord];
+    // 管理口令与网关口令相同 ⇒ `/admin` 树照常注册，但每条管理请求都是 503 `admin_unavailable`。
+    const { app: conflictApp } = await makeApp(
+      [], ["sk-err-conflict-target-a"], { gatewayToken: TEST_ADMIN_TOKEN }, () => NOW,
+      { adminToken: TEST_ADMIN_TOKEN },
+    );
+    const ctx: FailCtx = { app, conflictApp, id: k.id };
+    const out = {} as Record<AdminErrorCode, Failure>;
+    for (const code of Object.keys(FAILURE_RECIPES) as AdminErrorCode[]) {
+      out[code] = await readFailure(await FAILURE_RECIPES[code](ctx), code);
+    }
+    return out;
   }
 
   it("每一条失败都带 error.code，而且 code 在闭集里", async () => {
-    const { app, repo } = await makeApp([], ["sk-err-code-target-aaaa"], {}, () => NOW);
-    const [k] = await repo.all() as [KeyRecord];
-    for (const [name, f] of Object.entries(await allFailures(app, k.id))) {
+    const failures = await allFailures();
+    expect(
+      Object.keys(failures).sort(),
+      "有码没有配一次真请求 —— 那条码一侧都没有（N8/N9 就是这么逃掉的）",
+    ).toEqual([...ADMIN_ERROR_CODES].sort());
+    for (const [name, f] of Object.entries(failures)) {
       expect(f.error.code, `${name} 没有 error.code —— 面板只能回去解析中文`).toBeDefined();
       expect(ADMIN_ERROR_CODES as readonly string[], `${name} 的 code「${f.error.code}」不在闭集里`)
         .toContain(f.error.code);
     }
   });
 
-  it("六种不同的失败给出六个不同的 code —— 否则这一族码只是换个地方说「出错了」", async () => {
-    // **反向控制**：把全部 `code` 写成同一个兜底值时，上面那一格照样绿。
-    const { app, repo } = await makeApp([], ["sk-err-distinct-target-a"], {}, () => NOW);
-    const [k] = await repo.all() as [KeyRecord];
-    const codes = Object.values(await allFailures(app, k.id)).map((f) => f.error.code);
-    expect(new Set(codes).size, `六条路径只给出了 ${new Set(codes).size} 个不同的 code：${codes.join(", ")}`)
-      .toBe(codes.length);
+  it("每条路径打出的正是它那一条码 —— 否则这一族码只是换个地方说「出错了」", async () => {
+    // **这一格比「各个码互不相同」更强**：全部退化成同一个兜底值会红（复评 M2），
+    // 而「两条码互换」这种保持互异的错法也会红。
+    const failures = await allFailures();
+    for (const code of ADMIN_ERROR_CODES) {
+      expect(failures[code].error.code, `${code} 那条路径打出来的是「${failures[code].error.code}」`).toBe(code);
+    }
   });
 
   it("message 一个字都没删 —— 它是给日志与 API 客户端的，契约是 code 不是它", async () => {
-    const { app, repo } = await makeApp([], ["sk-err-msg-kept-target"], {}, () => NOW);
-    const [k] = await repo.all() as [KeyRecord];
-    for (const [name, f] of Object.entries(await allFailures(app, k.id))) {
+    const failures = await allFailures();
+    for (const [name, f] of Object.entries(failures)) {
       expect(typeof f.error.message, `${name} 的 message 没了`).toBe("string");
       expect((f.error.message ?? "").length, `${name} 的 message 是空串`).toBeGreaterThan(0);
       // `type` 同样保留：四协议信封的形状不因为多一格 `code` 而变。
@@ -947,9 +1036,9 @@ describe("写端点的错误体：码在闭集里，message 仍在", () => {
   it("每条错误响应带的 params 与它那个 code 声明的逐字相等", async () => {
     // 两侧都是现取现比：一侧是真 HTTP 响应体，另一侧是 `ADMIN_ERROR_PARAMS`。
     // **没有任何一张手写的期望表**——改字典占位符或改后端实参，两边有一边会不相等。
-    const { app, repo } = await makeApp([], ["sk-err-params-target-aa"], {}, () => NOW);
-    const [k] = await repo.all() as [KeyRecord];
-    for (const [name, f] of Object.entries(await allFailures(app, k.id))) {
+    // ⚠️ 「每条」这个词现在是真的：上面那张表覆盖闭集里每一条码，键集由第一格双向钉住。
+    const failures = await allFailures();
+    for (const [name, f] of Object.entries(failures)) {
       const declared = ADMIN_ERROR_PARAMS[f.error.code as keyof typeof ADMIN_ERROR_PARAMS];
       expect(declared, `${name} 的 code 不在 ADMIN_ERROR_PARAMS 里`).toBeDefined();
       expect(Object.keys(f.error.params ?? {}).sort(), `${name} 的 params 与声明对不上`)
@@ -960,9 +1049,8 @@ describe("写端点的错误体：码在闭集里，message 仍在", () => {
   it("params 里一个中文字符都不许有 —— 插进 ja/ko 的句子里就是同一个破口", async () => {
     // `params` 会被 `t(key, params)` 原样插进五语言句子里。往里塞一句中文
     // （例如把 `${what}` 那个「请求体」传进来）等于把这次要关掉的破口缩小重演一遍。
-    const { app, repo } = await makeApp([], ["sk-err-params-han-aaaa"], {}, () => NOW);
-    const [k] = await repo.all() as [KeyRecord];
-    for (const [name, f] of Object.entries(await allFailures(app, k.id))) {
+    const failures = await allFailures();
+    for (const [name, f] of Object.entries(failures)) {
       expect(JSON.stringify(f.error.params ?? {}), `${name} 的 params 里有汉字`).not.toMatch(/[一-鿿]/);
     }
   });
@@ -971,6 +1059,39 @@ describe("写端点的错误体：码在闭集里，message 仍在", () => {
     // 少了这一格，上面那格在「params 恒为空」时也是绿的，而判据本身可能压根不认汉字。
     expect(JSON.stringify({ what: "请求体" })).toMatch(/[一-鿿]/);
   });
+
+  /**
+   * **`params` 里放什么、不放什么**（复评 F3）。
+   *
+   * ⚠️⚠️ 上一版 `src/http/admin/errors.ts` 在这一格上写的是「`params` 只放数字与短标识，
+   * **永不放用户输入**」——**那句话是假的，而且零测法**：`rejectUnknown()` 把调用方送来的
+   * 字段**名**逐字塞进 `params.fields`（复评实测回显了 `sk-live-…` 与 `<img src=x>`）。
+   * 现在那段注释改成了「不放字段的**值**；`unknown_field` 的 `fields` 是唯一一处逐字回显
+   * 字段**名**的地方」，这一格就是它的测法。
+   */
+  it("params 永不回显请求体里字段的值，而 unknown_field 的 fields 确实逐字回显字段名", async () => {
+    const failures = await allFailures();
+    for (const [name, f] of Object.entries(failures)) {
+      expect(
+        JSON.stringify(f.error.params ?? {}),
+        `${name} 的 params 里回显了请求体里那个字段的值 —— 注释说的是「只回显字段名」`,
+      ).not.toContain(PROBE_FIELD_VALUE);
+    }
+    // **反向控制（用同一条判据、同一次真响应）**：这条判据看得见 `params` 里的调用方原文
+    // ——否则上面那一圈在「params 恒为空」时也是绿的。
+    expect(
+      f_fields(failures.unknown_field),
+      "unknown_field 的 params.fields 没有逐字回显字段名 —— errors.ts 里那句口径要跟着改",
+    ).toContain(PROBE_FIELD_NAME);
+    // 值那一侧在同一条响应上确实**没有**回显，两句话在同一格里各自成立。
+    expect(f_fields(failures.unknown_field)).not.toContain(PROBE_FIELD_VALUE);
+  });
+
+  /** `unknown_field` 那条响应的 `params.fields`，取不到时给一个显眼的空串。 */
+  function f_fields(f: Failure): string {
+    const v = (f.error.params ?? {}).fields;
+    return typeof v === "string" ? v : "";
+  }
 
   it("单条 DELETE 的 409 同时带 code 与设计 §11 的顶层 reason —— 两个都不许少", async () => {
     const { app, repo } = await makeApp([], ["sk-err-409-live-key-aa"], {}, () => NOW);

@@ -2,8 +2,10 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { bootPanel, settle } from "./harness.js";
-import { KEY_STORE, SAVED_AT_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
+import { KEY_STORE, SAVED_AT_STORE, LANG_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { I18N } from "../../../admin-ui/js/i18n-dict.js";
+import { ADMIN_ERROR_TEXT_KEY } from "../../../admin-ui/js/pure/keys-write.mjs";
+import { ADMIN_ERROR_CODES, ADMIN_ERROR_PARAMS } from "../../../src/core/admin/admin-errors.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
@@ -47,10 +49,14 @@ function listBody(items: Array<Record<string, unknown>>, overrides: Record<strin
 
 /** 进壳层、切到 Key 池板块。`respond` 必须自己处理 `/admin/api/keys`（含 query）
  *  与 `/admin/api/overview` 两条路径——`onShow()` 会把两个都打一遍。 */
-async function openKeys(respond: (url: string) => { status: number; body: unknown }) {
+async function openKeys(
+  respond: (url: string) => { status: number; body: unknown },
+  /** 额外塞进 localStorage 的键（今天只有语言：`{ [LANG_STORE]: "ja" }`）。 */
+  extraStore: Record<string, string> = {},
+) {
   const h = await bootPanel({
     now: NOW,
-    store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000) },
+    store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000), ...extraStore },
     respond,
   });
   await settle();
@@ -1239,5 +1245,101 @@ describe("复评强烈建议⑤：批量请求本身失败（catch 分支）同�
       setTimeoutCalls,
       "catch 分支的 sticky toast 不该排一个 4000ms 的自动移除计时器",
     ).not.toContain(4000);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 复评 F2：面板一侧的接线守卫退回成了源码字符串比对，仓里现成的输出层预言机没被用
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️⚠️ **复评 F2**：Task 22A 给 `errorMessage()` 补的接线守卫是
+ * `tests/ui/keys-write.test.ts` 里一条 `src.toContain("adminErrorText(...)")`
+ * ——**源码文本门禁得猜缺陷会长成什么语法形态**，而
+ * `tests/helpers/fake-dom.ts` 的文件头逐字反对只靠这一种；更要紧的是，
+ * **P3c 复评已经为同一个 `errorMessage()` 补过一格 DOM 用例**
+ *（本文件上面那条「PATCH 500 …绝不出现裸的 http_500」），这次把接线守卫退回源码层是往回走。
+ *
+ * 这一组把它补回输出层：**真 `bootPanel` + 真 `sec-keys.js` + 真 `i18n.js`，
+ * `LANG_STORE = "ja"`**，点真按钮，读 `toast-host` 的 `textContent`。
+ *
+ * ⚠️ **期望值取自 harness 自己那份 `i18n.js` 的真 `t()`**（`bootPanel` 里
+ * `vi.resetModules()` 之后 import 的那一份，语言已经绑在 ja 上），
+ * **不再手抄一份插值实现**——`tests/ui/keys-write.test.ts` 里 `tFor()` 那份手抄副本
+ * 已经另配了一格与真源对拍的断言（复评 F5）。
+ * 「期望值不是把被测实现照抄一遍」由每一格里三条独立锚兜住：
+ * ① 渲染结果里**一个 `{` 都不许剩**；② 后端那句中文原话**一个字都不许出现**；
+ * ③ 渲染结果**不等于 zh-CN 那格**（否则语言压根没切过去，读的是回落）。
+ *
+ * ⚠️ **它不覆盖复评 F1**：这一组的响应体是用例自己造的，`params` 齐不齐是喂进去的，
+ * 不是后端真吐的。「后端真的把 `params` 带上了」那一侧在
+ * `tests/contract/admin-keys-write.test.ts`「每条错误响应带的 params 与它那个 code 声明的逐字相等」
+ * （闭集里每一条码逐条现打）。**两侧各管一半，别把任何一侧读成全称。**
+ */
+describe("复评 F2：ja 面板上写失败画的是日文那句 —— 不是中文原话，也不是裸占位符", () => {
+  const BACKEND_CHINESE = "后端那句中文原话，屏幕上一个字都不许出现";
+
+  /** 让 `PATCH /admin/api/keys/<id>` 回一条带码的 400，其余端点照常。 */
+  function failingPanel(id: string, error: Record<string, unknown>) {
+    const items = [keyView({ id })];
+    return (url: string) => {
+      if (url.startsWith(`/admin/api/keys/${id}`)) return { status: 400, body: { error } };
+      if (url.startsWith("/admin/api/keys?")) return { status: 200, body: listBody(items) };
+      return { status: 200, body: {} };
+    };
+  }
+
+  /** harness 里那一份 `i18n.js`（语言已绑在 ja 上）。**不是本文件顶层那份。** */
+  async function jaT() {
+    const m = await import("../../../admin-ui/js/i18n.js");
+    expect(m.currentLang(), "面板没有切到 ja —— 这一组后面的断言全会变成在测回落").toBe("ja");
+    return m.t;
+  }
+
+  it.each([...ADMIN_ERROR_CODES])(
+    "code=%s：toast 是 err.* 的日文那句，占位符全填上，一个 { 都不剩",
+    async (code) => {
+      const key = ADMIN_ERROR_TEXT_KEY[code]!;
+      const params = Object.fromEntries([...ADMIN_ERROR_PARAMS[code]].map((n, i) => [n, `P${i}`]));
+      const h = await openKeys(
+        failingPanel("ja-toast", { type: "invalid_request_error", code, message: BACKEND_CHINESE, params }),
+        { [LANG_STORE]: "ja" },
+      );
+      rowButton(h.section("keys"), "ja-toast", "keys.action.disable").click();
+      await settle();
+
+      const t = await jaT();
+      const expected = t(key, params);
+      const shown = toastTexts(h).join(" | ");
+      expect(shown, `${code} 的 toast 不是字典里那句日文`).toContain(expected);
+      expect(shown, `${code}：后端那句中文原话被直投到 ja 屏幕上了`).not.toContain(BACKEND_CHINESE);
+      expect(shown, `${code}：屏幕上留着没填的占位符`).not.toContain("{");
+      // **锚三**：这一格真的在 ja 上，不是绕回 zh-CN 的回落。
+      expect(expected, `${code} 的 ja 与 zh-CN 逐字相同 —— 这一格证明不了语言切过去了`)
+        .not.toBe((I18N as Record<string, Record<string, string>>)[key]!["zh-CN"]);
+    },
+  );
+
+  /**
+   * **反向控制：那条「一个 `{` 都不剩」的断言不是空转。**
+   *
+   * 后端**漏了 `params`** 时（复评 N8 / N9 实测的那两条变异的形状），屏幕上真的会出现
+   * 一个裸的 `{max}`。这一格把那个后果钉在输出层，同时说明为什么
+   * `tests/contract/admin-keys-write.test.ts`「每条错误响应带的 params 与它那个 code 声明的逐字相等」
+   * 那一侧非有不可：**面板这一侧修不了它**。
+   */
+  it("反向控制：后端漏了 params，ja 屏幕上真的会画出裸的 {max} —— 契约那一侧拦的就是它", async () => {
+    const h = await openKeys(
+      failingPanel("ja-bare", { type: "invalid_request_error", code: "note_too_long", message: BACKEND_CHINESE }),
+      { [LANG_STORE]: "ja" },
+    );
+    rowButton(h.section("keys"), "ja-bare", "keys.action.disable").click();
+    await settle();
+
+    const shown = toastTexts(h).join(" | ");
+    expect(shown, "字典里那句日文本来就带 {max} —— 这一格前提不成立的话，上面那圈断言是空转")
+      .toContain("{max}");
+    // 即便如此，后端那句中文仍然没上屏：三分里第①支根本不读 `message`。
+    expect(shown).not.toContain(BACKEND_CHINESE);
   });
 });
