@@ -11,6 +11,9 @@ import { MAX_IMPORT_KEYS } from "../../src/http/admin/handlers/keys-write.js";
 import { EVENT_WINDOW_MS, EVENT_WINDOW_RETAIN } from "../../src/core/admin/event-ring.js";
 import { USAGE_DAY_RETAIN, USAGE_SLOTS } from "../../src/core/admin/usage-stats.js";
 import { SESSION_MAX_AGE_MS } from "../../admin-ui/js/pure/session.mjs";
+import {
+  PLAYGROUND_TURNS_MAX, VIDEO_POLL_INTERVAL_MS, VIDEO_POLL_MAX_ATTEMPTS, VIDEO_POLL_MAX_MS,
+} from "../../admin-ui/js/pure/playground.mjs";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 type Lang = (typeof LANGS)[number];
@@ -1410,6 +1413,47 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
       why: "同一天里的用量分片槽位数（超过这么多副本同写就是后写覆盖）",
       unit: { "zh-CN": "个槽位", "zh-TW": "個槽位", en: "slots", ja: "つのスロット", ko: "개의 슬롯" },
     },
+    // ⚠️⚠️ **下面四条是 P3e Task 26A 落的，前两条就是「轮询上限」那条红线的机器化。**
+    //
+    // 这条红线从 P3d 起立着：`admin-ui/js/pure/playground.mjs` 自己登记着「5 分钟 / 60 次
+    // 对真实的视频生成可能偏短……本仓从来没有量过」⇒ **真机了结之前，任何文案都不许把
+    // 这两个上限写成「足够 / 安全」**。今天它由**两半**共同看着，缺一半就有洞：
+    // · 上面 ① 那张软化词矩阵挡「把它说成足够 / 安全」；
+    // · 本表这两条挡「干脆不写这两个上限」与「常量改了文档没跟着改」。
+    //
+    // ⚠️ **需求书给的写法是一格独立的 `it()` + 一张 `POLL_HINT` 表，这里改成本表的两行，
+    // 单位词逐字照抄那张表**（次/次/attempts/回/회、分钟/分鐘/minutes/分/분）。
+    // 理由是本表已经带着三条那一格拿不到的探针：交叉反证（拿另一条规则的数字换进来，
+    // 五份必须全红 —— `60` 与「配置 30s+60s」那种同族地雷正是它挡的）、
+    // 漂一位（`n+1` 五份一起红，证明期望值不是手写的）、单位锚空串当场判死。
+    // 判据本身还比需求书那版严一格：正则前面多一个 `(?<!\d)`，见本组上方那段 ⚠️⚠️。
+    {
+      id: "video-poll-attempts",
+      n: VIDEO_POLL_MAX_ATTEMPTS,
+      why: "视频结果轮询的次数上限（先到哪条算哪条）",
+      unit: { "zh-CN": "次", "zh-TW": "次", en: "attempts", ja: "回", ko: "회" },
+    },
+    {
+      id: "video-poll-minutes",
+      n: VIDEO_POLL_MAX_MS / 60_000,
+      why: "视频结果轮询的时长上限，分钟",
+      unit: { "zh-CN": "分钟", "zh-TW": "分鐘", en: "minutes", ja: "分", ko: "분" },
+    },
+    // 间隔那一条**不是可有可无的第三个数**：没有它，「60 次」与「5 分钟」在文档里是
+    // 两个互不相干的数，读者算不出它们今天恰好等价（`60 × 5000 === 300000`），
+    // 也就读不懂为什么两条上限都要有。
+    {
+      id: "video-poll-interval-seconds",
+      n: VIDEO_POLL_INTERVAL_MS / 1_000,
+      why: "两次轮询之间的间隔，秒",
+      unit: { "zh-CN": "秒", "zh-TW": "秒", en: "seconds", ja: "秒", ko: "초" },
+    },
+    {
+      id: "playground-turns",
+      n: PLAYGROUND_TURNS_MAX,
+      why: "调试台屏幕上最多保留几轮对话",
+      unit: { "zh-CN": "轮", "zh-TW": "輪", en: "turns", ja: "往復", ko: "턴" },
+    },
   ];
 
   const ruleById = (id: string): NumRule => {
@@ -1813,93 +1857,283 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     return out;
   }
 
-  interface PanelCounts { readonly nav: number; readonly warn: number; readonly warnKeys: number }
+  interface PanelCounts {
+    readonly nav: number;
+    readonly warn: number;
+    readonly warnKeys: number;
+    /** 设置页上真的建出来的卡数（P3e Task 26A）。 */
+    readonly cards: number;
+    /** 调试台上真的有的模式数（P3e Task 26A）。 */
+    readonly modes: number;
+    readonly cardNames: readonly string[];
+    readonly modeKeys: readonly string[];
+  }
 
-  /** 屏幕那边的三条独立计数。真扫描与探针**共用这一份**。 */
-  function panelCounts(html: string, events: string, dict: string): PanelCounts {
+  /** 屏幕那边的几份源码。**真扫描与探针共用这一份取文口径。** */
+  interface PanelSource {
+    readonly html: string;
+    readonly events: string;
+    readonly dict: string;
+    readonly settings: string;
+    readonly playground: string;
+  }
+
+  const readPanelSource = (): PanelSource => ({
+    html: readFileSync(join(".", "admin-ui", "index.html"), "utf8"),
+    events: readFileSync(join(".", "admin-ui", "js", "sec-events.js"), "utf8"),
+    dict: readFileSync(join(".", "admin-ui", "js", "i18n-dict.js"), "utf8"),
+    settings: readFileSync(join(".", "admin-ui", "js", "sec-settings.js"), "utf8"),
+    playground: readFileSync(join(".", "admin-ui", "js", "sec-playground.js"), "utf8"),
+  });
+
+  /**
+   * 屏幕那边的独立计数。真扫描与探针**共用这一份**。
+   *
+   * ⚠️ **卡与模式取的是「真的建出来的那几张 / 那几档」，不是字典里的键数**：
+   * `set.card.upstreamNote` 与 `pg.mode.label` 同样长得像 `set.card.*` / `pg.mode.*`，
+   * 按字典数就会各多出一个，而屏幕上并没有那张卡、那一档。字典那边的作用是**作证**
+   * （下面「两条独立派生互相认账」那一格：这里数出来的每一个名字都得在字典里有译文），
+   * 不是当计数用。
+   */
+  function panelCounts(src: PanelSource): PanelCounts {
+    const cardNames = [...src.settings.matchAll(/card\("(set\.card\.[A-Za-z]+)"\)/g)]
+      .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
+    const modeKeys = [...src.playground.matchAll(/\{\s*mode:\s*"[a-z]+",\s*key:\s*"(pg\.mode\.[a-z]+)"\s*\}/g)]
+      .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
     return {
-      nav: (html.match(/class="nav-item"/g) ?? []).length,
-      warn: (events.match(/warnBanner\.appendChild\(/g) ?? []).length,
-      warnKeys: new Set([...dict.matchAll(/"ev\.warn[A-Za-z]+"/g)].map((m) => m[0])).size,
+      nav: (src.html.match(/class="nav-item"/g) ?? []).length,
+      warn: (src.events.match(/warnBanner\.appendChild\(/g) ?? []).length,
+      warnKeys: new Set([...src.dict.matchAll(/"ev\.warn[A-Za-z]+"/g)].map((m) => m[0])).size,
+      cards: cardNames.length,
+      modes: modeKeys.length,
+      cardNames,
+      modeKeys,
     };
   }
 
-  const realPanel = (): PanelCounts => panelCounts(
-    readFileSync(join(".", "admin-ui", "index.html"), "utf8"),
-    readFileSync(join(".", "admin-ui", "js", "sec-events.js"), "utf8"),
-    readFileSync(join(".", "admin-ui", "js", "i18n-dict.js"), "utf8"),
-  );
+  const realPanel = (): PanelCounts => panelCounts(readPanelSource());
 
   /**
-   * 一条「表行数 = 屏幕上的某个计数」的规则 × 五份 ADMIN.md。
-   * ⚠️ **认不出要吵**：行数等于 `n` 的表不是恰好一张时（0 张或 2 张）直接判失败，
-   * 不许挑一张凑合——将来往同一份文档里加表撞上这个数量时，它必须响。
+   * 文档里那几张表**按出现顺序**该有多少数据行，期望值逐项从屏幕派生。
+   * 顺序就是它们在 ADMIN.md 里出现的顺序：§3 板块速查、§7 警告条、§10 调试台模式、§11 设置卡。
    */
-  function tableRowFailures(n: number, why: string, read: ApiDocReader): string[] {
+  function expectedTables(c: PanelCounts): ReadonlyArray<readonly [why: string, rows: number]> {
+    return [["板块速查", c.nav], ["警告条", c.warn], ["调试台模式", c.modes], ["设置卡", c.cards]];
+  }
+
+  /**
+   * 一份期望序列 × 五份 ADMIN.md。返回失败报文数组。真扫描与探针**共用这一份**。
+   *
+   * ⚠️⚠️ **判据从「行数恰好等于 n 的表有且只有一张」改成了「按位置逐张比对」，
+   * 而这是 Task 26A 一条真变异逼出来的，不是设计时想到的。**
+   * 旧判据（Task 26）自己在注释里预言过「将来 Task 26A 往同一份文档里加表、撞上这两个
+   * 数量时它会吵」。**那句预言只对了一半，实测当场证伪另一半**：模拟 Task 31 建出第 5 张
+   * 设置卡（`cards` 4 → 5）之后，`tableRowFailures(5)` 在文档里确实找到**恰好一张** 5 行的表
+   * ——**那是警告条那张**。于是「该红时红」那一格**全绿放行**：判据认了别人家的表，
+   * 而它本该指出「设置卡那张表少了一行」。
+   * 会吵的只有「同一份文档里两张表撞了同一个行数」，**两条锚撞到同一张表上它一声不吭**。
+   * ⇒ 认表不能靠行数，只能靠位置：R2 已经把五份的 heading 序列钉死，第 k 张表在五份里
+   * 就是同一张。位置法顺带多守住一件旧判据完全看不见的事——**文档里多写 / 少写一张表**。
+   * 「四条锚两两不同数」那一格仍然留着：它守的是上面那张期望表的**顺序假设**
+   *（两条锚同数时，顺序写反了这条判据看不出来）。
+   */
+  function tableSeqFailures(expected: ReadonlyArray<readonly [string, number]>, read: ApiDocReader): string[] {
+    const want = expected.map(([, n]) => n);
     const out: string[] = [];
     for (const lang of LANGS) {
-      const sizes = tableSizes(read(lang));
-      const hit = sizes.filter((s) => s === n).length;
-      if (hit !== 1) {
+      const got = tableSizes(read(lang));
+      if (JSON.stringify(got) === JSON.stringify(want)) continue;
+      if (got.length !== want.length) {
         out.push(
-          `${lang}/ADMIN.md 里数据行数恰好是 ${n} 的表有 ${hit} 张（本份各表的行数：${JSON.stringify(sizes)}）`
-          + `——${why}。0 张多半是屏幕上多了 / 少了一条而文档没跟着改；2 张是判据认不出该核对哪一张，得先改判据`,
+          `${lang}/ADMIN.md 里有 ${got.length} 张表，而屏幕那边派生出 ${want.length} 张`
+          + `（本份各表的行数：${JSON.stringify(got)}，期望：${JSON.stringify(want)}）`
+          + "——多写或少写了一张表，或者某张表被中间的空行拆成了两张",
         );
+        continue;
       }
+      const diff = expected.flatMap(([why, n], i) =>
+        got[i] === n ? [] : [`第 ${i + 1} 张（${why}）该是 ${n} 行，实际 ${got[i]} 行`]);
+      out.push(
+        `${lang}/ADMIN.md 的表行数与屏幕对不上：${diff.join("；")}`
+        + "——屏幕上多了 / 少了一条而这一份文档没跟着改",
+      );
     }
     return out;
   }
 
-  it("非空锚：屏幕那三条计数都不是 0，且黄条的两个独立来源彼此认账", () => {
+  it("非空锚：屏幕那几条计数都不是 0，且黄条的两个独立来源彼此认账", () => {
     const c = realPanel();
     expect(c.nav, "index.html 里一个 nav-item 都没数到——这一组测的是空气").toBeGreaterThan(0);
     expect(c.warn, "sec-events.js 里一条 warnBanner.appendChild 都没数到——这一组测的是空气").toBeGreaterThan(0);
+    expect(c.cards, "sec-settings.js 里一张 card(\"set.card.*\") 都没数到——这一组测的是空气").toBeGreaterThan(0);
+    expect(c.modes, "sec-playground.js 里一档 MODES 都没数到——这一组测的是空气").toBeGreaterThan(0);
     expect(c.warnKeys, `字典里的 ev.warn* 键数（${c.warnKeys}）与横幅里挂上去的 <p> 条数（${c.warn}）对不上`
       + "——两条独立派生互相不认了，先回屏幕上核对到底有几条黄条，再改这里").toBe(c.warn);
-    expect(c.nav === c.warn, `板块数与黄条数撞成同一个数（${c.nav}）——`
-      + "下面靠「行数恰好等于那个数的表只有一张」认表，撞上了就认不出来了，得换认法").toBe(false);
   });
 
-  it("五份 ADMIN.md 的板块速查表行数 = index.html 里 nav-item 的个数", () => {
+  /**
+   * 卡与模式那两条计数的**第二个独立来源**：字典。
+   * 这里数出来的每一个名字都得在 `i18n-dict.js` 里有一条真的键——名字打错、卡被改名而
+   * 字典没跟着改，都会在这一格红，而不是让上面那两条计数静静地少一个。
+   * ⚠️ **字典这边只作证不当计数**，理由见 `panelCounts()` 上方那段。
+   */
+  it("两条独立派生互相认账：设置卡与调试台模式的每个名字在字典里都有译文", () => {
     const c = realPanel();
-    const failures = tableRowFailures(c.nav, "板块速查那张表的行数应当等于侧边栏里 nav-item 的个数", realAdminDoc);
+    const dict = readPanelSource().dict;
+    const missing = [...c.cardNames, ...c.modeKeys].filter((n) => !dict.includes(`"${n}":`));
+    expect(missing, `这些名字在 admin-ui/js/i18n-dict.js 里没有对应的键：${missing.join("、")}`
+      + "——要么屏幕上那张卡 / 那一档改名了字典没跟着改，要么本组的取名正则已经和源码对不上了")
+      .toEqual([]);
+  });
+
+  /**
+   * `expectedTables()` 手写的是**顺序**（板块 / 黄条 / 模式 / 设置卡），不是数值——
+   * 数值逐项从屏幕派生。那个顺序本身能不能被判据看住，是这一格的问题。
+   *
+   * 逐张比对只有在**相邻两项的数不同**时才看得出「顺序写反了」。所以这里不写一条
+   * 「四个数两两不同」的洁癖断言（那种断言会在两条锚碰巧同数的那天红，而那一天
+   * 判据其实什么都没坏，代价是逼后来的人去削弱一道守卫），而是直接测那件事本身：
+   * **把期望表里相邻两项对调，五份必须一起红。** 哪天某一对真的同数到让对调也看不出来，
+   * **红的是这一格**，报文点名是哪一对——那才是「顺序假设失效了」的准确时刻。
+   */
+  it("非空锚：把期望表里相邻两项的顺序对调，五份必须一起红 —— 顺序假设是看得住的", () => {
+    const base = expectedTables(realPanel());
+    const blind: string[] = [];
+    for (let i = 0; i + 1 < base.length; i += 1) {
+      const swapped = [...base];
+      swapped[i] = base[i + 1]!;
+      swapped[i + 1] = base[i]!;
+      if (tableSeqFailures(swapped, realAdminDoc).length !== LANGS.length) {
+        blind.push(
+          `把第 ${i + 1} 张（${base[i]![0]}，${base[i]![1]} 行）与第 ${i + 2} 张`
+          + `（${base[i + 1]![0]}，${base[i + 1]![1]} 行）对调之后，判据看不出来`
+          + "——这两张表的行数已经撞成同一个数，顺序写反了没有任何东西会响，得换一条不靠数值的认表法",
+        );
+      }
+    }
+    expect(blind, blind.join("\n")).toEqual([]);
+    // 反向控制：顺序原样传进去时一格都不许红（这一格若红，说明真文档本身坏了）。
+    expect(tableSeqFailures(base, realAdminDoc), "真表原样反而红了——先看真扫描那一格").toEqual([]);
+  });
+
+  it("五份 ADMIN.md 里四张表的行数，逐张等于屏幕那边对应的那个计数", () => {
+    const failures = tableSeqFailures(expectedTables(realPanel()), realAdminDoc);
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("五份 ADMIN.md 的警告条表行数 = 事件横幅里挂上去的 <p> 条数", () => {
-    const c = realPanel();
-    const failures = tableRowFailures(c.warn, "警告条那张表的行数应当等于事件横幅里独立黄条的条数", realAdminDoc);
-    expect(failures, failures.join("\n")).toEqual([]);
-  });
+  /** 与前几组同一条闸：真文档本身不过判据时，别让人从探针的报文里找原因。 */
+  function probeTableBase(): void {
+    const base = tableSeqFailures(expectedTables(realPanel()), realAdminDoc);
+    if (base.length > 0) {
+      throw new Error(
+        "本格是探针，它的基取自真文档，而真文档今天本身就不过判据 —— "
+        + "别从这一格的报文里找原因，真因在「五份 ADMIN.md 里四张表的行数，逐张等于屏幕那边对应的那个计数」那一格：\n"
+        + base.join("\n"),
+      );
+    }
+  }
 
-  it("该红时红：屏幕上多出一条黄条而五份文档没跟着加行 —— 五份一起红", () => {
+  it("该红时红：屏幕上多出一条黄条而五份文档没跟着加行 —— 五份一起红并点名是哪一张", () => {
+    probeTableBase();
     const c = realPanel();
-    expect(tableRowFailures(c.warn, "反向控制", realAdminDoc), "真文档本身就不过判据，先看上面那两格").toEqual([]);
-    const failures = tableRowFailures(c.warn + 1, "屏幕上多了一条黄条", realAdminDoc);
+    const failures = tableSeqFailures(expectedTables({ ...c, warn: c.warn + 1 }), realAdminDoc);
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
-    expect(failures[0] ?? "").toContain("有 0 张");
+    for (const h of ["警告条", "第 2 张"]) {
+      expect(failures[0] ?? "", "红了但报文没点名是哪一张表——报文是唯一会被看见的护栏").toContain(h);
+    }
   });
 
   it("该红时红：只有 ja 那份的警告条表被删掉一行 —— 只点名 ja", () => {
-    const c = realPanel();
+    probeTableBase();
     const oneRowLess = readerWith("ja", (s) => s.replace(/\n\| カーソル先行 \|[^\n]*/, ""), ADMIN);
-    expect(tableSizes(oneRowLess("ja")).includes(c.warn), "变异没落到那张表上——这一格控制是空的").toBe(false);
-    const failures = tableRowFailures(c.warn, "警告条那张表", oneRowLess);
+    const failures = tableSeqFailures(expectedTables(realPanel()), oneRowLess);
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
     expect(failures[0] ?? "").toContain("ja/ADMIN.md");
+    expect(failures[0] ?? "").toContain("警告条");
   });
 
   it("该红时红：index.html 里注释掉一个 nav-item —— 板块速查那张表五份一起红", () => {
-    const html = readFileSync(join(".", "admin-ui", "index.html"), "utf8");
-    const mutated = html.replace('class="nav-item" data-section="models"', 'data-section="models"');
-    expect(mutated === html, "变异没落到 index.html 上——这一格控制是空的").toBe(false);
-    const c = panelCounts(
-      mutated,
-      readFileSync(join(".", "admin-ui", "js", "sec-events.js"), "utf8"),
-      readFileSync(join(".", "admin-ui", "js", "i18n-dict.js"), "utf8"),
-    );
+    probeTableBase();
+    const src = readPanelSource();
+    const mutated = { ...src, html: src.html.replace('class="nav-item" data-section="models"', 'data-section="models"') };
+    expect(mutated.html === src.html, "变异没落到 index.html 上——这一格控制是空的").toBe(false);
+    const c = panelCounts(mutated);
     expect(c.nav, "变异没让 nav-item 少一个").toBe(realPanel().nav - 1);
-    const failures = tableRowFailures(c.nav, "板块速查那张表", realAdminDoc);
+    const failures = tableSeqFailures(expectedTables(c), realAdminDoc);
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+    expect(failures[0] ?? "").toContain("板块速查");
+  });
+
+  // ── ⑥ 设置卡表与调试台模式表：同一条派生法，多两张表（P3e Task 26A）───────────
+  //
+  // ⚠️ **第 12 节（危险区）今天只有一句「这张卡还不存在」，靠的就是下面那条设置卡变异。**
+  // 需求书要求那一节写「见设置页第 5 张卡」——**实测推翻**：`sec-settings.js` 今天只建
+  // 四张卡（`card("set.card.…")` 四处），第 5 张是 Task 31 的。往文档里写一句指向
+  // 一张不存在的卡的指路，正是本仓最忌的「描述一个还不存在的功能」。
+  // ⇒ 那一节改成「今天还不存在」，而**「今天是四张」这句话由这一组看着**：
+  // Task 31 建出第 5 张卡的那一刻，五份 ADMIN.md 的设置卡表一起红，逼人回来同时改
+  // 第 11 节的表与第 12 节那句话。**这就是那句话的测法**，不是靠人记得回来改。
+
+  it("该红时红：设置页多出第 5 张卡（危险区落地）而五份文档没跟着加行 —— 五份一起红", () => {
+    probeTableBase();
+    const src = readPanelSource();
+    // 变异取真源：照 Task 31 真的会写的那一行加一张卡出来。
+    const mutated = {
+      ...src,
+      settings: src.settings.replace(
+        'const examples = card("set.card.examples");',
+        'const examples = card("set.card.examples");\n    const danger = card("set.card.danger");',
+      ),
+    };
+    expect(mutated.settings === src.settings, "变异没落到 sec-settings.js 上——这一格控制是空的").toBe(false);
+    const c = panelCounts(mutated);
+    expect(c.cards, "变异没让卡多一张").toBe(realPanel().cards + 1);
+    // ⚠️ **落点断言：这条变异恰好让 `cards` 撞上 `warn`（都是 5）**——旧判据正是在这里
+    // 全绿逃逸的（它去数「5 行的表有几张」，数到警告条那张，判为「有且只有一张」）。
+    // 撞号这件事必须留在这一格里，否则改天两个数不撞了，这条变异就测不到那个洞了。
+    expect(c.cards, "这条变异不再撞上黄条数了——它就不再覆盖旧判据逃逸的那个形态，得换一条").toBe(c.warn);
+    const failures = tableSeqFailures(expectedTables(c), realAdminDoc);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+    for (const h of ["设置卡", "第 4 张"]) {
+      expect(failures[0] ?? "", "红了但报文没点名是哪一张表——报文是唯一会被看见的护栏").toContain(h);
+    }
+  });
+
+  it("该红时红：只有 en 那份的模式表被删掉一行 —— 只点名 en", () => {
+    probeTableBase();
+    const oneRowLess = readerWith("en", (s) => s.replace(/\n\| Image \|[^\n]*/, ""), ADMIN);
+    const failures = tableSeqFailures(expectedTables(realPanel()), oneRowLess);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("en/ADMIN.md");
+    expect(failures[0] ?? "").toContain("调试台模式");
+  });
+
+  it("该红时红：调试台少掉一档模式（比如图片档下线）而五份文档没跟着删行 —— 五份一起红", () => {
+    probeTableBase();
+    const src = readPanelSource();
+    const mutated = {
+      ...src,
+      playground: src.playground.replace('  { mode: "image", key: "pg.mode.image" },\n', ""),
+    };
+    expect(mutated.playground === src.playground, "变异没落到 sec-playground.js 上——这一格控制是空的").toBe(false);
+    const c = panelCounts(mutated);
+    expect(c.modes, "变异没让模式少一档").toBe(realPanel().modes - 1);
+    const failures = tableSeqFailures(expectedTables(c), realAdminDoc);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+    expect(failures[0] ?? "").toContain("调试台模式");
+  });
+
+  /**
+   * 位置判据比旧的行数判据多守住的那一件事，单独钉一格：**文档里多写一张表**。
+   * 旧判据只会去数「行数等于 n 的表有几张」，一张与那四个数都不撞的新表**它一眼都看不到**。
+   */
+  it("该红时红：某一份 ADMIN.md 里多写了一张表 —— 只点名那一份，并报「几张 vs 几张」", () => {
+    probeTableBase();
+    const extra = readerWith("zh-CN", (s) => `${s}\n\n| a | b |\n|---|---|\n| 1 | 2 |\n`, ADMIN);
+    const failures = tableSeqFailures(expectedTables(realPanel()), extra);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["zh-CN/ADMIN.md", "张表"]) {
+      expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
   });
 });

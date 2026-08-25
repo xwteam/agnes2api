@@ -9,7 +9,8 @@ and which actions write. **Every variable itself (default, accepted range, cost)
 in exactly one place, the environment-variable table in [DEPLOY.md](DEPLOY.md)**; this page
 only points at it and never keeps a second copy.
 
-Covered here: how to get in, plus the Overview, Key pool, Registrar, Events and Usage boards.
+Covered here: how to get in, all eight boards one by one, and finally what the panel does not
+do plus troubleshooting.
 
 ## Getting in
 
@@ -168,3 +169,168 @@ channel, which credentials you have to bring, and how to troubleshoot live in
 - **When a value cannot be read the cell shows `—`, not `0`**: "there really were 0 requests
   today", "the second tier is off" and "this read failed" are three different things, and the
   panel is not allowed to draw them the same way.
+
+## Models
+
+- **This page answers one question**: which models this gateway admits, what type each one is,
+  which protocols it is really available on, and which endpoint to call.
+- **Three types**: chat, image, video. Chat models hang off the four chat protocols; the
+  protocol column of image and video models is empty — they belong to no chat protocol and go
+  through their own media endpoints.
+- **Protocol availability is a badge per cell**, not one blanket "supported" or "unsupported":
+  the same model being available on one protocol and not on another is normal. You can filter
+  by protocol; when the filter matches nothing, this page says "no models are available on
+  this protocol" instead of drawing an empty table.
+- **The endpoint column says which path a client should call**, from the same single source as
+  [API.md](API.md), and this page keeps no second copy.
+- **When the catalog cannot be read this page shows a dash** and says outright that this is not
+  the same as "the gateway has no models" — those two must be told apart on screen.
+- ⚠️ **One known divergence in the public contract, recorded as it is**: the Gemini model-list
+  endpoint declares `generateContent` for **every** model, **including the video one**, while
+  the real path for video is the two-step "create the job, then poll". This page is filled in
+  by real availability; when the two disagree, this page is the one to believe.
+
+## Playground
+
+- **The two keys are strictly isolated, and that is the most important thing on this page.**
+  The admin token travels in `x-admin-key` and only ever hits the `/admin/api` tree; the
+  playground uses the **gateway token** (`GATEWAY_TOKEN`) and travels in each protocol's usual
+  auth header to the public tree. The two are stored separately in the browser and are
+  **cleared together when you log out** — on a shared or screen-shared machine, whichever one
+  is not cleared is handed to the next person as it was.
+- **You paste the gateway token by hand; there is no auto-fill**: the panel cannot read its
+  plaintext (credentials are write-only), so all it can do is compare the last 4 characters
+  stored on the settings page with the one you pasted and tell you "matches", "does not match",
+  or "cannot be read, no comparison this time".
+- **Three modes, each with a different set of controls**:
+
+| Mode | Endpoint it calls | What you can configure here |
+|---|---|---|
+| Chat | The public path of each of the four chat protocols | Pick a protocol and a model; streaming can be turned on |
+| Image | The single image-generation endpoint | Model only; no protocol picker and no streaming toggle |
+| Video | The create-job and fetch-result endpoints | Model only; the result is polled automatically once the job exists |
+
+**The protocol picker and the streaming toggle only exist in chat mode**, and they are not
+merely hidden: in the protocol catalog those two media endpoints belong to no chat protocol,
+and a row of buttons nobody can press would only suggest that images can pick a protocol or
+stream too.
+
+- **Streaming mode shows no token counts**: the panel does not read usage while streaming, and
+  writing a `0` there would be a lie, so that cell simply carries no number.
+- **Video is a two-step flow**: create the job, take the task ID, then poll for the result.
+  Polling runs **every 5 seconds, capped at 60 attempts / 5 minutes**, whichever comes first —
+  today the two caps coincide exactly (60 attempts × 5 seconds is exactly 5 minutes); if the
+  page has been hidden, ticking pauses while the wall clock keeps going, and then the duration
+  cap is the one that fires.
+- ⚠️ **How long a real upstream takes to generate a video has never been measured by this
+  repo.** These two caps exist to shut down "a forgotten tab turns into a perpetual polling
+  machine"; they were not derived from real generation times, and this page draws no conclusion
+  about how they relate to those times. On reaching a cap the panel says plainly that polling
+  stopped at its limit and leaves the task ID on screen — the job itself may still be running,
+  and you can come back later and query that ID yourself.
+- **When the create-job response carries no usable task ID, the panel does not guess one**: it
+  reads only a fixed set of fields as the ID, polls nothing when none of them works, and shows
+  the raw response as it came.
+- **Every press of Send really does hit upstream**: that request travels the same path any
+  forwarded request does, and the key that served it is accounted for just the same (see the
+  note under the board table). One video run is 1 create request plus up to 60 polling
+  requests.
+- **At most 20 turns are kept on screen**; older ones are removed from this page and the panel
+  tells you how many were removed. You can also clear them yourself with "clear conversation".
+  That only clears this copy on your screen; nothing server-side is touched.
+
+## Settings
+
+The settings page has four cards today:
+
+| Card | What it covers | Worth knowing |
+|---|---|---|
+| Credentials | The gateway token and each mailbox channel's own credentials | Credentials are write-only: a blank input means this field is left alone |
+| Upstream & cooldowns | Upstream address, timeouts, and the cooldown / eviction knobs | Two of them are read once when the instance is built, see the end of this section |
+| Registrar | Every refill knob, plus an "advanced" collapsed area | The field in that area changes where every automatic registration goes |
+| Integration examples | Ready-to-run call examples | The address comes from the origin you opened the panel on, and the token is a placeholder |
+
+- **Every field lays out a quadruple**: what is in storage, what is in the environment, which
+  one is in effect now, and who locked it. The priority is **environment variable > stored
+  value > built-in default**; a field locked by the environment changes nothing when edited
+  here, and the panel names the deployment-side variable you should change instead.
+- **Credentials are write-only**: the panel never gets the plaintext, and the screen only shows
+  "configured / not configured" plus the last 4 characters. Blank means unchanged; to really
+  delete one you press "clear", and that step first tells you what clearing will do — fall back
+  to the environment value, fail on the next restart, or change nothing right now.
+- **After saving, the panel does not claim "saved and in effect"**. It does three things: reads
+  the effective values back, highlights the fields that really changed, and states the upper
+  bound on "how long until other replicas / isolates see this change". That bound is the sum of
+  the configuration cache and the KV edge cache, and both numbers live in the
+  environment-variable table of [DEPLOY.md](DEPLOY.md).
+- ⚠️ **Two fields are the exception**: the pool snapshot cache and the write-coalescing interval
+  (`POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS`) are **read once when the instance is
+  built** ⇒ after saving, **not even this instance has picked them up**; the container has to
+  restart or the isolate has to be recycled. The panel says exactly that for those two and does
+  not also claim "this instance is already using it".
+- **The panel cannot rotate its own key**: `ADMIN_TOKEN` is read from the environment only. To
+  rotate it, change the deployment-side environment variable and restart.
+- **When the configuration in storage cannot be loaded this page turns into a diagnostic view**:
+  it lists what is missing item by item, and **the form stays editable** — that is the only way
+  out.
+
+## Danger zone
+
+**This card does not exist yet.** The settings page today holds only the four above; a danger
+zone is planned as another card. This page will not describe what it does until it really
+ships: describing a feature that does not exist is worse than writing nothing at all.
+The row count of the table above is derived from the panel's own card count, so the day the
+danger zone lands, a test will drag this document back here to be updated.
+
+## What the panel does not do
+
+- **It does not rotate its own key**: `ADMIN_TOKEN` is read from the environment only, so the
+  panel can neither change it nor offer any "invalidate every session already handed out" path.
+  Rotating means changing the deployment-side variable and redeploying or rebuilding the
+  container.
+- **It never echoes any credential in the clear**: the backend answers only "configured or not"
+  plus the last 4 characters, so no "fill in my token" button can exist — that would need a
+  plaintext read-back hole in the backend, and the moment such a hole is open the whole
+  write-only rule is gone.
+- **It is not a replacement for `wrangler secret` or `.env`**: this page edits the copy of the
+  configuration in storage, while environment variables take priority. When the two disagree
+  the screen carries a lock marker, but changing the environment variable itself can only be
+  done on the deployment side.
+- **It does not fetch remote media for you**: result addresses in the playground are listed as
+  they came, ready to copy or open in a new tab; only `data:` images are embedded inline, and
+  that path issues no request to any third party.
+
+## Troubleshooting
+
+- **It will not open, and the answer is `404`**: this deployment has no `ADMIN_TOKEN`, or it has
+  one that was rejected. The tree is not registered, so nothing outside can tell whether there
+  is a back office here at all.
+- **It will not open, and the answer is `401`**: the token itself is wrong, most likely because
+  it has been rotated. ⚠️ **Do not lump this together with the panel bouncing you back to the
+  login box**: the 12 hours window is decided by the panel itself, and when it runs out no
+  request leaves the browser at all, so the server has nothing on record. Either way, typing the
+  token again is the fix.
+- **It will not open, and the answer is `503`**: `ADMIN_TOKEN` collides with the gateway token
+  in storage. That rule is rechecked on every admin request, and the Events board and the logs
+  carry an `admin.token_conflict` entry. ⚠️ **Putting the stored gateway token back only
+  restores availability**: the admin token has to be treated as leaked, the full procedure is in
+  [DEPLOY.md](DEPLOY.md), and both steps have to be done before it counts as handled.
+- **Login looks like it succeeded, yet you never get in**: the token contains characters the
+  browser simply cannot send (code points above `U+00FF` such as CJK, emoji or zero-width
+  space, plus NUL / LF / CR). Such a request **is never sent at all**, so the server does not
+  even have a failed login to show — which is exactly why the token is restricted to printable
+  ASCII.
+- **The screen is showing stale values**: the configuration and the pool snapshot each have
+  their own cache window, with a layer of KV edge caching on top. Both upper bounds and their
+  costs are in the environment-variable table of [DEPLOY.md](DEPLOY.md) and are not copied here;
+  the two "read N seconds ago" lines on Overview are there for exactly this.
+- **The error text is the backend's own words, not your language**: for error codes **it
+  recognises** the panel shows its own localized text; for a code it does not recognise it puts
+  the backend's sentence on screen and marks it with "raw text from the backend; this panel has
+  no translation for that error code yet". ⚠️ **Do not read that as "every error appears in
+  your language"** — the unrecognised ones do not, and the panel would rather mark the fact than
+  pass the text off as a translation.
+
+## Related documents
+
+[README.md](README.md) · [DEPLOY.md](DEPLOY.md) · [API.md](API.md) · [USAGE.md](USAGE.md) · [REGISTRAR.md](REGISTRAR.md)
