@@ -366,10 +366,17 @@ curl http://localhost:8080/v1/videos/task-1 \
   -H "Authorization: Bearer your-gateway-token"
 ```
 
+Before forwarding, the gateway checks the shape of the task identifier and **accepts only
+`A-Za-z0-9_- (1-128)`**: the first part is the allowed character set, the parentheses hold
+the lower and upper length bounds. Anything else gets a 400, and **no upstream request is
+sent at all**. The 400 body carries this exact shape, so you can paste the identifier back
+accordingly.
+
 ⚠️ The task-identifier shape check is not verified against the real upstream — it is a
 character set and length bound **extrapolated** from the identifier in this repo's test
 fixtures, not a verbatim copy. If the upstream ever issues a different shape, the gateway
-answers 400 instead of forwarding it.
+answers 400 instead of forwarding it — and no request parameter you change will help;
+the gateway itself has to change.
 
 ```json
 { "id": "task-1", "status": "completed", "url": "https://example.com/generated-video.mp4" }

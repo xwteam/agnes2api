@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { dispatch, type DispatchDeps } from "../../core/dispatcher.js";
 import {
-  VIDEO_TASK_ID_RE, mediaEndpointById, withTaskId,
+  VIDEO_TASK_ID_RE, VIDEO_TASK_ID_SHAPE, mediaEndpointById, withTaskId,
 } from "../../core/admin/protocol-catalog.js";
 import { httpError, readJson } from "../errors.js";
 
@@ -42,7 +42,23 @@ export function mediaRoutes(deps: DispatchDeps): Hono {
     // 而那会让**每一次**轮询都 400——一条只有部署完才发现的故障。
     const id = c.req.param(String(poll.taskSlot).slice(1)) ?? "";
     if (!VIDEO_TASK_ID_RE.test(id)) {
-      throw httpError(400, "invalid_request_error", "视频任务标识格式非法");
+      // **报文要说得清「该怎么改」，不只是「不合法」。** 形状逐字来自
+      // `VIDEO_TASK_ID_SHAPE`（真源是 `VIDEO_TASK_ID_RE` 本身，这里不许手抄第二份）。
+      //
+      // ⚠️ **它必须同时说出「你改得动的那一半」和「你改不动的那一半」，否则就是把人
+      // 往坑里引**（阶段 D 的教训：报文说「改这个数」，照做了还是恒 400）。标识是
+      // **上游在建任务那一步签发的**：读者自己弄脏了它（编码、引号、空白）时照着改就通；
+      // 而上游本来就签发了别的形状时，**改请求参数一点用都没有** —— 那是本网关一条
+      // 已知的未核实假设，路在这里断，得改网关。两句话缺一句都会让人白试一轮。
+      throw httpError(
+        400, "invalid_request_error",
+        `视频任务标识格式非法：本网关只接受 ${VIDEO_TASK_ID_SHAPE} 这个形状`
+        + "（前一段是允许的字符集，括号里是长度的下界与上界）。"
+        + "这个标识是上游在 POST /v1/videos 那一步签发的，不是你输入的："
+        + "把那次响应里的标识原样贴回来（别做 URL 编码、别带引号或空白）通常就能过；"
+        + "若上游签发的标识本身就超出这个集合，改请求参数没有用——"
+        + "那是本网关一条已知的未核实假设，见 API.md 的 `GET /v1/videos/{id}` 一节。",
+      );
     }
     return dispatch({
       path: withTaskId(poll.upstreamPath, String(poll.taskSlot), encodeURIComponent(id)),

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { FAIL_REASONS } from "../../src/core/dispatcher.js";
 import { UPSTREAM_FACTS, type UpstreamFact } from "../../src/core/admin/upstream-facts.js";
+import { VIDEO_TASK_ID_SHAPE } from "../../src/core/admin/protocol-catalog.js";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 type Lang = (typeof LANGS)[number];
@@ -295,6 +296,21 @@ function sectionBody(src: string, heading: string): string | null {
   return next === -1 ? src.slice(from) : src.slice(from, next);
 }
 
+/**
+ * 变异只改一种语言的那一份，其余四份照旧走真文档。**改不动就当场炸。**
+ * **两组探针（上游事实的限定句、字符集硬闸）共用这一份**，各写一份的话，两组的
+ * 「变异落没落地」会各有各的口径，而其中一份坏了另一份不会响。
+ */
+function readerWith(target: Lang, edit: (s: string) => string): ApiDocReader {
+  return (lang) => {
+    const src = realApiDoc(lang);
+    if (lang !== target) return src;
+    const out = edit(src);
+    if (out === src) throw new Error(`变异没落到 docs/${lang}/API.md 上——这一格控制是空的`);
+    return out;
+  };
+}
+
 /** 一条事实 × 五份 API.md。返回失败报文数组。真扫描与探针共用这一份。 */
 function factDocFailures(fact: UpstreamFact, read: ApiDocReader): string[] {
   const out: string[] = [];
@@ -352,17 +368,6 @@ describe("五语言 API.md 逐份写着「这条上游事实未经核实」", ()
     const failures = factDocFailures(fact, realApiDoc);
     expect(failures, failures.join("\n")).toEqual([]);
   });
-
-  /** 变异只改一种语言的那一份，其余四份照旧走真文档。**改不动就当场炸。** */
-  function readerWith(target: Lang, edit: (s: string) => string): ApiDocReader {
-    return (lang) => {
-      const src = realApiDoc(lang);
-      if (lang !== target) return src;
-      const out = edit(src);
-      if (out === src) throw new Error(`变异没落到 docs/${lang}/API.md 上——这一格控制是空的`);
-      return out;
-    };
-  }
 
   /**
    * 探针一律从**真实那条事实**派生，不另造一个仓里不存在的世界。取的是第一条仍是
@@ -477,6 +482,141 @@ describe("五语言 API.md 逐份写着「这条上游事实未经核实」", ()
     expect(failures.join("\n")).toContain("空串");
     // 反向控制：其余四种语言的 token 没动，它们一条都不许跟着红。
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+  });
+});
+
+/**
+ * ── 五语言 API.md 里那条字符集硬闸（期望值从 `VIDEO_TASK_ID_SHAPE` 来）──────────
+ *
+ * 上面那组管的是「这条事实**没被核实过**」这句限定，**它一个字都没说网关到底收什么
+ * 形状**。运维手里今天只有一个 400，而这条路是两段式的：标识由上游签发，读者除了
+ * 逐个字符试没有别的办法。这一组把形状本身钉进五份文档的**指名小节**里。
+ *
+ * ⚠️ **期望值来自代码里那个派生常量，不是文档互校**（同 `FAIL_REASONS` 那条路）：
+ * `VIDEO_TASK_ID_RE` 哪天从 `{1,128}` 改成 `{1,64}`，`VIDEO_TASK_ID_SHAPE` 当场跟着变，
+ * 而五份文档还写着旧上界 ⇒ 这里五格一起红并逐份点名。文档互校在这一格是无效的
+ *（五份一起挂着同一个旧上界，互相校验永远一致）。
+ *
+ * ── 它做不到什么（明写）────────────────────────────────────────────────────
+ * 它只证明**那串形状逐字出现在那一份文档的那一个小节里**。形状旁边那句解释（哪一段是
+ * 字符集、括号里是什么）译得对不对、读者看不看得懂，它一概不管，留给评审。
+ * 「这个字符集本身对不对」更不在它射程内——那是一条未核实的上游假设。
+ */
+describe("五语言 API.md 逐份写着视频任务标识的字符集", () => {
+  /**
+   * 该贴在哪个小节，**不另写一份**：取的是 `UPSTREAM_FACTS` 里锚在 `VIDEO_TASK_ID_RE`
+   * 上的那条事实的 `docSections` —— 它说的正是这条字符集，而它的 `anchor` 已经被
+   * `tests/unit/admin/upstream-facts.test.ts` 的「真表逐条的锚都在它说的那个文件里」
+   * 绑在真源上。在这里手写一个 `GET /v1/videos/{id}` 就是第二份会静静漂走的知识。
+   */
+  const CHARSET_FACTS = UPSTREAM_FACTS.filter((f) => f.anchor === "VIDEO_TASK_ID_RE");
+  const SECTIONS: readonly string[] = CHARSET_FACTS[0]?.docSections ?? [];
+
+  /**
+   * 一条形状 × 五份 API.md 的指名小节。返回失败报文数组。真扫描与探针**共用这一份**。
+   * **锚没了就当场判死**，不返回空数组：空数组会让下面整组静静全绿。
+   */
+  function shapeDocFailures(read: ApiDocReader): string[] {
+    if (SECTIONS.length === 0) {
+      return ["登记表上锚在 VIDEO_TASK_ID_RE 上的事实没了 —— 这一组不知道形状该贴在哪个小节，测的是空气"];
+    }
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const src = read(lang);
+      for (const heading of SECTIONS) {
+        const body = sectionBody(src, heading);
+        if (body === null) {
+          out.push(`${lang}/API.md 里找不到小节「${heading}」——任务标识的字符集该写在哪里已经说不清了`);
+          continue;
+        }
+        if (!body.includes(VIDEO_TASK_ID_SHAPE)) {
+          out.push(
+            `${lang}/API.md 的小节「${heading}」里没有逐字写明任务标识的形状「${VIDEO_TASK_ID_SHAPE}」`
+            + "——运维在文档里查不到这条约束，只能从一个 400 里猜网关到底收什么",
+          );
+        }
+      }
+    }
+    return out;
+  }
+
+  it("非空锚：登记表上锚在 VIDEO_TASK_ID_RE 上的事实恰好一条，下面几格才不是空转", () => {
+    expect(
+      CHARSET_FACTS.map((f) => f.id),
+      "锚在 VIDEO_TASK_ID_RE 上的事实不是恰好一条 —— 形状该贴在哪个小节已经说不清了",
+    ).toHaveLength(1);
+  });
+
+  it("五份 API.md 的指名小节里都逐字写明了任务标识的形状", () => {
+    const failures = shapeDocFailures(realApiDoc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  /** 与上面那组同一条闸、同一个理由：真文档本身不过判据时，别让人从探针的报文里找原因。 */
+  function probeShapeBase(read: ApiDocReader = realApiDoc): void {
+    const base = shapeDocFailures(read);
+    if (base.length > 0) {
+      throw new Error(
+        "本格是探针，它的基取自真文档，而真文档今天本身就不过判据 —— "
+        + "别从这一格的报文里找原因，真因在「五份 API.md 的指名小节里都逐字写明了任务标识的形状」那一格：\n"
+        + base.join("\n"),
+      );
+    }
+  }
+
+  it("探针自检这道闸本身有牙：真文档不过判据时，探针格报的是「先看真扫描那一格」", () => {
+    const broken: ApiDocReader = (lang) => realApiDoc(lang).split(VIDEO_TASK_ID_SHAPE).join("(某个形状)");
+    expect(broken("en").includes(VIDEO_TASK_ID_SHAPE), "变异没落地 —— 这一格控制是空的").toBe(false);
+    expect(() => probeShapeBase(broken)).toThrow("本格是探针");
+    expect(() => probeShapeBase(realApiDoc)).not.toThrow();
+  });
+
+  it("该红时红：某一种语言里那段形状被删掉（其余四份不动）", () => {
+    probeShapeBase();
+    const failures = shapeDocFailures(readerWith("ja", (s) => s.replace(VIDEO_TASK_ID_SHAPE, "")));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["ja/API.md", VIDEO_TASK_ID_SHAPE, SECTIONS[0]!]) {
+      expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
+  });
+
+  /**
+   * 这一格是「把长度上界一起从正则派生」那条设计的**测法**：翻译时抄错一位数字，
+   * 或者改了正则却只改了四份文档，形态都长这样。手抄一份形状字面量的话，
+   * 这种漂移在代码侧一点痕迹都没有。
+   */
+  it("该红时红：某一份把形状里的长度上界抄错了一位", () => {
+    probeShapeBase();
+    const typo = VIDEO_TASK_ID_SHAPE.replace(/(\d+)\)$/, (_m, n: string) => `${Number(n) - 1})`);
+    expect(typo, "变异串与原串相同 —— 这一格控制是空的").not.toBe(VIDEO_TASK_ID_SHAPE);
+    const failures = shapeDocFailures(readerWith("ko", (s) => s.replace(VIDEO_TASK_ID_SHAPE, typo)));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("ko/API.md");
+  });
+
+  it("该红时红：形状被挪出指名小节——整份文档照旧查得到，小节内查不到", () => {
+    probeShapeBase();
+    // 挪到**文档标题之下、第一个 `## ` 之上**那一片不属于任何小节的地方。
+    // 「别用追加到文件末尾」的理由与上面那组逐字相同（末尾属于最后一个小节）。
+    const moved = (s: string) => {
+      const t = s.replace(VIDEO_TASK_ID_SHAPE, "(形状搬走了)");
+      const at = t.indexOf("\n");
+      return `${t.slice(0, at + 1)}\n${VIDEO_TASK_ID_SHAPE}\n${t.slice(at + 1)}`;
+    };
+    expect(moved(realApiDoc("zh-TW")), "变异把形状整个删掉了——那测的是上一格，不是本格")
+      .toContain(VIDEO_TASK_ID_SHAPE);
+    const failures = shapeDocFailures(readerWith("zh-TW", moved));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("zh-TW/API.md");
+  });
+
+  it("该红时红：小节标题在某一份里对不上时会吵，不装作「这一份没写形状」", () => {
+    probeShapeBase();
+    const heading = `## ${SECTIONS[0]!}`;
+    const failures = shapeDocFailures(readerWith("zh-CN", (s) => s.replace(heading, `${heading} (draft)`)));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "报文没说是「找不到小节」——那会把人指去补一句其实已经在的形状")
+      .toContain("找不到小节");
   });
 });
 

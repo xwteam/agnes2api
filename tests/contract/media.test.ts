@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { makeApp } from "../helpers/make-app.js";
+import { makeApp, TEST_CONFIG } from "../helpers/make-app.js";
+import {
+  VIDEO_TASK_ID_RE, VIDEO_TASK_ID_SHAPE, videoTaskIdShape,
+} from "../../src/core/admin/protocol-catalog.js";
 
 describe("POST /v1/images/generations", () => {
   it("把上游图片响应原样返回", async () => {
@@ -130,6 +133,143 @@ describe("GET /v1/videos/{id} 的路径穿越防护", () => {
     const res = await app.request("/v1/videos/task_1-ABC", { headers: { authorization: "Bearer t" } });
     expect(res.status).toBe(200);
     expect(fetcher.sentUrls).toEqual(["https://upstream.test/v1/videos/task_1-ABC"]);
+  });
+});
+
+/**
+ * ── 字符集硬闸：400 得让人知道**该怎么改**，不只是「不合法」 ────────────────────
+ *
+ * 上面那组只断言「拦下了」。**拦下之后运维手里只有一个 400**，而这条路是两段式的：
+ * 标识是上游在 `POST /v1/videos` 那一步签发的，不是客户端自己起的名字。报文不说
+ * 「接受什么形状」，读者除了逐个字符试没有别的办法；报文只说「改成这个形状」而不说
+ * 「这个标识不是你起的」，读者会去改自己的请求参数，**而那一定改不出结果**
+ *（阶段 D 的教训：报文可以亲手把人引进坑）。两句话在这一组里各有一条断言。
+ */
+describe("GET /v1/videos/{id} 的字符集硬闸：400 说得清", () => {
+  const AUTH = { authorization: `Bearer ${TEST_CONFIG.gatewayToken}` };
+
+  it("非法形状的任务标识 ⇒ 400，且报文逐字说明接受什么形状", async () => {
+    const { app, fetcher } = await makeApp([], ["sk-x"], {}, () => 1_000);
+    // `.` 是这条假设最可能被真上游踩中的那个字符（`upstream-facts.ts` 的
+    // `video.taskIdCharset` 逐字点了 `.` `:` `+` `/` `=` 五个）。
+    const res = await app.request("/v1/videos/job.2026.001", { headers: AUTH });
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: { message: string } };
+    expect(body.error.message, "报文里没有那个形状 —— 读者只知道「不合法」，不知道该改成什么")
+      .toContain(VIDEO_TASK_ID_SHAPE);
+    expect(
+      body.error.message,
+      "报文没说这个标识是上游在建任务那一步签发的 —— 那会把人指去改自己的请求参数，而那一定改不出结果",
+    ).toContain("POST /v1/videos");
+    expect(fetcher.usedKeys, "已经 400 了却还拿池里的 key 向上游发过请求").toEqual([]);
+  });
+
+  it("反向控制（同格）：合法 id 仍然 200，且出站 URL 逐字对 —— 防「收紧到谁都进不来」空洞满足", async () => {
+    const id = "550e8400-e29b-41d4-a716-446655440000";
+    const { app, fetcher } = await makeApp(
+      [{ status: 200, body: '{"id":"x","status":"completed"}' }], ["sk-x"], {}, () => 1_000,
+    );
+    const res = await app.request(`/v1/videos/${id}`, { headers: AUTH });
+    expect(res.status).toBe(200);
+    expect(fetcher.sentUrls.at(-1)).toBe(`${TEST_CONFIG.agnesBaseUrl}/videos/${id}`);
+  });
+});
+
+/**
+ * ── `VIDEO_TASK_ID_SHAPE` 说的是不是**真话** ────────────────────────────────
+ *
+ * 「从正则派生」只保证形状串**跟着正则一起变**，不保证它**说得对**：取法写错
+ *（漏掉长度那一段、把上下界读反、字符类多抠掉一个字符）照样派生得出一个自洽却不
+ * 成立的串，而它会被逐字印进 400 的报文与五份 API.md —— 那时守卫本身成了假话的
+ * 搬运工。这一组把形状串**读回来**，逐条去问真正的 `VIDEO_TASK_ID_RE`：
+ * 它点名的每个字符真的收、它没点名的那几个真的不收、它给的两个界真的就是分界。
+ *
+ * ⚠️ **它验的是「形状串描述得对不对」，不是「这个字符集本身对不对」**——后者是一条
+ * 未核实的上游假设，登记在 `src/core/admin/upstream-facts.ts` 的 `video.taskIdCharset`，
+ * 只有一次真上游能定案。
+ */
+describe("VIDEO_TASK_ID_SHAPE 说的是真话", () => {
+  /** 形状串读回来：`字符类 (下界-上界)`。 */
+  const PARTS = /^(\S+) \((\d+)-(\d+)\)$/.exec(VIDEO_TASK_ID_SHAPE);
+
+  it("形状串读得回来 —— 读不回来的话下面几格全是空转", () => {
+    expect(PARTS, `VIDEO_TASK_ID_SHAPE 现在是「${VIDEO_TASK_ID_SHAPE}」，不是「字符类 (下界-上界)」这个形态`)
+      .not.toBeNull();
+  });
+
+  /**
+   * 把 `A-Za-z0-9_-` 这种字符类展开成逐个字符。
+   * **结尾那个 `-` 是字面量不是范围**（`X-` 后面没有右端点），这一条由下面
+   * 「不乱红」那格反过来钉着：把它误当成范围会吞掉后面的字符，展开集合就变了。
+   */
+  const expandClass = (cls: string): string[] => {
+    const out: string[] = [];
+    for (let i = 0; i < cls.length; i++) {
+      if (cls[i + 1] === "-" && i + 2 < cls.length) {
+        const from = cls.charCodeAt(i);
+        const to = cls.charCodeAt(i + 2);
+        // **倒着的范围要吵，不许静静展开成空集。** 真正的正则引擎对 `_-.` 直接
+        // SyntaxError；这里若跟着静默，形状串里多写的那几个字符会被这个展开器
+        // 自己吞掉，于是「形状点名的每个字符正则真的收」那一格漏检 —— 变异实测
+        // 踩到过一次（`A-Za-z0-9_-.:` 里的 `.` 被 `_-.` 这段吞了）。
+        if (from > to) {
+          throw new Error(`字符类里「${cls[i]}-${cls[i + 2]}」是一个倒着的范围，真正的正则会当场 SyntaxError`);
+        }
+        for (let c = from; c <= to; c++) out.push(String.fromCharCode(c));
+        i += 2;
+      } else out.push(cls[i]!);
+    }
+    return out;
+  };
+
+  it("形状点名的每一个字符，VIDEO_TASK_ID_RE 真的收", () => {
+    const chars = expandClass(PARTS![1]!);
+    expect(chars.length, "字符类展开成空的 —— 下面那条 filter 什么都没检查").toBeGreaterThan(0);
+    const rejected = chars.filter((c) => !VIDEO_TASK_ID_RE.test(c));
+    expect(rejected, `形状说收这些字符，正则却不收：${rejected.join("")}`).toEqual([]);
+  });
+
+  it("不乱红：形状没点名的那几个字符，正则一个都不收", () => {
+    const chars = expandClass(PARTS![1]!);
+    // 取的是**真上游最可能签发**的那几个（`video.taskIdCharset` 逐字点的五个）加上空白与百分号。
+    const outside = [".", ":", "+", "/", "=", " ", "%"];
+    expect(
+      outside.filter((c) => chars.includes(c)),
+      "反向控制取的字符其实在形状点名的集合里 —— 这一格测的是一个不存在的世界",
+    ).toEqual([]);
+    const accepted = outside.filter((c) => VIDEO_TASK_ID_RE.test(c));
+    expect(accepted, `形状没点名这些字符，正则却收：${accepted.join("")}`).toEqual([]);
+  });
+
+  it("形状给的两个界就是正则收与不收的那条分界（界内收、界外一个都不收）", () => {
+    const lo = Number(PARTS![2]);
+    const hi = Number(PARTS![3]);
+    // 填充字符**从形状自己点名的字符集里取**，不写死一个 `a`：写死的话，字符集哪天
+    // 不再含 `a`，这一格会红在「长度界不对」上，而真因是字符 —— 报文把人指错地方。
+    // （M2 变异实测过这条：正则收紧成只收 `Z` 之后，写死 `a` 的版本红的是长度那句话。）
+    const fill = expandClass(PARTS![1]!)[0]!;
+    const s = (n: number) => fill.repeat(n);
+    expect(VIDEO_TASK_ID_RE.test(s(lo)), `长度 ${lo}（形状说的下界）被拒了`).toBe(true);
+    expect(VIDEO_TASK_ID_RE.test(s(hi)), `长度 ${hi}（形状说的上界）被拒了`).toBe(true);
+    expect(VIDEO_TASK_ID_RE.test(s(lo - 1)), `长度 ${lo - 1} 被收了 —— 形状说的下界不是真的下界`).toBe(false);
+    expect(VIDEO_TASK_ID_RE.test(s(hi + 1)), `长度 ${hi + 1} 被收了 —— 形状说的上界不是真的上界`).toBe(false);
+  });
+
+  it("认不出 `VIDEO_TASK_ID_RE` 的写法时当场抛，不返回一个「大概对」的形状", () => {
+    // 两种真实的改法：换成简写字符类、以及把定量符换成 `+`（长度上界从此不存在）。
+    expect(() => videoTaskIdShape("^\\w{1,128}$")).toThrow("派生不出人读形状");
+    expect(() => videoTaskIdShape("^[A-Za-z0-9_-]+$")).toThrow("只认");
+  });
+
+  it("三样都真的从源码里读出来：换一条形状良好的正则，字符类与上下界一起跟着变", () => {
+    expect(videoTaskIdShape("^[a-f0-9]{8,64}$")).toBe("a-f0-9 (8-64)");
+  });
+
+  it("不乱红：真源那条原样喂进去不抛，交出来的就是全仓在用的那一份", () => {
+    expect(() => videoTaskIdShape(VIDEO_TASK_ID_RE.source)).not.toThrow();
+    // 这半句是同义反复（`VIDEO_TASK_ID_SHAPE` 就是这么算出来的），判别力在上面那一句
+    // 「不抛」和这一组前四格「说的是真话」上。留着它是为了钉住导出的那份没被谁改写过。
+    expect(videoTaskIdShape(VIDEO_TASK_ID_RE.source)).toBe(VIDEO_TASK_ID_SHAPE);
   });
 });
 

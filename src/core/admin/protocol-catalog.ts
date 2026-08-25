@@ -285,6 +285,50 @@ export const MODEL_CATALOG: readonly ModelEntry[] = [
  */
 export const VIDEO_TASK_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
+/**
+ * 从一条形如 `^[字符类]{下界,上界}$` 的正则源码里，派生出**人读形状**。
+ *
+ * 消费者有两个，**都不许自己手抄一份**：`src/http/routes/media.ts` 那条 400 的报文、
+ * 以及五语言 API.md 的 `GET /v1/videos/{id}` 一节。
+ *
+ * ⚠️ **连长度那两个数一起派生，不只是字符类那一段。** 只派生字符类、把 `(1-128)`
+ * 写成字面量的话，`{1,128}` 哪天改成 `{1,64}`，形状串一个字节都不变 —— 报文与五份
+ * 文档会一起对读者说一个**已经不成立的上界**，而没有任何东西会红。
+ * 「能删数字就删数字」在这里的落点就是这个函数。
+ *
+ * ⚠️ **认不出就抛，不返回一个「大概对」的串。** 正则被改成本函数不认识的写法时，
+ * 静默降级会让报文与文档继续挂着旧形状 —— 那正是「认不出要吵，不能装没看见」
+ * 要挡的形态。抛的代价是每一条经过这个模块的用例当场红（契约测试全体都经过它），
+ * 它因此不可能带着绿 CI 溜进生产。由 `tests/contract/media.test.ts` 的
+ * 「认不出 `VIDEO_TASK_ID_RE` 的写法时当场抛」钉着。
+ *
+ * ⚠️ **它派生的是「形状怎么读」，不是「形状对不对」。** 这条字符集本身是一条
+ * **未核实的假设**，登记在 `src/core/admin/upstream-facts.ts` 的 `video.taskIdCharset`：
+ * 标识是**上游签发的**，本仓从没见过真上游签发的样本。真上游若用了 `.` `:` `+` `/` `=`，
+ * 两段式视频接口对所有客户端结构性不可用。⇒ **本函数与它的消费者只做文档化与错误
+ * 文案，`VIDEO_TASK_ID_RE` 一个字符都不许跟着放宽**：放宽它会把 P1 已解决的路径穿越 /
+ * 查询参数注入搬回来（`..%2F..%2Fadmin`、`x%3Fsecret%3D1`）。
+ */
+export function videoTaskIdShape(source: string): string {
+  const m = /^\^\[([^\]]+)\]\{(\d+),(\d+)\}\$$/.exec(source);
+  if (m === null) {
+    throw new Error(
+      `派生不出人读形状：VIDEO_TASK_ID_RE 现在写成 ${source}，`
+      + "而本函数只认「^[字符类]{下界,上界}$」这一种写法。"
+      + "改正则的同时把这里的取法一起改，别把形状退回成一份手抄的字面量。",
+    );
+  }
+  return `${m[1]} (${m[2]}-${m[3]})`;
+}
+
+/**
+ * `VIDEO_TASK_ID_RE` 的人读形状，**全仓唯一一份**。取法与理由见 `videoTaskIdShape()`。
+ *
+ * ⚠️ **它必须是纯 ASCII**：五份 API.md 逐字带着它，写成一句中文的话 `en` / `ja` / `ko`
+ * 三份里会凭空出现一段中文。
+ */
+export const VIDEO_TASK_ID_SHAPE = videoTaskIdShape(VIDEO_TASK_ID_RE.source);
+
 /** 媒体那两种形态。`chat` 不在其中——它走 `PROTOCOLS`。 */
 export type MediaModality = Exclude<Modality, "chat">;
 /** `generate` = 发一次生成请求；`poll` = 拿着任务标识查一次结果。 */
