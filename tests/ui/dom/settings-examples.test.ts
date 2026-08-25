@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { bootPanel, settle, PANEL_ORIGIN, type Harness } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import { catalogPayload } from "../../../src/core/admin/protocol-catalog.js";
+import { I18N } from "../../../admin-ui/js/i18n-dict.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
@@ -268,5 +269,98 @@ describe("设置页第 4 张卡：集成示例", () => {
     gates[0]!({ status: 200, body: catalogPayload() });
     await settle(20);
     expect(codeText(h)).toContain(PANEL_ORIGIN);
+  });
+
+  /**
+   * 被守护的性质：**这条协议的路径要一个模型，而目录里没有任何模型支持它时，
+   * 卡上是一句「这里没有示例」。**
+   * 「绝不能把 `null` 拼进 URL」那一半在**纯函数层**（`allExamples()` 交出 `code: null`），
+   * 由 `tests/ui/examples.test.ts` 的
+   *「路径需要模型而一个模型都没有时，那几段是 null，不是把 null 拼进 URL」钉着；
+   * 这一格补的是「板块文件真的照那条判据画」的另一半。
+   *
+   * ⚠️ **删掉那条判据的后果，是实测出来的，不是推出来的**（见下面 M1）：
+   * 把 `sec-settings.js` 的 `row === undefined || row.code === null` 改成只判前半截，
+   * 屏幕上出现的**不是**一条带 `null` 的地址，而是**一个彻底空白的代码块**
+   *（实测 `codeCount=1`、`pre.textContent === ""`）**外加一颗把 `null` 原样交给剪贴板的
+   * 复制按钮**（实测 `copyCount=1`，替身收到的逐字是 `null` 本身，不是字符串 `"null"`）
+   * ——`ui.js` 的 `el()` 对 `text === null` 直接跳过赋值，所以 `null` 根本没机会被 `String()`。
+   * 这三句都是量出来的：**别把「拼出一条假 URL」写进这里，那句话在这一层是假的。**
+   * 空白代码块比假 URL 更难被发现：运维会以为是自己没等它加载完。
+   *
+   * ── **夹具是派生的，本用例里没有一个手写的 protocol / model 字面量对象** ──────
+   * 派生**只动 `models[].protocols`**（清空）；`protocols[]` 里 `pathTemplate` /
+   * `sampleBody` / `authHeader` 那些真正会漂的知识**一个字节都没抄**
+   * ⇒ 第 7 种假阳性（测的是抄件不是原件）在这一格上没有立足点。
+   *
+   * ── **前置条件为什么不是「`.danger-text` 一个都没有」** ────────────────────────
+   * ⚠️ 那样写**恒红**，实测 `expected 4 to be +0`：设置板块里常驻 4 个 `.danger-text`
+   *（`set.degraded` / `set.advanced.warn` / `.cfg-blocked` / `.cfg-errors`，
+   * 见 `sec-settings.js` 的 `init()`），**它们与这张卡毫无关系**。
+   * 更要命的是那条断言的报文会说「落进了窄化失败那一档」——**一句把人往坑里引的报文**：
+   * 照它去查夹具永远查不出问题，而真正错的是观测点选得太宽。
+   * 观测点必须落在**这张卡自己那一档**上，写法与上面「读不出来」两格逐字一致。
+   *
+   * ⚠️ **两条前置条件都不是死断言，各有量出来的红法**：
+   * ① 把夹具换成上面那格用的 `mangled`（协议缺 `sampleBody` ⇒ 真的落进窄化失败那一档）
+   *   ⇒ ①红成 `expected 1 to be +0`；
+   * ② 把 `sec-settings.js` 那条判据改成 `if (true)`（永远不画代码块）
+   *   ⇒ ②红成 `expected +0 to be 1`。
+   */
+  it("这条协议上一个模型都没有时，示例卡不画任何代码块，只画那句解释", async () => {
+    // 走另一条路（手抄一份夹具）的后果同仓就摆着：`tests/ui/dom/settings-save.test.ts`
+    // 里两份配置夹具，`BLOCKED` 那份已经改成接真源的 `EDITABLE_FIELDS` / `SECRET_FIELDS`，
+    // 而 `configBody()` 那份至今整份手抄、`editable` 写死为空数组。
+    // 那一族「夹具与真实契约偏离」的登记就在那个文件里。
+    const real = catalogPayload();
+    const derived = { ...real, models: real.models.map((m) => ({ ...m, protocols: [] })) };
+    const h = await openSettings(respondWith(derived));
+
+    // 前置条件 ①：把「落进窄化失败那一档」这条可能性钉死——否则这格测的是另一件事。
+    expect(section(h).querySelectorAll('[data-i18n="set.examples.unavailable"]').length,
+      "落进了「窄化失败」那一档，说明夹具没走到 noModel 分支").toBe(0);
+    // 前置条件 ②：派生只该打掉「要模型」那一条协议，没把整张卡打死。
+    // 默认停在真源给的第一条（不要模型），它照旧有代码块。
+    // ⚠️ **两条前置条件的顺序不能对调**：夹具真的落进窄化失败时代码块数恰好是 0
+    //（上面「响应读得回来但形状不对」那格已经量着这一点），②在前就会先红成
+    // 「把整张卡打死了」——**一句会把人引去查夹具、而真因在别处的报文**。
+    expect(section(h).querySelectorAll(".examples-code").length,
+      "派生目录把整张卡打死了，下面测的就不是 noModel 那一档").toBe(1);
+
+    // Gemini 是四条里唯一把模型拼进路径的那条。
+    clickTab(h, "data-ex-protocol", "gemini");
+
+    expect(section(h).querySelectorAll(".examples-code").length,
+      "一个模型都不支持这条协议，却还是拼出了一段示例").toBe(0);
+    expect(section(h).querySelectorAll(".examples-copy").length,
+      "没有示例可抄，却还画着一颗复制按钮").toBe(0);
+    // 文案取自字典真源，**不在这里再抄一遍那句中文**（同 `registrar-section.test.ts` 的写法）。
+    expect(section(h).textContent, "那句「这条协议没有可用模型」没画出来")
+      .toContain(I18N["set.examples.noModel"]!["zh-CN"]!);
+  });
+
+  /**
+   * **反向控制（刻意与上一格同一个 describe、同一个观测点、同一条协议）**：
+   * 上一格证明的是「我认得出『没有可用模型』」，这一格证明的是「我对真源原样不乱红」。
+   *
+   * ⚠️ **它的射程是量出来的，不是摆样子的**——两条各有一个只红这一格的变异：
+   * · 把 `modelForProtocol()` 改成恒返回 `null`（真源原样也说「没有模型」）
+   *   ⇒ 下面第一条红（`expected +0 to be 1`），而**上一格照样全绿**——这正是这一格独有的射程。
+   *  （同时红的还有既有那格「四个协议标签页 + 三个语言标签页，点一下代码块跟着换」，
+   *   那是它自己的射程，与这一格无关。）
+   * · 把那句 `set.examples.noModel` 无条件也 append 一份
+   *   ⇒ **只有**下面第二条红，上一格与既有 8 格全绿。
+   * ⚠️ 反过来也量过：把判据改成 `if (true)`（永远不画代码块）时**两格一起红**
+   *   ——所以别把这一格写成「上一格漏掉的那个变异全靠它」，那句话是假的。
+   *
+   * ⚠️ **默认应答仍是 `catalogPayload()`，一个字都没改**——改了会把既有那几格从
+   * 「测原件」降级成「测抄件」。
+   */
+  it("反向控制（同格 describe）：真源原样时照旧画出一个代码块", async () => {
+    const h = await openSettings(respondWith());
+    clickTab(h, "data-ex-protocol", "gemini");
+    expect(section(h).querySelectorAll(".examples-code").length).toBe(1);
+    expect(section(h).textContent, "真源原样，却画出了「没有可用模型」那句")
+      .not.toContain(I18N["set.examples.noModel"]!["zh-CN"]!);
   });
 });
