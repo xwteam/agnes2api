@@ -385,13 +385,29 @@ describe("左栏：档位与模型全部来自协议目录", () => {
    * `.pg-media-endpoint` 那一行的文字上（它是 `buildRequest()` 现拼出来的那条地址，
    * 不是另拼的一份）。
    *
-   * **变红条件（三条，逐条实测，见 progress note 的 M8/M9/M10）**：
+   * **变红条件（逐条实测；①②③ 见 progress note 的 M8/M9/M10，④ 是 P3e Task 18 回填时补的）**：
    * ① 把 `MODES` 里 `video` 那行的 `mode` 改成 `image` ⇒ 视频档拼出来的是图片那条地址 ⇒ 红；
    * ② 把 `currentMediaEndpoint()` 里的 `m.op === "generate"` 改成 `m.op === "poll"`
    *    ⇒ 图片档挑不到端点（图片没有 poll 那一条）、视频档拼出来的是轮询那条 ⇒ 红；
    * ③ 把 `buildModeBar()` 里那句 `if (mode === m.mode) return;` 之后的 `render()` 删掉
-   *    ⇒ 点了不重画 ⇒ 红。
+   *    ⇒ 点了不重画 ⇒ 红；
+   * ④ 往 `MODEL_CATALOG` 里再加一条 `modality: "video"` 的模型
+   *    ⇒ **只红视频那一条**（实测 `video 档下拉里的模型条数不对: expected 2 to be 1`），图片档照旧绿。
    *
+   * ⚠️ **④ 有两种看着对、其实打不中 video 那一半的改法，都实测过，别拿它们当红法**：
+   * · 把 `agnes-video-v2.0` 那行的 `modality` 改成 `"image"` ⇒ **先红在 image 那一条**
+   *   （`expected 3 to be 2`），循环里 video 那一趟根本轮不到执行
+   *   ——「第二层替第一层挡住变异」的又一例；
+   * · 直接删掉 `MODEL_CATALOG` 里那一行 ⇒ 实测整份目录**窄化不过**，面板落进「读不出来」
+   *   那一档，本文件大面积红（连模式条都不画了），那不是这一条断言的射程。
+   *
+   * ⚠️ **每档的模型条数（image 2 / video 1）为什么在这一格**：`sec-playground.js` 的 `MODES`
+   * 上方那段拿「`MODEL_CATALOG` 钉着 2 个 image + 1 个 video 模型」当**前提**，据此裁定
+   * `pg.model.noneMedia` 在形态名不漂时取不到。这个前提原来只有 image 那一半有机器
+   *（漂移那组的反向控制断言 image 档 2 项），**video 那一半一条断言都没有** ⇒ 真源哪天
+   * **多**一个视频模型，那段裁定里的「1 个 video」就静默变假（**少**一个不会静默——
+   * 见上一条：目录当场窄化不过）。这一格本来就把两档都点了一遍，顺手把条数一起钉住，
+   * 是最便宜的补法。
    * ⚠️ 地址期望值**手写整条字面量**（`PANEL_ORIGIN` 是夹具导出的探针值，
    * 路径那一半是手写的）——从 `catalogPayload()` 里取出来再回填就是第 6 种假阳性。
    */
@@ -404,12 +420,18 @@ describe("左栏：档位与模型全部来自协议目录", () => {
     // 对话档下**不该**出现媒体那一行说明（它是另一档的东西）。
     expect(pick(sec, ".pg-media-endpoint").length, "对话档下画出了媒体端点那一行").toBe(0);
 
-    for (const [name, wanted] of [
-      ["image", `POST ${PANEL_ORIGIN}/v1/images/generations`],
-      ["video", `POST ${PANEL_ORIGIN}/v1/videos`],
+    for (const [name, wanted, models] of [
+      ["image", `POST ${PANEL_ORIGIN}/v1/images/generations`, 2],
+      ["video", `POST ${PANEL_ORIGIN}/v1/videos`, 1],
     ] as const) {
       pick(sec, "[data-mode]").find((b) => b.getAttribute("data-mode") === name)!.click();
       await settle();
+      // 真源里这一档有几个模型 —— 见上方那条 ④：这是 `sec-playground.js` 判「兜底文案取不到」
+      // 所依赖的前提，两档都得钉住，不能只钉 image 那一半。
+      // ⚠️ **这一条必须排在端点行前面**：模型没了的时候端点行**也**画不出来（`buildRequest()`
+      // 两者任一为空都交 `null`，同一处过定性），排在后面的话 `one(sec, ".pg-media-endpoint")`
+      // 会先抛「应当恰好命中一个，实际 0」，把人引去查端点那一路，而真因在模型这一路。
+      expect(pick(sec, "option").length, `${name} 档下拉里的模型条数不对`).toBe(models);
       expect(one(sec, ".pg-media-endpoint").textContent, `${name} 档挑到的端点不对`).toBe(wanted);
       // 换档之后协议分段与流式开关都不该还在：媒体那两条端点不属于任何一条对话协议、
       // 也没有流式形态，留着它们就是两个按了没用的控件。
@@ -612,10 +634,12 @@ describe("形态名一漂，媒体那一档的三处兜底文案逐条上屏", (
    * · 端点行 0：见下面那条过定性说明（**要两处一起改**）；
    * · 下拉 0 项：`currentModelIds()` 媒体那一路换成 `catalog.models.map(...)`；
    * · 发送停用：`syncSendButton()` 里 `nodes.send.disabled` 赋成恒 `false`；
-   * · ① 字典交叉核对：改字典里 `pg.send.blockedNoEndpoint` 的 `zh-CN`（去掉句号即可）；
+   * · ① 字典交叉核对（`pg.send.blockedNoEndpoint`）：改字典里那句的 `zh-CN`（去掉句号即可）；
    * · ② tooltip：`sendBlockedKey()` 那一路返回 `pg.send.blockedNoProto`；
    * · ③ `data-i18n`：把媒体档那个 key 折成恒 `pg.model.none`；
-   * · ④ 文案内容：改字典里 `pg.model.noneMedia` 的 `zh-CN`（③ 照旧绿，④ 单独红）。
+   * · ④ 字典交叉核对（`pg.model.noneMedia`）：改字典里那句的 `zh-CN`（去掉句号即可）；
+   * · ⑤ 文案内容：把 `buildLeft()` 里那句 `elI18n("p", …)` 换成只带 `data-i18n` 属性、
+   *   **不写 `textContent`** 的 `el("p", …)`（③④ 照旧绿，⑤ 单独红 —— 这正是 ⑤ 存在的理由）。
    * · ⚠️ **「端点行 0」那一条是过定的（over-determined），明写**：形态名一漂之后
    *   端点与模型**同时**没了，而 `buildMediaNote()` 里 `buildRequest()` 在**两者任一为空**时
    *   都交出 `null` ⇒ **只改 `currentMediaEndpoint()` 那一处打不红它**
@@ -627,12 +651,16 @@ describe("形态名一漂，媒体那一档的三处兜底文案逐条上屏", (
   it("端点行 0（真源为 1）、模型下拉 0 项（真源为 2）、发送按钮停用且两句文案逐字上屏", async () => {
     const h = await openPg(respondWith({ catalog: { status: 200, body: drift() } }));
     const sec = h.section("playground");
-    // 前置条件：目录**读得回来**。落进「读不出来」那一档的话，下面四条全都恒成立
-    // 而测的完全是另一件事（那一档连模式条都不画）。
+    // 前置条件：目录**读得回来**。落进「读不出来」那一档的话，下面那些「没画出来」类的断言
+    // 全都恒成立，而测的完全是另一件事（那一档连模式条都不画）。
     expect(pick(sec, ".pg-unknown").length,
       "落进了「读不出来」那一档 —— 派生把目录改到窄化不过了，下面测的就不是形态名漂移")
       .toBe(0);
-    expect(pick(sec, "[data-mode]").length, "模式条没画出来，切不了档").toBe(3);
+    // ⚠️ 报文说的是「不是三档」而不是「没画出来」：已量到的那条红法（`MODES` 删掉 `video` 那行）
+    // 下模式条**是画出来的**，只是少一档（实测 `expected 2 to be 3`）。真的一档都不画那种情形
+    // 由上一条 `.pg-unknown` 管，两句不是一件事。
+    expect(pick(sec, "[data-mode]").length,
+      "模式条不是三档 —— 下面的切档与各项计数都不作数").toBe(3);
 
     toMode(sec, "image");
     await settle();
@@ -648,12 +676,19 @@ describe("形态名一漂，媒体那一档的三处兜底文案逐条上屏", (
     // ⚠️ 只断言渲染结果的话，两个 key 名一次都不出现在 `expect(` 上 ⇒
     // `grep -rn "noneMedia\|blockedNoEndpoint" tests/` 只会命中注释，
     // 而**一份只在注释里被提到的 key，与本任务开头要修的那个毛病是同一个形态**。
-    // 下面把「屏幕上那一句」与「注释里点名的那个 key」分两步绑住。
+    // 下面把「屏幕上那一句」与「注释里点名的那个 key」绑住，**两个 key 各一组、口径相同**：
+    // 先「字典里那一栏 = 这一句」，再「屏幕 = 这一句」。
     //
-    // ⚠️⚠️ **两步的顺序不能对调，这是量出来的**：写成「先文案后 key」的话，
-    // 改字典时**先红的永远是文案那条**，key 那条一次都轮不到执行 ⇒ 它变成一条
+    // ⚠️⚠️ **组内顺序不能对调，这是量出来的**：写成「先文案后字典」的话，
+    // 改字典时**先红的永远是文案那条**，字典那条一次都轮不到执行 ⇒ 它变成一条
     // 被上一层挡住、自己永远量不到自己的死断言（阶段 E 那条「第二层可能替第一层
-    // 挡住变异」的镜像）。现在的顺序下两条各有**只红自己**的变异，见上方清单。
+    // 挡住变异」的镜像）。现在的顺序下每条各有**只红自己**的变异，见上方清单。
+    //
+    // ⚠️ **两组必须对称**：`noneMedia` 那一组原来缺 ④ 这条字典交叉核对，于是改字典时
+    // 红出来的是 ⑤ 那句「屏幕上却没有任何一句话解释为什么」——**而那句话在屏幕上，
+    // 只是少了个句号**，且 vitest 会把实得的 `textContent` 截成 `…`，读的人看不见差异，
+    // 报文直接把人引去查 `buildLeft()` 里那个 `if (ids.length === 0)` 分支，真因却在字典里。
+    // （P3e Task 18 回填补上；紧邻的上一个提交 `730559f` 修的是同一个形态的毛病。）
 
     // ① tooltip 是 `t(blocked)` 直接写进 `title` 的，DOM 上不留 key 的痕迹 ⇒
     //    只能先钉「这一句 = 这个 key 的 zh-CN 那一栏」。
@@ -669,9 +704,14 @@ describe("形态名一漂，媒体那一档的三处兜底文案逐条上屏", (
     expect(pick(sec, '[data-i18n="pg.model.noneMedia"]').length,
       "那句话上屏了，但画它的不是 pg.model.noneMedia —— 注释里点名的那个 key 仍然没人用")
       .toBe(1);
-    // ④ 再钉那一段的**内容**：③ 只证明「这个 key 被用来画了一段」，
+    // ④ 与 ① 同一个口径：先钉「这一句 = 这个 key 的 zh-CN 那一栏」，
+    //    这样改字典时红在这里、报文点名字典，而不是让 ⑤ 去替它红。
+    expect(I18N["pg.model.noneMedia"]!["zh-CN"],
+      "字典里 pg.model.noneMedia 的 zh-CN 改了，而下面那条手写期望没跟着改")
+      .toBe("这个形态下没有可用的模型。");
+    // ⑤ 再钉那一段的**内容**：③ 只证明「这个 key 被用来画了一段」，
     //    一段空白的 `<p data-i18n=…>` 照样能过 ③。
-    expect(sec.textContent, "模型下拉空了，屏幕上却没有任何一句话解释为什么")
+    expect(sec.textContent, "模型下拉空了，屏幕上那一段是空的 —— 去看 ui.js 的 elI18n() 有没有写 textContent")
       .toContain("这个形态下没有可用的模型。");
   });
 
@@ -687,7 +727,7 @@ describe("形态名一漂，媒体那一档的三处兜底文案逐条上屏", (
    * ⇒ 真源原样时这颗按钮**照样是灰的**，只是灰的**理由**不同。
    * 观测点因此落在「那两句兜底文案一句都没上屏」上，而不是按钮的可用性上。
    *
-   * ── **这一格四条断言各自的红法（同样是量出来的）** ────────────────────────────
+   * ── **这一格每条断言各自的红法（同样是量出来的）** ────────────────────────────
    * · 端点行 1：`currentMediaEndpoint()` 里 `m.op === "generate"` 改成 `"poll"`
    *  （这也是**唯一单点就能打红端点那一行**的地方，上一格那条端点断言做不到）；
    * · 下拉 2 项：`currentModelIds()` 媒体那一路换成 `catalog.models.map(...)`（红成 4）；
@@ -710,8 +750,12 @@ describe("形态名一漂，媒体那一档的三处兜底文案逐条上屏", (
     expect(one(sec, ".pg-send").getAttribute("title"),
       "真源原样，却说「目录里没有这个形态的端点」")
       .not.toBe("协议目录里没有这个形态的端点，这一档发不出请求。");
-    // 与上一格 ③④ 同序、同理由：先「这个 key 没被用来画东西」，再「那句话没上屏」。
+    // 与上一格 ③⑤ 同序、同理由：先「这个 key 没被用来画东西」，再「那句话没上屏」。
     // 后一条不是前一条的重复——**把那句中文硬编码进来、绕开 key** 时只有它会红。
+    // ⚠️ 这一格**不需要**再抄一遍上一格 ①④ 那两条字典交叉核对：这里两条都是 `not.*`，
+    // 字典改一个字它们照样绿，抄过来也只是同一条断言的第二份副本。这两句手写字面量
+    // 与上一格 ①④ 钉的是**同两句、同一个 `zh-CN` 栏位** ⇒ 字典一改上一格当场红，
+    // 改的人必然回到这两句上；时效靠的是那道红，不是这一格自己。
     expect(pick(sec, '[data-i18n="pg.model.noneMedia"]').length,
       "真源原样，却画出了 pg.model.noneMedia 那一段").toBe(0);
     expect(sec.textContent, "真源原样，却说「这个形态下没有可用的模型」")
