@@ -296,16 +296,54 @@ describe("视频两段式：任务标识与轮询", () => {
       [{ id: "task-1" }, "task-1"],
       [{ task_id: "task-1" }, "task-1"],
       [{ taskId: "task-1" }, "task-1"],
-      [{ name: "operations-abc123" }, "operations-abc123"],
       [{ data: { id: "task-1" } }, "task-1"],
       [{ data: { task_id: "task-1" } }, "task-1"],
     ])("正向：%j ⇒ 取得到", (body, want) => { expect(videoTaskIdOf(body)).toBe(want); });
 
+    /**
+     * ⚠️ **反向这一组里每一格靠的是谁，逐格登记**（P3e Task 21 回填；上一版漏登记了
+     * `model` 那一格，而它当时的值 `"agnes-video-v2.0"` 里带 `.`，**先被形状判据挡下**
+     *  ⇒ 把 `["model"]` 加进槽表它照样绿 ⇒ 单条变异下它是一格纯装饰）：
+     * · `status` / `state` / `object` / `model` / `name` 这五格靠的是**槽表**——
+     *   值都过得了形状判据，把对应的键加进表里、或把 `videoTaskIdOf()` 放宽成值扫描，
+     *   当场红。`model` 的值已由 `"agnes-video-v2.0"` 改成 `"agnes_video_v2"` 才有这颗牙。
+     * · `name` 那一格是本轮**把 `["name"]` 移出表**之后的执行机构：加回去当场红
+     *   （理由写在 `admin-ui/js/pure/playground.mjs` 的 `VIDEO_TASK_ID_SLOTS` 上方）。
+     * · `{ id: 12345 }` 与 `["task-1"]` 靠的**不是**槽表，是 `videoTaskIdOk()` / `obj()`——
+     *   放宽槽表不会让它们红。**这是刻意的分工，不是漏**，写在这里免得读成「这几格都在守表」。
+     */
     it.each([
       [{ status: "queued" }], [{ state: "running" }], [{ object: "video" }],
-      [{ model: "agnes-video-v2.0" }], [{ id: 12345 }], [["task-1"]],
+      [{ model: "agnes_video_v2" }], [{ name: "my_video", status: "queued" }],
+      [{ id: 12345 }], [["task-1"]],
     ])("反向：%j 仍必须是 null（一个 \"queued\" 就会被轮到上限）", (body) => {
       expect(videoTaskIdOf(body)).toBeNull();
+    });
+
+    /**
+     * **`name` 为什么不在表上（P3e Task 21 回填，实测口径）。**
+     *
+     * 它进表时写的理由是「长跑作业的资源名」，而真实的那个形态是 `operations/xxx`——
+     * **`/` 过不了形状判据**（网关那条路由同判，放行了也只换来一个 400）。
+     * 于是 `name` 那一格对自己被加进来的理由是死的，剩下能过判据的只有
+     * **运维自己传的显示名被上游回显**那一族，而那一族被当成任务标识的后果是轮空到上限
+     *（行为面那一格在 `tests/ui/dom/playground-section.test.ts` 的
+     * 「上游把运维传的显示名回显在 name 里时一次都不轮 —— 拿显示名去轮只会一边 404 一边说「正在轮询」」）。
+     *
+     * ⚠️ 这一格**不是**只登记「name 取不到」——那句话上面反向那一组已经有了。
+     * 它登记的是**那个理由本身不成立**：前两条即使有人把 `["name"]` 加回表里也照样 `null`，
+     * 它们红在「有人放宽 `videoTaskIdOk()` 去收 `/`」这个方向上。
+     */
+    it("真实的长跑作业名过不了形状判据 —— name 那一格对它被加进来的那个理由是死的", () => {
+      expect(videoTaskIdOk("operations/abc123"), "形状判据开始收 `/` 了 —— 网关那条路由不收，面板放行只换来一个 400")
+        .toBe(false);
+      expect(videoTaskIdOf({ name: "operations/abc123" })).toBeNull();
+      expect(videoTaskIdOf({ name: "models/veo-3.0/operations/abc" })).toBeNull();
+      // 连字符那个形态（上一版正向组里那个**为过正则造出来的**值）现在也取不到：那一格不在表上。
+      expect(videoTaskIdOf({ name: "operations-abc123" })).toBeNull();
+      // **非空锚**：同一个值放进表上的槽就取得到 ⇒ 上面那三条 `null` 不是「这个值本身有毛病」。
+      expect(videoTaskIdOf({ task_id: "operations-abc123" }), "非空锚塌了 —— 上面那几条 null 有第二种成因")
+        .toBe("operations-abc123");
     });
 
     /**
@@ -328,9 +366,19 @@ describe("视频两段式：任务标识与轮询", () => {
      *（第 6 种假阳性：拿被测物推出期望值，改了表两边一起动，一格都不会红）。
      * 这一条同时是「文案不再是全称句」那半的执行机构：`pg.media.noTaskId` 说
      * 「本面板只认这几格 `{slots}`」，而 `{slots}` 里逐字就是下面这串。
+     *
+     * ⚠️⚠️ **第二条断言钉的是另一样东西：派生关系**（P3e Task 21 回填，实测补的）。
+     * 只有上面那条手写字面量的话，**把 `videoTaskIdSlotsText()` 的函数体换成手抄的字面量、
+     * 同时往槽表里加一格 ⇒ `tests/ui/` 全绿**（实测过），而此刻面板读 N+1 格、
+     * 屏幕只列 N 格——正是那段注释逐字说要防的「静静变假」。
+     * 手写字面量钉**内容**，长度那条钉**这串是不是真从表里现渲染出来的**，两者不重叠。
      */
     it("槽表渲染成给运维看的那一串 —— 屏幕上那句限定句列的就是这几格", () => {
-      expect(videoTaskIdSlotsText()).toBe("id / task_id / taskId / name / data.id / data.task_id");
+      expect(videoTaskIdSlotsText()).toBe("id / task_id / taskId / data.id / data.task_id");
+      expect(
+        videoTaskIdSlotsText().split(" / ").length,
+        "屏幕上那串与槽表长度对不上 —— 它已经不是从表里现渲染的了（手抄的那份正在静静变假）",
+      ).toBe(VIDEO_TASK_ID_SLOTS.length);
     });
   });
 

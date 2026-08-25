@@ -3448,7 +3448,7 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
     // 拿 `videoTaskIdSlotsText()` 回填的话，槽表改了两边一起动，屏幕上少列一格也不会红。
     const noTask = one(sec, ".pg-no-task").textContent;
     expect(noTask, "那句话没按槽表插值 —— 屏幕上会出现裸的占位符")
-      .toBe(say("pg.media.noTaskId", { slots: "id / task_id / taskId / name / data.id / data.task_id" }));
+      .toBe(say("pg.media.noTaskId", { slots: "id / task_id / taskId / data.id / data.task_id" }));
     expect(noTask.includes("{slots}"), "占位符原样漏到了屏幕上").toBe(false);
     // ⚠️ **非空锚，别删**：只有上面那条 `say()` 比对的话，字典里那句话哪天被改回
     // 不带 `{slots}` 的全称句，两边会**一起**变回旧句子而这一格照样全绿
@@ -3468,8 +3468,16 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
    *（`startPolling()` 里任何一句早退都能造出它），而那正是运维会盯着一个
    * 永远不动的框等下去的形态。
    *
-   * **变红条件**：把 `VIDEO_TASK_ID_SLOTS` 缩回只剩 `["id"]`
-   * ⇒ 这一格红在「打点次数 0」与「画的是没有标识那一档」两处。
+   * **变红条件（实测，逐字记报文）**：把 `VIDEO_TASK_ID_SLOTS` 缩回只剩 `["id"]`
+   * ⇒ 这一格红在**第一条 `expect`** 上，报文是
+   * `选择器 .pg-task-id 应当恰好命中一个，实际 0`。
+   * ⚠️ **只红这一处**：`h.calls` 那条排在它后面，而 vitest 在第一条 `expect` 就停
+   *（上一版这段写着「红在『打点次数 0』与『画的是没有标识那一档』两处」——**那是假话**：
+   *  「打点次数」那句报文全文件只有一处，而且在**别的格**里（那个 60 拍上限格），
+   *  照着它去复核变异的人在这一格里一处都找不到）。
+   * ⇒ **`h.calls` 那条守的是另一个方向**：`startPolling()` 里任何一句早退
+   *（认出来了、屏幕上也画了，就是不轮）——那条变异动不了 `.pg-task-id`，
+   * 只有它会红。两条断言各守一个方向，不是同一条变异的两处。
    */
   it("标识放在 task_id 那一格时照样接着轮 —— 认得出却不轮的话，运维盯着一个永远不动的框", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -3495,6 +3503,46 @@ describe("视频两段式：建任务 + 轮询，以及那三条护栏", () => {
     expect(h.calls.filter((c) => c.url.startsWith(PANEL_ORIGIN)).map((c) => c.url))
       .toEqual([CREATE, POLL, POLL]);
     expect(one(sec, ".pg-media-url").textContent).toBe("https://cdn.invalid/v.mp4");
+  });
+
+  /**
+   * ── **`name` 那一格移出槽表之后的行为面（P3e Task 21 回填）** ────────────────
+   *
+   * 上一版 `["name"]` 在槽表上，理由写的是「长跑作业的资源名」。**那个理由是死的**：
+   * 真实的 `operations/xxx` 过不了形状判据（纯函数那侧
+   * `tests/ui/playground-media.test.ts` 的「真实的长跑作业名过不了形状判据 —— name 那一格对它被加进来的那个理由是死的」逐条量过）。
+   * 而**能**过判据的 `name` 是另一族：**运维自己在建任务时传的显示名被上游原样回显**，
+   * 这一档在屏幕上实测长这样——**一边贴着 404 与 `task not found`、一边说
+   * 「正在轮询这个任务的结果，已经查过 N 次」**，并一路轮到 `VIDEO_POLL_MAX_ATTEMPTS`
+   *（60 拍 / 5 分钟，**每一拍都烧一次配额**，全局约束 14）。
+   *
+   * ⚠️ **观测点是真发出去的那几条请求，不是屏幕文字**：
+   * 只断言 `.pg-no-task` 画出来了的话，「屏幕上说没有标识、后台照旧在轮」这条形态全绿——
+   * 而那正是最费配额的一种。
+   * ⚠️ **夹具里那条 404 在绿路径上一次都走不到**（这一格断言的就是「零次轮询」）。
+   * 它不是前置条件，是**给变异路径备着的**：把 `["name"]` 加回槽表之后打出去的那几拍
+   * 拿回来的正是它，那时报文里那句「一边贴着 404 一边说正在轮询」才是可核的实况。
+   *
+   * **变红条件**：把 `["name"]` 加回 `VIDEO_TASK_ID_SLOTS`
+   * ⇒ 这一格红在第一条 `expect`，报文是「拿显示名当任务标识去轮了…」。
+   */
+  it("上游把运维传的显示名回显在 name 里时一次都不轮 —— 拿显示名去轮只会一边 404 一边说「正在轮询」", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { h, sec } = await startVideo(respondWith({
+      gateway: (url) => (url === CREATE
+        ? { status: 200, body: { name: "my_video", status: "queued" } }
+        : { status: 404, body: { error: { message: "task not found" } } }),
+    }));
+    await tick();
+    await tick();
+    vi.useRealTimers();
+
+    expect(
+      h.calls.filter((c) => c.url.startsWith(`${PANEL_ORIGIN}/v1/videos/`)).length,
+      "拿显示名当任务标识去轮了 —— 屏幕会一边贴着 404 一边说「正在轮询…已经查过 N 次」，一路轮到上限",
+    ).toBe(0);
+    expect(pick(sec, ".pg-task-id").length, "把一个显示名画成了任务标识").toBe(0);
+    expect(pick(sec, ".pg-no-task").length, "既没轮也没说是哪一档 —— 运维手上什么都没有").toBe(1);
   });
 
   /**
