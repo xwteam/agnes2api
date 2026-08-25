@@ -83,7 +83,8 @@ import {
   selectAllIds, pruneSelection, headerSelectAllChecked, bulkBarVisible,
   toggleSelection, applySelectAll, knobsLoaded, hasNote,
   bulkResultSummary, bulkResultPresentation, importLines, hasImportableContent,
-  importResultCounts, importResultPresentation, noteToPatch, NOTE_MAX_LENGTH, isOpaqueErrorMessage,
+  importResultCounts, importResultPresentation, noteToPatch, NOTE_MAX_LENGTH,
+  adminErrorFields, adminErrorText,
   verifyDisabledReason, verifyDisabledTitleKey, verifyResultCode, verifyTransportCode,
   verifyResultLabelKey, VERIFY_MIN_INTERVAL_MS,
 } from "./pure/keys-write.mjs";
@@ -569,18 +570,21 @@ function restartTimer() {
 }
 
 /**
- * 写操作失败时给用户看的话。优先用后端 `error.message`（人话），拿不到、
- * 或者它是 `isOpaqueErrorMessage()` 判出来的内部码时退回一句通用文案。
+ * 写操作失败时给用户看的话。**全面板唯一一处会碰到后端 `message` 的地方。**
  *
  * ⚠️ 这句原来写着"绝不把裸的 http_500 这类内部码丢给运维"，而当时的判据只看
  * "是不是非空字符串"——那句话是假的（评审探针实测：500 无 message、401、
- * 备注超长的中文 message 三种都会原样进 toast）。现在判据搬进了
- * `pure/keys-write.mjs` 的 `isOpaqueErrorMessage()`，这里只调用它；那个函数的
- * 说明里也如实登记了"后端中文校验 message 直投非中文面板"这个仍未关掉的破口。
+ * 备注超长的中文 message 三种都会原样进 toast）。判据因此搬进了
+ * `pure/keys-write.mjs` 的 `isOpaqueErrorMessage()`。
+ *
+ * ⚠️⚠️ **那次搬家只关掉了一半**：内部码拦住了，而后端中文校验 `message` 仍然被
+ * 原样投给 ja / en / ko 的面板。**P3e Task 22A 把另一半也关掉了**——后端多回一格
+ * 闭集里的 `error.code`，这里改走 `adminErrorText()` 拿码查五语言字典，
+ * 表外的码才回落到后端原话、并且带一个看得见的标记。三分的顺序与理由全文
+ * 在那个函数上方，**这里只负责把当前语言的 `t` 递进去**（pure 模块拿不到语言状态）。
  */
 function errorMessage(e) {
-  const raw = e && typeof e.message === "string" ? e.message : "";
-  return isOpaqueErrorMessage(raw) ? t("keys.writeFailed") : raw;
+  return adminErrorText(adminErrorFields(e), t, "keys.writeFailed");
 }
 
 /** 单条 PATCH（停用/启用/清冷却/解除剔除/备注）的统一收尾：成功/失败都提示一次，

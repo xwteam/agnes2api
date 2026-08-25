@@ -1,6 +1,9 @@
 import type { MiddlewareHandler } from "hono";
 import type { Logger } from "../../ports/logger.js";
 import { clientIp } from "../client-ip.js";
+// 管理树自己的错误信封：**比网关那份多一格 `code`**，面板靠它选五语言文案。
+// 两个函数为什么不合并，见 `./errors.ts` 的文件头。
+import { adminErrorBody } from "./errors.js";
 
 /**
  * 常数时间比较：先比长度，再逐字节异或累加，**中途不提前 return**。
@@ -249,7 +252,7 @@ export function adminAuth(
       // **响应体不说原因**。这个分支跑在验证凭据之前，任何未鉴权的调用方都拿得到
       // 它；说出「两把口令相同」，等于告诉一个手里已经有中转口令的人「管理口令就是
       // 你手上那把」。原因只进日志，那是运维才看得到的地方。
-      return c.json({ error: { type: "service_unavailable", message: "管理接口不可用" } }, 503);
+      return c.json(adminErrorBody("service_unavailable", "admin_unavailable", "管理接口不可用"), 503);
     }
 
     // **只认请求头**。刻意不接受 `?key=`（`/v1` 接受它是为了 Gemini 协议兼容，
@@ -265,7 +268,7 @@ export function adminAuth(
         level: "warn", event: "admin.login_failed", msg: "管理接口凭据无效",
         fields: { ip: clientIp(c, trustProxy), path: auditPath(c.req.path), hasHeader: provided.length > 0 },
       });
-      return c.json({ error: { type: "unauthorized", message: "未授权" } }, 401);
+      return c.json(adminErrorBody("unauthorized", "admin_unauthorized", "未授权"), 401);
     }
     await next();
   };

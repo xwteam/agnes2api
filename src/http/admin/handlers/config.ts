@@ -10,7 +10,13 @@ import {
   validateConfigPatch, clearSecret, configLoadBlockers, envNameOf,
   SECRET_FIELDS, EDITABLE_FIELDS, type ConfigError,
 } from "../../../core/admin/config-validate.js";
-import { httpError, readJson } from "../../errors.js";
+import { httpError } from "../../errors.js";
+// 管理树自己的请求体解析：**畸形 JSON 那一档要带 `code`**，理由见 `../errors.ts`。
+// ⚠️ 本文件其余几处 `httpError()` 刻意仍是不带码的网关信封：设置页**从不渲染**
+// `error.message`（`admin-ui/js/sec-settings.js` 的 `save()` 拿的是顶层 `errors[]`
+// 里的逐字段 `code`，取不到就退回 `set.saveFailed` 那句五语言文案）
+// ⇒ 它们够不着屏幕，不在 P3e Task 22A 的射程里。**这不是漏了，是边界。**
+import { readAdminJson } from "../errors.js";
 
 /**
  * 配置的四条管理端点（设计 §5.3 / §5.4 / §8.6 / §10.4 / §11）。
@@ -223,8 +229,13 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
       return { prov, ...split(prov.source), configDegraded: prov.config.degraded, loadBlocked: [] };
     } catch {
       const blockers = configLoadBlockers(stored ?? {}, wiring.env);
-      // 具体原因（`posInt` 那类）只进事件板块，**不进响应体**：那是一句后端中文
-      // `Error.message`，把它变成对外契约是 P3e 才裁的事。
+      // 具体原因（`posInt` 那类）只进事件板块，**不进响应体**。
+      // ⚠️ **P3e Task 22A 已经裁完，这里改写成结论**：管理接口的对外契约是
+      // `error.code`（闭集，见 `src/core/admin/admin-errors.ts`），**`message` 不是**
+      // ——它是给日志与 API 客户端读的，措辞随时可以改而不算破坏兼容。
+      // 一句后端中文 `Error.message` 因此**更不能**进响应体：它既不是契约，
+      // 又会被面板当成人话画到非中文用户脸上。这一档的兜底码是
+      // `config_unloadable`（下面那个 `loadBlocked`），面板已有五语言文案。
       if (blockers.length === 0) {
         logger.log({
           level: "error", event: "config.unloadable",
@@ -294,7 +305,7 @@ function asObject(body: unknown, what: string): Record<string, unknown> {
  * 「保存成功、什么都没发生」，而面板会如实显示保存成功——本仓已经反复裁过同一形状。
  */
 async function readPatch(c: Context): Promise<Record<string, unknown>> {
-  const body = asObject(await readJson<unknown>(c), "请求体");
+  const body = asObject(await readAdminJson<unknown>(c), "请求体");
   const extra = Object.keys(body).filter((k) => k !== "patch");
   if (extra.length > 0) {
     throw httpError(400, "invalid_request_error", `不认识的字段：${extra.join(", ")}`);
@@ -452,7 +463,7 @@ export function configClearSecretHandler(deps: ConfigDeps) {
     const wiring = deps.wiring;
     if (wiring === null) return notWired(c);
 
-    const body = asObject(await readJson<unknown>(c), "请求体");
+    const body = asObject(await readAdminJson<unknown>(c), "请求体");
     const extra = Object.keys(body).filter((k) => k !== "path");
     if (extra.length > 0) {
       throw httpError(400, "invalid_request_error", `不认识的字段：${extra.join(", ")}`);

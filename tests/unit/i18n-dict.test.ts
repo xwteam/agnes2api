@@ -47,6 +47,12 @@ const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 // 自动派生不会漏但也不会逼人表态。**两者都留着，才是这一半还没被收编的那份冗余。**
 const NAMESPACES = [
   "gate", "nav", "shell", "common", "reg", "keys", "ov", "ev", "set", "usage", "models", "pg",
+  // ⚠️ `err` 是 P3e Task 22A 新开的命名空间（管理接口错误码 → 五语言文案）。
+  // **它是被上面那条「反向自检 ②」逼出来的**：新命名空间加进字典、被
+  // `admin-ui/js/pure/keys-write.mjs` 的 `ADMIN_ERROR_TEXT_KEY` 真的用作 key 前缀，
+  // 而这张表没跟上 ⇒ 那一格当场红并点名 `err`。**那正是它按设计工作**——
+  // 上一次（P3b 加 `ov`/`ev`）没有这条自检，于是没人回来表态。
+  "err",
 ] as const;
 // ⚠️ **两种引号都要扫。** 与 `scripts/check-i18n.mjs` 规则 ⑧ 早就补上的那条同源：
 // 实测 `elI18n('h2','usage.titel')`（单引号 + 拼错）能让六道脚本门禁 + 全量用例

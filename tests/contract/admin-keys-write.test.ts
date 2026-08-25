@@ -5,6 +5,7 @@ import { MAX_IMPORT_KEYS, MAX_NOTE_LENGTH } from "../../src/http/admin/handlers/
 import { MAX_KEY_LENGTH } from "../../src/core/keypool-repo.js";
 import type { KeyView } from "../../src/core/admin/key-view.js";
 import type { KeyRecord } from "../../src/core/types.js";
+import { ADMIN_ERROR_CODES, ADMIN_ERROR_PARAMS } from "../../src/core/admin/admin-errors.js";
 
 /**
  * Key 池的四条写端点（P3c Task 3）。
@@ -872,5 +873,113 @@ describe("POST /admin/api/keys/bulk", () => {
   ])("请求体形状不对时 400：%s", async (_name, body) => {
     const { app } = await makeApp([], ["sk-bulk-400-target-aaaa"], {}, () => NOW);
     expect((await send(app, "POST", "/admin/api/keys/bulk", body)).status).toBe(400);
+  });
+});
+
+/**
+ * **面板会渲染的那一族 400/404/409：机器可读的码，而不是一句中文散文**（P3e Task 22A）。
+ *
+ * ⚠️⚠️ **这是那条「归属定死归 P3e」的破口的后端半身。** 在它之前，这一族错误的
+ * `error.message` 是中文散文（`note 最长 200 个字符` / `不认识的字段：…`），
+ * 而 `admin-ui/js/sec-keys.js` 的 `errorMessage()` 把它**原样**画给 ja / en / ko 用户。
+ * 前端半身（拿码查五语言字典、表外的码回落并带标记）在
+ * `tests/ui/keys-write.test.ts`「已知 code ⇒ 渲染五语言字典里的那句，不是后端那句中文」
+ * 与 `tests/ui/keys-write.test.ts`「表外的 code ⇒ 回落到后端原话，并且带一个看得见的标记」两格。
+ *
+ * ⚠️ **`message` 一个字都没删，这里也顺带钉住这件事**：它是给日志与 API 客户端的。
+ * 契约是 `code`，**不是** `message`——后者的措辞随时可以改而不算破坏兼容。
+ */
+describe("写端点的错误体：码在闭集里，message 仍在", () => {
+  /** 一次会失败的请求，连同它的响应体。 */
+  async function failWith(app: App, method: string, path: string, body?: unknown) {
+    const res = await send(app, method, path, body);
+    expect(res.status, `${method} ${path} 本该失败`).toBeGreaterThanOrEqual(400);
+    const parsed = await res.json() as {
+      error?: { type?: string; code?: string; message?: string; params?: Record<string, unknown> };
+    };
+    return { status: res.status, error: parsed.error ?? {} };
+  }
+
+  /** 五个真实会走到的失败路径。**每一条都是面板上真按得出来的动作。** */
+  async function allFailures(app: App, id: string) {
+    return {
+      noteTooLong: await failWith(app, "PATCH", `/admin/api/keys/${id}`, { note: "x".repeat(MAX_NOTE_LENGTH + 1) }),
+      unknownField: await failWith(app, "PATCH", `/admin/api/keys/${id}`, { disbaled: true }),
+      emptyPatch: await failWith(app, "PATCH", `/admin/api/keys/${id}`, {}),
+      notFound: await failWith(app, "DELETE", "/admin/api/keys/nope"),
+      badBulkOp: await failWith(app, "POST", "/admin/api/keys/bulk", { op: "nuke", ids: [] }),
+      tooManyImport: await failWith(app, "POST", "/admin/api/keys", {
+        keys: Array.from({ length: MAX_IMPORT_KEYS + 1 }, (_, i) => `sk-code-scan-${i}`),
+      }),
+    };
+  }
+
+  it("每一条失败都带 error.code，而且 code 在闭集里", async () => {
+    const { app, repo } = await makeApp([], ["sk-err-code-target-aaaa"], {}, () => NOW);
+    const [k] = await repo.all() as [KeyRecord];
+    for (const [name, f] of Object.entries(await allFailures(app, k.id))) {
+      expect(f.error.code, `${name} 没有 error.code —— 面板只能回去解析中文`).toBeDefined();
+      expect(ADMIN_ERROR_CODES as readonly string[], `${name} 的 code「${f.error.code}」不在闭集里`)
+        .toContain(f.error.code);
+    }
+  });
+
+  it("六种不同的失败给出六个不同的 code —— 否则这一族码只是换个地方说「出错了」", async () => {
+    // **反向控制**：把全部 `code` 写成同一个兜底值时，上面那一格照样绿。
+    const { app, repo } = await makeApp([], ["sk-err-distinct-target-a"], {}, () => NOW);
+    const [k] = await repo.all() as [KeyRecord];
+    const codes = Object.values(await allFailures(app, k.id)).map((f) => f.error.code);
+    expect(new Set(codes).size, `六条路径只给出了 ${new Set(codes).size} 个不同的 code：${codes.join(", ")}`)
+      .toBe(codes.length);
+  });
+
+  it("message 一个字都没删 —— 它是给日志与 API 客户端的，契约是 code 不是它", async () => {
+    const { app, repo } = await makeApp([], ["sk-err-msg-kept-target"], {}, () => NOW);
+    const [k] = await repo.all() as [KeyRecord];
+    for (const [name, f] of Object.entries(await allFailures(app, k.id))) {
+      expect(typeof f.error.message, `${name} 的 message 没了`).toBe("string");
+      expect((f.error.message ?? "").length, `${name} 的 message 是空串`).toBeGreaterThan(0);
+      // `type` 同样保留：四协议信封的形状不因为多一格 `code` 而变。
+      expect(typeof f.error.type).toBe("string");
+    }
+  });
+
+  it("每条错误响应带的 params 与它那个 code 声明的逐字相等", async () => {
+    // 两侧都是现取现比：一侧是真 HTTP 响应体，另一侧是 `ADMIN_ERROR_PARAMS`。
+    // **没有任何一张手写的期望表**——改字典占位符或改后端实参，两边有一边会不相等。
+    const { app, repo } = await makeApp([], ["sk-err-params-target-aa"], {}, () => NOW);
+    const [k] = await repo.all() as [KeyRecord];
+    for (const [name, f] of Object.entries(await allFailures(app, k.id))) {
+      const declared = ADMIN_ERROR_PARAMS[f.error.code as keyof typeof ADMIN_ERROR_PARAMS];
+      expect(declared, `${name} 的 code 不在 ADMIN_ERROR_PARAMS 里`).toBeDefined();
+      expect(Object.keys(f.error.params ?? {}).sort(), `${name} 的 params 与声明对不上`)
+        .toEqual([...declared].sort());
+    }
+  });
+
+  it("params 里一个中文字符都不许有 —— 插进 ja/ko 的句子里就是同一个破口", async () => {
+    // `params` 会被 `t(key, params)` 原样插进五语言句子里。往里塞一句中文
+    // （例如把 `${what}` 那个「请求体」传进来）等于把这次要关掉的破口缩小重演一遍。
+    const { app, repo } = await makeApp([], ["sk-err-params-han-aaaa"], {}, () => NOW);
+    const [k] = await repo.all() as [KeyRecord];
+    for (const [name, f] of Object.entries(await allFailures(app, k.id))) {
+      expect(JSON.stringify(f.error.params ?? {}), `${name} 的 params 里有汉字`).not.toMatch(/[一-鿿]/);
+    }
+  });
+
+  it("反向控制：那条汉字判据在真的有汉字的 message 上确实说「有」", () => {
+    // 少了这一格，上面那格在「params 恒为空」时也是绿的，而判据本身可能压根不认汉字。
+    expect(JSON.stringify({ what: "请求体" })).toMatch(/[一-鿿]/);
+  });
+
+  it("单条 DELETE 的 409 同时带 code 与设计 §11 的顶层 reason —— 两个都不许少", async () => {
+    const { app, repo } = await makeApp([], ["sk-err-409-live-key-aa"], {}, () => NOW);
+    const [k] = await repo.all() as [KeyRecord];
+    const res = await send(app, "DELETE", `/admin/api/keys/${k.id}`);
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error?: { code?: string }; reason?: string };
+    expect(body.error?.code).toBe("must_disable_first");
+    // 顶层 `reason` 是设计 §11 逐字定死的那一格，`isMustDisableFirstConflict()` 读的是它。
+    expect(body.reason).toBe("must_disable_first");
   });
 });

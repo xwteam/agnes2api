@@ -3,7 +3,7 @@ import type { Logger } from "../../../ports/logger.js";
 import type { KeyPoolRepo } from "../../../core/keypool-repo.js";
 import type { KeyRecord } from "../../../core/types.js";
 import { isDisabled } from "../../../core/keypool.js";
-import { httpError, readJson } from "../../errors.js";
+import { adminError, adminErrorBody, readAdminJson } from "../errors.js";
 
 /**
  * Key 池的四条写端点。**本仓第一批 `/admin/api/*` 写方法**——在此之前那棵树上
@@ -57,7 +57,10 @@ export const MAX_NOTE_LENGTH = 200;
 /** 请求体必须是一个 JSON 对象（不是数组、不是标量）。 */
 function asObject(body: unknown, what: string): Record<string, unknown> {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    throw httpError(400, "invalid_request_error", `${what} 必须是一个 JSON 对象`);
+    // ⚠️ **`what` 刻意不进 `params`**：它是一句中文（「请求体」），插进 ja/ko 的
+    // 字典串里等于把中文又漏回屏幕上——正是这次要关掉的那个破口的微缩版。
+    // 它只留在 `message` 里给日志与 API 客户端读。
+    throw adminError(400, "invalid_request_error", "body_not_an_object", `${what} 必须是一个 JSON 对象`);
   }
   return body as Record<string, unknown>;
 }
@@ -70,7 +73,9 @@ function asObject(body: unknown, what: string): Record<string, unknown> {
 function optBool(o: Record<string, unknown>, name: string): boolean | undefined {
   const v = o[name];
   if (v === undefined) return undefined;
-  if (typeof v !== "boolean") throw httpError(400, "invalid_request_error", `${name} 必须是布尔值`);
+  if (typeof v !== "boolean") {
+    throw adminError(400, "invalid_request_error", "not_a_boolean", `${name} 必须是布尔值`, { field: name });
+  }
   return v;
 }
 
@@ -79,9 +84,14 @@ function optNote(o: Record<string, unknown>): string | null | undefined {
   const v = o.note;
   if (v === undefined) return undefined;
   if (v === null) return null;
-  if (typeof v !== "string") throw httpError(400, "invalid_request_error", "note 必须是字符串或 null");
+  if (typeof v !== "string") {
+    throw adminError(400, "invalid_request_error", "note_not_a_string", "note 必须是字符串或 null");
+  }
   if (v.length > MAX_NOTE_LENGTH) {
-    throw httpError(400, "invalid_request_error", `note 最长 ${MAX_NOTE_LENGTH} 个字符`);
+    throw adminError(
+      400, "invalid_request_error", "note_too_long",
+      `note 最长 ${MAX_NOTE_LENGTH} 个字符`, { max: MAX_NOTE_LENGTH },
+    );
   }
   return v;
 }
@@ -96,7 +106,10 @@ function optNote(o: Record<string, unknown>): string | null | undefined {
 function rejectUnknown(o: Record<string, unknown>, allowed: readonly string[]): void {
   const extra = Object.keys(o).filter((k) => !allowed.includes(k));
   if (extra.length > 0) {
-    throw httpError(400, "invalid_request_error", `不认识的字段：${extra.join(", ")}`);
+    throw adminError(
+      400, "invalid_request_error", "unknown_field",
+      `不认识的字段：${extra.join(", ")}`, { fields: extra.join(", ") },
+    );
   }
 }
 
@@ -158,14 +171,17 @@ function paramId(c: Context): string {
  */
 export function keysImportHandler(deps: KeysWriteDeps) {
   return async (c: Context) => {
-    const body = asObject(await readJson<unknown>(c), "请求体");
+    const body = asObject(await readAdminJson<unknown>(c), "请求体");
     rejectUnknown(body, ["keys", "resetExisting"]);
     const raw = body.keys;
     if (!Array.isArray(raw) || !raw.every((k): k is string => typeof k === "string")) {
-      throw httpError(400, "invalid_request_error", "keys 必须是字符串数组");
+      throw adminError(400, "invalid_request_error", "keys_not_a_string_array", "keys 必须是字符串数组");
     }
     if (raw.length > MAX_IMPORT_KEYS) {
-      throw httpError(400, "invalid_request_error", `一次最多导入 ${MAX_IMPORT_KEYS} 把 key`);
+      throw adminError(
+        400, "invalid_request_error", "too_many_import_keys",
+        `一次最多导入 ${MAX_IMPORT_KEYS} 把 key`, { max: MAX_IMPORT_KEYS },
+      );
     }
     const resetExisting = optBool(body, "resetExisting") ?? false;
 
@@ -212,13 +228,13 @@ export function keyDeleteHandler(deps: KeysWriteDeps) {
   return async (c: Context) => {
     const id = paramId(c);
     const r = await deps.repo.get(id);
-    if (r === null) throw httpError(404, "not_found", "没有这把 key");
+    if (r === null) throw adminError(404, "not_found", "key_not_found", "没有这把 key");
     if (!deletable(r)) {
       return c.json({
-        error: {
-          type: "conflict",
-          message: "请先停用这把 key 再删除（删除不可撤销，而停用随时可以撤销）",
-        },
+        ...adminErrorBody(
+          "conflict", "must_disable_first",
+          "请先停用这把 key 再删除（删除不可撤销，而停用随时可以撤销）",
+        ),
         reason: MUST_DISABLE_FIRST,
       }, 409);
     }
@@ -269,11 +285,11 @@ const PATCH_FIELDS = ["disabled", "note", "clearCooldown", "clearStrikes", "unev
  */
 export function keyPatchHandler(deps: KeysWriteDeps) {
   return async (c: Context) => {
-    const body = asObject(await readJson<unknown>(c), "请求体");
+    const body = asObject(await readAdminJson<unknown>(c), "请求体");
     rejectUnknown(body, PATCH_FIELDS);
     if (Object.keys(body).length === 0) {
       // 空 patch 返回 200 就是一次「保存成功」而什么都没做，见 `rejectUnknown`。
-      throw httpError(400, "invalid_request_error", "至少要改一个字段");
+      throw adminError(400, "invalid_request_error", "empty_patch", "至少要改一个字段");
     }
     const disabled = optBool(body, "disabled");
     const note = optNote(body);
@@ -282,7 +298,7 @@ export function keyPatchHandler(deps: KeysWriteDeps) {
     const unevict = optBool(body, "unevict") ?? false;
 
     const prev = await deps.repo.get(paramId(c));
-    if (prev === null) throw httpError(404, "not_found", "没有这把 key");
+    if (prev === null) throw adminError(404, "not_found", "key_not_found", "没有这把 key");
 
     const next: KeyRecord = { ...prev };
     if (disabled !== undefined) next.disabled = disabled;
@@ -346,18 +362,24 @@ interface BulkItemResult { id: string; ok: boolean; reason: string | null }
  */
 export function keysBulkHandler(deps: KeysWriteDeps) {
   return async (c: Context) => {
-    const body = asObject(await readJson<unknown>(c), "请求体");
+    const body = asObject(await readAdminJson<unknown>(c), "请求体");
     rejectUnknown(body, ["op", "ids"]);
     const op = body.op;
     if (!isBulkOp(op)) {
-      throw httpError(400, "invalid_request_error", `op 必须是 ${BULK_OPS.join(" / ")} 之一`);
+      throw adminError(
+        400, "invalid_request_error", "not_a_bulk_op",
+        `op 必须是 ${BULK_OPS.join(" / ")} 之一`, { ops: BULK_OPS.join(" / ") },
+      );
     }
     const ids = body.ids;
     if (!Array.isArray(ids) || !ids.every((x): x is string => typeof x === "string")) {
-      throw httpError(400, "invalid_request_error", "ids 必须是字符串数组");
+      throw adminError(400, "invalid_request_error", "ids_not_a_string_array", "ids 必须是字符串数组");
     }
     if (ids.length > MAX_IMPORT_KEYS) {
-      throw httpError(400, "invalid_request_error", `一次最多操作 ${MAX_IMPORT_KEYS} 把 key`);
+      throw adminError(
+        400, "invalid_request_error", "too_many_bulk_ids",
+        `一次最多操作 ${MAX_IMPORT_KEYS} 把 key`, { max: MAX_IMPORT_KEYS },
+      );
     }
 
     const results: BulkItemResult[] = [];

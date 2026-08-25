@@ -65,6 +65,33 @@ export const I18N = {
   "common.dismiss":   { "zh-CN": "关闭提示", "zh-TW": "關閉提示", en: "Dismiss", ja: "閉じる", ko: "닫기" },
   "common.sessionExpired": { "zh-CN": "会话已过期，请重新输入管理口令", "zh-TW": "工作階段已過期，請重新輸入管理口令", en: "Session expired, please sign in again", ja: "セッションが失効しました。再度サインインしてください", ko: "세션이 만료되었습니다. 다시 로그인하세요" },
 
+  // ── 管理接口错误码 → 五语言文案（P3e Task 22A）───────────────────────────
+  //
+  // ⚠️⚠️ **这一族存在的全部理由：在它之前，后端那句中文 `error.message` 被
+  // `js/sec-keys.js` 原样画到 ja / en / ko 的屏幕上。** 现在后端只回一个闭集里的
+  // `error.code`（`src/core/admin/admin-errors.ts`），文案在这里，五语言各一份。
+  // 码 → 键的对照表在 `js/pure/keys-write.mjs` 的 `ADMIN_ERROR_TEXT_KEY`，
+  // **写成字面量而不是 `err.` 前缀拼键**——拼键会把整族变成永久豁免，理由写在那张表上方。
+  //
+  // ⚠️ **`keys.mustDisableFirst` 刻意不在这个命名空间里另开一条**：那句话早就有了
+  // （下面 Key 池写操作那一段），再写一份就是同一批文案两份真源。对照表直接指过去。
+  "err.untranslated": { "zh-CN": "{message}（这句是后端原话，本面板还没有这条错误码的译文）", "zh-TW": "{message}（這句是後端原話，本面板還沒有這條錯誤碼的譯文）", en: "{message} (raw text from the backend; this panel has no translation for that error code yet)", ja: "{message}（これはバックエンドの原文です。このパネルにはそのエラーコードの訳文がまだありません）", ko: "{message} (백엔드가 보낸 원문입니다. 이 패널에는 해당 오류 코드의 번역문이 아직 없습니다)" },
+  "err.admin_unavailable": { "zh-CN": "管理接口已停用。原因只写进了服务端日志，请查一下管理口令的配置。", "zh-TW": "管理介面已停用。原因只寫進了伺服器日誌，請查一下管理口令的設定。", en: "The admin API is disabled. The reason is written only to the server log; check the admin token configuration.", ja: "管理 API は停止しています。理由はサーバーログにのみ記録されます。管理トークンの設定を確認してください。", ko: "관리 API가 중지되었습니다. 이유는 서버 로그에만 기록되므로 관리 토큰 설정을 확인하세요." },
+  "err.admin_unauthorized": { "zh-CN": "口令缺失或不正确", "zh-TW": "口令缺失或不正確", en: "Missing or invalid token", ja: "トークンがないか、正しくありません", ko: "토큰이 없거나 올바르지 않습니다" },
+  "err.bad_json": { "zh-CN": "请求体不是合法的 JSON", "zh-TW": "請求體不是合法的 JSON", en: "The request body is not valid JSON", ja: "リクエストボディが正しい JSON ではありません", ko: "요청 본문이 올바른 JSON이 아닙니다" },
+  "err.body_not_an_object": { "zh-CN": "请求体必须是一个 JSON 对象", "zh-TW": "請求體必須是一個 JSON 物件", en: "The request body must be a JSON object", ja: "リクエストボディは JSON オブジェクトである必要があります", ko: "요청 본문은 JSON 객체여야 합니다" },
+  "err.unknown_field": { "zh-CN": "后端不认识这些字段：{fields}。多半是面板与网关的版本对不上。", "zh-TW": "後端不認識這些欄位：{fields}。多半是面板與網關的版本對不上。", en: "The backend does not recognize these fields: {fields}. The panel and the gateway are most likely on different versions.", ja: "バックエンドが認識できない項目があります: {fields}。パネルとゲートウェイのバージョンが一致していない可能性が高いです。", ko: "백엔드가 인식하지 못하는 항목이 있습니다: {fields}. 패널과 게이트웨이의 버전이 다를 가능성이 큽니다." },
+  "err.key_not_found": { "zh-CN": "池子里没有这把 key，可能已经被别的副本删掉了", "zh-TW": "池子裡沒有這把 key，可能已經被別的副本刪掉了", en: "This key is not in the pool; another replica may have deleted it already", ja: "この key はプールにありません。別のレプリカが既に削除した可能性があります", ko: "이 key는 풀에 없습니다. 다른 복제본이 이미 삭제했을 수 있습니다" },
+  "err.not_a_boolean": { "zh-CN": "字段 {field} 必须是开或关", "zh-TW": "欄位 {field} 必須是開或關", en: "The field {field} must be on or off", ja: "項目 {field} はオンまたはオフである必要があります", ko: "항목 {field}은(는) 켜기 또는 끄기여야 합니다" },
+  "err.note_not_a_string": { "zh-CN": "备注必须是文本，或者留空表示清掉它", "zh-TW": "備註必須是文字，或者留空表示清掉它", en: "The note must be text, or empty to clear it", ja: "備考は文字列にするか、空にして削除してください", ko: "메모는 문자열이어야 하며, 비우면 삭제됩니다" },
+  "err.note_too_long": { "zh-CN": "备注最长 {max} 个字符", "zh-TW": "備註最長 {max} 個字元", en: "The note may be at most {max} characters", ja: "備考は最大 {max} 文字です", ko: "메모는 최대 {max}자입니다" },
+  "err.empty_patch": { "zh-CN": "这次没有要改的字段。一次什么都没做的保存不会被说成「已保存」。", "zh-TW": "這次沒有要改的欄位。一次什麼都沒做的儲存不會被說成「已儲存」。", en: "Nothing was changed this time. A save that does nothing will not be reported as saved.", ja: "今回は変更する項目がありません。何もしない保存を「保存しました」とは表示しません。", ko: "이번에는 변경할 항목이 없습니다. 아무것도 하지 않은 저장을 저장됨으로 표시하지 않습니다." },
+  "err.keys_not_a_string_array": { "zh-CN": "导入的内容必须是一组文本，面板与网关的版本可能对不上", "zh-TW": "匯入的內容必須是一組文字，面板與網關的版本可能對不上", en: "The imported keys must be an array of strings; the panel and the gateway may be on different versions", ja: "取り込む key は文字列の配列である必要があります。パネルとゲートウェイのバージョンが異なる可能性があります", ko: "가져올 key는 문자열 배열이어야 합니다. 패널과 게이트웨이의 버전이 다를 수 있습니다" },
+  "err.too_many_import_keys": { "zh-CN": "一次最多导入 {max} 把 key。超出的部分不会被静默截断，请分几次导入。", "zh-TW": "一次最多匯入 {max} 把 key。超出的部分不會被靜默截斷，請分幾次匯入。", en: "At most {max} keys per import. Anything beyond that is rejected rather than silently truncated, so split it into several imports.", ja: "1 回の取り込みは最大 {max} 件です。超過分は黙って切り捨てるのではなく拒否するため、数回に分けて取り込んでください。", ko: "한 번에 최대 {max}개까지 가져올 수 있습니다. 초과분은 조용히 잘라내지 않고 거부하므로 여러 번에 나눠 가져오세요." },
+  "err.not_a_bulk_op": { "zh-CN": "这个批量操作后端不认识，它只接受：{ops}", "zh-TW": "這個批次操作後端不認識，它只接受：{ops}", en: "The backend does not recognize this bulk operation; it only accepts: {ops}", ja: "このバッチ操作はバックエンドが認識しません。受け付けるのは次のみです: {ops}", ko: "백엔드가 이 일괄 작업을 인식하지 못합니다. 허용되는 값은 다음뿐입니다: {ops}" },
+  "err.ids_not_a_string_array": { "zh-CN": "批量操作的 id 列表必须是一组文本，面板与网关的版本可能对不上", "zh-TW": "批次操作的 id 清單必須是一組文字，面板與網關的版本可能對不上", en: "The id list for a bulk operation must be an array of strings; the panel and the gateway may be on different versions", ja: "バッチ操作の id 一覧は文字列の配列である必要があります。パネルとゲートウェイのバージョンが異なる可能性があります", ko: "일괄 작업의 id 목록은 문자열 배열이어야 합니다. 패널과 게이트웨이의 버전이 다를 수 있습니다" },
+  "err.too_many_bulk_ids": { "zh-CN": "一次最多操作 {max} 把 key，请分几次来", "zh-TW": "一次最多操作 {max} 把 key，請分幾次來", en: "At most {max} keys per bulk operation; split it into several rounds", ja: "1 回のバッチ操作は最大 {max} 件です。数回に分けてください", ko: "일괄 작업은 한 번에 최대 {max}개까지입니다. 여러 번에 나눠 주세요" },
+
   // ── 补池失败归因（P3c 的注册机板块才渲染；本期先把键写齐，好让门禁从第一天就是活的）──
   "reg.fail.domain_blocked_all": { "zh-CN": "所有域名都被上游拦下", "zh-TW": "所有網域都被上游擋下", en: "Every domain was blocked upstream", ja: "すべてのドメインが上流でブロックされました", ko: "모든 도메인이 업스트림에서 차단되었습니다" },
   "reg.fail.upstream_error":     { "zh-CN": "上游返回错误", "zh-TW": "上游回傳錯誤", en: "Upstream returned an error", ja: "上流がエラーを返しました", ko: "업스트림이 오류를 반환했습니다" },

@@ -9,7 +9,9 @@ import {
   importResultCounts, importResultPresentation, noteToPatch, NOTE_MAX_LENGTH, isOpaqueErrorMessage,
   verifyDisabledReason, verifyDisabledTitleKey, verifyResultCode, verifyTransportCode,
   verifyResultLabelKey, VERIFY_MIN_INTERVAL_MS,
+  ADMIN_ERROR_TEXT_KEY, adminErrorFields, adminErrorText,
 } from "../../admin-ui/js/pure/keys-write.mjs";
+import { ADMIN_ERROR_CODES, ADMIN_ERROR_PARAMS } from "../../src/core/admin/admin-errors.js";
 import { refuseReasonKey } from "../../admin-ui/js/pure/registrar.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 import { PROBE_MIN_INTERVAL_MS } from "../../src/http/admin/probe-guard.js";
@@ -1001,5 +1003,131 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
     const labels = literals.map((r) => verifyResultLabelKey(verifyResultCode({ ok: false, status: null, reason: r })));
     expect(new Set(labels).size, "两条 reason 共用了同一句文案").toBe(literals.length);
     for (const k of labels) expect(k in I18N, `${k} 不在字典里`).toBe(true);
+  });
+});
+
+/**
+ * **面板这一侧：拿码查五语言字典，表外的码回落并带一个看得见的标记**（P3e Task 22A）。
+ *
+ * ⚠️⚠️ **这是那条「归属定死归 P3e」的破口的前端半身。** 后端半身（400/404/409 带不带
+ * 闭集里的码）在 `tests/contract/admin-keys-write.test.ts` 的
+ * 「每一条失败都带 error.code，而且 code 在闭集里」那一格，**跑在两份配置上**。
+ *
+ * ⚠️ **最容易走成的错法是「把中文 message 翻译成英文」**——那样 ja / ko 用户看到的
+ * 仍然是一句看不懂的话，只是换了一种看不懂。下面「五种语言逐格各是各的」那格判的正是它。
+ */
+
+/** 绑定到某种语言的取词函数，行为与 `admin-ui/js/i18n.js` 的 `t()` 逐字相同（缺 key 回 key 本身）。 */
+function tFor(lang: string) {
+  return (key: string, params?: Record<string, unknown>) => {
+    const row = (I18N as Record<string, Record<string, string>>)[key];
+    let s = row ? (row[lang] ?? row["zh-CN"]) : undefined;
+    if (s === undefined) return key;
+    if (params) for (const [k, v] of Object.entries(params)) s = s.split(`{${k}}`).join(String(v));
+    return s;
+  };
+}
+
+const UI_LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"];
+
+describe("管理接口错误码 → 面板文案", () => {
+  it("后端每一个 code 都有一行、这里也没有多出后端不认的码（双向）", () => {
+    expect(Object.keys(ADMIN_ERROR_TEXT_KEY).sort()).toEqual([...ADMIN_ERROR_CODES].sort());
+    for (const [code, key] of Object.entries(ADMIN_ERROR_TEXT_KEY)) {
+      expect(key in I18N, `code「${code}」指向的 ${key} 不在字典里`).toBe(true);
+    }
+  });
+
+  it("已知 code ⇒ 渲染五语言字典里的那句，不是后端那句中文", () => {
+    const err = { code: "note_too_long", message: "note 最长 200 个字符", params: { max: 200 } };
+    expect(adminErrorText(err, tFor("ja"), "keys.writeFailed"))
+      .toBe((I18N as Record<string, Record<string, string>>)["err.note_too_long"]!.ja!.replace("{max}", "200"));
+    // **后端那句中文一个字都不许出现在 ja 的结果里。**
+    expect(adminErrorText(err, tFor("ja"), "keys.writeFailed")).not.toContain("note 最长");
+  });
+
+  it("五种语言逐格各是各的 —— 「把中文翻译成英文」这种做法在这一格上过不去", () => {
+    // 只翻一种语言的话，ja / ko 那两格会与 en 那格相等（或者与中文那格相等）。
+    for (const code of ADMIN_ERROR_CODES) {
+      const key = ADMIN_ERROR_TEXT_KEY[code]!;
+      const rendered = UI_LANGS.map((l) => adminErrorText({ code, message: "后端原话" }, tFor(l), "keys.writeFailed"));
+      expect(new Set(rendered).size, `${key} 的五种语言里有重复：${rendered.join(" | ")}`).toBe(UI_LANGS.length);
+      // 后端那句话在**任何**一格里都不该出现——已知码这条路根本不读 `message`。
+      for (const r of rendered) expect(r).not.toContain("后端原话");
+    }
+  });
+
+  it("每个 code 的五语言字典串里的占位符与后端声明的 params 逐字相等", () => {
+    // ⚠️ 这一格顶的是 `node scripts/check-i18n.mjs` 规则⑧ 的一个已登记盲点：
+    // 这一族 key 是 `ADMIN_ERROR_TEXT_KEY` 里一张表的**值**，后面天然跟着逗号
+    // ⇒ 那条规则对它结构性地看不见，而漏一格 params 会在屏幕上画出裸的 `{max}`。
+    for (const code of ADMIN_ERROR_CODES) {
+      const key = ADMIN_ERROR_TEXT_KEY[code]!;
+      const declared = [...ADMIN_ERROR_PARAMS[code]].sort();
+      for (const lang of UI_LANGS) {
+        const s = (I18N as Record<string, Record<string, string>>)[key]![lang]!;
+        const found = [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!).sort();
+        expect([...new Set(found)], `${key}/${lang} 的占位符与后端声明对不上`).toEqual(declared);
+      }
+    }
+  });
+
+  it("反向控制：占位符判据认得出真的占位符 —— 否则上一格在「一个都没找到」时恒绿", () => {
+    // 拿仓里真实存在的一条带占位符的文案（后端声明它带 `max`）当正样本。
+    const s = (I18N as Record<string, Record<string, string>>)["err.note_too_long"]!.ja!;
+    expect([...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1])).toEqual(["max"]);
+    expect(ADMIN_ERROR_PARAMS.note_too_long).toEqual(["max"]);
+  });
+
+  it("表外的 code ⇒ 回落到后端原话，并且带一个看得见的标记", () => {
+    // 静默把一句读不懂的话摆上去 = 撒谎的近亲；而删掉回落分支 = 未知错误变成空白，
+    // 比读不懂更糟。**两条都不许。**
+    const r = adminErrorText({ code: "zzz_unknown", message: "某种中文" }, tFor("ja"), "keys.writeFailed");
+    expect(r).toContain("某种中文");
+    // **标记必须真的加了东西**，不能等于原话——那就是「静默摆上去」。
+    expect(r).not.toBe("某种中文");
+    expect(r).toBe((I18N as Record<string, Record<string, string>>)["err.untranslated"]!.ja!
+      .replace("{message}", "某种中文"));
+  });
+
+  it("回落标记五种语言各有一份，每一种都真的把原话包起来了", () => {
+    for (const lang of UI_LANGS) {
+      const r = adminErrorText({ code: "", message: "某种中文" }, tFor(lang), "keys.writeFailed");
+      expect(r, `${lang} 的回落把原话弄丢了`).toContain("某种中文");
+      expect(r, `${lang} 的回落没有任何看得见的标记`).not.toBe("某种中文");
+    }
+  });
+
+  it("表外的 code + 内部码 message ⇒ 走通用文案，不把 http_500 摆给运维", () => {
+    // 第三支：`isOpaqueErrorMessage()` 那一档。它比回落更靠后——回落只对「人话」成立。
+    for (const raw of ["http_500", "unauthorized", "session_expired", ""]) {
+      expect(adminErrorText({ code: "zzz_unknown", message: raw }, tFor("ja"), "keys.writeFailed"))
+        .toBe((I18N as Record<string, Record<string, string>>)["keys.writeFailed"]!.ja);
+    }
+  });
+
+  it("adminErrorFields 从 ApiError 那种嵌套形状里摊得出码，也收扁平的三元组", () => {
+    // 运行期走的是前一种（`js/api.js` 的 `json()` 把 `error.message` 提到 `e.message` 上），
+    // 测试里写的是后一种。**两种必须落到同一条判据上**，否则被测的不是屏幕上跑的那份。
+    const apiError = {
+      message: "note 最长 200 个字符",
+      body: { error: { type: "invalid_request_error", code: "note_too_long", params: { max: 200 } } },
+    };
+    expect(adminErrorFields(apiError)).toEqual({
+      code: "note_too_long", message: "note 最长 200 个字符", params: { max: 200 },
+    });
+    expect(adminErrorFields({ code: "empty_patch", message: "至少要改一个字段" }))
+      .toEqual({ code: "empty_patch", message: "至少要改一个字段", params: undefined });
+    // 什么都没有时三格都是空，交给回落/通用那两支处理。
+    expect(adminErrorFields(null)).toEqual({ code: "", message: "", params: undefined });
+  });
+
+  it("板块文件不再自己判 message —— 唯一的出口是 adminErrorText", () => {
+    // ⚠️ 判据建在**源码**上：`sec-keys.js` 里只要还留着一条「非空就原样显示」的分支，
+    // 上面那些行为断言全绿而屏幕上照旧漏中文（第一版的破口就是这个形状）。
+    const src = stripComments(readFileSync("admin-ui/js/sec-keys.js", "utf8"));
+    expect(src).toContain("adminErrorText(adminErrorFields(e), t, \"keys.writeFailed\")");
+    // 反向控制：同一份源码里确实还有别的 `t(` 调用 —— 上一格不是在一份空文本上比对。
+    expect(src.includes("t(\"keys.actionOk\")")).toBe(true);
   });
 });

@@ -338,17 +338,123 @@ export function importResultPresentation(counts) {
  * 落成字面量 `"unauthorized"` / `"session_expired"`——三种都是非空字符串，
  * 会原样出现在 toast 里。
  *
- * **这不是全部破口**：后端校验类 400 的 `error.message` 是中文散文（例如
- * note 超长时的「note 最长 200 个字符」），没有配套的机器可读 `reason` 字段
- * （不像 409 `must_disable_first` 那样），这条判据拦不住它——那句中文会被
- * 直接投到 ja/en/ko 的面板上。这是全面板第一处把后端原始 message 渲染给
- * 用户的地方。**归属定死：这条破口归 P3e（五语言与收尾）**——机制解是后端
- * 只回错误码、前端查五语言字典，或后端按 `Accept-Language` 返回，两条路各有
- * 代价，留给 P3e 裁，本任务不在这里假装解决。
+ * ⚠️⚠️ **它上面那段「归属定死：这条破口归 P3e」已经结案（P3e Task 22A），
+ * 这一段是结案陈述，不是待办。**
+ *
+ * **当时的破口**：后端校验类 400 的 `error.message` 是中文散文（例如 note 超长时的
+ * 「note 最长 200 个字符」），没有配套的机器可读字段（不像 409 `must_disable_first`
+ * 有 `reason`），这条判据拦不住它——那句中文被直接投到 ja/en/ko 的面板上。
+ *
+ * **裁定**：后端只回**机器可读的码**、前端查五语言字典。**不走 `Accept-Language`**，
+ * 三条理由写死在 `src/core/admin/admin-errors.ts` 的文件头（一句话版：面板的语言是
+ * 用户在面板里选的，不等于浏览器请求头）。
+ *
+ * **做法**：`/admin/api/*` 的错误信封多一格 `error.code`（闭集
+ * `ADMIN_ERROR_CODES`，`message` 一个字都没删——它还要给日志与 API 客户端读），
+ * 面板这一侧由下面的 `adminErrorText()` 拿码查 `err.*` 五语言字典；
+ * **表外的码原样回落到后端那句话，并且带一个看得见的「这句可能不是你的语言」标记**。
+ *
+ * **边界（如实写，别读成全称承诺）**：闭集只覆盖**面板真的会把后端 `message`
+ * 画到屏幕上**的那一族（`js/sec-keys.js` 的 `errorMessage()` 够得着的端点）。
+ * **网关业务口**（`/v1` 那棵树的 401/400、dispatcher、worker 兜底）对 API 客户端
+ * 仍然只说中文，P3e 明确不做，理由与档位在 `src/core/admin/admin-errors.ts` 的文件头。
+ *
+ * 结案后的行为由 `tests/ui/keys-write.test.ts` 的
+ * 「已知 code ⇒ 渲染五语言字典里的那句，不是后端那句中文」与
+ * 「表外的 code ⇒ 回落到后端原话，并且带一个看得见的标记」两格钉着。
  */
 export function isOpaqueErrorMessage(message) {
   if (typeof message !== "string" || message === "") return true;
   return /^http_\d+$/.test(message) || message === "unauthorized" || message === "session_expired";
+}
+
+/**
+ * 管理接口错误码 → 五语言字典的键。**两侧都写成字符串字面量，不拼。**
+ *
+ * ⚠️⚠️ **拼成 `` `err.${code}` `` 会当场把整个 `err.*` 族变成永久豁免。**
+ * `scripts/check-i18n.mjs` 把模板拼键收成一张**前缀**表，落进那张表的命名空间
+ * 从此再也不会被报「未被引用」——那道判据在这一族上就此失明，而它正是本仓
+ * 唯一一道能发现「字典里躺着一条谁都不用的死文案」的判据。
+ * 写成字面量的话，删掉某一行的同时不删字典条目 ⇒ 那条 key 当场被报未被引用（硬错）。
+ *
+ * ⚠️ **这张表的键集必须与后端 `ADMIN_ERROR_CODES` 逐字相等（双向）**，由
+ * `tests/ui/keys-write.test.ts` 的
+ * 「后端每一个 code 都有一行、这里也没有多出后端不认的码（双向）」钉着；
+ * 值指向的每一条 key 五语言齐全由 `node scripts/check-i18n.mjs` 的规则② 保证。
+ */
+export const ADMIN_ERROR_TEXT_KEY = {
+  "admin_unavailable": "err.admin_unavailable",
+  "admin_unauthorized": "err.admin_unauthorized",
+  "bad_json": "err.bad_json",
+  "body_not_an_object": "err.body_not_an_object",
+  "unknown_field": "err.unknown_field",
+  "key_not_found": "err.key_not_found",
+  // ⚠️ **刻意指向 `err.*` 之外那条已经存在的 key**：同一句话在 P3c 就写全了五语言
+  //（行内删除那颗按钮走 409 顶层 `reason` 那条路时用的就是它）。
+  // 在 `err.` 底下再写一份等于同一批文案两份真源。**这也顺带证明这张表不是
+  // 「`err.` + code」那种可以被拼出来的映射**——它必须一行一行写。
+  "must_disable_first": "keys.mustDisableFirst",
+  "not_a_boolean": "err.not_a_boolean",
+  "note_not_a_string": "err.note_not_a_string",
+  "note_too_long": "err.note_too_long",
+  "empty_patch": "err.empty_patch",
+  "keys_not_a_string_array": "err.keys_not_a_string_array",
+  "too_many_import_keys": "err.too_many_import_keys",
+  "not_a_bulk_op": "err.not_a_bulk_op",
+  "ids_not_a_string_array": "err.ids_not_a_string_array",
+  "too_many_bulk_ids": "err.too_many_bulk_ids",
+};
+
+/**
+ * 把 `js/api.js` 抛出来的那个错误对象摊平成 `{ code, message, params }`。
+ *
+ * **两种入参形状都收，而且是同一条路**：`ApiError`（`code`/`params` 在
+ * `e.body.error` 里，`message` 已经被 `json()` 提到 `e.message` 上）与一个直接写好的
+ * 扁平三元组。收两种不是为了宽容，是因为**下面那个函数不该知道错误是怎么来的**
+ * ——测试里那一份与运行期那一份走同一条判据，否则被测的就不是屏幕上跑的那份。
+ */
+export function adminErrorFields(e) {
+  const o = e && typeof e === "object" ? e : {};
+  const body = o.body && typeof o.body === "object" ? o.body : null;
+  const env = body && body.error && typeof body.error === "object" ? body.error : null;
+  const src = env !== null ? env : o;
+  return {
+    code: typeof src.code === "string" ? src.code : "",
+    // `message` 优先取 `ApiError` 那一层：`js/api.js` 的 `json()` 在响应体没有
+    // `error.message` 时会把它落成 `http_<状态码>`，那一档要交给 `isOpaqueErrorMessage`。
+    message: typeof o.message === "string" ? o.message
+      : (env !== null && typeof env.message === "string" ? env.message : ""),
+    params: src.params && typeof src.params === "object" ? src.params : undefined,
+  };
+}
+
+/**
+ * 一条管理接口错误在屏幕上该显示成什么。**面板一侧唯一的出口。**
+ *
+ * @param err  `adminErrorFields()` 摊平出来的 `{ code, message, params }`。
+ * @param t    绑好当前语言的取词函数（`js/i18n.js` 的 `t`）。**从外面传进来**：
+ *             这个文件是 pure 的，拿不到语言状态，而语言正是这条判据的全部意义。
+ * @param genericKey 三条路都走不通时那句通用文案的 key（调用方给，因为通用文案是板块自己的）。
+ *
+ * **三分，顺序不能调：**
+ * ① 码在表里 ⇒ 渲染**字典里的那句**，用户选的是哪种语言就是哪种。
+ *    ⚠️ 后端那句中文在这一支**根本不参与**——「把中文翻译成英文再发过来」这种做法
+ *    对 ja/ko 用户仍然是一句看不懂的话，只是换了一种看不懂。
+ * ② 码不在表里（旧面板遇到新后端 / 后端漏了码），而后端那句话是人话 ⇒
+ *    **原样回落，并且带一个看得见的标记**。静默把一句读不懂的话摆上去是撒谎的近亲；
+ *    而删掉这条回落分支的话，未知错误会变成一片空白，比读不懂更糟。**两条都不许。**
+ * ③ 码不在表里、后端那句话又是内部码（`http_500` / `unauthorized` / `session_expired`）
+ *    ⇒ 退回通用文案，见 `isOpaqueErrorMessage`。
+ */
+export function adminErrorText(err, t, genericKey) {
+  const f = err && typeof err === "object" ? err : {};
+  const key = Object.prototype.hasOwnProperty.call(ADMIN_ERROR_TEXT_KEY, f.code)
+    ? ADMIN_ERROR_TEXT_KEY[f.code]
+    : null;
+  if (key !== null) return t(key, f.params);
+  const raw = typeof f.message === "string" ? f.message : "";
+  if (isOpaqueErrorMessage(raw)) return t(genericKey);
+  return t("err.untranslated", { message: raw });
 }
 
 /**
