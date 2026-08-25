@@ -2,15 +2,23 @@ import { describe, it, expect } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+// 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源（P3e Task 1 收编），不在这里手写第二份。
+import { blankComments } from "../helpers/strip-comments.js";
 import { FAIL_REASONS } from "../../src/core/dispatcher.js";
 import { UPSTREAM_FACTS, type UpstreamFact } from "../../src/core/admin/upstream-facts.js";
-import { VIDEO_TASK_ID_SHAPE } from "../../src/core/admin/protocol-catalog.js";
+import { MODEL_CATALOG, VIDEO_TASK_ID_SHAPE } from "../../src/core/admin/protocol-catalog.js";
 // ADMIN.md 那一组的期望值一律从这些真源常量派生，不手写字面量。
 import { ADMIN_TOKEN_MIN_LENGTH } from "../../src/http/admin/auth.js";
 import { MAX_IMPORT_KEYS } from "../../src/http/admin/handlers/keys-write.js";
 import { EVENT_WINDOW_MS, EVENT_WINDOW_RETAIN } from "../../src/core/admin/event-ring.js";
 import { USAGE_DAY_RETAIN, USAGE_SLOTS } from "../../src/core/admin/usage-stats.js";
 import { SESSION_MAX_AGE_MS } from "../../admin-ui/js/pure/session.mjs";
+// 复评回填（F1 / F3）：设置卡与字符集那两句话的期望值一律从这几份真源现算，不手抄。
+import { sendable } from "../../admin-ui/js/pure/sendable.mjs";
+import {
+  ADVANCED_FIELDS, CARD_AUTH, CARD_REGISTRAR, CARD_UPSTREAM, channelFields,
+} from "../../admin-ui/js/pure/settings.mjs";
+import { CHANNELS } from "../../admin-ui/js/pure/registrar.mjs";
 import {
   PLAYGROUND_TURNS_MAX, VIDEO_POLL_INTERVAL_MS, VIDEO_POLL_MAX_ATTEMPTS, VIDEO_POLL_MAX_MS,
 } from "../../admin-ui/js/pure/playground.mjs";
@@ -769,6 +777,19 @@ const firstDiff = (a: readonly unknown[], b: readonly unknown[]) => {
 };
 
 /**
+ * 摊一个下标上的值，**越界时说「越界」而不是把 `undefined` 抄进报文**。
+ *
+ * ⚠️ 这是复评 F9 抓到的：两侧长度不同时 `firstDiff` 返回的正是**短的那一侧的长度**
+ *（一份多写一个 `##`，多重集差一项、首个不同的下标恰好落在参照的末尾之后），
+ * 而 `JSON.stringify(undefined)` 返回的是 `undefined` 这个值本身，模板串里就成了
+ * 字面的 `参照 undefined`。**报文是唯一会被看见的护栏**——一个 `undefined` 会让人
+ * 以为判据自己坏了，而真相是「参照那边根本没有这一项」。
+ * 测法在下面「分叉报文：首个不同的下标越界时…」那两格（正向 + 不乱红各一）。
+ */
+const cellAt = (a: readonly unknown[], i: number) =>
+  i >= 0 && i < a.length ? JSON.stringify(a[i]) : `（越界，这一侧只有 ${a.length} 项）`;
+
+/**
  * 分叉报文：**只摊差异，不摊全集**。
  *
  * ⚠️ 第一版把五份指纹整个 `JSON.stringify` 摊进报文，实跑一看是灾难：DEPLOY.md 的
@@ -802,7 +823,7 @@ function divergenceReport(labels: readonly string[], values: readonly unknown[])
     out.push(
       `  ${labels[i]}（本份 ${arr.length} 项，参照的 ${tally.get(majority)} 份 ${refArr.length} 项）：` +
         (delta.length > 0 ? `多出/少掉 ${delta.join("，")}；` : "多重集相同但顺序不同；") +
-        `首个不同的下标 ${at}（参照 ${JSON.stringify(refArr[at])} / 本份 ${JSON.stringify(arr[at])}）`,
+        `首个不同的下标 ${at}（参照 ${cellAt(refArr, at)} / 本份 ${cellAt(arr, at)}）`,
     );
   }
   return out.join("\n");
@@ -996,7 +1017,9 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
     },
     {
       why: "R2 某一份多一个 ###",
-      hits: ["API.md 的「R2", "ja"],
+      // ⚠️ `越界` 这一项是复评 F9 的落点：ja 比参照多一项，`firstDiff` 返回的下标恰好
+      // 落在参照的末尾之后。修之前这里印的是字面的 `参照 undefined`。
+      hits: ["API.md 的「R2", "ja", "越界，这一侧只有"],
       mutate: (f) => patch(f, "docs/ja/API.md", (b) => `${b}\n### 追加\n`),
     },
     {
@@ -1048,6 +1071,32 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
       "夹具里的伪公式被 IDENTIFIER 认成了标识符，这条控制证明不了「伪公式不进判据」",
     ).toEqual([]);
     expect(scanFixture(() => {}), "结构相同、只有译文不同的五份文档不该有任何一条判据变红").toEqual([]);
+  });
+
+  /**
+   * 复评 F9 的两格：**报文里不许出现字面的 `undefined`**。
+   * 上面那条「R2 某一份多一个 `###`」的 `hits` 已经在真夹具上钉着同一件事，这里再直接
+   * 对 `divergenceReport()` 打两枪，是因为那条走的是整棵夹具树、失败时不容易看清是
+   * 哪一段字符串出的问题；这两格把正向（越界）与不乱红（不越界）分开摆着。
+   */
+  it("分叉报文：首个不同的下标越界时说「越界」，不许把 undefined 抄进报文", () => {
+    const report = divergenceReport(
+      [...LANGS],
+      [[1, 2], [1, 2], [1, 2], [1, 2], [1, 2, 3]],
+    ) ?? "";
+    expect(report, "五份里有一份多一项，报文却是空的——这一格控制是空的").not.toBe("");
+    expect(report, `报文里出现了字面的 undefined：\n${report}`).not.toContain("undefined");
+    expect(report, `越界那一侧没被说清楚：\n${report}`).toContain("越界，这一侧只有 2 项");
+  });
+
+  it("不乱红：两侧长度相同、只是某一项不一样时，报文照常摊出两边的值，不说「越界」", () => {
+    const report = divergenceReport(
+      [...LANGS],
+      [[1, 2], [1, 2], [1, 2], [1, 2], [1, 9]],
+    ) ?? "";
+    expect(report, "五份里有一份改了一项，报文却是空的——这一格控制是空的").not.toBe("");
+    expect(report, `长度相同却说成越界：\n${report}`).not.toContain("越界");
+    expect(report, `没摊出首个不同的下标上的两个值：\n${report}`).toContain("参照 2 / 本份 9");
   });
 });
 
@@ -1886,6 +1935,78 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     playground: readFileSync(join(".", "admin-ui", "js", "sec-playground.js"), "utf8"),
   });
 
+  /** 抠掉注释再数**调用点**：本仓的注释里到处写真代码片段，裸数会把它们一起数进来。 */
+  const codeOnly = (src: string): string => blankComments(src);
+
+  /**
+   * 认源的**完备性锚**（复评 F2）。返回失败报文数组，空 = 认全了。
+   *
+   * ⚠️⚠️ **这一层是复评实测逼出来的，不是设计时想到的，读完再改。** 下面 `panelCounts()`
+   * 那两条取名正则**只认单行字面形态**（`card("…")` 与 `{ mode: "x", key: "y" }`），
+   * 而上面那些「非空锚」只验「> 0」——**它们只保证「认出来的那些不是空的」，一个字都不
+   * 保证「我认全了」**。复评当场量到的逃逸：把 Task 31 那张卡写成多行
+   * `const danger = card(\n  "set.card.danger",\n);`（外加五语言字典补键），
+   * `check-i18n` exit 0、**本文件一格都没红**、`build-ui` 之后 `pnpm test` 全过，
+   * 而此刻五份 ADMIN.md 仍写着「设置页今天有四张卡」、危险区那一节仍写着「这张卡今天还不存在」。
+   * （**这里刻意不抄当时的格数与文件数**：注释里抄一份计数天生会过期，本仓已因此漂过多次。）
+   * 给 `MODES` 加一档 `{ mode: "audio", key: "pg.mode.audio", beta: true }` 是同一个形状
+   *（多一个属性，`}` 不再紧跟 key，正则整条认不出）。
+   * **字典互认那一格挡不住它**：那一格按定义只验「找到的名字有译文」，找不到的名字它看不见。
+   *
+   * ⇒ 修法是给两条认源各配一条**完备性锚**：
+   * · 卡：`card(` 的**调用点数**（抠注释后，排除函数声明自己）必须等于认出来的名字数；
+   * · 模式：`MODES` 那张表里 `mode:` 的**条目数**必须等于认出来的键数。
+   * 形态变了但名字还认得出 ⇒ 两个数分叉 ⇒ **当场吵**，而不是静静少认一个。
+   *
+   * ⚠️ **认不出要吵**：`card` 的函数声明、`MODES` 那张表本身，找不到就直接算失败——
+   * 它们改名 / 改形态之后，这两条锚会退化成「0 === 0」那种永远成立的废话。
+   */
+  function recognitionFailures(src: PanelSource): string[] {
+    const out: string[] = [];
+
+    const settings = codeOnly(src.settings);
+    const decl = (settings.match(/function\s+card\s*\(/g) ?? []).length;
+    // `(?<![.\w$])`：排除成员访问（`x.card(`）与以 card 结尾的别的标识符。
+    const allCalls = (settings.match(/(?<![.\w$])card\s*\(/g) ?? []).length;
+    const cardNames = [...settings.matchAll(/card\("(set\.card\.[A-Za-z]+)"\)/g)]
+      .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
+    if (decl !== 1) {
+      out.push(
+        `sec-settings.js 里 \`function card(\` 数到 ${decl} 处（该是 1 处）`
+        + "——建卡的那个函数改名或改形态了，下面那条「调用点数 === 认出来的名字数」的锚会跟着失灵",
+      );
+    } else if (allCalls - decl !== cardNames.length) {
+      out.push(
+        `sec-settings.js 里 \`card(\` 的调用点有 ${allCalls - decl} 处，`
+        + `而取名正则只认出 ${cardNames.length} 个（${cardNames.join("、")}）`
+        + "——多半是某一张卡写成了多行 / 换了写法，取名正则认不出它，"
+        + "于是设置卡那条计数会静静地少一张，而五份 ADMIN.md 的设置卡表、以及危险区那一节"
+        + "「这张卡今天还不存在」那句话，全靠它",
+      );
+    }
+
+    const playground = codeOnly(src.playground);
+    const block = /(?<![.\w$])const\s+MODES\s*=\s*\[([\s\S]*?)\n\];/.exec(playground);
+    const modeKeys = [...playground.matchAll(/\{\s*mode:\s*"[a-z]+",\s*key:\s*"(pg\.mode\.[a-z]+)"\s*\}/g)]
+      .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
+    if (block === null || block[1] === undefined) {
+      out.push(
+        "sec-playground.js 里找不到 `const MODES = [ … ];` 那张表"
+        + "——它改名或改形态了，下面那条「条目数 === 认出来的键数」的锚会跟着失灵",
+      );
+    } else {
+      const entries = (block[1].match(/(?<![.\w$])mode\s*:/g) ?? []).length;
+      if (entries !== modeKeys.length) {
+        out.push(
+          `sec-playground.js 的 MODES 表里有 ${entries} 条，而取键正则只认出 ${modeKeys.length} 个`
+          + `（${modeKeys.join("、")}）——多半是某一档多带了属性 / 写成了多行，`
+          + "于是调试台模式那条计数会静静地少一档，而五份 ADMIN.md 的模式表全靠它",
+        );
+      }
+    }
+    return out;
+  }
+
   /**
    * 屏幕那边的独立计数。真扫描与探针**共用这一份**。
    *
@@ -1894,11 +2015,19 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
    * 按字典数就会各多出一个，而屏幕上并没有那张卡、那一档。字典那边的作用是**作证**
    * （下面「两条独立派生互相认账」那一格：这里数出来的每一个名字都得在字典里有译文），
    * 不是当计数用。
+   *
+   * ⚠️⚠️ **认不全就抛，不返回一个少数了一张的计数**（复评 F2）：这个函数是真扫描与
+   * 全部探针的**共用入口**，在这里抛，意味着「取名正则和源码对不上」这件事会在整组
+   * 一起冒出来，而不是让某一格静静地拿一个偏小的数去和文档比对——那正是复评量到的逃逸。
    */
   function panelCounts(src: PanelSource): PanelCounts {
-    const cardNames = [...src.settings.matchAll(/card\("(set\.card\.[A-Za-z]+)"\)/g)]
+    const blind = recognitionFailures(src);
+    if (blind.length > 0) {
+      throw new Error(`认不出屏幕上的卡 / 模式，这一组的计数已经不可信：\n${blind.join("\n")}`);
+    }
+    const cardNames = [...codeOnly(src.settings).matchAll(/card\("(set\.card\.[A-Za-z]+)"\)/g)]
       .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
-    const modeKeys = [...src.playground.matchAll(/\{\s*mode:\s*"[a-z]+",\s*key:\s*"(pg\.mode\.[a-z]+)"\s*\}/g)]
+    const modeKeys = [...codeOnly(src.playground).matchAll(/\{\s*mode:\s*"[a-z]+",\s*key:\s*"(pg\.mode\.[a-z]+)"\s*\}/g)]
       .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
     return {
       nav: (src.html.match(/class="nav-item"/g) ?? []).length,
@@ -1971,11 +2100,80 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
       + "——两条独立派生互相不认了，先回屏幕上核对到底有几条黄条，再改这里").toBe(c.warn);
   });
 
+  // ── 完备性锚：「我认全了」，不只是「我认出来的那些非空」（复评 F2）─────────────
+
+  it("完备性锚：`card(` 的调用点数 === 认出来的卡名数，MODES 的条目数 === 认出来的档位键数", () => {
+    const failures = recognitionFailures(readPanelSource());
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：Task 31 那张卡写成多行 `card(\\n \"set.card.danger\",\\n)` —— 取名正则认不出，当场吵", () => {
+    const src = readPanelSource();
+    // 变异取真源：这正是复评实测里全绿逃逸的那一种写法。
+    const mutated = {
+      ...src,
+      settings: src.settings.replace(
+        'const examples = card("set.card.examples");',
+        'const examples = card("set.card.examples");\n    const danger = card(\n      "set.card.danger",\n    );',
+      ),
+    };
+    expect(mutated.settings === src.settings, "变异没落到 sec-settings.js 上——这一格控制是空的").toBe(false);
+    const failures = recognitionFailures(mutated);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    // ⚠️ 期望的两个数**从真源现算**，不手写：Task 31 真的落地那天卡数会变，写死会在
+    // 「判据其实什么都没坏」的那天红，而代价是逼后来的人去削弱这一格。
+    const cards = realPanel().cards;
+    for (const h of [`调用点有 ${cards + 1} 处`, `只认出 ${cards} 个`, "设置卡表"]) {
+      expect(failures[0] ?? "", "吵了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
+    // 共用入口这一层：整组的计数都从 `panelCounts()` 来，它必须当场抛，而不是少数一张。
+    expect(() => panelCounts(mutated), "认不出却照常返回了一个偏小的计数——这正是复评量到的逃逸")
+      .toThrow("认不出屏幕上的卡");
+  });
+
+  it("该红时红：MODES 多一档且带了额外属性（`beta: true`）—— 取键正则认不出，当场吵", () => {
+    const src = readPanelSource();
+    const mutated = {
+      ...src,
+      playground: src.playground.replace(
+        '  { mode: "video", key: "pg.mode.video" },\n',
+        '  { mode: "video", key: "pg.mode.video" },\n  { mode: "audio", key: "pg.mode.audio", beta: true },\n',
+      ),
+    };
+    expect(mutated.playground === src.playground, "变异没落到 sec-playground.js 上——这一格控制是空的").toBe(false);
+    const failures = recognitionFailures(mutated);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    // 同上：两个数从真源现算，模式档数将来一变，这一格不会假红。
+    const modes = realPanel().modes;
+    for (const h of [`MODES 表里有 ${modes + 1} 条`, `只认出 ${modes} 个`, "模式表"]) {
+      expect(failures[0] ?? "", "吵了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
+    expect(() => panelCounts(mutated)).toThrow("认不出屏幕上的卡");
+  });
+
+  it("不乱红：注释里写一句真代码片段（`card(\"set.card.danger\")`）不算调用点 —— 抠注释这一步是必需的", () => {
+    const src = readPanelSource();
+    // 本仓的注释里到处写真代码片段（`sec-settings.js` 卡 4 上方那段就在讲第 5 张卡），
+    // 裸数 `card(` 会把它们一起数进来 ⇒ 完备性锚会在**判据什么都没坏**的那天红。
+    const mutated = {
+      ...src,
+      settings: src.settings.replace(
+        'const examples = card("set.card.examples");',
+        '// 将来 Task 31 会写 const danger = card("set.card.danger");\n    const examples = card("set.card.examples");',
+      ),
+    };
+    expect(mutated.settings === src.settings, "变异没落到 sec-settings.js 上——这一格控制是空的").toBe(false);
+    expect(recognitionFailures(mutated), "注释里的那一句被当成了真的调用点").toEqual([]);
+    expect(panelCounts(mutated).cards, "注释里的那一句被数进了卡数").toBe(realPanel().cards);
+  });
+
   /**
    * 卡与模式那两条计数的**第二个独立来源**：字典。
    * 这里数出来的每一个名字都得在 `i18n-dict.js` 里有一条真的键——名字打错、卡被改名而
    * 字典没跟着改，都会在这一格红，而不是让上面那两条计数静静地少一个。
    * ⚠️ **字典这边只作证不当计数**，理由见 `panelCounts()` 上方那段。
+   * ⚠️ **它挡不住「认不出来的那一张」**（复评 F2）：找不到的名字它按定义看不见，
+   * 那一族归上面那三格完备性锚。
    */
   it("两条独立派生互相认账：设置卡与调试台模式的每个名字在字典里都有译文", () => {
     const c = realPanel();
@@ -2135,5 +2333,191 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     for (const h of ["zh-CN/ADMIN.md", "张表"]) {
       expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
     }
+  });
+
+  // ── ⑦ 三句「今天是什么样」的话，各自的测法（P3e Task 26A 复评回填）─────────────
+  //
+  // 这三句都是复评实测抓到的「五份一起说错」（F1 / F3 / F6）：结构判据、数字锚、
+  // 软化词矩阵全绿，而句子本身与屏幕对不上。改真之外还得留下**会自己红的那一格**，
+  // 否则下一次源码一动，这三句又会一起变成假话，而没有任何东西会响。
+
+  /**
+   * F1：设置卡表第 1 行原来写的是「认证密钥 = 网关口令 **+ 各条邮箱通道自己的凭据**」。
+   * 实测：`CARD_AUTH` 只有 `gatewayToken` 一格，通道凭据由 `channelFields()` 渲染进
+   * **卡 3（注册机）** 的两张对称子卡 ⇒ 运维照原文在两处都找不到它们。
+   *
+   * 这一格钉的是改真之后那两行话：**取值侧**（三张表里没有通道凭据）与**位置侧**
+   *（`channelFields()` 的调用点夹在卡 3 与卡 4 的建卡语句之间）。哪天真把通道凭据搬进
+   * 卡 1，这一格当场红，逼人回来同时改五份文档的第 1 行与第 3 行。
+   */
+  it("设置卡表第 1 / 3 行那两句话的测法：卡 1 只有网关口令，邮箱通道凭据渲染在卡 3 里", () => {
+    expect([...CARD_AUTH], "认证密钥卡的字段清单变了——五份 ADMIN.md 设置卡表第 1 行那句话得跟着改")
+      .toEqual(["gatewayToken"]);
+
+    const channelPaths = CHANNELS.flatMap((c) => channelFields(c));
+    expect(channelPaths.length, "一条通道凭据字段都没数到——这一格测的是空气").toBeGreaterThan(0);
+    const elsewhere = [...CARD_AUTH, ...CARD_UPSTREAM, ...CARD_REGISTRAR, ...ADVANCED_FIELDS];
+    const strayed = channelPaths.filter((p) => elsewhere.includes(p));
+    expect(strayed, `这些通道凭据字段跑进了别的卡的字段表：${strayed.join("、")}`
+      + "——五份 ADMIN.md 说它们在卡 3 的两张子卡里，那句话已经不成立了").toEqual([]);
+
+    // 位置侧：抠注释之后，`channelFields(` 的调用点必须夹在卡 3 与卡 4 的建卡语句之间。
+    const src = codeOnly(readPanelSource().settings);
+    const reg = src.indexOf('card("set.card.registrar")');
+    const call = src.indexOf("channelFields(");
+    const examples = src.indexOf('card("set.card.examples")');
+    expect([reg, call, examples].filter((i) => i < 0), "这三个落点有认不出来的——判据本身已经和源码对不上了")
+      .toEqual([]);
+    expect(reg < call && call < examples,
+      `通道凭据的渲染点已经不在卡 3 那一段里了（卡 3 在 ${reg}，channelFields( 在 ${call}，卡 4 在 ${examples}）`
+      + "——五份 ADMIN.md 设置卡表第 3 行那句话得跟着改").toBe(true);
+  });
+
+  /**
+   * F5：设置那一节原来写的是「保存之后面板**不说**「已保存并生效」」，而屏幕上
+   * `set.propagation` 逐字说的正是「本实例已经生效」——**文档与屏幕当面打架**。
+   * 改真之后那一句引的是屏幕原话的**开头一截**，这一格就是那句引文的测法：
+   * 引文逐份从 `i18n-dict.js` 里 `set.propagation` 的第一小句现算，字典一改，五份一起红。
+   *
+   * ⚠️ **比对是「抹掉空白 + 不分大小写」的**，理由是物理的：markdown 会在句子中间折行，
+   * 而字典里那句是一行。代价写在这里——一处多余的空格它看不出来，它管的是「这句引文
+   * 还是不是屏幕上那句话」，不是排版。
+   */
+  const squash = (s: string) => s.replace(/[\s*`"「」]/g, "").toLowerCase();
+
+  /** `set.propagation` 五种语言各自的**第一小句**。真扫描与探针**共用这一份**。 */
+  function propagationLeads(dictSrc: string): Record<Lang, string> {
+    const line = dictSrc.split("\n").find((l) => l.includes('"set.propagation":'));
+    if (line === undefined) {
+      throw new Error("i18n-dict.js 里找不到 `set.propagation` 那一行——判据认不出真源了，先看这里");
+    }
+    const out = {} as Record<Lang, string>;
+    for (const lang of LANGS) {
+      const m = new RegExp(`(?:"${lang}"|${lang})\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(line);
+      const whole = m?.[1];
+      if (whole === undefined) {
+        throw new Error(`i18n-dict.js 的 set.propagation 里取不出 ${lang} 那一句——判据认不出真源了`);
+      }
+      // 第一小句：到第一个句读为止（中日的「；。」、英韩的「; 」「. 」）。
+      const lead = whole.split(/[；;。]|\.\s/)[0] ?? "";
+      if (squash(lead).length < 5) {
+        throw new Error(`set.propagation 在 ${lang} 下的第一小句短得不像一句话（「${lead}」）——判据退化了`);
+      }
+      out[lang] = lead;
+    }
+    return out;
+  }
+
+  /** 一份引文表 × 五份 ADMIN.md。返回失败报文数组。真扫描与探针**共用这一份**。 */
+  function propagationFailures(leads: Record<Lang, string>, read: ApiDocReader): string[] {
+    return LANGS.filter((l) => !squash(read(l)).includes(squash(leads[l]))).map((l) =>
+      `${l}/ADMIN.md 的设置那一节没有逐字引到屏幕上那句「${leads[l]}」`
+      + "——要么 `set.propagation` 改了文案而这一份没跟着改，要么这一份把引文改写了"
+      + "（比对抹掉了空白与大小写，所以折行不算问题）");
+  }
+
+  it("设置那一节引的「本实例已经生效」是屏幕原话：逐份与 i18n 字典里 set.propagation 的第一小句对得上", () => {
+    const failures = propagationFailures(propagationLeads(readPanelSource().dict), realAdminDoc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：屏幕那句 set.propagation 改了文案而五份文档没跟着改 —— 五份一起红", () => {
+    const leads = propagationLeads(readPanelSource().dict);
+    const base = propagationFailures(leads, realAdminDoc);
+    if (base.length > 0) {
+      throw new Error("本格是探针，它的基取自真文档，而真文档今天本身就不过判据 —— "
+        + "别从这一格的报文里找原因，真因在「设置那一节引的「本实例已经生效」是屏幕原话…」那一格：\n"
+        + base.join("\n"));
+    }
+    const reworded = Object.fromEntries(LANGS.map((l) => [l, `${leads[l]}（改过了）`])) as Record<Lang, string>;
+    const failures = propagationFailures(reworded, realAdminDoc);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+  });
+
+  /**
+   * F6：模型那一节原来写的是「同一个模型在一条协议上可用、在另一条上不可用**是常态**」。
+   * 实测 `MODEL_CATALOG`：唯一的对话模型挂满四条协议，三个媒体模型的 `protocols` 是空数组
+   * ⇒ **今天一个这样的例子都没有**。改真之后那句话变成「今天没有一个模型是这样」，
+   * 而这一格就是它的测法：哪天真出现一个「部分可用」的模型，它当场红。
+   *
+   * ⚠️ 后面那条 `toEqual([4, 1, 3])` 是**手写数字**，刻意的：五份 ADMIN.md 里「四条协议 /
+   * 那个对话模型 / 三个媒体模型」这三个量词在五种语言里是汉字数词 / 英文单词 / 日文
+   * 「4 つ」/ 韩文「네 가지」，**没有一种正则能把五种写法一起认下来**（数字锚那张表按
+   * 阿拉伯数字 + 单位词工作，这里一个都套不上）。所以数字留在这一侧：目录一动它就红，
+   * 报文直接告诉人回去改哪一句。
+   */
+  it("模型那一节「今天没有一个模型是一条协议可用、另一条不可用」的测法", () => {
+    const protocols = [...new Set(MODEL_CATALOG.flatMap((m) => [...m.protocols]))];
+    expect(protocols.length, "目录里一条协议都没数到——这一格测的是空气").toBeGreaterThan(0);
+    expect(MODEL_CATALOG.length, "目录里一个模型都没有——这一格测的是空气").toBeGreaterThan(0);
+
+    const partial = MODEL_CATALOG.filter((m) => m.protocols.length > 0 && m.protocols.length < protocols.length);
+    expect(partial.map((m) => m.id), `这些模型只挂了一部分协议：${partial.map((m) => m.id).join("、")}`
+      + "——五份 ADMIN.md 的模型那一节写着「今天目录里没有一个模型是这样」，那句话已经不成立了")
+      .toEqual([]);
+
+    const full = MODEL_CATALOG.filter((m) => m.protocols.length === protocols.length).length;
+    const media = MODEL_CATALOG.filter((m) => m.protocols.length === 0).length;
+    expect([protocols.length, full, media],
+      "协议数 / 挂满协议的模型数 / 协议列为空的模型数，与五份 ADMIN.md 模型那一节写的"
+      + "「四条协议、那个对话模型、三个媒体模型」对不上了——那三个量词是手写的，得回去改")
+      .toEqual([4, 1, 3]);
+  });
+
+  /**
+   * F3：排障那一节原来写的是「登录看起来成功了，却永远进不去」。
+   * 实测 `admin-ui/js/app.js` 的登录前置闸：`sendable()` 不过时当场显示 `gate.badShape`，
+   * `probe()` 一次都不跑 ⇒ 屏幕上根本不会「看起来成功」；部署那一侧真配了这种口令则整棵树
+   * 不注册、给的是 `404`（已由同一节的 404 那一条覆盖）。两条路径都不产生原文描述的症状。
+   *
+   * 改真之后那一条写的是「登录框当场说有不被接受的字符，只收可打印 ASCII（`0x20–0x7E`）」。
+   * **那个区间不许手抄**：这里拿真的 `sendable()` 逐字节量一遍 0x00–0xFF，再把区间格式化成
+   * 文档里那个 code span 去核对。字符集一放宽 / 一收紧，期望的串当场变，五份一起红。
+   */
+  const hex2 = (c: number) => `0x${c.toString(16).toUpperCase().padStart(2, "0")}`;
+
+  /** 真的 `sendable()` 逐字节量出来的可送码位。真扫描与探针**共用这一份**。 */
+  const SENDABLE_BYTES: readonly number[] = (() => {
+    const ok: number[] = [];
+    for (let c = 0; c <= 0xff; c += 1) if (sendable(String.fromCharCode(c))) ok.push(c);
+    return ok;
+  })();
+
+  /** 一个区间 × 五份 ADMIN.md。返回失败报文数组。真扫描与探针**共用这一份**。 */
+  function charsetFailures(lo: number, hi: number, read: ApiDocReader): string[] {
+    const token = `\`${hex2(lo)}–${hex2(hi)}\``;
+    return LANGS.filter((l) => !read(l).includes(token)).map((l) =>
+      `${l}/ADMIN.md 里找不到「${token}」（那个短横是 EN DASH U+2013，与 i18n 字典里 gate.badShape 那句逐字同款）`
+      + "——要么 `sendable()` 的字符集变了而这一份没跟着改，要么这一份漏写了排障那一条");
+  }
+
+  it("排障那一节里的字符集区间是从 sendable() 现算的：五份都写着它，且它真是一段连续区间", () => {
+    expect(SENDABLE_BYTES.length, "一个可送码位都没量到——这一组测的是空气").toBeGreaterThan(0);
+    const lo = SENDABLE_BYTES[0] ?? -1;
+    const hi = SENDABLE_BYTES[SENDABLE_BYTES.length - 1] ?? -1;
+    expect(SENDABLE_BYTES.length,
+      `${hex2(lo)}–${hex2(hi)} 之间有洞（量到 ${SENDABLE_BYTES.length} 个可送码位，区间宽 ${hi - lo + 1}）`
+      + "——文档把它写成一个区间，那句话已经不成立了，得换一种写法而不是改这一格")
+      .toBe(hi - lo + 1);
+    // 排障那一条**点名了 `é` / `£`**（「发得出去，但本网关同样不收」）。
+    // 「发得出去」那一半是 `sendable.mjs` 文件头的全 256 字节实测，这里证不了；
+    // 「本网关不收」那一半是这里这两枪——哪天真放行了它们，这一格连同上面那个区间一起红。
+    expect(["é", "£"].filter((c) => sendable(c)), "五份 ADMIN.md 说这两个字符本网关不收，而 sendable() 收了")
+      .toEqual([]);
+    const failures = charsetFailures(lo, hi, realAdminDoc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：字符集放宽到 0xFF（`é` / `£` 也收）而五份文档没跟着改 —— 五份一起红", () => {
+    const lo = SENDABLE_BYTES[0] ?? -1;
+    const base = charsetFailures(lo, SENDABLE_BYTES[SENDABLE_BYTES.length - 1] ?? -1, realAdminDoc);
+    if (base.length > 0) {
+      throw new Error("本格是探针，它的基取自真文档，而真文档今天本身就不过判据 —— "
+        + "别从这一格的报文里找原因，真因在「排障那一节里的字符集区间是从 sendable() 现算的…」那一格：\n"
+        + base.join("\n"));
+    }
+    const failures = charsetFailures(lo, 0xff, realAdminDoc);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+    expect(failures[0] ?? "", "红了但报文没写出它在找哪个串——报文是唯一会被看见的护栏").toContain("0x20–0xFF");
   });
 });

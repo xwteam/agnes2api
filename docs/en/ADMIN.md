@@ -9,7 +9,7 @@ and which actions write. **Every variable itself (default, accepted range, cost)
 in exactly one place, the environment-variable table in [DEPLOY.md](DEPLOY.md)**; this page
 only points at it and never keeps a second copy.
 
-Covered here: how to get in, all eight boards one by one, and finally what the panel does not
+Covered here: how to get in, every board one by one, and finally what the panel does not
 do plus troubleshooting.
 
 ## Getting in
@@ -178,13 +178,17 @@ channel, which credentials you have to bring, and how to troubleshoot live in
   protocol column of image and video models is empty — they belong to no chat protocol and go
   through their own media endpoints.
 - **Protocol availability is a badge per cell**, not one blanket "supported" or "unsupported":
-  the same model being available on one protocol and not on another is normal. You can filter
-  by protocol; when the filter matches nothing, this page says "no models are available on
-  this protocol" instead of drawing an empty table.
+  the column is filled in model by model. ⚠️ **No model in today's catalog is available on one
+  protocol and unavailable on another**: the one chat model is available on all four, and the
+  three media models have an empty column. You can filter by protocol; when the filter matches
+  nothing, this page says "no models are available on this protocol" instead of drawing an
+  empty table.
 - **The endpoint column says which path a client should call**, from the same single source as
   [API.md](API.md), and this page keeps no second copy.
-- **When the catalog cannot be read this page shows a dash** and says outright that this is not
-  the same as "the gateway has no models" — those two must be told apart on screen.
+- **When the catalog cannot be read this page shows a dash**, next to a load-failure banner and
+  a retry button. ⚠️ **"cannot be read" and "there are no models" are two different things, and
+  today the sentence that spells that out lives only in the dash's hover tooltip** (`title=`):
+  visible with a mouse, out of reach on a touch screen.
 - ⚠️ **One known divergence in the public contract, recorded as it is**: the Gemini model-list
   endpoint declares `generateContent` for **every** model, **including the video one**, while
   the real path for video is the two-step "create the job, then poll". This page is filled in
@@ -245,9 +249,9 @@ The settings page has four cards today:
 
 | Card | What it covers | Worth knowing |
 |---|---|---|
-| Credentials | The gateway token and each mailbox channel's own credentials | Credentials are write-only: a blank input means this field is left alone |
+| Credentials | The gateway token and nothing else; the admin token is shown read-only on this card, because the panel cannot change its own key | Credentials are write-only: a blank input means this field is left alone |
 | Upstream & cooldowns | Upstream address, timeouts, and the cooldown / eviction knobs | Two of them are read once when the instance is built, see the end of this section |
-| Registrar | Every refill knob, plus an "advanced" collapsed area | The field in that area changes where every automatic registration goes |
+| Registrar | Every refill knob, **each mailbox channel's own credentials** (two symmetric sub-cards), plus an "advanced" collapsed area | The field in that area changes where every automatic registration goes |
 | Integration examples | Ready-to-run call examples | The address comes from the origin you opened the panel on, and the token is a placeholder |
 
 - **Every field lays out a quadruple**: what is in storage, what is in the environment, which
@@ -258,16 +262,20 @@ The settings page has four cards today:
   "configured / not configured" plus the last 4 characters. Blank means unchanged; to really
   delete one you press "clear", and that step first tells you what clearing will do — fall back
   to the environment value, fail on the next restart, or change nothing right now.
-- **After saving, the panel does not claim "saved and in effect"**. It does three things: reads
-  the effective values back, highlights the fields that really changed, and states the upper
-  bound on "how long until other replicas / isolates see this change". That bound is the sum of
-  the configuration cache and the KV edge cache, and both numbers live in the
-  environment-variable table of [DEPLOY.md](DEPLOY.md).
+- **After saving, the panel answers with more than a bare "saved"**: it reads the effective
+  values back, highlights the fields that really changed, and then splits on what kind of field
+  you touched. For ordinary fields the sentence on screen **opens, word for word, with "this
+  instance already picked it up"**, and only then states how long other replicas / isolates may
+  take to see the change — it says this instance is already using the new value, not that
+  nothing is live yet. That bound is the sum of the configuration cache and the KV edge cache,
+  and both numbers live in the environment-variable table of [DEPLOY.md](DEPLOY.md).
 - ⚠️ **Two fields are the exception**: the pool snapshot cache and the write-coalescing interval
   (`POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS`) are **read once when the instance is
   built** ⇒ after saving, **not even this instance has picked them up**; the container has to
-  restart or the isolate has to be recycled. The panel says exactly that for those two and does
-  not also claim "this instance is already using it".
+  restart or the isolate has to be recycled. When a save touches **only** those two, the
+  "already picked it up + upper bound" sentence **is not shown at all** and is replaced by
+  "persisted, but this instance has not picked it up either"; when a save touches both kinds,
+  both sentences appear.
 - **The panel cannot rotate its own key**: `ADMIN_TOKEN` is read from the environment only. To
   rotate it, change the deployment-side environment variable and restart.
 - **When the configuration in storage cannot be loaded this page turns into a diagnostic view**:
@@ -297,8 +305,11 @@ danger zone lands, a test will drag this document back here to be updated.
   the screen carries a lock marker, but changing the environment variable itself can only be
   done on the deployment side.
 - **It does not fetch remote media for you**: result addresses in the playground are listed as
-  they came, ready to copy or open in a new tab; only `data:` images are embedded inline, and
-  that path issues no request to any third party.
+  they came and are always ready to copy; **only the ones starting with `http` / `https` also
+  get an "open" link** — `javascript:` / `blob:` / `file:` never do, even when the upstream
+  really returned one, because following such a link yields a top-level document decided by
+  upstream content; only `data:` images are embedded inline, and that path issues no request to
+  any third party.
 
 ## Troubleshooting
 
@@ -315,11 +326,14 @@ danger zone lands, a test will drag this document back here to be updated.
   carry an `admin.token_conflict` entry. ⚠️ **Putting the stored gateway token back only
   restores availability**: the admin token has to be treated as leaked, the full procedure is in
   [DEPLOY.md](DEPLOY.md), and both steps have to be done before it counts as handled.
-- **Login looks like it succeeded, yet you never get in**: the token contains characters the
-  browser simply cannot send (code points above `U+00FF` such as CJK, emoji or zero-width
-  space, plus NUL / LF / CR). Such a request **is never sent at all**, so the server does not
-  even have a failed login to show — which is exactly why the token is restricted to printable
-  ASCII.
+- **You paste the token and the login box tells you right there that it contains characters that
+  are not accepted**: the panel checks the character set before sending anything, and accepts
+  printable ASCII only (`0x20–0x7E`). Code points above `U+00FF` — CJK, emoji, zero-width space
+  — plus NUL / LF / CR cannot be sent by the browser at all; `é` / `£` can be sent, yet this
+  gateway declines them too, as a cross-runtime encoding decision. On this path **no request
+  leaves the browser**, so the server does not even have a failed login to show. ⚠️ **You never
+  see this message when the deployment side is the one carrying such a token**: the whole tree
+  is then never registered, and what you get is the `404` above.
 - **The screen is showing stale values**: the configuration and the pool snapshot each have
   their own cache window, with a layer of KV edge caching on top. Both upper bounds and their
   costs are in the environment-variable table of [DEPLOY.md](DEPLOY.md) and are not copied here;
