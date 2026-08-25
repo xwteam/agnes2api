@@ -366,9 +366,10 @@ curl http://localhost:8080/v1/videos/task-1 \
   -H "Authorization: Bearer your-gateway-token"
 ```
 
-⚠️ The task-identifier shape check is not verified against the real upstream — it is
-copied from this repo's test fixtures. If the upstream ever issues a different shape, the
-gateway answers 400 instead of forwarding it.
+⚠️ The task-identifier shape check is not verified against the real upstream — it is a
+character set and length bound **extrapolated** from the identifier in this repo's test
+fixtures, not a verbatim copy. If the upstream ever issues a different shape, the gateway
+answers 400 instead of forwarding it.
 
 ```json
 { "id": "task-1", "status": "completed", "url": "https://example.com/generated-video.mp4" }

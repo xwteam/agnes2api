@@ -350,8 +350,8 @@ curl http://localhost:8080/v1/videos/task-1 \
   -H "Authorization: Bearer your-gateway-token"
 ```
 
-⚠️ 任務識別碼的形狀判據未經真實上游核實：它照抄的是本倉測試夾具裡那個識別碼。上游
-真發出別的形狀時，閘道先回一個 400，不會把它轉給上游。
+⚠️ 任務識別碼的形狀判據未經真實上游核實：它是從本倉測試夾具裡那個識別碼**外推**出來的
+字元集與長度上界，不是照抄。上游真發出別的形狀時，閘道先回一個 400，不會把它轉給上游。
 
 ```json
 { "id": "task-1", "status": "completed", "url": "https://example.com/generated-video.mp4" }

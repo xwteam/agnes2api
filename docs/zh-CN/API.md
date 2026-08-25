@@ -346,8 +346,8 @@ curl http://localhost:8080/v1/videos/task-1 \
   -H "Authorization: Bearer your-gateway-token"
 ```
 
-⚠️ 任务标识的形状判据未经真实上游核实：它照抄的是本仓测试夹具里那个标识。上游真发出
-别的形状时，网关先回一个 400，不会把它转给上游。
+⚠️ 任务标识的形状判据未经真实上游核实：它是从本仓测试夹具里那个标识**外推**出来的字符
+集与长度上界，不是照抄。上游真发出别的形状时，网关先回一个 400，不会把它转给上游。
 
 ```json
 { "id": "task-1", "status": "completed", "url": "https://example.com/generated-video.mp4" }

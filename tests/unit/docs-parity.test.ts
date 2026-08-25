@@ -266,8 +266,15 @@ describe("五语言 API.md 的 503 reason 表覆盖全部取值", () => {
  * 更不证明这条上游事实本身是真是假。后者只有一次真上游能定案；译文准确与否留给评审。
  *
  * ⚠️ **`docSections` 那一栏不是装饰**：判据是**小节内**查找，不是整份文档查找。
- * 下面「限定句被挪出指名小节」那格就是这句话的测法——把限定句挪到文件末尾之后，
- * 整份文档照旧 `includes` 得到（那一格里连这件事一起断言了），而小节内查不到 ⇒ 红。
+ * 下面「限定句被挪出指名小节」那格就是这句话的测法——把限定句挪到**文档标题之下、
+ * 第一个 `## ` 之上**那片不属于任何小节的地方，整份文档照旧 `includes` 得到
+ *（那一格里连这件事一起断言了），而小节内查不到 ⇒ 红。
+ * ⚠️⚠️ **别把这条测法读成「挪到文件末尾」**：上一版这段逐字这么写着，而复评照它做
+ * 真文件变异的结果是**全绿 EXIT=0**——`sectionBody()` 里最后一个小节的正文一直延伸到
+ * EOF，所以「追加到文件末尾」等于**追加进最后一个小节**；某条事实指名的小节恰好排在
+ * 最后时（今天 `video.taskIdCharset` 就是），那种变异一格都不会红。
+ * 「最后一节延伸到 EOF」这半句不是散文，下面那格里连它一起断言了。
+ * 同一件事在下面那格的实现旁边也写着，两处必须一起改。
  */
 
 /** 五份 API.md 的取文口径：真扫描与探针**共用这一份**，探针换掉的只是这个函数。 */
@@ -370,7 +377,41 @@ describe("五语言 API.md 逐份写着「这条上游事实未经核实」", ()
 
   const FIRST = ASSUMED!;
 
+  /**
+   * **探针的「基」取自真文档，于是真文档一漂，下面几格会跟着红在被测的那件事上。**
+   * **这道闸加进来之前**复评实测过：把 `docs/ja/API.md` 的小节标题改一个字 ⇒ 除真扫描
+   * 那一格之外，下面几格探针**跟着一起红，而它们的报文只有一句「报文：」**，把人往错的
+   * 方向指（P3e 的老教训：报文可以亲手把人引进坑）。⇒ 每格先过这一道闸：真文档今天
+   * 本身就不过判据的话，当场说清「先看真扫描那一格」，别让人从探针的报文里找原因。
+   * **加进来之后**同一条变异重跑（回填时亲手跑的）：这一组红 **7** 格 —— 真扫描那一格
+   * 是真因本身，**5 格探针的报文逐字点名「真因在哪一格」**，剩下一格是这道闸自己的
+   * 自检（它的反向控制当场红，报文里带的正是这道闸的原话）。
+   *
+   * `read` 留成参数是为了让这道闸自己也能被打红——见「探针自检这道闸本身有牙」那一格。
+   */
+  function probeBase(fact: UpstreamFact, read: ApiDocReader = realApiDoc): void {
+    const base = factDocFailures(fact, read);
+    if (base.length > 0) {
+      throw new Error(
+        "本格是探针，它的基取自真文档，而真文档今天本身就不过判据 —— "
+        + `别从这一格的报文里找原因，真因在「${fact.id} 的限定句在五份 API.md 的指名小节里逐份出现」那一格：\n`
+        + base.join("\n"),
+      );
+    }
+  }
+
+  it("探针自检这道闸本身有牙：真文档不过判据时，探针格报的是「先看真扫描那一格」", () => {
+    // 变异取真文档：把指名小节的标题抹掉，`sectionBody()` 于是找不到它。
+    const heading = `## ${FIRST.docSections[0]!}`;
+    const broken: ApiDocReader = (lang) => realApiDoc(lang).split(heading).join("## (gone)");
+    expect(broken("ja").includes(heading), "变异没落地 —— 这一格控制是空的").toBe(false);
+    expect(() => probeBase(FIRST, broken)).toThrow("本格是探针");
+    // 反向控制：真文档原样传进去时它一声不吭（这一格若红，说明真文档本身坏了）。
+    expect(() => probeBase(FIRST, realApiDoc)).not.toThrow();
+  });
+
   it("该红时红：某一种语言的限定句被删掉（其余四份不动）", () => {
+    probeBase(FIRST);
     const hint = FIRST.docHints.ja;
     const failures = factDocFailures(FIRST, readerWith("ja", (s) => s.replace(hint, "")));
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
@@ -380,9 +421,23 @@ describe("五语言 API.md 逐份写着「这条上游事实未经核实」", ()
   });
 
   it("该红时红：限定句被挪出指名小节——整份文档照旧查得到，小节内查不到", () => {
+    probeBase(FIRST);
     const hint = FIRST.docHints.ko;
     // 挪到**文档标题之下、第一个 `## ` 之上**——那一片不属于任何小节。
     // 不用「追加到文件末尾」：那等于挪进最后一个小节，某些事实的指名小节恰好就是它。
+    // ↓ 「最后一个小节的正文一直延伸到 EOF」是上面那句话的全部依据，在这里断言掉：
+    //   哪天 `sectionBody()` 改成在别处收尾，这一格当场红，逼人回来改上面那段说明。
+    {
+      const src = realApiDoc("ko");
+      const lastHeading = [...src.matchAll(/\n## (.+)\n/g)].at(-1)?.[1] ?? "";
+      expect(lastHeading, "这一份文档里一个 `## ` 小节都没有 —— 下面这条断言什么都没证明").not.toBe("");
+      const lastBody = sectionBody(src, lastHeading);
+      expect(lastBody, `找不到最后那个小节「${lastHeading}」`).not.toBeNull();
+      expect(
+        lastBody !== null && src.endsWith(lastBody),
+        "最后一个小节的正文没有延伸到 EOF —— 「追加到文件末尾 = 挪进最后一个小节」这句话不再成立，回去改上面那段说明",
+      ).toBe(true);
+    }
     const moved = (s: string) => {
       const t = s.replace(hint, "");
       const at = t.indexOf("\n");
@@ -399,6 +454,7 @@ describe("五语言 API.md 逐份写着「这条上游事实未经核实」", ()
   });
 
   it("该红时红：小节标题在某一份里对不上时会吵，不装作「这一份没写那句话」", () => {
+    probeBase(FIRST);
     const heading = `## ${FIRST.docSections[0]!}`;
     const failures = factDocFailures(FIRST, readerWith("en", (s) => s.replace(heading, `${heading} (draft)`)));
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
@@ -407,6 +463,7 @@ describe("五语言 API.md 逐份写着「这条上游事实未经核实」", ()
   });
 
   it("该红时红：事实被升级成 verified，而五份文档里那句「未核实」一个都没删", () => {
+    probeBase(FIRST);
     const upgraded: UpstreamFact = { ...FIRST, status: "verified" };
     const failures = factDocFailures(upgraded, realApiDoc);
     expect(failures.length, `报文：\n${failures.join("\n")}`).toBe(LANGS.length);
@@ -414,6 +471,7 @@ describe("五语言 API.md 逐份写着「这条上游事实未经核实」", ()
   });
 
   it("该红时红：限定 token 是空串时当场判死——空串永远查得到，那条断言会静静空转", () => {
+    probeBase(FIRST);
     const blanked: UpstreamFact = { ...FIRST, docHints: { ...FIRST.docHints, en: "  " } };
     const failures = factDocFailures(blanked, realApiDoc);
     expect(failures.join("\n")).toContain("空串");
