@@ -3,8 +3,12 @@ services:
     image: ghcr.io/xwteam/agnes2api:latest
     # ⚠️ 没有已发布镜像时（首个 release 之前，或 fork 之后），compose 会回落到本地构建。
     # 删掉这三行 ⇒ `docker compose up -d` 在那两种情形下直接失败（拉不到那个 tag）。
-    # 镜像发布只在打 `v*` 标签时触发，而首个标签必须等推送之后才能打
-    # （在那之前打的标签会指向不存在的提交），所以「拉不到」是**推送当天的常态**，不是边角情形。
+    # 镜像发布由 .github/workflows/docker-publish.yml 的两个触发器决定：`push` 一个
+    # `v*` 标签，或在 Actions 页手动跑一次（`workflow_dispatch`）。**两个都要有人动手**，
+    # 而首个标签必须等推送之后才能打（在那之前打的标签会指向不存在的提交），
+    # 所以「拉不到」是**推送当天的常态**，不是边角情形。
+    # ⚠️ 这句话与那份 workflow 的触发器由 tests/unit/repo-front-door.test.ts 的 (i) 钉着：
+    #   那边多一个触发器而这里没跟上，就会红。
     build:
       context: .
       dockerfile: Dockerfile

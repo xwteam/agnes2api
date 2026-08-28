@@ -750,6 +750,9 @@ that only sets `POOL` (the same name as the KV binding), stays green.
    docker compose up -d
    ```
 
+   **Before the first published image exists** (or in a fork), this command falls back to
+   building the image locally — that is what the `build:` block in `docker-compose.yml` is for.
+
    `docker-compose.yml` publishes port `8080` (override with `PORT` in `.env`) and mounts
    `./data` into `/app/data` inside the container — that's where `store.json` (the key pool
    and any persisted config) lives. Keep that directory around across restarts/upgrades; it's

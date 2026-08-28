@@ -727,6 +727,9 @@ CI에는 이 파일이 없으므로 테스트 전에 `mv .dev.vars .dev.vars.off
    docker compose up -d
    ```
 
+   **첫 이미지가 배포되기 전**(또는 fork 이후)에는 이 명령이 로컬 빌드로 폴백합니다 ——
+   `docker-compose.yml` 의 `build:` 블록이 그 역할을 합니다.
+
    `docker-compose.yml`은 기본적으로 `8080` 포트를 게시하며(`.env`의
    `PORT`로 재정의 가능), `./data`를 컨테이너 내부의 `/app/data`에
    마운트합니다 —— `store.json`(key 풀 및 영속화된 설정)이 여기에

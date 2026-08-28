@@ -718,6 +718,105 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     expect(failures[0] ?? "").toContain("Dockerfile.nope，而那个文件不在仓里");
   });
 
+  /* ── (i) 「什么时候才会有已发布镜像」那句话与 workflow 的触发器 ──────────
+   *
+   * `docker-compose.yml` 那段注释要回答的是「`docker compose up -d` 为什么可能拉不到镜像」，
+   * 而答案取决于 `docker-publish.yml` 到底被什么触发。上一版写的是
+   * 「镜像发布**只**在打 `v*` 标签时触发」—— 实测那份 workflow 还有 `workflow_dispatch`，
+   * **那个「只」当天就是假的**（需求书同样这么写，实施者照抄；「需求书也会错」）。
+   * ⚠️ 判据不是「注释里有没有 workflow_dispatch 这个词」，而是**触发器逐个点名**：
+   *   那份 workflow 哪天多一个触发器（比如 `schedule`），这一格会指着那个名字红。
+   */
+  const PUBLISH_WF = ".github/workflows/docker-publish.yml";
+  const REAL_I = "docker-compose.yml 那句「什么时候会有已发布镜像」把 docker-publish.yml 的触发器逐个点到了";
+
+  const publishTriggerFailures = (read: Read): string[] => {
+    const wf = read(PUBLISH_WF);
+    // `on:` 之后、下一个顶格键之前的那一段；触发器是其中缩进两格的那几个键。
+    const block = /^on:\n([\s\S]*?)(?=^\S)/m.exec(wf);
+    if (block === null) throw new Error(`${PUBLISH_WF} 里读不出 on: 那一段 —— 判据坏了，不许静默跳过`);
+    const triggers = [...block[1]!.matchAll(/^ {2}([A-Za-z_]+):/gm)].map((m) => m[1]!);
+    if (triggers.length === 0) throw new Error(`${PUBLISH_WF} 的 on: 里一个触发器都没抠出来 —— 判据坏了`);
+    const note = read(COMPOSE);
+    return triggers
+      .filter((t) => !note.includes(t))
+      .map((t) => `${PUBLISH_WF} 有 \`${t}\` 这个触发器，而 ${COMPOSE} 那段注释一个字没提它 —— 「什么时候会有已发布镜像」那句话就是不全的`);
+  };
+
+  it(REAL_I, () => {
+    const failures = publishTriggerFailures(realRead);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("(i) 该红时红：workflow 多一个触发器而注释没跟上 —— 点名那个触发器", () => {
+    probeBase(publishTriggerFailures(realRead), REAL_I);
+    const mutated = realRead(PUBLISH_WF).replace("  workflow_dispatch:\n", "  workflow_dispatch:\n  schedule:\n    - cron: \"0 0 * * *\"\n");
+    expect(mutated, "变异没落地 —— workflow 里已经不是那个形状").not.toBe(realRead(PUBLISH_WF));
+    const failures = publishTriggerFailures(patchRead(realRead, PUBLISH_WF, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("`schedule`");
+  });
+
+  it("(i) 该红时红：注释里把 workflow_dispatch 那句删掉 —— 退回上一版那个假的「只」", () => {
+    probeBase(publishTriggerFailures(realRead), REAL_I);
+    const mutated = realRead(COMPOSE).replace("（`workflow_dispatch`）", "");
+    expect(mutated, "变异没落地").not.toBe(realRead(COMPOSE));
+    const failures = publishTriggerFailures(patchRead(realRead, COMPOSE, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("workflow_dispatch");
+  });
+
+  it("(i) 认不出要吵：workflow 的 on: 段读不出来时当场抛，不静默当成「没有触发器」", () => {
+    const gutted = realRead(PUBLISH_WF).replace(/^on:$/m, "ON_DISABLED:");
+    expect(gutted, "变异没落地").not.toBe(realRead(PUBLISH_WF));
+    expect(() => publishTriggerFailures(patchRead(realRead, PUBLISH_WF, gutted))).toThrow(/判据坏了/);
+  });
+
+  /* ── (j) 教了那条命令的每一份文档都要写「首个镜像发布前会本地构建」 ────────
+   *
+   * 六份 README 有这句话，而**五份 DEPLOY.md 才是部署的权威入口**，上一版那五份没跟上
+   * ⇒ 同一句话在两类文档之间断了（Task 34A 复评 D7）。
+   * ⚠️ 文档一侧不许**手数**：射程从 `docs/` 现列，多一种语言当天就进射程；
+   *   判据是「教了 `docker compose up -d` 的文件必须同时提到 `build:`」——
+   *   哪一份缺，就点名哪一份。
+   */
+  const BUILD_FALLBACK_TAUGHT = "docker compose up -d";
+  const REAL_J = "教了 `docker compose up -d` 的每一份 README / DEPLOY.md 都写了 `build:` 那条回退";
+
+  const buildFallbackFailures = (read: Read, list: List, exists: Exists): string[] => {
+    const langs = list("docs").filter((d) => exists(`docs/${d}/README.md`));
+    if (langs.length === 0) throw new Error("docs/ 下一种语言都没列出来 —— 判据坏了，不许静默跳过");
+    const files = ["README.md", ...langs.flatMap((l) => [`docs/${l}/README.md`, `docs/${l}/DEPLOY.md`])]
+      .filter((f) => exists(f));
+    const teaching = files.filter((f) => read(f).includes(BUILD_FALLBACK_TAUGHT));
+    if (teaching.length === 0) {
+      throw new Error(`一份教 \`${BUILD_FALLBACK_TAUGHT}\` 的文档都没扫到 —— 判据坏了，不许静默放行`);
+    }
+    return teaching
+      .filter((f) => !read(f).includes("`build:`"))
+      .map((f) => `${f} 教了 \`${BUILD_FALLBACK_TAUGHT}\`，却没写「首个镜像发布前会回落到本地构建」（那段 \`build:\`）—— 陌生人照着它跑会以为拉取失败就是坏了`);
+  };
+
+  it(REAL_J, () => {
+    const failures = buildFallbackFailures(realRead, realList, realExists);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("(j) 该红时红：某一种语言的 DEPLOY.md 把那句删掉 —— 点名是哪一份", () => {
+    probeBase(buildFallbackFailures(realRead, realList, realExists), REAL_J);
+    const at = "docs/ko/DEPLOY.md";
+    const mutated = realRead(at).split("`build:`").join("`buiId:`");
+    expect(mutated, "变异没落地").not.toBe(realRead(at));
+    const failures = buildFallbackFailures(patchRead(realRead, at, mutated), realList, realExists);
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain(at);
+  });
+
+  it("(j) 认不出要吵：一份教那条命令的文档都扫不到时当场抛", () => {
+    const blind: Read = (p) => realRead(p).split(BUILD_FALLBACK_TAUGHT).join("docker compose up -q");
+    expect(() => buildFallbackFailures(blind, realList, realExists)).toThrow(/判据坏了/);
+  });
+
   it(REAL_E, () => {
     const failures = ledgerUnqualified(trackedProse(), realRead, realExists);
     expect(

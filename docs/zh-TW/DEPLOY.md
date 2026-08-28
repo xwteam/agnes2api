@@ -609,6 +609,9 @@ npx wrangler dev
    docker compose up -d
    ```
 
+   **首個映像發布之前**（或 fork 之後），這條命令會回落到本機建置——
+   `docker-compose.yml` 裡那段 `build:` 就是做這件事的。
+
    `docker-compose.yml` 預設發布 `8080` 埠（可透過 `.env` 內的 `PORT` 覆寫），並將
    `./data` 掛載到容器內的 `/app/data`——`store.json`（key 池與任何持久化設定）就存
    放在這裡。重啟／升級時務必保留這個目錄，它是已匯入 key 池的唯一副本。

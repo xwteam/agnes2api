@@ -607,6 +607,9 @@ npx wrangler dev
    docker compose up -d
    ```
 
+   **首个镜像发布之前**（或 fork 之后），这条命令会回落到本地构建——
+   `docker-compose.yml` 里那段 `build:` 就是干这个的。
+
    `docker-compose.yml` 默认发布 `8080` 端口（可通过 `.env` 里的 `PORT` 覆盖），并把
    `./data` 挂载到容器内的 `/app/data`——`store.json`（key 池与任何持久化配置）就存在
    这里。重启/升级时务必保留这个目录，它是已导入 key 池的唯一副本。

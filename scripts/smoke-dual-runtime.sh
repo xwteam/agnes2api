@@ -33,8 +33,24 @@
 # ⚠️ **凭据现生成、用完即弃**：网关口令与管理口令每次跑都重新随机生成，只经由
 #   `docker compose` 的 override 文件（临时目录里，收尾时删）与 `wrangler dev --var`
 #   传进去，**一个字符都不写进仓库里任何被 git 跟踪的文件**。
-#   为满足 `docker-compose.yml` 的 `env_file:`，会在仓库根目录建一个**内容为空**的
-#   `.env`（它被 `.gitignore` 排除），收尾时删掉——**空文件，零凭据**。
+#
+# ⚠️ **开发者自己的 `./data` 与 `.env`，这份脚本一个字节都不写、也不删**
+#   （这两条是本任务复评实测出来的，上一版两样都动）：
+#   · `docker-compose.yml` 的 `./data:/app/data` 会让冒烟往**开发者那份 store.json**
+#     里塞假 key 并把整个目录 chown 走 ⇒ override 把那条挂载改指到临时目录；
+#   · `docker-compose.yml` 的 `env_file: .env` 会把开发者的真 `.env` **整份**灌进容器
+#     （实测 `env_file: []` 清不掉，被合并成「基文件那一份还在」）⇒ override 用
+#     compose 的 `!reset` 标记把它整条抹掉，于是这份脚本连 `.env` 存不存在都不关心
+#     （上一版为了满足 `env_file:` 会现建一个空的再删掉，这一版不建了）。
+#   ⚠️ **「不写」不等于「没被读到」，这半句得说准**：`.env` 还有第二条路
+#     —— compose 会读它给 `${...}` **插值**（基文件里是 `${PORT:-8080}` 与
+#     `${TZ:-Asia/Shanghai}` 两处）。`PORT` 由本脚本 `export` 出去、外壳压过 `.env`，
+#     由下面那次回读当场证；**`TZ` 没有被压住**：开发者 `.env` 里的 `TZ` 会成为容器的 TZ。
+#     ⇒ 射程如实写在这里：抹掉的是 `env_file` 那条路（**键一个都进不来**），
+#     插值那条路上今天只剩 `TZ` 这一个值，它不改被测的任何一格。
+#   ⚠️⚠️ 这几条都**不靠对 compose 合并语义的假定**：`cell_docker_up` 在 `up` 之前先跑一次
+#     `compose config` 把合出来的那份配置读回来逐项核对（挂载指哪、环境变量有哪几个键、
+#     端口是不是本次这个），核不上就当场红。**假定会静静地放行，回读不会。**
 #
 # ⚠️ **形态：`set -uo pipefail`，顶层没有 `-e`**，与推送前复跑脚本同一套：
 #   必须**逐格跑完再汇总**，只红一格就中止的话「哪几格红」这个唯一想读出来的结论就没了。
@@ -151,15 +167,29 @@ STUB_LOG="$TMP/stub.log"
 WRANGLER_LOG="$TMP/wrangler.log"
 OVERRIDE="$TMP/compose.override.yml"
 COMPOSE_PROJECT="agnes2api-smoke"
+# 容器写存储的地方。**必须落在临时目录，不许用仓库根下的 `./data`**：
+# 那是开发者自己那份 store.json 的位置（key 池的唯一副本），而冒烟会往里塞一把假 key、
+# 还会让容器的 entrypoint 把它整个 chown 走 —— 本任务复评实测过：假 key
+# `sk-smoke-upstream-stub` 与它的用量统计被写进了真 store.json，属主从 `ubuntu:ubuntu`
+# 变成容器里那个 uid，而屏幕上照样打「工作树与开跑前逐字一致」（`data/` 在 .gitignore 第 4 行，
+# **那句话对 git 是真的，对机器是假的**）。
+SMOKE_DATA_DIR="$TMP/data"
+# 容器内那条路径**从基文件现读，不在这里手抄 `/app/data`**：compose 合并 `volumes` 是
+# **按容器内的目标路径认同一条**（实测：目标相同 ⇒ override 那条替换掉基文件那条）。
+# 基文件哪天把目标改到别处，手抄的这一份就对不上 ⇒ 合出来会是**两条**挂载，
+# 开发者的 `./data` 又回来了，而屏幕上什么都不会说。
+COMPOSE_DATA_TARGET=$(grep -oE '^[[:space:]]*-[[:space:]]*\./data:/[^[:space:]":]+' docker-compose.yml | head -n 1 | sed 's#.*\./data:##')
+if [[ -z $COMPOSE_DATA_TARGET ]]; then
+  echo '❌ docker-compose.yml 里认不出 ./data 那条绑定挂载 —— 判据坏了，不许静默照跑（照跑的后果是开发者那份 store.json 被写脏）' >&2
+  exit 2
+fi
 
 # 收尾要用的状态。**每一项都在建立之前先记下来**：只删自己造出来的东西。
 STUB_PID=""
 WRANGLER_PID=""
 WRANGLER_PGID=""
 COMPOSE_UP=0
-ENV_CREATED=0
 WRANGLER_DIR_CREATED=0
-DATA_DIR_CREATED=0
 GIT_BASELINE=$(git status --porcelain 2>/dev/null || true)
 
 DOCKER_OK=0
@@ -194,16 +224,20 @@ cleanup() {
     fi
   fi
   if [[ -n $STUB_PID ]]; then kill -TERM "$STUB_PID" 2>/dev/null || true; fi
-  if (( ENV_CREATED == 1 )); then rm -f .env; fi
   if (( WRANGLER_DIR_CREATED == 1 )); then rm -rf .wrangler; fi
-  if (( DATA_DIR_CREATED == 1 )); then
-    # 绑定挂载里的文件属主被 entrypoint 改成了容器内的 app（宿主上看是一个陌生 uid），
-    # 宿主这边删不动 ⇒ 借同一个镜像以 root 身份把它清空，再由宿主 rmdir 掉空目录。
-    docker run --rm --entrypoint sh -v "$PWD/data:/d" ghcr.io/xwteam/agnes2api:latest \
-      -c 'rm -rf /d/..?* /d/.[!.]* /d/* 2>/dev/null; true' >/dev/null 2>&1 || true
-    rmdir data 2>/dev/null || echo "⚠️ ./data 没删掉（它被 .gitignore 排除，不影响工作树判定）"
+  # 临时 DATA_DIR 里的文件属主被 entrypoint 改成了容器内的 app（宿主上看是一个陌生 uid），
+  # 连那个目录本身也被 chown 走 ⇒ 宿主这边 `rm -rf` 会 Permission denied。
+  # 借同一个镜像以 root 身份把它整个删掉，再由宿主删父目录。
+  if [[ -d $SMOKE_DATA_DIR ]]; then
+    docker run --rm --entrypoint sh -v "$TMP:/t" ghcr.io/xwteam/agnes2api:latest \
+      -c 'rm -rf /t/data' >/dev/null 2>&1 || true
   fi
   rm -rf "$TMP"
+  # **删没删掉要当场说**：这份脚本每跑一次就建一个临时目录，静默失败会在 /tmp 里
+  # 攒出一堆谁也不认识的残留（而它们里面装着这次跑出来的 store.json）。
+  if [[ -d $TMP ]]; then
+    echo "⚠️ 临时目录没删干净，请手动看一眼：$TMP"
+  fi
   after=$(git status --porcelain 2>/dev/null || true)
   if [[ $after != "$GIT_BASELINE" ]]; then
     echo "❌ 工作树与开跑前不一样了 —— 这次冒烟往树里留下了东西，收尾没做干净：" >&2
@@ -229,7 +263,15 @@ import { createServer } from "node:http";
 
 const PORT = Number(process.argv[2]);
 const GAP_MS = Number(process.argv[3]);
-const CHUNKS = 4;
+// ⚠️ **块数从命令行来，不在这里手抄一个字面量**：③ 的判据要拿它当「该到几块」的期望值，
+//   而两处手抄的数会各自漂。改 stub 的块数而判据没跟上时，报文会说
+//   「少于上游发的 4 块」，把人指去查网关 —— 真因却在 stub（本任务复评实测过这条）。
+const CHUNKS = Number(process.argv[4]);
+if (!Number.isInteger(CHUNKS) || CHUNKS < 2) {
+  // 少于 2 块时「首末两块的到达间隔」这个观测量根本不存在 ⇒ ③ 会变成零鉴别力。
+  console.error(`stub: 块数必须是 ≥2 的整数，拿到 ${JSON.stringify(process.argv[4])}`);
+  process.exit(2);
+}
 
 /** 一条上游 SSE 增量行（内部规范格式 = OpenAI chat 增量块）。 */
 const delta = (text) =>
@@ -268,10 +310,21 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, "0.0.0.0", () => console.log(`stub listening on ${PORT}`));
 UPSTREAM_STUB
 
-# 每块之间的间隔。③ 的判据要的是「第一行到达」早于「最后一块发出」，
-# 而这两个时刻之间隔着 (CHUNKS-1) × 这个数 —— 整体缓冲下前者只可能晚于后者。
+# ── ③ 那一格的三个数，一处定义、四处引用 ────────────────────────────────────
+# 上游把 STUB_CHUNKS 块正文按 STUB_GAP_MS 的间隔发出去 ⇒ 逐块透传时，客户端读到的
+# **正文首块与末块**之间会铺开约 (STUB_CHUNKS − 1) × STUB_GAP_MS；整体缓冲时它们挤在
+# 几毫秒里一起到。门槛取那个跨度的一半：健康态余量约 2 倍，缓冲态差两个数量级
+# ——**它不是一个手抄的阈值，改上面两个数它自己会跟着动**。
+# ⚠️ 这三个数与 check_stream 里的引用由 tests/unit/smoke-guard.test.ts 的 G7 钉着：
+#   块数只许有这一份，判据里不许再出现第二个写死的块数。
+STUB_CHUNKS=4
 STUB_GAP_MS=1000
-node "$TMP/upstream-stub.mjs" "$STUB_PORT" "$STUB_GAP_MS" >"$STUB_LOG" 2>&1 &
+STREAM_SPREAD_MIN_MS=$(( (STUB_CHUNKS - 1) * STUB_GAP_MS / 2 ))
+if (( STUB_CHUNKS < 2 || STREAM_SPREAD_MIN_MS < 1 )); then
+  echo "❌ ③ 的门槛算出来是 ${STREAM_SPREAD_MIN_MS}ms（块数 $STUB_CHUNKS、间隔 ${STUB_GAP_MS}ms）—— 那一格会变成零鉴别力，不许这么跑" >&2
+  exit 2
+fi
+node "$TMP/upstream-stub.mjs" "$STUB_PORT" "$STUB_GAP_MS" "$STUB_CHUNKS" >"$STUB_LOG" 2>&1 &
 STUB_PID=$!
 sleep 1
 if ! kill -0 "$STUB_PID" 2>/dev/null; then
@@ -304,20 +357,73 @@ import_key() { # $1 = 形态的基址；给池子里塞一把 key，否则转发
 
 STREAM_BODY='{"model":"agnes-2.0-flash","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"ping"}]}'
 
+# ── override 真的生效了吗：把合出来的那份配置读回来核 ────────────────────────
+# ⚠️ **这一步不是形式**：override 能不能压住基文件，取决于 compose 的合并语义
+#   （`volumes` 按目标路径认、`env_file` 只有 `!reset` 抹得掉、`ports` 走外壳插值），
+#   而**假定错了不会报错，会静静地放行** —— 放行的后果是开发者的 `./data` 被写脏、
+#   真 `.env` 被灌进容器，两件事屏幕上都不会有一个字。所以在 `up` 之前先回读一次。
+# 允许出现的环境变量键：override 写的那五个 + 基文件 `environment:` 里的 TZ。
+# **多出任何一个键**都意味着 `env_file` 那条没被抹掉 ⇒ 当场红。
+assert_override_took() {
+  local cfg
+  if ! cfg=$(compose config --format json 2>&1); then
+    echo "❌ docker compose config 没跑通 —— 合出来的配置根本不成立：" >&2
+    printf '%s\n' "$cfg" | head -20 >&2
+    return 1
+  fi
+  CFG="$cfg" WANT_SRC="$SMOKE_DATA_DIR" WANT_TGT="$COMPOSE_DATA_TARGET" WANT_PORT="$DOCKER_PORT" node -e '
+    const cfg = JSON.parse(process.env.CFG);
+    const tgt = process.env.WANT_TGT, src = process.env.WANT_SRC, port = process.env.WANT_PORT;
+    const svc = cfg.services && cfg.services.agnes2api;
+    const bad = [];
+    if (!svc) bad.push("合出来的配置里没有 agnes2api 这个服务");
+    else {
+      const hits = (svc.volumes || []).filter((v) => v.target === tgt);
+      if (hits.length !== 1) {
+        bad.push(`挂到 ${tgt} 的挂载有 ${hits.length} 条（应恰好 1 条）⇒ override 没有替换掉基文件那条，开发者的 ./data 会被写进去`);
+      } else if (hits[0].source !== src) {
+        bad.push(`${tgt} 的宿主侧是 ${hits[0].source}，不是本次的临时目录 ${src} ⇒ 冒烟会往开发者那份 store.json 里写`);
+      }
+      const allowed = new Set(["PORT", "GATEWAY_TOKEN", "ADMIN_TOKEN", "AGNES_BASE_URL", "USAGE_STATS_ENABLED", "TZ"]);
+      const extra = Object.keys(svc.environment || {}).filter((k) => !allowed.has(k));
+      if (extra.length > 0) {
+        bad.push(`容器里多出这些环境变量键：${extra.join(", ")} ⇒ 开发者的 .env 被整份灌进来了（env_file 那条 !reset 没生效）`);
+      }
+      const published = (svc.ports || []).map((p) => String(p.published));
+      if (!published.includes(String(port))) {
+        bad.push(`发布的端口是 [${published.join(", ")}]，里面没有本次的 ${port} ⇒ 外壳里的 PORT 没被插值用上`);
+      }
+    }
+    if (bad.length) { console.error("❌ override 没按预期合上去：\n   · " + bad.join("\n   · ")); process.exit(1); }
+    console.log(`· override 已回读核对：${tgt} ← ${src}；环境变量键 ${Object.keys(svc.environment || {}).sort().join(",")}；发布端口 ${port}`);
+  ' || return 1
+  return 0
+}
+
 # ── ① Docker 形态起得来 ─────────────────────────────────────────────────────
 # ⚠️ **`--build` 不是可选的**：`docker-compose.yml` 写的是一个已发布镜像的 tag，
 #   不带 `--build` 时 compose 会拿本机上那份旧的跑 ⇒ 这一格验的就不是**这棵树**了
 #   （而「验了个旧镜像还全绿」正是这种冒烟最容易的死法）。
-# override 只加三样东西，都不改被测行为：项目内的容器名（免得撞上这台机器上真在跑的
-# 那个 agnes2api）、端口、以及一条 `host.docker.internal` 的 host 别名（容器要能回连
-# 本机的假上游）。凭据也走这里，所以它落在临时目录、收尾时删。
+# override 加的是下面这五样，一样不多一样不少（照着 `cat >"$OVERRIDE"` 那段逐项数得出来）：
+#   1. `container_name` —— 项目内的容器名，免得撞上这台机器上真在跑的那个 agnes2api；
+#   2. 五个环境变量 —— 两把现生成的口令、本次的端口、指向 **compose 网络里那份 stub**
+#      的上游基址、以及打开用量统计（④ 要它）；
+#   3. `env_file: !reset []` —— 把开发者自己的 `.env` 整条抹掉（见文件头那段）；
+#   4. `/app/data` 那条绑定挂载改指到临时目录 —— 不碰开发者的 `./data`；
+#      ⚠️ **代价要说清**：五份 DEPLOY.md 写的那个副作用（`./data` 与其中文件的属主会从你的
+#      uid 变成容器里那个 uid）**因此不在这一格的射程里**了。这是有意换的：
+#      验它就必须往开发者的真 store.json 上跑。已登记进计划 §「P3e 之后仍然欠着的」第 13 条。
+#   5. 整个 `smoke-upstream` 服务 —— compose 网络里的那份假上游。
+# ⚠️ **没有 `ports:`、也没有 `extra_hosts`**：前者的理由见下面那段，后者是因为这份脚本
+#   走的是 compose 网络内的服务名（`smoke-upstream`），**不依赖 `host.docker.internal`**
+#   ——文件头第 28 行那句「实测它不通」说的正是这件事。
 cell_docker_up() {
-  if [[ ! -f .env ]]; then : >.env; export_state ENV_CREATED 1; fi
-  if [[ ! -d data ]]; then export_state DATA_DIR_CREATED 1; fi
   # `ports:` 刻意**不在 override 里重写**：基文件那一行是 `"${PORT:-8080}:${PORT:-8080}"`，
-  # 而 compose 的插值读的是**外壳环境**。这里导出 PORT 就让那一行原样用上本次的端口，
-  # override 再写一遍会变成两条映射抢同一个宿主端口、自己撞自己。
+  # 而 compose 的插值读的是**外壳环境**（外壳里的值压过 `.env` 里的同名值）。这里导出 PORT
+  # 就让那一行原样用上本次的端口，override 再写一遍会变成两条映射抢同一个宿主端口、自己撞自己。
+  # ⇒ 「它真的用上了本次这个端口」由下面那次 `compose config` 回读来证，不靠这段话。
   export PORT="$DOCKER_PORT"
+  mkdir -p "$SMOKE_DATA_DIR"
   # compose 网络里那份假上游：镜像直接复用刚构建出来的这一个（它就是 node:22-alpine
   # 打底的，有 node），脚本以只读挂进去。**它不往宿主机发布任何端口**，
   # 只有同一个 compose 网络里的网关连得到它。
@@ -325,19 +431,23 @@ cell_docker_up() {
 services:
   agnes2api:
     container_name: ${COMPOSE_PROJECT}
+    env_file: !reset []
     environment:
       PORT: "${DOCKER_PORT}"
       GATEWAY_TOKEN: "${GATEWAY_TOKEN}"
       ADMIN_TOKEN: "${ADMIN_TOKEN}"
       AGNES_BASE_URL: "http://smoke-upstream:${STUB_PORT_IN_NET}/docker/v1"
       USAGE_STATS_ENABLED: "true"
+    volumes:
+      - "${SMOKE_DATA_DIR}:${COMPOSE_DATA_TARGET}"
   smoke-upstream:
     image: ghcr.io/xwteam/agnes2api:latest
-    entrypoint: ["node", "/stub/upstream-stub.mjs", "${STUB_PORT_IN_NET}", "${STUB_GAP_MS}"]
+    entrypoint: ["node", "/stub/upstream-stub.mjs", "${STUB_PORT_IN_NET}", "${STUB_GAP_MS}", "${STUB_CHUNKS}"]
     volumes:
       - "${TMP}/upstream-stub.mjs:/stub/upstream-stub.mjs:ro"
     restart: "no"
 YML
+  if ! assert_override_took; then return 1; fi
   echo "· docker compose up -d --build（项目 $COMPOSE_PROJECT，端口 $DOCKER_PORT）"
   export_state COMPOSE_UP 1
   if ! compose up -d --build; then
@@ -399,11 +509,25 @@ cell_worker_up() {
 # ⚠️⚠️ **判据是「到达间隔」，不是「拿到了几块」。**
 #   一次性缓冲的实现**最终也会把全部内容交出来** ⇒ 只看总量是零鉴别力
 #   （与 Task 11 明令禁止的「往单块表里加一行 CRLF 样本」是同一条）。
-#   所以比的是两个时刻：
-#     · `first_ms` —— 客户端读到**第一行**的时刻（`curl -N` 出来的每一行现打时间戳）；
-#     · `last_ms`  —— 假上游把**最后一块**发出去的时刻（**它就写在最后一块的正文里**）。
-#   逐块透传时前者远早于后者（差约 (块数−1) × 间隔）；整体缓冲时前者只可能在后者之后。
-#   下面那句「到齐了几块」是**内容侧的陪衬，不是鉴别力所在**：它在缓冲实现下照样绿，
+#
+# ⚠️⚠️ **而「第一行」也不是那个观测点** —— 这是本任务复评实测出来的一条洞：
+#   `/v1/messages` 那条流的头两行是 `message_start` 与 `content_block_start`，
+#   `src/core/protocol/anthropic.ts` 的 `toAnthropicStream()` 里逐字写着它们
+#   「**必须在读取上游之前产出**」⇒ 它们的到达时刻与「正文有没有逐块流出来」在构造上无关。
+#   实测：把正文增量攒完再一次性吐出来（preamble 保持早发），第一行照样在 +7ms 到，
+#   这一格**照样全绿**，屏幕上还打出一句「⇒ 都是逐块透传」。
+#   ⇒ 三个时刻**一律只从带上游时间戳的那几行正文里取**：
+#     · `first_ms` —— 客户端读到**第一块正文**的时刻（`curl -N` 出来的每一行现打时间戳）；
+#     · `last_ms`  —— 客户端读到**最后一块正文**的时刻；
+#     · `sent_ms`  —— 假上游把**最后一块**发出去的时刻（**它就写在那一块的正文里**）。
+#   两条判据，都必须过：
+#     · `spread = last_ms − first_ms` ≥ `STREAM_SPREAD_MIN_MS`
+#       —— 逐块透传时它约等于 (块数−1) × 间隔（健康态余量约 2 倍），
+#          整体缓冲时几块挤在几毫秒里一起到（差两个数量级）。**这是鉴别力所在。**
+#     · `lead = sent_ms − first_ms` > 0
+#       —— 第一块正文比上游发完最后一块还早。它在缓冲态只差几毫秒（余量薄），
+#          所以**它是佐证不是主判据**；两条一起读才说得清是哪一种形态。
+#   下面那句「到齐了几块」同样是**内容侧的陪衬，不是鉴别力所在**：它在缓冲实现下照样绿，
 #   留着只是为了把「一块都没到」与「到了但一次性到」这两种红分开说。
 stream_probe() { # $1 = 基址 $2 = 输出文件
   # `|| [[ -n $line ]]`：最后一段没有换行时 `read` 返回非 0，但 `$line` 里是有东西的
@@ -418,32 +542,42 @@ stream_probe() { # $1 = 基址 $2 = 输出文件
 }
 
 check_stream() { # $1 = 形态名 $2 = 探针输出
-  local label="$1" out="$2" first_ms last_ms deltas gap
-  first_ms=$(awk -F'\t' 'NR==1 { print $1; exit }' "$out")
+  local label="$1" out="$2" body first_ms last_ms sent_ms deltas spread lead bad=0
+  # **只留带上游时间戳的那几行**（= 正文增量）。preamble 那两行不在这里，理由见上面那段。
+  body=$(grep -E '"text":"[0-9]{10,}"' "$out" || true)
+  deltas=$(printf '%s' "$body" | grep -c . || true)
+  if (( deltas == 0 )); then
+    if [[ ! -s $out ]]; then
+      echo "❌ $label：这次请求一行都没返回 —— 先看它是不是根本没到上游" >&2
+    else
+      echo "❌ $label：正文里一个上游时间戳都没有 —— 这一趟根本没走到 stub 的流式分支：" >&2
+      head -c 400 "$out" >&2
+    fi
+    return 1
+  fi
+  first_ms=$(printf '%s\n' "$body" | head -n 1 | cut -f1)
+  last_ms=$(printf '%s\n' "$body" | tail -n 1 | cut -f1)
   # 每一块的正文就是它发出去那一刻的毫秒时间戳；取最后一块那个。
-  deltas=$(grep -coE '"text":"[0-9]{10,}"' "$out" || true)
-  last_ms=$(grep -oE '"text":"[0-9]{10,}"' "$out" | tail -n 1 | tr -cd '0-9')
-  if [[ -z $first_ms ]]; then
-    echo "❌ $label：这次请求一行都没返回 —— 先看它是不是根本没到上游" >&2
-    return 1
+  sent_ms=$(printf '%s\n' "$body" | tail -n 1 | grep -oE '"text":"[0-9]{10,}"' | tr -cd '0-9')
+  spread=$((last_ms - first_ms))
+  lead=$((sent_ms - first_ms))
+  echo "   $label：正文首块到达 $first_ms、末块到达 $last_ms（铺开 ${spread}ms，门槛 ${STREAM_SPREAD_MIN_MS}ms）；上游末块发出 $sent_ms（首块领先 ${lead}ms）；正文增量 $deltas 块"
+  if (( deltas != STUB_CHUNKS )); then
+    echo "❌ $label：正文到了 $deltas 块，而本次让 stub 发的是 $STUB_CHUNKS 块 —— 内容侧就已经不对了" >&2
+    echo "   ⇒ 两个数同出一处（脚本里的 STUB_CHUNKS），对不上时先看网关有没有丢块或补块。" >&2
+    bad=1
   fi
-  if [[ -z $last_ms ]]; then
-    echo "❌ $label：正文里一个上游时间戳都没有 —— 这一趟根本没走到 stub 的流式分支：" >&2
-    head -c 400 "$out" >&2
-    return 1
+  if (( spread < STREAM_SPREAD_MIN_MS )); then
+    echo "❌ $label：正文首末两块只铺开 ${spread}ms，不到门槛 ${STREAM_SPREAD_MIN_MS}ms" >&2
+    echo "   ⇒ 这一趟是**整体缓冲**：内容最后照样全给了，但流式开关在面板上就是一句假话。" >&2
+    bad=1
   fi
-  gap=$((last_ms - first_ms))
-  echo "   $label：第一行到达 $first_ms / 上游最后一块发出 $last_ms（早了 ${gap}ms），正文增量 $deltas 块"
-  if (( deltas < 4 )); then
-    echo "❌ $label：正文只到了 $deltas 块，少于上游发的 4 块 —— 内容侧就已经不对了" >&2
-    return 1
+  if (( lead <= 0 )); then
+    echo "❌ $label：正文首块到达（$first_ms）不早于上游最后一块发出（$sent_ms）" >&2
+    echo "   ⇒ 同上：第一块正文是等上游全发完之后才出现的。" >&2
+    bad=1
   fi
-  if (( first_ms < last_ms )); then
-    return 0
-  fi
-  echo "❌ $label：第一行到达（$first_ms）不早于上游最后一块发出（$last_ms）" >&2
-  echo "   ⇒ 这一趟是**整体缓冲**：内容最后照样全给了，但流式开关在面板上就是一句假话。" >&2
-  return 1
+  return $bad
 }
 
 cell_stream_interval() {
@@ -463,7 +597,7 @@ cell_stream_interval() {
     bad=1
   fi
   if (( bad != 0 )); then return 1; fi
-  echo "✅ 两个形态的第一行都早于上游最后一块发出 ⇒ 都是逐块透传"
+  echo "✅ 两个形态的正文首末块都铺开到了 ${STREAM_SPREAD_MIN_MS}ms 以上，且首块早于上游末块发出 ⇒ 都是逐块透传"
   return 0
 }
 

@@ -743,6 +743,9 @@ KV バインディングと同名の `POOL` だけを書いた場合は赤くな
    docker compose up -d
    ```
 
+   **最初のイメージが公開される前**（または fork 後）は、このコマンドはローカルビルドに
+   フォールバックします —— `docker-compose.yml` の `build:` ブロックがそのためのものです。
+
    `docker-compose.yml` は既定でポート `8080` を公開し（`.env` の `PORT` で
    上書き可能）、`./data` をコンテナ内の `/app/data` にマウントします——
    `store.json`（key プールと永続化された設定）はここに保存されます。
