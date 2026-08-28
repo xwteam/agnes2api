@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 // 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源（P3e Task 1 收编），不在这里手写第二份。
 import { blankComments } from "../helpers/strip-comments.js";
 import { FAIL_REASONS } from "../../src/core/dispatcher.js";
@@ -84,6 +84,16 @@ type Lang = (typeof LANGS)[number];
 describe("五语言 DEPLOY.md 的关键数字对等", () => {
   const NUMBERS: ReadonlyArray<{ token: string; why: string }> = [
     { token: "**120", why: "POOL_CACHE_TTL_MS 的真实上界（60s TTL + 60s 边缘缓存），加粗标记只在这句出现" },
+    // ⚠️ **这个锚点是 P3e Task 30 复评回填（F7）补的，照本组的规矩「数过再加」**：
+    // 加之前 `**90` 在五份里**各 1 次**（就是配置生效上界那一句，五份都用加粗包住数字），
+    // 完全一致 ⇒ 是个能指得出是哪一句的锚点，不是 `48` 那种散落 7~9 次的噪声锚点。
+    // 补它的直接理由是实测：把 `docs/zh-CN/DEPLOY.md` 那句 `**90 秒**` 改成 `**95 秒**`，
+    // **docs-parity 251 格全绿** —— 这个数在五份文档里当时一点守卫都没有。
+    // ⚠️ **它挡不住的那一种照旧**：`CONFIG_TTL_MS`/`KV_EDGE_CACHE_MS` 真改了值、
+    // 五份 DEPLOY.md 一起没跟上 ⇒ 计数依然对等 ⇒ 依然绿（跨语言互校的固有边界）。
+    // 设计文档 §5.3 与「重置到底重置了什么」那一节的同一批数**是**从常量现算的，
+    // 由本文件末尾那一组的两格钉着；五份 DEPLOY.md 不是。
+    { token: "**90", why: "配置保存后其他 isolate 的生效上界（CONFIG_TTL_MS 30s + KV_EDGE_CACHE_MS 60s），五份各只此一处" },
     { token: "100,000", why: "免费档每天读配额" },
     { token: "1,000", why: "免费档每天写 / 删除 / list 配额" },
     // ⚠️ **这个锚点是全分支评审 C2 补的，补之前它不在表里**——于是"安静部署"那条
@@ -4583,28 +4593,80 @@ function resetTableFailures(design: string): string[] {
 /**
  * 源码里的存储键常量。**判据从源码派生，不是一张手抄名单。**
  *
- * 约定：`src/` 下 `export const <名字>_KEY / <名字>_KEY_PREFIX = "字面量"` 一律是存储键。
+ * 约定：`src/` 下 `const <名字>_KEY / <名字>_KEY_PREFIX = "字面量"` 一律是存储键。
  * ⚠️ 这条约定今天是**无例外**的：Task 30 为此把 `byModel` 的兜底桶名从以 `_KEY` 结尾
  * 改成了 `USAGE_OTHER_BUCKET`（理由写在 `src/core/admin/usage-stats.ts` 那个常量旁边）
  * ——**开一张只有一条的豁免名册，下一个人往里加第二条时不会有任何东西红。**
  * ⚠️ 扫之前先过 Task 1 的 `blankComments`：本仓注释里复述常量名是最常见的写法。
+ *
+ * ⚠️⚠️ **射程是复评回填后扩过的，上一版漏掉两种真实写法（都实测过，当时全绿）**：
+ * · **不带 `export`** 的 `const X_KEY = "…";` —— `PROBE_KEY` 提成导出常量之前就是这个形态，
+ *   而 `src/adapters/storage-file.ts` 的 `TTL_TABLE_KEY` **今天就是**这个形态（见下面 `PORTLESS_KEYS`）；
+ * · 值带 **` as const`** 尾巴的。
+ * 所以 `export` 改成可选（**导出与否记在 `exported` 上，不是丢掉**——两族的处置不一样），
+ * 并容忍 ` as const`。
+ * ⚠️ **仍然扫不到的两种，是这条判据的固有边界，别以为扩正则能解决**：
+ * 调用点裸字面量（`storage.put("brandnew:x", …)`）、模板串/变量拼接的键名。
+ * 两条都逐字登记在设计小节「这一节的守卫能与不能」的「也不能」那一栏里。
  */
-function storageKeyConstantsIn(root: string): { file: string; name: string; value: string }[] {
-  const re = /^\s*export\s+const\s+([A-Z0-9_]*KEY(?:_PREFIX)?)\s*(?::[^=]*)?=\s*"([^"]*)"\s*;/gm;
-  const out: { file: string; name: string; value: string }[] = [];
+function storageKeyConstantsIn(
+  root: string,
+): { file: string; name: string; value: string; exported: boolean }[] {
+  const re = /^[^\S\n]*(export\s+)?const\s+([A-Z0-9_]*KEY(?:_PREFIX)?)\s*(?::[^=]*)?=\s*"([^"]*)"(?:\s+as\s+const)?\s*;/gm;
+  const out: { file: string; name: string; value: string; exported: boolean }[] = [];
   const walk = (dir: string): void => {
     for (const e of readdirSync(dir).sort()) {
       const p = join(dir, e);
       if (statSync(p).isDirectory()) walk(p);
       else if (p.endsWith(".ts")) {
         for (const m of blankComments(readFileSync(p, "utf8")).matchAll(re)) {
-          out.push({ file: p, name: m[1]!, value: m[2]! });
+          out.push({ file: p, name: m[2]!, value: m[3]!, exported: m[1] !== undefined });
         }
       }
     }
   };
   walk(root);
   return out;
+}
+
+/**
+ * **不经 `Storage` 端口**的那一族键的**封闭登记**（复评 F4 回填）。
+ *
+ * ⚠️ **这不是豁免名册。** 豁免名册的性质是「扫到了就跳过」——下一个人往里加第二条时
+ * 不会有任何东西红（本仓已登记过「豁免名册会变成永久的洞」）。这里是**封闭登记**：
+ * 实扫结果必须与它**逐条相等**，多一条、少一条、改了值都红，而且报文要求
+ * 「要么提成导出常量进 `KEYS` 并给设计表补一行，要么回来在设计小节表下那段登记里
+ * 给它一行并说明它为什么不是业务键」。
+ *
+ * 今天只有一条：`src/adapters/storage-file.ts` 的 `TTL_TABLE_KEY = " ttl"`——
+ * file 适配器写在 `store.json` **顶层**的 TTL 记账表，`list()` 用 `k !== TTL_TABLE_KEY`
+ * 把它滤掉，Worker/KV 侧根本不存在它。它同时是 `src/` 下**唯一一个不带 `export`** 的
+ * 这类常量，上一版的扫描（只认 `export const`）因此看不见它，而设计小节当时那句
+ * 「全仓的存储键：九把」**就是假的**。
+ */
+const PORTLESS_KEYS: ReadonlyArray<{ file: string; name: string; value: string }> = [
+  { file: join("src", "adapters", "storage-file.ts"), name: "TTL_TABLE_KEY", value: " ttl" },
+];
+
+/**
+ * 免费档 delete 桶的每日次数，**从 `docs/zh-CN/DEPLOY.md` 那一行现抠**（复评 F8 回填）。
+ *
+ * 本仓没有对应常量可 import——它是 Cloudflare 的平台配额，只写在配额账那一节里。
+ * 上一版小节里把它手写成 `1,000`，是那一节**唯一一个没有测法的数**。
+ * ⚠️ **认不出要吵**：抠不出来时 `throw`，不许 `?? "1,000"` 之类的静默兜底——
+ * 那会让判据在 DEPLOY.md 被改写之后恒绿（本仓「判据用错工具时静静放行」那一族）。
+ */
+function deleteBucketPerDayFromDeployDoc(): string {
+  const src = readFileSync(join("docs", "zh-CN", "DEPLOY.md"), "utf8");
+  const m = /`list` 与 `delete` 是另外两个桶，各 ([\d,]+) 次\/天/.exec(src);
+  if (m === null) {
+    throw new Error(
+      "docs/zh-CN/DEPLOY.md 里认不出「`list` 与 `delete` 是另外两个桶，各 N 次/天」那一句 —— "
+      + "判据坏了，不许静默当成「文档里没这个数」。要么那句话被改写了（回来把这条正则改对），"
+      + "要么配额账那一节没了（那才是真问题）。",
+    );
+  }
+  return m[1]!;
 }
 
 describe("设计小节「重置到底重置了什么」的逐存储键表（P3e Task 30）", () => {
@@ -4630,23 +4692,57 @@ describe("设计小节「重置到底重置了什么」的逐存储键表（P3e 
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("反向控制：源码里每一个存储键常量都被上面那张 import 清单收着 —— 新增一个而不 import 就红", () => {
+  it("反向控制：源码里每一个存储键常量，要么被上面那张 import 清单收着、要么落在封闭登记里 —— 新增一个就红", () => {
     const declared = storageKeyConstantsIn("src");
-    const orphans = declared
-      .filter((d) => !KEYS.includes(d.value))
-      .map((d) => `${d.file}: ${d.name} = "${d.value}"`);
+    const exported = declared.filter((d) => d.exported);
+    const portless = declared.filter((d) => !d.exported);
+    const show = (d: { file: string; name: string; value: string }): string =>
+      `${d.file}: ${d.name} = "${d.value}"`;
+
     // ⚠️ **这一条必须排在计数之前。** 上一版把计数放在前面，于是「新增一个存储键」这个
     // 最常见的形态报出来的是「一个都没扫到，扫描多半写坏了：expected 10 to be 9」——
     // 报文亲手把人引向「扫描坏了」，而真因是「你新加的那把键没进清单」（实测过一次）。
+    const orphans = exported.filter((d) => !KEYS.includes(d.value)).map(show);
     expect(orphans,
       "这些存储键常量在源码里真的存在，却没被那张 import 清单收着 —— "
       + "把它 import 进 KEYS、并在设计小节那张表里给它一行（逐把表态，不许留白）：\n"
       + orphans.join("\n")).toEqual([]);
+
+    // 不带 `export` 的那一族：与 `PORTLESS_KEYS` **逐条相等**（封闭登记，不是豁免名册）。
+    // ⚠️ 报文要把两条出路都说出来，否则下一个人只会来改这张表——那就把封闭登记变成了洞。
+    const fmt = (xs: readonly { file: string; name: string; value: string }[]): string[] =>
+      xs.map(show).sort();
+    expect(fmt(portless),
+      "`src/` 下不带 `export` 的存储键常量与封闭登记 `PORTLESS_KEYS` 对不上 —— "
+      + "多出来的那条要么**提成 `export` 常量**、import 进 KEYS 并给设计小节那张表补一行"
+      + "（它经 `Storage` 端口就走这条），要么回来在**设计小节表下那段登记**里给它一行、"
+      + "说明它为什么不是业务键，再把它加进 `PORTLESS_KEYS`。"
+      + "少了一条则说明那把键没了或改了形态，回来把这张表改对：\n"
+      + `实扫：${fmt(portless).join(" / ") || "(空)"}\n登记：${fmt(PORTLESS_KEYS).join(" / ")}`)
+      .toEqual(fmt(PORTLESS_KEYS));
+
+    // 封闭登记里的每一条都必须在设计小节表下那段登记里被点名（常量名 + 文件）。
+    // ⚠️ 没有这一条，`PORTLESS_KEYS` 就成了一张只有测试知道、文档读者看不见的名单。
+    // ⚠️ 文件名从**每一条自己的 `file`** 现算，不许写死 `"storage-file.ts"`：
+    // 写死之后，将来登记里多出一条来自别的文件的键，这一格照样绿——
+    // 那正是本仓「判据用错工具时不会报错，会静静地放行」那一族。
+    const sec = resetSection(realDesign());
+    const unnamed = PORTLESS_KEYS
+      .filter((d) => !sec.includes(d.name) || !sec.includes(basename(d.file)))
+      .map((d) => `${d.name}（${basename(d.file)}）`);
+    expect(unnamed,
+      "封闭登记里的这几把键在设计小节里一个字都没提 —— 那张表下面那段登记要点名"
+      + "（常量名 + 所在文件 + 为什么它不经 `Storage` 端口 + 三条重置路径动不动它）：\n"
+      + unnamed.join("\n")).toEqual([]);
+
     // 计数是「扫描不是空跑」的绊线，也拦「加了键、也 import 了、但没回来改这个数」。
     // ⚠️ 报文要两个方向都说得通：扫少了是扫描坏了，扫多了是清单该长大。
-    expect(declared.length,
-      "扫到的存储键常量条数与手写的不一致 —— 比 9 少通常是扫描写坏了（判据认不出真声明），"
+    expect(exported.length,
+      "扫到的**导出**存储键常量条数与手写的不一致 —— 比 9 少通常是扫描写坏了（判据认不出真声明），"
       + "比 9 多说明真加了一把键：把它 import 进 KEYS、给设计小节那张表补一行，再回来把这个数改对").toBe(9);
+    expect(declared.length,
+      "扫到的存储键常量总数不是 10（9 把导出的业务键 + 1 把封闭登记里的适配器内部键）—— "
+      + "扫少了是判据认不出真声明，扫多了见上面两条报文").toBe(10);
   });
 
   it("小节里那几个数一律从真源常量现算 —— 改了常量而小节没跟着改就红", () => {
@@ -4662,11 +4758,37 @@ describe("设计小节「重置到底重置了什么」的逐存储键表（P3e 
       ["被实测推翻的那条有界性论证（它算的是 Tier-2 键空间，不是这颗按钮）",
         `${USAGE_DAY_RETAIN} × ${USAGE_SLOTS} = ${USAGE_DAY_RETAIN * USAGE_SLOTS}`],
       ["导入上限（用来说明它兜不着批量重置那条路）", `MAX_IMPORT_KEYS = ${MAX_IMPORT_KEYS}`],
+      // 复评 F8 回填：这是小节里**唯一一个本仓没有对应常量**的数（Cloudflare 平台配额）。
+      // 手写它就是一个没有测法的数字 ⇒ 改成**从五语言 DEPLOY.md 的 zh-CN 那份现抠**，
+      // 两处从此一起动。抠不出来要吵，不许静默当成「没这句话」。
+      ["免费档 delete 桶（口径锚在 docs/zh-CN/DEPLOY.md 那一行，不是手写）",
+        `免费档 delete 桶 ${deleteBucketPerDayFromDeployDoc()}/天`],
     ];
     const missing = expected
       .filter(([, text]) => !sec.includes(text))
       .map(([what, text]) => `${what}：小节里找不到「${text}」`);
     expect(missing, missing.join("\n")).toEqual([]);
+  });
+
+  it("复评 F7 回填：§5.3 那张表的同一批数也从真源常量现算 —— 改了常量只改一处就红", () => {
+    // 上一版小节里写着「（§5.3 那张表逐字，同一个数）」，实测两件事都不对：
+    // ① 不逐字（§5.3 的排版是「30s / 60s」，小节里是「30 秒 / 60 秒」）；
+    // ② 复评的 MUT-H（`KV_EDGE_CACHE_MS 60_000 → 75_000`）跑下来，
+    //    整个 docs-parity 里**只有小节那一格红**，§5.3 纹丝不动 ⇒ 这条交叉引用当时无守卫。
+    // 这一格把 §5.3 那句也钉到同一批常量上，两处从此一起红。
+    // ⚠️ **剩下的欠账要写明白，而且这句话本身被实测改过一次**：草稿里写的是
+    // 「五份 DEPLOY.md 那句只被『关键数字对等』那一组钉着」——**当时是假的**，
+    // `**90` 那时根本不在 `NUMBERS` 表上（实测：把 zh-CN 那句 `**90 秒**` 改成
+    // `**95 秒**`，docs-parity 251 格全绿）。回填时把它补进了 `NUMBERS`（见那张表）。
+    // ⇒ **今天的真实分工**：§5.3 与本小节的数**从常量现算**（这一格 + 上一格）；
+    // 五份 DEPLOY.md 的那句只由跨语言**计数相等**钉着 ⇒ 挡「某一份改歪」，
+    // **挡不住「常量真改了、五份一起没跟上」** —— 那一种今天仍然要人手改。
+    const s = (ms: number): number => ms / 1000;
+    const want = `≤ ${s(CONFIG_TTL_MS)}s（holder TTL）+ 约 ${s(KV_EDGE_CACHE_MS)}s`
+      + `（KV 边缘缓存与传播，默认值）≈ ${s(CONFIG_TTL_MS + KV_EDGE_CACHE_MS)} 秒`;
+    expect(readFileSync(RESET_DESIGN_DOC, "utf8"),
+      `§5.3 那张表里找不到「${want}」—— 要么常量改了而 §5.3 没跟着改（去改 §5.3），`
+      + "要么 §5.3 那句被改写了（那就回来把这一格的拼法改对，别把它删掉）").toContain(want);
   });
 
   it("第三颗按钮的去向写死了：小节里恰好一条「裁定：做 / 不做」，不许留白也不许两条都在", () => {
@@ -4734,10 +4856,49 @@ describe("设计小节「重置到底重置了什么」的逐存储键表（P3e 
       writeFileSync(join(dir, "live.ts"), real);
       const seen = storageKeyConstantsIn(dir);
       expect(seen.map((d) => d.value).sort(), "扫描认不出仓里真实存在的那两条声明").toEqual([KEY_PREFIX, POOL_INDEX_KEY].sort());
+      expect(seen.every((d) => d.exported), "这两条明明带着 `export`，却没被记成导出").toBe(true);
 
       // 同样两行，整段包进块注释：`blankComments` 接上了的话，一条都不该扫到。
       writeFileSync(join(dir, "live.ts"), `/*\n${real}*/\n`);
       expect(storageKeyConstantsIn(dir), "注释里的声明被当成真声明了 —— blankComments 没接上").toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("探针：复评回填后新覆盖的两种写法 —— 不带 `export` 的、值带 ` as const` 的，都要扫得到", () => {
+    // ⚠️ 反向控制用**仓里真实存在的形态**：
+    // 第一行逐字抄自 `src/adapters/storage-file.ts`（今天真的是这个写法）；
+    // 第二行是 `PROBE_KEY` 提成导出常量之前的原样，只把值换成一个不存在的键名。
+    const dir = mkdtempSync(join(tmpdir(), "storage-keys-widened-"));
+    try {
+      writeFileSync(join(dir, "live.ts"),
+        'const TTL_TABLE_KEY = " ttl";\n'
+        + 'const PROBE_KEY = "probe:brandnew";\n'
+        + 'export const AS_CONST_KEY = "asconst:brandnew" as const;\n');
+      const seen = storageKeyConstantsIn(dir);
+      expect(seen.map((d) => d.value).sort(),
+        "扩射程之后这三种写法仍然有扫不到的 —— 复评实测过：上一版这三条全绿")
+        .toEqual([" ttl", "asconst:brandnew", "probe:brandnew"]);
+      expect(seen.filter((d) => d.exported).map((d) => d.name),
+        "`exported` 记错了 —— 两族的处置不一样，记混就把封闭登记变成了豁免名册")
+        .toEqual(["AS_CONST_KEY"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("不乱红：`_KEY` 结尾但不是存储键的那一族 —— `USAGE_OTHER_BUCKET` 那次改名的反面，不许扫成键", () => {
+    // ⚠️ 反向控制用**仓里真实存在的串**：`"__other__"` 是 `src/core/admin/usage-stats.ts`
+    // 里 `USAGE_OTHER_BUCKET` 今天的值，Task 30 正是为了这条约定把它从 `_KEY` 改名的。
+    const dir = mkdtempSync(join(tmpdir(), "storage-keys-nonkey-"));
+    try {
+      writeFileSync(join(dir, "live.ts"),
+        'export const USAGE_OTHER_BUCKET = "__other__";\n'
+        + 'export const KEYBOARD = "kbd";\n'
+        + 'export const SOME_KEY_LIST = ["a"];\n');
+      expect(storageKeyConstantsIn(dir),
+        "扩射程扩过头了：不以 `_KEY`/`_KEY_PREFIX` 结尾的常量被当成存储键了").toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
