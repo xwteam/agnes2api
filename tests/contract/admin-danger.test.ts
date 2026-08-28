@@ -317,6 +317,53 @@ describe("POST /admin/api/config/reset", () => {
     expect(ok2.resetBlocked, "env 兜住了却还在报缺失 —— 判据多半没看 env").toEqual([]);
   });
 
+  /**
+   * 【落盘类】**面板会拿哪条响应换掉手上那份 `data`，就必须在哪条响应里给出 `resetBlocked`。**
+   *
+   * ⚠️⚠️ 这一格是 P3e Task 31 复评回填（F4）补的，起因是前端那一半：
+   * `admin-ui/js/pure/settings.mjs` 的 `resetWarnings()` 上一版把「读不到 `resetBlocked`」
+   * 与「`resetBlocked` 是空数组」折进同一档，于是读不到时弹窗照说一句
+   * 「重置之后这份配置仍然装载得起来」——**背后一条数据都没有**。那一档现在单独报
+   * 「判断不了」（`tests/ui/settings.test.ts` 的
+   * 「读不到 resetBlocked 时单独一档，绝不冒充「装得起来」—— 与 poolSizeOf 那条同源」钉着）。
+   * 分开之后就冒出**后端这一半**：`POST /admin/api/config/secrets/clear` 原来没有这一格，
+   * 而面板清完一把凭据正是拿它换掉 `data` 的 ⇒ 紧接着点「重置配置」会退化成一句
+   * 「判断不了」，而那时后端其实完全算得出来。**三条响应形状对齐**，这一格钉住它。
+   *
+   * ⚠️ **顺带钉住「它只随 env 变」**：判据是 `configLoadBlockers(RESET_VALUE, env)`，
+   * `RESET_VALUE` 是常量 ⇒ 同一个 env 下三条响应必须给出**同一个值**。
+   * 哪天有人把其中一条改成「按存储里那份算」，这一格当场红。
+   */
+  it("GET / secrets/clear / reset 三条响应都给出 resetBlocked，且同一个 env 下三份一致", async () => {
+    // env 里没有 GATEWAY_TOKEN、口令只在存储里 ⇒ 三条响应都该报「重置之后缺网关口令」。
+    const { app } = await realApp({
+      env: {},
+      stored: {
+        gatewayToken: "only-in-storage-000000002",
+        registrar: { yyds: { apiKey: "yyds-api-key-only-in-storage" } },
+      },
+    });
+    const codesOf = (b: unknown): string[] => {
+      const rows = (b as { resetBlocked?: unknown }).resetBlocked;
+      if (!Array.isArray(rows)) return ["（这条响应里根本没有 resetBlocked）"];
+      return rows.map((r) => String((r as { code?: unknown }).code));
+    };
+
+    const getBody = await (await app.request("/admin/api/config", { headers: withKey })).json();
+    const clearBody = await (await app.request("/admin/api/config/secrets/clear", {
+      method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ path: "registrar.yyds.apiKey" }),
+    })).json();
+    const resetBody = await (await reset(app)).json();
+
+    // 非空锚：这个 env 下它本来就该非空，否则下面三份「一致」是三个空数组在互相认账。
+    expect(codesOf(getBody), "这一格的前提是「重置之后真的会缺东西」，而 GET 说什么都不缺")
+      .toContain("gateway_token_required");
+    expect(codesOf(clearBody), "secrets/clear 的响应里没有 resetBlocked —— 面板清完凭据再点重置只能说「判断不了」")
+      .toEqual(codesOf(getBody));
+    expect(codesOf(resetBody), "reset 回执里那一格与 GET 那一格分叉了 —— 两处判据不再同源")
+      .toEqual(codesOf(getBody));
+  });
+
   /** 【不出网类】危险区不许开任何回显口子（全局约束 12）。 */
   it("回执里没有任何一个叶子值等于凭据原串", async () => {
     const SECRET = "stored-gateway-token-danger-000001";

@@ -3,6 +3,11 @@ import { bootPanel, settle } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 import { EDITABLE_FIELDS, SECRET_FIELDS } from "../../../src/core/admin/config-validate.js";
+// P3e Task 31 复评回填（F5）：危险区那两颗按钮的 id 序列**从真源现算**，不再手抄字面量
+//（手抄的那一份红起来会说「按钮与 DANGER_ACTIONS 对不上」，而真正对不上的是它自己）。
+import { DANGER_ACTIONS } from "../../../admin-ui/js/pure/settings.mjs";
+// 危险区那几句回执与警告要逐字核对，文案取字典真源，不在用例里抄中文。
+import { I18N } from "../../../admin-ui/js/i18n-dict.js";
 
 /**
  * 设置页的**行为**覆盖（P3c Task 7）。纯函数那一半在 `tests/ui/settings.test.ts` 的
@@ -61,9 +66,27 @@ function configBody(over: Record<string, unknown> = {}) {
     configDegraded: false,
     editable: [],
     secrets: ["gatewayToken", "registrar.yyds.apiKey", "registrar.moemail.apiKey"],
+    // ⚠️ **真的 `GET /admin/api/config` 恒有这一格**（`configGetHandler` 的 `c.json(...)`），
+    // 夹具里原来漏了它 —— 而「读得到配置却读不到 `resetBlocked`」在真机上不存在。
+    // 补上它之后「读不到」那一档只由真正读不到的用例（`GET` 500）触发，不再被夹具白占。
+    resetBlocked: [],
     propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
     ...over,
   };
+}
+
+/**
+ * 字典里这一条在**面板当前语言**下的原文。
+ * **不在用例里抄中文**：抄一份就会与字典漂，而这一族断言比的正好是「屏幕上说的是哪一句」。
+ * 当前语言取 `lang-select` 的值（`app.js` 启动时把它设成 `currentLang()`）。
+ */
+function say(h: Awaited<ReturnType<typeof openSettings>>, key: string): string {
+  const lang = h.dom.byId("lang-select").value;
+  const row = (I18N as unknown as Record<string, Record<string, string>>)[key];
+  if (row === undefined) throw new Error(`字典里没有 ${key} —— 这一格比的是空串`);
+  const text = row[lang];
+  if (typeof text !== "string" || text === "") throw new Error(`${key} 在 ${lang} 下是空的`);
+  return text;
 }
 
 const ok = (body: unknown): Resp => ({ status: 200, body });
@@ -954,12 +977,24 @@ describe("危险区（设计小节「重置到底重置了什么」）", () => {
     };
   }
 
+  /**
+   * ⚠️ **期望值从 `DANGER_ACTIONS` 现算，不手抄字面量**（复评回填 F5）。
+   *
+   * 上一版这里写死的是 `["resetConfig","purgeKeys"]`，而报文说的是
+   * 「危险区的按钮与 `DANGER_ACTIONS` 对不上」。复评把那张表的两条记录**整体对调**之后，
+   * 唯一变红的就是这一格 —— 可那一刻 DOM 与那张表**完全一致**，对不上的是这句手抄的
+   * 字面量和五份 ADMIN.md 的行序，照着报文去查会查错地方。
+   * ⇒ 这一格今天只守「板块文件真的按那张表派生」；**「那张表的顺序 = 五份文档的行序」
+   * 由 `tests/unit/docs-parity.test.ts` 的
+   * 「五份 ADMIN.md 危险区那张表的按钮列，逐行等于 DANGER_ACTIONS 的 titleKey 译文」守**。
+   */
   it("危险区那张卡真的建出来了，两颗按钮各在自己那一行上", async () => {
     const h = await openSettings(danger());
     const rows = dangerCard(h).walk().filter((n) => n.getAttribute("data-danger") !== null);
+    expect(rows.length, "危险区一行都没建出来——这一格比的是两个空数组").toBe(DANGER_ACTIONS.length);
     expect(rows.map((r) => r.getAttribute("data-danger")),
-      "危险区的按钮与 DANGER_ACTIONS 对不上 —— 那张表是屏幕与五份 ADMIN.md 共用的真源")
-      .toEqual(["resetConfig", "purgeKeys"]);
+      "屏幕上的危险区按钮没有按 DANGER_ACTIONS 派生 —— 板块文件里多半又写了一份清单")
+      .toEqual(DANGER_ACTIONS.map((a) => a.id));
   });
 
   it("清空 Key 池：点开先取一次当前池大小，确认之前一次写请求都不发", async () => {
@@ -1081,5 +1116,136 @@ describe("危险区（设计小节「重置到底重置了什么」）", () => {
     // 回执里 `changed: ["maxStrikes"]` ⇒ 那一格要被高亮（判据与保存那条同源）。
     expect(fieldNode(h.section("settings"), "maxStrikes").classList.contains("changed"),
       "回读说这一格变了，屏幕上却没高亮").toBe(true);
+    // ⚠️ **回执那句话里的数字就是被高亮的格数**（复评回填 F3）：说「高亮出来了」而屏幕上
+    // 一格都没亮，与说「亮了 3 格」而只亮 1 格，是同一种「屏幕上编一个状态」。
+    const line = dangerCard(h).walk().find((n) => n.classList.contains("cfg-danger-result"))!;
+    const lit = h.section("settings").walk().filter((n) => n.classList.contains("changed")).length;
+    expect(lit, "前置条件：这一档本该真的高亮一格").toBe(1);
+    expect(line.textContent, "回执那句话里的数字与真的高亮出来的格数对不上")
+      .toBe(say(h, "set.danger.reset.done").replace("{count}", String(lit)));
+  });
+
+  // ── 复评回填：三条「屏幕上讲一个假故事」的用户可见缺陷 ─────────────────────────
+  //
+  // ⚠️⚠️ **这三格测的是同一个形状：一句话在它描述的那件事已经过去之后还留在屏幕上。**
+  // P3d 那次「屏幕上编出一个状态码」、Task 23 复评那次「三个信号一起指向一次没有发生的
+  // 变化」都是它。**复评实测到的三条全部落在这张卡上**，而当天没有任何一格看得见它们
+  //（原来那几格只在动作发生的那一拍断言 `display === ""`，一拍之后再没人看过）。
+
+  it("清空成功之后：点刷新 / 切板块回来 / 切语言，危险区那一行回执都必须作废", async () => {
+    const h = await openSettings(danger({}, 7));
+    dangerButton(h, "purgeKeys").click();
+    await settle();
+    const modal = h.dom.document.querySelectorAll(".modal")[0]!;
+    modal.querySelectorAll("input")[0]!.value = "7";
+    modal.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+
+    const line = dangerCard(h).walk().find((n) => n.classList.contains("cfg-danger-result"))!;
+    expect(line.style.display, "前置条件：回执行得先显示出来").toBe("");
+    expect(line.textContent, "前置条件：回执行得先说出删了几把").toContain("7");
+
+    // ① 面板自己的「刷新」。
+    h.section("settings").querySelectorAll("button")
+      .find((b) => b.getAttribute("data-i18n") === "common.refresh")!.click();
+    await settle();
+    expect(line.style.display,
+      "刷新之后那句「已删掉 7 把」还挂在屏幕上 —— 它描述的是一次早已过去的操作").toBe("none");
+    expect(line.textContent, "藏起来了但文本还在，下一次显示会把旧话再放出来").toBe("");
+
+    // ② 切走再切回来。
+    const nav = (name: string) => h.dom.document.querySelectorAll(".nav-item")
+      .find((b) => b.getAttribute("data-section") === name)!;
+    nav("keys").click();
+    await settle();
+    nav("settings").click();
+    await settle();
+    expect(line.style.display, "切板块回来之后那句回执又冒出来了").toBe("none");
+
+    // ③ 切语言。**这一档是它最难看的形态**：`t()` 出来的文本框架层 `apply(document)`
+    //    刷不动，于是屏幕上会同时有两种语言。
+    const sel = h.dom.byId("lang-select");
+    const before = sel.value;
+    sel.value = before === "en" ? "ja" : "en";
+    sel.change();
+    await settle();
+    expect(line.style.display, "切语言之后那句回执还在，而且停在旧语言上").toBe("none");
+    expect(line.textContent).toBe("");
+  });
+
+  /**
+   * ⚠️⚠️ **重置回执里也有 `changed`** ⇒ `isSaveReceipt()` 认它是一次写回执 ⇒
+   * `render()` 里那段「回到读取态就把回读行与高亮一并作废」**恒不跑**。
+   * 复评实测：保存一格之后重置（回执 `changed: []`），屏幕上同时挂着
+   * 「已回读生效值，**1** 个字段发生了变化（已高亮）」+ maxStrikes 仍带 `.changed`
+   * ——那个 `1` 来自上一次保存，三个信号一起指向一次**没有发生**的变化。
+   */
+  it("保存一格之后重置：上一次保存留下的回读行与高亮一并作废，回执说的是「一格都没变」", async () => {
+    const h = await openSettings((url: string) => {
+      if (url.includes("/config/reset")) {
+        return ok({ ...configBody(), changed: [], credentialsChanged: [], resetBlocked: [] });
+      }
+      if (url.includes("/keys")) return ok({ items: [], total: 0, page: 1, size: 1, pages: 1 });
+      if (url.includes("/config")) return ok({ ...configBody(), changed: ["maxStrikes"], credentialsChanged: [] });
+      return ok({ protocols: [], models: [] });
+    });
+    const section = h.section("settings");
+    inputOf(section, "maxStrikes").input("5");
+    saveButton(section).click();
+    await settle();
+    expect(h.section("settings").walk().find((n) => n.classList.contains("cfg-readback"))!.style.display,
+      "前置条件：保存之后回读行得先显示出来").toBe("");
+    expect(fieldNode(section, "maxStrikes").classList.contains("changed"),
+      "前置条件：保存之后那一格得先高亮").toBe(true);
+
+    dangerButton(h, "resetConfig").click();
+    await settle();
+    h.dom.document.querySelectorAll(".modal")[0]!
+      .querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+
+    const readback = h.section("settings").walk().find((n) => n.classList.contains("cfg-readback"))!;
+    expect(readback.style.display,
+      "重置之后回读行还挂着 —— 那句「1 个字段发生了变化」说的是上一次保存").toBe("none");
+    expect(readback.textContent).toBe("");
+    expect(fieldNode(h.section("settings"), "maxStrikes").classList.contains("changed"),
+      "重置回执说一格都没变，屏幕上却还留着上一次保存的高亮").toBe(false);
+    // 而危险区那句话必须走「一格都没变」那一档，不许照说「已经高亮出来」。
+    const line = dangerCard(h).walk().find((n) => n.classList.contains("cfg-danger-result"))!;
+    expect(line.textContent, "重置对这些字段什么都没做，屏幕上却说「真的变了的那几格已经高亮出来」")
+      .toBe(say(h, "set.danger.reset.doneNone"));
+  });
+
+  /**
+   * ⚠️⚠️ **「读不到当前配置」与「重置之后什么都不缺」是两件事。**
+   * 复评实测：`GET /admin/api/config` 返回 500（⇒ `data = null`）之后点「重置配置」，
+   * 弹窗逐字说「按逐字段判据看，重置之后这份配置仍然装载得起来」——**那句安心话背后
+   * 一条数据都没有**；同一份弹窗里那句传播说明因为 `propagationView(null)` 直接消失。
+   * 同一个作者在 `poolSizeOf()` 上对同一件事的裁定是「读不出来就 null，绝不伪造 0」。
+   */
+  it("读不到配置时点重置：弹窗说的是「判断不了」，传播那句话照旧在，而且不假装安全", async () => {
+    const h = await openSettings((url: string) => {
+      if (url.includes("/keys")) return ok({ items: [], total: 0, page: 1, size: 1, pages: 1 });
+      if (url.includes("/config")) return { status: 500, body: { error: { message: "boom" } } };
+      return ok({ protocols: [], models: [] });
+    });
+    dangerButton(h, "resetConfig").click();
+    await settle();
+    const modal = h.dom.document.querySelectorAll(".modal")[0];
+    expect(modal, "重置配置没有二次确认").toBeDefined();
+    expect(modal!.textContent, "读不到配置却照说「仍然装载得起来」—— 那句安心话背后一条数据都没有")
+      .not.toContain(say(h, "set.danger.reset.effect.ok"));
+    expect(modal!.textContent, "读不到配置时没有把「判断不了」说出来").toContain(say(h, "set.danger.reset.effect.unknown"));
+    // 传播那句话**不许整条消失**：读不到的只是那个数（设计 §5.2 要的是「必须显示」）。
+    expect(modal!.walk().some((n) => n.getAttribute("data-i18n") === "set.danger.reset.propagation.unknown"),
+      "上界读不到时传播那句话整条消失了 —— 「不显示」不是设计 §5.2 的一档").toBe(true);
+
+    // ⚠️ **按钮照旧能按下去，这是明写的取舍**：读不到的只是后果预览，而「配置装不起来」
+    // 恰恰是运维最可能来按这颗按钮的时候。与「读不到池大小就不开确认框」不同——
+    // 那边读不到的是确认动作**本身要用的基线**。
+    modal!.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+    expect(h.calls.some((c) => c.url.includes("/config/reset")),
+      "读不到配置时把这条自救路径整个堵死了 —— 那时运维再没有别的出路").toBe(true);
   });
 });

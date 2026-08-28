@@ -576,6 +576,19 @@ export function configClearSecretHandler(deps: ConfigDeps) {
       fields: after.fields,
       credentials: after.credentials,
       configDegraded: after.configDegraded,
+      /**
+       * **按下危险区那颗「重置配置」之后这份配置会缺什么**，判据与 `GET` 上那一格逐字同源
+       *（`configLoadBlockers(RESET_VALUE, env)`：`RESET_VALUE` 是常量、`env` 手上就有 ⇒
+       * **零额外存储读**，而且它的取值只随 `env` 变，与刚清掉的那把凭据无关）。
+       *
+       * ⚠️ **它是复评回填补上的（F4 的另一半）**：面板清空一把凭据之后拿这条响应换掉了
+       * 手上那份 `data`，而这条响应原来**没有**这一格 ⇒ 紧接着点「重置配置」时，
+       * 前端的 `resetWarnings()` 读不到它。上一版前端把「读不到」与「空数组」折进同一档，
+       * 于是弹窗照说一句没有依据的安心话；那一档现在单独报「判断不了」。
+       * 补上这一格是为了让**清空凭据之后**那条正当路径仍然拿得到真判据，
+       * 而不是退化成一句「判断不了」——三条响应从此形状一致。
+       */
+      resetBlocked: configLoadBlockers(RESET_VALUE, wiring.env),
       propagation: PROPAGATION,
     });
   };

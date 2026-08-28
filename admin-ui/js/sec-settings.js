@@ -316,11 +316,21 @@ function render() {
   // 管（每次保存前清），读取态不动它们——那是**上一次保存失败**留下的东西，与这句
   // 传播说明不发生任何组合，扩到这里就是一次没被评审过的行为改动。这条边界如实登记在
   // Task 23 报告的遗留里，别把它读成「读取态会把屏幕清干净」。
-  if (saved === null) {
-    nodes.readback.textContent = "";
-    nodes.readback.style.display = "none";
-    for (const path of Object.keys(nodes.fields)) nodes.fields[path].wrap.classList.remove("changed");
-  }
+  if (saved === null) clearReadback();
+
+  // ⚠️⚠️ **危险区那一行回执同样必须在这里作废**（P3e Task 31 复评回填 F1）。
+  //
+  // 它与上面那段是**同一个形状的第二例**，而它逃过了上面那段：上面清的是
+  // `nodes.readback`，判据是「这份数据是不是保存回执」；危险区那一行由 `doReset()` /
+  // `doPurge()` 直接写 `textContent`，`render()` 与 `load()` 从前一个字都不碰它。
+  // 复评实测：清空 7 把 key 成功之后，点面板自己的「刷新」、切板块再切回来、
+  // 甚至**把语言切成 en**，屏幕上一直挂着那句中文「已删掉 7 把 key；回读之后池子是空的。」
+  // ——它描述的是一次早已过去的操作，而且 `t()` 出来的文本框架层
+  // `apply(document)` 刷不动（本文件末尾 `set.propagation.buildTime` 那段注释写着这条陷阱）。
+  //
+  // ⚠️ **`doReset()` 在 `render()` 之后才写这一行**，所以这里无条件清不会把它自己刚说的话清掉；
+  // `doPurge()` 根本不调 `render()`，它那一行由下一次 `render()` / `clearMarks()` 清。
+  clearDangerResult();
 
   const showLive = p.visibilityUpperBoundMs !== null && (saved === null || touchesLiveField(saved));
   nodes.propagation.textContent = showLive
@@ -467,18 +477,40 @@ async function loadCatalog() {
   renderExamples();
 }
 
+/**
+ * 上一次保存留下的**回读行与各格高亮**一并作废。
+ *
+ * ⚠️ **抽成函数是因为它有三个调用点**（`render()` 的读取态那一支、`clearMarks()`、
+ * `doReset()`），而抄三份的话迟早有一份忘了清其中一样——Task 23 复评那次
+ * 「三个信号一起指向一次没有发生的变化」就是漏清其中一样的后果。
+ */
+function clearReadback() {
+  nodes.readback.textContent = "";
+  nodes.readback.style.display = "none";
+  for (const path of Object.keys(nodes.fields)) nodes.fields[path].wrap.classList.remove("changed");
+}
+
+/**
+ * 危险区那一行回执作废。**一次早已过去的操作不许挂在屏幕上**，理由见 `render()` 里那段。
+ */
+function clearDangerResult() {
+  nodes.dangerResult.textContent = "";
+  nodes.dangerResult.style.display = "none";
+}
+
 /** 把上一次保存留下的高亮与错误全部清掉。**每次保存前都要清**，否则会越积越多。 */
 function clearMarks() {
   for (const path of Object.keys(nodes.fields)) {
-    nodes.fields[path].wrap.classList.remove("changed");
     nodes.fields[path].wrap.classList.remove("invalid");
   }
   nodes.errors.textContent = "";
   nodes.errors.style.display = "none";
   // ⚠️ **不清 `nodes.blocked`**：它讲的是「存储里那份配置现在装不装得起来」这个
   // **当前状态**，不是上一次保存留下的痕迹；由 `render()` 按最新响应重算。
-  nodes.readback.textContent = "";
-  nodes.readback.style.display = "none";
+  clearReadback();
+  // ⚠️ **保存失败那一支不走 `render()`**（`save()` 的 `catch` 里只画错误行），
+  // 所以危险区那一行必须在这里也清一次，否则一次失败的保存之后它还挂着。
+  clearDangerResult();
 }
 
 function showErrors(rows) {
@@ -649,6 +681,12 @@ function confirmReset() {
     // 别的副本要等 `CONFIG_TTL_MS` + KV 边缘缓存。
     body.appendChild(el("p", { class: "muted note" },
       t("set.danger.reset.propagation", { bound: fmtDuration(p.visibilityUpperBoundMs) })));
+  } else {
+    // ⚠️ **上界读不出来时这句话不许整条消失**（复评回填 F4）：上一版这里没有 else，
+    // 于是 `GET /admin/api/config` 失败之后弹窗里**一个字都不提传播**——
+    // 而设计 §5.2 要求的是「必须显示，不许写立即生效」，「不显示」不是它的一档。
+    // 读不到的只是那个数，「别的副本不会在这一刻看到」这件事照旧成立。
+    body.appendChild(elI18n("p", "set.danger.reset.propagation.unknown", { class: "muted note" }));
   }
   openModal("set.danger.reset.confirmTitle", body, [
     { labelKey: "common.cancel" },
@@ -660,13 +698,32 @@ async function doReset() {
   try {
     const res = await api.post("/config/reset", { confirm: true });
     // **回读之后**才刷界面（与 `save()` / `doClear()` 同一条纪律）：`res` 就是
-    // 后端回读出来的新状态本身，`render()` 会把 `changed` 那几格高亮出来。
+    // 后端回读出来的新状态本身。
     data = res;
+    // ⚠️⚠️ **上一次保存留下的回读行与高亮必须在这里显式作废**（复评回填 F2）。
+    //
+    // `render()` 里那段清理的判据是 `isSaveReceipt()`，而它认的是「`changed` 这一格在不在」
+    // ——**重置回执里也有 `changed`**（`src/http/admin/handlers/config.ts` 的
+    // `configResetHandler` 逐字如此）⇒ `saved !== null` ⇒ 那段清理**恒不跑**。
+    // 复评实测：先改一格保存（回读行说「1 个字段发生了变化（已高亮）」、maxStrikes 带
+    // `.changed`），再点重置、回执 `changed: []` ⇒ 回读行与高亮**原样留着**，
+    // 而那个 `1` 来自上一次保存 —— 与 Task 23 复评发现 1 逐字同形。
+    // ⚠️ **不改 `isSaveReceipt()` 去把重置排除掉**：那条判据「跟着数据走、不跟着时间走」
+    // 是它存在的全部理由，而重置回执确实是一次写回执（`changed` 那一格的语义与 `PUT` 同源）。
+    // 该作废的是**上一次那件事**留下的痕迹，落点就在这里。
+    clearReadback();
     render();
-    for (const path of changedFields(res).concat(changedSecrets(res))) {
+    const changed = changedFields(res).concat(changedSecrets(res));
+    for (const path of changed) {
       if (nodes.fields[path] !== undefined) nodes.fields[path].wrap.classList.add("changed");
     }
-    nodes.dangerResult.textContent = t("set.danger.reset.done");
+    // ⚠️ **按 `changed` 分岔**（复评回填 F3）：重置对一部分字段**什么都没做**
+    //（存储里本来就没有值、或者被环境变量锁着，而那正是五份 ADMIN.md 反复强调的那一句），
+    // 那一档一格都没高亮，说「已经高亮出来」就是当面说反话。
+    // 两档的形状照 `save()` 里 `set.readback` / `set.readback.none` 那一对。
+    nodes.dangerResult.textContent = changed.length === 0
+      ? t("set.danger.reset.doneNone")
+      : t("set.danger.reset.done", { count: String(changed.length) });
     nodes.dangerResult.style.display = "";
   } catch (e) {
     toast(t("set.danger.failed"), "warn", { sticky: true });
@@ -681,8 +738,14 @@ async function doReset() {
  * 每把 key 的用量历史住在记录的值里面），而「再点一次确认」对着一个手滑的人
  * 拦不住任何东西。
  *
- * ⚠️ **池大小是点开这一刻现取的**（`GET /admin/api/keys`，走 isolate 快照、
- * 零存储读），不是常驻轮询——本板块那条「没有自动刷新」的纪律照旧。
+ * ⚠️ **池大小是点开这一刻现取的**（`GET /admin/api/keys`，走 isolate 快照：
+ * **命中快照那一次零存储读**），不是常驻轮询——本板块那条「没有自动刷新」的纪律照旧。
+ * ⚠️ **上一版这里写的是无条件的「零存储读」，那是假的**（复评回填 F7）：
+ * `src/core/keypool-repo.ts` 的 `all()` 第一行是
+ * `if (this.cacheTtlMs <= 0) return await this.loadAll();`——而 `POOL_CACHE_TTL_MS=0`
+ * 是五份 DEPLOY.md 明写的逃生口；快照过期时 `ensureFresh()` 同样真读。
+ * 这条端点自己的说法（`src/http/admin/handlers/keys.ts` 文件头）是
+ * 「零 `list()`、零**额外**读，与转发路径共用同一个 isolate 快照」，那句是对的。
  * **读不到就不给开确认框**：没有基线时那个数字要么是编的、要么是 0，
  * 而 0 会让人在一池 key 上确认一个「空池」。
  */

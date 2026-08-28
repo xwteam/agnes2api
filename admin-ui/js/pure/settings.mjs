@@ -74,6 +74,19 @@ export const ADVANCED_FIELDS = ["registrar.agnesPlatformUrl"];
  * 危险区（第 5 张卡）上的那几颗按钮。**顺序即渲染顺序**，也是五份 ADMIN.md
  * 危险区那张表的行序。
  *
+ * ⚠️ **上面这两句话各自有一条会自己红的判据，别再当散文读**（复评回填 F5）：
+ * · 「顺序即渲染顺序」由 `tests/ui/dom/settings-save.test.ts` 的
+ *   「危险区那张卡真的建出来了，两颗按钮各在自己那一行上」钉着——它拿 DOM 上的
+ *   `data-danger` 序列与**本表现算**出来的 id 序列比，不再手抄字面量；
+ * · 「也是五份 ADMIN.md 那张表的行序」由 `tests/unit/docs-parity.test.ts` 的
+ *   「五份 ADMIN.md 危险区那张表的按钮列，逐行等于 DANGER_ACTIONS 的 titleKey 译文」
+ *   钉着——期望值从**字典里 `titleKey` 那一行的译文**现算，所以那张表的第一列
+ *   必须逐字是屏幕上那颗按钮的标签。
+ * ⚠️ **这两条判据在复评之前都不存在**：当时把两条记录**整体对调**（条数与 id 集合
+ * 都不变），`docs-parity` + `i18n-dict` + `settings.test.ts` **一格都没红**，
+ * 唯一变红的是 DOM 那格手抄的字面量，而它的报文把人指向「按钮与本表对不上」
+ *——那一刻 DOM 与本表恰恰完全一致，对不上的是五份文档的行序。
+ *
  * ⚠️ **文案 key 写成字面量、放在这张表里，不许在板块文件里拼模板**
  *（`` `set.danger.${a}.title` `` 那种形态）。两条硬理由：
  * ① `scripts/check-i18n.mjs` 的第 ① 条对拼键只认「整条模板就是一个 key」，
@@ -672,10 +685,30 @@ export function displayValue(v) {
  *（存储里 `registrar.targetKeys: "abc"` 这类它返回 `[]`、配置照样装不起来），
  * 本仓为这个等号栽过一次。所以空数组那一档说的是
  * `set.danger.reset.effect.ok`——「按逐字段判据看不出会缺什么」，不是「一定没事」。
+ *
+ * ⚠️⚠️ **「读不到 `resetBlocked`」与「`resetBlocked` 是空数组」是两件事，不许折进同一档**
+ *（复评回填 F4）。上一版把两者一起兜到 `set.danger.reset.effect.ok` 那一句上，
+ * 实测后果：`GET /admin/api/config` 返回 500（⇒ 板块文件把 `data` 清成 `null`）之后点
+ * 「重置配置」，弹窗照样逐字说「按逐字段判据看，重置之后这份配置仍然装载得起来」
+ * ——**那句安心话背后一条数据都没有**。同一个文件下面的 `poolSizeOf()` 对同一件事
+ * 的裁定逐字是「读不出来就 `null`，**绝不伪造 0**」，这里不许自相矛盾。
+ * ⇒ 读不到时单独一档 `set.danger.reset.effect.unknown`，而且它是 `danger`：
+ * 「判断不了」在一颗不可撤销的按钮上就是一条该红的提示。
+ * ⚠️ **判据是「`resetBlocked` 这一格在不在」，不是「body 空不空」**：
+ * `GET /admin/api/config` 与 `POST /admin/api/config/reset` 两条响应里都有它
+ *（`src/http/admin/handlers/config.ts` 两处 `c.json(...)` 逐字如此），
+ * 而清空凭据那条响应里原来没有——那条也已经补上了，理由写在那个 handler 里。
+ * ⚠️ **这一档不禁用按钮**：与 `purgeConfirmed()` 那边「读不到池大小就不开确认框」
+ * 不同——那边读不到的是**确认动作本身要用的基线**（没有那个数就没有「打对了」这回事），
+ * 这边读不到的只是**后果预览**，而「配置装不起来」恰恰是运维最可能来按这颗按钮的时候，
+ * 把它堵死等于关掉唯一的自救路径（后端 `configResetHandler` 上方那段 ⚠️ 写的是同一件事）。
  */
 export function resetWarnings(body) {
   const b = obj(body);
-  const list = b !== null && Array.isArray(b.resetBlocked) ? b.resetBlocked : [];
+  if (b === null || !Array.isArray(b.resetBlocked)) {
+    return [{ code: "", key: "set.danger.reset.effect.unknown", params: {}, kind: "danger" }];
+  }
+  const list = b.resetBlocked;
   const rows = [];
   const seen = new Set();
   for (const e of list) {

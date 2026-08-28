@@ -858,8 +858,26 @@ describe("危险区的取值决策", () => {
     const rows = resetWarnings({ resetBlocked: [] });
     expect(rows.map((r) => r.key)).toEqual(["set.danger.reset.effect.ok"]);
     expect(rows[0]!.kind).toBe("info");
-    // 读不到那一格时同样落到这一档（而不是抛）。
-    expect(resetWarnings(null).map((r) => r.key)).toEqual(["set.danger.reset.effect.ok"]);
+  });
+
+  /**
+   * ⚠️⚠️ **「读不到 `resetBlocked`」与「`resetBlocked` 是空数组」必须分得开**（复评回填 F4）。
+   *
+   * 上一版把两者一起兜到 `set.danger.reset.effect.ok`，实测后果：`GET /admin/api/config`
+   * 返回 500（板块文件据此把 `data` 清成 `null`）之后点「重置配置」，弹窗逐字说
+   * 「按逐字段判据看，重置之后这份配置仍然装载得起来」——**那句安心话背后一条数据都没有**。
+   * 同一个文件里 `poolSizeOf()` 对同一件事的裁定是「读不出来就 `null`，绝不伪造 0」。
+   */
+  it("读不到 resetBlocked 时单独一档，绝不冒充「装得起来」—— 与 poolSizeOf 那条同源", () => {
+    // 真机上会出现的两种「读不到」：整份读不到（GET 失败）、以及形状里没有这一格。
+    for (const body of [null, undefined, {}, { resetBlocked: null }, { resetBlocked: "[]" }, "boom"]) {
+      const rows = resetWarnings(body);
+      expect(rows.map((r) => r.key), `${JSON.stringify(body)} 被当成了「什么都不缺」`)
+        .toEqual(["set.danger.reset.effect.unknown"]);
+      expect(rows[0]!.kind, "「判断不了」在一颗不可撤销的按钮上就是一条该红的提示").toBe("danger");
+    }
+    // 反向控制：**真的读到了一个空数组**时不许落到这一档，否则上面那格等于把两态换了个方向合并。
+    expect(resetWarnings({ resetBlocked: [] }).map((r) => r.key)).toEqual(["set.danger.reset.effect.ok"]);
   });
 
   it("池大小读不出来一律 null，绝不伪造 0 —— 0 会让人在一池 key 上确认一个「空池」", () => {

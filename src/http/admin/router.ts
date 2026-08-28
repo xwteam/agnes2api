@@ -372,7 +372,9 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.post("/admin/api/registrar/tend", manualTendHandler(registrar));
   admin.get("/admin/api/registrar/status", registrarStatusHandler(registrar));
   // **`channels/:channel/test` 与 `tend` 不会互相吃掉**：Hono 按注册顺序匹配，而
-  // `/admin/api/registrar/tend` 是两段、这条是四段，形状上不可能重叠。同一段
+  // `/admin/api/registrar/tend` 在 `/admin/api/` 之后是两段、这条是四段
+  //（本文件里凡是数「段」，一律指 `/admin/api/` 之后按 `/` 切出来的段数），
+  // 形状上不可能重叠。同一段
   // `:id` vs `bulk` 的坑（见上面 Key 写端点那段）在这里不成立，但**新增
   // `/admin/api/registrar/:something` 这种单段通配时会立刻成立**——真要加，
   // 请把它排在这两条之后。
@@ -386,9 +388,16 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 等于把整台网关交出去——它照样只能待在 `adminAuth` 那一行之后。
   //
   // ⚠️ **`config/validate` 与 `config/secrets/clear` 都排在 `PUT /admin/api/config`
-  // 之后，但这与 Hono 的匹配顺序无关**：三条路径段数不同（两段 / 三段 / 四段），
-  // 形状上不可能重叠，而且方法也不同。真正会出事的是将来有人加一条
-  // `POST /admin/api/config/:something` 单段通配——那时它必须排在这两条之后。
+  // 之后，但这与 Hono 的匹配顺序无关**：三条路径段数不同（一段 / 两段 / 三段，
+  // 口径见上面 `registrar` 那段括号里那句），形状上不可能重叠，而且方法也不同。
+  // ⚠️ **上一版这里写的是「两段 / 三段 / 四段」，与同文件 15 行之上那段用的口径不是
+  // 同一个**（复评回填 F6：那个口径下 `config/validate` 会算成三段，而下面那条新端点
+  // 又按第三种口径写成了「四段」——同一份文件对同一条路径给了两个数）。全文统一成
+  // `/admin/api/` 之后的段数，因为「单段通配」这件事本来就发生在那一层。
+  // 真正会出事的是将来有人加一条
+  // `POST /admin/api/config/:something` 单段通配——它是两段，会吃掉同样两段的
+  // `config/validate` 与下面那条 `config/reset`（`config/secrets/clear` 是三段，吃不到），
+  // 那时它必须排在这两条之后。
   //
   // `config/reset` 按范围裁定 ② 移到了 P3e，**P3e Task 31 已经把它落地**（上一版这里
   // 写的是「本期没有这条端点」——那句话从本任务起就是假的）。它是危险区第一颗按钮，
@@ -403,7 +412,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.put("/admin/api/config", configPutHandler(config));
   admin.post("/admin/api/config/validate", configValidateHandler(config));
   admin.post("/admin/api/config/secrets/clear", configClearSecretHandler(config));
-  // 危险区第一颗按钮：`config` 整把写回 `{}`（P3e Task 31）。四段，与上面那条
+  // 危险区第一颗按钮：`config` 整把写回 `{}`（P3e Task 31）。两段，与上面那条
   // `config/validate` 同形，今天与谁都不重叠；将来那条单段通配真出现时，
   // 它与 `validate` 一起必须排在通配之前（上面那段 ⚠️ 说的就是这件事）。
   admin.post(CONFIG_RESET_PATH, configResetHandler(config));

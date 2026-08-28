@@ -28,6 +28,9 @@ import { sendable } from "../../admin-ui/js/pure/sendable.mjs";
 import {
   ADVANCED_FIELDS, CARD_AUTH, CARD_REGISTRAR, CARD_UPSTREAM, channelFields, DANGER_ACTIONS,
 } from "../../admin-ui/js/pure/settings.mjs";
+// P3e Task 31 复评回填（F5）：危险区那张表的**行序**期望值从字典里 `titleKey` 那一行的
+// 译文现算——那一列写的就该是屏幕上那颗按钮的标签，所以这里不另抄一份五语言按钮名。
+import { I18N } from "../../admin-ui/js/i18n-dict.js";
 // P3e Task 31：危险区那两条端点的路径**一律从真源常量现算**，不在本文件手抄字符串。
 import { CONFIG_RESET_PATH } from "../../src/http/admin/handlers/config.js";
 import { KEYS_PURGE_PATH } from "../../src/http/admin/handlers/keys-write.js";
@@ -2546,6 +2549,168 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     const failures = tableSeqFailures(expectedTables(c), realAdminDoc);
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
     expect(failures[0] ?? "").toContain("板块速查");
+  });
+
+  // ── ⑤A 危险区那张表的**行序**（P3e Task 31 复评回填 F5）──────────────────────
+  //
+  // ⚠️⚠️ **上面那一组只数行数，数不出「顺序」——这一条是实测逼出来的，不是设计时想到的。**
+  // 复评把 `DANGER_ACTIONS` 的两条记录**整体对调**（条数不变、id 集合不变，屏幕上的行序
+  // 从此与五份 ADMIN.md 的行序相反）：`docs-parity` + `i18n-dict` + `settings.test.ts`
+  // **一格都没红**，唯一变红的是
+  // `tests/ui/dom/settings-save.test.ts「危险区那张卡真的建出来了，两颗按钮各在自己那一行上」`
+  // 里那句手抄的
+  // `["resetConfig","purgeKeys"]`，而它的报文说的是「危险区的按钮与 `DANGER_ACTIONS` 对不上」
+  // —— 那一刻 DOM 与那张表**完全一致**，对不上的是那句字面量和五份文档的行序，
+  // 照着报文去查会查错地方（阶段 D「报文可以亲手把人引进坑」同形）。
+  // ⇒ 那句字面量已经改成从 `DANGER_ACTIONS` 现算（它守的是「板块文件按那张表派生」），
+  //   「五份文档的行序」这一半落在这里。
+  //
+  // **判据：那张表第一列（按钮名）逐行等于 `DANGER_ACTIONS[k].titleKey` 在这种语言下的译文。**
+  // 期望值从字典现算，所以它同时守住三件事：表里两行顺序反了、`DANGER_ACTIONS` 顺序反了、
+  // 以及某一份翻译时把按钮名改写成了屏幕上没有的说法（那会让人在界面里找不到那颗按钮）。
+  // ⚠️ **代价如实写**：这条判据要求那一列**逐字**是按钮标签，不许意译。
+  // 落地时 ja 那份原本写的是名词形（「設定のリセット」/「Key プールの全削除」），
+  // 已经改成按钮上的原话（「設定をリセット」/「Key プールを空にする」）——
+  // 那一列的表头逐字就是「ボタン」，写按钮的原话本来就更准。
+
+  /**
+   * 危险区那张表在 ADMIN.md 里排第几张。**认不出要吵**：`expectedTables()` 里没有这一项时
+   * 直接抛，而不是让下面整组静静退化成「跳过」——跳过的守卫与不存在的守卫是同一样东西。
+   */
+  function dangerTableIndex(): number {
+    const i = expectedTables(realPanel()).findIndex(([why]) => why === "危险区");
+    if (i < 0) throw new Error("expectedTables() 里没有「危险区」那一项——本组已经无事可做，先回去核对那张期望表");
+    return i;
+  }
+
+  /**
+   * 每一张 markdown 表的**数据行**，逐行切成单元格。
+   * **与 `tableSizes()` 是同一条切表口径**，两者对不上时下面那条扫描会当场报「判据本身坏了」
+   * ——不许出现「一条口径数出 5 张表、另一条数出 4 张」而没人知道的那一档。
+   */
+  function tableCells(src: string): string[][][] {
+    const out: string[][][] = [];
+    let run: string[] = [];
+    const flush = (): void => {
+      if (run.length > 0) {
+        out.push(run.slice(2).map((line) => line.trim().replace(/^\|/, "").replace(/\|$/, "")
+          .split("|").map((c) => c.trim())));
+        run = [];
+      }
+    };
+    for (const line of `${src}\n`.split("\n")) {
+      if (/^\s*\|/.test(line)) { run.push(line); continue; }
+      flush();
+    }
+    flush();
+    return out;
+  }
+
+  const DICT = I18N as unknown as Record<string, Record<string, string>>;
+
+  /** 一次扫描 × 五份 ADMIN.md。返回失败报文数组。真扫描与探针**共用这一份**。 */
+  function dangerRowFailures(read: ApiDocReader, order: ReadonlyArray<{ id: string; titleKey: string }>): string[] {
+    const idx = dangerTableIndex();
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const src = read(lang);
+      const tables = tableCells(src);
+      if (JSON.stringify(tables.map((t) => t.length)) !== JSON.stringify(tableSizes(src))) {
+        out.push(`${lang}/ADMIN.md：切表的两条口径（行数 / 单元格）数出来的表不一样——判据本身坏了`);
+        continue;
+      }
+      const table = tables[idx];
+      if (table === undefined) {
+        out.push(`${lang}/ADMIN.md 里数不出第 ${idx + 1} 张表（危险区）——上面那条行数判据该先红`);
+        continue;
+      }
+      const want: string[] = [];
+      let broken = false;
+      for (const a of order) {
+        const label = DICT[a.titleKey]?.[lang];
+        if (typeof label !== "string" || label.trim() === "") {
+          out.push(`${a.id} 的 ${a.titleKey} 在字典里 ${lang} 那一格是空的——期望值本身坏了，先补字典`);
+          broken = true;
+          continue;
+        }
+        want.push(label);
+      }
+      if (broken) continue;
+      const got = table.map((r) => r[0] ?? "");
+      if (JSON.stringify(got) === JSON.stringify(want)) continue;
+      const diff = want.flatMap((w, i) => (got[i] === w
+        ? []
+        : [`第 ${i + 1} 行该是「${w}」（${order[i]?.id}），实际是「${got[i] ?? "（这一行不存在）"}」`]));
+      out.push(
+        `${lang}/ADMIN.md 危险区那张表的按钮列与 DANGER_ACTIONS 的行序对不上：`
+        + `${diff.length > 0 ? diff.join("；") : `期望 ${JSON.stringify(want)}，实际 ${JSON.stringify(got)}`}`
+        + "——要改的是这三处之一：pure/settings.mjs 里那张表的顺序、这一份文档里那两行的顺序、"
+        + "或者这一份把按钮名意译了（那一列逐字就该是屏幕上那颗按钮的标签）",
+      );
+    }
+    return out;
+  }
+
+  it("五份 ADMIN.md 危险区那张表的按钮列，逐行等于 DANGER_ACTIONS 的 titleKey 译文", () => {
+    const failures = dangerRowFailures(realAdminDoc, DANGER_ACTIONS);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("非空锚：这一格真的在比东西 —— 危险区有按钮、每种语言都取到了那么多行按钮名", () => {
+    expect(DANGER_ACTIONS.length, "DANGER_ACTIONS 是空的——本组测的是空气").toBeGreaterThan(0);
+    const idx = dangerTableIndex();
+    for (const lang of LANGS) {
+      const table = tableCells(realAdminDoc(lang))[idx];
+      expect(table?.length, `${lang}/ADMIN.md 第 ${idx + 1} 张表的行数与屏幕对不上——本组比的是空数组`)
+        .toBe(DANGER_ACTIONS.length);
+      for (const row of table ?? []) {
+        expect((row[0] ?? "").trim(), `${lang}/ADMIN.md 危险区表里有一行的按钮列是空的`).not.toBe("");
+      }
+    }
+  });
+
+  it("该红时红：DANGER_ACTIONS 两条记录整体对调（条数与 id 集合都不变）—— 五份一起红", () => {
+    expect(dangerRowFailures(realAdminDoc, DANGER_ACTIONS), "真表原样反而红了——先看真扫描那一格").toEqual([]);
+    const swapped = [...DANGER_ACTIONS].reverse();
+    // **落点断言**：只有一颗按钮时「对调」等于没动，那时这一格会静静地绿。
+    if (JSON.stringify(swapped.map((a) => a.id)) === JSON.stringify(DANGER_ACTIONS.map((a) => a.id))) {
+      throw new Error("对调之后 id 序列没变——这一格控制是空的，得换一条造顺序差异的办法");
+    }
+    const failures = dangerRowFailures(realAdminDoc, swapped);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+    for (const h of ["zh-CN/ADMIN.md", "第 1 行", DICT[DANGER_ACTIONS[0]!.titleKey]!["zh-CN"]!]) {
+      expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
+  });
+
+  it("该红时红：只有 ko 那份把危险区两行对调 —— 只点名 ko，并写出第 1 行的期望与实际", () => {
+    expect(dangerRowFailures(realAdminDoc, DANGER_ACTIONS), "真表原样反而红了——先看真扫描那一格").toEqual([]);
+    const idx = dangerTableIndex();
+    const swapRows: ApiDocReader = readerWith("ko", (s) => {
+      const rows = tableCells(s)[idx] ?? [];
+      const lines = s.split("\n");
+      const at = rows.map((r) => lines.findIndex((l) => l.trim().startsWith(`| ${r[0]} |`)));
+      if (at.length !== 2 || at.some((i) => i < 0)) return s;
+      const [a, b] = at as [number, number];
+      const tmp = lines[a]!;
+      lines[a] = lines[b]!;
+      lines[b] = tmp;
+      return lines.join("\n");
+    }, ADMIN);
+    const failures = dangerRowFailures(swapRows, DANGER_ACTIONS);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["ko/ADMIN.md", "第 1 行", DICT[DANGER_ACTIONS[0]!.titleKey]!.ko!]) {
+      expect(failures[0] ?? "", "红了但报文没点名这些东西").toContain(h);
+    }
+  });
+
+  it("不乱红：某一份把危险区表**别的列**重写了（译文本来就该各写各的）—— 一格都不红", () => {
+    const reworded: ApiDocReader = readerWith("en", (s) => s.replace(
+      "The key pool, per-key usage, event records and refill history",
+      "The key pool, the per-key usage counters, the event log and the refill history",
+    ), ADMIN);
+    expect(dangerRowFailures(reworded, DANGER_ACTIONS),
+      "改的是第 3 列却红了——这条判据的射程越出了按钮列").toEqual([]);
   });
 
   // ── ⑥ 设置卡表与调试台模式表：同一条派生法，多两张表（P3e Task 26A）───────────

@@ -303,8 +303,9 @@ The last card on the settings page. Neither button here can be undone, and there
 - **Finishing on screen does not mean every replica has caught up.** After a reset, other
   replicas or isolates only see it once the config cache and the edge cache have expired; after
   a purge, the forwarding path can keep selecting those keys for up to one pool-snapshot TTL
-  plus the edge cache. Both upper bounds are stated in the settings card notes above, and in
-  the environment table of [DEPLOY.md](DEPLOY.md).
+  plus the edge cache. Both upper bounds live in the environment table of
+  [DEPLOY.md](DEPLOY.md); on this page, the config one is also mentioned in the settings card
+  notes above, and the pool-snapshot one in the overview bullet about the two freshness clocks.
 - **What each button costs in quota is written in the quota account of [DEPLOY.md](DEPLOY.md)**:
   a reset is one write; a purge is one delete per key plus the single index write — the bigger
   the pool, the more expensive that button gets.
