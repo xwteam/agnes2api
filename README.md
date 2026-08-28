@@ -100,6 +100,10 @@ cp .env.example .env   # set GATEWAY_TOKEN
 docker compose up -d
 ```
 
+> **Before the first published image exists** (or in a fork), `docker compose up -d`
+> falls back to building the image locally — that is what the `build:` block in
+> `docker-compose.yml` is for.
+
 ## Documentation
 
 Each language directory below carries the full docs: endpoint reference with request/response

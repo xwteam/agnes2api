@@ -450,8 +450,11 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 两条都是只读的。**唯一会烧配额的是读扇出**：`30d` 那一档一次请求发
   // `30 × USAGE_SLOTS = 60` 次 get（计划 §配额账「读侧」那张表），
   // 而 `src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方记着 U-H 的裁定
-  // ——**Cloudflare 的两页官方文档在这个数上互相对不上，在 P3e 真机了结之前
-  // 不许把 60 写成「安全的」**。所以那一档必须失败得诚实，见 `usageHandler`。
+  // ——**Cloudflare 的两页官方文档在这个数上互相对不上，不许把 60 写成「安全的」**。
+  // 所以那一档必须失败得诚实，见 `usageHandler`。
+  // ⚠️ 真机冒烟已经量过「跑不跑得完」那一半（`scripts/smoke-dual-runtime.sh` 的 ④），
+  // 本次实测在本地 workerd 上跑得完；**「线上会不会超」那一半仍然没有答案**，
+  // 两句话的射程差别写在 `USAGE_DAY_RETAIN` 上方。
   //
   // ⚠️ **`/admin/api/usage` 与 `/admin/api/usage/:date` 不会互相吃掉**：
   // Hono 按注册顺序匹配，而两者段数不同（三段 vs 四段），形状上不可能重叠。

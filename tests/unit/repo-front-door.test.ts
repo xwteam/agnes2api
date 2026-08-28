@@ -540,6 +540,8 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   const REAL_C = "README 的 CI 徽章指向 .github/workflows 下真的存在的那个 workflow";
   const REAL_D = "Dockerfile / CI / package.json 钉的 node 大版本彼此相等";
   const REAL_E = "引用工作账本 .superpowers 的 tracked 文档都写明了它不随仓库推送";
+  const REAL_H = "docker-compose.yml 有 build 回退 —— 没有已发布镜像时 `docker compose up -d` 仍跑得起来";
+  const COMPOSE = "docker-compose.yml";
 
   it(REAL_A, () => {
     const failures = communityFailures(realExists, realRead, realList);
@@ -666,6 +668,54 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   it("(d) 认不出要吵：workflow 里一处 node-version 都认不出时当场抛", () => {
     const blind = patchList(realList, ".github/workflows", []);
     expect(() => nodeMajorFailures(realRead, blind)).toThrow(/判据坏了/);
+  });
+
+  /* ── (h) docker-compose.yml 的 build 回退 ────────────────────────────────
+   *
+   * `docker-compose.yml` 写的是一个**已发布镜像**的 tag，而镜像发布只在打 `v*` 标签时触发。
+   * 推送当天 `git tag` = 0 ⇒ **README 教的那条 `docker compose up -d` 拉不到那个 tag**。
+   * fork 之后同理。`build:` 回退把这条路补上：拉不到就本地构建。
+   * ⚠️ **判据不是「有没有 build 这个词」**：`context` 与 `dockerfile` 两格都得在，
+   *   而且 `dockerfile` 指的那份文件必须真的在仓里 —— 指到一个不存在的 Dockerfile
+   *   同样是「陌生人第一天跑不起来」，只是失败得更晚一点。
+   * ⚠️ 六份 README 里那句「首个镜像发布前会本地构建」是这条判据的散文侧，
+   *   由 (f) 一族看着它写下的仓内指向解析得开；**两侧都不替对方说话**。
+   */
+  const composeFailures = (read: Read, exists: Exists): string[] => {
+    const y = read(COMPOSE);
+    const svc = /^\s{4}build:\n([\s\S]*?)(?=^\s{4}\S|^\s{2}\S|\Z)/m.exec(y);
+    if (svc === null) return [`${COMPOSE} 里没有 build 回退 —— 没有已发布镜像时 \`docker compose up -d\` 会直接失败`];
+    const block = svc[1] ?? "";
+    const out: string[] = [];
+    if (!/^\s{6}context:\s*\.\s*$/m.test(block)) out.push(`${COMPOSE} 的 build 块里没有 \`context: .\``);
+    const df = /^\s{6}dockerfile:\s*(\S+)\s*$/m.exec(block);
+    if (df === null) out.push(`${COMPOSE} 的 build 块里没有 \`dockerfile:\``);
+    else if (!exists(df[1]!)) out.push(`${COMPOSE} 的 build 块指向 ${df[1]}，而那个文件不在仓里`);
+    return out;
+  };
+
+  it(REAL_H, () => {
+    const failures = composeFailures(realRead, realExists);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  /** M1 的机器侧：把那三行删掉 —— 判据必须点名，而不是安安静静放行。 */
+  it("(h) 该红时红：把 build 那三行整段删掉 —— 点名「没有已发布镜像时会直接失败」", () => {
+    probeBase(composeFailures(realRead, realExists), REAL_H);
+    const mutated = realRead(COMPOSE).replace(/^\s{4}build:\n(?:^\s{6}\S.*\n)+/m, "");
+    expect(mutated, "变异没落地 —— docker-compose.yml 里已经没有那段 build").not.toBe(realRead(COMPOSE));
+    expect(composeFailures(patchRead(realRead, COMPOSE, mutated), realExists)).toHaveLength(1);
+    expect(composeFailures(patchRead(realRead, COMPOSE, mutated), realExists)[0] ?? "")
+      .toContain("没有 build 回退");
+  });
+
+  it("(h) 该红时红：build 指向一份仓里没有的 Dockerfile —— 说的是「那个文件不在仓里」", () => {
+    probeBase(composeFailures(realRead, realExists), REAL_H);
+    const mutated = realRead(COMPOSE).replace("dockerfile: Dockerfile", "dockerfile: Dockerfile.nope");
+    expect(mutated, "变异没落地").not.toBe(realRead(COMPOSE));
+    const failures = composeFailures(patchRead(realRead, COMPOSE, mutated), realExists);
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("Dockerfile.nope，而那个文件不在仓里");
   });
 
   it(REAL_E, () => {

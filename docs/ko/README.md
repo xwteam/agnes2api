@@ -105,6 +105,9 @@ cp .env.example .env   # GATEWAY_TOKEN 설정
 docker compose up -d
 ```
 
+> **첫 이미지가 배포되기 전**(또는 fork 이후)에는 `docker compose up -d` 가
+> 로컬 빌드로 폴백합니다 —— `docker-compose.yml` 의 `build:` 블록이 그 역할을 합니다.
+
 전체 배포 가이드, 환경 변수 설명, key 수동 임포트 방법: [DEPLOY.md](./DEPLOY.md)
 
 ## 게이트웨이 사용하기

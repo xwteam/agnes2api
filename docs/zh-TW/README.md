@@ -94,6 +94,9 @@ cp .env.example .env   # 設定 GATEWAY_TOKEN
 docker compose up -d
 ```
 
+> **首個映像發布之前**（或 fork 之後），`docker compose up -d` 會回落到本機建置
+> —— `docker-compose.yml` 裡那段 `build:` 就是做這件事的。
+
 完整部署指南、環境變數說明與手動匯入 key 的方法：[DEPLOY.md](./DEPLOY.md)
 
 ## 接入閘道

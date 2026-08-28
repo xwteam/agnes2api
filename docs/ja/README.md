@@ -106,6 +106,10 @@ cp .env.example .env   # GATEWAY_TOKEN を設定
 docker compose up -d
 ```
 
+> **最初のイメージが公開される前**（または fork 後）は、`docker compose up -d` は
+> ローカルビルドにフォールバックします —— `docker-compose.yml` の `build:` ブロックが
+> そのためのものです。
+
 デプロイの詳細、環境変数、key の手動インポート方法は [DEPLOY.md](./DEPLOY.md) を
 参照してください。
 

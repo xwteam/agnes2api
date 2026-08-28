@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { spawnSync, execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -140,6 +140,8 @@ function tailScript(rows: readonly (readonly [string, string, string])[]): strin
   return [
     "set -uo pipefail",
     constOf("MARK"),
+    // 逐格表现在还认第三种状态（`--skip-smoke` 留下的那一行），它的字面量同样从真源抠。
+    constOf("SKIPPED_MARK"),
     `CELL_IDS=(${rows.map(([id]) => `"${id}"`).join(" ")})`,
     `declare -A CELL_TITLE=(${rows.map(([id, t]) => `[${id}]="${t}"`).join(" ")})`,
     `declare -A CELL_STATUS=(${rows.map(([id, , st]) => `[${id}]="${st}"`).join(" ")})`,
@@ -391,8 +393,10 @@ describe("prepush.sh 的逐格表：预期红不许被吃掉，列位不许错�
   it("预期红也算没过：把逐格表那几行逐字抠出来跑，一格预期红 ⇒ 整体退出码 1", () => {
     const allPass = rows.map(([id, t]) => [id, t, "PASS"] as const);
     const base = runBash(tailScript(allPass));
-    expect(base.code, `六格全过时不该红：\n${base.stdout}${base.stderr}`).toBe(0);
-    expect(base.stdout).toContain("六格全过");
+    expect(base.code, `全过时不该红：\n${base.stdout}${base.stderr}`).toBe(0);
+    // ⚠️ **判词里那个数是从 `CELL_IDS` 现数的，不是写死的「六格」**（Task 34A 加了第七格，
+    //   写死的那句话当场就会变假）。这里喂进去三行，判词就该说三格。
+    expect(base.stdout).toMatch(/⇒ 3 格全过。$/m);
 
     const oneExpected = runBash(tailScript([allPass[0]!, rows[1]!, allPass[2]!]));
     expect(oneExpected.code, "有一格是已登记的预期红，整体退出码却不是 1 ⇒ 豁免被吃掉了")
@@ -437,6 +441,81 @@ describe("prepush.sh 的逐格表：预期红不许被吃掉，列位不许错�
       new Set(statusAt).size,
       `状态这一列的起始列位对不齐（各行是 ${statusAt.join(" / ")}）—— 补齐位上放的是按字节补不准的中日韩标题`,
     ).toBe(1);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Task 34A：第七格（双形态真机冒烟）与它那个 `--skip-smoke` 开关。
+ *
+ * **一个可以静默跳过的检查等于没有**（本仓 `--reporter=basic` 空跑那一族就是这么绿了
+ * 一整轮的）。所以这一族钉两件事：⑦ 真的接上了、而且跳过它会在屏幕上留下痕迹。
+ * ────────────────────────────────────────────────────────────────────────── */
+
+describe("prepush.sh 的 ⑦ 真机冒烟格：接上了，而且跳过它不是静默的", () => {
+  const src = () => readFileSync(PREPUSH, "utf8");
+  const SMOKE = "scripts/smoke-dual-runtime.sh";
+
+  /**
+   * ①～⑥ 全是「仓库文本 / 门禁 / 测试数」这一档，**没有一格构建镜像或跑容器**，
+   * 而仓里有一批注释把自己的了结条件写成「在双形态真机验收之前」。⑦ 是它们的落点。
+   * ⚠️ 这里连**被跑的那个脚本真的存在**一起断言：跑一个不存在的脚本时 bash 回 127，
+   *   逐格表上会是一格 `FAIL(exit 127)`——那当然会被看见，但报文说的不是真因。
+   */
+  it("⑦ 接的是双形态真机冒烟脚本，而那个脚本真的在仓里", () => {
+    const s = src();
+    expect(s, "⑦ 那一格没接上").toContain(`run_cell "⑦"`);
+    const body = /\ncell_smoke\(\) \{\n([\s\S]*?)\n\}\n/.exec(s)?.[1];
+    expect(body, "cell_smoke 的函数体没抠出来，下面这条等于白写").toBeTruthy();
+    expect(body!, "⑦ 跑的不是那份冒烟脚本").toContain(`bash ${SMOKE}`);
+    expect(existsSync(SMOKE), `${SMOKE} 不在仓里 —— ⑦ 会以 exit 127 红在一个说不清真因的报文上`).toBe(true);
+  });
+
+  /**
+   * `--skip-smoke` 必须走 `skip_cell`（记 `$SKIPPED_MARK`），不许悄悄不跑。
+   * ⚠️ **正向控制用「这个开关今天真的存在」，反向控制用「它没被接到 run_cell 上」**：
+   *   把 `skip_cell` 换成什么都不做的话，⑦ 连行都不会出现在逐格表里。
+   */
+  it("--skip-smoke 走的是 skip_cell，逐格表里那一行记的是 SKIPPED，不是「什么都没发生」", () => {
+    const s = src();
+    expect(s).toMatch(/^\s*--skip-smoke\) SKIP_SMOKE=1 ;;$/m);
+    const block = /\nif \(\( SKIP_SMOKE == 1 \)\); then\n([\s\S]*?)\nfi\n/.exec(s)?.[1];
+    expect(block, "跳过分支没抠出来，下面几条等于白写").toBeTruthy();
+    expect(block!, "跳过分支不再调 skip_cell ⇒ ⑦ 会从逐格表里整行消失").toContain('skip_cell "⑦"');
+    expect(block!, "跳过分支不再有「不跳过就跑」的那一支").toContain('run_cell "⑦"');
+    const fn = /\nskip_cell\(\) \{ #[^\n]*\n([\s\S]*?)\n\}\n/.exec(s)?.[1];
+    expect(fn, "skip_cell 的函数体没抠出来").toBeTruthy();
+    expect(fn!, "skip_cell 记的不是 SKIPPED ⇒ 跳过就变成了「过」").toContain('CELL_STATUS[$id]="$SKIPPED_MARK"');
+  });
+
+  /**
+   * 行为侧：把逐格表那几行逐字抠出来跑，喂一行 `SKIPPED` 进去。
+   * ⚠️ **判词不许再说「N 格全过」**：那一行是这张表唯一会被当成结论引用的东西，
+   *   而它在有一格根本没跑的时候是假的。退出码仍是 0（用户显式要求跳过时不该被拦住），
+   *   所以「屏幕上写着他跳过了哪一格」是这里唯一的护栏。
+   */
+  it("--skip-smoke 不是静默跳过：逐格表里留下 SKIPPED 那一行，判词也不再说「全过」", () => {
+    const rows = [
+      ["①", "工作树干净", "PASS"],
+      ["⑥", "测试数与横幅同时校验", "PASS"],
+      ["⑦", "双形态真机冒烟", "SKIPPED"],
+    ] as const;
+    const allPass = rows.map(([id, t]) => [id, t, "PASS"] as const);
+
+    const base = runBash(tailScript(allPass));
+    expect(base.code, `全过时不该红：\n${base.stdout}${base.stderr}`).toBe(0);
+    expect(base.stdout, "没跳过时判词就该是那一句「N 格全过。」").toMatch(/⇒ 3 格全过。$/m);
+    expect(base.stdout, "一格都没跳过，汇总行却数出了跳过的格").toContain("0 格 SKIPPED");
+    expect(base.stdout, "一格都没跳过，表里却出现了一行 SKIPPED").not.toContain("⑦ SKIPPED");
+
+    const skipped = runBash(tailScript(rows));
+    expect(skipped.code, "显式要求跳过时不该被拦住").toBe(0);
+    expect(skipped.stdout, "逐格表里没有那一行 SKIPPED ⇒ 跳过是静默的").toContain("⑦ SKIPPED");
+    expect(skipped.stdout, "汇总行没把跳过的格数单独数出来").toContain("1 格 SKIPPED");
+    expect(skipped.stdout, "判词没说清那一格是没验到、不是过了").toContain("没验到，不是过了");
+    expect(
+      skipped.stdout,
+      "有一格被跳过时判词仍然是那句干净的「N 格全过。」—— 那句话此刻是假的",
+    ).not.toMatch(/⇒ \d+ 格全过。$/m);
   });
 });
 

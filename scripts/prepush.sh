@@ -2,7 +2,8 @@
 # ── agnes2api 推送前复跑清单（可执行的那一份）────────────────────────────────
 #
 # 用法：
-#   bash scripts/prepush.sh                        # 六格全跑，末尾打一张逐格表
+#   bash scripts/prepush.sh                        # 逐格全跑，末尾打一张逐格表
+#   bash scripts/prepush.sh --skip-smoke           # 同上，但跳过⑦那一格（双形态真机冒烟）
 #   bash scripts/prepush.sh --print-gates [ci 路径] # 干跑：把从 ci.yml 抽出来的门禁原样打出来，
 #                                                  # **一道都不执行**。第二个参数只给
 #                                                  # tests/unit/prepush-guard.test.ts 的夹具用。
@@ -24,11 +25,11 @@
 # ⚠️ **形态：`set -uo pipefail`，顶层没有 `-e`。这是有意的，加回去会毁掉这个脚本的用途。**
 # 它必须**逐格跑完再汇总**，不是 fail-fast：在一次性历史重写落地之前，③④⑤ 是**已登记的
 # 预期红**（③ 会红是因为 ci.yml 的凭据扫描那一步自己就把历史那一档包在里面），
-# fail-fast 会在 ③ 停住，④⑤⑥ 永远拿不到证据——而「哪几格红、红的是不是已登记的那几格」
+# fail-fast 会在 ③ 停住，它后面那几格永远拿不到证据——而「哪几格红、红的是不是已登记的那几格」
 # 恰恰是推送前唯一想读出来的那个结论。
 # ⚠️ 但**每一格自己跑在 `( set -e; … )` 子壳里**：格内的意外失败（git 不在、日志读不到）
 # 必须当场把这一格弄红，不许被「下一行照跑」吞掉。
-# ⇒ **顶层无 `-e`（所以六格都跑得完），格内有 `-e`（所以格内没有静默失败）。**
+# ⇒ **顶层无 `-e`（所以每一格都跑得完），格内有 `-e`（所以格内没有静默失败）。**
 #   `grep -c` 那种「没匹配 = exit 1」的命令因此必须自己带 `|| true`，见 ⑤ 那一格。
 #
 # ⚠️ **「预期中的红」不是豁免**：那几格照样算没过，整体退出码照样是 1。
@@ -36,7 +37,7 @@
 #   每一格的预期红都带着**自己的收窄条件**（见各格），条件不成立一律按真红处理。
 #
 # ⚠️ **这个脚本自己不是门禁的一道**，它是把 ci.yml 里已有的那几道按同一个顺序重跑一遍，
-#   再补上 CI 结构上看不见的那几格（工作树、分支、作者身份、测试计数）。
+#   再补上 CI 结构上看不见的那几格（工作树、分支、作者身份、测试计数、双形态真机冒烟）。
 #   那几道从 ci.yml **当场抽**，不在这里手抄一份——手抄的那份会漂，而漂了没人会发现。
 # ⚠️ **连「一共几道」这个数都不写进本文件的正文**：它今天是一个确定的数，而写下去的那一刻
 #   就会在有人增删一道的那天静静变假（逻辑早就是从步名 `N/M` 推的，只有话是写死的）。
@@ -164,15 +165,22 @@ print_gates() { # $1 = ci.yml 路径
   return 0
 }
 
+# ⚠️ **这个开关不是「静默跳过」**：跳过时逐格表里那一行写的是 `SKIPPED`，
+#   末尾的判词也跟着换一句（不再是「N 格全过」）。一个可以静默跳过的检查等于没有
+#   ——本仓 `--reporter=basic` 空跑那一族就是这么绿了一整轮的。
+#   这两条由 `tests/unit/prepush-guard.test.ts` 的
+#   「--skip-smoke 不是静默跳过：逐格表里留下 SKIPPED 那一行，判词也不再说「全过」」钉着。
+SKIP_SMOKE=0
 case "${1:-}" in
   "") ;;
+  --skip-smoke) SKIP_SMOKE=1 ;;
   --print-gates)
     print_gates "${2:-$CI_FILE}"
     exit $?
     ;;
   *)
     # 与 scripts/scan-secrets.sh 同一条规矩：手滑打错的参数不许静静跑成默认档。
-    echo "❌ 认不出的参数「$1」。用法：prepush.sh [--print-gates [ci 路径]]" >&2
+    echo "❌ 认不出的参数「$1」。用法：prepush.sh [--skip-smoke] [--print-gates [ci 路径]]" >&2
     exit 2
     ;;
 esac
@@ -202,8 +210,8 @@ BANNER='[collection-guard] ✅'
 # 把其中一处数字悄悄改错之后计数从 3 掉到 2、仍然满足「≥ 1」，门禁一声不吭。
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
-EXPECT_NODE_FILES=133
-EXPECT_NODE_TESTS=3644
+EXPECT_NODE_FILES=134
+EXPECT_NODE_TESTS=3670
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
@@ -216,6 +224,8 @@ MARK="EXPECTED-RED-UNTIL-TASK-35"
 CELL_IDS=()
 declare -A CELL_TITLE=()
 declare -A CELL_STATUS=()
+
+SKIPPED_MARK="SKIPPED"
 
 run_cell() { # $1 = 序号符 $2 = 标题 $3 = 函数名
   local id="$1" title="$2" fn="$3" rc
@@ -230,6 +240,16 @@ run_cell() { # $1 = 序号符 $2 = 标题 $3 = 函数名
     "$EXPECTED_RED") CELL_STATUS[$id]="$MARK" ;;
     *)               CELL_STATUS[$id]="FAIL(exit $rc)" ;;
   esac
+  printf '──── %s %s\n' "$id" "${CELL_STATUS[$id]}"
+}
+
+skip_cell() { # $1 = 序号符 $2 = 标题 $3 = 为什么跳过
+  local id="$1" title="$2" why="$3"
+  CELL_IDS+=("$id")
+  CELL_TITLE[$id]="$title"
+  CELL_STATUS[$id]="$SKIPPED_MARK"
+  printf '\n════ %s %s ════\n' "$id" "$title"
+  printf '⏭️  这一格被跳过了：%s\n' "$why"
   printf '──── %s %s\n' "$id" "${CELL_STATUS[$id]}"
 }
 
@@ -507,6 +527,16 @@ check_log() { # $1 = 日志 $2 = 人话标签 $3 = 期望文件数 $4 = 期望�
   return 0
 }
 
+# ── ⑦ 双形态真机冒烟 ───────────────────────────────────────────────────────
+# ①～⑥ 全是「仓库文本 / 门禁 / 测试数」这一档，**没有一格构建镜像或跑容器**
+# ——而本仓有一批注释逐字把自己的了结条件写成「在双形态真机验收之前」。
+# 这一格就是那批注释唯一的了结方式，全文在 `scripts/smoke-dual-runtime.sh`。
+# ⚠️ 它比其余几格慢一个数量级（要构建镜像、起容器、起真 workerd），
+#   所以给了一个 `--skip-smoke` 开关；**跳过必须留痕**，见上面那段。
+cell_smoke() {
+  bash scripts/smoke-dual-runtime.sh
+}
+
 # ── 跑 ──────────────────────────────────────────────────────────────────────
 if ! load_gates "$CI_FILE"; then exit 2; fi
 rm -f "$NODE_LOG" "$WORKERS_LOG"
@@ -517,6 +547,11 @@ run_cell "③" "门禁按 ci.yml 同序跑完"         cell_gates
 run_cell "④" "凭据扫描（工作树 / 历史各一档）" cell_secrets
 run_cell "⑤" "无署名尾注、作者身份唯一"        cell_authorship
 run_cell "⑥" "测试数与横幅同时校验"           cell_counts
+if (( SKIP_SMOKE == 1 )); then
+  skip_cell "⑦" "双形态真机冒烟" "命令行给了 --skip-smoke。它没被验到，不是过了。"
+else
+  run_cell "⑦" "双形态真机冒烟"               cell_smoke
+fi
 
 # ── 逐格表 ──────────────────────────────────────────────────────────────────
 # ⚠️ **补齐的那一列必须是状态、不是标题**（复评 F9）：`printf` 的 `%-28s` 按**字节**补，
@@ -525,17 +560,19 @@ run_cell "⑥" "测试数与横幅同时校验"           cell_counts
 #   标题挪到行尾，右边参差不齐但没有一列是错位的。
 #   这条由 `tests/unit/prepush-guard.test.ts` 的
 #   「逐格表的列位对得齐：补齐的那一列是 ASCII 状态，不是按字节补不准的中日韩标题」钉着。
-pass=0; expected=0; failed=0
+pass=0; expected=0; failed=0; skipped=0
 printf '\n══════════ 推送前逐格表 ══════════\n'
 for id in "${CELL_IDS[@]}"; do
   printf '  %s %-28s %s\n' "$id" "${CELL_STATUS[$id]}" "${CELL_TITLE[$id]}"
   case "${CELL_STATUS[$id]}" in
-    PASS)   pass=$((pass + 1)) ;;
-    "$MARK") expected=$((expected + 1)) ;;
-    *)      failed=$((failed + 1)) ;;
+    PASS)             pass=$((pass + 1)) ;;
+    "$MARK")          expected=$((expected + 1)) ;;
+    "$SKIPPED_MARK")  skipped=$((skipped + 1)) ;;
+    *)                failed=$((failed + 1)) ;;
   esac
 done
-printf '  ── %s 格 PASS / %s 格 %s / %s 格 FAIL\n' "$pass" "$expected" "$MARK" "$failed"
+printf '  ── %s 格 PASS / %s 格 %s / %s 格 %s / %s 格 FAIL\n' \
+  "$pass" "$expected" "$MARK" "$skipped" "$SKIPPED_MARK" "$failed"
 
 if (( expected != 0 )); then
   printf '  ⚠️ %s 也算没过：整体退出码仍然是 1。\n' "$MARK"
@@ -545,5 +582,12 @@ if (( failed != 0 || expected != 0 )); then
   printf '  ⇒ 不该推。\n'
   exit 1
 fi
-printf '  ⇒ 六格全过。\n'
+# ⚠️ **跳过了就不许说「全过」**：那句话是这张表唯一会被当成结论引用的一行，
+#   而「N 格全过」在有一格根本没跑的时候是假的。判词换一句，退出码仍然是 0
+#   ——用户显式要求跳过时不该被拦住，但屏幕上必须写着他跳过了哪一格。
+if (( skipped != 0 )); then
+  printf '  ⇒ %s 格全过，另有 %s 格被跳过（没验到，不是过了）。\n' "$pass" "$skipped"
+  exit 0
+fi
+printf '  ⇒ %s 格全过。\n' "$pass"
 exit 0
