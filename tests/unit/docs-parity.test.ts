@@ -3802,6 +3802,33 @@ describe("五语言 DEPLOY.md 的两笔「没在真机上了结过」配额账�
  * `CHANGELOG` 与 `package.json` 两格同理：期望值分别从 `VERSION`、`PROTOCOLS`、
  * `data-section`、根 `README.md` 的 clone 地址、`LICENSE` 的版权行现算，**一个字面量都不手抄**。
  *
+ * ── 复评回填（RX1 / RX7 / RX8 与两句新写的假话）──────────────────────────────
+ * 第一版落地之后的复评实测抓到四件事，全部在这一组里补上，都记在这里免得再犯：
+ * · **「删一个板块也点名」当时是假的**（RX1）：判据只从 `data-section` 单向查 README 那张表，
+ *   板块删了、表里那一行还在，**没有任何一格看得见它**。修法：这张表与 `data-section`
+ *   **双向**比集合——表里多一行、少一行都点名那一行。
+ * · **主格的下限是硬编码的 `8`**（RX8）：把一个板块从 `index.html`、README 那张表、CHANGELOG
+ *   三处一致地删干净之后这一格仍然红，报文写的是「一个 data-section 都没扫到，正则多半写坏了」
+ *   ——而实际扫到了 7 个，**这句报文是假的**，照它去改正则是白改。**报文可以亲手把人引进坑**。
+ *   修法是把下限改成「一个都没扫到才吵」（那才是「正则写坏了」的真形态），板块数由上面
+ *   那条双向集合判据管。
+ *   ⚠️ **回填时顺带实测出来的一件事**：删一个板块要动的地方**不止那三处**——两份板块文件
+ *   （`js/sec-<板块>.js` / `js/pure/<板块>.mjs`）、五份 `docs/<lang>/ADMIN.md` 的板块速查表
+ *   也都得跟着删。把这些一起改干净之后本文件 238 格全绿（回填实测 MR2b），**唯一还红的**
+ *   是本文件上面「五份 ADMIN.md 的措辞与数字守卫」那一组里把 `data-section="models"`
+ *   写死当变异靶子的那一格：靶子没了它会大声说「变异没落到 index.html 上——这一格控制是空的」。
+ *   那是**认不出就吵**、不是假绿，留给真的要删板块的那次任务改，这里不动它。
+ * · **`admin-ui/README.md` 里那两串共用件枚举没有完备性判据**（RX7）：往 `js/pure/` 里
+ *   新加一份文件而不改 README，227 格全绿。修法：`admin-ui/js/` 与 `admin-ui/js/pure/`
+ *   目录里的每一份 `.js` / `.mjs` 都必须在 README 里露过面。
+ * · **CHANGELOG 自己新写了两句假话**：①「KV 上的池索引与取号」——Docker 形态下没有 KV
+ *   （`src/entry/node.ts` 用 `FileStorage`），与 Task 28 刚修掉的那句同型；②「上游一个都
+ *   用不上时回 503」——同步档耗尽预算那一种是 504。修法：两句都改真，并各配一条**从真源
+ *   现算**的判据（存储实现从两个 entry 的 import 现算、两个状态码从 `dispatcher.ts` 现算）。
+ * 顺带把 CHANGELOG 里剩下的手抄清单也接上真源：协议的括号标签必须是 `PROTOCOLS[].label`
+ * 的子串、六份文档名单与 `DOCS` 逐项对齐、十二道门禁那一串短名逐个是 `ci.yml` 里对应那一步
+ * 名字的子串（顺序也是那边的顺序）。
+ *
  * ── 它做不到什么（明写）────────────────────────────────────────────────────
  * · 板块那一格只比 **code span 在不在**，不比那一行说得对不对：把 `overview` 那一行的
  *   中文名从「概览」改成「设置」，八个 span 一个不少 ⇒ **全绿**。行内的中文名今天没有机器判据。
@@ -3830,16 +3857,56 @@ describe(TASK29_GROUP, () => {
   const sectionsOf = (html: string) => [...new Set([...html.matchAll(/data-section="([^"]+)"/g)].map((m) => m[1]!))];
 
   /**
+   * `admin-ui/README.md` 那张板块表的第一列（`data-section` 那一列）。
+   * **认不出返回 `null`**（表头找不到、或者表里某一行第一列不是 code span），绝不返回空数组：
+   * 返回空数组会让下面那条「表里多一行就点名」的判据在正则瞎掉时静静地全绿。
+   */
+  const readmeTableSections = (readme: string): string[] | null => {
+    const lines = readme.split("\n");
+    const head = lines.findIndex((l) => l.startsWith("| `data-section` |"));
+    if (head < 0) return null;
+    const out: string[] = [];
+    for (let i = head + 2; i < lines.length && lines[i]!.startsWith("|"); i += 1) {
+      const m = /^\|\s*`([^`]+)`\s*\|/.exec(lines[i]!);
+      if (m === null) return null;
+      out.push(m[1]!);
+    }
+    return out.length === 0 ? null : out;
+  };
+
+  /**
    * 每个板块要过四关：`admin-ui/README.md` 里三个 code span（板块名 / 挂载文件 / 纯逻辑文件）、
    * 那两份文件真的在、`admin-ui/js/i18n-dict.js` 里有 `nav.<板块>` 这个 key
    *（README 里「`i18n` 字典按它取 `nav.*` 文案」那句话的测法）。
+   * **外加那张表与 `data-section` 双向比集合**——复评 RX1 实测：只有上面那几条单向判据时，
+   * 「删一个板块、表里那一行还留着」**没有任何一格看得见**，而 README 与本文件都写着
+   * 「删一个板块…当场点名那个板块」。
    * **真扫描与该红时红共用这一份**，两个 `read` 是仅有的注入点。
    */
   const panelDocFailures = (readHtml: () => string, readReadme: () => string): string[] => {
     const readme = readReadme();
     const dict = readReal("admin-ui/js/i18n-dict.js");
     const out: string[] = [];
-    for (const s of sectionsOf(readHtml())) {
+    const sections = sectionsOf(readHtml());
+    const rows = readmeTableSections(readme);
+    if (rows === null) {
+      out.push("admin-ui/README.md 里认不出那张板块表（`| \\`data-section\\` |` 开头那一行，"
+        + "以及它下面每一行的第一列 code span）—— 认不出要吵，不是这份文件很干净");
+    } else {
+      for (const r of rows) {
+        if (!sections.includes(r)) {
+          out.push(`板块表里有 \`${r}\` 这一行，admin-ui/index.html 里却没有 data-section="${r}" `
+            + "—— 板块删了 / 改名了，这张表没跟着改");
+        }
+      }
+      for (const s of sections) {
+        if (!rows.includes(s)) {
+          out.push(`板块 ${s}：admin-ui/index.html 里真的有 data-section="${s}"，`
+            + "admin-ui/README.md 那张表里却没有它这一行");
+        }
+      }
+    }
+    for (const s of sections) {
       const mount = `js/sec-${s}.js`;
       const pure = `js/pure/${s}.mjs`;
       for (const span of [s, mount, pure]) {
@@ -3872,7 +3939,12 @@ describe(TASK29_GROUP, () => {
 
   it(PANEL_CELL, () => {
     const sections = sectionsOf(realIndexHtml());
-    expect(sections.length, "一个 data-section 都没扫到，正则多半写坏了").toBeGreaterThanOrEqual(8);
+    // ⚠️ 这里**只挡「正则一个都没扫到」**。第一版写的是 `toBeGreaterThanOrEqual(8)`——那个 8 是
+    // 本组唯一没从真源现算的数，复评 RX8 实测它会把「三处一致地删掉一个板块」这样一次
+    // **完全正确**的改动拦下，报文还写「一个 data-section 都没扫到」（当时扫到了 7 个）。
+    // 板块数不该在这里定死：多一个少一个由上面那条「表与 data-section 双向比集合」管。
+    expect(sections.length, "admin-ui/index.html 里一个 data-section 都没扫到 —— 这条正则多半写坏了")
+      .toBeGreaterThan(0);
     const failures = panelDocFailures(realIndexHtml, realPanelReadme);
     expect(failures, failures.join("\n")).toEqual([]);
   });
@@ -3882,9 +3954,24 @@ describe(TASK29_GROUP, () => {
     const mutated = `${realIndexHtml()}\n<button class="nav-item" data-section="foo">foo</button>\n`;
     expect(sectionsOf(mutated), "变异没落地——mutated 里没扫出 foo").toContain("foo");
     const failures = panelDocFailures(() => mutated, realPanelReadme);
-    // 三个 span 都缺 + 两份文件都不在 + 字典里没有 nav.foo = 6 条，条条点名 foo；真板块一条都不许被带红。
-    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(6);
+    // 表里没有 foo 那一行 + 三个 span 都缺 + 两份文件都不在 + 字典里没有 nav.foo = 7 条，
+    // 条条点名 foo；真板块一条都不许被带红。
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(7);
     for (const f of failures) expect(f, `这一条没点名 foo：${f}`).toContain("foo");
+  });
+
+  it("该红时红（复评 RX1）：index.html 里删掉一个板块而 README 那张表没跟着删 —— 点名表里多出来的那一行", () => {
+    probeBase(panelDocFailures(realIndexHtml, realPanelReadme), PANEL_CELL);
+    const sections = sectionsOf(realIndexHtml());
+    // 删哪一个不写死：取真源里的最后一个板块，加板块 / 改名时这一格自己跟着走。
+    const gone = sections[sections.length - 1]!;
+    const mutated = realIndexHtml().split("\n").filter((l) => !l.includes(`data-section="${gone}"`)).join("\n");
+    expect(sectionsOf(mutated), `变异没落地——mutated 里还扫得出 ${gone}`).not.toContain(gone);
+    expect(sectionsOf(mutated), "变异把别的板块也一起删了——这一格测的就不是「删一个」了")
+      .toEqual(sections.filter((s) => s !== gone));
+    const failures = panelDocFailures(() => mutated, realPanelReadme);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", `红了但报文没点名被删掉的那个板块 ${gone}`).toContain(gone);
   });
 
   it("不乱红：同一个板块被第二个按钮指向 + README 合法地多提一次板块名 —— 都不许让上面那一格红", () => {
@@ -3914,6 +4001,47 @@ describe(TASK29_GROUP, () => {
     // README 里那句「上面那张表有机器守了」点的就是本组的名字。组名改了而 README 没跟着改 ⇒ 这里红。
     expect(readme, `admin-ui/README.md 里那句「有机器守了」点名的组名已经不是「${TASK29_GROUP}」了`)
       .toContain(TASK29_GROUP);
+  });
+
+  /**
+   * `admin-ui/js/` 与 `admin-ui/js/pure/` 两个目录的**完备性**判据（复评 RX7 逼出来的）。
+   *
+   * README 里那两串共用件是手抄的：往 `js/pure/` 里新加一份真实形态的 `.mjs` 而不改 README，
+   * 这一组当时 **227 格全绿**——「README 段落静静过期」正是本任务存在的理由，却在新表下方
+   * 一段原样复发。这里只要求「露过面」（有 `` `js/xxx` `` 这个 code span），不要求出现在
+   * 哪一串里：`js/boot.js` 在「其他约定」那一节、板块文件在那张表里，都算数。
+   *
+   * **认不出要吵**：目录读出来一份都没有时当场红，而不是「零个文件全都露过面」式的假绿。
+   * `listFiles` 是唯一的注入点，真扫描与该红时红共用这一份。
+   */
+  const PANEL_FILES_CELL = "admin-ui/js/ 与 js/pure/ 目录里的每一份 .js / .mjs 都在 admin-ui/README.md 里露过面";
+  const realPanelFiles = (): string[] => {
+    const listed = (dir: string) => readdirSync(`admin-ui/${dir}`)
+      .filter((f) => f.endsWith(".js") || f.endsWith(".mjs"))
+      .map((f) => `${dir}/${f}`);
+    return [...listed("js"), ...listed("js/pure")];
+  };
+  const panelFileFailures = (listFiles: () => string[], readReadme: () => string): string[] => {
+    const files = listFiles();
+    if (files.length === 0) return ["admin-ui/js 下一个 .js / .mjs 都没读到 —— readdir 多半指错了目录，不是面板空了"];
+    const readme = readReadme();
+    return files
+      .filter((p) => !readme.includes(`\`${p}\``))
+      .map((p) => `admin-ui/${p} 真的在，admin-ui/README.md 里却一次都没提到 \`${p}\` —— 手抄的枚举又过期了`);
+  };
+
+  it(PANEL_FILES_CELL, () => {
+    const failures = panelFileFailures(realPanelFiles, realPanelReadme);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红（复评 RX7）：js/pure/ 下多一份共用纯逻辑而 README 那串枚举不改 —— 点名那一份", () => {
+    probeBase(panelFileFailures(realPanelFiles, realPanelReadme), PANEL_FILES_CELL);
+    const added = "js/pure/zzz.mjs";
+    expect(existsSync(`admin-ui/${added}`), `${added} 今天真的存在，这一格的变异就不是「多一份」了`).toBe(false);
+    const failures = panelFileFailures(() => [...realPanelFiles(), added], realPanelReadme);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "红了但报文没点名多出来的那一份").toContain(added);
   });
 
   /** 取 CHANGELOG 的 `## [x]` 一节（含标题行）。**认不出返回 `null`**，绝不返回空数组。 */
@@ -4044,6 +4172,219 @@ describe(TASK29_GROUP, () => {
       expect(wanted.some((w) => text.includes(w)),
         `CHANGELOG 那条版本条目里没有「${wanted.join("」/「")}」（${source} 现算是 ${n}）`).toBe(true);
     }
+  });
+
+  /**
+   * 两个运行时入口各自选的存储实现，从 `src/entry/*.ts` 的 import 现算。**认不出返回 `null`**。
+   *
+   * 这一条是复评抓到的第一句假话的测法：CHANGELOG 第一版写「**KV 上的**池索引与取号」，
+   * 而同一条版本条目开头刚说「同一份代码同时跑 Cloudflare Worker 与 Node / Docker 两种运行时」
+   * —— Docker 形态下没有 KV（`src/entry/node.ts` 用的是 `FileStorage`）。
+   * 与 Task 28 刚修掉的「Docker 侧那句假话」同型，**修一处前得先查修法有没有把别处的问题搬回来**。
+   */
+  const entryStorages = (read: (p: string) => string = readReal): ReadonlyArray<readonly [string, string]> | null => {
+    const out: Array<readonly [string, string]> = [];
+    for (const entry of ["worker", "node"]) {
+      const m = /import \{ (\w+Storage) \} from "\.\.\/adapters\/storage-[\w-]+\.js";/.exec(read(`src/entry/${entry}.ts`));
+      if (m === null) return null;
+      out.push([entry, m[1]!] as const);
+    }
+    return out;
+  };
+
+  /** 池子整体不可用 / 同步档耗尽预算这两种兜底响应的状态码，从 `src/core/dispatcher.ts` 现算。 */
+  const dispatcherStatuses = (read: (p: string) => string = readReal): readonly [number, number] | null => {
+    const src = read("src/core/dispatcher.ts");
+    const pool = /function fail\([\s\S]*?status: (\d{3})/.exec(src)?.[1];
+    const sync = /function syncBudgetExhausted\([\s\S]*?jsonBody\((\d{3})/.exec(src)?.[1];
+    if (pool === undefined || sync === undefined || pool === sync) return null;
+    return [Number(pool), Number(sync)] as const;
+  };
+
+  const storageFailures = (readLog: () => string): string[] => {
+    const v = realVersion();
+    const sec = logSection(readLog(), v);
+    if (sec === null) return [`CHANGELOG.md 里没有 ${v} 的条目 —— 这一格无从判起`];
+    const text = sec.join("\n");
+    const st = entryStorages();
+    if (st === null) {
+      return ["src/entry/{worker,node}.ts 里认不出 `import { XxxStorage } from \"../adapters/storage-*.js\"` "
+        + "—— 认不出要吵，不是 CHANGELOG 写对了"];
+    }
+    const out: string[] = [];
+    const named = [...new Set([...text.matchAll(/`(\w+Storage)`/g)].map((m) => m[1]!))].sort();
+    const want = [...new Set(st.map(([, cls]) => cls))].sort();
+    for (const [entry, cls] of st) {
+      if (!named.includes(cls)) {
+        out.push(`src/entry/${entry}.ts 用的是 \`${cls}\`，CHANGELOG 那条版本条目里一次都没提到它`
+          + " —— 两种运行时的存储形态不许只写一种");
+      }
+    }
+    for (const cls of named) {
+      if (!want.includes(cls)) {
+        out.push(`CHANGELOG 那条版本条目里写着 \`${cls}\`，而两个运行时入口现算用的是 ${want.join(" / ")}`
+          + " —— 这个存储实现已经没人用了");
+      }
+    }
+    const codes = dispatcherStatuses();
+    if (codes === null) {
+      out.push("src/core/dispatcher.ts 里认不出 `fail()` 的 503 与 `syncBudgetExhausted()` 的 504"
+        + "（或者两者取到了同一个数）—— 认不出要吵");
+    } else {
+      for (const c of codes) {
+        if (!text.includes(String(c))) {
+          out.push(`CHANGELOG 那条版本条目里没写状态码 ${c}（src/core/dispatcher.ts 现算）`
+            + " —— 「一个都用不上时回 503」这句全称句漏掉了同步档那一种");
+        }
+      }
+    }
+    return out;
+  };
+
+  const STORAGE_CELL = "CHANGELOG 里的存储形态与兜底状态码都从 src/entry/*.ts、src/core/dispatcher.ts 现算";
+
+  it(STORAGE_CELL, () => {
+    const failures = storageFailures(realChangelog);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：CHANGELOG 把 Node / Docker 那一半存储删掉（只剩 KV 那句）—— 点名 src/entry/node.ts 用的那个实现", () => {
+    probeBase(storageFailures(realChangelog), STORAGE_CELL);
+    const st = entryStorages();
+    expect(st, "认不出两个入口的存储实现——这一格的前提没了").not.toBeNull();
+    const nodeCls = st!.find(([entry]) => entry === "node")![1];
+    const mutated = realChangelog().split(`\`${nodeCls}\``).join("那一份");
+    expect(mutated, `变异没落地——CHANGELOG 里没找到 \`${nodeCls}\``).not.toEqual(realChangelog());
+    const failures = storageFailures(() => mutated);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "红了但报文没点名 src/entry/node.ts").toContain("src/entry/node.ts");
+  });
+
+  it("该红时红：CHANGELOG 把 504 那半句删掉 —— 点名从 dispatcher.ts 现算出来的那个状态码", () => {
+    probeBase(storageFailures(realChangelog), STORAGE_CELL);
+    const codes = dispatcherStatuses();
+    expect(codes, "认不出两个兜底状态码——这一格的前提没了").not.toBeNull();
+    const gone = codes![1];
+    const mutated = realChangelog().split(String(gone)).join("五百多");
+    expect(mutated, `变异没落地——CHANGELOG 里没找到 ${gone}`).not.toEqual(realChangelog());
+    const failures = storageFailures(() => mutated);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "红了但报文没点名那个状态码").toContain(String(gone));
+  });
+
+  /** `.github/workflows/ci.yml` 里每一步的名字（去掉 `n/总数 ` 前缀），按 yml 里的顺序。
+   *  **序号不是 1..N 连号、或者总数彼此不一致 ⇒ 返回 `null`**，调用方当场吵。 */
+  const ciGateNames = (read: (p: string) => string = readReal): string[] | null => {
+    const rows = [...read(".github/workflows/ci.yml").matchAll(/^\s*- name: (\d+)\/(\d+) (.+)$/gm)]
+      .map((m) => ({ idx: Number(m[1]), total: Number(m[2]), title: m[3]!.trim() }));
+    if (rows.length === 0) return null;
+    return rows.every((r, i) => r.idx === i + 1 && r.total === rows.length) ? rows.map((r) => r.title) : null;
+  };
+
+  /** CHANGELOG 里门禁那一串短名（`**CI …门禁**：` 与 `——` 之间、按 `、` 切）。认不出返回 `null`。 */
+  const changelogGateItems = (text: string): string[] | null => {
+    const m = /\*\*CI [^*]*\*\*：([\s\S]*?)——/.exec(text);
+    if (m === null) return null;
+    const items = m[1]!.split("、").map((s) => s.replace(/\s+/g, " ").trim()).filter((s) => s !== "");
+    return items.length === 0 ? null : items;
+  };
+
+  it("CHANGELOG 里那三串手抄清单（协议括号标签 / 六份文档 / 十二道门禁）逐项对齐真源", () => {
+    const sec = logSection(realChangelog(), realVersion());
+    expect(sec, `CHANGELOG.md 里没有 ${realVersion()} 的条目`).not.toBeNull();
+    const text = sec!.join("\n");
+    // ① 协议后面那个括号标签必须是 `PROTOCOLS[].label` 的子串（真源写 "Google Gemini generateContent"，
+    //    这里写 "generateContent" 是合法的省写；写成别的协议的名字 / 一个不存在的名字则红）。
+    for (const p of PROTOCOLS) {
+      const m = new RegExp(`\`${p.id}\`（([^）]+)）`).exec(text);
+      expect(m, `版本条目里 \`${p.id}\` 后面没有「（协议名）」那个括号标签`).not.toBeNull();
+      expect(p.label.includes(m![1]!),
+        `版本条目里 \`${p.id}\` 的括号标签写的是「${m![1]}」，PROTOCOLS 里那条的 label 是「${p.label}」`
+        + "—— 不是它的子串").toBe(true);
+    }
+    // ② 六份文档的名单与 `DOCS` 这张真源表逐项对齐（多一份少一份都红）。
+    const docsList = /文档（([^）]+)）/.exec(text);
+    expect(docsList, "版本条目里认不出「文档（… / … / …）」那一串名单").not.toBeNull();
+    expect(docsList![1]!.split("/").map((s) => s.trim()).sort(), "CHANGELOG 里那串文档名单与 DOCS 对不上")
+      .toEqual([...DOCS].sort());
+    // ③ 门禁那一串短名逐个是 ci.yml 里对应那一步名字的子串，顺序也是那边的顺序。
+    const names = ciGateNames();
+    expect(names, ".github/workflows/ci.yml 里的 `- name: n/总数 …` 认不出，或者序号不是 1..N 连号 —— 认不出要吵")
+      .not.toBeNull();
+    const items = changelogGateItems(text);
+    expect(items, "版本条目里认不出门禁那一串短名（`**CI …门禁**：` 与 `——` 之间那一段）").not.toBeNull();
+    expect(items!.length, `CHANGELOG 里门禁那一串写了 ${items!.length} 个短名，ci.yml 现算是 ${names!.length} 步`)
+      .toBe(names!.length);
+    items!.forEach((item, i) => {
+      expect(names![i]!.includes(item),
+        `门禁那一串的第 ${i + 1} 个短名写的是「${item}」，ci.yml 第 ${i + 1} 步叫「${names![i]}」—— 不是它的子串`)
+        .toBe(true);
+    });
+  });
+
+  it("凡是**加粗**写下「零构建」的地方都带着「挂在 `/admin/` 下」这个限定", () => {
+    // admin-ui/README.md 用 23 行论证过：不带这个限定的说法是假的（`file://` 下绝对路径 404 + module CORS）。
+    // 复评发现 6：CHANGELOG 第一版把那个被推翻过的说法以弱化形式写了回去，且无判据。
+    for (const [path, body] of [["CHANGELOG.md", realChangelog()], ["admin-ui/README.md", realPanelReadme()]] as const) {
+      const claims = body.split("\n").filter((l) => l.includes("**零构建**"));
+      expect(claims.length, `${path} 里一句加粗的「零构建」都没有 —— 这一格测的是空气`).toBeGreaterThan(0);
+      for (const l of claims) {
+        expect(l, `${path} 里这句「零构建」没带上「挂在 /admin/ 下」这个限定：${l}`).toContain("/admin/");
+      }
+    }
+  });
+
+  /** 五种语言在首屏语言切换行里的**自称**，从根 `README.md` 现算。认不出 / 数量对不上返回 `null`。 */
+  const nativeLangLabels = (read: (p: string) => string = readReal): string[] | null => {
+    const line = read("README.md").split("\n").find((l) => l.startsWith("**Language:**"));
+    if (line === undefined) return null;
+    const cells = line.replace("**Language:**", "").split("|").map((s) => s.trim()).filter((s) => s !== "");
+    const labels = cells.map((c) => /^\[([^\]]+)\]/.exec(c)?.[1]?.trim() ?? c);
+    return labels.length === LANGS.length ? labels : null;
+  };
+
+  it("CHANGELOG 顶上那句语言提示逐个点名五种语言的自称（从根 README 的语言切换行现算）", () => {
+    // 复评发现 7：六份 README 的版本徽章都链到这份 CHANGELOG，而它只有简体中文一份 ——
+    // Task 29 之前那是一张空页，之后 en / ja / ko 的访客点进来看到的是整页中文。至少说清楚。
+    const labels = nativeLangLabels();
+    expect(labels, `根 README.md 的 \`**Language:**\` 那一行认不出，或者它列的语言数不是 ${LANGS.length} 种 —— 认不出要吵`)
+      .not.toBeNull();
+    const head = realChangelog().split("## [")[0]!;
+    expect(head, "CHANGELOG 第一条版本条目之前没有那句语言提示").toContain("只有简体中文一份");
+    for (const l of labels!) {
+      expect(head, `CHANGELOG 顶上那句语言提示里没点名「${l}」—— 根 README 的语言切换行里有这一种`).toContain(l);
+    }
+  });
+
+  it("CHANGELOG 里指向仓内的每一条路径都真的在（check-comment-refs 同样够不着这份 .md）", () => {
+    const log = realChangelog();
+    const paths = [...log.matchAll(/`((?:src|scripts|tests|admin-ui|docs|\.github)\/[A-Za-z0-9_./-]+\.(?:ts|js|mjs|md|yml))`/g)]
+      .map((m) => m[1]!);
+    expect(paths.length, "CHANGELOG.md 里一条仓内路径的 code span 都没扫到 —— 这条正则多半瞎了").toBeGreaterThanOrEqual(3);
+    expect(paths.filter((p) => !existsSync(p)), "CHANGELOG.md 里这几条路径指向的文件不在").toEqual([]);
+  });
+
+  it("认不出要吵：本组几个「找不到就返回 null」的取数函数，在认不出时真的返回 null", () => {
+    // 复评发现 9 记的是这几条分支只在手工变异里试过、没有常驻格。它们都会大声红、不会静静放行，
+    // 但「会不会静静放行」这件事本身值一格：这几条一旦悄悄回退成空数组 / 0 / 空串，上面那些
+    // 「一条都没扫到就吵」的报文就会变成假绿。
+    expect(logSection("# 一条版本条目都没有\n", realVersion()), "logSection 认不出时没返回 null").toBeNull();
+    expect(cnForms(CN.length), `cnForms 超出这张中文数字表（${CN.length} 起）时没返回 null`).toBeNull();
+    expect(readmeTableSections("# 一张表都没有\n"), "readmeTableSections 认不出表头时没返回 null").toBeNull();
+    const firstSection = sectionsOf(realIndexHtml())[0]!;
+    expect(readmeTableSections(realPanelReadme().replace(`| \`${firstSection}\` |`, `| ${firstSection} |`)),
+      "板块表里第一列不是 code span 时 readmeTableSections 没返回 null").toBeNull();
+    expect(changelogGateItems("- 门禁那一条整段没了\n"), "认不出门禁那一串时 changelogGateItems 没返回 null").toBeNull();
+    expect(changelogGateItems("- **CI 十二道门禁**：—— 一个短名都没写\n"),
+      "门禁那一串一个短名都切不出来时没返回 null").toBeNull();
+    expect(ciGateNames(() => "jobs:\n  ci:\n"), "ci.yml 里一步都认不出时 ciGateNames 没返回 null").toBeNull();
+    expect(ciGateNames(() => "      - name: 1/2 甲\n      - name: 3/2 乙\n"),
+      "ci.yml 的序号不连号时 ciGateNames 没返回 null").toBeNull();
+    expect(entryStorages(() => "import { Whatever } from \"./x.js\";"), "认不出 entry 的存储实现时没返回 null").toBeNull();
+    expect(dispatcherStatuses(() => "function fail() { status: 503 }"), "认不出 504 时没返回 null").toBeNull();
+    expect(nativeLangLabels(() => "# 没有语言切换行\n"), "认不出语言切换行时没返回 null").toBeNull();
+    expect(nativeLangLabels(() => "**Language:** English | [日本語](docs/ja/README.md)\n"),
+      "语言切换行只列了 2 种语言时没返回 null").toBeNull();
   });
 
   /** `package.json` 的元信息。期望值全部从 `README.md` / `LICENSE` 现算，这里不留第二份手抄。 */
