@@ -10,6 +10,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        # ⚠️ **下面这一行（全克隆）是历史凭据扫描的前提，两件事必须一起在场。**
+        # 默认的浅克隆里 `git rev-parse --is-shallow-repository` 回 true，而
+        # `scripts/scan-secrets.sh` 的历史那一档对浅仓是**按失败处理**的：
+        # 删了它历史扫描会 fail closed（**不是静默放行**）——每次 CI 都会红在
+        # 「拿不到全部历史」上，而不是悄悄地一个历史对象都不扫。
+        # 代价：全克隆要多拉整个 `.git`（本仓今天是几十 MB 量级），可接受。
+        with: { fetch-depth: 0 }
       - uses: pnpm/action-setup@v4
         with: { version: 9 }
       - uses: actions/setup-node@v4
@@ -23,8 +30,19 @@ jobs:
       # 同一个成立的前提上。起因见 scripts/check-no-binary.mjs 文件头。
       - name: 1/12 跟踪文件不许是二进制
         run: node scripts/check-no-binary.mjs
+      # 凭据扫描跑**两档**：工作树，然后可达历史（blob / 提交信息 / 标签说明）。
+      # 历史那一档不是锦上添花——`git push` 发的是历史、不是工作树，一个凭据只要进过
+      # 一个提交，哪怕下一个提交就把它删掉，工作树那一档一个字都看不见。
+      # 它已知的盲区与欠账逐条写在 `scripts/scan-secrets.sh` 文件头。
+      # 两条命令写在同一个 run 块里，`shell: bash` 是**显式**声明的：要的是 `-e`
+      # （第一条失败就中断），不去赌 runner 默认 shell 带不带它。
+      # ⚠️ 在历史被清理干净之前，历史那一档会红——那是**预期中的红，不是回归**：
+      #    它报出来的东西正是它存在的理由。
       - name: 2/12 凭据扫描
-        run: bash scripts/scan-secrets.sh
+        shell: bash
+        run: |
+          bash scripts/scan-secrets.sh
+          bash scripts/scan-secrets.sh --history
       - name: 3/12 生成面板资源
         run: node scripts/build-ui.mjs
       - name: 4/12 生成物一致性（仓库里那份必须与 admin-ui/ 一致）

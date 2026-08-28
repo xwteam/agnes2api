@@ -157,6 +157,70 @@ describe("pnpm build 在 CI 门禁列表里", () => {
 });
 
 /**
+ * ── 历史凭据扫描进了 CI，而它的前提也必须在场 ────────────────────────────────
+ *
+ * `scripts/scan-secrets.sh` 的历史那一档（`--history`）扫的是**可达对象**，而
+ * `actions/checkout` 默认拉的是浅仓；那一档在浅仓上**按失败处理**（fail closed，
+ * 不是静默放行）。于是这两件事只做一件都等于没做：
+ * · 只加 `--history`、不给 checkout 全克隆 ⇒ CI 天天红在「拿不到全部历史」上；
+ * · 只给 checkout 全克隆、不加 `--history` ⇒ 白拉一个全克隆，历史一个对象都没扫过。
+ * 两个方向都是「装了一半」，所以两条断言写在同一格里。
+ *
+ * ⚠️ **下面第二格不是重复第一格**：第一格对**整个文件**做 `toContain`，
+ * 而这个文件里有 `#` 注释——**注释里提一句就能把它喂饱**。本仓踩过同形的坑
+ *（`tests/unit/check-comment-refs.test.ts` 那格夹具：第二层替第一层挡住了变异）。
+ * 所以第二格先把 `#` 注释行剥掉，再把判据锚到**那一步自己的 YAML 块**里。
+ * 这不是假想：本轮实测把凭据扫描那一步的第二条命令换成一行提到它的 `#` 注释，
+ * **第一格照样绿，只有第二格红**。
+ */
+describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
+  it("ci.yml 里 fetch-depth: 0 与 scan-secrets.sh --history 必须同时在场 —— 少一个另一个就没用", () => {
+    const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+    expect(ci, "缺 fetch-depth: 0 ⇒ 浅仓上 --history 会 fail closed（不是静默放行）").toContain("fetch-depth: 0");
+    expect(ci, "缺 --history ⇒ 历史扫描没进 CI").toContain("scan-secrets.sh --history");
+  });
+
+  it("两者都长在各自那一步的 YAML 块里，不是只在 # 注释里被提过一句", () => {
+    const yml = readFileSync(".github/workflows/ci.yml", "utf8");
+    const stripHashComments = (s: string) =>
+      s.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+
+    // **反向控制：剥注释这一步必须真的剥掉内容。** 它要是个 no-op（或者写成了只删空行），
+    // 下面三条就退化成上面那一格的同义反复，而「注释里写一句就算数」那个洞会原样留着。
+    // 锚的是 checkout 那一步注释里**实有的一句话**——那句话被改写时这一格会红，
+    // 那是提醒不是事故：它同时也钉住「那一行为什么必须在」的说明没被人顺手删掉。
+    const CHECKOUT_NOTE = "删了它历史扫描会 fail closed";
+    expect(yml, "checkout 那一步的注释没了：它是那一行为什么必须在的唯一说明").toContain(CHECKOUT_NOTE);
+    expect(
+      stripHashComments(yml),
+      "剥 # 注释这一步是个 no-op，下面三条等于白写",
+    ).not.toContain(CHECKOUT_NOTE);
+
+    // 期望值都是手写字面量。右边界用「下一个同缩进的 `- `」，**不是固定长度的窗口**
+    // ——本文件最后那一格记着固定窗口越界吃到下一步的实测。
+    const blockOf = (startNeedle: string) => {
+      const i = yml.indexOf(startNeedle);
+      expect(i, `ci.yml 里找不到「${startNeedle}」`).toBeGreaterThan(-1);
+      const end = yml.indexOf("\n      - ", i + 1);
+      return stripHashComments(yml.slice(i, end === -1 ? yml.length : end));
+    };
+
+    expect(
+      blockOf("- uses: actions/checkout@v4"),
+      "fetch-depth: 0 不在 checkout 那一步自己的块里 ⇒ 拉到的还是浅仓，历史那一档只会 fail closed",
+    ).toContain("fetch-depth: 0");
+
+    const scan = blockOf("name: 2/12 凭据扫描");
+    expect(scan, "历史那一档不在凭据扫描那一步自己的块里 ⇒ 它根本没被跑到").toContain(
+      "bash scripts/scan-secrets.sh --history",
+    );
+    expect(scan, "凭据扫描那一步缺 shell: bash ⇒ 两条命令的中断行为要去赌 runner 的默认 shell").toContain(
+      "shell: bash",
+    );
+  });
+});
+
+/**
  * CI 步骤编号。**它不是装饰**：门禁靠人一眼数得清「跑了几道」来发现「少跑了一道」，
  * 而少跑一道的形态恰恰是静默的（那一步被删掉之后没有任何东西会红）。
  * 期望值是**手写字面量**，不是从 yml 里数出来再回填。
