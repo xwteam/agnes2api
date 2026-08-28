@@ -35,6 +35,22 @@ import {
  * （调用方从各自运行时取好再传进来），三者都不违反那条约束。
  */
 
+/**
+ * 面板可改的那份配置在存储里的键。**整个仓库只有这一把配置键，值是一个对象。**
+ *
+ * ⚠️ **提成常量是 P3e Task 30 做的，之前它在两个文件里是裸字面量 `"config"`**
+ * （本文件的 `loadConfigWithProvenance`，以及 `src/http/admin/handlers/config.ts` 的
+ * 读 / 写 / 回读几处）。提它的直接理由是：设计文档
+ * `docs/design/2026-08-15-agnes2api-p3-admin-panel-design.md` 的
+ * 「重置到底重置了什么」那张表由**按名字扫源码**的一格钉着，
+ * 而裸字面量在那一格里是**扫不到**的——「差一个」这种状态最容易被人改数字糊过去。
+ *
+ * ⚠️ **别把「唯一一把配置键」读成「重置它就等于恢复出厂」**：本文件的优先级是
+ * `env > 存储 > 内置默认`，env 锁定的字段**根本不来自这把键**，删掉它对那些字段的
+ * 生效值一个比特都不动。逐字段的后果写在那一节的那张表里。
+ */
+export const CONFIG_KEY = "config";
+
 /** 一个叶子字段是「可以四元组明示」还是「只能报 `{ configured, hint }`」。 */
 export type Exposure = "public" | "secret";
 
@@ -399,7 +415,7 @@ export async function loadConfigWithProvenance(
   let storageUnreadable = false;
   if (env.RESET_CONFIG !== "1") {
     try {
-      storedRaw = (await storage.get<unknown>("config")) ?? {};
+      storedRaw = (await storage.get<unknown>(CONFIG_KEY)) ?? {};
     } catch (err) {
       // 热路径（degradeOnUnreadable=false）：如实抛，交给 Refreshable.reload()
       // 的既有兜底（保留上一份合法快照）——见 loadConfig 里 degradeOnUnreadable 的说明。

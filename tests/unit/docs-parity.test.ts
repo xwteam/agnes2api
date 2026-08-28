@@ -10,8 +10,18 @@ import { MODEL_CATALOG, PROTOCOLS, VIDEO_TASK_ID_SHAPE } from "../../src/core/ad
 // ADMIN.md 那一组的期望值一律从这些真源常量派生，不手写字面量。
 import { ADMIN_TOKEN_MIN_LENGTH } from "../../src/http/admin/auth.js";
 import { MAX_IMPORT_KEYS } from "../../src/http/admin/handlers/keys-write.js";
-import { EVENT_WINDOW_MS, EVENT_WINDOW_RETAIN } from "../../src/core/admin/event-ring.js";
-import { USAGE_DAY_RETAIN, USAGE_SLOTS } from "../../src/core/admin/usage-stats.js";
+import { EVENT_KEY_PREFIX, EVENT_WINDOW_MS, EVENT_WINDOW_RETAIN } from "../../src/core/admin/event-ring.js";
+import { USAGE_DAY_RETAIN, USAGE_KEY_PREFIX, USAGE_SLOTS } from "../../src/core/admin/usage-stats.js";
+// P3e Task 30：「重置到底重置了什么」那张表的键名**一律从真源 import**，
+// 手写的只是这张 import 清单本身（那张清单自己有没有漏，由本文件末尾那一组的第二格扫源码钉着）。
+import { CONFIG_KEY } from "../../src/core/config-provenance.js";
+import { KEY_PREFIX, POOL_INDEX_KEY } from "../../src/core/pool-index.js";
+import { TEND_HISTORY_KEY } from "../../src/core/admin/tend-history.js";
+import { MANUAL_GUARD_KEY } from "../../src/core/admin/tend-guard.js";
+import { TEND_LOCK_KEY } from "../../src/http/admin/tend-lock.js";
+import { HEALTH_PROBE_KEY } from "../../src/core/storage-health.js";
+import { CONFIG_TTL_MS, KV_EDGE_CACHE_MS } from "../../src/http/config-holder.js";
+import { DEFAULT_POOL_CACHE_TTL_MS } from "../../src/core/keypool-repo.js";
 import { SESSION_MAX_AGE_MS } from "../../admin-ui/js/pure/session.mjs";
 // 复评回填（F1 / F3）：设置卡与字符集那两句话的期望值一律从这几份真源现算，不手抄。
 import { sendable } from "../../admin-ui/js/pure/sendable.mjs";
@@ -4454,5 +4464,290 @@ describe(TASK29_GROUP, () => {
     const mutated = realPkg().replace('"keywords"', '"files": ["dist"],\n  "keywords"');
     expect(JSON.parse(mutated), "变异没落地——`files` 没进去").toHaveProperty("files");
     expect(pkgMetaFailures(() => mutated), "多一个无关字段把这一格弄红了").toEqual([]);
+  });
+});
+
+/**
+ * ── 设计小节「重置到底重置了什么」的逐存储键表（P3e Task 30）─────────────────────
+ *
+ * 订正 D1 的原话是「『重置』到底重置了什么本身就需要一节设计，而本文档没有这一节」。
+ * 这一组守的是那一节里**那张表**，不是那一节的散文。
+ *
+ * ⚠️ **两格是互补不是重复，别合成一格**（与 Task 10「下标不变式与 EXPECTED 互补」同一条道理）：
+ * · 第一格的输入是**手写的 `import` 清单** `KEYS` ⇒ 它管「表里有没有漏」；
+ * · 第二格的输入是**源码扫描** ⇒ 它管「那张 `import` 清单自己有没有漏」。
+ * 合成一格之后，扫描写坏时它会静默恒绿——本仓 `--reporter=basic` 空跑那一族。
+ *
+ * ⚠️⚠️ **需求书那段示例代码里的 `design.slice(design.indexOf(...))` 不能照抄，实测会假绿**：
+ * 它切到的是**文件尾**，于是「小节」里装着 §6–§17 整个下半本文档。
+ * `config` / `key:` 这些串在下半本里本来就到处都是（实测：把整张表连同小节一起删掉，
+ * 那一格照样绿）。**本组切到下一个 `## ` 为止**，`resetSection()` 就是那一刀。
+ *
+ * ⚠️ 判据用的是**整格 code span 相等**，不是 `includes`：`config` 这个词在任何一段中文
+ * 设计文档里都能撞上（`/admin/api/config/reset` 就够了），`includes` 判据在删掉
+ * `config` 那一行之后不会红——与本文件开头登记的「裸 `120` 已经出现 4 次」同一个坑。
+ */
+const RESET_DESIGN_DOC = "docs/design/2026-08-15-agnes2api-p3-admin-panel-design.md";
+const RESET_HEADING = "## 重置到底重置了什么";
+
+/**
+ * 从真源 import 的存储键常量。**手写的是 import 列表，不是键名。**
+ * 顺序与设计小节那张表一致，纯为对读方便；判据不看顺序。
+ */
+const KEYS: readonly string[] = [
+  CONFIG_KEY,          // src/core/config-provenance.ts
+  KEY_PREFIX,          // src/core/pool-index.ts
+  POOL_INDEX_KEY,      // src/core/pool-index.ts
+  USAGE_KEY_PREFIX,    // src/core/admin/usage-stats.ts
+  EVENT_KEY_PREFIX,    // src/core/admin/event-ring.ts
+  TEND_HISTORY_KEY,    // src/core/admin/tend-history.ts
+  TEND_LOCK_KEY,       // src/http/admin/tend-lock.ts
+  MANUAL_GUARD_KEY,    // src/core/admin/tend-guard.ts
+  HEALTH_PROBE_KEY,    // src/core/storage-health.ts
+];
+
+/** 三条重置路径，顺序 = 表里那三列裁决的顺序。 */
+const RESET_PATHS = ["重置配置", "清空 Key 池", "重置用量统计"] as const;
+/** 裁决的**封闭词表**：留白、写成「部分」「视情况」一律红。 */
+const VERDICTS = ["动", "不动"] as const;
+
+/** 小节体：从标题切到**下一个 `## `**，不是切到文件尾（理由见本组文件头）。 */
+function resetSection(design: string): string {
+  const i = design.indexOf(RESET_HEADING);
+  if (i < 0) return "";
+  const rest = design.slice(i);
+  const j = rest.indexOf("\n## ", 1);
+  return j < 0 ? rest : rest.slice(0, j);
+}
+
+/**
+ * 那张表：`键名字面量 → 三格裁决`。
+ * 判据是「这一行恰好 6 格，且第一格是一个**完整的** code span」——
+ * 三条重置路径那张表每行只有 4 格，撞不上。
+ */
+function keyVerdictRows(sec: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const line of sec.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("|") || !t.endsWith("|")) continue;
+    const cells = t.slice(1, -1).split("|").map((c) => c.trim());
+    if (cells.length !== 6) continue;
+    const m = /^`([^`]+)`$/.exec(cells[0] ?? "");
+    if (m === null) continue;
+    out.set(m[1]!, cells.slice(3).map((c) => c.replace(/\*/g, "").trim()));
+  }
+  return out;
+}
+
+/** 第一格的全部判据。**报文逐条点名**，不许只说「表不对」。 */
+function resetTableFailures(design: string): string[] {
+  const sec = resetSection(design);
+  if (sec.length < 200) {
+    return [`${RESET_DESIGN_DOC} 里找不到「${RESET_HEADING}」那一节（或它短得不像一节）——`
+      + "订正 D1 要求的就是这一节，它是 Task 31 / 31A 的输入。"];
+  }
+  const fails: string[] = [];
+  const rows = keyVerdictRows(sec);
+  // ⚠️ **先查清单本身**：某个真源常量被改回字面量（或改了名）之后，`import` 拿到的是
+  // `undefined`，而报文会变成「存储键 `undefined` 在那张表里没有一行」——那句话会
+  // 把人引去改设计文档，真因却在源码。`pnpm typecheck` 那道门禁同样会红，但这一格的报文
+  // 得自己说得清楚。实测见本组 M4。
+  const broken = KEYS.map((k, i) => [i, k] as const).filter(([, k]) => typeof k !== "string" || k === "");
+  if (broken.length > 0) {
+    return broken.map(([i]) =>
+      `KEYS 第 ${i + 1} 项不是一个非空字符串 —— 它 import 的那个真源常量多半已经不再导出了。`
+      + "真因在源码，不在设计文档。");
+  }
+  for (const k of KEYS) {
+    if (!rows.has(k)) {
+      fails.push(`存储键 \`${k}\` 在那张表里没有一行 —— 九把键必须逐把表态，`
+        + "第一列写的是键名字面量、整格一个 code span（判据不是 includes）。");
+    }
+  }
+  for (const [k, verdicts] of rows) {
+    if (!KEYS.includes(k)) {
+      fails.push(`表里多出一行 \`${k}\`，而它不在从真源 import 的那张清单里 —— `
+        + "要么它是新存储键（那就 import 进 KEYS），要么这一行写错了。");
+      continue;
+    }
+    verdicts.forEach((v, i) => {
+      if (!(VERDICTS as readonly string[]).includes(v)) {
+        fails.push(`\`${k}\` 在「${RESET_PATHS[i]}」那一格的裁决是「${v || "(空)"}」，`
+          + `不在封闭词表 ${VERDICTS.join(" / ")} 里 —— 留白不算表态。`);
+      }
+    });
+  }
+  return fails;
+}
+
+/**
+ * 源码里的存储键常量。**判据从源码派生，不是一张手抄名单。**
+ *
+ * 约定：`src/` 下 `export const <名字>_KEY / <名字>_KEY_PREFIX = "字面量"` 一律是存储键。
+ * ⚠️ 这条约定今天是**无例外**的：Task 30 为此把 `byModel` 的兜底桶名从以 `_KEY` 结尾
+ * 改成了 `USAGE_OTHER_BUCKET`（理由写在 `src/core/admin/usage-stats.ts` 那个常量旁边）
+ * ——**开一张只有一条的豁免名册，下一个人往里加第二条时不会有任何东西红。**
+ * ⚠️ 扫之前先过 Task 1 的 `blankComments`：本仓注释里复述常量名是最常见的写法。
+ */
+function storageKeyConstantsIn(root: string): { file: string; name: string; value: string }[] {
+  const re = /^\s*export\s+const\s+([A-Z0-9_]*KEY(?:_PREFIX)?)\s*(?::[^=]*)?=\s*"([^"]*)"\s*;/gm;
+  const out: { file: string; name: string; value: string }[] = [];
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir).sort()) {
+      const p = join(dir, e);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (p.endsWith(".ts")) {
+        for (const m of blankComments(readFileSync(p, "utf8")).matchAll(re)) {
+          out.push({ file: p, name: m[1]!, value: m[2]! });
+        }
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
+describe("设计小节「重置到底重置了什么」的逐存储键表（P3e Task 30）", () => {
+  const realDesign = (): string => readFileSync(RESET_DESIGN_DOC, "utf8");
+
+  /** 探针的基：真文档今天必须过判据，否则探针红了会被误读成「探针有问题」。 */
+  function probeBaseReset(): void {
+    const base = resetTableFailures(realDesign());
+    if (base.length > 0) {
+      throw new Error(
+        "本格是探针，它的基取自真设计文档，而真文档今天本身就不过判据 —— "
+        + "别从这一格的报文里找原因，真因在「设计小节那张表对这 9 个存储键逐个表态」那一格：\n"
+        + base.join("\n"),
+      );
+    }
+  }
+
+  it("设计小节那张表对这 9 个存储键逐个表态 —— 删掉表里一行就红", () => {
+    // ⚠️ 手写字面量等号，不许 `toBeGreaterThanOrEqual`（本计划 §通用纪律逐字禁的形态）。
+    expect(KEYS.length, "键表被改动了 —— 回来把这个数改对，别删断言").toBe(9);
+    expect(new Set(KEYS).size, "KEYS 里有重复的键名 —— 两个常量取了同一个值？").toBe(9);
+    const failures = resetTableFailures(realDesign());
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("反向控制：源码里每一个存储键常量都被上面那张 import 清单收着 —— 新增一个而不 import 就红", () => {
+    const declared = storageKeyConstantsIn("src");
+    const orphans = declared
+      .filter((d) => !KEYS.includes(d.value))
+      .map((d) => `${d.file}: ${d.name} = "${d.value}"`);
+    // ⚠️ **这一条必须排在计数之前。** 上一版把计数放在前面，于是「新增一个存储键」这个
+    // 最常见的形态报出来的是「一个都没扫到，扫描多半写坏了：expected 10 to be 9」——
+    // 报文亲手把人引向「扫描坏了」，而真因是「你新加的那把键没进清单」（实测过一次）。
+    expect(orphans,
+      "这些存储键常量在源码里真的存在，却没被那张 import 清单收着 —— "
+      + "把它 import 进 KEYS、并在设计小节那张表里给它一行（逐把表态，不许留白）：\n"
+      + orphans.join("\n")).toEqual([]);
+    // 计数是「扫描不是空跑」的绊线，也拦「加了键、也 import 了、但没回来改这个数」。
+    // ⚠️ 报文要两个方向都说得通：扫少了是扫描坏了，扫多了是清单该长大。
+    expect(declared.length,
+      "扫到的存储键常量条数与手写的不一致 —— 比 9 少通常是扫描写坏了（判据认不出真声明），"
+      + "比 9 多说明真加了一把键：把它 import 进 KEYS、给设计小节那张表补一行，再回来把这个数改对").toBe(9);
+  });
+
+  it("小节里那几个数一律从真源常量现算 —— 改了常量而小节没跟着改就红", () => {
+    const sec = resetSection(realDesign());
+    const s = (ms: number): number => ms / 1000;
+    const expected: [string, string][] = [
+      ["config 的生效上界（§5.3 同一个数）",
+        `≤ ${s(CONFIG_TTL_MS)} 秒（holder TTL）+ 约 ${s(KV_EDGE_CACHE_MS)} 秒`
+        + `（KV 边缘缓存与传播）≈ ${s(CONFIG_TTL_MS + KV_EDGE_CACHE_MS)} 秒`],
+      ["key 池快照的生效上界",
+        `默认 ${s(DEFAULT_POOL_CACHE_TTL_MS)} 秒）+ 约 ${s(KV_EDGE_CACHE_MS)} 秒边缘缓存`
+        + ` ≈ ${s(DEFAULT_POOL_CACHE_TTL_MS + KV_EDGE_CACHE_MS)} 秒`],
+      ["被实测推翻的那条有界性论证（它算的是 Tier-2 键空间，不是这颗按钮）",
+        `${USAGE_DAY_RETAIN} × ${USAGE_SLOTS} = ${USAGE_DAY_RETAIN * USAGE_SLOTS}`],
+      ["导入上限（用来说明它兜不着批量重置那条路）", `MAX_IMPORT_KEYS = ${MAX_IMPORT_KEYS}`],
+    ];
+    const missing = expected
+      .filter(([, text]) => !sec.includes(text))
+      .map(([what, text]) => `${what}：小节里找不到「${text}」`);
+    expect(missing, missing.join("\n")).toEqual([]);
+  });
+
+  it("第三颗按钮的去向写死了：小节里恰好一条「裁定：做 / 不做」，不许留白也不许两条都在", () => {
+    // 需求书逐字：「二选一，不许留白」，**且这个裁定就是 Task 31A 的输入**。
+    const hits = [...resetSection(realDesign()).matchAll(/^\*\*裁定：(做|不做)。\*\*/gm)];
+    expect(hits.map((m) => m[1]),
+      "小节里的「裁定：X。」不是恰好一条 —— 留白或者两条都在，Task 31A 就没有输入了").toHaveLength(1);
+  });
+
+  it("该红时红：从表里删掉 `tend:history` 那一行 —— 第一格红并点名它", () => {
+    probeBaseReset();
+    const real = realDesign();
+    const line = real.split("\n").find((l) => l.trim().startsWith(`| \`${TEND_HISTORY_KEY}\` |`));
+    expect(line, "变异没落地——表里找不到 `tend:history` 那一行").toBeDefined();
+    const mutated = real.split(`${line}\n`).join("");
+    expect(mutated, "变异没落地——文档没变").not.toEqual(real);
+    const failures = resetTableFailures(mutated);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "红了但报文没点名那把键").toContain(TEND_HISTORY_KEY);
+  });
+
+  it("该红时红：把某一格裁决留白 —— 第一格红并点名是哪把键的哪一条路径", () => {
+    probeBaseReset();
+    const real = realDesign();
+    const marker = `| \`${HEALTH_PROBE_KEY}\` |`;
+    const line = real.split("\n").find((l) => l.trim().startsWith(marker));
+    expect(line, "变异没落地——表里找不到 `health:probe` 那一行").toBeDefined();
+    // 最后一格（「重置用量统计」那一列）掏空。
+    const blanked = `${(line ?? "").replace(/\|[^|]*\|$/, "|  |")}`;
+    expect(blanked, "变异没落地——那一行没被改动").not.toEqual(line);
+    const failures = resetTableFailures(real.split(line ?? "").join(blanked));
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "红了但报文没点名那把键").toContain(HEALTH_PROBE_KEY);
+    expect(failures[0] ?? "", "红了但报文没点名是哪一条重置路径").toContain(RESET_PATHS[2]);
+  });
+
+  it("该红时红：整节被删掉 —— 报文说的是「找不到这一节」，不是九条「少一行」", () => {
+    probeBaseReset();
+    const gutted = realDesign().split(RESET_HEADING).join("## (gone)");
+    expect(gutted, "变异没落地——标题还在").not.toContain(RESET_HEADING);
+    const failures = resetTableFailures(gutted);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "报文没说清是整节不见了").toContain(RESET_HEADING);
+  });
+
+  it("探针：切片只到下一个 `## ` —— 把整节连表一起删掉之后，下半本文档不许把它救绿", () => {
+    // 这一格钉的是需求书示例里那处 `slice(indexOf(...))` 假绿：切到文件尾时，
+    // `config` / `key:` 这些串在 §6–§17 里本来就有，删掉整张表也不会红。
+    probeBaseReset();
+    const real = realDesign();
+    const sec = resetSection(real);
+    expect(sec.length, "切片切出来是空的，判据本身坏了").toBeGreaterThan(200);
+    expect(sec, "切片越界，把下一节的标题也吃进来了").not.toContain("## 6. 数据模型：key 池");
+    const withoutSection = real.split(sec).join("\n");
+    expect(withoutSection, "变异没落地——整节还在").not.toContain(RESET_HEADING);
+    // 同一份判据、同一个函数：整节没了就必须红。
+    expect(resetTableFailures(withoutSection), "整节删掉之后判据还是绿的").not.toEqual([]);
+  });
+
+  it("探针：同一个扫描跑临时夹具 —— 认得出真实形状的声明，而注释里的那一份不算", () => {
+    // ⚠️ 反向控制用**仓里真实存在的串**：下面这两行逐字抄自 `src/core/pool-index.ts`。
+    const real = 'export const KEY_PREFIX = "key:";\nexport const POOL_INDEX_KEY = "pool:index";\n';
+    const dir = mkdtempSync(join(tmpdir(), "storage-keys-"));
+    try {
+      writeFileSync(join(dir, "live.ts"), real);
+      const seen = storageKeyConstantsIn(dir);
+      expect(seen.map((d) => d.value).sort(), "扫描认不出仓里真实存在的那两条声明").toEqual([KEY_PREFIX, POOL_INDEX_KEY].sort());
+
+      // 同样两行，整段包进块注释：`blankComments` 接上了的话，一条都不该扫到。
+      writeFileSync(join(dir, "live.ts"), `/*\n${real}*/\n`);
+      expect(storageKeyConstantsIn(dir), "注释里的声明被当成真声明了 —— blankComments 没接上").toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("不乱红：小节里多一段无关的散文、表里多一列说明 —— 不许因此红", () => {
+    probeBaseReset();
+    const real = realDesign();
+    const noisy = real.replace(RESET_HEADING, `${RESET_HEADING}\n\n> 补记：这一段是后来加的，与那张表无关。`);
+    expect(noisy, "变异没落地").not.toEqual(real);
+    expect(resetTableFailures(noisy), "多一段散文把这一格弄红了").toEqual([]);
   });
 });

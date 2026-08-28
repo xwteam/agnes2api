@@ -92,7 +92,7 @@ class WatchedStorage implements Storage {
  * 探针键。写一次再删掉，不在存储里留下痕迹；与 key 池的 `key:` 前缀不冲突，
  * 因此即使删除那一步失败，也不会被 `KeyPoolRepo.all()` 当成一把 key。
  */
-const PROBE_KEY = "health:probe";
+export const HEALTH_PROBE_KEY = "health:probe";
 
 /**
  * 启动时探一次「存储是不是真的可写」，返回失败原因（成功则返回 null）。
@@ -113,18 +113,18 @@ export async function probeWritable(
   logger: Logger = NULL_LOGGER,
 ): Promise<Error | null> {
   try {
-    await storage.put(PROBE_KEY, { at: now() });
+    await storage.put(HEALTH_PROBE_KEY, { at: now() });
   } catch (err) {
     return toError(err);
   }
 
   try {
-    await storage.delete(PROBE_KEY);
+    await storage.delete(HEALTH_PROBE_KEY);
   } catch (err) {
     logger.log({
       level: "error", event: "storage.probe_cleanup_failed",
       msg: "健康探针键清理失败（不影响「存储可写」的结论）",
-      fields: { key: PROBE_KEY, err: toError(err).message },
+      fields: { key: HEALTH_PROBE_KEY, err: toError(err).message },
     });
     // storage 若是 watchStorage 包过的那层，上面这次失败已经被它记成不可写；
     // 按 put 的结论纠正回来，否则 /health 会因为一次删除失败而误报 degraded。

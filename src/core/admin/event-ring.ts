@@ -144,8 +144,14 @@ export function slotOf(shardId: string): number {
  * `expiresAt` 参数）——把有界性做成存储自己的性质，不再依赖这个函数或调用它的
  * 那次落盘发生在什么节奏上。
  */
+/**
+ * 事件分片键的前缀。提成常量的理由与 `usage-stats.ts` 的 `USAGE_KEY_PREFIX` 逐字相同：
+ * 键名藏在模板串里时，按名字扫源码的那一格扫不到它。
+ */
+export const EVENT_KEY_PREFIX = "event:";
+
 export function shardKey(window: number, slot: number): string {
-  return `event:${window}:${slot}`;
+  return `${EVENT_KEY_PREFIX}${window}:${slot}`;
 }
 
 /**

@@ -253,8 +253,17 @@ export function usageSlotOf(shardId: string): number {
   return ((h % USAGE_SLOTS) + USAGE_SLOTS) % USAGE_SLOTS;
 }
 
+/**
+ * Tier-2 用量键的前缀。**提成常量是为了让它可被扫到**：设计文档
+ * `docs/design/2026-08-15-agnes2api-p3-admin-panel-design.md` 的
+ * 「重置到底重置了什么」那张表逐存储键表态，而钉住那张表的两格里有一格是
+ * **按名字扫源码**（`export const …_KEY / …_KEY_PREFIX = "字面量"`）。
+ * 键名藏在模板串里的时候那一格扫不到它，于是「新增一个存储键而不进表」就没人拦。
+ */
+export const USAGE_KEY_PREFIX = "usage:";
+
 export function usageDayKey(day: number, slot: number): string {
-  return `usage:${day}:${slot}`;
+  return `${USAGE_KEY_PREFIX}${day}:${slot}`;
 }
 
 /**
@@ -292,7 +301,7 @@ export function usageDayKey(day: number, slot: number): string {
 export const USAGE_MODEL_KEY_MAX_LEN = 64;
 
 /**
- * `byModel` 最多留几个具名键，**超出的一律并进 `USAGE_OTHER_KEY`**。
+ * `byModel` 最多留几个具名键，**超出的一律并进 `USAGE_OTHER_BUCKET`**。
  *
  * ⚠️ **这条上界不是防御性代码，是有界性本身**（评审 I4）：`byModel` 的键**完全由
  * 客户端控制**（模型名来自请求体），每个不同的串就是一个新 `UsageBucket`，
@@ -316,7 +325,19 @@ export const USAGE_MODEL_MAX_KEYS = 32;
  * `GET /admin/api/usage/:date` 把 `byModel` 原样交出去，这个键在里面就是一个普通的键
  *（上一版这里写的是「Task 4 要把它渲染成『其它』」，那句话点错了任务）。
  */
-export const USAGE_OTHER_KEY = "__other__";
+/*
+ * ⚠️ **P3e Task 30 把它的名字从「以 _KEY 结尾」改成了 `USAGE_OTHER_BUCKET`，为的是让一条
+ * 命名约定变成无例外的**：`docs-parity` 那一组新增的
+ * 「源码里每一个存储键常量都被那张 import 清单收着」是**按名字扫**的
+ *（`export const …_KEY / …_KEY_PREFIX = "字面量"`）。它撞上这个名字时会得到一个假阳性——
+ * 这**不是**存储键，是 `byModel` 里那个兜底桶的**桶名**，一次存储访问都不产生。
+ * 当时有两条路：给扫描开一张豁免名册，或者把这个名字改对。选了后者，理由是本仓已经登记过
+ * 「扩太宽就要开豁免名册，而豁免名册会变成永久的洞」——一张只有一个条目的名册，
+ * 下一个人往里加第二条时不会有任何东西红。
+ * ⇒ **约定现在是硬的：`src/` 下叫 `*_KEY` / `*_KEY_PREFIX` 的导出常量一律是存储键。**
+ * 谁再拿这个后缀命名一个非存储键，那一格会红——**红就是对的**，它逼人要么改名要么表态。
+ */
+export const USAGE_OTHER_BUCKET = "__other__";
 
 /**
  * 把一个外部可控的桶键收进上界内。
@@ -346,7 +367,7 @@ export const USAGE_OTHER_KEY = "__other__";
  * 因为那格用例里 200 个模型名各只出现一次，满桶之后从不复用旧键）——
  * 见「满桶之后再打一次早期的模型名，它仍然进自己那一格……」。
  *
- * ⚠️ **上界是 `USAGE_MODEL_MAX_KEYS + 1`，那多出来的一格是 `USAGE_OTHER_KEY` 自己。**
+ * ⚠️ **上界是 `USAGE_MODEL_MAX_KEYS + 1`，那多出来的一格是 `USAGE_OTHER_BUCKET` 自己。**
  * 明写出来，免得下一个人按 32 去断言然后发现是 33。
  *
  * ⚠️ **已知边界，如实登记（定向复评 N10 + 收口复评 H3）**：
@@ -391,7 +412,7 @@ function safeString(raw: unknown): string {
 export function boundUsageKey(existing: Readonly<Record<string, unknown>>, raw: string): string {
   const k = safeString(raw).slice(0, USAGE_MODEL_KEY_MAX_LEN);
   if (Object.prototype.hasOwnProperty.call(existing, k)) return k;
-  if (Object.keys(existing).length >= USAGE_MODEL_MAX_KEYS) return USAGE_OTHER_KEY;
+  if (Object.keys(existing).length >= USAGE_MODEL_MAX_KEYS) return USAGE_OTHER_BUCKET;
   return k;
 }
 

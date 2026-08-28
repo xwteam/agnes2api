@@ -4,6 +4,7 @@ import type { Storage } from "../../../ports/storage.js";
 import type { ConfigHolder } from "../../config-holder.js";
 import { CONFIG_TTL_MS, KV_EDGE_CACHE_MS } from "../../config-holder.js";
 import {
+  CONFIG_KEY,
   loadConfigWithProvenance, type ConfigProvenance, type Env, type FieldSource,
 } from "../../../core/config-provenance.js";
 import {
@@ -141,7 +142,7 @@ function split(source: Record<string, FieldSource>) {
 function frozenConfig(stored: unknown, inner: Storage): Storage {
   return {
     async get<T>(key: string): Promise<T | null> {
-      return key === "config" ? ((stored ?? null) as T | null) : inner.get<T>(key);
+      return key === CONFIG_KEY ? ((stored ?? null) as T | null) : inner.get<T>(key);
     },
     put: (k, v, e) => inner.put(k, v, e),
     delete: (k) => inner.delete(k),
@@ -215,7 +216,7 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
      */
     let stored: unknown;
     try {
-      stored = await wiring.storage.get<unknown>("config");
+      stored = await wiring.storage.get<unknown>(CONFIG_KEY);
     } catch {
       // 读不出来 ⇒ 存储真的坏了。**抛第一个异常**（那才是原因），不是这一个。
       throw err;
@@ -344,14 +345,14 @@ export function configPutHandler(deps: ConfigDeps) {
     // 填回去」这条自救路径自己也走不通**（实测：关注册机 / 重填 key / 换主通道全 500）。
     // 校验只需要 `storedBefore`（原始读，永远不抛），所以写这条路完全不依赖装载成功。
     const before = await readAll(wiring, deps.logger);
-    const storedBefore = (await wiring.storage.get<unknown>("config")) ?? {};
+    const storedBefore = (await wiring.storage.get<unknown>(CONFIG_KEY)) ?? {};
 
     const verdict = validateConfigPatch(patch, {
       stored: storedBefore, env: wiring.env, adminToken: wiring.adminToken,
     });
     if (!verdict.ok) return invalid(c, verdict.errors);
 
-    await wiring.storage.put("config", verdict.next);
+    await wiring.storage.put(CONFIG_KEY, verdict.next);
     // **F7：让同一个进程的下一个请求一定重载。** 少了这一行，`GET /admin/api/overview`
     // 会在最多一个 `CONFIG_TTL_MS`（默认 30 秒）内继续报旧值。
     deps.configHolder.invalidate();
@@ -438,7 +439,7 @@ export function configValidateHandler(deps: ConfigDeps) {
     const wiring = deps.wiring;
     if (wiring === null) return notWired(c);
     const patch = await readPatch(c);
-    const stored = (await wiring.storage.get<unknown>("config")) ?? {};
+    const stored = (await wiring.storage.get<unknown>(CONFIG_KEY)) ?? {};
     const verdict = validateConfigPatch(patch, {
       stored, env: wiring.env, adminToken: wiring.adminToken,
     });
@@ -476,7 +477,7 @@ export function configClearSecretHandler(deps: ConfigDeps) {
       );
     }
 
-    const stored = (await wiring.storage.get<unknown>("config")) ?? {};
+    const stored = (await wiring.storage.get<unknown>(CONFIG_KEY)) ?? {};
     const result = clearSecret(stored, path);
     // `SECRET_FIELDS.includes(path)` 上面已经查过，这一支走不到；留着它是因为
     // `clearSecret` 的契约里有这一档，吞掉返回值会让将来某次改动静默失败。
@@ -500,7 +501,7 @@ export function configClearSecretHandler(deps: ConfigDeps) {
      */
     const blockedAfter = configLoadBlockers(result.next, wiring.env);
 
-    await wiring.storage.put("config", result.next);
+    await wiring.storage.put(CONFIG_KEY, result.next);
     deps.configHolder.invalidate();
 
     /**
