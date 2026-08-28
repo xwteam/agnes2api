@@ -8,12 +8,18 @@
 #                                                  # tests/unit/prepush-guard.test.ts 的夹具用。
 #
 # **为什么有这个脚本。** 推送前的清单原来只是一份 markdown
-# （`.superpowers/sdd/prepush/checklist.md`），里面写死的 HEAD / 提交数 / 邮箱分布
-# **落地当天就开始过期**；而且它缺一条谁都没在守的：**工作树干净**。
+# （`.superpowers/sdd/prepush/checklist.md`——⚠️ **该目录被 `.gitignore` 排除、
+# 不随仓库推送**，公开仓的读者打不开它；本文件里另一处指向该目录的也同此），
+# 里面写死的 HEAD / 提交数 / 邮箱分布**落地当天就开始过期**；
+# 而且它缺一条谁都没在守的：**工作树干净**。
 # 本仓的工作流经常把变异探针留在树里（勘察实测到过 `admin-ui/js/ui.js` 被塞进一个探针
-# 函数、生成物跟着漂），而 `.github/workflows/ci.yml` 那十二道门禁**没有一道**校验
-# 「你手上这棵树是不是干净的」——CI 看的是已经推上去的那个提交，推之前手上多出来的东西
-# 它一个字都看不见。
+# 函数、生成物跟着漂），而 `.github/workflows/ci.yml` 里那一串门禁**只有「生成面板资源 +
+# 生成物一致性」那一对**顺带守着 `admin-ui/` → `src/ui/assets.generated.ts` 这一条链：
+# 改了面板源码却没把生成物一起提交时，前一道当场重新生成、后一道的 `git diff --exit-code`
+# 跟着红。⚠️ **实测：单跑后一道是绿的**（脏的是面板源码，生成物那份还没动）——
+# 这条链要前一道先跑过才闭合，别把它读成「有一道在直接看 admin-ui/」。
+# **这条链之外的脏它一处都看不见**——CI 看的是已经推上去的那个提交，推之前手上多出来
+# 的东西它一个字都看不见。
 #
 # ⚠️ **形态：`set -uo pipefail`，顶层没有 `-e`。这是有意的，加回去会毁掉这个脚本的用途。**
 # 它必须**逐格跑完再汇总**，不是 fail-fast：在一次性历史重写落地之前，③④⑤ 是**已登记的
@@ -29,9 +35,13 @@
 #   给自己开豁免的清单，下一次就会被人当成绿的。
 #   每一格的预期红都带着**自己的收窄条件**（见各格），条件不成立一律按真红处理。
 #
-# ⚠️ **这个脚本自己不是门禁的一道**，它是把已有的十二道按 ci.yml 的顺序重跑一遍，
+# ⚠️ **这个脚本自己不是门禁的一道**，它是把 ci.yml 里已有的那几道按同一个顺序重跑一遍，
 #   再补上 CI 结构上看不见的那几格（工作树、分支、作者身份、测试计数）。
-#   十二道从 ci.yml **当场抽**，不在这里手抄一份——手抄的那份会漂，而漂了没人会发现。
+#   那几道从 ci.yml **当场抽**，不在这里手抄一份——手抄的那份会漂，而漂了没人会发现。
+# ⚠️ **连「一共几道」这个数都不写进本文件的正文**：它今天是一个确定的数，而写下去的那一刻
+#   就会在有人增删一道的那天静静变假（逻辑早就是从步名 `N/M` 推的，只有话是写死的）。
+#   这条由 `tests/unit/prepush-guard.test.ts` 的
+#   「脚本正文里不许写死门禁的总道数：那个数改的那天，写死的话会静静变假」钉着。
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -98,7 +108,7 @@ GATE_MANIFEST=()
 load_gates() { # $1 = ci.yml 路径
   local ci="$1" line num den flags name expect="" i=0
   if [[ ! -f $ci ]]; then
-    echo "❌ 读不到 $ci —— 十二道是从它当场抽的，抽不到就没有可跑的东西" >&2
+    echo "❌ 读不到 $ci —— 要跑的那几道是从它当场抽的，抽不到就没有可跑的东西" >&2
     return 2
   fi
   GATE_DIR=$(mktemp -d)
@@ -125,7 +135,13 @@ load_gates() { # $1 = ci.yml 路径
       return 2
     fi
   done
-  if (( ${#GATE_MANIFEST[@]} != expect )); then
+  # ⚠️ **两个方向要分开说**：报文是唯一会被看见的护栏，方向说反会把人引去找一件不存在的事
+  #   （「少的那几道」——而实际是多抽到了一道，真正要改的是步名里的分母）。
+  if (( ${#GATE_MANIFEST[@]} > expect )); then
+    echo "❌ $ci 步名说共 $expect 道，实际抽到 ${#GATE_MANIFEST[@]} 道 —— 多出来的那几道，是步名里的分母没跟着改" >&2
+    return 2
+  fi
+  if (( ${#GATE_MANIFEST[@]} < expect )); then
     echo "❌ $ci 步名说共 $expect 道，实际只抽到 ${#GATE_MANIFEST[@]} 道 —— 少的那几道不会被跑到" >&2
     return 2
   fi
@@ -161,6 +177,16 @@ case "${1:-}" in
     ;;
 esac
 
+# ── 整跑档：把 stderr 并进 stdout ────────────────────────────────────────────
+# 这个脚本最可能的用法是留一份日志（`bash scripts/prepush.sh > prepush.log` 或 `| tee`）。
+# 两股流分开的话，末尾那张逐格表在 stdout、每一格「为什么红」的 ❌ 解释在 stderr，
+# ⇒ **日志里只剩一张说「红了」却不说为什么的表**，而那正是这份产物唯一要交付的东西。
+# 合并之后顺序也变成确定的（同一个文件描述符，写入按发生顺序落盘）。
+# ⚠️ **这一行必须在上面那个参数分派之后**：`--print-gates` 是给
+#   `tests/unit/prepush-guard.test.ts` 读的机器档，它的判据分 stdout（抽出来的门禁原文）
+#   与 stderr（抽歪了的报文）两股，合并会把那一侧的读法一起弄坏。
+exec 2>&1
+
 # ── 从 ci.yml 抄下来的三个常量，以及它们各自的核对方式 ──────────────────────
 # 抄来的东西会漂，所以 ⑥ 那一格开头会回到 ci.yml 抽出来的真源上核对这三个值还在被用
 # ——对不上就红在「⑥ 的常量与 ci.yml 对不上」，而不是安安静静地去读一个没人写的日志。
@@ -177,7 +203,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=133
-EXPECT_NODE_TESTS=3632
+EXPECT_NODE_TESTS=3644
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
@@ -215,7 +241,9 @@ cell_worktree() {
     printf '%s\n' "$dirty" >&2
     echo "❌ 工作树不干净，推送前不许有未提交改动 —— 上面每一行都是一处。" >&2
     echo "   本仓最常见的成因是变异探针没撤干净（改了 admin-ui/ 还会连带 src/ui/assets.generated.ts 一起漂）。" >&2
-    echo "   ⚠️ 这一格是 ci.yml 那十二道结构上看不见的：CI 看的是已经推上去的提交，不是你手上这棵树。" >&2
+    echo "   ⚠️ ci.yml 那几道里只有「生成面板资源 + 生成物一致性」那一对顺带守着 admin-ui/ → src/ui/assets.generated.ts 这条链" >&2
+    echo "      （前一道重新生成、后一道 git diff 才红；单跑后一道是绿的）。这条链之外的脏它一处都看不见：" >&2
+    echo "      CI 看的是已经推上去的提交，不是你手上这棵树。" >&2
     return 1
   fi
   echo "✅ git status --porcelain 无输出"
@@ -227,38 +255,58 @@ cell_worktree() {
 # 远端跟踪分支（`origin/main` 那种）单独放行——公开仓推出去之后它必然存在，
 # 而它不是「开了一个分支」。放行判据按 `git remote` 当场列出来的远端名拼，
 # 不写死 `origin`；`origin/feat/x` 这种照样打红。
-# ⚠️ **那一支今天一次都没跑到过**：本仓至今没有远端（`git remote` 无输出），
-#    所以这一格实际验过的只有「只有 main ⇒ 绿」。推仓当天第一次复跑要盯一眼这一格。
+#
+# ⚠️ **还要放行一样长得完全不像分支的东西：远端 HEAD 符号引用。**
+#   `git clone` 出来的仓里必然有 `refs/remotes/origin/HEAD`，而它的 `%(refname:short)`
+#   是**裸的 `origin`**（不是 `origin/main`）⇒ 上一版按 `<远端>/main` 拼的放行名单认不出它，
+#   在任何一个 clone 出来的仓里都会打红并劝人「删掉分支「origin」」——那不是分支，删不掉。
+#   （复评 F2 实测：clone ⇒ 红；`git remote add` + `git push -u` 那条路径 ⇒ 绿。
+#    公开仓读者第一件事就是 clone，所以这是屏幕上会被看见的那一类错。）
+#   判据因此改成读 `%(symref:short)`：有 symref 的那一条按「远端 HEAD」处置，
+#   只在它指向 `<远端>/main` 时放行；指向别处照样红，但报文说的是它自己的处置办法。
+# ⚠️ 这一格的四侧由 `tests/unit/prepush-guard.test.ts` 的
+#   「② cell_branch 在 clone 出来的仓里是绿的：远端 HEAD 那条符号引用不是「开了一个分支」」
+#   一族钉着（真造仓、真 clone、逐字抽这个函数去跑）。
 cell_branch() {
-  local head branches b bad=0 remotes r ok
+  local head branches line b sym bad=0 remotes r ok
   head=$(git rev-parse --abbrev-ref HEAD)
   if [[ $head != main ]]; then
     echo "❌ 当前分支是「$head」，不是 main" >&2
     bad=1
   fi
-  branches=$(git branch -a --format='%(refname:short)')
+  # 制表符分隔：分支名里不可能有制表符（git 的 ref 名禁止控制字符），`|` 之类就未必。
+  branches=$(git branch -a --format='%(refname:short)%09%(symref:short)')
   remotes=$(git remote)
-  while IFS= read -r b; do
-    if [[ -z $b ]]; then continue; fi
-    if [[ $b == main ]]; then continue; fi
+  while IFS= read -r line; do
+    if [[ -z $line ]]; then continue; fi
+    b=${line%%$'\t'*}
+    sym=${line#*$'\t'}
+    if [[ -z $b || $b == main ]]; then continue; fi
     ok=0
     while IFS= read -r r; do
-      if [[ -n $r && $b == "$r/main" ]]; then ok=1; fi
+      if [[ -z $r ]]; then continue; fi
+      if [[ $b == "$r/main" ]]; then ok=1; fi
+      if [[ $b == "$r" && $sym == "$r/main" ]]; then ok=1; fi
     done <<<"$remotes"
     if (( ok == 0 )); then
-      echo "❌ 除 main 之外还有分支「$b」" >&2
+      if [[ -n $sym ]]; then
+        echo "❌ 远端 HEAD 符号引用「$b」指向「$sym」，而不是 <远端>/main" >&2
+        echo "   它不是一个分支，删分支删不掉它：跑 git remote set-head <远端> -a，或先把远端的默认分支改回 main。" >&2
+      else
+        echo "❌ 除 main 之外还有分支「$b」" >&2
+      fi
       bad=1
     fi
   done <<<"$branches"
   if (( bad != 0 )); then
-    echo "   用户的硬约束是只留 main、不开分支（远端跟踪的 <远端>/main 除外）。" >&2
+    echo "   用户的硬约束是只留 main、不开分支（远端跟踪的 <远端>/main、以及指向它的远端 HEAD 除外）。" >&2
     return 1
   fi
-  echo "✅ HEAD = main；git branch -a 除 main 与远端跟踪的 <远端>/main 外无它"
+  echo "✅ HEAD = main；git branch -a 除 main、远端跟踪的 <远端>/main 与指向它的远端 HEAD 外无它"
   return 0
 }
 
-# ── ③ 十二道门禁，按 ci.yml 同序 ───────────────────────────────────────────
+# ── ③ ci.yml 里那几道门禁，按同序跑完 ──────────────────────────────────────
 # ⚠️ 这里跑的是**从 ci.yml 当场抽出来的那几行原文**，不是本地另写的一套等价命令。
 # 「本地那套和 CI 那套慢慢长歪」是这份清单最容易犯的错，抽真源就没有这个可能。
 cell_gates() {
@@ -308,7 +356,9 @@ cell_gates() {
 # 工作树回归还是历史那笔欠账**。这一格把两条拆开各自取退出码，因为这两件事的处置完全不同：
 # · 工作树档红 ⇒ **真回归**，现在就得改；
 # · 只有历史档红 ⇒ 历史里那个泄漏 blob 还在，处置是那次一次性历史重写
-#   （见 `.superpowers/sdd/prepush/history-leak.md`），**不是放宽这道门禁**。
+#   （细节见 `.superpowers/sdd/prepush/history-leak.md`——⚠️ 同上，该目录**不随仓库推送**，
+#   公开仓的读者打不开它；命中的原文本身由 `scripts/scan-secrets.sh --history` 当场打出来，
+#   不依赖那份文件），**不是放宽这道门禁**。
 cell_secrets() {
   local wt hist
   echo "· 工作树档：bash scripts/scan-secrets.sh"
@@ -416,31 +466,41 @@ assert_ci_still_uses() { # $1 = 命令锚 $2 = 期望的日志路径
   return 0
 }
 
+# ⚠️ **两种红要分开说尾巴**（复评 F4）：那句「别把脚本里的数改成新的就完事」是这一格
+#   最值钱的一条护栏——人最想做的一步恰恰是「把基线改成日志里的实际值」，改完就绿。
+#   但它只对**数字对不上**那一种红成立。横幅缺失时数字明明是对的，把人指回 `EXPECT_*`
+#   那四行等于亲手把人引进坑（阶段 D 的教训：报文可以亲手把人引进坑）。
 check_log() { # $1 = 日志 $2 = 人话标签 $3 = 期望文件数 $4 = 期望用例数
-  local log="$1" label="$2" files="$3" tests="$4" bad=0 n
+  local log="$1" label="$2" files="$3" tests="$4" no_banner=0 bad_count=0 n
   if [[ ! -f $log ]]; then
     echo "❌ $label：日志 $log 不在。本脚本开头删过它一次 ⇒ 那一步根本没跑到 tee" >&2
     return 1
   fi
   if ! grep -qF "$BANNER" "$log"; then
     echo "❌ $label：日志里没有收集门禁的成功横幅，它可能被静默跳过了" >&2
-    bad=1
+    no_banner=1
   fi
   n=$(grep -acE "^ +Test Files +${files} passed \(${files}\)\$" "$log" || true)
   if [[ $n != 1 ]]; then
     echo "❌ $label：期望恰好一行「Test Files  ${files} passed (${files})」，实际 $n 行" >&2
-    bad=1
+    bad_count=1
   fi
   n=$(grep -acE "^ +Tests +${tests} passed \(${tests}\)\$" "$log" || true)
   if [[ $n != 1 ]]; then
     echo "❌ $label：期望恰好一行「Tests  ${tests} passed (${tests})」，实际 $n 行" >&2
-    bad=1
+    bad_count=1
   fi
-  if (( bad != 0 )); then
+  if (( bad_count != 0 )); then
     echo "   日志里实际那两行是：" >&2
     grep -aE '^ +(Test Files|Tests) ' "$log" >&2 || true
     echo "   ⚠️ 数字对不上不等于「把脚本里那个数改成新的」就完事：先弄清楚多/少的是哪几格。" >&2
     echo "   确认是有意增删之后，再回来改 scripts/prepush.sh 里 EXPECT_* 那四行。" >&2
+  fi
+  if (( no_banner != 0 )); then
+    echo "   ⚠️ 横幅缺失与本脚本里那四行基线数无关，改它们一个字都不会让横幅回来：" >&2
+    echo "      要查的是收集门禁（tests/global-setup.ts）这一趟为什么没跑到、或者输出为什么没进日志。" >&2
+  fi
+  if (( no_banner != 0 || bad_count != 0 )); then
     return 1
   fi
   echo "✅ $label：${files} 个文件 / ${tests} 格用例，横幅在"
@@ -459,10 +519,16 @@ run_cell "⑤" "无署名尾注、作者身份唯一"        cell_authorship
 run_cell "⑥" "测试数与横幅同时校验"           cell_counts
 
 # ── 逐格表 ──────────────────────────────────────────────────────────────────
+# ⚠️ **补齐的那一列必须是状态、不是标题**（复评 F9）：`printf` 的 `%-28s` 按**字节**补，
+#   而标题全是中日韩宽字符（一个字 3 字节、显示 2 列）⇒ 标题放在补齐位时四行列位全错。
+#   状态串（`PASS` / `FAIL(exit 1)` / `$MARK`）全是 ASCII，补齐对它是准的；
+#   标题挪到行尾，右边参差不齐但没有一列是错位的。
+#   这条由 `tests/unit/prepush-guard.test.ts` 的
+#   「逐格表的列位对得齐：补齐的那一列是 ASCII 状态，不是按字节补不准的中日韩标题」钉着。
 pass=0; expected=0; failed=0
 printf '\n══════════ 推送前逐格表 ══════════\n'
 for id in "${CELL_IDS[@]}"; do
-  printf '  %s %-28s %s\n' "$id" "${CELL_TITLE[$id]}" "${CELL_STATUS[$id]}"
+  printf '  %s %-28s %s\n' "$id" "${CELL_STATUS[$id]}" "${CELL_TITLE[$id]}"
   case "${CELL_STATUS[$id]}" in
     PASS)   pass=$((pass + 1)) ;;
     "$MARK") expected=$((expected + 1)) ;;

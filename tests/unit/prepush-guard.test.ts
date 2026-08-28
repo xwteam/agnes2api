@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { spawnSync, execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -79,6 +79,79 @@ function fixture(edit: (yml: string) => string): string {
   writeFileSync(p, edit(yml), "utf8");
   return p;
 }
+
+/* ── 逐字抠片段：探针与真扫描共用同一份判据 ───────────────────────────────────
+ *
+ * 下面几族用例跑的**不是这里另抄的一份等价物，是 `scripts/prepush.sh` 里那几行本身**：
+ * 按名字把一个函数（或末尾那段逐格表）从脚本里原样抠出来，配上它需要的那点前置，
+ * 做成一个能单跑的脚本。理由是这几格在整份脚本里跑一次要十几分钟（十二道全跑），
+ * 而它们各自要验的东西是纯逻辑。
+ *
+ * ⚠️ **抠不到要当场抛，不许静默跳过**：抠成空串的话，下面每一条断言都会退化成同义反复
+ * （「空脚本里没有 X」恒真）——这正是本仓「判据用错工具时不会报错，会静静地放行」那条。
+ */
+function fragment(re: RegExp, what: string): string {
+  const m = re.exec(readFileSync(PREPUSH, "utf8"));
+  if (!m) throw new Error(`prepush.sh 里抠不出${what} —— 判据坏了，不许静默跳过`);
+  return m[0];
+}
+
+/** 抠一个顶层函数：从 `名字() {` 那一行到第一行顶格的 `}`。 */
+const fnOf = (name: string): string =>
+  fragment(new RegExp(`^${name}\\(\\) \\{[^\\n]*\\n[\\s\\S]*?^\\}$`, "m"), `${name}()`);
+
+/** 抠一行顶层赋值（`MARK=…` / `BANNER=…` 这种），值也从真源来，不在这里手抄。 */
+const constOf = (name: string): string =>
+  fragment(new RegExp(`^${name}=.*$`, "m"), `${name}= 那一行`);
+
+function runBash(script: string, opts: { cwd?: string; args?: string[] } = {}) {
+  const r = spawnSync("bash", ["-c", script, "prepush-fragment", ...(opts.args ?? [])], {
+    encoding: "utf8",
+    cwd: opts.cwd,
+  });
+  return { code: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
+}
+
+const git = (cwd: string, ...args: string[]): string =>
+  execFileSync(
+    "git",
+    ["-c", "user.email=xwteam@xwteam.cn", "-c", "user.name=xwteam", ...args],
+    { cwd, encoding: "utf8" },
+  );
+
+/** 造一个只有 main 的真仓，再 `git clone` 一份出来 —— clone 那份是 ② 那一格的真形态。 */
+function makeRepos(): { root: string; src: string; clone: string } {
+  const root = mkdtempSync(join(tmpdir(), "prepush-repo-"));
+  const src = join(root, "src");
+  execFileSync("git", ["init", "-q", "-b", "main", src], { encoding: "utf8" });
+  writeFileSync(join(src, "a.txt"), "hi\n", "utf8");
+  git(src, "add", "a.txt");
+  git(src, "commit", "-qm", "init");
+  git(root, "clone", "-q", src, join(root, "clone"));
+  return { root, src, clone: join(root, "clone") };
+}
+
+/** 末尾那段逐格表 + 整体退出码，连同它真正的 `MARK=` 一起抠出来单跑。 */
+const TAIL_MARKER = "# ── 逐格表 ─";
+function tailScript(rows: readonly (readonly [string, string, string])[]): string {
+  const s = readFileSync(PREPUSH, "utf8");
+  const i = s.indexOf(TAIL_MARKER);
+  if (i < 0) throw new Error("prepush.sh 里找不到逐格表那一段 —— 判据坏了，不许静默跳过");
+  return [
+    "set -uo pipefail",
+    constOf("MARK"),
+    `CELL_IDS=(${rows.map(([id]) => `"${id}"`).join(" ")})`,
+    `declare -A CELL_TITLE=(${rows.map(([id, t]) => `[${id}]="${t}"`).join(" ")})`,
+    `declare -A CELL_STATUS=(${rows.map(([id, , st]) => `[${id}]="${st}"`).join(" ")})`,
+    s.slice(i),
+  ].join("\n");
+}
+
+const MARK_VALUE = (() => {
+  const m = /^MARK="([^"]+)"$/m.exec(readFileSync(PREPUSH, "utf8"));
+  if (!m) throw new Error("prepush.sh 里读不出 MARK 的值 —— 判据坏了");
+  return m[1]!;
+})();
 
 describe("prepush.sh 跑的门禁是从 ci.yml 当场抽的", () => {
   it("真 ci.yml：条数、编号顺序、步名与 ci.yml 自己写的逐条对齐", () => {
@@ -213,10 +286,22 @@ describe("prepush.sh 自己的形态：逐格跑完再汇总，预期红不许�
     expect(body!).toContain('return "$EXPECTED_RED"');
   });
 
+  /**
+   * ⚠️ **这一格只查源码字面，它挡不住「块里那句 `exit 1` 被改掉」**（复评 F1 实测：
+   * 把 `exit 1` 改成 `exit 0`，脚本从此对预期红一路放行、屏幕上照打「⇒ 不该推」却 exit 0，
+   * 而这一格仍然全绿）。所以块里那一行现在也一起断言，**并且**下面
+   * 「预期红也算没过：把逐格表那几行逐字抠出来跑，一格预期红 ⇒ 整体退出码 1」
+   * 那一格真的把它跑起来验退出码——字面与行为两侧都钉住。
+   */
   it("预期红也算没过：只要有一格非 PASS，整体退出码就是 1", () => {
     const s = src();
     expect(s).toMatch(/if \(\( failed != 0 \|\| expected != 0 \)\); then/);
     expect(s).toContain("EXPECTED-RED-UNTIL-TASK-35");
+    const block = /\nif \(\( failed != 0 \|\| expected != 0 \)\); then\n([\s\S]*?)\nfi\n/.exec(s)?.[1];
+    expect(block, "那个 if 块没抠出来，下面这条等于白写").toBeTruthy();
+    expect(block!, "块里必须留着「⇒ 不该推」那句话，否则抠出来的不是这个块").toContain("不该推");
+    expect(block!, "块里那句 exit 1 没了 ⇒ 三格预期红一路放行，屏幕照打「不该推」而退出码是 0")
+      .toMatch(/^ *exit 1$/m);
   });
 
   /**
@@ -239,5 +324,243 @@ describe("prepush.sh 自己的形态：逐格跑完再汇总，预期红不许�
     expect(body!).toContain("passed \\(${files}\\)");
     expect(body!).toContain("passed \\(${tests}\\)");
     expect(body!.match(/\[\[ \$n != 1 \]\]/g)?.length).toBe(2);
+  });
+
+  /**
+   * 复评 F6：**逻辑**早就是从步名 `N/M` 推的（上面几格实测过它跟得上 13 道），
+   * 但**话**曾经写死在六处，其中一处是会打到屏幕上的 ❌ 报文。
+   * 本仓已有同族纪律（`tests/unit/scripts-guard.test.ts` 的
+   * 「ci.yml 的注释行里不许写门禁的绝对序号」），只是那条判据只扫 `ci.yml`、够不着 `.sh`。
+   *
+   * ⚠️ **射程写明白，别读成「任何数字都不许」**：这里禁的是「十…道」与两位以上阿拉伯数字
+   * 加「道」。个位数（写成「九道」）不在射程里——今天的门禁数是两位，缩到个位是另一回事，
+   * 真发生了要回来扩这条判据。下面的正向控制用**这份脚本昨天真的写过的那句原话**，
+   * 反向控制用**它今天真的还写着的那几种写法**。
+   */
+  it("脚本正文里不许写死门禁的总道数：那个数改的那天，写死的话会静静变假", () => {
+    const s = src();
+    const HARDCODED = /(?:十[一二三四五六七八九]?|\d{2,}\s?)道/g;
+    // 正向控制：判据认得出这个形态（两句都是本文件历史上真的写过的）。
+    expect("它是把已有的十二道按 ci.yml 的顺序重跑一遍".match(HARDCODED)).toEqual(["十二道"]);
+    expect("实际只抽到 13 道".match(HARDCODED)).toEqual(["13 道"]);
+    // 反向控制：脚本今天真的还写着这几句，一句都不许被误伤。
+    const innocent = ["那一道红", "还有第二道红", "少的那几道不会被跑到", "每一道的退出码"];
+    for (const ok of innocent) {
+      expect(s, `反向控制选了一句脚本里其实没有的话「${ok}」，这条控制是空的`).toContain(ok);
+      expect(ok.match(HARDCODED), `误伤了脚本里真实存在的写法「${ok}」`).toBeNull();
+    }
+    expect(s.match(HARDCODED) ?? [], "脚本正文里把门禁总道数写死了").toEqual([]);
+  });
+
+  /**
+   * 复评 F10：❌ 的解释走 stderr、末尾那张逐格表走 stdout ⇒ `> log` / `| tee` 留下来的
+   * 那份日志里只剩一张说「红了」却不说为什么的表。整跑档因此把两股并成一股。
+   * ⚠️ 但**干跑档不许一起并**：`--print-gates` 是给这份测试读的机器档，
+   * 上面「反向控制之二：判据对真 ci.yml 不乱红」断言它 stderr 恰好 0 字节、
+   * 「反向控制：ci.yml 少一步 ⇒ 干跑非 0 并点名少了几道」断言报文落在 stderr——
+   * 合并会把这两条一起弄坏。所以这里连**位置**一起钉：合并必须在参数分派之后。
+   */
+  it("整跑档把 stderr 并进 stdout，且这一步在参数分派之后（干跑档的两股流不许被合并）", () => {
+    const s = src();
+    const iExec = s.indexOf("\nexec 2>&1\n");
+    expect(iExec, "整跑档没合并两股流 ⇒ 留档的日志里会只剩一张不说理由的表").toBeGreaterThan(-1);
+    const iEsac = s.indexOf("\nesac\n");
+    expect(iEsac, "参数分派那个 case 块没找到，下面这条等于白写").toBeGreaterThan(-1);
+    expect(iExec, "合并写在了参数分派之前 ⇒ 干跑档的 stderr 也被并走，上面那两条反向控制跟着坏")
+      .toBeGreaterThan(iEsac);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 下面这一族**逐字抠出脚本里的那几行真跑**（见文件中部 `fragment()` 那段说明）：
+ * 整份脚本跑一次是十几分钟（十二道全跑），而这几格各自要验的是纯逻辑。
+ * ────────────────────────────────────────────────────────────────────────── */
+
+describe("prepush.sh 的逐格表：预期红不许被吃掉，列位不许错开", () => {
+  const rows = [
+    ["①", "工作树干净", "PASS"],
+    ["③", "门禁按 ci.yml 同序跑完", MARK_VALUE],
+    ["⑥", "测试数与横幅同时校验", "FAIL(exit 1)"],
+  ] as const;
+
+  /**
+   * 复评 F1 那条的行为侧：上一版只断言源码里有那个 `if`，把块里的 `exit 1` 改成 `exit 0`
+   * 之后守卫仍然全绿——而那正是这份产物最值钱的一句承诺（「给自己开豁免的清单，
+   * 下一次就会被人当成绿的」）。这里把那几行真跑起来看退出码。
+   */
+  it("预期红也算没过：把逐格表那几行逐字抠出来跑，一格预期红 ⇒ 整体退出码 1", () => {
+    const allPass = rows.map(([id, t]) => [id, t, "PASS"] as const);
+    const base = runBash(tailScript(allPass));
+    expect(base.code, `六格全过时不该红：\n${base.stdout}${base.stderr}`).toBe(0);
+    expect(base.stdout).toContain("六格全过");
+
+    const oneExpected = runBash(tailScript([allPass[0]!, rows[1]!, allPass[2]!]));
+    expect(oneExpected.code, "有一格是已登记的预期红，整体退出码却不是 1 ⇒ 豁免被吃掉了")
+      .toBe(1);
+    expect(oneExpected.stdout).toContain("不该推");
+    expect(oneExpected.stdout).toContain(`1 格 ${MARK_VALUE}`);
+
+    const oneFail = runBash(tailScript([allPass[0]!, allPass[1]!, rows[2]!]));
+    expect(oneFail.code, "有一格真 FAIL，整体退出码却不是 1").toBe(1);
+    expect(oneFail.stdout).toContain("1 格 FAIL");
+  });
+
+  /**
+   * 复评 F9：`printf` 的 `%-28s` 按**字节**补齐，而标题全是中日韩宽字符
+   *（一个字 3 字节、显示 2 列）⇒ 标题放在补齐位时行与行的列位全错。
+   * 现在补齐位放的是 ASCII 状态串，标题挪到行尾。
+   */
+  it("逐格表的列位对得齐：补齐的那一列是 ASCII 状态，不是按字节补不准的中日韩标题", () => {
+    // 夹具自守：几个标题的字节长度必须不一样，否则「按字节补」这件事在这里根本显不出来。
+    const byteLens = new Set(rows.map(([, t]) => Buffer.byteLength(t, "utf8")));
+    expect(byteLens.size, "夹具的标题字节长度全一样 ⇒ 这一格判不出「按字节补齐」").toBeGreaterThan(1);
+    expect(MARK_VALUE.length, "预期红那个标记比补齐宽度还长 ⇒ 那一行会把后面顶开").toBeLessThan(28);
+
+    const r = runBash(tailScript(rows));
+    const lines = r.stdout.split("\n");
+    // ⚠️ **两列都要量**：只量标题那一列判不出这件事——把标题挪回补齐位时它恒在第 4 列，
+    //   错开的是它**后面**那一列。（这条判据第一版正是只量了标题，把 M-TABLE 那次变异
+    //   放行了：判据用错工具时不会报错，会静静地放行。）
+    const columnStarts = (pick: (row: (typeof rows)[number]) => string): number[] =>
+      rows.map((row) => {
+        const [, title] = row;
+        const line = lines.find((l) => l.includes(title));
+        expect(line, `逐格表里没有「${title}」那一行`).toBeTruthy();
+        const at = line!.indexOf(pick(row));
+        expect(at, `「${pick(row)}」在那一行里找不到`).toBeGreaterThan(0);
+        return at;
+      });
+    const titleAt = columnStarts(([, title]) => title);
+    const statusAt = columnStarts(([, , status]) => status);
+    expect(new Set(titleAt).size, `标题这一列的起始列位对不齐（各行是 ${titleAt.join(" / ")}）`).toBe(1);
+    expect(
+      new Set(statusAt).size,
+      `状态这一列的起始列位对不齐（各行是 ${statusAt.join(" / ")}）—— 补齐位上放的是按字节补不准的中日韩标题`,
+    ).toBe(1);
+  });
+});
+
+describe("prepush.sh 的 ② 分支格：clone 出来的仓也得是绿的", () => {
+  const script = ["set -uo pipefail", fnOf("cell_branch"), "cell_branch"].join("\n");
+
+  /**
+   * 复评 F2：`refs/remotes/origin/HEAD` 的 `%(refname:short)` 是**裸的 `origin`**，
+   * 上一版按 `<远端>/main` 拼的放行名单认不出它 ⇒ 任何一个 `git clone` 出来的仓里
+   * ② 都会红，并劝人「删掉分支「origin」」——那不是分支，删不掉。
+   * 公开仓读者第一件事就是 clone，所以这是屏幕上会被看见的那一类错。
+   */
+  it("② cell_branch 在 clone 出来的仓里是绿的：远端 HEAD 那条符号引用不是「开了一个分支」", () => {
+    const { root, src, clone } = makeRepos();
+    try {
+      // 先钉住这一格真的在验那个危险形态：clone 里确实躺着一条 short 形是裸 `origin` 的 ref。
+      const shorts = git(clone, "branch", "-a", "--format=%(refname:short)").split("\n");
+      expect(shorts, "clone 里没有那条裸 `origin` ⇒ 这一格验的不是复评 F2 那个形态").toContain("origin");
+
+      // 反向控制：没有远端的裸仓（本仓今天的形态）本来就该绿。
+      const bare = runBash(script, { cwd: src });
+      expect(bare.code, `裸仓（只有 main、无远端）不该红：\n${bare.stdout}${bare.stderr}`).toBe(0);
+
+      const cloned = runBash(script, { cwd: clone });
+      expect(cloned.code, `clone 出来的仓被判红了：\n${cloned.stdout}${cloned.stderr}`).toBe(0);
+      expect(cloned.stdout).toContain("HEAD = main");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("② 真多开了一个分支照样红，并点名它 —— 放行远端 HEAD 不等于放行一切", () => {
+    const { root, clone } = makeRepos();
+    try {
+      git(clone, "branch", "feat/x");
+      const r = runBash(script, { cwd: clone });
+      expect(r.code, "多了一个真分支却没红 ⇒ 放行条件被放得太宽").toBe(1);
+      expect(r.stderr).toContain("除 main 之外还有分支");
+      expect(r.stderr).toContain("feat/x");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("② 远端 HEAD 指向的不是 <远端>/main ⇒ 红，且报文说清它不是一个分支、删不掉", () => {
+    const { root, clone } = makeRepos();
+    try {
+      git(clone, "update-ref", "refs/remotes/origin/dev", "refs/remotes/origin/main");
+      git(clone, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/dev");
+      const r = runBash(script, { cwd: clone });
+      expect(r.code, "远端 HEAD 指向别处也照样放行 ⇒ 放行条件没有收窄").toBe(1);
+      expect(r.stderr).toContain("远端 HEAD 符号引用");
+      expect(r.stderr, "报文得给出它自己的处置办法，不是「删分支」").toContain("set-head");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("prepush.sh 的报文：方向要说对，别把人指到与这次失败无关的那几行上", () => {
+  /**
+   * 复评 F3：上一版「多抽到一道」和「少抽到一道」共用同一句「少的那几道不会被跑到」。
+   * 抽到的是**多**了一道时，真正要改的是步名里的分母；照那句话去找「少掉的那几道」是死路。
+   */
+  it("抽到的道数与步名说的对不上时，报文得说对方向（多了 / 少了）", () => {
+    const more = printGates(
+      fixture((yml) => `${yml.replace(/\n?$/, "\n")}      - name: 13/12 变异追加的一道\n        run: true\n`),
+    );
+    expect(more.code, "多出一道却照样 exit 0").not.toBe(0);
+    expect(more.stderr).toContain("步名说共");
+    expect(more.stderr, "多抽到一道时说成「少的那几道」⇒ 照报文去找的是一件不存在的事")
+      .toContain("多出来的那几道");
+    expect(more.stderr).not.toContain("少的那几道");
+
+    const fewer = printGates(fixture((yml) => yml.replace(/^ {6}- name: 12\/12 .*\n {8}run: .*\n?/m, "")));
+    expect(fewer.code, "少了一道却照样 exit 0").not.toBe(0);
+    expect(fewer.stderr).toContain("步名说共");
+    expect(fewer.stderr).toContain("少的那几道");
+    expect(fewer.stderr).not.toContain("多出来的那几道");
+  });
+
+  /**
+   * 复评 F4：`check_log` 的尾巴无条件把人指回 `EXPECT_*` 那四行。
+   * 那句劝阻是这一格最值钱的护栏（人最想做的一步恰恰是「把基线改成日志里的实际值」，
+   * 改完就绿），但它只对**数字对不上**那一种红成立；横幅缺失时数字明明是对的。
+   */
+  const checkLog = ["set -uo pipefail", constOf("BANNER"), fnOf("check_log"), 'check_log "$@"'].join("\n");
+  const FILES = 133;
+  const TESTS = 3632;
+  const synthLog = (opts: { banner?: boolean; tests?: number } = {}): string => {
+    const lines = [
+      ...(opts.banner === false ? [] : ["[collection-guard] ✅ 逐一核对通过"]),
+      "",
+      ` Test Files  ${FILES} passed (${FILES})`,
+      `      Tests  ${opts.tests ?? TESTS} passed (${opts.tests ?? TESTS})`,
+      "",
+    ];
+    const dir = mkdtempSync(join(tmpdir(), "prepush-log-"));
+    const p = join(dir, "test.log");
+    writeFileSync(p, lines.join("\n"), "utf8");
+    return p;
+  };
+  const runCheckLog = (log: string) =>
+    runBash(checkLog, { args: [log, "夹具运行时", String(FILES), String(TESTS)] });
+
+  it("check_log：数字对不上时，把人指向 EXPECT_* 那四行（并先把日志里的实际值摆出来）", () => {
+    // 反向控制先跑：横幅在、两行数字都对 ⇒ 绿、stderr 一个字都没有。
+    const base = runCheckLog(synthLog());
+    expect(base.code, `真形态的合成日志被判红了：\n${base.stdout}${base.stderr}`).toBe(0);
+    expect(base.stderr).toBe("");
+
+    const r = runCheckLog(synthLog({ tests: TESTS - 1 }));
+    expect(r.code, "少一格用例却没红").toBe(1);
+    expect(r.stderr).toContain("日志里实际那两行是");
+    expect(r.stderr).toContain("EXPECT_");
+  });
+
+  it("check_log：只因横幅缺失变红时，不许把人指向 EXPECT_* —— 那四行与这次失败无关", () => {
+    const r = runCheckLog(synthLog({ banner: false }));
+    expect(r.code, "横幅没了却没红").toBe(1);
+    expect(r.stderr).toContain("收集门禁");
+    expect(r.stderr, "两行数字明明都对，把人指回 EXPECT_* 等于亲手把人引进坑")
+      .not.toContain("EXPECT_");
+    expect(r.stderr, "数字没问题，却把日志里那两行摆出来 ⇒ 又把人的注意力引回数字上")
+      .not.toContain("日志里实际那两行是");
   });
 });

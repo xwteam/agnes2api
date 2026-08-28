@@ -32,10 +32,12 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  *   ⚠️ **处数不写进这段话**（复评 F9：上一版写「三处」，而报文实际摆出来的是六个取值，
  *   且随 workflow 数量增长）——要处数就去看报文，它把每一处逐个摆出来。
  *   ⚠️ 判据是**这些取值彼此相等**，不是「有没有 `engines` 字段」——后者填个 `>=1` 也能绿。
- * · **(e) tracked 文档里对工作账本 `.superpowers` 的引用必须自带溯源限定**。
+ * · **(e) tracked 的 `*.md` 与 `*.sh` 里对工作账本 `.superpowers` 的引用必须自带溯源限定**。
  *   ⚠️ **判据不是「不许引用」**：那些引用是真实的溯源记录，删掉等于抹掉出处。
  *   判据是「引用它的文件必须自己说清读者打不开」——把一条死链变成一条诚实的标注。
  *   该目录被 `.gitignore` 排除（`git ls-files .superpowers` = 0），公开仓读者点不开它。
+ *   ⚠️ **`.sh` 那一半是 Task 34 复评 F5 补的**，理由写在 `trackedProse()` 上：
+ *   `.md` 与 `.ts/.js/.mjs` 两侧各有门禁，`.sh` 正好漏在中间，于是同一个问题被原样搬了进去。
  *   ⚠️ 限定串是一个**候选集**（中英各一版），且报文把候选逐条摆出来。复评 F5 实测出
  *   上一版的两个毛病：文档里明明写了「读者打不开它」，报文却断言「却没说读者打不开」；
  *   而真正要求的那个字面串在报文里一次都没出现，且只认中文——英文文档要变绿只能塞中文。
@@ -80,9 +82,10 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  * · (d) 只查**这些取值彼此相等**，不查这个大版本本身是不是还在维护期。
  * · (e) 只查**「引用了」与「有没有那句限定」这两件事的共现**，不查那句限定写在哪儿。
  *   把限定塞进文件最后一行、读者读到死链时根本没看到它——这里照样绿。
- *   ⚠️ 更要紧的一条：它**只认 tracked 的 `*.md`**。同一条死引用写进 `src/**.ts` 的注释里
- *   它一眼都不看（那一侧归 `scripts/check-comment-refs.mjs` 那道门禁管，而它
- *   的 `REPO_PREFIXES` 里没有 `.superpowers/`，两边合起来仍有这个洞）。
+ *   ⚠️ 更要紧的一条：它**只认 tracked 的 `*.md` 与 `*.sh`**。同一条死引用写进 `src/**.ts`
+ *   或 `admin-ui/**.js` 的注释里它一眼都不看（那一侧归 `scripts/check-comment-refs.mjs`
+ *   那道门禁管，而它的 `REPO_PREFIXES` 里没有 `.superpowers/`，两边合起来仍有这个洞）。
+ *   `*.yml` 同样两边都不在射程里。
  * · (f) 只查**路径解析得开**，不查那份文件里真有它被引来说明的那件事；`pnpm` 那一半只查
  *   script 名字在不在，不查参数、也不查这个命令今天跑不跑得通。
  *   ⚠️ 还有一类它**故意**不收：首段不是仓里的顶层目录、末段又不带扩展名的 code span
@@ -295,11 +298,24 @@ const PLAN = "docs/design/2026-08-22-agnes2api-p3e-i18n-and-closeout-plan.md";
 /** 报文里把候选逐条摆出来——复评 F5：真正的要求在上一版报文里一次都没出现过。 */
 const notesHint = () => NOTES.map((n) => `「${n}」`).join(" 或 ");
 
-function trackedMarkdown(): string[] {
-  const raw = execFileSync("git", ["ls-files", "-z", "--", "*.md"], { encoding: "utf8" });
+/**
+ * 射程 = tracked 的 `*.md` **与 `*.sh`**。
+ *
+ * ⚠️ **`.sh` 那一半是 Task 34 复评 F5 补的**：那一轮在 `scripts/prepush.sh` 的注释里新写下
+ * 两条指向 `.superpowers/…` 的引用，而两边的门禁正好把 `.sh` 漏在中间——本格上一版
+ * 只认 tracked 的 `*.md`，`scripts/check-comment-refs.mjs` 的 `walk()` 又自己写明
+ * 「`.sh` 与 `.yml` 一个文件都不打开」⇒ [V7] 刚在 `.md` 那一侧解决掉的问题被原样搬进了 `.sh`，
+ * **没有任何机器看得见**。
+ * ⚠️ 剩下的洞照旧登记在文件头：`src/**.ts` / `admin-ui/**.js` 的注释仍然不在任何一侧的射程里。
+ */
+function trackedProse(): string[] {
+  const raw = execFileSync("git", ["ls-files", "-z", "--", "*.md", "*.sh"], { encoding: "utf8" });
   const files = raw.split("\0").filter(Boolean);
   if (files.length === 0) {
-    throw new Error("`git ls-files -- '*.md'` 一个文件都没列出来 —— 扫描坏了，不许静默当成空集");
+    throw new Error("`git ls-files -- '*.md' '*.sh'` 一个文件都没列出来 —— 扫描坏了，不许静默当成空集");
+  }
+  if (!files.some((f) => f.endsWith(".sh"))) {
+    throw new Error("射程里一个 `.sh` 都没有 —— 那一半被谁收窄掉了，不许静默放行");
   }
   return files;
 }
@@ -653,7 +669,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   it(REAL_E, () => {
-    const failures = ledgerUnqualified(trackedMarkdown(), realRead, realExists);
+    const failures = ledgerUnqualified(trackedProse(), realRead, realExists);
     expect(
       failures,
       `这些文档引用了 ${LEDGER}，却没有在同一份文件里写出溯源限定（${notesHint()} 任一即可）：\n${failures.join("\n")}`,
@@ -661,13 +677,40 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   it("(e) 射程自守：真的扫到了引用方，而且本计划文件在射程内 —— 它自己就是引用大户", () => {
-    const referrers = ledgerReferrers(trackedMarkdown(), realRead, realExists);
+    const referrers = ledgerReferrers(trackedProse(), realRead, realExists);
     expect(referrers.length, "一份都没扫到，扫描多半写坏了").toBeGreaterThan(0);
     expect(referrers, "本计划文件掉出了射程 —— 判据放过了自己").toContain(PLAN);
   });
 
+  /**
+   * Task 34 复评 F5 的正面回应。`scripts/prepush.sh` 的注释里有两条真实的工作账本引用，
+   * 它必须落在射程里——否则「`.md` 那一侧解决掉的问题被原样搬进 `.sh`」会再发生一次。
+   * ⚠️ 这一格钉的是**射程**（`.sh` 真的被扫到了），不是那两条引用本身；
+   * 它们合不合规由上面那格真扫描判。
+   */
+  it("(e) 射程含 tracked 的 `*.sh`：脚本注释里的工作账本引用同样要被扫到", () => {
+    const files = trackedProse();
+    const shellFiles = files.filter((f) => f.endsWith(".sh"));
+    expect(shellFiles, "射程里一个 `.sh` 都没有 —— 那一半被收窄掉了").not.toEqual([]);
+    expect(
+      ledgerReferrers(files, realRead, realExists),
+      "scripts/prepush.sh 掉出了射程 —— 它的注释里真的引用着工作账本",
+    ).toContain("scripts/prepush.sh");
+  });
+
+  it("(e) 该红时红（`.sh` 侧）：往脚本里加一条 .superpowers 引用而不加那句限定 —— 点名它", () => {
+    const files = trackedProse();
+    probeBase(ledgerUnqualified(files, realRead, realExists), REAL_E);
+    const victim = "scripts/scan-secrets.sh";
+    expect(files, "选错了变异对象：它不在 tracked *.sh 里").toContain(victim);
+    expect(ledgerReferrers(files, realRead, realExists), "选错了变异对象：它今天本来就引用了工作账本")
+      .not.toContain(victim);
+    const mutated = `${realRead(victim)}\n# （变异）出处见 ${LEDGER}/sdd/prepush/history-leak.md。\n`;
+    expect(ledgerUnqualified(files, patchRead(realRead, victim, mutated), realExists)).toEqual([victim]);
+  });
+
   it("(e) 该红时红：新加一条 .superpowers 引用而不加那句限定 —— 点名新加的那一份", () => {
-    const files = trackedMarkdown();
+    const files = trackedProse();
     probeBase(ledgerUnqualified(files, realRead, realExists), REAL_E);
     const victim = "README.md";
     expect(ledgerReferrers(files, realRead, realExists), "选错了变异对象：README.md 今天本来就引用了工作账本")
@@ -681,7 +724,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
    * 这一格与上一格共用同一份判据、同一个变异对象，只差那句限定的语言。
    */
   it("(e) 英文候选也算数：同一条引用配一句英文限定 —— 不许红", () => {
-    const files = trackedMarkdown();
+    const files = trackedProse();
     probeBase(ledgerUnqualified(files, realRead, realExists), REAL_E);
     const victim = "README.md";
     const english = NOTES.find((n) => !/[\u4e00-\u9fff]/.test(n));
@@ -691,7 +734,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   it("(e) 缺文件给人话：git 索引里有而磁盘上读不到时不抛裸 ENOENT，另立一格说清楚", () => {
-    const files = trackedMarkdown();
+    const files = trackedProse();
     const gone = "SECURITY.md";
     expect(files, "选错了对象：SECURITY.md 不在 tracked *.md 里").toContain(gone);
     const hidden = hideFile(realExists, gone);
@@ -873,7 +916,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   it("(e) 不放过自己：把那句限定从本计划文件里删掉 —— 点名本计划文件", () => {
-    const files = trackedMarkdown();
+    const files = trackedProse();
     probeBase(ledgerUnqualified(files, realRead, realExists), REAL_E);
     let mutated = realRead(PLAN);
     for (const n of NOTES) mutated = mutated.split(n).join("（限定被变异抹掉了）");
