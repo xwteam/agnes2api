@@ -182,8 +182,19 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
 
   it("两者都长在各自那一步的 YAML 块里，不是只在 # 注释里被提过一句", () => {
     const yml = readFileSync(".github/workflows/ci.yml", "utf8");
+    // ⚠️ **整行注释与行尾内联注释都要剥，只剥整行是实测过的 fail open。**
+    // 第一版只删 `l.trim().startsWith("#")` 的整行，复评当场用两处内联注释把这一格喂饱：
+    // 把历史那条命令改写成「命令 + 两个空格 + `#` 一段提到它的话」（`bash -c 'echo A  # echo B'`
+    // 实测只打 A ⇒ 那条命令根本不跑），以及把 checkout 那一行改成「浅仓的值 + `#` 一句
+    // 「曾经是全克隆」」（YAML 解出来就是浅仓）——两次都 20 passed 全绿，而第二次命中的
+    // 正是下面那条断言自己写的失败报文。「空白 + `#`」是 YAML 与 shell 共同的行尾注释
+    // 形态，一条规则两处都砍得掉。
     const stripHashComments = (s: string) =>
-      s.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+      s
+        .split("\n")
+        .filter((l) => !l.trim().startsWith("#"))
+        .map((l) => l.replace(/\s+#.*$/, ""))
+        .join("\n");
 
     // **反向控制：剥注释这一步必须真的剥掉内容。** 它要是个 no-op（或者写成了只删空行），
     // 下面三条就退化成上面那一格的同义反复，而「注释里写一句就算数」那个洞会原样留着。
@@ -195,6 +206,18 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
       stripHashComments(yml),
       "剥 # 注释这一步是个 no-op，下面三条等于白写",
     ).not.toContain(CHECKOUT_NOTE);
+
+    // **反向控制之二：剥注释不许把不带 `#` 的行吃坏。**「砍行尾注释」是按正则下手的，
+    // 写歪一点（比如漏掉 `\s+`、或者贪到整行）就会把真源行一起削掉，而上面那条
+    // no-op 反向控制**只管它剥得够不够，不管它剥过了头**。这两行是 ci.yml 里真实
+    // 存在的、不带任何 `#` 的行。
+    const stripped = stripHashComments(yml);
+    expect(stripped, "剥注释把 `with: { version: 9 }` 这一行也削掉了 —— 砍行尾注释下手过重").toContain(
+      "with: { version: 9 }",
+    );
+    expect(stripped, "剥注释把 `run: node scripts/build-ui.mjs` 这一行也削掉了 —— 砍行尾注释下手过重").toContain(
+      "run: node scripts/build-ui.mjs",
+    );
 
     // 期望值都是手写字面量。右边界用「下一个同缩进的 `- `」，**不是固定长度的窗口**
     // ——本文件最后那一格记着固定窗口越界吃到下一步的实测。
@@ -217,6 +240,61 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
     expect(scan, "凭据扫描那一步缺 shell: bash ⇒ 两条命令的中断行为要去赌 runner 的默认 shell").toContain(
       "shell: bash",
     );
+
+    // 「砍行尾注释」有代价：`run:` 块里将来若出现**合法**的行尾 `#`（echo 一段带 `#`
+    // 的文本、或者 shell 里的真注释），会被连内容一起砍掉。这一格只会因此变**更严**，
+    // 不会漏；但"今天一个都没有"这句话必须自己会红——下面这条就是它的测法。
+    // 排在三条块断言之后是有意的：内联注释那两种变异应当先被上面点名到具体那一行，
+    // 而不是被这条笼统的前提断言抢先。
+    const inlineHash = yml
+      .split("\n")
+      .flatMap((l, i) =>
+        l.trim() !== "" && !l.trim().startsWith("#") && /\s#/.test(l) ? [`${i + 1}: ${l.trim()}`] : [],
+      );
+    expect(
+      inlineHash,
+      "ci.yml 的非注释行里出现了行尾 `#`：上面剥注释那一步会把它连内容一起砍掉。"
+      + "要么把这个 `#` 改写掉，要么回来把剥法改成分方言解析"
+      + "（YAML 与 shell 的引号规则不一样，那是另一件事）",
+    ).toEqual([]);
+  });
+
+  /**
+   * ── 历史那一档的红，必须在 Actions 日志里自报「这是预期」──────────────────────
+   *
+   * `#` 注释**进不了 Actions 日志**（复评实测：这一步的 `::error::` / `::notice::`
+   * 注解数是 0），而历史那一档在历史被重写干净之前**必红**。于是第一个看到红 CI 的人
+   * 拿到的全部信息就是 stderr 那几行 ❌——而 ci.yml 里"这是已登记的预期"那句话
+   * 只写在 `#` 注释里，他一个字也看不到。**最省事的处置就变成了把这道门禁放宽。**
+   *
+   * ⚠️ **判据锚的是注解前缀，不是那句话本身**：话会改，`::error::` 这个前缀才是它
+   * 能不能出现在日志里的全部条件。
+   * ⚠️ **恰好一条，不是至少一条**：多一条就意味着工作树那一条也被同一句"这是预期"
+   * 盖住了，而工作树那一档红了是真回归。下面第二条断言从另一面钉同一件事——
+   * 工作树那一条必须仍是**裸命令**。
+   */
+  it("历史那一档失败时会在日志里自报「这是预期」，工作树那一条刻意不带注解", () => {
+    const yml = readFileSync(".github/workflows/ci.yml", "utf8");
+    const i = yml.indexOf("name: 2/12 凭据扫描");
+    expect(i, "ci.yml 里找不到「name: 2/12 凭据扫描」").toBeGreaterThan(-1);
+    const end = yml.indexOf("\n      - ", i + 1);
+    const lines = yml
+      .slice(i, end === -1 ? yml.length : end)
+      .split("\n")
+      .map((l) => l.trim());
+
+    const annotations = lines.filter((l) => l.startsWith('echo "::error::'));
+    expect(
+      annotations.length,
+      `凭据扫描那一步的 ::error:: 注解有 ${annotations.length} 条，不是恰好一条。`
+      + "0 条 ⇒ 历史那一档的红在日志里没有任何「这是已登记的预期」的说明（# 注释进不了日志）；"
+      + "2 条以上 ⇒ 工作树那一档的红也被说成了预期，而它是真回归",
+    ).toBe(1);
+
+    expect(
+      lines,
+      "工作树那一条不再是裸命令了：它红了就是真回归，不该被历史那一档的「这是预期」盖住",
+    ).toContain("bash scripts/scan-secrets.sh");
   });
 });
 

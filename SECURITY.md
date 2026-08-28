@@ -22,8 +22,11 @@ commitment (see the disclaimer in [LICENSE](LICENSE)).
 **"No credentials in the repository" is a repository discipline. It is not a statement about
 your deployment.** CI enforces it with `scripts/check-no-binary.mjs` (no tracked file may be
 binary, because a binary file is a blind spot for the next step) and `scripts/scan-secrets.sh`
-(tracked and untracked files are scanned for key-shaped strings and for `IP:PORT` pairs). A
-build fails if either finds something. That is the entire claim.
+(tracked and untracked files are scanned for key-shaped strings, for `IP:PORT` pairs, and for
+bare IP addresses outside a small allowlist that the script documents line by line). CI runs
+that scanner twice: once over the working tree, and once over reachable git history as well —
+blobs, commit messages and tag messages — because a push carries history, not the working
+tree. A build fails if either finds something. That is the entire claim.
 
 Those steps run on every pull request and on pushes to the branches listed in the `on:` block
 of [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — read that block rather than this
