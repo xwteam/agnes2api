@@ -9,7 +9,7 @@ import { UPSTREAM_FACTS, type UpstreamFact } from "../../src/core/admin/upstream
 import { MODEL_CATALOG, PROTOCOLS, VIDEO_TASK_ID_SHAPE } from "../../src/core/admin/protocol-catalog.js";
 // ADMIN.md 那一组的期望值一律从这些真源常量派生，不手写字面量。
 import { ADMIN_TOKEN_MIN_LENGTH } from "../../src/http/admin/auth.js";
-import { MAX_IMPORT_KEYS } from "../../src/http/admin/handlers/keys-write.js";
+import { MAX_IMPORT_KEYS, PATCH_FIELDS } from "../../src/http/admin/handlers/keys-write.js";
 import { EVENT_KEY_PREFIX, EVENT_WINDOW_MS, EVENT_WINDOW_RETAIN } from "../../src/core/admin/event-ring.js";
 import { USAGE_DAY_RETAIN, USAGE_KEY_PREFIX, USAGE_SLOTS } from "../../src/core/admin/usage-stats.js";
 // P3e Task 30：「重置到底重置了什么」那张表的键名**一律从真源 import**，
@@ -3734,6 +3734,88 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
  * ⚠️ **能与不能，一句话写清**：本组能证明「五份各自写着那句话、而且没有互相顶替」，
  * **不能**证明那句话说得对、也不能证明五份说的是同一件事——译文准确性今天仍靠人。
  */
+/**
+ * ── 「每语言一个 token」这套锚的两个纯判据（模块作用域）─────────────────────
+ *
+ * ⚠️ **它们住在模块作用域，不住在某一个 `describe` 里**：Task 28 那一组与
+ * Task 31A 那一组用的是同一套锚，各抄一份的话两边的口径会各自漂，
+ * 而其中一份坏了另一份不会响——本文件对「第二份实现」的既有裁决。
+ */
+/**
+ * 一张「每语言一个 token」的锚表 × 五份 DEPLOY.md，返回失败报文数组。
+ * **真扫描与下面的探针共用这一份**——各写一份的话，两边的判据会各有各的口径，
+ * 而其中一份坏了另一份不会响（本文件既有纪律）。
+ */
+function perLangTokenFailures(label: string, table: Record<Lang, string>, read: ApiDocReader): string[] {
+  const out: string[] = [];
+  for (const lang of LANGS) {
+    const token = table[lang];
+    // 空串永远查得到 —— 认不出要吵，不许装没看见。
+    if (token.trim() === "") {
+      out.push(`${label}：${lang} 的锚 token 是空串——空串永远查得到，这一格从此空转`);
+      continue;
+    }
+    const own = read(lang).split(token).length - 1;
+    if (own !== 1) {
+      out.push(
+        `${label}：docs/${lang}/DEPLOY.md 里「${token}」出现 ${own} 次，应当恰好 1 次`
+        + "——0 次多半是这一份漏改（或翻译时抄错了一位），"
+        + "2 次以上说明这个 token 不再唯一，换一个只在那句话里出现的写法",
+      );
+    }
+    for (const other of LANGS) {
+      if (other === lang) continue;
+      if (read(other).includes(token)) {
+        out.push(
+          `${label}：${lang} 的锚 token「${token}」在 docs/${other}/DEPLOY.md 里也出现了`
+          + `——${other} 的读者拿到的是一句不属于他那种语言的话，`
+          + "而且这两份从此会互相顶替：其中一份漏改另一份替它满足",
+        );
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 一张锚表**自身**的三条自检，返回失败报文数组。
+ * **真扫描与下面那格探针共用这一份**——上一版这三条是直接写在 `it()` 里的裸
+ * `expect`，仓里没有任何东西会在它坏掉时变红：复评实测把子串那条的
+ * `.toBe(false)` 改成 `.toBe(a.includes(b))`（判据变成同义反复）⇒ 本文件 202 格
+ * 全绿、另外三处引用本文件的测试也全绿（78 格）。**一个不会自己红的清单不是守卫，
+ * 是待办**——所以搬成函数，再配下面那格探针。
+ */
+function tokenTableFailures(label: string, table: Partial<Record<Lang, string>>): string[] {
+  const out: string[] = [];
+  // 期望值是本文件那张手写的 `LANGS`，不是从表自己数出来再回填：两份独立的语言清单
+  // 互校，某一边少一种语言时这一格当场红，而不是让上面那圈循环静静少跑一种。
+  const want = [...LANGS].sort();
+  const got = Object.keys(table).sort();
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    out.push(`${label} 的语言集与本文件的 LANGS 对不上：表 ${JSON.stringify(got)}，LANGS ${JSON.stringify(want)}`);
+  }
+  const vals = LANGS.map((l) => table[l]).filter((v): v is string => typeof v === "string");
+  for (let i = 0; i < vals.length; i += 1) {
+    for (let j = 0; j < vals.length; j += 1) {
+      if (i === j) continue;
+      const a = vals[i]!;
+      const b = vals[j]!;
+      if (a === b) {
+        // 共用同一个 token：只报一次（i < j），否则同一对会报两条。
+        if (i < j) out.push(`${label} 里有两种语言共用了同一个锚 token「${a}」`);
+        continue;
+      }
+      if (a.includes(b)) {
+        out.push(
+          `${label} 里「${a}」把「${b}」整个包住了——互为子串与共用同一个 token 是同一种病：`
+          + "包含关系下，被包住的那一份漏改会被另一份替它满足",
+        );
+      }
+    }
+  }
+  return out;
+}
+
 describe("五语言 DEPLOY.md 的三笔欠账各自上锚（P3e Task 28）", () => {
   /**
    * (2) ③ 段那句「欠下的那几天会在恢复之后补上」后面必须紧跟的限定。
@@ -3796,85 +3878,12 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚（P3e Task 28）", () 
     { label: "(4) 保存一次设置的 get 次数", table: GET_COUNT_HINT },
   ] as const;
 
-  /**
-   * 一张「每语言一个 token」的锚表 × 五份 DEPLOY.md，返回失败报文数组。
-   * **真扫描与下面的探针共用这一份**——各写一份的话，两边的判据会各有各的口径，
-   * 而其中一份坏了另一份不会响（本文件既有纪律）。
-   */
-  function perLangTokenFailures(label: string, table: Record<Lang, string>, read: ApiDocReader): string[] {
-    const out: string[] = [];
-    for (const lang of LANGS) {
-      const token = table[lang];
-      // 空串永远查得到 —— 认不出要吵，不许装没看见。
-      if (token.trim() === "") {
-        out.push(`${label}：${lang} 的锚 token 是空串——空串永远查得到，这一格从此空转`);
-        continue;
-      }
-      const own = read(lang).split(token).length - 1;
-      if (own !== 1) {
-        out.push(
-          `${label}：docs/${lang}/DEPLOY.md 里「${token}」出现 ${own} 次，应当恰好 1 次`
-          + "——0 次多半是这一份漏改（或翻译时抄错了一位），"
-          + "2 次以上说明这个 token 不再唯一，换一个只在那句话里出现的写法",
-        );
-      }
-      for (const other of LANGS) {
-        if (other === lang) continue;
-        if (read(other).includes(token)) {
-          out.push(
-            `${label}：${lang} 的锚 token「${token}」在 docs/${other}/DEPLOY.md 里也出现了`
-            + `——${other} 的读者拿到的是一句不属于他那种语言的话，`
-            + "而且这两份从此会互相顶替：其中一份漏改另一份替它满足",
-          );
-        }
-      }
-    }
-    return out;
-  }
 
   it.each([...TABLES])("$label：五份 DEPLOY.md 各自写着自己那种语言的写法，且不串门", ({ label, table }) => {
     const failures = perLangTokenFailures(label, table, realDoc("DEPLOY"));
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  /**
-   * 一张锚表**自身**的三条自检，返回失败报文数组。
-   * **真扫描与下面那格探针共用这一份**——上一版这三条是直接写在 `it()` 里的裸
-   * `expect`，仓里没有任何东西会在它坏掉时变红：复评实测把子串那条的
-   * `.toBe(false)` 改成 `.toBe(a.includes(b))`（判据变成同义反复）⇒ 本文件 202 格
-   * 全绿、另外三处引用本文件的测试也全绿（78 格）。**一个不会自己红的清单不是守卫，
-   * 是待办**——所以搬成函数，再配下面那格探针。
-   */
-  function tokenTableFailures(label: string, table: Partial<Record<Lang, string>>): string[] {
-    const out: string[] = [];
-    // 期望值是本文件那张手写的 `LANGS`，不是从表自己数出来再回填：两份独立的语言清单
-    // 互校，某一边少一种语言时这一格当场红，而不是让上面那圈循环静静少跑一种。
-    const want = [...LANGS].sort();
-    const got = Object.keys(table).sort();
-    if (JSON.stringify(got) !== JSON.stringify(want)) {
-      out.push(`${label} 的语言集与本文件的 LANGS 对不上：表 ${JSON.stringify(got)}，LANGS ${JSON.stringify(want)}`);
-    }
-    const vals = LANGS.map((l) => table[l]).filter((v): v is string => typeof v === "string");
-    for (let i = 0; i < vals.length; i += 1) {
-      for (let j = 0; j < vals.length; j += 1) {
-        if (i === j) continue;
-        const a = vals[i]!;
-        const b = vals[j]!;
-        if (a === b) {
-          // 共用同一个 token：只报一次（i < j），否则同一对会报两条。
-          if (i < j) out.push(`${label} 里有两种语言共用了同一个锚 token「${a}」`);
-          continue;
-        }
-        if (a.includes(b)) {
-          out.push(
-            `${label} 里「${a}」把「${b}」整个包住了——互为子串与共用同一个 token 是同一种病：`
-            + "包含关系下，被包住的那一份漏改会被另一份替它满足",
-          );
-        }
-      }
-    }
-    return out;
-  }
 
   // 这一格同时是下面那格探针的「我对 X 不乱红」那一半：两格共用 `tokenTableFailures`，
   // 探针证明三条分支各自点得出名，这一格证明它们在三张真表上一格都不响。
@@ -5243,5 +5252,245 @@ describe("设计小节「重置到底重置了什么」的逐存储键表（P3e 
     const noisy = real.replace(RESET_HEADING, `${RESET_HEADING}\n\n> 补记：这一段是后来加的，与那张表无关。`);
     expect(noisy, "变异没落地").not.toEqual(real);
     expect(resetTableFailures(noisy), "多一段散文把这一格弄红了").toEqual([]);
+  });
+});
+
+/**
+ * ── 那句「某一期会提供一条正式重置路径」（P3e Task 31A）──────────────────────
+ *
+ * R10 的原形：五份 DEPLOY.md 在 `POOL_TOUCH_INTERVAL_MS` 那一行**同步承诺**了
+ * 「P3c 会提供一条经过 repo 的正式重置路径」，而 P3c 已经完成、
+ * `PATCH_FIELDS` 里当时**没有** stats ⇒ 五份齐说一句假话，跨语言计数判据一格都不响
+ * （五份都写着，计数当然对得上）。
+ *
+ * Task 31A 走的是**兑现**那一支（裁定写死在设计小节「第三颗按钮的去向」里）。
+ * 这一组是兑现之后留下的**反向守卫**：它不管那条路径实现得对不对（那由
+ * `tests/contract/admin-keys-write.test.ts` 那两格管），只管**没有人再写下一句
+ * 同样形态的空头承诺**。
+ */
+describe("五份 DEPLOY.md 不许再写「某一期会提供某条重置路径」这种不兑现的承诺（P3e Task 31A）", () => {
+  /**
+   * ⚠️ **需求书给的原式逐条实测下来有两个洞，两个都会让这一格在最该响的时候不响。**
+   * 原式：`/P3[abcde]\s*(?:会|會|will|で|에서)[^\n]{0,40}(重置|重設|reset|초기화|리셋)/i`
+   *
+   * ① **尾词表里两个韩文词、零个日文词**：`리셋` 是谚文，而日文那句用的是片假名
+   *    `リセット`。实测原式在**改话之前**的五份上只命中 4 份、**ja 那份 0 命中**
+   *    （`P3c で repo を経由する正式なリセット経路を用意する。` 明明就在那儿）
+   *    ⇒ 需求书 Step 1 自己写的验收条件「必须红，且**点名五份**」，用原式做不到。
+   * ② **`P3[abcde]` 罩不住它自己声称要罩的东西**：原式那条注释写的是
+   *    「谁再写「**P4** 会提供 X」而不实现，它会红」——`P3[abcde]` 连 `P4` 的第二个
+   *    字符都对不上；需求书 M1 用的变异串 `P3f 会提供一条正式重置路径`（这一串真的
+   *    写在 `docs/design/2026-08-22-agnes2api-p3e-i18n-and-closeout-plan.md` 里）
+   *    里的 `f` 同样在字符类之外 ⇒ **照抄原式做 M1，变异打上去这一格照绿**，
+   *    也就是本仓登记过的「跑了变异、绿了，其实压根没打中」。
+   *
+   * ⇒ 尾词表补 `リセット`、期号放宽成 `P[3-9][a-z]?`。**放宽了就要自己数假阳性**：
+   * 逐份扫过，改话之前五份各命中 1 次、改话之后五份各 0 次，DEPLOY.md 里没有第二处
+   * 命中。（这个「1 次 / 0 次」不是判据，是当时的读数；判据是下面那三格。）
+   */
+  const PROMISE = /P[3-9][a-z]?\s*(?:会|會|will|で|에서)[^\n]{0,40}(?:重置|重設|reset|초기화|リセット|리셋)/i;
+
+  /**
+   * 五份 × 一条正则 ⇒ 失败报文数组。**真扫描与下面几格探针共用这一份**——
+   * 各写一份的话，两边的判据会各有各的口径，而其中一份坏了另一份不会响。
+   */
+  function promiseFailures(read: ApiDocReader): string[] {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const hit = read(lang).match(new RegExp(PROMISE.source, "i"));
+      if (hit !== null) {
+        out.push(
+          `docs/${lang}/DEPLOY.md 还留着一句不兑现的承诺：「${hit[0]}」`
+          + "——要么把那条路径真的做出来、把这句话改成描述**已实现**的东西，"
+          + "要么如实写「今天没有这条路径」。**不许原样翻译成五份**："
+          + "五份齐说的假话，跨语言计数判据一格都不响。",
+        );
+      }
+    }
+    return out;
+  }
+
+  it("五份 DEPLOY.md 都不许再出现「某一期会提供某条重置路径」这种不兑现的承诺", () => {
+    const failures = promiseFailures(realDoc("DEPLOY"));
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  /**
+   * 探针的基：真文档今天必须过判据，否则探针红了会被误读成「探针有问题」。
+   * ⚠️ **这一段不是锦上添花，是实测补上的**：真往 `docs/ko/DEPLOY.md` 末尾加一句
+   * `P3f 会提供一条正式重置路径。` 之后，上面那一格如实点名了 ko，
+   * 而下面五格探针**同时**报「应当只红一条，实际 2 条」——报文把人指向探针本身，
+   * 而真因在文档。同型的处置本文件已有一份（`probeBaseReset`）。
+   */
+  function probeBasePromise(): void {
+    const base = promiseFailures(realDoc("DEPLOY"));
+    if (base.length > 0) {
+      throw new Error(
+        "本格是探针，它的基取自真的五份 DEPLOY.md，而真文档今天本身就不过判据 —— "
+        + "别从这一格的报文里找原因，真因在「五份 DEPLOY.md 都不许再出现「某一期会提供"
+        + "某条重置路径」这种不兑现的承诺」那一格：\n"
+        + base.join("\n"),
+      );
+    }
+  }
+
+  /** 同上，配给那半句限制的三格探针。 */
+  function probeBaseCaveat(): void {
+    const base = perLangTokenFailures("改话之后那半句限制", REBOUND_CAVEAT, realDoc("DEPLOY"));
+    if (base.length > 0) {
+      throw new Error(
+        "本格是探针，它的基取自真的五份 DEPLOY.md，而真文档今天本身就不过判据 —— "
+        + "真因在「五份 DEPLOY.md 各自写着自己那种语言的那半句限制，且不串门」那一格：\n"
+        + base.join("\n"),
+      );
+    }
+  }
+
+  /**
+   * **反向控制：这条正则在五种语言上都真的认得出那个形状。**
+   *
+   * ⚠️ 串一律取**仓里真实存在过**的那五句——它们就是本任务亲手改掉的那五句原话，
+   * 逐字抄自改话前的 `docs/<lang>/DEPLOY.md`（zh-CN 那句今天仍逐字写在
+   * `docs/design/2026-08-22-agnes2api-p3e-i18n-and-closeout-plan.md` 的 R10 那一行里）。
+   * **没有这一格，「真扫描是绿的」有两种解释**：一是那五句真的改干净了，
+   * 二是正则在这五种语言上压根认不出东西——而后者正是本仓 Task 9 M1 那次
+   * 「判据认不出任何东西 ⇒ 真仓五格全变绿」的形态。
+   *
+   * 这一格同时就是需求书 M4（「只改四份、漏掉某一份」）：它逐份把那一份改回原话，
+   * 每一次都必须**只红一条**并点名那一份。
+   */
+  const OLD_PROMISE: Record<Lang, string> = {
+    "zh-CN": "P3c 会提供一条经过 repo 的正式重置路径。",
+    "zh-TW": "P3c 會提供一條經過 repo 的正式重設路徑。",
+    en: "P3c will offer a proper reset path that goes through the repo.",
+    ja: "P3c で repo を経由する正式なリセット経路を用意する。",
+    ko: "P3c에서 repo를 거치는 정식 초기화 경로를 제공할 예정.",
+  };
+
+  /** 改话之后每一份里都必须还在的那半句（每语言各一个 token，且不许串门）。见下面那格。 */
+  const REBOUND_CAVEAT: Record<Lang, string> = {
+    "zh-CN": "仍可能把旧值顶回来一次",
+    "zh-TW": "仍可能把舊值頂回來一次",
+    en: "may push an old value back once",
+    ja: "古い値を一度だけ書き戻すことがある",
+    ko: "옛 값을 한 번 되돌려 쓸 수 있음",
+  };
+
+  it.each([...LANGS])("该红时红：把 %s 那一份改回改话之前的原话 ⇒ 只红一条并点名那一份", (lang) => {
+    probeBasePromise();
+    const failures = promiseFailures(
+      readerWith(lang, (src) => src.split(REBOUND_CAVEAT[lang]).join(OLD_PROMISE[lang]), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain(`docs/${lang}/DEPLOY.md`);
+  });
+
+  it("该红时红：需求书 M1 那句「P3f 会提供一条正式重置路径」塞进任一份 ⇒ 点名那一份", () => {
+    probeBasePromise();
+    // ⚠️ **这一串是仓里真实存在的**：它逐字写在
+    // `docs/design/2026-08-22-agnes2api-p3e-i18n-and-closeout-plan.md` 的 Task 31A M1 那一行。
+    // ⚠️ **需求书原式罩不住它**：原式的期号字符类是 `P3[abcde]`，`f` 不在里面
+    // ⇒ 照抄原式做这个变异，这一格会绿——「跑了变异、绿了，其实压根没打中」。
+    const failures = promiseFailures(
+      readerWith("ja", (src) => `${src}\n\nP3f 会提供一条正式重置路径。\n`, "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/ja/DEPLOY.md");
+    expect(failures[0]).toContain("P3f 会提供一条正式重置");
+  });
+
+  it("不乱红：期号与「重置」各在自己那一行时不许命中 —— 40 字窗口是按行算的", () => {
+    probeBasePromise();
+    // ⚠️ **两行都是仓里真实存在的原文**（`docs/zh-CN/DEPLOY.md`）：一行是小节标题、
+    // 一行是危险区那笔配额账。五份 DEPLOY.md 里 `P3c` 各出现七八次、「重置」各出现
+    // 十几次，真扫描今天是绿的——**这一格把那件事变成一条会自己红的断言**：
+    // 哪天有人把 `[^\n]` 放宽成 `[\s\S]`，跨行就会开始假红，而假红的守卫下一步
+    // 就会被人放宽或删掉。
+    const noisy: ApiDocReader = (lang) =>
+      `${realDoc("DEPLOY")(lang)}\n\n### 设置页能改什么（P3c）\n\n`
+      + "- **重置配置**（`/admin/api/config/reset`，设置页危险区第一颗按钮）\n";
+    const failures = promiseFailures(noisy);
+    expect(failures, `期号与「重置」分处两行，却被判成了一句承诺：\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  // ── 兑现那一支的另一半：文档里那个字段名从真源现算 ──────────────────────────
+
+  /**
+   * **「已实现」这三个字要有一端钉在代码上，否则改话与撒谎只差一次改名。**
+   *
+   * 五份 DEPLOY.md 现在写的是「走 `PATCH /admin/api/keys/:id` 带 `clearStats`」。
+   * 端点路径那一半已经由上面「危险区那两条端点的路径……从真源常量现算」同型地守着，
+   * 这一格守的是**字段名**：`PATCH_FIELDS` 里没有它、或者它被改了名而文档没跟上，
+   * 这一格当场红，且报文明说**真因在源码，不在文档**（本文件 MUT-G 那一族的报文纪律）。
+   *
+   * 比「五份彼此相等」多守一件事：**各恰好 1 次**。五份一起写成 2 次
+   * （复制粘贴把那一行重复了）在纯对等判据下是合法的。
+   */
+  it("五份 DEPLOY.md 里那条已实现的重置路径写着真源里的字段名，各恰好 1 次", () => {
+    // 宽化成 `readonly string[]` 再查：直接对 `PATCH_FIELDS` 的字面量联合做比较的话，
+    // 字段被删掉时这里会变成一个 **tsc 报错**，而报错信息说的是类型没有重叠——
+    // 那句报文没法告诉人「五份文档现在指着一个不存在的字段」。
+    const fields: readonly string[] = PATCH_FIELDS;
+    const field = fields.find((f) => f === "clearStats");
+    expect(
+      field,
+      "`PATCH_FIELDS`（`src/http/admin/handlers/keys-write.ts`）里已经没有 `clearStats` 了 —— "
+      + "**真因在源码，不在文档**：这条路径要么被删了、要么被改了名。"
+      + "五份 DEPLOY.md 那句「走 `PATCH /admin/api/keys/:id` 带 `clearStats`」现在指着一个不存在的字段，"
+      + "而 R10 那句承诺就是这样变成假话的",
+    ).toBeDefined();
+
+    const token = `\`${field as string}\``;
+    const counts = Object.fromEntries(
+      LANGS.map((l) => [l, realDoc("DEPLOY")(l).split(token).length - 1]),
+    );
+    expect(
+      counts,
+      `${token} 在五份 DEPLOY.md 里不是各出现 1 次（${JSON.stringify(counts)}）——`
+      + "0 次是那一份漏改（R10 那句承诺在那种语言里还没兑现），"
+      + "2 次以上多半是复制粘贴把那一行重复了",
+    ).toEqual(Object.fromEntries(LANGS.map((l) => [l, 1])));
+  });
+
+  // ── 改话之后那半句限制（「别的实例仍可能顶回来一次」）逐份上锚 ────────────────
+  //
+  // ⚠️ **这半句是本次改话里最容易在翻译中丢掉的一句，而丢掉它就又是一句假话**：
+  // `clearStats` 清的只是**处理这次请求那个实例**的 `pendingStats`
+  // （`src/core/keypool-repo.ts` 的 `save()` 新建分支），同时在跑的别的 isolate /
+  // 别的容器各有各的 `entry.base`，仍会把旧值顶回来一次。
+  // 少了这半句，文档就在说「重置之后立刻且永远干净」——而那正是 R10 那句承诺
+  // 当年被写下来的原因（先清零后回弹）。
+
+  const CAVEAT_TABLE = [{ label: "改话之后那半句「别的实例仍可能顶回来一次」", table: REBOUND_CAVEAT }] as const;
+
+  it("五份 DEPLOY.md 各自写着自己那种语言的那半句限制，且不串门", () => {
+    const failures = perLangTokenFailures(CAVEAT_TABLE[0].label, REBOUND_CAVEAT, realDoc("DEPLOY"));
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("反向自检：这张锚表的语言集恰好等于 LANGS，且没有两种语言共用（或互为子串）同一个 token", () => {
+    const failures = tokenTableFailures(CAVEAT_TABLE[0].label, REBOUND_CAVEAT);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("探针：把 ko 那半句限制删掉（只改四份）⇒ 变红并点名 ko", () => {
+    probeBaseCaveat();
+    // ⚠️ 反向控制用仓里真实存在的串：替换成的那句是 ko 那份**同一句话的前半截**，
+    // 也就是「只把限制那半句删了、别的照留」在文档上真实的样子。
+    const failures = perLangTokenFailures(
+      CAVEAT_TABLE[0].label,
+      REBOUND_CAVEAT,
+      readerWith("ko", (s) => s.split(REBOUND_CAVEAT.ko).join("각자 자기 기준값을 갖고 있음"), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/ko/DEPLOY.md");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("不乱红：五份一起合法地多写一句无关的话 —— 上面那几格不许因此假红", () => {
+    const noisy: ApiDocReader = (lang) => `${realDoc("DEPLOY")(lang)}\n\n<!-- 无关的一行 -->\n`;
+    const failures = perLangTokenFailures(CAVEAT_TABLE[0].label, REBOUND_CAVEAT, noisy);
+    expect(failures, `五份一起多写了一句无关的话，判据却红了\n${failures.join("\n")}`).toEqual([]);
+    expect(promiseFailures(noisy), "承诺判据也不许因此假红").toEqual([]);
   });
 });

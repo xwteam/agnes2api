@@ -3,6 +3,7 @@ import type { Logger } from "../../../ports/logger.js";
 import type { KeyPoolRepo } from "../../../core/keypool-repo.js";
 import type { KeyRecord } from "../../../core/types.js";
 import { isDisabled } from "../../../core/keypool.js";
+import { EMPTY_STATS } from "../../../core/admin/stats.js";
 import { adminError, adminErrorBody, readAdminJson } from "../errors.js";
 // 危险区那条端点走**不带码的网关信封**，理由见 `POOL_SIZE_CHANGED` 上方那段 ⚠️。
 import { httpError } from "../../errors.js";
@@ -251,14 +252,23 @@ export function keyDeleteHandler(deps: KeysWriteDeps) {
   };
 }
 
-/** PATCH 能改的五件事。顺序即文档顺序（设计 §11）。 */
-const PATCH_FIELDS = ["disabled", "note", "clearCooldown", "clearStrikes", "unevict"] as const;
+/**
+ * PATCH 能改的六件事。顺序即文档顺序（设计 §11）。
+ *
+ * ⚠️ **这张表是真源，五语言 DEPLOY.md 里那个字段名是从它现算的**：把 `clearStats`
+ * 改名而文档没跟着改，`tests/unit/docs-parity.test.ts`「五份 DEPLOY.md 里那条已实现的
+ * 重置路径写着真源里的字段名，各恰好 1 次」会红，并明说「真因在源码，不在文档」。
+ */
+export const PATCH_FIELDS = [
+  "disabled", "note", "clearCooldown", "clearStrikes", "unevict", "clearStats",
+] as const;
 
 /**
- * `PATCH /admin/api/keys/:id` —— 停用/启用、备注、清冷却、清 strikes、解除剔除。
+ * `PATCH /admin/api/keys/:id` —— 停用/启用、备注、清冷却、清 strikes、解除剔除、
+ * 重置用量计数。
  *
- * 三个布尔开关（`clearCooldown` / `clearStrikes` / `unevict`）是**动作**不是状态：
- * 传 `false` 等于没传，**不会**反过来「加一段冷却」。
+ * 四个布尔开关（`clearCooldown` / `clearStrikes` / `unevict` / `clearStats`）是
+ * **动作**不是状态：传 `false` 等于没传，**不会**反过来「加一段冷却」。
  *
  * ⚠️⚠️ **落盘走 `repo.save(next)`，刻意不传 `prev`——这一行是本任务最容易写错的
  * 一行，而写错时没有任何自动化会变红。**
@@ -284,6 +294,37 @@ const PATCH_FIELDS = ["disabled", "note", "clearCooldown", "clearStrikes", "unev
  * **问的是同一个问题、读的是同一个键、准确度完全相同，只是更早**。
  * （⚠️ 这里原来写的是「更早、**更准**」——那个方向是反的：更早的读对「现在还在不在」
  * 只会**更弱**，不会更强。两者的差是一个窗口，不是一个精度。评审 m4 订正。）
+ *
+ * ── `clearStats`：R10 承诺过的那条「经过 repo 的正式重置路径」（P3e Task 31A）──
+ *
+ * 五份 DEPLOY.md 在 `POOL_TOUCH_INTERVAL_MS` 那一行**同步承诺**过它，而 P3c 完成时
+ * `PATCH_FIELDS` 里并没有 stats ⇒ 五份齐说一句假话。裁定「做」与它的形态
+ * （**加一个字段，不做危险区第三颗按钮**）写死在设计小节「第三颗按钮的去向」里，
+ * 判据是**有界性**：加一个字段 = 单把 key、1 次 put，硬有界；批量重置全池 = N 次 put，
+ * 而本仓没有任何常量给 N 上界。
+ *
+ * ⚠️ **「经过 repo」这半句才是整条承诺的重点，别当成修辞。**
+ * 绕过 repo 直接改存储会先看到清零、随后被下一次真落盘按 `pendingStats` 的基线顶回
+ * 旧值——那正是那一行文档描述的现象。走这里则**不传 `prev`**，而 `save()` 的
+ * 「新建」分支头一行就是 `this.pendingStats.delete(next.id)`
+ * （`src/core/keypool-repo.ts`）⇒ 本实例攒着的基线与未落盘增量一并作废。
+ * ⚠️ **它清的只是「处理这次请求的那个实例」那一份。** 同时在跑的别的实例
+ * （Worker 的其它 isolate / 同一个卷上的另一个容器）各有各的基线，仍可能把旧值
+ * 再顶回来一次——这条限制五份 DEPLOY.md 里逐份写着，别在任何一侧把它说没了。
+ * 绊线是 `tests/contract/admin-keys-write.test.ts` 的
+ * 「clearStats 之后再来一次真落盘，不许把重置前攒着的增量补写回去」。
+ *
+ * ⚠️ **它是独立动作，绝不能顺手挂进 `addMany` 的 `resetExisting` 字段集。**
+ * `resetExisting` 之所以刻意不动 `stats`（逐字：「用量是历史，不是失败态」），
+ * 是「重新导入即解封」那个后门的收口结论；挂进去就是把刚收口的后门重新打开。
+ * 那一侧由「resetExisting 只重置失败态，`stats` 一个数都不许动」正面钉着。
+ *
+ * ⚠️ **它刻意不打事件，代价明写**：事件白名单（设计 §7.2）里没有「用量被清零」
+ * 这一条，而事件板块的口径是「池子为什么变了」——`stats` 在 `FIELD_ROLE` 里是
+ * telemetry，清零不改变任何调度行为，这与「只改备注不打事件」是同一把尺子。
+ * **代价是：面板上那把 key 的计数会突然掉到 0，而事件板块里没有任何痕迹**，
+ * 今天唯一看得出发生过这件事的是访问日志。这条登记在 task-31A-report.md 的遗留里。
+ * 「不打事件」由下面那格用例正面钉着，将来要改成打事件，先回设计 §7.2 加白名单。
  */
 export function keyPatchHandler(deps: KeysWriteDeps) {
   return async (c: Context) => {
@@ -298,6 +339,7 @@ export function keyPatchHandler(deps: KeysWriteDeps) {
     const clearCooldown = optBool(body, "clearCooldown") ?? false;
     const clearStrikes = optBool(body, "clearStrikes") ?? false;
     const unevict = optBool(body, "unevict") ?? false;
+    const clearStats = optBool(body, "clearStats") ?? false;
 
     const prev = await deps.repo.get(paramId(c));
     if (prev === null) throw adminError(404, "not_found", "key_not_found", "没有这把 key");
@@ -308,6 +350,9 @@ export function keyPatchHandler(deps: KeysWriteDeps) {
     if (clearCooldown) { next.cooldownUntil = 0; next.cooldownReason = null; }
     if (clearStrikes) next.strikes = 0;
     if (unevict) { next.evicted = false; next.evictedReason = null; }
+    // **摊平一份新的，不是复用 `EMPTY_STATS` 那个 frozen 单例**：整池共享同一个对象时，
+    // 任何一处「顺手改一个计数」都会同时改掉别的 key 的那一份（冻结只在严格模式下抛）。
+    if (clearStats) next.stats = { ...EMPTY_STATS };
 
     await deps.repo.save(next);
 

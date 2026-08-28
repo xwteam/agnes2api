@@ -4,7 +4,7 @@ import { CountingStorage } from "../helpers/counting-storage.js";
 import { MAX_IMPORT_KEYS, MAX_NOTE_LENGTH } from "../../src/http/admin/handlers/keys-write.js";
 import { MAX_KEY_LENGTH } from "../../src/core/keypool-repo.js";
 import type { KeyView } from "../../src/core/admin/key-view.js";
-import type { KeyRecord } from "../../src/core/types.js";
+import type { KeyRecord, KeyStats } from "../../src/core/types.js";
 import {
   ADMIN_ERROR_CODES, ADMIN_ERROR_PARAMS, type AdminErrorCode,
 } from "../../src/core/admin/admin-errors.js";
@@ -256,6 +256,51 @@ describe("POST /admin/api/keys（批量导入）", () => {
   });
 
   /**
+   * **`resetExisting` 不许动 `stats`，这是「重新导入即解封」那个后门（L4）的收口结论
+   * 在计数这一侧的另一半。**
+   *
+   * `src/core/keypool-repo.ts` 里 `resetExisting` 上方逐字写着「`stats`——用量是历史，
+   * 不是失败态」，而在 P3e Task 31A 之前**没有任何一格守着它**：真把
+   * `stats: { ...EMPTY_STATS }` 加进那个字段集，全量一条不红。
+   * Task 31A 新增的 `clearStats` 恰好让这条边界第一次有了被抹掉的动机
+   * （「都是清零，顺手一起清了吧」）⇒ 它必须在这一侧留一条绊线。
+   *
+   * ⚠️ **同一格必须同时钉住「重置确实做了它该做的」**：只断言「`stats` 没动」的话，
+   * 一个**什么都不重置**的实现照样满足它（第 1 种假阳性的镜像）。
+   */
+  it("resetExisting 只重置失败态，`stats` 一个数都不许动 —— 用量是历史，不是失败态", async () => {
+    const KEY = "sk-reset-keeps-stats-key";
+    const { app, repo, storage } = await makeApp([], [KEY], {}, () => NOW);
+    const r = (await repo.all())[0] as KeyRecord;
+    // 六个计数各取**互不相同**的非默认值：全取同一个数时，「把 stats 整块换成另一份」
+    // 这种实现分不出来。
+    const SEEDED: KeyStats = {
+      requests: 41, success: 37, failed: 3, clientErrors: 1,
+      lastErrorAt: NOW - 5, lastErrorKind: "upstream_5xx",
+    };
+    await storage.put(`key:${r.id}`, {
+      ...r, strikes: 4, cooldownUntil: NOW + 9_000, cooldownReason: "payment required",
+      evicted: true, evictedReason: "upstream 401", stats: SEEDED,
+    });
+
+    const res = await send(app, "POST", "/admin/api/keys", { keys: [KEY], resetExisting: true });
+    expect(res.status).toBe(200);
+    expect((await res.json() as ImportBody).reset, "前置：这一把确实走了重置那条分支").toBe(1);
+
+    const after = await storage.get<KeyRecord>(`key:${r.id}`) as KeyRecord;
+    expect(
+      after.stats,
+      "一次导入把这把 key 的用量历史抹掉了 —— 重置的是**系统判定的失败态**，"
+      + "而用量是历史。要清计数请走 `PATCH /admin/api/keys/:id` 的 `clearStats`："
+      + "那是一个知情的、单把的动作，不是粘一遍清单的副作用",
+    ).toEqual(SEEDED);
+    expect(
+      { strikes: after.strikes, evicted: after.evicted, cooldownUntil: after.cooldownUntil },
+      "前置条件塌了：重置压根没生效 ⇒ 上面那句「stats 没动」是靠「整条都没动」满足的",
+    ).toEqual({ strikes: 0, evicted: false, cooldownUntil: 0 });
+  });
+
+  /**
    * **「被重置了几把」这个数字要说的是「本批之前就已经在池子里」的那些。**
    *
    * 本批刚新建的那把即使被粘了两遍也谈不上重置。夹具把两种重复都摆上：
@@ -472,7 +517,7 @@ describe("DELETE /admin/api/keys/:id", () => {
    * DEPLOY.md 的配额账」——而那份账里的每个数字都得是**某次实测的读数**。
    * 这一格就是那次实测：五份 DEPLOY.md 里「面板写操作」那一段的数字直接抄它。
    */
-  it("单把写操作的存储开销：PATCH = 1 get + 1 put，DELETE = 2 get + 1 put + 1 delete", async () => {
+  it("单把写操作的存储开销：PATCH = 1 get + 1 put（`clearStats` 那一支同价），DELETE = 2 get + 1 put + 1 delete", async () => {
     const st = new CountingStorage();
     const { app, repo } = await makeApp([], ["sk-single-op-cost-key-a"], {}, () => NOW, { storage: st });
     const r = (await repo.all())[0] as KeyRecord;
@@ -485,6 +530,15 @@ describe("DELETE /admin/api/keys/:id", () => {
     let base = snap();
     expect((await send(app, "PATCH", `/admin/api/keys/${r.id}`, { disabled: true })).status).toBe(200);
     expect(since(base), "PATCH：1 次「读当前真值」+ 1 次落盘").toEqual({ gets: 1, puts: 1, deletes: 0, lists: 0 });
+
+    // P3e Task 31A 新增的 `clearStats` 走的是**同一个 handler、同一次 `save()`**，
+    // 所以它的单价与上面那一支逐桶相同。**单独数一次**：五份 DEPLOY.md 那一行把
+    // 「重置用量计数」与另外五个动作并列写在同一条单价里，而"同一个 handler ⇒ 同价"
+    // 是个**推论**——推论要有读数背书，否则哪天它多读一次存储，那一行会在零信号下变假。
+    base = snap();
+    expect((await send(app, "PATCH", `/admin/api/keys/${r.id}`, { clearStats: true })).status).toBe(200);
+    expect(since(base), "PATCH clearStats：与另外五个动作同价，1 次读 + 1 次落盘")
+      .toEqual({ gets: 1, puts: 1, deletes: 0, lists: 0 });
 
     base = snap();
     expect((await send(app, "DELETE", `/admin/api/keys/${r.id}`)).status).toBe(204);
@@ -702,6 +756,158 @@ describe("PATCH /admin/api/keys/:id", () => {
     const { app, repo } = await makeApp([], ["sk-patch-400-target-aaa"], {}, () => NOW);
     const r = (await repo.all())[0] as KeyRecord;
     expect((await send(app, "PATCH", `/admin/api/keys/${r.id}`, body)).status).toBe(400);
+  });
+
+  // ── clearStats：R10 承诺过的那条「经过 repo 的正式重置路径」（P3e Task 31A）──
+  //
+  // 五份 DEPLOY.md 在 `POOL_TOUCH_INTERVAL_MS` 那一行同步承诺过它，P3c 完成时
+  // `PATCH_FIELDS` 里却没有 stats ⇒ 五份齐说一句假话。裁定「做」与它的形态
+  // （加一个字段，**不做**危险区第三颗按钮）写死在设计小节「第三颗按钮的去向」里。
+
+  /** 六个计数全零，就是重置之后该有的样子。**写字面量**：从 `EMPTY_STATS` 派生等于拿实现当期望值。 */
+  const ZEROED: KeyStats = {
+    requests: 0, success: 0, failed: 0, clientErrors: 0, lastErrorAt: null, lastErrorKind: null,
+  };
+
+  /**
+   * **① 逐字段比对，不是「只看 stats 归零」。**
+   *
+   * 只断言 `stats` 归零的话，一个把整条记录覆盖成新建态的实现照样满足它，
+   * 而那样会顺手抹掉 `resetExisting` 明列刻意不动的那四样
+   * （`disabled` / `addedAt` / `stats` / `note`）——那正是「重新导入即解封」
+   * 那个后门（L4）的收口结论。所以这一格拿**整条记录**做等值比对：
+   * 除 `stats` 之外任何一个字段被动了，它当场红并把那个字段指出来。
+   *
+   * 夹具让每个字段各取一个**非默认**值：全是默认值时，「整条记录被重建」与
+   * 「只清了 stats」在断言上分不出来（本仓登记的第 1 种假阳性）。
+   */
+  it("clearStats：stats 归零，而 disabled / addedAt / note / cooldownUntil / evicted 逐字段不变", async () => {
+    const { app, repo, storage } = await makeApp([], ["sk-clear-stats-target-a"], {}, () => NOW);
+    const r0 = (await repo.all())[0] as KeyRecord;
+    const SEEDED: KeyRecord = {
+      ...r0,
+      addedAt: NOW - 86_400_000,
+      lastUsedAt: NOW - 1_000,
+      disabled: true,
+      note: "运维写给自己看的话，重置用量不该动它",
+      cooldownUntil: NOW + 30_000,
+      cooldownReason: "rate limited",
+      evicted: true,
+      evictedReason: "upstream 401",
+      strikes: 5,
+      stats: {
+        requests: 41, success: 37, failed: 3, clientErrors: 1,
+        lastErrorAt: NOW - 5, lastErrorKind: "upstream_5xx",
+      },
+    };
+    await storage.put(`key:${r0.id}`, SEEDED);
+
+    expect((await send(app, "PATCH", `/admin/api/keys/${r0.id}`, { clearStats: true })).status).toBe(200);
+
+    const after = await storage.get<KeyRecord>(`key:${r0.id}`) as KeyRecord;
+    expect(after.stats, "clearStats 之后计数没有归零 —— 这条路径压根没做事").toEqual(ZEROED);
+    // 五个字段单独再点一次名：整条比对红的时候报文是一整条记录的 diff，
+    // 而这一格的报文直接说出「是这五样里的哪一样被动了」。
+    expect(
+      {
+        disabled: after.disabled, addedAt: after.addedAt, note: after.note,
+        cooldownUntil: after.cooldownUntil, evicted: after.evicted,
+      },
+      "重置用量顺手动了别的字段 —— `resetExisting` 刻意不动的正是这几样，"
+      + "把它们一起清掉就是把「重新导入即解封」那个后门从另一扇门放回来",
+    ).toEqual({
+      disabled: true, addedAt: NOW - 86_400_000, note: "运维写给自己看的话，重置用量不该动它",
+      cooldownUntil: NOW + 30_000, evicted: true,
+    });
+    // 整条记录：上面那五样之外的字段（`key` / `id` / `strikes` / `lastUsedAt` /
+    // `cooldownReason` / `evictedReason`）同样一个字节都不许动。
+    expect(after, "除 stats 之外还有字段被动了").toEqual({ ...SEEDED, stats: ZEROED });
+  });
+
+  /**
+   * **② 「经过 repo」那半句的绊线。**
+   *
+   * `src/core/keypool-repo.ts` 有一份 `pendingStats` 基线：被写消除吃掉的计数增量
+   * 攒在里面，而**运行中的实例记着自己那份 `entry.base`**。绕过 repo 直接改存储
+   * ⇒ 先看到清零、随后被下一次真落盘按基线顶回旧值——那正是五份 DEPLOY.md
+   * 那一行描述的现象，也正是 R10 要求「经过 repo」的原因。
+   *
+   * 走 PATCH 这条路时 `save()` **不传 `prev`**，而它的「新建」分支头一行就是
+   * `pendingStats.delete(next.id)` ⇒ 基线与增量一并作废。
+   *
+   * ⚠️ **判别力全在最后那一格**：重置**当时**存储里是零，这一条在「基线没清」的
+   * 实现下**也是绿的**（不传 prev 的分支直接把 `next` 原样 put 下去，根本不看基线）。
+   * 会红的是重置之后**下一次本来就会发生的真落盘**：基线还在的话，那一次会写成
+   * `base(1) + 攒着的(2) + 本次(1) = 4`。
+   *
+   * 三个前置条件缺一它就是在测空气，每一条都当场断言：
+   *   ① `poolTouchIntervalMs` 开成生产默认值（夹具默认 `0` = 写消除整个关掉）；
+   *   ② 目标 key **最近被用过**（`lastUsedAt` 为 `null` 时差值是 `Infinity`，不触发消除）；
+   *   ③ 被消除的那两笔**真的没落盘**，且存储里确实还停在重置前的旧值。
+   */
+  it("clearStats 之后再来一次真落盘，不许把重置前攒着的增量补写回去", async () => {
+    const st = new CountingStorage();
+    const { app, repo, storage } = await makeApp(
+      [], ["sk-clear-stats-pending-x"],
+      // 前置条件①。夹具默认的 0 会把写消除整个关掉，那样这一格在两种实现下都绿。
+      { poolTouchIntervalMs: 21_600_000, poolCacheTtlMs: 0 }, () => NOW, { storage: st },
+    );
+    const r0 = (await repo.all())[0] as KeyRecord;
+    const path = `key:${r0.id}`;
+    const counted = (n: number): KeyStats => ({
+      requests: n, success: n, failed: 0, clientErrors: 0, lastErrorAt: null, lastErrorKind: null,
+    });
+
+    // 前置条件②：首次落 `lastUsedAt` 一定会写盘（差值是 Infinity），这一笔进存储。
+    let cur: KeyRecord = { ...r0, lastUsedAt: NOW, stats: counted(1) };
+    await repo.save(cur, r0);
+
+    // 接着两笔「只推 lastUsedAt + 计数」的写：被写消除吃掉，增量攒进 pendingStats。
+    const beforeElided = st.puts;
+    for (const [tick, n] of [[1, 2], [2, 3]] as const) {
+      const next: KeyRecord = { ...cur, lastUsedAt: NOW + tick, stats: counted(n) };
+      await repo.save(next, cur);
+      cur = next;
+    }
+    // 前置条件③：这两笔**真的**被吃掉了，且存储还停在 1。
+    expect(st.puts - beforeElided, "夹具没能触发写消除 ⇒ 后面那一格什么都没证明").toBe(0);
+    expect(
+      (await storage.get<KeyRecord>(path))?.stats?.requests,
+      "存储里已经是新值 ⇒ 那两笔没被攒起来，本格失去判别力",
+    ).toBe(1);
+
+    expect((await send(app, "PATCH", `/admin/api/keys/${r0.id}`, { clearStats: true })).status).toBe(200);
+    const afterReset = await storage.get<KeyRecord>(path) as KeyRecord;
+    // 这一条在两种实现下都绿（见上面那段 ⚠️），留着是因为它是下一步的前置条件。
+    expect(afterReset.stats, "重置这一次自己就没落盘").toEqual(ZEROED);
+
+    // 重置之后**下一次本来就会发生的真落盘**（改了 scheduling 字段 ⇒ 必写）。
+    await repo.save({ ...afterReset, strikes: 1, lastUsedAt: NOW + 3, stats: counted(1) }, afterReset);
+    expect(
+      (await storage.get<KeyRecord>(path))?.stats?.requests,
+      "重置前攒在 `pendingStats` 里的基线与增量被补写回来了 —— 面板会先显示 0、"
+      + "随后被顶回旧值，那正是这条路径本来要修的那个 bug",
+    ).toBe(1);
+  });
+
+  /**
+   * **③ 它刻意不打事件——把这个选择钉下来，而不是让它悬着。**
+   *
+   * 事件白名单（设计 §7.2）里没有「用量被清零」这一条，而事件板块的口径是
+   * 「池子为什么变了」：`stats` 在 `FIELD_ROLE` 里是 telemetry，清零不改变任何调度
+   * 行为，这与「只改备注不打事件」是同一把尺子。
+   * **代价明写**：面板上那把 key 的计数会突然掉到 0 而事件板块里没有痕迹。
+   * 将来要改成打事件，先回设计 §7.2 把白名单加上，再来改这一格。
+   */
+  it("clearStats 不打事件 —— 与「只改备注不打事件」同一把尺子，代价登记在 handler 的注释里", async () => {
+    const { app, repo, logger } = await makeApp([], ["sk-clear-stats-events-a"], {}, () => NOW);
+    const r = (await repo.all())[0] as KeyRecord;
+    logger.clear();
+    expect((await send(app, "PATCH", `/admin/api/keys/${r.id}`, { clearStats: true })).status).toBe(200);
+    expect(
+      logger.entries.filter((x) => x.event.startsWith("key.")),
+      "重置用量打了事件 —— 要么改这一格，要么先回设计 §7.2 把白名单加上",
+    ).toEqual([]);
   });
 
   it("改一个不存在的 id 是 404", async () => {
