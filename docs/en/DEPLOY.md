@@ -235,7 +235,15 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 
   ③ **The 13 puts per day per instance is a hard gate**: once exhausted, nothing more is
      written that day, it **recovers automatically on the next UTC day**, and the days it owed
-     are written out after recovery (the in-memory accumulator is never cleared).
+     are written out after recovery (the in-memory accumulator is never cleared) —
+     **provided the instance is still alive**.
+     ⚠️ **That half-sentence is structurally out of reach on Workers**: those accumulators live
+     only in memory, and a Worker isolate usually does not survive into the next UTC day (see
+     point ② above: an isolate that lived 10 minutes stores nothing at all). So on Workers
+     "written out after recovery" requires **the same isolate to have crossed UTC midnight**,
+     which is the exception, not the rule; when it does not, those days' counts **vanish with
+     the instance — they are not merely posted late**. **On Docker the process is long-lived,
+     which is where that promise holds as the normal case.**
      ⚠️ This gate **only applies inside a single instance** — 8 isolates means 8 independent
      allowances of 13, exactly like the events gate above, with no cross-instance coordination.
 
@@ -267,6 +275,32 @@ its writes grow with request count, so the budget is "so many per day", not "so 
      record nothing ⇒ the panel's "total requests" is systematically lower than the real
      forwarded volume. This is a known boundary of this phase, not a defect; judge key
      consumption from the key-pool side instead.
+
+- **Tier-2 usage reads — what they burn is not the daily read quota but "how many subrequests
+  one invocation may issue".** The `30d` range of `/admin/api/usage` issues
+  `USAGE_DAY_RETAIN × USAGE_SLOTS` = `30 × 2` = 60 KV gets **in a single request**
+  (`src/core/admin/usage-stats.ts`). Against 100,000 reads per day those 60 are negligible;
+  **what has no platform guarantee is the subrequest count of a single invocation**:
+  Cloudflare's Workers limits page splits it into two rows — "Subrequests per invocation",
+  **50** on the free plan, and "Subrequests to internal services", **1,000** on the free plan —
+  yet that page never defines what "internal services" means, nor which row a KV binding call
+  falls under; KV's own limits page separately states "Operations/Worker invocation" **1,000**
+  (identical on free and paid). **The two pages disagree, and we have not settled it on real
+  hardware** ⇒ read against the KV page, 60 is 6%; read against the 50 row, **60 is over**.
+  So the `30d` range may behave differently on Workers than on Node, and the gateway only
+  guarantees that it **fails honestly**: when the read fan-out fails part way through, **the
+  whole `days` series comes back as `null`** (the panel shows `—`) with `note` set to
+  `read_failed`; it never returns 500 and never passes off the shards it did read as the full
+  picture.
+  ⚠️ **Do not cite the events board's 48 cold gets below as evidence** — 48 is within limits
+  under both readings, so it says nothing at all about whether 60 is fine. To rely on this
+  range on the free plan, measure it on real hardware first.
+- **Playground video runs: at most `1 + 60` upstream requests per task** (1 create + at most
+  60 polls, `VIDEO_POLL_MAX_ATTEMPTS`). ⚠️ **That 61× multiplies the upstream quota and the
+  keys' use counts only; it does not multiply the KV daily write quota**: `lastUsedAt` and the
+  usage counters are gated by `POOL_TOUCH_INTERVAL_MS` (6 hours by default), and one polling
+  run cannot fill a single flush interval; cooldown and eviction are still counted per failure.
+  **Do not read the two as one** — what gets exhausted first is the upstream side, not KV.
 
 - **Events board reads (post-C4/C4b-fix figures, more conservative than the earlier draft)**:
   polling no longer depends on an index, so the number of candidate keys is **hard-bounded** —

@@ -213,6 +213,29 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     // `toBe(2)` 去和本表的设计对着干。「那两格里各有一处」这件事本身由
     // `tests/ui/settings.test.ts` 那条逐行查的正文守卫钉着，那里是逐格取行的。
     { token: "src/http/wire.ts", why: "这两个旋钮「建实例时读一次」的出处" },
+    // ⚠️ **P3e Task 28 补的四个，同样是先数过再加**：改动前 `1 + 60` / `30 × 2` /
+    // `Subrequests per invocation` / `Operations/Worker invocation` 在五份 DEPLOY.md 里
+    // **各 0 次**（`grep -o -F | wc -l` 逐份数过），加进来之后五份完全一致。
+    // ⭐ **这段话里的计数不是判据**（同上面 N8 那条 ⭐）：能变红的是下面那条跨语言互校。
+    //
+    // **它们守的是本任务新写进配额账的两笔（Task 28 的第 (3) 笔）**：
+    // ① Tier-2 用量的读侧 —— `30d` 那一档一次请求发 `30 × 2` = 60 次 KV get，
+    //    而 Cloudflare 两页官方文档在「一次调用能发多少条子请求」上对不上；
+    // ② Playground 的视频档一次任务最多 `1 + 60` 次上游请求。
+    //
+    // **`Subrequests per invocation` 与 `Operations/Worker invocation` 两个都要**：
+    // 那句话的全部意义是「两页对不上」，只留一行就不再是一处分歧，而是一条看起来
+    // 干净的结论 —— **少掉哪一行都会让那段话变成另一件事**，所以两行各上一个锚。
+    // 它们是 Cloudflare 官方文档里的行名，五种语言都不翻译（本表第三、四个非数字 token，
+    // 理由同 `.dev.vars.off`：跨语言稳定、且全仓只有那一句提到它）。
+    //
+    // ⚠️ **不加裸 `60` / 裸 `50`**：它们在五份里散落在这两笔账、`VIDEO_POLL_MAX_ATTEMPTS`、
+    // 60 秒轮询上限、`60000`、`750` 这类**子串**等互不相干的地方，变红时指不出是哪一句坏了，
+    // 而定位成本正是这道门禁存在的意义（同 `48` 那条不加的理由）。
+    { token: "1 + 60", why: "Playground 视频档一次任务的上游请求上界（1 次建任务 + 最多 60 拍轮询）" },
+    { token: "30 × 2", why: "`30d` 那一档一次请求的 KV get 数（USAGE_DAY_RETAIN × USAGE_SLOTS）" },
+    { token: "Subrequests per invocation", why: "Cloudflare Workers limits 页免费档 50 的那一行，口径分歧的一半" },
+    { token: "Operations/Worker invocation", why: "Cloudflare KV limits 页 1,000 的那一行，口径分歧的另一半" },
   ];
 
   for (const { token, why } of NUMBERS) {
@@ -3179,5 +3202,177 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
     });
     expect(missing, "六份一起多写了一处合法的 `/admin`，控制格却把 victim 之外的份也算成缺失（或漏掉了 victim）——"
       + "多半又退回了只换第一处的 `replace`").toEqual([victim]);
+  });
+});
+
+/**
+ * ── P3e Task 28：五语言 DEPLOY.md 的三笔欠账，逐笔各配一条会自己红的锚 ────────
+ *
+ * 本组守的是**这一次改动写下的那几句话本身**，与上面那张 `NUMBERS` 表分工不同：
+ * · `NUMBERS` 判的是「同一个 token 在五份里出现次数相等」——它挡「某一份漏改」，
+ *   但要求那个 token **跨五种语言逐字相同**（所以表里全是数字、路径、英文行名）；
+ * · 本组判的是**每种语言各自写法**的那两句话。这两句在五种语言里本来就不同字
+ *   （`3~4 次 get` / `get 讀取 3~4 次` / `3–4 gets` / `get 3〜4 回` / `get 3~4회`），
+ *   塞进 `NUMBERS` 要么恒不相等、要么被迫把 token 削成一个满仓都是的裸数字。
+ *   ⇒ 写法照上面 `UPSTREAM_FACTS.docHints`：**每语言一个只在这句里出现的 token**。
+ *
+ * ⚠️ **这两张表都是「清单」，所以各自配了会让它变红的断言**（P3e 头号纪律）：
+ * ① 正向：每种语言在**自己那份**里恰好 1 次；
+ * ② 跨份：那个 token 在**其余四份里 0 次**——这一条挡的是「五份都塞同一句英文」
+ *    这种糊弄法（ja/ko 的读者会拿到一句看不懂的话，而这两笔账的全部意义是让运维
+ *    看懂「一次补池要打几次 get」「那半句承诺在 Worker 上到不到得了」）；
+ * ③ 反向自检：表的语言集恰好等于 `LANGS`，且**没有两种语言共用同一个 token、
+ *    也没有任何一个 token 是另一个的子串**。共用（或互为子串）时，某一份漏改会被
+ *    另一份「替它满足」——这正是本仓 `NUMBERS` 表的已知边界，不许在这里重演。
+ *    ⚠️ 这一格是**实测逼出来的**：zh-CN 与 zh-TW 原本逐字相同（都写 `3~4 次 get`），
+ *    这一格当场红；处置是让两份繁简各写各的正字（zh-TW 用「get 讀取 3~4 次」），
+ *    **不是把这格放宽**。
+ *
+ * ⚠️ **能与不能，一句话写清**：本组能证明「五份各自写着那句话、而且没有互相顶替」，
+ * **不能**证明那句话说得对、也不能证明五份说的是同一件事——译文准确性今天仍靠人。
+ */
+describe("五语言 DEPLOY.md 的三笔欠账各自上锚（P3e Task 28）", () => {
+  /**
+   * (2) ③ 段那句「欠下的那几天会在恢复之后补上」后面必须紧跟的限定。
+   * 依据：`src/http/usage-sink.ts` 的 `days`/`dirty` 累加器只在内存里，
+   * 而同一份文档 ② 段自己写着 Worker 的 isolate 常常只活分钟级
+   * ⇒ 「恢复之后补上」在 Worker 形态下**结构上到不了**，那半句必须带限定。
+   */
+  const ALIVE_QUALIFIER: Record<Lang, string> = {
+    "zh-CN": "这个实例还活着",
+    "zh-TW": "這個實例還活著",
+    en: "provided the instance is still alive",
+    ja: "インスタンスが生きている",
+    ko: "인스턴스가 살아 있",
+  };
+
+  /**
+   * (4) 「保存一次设置要发几次 get」——P3c 账本逐字登记「⇒ 登记 P3e」的那条无锚新账。
+   * 五种语言写法本来就不同，逐份一个 token。
+   */
+  const GET_COUNT_HINT: Record<Lang, string> = {
+    "zh-CN": "3~4 次 get",
+    "zh-TW": "get 讀取 3~4 次",
+    en: "3–4 gets",
+    ja: "get 3〜4 回",
+    ko: "get 3~4회",
+  };
+
+  const TABLES = [
+    { label: "(2) ③ 段那句承诺的限定", table: ALIVE_QUALIFIER },
+    { label: "(4) 保存一次设置的 get 次数", table: GET_COUNT_HINT },
+  ] as const;
+
+  /**
+   * 一张「每语言一个 token」的锚表 × 五份 DEPLOY.md，返回失败报文数组。
+   * **真扫描与下面的探针共用这一份**——各写一份的话，两边的判据会各有各的口径，
+   * 而其中一份坏了另一份不会响（本文件既有纪律）。
+   */
+  function perLangTokenFailures(label: string, table: Record<Lang, string>, read: ApiDocReader): string[] {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const token = table[lang];
+      // 空串永远查得到 —— 认不出要吵，不许装没看见。
+      if (token.trim() === "") {
+        out.push(`${label}：${lang} 的锚 token 是空串——空串永远查得到，这一格从此空转`);
+        continue;
+      }
+      const own = read(lang).split(token).length - 1;
+      if (own !== 1) {
+        out.push(
+          `${label}：docs/${lang}/DEPLOY.md 里「${token}」出现 ${own} 次，应当恰好 1 次`
+          + "——0 次多半是这一份漏改（或翻译时抄错了一位），"
+          + "2 次以上说明这个 token 不再唯一，换一个只在那句话里出现的写法",
+        );
+      }
+      for (const other of LANGS) {
+        if (other === lang) continue;
+        if (read(other).includes(token)) {
+          out.push(
+            `${label}：${lang} 的锚 token「${token}」在 docs/${other}/DEPLOY.md 里也出现了`
+            + `——${other} 的读者拿到的是一句不属于他那种语言的话，`
+            + "而且这两份从此会互相顶替：其中一份漏改另一份替它满足",
+          );
+        }
+      }
+    }
+    return out;
+  }
+
+  it.each([...TABLES])("$label：五份 DEPLOY.md 各自写着自己那种语言的写法，且不串门", ({ label, table }) => {
+    const failures = perLangTokenFailures(label, table, realDoc("DEPLOY"));
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("反向自检：两张锚表的语言集恰好等于 LANGS，且没有两种语言共用（或互为子串）同一个 token", () => {
+    // 期望值是本文件那张手写的 `LANGS`，不是从表自己数出来再回填：两份独立的语言清单
+    // 互校，某一边少一种语言时这一格当场红，而不是让上面那圈循环静静少跑一种。
+    const want = [...LANGS].sort();
+    for (const { label, table } of TABLES) {
+      expect(Object.keys(table).sort(), `${label} 的语言集与本文件的 LANGS 对不上`).toEqual(want);
+      const vals = LANGS.map((l) => table[l]);
+      expect(new Set(vals).size, `${label} 里有两种语言共用了同一个锚 token`).toBe(vals.length);
+      for (const a of vals) {
+        for (const b of vals) {
+          if (a === b) continue;
+          expect(
+            a.includes(b),
+            `${label} 里「${a}」把「${b}」整个包住了——互为子串与共用同一个 token 是同一种病：`
+            + "包含关系下，被包住的那一份漏改会被另一份替它满足",
+          ).toBe(false);
+        }
+      }
+    }
+  });
+
+  // ── 探针：变异只改一份，其余四份照旧走真文档；共用上面那份 `perLangTokenFailures` ──
+  //
+  // ⚠️ **反向控制用仓里真实存在的串**：下面三格都从今天真的写在文档里的那句话派生，
+  // 不另造一个仓里不存在的世界。`readerWith` 在变异没落地时当场炸，所以「探针绿」
+  // 不可能是「变异压根没打中」造成的。
+
+  it("探针 M1：只改四份、ko 那份的限定被删掉 ⇒ 变红并点名 ko", () => {
+    const failures = perLangTokenFailures(
+      "(2) ③ 段那句承诺的限定",
+      ALIVE_QUALIFIER,
+      readerWith("ko", (s) => s.split(ALIVE_QUALIFIER.ko).join("인스턴스가 죽어 있"), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/ko/DEPLOY.md");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("探针 M2：把 ja 那份的 `get 3〜4 回` 改成 `get 2〜3 回` ⇒ 变红并点名 ja", () => {
+    const failures = perLangTokenFailures(
+      "(4) 保存一次设置的 get 次数",
+      GET_COUNT_HINT,
+      readerWith("ja", (s) => s.split("get 3〜4 回").join("get 2〜3 回"), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/ja/DEPLOY.md");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("探针 M3：把 en 那句英文原样塞进 ko 那份（「五份都塞同一句英文」那种糊弄法）⇒ 变红并点名 ko", () => {
+    // 这一格测的是上面第 ② 条：光看「每份都含自己的 token」是抓不住串门的
+    // ——ko 那份仍然写着自己的 `get 3~4회`，正向那一半照绿。
+    const failures = perLangTokenFailures(
+      "(4) 保存一次设置的 get 次数",
+      GET_COUNT_HINT,
+      readerWith("ko", (s) => s.split("get 3~4회").join("get 3~4회（3–4 gets）"), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/ko/DEPLOY.md");
+    expect(failures[0]).toContain("3–4 gets");
+  });
+
+  it("不乱红：五份一起合法地多写一句无关的话 —— 上面那几格不许因此假红", () => {
+    // 与探针同源的「我对 X 不乱红」那一半：五份各追加一段既不含任何锚 token、
+    // 又与那两句话无关的正文，真扫描必须仍然是空。
+    const noisy: ApiDocReader = (lang) => `${realDoc("DEPLOY")(lang)}\n\n<!-- 无关的一行 -->\n`;
+    for (const { label, table } of TABLES) {
+      const failures = perLangTokenFailures(label, table, noisy);
+      expect(failures, `${label}：五份一起多写了一句无关的话，判据却红了\n${failures.join("\n")}`).toEqual([]);
+    }
   });
 });
