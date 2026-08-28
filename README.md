@@ -1,5 +1,6 @@
 # agnes2api
 
+[![CI](https://github.com/xwteam/agnes2api/actions/workflows/ci.yml/badge.svg)](https://github.com/xwteam/agnes2api/actions/workflows/ci.yml)
 [![version](https://img.shields.io/badge/version-v0.1.0-success)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -117,3 +118,6 @@ SDK usage examples, and the admin panel.
 
 MIT — see [LICENSE](LICENSE). See also [SPONSORS.md](SPONSORS.md) if you'd like to support
 or contribute to the project.
+
+Sending code: [CONTRIBUTING.md](CONTRIBUTING.md). Found a vulnerability: report it privately,
+see [SECURITY.md](SECURITY.md) — please don't open a public issue for it.

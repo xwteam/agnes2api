@@ -507,8 +507,11 @@ function addBuckets(a: UsageBucket, b: UsageBucket): UsageBucket {
  * ⚠️ **入参是 `unknown[]` 不是 `UsageDayShard[]`，且逐条窄化。**
  * 真实输入来自 `storage.get`（`JSON.parse` 的结果），运行期什么形状都可能是——
  * P3c Task 1 的 W2 穷举过畸形事件条目（
- * `docs/design/2026-08-20-agnes2api-p3c-write-ops-plan.md:238`
+ * `docs/design/2026-08-20-agnes2api-p3c-write-ops-plan.md「W2 详表（穷举，不是抽样」`
  * 那张表五行），其中三行让端点 **500**、两行**原样进了响应体并让游标永远推不动**。
+ * ⚠️ 这里原来写的是 `:238`，P3e Task 29A 在那份计划顶部插了四行溯源限定之后，
+ * 那个行号落到了另一张表的 W5 行上——**门禁不会为此变红**（规则 A 对非测试文件只查
+ * 行号在不在范围内），改成名字锚就没有这个漂法了。
  * 写成 `UsageDayShard[]` 就是在签名上撒谎。
  * **返回值里的 `malformed` 是给面板看的**：静默丢弃就是撒谎。
  *

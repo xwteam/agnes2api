@@ -1,0 +1,30 @@
+---
+name: Bug report
+about: Something the gateway does that it should not
+title: ''
+labels: ''
+assignees: ''
+---
+
+⚠️ **Never paste real API keys, tokens, hostnames or `IP:PORT` pairs.** Redact them before
+you hit submit. For a suspected *vulnerability*, do not use this template at all — see
+[SECURITY.md](../../SECURITY.md).
+
+**Runtime** — Cloudflare Worker, or Docker / Node? (say which; they share one codebase but
+not one storage layer)
+
+**Version** — the value in `VERSION`, or the tag of the image you ran.
+
+**Surface** — OpenAI, Anthropic, Gemini, OpenAI-Responses, image/video passthrough, or the
+admin panel?
+
+**What happened**
+
+**What you expected instead**
+
+**Smallest reproduction** — the request you sent (redacted) and the response you got back,
+including the status code. If it is a streaming problem, say so; streaming and non-streaming
+go down different paths.
+
+**Anything in the logs?** The gateway records upstream failures and key-pool decisions; the
+relevant lines usually say more than the client-side error does.
