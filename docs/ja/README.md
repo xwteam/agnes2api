@@ -118,3 +118,7 @@ docker compose up -d
 ## ライセンス
 
 MIT —— [LICENSE](../../LICENSE) を参照してください。
+
+コードを送る場合は [CONTRIBUTING.md](../../CONTRIBUTING.md) を参照してください。脆弱性を
+見つけた場合は公開 issue を立てず、[SECURITY.md](../../SECURITY.md) の手順で非公開に報告
+してください。

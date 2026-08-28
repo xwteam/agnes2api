@@ -104,3 +104,6 @@ docker compose up -d
 ## 授權條款
 
 MIT —— 詳見 [LICENSE](../../LICENSE)。
+
+想提交程式碼：見 [CONTRIBUTING.md](../../CONTRIBUTING.md)。發現安全問題：請私下回報，見
+[SECURITY.md](../../SECURITY.md)，不要開公開 issue。

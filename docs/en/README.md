@@ -112,3 +112,6 @@ GenAI SDK — see [USAGE.md](./USAGE.md) for copy-pasteable examples in each.
 ## License
 
 MIT — see [LICENSE](../../LICENSE).
+
+Sending code: [CONTRIBUTING.md](../../CONTRIBUTING.md). Found a vulnerability: report it
+privately, see [SECURITY.md](../../SECURITY.md) — please don't open a public issue for it.

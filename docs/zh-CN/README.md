@@ -103,3 +103,6 @@ docker compose up -d
 ## 许可证
 
 MIT —— 见 [LICENSE](../../LICENSE)。
+
+想提代码：见 [CONTRIBUTING.md](../../CONTRIBUTING.md)。发现安全问题：请私下上报，见
+[SECURITY.md](../../SECURITY.md)，不要开公开 issue。

@@ -8,7 +8,7 @@ assignees: ''
 
 ⚠️ **Never paste real API keys, tokens, hostnames or `IP:PORT` pairs.** Redact them before
 you hit submit. For a suspected *vulnerability*, do not use this template at all — see
-[SECURITY.md](../../SECURITY.md).
+[SECURITY.md](https://github.com/xwteam/agnes2api/blob/main/SECURITY.md).
 
 **Runtime** — Cloudflare Worker, or Docker / Node? (say which; they share one codebase but
 not one storage layer)

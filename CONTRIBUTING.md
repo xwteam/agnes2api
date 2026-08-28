@@ -15,8 +15,10 @@ save you a round trip.
 - **The repository holds zero credentials.** No keys, no tokens, no private hostnames, no
   `IP:PORT` pairs — not in code, not in tests, not in docs, not in an issue you file.
   See [SECURITY.md](SECURITY.md) for what that rule does and does not mean.
-- **Five languages.** Documentation lives in `docs/` under one directory per language. A new
-  i18n key must exist in all five, and a new section must appear in all five.
+- **Five languages.** The translated documentation lives in `docs/<lang>/`, one directory per
+  language. (`docs/` also holds `docs/design/`, which is a working record and not a translation
+  target.) A new i18n key must exist in all five languages, and a new section must appear in
+  all five.
 
 ## Setting up
 
@@ -38,8 +40,15 @@ The two you will run most often:
 - `pnpm test:workers` — the contract tests again, this time inside `workerd`.
 
 Contract tests are expected to run under **both** runtimes; that is the point of having them
-in `tests/contract/`. A new case that only runs under Node covers half the product, and a
-collection guard will tell you so.
+in `tests/contract/`. A new case that only runs under Node covers half the product.
+
+**No machine will tell you that you put a case in the wrong directory.** The collection guard
+in `tests/global-setup.ts` checks that every file *already in* `tests/contract/` is collected
+by both vitest configs — it does not judge where a case belongs. Its own note says so in as
+many words: `tests/global-setup.ts`「不校验目录归属本身是否合理」. Write a contract-shaped case
+into `tests/unit/` and it legitimately runs on Node only, with a green run and an unchanged
+banner. Catching that is a reviewer's job, and it is one of the things the pull request
+template asks about.
 
 If you touch `admin-ui/`, the generated bundle `src/ui/assets.generated.ts` has to be
 regenerated and committed in the same change. CI regenerates it and fails on any difference,
@@ -65,9 +74,11 @@ Paste the result as a table in the pull request. The template asks for it.
 
 Structural parity across the five languages is machine-checked: section skeletons, link sets,
 identifier code spans, and the absence of untranslated leakage. **Translation accuracy is not
-machine-checked and cannot be** — five files can be wrong in the same way and every guard will
-stay green. If you change the meaning of a sentence, change it in all five, and say so in the
-pull request so a human reads them.
+machine-checked here** — five files can be wrong in the same way, or one of them can say the
+opposite of the other four without moving a single `#`, and every guard stays green. The
+guards listed above compare structure; none of them compares meaning. If you change the
+meaning of a sentence, change it in all
+five, and say so in the pull request so a human reads them.
 
 ## Reporting a security issue
 

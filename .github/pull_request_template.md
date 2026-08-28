@@ -5,9 +5,10 @@
 ## Merge conditions
 
 Tick every box, or strike it out and say why it does not apply. These are the house rules, not
-a formality — see [CONTRIBUTING.md](../CONTRIBUTING.md).
+a formality — see [CONTRIBUTING.md](https://github.com/xwteam/agnes2api/blob/main/CONTRIBUTING.md).
 
-- [ ] Every check in [`.github/workflows/ci.yml`](workflows/ci.yml) was run locally, in the
+- [ ] Every check in
+      [`.github/workflows/ci.yml`](https://github.com/xwteam/agnes2api/blob/main/.github/workflows/ci.yml) was run locally, in the
       order that file lists them, and each one exited 0.
 - [ ] `pnpm test` and `pnpm test:workers` are both green, and the totals went **up**, not down.
 - [ ] New contract tests live in `tests/contract/` and therefore run under **both** runtimes.

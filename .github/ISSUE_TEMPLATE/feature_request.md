@@ -17,5 +17,5 @@ pool, the registrar, or the admin panel.
 **Does it have to work on both runtimes?** Cloudflare Workers and Docker/Node run the same
 request-handling code, and anything that only works on one of them is a much harder sell.
 
-**Would you be willing to send a pull request?** See [CONTRIBUTING.md](../../CONTRIBUTING.md)
-first — the bar on tests here is higher than usual, and it is better to know that up front.
+**Would you be willing to send a pull request?** See
+[CONTRIBUTING.md](https://github.com/xwteam/agnes2api/blob/main/CONTRIBUTING.md) first — the bar on tests here is higher than usual, and it is better to know that up front.
