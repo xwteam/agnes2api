@@ -915,3 +915,171 @@ describe("装载不起来时的诊断视图（评审 C2 的前端那一半）", 
     expect(inputOf(section, "cooldownStrikeMs").disabled).toBe(false);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// 卡 5：危险区（P3e Task 31）
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * 危险区那张卡的**行为**覆盖。取值决策那一半在 `tests/ui/settings.test.ts` 的
+ * 「危险区的取值决策」那一组；这里验的是「板块文件真的把那些判据接上了 DOM」。
+ *
+ * ⚠️⚠️ **本组最要紧的一格是「打错数字不许发请求」。** 这两颗按钮的后果不可撤销，
+ * 而「再点一次确认」对着一个手滑的人拦不住任何东西——把当前池大小手打一遍才是
+ * 那道闸。只断言「有个输入框」是不够的：一个**收下输入却不看它**的实现照样绿。
+ */
+describe("危险区（设计小节「重置到底重置了什么」）", () => {
+  /** 危险区那张卡，按标题 key 找。 */
+  const dangerCard = (h: Awaited<ReturnType<typeof openSettings>>) =>
+    cardByTitleKey(h.section("settings"), "set.card.danger");
+
+  const dangerButton = (h: Awaited<ReturnType<typeof openSettings>>, id: string): FakeElement => {
+    const row = dangerCard(h).walk().find((n) => n.getAttribute("data-danger") === id);
+    if (!row) throw new Error(`找不到危险区里的 ${id}`);
+    const btn = row.children.find((c) => c.tagName === "button");
+    if (!btn) throw new Error(`${id} 这一行上没有按钮`);
+    return btn;
+  };
+
+  /** 默认应答：配置读得到、Key 池有 3 把、两条危险动作都成功。 */
+  function danger(over: Record<string, unknown> = {}, poolTotal = 3) {
+    return (url: string): Resp => {
+      if (url.includes("/config/reset")) {
+        return ok({ ...configBody(over), changed: ["maxStrikes"], credentialsChanged: [], resetBlocked: [] });
+      }
+      if (url.includes("/keys/purge")) return ok({ deleted: poolTotal, remaining: 0, expected: poolTotal });
+      if (url.includes("/keys")) return ok({ items: [], total: poolTotal, page: 1, size: 1, pages: 1 });
+      if (url.includes("/config")) return ok(configBody(over));
+      return ok({ protocols: [], models: [] });
+    };
+  }
+
+  it("危险区那张卡真的建出来了，两颗按钮各在自己那一行上", async () => {
+    const h = await openSettings(danger());
+    const rows = dangerCard(h).walk().filter((n) => n.getAttribute("data-danger") !== null);
+    expect(rows.map((r) => r.getAttribute("data-danger")),
+      "危险区的按钮与 DANGER_ACTIONS 对不上 —— 那张表是屏幕与五份 ADMIN.md 共用的真源")
+      .toEqual(["resetConfig", "purgeKeys"]);
+  });
+
+  it("清空 Key 池：点开先取一次当前池大小，确认之前一次写请求都不发", async () => {
+    const h = await openSettings(danger({}, 7));
+    dangerButton(h, "purgeKeys").click();
+    await settle();
+
+    const modal = h.dom.document.querySelectorAll(".modal")[0];
+    expect(modal, "清空 Key 池没有二次确认 —— 一次误点就抹掉整池").toBeDefined();
+    // 弹窗里印着**现取的**那个数，而不是一个写死的占位。
+    expect(modal!.textContent).toContain("7");
+    expect(h.calls.some((c) => c.url.includes("/keys/purge")), "还没确认就发出去了").toBe(false);
+    // 取数走的是只读那条（GET），不是别的。
+    const sizeCall = h.calls.find((c) => c.url.includes("/keys") && !c.url.includes("purge"));
+    expect(sizeCall?.method, "取池大小用的不是 GET").toBe("GET");
+  });
+
+  it("打错数字：弹窗留着、一次请求都不发，并把「对不上」那句话显示出来", async () => {
+    const h = await openSettings(danger({}, 7));
+    dangerButton(h, "purgeKeys").click();
+    await settle();
+    const modal = h.dom.document.querySelectorAll(".modal")[0]!;
+    const input = modal.querySelectorAll("input")[0]!;
+    input.value = "8";
+    modal.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+
+    expect(h.calls.some((c) => c.url.includes("/keys/purge")), "数字打错了却把请求发了出去").toBe(false);
+    expect(h.dom.document.querySelectorAll(".modal").length,
+      "打错了却把弹窗关掉了 —— 运维得重新点开、重新读那个数").toBe(1);
+    const mismatch = modal.walk().find((n) => n.getAttribute("data-i18n") === "set.danger.purge.mismatch");
+    expect(mismatch?.style.display, "「对不上」那句话没显示出来").toBe("");
+  });
+
+  it("打对数字：把 expect 带上发出去，回执里的 remaining 决定屏幕上说哪句话", async () => {
+    const h = await openSettings(danger({}, 7));
+    dangerButton(h, "purgeKeys").click();
+    await settle();
+    const modal = h.dom.document.querySelectorAll(".modal")[0]!;
+    modal.querySelectorAll("input")[0]!.value = "7";
+    modal.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+
+    const call = h.calls.find((c) => c.url.includes("/keys/purge"));
+    expect(call, "数字打对了却没发请求").toBeDefined();
+    expect(call!.method).toBe("POST");
+    expect(call!.body, "expect 没带上 —— 后端那道「池子在你确认之前变了」的闸就成了摆设")
+      .toEqual({ expect: 7 });
+    const line = dangerCard(h).walk().find((n) => n.classList.contains("cfg-danger-result"))!;
+    expect(line.style.display, "回执行没显示出来").toBe("");
+    expect(line.textContent, "回执里 remaining=0，回执行却没说删了几把").toContain("7");
+  });
+
+  /**
+   * ⚠️ **`remaining` 非零那一档必须说实话。** 后端那一格是**回读**出来的
+   *（索引写空了、而存储里还躺着记录），面板把它说成「已清空」就是又一次
+   * 「屏幕上编一个状态」——P3d 那次编状态码是同一个形状。
+   */
+  it("回执里 remaining 非零：屏幕上说的是「还剩几把」，不是「已清空」", async () => {
+    const h = await openSettings((url: string) => {
+      if (url.includes("/keys/purge")) return ok({ deleted: 7, remaining: 2, expected: 7 });
+      if (url.includes("/keys")) return ok({ items: [], total: 7, page: 1, size: 1, pages: 1 });
+      if (url.includes("/config")) return ok(configBody());
+      return ok({ protocols: [], models: [] });
+    });
+    dangerButton(h, "purgeKeys").click();
+    await settle();
+    const modal = h.dom.document.querySelectorAll(".modal")[0]!;
+    modal.querySelectorAll("input")[0]!.value = "7";
+    modal.querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+
+    const line = dangerCard(h).walk().find((n) => n.classList.contains("cfg-danger-result"))!;
+    expect(line.style.display, "回执行没显示出来").toBe("");
+    expect(line.textContent, "屏幕上没说还剩几把").toContain("2");
+  });
+
+  it("池大小读不出来：不开确认框，也不发任何写请求", async () => {
+    const h = await openSettings((url: string) => {
+      if (url.includes("/keys")) return { status: 500, body: { error: { message: "boom" } } };
+      if (url.includes("/config")) return ok(configBody());
+      return ok({ protocols: [], models: [] });
+    });
+    dangerButton(h, "purgeKeys").click();
+    await settle();
+    expect(h.dom.document.querySelectorAll(".modal").length,
+      "读不到池大小却把确认框开了 —— 那个数要么是编的、要么是 0，而 0 会让人在一池 key 上确认一个「空池」")
+      .toBe(0);
+    expect(h.calls.some((c) => c.url.includes("purge"))).toBe(false);
+  });
+
+  it("重置配置：二次确认里那句话按后端的 resetBlocked 分岔，且确认之前不发请求", async () => {
+    const missing = await openSettings(danger({ resetBlocked: [{ field: "gatewayToken", code: "gateway_token_required" }] }));
+    dangerButton(missing, "resetConfig").click();
+    await settle();
+    const m1 = missing.dom.document.querySelectorAll(".modal")[0];
+    expect(m1, "重置配置没有二次确认").toBeDefined();
+    expect(m1!.textContent, "缺网关口令那一态没有复用已上线的那句话").toContain("起不来");
+    expect(missing.calls.some((c) => c.url.includes("/config/reset")), "还没确认就发出去了").toBe(false);
+
+    const fine = await openSettings(danger({ resetBlocked: [] }));
+    dangerButton(fine, "resetConfig").click();
+    await settle();
+    const m2 = fine.dom.document.querySelectorAll(".modal")[0]!;
+    expect(m2.textContent, "两态给出的是同一句话 —— 那就等于没有分岔").not.toContain("起不来");
+  });
+
+  it("重置确认之后：请求带 confirm: true，回执按回读结果把变了的那格高亮出来", async () => {
+    const h = await openSettings(danger({ resetBlocked: [] }));
+    dangerButton(h, "resetConfig").click();
+    await settle();
+    h.dom.document.querySelectorAll(".modal")[0]!
+      .querySelectorAll("button").find((b) => b.getAttribute("data-i18n") === "common.confirm")!.click();
+    await settle();
+
+    const call = h.calls.find((c) => c.url.includes("/config/reset"));
+    expect(call, "确认了却没发请求").toBeDefined();
+    expect(call!.body, "confirm 没带上 —— 后端那道「必须显式确认」的闸就成了摆设").toEqual({ confirm: true });
+    // 回执里 `changed: ["maxStrikes"]` ⇒ 那一格要被高亮（判据与保存那条同源）。
+    expect(fieldNode(h.section("settings"), "maxStrikes").classList.contains("changed"),
+      "回读说这一格变了，屏幕上却没高亮").toBe(true);
+  });
+});

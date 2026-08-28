@@ -4,10 +4,12 @@ import type { KeyPoolRepo } from "../../../core/keypool-repo.js";
 import type { KeyRecord } from "../../../core/types.js";
 import { isDisabled } from "../../../core/keypool.js";
 import { adminError, adminErrorBody, readAdminJson } from "../errors.js";
+// 危险区那条端点走**不带码的网关信封**，理由见 `POOL_SIZE_CHANGED` 上方那段 ⚠️。
+import { httpError } from "../../errors.js";
 
 /**
- * Key 池的四条写端点。**本仓第一批 `/admin/api/*` 写方法**——在此之前那棵树上
- * 六条路由全是 `admin.get()`。
+ * Key 池的五条写端点（第五条「清空 Key 池」是 P3e Task 31 的危险区）。
+ * **前四条是本仓第一批 `/admin/api/*` 写方法**——在此之前那棵树上六条路由全是 `admin.get()`。
  *
  * 三条贯穿全文件的纪律，每一条都对应一个已经发生过的失效形态：
  *
@@ -457,4 +459,107 @@ function bulkEvent(op: BulkOp, changed: readonly string[]) {
     };
   }
   return { level: "info" as const, event: "key.restored", msg: "面板批量清掉了冷却", fields };
+}
+
+/**
+ * `POST /admin/api/keys/purge` 的注册路径。**这个字符串是真源**：
+ * `src/http/admin/router.ts` 从这里取，`tests/unit/docs-parity.test.ts` 的
+ * 「危险区那两条端点的路径在五份 DEPLOY.md 的配额账里逐份写着 —— 路径从真源常量现算」
+ * 也从这里取 ⇒ 改了它而五份文档没跟着改，那一格当场红。
+ */
+export const KEYS_PURGE_PATH = "/admin/api/keys/purge";
+
+/**
+ * 池子在「你看到的那一刻」与「你按下确认那一刻」之间变了。
+ *
+ * **它不是洁癖**：清空 Key 池是本系统最不可撤销的动作（key 明文只在存储里有一份），
+ * 而面板上那个数字是运维**读过一眼**的。中间被别人导入 / 补池铸出新 key 时，
+ * 一次「我确认清掉这 3 把」会连带把第 4 把一起删掉，而那把 key 他从来没见过。
+ * ⇒ 请求体里必须带上他看到的那个数，对不上就 **409 + 两边的数**，一把都不删。
+ *
+ * **响应体同时给 `error` 信封与顶层 `reason`**，与 `MUST_DISABLE_FIRST` 同一条理由：
+ * 面板要靠机器可读的判别字段选一句五语言文案，靠解析 `message` 的中文是不行的。
+ *
+ * ⚠️ **本端点的两处错误走的是不带 `code` 的网关信封（`httpError`），与同文件上面那四条
+ * 端点刻意不同，这是边界不是疏忽。** `ADMIN_ERROR_CODES` 那张闭集的射程写在
+ * `src/core/admin/admin-errors.ts` 里，逐字是「面板真的会把后端 `message` 画到屏幕上
+ * 的那一族，也就是 `admin-ui/js/sec-keys.js` 的 `errorMessage()` 够得着的那些端点」。
+ * **这一条的消费者是设置页的危险区卡**，而设置页**从不渲染 `error.message`**
+ *（`src/http/admin/handlers/config.ts` 文件头那段逐字写着这条纪律）——它按顶层
+ * `reason` 选一句五语言文案（`set.danger.purge.changed`）。给它发一个码，等于在一个
+ * 够不着屏幕的位置上多一条要五语言维护的契约。
+ */
+const POOL_SIZE_CHANGED = "pool_size_changed";
+
+/**
+ * `POST /admin/api/keys/purge` —— 危险区第二颗按钮（设计小节「重置到底重置了什么」）。
+ *
+ * 请求 `{ expect: number }` → `{ deleted, remaining, expected }`。
+ *
+ * ── 四件事，每一件都对应设计小节里的一条裁定 ─────────────────────────────────
+ * ① **只动 `key:<id>` 与 `pool:index` 两族键。** `config` / `usage:` / `event:` /
+ *    `tend:history` / 两把补池键 / `health:probe` 一个字节都不动——那是一条设计裁定，
+ *    不是疏忽：任何一颗重置按钮顺手去删诊断历史，等于把「诊断用的历史」和「运维的
+ *    一次误操作」绑在一起，而运维往往正是**因为**出事才来按它的。
+ *    绊线在 `tests/contract/admin-danger.test.ts` 的
+ *    「清空 Key 池之后，config / tend:history / usage:* / event:* 的读回值不变」。
+ * ② **走 `repo.deleteMany()`，不许退化成循环调 `repo.delete()`。** 后者每一把都要
+ *    「读索引 + 写索引」，N 把就是 N 次索引 put 打在每天 1,000 次的写桶上，
+ *    而换来的信息量与一次 put 完全相同（那个方法的说明里逐字写着这条）。
+ *    ⇒ 单价是 **N 次 delete + 1 次 put**，五语言 DEPLOY.md 的配额账写的就是这个。
+ * ③ **`stats` 跟着记录一起没了，这是它的语义不是它的 bug。** 每把 key 的用量历史
+ *    住在 `key:<id>` 的**值里面**，删记录就是删历史，没有第二份 ⇒ 面板的二次确认
+ *    必须把这句话说破（`set.danger.purge.stats`）。
+ * ④ **回执里的 `remaining` 是回读出来的**，不是 `0` 这个常数。走 `repo.all()`——
+ *    `deleteMany` 的 `finally` 里已经 `invalidate()` 过，所以这一次是真的去存储读。
+ *    它顺带把「索引说空了、而存储里还躺着记录」那一档如实报出来（空池兜底会 `list()`
+ *    一次，见 `KeyPoolRepo.rescanEmptyResult`）——**那正是「清空之后真的空了吗」
+ *    这个问题的唯一诚实答案**，写死一个 `0` 只是把 handler 的心愿印在屏幕上。
+ *
+ * ⚠️ **`expect` 是必填的，理由与 `configResetHandler` 的 `confirm` 逐字相同**：
+ * 枚举式鉴权矩阵会拿正确的管理口令把每一条路由真的打一遍，一条不带请求体就会清空
+ * 整池的端点会在那一格里把夹具自己的 key 池抹掉。
+ */
+export function keysPurgeHandler(deps: KeysWriteDeps) {
+  return async (c: Context) => {
+    const body = asObject(await readAdminJson<unknown>(c), "请求体");
+    rejectUnknown(body, ["expect"]);
+    const expected = body.expect;
+    if (typeof expected !== "number" || !Number.isInteger(expected) || expected < 0) {
+      throw httpError(
+        400, "invalid_request_error",
+        "expect 必须是一个非负整数：它是你在屏幕上看到的池大小",
+      );
+    }
+
+    const before = await deps.repo.all();
+    if (before.length !== expected) {
+      return c.json({
+        error: {
+          type: "conflict",
+          message: `池子在你确认之前变了：你看到的是 ${expected} 把，现在是 ${before.length} 把。一把都没有删，请刷新后重来`,
+        },
+        reason: POOL_SIZE_CHANGED,
+        expected,
+        actual: before.length,
+      }, 409);
+    }
+
+    await deps.repo.deleteMany(before.map((r) => r.id));
+
+    // **回读**：从存储读回来，不是拿 `before.length` 反推。
+    const after = await deps.repo.all();
+
+    if (before.length > 0) {
+      deps.logger.log({
+        level: "warn", event: "key.deleted",
+        msg: "面板清空了整个 Key 池（每把 key 的用量历史随记录一起没了，没有第二份）",
+        // **只记数**：一次清空的 id 可能有几百个，而 `LogEntry.fields` 的值是标量，
+        // 拼成一个字符串就是几 KB 挂在一条事件上（同 `BULK_EVENT_IDS_MAX` 那段）。
+        fields: { count: before.length, remaining: after.length },
+      });
+    }
+
+    return c.json({ deleted: before.length, remaining: after.length, expected });
+  };
 }

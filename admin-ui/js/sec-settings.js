@@ -1,5 +1,9 @@
 /**
- * 设置页（设计 §10.4 的前三张卡）：认证密钥 / 上游与冷却 / 注册机。
+ * 设置页：认证密钥 / 上游与冷却 / 注册机（设计 §10.4 的前三张卡）
+ * + 集成示例（P3d Task 7）+ 危险区（P3e Task 31，设计里不带编号的那一节
+ * 「重置到底重置了什么」）。**卡数是五份 ADMIN.md 设置卡那张表的行数真源**，
+ * 由 `tests/unit/docs-parity.test.ts` 的
+ * 「五份 ADMIN.md 里五张表的行数，逐张等于屏幕那边对应的那个计数」钉着。
  *
  * 板块契约（设计文档 §9.3）：`{ init?, onShow?, onHide? }`，见 admin-ui/js/app.js
  * 的 showSection。**板块内不许监听 langchange**——框架层会 apply(document) 之后
@@ -40,6 +44,8 @@ import {
   buildPatch, localErrors, changedFields, changedSecrets, propagationView,
   errorRows, clearResultView, displayValue, clearWarning, isDiagnostic, loadBlockedRows,
   isSaveReceipt, touchesLiveField, touchesBuildTimeField,
+  // 第 5 张卡（危险区，P3e Task 31）。**取值决策一律在纯函数里**，见本文件纪律 ②。
+  DANGER_ACTIONS, resetWarnings, poolSizeOf, purgeConfirmed, purgeResultView, isPoolSizeChanged,
 } from "./pure/settings.mjs";
 
 let nodes = null;
@@ -616,6 +622,133 @@ async function doClear(path) {
   }
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// 卡 5：危险区（P3e Task 31）
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * 「重置配置」的二次确认。
+ *
+ * ⚠️ **弹窗里那几句「重置之后会缺什么」全部来自后端的 `resetBlocked`**
+ *（`configLoadBlockers({}, env)`），面板一个优先级判断都不做——设计小节明令
+ * 复用「清空凭据」已经在用的那两条文案，不许另写第三句。取值决策在
+ * `resetWarnings()` 里，含红不红。
+ */
+function confirmReset() {
+  const body = el("div");
+  body.appendChild(elI18n("p", "set.danger.reset.warn", { class: "danger-text" }));
+  body.appendChild(elI18n("p", "set.danger.reset.scope", { class: "muted note" }));
+  for (const w of resetWarnings(data)) {
+    // 表外的码**原样显示出来**，不冒充任何一档已知原因（与 `showErrors()` 同源）。
+    const text = w.key === null ? t("set.err.unknown", { code: w.code }) : t(w.key, w.params);
+    body.appendChild(el("p", { class: w.kind === "danger" ? "danger-text" : "muted note" }, text));
+  }
+  const p = propagationView(data);
+  if (p.visibilityUpperBoundMs !== null) {
+    // **必须显示，不许写「立即生效」**（设计 §5.2）：本进程确实立刻生效，
+    // 别的副本要等 `CONFIG_TTL_MS` + KV 边缘缓存。
+    body.appendChild(el("p", { class: "muted note" },
+      t("set.danger.reset.propagation", { bound: fmtDuration(p.visibilityUpperBoundMs) })));
+  }
+  openModal("set.danger.reset.confirmTitle", body, [
+    { labelKey: "common.cancel" },
+    { labelKey: "common.confirm", danger: true, onClick: () => { doReset(); } },
+  ]);
+}
+
+async function doReset() {
+  try {
+    const res = await api.post("/config/reset", { confirm: true });
+    // **回读之后**才刷界面（与 `save()` / `doClear()` 同一条纪律）：`res` 就是
+    // 后端回读出来的新状态本身，`render()` 会把 `changed` 那几格高亮出来。
+    data = res;
+    render();
+    for (const path of changedFields(res).concat(changedSecrets(res))) {
+      if (nodes.fields[path] !== undefined) nodes.fields[path].wrap.classList.add("changed");
+    }
+    nodes.dangerResult.textContent = t("set.danger.reset.done");
+    nodes.dangerResult.style.display = "";
+  } catch (e) {
+    toast(t("set.danger.failed"), "warn", { sticky: true });
+  }
+}
+
+/**
+ * 「清空 Key 池」的二次确认。
+ *
+ * ⚠️⚠️ **确认框要求把当前池大小那个数字亲手打一遍**，判据在 `purgeConfirmed()` 里。
+ * 这不是仪式感：这颗按钮是本系统最不可撤销的动作（key 明文只在存储里有一份，
+ * 每把 key 的用量历史住在记录的值里面），而「再点一次确认」对着一个手滑的人
+ * 拦不住任何东西。
+ *
+ * ⚠️ **池大小是点开这一刻现取的**（`GET /admin/api/keys`，走 isolate 快照、
+ * 零存储读），不是常驻轮询——本板块那条「没有自动刷新」的纪律照旧。
+ * **读不到就不给开确认框**：没有基线时那个数字要么是编的、要么是 0，
+ * 而 0 会让人在一池 key 上确认一个「空池」。
+ */
+async function confirmPurge() {
+  let size = null;
+  try {
+    size = poolSizeOf(await api.get("/keys?size=1&page=1"));
+  } catch (e) {
+    size = null;
+  }
+  if (size === null) {
+    toast(t("set.danger.purge.sizeUnknown"), "warn", { sticky: true });
+    return;
+  }
+
+  const body = el("div");
+  body.appendChild(el("p", { class: "danger-text" }, t("set.danger.purge.warn", { count: String(size) })));
+  body.appendChild(elI18n("p", "set.danger.purge.stats", { class: "danger-text" }));
+  body.appendChild(elI18n("p", "set.danger.purge.propagation", { class: "muted note" }));
+  body.appendChild(el("p", null, t("set.danger.purge.typeTo", { count: String(size) })));
+  const input = el("input", { type: "text", inputmode: "numeric", class: "danger-confirm" });
+  body.appendChild(input);
+  const mismatch = elI18n("p", "set.danger.purge.mismatch", { class: "danger-text" });
+  mismatch.style.display = "none";
+  body.appendChild(mismatch);
+
+  openModal("set.danger.purge.confirmTitle", body, [
+    { labelKey: "common.cancel" },
+    {
+      labelKey: "common.confirm",
+      danger: true,
+      // **打错了就把弹窗留着**（`openModal` 的契约：`onClick` 返回 `false` 不关闭），
+      // 而不是关掉再弹一句 toast——那样运维得重新点开、重新读那个数。
+      onClick: () => {
+        if (!purgeConfirmed(input.value, size)) {
+          mismatch.style.display = "";
+          return false;
+        }
+        doPurge(size);
+        return true;
+      },
+    },
+  ]);
+}
+
+async function doPurge(size) {
+  try {
+    const res = await api.post("/keys/purge", { expect: size });
+    const view = purgeResultView(res);
+    // **回执里的 `remaining` 是后端回读出来的**：非零就是「索引写空了、存储里还躺着
+    // 记录」，那件事必须如实说出来，不许说成「已清空」。
+    nodes.dangerResult.textContent = view.remaining !== null && view.remaining > 0
+      ? t("set.danger.purge.leftover", { deleted: String(view.deleted), remaining: String(view.remaining) })
+      : t("set.danger.purge.done", { deleted: String(view.deleted) });
+    nodes.dangerResult.style.display = "";
+  } catch (e) {
+    // 「池子在你确认之前变了」是一条**运维看得懂、也做得了**的失败（去刷新一下再来），
+    // 与一句笼统的「失败了」不是一回事——判据是顶层 `reason`，不解析 message 的中文。
+    if (isPoolSizeChanged(e && e.body)) {
+      toast(t("set.danger.purge.changed"), "warn", { sticky: true });
+      return;
+    }
+    toast(t("set.danger.failed"), "warn", { sticky: true });
+  }
+}
+
 async function load() {
   if (abort) abort.abort();
   abort = new AbortController();
@@ -714,12 +847,38 @@ export const settingsSection = {
     // 板块文件允许碰浏览器全局，**base URL 在这里读一次再传给纯函数**——
     // `js/pure/` 下禁止出现浏览器那两个顶层全局（`scripts/build-ui.mjs` 的静态校验，
     // 含注释里的字样），所以纯函数只收一个 `origin` 参数。
-    // ⚠️ **第 5 张卡（危险区）是 P3e 的**，设计订正 D1 把它移过去的理由是
-    // 「重置到底重置了什么本身需要一节设计，而设计文档没有这一节」。别在这里顺手做。
     const examples = card("set.card.examples");
     exOrigin = location.origin;
     nodes.examples = examples.body;
     section.appendChild(examples.wrap);
+
+    // ── 卡 5：危险区（P3e Task 31，设计小节「重置到底重置了什么」）───────────────
+    //
+    // ⚠️ **这张卡在 P3e 之前刻意不存在**：设计订正 D1 把它推迟到 P3e，逐字理由是
+    // 「『重置』到底重置了什么本身就需要一节设计，而本文档没有这一节」——
+    // **让一颗后果不可挽回的按钮先于它的语义上线，正是会变成 Critical 的形状。**
+    // 那一节现在写好了，这张卡才落地。
+    //
+    // ⚠️ **两颗按钮从 `DANGER_ACTIONS` 派生**，不在这里写第二份清单：那张表的**条数**
+    // 同时是五份 ADMIN.md 危险区那张表的行数真源，各写一份就会漂。
+    const danger = card("set.card.danger");
+    danger.wrap.classList.add("danger-zone");
+    danger.body.appendChild(elI18n("p", "set.danger.intro", { class: "danger-text" }));
+    const dangerRun = { resetConfig: confirmReset, purgeKeys: confirmPurge };
+    for (const a of DANGER_ACTIONS) {
+      const row = el("div", { class: "cfg-field", "data-danger": a.id });
+      row.appendChild(elI18n("div", a.titleKey, { class: "label" }));
+      row.appendChild(elI18n("p", a.descKey, { class: "muted note" }));
+      const btn = elI18n("button", a.buttonKey, { type: "button", class: "danger" });
+      btn.addEventListener("click", () => { dangerRun[a.id](); });
+      row.appendChild(btn);
+      danger.body.appendChild(row);
+    }
+    const dangerResult = el("p", { class: "muted note cfg-danger-result" });
+    dangerResult.style.display = "none";
+    danger.body.appendChild(dangerResult);
+    nodes.dangerResult = dangerResult;
+    section.appendChild(danger.wrap);
 
     const blocked = el("div", { class: "cfg-blocked danger-text" });
     blocked.style.display = "none";

@@ -245,7 +245,7 @@ stream too.
 
 ## Settings
 
-The settings page has four cards today:
+The settings page has five cards today:
 
 | Card | What it covers | Worth knowing |
 |---|---|---|
@@ -253,6 +253,7 @@ The settings page has four cards today:
 | Upstream & cooldowns | Upstream address, timeouts, and the cooldown / eviction knobs | Two of them are read once when the instance is built, see the end of this section |
 | Registrar | Every refill knob, **each mailbox channel's own credentials** (two symmetric sub-cards), plus an "advanced" collapsed area | The field in that area changes where every automatic registration goes |
 | Integration examples | Ready-to-run call examples | The address comes from the origin you opened the panel on, and the token is a placeholder |
+| Danger zone | Two buttons whose effects cannot be undone: reset configuration, purge the key pool | Both ask for a second confirmation; purging also makes you type the current pool size by hand |
 
 - **Every field lays out a quadruple**: what is in storage, what is in the environment, which
   one is in effect now, and who locked it. The priority is **environment variable > stored
@@ -284,11 +285,32 @@ The settings page has four cards today:
 
 ## Danger zone
 
-**This card does not exist yet.** The settings page today holds only the four above; a danger
-zone is planned as another card. This page will not describe what it does until it really
-ships: describing a feature that does not exist is worse than writing nothing at all.
-The row count of the table above is derived from the panel's own card count, so the day the
-danger zone lands, a test will drag this document back here to be updated.
+The last card on the settings page. Neither button here can be undone, and there is no undo path.
+
+| Button | What it touches | What it leaves alone | Second confirmation |
+|---|---|---|---|
+| Reset configuration | The one stored configuration entry, wiped in a single write, including the gateway token and both mailbox channel credentials | The key pool, per-key usage, event records and refill history | The dialog spells out what will be missing after the reset, then asks you to confirm |
+| Purge the key pool | The record of every key in the pool, plus the id index | Configuration, event records and refill history | Besides confirming, you must type the current pool size by hand |
+
+- **Resetting the configuration is not a factory reset.** Effective values come from three
+  layers — environment variable, then storage, then built-in value — and this button only wipes
+  the middle one; fields locked by the environment do not move by a single bit. For some fields
+  it therefore does nothing at all, and the screen highlights the ones that really changed.
+- **Purging the key pool takes the usage history with it.** Each key's request count, success
+  count and last error live inside the value of that record: deleting the record deletes the
+  history, and there is no second copy to recover from. The key material likewise exists only
+  in storage.
+- **Finishing on screen does not mean every replica has caught up.** After a reset, other
+  replicas or isolates only see it once the config cache and the edge cache have expired; after
+  a purge, the forwarding path can keep selecting those keys for up to one pool-snapshot TTL
+  plus the edge cache. Both upper bounds are stated in the settings card notes above, and in
+  the environment table of [DEPLOY.md](DEPLOY.md).
+- **What each button costs in quota is written in the quota account of [DEPLOY.md](DEPLOY.md)**:
+  a reset is one write; a purge is one delete per key plus the single index write — the bigger
+  the pool, the more expensive that button gets.
+- **Neither button echoes a credential.** The reset receipt carries only the read-back
+  quadruples and "configured or not", exactly like the rest of this page: not a single
+  character of plaintext.
 
 ## What the panel does not do
 

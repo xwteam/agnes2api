@@ -16,12 +16,14 @@ import { overviewHandler } from "./handlers/overview.js";
 import { eventsHandler, eventsDownloadHandler } from "./handlers/events.js";
 import {
   keysImportHandler, keysBulkHandler, keyDeleteHandler, keyPatchHandler,
+  keysPurgeHandler, KEYS_PURGE_PATH,
 } from "./handlers/keys-write.js";
 import {
   manualTendHandler, registrarStatusHandler, channelTestHandler, type RegistrarWiring,
 } from "./handlers/registrar.js";
 import {
   configGetHandler, configPutHandler, configValidateHandler, configClearSecretHandler,
+  configResetHandler, CONFIG_RESET_PATH,
   type ConfigWiring,
 } from "./handlers/config.js";
 import {
@@ -286,6 +288,23 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 所以碰不上，但顺序反了之后加一条 `POST /admin/api/keys/:id` 就会静默地
   // 把 bulk 吃掉——与本文件末尾那条静态兜底是同一个坑。
   admin.post("/admin/api/keys/bulk", keysBulkHandler(keysWrite));
+  // ── 危险区第二颗按钮：清空整个 Key 池（P3e Task 31）────────────────────────
+  //
+  // **路径从 `KEYS_PURGE_PATH` 取，不写第二遍字面量**：五语言 DEPLOY.md 的配额账
+  // 里逐份写着这条路径，而 `tests/unit/docs-parity.test.ts` 的
+  // 「危险区那两条端点的路径在五份 DEPLOY.md 的配额账里逐份写着 —— 路径从真源常量现算」
+  // 从那个常量现算 ⇒ 改路径而文档没跟上，那一格当场红。
+  //
+  // ⚠️ **它排在 `bulk` 之后、两条 `:id` 之前，与 `bulk` 是同一条规矩**：Hono 按注册
+  // 顺序匹配，`/admin/api/keys/purge` 同样能匹配 `/admin/api/keys/:id`。今天两者方法
+  // 不同（POST / DELETE、PATCH）所以碰不上，但顺序反了之后加一条
+  // `POST /admin/api/keys/:id` 就会静默地把它吃掉——**而这一条被吃掉的后果不是少一个
+  // 功能，是一颗清空整池的按钮落在别的 handler 上**。本文件里这是同一个坑的第五处，
+  // 措辞刻意与 `bulk` 那段一致。窗口内部的这条规矩由
+  // `tests/contract/admin-auth.test.ts` 的
+  // 「窗口内更宽的模式不许排在更窄的之前 —— 被吃掉的那一条恒不可达，而它只会回一个看起来合理的 400」
+  // 从 `app.routes` 现算钉着，不用回来改任何清单。
+  admin.post(KEYS_PURGE_PATH, keysPurgeHandler(keysWrite));
   admin.delete("/admin/api/keys/:id", keyDeleteHandler(keysWrite));
   admin.patch("/admin/api/keys/:id", keyPatchHandler(keysWrite));
   // **单把 key 的 Tier-1 计数（P3d Task 4）。挂在上面那两条 `:id` 之后。**
@@ -371,7 +390,9 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 形状上不可能重叠，而且方法也不同。真正会出事的是将来有人加一条
   // `POST /admin/api/config/:something` 单段通配——那时它必须排在这两条之后。
   //
-  // `config/reset` 按范围裁定 ② 移到 P3e，本期没有这条端点。
+  // `config/reset` 按范围裁定 ② 移到了 P3e，**P3e Task 31 已经把它落地**（上一版这里
+  // 写的是「本期没有这条端点」——那句话从本任务起就是假的）。它是危险区第一颗按钮，
+  // 路径同样从真源常量 `CONFIG_RESET_PATH` 取，理由与 `KEYS_PURGE_PATH` 那段逐字相同。
   const config = {
     wiring: deps.config,
     configHolder: deps.configHolder,
@@ -382,6 +403,10 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.put("/admin/api/config", configPutHandler(config));
   admin.post("/admin/api/config/validate", configValidateHandler(config));
   admin.post("/admin/api/config/secrets/clear", configClearSecretHandler(config));
+  // 危险区第一颗按钮：`config` 整把写回 `{}`（P3e Task 31）。四段，与上面那条
+  // `config/validate` 同形，今天与谁都不重叠；将来那条单段通配真出现时，
+  // 它与 `validate` 一起必须排在通配之前（上面那段 ⚠️ 说的就是这件事）。
+  admin.post(CONFIG_RESET_PATH, configResetHandler(config));
 
   // ── 协议与模型目录（P3d Task 1）────────────────────────────────────────
   // 「怎么调这个网关」的单一真源经这条端点交给面板。**零存储读、只读、无副作用**。

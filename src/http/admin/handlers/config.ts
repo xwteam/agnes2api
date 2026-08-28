@@ -20,7 +20,8 @@ import { httpError } from "../../errors.js";
 import { readAdminJson } from "../errors.js";
 
 /**
- * 配置的四条管理端点（设计 §5.3 / §5.4 / §8.6 / §10.4 / §11）。
+ * 配置的五条管理端点（设计 §5.3 / §5.4 / §8.6 / §10.4 / §11，第五条另见不带编号的
+ * 那一节「重置到底重置了什么」）。
  *
  * | 方法 | 路径 | 干什么 | 写存储吗 |
  * |---|---|---|---|
@@ -28,6 +29,7 @@ import { readAdminJson } from "../errors.js";
  * | PUT | `/admin/api/config` | 校验 → 写 → invalidate → **回读** | **是**（成功时 1 次 put） |
  * | POST | `/admin/api/config/validate` | 干跑，只回错误 | **否，一次都不写** |
  * | POST | `/admin/api/config/secrets/clear` | 显式清空一把凭据 | **是** |
+ * | POST | `/admin/api/config/reset` | 危险区：`config` 整把写回 `{}` → invalidate → **回读** | **是**（1 次 put） |
  *
  * ── 贯穿本文件的四条纪律 ────────────────────────────────────────────────────
  *
@@ -253,6 +255,34 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
   }
 }
 
+/**
+ * 真的变了的公开字段（**按回读出来的 `effective` 比**，不是按请求体比）。
+ *
+ * 这个区别是有后果的：`TARGET_KEYS=30` 锁着时，一次「把 targetKeys 改成 20」
+ * 的 patch 会被 `locked_by_env` 拒掉——但即使没被拒（比如将来放宽了锁定语义），
+ * 按 patch 比会说「改了」，而生效值纹丝不动。**面板高亮的必须是真的变了的那些。**
+ * 凭据不进这份清单（它们没有可比的公开值），改没改由各自的 `credentialsChanged` 报。
+ *
+ * ⚠️ **两侧任一装载不起来时一律空数组**，而不是编一份差异出来：那时根本没有
+ * 「生效值」这个东西可比。面板靠 `loadBlocked` 说话，不靠高亮。
+ *
+ * ⚠️ **`PUT` 与 `POST /admin/api/config/reset` 共用这一份，刻意的**：两条端点的回执
+ * 里那一格是同一个意思（「这次落盘之后，生效值真的变了的是哪几格」），各写一份
+ * 迟早分叉，而分叉的表现是同一次改动在两条路径上被高亮成不同的几格。
+ */
+function changedEffective(before: ConfigSnapshot, after: ConfigSnapshot): string[] {
+  if (after.prov === null || before.prov === null) return [];
+  const b0 = before.prov;
+  const a0 = after.prov;
+  return Object.keys(a0.source).filter((path) => {
+    const a = b0.source[path];
+    const b = a0.source[path];
+    if (a === undefined || b === undefined) return false;
+    if (a.exposure !== "public" || b.exposure !== "public") return false;
+    return JSON.stringify(a.effective) !== JSON.stringify(b.effective);
+  }).sort();
+}
+
 /** 传播时间。两个数都从 `config-holder.ts` 取，**这里没有任何字面量**（见那里的说明）。 */
 const PROPAGATION = {
   configTtlMs: CONFIG_TTL_MS,
@@ -286,6 +316,19 @@ export function configGetHandler(deps: ConfigDeps) {
       editable: [...EDITABLE_FIELDS],
       /** 哪几条路径是凭据。前端据此渲染「留空则不修改」的占位符与清空按钮。 */
       secrets: [...SECRET_FIELDS],
+      /**
+       * **按下危险区那颗「重置配置」之后，这份配置会缺什么**（空数组 = 逐字段判据看不出会缺什么）。
+       *
+       * ⚠️ **它必须在 `GET` 上就给，不能等重置回来再说**：面板要在**二次确认框里**
+       * 就把后果说清，而那一刻还没有发过任何写请求。判据是
+       * `configLoadBlockers(RESET_VALUE, env)`——与 `PUT` 的跨字段校验、与诊断视图、
+       * 与 `POST /admin/api/config/reset` 自己回执里那一格**同一个函数**。
+       * 让面板自己去看「`gatewayToken` 的 `lockedBy` 空不空」就是在面板层另写一套
+       * 来源推导，那是本文件纪律 ① 明令禁止的事。
+       *
+       * **零额外存储读**：`RESET_VALUE` 是常量，`env` 手上就有。
+       */
+      resetBlocked: configLoadBlockers(RESET_VALUE, wiring.env),
       propagation: PROPAGATION,
     });
   };
@@ -360,23 +403,8 @@ export function configPutHandler(deps: ConfigDeps) {
     // ── 回读。**从存储读，不是把 `verdict.next` 换个形状交回去。** ──────────────
     const after = await readAll(wiring, deps.logger);
 
-    /**
-     * 真的变了的公开字段（**按回读出来的 `effective` 比**，不是按 patch 比）。
-     *
-     * 这个区别是有后果的：`TARGET_KEYS=30` 锁着时，一次「把 targetKeys 改成 20」
-     * 的 patch 会被 `locked_by_env` 拒掉——但即使没被拒（比如将来放宽了锁定语义），
-     * 按 patch 比会说「改了」，而生效值纹丝不动。**面板高亮的必须是真的变了的那些。**
-     * 凭据不进这份清单（它们没有可比的公开值），改没改由 `credentialsChanged` 报。
-     */
-    // ⚠️ **两侧任一装载不起来时，`changed` 一律是空数组**，而不是编一份差异出来：
-    // 那时根本没有「生效值」这个东西可比。面板靠 `loadBlocked` 说话，不靠高亮。
-    const changed = after.prov === null || before.prov === null ? [] : Object.keys(after.prov.source).filter((path) => {
-      const a = before.prov!.source[path];
-      const b = after.prov!.source[path];
-      if (a === undefined || b === undefined) return false;
-      if (a.exposure !== "public" || b.exposure !== "public") return false;
-      return JSON.stringify(a.effective) !== JSON.stringify(b.effective);
-    }).sort();
+    // 真的变了的公开字段。判据与它的全部理由见 `changedEffective()` 上方。
+    const changed = changedEffective(before, after);
 
     /** 这次动过的凭据路径。**只报路径，不报值**——那正是 §8.6 的全部意思。 */
     const credentialsChanged = verdict.changed.filter((p) => SECRET_FIELDS.includes(p));
@@ -548,6 +576,155 @@ export function configClearSecretHandler(deps: ConfigDeps) {
       fields: after.fields,
       credentials: after.credentials,
       configDegraded: after.configDegraded,
+      propagation: PROPAGATION,
+    });
+  };
+}
+
+/**
+ * `POST /admin/api/config/reset` 的注册路径。**这个字符串是真源**：
+ * `src/http/admin/router.ts` 从这里取，`tests/unit/docs-parity.test.ts` 的
+ * 「危险区那两条端点的路径在五份 DEPLOY.md 的配额账里逐份写着 —— 路径从真源常量现算」
+ * 也从这里取 ⇒ 改了它而五份文档没跟着改，那一格当场红。
+ */
+export const CONFIG_RESET_PATH = "/admin/api/config/reset";
+
+/**
+ * 重置写回的那个值。
+ *
+ * ⚠️ **是 `put({})`，不是 `delete(CONFIG_KEY)`**（设计小节「重置到底重置了什么」逐字三条理由）：
+ * ① 与已上线的「清空凭据」走同一条写路径（本文件那两处 `storage.put`），形态一致；
+ * ② 避开本仓已登记的 KV 删除墓碑那一族问题（`src/core/keypool-repo.ts` 的 `stillExists`
+ *    那段：删除在 KV 上「最多一个传播窗口内可能复活」）；
+ * ③ 配额落在 put 桶，与五语言 DEPLOY.md 那笔账已有的口径一致。
+ *
+ * ⚠️ **它与 `RESET_CONFIG=1` 不是一回事**：那个逃生口**只忽略不删**（设计 §5.4），
+ * 存储里那份原值还在，改回 env 就能拿回来；这条端点是真的把它抹掉。
+ */
+const RESET_VALUE: Record<string, never> = {};
+
+/**
+ * `POST /admin/api/config/reset` —— 危险区第一颗按钮（设计小节「重置到底重置了什么」）。
+ *
+ * **重置的对象只有 `config` 这一把键**，其余八把业务键一个字节都不动
+ *（那张逐键表在设计小节里，由 `tests/unit/docs-parity.test.ts` 的
+ * 「设计小节那张表对这 9 个存储键逐个表态 —— 删掉表里一行就红」钉着形状、
+ * 由 `tests/contract/admin-danger.test.ts` 的
+ * 「重置配置之后，key:* / pool:index / tend:history / usage:* / event:* 的读回值不变」
+ * 钉着内容）。
+ *
+ * ── 与 `PUT` 逐条同源的四件事，一件都不许在这条新路径上退化 ───────────────────
+ * ① **回执是回读出来的**，不是 handler 自己拼的一份空配置。写完再调一次
+ *    `readAll()`，付一次读——它证明的是「存储里现在是什么」，而不是「handler 说它写了什么」。
+ *    这条是本仓登记过的「写错了没有任何自动化会红」的那一行，绊线在
+ *    `tests/contract/admin-danger.test.ts` 的
+ *    「reset 的回执是回读出来的：写完之后存储被换掉，回执必须报出存储里那一份」。
+ * ② **`invalidate()` 与回读是两件事**（F7）。少了它，`GET /admin/api/overview`
+ *    会在最多一个 `CONFIG_TTL_MS` 内继续报旧值，而运维刚看到回执上是新值。
+ * ③ **`changed` 走 `changedEffective()` 那一份判据**，不另写。
+ * ④ **响应体里一个凭据明文都没有**：`credentials` 那一块由 `split()` 产出，
+ *    只有 `{configured,hint,lockedBy}`。危险区不许开任何回显口子（全局约束 12）。
+ *
+ * ⚠️⚠️ **两态文案的判据是 `configLoadBlockers({}, env)`，不是「有没有 `GATEWAY_TOKEN`」。**
+ * 重置 = `config` 整把写回 `{}`，它连**通道凭据**一起清，爆炸半径严格大于
+ * 「清空一把凭据」那条单字段路径。本文件 `configClearSecretHandler` 里那段 ⚠️⚠️
+ * 逐字记着第一版只判 `gatewayToken`、同构的通道凭据一条都没判的后果，
+ * **这条新端点不许把那个缺口原样搬回来**。`{}` 就是重置之后存储里那份配置，
+ * 所以这一句算的正是「重置之后装得起来吗」。
+ * ⚠️ 而 `configLoadBlockers` **自己不完备**（它上方那段注释逐字说了：存储里
+ * `registrar.targetKeys: "abc"` 这类它返回 `[]`、配置照样装不起来）——
+ * **别把「`resetBlocked` 是空的」读成「重置之后一定装得起来」**。
+ *
+ * ⚠️ **`confirm: true` 是必填的，不是装饰**：枚举式鉴权矩阵会拿正确的管理口令把每一条
+ * 路由真的打一遍（`tests/contract/admin-auth.test.ts` 的
+ * 「每一条路由 × 每一种凭据状态，逐格断言」），一条不带请求体
+ * 就会重置整份配置的端点会在那一格里**把夹具自己的配置抹掉**。带上它之后，
+ * 空请求体在 `readAdminJson` 那一步就是 400，矩阵那一格断言的「不该被判 401」照样成立。
+ */
+export function configResetHandler(deps: ConfigDeps) {
+  return async (c: Context) => {
+    const wiring = deps.wiring;
+    if (wiring === null) return notWired(c);
+
+    const body = asObject(await readAdminJson<unknown>(c), "请求体");
+    const extra = Object.keys(body).filter((k) => k !== "confirm");
+    if (extra.length > 0) {
+      throw httpError(400, "invalid_request_error", `不认识的字段：${extra.join(", ")}`);
+    }
+    if (body.confirm !== true) {
+      throw httpError(
+        400, "invalid_request_error",
+        "这一步不可撤销，必须显式带 confirm: true",
+      );
+    }
+
+    // **写之前先回读一次**：`changed` 要拿它做对照。这一次读发生在任何写之前。
+    // 走 `readAll` 而不是裸 `loadConfigWithProvenance`（评审 C2）：存储里那份配置
+    // 已经装载不起来时，裸调用会抛 ⇒ 整条重置变成 500，而「装不起来」恰恰是运维
+    // 最可能来按这颗按钮的时候。
+    const before = await readAll(wiring, deps.logger);
+    /** 重置之后这份配置还装不装得起来——**在写之前算好**，与 `clearSecret` 那条同源。 */
+    const blockedAfter = configLoadBlockers(RESET_VALUE, wiring.env);
+
+    await wiring.storage.put(CONFIG_KEY, RESET_VALUE);
+    deps.configHolder.invalidate();
+
+    // **审计先落，再回读**（与 `configClearSecretHandler` 同一条：回读抛错的那一支
+    // 正是最该留痕的那一支）。**只记路径与机器可读的原因码，值一个字都不记。**
+    deps.logger.log({
+      level: blockedAfter.length > 0 ? "error" : "warn",
+      event: "config.reset",
+      msg: blockedAfter.length > 0
+        ? "面板重置了存储里那份配置，重置之后它已经装载不起来了——当前进程靠上一份快照还能跑，"
+          + "但下一次冷启动会失败。请立刻在设置页里把缺的那几格填回来。"
+        : "面板重置了存储里那份配置；生效值回落到环境变量与内置默认值",
+      fields: {
+        blocked: blockedAfter.map((b) => `${b.field}:${b.code}`).join(",") || null,
+      },
+    });
+
+    // ── 回读。**从存储读，不是把 `RESET_VALUE` 换个形状交回去。** ────────────────
+    const after = await readAll(wiring, deps.logger);
+
+    // 真的变了的公开字段。**与 `PUT` 同一份判据**，见 `changedEffective()` 上方。
+    const changed = changedEffective(before, after);
+
+    /**
+     * 这次真的从「已配置」变成了「未配置」的那几把凭据。**只有路径，没有值。**
+     *
+     * ⚠️ **它是从回读出来的两份 `credentials` 差出来的，不是 handler 自己列的
+     * `SECRET_FIELDS`**：环境变量里也提供了的那几把，重置之后仍然是「已配置」
+     *（生效值纹丝不动）⇒ 不该出现在这份清单里。判据与 `changed` 同源——
+     * 两格说的都是「回读前后真的变了的是哪些」。
+     */
+    const credentialsChanged = before.credentials === null || after.credentials === null
+      ? []
+      : Object.keys(before.credentials).filter((path) => {
+        const b = before.credentials?.[path] as { configured?: unknown } | undefined;
+        const a = after.credentials?.[path] as { configured?: unknown } | undefined;
+        return b?.configured === true && a?.configured !== true;
+      }).sort();
+
+    return c.json({
+      fields: after.fields,
+      credentials: after.credentials,
+      configDegraded: after.configDegraded,
+      loadBlocked: [...after.loadBlocked],
+      changed,
+      credentialsChanged,
+      /**
+       * 重置之后这份配置装不装得起来的**逐条原因**（空数组 = 装得起来）。
+       * 它与上面的 `loadBlocked` 今天算出来是同一批，但**来源不同**：这一格是
+       * **写之前**按 `{}` 算的（面板据此在二次确认里就把后果说清），
+       * `loadBlocked` 是**写之后回读**出来的。两格分叉时说明存储在这两步之间被别人动过。
+       */
+      resetBlocked: [...blockedAfter],
+      /**
+       * ⚠️ **不是「已生效」的承诺，就是服务器落盘的那一刻**（与 `PUT` 逐字同源）。
+       * 面板不许拿它渲染「已重置并生效」。
+       */
+      appliedAt: deps.now(),
+      /** 别的副本 / 别的 isolate 多久能看见这次重置。**必须显示，不许写「立即生效」**（设计 §5.2）。 */
       propagation: PROPAGATION,
     });
   };

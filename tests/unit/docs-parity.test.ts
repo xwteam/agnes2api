@@ -26,8 +26,11 @@ import { SESSION_MAX_AGE_MS } from "../../admin-ui/js/pure/session.mjs";
 // 复评回填（F1 / F3）：设置卡与字符集那两句话的期望值一律从这几份真源现算，不手抄。
 import { sendable } from "../../admin-ui/js/pure/sendable.mjs";
 import {
-  ADVANCED_FIELDS, CARD_AUTH, CARD_REGISTRAR, CARD_UPSTREAM, channelFields,
+  ADVANCED_FIELDS, CARD_AUTH, CARD_REGISTRAR, CARD_UPSTREAM, channelFields, DANGER_ACTIONS,
 } from "../../admin-ui/js/pure/settings.mjs";
+// P3e Task 31：危险区那两条端点的路径**一律从真源常量现算**，不在本文件手抄字符串。
+import { CONFIG_RESET_PATH } from "../../src/http/admin/handlers/config.js";
+import { KEYS_PURGE_PATH } from "../../src/http/admin/handlers/keys-write.js";
 import { CHANNELS } from "../../admin-ui/js/pure/registrar.mjs";
 import {
   PLAYGROUND_TURNS_MAX, VIDEO_POLL_INTERVAL_MS, VIDEO_POLL_MAX_ATTEMPTS, VIDEO_POLL_MAX_MS,
@@ -271,6 +274,21 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     },
     { token: "Subrequests per invocation", why: "Cloudflare Workers limits 页免费档 50 的那一行，口径分歧的一半" },
     { token: "Operations/Worker invocation", why: "Cloudflare KV limits 页 1,000 的那一行，口径分歧的另一半" },
+    // ⚠️ **P3e Task 31 补的两个，同样是先数过再加**：改动前这两条路径在五份 DEPLOY.md 里
+    // **各 0 次**（`grep -o -F | wc -l` 逐份数过），加进来之后**各 1 次**，五份完全一致。
+    // 它们守的是本任务往配额账里新写的那两笔（全局约束 14：新增一条会写存储的代码路径，
+    // 同一个提交里必须更新五语言 DEPLOY.md 的配额账）。
+    //
+    // ⚠️⚠️ **两个 token 都从真源常量现算，不写字面量**——理由与上面 `1 + ${…}` 那两条
+    // 逐字相同（Task 28 复评 H2 那次教训）：写死字符串的话，端点路径一改，五份文档里
+    // 那两行原地变成假话而本组照绿。现算之后，路径一改 token 就成了文档里查不到的串
+    // ⇒ 下面那条 `total === 0` 当场红，报文点名 DEPLOY.md。
+    //
+    // **为什么选路径而不选那两个数**（`1 次 put` / `N 次 delete`）：本表要的是「跨五种语言
+    // 稳定、且只出现在目标那一句里」的锚。路径两条都满足（不会被翻译、全仓只有那一句提到）；
+    // 而裸 `1` 与裸 `N` 在五份里各出现几十次，变红时指不出是哪一句坏了（同 `48` 那条不加的理由）。
+    { token: CONFIG_RESET_PATH, why: "危险区「重置配置」那条端点的路径（1 次 put），五份 DEPLOY.md 各只此一处" },
+    { token: KEYS_PURGE_PATH, why: "危险区「清空 Key 池」那条端点的路径（N 次 delete + 1 次 put），五份 DEPLOY.md 各只此一处" },
   ];
 
   for (const { token, why } of NUMBERS) {
@@ -301,6 +319,32 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     expect(tokens, "`USAGE_DAY_RETAIN × USAGE_SLOTS` 那一行不在 NUMBERS 表上了——"
       + "五份 DEPLOY.md 里那笔 Tier-2 读扇出的账从此没有任何跨语言守卫")
       .toContain(`${USAGE_DAY_RETAIN} × ${USAGE_SLOTS}`);
+  });
+
+  /**
+   * ⚠️ **同一条理由的第二格**（P3e Task 31）：`src/http/admin/handlers/config.ts`、
+   * `keys-write.ts` 与 `router.ts` 三处注释都声称「路径改了而五份文档没跟着改，
+   * 那一格当场红」，而上面那圈 `it()` 的标题是模板串生成的，名字锚指不住。
+   *
+   * 这一格同时比上面那圈**多守一件事**：上面只验「五份彼此相等」，这里验的是
+   * **各恰好 1 次**——五份一起写成 2 次（比如某次复制粘贴把那一行重复了）在上面那圈
+   * 是合法的，而 `why` 里逐字写着「各只此一处」。删掉表上那一行 ⇒ 这一格红；
+   * 删掉这一格 ⇒ 三处注释的名字锚落空 ⇒ `check-comment-refs` 红。两条路都不静默。
+   */
+  it("危险区那两条端点的路径在五份 DEPLOY.md 的配额账里逐份写着 —— 路径从真源常量现算", () => {
+    const tokens = NUMBERS.map((n) => n.token);
+    for (const path of [CONFIG_RESET_PATH, KEYS_PURGE_PATH]) {
+      expect(tokens, `${path} 那一行不在 NUMBERS 表上了——`
+        + "三处源码注释正声称这条路径由那一格钉着，要么把行加回来，要么改那三段注释")
+        .toContain(path);
+      const counts = Object.fromEntries(
+        LANGS.map((l) => [l, realDoc("DEPLOY")(l).split(path).length - 1]),
+      );
+      expect(counts, `${path} 在五份 DEPLOY.md 的配额账里不是各出现 1 次（${JSON.stringify(counts)}）`
+        + "——要么某一份漏写了这笔配额账（全局约束 14：新增一条会写存储的代码路径，"
+        + "同一个提交里必须更新五语言 DEPLOY.md），要么端点路径改了而文档没跟上")
+        .toEqual(Object.fromEntries(LANGS.map((l) => [l, 1])));
+    }
   });
 
   // ── 探针：真源常量漂一位 ⇒ 派生出来的 token 变成文档里查不到的串 ───────────────
@@ -2096,8 +2140,11 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     readonly cards: number;
     /** 调试台上真的有的模式数（P3e Task 26A）。 */
     readonly modes: number;
+    /** 危险区那张卡上真的有几颗按钮（P3e Task 31）。 */
+    readonly danger: number;
     readonly cardNames: readonly string[];
     readonly modeKeys: readonly string[];
+    readonly dangerIds: readonly string[];
   }
 
   /** 屏幕那边的几份源码。**真扫描与探针共用这一份取文口径。** */
@@ -2107,6 +2154,8 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     readonly dict: string;
     readonly settings: string;
     readonly playground: string;
+    /** 危险区那几颗按钮的真源（P3e Task 31）。**它在 pure 层，不在板块文件里。** */
+    readonly pureSettings: string;
   }
 
   const readPanelSource = (): PanelSource => ({
@@ -2115,6 +2164,7 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     dict: readFileSync(join(".", "admin-ui", "js", "i18n-dict.js"), "utf8"),
     settings: readFileSync(join(".", "admin-ui", "js", "sec-settings.js"), "utf8"),
     playground: readFileSync(join(".", "admin-ui", "js", "sec-playground.js"), "utf8"),
+    pureSettings: readFileSync(join(".", "admin-ui", "js", "pure", "settings.mjs"), "utf8"),
   });
 
   /** 抠掉注释再数**调用点**：本仓的注释里到处写真代码片段，裸数会把它们一起数进来。 */
@@ -2129,7 +2179,9 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
    * 保证「我认全了」**。复评当场量到的逃逸：把 Task 31 那张卡写成多行
    * `const danger = card(\n  "set.card.danger",\n);`（外加五语言字典补键），
    * `check-i18n` exit 0、**本文件一格都没红**、`build-ui` 之后 `pnpm test` 全过，
-   * 而此刻五份 ADMIN.md 仍写着「设置页今天有四张卡」、危险区那一节仍写着「这张卡今天还不存在」。
+   * 而此刻五份 ADMIN.md 仍写着当时那句「设置页今天有四张卡」、危险区那一节仍写着当时那句
+ * 「这张卡今天还不存在」。**两句话今天都已经不在文档里了**（Task 31 落地时一起改掉），
+ * 这段留的是那次逃逸的形状，不是现状。
    * （**这里刻意不抄当时的格数与文件数**：注释里抄一份计数天生会过期，本仓已因此漂过多次。）
    * 给 `MODES` 加一档 `{ mode: "audio", key: "pg.mode.audio", beta: true }` 是同一个形状
    *（多一个属性，`}` 不再紧跟 key，正则整条认不出）。
@@ -2162,8 +2214,7 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
         `sec-settings.js 里 \`card(\` 的调用点有 ${allCalls - decl} 处，`
         + `而取名正则只认出 ${cardNames.length} 个（${cardNames.join("、")}）`
         + "——多半是某一张卡写成了多行 / 换了写法，取名正则认不出它，"
-        + "于是设置卡那条计数会静静地少一张，而五份 ADMIN.md 的设置卡表、以及危险区那一节"
-        + "「这张卡今天还不存在」那句话，全靠它",
+        + "于是设置卡那条计数会静静地少一张，而五份 ADMIN.md 的设置卡表全靠它",
       );
     }
 
@@ -2186,7 +2237,38 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
         );
       }
     }
+
+    // ── 危险区那几颗按钮（P3e Task 31）。**同一条完备性锚，第三次。** ──────────
+    const pure = codeOnly(src.pureSettings);
+    const dangerBlock = /(?<![.\w$])export\s+const\s+DANGER_ACTIONS\s*=\s*\[([\s\S]*?)\n\];/.exec(pure);
+    const dangerIds = dangerIdsOf(src);
+    if (dangerBlock === null || dangerBlock[1] === undefined) {
+      out.push(
+        "pure/settings.mjs 里找不到 `export const DANGER_ACTIONS = [ … ];` 那张表"
+        + "——它改名或改形态了，下面那条「条目数 === 认出来的 id 数」的锚会跟着失灵",
+      );
+    } else {
+      const entries = (dangerBlock[1].match(/(?<![.\w$])id\s*:/g) ?? []).length;
+      if (entries !== dangerIds.length) {
+        out.push(
+          `pure/settings.mjs 的 DANGER_ACTIONS 表里有 ${entries} 条，而取 id 正则只认出 `
+          + `${dangerIds.length} 个（${dangerIds.join("、")}）——多半是某一条改了字段顺序 / 少写了 titleKey，`
+          + "于是危险区那条计数会静静地少一颗按钮，而五份 ADMIN.md 的危险区表全靠它",
+        );
+      }
+    }
     return out;
+  }
+
+  /**
+   * 危险区那几颗按钮的 id。**判据要求 `id` 与 `titleKey` 成对出现**：
+   * 只认 `id:` 的话，一条少写了 `titleKey` 的记录照样被数进去，而它在屏幕上是一颗
+   * 画不出标题的按钮。取名正则与上面两条同形（单行/多行都吃，字段之间允许换行）。
+   */
+  function dangerIdsOf(src: PanelSource): string[] {
+    return [...codeOnly(src.pureSettings).matchAll(
+      /\bid:\s*"([A-Za-z]+)",\s*titleKey:\s*"set\.danger\.[A-Za-z.]+",/g,
+    )].flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
   }
 
   /**
@@ -2211,14 +2293,17 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
       .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
     const modeKeys = [...codeOnly(src.playground).matchAll(/\{\s*mode:\s*"[a-z]+",\s*key:\s*"(pg\.mode\.[a-z]+)"\s*\}/g)]
       .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
+    const dangerIds = dangerIdsOf(src);
     return {
       nav: (src.html.match(/class="nav-item"/g) ?? []).length,
       warn: (src.events.match(/warnBanner\.appendChild\(/g) ?? []).length,
       warnKeys: new Set([...src.dict.matchAll(/"ev\.warn[A-Za-z]+"/g)].map((m) => m[0])).size,
       cards: cardNames.length,
       modes: modeKeys.length,
+      danger: dangerIds.length,
       cardNames,
       modeKeys,
+      dangerIds,
     };
   }
 
@@ -2226,10 +2311,14 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
 
   /**
    * 文档里那几张表**按出现顺序**该有多少数据行，期望值逐项从屏幕派生。
-   * 顺序就是它们在 ADMIN.md 里出现的顺序：§3 板块速查、§7 警告条、§10 调试台模式、§11 设置卡。
+   * 顺序就是它们在 ADMIN.md 里出现的顺序：§3 板块速查、§7 警告条、§10 调试台模式、
+   * §11 设置卡、§12 危险区（最后一张是 P3e Task 31 补的）。
    */
   function expectedTables(c: PanelCounts): ReadonlyArray<readonly [why: string, rows: number]> {
-    return [["板块速查", c.nav], ["警告条", c.warn], ["调试台模式", c.modes], ["设置卡", c.cards]];
+    return [
+      ["板块速查", c.nav], ["警告条", c.warn], ["调试台模式", c.modes],
+      ["设置卡", c.cards], ["危险区", c.danger],
+    ];
   }
 
   /**
@@ -2278,8 +2367,23 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     expect(c.warn, "sec-events.js 里一条 warnBanner.appendChild 都没数到——这一组测的是空气").toBeGreaterThan(0);
     expect(c.cards, "sec-settings.js 里一张 card(\"set.card.*\") 都没数到——这一组测的是空气").toBeGreaterThan(0);
     expect(c.modes, "sec-playground.js 里一档 MODES 都没数到——这一组测的是空气").toBeGreaterThan(0);
+    expect(c.danger, "pure/settings.mjs 里一颗 DANGER_ACTIONS 都没数到——这一组测的是空气").toBeGreaterThan(0);
     expect(c.warnKeys, `字典里的 ev.warn* 键数（${c.warnKeys}）与横幅里挂上去的 <p> 条数（${c.warn}）对不上`
       + "——两条独立派生互相不认了，先回屏幕上核对到底有几条黄条，再改这里").toBe(c.warn);
+  });
+
+  /**
+   * **危险区那条计数的第二条独立派生**：正则扫源码 vs 直接 `import` 进来的那张表。
+   *
+   * 两条路一起走的理由与 `warnKeys` 那一格逐字相同：正则哪天认不出（改了字段顺序、
+   * 写成了别的形态）会静静地少数一颗，而五份 ADMIN.md 的危险区表全靠它。
+   * ⚠️ **这一格只跑真源**，不跑探针的 mutated 源——探针要的就是「让扫描结果与真表不同」。
+   */
+  it("两条独立派生互相认账：危险区那张表的扫描结果与 import 进来的 DANGER_ACTIONS 逐条相等", () => {
+    expect(realPanel().dangerIds,
+      "正则扫出来的危险区按钮与 pure/settings.mjs 里那张表对不上"
+      + "——要么表改了形态、正则认不出，要么有人在别处又写了一份")
+      .toEqual(DANGER_ACTIONS.map((a) => a.id));
   });
 
   // ── 完备性锚：「我认全了」，不只是「我认出来的那些非空」（复评 F2）─────────────
@@ -2396,7 +2500,7 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     expect(tableSeqFailures(base, realAdminDoc), "真表原样反而红了——先看真扫描那一格").toEqual([]);
   });
 
-  it("五份 ADMIN.md 里四张表的行数，逐张等于屏幕那边对应的那个计数", () => {
+  it("五份 ADMIN.md 里五张表的行数，逐张等于屏幕那边对应的那个计数", () => {
     const failures = tableSeqFailures(expectedTables(realPanel()), realAdminDoc);
     expect(failures, failures.join("\n")).toEqual([]);
   });
@@ -2407,7 +2511,7 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     if (base.length > 0) {
       throw new Error(
         "本格是探针，它的基取自真文档，而真文档今天本身就不过判据 —— "
-        + "别从这一格的报文里找原因，真因在「五份 ADMIN.md 里四张表的行数，逐张等于屏幕那边对应的那个计数」那一格：\n"
+        + "别从这一格的报文里找原因，真因在「五份 ADMIN.md 里五张表的行数，逐张等于屏幕那边对应的那个计数」那一格：\n"
         + base.join("\n"),
       );
     }
@@ -2446,35 +2550,99 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
 
   // ── ⑥ 设置卡表与调试台模式表：同一条派生法，多两张表（P3e Task 26A）───────────
   //
-  // ⚠️ **第 12 节（危险区）今天只有一句「这张卡还不存在」，靠的就是下面那条设置卡变异。**
-  // 需求书要求那一节写「见设置页第 5 张卡」——**实测推翻**：`sec-settings.js` 今天只建
-  // 四张卡（`card("set.card.…")` 四处），第 5 张是 Task 31 的。往文档里写一句指向
-  // 一张不存在的卡的指路，正是本仓最忌的「描述一个还不存在的功能」。
-  // ⇒ 那一节改成「今天还不存在」，而**「今天是四张」这句话由这一组看着**：
-  // Task 31 建出第 5 张卡的那一刻，五份 ADMIN.md 的设置卡表一起红，逼人回来同时改
-  // 第 11 节的表与第 12 节那句话。**这就是那句话的测法**，不是靠人记得回来改。
+  // ⚠️ **上一版这里写着「第 12 节（危险区）今天只有一句『这张卡还不存在』，靠的就是
+  // 下面那条设置卡变异」——那句话从 P3e Task 31 起是史实，不是现状。** 那条变异当时
+  // 模拟的正是 Task 31 会建的第 5 张卡，而它当天真的落地了：`sec-settings.js` 今天建
+  // 五张卡，第 12 节也从占位改成了实节 + 一张两行的表。**那条绊线按设计响过了**
+  //（本任务实测：只加卡不改文档 ⇒ 这一组 9 格红，其中 5 格逐份点名「设置卡」）。
+  // 下面那条变异因此上移一档：现在模拟的是**第 6 张卡**。
 
-  it("该红时红：设置页多出第 5 张卡（危险区落地）而五份文档没跟着加行 —— 五份一起红", () => {
+  /**
+   * ⚠️⚠️ **落地之后真仓自己就处在旧判据会瞎掉的那个形态里，这件事必须留成一条断言。**
+   *
+   * 旧判据（Task 26）是「行数恰好等于 n 的表有且只有一张」，它当时全绿逃逸的原因是
+   * 设置卡数撞上了黄条数。Task 31 落地之后**那个撞号是真的**：设置卡 5 张、黄条 5 条。
+   * 也就是说旧判据对「设置卡表少一行」这件事**今天恒瞎**——而位置判据不受影响。
+   * 这一格把撞号本身钉住（撞号消失时它会红，提醒回来重新评估下面那条变异还覆不覆盖
+   * 那个形态），紧跟着的那一格用一次**文档侧**变异正面证明位置判据没被撞号骗到。
+   */
+  it("落地之后的既成事实：设置卡表与警告条表今天行数相同 —— 旧的「按行数认表」判据对它已经恒瞎", () => {
+    const c = realPanel();
+    expect(c.cards,
+      "设置卡数与黄条数不再相同了 —— 下面那格「按行数认表会认错」的正面证据没了，回来重新评估")
+      .toBe(c.warn);
+  });
+
+  it("该红时红：设置卡表少一行（五份一起）—— 位置判据点名「设置卡」，不许认成行数相同的警告条表", () => {
+    probeTableBase();
+    // **文档侧变异**：把每一份 ADMIN.md 的第 4 张表（设置卡）删掉最后一行数据。
+    // 旧判据在这里会去数「5 行的表有几张」、数到警告条那张、判为「有且只有一张」而放行。
+    const dropLastRowOfTable = (s: string, nth: number): string => {
+      const lines = s.split("\n");
+      let table = 0;
+      let inRun = false;
+      let lastRow = -1;
+      for (let i = 0; i < lines.length; i += 1) {
+        const isRow = /^\s*\|/.test(lines[i] ?? "");
+        if (isRow && !inRun) { inRun = true; table += 1; }
+        if (isRow && table === nth) lastRow = i;
+        if (!isRow) inRun = false;
+      }
+      if (lastRow < 0) throw new Error(`夹具找不到第 ${nth} 张表 —— 这一格的变异是空的`);
+      return [...lines.slice(0, lastRow), ...lines.slice(lastRow + 1)].join("\n");
+    };
+    const shorter: ApiDocReader = (lang) => dropLastRowOfTable(realAdminDoc(lang), 4);
+    const failures = tableSeqFailures(expectedTables(realPanel()), shorter);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+    for (const h of ["设置卡", "第 4 张"]) {
+      expect(failures[0] ?? "", "红了但报文没点名是哪一张表——报文是唯一会被看见的护栏").toContain(h);
+    }
+  });
+
+  it("该红时红：设置页多出第 6 张卡而五份文档没跟着加行 —— 五份一起红", () => {
     probeTableBase();
     const src = readPanelSource();
-    // 变异取真源：照 Task 31 真的会写的那一行加一张卡出来。
+    // 变异取真源：照本仓真的会写的那一行再加一张卡出来。
     const mutated = {
       ...src,
       settings: src.settings.replace(
-        'const examples = card("set.card.examples");',
-        'const examples = card("set.card.examples");\n    const danger = card("set.card.danger");',
+        'const danger = card("set.card.danger");',
+        'const danger = card("set.card.danger");\n    const extra = card("set.card.extra");',
       ),
     };
     expect(mutated.settings === src.settings, "变异没落到 sec-settings.js 上——这一格控制是空的").toBe(false);
     const c = panelCounts(mutated);
     expect(c.cards, "变异没让卡多一张").toBe(realPanel().cards + 1);
-    // ⚠️ **落点断言：这条变异恰好让 `cards` 撞上 `warn`（都是 5）**——旧判据正是在这里
-    // 全绿逃逸的（它去数「5 行的表有几张」，数到警告条那张，判为「有且只有一张」）。
-    // 撞号这件事必须留在这一格里，否则改天两个数不撞了，这条变异就测不到那个洞了。
-    expect(c.cards, "这条变异不再撞上黄条数了——它就不再覆盖旧判据逃逸的那个形态，得换一条").toBe(c.warn);
     const failures = tableSeqFailures(expectedTables(c), realAdminDoc);
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
     for (const h of ["设置卡", "第 4 张"]) {
+      expect(failures[0] ?? "", "红了但报文没点名是哪一张表——报文是唯一会被看见的护栏").toContain(h);
+    }
+  });
+
+  /**
+   * ⚠️ **危险区那张表是 P3e Task 31 新加的第 5 张，它与前四张走同一条派生法。**
+   * 真源是 `admin-ui/js/pure/settings.mjs` 的 `DANGER_ACTIONS`——那张表加一颗按钮
+   *（比如把「重置单把 key 的用量」也做成危险区按钮，而设计小节明令它不该在这里）
+   * 就会让五份文档一起红，逼人回来同时改第 12 节的表。
+   */
+  it("该红时红：危险区多出第三颗按钮而五份文档没跟着加行 —— 五份一起红并点名危险区", () => {
+    probeTableBase();
+    const src = readPanelSource();
+    const mutated = {
+      ...src,
+      pureSettings: src.pureSettings.replace(
+        '  {\n    id: "purgeKeys",',
+        '  {\n    id: "clearAllStats",\n    titleKey: "set.danger.purge.title",\n'
+        + '    descKey: "set.danger.purge.desc",\n    buttonKey: "set.danger.purge.button",\n  },\n  {\n    id: "purgeKeys",',
+      ),
+    };
+    expect(mutated.pureSettings === src.pureSettings, "变异没落到 pure/settings.mjs 上——这一格控制是空的").toBe(false);
+    const c = panelCounts(mutated);
+    expect(c.danger, "变异没让危险区多一颗按钮").toBe(realPanel().danger + 1);
+    const failures = tableSeqFailures(expectedTables(c), realAdminDoc);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+    for (const h of ["危险区", "第 5 张"]) {
       expect(failures[0] ?? "", "红了但报文没点名是哪一张表——报文是唯一会被看见的护栏").toContain(h);
     }
   });

@@ -71,6 +71,42 @@ export const CARD_REGISTRAR = [
 export const ADVANCED_FIELDS = ["registrar.agnesPlatformUrl"];
 
 /**
+ * 危险区（第 5 张卡）上的那几颗按钮。**顺序即渲染顺序**，也是五份 ADMIN.md
+ * 危险区那张表的行序。
+ *
+ * ⚠️ **文案 key 写成字面量、放在这张表里，不许在板块文件里拼模板**
+ *（`` `set.danger.${a}.title` `` 那种形态）。两条硬理由：
+ * ① `scripts/check-i18n.mjs` 的第 ① 条对拼键只认「整条模板就是一个 key」，
+ *    `${…}` 后面还跟着别的东西时它**当场吵**（那是它明写的「分不清就吵」那一档）；
+ * ② 就算拼成了合法形态，那也会往那道门禁的「拼键前缀」表里加一条 `set.danger.`，
+ *    **把整族 key 一并喂活** —— 于是这一族里将来任何一个真死 key 从此永远不会红，
+ *    而第 ④ 条今天是硬错。这两条都是那个脚本自己逐字登记过的形态。
+ *
+ * ⚠️ **今天恰好两颗，第三颗刻意不在这里**（设计小节「第三颗按钮的去向」）：
+ * 「重置单把 key 的用量统计」做成了 `PATCH /admin/api/keys/:id` 的一个字段，
+ * 判据是**有界性**——`PATCH_FIELDS` 加一格 = 单把 key、1 次 put，硬有界；
+ * 而做成危险区第三颗按钮（批量重置全池 stats）= N 次 put，**本仓没有任何常量给它上界**。
+ *
+ * 这张表的**条数**是五份 ADMIN.md 危险区那张表的行数真源，由
+ * `tests/unit/docs-parity.test.ts` 的
+ * 「五份 ADMIN.md 里五张表的行数，逐张等于屏幕那边对应的那个计数」钉着。
+ */
+export const DANGER_ACTIONS = [
+  {
+    id: "resetConfig",
+    titleKey: "set.danger.reset.title",
+    descKey: "set.danger.reset.desc",
+    buttonKey: "set.danger.reset.button",
+  },
+  {
+    id: "purgeKeys",
+    titleKey: "set.danger.purge.title",
+    descKey: "set.danger.purge.desc",
+    buttonKey: "set.danger.purge.button",
+  },
+];
+
+/**
  * **建实例时读一次**的字段。它们与别的字段的差异是一条**性质**，不是一份巧合的名单：
  * `src/http/wire.ts` 里 `const cfg = configHolder.current()` 之后拿它们建 `KeyPoolRepo`，
  * 此后不随 ConfigHolder 每次刷新而变 ⇒ 改了要重启容器 / 等 isolate 回收才生效。
@@ -610,4 +646,105 @@ export function displayValue(v) {
   if (v === null || v === undefined) return "—";
   if (typeof v === "boolean") return v ? "true" : "false";
   return String(v);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 危险区（第 5 张卡，P3e Task 31）
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * 重置配置**之前**必须对运维说的那几句话。
+ *
+ * ⚠️⚠️ **判据不是这里算的，是后端给的 `resetBlocked`。**
+ * 那一格由 `configLoadBlockers({}, env)` 产出——与 `PUT` 的跨字段校验、与诊断视图
+ * **同一份**。设计小节逐字裁过这条：上一版把两态写成「有没有 `GATEWAY_TOKEN`」，
+ * 那是把 P3c 已经收口过一次的缺口原样搬回来（重置连**通道凭据**一起清，
+ * 爆炸半径严格大于「清空一把凭据」那条单字段路径）。
+ * **面板这一层只负责把码翻成话，一个优先级判断都不做。**
+ *
+ * 两句复用**已经上线的**那两条文案，不许另写（设计小节明令）：
+ * · `gateway_token_required` ⇒ `set.clear.effect.gatewayMissing`；
+ * · `channel_credentials_missing` ⇒ `set.clear.effect.channelBreaks`（一族只说一次）。
+ * 其余的码走 `errorMessageKey()` 那张既有映射，表外的码**原样把码显示出来**
+ *（`key` 为 `null` ⇒ 调用方用 `set.err.unknown`），与 `errorRows()` 逐条同源。
+ *
+ * ⚠️ **空数组不等于「重置之后一定装得起来」**：`configLoadBlockers` 自己不完备
+ *（存储里 `registrar.targetKeys: "abc"` 这类它返回 `[]`、配置照样装不起来），
+ * 本仓为这个等号栽过一次。所以空数组那一档说的是
+ * `set.danger.reset.effect.ok`——「按逐字段判据看不出会缺什么」，不是「一定没事」。
+ */
+export function resetWarnings(body) {
+  const b = obj(body);
+  const list = b !== null && Array.isArray(b.resetBlocked) ? b.resetBlocked : [];
+  const rows = [];
+  const seen = new Set();
+  for (const e of list) {
+    if (obj(e) === null) continue;
+    const code = typeof e.code === "string" ? e.code : "";
+    // 同一族只说一次：两条通道各缺一把凭据时，那句话说两遍不会更清楚。
+    const key = code === "gateway_token_required"
+      ? "set.clear.effect.gatewayMissing"
+      : (code === "channel_credentials_missing" ? "set.clear.effect.channelBreaks" : errorMessageKey(code));
+    const id = key === null ? `unknown:${code}` : key;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    rows.push({ code, key, params: obj(e.params) === null ? {} : e.params, kind: "danger" });
+  }
+  if (rows.length === 0) {
+    return [{ code: "", key: "set.danger.reset.effect.ok", params: {}, kind: "info" }];
+  }
+  return rows;
+}
+
+/**
+ * 当前池大小。取的是 `GET /admin/api/keys` 那份响应的 `total`。
+ *
+ * **读不出来就 `null`，绝不伪造 0**：`0` 在这里的意思是「池子是空的」，而那会让
+ * 二次确认要求运维输入一个 `0` 然后**真的把一池 key 删掉**——「读不到」与
+ * 「真的是空的」必须分得开，这是本仓反复裁过的同一条。
+ */
+export function poolSizeOf(body) {
+  const b = obj(body);
+  const n = b === null ? null : b.total;
+  return typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+/**
+ * 清空 Key 池的二次确认：**运维必须把当前池大小那个数字亲手打一遍。**
+ *
+ * ⚠️ **判据是「逐字等于」，不是「数值相等」**：`Number("１")`（全角）在某些环境下
+ * 会解析成 1，`" 3 "` 也会。用 `Number()` 比较等于把「打对了」放宽成「像那个数」，
+ * 而这颗按钮的全部意义就是逼人**看清楚那个数**再手打一遍。只 `trim()` 两端空白
+ *（复制粘贴带的），中间与形态一律照字面比。
+ *
+ * `poolSize` 读不出来（`null`）时**一律 `false`**：没有基线就没有「打对了」这回事。
+ */
+export function purgeConfirmed(typed, poolSize) {
+  if (typeof poolSize !== "number" || !Number.isInteger(poolSize) || poolSize < 0) return false;
+  if (typeof typed !== "string") return false;
+  return typed.trim() === String(poolSize);
+}
+
+/**
+ * 清空 Key 池的回执。**`remaining` 是后端回读出来的**，不是 `0` 这个常数——
+ * 索引写空之后存储里还躺着记录（另一个副本刚导入 / 有人裸写了存储）时它非零，
+ * 而面板必须如实说出来，不许把 handler 的心愿印在屏幕上。
+ * 读不出来一律 `null`（同 `poolSizeOf`：绝不伪造 0）。
+ */
+export function purgeResultView(body) {
+  const b = obj(body);
+  const num = (v) => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
+  if (b === null) return { deleted: null, remaining: null };
+  return { deleted: num(b.deleted), remaining: num(b.remaining) };
+}
+
+/**
+ * 这次失败是不是「池子在你确认之前变了」。
+ *
+ * 判据是**顶层 `reason`**（机器可读的判别字符串），不是解析 `message` 里的中文
+ * ——与 `keys-write.mjs` 对 `must_disable_first` 的处置逐字同源。
+ */
+export function isPoolSizeChanged(errBody) {
+  const b = obj(errBody);
+  return b !== null && b.reason === "pool_size_changed";
 }

@@ -146,8 +146,19 @@ describe("管理接口错误码：码是码，文案在五语言字典里", () =
  *
  * ⚠️ **这个数刻意是手写字面量**，不是从别处算出来的：算出来的话它会跟着代码一起漂，
  * 而那正是「一个不会自己红的清单」。
+ *
+ * ⚠️ **P3e Task 31 把它从 49 改成了 53，这一次的表态逐条写在这里**（危险区那两条端点）：
+ * 新增的四条 message **一条都不进 `ADMIN_ERROR_CODES`**，因为它们的消费者是**设置页**，
+ * 而设置页**从不渲染 `error.message`**（`src/http/admin/handlers/config.ts` 文件头那段
+ * 纪律逐字写着这条；面板按顶层 `reason` 或逐字段 `code` 选五语言文案）。
+ * 那张闭集的射程本身也写着「面板真的会把后端 `message` 画到屏幕上的那一族，
+ * 也就是 `admin-ui/js/sec-keys.js` 的 `errorMessage()` 够得着的那些端点」——
+ * 这两条端点够不着它。**给它们发码 = 在一个够不着屏幕的位置上多两条要五语言维护的契约。**
+ * 四条落点逐条数过：`config.ts` 两条（重置端点自己的「不认识的字段」/「必须显式带
+ * confirm: true」）+ `keys-write.ts` 两条（「expect 必须是一个非负整数」/「池子在你确认
+ * 之前变了」）。**49 + 4 = 53**。
  */
-const ADMIN_MESSAGE_SITES = 49;
+const ADMIN_MESSAGE_SITES = 53;
 
 describe("面不许增长", () => {
   it("面不许增长：src/http/admin/ 下带中文 message 的落点恰好这么多", () => {

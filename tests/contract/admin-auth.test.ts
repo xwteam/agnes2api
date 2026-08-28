@@ -828,6 +828,23 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 明确表一次态，而不是默认它不变）。
     "POST /admin/api/keys",
     "POST /admin/api/keys/bulk",
+    // ── Task 31（P3e）的危险区第二颗按钮：清空整个 Key 池 ─────────────────────
+    //
+    // 它用 `admin.post()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
+    // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
+    // 而不是默认它不变。
+    //
+    // ⚠️ **这是这张表上后果最不可挽回的一条**：上面那条 `DELETE /admin/api/keys/:id`
+    // 一次删一把、而且要求先停用；这一条一次删**整池**，且 key 明文只在存储里有一份。
+    // 一个鉴权失效的它 = 任何人一次请求就把这台网关的全部上游凭据抹掉，
+    // 连带每把 key 的用量历史（`stats` 住在记录的值里面）。`PUBLIC_PATHS` 当然不增长。
+    //
+    // ⚠️ **矩阵会拿正确的管理口令把每条路由真的打一遍，而这一条打通了就是清空整池**
+    // ——它安全的唯一理由是 `expect` 必填：矩阵发的是不带请求体的 POST，
+    // 在 `readAdminJson` 那一步就 400，一把都删不掉。400 不是 401，那一格断言的
+    // 「不该被判 401」照样成立。**别把 `expect` 改成可选**，那会让这张矩阵开始
+    // 清自己的夹具（`src/http/admin/handlers/keys-write.ts` 里那段 ⚠️ 记的是同一件事）。
+    "POST /admin/api/keys/purge",
     "DELETE /admin/api/keys/:id",
     "PATCH /admin/api/keys/:id",
     // ── Task 5（P3c）的「立即补池」──────────────────────────────────────────
@@ -888,6 +905,20 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     "PUT /admin/api/config",
     "POST /admin/api/config/validate",
     "POST /admin/api/config/secrets/clear",
+    // ── Task 31（P3e）的危险区第一颗按钮：`config` 整把写回 `{}` ────────────────
+    //
+    // 它用 `admin.post()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
+    // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态。**
+    //
+    // ⚠️ **它比上面那条 `PUT /admin/api/config` 的爆炸半径更大，而不是更小**：
+    // `PUT` 至少是逐字段的，这一条是整把写回 `{}` —— 网关口令、两条通道的凭据、
+    // 注册机的全部旋钮一次全清。一个鉴权失效的它 = 任何人一次请求就让这台网关的
+    // 下一次冷启动起不来（env 里没有兜底时）。`PUBLIC_PATHS` 同样不增长。
+    //
+    // ⚠️ **它在矩阵里安全的唯一理由是 `confirm: true` 必填**，与
+    // `POST /admin/api/keys/purge` 那段逐字同源：矩阵发的是不带请求体的 POST，
+    // 在 `readAdminJson` 那一步就 400，一个字节都不写。
+    "POST /admin/api/config/reset",
     // ── Task 1（P3d）的协议与模型目录 ─────────────────────────────────────────
     //
     // 它用 `admin.get()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
@@ -1183,7 +1214,8 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // ⇒ **静默丢掉 2 条路由这一格仍然绿**，而这一格存在的全部理由就是「filter 写坏后会恒绿」，
     // 留 2 条余量把它自己削掉了一半。这正是本计划 §通用纪律「禁止的断言形态」里逐字点名的那一条
     // （`tests/unit/docs-parity.test.ts「第一版在这里又踩了一次同类的坑」` 那段记着它为什么不行）。
-    // ⚠️ **Task 31 会新增两条端点 ⇒ 这个数要改成 24。改数字不是削弱，是它在按设计工作。**
+    // ⚠️ **Task 31 已经新增了那两条端点（危险区），所以这个数从 22 改成了 24。
+    // 改数字不是削弱，是它在按设计工作。**
     // 它排在上面两格之后的理由见本格上方的 docblock 最后一段。
     //
     // ⚠️⚠️ **报文里那句「先确认没被前面更宽的模式吃掉」不是客套话，它是一条实测出来的
@@ -1207,7 +1239,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
       "扫到的 /admin/api/* 条目数不对。**先确认新端点没有被前面更宽的模式吃掉**"
       + "（下面那格「窗口内更宽的模式不许排在更窄的之前」会逐条点名），"
       + "再改这个数：filter 写坏了、或者有人加/删了端点没回来改它，都会落到这一句上",
-    ).toBe(22);
+    ).toBe(24);
   });
 
   /**
@@ -1347,7 +1379,11 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
   it("鉴权失败的非幂等请求必须零副作用 —— 只断言 401 抓不住『先删了再返回 401』", async () => {
     const st = new CountingStorage();
     const { app, repo } = await makeApp(
-      [], ["sk-side-effect-probe-key"], {}, () => 1000, { storage: st },
+      [], ["sk-side-effect-probe-key"], {}, () => 1000,
+      // **配置接线必须给**（P3e Task 31）：不给的话 `POST /admin/api/config/reset`
+      // 在带对口令时是 `503 not_wired`，下面那条「它真的会写」的反向自检就成了空转
+      // ——而「零副作用」的四个 0 全靠反向自检才有意义。
+      { storage: st, config: { storage: st, env: {}, adminToken: TEST_ADMIN_TOKEN } },
     );
     const target = (await repo.all())[0]!;
     // 停用它：**这样那次无口令的 DELETE 在鉴权失效时会真的删掉一条记录**。
@@ -1362,6 +1398,12 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
         name: "POST 批量删除", path: "/admin/api/keys/bulk", method: "POST",
         body: { op: "delete", ids: [target.id] },
       },
+      // ── 危险区那两条（P3e Task 31）───────────────────────────────────────────
+      // **两条的请求体都是「鉴权若不存在就一定会成功」的那一份**，与上面四条同一条
+      // 判据：`confirm: true` / `expect: 1`（此刻池里恰好一把）都带齐了 ⇒ 鉴权失效
+      // 时它们会真的清掉整份配置、真的删掉整池。它们各自的反向自检在本格末尾。
+      { name: "POST 重置配置", path: "/admin/api/config/reset", method: "POST", body: { confirm: true } },
+      { name: "POST 清空 Key 池", path: "/admin/api/keys/purge", method: "POST", body: { expect: 1 } },
     ];
 
     for (const c of CASES) {
@@ -1381,6 +1423,29 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     });
     expect(ok.status, "夹具本身删不掉 ⇒ 上面那四个「零副作用」是空的").toBe(204);
     expect(st.deletes, "带对口令的那次 DELETE 也没碰存储").toBeGreaterThan(0);
+
+    // ── 危险区那两条的反向自检（P3e Task 31）─────────────────────────────────────
+    // **顺序是有讲究的**：上面那次 DELETE 已经把池子清空了，所以清空 Key 池这一条
+    // 必须先补一把 key 回去，否则 `expect: 0` 打过去也是 200 而一次 delete 都不发
+    // ——那样它就成了一个「永远绿」的自检，正是本仓反复裁过的形态。
+    const putsBeforeReset = st.puts;
+    const reset = await app.request("/admin/api/config/reset", {
+      method: "POST",
+      headers: { "x-admin-key": TEST_ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    });
+    expect(reset.status, "夹具本身重置不了 ⇒ 上面那条「零副作用」是空的").toBe(200);
+    expect(st.puts, "带对口令的那次重置也没写存储").toBeGreaterThan(putsBeforeReset);
+
+    await repo.add("sk-purge-reverse-control-key");
+    const deletesBeforePurge = st.deletes;
+    const purge = await app.request("/admin/api/keys/purge", {
+      method: "POST",
+      headers: { "x-admin-key": TEST_ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ expect: 1 }),
+    });
+    expect(purge.status, "夹具本身清不掉 ⇒ 上面那条「零副作用」是空的").toBe(200);
+    expect(st.deletes, "带对口令的那次清空也没碰存储").toBeGreaterThan(deletesBeforePurge);
   });
 
   it("矩阵里「不该 401」的格子不是空口白话：两条路由用对口令确实 200", async () => {

@@ -146,6 +146,19 @@ its writes grow with request count, so the budget is "so many per day", not "so 
     - **Clearing one credential** (`POST /admin/api/config/secrets/clear`): **1 put** + 2 gets;
       clearing `gatewayToken` (after which the config no longer loads) costs 3 gets.
     - **Dry-run validation** (`POST /admin/api/config/validate`): **0 puts** + 1 get.
+    - **Resetting the configuration** (`/admin/api/config/reset`, the first danger-zone button
+      on the settings page): **1 put** + 2 gets (one read-back before the write, one after).
+      It wipes the single stored configuration entry, and **it spends the put bucket, not the
+      delete bucket** — writing an empty value instead of deleting the key avoids the KV
+      delete-tombstone family of problems.
+    - **Purging the key pool** (`/admin/api/keys/purge`, the second danger-zone button):
+      **N deletes (N = pool size) + 1 put** (the index is written exactly once, the same rule as
+      bulk delete).
+      ⚠️ **The free tier's delete bucket is 1,000 per day** (independent of read, write and
+      list) ⇒ **with N approaching 1,000 this one button blows the day's delete quota on its
+      own**, and the bigger the pool the more it costs. On the read side it is one pool snapshot
+      (0 gets when the isolate cache is warm) plus one read-back; clicking again on an empty
+      pool is 0 deletes and 0 puts.
   ⚠️⚠️ **"Saving the settings" and "clearing one credential" have no daily cap. That is
   deliberate, not an oversight.** Both require the admin token and both only happen when a human
   clicks; no automatic path can trigger them. Putting a storage guardrail on them would itself

@@ -5,6 +5,8 @@ import { I18N } from "../../admin-ui/js/i18n-dict.js";
 import { TEND_FAILURE_REASONS } from "../../src/core/registrar/tender.js";
 import { stripComments } from "../helpers/strip-comments.js";
 import { UNVERIFIED_KEYS, UNVERIFIED_BANNED } from "../../scripts/lib/unverified-claims.mjs";
+// P3e Task 31：危险区那道「不许说立即生效」的守卫，射程里那两条复用文案从真源现算。
+import { resetWarnings } from "../../admin-ui/js/pure/settings.mjs";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 
@@ -204,6 +206,158 @@ describe("i18n 字典", () => {
    * 降级回落到默认值）都与「两条通道平级」无关，扩宽前缀会把这两条正当文案一起
    * 打红，逼着开豁免名册——理由与上面「刻意不是整个 `set.*`」同一条。
    */
+  // ── 危险区那一族文案里不许出现「立即生效」（P3e Task 31）───────────────────────
+  //
+  // ⚠️⚠️ **这道守卫刻意**不**做成 `scripts/check-i18n.mjs` 的禁词表，理由是实测出来的**
+  //（设计小节「重置到底重置了什么」复评 F1 逐条写着）：
+  // · 那个脚本的 `BANNED` 是**偏好词**表（推荐 / 默认 / recommended / おすすめ / 권장……），
+  //   作用域被 `BANNED_PREFIXES` 钉死在 `reg.` 与几条 `set.field.*` / `ov.config.*` 上；
+  //   `scripts/lib/unverified-claims.mjs` 的 `UNVERIFIED_BANNED` 是**安全 / 够用**那张表。
+  //   **两张表里都没有「立即」这一族词。**
+  // · 而它**今天也加不进那张表**：字典里含「立即」的 key 全是正当使用（「立即补池」
+  //   那一族，外加 `ov.freshness.config` —— 那一条的正文本身就写着「不是「立即生效」」），
+  //   而它们恰好落在 `BANNED_PREFIXES` 的作用域里 ⇒ 按词扫会**先打中做对了的那几条**，
+  //   一加就要开豁免名册，而本仓的裁定是「开豁免名册比没有规则更糟」。
+  // ⇒ 处置：**按作用域另立一格**，射程只有危险区那一族 key，跟着 `pnpm test` 跑。
+  //
+  // ⚠️ **射程不是手写的**：`set.card.danger` + `set.danger.*` 是前缀派生，
+  // 而那两条**复用**的文案（设计小节明令不许另写第三句）由 `resetWarnings()` 现算出来
+  // —— 哪天有人把复用的那两条换成别的 key，射程自动跟着换，不用回来改这里。
+  const dangerScope = (): string[] => {
+    const reused = resetWarnings({
+      resetBlocked: [{ code: "gateway_token_required" }, { code: "channel_credentials_missing" }],
+    }).flatMap((r: { key: string | null }) => (r.key === null ? [] : [r.key]));
+    const own = Object.keys(I18N).filter((k) => k === "set.card.danger" || k.startsWith("set.danger."));
+    return [...new Set([...own, ...reused])];
+  };
+
+  /**
+   * 「立即生效」那一族说法：**概念 × 语言的矩阵**，形态照抄
+   * `tests/unit/docs-parity.test.ts` 的
+   * 「软化词表是「概念 × 语言」的矩阵：每条概念五种语言都得有说法，缺一种就是那种语言的盲区」
+   * 那张表（那一族已经被两次实测逃逸教育过：
+   * 只填简体、只填一种语言，都会让某种语言在这条概念上整个瞎掉）。
+   * **射程是全部语言的全部说法**：一条英文文案里冒出「즉시 반영」同样是错的。
+   *
+   * ⚠️⚠️ **这里收的是「立即 + 生效」这条短语，不是「立即」这个词，而这一条是实测逼出来的。**
+   * 第一版按**单词**收（立即 / 立刻 / immediately / すぐに / 즉시），跑真字典当场红 9 条，
+   * 红的全是设计小节明令要**复用**的那两条文案：`set.clear.effect.gatewayMissing` 与
+   * `set.clear.effect.channelBreaks` 里逐字写着「清完请**立刻**在这一页写一把新的」——
+   * 那是**对运维下的一句指令**，不是「这次改动马上就在别处生效」的承诺，**它做对了**。
+   * 这正是设计小节复评 F1 预言过的形态：「按词扫会先打中做对了的那几条，一加就要开豁免
+   * 名册」，而本仓的裁定是「开豁免名册比没有规则更糟」。⇒ 判据收窄到那条红线本身的字面：
+   * 「立即生效」。
+   *
+   * ⚠️ **边界，如实登记：这只管词面连写的那一档。** 把两个词拆开写
+   *（「本实例立即……别的副本也一样生效」）、或者换一个同义句式，它一个字都抓不住；
+   * 那一档留给评审，与 `scripts/check-i18n.mjs` 的 `BANNED` 自己写着的
+   * 「这只管词面」是同一条边界，**别把它升格成「杜绝一切『马上生效』的暗示」**。
+   */
+  const IMMEDIATE_CONCEPTS: ReadonlyArray<{ id: string; words: Record<string, readonly string[]> }> = [
+    {
+      id: "takes-effect-now",
+      words: {
+        "zh-CN": ["立即生效", "立刻生效", "马上生效"],
+        "zh-TW": ["立即生效", "立刻生效", "馬上生效"],
+        en: ["takes effect immediately", "effective immediately", "applies immediately", "instantly effective"],
+        ja: ["即時反映", "すぐに反映", "即座に反映", "直ちに反映"],
+        ko: ["즉시 적용", "즉시 반영", "바로 적용", "바로 반영"],
+      },
+    },
+  ];
+
+  const IMMEDIATE_WORDS = [...new Set(
+    IMMEDIATE_CONCEPTS.flatMap((c) => LANGS.flatMap((l) => c.words[l] ?? [])),
+  )];
+
+  /** 一份字典 × 危险区射程。返回失败报文数组。**真扫描与探针共用这一份。** */
+  function immediateFailures(dict: Record<string, Record<string, string>>): string[] {
+    const out: string[] = [];
+    for (const k of dangerScope()) {
+      const row = dict[k];
+      if (row === undefined) { out.push(`射程里的 ${k} 在字典里不存在——射程本身坏了`); continue; }
+      for (const lang of LANGS) {
+        const v = String(row[lang] ?? "").toLowerCase();
+        for (const w of IMMEDIATE_WORDS) {
+          if (v.includes(w.toLowerCase())) {
+            out.push(
+              `${k}/${lang} 里出现了「${w}」——危险区那两颗按钮的后果都要等传播窗口才在`
+              + "别的副本上成立，把它说成这样就是当面说反话（设计 §5.3 同源）",
+            );
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  it("词表是「概念 × 语言」的矩阵：每条概念五种语言都得有说法，缺一种就是那种语言的盲区", () => {
+    expect(IMMEDIATE_CONCEPTS.length, "概念表空了——下面整组会一格都不跑").toBeGreaterThan(0);
+    const holes: string[] = [];
+    for (const c of IMMEDIATE_CONCEPTS) {
+      expect(Object.keys(c.words).sort(), `${c.id} 的语言集与 LANGS 对不上`).toEqual([...LANGS].sort());
+      for (const lang of LANGS) {
+        if ((c.words[lang] ?? []).filter((w) => w.trim() !== "").length === 0) {
+          holes.push(`概念 ${c.id} 在 ${lang} 下一个说法都没有——那种语言在这条概念上是瞎的`);
+        }
+      }
+    }
+    expect(holes, holes.join("\n")).toEqual([]);
+  });
+
+  it("非空锚：射程里既有 set.danger.* 自己那一族，也有复用的那两条 —— 少一半就等于没扫", () => {
+    const scope = dangerScope();
+    expect(scope.filter((k) => k.startsWith("set.danger.")).length,
+      "一条 set.danger.* 都没扫到——这一格测的是空气").toBeGreaterThan(0);
+    expect(scope, "复用的那两条不在射程里——resetWarnings() 的映射改了，回来核对设计小节那条明令")
+      .toEqual(expect.arrayContaining(["set.clear.effect.gatewayMissing", "set.clear.effect.channelBreaks"]));
+  });
+
+  it("危险区那一族文案里一句「立即生效」都没有 —— 词表是「概念 × 语言」的矩阵", () => {
+    const failures = immediateFailures(I18N as Record<string, Record<string, string>>);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("反向控制：判据在真字典里认得出这条短语 —— 它在射程外正当地活着（`ov.freshness.config`）", () => {
+    // **反向控制用仓里真实存在的串**：`ov.freshness.config` 的正文逐字写着
+    // 「不是「立即生效」」（ja 是「即時反映」、ko 是「즉시 반영」，都被引号否定着）。
+    // 少了这一格，一个词表被写空 / 判据整个瞎掉的版本照样能让上面那格绿。
+    const legit = Object.entries(I18N as Record<string, Record<string, string>>)
+      .filter(([k]) => !dangerScope().includes(k))
+      .filter(([, row]) => LANGS.some((l) => IMMEDIATE_WORDS.some((w) => String(row[l] ?? "").includes(w))));
+    expect(legit.length,
+      "整本字典里一条都扫不出这条短语——判据多半已经瞎了，而上面那格会静静地绿").toBeGreaterThan(0);
+    expect(legit.map(([k]) => k), "`ov.freshness.config` 不在命中里 —— 反向控制用的串该是仓里真实存在的")
+      .toContain("ov.freshness.config");
+    // ⚠️ **如实登记：这条反向控制只覆盖 zh-CN / zh-TW / ja / ko 四种。**
+    // `ov.freshness.config` 的 en 写的是 `Not "immediately"`，**不含**本表任何一条英文说法
+    //（那句话本身也不是在承诺立即生效）⇒ 真字典里今天没有一条正当的英文命中。
+    // en 那一档的判别力全部来自下面那条逐语言变异，不是这一格。
+    const hitLangs = LANGS.filter((l) => legit.some(([, row]) => IMMEDIATE_WORDS.some(
+      (w) => String(row[l] ?? "").includes(w))));
+    expect(hitLangs, "真字典里正当命中的语言集变了 —— 回来重新核对这一格覆盖了哪几种")
+      .toEqual(["zh-CN", "zh-TW", "ja", "ko"]);
+  });
+
+  it("该红时红：逐种语言各往一条危险区文案里塞一次那种语言的说法 —— 每一种都要被点名", () => {
+    const target = "set.danger.reset.desc";
+    for (const lang of LANGS) {
+      const word = IMMEDIATE_CONCEPTS[0]!.words[lang]![0]!;
+      const poisoned = {
+        ...(I18N as Record<string, Record<string, string>>),
+        [target]: {
+          ...(I18N as Record<string, Record<string, string>>)[target]!,
+          [lang]: `${(I18N as Record<string, Record<string, string>>)[target]![lang]}（${word}）`,
+        },
+      };
+      const failures = immediateFailures(poisoned);
+      expect(failures.length, `${lang}：塞了「${word}」却一条都没报——这一格控制是空的`).toBe(1);
+      for (const h of [target, lang, word]) {
+        expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+      }
+    }
+  });
+
   it("通道相关命名空间不出现任何偏好词（含繁体变体）", () => {
     const BANNED = [
       "推荐", "推薦", "建议", "建議", "默认", "預设", "預設", "主流", "首选", "首選", "优先", "優先",

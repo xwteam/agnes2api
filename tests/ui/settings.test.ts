@@ -5,6 +5,7 @@ import {
   channelFields, fieldLabelKey, errorMessageKey, fieldView, credentialView,
   buildPatch, localErrors, changedFields, propagationView, errorRows, displayValue, clearWarning,
   BUILD_TIME_FIELDS, touchesBuildTimeField, touchesLiveField, isSaveReceipt,
+  DANGER_ACTIONS, resetWarnings, poolSizeOf, purgeConfirmed, purgeResultView, isPoolSizeChanged,
 } from "../../admin-ui/js/pure/settings.mjs";
 import { CHANNELS } from "../../admin-ui/js/pure/registrar.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
@@ -781,5 +782,123 @@ describe("清空凭据前那句警告：按状态分岔，每一条都是确定�
         expect(row![lang]!.trim(), `${c.key}/${lang} 是空的`).not.toBe("");
       }
     }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 危险区（第 5 张卡，P3e Task 31）
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("危险区的取值决策", () => {
+  it("两颗按钮的每一个文案 key 都在字典里五语言齐备 —— 这张表是屏幕与五份 ADMIN.md 共用的真源", () => {
+    expect(DANGER_ACTIONS.length, "危险区一颗按钮都没有——这一组测的是空气").toBeGreaterThan(0);
+    for (const a of DANGER_ACTIONS) {
+      for (const key of [a.titleKey, a.descKey, a.buttonKey]) {
+        const row = dict[key];
+        expect(row, `${a.id} 的 ${key} 不在字典里`).toBeDefined();
+        for (const lang of LANGS) {
+          expect(row![lang]!.trim(), `${key}/${lang} 是空的`).not.toBe("");
+        }
+      }
+    }
+  });
+
+  it("id 不重名，且每颗按钮在板块文件里都真的接上了一个动作 —— 少接一颗就是一颗点不动的按钮", () => {
+    const ids = DANGER_ACTIONS.map((a) => a.id);
+    expect(new Set(ids).size, "危险区按钮 id 有重名").toBe(ids.length);
+    // ⚠️ **判据落在板块文件的那张分派表上**（`sec-settings.js` 的 `dangerRun`）：
+    // 表里少一个 id，那颗按钮点下去是 `undefined is not a function`，而屏幕上它长得很正常。
+    const section = blankComments(readFileSync("admin-ui/js/sec-settings.js", "utf8"));
+    const m = /const\s+dangerRun\s*=\s*\{([^}]*)\}/.exec(section);
+    expect(m, "sec-settings.js 里找不到 dangerRun 那张分派表——它改名了，这一格已经无事可做").not.toBeNull();
+    const wired = [...(m?.[1] ?? "").matchAll(/([A-Za-z]+)\s*:/g)].map((x) => x[1]);
+    expect(wired.sort(), "危险区按钮与它们的动作对不上").toEqual([...ids].sort());
+  });
+
+  /**
+   * ⚠️⚠️ **两态文案必须复用「清空凭据」已经在用的那两条，不许另写第三句**
+   *（设计小节「重置到底重置了什么」明令）。这一格正面钉住那条明令。
+   */
+  it("重置的两态复用已上线的那两条文案，判据是后端给的 resetBlocked（不是「有没有 GATEWAY_TOKEN」）", () => {
+    expect(resetWarnings({ resetBlocked: [{ field: "gatewayToken", code: "gateway_token_required" }] })
+      .map((r) => r.key)).toEqual(["set.clear.effect.gatewayMissing"]);
+    expect(resetWarnings({
+      resetBlocked: [{ field: "registrar.moemail.apiKey", code: "channel_credentials_missing" }],
+    }).map((r) => r.key)).toEqual(["set.clear.effect.channelBreaks"]);
+    // 两条通道各缺一把 ⇒ 同一族只说一次（说两遍不会更清楚）。
+    expect(resetWarnings({
+      resetBlocked: [
+        { field: "registrar.moemail.apiKey", code: "channel_credentials_missing" },
+        { field: "registrar.yyds.apiKey", code: "channel_credentials_missing" },
+      ],
+    })).toHaveLength(1);
+    // 两态同时成立 ⇒ 两句都要说，而且都是红的。
+    const both = resetWarnings({
+      resetBlocked: [
+        { field: "gatewayToken", code: "gateway_token_required" },
+        { field: "registrar.moemail.apiKey", code: "channel_credentials_missing" },
+      ],
+    });
+    expect(both.map((r) => r.key))
+      .toEqual(["set.clear.effect.gatewayMissing", "set.clear.effect.channelBreaks"]);
+    expect(both.every((r) => r.kind === "danger")).toBe(true);
+  });
+
+  it("表外的码原样交出去（key 为 null），调用方才有机会把码本身显示出来", () => {
+    const rows = resetWarnings({ resetBlocked: [{ field: "x", code: "brand_new_code_from_the_future" }] });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.key, "表外的码被冒充成某一档已知原因了").toBeNull();
+    expect(rows[0]!.code).toBe("brand_new_code_from_the_future");
+    // 表内但不属于那两态的码走既有映射，不另写一份。
+    expect(resetWarnings({ resetBlocked: [{ field: "registrar.primary", code: "primary_required" }] })[0]!.key)
+      .toBe(errorMessageKey("primary_required"));
+  });
+
+  it("空数组说的是「逐字段判据看不出会缺什么」，不是「一定没事」", () => {
+    const rows = resetWarnings({ resetBlocked: [] });
+    expect(rows.map((r) => r.key)).toEqual(["set.danger.reset.effect.ok"]);
+    expect(rows[0]!.kind).toBe("info");
+    // 读不到那一格时同样落到这一档（而不是抛）。
+    expect(resetWarnings(null).map((r) => r.key)).toEqual(["set.danger.reset.effect.ok"]);
+  });
+
+  it("池大小读不出来一律 null，绝不伪造 0 —— 0 会让人在一池 key 上确认一个「空池」", () => {
+    expect(poolSizeOf({ total: 7 })).toBe(7);
+    expect(poolSizeOf({ total: 0 })).toBe(0);
+    for (const bad of [null, undefined, {}, { total: "7" }, { total: -1 }, { total: 1.5 }, { total: NaN }]) {
+      expect(poolSizeOf(bad), `${JSON.stringify(bad)} 应当读成 null`).toBeNull();
+    }
+  });
+
+  /**
+   * ⚠️ **判据是「逐字等于」，不是「数值相等」。** 全角数字与首尾之外的空白一律不算——
+   * 这颗按钮的全部意义就是逼人**看清楚那个数**再手打一遍，放宽成「像那个数」就白做了。
+   */
+  it("清空 Key 池的二次确认：逐字等于当前池大小才算打对", () => {
+    expect(purgeConfirmed("12", 12)).toBe(true);
+    expect(purgeConfirmed("  12  ", 12), "首尾空白（复制粘贴带的）应当放行").toBe(true);
+    expect(purgeConfirmed("0", 0)).toBe(true);
+    for (const typed of ["13", "1 2", "１２", "12.0", "+12", "012", "", "twelve"]) {
+      expect(purgeConfirmed(typed, 12), `「${typed}」不该被判成打对了`).toBe(false);
+    }
+    // 没有基线就没有「打对了」这回事。
+    for (const size of [null, undefined, -1, 1.5, "12"]) {
+      expect(purgeConfirmed("12", size as never), `池大小是 ${String(size)} 时不该放行`).toBe(false);
+    }
+    expect(purgeConfirmed(12 as never, 12), "非字符串输入不该被判成打对了").toBe(false);
+  });
+
+  it("回执里的 remaining 原样交出去，读不出来是 null（不伪造 0）", () => {
+    expect(purgeResultView({ deleted: 3, remaining: 0 })).toEqual({ deleted: 3, remaining: 0 });
+    expect(purgeResultView({ deleted: 3, remaining: 1 })).toEqual({ deleted: 3, remaining: 1 });
+    expect(purgeResultView({ deleted: "3" })).toEqual({ deleted: null, remaining: null });
+    expect(purgeResultView(null)).toEqual({ deleted: null, remaining: null });
+  });
+
+  it("「池子变了」的判据是顶层 reason，不是解析 message 里的中文", () => {
+    expect(isPoolSizeChanged({ reason: "pool_size_changed" })).toBe(true);
+    expect(isPoolSizeChanged({ error: { message: "池子在你确认之前变了" } }),
+      "靠 message 的中文判会在别的语言 / 别的措辞下当场失效").toBe(false);
+    expect(isPoolSizeChanged(null)).toBe(false);
   });
 });

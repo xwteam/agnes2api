@@ -210,6 +210,20 @@ tr:last-child td { border-bottom: 0; }
 .cfg-errors p { margin: 2px 0; }
 .danger-text { color: var(--danger); }
 
+/* 危险区（P3e Task 31，设计里不带编号的那一节「重置到底重置了什么」）。
+
+   ⚠️ **两颗按钮同样 `align-self: flex-start`**，与上面 `.cfg-clear` 那段逐字同源：
+   `.cfg-field` 是 column 方向的 flex 容器，不缩的话它们会被拉成两条横贯整张卡的
+   红色大条 —— 而这两颗按钮的后果比清空一把凭据还要不可撤销，把它们做成整页最抢眼
+   的东西正好是反的。
+   整张卡走一条 `--danger` 左边框：它与别的卡的差别必须在**扫一眼**的层面就成立，
+   不能只靠标题上那三个字。 */
+.danger-zone { border-left: 2px solid var(--danger); }
+.danger-zone .cfg-field button { align-self: flex-start; }
+/* 二次确认里那个「把当前池大小打一遍」的输入框。窄一点：它只装一个整数，
+   做成整行宽会让人以为该往里粘点别的东西。 */
+.danger-confirm { max-width: 140px; }
+
 /* 集成示例卡（P3d Task 7，设计 §10.4 第 4 张卡）。
 
    ⚠️ **`white-space: pre` 而不是 `pre-wrap`**：示例是要照抄去跑的，curl 那几段靠
