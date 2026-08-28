@@ -242,8 +242,14 @@ its writes grow with request count, so the budget is "so many per day", not "so 
      point ② above: an isolate that lived 10 minutes stores nothing at all). So on Workers
      "written out after recovery" requires **the same isolate to have crossed UTC midnight**,
      which is the exception, not the rule; when it does not, those days' counts **vanish with
-     the instance — they are not merely posted late**. **On Docker the process is long-lived,
-     which is where that promise holds as the normal case.**
+     the instance — they are not merely posted late**.
+     ⚠️⚠️ **On Docker this gate does not exist at all**, so the promise simply does not apply
+     on that side: whether there is a daily write budget depends only on **whether your storage
+     has a write quota** (the criterion is in point ④ below), and file storage does not ⇒ the
+     budget is empty (`budgetPerDay = null`), nothing is ever exhausted, and there is no
+     "recovery" or "catch-up" to speak of. **Do not read it as "on Docker you hit the 13-put
+     gate and lose nothing" — on Docker there is no such gate**; what you do lose there is the
+     tail from point ② above (up to 2 hours not yet flushed when the process stops).
      ⚠️ This gate **only applies inside a single instance** — 8 isolates means 8 independent
      allowances of 13, exactly like the events gate above, with no cross-instance coordination.
 

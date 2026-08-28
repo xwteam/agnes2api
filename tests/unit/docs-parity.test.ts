@@ -232,37 +232,107 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     // ⚠️ **不加裸 `60` / 裸 `50`**：它们在五份里散落在这两笔账、`VIDEO_POLL_MAX_ATTEMPTS`、
     // 60 秒轮询上限、`60000`、`750` 这类**子串**等互不相干的地方，变红时指不出是哪一句坏了，
     // 而定位成本正是这道门禁存在的意义（同 `48` 那条不加的理由）。
-    { token: "1 + 60", why: "Playground 视频档一次任务的上游请求上界（1 次建任务 + 最多 60 拍轮询）" },
-    { token: "30 × 2", why: "`30d` 那一档一次请求的 KV get 数（USAGE_DAY_RETAIN × USAGE_SLOTS）" },
+    //
+    // ⚠️⚠️ **这两个 token 从真源常量现算，不写字面量**（Task 28 复评 H2）。上一版写死了
+    // `"1 + 60"` 与 `"30 × 2"`，复评拿真源变更做过两次变异：`USAGE_DAY_RETAIN 30→14`、
+    // `VIDEO_POLL_MAX_ATTEMPTS 60→30`，两次都**只红 3 格且全部点名 ADMIN.md**
+    //（那三格是下面 `ADMIN_NUMBERS` 派生出来的），本表这两格照绿——而那三格的报文
+    // 逐字写着「要么常量改了而这一份文档没跟着改」，照它做完只改五份 ADMIN.md，
+    // 五份 DEPLOY.md 里的 `30 × 2` = 60 原地变成假话且全绿。**报文可以亲手把人引进坑**。
+    // 改成现算之后，常量一改，token 就成了文档里查不到的串 ⇒ 下面那条
+    // `total === 0` 当场红，报文点名 DEPLOY.md。测法是本组末尾那两格探针。
+    {
+      token: `1 + ${VIDEO_POLL_MAX_ATTEMPTS}`,
+      why: "Playground 视频档一次任务的上游请求上界（1 次建任务 + 最多 VIDEO_POLL_MAX_ATTEMPTS 拍轮询）",
+    },
+    {
+      token: `${USAGE_DAY_RETAIN} × ${USAGE_SLOTS}`,
+      why: "「30d」那一档一次请求的 KV get 数（USAGE_DAY_RETAIN × USAGE_SLOTS，两个都现算）",
+    },
     { token: "Subrequests per invocation", why: "Cloudflare Workers limits 页免费档 50 的那一行，口径分歧的一半" },
     { token: "Operations/Worker invocation", why: "Cloudflare KV limits 页 1,000 的那一行，口径分歧的另一半" },
   ];
 
   for (const { token, why } of NUMBERS) {
     it(`五语言 DEPLOY.md 里「${token}」（${why}）的出现次数彼此一致`, () => {
-      const counts = Object.fromEntries(
-        LANGS.map((lang) => {
-          const src = readFileSync(`docs/${lang}/DEPLOY.md`, "utf8");
-          return [lang, src.split(token).length - 1] as const;
-        }),
-      ) as Record<(typeof LANGS)[number], number>;
-
-      // 先挡住「五份都是 0」这种平凡相等——那不叫对等，叫这个锚点压根没写进任何
-      // 一份文档（token 本身打错，或该数字被整体换了写法）。
-      const total = Object.values(counts).reduce((a, b) => a + b, 0);
-      expect(total, `「${token}」（${why}）在五语言里一次都没出现，先检查 token 是否还匹配文档里的真实写法`)
-        .toBeGreaterThan(0);
-
-      // 期望值来自其余语言，不是手写常数：任何一种语言的计数与其余四份不一致，
-      // 下面这个对象级 toEqual 会把完整的五语言计数摊开显示，一眼看出是哪一种偏了。
-      const reference = counts[LANGS[0]];
-      const expected = Object.fromEntries(LANGS.map((lang) => [lang, reference])) as Record<(typeof LANGS)[number], number>;
-      expect(
-        counts,
-        `「${token}」（${why}）在五语言里的出现次数不一致——可能有语言漏翻、漏改，或翻译时抄错了数字`,
-      ).toEqual(expected);
+      const failures = numberTokenFailures(token, why, realDoc("DEPLOY"));
+      expect(failures, failures.join("\n")).toEqual([]);
     });
   }
+
+  /**
+   * ⚠️ **这一格存在的唯一理由是「让别处那句注释指得住『那一格』」**（复评 H4）。
+   *
+   * `admin-ui/js/sec-playground.js` 写着「这笔账由 docs-parity 那一格钉着」。上一版
+   * 它指的是上面那圈 `it()` 的**用例名**，而用例名是模板串生成的，注释里的名字锚
+   * 只认得住族名（`……` 省略号匹配）——复评实测**删掉 `1 + 60` 那一整行**，
+   * `check-comment-refs` **exit 0**、docs-parity 照绿。**族名还在，那一格已经没了。**
+   *
+   * 名字锚必须落在**用例标题**里（`check-comment-refs.mjs` 的 `testTitles()`，
+   * 断言性措辞触发规则 B 时收紧到标题），所以补一格标题是**字面量**的用例，
+   * 逐行断言那两个派生 token 还在表上：删掉任意一行 ⇒ 这一格红；
+   * 删掉这一格本身 ⇒ 注释里的名字锚落空 ⇒ 那道门禁红。两条路都不静默。
+   */
+  it("NUMBERS 表里那两个从真源常量现算的 token 都还在：Playground 视频档的上游请求上界、30d 那一档的 KV get 数", () => {
+    const tokens = NUMBERS.map((n) => n.token);
+    expect(tokens, "`1 + VIDEO_POLL_MAX_ATTEMPTS` 那一行不在 NUMBERS 表上了——"
+      + "`admin-ui/js/sec-playground.js` 那段注释正声称它由那一格钉着，要么把行加回来，要么改那段注释")
+      .toContain(`1 + ${VIDEO_POLL_MAX_ATTEMPTS}`);
+    expect(tokens, "`USAGE_DAY_RETAIN × USAGE_SLOTS` 那一行不在 NUMBERS 表上了——"
+      + "五份 DEPLOY.md 里那笔 Tier-2 读扇出的账从此没有任何跨语言守卫")
+      .toContain(`${USAGE_DAY_RETAIN} × ${USAGE_SLOTS}`);
+  });
+
+  // ── 探针：真源常量漂一位 ⇒ 派生出来的 token 变成文档里查不到的串 ───────────────
+  //
+  // ⚠️ **这不是「换个 token 试试」，它就是「常量改了而五份 DEPLOY.md 没跟着改」那一刻
+  // 判据会看到的东西**：`token` 是从常量现算的，常量改成 `n+1` 之后判据拿到的正是
+  // 下面这两个串。探针与真扫描共用 `numberTokenFailures`。
+  const DERIVED_PROBES = [
+    {
+      label: "VIDEO_POLL_MAX_ATTEMPTS",
+      token: `1 + ${VIDEO_POLL_MAX_ATTEMPTS + 1}`,
+      // ⚠️ 探针这句 `why` **刻意与真表那一行的不同字**：两者都会原样进报文，长得一样
+      // 的时候跑红了分不清是真表那一格还是探针那一格——**报文是唯一会被看见的护栏**。
+      why: "Playground 视频档的上游请求上界（探针）",
+    },
+    {
+      label: "USAGE_DAY_RETAIN",
+      token: `${USAGE_DAY_RETAIN + 1} × ${USAGE_SLOTS}`,
+      why: "「30d」那一档一次请求的 KV get 数",
+    },
+  ] as const;
+
+  it.each([...DERIVED_PROBES])(
+    "该红时红：$label 漂一位 ⇒ 派生 token 那一格当场红，报文点名 DEPLOY.md（不是 ADMIN.md）",
+    ({ token, why }) => {
+      const failures = numberTokenFailures(token, why, realDoc("DEPLOY"));
+      expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+      expect(failures[0]).toContain("DEPLOY.md");
+      expect(failures[0]).not.toContain("ADMIN.md");
+      expect(failures[0]).toContain("一次都没出现");
+    },
+  );
+
+  it("不乱红：五份一起合法地多写一句无关的话 —— 上面每一格都不许因此假红", () => {
+    const noisy: ApiDocReader = (lang) => `${realDoc("DEPLOY")(lang)}\n\n<!-- 无关的一行 -->\n`;
+    for (const { token, why } of NUMBERS) {
+      const failures = numberTokenFailures(token, why, noisy);
+      expect(failures, `「${token}」：五份一起多写了一句无关的话，判据却红了\n${failures.join("\n")}`).toEqual([]);
+    }
+  });
+
+  it("该红时红：只把 ko 那份里的一处锚点抹掉 ⇒ 计数分叉那一格必须点名 ko", () => {
+    // 反向控制用仓里真实存在的串：`.dev.vars.off` 今天真的在五份 DEPLOY.md 里各 1 次。
+    const failures = numberTokenFailures(
+      ".dev.vars.off",
+      ".dev.vars 绊线红了之后的出路",
+      readerWith("ko", (s) => s.split(".dev.vars.off").join(".dev.vars.disabled"), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("不一致");
+    expect(failures[0]).toContain('"ko":0');
+  });
 });
 
 /**
@@ -357,6 +427,46 @@ function readerWith(target: Lang, edit: (s: string) => string, doc = "API"): Api
     if (out === src) throw new Error(`变异没落到 docs/${lang}/${doc}.md 上——这一格控制是空的`);
     return out;
   };
+}
+
+/**
+ * 一个 token × 五份 DEPLOY.md 的计数对等。返回失败报文数组。
+ * **真扫描与探针共用这一份**——各写一份的话，两边的判据会各有各的口径，
+ * 而其中一份坏了另一份不会响（本文件既有纪律）。
+ *
+ * ⚠️ **报文里两处都点名 `DEPLOY.md`**（Task 28 复评 H2）：本文件另有一组
+ * `ADMIN_NUMBERS` 报的是 ADMIN.md，两组报文长得像的时候，人会照着先看见的那一条去改
+ * 另一份文档——复评实测过一次，真源常量一改只有 ADMIN.md 那三格红，照着它改完
+ * DEPLOY.md 里同源的那个数原地变假且全绿。
+ */
+function numberTokenFailures(token: string, why: string, read: ApiDocReader): string[] {
+  if (token.trim() === "") {
+    return [`「${why}」的锚 token 是空串——空串永远查得到，这一格从此空转`];
+  }
+  const counts = Object.fromEntries(
+    LANGS.map((lang) => [lang, read(lang).split(token).length - 1] as const),
+  ) as Record<Lang, number>;
+
+  // 先挡住「五份都是 0」这种平凡相等——那不叫对等，叫这个锚点压根没写进任何一份文档。
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (total === 0) {
+    return [
+      `「${token}」（${why}）在五语言 DEPLOY.md 里一次都没出现`
+      + "——要么 token 本身打错了，要么它是从真源常量现算出来的而那个常量刚改过；"
+      + "后者该改的是五份 DEPLOY.md 的正文，不是把 token 改回旧值",
+    ];
+  }
+
+  // 期望值来自其余语言，不是手写常数：任何一种语言的计数与其余四份不一致，
+  // 下面这份逐语言计数会摊开显示，一眼看出是哪一种偏了。
+  const reference = counts[LANGS[0]];
+  if (LANGS.some((lang) => counts[lang] !== reference)) {
+    return [
+      `「${token}」（${why}）在五语言 DEPLOY.md 里的出现次数不一致`
+      + `——可能有语言漏翻、漏改，或翻译时抄错了数字：${JSON.stringify(counts)}`,
+    ];
+  }
+  return [];
 }
 
 /** 一条事实 × 五份 API.md。返回失败报文数组。真扫描与探针共用这一份。 */
@@ -1124,6 +1234,90 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
 });
 
 /**
+ * ── 软化词表：「一条软化概念 × 五种语言」的矩阵 ──────────────────────────────
+ *
+ * P3d 立的红线：**真机了结之前，任何文案都不许把一个从没量过的上限写成「足够 / 安全」**。
+ * 它今天有两个消费者，**共用这一张表**：
+ * · 五份 ADMIN.md 的**整份**扫描（Task 26A）；
+ * · 五份 DEPLOY.md 里那两笔「没在真机上了结过」的配额账，**逐段**扫描（Task 28 复评 H3）。
+ *
+ * ⚠️ **两处必须共用同一张表，这不是省代码**：这张表历史上漏过两次（繁体「足夠/夠用」、
+ * 韩文「안전」都是复评实测逃逸之后才补的）。各留一份的话，下一次补词只会补到其中一边，
+ * 另一边继续瞎，而且不会有任何东西告诉你它瞎了。
+ * 表的完备性（每条概念五种语言都得有说法）由下面 ADMIN 那一组的
+ * 「软化词表是「概念 × 语言」的矩阵……」与紧跟着的「该红时红：把某条概念的某种语言清空」
+ * 两格钉着——那两格钉的就是这张表，搬到模块作用域之后仍然是同一个对象。
+ */
+
+/** 一条**软化概念**在五种语言里各自的说法。同一条概念可以有多个同义词。 */
+interface SoftenerConcept {
+  readonly id: string;
+  readonly words: Record<Lang, readonly string[]>;
+}
+
+const SOFTENER_CONCEPTS: readonly SoftenerConcept[] = [
+  {
+    id: "enough",
+    words: {
+      "zh-CN": ["足够", "够用"],
+      // ⚠️ 繁体这两个是复评实测逃逸后补的：第一版平表里只有简体，
+      // 「這個上限足夠了，也夠用。」当时 117/117 全绿。
+      "zh-TW": ["足夠", "夠用"],
+      en: ["enough"],
+      ja: ["十分"],
+      ko: ["충분"],
+    },
+  },
+  {
+    id: "safe",
+    // ⚠️ ko 的「안전」同样是复评实测逃逸后补的：「이 상한은 안전합니다.」当时全绿。
+    words: { "zh-CN": ["安全"], "zh-TW": ["安全"], en: ["safe"], ja: ["安全"], ko: ["안전"] },
+  },
+  {
+    id: "no-problem",
+    words: {
+      "zh-CN": ["没问题"],
+      "zh-TW": ["沒問題"],
+      en: ["no problem"],
+      ja: ["問題な"],
+      ko: ["문제없"],
+    },
+  },
+];
+
+/**
+ * 打平：小写词 → 它是「哪条概念的哪种语言说法」（同一个词可能被多条命中，
+ * 比如「安全」同时是 zh-CN / zh-TW / ja 的说法）。**去重是必须的**：不去重的话
+ * 一次命中会产出三条失败，下面那些 `toHaveLength(1)` 会变成在数词表里的重复数。
+ */
+const SOFTENER_ORIGINS = ((): ReadonlyMap<string, readonly string[]> => {
+  const m = new Map<string, string[]>();
+  for (const c of SOFTENER_CONCEPTS) {
+    for (const lang of LANGS) {
+      for (const w of c.words[lang]) {
+        const key = w.toLowerCase();
+        m.set(key, [...(m.get(key) ?? []), `${c.id}/${lang}`]);
+      }
+    }
+  }
+  return m;
+})();
+
+const SOFTENER_WORDS: readonly string[] = [...SOFTENER_ORIGINS.keys()];
+
+/**
+ * 一段文本里命中的全部软化词。**ADMIN.md 那一组与 DEPLOY.md 那一组共用这一份判据**。
+ * **射程是全部语言的全部词**（不是「这一份只查它自己语言的词」）：一份英文文档里
+ * 冒出一个「충분」同样是错的，按语言分开查会把这类漏掉。
+ */
+function softenerHits(text: string): ReadonlyArray<{ word: string; origins: readonly string[] }> {
+  const lower = text.toLowerCase();
+  return SOFTENER_WORDS
+    .filter((w) => lower.includes(w))
+    .map((w) => ({ word: w, origins: SOFTENER_ORIGINS.get(w) ?? [] }));
+}
+
+/**
  * ── 五份 ADMIN.md 的措辞与数字守卫（P3e Task 26）─────────────────────────────
  *
  * R1–R6 只证明五份的**结构骨架**一样，句子里说了什么它们一无所知（那段边界写在
@@ -1211,62 +1405,10 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
   const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   // ── ① 软化词表 ────────────────────────────────────────────────────────────
-
-  /** 一条**软化概念**在五种语言里各自的说法。同一条概念可以有多个同义词。 */
-  interface SoftenerConcept {
-    readonly id: string;
-    readonly words: Record<Lang, readonly string[]>;
-  }
-
-  const SOFTENER_CONCEPTS: readonly SoftenerConcept[] = [
-    {
-      id: "enough",
-      words: {
-        "zh-CN": ["足够", "够用"],
-        // ⚠️ 繁体这两个是复评实测逃逸后补的：第一版平表里只有简体，
-        // 「這個上限足夠了，也夠用。」当时 117/117 全绿。
-        "zh-TW": ["足夠", "夠用"],
-        en: ["enough"],
-        ja: ["十分"],
-        ko: ["충분"],
-      },
-    },
-    {
-      id: "safe",
-      // ⚠️ ko 的「안전」同样是复评实测逃逸后补的：「이 상한은 안전합니다.」当时全绿。
-      words: { "zh-CN": ["安全"], "zh-TW": ["安全"], en: ["safe"], ja: ["安全"], ko: ["안전"] },
-    },
-    {
-      id: "no-problem",
-      words: {
-        "zh-CN": ["没问题"],
-        "zh-TW": ["沒問題"],
-        en: ["no problem"],
-        ja: ["問題な"],
-        ko: ["문제없"],
-      },
-    },
-  ];
-
-  /**
-   * 打平：小写词 → 它是「哪条概念的哪种语言说法」（同一个词可能被多条命中，
-   * 比如「安全」同时是 zh-CN / zh-TW / ja 的说法）。**去重是必须的**：不去重的话
-   * 一次命中会产出三条失败，下面那些 `toHaveLength(1)` 会变成在数词表里的重复数。
-   */
-  const SOFTENER_ORIGINS = ((): ReadonlyMap<string, readonly string[]> => {
-    const m = new Map<string, string[]>();
-    for (const c of SOFTENER_CONCEPTS) {
-      for (const lang of LANGS) {
-        for (const w of c.words[lang]) {
-          const key = w.toLowerCase();
-          m.set(key, [...(m.get(key) ?? []), `${c.id}/${lang}`]);
-        }
-      }
-    }
-    return m;
-  })();
-
-  const SOFTENER_WORDS: readonly string[] = [...SOFTENER_ORIGINS.keys()];
+  //
+  // ⚠️ 词表本身与打平表**搬到了模块作用域**（复评 H3）：同一条红线在 DEPLOY.md 那一侧
+  // 也要守，两处必须共用同一张词表——各留一份的话，补一个逃逸词只会补到其中一边，
+  // 而另一边继续瞎。见文件里 `SOFTENER_CONCEPTS` 上方那段。
 
   /**
    * 一次扫描 × 五份 ADMIN.md。返回失败报文数组。真扫描与探针**共用这一份**。
@@ -1276,15 +1418,12 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
   function softenerFailures(read: ApiDocReader): string[] {
     const out: string[] = [];
     for (const lang of LANGS) {
-      const lower = read(lang).toLowerCase();
-      for (const w of SOFTENER_WORDS) {
-        if (lower.includes(w)) {
-          out.push(
-            `${lang}/ADMIN.md 把一件本仓从没量过的事说成了「${w}」`
-            + `（软化概念 ${(SOFTENER_ORIGINS.get(w) ?? []).join("、")}）`
-            + "——能写下来的只有上限本身，以及「本仓没量过」这句话",
-          );
-        }
+      for (const { word, origins } of softenerHits(read(lang))) {
+        out.push(
+          `${lang}/ADMIN.md 把一件本仓从没量过的事说成了「${word}」`
+          + `（软化概念 ${origins.join("、")}）`
+          + "——能写下来的只有上限本身，以及「本仓没量过」这句话",
+        );
       }
     }
     return out;
@@ -3211,22 +3350,33 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
  * 本组守的是**这一次改动写下的那几句话本身**，与上面那张 `NUMBERS` 表分工不同：
  * · `NUMBERS` 判的是「同一个 token 在五份里出现次数相等」——它挡「某一份漏改」，
  *   但要求那个 token **跨五种语言逐字相同**（所以表里全是数字、路径、英文行名）；
- * · 本组判的是**每种语言各自写法**的那两句话。这两句在五种语言里本来就不同字
- *   （`3~4 次 get` / `get 讀取 3~4 次` / `3–4 gets` / `get 3〜4 回` / `get 3~4회`），
- *   塞进 `NUMBERS` 要么恒不相等、要么被迫把 token 削成一个满仓都是的裸数字。
+ * · 本组判的是**每种语言各自写法**的那几句话（今天三句，见下面三张表）。这几句在五种
+ *   语言里本来就不同字（比如 (4) 那句是 `3~4 次 get` / `3–4 gets` / `get 3〜4 回` /
+ *   `get 3~4회`），塞进 `NUMBERS` 要么恒不相等、要么被迫把 token 削成一个满仓都是的裸数字。
  *   ⇒ 写法照上面 `UPSTREAM_FACTS.docHints`：**每语言一个只在这句里出现的 token**。
+ *   ⚠️ 第 (3) 笔（Tier-2 读扇出与 Playground 视频档那两笔配额账）不在本组，它跨语言逐字
+ *   相同，锚在上面 `NUMBERS` 那两条**从真源常量现算**的 token 上；那两段里不许出现软化词
+ *   这一条，在本文件末尾那一组。**三处分工不同，别只读其中一处就以为守全了。**
  *
- * ⚠️ **这两张表都是「清单」，所以各自配了会让它变红的断言**（P3e 头号纪律）：
+ * ⚠️ **这三张表都是「清单」，所以各自配了会让它变红的断言**（P3e 头号纪律）：
  * ① 正向：每种语言在**自己那份**里恰好 1 次；
  * ② 跨份：那个 token 在**其余四份里 0 次**——这一条挡的是「五份都塞同一句英文」
- *    这种糊弄法（ja/ko 的读者会拿到一句看不懂的话，而这两笔账的全部意义是让运维
+ *    这种糊弄法（ja/ko 的读者会拿到一句看不懂的话，而这几笔账的全部意义是让运维
  *    看懂「一次补池要打几次 get」「那半句承诺在 Worker 上到不到得了」）；
  * ③ 反向自检：表的语言集恰好等于 `LANGS`，且**没有两种语言共用同一个 token、
  *    也没有任何一个 token 是另一个的子串**。共用（或互为子串）时，某一份漏改会被
  *    另一份「替它满足」——这正是本仓 `NUMBERS` 表的已知边界，不许在这里重演。
  *    ⚠️ 这一格是**实测逼出来的**：zh-CN 与 zh-TW 原本逐字相同（都写 `3~4 次 get`），
- *    这一格当场红；处置是让两份繁简各写各的正字（zh-TW 用「get 讀取 3~4 次」），
- *    **不是把这格放宽**。
+ *    这一格当场红。
+ *    ⚠️⚠️ **第一版的处置是把 zh-TW 正文改成「get 讀取 3~4 次」，那是判据反过来指挥
+ *    文案，代价由读者承担（复评 H6）**。今天的处置是把锚**往左扩**到含各自的正字
+ *    （简体「保存一次设置」/ 繁体「儲存一次設定」）：两份行首本来就不同字，扩完天然
+ *    互异、互不为子串，还顺带把端点与 put 次数一起锚住，而 zh-TW 正文语序恢复成
+ *    与其余四份一致。**扩锚不是放宽这一格**——判据一个字没松，换的是锚。
+ *    ⚠️⚠️⚠️ 这条自检**自己也配了探针**（复评 H5：上一版它在真表上一次都不触发，
+ *    实测把 `.toBe(false)` 改成 `.toBe(a.includes(b))` 之后本文件全绿）——
+ *    见下面「该红时红：两种语言共用 / 互为子串 / 少一种语言」那一格，它与真扫描
+ *    共用 `tokenTableFailures()`。
  *
  * ⚠️ **能与不能，一句话写清**：本组能证明「五份各自写着那句话、而且没有互相顶替」，
  * **不能**证明那句话说得对、也不能证明五份说的是同一件事——译文准确性今天仍靠人。
@@ -3247,12 +3397,41 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚（P3e Task 28）", () 
   };
 
   /**
+   * (2') 同一段里紧跟着的那句：**这道闸在 Docker 形态下压根不存在**。
+   *
+   * ⚠️ **它是复评 H1 抓出来的一句假话的替身，不是锦上添花**：上一版这里写的是
+   * 「Docker 形态下进程长活，这句承诺才是常态成立的」，而
+   * `src/http/usage-sink.ts` 的 `resolveUsageFlushInterval()` 是
+   * `budgetPerDay = hasWriteQuota ? USAGE_WRITES_PER_DAY : null`，
+   * `src/http/wire.ts` 传进去的是 `runtime.quotaModel === "kv"`，
+   * 而 `src/adapters/runtime-node.ts` 的 `quotaModel` 恒 `"file"`
+   * ⇒ **Docker 上这道闸根本不存在**，既不会耗尽也没有「恢复」。
+   * 既有契约测试逐字钉着这件事：`tests/contract/usage-tier2.test.ts`
+   * 的「没设这个环境变量时：两种存储形态拿到逐字相同的间隔（2 小时），差别只在
+   * 「有没有写配额」那道闸」（`budgetPerDay: null`）。
+   * 同一份文档 ④ 段自己也写着「文件存储（Docker）没有写配额 …… 不再有每天的写预算」
+   * ——那句假话是被同一份文档紧接着的 ④ 正面证伪的，**而五份齐说，跨语言判据一格都不响**。
+   * 所以这句改真之后必须自带锚：漏改一份、或哪天有人把它改回「常态成立」，这里当场红。
+   */
+  const FILE_HAS_NO_GATE: Record<Lang, string> = {
+    "zh-CN": "Docker 形态下这道闸压根不存在",
+    "zh-TW": "Docker 形態下這道閘壓根不存在",
+    en: "On Docker this gate does not exist at all",
+    ja: "Docker 形態ではこの閘門そのものが存在しません",
+    ko: "Docker 형태에서는 이 게이트 자체가 없으므로",
+  };
+
+  /**
    * (4) 「保存一次设置要发几次 get」——P3c 账本逐字登记「⇒ 登记 P3e」的那条无锚新账。
    * 五种语言写法本来就不同，逐份一个 token。
+   *
+   * ⚠️ 简繁两份的锚**往左扩到了行首的正字与端点**（复评 H6）：右半截
+   * 「**1 次 put** + 3~4 次 get」两份逐字相同，只锚右半截就得去拧其中一份的正文。
+   * 扩完之后这两个 token 顺带锚住了端点（`PUT /admin/api/config`）与 put 次数。
    */
   const GET_COUNT_HINT: Record<Lang, string> = {
-    "zh-CN": "3~4 次 get",
-    "zh-TW": "get 讀取 3~4 次",
+    "zh-CN": "保存一次设置**（`PUT /admin/api/config`）：**1 次 put** + 3~4 次 get",
+    "zh-TW": "儲存一次設定**（`PUT /admin/api/config`）：**1 次 put** + 3~4 次 get",
     en: "3–4 gets",
     ja: "get 3〜4 回",
     ko: "get 3~4회",
@@ -3260,6 +3439,7 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚（P3e Task 28）", () 
 
   const TABLES = [
     { label: "(2) ③ 段那句承诺的限定", table: ALIVE_QUALIFIER },
+    { label: "(2') 那道闸在 Docker 形态下压根不存在", table: FILE_HAS_NO_GATE },
     { label: "(4) 保存一次设置的 get 次数", table: GET_COUNT_HINT },
   ] as const;
 
@@ -3304,25 +3484,73 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚（P3e Task 28）", () 
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("反向自检：两张锚表的语言集恰好等于 LANGS，且没有两种语言共用（或互为子串）同一个 token", () => {
+  /**
+   * 一张锚表**自身**的三条自检，返回失败报文数组。
+   * **真扫描与下面那格探针共用这一份**——上一版这三条是直接写在 `it()` 里的裸
+   * `expect`，仓里没有任何东西会在它坏掉时变红：复评实测把子串那条的
+   * `.toBe(false)` 改成 `.toBe(a.includes(b))`（判据变成同义反复）⇒ 本文件 202 格
+   * 全绿、另外三处引用本文件的测试也全绿（78 格）。**一个不会自己红的清单不是守卫，
+   * 是待办**——所以搬成函数，再配下面那格探针。
+   */
+  function tokenTableFailures(label: string, table: Partial<Record<Lang, string>>): string[] {
+    const out: string[] = [];
     // 期望值是本文件那张手写的 `LANGS`，不是从表自己数出来再回填：两份独立的语言清单
     // 互校，某一边少一种语言时这一格当场红，而不是让上面那圈循环静静少跑一种。
     const want = [...LANGS].sort();
-    for (const { label, table } of TABLES) {
-      expect(Object.keys(table).sort(), `${label} 的语言集与本文件的 LANGS 对不上`).toEqual(want);
-      const vals = LANGS.map((l) => table[l]);
-      expect(new Set(vals).size, `${label} 里有两种语言共用了同一个锚 token`).toBe(vals.length);
-      for (const a of vals) {
-        for (const b of vals) {
-          if (a === b) continue;
-          expect(
-            a.includes(b),
+    const got = Object.keys(table).sort();
+    if (JSON.stringify(got) !== JSON.stringify(want)) {
+      out.push(`${label} 的语言集与本文件的 LANGS 对不上：表 ${JSON.stringify(got)}，LANGS ${JSON.stringify(want)}`);
+    }
+    const vals = LANGS.map((l) => table[l]).filter((v): v is string => typeof v === "string");
+    for (let i = 0; i < vals.length; i += 1) {
+      for (let j = 0; j < vals.length; j += 1) {
+        if (i === j) continue;
+        const a = vals[i]!;
+        const b = vals[j]!;
+        if (a === b) {
+          // 共用同一个 token：只报一次（i < j），否则同一对会报两条。
+          if (i < j) out.push(`${label} 里有两种语言共用了同一个锚 token「${a}」`);
+          continue;
+        }
+        if (a.includes(b)) {
+          out.push(
             `${label} 里「${a}」把「${b}」整个包住了——互为子串与共用同一个 token 是同一种病：`
             + "包含关系下，被包住的那一份漏改会被另一份替它满足",
-          ).toBe(false);
+          );
         }
       }
     }
+    return out;
+  }
+
+  // 这一格同时是下面那格探针的「我对 X 不乱红」那一半：两格共用 `tokenTableFailures`，
+  // 探针证明三条分支各自点得出名，这一格证明它们在三张真表上一格都不响。
+  it("反向自检：三张锚表的语言集恰好等于 LANGS，且没有两种语言共用（或互为子串）同一个 token", () => {
+    for (const { label, table } of TABLES) {
+      const failures = tokenTableFailures(label, table);
+      expect(failures, failures.join("\n")).toEqual([]);
+    }
+  });
+
+  it("该红时红：两种语言共用同一个 token / 其中一个是另一个的子串 / 表里少一种语言 —— 三条各自当场点名", () => {
+    // ⚠️ **反向控制用仓里真实存在的串**：下面三张畸形表都从今天真的写在
+    // `GET_COUNT_HINT` 里的那五个 token 派生，`"gets"` 也真的写在 docs/en/DEPLOY.md 里。
+    const shared = tokenTableFailures("共用", { ...GET_COUNT_HINT, ko: GET_COUNT_HINT.en });
+    expect(shared.length, `应当只红一条，实际：\n${shared.join("\n")}`).toBe(1);
+    expect(shared[0]).toContain("共用了同一个锚 token");
+    expect(shared[0]).toContain(GET_COUNT_HINT.en);
+
+    const substring = tokenTableFailures("子串", { ...GET_COUNT_HINT, ko: "gets" });
+    expect(substring.length, `应当只红一条，实际：\n${substring.join("\n")}`).toBe(1);
+    expect(substring[0]).toContain("整个包住了");
+    expect(substring[0]).toContain("「gets」");
+
+    const short: Partial<Record<Lang, string>> = { ...GET_COUNT_HINT };
+    delete short.ko;
+    const missing = tokenTableFailures("少一种语言", short);
+    expect(missing.length, `应当只红一条，实际：\n${missing.join("\n")}`).toBe(1);
+    expect(missing[0]).toContain("语言集与本文件的 LANGS 对不上");
+    expect(missing[0]).toContain("ko");
   });
 
   // ── 探针：变异只改一份，其余四份照旧走真文档；共用上面那份 `perLangTokenFailures` ──
@@ -3353,6 +3581,23 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚（P3e Task 28）", () 
     expect(failures[0]).toContain("出现 0 次");
   });
 
+  it("探针 M1'：把 zh-CN 那句改回复评抓到的那句假话（「Docker 形态下进程长活…常态成立」）⇒ 变红并点名 zh-CN", () => {
+    // 这一格钉的是复评 H1：那句假话五份齐说，跨语言计数判据一格都不响，
+    // 所以改真之后必须有一个**每语言各一个**的 token 盯着它，改回去当场红。
+    const failures = perLangTokenFailures(
+      "(2') 那道闸在 Docker 形态下压根不存在",
+      FILE_HAS_NO_GATE,
+      readerWith(
+        "zh-CN",
+        (s) => s.split(FILE_HAS_NO_GATE["zh-CN"]).join("Docker 形态下进程长活，这句承诺才是常态成立的"),
+        "DEPLOY",
+      ),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/zh-CN/DEPLOY.md");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
   it("探针 M3：把 en 那句英文原样塞进 ko 那份（「五份都塞同一句英文」那种糊弄法）⇒ 变红并点名 ko", () => {
     // 这一格测的是上面第 ② 条：光看「每份都含自己的 token」是抓不住串门的
     // ——ko 那份仍然写着自己的 `get 3~4회`，正向那一半照绿。
@@ -3373,6 +3618,151 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚（P3e Task 28）", () 
     for (const { label, table } of TABLES) {
       const failures = perLangTokenFailures(label, table, noisy);
       expect(failures, `${label}：五份一起多写了一句无关的话，判据却红了\n${failures.join("\n")}`).toEqual([]);
+    }
+  });
+});
+
+/**
+ * ── P3d 那条红线在 DEPLOY.md 一侧的机器化（P3e Task 28 复评 H3）───────────────
+ *
+ * 红线原话（P3d 起立着，登记在 `admin-ui/js/pure/playground.mjs` 自己的注释里）：
+ * **真机了结之前，任何文案都不许把一个没量过的上限写成「足够 / 安全」。**
+ * 它在 ADMIN.md 那一侧由上面那张软化词矩阵**整份**守着（Task 26A）。
+ * Task 28 把**同一条红线性质的结论**写进了五份 DEPLOY.md 的配额账里，却没有把射程
+ * 扩过去——复评实测：把 `docs/zh-CN/DEPLOY.md` 里
+ * 「两页对不上，我们也没有在真机上了结过它 …… 60 就是超的」改写成
+ * 「已经在真机上了结过了 …… 这 60 次是安全的、足够用」⇒ **202 passed，EXIT=0**，一格不红。
+ *
+ * ⚠️ **为什么不能像 ADMIN.md 那样整份扫**：五份 DEPLOY.md 里这六族词各已**合法**出现
+ * 7~9 处（zh-CN/zh-TW 各 7、en 8、ja 9、ko 8，落地时逐份数过）。zh-CN 那 7 处逐条是：
+ * 「全局是否安全取决于…」「重新粘一遍整份清单是廉价且安全的」「救的是可用性、不是
+ * 安全性」「`TRUST_PROXY` 是安全开关」「环境变量里有这一项时清空是安全的」
+ * 「安全边界：`DATA_DIR` 被设成 `/` …」「对账触发得越少…是安全的」——
+ * **没有一处在讲那两笔没量过的账**。整份套矩阵会假红一整片，而假红的守卫下一步
+ * 就会被人放宽或删掉。
+ * ⭐ 这段里的计数**不是判据**（同本文件 N8 那条 ⭐）：会变红的是下面那几格，
+ * 数字会过期，要数就当场自己数一遍。
+ * ⇒ 照 `UPSTREAM_FACTS.docSections` 的形态**收窄射程**：只扫那两笔账各自所在的
+ * 那一条顶格列表项。**射程收窄不是判据放宽**——下面「射程之外那些合法用法确实存在」
+ * 那一格逐语言证明这张词表在同一份文档里认得出东西，所以块内为空不是「词表瞎了」。
+ *
+ * ⚠️ **锚点从真源常量现算**（同 `NUMBERS` 那两条，复评 H2）：常量一改，锚点就落空，
+ * 而落空时这一组**报错而不是放行**（「认不出要吵」那一格钉着）。
+ *
+ * ── 它做不到什么（明写）────────────────────────────────────────────────────
+ * 它只挡「用这六族软化词把结论说软」。**换一个不在表里的措辞**（「这个数没什么可担心的」）
+ * 它一个字都看不见——这是子串词表的固有边界，与 ADMIN.md 那一侧逐字相同。
+ * 它也不证明那两笔账的数字是对的：那由上面 `NUMBERS` 的派生 token 管。
+ */
+describe("五语言 DEPLOY.md 的两笔「没在真机上了结过」配额账不许被软化（P3e Task 28 复评 H3）", () => {
+  const REDLINE_BLOCKS = [
+    {
+      id: "tier2-read-fanout",
+      anchor: `${USAGE_DAY_RETAIN} × ${USAGE_SLOTS}`,
+      why: "`30d` 那一档一次请求的 KV get 数——Cloudflare 两页官方文档对不上，本仓没在真机上量过",
+    },
+    {
+      id: "playground-video",
+      anchor: `1 + ${VIDEO_POLL_MAX_ATTEMPTS}`,
+      // 同上：与 `NUMBERS` 那一行的 `why` 不同字，两组的报文才分得开。
+      why: "Playground 视频档一次任务能打出的上游请求条数——`playground.mjs` 自己登记着「本仓从来没有量过」",
+    },
+  ] as const;
+
+  /**
+   * 射程：含锚点的那一行往上找最近的**顶格 `- `** 行，往下到下一个顶格 `- ` 行、
+   * 下一个 markdown 标题、或 EOF 为止。**这一段就是那笔账的全部正文。**
+   * 五份的这两条都是顶格列表项（R2/R5 只管标题与表格行，管不到这件事，所以下面
+   * 「认不出要吵」那一格连「找不到顶格 `- `」一起当失败报出来）。
+   */
+  function blockOf(src: string, anchor: string): { lines: string[] } | { error: string } {
+    const lines = src.split("\n");
+    const hits = lines.flatMap((l, i) => (l.includes(anchor) ? [i] : []));
+    if (hits.length !== 1) {
+      return {
+        error: `含锚点「${anchor}」的行有 ${hits.length} 行，应当恰好 1 行`
+          + "——0 行多半是真源常量改了而这一份文档没跟着改，2 行以上说明这个锚点不再唯一；"
+          + "两种情况下这一段的射程都已经说不清，不许当成「这一段很干净」放行",
+      };
+    }
+    let from = hits[0]!;
+    while (from >= 0 && !(lines[from] ?? "").startsWith("- ")) from -= 1;
+    if (from < 0) return { error: `锚点「${anchor}」那一行往上找不到顶格的 \`- \`——射程的起点说不清了` };
+    let to = from + 1;
+    while (to < lines.length && !(lines[to] ?? "").startsWith("- ") && !/^#{1,6} /.test(lines[to] ?? "")) to += 1;
+    return { lines: lines.slice(from, to) };
+  }
+
+  /** 两笔账 × 五份 DEPLOY.md。返回失败报文数组。真扫描与探针**共用这一份**。 */
+  function redlineFailures(read: ApiDocReader): string[] {
+    const out: string[] = [];
+    for (const { id, anchor, why } of REDLINE_BLOCKS) {
+      for (const lang of LANGS) {
+        const got = blockOf(read(lang), anchor);
+        if ("error" in got) {
+          out.push(`${id}：docs/${lang}/DEPLOY.md ${got.error}（${why}）`);
+          continue;
+        }
+        for (const { word, origins } of softenerHits(got.lines.join("\n"))) {
+          out.push(
+            `${id}：docs/${lang}/DEPLOY.md 的那一段（锚点「${anchor}」）把一件本仓从没在真机上`
+            + `量过的事说成了「${word}」（软化概念 ${origins.join("、")}）`
+            + `——${why}；能写下来的只有上限本身，以及「本仓没量过」这句话`,
+          );
+        }
+      }
+    }
+    return out;
+  }
+
+  it("真扫描：五份 DEPLOY.md 的那两段里一个软化词都没有", () => {
+    const failures = redlineFailures(realDoc("DEPLOY"));
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：把 zh-CN 那段的结论改写成「这 60 次是安全的、足够用」⇒ 当场点名 zh-CN 与两条概念", () => {
+    // ⚠️ **反向控制用仓里真实存在的串**：被替换掉的那一句今天逐字写在
+    // docs/zh-CN/DEPLOY.md 里，替换文就是复评做过的那次真文件变异（V3）。
+    const failures = redlineFailures(readerWith(
+      "zh-CN",
+      (s) => s.split("**两页对不上，我们也\n  没有在真机上了结过它**")
+        .join("**两页虽然写法不同，但已经\n  在真机上了结过了**，这 60 次是安全的、足够用"),
+      "DEPLOY",
+    ));
+    // ⚠️ **三条不是两条**：「足够用」这三个字同时命中 `enough` 的两个说法
+    //（「足够」与「够用」），再加上「安全」命中 `safe` —— 落地时先按两条写，实跑当场
+    // 摊出三条，按实测改的期望值（**发现不符先实测再决定**）。
+    expect(failures.length, `应当红三条（足够 + 够用 + 安全），实际：\n${failures.join("\n")}`).toBe(3);
+    for (const f of failures) {
+      expect(f).toContain("docs/zh-CN/DEPLOY.md");
+      expect(f).toContain("tier2-read-fanout");
+    }
+    const joined = failures.join("\n");
+    for (const w of ["「足够」", "「够用」", "「安全」", "enough/zh-CN", "safe/zh-CN"]) {
+      expect(joined, `报文里没点名 ${w}：\n${joined}`).toContain(w);
+    }
+  });
+
+  it("认不出要吵：某一份里锚点落空时报「射程说不清」，不是当成这一段很干净", () => {
+    // 这就是「真源常量改了而文档没跟着改」那一刻这一组会看到的东西。
+    const failures = redlineFailures(readerWith(
+      "ja",
+      (s) => s.split(`1 + ${VIDEO_POLL_MAX_ATTEMPTS}`).join("1 + いっぱい"),
+      "DEPLOY",
+    ));
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/ja/DEPLOY.md");
+    expect(failures[0]).toContain("应当恰好 1 行");
+    expect(failures[0]).toContain("射程都已经说不清");
+  });
+
+  it("射程之外那些合法用法确实存在：整份扫时五份都必然命中 —— 块内为空不是「词表瞎了」", () => {
+    // 「我认得出 X」那一半。没有这一格，上面那条真扫描的「全绿」既可能是
+    // 「那两段确实干净」，也可能是「这张词表在 DEPLOY.md 上一个字都认不出来」。
+    for (const lang of LANGS) {
+      const whole = softenerHits(realDoc("DEPLOY")(lang));
+      expect(whole.length, `docs/${lang}/DEPLOY.md 整份扫一个软化词都没命中——`
+        + "这张词表在这一份上是瞎的，上面那条真扫描的全绿就什么都不证明了").toBeGreaterThan(0);
     }
   });
 });
