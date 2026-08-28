@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { blankComments } from "../helpers/strip-comments.js";
 import { FAIL_REASONS } from "../../src/core/dispatcher.js";
 import { UPSTREAM_FACTS, type UpstreamFact } from "../../src/core/admin/upstream-facts.js";
-import { MODEL_CATALOG, VIDEO_TASK_ID_SHAPE } from "../../src/core/admin/protocol-catalog.js";
+import { MODEL_CATALOG, PROTOCOLS, VIDEO_TASK_ID_SHAPE } from "../../src/core/admin/protocol-catalog.js";
 // ADMIN.md 那一组的期望值一律从这些真源常量派生，不手写字面量。
 import { ADMIN_TOKEN_MIN_LENGTH } from "../../src/http/admin/auth.js";
 import { MAX_IMPORT_KEYS } from "../../src/http/admin/handlers/keys-write.js";
@@ -3764,5 +3764,354 @@ describe("五语言 DEPLOY.md 的两笔「没在真机上了结过」配额账�
       expect(whole.length, `docs/${lang}/DEPLOY.md 整份扫一个软化词都没命中——`
         + "这张词表在这一份上是瞎的，上面那条真扫描的全绿就什么都不证明了").toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * ── P3e Task 29：推公开仓之前第一个访客会看到的三处「空白 / 假话」各自上锚 ────────
+ *
+ * 这三处是同一族毛病：**十二道门禁全绿，而文字说的是假的、或者干脆什么都没说。**
+ *
+ * · `admin-ui/README.md` 末尾原来写着「## P3a 的范围 —— 只有登录闸和一个空壳，
+ *   `i18n` 字典、`theme.js` / `ui.js` / `api.js` 与 8 个功能板块都在 P3b 起」。
+ *   那句话在 P3b 落地当天就过期了，却一路活到 P3e。**没人守是有原因的**：
+ *   `scripts/check-comment-refs.mjs` 这道门禁的 `SCAN_DIRS` 虽然含 `admin-ui`，但它的
+ *   `walk()` 只收 `.ts` / `.js` / `.mjs` —— 这份 `.md` **从来没被任何机器看过一眼**。
+ * · `CHANGELOG.md` 全文只有一个 `## [Unreleased]`，而**六份 README 的版本徽章都链到它**
+ *   （Task 27 的 ③ 那一格盯的是徽章上的版本号，盯不到链接落地之后是不是一张白纸）。
+ * · `package.json` 的 `description` / `author` / `keywords` 三格全空，没有
+ *   `repository` / `homepage` / `bugs` —— npm 与 GitHub 的元信息卡片直接读这几格。
+ *
+ * ── 需求书里那条被实测判定为**死断言**的期望（发现不符先实测再决定）──────────────
+ * Task 29 需求书的第二格原样写着：
+ *
+ *     const head = log.slice(0, log.indexOf(`## [${v}]`) === -1 ? log.length : log.indexOf(`## [${v}]`));
+ *     expect(head.includes(v) && !head.includes("[Unreleased]"), "版本号只出现在 [Unreleased] 下").toBe(false);
+ *
+ * 它想挡的是「版本号只在 `[Unreleased]` 底下露过脸、没有自己的条目」。**实测下来它一枪都放不出去**：
+ * Keep a Changelog 的排版里 `## [Unreleased]` 永远排在版本条目之前，于是 `head` 必然包含
+ * `[Unreleased]`，`!head.includes("[Unreleased]")` 恒为假，整个合取恒为假 ⇒ 这一格**恒绿**。
+ * 连它自己想抓的那个坏样本（CHANGELOG 里只有 `## [Unreleased]`、正文里提了一句 `0.1.0`）
+ * 也照样恒绿：那时 `indexOf` 返回 -1、`head` 是全文、`[Unreleased]` 还在里面。
+ * 三种情形都实跑过（红/绿见 task-29-report.md 的变异表 M2b）。
+ * ⇒ 换成**会自己红**的写法：条目必须存在，且**正文里至少有一条 `- `**（徽章点进来不许是空壳）。
+ *
+ * ── 它能做到什么 ────────────────────────────────────────────────────────────
+ * 板块那一格的判据**只有一个真源**：`admin-ui/index.html` 的 `data-section`。加一个板块、
+ * 删一个板块、改一个板块的名字，而不改 `admin-ui/README.md` 那张表 ⇒ 当场红并**点名那个板块**。
+ * `CHANGELOG` 与 `package.json` 两格同理：期望值分别从 `VERSION`、`PROTOCOLS`、
+ * `data-section`、根 `README.md` 的 clone 地址、`LICENSE` 的版权行现算，**一个字面量都不手抄**。
+ *
+ * ── 它做不到什么（明写）────────────────────────────────────────────────────
+ * · 板块那一格只比 **code span 在不在**，不比那一行说得对不对：把 `overview` 那一行的
+ *   中文名从「概览」改成「设置」，八个 span 一个不少 ⇒ **全绿**。行内的中文名今天没有机器判据。
+ * · `CHANGELOG` 那一格只要求条目**非空**，不看正文写的是不是这一版真的做过的事：
+ *   把 `0.1.0` 的正文整段换成一句「- 修了个错别字」⇒ 除了协议 / 板块那一格点名的
+ *   几个 code span 之外，**结构判据一个字都不吭**。
+ * · `package.json` 那一格只比字符串**逐字相等**，管不到那个 GitHub 仓库是不是真的存在、
+ *   是不是公开的 —— 那要联网，本仓的测试一律不联网。
+ * · 这三格全都**只在 Node 下跑**（`tests/unit/`）。它们判的是仓库里的静态文本，
+ *   与运行时无关，所以这里刻意不进 `tests/contract/`。
+ */
+/** 本组的名字。`admin-ui/README.md` 点名它，下面那一格拿这个常量回头去 README 里找——
+ *  改了组名而 README 没跟着改，当场红。这样 README 里那句「有机器守了」自己也有测法。 */
+const TASK29_GROUP = "推公开仓之前第一个访客会看到的三份自述（P3e Task 29）";
+
+describe(TASK29_GROUP, () => {
+  const readReal = (p: string) => readFileSync(p, "utf8");
+  const realIndexHtml = () => readReal("admin-ui/index.html");
+  const realPanelReadme = () => readReal("admin-ui/README.md");
+  const realChangelog = () => readReal("CHANGELOG.md");
+
+  /**
+   * 板块清单的**唯一真源**。去重是有意的：同一个板块被两个按钮指向（比如概览卡上再来一个
+   * 快捷入口）是合法改动，不该让下面任何一格红——「不乱红」那一格钉的正是这条。
+   */
+  const sectionsOf = (html: string) => [...new Set([...html.matchAll(/data-section="([^"]+)"/g)].map((m) => m[1]!))];
+
+  /**
+   * 每个板块要过四关：`admin-ui/README.md` 里三个 code span（板块名 / 挂载文件 / 纯逻辑文件）、
+   * 那两份文件真的在、`admin-ui/js/i18n-dict.js` 里有 `nav.<板块>` 这个 key
+   *（README 里「`i18n` 字典按它取 `nav.*` 文案」那句话的测法）。
+   * **真扫描与该红时红共用这一份**，两个 `read` 是仅有的注入点。
+   */
+  const panelDocFailures = (readHtml: () => string, readReadme: () => string): string[] => {
+    const readme = readReadme();
+    const dict = readReal("admin-ui/js/i18n-dict.js");
+    const out: string[] = [];
+    for (const s of sectionsOf(readHtml())) {
+      const mount = `js/sec-${s}.js`;
+      const pure = `js/pure/${s}.mjs`;
+      for (const span of [s, mount, pure]) {
+        if (!readme.includes(`\`${span}\``)) {
+          out.push(`板块 ${s}：admin-ui/index.html 里真的有 data-section="${s}"，`
+            + `admin-ui/README.md 里却没有 \`${span}\` 这个 code span`);
+        }
+      }
+      for (const rel of [mount, pure]) {
+        if (!existsSync(`admin-ui/${rel}`)) {
+          out.push(`板块 ${s}：admin-ui/README.md 那张表指着 admin-ui/${rel}，这个文件不在`);
+        }
+      }
+      if (!dict.includes(`"nav.${s}"`)) {
+        out.push(`板块 ${s}：admin-ui/js/i18n-dict.js 里没有 "nav.${s}" 这个 key —— 导航按钮取不到文案`);
+      }
+    }
+    return out;
+  };
+
+  /** 每一格「该红时红」的统一前置：基取自真文件，真文件本身就不过判据时当场抛并把人指回主格。 */
+  const probeBase = (failures: readonly string[], mainCell: string) => {
+    if (failures.length > 0) {
+      throw new Error("本格是探针，它的基取自真文件，而真文件今天本身就不过判据 —— "
+        + `别从这一格的报文里找原因，真因在「${mainCell}」那一格：\n${failures.join("\n")}`);
+    }
+  };
+
+  const PANEL_CELL = "admin-ui/README.md 提到 index.html 里的每一个板块（板块名 / 挂载 / 纯逻辑三个 code span）";
+
+  it(PANEL_CELL, () => {
+    const sections = sectionsOf(realIndexHtml());
+    expect(sections.length, "一个 data-section 都没扫到，正则多半写坏了").toBeGreaterThanOrEqual(8);
+    const failures = panelDocFailures(realIndexHtml, realPanelReadme);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：index.html 多出一个 data-section=\"foo\" 而 README 没跟着改 —— 逐条点名 foo", () => {
+    probeBase(panelDocFailures(realIndexHtml, realPanelReadme), PANEL_CELL);
+    const mutated = `${realIndexHtml()}\n<button class="nav-item" data-section="foo">foo</button>\n`;
+    expect(sectionsOf(mutated), "变异没落地——mutated 里没扫出 foo").toContain("foo");
+    const failures = panelDocFailures(() => mutated, realPanelReadme);
+    // 三个 span 都缺 + 两份文件都不在 + 字典里没有 nav.foo = 6 条，条条点名 foo；真板块一条都不许被带红。
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(6);
+    for (const f of failures) expect(f, `这一条没点名 foo：${f}`).toContain("foo");
+  });
+
+  it("不乱红：同一个板块被第二个按钮指向 + README 合法地多提一次板块名 —— 都不许让上面那一格红", () => {
+    // ⚠️ 这一句是 M1 实测补的：不加基探针时，真文件一脏这一格也会跟着红，而它的报文说的是
+    // 「重复的 data-section 把这一格弄红了」——报文会亲手把人引到一个没坏的东西上。
+    probeBase(panelDocFailures(realIndexHtml, realPanelReadme), PANEL_CELL);
+    const dupHtml = `${realIndexHtml()}\n<button class="nav-item" data-section="overview">再来一个入口</button>\n`;
+    expect(sectionsOf(dupHtml), "去重之后板块数不该变——这一格的前提没了")
+      .toEqual(sectionsOf(realIndexHtml()));
+    const extraReadme = () => `${realPanelReadme()}\n\n另见 \`overview\` 板块。\n`;
+    expect(panelDocFailures(() => dupHtml, extraReadme),
+      "重复的 data-section 或 README 里多写一次板块名把这一格弄红了").toEqual([]);
+  });
+
+  it("admin-ui/README.md 里指向仓内的每一条路径都真的在（check-comment-refs 只扫 .ts/.js/.mjs 的注释，够不着这份 .md）", () => {
+    const readme = realPanelReadme();
+    const local = [...readme.matchAll(/`(js\/[A-Za-z0-9_./-]+\.(?:js|mjs))`/g)].map((m) => m[1]!);
+    const sections = sectionsOf(realIndexHtml());
+    expect(local.length, `形如 \`js/…\` 的 code span 只扫到 ${local.length} 个，少于板块数 × 2 —— 这条正则多半瞎了`)
+      .toBeGreaterThanOrEqual(sections.length * 2);
+    expect(local.filter((p) => !existsSync(`admin-ui/${p}`)),
+      "admin-ui/README.md 里这几条 `js/…` 指向的文件不在").toEqual([]);
+    const repoPaths = [...readme.matchAll(/`((?:tests|scripts|src)\/[A-Za-z0-9_./-]+\.(?:ts|js|mjs))`/g)].map((m) => m[1]!);
+    expect(repoPaths.length, "一条 `tests/…` / `scripts/…` / `src/…` 的 code span 都没扫到 —— 这条正则多半瞎了")
+      .toBeGreaterThanOrEqual(3);
+    expect(repoPaths.filter((p) => !existsSync(p)), "admin-ui/README.md 里这几条仓根路径指向的文件不在").toEqual([]);
+    // README 里那句「上面那张表有机器守了」点的就是本组的名字。组名改了而 README 没跟着改 ⇒ 这里红。
+    expect(readme, `admin-ui/README.md 里那句「有机器守了」点名的组名已经不是「${TASK29_GROUP}」了`)
+      .toContain(TASK29_GROUP);
+  });
+
+  /** 取 CHANGELOG 的 `## [x]` 一节（含标题行）。**认不出返回 `null`**，绝不返回空数组。 */
+  const logSection = (body: string, tag: string): string[] | null => {
+    const lines = body.split("\n");
+    const i = lines.findIndex((l) => l.startsWith(`## [${tag}]`));
+    if (i < 0) return null;
+    let j = i + 1;
+    while (j < lines.length && !lines[j]!.startsWith("## ")) j += 1;
+    return lines.slice(i, j);
+  };
+
+  /** 真扫描与该红时红**共用这一份**，`read` 是唯一的注入点。 */
+  const changelogFailures = (v: string, read: () => string): string[] => {
+    const body = read();
+    const tags = [...body.matchAll(/^## \[([^\]]+)\]/gm)].map((m) => m[1]!);
+    if (tags.length === 0) return ["CHANGELOG.md 里一个 `## [...]` 小节都没扫到 —— 判据多半瞎了，不是这份文件很干净"];
+    const out: string[] = [];
+    if (!tags.includes("Unreleased")) out.push("CHANGELOG.md 没有 `## [Unreleased]` —— Keep a Changelog 的结构塌了");
+    const sec = logSection(body, v);
+    if (sec === null) {
+      out.push(`CHANGELOG.md 里没有 ${v} 的条目 —— 六份 README 的版本徽章都链到这份文件`);
+      return out;
+    }
+    if (!sec.slice(1).some((l) => l.startsWith("- "))) {
+      out.push(`CHANGELOG.md 的 \`## [${v}]\` 只有标题、正文里一条 \`- \` 都没有 —— 徽章点进来是一张空条目`);
+    }
+    return out;
+  };
+
+  const CHANGELOG_CELL = "VERSION 里的版本号在 CHANGELOG 里有自己的一条非空条目";
+  const realVersion = () => readReal("VERSION").trim();
+
+  it(CHANGELOG_CELL, () => {
+    const v = realVersion();
+    expect(v, "VERSION 是空的，这一格会拿空串去比，测的是空气").not.toEqual("");
+    const failures = changelogFailures(v, realChangelog);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红（M2）：CHANGELOG 里那条版本条目的标题被改掉 —— 点名 VERSION 里的那个版本号", () => {
+    const v = realVersion();
+    probeBase(changelogFailures(v, realChangelog), CHANGELOG_CELL);
+    const mutated = realChangelog().split(`## [${v}]`).join(`## [${v}-gone]`);
+    expect(mutated, `变异没落地——CHANGELOG.md 里没找到 \`## [${v}]\``).not.toEqual(realChangelog());
+    const failures = changelogFailures(v, () => mutated);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "红了但报文没点名那个版本号").toContain(v);
+  });
+
+  it("该红时红（M2b）：条目还在但正文被掏空 —— 这正是需求书那条恒绿断言放不出的那一枪", () => {
+    const v = realVersion();
+    probeBase(changelogFailures(v, realChangelog), CHANGELOG_CELL);
+    const real = realChangelog();
+    const sec = logSection(real, v);
+    expect(sec, "取节认不出真 CHANGELOG 的版本条目——这一格的前提没了").not.toBeNull();
+    const mutated = real.replace(sec!.join("\n"), sec![0]!);
+    expect(mutated, "变异没落地——正文没被掏空").not.toEqual(real);
+    expect(logSection(mutated, v), "掏空之后标题还得在，否则这一格测的是 M2 而不是 M2b").not.toBeNull();
+    const failures = changelogFailures(v, () => mutated);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "红了但报文没说清是「空条目」").toContain("空条目");
+  });
+
+  it("不乱红：CHANGELOG 之后合法地多发一版（版本条目上面再压一条） —— 不许因此红", () => {
+    const v = realVersion();
+    probeBase(changelogFailures(v, realChangelog), CHANGELOG_CELL);
+    const mutated = realChangelog().replace(`## [${v}]`, `## [9.9.9] - 2099-01-01\n\n- 未来的一次发版。\n\n## [${v}]`);
+    expect(mutated, "变异没落地").not.toEqual(realChangelog());
+    expect(changelogFailures(v, () => mutated), "多压一条新版本条目把这一格弄红了").toEqual([]);
+  });
+
+  /**
+   * 中文数字 0–20。CHANGELOG 那条版本条目里写下的**每一个**计数都从这张表现算，
+   * **超出范围返回 `undefined`**，下面那一格当场吵——不悄悄回退成阿拉伯数字。
+   */
+  const CN = [
+    "零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
+    "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
+  ] as const;
+
+  /**
+   * 一个计数在中文里可接受的写法。**「2」这一条是实测逼出来的**：第一版只认 `CN[n]`，
+   * 于是「二条临时邮箱通道」找不到而 CHANGELOG 里写的是「**两**条临时邮箱通道」——
+   * 汉语里量词前的 2 写「两」不写「二」。这不是给判据开豁免（两种写法都是对的，
+   * 只是同一个数的两种字面），所以放宽的是**字面表**、不是那个数。
+   */
+  const cnForms = (n: number): readonly string[] | null => {
+    const base = CN[n];
+    if (base === undefined) return null;
+    return n === 2 ? [base, "两"] : [base];
+  };
+
+  /** CI 里门禁的总道数：从 `.github/workflows/ci.yml` 的 `- name: n/总数` 现算，不手抄。 */
+  const ciGateTotal = (): number | null => {
+    const totals = [...readReal(".github/workflows/ci.yml").matchAll(/^\s*- name: \d+\/(\d+) /gm)].map((m) => Number(m[1]));
+    if (totals.length === 0) return null;
+    return totals.every((t) => t === totals[0]) ? totals[0]! : null;
+  };
+
+  it("CHANGELOG 的版本条目逐条点名协议 / 板块 / 通道，且它写下的每一个中文计数都从真源现算", () => {
+    const v = realVersion();
+    const sec = logSection(realChangelog(), v);
+    expect(sec, `CHANGELOG.md 里没有 ${v} 的条目`).not.toBeNull();
+    const text = sec!.join("\n");
+    const sections = sectionsOf(realIndexHtml());
+    // ── 逐条点名：加一条协议 / 一个板块 / 一条通道而不改 CHANGELOG ⇒ 当场点名它 ──
+    for (const p of PROTOCOLS) expect(text, `版本条目里没点名协议 \`${p.id}\``).toContain(`\`${p.id}\``);
+    for (const s of sections) expect(text, `版本条目里没点名板块 \`${s}\``).toContain(`\`${s}\``);
+    for (const c of CHANNELS) expect(text, `版本条目里没点名注册机通道 \`${c}\``).toContain(`\`${c}\``);
+    for (const l of LANGS) expect(text, `版本条目里没点名语言 \`${l}\``).toContain(`\`${l}\``);
+    // ── 五个中文计数，逐个从真源现算 ──
+    const gates = ciGateTotal();
+    expect(gates, ".github/workflows/ci.yml 里的 `- name: n/总数` 要么一条都没扫到、要么总数彼此不一致 —— 认不出要吵")
+      .not.toBeNull();
+    const counts: ReadonlyArray<readonly [number, string, string]> = [
+      [PROTOCOLS.length, "协议网关", "PROTOCOLS"],
+      [sections.length, "个板块", "admin-ui/index.html 的 data-section"],
+      [CHANNELS.length, "条临时邮箱通道", "CHANNELS"],
+      [gates ?? -1, "道门禁", ".github/workflows/ci.yml 的 `- name: n/总数`"],
+      [LANGS.length, "语言", "LANGS"],
+      [LANGS.length, "份", "LANGS"],
+    ];
+    for (const [n, suffix, source] of counts) {
+      const forms = cnForms(n);
+      expect(forms, `${source} 现在算出 ${n}，超出这张中文数字表 —— 认不出要吵，不许静静放行`).not.toBeNull();
+      const wanted = forms!.map((f) => `${f}${suffix}`);
+      expect(wanted.some((w) => text.includes(w)),
+        `CHANGELOG 那条版本条目里没有「${wanted.join("」/「")}」（${source} 现算是 ${n}）`).toBe(true);
+    }
+  });
+
+  /** `package.json` 的元信息。期望值全部从 `README.md` / `LICENSE` 现算，这里不留第二份手抄。 */
+  type Json = Record<string, unknown>;
+  const dig = (o: Json, path: string): unknown =>
+    path.split(".").reduce<unknown>((cur, k) => (cur !== null && typeof cur === "object" ? (cur as Json)[k] : undefined), o);
+
+  const pkgMetaFailures = (readPkg: () => string): string[] => {
+    const p = JSON.parse(readPkg()) as Json;
+    const url = /git clone (https:\/\/github\.com\/\S+?)\.git/.exec(readReal("README.md"))?.[1] ?? null;
+    if (url === null) return ["根 README.md 里找不到 `git clone https://github.com/….git` 那一行 —— 仓库 URL 的真源没了"];
+    const holder = /Copyright \(c\) \d{4} (.+)/.exec(readReal("LICENSE"))?.[1]?.trim() ?? null;
+    if (holder === null) return ["LICENSE 里找不到 `Copyright (c) <年> <署名>` 那一行 —— 署名的真源没了"];
+    const out: string[] = [];
+    for (const k of ["description", "author"]) {
+      const got = p[k];
+      if (typeof got !== "string" || got.trim() === "") out.push(`package.json 的 \`${k}\` 是空的 —— npm / GitHub 的元信息卡片直接读这一格`);
+    }
+    if (!Array.isArray(p.keywords) || p.keywords.length === 0) out.push("package.json 的 `keywords` 是空数组");
+    if (p.author !== holder) out.push(`package.json 的 author 是「${String(p.author)}」，LICENSE 的版权人是「${holder}」—— 两处署名对不上`);
+    // description / keywords 里那张协议清单也从 `PROTOCOLS` 现算：加一条协议而不改元信息 ⇒ 点名它。
+    const desc = typeof p.description === "string" ? p.description.toLowerCase() : "";
+    const kws = Array.isArray(p.keywords) ? p.keywords.map((k) => String(k).toLowerCase()) : [];
+    for (const { id } of PROTOCOLS) {
+      if (!desc.includes(id)) out.push(`package.json 的 description 没提协议 ${id}（PROTOCOLS 现算）`);
+      if (!kws.includes(id)) out.push(`package.json 的 keywords 里没有协议 ${id}（PROTOCOLS 现算）`);
+    }
+    for (const [path, want] of [
+      ["repository.url", `git+${url}.git`],
+      ["homepage", `${url}#readme`],
+      ["bugs.url", `${url}/issues`],
+    ] as const) {
+      const got = dig(p, path);
+      if (got !== want) out.push(`package.json 的 \`${path}\` 是「${String(got)}」，按根 README.md 的 clone 地址现算应当是「${want}」`);
+    }
+    return out;
+  };
+
+  const PKG_CELL = "package.json 的元信息不是空表，且署名与仓库地址都与真源逐字一致";
+  const realPkg = () => readReal("package.json");
+
+  it(PKG_CELL, () => {
+    const failures = pkgMetaFailures(realPkg);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：author 被改成 LICENSE 版权人之外的名字 —— 点名两处署名", () => {
+    probeBase(pkgMetaFailures(realPkg), PKG_CELL);
+    const mutated = realPkg().replace(/"author": "[^"]*"/, '"author": "somebody-else"');
+    expect(mutated, "变异没落地——package.json 里没找到 author 那一行").not.toEqual(realPkg());
+    const failures = pkgMetaFailures(() => mutated);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "红了但报文没点名 LICENSE 侧的版权人").toContain("LICENSE");
+  });
+
+  it("该红时红：repository 指向另一个仓库 —— 点名从根 README 现算出来的那个地址", () => {
+    probeBase(pkgMetaFailures(realPkg), PKG_CELL);
+    const mutated = realPkg().replace("github.com/xwteam/agnes2api.git", "github.com/someone/other.git");
+    expect(mutated, "变异没落地——package.json 的 repository.url 里没找到那个地址").not.toEqual(realPkg());
+    const failures = pkgMetaFailures(() => mutated);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "红了但报文没点名 repository.url").toContain("repository.url");
+  });
+
+  it("不乱红：package.json 合法地多一个字段（`files`） —— 不许因此红", () => {
+    probeBase(pkgMetaFailures(realPkg), PKG_CELL);
+    const mutated = realPkg().replace('"keywords"', '"files": ["dist"],\n  "keywords"');
+    expect(JSON.parse(mutated), "变异没落地——`files` 没进去").toHaveProperty("files");
+    expect(pkgMetaFailures(() => mutated), "多一个无关字段把这一格弄红了").toEqual([]);
   });
 });

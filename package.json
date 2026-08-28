@@ -1,9 +1,18 @@
 {
   "name": "agnes2api",
   "version": "0.1.0",
-  "description": "",
+  "description": "AI gateway that speaks the OpenAI, Anthropic, OpenAI Responses and Google Gemini protocols over one shared upstream pool, with a built-in admin panel. One codebase, two runtimes: Cloudflare Workers and Node/Docker.",
   "type": "module",
   "license": "MIT",
+  "author": "xwteam",
+  "homepage": "https://github.com/xwteam/agnes2api#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xwteam/agnes2api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xwteam/agnes2api/issues"
+  },
   "packageManager": "pnpm@9.15.4",
   "engines": {
     "node": ">=22.13"
@@ -22,8 +31,16 @@
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:refs": "node scripts/check-comment-refs.mjs"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "ai-gateway",
+    "openai",
+    "anthropic",
+    "responses",
+    "gemini",
+    "cloudflare-workers",
+    "hono",
+    "llm-proxy"
+  ],
   "dependencies": {
     "@hono/node-server": "2.1.1",
     "hono": "4.13.2"

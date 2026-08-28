@@ -62,8 +62,46 @@ CI 的漂移门禁同样会红。
 - 所有颜色引用 CSS 变量，零硬编码色值。主色是 indigo：同一个运维会同时开着
   kiro2api（emerald）和本面板，颜色是最快最可靠的区分信号。
 
-## P3a 的范围
+## 目录结构与板块
 
-只有登录闸和一个空壳。`i18n` 字典、`theme.js` / `ui.js` / `api.js` 与 8 个功能板块
-都在 P3b 起。`index.html` 里的文案先写 zh-CN 并挂上 `data-i18n` 属性占位，
-P3b 接字典时不用改结构。
+`index.html` 是全站唯一的 HTML：左边一列导航按钮、右边一个内容区。导航按钮上的
+`data-section` 是**板块清单的唯一真源**——`app.js` 按它切板块，下面这张表按它排，
+`i18n` 字典按它取 `nav.*` 文案。每一个 `data-section` 各配一份同名的挂载文件
+（拼 DOM 与发请求）和一份同名的纯逻辑文件（可测、无 DOM）。
+
+| `data-section` | 板块 | 挂载 | 纯逻辑 |
+|---|---|---|---|
+| `overview` | 概览 | `js/sec-overview.js` | `js/pure/overview.mjs` |
+| `keys` | Key 池 | `js/sec-keys.js` | `js/pure/keys.mjs` |
+| `registrar` | 注册机 | `js/sec-registrar.js` | `js/pure/registrar.mjs` |
+| `events` | 事件 | `js/sec-events.js` | `js/pure/events.mjs` |
+| `usage` | 用量 | `js/sec-usage.js` | `js/pure/usage.mjs` |
+| `models` | 模型 | `js/sec-models.js` | `js/pure/models.mjs` |
+| `playground` | 调试台 | `js/sec-playground.js` | `js/pure/playground.mjs` |
+| `settings` | 设置 | `js/sec-settings.js` | `js/pure/settings.mjs` |
+
+`js/pure/` 下另有几份**不与板块一一对应**的共用纯逻辑：`js/pure/format.mjs`、
+`js/pure/session.mjs`、`js/pure/storage-keys.mjs`、`js/pure/sendable.mjs`、
+`js/pure/examples.mjs`、`js/pure/keys-write.mjs`。上表不管它们，只钉
+「一个板块 ⇒ 两份同名文件」这一条。
+
+板块之外的共用件：`js/api.js`（打管理接口 `/admin/api/*` 的出口）、`js/gw-api.js`
+（调试台打对外网关那棵树用的另一份，**拿的是另一把钥匙**）、`js/i18n.js` +
+`js/i18n-dict.js`（五语言字典）、`js/theme.js`（亮/暗主题）、`js/ui.js`（DOM 小工具）。
+每一份的边界与理由都写在各自文件头，这里不复述。
+
+> ⚠️ **这一节原来写的是「## P3a 的范围 —— 只有登录闸和一个空壳，`i18n` 字典、
+> `theme.js` / `ui.js` / `api.js` 与 8 个功能板块都在 P3b 起」。那句话在 P3b 落地
+> 当天就过期了，却一路活到 P3e。** 没人守是有原因的：`scripts/check-comment-refs.mjs`
+> 这道门禁的扫描目录虽然含 `admin-ui`，但它只打开
+> `.ts` / `.js` / `.mjs`——这份 `.md` 从来没被任何机器看过一眼。
+>
+> 上面那张表现在**有机器守了**：`tests/unit/docs-parity.test.ts` 里
+> 「推公开仓之前第一个访客会看到的三份自述（P3e Task 29）」那一组直接拿 `index.html`
+> 的 `data-section` 当真源，加一个板块、删一个板块、改一个板块的名字而不改这张表，
+> 就会当场红并点名那个板块；表里那两列文件也逐个 `existsSync`。
+> **上面这句话本身也有测法**：那一组的名字改了、或者这份 README 不再点它，
+> 那一格会红——它拿自己的 `describe` 名去 `admin-ui/README.md` 里找。
+>
+> **它只比 code span 在不在，不比中文名写得对不对**——把 `overview` 那一行的
+> 「概览」改成「设置」，表里每个板块的 span 一个不少，它一个字都不会吭。
