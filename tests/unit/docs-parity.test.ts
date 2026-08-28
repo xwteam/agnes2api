@@ -5488,9 +5488,283 @@ describe("五份 DEPLOY.md 不许再写「某一期会提供某条重置路径�
   });
 
   it("不乱红：五份一起合法地多写一句无关的话 —— 上面那几格不许因此假红", () => {
+    // ⚠️ **这一格断言了两族判据，所以两族的探针基都要先取一遍**（复评 M3）：
+    // 少了 `probeBasePromise()` 时，真文档里真出现一句空头承诺 ⇒ 本格的第二条断言
+    // 红成「承诺判据也不许因此假红」，把人指向这个与真因无关的 noise reader，
+    // 而同组另外四格都在如实喊「真因在真扫描那一格」。**报文是唯一会被看见的护栏。**
+    probeBaseCaveat();
+    probeBasePromise();
     const noisy: ApiDocReader = (lang) => `${realDoc("DEPLOY")(lang)}\n\n<!-- 无关的一行 -->\n`;
     const failures = perLangTokenFailures(CAVEAT_TABLE[0].label, REBOUND_CAVEAT, noisy);
     expect(failures, `五份一起多写了一句无关的话，判据却红了\n${failures.join("\n")}`).toEqual([]);
     expect(promiseFailures(noisy), "承诺判据也不许因此假红").toEqual([]);
+  });
+});
+
+/**
+ * ── 「改一把 key 能改哪几件事」的两个投影都从 `PATCH_FIELDS` 现算（P3e Task 31A 复评回填 H2）──
+ *
+ * **复评实测出来的洞**：给 `PATCH_FIELDS` 加第七个字段 ⇒ 本文件全绿、
+ * Key 池写端点那一组契约用例也全绿，而五份 DEPLOY.md 那笔配额账里的动作枚举、
+ * 设计文档 §11 的端点表**都停在六个字段上**。
+ * 上面那一组只把 `clearStats` **这一个**字段名钉在真源上（改名当场红），
+ * **表变长它一个字都看不见**——那正是 task-31A-report.md 遗留 6 与遗留 7 登记的两笔，
+ * 这一组把它们收掉。
+ *
+ * ⚠️ **同一轮里删掉的那个数**：五份原来写着「六个动作同价 / All six actions /
+ * 6 つの操作 / 여섯 동작」，而紧挨着的括号里枚举的是**七**项——`disabled` 一个字段
+ * 对应「停用 / 启用」两个方向。那个数与它身边那一行自相矛盾，且真源变了也不会红。
+ * **能删数字就删数字**：五份一律改成「上面每一项都同价」，数量这件事交给下面两格。
+ */
+describe("「改一把 key」那份动作枚举的两个投影都从 `PATCH_FIELDS` 现算（P3e Task 31A 复评回填）", () => {
+  /**
+   * **字段 → 那种语言里的动作词。** 这是一张手写表，但它**不是第二份真源**：
+   * 它的**字段集**由下面 `enumerationFailures()` 逐次与 `PATCH_FIELDS` 对齐——
+   * 真源长一格而这张表没跟上，当场红并明说「真因在源码」。
+   *
+   * ⚠️ **`disabled` 那一项刻意只取「停用」这一个方向**：五份文档里它写成
+   * 「停用 / 启用」两个词，取整串会把一个纯排版问题（两个方向之间的分隔符）
+   * 变成这一格的红。守的是「这个字段在枚举里有没有出现」，不是排版。
+   */
+  const PATCH_ACTION_WORDS: Record<Lang, Record<string, string>> = {
+    "zh-CN": {
+      disabled: "停用", note: "备注", clearCooldown: "清冷却",
+      clearStrikes: "清 strikes", unevict: "解除剔除", clearStats: "重置用量计数",
+    },
+    "zh-TW": {
+      disabled: "停用", note: "備註", clearCooldown: "清冷卻",
+      clearStrikes: "清 strikes", unevict: "解除剔除", clearStats: "重設用量計數",
+    },
+    en: {
+      disabled: "disable", note: "note", clearCooldown: "clear cooldown",
+      clearStrikes: "clear strikes", unevict: "un-evict", clearStats: "reset usage counters",
+    },
+    ja: {
+      disabled: "停止", note: "メモ", clearCooldown: "クールダウン解除",
+      clearStrikes: "strikes クリア", unevict: "除外解除", clearStats: "利用回数のリセット",
+    },
+    ko: {
+      disabled: "중지", note: "메모", clearCooldown: "쿨다운 해제",
+      clearStrikes: "strikes 초기화", unevict: "제외 해제", clearStats: "사용량 카운터 초기화",
+    },
+  };
+
+  /**
+   * 「改一把 key」那一条 bullet 的**开头**。射程收窄到这一条，理由是这些动作词
+   * （「备注」「停用」）在整份 DEPLOY.md 里到处都是——拿整份文档做底，
+   * 这一格会被别处的同一个词**替它满足**，也就是又一个静静放行的判据。
+   */
+  const BULLET_ANCHOR: Record<Lang, string> = {
+    "zh-CN": "**改一把 key**",
+    "zh-TW": "**改一把 key**",
+    en: "**Changing one key**",
+    ja: "**key を 1 本変更**",
+    ko: "**key 하나 수정**",
+  };
+
+  /**
+   * 切出锚后面**那一对括号里的枚举**（半角/全角都认）。
+   *
+   * ⚠️ **第一版切的是「整条 bullet」，回填时当场实测出它是空转的**：那一条 bullet 的
+   * 后半句里还有一句「重置用量计数不额外读写任何东西」，于是把括号里的
+   * 「/ 重置用量计数」整项删掉之后，那个词**仍然在窗口里**，判据 284 格全绿。
+   * 这就是本仓登记过的「判据用错工具时不会报错，会静静地放行」。
+   * 窗口收到括号里之后，同一个变异当场红（下面「同一条 bullet 后半句里那个词还在」那一格
+   * 就是它，**别把它当重复用例删掉**）。
+   *
+   * **锚不是恰好 1 次、或后面根本没有那对括号，一律返回 `null`——认不出要吵。**
+   */
+  function patchEnumeration(src: string, lang: Lang): string | null {
+    const anchor = BULLET_ANCHOR[lang];
+    if (src.split(anchor).length - 1 !== 1) return null;
+    const rest = src.slice(src.indexOf(anchor) + anchor.length);
+    const firstOf = (marks: readonly string[]): number => {
+      const hits = marks.map((m) => rest.indexOf(m)).filter((i) => i >= 0);
+      return hits.length === 0 ? -1 : Math.min(...hits);
+    };
+    const open = firstOf(["（", "("]);
+    const close = firstOf(["）", ")"]);
+    if (open < 0 || close < 0 || close < open) return null;
+    return rest.slice(open + 1, close);
+  }
+
+  /**
+   * 五份 × 一张表 ⇒ 失败报文数组。`fields` 是参数而不是直接读 `PATCH_FIELDS`：
+   * 下面那格探针要拿一份**多一格的真源**打进来，而探针必须与真扫描共用同一份判据。
+   */
+  function enumerationFailures(fields: readonly string[], read: ApiDocReader): string[] {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const words = PATCH_ACTION_WORDS[lang];
+      const missing = fields.filter((f) => typeof words[f] !== "string");
+      if (missing.length > 0) {
+        out.push(
+          `\`PATCH_FIELDS\` 里的 ${missing.map((f) => `\`${f}\``).join(" / ")} 在「字段 → ${lang} 的动作词」`
+          + "这张表里没有对应项 —— **真因在源码，不在文档**：`PATCH_FIELDS`"
+          + "（`src/http/admin/handlers/keys-write.ts`）长了一格，而 "
+          + `docs/${lang}/DEPLOY.md「改一把 key」那一笔配额账里的动作枚举没跟着长。`
+          + "先把那一项写进五份文档的枚举，再把它的动作词补进这张表",
+        );
+        continue;   // 表都不齐，逐词查没有意义
+      }
+      const stale = Object.keys(words).filter((f) => !fields.includes(f));
+      if (stale.length > 0) {
+        out.push(
+          `「字段 → ${lang} 的动作词」表里的 ${stale.map((f) => `\`${f}\``).join(" / ")} `
+          + "已经不在 `PATCH_FIELDS` 里了 —— 那个字段被删掉或改了名，"
+          + "五份文档那份枚举与这张表都该跟着改",
+        );
+      }
+      const bullet = patchEnumeration(read(lang), lang);
+      if (bullet === null) {
+        out.push(
+          `docs/${lang}/DEPLOY.md 里「${BULLET_ANCHOR[lang]}」不是恰好出现 1 次、`
+          + "或者它后面那对括号不见了 —— 这一格靠它切出「改一把 key」括号里的那份枚举，"
+          + "切不出来就是空转，不许当成通过",
+        );
+        continue;
+      }
+      for (const f of fields) {
+        const word = words[f] as string;
+        if (word.trim() === "") {
+          out.push(`「字段 → ${lang} 的动作词」表里 \`${f}\` 的动作词是空串——空串永远查得到，这一项从此空转`);
+          continue;
+        }
+        if (!bullet.includes(word)) {
+          out.push(
+            `docs/${lang}/DEPLOY.md「改一把 key」括号里的枚举中找不到 \`${f}\` 对应的动作词`
+            + `「${word}」（那对括号里今天写的是：${bullet.replace(/\s+/g, " ").trim()}）`
+            + " —— 那一笔配额账正在说「改一把 key 能改的是这几件事」，而它漏了一件；"
+            + "要么补进枚举，要么这个动作词换了写法、把这张表改过来",
+          );
+        }
+      }
+    }
+    return out;
+  }
+
+  /** 探针的基：真文档今天必须过判据，否则探针红了会被误读成「探针有问题」。 */
+  function probeBaseEnumeration(): void {
+    const base = enumerationFailures(PATCH_FIELDS, realDoc("DEPLOY"));
+    if (base.length > 0) {
+      throw new Error(
+        "本格是探针，它的基取自真的五份 DEPLOY.md，而真文档今天本身就不过判据 —— "
+        + "别从这一格的报文里找原因，真因在「五份 DEPLOY.md 那笔配额账里的动作枚举"
+        + "盖住 `PATCH_FIELDS` 的每一个字段」那一格：\n"
+        + base.join("\n"),
+      );
+    }
+  }
+
+  it("五份 DEPLOY.md 那笔配额账里的动作枚举盖住 `PATCH_FIELDS` 的每一个字段", () => {
+    const failures = enumerationFailures(PATCH_FIELDS, realDoc("DEPLOY"));
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：`PATCH_FIELDS` 长出第七个字段 ⇒ 五份一起红，并逐份点名那个字段", () => {
+    probeBaseEnumeration();
+    // ⚠️ **这一串是仓里真实存在过的形态**：复评的 MUT-2 就是往 `PATCH_FIELDS` 里
+    // 加 `clearNote`，而那一次 docs-parity 277 格全绿——这一格就是那次全绿的解药。
+    const failures = enumerationFailures([...PATCH_FIELDS, "clearNote"], realDoc("DEPLOY"));
+    expect(failures.length, `五种语言各该红一条，实际：\n${failures.join("\n")}`).toBe(LANGS.length);
+    for (const lang of LANGS) {
+      expect(failures.some((f) => f.includes(lang) && f.includes("clearNote")), `没点名 ${lang}`).toBe(true);
+    }
+    expect(failures[0]).toContain("真因在源码，不在文档");
+  });
+
+  it("该红时红：某一份的枚举里那一项被换了写法 ⇒ 只红一条并点名那一份", () => {
+    probeBaseEnumeration();
+    // 反向控制用仓里真实存在的串：`利用回数` 是 ja 那份自己的用词，把「リセット」
+    // 换成「記録」就是「翻译时把那一项改了写法（或整项漏掉）」在文档上真实的样子。
+    const failures = enumerationFailures(
+      PATCH_FIELDS,
+      readerWith("ja", (s) => s.split("利用回数のリセット").join("利用回数の記録"), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/ja/DEPLOY.md");
+    expect(failures[0]).toContain("利用回数のリセット");
+  });
+
+  it("该红时红：把某一项从括号里的枚举删掉，而同一条 bullet 后半句里那个词还在 ⇒ 仍然红", () => {
+    probeBaseEnumeration();
+    // ⚠️ **这一格记的是回填时真实发生过的一次空转**：判据第一版切的是整条 bullet，
+    // 而 `docs/zh-CN/DEPLOY.md` 那一条的后半句里写着「重置用量计数不额外读写任何东西」
+    // ⇒ 把括号里的「/ 重置用量计数」整项删掉，那个词仍在窗口里，284 格全绿。
+    // 变异串逐字取自那一行今天的原文。
+    const failures = enumerationFailures(
+      PATCH_FIELDS,
+      readerWith("zh-CN", (s) => s.split(" / 重置用量计数）：").join("）："), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/zh-CN/DEPLOY.md");
+    expect(failures[0]).toContain("clearStats");
+    // 报文要把括号里今天的原文回显出来，好让人一眼看出少的是哪一项。
+    expect(failures[0]).toContain("解除剔除");
+  });
+
+  it("不乱红：五份一起合法地多写一句无关的话", () => {
+    probeBaseEnumeration();
+    const noisy: ApiDocReader = (lang) => `${realDoc("DEPLOY")(lang)}\n\n<!-- 无关的一行 -->\n`;
+    expect(enumerationFailures(PATCH_FIELDS, noisy), "五份一起多写了一句无关的话，判据却红了").toEqual([]);
+  });
+
+  // ── 第二个投影：设计文档 §11 端点表那一行的请求体字段清单 ──────────────────
+
+  const ENDPOINT_ROW_ANCHOR = "| PATCH | `/admin/api/keys/:id` |";
+
+  /** 设计文档的取文口径。**与上面那一组同名的那个是各自 describe 里的局部量**，这里另取一份同源的。 */
+  const designSrc = (): string => readFileSync(RESET_DESIGN_DOC, "utf8");
+
+  /**
+   * 从端点表那一行里把 `{ a?, b?, … }` 解析成字段数组。
+   * **解析不出来返回 `null`**（行不在、或不是恰好一行、或那一格里没有花括号）——
+   * 同样是「认不出要吵」：解析不出来时返回 `[]` 会让下面那格拿空数组去比，
+   * 报文说的是「字段对不上」，而真相是这一格根本没找到那一行。
+   */
+  function endpointRowFields(src: string): string[] | null {
+    const rows = src.split("\n").filter((l) => l.startsWith(ENDPOINT_ROW_ANCHOR));
+    if (rows.length !== 1) return null;
+    const m = (rows[0] as string).match(/\{([^}]*)\}/);
+    if (m === null) return null;
+    return (m[1] as string).split(",").map((s) => s.trim().replace(/\?$/, "")).filter((s) => s !== "");
+  }
+
+  it("设计文档 §11 端点表那一行的请求体字段清单，逐项逐序等于 `PATCH_FIELDS`", () => {
+    const got = endpointRowFields(designSrc());
+    expect(
+      got,
+      `${RESET_DESIGN_DOC} 里以「${ENDPOINT_ROW_ANCHOR}」开头的行不是恰好一行、`
+      + "或者那一行里解析不出 `{ … }` —— 这一格是靠那一行活着的，解析不出来就是空转",
+    ).not.toBeNull();
+    expect(
+      got,
+      `${RESET_DESIGN_DOC} 的端点表那一行写的请求体字段与真源 \`PATCH_FIELDS\` 对不上`
+      + "（`src/http/admin/handlers/keys-write.ts`）—— **顺序也算**：那张表的顺序"
+      + "就是文档顺序，两边的顺序一旦分家，读表的人拿到的就是另一份约定",
+    ).toEqual([...PATCH_FIELDS]);
+  });
+
+  it("该红时红：端点表那一行少一个字段 / 多一个字段 / 顺序换了，三种都不许绿", () => {
+    const real = designSrc();
+    expect(endpointRowFields(real), "探针的基坏了：真文档今天就解析不出那一行").toEqual([...PATCH_FIELDS]);
+    // 三种变异串都取自那一行今天真实的原文。
+    const dropped = real.split(", clearStats? }").join(" }");
+    expect(dropped, "变异没落地").not.toEqual(real);
+    expect(endpointRowFields(dropped), "少一个字段却绿了").not.toEqual([...PATCH_FIELDS]);
+    const added = real.split(", clearStats? }").join(", clearStats?, clearNote? }");
+    expect(endpointRowFields(added), "多一个字段却绿了").not.toEqual([...PATCH_FIELDS]);
+    const reordered = real.split("{ disabled?, note?,").join("{ note?, disabled?,");
+    expect(reordered, "变异没落地").not.toEqual(real);
+    expect(endpointRowFields(reordered), "顺序换了却绿了").not.toEqual([...PATCH_FIELDS]);
+  });
+
+  it("不乱红：设计文档里多一段散文、那一行前后多几行表 —— 不许因此红", () => {
+    const noisy = designSrc().replace(
+      ENDPOINT_ROW_ANCHOR,
+      `| PATCH | \`/admin/api/keys/:id/nothing\` | ✅ | \`{ 与上面那张真源无关 }\` |\n${ENDPOINT_ROW_ANCHOR}`,
+    );
+    expect(noisy, "变异没落地").not.toEqual(designSrc());
+    expect(endpointRowFields(noisy), "多了一行长得像的表行，判据却红了").toEqual([...PATCH_FIELDS]);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { CountingStorage } from "../helpers/counting-storage.js";
-import { MAX_IMPORT_KEYS, MAX_NOTE_LENGTH } from "../../src/http/admin/handlers/keys-write.js";
+import { MAX_IMPORT_KEYS, MAX_NOTE_LENGTH, PATCH_FIELDS } from "../../src/http/admin/handlers/keys-write.js";
 import { MAX_KEY_LENGTH } from "../../src/core/keypool-repo.js";
 import type { KeyView } from "../../src/core/admin/key-view.js";
 import type { KeyRecord, KeyStats } from "../../src/core/types.js";
@@ -517,7 +517,7 @@ describe("DELETE /admin/api/keys/:id", () => {
    * DEPLOY.md 的配额账」——而那份账里的每个数字都得是**某次实测的读数**。
    * 这一格就是那次实测：五份 DEPLOY.md 里「面板写操作」那一段的数字直接抄它。
    */
-  it("单把写操作的存储开销：PATCH = 1 get + 1 put（`clearStats` 那一支同价），DELETE = 2 get + 1 put + 1 delete", async () => {
+  it("单把写操作的存储开销：PATCH 的每个字段各 1 get + 1 put（逐个数过），DELETE = 2 get + 1 put + 1 delete", async () => {
     const st = new CountingStorage();
     const { app, repo } = await makeApp([], ["sk-single-op-cost-key-a"], {}, () => NOW, { storage: st });
     const r = (await repo.all())[0] as KeyRecord;
@@ -527,18 +527,35 @@ describe("DELETE /admin/api/keys/:id", () => {
       deletes: st.deletes - b.deletes, lists: st.lists - b.lists,
     });
 
+    // **逐个字段各数一遍，而不是数一个推而广之。**
+    // 五份 DEPLOY.md 那一行现在写的是「上面每一项都同价」——**每一项**，
+    // 而"同一个 handler ⇒ 同价"只是个推论，推论要有读数背书：哪天某一支多读一次存储，
+    // 那句话会在零信号下变假。
+    // ⚠️ 这里原来只数 `disabled` 与 `clearStats` 两支，文档那半句却写着「六个动作同价」
+    // ——一个手抄自 `PATCH_FIELDS` 今天长度的数，表长一格它就成假话而没有任何东西会红
+    //（复评 H2）。现在数的是 `PATCH_FIELDS` 本身，**表长一格这一格当场红**。
+    const SAMPLE: Record<string, unknown> = {
+      disabled: true, note: "配额账要数的那条备注", clearCooldown: true,
+      clearStrikes: true, unevict: true, clearStats: true,
+    };
+    expect(
+      PATCH_FIELDS.filter((f) => !(f in SAMPLE)),
+      "`PATCH_FIELDS` 长了一格而这张样值表没跟上 —— 那一支的单价从此没人数过，"
+      + "而五份 DEPLOY.md 那句「上面每一项都同价」是按整张表说的",
+    ).toEqual([]);
+    for (const field of PATCH_FIELDS) {
+      const base = snap();
+      expect(
+        (await send(app, "PATCH", `/admin/api/keys/${r.id}`, { [field]: SAMPLE[field] })).status,
+        `PATCH { ${field} } 没返回 200 —— 样值表里那个值对不上这个字段的类型？`,
+      ).toBe(200);
+      expect(
+        since(base),
+        `PATCH { ${field} }：应当是 1 次「读当前真值」+ 1 次落盘，与别的动作同价 —— `
+        + "对不上就说明五份 DEPLOY.md「改一把 key」那一笔配额账里的「上面每一项都同价」不再成立",
+      ).toEqual({ gets: 1, puts: 1, deletes: 0, lists: 0 });
+    }
     let base = snap();
-    expect((await send(app, "PATCH", `/admin/api/keys/${r.id}`, { disabled: true })).status).toBe(200);
-    expect(since(base), "PATCH：1 次「读当前真值」+ 1 次落盘").toEqual({ gets: 1, puts: 1, deletes: 0, lists: 0 });
-
-    // P3e Task 31A 新增的 `clearStats` 走的是**同一个 handler、同一次 `save()`**，
-    // 所以它的单价与上面那一支逐桶相同。**单独数一次**：五份 DEPLOY.md 那一行把
-    // 「重置用量计数」与另外五个动作并列写在同一条单价里，而"同一个 handler ⇒ 同价"
-    // 是个**推论**——推论要有读数背书，否则哪天它多读一次存储，那一行会在零信号下变假。
-    base = snap();
-    expect((await send(app, "PATCH", `/admin/api/keys/${r.id}`, { clearStats: true })).status).toBe(200);
-    expect(since(base), "PATCH clearStats：与另外五个动作同价，1 次读 + 1 次落盘")
-      .toEqual({ gets: 1, puts: 1, deletes: 0, lists: 0 });
 
     base = snap();
     expect((await send(app, "DELETE", `/admin/api/keys/${r.id}`)).status).toBe(204);
@@ -908,6 +925,142 @@ describe("PATCH /admin/api/keys/:id", () => {
       logger.entries.filter((x) => x.event.startsWith("key.")),
       "重置用量打了事件 —— 要么改这一格，要么先回设计 §7.2 把白名单加上",
     ).toEqual([]);
+  });
+
+  /**
+   * **④ 「那个实例不会再把旧值顶回去」那半句的真实射程（复评 H1 实测订正）。**
+   *
+   * 改话之前五份 DEPLOY.md 与本文件对应的 handler 注释都写着「所以**那个实例**不会
+   * 再把旧值顶回去」。**那是一句假话**：`dispatch` 开头 `repo.all()` 交出的是
+   * **每请求一份的浅拷贝**（`src/core/keypool-repo.ts` 的 `all()` 末尾 `[...cur]`），
+   * 重置不会回头改已经发出去的那一份；重置**之前**就取到 records 的那个请求收尾时走
+   * `repo.save(updated, records[at])`，`save()` 同 id 分支第一行的 `trackBaseline`
+   * 会拿**重置前的那份 `stats`** 重新建出 `entry.base` ⇒ 落盘 = 旧基线 + 本次增量。
+   * 屏幕上那个 0 会在一个请求的时间里自己跳回去，**与「别的实例」无关，同一个进程内就够**。
+   *
+   * ⚠️ **这一格钉的是今天真实的行为，不是它「应该」的样子。** 它没有被修：要修得在 repo
+   * 里给「刚重置过」立一个不吸收 `seen` 的标记，而 `trackBaseline` 的 N1 恰恰靠吸收
+   * `seen` 才不会把别的 isolate 写得更高的计数压回去——同一个旋钮的两个方向。
+   * 这条代价现在五份 DEPLOY.md、handler 注释、设计文档三处逐份写着，
+   * **哪天有人真把它修好了，这一格会红**——那时候要改的是这一格与那三处文字，别删了了事。
+   */
+  it("clearStats 之后，重置前就在飞的那个请求收尾时会把旧基线顶回来一次（登记在案的代价）", async () => {
+    const { app, repo, storage } = await makeApp([], ["sk-clear-stats-inflight"], {}, () => NOW);
+    const r0 = (await repo.all())[0] as KeyRecord;
+    const path = `key:${r0.id}`;
+    const counted = (n: number): KeyStats => ({
+      requests: n, success: n, failed: 0, clientErrors: 0, lastErrorAt: null, lastErrorKind: null,
+    });
+
+    // 一次真落盘：存储 requests = 1，本实例的 `entry.base` 也推到 1。
+    await repo.save({ ...r0, lastUsedAt: NOW, stats: counted(1) }, r0);
+    expect(
+      (await storage.get<KeyRecord>(path))?.stats?.requests,
+      "前置条件：这一笔没落盘 ⇒ 后面几条什么都没证明",
+    ).toBe(1);
+
+    // **在飞请求手上的那一份**——就是 `dispatch` 里的 `records[at]`。
+    const inFlight = (await repo.all())[0] as KeyRecord;
+    expect(
+      inFlight.stats?.requests,
+      "夹具拿到的不是重置前的那一份 ⇒ 这一格测的就不是在飞窗口",
+    ).toBe(1);
+
+    expect((await send(app, "PATCH", `/admin/api/keys/${r0.id}`, { clearStats: true })).status).toBe(200);
+    expect((await storage.get<KeyRecord>(path))?.stats?.requests, "重置这一次自己就没落盘").toBe(0);
+
+    // 那个在飞请求收尾。prev 取自重置**之前**，这正是 commit 那一行的真实形态。
+    await repo.save({ ...inFlight, strikes: 1, lastUsedAt: NOW + 1, stats: counted(2) }, inFlight);
+    expect(
+      (await storage.get<KeyRecord>(path))?.stats?.requests,
+      "在飞窗口的回弹不见了 —— 要么是有人真把它修好了（那就回来改这一格、"
+      + "并把五份 DEPLOY.md / handler 注释 / 设计文档里那条代价一起改掉），"
+      + "要么是这个夹具不再打在那个窗口上",
+    ).toBe(2);
+  });
+
+  /**
+   * **⑤ ④ 的反向控制，也是改话之后那半句话的正面锚。**
+   *
+   * 五份 DEPLOY.md 现在写的是「**在这次重置之后才开始的请求**不会把旧值顶回去」。
+   * 这一格就是那半句：同一条链路、同一个 repo 实例，唯一的差别是这个请求的 `prev`
+   * 取自重置**之后**。没有它，④ 只证明了「会回弹」，而**改话之后那半句本身仍然没有锚**。
+   */
+  it("clearStats 之后新开始的请求收尾，落盘的就是重置后的真实计数（不回弹）", async () => {
+    const { app, repo, storage } = await makeApp([], ["sk-clear-stats-after-x"], {}, () => NOW);
+    const r0 = (await repo.all())[0] as KeyRecord;
+    const path = `key:${r0.id}`;
+    const counted = (n: number): KeyStats => ({
+      requests: n, success: n, failed: 0, clientErrors: 0, lastErrorAt: null, lastErrorKind: null,
+    });
+
+    await repo.save({ ...r0, lastUsedAt: NOW, stats: counted(1) }, r0);
+    expect((await storage.get<KeyRecord>(path))?.stats?.requests, "前置条件：这一笔没落盘").toBe(1);
+    expect((await send(app, "PATCH", `/admin/api/keys/${r0.id}`, { clearStats: true })).status).toBe(200);
+
+    // **重置之后才开始**的请求：它的 records 是重置之后读到的。
+    const fresh = (await repo.all())[0] as KeyRecord;
+    expect(fresh.stats?.requests, "夹具读到的还是重置前那份 ⇒ 这一格就退化成 ④ 了").toBe(0);
+    await repo.save({ ...fresh, strikes: 1, lastUsedAt: NOW + 1, stats: counted(1) }, fresh);
+    expect(
+      (await storage.get<KeyRecord>(path))?.stats?.requests,
+      "重置之后新开始的请求也被顶回了旧值 —— 那样五份 DEPLOY.md 现在那半句就又是假话了",
+    ).toBe(1);
+  });
+
+  /**
+   * **⑥ 屏幕上那两处「请求数」会当场对不上，这一格把那件事钉下来（复评 L5）。**
+   *
+   * `clearStats` 清的是 `KeyRecord.stats`，而概览页的 Tier-1 池级聚合就是
+   * `sumStats(records.map((r) => r.stats))`（`src/http/admin/handlers/overview.ts`）
+   * ⇒ **重置一把 key，概览那四个计数当场跟着掉**。
+   * 而「用量」板块的 Tier-2 时间序列住在 `usage:*` 键里、与 `KeyRecord.stats` 无关，
+   * **一个数都不掉**——这一格用「这次 PATCH 到底写了哪几把键」把后半句钉住：
+   * 只写 `key:<id>` 一把，`usage:*` 一个字节都没碰。
+   * 两个数字在同一屏上从此对不上，这条代价写在设计文档「重置到底重置了什么」那一节的补记里。
+   */
+  it("clearStats 之后：概览的 Tier-1 计数当场跟着掉，而这次 PATCH 只写了 `key:<id>` 一把键", async () => {
+    /** 只多记一件事：每次 `put` 写的是哪一把键。计数三个桶仍由 `CountingStorage` 管。 */
+    class PutKeyRecordingStorage extends CountingStorage {
+      readonly putKeys: string[] = [];
+      override async put<T>(k: string, v: T, expiresAt?: number): Promise<void> {
+        this.putKeys.push(k);
+        return await super.put(k, v, expiresAt);
+      }
+    }
+    const st = new PutKeyRecordingStorage();
+    const { app, repo, storage } = await makeApp(
+      [], ["sk-clear-stats-overview"], {}, () => NOW, { storage: st },
+    );
+    const r0 = (await repo.all())[0] as KeyRecord;
+    await storage.put(`key:${r0.id}`, {
+      ...r0,
+      stats: {
+        requests: 41, success: 37, failed: 3, clientErrors: 1,
+        lastErrorAt: NOW - 5, lastErrorKind: "upstream_5xx",
+      },
+    });
+
+    const poolRequests = async (): Promise<number | null | undefined> => {
+      const res = await app.request("/admin/api/overview", AUTH);
+      expect(res.status, "GET /admin/api/overview").toBe(200);
+      const body = await res.json() as { poolStats: { requests: number } | null };
+      return body.poolStats?.requests;
+    };
+    expect(await poolRequests(), "前置条件：概览没读到那把 key 的计数 ⇒ 下面什么都没证明").toBe(41);
+
+    st.putKeys.length = 0;
+    expect((await send(app, "PATCH", `/admin/api/keys/${r0.id}`, { clearStats: true })).status).toBe(200);
+    expect(
+      st.putKeys,
+      "这次 PATCH 写了 `key:<id>` 之外的键 —— 它本该是**单把、1 次 put**的动作；"
+      + "碰了 `usage:*` 就等于把 Tier-2 也一起动了，那与设计文档补记里写的正相反",
+    ).toEqual([`key:${r0.id}`]);
+    expect(
+      await poolRequests(),
+      "概览的 Tier-1 池级计数没跟着掉 —— 它就是逐条 `r.stats` 加出来的，"
+      + "不跟着掉说明概览换了取数口径，设计文档那条补记要跟着改",
+    ).toBe(0);
   });
 
   it("改一个不存在的 id 是 404", async () => {

@@ -253,11 +253,21 @@ export function keyDeleteHandler(deps: KeysWriteDeps) {
 }
 
 /**
- * PATCH 能改的六件事。顺序即文档顺序（设计 §11）。
+ * PATCH 能改的那几件事。**顺序即文档顺序**（设计 §11 的端点表）。
+ * ⚠️ 这里原先写的是「能改的**六**件事」——一个只在写下那天为真、表长一格也不会红的数。
+ * 数量这件事今天由下面第三条守着，注释里不再复述它（复评 H2）。
  *
- * ⚠️ **这张表是真源，五语言 DEPLOY.md 里那个字段名是从它现算的**：把 `clearStats`
- * 改名而文档没跟着改，`tests/unit/docs-parity.test.ts`「五份 DEPLOY.md 里那条已实现的
- * 重置路径写着真源里的字段名，各恰好 1 次」会红，并明说「真因在源码，不在文档」。
+ * ⚠️ **这张表是真源，三处文档投影都从它现算**，三处各有一格判据：
+ *   ① 字段名——把 `clearStats` 改名而文档没跟着改 ⇒ `tests/unit/docs-parity.test.ts`
+ *      的「五份 DEPLOY.md 里那条已实现的重置路径写着真源里的字段名，各恰好 1 次」红，
+ *      并明说「真因在源码，不在文档」。
+ *   ② 五份 DEPLOY.md 那笔配额账里的动作枚举——本表**长一格**而枚举没跟着长 ⇒
+ *      `tests/unit/docs-parity.test.ts` 的
+ *      「五份 DEPLOY.md 那笔配额账里的动作枚举盖住 `PATCH_FIELDS` 的每一个字段」红。
+ *   ③ 设计文档 §11 端点表那一行的请求体字段清单 ⇒ `tests/unit/docs-parity.test.ts` 的
+ *      「设计文档 §11 端点表那一行的请求体字段清单，逐项逐序等于 `PATCH_FIELDS`」红。
+ * ⚠️ ②③ 是复评回填补上的：在那之前**本表长一格，两处文档一个字都不会红**
+ *（复评 MUT-2 实测：加第七个字段 ⇒ docs-parity 与契约双双全绿）。
  */
 export const PATCH_FIELDS = [
   "disabled", "note", "clearCooldown", "clearStrikes", "unevict", "clearStats",
@@ -308,11 +318,31 @@ export const PATCH_FIELDS = [
  * 旧值——那正是那一行文档描述的现象。走这里则**不传 `prev`**，而 `save()` 的
  * 「新建」分支头一行就是 `this.pendingStats.delete(next.id)`
  * （`src/core/keypool-repo.ts`）⇒ 本实例攒着的基线与未落盘增量一并作废。
- * ⚠️ **它清的只是「处理这次请求的那个实例」那一份。** 同时在跑的别的实例
- * （Worker 的其它 isolate / 同一个卷上的另一个容器）各有各的基线，仍可能把旧值
- * 再顶回来一次——这条限制五份 DEPLOY.md 里逐份写着，别在任何一侧把它说没了。
+ * ⚠️ **它清的只是「处理这次请求的那个实例」那一份，而且只对「这次重置之后才开始的
+ * 请求」成立。** 同时在跑的别的实例（Worker 的其它 isolate / 同一个卷上的另一个容器）
+ * 各有各的基线，仍可能把旧值再顶回来一次——这条限制五份 DEPLOY.md 里逐份写着，
+ * 别在任何一侧把它说没了。
  * 绊线是 `tests/contract/admin-keys-write.test.ts` 的
  * 「clearStats 之后再来一次真落盘，不许把重置前攒着的增量补写回去」。
+ *
+ * ⚠️⚠️ **本实例的在飞请求同样会把旧值顶回来一次，这一句是复评实测订正的**
+ * （原文写的是「所以那个实例不会再把旧值顶回去」，那是一句假话）：
+ * `dispatch` 开头 `repo.all()` 拿到的那份 `records` 是**每请求一份的浅拷贝**
+ * （`src/core/keypool-repo.ts` 的 `all()` 末尾 `[...cur]`），重置**不会**回头改它；
+ * 这次重置之前就已经取到 `records` 的那个请求收尾时走
+ * `repo.save(updated, records[at])`，`save()` 的同 id 分支第一行
+ * `trackBaseline(next.id, normalizeStats(prev.stats), at)` 会拿**重置前的那份 stats**
+ * 重新建出 `entry.base` ⇒ 落盘 = 旧基线 + 本次增量，屏幕上的 0 自己跳回去。
+ * **窗口 = 那一个请求从 `repo.all()` 到 `repo.save()` 之间**：非流式端点
+ * （`timeout: "sync"`）的等待预算是 `UPSTREAM_SYNC_TIMEOUT_MS`，流式端点是每把 key
+ * 一个 `UPSTREAM_TIMEOUT_MS` 的首字节预算、逐把重试。
+ * **它今天没有被修，只是被说清楚了**：要修得在 repo 里给「刚重置过」立一个不吸收
+ * `seen` 的标记，而 `trackBaseline` 的 N1 恰恰是靠吸收 `seen` 才不会把别的 isolate
+ * 写得更高的计数压回去——两者是同一个旋钮的两个方向，不是顺手一行。
+ * 两个方向各有一格用例钉着：
+ * `tests/contract/admin-keys-write.test.ts`
+ * 「clearStats 之后，重置前就在飞的那个请求收尾时会把旧基线顶回来一次（登记在案的代价）」
+ * 与「clearStats 之后新开始的请求收尾，落盘的就是重置后的真实计数」。
  *
  * ⚠️ **它是独立动作，绝不能顺手挂进 `addMany` 的 `resetExisting` 字段集。**
  * `resetExisting` 之所以刻意不动 `stats`（逐字：「用量是历史，不是失败态」），
@@ -350,8 +380,17 @@ export function keyPatchHandler(deps: KeysWriteDeps) {
     if (clearCooldown) { next.cooldownUntil = 0; next.cooldownReason = null; }
     if (clearStrikes) next.strikes = 0;
     if (unevict) { next.evicted = false; next.evictedReason = null; }
-    // **摊平一份新的，不是复用 `EMPTY_STATS` 那个 frozen 单例**：整池共享同一个对象时，
-    // 任何一处「顺手改一个计数」都会同时改掉别的 key 的那一份（冻结只在严格模式下抛）。
+    // **摊平一份新的，不是复用 `EMPTY_STATS` 那个 frozen 单例。**
+    // ⚠️ 这里原来写的理由是「整池共享同一个对象时，任何一处顺手改一个计数都会同时改掉
+    // 别的 key 那一份（冻结只在严格模式下抛）」——**那个理由在本仓不成立**（复评 L6）：
+    // 本仓是 ESM/TS，**全程严格模式**，真有人原地改共享单例会当场抛 `TypeError`，
+    // 不会静静串改；而且今天 `src/` 里没有任何一处原地改 `record.stats`
+    // （`src/core/admin/stats.ts` 里凡是把它当成**一份新的 stats** 用的地方同样都摊平，
+    // 只有当只读入参传给 `statsDelta` 那一处是直接用的）。
+    // **真实的口径是：这一行是防御性的，而且它今天没有绊线**——回填时实测把它换成共享
+    // 单例，`tests/contract/admin-keys-write.test.ts` 与 `tests/unit/docs-parity.test.ts`
+    // 一格都不红。留着它是为了让「这条记录能不能被随手改一格」这个问题在本文件里
+    // 不必被回答，代价是一次对象摊平。
     if (clearStats) next.stats = { ...EMPTY_STATS };
 
     await deps.repo.save(next);
