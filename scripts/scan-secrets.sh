@@ -3,11 +3,14 @@
 #
 # 用法：
 #   bash scripts/scan-secrets.sh              # 只扫工作树；CI 里跑的就是这一档
-#   bash scripts/scan-secrets.sh --history    # 工作树 + 可达历史里的每一个 blob
+#   bash scripts/scan-secrets.sh --history    # 工作树 + 可达历史（blob / 提交信息 / 标签说明）
 #
-# ── 这道门禁已知的三格盲区，逐条写在这里 ─────────────────────────────────────
-# **写清楚边界不是免责声明。** 下面三条每一条都还欠着东西，写在这里是为了让下一个
+# ── 这道门禁已知的四格盲区，逐条写在这里 ─────────────────────────────────────
+# **写清楚边界不是免责声明。** 下面四条每一条都还欠着东西，写在这里是为了让下一个
 # 人看得见那笔账，不是为了说"已经写明所以不用管"。
+# ⚠️ **这张清单会自己红**：条数与逐条的锚句由 tests/unit/scan-secrets.test.ts 的
+# 「scan-secrets.sh 的注释写明了四条已知边界，且条数是手写的」那一格钉着——
+# 删掉一条、或者悄悄加第五条而不来改这个数，那一格当场红。
 #
 # ① **不带 --history 时只扫工作树。** 一个凭据只要进过一个提交，哪怕下一个提交就把
 #    它 `git rm` 掉，工作树这一档一个字都看不见——而 `git push` 发的是历史，不是工作
@@ -34,6 +37,16 @@
 #    排除，而那是一个新的、没人守的盲区），也是本门禁**已知且有意的最后一格盲区**。
 #    ⇒ **今天的欠账**：没有任何东西守着这一格；要补只能另起一个不排除自己的扫描器，
 #    而那会是第二份凭据判据。今天不补，账记在这里。
+#
+# ④ **文件名本身不在射程内，两档都不在**（复评 F3 回填时登记）。工作树那一档
+#    `git grep` 扫的是**内容**；历史那一档收 blob / commit / tag 三类对象，**刻意不收
+#    tree**——树对象是二进制格式（`mode name\0` 加 20 个裸字节的 sha），按行分帧只会
+#    读出乱码。可读的只有文件名，而文件名今天两档都没扫。
+#    ⇒ 于是一个把凭据写进**路径**、内容留空的文件，这道门禁两档都 exit 0。
+#    这条边界由 tests/unit/scan-secrets.test.ts
+#    的「(h) 已知边界：凭据写在文件名里 ⇒ 今天两档都放行（边界是断言，不是散文）」钉着。
+#    ⇒ **今天的欠账**：补它要为「路径」再开一份判据（工作树侧 `git ls-files`、历史侧
+#    `git rev-list --objects` 的第二列），那是第三份形态判据，本期不开。账记在这里。
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -83,15 +96,31 @@ BARE_IP='\b([0-9]{1,3}\.){3}[0-9]{1,3}\b'
 BARE_IP_AWK='([0-9]{1,3}[.]){3}[0-9]{1,3}'
 
 # 从任意文本里抽出「点分四段」：先把所有不是数字和点的字节换成换行，剩下的每一段都是
-# 一个**极大**的数字点串，再要求整段恰好是四段 1–3 位数字。
+# 一个**极大**的数字点串；再把**两个及以上连续的点**也当成分隔符切开、把每一段**首尾的
+# 点剥掉**；最后要求整段恰好是四段 1–3 位数字。
 # ⚠️ **极大段这一步不能省**：不加它，`2026.08.22.1` 这种日期写法会被从中间切出一个
 # 假 IP 来（掐掉四位年份的头一位，剩下的三位正好凑成合法的第一段），凭空多一条假红。
+# ⚠️ **首尾剥点与切连续点这两步是复评 F1 补的，它俩是「极大段」的代价的一半**：
+# 只要一个 IP 紧挨着一个 ASCII 点，它所在的极大段就不再是"恰好四段"，整条规则**两档
+# 一起放行并打成功横幅**。复评在临时仓实测的三种写法全部逃走：英文句末的句点、
+# 前面顶一串省略号、以及 `<IP>.nip.io` 这种通配 DNS 写法。补完这两步，三种都红。
+# ⚠️ **剩下的代价明写在这里**：极大段里如果还夹着**单个**点，那一段仍然不是"恰好四段"
+# ——把一个 IP 写进更长的单点链（形如把四段后面再接一段）依然逃得掉。**这一格今天
+# 没补，因为补它就要放弃防日期假红的那条判据**（日期正好是单点链）。它由
+# tests/unit/scan-secrets.test.ts 的
+# 「(g) 已知边界：写进更长的单点链里的 IP ⇒ 今天放行（边界是断言，不是散文）」钉着。
 # ⚠️ **这里刻意不把那个假 IP 逐字写出来**：写出来它就是一个不在白名单里的裸 IP 字面量，
 # 只因为文件头 ③ 那格自我豁免才不会当场打红本文件——**一个安全扫描器不该在自己身上
 # 攒下"只有靠自己的盲区才活得下去"的串**。（M2 变异实测：一旦路径过滤失效，
 # 本文件立刻红在自己这行注释上。）
 extract_ips() {
-  tr -c '0-9.' '\n' | grep -xE '[0-9]{1,3}(\.[0-9]{1,3}){3}'
+  # ⚠️ **这三步的顺序不能换，但它们写成一遍 sed 就够**：`tr` 之后每个极大段自成一行，
+  # `s/\.{2,}/\n/g` 把段内那种连续点整段吃掉——**吃掉之后新切出来的片段两端不会再剩下点**
+  # （连续点是整段被消费的），所以 `s/^\.+//; s/\.+$//` 只剩下剥整段首尾的活。
+  # ⚠️ **上一版这里写成两遍 sed，还给了一句「一遍只会剥首尾、中间那些段照旧带着点」的理由，
+  #   那句理由是没实测就写下的，本轮实测两种写法输出逐字节相同 ⇒ 理由已删、写法收成一遍。**
+  tr -c '0-9.' '\n' | sed -E 's/\.{2,}/\n/g; s/^\.+//; s/\.+$//' \
+    | grep -xE '[0-9]{1,3}(\.[0-9]{1,3}){3}'
 }
 
 # 白名单。返回 0 = 放行，返回 1 = 这是一个该报的裸 IP。
@@ -142,7 +171,14 @@ fail=0
 # 凭据同样会被扫到（git grep 对二进制匹配只报"Binary file ... matches"，退出码仍是
 # 0，因此会被下面 `case` 的 `0)` 分支捕获并让这一步失败）。`scripts/check-no-binary.mjs`
 # 从根上不让这类文件存在，这里是第二道防线，两者缺一不可——
-# 万一有人绕开或跳过 `scripts/check-no-binary.mjs` 那道门禁单独跑这个脚本，这里依然不会失明。
+# 万一有人绕开或跳过 `scripts/check-no-binary.mjs` 那道门禁单独跑这个脚本，
+# **上面这个 `for p in "${PATTERNS[@]}"` 循环依然不会失明**。
+# ⚠️ **这句话的射程止于这个循环，不许再读成"整个脚本都不会失明"**（复评 F2）：
+# 它成立是因为这五条只看 `git grep` 的**退出码**，二进制命中照样是 0。**下面第 6 条
+# 规则要的是命中行的内容**，而 `git grep` 对二进制只打一行 `Binary file X matches`
+# ——第一版把这行原样喂给 `bad_ips_in`，行里没有 IP，于是 `continue`，
+# **屏幕上打的是成功横幅**。这正是本仓「加了新段要回头改旧段」那条方法论的靶子：
+# 新规则把旧段刚解决的 `-I` 盲区在自己身上复活了一遍。处置见第 6 条那里的 fail closed。
 # **评审四审 B 组第 5 条：`git grep` 的退出码原来被静默吞掉。**
 # 原来写的是 `if git grep …; then 命中; fi`——`git grep` 的约定是
 #   0 = 有命中、1 = 没命中、**>1 = 出错**。`if` 只分"零/非零"，于是**出错被当成
@@ -174,11 +210,32 @@ done
 
 # 第 6 条规则的工作树档：先用 `git grep` 把**候选行**找出来（形态判据是超集），
 # 再逐行交给唯一那份放行判据。命中行照样打到 stdout，与上面五条同形。
-ip_hits=$(git grep --untracked -nnE "$BARE_IP" -- "${EXCLUDES[@]}")
+#
+# ⚠️ **`LC_ALL=C` 不是顺手加的，但它的理由只能写成实测得住的那句**：下面那个判据靠的是
+# `Binary file … matches` 这句报文的**字面**，而 git 的报文整体走 gettext。
+# 本机实测切到 `LANGUAGE=zh_CN` 与 `LC_ALL=zh_CN.UTF-8` 报文都没变，**但这台机器只装了
+# `C / C.utf8 / POSIX / en_US.utf8` 四个 locale** ⇒ 这只证明「今天这台机器上不会变」，
+# **证不了 git 在任何机器上都不翻译它**。钉死语言的代价是零，赌它不翻译的代价是
+# 「判据静静地认不出来、退回复评 F2 那个 fail open」——所以钉死。
+ip_hits=$(LC_ALL=C git grep --untracked -nnE "$BARE_IP" -- "${EXCLUDES[@]}")
 status=$?
 case $status in
   0)
     while IFS= read -r line; do
+      # **二进制文件：fail closed，不猜**（复评 F2）。
+      # `git grep` 对二进制文件只打一行 `Binary file X matches`，**不给内容**，而第 6
+      # 条的判决必须看内容（白名单是按取值放行的）。有两条路，这里选了后者：
+      # ① 加 `-a` 强行按文本打出来——但命中行里的 NUL 会被 bash 的命令替换丢掉
+      #    （bash 还会为此打一条 warning），等于**明知数据被改过还拿它下判决**；
+      # ② 直接按失败处理。二进制跟踪文件本来就被 `scripts/check-no-binary.mjs` 那道
+      #    门禁从根上禁掉了，所以"二进制文件命中了裸 IP 超集"本身就是异常，
+      #    报出来比猜一个结论有用。
+      if [[ $line == "Binary file "*" matches" ]]; then
+        printf '%s\n' "$line"
+        echo "❌ 二进制文件命中裸 IP 形态，但 git grep 不给内容、白名单判不了 —— 扫不动不等于扫干净，按失败处理。先看 scripts/check-no-binary.mjs 那道门禁为什么放它进来" >&2
+        fail=1
+        continue
+      fi
       bad=$(bad_ips_in "$line")
       [[ -z $bad ]] && continue
       printf '%s\n' "$line"
@@ -222,18 +279,32 @@ if [[ $MODE == history ]]; then
       echo "❌ --history: 这个仓库一个提交都没有，没有可扫的历史。历史不完整，按失败处理" >&2
       fail=1
     else
-      # 六条规则合成一条超集正则交给 gawk 一次过：1067288 行的真仓实测 1.6 s。
+      # 六条规则合成一条超集正则交给 gawk 一次过（真仓上是秒级，不是分钟级；这里刻意
+      # 不写行数与秒数——那是两个会随每次提交漂、`.sh` 又不在
+      # `scripts/check-comment-refs.mjs` 射程内、没有任何东西守得住的数，见复评 F7）。
       # `\.` 在动态正则里会被 gawk 降级成"任意字符"并打一条 warning，所以逐条换成 `[.]`。
       awkre=""
       for p in "${PATTERNS[@]}"; do awkre="${awkre:+$awkre|}(${p//\\./[.]})"; done
       awkre="$awkre|($BARE_IP_AWK)"
 
       # sha → 路径。路径过滤与工作树档的 EXCLUDES 一一对应（文件头 ③）。
-      declare -A BLOB_PATH=()
-      while IFS=$'\t' read -r sha path; do BLOB_PATH[$sha]=$path; done < <(
+      #
+      # ⚠️ **收哪几类对象（复评 F3）**：blob **加上** commit 与 tag。
+      # 第一版写的是 `$2 != "blob" { next }`——**提交信息里的凭据一个字都看不见**，
+      # 而 `git push` 发的是历史，提交信息就在历史里。复评在临时仓实测：把假凭据写进
+      # 提交信息 ⇒ `--history` 打成功横幅 exit 0；同一串写进 blob ⇒ exit 1。
+      # 注解标签（`git tag -a`）的说明同理，`git rev-list --objects --all` 会把 tag
+      # 对象连同标签名一起列出来（实测），所以一并收。
+      # ⚠️ **tree 对象仍然不收，这是文件头 ④ 那格盲区**：树对象是二进制格式
+      # （`mode name\0` + 20 个裸字节的 sha），塞进按行分帧的 awk 只会得到乱码；
+      # 它里面唯一可读的东西是**文件名**，而文件名这一格今天两档都没人扫。
+      declare -A OBJ_PATH=()
+      while IFS=$'\t' read -r sha path; do OBJ_PATH[$sha]=$path; done < <(
         git rev-list --objects --all \
           | git cat-file --batch-check='%(objectname) %(objecttype) %(rest)' \
           | LC_ALL=C awk '
+              $2 == "commit" { print $1 "\t<提交信息>"; next }
+              $2 == "tag"    { print $1 "\t<标签说明>"; next }
               $2 != "blob" { next }
               {
                 path = ""
@@ -243,15 +314,15 @@ if [[ $MODE == history ]]; then
                 print $1 "\t" path
               }'
       )
-      if (( ${#BLOB_PATH[@]} == 0 )); then
-        echo "❌ --history: 一个可扫的 blob 都没列出来。历史不完整，按失败处理" >&2
+      if (( ${#OBJ_PATH[@]} == 0 )); then
+        echo "❌ --history: 一个可扫的对象都没列出来。历史不完整，按失败处理" >&2
         fail=1
       else
         # `git cat-file --batch` 的输出是 `<sha> <type> <size>\n<内容>\n`。**按字节数
         # 自己分帧**（LC_ALL=C 下 length() 数的是字节），并且**分帧对不上就 fail closed**
         # ——错位之后 sha 会张冠李戴，而"报错了对象"比"没报"更难发现。
         hits=$(
-          printf '%s\n' "${!BLOB_PATH[@]}" | git cat-file --batch | LC_ALL=C awk -v re="$awkre" '
+          printf '%s\n' "${!OBJ_PATH[@]}" | git cat-file --batch | LC_ALL=C awk -v re="$awkre" '
             BEGIN { need = 0 }
             need <= 0 {
               if ($0 !~ /^[0-9a-f]{40} [a-z]+ [0-9]+$/) {
@@ -286,14 +357,14 @@ if [[ $MODE == history ]]; then
             [[ -z $matched ]] && continue
             echo "❌ 历史里命中疑似凭据模式: $p" >&2
             while IFS=$'\t' read -r sha ln line; do
-              echo "   ${sha:0:12} ${BLOB_PATH[$sha]:-?}:$ln: ${line:0:200}" >&2
+              echo "   ${sha:0:12} ${OBJ_PATH[$sha]:-?}:$ln: ${line:0:200}" >&2
             done <<<"$matched"
             fail=1
           done
           for ip in $(bad_ips_in "$hits"); do
             echo "❌ 历史里命中不在白名单里的裸 IP: $ip" >&2
             while IFS=$'\t' read -r sha ln line; do
-              echo "   ${sha:0:12} ${BLOB_PATH[$sha]:-?}:$ln: ${line:0:200}" >&2
+              echo "   ${sha:0:12} ${OBJ_PATH[$sha]:-?}:$ln: ${line:0:200}" >&2
             done < <(grep -aF "$ip" <<<"$hits")
             fail=1
           done

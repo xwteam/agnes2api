@@ -71,6 +71,21 @@ function run(
  */
 const ip = (...octets: string[]): string => octets.join(".");
 
+/**
+ * **把一段文本变成「git 会判成二进制」的文件内容。**
+ * 一个字面 NUL 就够了——`storage-file.ts` 当年正是因为一个 NUL 被判成二进制，
+ * 才让带 `-I` 的那一版门禁对它整个失明（评审 F3）。
+ * ⚠️ **NUL 只许在运行时拼出来，绝不许写成本文件里的一个字面字节**：本文件是跟踪文件。
+ * 本轮回填手滑往这里写进过一个裸 NUL（当时是靠 `cat -A` 看出来的，**不是靠门禁**）。
+ * 事后补做的探针实测：往本文件的**工作树内容**里塞一个裸 NUL（不提交），
+ * `scripts/check-no-binary.mjs` 当场 exit 1 并点名本文件「git 判定为二进制」，
+ * 凭据扫描那道也跟着 exit 1、红在下面 (h) 那格本轮新补的 fail closed 上。
+ * ⚠️ 用到它的那两格各自先断言报文里出现了 `Binary file`：**夹具没造出二进制文件时
+ * 这两格会在「看起来通过」的情况下什么都没验**——同一条纪律逐字在
+ * 「(c) 浅仓（git clone --depth 1）……」那格的 `is-shallow-repository` 前置断言里。
+ */
+const binary = (text: string): string => `${text}${String.fromCharCode(0)}\n`;
+
 describe("scripts/scan-secrets.sh", () => {
   it("干净的仓库：exit 0 并打出成功横幅", () => {
     const root = stageScript(true);
@@ -218,10 +233,115 @@ describe("scripts/scan-secrets.sh 第 6 条规则：裸 IP", () => {
         .toBe(expected);
     }
   });
+
+  /**
+   * **复评 F1 的绊线：点号相邻的公网裸 IP 从这条规则整个逃走，而且两档一起逃。**
+   *
+   * `extract_ips()` 先把非「数字和点」的字节换成换行，再要求**整个极大段**恰好四段。
+   * 于是 IP 只要紧挨着一个 ASCII 点，那个极大段就不是"恰好四段"，整条规则放行，
+   * **屏幕上打的是成功横幅** —— 本阶段最忌的那种失败。复评在临时仓实测的三种写法
+   * （英文句末、前顶省略号、通配 DNS 后缀）**两档都 exit 0**，反向控制（同文件里
+   * 再裸写一次同一个地址）才 exit 1。
+   *
+   * ⚠️ **每种写法各起一个仓**：写进同一个文件的话，只要有一条是裸写的，
+   * `bad_ips_in` 就会在**整块文本**上抽出那个地址，别的行跟着被 `grep -aF` 带出来
+   * ——这一格会在什么都没修好的情况下变绿（本轮回填实测撞到过）。
+   */
+  it.each([
+    ["英文句末的句点", (v: string) => `The box lives at ${v}.`],
+    ["前面顶一串省略号", (v: string) => `地址是 ...${v}`],
+    ["通配 DNS 后缀", (v: string) => `访问 ${v}.nip.io 就到`],
+  ])("(f) 点号紧挨着的公网裸 IP 也要 exit 1，两档都要：%s", (_label, wrap) => {
+    const bad = ip("93", "184", "216", "34");
+    for (const args of [[], ["--history"]] as string[][]) {
+      const root = stageScript(true);
+      writeFileSync(join(root, "note.md"), wrap(bad) + "\n");
+      commit(root, "note");
+      const r = run(root, args);
+      expect(r.status, `${args.join(" ") || "工作树"} 档：\n${r.stdout}${r.stderr}`).toBe(1);
+      expect(r.stdout, "命中时绝不能打成功横幅").not.toContain("未发现疑似凭据");
+    }
+  });
+
+  /**
+   * **反向控制：上面那条修法不许把日期写法拖下水。**
+   * `extract_ips()` 的「极大段」判据存在的**唯一**理由就是防这一类假红——
+   * 不加它，一个四位年份开头的点分日期会被从中间切出一个形态合法的假 IP 来。
+   * (f) 补的是「剥掉首尾的点 + 按两个以上连续的点切开」，**单点链一个都没动**，
+   * 所以这一格必须还是绿的；它红了就说明修法把那条判据一起改掉了。
+   */
+  it("(f) 反向控制：点分日期写法（含句末带点）仍然不许红", () => {
+    const root = stageScript(true);
+    writeFileSync(
+      join(root, "changelog.md"),
+      "构建号 2026.08.22.1 发布\n日期 2026.08.22.\n版本 1.10.20.30.40 的那一支\n",
+    );
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    const r = run(root);
+    expect(r.status, `点分日期不是 IP，不许红。脚本说：\n${r.stdout}${r.stderr}`).toBe(0);
+  });
+
+  /**
+   * **这是一格「边界是断言，不是散文」**，与 `--history` 那边的 (b) 同形。
+   *
+   * 上面 (f) 的修法只切「两个以上连续的点」并剥掉首尾的点。**极大段里还夹着单个点的
+   * 情况没补**：把一个四段地址接在更长的单点链里，它仍然逃得掉。**这不是疏忽，是那条
+   * 防日期假红判据的代价**——日期正好就是单点链，补这一格就得放弃上面那一格。
+   * ⇒ 今天它是绿的。哪天有人把这一格补上了，这里会红，那是提醒不是事故：
+   * 回到 `scripts/scan-secrets.sh` 的 `extract_ips()` 上方把那段「剩下的代价」删掉。
+   */
+  it("(g) 已知边界：写进更长的单点链里的 IP ⇒ 今天放行（边界是断言，不是散文）", () => {
+    const root = stageScript(true);
+    // 四段地址后面再接一段 ⇒ 极大段是五段，不是"恰好四段"。
+    writeFileSync(join(root, "chain.md"), `链路 ${ip("93", "184", "216", "34")}.9 那一段\n`);
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    const r = run(root);
+    expect(r.status, `这条边界今天是放行的：\n${r.stdout}${r.stderr}`).toBe(0);
+  });
+
+  /**
+   * **复评 F2 的绊线：这条规则对二进制文件失明，而它上面那段注释逐字保证"不会失明"。**
+   *
+   * `git grep` 对二进制文件只打一行 `Binary file X matches`，**不给内容**。第一版把
+   * 这一行原样喂给 `bad_ips_in`，行里没有 IP ⇒ `continue` ⇒ `fail` 保持 0 ⇒
+   * **成功横幅 + exit 0**。上面五条正则没有这个洞（它们只看退出码），所以这是
+   * 「加了新段没回头改旧段」+「把别处刚解决的问题搬过来」两条方法论各中一枪。
+   * 现在改成 fail closed：判不了就报，别猜。
+   */
+  it("(h) 二进制文件命中裸 IP 形态 ⇒ fail closed，绝不报「未发现疑似凭据」", () => {
+    const root = stageScript(true);
+    writeFileSync(join(root, "bin.txt"), binary(`x y ${ip("93", "184", "216", "34")} z`));
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    const r = run(root);
+    expect(
+      r.stdout + r.stderr,
+      "夹具没被 git 判成二进制，这条用例会空跑",
+    ).toContain("Binary file");
+    expect(r.status, "二进制文件里的裸 IP 判不了白名单，必须按失败处理").toBe(1);
+    expect(r.stdout, "扫不动绝不能打成功横幅").not.toContain("未发现疑似凭据");
+    expect(r.stderr, "报文要说清为什么失败，并指向该看的那道门禁")
+      .toContain("scripts/check-no-binary.mjs");
+  });
+
+  /**
+   * **反向控制：同形的二进制文件里写别的凭据形态，走的是上面五条那条路，本来就红。**
+   * 这一格是为了证明 (h) 抓到的确实是「裸 IP 规则那条路」上的洞，而不是
+   * 「二进制文件一律红」这种把整类文件误伤掉的粗判据。
+   */
+  it("(h) 反向控制：二进制文件里的 sk- 前缀凭据，走的是前五条那条路，照旧 exit 1", () => {
+    const root = stageScript(true);
+    const planted = "sk-" + "A".repeat(24);
+    writeFileSync(join(root, "bin.txt"), binary(`x y ${planted} z`));
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    const r = run(root);
+    expect(r.stdout + r.stderr, "夹具没被 git 判成二进制，这条用例会空跑").toContain("Binary file");
+    expect(r.status).toBe(1);
+    expect(r.stderr, "这一条该由前五条报出来").toContain("命中疑似凭据模式");
+  });
 });
 
 /**
- * ── `--history`：扫可达历史里的每一个 blob ──────────────────────────────────
+ * ── `--history`：扫可达历史里的 blob / 提交信息 / 标签说明 ─────────────────────
  *
  * **它为什么在这里**：不带 `--history` 时这个脚本只扫工作树。一个凭据只要进过一个
  * 提交，哪怕下一个提交就 `git rm` 掉，工作树那一档一个字都看不见——而 `git push`
@@ -332,6 +452,74 @@ describe("scripts/scan-secrets.sh --history", () => {
     }
   });
 
+  /**
+   * **复评 F3 的绊线：`--history` 第一版只收 blob，提交信息里的凭据一个字看不见。**
+   *
+   * `git push` 发的是历史，而**提交信息就在历史里**。第一版那句 `$2 != "blob" { next }`
+   * 把 commit 与 tag 两类对象整类丢掉，于是把凭据写进提交信息 ⇒ `--history` 打
+   * **成功横幅 + exit 0**（复评临时仓实测；同一串写进 blob 则 exit 1）。
+   * 讽刺的是同一个提交改写的 Task 35 复验循环本来就不过滤对象类型——**更宽的写法
+   * 就在手边却没带进来**。现在收 blob / commit / tag 三类。
+   *
+   * ⚠️ 夹具刻意让**工作树是干净的**：不这样的话，红有可能是工作树那一档报的，
+   * 这一格就在什么都没验的情况下变绿。
+   */
+  it("(g) 凭据写进提交信息 ⇒ --history exit 1，而同一次调用的工作树档 exit 0", () => {
+    const root = stageScript(true);
+    writeFileSync(join(root, "ok.txt"), "clean\n");
+    const planted = "sk-" + "F".repeat(24);
+    commit(root, `chore: ${planted}`);
+
+    const worktree = run(root);
+    expect(worktree.status, `工作树是干净的，这里必须 0：\n${worktree.stdout}`).toBe(0);
+    const history = run(root, ["--history"]);
+    expect(history.status, `提交信息里的凭据必须被看见：\n${history.stdout}${history.stderr}`)
+      .toBe(1);
+    expect(history.stdout, "命中时绝不能打成功横幅").not.toContain("未发现疑似凭据");
+    expect(history.stderr, "报文要说清命中的是提交信息，不是某个文件")
+      .toContain("<提交信息>");
+  });
+
+  /**
+   * **注解标签的说明同理**：`git rev-list --objects --all` 会把 tag 对象连同标签名一起
+   * 列出来（本轮回填实测），所以它和提交信息是同一类洞、同一处修法。
+   * ⚠️ 真仓今天 `git tag` 计数为 0 ⇒ **这条分支在真仓上永远跑不到**，只有这一格在验它。
+   */
+  it("(h) 凭据写进注解标签的说明 ⇒ --history exit 1", () => {
+    const root = stageScript(true);
+    writeFileSync(join(root, "ok.txt"), "clean\n");
+    commit(root, "base");
+    const planted = "sk-" + "G".repeat(24);
+    execFileSync("git", ["tag", "-a", "v1", "-m", `release ${planted}`], { cwd: root });
+
+    expect(run(root).status, "工作树是干净的").toBe(0);
+    const history = run(root, ["--history"]);
+    expect(history.status, `标签说明里的凭据必须被看见：\n${history.stdout}${history.stderr}`)
+      .toBe(1);
+    expect(history.stderr, "报文要说清命中的是标签说明").toContain("<标签说明>");
+  });
+
+  /**
+   * **这一格是「边界是断言，不是散文」，钉的是文件头 ④。**
+   *
+   * 两档扫的都是**内容**：工作树那一档是 `git grep`，历史那一档收 blob / commit / tag
+   * 三类对象、**刻意不收 tree**（树对象是二进制格式，按行分帧只会读出乱码）。
+   * ⇒ 文件名本身今天两档都不在射程内。这不是猜的，是这一格量出来的。
+   * ⇒ 哪天有人把路径也扫上了，这里会红，那是提醒不是事故：
+   * 回到 `scripts/scan-secrets.sh` 文件头把 ④ 那一条划掉，并把「四格盲区」改成三格
+   *（条数由下面「……写明了四条已知边界」那一格连带钉着）。
+   */
+  it("(i) 已知边界：凭据写在文件名里 ⇒ 今天两档都放行（边界是断言，不是散文）", () => {
+    const root = stageScript(true);
+    // 内容留空，凭据只在**路径**里。
+    writeFileSync(join(root, `${"sk-" + "H".repeat(24)}.txt`), "");
+    commit(root, "add");
+    expect(run(root).status, "工作树档今天看不见文件名").toBe(0);
+    const history = run(root, ["--history"]);
+    expect(history.status, `历史档今天也看不见文件名：\n${history.stdout}${history.stderr}`)
+      .toBe(0);
+  });
+
   it("(f) 未知参数 ⇒ exit≠0，不许当成默认档静静跑过去", () => {
     const root = stageScript(true);
     writeFileSync(join(root, "ok.txt"), "clean\n");
@@ -346,11 +534,27 @@ describe("scripts/scan-secrets.sh --history", () => {
  * ── 注释与门禁序号 ──────────────────────────────────────────────────────────
  */
 describe("scripts/scan-secrets.sh 的注释", () => {
-  it("scan-secrets.sh 的注释写明了三条已知边界", () => {
+  /**
+   * ⚠️ **条数是手写的，而且必须是手写的**：这张盲区清单唯一的价值就是"下一个人看得见
+   * 那笔账"，而清单最常见的坏法不是写错一条，是**悄悄少一条**。逐条锚句只能证明
+   * "这几条还在"，证不了"没有第五条被顺手塞进来、也没有第六条该写而没写"。
+   * ⇒ 这里连条数一起数：文件头以 `# ①`…`# ④` 起头的顶格行，恰好四条。
+   * 本轮回填把 ④（文件名不在射程内）加进来时，正是这个数逼着回来改标题的。
+   */
+  it("scan-secrets.sh 的注释写明了四条已知边界，且条数是手写的", () => {
     const s = readFileSync("scripts/scan-secrets.sh", "utf8");
     expect(s, "少了「只扫工作树」那条边界").toContain("不带 --history 时只扫工作树");
     expect(s, "少了「裸 IP 走哪条规则」那条边界").toContain("裸 IP 走第 6 条规则");
     expect(s, "少了「本脚本自己是盲区」那条边界").toContain("本脚本把自己排除在扫描外");
+    expect(s, "少了「文件名不在射程内」那条边界").toContain("文件名本身不在射程内");
+    // 顶格的 `# ①`…`# ⑩`。缩进过的同款序号（awk 块里、函数体里都有）刻意不算。
+    const marks = s.match(/^# [①②③④⑤⑥⑦⑧⑨⑩] /gm) ?? [];
+    expect(
+      marks.length,
+      `盲区清单的条数变了（实际 ${marks.length} 条）—— 回来改这个数、改文件头那句`
+      + "「四格盲区」，并确认新增/删掉的那一条真的该动",
+    ).toBe(4);
+    expect(s, "文件头那句和条数对不上").toContain("已知的四格盲区");
   });
 
   /**
@@ -391,19 +595,53 @@ describe("scripts/scan-secrets.sh 的注释", () => {
 
   /**
    * **上面那条判据是从 `scripts/check-comment-refs.mjs` 抄过来的第二份 —— 这一格
-   * 是它们的逐字节孪生体比对。**
+   * 把两侧各自钉死，逼它们只能一起动。**
    * 那个脚本不导出任何东西（它是**直接跑**的门禁脚本，不是模块），import
    * 进来会把整道扫描连带跑一遍，所以只能抄。抄来的判据会漂：规则 E 收窄或放宽一次，
    * 上面那一格就在**不报错**的情况下开始验一件别的事。
    * ⇒ 拿真源的字面量当期望值。它红了不代表谁错了，代表「规则 E 动过，回来看一眼
    * 这里要不要跟着动」。
+   *
+   * ⚠️ **上一版这里自称「逐字节孪生体比对」，那是一句假的全称句（复评 F4）**：
+   * 它只挑了四条 alternation 里的三条来断言，**排在最前面那一条整条没人看**。
+   * 复评变异实测：把真源里那条最前面的 alternation 结尾那两个字换成一个近义词
+   *（规则 E 真的换了语义）⇒ **一格都不红**；反向控制改 `GATE_ORDINAL_CORE`
+   * 才当场红。
+   * ⇒ 现在两侧各钉一个定值：真源那侧比的是**整块 alternation 的源码字节**
+   *（多一条、少一条、改一个字都红），本文件这侧比的是抄来那一份编出来的
+   * `RegExp.source`。两侧都钉死，才谈得上"同一条"。
+   * ⚠️ **两侧的期望值必须一起改**；只改一侧的话，红的那一格会告诉你是哪一侧。
    */
-  it("上面那条判据与 check-comment-refs.mjs 的规则 E 是同一条（逐字节孪生体比对）", () => {
+  it("上面那条判据与 check-comment-refs.mjs 的规则 E 是同一条（两侧各自定值比对）", () => {
     const refs = readFileSync("scripts/check-comment-refs.mjs", "utf8");
     const hint = "规则 E 的正则改过了 —— 回到 tests/unit/scan-secrets.test.ts"
       + " 把抄过来的那一份改成一样的，否则 .sh 那一半守的是另一件事";
     expect(refs, hint).toContain(`const GATE_ORDINAL_CORE = ${JSON.stringify(GATE_ORDINAL_CORE)};`);
-    expect(refs, hint).toContain("`|CI\\\\s*的?\\\\s*${GATE_ORDINAL_CORE}`");
-    expect(refs, hint).toContain('"|第\\\\s*\\\\d+\\\\s*/\\\\s*\\\\d+\\\\s*道"');
+
+    // ── 真源那一侧：整块 alternation 的源码字节，不是从里面挑几条 ──
+    const block = /const GATE_ORDINAL_RE = new RegExp\(\n([\s\S]*?)\n {2}"g",\n\);/
+      .exec(refs)?.[1];
+    expect(
+      block,
+      "在 check-comment-refs.mjs 里找不到 GATE_ORDINAL_RE 那个块 —— 结构变了，回来看一眼这格还比不比得动",
+    ).toBeTypeOf("string");
+    expect(block, hint).toBe(
+      "  `${GATE_ORDINAL_CORE}\\\\s*门禁`\n"
+      + "  + `|CI\\\\s*的?\\\\s*${GATE_ORDINAL_CORE}`\n"
+      + '  + "|第\\\\s*\\\\d+\\\\s*/\\\\s*\\\\d+\\\\s*道",',
+    );
+
+    // ── 本文件这一侧：抄来的那一份编出来长什么样，也钉死 ──
+    expect(
+      GATE_ORDINAL_RE.source,
+      "本文件抄的那一份改过了 —— 两侧必须一起改，否则这一格比的是它自己",
+    ).toBe(
+      // ⚠️ `RegExp.source` 会把每一个 `/` 转义成 `\/`（免得直接塞进正则字面量里破字面量），
+      //    所以这一侧的期望值里的斜杠必须带反斜杠 —— 与上面真源那一侧的源码字节不同形。
+      //    本轮回填照着源码抄了一遍，第一次跑就红在这三个斜杠上。
+      "第\\s*(?:\\d+\\s*\\/\\s*\\d+|\\d+|[一二三四五六七八九十]+)\\s*道\\s*门禁"
+      + "|CI\\s*的?\\s*第\\s*(?:\\d+\\s*\\/\\s*\\d+|\\d+|[一二三四五六七八九十]+)\\s*道"
+      + "|第\\s*\\d+\\s*\\/\\s*\\d+\\s*道",
+    );
   });
 });
