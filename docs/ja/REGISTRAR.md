@@ -68,7 +68,7 @@
 |---|---|---|---|
 | `REGISTRAR_ENABLED` | いいえ | `false` | マスタースイッチ。`true` にしないとレジストラーは有効になりません。 |
 | `REGISTRAR_PRIMARY` | 有効化時は必須 | なし | 主チャネル、`yyds` または `moemail`。両者は対等でデフォルト値なし。 |
-| `REGISTRAR_FALLBACK` | いいえ | 空（フォールバックなし） | 副チャネル、`yyds` または `moemail`。主チャネルがチャネルレベルで失敗した際に使われる。 |
+| `REGISTRAR_FALLBACK` | いいえ | 空（フォールバックなし） | フォールバックチャネル、`yyds` または `moemail`。主チャネルがチャネルレベルで失敗した際に使われる。 |
 | `TARGET_KEYS` | いいえ | `20` | 目標とする利用可能 key 数。これを下回ったときのみ補充が発生。 |
 | `MINT_BATCH` | いいえ | `5` | 1 ラウンドで発行する key の最大数。 |
 | `TEND_INTERVAL_MS` | いいえ（Node/Docker のみ） | `1800000`（30 分） | Node 側の補充スケジュール間隔。Worker 側は `wrangler.toml` の Cron が決める（下記参照）。 |

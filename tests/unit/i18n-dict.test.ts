@@ -1,14 +1,19 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 import { TEND_FAILURE_REASONS } from "../../src/core/registrar/tender.js";
 import { stripComments } from "../helpers/strip-comments.js";
-import { UNVERIFIED_KEYS, UNVERIFIED_BANNED } from "../../scripts/lib/unverified-claims.mjs";
+import {
+  UNVERIFIED_KEYS, UNVERIFIED_BANNED, UNVERIFIED_CONCEPTS, unverifiedHit,
+} from "../../scripts/lib/unverified-claims.mjs";
+import { tableFromSource } from "../helpers/gate-tables.js";
 // P3e Task 31：危险区那道「不许说立即生效」的守卫，射程里那两条复用文案从真源现算。
 import { resetWarnings } from "../../admin-ui/js/pure/settings.mjs";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
+/** 门禁脚本本体。**只用来抠它源码里那两张手写表**，本文件不跑它（那是另一份实现的活）。 */
+const GATE = resolve("scripts/check-i18n.mjs");
 
 // ── 「板块里当参数传的 i18n key」那道广扫的判据本体 ─────────────────────────────
 // **整块从那条用例体里原样搬到模块作用域，判据一个字符没改。** 搬的理由只有一个：
@@ -186,8 +191,14 @@ describe("i18n 字典", () => {
    *  （门禁那边扩了、这边没扩 ⇒ 那一族只剩一份实现在守，「两份互为印证」当时是假的）。
    *
    * ⚠️ **刻意不是整个 `set.*`**（与门禁那边同一条推理，删了下一个人会顺手扩宽）：
-   * `set.*` 里有大量与通道无关、且**正当地**会出现「默认 / 优先 / 推荐」的运维文案
-   *（超时、冷却、口令）。扩太宽 = 这道今天零命中的干净规则立刻要带一册豁免名单，
+   * `set.*` 里有与通道无关、却**正当地**含着表内词的运维文案。**逐字的那一条是
+   * `set.field.agnesBaseUrl`：它的 ko 值是「업스트림 기본 URL」，`기본` 在这里是
+   * base URL 的「基」，与「默认通道」毫无关系**——放宽成整个 `set.` 就会当场打红它。
+   * ⚠️ **上一版这里写的是「有大量……（超时、冷却、口令）」，那句话当时是假的**：
+   * 本轮实测放宽成 `set.` 之后全字典**只命中上面那一条**，超时 / 冷却 / 口令三族
+   * 一条都没中。而「不许扩宽」这条推理的全部载重都压在它身上 ⇒ 换成一条真的反例，
+   * 并且把它变成会自己红的断言（下面「作用域刻意不是整个 set.：真仓里那条正当用词的反例还在」那一格）。
+   * 扩太宽 = 这道今天零命中的干净规则立刻要带一册豁免名单，
    * 而本仓的裁定是「开豁免名册比没有规则更糟」。
    *
    * ⚠️ **边界（明写，别宣称成「杜绝一切偏好表述」）**：这是纯词面匹配，
@@ -358,22 +369,23 @@ describe("i18n 字典", () => {
     }
   });
 
+  const BANNED = [
+    "推荐", "推薦", "建议", "建議", "默认", "預设", "預設", "主流", "首选", "首選", "优先", "優先",
+    "recommended", "preferred", "default",
+    "おすすめ", "推奨", "권장", "기본",
+  ] as const;
+  const PREFIXES = [
+    "reg.",
+    "keys.addMenu.auto",
+    "set.field.registrar.primary",
+    "set.field.registrar.fallback",
+    "set.field.channel.",
+    "set.card.registrar",
+    "ov.config.primary",
+    "ov.config.fallback",
+  ] as const;
+
   it("通道相关命名空间不出现任何偏好词（含繁体变体）", () => {
-    const BANNED = [
-      "推荐", "推薦", "建议", "建議", "默认", "預设", "預設", "主流", "首选", "首選", "优先", "優先",
-      "recommended", "preferred", "default",
-      "おすすめ", "推奨", "권장", "기본",
-    ] as const;
-    const PREFIXES = [
-      "reg.",
-      "keys.addMenu.auto",
-      "set.field.registrar.primary",
-      "set.field.registrar.fallback",
-      "set.field.channel.",
-      "set.card.registrar",
-      "ov.config.primary",
-      "ov.config.fallback",
-    ] as const;
     const hits: string[] = [];
     for (const [k, v] of Object.entries(I18N)) {
       if (!PREFIXES.some((p) => k.startsWith(p))) continue;
@@ -394,6 +406,63 @@ describe("i18n 字典", () => {
   });
 
   /**
+   * ⚠️⚠️ **这两份手写副本必须逐条相等**（Task 7 补漏评审 L2）。
+   *
+   * 上面那两张表与 `scripts/check-i18n.mjs` 的 `BANNED` / `BANNED_PREFIXES` 是**逐字重复的
+   * 两份手写副本**，而在这一格出现之前，仓里**没有任何东西要求它们一致**。
+   * 实测的三档全绿：把这一份的 `PREFIXES` 整表清成 `[]`（上面那格扫的东西为空，
+   * `toEqual([])` 只会更绿，`dead` 对空表也无话可说）、删掉其中一条、
+   * 删掉门禁那一份里的两条 —— 三种改法一个字都不吵。
+   *
+   * 「两份独立实现互为印证」这句话要成立，前提是**两份问的是同一批东西**；
+   * 两份表悄悄分了家之后，剩下的不是两份印证，是一份没人知道射程的扫描。
+   * 本任务自己在 `scripts/lib/unverified-claims.mjs` 文件头把
+   *「两份不一致时，瞎掉的那一份才是报绿的那一份」写成裁定，却在同一个提交里
+   * 让这两张表继续各抄一份 —— 这一格把那条裁定补齐。
+   *
+   * ⚠️ **它只要求「字面量逐条相等」，不要求两份扫描相同**：谁扫什么、报文怎么写、
+   * 失败怎么表达仍然各写各的（那才是冗余的价值所在）。抠表判据（认不出就抛，
+   * 不许静默当成空表）在 `tests/helpers/gate-tables.ts`。
+   */
+  it("偏好词表与作用域表：这一份与门禁那一份逐条相等（抄两份可以，分家不行）", () => {
+    const gateBanned = tableFromSource(GATE, "const BANNED = [");
+    const gatePrefixes = tableFromSource(GATE, "const BANNED_PREFIXES = [");
+    expect(gateBanned, "抠到的不是那张偏好词表").toContain("推薦");
+    expect(gatePrefixes, "抠到的不是那张作用域表").toContain("reg.");
+    expect([...BANNED], "偏好词表与门禁那一份分了家 —— 少的那一边就是报绿的那一边")
+      .toEqual(gateBanned);
+    expect([...PREFIXES], "作用域表与门禁那一份分了家 —— 少的那一边就是报绿的那一边")
+      .toEqual(gatePrefixes);
+  });
+
+  /**
+   * ⚠️⚠️ **「作用域刻意不是整个 `set.`」这条推理的真反例，钉成断言**（Task 7 补漏评审 M3）。
+   *
+   * 需求书原文给的反例是 `set.field.agnesBaseUrl` 的 ko 值含 `기본`（base URL 的「基」），
+   * 而实施时它被删掉、换成了一句「`set.*` 里有**大量**……（超时、冷却、口令）」的全称句
+   * —— 本轮实测：放宽成整个 `set.` 之后全字典**只命中那一条**，三个举例一条都没中。
+   * 一句无人能核的全称句撑着「不许扩宽」的全部载重，而它当时就是假的。
+   *
+   * ⇒ 这一格把那条反例变成机器：**它今天还在**，扩宽就会当场打红一条正当文案。
+   * 哪天那条 ko 文案改了词，这一格会红，那正是提醒下一个人「载重理由变了，
+   * 回去重新评估作用域该不该扩」的地方 —— 而不是让他读到一句已经变假的话。
+   */
+  it("作用域刻意不是整个 set.：真仓里那条正当用词的反例还在", () => {
+    const row = (I18N as Record<string, Record<string, string>>)["set.field.agnesBaseUrl"];
+    expect(row, "反例那条 key 已经不在字典里了 —— 回去重新评估作用域该不该扩").toBeDefined();
+    expect(
+      row!.ko,
+      "这条 ko 文案不再含 `기본` ⇒ 「不许把作用域扩成整个 set.」那条推理的载重理由变了",
+    ).toContain("기본");
+    // 反向控制：它今天**不在**作用域里，所以上面那格 `toEqual([])` 才是绿的。
+    // 少了这一句，把 `set.` 加进 `PREFIXES` 之后这一格照样绿，而它守的正是那件事。
+    expect(
+      PREFIXES.some((p) => "set.field.agnesBaseUrl".startsWith(p)),
+      "这条正当文案已经落进作用域里了 ⇒ 作用域被扩宽了",
+    ).toBe(false);
+  });
+
+  /**
    * **未核实的事不许被说成已核实**（P3e Task 7；`scripts/check-i18n.mjs` 规则⑨ 的第二份扫描）。
    *
    * 用户点名的红线是：真机了结之前，任何文案都不许把「上限是 60 次」写成「60 次是安全的」。
@@ -405,22 +474,69 @@ describe("i18n 字典", () => {
    * 表**自身**不空转由 `tests/unit/check-i18n.test.ts` 的
    * 「⑨ 反向自检：白名单非空、词表非空、且白名单里每个 key 都真的在字典里」那一格钉着。
    *
-   * ⚠️ **边界：它证明的只是「没有人把未核实的事说成已核实」，不证明译文准确。**
+   * ⚠️ **边界：它证明的只是「这几条 key 的文案里没出现表内那几个词」，不证明译文准确，
+   * 也不等于「没有人把未核实的事说成已核实」**——判据是子串匹配，
+   * 换个同义词它一个字都抓不住，反过来一句诚实的存疑句里出现表内词它照样红。
+   * 那条已登记的误报边界与「为什么不给它加否定式」整段写在
+   * `scripts/check-i18n.mjs` 规则⑨ 上方，这里不复述（复述两份，改的时候只会改一份）。
    */
-  it("未核实的事不许被说成已核实（白名单 × 词表的交集）", () => {
-    const hits: string[] = [];
+  /**
+   * 一份字典 × 白名单射程。返回失败报文数组。**真扫描与探针共用这一份。**
+   * 命中口径走 `unverifiedHit`（两份实现共用的那一条），别在这里另写一个 `includes`。
+   */
+  function unverifiedFailures(dict: Record<string, Record<string, string>>): string[] {
+    const out: string[] = [];
     for (const k of UNVERIFIED_KEYS) {
-      const row = (I18N as Record<string, Record<string, string> | undefined>)[k];
+      const row = dict[k];
       // 表里指着一个字典里没有的 key ⇒ 那一条红线已经无人再守，当场说出来，不许静默跳过。
-      if (row === undefined) { hits.push(`${k}: 白名单里这个 key 不在字典里`); continue; }
+      if (row === undefined) { out.push(`${k}: 白名单里这个 key 不在字典里`); continue; }
       for (const lang of LANGS) {
-        const s = (row[lang] ?? "").toLowerCase();
         for (const w of UNVERIFIED_BANNED) {
-          if (s.includes(w.toLowerCase())) hits.push(`${k}/${lang}: ${w}`);
+          if (unverifiedHit(row[lang] ?? "", w)) out.push(`${k}/${lang}: ${w}`);
         }
       }
     }
-    expect(hits, "这几条文案描述的是尚未在真机上核实的事，不许写成已经核实过的口吻").toEqual([]);
+    return out;
+  }
+
+  it("未核实的事不许被说成已核实（白名单 × 词表的交集）", () => {
+    const failures = unverifiedFailures(I18N as Record<string, Record<string, string>>);
+    expect(failures, "这几条文案描述的是尚未在真机上核实的事，不许写成已经核实过的口吻").toEqual([]);
+  });
+
+  /**
+   * ⚠️⚠️ **该红时红：逐概念 × 逐语言各往白名单里那条文案塞一次那种语言的说法**
+   *（Task 7 补漏评审 H1/H2）。
+   *
+   * 上面那格 `toEqual([])` 是**空断言家族**里最典型的一个：词表整族被删掉、
+   * 命中口径被写坏、射程被清空——三种改法都只会让它更绿。实测的那一次：
+   * 把日 / 韩三个词整族从表里删掉，门禁 EXIT=0、两份测试全绿。
+   *
+   * ⇒ 这一格拿**同一个 `unverifiedFailures`** 去问「毒刺在场时它还看不看得见」。
+   * **探针必须与真扫描共用同一份判据**：另抄一份的话，探针绿而真扫描瞎，
+   * 两者永远不会互相揭发。
+   */
+  it("该红时红：逐概念 × 逐语言各塞一次那种语言的说法 —— 每一种都要被点名", () => {
+    const target = UNVERIFIED_KEYS[0]!;
+    const base = I18N as Record<string, Record<string, string>>;
+    expect(base[target], "白名单第一条已经不在字典里了 —— 这一格会退化成空转").toBeDefined();
+    for (const c of UNVERIFIED_CONCEPTS as Array<{ id: string; words: Record<string, string[]> }>) {
+      for (const lang of LANGS) {
+        const word = (c.words[lang] ?? [])[0];
+        expect(word, `概念 ${c.id} 在 ${lang} 下一个说法都没有 —— 那种语言在这条概念上是瞎的`)
+          .toBeTruthy();
+        const poisoned = {
+          ...base,
+          [target]: { ...base[target]!, [lang]: `${base[target]![lang]}（${word}）` },
+        };
+        const failures = unverifiedFailures(poisoned);
+        expect(failures.length, `${c.id}/${lang}：塞了「${word}」却一条都没报——这一格控制是空的`)
+          .toBe(1);
+        for (const h of [target, lang, word!]) {
+          expect(failures[0] ?? "", "红了但报文没点名这些东西").toContain(h);
+        }
+      }
+    }
   });
 
   /**
@@ -438,16 +554,78 @@ describe("i18n 字典", () => {
    */
   it("同一个概念在 ja 里只有一个术语 —— 主通道那一族", () => {
     const LABEL_KEYS = ["reg.primary", "set.field.registrar.primary", "ov.config.primary"] as const;
+    /**
+     * ⚠️⚠️ **下面读到的每一条 key 都要登记在这里，不许只登记 `LABEL_KEYS`**
+     *（Task 7 补漏评审 L1）。上一版的反向自检只问了 `LABEL_KEYS` 三条，
+     * 而用例体里还读着另外三条**没登记**的 key；`ja()` 对不存在的 key 返回 `""`，
+     * 于是那两条 `toContain(ja("reg.role.primary"))` 变成 `toContain("")` **恒真**。
+     * 实测：把 `reg.role.primary` 改个名、并给新 key 写回本任务要消灭的那个词 ⇒ 这一格仍然 PASS。
+     * 上一版那句「这张表不许空转」承诺的射程比它的代码大 —— 这里把射程补齐。
+     */
+    const READ_KEYS = [...LABEL_KEYS, "reg.emptyPrimary", "reg.role.primary", "reg.tend.channelAny"];
     const ja = (k: string): string => ((I18N as Record<string, Record<string, string>>)[k] ?? {}).ja ?? "";
-    // 反向自检：这张表不许空转（key 改了名之后下面几条会在空字符串上恒真）。
-    expect(LABEL_KEYS.filter((k) => !(k in I18N)), "表里有字典中不存在的 key").toEqual([]);
+    expect(READ_KEYS.filter((k) => !(k in I18N)), "这一格读到的 key 里有字典中不存在的").toEqual([]);
     expect([...new Set(LABEL_KEYS.map(ja))], "同一个概念在 ja 里出现了不止一个术语").toHaveLength(1);
     const term = ja(LABEL_KEYS[0]);
     expect(term.length, "ja 值是空的 ⇒ 上面那条 `toHaveLength(1)` 是恒真的").toBeGreaterThan(0);
+    /**
+     * ⚠️ **短标签也要有下限，否则「长词 contains 短标签」这条方向天生松**：
+     * `ja("reg.role.primary")` 退化成一个碎片（甚至空串）时，`toContain` 照样过。
+     * 这里只钉「不许是空串 / 单字符碎片」这一档，**刻意不写死是哪个词**——
+     * 理由与上面那段同一条：主 / 备措辞真换词时几个 key 会一起换。
+     */
+    const short = ja("reg.role.primary");
+    expect(short.length, "短标签退化成碎片 ⇒ 下面那条 `toContain` 松到什么都能过").toBeGreaterThan(0);
     // 整句文案与短标签也必须用同一个词，不许各说各的。
     expect(ja("reg.emptyPrimary"), "那句「两条通道平级，请选择一条作为主通道」用的是另一个日文词").toContain(term);
-    expect(term, "短标签 reg.role.primary 用的是另一个日文词").toContain(ja("reg.role.primary"));
-    expect(ja("reg.tend.channelAny"), "补池范围那句用的是另一个日文词").toContain(ja("reg.role.primary"));
+    expect(term, "短标签 reg.role.primary 用的是另一个日文词").toContain(short);
+    expect(ja("reg.tend.channelAny"), "补池范围那句用的是另一个日文词").toContain(short);
+  });
+
+  /**
+   * ⚠️⚠️ **同一个概念在 ja 文档里也只许有一个术语 —— 备用通道那一族**
+   *（Task 7 补漏评审 M5）。
+   *
+   * Step 5 当时只统一了 primary 一侧，fallback 一侧的结论是「字典内已一致，不动」——
+   * **那句话只在字典内为真**。实测：同一个概念当时在 `docs/ja/` 里是「副チャネル」，
+   * 而下一期新写的 `docs/ja/ADMIN.md` 又冒出第三个词「予備」，**全程零告警**，
+   * 因为上面那一格的射程只有字典、不含 `docs/`。
+   * 一个概念三个日文词，读文档的人无从判断它们是不是同一个东西。
+   *
+   * ⇒ 这一格把射程接到 `docs/ja/` 上：**面板怎么说，文档就怎么说**（正典取自字典，
+   * 不在这里手写第二份），另外两个词一个都不许再出现。
+   * ⚠️ **禁的是「副チャネル」与「予備」这两种指称**（后者连「予備チャネル」一起收），
+   * **不是「フォールバック」这个词本身**：
+   * `docs/ja/DEPLOY.md` 里好几处正当地用它描述别的回落（池空回落、`X-Forwarded-For` 回落），
+   * 那些与两条邮箱通道无关，禁词写宽一格就会当场逼出一册豁免名单。
+   */
+  it("同一个概念在 ja 文档里也只有一个术语 —— 备用通道那一族", () => {
+    const canonical = ((I18N as Record<string, Record<string, string>>)["reg.fallback"] ?? {}).ja ?? "";
+    expect(canonical, "`reg.fallback` 的 ja 值没了 ⇒ 正典取不到，下面整格会空转").toBeTruthy();
+    const BANNED_JA_ALIASES = ["副チャネル", "予備"];
+    const dir = resolve("docs/ja");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    // 非空锚：目录读空 / 后缀写错时，下面那条 `toEqual([])` 只会更绿。
+    expect(files.length, "docs/ja 下一份 .md 都没读到 —— 这一格测的是空气").toBeGreaterThan(0);
+    const hits: string[] = [];
+    let canonicalSeen = 0;
+    for (const f of files) {
+      const lines = readFileSync(join(dir, f), "utf8").split("\n");
+      lines.forEach((line, i) => {
+        if (line.includes(canonical)) canonicalSeen++;
+        for (const w of BANNED_JA_ALIASES) {
+          if (line.includes(w)) hits.push(`docs/ja/${f}:${i + 1} 用了「${w}」`);
+        }
+      });
+    }
+    expect(
+      canonicalSeen,
+      `docs/ja 里一处「${canonical}」都没有 —— 正典对不上文档，这一格的射程是假的`,
+    ).toBeGreaterThan(0);
+    expect(
+      hits,
+      `备用通道在 ja 里只许有一个说法（面板用的是「${canonical}」）：\n${hits.join("\n")}`,
+    ).toEqual([]);
   });
 
   /**

@@ -572,7 +572,7 @@ Caddy は `header_up CF-Connecting-IP ""`、Traefik はミドルウェアの `cu
 |---|---|---|---|
 | `REGISTRAR_ENABLED` | いいえ | `false` | マスタースイッチ。`true` にしないとレジストラーは有効になりません。 |
 | `REGISTRAR_PRIMARY` | 有効化時は必須 | なし | 主チャネル、`yyds` または `moemail`。両者は対等でデフォルト値なし。 |
-| `REGISTRAR_FALLBACK` | いいえ | 空（フォールバックなし） | 副チャネル、`yyds` または `moemail`。 |
+| `REGISTRAR_FALLBACK` | いいえ | 空（フォールバックなし） | フォールバックチャネル、`yyds` または `moemail`。 |
 | `TARGET_KEYS` | いいえ | `20` | 目標とする利用可能 key 数。 |
 | `MINT_BATCH` | いいえ | `5` | 1 ラウンドで発行する key の最大数。 |
 | `TEND_INTERVAL_MS` | いいえ（Node/Docker のみ） | `1800000` | Node 側の補充間隔。Worker 側は `wrangler.toml` の Cron が代わりに決める。 |

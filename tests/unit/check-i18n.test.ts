@@ -4,9 +4,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
-import { UNVERIFIED_KEYS, UNVERIFIED_BANNED } from "../../scripts/lib/unverified-claims.mjs";
+import {
+  UNVERIFIED_KEYS, UNVERIFIED_BANNED, UNVERIFIED_CONCEPTS,
+} from "../../scripts/lib/unverified-claims.mjs";
+import { tableFromSource } from "../helpers/gate-tables.js";
 
 const SCRIPT = resolve("scripts/check-i18n.mjs");
+const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 
 /**
  * **i18n 门禁（`scripts/check-i18n.mjs`）自己的元测试**（全分支评审 I2）。
@@ -137,6 +141,30 @@ function fixtureWith(key: string, lang: string, text: string, extra: Partial<Fix
     ...extra,
   };
 }
+
+/**
+ * 偏好词门禁（规则⑥）的**正向格表**：每一行 = 一条真作用域前缀 × 一种语言 × 一段中招文案。
+ *
+ * ⚠️ **它同时是「作用域覆盖」那条断言的取数一侧**（见「⑥ 前缀表与正向格双向咬合…」那一格），
+ * 所以**别把它拆回各个用例体里**：拆回去之后「门禁那张表里多了一条而没人证明它生效」
+ * 这件事就再也没有机器看得见了——那正是本轮补上的那个缺口。
+ * `reg.` 与 `keys.addMenu.auto` 两条另有各自的多语言循环用例，这里各留一行是为了让
+ * 覆盖断言问得出话，**不是重复**：那两格问的是「三种语言都拦得住」，这张表问的是
+ *「这条前缀在作用域里」。
+ */
+const BANNED_PREFIX_CASES: ReadonlyArray<readonly [string, string, string]> = [
+  ["reg.x", "zh-TW", "主通道（推薦）"],
+  ["keys.addMenu.autoMoemail", "en", "Auto-register (recommended)"],
+  ["set.field.registrar.primary", "zh-TW", "主通道（推薦）"],
+  ["set.field.registrar.fallback", "en", "Fallback channel (recommended)"],
+  ["set.field.channel.baseUrl", "ko", "서비스 URL (권장)"],
+  ["set.card.registrar", "zh-CN", "注册机（推荐先配这条）"],
+  ["ov.config.primary", "ko", "주 채널(권장)"],
+  ["ov.config.fallback", "ja", "フォールバックチャネル（推奨）"],
+];
+
+/** 门禁源码里那张 `BANNED_PREFIXES`，逐字抠出来。认不出会抛，不会静默当成空表。 */
+const gateBannedPrefixes = (): string[] => tableFromSource(SCRIPT, "const BANNED_PREFIXES = [");
 
 /**
  * 上面那个的**两语言**版（P3e Task 8）。第 ⑩ 条判据问的是 `zh-CN` 与 `ko` 的**关系**
@@ -377,28 +405,62 @@ describe("scripts/check-i18n.mjs 元测试：十条判据逐条", () => {
    *（`set.field.channel.*`）和主 / 备两个选择器标签（`set.field.registrar.primary`
    * / `fallback`）**全在门外**，夹具实跑 EXIT=0。
    *
-   * 下面四格逐个前缀各钉一种语言变体：**新纳入的每一条前缀都要有自己的正向格**，
+   * 下面逐个前缀各钉一种语言变体：**新纳入的每一条前缀都要有自己的正向格**，
    * 少哪一条，那一条就是「登记在表里但没有任何东西证明它生效」的那一档——
    * 本仓对这种东西的裁定是「一个不会自己红的清单不是守卫，是待办」。
+   * ⚠️ **这句话本轮才真正变成机器**：它以前只是一句写在这里的话，而
+   * `ov.config.primary` / `ov.config.fallback` 两条追加进去之后**没有跟上**，
+   * 一整轮都没人发现。下面那格「⑥ 前缀表与正向格双向咬合…」把它钉住了。
    */
-  it.each([
-    ["set.field.registrar.primary", "zh-TW", "主通道（推薦）"],
-    ["set.field.registrar.fallback", "en", "Fallback channel (recommended)"],
-    ["set.field.channel.baseUrl", "ko", "서비스 URL (권장)"],
-    ["set.card.registrar", "zh-CN", "注册机（推荐先配这条）"],
-  ])("⑥ %s/%s 出现偏好词 ⇒ 当场红", (key, lang, text) => {
+  it.each(BANNED_PREFIX_CASES)("⑥ %s/%s 出现偏好词 ⇒ 当场红", (key, lang, text) => {
     const r = run(fixtureWith(key, lang, text));
     expect(r.status, `${key}/${lang} 没被拦住`).toBe(1);
     expect(r.stderr).toContain("偏好词");
   });
 
   /**
-   * **上面那四格的反向控制：钉住「范围没有被扩大」。**
+   * ⚠️⚠️ **上面那张表与门禁那张前缀表的双向咬合，本轮补上（Task 7 补漏评审 H3）。**
    *
-   * 少了它，把作用域写成整个 `set.*` 也能让那四格全绿——而 `set.*` 里有大量与通道
-   * 无关、且**正当地**会出现「默认 / 优先 / 推荐」的运维文案（超时、冷却、口令）。
-   * 扩太宽的代价不是「多报几条」：这道今天零命中的干净门禁会立刻需要一册豁免名单，
-   * 而本仓的裁定是「开豁免名册比没有规则更糟」。
+   * 上面每一格只证明「**我登记的这条**前缀今天有牙」，**一个字也没说反过来那件事**：
+   * 门禁那张 `BANNED_PREFIXES` 里多出一条而这里没跟上时，那一条就是
+   * 「登记在表里但没有任何东西证明它生效」的那一档。实测的那一次：
+   * 韩文实测追加 `ov.config.primary` / `ov.config.fallback` 两条整 key 之后没有补正向格，
+   * **把那两行从门禁里删掉，门禁 EXIT=0、这份元测试全绿**——而这段说明的正上方
+   * 逐字写着「新纳入的每一条前缀都要有自己的正向格」。
+   *
+   * ⇒ 这一格把那句话变成机器：**从门禁源码里逐字抠出那张表**，两个方向各断言一次。
+   * 抠表判据（认不出就抛，不许静默当成空表）在 `tests/helpers/gate-tables.ts`。
+   */
+  it("⑥ 前缀表与正向格双向咬合：门禁里每条前缀都有正向格，正向格里每条 key 都真在作用域内", () => {
+    const prefixes = gateBannedPrefixes();
+    expect(prefixes, "抠到的不是那张前缀表").toContain("reg.");
+    const uncovered = prefixes.filter((p) => !BANNED_PREFIX_CASES.some(([k]) => k.startsWith(p)));
+    expect(
+      uncovered,
+      "门禁的作用域里有这几条前缀，而上面那张正向格表里没有任何一条 key 命中它们"
+      + " ⇒ 它们是「登记在表里但没有任何东西证明它生效」的那一档，请各补一格",
+    ).toEqual([]);
+    const orphan = BANNED_PREFIX_CASES
+      .map(([k]) => k)
+      .filter((k) => !prefixes.some((p) => k.startsWith(p)));
+    expect(
+      orphan,
+      "上面那张正向格表里这几条 key 已经不在门禁的作用域里了"
+      + " ⇒ 要么门禁那张前缀表被人删了一条，要么这里的 key 写错了",
+    ).toEqual([]);
+  });
+
+  /**
+   * **上面那一族的反向控制：钉住「范围没有被扩大」。**
+   *
+   * 少了它，把作用域写成整个 `set.*` 也能让那几格全绿——而 `set.*` 里有与通道无关、
+   * 却**正当地**含着表内词的运维文案。⚠️ **这里刻意只说这一句，不再写
+   * 「大量（超时、冷却、口令）」那种全称句**：本轮实测放宽成 `set.` 之后全字典
+   * **只命中 `set.field.agnesBaseUrl` 的 ko 值一条**（「업스트림 기본 URL」里的 `기본`
+   * 是 base URL 的「基」），超时 / 冷却 / 口令三族一条都没中 ⇒ 上一版那句话当时就是假的。
+   * 真仓那一条反例由 `tests/unit/i18n-dict.test.ts` 的
+   * 「作用域刻意不是整个 set.：真仓里那条正当用词的反例还在」那一格钉着，
+   * 本格用的仍是夹具（夹具与真仓各守一半：夹具证明判据形状，真仓证明反例还在）。
    */
   it("⑥ 反向控制：与通道无关的 set.field.upstreamTimeoutMs 里出现同样的词 ⇒ 不红", () => {
     const r = run(fixtureWith("set.field.upstreamTimeoutMs", "zh-CN", "上游超时（推荐 30 秒）"));
@@ -471,7 +533,83 @@ describe("scripts/check-i18n.mjs 元测试：十条判据逐条", () => {
       unverifiedKeys: ["usage.range.retention"],
     }));
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain("把一件未核实的事说成了");
+    expect(r.stderr).toContain("里出现了软化词");
+    // **报文里必须带处置指引**（P3e Task 4 复评 F2 的裁定：读 CI 输出的人不会回头读源码注释）。
+    // 少了这一句，撞上误报的人手里只有一句指控，而他唯一想得到的做法是把那句文案改坏。
+    expect(r.stderr, "报文没说表在哪儿 ⇒ 撞上它的人无从下手").toContain("scripts/lib/unverified-claims.mjs");
+    expect(r.stderr, "报文没给出路 ⇒ 报文会亲手把人引进坑").toContain("尚未在真机上核实");
+  });
+
+  /**
+   * ⚠️⚠️ **逐概念 × 逐语言：每一种语言在每一条概念上都要真的被门禁认出来**
+   *（Task 7 补漏评审 H1/H2）。
+   *
+   * **这一族存在的全部理由**：上一版的词表是拉平的一维表，繁体形态一个都没有，
+   * 于是同义的一句话简体当场红、繁体一路绿；韩文的 `안전`、日文的 `大丈夫` 同样漏网。
+   * 那时守着词表的只有一句 `length` 断言——**把日韩三个词整族删掉，门禁 EXIT=0、
+   * 这两份测试全绿**。`length` 那种断言证明的是「表还有几行」，不是「每种语言都有牙」。
+   *
+   * ⇒ 这里拿真门禁把矩阵里**每一格的第一个说法**各跑一遍。
+   * 词表是从 `scripts/lib/unverified-claims.mjs` 那份真源现算的，**不是这里手抄一份**：
+   * 手抄的那份漂了没人会发现，而漂了之后这一族仍然会全绿。
+   */
+  it.each(
+    (UNVERIFIED_CONCEPTS as Array<{ id: string; words: Record<string, string[]> }>).flatMap(
+      (c) => LANGS.map((lang) => [c.id, lang, (c.words[lang] ?? [])[0] ?? ""] as const),
+    ),
+  )("⑨ 概念 %s 的 %s 说法「%s」要被真门禁认出来", (id, lang, word) => {
+    // 空说法 = 那种语言在这条概念上是瞎的。这里当场说出来，不许拿一个空串去跑出一格假绿。
+    expect(word, `概念 ${id} 在 ${lang} 下一个说法都没有`).not.toBe("");
+    const r = run(fixtureWith("usage.range.retention", lang, `……${word}……`, {
+      unverifiedKeys: ["usage.range.retention"],
+    }));
+    expect(r.status, `${id}/${lang}「${word}」没被拦住：\n${r.stderr}`).toBe(1);
+    expect(r.stderr).toContain(word);
+  });
+
+  /**
+   * **两条反向控制：钉住「命中口径没有退回裸 `includes`」**（Task 7 补漏评审 M1 / L4）。
+   *
+   * 两条都是实测抓到的真误报，不是假想：
+   * · 英文 `defined` / `refined` 里含着 `fine`，上一版当场把一句纯技术描述判成软化；
+   * · 中文「十分钟」里含着「十分」，同上。「十分」已经从词表里删掉，
+   *   「十分安全 / 十分够用」那一档由 `safe` / `enough` 两条概念自己接住。
+   * 少了这两格，把命中口径改回裸 `includes`（或者把「十分」加回词表）不会有任何东西红。
+   */
+  it("⑨ 反向控制：英文 defined 里的 fine 不许被当成软化词", () => {
+    const r = run(fixtureWith("usage.range.retention", "en", "The window is defined by the shard layout.", {
+      unverifiedKeys: ["usage.range.retention"],
+    }));
+    expect(r.status, `ASCII 词没按词边界匹配 ⇒ defined 里的 fine 被误伤：\n${r.stderr}`).toBe(0);
+  });
+
+  it("⑨ 反向控制：中文「十分钟」不许被当成软化词", () => {
+    const r = run(fixtureWith("usage.range.retention", "zh-CN", "十分钟之后这一档就会超时。", {
+      unverifiedKeys: ["usage.range.retention"],
+    }));
+    expect(r.status, `「十分」又回到词表里了 ⇒ 它是一台稳定的误报机：\n${r.stderr}`).toBe(0);
+  });
+
+  /**
+   * ⚠️⚠️ **登记在案的误报边界：这一格断言的是「今天它就是会红」，不是「它做对了」。**
+   *
+   * 判据是子串匹配，它分辨不出「60 次是安全的」（要拦的）与「是否安全尚未核实」
+   *（完全正确的存疑句）。**为什么不给它加否定式处理**、替代方案在这个仓里为什么
+   * 会带一个语言形状的洞，理由整段写在 `scripts/check-i18n.mjs` 规则⑨ 上方，
+   * 不在这里复述一遍（复述两份，改的时候只会改一份）。
+   *
+   * 这一格要钉住的是**报文**：撞上这一档的人手里唯一的东西就是那几行 stderr，
+   * 报文必须告诉他正确的出路是「把这句话改写成不含这个词的说法」，
+   * 而不是让他把「尚未核实」这层意思删掉——**报文可以亲手把人引进坑**，本仓栽过。
+   * 哪天真有人给它加了否定式处理，这一格会变红，那正是提醒他回去改那段说明的地方。
+   */
+  it("⑨ 已登记的误报边界：诚实的存疑句里出现「安全」照样红（报文必须给出正确的出路）", () => {
+    const r = run(fixtureWith("usage.range.retention", "zh-CN", "这一档是否安全尚未核实。", {
+      unverifiedKeys: ["usage.range.retention"],
+    }));
+    expect(r.status, "误报边界变了 ⇒ 回去改 scripts/check-i18n.mjs 规则⑨ 上方那段说明").toBe(1);
+    expect(r.stderr, "报文没给出路，撞上误报的人只会去改那句本来正确的文案")
+      .toContain("不是把「尚未核实」这层意思删掉");
   });
 
   /**
@@ -524,11 +662,41 @@ describe("scripts/check-i18n.mjs 元测试：十条判据逐条", () => {
   it("⑨ 反向自检：白名单非空、词表非空、且白名单里每个 key 都真的在字典里", () => {
     // 没有这一格的话，把 key 改个名就能让整条规则空转 —— 本仓已栽过 `--reporter=basic` 空跑那一族。
     expect(UNVERIFIED_KEYS.length).toBeGreaterThan(2);
-    expect(UNVERIFIED_BANNED.length).toBeGreaterThan(5);
+    // ⚠️ **词表这一半只问「非空」，射程那一半在下面那一格**：上一版这里写的是
+    // `length > 5`，而那张表当时有十来条 —— 一个松到能整族删词的魔法数，
+    // 与它同一行的 `UNVERIFIED_KEYS` 那一半（`> 2` 对三条表是紧的）恰好相反。
+    // **一个不会自己红的清单不是守卫，是待办**：词表的守卫是矩阵完备性，不是行数。
+    expect(UNVERIFIED_BANNED.length, "词表空了 ⇒ 规则⑨ 的交集恒为空").toBeGreaterThan(0);
     expect(
       UNVERIFIED_KEYS.filter((k: string) => !(k in I18N)),
       "白名单里这些 key 已经不在字典里了 ⇒ 规则⑨ 对它们空转（改了名就把名字改过来，别删条目）",
     ).toEqual([]);
+  });
+
+  /**
+   * ⚠️⚠️ **词表的真守卫：「概念 × 语言」的完备性**（Task 7 补漏评审 H1/H2）。
+   *
+   * 实测的那一次：把日 / 韩三个词整族从表里删掉 ⇒ 门禁 EXIT=0、两份测试全绿，
+   * 因为当时守着这张表的只有一句 `length` 断言，而那个数比表短得多。
+   * 一张能整族删空还全绿的表，不是守卫，是待办。
+   *
+   * 这一格问的是**结构**：每条概念的语言集必须与 `LANGS` 逐条对齐，
+   * 而且每种语言下至少要有一个非空说法。缺一格 = 那种语言在那条概念上是瞎的。
+   * 形态照抄 `tests/unit/i18n-dict.test.ts` 的
+   * 「词表是「概念 × 语言」的矩阵：每条概念五种语言都得有说法，缺一种就是那种语言的盲区」。
+   */
+  it("⑨ 词表是「概念 × 语言」的矩阵：每条概念五种语言都得有说法，缺一种就是那种语言的盲区", () => {
+    expect(UNVERIFIED_CONCEPTS.length, "概念表空了——上面那一族会一格都不跑").toBeGreaterThan(0);
+    const holes: string[] = [];
+    for (const c of UNVERIFIED_CONCEPTS as Array<{ id: string; words: Record<string, string[]> }>) {
+      expect(Object.keys(c.words).sort(), `${c.id} 的语言集与 LANGS 对不上`).toEqual([...LANGS].sort());
+      for (const lang of LANGS) {
+        if ((c.words[lang] ?? []).filter((w) => w.trim() !== "").length === 0) {
+          holes.push(`概念 ${c.id} 在 ${lang} 下一个说法都没有——那种语言在这条概念上是瞎的`);
+        }
+      }
+    }
+    expect(holes, holes.join("\n")).toEqual([]);
   });
 
   /**
