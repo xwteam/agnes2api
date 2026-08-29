@@ -4028,6 +4028,56 @@ describe("根 README 首屏的一行五链与 16 节骨架（P3e Task 27 / P3f �
     expect(got, "两节对调了，⑥ 却没红——它多半退回了「在不在这个集合里」").not.toEqual(WANT_SECTIONS);
   });
 
+  /* ── ⑦ 头部块那 9 条章节锚点导航（W53）───────────────────────────────────────
+   *
+   * 模板的头部块里有一排 `<a href="#-快速部署">快速部署</a> &bull; …`，**恰好 9 条**，
+   * 收录 16 节里的 §1–§11 减去「技术架构」与「项目结构」（`K/README.md:19-29` 与
+   * `G/README.md:19-29` 逐字节相同，两仓 100% 一致）。
+   *
+   * 锚点是**推导量不是手写量**：GitHub 的片段标识符由标题现算，改一个标题而不改导航，
+   * 屏幕上那条链接就点开落空——而这种坏法**没有任何构建步骤会报错**。
+   * 下面两格分别钉住「9 条解析得开」与「改标题不改导航当场红并点名死锚点」。
+   */
+
+  /** GitHub 的标题 → 片段标识符：转小写 → 删掉字母/数字/空格/连字符之外的字符 → 空格转 `-`。 */
+  const slugOf = (heading: string) =>
+    heading.replace(/^#+\s/, "").toLowerCase().replace(/[^\p{L}\p{N} -]/gu, "").replace(/ /g, "-");
+
+  /** 头部块导航里的页内锚点。 */
+  const navAnchors = (body: string) =>
+    [...body.matchAll(/<a href="(#[^"]*)"/g)].map((m) => m[1]!);
+
+  /** 导航收录的那 9 节在 `SECTIONS` 里的下标：§1–§11 去掉「技术架构」(2) 与「项目结构」(9)。 */
+  const NAV_AT = [0, 1, 3, 4, 5, 6, 7, 8, 10] as const;
+
+  /** ⑦ 的失败报文全集。**真扫描与反向控制共用这一份。** */
+  const deadAnchorFailures = (body: string): string[] => {
+    const nav = navAnchors(body);
+    if (nav.length === 0) return ["认不出根 README 头部块里的章节锚点导航——认不出要吵，不许静静报零缺格"];
+    const slugs = new Set(rootHeadings(body).map(slugOf));
+    return nav.filter((a) => !slugs.has(a.slice(1)))
+      .map((a) => `头部块导航里的锚点 ${a} 在根 README 里没有对应的 \`## \` 标题——点开落空。`
+        + "改标题就要一起改导航，两处是同一件事的两半");
+  };
+
+  it("⑦ 头部块那 9 条章节锚点全部解析得开，且逐条命中 SECTIONS 常量算出来的 slug", () => {
+    const body = readFileSync("README.md", "utf8");
+    expect(navAnchors(body), "头部块导航不是模板固定的 9 条")
+      .toEqual(NAV_AT.map((i) => `#${slugOf(SECTIONS[i]!.title["zh-CN"])}`));
+    const failures = deadAnchorFailures(body);
+    expect(failures, `头部块导航里有死锚点：\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  it("⑦ 该红时红：改一个 `## ` 标题而不改导航 —— 当场红并点名那个死锚点", () => {
+    const body = readFileSync("README.md", "utf8");
+    probeBase(deadAnchorFailures(body), "⑦ 头部块那 9 条章节锚点全部解析得开，且逐条命中 SECTIONS 常量算出来的 slug");
+    const mutated = body.replace("\n## ⚙ 配置说明\n", "\n## ⚙ 配置项说明\n");
+    expect(mutated, "变异没落地——根 README 里没找到 `## ⚙ 配置说明` 那一行").not.toEqual(body);
+    const failures = deadAnchorFailures(mutated);
+    expect(failures, "改了标题没改导航，⑦ 却没红").toHaveLength(1);
+    expect(failures[0] ?? "", "⑦ 红了却没点名是哪一个锚点落空").toContain("#-配置说明");
+  });
+
   /** 徽章缺失的那几份。**真扫描与反向控制共用这一份**，`read` 是唯一的注入点。 */
   const badgeMissing = (v: string, read: (p: string) => string) => SIX.filter((p) => !read(p).includes(`version-v${v}`));
 
