@@ -30,7 +30,7 @@ Cloudflare Worker 与 Node / Docker 两种运行时。
   `scripts/build-ui.mjs` 只把它逐字节烧进 `src/ui/assets.generated.ts`。
 - **管理接口鉴权**：`ADMIN_TOKEN` 没设时 `/admin` 整棵树都不注册；口令只走
   `x-admin-key` 请求头，不落 Cookie、不进 query。
-- **五语言**：面板与文档（README / ADMIN / API / DEPLOY / REGISTRAR / USAGE）
+- **五语言**：面板与文档（README / ADMIN / API / DEPLOY / REGISTRAR / SPONSORS / USAGE）
   各有 `zh-CN` / `zh-TW` / `en` / `ja` / `ko` 五份。
 - **CI 十三道门禁**：跟踪文件不许是二进制、具名放行的 PNG 结构审计、凭据扫描、
   生成面板资源、生成物一致性、面板体积预算、i18n 完整性、KV namespace id 仍是占位符、

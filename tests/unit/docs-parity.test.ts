@@ -1035,7 +1035,7 @@ const idents = (s: string) => codeSpans(s).filter((c) => IDENTIFIER.test(c));
  * 没在守），只是换到了另外四个目录里。今天改成**逐个语言目录各比一次**，报文点名
  * 「哪一种语言多出/少掉哪一份」，测法见反向控制里那条「R1 多一份只在 en 有的」。
  */
-const DOCS = ["ADMIN", "API", "DEPLOY", "README", "REGISTRAR", "USAGE"] as const;
+const DOCS = ["ADMIN", "API", "DEPLOY", "README", "REGISTRAR", "SPONSORS", "USAGE"] as const;
 
 /**
  * `docs/` 下**不按语言分**的目录。名册之外的子目录一律必须是 `LANGS` 里的一种。
@@ -1207,9 +1207,21 @@ function divergenceReport(labels: readonly string[], values: readonly unknown[])
  * · 在名册里却抽到了东西 ⇒ 红（名册过期了，删掉登记——**豁免名册会变成永久的洞**）。
  */
 const EMPTY_BY_DESIGN: ReadonlyArray<readonly [rule: string, doc: string]> = [
-  // 这两份文档整份没有代码围栏（不是"缩进围栏认不出"——`fences` 今天顶格与缩进一视同仁）。
+  // 这三份文档整份没有代码围栏（不是"缩进围栏认不出"——`fences` 今天顶格与缩进一视同仁）。
   ["R3 代码围栏语言标记序列", "ADMIN"],
   ["R3 代码围栏语言标记序列", "REGISTRAR"],
+  ["R3 代码围栏语言标记序列", "SPONSORS"],
+  // ⚠️ `SPONSORS.md` 一份文档独占三格，理由是它的**体裁**：它是一页号召 Star / 提 Issue /
+  // 提 PR 的散文 + 一段四步 git 命令，**结构上就不该有表格，也不该出现网关的标识符**
+  // （模板实例 `K/docs/{lang}/SPONSORS.md` 五份同样一张表、一个 `IDENTIFIER` 都没有）。
+  // 这三格因此不是"欠着还没写"，是"这条判据在这份文档上无从取样"：
+  // · R5 五份都是 0 —— 全篇没有一行以 `|` 开头；
+  // · R6 五份都是空数组 —— 全篇只有两处行内 code（`git checkout …` / `git commit …`），
+  //   两处都不满足 `IDENTIFIER`（不是全大写常量、不以 `/` 开头、也不是 `agnes-` 前缀）。
+  // **两个方向都活着**：哪天这份文档补进一张表或写进一个 `GATEWAY_TOKEN` 这样的标识符，
+  // 名册这一条会因为"登记了却抽到东西"当场红，逼人回来删登记。
+  ["R5 以竖线开头的表格行数", "SPONSORS"],
+  ["R6 标识符型 code span 多重集", "SPONSORS"],
 ];
 
 /** 指纹「空」的判定：数组看长度，数字（R5）看是不是 0。 */
@@ -3479,7 +3491,12 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
  *   首屏第一行的**语言切换行**和 `## Features` 里那几条指路链接一起漏在射程外，
  *   而那两处指错同样是首屏可见。存在性还要求**是文件**：`existsSync` 对目录也返回真，
  *   `[ADMIN](docs/en)` 点开是列目录不是文档（下面有一格该红时红钉这条）。
- * ④ **索引表按「行×列」定位**，不是「这个路径在不在某个集合里」。
+ * ④A **每份 `DOCS` 文档在根 README 里都指得到五种语言**，一种都不少。这一条**只问入口在不在，
+ *   不问入口长什么样**：谁写在 `## Documentation` 的矩阵表里、谁写成模板那种「一行五链」的
+ *   指针行都算数（改写的完整理由写在 `docPointerFailures()` 上方，别在这里读第二遍）。
+ *   它取代的是旧版塞在 ④ 里的「这些文档在首屏索引表里连一列都没有」那一句——那一句把
+ *   「有没有入口」绑死在一张表的列结构上，换一种同样合法的写法就会红错方向。
+ * ④B **索引表按「行×列」定位**，不是「这个路径在不在某个集合里」。
  *   ⚠️ 这一条是复评用两条变异逼出来的：第一版把整张表的目标塞进一个 `Set` 再问「在不在」，
  *   于是「日本語行与한국어行的 README 链接对调」「英文行的 API 格与 DEPLOY 格对调」
  *   **两种置换都全绿**——集合里的元素一个没少，而屏幕上点「日本語 → README」落到韩文文档。
@@ -3530,7 +3547,7 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
  * 而真正没人守的（当时是「整行/整列置换」）根本不在名单里。**下面每一条都是实测过的。**
  *
  * · ① 只查**链接指的文件在不在**，不查**指得对不对**。索引表那 `LANGS × DOCS` 格今天由
- *   ④ 按行×列兜住，**但正文散文里的链接只有 ①**：把 `## Features` 里那条指向
+ *   ④B 按行×列兜住，**但正文散文里的链接只有 ①**：把 `## Features` 里那条指向
  *   `REGISTRAR.md` 的链接**六份一起**改指 `USAGE.md`（根那份写 `docs/en/USAGE.md`、
  *   五语言各写 `./USAGE.md`），文件在、② 不分叉、R4 五份一致 ⇒ **全绿**。
  *   这是今天真正剩下的那个洞。
@@ -3541,9 +3558,13 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
  * · ② 只证明**两份复制没分叉**，不证明任何一份说得对：两份一起说错，它一个字都不吭。
  * · ②B 是**前缀**判据：`docs/en/README.md` 在这两节尾巴上追加的散文不受管（只钉住
  *   尾巴里不许有表格行）；根那份**永远不会**因为 en 多写而红，反过来也一样。
- * · ④⑤ 只认 `## Documentation` 那张表与 `**Language:**` 那一行的**结构**：行首标签写的是
+ * · ④B⑤ 只认 `## Documentation` 那张表与 `**Language:**` 那一行的**结构**：行首标签写的是
  *   哪一国文字、链接文字与目标是不是同一种语言，它一概不看——「`한국어` 这四个字其实是韩文」
  *   这种事没有机器判据，只能靠人。
+ * · ④A 只数「五种语言齐不齐」，**不要求那五条落在同一行上**，也不看那条入口周围写了什么：
+ *   一条 `docs/ko/API.md` 藏在一段与 API 无关的散文里，它照样算数。**「并列」这半句今天
+ *   没有机器判据**——本仓的入口今天是一张转置矩阵表（每行一种语言），要求同一行会当场
+ *   把真仓判红，而那并不是读者找不找得到文档的必要条件。
  * · ③ 只比字符串包含，管不到徽章的颜色与链接目标，也管不到 `package.json` 里那一份
  *   版本号（那是 `scripts/set-version.sh` 一次刷的另一半）。
  * · 面板条目里那句话是否属实（`ADMIN_TOKEN` 没设时 `/admin` 真的不注册），**这一组
@@ -3682,9 +3703,55 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
   };
 
   /**
-   * ④ 的失败报文全集：**按行×列定位**。
+   * ④A 的失败报文全集：**每份 `DOCS` 文档在根 README 都指得到五种语言，一种都不少。**
+   *
+   * ⚠️ **这一条是从「索引表必须有第 N 列」改写过来的**，改写理由有两条，都不是风格问题：
+   * · **旧写法把「有没有入口」这件事绑死在一张表的列结构上。** 一份文档在首屏有没有入口，
+   *   与它的入口长成一张 `语言 × 文档` 的矩阵表、还是长成模板那种一行五链的指针行
+   *  （`> 📖 详细部署文档：[简体中文](…) | [繁體中文](…) | …`，见 `K/README.md:76,196,409`），
+   *   本来就没有关系。绑死之后，**换一种同样合法、而且是模板正形的写法会让判据当场红**，
+   *   而红的原因是"表里没有这一列"，不是"读者找不到这份文档"——报文把人引向错误的方向。
+   * · **旧写法只数「列」，一列里缺哪几种语言它一个字都不说。** 真正要守的不变量是
+   *   「五种语言的读者在首屏都点得到这份文档」，而不是「表头上有这个词」。
+   *
+   * 改写之后它**与入口的排版形态解耦**：只问 `docs/<语言>/<文档>.md` 这五个目标在根 README
+   * 正文里出没出现（射程是整份文件，不是以 `|` 开头的行），谁写在表里、谁写成指针行都算数。
+   *
+   * ⚠️ **它做不到什么，明写**：它**不要求五种语言落在同一行上**。「并列」今天在本仓是
+   * 一张转置过来的矩阵表（每一行一种语言、每一列一份文档），要求同一行会当场把真仓判红；
+   * 而"同一行"本身不是读者能不能找到文档的必要条件。**哪天索引表被换成模板那种指针行，
+   * 这一条一个字都不用改**——那正是它改写的目的。
+   */
+  const docPointerFailures = (body: string): string[] => {
+    const targets = relTargets(body);
+    const out: string[] = [];
+    for (const doc of DOCS) {
+      const re = new RegExp(`^docs/([^/]+)/${doc}\\.md$`);
+      const seen = new Set(targets.flatMap((t) => {
+        const m = re.exec(t);
+        return m?.[1] === undefined ? [] : [m[1]];
+      }));
+      const missing = LANGS.filter((l) => !seen.has(l));
+      const extra = [...seen].filter((l) => !(LANGS as readonly string[]).includes(l)).sort();
+      if (missing.length > 0) {
+        out.push(`根 README 里指得到 ${doc}.md 的只有 ${LANGS.length - missing.length} 种语言，缺 ${missing.join("、")}`
+          + "——首屏少一种语言的入口，那一种语言的读者就找不到这份文档，等于没写");
+      }
+      if (extra.length > 0) {
+        out.push(`根 README 里 ${doc}.md 指向了 LANGS 之外的语言目录：${extra.join("、")}`);
+      }
+    }
+    return out;
+  };
+
+  /**
+   * ④B 的失败报文全集：**索引表按行×列定位**。
    * 每一行的语言从该行 README 那一格现算，于是「两行的 README 链接对调」「同一行里两格对调」
    * 都会让「行语言 × 列文档」对不上。**真扫描与反向控制共用这一份。**
+   *
+   * ⚠️ 「这份文档在表里连一列都没有」那一条**已经搬到 ④A**（见上方那段的改写理由）：
+   * 本函数今天只管**表里已经有的那些列对不对得上**，一份文档该不该在表里、
+   * 五种语言齐不齐，它一概不问。
    */
   const indexGridFailures = (body: string): string[] => {
     const t = indexTable(body);
@@ -3694,8 +3761,6 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
     const cols = t.header.map((h, i) => (i === 0 ? null : DOCS.find((d) => d.toLowerCase() === h.toLowerCase()) ?? null));
     const out = cols.flatMap((d, i) =>
       i > 0 && d === null ? [`索引表第 ${i + 1} 列的表头「${t.header[i]}」在 DOCS 里没有同名文档`] : []);
-    const noCol = DOCS.filter((d) => !cols.includes(d));
-    if (noCol.length > 0) out.push(`这些文档在首屏索引表里连一列都没有：${noCol.join("、")}——文档写了却没有入口，等于没写`);
     const readmeAt = cols.indexOf("README");
     if (readmeAt < 1) return [...out, "索引表里没有 README 这一列——每一行的语言就是从这一格现算的，缺了它整条判据无从谈起"];
     const seen: string[] = [];
@@ -3891,9 +3956,35 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
       .toEqual([]);
   });
 
-  it("④ 该红时红：索引表里 ADMIN 那一整列（连表头一起）被删掉 —— ④ 点名这份文档没有入口", () => {
+  it("④A 每份 DOCS 文档在根 README 都指得到五种语言 —— 一种都不少", () => {
     const body = readFileSync("README.md", "utf8");
-    probeBase(indexGridFailures(body), "④ 索引表按行×列定位 —— 每一行的语言从该行 README 那一格现算");
+    // 平凡相等护栏：`DOCS` 空了、或者根 README 一条 `docs/<语言>/<文档>.md` 都扫不到时，
+    // 下面那句 `toEqual([])` 会因为"什么都没查"而永远绿。
+    expect(DOCS.length, "DOCS 是空的，④A 测的是空气").toBeGreaterThan(0);
+    expect(relTargets(body).filter((t) => /^docs\/[^/]+\/[A-Z]+\.md$/.test(t)).length,
+      "根 README 里一条 `docs/<语言>/<文档>.md` 都没扫到——④A 测的是空气")
+      .toBeGreaterThanOrEqual(LANGS.length * DOCS.length);
+    const failures = docPointerFailures(body);
+    expect(failures, `首屏有文档指不全五种语言：\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  it("④A 该红时红：根 README 里 REGISTRAR 的五语言指针整片被抹掉 —— 点名 REGISTRAR 没有入口", () => {
+    const body = readFileSync("README.md", "utf8");
+    probeBase(docPointerFailures(body), "④A 每份 DOCS 文档在根 README 都指得到五种语言 —— 一种都不少");
+    // 换成一份**真实存在**的兄弟文档：磁盘上的文件一个都没少，① 一个字都不会吭，
+    // 「入口没了」这件事只有 ④A 看得见。
+    const mutated = body.replaceAll("REGISTRAR.md", "USAGE.md");
+    expect(mutated, "变异没落地——根 README 里没找到 `REGISTRAR.md`").not.toEqual(body);
+    expect(brokenTargets(mutated), "换的是一份真实存在的文档，① 却跟着红了——变异多半打偏了").toEqual([]);
+    const failures = docPointerFailures(mutated);
+    expect(failures.join("\n"), "REGISTRAR 的指针整片没了，④A 却没点名它").toContain("REGISTRAR.md");
+    expect(failures.join("\n"), "④A 红了却没说少了哪几种语言").toContain(LANGS.join("、"));
+    expect(failures, `只抹掉一份文档的指针，只该报这一条，实报：\n${failures.join("\n")}`).toHaveLength(1);
+  });
+
+  it("④A 该红时红：索引表里 ADMIN 那一整列（连表头一起）被删掉 —— 点名这份文档没有入口", () => {
+    const body = readFileSync("README.md", "utf8");
+    probeBase(docPointerFailures(body), "④A 每份 DOCS 文档在根 README 都指得到五种语言 —— 一种都不少");
     const t = indexTable(body)!;
     const k = t.header.findIndex((h) => h.toLowerCase() === "admin");
     expect(k, "索引表里没有 Admin 这一列，这一格控制是空的").toBeGreaterThan(0);
@@ -3903,9 +3994,25 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
       return cells.length === t.header.length ? `|${cells.filter((_, i) => i !== k).join("|")}|` : l;
     }).join("\n");
     expect(mutated, "变异没落地——没有一行被删掉那一列").not.toEqual(body);
-    const failures = indexGridFailures(mutated);
-    expect(failures.join("\n"), "整列连表头一起删了，④ 却没点名 ADMIN 没有入口").toContain("ADMIN");
-    expect(failures, `整列删掉只该报「这份文档连一列都没有」这一条，实报：\n${failures.join("\n")}`).toHaveLength(1);
+    const failures = docPointerFailures(mutated);
+    expect(failures.join("\n"), "整列连表头一起删了，④A 却没点名 ADMIN 没有入口").toContain("ADMIN.md");
+    // `## Features` 里还留着一条 `[ADMIN.md](docs/en/ADMIN.md)` ⇒ en 还在，缺的是另外四种。
+    expect(failures.join("\n"), "④A 红了却没说清缺的是哪四种语言").toContain("缺 zh-CN、zh-TW、ja、ko");
+    expect(failures, `整列删掉只该报这一条，实报：\n${failures.join("\n")}`).toHaveLength(1);
+  });
+
+  it("④A 不乱红：入口写成模板那种「一行五链」的指针行时照样绿 —— 它判的是五种语言齐不齐，不是表格形态", () => {
+    const body = readFileSync("README.md", "utf8");
+    probeBase(docPointerFailures(body), "④A 每份 DOCS 文档在根 README 都指得到五种语言 —— 一种都不少");
+    const sec = rawSection(body, "Documentation")!.join("\n");
+    const pointerLines = DOCS.map(
+      (d) => `> 📖 ${d}：${LANGS.map((l) => `[${l}](docs/${l}/${d}.md)`).join(" | ")}`,
+    ).join("\n");
+    const mutated = body.replace(sec, `## Documentation\n\n${pointerLines}\n`);
+    expect(mutated, "变异没落地——`## Documentation` 那一节没被换掉").not.toEqual(body);
+    expect(indexTable(mutated), "索引表竟然还在，这一格证不了「不靠表格也能绿」").toBeNull();
+    expect(docPointerFailures(mutated), "换成模板那种指针行之后 ④A 却红了——它多半又把入口的排版形态当成了判据")
+      .toEqual([]);
   });
 
   it("④ 该红时红：链接文字与列名对不上（写着 README、点开去 API）", () => {

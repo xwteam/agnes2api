@@ -225,6 +225,11 @@ BANNER='[collection-guard] ✅'
 #   写着「全量 3790」，数字是知道的，人没走回这四行 ⇒ ⑥ 在那个 HEAD 上必红。
 #   它没有变成一次「推的时候才发现」，唯一的原因是评审先跑到了。教训不是「下次记得」——
 #   而是**改了用例格数就该顺手把这四行与这本账一起改，它们和用例在同一次提交里才对得上**。）
+#   P3f 阶段 4 从 3790 改到 3798：`SPONSORS` 进 `DOCS` 表并落地五份 `docs/{lang}/SPONSORS.md`
+#   ⇒ R2–R6 的「文档 × 判据」网格多出一整行 5 格；判据 ④ 拆成 ④A（每份文档的五语言入口
+#   齐不齐）与 ④B（索引表按行×列定位）之后，④A 的正扫 + 两条负例 + 一条「换成模板那种
+#   一行五链的指针行照样绿」的不乱红共 4 格里有 3 格是新增的（第 4 格是旧的整列删除负例
+#   改判到 ④A 上，不增不减）⇒ 5 + 3 = 8。文件数不变。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -233,7 +238,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=136
-EXPECT_NODE_TESTS=3790
+EXPECT_NODE_TESTS=3798
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
