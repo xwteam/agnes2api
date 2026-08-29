@@ -20,4 +20,22 @@ services:
       - "${PORT:-8080}:${PORT:-8080}"
     volumes:
       - ./data:/app/data
+      # 只读挂宿主的本地时间：`TZ` 只管进程自己的时区换算，容器里那份 `/etc/localtime`
+      # 仍是镜像烤进去的 UTC。两者不一致时，日志时间戳与宿主 `date` 会对不上，
+      # 而排障时对时间戳恰恰是第一件要做的事。
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      # ⚠️ 这一份与 Dockerfile 里那条 HEALTHCHECK 是**两处、有意重复**：镜像内那条只在
+      # 用这个镜像时生效，compose 这一份则连 `build:` 回落出来的本地镜像一起管住，
+      # 且它的参数在仓里读得到、改得动，不用重建镜像。判据同一套：容器内自己发 HTTP。
+      # 用 exec 形态而不是 CMD-SHELL：端口由 node 自己从 `PORT` 读，不经过 shell 展开，
+      # 也就不必去处理 compose 的 `$` 转义。
+      # 四个参数与 Dockerfile 那条逐个相同（两参照仓的 compose 与各自 Dockerfile 也是这个关系）：
+      # 同一件事的两份副本给不同的数，只会让「容器多久才算 unhealthy」变成一个要先查
+      # 「这次跑的是哪一份」才答得出的问题。
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
