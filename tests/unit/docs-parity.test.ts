@@ -854,10 +854,22 @@ describe("五语言 API.md 逐份写着视频任务标识的字符集", () => {
  * 评审**，二十余格全绿、十二道门禁全绿，没有任何东西响过一声。
  *
  * 下面这一组不比对任何人手写的清单，只比对**从五份文件各自派生出来的结构指纹**：
- * 文档基名全集（R1）、heading 层级序列（R2）、代码围栏语言标记序列（R3）、
+ * 语言轴与文档基名全集（R1）、heading 层级序列（R2）、代码围栏语言标记序列（R3）、
  * 归一化后的链接目标多重集（R4）、以 `|` 开头的表格行数（R5）、
  * 标识符型行内 code span 多重集（R6）。加一份新文档、加一段新小节、多一行表格、
  * 某一份多写一个环境变量名——**没有人需要回来表态**，它自己就红。
+ *
+ * ⚠️⚠️ **补漏评审（2026-08-29）在这一组上抓到三处「它自己就红」不成立的**，都已修掉，
+ * 各自的证据与测法写在落点上，这里只留索引：
+ * · **H2**：R1 的「从磁盘派生」原来只派生自 `docs/zh-CN` 一个目录 ⇒ 一份只在 `en` 下的
+ *   孤儿文档实测 285 格全绿。今天逐个语言目录各比一次（见 `DOCS` 上方那段）。
+ * · **H3**：**语言轴本身**原来是一张手写表 ⇒ 新建 `docs/fr/` 实测 285 格全绿。今天由
+ *   `langAxisFailure()` 把 `LANGS` 钉在磁盘上（见 `NON_LANG_DOC_DIRS` 上方那段）。
+ * · **H4**：R2–R6 一格都没继承数字锚点那组的「平凡相等」护栏 ⇒ `R3 × REGISTRAR`
+ *   与 `R3 × ADMIN` 落地当天起就是**结构上不可能变红**的空判据。今天由
+ *   `emptinessFailure()` + `EMPTY_BY_DESIGN` 名册两个方向都钉住。
+ * 另有三处判据本身的射程漏洞（缩进围栏 / 围栏内的 `#` / 跨行 code span），
+ * 分别记在 `FENCE_LINE`、`outsideFences()`、`codeSpans()` 三处的注释里。
  *
  * ⚠️ **与上面那组数字锚点是互补不是重复，那些锚点一个都不许删**：数字锚点管
  * 「同一个数字五份写得一样」，结构判据管「结构对得上」。某一份把 `856` 抄成
@@ -878,10 +890,15 @@ describe("五语言 API.md 逐份写着视频任务标识的字符集", () => {
  * 「为什么不多管一点」这个问题的答案**刻意不写成一句话**，而是两条会自己变红的
  * 用例：下面「R6 的窄判据不是随手定的」把放宽之后的噪声当场列出来；反向控制那格
  * 拿这三个真串证明伪公式确实不进判据。
- * ⭐ 勘察当日曾把「放宽之后多出多少项差异」的计数写进本段当理由，**落地复核时三个
- * 数一个都没对上**。「注释里抄一份计数」天生会过期，本仓已因此漂过多次（上一个
- * 提交刚修过一处同类的），所以这里连同复核出来的新数字一起都不留：**能变红的是
- * 下面那条用例，不是这段话**，要数字就当场自己数一遍，别信注释。
+ * ⭐ 勘察当日曾把「放宽之后多出多少项差异」的计数（`en 38 / ja 24 / ko 29`）写进本段
+ * 当理由，落地复核时写下的是「**三个数一个都没对上**，注释里抄计数天生会过期」。
+ * **补漏评审实测推翻了这句话，此处按实测改真**：那三个数是**「只看 DEPLOY.md 一份、
+ * 按多重集数差异项数」**这一把尺子量出来的，在勘察当日那棵树上**逐个精确命中**；
+ * 落地复核换成了另外两把尺子（「五份逐份 distinct 求和」43/28/37、「DEPLOY.md 一份
+ * distinct 键数」32/21/25），于是看着「一个都没对上」——**是换了尺子，不是数漂了**。
+ * **结论不变、理由换掉**：这里仍然不留计数，理由不是「它会过期」，而是
+ * **① 一个不写明口径的计数换把尺子就对不上；② 没有任何东西钉住它**——改了文档没人
+ * 会回来更新注释。**能变红的是下面那条用例，不是这段话**，要数字就当场自己数一遍。
  *
  * ⚠️ **不许把它挪成一个独立的门禁脚本 + 新增一道 CI 步骤**：那会让
  * `tests/unit/scripts-guard.test.ts「CI 恰好十二道门，编号 1/12 到 12/12 各出现一次」` 当场红，
@@ -895,12 +912,44 @@ describe("五语言 API.md 逐份写着视频任务标识的字符集", () => {
  * 译文是否准确、语义是否同义，仍然只能靠评审。
  */
 
-/** R2：heading 层级序列（只取 # 的个数，不取标题文本——文本本来就该被翻译）。 */
-const headings = (s: string) =>
-  s.split("\n").filter((l) => /^#{1,6} /.test(l)).map((l) => (l.match(/^#+/)?.[0] ?? "").length);
+/**
+ * 围栏行（**含缩进围栏**：列表项里的代码块一律缩进两格写）。
+ *
+ * ⚠️ 补漏评审 M1：第一版三条判据全用 `^```` 顶格锚，于是**列表项里的代码块整个在射程外**。
+ * 实测五份 `DEPLOY.md` 各 28 条围栏行里 **14 条是缩进的**（恰好一半），R3 只看得见另一半，
+ * 而报告却把「换了围栏语言标记就变红」写成了全称句。本仓不用 `~~~` 围栏（下面
+ * 「剥掉围栏之后反引号都成对」那一格顺带钉着这件事：真出现 `~~~` 时配对会当场乱）。
+ */
+const FENCE_LINE = /^[ \t]*```/;
 
-/** R3：代码围栏的语言标记序列。 */
-const fences = (s: string) => [...s.matchAll(/^```(\w*)/gm)].map((m) => m[1] ?? "");
+/**
+ * 把围栏**块内**的行连同围栏行本身一起换成空行（行数不变，只是内容清空）。
+ *
+ * ⚠️ 补漏评审 M2：`headings()` 第一版不分围栏内外，于是 ```bash 块里的 `# 注释` 被当成
+ * 一级标题。实测今天五份 `DEPLOY.md` 各有 **3 个**这样的假标题，而且报文会亲手把人引进坑
+ *（往 ja 的 bash 块里加一行 `# …` ⇒ 报文说「ja 多出一个一级标题、下标 13」，可 ja 里
+ * 根本没有那个标题）。**报文是唯一会被看见的护栏**，指错地方比不报还贵。
+ */
+function outsideFences(s: string): string {
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of s.split("\n")) {
+    if (FENCE_LINE.test(line)) {
+      inFence = !inFence;
+      out.push("");
+      continue;
+    }
+    out.push(inFence ? "" : line);
+  }
+  return out.join("\n");
+}
+
+/** R2：heading 层级序列（只取 # 的个数，不取标题文本——文本本来就该被翻译）。围栏内不算。 */
+const headings = (s: string) =>
+  outsideFences(s).split("\n").filter((l) => /^#{1,6} /.test(l)).map((l) => (l.match(/^#+/)?.[0] ?? "").length);
+
+/** R3：代码围栏的语言标记序列（顶格与缩进围栏一视同仁）。 */
+const fences = (s: string) => [...s.matchAll(/^[ \t]*```(\w*)/gm)].map((m) => m[1] ?? "");
 
 /** R4：归一化后的链接目标多重集（`../<lang>/` → `../LANG/`，锚点归一为 `#`）。 */
 const links = (s: string) =>
@@ -911,8 +960,22 @@ const links = (s: string) =>
 /** R5：以 `|` 开头的表格行数。 */
 const tableRows = (s: string) => s.split("\n").filter((l) => l.trimStart().startsWith("|")).length;
 
-/** 行内 code span 的全量多重集——只给下面那条「放宽会变噪声」的用例用，不是判据。 */
-const codeSpans = (s: string) => [...s.matchAll(/`([^`\n]+)`/g)].map((m) => m[1] ?? "").sort();
+/**
+ * 行内 code span 的全量多重集——只给下面那条「放宽会变噪声」的用例用，不是判据。
+ *
+ * ⚠️ 补漏评审 M3：第一版是 `` /`([^`\n]+)`/g `` ——**按行截断**。CommonMark 的 code span
+ * 本来就可以跨行（换行归一成一个空格），一处跨行会让**那一行之后的反引号整体错位配对**。
+ * 实测 `docs/zh-CN/DEPLOY.md` 里 `` `npx wrangler kv namespace\ncreate POOL` `` 这一处：
+ * 旧判据在那里凭空造出两个幽灵 span（`" 后把返回的 "` / `" 填进 "`），同时**吞掉**
+ * `id` 与 `[[kv_namespaces]]`；en / ja 同一段没换行、照常抽到。跨行处数**逐语言不同**
+ *（DEPLOY：zh-CN 2 / zh-TW 2 / ko 2、en 0 / ja 0），所以「今天没吞掉任何 `IDENTIFIER`、
+ * R6 照样绿」是**运气不是判据**——纯重排版（一个字都不改）就能让 R6 变色。
+ * 改法：先剥围栏（围栏内的反引号不是 span，且它们会把配对带歪），再允许跨行、
+ * 把内部空白归一成一个空格。**这三件事各配了一条会自己红的用例**，见下面
+ * 「code span：跨行的一处不再制造幽灵 span」与「…今天仍然承重…」那一组。
+ */
+const codeSpans = (s: string) =>
+  [...outsideFences(s).matchAll(/`([^`]+)`/g)].map((m) => (m[1] ?? "").replace(/\s+/g, " ").trim()).sort();
 
 /** R6 的三类标识符：全大写常量 / 斜杠开头的路径 / `agnes-` 开头的模型名。 */
 const IDENTIFIER = /^(?:[A-Z][A-Z0-9_]{2,}|\/[^\s`]*|agnes-[^\s`]*)$/;
@@ -921,21 +984,42 @@ const IDENTIFIER = /^(?:[A-Z][A-Z0-9_]{2,}|\/[^\s`]*|agnes-[^\s`]*)$/;
 const idents = (s: string) => codeSpans(s).filter((c) => IDENTIFIER.test(c));
 
 /**
- * 文档基名全集。**它不是手写清单，是从磁盘派生再钉住**：加了新文档不进表 = 红，
- * 表里有磁盘上没有的 = 红。
+ * 文档基名全集。**它不是手写清单，是从磁盘派生再钉住**：任何一种语言下加了新文档不进表
+ * = 红，表里有某种语言磁盘上没有的 = 红。
  *
  * ⚠️ Task 9 落地时这张表是五项（不含 `ADMIN`），它当时留下的原话是「`ADMIN.md` 由后续
  * 任务创建，那时把 `"ADMIN"` 加进来，**R1 的第一条断言会强制那一步**（不加就红）」。
  * P3e Task 26 落地五份 `ADMIN.md` 时先复现了那条测法：**只把 `"ADMIN"` 加进本表、
- * 一份文件都不写** ⇒ R1 当场红并逐字点名
- * 「磁盘 [...] 表 [...ADMIN...]」，`DOCS` 表这一条不是靠人记得回来加。
+ * 一份文件都不写** ⇒ R1 当场红并逐字点名，`DOCS` 表这一条不是靠人记得回来加。
+ *
+ * ⚠️⚠️ **补漏评审 H2：上面这句「从磁盘派生」曾经只对 `zh-CN` 一个目录成立。**
+ * `inventoryFailure()` 第一版只 `readdirSync(docs/zh-CN)`，于是「加了新文档不进表 = 红」
+ * 这句全称句对 `en` / `ja` / `ko` / `zh-TW` 四个目录**都是假的**——实测在 `en` 那个语言
+ * 目录下新建一份 `ORPHAN.md`，整组 285 格**全绿**。那正是本组立项要消灭的形态（一份文档谁都
+ * 没在守），只是换到了另外四个目录里。今天改成**逐个语言目录各比一次**，报文点名
+ * 「哪一种语言多出/少掉哪一份」，测法见反向控制里那条「R1 多一份只在 en 有的」。
  */
 const DOCS = ["ADMIN", "API", "DEPLOY", "README", "REGISTRAR", "USAGE"] as const;
+
+/**
+ * `docs/` 下**不按语言分**的目录。名册之外的子目录一律必须是 `LANGS` 里的一种。
+ *
+ * ⚠️⚠️ **补漏评审 H3：语言轴本身原来是一张不会自己红的手写表。** `LANGS` 五项手写，
+ * 全仓没有任何一处拿 `readdirSync("docs")` 钉住它——实测在 `docs/` 下新建第六种语言的
+ * 目录（`fr/`）并放一份 `DEPLOY.md` 进去，整组 285 格**全绿**，没有一格知道多了一种语言。本组的立项理由逐字是「一个不会自己红的
+ * 清单不是守卫，是待办」，文档轴做到了、语言轴原样留着，这一轮补上。
+ * ⚠️ **豁免名册会变成永久的洞**，所以下面那条 R1 语言轴的断言**两个方向都查**：名册里
+ * 的目录今天必须真的在（`design` 哪天改名/搬走，这条登记会当场红，而不是静静地放行）。
+ */
+const NON_LANG_DOC_DIRS = ["design"] as const;
 
 const RULES: ReadonlyArray<readonly [name: string, fingerprint: (s: string) => unknown]> = [
   ["R2 heading 层级序列", headings],
   ["R3 代码围栏语言标记序列", fences],
   ["R4 归一化后的链接目标多重集", links],
+  // ⚠️ R5 只数**行数**，一个变量名都不认识。「表里点名了哪些变量」由
+  // `tests/unit/env-example-parity.test.ts` 的「.env.example 与五语言文档对等」那一组管
+  // ——两套判据都在看五份 DEPLOY.md，分工写在那一组的 `ENV_TABLE_DOCS` 上方。
   ["R5 以竖线开头的表格行数", tableRows],
   ["R6 标识符型 code span 多重集", idents],
 ];
@@ -943,21 +1027,51 @@ const RULES: ReadonlyArray<readonly [name: string, fingerprint: (s: string) => u
 const docPath = (root: string, lang: string, doc: string) => join(root, "docs", lang, `${doc}.md`);
 
 /**
+ * R1 的语言轴：`docs/` 下的子目录集合恰好等于 `LANGS` + 非语言目录豁免名册。
+ * **这是全仓唯一一处把 `LANGS` 钉在磁盘上的地方**（补漏评审 H3），返回失败报文或 `null`。
+ */
+function langAxisFailure(root: string): string | null {
+  const dirs = readdirSync(join(root, "docs"), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort();
+  const want: string[] = [...LANGS, ...NON_LANG_DOC_DIRS].sort();
+  if (JSON.stringify(dirs) === JSON.stringify(want)) return null;
+  const extra = dirs.filter((d) => !want.includes(d));
+  const missing = want.filter((d) => !dirs.includes(d));
+  return "R1 语言轴 docs/ 下的子目录集合与「LANGS + 非语言目录豁免名册」对不上"
+    + `——加一种语言（或改了目录名）要回来表态：多出 ${JSON.stringify(extra)}，少掉 ${JSON.stringify(missing)}`;
+}
+
+/**
  * R1。返回失败报文或 `null`。
  * **真扫描与反向控制共用这一份**——探针与被探的东西必须是同一段代码，否则探针绿了
  * 什么都不证明。
+ *
+ * 两条，顺序有意义：先钉语言轴（多一种语言目录 = 红），再**逐个语言目录**比文档集。
+ * ⚠️ 语言轴不过就直接返回：目录都对不上了，再去逐份读文档只会 ENOENT，报文反而更差。
  */
 function inventoryFailure(root: string, table: readonly string[]): string | null {
-  const onDisk = readdirSync(join(root, "docs", "zh-CN"))
-    .filter((n) => n.endsWith(".md"))
-    .map((n) => n.replace(/\.md$/, ""))
-    .sort();
+  const axis = langAxisFailure(root);
+  if (axis !== null) return axis;
+
   const want = [...table].sort();
-  if (JSON.stringify(onDisk) !== JSON.stringify(want)) {
-    return `R1 docs/zh-CN 下的文档集与 DOCS 表对不上——加了新文档要回来表态：磁盘 ${JSON.stringify(onDisk)}，表 ${JSON.stringify(want)}`;
-  }
-  const missing = table.flatMap((d) => LANGS.filter((l) => !existsSync(docPath(root, l, d))).map((l) => `${l}/${d}.md`));
-  return missing.length ? `R1 这些语言缺同名文档：${missing.join("、")}` : null;
+  // ⚠️ 逐个语言目录各比一次（补漏评审 H2：第一版只比 zh-CN 一个目录）。
+  const rows = LANGS.map((lang) => {
+    const dir = join(root, "docs", lang);
+    const onDisk = existsSync(dir)
+      ? readdirSync(dir).filter((n) => n.endsWith(".md")).map((n) => n.replace(/\.md$/, "")).sort()
+      : [];
+    return {
+      lang,
+      extra: onDisk.filter((d) => !want.includes(d)),
+      missing: want.filter((d) => !onDisk.includes(d)),
+    };
+  }).filter((r) => r.extra.length > 0 || r.missing.length > 0);
+
+  if (rows.length === 0) return null;
+  return "R1 语言目录下的 .md 全集与 DOCS 表对不上——加了新文档要回来表态：\n"
+    + rows.map((r) => `  ${r.lang}：多出 ${JSON.stringify(r.extra)}，少掉 ${JSON.stringify(r.missing)}`).join("\n");
 }
 
 const countBy = (a: readonly unknown[]) => {
@@ -1029,6 +1143,55 @@ function divergenceReport(labels: readonly string[], values: readonly unknown[])
   return out.join("\n");
 }
 
+/**
+ * ── R2–R6 的「平凡相等」护栏（补漏评审 H4）─────────────────────────────────────
+ *
+ * 本文件上面那组**数字锚点先挡住「五份都是 0」这种平凡相等**（`total === 0` 那一段，
+ * 注释还专门解释了为什么）。R2–R6 落地时一格都没继承这道护栏——`divergenceReport()`
+ * 对「五份都是空数组」直接返回 `null`，于是**空 === 空 = 永远绿**。
+ *
+ * **真数据上已经踩上去了**：`R3 × REGISTRAR.md`（五份一条围栏都没有）与
+ * `R3 × ADMIN.md`（Task 26 加进 `DOCS` 之后新增的一格，同样整份无围栏）——30 格里
+ * **2 格结构上不可能变红**，而文件里原本一个字都没说这件事。实测把 `fences` 改成恒返回
+ * `[]`：真仓 6 格 R3 **全绿**，只有夹具那一条控制吵——**判据用错工具时静静放行**，正是
+ * 本组自己在变异 M1 里登记过的那个形态，只是这一次真数据已经站在上面了。
+ *
+ * ⚠️ 名册**两个方向都查**，这是它与「待办清单」的区别：
+ * · 不在名册里却五份全空 ⇒ 红（这一格是空判据，要么改判据要么登记进来）；
+ * · 在名册里却抽到了东西 ⇒ 红（名册过期了，删掉登记——**豁免名册会变成永久的洞**）。
+ */
+const EMPTY_BY_DESIGN: ReadonlyArray<readonly [rule: string, doc: string]> = [
+  // 这两份文档整份没有代码围栏（不是"缩进围栏认不出"——`fences` 今天顶格与缩进一视同仁）。
+  ["R3 代码围栏语言标记序列", "ADMIN"],
+  ["R3 代码围栏语言标记序列", "REGISTRAR"],
+];
+
+/** 指纹「空」的判定：数组看长度，数字（R5）看是不是 0。 */
+const isEmptyFingerprint = (v: unknown) => (Array.isArray(v) ? v.length === 0 : v === 0);
+
+/**
+ * 一格的平凡相等护栏。返回失败报文或 `null`。**真扫描与探针共用这一份**。
+ */
+function emptinessFailure(
+  doc: string,
+  name: string,
+  samples: readonly unknown[],
+  table: ReadonlyArray<readonly [rule: string, doc: string]>,
+): string | null {
+  const allEmpty = samples.every(isEmptyFingerprint);
+  const exempt = table.some(([r, d]) => r === name && d === doc);
+  if (allEmpty && !exempt) {
+    return `${doc}.md 的「${name}」在五份里抽到的都是空的——空 === 空，这一格结构上永远不会红，`
+      + "它是一条待办不是守卫。要么把判据改成认得出这份文档里的东西，"
+      + "要么把它登记进 EMPTY_BY_DESIGN 并写明为什么不适用";
+  }
+  if (!allEmpty && exempt) {
+    return `${doc}.md 的「${name}」登记在 EMPTY_BY_DESIGN 里（「这份文档上无从取样」），`
+      + "可是今天抽到东西了——这条登记过期了，删掉它，这一格已经是一条真判据";
+  }
+  return null;
+}
+
 /** R2–R6 的单格：一份文档 × 一条判据。返回失败报文或 `null`。真扫描与反向控制共用这一份。 */
 function parityFailure(root: string, doc: string, name: string, fingerprint: (s: string) => unknown): string | null {
   const body = divergenceReport(LANGS, LANGS.map((l) => fingerprint(readFileSync(docPath(root, l, doc), "utf8"))));
@@ -1062,7 +1225,12 @@ function allFailures(root: string, table: readonly string[]): string[] {
 }
 
 describe("五语言文档的派生结构对等（R1–R6）", () => {
-  it("R1 五个语言目录下同名文件都存在，且 DOCS 表恰好等于 zh-CN 目录的 .md 全集", () => {
+  it("R1 语言轴：docs/ 的子目录集合恰好等于 LANGS 加上非语言目录豁免名册", () => {
+    const failure = langAxisFailure(".");
+    expect(failure, failure ?? "").toBeNull();
+  });
+
+  it("R1 五个语言目录下同名文件都存在，且 DOCS 表恰好等于每一个语言目录的 .md 全集", () => {
     const failure = inventoryFailure(".", DOCS);
     expect(failure, failure ?? "").toBeNull();
   });
@@ -1070,13 +1238,30 @@ describe("五语言文档的派生结构对等（R1–R6）", () => {
   for (const doc of DOCS) {
     for (const [name, fingerprint] of RULES) {
       it(`${doc}.md 的「${name}」五份逐份相同`, () => {
+        // 先过平凡相等那道护栏：五份都空的话下面那条 `toBeNull()` 永远绿，等于没这一格。
+        const samples = LANGS.map((l) => fingerprint(readFileSync(docPath(".", l, doc), "utf8")));
+        const empty = emptinessFailure(doc, name, samples, EMPTY_BY_DESIGN);
+        expect(empty, empty ?? "").toBeNull();
+
         const failure = parityFailure(".", doc, name, fingerprint);
         expect(failure, failure ?? "").toBeNull();
       });
     }
   }
 
+  it("EMPTY_BY_DESIGN 名册里的每一条都指向真实存在的「判据 × 文档」格", () => {
+    const names = RULES.map(([n]) => n);
+    const bad = EMPTY_BY_DESIGN.filter(
+      ([r, d]) => !names.includes(r) || !(DOCS as readonly string[]).includes(d),
+    );
+    expect(bad, `名册里有拼错的格——拼错的登记永远不会命中任何一格，等于一条不生效的豁免：${JSON.stringify(bad)}`)
+      .toEqual([]);
+  });
+
   it("R6 扩展：根 README.md 与五语言 README.md 的标识符 code span 多重集六份相同", () => {
+    // 同一道平凡相等护栏：根 README 一个标识符都抽不到的话，这一格也是空判据。
+    expect(idents(readFileSync("README.md", "utf8")).length, "根 README.md 里一个标识符 code span 都没抽到——这一格是平凡相等")
+      .toBeGreaterThan(0);
     const failure = rootReadmeFailure(".");
     expect(failure, failure ?? "").toBeNull();
   });
@@ -1094,6 +1279,77 @@ describe("五语言文档的派生结构对等（R1–R6）", () => {
       noisy,
       "全量 code span 判据今天在五语言之间不再分叉了——伪公式看来已经统一写法，回来重新评估 IDENTIFIER 是否还需要这么窄",
     ).not.toEqual([]);
+  });
+
+  /**
+   * ── 判据自身的三格（补漏评审 M1 / M2 / M3 的正向测法）─────────────────────────
+   * 三条抽取函数都被改过：`fences` 认缩进围栏、`headings` 剥围栏、`codeSpans` 允许跨行。
+   * 每一条在这里各有一格**直接打函数**的用例（认得出 + 不乱红各一句），
+   * 紧跟着三格「今天仍然承重」把"为什么要改"钉在真仓的现状上——哪天真仓里再也没有
+   * 这种写法了，那三格会红，逼人回来重新评估，而不是让理由永远挂着。
+   */
+  it("R2 判据自身：围栏内的 `# ` 不算标题、围栏外的算，缩进围栏同样剥", () => {
+    expect(headings("# 标题\n\n```bash\n# 这是注释\n```\n\n## 小节")).toEqual([1, 2]);
+    // 缩进围栏也要开合状态机：里面那行顶格的 `#` 不许算成标题，后面的 `## ` 仍要算。
+    expect(headings("- 列表：\n\n  ```bash\n# 缩进围栏里顶格写的注释\n  ```\n\n## 小节")).toEqual([2]);
+  });
+
+  it("R3 判据自身：顶格与缩进围栏都算，语言标记按出现顺序取", () => {
+    expect(fences("```bash\nx\n```\n\n- 列表：\n\n  ```json\n  {}\n  ```\n")).toEqual(["bash", "", "json", ""]);
+  });
+
+  it("R6 判据自身：跨行的 code span 归一成一个空格，不再制造幽灵 span", () => {
+    // 旧判据（按行截断）在这段文本上造出 `" 后把返回的 "` 这种幽灵项，同时吞掉 `id`。
+    expect(codeSpans("跑 `npx wrangler kv\ncreate POOL` 后把返回的 `id` 填进 `[[kv]]`"))
+      .toEqual(["[[kv]]", "id", "npx wrangler kv create POOL"]);
+    // 不乱红：本来就写在一行里的，抽出来的东西一个字都不变。
+    expect(codeSpans("`a` 与 `b`")).toEqual(["a", "b"]);
+  });
+
+  /** 三条「今天仍然承重」共用的窄口径——它们就是被替换掉的那一版判据，拿来对拍。 */
+  const NARROW = {
+    topLevelFences: (s: string) => [...s.matchAll(/^```(\w*)/gm)].length,
+    rawHeadings: (s: string) => s.split("\n").filter((l) => /^#{1,6} /.test(l)).length,
+    lineBoundSpans: (s: string) => [...s.matchAll(/`([^`\n]+)`/g)].map((m) => m[1] ?? ""),
+  };
+  const everyRealDoc = () => DOCS.flatMap((d) => LANGS.map((l) => readFileSync(docPath(".", l, d), "utf8")));
+  const sum = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
+
+  it("M1 今天仍然承重：真文档里确实有缩进围栏，顶格锚会漏掉它们", () => {
+    const missed = sum(everyRealDoc().map((s) => fences(s).length - NARROW.topLevelFences(s)));
+    expect(missed, "真仓里已经没有缩进围栏了——`fences` 认缩进这件事不再承重，回来重新评估要不要保留").toBeGreaterThan(0);
+  });
+
+  it("M2 今天仍然承重：真文档的围栏里确实有 `# ` 开头的行，不剥围栏就会被当成一级标题", () => {
+    const fake = sum(everyRealDoc().map((s) => NARROW.rawHeadings(s) - headings(s).length));
+    expect(fake, "真仓的围栏里已经没有 `# ` 开头的行了——`headings` 剥围栏这件事不再承重，回来重新评估").toBeGreaterThan(0);
+  });
+
+  it("M3 今天仍然承重：真文档里确实有跨行的 code span", () => {
+    const oddLines = (s: string) =>
+      outsideFences(s).split("\n").filter((l) => ((l.match(/`/g) ?? []).length % 2) === 1).length;
+    expect(sum(everyRealDoc().map(oddLines)), "真仓里已经没有跨行的 code span 了——`codeSpans` 允许跨行这件事不再承重，回来重新评估")
+      .toBeGreaterThan(0);
+  });
+
+  it("M3 的落点：那处跨行 span 归一之后五份 DEPLOY.md 都抽得到，且它至少在一种语言里是跨行写的", () => {
+    const SPAN = "npx wrangler kv namespace create POOL";
+    const deploy = (l: Lang) => readFileSync(docPath(".", l, "DEPLOY"), "utf8");
+    expect(
+      LANGS.filter((l) => !codeSpans(deploy(l)).includes(SPAN)),
+      `这些语言的 DEPLOY.md 里抽不到 \`${SPAN}\`——跨行归一坏了，或者那一段被改写了`,
+    ).toEqual([]);
+    expect(
+      LANGS.filter((l) => !NARROW.lineBoundSpans(deploy(l)).includes(SPAN)).length,
+      "这条串今天五份都写在一行里——按行截断的旧判据也抽得到它，这一格就证明不了跨行归一",
+    ).toBeGreaterThan(0);
+  });
+
+  it("剥掉围栏之后每一份文档的反引号都成对——不成对时 code span 的配对会整篇错位", () => {
+    const files = [join(".", "README.md"), ...DOCS.flatMap((d) => LANGS.map((l) => docPath(".", l, d)))];
+    const odd = files.filter((p) => ((outsideFences(readFileSync(p, "utf8")).match(/`/g) ?? []).length % 2) === 1);
+    expect(odd, `这些文件剥掉围栏后反引号是奇数个，`+
+      `从那一处起整篇的 code span 配对都会错位（R6 会开始比对幻觉）：${JSON.stringify(odd)}`).toEqual([]);
   });
 });
 
@@ -1134,9 +1390,23 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
       "",
       `\`/v1/messages\` + \`agnes-2.0-flash\`，${p.note} \`${p.formula}\`。`,
       "",
+      // ⚠️ 补漏评审 M3：这一行是**故意照着真 `docs/*/DEPLOY.md` 那处摆的**——一个多词
+      // span 后面紧跟一个标识符 span。把前一个 span 换行重排（内容一个字不改）时，
+      // 按行截断的旧判据会在这里造出一个幽灵 span 并**吞掉后面那个 `POOL_CACHE_TTL_MS`**，
+      // 于是 R6 变色；下面「一处 code span 换行重排」那条不乱红就是打在这一行上的。
+      `\`npx wrangler kv namespace create POOL\` → \`POOL_CACHE_TTL_MS\`。`,
+      "",
       "```bash",
       "curl http://localhost:8080/v1/messages",
       "```",
+      "",
+      // ⚠️ 补漏评审 M1：夹具里**必须有一个缩进围栏**，否则「`fences` 认缩进围栏」那条
+      // 放宽在这组反向控制里一格都测不到（真文档里一半的围栏是这种写法）。
+      `- ${p.note}：`,
+      "",
+      "  ```json",
+      '  { "id": "REPLACE_ME" }',
+      "  ```",
       "",
       `[${p.link}](../${lang}/USAGE.md#${p.section})`,
       "",
@@ -1148,14 +1418,25 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
   function pristineTree(): Tree {
     const files: Tree = { "README.md": fixtureDoc("zh-CN", "README") };
     for (const doc of DOCS) for (const l of LANGS) files[`docs/${l}/${doc}.md`] = fixtureDoc(l, doc);
+    // ⚠️ 补漏评审 H3：夹具树必须带上非语言目录，否则 R1 语言轴那条（`docs/` 子目录集合
+    // 恰好等于 LANGS + 豁免名册）在这棵树上恒红，整组反向控制全部失效。
+    for (const d of NON_LANG_DOC_DIRS) files[`docs/${d}/placeholder.md`] = "# placeholder\n";
     return files;
   }
 
-  /** 路径打错 = 变异没落地 = 这一格控制是空的。当场炸掉，不许静默通过。 */
+  /**
+   * 路径打错 = 变异没落地 = 这一格控制是空的。当场炸掉，不许静默通过。
+   *
+   * ⚠️ 补漏评审回填时收紧了第二个方向：**`replace` 打空拳（一个字都没改到）也炸**。
+   * 「该红时红」那些格靠 `toHaveLength(1)` 兜得住空拳（0 告警会红），但下面那两条
+   * **「不乱红」**期望的就是 0 告警——空拳在那里会被读成"判据很克制"，实际什么都没测。
+   */
   function patch(files: Tree, rel: string, f: (body: string) => string): void {
     const body = files[rel];
     if (body === undefined) throw new Error(`夹具里没有 ${rel}——变异没落到任何文件上`);
-    files[rel] = f(body);
+    const next = f(body);
+    if (next === body) throw new Error(`${rel} 上的变异一个字都没改到——这一格控制是空的`);
+    files[rel] = next;
   }
 
   function drop(files: Tree, rel: string): void {
@@ -1202,18 +1483,39 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
   const MUTATIONS: ReadonlyArray<{ why: string; hits: readonly string[]; mutate: (f: Tree) => void }> = [
     {
       why: "R1 少一份 docs/ko/USAGE.md",
-      hits: ["R1 这些语言缺同名文档：ko/USAGE.md"],
+      hits: ["R1 语言目录下的 .md 全集与 DOCS 表对不上", 'ko：多出 []，少掉 ["USAGE"]'],
       mutate: (f) => drop(f, "docs/ko/USAGE.md"),
     },
     {
       why: "R1 多一份没进 DOCS 表的 docs/zh-CN/GLOSSARY.md",
-      hits: ["R1 docs/zh-CN 下的文档集与 DOCS 表对不上", "GLOSSARY"],
+      hits: ["R1 语言目录下的 .md 全集与 DOCS 表对不上", 'zh-CN：多出 ["GLOSSARY"]'],
       mutate: (f) => { f["docs/zh-CN/GLOSSARY.md"] = fixtureDoc("zh-CN", "GLOSSARY"); },
     },
     {
+      // ⚠️ **补漏评审 H2 的那一格**：`inventoryFailure` 第一版只 `readdirSync(docs/zh-CN)`，
+      // 于是这条变异在真仓上实测 285 格**全绿**——一份只在 en 目录下的孤儿文档谁都没在守。
+      // 这一格就是那件事的测法：换回只扫 zh-CN 的写法，它会立刻变绿（= 控制失效）。
+      why: "R1 多一份只在 en 有、没进 DOCS 表的 docs/en/ORPHAN.md",
+      hits: ["R1 语言目录下的 .md 全集与 DOCS 表对不上", 'en：多出 ["ORPHAN"]'],
+      mutate: (f) => { f["docs/en/ORPHAN.md"] = fixtureDoc("en", "ORPHAN"); },
+    },
+    {
       why: "R1 反方向：表里有磁盘上没有的（五份 USAGE.md 一起删）",
-      hits: ["R1 docs/zh-CN 下的文档集与 DOCS 表对不上", "USAGE"],
+      hits: ["R1 语言目录下的 .md 全集与 DOCS 表对不上", "USAGE", "zh-CN：", "ko："],
       mutate: (f) => { for (const l of LANGS) drop(f, `docs/${l}/USAGE.md`); },
+    },
+    {
+      // ⚠️ **补漏评审 H3 的那一格**：`LANGS` 五项手写、全仓没有一处拿磁盘钉住它，
+      // 于是这条变异在真仓上实测 285 格**全绿**——第六种语言完全不可见。
+      why: "R1 语言轴：多一个 docs/fr 语言目录",
+      hits: ["R1 语言轴 docs/ 下的子目录集合与「LANGS + 非语言目录豁免名册」对不上", '多出 ["fr"]'],
+      mutate: (f) => { f["docs/fr/DEPLOY.md"] = fixtureDoc("en", "DEPLOY"); },
+    },
+    {
+      // 豁免名册的另一个方向：**名册会变成永久的洞**，所以名册里的目录消失了也要红。
+      why: "R1 语言轴：非语言目录豁免名册过期（docs/design 不在了）",
+      hits: ["R1 语言轴 docs/ 下的子目录集合与「LANGS + 非语言目录豁免名册」对不上", '少掉 ["design"]'],
+      mutate: (f) => { for (const d of NON_LANG_DOC_DIRS) drop(f, `docs/${d}/placeholder.md`); },
     },
     {
       why: "R2 某一份多一个 ###",
@@ -1223,9 +1525,17 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
       mutate: (f) => patch(f, "docs/ja/API.md", (b) => `${b}\n### 追加\n`),
     },
     {
-      why: "R3 某一份把 bash 围栏写成 sh",
+      why: "R3 某一份把顶格的 bash 围栏写成 sh",
       hits: ["DEPLOY.md 的「R3", "en", "sh"],
-      mutate: (f) => patch(f, "docs/en/DEPLOY.md", (b) => b.replace("```bash", "```sh")),
+      mutate: (f) => patch(f, "docs/en/DEPLOY.md", (b) => b.replace("\n```bash", "\n```sh")),
+    },
+    {
+      // ⚠️ **补漏评审 M1 的那一格**：顶格锚（`/^```(\w*)/gm`）看不见缩进围栏，
+      // 而真仓五份 DEPLOY.md 各 28 条围栏行里有 14 条是缩进的——报告里
+      // 「换了围栏语言标记就变红」那句全称句对它们原本是假的。
+      why: "R3 某一份把缩进的 json 围栏写成 jsonc",
+      hits: ["DEPLOY.md 的「R3", "ja", "jsonc"],
+      mutate: (f) => patch(f, "docs/ja/DEPLOY.md", (b) => b.replace("\n  ```json", "\n  ```jsonc")),
     },
     {
       why: "R4 某一份的链接目标被改掉",
@@ -1274,6 +1584,35 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
   });
 
   /**
+   * ── 补漏评审 M2 / M3 的两条「不乱红」──────────────────────────────────────────
+   * 这两条期望的是 **0 告警**，所以 `patch` 里那条"变异必须真的改到东西"是它们的命门：
+   * `replace` 打空拳的话这里会绿得很好看，实际什么都没测。
+   */
+  it("不乱红：围栏里多一行 `# ` 开头的注释——那不是标题，R2 不该红", () => {
+    // M2 的原始证据：往真 `docs/ja/DEPLOY.md` 的 ```bash 块里加一行 `# …` ⇒ R2 当场红，
+    // 报文说「ja 多出一个一级标题、下标 13」——而 ja 里根本没有那个标题。
+    expect(
+      scanFixture((f) => patch(f, "docs/ja/DEPLOY.md", (b) => b.replace("\ncurl ", "\n# ここでポートを確認\ncurl "))),
+      "围栏里的 shell 注释被当成了一级标题——报文会把人指到标题里翻半天",
+    ).toEqual([]);
+  });
+
+  it("不乱红：一处 code span 换行重排（内容一个字不改）——R6 不该红", () => {
+    // M3 的原始证据：真 `docs/zh-CN/DEPLOY.md:553` 那处跨行 span 让按行截断的旧判据
+    // 造出两个幽灵 span 并吞掉 `id` / `[[kv_namespaces]]`；纯重排版就能让 R6 变色。
+    // 这条变异**能分辨新旧判据**：旧判据在这里会吞掉后面那个 `POOL_CACHE_TTL_MS`，
+    // ko 那一份的 R6 多重集少一项 ⇒ 红；新判据把换行归一成一个空格 ⇒ 五份完全相同。
+    expect(
+      scanFixture((f) => patch(
+        f,
+        "docs/ko/DEPLOY.md",
+        (b) => b.replace("`npx wrangler kv namespace create POOL`", "`npx wrangler kv namespace\ncreate POOL`"),
+      )),
+      "一处 code span 被换行重排就红了——R6 在比对的是排版而不是标识符",
+    ).toEqual([]);
+  });
+
+  /**
    * 复评 F9 的两格：**报文里不许出现字面的 `undefined`**。
    * 上面那条「R2 某一份多一个 `###`」的 `hits` 已经在真夹具上钉着同一件事，这里再直接
    * 对 `divergenceReport()` 打两枪，是因为那条走的是整棵夹具树、失败时不容易看清是
@@ -1297,6 +1636,45 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
     expect(report, "五份里有一份改了一项，报文却是空的——这一格控制是空的").not.toBe("");
     expect(report, `长度相同却说成越界：\n${report}`).not.toContain("越界");
     expect(report, `没摊出首个不同的下标上的两个值：\n${report}`).toContain("参照 2 / 本份 9");
+  });
+
+  /**
+   * ── 平凡相等护栏的四格（补漏评审 H4）─────────────────────────────────────────
+   * 这四格直接打 `emptinessFailure()`——**真扫描调的就是这一个函数**。两个方向各两格：
+   * 「不在名册里却五份全空」「在名册里却抽到了东西」该红，另外两格不许乱红。
+   */
+  const A_RULE = RULES[0]![0];
+  const A_DOC = DOCS[0];
+
+  it("该红时红：一格五份全空、又不在 EMPTY_BY_DESIGN 名册里 ⇒ 说清楚它是待办不是守卫", () => {
+    const m = emptinessFailure(A_DOC, A_RULE, [[], [], [], [], []], []) ?? "";
+    expect(m, "五份全空却没红——这道护栏是空的").not.toBe("");
+    expect(m, `报文没点名是哪一格：\n${m}`).toContain(A_DOC);
+    expect(m, `报文没点名是哪一条判据：\n${m}`).toContain(A_RULE);
+    expect(m, `报文没说清"它永远不会红"这件事：\n${m}`).toContain("永远不会红");
+    // R5 走的是数字分支：0 同样算"空"，不许只认数组。
+    expect(emptinessFailure(A_DOC, "R5 以竖线开头的表格行数", [0, 0, 0, 0, 0], []), "数字指纹的 0 没被当成空")
+      .not.toBeNull();
+  });
+
+  it("该红时红：登记在 EMPTY_BY_DESIGN 里、今天却抽到了东西 ⇒ 名册过期要当场吵", () => {
+    const m = emptinessFailure(A_DOC, A_RULE, [["x"], ["x"], ["x"], ["x"], ["x"]], [[A_RULE, A_DOC]]) ?? "";
+    expect(m, "名册过期了却没红——豁免名册就是这样变成永久的洞的").not.toBe("");
+    expect(m, `报文没说是名册过期：\n${m}`).toContain("过期");
+  });
+
+  it("不乱红：一格抽得到东西、又不在名册里 ⇒ 不红", () => {
+    expect(emptinessFailure(A_DOC, A_RULE, [["x"], ["x"], ["x"], ["x"], ["x"]], [])).toBeNull();
+    expect(emptinessFailure(A_DOC, "R5 以竖线开头的表格行数", [3, 3, 3, 3, 3], [])).toBeNull();
+  });
+
+  it("不乱红：一格五份全空、而且确实登记在名册里 ⇒ 不红", () => {
+    expect(emptinessFailure(A_DOC, A_RULE, [[], [], [], [], []], [[A_RULE, A_DOC]])).toBeNull();
+    // 名册是按「判据 × 文档」两维匹配的：只对上一维不算命中。
+    expect(emptinessFailure(A_DOC, A_RULE, [[], [], [], [], []], [[A_RULE, "另一份文档"]]), "名册只对上判据名就放行了")
+      .not.toBeNull();
+    expect(emptinessFailure(A_DOC, A_RULE, [[], [], [], [], []], [["另一条判据", A_DOC]]), "名册只对上文档名就放行了")
+      .not.toBeNull();
   });
 });
 
