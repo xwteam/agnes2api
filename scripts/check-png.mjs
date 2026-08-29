@@ -34,6 +34,10 @@
 //   ③ 重跑 `bash scripts/scan-secrets.sh` 与 `bash scripts/scan-secrets.sh --history`
 //      六条规则两档都要跑，理由见上面那段 fail-closed；
 //   ④ 重跑 `node scripts/check-png.mjs`。
+// 同一份流程在 `CONTRIBUTING.md` 的「Replacing docs/logo.png」一节里还有一份英文的：
+// 那一份是给外部贡献者看的，这一份是给改这个脚本的人看的。**两份都要改**——
+// 它们不是同一句话的两处复制（一份讲判据为什么长这样，一份讲流程怎么走），
+// 但第 ③ 步那条 fail-closed 的理由两边都必须在，少一边就会有人以为凭据扫描坏了。
 //
 // ── 判据自己的边界（明写，别读成它什么都能验）──────────────────────────────
 // · 它**证不了**这张图"好看"或"是我们想要的那张图"：sha256 只证明字节没变过，

@@ -79,6 +79,39 @@ guards listed above compare structure; none of them compares meaning. If you cha
 meaning of a sentence, change it in all
 five, and say so in the pull request so a human reads them.
 
+## Replacing `docs/logo.png`
+
+`docs/logo.png` is the **only binary file allowed anywhere under `src/`, `tests/`,
+`admin-ui/`, `scripts/` or `docs/`**. `scripts/check-no-binary.mjs` rejects binaries in those
+directories on purpose — a binary file is invisible to the text tool chain the rest of this
+project is built on (review diffs, `grep` audits, the credential scan). The logo gets in
+through a **named allowlist holding exactly one literal path**, and the hole that allowlist
+opens is closed by a second gate, `scripts/check-png.mjs`, which reads the file byte by byte:
+signature, per-chunk CRC, chunk-type allow/deny lists, **zero trailing bytes after `IEND`**,
+sha256 against a registered value, plus dimensions, byte budget and transparent-pixel ratio.
+
+Swapping the image is therefore four steps, not one:
+
+1. Overwrite `docs/logo.png` (128×128, 8-bit RGBA, non-interlaced).
+2. Update the registered sha256 in `scripts/check-png.mjs` (`sha256sum docs/logo.png`).
+   The gate goes red until you do, and that is the point: the registered digest is the only
+   evidence that a human ever looked at these bytes.
+3. Re-run the credential scan — **both archives**: `bash scripts/scan-secrets.sh` and
+   `bash scripts/scan-secrets.sh --history`.
+4. Re-run `node scripts/check-png.mjs`.
+
+Step 3 is not a formality. Five of the six rules in that scanner decide on `git grep`'s exit
+code, so a credential-shaped string inside a binary is caught. **The sixth rule — the bare-IP
+one — needs the matched line's content, which `git grep` refuses to print for a binary file,
+so it fails closed.** Concretely: if the compressed bytes of your new logo happen to contain
+an ASCII run that looks like a dotted quad, the credential scan goes red and its message
+points at `scripts/check-no-binary.mjs` asking why that file was let in. That is designed
+behaviour, not a broken gate — but you want to learn it from this page rather than from a red
+CI run. The other side of the same coin: anything that is *not* one of those six shapes
+(a private hostname, an e-mail address, a password, anything compressed) is invisible to the
+scanner inside a binary. That is exactly the hole `scripts/check-png.mjs` exists to close, and
+it is why "just widen the allowlist" is never the fix.
+
 ## Reporting a security issue
 
 Do not open a public issue for it. See [SECURITY.md](SECURITY.md).
