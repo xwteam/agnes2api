@@ -246,6 +246,12 @@ BANNER='[collection-guard] ✅'
 #   在那个 HEAD 上整套全绿。落成 `docs-parity` 的一整组：四项正扫 5 格（③ 拆成步数命令与
 #   bullet 两格）+ 六条负例 + 三格「认不出要吵」+ 一格「不乱红」+ 一格射程边界
 #  （SPONSORS 今天一条相对链接都没有，⑤ 对它是空判据，这件事本身钉住）= 16 格。文件数不变。
+#   P3f 阶段 3/4 复评回填从 3826 改到 3828：上一轮补的 (l) 只扫了 **Dockerfile 那一侧**的
+#   未知参数，compose 侧加键一个都不会红——实测两个真实形态：`start_interval: 5s`
+#   （新旗标只存在于一边，正是 (l) 自己写下的理由要挡的事）与 `disable: true`
+#   （compose 规范里这一键把**这一份** healthcheck 整个关掉，Dockerfile 那条照常跑
+#   ⇒「两份逐个相同」当场变成假话），补之前全量 68 格一格不红。
+#   `healthcheckParityFailures` 补上对称的 `knownC` 扫描 + 两条负例 = 2 格。文件数不变。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -254,7 +260,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=136
-EXPECT_NODE_TESTS=3826
+EXPECT_NODE_TESTS=3828
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

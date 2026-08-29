@@ -890,8 +890,11 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
    * 判过死刑的那个形态。
    * ⚠️ 判据不是「两边都有 healthcheck」，是**四个参数逐个相等 + 探针命令整串相等**。
    *   参数名两边写法不同（`--start-period` vs `start_period`），映射表写在 `HEALTH_KEYS`。
-   * ⚠️ **Dockerfile 那侧多出一个没登记的参数也要红**：docker 后来加过 `--start-interval`
+   * ⚠️ **任一侧多出一个没登记的参数都要红**：docker 后来加过 `--start-interval`
    *   这类新旗标，只对四个已知名字取值比对的话，新旗标会安安静静地只存在于一边。
+   *   **这条对两侧对称成立，而它此前只落地了 Dockerfile 那一半**（P3f 阶段 3/4 复评实测）：
+   *   给 compose 的 healthcheck 加 `disable: true`（规范里这一键把**这一份**整个关掉，
+   *   Dockerfile 那条照常跑）⇒ 全量 68 格一格不红。补齐的是 `knownC` 那个循环。
    * ⚠️ 两侧抽不出来一律**当场抛**，不许静默当成「这里没有约束」——那正是「探针绿了
    *   而真扫描早就没在看」的那条老路。
    */
@@ -944,9 +947,19 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
           + " —— 同一件事的两份副本给了不同的数，「容器多久才算 unhealthy」就变成一个要先查「这次跑的是哪一份」才答得出的问题");
       }
     }
-    const known = new Set<string>(HEALTH_KEYS.map(([dk]) => dk));
+    const knownD = new Set<string>(HEALTH_KEYS.map(([dk]) => dk));
     for (const dk of d.flags.keys()) {
-      if (!known.has(dk)) out.push(`Dockerfile 那条 HEALTHCHECK 多出一个 \`--${dk}=\`，${COMPOSE} 那边没有对应的键，也没人把它登记进 HEALTH_KEYS`);
+      if (!knownD.has(dk)) out.push(`Dockerfile 那条 HEALTHCHECK 多出一个 \`--${dk}=\`，${COMPOSE} 那边没有对应的键，也没人把它登记进 HEALTH_KEYS`);
+    }
+    // ⚠️ **这一段是对称的另一半**（P3f 阶段 3/4 复评实测补）：上面只扫了 Dockerfile 侧的未知旗标，
+    // compose 侧加键**一个都不会红**。实测过两个真实形态：
+    //   · `start_interval: 5s` —— 新参数只存在于一边，正是上面 ⚠️ 那条推理要挡的事；
+    //   · `disable: true`     —— compose 规范里这一键会把**这一份 healthcheck 整个关掉**，
+    //     而 Dockerfile 那条照常生效 ⇒ 「两份逐个相同」当场变成假话，而判据全绿（68/68）。
+    // 上面那条 ⚠️ 的推理对两侧对称成立，此前只落地了一半。
+    const knownC = new Set<string>(HEALTH_KEYS.map(([, ck]) => ck));
+    for (const ck of c.keys.keys()) {
+      if (!knownC.has(ck)) out.push(`${COMPOSE} 的 healthcheck 多出一个 \`${ck}:\`，Dockerfile 那边没有对应的旗标，也没人把它登记进 HEALTH_KEYS`);
     }
     if (d.probe !== c.probe) {
       out.push(`healthcheck 的探针命令两份对不上：\n  Dockerfile：${d.probe}\n  ${COMPOSE}：${c.probe}`);
@@ -993,6 +1006,30 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     const failures = healthcheckParityFailures(patchRead(realRead, "Dockerfile", mutated));
     expect(failures).toHaveLength(1);
     expect(failures[0] ?? "").toContain("`--start-interval=`");
+  });
+
+  it("(l) 该红时红：compose 多出一个 Dockerfile 那边没有的参数 —— 与上一格对称的另一半", () => {
+    probeBase(healthcheckParityFailures(realRead), REAL_L);
+    const mutated = realRead(COMPOSE).replace("      retries: 3", "      retries: 3\n      start_interval: 5s");
+    expect(mutated, "变异没落地").not.toBe(realRead(COMPOSE));
+    const failures = healthcheckParityFailures(patchRead(realRead, COMPOSE, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("`start_interval:`");
+  });
+
+  /**
+   * 这一格比上一格要紧：`disable` 不是「多一个无害的新参数」，它是 compose 规范里
+   * **把这一份 healthcheck 整个关掉**的开关。加上它之后 compose 那条不再跑，
+   * 而 Dockerfile 那条照常生效 ⇒ 上面注释里「两份逐个相同」那句话当场变成假话。
+   * 补这一格之前，全量 68 格一格不红（P3f 阶段 3/4 复评实测）。
+   */
+  it("(l) 该红时红：compose 的 healthcheck 被 `disable: true` 整个关掉 —— 两份逐个相同当场变假话", () => {
+    probeBase(healthcheckParityFailures(realRead), REAL_L);
+    const mutated = realRead(COMPOSE).replace("      retries: 3", "      retries: 3\n      disable: true");
+    expect(mutated, "变异没落地").not.toBe(realRead(COMPOSE));
+    const failures = healthcheckParityFailures(patchRead(realRead, COMPOSE, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("`disable:`");
   });
 
   it("(l) 认不出要吵：Dockerfile 那条 HEALTHCHECK 抽不出来时当场抛，不静默放行", () => {
