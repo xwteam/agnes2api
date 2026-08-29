@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 // 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源（P3e Task 1 收编），不在这里手写第二份。
 import { blankComments } from "../helpers/strip-comments.js";
+// R11 的根那一半：16 节骨架的期望值取 W38 那张常量表，不在本文件手抄第二份标题清单。
+import { SECTIONS } from "../helpers/readme-sections.js";
 import { FAIL_REASONS } from "../../src/core/dispatcher.js";
 import { UPSTREAM_FACTS, type UpstreamFact } from "../../src/core/admin/upstream-facts.js";
 import { MODEL_CATALOG, PROTOCOLS, VIDEO_TASK_ID_SHAPE } from "../../src/core/admin/protocol-catalog.js";
@@ -1256,11 +1258,95 @@ function parityFailure(root: string, doc: string, name: string, fingerprint: (s:
   return body === null ? null : `${doc}.md 的「${name}」在五语言之间分叉：\n${body}`;
 }
 
-/** R6 扩展：根 README 与五语言 README 六份。返回失败报文或 `null`。 */
-function rootReadmeFailure(root: string): string | null {
-  const six = [join(root, "README.md"), ...LANGS.map((l) => docPath(root, l, "README"))];
-  const body = divergenceReport(six, six.map((p) => idents(readFileSync(p, "utf8"))));
-  return body === null ? null : `R6 扩展 根 README 与五语言 README 的标识符 code span 分叉：\n${body}`;
+/**
+ * ── R6 扩展的过渡形态（P3f 阶段 5A）─────────────────────────────────────────
+ *
+ * 原形态是「根 README 与五语言 README **六份逐字全等**」。它成立的前提是这六份
+ * 是同一份文档的六个语言版；P3f 阶段 5A 把**根** README 单独重写成模板的 16 节
+ * 中文形态，而五语言那五份要到阶段 5B 才跟上 —— 这个前提在两个阶段之间
+ * **暂时不成立**，六份全等今天不可能绿。
+ *
+ * 处置不是删掉这一格、也不是 `skip` 掉它（一条被绕过去的判据比没有更坏），
+ * 而是换成一条**今天就能红、两个方向都能红**的形态：
+ * · **根必须含全语言版的每一个标识符**（多重集包含）—— 少一个当场红，
+ *   那说明重写时把某个端点 / 某个变量整片漏掉了；
+ * · 多出来的那些**逐条登记**在 `ROOT_ONLY_IDENTS` 里，用 `toEqual` 比：
+ *   ① 根上新写一个没登记的标识符 ⇒ 红（逼人回来看一眼是不是写错了）；
+ *   ② 阶段 5B 把语言版扩容上来、某一条不再「只有根有」⇒ **也红**（逼人删登记）。
+ *
+ * ⚠️ **阶段 5B 完工那天这张表必须清空**，清空之后这一格自动退回「六份全等」
+ * （`extra` 与 `missing` 都空 = 多重集相同）。它是一张**会自己过期的**登记表，
+ * 不是一条豁免。
+ */
+const ROOT_ONLY_IDENTS: Readonly<Record<string, number>> = {
+  "/admin": 4,
+  "/admin/": 1,
+  "/admin/api/*": 1,
+  "/app/data": 1,
+  "/health": 1,
+  "/v1": 5,
+  "/v1/images/generations": 1,
+  "/v1/messages": 1,
+  "/v1/videos": 1,
+  "/v1/videos/{id}": 1,
+  "/v1beta": 3,
+  "/v1beta/models/...": 1,
+  ADMIN_TOKEN: 6,
+  ADMIN_TOKEN_MIN_LENGTH: 1,
+  AGNES_BASE_URL: 2,
+  DATA_DIR: 1,
+  GATEWAY_TOKEN: 5,
+  MAX_STRIKES: 2,
+  POOL_CACHE_TTL_MS: 2,
+  PORT: 2,
+  REGISTRAR_ENABLED: 2,
+  TARGET_KEYS: 1,
+  TRUST_PROXY: 1,
+  UPSTREAM_SYNC_TIMEOUT_MS: 1,
+  UPSTREAM_TIMEOUT_MS: 1,
+  USAGE_STATS_ENABLED: 1,
+};
+
+/** 多重集计数。 */
+const tallyOf = (xs: readonly string[]): Map<string, number> => {
+  const m = new Map<string, number>();
+  for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1);
+  return m;
+};
+
+/**
+ * R6 扩展：根 README 与五语言 README 六份。返回失败报文或 `null`。
+ * `allowedExtra` 是「只有根有」的登记表；夹具那条路不传，于是夹具上仍然是严格全等。
+ */
+function rootReadmeFailure(root: string, allowedExtra: Readonly<Record<string, number>> = {}): string | null {
+  const rootTally = tallyOf(idents(readFileSync(join(root, "README.md"), "utf8")));
+  const out: string[] = [];
+  for (const l of LANGS) {
+    const langTally = tallyOf(idents(readFileSync(docPath(root, l, "README"), "utf8")));
+    for (const [span, n] of langTally) {
+      const got = rootTally.get(span) ?? 0;
+      if (got < n) {
+        out.push(`根 README.md 里 \`${span}\` 只有 ${got} 处，docs/${l}/README.md 有 ${n} 处`
+          + " —— 根那份必须含全语言版的每一个标识符，少掉的多半是重写时整片漏了");
+      }
+    }
+  }
+  // 「多出来的」拿 zh-CN 那份当基准：R6 本体已经钉住五语言之间不分叉，随便取一份即可。
+  const baseTally = tallyOf(idents(readFileSync(docPath(root, "zh-CN", "README"), "utf8")));
+  const extra: Record<string, number> = {};
+  for (const [span, n] of rootTally) {
+    const d = n - (baseTally.get(span) ?? 0);
+    if (d > 0) extra[span] = d;
+  }
+  const want = Object.entries(allowedExtra).sort(([a], [b]) => (a < b ? -1 : 1));
+  const got = Object.entries(extra).sort(([a], [b]) => (a < b ? -1 : 1));
+  if (JSON.stringify(want) !== JSON.stringify(got)) {
+    const fmt = (xs: ReadonlyArray<readonly [string, number]>) =>
+      xs.length === 0 ? "（空）" : xs.map(([s, n]) => `${s} ×${n}`).join("，");
+    out.push(`根 README.md 比语言版多出（未登记）：${fmt(got)}\n登记表 ROOT_ONLY_IDENTS 写的是：${fmt(want)}`
+      + "\n—— 两个方向都要红：根上新写一个没登记的标识符要红，语言版跟上来之后登记没删掉也要红");
+  }
+  return out.length === 0 ? null : `R6 扩展 根 README 与五语言 README 的标识符 code span 分叉：\n${out.join("\n")}`;
 }
 
 /**
@@ -1316,12 +1402,20 @@ describe("五语言文档的派生结构对等（R1–R6）", () => {
       .toEqual([]);
   });
 
-  it("R6 扩展：根 README.md 与五语言 README.md 的标识符 code span 多重集六份相同", () => {
+  it("R6 扩展：根 README.md 含全五语言 README.md 的标识符，多出来的逐条登记在 ROOT_ONLY_IDENTS", () => {
     // 同一道平凡相等护栏：根 README 一个标识符都抽不到的话，这一格也是空判据。
     expect(idents(readFileSync("README.md", "utf8")).length, "根 README.md 里一个标识符 code span 都没抽到——这一格是平凡相等")
       .toBeGreaterThan(0);
-    const failure = rootReadmeFailure(".");
+    const failure = rootReadmeFailure(".", ROOT_ONLY_IDENTS);
     expect(failure, failure ?? "").toBeNull();
+  });
+
+  it("R6 扩展 该红时红：语言版跟上来之后没删登记 —— 登记表过期同样要红", () => {
+    // 阶段 5B 的那个方向：把某一条搬进语言版（这里用注入式 reader 模拟），
+    // 它就不再是「只有根有」，`ROOT_ONLY_IDENTS` 里那一行必须跟着删掉。
+    const failure = rootReadmeFailure(".", { ...ROOT_ONLY_IDENTS, GATEWAY_TOKEN: 4 });
+    expect(failure ?? "", "把登记表里 GATEWAY_TOKEN 的条数改小了，这一格却没红")
+      .toContain("GATEWAY_TOKEN");
   });
 
   /**
@@ -3480,91 +3574,55 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
 });
 
 /**
- * ── 根 README 的文档索引 + 两份英文功能表的对账（P3e Task 27）────────────────
+ * ── 根 README 首屏的「一行五链」对账（P3e Task 27 / P3f 阶段 5A 改写）────────
  *
  * 根 `README.md` 是 GitHub 首屏。它有几处 R1–R6 一条都看不见的东西：
  *
  * ① **正文里所有相对链接指的文件在不在**。R4 只比五语言之间的链接多重集，**根 README
  *   根本不在那五份里**；就算在，「五份一起把同一个链接指错」也照样全绿（那句边界写在
- *   R1–R6 上方，逐字适用）。首屏那张表指错了，读者第一步就撞墙。
- *   ⚠️ **射程是整份文件，不是「以 `|` 开头的行」**：复评实测指出，只扫表格行会把
- *   首屏第一行的**语言切换行**和 `## Features` 里那几条指路链接一起漏在射程外，
- *   而那两处指错同样是首屏可见。存在性还要求**是文件**：`existsSync` 对目录也返回真，
- *   `[ADMIN](docs/en)` 点开是列目录不是文档（下面有一格该红时红钉这条）。
- * ④A **每份 `DOCS` 文档在根 README 里都指得到五种语言**，一种都不少。这一条**只问入口在不在，
- *   不问入口长什么样**：谁写在 `## Documentation` 的矩阵表里、谁写成模板那种「一行五链」的
- *   指针行都算数（改写的完整理由写在 `docPointerFailures()` 上方，别在这里读第二遍）。
- *   它取代的是旧版塞在 ④ 里的「这些文档在首屏索引表里连一列都没有」那一句——那一句把
- *   「有没有入口」绑死在一张表的列结构上，换一种同样合法的写法就会红错方向。
- * ④B **索引表按「行×列」定位**，不是「这个路径在不在某个集合里」。
- *   ⚠️ 这一条是复评用两条变异逼出来的：第一版把整张表的目标塞进一个 `Set` 再问「在不在」，
- *   于是「日本語行与한국어行的 README 链接对调」「英文行的 API 格与 DEPLOY 格对调」
- *   **两种置换都全绿**——集合里的元素一个没少，而屏幕上点「日本語 → README」落到韩文文档。
- *   现在每一行的语言从**该行 README 那一格**现算（不靠行序、也不靠语言显示名），
- *   再要求同一行里每一格都是 `docs/<该行语言>/<该列文档>.md`、链接文字与列名一致。
- * ⑤ **语言切换行与索引表互相印证**：`**Language:**` 那一行的标签→语言目录映射，
- *   必须与索引表每一行的行首标签→语言目录**逐条相等**。两处各写一份，写岔了首屏自相矛盾。
- *   「当前页那一种语言不带链接」也是现算的（`LANGS` 里没被链接到的那一种），不手写 `en`。
- * ② **根 README 与 `docs/en/README.md` 的 `## Features` / `## Models` 两节**：逐字节
- *   相同却是**两份复制**，此前没有任何机器守。
- *   ⚠️ **不许为了「一致」把两份合并成一份**：两者的结尾**刻意不同**（根那份是文档
- *   索引表 + 赞助，`docs/en/README.md` 那份是「Using the gateway」），合并会砍掉
- *   GitHub 首屏的索引表。正确做法就是这里这样——**只对共有的两节逐字节对账**，
- *   差异段落照旧各写各的（下面那格「不乱红」把这条边界摆成可执行的）。
- * ②B **另外两节也是两份复制**：`## Endpoints at a glance`（**含整张端点表**）与
- *   `## Quick start`。第一版的 `MIRRORED` 只有 Features / Models，复评实测点出这两节
- *   同样逐字节复制却无人守，而端点表恰恰是最会随开发漂的一张表。
- *   ⚠️ 这两节**不能**用逐字节全等：`docs/en/README.md` 那份结尾各多一句指路
- *   （`[API.md](./API.md)` / `[DEPLOY.md](./DEPLOY.md)`），根那份没有。判据取
- *   **「根那份是 en 那份的前缀」**——分叉发生在正文任何一处都会当场断掉前缀关系。
- *   ⚠️ 前缀天然放行「en 在尾巴上追加东西」，所以同一格额外钉住：**多出来的尾巴里
- *   不许出现表格行**，端点表不会在 en 那边偷偷长出第二半（有一格该红时红钉这条）。
+ *   R1–R6 上方，逐字适用）。首屏那几行指错了，读者第一步就撞墙。
+ *   ⚠️ **射程是整份文件，也包含 HTML 标记里的链接**：P3f 阶段 5A 把首屏换成了模板的
+ *   HTML 头部块，语言切换行与 logo 从 markdown 变成了 `<a href>` / `<img src>`。
+ *   只扫 `](…)` 的话它们会整片掉出射程，而那正是首屏最显眼的几条。存在性还要求
+ *   **是文件**：`existsSync` 对目录也返回真，`[ADMIN](docs/en)` 点开是列目录不是文档
+ *   （下面有一格该红时红钉这条）。
+ * ④ **五条 `> 📖` 指针行按「文档 × 语言」定位**。模板把文档入口写成「一行五链」的
+ *   指针行贴在用得到它的那一节首行（`K/README.md:76,196,409`），P3f W49 据此删掉了
+ *   旧的 `## Documentation` 矩阵表。这一条问的是每一条指针行**自己**站不站得住：
+ *   认得出是哪一份文档、五种语言一种不少、每一格的目标都是 `docs/<语言>/<文档>.md`、
+ *   同一种语言不出现两次。
+ * ④A **每份 `DOCS` 文档在根 README 里都指得到五种语言**，一种都不少。这一条**只问入口
+ *   在不在，不问入口长什么样**：谁写在指针行里、谁写在语言切换行里都算数。
+ *   ⚠️ 射程是 `DOCS` 减去 `NO_ROOT_FIVE_LANG_ENTRY`，那张名册**两个方向都查**。
+ * ⑤ **语言切换行与五条指针行互相印证**：同一种语言在这两处的**自称**必须逐字一致。
+ *   两处各写一份，写岔了首屏自相矛盾。这一条同时是「同一条指针行里两格目标对调」
+ *   的唯一守卫——那种置换不改任何一个目标集合、也不缺任何一种语言，只有
+ *   「语言 × 标签」这一层看得见。
+ * ⑥ **根 README 的 `## ` 序列逐字命中 `SECTIONS` 常量的 zh-CN 那一列**（R11 的根那一半）。
+ *   它取代的是旧的 ②/②B——那两条对账的是「根 README 与 `docs/en/README.md` 的
+ *   `## Features` / `## Models` / `## Endpoints at a glance` / `## Quick start` 四节
+ *   是两份逐字复制」。P3f 阶段 5A 之后**这个关系被有意解除**：根那份改成简体中文的
+ *   模板 16 节骨架，`docs/en/README.md` 仍是英文版，两者不再是复制关系，
+ *   照旧比下去只会得到一条永远红的判据。**被解除的关系不留空位**——根那份的结构
+ *   改由 R11 守：删一节、改一节的名字、两节对调，三种都会红并点名。
  * ③ **六份 README 的版本徽章**：`scripts/set-version.sh` 用一个 `sed` 一次刷六份，
  *   漏了哪一份、或者谁手改过某一份，只有这一格看得见。
  *
- * ── 归一化只做那四条替换，写死在下面，**不许加第五条特例** ────────────────────
- * 根那份的链接以仓根为基准（`docs/en/DEPLOY.md`），`docs/en/README.md` 那份以自身
- * 目录为基准（`./DEPLOY.md`），指的是同一个文件，逐字节比之前必须先抹平这一层。
- * 归一化函数一旦写复杂，改一次链接写法就要跟着调它，最后没人敢让它红。
- * **链接写法要改就一起改这四条**，别往函数里堆特例。
- * ⚠️ 语言目录那一条的备选串**从 `LANGS` 现拼**，不再手抄第二份语言名单：第一版把
- *   `zh-CN|zh-TW|en|ja|ko` 逐字抄进正则，复评指出「不许加第五条特例」约束的是**替换条数**、
- *   管不到这张表跟不跟 `LANGS` 走——加第六种语言时 `LANGS` 侧会被别处强制、这一侧不会。
- *   下面「归一化认全了五种语言」那一格是它的测法（每一种语言逐个走一遍 `norm`）。
- *
- * ⚠️ **落地实测推翻了需求书里「② 建起来就绿」那一句**：`docs/en/README.md` 当时
- * 写的是裸 `(DEPLOY.md)` / `(REGISTRAR.md)`，而根那边归一化之后是 `(./DEPLOY.md)`,
- * 这一格**建起来就是红的**。方向只有一个——让 `docs/en/README.md` 侧写 `./`：
- * 反过来让根那边写裸文件名的话，那个链接在仓根上指向一个不存在的 `DEPLOY.md`，
- * ① 当场红。五语言 README 的同目录链接因此一起统一成 `./` 形态（R4 要求五份的
- * 链接多重集相同，只改 `docs/en/README.md` 一份会让 R4 红）。
- *
  * ── 它做不到什么（明写，别读成「首屏从此都是真的」）──────────────────────────
- * ⚠️ **这份名单本身被复评实测推翻过一次**，教训比名单更值钱：第一版在这里写的是
- * 「把 API 那一整列换成 `docs/en/USAGE.md`，五个文件都在，① 全绿」。逐字看没错——
- * ① 确实全绿——但实测那条变异**会被 ④ 红着拦下并逐语言点名五条 `docs/<语言>/API.md`**。
- * 一份**指错方向**的边界名单比不写更容易让人放心：它请读者去担心一件已经有人守的事，
- * 而真正没人守的（当时是「整行/整列置换」）根本不在名单里。**下面每一条都是实测过的。**
+ * ⚠️ **这份名单本身被复评实测推翻过一次**，教训比名单更值钱：一份**指错方向**的边界
+ * 名单比不写更容易让人放心——它请读者去担心一件已经有人守的事，而真正没人守的
+ * 根本不在名单里。**下面每一条都是实测过的。**
  *
- * · ① 只查**链接指的文件在不在**，不查**指得对不对**。索引表那 `LANGS × DOCS` 格今天由
- *   ④B 按行×列兜住，**但正文散文里的链接只有 ①**：把 `## Features` 里那条指向
- *   `REGISTRAR.md` 的链接**六份一起**改指 `USAGE.md`（根那份写 `docs/en/USAGE.md`、
- *   五语言各写 `./USAGE.md`），文件在、② 不分叉、R4 五份一致 ⇒ **全绿**。
- *   这是今天真正剩下的那个洞。
- *   ⚠️ 这一条的第一版写的是「**两份**一起改 ⇒ 全绿」，**实测是红的**——只改根与 en
- *   会让 R4（五语言链接多重集）逐字点名 en。回填时差点在同一段里再写一句假话；
- *   现在这句是按「六份一起改 ⇒ 本文件全绿、EXIT=0」的实测重写的（**这里刻意不写用例条数**：
- *   那个数每加一格就漂一次，写下来就是下一句假话）。
- * · ② 只证明**两份复制没分叉**，不证明任何一份说得对：两份一起说错，它一个字都不吭。
- * · ②B 是**前缀**判据：`docs/en/README.md` 在这两节尾巴上追加的散文不受管（只钉住
- *   尾巴里不许有表格行）；根那份**永远不会**因为 en 多写而红，反过来也一样。
- * · ④B⑤ 只认 `## Documentation` 那张表与 `**Language:**` 那一行的**结构**：行首标签写的是
- *   哪一国文字、链接文字与目标是不是同一种语言，它一概不看——「`한국어` 这四个字其实是韩文」
- *   这种事没有机器判据，只能靠人。
- * · ④A 只数「五种语言齐不齐」，**不要求那五条落在同一行上**，也不看那条入口周围写了什么：
- *   一条 `docs/ko/API.md` 藏在一段与 API 无关的散文里，它照样算数。**「并列」这半句今天
- *   没有机器判据**——本仓的入口今天是一张转置矩阵表（每行一种语言），要求同一行会当场
- *   把真仓判红，而那并不是读者找不找得到文档的必要条件。
+ * · ① 只查**链接指的文件在不在**，不查**指得对不对**。指针行那 `LANGS × 文档` 格今天由
+ *   ④/⑤ 兜住，**但正文散文里的链接只有 ①**：把 `## ☕ 赞赏 & 共享` 那条指向
+ *   `CONTRIBUTING.md` 的链接改指 `SECURITY.md`，文件在 ⇒ **全绿**。这是今天真正剩下的那个洞。
+ * · ④ 只看每条指针行**自己**：五种语言齐不齐、目标形态对不对。**同一条行里两格的目标
+ *   对调它一个字都不吭**（目标集合一个元素都没少、语言一种都不缺）——那一种由 ⑤ 兜住。
+ * · ④A 只数「五种语言齐不齐」，**不要求那五条落在同一行上**，也不看那条入口周围写了什么。
+ * · ⑤ 只比**标签与语言目录的对应关系**，不看「`한국어` 这四个字其实是不是韩文」——
+ *   那件事没有机器判据，只能靠人。
+ * · ⑥ 只比 `## ` 那一行的**字面**，不看每一节里写了什么。一节标题对了、内容写反了，
+ *   它一个字都不吭。
  * · ③ 只比字符串包含，管不到徽章的颜色与链接目标，也管不到 `package.json` 里那一份
  *   版本号（那是 `scripts/set-version.sh` 一次刷的另一半）。
  * · 面板条目里那句话是否属实（`ADMIN_TOKEN` 没设时 `/admin` 真的不注册），**这一组
@@ -3573,65 +3631,42 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
  *   的反向那一枪钉的正是它，而且 `tests/contract/` 双运行时都跑。
  *   文档判据管不了的是**文档**，不是那个行为。
  */
-describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", () => {
-  /** 两份**逐字节全等**的复制节。下面第一格是它的非空锚：认不出要吵，不许静静给出空串。 */
-  const MIRRORED = ["Features", "Models"] as const;
-
-  /**
-   * 两份**前缀相同**的复制节：`docs/en/README.md` 那份结尾各多一句指路，根那份没有。
-   * ⚠️ 复评实测：这两节此前不在 `MIRRORED` 里，而 `## Endpoints at a glance` 里是**整张端点表**。
-   */
-  const MIRRORED_PREFIX = ["Endpoints at a glance", "Quick start"] as const;
-
+describe("根 README 首屏的一行五链与 16 节骨架（P3e Task 27 / P3f 阶段 5A 改写）", () => {
   /** 六份 README：根那份 + 五语言。`LANGS` 变了它自动跟着变，不手抄第二份名单。 */
   const SIX = ["README.md", ...LANGS.map((l) => `docs/${l}/README.md`)] as const;
 
   /**
-   * ⚠️ 只做这四条替换，**不许加第五条特例**（理由见上方 docblock）。
-   * 第一条的语言备选串从 `LANGS` 现拼——这里不留第二份手写语言名单。
+   * 模板把文档入口写成贴在小节首行的「一行五链」指针行，一份文档一条。
+   * 这张表**只是顺序无关的期望集合**：哪一份文档该有指针行，由 ④A 的射程决定，
+   * 这里列出来是为了让 ④ 的报文说得出「哪一份缺了」。
    */
-  const norm = (s: string) => s
-    .replace(new RegExp(`\\(docs/(${LANGS.join("|")})/`, "g"), "(../$1/")
-    .replace(/\(\.\.\/en\//g, "(./")
-    .replace(/\(LICENSE\)/g, "(../../LICENSE)")
-    .replace(/\(\.\.\/\.\.\/LICENSE\)/g, "(../../LICENSE)");
+  const POINTER_DOCS = ["ADMIN", "API", "DEPLOY", "REGISTRAR", "USAGE"] as const;
 
   /**
-   * 取一节。**认不出返回 `null`，绝不返回空串。**
+   * ④A 的射程要减掉的那几份：**按模板形态，根 README 里就没有它们的五语言入口**。
    *
-   * 这不是洁癖：写成 `indexOf` + `slice` 的那个直觉版本，标题找不到时 `indexOf`
-   * 返回 `-1`，`slice(-1, j)` 会**静静给出空串**，而两份的空串恰好相等——两份一起
-   * 把 `## Features` 改成别的名字，那一格会装作没事。测法是下面「认不出要吵」那一格。
+   * 今天只有 `SPONSORS`：模板的 `## ☕ 赞赏 & 共享` 一节只链根 `SPONSORS.md` 一条
+   * （`K/README.md:588` 逐字），`docs/{lang}/SPONSORS.md` 的入口在**各语言版 README
+   * 的同一节**里，不在根。
+   *
+   * ⚠️ **名册两个方向都查**（下面各有一格）：登记了却在根 README 里指得到五种语言
+   * ⇒ 红（登记过期了，删掉它）；根那条指向 `SPONSORS.md` 的链接没了 ⇒ 红
+   * （那是这份文档在首屏唯一的入口）。
    */
-  /** 取一节的原始行（**不归一化**）。④⑤ 要按原样看路径，不能拿被 `norm` 改写过的串去比。 */
-  const rawSection = (body: string, heading: string): string[] | null => {
-    const lines = body.split("\n");
-    const i = lines.findIndex((l) => l === `## ${heading}`);
-    if (i < 0) return null;
-    let j = i + 1;
-    while (j < lines.length && !lines[j]!.startsWith("## ")) j += 1;
-    return lines.slice(i, j);
-  };
-
-  const sectionOrNull = (body: string, heading: string): string | null => {
-    const lines = rawSection(body, heading);
-    return lines === null ? null : norm(lines.join("\n")).trim();
-  };
-
-  const sectionOf = (body: string, heading: string, where: string): string => {
-    const s = sectionOrNull(body, heading);
-    if (s === null) {
-      throw new Error(`${where} 里找不到 \`## ${heading}\` 这一节——两份复制的对账认不出小节时当场吵，不装作两份都是空的`);
-    }
-    return s;
-  };
+  const NO_ROOT_FIVE_LANG_ENTRY = ["SPONSORS"] as const;
+  const ENTRY_DOCS = DOCS.filter((d) => !(NO_ROOT_FIVE_LANG_ENTRY as readonly string[]).includes(d));
 
   /**
-   * 根 README 里**所有**相对链接目标——不只索引表那几行，语言切换行与 `## Features`
-   * 里那几条指路链接都在射程内。**真扫描与反向控制共用这一份。**
+   * 正文里**所有**相对链接目标。markdown 的 `](…)` 与 HTML 的 `href=` / `src=` 一起收。
+   * **真扫描与反向控制共用这一份。**
+   *
+   * ⚠️ 页内锚点（`#-快速部署` 那一族）与外链一律不进：前者不指文件，后者不在磁盘上。
    */
-  const relTargets = (body: string) =>
-    [...body.matchAll(/\]\(([^)]+)\)/g)].map((m) => m[1]!).filter((t) => !t.startsWith("http"));
+  const relTargets = (body: string) => [
+    ...[...body.matchAll(/\]\(([^)]+)\)/g)].map((m) => m[1]!),
+    ...[...body.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1]!),
+    ...[...body.matchAll(/<img src="([^"]+)"/g)].map((m) => m[1]!),
+  ].filter((t) => !t.startsWith("http") && !t.startsWith("#"));
 
   /**
    * 坏链。**「在磁盘上存在」不够，还得是文件**：`existsSync("docs/en")` 对目录返回真，
@@ -3659,10 +3694,9 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
   /**
    * 每一格「该红时红」的统一前置。
    *
-   * ⚠️ 这一条是复评用两条变异逼出来的，**回填时又差点在新写的几格里重演**：探针的基取自
-   * **真文档**，真文档今天本身就不过判据时，探针会跟着红，而它的报文说的是
-   * 「判据坏了」——把人直直引向一个没坏的东西。仓里 `charsetFailures` 那一族早有正确写法，
-   * 本族每一格现在都抄这条纪律：**先看基干不干净，脏了就当场抛并把人指回主格**。
+   * ⚠️ 这一条是复评用两条变异逼出来的：探针的基取自**真文档**，真文档今天本身就不过判据时，
+   * 探针会跟着红，而它的报文说的是「判据坏了」——把人直直引向一个没坏的东西。
+   * **先看基干不干净，脏了就当场抛并把人指回主格。**
    */
   const probeBase = (failures: readonly string[], mainCell: string) => {
     if (failures.length > 0) {
@@ -3671,61 +3705,98 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
     }
   };
 
-  /** 一格里的相对路径；这一格不是「[文字](目标)」的形态就返回 `null`（认不出要吵，不装作空串）。 */
-  const cellTarget = (cell: string) => /^\[([^\]]*)\]\(([^)]+)\)$/.exec(cell)?.[2] ?? null;
-  const cellText = (cell: string) => /^\[([^\]]*)\]\(([^)]+)\)$/.exec(cell)?.[1] ?? null;
+  /* ── 「一行五链」的解析器：切换行与指针行共用同一份 ────────────────────────── */
+
+  /** 一行五链里的一格：`<a href="…">标签</a>`、`[标签](…)`，或者不带链接的纯文本。 */
+  interface LinkCell { label: string; target: string | null }
+
+  /** 引导词（`📖 文档语言：` / `📖 详细部署文档：` 那一段）。中英文冒号都认。 */
+  const FIVE_LINK_LEAD = /^\s*>?\s*📖[^：:]*[：:]\s*/;
+
+  const splitLinkCells = (line: string): LinkCell[] =>
+    line.replace(FIVE_LINK_LEAD, "").split("|").map((s) => s.trim()).filter((s) => s !== "")
+      .map((c) => {
+        const html = /^<a href="([^"]+)">(.*)<\/a>$/.exec(c);
+        if (html !== null) return { label: html[2]!.trim(), target: html[1]! };
+        const md = /^\[([^\]]*)\]\(([^)]+)\)$/.exec(c);
+        if (md !== null) return { label: md[1]!.trim(), target: md[2]! };
+        return { label: c, target: null };
+      });
 
   /**
-   * `## Documentation` 那一节里的索引表，拆成表头 + 数据行（分隔行 `|---|` 丢掉）。
-   * **认不出返回 `null`**，绝不返回一张空表——空表会让下面每一条判据都「零缺格」地静静放行。
+   * 一行五链的「语言目录 → 标签」映射。**语言从每一格自己的目标现算**，不靠格序。
+   * 认不出的格进 `failures`，不静静丢掉。
    */
-  const indexTable = (body: string): { header: string[]; rows: string[][] } | null => {
-    const lines = rawSection(body, "Documentation");
-    if (lines === null) return null;
-    const cells = lines
-      .filter((l) => l.startsWith("|"))
-      .map((l) => l.split("|").slice(1, -1).map((c) => c.trim()))
-      .filter((r) => !r.every((c) => /^-+$/.test(c)));
-    if (cells.length < 2 || cells[0]!.length < 2) return null;
-    return { header: cells[0]!, rows: cells.slice(1) };
+  const lineLangLabels = (line: string, doc: string, where: string) => {
+    const map = new Map<string, string>();
+    const failures: string[] = [];
+    const cells = splitLinkCells(line);
+    if (cells.length === 0) failures.push(`${where}一格都切不出来——认不出要吵，不许静静报零缺格`);
+    for (const c of cells) {
+      if (c.target === null) continue; // 当前语言那一格不带链接（语言版才有），由调用方数
+      const m = new RegExp(`^(?:\\.\\./|docs/)([^/]+)/${doc}\\.md$`).exec(c.target);
+      if (m === null) {
+        failures.push(`${where}里「${c.label}」指向 ${c.target}，不是 docs/<语言>/${doc}.md`);
+        continue;
+      }
+      if (map.has(m[1]!)) failures.push(`${where}里 ${m[1]} 这一种语言出现了两次`);
+      map.set(m[1]!, c.label);
+    }
+    const missing = LANGS.filter((l) => !map.has(l));
+    if (missing.length > 0) failures.push(`${where}缺这几种语言：${missing.join("、")}`);
+    const extra = [...map.keys()].filter((l) => !(LANGS as readonly string[]).includes(l)).sort();
+    if (extra.length > 0) failures.push(`${where}里有 LANGS 之外的语言目录：${extra.join("、")}`);
+    return { map, failures };
   };
 
-  /** 索引表每一行的「语言目录 ← 行首显示名」。语言从**该行 README 那一格**现算。 */
-  const indexRows = (body: string): Array<{ lang: string; label: string }> => {
-    const t = indexTable(body);
-    if (t === null) return [];
-    const at = t.header.findIndex((h) => h.toLowerCase() === "readme");
-    if (at < 1) return [];
-    return t.rows.flatMap((row) => {
-      const lang = /^docs\/([^/]+)\/README\.md$/.exec(cellTarget(row[at] ?? "") ?? "")?.[1];
-      return lang === undefined ? [] : [{ lang, label: row[0] ?? "" }];
-    });
+  /** 语言切换行：`📖` 开头、**不在引用块里**的那一行。认不出返回 `null`。 */
+  const switcherLine = (body: string): string | null =>
+    body.split("\n").find((l) => l.includes("📖") && !l.trimStart().startsWith(">")) ?? null;
+
+  /** 五条 `> 📖` 指针行。 */
+  const pointerLines = (body: string): string[] =>
+    body.split("\n").filter((l) => l.trimStart().startsWith("> 📖"));
+
+  /** ④ 的失败报文全集。**真扫描与反向控制共用这一份。** */
+  const pointerFailures = (body: string): string[] => {
+    const lines = pointerLines(body);
+    if (lines.length === 0) {
+      return ["认不出根 README 里的 `> 📖` 指针行——认不出要吵，不许静静报零缺格"];
+    }
+    const out: string[] = [];
+    const seen: string[] = [];
+    for (const line of lines) {
+      const doc = DOCS.find((d) => line.includes(`/${d}.md`));
+      if (doc === undefined) {
+        out.push(`这一条 \`> 📖\` 指针行里一份 DOCS 文档都认不出来：${line.trim()}`);
+        continue;
+      }
+      if (seen.includes(doc)) out.push(`${doc} 有两条 \`> 📖\` 指针行——同一份文档在首屏出现两个入口`);
+      seen.push(doc);
+      out.push(...lineLangLabels(line, doc, `${doc} 的 \`> 📖\` 指针行`).failures);
+    }
+    const missing = POINTER_DOCS.filter((d) => !seen.includes(d));
+    if (missing.length > 0) {
+      out.push(`这几份文档在根 README 里没有 \`> 📖\` 指针行：${missing.join("、")}`
+        + "——模板把入口贴在用得到它的那一节首行，少一条就是少一个入口");
+    }
+    return out;
   };
 
   /**
-   * ④A 的失败报文全集：**每份 `DOCS` 文档在根 README 都指得到五种语言，一种都不少。**
+   * ④A 的失败报文全集：**每份 `ENTRY_DOCS` 文档在根 README 都指得到五种语言，一种都不少。**
    *
-   * ⚠️ **这一条是从「索引表必须有第 N 列」改写过来的**，改写理由有两条，都不是风格问题：
-   * · **旧写法把「有没有入口」这件事绑死在一张表的列结构上。** 一份文档在首屏有没有入口，
-   *   与它的入口长成一张 `语言 × 文档` 的矩阵表、还是长成模板那种一行五链的指针行
-   *  （`> 📖 详细部署文档：[简体中文](…) | [繁體中文](…) | …`，见 `K/README.md:76,196,409`），
-   *   本来就没有关系。绑死之后，**换一种同样合法、而且是模板正形的写法会让判据当场红**，
-   *   而红的原因是"表里没有这一列"，不是"读者找不到这份文档"——报文把人引向错误的方向。
-   * · **旧写法只数「列」，一列里缺哪几种语言它一个字都不说。** 真正要守的不变量是
-   *   「五种语言的读者在首屏都点得到这份文档」，而不是「表头上有这个词」。
+   * ⚠️ **这一条与入口的排版形态解耦**：只问 `docs/<语言>/<文档>.md` 这五个目标在根 README
+   * 正文里出没出现（射程是整份文件，markdown 与 HTML 一起），谁写在指针行里、
+   * 谁写在语言切换行里都算数。
    *
-   * 改写之后它**与入口的排版形态解耦**：只问 `docs/<语言>/<文档>.md` 这五个目标在根 README
-   * 正文里出没出现（射程是整份文件，不是以 `|` 开头的行），谁写在表里、谁写成指针行都算数。
-   *
-   * ⚠️ **它做不到什么，明写**：它**不要求五种语言落在同一行上**。「并列」今天在本仓是
-   * 一张转置过来的矩阵表（每一行一种语言、每一列一份文档），要求同一行会当场把真仓判红；
-   * 而"同一行"本身不是读者能不能找到文档的必要条件。**哪天索引表被换成模板那种指针行，
-   * 这一条一个字都不用改**——那正是它改写的目的。
+   * ⚠️ **它做不到什么，明写**：它**不要求五种语言落在同一行上**，也不看那条入口周围
+   * 写了什么——一条 `docs/ko/API.md` 藏在一段与 API 无关的散文里，它照样算数。
    */
-  const docPointerFailures = (body: string): string[] => {
+  const docPointerFailures = (body: string, docs: readonly string[] = ENTRY_DOCS): string[] => {
     const targets = relTargets(body);
     const out: string[] = [];
-    for (const doc of DOCS) {
+    for (const doc of docs) {
       const re = new RegExp(`^docs/([^/]+)/${doc}\\.md$`);
       const seen = new Set(targets.flatMap((t) => {
         const m = re.exec(t);
@@ -3745,165 +3816,47 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
   };
 
   /**
-   * ④B 的失败报文全集：**索引表按行×列定位**。
-   * 每一行的语言从该行 README 那一格现算，于是「两行的 README 链接对调」「同一行里两格对调」
-   * 都会让「行语言 × 列文档」对不上。**真扫描与反向控制共用这一份。**
-   *
-   * ⚠️ 「这份文档在表里连一列都没有」那一条**已经搬到 ④A**（见上方那段的改写理由）：
-   * 本函数今天只管**表里已经有的那些列对不对得上**，一份文档该不该在表里、
-   * 五种语言齐不齐，它一概不问。
-   */
-  const indexGridFailures = (body: string): string[] => {
-    const t = indexTable(body);
-    if (t === null) {
-      return ["认不出根 README `## Documentation` 那一节里的索引表——认不出要吵，不许静静报零缺格"];
-    }
-    const cols = t.header.map((h, i) => (i === 0 ? null : DOCS.find((d) => d.toLowerCase() === h.toLowerCase()) ?? null));
-    const out = cols.flatMap((d, i) =>
-      i > 0 && d === null ? [`索引表第 ${i + 1} 列的表头「${t.header[i]}」在 DOCS 里没有同名文档`] : []);
-    const readmeAt = cols.indexOf("README");
-    if (readmeAt < 1) return [...out, "索引表里没有 README 这一列——每一行的语言就是从这一格现算的，缺了它整条判据无从谈起"];
-    const seen: string[] = [];
-    t.rows.forEach((row, r) => {
-      const where = `索引表第 ${r + 1} 行（行首「${row[0] ?? ""}」）`;
-      if (row.length !== t.header.length) {
-        out.push(`${where}的格数与表头对不上：${row.length} vs ${t.header.length}——整列多半被删了或多打了一根竖线`);
-        return;
-      }
-      const lang = /^docs\/([^/]+)\/README\.md$/.exec(cellTarget(row[readmeAt] ?? "") ?? "")?.[1];
-      if (lang === undefined) {
-        out.push(`${where}的 README 格不是 \`docs/<语言>/README.md\` 的形态：${row[readmeAt]}`);
-        return;
-      }
-      seen.push(lang);
-      cols.forEach((doc, i) => {
-        if (doc === null) return;
-        const cell = row[i]!;
-        const want = `docs/${lang}/${doc}.md`;
-        const got = cellTarget(cell);
-        if (got !== want) {
-          out.push(`${where}的「${t.header[i]}」列指向 ${got ?? `一格不是链接的东西「${cell}」`}，按行×列该是 ${want}`);
-        }
-        const text = cellText(cell);
-        if (text !== null && text.toLowerCase() !== doc.toLowerCase()) {
-          out.push(`${where}的「${t.header[i]}」列链接文字写着「${text}」，与列名对不上——屏幕上写一处、点开去另一处`);
-        }
-      });
-    });
-    const missing = LANGS.filter((l) => !seen.includes(l));
-    if (missing.length > 0) out.push(`索引表里没有这几种语言的行：${missing.join("、")}`);
-    const extra = seen.filter((l) => !(LANGS as readonly string[]).includes(l));
-    if (extra.length > 0) out.push(`索引表里有 LANGS 之外的语言行：${extra.join("、")}`);
-    return out;
-  };
-
-  /**
-   * ⑤ 的失败报文全集：`**Language:**` 那一行与索引表**互相印证**。
-   * 「当前页那一种语言不带链接」是现算的——`LANGS` 里没被链接到的那一种，不手写 `en`。
+   * ⑤ 的失败报文全集：语言切换行与五条指针行**互相印证**。
+   * 「当前页那一种语言不带链接」在根 README 上**不成立**——模板的根那份把
+   * `简体中文` 也写成链接（指向 `docs/zh-CN/README.md` 那份并存的中文副本），
+   * 所以这里数的是「五种语言一种不少」，不是「恰好一种不带链接」。
    */
   const switcherFailures = (body: string): string[] => {
-    const line = body.split("\n").find((l) => l.startsWith("**Language:**"));
-    if (line === undefined) return ["认不出根 README 的语言切换行（`**Language:**` 开头那一行）——认不出要吵"];
-    const cells = line.replace("**Language:**", "").split("|").map((s) => s.trim()).filter((s) => s !== "");
-    const out: string[] = [];
-    const label = new Map<string, string>();
-    const plain: string[] = [];
-    for (const c of cells) {
-      const target = cellTarget(c);
-      if (target === null) { plain.push(c); continue; }
-      const lang = /^docs\/([^/]+)\/README\.md$/.exec(target)?.[1];
-      if (lang === undefined) { out.push(`语言切换行里「${cellText(c)}」指向 ${target}，不是 \`docs/<语言>/README.md\``); continue; }
-      label.set(lang, cellText(c) ?? "");
-    }
-    const unlinked = LANGS.filter((l) => !label.has(l));
-    if (plain.length !== 1 || unlinked.length !== 1) {
-      out.push(`语言切换行里应当恰好有一种语言是「当前页」（不带链接）：不带链接的有 ${plain.length} 个（${plain.join("、")}），`
-        + `LANGS 里没被链接到的有 ${unlinked.length} 种（${unlinked.join("、")}）`);
-    } else {
-      label.set(unlinked[0]!, plain[0]!);
-    }
-    const rows = indexRows(body);
-    if (rows.length === 0) return [...out, "认不出索引表的语言行，切换行的标签无从印证"];
-    for (const { lang, label: inTable } of rows) {
-      const inLine = label.get(lang);
-      if (inLine === undefined) out.push(`索引表有 ${lang} 这一行，语言切换行里却没有这一种语言`);
-      else if (inLine !== inTable) out.push(`${lang} 在语言切换行里叫「${inLine}」，在索引表行首却叫「${inTable}」——首屏两处自相矛盾`);
-    }
-    for (const lang of label.keys()) {
-      if (!rows.some((r) => r.lang === lang)) out.push(`语言切换行有 ${lang}，索引表里却没有这一行`);
+    const line = switcherLine(body);
+    if (line === null) return ["认不出根 README 的语言切换行（首屏那条带 `📖` 的行）——认不出要吵"];
+    const { map, failures } = lineLangLabels(line, "README", "语言切换行");
+    const out = [...failures];
+    for (const p of pointerLines(body)) {
+      const doc = DOCS.find((d) => p.includes(`/${d}.md`));
+      if (doc === undefined) continue; // 认不出是哪份文档 ⇒ ④ 已经点名了，这里不重复报
+      const { map: pm } = lineLangLabels(p, doc, `${doc} 的 \`> 📖\` 指针行`);
+      for (const [lang, label] of pm) {
+        const inLine = map.get(lang);
+        if (inLine === undefined) out.push(`${doc} 的指针行有 ${lang}，语言切换行里却没有这一种语言`);
+        else if (inLine !== label) {
+          out.push(`${lang} 在语言切换行里叫「${inLine}」，在 ${doc} 的指针行里却叫「${label}」`
+            + "——首屏两处自相矛盾，多半是同一行里两格的目标被对调了");
+        }
+      }
     }
     return out;
   };
-
-  /** ② 的失败报文全集（逐字节全等）。**真扫描与反向控制共用这一份。** */
-  const mirrorFailures = (root: string, en: string) => MIRRORED.flatMap((h) => {
-    const a = sectionOf(root, h, "README.md");
-    const b = sectionOf(en, h, "docs/en/README.md");
-    return a === b ? [] : [`「${h}」两份复制分叉了`];
-  });
-
-  /** ②B 的失败报文全集（根那份是 en 那份的前缀 + 尾巴里不许有表格行）。**真扫描与反向控制共用这一份。** */
-  const prefixFailures = (root: string, en: string) => MIRRORED_PREFIX.flatMap((h) => {
-    const a = sectionOf(root, h, "README.md");
-    const b = sectionOf(en, h, "docs/en/README.md");
-    const out: string[] = [];
-    const n = a.split("\n").length;
-    if (n <= 3) out.push(`README.md 的「${h}」只取到 ${n} 行——取节的边界判据多半没落对地方`);
-    if (!b.startsWith(a)) {
-      out.push(`「${h}」两份复制分叉了：根那份不再是 docs/en/README.md 那份的前缀\n根：\n${a}\n——\nen：\n${b}`);
-      return out;
-    }
-    const rows = b.slice(a.length).split("\n").filter((l) => l.trimStart().startsWith("|"));
-    if (rows.length > 0) {
-      out.push(`「${h}」在 docs/en/README.md 那边的尾巴里长出了表格行：${rows.join(" / ")}`
-        + "——前缀判据管不到尾巴，表格必须整张落在前缀里");
-    }
-    return out;
-  });
-
-  it("非空锚：两节在两份里都取得出来，且都不是被截断成一两行的残节", () => {
-    expect(MIRRORED.length, "复制节的名单是空的，这一组测的是空气").toBeGreaterThan(0);
-    for (const p of ["README.md", "docs/en/README.md"]) {
-      for (const h of MIRRORED) {
-        const n = sectionOf(readFileSync(p, "utf8"), h, p).split("\n").length;
-        expect(n, `${p} 的「${h}」只取到 ${n} 行——取节的边界判据多半没落对地方`).toBeGreaterThan(3);
-      }
-    }
-  });
-
-  it("认不出要吵：小节被改名时当场抛，不许两份空串相等就算过", () => {
-    const body = readFileSync("docs/en/README.md", "utf8");
-    const renamed = body.replace("\n## Features\n", "\n## Highlights\n");
-    expect(renamed, "变异没落地——没找到 `## Features` 那一行，这一格控制是空的").not.toEqual(body);
-    expect(sectionOrNull(renamed, "Features"), "小节改名之后仍然取出了东西").toBeNull();
-    expect(() => sectionOf(renamed, "Features", "docs/en/README.md")).toThrowError(/找不到/);
-  });
-
-  it("归一化认全了五种语言 —— `norm` 里不留第二份手写语言名单", () => {
-    for (const l of LANGS) {
-      const want = l === "en" ? "(./API.md)" : `(../${l}/API.md)`;
-      expect(norm(`[API](docs/${l}/API.md)`), `\`norm\` 认不出 ${l} 这一种语言——它的语言表没跟着 LANGS 走`)
-        .toEqual(`[API]${want}`);
-    }
-    expect(norm("[X](docs/de/X.md)"), "`norm` 把 LANGS 之外的语言目录也归一化了——它多半没在拿 LANGS 拼")
-      .toEqual("[X](docs/de/X.md)");
-  });
 
   it("① 根 README 正文里的每一个相对链接都指向磁盘上真实存在的**文件**", () => {
     const body = readFileSync("README.md", "utf8");
-    expect(relTargets(body).length, "根 README 里扫到的相对链接比索引表本身还少，链接正则多半写坏了")
-      .toBeGreaterThanOrEqual(LANGS.length * DOCS.length);
+    expect(relTargets(body).length, "根 README 里扫到的相对链接比五条指针行加语言切换行还少，链接正则多半写坏了")
+      .toBeGreaterThanOrEqual(LANGS.length * (POINTER_DOCS.length + 1));
     const broken = brokenTargets(body);
     expect(broken, `根 README 里这些相对链接在磁盘上不是一个存在的文件：${broken.join("、")}`).toEqual([]);
   });
 
-  it("① 该红时红：索引表里某一行指向一个仓里没有的语言目录", () => {
+  it("① 该红时红：某条指针行指向一个仓里没有的语言目录", () => {
     const body = readFileSync("README.md", "utf8");
     probeBase(brokenTargets(body), "① 根 README 正文里的每一个相对链接都指向磁盘上真实存在的**文件**");
-    const gone = `docs/${"de"}/README.md`;
-    const mutated = body.replaceAll("[README](docs/ja/README.md)", `[README](${gone})`);
-    expect(mutated, "变异没落地——索引表里没有 `[README](docs/ja/README.md)` 这一格").not.toEqual(body);
-    expect(brokenTargets(mutated), "索引表指向了一个不存在的文件，① 却没红").toEqual([gone]);
+    const gone = `docs/${"de"}/API.md`;
+    const mutated = body.replaceAll("(docs/ja/API.md)", `(${gone})`);
+    expect(mutated, "变异没落地——指针行里没有 `(docs/ja/API.md)` 这一格").not.toEqual(body);
+    expect(brokenTargets(mutated), "指针行指向了一个不存在的文件，① 却没红").toEqual([gone]);
   });
 
   it("① 该红时红：链接指到的是一个**目录**而不是文件 —— `existsSync` 会放行，① 不许放行", () => {
@@ -3915,55 +3868,49 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
     expect([...new Set(brokenTargets(mutated))], "链接指到了一个目录，① 却放行了").toEqual(["docs/en"]);
   });
 
-  it("① 不乱红：语言切换行与 Features 里那几条散文链接也在射程内，今天它们都是真文件", () => {
+  it("① 不乱红：HTML 头部块里的 logo 与语言切换行也在射程内，今天它们都是真文件", () => {
     const body = readFileSync("README.md", "utf8");
-    const inTable = new Set(indexTable(body)!.rows.flatMap((r) => r.map((c) => cellTarget(c)).filter((t): t is string => t !== null)));
-    const outside = relTargets(body).filter((t) => !inTable.has(t));
-    expect(outside.length, "表格之外一个相对链接都没扫到——① 多半又缩回只扫 `|` 开头的行了")
-      .toBeGreaterThan(0);
-    expect(outside.filter((t) => !(existsSync(t) && statSync(t).isFile())), "表格之外的相对链接有坏的").toEqual([]);
+    const html = [
+      ...[...body.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1]!),
+      ...[...body.matchAll(/<img src="([^"]+)"/g)].map((m) => m[1]!),
+    ].filter((t) => !t.startsWith("http") && !t.startsWith("#"));
+    expect(html.length, "HTML 标记里一个相对链接都没扫到——① 多半又缩回只认 markdown 的 `](…)` 了")
+      .toBeGreaterThanOrEqual(LANGS.length + 1);
+    expect(html.filter((t) => !(existsSync(t) && statSync(t).isFile())), "HTML 标记里的相对链接有坏的").toEqual([]);
   });
 
-  it("④ 索引表按行×列定位 —— 每一行的语言从该行 README 那一格现算", () => {
-    const failures = indexGridFailures(readFileSync("README.md", "utf8"));
-    expect(failures, `首屏索引表对不上账：\n${failures.join("\n")}`).toEqual([]);
+  it("④ 五条 `> 📖` 指针行按「文档 × 语言」定位 —— 每一格的语言从它自己的目标现算", () => {
+    const body = readFileSync("README.md", "utf8");
+    expect(pointerLines(body).length, "一条 `> 📖` 指针行都没扫到，④ 测的是空气").toBe(POINTER_DOCS.length);
+    const failures = pointerFailures(body);
+    expect(failures, `首屏的指针行对不上账：\n${failures.join("\n")}`).toEqual([]);
   });
 
-  it("④ 该红时红：两行的 README 链接对调（目标集合一个元素都没少）—— 按行×列当场红", () => {
+  it("④ 该红时红：某条指针行里少一种语言 —— 点名是哪一份文档缺了哪一种", () => {
     const body = readFileSync("README.md", "utf8");
-    probeBase(indexGridFailures(body), "④ 索引表按行×列定位 —— 每一行的语言从该行 README 那一格现算");
-    const mutated = swapOnce(body, "[README](docs/ja/README.md)", "[README](docs/ko/README.md)");
-    expect(new Set(relTargets(mutated)), "对调之后目标集合竟然变了，那这一格证不了「集合看不见置换」")
-      .toEqual(new Set(relTargets(body)));
-    const failures = indexGridFailures(mutated);
-    expect(failures.length, "两行的 README 链接对调了，④ 却没红——判据多半又缩回「在不在这个集合里」").toBeGreaterThan(0);
-    for (const l of ["ja", "ko"]) {
-      expect(failures.join("\n"), `④ 红了却没点到 ${l} 那一行`).toContain(`docs/${l}/API.md`);
-    }
+    probeBase(pointerFailures(body), "④ 五条 `> 📖` 指针行按「文档 × 语言」定位 —— 每一格的语言从它自己的目标现算");
+    const mutated = body.replaceAll(" | [한국어](docs/ko/DEPLOY.md)", "");
+    expect(mutated, "变异没落地——DEPLOY 的指针行里没找到 한국어 那一段").not.toEqual(body);
+    const failures = pointerFailures(mutated);
+    expect(failures.join("\n"), "指针行少了一种语言，④ 却没红").toContain("DEPLOY");
+    expect(failures.join("\n"), "④ 红了却没说少的是哪一种语言").toContain("缺这几种语言：ko");
   });
 
-  it("④ 该红时红：同一行里两格的**目标**对调（英文行的 API 与 Deploy）—— 链接文字照旧对得上，只有行×列看得见", () => {
+  it("④ 认不出要吵：五条指针行整片没了时报文明说认不出，不许静静报零缺格", () => {
     const body = readFileSync("README.md", "utf8");
-    probeBase(indexGridFailures(body), "④ 索引表按行×列定位 —— 每一行的语言从该行 README 那一格现算");
-    // 只在索引表那一节里换：`(docs/en/DEPLOY.md)` 在 `## Features` 里还有一处，全文换会打偏。
-    const sec = rawSection(body, "Documentation")!.join("\n");
-    const mutated = body.replace(sec, swapOnce(sec, "(docs/en/API.md)", "(docs/en/DEPLOY.md)"));
-    expect(mutated, "变异没落地——索引表那一节没被改写").not.toEqual(body);
-    const failures = indexGridFailures(mutated);
-    expect(failures.join("\n"), "同一行里两格的目标对调了，④ 却没红").toContain("按行×列该是 docs/en/API.md");
-    expect(failures.join("\n"), "④ 红了却没点出另一格").toContain("按行×列该是 docs/en/DEPLOY.md");
-    expect(failures.filter((f) => f.includes("链接文字")), "这一格只调了目标、没动链接文字，报「文字对不上」说明判据在拿别的东西凑红")
-      .toEqual([]);
+    const gutted = body.split("\n").filter((l) => !l.trimStart().startsWith("> 📖")).join("\n");
+    expect(gutted, "变异没落地——根 README 里一条 `> 📖` 都没找到").not.toEqual(body);
+    expect(pointerFailures(gutted).join("\n"), "指针行全没了却没吵").toContain("认不出");
   });
 
   it("④A 每份 DOCS 文档在根 README 都指得到五种语言 —— 一种都不少", () => {
     const body = readFileSync("README.md", "utf8");
-    // 平凡相等护栏：`DOCS` 空了、或者根 README 一条 `docs/<语言>/<文档>.md` 都扫不到时，
+    // 平凡相等护栏：射程空了、或者根 README 一条 `docs/<语言>/<文档>.md` 都扫不到时，
     // 下面那句 `toEqual([])` 会因为"什么都没查"而永远绿。
-    expect(DOCS.length, "DOCS 是空的，④A 测的是空气").toBeGreaterThan(0);
+    expect(ENTRY_DOCS.length, "④A 的射程是空的，它测的是空气").toBeGreaterThan(0);
     expect(relTargets(body).filter((t) => /^docs\/[^/]+\/[A-Z]+\.md$/.test(t)).length,
       "根 README 里一条 `docs/<语言>/<文档>.md` 都没扫到——④A 测的是空气")
-      .toBeGreaterThanOrEqual(LANGS.length * DOCS.length);
+      .toBeGreaterThanOrEqual(LANGS.length * ENTRY_DOCS.length);
     const failures = docPointerFailures(body);
     expect(failures, `首屏有文档指不全五种语言：\n${failures.join("\n")}`).toEqual([]);
   });
@@ -3982,68 +3929,48 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
     expect(failures, `只抹掉一份文档的指针，只该报这一条，实报：\n${failures.join("\n")}`).toHaveLength(1);
   });
 
-  it("④A 该红时红：索引表里 ADMIN 那一整列（连表头一起）被删掉 —— 点名这份文档没有入口", () => {
+  it("④A 名册两个方向都查（一）：登记在 NO_ROOT_FIVE_LANG_ENTRY 里的文档，根 README 里确实指不到五种语言", () => {
     const body = readFileSync("README.md", "utf8");
-    probeBase(docPointerFailures(body), "④A 每份 DOCS 文档在根 README 都指得到五种语言 —— 一种都不少");
-    const t = indexTable(body)!;
-    const k = t.header.findIndex((h) => h.toLowerCase() === "admin");
-    expect(k, "索引表里没有 Admin 这一列，这一格控制是空的").toBeGreaterThan(0);
-    const mutated = body.split("\n").map((l) => {
-      if (!l.startsWith("|")) return l;
-      const cells = l.split("|").slice(1, -1);
-      return cells.length === t.header.length ? `|${cells.filter((_, i) => i !== k).join("|")}|` : l;
-    }).join("\n");
-    expect(mutated, "变异没落地——没有一行被删掉那一列").not.toEqual(body);
-    const failures = docPointerFailures(mutated);
-    expect(failures.join("\n"), "整列连表头一起删了，④A 却没点名 ADMIN 没有入口").toContain("ADMIN.md");
-    // `## Features` 里还留着一条 `[ADMIN.md](docs/en/ADMIN.md)` ⇒ en 还在，缺的是另外四种。
-    expect(failures.join("\n"), "④A 红了却没说清缺的是哪四种语言").toContain("缺 zh-CN、zh-TW、ja、ko");
-    expect(failures, `整列删掉只该报这一条，实报：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(NO_ROOT_FIVE_LANG_ENTRY.length, "名册是空的，这一格测的是空气").toBeGreaterThan(0);
+    const stale = NO_ROOT_FIVE_LANG_ENTRY.filter((d) => docPointerFailures(body, [d]).length === 0);
+    expect(stale, `这几份文档登记着「根 README 里没有五语言入口」，可是今天指得到了：${stale.join("、")}`
+      + "——登记过期了，把它从 NO_ROOT_FIVE_LANG_ENTRY 里删掉，这一份已经进得了 ④A 的射程").toEqual([]);
   });
 
-  it("④A 不乱红：入口写成模板那种「一行五链」的指针行时照样绿 —— 它判的是五种语言齐不齐，不是表格形态", () => {
+  it("④A 名册两个方向都查（二）：根 README 的 ☕ 节仍然链着根 `SPONSORS.md` —— 那是它在首屏唯一的入口", () => {
     const body = readFileSync("README.md", "utf8");
-    probeBase(docPointerFailures(body), "④A 每份 DOCS 文档在根 README 都指得到五种语言 —— 一种都不少");
-    const sec = rawSection(body, "Documentation")!.join("\n");
-    const pointerLines = DOCS.map(
-      (d) => `> 📖 ${d}：${LANGS.map((l) => `[${l}](docs/${l}/${d}.md)`).join(" | ")}`,
-    ).join("\n");
-    const mutated = body.replace(sec, `## Documentation\n\n${pointerLines}\n`);
-    expect(mutated, "变异没落地——`## Documentation` 那一节没被换掉").not.toEqual(body);
-    expect(indexTable(mutated), "索引表竟然还在，这一格证不了「不靠表格也能绿」").toBeNull();
-    expect(docPointerFailures(mutated), "换成模板那种指针行之后 ④A 却红了——它多半又把入口的排版形态当成了判据")
-      .toEqual([]);
+    expect(relTargets(body), "根 README 里没有指向根 `SPONSORS.md` 的链接 —— 上一格豁免掉的那份文档"
+      + "在首屏就一个入口都没有了；模板的 ☕ 节那条 `> 完整内容请查看 [SPONSORS.md](SPONSORS.md)` 不许删")
+      .toContain("SPONSORS.md");
   });
 
-  it("④ 该红时红：链接文字与列名对不上（写着 README、点开去 API）", () => {
+  it("⑤ 语言切换行与五条指针行互相印证 —— 同一种语言在两处的自称必须一致", () => {
     const body = readFileSync("README.md", "utf8");
-    probeBase(indexGridFailures(body), "④ 索引表按行×列定位 —— 每一行的语言从该行 README 那一格现算");
-    const mutated = body.replaceAll("[API](docs/ko/API.md)", "[README](docs/ko/API.md)");
-    expect(mutated, "变异没落地——索引表里没找到 `[API](docs/ko/API.md)`").not.toEqual(body);
-    const failures = indexGridFailures(mutated);
-    expect(failures.join("\n"), "链接文字与列名对不上，④ 却没红").toContain("链接文字写着「README」");
+    expect(switcherLine(body), "认不出语言切换行，⑤ 测的是空气").not.toBeNull();
+    const failures = switcherFailures(body);
+    expect(failures, `首屏的语言切换行与指针行对不上账：\n${failures.join("\n")}`).toEqual([]);
   });
 
-  it("④ 认不出要吵：`## Documentation` 那一节被改名时报文明说认不出，不许静静报零缺格", () => {
+  it("⑤ 该红时红：同一条指针行里两格的**目标**对调 —— 目标集合一个没少、语言一种不缺，只有「语言 × 标签」看得见", () => {
     const body = readFileSync("README.md", "utf8");
-    const renamed = body.replace("\n## Documentation\n", "\n## Docs index\n");
-    expect(renamed, "变异没落地——没找到 `## Documentation` 那一行").not.toEqual(body);
-    expect(indexTable(renamed), "小节改名之后仍然解析出了索引表").toBeNull();
-    expect(indexGridFailures(renamed).join("\n"), "认不出索引表却没吵").toContain("认不出");
-  });
-
-  it("⑤ 语言切换行与索引表互相印证 —— 标签、语言目录两处一致", () => {
-    const failures = switcherFailures(readFileSync("README.md", "utf8"));
-    expect(failures, `首屏的语言切换行与索引表对不上账：\n${failures.join("\n")}`).toEqual([]);
-    expect(indexRows(readFileSync("README.md", "utf8")).length, "索引表一行语言都没解析出来，⑤ 测的是空气")
-      .toBe(LANGS.length);
+    probeBase(switcherFailures(body), "⑤ 语言切换行与五条指针行互相印证 —— 同一种语言在两处的自称必须一致");
+    const line = pointerLines(body).find((l) => l.includes("/USAGE.md"))!;
+    const mutated = body.replace(line, swapOnce(line, "(docs/ja/USAGE.md)", "(docs/ko/USAGE.md)"));
+    expect(mutated, "变异没落地——USAGE 的指针行没被改写").not.toEqual(body);
+    expect(new Set(relTargets(mutated)), "对调之后目标集合竟然变了，那这一格证不了「集合看不见置换」")
+      .toEqual(new Set(relTargets(body)));
+    expect(pointerFailures(mutated), "④ 跟着红了——那一条只看每行自己，置换它本来就该看不见").toEqual([]);
+    const failures = switcherFailures(mutated);
+    for (const l of ["ja", "ko"]) {
+      expect(failures.join("\n"), `⑤ 红了却没点到 ${l}`).toContain(`${l} 在语言切换行里叫`);
+    }
   });
 
   it("⑤ 该红时红：语言切换行里两种语言的**标签**对调（链接目标一个没动）—— 首屏两处自相矛盾", () => {
     const body = readFileSync("README.md", "utf8");
-    probeBase(switcherFailures(body), "⑤ 语言切换行与索引表互相印证 —— 标签、语言目录两处一致");
-    const line = body.split("\n").find((l) => l.startsWith("**Language:**"))!;
-    const mutated = body.replace(line, swapOnce(line, "[日本語]", "[한국어]"));
+    probeBase(switcherFailures(body), "⑤ 语言切换行与五条指针行互相印证 —— 同一种语言在两处的自称必须一致");
+    const line = switcherLine(body)!;
+    const mutated = body.replace(line, swapOnce(line, ">日本語<", ">한국어<"));
     expect(mutated, "变异没落地——语言切换行没被改写").not.toEqual(body);
     expect(new Set(relTargets(mutated)), "只调标签不该动到任何链接目标，这一格证的正是「目标全对、标签指错」")
       .toEqual(new Set(relTargets(body)));
@@ -4053,114 +3980,52 @@ describe("根 README 的文档索引与两份英文功能表（P3e Task 27）", 
     }
   });
 
-  it("⑤ 该红时红：切换行里少一种语言（当前页那一种不再是唯一没链接的）", () => {
+  it("⑤ 该红时红：切换行里少一种语言", () => {
     const body = readFileSync("README.md", "utf8");
-    probeBase(switcherFailures(body), "⑤ 语言切换行与索引表互相印证 —— 标签、语言目录两处一致");
-    const mutated = body.replaceAll(" | [한국어](docs/ko/README.md)", "");
+    probeBase(switcherFailures(body), "⑤ 语言切换行与五条指针行互相印证 —— 同一种语言在两处的自称必须一致");
+    const mutated = body.replace(' | <a href="docs/ko/README.md">한국어</a>', "");
     expect(mutated, "变异没落地——语言切换行里没找到 한국어 那一段").not.toEqual(body);
     const failures = switcherFailures(mutated);
-    expect(failures.join("\n"), "切换行少了一种语言，⑤ 却没红").toContain("索引表有 ko 这一行");
+    expect(failures.join("\n"), "切换行少了一种语言，⑤ 却没红").toContain("语言切换行缺这几种语言：ko");
   });
 
   it("⑤ 认不出要吵：语言切换行改了写法时报文明说认不出，不许静静报零缺格", () => {
     const body = readFileSync("README.md", "utf8");
-    const mutated = body.replace("**Language:**", "**Languages:**");
-    expect(mutated, "变异没落地——根 README 里没找到 `**Language:**`").not.toEqual(body);
+    const line = switcherLine(body)!;
+    const mutated = body.replace(line, line.replace("📖 ", ""));
+    expect(mutated, "变异没落地——语言切换行没被改写").not.toEqual(body);
     expect(switcherFailures(mutated).join("\n"), "语言切换行认不出了却没吵").toContain("认不出");
   });
 
-  it("④⑤ 不乱红：索引表里两整行（连行首标签一起）对调 —— 重排是合法编辑，不许红", () => {
+  /* ── ⑥ R11 的根那一半：16 节骨架逐字命中常量表 ────────────────────────────── */
+
+  /** 根 README 的 `## ` 序列。**真扫描与反向控制共用这一份。** */
+  const rootHeadings = (body: string) => body.split("\n").filter((l) => l.startsWith("## "));
+  const WANT_SECTIONS = SECTIONS.map((s) => s.title["zh-CN"]);
+
+  it("⑥ R11（根）：根 README 的 16 节标题逐字命中 SECTIONS 常量的 zh-CN 那一列", () => {
+    expect(WANT_SECTIONS.length, "常量表是空的，这一格测的是空气").toBe(16);
+    expect(rootHeadings(readFileSync("README.md", "utf8")),
+      "根 README 的章节骨架与 tests/helpers/readme-sections.ts 的常量表对不上"
+      + "——两边改一处就要一起改，别只改一边").toEqual(WANT_SECTIONS);
+  });
+
+  it("⑥ R11（根）该红时红：删掉一节 —— 报文点名少了哪一节", () => {
     const body = readFileSync("README.md", "utf8");
-    probeBase([...indexGridFailures(body), ...switcherFailures(body)],
-      "④ 索引表按行×列定位 —— 每一行的语言从该行 README 那一格现算");
-    const lines = body.split("\n");
-    const [ja, ko] = ["| 日本語 |", "| 한국어 |"].map((h) => lines.findIndex((l) => l.startsWith(h)));
-    expect(Math.min(ja!, ko!), "索引表里找不到 日本語 / 한국어 那两行，这一格控制是空的").toBeGreaterThan(0);
-    const swapped = [...lines];
-    swapped[ja!] = lines[ko!]!;
-    swapped[ko!] = lines[ja!]!;
-    const mutated = swapped.join("\n");
-    expect(mutated, "变异没落地——那两行没被对调").not.toEqual(body);
-    expect(indexGridFailures(mutated), "两整行合法重排却让 ④ 红了——判据多半把行序也当成了判据").toEqual([]);
-    expect(switcherFailures(mutated), "两整行合法重排却让 ⑤ 红了——⑤ 比的是标签与语言的对应，不是顺序").toEqual([]);
+    const victim = "## 🗂 项目结构";
+    expect(rootHeadings(body), "选错了变异对象：根 README 里没有这一节").toContain(victim);
+    const mutated = body.replace(`\n${victim}\n`, "\n");
+    expect(mutated, "变异没落地").not.toEqual(body);
+    expect(rootHeadings(mutated), "删掉一节之后骨架竟然还相等").not.toEqual(WANT_SECTIONS);
   });
 
-  it("② 根 README 与 docs/en/README.md 的 Features / Models 两节逐字节相同", () => {
-    const root = readFileSync("README.md", "utf8");
-    const en = readFileSync("docs/en/README.md", "utf8");
-    for (const h of MIRRORED) {
-      expect(sectionOf(en, h, "docs/en/README.md"), `${h} 两份复制分叉了`).toEqual(sectionOf(root, h, "README.md"));
-    }
-  });
-
-  it("② 该红时红：docs/en/README.md 的 Features 里改一个字", () => {
-    const root = readFileSync("README.md", "utf8");
-    const en = readFileSync("docs/en/README.md", "utf8");
-    probeBase(mirrorFailures(root, en), "② 根 README 与 docs/en/README.md 的 Features / Models 两节逐字节相同");
-    const mutated = en.replace("streaming included", "streaming excluded");
-    expect(mutated, "变异没落地——Features 里没找到 `streaming included`").not.toEqual(en);
-    expect(sectionOf(mutated, "Features", "docs/en/README.md"), "改了一个字，② 却没红")
-      .not.toEqual(sectionOf(root, "Features", "README.md"));
-  });
-
-  it("② 该红时红：docs/en/README.md 把 Features 里的 `./DEPLOY.md` 写回裸 `DEPLOY.md`", () => {
-    const root = readFileSync("README.md", "utf8");
-    const en = readFileSync("docs/en/README.md", "utf8");
-    probeBase(mirrorFailures(root, en), "② 根 README 与 docs/en/README.md 的 Features / Models 两节逐字节相同");
-    const mutated = en.replace("[DEPLOY.md](./DEPLOY.md)", "[DEPLOY.md](DEPLOY.md)");
-    expect(mutated, "变异没落地——Features 里没找到 `[DEPLOY.md](./DEPLOY.md)`").not.toEqual(en);
-    expect(sectionOf(mutated, "Features", "docs/en/README.md"), "归一化把 `./` 也一起抹掉了——那正是第五条特例在偷偷长出来")
-      .not.toEqual(sectionOf(root, "Features", "README.md"));
-  });
-
-  it("②B 端点表 / Quick start：根那份是 docs/en/README.md 那份的前缀，en 只多结尾一句指路", () => {
-    expect(MIRRORED_PREFIX.length, "前缀复制节的名单是空的，这一组测的是空气").toBeGreaterThan(0);
-    const failures = prefixFailures(readFileSync("README.md", "utf8"), readFileSync("docs/en/README.md", "utf8"));
-    expect(failures, `根 README 与 docs/en/README.md 的这两节对不上账：\n${failures.join("\n")}`).toEqual([]);
-  });
-
-  it("②B 该红时红：docs/en/README.md 的端点表里改一格 —— 前缀关系当场断掉", () => {
-    const root = readFileSync("README.md", "utf8");
-    const en = readFileSync("docs/en/README.md", "utf8");
-    probeBase(prefixFailures(root, en), "②B 端点表 / Quick start：根那份是 docs/en/README.md 那份的前缀，en 只多结尾一句指路");
-    const mutated = en.replaceAll("| GET | `/health` | – | no auth required |", "| GET | `/health` | – | auth required |");
-    expect(mutated, "变异没落地——端点表里没找到 `/health` 那一行").not.toEqual(en);
-    const failures = prefixFailures(root, mutated);
-    expect(failures.join("\n"), "端点表里改了一格，②B 却还认为根那份是前缀").toContain("Endpoints at a glance");
-  });
-
-  it("②B 该红时红：docs/en/README.md 在端点表尾巴上长出第二张表 —— 前缀放行，表格行那一枪不放行", () => {
-    const en = readFileSync("docs/en/README.md", "utf8");
-    const root = readFileSync("README.md", "utf8");
-    probeBase(prefixFailures(root, en), "②B 端点表 / Quick start：根那份是 docs/en/README.md 那份的前缀，en 只多结尾一句指路");
-    const mutated = en.replace("\n## Models\n", "\n| POST | `/v1/audio` | – | 只在 en 这份偷偷长出来 |\n\n## Models\n");
-    expect(mutated, "变异没落地——docs/en/README.md 里没找到 `## Models` 那一行").not.toEqual(en);
-    const a = sectionOf(root, "Endpoints at a glance", "README.md");
-    const b = sectionOf(mutated, "Endpoints at a glance", "docs/en/README.md");
-    expect(b.startsWith(a), "这一格证的正是「前缀本身放行尾巴」，前缀先得成立").toBe(true);
-    const failures = prefixFailures(root, mutated);
-    expect(failures.join("\n"), "尾巴上长出了一整行表格，②B 的表格行那一枪却没红").toContain("长出了表格行");
-  });
-
-  it("②B 不乱红：en 侧那两句结尾指路（`./API.md` / `./DEPLOY.md`）今天就在，且不该让这一格红", () => {
-    const root = readFileSync("README.md", "utf8");
-    const en = readFileSync("docs/en/README.md", "utf8");
-    // 这是上方 docblock 那句「en 侧结尾各多一句指路」的测法：哪天改了写法，这一格连同那句话一起红。
-    for (const [h, link] of [["Endpoints at a glance", "(./API.md)"], ["Quick start", "(./DEPLOY.md)"]] as const) {
-      const tail = sectionOf(en, h, "docs/en/README.md").slice(sectionOf(root, h, "README.md").length);
-      expect(tail.trim(), `en 侧「${h}」那句结尾指路不见了——这一格的前提没了，它证不了「尾巴被放行」`).not.toEqual("");
-      expect(tail, `en 侧「${h}」多出来的尾巴不再是那句指向 ${link} 的话`).toContain(link);
-    }
-    expect(prefixFailures(root, en), "en 侧那两句结尾指路把 ②B 弄红了——前缀判据本该放行尾巴").toEqual([]);
-  });
-
-  it("② 不乱红：两份刻意不同的结尾段（根是索引表 + 赞助，另一份是 Using the gateway）不进这一格", () => {
-    const root = `${readFileSync("README.md", "utf8")}\n## Extra\n\nonly at the end of the root README.\n`;
-    const en = readFileSync("docs/en/README.md", "utf8");
-    for (const h of MIRRORED) {
-      expect(sectionOf(en, h, "docs/en/README.md"), `${h}：只在根那份结尾多加一段就让这一格红了，说明取节的右边界没有真的收住`)
-        .toEqual(sectionOf(root, h, "README.md"));
-    }
+  it("⑥ R11（根）该红时红：两节对调 —— 多重集一个元素都没少，只有序列看得见", () => {
+    const body = readFileSync("README.md", "utf8");
+    const mutated = swapOnce(body, "## 🙏 致谢", "## 📄 许可协议");
+    const got = rootHeadings(mutated);
+    expect([...got].sort(), "对调之后多重集竟然变了，那这一格证不了「集合看不见换序」")
+      .toEqual([...WANT_SECTIONS].sort());
+    expect(got, "两节对调了，⑥ 却没红——它多半退回了「在不在这个集合里」").not.toEqual(WANT_SECTIONS);
   });
 
   /** 徽章缺失的那几份。**真扫描与反向控制共用这一份**，`read` 是唯一的注入点。 */
@@ -5260,12 +5125,19 @@ describe(TASK29_GROUP, () => {
     }
   });
 
-  /** 五种语言在首屏语言切换行里的**自称**，从根 `README.md` 现算。认不出 / 数量对不上返回 `null`。 */
+  /**
+   * 五种语言在首屏语言切换行里的**自称**，从根 `README.md` 现算。认不出 / 数量对不上返回 `null`。
+   *
+   * ⚠️ P3f 阶段 5A 把首屏换成了模板的 HTML 头部块：切换行从 `**Language:** [English](…) | …`
+   * 变成了 `📖 文档语言：<a href="docs/en/README.md">English</a> | …`。这里认的是**后者**——
+   * 认不出就返回 `null` 并让调用方吵，不静静给出空数组。
+   */
   const nativeLangLabels = (read: (p: string) => string = readReal): string[] | null => {
-    const line = read("README.md").split("\n").find((l) => l.startsWith("**Language:**"));
+    const line = read("README.md").split("\n")
+      .find((l) => l.includes("📖") && !l.trimStart().startsWith(">") && l.includes("README.md"));
     if (line === undefined) return null;
-    const cells = line.replace("**Language:**", "").split("|").map((s) => s.trim()).filter((s) => s !== "");
-    const labels = cells.map((c) => /^\[([^\]]+)\]/.exec(c)?.[1]?.trim() ?? c);
+    const cells = line.replace(/^\s*📖[^：:]*[：:]\s*/, "").split("|").map((s) => s.trim()).filter((s) => s !== "");
+    const labels = cells.map((c) => /^<a href="[^"]+">(.*)<\/a>$/.exec(c)?.[1]?.trim() ?? c);
     return labels.length === LANGS.length ? labels : null;
   };
 
@@ -5309,7 +5181,7 @@ describe(TASK29_GROUP, () => {
     expect(entryStorages(() => "import { Whatever } from \"./x.js\";"), "认不出 entry 的存储实现时没返回 null").toBeNull();
     expect(dispatcherStatuses(() => "function fail() { status: 503 }"), "认不出 504 时没返回 null").toBeNull();
     expect(nativeLangLabels(() => "# 没有语言切换行\n"), "认不出语言切换行时没返回 null").toBeNull();
-    expect(nativeLangLabels(() => "**Language:** English | [日本語](docs/ja/README.md)\n"),
+    expect(nativeLangLabels(() => '  📖 文档语言：<a href="docs/en/README.md">English</a> | <a href="docs/ja/README.md">日本語</a>\n'),
       "语言切换行只列了 2 种语言时没返回 null").toBeNull();
   });
 
