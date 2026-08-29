@@ -100,7 +100,7 @@ function fragment(re: RegExp, what: string): string {
 const fnOf = (name: string): string =>
   fragment(new RegExp(`^${name}\\(\\) \\{[^\\n]*\\n[\\s\\S]*?^\\}$`, "m"), `${name}()`);
 
-/** 抠一行顶层赋值（`MARK=…` / `BANNER=…` 这种），值也从真源来，不在这里手抄。 */
+/** 抠一行顶层赋值（`SKIPPED_MARK=…` / `BANNER=…` 这种），值也从真源来，不在这里手抄。 */
 const constOf = (name: string): string =>
   fragment(new RegExp(`^${name}=.*$`, "m"), `${name}= 那一行`);
 
@@ -131,7 +131,7 @@ function makeRepos(): { root: string; src: string; clone: string } {
   return { root, src, clone: join(root, "clone") };
 }
 
-/** 末尾那段逐格表 + 整体退出码，连同它真正的 `MARK=` 一起抠出来单跑。 */
+/** 末尾那段逐格表 + 整体退出码，连同它真正的 `SKIPPED_MARK=` 一起抠出来单跑。 */
 const TAIL_MARKER = "# ── 逐格表 ─";
 function tailScript(rows: readonly (readonly [string, string, string])[]): string {
   const s = readFileSync(PREPUSH, "utf8");
@@ -139,8 +139,7 @@ function tailScript(rows: readonly (readonly [string, string, string])[]): strin
   if (i < 0) throw new Error("prepush.sh 里找不到逐格表那一段 —— 判据坏了，不许静默跳过");
   return [
     "set -uo pipefail",
-    constOf("MARK"),
-    // 逐格表现在还认第三种状态（`--skip-smoke` 留下的那一行），它的字面量同样从真源抠。
+    // 逐格表认第三种状态（`--skip-smoke` 留下的那一行），它的字面量从真源抠。
     constOf("SKIPPED_MARK"),
     `CELL_IDS=(${rows.map(([id]) => `"${id}"`).join(" ")})`,
     `declare -A CELL_TITLE=(${rows.map(([id, t]) => `[${id}]="${t}"`).join(" ")})`,
@@ -148,12 +147,6 @@ function tailScript(rows: readonly (readonly [string, string, string])[]): strin
     s.slice(i),
   ].join("\n");
 }
-
-const MARK_VALUE = (() => {
-  const m = /^MARK="([^"]+)"$/m.exec(readFileSync(PREPUSH, "utf8"));
-  if (!m) throw new Error("prepush.sh 里读不出 MARK 的值 —— 判据坏了");
-  return m[1]!;
-})();
 
 describe("prepush.sh 跑的门禁是从 ci.yml 当场抽的", () => {
   it("真 ci.yml：条数、编号顺序、步名与 ci.yml 自己写的逐条对齐", () => {
@@ -258,7 +251,7 @@ describe("prepush.sh 的抽取器：认不出要吵，不许静静放行", () =>
   });
 });
 
-describe("prepush.sh 自己的形态：逐格跑完再汇总，预期红不许被吃掉", () => {
+describe("prepush.sh 自己的形态：逐格跑完再汇总，红不许被吃掉", () => {
   const src = () => readFileSync(PREPUSH, "utf8");
 
   /**
@@ -273,36 +266,50 @@ describe("prepush.sh 自己的形态：逐格跑完再汇总，预期红不许�
   });
 
   /**
-   * ③ 那一格在一次性历史重写落地之前不可能全绿：`ci.yml` 的凭据扫描那一步自己就把
-   * 历史那一档包在里面。它因此认一种「已登记的预期红」——而**任何一个预期红分支都是
-   * 一个豁免形状的东西**，所以它必须是收窄的：红的只有那一道、且同一个脚本的工作树档
-   * 单独跑是绿的，两条都成立才算。少任何一条，这一格就该按真红处理。
+   * ③ 里 `ci.yml` 的凭据扫描那一步把工作树档与历史档合成一步，红了分不清是哪一档，
+   * 而两档要动的地方完全不同。它因此收窄出一种形态单独说话：红的只有那一道、
+   * 且同一个脚本的工作树档单独跑是绿的 ⇒ 命中只在已提交的历史里。
+   * 少任何一条，报文都必须退回笼统那一句——这一支绝不许替别的红打掩护。
+   *
+   * ⚠️ **它返回的是 1，不是一个「预期红」的专用退出码**（P3e 全分支评审 HIGH-1）：
+   * 历史里那笔泄漏已经在一次性历史重写里清干净了，这一档再红就是新回归。
+   * 曾经的 `EXPECTED_RED=35` / `MARK="EXPECTED-RED-UNTIL-TASK-35"` 一并撤掉，
+   * 下面那条反向断言钉住「别把它加回来」。
    */
-  it("③ 的预期红是收窄的：只有那一道红、且工作树档单独绿时才算", () => {
+  it("③ 的诊断分支是收窄的：只有那一道红、且工作树档单独绿时才说「命中只在历史里」", () => {
     const body = /\ncell_gates\(\) \{\n([\s\S]*?)\n\}\n/.exec(src())?.[1];
     expect(body, "cell_gates 的函数体没抠出来，下面几条等于白写").toBeTruthy();
-    expect(body!, "预期红分支不再要求「只有一道红」⇒ 它会替别的红打掩护")
+    expect(body!, "那一支不再要求「只有一道红」⇒ 它会替别的红打掩护")
       .toMatch(/\(\( \$\{#failed\[@\]\} == 1 \)\) && grep -qF -- "scan-secrets\.sh --history"/);
-    expect(body!, "预期红分支不再单独确认工作树档是绿的 ⇒ 工作树回归会被当成历史欠账放过去")
+    expect(body!, "那一支不再单独确认工作树档是绿的 ⇒ 工作树里的命中会被说成「只在历史里」")
       .toContain("bash scripts/scan-secrets.sh >/dev/null 2>&1");
-    expect(body!).toContain('return "$EXPECTED_RED"');
+    expect(body!, "那一支不再按红处理 ⇒ 它又变回一个豁免").toMatch(/^ *return 1$/m);
   });
 
   /**
    * ⚠️ **这一格只查源码字面，它挡不住「块里那句 `exit 1` 被改掉」**（复评 F1 实测：
-   * 把 `exit 1` 改成 `exit 0`，脚本从此对预期红一路放行、屏幕上照打「⇒ 不该推」却 exit 0，
+   * 把 `exit 1` 改成 `exit 0`，脚本从此一路放行、屏幕上照打「⇒ 不该推」却 exit 0，
    * 而这一格仍然全绿）。所以块里那一行现在也一起断言，**并且**下面
-   * 「预期红也算没过：把逐格表那几行逐字抠出来跑，一格预期红 ⇒ 整体退出码 1」
+   * 「把逐格表那几行逐字抠出来跑，一格非 PASS ⇒ 整体退出码 1」
    * 那一格真的把它跑起来验退出码——字面与行为两侧都钉住。
+   *
+   * ⚠️ **第三档不许回来**（P3e 全分支评审 HIGH-1）：这里曾经有过
+   * `EXPECTED_RED=35` / `MARK="EXPECTED-RED-UNTIL-TASK-35"` 那一档「已登记的预期红」，
+   * 它的理由（历史里那个泄漏 blob 还在）在一次性历史重写落地时就了结了。
+   * 下面两条反向断言锚的是**顶层赋值**，不是那两个字样——文件头与逐格框架那两段
+   * 正当地复述着这段历史，锚字样会把那两段说明一起打红。
    */
-  it("预期红也算没过：只要有一格非 PASS，整体退出码就是 1", () => {
+  it("只要有一格非 PASS，整体退出码就是 1（而且没有第三档可以放行）", () => {
     const s = src();
-    expect(s).toMatch(/if \(\( failed != 0 \|\| expected != 0 \)\); then/);
-    expect(s).toContain("EXPECTED-RED-UNTIL-TASK-35");
-    const block = /\nif \(\( failed != 0 \|\| expected != 0 \)\); then\n([\s\S]*?)\nfi\n/.exec(s)?.[1];
+    expect(s).toMatch(/if \(\( failed != 0 \)\); then/);
+    expect(s, "顶层又出现了 EXPECTED_RED= ⇒ 那个只在历史重写落地前成立的豁免档位被加回来了")
+      .not.toMatch(/^EXPECTED_RED=/m);
+    expect(s, "顶层又出现了 MARK= ⇒ 同上；今天只该有 SKIPPED_MARK 这一个状态字面量")
+      .not.toMatch(/^MARK=/m);
+    const block = /\nif \(\( failed != 0 \)\); then\n([\s\S]*?)\nfi\n/.exec(s)?.[1];
     expect(block, "那个 if 块没抠出来，下面这条等于白写").toBeTruthy();
     expect(block!, "块里必须留着「⇒ 不该推」那句话，否则抠出来的不是这个块").toContain("不该推");
-    expect(block!, "块里那句 exit 1 没了 ⇒ 三格预期红一路放行，屏幕照打「不该推」而退出码是 0")
+    expect(block!, "块里那句 exit 1 没了 ⇒ 红一路放行，屏幕照打「不该推」而退出码是 0")
       .toMatch(/^ *exit 1$/m);
   });
 
@@ -378,10 +385,10 @@ describe("prepush.sh 自己的形态：逐格跑完再汇总，预期红不许�
  * 整份脚本跑一次是十几分钟（十二道全跑），而这几格各自要验的是纯逻辑。
  * ────────────────────────────────────────────────────────────────────────── */
 
-describe("prepush.sh 的逐格表：预期红不许被吃掉，列位不许错开", () => {
+describe("prepush.sh 的逐格表：红不许被吃掉，列位不许错开", () => {
   const rows = [
     ["①", "工作树干净", "PASS"],
-    ["③", "门禁按 ci.yml 同序跑完", MARK_VALUE],
+    ["③", "门禁按 ci.yml 同序跑完", "FAIL(exit 2)"],
     ["⑥", "测试数与横幅同时校验", "FAIL(exit 1)"],
   ] as const;
 
@@ -389,8 +396,12 @@ describe("prepush.sh 的逐格表：预期红不许被吃掉，列位不许错�
    * 复评 F1 那条的行为侧：上一版只断言源码里有那个 `if`，把块里的 `exit 1` 改成 `exit 0`
    * 之后守卫仍然全绿——而那正是这份产物最值钱的一句承诺（「给自己开豁免的清单，
    * 下一次就会被人当成绿的」）。这里把那几行真跑起来看退出码。
+   *
+   * ⚠️ **两格喂的退出码刻意不同**（`exit 2` / `exit 1`）：汇总那一步走的是
+   * 「非 PASS 且非 SKIPPED 一律记 failed」，而不是去认某一个具体的退出码——
+   * 全都喂 `exit 1` 的话，把判据写成「只认 exit 1」也照样全绿。
    */
-  it("预期红也算没过：把逐格表那几行逐字抠出来跑，一格预期红 ⇒ 整体退出码 1", () => {
+  it("把逐格表那几行逐字抠出来跑：一格非 PASS ⇒ 整体退出码 1，不论它红成哪个退出码", () => {
     const allPass = rows.map(([id, t]) => [id, t, "PASS"] as const);
     const base = runBash(tailScript(allPass));
     expect(base.code, `全过时不该红：\n${base.stdout}${base.stderr}`).toBe(0);
@@ -398,11 +409,11 @@ describe("prepush.sh 的逐格表：预期红不许被吃掉，列位不许错�
     //   写死的那句话当场就会变假）。这里喂进去三行，判词就该说三格。
     expect(base.stdout).toMatch(/⇒ 3 格全过。$/m);
 
-    const oneExpected = runBash(tailScript([allPass[0]!, rows[1]!, allPass[2]!]));
-    expect(oneExpected.code, "有一格是已登记的预期红，整体退出码却不是 1 ⇒ 豁免被吃掉了")
+    const exit2 = runBash(tailScript([allPass[0]!, rows[1]!, allPass[2]!]));
+    expect(exit2.code, "有一格 FAIL(exit 2)，整体退出码却不是 1 ⇒ 汇总只认得 exit 1 那一种红")
       .toBe(1);
-    expect(oneExpected.stdout).toContain("不该推");
-    expect(oneExpected.stdout).toContain(`1 格 ${MARK_VALUE}`);
+    expect(exit2.stdout).toContain("不该推");
+    expect(exit2.stdout).toContain("1 格 FAIL");
 
     const oneFail = runBash(tailScript([allPass[0]!, allPass[1]!, rows[2]!]));
     expect(oneFail.code, "有一格真 FAIL，整体退出码却不是 1").toBe(1);
@@ -418,7 +429,8 @@ describe("prepush.sh 的逐格表：预期红不许被吃掉，列位不许错�
     // 夹具自守：几个标题的字节长度必须不一样，否则「按字节补」这件事在这里根本显不出来。
     const byteLens = new Set(rows.map(([, t]) => Buffer.byteLength(t, "utf8")));
     expect(byteLens.size, "夹具的标题字节长度全一样 ⇒ 这一格判不出「按字节补齐」").toBeGreaterThan(1);
-    expect(MARK_VALUE.length, "预期红那个标记比补齐宽度还长 ⇒ 那一行会把后面顶开").toBeLessThan(28);
+    const widest = Math.max(...rows.map(([, , status]) => status.length));
+    expect(widest, "有一个状态串比补齐宽度还长 ⇒ 那一行会把后面顶开").toBeLessThan(28);
 
     const r = runBash(tailScript(rows));
     const lines = r.stdout.split("\n");

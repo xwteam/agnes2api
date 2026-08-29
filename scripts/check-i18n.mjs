@@ -470,10 +470,32 @@ for (const [k, row] of Object.entries(I18N)) {
 // 文案一起打红，逼着开豁免名册，而本仓的裁定是「开豁免名册比没有规则更糟」。
 // ⇒ 只登记 `ov.config.primary` / `ov.config.fallback` 这两条整 key。
 //
+// ⚠️⚠️ **最后两条（`set.danger.reset.` / `set.advanced.`）是 P3e 全分支评审 MEDIUM-2
+// 补的，起因是「射程停在阶段 I 之前」**：上面那一批是阶段 B（Task 7）按**当时存在的
+// key** 逐条枚举的，而阶段 I（Task 30/31）新写的 `set.danger.reset.warn` /
+// `set.danger.reset.desc` / `set.advanced.warn` 三条**逐字提到「两条邮箱通道」**
+// 却全在门外。评审实测：往 `set.danger.reset.warn/zh-CN` 插「推荐先用 MoeMail 通道。」
+// ⇒ 本门禁 **EXIT=0**；同一个词插进 `set.field.registrar.primary/zh-CN` ⇒ **EXIT=1**
+// 并逐字点名 ⇒ **判据没坏，是射程没跟着阶段 I 走**。
+// ⇒ **教训：按「当时有哪些 key」枚举的作用域，会随下一个阶段静静失效。**
+//    新增任何一条提到两条通道的文案时，回来看这张表。
+//
+// ⚠️ **登记的是两个「区」的前缀，不是那三条整 key**：整 key 会把同一个缺陷原样留给
+// 下一条新 key（那正是这次被抓到的形态）。两个区都是**逐条查过今天零命中**的：
+// · `set.danger.reset.`（重置配置那一区）：它的每一条都在讲「存储里那份配置连同
+//   **两条邮箱通道的凭据**一起被抹掉」，正是硬约束的射程。
+// · `set.advanced.`（高级区，注册后端地址）：它讲的是「每一次自动注册的去向」，
+//   换掉它就等于把两条通道的邮箱、密码与验证码送去别的服务器。
+// ⚠️ **刻意不含 `set.danger.purge.`**：清空 Key 池那一区与两条通道毫无关系，
+//    收进来就是又一次「扩太宽」——而本仓的裁定是「开豁免名册比没有规则更糟」。
+//
 // 这张表的每一条各由 `tests/unit/check-i18n.test.ts` 的
-// 「⑥ %s/%s 出现偏好词 ⇒ 当场红」那一族逐前缀钉着，「范围没有被扩大」那一半由
+// 「⑥ %s/%s 出现偏好词 ⇒ 当场红」那一族逐前缀钉着（那一族与本表的双向咬合由
+// 「⑥ 前缀表与正向格双向咬合…」那一格钉着：本表多一条而正向格没跟上，当场红），
+// 「范围没有被扩大」那一半由
 // 「⑥ 反向控制：与通道无关的 set.field.upstreamTimeoutMs 里出现同样的词 ⇒ 不红」
-// 钉着（**只做一半等于没做**：单看前一族，作用域写成整个 `set.*` 也全绿）。
+// 与「⑥ 反向控制：与通道无关的 set.danger.purge.* 里出现同样的词 ⇒ 不红」两格钉着
+// （**只做一半等于没做**：单看前一族，作用域写成整个 `set.*` 也全绿）。
 const BANNED_PREFIXES = [
   "reg.",
   "keys.addMenu.auto",
@@ -483,6 +505,8 @@ const BANNED_PREFIXES = [
   "set.card.registrar",
   "ov.config.primary",
   "ov.config.fallback",
+  "set.danger.reset.",
+  "set.advanced.",
 ];
 for (const [k, row] of Object.entries(I18N)) {
   if (!BANNED_PREFIXES.some((p) => k.startsWith(p))) continue;

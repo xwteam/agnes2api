@@ -383,6 +383,11 @@ describe("i18n 字典", () => {
     "set.card.registrar",
     "ov.config.primary",
     "ov.config.fallback",
+    // P3e 全分支评审 MEDIUM-2：阶段 I 新写的那两个区（重置配置 / 高级）逐字提到
+    // 「两条邮箱通道」却在射程外。理由与「为什么不含 set.danger.purge.」见门禁
+    // `scripts/check-i18n.mjs` 里 `BANNED_PREFIXES` 上方那段。
+    "set.danger.reset.",
+    "set.advanced.",
   ] as const;
 
   it("通道相关命名空间不出现任何偏好词（含繁体变体）", () => {

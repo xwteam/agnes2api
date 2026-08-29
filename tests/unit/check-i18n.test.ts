@@ -161,6 +161,10 @@ const BANNED_PREFIX_CASES: ReadonlyArray<readonly [string, string, string]> = [
   ["set.card.registrar", "zh-CN", "注册机（推荐先配这条）"],
   ["ov.config.primary", "ko", "주 채널(권장)"],
   ["ov.config.fallback", "ja", "フォールバックチャネル（推奨）"],
+  // P3e 全分支评审 MEDIUM-2：阶段 I 新写的那两个区（重置配置 / 高级）逐字提到
+  // 「两条邮箱通道」却在射程外，起因与测法见门禁那张表上方那段。
+  ["set.danger.reset.warn", "zh-CN", "这一步会抹掉两条邮箱通道的凭据，推荐先备份 MoeMail 那一条。"],
+  ["set.advanced.warn", "en", "Change it only if you run an equivalent backend (the recommended one)."],
 ];
 
 /** 门禁源码里那张 `BANNED_PREFIXES`，逐字抠出来。认不出会抛，不会静默当成空表。 */
@@ -465,6 +469,22 @@ describe("scripts/check-i18n.mjs 元测试：十条判据逐条", () => {
   it("⑥ 反向控制：与通道无关的 set.field.upstreamTimeoutMs 里出现同样的词 ⇒ 不红", () => {
     const r = run(fixtureWith("set.field.upstreamTimeoutMs", "zh-CN", "上游超时（推荐 30 秒）"));
     expect(r.status, `作用域被扩宽成了整个 set.*：\n${r.stderr}`).toBe(0);
+  });
+
+  /**
+   * **上面那条反向控制的第二条腿（P3e 全分支评审 MEDIUM-2）。**
+   *
+   * MEDIUM-2 的修法是把作用域扩到 `set.danger.reset.` 与 `set.advanced.` 两个**区**
+   * （而不是那三条整 key，理由见门禁那张表上方那段）。扩到「区」就带来一条新的
+   * 扩宽风险：顺手写成 `set.danger.` 的话，**清空 Key 池那一区会一起被收进来**——
+   * 而它讲的是 key 池，与两条通道毫无关系。
+   * ⇒ 这一格从反面钉住那条边界：`set.danger.purge.*` 里出现同样的词**不许红**。
+   * 少了它，把作用域写成 `set.danger.` 甚至整个 `set.` 也能让上面那两格正向格全绿。
+   */
+  it("⑥ 反向控制：与通道无关的 set.danger.purge.* 里出现同样的词 ⇒ 不红", () => {
+    const r = run(fixtureWith("set.danger.purge.desc", "zh-CN", "清空 Key 池（推荐先导出一份）"));
+    expect(r.status, `作用域被扩宽成了整个 set.danger.（清空 Key 池那一区被一起收进来了）：\n${r.stderr}`)
+      .toBe(0);
   });
 
   it("⑦ 字典里出现 IP:PORT 形态（scan-secrets 会打红 CI）：exit 1", () => {

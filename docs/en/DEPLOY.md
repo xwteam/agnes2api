@@ -124,6 +124,11 @@ its writes grow with request count, so the budget is "so many per day", not "so 
       reset usage counters): 1 get + 1 put. **Every action above costs the same**: they go through the
       same handler and the same single persist, and resetting the counters reads or writes nothing
       extra (what it clears is the in-memory persist baseline).
+      ⚠️ **The last item in those parentheses is the one thing in this section you cannot click**:
+      resetting the usage counters is **API only today — the panel has no button
+      for it** (same as the `POOL_TOUCH_INTERVAL_MS` row above). That list enumerates every action
+      the handler understands, not the buttons on the panel; it is written up here because the
+      unit price is identical to all the others, so that nobody assumes the other route costs more.
     - **Deleting one key**: 2 gets + 1 put (index) + 1 delete.
     - **Bulk disable / bulk clear-cooldown of N keys**: N gets + N puts.
     - **Bulk delete of N keys**: `N + 1` gets + **1** put (the index is written once) + N deletes.
@@ -226,11 +231,15 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   | **Tier-2 off (default)**, registrar off | **176** | 17.6% |
   | Tier-2 on, registrar off | **280** | 28.0% |
   | Tier-2 on, registrar on and every round producing failure events | **424** | 42.4% |
-  | Previous row + someone clicking "Tend now" every 10 minutes | **856** | 85.6% |
+  | Previous row + "Tend now" clicked until the 24-per-day gate is spent | **496** | 49.6% |
 
-  ⚠️ **The worst row has no headroom, and like the three columns above this table is not an
-  upper bound.** Read it this way: **the 104 from Tier-2 is the only item in this table with a
-  hard gate** (point ③ below); none of the others has one.
+  ⚠️ **Like the three columns above, this table is not an upper bound.** Read it this way:
+  **two items in this table carry a hard gate** — the 104 from Tier-2 (13 puts per instance
+  per day, point ③ below) and the 72 from "Tend now" (24 per day, see the "clicking Tend now
+  once" bullet above). None of the others has a gate, and what they cost depends on whoever
+  is operating the panel. The last row assumes **no new keys are minted** (a flat 3 puts per
+  click); minting on every click costs more, but that column hits the temporary-mailbox quota
+  first and is not sustainable — the arithmetic is in that same bullet.
 
   Those 13 come from the following, and all four points matter:
 
@@ -718,8 +727,14 @@ and skips the deploy step without failing the run.
 ### Local development
 
 ```bash
-npx wrangler dev
+pnpm dev:worker   # Worker shape: build the panel assets first, then wrangler dev
+pnpm dev:node     # Node shape: build the panel assets, pnpm build, then run dist/entry/node.js
 ```
+
+⚠️ **Both start with `node scripts/build-ui.mjs`, and that is not incidental**: the panel assets
+are a build product (`src/ui/assets.generated.ts`). A bare `npx wrangler dev` still starts, but the
+panel stays on whatever was generated last — if you changed `admin-ui/` and see nothing, this is
+usually why.
 
 Put `GATEWAY_TOKEN` into a local `.dev.vars` file next to `wrangler.toml` (already
 git-ignored) — do not put secrets directly in `wrangler.toml`.

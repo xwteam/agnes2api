@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { UI_BUILD_HASH } from "../../src/ui/assets.generated.js";
 
 /**
  * ── tracked 文件里的提交 sha 引用必须解析得开（P3e Task 35 补漏评审 发现 3）─────────
@@ -315,7 +316,13 @@ describe("tracked 文件里的提交 sha 引用", () => {
     const fixtures: { file: string; snippet: string }[] = [
       { file: "tests/contract/admin-usage.test.ts", snippet: "1.157e292" },
       { file: ".env.example", snippet: "COOLDOWN_STRIKE_MS=1800000" },
-      { file: "src/ui/assets.generated.ts", snippet: 'UI_BUILD_HASH = "cf488688ed7f2b45"' },
+      // ⚠️ **这一条的值从真源现算，不写死**（P3e 全分支评审回填）：它是一个**生成物**里的
+      //    构建哈希，`admin-ui/` 改一个字它就换一个值 —— 写死的那一版每改一次面板源码
+      //    就会红一次，而红的报文说的是「夹具串已经不在文件里了」，指的方向与真因无关。
+      //    现算之后这一格问的仍是它该问的那件事：**一段真实存在于 tracked 文件里的十六进制
+      //    长串，不许被当成 sha 引用**（16 位不在 `REF_LENGTHS` 射程内，下面那条形状断言
+      //    连这个前提一起钉住 —— 哈希长度哪天变成 8 或 40，这一格会先吵）。
+      { file: "src/ui/assets.generated.ts", snippet: `UI_BUILD_HASH = "${UI_BUILD_HASH}"` },
       { file: "docs/en/DEPLOY.md", snippet: '"id": "1a2b3c4d5e6f7a8b"' },
       { file: "tests/ui/dom/render-text.test.ts", snippet: 'id: "abc12345"' },
       { file: "src/core/registrar/code.ts", snippet: "abc887766 会误命中" },
@@ -324,6 +331,15 @@ describe("tracked 文件里的提交 sha 引用", () => {
       const text = readFileSync(join(ROOT, f.file), "utf8");
       expect(text, `夹具串已经不在 ${f.file} 里了，这一格会空跑`).toContain(f.snippet);
     }
+    // 上面那条现算夹具的**前提**：它得真的是一段十六进制长串，而且长度落在射程之外。
+    // 哪天 build-ui 换了哈希写法（长度变成 8 或 40、或者不再是纯十六进制），
+    // 这一格先在这里吵，而不是让那条反向控制静静变成一句废话。
+    expect(UI_BUILD_HASH, "构建哈希不再是纯十六进制串了").toMatch(/^[0-9a-f]+$/);
+    expect(
+      REF_LENGTHS.has(UI_BUILD_HASH.length),
+      `构建哈希的长度变成了 ${UI_BUILD_HASH.length}，正好落进 sha 引用的射程 —— `
+      + "它会被判成一处解析不开的引用，这条反向控制的前提没了",
+    ).toBe(false);
 
     // 活着的提交 sha 从 git 现取，不手抄一个会随历史漂的数。
     const live = git(["rev-parse", "--short", "HEAD"]).trim();

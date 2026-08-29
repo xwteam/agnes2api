@@ -17,7 +17,7 @@ import { USAGE_DAY_RETAIN, USAGE_KEY_PREFIX, USAGE_SLOTS } from "../../src/core/
 import { CONFIG_KEY } from "../../src/core/config-provenance.js";
 import { KEY_PREFIX, POOL_INDEX_KEY } from "../../src/core/pool-index.js";
 import { TEND_HISTORY_KEY } from "../../src/core/admin/tend-history.js";
-import { MANUAL_GUARD_KEY } from "../../src/core/admin/tend-guard.js";
+import { MANUAL_GUARD_KEY, MANUAL_TENDS_PER_DAY } from "../../src/core/admin/tend-guard.js";
 import { TEND_LOCK_KEY } from "../../src/http/admin/tend-lock.js";
 import { HEALTH_PROBE_KEY } from "../../src/core/storage-health.js";
 import { CONFIG_TTL_MS, KV_EDGE_CACHE_MS } from "../../src/http/config-holder.js";
@@ -158,22 +158,40 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     // **三个一起加，因为它们是同一笔账的三段，各自都会被单独写歪**：
     // `24 × 3` 是算式本身、`392` 是可持续那一栏的合计、`632` 是突发上界那一栏的合计。
     // 只锚一个的话，另外两段在某一种语言里抄错一位不会有任何东西变红。
-    { token: "24 × 3", why: "「立即补池」可持续写侧的算式（每天 24 次 × 每次 3 次 put）" },
+    // ⚠️⚠️ **算式那一条从真源常量现算，不写字面量**（P3e 全分支评审 HIGH-2 回填）：
+    // 写死 `"24 × 3"` 的话，`MANUAL_TENDS_PER_DAY` 一改，五份文档里那句算式原地变成
+    // 假话而本表照绿。现算之后常量一改，token 就成了文档里查不到的串 ⇒ 下面那条
+    // `total === 0` 当场红并点名 DEPLOY.md。理由与 `1 + ${…}` 那两条逐字相同。
+    {
+      token: `${MANUAL_TENDS_PER_DAY} × 3`,
+      why: "「立即补池」可持续写侧的算式（每天 MANUAL_TENDS_PER_DAY 次 × 每次 3 次 put）",
+    },
     { token: "392", why: "「立即补池」可持续写侧叠上稳态第三栏之后的合计（72 + 320）" },
     { token: "632", why: "「立即补池」每次都铸满 MINT_BATCH 时的突发上界合计（312 + 320）" },
     // ⚠️ **P3d Task 3 补的五个，同样是先数过再加**：改动前 `104` / `13 × 8` / `280` /
-    // `424` / `856` 在五份文档里**各 0 次**（`grep -o -F` 逐份数过），加进来之后
-    // `13 × 8` / `104` / `280` / `424` / `856` 分别是 **1 / 4 / 1 / 1 / 1** 次，
+    // `424` / 最坏那一行的合计在五份文档里**各 0 次**（`grep -o -F` 逐份数过），
+    // 加进来之后 `13 × 8` / `104` / `280` / `424` / 最坏那一行分别是 **1 / 4 / 1 / 1 / 1** 次，
     // 五份完全一致（定向复评 N8：上一版这里写的是「3 / 1 / 1 / 1 / 1」，
     // **前两个配反了，而且 `104` 后来又多了一处，早就不是 3**。
     // ⭐ 这类「注释里抄一份计数」天生会过期 —— **能变红的是下面那条跨语言互校，
     // 不是这段话**，读的人别把它当判据）。
     //
     // **五个一起加，因为它们是同一笔账里五段各自会被单独写歪的数**：
-    // `13 × 8` 是算式本身、`104` 是 Tier-2 的写量增量，`280`/`424`/`856` 是四行场景表里
+    // `13 × 8` 是算式本身、`104` 是 Tier-2 的写量增量，`280`/`424`/最坏那一行是四行场景表里
     // 新增的那三行合计（第一行 `176` 与 Tier-2 关掉时逐字相同，已被上面那个锚覆盖）。
-    // 只锚 `104` 的话，某一种语言把 `856` 抄成 `865` 不会有任何东西变红——而 `856` 恰恰是
-    // 「开了之后会不会打穿写配额」这个问题的答案（85.6% < 100%），写歪一位就是相反的结论。
+    // 只锚 `104` 的话，某一种语言把最坏那一行抄错一位不会有任何东西变红——而那一行恰恰是
+    // 「开了之后会不会打穿写配额」这个问题的答案，写歪一位就是相反的结论。
+    //
+    // ⚠️⚠️ **最坏那一行从真源常量现算，不写字面量**（P3e 全分支评审 HIGH-2）。
+    // 它上一版写死的是 `856`（= 424 + 每 10 分钟点一次立即补池的 `144 × 3 = 432`），
+    // 而 `MANUAL_TENDS_PER_DAY = 24` 那道闸把点击次数压到 24 次/天
+    // ⇒ 真实的那一行是 `424 + 24 × 3 = 496`。**上一版的守卫在保证五份把同一个错数
+    // 抄得一模一样**——这正是本表开头那段边界说明（「只能证明五份写得一样，不能证明
+    // 五份说得对」）的一个活实例。现算之后常量一改，token 就成了文档里查不到的串
+    // ⇒ 下面那条 `total === 0` 当场红并点名 DEPLOY.md。
+    // ⚠️ `424` 仍是字面量：它是上一行的合计（320 + 104），与这道闸无关。
+    //    每次点击**不铸新 key** 时的写侧固定是 3 次 put（`tend-guard.ts` 文件头那段算式），
+    //    五份文档里那一行也是按这个口径写的。
     //
     // ⚠️ **不加 `13`**：它在五份里散落在「13 次 put」「12 + 1」等十几处，
     // 变红时指不出是哪一句坏了，而定位成本正是这道门禁存在的意义（同 `48` 那条不加的理由）。
@@ -182,7 +200,10 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     { token: "104", why: "Tier-2 打开之后每天新增的 put 数，配额账里本期唯一的新写者" },
     { token: "280", why: "Tier-2 开、注册机关着时的写侧合计（176 + 104）" },
     { token: "424", why: "Tier-2 开、注册机开着且每轮有失败事件时的写侧合计（320 + 104）" },
-    { token: "856", why: "四行场景表里最坏那一行的合计（752 + 104），85.6% —— 「开了也不打穿」这条结论就靠它" },
+    {
+      token: String(424 + MANUAL_TENDS_PER_DAY * 3),
+      why: "四行场景表里最坏那一行的合计（424 + MANUAL_TENDS_PER_DAY × 3）—— 「开了也不打穿」这条结论就靠它",
+    },
     // ⚠️ **P3e Task 13 补的，同样是先数过再加**：改动前 `.dev.vars.off` 在五份文档里
     // **各 0 次**（`grep -o -F | wc -l` 逐份数过），加进来之后**各 1 次**，五份完全一致。
     //
@@ -872,8 +893,8 @@ describe("五语言 API.md 逐份写着视频任务标识的字符集", () => {
  * 分别记在 `FENCE_LINE`、`outsideFences()`、`codeSpans()` 三处的注释里。
  *
  * ⚠️ **与上面那组数字锚点是互补不是重复，那些锚点一个都不许删**：数字锚点管
- * 「同一个数字五份写得一样」，结构判据管「结构对得上」。某一份把 `856` 抄成
- * `865`，五份的结构指纹**逐字节相同**，R1–R6 全绿。反过来，某一份多一段没翻译
+ * 「同一个数字五份写得一样」，结构判据管「结构对得上」。某一份把 `496` 抄成
+ * `469`，五份的结构指纹**逐字节相同**，R1–R6 全绿。反过来，某一份多一段没翻译
  * 的小节，数字锚点也可能一个都不动。两组各管各的一半。
  * ⚠️ 后续任务改 DEPLOY.md 会让锚点计数变动 ⇒ **改文档必须同步改锚点**，这是好事，
  * 但要预期到。
@@ -6152,4 +6173,207 @@ describe("「改一把 key」那份动作枚举的两个投影都从 `PATCH_FIEL
     expect(noisy, "变异没落地").not.toEqual(designSrc());
     expect(endpointRowFields(noisy), "多了一行长得像的表行，判据却红了").toEqual([...PATCH_FIELDS]);
   });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 「某一份根本没翻译」—— 阶段 B 规则⑩ 在 docs 轴上的移植（P3e 全分支评审 MEDIUM-3）
+ *
+ * **缺口是怎么被发现的**：评审把 `docs/en/ADMIN.md` 里一整句英文换成中文（结构一个字
+ * 不动）⇒ `pnpm test` 全绿、七道门禁全 exit 0。阶段 B（Task 8）早就给**字典**建过
+ * 同一个失败形态的判据（规则⑩：en 不含 CJK / ko 必须有谚文），阶段 H 随后写了约 1700 行
+ * 五语言文档，**那条判据一个字都没有移植到 docs 轴上**。
+ * 上面那组结构判据管不了它：把一段英文换成同样长的中文，标题层级、围栏、链接、表格行、
+ * 标识符 code span **逐字节不变**，R1–R6 全绿；数字锚点也可能一个都不动。
+ *
+ * ── 判据要能分辨「故意引用」与「整段没翻」，而且不许开豁免名册 ─────────────────
+ * `docs/en/API.md` 里有 **174 个** CJK 字符，**它们是故意的**：上游报文只有中文，五份
+ * 文档都如实披露了这件事并原样引用（`docs/en/API.md` 与 `docs/ja/API.md` 各有一句
+ * 逐字说明）。若为它开一条「这份文件豁免」，本仓的裁定是**豁免名册会变成永久的洞**。
+ * ⇒ 判据改成按**位置**分：那 174 个字符**全部在代码围栏或行内 code span 里**
+ *（实测：剥掉围栏与 code span 之后 `en/API.md` 的 CJK 从 174 掉到 11，与其余五份 en
+ *  文档逐字相同，而那 11 个就是语言切换行上另外三种语言的自名）。
+ * ⇒ **剥围栏 + 剥 code span + 跳过语言切换行之后，六份 en 文档各 0 个 CJK。**
+ *   零豁免、零名册，且「故意引用」那一面今天真实存在（下面有一格专门钉它还在）。
+ *
+ * ── ko 那一半：谚文旁边的汉字注是合法的 ──────────────────────────────────────
+ * `docs/ko/DEPLOY.md` 有一处 `대사(對帳)` —— 韩文里「谚文词 + 括号汉字注」是正当写法。
+ * 判据因此先剥掉这一种**形态**（谚文紧跟一对括号、括号里全是汉字），再要求 0。
+ * 剥的是形态不是那一处，所以它不是名册：换个词写同样的注照样放行，而**整行中文**
+ * （前面没有谚文）一个字都躲不掉。
+ *
+ * ── 已知缺口如实登记：ja / zh-CN / zh-TW 三轴今天没有判据 ────────────────────
+ * 见本组最后一格。**按字形分不开**：ja 正当地用汉字、zh-CN 与 zh-TW 共用汉字，
+ * 要分开需要另一份判据（简繁字表 / 假名比例阈值），那是另一件事，本期不开。
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/** 汉字与假名。**谚文不在内**：ko 那一档要的是谚文出现，不是禁止它。 */
+const HAN_KANA = /[㐀-䶿一-鿿぀-ヿ]/u;
+
+/** ko 里合法的「谚文词 + 括号汉字注」形态（`대사(對帳)`）。剥的是形态，不是某一处。 */
+const KO_HANJA_GLOSS = /[가-힣]\s*[(（][㐀-䶿一-鿿]+[)）]/gu;
+
+/**
+ * 语言切换行：它逐字带着另外几种语言的自名（`[简体中文](../zh-CN/…)`），六份文档
+ * 每份恰好一行，五种语言都一样。
+ *
+ * ⚠️ **判据是「这一行有 ≥3 条跨语言链接」，不是行号也不是那几个自名**：写死行号会随
+ * 排版漂，写死自名等于把「简体中文」四个字加进一张豁免名册。
+ * ⚠️ **边界**：正文里若真出现一行同时挂着三条以上跨语言链接，那一行的 CJK 会被一起
+ * 跳过。今天全仓只有切换行是这个形状（下面那格夹具从反面钉着「两条链接不够」）。
+ */
+const CROSS_LANG_LINK = /\]\(\.\.\/(?:zh-CN|zh-TW|en|ja|ko)\//g;
+const isSwitcherLine = (line: string): boolean => (line.match(CROSS_LANG_LINK) ?? []).length >= 3;
+
+/**
+ * 一份文档里「没翻译」的嫌疑行。**剥围栏与 code span 走的是上面 R3/R6 那两处真源**
+ *（`outsideFences()`，以及与 `codeSpans()` 逐字同一条允许跨行的正则），不另写第二份。
+ */
+function untranslatedLines(src: string, lang: "en" | "ko"): string[] {
+  const prose = outsideFences(src).replace(/`[^`]+`/g, " ");
+  const out: string[] = [];
+  prose.split("\n").forEach((line, i) => {
+    if (isSwitcherLine(line)) return;
+    const probe = lang === "ko" ? line.replace(KO_HANJA_GLOSS, " ") : line;
+    if (HAN_KANA.test(probe)) out.push(`${i + 1}: ${line.trim()}`);
+  });
+  return out;
+}
+
+describe("「某一份根本没翻译」：en 与 ko 的正文里不许有汉字假名", () => {
+  for (const lang of ["en", "ko"] as const) {
+    it(`docs/${lang} 的六份文档，剥掉围栏 / 行内 code / 语言切换行之后一个汉字假名都没有`, () => {
+      const failures: string[] = [];
+      for (const doc of DOCS) {
+        const hits = untranslatedLines(realDoc(doc)(lang), lang);
+        if (hits.length > 0) {
+          failures.push(`docs/${lang}/${doc}.md 有 ${hits.length} 行：\n    ${hits.join("\n    ")}`);
+        }
+      }
+      expect(
+        failures,
+        `这几行是**正文**（不在围栏里、也不在行内 code 里）却带着汉字或假名 —— `
+        + "多半是某一段根本没翻译，或者翻译时把原文粘了回去。"
+        + "若它确实是必须原样引用的报文，**把它放进围栏或行内 code**（`docs/en/API.md` 里那 174 个"
+        + "就是这么处理的），不要来这里开一条豁免：本仓的裁定是豁免名册会变成永久的洞。\n"
+        + failures.join("\n"),
+      ).toEqual([]);
+    });
+  }
+
+  /**
+   * **上面那条判据的「豁免面今天是活的」控制格。**
+   *
+   * 少了它，`docs/en/API.md` 那批故意引用哪天被删光之后，上面那两格照样全绿，而
+   * 「剥围栏 / 剥 code span」这一步会安安静静地变成一段没有任何东西触发的死代码——
+   * 下一个人于是有理由把它简化掉，而简化掉的那一刻 `en/API.md` 会当场红成一片。
+   */
+  it("控制格：en/API.md 里那批故意的中文报文引用今天真的存在，而且真的全在代码里", () => {
+    const src = realDoc("API")("en");
+    const all = (src.match(/[㐀-䶿一-鿿぀-ヿ]/gu) ?? []).length;
+    const switcher = (src.split("\n").filter(isSwitcherLine).join("\n")
+      .match(/[㐀-䶿一-鿿぀-ヿ]/gu) ?? []).length;
+    expect(
+      all - switcher,
+      "docs/en/API.md 里已经没有原样引用的中文报文了 —— 要么它们被删/被翻译了"
+      + "（那就该回来把上面两格的剥法与这一格一起重新论证），"
+      + "要么它们挪出了代码围栏（那样上面那两格会当场红）",
+    ).toBeGreaterThan(0);
+    expect(
+      untranslatedLines(src, "en"),
+      "en/API.md 里那批中文跑到正文里去了 —— 报文原样引用必须待在围栏或行内 code 里",
+    ).toEqual([]);
+  });
+
+  /**
+   * 夹具正反两侧。**六种形态一次说清**：三种不许红（围栏内、行内 code、语言切换行）、
+   * 一种 ko 专属不许红（谚文汉字注）、两种必须红（正文整句中文 / ko 正文整行中文）。
+   * ⚠️ 反向控制不是可选项：只写「该红时红」的话，把判据写成恒真也全绿。
+   */
+  it("夹具正反两侧：围栏 / 行内 code / 切换行 / 谚文汉字注不许红，正文里的中文必须红", () => {
+    const SWITCH = "**Language:** English | [简体中文](../zh-CN/X.md) | [繁體中文](../zh-TW/X.md)"
+      + " | [日本語](../ja/X.md) | [한국어](../ko/X.md)";
+    expect(untranslatedLines(SWITCH, "en"), "语言切换行被当成了没翻译").toEqual([]);
+    expect(
+      untranslatedLines("See two docs: [简体中文](../zh-CN/X.md) and [日本語](../ja/X.md).", "en"),
+      "只有两条跨语言链接的一行不该被当成切换行放过去",
+    ).not.toEqual([]);
+
+    expect(untranslatedLines("The body reads `请求体里没有 model 字段`.", "en"), "行内 code 被当成了没翻译")
+      .toEqual([]);
+    expect(untranslatedLines("```json\n{ \"message\": \"请求体里没有 model 字段\" }\n```", "en"), "围栏内被当成了没翻译")
+      .toEqual([]);
+    expect(untranslatedLines("  ```json\n  { \"message\": \"请求体里没有 model 字段\" }\n  ```", "en"), "缩进围栏内被当成了没翻译")
+      .toEqual([]);
+
+    expect(untranslatedLines("This paragraph 根本没有翻译成英文。", "en"), "正文里整句中文没被抓住")
+      .not.toEqual([]);
+    expect(untranslatedLines("この段落は英語に翻訳されていません。", "en"), "正文里整句日文没被抓住")
+      .not.toEqual([]);
+
+    expect(untranslatedLines("계산에는 안전한 방향입니다 —— 대사(對帳) 트리거가 줄어들수록", "ko"), "谚文汉字注被当成了没翻译")
+      .toEqual([]);
+    expect(untranslatedLines("这一段根本没有翻译成韩文。", "ko"), "ko 正文里整行中文没被抓住")
+      .not.toEqual([]);
+    expect(untranslatedLines("對帳(대사)는 안전합니다", "ko"), "括号在前的裸汉字不该被当成谚文汉字注放过去")
+      .not.toEqual([]);
+  });
+
+  /**
+   * **已知缺口，如实登记（不硬上一个会误伤的判据）。**
+   *
+   * `ja` 正当地用汉字，`zh-CN` 与 `zh-TW` 共用汉字 ⇒ 上面那条按**字形**分的判据在这三轴上
+   * 一格都问不出话。真要补，需要另一份判据：ja 侧要一条「假名比例」阈值（阈值判据在本仓
+   * 已被裁定为脆弱），zh 侧要一张简繁字表（那是第二份形态知识）。**本期不开，账记在这里。**
+   * ⚠️ 这一格不是散文：它把「今天有判据的是哪两种语言」钉成断言 —— 哪天有人给 ja 或
+   * zh 补上判据而忘了改这段话，或者反过来把 en/ko 那两格删掉，这一格当场红。
+   */
+  it("已知缺口：ja / zh-CN / zh-TW 三轴今天没有「没翻译」判据，理由记在这里", () => {
+    const COVERED = ["en", "ko"] as const;
+    const uncovered = LANGS.filter((l) => !(COVERED as readonly string[]).includes(l));
+    expect(
+      [...uncovered].sort(),
+      "「哪几种语言今天没有判据」变了 —— 要么有人补上了新判据（那就把 COVERED 与上面那段"
+      + "理由一起改），要么有人删掉了 en/ko 那两格（那就是把一条活着的守卫弄没了）",
+    ).toEqual(["ja", "zh-CN", "zh-TW"]);
+    // 反面：被覆盖的那两种今天真的各有一格在跑（上面那圈 `it` 就是按这张表生成的）。
+    expect([...COVERED].sort(), "COVERED 与上面那圈用例的取数分了家").toEqual(["en", "ko"]);
+  });
+});
+
+/**
+ * ── 本地开发那两条命令（P3e 全分支评审 LOW 回填）────────────────────────────
+ *
+ * 五份 DEPLOY.md 的「本地开发」原来只写 `npx wrangler dev`，而 `package.json` 里那两条
+ * 真正该用的脚本（`dev:worker` / `dev:node`）**五份文档零处提及**。差别不是风格问题：
+ * 两条脚本都以 `node scripts/build-ui.mjs` 开头，而面板资源是**生成物**——
+ * 裸 `wrangler dev` 起得来，但面板停在上一次生成的那一份，改了 `admin-ui/` 看不到变化。
+ *
+ * ⚠️ **这一格把那句话的两端都钉住**：脚本名与「以 build-ui 开头」这件事从 `package.json`
+ * 现算（脚本改名或者那一段前缀被拿掉 ⇒ 当场红），五份文档各自必须提到这两个脚本名
+ * （某一份漏改 ⇒ 当场红并点名）。**只钉一端等于没钉**：只查文档的话脚本改名不会红，
+ * 只查脚本的话文档漏改不会红。
+ */
+it("五份 DEPLOY.md 都写着 package.json 里那两条本地开发脚本，而它们确实都先生成面板资源", () => {
+  const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
+  const BUILD_UI = "node scripts/build-ui.mjs";
+  const names = ["dev:worker", "dev:node"] as const;
+  for (const n of names) {
+    expect(
+      pkg.scripts[n],
+      `package.json 里没有 \`${n}\` 了 —— 五份 DEPLOY.md 的「本地开发」正指着它`,
+    ).toBeDefined();
+    expect(
+      pkg.scripts[n],
+      `\`${n}\` 不再以 \`${BUILD_UI}\` 开头 —— 五份 DEPLOY.md 里那句`
+      + "「两条都以 node scripts/build-ui.mjs 开头」当场变成假话，"
+      + "而它正是「别用裸 wrangler dev」那条建议的全部理由",
+    ).toMatch(new RegExp(`^${BUILD_UI.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`));
+  }
+  const missing: string[] = [];
+  for (const lang of LANGS) {
+    const src = realDoc("DEPLOY")(lang);
+    for (const n of names) if (!src.includes(`pnpm ${n}`)) missing.push(`docs/${lang}/DEPLOY.md 没提到 \`pnpm ${n}\``);
+    if (!src.includes(BUILD_UI)) missing.push(`docs/${lang}/DEPLOY.md 没写出 \`${BUILD_UI}\` 这条前提`);
+  }
+  expect(missing, missing.join("\n")).toEqual([]);
 });

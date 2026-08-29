@@ -268,8 +268,10 @@ The settings page has five cards today:
   you touched. For ordinary fields the sentence on screen **opens, word for word, with "this
   instance already picked it up"**, and only then states how long other replicas / isolates may
   take to see the change — it says this instance is already using the new value, not that
-  nothing is live yet. That bound is the sum of the configuration cache and the KV edge cache,
-  and both numbers live in the environment-variable table of [DEPLOY.md](DEPLOY.md).
+  nothing is live yet. That bound is the sum of the configuration cache and the KV edge cache.
+  ⚠️ **Neither number is in the environment-variable table**: both are hard-coded constants in
+  `src/http/config-holder.ts` that nobody can tune; the values are written out in the **prose** of
+  [DEPLOY.md](DEPLOY.md), in the part about what the settings page returns after a save.
 - ⚠️ **Two fields are the exception**: the pool snapshot cache and the write-coalescing interval
   (`POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS`) are **read once when the instance is
   built** ⇒ after saving, **not even this instance has picked them up**; the container has to
@@ -303,15 +305,19 @@ The last card on the settings page. Neither button here can be undone, and there
 - **Finishing on screen does not mean every replica has caught up.** After a reset, other
   replicas or isolates only see it once the config cache and the edge cache have expired; after
   a purge, the forwarding path can keep selecting those keys for up to one pool-snapshot TTL
-  plus the edge cache. Both upper bounds live in the environment table of
-  [DEPLOY.md](DEPLOY.md); on this page, the config one is also mentioned in the settings card
-  notes above, and the pool-snapshot one in the overview bullet about the two freshness clocks.
+  plus the edge cache. The knob behind the pool-snapshot bound (`POOL_CACHE_TTL_MS`) is in the
+  environment table of [DEPLOY.md](DEPLOY.md); ⚠️ **the config bound is not in that table** — it is
+  the sum of two hard-coded constants in `src/http/config-holder.ts` that nobody can tune, and its
+  value is written out in the prose of the same document. On this page, the config one is also
+  mentioned in the settings card notes above, and the pool-snapshot one in the overview bullet
+  about the two freshness clocks.
 - **What each button costs in quota is written in the quota account of [DEPLOY.md](DEPLOY.md)**:
   a reset is one write; a purge is one delete per key plus the single index write — the bigger
   the pool, the more expensive that button gets.
-- **Neither button echoes a credential.** The reset receipt carries only the read-back
-  quadruples and "configured or not", exactly like the rest of this page: not a single
-  character of plaintext.
+- **Neither button echoes a credential.** The reset receipt carries the read-back quadruples,
+  "configured or not", and the short last-four hint (`hint`, the same thing the credential fields
+  on the settings page show) — **exactly the same rule as the rest of this page: the last four
+  characters, yes; not a single character of the plaintext.**
 
 ## What the panel does not do
 
@@ -358,9 +364,11 @@ The last card on the settings page. Neither button here can be undone, and there
   see this message when the deployment side is the one carrying such a token**: the whole tree
   is then never registered, and what you get is the `404` above.
 - **The screen is showing stale values**: the configuration and the pool snapshot each have
-  their own cache window, with a layer of KV edge caching on top. Both upper bounds and their
-  costs are in the environment-variable table of [DEPLOY.md](DEPLOY.md) and are not copied here;
-  the two "read N seconds ago" lines on Overview are there for exactly this.
+  their own cache window, with a layer of KV edge caching on top. The pool-snapshot bound and its
+  cost are in the environment-variable table of [DEPLOY.md](DEPLOY.md); the config bound is a pair
+  of hard-coded constants and is **not in that table** — its value is written out in the prose of
+  the same document. Neither is copied here; the two "read N seconds ago" lines on Overview are
+  there for exactly this.
 - **The error text is the backend's own words, not your language**: for error codes **it
   recognises** the panel shows its own localized text; for a code it does not recognise it puts
   the backend's sentence on screen and marks it with "raw text from the backend; this panel has
