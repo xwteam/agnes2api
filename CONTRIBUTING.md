@@ -140,6 +140,57 @@ CI run. The other side of the same coin: anything that is *not* one of those six
 scanner inside a binary. That is exactly the hole `scripts/check-png.mjs` exists to close, and
 it is why "just widen the allowlist" is never the fix.
 
+## Cutting a release
+
+Releases come off `main`; there is no release branch. The version string lives in four places
+and none of them is edited by hand — `scripts/set-version.sh` writes all four in one go:
+
+```bash
+bash scripts/set-version.sh 0.1.1
+```
+
+That rewrites `VERSION`, the `version` field in `package.json`, the constant in
+`src/version.ts`, and the version badge at the top of the root README **and** of every
+translated README. Then, in this order:
+
+1. Refresh the lockfile. The script prints the exact command as its last line; run it, because
+   `package.json` and `pnpm-lock.yaml` disagreeing is a red build, not a warning.
+2. Write the entry in `CHANGELOG.md`.
+3. Run the pre-push checklist — `bash scripts/prepush.sh` — and make it green. It re-runs the
+   CI gates in CI's own order, plus the few things CI structurally cannot see (a dirty working
+   tree, the branch, the author identity, the test counts, and a real two-runtime smoke test).
+4. Commit, tag `vX.Y.Z`, and push **both the commit and the tag**. Pushing a `v*` tag is what
+   triggers [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) to
+   publish the image; that workflow can also be run by hand from the Actions tab. The version
+   badges are not computed at render time — they ship inside the commit the tag points at, so
+   the tag must come after the version bump, never before.
+5. Write the GitHub Release body from the skeleton below.
+
+### The Release body is five languages, in this order
+
+Same rule as the documentation: whatever the release notes say, they say it five times. The
+skeleton — heading level, flags, and order — is copied from the sibling repository's published
+releases, so anyone reading both sees the same shape:
+
+```markdown
+## 🇨🇳 中文
+
+## 🇺🇸 English
+
+## 🇯🇵 日本語
+
+## 🇰🇷 한국어
+
+## 🇹🇼 繁體中文
+```
+
+Three details in that block are deliberate and are the ones people get wrong: the headings are
+`##` (not `###`), every language carries its flag emoji, and **Traditional Chinese comes last**
+— it is not paired next to Simplified Chinese, and its flag is 🇹🇼.
+
+Nothing machine-checks the Release body: it lives on GitHub, not in this repository, so no gate
+in `.github/workflows/ci.yml` can reach it. This section is the whole of the enforcement.
+
 ## Reporting a security issue
 
 Do not open a public issue for it. See [SECURITY.md](SECURITY.md).
