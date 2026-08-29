@@ -213,7 +213,7 @@ describe("prepush.sh 跑的门禁是从 ci.yml 当场抽的", () => {
 describe("prepush.sh 的抽取器：认不出要吵，不许静静放行", () => {
   it("反向控制：ci.yml 少一步 ⇒ 干跑非 0 并点名少了几道", () => {
     const p = fixture((yml) =>
-      yml.replace(/^ {6}- name: 7\/12 .*\n {8}run: .*\n/m, ""),
+      yml.replace(/^ {6}- name: 8\/13 .*\n {8}run: .*\n/m, ""),
     );
     const r = printGates(p);
     expect(r.code, "少了一步却照样 exit 0 —— 那正是这份复跑最坏的死法").not.toBe(0);
@@ -232,7 +232,7 @@ describe("prepush.sh 的抽取器：认不出要吵，不许静静放行", () =>
     const before = parseGates(printGates().stdout).find((g) => g.body.includes("pnpm test 2>&1"));
     expect(before?.flags).toBe("-eo pipefail");
     const p = fixture((yml) =>
-      yml.replace(/^( {6}- name: 10\/12 .*\n) {8}shell: bash\n/m, "$1"),
+      yml.replace(/^( {6}- name: 11\/13 .*\n) {8}shell: bash\n/m, "$1"),
     );
     const after = parseGates(printGates(p).stdout).find((g) => g.body.includes("pnpm test 2>&1"));
     expect(after?.flags, "flag 不是从 ci.yml 读的，是写死的").toBe("-e");
@@ -594,7 +594,7 @@ describe("prepush.sh 的报文：方向要说对，别把人指到与这次失�
    */
   it("抽到的道数与步名说的对不上时，报文得说对方向（多了 / 少了）", () => {
     const more = printGates(
-      fixture((yml) => `${yml.replace(/\n?$/, "\n")}      - name: 13/12 变异追加的一道\n        run: true\n`),
+      fixture((yml) => `${yml.replace(/\n?$/, "\n")}      - name: 14/13 变异追加的一道\n        run: true\n`),
     );
     expect(more.code, "多出一道却照样 exit 0").not.toBe(0);
     expect(more.stderr).toContain("步名说共");
@@ -602,7 +602,7 @@ describe("prepush.sh 的报文：方向要说对，别把人指到与这次失�
       .toContain("多出来的那几道");
     expect(more.stderr).not.toContain("少的那几道");
 
-    const fewer = printGates(fixture((yml) => yml.replace(/^ {6}- name: 12\/12 .*\n {8}run: .*\n?/m, "")));
+    const fewer = printGates(fixture((yml) => yml.replace(/^ {6}- name: 13\/13 .*\n {8}run: .*\n?/m, "")));
     expect(fewer.code, "少了一道却照样 exit 0").not.toBe(0);
     expect(fewer.stderr).toContain("步名说共");
     expect(fewer.stderr).toContain("少的那几道");

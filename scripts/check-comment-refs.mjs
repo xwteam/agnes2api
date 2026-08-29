@@ -733,9 +733,9 @@ const PROSE_LINENO_RE =
  * 会漂的东西。这条边界由 `tests/unit/check-comment-refs.test.ts` 的
  * 「已知认不得：%s ⇒ 今天放行（边界是断言，不是散文）」那张表钉着，不是散文。
  *
- * ⚠️ **`.github/workflows/ci.yml` 里那些 `name: N/12` 是真源，不受影响**：`SCAN_DIRS` 不含
+ * ⚠️ **`.github/workflows/ci.yml` 里那些 `name: N/M` 是真源，不受影响**：`SCAN_DIRS` 不含
  * `.github/`，而 `tests/unit/scripts-guard.test.ts` 的
- * 「CI 恰好十二道门，编号 1/12 到 12/12 各出现一次」判的是 `N/12` 那种形态、不带
+ * 「CI 恰好十三道门，编号 1/13 到 13/13 各出现一次」判的是 `N/M` 那种形态、不带
  * 「第 … 道」，一格都碰不到。**方向是把注释里的序号换成脚本名，既不是改 CI 去对齐
  * 注释，也不是把序号改成写对的那个数。**
  *

@@ -233,7 +233,7 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
       "fetch-depth: 0 不在 checkout 那一步自己的块里 ⇒ 拉到的还是浅仓，历史那一档只会 fail closed",
     ).toContain("fetch-depth: 0");
 
-    const scan = blockOf("name: 2/12 凭据扫描");
+    const scan = blockOf("name: 3/13 凭据扫描");
     expect(scan, "历史那一档不在凭据扫描那一步自己的块里 ⇒ 它根本没被跑到").toContain(
       "bash scripts/scan-secrets.sh --history",
     );
@@ -280,8 +280,8 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
    */
   it("历史那一档失败时会在日志里自报处置办法，工作树那一条刻意不带注解", () => {
     const yml = readFileSync(".github/workflows/ci.yml", "utf8");
-    const i = yml.indexOf("name: 2/12 凭据扫描");
-    expect(i, "ci.yml 里找不到「name: 2/12 凭据扫描」").toBeGreaterThan(-1);
+    const i = yml.indexOf("name: 3/13 凭据扫描");
+    expect(i, "ci.yml 里找不到「name: 3/13 凭据扫描」").toBeGreaterThan(-1);
     const end = yml.indexOf("\n      - ", i + 1);
     const lines = yml
       .slice(i, end === -1 ? yml.length : end)
@@ -308,16 +308,18 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
  * 而少跑一道的形态恰恰是静默的（那一步被删掉之后没有任何东西会红）。
  * 期望值是**手写字面量**，不是从 yml 里数出来再回填。
  */
-it("CI 恰好十二道门，编号 1/12 到 12/12 各出现一次", () => {
+it("CI 恰好十三道门，编号 1/13 到 13/13 各出现一次", () => {
   const ci = readFileSync(".github/workflows/ci.yml", "utf8");
-  for (let i = 1; i <= 12; i++) {
-    const n = ci.split(`name: ${i}/12 `).length - 1;
-    expect(n, `编号 ${i}/12 出现了 ${n} 次`).toBe(1);
+  for (let i = 1; i <= 13; i++) {
+    const n = ci.split(`name: ${i}/13 `).length - 1;
+    expect(n, `编号 ${i}/13 出现了 ${n} 次`).toBe(1);
   }
   // 反向：不许还剩下旧编号（评审 F3 从十道扩到十一道；全分支评审 B2 又插入
-  // check-comment-refs 又插了一步进去，原来的 8/11..11/11 全部跟着挪一位）。
-  expect(ci, "还有步骤写着 N/10").not.toMatch(/name: \d+\/10 /);
-  expect(ci, "还有步骤写着 N/11").not.toMatch(/name: \d+\/11 /);
+  // check-comment-refs 又插了一步进去，原来的 8/11..11/11 全部跟着挪一位；
+  // P3f 阶段 2 给 docs/logo.png 配的那道 PNG 结构审计插在第二位，2/12..12/12 又挪了一位）。
+  for (const stale of [10, 11, 12]) {
+    expect(ci, `还有步骤写着 N/${stale}`).not.toMatch(new RegExp(`name: \\d+\\/${stale} `));
+  }
 });
 
 /**
@@ -377,7 +379,7 @@ describe("check-comment-refs 在 CI 门禁列表里", () => {
 });
 
 /**
- * CI 第 10/12、11/12 两步的退出码**全靠 `shell: bash` 提供的 pipefail**：
+ * CI 里跑 `pnpm test` / `pnpm test:workers` 那两步的退出码**全靠 `shell: bash` 提供的 pipefail**：
  * 它们是 `pnpm test 2>&1 | tee ... ; grep ...`，没有 pipefail 时管道的退出码取最后一条命令，
  * **测试失败会被 tee/grep 的成功退出码吃掉，CI 全绿**。
  * 上面那组断言了这两步的裸命令、grep 次数、pnpm build——**唯独没断言它**。
@@ -393,7 +395,7 @@ it("跑测试的两步显式声明 shell: bash（pipefail 的唯一来源）", (
   // 全绿，因为窗口滑进了 9/10 自己的 `shell: bash`，「变异点与被守护的不变量」
   // 没对齐。判据必须锚在**这一步自己的 YAML 块**，用下一个 `- name:` 当右边界，
   // 而不是一个跟内容脱钩的字符数。
-  for (const name of ["10/12 单元 / 契约 / 前端纯函数测试（Node 运行时）", "11/12 契约测试（workerd 运行时）"]) {
+  for (const name of ["11/13 单元 / 契约 / 前端纯函数测试（Node 运行时）", "12/13 契约测试（workerd 运行时）"]) {
     const i = yml.indexOf(`name: ${name}`);
     expect(i, `找不到步骤 ${name}`).toBeGreaterThan(0);
     const nextStep = yml.indexOf("\n      - name:", i);

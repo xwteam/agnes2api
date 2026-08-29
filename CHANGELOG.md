@@ -32,10 +32,11 @@ Cloudflare Worker 与 Node / Docker 两种运行时。
   `x-admin-key` 请求头，不落 Cookie、不进 query。
 - **五语言**：面板与文档（README / ADMIN / API / DEPLOY / REGISTRAR / USAGE）
   各有 `zh-CN` / `zh-TW` / `en` / `ja` / `ko` 五份。
-- **CI 十二道门禁**：跟踪文件不许是二进制、凭据扫描、生成面板资源、生成物一致性、
-  面板体积预算、i18n 完整性、KV namespace id 仍是占位符、注释里的指向必须解析得开、
-  类型检查、单元 / 契约 / 前端纯函数测试、契约测试（workerd 运行时）、构建
-  —— 这一串短名逐个对应 `.github/workflows/ci.yml` 里那十二步，顺序也是那边的顺序。
+- **CI 十三道门禁**：跟踪文件不许是二进制、具名放行的 PNG 结构审计、凭据扫描、
+  生成面板资源、生成物一致性、面板体积预算、i18n 完整性、KV namespace id 仍是占位符、
+  注释里的指向必须解析得开、类型检查、单元 / 契约 / 前端纯函数测试、
+  契约测试（workerd 运行时）、构建
+  —— 这一串短名逐个对应 `.github/workflows/ci.yml` 里那十三步，顺序也是那边的顺序。
 
 ### 已知限制
 

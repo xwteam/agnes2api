@@ -210,7 +210,10 @@ BANNER='[collection-guard] ✅'
 #   格数不变。
 #   那次评审的回填第 1 轮又从 3763 回到 3765：删掉的三格里有两格钉的是 `PATCH_FIELDS`
 #   的**顺序**，这一维没有随文档消失，判据搬进 `enumerationFailures()` 之后
-#   补了 2 格反向控制——**这一格当场把这次增格拦下来了，不是我主动想起来改的**。）
+#   补了 2 格反向控制——**这一格当场把这次增格拦下来了，不是我主动想起来改的**。
+#   P3f 阶段 2 从 3765 改到 3784、文件数从 135 改到 136：`docs/logo.png` 进仓需要给
+#   `scripts/check-no-binary.mjs` 开一个具名放行，配套的补偿判据 `scripts/check-png.mjs`
+#   带来一份新测试（16 格）与放行那一族的 3 格。）
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -218,8 +221,8 @@ BANNER='[collection-guard] ✅'
 # 把其中一处数字悄悄改错之后计数从 3 掉到 2、仍然满足「≥ 1」，门禁一声不吭。
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
-EXPECT_NODE_FILES=135
-EXPECT_NODE_TESTS=3765
+EXPECT_NODE_FILES=136
+EXPECT_NODE_TESTS=3784
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

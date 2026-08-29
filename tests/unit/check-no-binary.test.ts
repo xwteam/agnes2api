@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -127,6 +127,54 @@ describe("scripts/check-no-binary.mjs", () => {
     addAndTrack(dir, ".gitattributes", "src/gen.ts linguist-generated=true\n");
     const result = run(dir);
     expect(result.status, `只有 -diff 才该被拦，别把所有属性都当问题：${result.stderr}`).toBe(0);
+  });
+
+  /**
+   * ── 具名放行那一族 ────────────────────────────────────────────────────────
+   *
+   * 模板要求 README 头部块摆 `docs/logo.png`，而这道门禁的射程含 `docs/`。处置是
+   * **具名放行一个字面路径 + 补偿判据**，而不是把 `docs/` 摘出射程。三条用例分别钉住
+   * 这个处置的三个面，缺任何一条这个放行都不成立：
+   *   ① 放行真的生效（否则模板落不了地）；
+   *   ② 放行**只**对那一个字面路径生效（写成 `*.png` 或整个 `docs/` 等于废掉门禁）；
+   *   ③ 放行之后这个文件的内容由谁看着 —— 这道门禁**看不见内容**，故意的：
+   *      它只判"是不是二进制"。内容那一半由 `node scripts/check-png.mjs` 接手，
+   *      第三条用例把这个交接**演一遍**（同一份被篡改的字节：这边绿、那边红）。
+   */
+  it("具名放行：docs/logo.png 是二进制也放行", () => {
+    const dir = initTempRepo();
+    addAndTrack(dir, "docs/logo.png", readFileSync(resolve("docs/logo.png")));
+    const result = run(dir);
+    expect(result.status, `名册里的路径没被放行：${result.stderr}`).toBe(0);
+    expect(result.stdout, "放行没有打在屏幕上 —— 看不见的放行下一次就会被当成「本来就没有二进制文件」")
+      .toContain("docs/logo.png");
+  });
+
+  it("放行的是字面路径不是后缀：同样的字节换个名字（docs/logo-2.png）照样红", () => {
+    const dir = initTempRepo();
+    const bytes = readFileSync(resolve("docs/logo.png"));
+    addAndTrack(dir, "docs/logo.png", bytes);
+    addAndTrack(dir, "docs/logo-2.png", bytes);
+    const result = run(dir);
+    expect(result.status, "换个名字就混进来了 ⇒ 放行被写成了后缀或目录，门禁等于废了").toBe(1);
+    expect(result.stderr).toContain("docs/logo-2.png");
+    expect(result.stderr, "把名册里那条也一起报了 ⇒ 放行没生效").not.toContain("docs/logo.png ");
+  });
+
+  it("放行的那个路径被篡改：这道门禁仍然绿（它不看内容），由 scripts/check-png.mjs 红", () => {
+    const dir = initTempRepo();
+    // `IEND` 之后接一段私有域名 + 邮箱：`scripts/scan-secrets.sh` 的六条规则对这种
+    // 形态一个字都读不到（本机实测），所以这一段字节今天只有 PNG 结构审计拦得住。
+    const tampered = Buffer.concat([
+      readFileSync(resolve("docs/logo.png")),
+      Buffer.from("gw.internal-example.invalid ops@internal-example.invalid"),
+    ]);
+    addAndTrack(dir, "docs/logo.png", tampered);
+    expect(run(dir).status, "这道门禁不该看内容 —— 看内容是补偿判据的活").toBe(0);
+
+    const png = spawnSync("node", [resolve("scripts/check-png.mjs"), join(dir, "docs/logo.png")], { encoding: "utf8" });
+    expect(png.status, "篡改过的字节两道门禁都放行了 ⇒ 放行让出的洞没人堵").toBe(1);
+    expect(png.stderr).toContain("IEND 之后还有");
   });
 
   it("多个 scope 目录混合、一个二进制一个正常：仍然精确报出那一个", () => {

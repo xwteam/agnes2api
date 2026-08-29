@@ -933,7 +933,7 @@ describe("五语言 API.md 逐份写着视频任务标识的字符集", () => {
  * 会回来更新注释。**能变红的是下面那条用例，不是这段话**，要数字就当场自己数一遍。
  *
  * ⚠️ **不许把它挪成一个独立的门禁脚本 + 新增一道 CI 步骤**：那会让
- * `tests/unit/scripts-guard.test.ts「CI 恰好十二道门，编号 1/12 到 12/12 各出现一次」` 当场红，
+ * `tests/unit/scripts-guard.test.ts「CI 恰好十三道门，编号 1/13 到 13/13 各出现一次」` 当场红，
  * 代价要么是改那条手写字面量（削弱一道现存守卫），要么是把新门禁塞进已有步骤里
  * 假装不是新的。放进 CI 跑 `pnpm test` 那一步的 vitest 里零副作用。
  *
@@ -4618,7 +4618,7 @@ describe("五语言 DEPLOY.md 的两笔「没在真机上了结过」配额账�
  *   用不上时回 503」——同步档耗尽预算那一种是 504。修法：两句都改真，并各配一条**从真源
  *   现算**的判据（存储实现从两个 entry 的 import 现算、两个状态码从 `dispatcher.ts` 现算）。
  * 顺带把 CHANGELOG 里剩下的手抄清单也接上真源：协议的括号标签必须是 `PROTOCOLS[].label`
- * 的子串、六份文档名单与 `DOCS` 逐项对齐、十二道门禁那一串短名逐个是 `ci.yml` 里对应那一步
+ * 的子串、六份文档名单与 `DOCS` 逐项对齐、门禁那一串短名逐个是 `ci.yml` 里对应那一步
  * 名字的子串（顺序也是那边的顺序）。
  *
  * ── 它做不到什么（明写）────────────────────────────────────────────────────
@@ -5081,7 +5081,7 @@ describe(TASK29_GROUP, () => {
     return items.length === 0 ? null : items;
   };
 
-  it("CHANGELOG 里那三串手抄清单（协议括号标签 / 六份文档 / 十二道门禁）逐项对齐真源", () => {
+  it("CHANGELOG 里那三串手抄清单（协议括号标签 / 六份文档 / 十三道门禁）逐项对齐真源", () => {
     const sec = logSection(realChangelog(), realVersion());
     expect(sec, `CHANGELOG.md 里没有 ${realVersion()} 的条目`).not.toBeNull();
     const text = sec!.join("\n");
@@ -5194,7 +5194,7 @@ describe(TASK29_GROUP, () => {
     expect(readmeTableSections(realPanelReadme().replace(`| \`${firstSection}\` |`, `| ${firstSection} |`)),
       "板块表里第一列不是 code span 时 readmeTableSections 没返回 null").toBeNull();
     expect(changelogGateItems("- 门禁那一条整段没了\n"), "认不出门禁那一串时 changelogGateItems 没返回 null").toBeNull();
-    expect(changelogGateItems("- **CI 十二道门禁**：—— 一个短名都没写\n"),
+    expect(changelogGateItems("- **CI 十三道门禁**：—— 一个短名都没写\n"),
       "门禁那一串一个短名都切不出来时没返回 null").toBeNull();
     expect(ciGateNames(() => "jobs:\n  ci:\n"), "ci.yml 里一步都认不出时 ciGateNames 没返回 null").toBeNull();
     expect(ciGateNames(() => "      - name: 1/2 甲\n      - name: 3/2 乙\n"),

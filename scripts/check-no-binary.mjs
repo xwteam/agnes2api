@@ -43,9 +43,33 @@
 // `.gitattributes` 里的 `-diff` 会让一份**纯文本**文件在 `git diff` 里只剩一行
 // `Binary files … differ`，而 `--eol` 照样报 `i/lf`。见下面 `check-attr` 那一段。
 
+// ⚠️ **上面那段起因里关于 `scan-secrets.sh` 的话要按今天的实测读**（本次订正）：
+// 那句"`-I` 的字面意思就是跳过二进制文件 ⇒ 对这类文件完全失明"描述的是
+// `scripts/scan-secrets.sh` **去掉 `-I` 之前**的状态。今天它的前五条形态判据只看
+// `git grep` 的退出码，二进制命中照样是 0 ⇒ 一段 `sk-` 开头的假凭据塞进二进制文件
+// **是抓得住的**（本机在仓库副本上实测过）。**但盲区没有消失，只是缩小了**：
+// 私有域名 / 邮箱这类不长成那六条形态的东西、以及任何被压过一道的字节，它一个字都读不到
+// （同一次实测里这两种都是绿的）。这道门禁存在的理由因此仍然成立，只是理由的**射程**
+// 要说准：它挡的是"整个文件对文本工具链隐形"，不是"凭据扫描完全失明"。
+// 逐档实测数据写在 `scripts/check-png.mjs` 文件头。
+//
+// ── 具名放行名册 ────────────────────────────────────────────────────────────
+// 模板要求 README 头部块第一行是 `docs/logo.png` 那张图，而这道门禁的射程恰好含 `docs/`。
+// 处置是**具名放行 + 补偿判据**，不是把 `docs/` 从射程里摘出去：
+// · 放行的是**一个字面路径**，不是 `*.png`、更不是整个 `docs/`——后两种等于废掉这道门禁；
+// · 放行让出的那块（"这个文件里藏没藏东西"没人回答了）由 `scripts/check-png.mjs`
+//   逐字节接回去：签名 / 逐块 CRC / 块类型黑白名单 / `IEND` 之后零尾随字节 / sha256 登记值。
+// 名册**从 `scripts/check-png.mjs` import**，这里不抄第二份：抄一份出来就是两份真源，
+// 而两份真源对不上的那天是静静对不上的。放行一个路径与"它会被逐字节审一遍"因此
+// 是同一个动作，谁也脱不开谁。
+
 import { execFileSync } from "node:child_process";
+import { REGISTERED_BINARIES } from "./check-png.mjs";
 
 const SCOPE_PREFIXES = ["src/", "tests/", "admin-ui/", "scripts/", "docs/"];
+
+/** 具名放行的字面路径集合。见上面那段——真源在 `scripts/check-png.mjs` 的名册里。 */
+const ALLOWLIST = new Set(Object.keys(REGISTERED_BINARIES));
 
 /** git 判定为二进制的记号。其余（lf / crlf / mixed / none）一律是文本。 */
 const BINARY_EOL = "-text";
@@ -107,8 +131,11 @@ const inScope = records.filter((r) => SCOPE_PREFIXES.some((p) => r.path.startsWi
 // 时，这道门禁仍然报红（索引侧还是二进制）。这是想要的语义——"跟踪文件"指的就是
 // 索引里的那份；CI 上索引与工作树同源，不会出现这个中间态。报错信息里带上
 // `(i/… w/…)` 就是为了让这个中间态一眼可辨，不至于被当成门禁坏了。
+// ⚠️ **放行只作用在"是不是二进制"这一条上，不作用在下面 `-diff` 那一条上**：
+// 给 `docs/logo.png` 标 `-diff` 仍然要红。两条判据挡的是两件事（字节 / 可见性），
+// 为了一张图放行了前者，不等于连后者也一起放。
 const binaryInScope = inScope.filter(
-  (r) => r.index === BINARY_EOL || r.worktree === BINARY_EOL,
+  (r) => (r.index === BINARY_EOL || r.worktree === BINARY_EOL) && !ALLOWLIST.has(r.path),
 );
 
 /**
@@ -165,7 +192,13 @@ if (binaryInScope.length > 0 || noDiffInScope.length > 0) {
   process.exit(1);
 }
 
+const allowed = inScope.filter((r) => ALLOWLIST.has(r.path)).map((r) => r.path);
 console.log(
   `[check-no-binary] ✅ ${inScope.length} 个文件（${SCOPE_PREFIXES.join(", ")}，含未跟踪的新文件），`
-  + "全部是文本、且都没有被 `-diff` 从评审包 diff 里屏蔽",
+  + "全部是文本、且都没有被 `-diff` 从评审包 diff 里屏蔽"
+  + (allowed.length > 0
+    // 放行必须打在屏幕上：一条没人看得见的放行，下一次就会被当成"本来就没有二进制文件"。
+    ? `\n[check-no-binary] ℹ️ 具名放行 ${allowed.length} 个：${allowed.join(", ")}`
+      + "（它们由 `node scripts/check-png.mjs` 逐字节审，不是没人管）"
+    : ""),
 );
