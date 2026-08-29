@@ -230,6 +230,11 @@ BANNER='[collection-guard] ✅'
 #   齐不齐）与 ④B（索引表按行×列定位）之后，④A 的正扫 + 两条负例 + 一条「换成模板那种
 #   一行五链的指针行照样绿」的不乱红共 4 格里有 3 格是新增的（第 4 格是旧的整列删除负例
 #   改判到 ④A 上，不增不减）⇒ 5 + 3 = 8。文件数不变。
+#   P3f 阶段 3 评审回填从 3798 改到 3803：`docker-compose.yml` 那条 `/etc/localtime` 挂载的
+#   注释此前给的是一条**没量过、且实测为假**的理由（`TZ` 一有值就压过 `/etc/localtime`，
+#   加不加那条挂载，应用日志的时间戳逐字相同）。注释改写成实测得出的那一版之后，
+#   给「那句话赖以成立的前提」补了 `repo-front-door` 的 (k)：正扫 1 格 + 三条负例
+#   （删掉 TZ 行 / 改成 `${TZ:-}` / 删掉那段说明）+ 一格「认不出要吵」= 5 格。文件数不变。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -238,7 +243,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=136
-EXPECT_NODE_TESTS=3798
+EXPECT_NODE_TESTS=3803
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

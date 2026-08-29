@@ -20,9 +20,22 @@ services:
       - "${PORT:-8080}:${PORT:-8080}"
     volumes:
       - ./data:/app/data
-      # 只读挂宿主的本地时间：`TZ` 只管进程自己的时区换算，容器里那份 `/etc/localtime`
-      # 仍是镜像烤进去的 UTC。两者不一致时，日志时间戳与宿主 `date` 会对不上，
-      # 而排障时对时间戳恰恰是第一件要做的事。
+      # 只读挂宿主的本地时间。**它对本仓今天是空操作**，留着只是因为两参照仓的 compose
+      # 都有这一行（模板形态），不是因为它修好了什么。
+      # 理由：上面那行 `TZ: ${TZ:-Asia/Shanghai}` 是**无条件**设的（`:-` 连空串都回落到
+      # 默认值——实测 `.env` 里写 `TZ=`，`docker compose config` 渲染出来仍是 `TZ: Asia/Shanghai`），
+      # 而 `TZ` 一旦有值就压过这份文件。本机实测（node:22-alpine；把宿主那份换成 Tokyo 才分得开
+      # 两条路，因为本机 `/etc/localtime` 本身就是 UTC）：
+      #   · `TZ=Asia/Shanghai` + 挂载 → node 打 `GMT+0800`，**挂载被整个忽略**；
+      #     不挂载 → 同一秒同一行，逐字相同 ⇒ 加不加它，应用日志的时间戳一个字都不变。
+      #   · 不给 `TZ` + 挂载 → node 打 `GMT+0900` ⇒ 只有在没人设 `TZ` 时才轮到它说话。
+      # ⚠️ 上一版这段注释写的是「挂了它日志时间戳才跟得上宿主」——那是**推出来的、没量过**，
+      #   三条 `docker run` 就能证伪：应用侧的时区由 `TZ` 一个人说了算。
+      # ⚠️ 也别指望它管住容器里的 `date`：`node:22-alpine` 不带 tzdata（`/usr/share/zoneinfo`
+      #   根本不存在），musl 解不开 `Asia/Shanghai` 这个名字就回落 UTC —— 实测 `TZ` + Tokyo 挂载下
+      #   `date` 打的是 `UTC`。要 shell 侧也跟上得装 tzdata，那是另一件事，本仓没做。
+      # ⇒ 这条挂载唯一会生效的情形是「有人把上面那行 `TZ` 删掉」。那个前提由
+      #   tests/unit/repo-front-door.test.ts 的 (k) 钉着：`TZ` 那行没了而这段话还在 ⇒ 红。
       - /etc/localtime:/etc/localtime:ro
     healthcheck:
       # ⚠️ 这一份与 Dockerfile 里那条 HEALTHCHECK 是**两处、有意重复**：镜像内那条只在

@@ -61,7 +61,12 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  * · **(g) 社区文件里那几句「这件事由某某守着」必须点得出是哪一格**：用本仓的名字锚写法，
  *   引契约用例时标题要逐字对得上 `it("…"`，引其它文件时那段文字要逐字在那个文件里。
  *   会话上限那个「12 小时」同样从 `SESSION_MAX_AGE_MS` 现算，不手抄。
+ * · **(k) `docker-compose.yml` 那条 `/etc/localtime` 挂载的说明，它的前提得在同一份文件里成立**
+ *  （P3f 阶段 3 评审回填）。那段注释上一版给的理由是假的，而它假在哪儿本机三条 `docker run`
+ *   就量得出来：`TZ` 与那条挂载**不是互补的两件事，是互相排斥的两条路**，`TZ` 一有值就赢。
+ *   本格钉的是那句话赖以成立的那半件事——`environment` 里 `TZ` 无条件带一个非空默认值。
  *
+
  * ── 判据只有一份，反向控制从同一份进 ────────────────────────────────────────
  * 每条判据都写成 `(read, exists, list) => 失败报文[]` 的纯函数，真扫描传真 fs，反向控制传
  * 打过补丁的 `read` / `exists` / `list`。**没有第二份判据**，所以「探针绿了而真扫描是另一套
@@ -98,6 +103,10 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  *   它也不查 `main` 这个分支名今天存不存在于远端。
  * · (g) 只查**被引的那段文字今天还在**，不查那条用例真的守着社区文件声称的那件事——
  *   一条改成 `expect(1).toBe(1)` 的用例，标题不动的话这里照样绿。
+ * · (k) 只查**那句话的前提**（`TZ` 这一行的形状），**一点时区行为都不验**：容器里的
+ *   `new Date()` 到底打什么，本机跑得出来、CI 里跑不出来（跑测试的进程不在容器里，
+ *   而起一个容器只为了看一行时间戳，代价与收益不成比例）。实测记在那段注释里，
+ *   哪天有人要改 `TZ` / 挂载这两行中的任何一行，请照那段实测重跑一遍，别只读注释。
  * · 整组都**只看仓库里的文本**：GitHub 侧的设置（Security Advisory 开没开、issue 模板认不认）
  *   一个字都验不到。
  */
@@ -781,6 +790,85 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     const gutted = realRead(PUBLISH_WF).replace(/^on:$/m, "ON_DISABLED:");
     expect(gutted, "变异没落地").not.toBe(realRead(PUBLISH_WF));
     expect(() => publishTriggerFailures(patchRead(realRead, PUBLISH_WF, gutted))).toThrow(/判据坏了/);
+  });
+
+  /* ── (k) `/etc/localtime` 那条挂载的注释，它的前提得在同一份文件里成立 ────
+   *
+   * 这一格是**回填**：那段注释上一版写的是「挂了它日志时间戳才跟得上宿主」，而 `TZ`
+   * 在同一份文件里被无条件设着（`environment: TZ: ${TZ:-…}`），`TZ` 一有值就压过
+   * `/etc/localtime` ⇒ 那句理由从落地第一天起就是假的。三条 `docker run` 就能证伪
+   * （实测记在 `docker-compose.yml` 那段注释里，此处不抄第二份）。
+   * ⚠️ **本格不验时区行为**——容器里的时间本机验得到、CI 里验不到，而且那是 docker 与
+   *   musl 的行为不是本仓的代码。本格验的是**那句话的前提**：注释说「因为 `TZ` 无条件
+   *   设着，所以这条挂载是空操作」，那么「`TZ` 无条件设着」这件事就必须在这份文件里
+   *   读得出来。谁把那行 `TZ` 删掉或改成不带默认值（`${TZ:-}`），这一格当场红，
+   *   逼他回来改注释——因为那时挂载**真的开始生效**，整段话反过来了。
+   * ⚠️ 反方向也查：挂载在、而那句话没了 ⇒ 红。上一版那条假理由正是这么留下来的：
+   *   一行挂载配一段没人对过账的说明。
+   */
+  const LOCALTIME_MOUNT = "- /etc/localtime:/etc/localtime:ro";
+  const NOOP_CLAIM = "它对本仓今天是空操作";
+  const REAL_K = "docker-compose.yml 那段 /etc/localtime 注释的前提（同一份文件里 TZ 被无条件设着）今天成立";
+
+  const localtimeNoteFailures = (read: Read): string[] => {
+    const y = read(COMPOSE);
+    const mounted = y.includes(LOCALTIME_MOUNT);
+    const claims = y.includes(NOOP_CLAIM);
+    if (!mounted && !claims) {
+      throw new Error(`${COMPOSE} 里既没有那条 /etc/localtime 挂载也没有那段说明 —— 判据坏了或射程整个没了，不许静默放行`);
+    }
+    const out: string[] = [];
+    if (mounted && !claims) {
+      out.push(`${COMPOSE} 挂了 /etc/localtime，却没写它为什么在这儿 —— 上一版那条假理由（「日志时间戳才跟得上宿主」）就是这么留下的`);
+    }
+    if (!claims) return out;
+    const line = /^\s{6}TZ:\s*(\S.*?)\s*$/m.exec(y);
+    if (line === null) {
+      out.push(`${COMPOSE} 那段注释说「因为 TZ 无条件设着，所以 /etc/localtime 这条挂载是空操作」，可 environment 里已经没有 TZ 这一行了 —— 前提没了，那句话当场变假，而挂载反过来开始生效`);
+      return out;
+    }
+    if (!/^\$\{TZ:-\S[^}]*\}$/.test(line[1]!)) {
+      out.push(`${COMPOSE} 的 TZ 现在是 \`${line[1]}\`，不再是「无条件带一个非空默认值」的 \`\${TZ:-…}\` —— 那段注释的前提不成立了`);
+    }
+    return out;
+  };
+
+  it(REAL_K, () => {
+    const failures = localtimeNoteFailures(realRead);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("(k) 该红时红：把 environment 里那行 TZ 删掉 —— 注释的前提没了，挂载反过来开始生效", () => {
+    probeBase(localtimeNoteFailures(realRead), REAL_K);
+    const mutated = realRead(COMPOSE).replace(/^ {6}TZ: .*\n/m, "");
+    expect(mutated, "变异没落地 —— docker-compose.yml 里已经没有那行 TZ").not.toBe(realRead(COMPOSE));
+    const failures = localtimeNoteFailures(patchRead(realRead, COMPOSE, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("已经没有 TZ 这一行");
+  });
+
+  it("(k) 该红时红：TZ 改成不带默认值的 `${TZ:-}` —— 空串不再压过 /etc/localtime", () => {
+    probeBase(localtimeNoteFailures(realRead), REAL_K);
+    const mutated = realRead(COMPOSE).replace(/^( {6}TZ: ).*$/m, "$1${TZ:-}");
+    expect(mutated, "变异没落地").not.toBe(realRead(COMPOSE));
+    const failures = localtimeNoteFailures(patchRead(realRead, COMPOSE, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("不再是「无条件带一个非空默认值」");
+  });
+
+  it("(k) 该红时红：挂载还在、那段说明被删掉 —— 一行挂载配一段没人对过账的说明", () => {
+    probeBase(localtimeNoteFailures(realRead), REAL_K);
+    const mutated = realRead(COMPOSE).replace(NOOP_CLAIM, "它很重要");
+    expect(mutated, "变异没落地").not.toBe(realRead(COMPOSE));
+    const failures = localtimeNoteFailures(patchRead(realRead, COMPOSE, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("却没写它为什么在这儿");
+  });
+
+  it("(k) 认不出要吵：挂载与说明一起没了时当场抛，不静默当成「这里没有约束」", () => {
+    const gutted = realRead(COMPOSE).replace(LOCALTIME_MOUNT, "- ./tz:/tz:ro").replace(NOOP_CLAIM, "无关的一句话");
+    expect(gutted, "变异没落地").not.toBe(realRead(COMPOSE));
+    expect(() => localtimeNoteFailures(patchRead(realRead, COMPOSE, gutted))).toThrow(/判据坏了/);
   });
 
   /* ── (j) 教了那条命令的每一份文档都要写「首个镜像发布前会本地构建」 ────────
