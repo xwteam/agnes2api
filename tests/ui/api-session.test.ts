@@ -364,7 +364,7 @@ function stripTemplateText(src: string): string {
  * `send(u, { fetcher: fetch });` / `export default fetch;`
  * ——**第一条最要命：把 `fetch` 当参数传进去正是本仓自己的主流写法**
  * （`src/core/` 零 IO、fetcher 一律依赖注入）。
- * ⚠️ **这与 `9fc7da5`「收窄那句全称句时把两条轴都列全」是同一族的第二次发生。**
+ * ⚠️ **这与 `0dd0bca`「收窄那句全称句时把两条轴都列全」是同一族的第二次发生。**
  *
  * **第三版（今天这一版）**：判据从「前面是什么」改成
  * **「前面不是标识符字符（含 `-`）、而后面紧跟一个结束符」**。

@@ -494,7 +494,7 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
   /**
    * **C1 的 Node 那一半。**
    *
-   * ⚠️ **成因如实登记**：`4f0c879` 只给 Worker 侧补了覆盖，Node 侧那两段
+   * ⚠️ **成因如实登记**：`8cd3625` 只给 Worker 侧补了覆盖，Node 侧那两段
    *（`logger.log(round_failed)` + `recordCrashedRound`）**整个删掉，全量 1541 全绿**
    * ——M6node / M7node / M13node 三条都补了 Node 侧，唯独这个 **Critical** 没补，
    * 直接违反「双运行时对等：差异必须被**断言**而非被容忍」。
