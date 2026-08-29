@@ -280,10 +280,10 @@ function nodeMajorFailures(read: Read, list: List): string[] {
 
 /**
  * 射程判据用的是**裸 `.superpowers`**，不是 `.superpowers/`。
- * 需求书写的是带斜杠那版，落地实测推翻了它：`docs/design/2026-08-15-agnes2api-p2-registrar-plan.md`
- * 里那 8 处是 `git add -A -- . ':!.superpowers'`（pathspec 排除，**不带斜杠**），带斜杠的判据
- * 一处都扫不到它——而同一份需求书的 Step 4 又要求 P2 也加限定。两句自相矛盾，按**更宽的那一侧**
- * 落地：宽的那一侧扫得到 P2，窄的那一侧扫不到。
+ * 需求书写的是带斜杠那版，落地实测推翻了它：真实写法里那 8 处是
+ * `git add -A -- . ':!.superpowers'`（pathspec 排除，**不带斜杠**），带斜杠的判据
+ * 一处都扫不到它——而同一份需求书的 Step 4 又要求那一期也加限定。两句自相矛盾，按**更宽的那一侧**
+ * 落地：宽的那一侧扫得到 pathspec 那种写法，窄的那一侧扫不到。
  */
 const LEDGER = ".superpowers";
 
@@ -294,8 +294,17 @@ const LEDGER = ".superpowers";
  * 英文那一版今天没有消费者，但它不是摆设：下面「(e) 英文候选也算数」那一格用真形态验它。
  */
 const NOTES: readonly string[] = ["不随仓库推送", "not pushed to the public repository"];
-/** 本计划文件。它自己就是引用大户，**判据必须不放过它**。 */
-const PLAN = "docs/design/2026-08-22-agnes2api-p3e-i18n-and-closeout-plan.md";
+/**
+ * 射程里今天**唯一**那份引用工作账本的文件，**判据必须不放过它**。
+ *
+ * ⚠️ **这里原来指的是一份内部计划文档**（它当时是引用大户，一份文件里就有 8 处引用）。
+ * 那份文档已随全部内部设计文档移出本仓，射程里的引用方**只剩这一份**——
+ * `scripts/prepush.sh` 的注释里有两条真实的工作账本引用。
+ * ⚠️ **「引用大户」这个说法今天不成立了，别再照它去读这一组**：判据的价值随之缩水，
+ * 但判据本身仍然成立、仍然会红——`trackedProse()` 对空集是 `throw` 而不是静默放行
+ *（见它自己那段注释），所以「射程空了」不会被读成「全都合规」。
+ */
+const SELF_REFERRER = "scripts/prepush.sh";
 
 /** 报文里把候选逐条摆出来——复评 F5：真正的要求在上一版报文里一次都没出现过。 */
 const notesHint = () => NOTES.map((n) => `「${n}」`).join(" 或 ");
@@ -827,10 +836,10 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     ).toEqual([]);
   });
 
-  it("(e) 射程自守：真的扫到了引用方，而且本计划文件在射程内 —— 它自己就是引用大户", () => {
+  it("(e) 射程自守：真的扫到了引用方，而且那份唯一的引用方在射程内", () => {
     const referrers = ledgerReferrers(trackedProse(), realRead, realExists);
     expect(referrers.length, "一份都没扫到，扫描多半写坏了").toBeGreaterThan(0);
-    expect(referrers, "本计划文件掉出了射程 —— 判据放过了自己").toContain(PLAN);
+    expect(referrers, `${SELF_REFERRER} 掉出了射程 —— 判据放过了自己`).toContain(SELF_REFERRER);
   });
 
   /**
@@ -1066,12 +1075,13 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     expect(sessionExpired(now + 60_000, now), "SECURITY.md 说未来时刻按过期算，而 sessionExpired 不这么认为").toBe(true);
   });
 
-  it("(e) 不放过自己：把那句限定从本计划文件里删掉 —— 点名本计划文件", () => {
+  it("(e) 不放过自己：把那句限定从那份唯一的引用方里删掉 —— 点名它", () => {
     const files = trackedProse();
     probeBase(ledgerUnqualified(files, realRead, realExists), REAL_E);
-    let mutated = realRead(PLAN);
+    let mutated = realRead(SELF_REFERRER);
     for (const n of NOTES) mutated = mutated.split(n).join("（限定被变异抹掉了）");
-    expect(mutated, "变异没落地 —— 本计划文件里找不到任何一句限定").not.toBe(realRead(PLAN));
-    expect(ledgerUnqualified(files, patchRead(realRead, PLAN, mutated), realExists)).toEqual([PLAN]);
+    expect(mutated, `变异没落地 —— ${SELF_REFERRER} 里找不到任何一句限定`).not.toBe(realRead(SELF_REFERRER));
+    expect(ledgerUnqualified(files, patchRead(realRead, SELF_REFERRER, mutated), realExists))
+      .toEqual([SELF_REFERRER]);
   });
 });

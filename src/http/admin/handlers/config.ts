@@ -617,14 +617,19 @@ export const CONFIG_RESET_PATH = "/admin/api/config/reset";
 const RESET_VALUE: Record<string, never> = {};
 
 /**
- * `POST /admin/api/config/reset` —— 危险区第一颗按钮（设计小节「重置到底重置了什么」）。
+ * `POST /admin/api/config/reset` —— 危险区第一颗按钮（「重置到底重置了什么」）。
  *
- * **重置的对象只有 `config` 这一把键**，其余八把业务键一个字节都不动
- *（那张逐键表在设计小节里，由 `tests/unit/docs-parity.test.ts` 的
- * 「设计小节那张表对这 9 个存储键逐个表态 —— 删掉表里一行就红」钉着形状、
- * 由 `tests/contract/admin-danger.test.ts` 的
- * 「重置配置之后，key:* / pool:index / tend:history / usage:* / event:* 的读回值不变」
- * 钉着内容）。
+ * **重置的对象只有 `config` 这一把键**，其余八把业务键一个字节都不动。
+ * 那张逐键表是一份**封闭登记**，写在 `tests/unit/docs-parity.test.ts` 的 `RESET_LEDGER` 上：
+ * · 形状由 `tests/unit/docs-parity.test.ts` 的
+ *   「封闭登记对这 9 个存储键逐把表态 —— 删掉登记里一行就红」钉着；
+ * · **这一段函数体真的动了哪几把键**由同文件的
+ *   「「重置配置」那一列裁决从重置实现现扫 —— 实现动了哪几把键，登记就得写哪几把」钉着
+ *   ——它会把下面那句 `storage.put(CONFIG_KEY, …)` 从源码里扫出来，与登记逐条比对，
+ *   **所以在这个函数体里多写一句 `put`/`delete` 会当场红**；
+ * · 内容由 `tests/contract/admin-danger.test.ts` 的
+ *   「重置配置之后，key:* / pool:index / tend:history / usage:* / event:* 的读回值不变」
+ *   钉着。
  *
  * ── 与 `PUT` 逐条同源的四件事，一件都不许在这条新路径上退化 ───────────────────
  * ① **回执是回读出来的**，不是 handler 自己拼的一份空配置。写完再调一次

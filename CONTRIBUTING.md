@@ -16,8 +16,7 @@ save you a round trip.
   `IP:PORT` pairs — not in code, not in tests, not in docs, not in an issue you file.
   See [SECURITY.md](SECURITY.md) for what that rule does and does not mean.
 - **Five languages.** The translated documentation lives in `docs/<lang>/`, one directory per
-  language. (`docs/` also holds `docs/design/`, which is a working record and not a translation
-  target.) A new i18n key must exist in all five languages, and a new section must appear in
+  language. A new i18n key must exist in all five languages, and a new section must appear in
   all five.
 
 ## Setting up

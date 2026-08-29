@@ -172,7 +172,7 @@ export const I18N = {
   "reg.channel.credsYes": { "zh-CN": "已配好", "zh-TW": "已配好", en: "Configured", ja: "設定済み", ko: "설정됨" },
   "reg.channel.credsNo":  { "zh-CN": "未配置", "zh-TW": "未設定", en: "Not configured", ja: "未設定", ko: "설정 안 됨" },
   // 设计 §10.3 第 6 条：用数据代替推荐——两个**等权**的按钮，返回可用域名数。
-  // P2 design §4.5：可用域名多寡是选主通道时唯一值得看的指标，与是哪家服务无关。
+  // 注册机设计定的口径：可用域名多寡是选主通道时唯一值得看的指标，与是哪家服务无关。
   "reg.channel.test":     { "zh-CN": "测试连接", "zh-TW": "測試連線", en: "Test connection", ja: "接続テスト", ko: "연결 테스트" },
   "reg.channel.testing":  { "zh-CN": "测试中…", "zh-TW": "測試中…", en: "Testing…", ja: "テスト中…", ko: "테스트 중…" },
   "reg.channel.testOk":     { "zh-CN": "连通：可用域名 {domains} 个 · 耗时 {latencyMs} ms", "zh-TW": "連通：可用網域 {domains} 個 · 耗時 {latencyMs} ms", en: "Reachable: {domains} usable domain(s) · {latencyMs} ms", ja: "接続できました: 利用可能なドメイン {domains} 件 · {latencyMs} ms", ko: "연결됨: 사용 가능한 도메인 {domains}개 · {latencyMs} ms" },

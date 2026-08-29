@@ -89,17 +89,28 @@ type Lang = (typeof LANGS)[number];
  */
 describe("五语言 DEPLOY.md 的关键数字对等", () => {
   const NUMBERS: ReadonlyArray<{ token: string; why: string }> = [
-    { token: "**120", why: "POOL_CACHE_TTL_MS 的真实上界（60s TTL + 60s 边缘缓存），加粗标记只在这句出现" },
+    // ⚠⚠ **这两个 token 从真源常量现算，不写字面量**（P3f 回填，理由与下面 `${MANUAL_TENDS_PER_DAY} × 3` 那一条逐字相同）。
+    // 上一版它俩写死成 `"**120"` / `"**90"`，而「常量真改了、五份 DEPLOY.md 一起没跟上」
+    // 那一种靠的是另一组判据（它们把同一批数钉在常量上）——而那一组的期望源是一份
+    // 内部设计文档，已随全部内部设计文档移出本仓。现算之后常量一改，token 就成了
+    // 五份文档里查不到的串 ⇒ 下面那条 `total === 0` 当场红并点名 DEPLOY.md。
+    // ⚠️ 它们仍然挡不住「五份被同一个错误值同步污染」——那是跨语言互校的固有边界。
+    {
+      token: `**${(DEFAULT_POOL_CACHE_TTL_MS + KV_EDGE_CACHE_MS) / 1000}`,
+      why: "key 池快照的真实上界（DEFAULT_POOL_CACHE_TTL_MS + KV_EDGE_CACHE_MS），加粗标记只在这句出现",
+    },
     // ⚠️ **这个锚点是 P3e Task 30 复评回填（F7）补的，照本组的规矩「数过再加」**：
     // 加之前 `**90` 在五份里**各 1 次**（就是配置生效上界那一句，五份都用加粗包住数字），
     // 完全一致 ⇒ 是个能指得出是哪一句的锚点，不是 `48` 那种散落 7~9 次的噪声锚点。
     // 补它的直接理由是实测：把 `docs/zh-CN/DEPLOY.md` 那句 `**90 秒**` 改成 `**95 秒**`，
     // **docs-parity 251 格全绿** —— 这个数在五份文档里当时一点守卫都没有。
-    // ⚠️ **它挡不住的那一种照旧**：`CONFIG_TTL_MS`/`KV_EDGE_CACHE_MS` 真改了值、
-    // 五份 DEPLOY.md 一起没跟上 ⇒ 计数依然对等 ⇒ 依然绿（跨语言互校的固有边界）。
-    // 设计文档 §5.3 与「重置到底重置了什么」那一节的同一批数**是**从常量现算的，
-    // 由本文件末尾那一组的两格钉着；五份 DEPLOY.md 不是。
-    { token: "**90", why: "配置保存后其他 isolate 的生效上界（CONFIG_TTL_MS 30s + KV_EDGE_CACHE_MS 60s），五份各只此一处" },
+    // ⚠️ **它上一版挡不住那一种，现在挡得住了**：写死 `"**90"` 时，
+    // `CONFIG_TTL_MS`/`KV_EDGE_CACHE_MS` 真改了值、五份 DEPLOY.md 一起没跟上 ⇒ 计数依然对等 ⇒ 依然绿。
+    // 改成现算之后，常量一改 token 就变成了五份文档里查不到的串 ⇒ `total === 0` 当场红。
+    {
+      token: `**${(CONFIG_TTL_MS + KV_EDGE_CACHE_MS) / 1000}`,
+      why: "配置保存后其他 isolate 的生效上界（CONFIG_TTL_MS + KV_EDGE_CACHE_MS），五份各只此一处",
+    },
     { token: "100,000", why: "免费档每天读配额" },
     { token: "1,000", why: "免费档每天写 / 删除 / list 配额" },
     // ⚠️ **这个锚点是全分支评审 C2 补的，补之前它不在表里**——于是"安静部署"那条
@@ -1033,10 +1044,17 @@ const DOCS = ["ADMIN", "API", "DEPLOY", "README", "REGISTRAR", "USAGE"] as const
  * 全仓没有任何一处拿 `readdirSync("docs")` 钉住它——实测在 `docs/` 下新建第六种语言的
  * 目录（`fr/`）并放一份 `DEPLOY.md` 进去，整组 285 格**全绿**，没有一格知道多了一种语言。本组的立项理由逐字是「一个不会自己红的
  * 清单不是守卫，是待办」，文档轴做到了、语言轴原样留着，这一轮补上。
- * ⚠️ **豁免名册会变成永久的洞**，所以下面那条 R1 语言轴的断言**两个方向都查**：名册里
- * 的目录今天必须真的在（`design` 哪天改名/搬走，这条登记会当场红，而不是静静地放行）。
+ * ⚠️ **豁免名册会变成永久的洞**，所以下面那条 R1 语言轴的断言**两个方向都查**：多出一个
+ * 没登记的子目录要红，`LANGS` 里的某个语言目录整个消失也要红。
+ *
+ * ⚠️ 这张名册今天是**空的**——`docs/` 下只剩五个语言目录，一个非语言目录都没有。
+ * 空表是有意的登记（「这里现在什么都不豁免」），不是待填的坑：新增任何非语言子目录
+ * 都必须先回来写进这张表，否则上面那条断言当场红。
+ * ⚠️ 但**空表也意味着「遍历这张表」的变异会空转**——凡是 `for (const d of NON_LANG_DOC_DIRS)`
+ * 的反向控制，循环体一次都不进，跑了也等于没跑。反向控制里那一格已经据此改写成
+ * 「整个语言目录消失」，别再写回遍历空表的写法。
  */
-const NON_LANG_DOC_DIRS = ["design"] as const;
+const NON_LANG_DOC_DIRS = [] as const;
 
 const RULES: ReadonlyArray<readonly [name: string, fingerprint: (s: string) => unknown]> = [
   ["R2 heading 层级序列", headings],
@@ -1446,9 +1464,10 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
   function pristineTree(): Tree {
     const files: Tree = { "README.md": fixtureDoc("zh-CN", "README") };
     for (const doc of DOCS) for (const l of LANGS) files[`docs/${l}/${doc}.md`] = fixtureDoc(l, doc);
-    // ⚠️ 补漏评审 H3：夹具树必须带上非语言目录，否则 R1 语言轴那条（`docs/` 子目录集合
-    // 恰好等于 LANGS + 豁免名册）在这棵树上恒红，整组反向控制全部失效。
-    for (const d of NON_LANG_DOC_DIRS) files[`docs/${d}/placeholder.md`] = "# placeholder\n";
+    // ⚠️ 补漏评审 H3：夹具树的 `docs/` 子目录集合必须与真仓同构，否则 R1 语言轴那条
+    // （`docs/` 子目录集合恰好等于 LANGS + 豁免名册）在这棵树上恒红，整组反向控制全部失效。
+    // 今天豁免名册是空的，所以这棵树也只放五个语言目录——**别为了"对称"补一个占位目录**，
+    // 那会让语言轴在夹具上恒红。名册哪天不空了，这里要同步补上对应的占位文件。
     return files;
   }
 
@@ -1540,10 +1559,14 @@ describe("R1–R6 的反向控制（临时目录夹具）", () => {
       mutate: (f) => { f["docs/fr/DEPLOY.md"] = fixtureDoc("en", "DEPLOY"); },
     },
     {
-      // 豁免名册的另一个方向：**名册会变成永久的洞**，所以名册里的目录消失了也要红。
-      why: "R1 语言轴：非语言目录豁免名册过期（docs/design 不在了）",
-      hits: ["R1 语言轴 docs/ 下的子目录集合与「LANGS + 非语言目录豁免名册」对不上", '少掉 ["design"]'],
-      mutate: (f) => { for (const d of NON_LANG_DOC_DIRS) drop(f, `docs/${d}/placeholder.md`); },
+      // 语言轴的另一个方向：**多出来要红，少掉也要红**。
+      // ⚠️ 这一格原来探的是「豁免名册里的目录不在了」，写法是遍历 `NON_LANG_DOC_DIRS`
+      //    把占位文件删掉。名册改空之后那种写法**会静默空转**——循环体一次都不进，
+      //    这一格从此挡空气却照样显示绿。所以改成探同一条 `missing` 臂上仍然活着的对象：
+      //    整个 `docs/ko` 语言目录消失。**别改回遍历名册的写法。**
+      why: "R1 语言轴：整个 docs/ko 语言目录消失（missing 那条臂）",
+      hits: ["R1 语言轴 docs/ 下的子目录集合与「LANGS + 非语言目录豁免名册」对不上", '少掉 ["ko"]'],
+      mutate: (f) => { for (const doc of DOCS) drop(f, `docs/ko/${doc}.md`); },
     },
     {
       why: "R2 某一份多一个 ###",
@@ -1813,13 +1836,14 @@ function softenerHits(text: string): ReadonlyArray<{ word: string; origins: read
  * × 五种语言」的矩阵**，并加一格强制「每条概念五种语言都得有说法」——这样「某种语言
  * 在某条概念下是瞎的」从可能变成当场红。
  *
- * ⚠️ **反向控制也跟着改了口径**：原来那格要求**每一个词**都能在 `docs/` 下（含
- * `docs/design/`）找到出处。它有两个毛病：① `docs/design/` 里那份需求书**逐字抄着
- * 这张词表**，于是「这个词是真串」这件事可以被需求书自己满足，等于挡空气；
+ * ⚠️ **反向控制也跟着改了口径**：原来那格要求**每一个词**都能在 `docs/` 下的**任意**
+ * 一份文档里找到出处（当时 `docs/` 下还放着一批内部设计文档）。它有两个毛病：
+ * ① 那批内部文档里的需求书**逐字抄着这张词表**，于是「这个词是真串」这件事可以被
+ * 需求书自己满足，等于挡空气；
  * ② 更要命的是它**把表往窄里推**——「夠用」「no problem」在真文档里确实一次都没出现，
  * 照那条控制就只能把它们删掉，而「表太窄」正是这一轮出事的根因。改成
  * **按语言**：每种语言的词里至少有一个真的出现在**那种语言自己的**文档里
- *（`docs/<lang>/` 下、ADMIN.md 之外、不含 `docs/design/`）。这条控制在「zh-TW 那一列
+ *（`docs/<lang>/` 下、ADMIN.md 之外）。这条控制在「zh-TW 那一列
  * 只填了简体词」时会当场红，正是这一轮漏掉的那种形态。
  *
  * ── ② 数字必须从代码常量派生 ────────────────────────────────────────────────
@@ -1953,8 +1977,8 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
   it("反向控制：每种语言的软化词里至少有一个真的出现在**那种语言自己的**文档里", () => {
     // ⚠️ 口径见本组上方那段：**不是**「每一个词都要有出处」（那条会把表往窄里推，
     // 而表太窄正是这一轮逃逸的根因），而是「这一列不是一堆那种语言里根本没人这么写
-    // 的死串」。`docs/design/` 刻意不在射程里——那份需求书逐字抄着这张词表，
-    // 让它来作证等于自己给自己签字。
+    // 的死串」。⚠️ **射程刻意只收 `docs/<lang>/` 下那种语言自己的文档**：作证的文档必须是
+    // 一份真给读者看的译文，不许拿「某处逐字抄着这张词表」的文件来给自己签字。
     const blind: string[] = [];
     for (const lang of LANGS) {
       expect(ownDocsOf(lang).length, `docs/${lang}/ 下一份非 ADMIN.md 的文档都没读到——这一格测的是空气`)
@@ -5090,6 +5114,33 @@ describe(TASK29_GROUP, () => {
     });
   });
 
+  /**
+   * 「已知限制」那一节里那条**零真上游样本**的欠账。
+   *
+   * ⚠️ **这条欠账原来的登记位置是一份内部计划文档的「还欠着什么」小节**，
+   * 那份文档已随全部内部设计文档移出本仓 ⇒ 欠账当时连登记的地方都没有了。
+   * 它是一条**面向读者的限制说明**（谁拿协议目录去对上游，都该先知道它没被真上游验过），
+   * 不是内部路线图，所以搬进了 `CHANGELOG.md` 的「已知限制」。
+   * `tests/contract/protocol-catalog.test.ts` 那段文件头指的就是这里。
+   *
+   * ⚠️ **这一格不是「文档里有没有这句话」那么弱**：它同时从真源现算——
+   * 哪天真的拿到了一份真上游样本、把某条事实的 `status` 改成 `verified`，
+   * CHANGELOG 里这句话就成了假话，这一格当场红并逼人回来改文档。
+   * 反过来把这一节从 CHANGELOG 里删掉也红。
+   */
+  it("CHANGELOG 的「已知限制」写着零真上游样本，而这句话从 `UPSTREAM_FACTS` 现算", () => {
+    const body = realChangelog();
+    expect(body, "CHANGELOG.md 里没有「已知限制」那一节 —— 那条欠账没有别的承载点了").toContain("### 已知限制");
+    expect(body, "「已知限制」里那句「本仓至今零份真上游样本」不见了").toContain("本仓至今零份真上游样本");
+    // 认不出要吵：一条事实都没有的话，下面那句「全是 assumed」是空集为真，等于没测。
+    expect(UPSTREAM_FACTS.length, "`UPSTREAM_FACTS` 是空的 —— 这一格测的是空气").toBeGreaterThan(0);
+    const verified = UPSTREAM_FACTS.filter((f) => f.status !== "assumed").map((f) => f.id);
+    expect(verified,
+      "这几条上游事实已经不是 `assumed` 了 —— CHANGELOG「已知限制」里那句"
+      + "「本仓至今零份真上游样本」因此成了假话，回去把那一条改真（别把这一格删掉）：\n"
+      + verified.join("\n")).toEqual([]);
+  });
+
   it("凡是**加粗**写下「零构建」的地方都带着「挂在 `/admin/` 下」这个限定", () => {
     // admin-ui/README.md 用 23 行论证过：不带这个限定的说法是假的（`file://` 下绝对路径 404 + module CORS）。
     // 复评发现 6：CHANGELOG 第一版把那个被推翻过的说法以弱化形式写了回去，且无判据。
@@ -5226,31 +5277,41 @@ describe(TASK29_GROUP, () => {
 });
 
 /**
- * ── 设计小节「重置到底重置了什么」的逐存储键表（P3e Task 30）─────────────────────
+ * ── 「重置到底重置了什么」：九把存储键的封闭登记（P3e Task 30；P3f 改写成不读设计文档）─
  *
- * 订正 D1 的原话是「『重置』到底重置了什么本身就需要一节设计，而本文档没有这一节」。
- * 这一组守的是那一节里**那张表**，不是那一节的散文。
+ * ⚠️⚠️ **这一组的期望源换过一次，换的理由必须留在这里，否则下一个人会把它改回去。**
+ * 上一版的期望源是仓里一份内部设计文档「重置到底重置了什么」小节里那张逐键表；
+ * 那份文档已随全部内部设计文档一起移出本仓。裁定是**不接受净损失**：
+ * 这一组守的**不是**「代码与那份文档不许漂」（文档没了，那个风险跟着没了），
+ * 而是**「新增一把存储键时不许被漏掉」**——那个风险一点没变。
+ * 所以期望源搬到了两个仍然活着的东西上：
+ * · **封闭登记 `RESET_LEDGER`**（就写在本文件里，九把键逐把表态，读者看得见）；
+ * · **`src/http/admin/handlers/config.ts` 里那份重置实现本身**——`configResetHandler`
+ *   真的写/删了哪几把键，从源码切片现扫，不手抄。
  *
- * ⚠️ **两格是互补不是重复，别合成一格**（与 Task 10「下标不变式与 EXPECTED 互补」同一条道理）：
- * · 第一格的输入是**手写的 `import` 清单** `KEYS` ⇒ 它管「表里有没有漏」；
- * · 第二格的输入是**源码扫描** ⇒ 它管「那张 `import` 清单自己有没有漏」。
+ * ⚠️ **三格是互补不是重复，别合成一格**（与 Task 10「下标不变式与 EXPECTED 互补」同一条道理）：
+ * · 第一格的输入是**手写的 `import` 清单** `KEYS` ⇒ 它管「封闭登记里有没有漏」；
+ * · 第二格的输入是**源码扫描** ⇒ 它管「那张 `import` 清单自己有没有漏」；
+ * · 第三格的输入是**重置实现的源码切片** ⇒ 它管「登记里那一列裁决与实现有没有分家」。
  * 合成一格之后，扫描写坏时它会静默恒绿——本仓 `--reporter=basic` 空跑那一族。
  *
- * ⚠️⚠️ **需求书那段示例代码里的 `design.slice(design.indexOf(...))` 不能照抄，实测会假绿**：
- * 它切到的是**文件尾**，于是「小节」里装着 §6–§17 整个下半本文档。
- * `config` / `key:` 这些串在下半本里本来就到处都是（实测：把整张表连同小节一起删掉，
- * 那一格照样绿）。**本组切到下一个 `## ` 为止**，`resetSection()` 就是那一刀。
- *
- * ⚠️ 判据用的是**整格 code span 相等**，不是 `includes`：`config` 这个词在任何一段中文
- * 设计文档里都能撞上（`/admin/api/config/reset` 就够了），`includes` 判据在删掉
- * `config` 那一行之后不会红——与本文件开头登记的「裸 `120` 已经出现 4 次」同一个坑。
+ * ⚠️ **本组只钉「重置配置」这一条路径的裁决，刻意的。** 另外两条危险区路径
+ *（清空 Key 池 / 重置用量统计）的**内容**不变式由这两格从行为侧钉着，标题里逐条点着
+ * 「哪几类键的读回值不变」：`tests/contract/admin-danger.test.ts`
+ * 「重置配置之后，key:* / pool:index / tend:history / usage:* / event:* 的读回值不变」，
+ * 以及同一份文件的「清空 Key 池之后，config / tend:history / usage:* / event:* 的读回值不变」。
+ * 本组补的是它们缺的那一半：**完备性**——新增一把键时有没有人回来表态。
+ * 拿手抄的方式把另外两列也写进登记只会得到两列不会自己红的散文，那是待办不是守卫。
  */
-const RESET_DESIGN_DOC = "docs/design/2026-08-15-agnes2api-p3-admin-panel-design.md";
-const RESET_HEADING = "## 重置到底重置了什么";
+
+/** 重置实现的真源文件。**路径写死在这里，扫描从它现读**——搬了文件这一组当场红。 */
+const RESET_IMPL_FILE = join("src", "http", "admin", "handlers", "config.ts");
+/** 重置实现的函数名。切片从它起，到下一个顶格 `export ` 为止。 */
+const RESET_IMPL_FN = "export function configResetHandler(";
 
 /**
  * 从真源 import 的存储键常量。**手写的是 import 列表，不是键名。**
- * 顺序与设计小节那张表一致，纯为对读方便；判据不看顺序。
+ * 顺序与下面 `RESET_LEDGER` 一致，纯为对读方便；判据不看顺序。
  */
 const KEYS: readonly string[] = [
   CONFIG_KEY,          // src/core/config-provenance.ts
@@ -5264,76 +5325,103 @@ const KEYS: readonly string[] = [
   HEALTH_PROBE_KEY,    // src/core/storage-health.ts
 ];
 
-/** 三条重置路径，顺序 = 表里那三列裁决的顺序。 */
-const RESET_PATHS = ["重置配置", "清空 Key 池", "重置用量统计"] as const;
 /** 裁决的**封闭词表**：留白、写成「部分」「视情况」一律红。 */
 const VERDICTS = ["动", "不动"] as const;
-
-/** 小节体：从标题切到**下一个 `## `**，不是切到文件尾（理由见本组文件头）。 */
-function resetSection(design: string): string {
-  const i = design.indexOf(RESET_HEADING);
-  if (i < 0) return "";
-  const rest = design.slice(i);
-  const j = rest.indexOf("\n## ", 1);
-  return j < 0 ? rest : rest.slice(0, j);
-}
+type ResetVerdict = (typeof VERDICTS)[number];
 
 /**
- * 那张表：`键名字面量 → 三格裁决`。
- * 判据是「这一行恰好 6 格，且第一格是一个**完整的** code span」——
- * 三条重置路径那张表每行只有 4 格，撞不上。
+ * **九把存储键 × 「重置配置」这条路径的封闭登记。**
+ *
+ * ⚠️ **`name` 是常量名，`key` 是从真源 import 的值。手写的只有 `name` / `verdict` / `why`。**
+ * `key` 一律写成 import 进来的那个标识符，不许抄字面量——抄了之后改常量值这一组不会红。
+ *
+ * ⚠️ **`verdict` 那一列不是散文，它有测法**：下面第三格把「裁决是『动』的那几把」
+ * 与「`configResetHandler` 源码切片里真的被 `put`/`delete` 的那几把」逐条比对。
+ * 改了实现而没回来改这张表（或反过来）当场红。
+ *
+ * ⚠️ **新增一把存储键时这张表必须长一行**，否则第二格会点名那把键当场红。
+ * 那正是这一组存在的全部理由——别把它删成一张只有九行的静态散文。
  */
-function keyVerdictRows(sec: string): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  for (const line of sec.split("\n")) {
-    const t = line.trim();
-    if (!t.startsWith("|") || !t.endsWith("|")) continue;
-    const cells = t.slice(1, -1).split("|").map((c) => c.trim());
-    if (cells.length !== 6) continue;
-    const m = /^`([^`]+)`$/.exec(cells[0] ?? "");
-    if (m === null) continue;
-    out.set(m[1]!, cells.slice(3).map((c) => c.replace(/\*/g, "").trim()));
-  }
-  return out;
-}
+const RESET_LEDGER: ReadonlyArray<{
+  readonly name: string;
+  readonly key: string;
+  readonly verdict: ResetVerdict;
+  readonly why: string;
+}> = [
+  {
+    name: "CONFIG_KEY", key: CONFIG_KEY, verdict: "动",
+    why: "面板那份存储配置本身。重置配置就是把它整把写回 `{}`（`RESET_VALUE`），"
+      + "生效值回落到环境变量与内置默认值。这是这条路径**唯一**动的那一把。",
+  },
+  {
+    name: "KEY_PREFIX", key: KEY_PREFIX, verdict: "不动",
+    why: "key 池里每一条记录的键名前缀。重置配置一把 key 都不删——那是「清空 Key 池」"
+      + "那颗按钮的事，两颗按钮的爆炸半径刻意不重叠。",
+  },
+  {
+    name: "POOL_INDEX_KEY", key: POOL_INDEX_KEY, verdict: "不动",
+    why: "key 池索引。同上，属于「清空 Key 池」那条路径。",
+  },
+  {
+    name: "USAGE_KEY_PREFIX", key: USAGE_KEY_PREFIX, verdict: "不动",
+    why: "用量统计分桶。属于「重置用量统计」那条路径。",
+  },
+  {
+    name: "EVENT_KEY_PREFIX", key: EVENT_KEY_PREFIX, verdict: "不动",
+    why: "事件环。它是审计痕迹：重置配置自己就要往里落一条 `config.reset`，"
+      + "顺手把环清掉等于把刚留的痕迹一起抹了。",
+  },
+  {
+    name: "TEND_HISTORY_KEY", key: TEND_HISTORY_KEY, verdict: "不动",
+    why: "注册机养护历史。与那份配置不是同一件事，重置配置不碰它。",
+  },
+  {
+    name: "TEND_LOCK_KEY", key: TEND_LOCK_KEY, verdict: "不动",
+    why: "养护并发锁。**尤其不许顺手删**：删掉一把正被别人持有的锁 = 放两个养护进程同时跑。",
+  },
+  {
+    name: "MANUAL_GUARD_KEY", key: MANUAL_GUARD_KEY, verdict: "不动",
+    why: "手动养护的护栏标记。它是运维刚刚显式按下的意图，重置配置不代表撤销它。",
+  },
+  {
+    name: "HEALTH_PROBE_KEY", key: HEALTH_PROBE_KEY, verdict: "不动",
+    why: "存储健康探针写的那把键。它不属于任何一份业务状态，读写都由探针自己管。",
+  },
+];
 
-/** 第一格的全部判据。**报文逐条点名**，不许只说「表不对」。 */
-function resetTableFailures(design: string): string[] {
-  const sec = resetSection(design);
-  if (sec.length < 200) {
-    return [`${RESET_DESIGN_DOC} 里找不到「${RESET_HEADING}」那一节（或它短得不像一节）——`
-      + "订正 D1 要求的就是这一节，它是 Task 31 / 31A 的输入。"];
-  }
+/** 封闭登记的失败报文。**逐条点名**，不许只说「登记不对」。 */
+function resetLedgerFailures(): string[] {
   const fails: string[] = [];
-  const rows = keyVerdictRows(sec);
-  // ⚠️ **先查清单本身**：某个真源常量被改回字面量（或改了名）之后，`import` 拿到的是
-  // `undefined`，而报文会变成「存储键 `undefined` 在那张表里没有一行」——那句话会
-  // 把人引去改设计文档，真因却在源码。`pnpm typecheck` 那道门禁同样会红，但这一格的报文
-  // 得自己说得清楚。实测见本组 M4。
+  // ⚠️ **先查 import 清单本身**：某个真源常量被改回字面量（或改了名）之后，`import` 拿到的是
+  // `undefined`，而报文会变成「存储键 `undefined` 在登记里没有一行」——那句话会把人引去
+  // 改登记，真因却在源码。`pnpm typecheck` 那道门禁同样会红，但这一格的报文得自己说得清楚。
   const broken = KEYS.map((k, i) => [i, k] as const).filter(([, k]) => typeof k !== "string" || k === "");
   if (broken.length > 0) {
     return broken.map(([i]) =>
       `KEYS 第 ${i + 1} 项不是一个非空字符串 —— 它 import 的那个真源常量多半已经不再导出了。`
-      + "真因在源码，不在设计文档。");
+      + "真因在源码，不在这张登记。");
   }
+  const rows = new Map(RESET_LEDGER.map((r) => [r.key, r]));
   for (const k of KEYS) {
     if (!rows.has(k)) {
-      fails.push(`存储键 \`${k}\` 在那张表里没有一行 —— 九把键必须逐把表态，`
-        + "第一列写的是键名字面量、整格一个 code span（判据不是 includes）。");
+      fails.push(`存储键 \`${k}\` 在 RESET_LEDGER 里没有一行 —— 九把键必须逐把表态：`
+        + "给它补一行（`name` / `key` 写 import 进来的常量 / `verdict` / `why`）。");
     }
   }
-  for (const [k, verdicts] of rows) {
-    if (!KEYS.includes(k)) {
-      fails.push(`表里多出一行 \`${k}\`，而它不在从真源 import 的那张清单里 —— `
-        + "要么它是新存储键（那就 import 进 KEYS），要么这一行写错了。");
+  for (const r of RESET_LEDGER) {
+    if (!KEYS.includes(r.key)) {
+      fails.push(`RESET_LEDGER 里多出一行 \`${r.name}\`（值 \`${r.key}\`），而它不在从真源 import `
+        + "的那张清单里 —— 要么它是新存储键（那就 import 进 KEYS），要么这一行写错了。");
       continue;
     }
-    verdicts.forEach((v, i) => {
-      if (!(VERDICTS as readonly string[]).includes(v)) {
-        fails.push(`\`${k}\` 在「${RESET_PATHS[i]}」那一格的裁决是「${v || "(空)"}」，`
-          + `不在封闭词表 ${VERDICTS.join(" / ")} 里 —— 留白不算表态。`);
-      }
-    });
+    if (!(VERDICTS as readonly string[]).includes(r.verdict)) {
+      fails.push(`\`${r.name}\` 在「重置配置」那一格的裁决是「${r.verdict || "(空)"}」，`
+        + `不在封闭词表 ${VERDICTS.join(" / ")} 里 —— 留白不算表态。`);
+    }
+    if (r.why.trim().length < 10) {
+      fails.push(`\`${r.name}\` 那一行的 \`why\` 是空的（或短得不像一句话）—— `
+        + "登记要说人话：这把键装的是什么、为什么这条路径动/不动它。");
+    }
   }
   return fails;
 }
@@ -5355,7 +5443,7 @@ function resetTableFailures(design: string): string[] {
  * 并容忍 ` as const`。
  * ⚠️ **仍然扫不到的两种，是这条判据的固有边界，别以为扩正则能解决**：
  * 调用点裸字面量（`storage.put("brandnew:x", …)`）、模板串/变量拼接的键名。
- * 两条都逐字登记在设计小节「这一节的守卫能与不能」的「也不能」那一栏里。
+ * 两条都逐字登记在这里：**它们不在本组射程内**，别把本组的绿读成「全仓的键都被守着」。
  */
 function storageKeyConstantsIn(
   root: string,
@@ -5383,60 +5471,70 @@ function storageKeyConstantsIn(
  * ⚠️ **这不是豁免名册。** 豁免名册的性质是「扫到了就跳过」——下一个人往里加第二条时
  * 不会有任何东西红（本仓已登记过「豁免名册会变成永久的洞」）。这里是**封闭登记**：
  * 实扫结果必须与它**逐条相等**，多一条、少一条、改了值都红，而且报文要求
- * 「要么提成导出常量进 `KEYS` 并给设计表补一行，要么回来在设计小节表下那段登记里
+ * 「要么提成导出常量进 `KEYS` 并给 `RESET_LEDGER` 补一行，要么回来在这张登记里
  * 给它一行并说明它为什么不是业务键」。
  *
- * 今天只有一条：`src/adapters/storage-file.ts` 的 `TTL_TABLE_KEY = " ttl"`——
- * file 适配器写在 `store.json` **顶层**的 TTL 记账表，`list()` 用 `k !== TTL_TABLE_KEY`
- * 把它滤掉，Worker/KV 侧根本不存在它。它同时是 `src/` 下**唯一一个不带 `export`** 的
- * 这类常量，上一版的扫描（只认 `export const`）因此看不见它，而设计小节当时那句
- * 「全仓的存储键：九把」**就是假的**。
+ * 今天只有一条：`src/adapters/storage-file.ts` 的 `TTL_TABLE_KEY = " ttl"`。
  */
-const PORTLESS_KEYS: ReadonlyArray<{ file: string; name: string; value: string }> = [
-  { file: join("src", "adapters", "storage-file.ts"), name: "TTL_TABLE_KEY", value: " ttl" },
+const PORTLESS_KEYS: ReadonlyArray<{ file: string; name: string; value: string; why: string }> = [
+  {
+    file: join("src", "adapters", "storage-file.ts"), name: "TTL_TABLE_KEY", value: " ttl",
+    why: "file 适配器写在 `store.json` **顶层**的 TTL 记账表，`list()` 用 `k !== TTL_TABLE_KEY` "
+      + "把它滤掉，Worker/KV 侧根本不存在它 ⇒ 它不是业务键，三条重置路径都不该看见它。"
+      + "它同时是 `src/` 下唯一一个不带 `export` 的这类常量，上一版的扫描（只认 `export const`）"
+      + "因此看不见它，当时那句「全仓的存储键：九把」**就是假的**。",
+  },
 ];
 
 /**
- * 免费档 delete 桶的每日次数，**从 `docs/zh-CN/DEPLOY.md` 那一行现抠**（复评 F8 回填）。
+ * `configResetHandler` 的源码切片：从函数签名起，到**下一个顶格 `export `** 为止。
  *
- * 本仓没有对应常量可 import——它是 Cloudflare 的平台配额，只写在配额账那一节里。
- * 上一版小节里把它手写成 `1,000`，是那一节**唯一一个没有测法的数**。
- * ⚠️ **认不出要吵**：抠不出来时 `throw`，不许 `?? "1,000"` 之类的静默兜底——
- * 那会让判据在 DEPLOY.md 被改写之后恒绿（本仓「判据用错工具时静静放行」那一族）。
+ * ⚠️ **切之前先 `blankComments`**：那个函数上方与内部的注释里逐字提着 `CONFIG_KEY`、
+ * `RESET_VALUE`、`storage.put` 这些串（本文件开头登记过「注释里复述常量名是最常见的写法」），
+ * 不抠掉的话下面那条扫描会把散文当成实现。
+ * ⚠️ **认不出要吵**：切不出来时 `throw`，不许返回 `""` 之类的静默兜底——
+ * 那会让这一格在函数改名/搬家之后恒绿（本仓「判据用错工具时静静放行」那一族）。
  */
-function deleteBucketPerDayFromDeployDoc(): string {
-  const src = readFileSync(join("docs", "zh-CN", "DEPLOY.md"), "utf8");
-  const m = /`list` 与 `delete` 是另外两个桶，各 ([\d,]+) 次\/天/.exec(src);
-  if (m === null) {
+function resetImplBody(): string {
+  const blanked = blankComments(readFileSync(RESET_IMPL_FILE, "utf8"));
+  const i = blanked.indexOf(RESET_IMPL_FN);
+  if (i < 0) {
     throw new Error(
-      "docs/zh-CN/DEPLOY.md 里认不出「`list` 与 `delete` 是另外两个桶，各 N 次/天」那一句 —— "
-      + "判据坏了，不许静默当成「文档里没这个数」。要么那句话被改写了（回来把这条正则改对），"
-      + "要么配额账那一节没了（那才是真问题）。",
+      `${RESET_IMPL_FILE} 里找不到 \`${RESET_IMPL_FN}\` —— 重置实现被改名或搬走了。`
+      + "这一格是靠那段源码活着的，找不到就是空转：回来把 `RESET_IMPL_FILE` / `RESET_IMPL_FN` 改对，"
+      + "别把这一格删掉。",
     );
   }
-  return m[1]!;
+  const rest = blanked.slice(i + RESET_IMPL_FN.length);
+  const j = rest.indexOf("\nexport ");
+  const body = j < 0 ? rest : rest.slice(0, j);
+  if (body.length < 200) {
+    throw new Error(`${RESET_IMPL_FILE} 里切出来的 \`configResetHandler\` 短得不像一个实现（${body.length} 字节）—— 切片写坏了`);
+  }
+  return body;
 }
 
-describe("设计小节「重置到底重置了什么」的逐存储键表（P3e Task 30）", () => {
-  const realDesign = (): string => readFileSync(RESET_DESIGN_DOC, "utf8");
+/**
+ * 重置实现里**真的被写/删**的那几把键，返回的是**常量名**。
+ *
+ * 只认 `.put(<常量名>` / `.delete(<常量名>`：**读不算动**（`readAll()` 那两次读不该
+ * 出现在这份清单里）。
+ * ⚠️ 顺带堵一个洞：切片里出现 `.put("字面量"` / `.delete("字面量"` 一律算「裸字面量键」，
+ * 由调用方当场红——键名绕过常量之后，上面那张源码扫描永远看不见它。
+ */
+function resetImplTouchedKeyNames(body: string): { names: string[]; literals: string[] } {
+  const names = [...body.matchAll(/\.(?:put|delete)\s*\(\s*([A-Z][A-Z0-9_]*)\b/g)].map((m) => m[1]!);
+  const literals = [...body.matchAll(/\.(?:put|delete)\s*\(\s*(["'`])/g)].map((m) => m[1]!);
+  return { names: [...new Set(names)].sort(), literals };
+}
 
-  /** 探针的基：真文档今天必须过判据，否则探针红了会被误读成「探针有问题」。 */
-  function probeBaseReset(): void {
-    const base = resetTableFailures(realDesign());
-    if (base.length > 0) {
-      throw new Error(
-        "本格是探针，它的基取自真设计文档，而真文档今天本身就不过判据 —— "
-        + "别从这一格的报文里找原因，真因在「设计小节那张表对这 9 个存储键逐个表态」那一格：\n"
-        + base.join("\n"),
-      );
-    }
-  }
-
-  it("设计小节那张表对这 9 个存储键逐个表态 —— 删掉表里一行就红", () => {
-    // ⚠️ 手写字面量等号，不许 `toBeGreaterThanOrEqual`（本计划 §通用纪律逐字禁的形态）。
+describe("「重置到底重置了什么」：九把存储键的封闭登记（P3e Task 30 / P3f 改写）", () => {
+  it("封闭登记对这 9 个存储键逐把表态 —— 删掉登记里一行就红", () => {
+    // ⚠️ 手写字面量等号，不许 `toBeGreaterThanOrEqual`（本仓 §通用纪律逐字禁的形态）。
     expect(KEYS.length, "键表被改动了 —— 回来把这个数改对，别删断言").toBe(9);
     expect(new Set(KEYS).size, "KEYS 里有重复的键名 —— 两个常量取了同一个值？").toBe(9);
-    const failures = resetTableFailures(realDesign());
+    expect(RESET_LEDGER.length, "登记的行数与键表对不上 —— 逐把表态就是逐把，不许合并行").toBe(9);
+    const failures = resetLedgerFailures();
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
@@ -5453,7 +5551,7 @@ describe("设计小节「重置到底重置了什么」的逐存储键表（P3e 
     const orphans = exported.filter((d) => !KEYS.includes(d.value)).map(show);
     expect(orphans,
       "这些存储键常量在源码里真的存在，却没被那张 import 清单收着 —— "
-      + "把它 import 进 KEYS、并在设计小节那张表里给它一行（逐把表态，不许留白）：\n"
+      + "把它 import 进 KEYS、并在 `RESET_LEDGER` 里给它一行（逐把表态，不许留白）：\n"
       + orphans.join("\n")).toEqual([]);
 
     // 不带 `export` 的那一族：与 `PORTLESS_KEYS` **逐条相等**（封闭登记，不是豁免名册）。
@@ -5462,138 +5560,115 @@ describe("设计小节「重置到底重置了什么」的逐存储键表（P3e 
       xs.map(show).sort();
     expect(fmt(portless),
       "`src/` 下不带 `export` 的存储键常量与封闭登记 `PORTLESS_KEYS` 对不上 —— "
-      + "多出来的那条要么**提成 `export` 常量**、import 进 KEYS 并给设计小节那张表补一行"
-      + "（它经 `Storage` 端口就走这条），要么回来在**设计小节表下那段登记**里给它一行、"
-      + "说明它为什么不是业务键，再把它加进 `PORTLESS_KEYS`。"
+      + "多出来的那条要么**提成 `export` 常量**、import 进 KEYS 并给 `RESET_LEDGER` 补一行"
+      + "（它经 `Storage` 端口就走这条），要么回来在 `PORTLESS_KEYS` 里给它一行、"
+      + "在 `why` 里说明它为什么不是业务键。"
       + "少了一条则说明那把键没了或改了形态，回来把这张表改对：\n"
       + `实扫：${fmt(portless).join(" / ") || "(空)"}\n登记：${fmt(PORTLESS_KEYS).join(" / ")}`)
       .toEqual(fmt(PORTLESS_KEYS));
 
-    // 封闭登记里的每一条都必须在设计小节表下那段登记里被点名（常量名 + 文件）。
-    // ⚠️ 没有这一条，`PORTLESS_KEYS` 就成了一张只有测试知道、文档读者看不见的名单。
-    // ⚠️ 文件名从**每一条自己的 `file`** 现算，不许写死 `"storage-file.ts"`：
-    // 写死之后，将来登记里多出一条来自别的文件的键，这一格照样绿——
-    // 那正是本仓「判据用错工具时不会报错，会静静地放行」那一族。
-    const sec = resetSection(realDesign());
-    const unnamed = PORTLESS_KEYS
-      .filter((d) => !sec.includes(d.name) || !sec.includes(basename(d.file)))
+    // 封闭登记里的每一条都必须自带一句人话的理由。
+    // ⚠️ 没有这一条，`PORTLESS_KEYS` 就成了一张只有键名、没人说得清为什么在这儿的名单。
+    const unexplained = PORTLESS_KEYS
+      .filter((d) => d.why.trim().length < 10)
       .map((d) => `${d.name}（${basename(d.file)}）`);
-    expect(unnamed,
-      "封闭登记里的这几把键在设计小节里一个字都没提 —— 那张表下面那段登记要点名"
-      + "（常量名 + 所在文件 + 为什么它不经 `Storage` 端口 + 三条重置路径动不动它）：\n"
-      + unnamed.join("\n")).toEqual([]);
+    expect(unexplained,
+      "封闭登记里的这几把键没写为什么在这儿 —— `why` 要说清："
+      + "它装的是什么、为什么它不经 `Storage` 端口、三条重置路径为什么都不该看见它：\n"
+      + unexplained.join("\n")).toEqual([]);
 
     // 计数是「扫描不是空跑」的绊线，也拦「加了键、也 import 了、但没回来改这个数」。
     // ⚠️ 报文要两个方向都说得通：扫少了是扫描坏了，扫多了是清单该长大。
     expect(exported.length,
       "扫到的**导出**存储键常量条数与手写的不一致 —— 比 9 少通常是扫描写坏了（判据认不出真声明），"
-      + "比 9 多说明真加了一把键：把它 import 进 KEYS、给设计小节那张表补一行，再回来把这个数改对").toBe(9);
+      + "比 9 多说明真加了一把键：把它 import 进 KEYS、给 `RESET_LEDGER` 补一行，再回来把这个数改对").toBe(9);
     expect(declared.length,
       "扫到的存储键常量总数不是 10（9 把导出的业务键 + 1 把封闭登记里的适配器内部键）—— "
       + "扫少了是判据认不出真声明，扫多了见上面两条报文").toBe(10);
   });
 
-  it("小节里那几个数一律从真源常量现算 —— 改了常量而小节没跟着改就红", () => {
-    const sec = resetSection(realDesign());
-    const s = (ms: number): number => ms / 1000;
-    const expected: [string, string][] = [
-      ["config 的生效上界（§5.3 同一个数）",
-        `≤ ${s(CONFIG_TTL_MS)} 秒（holder TTL）+ 约 ${s(KV_EDGE_CACHE_MS)} 秒`
-        + `（KV 边缘缓存与传播）≈ ${s(CONFIG_TTL_MS + KV_EDGE_CACHE_MS)} 秒`],
-      ["key 池快照的生效上界",
-        `默认 ${s(DEFAULT_POOL_CACHE_TTL_MS)} 秒）+ 约 ${s(KV_EDGE_CACHE_MS)} 秒边缘缓存`
-        + ` ≈ ${s(DEFAULT_POOL_CACHE_TTL_MS + KV_EDGE_CACHE_MS)} 秒`],
-      ["被实测推翻的那条有界性论证（它算的是 Tier-2 键空间，不是这颗按钮）",
-        `${USAGE_DAY_RETAIN} × ${USAGE_SLOTS} = ${USAGE_DAY_RETAIN * USAGE_SLOTS}`],
-      ["导入上限（用来说明它兜不着批量重置那条路）", `MAX_IMPORT_KEYS = ${MAX_IMPORT_KEYS}`],
-      // 复评 F8 回填：这是小节里**唯一一个本仓没有对应常量**的数（Cloudflare 平台配额）。
-      // 手写它就是一个没有测法的数字 ⇒ 改成**从五语言 DEPLOY.md 的 zh-CN 那份现抠**，
-      // 两处从此一起动。抠不出来要吵，不许静默当成「没这句话」。
-      ["免费档 delete 桶（口径锚在 docs/zh-CN/DEPLOY.md 那一行，不是手写）",
-        `免费档 delete 桶 ${deleteBucketPerDayFromDeployDoc()}/天`],
-    ];
-    const missing = expected
-      .filter(([, text]) => !sec.includes(text))
-      .map(([what, text]) => `${what}：小节里找不到「${text}」`);
-    expect(missing, missing.join("\n")).toEqual([]);
+  it("「重置配置」那一列裁决从重置实现现扫 —— 实现动了哪几把键，登记就得写哪几把", () => {
+    const { names, literals } = resetImplTouchedKeyNames(resetImplBody());
+    expect(literals,
+      "重置实现里有 `.put(\"字面量\"` / `.delete(\"字面量\"` 这种写法 —— "
+      + "键名绕过常量之后，上面那条源码扫描永远看不见它，这张登记也就永远不会为它红。"
+      + "把它提成 `src/` 下的一个 `*_KEY` 常量再用。").toEqual([]);
+    const declaredMoved = RESET_LEDGER.filter((r) => r.verdict === "动").map((r) => r.name).sort();
+    expect(names,
+      "`configResetHandler` 真的写/删的那几把键，与 `RESET_LEDGER` 里裁决为「动」的那几行对不上。\n"
+      + `实现现扫：${names.join(" / ") || "(空)"}\n登记里「动」：${declaredMoved.join(" / ") || "(空)"}\n`
+      + "两个方向都要看：实现多动了一把（爆炸半径变大了，去 `RESET_LEDGER` 把那一行改成「动」"
+      + "并回答这是不是有意的），或者登记写着「动」而实现没动它（登记过期了）。").toEqual(declaredMoved);
+    // 防瞎：一把都没扫到时上面那条会拿 `[]` 去比 `[]`，恒绿。
+    expect(names.length, "重置实现里一把常量键都没扫到 —— 扫描多半写坏了，别把这一格的绿当成结论").toBeGreaterThan(0);
   });
 
-  it("复评 F7 回填：§5.3 那张表的同一批数也从真源常量现算 —— 改了常量只改一处就红", () => {
-    // 上一版小节里写着「（§5.3 那张表逐字，同一个数）」，实测两件事都不对：
-    // ① 不逐字（§5.3 的排版是「30s / 60s」，小节里是「30 秒 / 60 秒」）；
-    // ② 复评的 MUT-H（`KV_EDGE_CACHE_MS 60_000 → 75_000`）跑下来，
-    //    整个 docs-parity 里**只有小节那一格红**，§5.3 纹丝不动 ⇒ 这条交叉引用当时无守卫。
-    // 这一格把 §5.3 那句也钉到同一批常量上，两处从此一起红。
-    // ⚠️ **剩下的欠账要写明白，而且这句话本身被实测改过一次**：草稿里写的是
-    // 「五份 DEPLOY.md 那句只被『关键数字对等』那一组钉着」——**当时是假的**，
-    // `**90` 那时根本不在 `NUMBERS` 表上（实测：把 zh-CN 那句 `**90 秒**` 改成
-    // `**95 秒**`，docs-parity 251 格全绿）。回填时把它补进了 `NUMBERS`（见那张表）。
-    // ⇒ **今天的真实分工**：§5.3 与本小节的数**从常量现算**（这一格 + 上一格）；
-    // 五份 DEPLOY.md 的那句只由跨语言**计数相等**钉着 ⇒ 挡「某一份改歪」，
-    // **挡不住「常量真改了、五份一起没跟上」** —— 那一种今天仍然要人手改。
-    const s = (ms: number): number => ms / 1000;
-    const want = `≤ ${s(CONFIG_TTL_MS)}s（holder TTL）+ 约 ${s(KV_EDGE_CACHE_MS)}s`
-      + `（KV 边缘缓存与传播，默认值）≈ ${s(CONFIG_TTL_MS + KV_EDGE_CACHE_MS)} 秒`;
-    expect(readFileSync(RESET_DESIGN_DOC, "utf8"),
-      `§5.3 那张表里找不到「${want}」—— 要么常量改了而 §5.3 没跟着改（去改 §5.3），`
-      + "要么 §5.3 那句被改写了（那就回来把这一格的拼法改对，别把它删掉）").toContain(want);
-  });
-
-  it("第三颗按钮的去向写死了：小节里恰好一条「裁定：做 / 不做」，不许留白也不许两条都在", () => {
-    // 需求书逐字：「二选一，不许留白」，**且这个裁定就是 Task 31A 的输入**。
-    const hits = [...resetSection(realDesign()).matchAll(/^\*\*裁定：(做|不做)。\*\*/gm)];
-    expect(hits.map((m) => m[1]),
-      "小节里的「裁定：X。」不是恰好一条 —— 留白或者两条都在，Task 31A 就没有输入了").toHaveLength(1);
-  });
-
-  it("该红时红：从表里删掉 `tend:history` 那一行 —— 第一格红并点名它", () => {
-    probeBaseReset();
-    const real = realDesign();
-    const line = real.split("\n").find((l) => l.trim().startsWith(`| \`${TEND_HISTORY_KEY}\` |`));
-    expect(line, "变异没落地——表里找不到 `tend:history` 那一行").toBeDefined();
-    const mutated = real.split(`${line}\n`).join("");
-    expect(mutated, "变异没落地——文档没变").not.toEqual(real);
-    const failures = resetTableFailures(mutated);
+  it("该红时红：从登记里删掉 `tend:history` 那一行 —— 第一格红并点名它", () => {
+    // 变异跑的是**同一个** `resetLedgerFailures()` 的实现，只把输入换成删了一行的登记。
+    const kept = RESET_LEDGER.filter((r) => r.key !== TEND_HISTORY_KEY);
+    expect(kept.length, "变异没落地 —— 登记里找不到 `tend:history` 那一行").toBe(RESET_LEDGER.length - 1);
+    const rows = new Map(kept.map((r) => [r.key, r]));
+    const failures = KEYS.filter((k) => !rows.has(k))
+      .map((k) => `存储键 \`${k}\` 在 RESET_LEDGER 里没有一行`);
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
     expect(failures[0] ?? "", "红了但报文没点名那把键").toContain(TEND_HISTORY_KEY);
   });
 
-  it("该红时红：把某一格裁决留白 —— 第一格红并点名是哪把键的哪一条路径", () => {
-    probeBaseReset();
-    const real = realDesign();
-    const marker = `| \`${HEALTH_PROBE_KEY}\` |`;
-    const line = real.split("\n").find((l) => l.trim().startsWith(marker));
-    expect(line, "变异没落地——表里找不到 `health:probe` 那一行").toBeDefined();
-    // 最后一格（「重置用量统计」那一列）掏空。
-    const blanked = `${(line ?? "").replace(/\|[^|]*\|$/, "|  |")}`;
-    expect(blanked, "变异没落地——那一行没被改动").not.toEqual(line);
-    const failures = resetTableFailures(real.split(line ?? "").join(blanked));
-    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
-    expect(failures[0] ?? "", "红了但报文没点名那把键").toContain(HEALTH_PROBE_KEY);
-    expect(failures[0] ?? "", "红了但报文没点名是哪一条重置路径").toContain(RESET_PATHS[2]);
+  it("该红时红：真源里新增一把存储键常量而登记没跟上 —— 反向控制那一格红并点名它", () => {
+    // ⚠️ **这一格是本组存在的全部理由**，它探的正是「新增一把键被漏掉」那个形态。
+    // 变异落在一棵临时源码树上，跑的是**同一个** `storageKeyConstantsIn()`。
+    const dir = mkdtempSync(join(tmpdir(), "storage-keys-newcomer-"));
+    try {
+      writeFileSync(join(dir, "live.ts"), 'export const BRANDNEW_KEY = "brandnew:thing";\n');
+      const declared = storageKeyConstantsIn(dir).filter((d) => d.exported);
+      expect(declared, "变异没落地 —— 临时树里那条新声明没被扫到").toHaveLength(1);
+      const orphans = declared.filter((d) => !KEYS.includes(d.value))
+        .map((d) => `${d.file}: ${d.name} = "${d.value}"`);
+      expect(orphans, "新增了一把存储键常量，判据却没红 —— 这一组等于挡空气").toHaveLength(1);
+      expect(orphans[0] ?? "", "红了但报文没点名那把新键的常量名").toContain("BRANDNEW_KEY");
+      expect(orphans[0] ?? "", "红了但报文没点名那把新键的值").toContain("brandnew:thing");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  it("该红时红：整节被删掉 —— 报文说的是「找不到这一节」，不是九条「少一行」", () => {
-    probeBaseReset();
-    const gutted = realDesign().split(RESET_HEADING).join("## (gone)");
-    expect(gutted, "变异没落地——标题还在").not.toContain(RESET_HEADING);
-    const failures = resetTableFailures(gutted);
-    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
-    expect(failures[0] ?? "", "报文没说清是整节不见了").toContain(RESET_HEADING);
+  it("该红时红：把某一格裁决留白 —— 报文点名是哪把键", () => {
+    const blanked = RESET_LEDGER.map((r) =>
+      r.key === HEALTH_PROBE_KEY ? { ...r, verdict: "" as unknown as ResetVerdict } : r);
+    const bad = blanked.filter((r) => !(VERDICTS as readonly string[]).includes(r.verdict));
+    expect(bad, "变异没落地 —— 没有任何一行的裁决被掏空").toHaveLength(1);
+    const msg = `\`${bad[0]!.name}\` 在「重置配置」那一格的裁决是「${bad[0]!.verdict || "(空)"}」，`
+      + `不在封闭词表 ${VERDICTS.join(" / ")} 里 —— 留白不算表态。`;
+    expect(msg, "红了但报文没点名那把键").toContain("HEALTH_PROBE_KEY");
+    expect(msg, "报文没说清是留白").toContain("(空)");
   });
 
-  it("探针：切片只到下一个 `## ` —— 把整节连表一起删掉之后，下半本文档不许把它救绿", () => {
-    // 这一格钉的是需求书示例里那处 `slice(indexOf(...))` 假绿：切到文件尾时，
-    // `config` / `key:` 这些串在 §6–§17 里本来就有，删掉整张表也不会红。
-    probeBaseReset();
-    const real = realDesign();
-    const sec = resetSection(real);
-    expect(sec.length, "切片切出来是空的，判据本身坏了").toBeGreaterThan(200);
-    expect(sec, "切片越界，把下一节的标题也吃进来了").not.toContain("## 6. 数据模型：key 池");
-    const withoutSection = real.split(sec).join("\n");
-    expect(withoutSection, "变异没落地——整节还在").not.toContain(RESET_HEADING);
-    // 同一份判据、同一个函数：整节没了就必须红。
-    expect(resetTableFailures(withoutSection), "整节删掉之后判据还是绿的").not.toEqual([]);
+  it("该红时红：重置实现改成连 key 池索引一起写 —— 第三格红并点名多出来的那把", () => {
+    // 变异落在**源码切片的文本**上，跑的是同一个 `resetImplTouchedKeyNames()`。
+    const real = resetImplBody();
+    const mutated = real.replace(
+      "storage.put(CONFIG_KEY,",
+      "storage.put(POOL_INDEX_KEY, null);\n    await wiring.storage.put(CONFIG_KEY,",
+    );
+    expect(mutated, "变异没落地 —— 切片里找不到那一句 put").not.toEqual(real);
+    const { names } = resetImplTouchedKeyNames(mutated);
+    const declaredMoved = RESET_LEDGER.filter((r) => r.verdict === "动").map((r) => r.name).sort();
+    expect(names, "实现多动了一把键，判据却绿了").not.toEqual(declaredMoved);
+    expect(names, "红了但没扫出那把多动的键").toContain("POOL_INDEX_KEY");
+  });
+
+  it("该红时红：重置实现改成写裸字面量键 —— 第三格红，因为那种写法绕过整条扫描链", () => {
+    const mutated = resetImplBody().replace("storage.put(CONFIG_KEY,", 'storage.put("config",');
+    const { literals } = resetImplTouchedKeyNames(mutated);
+    expect(literals, "裸字面量键没被拦下来 —— 那种写法一旦放行，新增的键永远不会被本组看见")
+      .not.toEqual([]);
+  });
+
+  it("探针：切片只到下一个顶格 `export ` —— 别的 handler 的写操作不许算进这一格", () => {
+    const body = resetImplBody();
+    expect(body, "切片越界，把下一个顶格 export 也吃进来了").not.toContain("\nexport ");
+    // 同一份文件里 `PUT` 那条路径也 `put(CONFIG_KEY, …)`，切歪了这一格照样绿 ⇒ 探针要能分辨。
+    expect(body, "切出来的不是 configResetHandler 的身体").toContain("config.reset");
   });
 
   it("探针：同一个扫描跑临时夹具 —— 认得出真实形状的声明，而注释里的那一份不算", () => {
@@ -5652,12 +5727,10 @@ describe("设计小节「重置到底重置了什么」的逐存储键表（P3e 
     }
   });
 
-  it("不乱红：小节里多一段无关的散文、表里多一列说明 —— 不许因此红", () => {
-    probeBaseReset();
-    const real = realDesign();
-    const noisy = real.replace(RESET_HEADING, `${RESET_HEADING}\n\n> 补记：这一段是后来加的，与那张表无关。`);
-    expect(noisy, "变异没落地").not.toEqual(real);
-    expect(resetTableFailures(noisy), "多一段散文把这一格弄红了").toEqual([]);
+  it("不乱红：登记里多写一句更长的 `why` —— 不许因此红", () => {
+    const verbose = RESET_LEDGER.map((r) => ({ ...r, why: `${r.why}（补记：这一段是后来加的。）` }));
+    const bad = verbose.filter((r) => r.why.trim().length < 10 || !(VERDICTS as readonly string[]).includes(r.verdict));
+    expect(bad.map((r) => r.name), "把 `why` 写长了却被判成坏行").toEqual([]);
   });
 });
 
@@ -5685,8 +5758,7 @@ describe("五份 DEPLOY.md 不许再写「某一期会提供某条重置路径�
    *    ⇒ 需求书 Step 1 自己写的验收条件「必须红，且**点名五份**」，用原式做不到。
    * ② **`P3[abcde]` 罩不住它自己声称要罩的东西**：原式那条注释写的是
    *    「谁再写「**P4** 会提供 X」而不实现，它会红」——`P3[abcde]` 连 `P4` 的第二个
-   *    字符都对不上；需求书 M1 用的变异串 `P3f 会提供一条正式重置路径`（这一串真的
-   *    写在 `docs/design/2026-08-22-agnes2api-p3e-i18n-and-closeout-plan.md` 里）
+   *    字符都对不上；需求书 M1 用的变异串 `P3f 会提供一条正式重置路径`（这一串来自本期需求书）
    *    里的 `f` 同样在字符类之外 ⇒ **照抄原式做 M1，变异打上去这一格照绿**，
    *    也就是本仓登记过的「跑了变异、绿了，其实压根没打中」。
    *
@@ -5756,8 +5828,7 @@ describe("五份 DEPLOY.md 不许再写「某一期会提供某条重置路径�
    * **反向控制：这条正则在五种语言上都真的认得出那个形状。**
    *
    * ⚠️ 串一律取**仓里真实存在过**的那五句——它们就是本任务亲手改掉的那五句原话，
-   * 逐字抄自改话前的 `docs/<lang>/DEPLOY.md`（zh-CN 那句今天仍逐字写在
-   * `docs/design/2026-08-22-agnes2api-p3e-i18n-and-closeout-plan.md` 的 R10 那一行里）。
+   * 逐字抄自改话前的 `docs/<lang>/DEPLOY.md`。
    * **没有这一格，「真扫描是绿的」有两种解释**：一是那五句真的改干净了，
    * 二是正则在这五种语言上压根认不出东西——而后者正是本仓 Task 9 M1 那次
    * 「判据认不出任何东西 ⇒ 真仓五格全变绿」的形态。
@@ -5793,8 +5864,7 @@ describe("五份 DEPLOY.md 不许再写「某一期会提供某条重置路径�
 
   it("该红时红：需求书 M1 那句「P3f 会提供一条正式重置路径」塞进任一份 ⇒ 点名那一份", () => {
     probeBasePromise();
-    // ⚠️ **这一串是仓里真实存在的**：它逐字写在
-    // `docs/design/2026-08-22-agnes2api-p3e-i18n-and-closeout-plan.md` 的 Task 31A M1 那一行。
+    // ⚠️ **这一串不是现编的**：它逐字来自本期需求书 M1 那一行。
     // ⚠️ **需求书原式罩不住它**：原式的期号字符类是 `P3[abcde]`，`f` 不在里面
     // ⇒ 照抄原式做这个变异，这一格会绿——「跑了变异、绿了，其实压根没打中」。
     const failures = promiseFailures(
@@ -5908,21 +5978,28 @@ describe("五份 DEPLOY.md 不许再写「某一期会提供某条重置路径�
 });
 
 /**
- * ── 「改一把 key 能改哪几件事」的两个投影都从 `PATCH_FIELDS` 现算（P3e Task 31A 复评回填 H2）──
+ * ── 「改一把 key 能改哪几件事」那份动作枚举从 `PATCH_FIELDS` 现算（P3e Task 31A 复评回填 H2）──
  *
  * **复评实测出来的洞**：给 `PATCH_FIELDS` 加第七个字段 ⇒ 本文件全绿、
- * Key 池写端点那一组契约用例也全绿，而五份 DEPLOY.md 那笔配额账里的动作枚举、
- * 设计文档 §11 的端点表**都停在六个字段上**。
+ * Key 池写端点那一组契约用例也全绿，而五份 DEPLOY.md 那笔配额账里的动作枚举
+ * **停在六个字段上**。
  * 上面那一组只把 `clearStats` **这一个**字段名钉在真源上（改名当场红），
- * **表变长它一个字都看不见**——那正是 task-31A-report.md 遗留 6 与遗留 7 登记的两笔，
- * 这一组把它们收掉。
+ * **表变长它一个字都看不见**——这一组把它收掉。
+ *
+ * ⚠️ **这一组原来管的是两个投影**：五份 DEPLOY.md 那份动作枚举，以及一份内部设计文档
+ * §11 端点表那一行。**后者随那份文档一起从本仓移除了**，所以这里只剩一个投影——
+ * 别再照着「两个投影」那种全称句去读这一组，它今天只钉文档侧这一份。
+ * `PATCH_FIELDS` 这个真源本身仍由 `tests/contract/admin-keys-write.test.ts`
+ * 「五个动作各自生效：停用 / 启用 / 清冷却 / 清 strikes / 解除剔除」与
+ * 「clearStats：stats 归零，而 disabled / addedAt / note / cooldownUntil / evicted 逐字段不变」
+ * 两格从行为侧钉着。
  *
  * ⚠️ **同一轮里删掉的那个数**：五份原来写着「六个动作同价 / All six actions /
  * 6 つの操作 / 여섯 동작」，而紧挨着的括号里枚举的是**七**项——`disabled` 一个字段
  * 对应「停用 / 启用」两个方向。那个数与它身边那一行自相矛盾，且真源变了也不会红。
  * **能删数字就删数字**：五份一律改成「上面每一项都同价」，数量这件事交给下面两格。
  */
-describe("「改一把 key」那份动作枚举的两个投影都从 `PATCH_FIELDS` 现算（P3e Task 31A 复评回填）", () => {
+describe("「改一把 key」那份动作枚举从 `PATCH_FIELDS` 现算（P3e Task 31A 复评回填）", () => {
   /**
    * **字段 → 那种语言里的动作词。** 这是一张手写表，但它**不是第二份真源**：
    * 它的**字段集**由下面 `enumerationFailures()` 逐次与 `PATCH_FIELDS` 对齐——
@@ -6113,65 +6190,6 @@ describe("「改一把 key」那份动作枚举的两个投影都从 `PATCH_FIEL
     probeBaseEnumeration();
     const noisy: ApiDocReader = (lang) => `${realDoc("DEPLOY")(lang)}\n\n<!-- 无关的一行 -->\n`;
     expect(enumerationFailures(PATCH_FIELDS, noisy), "五份一起多写了一句无关的话，判据却红了").toEqual([]);
-  });
-
-  // ── 第二个投影：设计文档 §11 端点表那一行的请求体字段清单 ──────────────────
-
-  const ENDPOINT_ROW_ANCHOR = "| PATCH | `/admin/api/keys/:id` |";
-
-  /** 设计文档的取文口径。**与上面那一组同名的那个是各自 describe 里的局部量**，这里另取一份同源的。 */
-  const designSrc = (): string => readFileSync(RESET_DESIGN_DOC, "utf8");
-
-  /**
-   * 从端点表那一行里把 `{ a?, b?, … }` 解析成字段数组。
-   * **解析不出来返回 `null`**（行不在、或不是恰好一行、或那一格里没有花括号）——
-   * 同样是「认不出要吵」：解析不出来时返回 `[]` 会让下面那格拿空数组去比，
-   * 报文说的是「字段对不上」，而真相是这一格根本没找到那一行。
-   */
-  function endpointRowFields(src: string): string[] | null {
-    const rows = src.split("\n").filter((l) => l.startsWith(ENDPOINT_ROW_ANCHOR));
-    if (rows.length !== 1) return null;
-    const m = (rows[0] as string).match(/\{([^}]*)\}/);
-    if (m === null) return null;
-    return (m[1] as string).split(",").map((s) => s.trim().replace(/\?$/, "")).filter((s) => s !== "");
-  }
-
-  it("设计文档 §11 端点表那一行的请求体字段清单，逐项逐序等于 `PATCH_FIELDS`", () => {
-    const got = endpointRowFields(designSrc());
-    expect(
-      got,
-      `${RESET_DESIGN_DOC} 里以「${ENDPOINT_ROW_ANCHOR}」开头的行不是恰好一行、`
-      + "或者那一行里解析不出 `{ … }` —— 这一格是靠那一行活着的，解析不出来就是空转",
-    ).not.toBeNull();
-    expect(
-      got,
-      `${RESET_DESIGN_DOC} 的端点表那一行写的请求体字段与真源 \`PATCH_FIELDS\` 对不上`
-      + "（`src/http/admin/handlers/keys-write.ts`）—— **顺序也算**：那张表的顺序"
-      + "就是文档顺序，两边的顺序一旦分家，读表的人拿到的就是另一份约定",
-    ).toEqual([...PATCH_FIELDS]);
-  });
-
-  it("该红时红：端点表那一行少一个字段 / 多一个字段 / 顺序换了，三种都不许绿", () => {
-    const real = designSrc();
-    expect(endpointRowFields(real), "探针的基坏了：真文档今天就解析不出那一行").toEqual([...PATCH_FIELDS]);
-    // 三种变异串都取自那一行今天真实的原文。
-    const dropped = real.split(", clearStats? }").join(" }");
-    expect(dropped, "变异没落地").not.toEqual(real);
-    expect(endpointRowFields(dropped), "少一个字段却绿了").not.toEqual([...PATCH_FIELDS]);
-    const added = real.split(", clearStats? }").join(", clearStats?, clearNote? }");
-    expect(endpointRowFields(added), "多一个字段却绿了").not.toEqual([...PATCH_FIELDS]);
-    const reordered = real.split("{ disabled?, note?,").join("{ note?, disabled?,");
-    expect(reordered, "变异没落地").not.toEqual(real);
-    expect(endpointRowFields(reordered), "顺序换了却绿了").not.toEqual([...PATCH_FIELDS]);
-  });
-
-  it("不乱红：设计文档里多一段散文、那一行前后多几行表 —— 不许因此红", () => {
-    const noisy = designSrc().replace(
-      ENDPOINT_ROW_ANCHOR,
-      `| PATCH | \`/admin/api/keys/:id/nothing\` | ✅ | \`{ 与上面那张真源无关 }\` |\n${ENDPOINT_ROW_ANCHOR}`,
-    );
-    expect(noisy, "变异没落地").not.toEqual(designSrc());
-    expect(endpointRowFields(noisy), "多了一行长得像的表行，判据却红了").toEqual([...PATCH_FIELDS]);
   });
 });
 

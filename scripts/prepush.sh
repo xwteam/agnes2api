@@ -204,7 +204,10 @@ WORKERS_LOG="/tmp/test-workers.log"
 BANNER='[collection-guard] ✅'
 
 # ⚠️ **基线数：最近一次全量跑当场取的，随取随改，它不是一个恒定常量。**
-# （本轮 P3e 全分支评审回填时从 3753 改到 3765：新增 12 格，逐条见那份回填报告。）
+# （上一轮全分支评审回填时从 3753 改到 3765：新增 12 格。
+#   本轮删掉内部设计文档时从 3765 改到 3763：删了 3 格「拿设计文档当期望源」的投影格、
+#   新增 1 格「CHANGELOG 已知限制」；「重置到底重置了什么」那一组 13 格改写成不读设计文档，
+#   格数不变。）
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -213,7 +216,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=135
-EXPECT_NODE_TESTS=3765
+EXPECT_NODE_TESTS=3763
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

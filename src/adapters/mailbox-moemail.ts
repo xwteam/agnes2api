@@ -8,8 +8,8 @@ import type { Logger } from "../ports/logger.js";
  * **MoeMail 侧「活跃邮箱上限」这件事的唯一出处，全仓只此一处复述数字。**
  *
  * · 值：**上游默认 30**，超限时建邮箱返回 **403**。
- * · 出处：P2 设计文档 `docs/design/2026-08-15-agnes2api-p2-registrar-design.md:122`
- *   一段——上游 `app/config/email.ts` 的 `MAX_ACTIVE_EMAILS` 默认 30，
+ * · 出处：注册机设计阶段的一份内部文档（**未随公开仓发布**），那一段追溯的是
+ *   上游 `app/config/email.ts` 的 `MAX_ACTIVE_EMAILS` 默认 30，
  *   **实例可用 `SITE_CONFIG.MAX_EMAILS` 覆盖**，仅 EMPEROR 角色豁免。
  * · 复核日期：**2026-08-21（北京时间）**，本次复核只到"设计文档追溯到了上游那个
  *   常量名"为止，**没有**去 MoeMail 上游仓库二次核对那个默认值今天还是不是 30。
