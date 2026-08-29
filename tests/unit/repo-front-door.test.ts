@@ -65,7 +65,12 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  *  （P3f 阶段 3 评审回填）。那段注释上一版给的理由是假的，而它假在哪儿本机三条 `docker run`
  *   就量得出来：`TZ` 与那条挂载**不是互补的两件事，是互相排斥的两条路**，`TZ` 一有值就赢。
  *   本格钉的是那句话赖以成立的那半件事——`environment` 里 `TZ` 无条件带一个非空默认值。
+ * · **(l) healthcheck 的四个参数与探针命令，在 `Dockerfile` 与 `docker-compose.yml` 两份
+ *   副本之间逐字节相同**（P3f 阶段 3 评审回填）。两份副本是有意的，而
+ *   `docker-compose.yml` 那段注释要求它们「逐个相同」——**这句话此前没有任何判据看着**，
+ *   改一边不改另一边，全仓一格都不会红。
  *
+
 
  * ── 判据只有一份，反向控制从同一份进 ────────────────────────────────────────
  * 每条判据都写成 `(read, exists, list) => 失败报文[]` 的纯函数，真扫描传真 fs，反向控制传
@@ -107,6 +112,9 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  *   `new Date()` 到底打什么，本机跑得出来、CI 里跑不出来（跑测试的进程不在容器里，
  *   而起一个容器只为了看一行时间戳，代价与收益不成比例）。实测记在那段注释里，
  *   哪天有人要改 `TZ` / 挂载这两行中的任何一行，请照那段实测重跑一遍，别只读注释。
+ * · (l) 只查**两份副本彼此相等**，不查这套参数本身合不合理（`interval: 30s` 配
+ *   `start_period: 10s` 对本仓的冷启动够不够，这里一个字都不知道），也不查探针命令
+ *   在容器里真的跑得通——后者由 prepush ⑦ 的双形态冒烟在真容器上验，两侧分工不重叠。
  * · 整组都**只看仓库里的文本**：GitHub 侧的设置（Security Advisory 开没开、issue 模板认不认）
  *   一个字都验不到。
  */
@@ -869,6 +877,134 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     const gutted = realRead(COMPOSE).replace(LOCALTIME_MOUNT, "- ./tz:/tz:ro").replace(NOOP_CLAIM, "无关的一句话");
     expect(gutted, "变异没落地").not.toBe(realRead(COMPOSE));
     expect(() => localtimeNoteFailures(patchRead(realRead, COMPOSE, gutted))).toThrow(/判据坏了/);
+  });
+
+  /* ── (l) healthcheck 的两份副本必须逐字节相同 ─────────────────────────────
+   *
+   * 四个参数 + 探针命令在 `Dockerfile` 与 `docker-compose.yml` 里**各存一份**，这是
+   * 有意的（镜像内那条管「拿这个镜像跑」，compose 那条连 `build:` 回落出来的本地镜像
+   * 一起管住，且改它不用重建镜像）。`docker-compose.yml` 那段注释白纸黑字要求两份
+   * 「逐个相同」——**而这句话此前没有任何东西看着**：改一边不改另一边，CI 那一串门禁
+   * 与 prepush 的逐格表一格都不会红（P3f 阶段 3 评审实测）。
+   * 这正是 `CONTRIBUTING.md`「a checklist that cannot go red is not a guard, it is a to-do list」
+   * 判过死刑的那个形态。
+   * ⚠️ 判据不是「两边都有 healthcheck」，是**四个参数逐个相等 + 探针命令整串相等**。
+   *   参数名两边写法不同（`--start-period` vs `start_period`），映射表写在 `HEALTH_KEYS`。
+   * ⚠️ **Dockerfile 那侧多出一个没登记的参数也要红**：docker 后来加过 `--start-interval`
+   *   这类新旗标，只对四个已知名字取值比对的话，新旗标会安安静静地只存在于一边。
+   * ⚠️ 两侧抽不出来一律**当场抛**，不许静默当成「这里没有约束」——那正是「探针绿了
+   *   而真扫描早就没在看」的那条老路。
+   */
+  const HEALTH_KEYS = [
+    ["interval", "interval"],
+    ["timeout", "timeout"],
+    ["start-period", "start_period"],
+    ["retries", "retries"],
+  ] as const;
+  const REAL_L = "Dockerfile 与 docker-compose.yml 的 healthcheck 四参数与探针命令逐字节相同";
+
+  const dockerfileHealth = (read: Read): { flags: Map<string, string>; probe: string } => {
+    const m = /^HEALTHCHECK((?:\s+--[a-z-]+=\S+)+)\s*\\\n\s*CMD node -e "(.*)"\s*$/m.exec(read("Dockerfile"));
+    if (m === null) {
+      throw new Error("Dockerfile 里那条 HEALTHCHECK 抽不出来 —— 判据坏了，不许静默当成「这里没有约束」");
+    }
+    return {
+      flags: new Map([...m[1]!.matchAll(/--([a-z-]+)=(\S+)/g)].map((f) => [f[1]!, f[2]!])),
+      probe: m[2]!,
+    };
+  };
+
+  const composeHealth = (read: Read): { keys: Map<string, string>; probe: string } => {
+    const block = /^\s{4}healthcheck:\n([\s\S]*?)(?=^\s{4}\S|^\s{2}\S|\Z)/m.exec(read(COMPOSE));
+    if (block === null) {
+      throw new Error(`${COMPOSE} 里那段 healthcheck 抽不出来 —— 判据坏了，不许静默当成「这里没有约束」`);
+    }
+    const body = block[1]!;
+    const t = /^\s{6}test: \["CMD", "node", "-e", "(.*)"\]\s*$/m.exec(body);
+    if (t === null) {
+      throw new Error(`${COMPOSE} 的 healthcheck 里那条 test: 抽不出来 —— 判据坏了，不许静默当成「这里没有探针」`);
+    }
+    return {
+      keys: new Map([...body.matchAll(/^ {6}([a-z_]+): (\S+)\s*$/gm)].map((m) => [m[1]!, m[2]!])),
+      probe: t[1]!,
+    };
+  };
+
+  const healthcheckParityFailures = (read: Read): string[] => {
+    const d = dockerfileHealth(read);
+    const c = composeHealth(read);
+    const out: string[] = [];
+    for (const [dk, ck] of HEALTH_KEYS) {
+      const dv = d.flags.get(dk);
+      const cv = c.keys.get(ck);
+      if (dv === undefined) out.push(`Dockerfile 那条 HEALTHCHECK 没有 \`--${dk}=\`，而 ${COMPOSE} 写着 \`${ck}: ${cv ?? "（也没有）"}\``);
+      else if (cv === undefined) out.push(`${COMPOSE} 的 healthcheck 没有 \`${ck}:\`，而 Dockerfile 写着 \`--${dk}=${dv}\``);
+      else if (dv !== cv) {
+        out.push(`healthcheck 的 ${dk}：Dockerfile 是 \`${dv}\`、${COMPOSE} 是 \`${cv}\``
+          + " —— 同一件事的两份副本给了不同的数，「容器多久才算 unhealthy」就变成一个要先查「这次跑的是哪一份」才答得出的问题");
+      }
+    }
+    const known = new Set<string>(HEALTH_KEYS.map(([dk]) => dk));
+    for (const dk of d.flags.keys()) {
+      if (!known.has(dk)) out.push(`Dockerfile 那条 HEALTHCHECK 多出一个 \`--${dk}=\`，${COMPOSE} 那边没有对应的键，也没人把它登记进 HEALTH_KEYS`);
+    }
+    if (d.probe !== c.probe) {
+      out.push(`healthcheck 的探针命令两份对不上：\n  Dockerfile：${d.probe}\n  ${COMPOSE}：${c.probe}`);
+    }
+    return out;
+  };
+
+  it(REAL_L, () => {
+    const failures = healthcheckParityFailures(realRead);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("(l) 该红时红：compose 的 start_period 改成 20s —— 点名是哪个键、两边各是什么", () => {
+    probeBase(healthcheckParityFailures(realRead), REAL_L);
+    const mutated = realRead(COMPOSE).replace("start_period: 10s", "start_period: 20s");
+    expect(mutated, "变异没落地").not.toBe(realRead(COMPOSE));
+    const failures = healthcheckParityFailures(patchRead(realRead, COMPOSE, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("start-period：Dockerfile 是 `10s`");
+  });
+
+  it("(l) 该红时红：Dockerfile 的 --retries 改成 5 —— 反方向同样点名", () => {
+    probeBase(healthcheckParityFailures(realRead), REAL_L);
+    const mutated = realRead("Dockerfile").replace("--retries=3", "--retries=5");
+    expect(mutated, "变异没落地").not.toBe(realRead("Dockerfile"));
+    const failures = healthcheckParityFailures(patchRead(realRead, "Dockerfile", mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("retries：Dockerfile 是 `5`");
+  });
+
+  it("(l) 该红时红：探针里的 127.0.0.1 只在一边改成 localhost —— 点名探针命令对不上", () => {
+    probeBase(healthcheckParityFailures(realRead), REAL_L);
+    const mutated = realRead(COMPOSE).replace("http://127.0.0.1:", "http://localhost:");
+    expect(mutated, "变异没落地").not.toBe(realRead(COMPOSE));
+    const failures = healthcheckParityFailures(patchRead(realRead, COMPOSE, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("探针命令两份对不上");
+  });
+
+  it("(l) 该红时红：Dockerfile 多出一个 compose 那边没有的参数 —— 不许只比对四个已知名字", () => {
+    probeBase(healthcheckParityFailures(realRead), REAL_L);
+    const mutated = realRead("Dockerfile").replace("--retries=3", "--retries=3 --start-interval=5s");
+    expect(mutated, "变异没落地").not.toBe(realRead("Dockerfile"));
+    const failures = healthcheckParityFailures(patchRead(realRead, "Dockerfile", mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("`--start-interval=`");
+  });
+
+  it("(l) 认不出要吵：Dockerfile 那条 HEALTHCHECK 抽不出来时当场抛，不静默放行", () => {
+    const gutted = realRead("Dockerfile").replace(/^HEALTHCHECK/m, "# HEALTHCHECK");
+    expect(gutted, "变异没落地").not.toBe(realRead("Dockerfile"));
+    expect(() => healthcheckParityFailures(patchRead(realRead, "Dockerfile", gutted))).toThrow(/判据坏了/);
+  });
+
+  it("(l) 认不出要吵：compose 那段 healthcheck 抽不出来时当场抛，不静默放行", () => {
+    const gutted = realRead(COMPOSE).replace(/^ {4}healthcheck:$/m, "    healthcheck_disabled:");
+    expect(gutted, "变异没落地").not.toBe(realRead(COMPOSE));
+    expect(() => healthcheckParityFailures(patchRead(realRead, COMPOSE, gutted))).toThrow(/判据坏了/);
   });
 
   /* ── (j) 教了那条命令的每一份文档都要写「首个镜像发布前会本地构建」 ────────

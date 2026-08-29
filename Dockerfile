@@ -26,6 +26,9 @@ COPY --from=builder /build/dist ./dist
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN mkdir -p /app/data && chown -R app:app /app && chmod +x /usr/local/bin/docker-entrypoint.sh
 EXPOSE 8080
+# ⚠️ 这四个参数与下面那条探针命令在 `docker-compose.yml` 里**还有一份**（两处有意重复，
+# 理由写在那边）。两份必须逐字节相同，由 tests/unit/repo-front-door.test.ts 的 (l) 钉着
+# ——改这两行就得回去改那边，反过来也一样。
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 # 刻意不写 `USER app`：绑定挂载的宿主目录属主会盖过构建期的 chown，必须在运行期

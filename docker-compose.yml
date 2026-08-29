@@ -46,6 +46,10 @@ services:
       # 四个参数与 Dockerfile 那条逐个相同（两参照仓的 compose 与各自 Dockerfile 也是这个关系）：
       # 同一件事的两份副本给不同的数，只会让「容器多久才算 unhealthy」变成一个要先查
       # 「这次跑的是哪一份」才答得出的问题。
+      # ⚠️ 这句「逐个相同」从落地那天到 P3f 阶段 3 评审为止**没有任何判据看着**：改一边不改
+      #   另一边，CI 那一串门禁与 prepush 的逐格表一格都不会红。现在由
+      #   tests/unit/repo-front-door.test.ts 的 (l) 钉着 —— 四个参数逐个比、探针命令整串比，
+      #   Dockerfile 那边多出一个这里没有的参数同样红。**改这五行必须两份一起改。**
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
