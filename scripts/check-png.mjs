@@ -16,7 +16,28 @@
 //   base64 团），以及任何被压过一道的东西，凭据扫描一个字都读不到。**
 // 一个 PNG 有的是地方放这些：`IEND` 之后的尾随字节、`tEXt` / `zTXt` / `iTXt` /
 // `eXIf` 这类能塞任意字节的块、乃至一个 CRC 对不上的坏块。这个脚本把这些位置
-// 逐个封掉——**它守的是"这个文件里除了像素什么都没有"，不是"这张图好不好看"。**
+// 逐个封掉——**它守的是"这个文件里没有第二个能自由写字节的地方：除了 IDAT
+// （而 IDAT 的内容被解压后按 `宽×高×4 + 每行 1 字节` 逐字节对过账），
+// 其余每个块的长度都被钉死"**，不是"这张图好不好看"。
+//
+// ⚠️ **上面这句话在第一版里是假的，回填第 1 轮才变成真的。** 第一版的白名单里有
+// `iCCP`（"名字 \0 + 压缩方法 + 任意长度 zlib 流"）、`PLTE`、`tRNS` 三个变长块，
+// 而且**任何一个白名单块都没有长度校验**——`gAMA` 按规范固定 4 字节，声明成
+// 20000 字节照样放行（评审复现出前三个，第四个是回填时自己量出来的）。
+// 本机复现（数字都是自己跑出来的，不是抄评审的）：往 `IEND` 之前插一个装了 20000 字节
+// zlib 载荷的 `iCCP` ⇒「✅ 块序 IHDR IDAT iCCP IEND」；`tRNS` 装一段域名+邮箱 ⇒ ✅；
+// `PLTE` 装 768 字节 ⇒ ✅；`gAMA` 声明 20000 字节 ⇒「✅ 31971 字节」。
+// 四条全在 32 KB 上限之内 —— 也就是说体积上限一次都没被走到，是块判据自己漏的。
+// 载荷是压过的，而压过的东西 `scripts/scan-secrets.sh` 一个字都读不到（见上面的档 D）。
+// **也就是说具名放行让出的洞原样还在，只是从 IEND 尾随字节挪进了一个被白名单
+// 祝福过的块里。** 处置是三条一起上，不是改文案：
+//   ① `iCCP` / `PLTE` / `tRNS` 从白名单里删掉——三张真图（本仓 + 两个参照仓）的块序
+//      都是 `IHDR IDAT IEND`，删掉零代价；且本脚本只收 colorType=6，按 PNG 规范
+//      `tRNS` 在这个色彩类型下根本不该出现，`PLTE` 也只是个"建议调色板"；
+//   ② 每个白名单块配长度界（`CHUNK_SIZE`），`IDAT` 是唯一的变长块；
+//   ③ 补块序校验：`IHDR` 恰一个且在首、`IEND` 在末、其余块必须排在第一个 `IDAT` 之前。
+//      （`IDAT` 连续性由 ③ 推出，不另设一条——两个 IDAT 之间只可能夹 IHDR/IEND/辅助块，
+//      三种都已各自被判掉。多写一条恒真的判据就是一条不会红的判据。）
 //
 // ⚠️ **第 6 条规则（裸 IP）那一档是 fail-closed，今天不红是逐字节的运气。**
 // 它要的是命中行的**内容**（白名单按取值放行），而 `git grep` 对二进制只吐一行
@@ -67,10 +88,38 @@ export const REGISTERED_BINARIES = Object.freeze({
 
 const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-/** 允许出现的块：只有真正承载像素与画布信息的那几种。白名单外一律拒绝。 */
+/**
+ * 允许出现的块：只有真正承载像素与画布信息的那几种。白名单外一律拒绝。
+ *
+ * ⚠️ **进这张表的门槛是「长度被钉死」，不是「PNG 规范认得它」**（回填第 1 轮改的判准）。
+ * `iCCP` / `PLTE` / `tRNS` 三个曾经在这张表里，它们的共同点是**变长**——
+ * `iCCP` 更是直接允许一段任意长度的 zlib 流。一个变长块被白名单祝福，
+ * 等于把具名放行让出的那个洞原样搬进来。三者一律删除，理由见文件头 ①。
+ * 唯一的例外是 `IDAT`，它的内容不是靠长度而是靠**解压后逐字节对账**验的
+ * （`transparentRatio()` 里那句 `raw.length !== height * (stride + 1)`）。
+ */
 export const ALLOWED_CHUNKS = new Set([
-  "IHDR", "PLTE", "IDAT", "IEND", "tRNS", "gAMA", "cHRM", "sRGB", "pHYs", "bKGD", "sBIT", "iCCP",
+  "IHDR", "IDAT", "IEND", "gAMA", "cHRM", "sRGB", "pHYs", "bKGD", "sBIT",
 ]);
+
+/**
+ * 每个白名单块的长度界 `[最小, 最大]`（按 PNG 规范第 11 章的固定长度写死）。
+ * **`IDAT` 不在表里 —— 它是唯一允许变长的块**，上界由文件总体积 `LIMITS.maxBytes` 兜。
+ *
+ * 没有这张表的话删掉 `iCCP` 只是把载荷挪个窝：实测一个声明 20000 字节的 `gAMA`
+ * （规范里它固定 4 字节）在补这张表之前是**全绿**的。
+ * `sBIT` / `bKGD` 的长度随色彩类型变，本脚本只收 colorType=6 ⇒ 分别恰好是 4 与 6。
+ */
+export const CHUNK_SIZE = Object.freeze({
+  IHDR: [13, 13],
+  IEND: [0, 0],
+  gAMA: [4, 4],
+  cHRM: [32, 32],
+  sRGB: [1, 1],
+  pHYs: [9, 9],
+  sBIT: [4, 4],
+  bKGD: [6, 6],
+});
 
 /**
  * 明令禁止的块。**它们与"白名单外一律拒绝"不是同一件事**：白名单已经把这些挡在外面了，
@@ -151,8 +200,8 @@ function transparentRatio(idat, width, height) {
 
 /**
  * 逐字节审一个 PNG。**不满足任何一条就 throw**，报文里带上是哪一条不满足
- * ——五条负例各自命中不同分支这件事由 `tests/unit/check-png.test.ts` 的
- * 「五条负例的报文两两不同 —— 不是一把梭」钉着。
+ * ——九条负例各自命中不同分支这件事由 `tests/unit/check-png.test.ts` 的
+ * 「九条负例的报文两两不同 —— 不是一把梭」钉着。
  */
 export function auditPng(path, buf = readFileSync(path)) {
   const fail = (msg) => { throw new Error(`${path}: ${msg}`); };
@@ -160,6 +209,7 @@ export function auditPng(path, buf = readFileSync(path)) {
   if (!buf.subarray(0, 8).equals(SIGNATURE)) fail("不是 PNG（头 8 字节的签名不符）");
 
   const chunks = [];
+  const sizes = [];
   let off = 8;
   let idat = [];
   while (off < buf.length) {
@@ -175,6 +225,7 @@ export function auditPng(path, buf = readFileSync(path)) {
       fail(`块 ${type} CRC 不符（文件里写着 ${crcGot.toString(16)}，按内容算是 ${crcWant.toString(16)}）—— 有字节被改过`);
     }
     chunks.push(type);
+    sizes.push(len);
     if (type === "IDAT") idat.push(buf.subarray(off + 8, dataEnd));
     off = dataEnd + 4;
     if (type === "IEND") break;
@@ -189,6 +240,38 @@ export function auditPng(path, buf = readFileSync(path)) {
     if (!ALLOWED_CHUNKS.has(t)) fail(`含未登记块 ${t}（白名单外一律拒绝）`);
   }
   if (idat.length === 0) fail("一个 IDAT 都没有 —— 这份 PNG 里没有像素");
+
+  // ── 长度界：`IDAT` 之外的每个块都被钉死 ────────────────────────────────────
+  // 白名单只回答"这个类型能不能来"，回答不了"它能带多少字节进来"。
+  // 少了这一条，删掉 `iCCP` 只是把载荷挪进 `gAMA`：一个声明 20000 字节的 `gAMA`
+  // （规范里固定 4 字节）在补这条判据之前是全绿的，实测过。
+  for (let i = 0; i < chunks.length; i++) {
+    const bound = CHUNK_SIZE[chunks[i]];
+    if (bound === undefined) continue; // 只有 IDAT 落到这儿：它靠解压后逐字节对账，不靠长度
+    const [lo, hi] = bound;
+    if (sizes[i] < lo || sizes[i] > hi) {
+      fail(`块 ${chunks[i]} 的长度是 ${sizes[i]} 字节，PNG 规范里它${lo === hi ? `固定 ${lo}` : `只能是 ${lo}..${hi}`} 字节`
+        + " —— 一个超长的定长块就是一个能自由写字节的口袋");
+    }
+  }
+
+  // ── 块序：辅助块一律排在像素之前 ───────────────────────────────────────────
+  // 规范原文（第 5.6 节）：`PLTE` 与绝大多数辅助块必须排在第一个 `IDAT` 之前。
+  // `IHDR IDAT gAMA IEND` 这种排法真解码器会拒，而没有这条判据时本脚本照收——
+  // 那正是"看起来一切正常的图后面接了点东西"最容易伪装的位置。
+  // ⚠️ **`IDAT` 连续性不另设一条**：两个 `IDAT` 之间只可能夹 `IHDR`（下面那条判掉）、
+  // `IEND`（解析到它就 break，多出来的字节走尾随判据）或辅助块（这条判掉），
+  // 所以连续性是这三条的推论。再写一条只会得到一条永远不会红的判据。
+  if (chunks.filter((t) => t === "IHDR").length !== 1) {
+    fail(`IHDR 出现了 ${chunks.filter((t) => t === "IHDR").length} 次 —— 一份 PNG 只能有一个 IHDR`);
+  }
+  const firstIdat = chunks.indexOf("IDAT");
+  for (let i = firstIdat + 1; i < chunks.length; i++) {
+    if (chunks[i] !== "IDAT" && chunks[i] !== "IEND") {
+      fail(`块 ${chunks[i]} 排在第一个 IDAT 之后（块序 ${chunks.join(" ")}）`
+        + " —— PNG 规范要求辅助块排在像素数据之前，真解码器会拒这份文件");
+    }
+  }
 
   const width = buf.readUInt32BE(16), height = buf.readUInt32BE(20);
   const [depth, colorType, compression, filter, interlace] = [buf[24], buf[25], buf[26], buf[27], buf[28]];

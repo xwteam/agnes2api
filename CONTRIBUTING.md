@@ -87,8 +87,29 @@ directories on purpose — a binary file is invisible to the text tool chain the
 project is built on (review diffs, `grep` audits, the credential scan). The logo gets in
 through a **named allowlist holding exactly one literal path**, and the hole that allowlist
 opens is closed by a second gate, `scripts/check-png.mjs`, which reads the file byte by byte:
-signature, per-chunk CRC, chunk-type allow/deny lists, **zero trailing bytes after `IEND`**,
-sha256 against a registered value, plus dimensions, byte budget and transparent-pixel ratio.
+signature, per-chunk CRC, chunk-type allow/deny lists, **a size bound on every chunk type
+except `IDAT`**, **chunk ordering** (one `IHDR` first, everything but `IDAT` ahead of the
+pixels, `IEND` last), **zero trailing bytes after `IEND`**, sha256 against a registered value,
+plus dimensions, byte budget and transparent-pixel ratio. Taken together those add up to one
+property: **`IDAT` is the only place in the file where a byte is free, and `IDAT` is checked
+against `width × height × 4 + one byte per row` after decompression.**
+
+That property is worth stating precisely, because the first version of this gate did not have
+it and said it did. The allowlist then included `iCCP`, `PLTE` and `tRNS` — all
+variable-length, and `iCCP` is by definition "a name, a NUL, a compression byte, then a zlib
+stream of any length". No chunk had a length bound either, so even a `gAMA` (fixed at 4 bytes
+by the spec) could declare 20 000. A logo carrying 20 KB of compressed payload passed with a
+green tick, and compressed payload is exactly what the credential scan cannot read. The hole
+the allowlist opens had not been closed; it had been moved into a chunk the allowlist blessed.
+If you ever need to widen `ALLOWED_CHUNKS`, the entry bar is **"its length is pinned by the
+spec"**, not "the spec knows this chunk".
+
+The word **only** at the top of this section is not asking to be trusted either — it has a
+test that goes red. `tests/unit/check-png.test.ts`「名册整份恰好是 [docs/logo.png] —— 往里加一行就等于把放行扩到别处」
+compares the whole registry against a one-element list, so a second path fails and gets named.
+Before that assertion existed the registry had no lock at all: a second PNG dropped under
+`src/`, plus one line in `REGISTERED_BINARIES`, made the binary gate print a green tick and
+left every other check quiet.
 
 Swapping the image is therefore four steps, not one:
 

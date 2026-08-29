@@ -13,7 +13,7 @@ const REAL_LOGO = resolve("docs/logo.png");
  * `docs/logo.png` 开了一个具名放行，"这个文件里藏没藏东西"从此没人回答，这个脚本接手。
  * 所以这份测试要证的不是"它能跑"，而是两件相反的事：
  * · **该红时红，而且各自为不同的理由红**——报文互不相同这一条单独占一格，
- *   一把梭（无论什么输入都吐同一句话）在计数上与"五条都红"是分不清的；
+ *   一把梭（无论什么输入都吐同一句话）在计数上与"九条都红"是分不清的；
  * · **不乱红**——三张真正合规的图必须绿。少了这一侧，"永远红"也能拿满分。
  *
  * ⚠️ **阳性对照为什么是"本仓真图 + 两张合成图"，而不是两个参照仓的真图**（如实登记）：
@@ -103,7 +103,46 @@ const realLogo = (): Buffer => readFileSync(REAL_LOGO);
 /** `IEND` 块（长度 0 + 类型 + CRC，共 12 字节）在文件末尾的起点。 */
 const iendStart = (buf: Buffer): number => buf.length - 12;
 
-/** 五条负例的构造：名字 → [文件名, 字节, 报文里必须出现的那句话]。 */
+/**
+ * 第一个 `IDAT` 块的起点。**走一遍块表算出来，不写死偏移**——写死 33
+ * （= 8 字节签名 + 12 + 13 的 IHDR）会在换图那天静静指到别处。
+ */
+function firstIdatStart(buf: Buffer): number {
+  // ⚠️ 这里刻意用字节算术而不是 `buf.readUInt32BE` / `buf.toString("ascii", …)`：
+  // 本仓 tsconfig 的 `types` 里 `@cloudflare/workers-types` 排在 `node` 之前，
+  // 全局 `Buffer` 解析到的是 workers 那份**子集**声明，那两个方法在类型上不存在
+  // （`pnpm typecheck` 会报 TS2339 / TS2554，实测过）。
+  let off = 8;
+  while (off + 12 <= buf.length) {
+    const len = (buf[off]! * 0x1000000) + (buf[off + 1]! << 16) + (buf[off + 2]! << 8) + buf[off + 3]!;
+    const type = String.fromCharCode(buf[off + 4]!, buf[off + 5]!, buf[off + 6]!, buf[off + 7]!);
+    if (type === "IDAT") return off;
+    off += 12 + len;
+  }
+  throw new Error("这份 PNG 里没有 IDAT —— 测试数据坏了");
+}
+
+const insertAt = (buf: Buffer, at: number, blk: Buffer): Buffer =>
+  Buffer.concat([buf.subarray(0, at), blk, buf.subarray(at)]);
+
+/**
+ * 确定性的"压不动"字节。**装 iCCP 载荷那条负例需要它**：载荷若用 `Buffer.alloc(n, 0x41)`，
+ * zlib 一压只剩几十字节，那条负例就只证明了"iCCP 被拒"，证不了
+ * "一个 iCCP 能装下多大的东西"。用 LCG 出的噪声压完还是 20 KB 上下，
+ * 而合成出来的文件仍在 32 KB 上限之内——**这一点很要紧**：它保证那条负例
+ * 是被块类型判据接住的，不是被体积上限顺手挡下的。
+ */
+function noise(n: number): Buffer {
+  const b = Buffer.alloc(n);
+  let s = 0x2545f491;
+  for (let i = 0; i < n; i++) {
+    s = (Math.imul(s, 1103515245) + 12345) >>> 0;
+    b[i] = (s >>> 16) & 0xff;
+  }
+  return b;
+}
+
+/** 九条负例的构造：名字 → [文件名, 字节, 报文里必须出现的那句话]。 */
 const NEGATIVES: ReadonlyArray<readonly [string, () => Buffer, string]> = [
   [
     "IEND 之后追加一段尾随字节（最常见的藏法：图一字未动，东西全接在后面）",
@@ -140,9 +179,57 @@ const NEGATIVES: ReadonlyArray<readonly [string, () => Buffer, string]> = [
     () => synthPng(128, 128, 0),
     "低于下限",
   ],
+  // ── 以下四条是回填第 1 轮补的：块白名单曾经放行三个变长块、一个块都不校验长度、块序完全没判 ──
+  [
+    "塞一个装了 20 KB zlib 载荷的 iCCP —— 而且放在规范允许的位置（IDAT 之前），块序完全合法",
+    // 这条负例的分量在于**它一度是全绿的**：`iCCP` 曾在白名单上，
+    // 载荷是压过的、`scripts/scan-secrets.sh` 一个字读不到（文件头档 D 实测），
+    // 位置又合规到真解码器都挑不出毛病。它就是具名放行让出的那个洞本身，
+    // 只不过从 `IEND` 尾随字节挪进了一个被祝福过的块里。
+    () => {
+      const b = realLogo();
+      const iccp = chunk("iCCP", Buffer.concat([
+        Buffer.from("p\0", "latin1"), Buffer.from([0]), deflateSync(noise(20000)),
+      ]));
+      return insertAt(b, firstIdatStart(b), iccp);
+    },
+    "含未登记块 iCCP",
+  ],
+  [
+    "塞一个声明 20000 字节的 gAMA —— 类型在白名单上、位置也合法，只是规范里它固定 4 字节",
+    // 只删 `iCCP` 是不够的：白名单回答的是"这个类型能不能来"，回答不了
+    // "它能带多少字节进来"。补长度界之前这一条同样是全绿的（实测 31971 字节）。
+    () => {
+      const b = realLogo();
+      return insertAt(b, firstIdatStart(b), chunk("gAMA", noise(20000)));
+    },
+    "块 gAMA 的长度是 20000 字节",
+  ],
+  [
+    "把一个长度合法的 pHYs 挪到 IDAT 之后（`IHDR IDAT pHYs IEND` 这种块序真解码器会拒）",
+    // 这一条钉的是块序判据，所以刻意用一个**在白名单上、长度也对**的块：
+    // 换成 `iCCP` 的话红的会是白名单那条，块序判据一格都没被走到。
+    () => {
+      const b = realLogo();
+      return insertAt(b, iendStart(b), chunk("pHYs", Buffer.from([0, 0, 0x0b, 0x13, 0, 0, 0x0b, 0x13, 1])));
+    },
+    "排在第一个 IDAT 之后",
+  ],
+  [
+    "复制一份 IHDR 塞在原 IHDR 之后 —— 位置合法、长度合法，就是多了一个",
+    // 这一条钉的是「IHDR 恰一个」。**它不是为了拦载荷**（IHDR 固定 13 字节，装不下什么），
+    // 是因为块序判据只管"第一个 IDAT 之后"，管不到两个 IHDR 都在 IDAT 之前的排法。
+    // 写下一条判据就得配一条会红的输入，否则那条判据只是句好听的话。
+    () => {
+      const b = realLogo();
+      const at = firstIdatStart(b);
+      return insertAt(b, at, b.subarray(8, at));
+    },
+    "IHDR 出现了 2 次",
+  ],
 ];
 
-describe("scripts/check-png.mjs：五条负例各自红", () => {
+describe("scripts/check-png.mjs：九条负例各自红", () => {
   it.each(NEGATIVES.map((n, i) => [i, n[0], n[1], n[2]] as const))(
     "负例 %i：%s",
     (_i, _name, make, needle) => {
@@ -155,17 +242,17 @@ describe("scripts/check-png.mjs：五条负例各自红", () => {
   );
 
   /**
-   * **这一格是上面五格的前提，不是重复**：五条都红、但五句话一模一样的话，
+   * **这一格是上面九格的前提，不是重复**：九条都红、但九句话一模一样的话，
    * 判据完全可能只是"对任何输入都红"，而计数上看不出区别。这里要求报文两两不同。
    */
-  it("五条负例的报文两两不同 —— 不是一把梭", () => {
+  it("九条负例的报文两两不同 —— 不是一把梭", () => {
     const messages = NEGATIVES.map(([, make]) => {
       let out = "";
       withTempFile("logo.png", make(), (p) => { out = run([p]).stderr; });
       // 临时目录名每次都不一样，比对前把路径那一段去掉，只留判据自己说的话。
       return out.replace(/\/tmp\/[^\s:]+/g, "<路径>");
     });
-    expect(new Set(messages).size, `五条负例只吐出了 ${new Set(messages).size} 种报文：\n${messages.join("\n---\n")}`)
+    expect(new Set(messages).size, `九条负例只吐出了 ${new Set(messages).size} 种报文：\n${messages.join("\n---\n")}`)
       .toBe(NEGATIVES.length);
   });
 });
@@ -260,16 +347,30 @@ describe("scripts/check-png.mjs 与 scripts/check-no-binary.mjs 的咬合", () =
     expect(ci).toMatch(/run:\s*node scripts\/check-png\.mjs\s*$/m);
   });
 
-  it("放行的路径与被审的路径是同一批：名册里每一条都真的在 docs/ 下存在", () => {
-    // 这一格与上面「名册里登记着、仓里却没有 ⇒ 红」是两件事：那一格测脚本的行为，
-    // 这一格测**真仓今天的状态**——名册不许留幽灵条目。
+  it("名册整份恰好是 [docs/logo.png] —— 往里加一行就等于把放行扩到别处", () => {
+    // ⚠️ **这一格在回填第 1 轮之前是「差一点就是守卫」的形态**，如实记下来：
+    // 它当时的名字承诺「名册里每一条都真的在 docs/ 下存在」，断言体却只是
+    // `readFileSync(resolve(p))` 不抛——**任何目录下的任何一个存在的文件都能过**。
+    // 实测：`cp docs/logo.png src/backdoor.png` 再往名册里加一行它的 sha256 ⇒
+    // `check-no-binary` 绿、这份测试 16 格一格不吵。而 `CONTRIBUTING.md` 明写着
+    // 「`docs/logo.png` 是 src/ tests/ admin-ui/ scripts/ docs/ 下**唯一**被允许的二进制文件」。
+    // 一条被公开承诺、却没有任何判据会为它变红的不变量，按本仓的话说不是守卫，是待办。
+    //
+    // 改法是**从真源现算整份名册再整体相等**，不是逐条做存在性检查：
+    // 逐条检查的射程是「这一条没烂」，整体相等的射程才是「只有这一条」。
     const out = execFileSync("node", ["-e",
       "import('./scripts/check-png.mjs').then(m => console.log(Object.keys(m.REGISTERED_BINARIES).join('\\n')))",
     ], { encoding: "utf8" }).trim();
     const paths = out.split("\n").filter((s) => s !== "");
-    expect(paths.length, "名册空了 —— 空名册会让这道门禁静静地什么都不审").toBeGreaterThan(0);
-    for (const p of paths) {
-      expect(() => readFileSync(resolve(p)), `名册里登记的 ${p} 不在仓里`).not.toThrow();
-    }
+    expect(
+      paths,
+      "名册被扩过了 —— 具名放行的前提就是它只有这一个字面路径。"
+      + "要再放行一个二进制文件，先去改 CONTRIBUTING.md 里那句「唯一」，"
+      + "并回答清楚谁来替新那份回答「这个文件里藏没藏东西」。",
+    ).toEqual(["docs/logo.png"]);
+    // 名册不许留幽灵条目：登记了却不在仓里同样是烂名册。
+    // （这一格与上面「名册里登记着、仓里却没有 ⇒ 红」是两件事：那一格测脚本的行为，
+    //   这一格测**真仓今天的状态**。）
+    expect(() => readFileSync(resolve(paths[0]!)), `名册里登记的 ${paths[0]} 不在仓里`).not.toThrow();
   });
 });

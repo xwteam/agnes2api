@@ -213,7 +213,11 @@ BANNER='[collection-guard] ✅'
 #   补了 2 格反向控制——**这一格当场把这次增格拦下来了，不是我主动想起来改的**。
 #   P3f 阶段 2 从 3765 改到 3784、文件数从 135 改到 136：`docs/logo.png` 进仓需要给
 #   `scripts/check-no-binary.mjs` 开一个具名放行，配套的补偿判据 `scripts/check-png.mjs`
-#   带来一份新测试（16 格）与放行那一族的 3 格。）
+#   带来一份新测试（16 格）与放行那一族的 3 格。
+#   阶段 2 回填第 1 轮从 3784 改到 3788：`scripts/check-png.mjs` 的块白名单里曾有三个
+#   变长块、且一个块都不校验长度，补了「白名单收窄 + 逐块长度界 + 块序」三条判据，
+#   各配一条负例（块序那条顺带补出「IHDR 恰一个」，也配了负例）⇒ 那份测试从 16 格到 20 格。
+#   文件数不变。）
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -222,7 +226,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=136
-EXPECT_NODE_TESTS=3784
+EXPECT_NODE_TESTS=3788
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
