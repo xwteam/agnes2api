@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
-# 同步版本号到 VERSION、package.json、src/version.ts 与全部 README 徽章。
+# 统一设置项目版本号，一处修改、多处同步：
+#   - VERSION
+#   - package.json 的 version
+#   - src/version.ts 的 VERSION 常量
+#   - 根 README 与全部多语言文档（docs/*/README.md）顶部的 version 徽章
+#
 # 用法: bash scripts/set-version.sh 0.1.1
+#
+# 发版流程：先跑本脚本同步版本 → 刷 lock 文件（脚本末尾会把这条命令打出来）→
+# 更新 CHANGELOG → 提交 → 打 tag vX.Y.Z → 推送（提交与 tag 都要推）。
+# 推 `v*` 标签会触发 .github/workflows/docker-publish.yml 发 GHCR 镜像
+# （那份 workflow 也可以在 Actions 页手动跑一次）；README 的 version 徽章不是
+# 现算的，它随本脚本改出来的那个提交一起进仓，所以顺序不能倒过来。
 set -euo pipefail
 V="${1:-}"
 [[ -z "$V" ]] && { echo "用法: scripts/set-version.sh <version>" >&2; exit 1; }
