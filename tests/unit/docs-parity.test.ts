@@ -6562,3 +6562,340 @@ it("五份 DEPLOY.md 都写着 package.json 里那两条本地开发脚本，而
   }
   expect(missing, missing.join("\n")).toEqual([]);
 });
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 五份 SPONSORS.md 的字面恒等式（P3f 阶段 4 评审回填：W33 的验收 ①②③⑤）
+ *
+ * 这五份文档落地那一笔（W32/W33/W34/W36/W37）声称验收过四项恒等式——
+ * ①「`## ` 序列 `toEqual` 该语言的译名」②「`^---$` == 2」③「4 步 git 命令与 4 条 bullet
+ * 逐字节命中固定串」⑤「相对链接零 broken」——**而这四项当时一条都没落成判据**，
+ * 全靠一次性 shell 跑出来的计数。`toEqual` 是断言，`grep -c` 不是。
+ *
+ * 阶段 4 评审的两条变异实测（都在盘上真跑过，全绿）：
+ * · 变异 D：只改 `docs/zh-CN/SPONSORS.md` 一份，同时违反 ①②③ —— H2 改名、删掉第二条
+ *   `---`、把 `git commit -m "feat: add something"` 改成 `chore: whatever`、把 ⭐ 那条
+ *   bullet 换掉。整套用例**全绿**。原因是这份文档当天唯一活着的守卫只有 R2（heading
+ *   **层级**序列 `[1,2,2]`，不看标题文字）与 R4（链接多重集）：改标题不动层级、
+ *   删 `---` 不动 heading、改 git 命令不动链接。
+ * · 变异 E：给五份各加一行 `[x](./NOPE.md)`（五份一致所以 R4 也不红）。同样**全绿**——
+ *   坏链判据当天的射程只有根 `README.md`，`docs/**` 一份都不在里面。
+ *
+ * ⇒ 本组把那四项各自落成判据，并按本仓体例各配「该红时红」。
+ *
+ * ── 边界（明写，别读成「这五份文档从此都是对的」）──────────────────────────
+ * · ① 只钉**标题这三行的字面**，不钉正文一个字。导语、`**贡献方向：**` 那段、
+ *   五条方向 bullet 里除末两条之外的部分，今天都没有判据（末两条由 W35 那一笔的
+ *   「与两仓末两条 bullet 逐字一致」管着，那是另一组）。
+ * · ② 只数 `^---$`，不管它们分割出来的是不是想要的那几段。
+ * · ③ 只钉四步的**条数**与两条 git 命令的**字面**；四步各自的说明文字逐语言不同，
+ *   由 ③b 的 bullet 表之外**没有**判据——那是登记在案的缺口，不是「已经覆盖」。
+ * · ⑤ 的射程是 `docs/` 下递归到的每一份 `.md`（不只 SPONSORS），但它**只查落点存不存在、是不是
+ *   文件**：`#锚点` 那一段一律截掉不查（跨文档锚点要 slug 化，那是 R17 统一治理的活，
+ *   本轮不做）。**而 SPONSORS.md 这五份今天一条相对链接都没有**（唯一那条 Issue 链接是
+ *   绝对 URL）⇒ ⑤ 对 SPONSORS 本身是一格空判据，真正看着它那条链接的是 R4 的
+ *   「五份链接多重集相等」。这件事下面单配一格钉住**今天的事实**，哪天有人给它加了
+ *   第一条相对链接，那一格会红并把人带回这段话。
+ * · 根 `SPONSORS.md`（不在 `docs/` 下的那一份）**不在本组射程**：它归 W35/W67。
+ *   顺带记一条给那一档的人：根那份的 🐛 bullet 写的是「提交 Issue 反馈 bug 或建议」，
+ *   **没有** `docs/zh-CN/SPONSORS.md` 那条 `[Issue](…)` 链接——两份是不是该一致，
+ *   本轮没判，也没有判据在看。
+ * ────────────────────────────────────────────────────────────────────────── */
+describe("五份 SPONSORS.md 的字面恒等式（W33 的验收 ①②③⑤）", () => {
+  /** ① 逐字抄 T3 §4.1 那张译名表。H2-2「交流群」整列按 V40 不取，所以每种语言三项不是四项。 */
+  const SPONSORS_HEADINGS: Record<Lang, readonly [string, string, string]> = {
+    "zh-CN": ["# ☕ 赞赏 & 共享", "## 💖 支持项目", "## 🤝 参与贡献"],
+    "zh-TW": ["# ☕ 贊賞 & 共享", "## 💖 支持專案", "## 🤝 參與貢獻"],
+    en: ["# ☕ Support & Contribute", "## 💖 Support the Project", "## 🤝 Contributing"],
+    ja: ["# ☕ サポート & 貢献", "## 💖 プロジェクトをサポート", "## 🤝 貢献する"],
+    ko: ["# ☕ 후원 & 기여", "## 💖 프로젝트 지원", "## 🤝 기여하기"],
+  };
+
+  /** ③b 四条支持 bullet，逐语言逐字节。emoji 前缀五份相同，后面的话逐语言不同。 */
+  const SPONSORS_BULLETS: Record<Lang, readonly [string, string, string, string]> = {
+    "zh-CN": [
+      "- ⭐ 给项目点个 Star",
+      "- 🔗 分享给有需要的朋友",
+      "- 🐛 提交 [Issue](https://github.com/xwteam/agnes2api/issues) 反馈 bug 或建议",
+      "- 🔧 提交 PR 贡献代码或文档",
+    ],
+    "zh-TW": [
+      "- ⭐ 給專案點個 Star",
+      "- 🔗 分享給有需要的朋友",
+      "- 🐛 提交 [Issue](https://github.com/xwteam/agnes2api/issues) 回饋 bug 或建議",
+      "- 🔧 提交 PR 貢獻程式碼或文件",
+    ],
+    en: [
+      "- ⭐ Star the project",
+      "- 🔗 Share with friends who might need it",
+      "- 🐛 Submit an [Issue](https://github.com/xwteam/agnes2api/issues) to report bugs or suggestions",
+      "- 🔧 Submit PRs to contribute code or documentation",
+    ],
+    ja: [
+      "- ⭐ プロジェクトにスターを付ける",
+      "- 🔗 必要としている友人と共有する",
+      "- 🐛 バグや提案を[Issue](https://github.com/xwteam/agnes2api/issues)で報告する",
+      "- 🔧 コードやドキュメントをPRで貢献する",
+    ],
+    ko: [
+      "- ⭐ 프로젝트에 스타 주기",
+      "- 🔗 필요한 친구들과 공유하기",
+      "- 🐛 버그나 제안을 [Issue](https://github.com/xwteam/agnes2api/issues)로 제출하기",
+      "- 🔧 코드나 문서를 PR로 기여하기",
+    ],
+  };
+
+  /** ③ 两条 git 命令：**语言无关**，五份逐字节相同，各恰出现一次。 */
+  const GIT_COMMANDS = [
+    "`git checkout -b feature/your-feature`",
+    "`git commit -m \"feat: add something\"`",
+  ] as const;
+
+  type LangRead = (lang: Lang) => string;
+  const realSponsors: LangRead = (l) => readFileSync(docPath(".", l, "SPONSORS"), "utf8");
+  /** 变异的唯一注入点：换掉某一种语言那份的内容，其余照旧。 */
+  const patchLang = (base: LangRead, at: Lang, body: string): LangRead => (l) => (l === at ? body : base(l));
+
+  /** 变异格的基自检，与本文件其它组同一套口径。 */
+  const probeGreen = (failures: readonly string[], realCase: string): void => {
+    if (failures.length > 0) {
+      throw new Error(`本格是探针，它的基取自真仓，而真仓今天本身就不过这条判据 —— 真因在「${realCase}」那一格：\n${failures.join("\n")}`);
+    }
+  };
+
+  /* ── ① 标题三行 ──────────────────────────────────────────────────────── */
+  const REAL_1 = "① 五份 SPONSORS.md 的标题逐字等于 T3 §4.1 那张译名表";
+
+  const headingLines = (src: string): string[] =>
+    outsideFences(src).split("\n").filter((l) => /^#{1,6} /.test(l));
+
+  const headingFailures = (read: LangRead): string[] => {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const got = headingLines(read(lang));
+      if (got.length === 0) {
+        throw new Error(`docs/${lang}/SPONSORS.md 里一个标题都没抽出来 —— 判据坏了，不许静默当成「标题都对」`);
+      }
+      const want = SPONSORS_HEADINGS[lang];
+      if (got.length !== want.length || got.some((h, i) => h !== want[i])) {
+        out.push(`docs/${lang}/SPONSORS.md 的标题序列与登记表对不上：\n  want: ${JSON.stringify(want)}\n  got:  ${JSON.stringify(got)}`);
+      }
+    }
+    return out;
+  };
+
+  it(REAL_1, () => {
+    const failures = headingFailures(realSponsors);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("① 该红时红：zh-CN 的 H2 改成别的名字 —— 层级没变，R2 不会红，本格必须红", () => {
+    probeGreen(headingFailures(realSponsors), REAL_1);
+    const mutated = realSponsors("zh-CN").replace("## 💖 支持项目", "## 💖 随便什么标题");
+    expect(mutated, "变异没落地").not.toBe(realSponsors("zh-CN"));
+    const failures = headingFailures(patchLang(realSponsors, "zh-CN", mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("docs/zh-CN/SPONSORS.md 的标题序列与登记表对不上");
+  });
+
+  it("① 认不出要吵：某一份一个标题都抽不出来时当场抛，不静默当成「标题都对」", () => {
+    const blind = patchLang(realSponsors, "ja", "没有任何标题的一段话\n");
+    expect(() => headingFailures(blind)).toThrow(/判据坏了/);
+  });
+
+  /* ── ② 分隔线条数 = 节数（C30）─────────────────────────────────────────── */
+  const HR_COUNT = 2;
+  const REAL_2 = `② 五份 SPONSORS.md 各恰有 ${HR_COUNT} 条 \`---\`（= 节数；模板是 3 条，少的那条是 V40 删掉交流群节的刻意偏离）`;
+
+  const hrFailures = (read: LangRead): string[] =>
+    LANGS
+      .map((lang) => [lang, outsideFences(read(lang)).split("\n").filter((l) => l === "---").length] as const)
+      .filter(([, n]) => n !== HR_COUNT)
+      .map(([lang, n]) => `docs/${lang}/SPONSORS.md 有 ${n} 条 \`---\`，不是 ${HR_COUNT} 条 —— 分隔线条数与节数是绑在一起的，对不上说明少了一节或多了一条线`);
+
+  it(REAL_2, () => {
+    const failures = hrFailures(realSponsors);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("② 该红时红：删掉第二条 `---` —— heading 一个没动，R2 不会红，本格必须红", () => {
+    probeGreen(hrFailures(realSponsors), REAL_2);
+    const src = realSponsors("zh-CN");
+    const at = src.lastIndexOf("\n---\n");
+    expect(at, "文档里找不到第二条 `---`，变异打偏了").toBeGreaterThan(0);
+    const mutated = src.slice(0, at) + src.slice(at + "\n---".length);
+    expect(mutated, "变异没落地").not.toBe(src);
+    const failures = hrFailures(patchLang(realSponsors, "zh-CN", mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain(`有 ${HR_COUNT - 1} 条 \`---\``);
+  });
+
+  /* ── ③ 四步贡献流程 + 两条 git 命令 ───────────────────────────────────── */
+  const STEP_COUNT = 4;
+  const REAL_3 = "③ 五份 SPONSORS.md 的参与贡献都是四步，两条 git 命令逐字节各出现一次";
+
+  const contribFailures = (read: LangRead): string[] => {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const src = outsideFences(read(lang));
+      const steps = src.split("\n").filter((l) => /^\d+\. /.test(l));
+      if (steps.length !== STEP_COUNT) {
+        out.push(`docs/${lang}/SPONSORS.md 的参与贡献是 ${steps.length} 步，不是 ${STEP_COUNT} 步`);
+      } else {
+        const numbers = steps.map((l) => Number.parseInt(l, 10));
+        if (numbers.some((n, i) => n !== i + 1)) {
+          out.push(`docs/${lang}/SPONSORS.md 的四步编号是 ${JSON.stringify(numbers)}，不是 1..${STEP_COUNT}`);
+        }
+      }
+      for (const cmd of GIT_COMMANDS) {
+        const n = src.split(cmd).length - 1;
+        if (n !== 1) out.push(`docs/${lang}/SPONSORS.md 里 ${cmd} 出现了 ${n} 次，不是 1 次 —— 这两条命令是语言无关的固定串，五份必须逐字节相同`);
+      }
+    }
+    return out;
+  };
+
+  it(REAL_3, () => {
+    const failures = contribFailures(realSponsors);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("③ 该红时红：commit 消息从 `feat: add something` 改成别的 —— 点名那条命令", () => {
+    probeGreen(contribFailures(realSponsors), REAL_3);
+    const mutated = realSponsors("zh-CN").replace('git commit -m "feat: add something"', 'git commit -m "chore: whatever"');
+    expect(mutated, "变异没落地").not.toBe(realSponsors("zh-CN"));
+    const failures = contribFailures(patchLang(realSponsors, "zh-CN", mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("feat: add something");
+  });
+
+  it("③ 该红时红：四步删成三步 —— 点名是哪一份、剩了几步", () => {
+    probeGreen(contribFailures(realSponsors), REAL_3);
+    const mutated = realSponsors("en").replace(/^4\. .*\n/m, "");
+    expect(mutated, "变异没落地").not.toBe(realSponsors("en"));
+    const failures = contribFailures(patchLang(realSponsors, "en", mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain(`是 ${STEP_COUNT - 1} 步`);
+  });
+
+  /* ── ③b 四条支持 bullet 逐字节 ────────────────────────────────────────── */
+  const REAL_3B = "③b 五份 SPONSORS.md 的四条支持 bullet 逐字节等于登记表";
+
+  const bulletFailures = (read: LangRead): string[] => {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const want = SPONSORS_BULLETS[lang];
+      // ⚠️ `u` 标志不能省：🔗 / 🐛 / 🔧 都在 BMP 之外，没有 `u` 时字符类会被按代理对的
+      // **半个码元**拆开，实测只有 ⭐（U+2B50，在 BMP 内）能匹配上，四条只抽到一条。
+      const got = outsideFences(read(lang)).split("\n").filter((l) => /^- [⭐🔗🐛🔧] /u.test(l));
+      if (got.length === 0) {
+        throw new Error(`docs/${lang}/SPONSORS.md 里一条支持 bullet 都没抽出来 —— 判据坏了，不许静默当成「四条都对」`);
+      }
+      if (got.length !== want.length || got.some((b, i) => b !== want[i])) {
+        out.push(`docs/${lang}/SPONSORS.md 的四条支持 bullet 与登记表对不上：\n  want: ${JSON.stringify(want)}\n  got:  ${JSON.stringify(got)}`);
+      }
+    }
+    return out;
+  };
+
+  it(REAL_3B, () => {
+    const failures = bulletFailures(realSponsors);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("③b 该红时红：⭐ 那条 bullet 换掉文案 —— 层级、链接、表格行数都不动，只有本格看得见", () => {
+    probeGreen(bulletFailures(realSponsors), REAL_3B);
+    const mutated = realSponsors("zh-CN").replace("- ⭐ 给项目点个 Star", "- ⭐ 随便写点什么");
+    expect(mutated, "变异没落地").not.toBe(realSponsors("zh-CN"));
+    const failures = bulletFailures(patchLang(realSponsors, "zh-CN", mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("四条支持 bullet 与登记表对不上");
+  });
+
+  /* ── ⑤ docs/** 的相对链接零 broken ────────────────────────────────────── */
+  const REAL_5 = "⑤ docs/ 下每一份 .md 里的相对链接都指向磁盘上真实存在的文件";
+
+  /** 射程从磁盘现列，多一种语言 / 多一份文档当天就进射程，不手抄第二份名单。 */
+  const docsMdFiles = (): string[] => {
+    const out: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith(".md")) out.push(p);
+      }
+    };
+    walk("docs");
+    return out.sort();
+  };
+
+  /** markdown 链接与 HTML `href` 两种载体一起收；`http(s)` / `mailto:` / 纯锚点不算相对链接。 */
+  const relTargetsOf = (body: string): string[] =>
+    [...outsideFences(body).matchAll(/\]\(([^)\s]+)\)|href="([^"]+)"/g)]
+      .map((m) => m[1] ?? m[2] ?? "")
+      .filter((t) => t !== "" && !/^(?:https?:|mailto:|#)/.test(t));
+
+  const brokenDocLinks = (read: (p: string) => string, files: readonly string[]): string[] => {
+    const out: string[] = [];
+    let scanned = 0;
+    for (const f of files) {
+      for (const t of relTargetsOf(read(f))) {
+        scanned += 1;
+        // `#锚点` 那一段截掉不查：跨文档锚点要 slug 化，那是 R17 统一治理的活，本轮不做。
+        const target = join(dirname(f), t.split("#")[0] ?? "");
+        if (!existsSync(target)) out.push(`${f} 里的 \`${t}\` 解析到 ${target}，那儿没有东西`);
+        else if (!statSync(target).isFile()) out.push(`${f} 里的 \`${t}\` 解析到 ${target}，那是个目录不是文件 —— 点开是列目录，不是那份文档`);
+      }
+    }
+    if (scanned === 0) {
+      throw new Error("docs/ 下一条相对链接都没抽到 —— 判据坏了，不许静默当成「零 broken」");
+    }
+    return out;
+  };
+
+  const realFileRead = (p: string) => readFileSync(p, "utf8");
+  const patchFile = (base: (p: string) => string, at: string, body: string) => (p: string) => (p === at ? body : base(p));
+
+  it(REAL_5, () => {
+    const failures = brokenDocLinks(realFileRead, docsMdFiles());
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("⑤ 该红时红：某一份文档里多出一条 `./NOPE.md` —— 五份一致所以 R4 不会红，本格必须红", () => {
+    probeGreen(brokenDocLinks(realFileRead, docsMdFiles()), REAL_5);
+    const at = docPath(".", "zh-CN", "SPONSORS");
+    const mutated = `${realFileRead(at)}\n[x](./NOPE.md)\n`;
+    const failures = brokenDocLinks(patchFile(realFileRead, at, mutated), docsMdFiles());
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("NOPE.md");
+  });
+
+  it("⑤ 该红时红：链接指到一个目录 —— 「在磁盘上存在」不够，还得是文件", () => {
+    probeGreen(brokenDocLinks(realFileRead, docsMdFiles()), REAL_5);
+    const at = docPath(".", "en", "SPONSORS");
+    const mutated = `${realFileRead(at)}\n[x](../ja)\n`;
+    const failures = brokenDocLinks(patchFile(realFileRead, at, mutated), docsMdFiles());
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("那是个目录不是文件");
+  });
+
+  it("⑤ 认不出要吵：一条相对链接都抽不到时当场抛，不静默当成「零 broken」", () => {
+    const blind = (p: string) => realFileRead(p).split("](").join("] (");
+    expect(() => brokenDocLinks(blind, docsMdFiles())).toThrow(/判据坏了/);
+  });
+
+  it("⑤ 不乱红：绝对链接、mailto 与纯锚点都不是相对链接，不许被判成坏链", () => {
+    probeGreen(brokenDocLinks(realFileRead, docsMdFiles()), REAL_5);
+    const at = docPath(".", "ko", "SPONSORS");
+    const mutated = `${realFileRead(at)}\n[a](https://example.com/nope)\n[b](mailto:nobody@example.com)\n[c](#기여하기)\n`;
+    expect(brokenDocLinks(patchFile(realFileRead, at, mutated), docsMdFiles())).toEqual([]);
+  });
+
+  it("⑤ 的射程边界：五份 SPONSORS.md 今天一条相对链接都没有 —— 所以 ⑤ 对它是空判据，看着那条 Issue 链接的是 R4", () => {
+    const counts = LANGS.map((l) => [l, relTargetsOf(realSponsors(l)).length] as const);
+    expect(
+      counts.filter(([, n]) => n !== 0),
+      "SPONSORS.md 里出现了第一条相对链接 —— ⑤ 从这一刻起对它不再是空判据了，"
+      + "回到本组顶上那段「边界」把这句话改真（它现在是假的）",
+    ).toEqual([]);
+  });
+});

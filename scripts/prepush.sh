@@ -240,6 +240,12 @@ BANNER='[collection-guard] ✅'
 #   看着**（改一边不改另一边，CI 那一串门禁与 prepush 的逐格表一格都不红）。补 `repo-front-door` 的 (l)：
 #   正扫 1 格 + 四条负例（compose 的 start_period / Dockerfile 的 --retries / 只改一边的
 #   探针命令 / Dockerfile 多出一个没登记的参数）+ 两格「认不出要吵」= 7 格。文件数不变。
+#   P3f 阶段 4 评审回填从 3810 改到 3826：W33 声称验收过的四项恒等式（① 标题译名
+#   ② `^---$` 条数 ③ 四步 git 命令与四条 bullet ⑤ 相对链接零 broken）**一条都没落成判据**，
+#   全靠一次性 grep；实测两条变异（只改 zh-CN 一份同时违反 ①②③ / 五份各加一条死链）
+#   在那个 HEAD 上整套全绿。落成 `docs-parity` 的一整组：四项正扫 5 格（③ 拆成步数命令与
+#   bullet 两格）+ 六条负例 + 三格「认不出要吵」+ 一格「不乱红」+ 一格射程边界
+#  （SPONSORS 今天一条相对链接都没有，⑤ 对它是空判据，这件事本身钉住）= 16 格。文件数不变。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -248,7 +254,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=136
-EXPECT_NODE_TESTS=3810
+EXPECT_NODE_TESTS=3826
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
