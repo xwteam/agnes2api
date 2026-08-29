@@ -271,12 +271,14 @@ describe("tracked 文件里的提交 sha 引用", () => {
     const seen = new Set(hits.map((h) => h.token));
     const entries = Object.keys(DESTROYED_OBJECTS);
     // ⚠️ **名册今天是空的 ⇒ 下面两条是空集比空集，这一格的绿不作数**（理由见名册上方那段）。
-    // 唯一在空表上仍然有对象可比的，是「豁免通道真的没人在用」这件事：名册空着却仍有
-    // 引用命中它，那说明扫描或名册坏了。名册重新长出条目之后，下面两条自动重新上膛。
-    expect(
-      hits.filter((h) => h.token in DESTROYED_OBJECTS).map((h) => h.token),
-      "已销毁名册是空的，却仍有 sha 引用命中它 —— 扫描或名册坏了",
-    ).toEqual(entries.filter((t) => seen.has(t)));
+    // 名册重新长出条目之后，下面两条自动重新上膛；在那之前，上膛的是 (a) 那一格。
+    //
+    // ⚠️ **别再往这里加「空表上也能比的第三条」**：回填时试过一条
+    // `hits.filter(h => h.token in DESTROYED_OBJECTS)` 对 `entries.filter(...)`，
+    // 想借它证明「豁免通道没人在用」。那条按构造恒真（名册空 ⇒ `in` 恒 false ⇒ 两边恒
+    // 空数组），**永远不可能红**；更糟的是名册一旦重新非空，它对**重复**敏感——一条完全
+    // 合法的、在 tracked 文件里被引用两次的登记会让它先红，报文还写着「名册是空的」并
+    // 归因成「扫描或名册坏了」，把下面两条的真诊断整个盖住。已删，教训记在这儿。
     expect(
       entries.filter((t) => !seen.has(t)),
       "这些条目已经没有任何 tracked 文件在引用了 —— 名册发霉了，删掉它们",

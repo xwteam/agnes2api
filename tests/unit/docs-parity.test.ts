@@ -5989,6 +5989,13 @@ describe("五份 DEPLOY.md 不许再写「某一期会提供某条重置路径�
  * ⚠️ **这一组原来管的是两个投影**：五份 DEPLOY.md 那份动作枚举，以及一份内部设计文档
  * §11 端点表那一行。**后者随那份文档一起从本仓移除了**，所以这里只剩一个投影——
  * 别再照着「两个投影」那种全称句去读这一组，它今天只钉文档侧这一份。
+ * ⚠️⚠️ **但被移除的那一行钉着一维本组当时没有的东西：逐项逐序的「顺序」。**
+ * 那两格（「逐项逐序等于 `PATCH_FIELDS`」与它的反向控制）是全仓唯一管顺序的，
+ * 随文档删掉之后，`keys-write.ts` 上仍写着的「顺序即文档顺序」**一度是一句散文**
+ *（复评实测：把 `PATCH_FIELDS` 整个倒序 ⇒ `pnpm test` 3763 格全绿）。
+ * 顺序这一维**已经搬进 `enumerationFailures()`**（逐词 `includes` 之后那一段位置递增判据），
+ * 与覆盖那一维共用下面「……盖住 `PATCH_FIELDS` 的每一个字段」那一格，
+ * 并各配一格反向控制。**这不是随文档一起丢，是搬了期望源。**
  * `PATCH_FIELDS` 这个真源本身仍由 `tests/contract/admin-keys-write.test.ts`
  * 「五个动作各自生效：停用 / 启用 / 清冷却 / 清 strikes / 解除剔除」与
  * 「clearStats：stats 归零，而 disabled / addedAt / note / cooldownUntil / evicted 逐字段不变」
@@ -6122,6 +6129,27 @@ describe("「改一把 key」那份动作枚举从 `PATCH_FIELDS` 现算（P3e T
           );
         }
       }
+      // ⚠️ **顺序这一维**：上面逐词 `includes` 只查覆盖，与位置无关，
+      // 把 `PATCH_FIELDS` 整个倒序它照样全绿（复评实测过）。而
+      // `keys-write.ts` 的 `PATCH_FIELDS` 上方逐字写着「**顺序即文档顺序**」——
+      // 那句话原先由一份内部设计文档上的投影守着，文档移出本仓之后它一度没有判据。
+      // 这一段就是把那一维搬到真源与 DEPLOY.md 之间重新上膛：
+      // 六个动作词在括号里的出现位置必须**严格递增**。
+      const at = fields.map((f) => bullet.indexOf(words[f] as string));
+      if (at.every((i) => i >= 0)) {
+        const bad = at.findIndex((i, k) => k > 0 && i <= (at[k - 1] as number));
+        if (bad > 0) {
+          out.push(
+            `docs/${lang}/DEPLOY.md「改一把 key」括号里的枚举顺序与 \`PATCH_FIELDS\` 对不上：`
+            + `\`${fields[bad - 1]}\`（「${words[fields[bad - 1] as string]}」）应当排在 `
+            + `\`${fields[bad]}\`（「${words[fields[bad] as string]}」）**前面**，`
+            + `而括号里今天写的是：${bullet.replace(/\s+/g, " ").trim()}`
+            + " —— `PATCH_FIELDS`（`src/http/admin/handlers/keys-write.ts`）那张表上方"
+            + "逐字承诺了「顺序即文档顺序」，两边只要有一边动了顺序、这句承诺就成了假话；"
+            + "要么把五份文档的枚举调回来，要么真源改了顺序就五份一起跟着改",
+          );
+        }
+      }
     }
     return out;
   }
@@ -6184,6 +6212,38 @@ describe("「改一把 key」那份动作枚举从 `PATCH_FIELDS` 现算（P3e T
     expect(failures[0]).toContain("clearStats");
     // 报文要把括号里今天的原文回显出来，好让人一眼看出少的是哪一项。
     expect(failures[0]).toContain("解除剔除");
+  });
+
+  it("该红时红：`PATCH_FIELDS` 被换了顺序 ⇒ 五份一起红，并逐份点名换位的那两个字段", () => {
+    probeBaseEnumeration();
+    // ⚠️ **这一格记的是复评实测出来的一处净损失**：全仓唯一钉「逐项逐序」的两格
+    // 判据，期望源是一份内部设计文档 §11 的端点表，那份文档移出本仓时它们一起删了，
+    // 而 `keys-write.ts` 的 `PATCH_FIELDS` 上方仍写着「**顺序即文档顺序**」。
+    // 复评把整张表倒序打进来，`pnpm test` **3763 格全绿**——那句承诺当时没有判据。
+    // 这一格就是把那一维搬回真源与 DEPLOY.md 之间之后的解药，倒序是复评用的原变异。
+    const failures = enumerationFailures([...PATCH_FIELDS].reverse(), realDoc("DEPLOY"));
+    expect(failures.length, `五种语言各该红一条，实际：\n${failures.join("\n")}`).toBe(LANGS.length);
+    for (const lang of LANGS) {
+      expect(failures.some((f) => f.includes(lang)), `没点名 ${lang}`).toBe(true);
+    }
+    // 倒序之后第一处逆序出现在头两项（`clearStats` 之后是 `unevict`），报文要点到它们。
+    expect(failures[0]).toContain("clearStats");
+    expect(failures[0]).toContain("unevict");
+    expect(failures[0]).toContain("顺序即文档顺序");
+  });
+
+  it("该红时红：某一份把括号里两项对调 ⇒ 只红一条并点名那一份", () => {
+    probeBaseEnumeration();
+    // 文档侧的同一维：真源不动，只把 zh-CN 那对括号里相邻的两项互换位置。
+    // 逐词 `includes` 对这个变异完全无感（七项一个都没少），只有顺序那一段会红。
+    const failures = enumerationFailures(
+      PATCH_FIELDS,
+      readerWith("zh-CN", (s) => s.split("清冷却 / 清 strikes").join("清 strikes / 清冷却"), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/zh-CN/DEPLOY.md");
+    expect(failures[0]).toContain("clearCooldown");
+    expect(failures[0]).toContain("clearStrikes");
   });
 
   it("不乱红：五份一起合法地多写一句无关的话", () => {
