@@ -5,8 +5,21 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 同一个 ref 上只留最新那一跑：连推两个提交时，前一跑当场取消。
+# 省的不只是 runner 时间——**旧跑的绿会挂在 ref 上**，而它验的是已经被覆盖掉的那棵树。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# 显式收窄到只读。不写这一段时，`GITHUB_TOKEN` 拿的是仓库设置里的默认权限
+# （公开仓今天多为只读，但那是**仓库设置**，改一次全部 workflow 跟着变，仓里看不见）。
+# 这里的门禁一步都不需要写仓库：写死只读之后，被换进来的某个 action 想推提交、开 issue、
+# 发 package 时，拿到的 token 一律没有那个权限。
+permissions:
+  contents: read
+
 jobs:
-  check:
+  lint-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
