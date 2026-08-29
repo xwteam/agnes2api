@@ -13,7 +13,7 @@ const REAL_LOGO = resolve("docs/logo.png");
  * `docs/logo.png` 开了一个具名放行，"这个文件里藏没藏东西"从此没人回答，这个脚本接手。
  * 所以这份测试要证的不是"它能跑"，而是两件相反的事：
  * · **该红时红，而且各自为不同的理由红**——报文互不相同这一条单独占一格，
- *   一把梭（无论什么输入都吐同一句话）在计数上与"九条都红"是分不清的；
+ *   一把梭（无论什么输入都吐同一句话）在计数上与"十一条都红"是分不清的；
  * · **不乱红**——三张真正合规的图必须绿。少了这一侧，"永远红"也能拿满分。
  *
  * ⚠️ **阳性对照为什么是"本仓真图 + 两张合成图"，而不是两个参照仓的真图**（如实登记）：
@@ -142,7 +142,7 @@ function noise(n: number): Buffer {
   return b;
 }
 
-/** 九条负例的构造：名字 → [文件名, 字节, 报文里必须出现的那句话]。 */
+/** 十一条负例的构造：名字 → [文件名, 字节, 报文里必须出现的那句话]。 */
 const NEGATIVES: ReadonlyArray<readonly [string, () => Buffer, string]> = [
   [
     "IEND 之后追加一段尾随字节（最常见的藏法：图一字未动，东西全接在后面）",
@@ -220,6 +220,10 @@ const NEGATIVES: ReadonlyArray<readonly [string, () => Buffer, string]> = [
     // 这一条钉的是「IHDR 恰一个」。**它不是为了拦载荷**（IHDR 固定 13 字节，装不下什么），
     // 是因为块序判据只管"第一个 IDAT 之后"，管不到两个 IHDR 都在 IDAT 之前的排法。
     // 写下一条判据就得配一条会红的输入，否则那条判据只是句好听的话。
+    // ⚠️ 回填第 2 轮把这条判据推广成了"非 IDAT 的块类型每种至多一次"，它没有变松：
+    // 报文从「IHDR 出现了 2 次 —— 一份 PNG 只能有一个 IHDR」换成了同样以
+    // 「IHDR 出现了 2 次」开头的通用句，所以下面这个 needle 一字未动仍然接得住。
+    // 下一条负例（gAMA × 1000）钉的是推广出去的那一半。
     () => {
       const b = realLogo();
       const at = firstIdatStart(b);
@@ -227,9 +231,47 @@ const NEGATIVES: ReadonlyArray<readonly [string, () => Buffer, string]> = [
     },
     "IHDR 出现了 2 次",
   ],
+  // ── 以下两条是回填第 2 轮补的：IDAT 里 zlib 流之后的尾随字节没人查、块的出现次数没人管 ──
+  [
+    "把 20 KB 明文接在 IDAT 的 zlib 流后面（块长与 CRC 都重算过，块序仍是 IHDR IDAT IEND）",
+    // **这一条一度是全绿的，而且是七条判据一条都没被走到的那种全绿**：
+    // 块序合法、CRC 对、31947 字节在 32 KB 上限之内、透明度 70.1%。
+    // 原因是解压那一步只对了**解压出来多少**这一笔账（`raw.length`），
+    // 没对**解压用掉多少**——`inflateSync` 在 zlib 流结束后会静默吃掉后面所有字节。
+    // 容量与上面那条 iCCP 负例（20 KB）一模一样，也就是说洞只是从块里挪进了块内的流尾。
+    // 载荷刻意用"邮箱形态的明文"：`scripts/scan-secrets.sh` 对二进制里的这一类一个字读不到。
+    () => {
+      const b = realLogo();
+      const at = firstIdatStart(b);
+      const len = (b[at]! * 0x1000000) + (b[at + 1]! << 16) + (b[at + 2]! << 8) + b[at + 3]!;
+      const zlib = b.subarray(at + 8, at + 8 + len);
+      const payload = Buffer.from("ops@internal-example.invalid ".repeat(714)); // ≈20 KB 明文
+      return Buffer.concat([
+        b.subarray(0, at),
+        chunk("IDAT", Buffer.concat([zlib, payload])),
+        b.subarray(at + 12 + len),
+      ]);
+    },
+    "没被解码",
+  ],
+  [
+    "在 IDAT 之前插 1000 个各装 4 字节载荷的合法 gAMA —— 每一个的类型、长度、位置都挑不出毛病",
+    // 这一条钉的是**出现次数**，所以刻意让每个块都完全合规（`gAMA` 规范固定 4 字节，
+    // 这里就装 4 字节）：长度界是逐块独立判的，它回答不了"这个类型能来几次"。
+    // 1000 × 16 字节开销 + 11959 = 27959 字节，**在 32 KB 上限之内**——
+    // 这一点是这条负例的分量所在：它必须被重复判据接住，不是被体积上限顺手挡下。
+    () => {
+      const b = realLogo();
+      const at = firstIdatStart(b);
+      const blocks: Buffer[] = [];
+      for (let i = 0; i < 1000; i++) blocks.push(chunk("gAMA", Buffer.from("a@b.invalid".slice(i % 8, (i % 8) + 4))));
+      return Buffer.concat([b.subarray(0, at), ...blocks, b.subarray(at)]);
+    },
+    "gAMA 出现了 1000 次",
+  ],
 ];
 
-describe("scripts/check-png.mjs：九条负例各自红", () => {
+describe("scripts/check-png.mjs：十一条负例各自红", () => {
   it.each(NEGATIVES.map((n, i) => [i, n[0], n[1], n[2]] as const))(
     "负例 %i：%s",
     (_i, _name, make, needle) => {
@@ -242,17 +284,17 @@ describe("scripts/check-png.mjs：九条负例各自红", () => {
   );
 
   /**
-   * **这一格是上面九格的前提，不是重复**：九条都红、但九句话一模一样的话，
+   * **这一格是上面十一格的前提，不是重复**：十一条都红、但十一句话一模一样的话，
    * 判据完全可能只是"对任何输入都红"，而计数上看不出区别。这里要求报文两两不同。
    */
-  it("九条负例的报文两两不同 —— 不是一把梭", () => {
+  it("十一条负例的报文两两不同 —— 不是一把梭", () => {
     const messages = NEGATIVES.map(([, make]) => {
       let out = "";
       withTempFile("logo.png", make(), (p) => { out = run([p]).stderr; });
       // 临时目录名每次都不一样，比对前把路径那一段去掉，只留判据自己说的话。
       return out.replace(/\/tmp\/[^\s:]+/g, "<路径>");
     });
-    expect(new Set(messages).size, `九条负例只吐出了 ${new Set(messages).size} 种报文：\n${messages.join("\n---\n")}`)
+    expect(new Set(messages).size, `十一条负例只吐出了 ${new Set(messages).size} 种报文：\n${messages.join("\n---\n")}`)
       .toBe(NEGATIVES.length);
   });
 });

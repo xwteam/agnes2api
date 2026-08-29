@@ -16,9 +16,12 @@
 //   base64 团），以及任何被压过一道的东西，凭据扫描一个字都读不到。**
 // 一个 PNG 有的是地方放这些：`IEND` 之后的尾随字节、`tEXt` / `zTXt` / `iTXt` /
 // `eXIf` 这类能塞任意字节的块、乃至一个 CRC 对不上的坏块。这个脚本把这些位置
-// 逐个封掉——**它守的是"这个文件里没有第二个能自由写字节的地方：除了 IDAT
-// （而 IDAT 的内容被解压后按 `宽×高×4 + 每行 1 字节` 逐字节对过账），
-// 其余每个块的长度都被钉死"**，不是"这张图好不好看"。
+// 逐个封掉——**它守的是"这个文件里没有第二个能自由写字节的地方"**，不是"这张图好不好看"。
+// 这句话展开是三件事，缺一件它就是句假话（前两轮回填各抓到缺了哪一件）：
+//   · `IDAT` 之外每个块的长度都被规范钉死（`CHUNK_SIZE`）；
+//   · `IDAT` 之外每种块**至多出现一次**——一千个合法瘦块与一个超长胖块是同一个口袋；
+//   · `IDAT` 自己**两侧都对账**：解压**出来**多少（`宽×高×4 + 每行 1 字节`）
+//     与解压**用掉**多少（`engine.bytesWritten` 必须吃满整段 `IDAT`）都要对上。
 //
 // ⚠️ **上面这句话在第一版里是假的，回填第 1 轮才变成真的。** 第一版的白名单里有
 // `iCCP`（"名字 \0 + 压缩方法 + 任意长度 zlib 流"）、`PLTE`、`tRNS` 三个变长块，
@@ -38,6 +41,28 @@
 //   ③ 补块序校验：`IHDR` 恰一个且在首、`IEND` 在末、其余块必须排在第一个 `IDAT` 之前。
 //      （`IDAT` 连续性由 ③ 推出，不另设一条——两个 IDAT 之间只可能夹 IHDR/IEND/辅助块，
 //      三种都已各自被判掉。多写一条恒真的判据就是一条不会红的判据。）
+//
+// ⚠️ **回填第 1 轮那句话仍然是假的，第 2 轮才补齐——同一个洞又挪了两个窝。**
+// 上面那段自称"除了 IDAT，其余每个块的长度都被钉死"，评审复现出两条还开着的路，
+// 数字都是本机自己跑出来的：
+//   ⑴ **`IDAT` 里 zlib 流之后的尾随字节没人查。** `inflateSync` 在流正常结束后会
+//      **静默忽略**剩下的输入（单独验过：`inflateSync(concat(deflate(src), "PAYLOAD"), {info:true})`
+//      正常返回，`engine.bytesWritten` 只有 24，输入 36）。原来唯一的校验是
+//      `raw.length !== height * (stride + 1)`——它只对**解压结果**的长度对账，
+//      完全不管**输入**有没有被吃完。实测：把 19988 字节明文接在本仓 `docs/logo.png`
+//      那个 `IDAT` 的 zlib 流后面、重算块长与 CRC ⇒ 31947 字节的文件
+//      **「✅ 128×128 / 块序 IHDR IDAT IEND / 完全透明 70.1%」，七条判据一条都没被走到**。
+//      容量与被判红的那条 `iCCP` 负例（31990 字节 / 20 KB 载荷）一模一样。
+//      ⇒ 处置：`inflateSync(idat, { info: true })` + `engine.bytesWritten !== idat.length` 即红。
+//   ⑵ **白名单块的「出现次数」没人管。** 长度界是逐块独立判的：`CHUNK_SIZE` 回答
+//      "这一个块能带多少字节"，回答不了"这个类型能来几次"。实测：在第一个 `IDAT` 之前
+//      插 1000 个各装 4 字节明文载荷的合法 `gAMA`（每块 16 字节开销，共 16000 字节）
+//      ⇒ 27959 字节、**全绿**；换成 `sRGB`（规范固定 1 字节）插 1200 个同样全绿。
+//      上限约 (32768−11959)/16×4 ≈ 5200 字节，而且载荷可以是一段被拆散的 zlib 流。
+//      ⇒ 处置：按 PNG 规范第 4.2 节，白名单里除 `IDAT` 外**全部是"至多出现一次"**的块，
+//      于是把"IHDR 恰一个"推广成"非 IDAT 的块类型每种至多一次"，零代价
+//      （三张真图的块序都是 `IHDR IDAT IEND`），且"IHDR 恰一个"仍是它与首块判据的合取。
+// 两条的共同教训与第 1 轮是同一条：**对了一半的账等于没对账。**
 //
 // ⚠️ **第 6 条规则（裸 IP）那一档是 fail-closed，今天不红是逐字节的运气。**
 // 它要的是命中行的**内容**（白名单按取值放行），而 `git grep` 对二进制只吐一行
@@ -95,8 +120,15 @@ const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
  * `iCCP` / `PLTE` / `tRNS` 三个曾经在这张表里，它们的共同点是**变长**——
  * `iCCP` 更是直接允许一段任意长度的 zlib 流。一个变长块被白名单祝福，
  * 等于把具名放行让出的那个洞原样搬进来。三者一律删除，理由见文件头 ①。
- * 唯一的例外是 `IDAT`，它的内容不是靠长度而是靠**解压后逐字节对账**验的
- * （`transparentRatio()` 里那句 `raw.length !== height * (stride + 1)`）。
+ * 唯一的例外是 `IDAT`，它的内容不是靠长度而是靠 `transparentRatio()` 里**两侧的对账**验的：
+ * 解压**出来**多少（`raw.length !== height * (stride + 1)`）**与**解压**用掉**多少
+ * （`engine.bytesWritten !== idat.length`）。⚠️ 第二笔账是回填第 2 轮补的——
+ * 只对第一笔时，接在 zlib 流后面的 19988 字节明文是全绿的（文件头 ⑴ 有实测数字）。
+ *
+ * ⚠️ 这张表还有第二重约束**不在这里，而在块序那段**：白名单只回答"这个类型能不能来"，
+ * 长度界只回答"这一个块能带多少字节"，**"这个类型能来几次"由那边的重复判据回答**
+ * （规范第 4.2 节：这张表里除 `IDAT` 外全是"至多出现一次"的块）。三条缺一条，
+ * 载荷就换个窝继续进来——第 1 轮缺长度界，第 2 轮缺次数。
  */
 export const ALLOWED_CHUNKS = new Set([
   "IHDR", "IDAT", "IEND", "gAMA", "cHRM", "sRGB", "pHYs", "bKGD", "sBIT",
@@ -164,12 +196,24 @@ function paeth(a, b, c) {
  * 完全透明像素的占比。**只支持 8 位 RGBA 非隔行**——别的形态在上面就被判掉了，
  * 这里不做第二次分支：一个"顺手支持一下"的分支等于一条没人测过的解码路径。
  */
-function transparentRatio(idat, width, height) {
-  const raw = inflateSync(idat);
+function transparentRatio(idat, width, height, fail) {
+  // ⚠️ **两笔账，缺一笔就等于没对账**（回填第 2 轮补的第二笔，理由见文件头 ⑴）：
+  // `inflateSync` 在 zlib 流正常结束后会**静默忽略后面所有输入字节**，所以
+  // "解压出来多少"对上了，完全不能推出"输入有没有被吃完"。`{ info: true }` 让它
+  // 连同 `engine` 一起返回，`engine.bytesWritten` = 被喂进去并真正消费掉的输入字节数
+  //（本机验过：干净流 `bytesWritten === 输入长度`，带尾随时严格小于）。
+  // 这一条必须落在解压这一步、且在返回 ratio 之前——`IDAT` 是本文件唯一变长的块，
+  // 它的 zlib 流之后就是最后一个还能自由写字节的口袋。
+  const { buffer: raw, engine } = inflateSync(idat, { info: true });
+  if (engine.bytesWritten !== idat.length) {
+    fail(`IDAT 的 zlib 流在第 ${engine.bytesWritten} 字节就结束了，后面还有 ${idat.length - engine.bytesWritten} 字节没被解码`
+      + " —— 那是一个能自由写字节的口袋：zlib 解压在流结束后会静默忽略剩下的输入，"
+      + "而「解压出来多少」与「解压用掉多少」是两笔账，只对前一笔等于没对账");
+  }
   const bpp = 4;
   const stride = width * bpp;
   if (raw.length !== height * (stride + 1)) {
-    throw new Error(`解压后的像素数据是 ${raw.length} 字节，按 ${width}×${height} RGBA 算应该是 ${height * (stride + 1)} 字节`);
+    fail(`解压后的像素数据是 ${raw.length} 字节，按 ${width}×${height} RGBA 算应该是 ${height * (stride + 1)} 字节`);
   }
   const prev = Buffer.alloc(stride);
   const cur = Buffer.alloc(stride);
@@ -189,7 +233,7 @@ function transparentRatio(idat, width, height) {
         case 2: cur[i] = (cur[i] + b) & 0xff; break;
         case 3: cur[i] = (cur[i] + ((a + b) >> 1)) & 0xff; break;
         case 4: cur[i] = (cur[i] + paeth(a, b, c)) & 0xff; break;
-        default: throw new Error(`第 ${y} 行的行过滤器是 ${ft}，PNG 只定义了 0..4`);
+        default: fail(`第 ${y} 行的行过滤器是 ${ft}，PNG 只定义了 0..4`);
       }
     }
     for (let x = 3; x < stride; x += bpp) if (cur[x] === 0) transparent++;
@@ -200,8 +244,8 @@ function transparentRatio(idat, width, height) {
 
 /**
  * 逐字节审一个 PNG。**不满足任何一条就 throw**，报文里带上是哪一条不满足
- * ——九条负例各自命中不同分支这件事由 `tests/unit/check-png.test.ts` 的
- * 「九条负例的报文两两不同 —— 不是一把梭」钉着。
+ * ——十一条负例各自命中不同分支这件事由 `tests/unit/check-png.test.ts` 的
+ * 「十一条负例的报文两两不同 —— 不是一把梭」钉着。
  */
 export function auditPng(path, buf = readFileSync(path)) {
   const fail = (msg) => { throw new Error(`${path}: ${msg}`); };
@@ -262,8 +306,17 @@ export function auditPng(path, buf = readFileSync(path)) {
   // ⚠️ **`IDAT` 连续性不另设一条**：两个 `IDAT` 之间只可能夹 `IHDR`（下面那条判掉）、
   // `IEND`（解析到它就 break，多出来的字节走尾随判据）或辅助块（这条判掉），
   // 所以连续性是这三条的推论。再写一条只会得到一条永远不会红的判据。
-  if (chunks.filter((t) => t === "IHDR").length !== 1) {
-    fail(`IHDR 出现了 ${chunks.filter((t) => t === "IHDR").length} 次 —— 一份 PNG 只能有一个 IHDR`);
+  // ⚠️ **「IHDR 恰一个」在回填第 2 轮被推广成了一条通用规则**（理由见文件头 ⑵）：
+  // 长度界是**逐块独立**判的，它回答不了"这个类型能来几次"——实测 1000 个各装 4 字节
+  // 载荷的合法 `gAMA`（每块 16 字节开销）在补这条判据之前是全绿的，
+  // 一千个瘦块拼起来和一个超长胖块是同一个口袋。按 PNG 规范第 4.2 节，
+  // 这张白名单里除 `IDAT` 外**全部是"至多出现一次"**的块，所以这条判据零代价：
+  // 三张真图（本仓 + 两个参照仓）的块序都是 `IHDR IDAT IEND`。
+  // 「IHDR 恰**一**个」不因此丢失：它 = 这条（至多一个）∧ 上面那条首块必须是 IHDR（至少一个）。
+  const dup = chunks.filter((t) => t !== "IDAT").find((t, i, a) => a.indexOf(t) !== i);
+  if (dup !== undefined) {
+    fail(`${dup} 出现了 ${chunks.filter((t) => t === dup).length} 次 —— 按 PNG 规范第 4.2 节，`
+      + "除 IDAT 外每种块至多只能出现一次；一千个长度合法的瘦块拼起来，和一个超长的胖块是同一个口袋");
   }
   const firstIdat = chunks.indexOf("IDAT");
   for (let i = firstIdat + 1; i < chunks.length; i++) {
@@ -285,7 +338,7 @@ export function auditPng(path, buf = readFileSync(path)) {
     fail(`体积 ${buf.length} 字节，超过上限 ${LIMITS.maxBytes} 字节`);
   }
 
-  const ratio = transparentRatio(Buffer.concat(idat), width, height);
+  const ratio = transparentRatio(Buffer.concat(idat), width, height, fail);
   if (ratio < LIMITS.minTransparentRatio) {
     fail(`完全透明像素只占 ${(ratio * 100).toFixed(1)}%，低于下限 ${(LIMITS.minTransparentRatio * 100).toFixed(0)}%`
       + " —— 模板要的是抠过图的标记，不是一整块不透明的贴片");

@@ -88,21 +88,28 @@ project is built on (review diffs, `grep` audits, the credential scan). The logo
 through a **named allowlist holding exactly one literal path**, and the hole that allowlist
 opens is closed by a second gate, `scripts/check-png.mjs`, which reads the file byte by byte:
 signature, per-chunk CRC, chunk-type allow/deny lists, **a size bound on every chunk type
-except `IDAT`**, **chunk ordering** (one `IHDR` first, everything but `IDAT` ahead of the
-pixels, `IEND` last), **zero trailing bytes after `IEND`**, sha256 against a registered value,
-plus dimensions, byte budget and transparent-pixel ratio. Taken together those add up to one
-property: **`IDAT` is the only place in the file where a byte is free, and `IDAT` is checked
-against `width × height × 4 + one byte per row` after decompression.**
+except `IDAT`**, **an at-most-once bound on every chunk type except `IDAT`**, **chunk
+ordering** (one `IHDR` first, everything but `IDAT` ahead of the pixels, `IEND` last),
+**zero trailing bytes after `IEND`**, sha256 against a registered value, plus dimensions,
+byte budget and transparent-pixel ratio. Taken together those add up to one property:
+**`IDAT` is the only place in the file where a byte is free, and `IDAT` is audited on both
+sides of its decompression — the output must be exactly `width × height × 4 + one byte per
+row`, and the zlib stream must consume every byte the chunk declared.**
 
-That property is worth stating precisely, because the first version of this gate did not have
-it and said it did. The allowlist then included `iCCP`, `PLTE` and `tRNS` — all
-variable-length, and `iCCP` is by definition "a name, a NUL, a compression byte, then a zlib
-stream of any length". No chunk had a length bound either, so even a `gAMA` (fixed at 4 bytes
-by the spec) could declare 20 000. A logo carrying 20 KB of compressed payload passed with a
-green tick, and compressed payload is exactly what the credential scan cannot read. The hole
-the allowlist opens had not been closed; it had been moved into a chunk the allowlist blessed.
+That property is worth stating precisely, because no version of this gate has yet had it on
+the first try, and every version so far claimed it did. Round one: the allowlist included
+`iCCP`, `PLTE` and `tRNS` — all variable-length, and `iCCP` is by definition "a name, a NUL,
+a compression byte, then a zlib stream of any length". No chunk had a length bound either,
+so even a `gAMA` (fixed at 4 bytes by the spec) could declare 20 000. Round two found the
+same hole in two more windows: a length bound is decided **per chunk**, so it cannot answer
+"how many times may this type appear" — 1000 perfectly legal 4-byte `gAMA` chunks carry
+4 KB of payload and used to pass; and `inflateSync` **silently ignores every input byte after
+the zlib stream ends**, so checking how much came *out* of `IDAT` never checked how much went
+*in* — 20 KB of plaintext appended inside the `IDAT` chunk used to pass with a green tick and
+a `IHDR IDAT IEND` chunk list. Payload inside a binary is exactly what the credential scan
+cannot read. Each time, the hole the allowlist opens had not been closed; it had been moved.
 If you ever need to widen `ALLOWED_CHUNKS`, the entry bar is **"its length is pinned by the
-spec"**, not "the spec knows this chunk".
+spec, and the spec allows it at most once"**, not "the spec knows this chunk".
 
 The word **only** at the top of this section is not asking to be trusted either — it has a
 test that goes red. `tests/unit/check-png.test.ts`「名册整份恰好是 [docs/logo.png] —— 往里加一行就等于把放行扩到别处」
