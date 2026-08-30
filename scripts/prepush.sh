@@ -258,6 +258,16 @@ BANNER='[collection-guard] ✅'
 #  （已换 / 未换各成一组，组内照旧逐份相同），另加三格把这件事钉住：进度登记与磁盘
 #   现算 `toEqual`、五份全搬完时自毁的开关、一份标题改坏就不再算「已搬完」= 3 格。
 #   文件数不变。
+#   P3f 阶段 5B-3 之三从 3843 **改回 3840**：`docs/zh-TW/README.md` 是最后一份，
+#   五份全换成 12 节形态之后上一条加的那套过渡装置**按它自己的自毁开关到期**——
+#  （那一格的报文逐字写着「把 README_MIGRATED 这张表、cohortsOf 的分组分支、
+#   以及这两格一起删掉」）。分组分支与 `README_MIGRATED` / `isMigratedReadme` /
+#   `migratedReadmeLangs` / `cohortsOf` 连同那 3 格一并删除，R2–R6 退回
+#  「五语言之间逐份相同」的原形态 ⇒ 3843 − 3 = 3840。**这不是「少了三格用例」**，
+#   是那三格守的东西（分组分对没分对）随分组一起不存在了；⚠️ 但如实登记：
+#  「每一份 README 的 `## ` 序列逐字等于 W38 常量表」这条**更大**的射程今天仍然
+#   没有判据（它是阶段 6 的 R11 语言版那一半），别把这次回落读成「守住了」。
+#   文件数不变。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -266,7 +276,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=3843
+EXPECT_NODE_TESTS=3840
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

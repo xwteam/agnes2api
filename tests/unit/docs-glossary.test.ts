@@ -127,6 +127,28 @@ function termConflicts(read: DocReader): string[] {
  * · `ko｜上游`（`README=업스트림`）与 `ko｜免费档`（`README=무료 등급`）**逐字不动**：
  *   前者是下面反向控制 ④ 的支点（它拿 ko/README 的 `업스트림` 制造新冲突），
  *   后者本来就是多数用词。
+ *
+ * ── 阶段 5B-3 之三（`docs/zh-TW/README.md` 扩成 12 节）动了哪几行 ────────────
+ * 🔴 **这一步销账数是 0，六行只是换了形状。** 别把「动了六行」读成「统一了六个词」——
+ * 下面这六行今天的分歧**全部落在 README 之外的那几份**（ADMIN / DEPLOY / REGISTRAR /
+ * SPONSORS 内部或彼此之间），README 这一侧改成什么都消不掉它们。**一行都消不掉**
+ * 这件事本身是可核的：`zh-TW｜排障` 要 ADMIN 那份改口、`zh-TW｜调试台` 要 DEPLOY
+ * 那份改口、`zh-TW｜余量` 要 REGISTRAR 那份**内部**先统一 —— 三处都不在本步射程里。
+ * · `zh-TW｜客户端`：README 从 `客戶端`（大陆用词）改成 `用戶端`（台标），跟上 API / USAGE。
+ *   ⚠️ 这不是销账：DEPLOY 那一份自己内部两种都在写，ADMIN 仍是 `客戶端`。
+ * · `zh-TW｜仓库`：README 这一侧**新进表**（`儲存庫`，台标，与 REGISTRAR 同）。
+ *   DEPLOY / SPONSORS 仍写 `倉庫` ⇒ 分歧一条没少，只是 README 也被看着了。
+ * · `zh-TW｜密钥`：README 这一侧**新进表**（`金鑰`，台标，与 REGISTRAR 同）。
+ * · `zh-TW｜调试台`：README 这一侧**新进表**（`除錯台`，与 ADMIN 同；DEPLOY 的 `偵錯台` 照旧）。
+ * · `zh-TW｜邮箱`：README 这一侧**新进表**（`信箱`，与 REGISTRAR 同、也是 DEPLOY 里的多数）。
+ * · `zh-TW｜余量`：README **退出这一行**。旧的 9 节骨架里有一句讲 KV 配额余量，
+ *   12 节形态的 README 不再展开那笔账（它归 DEPLOY.md 的「配额帐」小节），
+ *   `餘量` 在 README 里就此零命中。**同样不是销账**：DEPLOY 与 REGISTRAR 之间照旧打架。
+ * · `zh-TW｜免费档`（`README=免費方案`）、`zh-TW｜凭据`（`README=憑證`）、
+ *   `zh-TW｜协议`（`README=協議`）、`zh-TW｜网关`（`README=閘道`）**逐字不动**：
+ *   四条本来就写的是多数用词，重写时照原样搬了过去。
+ *   ⚠️ `zh-TW｜排障` 那一行 README 两侧都不沾（`排障` / `疑難排解` 一次都没写），
+ *   它是下面反向控制 ①② 的支点，本步一个字都不许碰。
  */
 const PENDING_TERM_CONFLICTS: readonly string[] = [
   "en｜仓库｜ADMIN=repo｜API=repo｜DEPLOY=repo+repository｜REGISTRAR=repository｜SPONSORS=repository",
@@ -143,19 +165,19 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   "ko｜免费档｜DEPLOY=무료 등급+무료 요금제｜README=무료 등급",
   "ko｜凭据｜ADMIN=자격 증명｜API=인증 정보+자격 증명｜DEPLOY=자격 증명｜README=자격 증명｜REGISTRAR=자격 증명｜USAGE=인증 정보",
   "ko｜邮箱｜ADMIN=메일박스｜DEPLOY=메일박스+메일함｜README=메일함｜REGISTRAR=메일박스+메일함",
-  "zh-TW｜仓库｜DEPLOY=倉庫｜REGISTRAR=儲存庫｜SPONSORS=倉庫",
-  "zh-TW｜余量｜DEPLOY=餘量｜README=餘量｜REGISTRAR=餘裕+餘量",
+  "zh-TW｜仓库｜DEPLOY=倉庫｜README=儲存庫｜REGISTRAR=儲存庫｜SPONSORS=倉庫",
+  "zh-TW｜余量｜DEPLOY=餘量｜REGISTRAR=餘裕+餘量",
   "zh-TW｜免费档｜DEPLOY=免費方案+免費檔｜README=免費方案",
   "zh-TW｜凭据｜ADMIN=憑證｜API=憑證｜DEPLOY=憑據+憑證｜README=憑證｜REGISTRAR=憑證｜USAGE=憑證",
   "zh-TW｜判据｜API=判據｜DEPLOY=判據+判準｜REGISTRAR=判據+判準",
   "zh-TW｜协议｜ADMIN=協定｜API=協定+協議｜DEPLOY=協定｜README=協議｜SPONSORS=協議｜USAGE=協議",
-  "zh-TW｜客户端｜ADMIN=客戶端｜API=用戶端｜DEPLOY=客戶端+用戶端｜README=客戶端｜USAGE=用戶端",
-  "zh-TW｜密钥｜ADMIN=密鑰｜DEPLOY=密鑰｜REGISTRAR=金鑰",
+  "zh-TW｜客户端｜ADMIN=客戶端｜API=用戶端｜DEPLOY=客戶端+用戶端｜README=用戶端｜USAGE=用戶端",
+  "zh-TW｜密钥｜ADMIN=密鑰｜DEPLOY=密鑰｜README=金鑰｜REGISTRAR=金鑰",
   "zh-TW｜并发｜ADMIN=並行｜DEPLOY=並發+並行｜REGISTRAR=並行",
   "zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解",
   "zh-TW｜网关｜ADMIN=閘道｜API=閘道｜DEPLOY=網關+閘道｜README=閘道｜REGISTRAR=閘道｜USAGE=閘道",
-  "zh-TW｜调试台｜ADMIN=除錯台｜DEPLOY=偵錯台",
-  "zh-TW｜邮箱｜ADMIN=郵箱｜DEPLOY=信箱+郵箱｜REGISTRAR=信箱",
+  "zh-TW｜调试台｜ADMIN=除錯台｜DEPLOY=偵錯台｜README=除錯台",
+  "zh-TW｜邮箱｜ADMIN=郵箱｜DEPLOY=信箱+郵箱｜README=信箱｜REGISTRAR=信箱",
 ];
 
 describe("W134 五语言术语表：同一源词在同一语言的不同文档里必须用同一译词", () => {

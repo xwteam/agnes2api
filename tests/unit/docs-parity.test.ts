@@ -1253,79 +1253,31 @@ function emptinessFailure(
 }
 
 /**
- * ── README 的对等分组：五语言重写期间的过渡形态（P3f 阶段 5B）────────────────
+ * ── R2–R6 的单格：五语言之间逐份相同（原形态，过渡分组已拆除）────────────────
  *
- * R2–R6 比的是「同一份文档的五个语言版结构相同」。阶段 5B 把五份 `docs/{lang}/README.md`
- * 从旧的 9 节骨架逐份换成模板的 12 节形态，**一次换不完**（一步两份）——换到一半时
- * 「五份结构相同」这个前提在事实上不成立，五格 R2–R6 会一起红，而那种红说的是
- * 「五语言之间分叉」，真因却是「有几份还没轮到」。
+ * 这里曾经有一段**按内容现算的两组分组**（已换成模板 12 节形态的一组、还是旧 9 节
+ * 骨架的一组，组内各自逐份相同），配一张 `README_MIGRATED` 进度登记表与三格判据。
+ * 它存在的理由是：P3f 阶段 5B 把五份 `docs/{lang}/README.md` **分步**换成 12 节形态，
+ * 换到一半时「五份结构相同」这个前提在事实上不成立，五格 R2–R6 会一起红，
+ * 而那种红说的是「五语言之间分叉」，真因却是「有几份还没轮到」。
  *
- * 处置不是 `skip` 掉这五格（一条被绕过去的判据比没有更坏），而是把五份**分成两组**：
- * 已经换成 12 节形态的一组、还是旧骨架的一组，**每组内部照旧逐份相同**。
- * 落在同一组里的份数 ≥ 2 时这一组就是一条真判据；只剩 1 份的那一组没有可比对象，
- * 跳过——**这是这个过渡形态真实的射程缺口**，不是豁免：它只在「某一步只搬了一份」
- * 的那个中间态存在，两份一步就不出现。
+ * ✅ **五份全换完了（阶段 5B-3 之三，`docs/zh-TW/README.md` 是最后一份）**，
+ * 那张过渡表自己的「自毁开关」那一格因此当场到期 ⇒ 分组分支、`README_MIGRATED`、
+ * `isMigratedReadme` / `migratedReadmeLangs` / `cohortsOf` 与那三格判据**一并删掉**，
+ * R2–R6 退回下面这个「五语言之间逐份相同」的原形态。
  *
- * ✅ **阶段 5B-2（`docs/en/README.md`）之后这个缺口关上了**：已换那组 2 份
- *（zh-CN / en）、未换那组 3 份（zh-TW / ja / ko），两组都 ≥ 2，五格 R2–R6 对
- * 每一份 README 都有可比对象。5B-1 那一步「zh-CN 独自一份、当天无人看着」的
- * 状态到此结束——en 这一份的 R2–R6 是照着 zh-CN 那份现算比出来的。
- *
- * 📍 **阶段 5B-3 之一（`docs/ja/README.md`）：两组仍然都 ≥ 2**（已换 3 份
- *（zh-CN / en / ja）、未换 2 份（zh-TW / ko）），缺口仍然关着。
- *
- * 🔴 **阶段 5B-3 之二（`docs/ko/README.md`）：缺口重新张开了一次，如实登记。**
- * 已换那组 4 份（zh-CN / en / ja / ko），未换那组只剩 zh-TW 一份 ⇒ 没有可比对象，
- * `parityFailure()` 里那句 `if (cohort.length < 2) continue` 会把它整组跳过
- * ⇒ **今天 `docs/zh-TW/README.md` 的 R2–R6 五格一格都没在守**。
- * 这是「一步两份」这个排法在**最后剩三份**时躲不开的形态（3 = 2 + 1），
- * 不是疏漏，也不是豁免：它随 zh-TW 搬完（`README_MIGRATED` 满 5、这张过渡表连同
- * `cohortsOf` 一起删掉）当场消失，那之后 R2–R6 退回「五语言之间逐份相同」。
- * ⚠️ **在那之前，zh-TW 那份 README 靠的是评审，不是判据**——
- * 别把这五格的绿读成「zh-TW 那份也比过了」。
- *
- * ⚠️ 分组**按内容现算**（这一份的 `## ` 全行是否恰好等于 W38 常量表那 12 行），
- * 不靠手写名册：手写的名册会漂，而漂了的名册会把两份形态不同的文档分进同一组，
- * 让这五格静静放行。`README_MIGRATED` 那张登记表是**给人看的进度**，
- * 由下面两格拿现算结果 `toEqual` 两个方向对着查。
+ * 🔴 **顺带如实结掉一笔过渡期的账**：`docs/ko/README.md` 搬完到 `docs/zh-TW/README.md`
+ * 搬完之间，未换那组只剩 zh-TW 一份 ⇒ `if (cohort.length < 2) continue` 把它整组跳过，
+ * **那一步 zh-TW 那份 README 的 R2–R6 五格一格都没在守**（当时靠的是评审）。
+ * 那个缺口随这次删除**当场消失**：今天五份走的是同一条 `divergenceReport`，
+ * 任意一份分叉都会红并点名是哪一份。
  */
-const H2_LINES = (s: string) => outsideFences(s).split("\n").filter((l) => /^## /.test(l));
-
-/** 语言版承载的那 12 节（去掉 4 节根专属），取 W38 常量表。 */
-const langSectionTitles = (lang: string): string[] =>
-  SECTIONS.filter((s) => s.rootOnly !== true).map((s) => s.title[lang as keyof typeof s.title]);
-
-/** 这一份 README 正文是否已经换成模板的 12 节形态。**真扫描与探针共用这一份。** */
-const isMigratedBody = (body: string, lang: string): boolean =>
-  JSON.stringify(H2_LINES(body)) === JSON.stringify(langSectionTitles(lang));
-
-/** 这一份 `docs/{lang}/README.md` 是否已经换成模板的 12 节形态。 */
-const isMigratedReadme = (root: string, lang: string): boolean =>
-  isMigratedBody(readFileSync(docPath(root, lang, "README"), "utf8"), lang);
-
-/** 已换成 12 节形态的语言（按 `LANGS` 的顺序）。夹具树上恒为空 ⇒ 夹具照旧只有一组。 */
-const migratedReadmeLangs = (root: string): string[] => LANGS.filter((l) => isMigratedReadme(root, l));
-
-/** R2–R6 的分组：README 分两组，其余文档只有一组（全五种语言）。 */
-function cohortsOf(root: string, doc: string): string[][] {
-  if (doc !== "README") return [[...LANGS]];
-  const done = migratedReadmeLangs(root);
-  const todo = LANGS.filter((l) => !done.includes(l));
-  return [done, todo].filter((c) => c.length > 0);
-}
 
 /** R2–R6 的单格：一份文档 × 一条判据。返回失败报文或 `null`。真扫描与反向控制共用这一份。 */
 function parityFailure(root: string, doc: string, name: string, fingerprint: (s: string) => unknown): string | null {
-  const out: string[] = [];
-  for (const cohort of cohortsOf(root, doc)) {
-    // 一组只剩一份时没有可比对象——上面那段注释里登记的射程缺口就是这一行。
-    if (cohort.length < 2) continue;
-    const body = divergenceReport(cohort, cohort.map((l) => fingerprint(readFileSync(docPath(root, l, doc), "utf8"))));
-    if (body === null) continue;
-    const where = cohort.length === LANGS.length ? "五语言" : `这一组（${cohort.join(" / ")}）`;
-    out.push(`${doc}.md 的「${name}」在${where}之间分叉：\n${body}`);
-  }
-  return out.length === 0 ? null : out.join("\n");
+  const body = divergenceReport([...LANGS], LANGS.map((l) => fingerprint(readFileSync(docPath(root, l, doc), "utf8"))));
+  if (body === null) return null;
+  return `${doc}.md 的「${name}」在五语言之间分叉：\n${body}`;
 }
 
 /**
@@ -1470,41 +1422,19 @@ describe("五语言文档的派生结构对等（R1–R6）", () => {
       .toContain("GATEWAY_TOKEN");
   });
 
-  /* ── 阶段 5B 的进度登记（README 的对等分组）────────────────────────────────
+  /* ── 阶段 5B 的进度登记（README 的对等分组）：**已随五份搬完一并删除** ────────
    *
-   * 上面 R2–R6 那五格对 README 走的是**分组**对等（见 `cohortsOf` 上方那段）。
-   * 分组按内容现算，所以它不会说谎；这里再摆一张**给人看的进度表**，
-   * 用 `toEqual` 两个方向对着查现算结果：
-   * · 又搬完一份却没登记 ⇒ 红（提醒：这一步还得刷 `ROOT_ONLY_IDENTS` 与术语欠账）；
-   * · 登记了却没真的搬（或搬坏了、标题对不上 W38 常量表）⇒ 也红。
+   * 这里曾经有三格：进度登记与磁盘现算 `toEqual`、五份全搬完时的自毁开关、
+   * 一份标题被改坏就不再算「已搬完」。三格连同 `README_MIGRATED` / `cohortsOf`
+   * 都是**过渡期**的东西，自毁开关那一格在 `docs/zh-TW/README.md` 搬完当天到期，
+   * 按它自己报文里写的处置一并删掉（见 `parityFailure` 上方那段）。
    *
-   * 🔴 **五份全搬完那天，这张表连同 `cohortsOf` 的分组逻辑一起删掉**，
-   * R2–R6 退回「五语言之间逐份相同」的原形态。下面第二格就是那个自毁开关：
-   * 表满 5 项时它会红，报文写明该删什么。
+   * ⚠️ **删掉它们不留缺口**：三格守的是「分组分了没分对」，而分组本身已经不存在了；
+   * 「这一份 README 的 `## ` 序列必须逐字等于 W38 常量表那 12 行」这条**射程更大**的
+   * 判据不由它们承担 —— 它是阶段 6 的 R11（语言版那一半）。今天守着五份 README 的是
+   * R2–R6 的「五语言之间逐份相同」：五份一起被同一个错误改坏那一种它挡不住，
+   * 那正是 R11 要补的那一格。**在 R11 落地前，这条边界是真实存在的，别读成已经守住了。**
    */
-  const README_MIGRATED = ["zh-CN", "en", "ja", "ko"] as const;
-
-  it("阶段 5B 进度登记：已换成 12 节形态的 README 与磁盘现算逐条相等", () => {
-    expect(migratedReadmeLangs("."), "登记表与磁盘对不上：多出来的是「搬完没登记」，少掉的是「登记了没搬（或标题与 W38 常量表对不上）」")
-      .toEqual([...README_MIGRATED]);
-  });
-
-  it("阶段 5B 进度登记 该红时红（自毁开关）：五份全搬完之后这张过渡表必须删掉", () => {
-    expect(
-      README_MIGRATED.length,
-      "五份 README 都换成 12 节形态了 —— 把 README_MIGRATED 这张表、cohortsOf 的分组分支、"
-      + "以及这两格一起删掉，R2–R6 退回「五语言之间逐份相同」的原形态。留着它只会让一份掉队时静静放行",
-    ).toBeLessThan(LANGS.length);
-  });
-
-  it("阶段 5B 进度登记 该红时红：一份 README 的标题被改坏 ⇒ 它就不再算「已搬完」", () => {
-    const lang = README_MIGRATED[0];
-    const body = readFileSync(docPath(".", lang, "README"), "utf8");
-    expect(isMigratedBody(body, lang), `docs/${lang}/README.md 今天本身就不是 12 节形态——别从这一格找原因，先看上面那格进度登记`).toBe(true);
-    const mutated = body.replace("\n## ⚙ 配置说明\n", "\n## ⚙ 配置项说明\n");
-    expect(mutated, "变异没落地——那份 README 里没找到 `## ⚙ 配置说明` 那一行").not.toEqual(body);
-    expect(isMigratedBody(mutated, lang), "改了一个 `## ` 标题，分组却照旧把它算进「已搬完」那一组").toBe(false);
-  });
 
   /**
    * 「为什么不多管一点」的可执行答案之一。这条会自己变红：哪天全量 code span 在
