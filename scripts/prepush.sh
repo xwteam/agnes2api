@@ -424,6 +424,13 @@ BANNER='[collection-guard] ✅'
 #   ⚠️ W101 **刻意不写 `toBe(6)`**：规格 FL-6-X2 的主控裁定说「恰 6 条 × 5 语言」与
 #   「不许为凑数编造条目」互斥，判据形态因此是「形态恒等 + 五语言相等 + 不回退下限」。
 #   今天五份各 6 条，与两个参照仓实测相同。
+#   P3f 阶段 7b 之四从 3956 改到 3959（+3，W132）：`SIBLING_DOCS` 那张手写表原来与 `DOCS`
+#   脱节（5 项 vs 7 项，少的是 `ADMIN` 自己 + **漏掉的 `SPONSORS`**），而 W104 要把五份
+#   `API.md` 的骨架整个重构 ⇒ ADMIN.md 对兄弟文档小节名的引用会**静默失效**。
+#   新增 3 格 = 1 格咬合（`SIBLING_DOCS` 恰好等于 `DOCS` 去掉 ADMIN；实测把 `SPONSORS.md`
+#   删掉当场红）+ 2 格变异验证（往 zh-CN/ADMIN.md 合成一条**指向 API.md** 的小节名引用
+#   ——今天真实的三条引用一条都没落在 API.md 上，不合成就证明不了那条路走得通：
+#   不改名一条不许红，改名当场红并点名 `API.md` 与那个名字）。文件数不变。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -432,7 +439,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=3956
+EXPECT_NODE_TESTS=3959
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

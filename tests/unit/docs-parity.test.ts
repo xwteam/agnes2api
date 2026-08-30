@@ -2481,8 +2481,22 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
 
   // ── ④ 跨文档的小节名引用 ─────────────────────────────────────────────────
 
-  /** 五份 ADMIN.md 之外的**同语言兄弟文档**。射程之外的链接（外网、锚点）不参与。 */
-  const SIBLING_DOCS = ["API.md", "DEPLOY.md", "README.md", "REGISTRAR.md", "USAGE.md"] as const;
+  /**
+   * 五份 ADMIN.md 之外的**同语言兄弟文档**。射程之外的链接（外网、锚点）不参与。
+   *
+   * ⚠️ **W132（P3f 阶段 7B）：这张表原来是一张与 `DOCS` 脱节的手写清单。**
+   * 它当时是 5 项，而 `DOCS` 是 7 项 —— 少的两项是 `ADMIN`（本组的引用方自己，
+   * 本来就不该在里面）与 **`SPONSORS`（纯粹漏了）**。漏掉的后果不是「少查一条」，
+   * 而是**报文说的是另一件事**：ADMIN.md 里一条 `[SPONSORS.md](SPONSORS.md) 的「X」一节`
+   * 会走到 `targets.length === 0` 那一支，被报成「同一段里没给出通往那份文档的链接」
+   * ——链接明明就在那一行上，而真因是本表没认它。**报文可以亲手把人引进坑**，
+   * 这是本仓登记过的老教训。
+   *
+   * ⇒ 下面那格 `SIBLING_DOCS 恰好等于 DOCS 去掉 ADMIN 自己` 是这条的**咬合断言**：
+   * `DOCS` 那张表本身是从磁盘派生并双向钉住的（见它上方的注释），本表因此也跟着
+   * 钉在磁盘上 —— 往 `docs/<lang>/` 里加一份新文档、进了 `DOCS` 而没进本表，当场红。
+   */
+  const SIBLING_DOCS = ["API.md", "DEPLOY.md", "README.md", "REGISTRAR.md", "SPONSORS.md", "USAGE.md"] as const;
 
   /**
    * 「这是一条小节名引用」的每语言手写锚：**引号闭合之后紧跟着的那个「节 / 段」标记词**。
@@ -2674,6 +2688,67 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     // 反向控制：其余四种语言的条数一条都没跟着变。
     expect(LANGS.filter((l) => l !== "ko").map((l) => counts[l]))
       .toEqual(LANGS.filter((l) => l !== "ko").map(() => counts["zh-CN"]));
+  });
+
+  // ── ④' W132：`SIBLING_DOCS` ↔ `DOCS` 的双向咬合 ──────────────────────────
+  //
+  // **立项理由（P3f 阶段 7B，Q16 的风险兜底）**：W104 把五份 `API.md` 的骨架整个
+  // 重构了一遍（15 个平铺 `##` → 13 节 + 端点降 `###`），而 `ADMIN.md` 正是通过
+  // 上面那套 `SIBLING_DOCS` 引用兄弟文档的**小节名**。「名字改了 ⇒ 引用失效」这一半
+  // 上面那格已经在守（`titleLines` 收窄之后连「散文里碰巧提过」都蒙混不过去），
+  // **没人守的是另一半：`SIBLING_DOCS` 这张手写表自己会不会与文档全集脱节。**
+
+  it("W132 咬合：`SIBLING_DOCS` 恰好等于 `DOCS` 去掉 ADMIN 自己 —— 手写表不许与文档全集脱节", () => {
+    const want = DOCS.filter((d) => d !== "ADMIN").map((d) => `${d}.md`).sort();
+    expect(
+      [...SIBLING_DOCS].sort(),
+      "`SIBLING_DOCS` 与 `DOCS` 对不上了。少一项的后果不是「少查一条」，而是那条引用会走到"
+      + "「同一段里没给出通往那份文档的链接」那一支 —— 链接就在那一行上，红的却是另一件事。"
+      + "多一项则是指向一份磁盘上没有的文档，`realSiblings` 会直接 ENOENT。",
+    ).toEqual(want);
+  });
+
+  /**
+   * W132 的变异夹具：往 `docs/zh-CN/ADMIN.md` 顶上插一条**指向 API.md 某一节**的引用，
+   * 同时按需把 `API.md` 那边的那一节改名。
+   *
+   * ⚠️ **为什么要合成这条引用**：今天五份 ADMIN.md 引的三条小节名全都落在
+   * `DEPLOY.md` / `REGISTRAR.md` 上，**一条都没落在 `API.md` 上** ⇒ 直接跑真扫描
+   * 证明不了「API 骨架重构会不会被接住」。这条合成引用把那条路真的走一遍。
+   *
+   * ⚠️ 只往 zh-CN 那一份里插：其余四种语言的标记词各不相同，插了会让「五种语言条数
+   * 一致」那格红成另一件事。本夹具只喂给 `xrefScan(...).failures`，不碰条数那两格。
+   */
+  const withApiXref = (renameApiSection: boolean): SiblingReader => (lang, doc) => {
+    const src = realSiblings(lang, doc);
+    if (lang !== "zh-CN") return src;
+    if (doc === "ADMIN.md") {
+      const out = src.replace(/^(# .+\n)/m, "$1\n- 网关暴露哪几个模型，见 [API.md](API.md) 的「模型」一节。\n");
+      if (out === src) throw new Error("变异没落到 docs/zh-CN/ADMIN.md 上——这一格控制是空的");
+      return out;
+    }
+    if (doc === "API.md" && renameApiSection) {
+      const out = src.split("模型").join("モデル");
+      if (out === src) throw new Error("docs/zh-CN/API.md 里没有「模型」这两个字——这一格控制是空的");
+      return out;
+    }
+    return src;
+  };
+
+  it("W132 不许乱红：ADMIN.md 引 API.md 的一节，而那一节今天真的在 —— 一条都不许红", () => {
+    probeXrefBase();
+    const { failures } = xrefScan(withApiXref(false));
+    expect(failures, `报文：\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  it("W132 该红时红：API.md 那边把被引的那一节改了名 —— 红并点名 API.md 与那个名字", () => {
+    probeXrefBase();
+    const { failures } = xrefScan(withApiXref(true));
+    expect(failures, "API.md 的小节改名了却没红 —— 骨架重构会让这条引用静默失效")
+      .toHaveLength(1);
+    for (const h of ["zh-CN/ADMIN.md", "模型", "API.md"]) {
+      expect(failures[0] ?? "", "红了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
+    }
   });
 
   // ── ⑤ 两张表的行数从屏幕的真源派生 ───────────────────────────────────────
