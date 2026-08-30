@@ -7035,7 +7035,12 @@ describe("五份 SPONSORS.md 的字面恒等式（W33 的验收 ①②③⑤）"
  *
  * ── 它补的是哪个洞 ────────────────────────────────────────────────────────
  * 阶段 5A 的 `cde41db` 把一颗 `Deploy to Cloudflare` 按钮从根 README 删掉，阶段 5B 的
- * `ba5a076` 之后又把它从五份语言版 README 删掉，全仓从此零命中。**可是五份 DEPLOY.md
+ * W40–W44 五笔（`e7ece1e` / `943a3d3` / `bfaf387` / `bf3193a` / `99ac29c`）在重写各自那份
+ * README 时把它从**五份**语言版删掉，全仓从此零命中。
+ * ⚠️ 这一段原先把功劳记在 `ba5a076` 头上，**是错的**——`git log -S deploy.workers.cloudflare.com`
+ *   的命中集合里没有它，`git show ba5a076:docs/{lang}/README.md` 逐份仍各有 1 处。
+ *   写错还能活下来的原因值得记：`check-comment-refs` 只校验注释里的**仓内路径**，
+ *   **commit id 是零判据区**——这一段的归因错不了任何一格。**可是五份 DEPLOY.md
  * 仍逐字指着它**，而且写在「方式一 / Option A」这个首选路径上：读者照着打开根 README，
  * 那儿什么按钮都没有。五份语言版同时说着同一句假话，阶段 5A/5B 全程绿着走完。
  *
