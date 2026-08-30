@@ -8083,3 +8083,83 @@ describe("W116 表格分隔行逐格补齐：宽度跟着表头走，不许有�
       .toEqual([[], [], []]);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W117 — 4 空格嵌套列表展平到 2 空格（R22 的列表那一半）
+ *
+ * 两个参照仓的 `^    [-*] ` 合计 **0 处**，agnes 此前 **105 处**（全在五份
+ * `DEPLOY.md`，各 21 处）。**嵌套深度硬上限 1 层**：2 空格是第一层，
+ * `^      [-*] `（6 空格）意味着又套了一层，本组一并钉死为 0。
+ *
+ * ⚠️ **展平不是只把那一行减 2 个空格**：嵌套项的**续行**原本缩进 6 格，
+ * 不跟着减 2 会比它自己的标记多缩 2 格。本组因此还配一格「不许留下孤儿续行」：
+ * 剥围栏后，紧跟在 `  - ` 项下的续行缩进只许是 4（或者更浅，那是回到上一层）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 剥围栏后命中给定正则的行，报文带路径与行号。 */
+const bodyHits = (
+  docs: ReadonlyArray<readonly [string, string]>, re: RegExp,
+): string[] => docs.flatMap(([path, text]) =>
+  bodyLines(text).filter((r) => re.test(r.line)).map((r) => `${path}:${r.no} ${JSON.stringify(r.line)}`));
+
+const NESTED_4 = /^ {4}[-*] /;
+const NESTED_6 = /^ {6}[-*] /;
+
+describe("W117 列表嵌套只用 2 空格，深度硬上限 1 层", () => {
+  it("R22 `^    [-*] ` 恒为 0（剥围栏后，40 份出货文档）", () => {
+    const hits = bodyHits(shipDocPairs(), NESTED_4);
+    expect(hits, `还有 4 空格嵌套列表（两个参照仓合计 0 处）：\n${hits.join("\n")}`).toEqual([]);
+  });
+
+  it("R22 `^      [-*] ` 恒为 0 —— 嵌套深度硬上限 1 层", () => {
+    const hits = bodyHits(shipDocPairs(), NESTED_6);
+    expect(hits, `出现了第二层嵌套：\n${hits.join("\n")}`).toEqual([]);
+  });
+
+  it("展平不许留下孤儿续行：`  - ` 项的续行缩进不许还是 6 格", () => {
+    const orphans: string[] = [];
+    for (const [path, text] of shipDocPairs()) {
+      const rows = bodyLines(text);
+      rows.forEach((r, i) => {
+        if (!/^ {2}[-*] /.test(r.line)) return;
+        const next = rows[i + 1];
+        if (next === undefined || next.no !== r.no + 1) return;
+        if (/^ {6}\S/.test(next.line)) {
+          orphans.push(`${path}:${next.no} 上一行是 2 空格的嵌套项，这一行却还缩着 6 格`);
+        }
+      });
+    }
+    expect(orphans, `展平只减了标记行、续行留在原地：\n${orphans.join("\n")}`).toEqual([]);
+  });
+
+  it("该红时红：把一处嵌套改回 4 空格 —— 两条判据里的第一条红并点名行号", () => {
+    const target = join("docs", "zh-CN", "DEPLOY.md");
+    const docs = shipDocsWith(target, (s) => s.replace(/^ {2}- \*\*补池锁\*\*/m, "    - **补池锁**"));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地 —— 那一行的锚字面改了")
+      .not.toEqual(readFileSync(target, "utf8"));
+    expect(bodyHits(docs, NESTED_4).join("\n"), "4 空格嵌套回来了却没红").toContain(`${target}:`);
+  });
+
+  it("该红时红：套出第二层 —— `^      [-*] ` 那一格红", () => {
+    const target = join("docs", "en", "DEPLOY.md");
+    const docs = shipDocsWith(target, (s) => s.replace(/^ {2}- /m, "      - "));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(bodyHits(docs, NESTED_6).join("\n"), "第二层嵌套进来了却没红").toContain(`${target}:`);
+  });
+
+  it("不许乱红：围栏里的 4 空格缩进（yaml / 代码本来就长这样）不进射程", () => {
+    const target = join("docs", "ja", "DEPLOY.md");
+    const decoy = "\n```yaml\nservices:\n  app:\n    - 这一行在围栏里\n```\n\n```text\n    - 也在围栏里\n```\n";
+    const docs = shipDocsWith(target, (s) => s + decoy);
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect([bodyHits(docs, NESTED_4), bodyHits(docs, NESTED_6)],
+      "围栏里的缩进被算进来了 —— 剥围栏那一步没生效，本组会误伤 yaml 与代码示例")
+      .toEqual([[], []]);
+  });
+
+  it("射程自守：今天真的存在 2 空格的一层嵌套 —— 否则上面几格是在守一片空地", () => {
+    const flat = bodyHits(shipDocPairs(), /^ {2}[-*] /);
+    expect(flat.length, "40 份文档里一处 2 空格嵌套列表都没有 —— 展平判据没有被守护的对象，"
+      + "多半是正则或剥围栏写坏了").toBeGreaterThan(50);
+  });
+});

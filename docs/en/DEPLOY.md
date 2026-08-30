@@ -83,18 +83,18 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   added by this section are **0/day**, not "a few less". When it is on, every tend round pays
   three items, **all hanging off one axis: the tend frequency** (on Worker that is the Cron in
   `wrangler.toml`, `*/30 * * * *` by default = 48 rounds/day; on Node it is `TEND_INTERVAL_MS`):
-    - **Tend lock**: one put + one delete per round. This item already existed before this
-      change; it had simply never been written into this account.
-    - **Tend event persistence**: at most one put per round. **What decides whether a write
-      happens is whether this round's event buffer is empty** — not what the events are
-      named. A round that is healthy *and* whose configuration is healthy emits no events at
-      all, so it costs 0. ⚠️ **"0 when healthy" has a precondition that must be stated**:
-      `loadConfig` emits one configuration warning **on every single round** when
-      `TEND_INTERVAL_MS` is below `MINT_BATCH × CODE_TIMEOUT_MS × channel count`
-      (by default `5 × 120000 × 1 = 600000`, i.e. 10 minutes). Under that setting **every
-      round writes once**, even a round that mints nothing.
-    - **Tend history (`tend:history`)**: one get + one put per round, **unconditionally**.
-      Single key, no fan-out.
+  - **Tend lock**: one put + one delete per round. This item already existed before this
+    change; it had simply never been written into this account.
+  - **Tend event persistence**: at most one put per round. **What decides whether a write
+    happens is whether this round's event buffer is empty** — not what the events are
+    named. A round that is healthy *and* whose configuration is healthy emits no events at
+    all, so it costs 0. ⚠️ **"0 when healthy" has a precondition that must be stated**:
+    `loadConfig` emits one configuration warning **on every single round** when
+    `TEND_INTERVAL_MS` is below `MINT_BATCH × CODE_TIMEOUT_MS × channel count`
+    (by default `5 × 120000 × 1 = 600000`, i.e. 10 minutes). Under that setting **every
+    round writes once**, even a round that mints nothing.
+  - **Tend history (`tend:history`)**: one get + one put per round, **unconditionally**.
+    Single key, no fan-out.
   ⚠️ **Do not read these three through `EVENT_WRITES_PER_DAY` (12 per isolate per day).**
   That gate is built for the `fetch` path, where the premise is "one isolate serves many
   requests, so the budget is consumed repeatedly on a long-lived instance". On the tend path
@@ -112,60 +112,60 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   (This sentence used to name only the first file, while the "tend now" row has nothing to do
   with it and no cell counted it at all back then — full-branch review I4. The fix is to add
   that missing cell, not to soften this sentence.)
-    - **Importing M new keys**: `M + 1` puts (M records + 1 index), `M + 1` gets, **0 lists**.
-      At most 200 per import (over that it is a 400, **never a silent truncation**) ⇒ the upper
-      bound for a single click is **201 puts**, i.e. 20% of the daily write quota. Splitting the
-      import into several batches is not cheaper (each batch still pays for the index write).
-    - **Re-importing** (pasting the same key again without ticking "reset the state of existing
-      keys"): **0 puts**. Duplicates are skipped, never overwritten, so re-pasting your whole
-      list is cheap and safe.
-    - With "reset the state of existing keys" ticked: 1 put for each key **already in the pool**.
-    - **Changing one key** (disable / enable / note / clear cooldown / clear strikes / un-evict /
-      reset usage counters): 1 get + 1 put. **Every action above costs the same**: they go through the
-      same handler and the same single persist, and resetting the counters reads or writes nothing
-      extra (what it clears is the in-memory persist baseline).
-      ⚠️ **The last item in those parentheses is the one thing in this section you cannot click**:
-      resetting the usage counters is **API only today — the panel has no button
-      for it** (same as the `POOL_TOUCH_INTERVAL_MS` row above). That list enumerates every action
-      the handler understands, not the buttons on the panel; it is written up here because the
-      unit price is identical to all the others, so that nobody assumes the other route costs more.
-    - **Deleting one key**: 2 gets + 1 put (index) + 1 delete.
-    - **Bulk disable / bulk clear-cooldown of N keys**: N gets + N puts.
-    - **Bulk delete of N keys**: `N + 1` gets + **1** put (the index is written once) + N deletes.
-    - **One click on "tend now"**: a fixed **3 puts** (guard key + lock acquisition + tend
-      history) plus 1 delete (releasing the lock, which lives in a different bucket), plus
-      **2 more puts per key actually minted** (record + index). It is the **only panel action
-      with a daily cap**: at most **24** per day (the fourth guardrail, see
-      [REGISTRAR.md](REGISTRAR.md)) ⇒ a sustainable `24 × 3 = 72` puts/day, which on top of
-      the 320 in the third row below gives **392/day (39.2%)**; minting the default
-      `MINT_BATCH = 5` every single time gives an upper bound of `24 × 13 = 312` ⇒
-      **632/day (63.2%)**, and that row is not sustainable — your temporary-mailbox quota and
-      `TARGET_KEYS` hit their limits first. **The reason for this gate is not "it would blow the
-      budget", it is "there is no headroom"**: with only the 10-minute cooldown the bound is
-      `24 × 6 = 144` rounds/day = 432 puts, which on top of 320 is already 75% — and 96 of that
-      320 equals `12 × concurrent isolate count`, a number **you cannot tune yourself**.
-    - **Saving the settings once** (`PUT /admin/api/config`): **1 put** + 3–4 gets (one
-      `readAll` plus one raw read before the write, then one `readAll` to read back; when you
-      save again right afterwards the previous `invalidate()` makes the config-refresh
-      middleware read once more, and the diagnostic branch likewise costs one extra).
-      **A save that fails validation is 0 puts + 2–3 gets** — not a single byte is written
-      (right after a successful save it likewise costs one extra read, same reason as above).
-    - **Clearing one credential** (`POST /admin/api/config/secrets/clear`): **1 put** + 2 gets;
-      clearing `gatewayToken` (after which the config no longer loads) costs 3 gets.
-    - **Dry-run validation** (`POST /admin/api/config/validate`): **0 puts** + 1 get.
-    - **Resetting the configuration** (`/admin/api/config/reset`, the first danger-zone button
-      on the settings page): **1 put** + 2 gets (one read-back before the write, one after).
-      It wipes the single stored configuration entry, and **it spends the put bucket, not the
-      delete bucket** — writing an empty value instead of deleting the key avoids the KV
-      delete-tombstone family of problems.
-    - **Purging the key pool** (`/admin/api/keys/purge`, the second danger-zone button):
-      **N deletes (N = pool size) + 1 put** (the index is written exactly once, the same rule as
-      bulk delete).
-      ⚠️ **The free tier's delete bucket is 1,000 per day** (independent of read, write and
-      list) ⇒ **with N approaching 1,000 this one button blows the day's delete quota on its
-      own**, and the bigger the pool the more it costs. On the read side it is one pool snapshot
-      (0 gets when the isolate cache is warm) plus one read-back; clicking again on an empty
-      pool is 0 deletes and 0 puts.
+  - **Importing M new keys**: `M + 1` puts (M records + 1 index), `M + 1` gets, **0 lists**.
+    At most 200 per import (over that it is a 400, **never a silent truncation**) ⇒ the upper
+    bound for a single click is **201 puts**, i.e. 20% of the daily write quota. Splitting the
+    import into several batches is not cheaper (each batch still pays for the index write).
+  - **Re-importing** (pasting the same key again without ticking "reset the state of existing
+    keys"): **0 puts**. Duplicates are skipped, never overwritten, so re-pasting your whole
+    list is cheap and safe.
+  - With "reset the state of existing keys" ticked: 1 put for each key **already in the pool**.
+  - **Changing one key** (disable / enable / note / clear cooldown / clear strikes / un-evict /
+    reset usage counters): 1 get + 1 put. **Every action above costs the same**: they go through the
+    same handler and the same single persist, and resetting the counters reads or writes nothing
+    extra (what it clears is the in-memory persist baseline).
+    ⚠️ **The last item in those parentheses is the one thing in this section you cannot click**:
+    resetting the usage counters is **API only today — the panel has no button
+    for it** (same as the `POOL_TOUCH_INTERVAL_MS` row above). That list enumerates every action
+    the handler understands, not the buttons on the panel; it is written up here because the
+    unit price is identical to all the others, so that nobody assumes the other route costs more.
+  - **Deleting one key**: 2 gets + 1 put (index) + 1 delete.
+  - **Bulk disable / bulk clear-cooldown of N keys**: N gets + N puts.
+  - **Bulk delete of N keys**: `N + 1` gets + **1** put (the index is written once) + N deletes.
+  - **One click on "tend now"**: a fixed **3 puts** (guard key + lock acquisition + tend
+    history) plus 1 delete (releasing the lock, which lives in a different bucket), plus
+    **2 more puts per key actually minted** (record + index). It is the **only panel action
+    with a daily cap**: at most **24** per day (the fourth guardrail, see
+    [REGISTRAR.md](REGISTRAR.md)) ⇒ a sustainable `24 × 3 = 72` puts/day, which on top of
+    the 320 in the third row below gives **392/day (39.2%)**; minting the default
+    `MINT_BATCH = 5` every single time gives an upper bound of `24 × 13 = 312` ⇒
+    **632/day (63.2%)**, and that row is not sustainable — your temporary-mailbox quota and
+    `TARGET_KEYS` hit their limits first. **The reason for this gate is not "it would blow the
+    budget", it is "there is no headroom"**: with only the 10-minute cooldown the bound is
+    `24 × 6 = 144` rounds/day = 432 puts, which on top of 320 is already 75% — and 96 of that
+    320 equals `12 × concurrent isolate count`, a number **you cannot tune yourself**.
+  - **Saving the settings once** (`PUT /admin/api/config`): **1 put** + 3–4 gets (one
+    `readAll` plus one raw read before the write, then one `readAll` to read back; when you
+    save again right afterwards the previous `invalidate()` makes the config-refresh
+    middleware read once more, and the diagnostic branch likewise costs one extra).
+    **A save that fails validation is 0 puts + 2–3 gets** — not a single byte is written
+    (right after a successful save it likewise costs one extra read, same reason as above).
+  - **Clearing one credential** (`POST /admin/api/config/secrets/clear`): **1 put** + 2 gets;
+    clearing `gatewayToken` (after which the config no longer loads) costs 3 gets.
+  - **Dry-run validation** (`POST /admin/api/config/validate`): **0 puts** + 1 get.
+  - **Resetting the configuration** (`/admin/api/config/reset`, the first danger-zone button
+    on the settings page): **1 put** + 2 gets (one read-back before the write, one after).
+    It wipes the single stored configuration entry, and **it spends the put bucket, not the
+    delete bucket** — writing an empty value instead of deleting the key avoids the KV
+    delete-tombstone family of problems.
+  - **Purging the key pool** (`/admin/api/keys/purge`, the second danger-zone button):
+    **N deletes (N = pool size) + 1 put** (the index is written exactly once, the same rule as
+    bulk delete).
+    ⚠️ **The free tier's delete bucket is 1,000 per day** (independent of read, write and
+    list) ⇒ **with N approaching 1,000 this one button blows the day's delete quota on its
+    own**, and the bigger the pool the more it costs. On the read side it is one pool snapshot
+    (0 gets when the isolate cache is warm) plus one read-back; clicking again on an empty
+    pool is 0 deletes and 0 puts.
   ⚠️⚠️ **"Saving the settings" and "clearing one credential" have no daily cap. That is
   deliberate, not an oversight.** Both require the admin token and both only happen when a human
   clicks; no automatic path can trigger them. Putting a storage guardrail on them would itself
@@ -197,17 +197,17 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 
   ⚠️ **All three items are billed per round, and "rounds per day" has two independent axes.
   Do not conflate them:**
-    - **Frequency axis**: tightening the tend frequency scales all three **proportionally**
-      (that is the sentence above). **On Worker the knob is the Cron in `wrangler.toml`**;
-      on Node it is `TEND_INTERVAL_MS`. `TEND_INTERVAL_MS` is **consumed only by the Node
-      scheduler** — changing it on Worker adds **not a single round**. Conversely the
-      `registrar_tend_lock` put/delete pair **exists in both runtimes** (as of P3c Task 5 the
-      Node side takes the same lock — an in-process boolean is worthless when several
-      containers share one volume).
-    - **Threshold axis**: when `TEND_INTERVAL_MS` drops below
-      `MINT_BATCH × CODE_TIMEOUT_MS × channel count`, the event item **jumps from "0 on a
-      healthy round" to "1 every round"** — that jump is independent of frequency and is
-      caused by the per-round configuration warning described above.
+  - **Frequency axis**: tightening the tend frequency scales all three **proportionally**
+    (that is the sentence above). **On Worker the knob is the Cron in `wrangler.toml`**;
+    on Node it is `TEND_INTERVAL_MS`. `TEND_INTERVAL_MS` is **consumed only by the Node
+    scheduler** — changing it on Worker adds **not a single round**. Conversely the
+    `registrar_tend_lock` put/delete pair **exists in both runtimes** (as of P3c Task 5 the
+    Node side takes the same lock — an in-process boolean is worthless when several
+    containers share one volume).
+  - **Threshold axis**: when `TEND_INTERVAL_MS` drops below
+    `MINT_BATCH × CODE_TIMEOUT_MS × channel count`, the event item **jumps from "0 on a
+    healthy round" to "1 every round"** — that jump is independent of frequency and is
+    caused by the per-round configuration warning described above.
   **The worst case is both axes at once.** This section is about Worker + the free KV tier,
   so here is an example that is **perfectly legal in that shape**: change the Cron to
   `*/5 * * * *` ⇒ 288 rounds/day, each producing events ⇒
@@ -342,35 +342,35 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   time-window boundary).
   **"Bounded" does not mean "independent of activity level"** — evaluation C4b surfaced a
   counter-intuitive result:
-    - **An "active" deployment with a steady stream of new events**: new events keep pushing
-      the poll interval back down to the 15-second minimum, and most polls hit a warm read.
-      Assuming the worst case of 4 gets/poll throughout: `(86400 ÷ 15) × 4 = 23,040` gets/day
-      (about 23% of the read quota; in practice far lower since only a small fraction of polls
-      happen to cross a window boundary).
-    - **A "quiet" deployment with no new events for a long stretch** (including a
-      freshly-deployed instance that hasn't triggered any diagnostic event yet): the `after`
-      cursor never advances, and once the frozen cursor falls out of the 24-hour retention
-      window, **every subsequent poll costs the full 48 gets**; at the same time, with no new
-      content, exponential backoff pushes the poll interval up to the 60-second cap. The
-      ⚠️ **That figure is a steady-state *idle* envelope, not an upper bound.** It assumes the
-      board is simply left open with nobody touching it. Interactive paths are not in it: every
-      click on a level filter is a full cold read, and returning to this board or making the tab
-      visible again also triggers a round immediately — **none of these are throttled today**.
-      steady state is `(86400 ÷ 60) × (48 + 1) = 70,560` gets/day (about **71%** of the read
-      quota). The `+1` is **the configuration read each poll round triggers on its own**: the
-      config-refresh middleware runs ahead of every route and the config cache TTL is 30
-      seconds, shorter than the 60-second poll interval, so every round costs exactly one
-      extra read. It draws on **the same bucket** as the `86400 ÷ config TTL seconds` term in
-      the key-pool account below (that term states the 2,880/day upper bound; an isolate
-      driven only by the panel actually spends 1,440), so **do not count it twice** when you
-      add the two accounts together. **A deployment healthy enough to produce almost no
-      diagnostic events ends up costing more read quota from a single open panel tab than an
-      "active" one does**. Plan your read-quota headroom around this larger number, not the
-      smaller "active" one, especially when adding it to the key-pool read side above (see
-      the "3 active isolates already use about 99.4%" scenario above).
-    - **The download endpoint** (`GET /admin/api/events/download`) costs a flat 48 gets per
-      click (`readEvents(null)` always does a cold read, no cursor) — this only happens on a
-      manual click and is negligible at that scale; noted here purely for completeness.
+  - **An "active" deployment with a steady stream of new events**: new events keep pushing
+    the poll interval back down to the 15-second minimum, and most polls hit a warm read.
+    Assuming the worst case of 4 gets/poll throughout: `(86400 ÷ 15) × 4 = 23,040` gets/day
+    (about 23% of the read quota; in practice far lower since only a small fraction of polls
+    happen to cross a window boundary).
+  - **A "quiet" deployment with no new events for a long stretch** (including a
+    freshly-deployed instance that hasn't triggered any diagnostic event yet): the `after`
+    cursor never advances, and once the frozen cursor falls out of the 24-hour retention
+    window, **every subsequent poll costs the full 48 gets**; at the same time, with no new
+    content, exponential backoff pushes the poll interval up to the 60-second cap. The
+    ⚠️ **That figure is a steady-state *idle* envelope, not an upper bound.** It assumes the
+    board is simply left open with nobody touching it. Interactive paths are not in it: every
+    click on a level filter is a full cold read, and returning to this board or making the tab
+    visible again also triggers a round immediately — **none of these are throttled today**.
+    steady state is `(86400 ÷ 60) × (48 + 1) = 70,560` gets/day (about **71%** of the read
+    quota). The `+1` is **the configuration read each poll round triggers on its own**: the
+    config-refresh middleware runs ahead of every route and the config cache TTL is 30
+    seconds, shorter than the 60-second poll interval, so every round costs exactly one
+    extra read. It draws on **the same bucket** as the `86400 ÷ config TTL seconds` term in
+    the key-pool account below (that term states the 2,880/day upper bound; an isolate
+    driven only by the panel actually spends 1,440), so **do not count it twice** when you
+    add the two accounts together. **A deployment healthy enough to produce almost no
+    diagnostic events ends up costing more read quota from a single open panel tab than an
+    "active" one does**. Plan your read-quota headroom around this larger number, not the
+    smaller "active" one, especially when adding it to the key-pool read side above (see
+    the "3 active isolates already use about 99.4%" scenario above).
+  - **The download endpoint** (`GET /admin/api/events/download`) costs a flat 48 gets per
+    click (`readEvents(null)` always does a cold read, no cursor) — this only happens on a
+    manual click and is negligible at that scale; noted here purely for completeness.
   Both scenarios' ceilings stay **flat regardless of how many days the deployment has been
   running** — that part of the original claim still holds after the C4 fix.
 - **`list` and `delete` are two further buckets, 1,000/day each**, separate from the read and
