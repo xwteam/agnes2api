@@ -1080,6 +1080,8 @@ curl http://localhost:8080/admin/api/registrar/status \
 
 A channel connectivity test: one read-only GET to the mailbox service. It creates no mailbox and claims no key.
 
+The `domains` field in the response is **the number of domains probed** (an integer), not a list of them — this endpoint deliberately echoes back no upstream detail.
+
 **Request body**: this endpoint takes no body; the channel name lives in the path (either `moemail` or `yyds`).
 
 **Request**:
@@ -1092,7 +1094,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 **Response**:
 
 ```json
-{ "ok": true, "channel": "moemail", "domains": ["example.test"], "latencyMs": 128 }
+{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128 }
 ```
 
 ### GET /admin/api/usage

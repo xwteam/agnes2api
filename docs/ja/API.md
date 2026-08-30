@@ -1080,6 +1080,8 @@ curl http://localhost:8080/admin/api/registrar/status \
 
 チャネルの疎通テスト：メールサービスへ読み取り専用の GET を一度だけ送ります。メールボックスも作らず key も受け取りません。
 
+レスポンスの `domains` は**探れたドメインの個数**（整数）であって、ドメインの一覧ではありません——このエンドポイントは上流の詳細を意図的に一切返しません。
+
 **リクエストボディ**：このエンドポイントはボディを取りません。チャネル名はパスに書きます（`moemail` か `yyds` のみ）。
 
 **リクエスト**：
@@ -1092,7 +1094,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 **レスポンス**：
 
 ```json
-{ "ok": true, "channel": "moemail", "domains": ["example.test"], "latencyMs": 128 }
+{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128 }
 ```
 
 ### GET /admin/api/usage

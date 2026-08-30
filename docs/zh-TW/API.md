@@ -1080,6 +1080,8 @@ curl http://localhost:8080/admin/api/registrar/status \
 
 通道連通性測試：向信箱服務發一次唯讀 GET，不建任何信箱、不領任何 key。
 
+回應裡的 `domains` 是**探到的網域個數**（整數），不是網域清單——這條端點刻意不回顯任何上游細節。
+
 **請求體**：本端點不收請求內容，通道名寫在路徑裡（只能是 `moemail` 或 `yyds`）。
 
 **請求**：
@@ -1092,7 +1094,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 **回應**：
 
 ```json
-{ "ok": true, "channel": "moemail", "domains": ["example.test"], "latencyMs": 128 }
+{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128 }
 ```
 
 ### GET /admin/api/usage

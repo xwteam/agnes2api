@@ -1080,6 +1080,8 @@ curl http://localhost:8080/admin/api/registrar/status \
 
 채널 연결 테스트: 메일 서비스로 읽기 전용 GET을 한 번 보냅니다. 메일함도 만들지 않고 key도 받지 않습니다.
 
+응답의 `domains`는 **탐지된 도메인 개수**(정수)이며 도메인 목록이 아닙니다 — 이 엔드포인트는 업스트림 세부 정보를 의도적으로 전혀 내보내지 않습니다.
+
 **요청 본문**: 이 엔드포인트는 본문을 받지 않으며 채널 이름은 경로에 씁니다(`moemail` 또는 `yyds`만).
 
 **요청**:
@@ -1092,7 +1094,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 **응답**:
 
 ```json
-{ "ok": true, "channel": "moemail", "domains": ["example.test"], "latencyMs": 128 }
+{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128 }
 ```
 
 ### GET /admin/api/usage
