@@ -7288,3 +7288,149 @@ describe("跨文档指认的真实性：文档里说「那份 README 里有 X」
       .toBe(1 + LANGS.length * DOCS.length);
   });
 });
+
+/**
+ * ⑧ 五份 README 的 `## 📄` 节末段逐字节登记（P3f 阶段 5B 第 1 轮评审回填，ADJ §63）。
+ *
+ * ── 它补的是哪个洞 ────────────────────────────────────────────────────────
+ * 回填前逐份数「担保 / 擔保 / warranty / 保証 / 보증」这一族字面：
+ * **zh-CN=0、zh-TW=0、en=1、ja=2、ko=1**。en/ja/ko 的末段带着「无担保、无支持承诺」
+ * 那半句，两份中文语言版**一个字都没有** —— 而五份语言版都没有 `## ⚠ 免责声明` 那一节
+ *（那是根 README 专属的第 4 节），所以中文读者拿不到任何等价内容。
+ *
+ * 🔴 **一格都没红，因为这是所有结构判据的公共盲区**：R2 只看 heading 层级、R3 看围栏
+ * 语言标记、R4 看链接目标、R5 只数表格行数、R6 只认 `IDENTIFIER` 型 code span
+ *（见本文件上方 `RULES` 那张表）—— **一句散文加没加，五格一格都看不见**。
+ * 逐节块计数（ul/ol/表格行/段落数）同样看不见：那半句是**加在同一段里**的，
+ * 不是新起一段，块计数分毫不动。
+ *
+ * ── 为什么是「五份都补」而不是「跟模板删掉」（ADJ §63）────────────────────
+ * 模板侧实测：kiro2api 五份 README 的这一段都**只有短句**，没有那半句 ⇒ 偏离模板的
+ * 是 en/ja/ko 而不是中文两份。但「按模板走」**不是这一节的裁决规则**：D3 明令
+ * agnes2api 的 📄 节不照抄 kiro2api 那份「**允许**：个人学习、研究、自用部署、二次开发」
+ * 枚举（它暗示商用不在允许之列，与 MIT 自相矛盾），改成按 MIT 的真实授权写
+ *「**授予** / **要求**」。⇒ 这一节从 D3 落地那天起就已经不跟模板了。
+ * 而按 D3 的口径，回填前的写法是**描述不全**：MIT 正文的第三块就是
+ * `THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND`，
+ *「授予 / 要求」两条把它漏了。kiro2api 没有这个义务（它那份枚举根本不是在描述 MIT）。
+ * ⇒ 补齐两份中文是**补全**，删 en/ja/ko 是**真损失**。措辞与根 README
+ * `## ⚠ 免责声明` §2「无担保声明」对齐。
+ *
+ * ── 判据为什么是逐字节而不是布尔量 ───────────────────────────────────────
+ * 评审建议的最小形态是「是否含无担保表述」这个布尔量五份相同。**这里做得更严**：
+ * 末段整段 `toEqual` 逐字节登记。理由是布尔量挡不住「半句还在、但整段被改写成
+ * 另一个意思」这种坏法，而那正是这一段最容易出的事（它同时承载「与上游无关联」
+ * 「无担保」「风险自负」「遵守服务条款」四件事）。**两个方向都会红**：文档改了不改
+ * 登记表要红，登记表改了不改文档也要红。
+ * 下面那格「一族字面五份都在」是**意图说明**，不是判据主体——它让红信息说得出
+ * 「你删掉的是无担保表述」，而不是只丢一段 diff 给人看。
+ */
+describe("⑧ 五份 README 的 `## 📄` 节末段逐字节等于登记表（ADJ §63）", () => {
+  /** 逐语言登记末段全文。**改这张表就是改对外承诺，别顺手改。** */
+  const LICENSE_TAILS: Readonly<Record<Lang, string>> = {
+    "zh-CN": "本项目与 Agnes AI 无关联，且不提供任何担保与支持承诺。使用者需自行承担风险并遵守相关服务条款。",
+    "zh-TW": "本專案與 Agnes AI 無關聯，且不提供任何擔保與支援承諾。使用者需自行承擔風險並遵守相關服務條款。",
+    en: "This project is not affiliated with Agnes AI. It comes with no warranty and no support commitment, so use it at your own risk and comply with the applicable terms of service.",
+    ja: "本プロジェクトは Agnes AI とは関係がありません。保証もサポートの約束もありませんので、自己責任でご利用いただき、該当する利用規約を守ってください。",
+    ko: "본 프로젝트는 Agnes AI와 관련이 없습니다. 어떠한 보증도 지원 약속도 없으므로 위험은 본인이 부담하고 해당 이용약관을 지켜 주세요.",
+  };
+
+  /** 「无担保」那一族字面，逐语言各一个。下面那格用它把红信息说清楚。 */
+  const WARRANTY_TOKEN: Readonly<Record<Lang, string>> = {
+    "zh-CN": "担保", "zh-TW": "擔保", en: "warranty", ja: "保証", ko: "보증",
+  };
+
+  /**
+   * 抠出 `## 📄` 一节的**最后一个非空段落**。
+   *
+   * ⚠️ 节的下界取 `---` 或下一个 `## `：这一节后面紧跟的是页脚分隔线，不取下界的话
+   * 会把页脚那个 `<div align="center">` 也算成末段。
+   */
+  const licenseTail = (src: string, lang: Lang): string => {
+    const lines = outsideFences(src).split("\n");
+    const start = lines.findIndex((l) => l.startsWith("## 📄 "));
+    if (start < 0) throw new Error(`docs/${lang}/README.md 里找不到 \`## 📄\` 那一节 —— 判据坏了，不许静默当成「末段都对」`);
+    const rest = lines.slice(start + 1);
+    const endAt = rest.findIndex((l) => l.trim() === "---" || l.startsWith("## "));
+    const body = (endAt < 0 ? rest : rest.slice(0, endAt)).join("\n");
+    const paras = body.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => p !== "");
+    const tail = paras[paras.length - 1];
+    if (tail === undefined) throw new Error(`docs/${lang}/README.md 的 \`## 📄\` 一节抠不出任何段落 —— 判据坏了，不许静默当成「末段都对」`);
+    return tail;
+  };
+
+  type LangRead = (lang: Lang) => string;
+  const realReadme: LangRead = (l) => readFileSync(docPath(".", l, "README"), "utf8");
+  const patchLang = (base: LangRead, at: Lang, body: string): LangRead => (l) => (l === at ? body : base(l));
+
+  const tailFailures = (read: LangRead): string[] => {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const got = licenseTail(read(lang), lang);
+      const want = LICENSE_TAILS[lang];
+      if (got !== want) {
+        out.push(`docs/${lang}/README.md 的 \`## 📄\` 节末段与登记表对不上：\n  want: ${JSON.stringify(want)}\n  got:  ${JSON.stringify(got)}`);
+      }
+    }
+    return out;
+  };
+
+  const probeGreen = (failures: readonly string[], realCase: string): void => {
+    if (failures.length > 0) {
+      throw new Error(`本格是探针，它的基取自真仓，而真仓今天本身就不过这条判据 —— 真因在「${realCase}」那一格：\n${failures.join("\n")}`);
+    }
+  };
+
+  const REAL_8 = "⑧ 五份 README 的 `## 📄` 节末段逐字节等于登记表";
+
+  it(REAL_8, () => {
+    const failures = tailFailures(realReadme);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("⑧ 意图说明：五份末段各自都带着「无担保」那一族字面 —— 回填前 zh-CN / zh-TW 这一格是红的", () => {
+    const missing = LANGS.filter((l) => !licenseTail(realReadme(l), l).includes(WARRANTY_TOKEN[l]));
+    expect(
+      missing,
+      "这几种语言的 `## 📄` 节末段里没有「无担保」表述，而五份语言版都没有 `## ⚠ 免责声明` 那一节"
+      + "（那是根 README 专属的第 4 节）⇒ 这几种语言的读者拿不到任何等价内容。"
+      + `逐语言该出现的字面：${JSON.stringify(WARRANTY_TOKEN)}`,
+    ).toEqual([]);
+  });
+
+  it("⑧ 该红时红：把 en 那半句「no warranty and no support commitment」删掉 —— R2–R6 全绿，本格必须红并点名 docs/en/README.md", () => {
+    probeGreen(tailFailures(realReadme), REAL_8);
+    const mutated = realReadme("en").replace(
+      " It comes with no warranty and no support commitment, so use it at your own risk and",
+      " Use it at your own risk and",
+    );
+    expect(mutated, "变异没落地").not.toBe(realReadme("en"));
+    const failures = tailFailures(patchLang(realReadme, "en", mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("docs/en/README.md 的 `## 📄` 节末段与登记表对不上");
+  });
+
+  it("⑧ 该红时红：半句还在、整段被改写成另一个意思 —— 布尔量式判据挡不住，逐字节这一格挡得住", () => {
+    probeGreen(tailFailures(realReadme), REAL_8);
+    // 「擔保」还在，但「與 Agnes AI 無關聯」与「遵守相關服務條款」两件事被抹掉了。
+    const mutated = realReadme("zh-TW").replace(
+      LICENSE_TAILS["zh-TW"],
+      "本專案不提供任何擔保。",
+    );
+    expect(mutated, "变异没落地").not.toBe(realReadme("zh-TW"));
+    const failures = tailFailures(patchLang(realReadme, "zh-TW", mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("docs/zh-TW/README.md");
+    // 反证：这一段仍然含「擔保」，所以只看那一族字面的判据在这里是绿的。
+    expect(licenseTail(mutated, "zh-TW")).toContain(WARRANTY_TOKEN["zh-TW"]);
+  });
+
+  it("⑧ 认不出要吵：某一份没有 `## 📄` 那一节、或那一节是空的时候当场抛", () => {
+    expect(() => tailFailures(patchLang(realReadme, "ja", "# 标题\n\n没有许可协议节的一份文档\n")))
+      .toThrow(/判据坏了/);
+    const emptied = realReadme("ko").replace(licenseTail(realReadme("ko"), "ko"), "");
+    const gutted = emptied.replace("본 프로젝트는 [MIT 라이선스](../../LICENSE)로 공개합니다:", "")
+      .replace(/- \*\*주는 것\*\*[^\n]*\n/, "").replace(/- \*\*요구하는 것\*\*[^\n]*\n/, "");
+    expect(() => tailFailures(patchLang(realReadme, "ko", gutted))).toThrow(/判据坏了/);
+  });
+});
