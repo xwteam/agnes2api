@@ -5,7 +5,7 @@
  * 这里只放**判据**与它的反向控制。
  *
  * ── 判据为什么长这样（先读这一段，再读断言）────────────────────────────────
- * 本工作项**只建表与判据、不修正文**：正文里今天就有 28 组术语打架，
+ * 本工作项**只建表与判据、不修正文**：落地当天正文里就有 28 组术语打架，
  * 修它们会与阶段 5B/7 的重写正面相撞。于是判据不能写成
  * 「一条冲突都不许有」——那样今天就是红的，只能被人加 `skip` 绕过去，
  * 而一条被绕过去的判据比没有更坏。
@@ -117,6 +117,16 @@ function termConflicts(read: DocReader): string[] {
  * · `ja｜文档`：README 这一侧**新进表**，用的是 ja 里已经占多数的 `ドキュメント`
  *   ——**没有制造新的分歧**，只是这份文档从此也被这条判据看着了。
  * · 其余各行的分歧全在 ADMIN / DEPLOY / REGISTRAR 一侧，**不是本步的射程**，原样留着。
+ *
+ * ── 阶段 5B-3 之二（`docs/ko/README.md` 扩成 12 节）动了哪几行 ────────────────
+ * · `ko｜凭据`：README 从 `인증 정보` 改成 `자격 증명` —— ADMIN / DEPLOY / REGISTRAR
+ *   三份用的都是后者，README 跟上多数（USAGE 那一份仍是 `인증 정보`，归阶段 7）。
+ * · `ko｜邮箱`：README 这一侧**新进表**（`메일함`）。⚠️ 这一条**不是销账**：
+ *   `메일함` 与 `메일박스` 今天在 DEPLOY / REGISTRAR 内部就并存，谁去谁留还没定，
+ *   README 只是挑了其中一个、把自己这一份写统一，**分歧一条没少**。
+ * · `ko｜上游`（`README=업스트림`）与 `ko｜免费档`（`README=무료 등급`）**逐字不动**：
+ *   前者是下面反向控制 ④ 的支点（它拿 ko/README 的 `업스트림` 制造新冲突），
+ *   后者本来就是多数用词。
  */
 const PENDING_TERM_CONFLICTS: readonly string[] = [
   "en｜仓库｜ADMIN=repo｜API=repo｜DEPLOY=repo+repository｜REGISTRAR=repository｜SPONSORS=repository",
@@ -131,8 +141,8 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   "ja｜默认｜ADMIN=既定｜API=既定｜DEPLOY=デフォルト+既定｜README=既定｜REGISTRAR=デフォルト+既定｜USAGE=既定",
   "ko｜上游｜ADMIN=업스트림｜API=업스트림｜DEPLOY=상류+업스트림｜README=업스트림｜REGISTRAR=업스트림",
   "ko｜免费档｜DEPLOY=무료 등급+무료 요금제｜README=무료 등급",
-  "ko｜凭据｜ADMIN=자격 증명｜API=인증 정보+자격 증명｜DEPLOY=자격 증명｜README=인증 정보｜REGISTRAR=자격 증명｜USAGE=인증 정보",
-  "ko｜邮箱｜ADMIN=메일박스｜DEPLOY=메일박스+메일함｜REGISTRAR=메일박스+메일함",
+  "ko｜凭据｜ADMIN=자격 증명｜API=인증 정보+자격 증명｜DEPLOY=자격 증명｜README=자격 증명｜REGISTRAR=자격 증명｜USAGE=인증 정보",
+  "ko｜邮箱｜ADMIN=메일박스｜DEPLOY=메일박스+메일함｜README=메일함｜REGISTRAR=메일박스+메일함",
   "zh-TW｜仓库｜DEPLOY=倉庫｜REGISTRAR=儲存庫｜SPONSORS=倉庫",
   "zh-TW｜余量｜DEPLOY=餘量｜README=餘量｜REGISTRAR=餘裕+餘量",
   "zh-TW｜免费档｜DEPLOY=免費方案+免費檔｜README=免費方案",

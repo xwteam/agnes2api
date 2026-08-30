@@ -1273,11 +1273,16 @@ function emptinessFailure(
  *
  * 📍 **阶段 5B-3 之一（`docs/ja/README.md`）：两组仍然都 ≥ 2**（已换 3 份
  *（zh-CN / en / ja）、未换 2 份（zh-TW / ko）），缺口仍然关着。
- * ⚠️ **但它下一步就会重新张开一次**：`docs/ko/README.md` 搬完之后未换那组只剩
- * zh-TW 一份，没有可比对象 ⇒ **zh-TW 那份 README 的 R2–R6 会有一步无人看着**。
+ *
+ * 🔴 **阶段 5B-3 之二（`docs/ko/README.md`）：缺口重新张开了一次，如实登记。**
+ * 已换那组 4 份（zh-CN / en / ja / ko），未换那组只剩 zh-TW 一份 ⇒ 没有可比对象，
+ * `parityFailure()` 里那句 `if (cohort.length < 2) continue` 会把它整组跳过
+ * ⇒ **今天 `docs/zh-TW/README.md` 的 R2–R6 五格一格都没在守**。
  * 这是「一步两份」这个排法在**最后剩三份**时躲不开的形态（3 = 2 + 1），
  * 不是疏漏，也不是豁免：它随 zh-TW 搬完（`README_MIGRATED` 满 5、这张过渡表连同
- * `cohortsOf` 一起删掉）当场消失。**期间 zh-TW 那份靠的是评审，不是判据。**
+ * `cohortsOf` 一起删掉）当场消失，那之后 R2–R6 退回「五语言之间逐份相同」。
+ * ⚠️ **在那之前，zh-TW 那份 README 靠的是评审，不是判据**——
+ * 别把这五格的绿读成「zh-TW 那份也比过了」。
  *
  * ⚠️ 分组**按内容现算**（这一份的 `## ` 全行是否恰好等于 W38 常量表那 12 行），
  * 不靠手写名册：手写的名册会漂，而漂了的名册会把两份形态不同的文档分进同一组，
@@ -1477,7 +1482,7 @@ describe("五语言文档的派生结构对等（R1–R6）", () => {
    * R2–R6 退回「五语言之间逐份相同」的原形态。下面第二格就是那个自毁开关：
    * 表满 5 项时它会红，报文写明该删什么。
    */
-  const README_MIGRATED = ["zh-CN", "en", "ja"] as const;
+  const README_MIGRATED = ["zh-CN", "en", "ja", "ko"] as const;
 
   it("阶段 5B 进度登记：已换成 12 节形态的 README 与磁盘现算逐条相等", () => {
     expect(migratedReadmeLangs("."), "登记表与磁盘对不上：多出来的是「搬完没登记」，少掉的是「登记了没搬（或标题与 W38 常量表对不上）」")
