@@ -25,6 +25,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { blankHtmlComments } from "../helpers/strip-comments.js";
 import { join } from "node:path";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
@@ -40,7 +41,10 @@ const COMMUNITY_MD = [
   join(".github", "ISSUE_TEMPLATE", "feature_request.md"),
 ];
 
-const read = (p: string) => readFileSync(p, "utf8");
+// P3f 整分支评审发现 19：`.md` 的正文先把 HTML 注释换成空格再判（换行保留 ⇒ 行号不变）。
+// `.ts`/`.mjs` 不走这一支：那边的注释语法是 JS 的，`<!--` 在源码里只可能是字符串内容。
+const read = (p: string) =>
+  (p.endsWith(".md") ? blankHtmlComments(readFileSync(p, "utf8")) : readFileSync(p, "utf8"));
 const FENCE_LINE = /^[ \t]*```/;
 /** 剥围栏后的行。名册里凡是数「文档里有几个 X」的条目都走它。 */
 const bodyLines = (text: string): string[] => {

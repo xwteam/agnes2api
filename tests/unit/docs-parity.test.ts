@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 // 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源（P3e Task 1 收编），不在这里手写第二份。
-import { blankComments } from "../helpers/strip-comments.js";
+import { blankComments, blankHtmlComments } from "../helpers/strip-comments.js";
 // R11 的根那一半：16 节骨架的期望值取 W38 那张常量表，不在本文件手抄第二份标题清单。
 import { SECTIONS } from "../helpers/readme-sections.js";
 import { FAIL_REASONS } from "../../src/core/dispatcher.js";
@@ -11726,8 +11726,12 @@ describe("W130 R13c' 的射程扩展：40 份出货文档的**全部正文行**�
 /* ══════════════════════════════════════════════════════════════════════════
  * W131 —— R27 的**源码锚**（真实性轴）
  *
- * 词表判据永远追不上换说法：R27 的 fail-open 黑名单是按字面扫的，换一句
- *「未设 `ADMIN_TOKEN` 时 `/admin` 仍会注册，但不做鉴权」就一个词都不撞。
+ * 词表判据永远追不上换说法：R27 的 fail-open 黑名单（住在
+ * `tests/unit/docs-typography.test.ts` 的「R27 fail-closed 语义的词表两侧」那一组，
+ * P3f 整分支评审发现 8 / 12 的回填）是**按字面扫的**，换一个新说法就可能一个词都不撞。
+ * ⚠️ **这句注释曾经是假的**：写下它的时候那张黑名单**根本不存在**，
+ * 于是它在替一个不存在的判据做担保（ADJ §71 那一族）。现在它存在了，这句话才成立；
+ * **两组的分工是「本组管数字、那一组管语义方向」，别再合并成一句。**
  * ⇒ 这一组**从源码现算**两件事，文档写的与之矛盾即红：
  * ① `src/core/config.ts`：缺 `GATEWAY_TOKEN` ⇒ 抛错，**而且那条路径只判存在、不判长度**；
  * ② `src/http/admin/auth.ts`：`ADMIN_TOKEN_MIN_LENGTH` 的**数值**。
@@ -11841,11 +11845,16 @@ describe("W131 R27 的源码锚：口令那两条门槛的数字从 `src/` 现�
    * ⚠️ 主控落地前已实测：扩射程后**零新增失败**——那 25 份里今天的长度陈述
    * 逐条都归属 `ADMIN_TOKEN`（`docs/en/ADMIN.md:33` 那句主语是 `ADMIN_TOKEN`，不是假话）。
    */
+  // ⚠️ **基集合也必须现算**（P3f 整分支评审发现 13）：上一版这里手写着 31 份
+  //（README × 6 + `docs/{5 语言}/{5 类}`），而注释却宣称「全部出货文档现算」。
+  // 差集里恰好躺着一份**提 `GATEWAY_TOKEN` 的 `SECURITY.md`**（第 52 / 117 / 118 行），
+  // 评审在它上面复现出 V33 那句假话的原型（「a strong `GATEWAY_TOKEN` of at least 24
+  // characters」），4181 格一格不红。⇒ 基集合改成与
+  // `docs-typography.test.ts` 的 `SHIP_DOCS` 同一份逻辑：仓根全部 `.md` + `docs/{语言}/*.md`。
   const SCOPE: readonly string[] = [
-    "README.md",
-    ...LANGS.map((l) => join("docs", l, "README.md")),
-    ...LANGS.flatMap((l) => ["API", "DEPLOY", "USAGE", "ADMIN", "REGISTRAR"]
-      .map((d) => join("docs", l, `${d}.md`))),
+    ...readdirSync(".").filter((f) => f.endsWith(".md")).sort(),
+    ...LANGS.flatMap((l) => readdirSync(join("docs", l))
+      .filter((f) => f.endsWith(".md")).sort().map((f) => join("docs", l, f))),
   ].filter((p) => readFileSync(p, "utf8").includes("GATEWAY_TOKEN"));
   /** 保留旧名以免下面几格全改；它已不是「11 份」而是现算集合。 */
   const ELEVEN = SCOPE;
@@ -11950,6 +11959,28 @@ describe("W131 R27 的源码锚：口令那两条门槛的数字从 `src/` 现�
     const wrong = gatewayLengthClaims(docs);
     expect(wrong.join("\n"), "把长度门槛安到网关口令上没被抓到 —— 而那正是 V33 犯过的那句假话")
       .toContain(`${target}:`);
+  });
+
+  it("射程自守（评审发现 13）：`SECURITY.md` 真的进了断言射程 —— 上一版写死 31 份时它够不着", () => {
+    expect(SCOPE, `断言射程今天有 ${SCOPE.length} 份，却不含 \`SECURITY.md\` —— `
+      + "它第 52 / 117 / 118 行提着 `GATEWAY_TOKEN`，基集合又漏了它，"
+      + "那就是上一版那个「注释宣称现算、基集合手写」的洞回来了").toContain("SECURITY.md");
+    expect(SCOPE.length, "断言射程掉到 20 份以下了 —— 多半是现算写坏了").toBeGreaterThan(20);
+  });
+
+  it("② 该红时红（评审发现 13 复现的那一条）：给 `SECURITY.md` 的 `GATEWAY_TOKEN` 加一句长度门槛 —— 方向② 必须点名", () => {
+    const target = "SECURITY.md";
+    const from = "you set a strong `GATEWAY_TOKEN` and a strong admin token";
+    const to = "you set a strong `GATEWAY_TOKEN` of at least 24 characters and a strong admin token";
+    expect(readFileSync(target, "utf8"), `\`${target}\` 里已经不是那一句了 —— 变异的支点没了`)
+      .toContain(from);
+    const docs = ELEVEN.map((p) => {
+      const t = readFileSync(p, "utf8");
+      return p === target ? [p, t.replace(from, to)] as const : [p, t] as const;
+    });
+    const wrong = gatewayLengthClaims(docs);
+    expect(wrong.join("\n"), "`SECURITY.md` 里的 V33 原型没被抓到 —— "
+      + "这正是上一版基集合写死 31 份时的死法（评审实测 4181 格全绿）").toContain(`${target}:`);
   });
 
   it("不许乱红：`ADMIN_TOKEN` 那一行里顺带提到 `GATEWAY_TOKEN`（「必须与它不同」）不算", () => {
@@ -12121,8 +12152,11 @@ const truthDocs = (
   mutate?: readonly [path: string, fn: (s: string) => string],
 ): ReadonlyArray<readonly [path: string, lang: string, text: string]> =>
   set.map(([p, lang]) => {
+    // 载体过滤（评审发现 19）：先把 HTML 注释换成空格（换行保留 ⇒ 行号不变），
+    // 再做任何 `includes`。**变异跑在过滤之前**——反向控制要模拟的是「有人往文件里
+    // 写了这么一段」，而不是「有人往过滤后的文本里写」。
     const raw = readFileSync(p, "utf8");
-    return [p, lang, mutate && mutate[0] === p ? mutate[1](raw) : raw] as const;
+    return [p, lang, blankHtmlComments(mutate && mutate[0] === p ? mutate[1](raw) : raw)] as const;
   });
 
 /** 五语言的禁用字面：**被源码证伪的原句**，一处都不许出现（含否定句里）。 */

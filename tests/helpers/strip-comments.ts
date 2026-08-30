@@ -32,7 +32,11 @@
  * 理由与射程写在真源那个函数自己的注释里：HTML 没有字符串字面量，正文里一个撇号
  * 就够让 `scan()` 的字符串分支失步；而 `admin-ui/index.html` 喂给 `stripComments()`
  * 实测当场抛 `unclosedRegex`（`</title>` 里那个斜杠被判成正则开头）。
- * ⚠️ **抠 HTML 一律用第四个，别拿前三个里的任何一个凑合**：拿 CSS 方言凑合的话
+ * **第五个导出 `blankHtmlComments`（HTML，注释换空格、换行保留）与第四个共用同一遍扫描**
+ * （真源里的 `scanHtml`），差别只有「一段注释换成什么」。**要报 `文件:行号` 的判据一律用它**：
+ * 删注释会让后面每一行的行号整体前移，报出来的位置指向别人（P3f 整分支评审发现 19 的回填）。
+ *
+ * ⚠️ **抠 HTML 一律用第四 / 第五个，别拿前三个里的任何一个凑合**：拿 CSS 方言凑合的话
  * 那一支在 HTML 上几乎是恒等变换——**一个注释都抠不掉，而且一声不吭**。
  *
  * **谁在用这一份**：**凡 import 本文件的都算**，一条都不必写在这里。
@@ -43,5 +47,5 @@
  * 而本文件曾连着三轮在这里写错数字——写死一个数只会换来机械 bump。
  */
 export {
-  stripComments, blankComments, stripCssComments, stripHtmlComments, FAIL_KINDS,
+  stripComments, blankComments, stripCssComments, stripHtmlComments, blankHtmlComments, FAIL_KINDS,
 } from "../../scripts/lib/strip-comments.mjs";

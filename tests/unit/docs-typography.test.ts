@@ -35,6 +35,10 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { SECTIONS, SECTION_LANGS } from "../helpers/readme-sections.js";
+// P3f 整分支评审发现 19：`includes` 型判定之前必须先做载体过滤。围栏本来就剥，
+// HTML 注释此前一处都没剥 —— 把一行整行包进 `<!-- -->` 就能让本文件全部判据看不见它，
+// 而 GitHub 上那一行同时消失。换空格（不是删）以保住 `文件:行号`。
+import { blankHtmlComments } from "../helpers/strip-comments.js";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
 type Lang = (typeof LANGS)[number];
@@ -67,7 +71,7 @@ const COMMUNITY_MD: readonly string[] = [
 
 type Doc = readonly [path: string, text: string];
 const pairsOf = (paths: readonly string[]): readonly Doc[] =>
-  paths.map((p) => [p, readFileSync(p, "utf8")] as const);
+  paths.map((p) => [p, blankHtmlComments(readFileSync(p, "utf8"))] as const);
 
 /** 把某一份换成变异过的文本，其余原样 —— 反向控制的公共夹具。 */
 const withMutation = (docs: readonly Doc[], path: string, mutate: (s: string) => string): readonly Doc[] =>
@@ -1327,5 +1331,470 @@ describe("R20/P5 风险语义句必须住在 alert 块里（内容锚定的下�
     });
     expect(inPinned.length, "许可协议 / 免责声明两节里一个风险词都没有 —— "
       + "那「这两节不进 P5 射程」这条豁免守的是空气，该删").toBeGreaterThan(0);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * R19' —— **载体过滤：出货文档正文里不许出现 HTML 注释**（评审发现 19 的回填）
+ *
+ * 规格（P3F-SPEC-FINAL.md §R14 补 / §R16）明写：「所有 `includes` 型判定之前必须先做
+ * 载体过滤 —— 剥掉 ``` 围栏与 `<!-- -->` HTML 注释」，并点名 R14 / R16 / R19 / R26f' /
+ * R27 全部适用。围栏一直在剥；**HTML 注释一处都没剥**，于是评审用两行注释就把整套
+ * 文档判官弄瞎了：
+ * · M5：把 `README.md` 里 `> 📖 详细面板文档：…` 整行包进 `<!-- -->`
+ *   ⇒ ADMIN.md 在首屏的唯一入口在 GitHub 上消失，`Tests 764 passed`。
+ * · M8：把头部那条 `> [!IMPORTANT]`（整段 fail-closed 说明）包进 `<!-- -->`
+ *   ⇒ 渲染只剩 3 块 alert，而 R20/P1① 仍数到 4 块，`Tests 702 passed`。
+ *
+ * 回填分两层，**两层都要，缺一层就还是可绕的**：
+ * ① **过滤**：`pairsOf`（本文件）、`read`（`docs-deviations`）、W136 的 `truthDocs`
+ *   （`docs-parity`）统一先走 `blankHtmlComments` —— 注释换空格、换行保留，
+ *   于是「注释里的字」对判据不再可见，而 `文件:行号` 仍然指得准。
+ * ② **禁止**：本组。40 份出货文档的正文里**一个 `<!--` 都不许有**。
+ *   为什么还要这一层：`docs-parity.test.ts` 有 130 多个 `readFileSync` 调用点，
+ *   逐个套过滤既做不干净也留不住（下一个新增的调用点又会漏）。**把载体本身禁掉**，
+ *   那 130 多格就一起安全了 —— 这是比逐点过滤更强的保证，也更好守。
+ *   ⚠️ **代价如实写在这里**：将来真需要一条 `<!-- prettier-ignore -->` 这样的
+ *   工具指令时，本格会红，那时要么给它开一条具名白名单（连同理由），
+ *   要么把 `docs-parity` 的读取路径真正收成一个入口。**别直接删掉本格。**
+ *
+ * **射程**：40 份出货文档，**剥围栏之后的正文**。围栏里教人写 HTML 注释的示例不算
+ *（它对渲染不可见、也进不了任何判据的射程）。
+ * **它验不了什么**：`.github/**` 那三份模板（PR 模板里今天就有三条 `<!-- -->`，
+ * 那是给提交者看的填写提示，属于刻意偏离名册第 18 条那一族，本组不收）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** **不过滤**的原始文本对。本组自己必须看得见注释，否则它是在测过滤后的空气。 */
+const rawPairsOf = (paths: readonly string[]): readonly Doc[] =>
+  paths.map((p) => [p, readFileSync(p, "utf8")] as const);
+
+/** 剥围栏之后仍然出现 `<!--` 的行。 */
+const htmlCommentLines = (docs: readonly Doc[]): string[] =>
+  docs.flatMap(([p, t]) => bodyLines(t)
+    .filter((r) => r.line.includes("<!--"))
+    .map((r) => `${p}:${r.no} ${r.line.trim().slice(0, 70)}`));
+
+describe("R19' 载体过滤：40 份出货文档的正文里一个 HTML 注释都没有", () => {
+  it("真扫描：射程内 `<!--` 的出现次数恒为 0", () => {
+    const found = htmlCommentLines(rawPairsOf(SHIP_DOCS));
+    expect(found, `这些行里有 HTML 注释：\n${found.join("\n")}\n`
+      + "⇒ 注释在 GitHub 上不渲染，而本仓的文档判据此前也看不见它 —— "
+      + "两边同时失明正是评审发现 19 复现出来的那条路。"
+      + "⚠️ 真需要一条工具指令时，去本组的文件头按那里写的两条路选一条，别删本格").toEqual([]);
+  });
+
+  it("自守：判据认得出一个普通的 HTML 注释 —— 不是恒绿", () => {
+    const fixture: Doc = ["x.md", "# X\n\n<!-- 藏一行 -->\n\n正文。\n"];
+    expect(htmlCommentLines([fixture]), "连最普通的 `<!-- -->` 都扫不到 —— 本组是恒绿的")
+      .toHaveLength(1);
+  });
+
+  it("不许乱红：围栏里教人写 HTML 注释的示例不进射程", () => {
+    const fixture: Doc = ["x.md", "# X\n\n```html\n<!-- 这是示例 -->\n```\n\n正文。\n"];
+    expect(htmlCommentLines([fixture]), "围栏里的示例被算进来了 —— 剥围栏没生效").toEqual([]);
+  });
+
+  it("该红时红（M5）：把 `README.md` 里那条 `> 📖 详细面板文档` 整行包进 `<!-- -->` —— 本组点名，且过滤层让那一行对别的判据消失", () => {
+    const target = "README.md";
+    const raw = readFileSync(target, "utf8");
+    const line = raw.split("\n").find((l) => l.startsWith("> 📖 详细面板文档：")) ?? "";
+    expect(line, "README 里已经没有那条面板文档指针行了 —— 变异的支点没了，先去 R16 那边确认")
+      .not.toBe("");
+    const hidden = raw.replace(line, `<!-- ${line} -->`);
+    expect(htmlCommentLines([[target, hidden]]).join("\n"), "整行被包进注释却没被本组抓到")
+      .toContain(`${target}:`);
+    // 过滤层的那一半：换空格之后，那一行对任何 `includes` 型判据都不再可见。
+    expect(blankHtmlComments(hidden).includes("详细面板文档"),
+      "注释换空格之后那句话居然还在 —— `blankHtmlComments` 没接上").toBe(false);
+    expect(blankHtmlComments(hidden).split("\n").length,
+      "换空格之后行数变了 —— 那么所有 `文件:行号` 都会指向别人").toBe(raw.split("\n").length);
+  });
+
+  it("该红时红（M8）：把头部那条 `> [!IMPORTANT]` 包进 `<!-- -->` —— R20/P1① 必须从 4 块掉到 3 块", () => {
+    const target = "README.md";
+    const raw = readFileSync(target, "utf8");
+    const start = raw.indexOf("> [!IMPORTANT]");
+    expect(start, "README 头部已经没有 IMPORTANT 那一块了").toBeGreaterThan(0);
+    const end = raw.indexOf("\n\n", start);
+    const hidden = `${raw.slice(0, start)}<!--\n${raw.slice(start, end)}\n-->${raw.slice(end)}`;
+    expect(alertTypes(headOf(raw)).join(","), "真仓头部本来就不是那四块 —— 先看 R20/P1①")
+      .toBe("NOTE,WARNING,TIP,IMPORTANT");
+    expect(alertTypes(headOf(blankHtmlComments(hidden))).join(","),
+      "整块 alert 被包进注释之后，判据还数得到 4 块 —— 载体过滤没生效，"
+      + "这正是评审 M8 那一格 702 全绿的死法").toBe("NOTE,WARNING,TIP");
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * R14 —— **D3 商用措辞：五语言一律建议式，不得为禁止性**（评审发现 7 / 11 / 18 的回填）
+ *
+ * 🔴 **这是用户唯一逐字点名「要有机器判据」的那一条**（USER-DECISIONS.md:41-42、
+ * ADJUDICATIONS.md:158：「五份各自命中本语言的建议式措辞，且全仓零命中禁用词表」）。
+ * 规格 P3F-SPEC-FINAL.md 有整节 `## R14`，而**阶段 6 只建了 R27、漏了 R14**：
+ * 评审把六份 README 的那句话全部改成禁止式，`Tests 4181 passed (4181)`。
+ *
+ * ⚠️ **为什么这条洞一定会被踩**：`ADJ ⑧` 实测 kiro2api 模板的 ja/ko 原文就是
+ * 禁止式（`商用は禁止です` / `사용하지 마십시오`）。「照模板走」这条路径的终点
+ * 就是违反 D3 —— 本组是那条路上唯一的拦截点。
+ *
+ * **两张表，两个方向都要查**（少任何一个方向都是半拉子）：
+ * · **正面表 + 否定守卫**：六份各自命中本语言的建议式措辞；命中点**之外**前后 8 个
+ *   字符内若出现 `不 / 并非 / 無需 / 无需 / 不会 / not / never / ません / 않`，判为未命中
+ *   —— 没有这条守卫，「本项目**并非不建议**用于商业目的」会让 `includes` 打绿灯。
+ * · **负面表**：禁止性字面一处都不许出现。
+ *
+ * ⚠️ **射程写死在六份 README 的头部 `[!NOTE]` 块内，绝不许改成全仓 grep。**
+ * 规格 §R14 实测全仓 grep 会误红三处**完全正当**的用法：`docs/en/ADMIN.md` 里的
+ * `must not`、免责声明第 4 条的「严禁」、`403 Forbidden` 的 ja/ko 译法「禁止」/「금지」。
+ * 报文会说「商用措辞违规」，把人引向一句根本没问题的话，接着一定有人「随手放宽」。
+ * ⇒ 收窄到那一块之后，负面表才敢收 `禁止` / `금지` 这种裸词。
+ *
+ * **它验不了什么**：「不建议」这句在整段语境里读起来像不像条款（N4）；也不管这句话
+ * 在别处（LICENSE、免责声明）有没有别的说法。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 头部第一块 `> [!NOTE]` 的正文（含 `> [!NOTE]` 那一行）。取不到返回空数组。 */
+const headNoteBlock = (text: string): ReadonlyArray<{ line: string; no: number }> => {
+  const rows = headOf(text);
+  const i = rows.findIndex((r) => /^> \[!NOTE\]/.test(r.line));
+  if (i < 0) return [];
+  const out = [rows[i]!];
+  for (let k = i + 1; k < rows.length; k++) {
+    const r = rows[k]!;
+    if (!r.line.startsWith(">")) break;
+    out.push(r);
+  }
+  return out;
+};
+
+/** 建议式措辞（正面表）。key 是语言，根 README 按 zh-CN 算。 */
+const D3_ADVISORY: Record<string, string> = {
+  "zh-CN": "不建议", "zh-TW": "不建議", en: "not recommended",
+  ja: "お勧めしません", ko: "권장하지 않습니다",
+};
+
+/** 否定守卫的特征词。**只在命中点之外的前后 8 个字符里查**。 */
+const D3_NEGATORS: readonly string[] = ["不", "并非", "並非", "無需", "无需", "不会", "不會", "not", "never", "ません", "않"];
+
+/**
+ * 禁止性字面（负面表）。**射程是头部 NOTE 块，所以敢收裸词**。
+ * 前 10 条是规格 §R14 写死的那张表，后面几条是评审四次变异实测用过的原句
+ *（含 kiro2api 模板的 ja/ko 原文）—— 照抄回来即红。
+ */
+const D3_FORBIDDEN: readonly string[] = [
+  "不要用于任何商业", "禁止商", "不得用于任何商业", "禁止です", "してはいけません",
+  "사용하지 마십시오", "금지", "must not", "prohibited", "do not use",
+  "禁止", "嚴禁", "严禁", "不得用於任何商業", "使用しないでください",
+];
+
+/** 一段文字里 `word` 命中点**之外**前后 8 字符的上下文。没命中返回 `null`。 */
+const advisoryContext = (text: string, word: string): string | null => {
+  const i = text.indexOf(word);
+  if (i < 0) return null;
+  return text.slice(Math.max(0, i - 8), i) + text.slice(i + word.length, i + word.length + 8);
+};
+
+/** 正面表的判定：逐份返回「为什么算未命中」，命中则不返回。 */
+const d3Missing = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) => {
+  const lang = p === "README.md" ? "zh-CN" : (p.split("/")[1] ?? "");
+  const want = D3_ADVISORY[lang];
+  if (want === undefined) return [`${p}：认不出语言 ${lang} —— 正面表没有这一格`];
+  const block = headNoteBlock(t).map((r) => r.line).join("\n");
+  if (block === "") return [`${p}：头部一块 \`> [!NOTE]\` 都没有 —— 射程是空的，判据在测空气`];
+  const ctx = advisoryContext(block, want);
+  if (ctx === null) return [`${p}：头部 NOTE 块里没有本语言的建议式措辞「${want}」`];
+  const neg = D3_NEGATORS.filter((n) => ctx.includes(n));
+  return neg.length === 0 ? []
+    : [`${p}：「${want}」命中了，但前后 8 字里有否定词 ${neg.join(" / ")} —— `
+      + `这是「并非不建议」那一类反话：${ctx}`];
+});
+
+/** 负面表的判定：射程内命中禁止性字面的行。 */
+const d3Forbidden = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) =>
+  headNoteBlock(t).flatMap((r) => D3_FORBIDDEN
+    .filter((w) => r.line.includes(w))
+    .map((w) => `${p}:${r.no} 命中禁止性措辞「${w}」：${r.line.trim().slice(0, 60)}`)));
+
+describe("R14 D3 商用措辞：六份 README 的头部 NOTE 块一律建议式（用户裁定，唯一点名要机器判据的那条）", () => {
+  it("射程自守：六份都取得到头部 `[!NOTE]` 块，且块里真有正文", () => {
+    const empty = pairsOf(SIX_READMES).filter(([, t]) => headNoteBlock(t).length < 2)
+      .map(([p]) => p);
+    expect(empty, `这几份取不到头部 NOTE 块（或块里只有 \`> [!NOTE]\` 一行）：${empty.join(" / ")}\n`
+      + "⇒ 射程一空，正负两张表就都成了摆设 —— 先去 R20/P1① 确认头部四块还在不在").toEqual([]);
+  });
+
+  it("正面表：六份各自命中本语言的建议式措辞，且不是「并非不建议」那种反话", () => {
+    const bad = d3Missing(pairsOf(SIX_READMES));
+    expect(bad, `商用措辞不是建议式：\n${bad.join("\n")}\n`
+      + "⇒ 用户裁定 D3：「不建议用于任何商业目的，这样就好了」—— **建议式，不是禁止式**").toEqual([]);
+  });
+
+  it("负面表：头部 NOTE 块里一处禁止性字面都没有", () => {
+    const bad = d3Forbidden(pairsOf(SIX_READMES));
+    expect(bad, `头部 NOTE 块里出现了禁止性措辞：\n${bad.join("\n")}\n`
+      + "⚠️ 射程只在这一块 —— `403 Forbidden` 的 ja/ko 译法、免责声明第 4 条的「严禁」、"
+      + "`docs/en/ADMIN.md` 里正当的 `must not` 都在射程之外，别把本表搬去全仓 grep").toEqual([]);
+  });
+
+  it("该红时红（M1，规格的反向控制①）：ko 改回模板原文 `사용하지 마십시오` —— 负面表点名", () => {
+    const target = join("docs", "ko", "README.md");
+    const docs = withMutation(pairsOf(SIX_READMES), target,
+      (s) => s.replace("상업적 용도로는 권장하지 않습니다.", "상업적 용도로는 절대 사용하지 마십시오."));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(d3Forbidden(docs).join("\n"), "ko 改成禁止式没被抓到 —— 而那正是模板原文")
+      .toContain(`${target}:`);
+    expect(d3Missing(docs).join("\n"), "正面表也该同时红（建议式措辞被换掉了）").toContain(`${target}：`);
+  });
+
+  it("该红时红（M2，规格的反向控制②）：en 改成 `must not be used commercially` —— 正负两表同时点名", () => {
+    const target = join("docs", "en", "README.md");
+    const docs = withMutation(pairsOf(SIX_READMES), target,
+      (s) => s.replace("it is not recommended for any commercial use.",
+        "it must not be used commercially; commercial use is prohibited."));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(d3Forbidden(docs).join("\n"), "`must not` / `prohibited` 都没被抓到").toContain(`${target}:`);
+    expect(d3Missing(docs).join("\n"), "`not recommended` 被换掉了，正面表也该红").toContain(`${target}：`);
+  });
+
+  it("该红时红（评审实测那四条）：zh-CN / en / ja 三种照抄模板的禁止式，逐条点名", () => {
+    const cases: ReadonlyArray<readonly [string, string, string]> = [
+      ["README.md", "不建议用于任何商业目的", "禁止用于任何商业目的"],
+      [join("docs", "zh-CN", "README.md"), "不建议用于任何商业目的", "禁止用于任何商业目的"],
+      [join("docs", "en", "README.md"), "it is not recommended for any commercial use",
+        "commercial use is strictly prohibited"],
+      [join("docs", "ja", "README.md"), "商用はお勧めしません", "商用は禁止です"],
+    ];
+    for (const [target, from, to] of cases) {
+      const docs = withMutation(pairsOf(SIX_READMES), target, (s) => s.replace(from, to));
+      expect(docs.find(([p]) => p === target)?.[1], `变异没落地：${target}`)
+        .not.toEqual(readFileSync(target, "utf8"));
+      expect(d3Forbidden(docs).join("\n"), `${target} 改成禁止式没被抓到`).toContain(`${target}:`);
+    }
+  });
+
+  it("该红时红（否定守卫）：把 zh-CN 那句写成「并非不建议用于任何商业目的」 —— 正面表判为未命中", () => {
+    const target = join("docs", "zh-CN", "README.md");
+    const docs = withMutation(pairsOf(SIX_READMES), target,
+      (s) => s.replace("不建议用于任何商业目的", "并非不建议用于任何商业目的"));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(d3Missing(docs).join("\n"), "「并非不建议」这种反话让 `includes` 打了绿灯 —— "
+      + "否定守卫没生效").toContain(`${target}：`);
+  });
+
+  it("不许乱红：`403 Forbidden` 的 ja/ko 译法与免责声明第 4 条的「严禁」都在射程之外", () => {
+    // 这三句在仓里是真实存在且完全正当的（规格 §R14 逐条实测过），
+    // 本组的射程收在头部 NOTE 块，所以它们连被看见的机会都没有。
+    const fixture: Doc = ["x.md", "# X\n\n> [!NOTE]\n> 商用はお勧めしません。\n\n"
+      + "| 403 | 禁止 |\n| 403 | 금지 (권한 부족) |\n\n严禁将本项目用于任何违法违规活动。\n"
+      + "those two things must not look alike on screen\n"];
+    expect(d3Forbidden([fixture]), "射程漏到了 NOTE 块之外 —— 规格 §R14 点名的那三处误红会全部回来")
+      .toEqual([]);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * R27 —— **fail-closed 鉴权语义的词表两侧**（评审发现 8 / 12 的回填）
+ *
+ * 🔴 **本仓的鉴权语义与 kiro2api 相反，这一组是专门为「抄错」设计的**（硬约束 4、ADJ ⑦）。
+ * 规格 P3F-SPEC-FINAL.md §R27 把它定成四件套：正面词表 + 否定守卫 + 负面 fail-open 词表
+ * + 源码锚（W131）。**阶段 6 只落了 W131**：评审把 README 头部那句
+ *「缺失时网关**直接拒绝启动**」改成「以开放模式启动」（与同一块开头「本网关是
+ * fail-closed 的」当场自相矛盾），`Tests 4181 passed (4181)`。
+ * W131 兜不住：它只现算 `ADMIN_TOKEN_MIN_LENGTH` 的**数值**，对句子的**方向**零覆盖。
+ *
+ * **分工写在这里，别再合并成一句**：
+ * · **本组（词表两侧）管语义方向** —— 这句话说的是「拒绝」还是「放行」。
+ * · **W131（源码锚）管数字** —— 24 位这条门槛在谁头上、`GATEWAY_TOKEN` 判不判长度。
+ * 两者缺一，R12/R27 就都是空壳（规格 :1341、:1857 逐字这么写）。
+ * ⚠️ 本文件上一版有一条注释写着「R27 的 fail-open 黑名单是按字面扫的」——**那张黑名单
+ * 当时并不存在**（ADJ §71 记的「注释在替判据做承诺」同族）。现在它存在了，注释才成立。
+ *
+ * **射程（写死，不许改成全仓 grep）**：
+ * · 正面：六份 README 的头部 `[!IMPORTANT]` 块内；
+ * · 负面：同一块 **+ 五份 DEPLOY 的「管理面板相关变量」那一节**（到下一个 `##` 为止）。
+ * 全仓扫会红在一堆正当用法上（同 R14 的理由）。
+ * **它验不了什么**：这段 fail-closed 描述**解释**得对不对（N7）；也不管别处有没有别的假话。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 头部第一块 `> [!IMPORTANT]`（含起始行）。取不到返回空数组。 */
+const headImportantBlock = (text: string): ReadonlyArray<{ line: string; no: number }> => {
+  const rows = headOf(text);
+  const i = rows.findIndex((r) => /^> \[!IMPORTANT\]/.test(r.line));
+  if (i < 0) return [];
+  const out = [rows[i]!];
+  for (let k = i + 1; k < rows.length; k++) {
+    const r = rows[k]!;
+    if (!r.line.startsWith(">")) break;
+    out.push(r);
+  }
+  return out;
+};
+
+/**
+ * 五份 DEPLOY 里「管理面板相关变量」那一节的标题。
+ * **手写的只有「去哪儿找」**，节的内容由文件说了算；下面有一格自守钉住五份都找得到。
+ */
+const DEPLOY_AUTH_HEADING: Record<string, string> = {
+  "zh-CN": "### 管理面板相关变量（P3，默认关闭）",
+  "zh-TW": "### 管理面板相關變數（P3，預設關閉）",
+  en: "### Admin panel variables (P3, disabled by default)",
+  ja: "### 管理パネル関連の変数（P3、デフォルトで無効）",
+  ko: "### 관리 패널 관련 변수(P3, 기본값은 비활성화)",
+};
+
+/** 从那个 `###` 起、到下一个 `## ` 为止的正文行。找不到标题返回空数组。 */
+const deployAuthSection = (lang: string, text: string): ReadonlyArray<{ line: string; no: number }> => {
+  const heading = DEPLOY_AUTH_HEADING[lang];
+  if (heading === undefined) return [];
+  const rows = bodyLines(text);
+  const i = rows.findIndex((r) => r.line.trim() === heading);
+  if (i < 0) return [];
+  const rest = rows.slice(i + 1);
+  const end = rest.findIndex((r) => /^## /.test(r.line));
+  return [rows[i]!, ...(end < 0 ? rest : rest.slice(0, end))];
+};
+
+/** 正面表：`GATEWAY_TOKEN` 那一半与 `ADMIN_TOKEN` 那一半，各自的本语言说法。 */
+const R27_REFUSE_START: Record<string, readonly string[]> = {
+  "zh-CN": ["拒绝启动", "起不来"], "zh-TW": ["拒絕啟動", "起不來"],
+  en: ["refuses to start", "refuse to start"],
+  ja: ["起動そのものを拒否", "起動を拒否", "起動しません"],
+  ko: ["기동 자체를 거부", "기동하지 않"],
+};
+const R27_NOT_REGISTERED: Record<string, readonly string[]> = {
+  "zh-CN": ["不注册"], "zh-TW": ["不註冊"],
+  en: ["never registered", "not registered"],
+  ja: ["登録されず", "登録されません"],
+  ko: ["등록되지 않"],
+};
+
+/**
+ * fail-open 词表（负面）。前八条是规格 §R27 写死的那张表（含它点名「第 1 版漏掉」的
+ * 最后两条），后面几条是评审两次变异实测用过的原句。
+ */
+const R27_FAIL_OPEN: readonly string[] = [
+  "开放访问", "開放存取", "open access", "未配置即", "面板本体始终不鉴权",
+  "always unauthenticated", "不做鉴权", "without auth",
+  "开放模式", "開放模式", "不做鑑權", "인증 없이", "認証なしで", "認証なし",
+];
+
+/** 否定守卫：命中点**之外**前后 8 字里出现这些词 ⇒ 判为未命中（同 R14）。 */
+const r27Hit = (text: string, words: readonly string[]): boolean => words.some((w) => {
+  const ctx = advisoryContext(text, w);
+  return ctx !== null && !D3_NEGATORS.some((n) => ctx.includes(n));
+});
+
+const r27Missing = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) => {
+  const lang = p === "README.md" ? "zh-CN" : (p.split("/")[1] ?? "");
+  const block = headImportantBlock(t).map((r) => r.line).join("\n");
+  if (block === "") return [`${p}：头部一块 \`> [!IMPORTANT]\` 都没有 —— 射程是空的`];
+  const out: string[] = [];
+  if (!r27Hit(block, R27_REFUSE_START[lang] ?? [])) {
+    out.push(`${p}：头部 IMPORTANT 块里没说「缺 \`GATEWAY_TOKEN\` 就拒绝启动」`
+      + `（本语言的说法：${(R27_REFUSE_START[lang] ?? []).join(" / ")}）`);
+  }
+  if (!r27Hit(block, R27_NOT_REGISTERED[lang] ?? [])) {
+    out.push(`${p}：头部 IMPORTANT 块里没说「没配 \`ADMIN_TOKEN\` 时整棵树不注册」`
+      + `（本语言的说法：${(R27_NOT_REGISTERED[lang] ?? []).join(" / ")}）`);
+  }
+  return out;
+});
+
+/** 负面表的射程：六份 README 的 IMPORTANT 块 + 五份 DEPLOY 的鉴权节。 */
+const r27Scope = (
+  readmes: readonly Doc[],
+  deploys: readonly Doc[],
+): ReadonlyArray<{ path: string; no: number; line: string }> => [
+  ...readmes.flatMap(([p, t]) => headImportantBlock(t).map((r) => ({ path: p, ...r }))),
+  ...deploys.flatMap(([p, t]) =>
+    deployAuthSection(p.split("/")[1] ?? "", t).map((r) => ({ path: p, ...r }))),
+];
+
+const r27FailOpen = (
+  readmes: readonly Doc[],
+  deploys: readonly Doc[],
+): string[] => r27Scope(readmes, deploys).flatMap((r) => R27_FAIL_OPEN
+  .filter((w) => r.line.includes(w))
+  .map((w) => `${r.path}:${r.no} 命中 fail-open 措辞「${w}」：${r.line.trim().slice(0, 60)}`));
+
+const FIVE_DEPLOYS: readonly string[] = LANGS.map((l) => join("docs", l, "DEPLOY.md"));
+
+describe("R27 fail-closed 语义的词表两侧：方向由本组管，数字由 W131 管", () => {
+  it("射程自守：六份都取得到头部 IMPORTANT 块，五份 DEPLOY 都找得到鉴权节", () => {
+    const noBlock = pairsOf(SIX_READMES).filter(([, t]) => headImportantBlock(t).length < 2)
+      .map(([p]) => p);
+    expect(noBlock, `这几份取不到头部 IMPORTANT 块：${noBlock.join(" / ")}`).toEqual([]);
+    const noSection = pairsOf(FIVE_DEPLOYS)
+      .filter(([p, t]) => deployAuthSection(p.split("/")[1] ?? "", t).length < 3)
+      .map(([p]) => p);
+    expect(noSection, `这几份 DEPLOY 找不到「管理面板相关变量」那一节（标题改过？）：`
+      + `${noSection.join(" / ")}\n⇒ 节找不到 ⇒ 负面表对那一份是瞎的，先把 `
+      + "`DEPLOY_AUTH_HEADING` 里的标题改对，别把这一格删掉").toEqual([]);
+    expect(r27Scope(pairsOf(SIX_READMES), pairsOf(FIVE_DEPLOYS)).length,
+      "负面表的射程行数掉到两位数了 —— 多半是切块写坏了").toBeGreaterThan(100);
+  });
+
+  it("正面表：六份 README 的头部 IMPORTANT 块，两个方向各自说清楚（带否定守卫）", () => {
+    const bad = r27Missing(pairsOf(SIX_READMES));
+    expect(bad, `fail-closed 那两句没写清楚：\n${bad.join("\n")}\n`
+      + "⇒ 本仓与 kiro2api 相反：缺 `GATEWAY_TOKEN` 是**拒绝启动**，"
+      + "没配 `ADMIN_TOKEN` 是**整棵树不注册**（404，不是 401）").toEqual([]);
+  });
+
+  it("负面表：射程内一处 fail-open 措辞都没有", () => {
+    const bad = r27FailOpen(pairsOf(SIX_READMES), pairsOf(FIVE_DEPLOYS));
+    expect(bad, `射程内出现了 fail-open 措辞：\n${bad.join("\n")}\n`
+      + "⚠️ **这是 kiro2api 的语义，不是本仓的。** 抄错这一段会给用户一个反的安全心智模型").toEqual([]);
+  });
+
+  it("该红时红（评审 M6）：把 README 头部那句改成「照常启动，未配置即开放访问」 —— 正负两侧同时点名", () => {
+    const target = "README.md";
+    const mutate = (s: string) => s.replace("缺失时网关**直接拒绝启动**",
+      "缺失时网关**照常启动，未配置即开放访问**");
+    const readmes = withMutation(pairsOf(SIX_READMES), target, mutate);
+    expect(readmes.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(r27FailOpen(readmes, pairsOf(FIVE_DEPLOYS)).join("\n"), "fail-open 措辞没被抓到")
+      .toContain(`${target}:`);
+    expect(r27Missing(readmes).join("\n"), "「拒绝启动」被换掉了，正面表也该红").toContain(`${target}：`);
+  });
+
+  it("该红时红（评审 M7）：把 `docs/zh-CN/README.md` 那句改成「以开放模式启动」 —— 必须点名", () => {
+    const target = join("docs", "zh-CN", "README.md");
+    const readmes = withMutation(pairsOf(SIX_READMES), target,
+      (s) => s.replace("缺失时网关**直接拒绝启动**", "缺失时网关**以开放模式启动**"));
+    expect(readmes.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(r27FailOpen(readmes, pairsOf(FIVE_DEPLOYS)).join("\n"), "「开放模式」没被抓到")
+      .toContain(`${target}:`);
+  });
+
+  it("该红时红（规格点名的那条换说法）：「仍会注册，但不做鉴权」—— 第 1 版词表一个都不撞，本表撞得到", () => {
+    const target = join("docs", "en", "README.md");
+    const readmes = withMutation(pairsOf(SIX_READMES), target,
+      (s) => s.replace("the whole `/admin` tree is never registered at all and requests get a 404",
+        "the whole `/admin` tree is still registered but served without auth"));
+    expect(readmes.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(r27FailOpen(readmes, pairsOf(FIVE_DEPLOYS)).join("\n"), "`without auth` 没被抓到")
+      .toContain(`${target}:`);
+    expect(r27Missing(readmes).join("\n"), "「不注册」被换掉了，正面表也该红").toContain(`${target}：`);
+  });
+
+  it("该红时红（否定守卫）：「`GATEWAY_TOKEN` 未设置时网关**不会**拒绝启动」—— 正面表判为未命中", () => {
+    const target = "README.md";
+    const readmes = withMutation(pairsOf(SIX_READMES), target,
+      (s) => s.replace("缺失时网关**直接拒绝启动**", "缺失时网关**不会拒绝启动**"));
+    expect(r27Missing(readmes).join("\n"), "「不会拒绝启动」让 `includes` 打了绿灯 —— 否定守卫没生效")
+      .toContain(`${target}：`);
+  });
+
+  it("不许乱红：DEPLOY 鉴权节之外的正当用法不进负面表射程", () => {
+    // 「开放访问」这类词在别的语境里可能完全正当（例如讲上游或讲公开文档）。
+    // 本表只在两处切片里查 —— 切片之外一个字都不看。
+    const fixture: Doc = ["docs/zh-CN/DEPLOY.md",
+      "# X\n\n### 管理面板相关变量（P3，默认关闭）\n\n口令必填。\n\n## 别的一节\n\n这里说开放访问也不算。\n"];
+    expect(r27FailOpen([], [fixture]), "射程漏到了鉴权节之外").toEqual([]);
+    const inside: Doc = ["docs/zh-CN/DEPLOY.md",
+      "# X\n\n### 管理面板相关变量（P3，默认关闭）\n\n未配置即开放访问。\n\n## 别的一节\n"];
+    expect(r27FailOpen([], [inside]), "鉴权节里的 fail-open 措辞没被抓到 —— 那这半个射程是死的")
+      .toHaveLength(2);
   });
 });

@@ -725,6 +725,33 @@ export function stripCssComments(src) {
  * @returns {string}
  */
 export function stripHtmlComments(src) {
+  return scanHtml(src, () => "");
+}
+
+/**
+ * HTML：注释（`<!-- … -->`）逐字符换成空格，**换行原样保留** ⇒ 行号与列位置不变。
+ *
+ * 与 `blankComments`（JS 那一支）是同一条理由：**判据要报 `文件:行号`**，
+ * 而删掉注释会让后面每一行的行号整体前移，报出来的位置指向别人。
+ * P3f 整分支评审发现 19 就死在这上面：三个文档判官一处都没剥 HTML 注释，
+ * 把一行 `> 📖 详细面板文档：…` 整行包进 `<!-- -->`，GitHub 上那条入口消失，
+ * 而 764 格全绿。
+ *
+ * ⚠️ **与 `stripHtmlComments` 共用同一个扫描器 `scanHtml`**，不是第二份实现。
+ * @param {string} src
+ * @returns {string}
+ */
+export function blankHtmlComments(src) {
+  return scanHtml(src, (text) => text.replace(/[^\n]/g, " "));
+}
+
+/**
+ * `stripHtmlComments` / `blankHtmlComments` 共用的那一遍扫描。
+ * @param {string} src
+ * @param {(text: string) => string} replace 一段注释（含 `<!--`/`-->` 记号）换成什么
+ * @returns {string}
+ */
+function scanHtml(src, replace) {
   const n = src.length;
   let out = "";
   let i = 0;
@@ -741,6 +768,7 @@ export function stripHtmlComments(src) {
           + "按 HTML 规范是纯文本），那是本函数已登记的那条边界撞上了这条抛 —— "
           + "把那段文本改写掉，或者去 `scripts/lib/strip-comments.mjs` 的 `stripHtmlComments` 扩判据");
       }
+      out += replace(src.slice(i, end));
       i = end;
       continue;
     }
