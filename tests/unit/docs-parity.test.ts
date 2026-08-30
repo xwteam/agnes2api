@@ -4055,6 +4055,11 @@ describe("根 README 首屏的一行五链与 16 节骨架（P3e Task 27 / P3f �
    * 锚点是**推导量不是手写量**：GitHub 的片段标识符由标题现算，改一个标题而不改导航，
    * 屏幕上那条链接就点开落空——而这种坏法**没有任何构建步骤会报错**。
    * 下面两格分别钉住「9 条解析得开」与「改标题不改导航当场红并点名死锚点」。
+   *
+   * ⚠️ **⑦ 只管根那一份，五份语言版那 45 条由下面的 ⑦B 管**（W53 的验收是 6 × 9 = 54 条，
+   * 根 9 条 + 语言版 45 条）。两格分开写不是重复：根那份的期望值取 `SECTIONS` 的 zh-CN 列，
+   * 语言版每一份取它**自己那一列**，而「拿别的语言的 slug 去当期望值」正是这一批最容易
+   * 犯的错——五份导航长得极像，抄一份改几个字看上去就对了。
    */
 
   /** GitHub 的标题 → 片段标识符：转小写 → 删掉字母/数字/空格/连字符之外的字符 → 空格转 `-`。 */
@@ -4068,13 +4073,18 @@ describe("根 README 首屏的一行五链与 16 节骨架（P3e Task 27 / P3f �
   /** 导航收录的那 9 节在 `SECTIONS` 里的下标：§1–§11 去掉「技术架构」(2) 与「项目结构」(9)。 */
   const NAV_AT = [0, 1, 3, 4, 5, 6, 7, 8, 10] as const;
 
-  /** ⑦ 的失败报文全集。**真扫描与反向控制共用这一份。** */
-  const deadAnchorFailures = (body: string): string[] => {
+  /**
+   * ⑦ / ⑦B 的失败报文全集。**真扫描与反向控制共用这一份**，`label` 只进报文不进判定。
+   *
+   * ⚠️ `rootHeadings` 在这里是**通用的** `## ` 行抽取器（名字是历史遗留），
+   * 语言版那五份照样走它——一份 README 的 `## ` 行怎么抽，与它是不是根那份无关。
+   */
+  const deadAnchorFailures = (body: string, label = "根 README"): string[] => {
     const nav = navAnchors(body);
-    if (nav.length === 0) return ["认不出根 README 头部块里的章节锚点导航——认不出要吵，不许静静报零缺格"];
+    if (nav.length === 0) return [`认不出 ${label} 头部块里的章节锚点导航——认不出要吵，不许静静报零缺格`];
     const slugs = new Set(rootHeadings(body).map(slugOf));
     return nav.filter((a) => !slugs.has(a.slice(1)))
-      .map((a) => `头部块导航里的锚点 ${a} 在根 README 里没有对应的 \`## \` 标题——点开落空。`
+      .map((a) => `头部块导航里的锚点 ${a} 在 ${label} 里没有对应的 \`## \` 标题——点开落空。`
         + "改标题就要一起改导航，两处是同一件事的两半");
   };
 
@@ -4095,6 +4105,64 @@ describe("根 README 首屏的一行五链与 16 节骨架（P3e Task 27 / P3f �
     expect(failures, "改了标题没改导航，⑦ 却没红").toHaveLength(1);
     expect(failures[0] ?? "", "⑦ 红了却没点名是哪一个锚点落空").toContain("#-配置说明");
   });
+
+  /* ── ⑦B 五份语言版头部块的那 45 条锚点（W53 的另一半）─────────────────────────
+   *
+   * W53 的验收是 **6 × 9 = 54 条**：根那 9 条归 ⑦，语言版这 45 条归 ⑦B。
+   * 每一份的期望值取 `SECTIONS` 里**它自己那一列**现算——不是从 zh-CN 那一列抄来再改，
+   * 也不是把某一份的导航复制给另一份。
+   *
+   * ⚠️ **它验不了什么**：slug 算法是本文件按 GitHub 的规则**重写的一份**
+   *（转小写 → 删掉 `\p{L}\p{N}`/空格/连字符之外的字符 → 空格转 `-`），
+   * 本机没有 GitHub 的渲染器可对照。CJK 与谚文走 `\p{L}` 被保留、emoji 被删掉并在
+   * 前面留下一个 `-`，这两条是从两个参照仓的实测锚点反推的，不是从 GitHub 文档抄的。
+   * 算法本身错了的话，⑦/⑦B 会一起绿——它们守的是**导航与标题两处一致**，
+   * 不是**这个 slug 在 GitHub 上真的跳得动**。
+   */
+
+  /** 一份语言版导航的期望值：**取它自己那一列**。 */
+  const wantNav = (lang: Lang) => NAV_AT.map((i) => `#${slugOf(SECTIONS[i]!.title[lang])}`);
+
+  it("⑦B 非空锚：五份语言版的期望导航两两不同 —— 「抄别的语言的」这种坏法它看得见", () => {
+    const seen = new Map<string, Lang>();
+    for (const lang of LANGS) {
+      const key = wantNav(lang).join("|");
+      const dup = seen.get(key);
+      expect(dup, `docs/${lang}/README.md 与 docs/${dup}/README.md 的期望导航逐条相同——`
+        + "两份的期望值撞了，⑦B 就分不出「这一份抄了那一份」，那正是它要抓的那一种").toBeUndefined();
+      seen.set(key, lang);
+    }
+    expect(seen.size, "五份的期望导航没能各自成一份").toBe(LANGS.length);
+  });
+
+  for (const lang of LANGS) {
+    it(`⑦B docs/${lang}/README.md 的 9 条章节锚点全部解析得开，且逐条命中 SECTIONS 的 ${lang} 那一列`, () => {
+      const body = readFileSync(docPath(".", lang, "README"), "utf8");
+      expect(navAnchors(body), `docs/${lang}/README.md 的头部块导航不是模板固定的 9 条`
+        + "——期望值取的是这一份自己那一列，别拿另一种语言的 slug 顶替")
+        .toEqual(wantNav(lang));
+      const failures = deadAnchorFailures(body, `docs/${lang}/README.md`);
+      expect(failures, `docs/${lang}/README.md 的头部块导航里有死锚点：\n${failures.join("\n")}`).toEqual([]);
+    });
+
+    it(`⑦B 该红时红：改 docs/${lang}/README.md 的一个 \`## \` 标题而不改导航 —— 当场红并点名死锚点`, () => {
+      const file = docPath(".", lang, "README");
+      const body = readFileSync(file, "utf8");
+      probeBase(deadAnchorFailures(body, file),
+        `⑦B docs/${lang}/README.md 的 9 条章节锚点全部解析得开，且逐条命中 SECTIONS 的 ${lang} 那一列`);
+      // 变异对象取 §8「配置说明」那一节（`NAV_AT` 收录它），改法是在标题末尾接一个 `-v2`：
+      // `-` 与 `v2` 都活得过 slug 的字符过滤 ⇒ slug 一定变，而这个改法与语言无关，
+      // 五种语言共用同一段代码，不必为每一种手写一个「改成什么」。
+      const victim = SECTIONS[7]!.title[lang];
+      const mutated = body.replace(`\n${victim}\n`, `\n${victim}-v2\n`);
+      expect(mutated, `变异没落地——docs/${lang}/README.md 里没找到 \`${victim}\` 那一行`).not.toEqual(body);
+      const dead = `#${slugOf(victim)}`;
+      expect(slugOf(`${victim}-v2`), "改完之后 slug 竟然没变，这一格的变异是空的").not.toEqual(slugOf(victim));
+      const failures = deadAnchorFailures(mutated, file);
+      expect(failures, `改了标题没改导航，⑦B 却没红：\n${failures.join("\n")}`).toHaveLength(1);
+      expect(failures[0] ?? "", "⑦B 红了却没点名是哪一个锚点落空").toContain(dead);
+    });
+  }
 
   /** 徽章缺失的那几份。**真扫描与反向控制共用这一份**，`read` 是唯一的注入点。 */
   const badgeMissing = (v: string, read: (p: string) => string) => SIX.filter((p) => !read(p).includes(`version-v${v}`));
