@@ -3,8 +3,15 @@ import type { LogLevel } from "../../../ports/logger.js";
 import type { StoreLogger } from "../../../adapters/logger-store.js";
 import { windowIndex } from "../../../core/admin/event-ring.js";
 
-const DEFAULT_LIMIT = 200;
-const MAX_LIMIT = 500;
+/**
+ * 本页条数的档位。**导出的理由见 `handlers/keys.ts` 的 `DEFAULT_SIZE` 上方那一段**——
+ * 这一对正是那段话里被点名的实例：五份 `docs/{lang}/API.md` 曾经把它们写成 50 / 200
+ *（照抄了 `keys.ts` 那一族的量级感），五种语言逐份同错，而当时全仓没有一格判据
+ * 拿源码核过文档里的**值**。现在由 `tests/unit/docs-parity.test.ts` 的
+ * 「B 格：文档里那几个硬编码数字从真源常量现算（各语言各恰 1 处）」从这里现算。
+ */
+export const DEFAULT_LIMIT = 200;
+export const MAX_LIMIT = 500;
 const LEVELS: readonly LogLevel[] = ["debug", "info", "warn", "error"];
 
 /** 与 `keysHandler` 同一份写法（该文件没有导出，这里各自留一份小的，见该文件的说明）。 */

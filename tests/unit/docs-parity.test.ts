@@ -12,6 +12,9 @@ import { MODEL_CATALOG, PROTOCOLS, VIDEO_TASK_ID_SHAPE } from "../../src/core/ad
 // ADMIN.md 那一组的期望值一律从这些真源常量派生，不手写字面量。
 import { ADMIN_TOKEN_MIN_LENGTH } from "../../src/http/admin/auth.js";
 import { MAX_IMPORT_KEYS, PATCH_FIELDS } from "../../src/http/admin/handlers/keys-write.js";
+// P3f 阶段 7B 评审发现 5：文档里那几个硬编码数字一律 import 真源常量，不手抄第二份。
+import { DEFAULT_LIMIT, MAX_LIMIT } from "../../src/http/admin/handlers/events.js";
+import { DEFAULT_SIZE, MAX_SIZE } from "../../src/http/admin/handlers/keys.js";
 import { EVENT_KEY_PREFIX, EVENT_WINDOW_MS, EVENT_WINDOW_RETAIN } from "../../src/core/admin/event-ring.js";
 import { USAGE_DAY_RETAIN, USAGE_KEY_PREFIX, USAGE_SLOTS } from "../../src/core/admin/usage-stats.js";
 // P3e Task 30：「重置到底重置了什么」那张表的键名**一律从真源 import**，
@@ -9639,5 +9642,254 @@ describe("W104–W107 五份 API.md 的 13 节骨架之下的四条验收", () =
     const headerIdx = lines.findIndex((x, j) => j > i && j <= i + 3 && x.trimStart().startsWith("|"));
     expect(headerIdx, "真文档里第一处 `**请求体**：` 之后没有表 —— 这一格控制是空的").toBeGreaterThan(i);
     expect(lines[headerIdx], "表头与常量对不上时本格才有意义").not.toBe(broken["zh-CN"]);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * P3f 阶段 7B 第 1 轮评审发现 5 —— `## 管理 API` 那 24 条端点与源码的对应，补判据
+ *
+ * **上一轮新增的 17 格钉的全是形态**（端点降 `###`、必填列写「是/否」、状态码升序、
+ * 五件套次序、`###` 条数五语言相等且不回退、`✅❌` 恒 0）。它们守得住，
+ * 但**没有一格断言「文档里写的端点/值在源码里存在且一致」**——同一轮评审就从这个洞里
+ * 一口气抓到 4 处编造，且五种语言逐份同错：
+ *
+ * · `GET /admin/api/usage` 的 `from`/`to` 写成日期串（源码只认 epoch 毫秒整数）
+ * · `GET /admin/api/events` 的 `limit` 写成 50/200（源码 200/500）
+ * · 通道测试的 `domains` 写成域名数组（源码回的是个数）
+ * · `registrar/status` 的 `counted`/`fresh` 平铺到顶层（源码里它们在 `pool` 里）
+ *
+ * 本组补两格，**分别接住其中两族**：
+ * · **A 格（端点集合双向相等）**：路由表从 `src/http/admin/router.ts` 现算，
+ *   与五份 `API.md` 的 `## 管理 API` 之下那批 `### METHOD /admin/api/...` 做**双向**
+ *   集合相等。源码多一条不写文档 ⇒ 红；文档编一条不存在的端点 ⇒ 红。
+ * · **B 格（硬编码数字从真源常量现算）**：`DEFAULT_LIMIT` / `MAX_LIMIT` /
+ *   `DEFAULT_SIZE` / `MAX_SIZE` / `MAX_IMPORT_KEYS` / `ADMIN_TOKEN_MIN_LENGTH`
+ *   六个常量**一律 import**，把文档里那几句话按模板渲染出来逐字比对。
+ *   这一族「改一次源码，文档就静静变假一次」，而变假之后没有任何自然信号。
+ *
+ * ⚠️ **本组接不住第三、四族**（响应体字段的类型与嵌套层级）：那要一份端到端的响应
+ * 快照，与「文档里那段 ```json 是不是真形状」是同一件事。**今天没有那一格，写在这里备查**
+ * ——`GET /admin/api/registrar/status` 的例子这次是人工回 `handlers/registrar.ts:493-538`
+ * 核对后重写的，**人工核对不留判据**，下一次改字段它照样静静变假。
+ *
+ * ⚠️ **A 格为什么必须先 `blankComments`**：`router.ts` 的注释里逐字写着
+ * `admin.get("/admin/api/usage/summary", …)`（讲的是「加了会被 `:date` 吃掉」的反例）。
+ * 不抠注释的话它会被当成一条真路由，判据当场把五份文档判成「少写了一条」——
+ * **本组落地时实测过这一条**，见下面那格「认不出要吵」。
+ * 而**不许用块注释正则代替 `blankComments`**：`strip-comments.mjs` 的文件头逐条记着
+ * 那条正则在 `router.ts` 上吞掉 172 行真代码的三次实测，这个文件正是苦主本人。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 路由真源。**注释先抠掉**，理由见本组文件头。 */
+const ADMIN_ROUTER_FILE = join("src", "http", "admin", "router.ts");
+
+/** `admin.<method>("<path>")` / `admin.<method>(<常量名>)`。`use()` 不在其中（它是中间件不是端点）。 */
+const ROUTE_CALL = /\badmin\.(get|post|put|patch|delete)\(\s*(?:"([^"]+)"|([A-Z][A-Z0-9_]*))/g;
+
+/** 两条**从常量取路径**的端点（`router.ts` 刻意不写第二遍字面量）。判据这一侧也 import，不手抄。 */
+const ROUTE_PATH_CONSTS: Readonly<Record<string, string>> = {
+  KEYS_PURGE_PATH,
+  CONFIG_RESET_PATH,
+};
+
+/** `:id` → `{id}`：源码用 Hono 的冒号写法，文档用模板通行的花括号写法。 */
+const toDocParam = (path: string): string => path.replace(/:([A-Za-z][A-Za-z0-9]*)/g, "{$1}");
+
+/** 从一段（已抠注释的）`router.ts` 正文里现算 `/admin/api/*` 的端点表。 */
+function adminEndpointsOf(routerSrc: string): string[] {
+  const out: string[] = [];
+  for (const m of routerSrc.matchAll(ROUTE_CALL)) {
+    const literal = m[2];
+    const constName = m[3];
+    let path: string;
+    if (literal !== undefined) {
+      path = literal;
+    } else {
+      const v = ROUTE_PATH_CONSTS[constName ?? ""];
+      if (v === undefined) {
+        throw new Error(
+          `${ADMIN_ROUTER_FILE} 里有一条用常量 ${JSON.stringify(constName)} 注册的路由，`
+          + "而本判据的 `ROUTE_PATH_CONSTS` 里没有它 —— **回来 import 它，别把这条路由静默漏掉**。",
+        );
+      }
+      path = v;
+    }
+    if (!path.startsWith("/admin/api/")) continue;
+    out.push(`${(m[1] ?? "").toUpperCase()} ${toDocParam(path)}`);
+  }
+  return out;
+}
+
+/** 一份 `API.md` 的 `## 管理 API` 之下那批端点 `###` 标题（去掉 `### ` 前缀）。 */
+function docAdminEndpoints(lang: Lang, src: string): string[] {
+  return h2Section(outsideFences(src), DOC_SECTIONS.API[lang][9])
+    .filter((l) => /^### /.test(l))
+    .map((l) => l.slice(4).trim())
+    .filter((t) => /^(?:GET|POST|PUT|PATCH|DELETE) \/admin\/api\//.test(t));
+}
+
+/**
+ * B 格的四条锚：**每一条都由真源常量渲染成一句话，再去文档里找**。
+ *
+ * ⚠️ **为什么不做成「把说明格里的数字抽出来比一遍」**：ja 的 `size` 那格写的是
+ * `1 ページの件数。既定 20、上限 200。`——开头那个 `1` 是「一页」的一，不是档位。
+ * 抽数字的写法要么把它算进去（判据恒红），要么开个「跳过第一个数」的口子
+ *（那个口子会把真正的错也一起放过去）。**渲染成整句再逐字找**没有这个歧义，
+ * 而且顺带把措辞也钉住了：常量变了或句子被改写，两个方向都红。
+ */
+type NumAnchor = {
+  readonly what: string;
+  readonly render: Record<Lang, string>;
+};
+
+const NUM_ANCHORS: readonly NumAnchor[] = [
+  {
+    what: `GET /admin/api/events 的 limit（DEFAULT_LIMIT=${DEFAULT_LIMIT} / MAX_LIMIT=${MAX_LIMIT}）`,
+    render: {
+      "zh-CN": `本页条数，默认 ${DEFAULT_LIMIT}，上限 ${MAX_LIMIT}。`,
+      "zh-TW": `本頁條數，預設 ${DEFAULT_LIMIT}，上限 ${MAX_LIMIT}。`,
+      en: `Items on this page, ${DEFAULT_LIMIT} by default, ${MAX_LIMIT} at most.`,
+      ja: `このページの件数。既定 ${DEFAULT_LIMIT}、上限 ${MAX_LIMIT}。`,
+      ko: `이 페이지의 개수. 기본 ${DEFAULT_LIMIT}, 최대 ${MAX_LIMIT}.`,
+    },
+  },
+  {
+    what: `GET /admin/api/keys 的 size（DEFAULT_SIZE=${DEFAULT_SIZE} / MAX_SIZE=${MAX_SIZE}）`,
+    render: {
+      "zh-CN": `每页条数，默认 ${DEFAULT_SIZE}，上限 ${MAX_SIZE}。`,
+      "zh-TW": `每頁條數，預設 ${DEFAULT_SIZE}，上限 ${MAX_SIZE}。`,
+      en: `Items per page, ${DEFAULT_SIZE} by default, ${MAX_SIZE} at most.`,
+      ja: `1 ページの件数。既定 ${DEFAULT_SIZE}、上限 ${MAX_SIZE}。`,
+      ko: `한 페이지 개수. 기본 ${DEFAULT_SIZE}, 최대 ${MAX_SIZE}.`,
+    },
+  },
+  {
+    what: `POST /admin/api/keys/bulk 的 ids（MAX_IMPORT_KEYS=${MAX_IMPORT_KEYS}）`,
+    render: {
+      "zh-CN": `字符串数组，一次最多 ${MAX_IMPORT_KEYS} 项。`,
+      "zh-TW": `字串陣列，一次最多 ${MAX_IMPORT_KEYS} 項。`,
+      en: `An array of strings, ${MAX_IMPORT_KEYS} at most per call.`,
+      ja: `文字列の配列。一度に最大 ${MAX_IMPORT_KEYS} 件。`,
+      ko: `문자열 배열, 한 번에 최대 ${MAX_IMPORT_KEYS}개.`,
+    },
+  },
+  {
+    what: `ADMIN_TOKEN 的长度硬规则（ADMIN_TOKEN_MIN_LENGTH=${ADMIN_TOKEN_MIN_LENGTH}）`,
+    render: {
+      "zh-CN": `短于 ${ADMIN_TOKEN_MIN_LENGTH} 位`,
+      "zh-TW": `短於 ${ADMIN_TOKEN_MIN_LENGTH} 位`,
+      en: `shorter than ${ADMIN_TOKEN_MIN_LENGTH} characters`,
+      ja: `${ADMIN_TOKEN_MIN_LENGTH} 文字未満`,
+      ko: `${ADMIN_TOKEN_MIN_LENGTH}자 미만`,
+    },
+  },
+];
+
+describe("`## 管理 API` 与源码的对应：端点集合双向相等 + 硬编码数字从真源现算（阶段 7B 评审发现 5）", () => {
+  /** 抠完注释的路由表正文，读一次给全组用。 */
+  const routerBlanked = (): string => blankComments(readFileSync(ADMIN_ROUTER_FILE, "utf8"));
+
+  it("射程自守：路由表现算得到 ≥20 条 `/admin/api/*` 端点，且无重复", () => {
+    const eps = adminEndpointsOf(routerBlanked());
+    expect(eps.length, `${ADMIN_ROUTER_FILE} 里只现算出 ${eps.length} 条端点 —— 正则或注释处理坏了，本格在测空气`)
+      .toBeGreaterThanOrEqual(20);
+    const dup = eps.filter((e, i) => eps.indexOf(e) !== i);
+    expect(dup, `路由表里有重复注册：${JSON.stringify(dup)}`).toEqual([]);
+    // 归一化真的被走到了（否则 `:id` ↔ `{id}` 那一步是死代码，而它一旦失效
+    // 五份文档会被整片判成「编了 4 条端点、漏了 4 条端点」）。
+    expect(eps.filter((e) => e.includes("{")).length, "一条带路径参数的端点都没有 —— `:id` → `{id}` 那一步没被走到")
+      .toBeGreaterThanOrEqual(4);
+  });
+
+  it("A 格：五份 API.md 的 `## 管理 API` 端点集合与 `router.ts` **双向**相等", () => {
+    const router = adminEndpointsOf(routerBlanked());
+    const routerSet = new Set(router);
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      const docs = docAdminEndpoints(lang, apiSrc(lang));
+      const docSet = new Set(docs);
+      const dup = docs.filter((e, i) => docs.indexOf(e) !== i);
+      if (dup.length > 0) bad.push(`docs/${lang}/API.md 里同一条端点写了两遍：${JSON.stringify(dup)}`);
+      for (const e of router) {
+        if (!docSet.has(e)) bad.push(`docs/${lang}/API.md **少写了**源码里真有的端点：${e}`);
+      }
+      for (const e of docs) {
+        if (!routerSet.has(e)) bad.push(`docs/${lang}/API.md **编了一条**源码里没有的端点：${e}`);
+      }
+    }
+    expect(
+      bad,
+      `${bad.join("\n")}\n`
+      + `⇒ 真源是 ${ADMIN_ROUTER_FILE} 的 \`admin.<method>(...)\` 注册处（今天 ${router.length} 条），`
+      + "**不是任何一份文档**。新增端点要同批改五份 `API.md`；"
+      + "路径参数源码写 `:id`、文档写 `{id}`，归一化由本判据做，别在文档里写冒号。",
+    ).toEqual([]);
+  });
+
+  it("B 格：文档里那几个硬编码数字从真源常量现算（各语言各恰 1 处）", () => {
+    const bad: string[] = [];
+    for (const a of NUM_ANCHORS) {
+      for (const lang of LANGS) {
+        const want = a.render[lang];
+        const n = apiSrc(lang).split(want).length - 1;
+        if (n !== 1) bad.push(`docs/${lang}/API.md 里「${want}」出现了 ${n} 次（要恰 1 次）—— ${a.what}`);
+      }
+    }
+    expect(
+      bad,
+      `${bad.join("\n")}\n`
+      + "⇒ 这几个数的真源是 `src/http/admin/handlers/{events,keys,keys-write}.ts` 与 "
+      + "`src/http/admin/auth.ts` 里的常量，本判据 **import 它们**再渲染成整句去比。\n"
+      + "⇒ 0 次 = 常量改了而文档没跟上（或者句子被改写了）；>1 次 = 同一句话写了两遍，回来去重。\n"
+      + "🔴 **不许把期望值改成手抄的字面量来对付它**——那正是本格要防的那件事："
+      + "阶段 7B 评审实测，`limit` 的 50/200 与源码的 200/500 五种语言逐份同错，全仓零判据。",
+    ).toEqual([]);
+  });
+
+  /* ── 反向控制：该红时红 / 不许乱红 / 认不出要吵 ─────────────────────────── */
+
+  it("该红时红：`router.ts` 里加一条端点而文档没跟上 ⇒ A 格点名「少写了」并给出那条端点", () => {
+    const mutated = `${routerBlanked()}\n  admin.get("/admin/api/whoami", x);\n`;
+    const router = adminEndpointsOf(mutated);
+    expect(router, "变异没落地 —— 这一格控制是空的").toContain("GET /admin/api/whoami");
+    const docSet = new Set(docAdminEndpoints("zh-CN", apiSrc("zh-CN")));
+    expect(router.filter((e) => !docSet.has(e)), "源码多了一条端点却没被抓到")
+      .toEqual(["GET /admin/api/whoami"]);
+  });
+
+  it("该红时红：文档里编一条源码没有的端点 ⇒ A 格点名「编了一条」", () => {
+    const src = apiSrc("ja");
+    const mutated = src.replace(
+      "### GET /admin/api/session",
+      "### GET /admin/api/ghost\n\nでっちあげ。\n\n### GET /admin/api/session",
+    );
+    expect(mutated, "变异没落地").not.toEqual(src);
+    const routerSet = new Set(adminEndpointsOf(routerBlanked()));
+    const docs = docAdminEndpoints("ja", mutated);
+    expect(docs.filter((e) => !routerSet.has(e)), "文档编了一条端点却没被抓到")
+      .toEqual(["GET /admin/api/ghost"]);
+  });
+
+  it("该红时红：把 `MAX_LIMIT` 当成 300 渲染 ⇒ B 格在五份里各 0 命中", () => {
+    const fake = `本页条数，默认 ${DEFAULT_LIMIT}，上限 300。`;
+    expect(fake, "变异没落地 —— 假值与真值撞上了").not.toEqual(NUM_ANCHORS[0]?.render["zh-CN"]);
+    expect(apiSrc("zh-CN").split(fake).length - 1, "常量被改成 300 之后文档里居然还找得到 —— 本格控制是空的").toBe(0);
+  });
+
+  it("认不出要吵：`router.ts` 注释里那条 `admin.get(\"/admin/api/usage/summary\")` 反例不算真路由", () => {
+    const raw = readFileSync(ADMIN_ROUTER_FILE, "utf8");
+    // 前提：那段反例今天真的在（它讲的是「加了会被 `:date` 吃掉」，是一条有价值的记录）。
+    expect(raw, "那段反例被删了 —— 本格失去了它要防的东西，回来换一个注释里的反例或删掉本格")
+      .toContain('admin.get("/admin/api/usage/summary"');
+    // 结论：抠完注释之后它不在端点表里。**这一条实测过**：不抠注释时五份文档会被整片
+    // 判成「少写了 GET /admin/api/usage/summary」，而那条端点压根不存在。
+    expect(adminEndpointsOf(blankComments(raw)), "注释里的反例被当成了真路由 —— blankComments 没接上")
+      .not.toContain("GET /admin/api/usage/summary");
+  });
+
+  it("不许乱红：`## 管理 API` 之外的端点 `###`（如 `### GET /health`）不进 A 格的射程", () => {
+    const docs = docAdminEndpoints("zh-CN", apiSrc("zh-CN"));
+    expect(docs, "系统 API 那一节的端点被扫进来了 —— 节切分没生效").not.toContain("GET /health");
+    expect(docs.length, "管理 API 那一节一条端点都没扫到 —— 本格与 A 格都在测空气").toBeGreaterThanOrEqual(20);
   });
 });

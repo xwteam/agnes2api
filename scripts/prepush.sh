@@ -452,6 +452,30 @@ BANNER='[collection-guard] ✅'
 #   ⚠️ 同批改了两处**咬合点**（不改就整片误报）：`sectionBody()` 认 `##` 与 `###` 两层
 #   （终点跟着起点的层级走），`src/core/admin/upstream-facts.ts` 的三条 `docSections`
 #   从 `` `POST /v1/videos` `` 去掉反引号变成 `POST /v1/videos`（模板实测两仓都不带反引号）。
+#   P3f 阶段 7B 第 1 轮评审回填从 3976 改到 3984（+8，发现 5）：上一轮那 17 格钉的**全是形态**
+#   （端点降 `###`、必填列写「是/否」、状态码升序、五件套次序、`###` 条数五语言相等），
+#   **没有一格断言「文档里写的端点/值在源码里存在且一致」** —— 同一轮评审就从这个洞里
+#   抓到 4 处编造，且五种语言逐份同错（`usage` 的 `from`/`to` 写成日期串、`events` 的
+#   `limit` 写成 50/200、通道测试的 `domains` 写成域名数组、`registrar/status` 的
+#   `counted`/`fresh` 平铺到顶层）。
+#   新增 8 格 = 1 格射程自守（路由表现算 ≥20 条且无重复，并断言 `:id` → `{id}` 那一步
+#   真的被走到 —— 它一旦失效，五份文档会被整片判成「编了 4 条、漏了 4 条」）
+#   + 1 格 A（五份 `API.md` 的 `## 管理 API` 端点集合与 `src/http/admin/router.ts`
+#     **双向**集合相等，路径从 `admin.<method>(...)` 现算，两条常量路径 import 不手抄）
+#   + 1 格 B（`DEFAULT_LIMIT` / `MAX_LIMIT` / `DEFAULT_SIZE` / `MAX_SIZE` /
+#     `MAX_IMPORT_KEYS` / `ADMIN_TOKEN_MIN_LENGTH` 六个常量 import 后**渲染成整句**
+#     去文档里逐字找，各语言各恰 1 处）
+#   + 3 格该红时红（router 加一条端点不写文档 / 文档编一条端点 / 常量当成 300 渲染）
+#   + 1 格认不出要吵（`router.ts` 注释里那条 `admin.get("/admin/api/usage/summary")`
+#     反例不算真路由 —— 不抠注释的话五份文档会被判成「少写了一条不存在的端点」）
+#   + 1 格不许乱红（`## 系统 API` 那一节的 `### GET /health` 不进 A 格射程）。
+#   ⚠️ 同批把 `handlers/events.ts` 的 `DEFAULT_LIMIT`/`MAX_LIMIT` 与 `handlers/keys.ts`
+#   的 `DEFAULT_SIZE`/`MAX_SIZE` **改成导出**（理由与 `KEYS_PURGE_PATH` 那条逐字相同：
+#   不导出的话判据只能在文档侧手抄第二份，而那正是被咬过的形态）。
+#   ⚠️ **B 格刻意不做成「把说明格里的数字抽出来比一遍」**：ja 的 `size` 那格写的是
+#   `1 ページの件数。既定 20、上限 200。`，开头那个 `1` 是「一页」的一、不是档位。
+#   ⚠️ **本组接不住「响应体字段的类型与嵌套」那一族**（发现 3、4 就是那一族），
+#   那要一份端到端响应快照，今天没有，登记在本组文件头备查。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -460,7 +484,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=3976
+EXPECT_NODE_TESTS=3984
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

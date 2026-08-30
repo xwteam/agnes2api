@@ -2,8 +2,19 @@ import type { Context } from "hono";
 import type { KeyPoolRepo } from "../../../core/keypool-repo.js";
 import { toKeyViews, bucketCounts, matchesQuery, BUCKETS, type Bucket } from "../../../core/admin/key-view.js";
 
-const DEFAULT_SIZE = 20;
-const MAX_SIZE = 200;
+/**
+ * 分页档位。**导出的理由与 `KEYS_PURGE_PATH` 那条逐字相同**：五份 `docs/{lang}/API.md`
+ * 的 `### GET /admin/api/keys` 参数表里逐份写着这两个数，而
+ * `tests/unit/docs-parity.test.ts` 的
+ * 「B 格：文档里那几个硬编码数字从真源常量现算（各语言各恰 1 处）」
+ * 从这里现算 ⇒ 改了这两个数而文档没跟上，那一格当场红
+ *（**这类数改一次，文档就静静变假一次**，而变假之后没有任何自然信号）。
+ * **不导出的话判据只能在文档侧手抄第二份**，而那正是被咬过的形态
+ *（P3f 阶段 7B：`GET /admin/api/events` 的 `limit` 文档写 50/200、源码是 200/500，
+ * 五种语言逐份同错，全仓零判据）。
+ */
+export const DEFAULT_SIZE = 20;
+export const MAX_SIZE = 200;
 
 function intParam(raw: string | undefined, fallback: number, min: number, max: number): number {
   const n = Number(raw);
