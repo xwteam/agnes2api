@@ -635,9 +635,11 @@ BANNER='[collection-guard] ✅'
 # 数字变了就该有人来改这四行。
 # 4173 → 4177：P3f 阶段 7D 评审回填给 `tests/unit/repo-front-door.test.ts` 补了 (m) 那一组
 # 「仓库根目录顶层文件 == 具名白名单」，**恰 4 格**（真扫描 1 + 反向控制 3）。
-# 文件数不变（补的是已有文件里的格子）。
+# 4177 → 4181：同一轮回填给 `tests/unit/docs-parity.test.ts` 的 W131 方向② 补了表格档，
+# **恰 4 格**（射程自守 1 + 反向控制 2 + 不许乱红 1）。
+# 两次文件数都不变（补的是已有文件里的格子）。
 EXPECT_NODE_FILES=140
-EXPECT_NODE_TESTS=4177
+EXPECT_NODE_TESTS=4181
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

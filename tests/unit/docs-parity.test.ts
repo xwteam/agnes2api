@@ -11736,34 +11736,85 @@ describe("W130 R13c' 的射程扩展：40 份出货文档的**全部正文行**�
  * ══════════════════════════════════════════════════════════════════════════ */
 
 
+const GW_LEN = /(\d+)\s*(位|個字元|个字符|字符|字元|文字|자리|자|characters|character|chars|char)/g;
+const GW_TOKEN_NAME = /GATEWAY_TOKEN|ADMIN_TOKEN/g;
+
+/** 一段文字里**最后出现**的 token 名；一个都没有则 `null`。 */
+const lastTokenName = (s: string): string | null => {
+  const names = s.match(GW_TOKEN_NAME);
+  return names && names.length > 0 ? names[names.length - 1]! : null;
+};
+
+/** 表格分隔行（`|---|---|` / `|:--|--:|`）—— 不是数据行，没有主语可言。 */
+const isTableSeparator = (line: string): boolean => /^\|[\s:|-]+$/.test(line.trim());
+
 /**
- * 「把长度门槛按在 `GATEWAY_TOKEN` 头上」的散文行。
+ * 表格行的**主语**：键列（去掉首尾 `|` 之后的第一格）里的 token 名。
+ * 环境变量表就长这个样子——第一格是变量名，后面几格全都是在说它。
+ */
+const tableRowSubject = (line: string): string | null => {
+  const t = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  const first = t.split("|")[0];
+  return first === undefined ? null : lastTokenName(first);
+};
+
+/** 散文那套：按**小句**（以 `。`/`；`/`;`/`.` 切）里最后一个 token 名归属。 */
+const clauseGatewayClaims = (path: string, no: number, line: string): string[] => {
+  const out: string[] = [];
+  for (const clause of line.split(/[。；;.]/)) {
+    for (const m of clause.matchAll(GW_LEN)) {
+      if (lastTokenName(clause.slice(0, m.index)) === "GATEWAY_TOKEN") {
+        out.push(`${path}:${no} 「${m[0]}」被按在了 \`GATEWAY_TOKEN\` 头上：${clause.trim().slice(0, 70)}`);
+      }
+    }
+  }
+  return out;
+};
+
+/**
+ * 「把长度门槛按在 `GATEWAY_TOKEN` 头上」的行。**散文与表格两种载体都收**。
  *
- * 归属判定按**小句**（以 `。`/`；`/`;`/`.` 切）里**最后一个** token 名：
- * · 小句里最后出现的是 `GATEWAY_TOKEN` ⇒ 这条长度陈述归网关口令 ⇒ 红；
- * · 最后出现的是 `ADMIN_TOKEN`（含 `ADMIN_TOKEN_MIN_LENGTH`）或一个都没有 ⇒ 放行。
+ * 归属判定分两档：
+ * · **散文行**：按**小句**（以 `。`/`；`/`;`/`.` 切）里**最后一个** token 名。
+ *   最后出现的是 `GATEWAY_TOKEN` ⇒ 这条长度陈述归网关口令 ⇒ 红；
+ *   是 `ADMIN_TOKEN`（含 `ADMIN_TOKEN_MIN_LENGTH`）或一个都没有 ⇒ 放行。
+ * · **表格行**：按**键列**（第一格）里的 token 名，即那一行的**主语**。
+ *   键列点不出 token 名时退回散文那套按小句判。
  *
- * ⚠️ **不扫表格行**：五份 DEPLOY 的环境变量表把整段解释压进一格，
+ * 🔴 **上一版整行跳过表格行，而那正是这条判据要抓的那句假话最自然的落点。**
+ * 那一版的注释还写着「表格那一侧由方向① 覆盖」——**那是一句假的覆盖声明**：
+ * 方向① 的过滤是「行里有 `ADMIN_TOKEN`」，而 `| \`GATEWAY_TOKEN\` | … |` 那一行里
+ * 根本没有 `ADMIN_TOKEN` ⇒ 两个方向都够不着。射程内这样的行共 **11 条**
+ *（`README.md` + 五份 `docs/{lang}/README.md` + 五份 `docs/{lang}/DEPLOY.md` 的「必填 / 默认值 / 说明」表），
+ * 而那张表正是「长度不得少于 24 位」这类话最会被写进去的地方。
+ * 实测：往 `docs/zh-CN/DEPLOY.md` 的 `GATEWAY_TOKEN` 行塞一句长度门槛 ⇒
+ * 本文件 543 格、全仓 4173 格**一格都不红**。V33 的原型就这么复活了一次。
+ *
+ * ⚠️ **为什么表格行不能沿用小句规则**：五份 DEPLOY 的环境变量表把整段解释压进一格，
  *「`ADMIN_TOKEN` … 必须与 `GATEWAY_TOKEN` 不同，且至少 24 位」这种写法里
- * 最近的 token 名是网关口令，而句子说的是管理口令 —— 按行归属会当场误红。
- * 表格那一侧由方向① 的「与 `ADMIN_TOKEN` 同行的数字必须等于常量」覆盖。
+ * 小句内最后的 token 名是网关口令，而句子说的是管理口令 —— 按小句归属会当场误红 5 处。
+ * 键列归属对上了这张表真实的语义：**第一格是主语，后面几格都在说它**。
+ * 实测射程内 11 条带长度陈述的表格行，键列**全都**是变量名本身（无一例外）。
+ *
+ * ⚠️ **它验不了什么（照实写）**：键列是 `ADMIN_TOKEN` 的行里，若有人把
+ *「`GATEWAY_TOKEN` 至少 24 位」硬塞进说明格，这里仍然放行——那一行的主语确实是管理口令。
+ * 这是键列归属换来误红为零所付的代价，登记为已知盲点，不假称覆盖。
  */
 const gatewayLengthClaims = (docs: ReadonlyArray<readonly [string, string]>): string[] => {
-  const LEN = /(\d+)\s*(位|個字元|个字符|字符|字元|文字|자리|자|characters|character|chars|char)/g;
-  const TOKEN_NAME = /GATEWAY_TOKEN|ADMIN_TOKEN/g;
   const out: string[] = [];
   for (const [path, text] of docs) {
     let inFence = false;
     text.split("\n").forEach((line, i) => {
       if (/^[ \t]*```/.test(line)) { inFence = !inFence; return; }
-      if (inFence || line.trim().startsWith("|")) return;
-      for (const clause of line.split(/[。；;.]/)) {
-        for (const m of clause.matchAll(LEN)) {
-          const names = clause.slice(0, m.index).match(TOKEN_NAME) ?? [];
-          if (names[names.length - 1] === "GATEWAY_TOKEN") {
-            out.push(`${path}:${i + 1} 「${m[0]}」被按在了 \`GATEWAY_TOKEN\` 头上：${clause.trim().slice(0, 70)}`);
-          }
-        }
+      if (inFence) return;
+      if (!line.trim().startsWith("|")) { out.push(...clauseGatewayClaims(path, i + 1, line)); return; }
+      if (isTableSeparator(line)) return;
+      const subject = tableRowSubject(line);
+      if (subject === null) { out.push(...clauseGatewayClaims(path, i + 1, line)); return; }
+      if (subject !== "GATEWAY_TOKEN") return;
+      for (const m of line.matchAll(GW_LEN)) {
+        out.push(`${path}:${i + 1} 「${m[0]}」被按在了 \`GATEWAY_TOKEN\` 头上`
+          + `（表格键列即该行主语）：${line.trim().slice(0, 90)}`);
       }
     });
   }
@@ -11870,10 +11921,60 @@ describe("W131 R27 的源码锚：口令那两条门槛的数字从 `src/` 现�
 
   it("不许乱红：`ADMIN_TOKEN` 那一行里顺带提到 `GATEWAY_TOKEN`（「必须与它不同」）不算", () => {
     // 五份 DEPLOY 的环境变量表里，`ADMIN_TOKEN` 那一行写着
-    //「必须与 `GATEWAY_TOKEN` 不同，且至少 24 位」——「最近的那个 token 名」是网关口令，
-    // 但这句话说的是管理口令。⇒ 方向② **不扫表格行**，只扫散文；散文按小句切开再看归属。
+    //「必须与 `GATEWAY_TOKEN` 不同，且至少 24 位」——小句内最后的那个 token 名是网关口令，
+    // 但这句话说的是管理口令。⇒ 表格行按**键列**（第一格 = 该行主语）归属，不按小句。
     const row = "| `ADMIN_TOKEN` | 否 | — | 管理接口的口令。**必须与 `GATEWAY_TOKEN` 不同**，且至少 24 位。|";
     expect(gatewayLengthClaims([["x.md", `# X\n\n一句。\n\n${row}\n`]]),
-      "表格行被扫进来了 —— 那五份 DEPLOY 的环境变量表会当场误红").toEqual([]);
+      "键列是 `ADMIN_TOKEN` 的行被判红了 —— 那五份 DEPLOY 的环境变量表会当场误红").toEqual([]);
+  });
+
+  /* ── 方向② 的表格档（阶段 7D 评审回填）────────────────────────────────────
+   * 上一版整行跳过表格行，注释还写着「表格那一侧由方向① 覆盖」——**假的**：
+   * 方向① 只看「行里有 `ADMIN_TOKEN`」的行，`| GATEWAY_TOKEN | … |` 那 11 行一条都不沾。
+   * 下面三格分别钉住：射程真的够得着那 11 行 / 塞进去必须红 / 键列不是 token 时的退路。
+   * ──────────────────────────────────────────────────────────────────────── */
+
+  it("方向② 的表格档射程自守：11 份文档里那 11 条 `| \\`GATEWAY_TOKEN\\` |` 行，主语逐条判得出来", () => {
+    const rows = ELEVEN.flatMap((p) => bodyOf(readFileSync(p, "utf8"))
+      .filter((r) => r.line.trim().startsWith("|") && /^\|\s*`GATEWAY_TOKEN`\s*\|/.test(r.line.trim()))
+      .map((r) => ({ path: p, no: r.no, subject: tableRowSubject(r.line) })));
+    expect(rows.length, "环境变量表里那条 `GATEWAY_TOKEN` 行一条都没扫到 —— 表格档在测空气")
+      .toBe(ELEVEN.length);
+    const blind = rows.filter((r) => r.subject !== "GATEWAY_TOKEN")
+      .map((r) => `${r.path}:${r.no} 的键列点不出 \`GATEWAY_TOKEN\``);
+    expect(blind, `这几行的主语判不出来，方向② 对它们仍然是瞎的：\n${blind.join("\n")}`).toEqual([]);
+  });
+
+  it("② 该红时红（表格档）：往 `docs/zh-CN/DEPLOY.md` 的 `GATEWAY_TOKEN` 行塞一句长度门槛 —— 必须红并点名那一行", () => {
+    const target = join("docs", "zh-CN", "DEPLOY.md");
+    // 探针的基：真仓今天必须过方向②，否则这一格报的就不是变异的事。
+    expect(gatewayLengthClaims(ELEVEN.map((p) => [p, readFileSync(p, "utf8")] as const)),
+      "真仓今天本身就不过方向② —— 别从这一格找原因，先看方向② 那一格").toEqual([]);
+    // ⚠️ 这条变异是评审逐字节还原的那一条：改之前本文件 543 格、全仓 4173 格一格都不红。
+    const from = "| `GATEWAY_TOKEN` | **是** | – | 客户端调用本网关时必须携带的令牌。 |";
+    const to = "| `GATEWAY_TOKEN` | **是** | – | 客户端调用本网关时必须携带的令牌，长度不得少于 24 位。|";
+    const docs = ELEVEN.map((p) => {
+      const t = readFileSync(p, "utf8");
+      return p === target ? [p, t.replace(from, to)] as const : [p, t] as const;
+    });
+    expect(docs.find(([p]) => p === target)?.[1], `变异没落地 —— ${target} 里已经不是那一行了`)
+      .not.toEqual(readFileSync(target, "utf8"));
+    const wrong = gatewayLengthClaims(docs);
+    expect(wrong).toHaveLength(1);
+    expect(wrong[0] ?? "", "表格行里的 V33 原型没被抓到 —— 这正是上一版整行跳过表格时的死法")
+      .toContain(`${target}:`);
+    expect(wrong[0] ?? "").toContain("表格键列即该行主语");
+  });
+
+  it("② 该红时红（表格档的退路）：键列不是 token 名时退回小句归属，照样抓得到", () => {
+    // 说明列在前、变量名在后的表也存在于世；键列点不出主语时不许静默放行。
+    const row = "| 网关口令 | `GATEWAY_TOKEN` 长度不得少于 24 位。|";
+    const wrong = gatewayLengthClaims([["x.md", `# X\n\n${row}\n`]]);
+    expect(wrong, "键列没有 token 名的表格行被静默跳过了 —— 那是上一版那个洞的另一半").toHaveLength(1);
+    expect(wrong[0] ?? "").toContain("x.md:3");
+  });
+
+  it("不许乱红：表格分隔行 `|---|---|` 不进射程", () => {
+    expect(gatewayLengthClaims([["x.md", "| a | b |\n|---|---|\n| 1 | 2 |\n"]])).toEqual([]);
   });
 });
