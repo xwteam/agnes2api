@@ -10756,3 +10756,82 @@ describe("W111 五份 REGISTRAR.md 的两级分层与 Cron 那一节的拆分", 
   });
 });
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * W113 —— 「两条通道完全平级」从加粗正文提升为 `> [!IMPORTANT]`（P3f 阶段 7C）
+ *
+ * 这一条不是排版偏好，它对着的是**用户的硬约束**：两条邮箱通道 YYDS / MoeMail
+ * **同级，本项目不替用户选主备**。同一句话此前只是一行加粗正文，与它上下那几段
+ * 说明混在一起；提升成 alert 之后，它在渲染出来的页面上是唯一被框起来的一句。
+ *
+ * ⚠️ **判据钉的是「恰 1 条」而不是「至少 1 条」**：alert 撒得到处都是等于没有重点，
+ * 而「至少 1 条」拦不住这种退化。今天这五份文档里它就是唯一一条 alert。
+ * ⚠️ **同时钉内容**：只数条数的话，把这条 alert 换成任何别的话都不会红，
+ * 而那正好会让「不替用户选主备」这条承诺**在有判据看着的假象下**消失。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("W113 五份 REGISTRAR.md 的那条平级承诺", () => {
+  const realRegSrc: ApiDocReader = realDoc("REGISTRAR");
+
+  /** 那条 `> [!IMPORTANT]` 里必须写着的话，逐语言。**不是现找的**——对不上就红。 */
+  const EQUAL_CHANNELS: Record<Lang, string> = {
+    "zh-CN": "两条通道完全平级",
+    "zh-TW": "兩條通道完全平等",
+    en: "The two channels are fully equal",
+    ja: "2 つのチャネルは完全に対等であり",
+    ko: "두 채널은 완전히 대등하며",
+  };
+
+  /** 一份文档里全部 `> [!IMPORTANT]` 块的正文（不含那一行标记本身）。 */
+  const alertBodies = (src: string): string[] => {
+    const lines = src.split("\n");
+    const out: string[] = [];
+    lines.forEach((l, i) => {
+      if (!l.startsWith("> [!IMPORTANT]")) return;
+      const rest = lines.slice(i + 1);
+      const stop = rest.findIndex((x) => !x.startsWith(">"));
+      out.push((stop < 0 ? rest : rest.slice(0, stop)).join("\n"));
+    });
+    return out;
+  };
+
+  it("W113 五份各恰 1 条 `> [!IMPORTANT]`，且那条 alert 里写着两条通道平级", () => {
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const bodies = alertBodies(realRegSrc(lang));
+      if (bodies.length !== 1) {
+        failures.push(`docs/${lang}/REGISTRAR.md 有 ${bodies.length} 条 \`> [!IMPORTANT]\`，应当恰好 1 条`);
+        continue;
+      }
+      if (!(bodies[0] ?? "").includes(EQUAL_CHANNELS[lang])) {
+        failures.push(`docs/${lang}/REGISTRAR.md 的那条 alert 里没写「${EQUAL_CHANNELS[lang]}」：\n${bodies[0]}`);
+      }
+    }
+    expect(
+      failures,
+      `${failures.join("\n")}\n`
+      + "⇒ 这条 alert 对着的是用户的硬约束：YYDS 与 MoeMail 同级，不替用户选主备。",
+    ).toEqual([]);
+  });
+
+  it("该红时红：某一份把那条 alert 退回加粗正文 ⇒ 条数那格红并点名语言", () => {
+    const read = readerWith("ko", (s) => s.replace("> [!IMPORTANT]\n> ", ""), "REGISTRAR");
+    const failures = LANGS
+      .map((lang) => [lang, alertBodies(read(lang)).length] as const)
+      .filter(([, n]) => n !== 1)
+      .map(([lang, n]) => `docs/${lang}/REGISTRAR.md 有 ${n} 条 \`> [!IMPORTANT]\``);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("ko/REGISTRAR.md");
+  });
+
+  it("该红时红：alert 还在、承诺被换成别的话 ⇒ 内容那格红（只数条数是拦不住的）", () => {
+    const read = readerWith(
+      "ja",
+      (s) => s.replace("> **2 つのチャネルは完全に対等であり、", "> **主チャネルには YYDS を推奨します。"),
+      "REGISTRAR",
+    );
+    expect(alertBodies(read("ja")), "条数变了 —— 这一格要证的是「条数不变而内容变了」").toHaveLength(1);
+    const failures = LANGS.filter((lang) => !(alertBodies(read(lang))[0] ?? "").includes(EQUAL_CHANNELS[lang]));
+    expect(failures, `报文：\n${failures.join("\n")}`).toEqual(["ja"]);
+  });
+});
+

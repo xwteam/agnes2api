@@ -539,6 +539,15 @@ BANNER='[collection-guard] ✅'
 #   ⚠️ 为什么要补位置这一层：`tests/unit/registrar/config.test.ts` 那一组是
 #   `toContain(整份文档)`，串被挪进隔壁小节它**一格都不会红**，而读者在这一节里读到的
 #   那个数就此没了出处。两组射程不同，都要留着。
+# P3f 阶段 7C（W113）从 4017 改到 4020（+3）：五份 `REGISTRAR.md` 把「两条通道完全平级，
+#   本项目不预设主通道」那句从加粗正文提升为 `> [!IMPORTANT]`（五份各恰 1 条，也是这五份
+#   文档里唯一一条 alert）。新增 3 格（`docs-parity.test.ts` 的
+#   「W113 五份 REGISTRAR.md 的那条平级承诺」一组）：恰 1 条且内容含逐语言的平级承诺 /
+#   该红时红「退回加粗正文 ⇒ 条数那格红并点名语言」/ 该红时红「alert 还在、承诺被换成
+#   『主通道推荐 YYDS』⇒ 内容那格红」。
+#   ⚠️ 后一格是这一组的重点：只数条数的话，把这条 alert 换成任何别的话都不会红，
+#   而那正好会让用户那条硬约束（YYDS 与 MoeMail 同级、不替用户选主备）
+#   **在有判据看着的假象下**消失。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -547,7 +556,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=4017
+EXPECT_NODE_TESTS=4020
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

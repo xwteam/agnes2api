@@ -30,8 +30,9 @@ The registrar supports two mailbox channels for receiving verification codes:
 
 ### Configuring the primary and the fallback
 
-**The two channels are fully equal — this project sets neither as primary and recommends
-neither.**
+> [!IMPORTANT]
+> **The two channels are fully equal — this project sets neither as primary and
+> recommends neither.**
 
 `REGISTRAR_PRIMARY` has no default; you must explicitly set it to `yyds` or `moemail` when
 enabling the registrar. `REGISTRAR_FALLBACK` is optional: when the primary channel hits a
