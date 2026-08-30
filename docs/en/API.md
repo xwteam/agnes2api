@@ -877,8 +877,8 @@ curl http://localhost:8080/admin/api/config \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "value": 120000, "source": "default" } },
-  "credentials": { "gatewayToken": { "configured": true, "source": "env" } },
+  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
   "editable": ["upstreamTimeoutMs"],
@@ -909,8 +909,8 @@ curl -X PUT http://localhost:8080/admin/api/config \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "value": 90000, "source": "stored" } },
-  "credentials": { "gatewayToken": { "configured": true, "source": "env" } },
+  "fields": { "upstreamTimeoutMs": { "stored": 90000, "env": null, "effective": 90000, "lockedBy": null } },
+  "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
   "changed": ["upstreamTimeoutMs"],
@@ -969,8 +969,8 @@ curl -X POST http://localhost:8080/admin/api/config/secrets/clear \
   "stillConfigured": true,
   "gatewayTokenMissing": false,
   "loadBlocked": [],
-  "fields": { "upstreamTimeoutMs": { "value": 90000, "source": "stored" } },
-  "credentials": { "gatewayToken": { "configured": true, "source": "env" } },
+  "fields": { "upstreamTimeoutMs": { "stored": 90000, "env": null, "effective": 90000, "lockedBy": null } },
+  "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false
 }
 ```
@@ -998,8 +998,8 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "value": 120000, "source": "default" } },
-  "credentials": { "gatewayToken": { "configured": true, "source": "env" } },
+  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
   "changed": ["upstreamTimeoutMs"],
