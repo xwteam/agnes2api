@@ -1346,3 +1346,175 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
       .toEqual([SELF_REFERRER]);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W120 / W121 —— 五份社区文件的排版（P3f 阶段 7C）
+ *
+ * 🔴 **这一组的形状是推导，不是模板照搬。** 两个参照仓（kiro2api / gemini2api）
+ * **根本没有** `SECURITY.md` / `CONTRIBUTING.md` / `.github/**` 这几份文件 ——
+ * ADJ ⑮⑯ 裁的是「保留它们，按本仓自己的排版词汇轻改」。所以下面每一条都写清
+ * **为什么是这个形状**，别当成「模板上就是这么写的」。
+ *
+ * · **W120**（`SECURITY.md` / `CONTRIBUTING.md`）：补 `---`（C28：ADJ ⑮ 赢，C16 的射程
+ *   收窄到「参照仓有对照物的五类文档」，而参照仓根本没有这几份）、关键提示改
+ *   `> [!IMPORTANT]` / `> [!WARNING]`、把「4 条安全行为」与「Ground rules」改成表；
+ *   **不套 16 节骨架**、**不补「支持的版本」表**（C25）。
+ * · **W121**（`.github/**` 三份）：补 `---`、关键提示改 alert。**不套骨架、不瘦身、不中文化**（Q11）。
+ *
+ * ⚠️ **R23' 在这里是本地版**：全仓那条「相邻标题间正文 ≤1200 字符」今天还没启用
+ * （W92b 排在阶段 7 末尾）。本组先把它用在**这两份散文**上，理由是 X9 的实测：
+ * `SECURITY.md` 段均 496.2 字符、最长 2164，是全仓最糟的几份之一，而规格第 1 版的
+ * R23i 声称「今天已达标」——那句话是假的。**两份 issue 模板不进这一格**：它们整份
+ * 一个标题都没有，是表单不是散文，插标题会把它们变成另一种东西。
+ *
+ * ⚠️ **`---` 数只判「恰 1 条」，不判位置。** 25 份文档那条位置规矩（ADJ §68：
+ * 最后一个 `##` 之后、页脚块之前）**推不到这里**：两份 issue 模板整份没有 `##`，
+ * 按那条规矩它们的 `---` 永远合法或永远非法，判据两头落空。这里退到「恰 1 条」——
+ * 它挡得住「零条（这一期白做）」与「散落好几条（回到旧的分节线用法）」两个方向。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** YAML front matter（issue 模板顶部那一段）不算正文，它的两条 `---` 是分隔符不是分隔线。 */
+const stripFrontMatter = (text: string): string => {
+  if (!text.startsWith("---\n")) return text;
+  const end = text.indexOf("\n---\n", 4);
+  return end === -1 ? text : text.slice(end + 5);
+};
+
+/** 剥围栏后的正文行（围栏定界行本身也剥掉）。 */
+const proseLines = (text: string): string[] => {
+  let inFence = false;
+  const out: string[] = [];
+  for (const line of stripFrontMatter(text).split("\n")) {
+    if (/^[ \t]*```/.test(line)) { inFence = !inFence; continue; }
+    if (!inFence) out.push(line);
+  }
+  return out;
+};
+
+const ALERT_LINE = /^>\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/;
+/** 裸 ⚠️ 段落：不在引用块里、以 ⚠️ 起头的一行。这一族正是本期要换掉的那种写法。 */
+const BARE_WARN_LINE = /^\s*⚠️/;
+
+/** 一份文件的排版体检。**只读文本**，反向控制因此可以直接喂变异过的字符串。 */
+const layoutScan = (path: string, text: string) => {
+  const lines = proseLines(text);
+  return {
+    path,
+    hr: lines.filter((l) => l === "---").length,
+    alerts: lines.filter((l) => ALERT_LINE.test(l)).length,
+    bareWarn: lines.filter((l) => BARE_WARN_LINE.test(l)).length,
+  };
+};
+
+/** 相邻两个标题之间的正文字符数（剥围栏、剥 front matter）。返回超限的那几段。 */
+const overlongSections = (path: string, text: string, cap: number): string[] => {
+  const lines = proseLines(text);
+  const at = lines.map((l, i) => [l, i] as const).filter(([l]) => /^#{1,6} /.test(l));
+  if (at.length === 0) throw new Error(`${path} 里一个标题都没有 —— 判据在测空气`);
+  const out: string[] = [];
+  at.forEach(([head, i], k) => {
+    const end = k + 1 < at.length ? at[k + 1]![1] : lines.length;
+    const chars = lines.slice(i + 1, end).join("\n").trim().length;
+    if (chars > cap) out.push(`${path} 的「${head}」之下有 ${chars} 个字符，上限 ${cap}`);
+  });
+  return out;
+};
+
+/** 某个 `##` 小节之下有没有一张 ≥`floor` 行数据的表。抽不到那一节时当场抛。 */
+const tableRowsUnder = (path: string, text: string, heading: string): number => {
+  const lines = proseLines(text);
+  const start = lines.indexOf(heading);
+  if (start === -1) throw new Error(`${path} 里没有「${heading}」这一节 —— 判据的落点变了`);
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((l) => /^## /.test(l));
+  const body = end === -1 ? rest : rest.slice(0, end);
+  const sep = body.findIndex((l) => /^\s*\|(?:\s*:?-+:?\s*\|)+\s*$/.test(l));
+  if (sep === -1) return 0;
+  let n = 0;
+  for (const l of body.slice(sep + 1)) {
+    if (!l.trimStart().startsWith("|")) break;
+    n += 1;
+  }
+  return n;
+};
+
+const R23_CAP = 1200;
+/** R23' 本地版的射程：**只有这两份散文**。两份 issue 模板整份没有标题，是表单不是散文。 */
+const PROSE_COMMUNITY = ["SECURITY.md", "CONTRIBUTING.md"] as const;
+
+describe("W120 / W121 五份社区文件的排版（推导，不是模板照搬）", () => {
+  const scans = (read: Read) => communityFiles(realList).map((f) => layoutScan(f, read(f)));
+
+  it("W120/W121 每份社区文件恰 1 条正文 `---`（front matter 的那两条不算）", () => {
+    const wrong = scans(realRead).filter((s) => s.hr !== 1).map((s) => `${s.path} 有 ${s.hr} 条 \`---\``);
+    expect(wrong, `报文：\n${wrong.join("\n")}`).toEqual([]);
+  });
+
+  it("该红时红：某份多加一条 `---` ⇒ 那格红并点名文件与条数", () => {
+    const at = "SECURITY.md";
+    const read = patchRead(realRead, at, `${realRead(at)}\n---\n`);
+    const wrong = scans(read).filter((s) => s.hr !== 1).map((s) => `${s.path} 有 ${s.hr} 条 \`---\``);
+    expect(wrong, `报文：\n${wrong.join("\n")}`).toHaveLength(1);
+    expect(wrong[0] ?? "").toContain(`${at} 有 2 条`);
+  });
+
+  it("W120/W121 每份至少 1 条 GitHub alert，且裸 `⚠️` 段落恒为 0（本期就是把它们换掉的）", () => {
+    const wrong: string[] = [];
+    for (const s of scans(realRead)) {
+      if (s.alerts < 1) wrong.push(`${s.path} 一条 GitHub alert 都没有`);
+      if (s.bareWarn > 0) wrong.push(`${s.path} 还有 ${s.bareWarn} 段裸 \`⚠️\` 散文`);
+    }
+    expect(wrong, `报文：\n${wrong.join("\n")}`).toEqual([]);
+  });
+
+  it("该红时红：把一条 alert 退回裸 `⚠️` 散文 ⇒ 两个方向同时红（少一条 alert、多一段裸 ⚠️）", () => {
+    const at = ".github/ISSUE_TEMPLATE/bug_report.md";
+    const mutated = realRead(at).replace(/^> \[!WARNING\]\n> \*\*Never paste/m, "⚠️ **Never paste");
+    expect(mutated, "变异没落地 —— 那一格控制是空的").not.toBe(realRead(at));
+    const s = layoutScan(at, mutated);
+    expect(s.bareWarn, "裸 `⚠️` 回来了却没被数到").toBe(1);
+    expect(s.alerts, "alert 少了一条却没被数到").toBe(layoutScan(at, realRead(at)).alerts - 1);
+  });
+
+  it("W120 R23' 本地版：`SECURITY.md` / `CONTRIBUTING.md` 相邻标题之间的正文 ≤1200 字符", () => {
+    const over = PROSE_COMMUNITY.flatMap((f) => overlongSections(f, realRead(f), R23_CAP));
+    expect(over, `报文：\n${over.join("\n")}`).toEqual([]);
+  });
+
+  /**
+   * ⚠️ **为什么这一格删的是两个 `###` 而不是一个。** 落地后逐节实测，`SECURITY.md` 里
+   * 单删任何一个 `###`，合并出来最大的一节是 **1047 字符**（`### Admin endpoints …` 的
+   * 322 + `### An admin session …` 的 725），仍在 1200 以内 ⇒ **单删一个今天红不了**。
+   * 这不是判据软，是这份文档改完之后**有余量**：把它写成「删一个就红」会是一句假话，
+   * 而假话在下一次有人加长正文时会静静变成真话，谁都不知道判据是什么时候开始承重的。
+   * 所以这一格如实删两个，并把「余量有多少」写在这里。
+   */
+  it("该红时红：把 `SECURITY.md` 里切开长节的两个 `###` 删掉 ⇒ 那格红并点名是哪一节、多长", () => {
+    const at = "SECURITY.md";
+    const mutated = realRead(at)
+      .replace("\n### When those checks run, and when they do not\n", "\n")
+      .replace("\n### What is decided outside this repository\n", "\n");
+    expect(mutated, "变异没落地 —— 那两个 `###` 的文字变了").not.toBe(realRead(at));
+    const over = overlongSections(at, mutated, R23_CAP);
+    expect(over, `报文：\n${over.join("\n")}`).toHaveLength(1);
+    expect(over[0] ?? "").toContain("What the credential gates actually check");
+    expect(over[0] ?? "", "报文没说这一节到底多长，读的人还得自己去数").toMatch(/有 \d+ 个字符/);
+  });
+
+  it("W120 那两组 bullet 已经是表：`If you operate one` 与 `Ground rules` 各 ≥4 行数据", () => {
+    const rows = [
+      ["SECURITY.md", "## If you operate one"] as const,
+      ["CONTRIBUTING.md", "## Ground rules"] as const,
+    ].map(([f, h]) => [`${f}${h}`, tableRowsUnder(f, realRead(f), h)] as const);
+    const thin = rows.filter(([, n]) => n < 4).map(([k, n]) => `${k} 之下的表只有 ${n} 行数据`);
+    expect(thin, `报文：\n${thin.join("\n")}`).toEqual([]);
+  });
+
+  it("该红时红：把 `Ground rules` 那张表退回 bullet 列表 ⇒ 行数掉到 0 并点名那一节", () => {
+    const at = "CONTRIBUTING.md";
+    const mutated = realRead(at).replace(/\n\| Rule \| What it means in practice \|\n\|[-|]+\|\n(?:\|.*\n)+/, "\n- 四条房规\n");
+    expect(mutated, "变异没落地 —— `Ground rules` 那张表的表头变了").not.toBe(realRead(at));
+    expect(() => tableRowsUnder(at, mutated, "## Ground rules")).not.toThrow();
+    expect(tableRowsUnder(at, mutated, "## Ground rules"), "表没了却还数得出行").toBe(0);
+  });
+});

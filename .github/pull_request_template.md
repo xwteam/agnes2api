@@ -4,8 +4,10 @@
 
 ## Merge conditions
 
-Tick every box, or strike it out and say why it does not apply. These are the house rules, not
-a formality — see [CONTRIBUTING.md](https://github.com/xwteam/agnes2api/blob/main/CONTRIBUTING.md).
+> [!IMPORTANT]
+> Tick every box, or strike it out and say why it does not apply. These are the house rules,
+> not a formality — see
+> [CONTRIBUTING.md](https://github.com/xwteam/agnes2api/blob/main/CONTRIBUTING.md).
 
 - [ ] Every check in
       [`.github/workflows/ci.yml`](https://github.com/xwteam/agnes2api/blob/main/.github/workflows/ci.yml) was run locally, in the
@@ -34,3 +36,9 @@ a formality — see [CONTRIBUTING.md](https://github.com/xwteam/agnes2api/blob/m
 
 <!-- Known gaps, deliberate omissions, things the new guards still cannot see. Writing "none"
      is fine; leaving it blank is not. -->
+
+---
+
+> [!WARNING]
+> A checklist that cannot go red is not a guard, it is a to-do list. The mutation evidence
+> above is the only thing that tells a reviewer which of these boxes was actually earned.

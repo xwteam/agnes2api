@@ -19,3 +19,10 @@ request-handling code, and anything that only works on one of them is a much har
 
 **Would you be willing to send a pull request?** See
 [CONTRIBUTING.md](https://github.com/xwteam/agnes2api/blob/main/CONTRIBUTING.md) first — the bar on tests here is higher than usual, and it is better to know that up front.
+
+---
+
+> [!IMPORTANT]
+> This is a personal project with no support commitment. A request can be a good idea, be
+> understood, and still not get built — and a request that only works on one of the two
+> runtimes is the one most likely to end up there.
