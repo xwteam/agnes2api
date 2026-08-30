@@ -72,26 +72,57 @@ set `REGISTRAR_FALLBACK`, prepare credentials for that channel as well.
 
 ## Configuration
 
-| Variable | Required | Default | Notes |
-|--------|--------|-------|-----|
-| `REGISTRAR_ENABLED` | no | `false` | Master switch; must be `true` to enable the registrar. |
-| `REGISTRAR_PRIMARY` | required once enabled | none | Primary channel, `yyds` or `moemail`; the two are equal, no default. |
-| `REGISTRAR_FALLBACK` | no | empty (no fallback) | Fallback channel, `yyds` or `moemail`; used when the primary hits a channel-level failure. |
-| `TARGET_KEYS` | no | `20` | Target number of usable keys; a refill round only triggers below this. |
-| `MINT_BATCH` | no | `5` | Maximum keys minted per round. |
-| `TEND_INTERVAL_MS` | no (Node/Docker only) | `1800000` (30 min) | Node-side refill scheduling interval; on the Worker this is instead governed by the Cron in `wrangler.toml` — see below. |
-| `CODE_TIMEOUT_MS` | no | `120000` (120s) | Timeout waiting for the verification code on a single mint attempt. |
-| `MINT_DELAY_MIN_MS` | no | `2000` | Lower bound of the random delay between mint attempts within a round (ms). |
-| `MINT_DELAY_MAX_MS` | no | `5000` | Upper bound of the random delay between mint attempts within a round (ms). |
-| `MAX_DOMAIN_ATTEMPTS` | no | `8` | Maximum number of temp-mailbox domains tried per mint attempt. |
-| `REGISTRAR_TOKEN_NAME` | no | `auto` | The display name given to the minted key in the Agnes dashboard. |
-| `AGNES_PLATFORM_URL` | no | `https://platform-backend.agnes-ai.com` | Agnes platform backend used for registration, login, and key minting (vendor's public endpoint). |
-| `YYDS_BASE_URL` | no | `https://maliapi.215.im` | YYDS Mail API base URL (vendor's public endpoint). |
-| `YYDS_API_KEY` | required if a channel is `yyds` | empty | YYDS Mail API key. |
-| `MOEMAIL_BASE_URL` | required if a channel is `moemail` | empty | Address of your own MoeMail instance, no default. |
-| `MOEMAIL_API_KEY` | required if a channel is `moemail` | empty | API key for that MoeMail instance. |
+```env
+# ── Switch and channels ───────────────────────────────────────────
+# Master switch. Must be true to enable the registrar. (optional, default false)
+REGISTRAR_ENABLED=false
+# Primary channel, yyds or moemail; the two are equal, no default.
+# (required once the registrar is enabled)
+REGISTRAR_PRIMARY=
+# Fallback channel, yyds or moemail; used when the primary hits a channel-level
+# failure. (optional, empty = no fallback)
+REGISTRAR_FALLBACK=
 
-Every variable in the table above has its own line in `.env.example` (the defaults are usually
+# ── Refill pacing ─────────────────────────────────────────────────
+# Target number of usable keys; a refill round only triggers below this.
+# (optional, default 20)
+TARGET_KEYS=20
+# Maximum keys minted per round. (optional, default 5)
+MINT_BATCH=5
+# Node-side refill scheduling interval in ms; on the Worker this is instead
+# governed by the Cron in wrangler.toml, see below.
+# (optional, default 1800000 = 30 min, read by Node/Docker only)
+TEND_INTERVAL_MS=1800000
+# Timeout waiting for the verification code on a single mint attempt, in ms.
+# (optional, default 120000 = 120s)
+CODE_TIMEOUT_MS=120000
+# Lower / upper bound of the random delay between mint attempts within a round,
+# in ms. (optional, default 2000 / 5000)
+MINT_DELAY_MIN_MS=2000
+MINT_DELAY_MAX_MS=5000
+# Maximum number of temp-mailbox domains tried per mint attempt.
+# (optional, default 8)
+MAX_DOMAIN_ATTEMPTS=8
+# Display name given to the minted key in the Agnes dashboard.
+# (optional, default auto)
+REGISTRAR_TOKEN_NAME=auto
+
+# ── Upstream and channel credentials ──────────────────────────────
+# Agnes platform backend used for registration, login and key minting
+# (the vendor's public endpoint). (optional)
+AGNES_PLATFORM_URL=https://platform-backend.agnes-ai.com
+# YYDS Mail API base URL (the vendor's public endpoint) and its API key.
+# (base URL optional; the key is required if a channel is yyds — this
+# repository ships no real credentials)
+YYDS_BASE_URL=https://maliapi.215.im
+YYDS_API_KEY=
+# Address of your own MoeMail instance and its API key; neither has a default.
+# (required if a channel is moemail)
+MOEMAIL_BASE_URL=
+MOEMAIL_API_KEY=
+```
+
+Every variable in the block above has its own line in `.env.example` (the defaults are usually
 fine, so you rarely need to touch them), and both deployment targets read them. Every numeric
 variable above must be a positive integer; the gateway refuses to start otherwise.
 
@@ -103,6 +134,19 @@ variable above must be a positive integer; the gateway refuses to start otherwis
 |-----------------|-------|--------------------------|
 | Cloudflare Worker | Cron under `[triggers]` in `wrangler.toml` (default `*/30 * * * *`, every 30 minutes) | Edit the cron expression in `wrangler.toml` |
 | Node / Docker | An in-process timer | `TEND_INTERVAL_MS` (default `1800000` ms) |
+
+Here is what each of the two settings looks like:
+
+```toml
+# wrangler.toml -- on the Worker the trigger interval comes only from here
+[triggers]
+crons = ["*/30 * * * *"]
+```
+
+```env
+# .env -- the trigger interval on Node / Docker, in milliseconds
+TEND_INTERVAL_MS=1800000
+```
 
 Both runtimes ultimately call **the same refill function**. The difference is **who is
 responsible for triggering it on time**, and **where the trigger interval comes from**:
@@ -199,23 +243,29 @@ produces nothing, round after round. Two log lines cover this — grep by **even
 "Troubleshooting" below; more reliable than grepping prose, which can drift across wording
 changes and is not translated into the language you are reading):
 
-- **At startup**, a **warning** (`console.warn`), event name
-  `registrar.attempt_exceeds_worker_budget` (`grep 'registrar.attempt_exceeds_worker_budget'`),
-  something like
-  `[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS times the channel
-  count exceeds the Worker per-round wall-clock budget codeTimeoutMs=... chainLength=...
-  worstAttemptMs=... workerRoundBudgetMs=...`.
-  It does **not** stop the gateway from starting — unlike "missing credentials fail at startup".
-  Node/Docker has no platform wall clock and the same configuration is perfectly valid there, so
-  both runtimes print this warning but only Worker is actually affected.
-- **On every Worker refill round** where not even the first attempt fits, an **error**
-  (`console.error`), event name `registrar.round_budget_impossible`
-  (`grep 'registrar.round_budget_impossible'`), something like
-  `[registrar] registrar.round_budget_impossible the worst-case time for one mint already
-  exceeds this round's wall-clock budget, not a single attempt can start
-  worstAttemptMs=... roundBudgetMs=...`.
-  It repeats every round, which is how you tell this is a standing condition rather than a
-  one-off.
+**(1) At startup**, a **warning** (`console.warn`), event name
+`registrar.attempt_exceeds_worker_budget` (`grep 'registrar.attempt_exceeds_worker_budget'`),
+something like:
+
+```text
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS times the channel count exceeds the Worker per-round wall-clock budget
+  codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
+```
+
+It does **not** stop the gateway from starting — unlike "missing credentials fail at startup".
+Node/Docker has no platform wall clock and the same configuration is perfectly valid there, so
+both runtimes print this warning but only Worker is actually affected.
+
+**(2) On every Worker refill round** where not even the first attempt fits, an **error**
+(`console.error`), event name `registrar.round_budget_impossible`
+(`grep 'registrar.round_budget_impossible'`), something like:
+
+```text
+[registrar] registrar.round_budget_impossible the worst-case time for one mint already exceeds this round's wall-clock budget, not a single attempt can start
+  worstAttemptMs=... roundBudgetMs=...
+```
+
+It repeats every round, which is how you tell this is a standing condition rather than a one-off.
 
 **Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers out
 with both formulas above.** When the limit is hit, the platform aborts that Cron invocation.

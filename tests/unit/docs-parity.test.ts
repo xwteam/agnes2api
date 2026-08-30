@@ -1237,11 +1237,11 @@ function divergenceReport(labels: readonly string[], values: readonly unknown[])
  * · 在名册里却抽到了东西 ⇒ 红（名册过期了，删掉登记——**豁免名册会变成永久的洞**）。
  */
 const EMPTY_BY_DESIGN: ReadonlyArray<readonly [rule: string, doc: string]> = [
-  // 这两份文档整份没有代码围栏（不是"缩进围栏认不出"——`fences` 今天顶格与缩进一视同仁）。
-  // ⚠️ 这里原来还有一条 `["R3 …", "ADMIN"]`，**P3f 阶段 7C 随 W109 一并删掉**（W123 的一半）：
-  // 那五份文档今天各有 4 段围栏，登记留着就是"在名册里却抽到了东西"⇒ 恒红。
-  // 剩下的 `REGISTRAR` 那条归阶段 7D 的 W112 销账，别提前删——它今天仍然真的一条围栏都没有。
-  ["R3 代码围栏语言标记序列", "REGISTRAR"],
+  // 这一份文档整份没有代码围栏（不是"缩进围栏认不出"——`fences` 今天顶格与缩进一视同仁）。
+  // ⚠️ 这里原来还有 `["R3 …", "ADMIN"]` 与 `["R3 …", "REGISTRAR"]` 两条，
+  // **P3f 阶段 7C 分两批删掉**（W123 的两半，各自与补围栏那一批同提交）：
+  // 前者随 W109（五份 ADMIN.md 各 4 段围栏），后者随 W112（五份 REGISTRAR.md 各 5 段）。
+  // 登记留着就是"在名册里却抽到了东西"⇒ 恒红，名册两个方向都查。
   ["R3 代码围栏语言标记序列", "SPONSORS"],
   // ⚠️ `SPONSORS.md` 一份文档独占三格，理由是它的**体裁**：它是一页号召 Star / 提 Issue /
   // 提 PR 的散文 + 一段四步 git 命令，**结构上就不该有表格，也不该出现网关的标识符**
@@ -10832,6 +10832,104 @@ describe("W113 五份 REGISTRAR.md 的那条平级承诺", () => {
     expect(alertBodies(read("ja")), "条数变了 —— 这一格要证的是「条数不变而内容变了」").toHaveLength(1);
     const failures = LANGS.filter((lang) => !(alertBodies(read(lang))[0] ?? "").includes(EQUAL_CHANNELS[lang]));
     expect(failures, `报文：\n${failures.join("\n")}`).toEqual(["ja"]);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W112 —— 五份 `REGISTRAR.md` 的代码围栏（P3f 阶段 7C）
+ *
+ * 现状是**一段围栏都没有**。今天各 5 段：`## 配置项` 那 16 个变量的 ```env 围栏、
+ * 调度那一节的 ```toml（`wrangler.toml` 的 Cron）与 ```env（`.env` 的 `TEND_INTERVAL_MS`）、
+ * 两条日志形状的 ```text × 2。
+ *
+ * ⚠️ **变量表改围栏是 ADJ ⑳「换形态不换内容」裁定的**：`ADMIN.md:7-8` 承诺
+ * 「变量本身（默认值、取值范围、代价）全仓只有一份，在 DEPLOY.md 的环境变量表里」，
+ * 那**一张表**因此留在 `DEPLOY.md`；注册机这 16 个变量各带一行解释，塞回 4 列表格
+ * 会把整段解释压进一格（R22e/R22e2 那两条当场咬人），而把读者从注册机主文档赶去
+ * `DEPLOY.md` 又更糟。⇒ 这一份换成带注释的 ```env 围栏。
+ *
+ * 🔴 **`wrangler.toml` 那段围栏的 cron 表达式从真源现算，不手抄第二份**：
+ * 手抄的那份会漂，而漂了没人会发现——五份文档教读者写的那一行与仓里真的那一行对不上，
+ * 是「文档 vs 代码」那条真实性轴上最典型的一种事故。
+ *
+ * ⚠️ **W123 的另一半与本组同批**：五份补了围栏之后，`EMPTY_BY_DESIGN` 里
+ * `["R3 代码围栏语言标记序列", "REGISTRAR"]` 那条登记**当场发霉**（名册两个方向都查）。
+ * 先补文档、后删登记的中间态实测是 `1 failed`，报文逐字是
+ * 「登记在 EMPTY_BY_DESIGN 里…可是今天抽到东西了」。那条登记已删。
+ *
+ * ⚠️ **本组之外还有一格在看这些围栏**：`tests/unit/env-example-parity.test.ts` 的
+ * `docEnvVars()`（W112a 给它加的 ```env 抽取分支）——那一份看的是**名单**
+ * （围栏里点名了哪些变量、与 `.env.example` 双向对不对得上），本组看的是**形态**
+ * （几段、带没带语言标记、cron 那一行与真源一不一致）。两边射程不重叠。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("W112 五份 REGISTRAR.md 的代码围栏", () => {
+  const realRegSrc: ApiDocReader = realDoc("REGISTRAR");
+
+  /** 今天的实测值，同时是**不回退下限**（只许升不许降，与 W109 同一种形态）。 */
+  const FENCE_FLOOR = 5;
+
+  /** **开围栏**的语言标记序列（口径与 W109 那一组同源，理由见那里的注释）。 */
+  const openFences = (src: string): string[] => {
+    const out: string[] = [];
+    let inFence = false;
+    for (const line of src.split("\n")) {
+      const m = /^[ \t]*```(\w*)/.exec(line);
+      if (m === null) continue;
+      if (!inFence) out.push(m[1] ?? "");
+      inFence = !inFence;
+    }
+    return out;
+  };
+
+  /** `wrangler.toml` 里真的那一行 cron。**真源现算**，抠不出来当场抛。 */
+  function realCronLine(): string {
+    const src = readFileSync("wrangler.toml", "utf8");
+    const m = /^crons\s*=\s*(\[[^\]]*\])\s*$/m.exec(src);
+    if (m === null || m[1] === undefined) {
+      throw new Error("wrangler.toml 里抠不出 `crons = [...]` —— 真源换写法了，这一格测的是空气");
+    }
+    return `crons = ${m[1]}`;
+  }
+
+  it("W112 五份各 ≥5 段代码围栏，且带语言标注率 100%（裸 ``` 开围栏一处都不许有）", () => {
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const marks = openFences(realRegSrc(lang));
+      if (marks.length < FENCE_FLOOR) {
+        failures.push(`docs/${lang}/REGISTRAR.md 只有 ${marks.length} 段围栏，下限是 ${FENCE_FLOOR}`);
+      }
+      const bare = marks.filter((m) => m === "").length;
+      if (bare > 0) failures.push(`docs/${lang}/REGISTRAR.md 有 ${bare} 段围栏没带语言标记`);
+    }
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：某一份把 ```env 写成裸 ``` ⇒ 语言标注率那格红并点名那一份", () => {
+    const read = readerWith("zh-TW", (s) => s.replace("```env", "```"), "REGISTRAR");
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const bare = openFences(read(lang)).filter((m) => m === "").length;
+      if (bare > 0) failures.push(`docs/${lang}/REGISTRAR.md 有 ${bare} 段围栏没带语言标记`);
+    }
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("zh-TW/REGISTRAR.md");
+  });
+
+  it("W112 那段 ```toml 围栏教读者写的 cron 与 `wrangler.toml` 里真的那一行逐字相同", () => {
+    const want = realCronLine();
+    // 非空锚：真源抠出来的不该是空壳，否则下面那格会平凡地全绿。
+    expect(want, "从 wrangler.toml 抠出来的 cron 行是空的").toMatch(/^crons = \[".+"\]$/);
+    expect(
+      LANGS.filter((lang) => !realRegSrc(lang).includes(want)),
+      `这些语言的 REGISTRAR.md 里没有 \`${want}\` —— 文档手抄的那一行与 wrangler.toml 漂开了`,
+    ).toEqual([]);
+  });
+
+  it("该红时红：`wrangler.toml` 的 cron 改一位而文档没跟上 ⇒ 五份一起红（证明期望值不是手写的）", () => {
+    const drifted = 'crons = ["*/15 * * * *"]';
+    expect(drifted, "变异值与今天的真值撞了 —— 这一格控制是空的").not.toBe(realCronLine());
+    expect(LANGS.filter((lang) => !realRegSrc(lang).includes(drifted))).toEqual([...LANGS]);
   });
 });
 

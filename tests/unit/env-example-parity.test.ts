@@ -387,20 +387,62 @@ const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
  * 两边的射程不重叠，谁也替不了谁；各自的边界说明写在各自文件里，别照着一边的结论
  * 去推另一边。
  *
- * 锚点是「认不出要吵」那条纪律的落地：下面的表格判据是一条正则，正则一旦与文档的
+ * 锚点是「认不出要吵」那条纪律的落地：下面的抽取判据是一组正则，正则一旦与文档的
  * 真实排版脱节（改了表格样式、变量名不再包在反引号里），它会**一个名字都认不出**，
  * 而「空集 ⊆ 任何集合」「五份空集彼此相等」两条都会静静地成立。锚点让那种失效变成红。
- * 选它们的理由都是「这张表里唯一的必填项」：没有它这份文档就没在讲配置。
+ * 选它们的理由都是「这份清单里唯一的必填项」：没有它这份文档就没在讲配置。
+ *
+ * ⚠️ **两份文档今天的排版不是同一种，这是裁定过的（ADJ ⑳「换形态不换内容」）**：
+ * · `DEPLOY.md` 留**表格**——`ADMIN.md:7-8` 承诺「全仓只有一份环境变量表」，那一份就是它；
+ * · `REGISTRAR.md` 是带注释的 ```env **围栏**——注册机那 16 个变量各带一行解释，
+ *   塞进 4 列表格里会把一整段解释压成一格（R22e/R22e2 那两条当场咬人）。
+ * ⇒ `docEnvVars()` 因此**两种形态都认**。这正是本判据设计来抓的那件事：
+ * P3f 阶段 7C 把 REGISTRAR 的表换成围栏时，只认表格行的旧正则让五种语言一起返回空集，
+ * 下面第二格（锚点）**五语言一起红**，报文逐字是「要么那一行真的没了，要么表格排版
+ * 变了而本判据已经瞎了」。**先红、再来这里加分支**，而不是反过来。
  */
 const ENV_TABLE_DOCS = [
   { doc: "DEPLOY", anchor: "GATEWAY_TOKEN", why: "网关唯一的必填项" },
   { doc: "REGISTRAR", anchor: "REGISTRAR_PRIMARY", why: "注册机启用后唯一没有默认值的必填项" },
 ] as const;
 
-/** 一份文档的环境变量表里点名的变量：表格第一格是一个反引号包住的全大写名字。 */
-function tableVars(lang: string, doc: string): string[] {
+/**
+ * 一段 markdown 里所有 ```env 围栏的**正文**（不含定界行）。
+ *
+ * ⚠️ **只认 `env` 这一个标记，别放宽**：同一份 `REGISTRAR.md` 里还有 ```text 围栏
+ * （两条日志的形状）与 ```toml 围栏（`wrangler.toml` 的 Cron），前者正文里就有
+ * `codeTimeoutMs=...` 这种 `名字=` 形状的片段。放宽到「所有围栏」等于把日志字段
+ * 当成环境变量抽进来，而那种脏数据会让下面「文档不许长出网关不认得的变量」那一格
+ * 变成一条恒红且解释不清的判据。
+ */
+function envFenceBodies(md: string): string[] {
+  const out: string[] = [];
+  let body: string[] | null = null;
+  for (const line of md.split("\n")) {
+    const m = /^[ \t]*```(\w*)/.exec(line);
+    if (m !== null) {
+      if (body === null) { if (m[1] === "env") body = []; continue; }
+      out.push(body.join("\n"));
+      body = null;
+      continue;
+    }
+    if (body !== null) body.push(line);
+  }
+  return out;
+}
+
+/**
+ * 一份文档里点名的环境变量。**两种排版都认**（见 `ENV_TABLE_DOCS` 上面那段的分工）：
+ * · 表格行——第一格是一个反引号包住的全大写名字（`DEPLOY.md`）；
+ * · ```env 围栏里的一行声明——`NAME=`，允许前面带一个 `#`（被注释掉的示例也算点名，
+ *   与 `.env.example` 自己那条 `DECLARATION` 同一口径，`REGISTRAR.md`）。
+ */
+function docEnvVars(lang: string, doc: string): string[] {
   const md = readFileSync(`docs/${lang}/${doc}.md`, "utf8");
-  return [...new Set([...md.matchAll(/^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|/gm)].map((m) => m[1]!))].sort();
+  const fromTable = [...md.matchAll(/^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|/gm)].map((m) => m[1]!);
+  const fromFence = envFenceBodies(md)
+    .flatMap((b) => [...b.matchAll(/^#?[ \t]*([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]!));
+  return [...new Set([...fromTable, ...fromFence])].sort();
 }
 
 /**
@@ -424,32 +466,57 @@ function tableVars(lang: string, doc: string): string[] {
  */
 describe(".env.example 与五语言文档对等", () => {
   for (const { doc, anchor, why } of ENV_TABLE_DOCS) {
-    it(`五语言 ${doc}.md 的环境变量表点名的变量集合完全相同 —— 某一种语言漏翻/多翻一行会红`, () => {
-      const actual = Object.fromEntries(LANGS.map((lang) => [lang, tableVars(lang, doc).join(" ")]));
+    it(`五语言 ${doc}.md 的环境变量清单点名的变量集合完全相同 —— 某一种语言漏翻/多翻一行会红`, () => {
+      const actual = Object.fromEntries(LANGS.map((lang) => [lang, docEnvVars(lang, doc).join(" ")]));
       const expected = Object.fromEntries(LANGS.map((lang) => [lang, actual[LANGS[0]]]));
       expect(
         actual,
-        `五语言 ${doc}.md 的环境变量表对不上 —— 有语言漏翻了一行、多写了一行，或者表格排版被改成本判据认不出的样子`,
+        `五语言 ${doc}.md 的环境变量清单对不上 —— 有语言漏翻了一行、多写了一行，或者排版被改成本判据认不出的样子`,
       ).toEqual(expected);
     });
 
-    it(`五语言 ${doc}.md 的表里都认得出 ${anchor}（${why}）—— 一个名字都认不出时上面那格会平凡地全绿`, () => {
+    it(`五语言 ${doc}.md 的清单里都认得出 ${anchor}（${why}）—— 一个名字都认不出时上面那格会平凡地全绿`, () => {
       expect(
-        LANGS.filter((lang) => !tableVars(lang, doc).includes(anchor)),
-        `这些语言的 ${doc}.md 里没认出 ${anchor} ⇒ 要么那一行真的没了，要么表格排版变了而本判据已经瞎了`,
+        LANGS.filter((lang) => !docEnvVars(lang, doc).includes(anchor)),
+        `这些语言的 ${doc}.md 里没认出 ${anchor} ⇒ 要么那一行真的没了，要么排版变了而本判据已经瞎了`,
       ).toEqual([]);
     });
 
-    it(`五语言 ${doc}.md 表里的每个变量都在 .env.example 里声明过 —— 文档不许长出网关不认得的变量`, () => {
+    it(`五语言 ${doc}.md 清单里的每个变量都在 .env.example 里声明过 —— 文档不许长出网关不认得的变量`, () => {
       const declared = new Set(declaredInEnvExample());
-      const stray = LANGS.flatMap((lang) => tableVars(lang, doc).filter((k) => !declared.has(k)).map((k) => `${lang}:${k}`));
+      const stray = LANGS.flatMap((lang) => docEnvVars(lang, doc).filter((k) => !declared.has(k)).map((k) => `${lang}:${k}`));
       expect(
         stray,
-        "文档的环境变量表里有 .env.example 里查不到的变量 ⇒ 要么那一行是拼错/过期的，"
+        "文档的环境变量清单里有 .env.example 里查不到的变量 ⇒ 要么那一行是拼错/过期的，"
         + "要么它是真变量而 .env.example 漏了一行（那样陌生人 cp 完拿不到它）",
       ).toEqual([]);
     });
   }
+
+  /**
+   * **W112a 的验收**：把锚点从 ```env 围栏里删掉 ⇒ 仍然必须红并点名该语言。
+   *
+   * 这一格盯的是**新加的那条围栏分支自己**。上面那格读的是磁盘，它证明不了
+   * 「分支真的在承重」——REGISTRAR 那五份今天全绿，既可能是因为围栏抽得对，
+   * 也可能是因为表格分支恰好还抓到了别的什么。这里用一份**被改过的文本**逼它表态。
+   */
+  it("W112a 该红时红：把 REGISTRAR_PRIMARY 从 ```env 围栏里删掉 ⇒ 锚点那格仍然红，并点名是哪一种语言", () => {
+    /** `mutate` 为真时，把那一行从 ```env 围栏里抹掉再抽——变异只落在指定的那一份上。 */
+    const anchorMissing = (lang: string, mutate: boolean): boolean => {
+      const raw = readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8");
+      const md = mutate ? raw.replace(/^REGISTRAR_PRIMARY=.*$/m, "") : raw;
+      const fromFence = envFenceBodies(md)
+        .flatMap((b) => [...b.matchAll(/^#?[ \t]*([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]!));
+      const fromTable = [...md.matchAll(/^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|/gm)].map((m) => m[1]!);
+      return ![...fromTable, ...fromFence].includes("REGISTRAR_PRIMARY");
+    };
+    // 变异只落在 ja 这一份上：其余四份照旧认得出，报文才点得出名。
+    expect(anchorMissing("ja", true), "变异落地了却还认得出 REGISTRAR_PRIMARY —— 这一格控制是空的").toBe(true);
+    expect(LANGS.filter((l) => anchorMissing(l, false)), "没变异的四份不该跟着红").toEqual([]);
+    // 而**整份文档里仍然写着这个名字**（正文里到处在讲它）⇒ 证明红的是抽取分支，
+    // 不是一条「全文 grep 一下」就能糊弄过去的弱判据。
+    expect(readFileSync("docs/ja/REGISTRAR.md", "utf8"), "前提坏了：正文里本来就该提到它").toContain("REGISTRAR_PRIMARY");
+  });
 
   it(".env.example 里声明的每个变量，五种语言的 DEPLOY.md / REGISTRAR.md 都提到过", () => {
     const missing = LANGS.flatMap((lang) => {

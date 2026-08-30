@@ -548,6 +548,26 @@ BANNER='[collection-guard] ✅'
 #   ⚠️ 后一格是这一组的重点：只数条数的话，把这条 alert 换成任何别的话都不会红，
 #   而那正好会让用户那条硬约束（YYDS 与 MoeMail 同级、不替用户选主备）
 #   **在有判据看着的假象下**消失。
+# P3f 阶段 7C（W112 + W112a + W123 的另一半）从 4020 改到 4025（+5）：五份
+#   `REGISTRAR.md` 从「一段围栏都没有」补到各 5 段（`## 配置项` 那 16 个变量的 ```env
+#   围栏、调度那一节的 ```toml 与 ```env、两条日志形状的 ```text × 2）。
+#   新增 5 格：
+#   + 4 格 W112（`docs-parity.test.ts` 的「W112 五份 REGISTRAR.md 的代码围栏」一组）：
+#     各 ≥5 段且**开围栏**语言标注率 100% / 该红时红「```env 写成裸 ```」/
+#     ```toml 里的 cron 与 `wrangler.toml` **真源现算**的那一行逐字相同 /
+#     该红时红「真源改一位而文档没跟上 ⇒ 五份一起红」
+#   + 1 格 W112a（`env-example-parity.test.ts`）：把 `REGISTRAR_PRIMARY` 从 ```env 围栏里
+#     删掉 ⇒ 锚点那格仍然红并点名该语言（**用被改过的文本逼新分支表态**，磁盘那一格
+#     证明不了「分支真的在承重」）。
+#   ⚠️ **变量表改围栏是 ADJ ⑳「换形态不换内容」裁的**：`ADMIN.md:7-8` 承诺的那**一张表**
+#   留在 `DEPLOY.md`；注册机 16 个变量各带一行解释，塞回 4 列表格会把整段解释压进一格。
+#   ⚠️ **同批改 `env-example-parity.test.ts` 的 `tableVars()` → `docEnvVars()`**（W112a）：
+#   旧正则只认表格行，换围栏当场让五种语言一起返回空集 ⇒ 锚点那格**五语言一起红**，
+#   报文逐字是「要么那一行真的没了，要么表格排版变了而本判据已经瞎了」。
+#   **先红、再加分支**，不是反过来。中间态实测 `2 failed / 526 passed`。
+#   ⚠️ **同批删掉 `docs-parity.test.ts` 的 `EMPTY_BY_DESIGN` 里
+#   `["R3 代码围栏语言标记序列","REGISTRAR"]` 那条登记**（W123 的另一半）：补了围栏之后
+#   那条登记当场发霉，名册两个方向都查。**格数不变**（那一格本来就在跑）。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -556,7 +576,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=4020
+EXPECT_NODE_TESTS=4025
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

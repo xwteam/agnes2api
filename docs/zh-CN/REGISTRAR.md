@@ -63,26 +63,47 @@ Agnes 账号、登录、铸出一把 API key 写入池子。注册过程需要�
 
 ## 配置项
 
-| 变量 | 是否必填 | 默认值 | 说明 |
-|----|--------|------|----|
-| `REGISTRAR_ENABLED` | 否 | `false` | 总开关，为 `true` 才会启用注册机。 |
-| `REGISTRAR_PRIMARY` | 启用时必填 | 无 | 主通道，`yyds` 或 `moemail`；两者平级，无默认值。 |
-| `REGISTRAR_FALLBACK` | 否 | 空（不降级） | 备通道，`yyds` 或 `moemail`；主通道通道级失败时降级到它。 |
-| `TARGET_KEYS` | 否 | `20` | 目标可用 key 数，低于它才会触发补池。 |
-| `MINT_BATCH` | 否 | `5` | 单轮最多铸几把 key。 |
-| `TEND_INTERVAL_MS` | 否（仅 Node/Docker） | `1800000`（30 分钟） | Node 侧补池调度间隔；Worker 侧由 `wrangler.toml` 的 Cron 决定，见下文。 |
-| `CODE_TIMEOUT_MS` | 否 | `120000`（120 秒） | 单次铸 key 等待验证码的超时。 |
-| `MINT_DELAY_MIN_MS` | 否 | `2000` | 单轮内每次铸 key 之间随机间隔的下限（毫秒）。 |
-| `MINT_DELAY_MAX_MS` | 否 | `5000` | 单轮内每次铸 key 之间随机间隔的上限（毫秒）。 |
-| `MAX_DOMAIN_ATTEMPTS` | 否 | `8` | 单次铸 key 最多尝试几个临时邮箱域名。 |
-| `REGISTRAR_TOKEN_NAME` | 否 | `auto` | 铸出的 Agnes API key 在 Agnes 后台显示的名称。 |
-| `AGNES_PLATFORM_URL` | 否 | `https://platform-backend.agnes-ai.com` | 注册、登录、铸 key 使用的 Agnes 平台后端地址（厂商公开端点）。 |
-| `YYDS_BASE_URL` | 否 | `https://maliapi.215.im` | YYDS Mail 的 API 基址（厂商公开端点）。 |
-| `YYDS_API_KEY` | 通道为 yyds 时必填 | 空 | YYDS Mail 的 API Key。 |
-| `MOEMAIL_BASE_URL` | 通道为 moemail 时必填 | 空 | 你自己部署的 MoeMail 实例地址，无默认值。 |
-| `MOEMAIL_API_KEY` | 通道为 moemail 时必填 | 空 | 该 MoeMail 实例的 API Key。 |
+```env
+# ── 开关与通道 ────────────────────────────────────────────────────
+# 总开关。为 true 才会启用注册机。（可选，默认 false）
+REGISTRAR_ENABLED=false
+# 主通道，yyds 或 moemail；两者平级，无默认值。（启用注册机时必填）
+REGISTRAR_PRIMARY=
+# 备通道，yyds 或 moemail；主通道遇到通道级失败时降级到它。（可选，留空＝不降级）
+REGISTRAR_FALLBACK=
 
-上表里的每个变量在 `.env.example` 里都有一行示例（默认值通常够用，不必逐项改），两种
+# ── 补池节奏 ──────────────────────────────────────────────────────
+# 目标可用 key 数，低于它才会触发补池。（可选，默认 20）
+TARGET_KEYS=20
+# 单轮最多铸几把 key。（可选，默认 5）
+MINT_BATCH=5
+# Node 侧补池调度间隔（毫秒）；Worker 侧由 wrangler.toml 的 Cron 决定，见下文。
+# （可选，默认 1800000＝30 分钟，仅 Node/Docker 读取）
+TEND_INTERVAL_MS=1800000
+# 单次铸 key 等待验证码的超时（毫秒）。（可选，默认 120000＝120 秒）
+CODE_TIMEOUT_MS=120000
+# 单轮内每次铸 key 之间随机间隔的下限 / 上限（毫秒）。（可选，默认 2000 / 5000）
+MINT_DELAY_MIN_MS=2000
+MINT_DELAY_MAX_MS=5000
+# 单次铸 key 最多尝试几个临时邮箱域名。（可选，默认 8）
+MAX_DOMAIN_ATTEMPTS=8
+# 铸出的 Agnes API key 在 Agnes 后台显示的名称。（可选，默认 auto）
+REGISTRAR_TOKEN_NAME=auto
+
+# ── 上游与通道凭据 ────────────────────────────────────────────────
+# 注册、登录、铸 key 使用的 Agnes 平台后端地址（厂商公开端点）。（可选）
+AGNES_PLATFORM_URL=https://platform-backend.agnes-ai.com
+# YYDS Mail 的 API 基址（厂商公开端点）与它的 API Key。
+# （基址可选；Key 在通道为 yyds 时必填，本仓不提供任何真实凭据）
+YYDS_BASE_URL=https://maliapi.215.im
+YYDS_API_KEY=
+# 你自己部署的 MoeMail 实例地址与它的 API Key，两项都没有默认值。
+# （通道为 moemail 时必填）
+MOEMAIL_BASE_URL=
+MOEMAIL_API_KEY=
+```
+
+上面这段里的每个变量在 `.env.example` 里都有一行示例（默认值通常够用，不必逐项改），两种
 部署形态都会读取。以上数值型变量都必须是正整数，否则网关拒绝启动。
 
 ## 两种运行时的调度差异
@@ -93,6 +114,19 @@ Agnes 账号、登录、铸出一把 API key 写入池子。注册过程需要�
 |--------|--------|------------|
 | Cloudflare Worker | `wrangler.toml` 的 `[triggers]` Cron（默认 `*/30 * * * *`，即每 30 分钟一次） | 修改 `wrangler.toml` 里的 cron 表达式 |
 | Node / Docker | 进程内定时器 | `TEND_INTERVAL_MS`（默认 `1800000` 毫秒） |
+
+两处配置各自长这样：
+
+```toml
+# wrangler.toml —— Worker 形态的触发间隔只由这里决定
+[triggers]
+crons = ["*/30 * * * *"]
+```
+
+```env
+# .env —— Node / Docker 形态的触发间隔（毫秒）
+TEND_INTERVAL_MS=1800000
+```
 
 两种运行时最终都会调用**同一个补池函数**，区别在于**谁负责按时触发**，以及**触发间隔从
 哪里来**：
@@ -178,18 +212,28 @@ Agnes 账号、登录、铸出一把 API key 写入池子。注册过程需要�
 87%），Worker 形态下**一次尝试都无法开始**，补池会持续零产出。有两条日志，按**事件名**
 grep（见下面「排障」一节——比按中文文案 grep 更可靠，措辞怎么调整都不会失配）：
 
-- **启动时**打印一条**警告**（`console.warn`），事件名 `registrar.attempt_exceeds_worker_budget`
-  （`grep 'registrar.attempt_exceeds_worker_budget'`），形如
-  `[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道数超过
-  Worker 单轮墙钟预算 codeTimeoutMs=... chainLength=... worstAttemptMs=...
-  workerRoundBudgetMs=...`。它**不会阻止网关启动**——这一点与「缺凭据启动即报错」不同：
-  Node/Docker 没有平台墙钟上限，同一份配置在那边完全合法，所以两种形态都会打这条警告，
-  但只有 Worker 真正受影响。
-- **Worker 每一轮补池**（连第一次尝试都开始不了时）再打一条**错误**（`console.error`），
-  事件名 `registrar.round_budget_impossible`（`grep 'registrar.round_budget_impossible'`），
-  形如 `[registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮
-  墙钟预算，一次尝试都无法开始 worstAttemptMs=... roundBudgetMs=...`。每轮都会出现，
-  可据此确认这是持续状态而不是偶发。
+**① 启动时**打印一条**警告**（`console.warn`），事件名
+`registrar.attempt_exceeds_worker_budget`（`grep 'registrar.attempt_exceeds_worker_budget'`），
+形如：
+
+```text
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道数超过 Worker 单轮墙钟预算
+  codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
+```
+
+它**不会阻止网关启动**——这一点与「缺凭据启动即报错」不同：Node/Docker 没有平台墙钟上限，
+同一份配置在那边完全合法，所以两种形态都会打这条警告，但只有 Worker 真正受影响。
+
+**② Worker 每一轮补池**（连第一次尝试都开始不了时）再打一条**错误**（`console.error`），
+事件名 `registrar.round_budget_impossible`（`grep 'registrar.round_budget_impossible'`），
+形如：
+
+```text
+[registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始
+  worstAttemptMs=... roundBudgetMs=...
+```
+
+每轮都会出现，可据此确认这是持续状态而不是偶发。
 
 **在调大 `MINT_BATCH`、`CODE_TIMEOUT_MS` 或 `MAX_DOMAIN_ATTEMPTS` 之前，请自行按上面两个
 公式核算。** 顶到上限时，本次 Cron 调用会被平台中止；即使被中止也不会丢失已经铸好的

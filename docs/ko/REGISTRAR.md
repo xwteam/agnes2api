@@ -73,26 +73,50 @@
 
 ## 설정 항목
 
-| 변수 | 필수 여부 | 기본값 | 설명 |
-|----|---------|------|----|
-| `REGISTRAR_ENABLED` | 아니오 | `false` | 마스터 스위치. `true`여야 레지스트라가 활성화됨. |
-| `REGISTRAR_PRIMARY` | 활성화 시 필수 | 없음 | 주 채널, `yyds` 또는 `moemail`. 둘은 대등하며 기본값 없음. |
-| `REGISTRAR_FALLBACK` | 아니오 | 공백(폴백 없음) | 보조 채널, `yyds` 또는 `moemail`. 주 채널이 채널 수준으로 실패할 때 사용됨. |
-| `TARGET_KEYS` | 아니오 | `20` | 목표로 하는 사용 가능 key 수. 이 값 아래로 떨어져야 보충이 발생. |
-| `MINT_BATCH` | 아니오 | `5` | 한 라운드에서 발급할 key의 최대 개수. |
-| `TEND_INTERVAL_MS` | 아니오(Node/Docker 전용) | `1800000`(30분) | Node 측 보충 스케줄 간격. Worker 측은 `wrangler.toml`의 Cron이 대신 결정함(아래 참조). |
-| `CODE_TIMEOUT_MS` | 아니오 | `120000`(120초) | 한 번의 발급 시도에서 인증 코드를 기다리는 타임아웃. |
-| `MINT_DELAY_MIN_MS` | 아니오 | `2000` | 한 라운드 내 발급 시도 사이에 두는 무작위 대기 시간의 하한(밀리초). |
-| `MINT_DELAY_MAX_MS` | 아니오 | `5000` | 한 라운드 내 발급 시도 사이에 두는 무작위 대기 시간의 상한(밀리초). |
-| `MAX_DOMAIN_ATTEMPTS` | 아니오 | `8` | 한 번의 발급 시도에서 시도할 임시 메일함 도메인의 최대 개수. |
-| `REGISTRAR_TOKEN_NAME` | 아니오 | `auto` | 발급된 Agnes API key가 Agnes 대시보드에 표시되는 이름. |
-| `AGNES_PLATFORM_URL` | 아니오 | `https://platform-backend.agnes-ai.com` | 등록·로그인·key 발급에 사용하는 Agnes 플랫폼 백엔드(벤더의 공개 엔드포인트). |
-| `YYDS_BASE_URL` | 아니오 | `https://maliapi.215.im` | YYDS Mail의 API base URL(벤더의 공개 엔드포인트). |
-| `YYDS_API_KEY` | 채널이 yyds일 때 필수 | 공백 | YYDS Mail의 API Key. |
-| `MOEMAIL_BASE_URL` | 채널이 moemail일 때 필수 | 공백 | 직접 배포한 MoeMail 인스턴스 주소. 기본값 없음. |
-| `MOEMAIL_API_KEY` | 채널이 moemail일 때 필수 | 공백 | 해당 MoeMail 인스턴스의 API Key. |
+```env
+# ── 스위치와 채널 ─────────────────────────────────────────────────
+# 마스터 스위치. true일 때만 레지스트라가 활성화됩니다. (선택, 기본값 false)
+REGISTRAR_ENABLED=false
+# 주 채널. yyds 또는 moemail. 둘은 대등하며 기본값이 없습니다. (활성화 시 필수)
+REGISTRAR_PRIMARY=
+# 폴백 채널. yyds 또는 moemail. 주 채널이 채널 수준 실패를 겪을 때 사용됩니다.
+# (선택, 비워 두면 폴백을 쓰지 않음)
+REGISTRAR_FALLBACK=
 
-위 표의 모든 변수는 `.env.example`에 한 줄씩 들어 있으며(대개 기본값으로 충분하므로
+# ── 보충 속도 ─────────────────────────────────────────────────────
+# 목표 사용 가능 key 수. 이보다 적을 때만 보충이 시작됩니다. (선택, 기본값 20)
+TARGET_KEYS=20
+# 한 라운드에서 발급할 key의 최대 개수. (선택, 기본값 5)
+MINT_BATCH=5
+# Node 쪽 보충 스케줄 간격(ms). Worker 쪽은 wrangler.toml의 Cron이 결정합니다(아래 참고).
+# (선택, 기본값 1800000 = 30분, Node/Docker만 읽음)
+TEND_INTERVAL_MS=1800000
+# 발급 1회당 인증 코드 대기 타임아웃(ms). (선택, 기본값 120000 = 120초)
+CODE_TIMEOUT_MS=120000
+# 한 라운드 안에서 발급 사이 무작위 대기의 하한 / 상한(ms). (선택, 기본값 2000 / 5000)
+MINT_DELAY_MIN_MS=2000
+MINT_DELAY_MAX_MS=5000
+# 발급 1회에서 시도할 임시 메일함 도메인의 최대 개수. (선택, 기본값 8)
+MAX_DOMAIN_ATTEMPTS=8
+# 발급된 Agnes API key가 Agnes 대시보드에 표시될 이름. (선택, 기본값 auto)
+REGISTRAR_TOKEN_NAME=auto
+
+# ── 업스트림과 채널 자격 증명 ─────────────────────────────────────
+# 가입·로그인·key 생성에 사용하는 Agnes 플랫폼 백엔드 주소(벤더의 공개 엔드포인트).
+# (선택)
+AGNES_PLATFORM_URL=https://platform-backend.agnes-ai.com
+# YYDS Mail의 API base URL(벤더의 공개 엔드포인트)과 그 API Key.
+# (base URL은 선택. Key는 채널이 yyds일 때 필수이며, 이 저장소는 실제 자격 증명을
+#  전혀 포함하지 않습니다)
+YYDS_BASE_URL=https://maliapi.215.im
+YYDS_API_KEY=
+# 직접 배포한 MoeMail 인스턴스 주소와 그 API Key. 둘 다 기본값이 없습니다.
+# (채널이 moemail일 때 필수)
+MOEMAIL_BASE_URL=
+MOEMAIL_API_KEY=
+```
+
+위 블록의 모든 변수는 `.env.example`에 한 줄씩 들어 있으며(대개 기본값으로 충분하므로
 따로 고칠 일은 드뭅니다), 두 배포 대상 모두 이 값을 읽어 들입니다. 위의 수치형 변수는
 모두 양의 정수여야 하며, 그렇지 않으면 게이트웨이가 기동을 거부합니다.
 
@@ -104,6 +128,19 @@
 |---------|-----------|--------------------|
 | Cloudflare Worker | `wrangler.toml`의 `[triggers]`에 설정한 Cron(기본값 `*/30 * * * *`, 30분마다) | `wrangler.toml`의 cron 표현식을 수정 |
 | Node / Docker | 프로세스 내 타이머 | `TEND_INTERVAL_MS`(기본값 `1800000`ms) |
+
+두 설정은 각각 다음과 같은 형태입니다:
+
+```toml
+# wrangler.toml -- Worker 형태의 트리거 간격은 여기서만 결정됩니다
+[triggers]
+crons = ["*/30 * * * *"]
+```
+
+```env
+# .env -- Node / Docker 형태의 트리거 간격(밀리초)
+TEND_INTERVAL_MS=1800000
+```
 
 두 런타임 모두 결국 **동일한 보충 함수**를 호출합니다. 차이는 **누가 제때 호출할 책임을
 지는가**, 그리고 **트리거 간격이 어디서 오는가**입니다:
@@ -200,23 +237,30 @@ MoeMail은 1시간 TTL로 만료). 따라서 Worker에서 **`MINT_BATCH`는 라�
 더 확실합니다(아래 "문제 해결" 참고 — 문구는 표현 조정으로 바뀔 수 있고 읽고 있는 언어로
 번역되어 있으리라는 보장도 없지만, 이벤트 이름은 바뀌지 않습니다).
 
-- **시작 시**에는 **경고**(`console.warn`)가 남습니다. 이벤트 이름은
-  `registrar.attempt_exceeds_worker_budget`(`grep 'registrar.attempt_exceeds_worker_budget'`)이며,
-  대략 다음과 같은 형태입니다:
-  `[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×채널 수가 Worker
-  라운드 월클록 예산을 초과했습니다 codeTimeoutMs=... chainLength=... worstAttemptMs=...
-  workerRoundBudgetMs=...`.
-  이 경고는 **게이트웨이 시작을 막지 않습니다** — "자격 증명이 없으면 시작 시점에 오류가
-  나서 뜨지 않는다"와는 다릅니다. Node/Docker에는 플랫폼 월클록 상한이 없어 같은 설정도
-  완전히 정상이므로, 두 런타임 모두 이 경고를 남기지만 실제로 영향을 받는 것은 Worker
-  뿐입니다.
-- **Worker의 보충 라운드마다**(첫 번째 시도조차 시작할 수 없을 때) **오류**
-  (`console.error`)가 남습니다. 이벤트 이름은 `registrar.round_budget_impossible`
-  (`grep 'registrar.round_budget_impossible'`)이며, 대략 다음과 같은 형태입니다:
-  `[registrar] registrar.round_budget_impossible 한 번의 발급에 걸리는 최악 소요 시간이
-  이미 이번 라운드 월클록 예산을 넘어, 단 한 번도 시작할 수 없습니다
-  worstAttemptMs=... roundBudgetMs=...`.
-  매 라운드 반복되므로 일시적인 상황이 아니라 지속 상태임을 확인할 수 있습니다.
+**① 시작 시**에는 **경고**(`console.warn`)가 남습니다. 이벤트 이름은
+`registrar.attempt_exceeds_worker_budget`(`grep 'registrar.attempt_exceeds_worker_budget'`)이며,
+대략 다음과 같은 형태입니다:
+
+```text
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×채널 수가 Worker 라운드 월클록 예산을 초과했습니다
+  codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
+```
+
+이 경고는 **게이트웨이 시작을 막지 않습니다** — "자격 증명이 없으면 시작 시점에 오류가
+나서 뜨지 않는다"와는 다릅니다. Node/Docker에는 플랫폼 월클록 상한이 없어 같은 설정도
+완전히 정상이므로, 두 런타임 모두 이 경고를 남기지만 실제로 영향을 받는 것은 Worker
+뿐입니다.
+
+**② Worker의 보충 라운드마다**(첫 번째 시도조차 시작할 수 없을 때) **오류**
+(`console.error`)가 남습니다. 이벤트 이름은 `registrar.round_budget_impossible`
+(`grep 'registrar.round_budget_impossible'`)이며, 대략 다음과 같은 형태입니다:
+
+```text
+[registrar] registrar.round_budget_impossible 한 번의 발급에 걸리는 최악 소요 시간이 이미 이번 라운드 월클록 예산을 넘어, 단 한 번도 시작할 수 없습니다
+  worstAttemptMs=... roundBudgetMs=...
+```
+
+매 라운드 반복되므로 일시적인 상황이 아니라 지속 상태임을 확인할 수 있습니다.
 
 **`MINT_BATCH`, `CODE_TIMEOUT_MS`, `MAX_DOMAIN_ATTEMPTS`를 늘리기 전에 위 두 공식으로 직접
 계산해 보세요.** 상한에 닿으면 해당 Cron 호출은 플랫폼에 의해 중단됩니다. 중단되더라도 이미

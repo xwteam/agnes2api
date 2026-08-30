@@ -75,26 +75,50 @@
 
 ## 設定項目
 
-| 変数 | 必須 | デフォルト | 説明 |
-|----|----|----------|----|
-| `REGISTRAR_ENABLED` | いいえ | `false` | マスタースイッチ。`true` にしないとレジストラーは有効になりません。 |
-| `REGISTRAR_PRIMARY` | 有効化時は必須 | なし | 主チャネル、`yyds` または `moemail`。両者は対等でデフォルト値なし。 |
-| `REGISTRAR_FALLBACK` | いいえ | 空（フォールバックなし） | フォールバックチャネル、`yyds` または `moemail`。主チャネルがチャネルレベルで失敗した際に使われる。 |
-| `TARGET_KEYS` | いいえ | `20` | 目標とする利用可能 key 数。これを下回ったときのみ補充が発生。 |
-| `MINT_BATCH` | いいえ | `5` | 1 ラウンドで発行する key の最大数。 |
-| `TEND_INTERVAL_MS` | いいえ（Node/Docker のみ） | `1800000`（30 分） | Node 側の補充スケジュール間隔。Worker 側は `wrangler.toml` の Cron が決める（下記参照）。 |
-| `CODE_TIMEOUT_MS` | いいえ | `120000`（120 秒） | 1 回の発行試行で認証コードを待つタイムアウト。 |
-| `MINT_DELAY_MIN_MS` | いいえ | `2000` | 1 ラウンド内で発行試行の間に入れるランダム待機時間の下限（ミリ秒）。 |
-| `MINT_DELAY_MAX_MS` | いいえ | `5000` | 1 ラウンド内で発行試行の間に入れるランダム待機時間の上限（ミリ秒）。 |
-| `MAX_DOMAIN_ATTEMPTS` | いいえ | `8` | 1 回の発行試行で試す一時メールドメインの最大数。 |
-| `REGISTRAR_TOKEN_NAME` | いいえ | `auto` | 発行された Agnes API key が Agnes 管理画面に表示される名前。 |
-| `AGNES_PLATFORM_URL` | いいえ | `https://platform-backend.agnes-ai.com` | 登録・ログイン・key 発行に使う Agnes プラットフォームのバックエンド（ベンダーの公開エンドポイント）。 |
-| `YYDS_BASE_URL` | いいえ | `https://maliapi.215.im` | YYDS Mail の API ベース URL（ベンダーの公開エンドポイント）。 |
-| `YYDS_API_KEY` | チャネルが yyds の場合は必須 | 空 | YYDS Mail の API Key。 |
-| `MOEMAIL_BASE_URL` | チャネルが moemail の場合は必須 | 空 | 自分でホストした MoeMail インスタンスのアドレス。デフォルトなし。 |
-| `MOEMAIL_API_KEY` | チャネルが moemail の場合は必須 | 空 | その MoeMail インスタンスの API Key。 |
+```env
+# ── スイッチとチャネル ────────────────────────────────────────────
+# 全体スイッチ。true のときだけレジストラーが有効になります。（任意、既定 false）
+REGISTRAR_ENABLED=false
+# 主チャネル。yyds か moemail。両者は対等で、既定値はありません。（有効化時は必須）
+REGISTRAR_PRIMARY=
+# フォールバックチャネル。yyds か moemail。主チャネルがチャネルレベルの失敗に
+# 遭遇したときに使われます。（任意、空欄＝フォールバックしない）
+REGISTRAR_FALLBACK=
 
-上表の変数はすべて `.env.example` に 1 行ずつ記載されており（多くの場合デフォルトで
+# ── 補充のペース ──────────────────────────────────────────────────
+# 目標とする利用可能 key 数。これを下回ると補充が走ります。（任意、既定 20）
+TARGET_KEYS=20
+# 1 ラウンドで発行する key の上限。（任意、既定 5）
+MINT_BATCH=5
+# Node 側の補充スケジュール間隔（ミリ秒）。Worker 側は wrangler.toml の Cron が
+# 決めます（後述）。（任意、既定 1800000＝30 分、Node / Docker のみ参照）
+TEND_INTERVAL_MS=1800000
+# 発行 1 回あたりの認証コード待ちタイムアウト（ミリ秒）。（任意、既定 120000＝120 秒）
+CODE_TIMEOUT_MS=120000
+# 1 ラウンド内の発行間ランダム待機の下限 / 上限（ミリ秒）。（任意、既定 2000 / 5000）
+MINT_DELAY_MIN_MS=2000
+MINT_DELAY_MAX_MS=5000
+# 発行 1 回で試す一時メールボックスドメインの最大数。（任意、既定 8）
+MAX_DOMAIN_ATTEMPTS=8
+# 発行した Agnes API key が Agnes 管理画面に表示される名前。（任意、既定 auto）
+REGISTRAR_TOKEN_NAME=auto
+
+# ── 上流とチャネルの認証情報 ──────────────────────────────────────
+# 登録・ログイン・key 発行に使う Agnes プラットフォームのバックエンド
+# （ベンダーの公開エンドポイント）。（任意）
+AGNES_PLATFORM_URL=https://platform-backend.agnes-ai.com
+# YYDS Mail の API ベース URL（ベンダーの公開エンドポイント）と API Key。
+# （ベース URL は任意。Key はチャネルが yyds のとき必須。本リポジトリは
+#   実際の認証情報を一切同梱しません）
+YYDS_BASE_URL=https://maliapi.215.im
+YYDS_API_KEY=
+# 自分でホストした MoeMail インスタンスのアドレスとその API Key。どちらも既定値なし。
+# （チャネルが moemail のとき必須）
+MOEMAIL_BASE_URL=
+MOEMAIL_API_KEY=
+```
+
+上のブロックの変数はすべて `.env.example` に 1 行ずつ記載されており（多くの場合デフォルトで
 十分なため、変更しなくて構いません）、どちらのデプロイ先でも読み込まれます。上記の
 数値型変数はすべて正の整数である必要があり、そうでない場合ゲートウェイは起動を拒否します。
 
@@ -106,6 +130,19 @@
 |----------|------------|----------------|
 | Cloudflare Worker | `wrangler.toml` の `[triggers]` に設定した Cron（デフォルト `*/30 * * * *`、30 分ごと） | `wrangler.toml` の cron 式を編集 |
 | Node / Docker | プロセス内タイマー | `TEND_INTERVAL_MS`（デフォルト `1800000` ミリ秒） |
+
+2 つの設定はそれぞれ次のような形です:
+
+```toml
+# wrangler.toml —— Worker 形態のトリガー間隔はここだけで決まります
+[triggers]
+crons = ["*/30 * * * *"]
+```
+
+```env
+# .env —— Node / Docker 形態のトリガー間隔（ミリ秒）
+TEND_INTERVAL_MS=1800000
+```
 
 どちらのランタイムも最終的には**同じ補充関数**を呼び出します。違うのは**誰が定刻に呼び出す
 責任を持つか**、そして**トリガー間隔がどこから来るか**です:
@@ -204,23 +241,30 @@ Worker にデプロイする場合、補充は Cron トリガーによって起�
 （下の「トラブルシューティング」参照。文言は表現の調整で変わり得ますし、読んでいる言語に
 翻訳されているとも限りませんが、イベント名は変わりません）。
 
-- **起動時**は**警告**（`console.warn`）で、イベント名は
-  `registrar.attempt_exceeds_worker_budget`（`grep 'registrar.attempt_exceeds_worker_budget'`）。
-  出力はおおよそ次の形です:
-  `[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×チャネル数が
-  Worker の 1 ラウンド壁時計予算を超えています codeTimeoutMs=... chainLength=...
-  worstAttemptMs=... workerRoundBudgetMs=...`。
-  これは**ゲートウェイの起動を止めません**——「認証情報が不足すると起動時にエラーとなり
-  起動しない」ケースとは異なります。Node / Docker にはプラットフォームの壁時計上限がなく
-  同じ設定でも完全に正当なので、両方のランタイムでこの警告は出ますが、実際に影響を受ける
-  のは Worker だけです。
-- **Worker の補充ラウンドごと**（1 回目の発行すら開始できない場合）に**エラー**
-  （`console.error`）が出ます。イベント名は `registrar.round_budget_impossible`
-  （`grep 'registrar.round_budget_impossible'`）。出力はおおよそ次の形です:
-  `[registrar] registrar.round_budget_impossible 1 回の発行の最悪所要時間がすでに
-  このラウンドの壁時計予算を超えており、1 回も開始できません
-  worstAttemptMs=... roundBudgetMs=...`。
-  毎ラウンド出るので、一時的な事象ではなく継続状態だと判断できます。
+**① 起動時**は**警告**（`console.warn`）で、イベント名は
+`registrar.attempt_exceeds_worker_budget`（`grep 'registrar.attempt_exceeds_worker_budget'`）。
+出力はおおよそ次の形です:
+
+```text
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×チャネル数が Worker の 1 ラウンド壁時計予算を超えています
+  codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
+```
+
+これは**ゲートウェイの起動を止めません**——「認証情報が不足すると起動時にエラーとなり
+起動しない」ケースとは異なります。Node / Docker にはプラットフォームの壁時計上限がなく
+同じ設定でも完全に正当なので、両方のランタイムでこの警告は出ますが、実際に影響を受けるのは
+Worker だけです。
+
+**② Worker の補充ラウンドごと**（1 回目の発行すら開始できない場合）に**エラー**
+（`console.error`）が出ます。イベント名は `registrar.round_budget_impossible`
+（`grep 'registrar.round_budget_impossible'`）。出力はおおよそ次の形です:
+
+```text
+[registrar] registrar.round_budget_impossible 1 回の発行の最悪所要時間がすでにこのラウンドの壁時計予算を超えており、1 回も開始できません
+  worstAttemptMs=... roundBudgetMs=...
+```
+
+毎ラウンド出るので、一時的な事象ではなく継続状態だと判断できます。
 
 **`MINT_BATCH`・`CODE_TIMEOUT_MS`・`MAX_DOMAIN_ATTEMPTS` を大きくする前に、上記 2 つの式で
 必ず計算してください。** 上限に達すると、その回の Cron 呼び出しはプラットフォームによって
