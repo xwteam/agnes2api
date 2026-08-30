@@ -7726,9 +7726,71 @@ function sectionFailures(doc: SectionDoc, lang: (typeof LANGS)[number], actual: 
  * 登记在册 ⇒ 今天允许对不上；**而一旦某一格真的走到了目标，本格当场红**，
  * 报文直接告诉后人「回来把这一格从名册里划掉、并把 R11 扩展接到真文档上」。
  * 一张只会「等人记得回来改」的待办清单在本仓不算守卫；这张会自己到期。
+ *
+ * ⚠️ **但「全等才到期」这一条自己有个洞**，见下面 `SECTIONS_DRIFT_BASELINE` 的注释。
  */
 const SECTIONS_NOT_YET_APPLIED: ReadonlyArray<readonly [SectionDoc, (typeof LANGS)[number]]> =
   (["DEPLOY", "API"] as const).flatMap((doc) => LANGS.map((lang) => [doc, lang] as const));
+
+/**
+ * **今天每一格差多少，逐格钉死。**
+ *
+ * ⚠️ **补漏评审（阶段 7A 第 1 轮）修的就是这里。** 上一版这一格写的是
+ * 「失败条数 `toBeGreaterThan(0)`」，而上面那张名册**只在逐字全等时到期**。
+ * 两者中间留了一个窗口：W99 的实施者把 15 节里**做对 14 节、错 1 节** ⇒
+ * 名册不到期（不全等）、失败条数也仍然 > 0 ⇒ **出货套件一声不吭**。
+ * 而「做对大半、错一两节」恰恰是这批改写最可能的落地形态；
+ * 一次性 15 节逐字全对反而是小概率。**只守两端、不守中间的判据等于没守。**
+ *
+ * ⇒ 改成**逐格钉死今天实测的失败条数**：这个数字一动（变小=有人在推进、
+ * 变大=骨架往反方向漂了）就当场红，并把**剩下的差距逐条打印出来**——
+ * W124 验收要的那句「ja 第 7 节对不上：目标 …，实际 …」就是从这条判据里出来的。
+ *
+ * **这些数字是量出来的，不是编的。** `sectionFailures()` = 1 条「节数对不上」
+ * + 每个对不上的槽位 1 条：
+ * - DEPLOY 五份今天各 **5** 个 `##`、目标 15 ⇒ 1 + 15 = **16**（五份一致）；
+ * - API 五份今天各 **15** 个平铺 `##`、目标 13 ⇒ 1 + 15 = **16**，
+ *   而 en/ja/ko 的**第 1 槽**（`## Authentication` / `## 認証` / `## 인증`）今天已经对上
+ *   —— W96a 的 `鉴权 → 认证` 改名只欠 zh-CN/zh-TW 两份 ⇒ 这三格是 **15**。
+ *   这个 15/16 的不齐本身就是「基线是量的不是拍的」的证据。
+ *
+ * **这个数守的是什么、不守什么（不许把它说大）**：它守的是「这一格**离目标还有多远**」——
+ * 只要有槽位开始对上、或节数走到目标，它就会掉，当场红。
+ * 它**不守**「往别的方向乱加一节」那类漂移：往今天的 `DEPLOY.md` 末尾追加一个
+ * 与目标毫不相干的 `##`（5 → 6 节，没有任何槽位因此对上）⇒ 条数仍是 16，本格不红。
+ * 那一类漂移归 R11 / R20 那边守，**本格只管「有没有人在往目标走」**。
+ *
+ * **维护规矩**：数字变小 ⇒ 回来把这一格重新量一遍写进本表，并在提交正文里写明
+ * 是哪一批 W 在推进；**走到 0 之前上面那格「名册双向」会先红**，那时把这一格
+ * 从名册与本表里一起划掉、把 `toEqual` 接到真文档上（R11 扩展）。
+ * **不许把这条判据删掉、也不许改回 `> 0` 了事** —— 那等于把上面那个窗口原样放回来。
+ */
+const SECTIONS_DRIFT_BASELINE: Readonly<Record<string, number>> = {
+  "DEPLOY/zh-CN": 16,
+  "DEPLOY/zh-TW": 16,
+  "DEPLOY/en": 16,
+  "DEPLOY/ja": 16,
+  "DEPLOY/ko": 16,
+  "API/zh-CN": 16,
+  "API/zh-TW": 16,
+  "API/en": 15,
+  "API/ja": 15,
+  "API/ko": 15,
+};
+
+/**
+ * 把一串目标 `##` 铺成一份**真形态的 markdown**（H1 + lead + 正文 + 代码围栏），
+ * 让 W124 的验收走完「文件文本 → `sectionTitles()` → `sectionFailures()`」这条
+ * **出货判据自己走的路**，而不是把常量数组直接塞给比较器。
+ *
+ * ⚠️ 上一版验收喂的是 `[...DOC_SECTIONS.DEPLOY.ja]`，**抽取器一步都没走到**：
+ * 围栏配对被改歪、`^## ` 被写成 `^#{2,} ` 之类的坏法，那种验收一格都不会红。
+ * 所以这里刻意在每节里塞一个 ```bash 围栏、围栏里塞一行 `## …` 假标题。
+ */
+const renderSectionDoc = (titles: readonly string[]): string =>
+  ["# タイトル", "", "リード文。", "", ...titles.flatMap((t, i) => [
+    t, "", `本文 ${i + 1}。`, "", "```bash", `## 围栏里的假标题 ${i + 1}`, "```", "",
+  ])].join("\n");
 
 describe("W124 非 README 文档的五语言 `##` 译名常量表", () => {
   const realSections = (doc: SectionDoc, lang: (typeof LANGS)[number]): string[] =>
@@ -7807,11 +7869,15 @@ describe("W124 非 README 文档的五语言 `##` 译名常量表", () => {
     }
   });
 
-  it("该红时红：ja 的 DEPLOY 第 7 节被换掉 ⇒ 恰 1 条失败，报文点名「ja」「第 7 节」（W124 的验收）", () => {
+  it("该红时红：ja 的 DEPLOY 第 7 节被换掉 ⇒ 恰 1 条失败，报文点名「ja」「第 7 节」（W124 的验收，走真抽取器）", () => {
     const mutated: string[] = [...DOC_SECTIONS.DEPLOY.ja];
     expect(mutated[6], "第 7 槽的落点变了 —— 先回来改这一格").toBe("## マルチアカウント設定");
     mutated[6] = "## アカウント設定";
-    const failures = sectionFailures("DEPLOY", "ja", mutated);
+    // 关键：不是把数组直接喂给比较器，而是先铺成 markdown 再让 `sectionTitles()` 抽回来。
+    const extracted = sectionTitles(renderSectionDoc(mutated));
+    expect(extracted, "抽取器没把这份合成文档还原成 15 个 `##` —— 坏的是抽取器，不是骨架")
+      .toEqual(mutated);
+    const failures = sectionFailures("DEPLOY", "ja", extracted);
     expect(failures).toHaveLength(1);
     expect(failures[0] ?? "").toContain("ja 第 7 节对不上");
     expect(failures[0] ?? "").toContain("## マルチアカウント設定");
@@ -7872,16 +7938,59 @@ describe("W124 非 README 文档的五语言 `##` 译名常量表", () => {
       .toEqual(all);
   });
 
+  it("反向控制：「15 节做对 14 节」这一档基线守得住 —— 旧写法 `> 0` 在这一档是绿的", () => {
+    // 补漏评审端到端复现过的那个状态：把 docs/ja/DEPLOY.md 写成 15 节目标骨架、
+    // 只把第 7 个 `##` 换掉 ⇒ 名册不到期（不全等）、失败条数 = 1（> 0）⇒ 旧判据全绿。
+    const near: string[] = [...DOC_SECTIONS.DEPLOY.ja];
+    near[6] = "## アカウント設定";
+    const failures = sectionFailures("DEPLOY", "ja", sectionTitles(renderSectionDoc(near)));
+    expect(failures, "这一档正是旧写法 `toBeGreaterThan(0)` 放行的那一格").toHaveLength(1);
+    expect(
+      SECTIONS_DRIFT_BASELINE["DEPLOY/ja"],
+      "DEPLOY/ja 的基线被调成了「15 节做对 14 节」也算数的值 —— 那等于把窗口原样放回来",
+    ).not.toBe(failures.length);
+  });
+
+  it("差距基线与名册逐格对齐：名册里有的格，本表必须有一条基线（少一条 = 那一格的差距没人守）", () => {
+    expect(
+      Object.keys(SECTIONS_DRIFT_BASELINE).sort(),
+      "SECTIONS_DRIFT_BASELINE 与 SECTIONS_NOT_YET_APPLIED 对不上 —— "
+      + "少登记一格，那一格就退回「只要还没全等就放行」的老样子（14/15 做对也不红）；"
+      + "多登记一格则是给一份没在名册里的文档钉死差距，同样要回来对齐",
+    ).toEqual(SECTIONS_NOT_YET_APPLIED.map(([doc, lang]) => `${doc}/${lang}`).sort());
+  });
+
   /**
-   * **今天这几格红的是什么，写下来备查。** 名册是「允许对不上」，不是「不知道差在哪」——
+   * **今天这几格红的是什么，逐条钉死。** 名册是「允许对不上」，不是「不知道差在哪」——
    * 差距说不清楚的话，上面那格就退化成一句「反正还没做」。
+   *
+   * ⚠️ 这一格的旧写法是 `toBeGreaterThan(0)`，与「全等才到期」的名册合起来漏掉了
+   * 「15 节做对 14 节」那一整档（见 `SECTIONS_DRIFT_BASELINE` 的注释）。现在钉的是**具体条数**。
    */
-  it("名册射程自守：今天每一格都真的抽到了 `##`，而且差距点得出来", () => {
+  it("名册射程自守：每一格的差距条数与实测基线逐格相等（条数一变 ⇒ `##` 骨架被动过，当场红并报出剩下的差距）", () => {
+    const drift: string[] = [];
     for (const [doc, lang] of SECTIONS_NOT_YET_APPLIED) {
+      const key = `${doc}/${lang}`;
       const actual = realSections(doc, lang);
       expect(actual.length, `docs/${lang}/${doc}.md 一个 \`##\` 都没抽到`).toBeGreaterThan(0);
-      expect(sectionFailures(doc, lang, actual).length, `${doc}/${lang} 的差距点不出来`).toBeGreaterThan(0);
+      const failures = sectionFailures(doc, lang, actual);
+      const baseline = SECTIONS_DRIFT_BASELINE[key];
+      if (baseline === undefined || failures.length !== baseline) {
+        drift.push(
+          `${key}：实测 ${failures.length} 条差距，基线钉的是 ${baseline ?? "（这一格没有基线）"} 条\n`
+          + failures.map((m) => `      · ${m}`).join("\n"),
+        );
+      }
     }
+    expect(
+      drift,
+      `这几份文档的 \`##\` 骨架与基线对不上了：\n${drift.join("\n")}\n`
+      + "⇒ 条数**变小** = W99 / W104 那一批在推进：把这一格重新量一遍写进 SECTIONS_DRIFT_BASELINE，"
+      + "提交正文里写明是哪一批 W 在推；走到全等时上面那格「名册双向」会先红，"
+      + "那时把这一格从名册与基线表里一起划掉、把 toEqual 接到真文档上（R11 扩展）。\n"
+      + "⇒ 条数**变大** = 原本对上的槽位又对不上了（或节数从对的变成不对），先看清楚是不是改错了再动基线。\n"
+      + "🔴 不许把这条判据删掉或改回「> 0」—— 那会把「15 节做对 14 节也不红」的窗口原样放回来",
+    ).toEqual([]);
   });
 });
 
