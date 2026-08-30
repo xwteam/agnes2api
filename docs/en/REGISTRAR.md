@@ -12,6 +12,7 @@ The registrar is an optional component: when the number of usable keys in the po
 the pool. Registration requires receiving a verification code by email, so it depends on one of
 the mailbox channels below.
 
+> [!WARNING]
 > **Compliance notice**
 >
 > Bulk account registration is in tension with Agnes's terms of service. Whether to enable the

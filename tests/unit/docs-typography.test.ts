@@ -779,3 +779,549 @@ describe("R28 排版基线不回退（W88 的 16 个指标里，能进仓的那�
       "截断到 30 行居然还在下限之上 —— 那这张表拦不住「掏空文档把 ↓ 型指标一次性归零」").toBe(true);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W92b —— 依赖阶段 7 成果的那一批（R20/P5、R21、R23'、R26）
+ *
+ * 为什么单独一批：R21 判的是「W118 把 195 处裸警告转完之后」的状态、R23' 判的是
+ * 「W119 在语义边界上插完标题之后」的状态、R26 判的是「W95 收完开篇之后」的状态。
+ * 在阶段 7 中途启用，整个阶段 7 全程 CI 红，而且**红的原因是「活还没干完」**，报文误导
+ *（X3 / O7 / Q17）。所以它们排在最后一批之后，**启用当天就必须全绿**。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── R21 —— 裸警告 emoji 归零（上限判据，不可灌水）────────────────────────── */
+
+const BARE_WARN = /⚠️|⚠|❗|🚫/g;
+
+/**
+ * §1.2 强制骨架里那两个**标题**自带 `⚠`：`## ⚠ 注意事项`（六份 README）与
+ * `## ⚠ 免责声明`（根 README，`SECTIONS[15]` 是 rootOnly）。合计 7 处，
+ * 这是模板要求的，不是「写在正文里的一个字符」。
+ *
+ * ⚠️ **登记是双向的**：下面那格既查「标题之外恒为 0」，也查「这 7 处今天真的还在」——
+ * 骨架哪天改了名，这条豁免就该跟着删，而不是继续豁免一个不存在的东西。
+ */
+const HEADING_WARN_COUNT = 7;
+
+describe("R21 出货文档正文里的裸警告 emoji 恒为 0（白名单已取消）", () => {
+  /** 一行是不是「语言切换行」：一行里有 ≥3 条跨语言链接就算，不认字面前缀。 */
+  const CROSS_LANG = /(?:\]\(|href=")(?:\.\.\/|docs\/)(?:zh-CN|zh-TW|en|ja|ko)\//g;
+  const isSwitcher = (line: string) => (line.match(CROSS_LANG) ?? []).length >= 3;
+
+  /** 正文里的裸警告：剥围栏、剥表格行、剥语言切换行、剥标题行之后还剩下的。 */
+  const bareWarnings = (docs: readonly Doc[]): string[] =>
+    docs.flatMap(([p, t]) => bodyLines(t).flatMap((r) => {
+      if (/^#{1,6} /.test(r.line) || r.line.trim().startsWith("|") || isSwitcher(r.line)) return [];
+      const n = (r.line.match(BARE_WARN) ?? []).length;
+      return n > 0 ? [`${p}:${r.no} ${n} 处：${r.line.trim().slice(0, 60)}`] : [];
+    }));
+
+  it("40 份出货文档：标题之外一处裸 `⚠️`/`⚠`/`❗`/`🚫` 都没有（W118 把 195 处转完之后的状态）", () => {
+    const hits = bareWarnings(pairsOf(SHIP_DOCS));
+    expect(hits, `正文里还有裸警告 emoji：\n${hits.join("\n")}\n`
+      + "⇒ 逐处判型转成 `> [!WARNING]` / `> [!IMPORTANT]` / `> [!TIP]`。"
+      + "GitHub 上行内 emoji 不渲染成带色块，扫读时和普通粗体没区别").toEqual([]);
+  });
+
+  it("🔴 这一条**比 R21 的字面更严**：连 alert 块正文里也不许有 —— 理由与实测一起写在这里", () => {
+    // R21 的原文允许裸警告住在 `> [!TYPE]` 块的正文行里。**本仓不开这一档**：
+    // 实测今天全仓 alert 块正文里的裸警告数 = 0（下面这一格钉着）。
+    // 开一条**零使用**的豁免，等于给「以后往 alert 里塞 emoji」提前留门，
+    // 而本仓对豁免的裁定一贯是「豁免名册会变成永久的洞」。
+    // 哪天真需要，改这里比从一个已经开着的洞里往回收容易得多。
+    const inAlert = pairsOf(SHIP_DOCS).flatMap(([p, t]) => {
+      let alert = false;
+      return bodyLines(t).flatMap((r) => {
+        if (/^> \[!/.test(r.line)) { alert = true; return []; }
+        if (!r.line.startsWith(">")) { alert = false; return []; }
+        return alert && BARE_WARN.test(r.line) ? [`${p}:${r.no}`] : [];
+      });
+    });
+    expect(inAlert, `alert 块正文里出现了裸警告 emoji：\n${inAlert.join("\n")}`).toEqual([]);
+  });
+
+  it("豁免的另一半：标题里那 7 处 `⚠` 今天真的还在（骨架改名了这条豁免就该删）", () => {
+    const inHeadings = pairsOf(SHIP_DOCS).reduce((n, [, t]) =>
+      n + bodyLines(t).filter((r) => /^#{1,6} /.test(r.line))
+        .reduce((m, r) => m + (r.line.match(BARE_WARN) ?? []).length, 0), 0);
+    expect(inHeadings, `标题里的 \`⚠\` 从 ${HEADING_WARN_COUNT} 处变成了 ${inHeadings} 处 —— `
+      + "`## ⚠ 注意事项`（六份）与 `## ⚠ 免责声明`（根那份）是 §1.2 的强制骨架，"
+      + "数变了说明骨架动了，这条豁免要跟着重新论证").toBe(HEADING_WARN_COUNT);
+  });
+
+  it("该红时红：往 `docs/zh-CN/DEPLOY.md` 正文塞一个裸 `⚠️` —— 红并给出文件:行号", () => {
+    const target = join("docs", "zh-CN", "DEPLOY.md");
+    const docs = withMutation(pairsOf(SHIP_DOCS), target, (s) => `${s}\n⚠️ 这一句是变异探针。\n`);
+    expect(bareWarnings(docs).join("\n"), "塞进去的裸 `⚠️` 没被抓到").toContain(`${target}:`);
+  });
+
+  it("🔴 该红时红（主反例）：给那一行加个 `> ` 前缀 —— **必须仍然红**（白名单被取消的全部意义）", () => {
+    // 可判定性审查构造的一次性机械变换：`sed 's/^\(.*⚠️\)/> \1/'`。
+    // 第 1 版的 R21 给 `>` 引用块开了一整类白名单，这一行 sed 能把 210 处**全部**搬进去，
+    // 而 **0 个 alert 块被创建**。所以白名单必须是「点一个名」而不是「开一类」。
+    const target = join("docs", "zh-CN", "DEPLOY.md");
+    const docs = withMutation(pairsOf(SHIP_DOCS), target, (s) => `${s}\n> ⚠️ 这一句是变异探针。\n`);
+    expect(bareWarnings(docs).join("\n"),
+      "加了 `> ` 前缀就逃掉了 —— 那条白名单又回来了，一行 sed 就能把全仓刷绿").toContain(`${target}:`);
+  });
+
+  it("不许乱红：围栏里的 `⚠️`（shell 注释 / 日志样例）与表格行里的不进射程", () => {
+    const fenced: readonly Doc[] = [["x.md", "# X\n\n一句话。\n\n```bash\n# ⚠️ 注意\n```\n\n| a | b |\n|------|------|\n| ⚠️ | 1 |\n"]];
+    expect(bareWarnings(fenced), "剥围栏 / 剥表格行没生效").toEqual([]);
+  });
+});
+
+/* ── R23' —— 长度驱动的分层（不数个数，数「标题之间有多长」）────────────────
+ *
+ * 🔴 **原 R23 的三条抗填充护栏被模板自己证伪，整组作废**（kiro 违反护栏 1 共 93 次、
+ * gemini 71 次；护栏 2 连数量都不等：48/49/63/37/61）。替换成下面三条。
+ *
+ * 🔴🔴 **B 那条阈值的出处，ADJ §80 已裁定，逐字抄在这里，别再「修正」它**：
+ *   ① 阈值保留 **≤15%**（agnes 今天 13.9%，已达标）；
+ *   ② **它不是「从模板现算」的** —— 规格里那句「K 93/631 = 14.7%、G 71/614 = 11.6%」
+ *      用错了分母（标题数实测是 873/847）。主控用同一把尺独立复算：
+ *      **agnes 14.6% / kiro2api 21.2% / gemini2api 38.1%** ⇒ **模板自己过不了 15%**。
+ *      所以这是**一条严于模板的自定标准**，不是对齐项；
+ *   ③ 性质是**棘轮**（防回退），不是「要去达到的目标」；
+ *   ④ **不许为了过线去删 `###`**。
+ *   写在这里的理由：带着假出处的阈值，后来的人回去复算发现对不上，会把它当错误
+ *   「修正」掉 —— 而它其实是对的，错的只是那句出处。**假理由撑着的真判据，
+ *   迟早死于理由被推翻。**（与 ADJ §54 同一个教训。）
+ * ────────────────────────────────────────────────────────────────────────── */
+
+type Interval = { readonly path: string; readonly no: number; readonly title: string; readonly chars: number };
+
+/**
+ * 相邻两个标题之间的正文字符数。**含列表、含表格，剥围栏**；
+ * 字符数 = 区间内各行 `trim()` 之后拼起来的 `String.length`。
+ * 最后一个标题到文末也算一个区间。
+ *
+ * ⚠️ **为什么不用 text-run**：`docs/en/DEPLOY.md:52-180` 实测是 129 行**全 bullet 列表**，
+ * 按 text-run 判，给 bullet 逐条插空行就能全绿（run 被切碎）而一个 `###` 都没加。
+ * 按「相邻标题间字符数」判，插空行**毫无用处，必须插标题**。
+ */
+const intervalsOf = (docs: readonly Doc[]): readonly Interval[] => {
+  const out: Interval[] = [];
+  for (const [path, text] of docs) {
+    const rows = bodyLines(text);
+    const idx = rows.flatMap((r, i) => (/^#{1,6} /.test(r.line) ? [i] : []));
+    idx.forEach((i, k) => {
+      const j = idx[k + 1] ?? rows.length;
+      const chars = rows.slice(i + 1, j).reduce((n, r) => n + r.line.trim().length, 0);
+      out.push({ path, no: rows[i]?.no ?? 0, title: rows[i]?.line.trim() ?? "", chars });
+    });
+  }
+  return out;
+};
+
+/**
+ * **R23'A 今天的棘轮值**：>1200 字符的区间数。
+ *
+ * 🔴 **规格给的目标是 0，今天是 67，差 67 —— 这是一笔如实登记的欠账，不是达标。**
+ * 为什么不硬冲 0：实测把全仓压到字面 0 需要每种语言约 47 个新标题、全仓约 235 个，
+ * `###`+`####` 会从 1095 涨到约 1330 = **模板密度的 2.4 倍**，与 ADJ §79
+ *（「排版密度已达成并超过模板，不许再堆 `###`，本阶段是收口不是加量」）正面冲突。
+ * ⇒ 本判据取**绝对数棍轮**：只许降不许升。
+ * **用绝对数而不是比例**：比例可以靠「多加几个短小节」把分母做大来稀释，
+ * 绝对数不行 —— 想让它降只能真的把长段切开。
+ * 登记在偏离名册第 21 条，**降到 0 那天这个常量与那条登记一起删**。
+ */
+const R23A_OVERLONG_RATCHET = 67;
+/** R23'A 的长度线。 */
+const R23A_LIMIT = 1200;
+/** R23'B 的薄标题线与占比上限（出处见上面那段 ADJ §80 的逐字裁定）。 */
+const R23B_THIN = 40;
+const R23B_RATIO = 15;
+
+/**
+ * R23'C 的判定本体：同一类文档的五种语言，标题**层级序列**必须逐位相等。
+ * **真扫描与反向控制共用它**，反向控制喂的是变异过的 `Doc[]`。
+ */
+const levelSeqFaults = (docs: readonly Doc[]): string[] => {
+  const byDoc = new Map<string, Array<{ lang: string; seq: number[] }>>();
+  for (const [p, t] of docs) {
+    const [, lang, file] = p.split("/");
+    const doc = (file ?? "").replace(/\.md$/, "");
+    const seq = bodyLines(t).flatMap((r) => {
+      const m = /^(#{1,6}) /.exec(r.line);
+      return m === null ? [] : [m[1]?.length ?? 0];
+    });
+    byDoc.set(doc, [...(byDoc.get(doc) ?? []), { lang: lang ?? "?", seq }]);
+  }
+  return [...byDoc.entries()].flatMap(([doc, rows]) => {
+    const base = rows[0];
+    if (base === undefined) return [];
+    return rows.slice(1).flatMap(({ lang, seq }) => {
+      if (seq.length !== base.seq.length) {
+        return [`${doc}: ${lang} 有 ${seq.length} 个标题，${base.lang} 有 ${base.seq.length} 个`];
+      }
+      const i = seq.findIndex((v, k) => v !== base.seq[k]);
+      return i < 0 ? [] : [`${doc}: ${lang} 第 ${i + 1} 个标题是 h${seq[i]}，${base.lang} 是 h${base.seq[i]}`];
+    });
+  });
+};
+
+describe("R23' 结构分层：相邻标题间的长度、薄标题占比、五语言层级序列", () => {
+  const all = () => intervalsOf(pairsOf(SHIP_DOCS));
+
+  it("射程自守：标题总数与区间数相等且都在四位数 —— 判据不是在测空气", () => {
+    const ints = all();
+    expect(ints.length, "区间数掉到三位数了 —— 多半是标题正则或剥围栏写坏了").toBeGreaterThan(1000);
+  });
+
+  it("A（棘轮）：>1200 字符的区间数不许比登记值多 —— 今天 67，规格的目标是 0（欠账，名册第 21 条）", () => {
+    const over = all().filter((x) => x.chars > R23A_LIMIT);
+    const worst = [...over].sort((a, b) => b.chars - a.chars).slice(0, 5)
+      .map((x) => `${x.path}:${x.no} ${x.chars} 字符 ${x.title.slice(0, 40)}`);
+    expect(over.length, `>${R23A_LIMIT} 字符的区间从 ${R23A_OVERLONG_RATCHET} 涨到了 ${over.length}。`
+      + `最长的几处：\n${worst.join("\n")}\n`
+      + "⇒ 想让它降只能**在语义边界上插标题**（给 bullet 逐条插空行对它毫无用处）；"
+      + "⚠️ 也不许靠删内容降 —— R28 的体量下限那一格盯着")
+      .toBeLessThanOrEqual(R23A_OVERLONG_RATCHET);
+  });
+
+  it("B（棘轮）：薄标题（相邻标题间 <40 字符）占比 ≤15% —— 今天 13.9%，余量 21 个空壳标题", () => {
+    const ints = all();
+    const thin = ints.filter((x) => x.chars < R23B_THIN).length;
+    const ratio = (100 * thin) / ints.length;
+    expect(ratio, `薄标题占比 ${ratio.toFixed(2)}%（${thin}/${ints.length}）超过了 ${R23B_RATIO}%。`
+      + "这一条专治「塞 20 个空壳 `### 说明 N` + 每个三行废话」那种刷密度的改法："
+      + "空壳标题**只会让这个比例变坏**。⚠️ 反过来也不许为了过线去删 `###`（ADJ §80 第 ④ 条）")
+      .toBeLessThanOrEqual(R23B_RATIO);
+  });
+
+  it("C：七类文档的标题**层级序列**五语言逐份相等（只比层级，不比文本）", () => {
+    const wrong = levelSeqFaults(pairsOf(SHIP_DOCS.filter((p) => p.startsWith("docs"))));
+    expect(wrong, `五语言的标题层级序列对不上：\n${wrong.join("\n")}\n`
+      + "⚠️ 这一条**刻意不比文本**：模板上「五语言 `###` 数不等」（48/49/63/37/61）"
+      + "说明比文本本来就不该要求；比文本还得先造一张 5×N 译名表").toEqual([]);
+  });
+
+  it("① 该红时红：从 `docs/ja/API.md` 删掉 5 个 `###` —— C 红并点名 ja", () => {
+    const target = join("docs", "ja", "API.md");
+    const docs = withMutation(pairsOf(SHIP_DOCS.filter((p) => p.startsWith("docs"))), target, (s) => {
+      let n = 0;
+      return s.split("\n").filter((l) => !(/^### /.test(l) && n++ < 5)).join("\n");
+    });
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const faults = levelSeqFaults(docs).join("\n");
+    expect(faults, "删掉 5 个 `###` 之后 C 居然还绿").toContain("API: ja 有");
+  });
+
+  it("② 该红时红：加 22 个空壳 `### 占位` —— B 被顶穿（专门证明「填充不管用」）", () => {
+    // 今天 232/1669 = 13.90%。要顶穿 15% 需要 x 满足 (232+x)/(1669+x) > 0.15 ⇒ x ≥ 22。
+    // **余量只有 21 个空壳标题**，这个数写在这里是为了让后来的人知道这条线有多紧。
+    const target = join("docs", "zh-CN", "USAGE.md");
+    const filler = Array.from({ length: 22 }, (_, i) => `### 占位 ${i + 1}\n`).join("\n");
+    const docs = withMutation(pairsOf(SHIP_DOCS), target, (s) => `${s}\n${filler}`);
+    const ints = intervalsOf(docs);
+    const ratio = (100 * ints.filter((x) => x.chars < R23B_THIN).length) / ints.length;
+    expect(ratio, `塞了 22 个空壳标题之后占比才 ${ratio.toFixed(2)}% —— B 没被顶穿，那它拦不住刷密度`)
+      .toBeGreaterThan(R23B_RATIO);
+  });
+
+  it("③ 该红时红：给一段 bullet 洪流逐条插空行而不加标题 —— A 的计数**一个都不许少**", () => {
+    // 这一条专打第 1 版被攻破的那条路：按 text-run 判，插空行能把 run 切碎从而全绿。
+    const target = join("docs", "en", "DEPLOY.md");
+    const docs = withMutation(pairsOf(SHIP_DOCS), target, (s) => s.replace(/\n- /g, "\n\n- "));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const after = intervalsOf(docs).filter((x) => x.chars > R23A_LIMIT).length;
+    expect(after, "逐条插空行之后超限区间居然变少了 —— 那这条判据数的还是 text-run，被攻破的那条路又开着")
+      .toBeGreaterThanOrEqual(R23A_OVERLONG_RATCHET);
+  });
+
+  it("④ 该红时红：把某两个标题之间撑到 3000 字符 —— A 的计数上升并点得出文件:行号", () => {
+    const target = join("docs", "zh-CN", "SPONSORS.md");
+    const docs = withMutation(pairsOf(SHIP_DOCS), target, (s) => `${s}\n## 撑一段\n\n${"字".repeat(3000)}\n`);
+    const over = intervalsOf(docs).filter((x) => x.chars > R23A_LIMIT);
+    expect(over.length, "撑到 3000 字符的那一段没被算进来").toBe(R23A_OVERLONG_RATCHET + 1);
+    expect(over.map((x) => x.path), "报文点不出是哪一份").toContain(target);
+  });
+});
+
+/* ── R26 —— 非 README 文档的开篇与页脚形态 ────────────────────────────────
+ * d（无语言切换行）在 `docs-parity.test.ts` 的 W75 组里、
+ * e'（末节标题 == 译名表同一下标）在 W102 / W107 / W115 三组里，本组不重复实现。
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * 25 份非 README 的 H1 译名表。**这是右操作数，不是从磁盘现算的**——
+ * 从磁盘现算就是拿被测对象跟自己比，构造上恒真。
+ */
+const DOC_H1: Readonly<Record<string, Readonly<Record<Lang, string>>>> = {
+  ADMIN: { "zh-CN": "# 管理面板", "zh-TW": "# 管理面板", en: "# Admin panel", ja: "# 管理パネル", ko: "# 관리 패널" },
+  API: { "zh-CN": "# API 文档", "zh-TW": "# API 文檔", en: "# API Reference", ja: "# API リファレンス", ko: "# API 레퍼런스" },
+  DEPLOY: { "zh-CN": "# 部署指南", "zh-TW": "# 部署指南", en: "# Deployment Guide", ja: "# デプロイガイド", ko: "# 배포 가이드" },
+  REGISTRAR: {
+    "zh-CN": "# 注册机（自动补池）", "zh-TW": "# 註冊機（自動補池）", en: "# Registrar (auto-refill)",
+    ja: "# レジストラー（自動プール補充）", ko: "# 레지스트라(자동 키 풀 보충)",
+  },
+  USAGE: { "zh-CN": "# 使用指南", "zh-TW": "# 使用指南", en: "# Usage Guide", ja: "# 使い方ガイド", ko: "# 사용 가이드" },
+};
+
+/** R26a 的判定本体。**真扫描与三条反向控制共用它**，不在反向控制里手写第二份。 */
+const openingFaults = (docs: readonly Doc[]): string[] =>
+  docs.flatMap(([p, t]) => {
+    const ls = t.split("\n");
+    const bad: string[] = [];
+    if (!/^# \S/.test(ls[0] ?? "")) bad.push(`第 1 行不是 H1：${(ls[0] ?? "").slice(0, 40)}`);
+    if ((ls[1] ?? "x") !== "") bad.push("第 2 行不是空行");
+    const lead = ls[2] ?? "";
+    if (lead.trim() === "") bad.push("第 3 行是空的（没有 lead）");
+    if (/^[>|<#![]/.test(lead)) bad.push(`第 3 行不是一句散文：${lead.slice(0, 40)}`);
+    if (!/[。.！!？?]$/.test(lead.trim())) bad.push(`第 3 行没有以句末标点收尾：…${lead.trim().slice(-20)}`);
+    if ((ls[3] ?? "x") !== "") bad.push("第 4 行不是空行（lead 不止一段）");
+    return bad.length === 0 ? [] : [`${p}: ${bad.join("；")}`];
+  });
+
+/** R26c 的判定本体。同上，反向控制喂的是变异过的文本，不是另一份手写比较。 */
+const h1Faults = (docs: readonly Doc[]): string[] =>
+  docs.flatMap(([p, t]) => {
+    const [, lang, file] = p.split("/");
+    const doc = (file ?? "").replace(/\.md$/, "");
+    const want = DOC_H1[doc]?.[lang as Lang] ?? "<表里没有这一格>";
+    const got = (t.split("\n")[0] ?? "").trim();
+    return got === want ? [] : [`${p}: 是「${got}」，译名表写的是「${want}」`];
+  });
+
+describe("R26a–c 25 份非 README 的开篇三行形态与 H1 译名", () => {
+  it("a 开篇四行：`# 标题` / 空 / **一句** lead / 空 —— lead 恰一段，不许是徽章行或 alert", () => {
+    const wrong = openingFaults(pairsOf(NON_25));
+    expect(wrong, `开篇形态不对：\n${wrong.join("\n")}\n`
+      + "⚠️ 「第 3 行非空」这一条单独太松：放一条徽章行或一个 `> [!NOTE]` 照样过，"
+      + "所以加了「不得以 `>`/`<`/`|`/`#`/`!`/`[` 开头」与「必须句末标点收尾」两道").toEqual([]);
+  });
+
+  it("b H1 的 emoji 按文件类型二分：六份 SPONSORS 必带 `☕`，25 份非 README 必**不**带", () => {
+    const wrong = [
+      ...pairsOf(SIX_SPONSORS).flatMap(([p, t]) => {
+        const h1 = t.split("\n")[0] ?? "";
+        return h1.startsWith("# ☕ ") ? [] : [`${p} 的 H1 没带 \`☕\`：${h1}`];
+      }),
+      ...pairsOf(NON_25).flatMap(([p, t]) => {
+        const h1 = t.split("\n")[0] ?? "";
+        return headingEmoji(h1) === "" ? [] : [`${p} 的 H1 带了 emoji：${h1}`];
+      }),
+    ];
+    expect(wrong, `H1 的 emoji 分档不对：\n${wrong.join("\n")}`).toEqual([]);
+  });
+
+  it("c 25 份的 H1 文字逐份命中译名表（右操作数是常量，不是磁盘）", () => {
+    const wrong = h1Faults(pairsOf(NON_25));
+    expect(wrong, `H1 与译名表对不上：\n${wrong.join("\n")}`).toEqual([]);
+    // 表自守：25 格齐全、都是合法 H1、同一类文档的五种语言两两不同（不许有两格抄同一句）。
+    for (const doc of NON_README_DOCS) {
+      const row = LANGS.map((l) => DOC_H1[doc]?.[l] ?? "");
+      expect(row.filter((x) => !/^# \S/.test(x)), `${doc} 那一行有格子不是合法 H1`).toEqual([]);
+      // zh-CN 与 zh-TW 的「部署指南 / 使用指南」在两岸用词相同，是真实情况，不强求两两不等；
+      // 但**五格全同**一定是抄漏了。
+      expect(new Set(row).size, `${doc} 五种语言的 H1 全都一样 —— 多半是没翻译`).toBeGreaterThan(1);
+    }
+  });
+
+  it("该红时红：把 `docs/ja/USAGE.md` 的 lead 拆成两段（第 4 行不空）—— a 红并点名它", () => {
+    const target = join("docs", "ja", "USAGE.md");
+    const docs = withMutation(pairsOf(NON_25), target, (s) => {
+      const ls = s.split("\n");
+      ls.splice(3, 0, "二段目のリード文です。");
+      return ls.join("\n");
+    });
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(openingFaults(docs).join("\n"), "lead 拆成两段之后 a 居然还绿").toContain(`${target}: 第 4 行不是空行`);
+  });
+
+  it("🔴 该红时红：第 3 行换成一条 `> [!NOTE]` —— 「第 3 行非空」放行，只有新加的两道看得见", () => {
+    const target = join("docs", "en", "API.md");
+    const docs = withMutation(pairsOf(NON_25), target, (s) => {
+      const ls = s.split("\n");
+      ls[2] = "> [!NOTE]";
+      return ls.join("\n");
+    });
+    const faults = openingFaults(docs).join("\n");
+    expect(faults, "把 lead 换成一条 alert 之后 a 居然还绿 —— 「第 3 行非空」这一条单独就是这么松")
+      .toContain(`${target}: 第 3 行不是一句散文`);
+  });
+
+  it("该红时红：把 `docs/ko/API.md` 的 H1 改成另一种合法译法 —— c 红并写出期望值", () => {
+    const target = join("docs", "ko", "API.md");
+    const docs = withMutation(pairsOf(NON_25), target, (s) => s.replace(/^# .*/, "# API 문서"));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const faults = h1Faults(docs).join("\n");
+    expect(faults, "H1 换了说法之后 c 居然还绿").toContain(`${target}: 是「# API 문서」`);
+    expect(faults, "报文里没写出期望值，读的人还得自己去翻表").toContain("# API 레퍼런스");
+  });
+});
+
+/* ── R20/P5 —— alert 的**内容锚定下限**（对「四个 sed 全绿」的正面回答）────
+ *
+ * 先交代问题有多硬：可判定性审查构造了一条一次性机械变换，跑四个 sed 就能让纯上限体系
+ * 全绿，而 25 份非 README 里的 alert 块**仍然是 0 个**、内容一个字没动。
+ * 根因是「宁取上限与恒等式，不取下限」贯彻得太彻底：**上限只能防退化，不能驱动改进**，
+ * 而 D4（「现在的太简单了」）是一个改进诉求。
+ *
+ * P5 的形态**不是回到计数下限**（那可灌水），而是**内容锚定**：
+ * 出货文档正文里每出现一处「风险语义句」，它所在的块必须以 `> [!TYPE]` 起头。
+ * **分子分母绑在同一批句子上** ⇒ 多写 alert 不加分（没有任何总数下限可以满足）、
+ * 少写直接红、想减少分母就得删掉真实的风险陈述（被 R28 的体量下限挡住）。
+ *
+ * **它验不了什么**：alert 选的**类型**对不对（N7）；一句风险陈述**写得全不全**。
+ * ⇒ W118 的判型转换有人工评审（Q17 已定），P5 只保证「风险句必须住在框里」。
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * 风险语义词表。**闭合**，且**双向登记**：
+ * 标 `attested` 的格子今天必须在那种语言的出货文档里出现过 ≥1 次；
+ * 标 `reserve` 的格子今天必须**一次都没有** —— 那是「留着以后用」的储备译法，
+ * 不是「已经在守的东西」。两个方向都查，表才不会发霉成一张守空气的清单。
+ */
+type WordCell = { readonly words: readonly string[]; readonly reserve?: true };
+const RISK_WORDS: ReadonlyArray<readonly [concept: string, cells: Readonly<Record<Lang, WordCell>>]> = [
+  ["服务条款（合规风险）", {
+    "zh-CN": { words: ["服务条款"] }, "zh-TW": { words: ["服務條款"] },
+    en: { words: ["terms of service"] }, ja: { words: ["利用規約"] },
+    ko: { words: ["이용약관", "서비스 약관"] },
+  }],
+  ["未经核实（诚实限定）", {
+    "zh-CN": { words: ["未经核实"], reserve: true }, "zh-TW": { words: ["未經核實"], reserve: true },
+    en: { words: ["unverified"] }, ja: { words: ["未検証"] }, ko: { words: ["검증되지 않"] },
+  }],
+  ["数据丢失", {
+    "zh-CN": { words: ["数据丢失"] }, "zh-TW": { words: ["資料遺失"] },
+    en: { words: ["data loss"] }, ja: { words: ["データ損失"], reserve: true }, ko: { words: ["데이터 손실"] },
+  }],
+];
+
+/**
+ * P5 够不着的两类，**逐条点名**（不是开一类白名单）：
+ * ① 六份 README 的 `## 📄 许可协议` 与 `## ⚠ 免责声明` 两节 —— ADJ §63 把它们的末段
+ *    **逐字节**钉在了登记表上，把里面的句子搬进 alert 就会当场破掉那条恒等式；
+ *    这两节本身就是「整节都是免责声明」，再套一层框子也不增加可读性。
+ * ② 两处写在长段中间的括注。它们是**限定语**不是**警告**，
+ *    单独拎进框里会把一段技术解释拦腰截断（ADJ §76 记过同型的真实伤害）。
+ * **登记是双向的**：下面那格查「这些位置今天确实还命中着词表」——
+ * 哪天句子改写了、词不在了，登记就该删，而不是留着守空气。
+ * （写这张表时第一版多列了一条 `docs/ko/ADMIN.md:429`，它命中的「不可逆」概念因为
+ *   五语言里只有三种语言在用、被踢出了词表 ⇒ 那条登记当场被这一格判成过期，已删。
+ *   **这就是双向登记该起的作用**，记一笔。）
+ */
+const P5_OUTSIDE_ALERT: ReadonlyArray<readonly [path: string, no: number, why: string]> = [
+  [join("docs", "en", "DEPLOY.md"), 832, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
+  [join("docs", "ja", "DEPLOY.md"), 819, "同上，ja 那一份的对应括注"],
+];
+
+describe("R20/P5 风险语义句必须住在 alert 块里（内容锚定的下限，不可灌水）", () => {
+  /** 六份 README 里 ADJ §63 钉死的那两节的标题（`SECTIONS` 下标 14 / 15）。 */
+  const pinnedSectionTitles = (path: string): readonly string[] => {
+    const lang = path === "README.md" ? "zh-CN" : (path.split("/")[1] as Lang);
+    return [14, 15].flatMap((i) => {
+      const s = SECTIONS[i];
+      if (s === undefined) return [];
+      if (s.rootOnly === true && path !== "README.md") return [];
+      return [s.title[lang]];
+    });
+  };
+
+  /** 逐行扫：命中词表、且所在块不是 alert 的行。 */
+  const escapes = (docs: readonly Doc[]) => {
+    const out: Array<{ path: string; no: number; word: string; line: string }> = [];
+    for (const [path, text] of docs) {
+      const lang: Lang = path.startsWith("docs") ? (path.split("/")[1] as Lang) : "zh-CN";
+      const pinned = new Set(pinnedSectionTitles(path));
+      let alert = false;
+      let inPinned = false;
+      for (const r of bodyLines(text)) {
+        if (/^## /.test(r.line)) inPinned = pinned.has(r.line.trim());
+        if (/^> \[!/.test(r.line)) alert = true;
+        else if (!r.line.startsWith(">")) alert = false;
+        if (alert || inPinned) continue;
+        if (/^#{1,6} /.test(r.line) || r.line.trim().startsWith("|")) continue;
+        for (const [, cells] of RISK_WORDS) {
+          for (const w of cells[lang].words) {
+            if (r.line.toLowerCase().includes(w.toLowerCase())) {
+              out.push({ path, no: r.no, word: w, line: r.line.trim() });
+            }
+          }
+        }
+      }
+    }
+    return out;
+  };
+
+  const registered = new Set(P5_OUTSIDE_ALERT.map(([p, n]) => `${p}:${n}`));
+
+  it("真扫描：风险语义句一处都没有落在 alert 块之外（名册里那两处除外）", () => {
+    const wrong = escapes(pairsOf(SHIP_DOCS))
+      .filter((x) => !registered.has(`${x.path}:${x.no}`))
+      .map((x) => `${x.path}:${x.no} 命中「${x.word}」：${x.line.slice(0, 70)}`);
+    expect(wrong, `这些风险陈述写在了普通段落里：\n${wrong.join("\n")}\n`
+      + "⇒ 把它所在的块改成 `> [!WARNING]` / `> [!IMPORTANT]`。"
+      + "⚠️ 不许反过来删掉这句话来达标 —— R28 的体量下限盯着").toEqual([]);
+  });
+
+  it("🔴 灌水不管用：往 `docs/ja/API.md` 塞 10 个空的 `> [!NOTE]` —— 报文一个字都不许变", () => {
+    // 这一格是 P5 的**全部意义**：分子分母绑在同一批句子上，
+    // 加的不是「承载风险句的块」就对判据毫无贡献。
+    const before = escapes(pairsOf(SHIP_DOCS)).length;
+    const filler = Array.from({ length: 10 }, () => "> [!NOTE]\n> 水。\n").join("\n");
+    const after = escapes(withMutation(pairsOf(SHIP_DOCS), join("docs", "ja", "API.md"),
+      (s) => `${s}\n${filler}`)).length;
+    expect(after, "塞 10 个空 alert 之后逃逸数居然变了 —— 那这条判据是可以靠灌水刷绿的").toBe(before);
+  });
+
+  it("该红时红：把一句含「服务条款」的话从 alert 块里挪到普通段落 —— 红并给出文件:行号", () => {
+    const target = join("docs", "zh-CN", "REGISTRAR.md");
+    const docs = withMutation(pairsOf(SHIP_DOCS), target,
+      (s) => s.replace(/^> \[!WARNING\]\n/m, ""));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const hits = escapes(docs).filter((x) => x.path === target);
+    expect(hits.map((x) => `${x.path}:${x.no}`).join("\n"),
+      "从 alert 里掉出来的那句合规提示没被抓到").toContain(`${target}:`);
+  });
+
+  it("词表双向登记（一）：标 attested 的格子今天真的命中着东西", () => {
+    const wrong = RISK_WORDS.flatMap(([concept, cells]) => LANGS.flatMap((lang) => {
+      const cell = cells[lang];
+      if (cell.reserve === true) return [];
+      const n = SHIP_DOCS.filter((p) => (p.startsWith("docs") ? p.split("/")[1] : "zh-CN") === lang)
+        .reduce((m, p) => m + cell.words.filter((w) =>
+          readFileSync(p, "utf8").toLowerCase().includes(w.toLowerCase())).length, 0);
+      return n > 0 ? [] : [`「${concept}」的 ${lang} 格标着 attested 却一次都没命中：${cell.words.join(" / ")}`];
+    }));
+    expect(wrong, `词表发霉了（守的是空气）：\n${wrong.join("\n")}\n`
+      + "⇒ 要么改成 `reserve: true`，要么换一个这门语言真的在用的说法").toEqual([]);
+  });
+
+  it("词表双向登记（二）：标 reserve 的格子今天确实一次都没命中（命中了就该转成 attested）", () => {
+    const wrong = RISK_WORDS.flatMap(([concept, cells]) => LANGS.flatMap((lang) => {
+      const cell = cells[lang];
+      if (cell.reserve !== true) return [];
+      const hits = SHIP_DOCS.filter((p) => (p.startsWith("docs") ? p.split("/")[1] : "zh-CN") === lang)
+        .flatMap((p) => cell.words.filter((w) => readFileSync(p, "utf8").toLowerCase().includes(w.toLowerCase()))
+          .map((w) => `${p} 命中「${w}」`));
+      return hits.length === 0 ? [] : [`「${concept}」的 ${lang} 格标着 reserve 却命中了：\n    ${hits.join("\n    ")}`];
+    }));
+    expect(wrong, `储备格用上了，登记该改成 attested（否则这些命中处不进 P5 的射程）：\n${wrong.join("\n")}`)
+      .toEqual([]);
+  });
+
+  it("名册双向（一）：那两条登记今天确实还命中着词表（句子改写了就该删登记）", () => {
+    const found = new Set(escapes(pairsOf(SHIP_DOCS)).map((x) => `${x.path}:${x.no}`));
+    const stale = P5_OUTSIDE_ALERT.filter(([p, n]) => !found.has(`${p}:${n}`))
+      .map(([p, n, why]) => `${p}:${n}（${why}）`);
+    expect(stale, `这几条登记已经过期了，删掉它们：\n${stale.join("\n")}`).toEqual([]);
+  });
+
+  it("名册双向（二）：ADJ §63 钉死的那两节今天确实含着风险词（否则那条豁免也在守空气）", () => {
+    const inPinned = pairsOf(SIX_READMES).flatMap(([p, t]) => {
+      const lang: Lang = p === "README.md" ? "zh-CN" : (p.split("/")[1] as Lang);
+      const titles = pinnedSectionTitles(p);
+      return titles.flatMap((title) => {
+        const raw = rawSection(t, title).toLowerCase();
+        return RISK_WORDS.flatMap(([, cells]) =>
+          cells[lang].words.filter((w) => raw.includes(w.toLowerCase())).map(() => `${p} ${title}`));
+      });
+    });
+    expect(inPinned.length, "许可协议 / 免责声明两节里一个风险词都没有 —— "
+      + "那「这两节不进 P5 射程」这条豁免守的是空气，该删").toBeGreaterThan(0);
+  });
+});
