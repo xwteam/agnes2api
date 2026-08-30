@@ -7730,7 +7730,21 @@ function sectionFailures(doc: SectionDoc, lang: (typeof LANGS)[number], actual: 
  * ⚠️ **但「全等才到期」这一条自己有个洞**，见下面 `SECTIONS_DRIFT_BASELINE` 的注释。
  */
 const SECTIONS_NOT_YET_APPLIED: ReadonlyArray<readonly [SectionDoc, (typeof LANGS)[number]]> =
-  (["DEPLOY", "API"] as const).flatMap((doc) => LANGS.map((lang) => [doc, lang] as const));
+  (["API"] as const).flatMap((doc) => LANGS.map((lang) => [doc, lang] as const));
+
+/**
+ * **已经接到真文档上的那一档（W99 落地，P3f 阶段 7B）。**
+ *
+ * 名册是**双向**的：`SECTIONS_APPLIED` ∪ `SECTIONS_NOT_YET_APPLIED` 必须恰好等于
+ * `DOC_SECTIONS × LANGS`，两边**不许有交集**。少登记一格，那一格就从两条判据之间掉出去
+ * ——既没有 `toEqual` 看着，也没有差距基线看着，而这正是 7A 那张名册注释里
+ * 「一张只会等人记得回来改的待办清单不算守卫」要消灭的东西。
+ *
+ * ⚠️ 搬一格从 `NOT_YET_APPLIED` 到 `APPLIED` 的**唯一合法时机**是那一格真的走到了逐字全等：
+ * 走不到全等而硬搬过来，下面「已接线的那几格：`##` 序列 `toEqual` DOC_SECTIONS」当场红。
+ */
+const SECTIONS_APPLIED: ReadonlyArray<readonly [SectionDoc, (typeof LANGS)[number]]> =
+  (["DEPLOY"] as const).flatMap((doc) => LANGS.map((lang) => [doc, lang] as const));
 
 /**
  * **今天每一格差多少，逐格钉死。**
@@ -7771,11 +7785,8 @@ const SECTIONS_NOT_YET_APPLIED: ReadonlyArray<readonly [SectionDoc, (typeof LANG
  * **不许把这条判据删掉、也不许改回 `> 0` 了事** —— 那等于把上面那个窗口原样放回来。
  */
 const SECTIONS_DRIFT_BASELINE: Readonly<Record<string, number>> = {
-  "DEPLOY/zh-CN": 16,
-  "DEPLOY/zh-TW": 16,
-  "DEPLOY/en": 16,
-  "DEPLOY/ja": 16,
-  "DEPLOY/ko": 16,
+  // DEPLOY 五份**已经全等**（W99，P3f 阶段 7B）⇒ 它们搬去了 `SECTIONS_APPLIED`，
+  // 由「已接线的那几格」那一格用 `toEqual` 直接守着，不再走差距基线这条路。
   "API/zh-CN": 16,
   "API/zh-TW": 16,
   "API/en": 15,
@@ -7936,11 +7947,39 @@ describe("W124 非 README 文档的五语言 `##` 译名常量表", () => {
     ).toEqual([]);
   });
 
-  it("名册不许悄悄长出第三类：它只登记 DOC_SECTIONS 里有的 doc × LANGS", () => {
-    const keys = SECTIONS_NOT_YET_APPLIED.map(([d, l]) => `${d}/${l}`).sort();
+  it("名册不许悄悄长出第三类：两张名册加起来恰好等于 DOC_SECTIONS × LANGS，且互不相交", () => {
+    const pending = SECTIONS_NOT_YET_APPLIED.map(([d, l]) => `${d}/${l}`);
+    const applied = SECTIONS_APPLIED.map(([d, l]) => `${d}/${l}`);
     const all = (Object.keys(DOC_SECTIONS) as SectionDoc[]).flatMap((d) => LANGS.map((l) => `${d}/${l}`)).sort();
-    expect(keys, "名册与 DOC_SECTIONS × LANGS 对不上 —— 少登记会让某一格提前接上真文档并红在错误的原因上")
-      .toEqual(all);
+    expect(
+      [...pending, ...applied].sort(),
+      "两张名册的并集与 DOC_SECTIONS × LANGS 对不上 —— 少登记一格，那一格就从两条判据之间掉出去："
+      + "既没有 `toEqual` 看着，也没有差距基线看着",
+    ).toEqual(all);
+    expect(
+      pending.filter((k) => applied.includes(k)),
+      "同一格同时出现在两张名册里 —— 一格只能待在一边，否则「已接线」与「还没接线」互相打掩护",
+    ).toEqual([]);
+  });
+
+  /**
+   * **R11 扩展：已接线的那几格，`##` 序列直接 `toEqual` 常量表。**
+   *
+   * 7A 留下的接线指令就是这一格：DEPLOY 五份走到目标那天，把它们从
+   * `SECTIONS_NOT_YET_APPLIED` 划掉、接到真文档上。这一格是那条指令的落地。
+   * 报文走 `sectionFailures()`，所以「ja 第 7 节对不上」那种逐槽点名在这里同样成立。
+   */
+  it("已接线的那几格：五份 `##` 序列逐字 `toEqual` DOC_SECTIONS（R11 扩展）", () => {
+    const failures: string[] = [];
+    for (const [doc, lang] of SECTIONS_APPLIED) {
+      failures.push(...sectionFailures(doc, lang, realSections(doc, lang)));
+    }
+    expect(
+      failures,
+      `已接线的文档骨架与 DOC_SECTIONS 对不上：\n${failures.join("\n")}\n`
+      + "⇒ 这几格已经不在「允许对不上」的名册里了。改文档还是改表，先想清楚哪一边是对的："
+      + "表是 W124 从两仓实测出来的，改表要先去推翻那一轮的来源档位登记。",
+    ).toEqual([]);
   });
 
   it("反向控制：「15 节做对 14 节」这一档基线守得住 —— 旧写法 `> 0` 在这一档是绿的", () => {
@@ -8905,5 +8944,256 @@ describe("W98 `### 配额账` 的折叠与分层（`<details>` 是 C23 的具名
     const fenced = "# T\n\n```html\n<details>\n<summary>x</summary>\n</details>\n```\n";
     expect(detailsTags(fenced), "围栏里的 `<details>` 被数进来了 —— 剥围栏没生效")
       .toEqual({ open: 0, close: 0, summary: 0 });
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W99–W102 —— 五份 `DEPLOY.md` 的 15 节骨架落地之后的四条验收
+ *
+ * `##` 骨架本身由上面 W124 那一组的「已接线的那几格」用 `toEqual DOC_SECTIONS` 守着。
+ * 本组守的是骨架**之下**那四件事，它们各自都能在骨架全对的前提下坏掉：
+ *
+ * · **W99 的对仗恒等式（§1.10 V54）**：`## Cloudflare Worker 部署` 与 `## Docker 部署`
+ *   两节的 `###` 文本数组必须**互相 `toEqual`**（逐条同名同序）。规格把它写成
+ *  「对仗是恒等式，不是风格」——两条部署路的步骤一旦错位，读者分不清哪一步属于哪条路。
+ *   同批还查 `## 选哪种形态` 之下**恰 1 张 3 列表**（V53），且那一节**不预设主推**（V55）。
+ * · **W100**：带注释的 ```env 围栏 ≥5 个/份，每个变量上方 1–3 行 `#` 注释、以
+ *   `必填：`/`可选：`（各语言的对应写法）起头，变量之间空一行。
+ * · **W101**：`## 常见问题` 的三段式——`### {症状短语}` + `**症状**：` + `**解决方案**：`
+ *   + 有序列表，三者**成对**且五语言条数彼此相等。
+ * · **W102**：`## 安全建议` 真的在，页脚节恰 4 条 bullet（模板固定形态）。
+ *
+ * ⚠️ **W101 为什么不写 `toBe(6)`**（这是规格 FL-6-X2 的主控裁定，不是本轮放宽）：
+ * 「恰 6 条 × 5 语言」与 C9/ADJ ⑩「不许为凑数编造条目」同型而方向相反——一条判据
+ * 要求编造，另一条禁止编造，同一份规格不能两头都要。⇒ 判据形态是
+ * **形态恒等 + 五语言彼此相等 + 不回退下限**。今天五份各 **6** 条（与两个参照仓实测
+ * 相同），下限因此钉在 6：**它挡得住「删掉两条凑合」，而挡不住「再加一条真问题」**，
+ * 后者本来也不该被挡。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 一份 markdown 里某个 `##` 节的正文行（不含标题行），到下一个 `##` 或 EOF 为止。 */
+function h2Section(src: string, heading: string): string[] {
+  const lines = src.split("\n");
+  const at = lines.indexOf(heading);
+  if (at < 0) {
+    throw new Error(`找不到 ${JSON.stringify(heading)} —— 判据的落点变了，先回来改常量，不许扫一段空文本`);
+  }
+  let to = at + 1;
+  while (to < lines.length && !/^## /.test(lines[to] ?? "")) to += 1;
+  return lines.slice(at + 1, to);
+}
+
+/** 一段正文里的 `###` 标题行（原样）。`####` 不算——V54 的对仗只到 `###` 这一层。 */
+const h3sOf = (sectionLines: readonly string[]): string[] =>
+  sectionLines.filter((l) => /^### /.test(l));
+
+/**
+ * 一份文档里所有 ```env 围栏的内容（不含定界行）。
+ * **只认 ```env**：`.env` 片段用别的语言标注（```bash / ```ini）就抽不到，那正是要红的形态。
+ */
+function envFences(src: string): string[][] {
+  const out: string[][] = [];
+  let cur: string[] | null = null;
+  for (const line of src.split("\n")) {
+    if (cur === null) {
+      if (/^\s*```env\s*$/.test(line)) cur = [];
+      continue;
+    }
+    if (/^\s*```\s*$/.test(line)) { out.push(cur); cur = null; continue; }
+    cur.push(line);
+  }
+  return out;
+}
+
+/** 各语言 ```env 注释的两种起头。**必须逐语言给，`必填：` 在 en 上一次都命中不了**。 */
+const ENV_COMMENT_PREFIXES: Record<Lang, readonly [required: string, optional: string]> = {
+  "zh-CN": ["# 必填：", "# 可选："],
+  "zh-TW": ["# 必填：", "# 選填："],
+  en: ["# Required: ", "# Optional: "],
+  ja: ["# 必須: ", "# 任意: "],
+  ko: ["# 필수: ", "# 선택: "],
+};
+
+/** 常见问题那一节的两个双粗体标签，逐语言。 */
+const FAQ_LABELS: Record<Lang, readonly [symptom: string, fix: string]> = {
+  "zh-CN": ["**症状**：", "**解决方案**："],
+  "zh-TW": ["**症狀**：", "**解決方案**："],
+  en: ["**Symptom**: ", "**Fix**:"],
+  ja: ["**症状**：", "**対処**："],
+  ko: ["**증상**: ", "**해결**:"],
+};
+
+/** 一份 `env` 围栏里的「注释块 + 变量行」结构体检。返回失败报文。 */
+function envFenceFailures(lang: Lang, where: string, body: readonly string[]): string[] {
+  const out: string[] = [];
+  const [req, opt] = ENV_COMMENT_PREFIXES[lang];
+  const decls = body.flatMap((l, i) => (/^[A-Z][A-Z0-9_]*=/.test(l) ? [i] : []));
+  if (decls.length === 0) {
+    out.push(`${where}：这个 \`\`\`env 围栏里一行变量声明都没有 —— 空围栏凑不出 W100 的数`);
+    return out;
+  }
+  for (const at of decls) {
+    // 紧邻上方连续的 `#` 注释行
+    let from = at;
+    while (from - 1 >= 0 && (body[from - 1] ?? "").startsWith("#")) from -= 1;
+    const comment = body.slice(from, at);
+    const name = (body[at] ?? "").split("=")[0];
+    if (comment.length < 1 || comment.length > 3) {
+      out.push(`${where} 的 \`${name}\` 上方有 ${comment.length} 行 \`#\` 注释，要求 1–3 行`);
+      continue;
+    }
+    const head = comment[0] ?? "";
+    if (!head.startsWith(req) && !head.startsWith(opt)) {
+      out.push(`${where} 的 \`${name}\` 那段注释没有以 ${JSON.stringify(req)} 或 ${JSON.stringify(opt)} 起头：`
+        + `${JSON.stringify(head.slice(0, 40))}`);
+    }
+    // 变量之间要空一行：注释块之前那一行必须是空行（除非它就是围栏开头）
+    if (from > 0 && (body[from - 1] ?? "").trim() !== "") {
+      out.push(`${where} 的 \`${name}\` 与上一个变量之间没有空行 —— 挤成一坨就不是「带注释的围栏」了`);
+    }
+  }
+  return out;
+}
+
+describe("W99–W102 五份 DEPLOY.md 的 15 节骨架之下的四条验收", () => {
+  const deploy = (lang: Lang): string => readFileSync(docPath(".", lang, "DEPLOY"), "utf8");
+  /** 两条部署路与三个专题节在 `DOC_SECTIONS` 里的槽位（0 基）。 */
+  const SLOT = { choose: 2, worker: 3, docker: 4, faq: 8, security: 13, footer: 14 } as const;
+  const headingAt = (lang: Lang, slot: number): string => DOC_SECTIONS.DEPLOY[lang][slot]!;
+
+  /* ── W99 / §1.10 ────────────────────────────────────────────────────────── */
+
+  it("W99 §1.10 的对仗恒等式：两条部署路的 `###` 数组互相 `toEqual`（逐条同名同序）", () => {
+    for (const lang of LANGS) {
+      const src = deploy(lang);
+      const wk = h3sOf(h2Section(src, headingAt(lang, SLOT.worker)));
+      const dk = h3sOf(h2Section(src, headingAt(lang, SLOT.docker)));
+      expect(wk.length, `docs/${lang}/DEPLOY.md 的 Worker 那一节一个 \`###\` 都没有 —— 定位器坏了`)
+        .toBeGreaterThan(0);
+      expect(
+        dk,
+        `docs/${lang}/DEPLOY.md 两条部署路的 \`###\` 对不上（§1.10 V54：对仗是恒等式，不是风格）：\n`
+        + `  Worker: ${JSON.stringify(wk)}\n  Docker: ${JSON.stringify(dk)}\n`
+        + "⇒ 两条路的步骤一旦错位，读者分不清哪一步属于哪条路。要改就两边一起改。",
+      ).toEqual(wk);
+    }
+  });
+
+  it("W99 §1.10 V53：`## 选哪种形态` 之下恰 1 张表，且那张表恰 3 列", () => {
+    for (const lang of LANGS) {
+      const sec = h2Section(deploy(lang), headingAt(lang, SLOT.choose));
+      const seps = sec.filter((l) => SEPARATOR_ROW.test(l));
+      expect(seps.length, `docs/${lang}/DEPLOY.md 的「选哪种形态」有 ${seps.length} 张表，V53 要的是恰 1 张`)
+        .toBe(1);
+      expect(rowCells(seps[0]!.trim()).length,
+        `docs/${lang}/DEPLOY.md 的那张对比表不是 3 列 —— V53 要的是「维度 / Worker / Docker」三列`)
+        .toBe(3);
+    }
+  });
+
+  /* ── W100 ───────────────────────────────────────────────────────────────── */
+
+  it("W100 每份 DEPLOY.md 至少 5 个 ```env 围栏（落地前是 0）", () => {
+    const counts = Object.fromEntries(LANGS.map((l) => [l, envFences(deploy(l)).length]));
+    const short = LANGS.filter((l) => envFences(deploy(l)).length < 5);
+    expect(short, `这些语言的 \`\`\`env 围栏少于 5 个：${JSON.stringify(counts)}`).toEqual([]);
+  });
+
+  it("W100 每个 ```env 围栏都是「带注释的」：变量上方 1–3 行 `#`、以必填/可选起头、变量之间空行", () => {
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      envFences(deploy(lang)).forEach((body, i) => {
+        failures.push(...envFenceFailures(lang, `docs/${lang}/DEPLOY.md 第 ${i + 1} 个 \`\`\`env`, body));
+      });
+    }
+    expect(
+      failures,
+      `${failures.join("\n")}\n⇒ W100 要的不是「有个围栏」，是「照着抄就能用」：`
+      + "每个变量上方 1–3 行注释、说清必填还是可选，变量之间空一行。",
+    ).toEqual([]);
+  });
+
+  it("W100 该红时红：把某个变量上方的注释整段删掉 ⇒ 点名那个变量", () => {
+    const body = ["# 必填：客户端令牌。", "GATEWAY_TOKEN=x", "", "PORT=8080"];
+    const failures = envFenceFailures("zh-CN", "夹具", body);
+    expect(failures.join("\n"), "没注释的那个变量没被点名").toContain("`PORT`");
+  });
+
+  it("W100 该红时红：注释在（1–3 行）但没写清必填还是可选 ⇒ 同样点名", () => {
+    const body = ["# 这是一个端口。", "PORT=8080"];
+    const failures = envFenceFailures("zh-CN", "夹具", body);
+    expect(failures.join("\n")).toContain("没有以");
+    expect(failures.join("\n")).toContain("`PORT`");
+  });
+
+  it("W100 不许乱红：合规的围栏一条都不报", () => {
+    const body = [
+      "# 必填：客户端调用本网关时必须携带的令牌。",
+      "GATEWAY_TOKEN=x",
+      "",
+      "# 可选：Node 运行时的监听端口。",
+      "# Worker 不使用该变量。",
+      "PORT=8080",
+    ];
+    expect(envFenceFailures("zh-CN", "夹具", body)).toEqual([]);
+  });
+
+  /* ── W101 ───────────────────────────────────────────────────────────────── */
+
+  it("W101 常见问题的三段式：`###` 条数 == `**症状**` 条数 == `**解决方案**` 条数，五语言彼此相等", () => {
+    const shapes: Record<string, string> = {};
+    for (const lang of LANGS) {
+      const sec = h2Section(deploy(lang), headingAt(lang, SLOT.faq));
+      const [sym, fix] = FAQ_LABELS[lang];
+      const h3 = h3sOf(sec).length;
+      const nSym = sec.filter((l) => l.startsWith(sym)).length;
+      const nFix = sec.filter((l) => l.startsWith(fix)).length;
+      // 有序列表：每条 FAQ 的解决方案至少一行 `1. `
+      const nOl = sec.filter((l) => /^1\. /.test(l)).length;
+      expect([h3, nSym, nFix, nOl],
+        `docs/${lang}/DEPLOY.md 的常见问题三段式不成对：\`###\`=${h3} / ${sym}=${nSym} / ${fix}=${nFix} / 有序列表=${nOl}`)
+        .toEqual([h3, h3, h3, h3]);
+      shapes[lang] = String(h3);
+    }
+    const first = shapes[LANGS[0]];
+    expect(shapes, `五语言的常见问题条数不一致：${JSON.stringify(shapes)} —— 某一份漏翻了一条`)
+      .toEqual(Object.fromEntries(LANGS.map((l) => [l, first])));
+  });
+
+  it("W101 不回退下限：常见问题今天五份各 6 条（与两个参照仓实测相同），不许掉下去", () => {
+    // ⚠️ **不是 `toBe(6)`**，理由见本组文件头（规格 FL-6-X2 的主控裁定）：
+    // 钉死具体值会与「不许为凑数编造条目」互斥。下限挡得住「删掉两条凑合」，
+    // 挡不住「再加一条真问题」——后者本来也不该被挡。
+    for (const lang of LANGS) {
+      const n = h3sOf(h2Section(deploy(lang), headingAt(lang, SLOT.faq))).length;
+      expect(n, `docs/${lang}/DEPLOY.md 的常见问题只剩 ${n} 条`).toBeGreaterThanOrEqual(6);
+    }
+  });
+
+  /* ── W102 ───────────────────────────────────────────────────────────────── */
+
+  it("W102 `## 安全建议` 真的在，而且不是一个空壳（≥4 条顶格 bullet）", () => {
+    for (const lang of LANGS) {
+      const sec = h2Section(deploy(lang), headingAt(lang, SLOT.security));
+      const bullets = sec.filter((l) => /^- /.test(l)).length;
+      expect(bullets, `docs/${lang}/DEPLOY.md 的安全建议只有 ${bullets} 条 bullet`).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it("W102 页脚节恰 4 条 bullet（模板固定形态），且末节标题就是译名表同一下标的那一个（R26e'）", () => {
+    for (const lang of LANGS) {
+      const heading = headingAt(lang, SLOT.footer);
+      const sec = h2Section(deploy(lang), heading);
+      const bullets = sec.filter((l) => /^- /.test(l));
+      expect(bullets.length, `docs/${lang}/DEPLOY.md 的页脚节有 ${bullets.length} 条 bullet，模板固定是 4 条`)
+        .toBe(4);
+      // R26e'：末节标题 == 译名表同一下标 —— 与 API.md 那一族用的是同一个下标（ADJ ㊷）。
+      expect(heading, `${lang} 的 DEPLOY 末节与 API 末节不是同一族译名`)
+        .toBe(DOC_SECTIONS.API[lang][DOC_SECTIONS.API[lang].length - 1]);
+    }
+  });
+
+  it("认不出要吵：`##` 标题被改名时 `h2Section` 当场抛，不许扫一段空文本", () => {
+    expect(() => h2Section("# T\n\n## 别的\n\n正文\n", "## 安全建议")).toThrow(/判据的落点变了/);
   });
 });

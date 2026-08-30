@@ -5,6 +5,284 @@ agnes2api는 동일한 코드베이스와 요청 처리 로직으로 만들어�
 차이는 저장소 백엔드뿐입니다. Worker는 Cloudflare KV 네임스페이스를, Docker는
 마운트된 볼륨 위의 JSON 파일을 사용합니다.
 
+## 환경 요구사항
+
+두 형태는 사전 조건이 다릅니다. 선택한 쪽 열만 읽으면 되고, 양쪽을 다 갖출 필요는 없습니다.
+
+| 항목 | Cloudflare Worker | Docker |
+|------|-------------------|--------|
+| 로컬 런타임 | Node.js 20+(`wrangler`와 빌드를 돌리는 용도) | 필요 없음 |
+| 커맨드라인 | `npx wrangler`(`pnpm install`로 설치됨) | Docker Engine 24+ 와 `docker compose` |
+| 플랫폼 | Cloudflare 계정 하나, 무료 등급이면 충분 | 컨테이너를 돌릴 수 있는 머신 한 대 |
+| 업스트림 | Agnes API key 최소 한 개, 다음 절 참고 | Agnes API key 최소 한 개, 다음 절 참고 |
+
+> [!TIP]
+> Docker 쪽은 Docker가 깔린 머신 한 대면 됩니다. `cp .env.example .env` 다음에
+> `docker compose up -d` 한 번으로 뜹니다.
+> Worker 쪽은 서버가 필요 없지만, 본인 Cloudflare 계정에 KV 네임스페이스를 먼저 만들어야
+> 합니다 —— 이 단계는 대체할 방법이 없습니다.
+
+## Agnes 자격 증명 준비
+
+게이트웨이는 key를 만들어내지 않습니다. 여러분이 이미 가진 한 개 또는 여러 개의 Agnes API
+key로 요청을 나눠 보낼 뿐입니다. 얻는 경로는 두 가지이고 **둘은 대등**하며, 주/보조를 정해
+두지 않았습니다.
+
+### 직접 발급받기
+
+Agnes 플랫폼에서 계정을 만들고 콘솔에서 API key를 하나 발급해 복사해 둡니다.
+이 경로는 한 번에 한 개만 주지만, 게이트웨이를 일단 띄우고 네 가지 프로토콜이 통하는지
+확인하는 단계에는 그걸로 충분합니다.
+
+### 레지스트라에게 자동 보충 맡기기
+
+이 저장소에는 선택 사항인 레지스트라가 들어 있어 `TARGET_KEYS`를 목표로 풀을 자동으로
+보충합니다. **기본값은 꺼짐**입니다(`REGISTRAR_ENABLED`를 설정하지 않으면 꺼진 상태).
+동작 원리, 두 메일함 채널 중 무엇을 고를지, Cloudflare Cron의 벽시계 상한은
+[REGISTRAR.md](REGISTRAR.md)에 전부 적혀 있습니다.
+
+> [!IMPORTANT]
+> 어느 경로든 key는 KV / `store.json`에 **평문**으로 저장됩니다. 데이터 디렉터리와 KV
+> 네임스페이스는 자격 증명으로 취급하세요.
+
+## 어떤 형태를 선택할까
+
+두 형태는 같은 코드베이스에서 만들어지며, 네 가지 프로토콜도 관리 패널도 레지스트라도
+양쪽에 다 있습니다. 차이는 아래 항목뿐입니다.
+
+| 항목 | Cloudflare Worker | Docker |
+|------|-------------------|--------|
+| 어디서 도는가 | 본인 Cloudflare 계정, 엣지 | 본인 서버 또는 로컬 머신 |
+| 저장소 백엔드 | KV 네임스페이스(`POOL` 바인딩) | 마운트한 볼륨 위의 `store.json` |
+| 서버 필요 여부 | 불필요 | 필요 |
+| 할당량 제약 | 무료 등급 KV는 하루 100,000회 읽기·1,000회 쓰기 | 본인 머신의 제약만 |
+| 정기 보충 | `wrangler.toml`의 Cron | `TEND_INTERVAL_MS` |
+| 아주 긴 비스트리밍 요청 | 기댈 수 있는 벽시계 보장이 없음(아래 참고) | 본인이 설정한 예산만 |
+
+**둘 사이에 주·보조는 없습니다**. 서버가 이미 있으면 Docker, 서버를 두고 싶지 않으면 Worker
+입니다. 둘 다 돌려도 되지만, **같은 key를 공유하면서 상태를 따로 두지는 마세요** —— 쿨다운과
+제외는 저장소에 기록되는데 두 저장소는 서로를 모르고, 같은 key가 두 번 판정됩니다.
+
+## Cloudflare Worker 배포
+
+### 사전 조건
+
+> [!NOTE]
+> **이 저장소는 Cloudflare 원클릭 배포 버튼을 제공하지 않습니다.** 여기서는 그 경로가
+> 성립하지 않기 때문입니다: 저장소의 `wrangler.toml`에 있는 KV 네임스페이스 id는 항상
+> 자리표시자이고(공개 저장소에는 실제 배포 정보를 두지 않습니다. CI에서는
+> `scripts/check-wrangler-placeholder.mjs`가 지키고 있습니다), `GATEWAY_TOKEN`은 필수
+> 민감 값이라 secret으로만 주입할 수 있습니다 —— 둘 중 하나라도 빠지면 기동되지 않습니다
+> (`src/core/config.ts`가 읽지 못하면 곧바로 예외를 던집니다). 원클릭 흐름은 이 두 가지
+> 어느 쪽도 대신해 주지 못하므로 아래 단계는 직접 한 번씩 진행해야 합니다. 명령만 보려면
+> 같은 디렉터리 [README](README.md)의 `## ⚡ 빠른 배포` 절을 참고하세요. tag를 찍는
+> 자동 배포는 뒤에서 다룹니다.
+
+저장소를 클론하고 의존성을 설치합니다.
+
+```bash
+git clone https://github.com/xwteam/agnes2api.git
+cd agnes2api
+pnpm install
+```
+
+### 설정
+
+1. key 풀을 위한 KV 네임스페이스를 만들고 `wrangler.toml`에 다시 씁니다.
+
+   ```bash
+   node scripts/setup-worker.mjs
+   ```
+
+   저장소의 `wrangler.toml`에 들어 있는 `id`는 항상 자리표시자입니다
+   (공개 저장소에는 실제 배포 정보를 전혀 넣지 않습니다), 그래서 이 단계는
+   필수입니다. 이 스크립트는 수동으로 `npx wrangler kv namespace create
+   POOL`을 실행하고 반환된 `id`를 `[[kv_namespaces]]` 블록의
+   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID` 자리에 붙여넣는 것과 같은 일을
+   합니다. **실행 후 이 `wrangler.toml` 변경 사항은 커밋하지 마세요**——
+   `check-wrangler-placeholder.mjs` CI 게이트가 실수로 커밋된 실제 id를
+   막습니다.
+
+2. 게이트웨이 토큰을 Worker secret으로 설정합니다(`wrangler.toml`에
+   절대 커밋하지 마세요).
+
+   ```bash
+   npx wrangler secret put GATEWAY_TOKEN
+   ```
+
+#### 로컬 개발
+
+```bash
+pnpm dev:worker   # Worker 형태: 패널 자원을 먼저 생성한 뒤 wrangler dev
+pnpm dev:node     # Node 형태: 패널 자원을 생성하고 pnpm build 후 dist/entry/node.js 실행
+```
+
+⚠️ **둘 다 `node scripts/build-ui.mjs`로 시작하며, 이는 곁다리가 아닙니다**: 패널 자원은
+생성물(`src/ui/assets.generated.ts`)입니다. `npx wrangler dev`만으로도 뜨지만 패널은 마지막으로
+생성된 내용에 머뭅니다 —— `admin-ui/`를 고쳤는데 아무 변화가 없다면 대개 이것 때문입니다.
+
+`GATEWAY_TOKEN`은 `wrangler.toml`과 같은 디렉터리에 있는 로컬 `.dev.vars`
+파일(이미 `.gitignore`에 포함됨)에 작성하세요 —— 비밀 값을 `wrangler.toml`에
+직접 쓰지 마세요.
+
+⚠️ 이 파일은 `pnpm test:workers`가 무조건 workerd의 `env`로 읽어 들입니다
+(`@cloudflare/vitest-pool-workers`가 wrangler를 호출할 때 `envFiles`를 넘기지 않습니다).
+CI에는 이 파일이 없으므로 테스트 전에 `mv .dev.vars .dev.vars.off` 를 실행하세요.
+이 파일이 **`env`에 바인딩 이름을 하나 더 들여오는 순간** 저장소의 어서션 한 칸이 즉시
+빨간불이 됩니다——판정 기준은 키 이름 집합이므로, 빈 파일이거나 KV 바인딩과 같은 이름인
+`POOL`만 적은 경우에는 빨간불이 되지 않습니다.
+
+`GATEWAY_TOKEN`은 이 파일에 씁니다. 형식은 `.env`와 같습니다.
+
+```env
+# 필수: 클라이언트가 이 게이트웨이를 호출할 때 제시해야 하는 토큰.
+# 로컬 개발에서는 아무 값이나 되지만, 운영에서 쓰는 값을 여기 붙여넣지는 마세요.
+GATEWAY_TOKEN=local-dev-token-change-me
+
+# 선택: 관리 패널 토큰. 설정하지 않으면 로컬에서도 패널이 열리지 않습니다.
+# GATEWAY_TOKEN과 달라야 하고, 24자 이상이며 출력 가능한 ASCII만 씁니다.
+ADMIN_TOKEN=local-dev-admin-token-change-me
+```
+
+### 배포
+
+배포합니다.
+
+```bash
+npx wrangler deploy
+```
+
+#### 태그 push 시 자동 배포
+
+`.github/workflows/deploy-worker.yml`은 `v*` 태그가 push될 때마다 Worker를
+자동으로 배포합니다. 단, 저장소의 **Settings → Secrets and variables →
+Actions**에 `CLOUDFLARE_API_TOKEN`이 설정되어 있어야 합니다. 설정되어 있지
+않으면 워크플로가 경고를 출력하고 배포 단계를 건너뛸 뿐, 전체 실행이
+실패하지는 않습니다.
+
+### 검증
+
+배포가 끝나면 wrangler가 `https://{name}.{sub}.workers.dev`를 출력합니다. 그 주소를 base URL로
+삼아 헬스 체크를 한 번 돌립니다.
+
+```bash
+curl -s https://your-worker.your-subdomain.workers.dev/health
+```
+
+`200`이 오고 `status`가 `ok`면 뜬 것입니다. 세 개짜리 전체 검증 명령은 아래에 있습니다.
+
+### 업데이트
+
+```bash
+git pull
+pnpm install
+npx wrangler deploy
+```
+
+KV 안의 key 풀과 설정은 **영향을 받지 않습니다**. 배포로 바뀌는 것은 코드이고 바인딩은 여전히
+같은 네임스페이스를 가리킵니다. `wrangler.toml`은 로컬에서 수정된 상태이므로
+(namespace id를 `setup-worker.mjs`가 써 넣었습니다) `git pull`이 거기서 충돌을 내면 로컬 id를
+남기세요.
+
+## Docker 배포
+
+### 사전 조건
+
+저장소를 클론하고 환경 변수 파일을 준비합니다.
+
+```bash
+git clone https://github.com/xwteam/agnes2api.git
+cd agnes2api
+cp .env.example .env
+```
+
+### 설정
+
+`.env`를 편집해 최소한 `GATEWAY_TOKEN`을 설정합니다. 나머지 변수는 아래의
+[환경 변수](#환경-변수) 표를 참고하세요.
+
+`.env`의 최소 형태는 두 줄입니다. 나머지는 모두 기본값이 있으니 필요할 때 더하면 됩니다.
+
+```env
+# 필수: 클라이언트가 이 게이트웨이를 호출할 때 제시해야 하는 토큰. 다운스트림에 나눠 주는 값입니다.
+GATEWAY_TOKEN=본인의 긴 랜덤 문자열로 교체
+
+# 선택: Node 런타임의 리스닝 포트. Worker는 이 변수를 쓰지 않습니다.
+# docker-compose.yml은 이 값을 호스트 쪽에 공개하는 포트로도 씁니다.
+PORT=8080
+```
+
+#### 데이터 디렉터리와 소유자: 컨테이너가 `./data`를 바꿉니다 (먼저 확인하세요)
+
+컨테이너는 **root로 entrypoint에 진입**해 두 가지를 한 뒤 권한을 낮춥니다:
+
+- `DATA_DIR`(기본 `/app/data`)의 소유자가 컨테이너 내 실행 사용자 `app`
+  (**uid 100 / gid 101**)과 다를 때에만 그 디렉터리를 재귀적으로 `chown`합니다.
+  소유자가 이미 일치하면 아무것도 바꾸지 않습니다.
+- 그다음 `su-exec`로 권한을 낮추므로 **메인 프로세스(PID 1)는 root가 아니라 app**으로
+  실행됩니다.
+
+런타임에 해야 하는 이유는, 바인드 마운트에서는 호스트 디렉터리의 소유자가 이미지 빌드
+시점의 `chown`을 덮어쓰기 때문입니다. 그러면 컨테이너 안의 app이 `store.json`에 쓸 수 없고,
+이 실패는 조용합니다(모든 API가 `pool_empty`를 반환).
+
+**부작용**: 바인드 마운트에서 바뀌는 것은 **호스트**의 파일입니다. `docker compose up -d`
+이후 여러분의 `./data`와 그 안의 파일 소유자는 본인 uid에서 `100:101`로 바뀌며, 이후
+호스트에서 읽고 쓰거나 백업하려면 `sudo`가 필요합니다. 원하지 않는다면 `--user`(또는
+compose의 `user:`)로 비 root 실행을 지정하세요. 그러면 entrypoint는 chown을 전혀 하지
+않으며, 데이터 디렉터리의 소유자와 쓰기 가능 여부는 직접 준비하게 됩니다.
+
+같은 이유로 이미지에는 **`USER app`이 없습니다**. 기본 사용자는 root입니다
+(`docker inspect --format '{{.Config.User}}' <image>`는 빈 값을 출력). 이는 Kubernetes에
+영향을 줍니다: `runAsNonRoot: true`를 설정하고 `runAsUser`를 명시하지 않으면 kubelet이
+컨테이너 기동을 거부합니다. 그런 배포에서는 `runAsUser: 100`, `runAsGroup: 101`(또는 원하는
+uid)을 명시하고 볼륨 소유자를 직접 준비하세요 —— 비 root로 기동하면 entrypoint는
+"chown 없이 그대로 실행" 분기를 탑니다.
+
+안전 경계: `DATA_DIR`이 `/`나 최상위 시스템 디렉터리(`/etc`, `/usr` 등)로 설정되면
+entrypoint는 그 위에서의 재귀 chown을 거부합니다(경고만 출력하고 기동은 계속). 컨테이너
+파일 시스템 전체가 app 쓰기 가능해지는 것을 막기 위함입니다.
+
+### 배포
+
+컨테이너를 시작합니다.
+
+```bash
+docker compose up -d
+```
+
+**첫 이미지가 배포되기 전**(또는 fork 이후)에는 이 명령이 로컬 빌드로 폴백합니다 ——
+`docker-compose.yml` 의 `build:` 블록이 그 역할을 합니다.
+
+`docker-compose.yml`은 기본적으로 `8080` 포트를 게시하며(`.env`의
+`PORT`로 재정의 가능), `./data`를 컨테이너 내부의 `/app/data`에
+마운트합니다 —— `store.json`(key 풀 및 영속화된 설정)이 여기에
+저장됩니다. 재시작/업그레이드 시에도 이 디렉터리를 반드시 유지하세요.
+임포트된 key 풀의 유일한 사본입니다.
+
+### 검증
+
+컨테이너가 정상적으로 기동했는지 확인합니다.
+
+```bash
+curl http://localhost:8080/health
+```
+
+이미지에는 `HEALTHCHECK`가 내장되어 있어 Docker가 이를 기준으로 컨테이너
+상태를 보고합니다. 데이터 디렉터리에 쓸 수 없으면 `/health`는 `status`가
+`degraded`인 `503`을 반환하고 컨테이너는 unhealthy로 표시됩니다. 구체적인 원인은
+컨테이너 로그를 확인하세요.
+
+### 업데이트
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+`./data`는 그대로이고 key 풀과 설정이 거기 있습니다. **업그레이드 전에 그 디렉터리를 백업하세요**
+(아래 "백업과 복구" 참고). 임포트한 key 풀의 유일한 사본이며, 두 번째 사본은 없습니다.
+
 ## 환경 변수
 
 | 변수 | 필수 여부 | 기본값 | 설명 |
@@ -729,158 +1007,7 @@ HTTP-triggered Workers"), 개별 아웃바운드 서브요청에도 **시간 제
    `UPSTREAM_SYNC_TIMEOUT_MS`를 조정하거나 스트리밍 엔드포인트(첫 바이트 예산)로
    전환하세요.
 
-## Cloudflare Worker
-
-### 수동 배포
-
-> [!NOTE]
-> **이 저장소는 Cloudflare 원클릭 배포 버튼을 제공하지 않습니다.** 여기서는 그 경로가
-> 성립하지 않기 때문입니다: 저장소의 `wrangler.toml`에 있는 KV 네임스페이스 id는 항상
-> 자리표시자이고(공개 저장소에는 실제 배포 정보를 두지 않습니다. CI에서는
-> `scripts/check-wrangler-placeholder.mjs`가 지키고 있습니다), `GATEWAY_TOKEN`은 필수
-> 민감 값이라 secret으로만 주입할 수 있습니다 —— 둘 중 하나라도 빠지면 기동되지 않습니다
-> (`src/core/config.ts`가 읽지 못하면 곧바로 예외를 던집니다). 원클릭 흐름은 이 두 가지
-> 어느 쪽도 대신해 주지 못하므로 아래 단계는 직접 한 번씩 진행해야 합니다. 명령만 보려면
-> 같은 디렉터리 [README](README.md)의 `## ⚡ 빠른 배포` 절을 참고하세요. tag를 찍는
-> 자동 배포는 뒤에서 다룹니다.
-
-1. 저장소를 클론하고 의존성을 설치합니다.
-
-   ```bash
-   git clone https://github.com/xwteam/agnes2api.git
-   cd agnes2api
-   pnpm install
-   ```
-
-2. key 풀을 위한 KV 네임스페이스를 만들고 `wrangler.toml`에 다시 씁니다.
-
-   ```bash
-   node scripts/setup-worker.mjs
-   ```
-
-   저장소의 `wrangler.toml`에 들어 있는 `id`는 항상 자리표시자입니다
-   (공개 저장소에는 실제 배포 정보를 전혀 넣지 않습니다), 그래서 이 단계는
-   필수입니다. 이 스크립트는 수동으로 `npx wrangler kv namespace create
-   POOL`을 실행하고 반환된 `id`를 `[[kv_namespaces]]` 블록의
-   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID` 자리에 붙여넣는 것과 같은 일을
-   합니다. **실행 후 이 `wrangler.toml` 변경 사항은 커밋하지 마세요**——
-   `check-wrangler-placeholder.mjs` CI 게이트가 실수로 커밋된 실제 id를
-   막습니다.
-
-3. 게이트웨이 토큰을 Worker secret으로 설정합니다(`wrangler.toml`에
-   절대 커밋하지 마세요).
-
-   ```bash
-   npx wrangler secret put GATEWAY_TOKEN
-   ```
-
-4. 배포합니다.
-
-   ```bash
-   npx wrangler deploy
-   ```
-
-### 태그 push 시 자동 배포
-
-`.github/workflows/deploy-worker.yml`은 `v*` 태그가 push될 때마다 Worker를
-자동으로 배포합니다. 단, 저장소의 **Settings → Secrets and variables →
-Actions**에 `CLOUDFLARE_API_TOKEN`이 설정되어 있어야 합니다. 설정되어 있지
-않으면 워크플로가 경고를 출력하고 배포 단계를 건너뛸 뿐, 전체 실행이
-실패하지는 않습니다.
-
-### 로컬 개발
-
-```bash
-pnpm dev:worker   # Worker 형태: 패널 자원을 먼저 생성한 뒤 wrangler dev
-pnpm dev:node     # Node 형태: 패널 자원을 생성하고 pnpm build 후 dist/entry/node.js 실행
-```
-
-⚠️ **둘 다 `node scripts/build-ui.mjs`로 시작하며, 이는 곁다리가 아닙니다**: 패널 자원은
-생성물(`src/ui/assets.generated.ts`)입니다. `npx wrangler dev`만으로도 뜨지만 패널은 마지막으로
-생성된 내용에 머뭅니다 —— `admin-ui/`를 고쳤는데 아무 변화가 없다면 대개 이것 때문입니다.
-
-`GATEWAY_TOKEN`은 `wrangler.toml`과 같은 디렉터리에 있는 로컬 `.dev.vars`
-파일(이미 `.gitignore`에 포함됨)에 작성하세요 —— 비밀 값을 `wrangler.toml`에
-직접 쓰지 마세요.
-
-⚠️ 이 파일은 `pnpm test:workers`가 무조건 workerd의 `env`로 읽어 들입니다
-(`@cloudflare/vitest-pool-workers`가 wrangler를 호출할 때 `envFiles`를 넘기지 않습니다).
-CI에는 이 파일이 없으므로 테스트 전에 `mv .dev.vars .dev.vars.off` 를 실행하세요.
-이 파일이 **`env`에 바인딩 이름을 하나 더 들여오는 순간** 저장소의 어서션 한 칸이 즉시
-빨간불이 됩니다——판정 기준은 키 이름 집합이므로, 빈 파일이거나 KV 바인딩과 같은 이름인
-`POOL`만 적은 경우에는 빨간불이 되지 않습니다.
-
-## Docker
-
-1. 저장소를 클론하고 환경 변수 파일을 준비합니다.
-
-   ```bash
-   git clone https://github.com/xwteam/agnes2api.git
-   cd agnes2api
-   cp .env.example .env
-   ```
-
-2. `.env`를 편집해 최소한 `GATEWAY_TOKEN`을 설정합니다. 나머지 변수는 위의
-   [환경 변수](#환경-변수) 표를 참고하세요.
-
-3. 컨테이너를 시작합니다.
-
-   ```bash
-   docker compose up -d
-   ```
-
-   **첫 이미지가 배포되기 전**(또는 fork 이후)에는 이 명령이 로컬 빌드로 폴백합니다 ——
-   `docker-compose.yml` 의 `build:` 블록이 그 역할을 합니다.
-
-   `docker-compose.yml`은 기본적으로 `8080` 포트를 게시하며(`.env`의
-   `PORT`로 재정의 가능), `./data`를 컨테이너 내부의 `/app/data`에
-   마운트합니다 —— `store.json`(key 풀 및 영속화된 설정)이 여기에
-   저장됩니다. 재시작/업그레이드 시에도 이 디렉터리를 반드시 유지하세요.
-   임포트된 key 풀의 유일한 사본입니다.
-
-4. 컨테이너가 정상적으로 기동했는지 확인합니다.
-
-   ```bash
-   curl http://localhost:8080/health
-   ```
-
-   이미지에는 `HEALTHCHECK`가 내장되어 있어 Docker가 이를 기준으로 컨테이너
-   상태를 보고합니다. 데이터 디렉터리에 쓸 수 없으면 `/health`는 `status`가
-   `degraded`인 `503`을 반환하고 컨테이너는 unhealthy로 표시됩니다. 구체적인 원인은
-   컨테이너 로그를 확인하세요.
-
-### 컨테이너가 `./data`의 소유자를 바꿉니다 (먼저 확인하세요)
-
-컨테이너는 **root로 entrypoint에 진입**해 두 가지를 한 뒤 권한을 낮춥니다:
-
-- `DATA_DIR`(기본 `/app/data`)의 소유자가 컨테이너 내 실행 사용자 `app`
-  (**uid 100 / gid 101**)과 다를 때에만 그 디렉터리를 재귀적으로 `chown`합니다.
-  소유자가 이미 일치하면 아무것도 바꾸지 않습니다.
-- 그다음 `su-exec`로 권한을 낮추므로 **메인 프로세스(PID 1)는 root가 아니라 app**으로
-  실행됩니다.
-
-런타임에 해야 하는 이유는, 바인드 마운트에서는 호스트 디렉터리의 소유자가 이미지 빌드
-시점의 `chown`을 덮어쓰기 때문입니다. 그러면 컨테이너 안의 app이 `store.json`에 쓸 수 없고,
-이 실패는 조용합니다(모든 API가 `pool_empty`를 반환).
-
-**부작용**: 바인드 마운트에서 바뀌는 것은 **호스트**의 파일입니다. `docker compose up -d`
-이후 여러분의 `./data`와 그 안의 파일 소유자는 본인 uid에서 `100:101`로 바뀌며, 이후
-호스트에서 읽고 쓰거나 백업하려면 `sudo`가 필요합니다. 원하지 않는다면 `--user`(또는
-compose의 `user:`)로 비 root 실행을 지정하세요. 그러면 entrypoint는 chown을 전혀 하지
-않으며, 데이터 디렉터리의 소유자와 쓰기 가능 여부는 직접 준비하게 됩니다.
-
-같은 이유로 이미지에는 **`USER app`이 없습니다**. 기본 사용자는 root입니다
-(`docker inspect --format '{{.Config.User}}' <image>`는 빈 값을 출력). 이는 Kubernetes에
-영향을 줍니다: `runAsNonRoot: true`를 설정하고 `runAsUser`를 명시하지 않으면 kubelet이
-컨테이너 기동을 거부합니다. 그런 배포에서는 `runAsUser: 100`, `runAsGroup: 101`(또는 원하는
-uid)을 명시하고 볼륨 소유자를 직접 준비하세요 —— 비 root로 기동하면 entrypoint는
-"chown 없이 그대로 실행" 분기를 탑니다.
-
-안전 경계: `DATA_DIR`이 `/`나 최상위 시스템 디렉터리(`/etc`, `/usr` 등)로 설정되면
-entrypoint는 그 위에서의 재귀 chown을 거부합니다(경고만 출력하고 기동은 계속). 컨테이너
-파일 시스템 전체가 app 쓰기 가능해지는 것을 막기 위함입니다.
-
-## 업스트림 Agnes key 임포트
+## 다중 계정 설정
 
 현재 버전의 게이트웨이는 key를 풀에 추가하기 위한 HTTP 엔드포인트를 제공하지
 않습니다. 저장소 백엔드에 직접 기록해야 합니다. 각 항목은 `key:<id>`를
@@ -902,7 +1029,7 @@ entrypoint는 그 위에서의 재귀 chown을 거부합니다(경고만 출력�
 }
 ```
 
-### Docker
+### Docker로 임포트
 
 실행 중인 프로세스와의 쓰기 경합을 피하기 위해 먼저 컨테이너를 중지한 뒤,
 호스트에서 `./data/store.json`을 편집해 `"key:1a2b3c4d5e6f7a8b"` 키
@@ -917,7 +1044,7 @@ docker compose start
 `./data/store.json`이 아직 없다면, `key:<id>` 형식의 키를 갖는 단일 JSON
 객체로 새로 만들면 됩니다.
 
-### Cloudflare Worker
+### Cloudflare Worker로 임포트
 
 wrangler로 레코드를 `POOL` KV 네임스페이스에 직접 씁니다.
 
@@ -929,6 +1056,8 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 
 `--remote`를 생략하면 프로덕션이 아니라 `wrangler dev`가 사용하는 로컬
 네임스페이스에 기록됩니다.
+
+### 색인과 반영까지 걸리는 시간
 
 게이트웨이는 풀의 id 목록을 `pool:index` 키에 보관하여 전달 요청마다 KV `list`를 쓰지 않게
 합니다(무료 등급의 `list` 할당량은 하루 1,000회뿐이며 읽기·쓰기와는 별개의 할당량입니다).
@@ -969,7 +1098,7 @@ Trigger가 `crons` 표현식대로 정확히 발동한다는 신뢰성을 문서
 해당 key는 일시적으로 사용할 수 없을 뿐이며, 데이터가 손실되거나 손상되지는
 않습니다.
 
-## key 폐기하기
+### key 폐기하기
 
 **레코드를 지우고, 그 id를 `pool:index`에서도 빼세요 — 두 단계 모두 해야 합니다.** 레코드만
 지워도 오류는 나지 않지만(읽을 수 없는 레코드는 그냥 걸러집니다) id가 색인에 남아, 다음
@@ -992,3 +1121,263 @@ colo에 보이기까지 그만큼 걸리기 때문입니다.
 레코드가 아직 있는지 먼저 확인하고, 읽히지 않으면 그 쓰기를 버리며 자신의 스냅숏을 즉시
 갱신합니다. 유일한 예외가 그 전파 창으로, 확인용 읽기가 KV 엣지 캐시에서 응답되면 그 colo는
 레코드가 아직 있다고 판단합니다. Docker(파일 저장소)에는 이 캐시가 없어 그쪽은 정확합니다.
+
+## 검증
+
+명령 세 개, 싼 것부터. `$BASE`는 본인 주소(Worker는 `https://{name}.{sub}.workers.dev`,
+Docker는 `http://localhost:8080`)로, `$TOKEN`은 본인이 설정한 `GATEWAY_TOKEN`으로 바꾸세요.
+
+### 헬스 체크
+
+```bash
+curl -s "$BASE/health"
+```
+
+`status`가 `ok`면 저장소를 읽고 쓸 수 있다는 뜻이고, `degraded`면 저장소 쪽에 문제가 있다는
+뜻이며 원인은 로그에 있습니다. **이 명령만 토큰이 필요 없어서**, 토큰이 틀렸을 때도 답이
+돌아오는 유일한 엔드포인트이기도 합니다.
+
+### 모델 목록
+
+```bash
+curl -s "$BASE/v1/models" -H "Authorization: Bearer $TOKEN"
+```
+
+이 게이트웨이가 다루는 모델 목록이 돌아옵니다. 이게 통과하면 토큰이 맞은 것이고, `401`이면
+틀린 것입니다.
+
+### 실제 대화 한 번
+
+```bash
+curl -s "$BASE/v1/chat/completions" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"agnes-2.0-flash","messages":[{"role":"user","content":"ping"}]}'
+```
+
+실제로 업스트림까지 가는 건 이 명령입니다. `503`이 오고 `error.reason`이 `pool_empty`면 풀에
+아직 key가 없다는 뜻이니, 위 절로 돌아가 하나 임포트하세요.
+
+## 문제 해결
+
+마주치기 쉬운 순서로 여섯 가지. 모두 "증상 → 해결" 형태이고, 해결은 위에서부터 차례로
+해 보세요.
+
+### 게이트웨이가 뜨지 않고 로그에 토큰이 없다는 한 줄만 나온다
+
+**증상**: 컨테이너나 Worker가 기동 직후 종료하고, 로그에는 `缺少 GATEWAY_TOKEN，网关无法启动` 한 줄뿐이다.
+
+**해결**:
+
+1. Docker: `.env`에 `GATEWAY_TOKEN=` 줄이 있고 **등호 뒤가 비어 있지 않은지** 확인합니다.
+2. Worker: `npx wrangler secret put GATEWAY_TOKEN`을 한 번 실행한 뒤 `npx wrangler deploy`.
+3. 저장된 설정이 망가져도 로드에 실패합니다. `RESET_CONFIG=1`로 한 번 기동해 복구하고, **복구한 뒤에는 그 줄을 지우세요**.
+
+### 모든 요청이 503을 주고 이유는 풀이 비었음
+
+**증상**: 어떤 전달 엔드포인트든 `503`을 주고 `error.reason`이 `pool_empty`다.
+
+**해결**:
+
+1. "다중 계정 설정" 절을 따라 key를 최소 한 개 임포트합니다.
+2. 이미 임포트했는데도 비어 있음: 손으로 쓴 레코드는 **`pool:index`를 건드리지 않습니다**. 대사(기본 30분)를 기다리거나 id를 직접 색인에 넣으세요.
+3. 레지스트라는 켜져 있는데 풀이 늘지 않음: 패널의 이벤트 보드를 보거나 [REGISTRAR.md](REGISTRAR.md)를 따라 두 메일함 채널을 점검하세요.
+
+### 패널이 열리지 않고 `/admin`이 404를 준다
+
+**증상**: 브라우저로 `/admin`을 열면 `404`가 온다. 로그인 화면도 `401`도 아니다.
+
+**해결**:
+
+1. **`ADMIN_TOKEN`을 설정하지 않았을 때**의 정상적인 모습입니다. 트리 자체가 등록되지 않으므로 "여기에 관리 화면이 있다"는 사실조차 새지 않습니다.
+2. 설정했는데도 404: 토큰이 규칙에 어긋납니다(24자 미만 / 앞뒤 공백 / 출력 불가 ASCII). 컨테이너 로그에 `admin.token_rejected`가 남습니다.
+3. 패널은 열리는데 엔드포인트가 `503`: `ADMIN_TOKEN`이 저장소의 `gatewayToken`과 충돌했습니다. 로그는 `admin.token_conflict`이고, 처리 방법은 위 절에 있습니다.
+
+### 패널에서 저장한 설정이 다른 인스턴스에 한참 반영되지 않는다
+
+**증상**: 패널에서 설정을 저장했고 이 인스턴스는 바로 바뀌었는데, 다른 복제본 / isolate는 여전히 옛 값이다.
+
+**해결**:
+
+1. **정상입니다**. 설정 홀더의 TTL은 30초, KV 엣지 캐시 기본값은 60초 ⇒ 상한은 약 **90초**입니다. 조금 기다렸다 다시 보세요.
+2. 2분이 지나도 그대로면: 그 필드가 환경 변수로 잠겨 있지 않은지 확인합니다. 잠긴 필드는 패널에서 흐리게 표시되고 엔드포인트는 `400 locked_by_env`를 줍니다.
+3. 바꾼 것이 `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS`라면: 이 둘은 **인스턴스를 만들 때 한 번만** 읽으므로 컨테이너 재시작이나 isolate 회수 외에는 방법이 없습니다.
+
+### 비스트리밍 요청이 무더기로 타임아웃되고 key 풀이 붉어진다
+
+**증상**: 이미지 생성, 비디오 작업 생성, 비스트리밍 대화가 무더기로 타임아웃되고 패널에서 key 한 무리가 쿨다운에 들어간다.
+
+**해결**:
+
+1. `UPSTREAM_SYNC_TIMEOUT_MS`를 **단일 호출 최악 소요 시간의 두 배 이상**으로 올립니다. 기본값 `120000`은 느린 모델에는 빡빡합니다.
+2. `UPSTREAM_TIMEOUT_MS`(첫 바이트 예산, 기본 `8000`)로 비스트리밍 요청을 묶지 마세요. 그 예산은 스트리밍과 비디오 폴링용입니다.
+3. 업스트림 전체가 느려진 게 아닌지 확인합니다. 한 요청 안에서 모든 key가 타임아웃되면 게이트웨이는 **어느 것도 벌하지 않습니다**. 쿨다운은 같은 요청에서 다른 key가 실제로 성공했을 때만 기록됩니다.
+
+### Docker 컨테이너는 떴는데 `/health`가 degraded다
+
+**증상**: `docker compose ps`가 unhealthy를 보이고 `/health`는 `503`, `status`는 `degraded`다.
+
+**해결**:
+
+1. 열에 아홉은 데이터 디렉터리에 쓰지 못하는 경우입니다. 컨테이너 로그의 entrypoint 줄을 읽고 `./data`의 소유자가 `100:101`인지 확인하세요.
+2. `--user`나 compose의 `user:`로 비 root를 지정했다면 entrypoint는 chown을 **하지 않습니다**. 소유자와 쓰기 가능 여부는 직접 준비해야 합니다.
+3. `DATA_DIR`가 `/`나 최상위 시스템 디렉터리를 가리키면 entrypoint는 재귀 chown을 거부하고 경고만 찍습니다 —— 멀쩡한 디렉터리로 바꾸세요.
+
+## 성능 최적화
+
+먼저 한 가지를 분명히 해 둡니다. **이 게이트웨이 자체는 시간을 거의 쓰지 않습니다.**
+비용은 두 곳에 있습니다 —— 업스트림 응답 시간, 그리고 저장소의 읽기/쓰기 할당량.
+그래서 이 절에서 만질 값어치가 있는 손잡이는 셋뿐입니다.
+
+```env
+# 선택: 각 isolate/프로세스가 key 풀 스냅숏을 유지하는 시간(밀리초). 0이면 캐시를 끔.
+# 키우면 KV 읽기를 아낌. 대가는 다른 인스턴스의 판정이 더 늦게 보인다는 점.
+POOL_CACHE_TTL_MS=120000
+
+# 선택: "마지막 사용 시각"을 저장하는 최대 간격(밀리초). 0이면 성공 요청마다 저장.
+# 표시 전용 필드라서 줄여 봐야 KV 쓰기만 늘고 스케줄링에는 아무 이득이 없음.
+POOL_TOUCH_INTERVAL_MS=21600000
+
+# 선택: 동기 엔드포인트(이미지, 비디오 작업, 모든 비스트리밍 대화)의 전체 예산(밀리초).
+# 단일 호출 최악 소요 시간의 두 배 이상으로 두지 않으면 정상 요청까지 죽고 key 풀이 상함.
+UPSTREAM_SYNC_TIMEOUT_MS=180000
+```
+
+효과가 큰 순서로 셋:
+
+1. **Worker + 무료 등급 KV에서 풀이 key 20개를 넘으면 `POOL_CACHE_TTL_MS`부터 키웁니다.**
+   기본값 그대로면 "key 20개, 활성 isolate 3개"에서 이미 읽기 할당량의 약 99.4%를 씁니다.
+   산식은 위 "할당량 계산"에 있습니다.
+2. **패널의 "마지막 사용"을 더 정확히 보겠다고 `POOL_TOUCH_INTERVAL_MS`를 줄이지 마세요.**
+   그건 표시 전용 필드인데 쓰기 할당량은 하루 1,000회뿐이고, 쿨다운과 제외 기록이 같은
+   할당량을 두고 다툽니다.
+3. **긴 요청은 스트리밍 엔드포인트로 옮기세요.** 첫 바이트 예산은 첫 바이트까지만 묶고 그
+   뒤의 생성 시간은 세지 않습니다. 비스트리밍 예산은 업스트림이 답을 다 만들 때까지를 품어야
+   하고, 두 형태의 플랫폼 쪽 거동이 같다는 보장도 없습니다.
+
+## 모니터링과 유지보수
+
+### 헬스 엔드포인트
+
+`/health`는 토큰이 필요 없는 유일한 엔드포인트이며 두 형태 모두에 있습니다.
+
+```bash
+curl -s "$BASE/health"
+```
+
+`status`가 `ok`면 저장소를 읽고 쓸 수 있다는 뜻이고, `degraded`면 저장소 쪽에 문제가 있다는
+뜻입니다(Docker에서는 대개 데이터 디렉터리에 쓰지 못하는 경우). Docker 형태에서는 이미지에
+내장된 `HEALTHCHECK`가 바로 이걸 때리고, `docker compose ps`의 healthy/unhealthy가 거기서
+나옵니다.
+
+### 패널의 이벤트 보드
+
+`ADMIN_TOKEN`을 설정하면 패널의 이벤트 보드가 게이트웨이가 스스로 남긴 진단 이벤트를
+등급별로 보여 줍니다(로그인 실패, 토큰 충돌, 보충 실패, 예산 소진 등).
+**로그를 대신하지는 못합니다**: 보관은 24시간이고 한 번의 폴링이 되짚는 키는 최대 48개입니다.
+오래 남겨야 한다면 컨테이너 로그를 어딘가로 보내세요.
+
+### 사용량 통계(기본값은 꺼짐)
+
+일／시간／모델／프로토콜별 시계열은 **기본값이 꺼짐**이고, 그 "꺼짐"은 무비용입니다 ——
+누적기를 만들지 않고 저장소 쓰기도 한 번도 일어나지 않습니다. 켜려면:
+
+```env
+# 선택: 패널 "사용량" 섹션의 Tier-2 시계열. 판정은 문자 그대로 true이고 1이나 yes는 꺼짐.
+# 켜면 인스턴스당 하루 최대 13회 put(쓰기 할당량의 약 10.4%), 미기록 꼬리는 최대 2시간.
+USAGE_STATS_ENABLED=true
+```
+
+켜기 전에 위 "할당량 계산"의 Tier-2 항목을 읽으세요. key 풀의 쿨다운/제외 기록과 같은 쓰기
+할당량을 두고 다툽니다.
+
+## 서비스 업그레이드
+
+각 형태의 업그레이드 명령은 해당 절의 "업데이트"에 있습니다
+([Cloudflare Worker](#cloudflare-worker-배포) / [Docker](#docker-배포)).
+이 절에서는 그 두 명령 바깥에 있는, 두 형태에 공통인 이야기를 합니다.
+
+### 업그레이드 전에
+
+1. **먼저 저장소를 백업합니다.** key 풀과 설정은 사본이 하나뿐입니다. 아래 "백업과 복구" 참고.
+2. **CHANGELOG를 한 번 봅니다.** 파괴적 변경은 거기 적힙니다. 여섯 개 README의 배지가 그곳을
+   가리킵니다.
+3. **업그레이드에 저장소 초기화는 필요 없습니다.** 저장된 레코드는 하위 호환이며 `pool:index`의
+   `v` 필드는 오늘 기준 항상 `1`입니다.
+
+### 업그레이드 후 확인할 것
+
+1. `/health`가 `200`을 주고 `status`가 `ok`일 것.
+2. 패널을(돌리고 있다면) 로그인할 수 있고 key 풀의 개수가 업그레이드 전과 같을 것.
+3. 위 "검증"의 세 번째 명령을 한 번 돌려 실제로 업스트림까지 닿는지 확인할 것.
+
+롤백: Docker는 이미지 tag를 이전 버전으로 고정하고 `docker compose up -d`를 다시 실행합니다.
+Worker는 Cloudflare 대시보드의 Deployments에서 되돌리거나, `git checkout`으로 이전 tag로
+돌아가 `npx wrangler deploy`를 다시 실행합니다.
+
+## 백업과 복구
+
+key 풀과 설정은 사본이 하나뿐이고 두 번째는 없습니다. **백업이란 저장소 자체를 뜨는
+일입니다.**
+
+### Docker
+
+```bash
+docker compose stop
+cp -a ./data ./data.bak
+docker compose start
+```
+
+한 번 멈추는 것은 쓰기 경합을 피하기 위해서입니다. `./data/store.json` 안에 전부 들어 있습니다:
+key 레코드, `pool:index`, 그리고 저장소 쪽 설정. 복구는 디렉터리를 되돌려 놓고
+`docker compose up -d` 하면 됩니다.
+
+### Cloudflare Worker
+
+```bash
+npx wrangler kv key list --binding=POOL --remote
+npx wrangler kv key get --binding=POOL "pool:index" --remote
+```
+
+`key:<id>`를 하나씩 꺼내 파일로 남기면 됩니다. 복구는 `npx wrangler kv key put`으로 하며,
+아래 key 임포트와 같은 방식입니다.
+
+> [!WARNING]
+> 백업 파일에는 **평문 key와 평문 자격 증명**이 들어 있습니다(게이트웨이 토큰도, 두 메일함
+> 채널의 API Key도 저장소 쪽 설정에 있습니다). 자격 증명으로 취급하세요: 저장소에 넣지 말고,
+> 공개 오브젝트 스토리지에도 올리지 마세요.
+
+## 보안 권장사항
+
+- **`GATEWAY_TOKEN`과 `ADMIN_TOKEN`은 서로 다른 두 개여야 합니다.** 앞의 것은 **모든
+  다운스트림 사용자**에게 나눠 주는 중계 토큰입니다. 그것을 패널 토큰으로 돌려쓰면 key 풀
+  전체, 레지스트라 스위치, 등록 백엔드 주소까지 함께 넘기는 셈입니다.
+- **패널은 TLS 뒤에 두고 신뢰하는 머신에서만 여세요.** 패널은 `ADMIN_TOKEN`을 브라우저의
+  localStorage에 그대로 보관하며, 파생 토큰도 제품 내 폐기 경로도 없습니다. 12시간 뒤에 다시
+  입력하게 하는 것은 창을 줄일 뿐 **폐기가 아닙니다**.
+- **`TRUST_PROXY`는 게이트웨이가 정말로 프록시 뒤에 있을 때만 켜세요.** 일반 리버스 프록시
+  뒤에서 켤 때는 그 프록시에서 `CF-Connecting-IP`를 떼어내세요. 그러지 않으면 공격자가 직접
+  붙인 값이 프록시가 방금 쓴 `X-Forwarded-For`를 눌러 버립니다.
+- **데이터 디렉터리, KV 네임스페이스, 백업 파일은 모두 자격 증명으로 취급하세요.** key도
+  패널로 써 넣은 자격 증명도 전부 평문으로 저장되며, key 평문 저장과 같은 수위입니다.
+
+최소한의 보안 기준 설정:
+
+```env
+# 필수: 클라이언트가 이 게이트웨이를 호출할 때 제시해야 하는 토큰. 다운스트림에 나눠 주는 값입니다.
+GATEWAY_TOKEN=본인의 긴 랜덤 문자열로 교체
+
+# 선택: 관리 패널 토큰. 설정하지 않으면 /admin 트리 전체가 등록되지 않아 401이 아니라 404가 옵니다.
+# GATEWAY_TOKEN과 달라야 하고, 24자 이상이며 출력 가능한 ASCII만 씁니다.
+ADMIN_TOKEN=또 다른 긴 랜덤 문자열로 교체
+
+# 선택: 게이트웨이가 정말로 프록시 뒤에 있을 때만 1로 둡니다. Worker 형태가 여기에 해당합니다.
+TRUST_PROXY=1
+```
+
+## 다음 단계
+
+- 사용법과 네 프로토콜의 SDK 연결: [USAGE.md](USAGE.md)
+- 엔드포인트·파라미터·에러 코드: [API.md](API.md)
+- 웹 관리 패널: [ADMIN.md](ADMIN.md)
+- 레지스트라(자동 풀 보충): [REGISTRAR.md](REGISTRAR.md)

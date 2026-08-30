@@ -157,7 +157,11 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   "ja｜免费档｜DEPLOY=無料プラン+無料枠｜README=無料枠",
   "ja｜凭据｜ADMIN=資格情報｜API=認証情報｜DEPLOY=認証情報+資格情報｜README=認証情報｜REGISTRAR=認証情報+資格情報｜USAGE=認証情報",
   "ja｜并发｜ADMIN=並行｜DEPLOY=並行+同時実行｜REGISTRAR=並行",
-  "ja｜排障｜ADMIN=障害対応｜REGISTRAR=トラブルシューティング",
+  // ⚠️ P3f 阶段 7B（W99）新增 `DEPLOY=トラブルシューティング` 那一格：DEPLOY.md 的 15 节骨架
+  // 由 `DOC_SECTIONS` 钉死，ja 第 9 槽的译名就是 `## トラブルシューティング`（W124 从两仓实测
+  // 出来的 K∩G 值）。⇒ 这一格**不是新的漏翻，是骨架落地的必然结果**，而且它让这一条欠账
+  // 从「ADMIN 与 REGISTRAR 两份打架」变成「ADMIN 一份孤立」——修的时候动 ADMIN 那一份即可。
+  "ja｜排障｜ADMIN=障害対応｜DEPLOY=トラブルシューティング｜REGISTRAR=トラブルシューティング",
   "ja｜文档｜ADMIN=ドキュメント+文書｜API=ドキュメント｜DEPLOY=ドキュメント+文書｜README=ドキュメント｜SPONSORS=ドキュメント",
   "ja｜注册机｜ADMIN=レジストラ+レジストラー｜DEPLOY=レジストラ+レジストラー｜README=レジストラー｜REGISTRAR=レジストラー｜SPONSORS=レジストラ",
   "ja｜默认｜ADMIN=既定｜API=既定｜DEPLOY=デフォルト+既定｜README=既定｜REGISTRAR=デフォルト+既定｜USAGE=既定",

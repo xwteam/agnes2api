@@ -4,7 +4,283 @@ agnes2api ships as two deployment targets built from the same codebase and reque
 logic — pick whichever fits your infrastructure. They differ only in storage backend: the
 Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volume.
 
-## Environment variables
+## System Requirements
+
+The two forms have different prerequisites. Read the column for the path you picked;
+you do not need both.
+
+| Item | Cloudflare Worker | Docker |
+|------|-------------------|--------|
+| Local runtime | Node.js 20+ (only to run `wrangler` and the build) | Not needed |
+| Command line | `npx wrangler` (installed by `pnpm install`) | Docker Engine 24+ and `docker compose` |
+| Platform | A Cloudflare account; the free tier is enough | A machine that can run containers |
+| Upstream | At least one Agnes API key, see the next section | At least one Agnes API key, see the next section |
+
+> [!TIP]
+> The Docker path needs nothing but a machine with Docker: `cp .env.example .env`, then a single
+> `docker compose up -d` brings it up.
+> The Worker path needs no server at all, but you must create a KV namespace in your own
+> Cloudflare account first — there is no substitute for that step.
+
+## Getting Agnes Credentials
+
+The gateway does not mint keys. All it does is spread requests across the one or more Agnes
+API keys you already hold. There are two ways to get one, and **they are equal peers** — this
+document does not pick a primary for you.
+
+### Getting one by hand
+
+Sign up on the Agnes platform, create an API key in its console, and copy it out.
+This gives you exactly one key at a time, which is what you want while getting the gateway
+running and confirming all four protocols work.
+
+### Letting the registrar refill the pool
+
+The repository ships an optional registrar that refills the pool up to `TARGET_KEYS` on its own.
+It is **off by default** (leave `REGISTRAR_ENABLED` unset and it stays off). How it works, how to
+choose between the two mailbox channels, and the Cloudflare Cron wall-clock ceiling are all
+documented in [REGISTRAR.md](REGISTRAR.md).
+
+> [!IMPORTANT]
+> Either way the key lands **in plain text** in KV / `store.json`. Treat the data directory and
+> the KV namespace as credentials.
+
+## Choosing a Deployment Form
+
+Both forms are built from the same codebase: all four protocols, the admin panel and the
+registrar exist on both sides. These are the only differences:
+
+| Dimension | Cloudflare Worker | Docker |
+|-----------|-------------------|--------|
+| Where it runs | Your own Cloudflare account, at the edge | Your own server or laptop |
+| Storage backend | A KV namespace (the `POOL` binding) | `store.json` on a mounted volume |
+| Server required | No | Yes |
+| Quota limits | Free-tier KV: 100,000 reads and 1,000 writes per day | Only your own machine |
+| Scheduled refill | The Cron in `wrangler.toml` | `TEND_INTERVAL_MS` |
+| Very long non-streaming requests | No platform wall-clock guarantee to lean on, see below | Only the budget you configure |
+
+**Neither path is the primary one**: take Docker if you already have a server, take the Worker if
+you would rather not run one. Running both is fine too, but **do not let them share one set of
+keys while each keeps its own state** — cooldowns and evictions are written into storage, the two
+stores know nothing about each other, and the same key ends up judged twice.
+
+## Cloudflare Worker Deployment
+
+### Prerequisites
+
+> [!NOTE]
+> **This repository ships no one-click Cloudflare deploy button** — that path cannot work
+> here. The KV namespace id in `wrangler.toml` is always a placeholder (a public repo
+> carries no real deployment details; `scripts/check-wrangler-placeholder.mjs` enforces
+> that in CI), and `GATEWAY_TOKEN` is a mandatory sensitive value that can only be
+> injected as a secret — miss either one and it will not start (`src/core/config.ts`
+> throws the moment it cannot read it). A one-click flow can do neither for you, so the
+> steps below have to be walked through by hand. For a command-only overview see the
+> `## ⚡ Quick Deployment` section of the [README](README.md) in this directory;
+> tag-triggered automatic deployment is covered further down.
+
+Clone the repository and install dependencies:
+
+```bash
+git clone https://github.com/xwteam/agnes2api.git
+cd agnes2api
+pnpm install
+```
+
+### Configuration
+
+1. Create a KV namespace for the key pool and write it back into `wrangler.toml`:
+
+   ```bash
+   node scripts/setup-worker.mjs
+   ```
+
+   The `id` in the repo's `wrangler.toml` is always a placeholder (the public repo
+   ships no real deployment details), so this step is mandatory. The script does the
+   same thing as manually running `npx wrangler kv namespace create POOL` and then
+   pasting the returned `id` into the `[[kv_namespaces]]` block in place of
+   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`. **Do not commit this change to
+   `wrangler.toml`** afterward — the `check-wrangler-placeholder.mjs` CI gate blocks
+   an accidentally committed real id.
+
+2. Set the gateway token as a Worker secret (never commit it to `wrangler.toml`):
+
+   ```bash
+   npx wrangler secret put GATEWAY_TOKEN
+   ```
+
+#### Local development
+
+```bash
+pnpm dev:worker   # Worker shape: build the panel assets first, then wrangler dev
+pnpm dev:node     # Node shape: build the panel assets, pnpm build, then run dist/entry/node.js
+```
+
+⚠️ **Both start with `node scripts/build-ui.mjs`, and that is not incidental**: the panel assets
+are a build product (`src/ui/assets.generated.ts`). A bare `npx wrangler dev` still starts, but the
+panel stays on whatever was generated last — if you changed `admin-ui/` and see nothing, this is
+usually why.
+
+Put `GATEWAY_TOKEN` into a local `.dev.vars` file next to `wrangler.toml` (already
+git-ignored) — do not put secrets directly in `wrangler.toml`.
+
+⚠️ This file is read unconditionally into workerd's `env` by `pnpm test:workers`
+(`@cloudflare/vitest-pool-workers` does not pass `envFiles` when it calls wrangler),
+and CI has no such file ⇒ run `mv .dev.vars .dev.vars.off` before the tests. The
+repository has one assertion that turns red on the spot once the file brings **an extra
+binding name** into `env` — it compares the set of key names, so an empty file, or one
+that only sets `POOL` (the same name as the KV binding), stays green.
+
+Put `GATEWAY_TOKEN` in that file, in the same format as `.env`:
+
+```env
+# Required: the token clients must present to call this gateway.
+# Anything works for local development, but do not paste the production one in here.
+GATEWAY_TOKEN=local-dev-token-change-me
+
+# Optional: the admin panel token. Leave it out and the panel stays off locally too.
+# Must differ from GATEWAY_TOKEN, at least 24 characters, printable ASCII only.
+ADMIN_TOKEN=local-dev-admin-token-change-me
+```
+
+### Deploy
+
+Deploy:
+
+```bash
+npx wrangler deploy
+```
+
+#### Automatic deploy on tag push
+
+`.github/workflows/deploy-worker.yml` deploys the Worker automatically whenever a `v*` tag is
+pushed, provided the repository secret `CLOUDFLARE_API_TOKEN` is configured under
+**Settings → Secrets and variables → Actions**. If it isn't set, the workflow logs a warning
+and skips the deploy step without failing the run.
+
+### Verify
+
+When the deploy finishes wrangler prints `https://{name}.{sub}.workers.dev`. Use that as the base
+URL for one health check:
+
+```bash
+curl -s https://your-worker.your-subdomain.workers.dev/health
+```
+
+A `200` with `status` set to `ok` means it is up. The full three-command check is further down.
+
+### Update
+
+```bash
+git pull
+pnpm install
+npx wrangler deploy
+```
+
+The key pool and the config in KV are **untouched**: a deploy replaces the code, the binding still
+points at the same namespace. `wrangler.toml` is locally modified (the namespace id was written by
+`setup-worker.mjs`), so when `git pull` reports a conflict there, keep your local id.
+
+## Docker Deployment
+
+### Prerequisites
+
+Clone the repository and prepare the environment file:
+
+```bash
+git clone https://github.com/xwteam/agnes2api.git
+cd agnes2api
+cp .env.example .env
+```
+
+### Configuration
+
+Edit `.env` and set at least `GATEWAY_TOKEN`. See the [environment variables](#environment-variables)
+table below for everything else.
+
+The smallest usable `.env` is two lines; everything else has a default and can be added later:
+
+```env
+# Required: the token clients must present to call this gateway. This is what you hand downstream.
+GATEWAY_TOKEN=replace-with-your-own-long-random-string
+
+# Optional: the listen port of the Node runtime; the Worker ignores this variable.
+# docker-compose.yml also uses it as the port published on the host.
+PORT=8080
+```
+
+#### The data directory and its owner: the container rewrites `./data` (read this first)
+
+The container **enters its entrypoint as root**, does two things, and only then drops
+privileges:
+
+- If `DATA_DIR` (default `/app/data`) is not owned by the in-container runtime user `app`
+  (**uid 100 / gid 101**), it recursively `chown`s that directory. If ownership already
+  matches, nothing is rewritten.
+- It then re-executes the server through `su-exec`, so the **main process (PID 1) runs as
+  `app`, not as root**.
+
+This has to happen at runtime because with a bind mount the host directory's ownership
+overrides the build-time `chown` baked into the image, leaving the in-container `app` user
+unable to write `store.json` — a silent failure in which every API call returns `pool_empty`.
+
+**Side effect:** with a bind mount those are *host* files. After `docker compose up -d`, your
+`./data` and everything in it is owned by `100:101` instead of your own uid, and you will need
+`sudo` to read, write, or back it up from the host. If you do not want that, run the container
+as a non-root user with `--user` (or compose's `user:`): the entrypoint then skips the `chown`
+entirely and you provide a directory your chosen uid can write.
+
+For the same reason the image deliberately has **no `USER app`**, so its default user is root
+(`docker inspect --format '{{.Config.User}}' <image>` prints nothing). This matters on
+Kubernetes: with `runAsNonRoot: true` and no explicit `runAsUser`, the kubelet refuses to start
+the container. Such deployments should set `runAsUser: 100` and `runAsGroup: 101` (or any uid of
+your own) and prepare the volume ownership themselves — a non-root start takes the entrypoint's
+"no chown, exec directly" branch.
+
+Safety boundary: if `DATA_DIR` is set to `/` or to a top-level system directory (`/etc`, `/usr`,
+…), the entrypoint refuses to recursively chown it (it only prints a warning and still starts),
+so a stray value cannot make the whole container filesystem writable by `app`.
+
+### Deploy
+
+Start the container:
+
+```bash
+docker compose up -d
+```
+
+**Before the first published image exists** (or in a fork), this command falls back to
+building the image locally — that is what the `build:` block in `docker-compose.yml` is for.
+
+`docker-compose.yml` publishes port `8080` (override with `PORT` in `.env`) and mounts
+`./data` into `/app/data` inside the container — that's where `store.json` (the key pool
+and any persisted config) lives. Keep that directory around across restarts/upgrades; it's
+your only copy of the imported key pool.
+
+### Verify
+
+Check it came up healthy:
+
+```bash
+curl http://localhost:8080/health
+```
+
+The image also ships a `HEALTHCHECK` that Docker uses to report container health. If the
+data directory is not writable, `/health` answers `503` with `"status": "degraded"`, the
+container is marked unhealthy, and the underlying reason is in the container logs.
+
+### Update
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+`./data` is left alone — the key pool and the config live there. **Back that directory up before
+upgrading** (see "Backup and Restore" below): it is the only copy of the imported key pool, and
+there is no second one.
+
+## Environment Variables
 
 | Variable | Required | Default | Notes |
 |--------|--------|-------|-----|
@@ -779,154 +1055,7 @@ conditioned on the client staying connected.
    `UPSTREAM_SYNC_TIMEOUT_MS` to a value you have measured, or switch to a streaming
    endpoint (the first-byte budget).
 
-## Cloudflare Worker
-
-### Manual deploy
-
-> [!NOTE]
-> **This repository ships no one-click Cloudflare deploy button** — that path cannot work
-> here. The KV namespace id in `wrangler.toml` is always a placeholder (a public repo
-> carries no real deployment details; `scripts/check-wrangler-placeholder.mjs` enforces
-> that in CI), and `GATEWAY_TOKEN` is a mandatory sensitive value that can only be
-> injected as a secret — miss either one and it will not start (`src/core/config.ts`
-> throws the moment it cannot read it). A one-click flow can do neither for you, so the
-> steps below have to be walked through by hand. For a command-only overview see the
-> `## ⚡ Quick Deployment` section of the [README](README.md) in this directory;
-> tag-triggered automatic deployment is covered further down.
-
-1. Clone the repository and install dependencies:
-
-   ```bash
-   git clone https://github.com/xwteam/agnes2api.git
-   cd agnes2api
-   pnpm install
-   ```
-
-2. Create a KV namespace for the key pool and write it back into `wrangler.toml`:
-
-   ```bash
-   node scripts/setup-worker.mjs
-   ```
-
-   The `id` in the repo's `wrangler.toml` is always a placeholder (the public repo
-   ships no real deployment details), so this step is mandatory. The script does the
-   same thing as manually running `npx wrangler kv namespace create POOL` and then
-   pasting the returned `id` into the `[[kv_namespaces]]` block in place of
-   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`. **Do not commit this change to
-   `wrangler.toml`** afterward — the `check-wrangler-placeholder.mjs` CI gate blocks
-   an accidentally committed real id.
-
-3. Set the gateway token as a Worker secret (never commit it to `wrangler.toml`):
-
-   ```bash
-   npx wrangler secret put GATEWAY_TOKEN
-   ```
-
-4. Deploy:
-
-   ```bash
-   npx wrangler deploy
-   ```
-
-### Automatic deploy on tag push
-
-`.github/workflows/deploy-worker.yml` deploys the Worker automatically whenever a `v*` tag is
-pushed, provided the repository secret `CLOUDFLARE_API_TOKEN` is configured under
-**Settings → Secrets and variables → Actions**. If it isn't set, the workflow logs a warning
-and skips the deploy step without failing the run.
-
-### Local development
-
-```bash
-pnpm dev:worker   # Worker shape: build the panel assets first, then wrangler dev
-pnpm dev:node     # Node shape: build the panel assets, pnpm build, then run dist/entry/node.js
-```
-
-⚠️ **Both start with `node scripts/build-ui.mjs`, and that is not incidental**: the panel assets
-are a build product (`src/ui/assets.generated.ts`). A bare `npx wrangler dev` still starts, but the
-panel stays on whatever was generated last — if you changed `admin-ui/` and see nothing, this is
-usually why.
-
-Put `GATEWAY_TOKEN` into a local `.dev.vars` file next to `wrangler.toml` (already
-git-ignored) — do not put secrets directly in `wrangler.toml`.
-
-⚠️ This file is read unconditionally into workerd's `env` by `pnpm test:workers`
-(`@cloudflare/vitest-pool-workers` does not pass `envFiles` when it calls wrangler),
-and CI has no such file ⇒ run `mv .dev.vars .dev.vars.off` before the tests. The
-repository has one assertion that turns red on the spot once the file brings **an extra
-binding name** into `env` — it compares the set of key names, so an empty file, or one
-that only sets `POOL` (the same name as the KV binding), stays green.
-
-## Docker
-
-1. Clone the repository and prepare the environment file:
-
-   ```bash
-   git clone https://github.com/xwteam/agnes2api.git
-   cd agnes2api
-   cp .env.example .env
-   ```
-
-2. Edit `.env` and set at least `GATEWAY_TOKEN`. See the [environment variables](#environment-variables)
-   table above for everything else.
-
-3. Start the container:
-
-   ```bash
-   docker compose up -d
-   ```
-
-   **Before the first published image exists** (or in a fork), this command falls back to
-   building the image locally — that is what the `build:` block in `docker-compose.yml` is for.
-
-   `docker-compose.yml` publishes port `8080` (override with `PORT` in `.env`) and mounts
-   `./data` into `/app/data` inside the container — that's where `store.json` (the key pool
-   and any persisted config) lives. Keep that directory around across restarts/upgrades; it's
-   your only copy of the imported key pool.
-
-4. Check it came up healthy:
-
-   ```bash
-   curl http://localhost:8080/health
-   ```
-
-   The image also ships a `HEALTHCHECK` that Docker uses to report container health. If the
-   data directory is not writable, `/health` answers `503` with `"status": "degraded"`, the
-   container is marked unhealthy, and the underlying reason is in the container logs.
-
-### The container rewrites the ownership of `./data` (read this first)
-
-The container **enters its entrypoint as root**, does two things, and only then drops
-privileges:
-
-- If `DATA_DIR` (default `/app/data`) is not owned by the in-container runtime user `app`
-  (**uid 100 / gid 101**), it recursively `chown`s that directory. If ownership already
-  matches, nothing is rewritten.
-- It then re-executes the server through `su-exec`, so the **main process (PID 1) runs as
-  `app`, not as root**.
-
-This has to happen at runtime because with a bind mount the host directory's ownership
-overrides the build-time `chown` baked into the image, leaving the in-container `app` user
-unable to write `store.json` — a silent failure in which every API call returns `pool_empty`.
-
-**Side effect:** with a bind mount those are *host* files. After `docker compose up -d`, your
-`./data` and everything in it is owned by `100:101` instead of your own uid, and you will need
-`sudo` to read, write, or back it up from the host. If you do not want that, run the container
-as a non-root user with `--user` (or compose's `user:`): the entrypoint then skips the `chown`
-entirely and you provide a directory your chosen uid can write.
-
-For the same reason the image deliberately has **no `USER app`**, so its default user is root
-(`docker inspect --format '{{.Config.User}}' <image>` prints nothing). This matters on
-Kubernetes: with `runAsNonRoot: true` and no explicit `runAsUser`, the kubelet refuses to start
-the container. Such deployments should set `runAsUser: 100` and `runAsGroup: 101` (or any uid of
-your own) and prepare the volume ownership themselves — a non-root start takes the entrypoint's
-"no chown, exec directly" branch.
-
-Safety boundary: if `DATA_DIR` is set to `/` or to a top-level system directory (`/etc`, `/usr`,
-…), the entrypoint refuses to recursively chown it (it only prints a warning and still starts),
-so a stray value cannot make the whole container filesystem writable by `app`.
-
-## Importing an upstream Agnes key
+## Multi-Account Configuration
 
 This version of the gateway does not expose an HTTP endpoint for adding keys to the pool —
 you write directly into the storage backend. Each entry is a JSON object keyed as
@@ -947,7 +1076,7 @@ so any unique identifier works for a manual import):
 }
 ```
 
-### Docker
+### Importing into Docker
 
 Stop the container first to avoid a write race with the running process, edit
 `./data/store.json` on the host to add an entry like the one above under the key
@@ -962,7 +1091,7 @@ docker compose start
 If `./data/store.json` doesn't exist yet, create it containing a single JSON object whose
 keys are the `key:<id>` strings.
 
-### Cloudflare Worker
+### Importing into Cloudflare Worker
 
 Write the record straight into the `POOL` KV namespace with wrangler:
 
@@ -974,6 +1103,8 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 
 Omit `--remote` to write into the local namespace used by `wrangler dev` instead of
 production.
+
+### The index and how long changes take to show up
 
 The gateway keeps a `pool:index` key listing the pool's ids so that forwarding never spends a
 KV `list` operation (the free-tier `list` quota is only 1,000/day and is a separate bucket from
@@ -1014,7 +1145,7 @@ how long an orphaned record or ghost index entry takes to be reclaimed**; in the
 worst case it can take longer than the expected "up to 30 minutes". During that
 wait the affected key is simply unusable, not lost or corrupted.
 
-## Revoking a key
+### Revoking a key
 
 **Delete the record, then remove its id from `pool:index` — do both steps.** Deleting only the
 record is not an error (unreadable records are simply filtered out), but the id stays in the
@@ -1039,3 +1170,270 @@ gateway first confirms the record still exists, and drops the write — refreshi
 immediately — when it does not. The one exception is that same propagation window: if the
 confirming read is served by KV's edge cache, this colo still believes the record is there.
 Docker (file storage) has no such cache, so there the guarantee is exact.
+
+## Verification
+
+Three commands, cheapest first. Replace `$BASE` with your own address (the Worker's is
+`https://{name}.{sub}.workers.dev`, Docker's is `http://localhost:8080`) and `$TOKEN` with the
+`GATEWAY_TOKEN` you set.
+
+### Health check
+
+```bash
+curl -s "$BASE/health"
+```
+
+`status` of `ok` means storage is readable and writable; `degraded` means something is wrong on
+the storage side and the reason is in the logs. **This one needs no token**, which also makes it
+the only endpoint that still answers when the token is wrong.
+
+### Model list
+
+```bash
+curl -s "$BASE/v1/models" -H "Authorization: Bearer $TOKEN"
+```
+
+You get back the list of models this gateway serves. If this passes, the token is right; a `401`
+means it is not.
+
+### One real conversation
+
+```bash
+curl -s "$BASE/v1/chat/completions" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"agnes-2.0-flash","messages":[{"role":"user","content":"ping"}]}'
+```
+
+This is the one that actually reaches upstream. A `503` whose `error.reason` is `pool_empty` means
+the pool has no key yet — go back to the section above and import one.
+
+## Troubleshooting
+
+Six of them, ordered by when you are likely to hit them. Each is "symptom → fix", and the
+numbered steps are meant to be worked through in order.
+
+### The gateway will not start and the log has one line about a missing token
+
+**Symptom**: The container or the Worker exits right after startup and the log contains nothing but `缺少 GATEWAY_TOKEN，网关无法启动`.
+
+**Fix**:
+
+1. Docker: check that `.env` has a `GATEWAY_TOKEN=` line and that **there is something after the equals sign**.
+2. Worker: run `npx wrangler secret put GATEWAY_TOKEN` once, then `npx wrangler deploy`.
+3. A corrupted stored config also fails to load. Boot once with `RESET_CONFIG=1` to recover, and **remove that line once you have**.
+
+### Every request answers 503 because the pool is empty
+
+**Symptom**: Every forwarding endpoint answers `503` with `error.reason` set to `pool_empty`.
+
+**Fix**:
+
+1. Import at least one key following the "Multi-Account Configuration" section.
+2. Already imported and still empty: a hand-written record **does not touch `pool:index`**, so either wait for one reconciliation (30 minutes by default) or add the id to the index by hand.
+3. The registrar is on but the pool never grows: check the panel's events board, or follow [REGISTRAR.md](REGISTRAR.md) to debug the two mailbox channels.
+
+### The panel will not open and `/admin` answers 404
+
+**Symptom**: Opening `/admin` in a browser gives a `404` — not a login page, and not a `401` either.
+
+**Fix**:
+
+1. That is exactly what **no `ADMIN_TOKEN`** looks like: the whole tree is never registered, so nothing leaks the fact that there is a panel here.
+2. Set and still 404: the token is non-compliant (under 24 characters / leading or trailing whitespace / non-printable ASCII), and the container log has an `admin.token_rejected` line.
+3. The panel opens but its endpoints answer `503`: `ADMIN_TOKEN` collides with the stored `gatewayToken`; the log says `admin.token_conflict`, and the section above tells you how to handle it.
+
+### A setting saved in the panel takes ages to reach the other replicas
+
+**Symptom**: You saved a setting in the panel, this instance changed immediately, and another replica or isolate still serves the old value.
+
+**Fix**:
+
+1. That is **normal**: the config holder's TTL is 30 seconds and KV's edge cache defaults to 60, so the ceiling is about **90 seconds**. Wait and look again.
+2. Still unchanged after two minutes: check that the field is not locked by an environment variable — locked fields are greyed out in the panel and the endpoint answers `400 locked_by_env`.
+3. You changed `POOL_CACHE_TTL_MS` or `POOL_TOUCH_INTERVAL_MS`: those two are **read once when the instance is built**, so only a container restart or an isolate recycle will do it.
+
+### Non-streaming requests time out in bulk and the key pool goes red
+
+**Symptom**: Image generation, video job creation or non-streaming chat time out in batches, and a group of keys enters cooldown in the panel.
+
+**Fix**:
+
+1. Raise `UPSTREAM_SYNC_TIMEOUT_MS` to **more than twice the worst-case duration of a single call**: the default `120000` is tight for slow models.
+2. Do not use `UPSTREAM_TIMEOUT_MS` (the first-byte budget, default `8000`) to bound non-streaming requests — that budget is for streaming and video polling.
+3. Rule out a general upstream slowdown: when every key in one request times out, the gateway **penalises none of them**; a cooldown is only recorded once a different key in the same request actually succeeds.
+
+### The Docker container is up but `/health` says degraded
+
+**Symptom**: `docker compose ps` shows unhealthy, `/health` answers `503`, and `status` is `degraded`.
+
+**Fix**:
+
+1. Nine times out of ten the data directory is not writable. Read the entrypoint lines in the container log and check whether `./data` is owned by `100:101`.
+2. If you pinned a non-root user with `--user` or compose's `user:`, the entrypoint **does not** chown anything and you have to prepare ownership and writability yourself.
+3. When `DATA_DIR` points at `/` or a top-level system directory the entrypoint refuses to chown recursively and only prints a warning — point it somewhere sane.
+
+## Performance Tips
+
+First, get one thing straight: **the gateway itself costs almost no time**. The cost sits in two
+places — upstream response time, and the read/write quota of your storage. So only three knobs in
+this section are worth touching.
+
+```env
+# Optional: how long each isolate/process keeps its key-pool snapshot, in ms; 0 disables the cache.
+# Raising it saves KV reads; the cost is that cooldowns/evictions decided elsewhere show up later.
+POOL_CACHE_TTL_MS=120000
+
+# Optional: how often "last used" is persisted, in ms; 0 persists on every successful request.
+# It is a display-only field — lowering it only multiplies KV writes and buys no scheduling gain.
+POOL_TOUCH_INTERVAL_MS=21600000
+
+# Optional: total timeout budget for synchronous endpoints (images, video jobs, all non-streaming
+# chat), in ms. Set it above twice the worst-case single call, or healthy requests get killed.
+UPSTREAM_SYNC_TIMEOUT_MS=180000
+```
+
+Three rules of thumb, most valuable first:
+
+1. **On Worker + free-tier KV with more than 20 keys in the pool, raise `POOL_CACHE_TTL_MS` first.**
+   At the default, "20 keys and 3 active isolates" already burns about 99.4% of the read quota;
+   the arithmetic is in the quota section above.
+2. **Do not lower `POOL_TOUCH_INTERVAL_MS` just to make the panel's "last used" more precise.**
+   That is a display-only field, the write quota is only 1,000 per day, and cooldown/eviction
+   bookkeeping competes for the same bucket.
+3. **Move long requests to the streaming endpoints.** The first-byte budget only bounds the first
+   byte; however long generation takes afterwards is not counted. The non-streaming budget has to
+   cover the upstream computing the whole answer, and the two forms may not even behave the same
+   way at the platform level.
+
+## Monitoring and Maintenance
+
+### The health endpoint
+
+`/health` is the only endpoint that needs no token, and both forms have it:
+
+```bash
+curl -s "$BASE/health"
+```
+
+`status` of `ok` means storage is readable and writable; `degraded` means something is wrong there
+(on Docker it is usually a data directory that cannot be written). On Docker the image's built-in
+`HEALTHCHECK` calls exactly this, and healthy/unhealthy in `docker compose ps` comes from it.
+
+### The panel's events board
+
+Once `ADMIN_TOKEN` is set, the panel's events board lists the diagnostic events the gateway
+records for itself, by level (failed logins, token conflicts, failed refills, exhausted
+budgets, and so on). It is **not a replacement for logs**: it keeps 24 hours, and a single poll
+looks back at most 48 keys. For long-term retention, ship the container logs somewhere.
+
+### Usage statistics (off by default)
+
+The by-day / by-hour / by-model / by-protocol time series is **off by default**, and "off" is
+zero-cost — no accumulator is built and not one storage write happens. To turn it on:
+
+```env
+# Optional: the Tier-2 time series behind the panel's "Usage" section. The check is a literal
+# true; 1 or yes count as off. Once on, each instance writes at most 13 puts per day (~10.4% of
+# the write quota) and the unflushed tail is at most 2 hours.
+USAGE_STATS_ENABLED=true
+```
+
+Read the Tier-2 part of the quota section above before switching it on: it competes for the same
+write bucket as the key pool's cooldown and eviction bookkeeping.
+
+## Upgrading the Service
+
+The upgrade command for each form lives in the "Update" part of its own section
+([Cloudflare Worker](#cloudflare-worker-deployment) / [Docker](#docker-deployment)). This section
+is about everything around those two commands that is the same on both sides.
+
+### Before you upgrade
+
+1. **Back the storage up first.** There is exactly one copy of the key pool and the config; see
+   "Backup and Restore" below.
+2. **Glance at the CHANGELOG.** Breaking changes are recorded there; the version badge in all six
+   READMEs points at it.
+3. **An upgrade never requires wiping storage.** Stored records are backward compatible, and the
+   `v` field of `pool:index` is always `1` today.
+
+### What to check afterwards
+
+1. `/health` answers `200` with `status` set to `ok`.
+2. The panel (if you run one) still logs in and the key pool has the same number of entries as
+   before.
+3. Run the third command from "Verification" above to confirm requests really reach upstream.
+
+Rolling back: on Docker, pin the image tag to the previous version and run `docker compose up -d`
+again; on the Worker, roll back from Deployments in the Cloudflare dashboard, or `git checkout`
+the previous tag and run `npx wrangler deploy` again.
+
+## Backup and Restore
+
+There is one copy of the key pool and the config, and no second one.
+**Backing up means backing up the storage itself.**
+
+### Docker
+
+```bash
+docker compose stop
+cp -a ./data ./data.bak
+docker compose start
+```
+
+Stopping first avoids a write race. `./data/store.json` holds everything: the key records,
+`pool:index`, and the storage-side config. Restoring is copying the directory back and running
+`docker compose up -d`.
+
+### Cloudflare Worker
+
+```bash
+npx wrangler kv key list --binding=POOL --remote
+npx wrangler kv key get --binding=POOL "pool:index" --remote
+```
+
+Pull each `key:<id>` out into a file; restoring goes through `npx wrangler kv key put`, exactly
+like importing a key below.
+
+> [!WARNING]
+> A backup file contains **keys and credentials in plain text** (the gateway token and both
+> mailbox channels' API keys live in the storage-side config). Treat it as a credential: not in a
+> repository, not in a public object store.
+
+## Security Recommendations
+
+- **`GATEWAY_TOKEN` and `ADMIN_TOKEN` must be two different tokens.** The former is the relay
+  token you hand to **every downstream user**; reusing it for the panel hands over the whole key
+  pool, the registrar switch and the registration backend URL along with it.
+- **Put the panel behind TLS and only open it on machines you trust.** The panel keeps
+  `ADMIN_TOKEN` verbatim in the browser's localStorage; there is no derived token and no in-product
+  revocation path. Asking for it again after 12 hours shortens the window, **it is not revocation**.
+- **Only turn `TRUST_PROXY` on when the gateway really sits behind a proxy.** Behind a generic
+  reverse proxy, strip `CF-Connecting-IP` there as well, or an attacker who supplies one outranks
+  the `X-Forwarded-For` your proxy just wrote.
+- **Treat the data directory, the KV namespace and every backup as credentials.** Keys and the
+  credentials written through the panel are all stored in plain text, at the same level as the
+  keys themselves.
+
+A minimal security baseline:
+
+```env
+# Required: the token clients must present to call this gateway. This is what you hand downstream.
+GATEWAY_TOKEN=replace-with-your-own-long-random-string
+
+# Optional: the admin panel token. Unset means the whole /admin tree is never registered, so
+# visiting it gives 404 rather than 401. Must differ from GATEWAY_TOKEN, at least 24 characters,
+# printable ASCII only.
+ADMIN_TOKEN=replace-with-another-long-random-string
+
+# Optional: set to 1 only when the gateway really sits behind a proxy. The Worker form is one of
+# those cases and should have it set.
+TRUST_PROXY=1
+```
+
+## Next Steps
+
+- Usage and SDK wiring for all four protocols: [USAGE.md](USAGE.md)
+- Endpoints, parameters and error codes: [API.md](API.md)
+- The web admin panel: [ADMIN.md](ADMIN.md)
+- The registrar (automatic pool refill): [REGISTRAR.md](REGISTRAR.md)

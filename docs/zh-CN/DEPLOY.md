@@ -4,6 +4,254 @@ agnes2api 提供两种部署形态，构建自同一套代码与请求处理逻�
 两者仅在存储后端上有区别：Worker 用 Cloudflare KV 命名空间，Docker 用挂载卷上的 JSON
 文件。
 
+## 环境要求
+
+两种形态各有各的前置，按你选的那条路读就行，不必两边都备齐。
+
+| 项 | Cloudflare Worker | Docker |
+|----|-------------------|--------|
+| 本机运行时 | Node.js 20+（只用来跑 `wrangler` 与构建） | 不需要 |
+| 命令行 | `npx wrangler`（随 `pnpm install` 装上） | Docker Engine 24+ 与 `docker compose` |
+| 平台 | 一个 Cloudflare 账号，免费档即可 | 一台能跑容器的机器 |
+| 上游 | 至少一把 Agnes API key，见下一节 | 至少一把 Agnes API key，见下一节 |
+
+> [!TIP]
+> Docker 那条路只要一台装了 Docker 的机器，`cp .env.example .env` 之后一条 `docker compose up -d` 就能起来。
+> Worker 那条路不需要服务器，但要先在你自己的 Cloudflare 账号里建一个 KV 命名空间——这一步没有替代品。
+
+## 获取 Agnes 凭据
+
+网关自己不产生 key，它只是把请求分发到你手上那一把或几把 Agnes API key 上。
+拿到 key 有两条路，**两条平级**，不预设主备。
+
+### 手动获取
+
+去 Agnes 平台注册账号，在后台新建一把 API key，复制出来备用。
+这条路一次只给你一把，适合先把网关跑通、确认四种协议都通了再说。
+
+### 让注册机自动补池
+
+本仓自带一套可选的注册机，能按 `TARGET_KEYS` 把池子自动补到目标数量。
+它**默认关闭**（`REGISTRAR_ENABLED` 不设就是关），工作原理、两条邮箱通道怎么选、
+Cloudflare Cron 的墙钟上限，完整说明见 [REGISTRAR.md](REGISTRAR.md)。
+
+> [!IMPORTANT]
+> 无论走哪条路，key 都以**明文**落在 KV / `store.json` 里。数据目录与 KV 命名空间请按凭据处置。
+
+## 选哪种形态
+
+两种形态构建自同一套代码，四种协议、管理面板、注册机两边都在。差别只有这几项：
+
+| 维度 | Cloudflare Worker | Docker |
+|------|-------------------|--------|
+| 跑在哪 | 你自己的 Cloudflare 账号，边缘节点 | 你自己的服务器或本机 |
+| 存储后端 | KV 命名空间（`POOL` 绑定） | 挂载卷上的 `store.json` |
+| 要不要服务器 | 不要 | 要 |
+| 配额约束 | 免费档 KV 每天 100,000 次读、1,000 次写 | 只受你自己那台机器约束 |
+| 定时补池 | `wrangler.toml` 里的 Cron | `TEND_INTERVAL_MS` |
+| 超长非流式请求 | 平台没有可依赖的墙钟承诺，见下文 | 只受你自己配的预算约束 |
+
+**两条路没有主次**：手上已经有服务器就走 Docker，不想管服务器就走 Worker。
+两边都跑起来也行，但**别让它们共用同一批 key 而各存各的状态**——冷却与剔除是写在存储里的，
+两份存储互不知情，同一把 key 会被判两次。
+
+## Cloudflare Worker 部署
+
+### 前置条件
+
+> [!NOTE]
+> **本仓库不提供 Cloudflare 一键部署按钮**，那条路在这里走不通：仓库里 `wrangler.toml`
+> 的 KV namespace id 永远是占位符（公开仓不放真实部署细节，CI 里由
+> `scripts/check-wrangler-placeholder.mjs` 守着），而 `GATEWAY_TOKEN` 是必填的敏感值、
+> 只能以 secret 注入——两项缺任何一项都起不来（`src/core/config.ts` 读不到它就直接抛错）。
+> 一键流程这两项都替你办不了，所以下面这几步必须自己走一遍。命令速览见同目录
+> [README](README.md) 的 `## ⚡ 快速部署` 一节；打 tag 自动部署见下文。
+
+克隆仓库并安装依赖：
+
+```bash
+git clone https://github.com/xwteam/agnes2api.git
+cd agnes2api
+pnpm install
+```
+
+### 配置
+
+1. 为 key 池创建一个 KV 命名空间并写回 `wrangler.toml`：
+
+   ```bash
+   node scripts/setup-worker.mjs
+   ```
+
+   仓库里 `wrangler.toml` 的 `id` 永远是占位符（公开仓不放任何真实部署细节），
+   这一步必不可少。脚本内部做的事等价于手动执行 `npx wrangler kv namespace
+   create POOL` 后把返回的 `id` 填进 `[[kv_namespaces]]` 段替换掉
+   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`。**跑完不要提交这次对 `wrangler.toml`
+   的改动**——`check-wrangler-placeholder.mjs` 那道 CI 门禁会拦下误提交的真实 id。
+
+2. 把网关令牌设置为 Worker secret（绝不要提交进 `wrangler.toml`）：
+
+   ```bash
+   npx wrangler secret put GATEWAY_TOKEN
+   ```
+
+#### 本地开发
+
+```bash
+pnpm dev:worker   # Worker 形态：先生成面板资源，再起 wrangler dev
+pnpm dev:node     # Node 形态：先生成面板资源，再 pnpm build，然后跑 dist/entry/node.js
+```
+
+⚠️ **两条都以 `node scripts/build-ui.mjs` 开头，这不是顺手加的**：面板的资源是**生成物**
+（`src/ui/assets.generated.ts`），直接跑 `npx wrangler dev` 起得来，但面板会停在上一次生成的
+那一份——改了 `admin-ui/` 却看不到变化，多半就是这个。
+
+把 `GATEWAY_TOKEN` 写进 `wrangler.toml` 同目录下的本地 `.dev.vars` 文件（已加入
+`.gitignore`）——不要把密钥直接写进 `wrangler.toml`。
+
+⚠️ 这个文件会被 `pnpm test:workers` 无条件读进 workerd 的 `env`
+（`@cloudflare/vitest-pool-workers` 调 wrangler 时不传 `envFiles`），而 CI 上没有它
+⇒ 跑测试前先 `mv .dev.vars .dev.vars.off`。仓库里有一格断言会在它**往 `env` 里多带进
+一个绑定名**时当场红——判据看的是键名集合，所以空文件、或者只写了与 KV 绑定同名的
+`POOL`，都不会红。
+
+把 `GATEWAY_TOKEN` 写进这个文件，格式与 `.env` 一样：
+
+```env
+# 必填：客户端调用本网关时必须携带的令牌。
+# 本地开发用什么都行，但别把生产那把写进来。
+GATEWAY_TOKEN=local-dev-token-change-me
+
+# 可选：管理面板口令。不设就等于本地也不开面板。
+# 必须与 GATEWAY_TOKEN 不同，且至少 24 位、纯可打印 ASCII。
+ADMIN_TOKEN=local-dev-admin-token-change-me
+```
+
+### 部署
+
+部署：
+
+```bash
+npx wrangler deploy
+```
+
+#### 打 tag 自动部署
+
+`.github/workflows/deploy-worker.yml` 会在推送 `v*` tag 时自动部署 Worker，前提是仓库
+在 **Settings → Secrets and variables → Actions** 中配置了 `CLOUDFLARE_API_TOKEN`。若未
+配置，工作流会打印警告并跳过部署步骤，不会导致整个运行失败。
+
+### 验证
+
+部署完成后 wrangler 会打印出 `https://{name}.{sub}.workers.dev`，拿它当基址跑一次健康检查：
+
+```bash
+curl -s https://your-worker.your-subdomain.workers.dev/health
+```
+
+回 `200` 且 `status` 为 `ok` 就算起来了。完整的三条验证命令见下文。
+
+### 更新
+
+```bash
+git pull
+pnpm install
+npx wrangler deploy
+```
+
+KV 里的 key 池与配置**不受影响**：Worker 换的是代码，绑定的还是同一个命名空间。
+`wrangler.toml` 是本地改过的（namespace id 被 `setup-worker.mjs` 写过），
+`git pull` 撞上冲突时保留你本地那一份 id。
+
+## Docker 部署
+
+### 前置条件
+
+克隆仓库并准备环境变量文件：
+
+```bash
+git clone https://github.com/xwteam/agnes2api.git
+cd agnes2api
+cp .env.example .env
+```
+
+### 配置
+
+编辑 `.env`，至少设置 `GATEWAY_TOKEN`。其余变量见下文的
+[环境变量](#环境变量) 表。
+
+`.env` 的最小可用形态就两行；其余变量都有默认值，需要时再加：
+
+```env
+# 必填：客户端调用本网关时必须携带的令牌。发给下游用户的就是它。
+GATEWAY_TOKEN=换成你自己的长随机串
+
+# 可选：Node 运行时的监听端口，Worker 不使用该变量。
+# docker-compose.yml 会把它同时用作宿主侧发布的端口。
+PORT=8080
+```
+
+#### 数据目录与属主：容器会改写 `./data`（请先知悉）
+
+容器**以 root 进入 entrypoint**，做两件事后再降权：
+
+- 若 `DATA_DIR`（默认 `/app/data`）的属主与容器内运行用户 `app`（**uid 100 / gid 101**）
+  不一致，就递归 `chown` 该目录；属主已经一致时不做任何改写。
+- 随后用 `su-exec` 降权，**主进程（PID 1）以 app 运行，不是 root**。
+
+必须在运行期做这件事的原因是：绑定挂载时宿主目录的属主会盖过镜像里构建期的 `chown`，
+容器内的 app 因此写不进 `store.json`，而这种失败是静默的（所有 API 返回 `pool_empty`）。
+
+**副作用**：绑定挂载改的是**宿主**上的文件——`docker compose up -d` 之后，你的 `./data`
+及其中的文件属主会从你自己的 uid 变成 `100:101`，之后在宿主上读写或备份它需要 `sudo`。
+不希望发生这件事的话，用 `--user`（或 compose 的 `user:`）指定非 root 运行：此时
+entrypoint 完全不 chown，数据目录的属主与可写性由你自己准备。
+
+出于同样的原因，镜像**没有** `USER app`，默认用户是 root
+（`docker inspect --format '{{.Config.User}}' <image>` 输出为空）。这对 Kubernetes 有影响：
+配了 `runAsNonRoot: true` 却没显式给 `runAsUser` 时，kubelet 会拒绝启动该容器。这类部署请
+显式写 `runAsUser: 100`、`runAsGroup: 101`（或任何你自己的 uid），并自行准备卷的属主——
+非 root 启动时 entrypoint 走的是「不 chown、直接执行」的分支。
+
+安全边界：`DATA_DIR` 被设成 `/` 或某个顶层系统目录（`/etc`、`/usr` 等）时，entrypoint
+拒绝在其上递归 chown（只打印警告，不影响启动），避免把整个容器文件系统改成 app 可写。
+
+### 部署
+
+启动容器：
+
+```bash
+docker compose up -d
+```
+
+**首个镜像发布之前**（或 fork 之后），这条命令会回落到本地构建——
+`docker-compose.yml` 里那段 `build:` 就是干这个的。
+
+`docker-compose.yml` 默认发布 `8080` 端口（可通过 `.env` 里的 `PORT` 覆盖），并把
+`./data` 挂载到容器内的 `/app/data`——`store.json`（key 池与任何持久化配置）就存在
+这里。重启/升级时务必保留这个目录，它是已导入 key 池的唯一副本。
+
+### 验证
+
+确认容器健康：
+
+```bash
+curl http://localhost:8080/health
+```
+
+镜像内置了 `HEALTHCHECK`，Docker 会据此上报容器健康状态。数据目录不可写时 `/health`
+返回 `503` 且 `status` 为 `degraded`，容器会被标成 unhealthy，具体原因见容器日志。
+
+### 更新
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+`./data` 不动，key 池与配置都在那儿。**升级前先备份那个目录**（见下文「备份和恢复」）：
+它是已导入 key 池的唯一副本，没有第二份。
+
 ## 环境变量
 
 | 变量 | 是否必填 | 默认值 | 说明 |
@@ -609,137 +857,7 @@ key——这两种状态被视为「这个 key 已失效」，重试没有意义
    的数字。真要跑长请求，把 `UPSTREAM_SYNC_TIMEOUT_MS` 调到你实测能过的范围，
    或者改用流式端点（首字节档）。
 
-## Cloudflare Worker
-
-### 手动部署
-
-> [!NOTE]
-> **本仓库不提供 Cloudflare 一键部署按钮**，那条路在这里走不通：仓库里 `wrangler.toml`
-> 的 KV namespace id 永远是占位符（公开仓不放真实部署细节，CI 里由
-> `scripts/check-wrangler-placeholder.mjs` 守着），而 `GATEWAY_TOKEN` 是必填的敏感值、
-> 只能以 secret 注入——两项缺任何一项都起不来（`src/core/config.ts` 读不到它就直接抛错）。
-> 一键流程这两项都替你办不了，所以下面这几步必须自己走一遍。命令速览见同目录
-> [README](README.md) 的 `## ⚡ 快速部署` 一节；打 tag 自动部署见下文。
-
-1. 克隆仓库并安装依赖：
-
-   ```bash
-   git clone https://github.com/xwteam/agnes2api.git
-   cd agnes2api
-   pnpm install
-   ```
-
-2. 为 key 池创建一个 KV 命名空间并写回 `wrangler.toml`：
-
-   ```bash
-   node scripts/setup-worker.mjs
-   ```
-
-   仓库里 `wrangler.toml` 的 `id` 永远是占位符（公开仓不放任何真实部署细节），
-   这一步必不可少。脚本内部做的事等价于手动执行 `npx wrangler kv namespace
-   create POOL` 后把返回的 `id` 填进 `[[kv_namespaces]]` 段替换掉
-   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`。**跑完不要提交这次对 `wrangler.toml`
-   的改动**——`check-wrangler-placeholder.mjs` 那道 CI 门禁会拦下误提交的真实 id。
-
-3. 把网关令牌设置为 Worker secret（绝不要提交进 `wrangler.toml`）：
-
-   ```bash
-   npx wrangler secret put GATEWAY_TOKEN
-   ```
-
-4. 部署：
-
-   ```bash
-   npx wrangler deploy
-   ```
-
-### 打 tag 自动部署
-
-`.github/workflows/deploy-worker.yml` 会在推送 `v*` tag 时自动部署 Worker，前提是仓库
-在 **Settings → Secrets and variables → Actions** 中配置了 `CLOUDFLARE_API_TOKEN`。若未
-配置，工作流会打印警告并跳过部署步骤，不会导致整个运行失败。
-
-### 本地开发
-
-```bash
-pnpm dev:worker   # Worker 形态：先生成面板资源，再起 wrangler dev
-pnpm dev:node     # Node 形态：先生成面板资源，再 pnpm build，然后跑 dist/entry/node.js
-```
-
-⚠️ **两条都以 `node scripts/build-ui.mjs` 开头，这不是顺手加的**：面板的资源是**生成物**
-（`src/ui/assets.generated.ts`），直接跑 `npx wrangler dev` 起得来，但面板会停在上一次生成的
-那一份——改了 `admin-ui/` 却看不到变化，多半就是这个。
-
-把 `GATEWAY_TOKEN` 写进 `wrangler.toml` 同目录下的本地 `.dev.vars` 文件（已加入
-`.gitignore`）——不要把密钥直接写进 `wrangler.toml`。
-
-⚠️ 这个文件会被 `pnpm test:workers` 无条件读进 workerd 的 `env`
-（`@cloudflare/vitest-pool-workers` 调 wrangler 时不传 `envFiles`），而 CI 上没有它
-⇒ 跑测试前先 `mv .dev.vars .dev.vars.off`。仓库里有一格断言会在它**往 `env` 里多带进
-一个绑定名**时当场红——判据看的是键名集合，所以空文件、或者只写了与 KV 绑定同名的
-`POOL`，都不会红。
-
-## Docker
-
-1. 克隆仓库并准备环境变量文件：
-
-   ```bash
-   git clone https://github.com/xwteam/agnes2api.git
-   cd agnes2api
-   cp .env.example .env
-   ```
-
-2. 编辑 `.env`，至少设置 `GATEWAY_TOKEN`。其余变量见上文的
-   [环境变量](#环境变量) 表。
-
-3. 启动容器：
-
-   ```bash
-   docker compose up -d
-   ```
-
-   **首个镜像发布之前**（或 fork 之后），这条命令会回落到本地构建——
-   `docker-compose.yml` 里那段 `build:` 就是干这个的。
-
-   `docker-compose.yml` 默认发布 `8080` 端口（可通过 `.env` 里的 `PORT` 覆盖），并把
-   `./data` 挂载到容器内的 `/app/data`——`store.json`（key 池与任何持久化配置）就存在
-   这里。重启/升级时务必保留这个目录，它是已导入 key 池的唯一副本。
-
-4. 确认容器健康：
-
-   ```bash
-   curl http://localhost:8080/health
-   ```
-
-   镜像内置了 `HEALTHCHECK`，Docker 会据此上报容器健康状态。数据目录不可写时 `/health`
-   返回 `503` 且 `status` 为 `degraded`，容器会被标成 unhealthy，具体原因见容器日志。
-
-### 容器会改写 `./data` 的属主（请先知悉）
-
-容器**以 root 进入 entrypoint**，做两件事后再降权：
-
-- 若 `DATA_DIR`（默认 `/app/data`）的属主与容器内运行用户 `app`（**uid 100 / gid 101**）
-  不一致，就递归 `chown` 该目录；属主已经一致时不做任何改写。
-- 随后用 `su-exec` 降权，**主进程（PID 1）以 app 运行，不是 root**。
-
-必须在运行期做这件事的原因是：绑定挂载时宿主目录的属主会盖过镜像里构建期的 `chown`，
-容器内的 app 因此写不进 `store.json`，而这种失败是静默的（所有 API 返回 `pool_empty`）。
-
-**副作用**：绑定挂载改的是**宿主**上的文件——`docker compose up -d` 之后，你的 `./data`
-及其中的文件属主会从你自己的 uid 变成 `100:101`，之后在宿主上读写或备份它需要 `sudo`。
-不希望发生这件事的话，用 `--user`（或 compose 的 `user:`）指定非 root 运行：此时
-entrypoint 完全不 chown，数据目录的属主与可写性由你自己准备。
-
-出于同样的原因，镜像**没有** `USER app`，默认用户是 root
-（`docker inspect --format '{{.Config.User}}' <image>` 输出为空）。这对 Kubernetes 有影响：
-配了 `runAsNonRoot: true` 却没显式给 `runAsUser` 时，kubelet 会拒绝启动该容器。这类部署请
-显式写 `runAsUser: 100`、`runAsGroup: 101`（或任何你自己的 uid），并自行准备卷的属主——
-非 root 启动时 entrypoint 走的是「不 chown、直接执行」的分支。
-
-安全边界：`DATA_DIR` 被设成 `/` 或某个顶层系统目录（`/etc`、`/usr` 等）时，entrypoint
-拒绝在其上递归 chown（只打印警告，不影响启动），避免把整个容器文件系统改成 app 可写。
-
-## 导入 Agnes 上游 key
+## 多账号配置
 
 当前版本的网关没有提供导入 key 的 HTTP 接口，需要直接写入存储后端。每条记录是一个
 键为 `key:<id>` 的 JSON 对象，`<id>` 可以是池内唯一的任意字符串（网关自己创建记录时
@@ -758,7 +876,7 @@ entrypoint 完全不 chown，数据目录的属主与可写性由你自己准备
 }
 ```
 
-### Docker
+### 导入到 Docker
 
 先停止容器，避免与正在运行的进程产生写入竞争；在宿主机上编辑 `./data/store.json`，
 在键 `"key:1a2b3c4d5e6f7a8b"` 下加入如上记录，然后再启动容器：
@@ -772,7 +890,7 @@ docker compose start
 如果 `./data/store.json` 还不存在，直接新建一个 JSON 对象文件，键为若干个
 `key:<id>` 字符串即可。
 
-### Cloudflare Worker
+### 导入到 Cloudflare Worker
 
 用 wrangler 直接把记录写进 `POOL` KV 命名空间：
 
@@ -783,6 +901,8 @@ npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
 ```
 
 不加 `--remote` 则写入 `wrangler dev` 使用的本地命名空间，而不是生产环境。
+
+### 索引与可见时延
 
 网关用一个 `pool:index` 键保存池内的 id 列表，这样每次转发都不必消耗 KV 的 `list` 操作
 （免费档的 `list` 配额只有每天 1,000 次，是独立于读、写之外的另一个桶）。**手工写记录不会
@@ -815,7 +935,7 @@ npx wrangler kv key put --binding=POOL "pool:index" \
 **孤儿记录 / 幽灵索引项被捡回索引的时间没有保证**，极端情况下可能比预期的
 「最长 30 分钟」更晚。这段等待期间该 key 只是暂时用不上，不会造成数据损坏。
 
-## 吊销一把 key
+### 吊销一把 key
 
 **删记录、再把 id 从 `pool:index` 里摘掉，两步都要做。** 只删记录不会出错（读不到的记录会被
 直接过滤掉），但索引里那个 id 还在，每次刷新都白付一次读，要等下一次对账才会被剪掉。
@@ -835,3 +955,242 @@ Worker 上还要再加一个 KV 的传播窗口（约 60 秒），因为删除�
 **这段窗口里它也不会被写回来**：网关在落盘任何状态变更之前都会先确认记录还在，读不到就
 丢弃这次写并立刻刷新自己的快照。唯一的例外同样是那个传播窗口——确认用的那次读若被 KV
 的边缘缓存挡下，本 colo 会以为记录还在。Docker（文件存储）没有这层缓存，那里是精确的。
+
+## 验证部署
+
+三条命令，从最便宜的一条开始。把 `$BASE` 换成你自己的地址
+（Worker 是 `https://{name}.{sub}.workers.dev`，Docker 是 `http://localhost:8080`），
+`$TOKEN` 换成你设的 `GATEWAY_TOKEN`。
+
+### 健康检查
+
+```bash
+curl -s "$BASE/health"
+```
+
+`status` 为 `ok` 表示存储可读可写；`degraded` 表示存储那一侧有问题，具体原因见日志。
+**这一条不需要令牌**，所以它也是唯一一条在令牌配错时仍然回得来的端点。
+
+### 模型列表
+
+```bash
+curl -s "$BASE/v1/models" -H "Authorization: Bearer $TOKEN"
+```
+
+回来的是本网关支持的模型清单。这一条能过，说明令牌对上了；回 `401` 就是令牌不对。
+
+### 一次真实对话
+
+```bash
+curl -s "$BASE/v1/chat/completions" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"agnes-2.0-flash","messages":[{"role":"user","content":"ping"}]}'
+```
+
+这一条才真的打到上游。回 `503` 且 `error.reason` 是 `pool_empty`，说明池子里还没有 key，
+回上面那一节导入一把。
+
+## 常见问题
+
+六条按会遇到的先后排。每条都是「症状 → 解决方案」，解决方案按顺序做。
+
+### 网关起不来，日志里只有一行缺少令牌
+
+**症状**：容器或 Worker 一启动就退出，日志里只有 `缺少 GATEWAY_TOKEN，网关无法启动` 这一行。
+
+**解决方案**：
+
+1. Docker：确认 `.env` 里有 `GATEWAY_TOKEN=`，而且**等号后面不是空的**。
+2. Worker：跑一次 `npx wrangler secret put GATEWAY_TOKEN`，再 `npx wrangler deploy`。
+3. 存储里的配置被写坏也会让装载失败。这时用 `RESET_CONFIG=1` 起一次救回来，**救回之后记得去掉这一行**。
+
+### 所有请求都回 503，理由是池子空的
+
+**症状**：任何一条转发端点都回 `503`，`error.reason` 是 `pool_empty`。
+
+**解决方案**：
+
+1. 按「多账号配置」那一节导入至少一把 key。
+2. 已经导入了却仍然是空的：手工写记录**不会动 `pool:index`**，等一次对账（默认 30 分钟）或者手动把 id 补进索引。
+3. 注册机开着但池子不涨：去看面板的事件板块，或按 [REGISTRAR.md](REGISTRAR.md) 排查两条邮箱通道。
+
+### 面板打不开，`/admin` 回 404
+
+**症状**：浏览器打开 `/admin` 得到 `404`，不是登录页，也不是 `401`。
+
+**解决方案**：
+
+1. 这就是**没配 `ADMIN_TOKEN`** 时的正常形态：整棵树压根没注册，所以不会泄漏「这里有个后台」。
+2. 配了仍然 404：口令不合规（少于 24 位 / 首尾有空白 / 含非可打印 ASCII），容器日志里会有一条 `admin.token_rejected`。
+3. 面板能开但接口回 `503`：`ADMIN_TOKEN` 与存储里的 `gatewayToken` 撞了，日志里是 `admin.token_conflict`，按上文那一段处置。
+
+### 改了面板里的设置，别的实例半天不生效
+
+**症状**：在面板里保存了配置，本实例立刻变了，另一个副本 / isolate 还是旧值。
+
+**解决方案**：
+
+1. 这是**正常的**：配置持有者的 TTL 是 30 秒，KV 边缘缓存默认 60 秒 ⇒ 上界约 **90 秒**。等一等再看。
+2. 超过两分钟仍然不变：确认那个字段没有被环境变量锁住——被锁的字段面板会置灰，接口回 `400 locked_by_env`。
+3. 改的是 `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` 这两个旋钮：它们**建实例时读一次**，只能重启容器 / 等 isolate 回收。
+
+### 非流式请求大量超时，key 池跟着变红
+
+**症状**：图片生成、视频建任务或非流式对话成片超时，面板上一批 key 进了冷却。
+
+**解决方案**：
+
+1. 把 `UPSTREAM_SYNC_TIMEOUT_MS` 调到**单次调用最坏耗时的两倍以上**：默认 `120000` 对慢模型偏紧。
+2. 别拿 `UPSTREAM_TIMEOUT_MS`（首字节档，默认 `8000`）去卡非流式请求——那一档是给流式与视频轮询的。
+3. 确认不是上游整体变慢：同一次请求里每一把 key 都超时时，网关**一把都不惩罚**，冷却只会在换的另一把真的成功之后才记。
+
+### Docker 容器起来了，但 `/health` 是 degraded
+
+**症状**：`docker compose ps` 显示 unhealthy，`/health` 回 `503`，`status` 是 `degraded`。
+
+**解决方案**：
+
+1. 九成是数据目录写不进去。看容器日志里 entrypoint 那几行，确认 `./data` 的属主是不是 `100:101`。
+2. 用 `--user` 或 compose 的 `user:` 指定了非 root 运行时，entrypoint **不会** chown，属主与可写性得你自己准备。
+3. `DATA_DIR` 被设成 `/` 或某个顶层系统目录时 entrypoint 拒绝递归 chown，只打警告——换一个正常的目录。
+
+## 性能优化
+
+先认清一件事：**这个网关自己几乎不花时间**，开销在两处——上游的响应时间，以及存储的读写配额。
+所以这一节只有三个旋钮值得动。
+
+```env
+# 可选：每个 isolate/进程缓存 key 池快照的存活时长，单位毫秒；0 = 关闭缓存。
+# 调大 = 省 KV 读配额；代价是别的实例判定的冷却/剔除更晚才可见。
+POOL_CACHE_TTL_MS=120000
+
+# 可选：「最后使用时间」最多多久落盘一次，单位毫秒；0 = 每次成功请求都落盘。
+# 它是纯展示字段，调小只会等量放大 KV 写量，换不来任何调度上的好处。
+POOL_TOUCH_INTERVAL_MS=21600000
+
+# 可选：同步端点（图片、视频建任务、所有非流式对话）的整体超时预算，单位毫秒。
+# 设成单次调用最坏耗时的两倍以上，否则正常请求会被误杀并连累 key 池。
+UPSTREAM_SYNC_TIMEOUT_MS=180000
+```
+
+三条经验，按收益排：
+
+1. **Worker + 免费档 KV、池子超过 20 把 key 时，先调大 `POOL_CACHE_TTL_MS`。**
+   默认值在「20 把 key、3 个活跃 isolate」处已经用掉约 99.4% 的读配额，算式见上文「配额账」。
+2. **别为了让面板上的「最后使用」准一点去调小 `POOL_TOUCH_INTERVAL_MS`。**
+   那是纯展示字段，而写配额每天只有 1,000 次，冷却与剔除的记账和它抢同一个桶。
+3. **长请求改用流式端点。** 首字节档的超时只卡第一个字节，后面生成多久都不再计时；
+   非流式那一档要等上游把整段答案算完，两种形态在平台侧的表现还不一定一样。
+
+## 监控和维护
+
+### 健康端点
+
+`/health` 是唯一不需要令牌的端点，两种形态都有：
+
+```bash
+curl -s "$BASE/health"
+```
+
+`status` 为 `ok` = 存储可读可写；`degraded` = 存储那一侧有问题（Docker 上多半是数据目录写不进去）。
+Docker 形态下镜像内置的 `HEALTHCHECK` 就是打这条，`docker compose ps` 里的 healthy/unhealthy 由它来。
+
+### 面板的事件板块
+
+配了 `ADMIN_TOKEN` 之后，面板的事件板块会按级别列出网关自己记下来的诊断事件
+（登录失败、口令冲突、补池失败、预算耗尽……）。它**不是日志的替代品**：只保留 24 小时，
+而且单次轮询最多回看 48 个键。要长期留存就去接容器日志。
+
+### 用量统计（默认关）
+
+按天／小时／模型／协议的时间序列**默认关**，而且「关」是零成本的——不建累加器、一次存储写都没有。
+要打开：
+
+```env
+# 可选：面板「用量」板块的 Tier-2 时间序列。判据是逐字的 true，写 1 / yes 都算关。
+# 打开之后每个实例每天最多 13 次 put，占写配额约 10.4%；未落盘的尾巴最长 2 小时。
+USAGE_STATS_ENABLED=true
+```
+
+打开之前先读一遍上文「配额账」里 Tier-2 那一段：它与 key 池的冷却/剔除记账抢的是同一个写桶。
+
+## 升级服务
+
+两种形态的升级命令写在各自那一节的「更新」里（[Cloudflare Worker](#cloudflare-worker-部署) /
+[Docker](#docker-部署)）。这一节讲的是那两条命令之外、两种形态都一样的事。
+
+### 升级前
+
+1. **先备份存储。** key 池与配置只有一份，见下文「备份和恢复」。
+2. **看一眼 CHANGELOG。** 破坏性变更会写在那里；本仓的版本号在六份 README 的徽章上。
+3. **升级不需要清空存储。** 存储里的记录是向后兼容的，`pool:index` 的 `v` 字段今天恒为 `1`。
+
+### 升级之后确认什么
+
+1. `/health` 回 `200` 且 `status` 为 `ok`。
+2. 面板（如果开着）能登录，key 池的条数与升级前一致。
+3. 跑一次上文「验证部署」里的第三条，确认真的能打到上游。
+
+回滚：Docker 把镜像 tag 钉回上一版再 `docker compose up -d`；
+Worker 在 Cloudflare 控制台的 Deployments 里回滚，或者 `git checkout` 到上一个 tag 重新 `npx wrangler deploy`。
+
+## 备份和恢复
+
+key 池与配置只有一份，没有第二副本。**备份就是备份存储本身。**
+
+### Docker
+
+```bash
+docker compose stop
+cp -a ./data ./data.bak
+docker compose start
+```
+
+停一下再拷是为了避开写入竞争。`./data/store.json` 里就是全部：key 记录、`pool:index`、以及存储侧的配置。
+恢复就是把目录拷回去再 `docker compose up -d`。
+
+### Cloudflare Worker
+
+```bash
+npx wrangler kv key list --binding=POOL --remote
+npx wrangler kv key get --binding=POOL "pool:index" --remote
+```
+
+逐个 `key:<id>` 取出来存成文件即可；恢复走 `npx wrangler kv key put`，与下文导入 key 的写法一样。
+
+> [!WARNING]
+> 备份文件里是**明文 key 与明文凭据**（网关口令、两条邮箱通道的 API Key 都在存储侧的配置里）。
+> 请按凭据处置：别放进仓库、别放进公开的对象存储。
+
+## 安全建议
+
+- **`GATEWAY_TOKEN` 与 `ADMIN_TOKEN` 必须是两把不同的口令。** 前者是发给**每一个下游用户**的中转口令，
+  拿它当面板口令等于把整池 key、注册机开关、注册后端地址一起交出去。
+- **面板放在 TLS 之后，只在你信任的机器上打开。** 面板把 `ADMIN_TOKEN` 原样存在浏览器的 localStorage 里，
+  没有派生令牌、也没有产品内的撤销路径；12 小时后要求重新输入只缩短窗口，**不等于撤销**。
+- **`TRUST_PROXY` 只在网关真的位于代理之后时才打开。** 通用反代后面打开它时，请在反代上把
+  `CF-Connecting-IP` 剥掉，否则攻击者自带一个就能压过反代刚写好的 `X-Forwarded-For`。
+- **数据目录、KV 命名空间、备份文件一律按凭据处置。** key 与面板写进去的凭据都是明文落盘的，
+  与 key 明文存盘是同一水位。
+
+一份最小的安全基线配置：
+
+```env
+# 必填：客户端调用本网关时必须携带的令牌。发给下游用户的就是它。
+GATEWAY_TOKEN=换成你自己的长随机串
+
+# 可选：管理面板口令。不设 = 整棵 /admin 树不注册，访问得到 404 而不是 401。
+# 必须与 GATEWAY_TOKEN 不同，且至少 24 位、纯可打印 ASCII。
+ADMIN_TOKEN=换成另一把长随机串
+
+# 可选：网关确实位于代理之后时才设成 1；Worker 形态属于这种情况，应当设上。
+TRUST_PROXY=1
+```
+
+## 获取帮助
+
+- 用法与四种协议的 SDK 接入：[USAGE.md](USAGE.md)
+- 端点、参数与错误码：[API.md](API.md)
+- Web 管理面板：[ADMIN.md](ADMIN.md)
+- 注册机（自动补池）：[REGISTRAR.md](REGISTRAR.md)
