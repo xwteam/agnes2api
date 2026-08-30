@@ -1,14 +1,17 @@
 # Admin panel
 
-The admin panel is **optional**: with no `ADMIN_TOKEN` set, the whole `/admin` tree is never
-registered at all, and the gateway keeps forwarding as usual. This page covers the half you
-can see on screen — what question each board answers, what the numbers on it actually mean,
-and which actions write. **Every variable itself (default, accepted range, cost) is defined
-in exactly one place, the environment-variable table in [DEPLOY.md](DEPLOY.md)**; this page
-only points at it and never keeps a second copy.
+This page covers the half you can see on screen — what question each board answers, what the numbers on it actually mean, and which actions write.
 
-Covered here: how to get in, every board one by one, and finally what the panel does not
-do plus troubleshooting.
+> [!NOTE]
+> The admin panel is **optional**: with no `ADMIN_TOKEN` set, the whole `/admin` tree is never
+> registered at all, and the gateway keeps forwarding as usual.
+> Covered here: how to get in, every board one by one, and finally what the panel does not
+> do plus troubleshooting.
+
+> [!IMPORTANT]
+> **Every variable itself (default, accepted range, cost) is defined
+> in exactly one place, the environment-variable table in [DEPLOY.md](DEPLOY.md)**; this page
+> only points at it and never keeps a second copy.
 
 ## Getting in
 

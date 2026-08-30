@@ -1,8 +1,10 @@
 # Deployment Guide
 
-agnes2api ships as two deployment targets built from the same codebase and request-handling
-logic — pick whichever fits your infrastructure. They differ only in storage backend: the
-Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volume.
+agnes2api ships as two deployment targets built from the same codebase and request-handling logic — pick whichever fits your infrastructure.
+
+> [!NOTE]
+> They differ only in storage backend: the Worker uses a Cloudflare KV namespace, Docker uses
+> a JSON file on a mounted volume.
 
 ## System Requirements
 

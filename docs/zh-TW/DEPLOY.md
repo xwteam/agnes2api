@@ -1,8 +1,10 @@
 # 部署指南
 
-agnes2api 提供兩種部署形態，建構自同一套程式碼與請求處理邏輯，依你的基礎設施擇一
-即可。兩者僅在儲存後端上有差異：Worker 使用 Cloudflare KV 命名空間，Docker 使用掛載
-卷上的 JSON 檔案。
+agnes2api 提供兩種部署形態，建構自同一套程式碼與請求處理邏輯，依你的基礎設施擇一即可。
+
+> [!NOTE]
+> 兩者僅在儲存後端上有差異：Worker 使用 Cloudflare KV 命名空間，Docker 使用掛載
+> 卷上的 JSON 檔案。
 
 ## 系統要求
 

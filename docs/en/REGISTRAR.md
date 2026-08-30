@@ -1,5 +1,7 @@
 # Registrar (auto-refill)
 
+This page covers the registrar: what it does, how to pick between the two mailbox channels, which settings it takes, and how to read its logs and troubleshoot it once it runs.
+
 > **Disabled by default.** `REGISTRAR_ENABLED` defaults to `false`. Installing the project does
 > not start any account registration on its own — you must explicitly set it to `true`.
 

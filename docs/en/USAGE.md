@@ -1,13 +1,11 @@
 # Usage Guide
 
-This page is about the **client side**: pointing each protocol's official SDK at a gateway
-that is already running, sending the first request, turning streaming on, and knowing which
-box to look in when a call is rejected. The per-endpoint request / response contracts live in
-[API.md](API.md); the two ways to get a gateway running live in [DEPLOY.md](DEPLOY.md).
+This page is about the **client side**: pointing each protocol's official SDK at a gateway that is already running, sending the first request, turning streaming on, and knowing which box to look in when a call is rejected. The per-endpoint request / response contracts live in [API.md](API.md); the two ways to get a gateway running live in [DEPLOY.md](DEPLOY.md).
 
-agnes2api implements four protocols on the wire, so you **don't need a special client** —
-point each protocol's official SDK at the gateway's base URL and pass your `GATEWAY_TOKEN` as
-the API key.
+> [!TIP]
+> agnes2api implements four protocols on the wire, so you **don't need a special client** —
+> point each protocol's official SDK at the gateway's base URL and pass your `GATEWAY_TOKEN` as
+> the API key.
 
 ## Before you start
 
