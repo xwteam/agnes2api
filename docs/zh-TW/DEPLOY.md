@@ -129,7 +129,7 @@ ADMIN_TOKEN=local-dev-admin-token-change-me
 
 ### 部署
 
-部署：
+上面兩步都做完之後執行：
 
 ```bash
 npx wrangler deploy

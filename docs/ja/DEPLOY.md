@@ -147,7 +147,7 @@ ADMIN_TOKEN=local-dev-admin-token-change-me
 
 ### デプロイ
 
-デプロイします。
+上の 2 手順が終わったら実行します。
 
 ```bash
 npx wrangler deploy

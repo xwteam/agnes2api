@@ -145,7 +145,7 @@ ADMIN_TOKEN=local-dev-admin-token-change-me
 
 ### Deploy
 
-Deploy:
+With both steps above done, run:
 
 ```bash
 npx wrangler deploy
