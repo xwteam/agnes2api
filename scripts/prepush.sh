@@ -633,8 +633,11 @@ BANNER='[collection-guard] ✅'
 # 把其中一处数字悄悄改错之后计数从 3 掉到 2、仍然满足「≥ 1」，门禁一声不吭。
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
+# 4173 → 4177：P3f 阶段 7D 评审回填给 `tests/unit/repo-front-door.test.ts` 补了 (m) 那一组
+# 「仓库根目录顶层文件 == 具名白名单」，**恰 4 格**（真扫描 1 + 反向控制 3）。
+# 文件数不变（补的是已有文件里的格子）。
 EXPECT_NODE_FILES=140
-EXPECT_NODE_TESTS=4173
+EXPECT_NODE_TESTS=4177
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

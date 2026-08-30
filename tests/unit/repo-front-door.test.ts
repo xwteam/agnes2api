@@ -69,6 +69,10 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  *   副本之间逐字节相同**（P3f 阶段 3 评审回填）。两份副本是有意的，而
  *   `docker-compose.yml` 那段注释要求它们「逐个相同」——**这句话此前没有任何判据看着**，
  *   改一边不改另一边，全仓一格都不会红。
+ * · **(m) 仓库根目录的顶层文件集合 == 一张具名白名单**（P3f 阶段 7D 评审回填）。
+ *   补的是一次真实事故：一次 shell 重定向意外把两个 0 字节的空文件提交进了公开仓根目录，
+ *   **十三道门禁一格都没拦住**——「工作树干净」查的是未提交的改动，`topLevelDirs()` 现算的是
+ *   顶层**目录**，W135 只查「目录树写的路径 ⇒ 磁盘存在」这一个方向。三条射程边界正好对齐成一个洞。
  *
 
 
@@ -115,6 +119,10 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  * · (l) 只查**两份副本彼此相等**，不查这套参数本身合不合理（`interval: 30s` 配
  *   `start_period: 10s` 对本仓的冷启动够不够，这里一个字都不知道），也不查探针命令
  *   在容器里真的跑得通——后者由 prepush ⑦ 的双形态冒烟在真容器上验，两侧分工不重叠。
+ * · (m) 只查**顶层这一层**，且只查**名字**：`docs/` 之类的目录里塞进一份垃圾文件它看不见
+ *   （那一层没有同型的白名单，代价与收益不成比例——顶层是陌生人第一屏，子目录不是），
+ *   也不查文件大小、内容、或者「这份文件今天还有没有用」。0 字节这件事在判据里一次都没出现，
+ *   钉的是**名字进没进表**——下一次事故完全可以是一份 3 字节的 `nohup.out`。
  * · 整组都**只看仓库里的文本**：GitHub 侧的设置（Security Advisory 开没开、issue 模板认不认）
  *   一个字都验不到。
  */
@@ -382,13 +390,19 @@ const CODE_PATH_RE = /`([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+\/?)`/g;
 /** 末段带扩展名 ⇒ 它自称是一个文件，那就得真的解析得开。 */
 const FILE_TAIL_RE = /\.[A-Za-z0-9]{1,6}$/;
 
-/** 仓里真实存在的顶层目录，从 `git ls-files` 现算。 */
-function topLevelDirs(): string[] {
+/** git 索引里的全部路径。**顶层目录**与**顶层文件**两侧共用这一个入口，不各扫各的。 */
+function gitLsFiles(): string[] {
   const raw = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" });
   const files = raw.split("\0").filter(Boolean);
   if (files.length === 0) {
     throw new Error("`git ls-files` 一个文件都没列出来 —— 扫描坏了，不许静默当成空集");
   }
+  return files;
+}
+
+/** 仓里真实存在的顶层目录，从 `git ls-files` 现算。 */
+function topLevelDirs(tracked: readonly string[] = gitLsFiles()): string[] {
+  const files = tracked;
   const dirs = [...new Set(files.filter((f) => f.includes("/")).map((f) => f.split("/")[0]!))].sort();
   if (dirs.length === 0) {
     throw new Error("`git ls-files` 扫不出任何顶层目录 —— 扫描坏了，不许静默当成「这个仓是平的」");
@@ -398,6 +412,65 @@ function topLevelDirs(): string[] {
 
 const looksLikeRepoPath = (t: string, topDirs: readonly string[]): boolean =>
   topDirs.includes(t.split("/")[0]!) || FILE_TAIL_RE.test(t);
+
+/* ── (m) 仓库根目录的顶层文件全集 ─────────────────────────────────────────── */
+
+/**
+ * 🔴 **这一格是补漏，补的是一次真实事故。**
+ *
+ * P3f 阶段 7 的 `f07a412` 里，转换脚本跑 shell 时一次重定向事故把两个 **0 字节**的空文件
+ * （`range` / `under`）提交进了公开仓根目录，**十三道门禁一格都没拦住**，两轮评审也都没提。
+ * 漏的原因是三条各自都成立的射程边界正好在这里对齐成了一个洞：
+ * · 「工作树干净」那道门禁查的是**未提交的改动** —— 文件已经提交，所以工作树确实是干净的；
+ * · 上面那个 `topLevelDirs()` 从 `git ls-files` 现算的是顶层**目录**，顶层**文件**不在它眼里；
+ * · W135 查的是「目录树里写的路径 ⇒ 磁盘上真的存在」**单向**，
+ *   反方向（磁盘/索引上多出来的东西要不要进目录树）没人查。
+ *
+ * ⇒ 这一格补的正是那个反方向：**索引里的顶层文件集合 == 一张具名表**，多一份少一份都得有人来表态。
+ * 判据故意做成**恒等式**而不是「不许有 0 字节文件」——后者只挡得住这一次的具体形态，
+ * 而下一次事故完全可以是一个 3 字节的 `nohup.out` 或一份 `tmp.json`。
+ *
+ * ⚠️ **这张表是白名单不是快照**：新加一份根级文件（比如某天真的要放 `Makefile`）时，
+ * 这一格会红，改表的那一下就是「这份文件该不该出现在陌生人打开仓库的第一屏」的表态点。
+ */
+const TOP_LEVEL_FILES: readonly string[] = [
+  // 点开头的仓库配置
+  ".dockerignore", ".env.example", ".gitattributes", ".gitignore", ".npmrc",
+  // 公开仓门面（社区文件 + 许可 + 赞助 + 变更日志）
+  "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE", "README.md", "SECURITY.md", "SPONSORS.md",
+  // Docker 形态
+  "Dockerfile", "docker-compose.yml", "docker-entrypoint.sh",
+  // Node / 构建 / 测试 / Worker 形态
+  "VERSION", "package.json", "pnpm-lock.yaml", "tsconfig.build.json", "tsconfig.json",
+  "vitest.config.ts", "vitest.workers.config.ts", "wrangler.toml",
+];
+
+/** 仓里真实存在的顶层文件（不含目录），从 `git ls-files` 现算。 */
+function topLevelFiles(tracked: readonly string[] = gitLsFiles()): string[] {
+  return tracked.filter((f) => !f.includes("/")).sort();
+}
+
+/**
+ * 顶层文件集合与白名单的双向差集。**纯函数**，所以反向控制可以直接喂一份伪造的索引清单，
+ * 不用真往仓里扔垃圾文件。报文两个方向各自点名，不合并成一句「对不上」。
+ */
+const topLevelFileFailures = (actual: readonly string[], allow: readonly string[]): string[] => {
+  const allowed = new Set(allow);
+  const seen = new Set(actual);
+  const out: string[] = [];
+  for (const f of actual) {
+    if (!allowed.has(f)) {
+      out.push(`仓库根目录上多出一份没人表过态的文件：\`${f}\` —— 它是随手落下的垃圾，`
+        + "还是真的该出现在陌生人打开仓库的第一屏？要留就把它写进 `TOP_LEVEL_FILES`");
+    }
+  }
+  for (const f of allow) {
+    if (!seen.has(f)) {
+      out.push(`\`TOP_LEVEL_FILES\` 里写着 \`${f}\`，而 git 索引里没有它 —— 文件被删了就把表一起改`);
+    }
+  }
+  return out;
+};
 
 function communityRefs(read: Read, exists: Exists, list: List): { from: string; target: string; resolved: string }[] {
   const topDirs = topLevelDirs();
@@ -562,7 +635,7 @@ function citedAnchorFailures(read: Read, exists: Exists, list: List): string[] {
 
 /* ────────────────────────────────────────────────────────────────────────── */
 
-describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工作账本的溯源限定", () => {
+describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工作账本的溯源限定 / 顶层文件全集", () => {
   const REAL_A = "公开仓的社区文件都在，且 SECURITY.md 里有一条可用的上报路径";
   const REAL_B = "SECURITY.md 不把仓库纪律说成运行时安全承诺";
   const REAL_C = "README 的 CI 徽章指向 .github/workflows 下真的存在的那个 workflow";
@@ -1213,6 +1286,43 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     expect(dirs, "扫盘结果里没有 src —— 判据多半接错了").toContain("src");
     expect(dirs, "扫盘结果里没有 .github —— 以点开头的顶层目录被漏掉了").toContain(".github");
     expect(dirs, "`docs/` 掉出了顶层目录集合").toContain("docs");
+  });
+
+  it("(m) 仓库根目录的顶层文件恰好等于那张具名表 —— 多一份少一份都要有人来表态", () => {
+    const failures = topLevelFileFailures(topLevelFiles(), TOP_LEVEL_FILES);
+    expect(failures, `报文：\n${failures.join("\n")}`).toEqual([]);
+    // 恒等式本身也直接钉一格。⚠️ 表是**按用途分组**写的（可读性优先），而 `git ls-files`
+    // 吐的是字节序 ⇒ 这里比的是排过序的两份，顺序差异不算错；重复项另钉一格，
+    // 否则一条写两遍会让差集与长度两个方向同时看不见。
+    expect(new Set(TOP_LEVEL_FILES).size, "`TOP_LEVEL_FILES` 里有重复项").toBe(TOP_LEVEL_FILES.length);
+    expect(topLevelFiles()).toEqual([...TOP_LEVEL_FILES].sort());
+  });
+
+  it("(m) 该红时红：`range` / `under` 那次事故重演 —— 两份 0 字节垃圾各自被点名", () => {
+    probeBase(topLevelFileFailures(topLevelFiles(), TOP_LEVEL_FILES),
+      "(m) 仓库根目录的顶层文件恰好等于那张具名表 —— 多一份少一份都要有人来表态");
+    // `f07a412` 当时索引里真实多出来的就是这两条（0 字节，git 不看大小、只看路径）。
+    const failures = topLevelFileFailures(topLevelFiles([...gitLsFiles(), "range", "under"]), TOP_LEVEL_FILES);
+    expect(failures).toHaveLength(2);
+    expect(failures.join("\n"), "重定向事故落下的空文件没被点名 —— 这一格就白补了").toContain("`range`");
+    expect(failures.join("\n")).toContain("`under`");
+  });
+
+  it("(m) 该红时红：顶层文件被删而表没跟上 —— 反方向同样点名", () => {
+    const without = topLevelFiles().filter((f) => f !== "LICENSE");
+    expect(without, "变异没落地 —— 索引里本来就没有 LICENSE").not.toEqual(topLevelFiles());
+    expect(topLevelFileFailures(without, TOP_LEVEL_FILES))
+      .toEqual(["`TOP_LEVEL_FILES` 里写着 `LICENSE`，而 git 索引里没有它 —— 文件被删了就把表一起改"]);
+  });
+
+  it("(m) 扫不出东西时要红不要绿：索引空了 ⇒ 逐条点名「表里有而索引里没有」，不静默通过", () => {
+    // 这一格钉的是**失败方向**：`topLevelFiles` 是纯函数，喂空集它不抛；
+    // 但差集必须因此红成 23 条，而不是「两边都是空的 ⇒ 相等 ⇒ 绿」。
+    const failures = topLevelFileFailures(topLevelFiles([]), TOP_LEVEL_FILES);
+    expect(failures).toHaveLength(TOP_LEVEL_FILES.length);
+    expect(failures.every((m) => m.includes("而 git 索引里没有它"))).toBe(true);
+    // 取数那一层另有一道：`git ls-files` 真的一条都不吐时当场抛，不把空集喂下来。
+    expect(() => topLevelDirs([])).toThrow(/顶层目录/);
   });
 
   it("社区文件里写下的每一条 `pnpm <名字>` 都是 package.json 里真有的 script", () => {
