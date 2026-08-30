@@ -7439,3 +7439,448 @@ describe("⑧ 五份 README 的 `## 📄` 节末段逐字节等于登记表（AD
     expect(() => tailFailures(patchLang(realReadme, "ko", gutted))).toThrow(/判据坏了/);
   });
 });
+
+/**
+ * # W124 —— 非 README 文档的五语言 `##` 译名常量表
+ *
+ * P3f 阶段 7 有四条验收判据（W99 / W102 / W104 / W107）写的都是
+ * 「五份 `##` 序列 `toEqual` 目标骨架」，而**规格全文没有那个右操作数**。
+ * 没有它，实施者只能自己编一套 —— 而「自己编一套」正是 ADJ ⑲ 选「五语言同构」时
+ * 要消灭的东西：五份各写各的，判据只能退化成「数量相等」，
+ * 而数量相等对「ja 把第 7 节写成了另一件事」是睁眼瞎。
+ *
+ * ## 这张表的每一格从哪来（三档，逐格在下面的注释里标）
+ *
+ * - **K∩G**：kiro2api 与 gemini2api 的**同一份文档、同一种语言**都实测到这个标题
+ *   ⇒ 那是模板形态，逐字照抄。ADJ ㊴ 的原话：「证据（实测）胜过规格（转述）」——
+ *   规格 §1.9.2 有 3 处抄写误差（`## 管理接口` 实为 `## 管理 API`、
+ *   `## 系统` 实为 `## 系统 API`、七个协议族**都带 ` API` 后缀**），本表按实测走。
+ * - **K∩G(跨档)**：同一个 zh-CN 标题在参照仓的**另一类文档**里有该语言的实测译名
+ *   （两仓的非 zh-CN 版本并不是 zh-CN 版的逐节翻译，DEPLOY 的 `##` 骨架逐语言就不同：
+ *   实测 K/G 的 zh-CN 14/12 节、zh-TW 9/9、en 9/9、ja 11/11、ko 8/8）⇒ 退一档取跨档实测。
+ * - **推导**：两仓在那一格上给不出该语言的实测值 ⇒ 按该语言在参照仓里的用词习惯翻译。
+ *
+ * ## 三条已裁定的骨架决定（ADJ ㊲㊳㊵）都落在这张表里
+ *
+ * - **ADJ ㊲**：`API.md` 的 `## 模型` **保留为独立 `##`** ⇒ API 是 **13 个 `##`**，不是 12。
+ * - **ADJ ㊵**：`DEPLOY.md` 的 `## 环境变量` **保留** ⇒ 叠加 §1.10 的双形态变体
+ *   （第 3 槽 `## Docker 部署` 拆成 `## 选哪种形态` / `## Cloudflare Worker 部署` /
+ *   `## Docker 部署`）之后是 **15 个 `##`**，不是 12 也不是 14。
+ * - **ADJ ㊳** 只管端点归族（`GET /v1/models` → OpenAI 族、`GET /v1beta/models` → Gemini 族），
+ *   那是 `###` 层的事，不影响本表。
+ *
+ * ## 射程：**只有 DEPLOY 与 API 进这张表**（§1.9.4）
+ *
+ * `USAGE` / `ADMIN` / `REGISTRAR` 三类本期是「`##` 骨架维持现状、只补 `###`/`####`」，
+ * 给它们钉文本 `toEqual` **等于把今天的现状当成模板** —— 那是本仓 C1 犯过的病
+ * （一张照抄现状的表永远绿，改坏了也绿）。它们只进「五份 `##` 数量相等 + 层级序列相等」
+ * 的弱形式，由 R2 那一族守着。**这一条由下面「射程登记」那一格钉住，不是靠人记得。**
+ */
+const DOC_SECTIONS = {
+  /**
+   * ### `DEPLOY.md` —— 15 节
+   *
+   * 槽位来源逐条：
+   * 1 `环境要求` K∩G ｜ 2 `获取 {凭据}` K∩G 句式（K `获取 Kiro 凭据` / G `获取 Cookie` ⇒ agnes `获取 Agnes 凭据`）
+   * 3–5 §1.10 的双形态变体（V53：第 3 槽拆三节；`## 选哪种形态` 排在两条部署路之前且不预设主推）
+   * 6 `环境变量` ADJ ㊵ 的扩展位，**取 agnes 五份今天已有的那五个标题逐字**（W1 实测五语言同构，漂移 0）
+   * 7 `多账号配置` ｜ 8 `验证部署` ｜ 9 `常见问题` ｜ 10 `性能优化` ｜ 11 `监控和维护`
+   * 12 `升级服务` ｜ 13 `备份和恢复` ｜ 14 `安全建议` ｜ 15 页脚节
+   *
+   * ⚠️ **第 6 槽的位置是本轮裁定的，规格没说。** ADJ ㊵ 只说「保留为独立 `##` 节」，
+   * 没给位置。放在两条部署路之后、`## 多账号配置` 之前的理由：两条部署路都要读环境变量，
+   * 而 `## 多账号配置` 本身就是一个配置专题 ⇒ 配置块连成一片，再进入验证。
+   * 放在全文第一节（agnes 今天的位置）会让一份 700 行的变量表挡在 `## 环境要求` 前面，
+   * 与模板固定的起手三节冲突。**这一条要推翻就来改这张表，别在文档侧各写各的。**
+   */
+  DEPLOY: {
+    "zh-CN": [
+      "## 环境要求",                    // K∩G
+      "## 获取 Agnes 凭据",             // K∩G 句式
+      "## 选哪种形态",                  // V53 必须变体（模板无先例）
+      "## Cloudflare Worker 部署",      // V53
+      "## Docker 部署",                 // K∩G
+      "## 环境变量",                    // ADJ ㊵（agnes 现名）
+      "## 多账号配置",                  // K∩G
+      "## 验证部署",                    // K∩G
+      "## 常见问题",                    // K∩G
+      "## 性能优化",                    // K∩G
+      "## 监控和维护",                  // K∩G
+      "## 升级服务",                    // K∩G
+      "## 备份和恢复",                  // K∩G
+      "## 安全建议",                    // K∩G
+      "## 获取帮助",                    // K∩G（页脚节）
+    ],
+    "zh-TW": [
+      "## 系統要求",                    // K∩G(zh-TW DEPLOY)
+      "## 取得 Agnes 憑證",             // K 句式 `取得 Kiro 憑證`
+      "## 選哪種形態",                  // 推导
+      "## Cloudflare Worker 部署",      // 推导
+      "## Docker 部署",                 // K∩G
+      "## 環境變數",                    // agnes 现名
+      "## 多帳號設定",                  // 推导（ja/ko 实测用「設定」）
+      "## 驗證",                        // K∩G
+      "## 常見問題排除",                // K∩G
+      "## 效能優化",                    // 推导
+      "## 監控與維護",                  // 推导
+      "## 升級服務",                    // 推导
+      "## 備份與還原",                  // 推导
+      "## 安全建議",                    // 推导
+      "## 後續步驟",                    // K∩G（页脚节）
+    ],
+    en: [
+      "## System Requirements",         // K∩G
+      "## Getting Agnes Credentials",   // K 句式 `Getting Credentials`
+      "## Choosing a Deployment Form",  // 推导
+      "## Cloudflare Worker Deployment",// 推导
+      "## Docker Deployment",           // K∩G
+      "## Environment Variables",       // agnes 现名，按模板体例改成 Title Case
+      "## Multi-Account Configuration", // 推导
+      "## Verification",                // K∩G
+      "## Troubleshooting",             // K∩G
+      "## Performance Tips",            // K∩G(跨档，两仓 en USAGE)
+      "## Monitoring and Maintenance",  // 推导
+      "## Upgrading the Service",       // 推导
+      "## Backup and Restore",          // 推导
+      "## Security Recommendations",    // 推导
+      "## Next Steps",                  // K∩G（页脚节）
+    ],
+    ja: [
+      "## 環境要件",                    // K∩G
+      "## Agnes 認証情報の取得",        // K 句式 `Kiro 認証情報の取得`
+      "## どちらの形態を選ぶか",        // 推导
+      "## Cloudflare Worker デプロイ",  // 推导
+      "## Docker デプロイ",             // K∩G
+      "## 環境変数",                    // agnes 现名
+      "## マルチアカウント設定",        // K∩G
+      "## 検証",                        // K∩G
+      "## トラブルシューティング",      // K∩G
+      "## パフォーマンス最適化",        // 推导
+      "## 監視とメンテナンス",          // 推导
+      "## アップデート",                // K∩G
+      "## バックアップと復元",          // 推导
+      "## セキュリティ推奨事項",        // 推导
+      "## 次のステップ",                // 推导（ja 侧两仓都没有页脚 `##`）
+    ],
+    ko: [
+      "## 환경 요구사항",               // K∩G
+      "## Agnes 자격 증명 준비",        // K 句式 `Kiro 자격 증명 준비`
+      "## 어떤 형태를 선택할까",        // 推导
+      "## Cloudflare Worker 배포",      // 推导
+      "## Docker 배포",                 // K∩G
+      "## 환경 변수",                   // agnes 现名
+      "## 다중 계정 설정",              // K∩G
+      "## 검증",                        // K∩G
+      "## 문제 해결",                   // K∩G
+      "## 성능 최적화",                 // K∩G(跨档，两仓 ko USAGE)
+      "## 모니터링과 유지보수",         // 推导
+      "## 서비스 업그레이드",           // 推导
+      "## 백업과 복구",                 // 推导
+      "## 보안 권장사항",               // 推导
+      "## 다음 단계",                   // K∩G（页脚节）
+    ],
+  },
+
+  /**
+   * ### `API.md` —— 13 节（3 固定节 + `## 模型` + 7 个协议族 + `## 请求示例` + 页脚节）
+   *
+   * - 第 1 节按 **W96a** 从 agnes 今天的 `## 鉴权` 改名到 `## 认证`（§1.5 的固定第一节）。
+   * - 第 4 节 `## 模型` 是 **ADJ ㊲** 保留的独立节，位置取模板实测序
+   *   （kiro zh-CN API：`## 错误响应`:87 → `## 模型名映射`:189 → `## OpenAI 兼容 API`:210），
+   *   标题取 agnes 五份今天已有的那五个（W1 实测同构）。
+   * - 七个协议族**都带 ` API` 后缀**（ADJ ㊴）。
+   * - agnes 今天那两个专题节（`## key 池耗尽时的错误` / `## 同步端点超时`）按 §1.9.2 给的
+   *   二选一，**选「并入 `## 错误响应` 之下降为 `###`」**——另一条路（当成额外的 `##`）
+   *   会让 `##` 数变 15，与 ADJ ㊲ 定的 13 冲突。
+   *
+   * ⚠️ **`## Anthropic 兼容 API` 这一格没有照抄 K∩G 的 `## Claude 兼容 API`，理由要说清楚**：
+   * ADJ ㊴ 逐条列出的 K∩G 差异是三项（`管理接口`→`管理 API`、`系统`→`系统 API`、` API` 后缀），
+   * 不含厂商名。而 D2 的 K∩G 通则本身就把「两仓一致的 = 模板骨架」与
+   * 「各写各的 = 项目特定内容」分开：**协议的厂商名属于后者**——agnes 全仓
+   * （`package.json` 的 description、六份 README、五份 API.md）一律写 Anthropic，
+   * 照抄 Claude 会让文档与它自己的其余部分打架。**这一条是判断不是实测，写在这里备查。**
+   */
+  API: {
+    "zh-CN": [
+      "## 认证",                        // K∩G（W96a：从 `## 鉴权` 改名）
+      "## 路径说明",                    // K∩G
+      "## 错误响应",                    // K∩G
+      "## 模型",                        // ADJ ㊲（agnes 现名）
+      "## OpenAI 兼容 API",             // K∩G
+      "## OpenAI Responses API",        // 推导（agnes 专有协议族）
+      "## Anthropic 兼容 API",          // 见上：厂商名走项目内容档
+      "## Gemini 原生 API",             // K∩G
+      "## 图片与视频 API",              // 推导（agnes 专有协议族）
+      "## 管理 API",                    // K∩G（规格写 `## 管理接口`，实测不是）
+      "## 系统 API",                    // K∩G（规格写 `## 系统`，实测不是）
+      "## 请求示例",                    // K∩G
+      "## 获取帮助",                    // K∩G（页脚节）
+    ],
+    "zh-TW": [
+      "## 認證",                        // K∩G（W96a：从 `## 鑑權` 改名）
+      "## 路徑說明",                    // K∩G
+      "## 錯誤碼",                      // K∩G(zh-TW API)
+      "## 模型",                        // agnes 现名
+      "## OpenAI 相容 API",             // K∩G（两仓的括号路径后缀各写各的 ⇒ 不在交集，去掉）
+      "## OpenAI Responses API",        // 推导
+      "## Anthropic 相容 API",          // 推导
+      "## Gemini 原生 API",             // K∩G
+      "## 圖片與影片 API",              // 推导
+      "## 管理 API",                    // K∩G
+      "## 系統 API",                    // K∩G
+      "## 請求範例",                    // 推导
+      "## 後續步驟",                    // 与 DEPLOY 同一页脚节
+    ],
+    en: [
+      "## Authentication",              // K∩G
+      "## Standard Bare Paths",         // K∩G
+      "## Error Responses",             // K∩G
+      "## Models",                      // agnes 现名
+      "## OpenAI Compatible API",       // K∩G
+      "## OpenAI Responses API",        // 推导
+      "## Anthropic Compatible API",    // 推导
+      "## Gemini Native API",           // K∩G
+      "## Images and Videos API",       // 推导
+      "## Admin API",                   // K∩G
+      "## System Endpoints",            // K∩G
+      "## Request Examples",            // 推导
+      "## Next Steps",                  // 与 DEPLOY 同一页脚节
+    ],
+    ja: [
+      "## 認証",                        // K∩G
+      "## 標準ベアパス",                // K∩G
+      "## エラーコード",                // K∩G(ja API)
+      "## モデル",                      // agnes 现名
+      "## OpenAI 互換 API",             // K∩G
+      "## OpenAI Responses API",        // 推导
+      "## Anthropic 互換 API",          // 推导
+      "## Gemini 原生 API",             // K∩G
+      "## 画像と動画 API",              // 推导
+      "## 管理 API",                    // K∩G
+      "## システム API",                // 推导（ja 侧两仓都没有这一节）
+      "## リクエスト例",                // 推导
+      "## 次のステップ",                // 与 DEPLOY 同一页脚节
+    ],
+    ko: [
+      "## 인증",                        // K∩G
+      "## 표준 베어 경로",              // K∩G(G ko；K 写 `이중 프리픽스 경로`，取 G 与 zh-CN/en 同义的那个)
+      "## 에러 응답 형식",              // K∩G(ko API)
+      "## 모델",                        // agnes 现名
+      "## OpenAI 호환 API",             // K∩G
+      "## OpenAI Responses API",        // 推导
+      "## Anthropic 호환 API",          // 推导
+      "## Gemini 원생 API",             // K∩G
+      "## 이미지와 비디오 API",         // 推导
+      "## 관리 API",                    // K∩G
+      "## 시스템 API",                  // 推导（ko 侧两仓都没有这一节）
+      "## 요청 예제",                   // K∩G
+      "## 다음 단계",                   // 与 DEPLOY 同一页脚节
+    ],
+  },
+} as const satisfies Record<string, Record<(typeof LANGS)[number], readonly string[]>>;
+
+type SectionDoc = keyof typeof DOC_SECTIONS;
+
+/** 一份 markdown 里**围栏之外**的全部 `##` 标题行（原样，含 `## ` 前缀）。 */
+const sectionTitles = (s: string): string[] =>
+  outsideFences(s).split("\n").filter((l) => /^## /.test(l)).map((l) => l.trimEnd());
+
+/**
+ * 把某一份文档实际的 `##` 序列与 `DOC_SECTIONS` 对一遍，**逐槽点名**。
+ *
+ * ⚠️ **报文必须点到「第几节」和「哪种语言」**：这一组的全部价值就在于
+ * 「ja 的第 7 节写成了另一件事」能被一句话指出来。只说「序列对不上」
+ * 等于把人扔回 15 行 diff 里自己找。
+ *
+ * ⚠️ **认不出要吵**：一个 `##` 都抽不到时当场抛，不许静静地报成「少了 15 节」——
+ * 那种报文会把人引去文档里补标题，而真正坏掉的是抽取器（比如围栏配对被改歪了）。
+ */
+function sectionFailures(doc: SectionDoc, lang: (typeof LANGS)[number], actual: readonly string[]): string[] {
+  const want = DOC_SECTIONS[doc][lang] as readonly string[];
+  if (actual.length === 0) {
+    throw new Error(`docs/${lang}/${doc}.md 里一个 \`##\` 都没抽到 —— 判据坏了，不许把它报成「少了 ${want.length} 节」`);
+  }
+  const out: string[] = [];
+  if (actual.length !== want.length) {
+    out.push(`${lang} 的 ${doc}.md 有 ${actual.length} 个 \`##\`，目标骨架是 ${want.length} 个`);
+  }
+  for (let i = 0; i < Math.max(actual.length, want.length); i++) {
+    if (actual[i] === want[i]) continue;
+    out.push(
+      `${lang} 第 ${i + 1} 节对不上：目标 ${want[i] === undefined ? "（没有这一节）" : `\`${want[i]}\``}`
+      + `，实际 ${actual[i] === undefined ? "（缺）" : `\`${actual[i]}\``}`,
+    );
+  }
+  return out;
+}
+
+/**
+ * **还没接到真文档上的那一档，两个方向都查。**
+ *
+ * 今天 agnes 的五份 `DEPLOY.md` 各 5 个 `##`、五份 `API.md` 各 15 个平铺 `##`，
+ * 离目标骨架还有 W99 / W104 整整两批改写。**在文档改完之前把
+ * 「五份 `##` 序列 `toEqual` DOC_SECTIONS」接上真文档，红的原因会是「骨架还没改完」
+ * 而不是「骨架改错了」** —— 报文误导，而误导的报文比没有判据更贵。
+ *
+ * ⚠️ 所以这里用本仓 `EMPTY_BY_DESIGN` 那条同款的**双向名册**语义：
+ * 登记在册 ⇒ 今天允许对不上；**而一旦某一格真的走到了目标，本格当场红**，
+ * 报文直接告诉后人「回来把这一格从名册里划掉、并把 R11 扩展接到真文档上」。
+ * 一张只会「等人记得回来改」的待办清单在本仓不算守卫；这张会自己到期。
+ */
+const SECTIONS_NOT_YET_APPLIED: ReadonlyArray<readonly [SectionDoc, (typeof LANGS)[number]]> =
+  (["DEPLOY", "API"] as const).flatMap((doc) => LANGS.map((lang) => [doc, lang] as const));
+
+describe("W124 非 README 文档的五语言 `##` 译名常量表", () => {
+  const realSections = (doc: SectionDoc, lang: (typeof LANGS)[number]): string[] =>
+    sectionTitles(readFileSync(`docs/${lang}/${doc}.md`, "utf8"));
+
+  /* ── 表自身的形状 ───────────────────────────────────────────────────────── */
+
+  it("射程登记：只有 DEPLOY 与 API 进这张表（§1.9.4：USAGE/ADMIN/REGISTRAR 钉文本 = 拿现状当模板）", () => {
+    expect(
+      Object.keys(DOC_SECTIONS).sort(),
+      "这张表长出了第三类文档 —— USAGE/ADMIN/REGISTRAR 本期是「`##` 维持现状」，"
+      + "给它们钉文本 `toEqual` 等于把今天的现状当成模板（C1 犯过的病）。要加就先来推翻 §1.9.4",
+    ).toEqual(["API", "DEPLOY"]);
+  });
+
+  it("五语言等长，且节数就是裁定的 DEPLOY 15 / API 13", () => {
+    const EXPECT_LEN: Record<SectionDoc, number> = { DEPLOY: 15, API: 13 };
+    const wrong: string[] = [];
+    for (const doc of Object.keys(DOC_SECTIONS) as SectionDoc[]) {
+      for (const lang of LANGS) {
+        const n = DOC_SECTIONS[doc][lang].length;
+        if (n !== EXPECT_LEN[doc]) wrong.push(`${doc}/${lang} 有 ${n} 节，裁定是 ${EXPECT_LEN[doc]} 节`);
+      }
+    }
+    expect(
+      wrong,
+      "DEPLOY 15 = §1.9.1 的 12 节 − 1（第 3 槽）+ 3（§1.10 双形态）+ 1（ADJ ㊵ 的 `## 环境变量`）；"
+      + "API 13 = §1.9.2 的 12 项 + 1（ADJ ㊲ 的 `## 模型`）。改这两个数之前先去改裁定",
+    ).toEqual([]);
+  });
+
+  it("每一格都是合法的 `##` 标题，且同一份文档里没有重名节", () => {
+    const bad: string[] = [];
+    for (const doc of Object.keys(DOC_SECTIONS) as SectionDoc[]) {
+      for (const lang of LANGS) {
+        const list: readonly string[] = DOC_SECTIONS[doc][lang];
+        list.forEach((t, i) => {
+          if (!/^## \S/.test(t)) bad.push(`${doc}/${lang}[${i}] 不是 \`## \` 开头的标题：${JSON.stringify(t)}`);
+          if (t !== t.trim()) bad.push(`${doc}/${lang}[${i}] 前后有多余空白：${JSON.stringify(t)}`);
+        });
+        const dup = list.filter((t, i) => list.indexOf(t) !== i);
+        if (dup.length > 0) bad.push(`${doc}/${lang} 有重名节：${dup.join(" / ")}`);
+      }
+    }
+    expect(bad, bad.join("\n")).toEqual([]);
+  });
+
+  it("这 25 份文档的射程铁律：目标标题一个 emoji 都不许带（C17 / R25f）", () => {
+    // 阶段 7 的三条否定项之一。表里先带上，文档侧就没有「照着表抄」这条借口。
+    const withEmoji = (Object.keys(DOC_SECTIONS) as SectionDoc[]).flatMap((doc) =>
+      LANGS.flatMap((lang) =>
+        DOC_SECTIONS[doc][lang].filter((t) => /\p{Extended_Pictographic}/u.test(t)).map((t) => `${doc}/${lang}: ${t}`)),
+    );
+    expect(withEmoji, "非 README 文档的标题不加 emoji（C17），而目标表自己带上了").toEqual([]);
+  });
+
+  it("页脚节五语言逐下标一致：DEPLOY 与 API 的末节用同一族译名（R26e' 的右操作数）", () => {
+    // W102 / W107 的「末节标题 == 译名表同一下标的五语言译名」靠的就是这一条：
+    // 两类文档的末节如果各写各的，R26e' 会退化成「每类各自内部一致」，
+    // 而 ADJ ㊷ 定的是**五类子文档统一成同一种页脚形态**。
+    for (const lang of LANGS) {
+      const deploy = DOC_SECTIONS.DEPLOY[lang];
+      const api = DOC_SECTIONS.API[lang];
+      expect(api[api.length - 1], `${lang} 的 API 末节与 DEPLOY 末节不是同一个标题`)
+        .toBe(deploy[deploy.length - 1]);
+    }
+  });
+
+  /* ── 比较器：正题 + 反向控制 ────────────────────────────────────────────── */
+
+  it("比较器的正题：拿目标表自己比自己 ⇒ 一条失败都没有", () => {
+    for (const doc of Object.keys(DOC_SECTIONS) as SectionDoc[]) {
+      for (const lang of LANGS) {
+        expect(sectionFailures(doc, lang, DOC_SECTIONS[doc][lang])).toEqual([]);
+      }
+    }
+  });
+
+  it("该红时红：ja 的 DEPLOY 第 7 节被换掉 ⇒ 恰 1 条失败，报文点名「ja」「第 7 节」（W124 的验收）", () => {
+    const mutated: string[] = [...DOC_SECTIONS.DEPLOY.ja];
+    expect(mutated[6], "第 7 槽的落点变了 —— 先回来改这一格").toBe("## マルチアカウント設定");
+    mutated[6] = "## アカウント設定";
+    const failures = sectionFailures("DEPLOY", "ja", mutated);
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("ja 第 7 节对不上");
+    expect(failures[0] ?? "").toContain("## マルチアカウント設定");
+    expect(failures[0] ?? "").toContain("## アカウント設定");
+  });
+
+  it("该红时红：少一节 / 多一节都要先报「节数对不上」，再逐槽点名", () => {
+    const short: string[] = DOC_SECTIONS.API["zh-CN"].slice(0, -1);
+    const fShort = sectionFailures("API", "zh-CN", short);
+    expect(fShort[0] ?? "").toContain("有 12 个 `##`，目标骨架是 13 个");
+    expect(fShort.some((m) => m.includes("第 13 节对不上") && m.includes("（缺）"))).toBe(true);
+
+    const long: string[] = [...DOC_SECTIONS.API["zh-CN"], "## 多出来的一节"];
+    const fLong = sectionFailures("API", "zh-CN", long);
+    expect(fLong[0] ?? "").toContain("有 14 个 `##`，目标骨架是 13 个");
+    expect(fLong.some((m) => m.includes("第 14 节对不上") && m.includes("（没有这一节）"))).toBe(true);
+  });
+
+  it("该红时红：顺序被调换（内容一个字没改）⇒ 两槽同时点名", () => {
+    const swapped: string[] = [...DOC_SECTIONS.DEPLOY["zh-CN"]];
+    [swapped[3], swapped[4]] = [swapped[4]!, swapped[3]!];
+    const failures = sectionFailures("DEPLOY", "zh-CN", swapped);
+    expect(failures).toHaveLength(2);
+    expect(failures[0] ?? "").toContain("第 4 节对不上");
+    expect(failures[1] ?? "").toContain("第 5 节对不上");
+  });
+
+  it("认不出要吵：一个 `##` 都抽不到时当场抛，不许报成「少了 15 节」", () => {
+    expect(() => sectionFailures("DEPLOY", "en", [])).toThrow(/判据坏了/);
+  });
+
+  it("抽取器不把围栏里的 `## …` 当成标题（否则 ```bash 里一行注释就能顶掉一个槽位）", () => {
+    const src = "# T\n\n## 真标题\n\n```bash\n## 这是围栏里的\n```\n\n## 另一个真标题\n";
+    expect(sectionTitles(src)).toEqual(["## 真标题", "## 另一个真标题"]);
+  });
+
+  /* ── 还没接上真文档的那一档：名册会自己到期 ─────────────────────────────── */
+
+  it("名册双向：登记在册的那几格今天确实还没走到目标（在册却已达标 ⇒ 名册过期，回来划掉并接上真文档）", () => {
+    const stale: string[] = [];
+    for (const [doc, lang] of SECTIONS_NOT_YET_APPLIED) {
+      if (sectionFailures(doc, lang, realSections(doc, lang)).length === 0) {
+        stale.push(`${doc}/${lang}`);
+      }
+    }
+    expect(
+      stale,
+      `这几格的 \`##\` 序列已经与 DOC_SECTIONS 逐字相同了：\n${stale.join(" / ")}\n`
+      + "⇒ W99 / W104 那一批已经落地。把它们从 SECTIONS_NOT_YET_APPLIED 里划掉，"
+      + "并把「五份 `##` 序列 toEqual DOC_SECTIONS」接到真文档上（R11 扩展）",
+    ).toEqual([]);
+  });
+
+  it("名册不许悄悄长出第三类：它只登记 DOC_SECTIONS 里有的 doc × LANGS", () => {
+    const keys = SECTIONS_NOT_YET_APPLIED.map(([d, l]) => `${d}/${l}`).sort();
+    const all = (Object.keys(DOC_SECTIONS) as SectionDoc[]).flatMap((d) => LANGS.map((l) => `${d}/${l}`)).sort();
+    expect(keys, "名册与 DOC_SECTIONS × LANGS 对不上 —— 少登记会让某一格提前接上真文档并红在错误的原因上")
+      .toEqual(all);
+  });
+
+  /**
+   * **今天这几格红的是什么，写下来备查。** 名册是「允许对不上」，不是「不知道差在哪」——
+   * 差距说不清楚的话，上面那格就退化成一句「反正还没做」。
+   */
+  it("名册射程自守：今天每一格都真的抽到了 `##`，而且差距点得出来", () => {
+    for (const [doc, lang] of SECTIONS_NOT_YET_APPLIED) {
+      const actual = realSections(doc, lang);
+      expect(actual.length, `docs/${lang}/${doc}.md 一个 \`##\` 都没抽到`).toBeGreaterThan(0);
+      expect(sectionFailures(doc, lang, actual).length, `${doc}/${lang} 的差距点不出来`).toBeGreaterThan(0);
+    }
+  });
+});
