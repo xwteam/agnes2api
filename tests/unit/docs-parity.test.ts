@@ -8499,3 +8499,195 @@ describe("W97 非 README 文档里位置不对的 `---` 删掉（页脚块之前
       .toEqual([[], [], 0]);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W103 — 表格行与单元格的长度上限（R22e / R22e2）
+ *
+ * **射程**：25 份非 README 文档（`API/DEPLOY/USAGE/ADMIN/REGISTRAR` × 5 语言），
+ * 与本文件 W75 / W97 / R25f 三组同一份 `non25Pairs()`。**README 不设上限**（ADJ ㊻）：
+ * 六份 README 的版本历史表天然是长行（`docs/en/README.md:62` 今天 501 字符），
+ * 那一族由模板自己的形态决定，不归本组管。
+ *
+ * ⚠️⚠️ **340 / 300 这两个数是被 `tests/ui/settings.test.ts:312` 的落点顶上去的，
+ * 不是从模板量的**（ADJ ㉞ / ㊹ / §64 明写的注释义务）。两个参照仓剥围栏后最长的
+ * 表格行是 84（kiro2api）/ 53（gemini2api）——按模板量，这条线应该在 100 上下。
+ * 顶上去的过程是可复算的：
+ * · `settings.test.ts:312` 要求五语言 `DEPLOY.md` 的 `POOL_CACHE_TTL_MS` /
+ *   `POOL_TOUCH_INTERVAL_MS` **那一行之内**同时含一整句 `PANEL_CAVEAT_BY_LANG[lang]`
+ *   与出处 `src/http/wire.ts`；
+ * · en 那句 caveat（`editing it in the admin panel does not take effect immediately`）
+ *   本身就是 **62** 个字符，配上出处与前缀，`POOL_TOUCH_INTERVAL_MS` 那一行的**地板**
+ *   （摘要长度取 0、尾句逐字保留）实测是 **254**；
+ * · ADJ ㉞ 明令**不许删 caveat、不许删出处**来达标 ⇒ 只能抬阈值。
+ *   340 同时容得下「尾句一字不动 + 85 字摘要 = 340」与「尾句收紧到 171 + 108 字摘要 = 329」
+ *   两种改法，320 会**强制** en 侧同时收紧尾句与摘要（把压力转嫁给译文）。
+ * · R22e2 = 300 同源：那两种改法的单元格分别是 291 / 291。
+ *
+ * ⚠️ **这两个数只为 en 的那两行而存在，不是给全仓的余量**。所以本组第三格
+ * 钉死「今天射程内超过 200 字符的行数」：它是一条**棘轮**——阶段 7C/7D 把
+ * `ADMIN.md` / `API.md` / `REGISTRAR.md` 重排之后这个数会掉，掉了本格当场红，
+ * 逼人回来重新量。**没有这一格，340 就是一张全仓通行证。**
+ *
+ * ⚠️ **为什么不落「除那 4 行外一律 ≤200」的分档判据**（ADJ §64 把这件事留给本轮定）：
+ * 今天射程内 >200 的有 **26** 行，其中 22 行住在 `ADMIN.md` / `API.md` / `REGISTRAR.md`
+ * 与四种语言的 `DEPLOY.md` 里，属于 **W104 / W108 / W111 还没做**的那几批。
+ * 现在落分档判据只有两条路：要么写一张 26 行的白名单（一张伪装成守卫的待办清单），
+ * 要么把射程外的三类文档现在就改掉。两条都不是本轮该做的事 ⇒ 改成上面那条棘轮，
+ * **它会自己到期**，而白名单不会。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 一行表格行的字符数（`[...s].length`，与 W88 基线指标 13 同一把尺，不是显示宽度）。 */
+const charLen = (s: string): number => [...s].length;
+
+type WideScan = {
+  /** 整行超过 `R22E_ROW` 的。 */
+  readonly wideRows: string[];
+  /** 单个单元格超过 `R22E2_CELL` 的。 */
+  readonly wideCells: string[];
+  /** 射程内被扫到的表格行总数（分隔行不计）。 */
+  readonly rows: number;
+  /** 射程内超过 200 字符的行（棘轮那一格用）。 */
+  readonly over200: string[];
+};
+
+/** R22e：任一表格行的字符数上限。**这个数的来历见本组文件头，别当成从模板量的**。 */
+const R22E_ROW = 340;
+/** R22e2：任一单元格的字符数上限。同源。 */
+const R22E2_CELL = 300;
+
+/**
+ * 一组文档的表格行长度体检。**只读文本，不碰磁盘**，反向控制因此可以直接喂变异过的字符串。
+ *
+ * 口径与 W116 那一组共用：先剥围栏（`bodyLines`），再取首尾都是 `|` 的行，
+ * **分隔行不算数据行**（它的长度由 W116 的逐格恒等式决定，两组算同一行会互相打架）。
+ */
+const scanWideRows = (docs: ReadonlyArray<readonly [path: string, text: string]>): WideScan => {
+  const wideRows: string[] = [], wideCells: string[] = [], over200: string[] = [];
+  let rows = 0;
+  for (const [path, text] of docs) {
+    for (const { line, no } of bodyLines(text)) {
+      const t = line.trim();
+      if (!t.startsWith("|") || !t.endsWith("|")) continue;
+      if (SEPARATOR_ROW.test(line)) continue;
+      rows += 1;
+      const len = charLen(line);
+      if (len > 200) over200.push(`${path}:${no}（${len}）`);
+      if (len > R22E_ROW) {
+        wideRows.push(`${path}:${no} 整行 ${len} 字符 > ${R22E_ROW}：${t.slice(0, 60)}…`);
+      }
+      rowCells(t).forEach((c, k) => {
+        const cl = charLen(c);
+        if (cl > R22E2_CELL) {
+          wideCells.push(`${path}:${no} 第 ${k + 1} 格 ${cl} 字符 > ${R22E2_CELL}：${c.slice(0, 60)}…`);
+        }
+      });
+    }
+  }
+  return { wideRows, wideCells, rows, over200 };
+};
+
+/** 把某份非 README 文档的正文替换一处，其余原样——反向控制的公共夹具。 */
+const non25With = (
+  path: string, mutate: (s: string) => string,
+): ReadonlyArray<readonly [string, string]> =>
+  non25Pairs().map(([p, t]) => (p === path ? [p, mutate(t)] as const : [p, t] as const));
+
+describe("W103 表格行与单元格的长度上限（R22e ≤ 340 / R22e2 ≤ 300）", () => {
+  it("射程自守：25 份非 README 文档、每一份都读得到，而且真的扫到了表格行", () => {
+    expect(NON_README_25.length, "射程从 25 份变了 —— 先确认新增/删除的那份该不该进本组")
+      .toBe(25);
+    expect(NON_README_25.filter((p) => !existsSync(p)), "射程里有读不到的文件").toEqual([]);
+    const scan = scanWideRows(non25Pairs());
+    expect(scan.rows, "一行表格行都没扫到 —— 判据在测空气，多半是行首/行尾那两个 `|` 的判定写坏了")
+      .toBeGreaterThan(300);
+  });
+
+  it("R22e：射程内没有任何一行表格行超过 340 字符", () => {
+    const { wideRows } = scanWideRows(non25Pairs());
+    expect(
+      wideRows,
+      `这些表格行超过了 ${R22E_ROW} 字符：\n${wideRows.join("\n")}\n`
+      + "⇒ 处置是 W103 那一条：表里只留一句摘要，长解释移到表下的 `>` 引用块或 `> [!NOTE]`。"
+      + "🔴 **不许靠删 caveat 或删出处来达标**（ADJ ㉞）—— `tests/ui/settings.test.ts` "
+      + "要求 `POOL_*` 那两行之内同时含一整句 caveat 与 `src/http/wire.ts`，删了当场红。",
+    ).toEqual([]);
+  });
+
+  it("R22e2：射程内没有任何一个单元格超过 300 字符", () => {
+    const { wideCells } = scanWideRows(non25Pairs());
+    expect(
+      wideCells,
+      `这些单元格超过了 ${R22E2_CELL} 字符：\n${wideCells.join("\n")}\n`
+      + "⇒ 与 R22e 同一条处置。两条不是同一件事：一行可以由多个格拼成，"
+      + "整行合规而某一格独大时读者仍然要横着读一屏。",
+    ).toEqual([]);
+  });
+
+  /**
+   * **棘轮：射程内 >200 字符的行数今天是多少，钉死。**
+   *
+   * 340 / 300 只为 en 的 `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` 那两行而存在
+   * （见本组文件头）。**没有这一格，那两个数就是一张全仓通行证**：任何人往任何一张表里
+   * 塞一段 300 字符的散文都不会红。
+   *
+   * **维护规矩**：这个数**变大** = 有人在往表里塞长句，先看清楚是不是该塞；
+   * **变小** = W104 / W108 / W111 那几批在推进，回来重新量一遍写进这里，并在提交正文里
+   * 写明是哪一批在推。**不许把这一格删掉、也不许改成 `toBeLessThanOrEqual`** ——
+   * 那等于把「只会变松、不会变紧」的老样子放回来。
+   */
+  it("棘轮：射程内超过 200 字符的表格行恰好还是今天这些（变大 = 有人在塞长句，变小 = 该回来重新量）", () => {
+    const OVER_200_TODAY = 26;
+    const { over200 } = scanWideRows(non25Pairs());
+    expect(
+      over200.length,
+      `射程内 >200 字符的表格行从 ${OVER_200_TODAY} 变成了 ${over200.length}：\n`
+      + `${over200.join("\n")}\n`
+      + "⇒ 变大：先确认这一行为什么非长不可（R22e 的 340 只为 en 那两行 caveat 而存在，不是通行证）；\n"
+      + "⇒ 变小：W104 / W108 / W111 那几批在推进，把这个数重新量一遍写回本格。",
+    ).toBe(OVER_200_TODAY);
+  });
+
+  /* ── 反向控制：该红时红 / 不许乱红 ───────────────────────────────────────── */
+
+  it("该红时红：把一行撑到 341 字符 ⇒ R22e 点名该文件与行号，而 R22e2 不响", () => {
+    const target = join("docs", "zh-CN", "USAGE.md");
+    // 两格各 170 ⇒ 整行 347 > 340，而**每一格都 ≤300** —— 这一格要证明的正是两条互相独立。
+    const docs = non25With(target, (s) => `${s}\n| ${"x".repeat(170)} | ${"y".repeat(170)} |\n`);
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const scan = scanWideRows(docs);
+    expect(scan.wideRows.join("\n"), "撑到 341 的那一行没被 R22e 抓到").toContain(`${target}:`);
+    expect(scan.wideCells, "整行超标但每一格都 ≤300 —— R22e2 不该跟着响").toEqual([]);
+  });
+
+  it("该红时红：整行合规而某一格 301 字符 ⇒ R22e2 单独响（证明两条不是同一条）", () => {
+    const target = join("docs", "ja", "USAGE.md");
+    const docs = non25With(target, (s) => `${s}\n| ${"x".repeat(301)} |\n`);
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const scan = scanWideRows(docs);
+    expect(scan.wideRows, `整行只有 305 字符，R22e 不该响：\n${scan.wideRows.join("\n")}`).toEqual([]);
+    expect(scan.wideCells.join("\n"), "301 字符那一格没被 R22e2 抓到").toContain(`${target}:`);
+  });
+
+  it("不许乱红：围栏里教人写 markdown 表格的长行不进射程", () => {
+    const target = join("docs", "ko", "USAGE.md");
+    const docs = non25With(target, (s) => `${s}\n\`\`\`markdown\n| a | ${"x".repeat(400)} |\n\`\`\`\n`);
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const scan = scanWideRows(docs);
+    expect([scan.wideRows, scan.wideCells], "围栏里的示例被算进来了 —— 剥围栏没生效")
+      .toEqual([[], []]);
+  });
+
+  it("不许乱红：分隔行不算数据行（W116 的逐格恒等式会把宽表的分隔行撑得很长）", () => {
+    const target = join("docs", "en", "USAGE.md");
+    const sep = `|${" ".repeat(1)}${"-".repeat(400)}${" ".repeat(1)}|`;
+    const docs = non25With(target, (s) => `${s}\n| h |\n${sep}\n| v |\n`);
+    const scan = scanWideRows(docs);
+    expect(scan.wideRows, `分隔行被当成数据行了：\n${scan.wideRows.join("\n")}`).toEqual([]);
+  });
+
+  it("认不出要吵的另一半：射程里塞一份没有任何表格的文档，`rows` 不许静静地变成 0", () => {
+    // 这一格守的是「本组会不会在某天悄悄测空气」：只要射程里还有真表格，`rows` 就 > 0。
+    const scan = scanWideRows([["fake.md", "# 标题\n\n没有表格。\n"] as const, ...non25Pairs()]);
+    expect(scan.rows, "掺进一份无表格文档之后一行都扫不到了 —— 扫描器坏了").toBeGreaterThan(300);
+  });
+});

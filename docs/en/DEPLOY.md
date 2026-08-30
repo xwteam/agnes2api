@@ -9,7 +9,7 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 | Variable | Required | Default | Notes |
 |--------|--------|-------|-----|
 | `GATEWAY_TOKEN` | **yes** | – | The token clients must present to call this gateway. |
-| `RESET_CONFIG` | no | – | Escape hatch: set it to `1` and startup **ignores the stored `config` key entirely** (ignores it, does not delete it), using only environment variables and built-in defaults. Use it to recover when the stored config has been corrupted badly enough to keep the gateway from starting; remove the line afterwards, or nothing you save in the panel will ever take effect. |
+| `RESET_CONFIG` | no | – | Escape hatch: set it to `1` and startup **ignores the stored `config` key entirely** (ignores it, does not delete it), using only environment variables and built-in defaults. When to reach for it, and what to do afterwards, is below. |
 | `AGNES_BASE_URL` | no | `https://apihub.agnes-ai.com/v1` | Upstream Agnes API base URL. |
 | `UPSTREAM_TIMEOUT_MS` | no | `8000` | First-byte timeout for **streaming** responses and video polling: abort the upstream call if no first byte arrives within this many milliseconds. |
 | `UPSTREAM_SYNC_TIMEOUT_MS` | no | `120000` | Total timeout budget for **synchronous** endpoints — the ones whose first byte only arrives once the upstream has computed the whole result: image generation, video job creation, and every **non-streaming** chat request. See below. |
@@ -17,9 +17,9 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 | `COOLDOWN_RATE_LIMIT_MS` | no | `60000` | Cooldown duration applied to a key after an upstream `429`. |
 | `COOLDOWN_PAYMENT_MS` | no | `3600000` | Cooldown duration applied to a key after an upstream `402`. |
 | `COOLDOWN_STRIKE_MS` | no | `1800000` | Cooldown duration applied once a key reaches `MAX_STRIKES`. The key recovers automatically when it expires. |
-| `POOL_CACHE_TTL_MS` | no | `60000` | Each isolate/process keeps an in-memory snapshot of the key pool; this is how long that snapshot lives. `0` disables the cache. **KV reads are independent of request count** — they depend only on the refresh rate; see the quota section below for the formula. Cost: cooldowns/evictions decided by another isolate take up to **this value + about 60 seconds** to become visible here (the extra 60s is KV's default edge-cache `cacheTtl`) — with the default 60000 that ceiling is about **120 seconds**. And it isn't just "seen late": any scheduling write made against a stale snapshot overwrites the whole record, **erasing** whatever `evicted` / `cooldownUntil` another isolate had just written within that window — that decision has to happen all over again. **Read once when the instance is built** (`src/http/wire.ts`): changes only take effect after a container restart or an isolate recycle — **editing it in the admin panel does not take effect immediately**. |
-| `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted. `0` persists it on every successful request. It is a display-only field that no scheduling logic reads; writing it per request would burn the free tier's 1,000 writes/day and leave no budget for cooldowns and evictions. Cost: "last used" is only accurate to within this interval. The same interval also governs the panel's usage counters (request count / success rate). **After you shrink `stats` by hand in storage (zeroing it, say), the panel may briefly show the reset value and then flip back to the old one**: the snapshot picks up the zeroed record after one TTL, but a running instance remembers its own persisted baseline and writes it back on its next real persist. They agree for good once that instance is recycled, at the latest. **To clear the counters, take the proper path that goes through the repo**: `PATCH /admin/api/keys/:id` with `clearStats`. It discards the persisted baseline and the not-yet-persisted delta held by **the instance that served this request**, so **requests that start after this reset** will not push the old value back. But a request that was **already in flight when the reset happened** holds a record taken from before the reset and rebuilds the baseline from that old value when it finishes; other instances running at the same time (another isolate, or another container on the same volume) each keep their own baseline too. Either way they may push an old value back once. **Today it is API only — the panel has no button for it.** **Read once when the instance is built** (`src/http/wire.ts`): changes only take effect after a container restart or an isolate recycle — **editing it in the admin panel does not take effect immediately**. |
-| `USAGE_STATS_ENABLED` | no | `false` | Tier-2 time series behind the panel's "Usage" section (by day / hour / model / protocol). **The check is a literal `true`**; `1` or `yes` count as off. **Off by default, and "off" is zero-cost**: no in-memory accumulator is created and not a single storage write happens. Once on, each instance writes at most 13 puts per day (about 10.4% of the write quota; 104 per day across 8 isolates); once exhausted nothing more is written that day and it recovers on the next UTC day. The unflushed tail is at most 2 hours. See the Tier-2 part of "Quota accounting" below. Read once when the app is built: changing it takes effect after a container restart / isolate recycle. |
+| `POOL_CACHE_TTL_MS` | no | `60000` | How long each isolate/process keeps its in-memory key-pool snapshot; `0` disables it. Formula and cost below. **Read once at instance build** (`src/http/wire.ts`): a container restart or an isolate recycle is required — **editing it in the admin panel does not take effect immediately**. |
+| `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted; `0` = every successful request. Cost below. **Read once at instance build** (`src/http/wire.ts`): a container restart or an isolate recycle is required — **editing it in the admin panel does not take effect immediately**. |
+| `USAGE_STATS_ENABLED` | no | `false` | Tier-2 time series behind the panel's "Usage" section (by day / hour / model / protocol). **The check is a literal `true`**; `1` or `yes` count as off. **Off by default, and "off" is zero-cost**. What it costs once on is below. Read once when the app is built. |
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
 
@@ -33,6 +33,56 @@ trade-offs. Every numeric variable above must be an integer; all of them must be
 `POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS` are read **once, when the app is built**.
 Changing them requires restarting the container or waiting for isolates to be recycled — unlike
 every other setting, they do not take effect per request.
+
+### `RESET_CONFIG`: when to reach for this escape hatch
+
+> Use it to recover when the stored config has been corrupted badly enough to keep the gateway
+> from starting; remove the line afterwards, or nothing you save in the panel will ever take
+> effect.
+
+### What `POOL_CACHE_TTL_MS` costs
+
+**KV reads are independent of request count** — they depend only on the refresh rate; see the
+quota section below for the formula.
+
+> Cooldowns/evictions decided by another isolate take up to **this value + about 60 seconds** to
+> become visible here (the extra 60s is KV's default edge-cache `cacheTtl`) — with the default
+> 60000 that ceiling is about **120 seconds**.
+
+And it isn't just "seen late": any scheduling write made against a stale snapshot overwrites the
+whole record, **erasing** whatever `evicted` / `cooldownUntil` another isolate had just written
+within that window — that decision has to happen all over again.
+
+### What `POOL_TOUCH_INTERVAL_MS` costs, and how to clear the counters
+
+It is a display-only field that no scheduling logic reads.
+Writing it per request would burn the free tier's 1,000 writes/day and leave no budget for
+cooldowns and evictions. Cost: "last used" is only accurate to within this interval. The same
+interval also governs the panel's usage counters (request count / success rate).
+
+> [!WARNING]
+> **After you shrink `stats` by hand in storage (zeroing it, say), the panel may briefly show the
+> reset value and then flip back to the old one**: the snapshot picks up the zeroed record after
+> one TTL, but a running instance remembers its own persisted baseline and writes it back on its
+> next real persist. They agree for good once that instance is recycled, at the latest.
+
+**To clear the counters, take the proper path that goes through the repo**:
+`PATCH /admin/api/keys/:id` with `clearStats`. It discards the persisted baseline and the
+not-yet-persisted delta held by **the instance that served this request**, so **requests that
+start after this reset** will not push the old value back. But a request that was **already in
+flight when the reset happened** holds a record taken from before the reset and rebuilds the
+baseline from that old value when it finishes; other instances running at the same time (another
+isolate, or another container on the same volume) each keep their own baseline too. Either way
+they may push an old value back once.
+**Today it is API only — the panel has no button for it.**
+
+### What `USAGE_STATS_ENABLED` costs once you turn it on
+
+"Off" is zero-cost: no in-memory accumulator is created and not a single storage write happens.
+Once on, each instance writes at most 13 puts per day (about 10.4% of the write quota; 104 per
+day across 8 isolates); once exhausted nothing more is written that day and it recovers on the
+next UTC day. The unflushed tail is at most 2 hours. See the Tier-2 part of "Quota accounting"
+below. Changing it takes effect after a container restart / isolate recycle.
 
 ### Quota budget: how many requests a Worker on the free KV tier can serve
 
@@ -411,13 +461,42 @@ number of isolates.
 
 | Variable | Required | Default | Notes |
 |--------|--------|-------|-----|
-| `ADMIN_TOKEN` | no | none (panel disabled) | Token for the admin endpoints. **Must differ from `GATEWAY_TOKEN`**, and must be at least 24 characters. It must also have **no leading or trailing whitespace**: HTTP strips whitespace from header values but environment variables keep it, so a padded token can never be sent by any client. The token must also consist solely of **printable ASCII (0x20–0x7E)**. This restriction has three parts with different natures: (1) characters above U+00FF (CJK, emoji, zero-width spaces) plus newlines and NUL make `fetch` **throw** when setting the header — the request is never sent, so you would get a panel that returns 200 yet can never be entered, and the server would not even get one `admin.login_failed`; (2) control characters **other than TAB** (`0x01–0x08`, `0x0B`, `0x0C`, `0x0E–0x1F`, `0x7F` — 29 in total) can be sent by the browser but are rejected as `400` by the HTTP parser; (3) **TAB (`0x09`)** and `0x80–0xFF` bytes such as `é`, `£` or a non-breaking space **can actually be sent and would work** — rejecting them is a **robustness trade-off on our side**, not a physical limit, and **the two have different reasons**. TAB is an **invisible character**: pasted into a `.env` file or a secret, nobody can see it (the same diagnosability problem as leading/trailing whitespace, except that rule is physical and this one is a trade-off). `0x80–0xFF` is an encoding question instead: environment variables are decoded as UTF-8 while header values are decoded as Latin-1, and nothing in the specs guarantees those two agree in that range (we have only verified this on Node; the Cloudflare Workers side is unverified), while RFC 9110 already marks that range as deprecated. Please use an ASCII-only token. **Interior spaces are allowed**: a passphrase like `correct horse battery staple` is perfectly sendable and, under a 24-character minimum, is often easier to get right than a random string. Leading/trailing whitespace is covered by the rule above. Unset or non-compliant ⇒ the whole `/admin` tree is never registered, and the reason is logged as `admin.token_rejected`. |
-| `TRUST_PROXY` | no | unset (**no** forwarded header is trusted) | Set to `1` **only** if the gateway really sits behind a proxy — that includes the Cloudflare Worker form, where you should set it. When set, the client IP recorded in login-failure events comes from `CF-Connecting-IP`, falling back to the first segment of `X-Forwarded-For`. |
+| `ADMIN_TOKEN` | no | none (panel disabled) | Token for the admin endpoints. **Must differ from `GATEWAY_TOKEN`**, at least 24 characters, **no leading/trailing whitespace**, **printable ASCII (0x20–0x7E)** only; reasoning below. Unset or non-compliant ⇒ the `/admin` tree is never registered, logged as `admin.token_rejected`. |
+| `TRUST_PROXY` | no | unset (**no** forwarded header is trusted) | Set to `1` **only** if the gateway really sits behind a proxy — that includes the Cloudflare Worker form, where you should set it. It decides where the client IP in login-failure events comes from; see below. |
 
 **Not set ⇒ the panel is simply unavailable, and the gateway keeps forwarding.** Requests to
 `/admin/...` then get **`404`, not `401`**: the tree is never registered, so nothing leaks the
 fact that there is a panel here. This mirrors the registrar being disabled by default — a missing
 or bad `ADMIN_TOKEN` must never stop the gateway from forwarding.
+
+#### The three hard rules on `ADMIN_TOKEN`
+
+**No leading or trailing whitespace**: HTTP strips whitespace from header values but environment
+variables keep it, so a padded token can never be sent by any client.
+
+The token must also consist solely of **printable ASCII (0x20–0x7E)**. This restriction has three
+parts with different natures:
+
+1. Characters above U+00FF (CJK, emoji, zero-width spaces) plus newlines and NUL make `fetch`
+   **throw** when setting the header — the request is never sent, so you would get a panel that
+   returns 200 yet can never be entered, and the server would not even get one
+   `admin.login_failed`.
+2. Control characters **other than TAB** (`0x01–0x08`, `0x0B`, `0x0C`, `0x0E–0x1F`, `0x7F` — 29 in
+   total) can be sent by the browser but are rejected as `400` by the HTTP parser.
+3. **TAB (`0x09`)** and `0x80–0xFF` bytes such as `é`, `£` or a non-breaking space **can actually
+   be sent and would work** — rejecting them is a **robustness trade-off on our side**, not a
+   physical limit, and **the two have different reasons**. TAB is an **invisible character**:
+   pasted into a `.env` file or a secret, nobody can see it (the same diagnosability problem as
+   leading/trailing whitespace, except that rule is physical and this one is a trade-off).
+   `0x80–0xFF` is an encoding question instead: environment variables are decoded as UTF-8 while
+   header values are decoded as Latin-1, and nothing in the specs guarantees those two agree in
+   that range (we have only verified this on Node; the Cloudflare Workers side is unverified),
+   while RFC 9110 already marks that range as deprecated.
+
+Please use an ASCII-only token. **Interior spaces are allowed**: a passphrase like
+`correct horse battery staple` is perfectly sendable and, under a 24-character minimum, is often
+easier to get right than a random string. Leading/trailing whitespace is covered by the rule
+above.
 
 **Why the 24-character minimum.** The Worker form has no distributed login rate limiting.
 Building one would mean using KV as the counting window, which hands an attacker a lever to burn
@@ -479,6 +558,11 @@ exfiltration; it cannot stop navigation-based exfiltration such as
 tokens**, which requires the server to store sessions and therefore conflicts with the design rule
 that `ADMIN_TOKEN` is read from environment variables only, never from storage. Left for a later
 release.
+
+#### `TRUST_PROXY` decides where the client IP comes from
+
+When set, the client IP recorded in login-failure events comes from `CF-Connecting-IP`, falling
+back to the first segment of `X-Forwarded-For`.
 
 **`TRUST_PROXY` is a security switch, which is why it defaults to off.** The client IP it decides
 ends up in the `admin.login_failed` event, so trusting a client-supplied header blindly would let
