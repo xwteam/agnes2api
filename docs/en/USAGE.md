@@ -394,7 +394,9 @@ instead of fabricating an empty response. Retrying once usually clears it.
 
 ## Next Steps
 
-- Endpoints of all four protocols, with request / response shapes: [API.md](API.md)
 - Both deployment forms and every environment variable: [DEPLOY.md](DEPLOY.md)
 - The web admin panel: [ADMIN.md](ADMIN.md)
 - The registrar (automatic pool refill): [REGISTRAR.md](REGISTRAR.md)
+- Endpoints and request / response shapes for all four protocols: [API.md](API.md)
+- What this project is, and how to get started: [README.md](../../README.md)
+- Bug reports and questions: [GitHub Issues](https://github.com/xwteam/agnes2api/issues)

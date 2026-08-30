@@ -1273,7 +1273,9 @@ TRUST_PROXY=1
 
 ## 後續步驟
 
-- 用法與四種協定的 SDK 接入：[USAGE.md](USAGE.md)
-- 端點、參數與錯誤碼：[API.md](API.md)
+- 用法與四種介面的 SDK 接入：[USAGE.md](USAGE.md)
 - Web 管理面板：[ADMIN.md](ADMIN.md)
 - 註冊機（自動補池）：[REGISTRAR.md](REGISTRAR.md)
+- 端點清單與請求 / 回應形狀：[API.md](API.md)
+- 專案概況與快速上手：[README.md](../../README.md)
+- 回報問題與提問：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)

@@ -1314,3 +1314,5 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 - Both deployment forms and every environment variable: [DEPLOY.md](DEPLOY.md)
 - The web admin panel: [ADMIN.md](ADMIN.md)
 - The registrar (automatic pool refill): [REGISTRAR.md](REGISTRAR.md)
+- What this project is, and how to get started: [README.md](../../README.md)
+- Bug reports and questions: [GitHub Issues](https://github.com/xwteam/agnes2api/issues)

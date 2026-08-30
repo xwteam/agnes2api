@@ -1459,7 +1459,9 @@ TRUST_PROXY=1
 
 ## 다음 단계
 
-- 사용법과 네 프로토콜의 SDK 연결: [USAGE.md](USAGE.md)
-- 엔드포인트·파라미터·에러 코드: [API.md](API.md)
+- 사용법과 네 프로토콜의 SDK 연동: [USAGE.md](USAGE.md)
 - 웹 관리 패널: [ADMIN.md](ADMIN.md)
 - 레지스트라(자동 풀 보충): [REGISTRAR.md](REGISTRAR.md)
+- 네 프로토콜의 엔드포인트와 요청 / 응답 형태: [API.md](API.md)
+- 프로젝트 개요와 빠른 시작: [README.md](../../README.md)
+- 버그 신고와 질문: [GitHub Issues](https://github.com/xwteam/agnes2api/issues)

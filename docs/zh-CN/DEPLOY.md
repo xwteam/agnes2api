@@ -1271,6 +1271,8 @@ TRUST_PROXY=1
 ## 获取帮助
 
 - 用法与四种协议的 SDK 接入：[USAGE.md](USAGE.md)
-- 端点、参数与错误码：[API.md](API.md)
 - Web 管理面板：[ADMIN.md](ADMIN.md)
 - 注册机（自动补池）：[REGISTRAR.md](REGISTRAR.md)
+- 四条协议的端点与请求 / 响应形状：[API.md](API.md)
+- 项目概况与快速上手：[README.md](../../README.md)
+- 报障与提问：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)

@@ -580,7 +580,9 @@ KV のエッジキャッシュが一層あります。プールスナップシ�
 
 ## 次のステップ
 
-- 四つのプロトコルのエンドポイントと要求 / 応答の形：[API.md](API.md)
-- 二つのデプロイ形態とすべての環境変数：[DEPLOY.md](DEPLOY.md)
 - 使い方と四つのプロトコルの SDK 接続：[USAGE.md](USAGE.md)
+- 二つのデプロイ形態とすべての環境変数：[DEPLOY.md](DEPLOY.md)
 - レジストラー（自動プール補充）：[REGISTRAR.md](REGISTRAR.md)
+- 四つのプロトコルのエンドポイントとリクエスト / レスポンスの形：[API.md](API.md)
+- プロジェクトの概要とクイックスタート：[README.md](../../README.md)
+- 不具合の報告と質問：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)

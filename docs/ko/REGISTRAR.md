@@ -424,3 +424,12 @@ MoeMail은 1시간 TTL로 만료). 따라서 Worker에서 **`MINT_BATCH`는 라�
 - 특정 채널에서 등록이 계속 실패한다면(예: Agnes가 인증 코드나 CAPTCHA 정책을 강화한
   경우), 이는 코드 수준에서는 우회할 수 없는 업스트림 측 변화입니다. 레지스트라를 비
   활성화하고 대신 key를 수동으로 임포트할 수 있습니다([DEPLOY.md](DEPLOY.md) 참고).
+
+## 다음 단계
+
+- 사용법과 네 프로토콜의 SDK 연동: [USAGE.md](USAGE.md)
+- 두 배포 형태와 모든 환경 변수: [DEPLOY.md](DEPLOY.md)
+- 웹 관리 패널: [ADMIN.md](ADMIN.md)
+- 네 프로토콜의 엔드포인트와 요청 / 응답 형태: [API.md](API.md)
+- 프로젝트 개요와 빠른 시작: [README.md](../../README.md)
+- 버그 신고와 질문: [GitHub Issues](https://github.com/xwteam/agnes2api/issues)

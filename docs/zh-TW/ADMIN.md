@@ -497,7 +497,9 @@ curl -X PATCH http://localhost:8080/admin/api/keys/9f2c \
 
 ## 後續步驟
 
-- 四條協定的端點與請求 / 回應形狀：[API.md](API.md)
+- 用法與四種介面的 SDK 接入：[USAGE.md](USAGE.md)
 - 部署兩種形態與全部環境變數：[DEPLOY.md](DEPLOY.md)
-- 用法與四種協定的 SDK 接入：[USAGE.md](USAGE.md)
 - 註冊機（自動補池）：[REGISTRAR.md](REGISTRAR.md)
+- 端點清單與請求 / 回應形狀：[API.md](API.md)
+- 專案概況與快速上手：[README.md](../../README.md)
+- 回報問題與提問：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)

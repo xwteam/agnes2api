@@ -435,3 +435,12 @@ attempt, whether it succeeded or failed.
 - If a channel keeps failing to register (for example, Agnes has tightened its verification-code
   or CAPTCHA policy), that's an upstream change no amount of code can work around. You can disable
   the registrar and switch to manually importing keys instead (see [DEPLOY.md](DEPLOY.md)).
+
+## Next Steps
+
+- Usage and SDK wiring for all four protocols: [USAGE.md](USAGE.md)
+- Both deployment forms and every environment variable: [DEPLOY.md](DEPLOY.md)
+- The web admin panel: [ADMIN.md](ADMIN.md)
+- Endpoints and request / response shapes for all four protocols: [API.md](API.md)
+- What this project is, and how to get started: [README.md](../../README.md)
+- Bug reports and questions: [GitHub Issues](https://github.com/xwteam/agnes2api/issues)

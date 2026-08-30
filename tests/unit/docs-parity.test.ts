@@ -38,7 +38,7 @@ import {
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 // P3e Task 31：危险区那两条端点的路径**一律从真源常量现算**，不在本文件手抄字符串。
 import { CONFIG_RESET_PATH } from "../../src/http/admin/handlers/config.js";
-// W136（整分支评审发现 1–6 的回填）：文档真值锚需要的三样真源。
+// W137（整分支评审发现 1–6 的回填）：文档真值锚需要的三样真源。
 import { applyEvict, applyStrike } from "../../src/core/keypool.js";
 import type { KeyRecord } from "../../src/core/types.js";
 import { TEST_ADMIN_TOKEN, makeApp } from "../helpers/make-app.js";
@@ -7222,8 +7222,17 @@ describe("跨文档指认的真实性：文档里说「那份 README 里有 X」
     ko: "## ⚡ 빠른 배포",
   };
 
-  /** 五份 DEPLOY.md 里允许出现的 README 链接目标。**同目录那一条，不是根那一条。** */
-  const ALLOWED_README_LINK_TARGETS = ["README.md"] as const;
+  /**
+   * 五份 DEPLOY.md 里允许出现的 README 链接目标。**排序后逐条相等**。
+   *
+   * · `README.md` —— 正文里那条「方式一」指认，指的是**同目录**那份语言 README；
+   * · `../../README.md` —— 页脚形态 A 的**根 README 回链**（ADJ ㊶：模板每份页脚
+   *   都是「兄弟文档 × N + 根 README 回链 + GitHub Issues」，P3f 整分支评审发现 9 / 21
+   *   的回填把这一条补进了 20 份文档）。
+   * ⚠️ **跨语言的 README（`../en/README.md` 这种）仍然不许出现**：读者点进去会换一种
+   * 语言，而本组守的正是「指认与真实存在」这条轴。下面那一格用它当变异。
+   */
+  const ALLOWED_README_LINK_TARGETS = ["../../README.md", "README.md"] as const;
 
   const readmeLinkTargets = (body: string): string[] =>
     [...outsideFences(body).matchAll(/\]\(([^)\s]+)\)|href="([^"]+)"/g)]
@@ -7311,14 +7320,16 @@ describe("跨文档指认的真实性：文档里说「那份 README 里有 X」
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("(A) 闭合该红时红：往 zh-CN/DEPLOY.md 里加一条指向根 README 的链接 —— 它解析得开，⑤ 不会红，本格必须红", () => {
+  it("(A) 闭合该红时红：往 zh-CN/DEPLOY.md 里加一条指向**另一种语言** README 的链接 —— 它解析得开，⑤ 不会红，本格必须红", () => {
     probeGreen(linkTargetFailures(readFile), "(A) 闭合");
     const at = docPath(".", "zh-CN", "DEPLOY");
-    const mutated = `${readFile(at)}\n见根目录 [README](../../README.md) 里的那颗按钮。\n`;
+    // ⚠️ 变异从「根 README」换成「en 的 README」：页脚形态 A 补进来之后，根回链
+    // 已经是登记表里的合法目标，拿它当变异这一格会恒绿（P3f 整分支评审发现 9 的连带）。
+    const mutated = `${readFile(at)}\n见英文版 [README](../en/README.md) 里的那一节。\n`;
     const failures = linkTargetFailures(patchPath(readFile, at, mutated));
     expect(failures).toHaveLength(1);
     expect(failures[0] ?? "").toContain("docs/zh-CN/DEPLOY.md");
-    expect(failures[0] ?? "").toContain("../../README.md");
+    expect(failures[0] ?? "").toContain("../en/README.md");
   });
 
   /* ── (B) 那颗按钮：提到它 ⇒ 根 README 里必须真有它 ────────────────────── */
@@ -9336,13 +9347,18 @@ describe("W99–W102 五份 DEPLOY.md 的 15 节骨架之下的四条验收", ()
     }
   });
 
-  it("W102 页脚节恰 4 条 bullet（模板固定形态），且末节标题就是译名表同一下标的那一个（R26e'）", () => {
+  it("W102 页脚节的 bullet 条数按公式（兄弟文档 + 根 README 回链 + Issues），且末节标题就是译名表同一下标的那一个（R26e'）", () => {
+    // ⚠️ **这里曾经是 `.toBe(4)`**，而 ADJ ㊶ 明写「常量从字面 4 改为公式『兄弟文档数 + 1』…
+    // 判官按公式实现（读 DOCS 表现算），不写死 4 也不写死 6」。写死 4 把偏离焊死了：
+    // 补上根 README 回链与 GitHub Issues 反而会把本格打红（P3f 整分支评审发现 9 / 21）。
+    // 逐条目标由 W138 那一组统一按公式查，本格只钉条数与末节标题。
+    const want = DOCS.filter((d) => d !== "README" && d !== "SPONSORS" && d !== "DEPLOY").length + 2;
     for (const lang of LANGS) {
       const heading = headingAt(lang, SLOT.footer);
       const sec = h2Section(deploy(lang), heading);
       const bullets = sec.filter((l) => /^- /.test(l));
-      expect(bullets.length, `docs/${lang}/DEPLOY.md 的页脚节有 ${bullets.length} 条 bullet，模板固定是 4 条`)
-        .toBe(4);
+      expect(bullets.length, `docs/${lang}/DEPLOY.md 的页脚节有 ${bullets.length} 条 bullet，公式算出来是 ${want} 条`)
+        .toBe(want);
       // R26e'：末节标题 == 译名表同一下标 —— 与 API.md 那一族用的是同一个下标（ADJ ㊷）。
       expect(heading, `${lang} 的 DEPLOY 末节与 API 末节不是同一族译名`)
         .toBe(DOC_SECTIONS.API[lang][DOC_SECTIONS.API[lang].length - 1]);
@@ -10303,8 +10319,16 @@ describe("W108–W110 五份 ADMIN.md 的分层、围栏与排障三段式", () 
     ko: ["**원인**:", "**해결**:"],
   };
 
-  /** 页脚（形态 A）四条 bullet 各自该指向的兄弟文档，顺序不限但每份恰一次。 */
-  const FOOTER_TARGETS = ["API.md", "DEPLOY.md", "USAGE.md", "REGISTRAR.md"] as const;
+  /**
+   * 页脚（形态 A）每条 bullet 该指向的目标，**按公式现算**（ADJ ㊶）：
+   * 兄弟文档各一条 + 根 README 回链 + GitHub Issues。顺序不限但每条恰一次。
+   * ⚠️ 曾经是写死的四份兄弟文档 —— 那把「模板每份页脚都有回链与报障入口」这件事焊掉了。
+   */
+  const FOOTER_TARGETS: readonly string[] = [
+    ...DOCS.filter((d) => d !== "README" && d !== "SPONSORS" && d !== "ADMIN").map((d) => `${d}.md`),
+    "../../README.md",
+    (JSON.parse(readFileSync("package.json", "utf8")) as { bugs?: { url?: string } }).bugs?.url ?? "",
+  ];
 
   /** 今天的实测值，同时是**不回退下限**（只许升不许降，与 W101 同一种形态）。 */
   const H2_COUNT = 14;
@@ -10567,7 +10591,7 @@ describe("W108–W110 五份 ADMIN.md 的分层、围栏与排障三段式", () 
       }
       const bullets = h2Section(src, heading).filter((l) => /^- /.test(l));
       if (bullets.length !== FOOTER_TARGETS.length) {
-        out.push(`docs/${lang}/ADMIN.md 的页脚节有 ${bullets.length} 条 bullet，形态 A 固定是 ${FOOTER_TARGETS.length} 条`);
+        out.push(`docs/${lang}/ADMIN.md 的页脚节有 ${bullets.length} 条 bullet，公式算出来是 ${FOOTER_TARGETS.length} 条`);
         continue;
       }
       for (const target of FOOTER_TARGETS) {
@@ -10578,7 +10602,7 @@ describe("W108–W110 五份 ADMIN.md 的分层、围栏与排障三段式", () 
     return out;
   }
 
-  it("W110 页脚统一成形态 A：末节 == 译名表同一下标，恰 4 条 bullet，四份兄弟文档各恰 1 条", () => {
+  it("W110 页脚统一成形态 A：末节 == 译名表同一下标，bullet 条数按公式，每条目标各恰 1 条", () => {
     const failures = footerFailures(realAdminSrc);
     expect(failures, failures.join("\n")).toEqual([]);
   });
@@ -10590,8 +10614,9 @@ describe("W108–W110 五份 ADMIN.md 的分层、围栏与排障三段式", () 
       "ADMIN",
     );
     const failures = footerFailures(read);
+    // ⚠️ 只有 1 条：本组的条数不符那一支带 `continue`，逐条目标那半在同一份上不会再报。
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
-    expect(failures[0] ?? "").toContain("有 3 条 bullet");
+    expect(failures[0] ?? "").toContain(`有 ${FOOTER_TARGETS.length - 1} 条 bullet`);
   });
 
   it("该红时红：某一份把末节标题改回 `## 相关文档` ⇒ 形态 A 那格红并点名译名", () => {
@@ -10658,8 +10683,17 @@ describe("W111 五份 REGISTRAR.md 的两级分层与 Cron 那一节的拆分", 
     ko: "남는 시나리오가 있습니다",
   };
 
-  /** 今天的实测值，同时是**不回退下限**（只许升不许降，与 W108 同一种形态）。 */
-  const H2_COUNT = 11;
+  /**
+   * 今天的实测值，同时是**不回退下限**（只许升不许降，与 W108 同一种形态）。
+   *
+   * ⚠️ **11 → 12 是 ADJ ㊷ 的落地，不是骨架漂移**：那条裁定原文写着
+   *「REGISTRAR.md 五份**完全没有页脚**（末节 = `## 排障`）…**裁定：五类子文档统一成形态 A**…
+   * W108/W111 的措辞**修正为**『`##` 不动、补 `###`/`####`、**并统一页脚为形态 A**』」。
+   * 上一版的注释引的是**修正前**的 W111（「明写骨架不动」），于是同一条裁定只在 ADMIN 上
+   * 做了、REGISTRAR 这一半漏了整整五份（P3f 整分支评审发现 10 / 20）。
+   * 多出来的那一个 `##` 就是页脚节；逐条内容由 W138 那一组按公式查。
+   */
+  const H2_COUNT = 12;
   const H3_FLOOR = 15;
   const H4_FLOOR = 4;
   /** Cron 那一节里的 `####` 恰好几个、至少几张表（`W111` 的靶子是「4 个 `####` + 3 张表」）。 */
@@ -10692,11 +10726,11 @@ describe("W111 五份 REGISTRAR.md 的两级分层与 Cron 那一节的拆分", 
   const tableCount = (section: string): number =>
     section.split("\n").filter((l) => /^\s*\|(?:\s*:?-+:?\s*\|)+\s*$/.test(l)).length;
 
-  it("W111 `##` 骨架维持现状：五份各恰 11 个 `##`（骨架不动是这一条的全部内容）", () => {
+  it("W111 `##` 骨架：五份各恰 12 个 `##`（原骨架 11 节 + ADJ ㊷ 统一补的页脚节）", () => {
     for (const lang of LANGS) {
       const n = headingsAtLevel(realRegSrc(lang), 2).length;
       expect(n, `docs/${lang}/REGISTRAR.md 的 \`##\` 数从 ${H2_COUNT} 变成了 ${n}`
-        + " —— W111 明写骨架不动，改骨架要先回来改这条判据并说明理由").toBe(H2_COUNT);
+        + " —— 骨架（11 节）+ 页脚节（ADJ ㊷）= 12，改它要先回来改这条判据并说明理由").toBe(H2_COUNT);
     }
   });
 
@@ -11137,8 +11171,12 @@ describe("W114–W115 五份 USAGE.md 的扩容、base_url 三坑与流式围栏
   const H3_FLOOR = 31;
   const FENCE_FLOOR = 11;
 
-  /** 页脚（形态 A）四条 bullet 各自该指向的兄弟文档，顺序不限但每份恰一次。 */
-  const FOOTER_TARGETS = ["API.md", "DEPLOY.md", "ADMIN.md", "REGISTRAR.md"] as const;
+  /** 页脚（形态 A）每条 bullet 该指向的目标，**按公式现算**（ADJ ㊶，同 W110 那一组）。 */
+  const FOOTER_TARGETS: readonly string[] = [
+    ...DOCS.filter((d) => d !== "README" && d !== "SPONSORS" && d !== "USAGE").map((d) => `${d}.md`),
+    "../../README.md",
+    (JSON.parse(readFileSync("package.json", "utf8")) as { bugs?: { url?: string } }).bugs?.url ?? "",
+  ];
 
   const headingsAtLevel = (src: string, level: number): string[] =>
     outsideFences(src).split("\n").filter((l) => new RegExp(`^#{${level}} `).test(l));
@@ -11315,8 +11353,8 @@ describe("W114–W115 五份 USAGE.md 的扩容、base_url 三坑与流式围栏
         continue;
       }
       const bullets = lines.slice(last[1] + 1).filter((l) => /^- /.test(l));
-      if (bullets.length !== 4) {
-        out.push(`docs/${lang}/USAGE.md 的页脚有 ${bullets.length} 条 bullet，形态 A 固定是 4 条`);
+      if (bullets.length !== FOOTER_TARGETS.length) {
+        out.push(`docs/${lang}/USAGE.md 的页脚有 ${bullets.length} 条 bullet，公式算出来是 ${FOOTER_TARGETS.length} 条`);
       }
       for (const target of FOOTER_TARGETS) {
         const n = bullets.filter((b) => b.includes(`](${target})`)).length;
@@ -11326,7 +11364,7 @@ describe("W114–W115 五份 USAGE.md 的扩容、base_url 三坑与流式围栏
     return out;
   }
 
-  it("W115 页脚统一成形态 A：末节 == 译名表同一下标，恰 4 条 bullet，四份兄弟文档各恰 1 条", () => {
+  it("W115 页脚统一成形态 A：末节 == 译名表同一下标，bullet 条数按公式，每条目标各恰 1 条", () => {
     const failures = footerFailures(realUsageSrc);
     expect(failures, failures.join("\n")).toEqual([]);
   });
@@ -11335,7 +11373,7 @@ describe("W114–W115 五份 USAGE.md 的扩容、base_url 三坑与流式围栏
     const read = readerWith("zh-CN", (s) => s.replace(/\n- [^\n]*\[REGISTRAR\.md\]\(REGISTRAR\.md\)\n/, "\n"), "USAGE");
     const failures = footerFailures(read);
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(2);
-    expect(failures[0] ?? "").toContain("有 3 条 bullet");
+    expect(failures[0] ?? "").toContain(`有 ${FOOTER_TARGETS.length - 1} 条 bullet`);
     expect(failures[1] ?? "").toContain("指向 REGISTRAR.md 的 bullet 有 0 条");
   });
 
@@ -12048,7 +12086,7 @@ describe("W131 R27 的源码锚：口令那两条门槛的数字从 `src/` 现�
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
- * W136 —— **文档真值锚**（整分支评审发现 1–6 的回填）
+ * W137 —— **文档真值锚**（整分支评审发现 1–6 的回填）
  *
  * 这一组守的是同一族缺陷：**六份 README / 五份 DEPLOY / 五份 API 里那几句关于
  * 网关行为的断言，与 `src/` 里真正跑着的代码相反**。四条都是评审逐字复现出来的：
@@ -12181,7 +12219,7 @@ const missingClaim = (
   return hit ? [] : [`${p}：${lines.length} 行射程内一条都没写「${want.join(" / ")}」`];
 });
 
-describe("W136 文档真值锚：key 池自愈那三句从 `applyStrike` 现算（评审发现 3）", () => {
+describe("W137 文档真值锚：key 池自愈那三句从 `applyStrike` 现算（评审发现 3）", () => {
   /** 一条刚建好的记录。字段照 `KeyRecord` 的形状写，缺字段会是编译错误。 */
   const freshRecord = (): KeyRecord => ({
     id: "w136", key: "sk-w136", addedAt: 0, lastUsedAt: null,
@@ -12245,7 +12283,7 @@ describe("W136 文档真值锚：key 池自愈那三句从 `applyStrike` 现算�
   });
 });
 
-describe("W136 文档真值锚：流式那两句拿真装配现算（评审发现 1）", () => {
+describe("W137 文档真值锚：流式那两句拿真装配现算（评审发现 1）", () => {
   it("源码现算：`stream:false` 的请求原样以 `stream:false` 发给上游，回来的是 JSON 不是事件流", async () => {
     const upstream = {
       id: "c1", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
@@ -12316,7 +12354,7 @@ describe("W136 文档真值锚：流式那两句拿真装配现算（评审发�
   });
 });
 
-describe("W136 文档真值锚：导入 key 的 HTTP 接口真的存在（评审发现 2）", () => {
+describe("W137 文档真值锚：导入 key 的 HTTP 接口真的存在（评审发现 2）", () => {
   it("源码现算：`POST /admin/api/keys` 接得住一次导入，上限是 `MAX_IMPORT_KEYS`", async () => {
     const { app, repo } = await makeApp([], []);
     const res = await app.request("/admin/api/keys", {
@@ -12354,7 +12392,7 @@ describe("W136 文档真值锚：导入 key 的 HTTP 接口真的存在（评审
   });
 });
 
-describe("W136 文档真值锚：删 key 的前置条件是**或**不是**且**（评审发现 5）", () => {
+describe("W137 文档真值锚：删 key 的前置条件是**或**不是**且**（评审发现 5）", () => {
   const importOne = () => makeApp([], ["k-live"]);
 
   it("源码现算：已停用的删得掉、已剔除的**不必再停用**也删得掉、两者都不是才 409", async () => {
@@ -12394,7 +12432,7 @@ describe("W136 文档真值锚：删 key 的前置条件是**或**不是**且**�
   });
 });
 
-describe("W136 文档真值锚：两把口令撞了是 503 不是 404（评审发现 6）", () => {
+describe("W137 文档真值锚：两把口令撞了是 503 不是 404（评审发现 6）", () => {
   const SAME = "same-token-for-w136-0123456789";
 
   it("源码现算：口令撞车时 `/admin` 树**照常注册**、面板本体打得开，管理接口回 503", async () => {
@@ -12436,7 +12474,7 @@ describe("W136 文档真值锚：两把口令撞了是 503 不是 404（评审�
   });
 });
 
-describe("W136 文档真值锚：`409` / `429` 的 `reason` 闭集从 `src/http/admin/handlers/` 现算（评审发现 4）", () => {
+describe("W137 文档真值锚：`409` / `429` 的 `reason` 闭集从 `src/http/admin/handlers/` 现算（评审发现 4）", () => {
   /**
    * 从源码里把两类拒绝的 `reason` **字面量**捞出来。
    * 手写的只有「去哪儿捞」，捞到什么由源码说了算 ⇒ 新增一条拒绝而文档没跟上，本组会红。
@@ -12514,5 +12552,131 @@ describe("W136 文档真值锚：`409` / `429` 的 `reason` 闭集从 `src/http/
     });
     expect(bad.length, "源码多一条 reason 而文档没跟上，居然一份都不红 —— 那这一格是恒绿的")
       .toBe(TRUTH_APIS.length);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W138 —— **页脚形态 A 的公式化射程**（整分支评审发现 9 / 10 / 20 / 21 的回填）
+ *
+ * ADJ ㊶ 逐字裁定：「常量从字面 4 改为**公式**『兄弟文档数 + 1』，agnes 落地为 6 条…
+ * 模板那个 4 不是魔数，它的真实规则就是『每个兄弟文档一条 + Issues 一条』。
+ * **判官按公式实现（读 DOCS 表现算），不写死 4 也不写死 6。**」
+ * ADJ ㊷ 又裁定：「REGISTRAR.md 五份**完全没有页脚**…五类子文档统一成形态 A」。
+ *
+ * 实施走了**反方向**：保留了字面 4、换掉了内容，于是 20 份非 README 文档的页脚里
+ * 既没有回项目首页的路、也没有报障入口 —— 而页脚节存在的全部理由就是提供这两条路；
+ * 五份 `REGISTRAR.md` 则连页脚节都没有，在 4181 全绿里完全隐形。
+ * 三处判官（W102 / W110 / W115）把这个偏离**焊死**了：`.toBe(4)` 是等号不是下限，
+ * 补上那两条 bullet 反而会把判据打红。
+ *
+ * ⇒ 本组按公式重写，**一处字面 4 / 字面 6 都不留**：
+ * · 射程 = 五类子文档 × 五语言 = **25 份**（从 `DOC_SECTIONS` 的键现算，不手抄名单）；
+ * · 末节标题 == `DOC_SECTIONS.API[lang]` 的最后一项（ADJ ㊷ 的同一族译名）；
+ * · bullet 条数 == **兄弟文档数 + 2**（根 README 回链 + GitHub Issues），现算；
+ * · 每份兄弟文档恰 1 条、`../../README.md` 恰 1 条、Issues 恰 1 条；
+ * · **Issues 的 URL 从 `package.json` 的 `bugs.url` 现算**，不在这里写第二遍字面量。
+ *
+ * **它验不了什么**：bullet 的**描述语**写得贴不贴切（那是 N7），也不管顺序。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("W138 页脚形态 A：25 份非 README 文档，条数与目标按公式现算（ADJ ㊶ / ㊷）", () => {
+  /**
+   * 五类子文档 —— **从 `DOCS` 表现算**（ADJ ㊶ 逐字：「判官按公式实现（读 DOCS 表现算）」），
+   * 不手抄名单。`README` 与 `SPONSORS` 排除：前者是页脚要回链的目标本身，
+   * 后者不属于「兄弟文档」那一族（R16 也把它排除在指针行之外，同一条理由）。
+   */
+  const FOOTER_DOCS: readonly string[] =
+    DOCS.filter((d) => d !== "README" && d !== "SPONSORS").map((d) => String(d)).sort();
+
+  /** 报障入口的 URL：真源是 `package.json` 的 `bugs.url`。 */
+  const issuesUrl = (): string => {
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { bugs?: { url?: string } };
+    return pkg.bugs?.url ?? "";
+  };
+
+  /** 一份文档的页脚该有哪几条链接目标（公式，不是名单）。 */
+  const wantTargets = (doc: string): readonly string[] =>
+    [...FOOTER_DOCS.filter((d) => d !== doc).map((d) => `${d}.md`), "../../README.md", issuesUrl()];
+
+  const footerFailures = (read: (path: string) => string): string[] => {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const api = DOC_SECTIONS.API[lang];
+      const want = api[api.length - 1] ?? "";
+      for (const doc of FOOTER_DOCS) {
+        const path = docPath(".", lang, doc);
+        const lines = outsideFences(read(path)).split("\n");
+        const h2s = lines.map((l, i) => [l, i] as const).filter(([l]) => /^## /.test(l));
+        const last = h2s[h2s.length - 1];
+        if (last === undefined) { out.push(`${path} 里一个 \`##\` 都没有`); continue; }
+        if (last[0] !== want) {
+          out.push(`${path} 的末节是「${last[0]}」，形态 A 要求它是译名表同一下标的「${want}」`
+            + "（ADJ ㊷：五类子文档统一页脚 —— `REGISTRAR.md` 曾经整整五份都没有页脚节）");
+          continue;
+        }
+        const bullets = lines.slice(last[1] + 1).filter((l) => /^- /.test(l));
+        const targets = wantTargets(doc);
+        if (bullets.length !== targets.length) {
+          out.push(`${path} 的页脚有 ${bullets.length} 条 bullet，公式算出来是 ${targets.length} 条`
+            + `（兄弟文档 ${targets.length - 2} 条 + 根 README 回链 + GitHub Issues）`);
+        }
+        for (const t of targets) {
+          const n = bullets.filter((b) => b.includes(`](${t})`)).length;
+          if (n !== 1) out.push(`${path} 的页脚里指向 ${t} 的 bullet 有 ${n} 条，要恰 1 条`);
+        }
+      }
+    }
+    return out;
+  };
+
+  it("射程自守：五类子文档从 `DOC_SECTIONS` 现算，恰 5 类；`bugs.url` 读得出来", () => {
+    expect(FOOTER_DOCS, "五类子文档的名单变了 —— 公式的分母跟着变，先确认这是有意的")
+      .toEqual(["ADMIN", "API", "DEPLOY", "REGISTRAR", "USAGE"]);
+    expect(issuesUrl(), "`package.json` 的 `bugs.url` 读不出来 —— 页脚那条报障入口就没有真源了")
+      .toMatch(/^https:\/\/github\.com\/.+\/issues$/);
+    expect(wantTargets("API").length, "公式算出来的条数不是「兄弟文档 4 + 2」").toBe(6);
+  });
+
+  it("25 份非 README 文档的页脚：末节标题、条数、每条目标逐份成立", () => {
+    const failures = footerFailures((p) => readFileSync(p, "utf8"));
+    expect(failures, `页脚形态 A 不成立：\n${failures.join("\n")}\n`
+      + "⚠️ 不许把条数改回字面 4 来达标 —— ADJ ㊶ 明写「不写死 4 也不写死 6」，"
+      + "而把根 README 回链与 Issues 删掉是内容损失，不是形态对齐").toEqual([]);
+  });
+
+  it("该红时红：把五份 `REGISTRAR.md` 的页脚整节删掉 —— 逐份点名（这正是 ADJ ㊷ 落地前的样子）", () => {
+    const read = (p: string) => {
+      const s = readFileSync(p, "utf8");
+      if (!p.endsWith(`REGISTRAR.md`)) return s;
+      const i = s.lastIndexOf("\n## ");
+      return i < 0 ? s : `${s.slice(0, i)}\n`;
+    };
+    const failures = footerFailures(read);
+    expect(failures.length, "五份 REGISTRAR 的页脚全删掉居然一格都不红").toBeGreaterThanOrEqual(5);
+    expect(failures.join("\n")).toContain(join("docs", "zh-CN", "REGISTRAR.md"));
+    expect(failures.join("\n")).toContain(join("docs", "ko", "REGISTRAR.md"));
+  });
+
+  it("该红时红：把根 README 回链那条 bullet 删掉 —— 条数与目标两格同时点名", () => {
+    const at = docPath(".", "zh-CN", "API");
+    const read = (p: string) => (p === at
+      ? readFileSync(p, "utf8").replace(/\n- [^\n]*\]\(\.\.\/\.\.\/README\.md\)/, "")
+      : readFileSync(p, "utf8"));
+    expect(read(at), "变异没落地").not.toEqual(readFileSync(at, "utf8"));
+    const failures = footerFailures(read);
+    expect(failures.join("\n"), "回链删掉了却没被抓到 —— 这正是 `.toBe(4)` 焊死偏离的那半")
+      .toContain(`${at} 的页脚有 5 条 bullet`);
+    expect(failures.join("\n")).toContain("指向 ../../README.md 的 bullet 有 0 条");
+  });
+
+  it("该红时红：把 Issues 那条 bullet 换成一个别的 URL —— 目标那格点名", () => {
+    const at = docPath(".", "en", "DEPLOY");
+    const read = (p: string) => (p === at
+      ? readFileSync(p, "utf8").replace(issuesUrl(), "https://example.invalid/issues")
+      : readFileSync(p, "utf8"));
+    expect(read(at), "变异没落地").not.toEqual(readFileSync(at, "utf8"));
+    const failures = footerFailures(read);
+    expect(failures.join("\n"), "报障入口被换成别处却没被抓到")
+      .toContain(`指向 ${issuesUrl()} 的 bullet 有 0 条`);
   });
 });

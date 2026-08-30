@@ -435,3 +435,12 @@ Worker だけです。
   リシーを強化した場合など）、これはコードレベルでは回避できない上流側の変化です。
   レジストラーを無効化し、代わりに key を手動でインポートすることもできます
   （[DEPLOY.md](DEPLOY.md) を参照）。
+
+## 次のステップ
+
+- 使い方と四つのプロトコルの SDK 接続：[USAGE.md](USAGE.md)
+- 二つのデプロイ形態とすべての環境変数：[DEPLOY.md](DEPLOY.md)
+- Web 管理パネル：[ADMIN.md](ADMIN.md)
+- 四つのプロトコルのエンドポイントとリクエスト / レスポンスの形：[API.md](API.md)
+- プロジェクトの概要とクイックスタート：[README.md](../../README.md)
+- 不具合の報告と質問：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)

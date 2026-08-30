@@ -1486,7 +1486,9 @@ TRUST_PROXY=1
 
 ## 次のステップ
 
-- 使い方と 4 プロトコルの SDK 接続: [USAGE.md](USAGE.md)
-- エンドポイント・パラメーター・エラーコード: [API.md](API.md)
-- Web 管理パネル: [ADMIN.md](ADMIN.md)
-- レジストラー（プールの自動補充）: [REGISTRAR.md](REGISTRAR.md)
+- 使い方と四つのプロトコルの SDK 接続：[USAGE.md](USAGE.md)
+- Web 管理パネル：[ADMIN.md](ADMIN.md)
+- レジストラー（自動プール補充）：[REGISTRAR.md](REGISTRAR.md)
+- 四つのプロトコルのエンドポイントとリクエスト / レスポンスの形：[API.md](API.md)
+- プロジェクトの概要とクイックスタート：[README.md](../../README.md)
+- 不具合の報告と質問：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)

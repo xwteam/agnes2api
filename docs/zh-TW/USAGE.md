@@ -337,7 +337,9 @@ curl http://localhost:8080/v1/videos/task-1 \
 
 ## 後續步驟
 
-- 四條協議的端點與請求 / 回應形狀：[API.md](API.md)
 - 部署兩種形態與全部環境變數：[DEPLOY.md](DEPLOY.md)
 - Web 管理面板：[ADMIN.md](ADMIN.md)
 - 註冊機（自動補池）：[REGISTRAR.md](REGISTRAR.md)
+- 端點清單與請求 / 回應形狀：[API.md](API.md)
+- 專案概況與快速上手：[README.md](../../README.md)
+- 回報問題與提問：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)

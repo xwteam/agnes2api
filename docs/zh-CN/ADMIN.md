@@ -497,7 +497,9 @@ curl -X PATCH http://localhost:8080/admin/api/keys/9f2c \
 
 ## 获取帮助
 
-- 四条协议的端点与请求 / 响应形状：[API.md](API.md)
-- 部署两种形态与全部环境变量：[DEPLOY.md](DEPLOY.md)
 - 用法与四种协议的 SDK 接入：[USAGE.md](USAGE.md)
+- 部署两种形态与全部环境变量：[DEPLOY.md](DEPLOY.md)
 - 注册机（自动补池）：[REGISTRAR.md](REGISTRAR.md)
+- 四条协议的端点与请求 / 响应形状：[API.md](API.md)
+- 项目概况与快速上手：[README.md](../../README.md)
+- 报障与提问：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)

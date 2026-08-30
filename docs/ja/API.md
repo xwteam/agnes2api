@@ -1314,3 +1314,5 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 - 二つのデプロイ形態とすべての環境変数：[DEPLOY.md](DEPLOY.md)
 - Web 管理パネル：[ADMIN.md](ADMIN.md)
 - レジストラー（自動プール補充）：[REGISTRAR.md](REGISTRAR.md)
+- プロジェクトの概要とクイックスタート：[README.md](../../README.md)
+- 不具合の報告と質問：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)

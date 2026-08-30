@@ -337,7 +337,9 @@ curl http://localhost:8080/v1/videos/task-1 \
 
 ## 다음 단계
 
-- 네 프로토콜의 엔드포인트와 요청 / 응답 형태: [API.md](API.md)
 - 두 배포 형태와 모든 환경 변수: [DEPLOY.md](DEPLOY.md)
 - 웹 관리 패널: [ADMIN.md](ADMIN.md)
 - 레지스트라(자동 풀 보충): [REGISTRAR.md](REGISTRAR.md)
+- 네 프로토콜의 엔드포인트와 요청 / 응답 형태: [API.md](API.md)
+- 프로젝트 개요와 빠른 시작: [README.md](../../README.md)
+- 버그 신고와 질문: [GitHub Issues](https://github.com/xwteam/agnes2api/issues)

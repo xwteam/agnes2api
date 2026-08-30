@@ -1314,3 +1314,5 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 - 部署两种形态与全部环境变量：[DEPLOY.md](DEPLOY.md)
 - Web 管理面板：[ADMIN.md](ADMIN.md)
 - 注册机（自动补池）：[REGISTRAR.md](REGISTRAR.md)
+- 项目概况与快速上手：[README.md](../../README.md)
+- 报障与提问：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)

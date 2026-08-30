@@ -1515,6 +1515,8 @@ TRUST_PROXY=1
 ## Next Steps
 
 - Usage and SDK wiring for all four protocols: [USAGE.md](USAGE.md)
-- Endpoints, parameters and error codes: [API.md](API.md)
 - The web admin panel: [ADMIN.md](ADMIN.md)
 - The registrar (automatic pool refill): [REGISTRAR.md](REGISTRAR.md)
+- Endpoints and request / response shapes for all four protocols: [API.md](API.md)
+- What this project is, and how to get started: [README.md](../../README.md)
+- Bug reports and questions: [GitHub Issues](https://github.com/xwteam/agnes2api/issues)

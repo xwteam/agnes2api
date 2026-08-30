@@ -373,3 +373,12 @@ key——每鑄出一把就立即寫入儲存，只是當輪次的補池不完�
 
 - 若某條通道持續註冊失敗（例如 Agnes 收緊了驗證碼或人機驗證策略），這是程式碼層面無法
   規避的上游變化，可以關閉註冊機、改為手動匯入 key（見 [DEPLOY.md](DEPLOY.md)）。
+
+## 後續步驟
+
+- 用法與四種介面的 SDK 接入：[USAGE.md](USAGE.md)
+- 部署兩種形態與全部環境變數：[DEPLOY.md](DEPLOY.md)
+- Web 管理面板：[ADMIN.md](ADMIN.md)
+- 端點清單與請求 / 回應形狀：[API.md](API.md)
+- 專案概況與快速上手：[README.md](../../README.md)
+- 回報問題與提問：[GitHub Issues](https://github.com/xwteam/agnes2api/issues)
