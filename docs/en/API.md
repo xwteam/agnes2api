@@ -883,6 +883,9 @@ curl -OJ http://localhost:8080/admin/api/events/download \
 
 Reads the configuration currently in effect. Credential fields report only whether they are configured, never their value.
 
+> [!NOTE]
+> On a field that was never saved, `stored` is **absent, not `null`**: it carries the raw value out of the stored `config` object, and `undefined` does not survive JSON. The example below is a fresh deployment — compare it with the `PUT` response, where the same field has a `stored` of its own.
+
 **Request**:
 
 ```bash
@@ -894,7 +897,7 @@ curl http://localhost:8080/admin/api/config \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
@@ -1021,7 +1024,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],

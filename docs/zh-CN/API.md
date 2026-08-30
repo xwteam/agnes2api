@@ -883,6 +883,9 @@ curl -OJ http://localhost:8080/admin/api/events/download \
 
 读当前生效配置。凭据字段只报「配没配」，不报值。
 
+> [!NOTE]
+> 从未保存过的字段上，`stored` 是**不存在，而不是 `null`**：它装的是存储里那份 `config` 的原始值，而 `undefined` 过不了 JSON。下面这个例子是一台全新部署——可与 `PUT` 的响应对照，同一个字段在那边有自己的 `stored`。
+
 **请求**：
 
 ```bash
@@ -894,7 +897,7 @@ curl http://localhost:8080/admin/api/config \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
@@ -1021,7 +1024,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],

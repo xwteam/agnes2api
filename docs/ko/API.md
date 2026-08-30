@@ -883,6 +883,9 @@ curl -OJ http://localhost:8080/admin/api/events/download \
 
 지금 유효한 설정을 읽습니다. 자격 증명 필드는 "설정되었는지"만 알려 주고 값은 알려 주지 않습니다.
 
+> [!NOTE]
+> 한 번도 저장된 적 없는 필드에서 `stored`는 **`null`이 아니라 아예 없습니다**: 저장된 `config` 객체의 원본 값을 담는데 `undefined`는 JSON을 넘지 못합니다. 아래 예시는 새로 배포한 상태이며, 같은 필드가 자체 `stored`를 가지는 `PUT` 응답과 비교해 보세요.
+
 **요청**:
 
 ```bash
@@ -894,7 +897,7 @@ curl http://localhost:8080/admin/api/config \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
@@ -1021,7 +1024,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],

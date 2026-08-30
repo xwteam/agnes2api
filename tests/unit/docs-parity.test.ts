@@ -38,6 +38,10 @@ import {
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 // P3e Task 31：危险区那两条端点的路径**一律从真源常量现算**，不在本文件手抄字符串。
 import { CONFIG_RESET_PATH } from "../../src/http/admin/handlers/config.js";
+import { DEFAULTS } from "../../src/core/config-provenance.js";
+import { buildApp } from "../../src/http/wire.js";
+import { nodeRuntime } from "../../src/adapters/runtime-node.js";
+import { MemoryStorage } from "../helpers/fake-storage.js";
 import { KEYS_PURGE_PATH } from "../../src/http/admin/handlers/keys-write.js";
 import { CHANNELS } from "../../admin-ui/js/pure/registrar.mjs";
 import {
@@ -9891,5 +9895,338 @@ describe("`## 管理 API` 与源码的对应：端点集合双向相等 + 硬编
     const docs = docAdminEndpoints("zh-CN", apiSrc("zh-CN"));
     expect(docs, "系统 API 那一节的端点被扫进来了 —— 节切分没生效").not.toContain("GET /health");
     expect(docs.length, "管理 API 那一节一条端点都没扫到 —— 本格与 A 格都在测空气").toBeGreaterThanOrEqual(20);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 阶段 7B 第 2 轮 —— `## 管理 API` 的**响应体形状**判据（评审发现 5 的另一半）
+ *
+ * 上一组（A 格 / B 格）自己在文件头登记了一条洞：**接不住第三、四族（响应体字段的
+ * 类型与嵌套层级）**，并写着「`registrar/status` 这次是人工回源码核对后重写的，
+ * **人工核对不留判据**」。第 2 轮评审把那条登记兑现成了实账：那次人工核对**只覆盖了
+ * 24 条端点里的 1 条**，剩下 23 条从没扫过，于是同一族里躺着四条真缺陷
+ *（`fields`/`credentials` 形状是编的、`upstreamTimeoutMs` 默认值写成 120000、
+ * `GET`/`PUT`/`secrets/clear` 三条各漏 2 个恒存在的顶层键、`overview` 漏三整块）。
+ *
+ * 本组补的是 **C 格**，并且**刻意不做成一张手写的期望表**——那正是本仓反复登记为
+ * 脆弱的那种判据。做法：**把 app 真的起起来，打这几条端点，拿活响应的键集合去比文档**。
+ * · 期望值来自 `buildApp()` 的真装配，理由与配置四条端点的契约测试在自己文件头写的
+ *   那条相同：观测点落在响应体上时，先问「这个字段是谁写的」——handler 自己的局部
+ *   变量就是自报，只能证明它说了什么；这里写它的是生产装配本人。
+ * · 于是「源码加一个响应字段而文档没跟上」「文档编一个源码没有的字段」两个方向都红，
+ *   **不需要任何人回来同步一张表**。
+ *
+ * ⚠️ **射程，明写，别读过头**：
+ * · 只比**对象的键集合**（顶层，外加 `fields`/`credentials` 里逐条目那一层）。
+ *   **值不比**——例子里的 `hint: "3f7a"`、`pid: 1`、`rssBytes` 都是示意值。
+ *   唯一被钉住的值是 `upstreamTimeoutMs` 的内置默认值，见下面 D 格。
+ * · **数组的内容不比**：`editable` 今天真有 26 条、`secrets` 真有 3 条，文档里都是
+ *   一条的示意样本。**这是本组已知且刻意留下的口子**，如实登记在这里。
+ * · 覆盖 5 条端点（`config` 四条 + `overview`）。**其余 19 条走 `UNCOVERED` 显式登记**，
+ *   并由下面那格「射程自守」保证 `COVERED ∪ UNCOVERED` 与 `router.ts` 现算出来的
+ *   端点集合**双向相等** ⇒ 新加一条端点，必须在这里表一次态，漏不掉。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 本组真的打过、拿活响应比过的端点。 */
+const SHAPE_COVERED = [
+  "GET /admin/api/config",
+  "PUT /admin/api/config",
+  "POST /admin/api/config/secrets/clear",
+  "POST /admin/api/config/reset",
+  "GET /admin/api/overview",
+] as const;
+
+/**
+ * 本组**没有**打的端点。第 2 轮评审把 24 条逐条对着 handler 人工核过一遍，
+ * 这 19 条当时是准的；**「当时是准的」不是判据**，所以它们在这里以「已登记未覆盖」
+ * 的身份存在，而不是悄悄不在名单上。
+ */
+const SHAPE_UNCOVERED = [
+  "GET /admin/api/session",
+  "GET /admin/api/capabilities",
+  "GET /admin/api/models",
+  "GET /admin/api/keys",
+  "POST /admin/api/keys",
+  "POST /admin/api/keys/bulk",
+  "PATCH /admin/api/keys/{id}",
+  "DELETE /admin/api/keys/{id}",
+  "POST /admin/api/keys/purge",
+  "GET /admin/api/keys/{id}/usage",
+  "POST /admin/api/keys/{id}/verify",
+  "GET /admin/api/events",
+  "GET /admin/api/events/download",
+  "POST /admin/api/config/validate",
+  "POST /admin/api/registrar/tend",
+  "GET /admin/api/registrar/status",
+  "POST /admin/api/registrar/channels/{channel}/test",
+  "GET /admin/api/usage",
+  "GET /admin/api/usage/{date}",
+] as const;
+
+/**
+ * 一条端点 `###` 之下那个 ```json 围栏的内容。
+ *
+ * **必须恰好一个**：这几条端点的请求体都是表格 + cURL，响应只有一段 JSON。
+ * 变成两个（例如有人补了一段错误响应示例）时本函数抛错而不是猜——猜错的那一支
+ * 会让判据静静去比另一段 JSON。
+ */
+function endpointJsonBlock(src: string, heading: string): string {
+  const lines = src.split("\n");
+  const at = lines.indexOf(`### ${heading}`);
+  if (at < 0) throw new Error(`API.md 里找不到 \`### ${heading}\` —— 端点标题被改过，回来改常量`);
+  let to = at + 1;
+  while (to < lines.length && !/^#{2,3} /.test(lines[to] ?? "")) to += 1;
+  const body = lines.slice(at + 1, to);
+  const blocks: string[] = [];
+  let cur: string[] | null = null;
+  for (const l of body) {
+    if (cur === null) { if (l.trim() === "```json") cur = []; continue; }
+    if (l.trim() === "```") { blocks.push(cur.join("\n")); cur = null; continue; }
+    cur.push(l);
+  }
+  if (blocks.length !== 1) {
+    throw new Error(`\`### ${heading}\` 之下有 ${blocks.length} 个 \`\`\`json 围栏（要恰 1 个）—— 本格不猜哪一段是响应`);
+  }
+  return blocks[0]!;
+}
+
+/** 文档里那段 JSON 的顶层键（顺带把「它到底是不是合法 JSON」也钉住了）。 */
+function docKeys(lang: Lang, heading: string): string[] {
+  const text = endpointJsonBlock(apiSrc(lang), heading);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`docs/${lang}/API.md 的 \`### ${heading}\` 那段 \`\`\`json 不是合法 JSON：${String(e)}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`docs/${lang}/API.md 的 \`### ${heading}\` 那段 JSON 不是对象`);
+  }
+  return Object.keys(parsed as Record<string, unknown>).sort();
+}
+
+/** 文档那段 JSON 里 `fields` / `credentials` 逐条目的键集合。 */
+function docEntryKeys(lang: Lang, heading: string, block: "fields" | "credentials"): Record<string, string[]> {
+  const parsed = JSON.parse(endpointJsonBlock(apiSrc(lang), heading)) as Record<string, unknown>;
+  const b = parsed[block];
+  if (typeof b !== "object" || b === null) return {};
+  return Object.fromEntries(
+    Object.entries(b as Record<string, unknown>)
+      .map(([k, v]) => [k, Object.keys(v as Record<string, unknown>).sort()]),
+  );
+}
+
+const SHAPE_ADMIN = { "x-admin-key": "docs-parity-admin-token-0123456789" };
+const SHAPE_JSON = { ...SHAPE_ADMIN, "content-type": "application/json" };
+
+/** 一台**真装配**的网关。`GATEWAY_TOKEN` 走环境变量 ⇒ `lockedBy` 那一格不是死的。 */
+async function shapeApp() {
+  const storage = new MemoryStorage();
+  const { app } = await buildApp(
+    {
+      ADMIN_TOKEN: SHAPE_ADMIN["x-admin-key"],
+      GATEWAY_TOKEN: "gateway-token-for-docs-parity-shape-tests",
+    },
+    storage,
+    nodeRuntime(),
+  );
+  return app;
+}
+
+type ShapeApp = Awaited<ReturnType<typeof shapeApp>>;
+
+/** 文档里那几个例子讲的是同一条剧情：先存一次 `upstreamTimeoutMs: 90000`。 */
+const savedOnce = (app: ShapeApp) =>
+  app.request("/admin/api/config", {
+    method: "PUT", headers: SHAPE_JSON,
+    body: JSON.stringify({ patch: { upstreamTimeoutMs: 90000 } }),
+  });
+
+/**
+ * 五条端点各自的「活响应」。**每条端点起一台新的 app**：`reset` 会把存储擦掉，
+ * 共用一台就会让后一条端点看到的是前一条留下的状态。
+ */
+const LIVE_SHAPES: Readonly<Record<(typeof SHAPE_COVERED)[number], (app: ShapeApp) => Promise<Response>>> = {
+  // 全新部署，一次都没保存过 ⇒ 文档那个例子讲的就是这一档。
+  "GET /admin/api/config": async (app) => await app.request("/admin/api/config", { headers: SHAPE_ADMIN }),
+  "PUT /admin/api/config": async (app) => await savedOnce(app),
+  "POST /admin/api/config/secrets/clear": async (app) => {
+    await savedOnce(app);
+    return await app.request("/admin/api/config/secrets/clear", {
+      method: "POST", headers: SHAPE_JSON, body: JSON.stringify({ path: "gatewayToken" }),
+    });
+  },
+  "POST /admin/api/config/reset": async (app) => {
+    await savedOnce(app);
+    return await app.request(CONFIG_RESET_PATH, {
+      method: "POST", headers: SHAPE_JSON, body: JSON.stringify({ confirm: true }),
+    });
+  },
+  "GET /admin/api/overview": async (app) => await app.request("/admin/api/overview", { headers: SHAPE_ADMIN }),
+};
+
+async function liveBody(heading: (typeof SHAPE_COVERED)[number]): Promise<Record<string, unknown>> {
+  const app = await shapeApp();
+  const res = await LIVE_SHAPES[heading](app);
+  expect(res.status, `${heading} 没回 200 —— 本格拿到的不是那条端点的正常响应`).toBe(200);
+  return await res.json() as Record<string, unknown>;
+}
+
+describe("`## 管理 API` 的响应体形状：拿**活响应**比文档，不比一张手写表（阶段 7B 第 2 轮评审发现 5）", () => {
+  it("射程自守：`COVERED ∪ UNCOVERED` 与 `router.ts` 现算出来的端点集合双向相等", () => {
+    const router = adminEndpointsOf(blankComments(readFileSync(ADMIN_ROUTER_FILE, "utf8"))).sort();
+    const listed: readonly string[] = [...SHAPE_COVERED, ...SHAPE_UNCOVERED].sort();
+    expect(listed.filter((e, i) => listed.indexOf(e) !== i), "名单里有重复").toEqual([]);
+    expect(
+      listed,
+      "⇒ 端点表变了而本组的两张名单没跟上。**新加的端点必须在这里表一次态**："
+      + "要么进 `SHAPE_COVERED`（回来给它写一条活响应），要么进 `SHAPE_UNCOVERED`"
+      + "（明说本组不覆盖它）。**不许两张都不进——那正是上一轮 23 条从没被扫过的成因。**",
+    ).toEqual(router);
+    expect(SHAPE_COVERED.length, "覆盖名单缩水了 —— 评审点名的 config 四条 + overview 是下限").toBe(5);
+  });
+
+  it("C 格：五份 API.md 那几段 ```json 的**顶层键集合**与活响应逐条相等", async () => {
+    const bad: string[] = [];
+    for (const heading of SHAPE_COVERED) {
+      const live = Object.keys(await liveBody(heading)).sort();
+      expect(live.length, `${heading} 的活响应只有 ${live.length} 个顶层键 —— 本格在测空气`)
+        .toBeGreaterThanOrEqual(8);
+      for (const lang of LANGS) {
+        const doc = docKeys(lang, heading);
+        const missing = live.filter((k) => !doc.includes(k));
+        const invented = doc.filter((k) => !live.includes(k));
+        if (missing.length > 0 || invented.length > 0) {
+          bad.push(
+            `docs/${lang}/API.md 的 \`### ${heading}\`：`
+            + `例子漏了 ${JSON.stringify(missing)}，编了 ${JSON.stringify(invented)}`,
+          );
+        }
+      }
+    }
+    expect(
+      bad,
+      `${bad.join("\n")}\n`
+      + "⇒ 期望值是 `buildApp()` 真装配打出来的**活响应**，不是一张手写表：\n"
+      + "   源码给响应加一个字段而文档没跟上 ⇒ 报「例子漏了」；\n"
+      + "   文档编一个源码没有的字段 ⇒ 报「编了」。**两个方向都红。**\n"
+      + "🔴 **不许把期望值改成从文档抽出来的东西来对付它**——那样这一格就只是在和自己比。",
+    ).toEqual([]);
+  });
+
+  it("C 格续：`fields` / `credentials` **逐条目**的键集合也与活响应相等（上一轮那条 `{value, source}` 就死在这里）", async () => {
+    const bad: string[] = [];
+    for (const heading of SHAPE_COVERED) {
+      const body = await liveBody(heading);
+      for (const block of ["fields", "credentials"] as const) {
+        const liveBlock = body[block];
+        if (typeof liveBlock !== "object" || liveBlock === null) continue;
+        for (const lang of LANGS) {
+          for (const [path, keys] of Object.entries(docEntryKeys(lang, heading, block))) {
+            const liveEntry = (liveBlock as Record<string, unknown>)[path];
+            if (liveEntry === undefined) {
+              bad.push(`docs/${lang}/API.md 的 \`### ${heading}\`：\`${block}\` 里编了一条源码不产出的路径 \`${path}\``);
+              continue;
+            }
+            const liveKeys = Object.keys(liveEntry as Record<string, unknown>).sort();
+            if (JSON.stringify(keys) !== JSON.stringify(liveKeys)) {
+              bad.push(
+                `docs/${lang}/API.md 的 \`### ${heading}\`：\`${block}.${path}\` 写的是 `
+                + `${JSON.stringify(keys)}，活响应是 ${JSON.stringify(liveKeys)}`,
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(
+      bad,
+      `${bad.join("\n")}\n`
+      + "⇒ 这两块的**唯一产地**是 `src/http/admin/handlers/config.ts` 的 `split()`，"
+      + "键集合由 `FieldSource`（`src/core/config-provenance.ts`）两支决定：\n"
+      + "   `public` ⇒ `{stored, env, effective, lockedBy}`（`stored` 是 `undefined` 时**整个键不上线**）\n"
+      + "   `secret` ⇒ `{configured, hint, lockedBy}`\n"
+      + "🔴 上一轮五份文档在这里写的是 `{value, source}`——**源码里这两个键从来没存在过**，"
+      + "照着写的前端解析器读到的恒是 `undefined`，而当时全仓零判据。",
+    ).toEqual([]);
+  });
+
+  it("D 格：`upstreamTimeoutMs` 的内置默认值从 `DEFAULTS` 现算（API.md 的例子 + DEPLOY.md 的变量表）", () => {
+    const want = DEFAULTS.upstreamTimeoutMs;
+    expect(want, "`DEFAULTS.upstreamTimeoutMs` 不是一个正整数 —— 本格在测空气").toBeGreaterThan(0);
+    // 与**隔壁那条**分得开：上一轮把 120000 当成了它，而 120000 是 upstreamSyncTimeoutMs。
+    expect(want, "两条超时的默认值撞上了 —— 本格失去了它要防的那个混淆")
+      .not.toBe(DEFAULTS.upstreamSyncTimeoutMs);
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      const reset = JSON.parse(endpointJsonBlock(apiSrc(lang), "POST /admin/api/config/reset")) as {
+        fields?: Record<string, { effective?: unknown }>;
+      };
+      const got = reset.fields?.upstreamTimeoutMs?.effective;
+      if (got !== want) {
+        bad.push(`docs/${lang}/API.md 的重置例子里 \`fields.upstreamTimeoutMs.effective\` 是 ${JSON.stringify(got)}，应为 ${want}`);
+      }
+      const row = readFileSync(join("docs", lang, "DEPLOY.md"), "utf8")
+        .split("\n").filter((l) => l.startsWith("| `UPSTREAM_TIMEOUT_MS` |"));
+      if (row.length !== 1) {
+        bad.push(`docs/${lang}/DEPLOY.md 里 \`UPSTREAM_TIMEOUT_MS\` 的表格行有 ${row.length} 条（要恰 1 条）`);
+      } else if (!row[0]!.includes(`\`${want}\``)) {
+        bad.push(`docs/${lang}/DEPLOY.md 的 \`UPSTREAM_TIMEOUT_MS\` 表格行里没有 \`${want}\`：${row[0]}`);
+      }
+    }
+    expect(
+      bad,
+      `${bad.join("\n")}\n`
+      + "⇒ 真源是 `src/core/config-provenance.ts` 的 `DEFAULTS.upstreamTimeoutMs`，本格 **import 它**。\n"
+      + "🔴 上一轮 API.md 把这个数写成 120000 并明标 `\"source\": \"default\"`，"
+      + "而同一套文档的 DEPLOY.md 写的是 8000 —— **一个数在同一套文档里有两个互相矛盾的答案**，"
+      + "本格把 API.md 与 DEPLOY.md 两处同时钉在同一个常量上，正是为了让那种分叉当场红。",
+    ).toEqual([]);
+  });
+
+  /* ── 反向控制：该红时红 / 不许乱红 ─────────────────────────────────────── */
+
+  it("该红时红：把 `propagation` 从 `GET /admin/api/config` 的例子里删掉 ⇒ C 格点名「例子漏了」", async () => {
+    const block = endpointJsonBlock(apiSrc("ko"), "GET /admin/api/config");
+    // `propagation` 是这段 JSON 的最后一项，连同它前面那个逗号一起删掉。
+    const mutated = block.replace(/,\n {2}"propagation":[^\n]*/, "");
+    expect(mutated, "变异没落地 —— 这一格控制是空的").not.toEqual(block);
+    const parsed = JSON.parse(mutated) as Record<string, unknown>;
+    const live = Object.keys(await liveBody("GET /admin/api/config")).sort();
+    expect(live.filter((k) => !Object.keys(parsed).includes(k)), "例子少了一个恒存在的顶层键却没被抓到")
+      .toEqual(["propagation"]);
+  });
+
+  it("该红时红：把 `fields` 那一格写回上一轮那个编出来的 `{value, source}` ⇒ C 格续点名两侧键集合", async () => {
+    const src = apiSrc("en");
+    const mutated = src.replace(
+      '"fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } }',
+      '"fields": { "upstreamTimeoutMs": { "value": 120000, "source": "default" } }',
+    );
+    expect(mutated, "变异没落地 —— 上一轮那个假形状与今天的真形状撞上了").not.toEqual(src);
+    const parsed = JSON.parse(endpointJsonBlock(mutated, "GET /admin/api/config")) as {
+      fields: Record<string, Record<string, unknown>>;
+    };
+    const body = await liveBody("GET /admin/api/config");
+    const liveKeys = Object.keys(
+      (body["fields"] as Record<string, Record<string, unknown>>)["upstreamTimeoutMs"]!,
+    ).sort();
+    expect(Object.keys(parsed.fields["upstreamTimeoutMs"]!).sort(), "假形状与真形状居然相等")
+      .not.toEqual(liveKeys);
+    expect(liveKeys, "活响应那一格的键集合变了 —— 回去看 `split()`").toEqual(["effective", "env", "lockedBy"]);
+  });
+
+  it("该红时红：`router.ts` 多一条端点而两张名单都没收 ⇒ 射程自守那格点名它", () => {
+    const mutated = `${blankComments(readFileSync(ADMIN_ROUTER_FILE, "utf8"))}\n  admin.get("/admin/api/whoami", x);\n`;
+    const router = adminEndpointsOf(mutated).sort();
+    const listed: readonly string[] = [...SHAPE_COVERED, ...SHAPE_UNCOVERED].sort();
+    expect(router.filter((e) => !listed.includes(e)), "新端点没被两张名单逼着表态")
+      .toEqual(["GET /admin/api/whoami"]);
+  });
+
+  it("不许乱红：`endpointJsonBlock` 只吃那条端点自己的围栏，不串到下一条", () => {
+    const block = endpointJsonBlock(apiSrc("zh-TW"), "GET /admin/api/config");
+    expect(block, "串到 `PUT` 那一段去了").not.toContain('"changed"');
+    expect(JSON.parse(block), "抠出来的不是那条端点的响应").toHaveProperty("editable");
   });
 });

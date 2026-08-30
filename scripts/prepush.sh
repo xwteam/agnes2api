@@ -476,6 +476,30 @@ BANNER='[collection-guard] ✅'
 #   `1 ページの件数。既定 20、上限 200。`，开头那个 `1` 是「一页」的一、不是档位。
 #   ⚠️ **本组接不住「响应体字段的类型与嵌套」那一族**（发现 3、4 就是那一族），
 #   那要一份端到端响应快照，今天没有，登记在本组文件头备查。
+# P3f 阶段 7B 第 2 轮评审回填从 3984 改到 3992（+8，发现 5 的另一半）：上一行那条
+#   「今天没有那一格」的登记在同一轮就被兑现成实账 —— 那次人工核对只覆盖了 24 条端点
+#   里的 1 条，剩下 23 条从没扫过，同一族里躺着四条真缺陷（`fields`/`credentials` 的
+#   形状写成源码里根本不存在的 `{value, source}`、`upstreamTimeoutMs` 的默认值写成
+#   隔壁 `upstreamSyncTimeoutMs` 的 120000、`GET`/`PUT`/`secrets/clear` 三条各漏 2 个
+#   恒存在的顶层键、`overview` 漏 `process`/`freshness`/`config` 三整块）。
+#   新增 8 格，**期望值一律来自 `buildApp()` 的真装配打出来的活响应，不是手写表**：
+#   + 1 格射程自守（`SHAPE_COVERED ∪ SHAPE_UNCOVERED` 与 `router.ts` 现算出来的端点集合
+#     双向相等 ⇒ 新加一条端点必须在这里表一次态，**不许两张名单都不进** —— 那正是
+#     上一轮 23 条从没被扫过的成因）
+#   + 1 格 C（五份 `API.md` 那几段 ```json 的**顶层键集合**与活响应逐条相等；
+#     源码加字段文档没跟上 ⇒ 报「例子漏了」，文档编字段 ⇒ 报「编了」，两个方向都红）
+#   + 1 格 C 续（`fields`/`credentials` **逐条目**的键集合也与活响应相等 ——
+#     上一轮那条 `{value, source}` 就死在这一格）
+#   + 1 格 D（`DEFAULTS.upstreamTimeoutMs` import 后同时钉住 `API.md` 重置例子里的
+#     `fields.upstreamTimeoutMs.effective` 与五份 `DEPLOY.md` 的 `UPSTREAM_TIMEOUT_MS`
+#     表格行 —— 两处钉在同一个常量上，「一个数在同一套文档里有两个答案」当场红）
+#   + 3 格该红时红（删 `propagation` / 把 `fields` 写回 `{value, source}` / router 多一条
+#     端点而两张名单都没收）+ 1 格不许乱红（`endpointJsonBlock` 不串到下一条端点）。
+#   ⚠️ **射程明写，别读过头**：只比**对象的键集合**（顶层 + `fields`/`credentials` 逐条目
+#   那一层），**值不比**（`hint`/`pid`/`rssBytes` 都是示意值，唯一被钉住的值是 D 格那个
+#   默认值），**数组内容不比**（`editable` 真有 26 条、`secrets` 真有 3 条，文档里是
+#   一条的示意样本 —— 这是本组已知且刻意留下的口子）。覆盖 5 条端点，其余 19 条走
+#   `SHAPE_UNCOVERED` 显式登记。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -484,7 +508,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=3984
+EXPECT_NODE_TESTS=3992
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

@@ -883,6 +883,9 @@ curl -OJ http://localhost:8080/admin/api/events/download \
 
 現在有効な設定を読みます。認証情報のフィールドは「設定済みかどうか」だけを報告し、値は報告しません。
 
+> [!NOTE]
+> 一度も保存されていないフィールドでは、`stored` は **`null` ではなく「存在しない」** です：それは保存された `config` オブジェクトの生の値を運ぶもので、`undefined` は JSON を越えられません。下の例は新規デプロイのものです。同じフィールドが自前の `stored` を持つ `PUT` の応答と見比べてください。
+
 **リクエスト**：
 
 ```bash
@@ -894,7 +897,7 @@ curl http://localhost:8080/admin/api/config \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
@@ -1021,7 +1024,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],

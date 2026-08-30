@@ -883,6 +883,9 @@ curl -OJ http://localhost:8080/admin/api/events/download \
 
 讀目前生效設定。憑證欄位只報「設沒設」，不報值。
 
+> [!NOTE]
+> 從未儲存過的欄位上，`stored` 是**不存在，而不是 `null`**：它裝的是儲存裡那份 `config` 的原始值，而 `undefined` 過不了 JSON。下面這個例子是一台全新部署——可與 `PUT` 的回應對照，同一個欄位在那邊有自己的 `stored`。
+
 **請求**：
 
 ```bash
@@ -894,7 +897,7 @@ curl http://localhost:8080/admin/api/config \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
@@ -1021,7 +1024,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ```json
 {
-  "fields": { "upstreamTimeoutMs": { "stored": null, "env": null, "effective": 8000, "lockedBy": null } },
+  "fields": { "upstreamTimeoutMs": { "env": null, "effective": 8000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
