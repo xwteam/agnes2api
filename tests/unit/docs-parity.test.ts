@@ -7029,3 +7029,262 @@ describe("五份 SPONSORS.md 的字面恒等式（W33 的验收 ①②③⑤）"
     ).toEqual([]);
   });
 });
+
+/**
+ * W136 —— 「某份文档里有 X」这种**跨文档指认**必须为真（P3f 阶段 5B 第 1 轮评审回填）。
+ *
+ * ── 它补的是哪个洞 ────────────────────────────────────────────────────────
+ * 阶段 5A 的 `cde41db` 把一颗 `Deploy to Cloudflare` 按钮从根 README 删掉，阶段 5B 的
+ * `ba5a076` 之后又把它从五份语言版 README 删掉，全仓从此零命中。**可是五份 DEPLOY.md
+ * 仍逐字指着它**，而且写在「方式一 / Option A」这个首选路径上：读者照着打开根 README，
+ * 那儿什么按钮都没有。五份语言版同时说着同一句假话，阶段 5A/5B 全程绿着走完。
+ *
+ * **为什么一格都没红**（这是本组存在的全部理由）：
+ * - `scripts/check-comment-refs.mjs` 只看**代码注释**里的仓内路径，够不着 markdown
+ *   （ADJ §59 已把这条失明登记在案）。
+ * - 上一组的 ⑤ 看的是**链接解析得开**：`[README](../../README.md)` 那条链接一直是好的，
+ *   坏的是「那份 README 里有一颗按钮」这句**关于目标内容的断言**。⑤ 的注释自己写着
+ *   跨文档锚点不在它射程内 —— 那正好是本组接手的地方。
+ * - R2–R6 只比五种语言之间的派生结构；五份**一起**指着同一个不存在的东西，它们全绿。
+ *
+ * ⇒ 本组守两件事，都是「指认 vs 真实存在」这一条轴：
+ *   **(A) 活着的那一半**：五份 DEPLOY.md 各自指着**同目录** README 的「快速部署」节，
+ *        那一节必须在那份 README 里真的以标题行的形态存在。改掉任一份 README 的那个
+ *        标题而不改 DEPLOY.md ⇒ 当场红并点名是哪两份文档。这一半今天有五条真断言，
+ *        不是空判据。
+ *   **(B) 蕴含式那一半**：根 README + `docs/` 下任何一份 .md 只要提到那颗按钮
+ *        （标签字面或 `deploy.workers.cloudflare.com` 那个 markup），根 README 里就
+ *        必须真的有它。**今天前件为空**（全仓零命中，按钮已按下面那条裁定弃用），
+ *        所以它今天是恒真的——恒真的判据在本仓不许白挂着，因此它配了**两侧夹具**：
+ *        「文档提到、根上没有」必须红并点名是哪一份；「文档提到、根上真有」必须绿。
+ *        少了这两格，(B) 就是一段没有任何东西触发的死代码。
+ *
+ * ── 按钮为什么是弃用而不是恢复（回填时的裁定，理由可机器复核）────────────────
+ * 评审建议过「把按钮放回根 README，让方式一当场重新为真，净损失归零」。**不采纳**，
+ * 因为那条路在本仓**证明走不通**，恢复它等于把一句假话换成另一句假话：
+ * ① `wrangler.toml` 的 KV namespace id 恒为占位符 `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`，
+ *    而且这件事由 `scripts/check-wrangler-placeholder.mjs` 在 CI 里钉死（ci.yml 第 8 道）
+ *    —— 一键流程克隆的就是这份 `wrangler.toml`，`wrangler deploy` 拿着这个 id 起不来。
+ * ② `GATEWAY_TOKEN` 是必填值，`src/core/config.ts` 读不到它直接
+ *    `throw new Error("缺少 GATEWAY_TOKEN，网关无法启动")` —— 一键流程设不了 secret。
+ * 被删那段原文自己就承认了这两点（「按钮本身不会帮你配置这两项」）。⇒ 弃用是对的，
+ * 五份 DEPLOY.md 的方式一同批改写成不依赖按钮的说法，并把「为什么没有一键按钮」
+ * 写成读者看得见的 `[!NOTE]`。**净损失不是零，但被删掉的那件事本来就办不成。**
+ *
+ * ⚠️ 本组按 ADJ §61 那条规矩写：被弃用的字面**只出现在判据里，不出现在文档里**。
+ * 五份 DEPLOY.md 的 `[!NOTE]` 里一个 `Deploy to Cloudflare` 都没有（写的是
+ * 「一键部署按钮 / one-click Cloudflare deploy button / ワンクリックデプロイボタン /
+ * 원클릭 배포 버튼」），否则 (B) 会被自己的否定句触发。
+ */
+describe("跨文档指认的真实性：文档里说「那份 README 里有 X」，X 就得真在（W136）", () => {
+  /** 变异的唯一注入点：换掉某一条路径的内容，其余照旧。 */
+  const readFile = (p: string) => readFileSync(p, "utf8");
+  const patchPath = (base: (p: string) => string, at: string, body: string) =>
+    (p: string) => (p === at ? body : base(p));
+
+  const probeGreen = (failures: readonly string[], realCase: string): void => {
+    if (failures.length > 0) {
+      throw new Error(`本格是探针，它的基取自真仓，而真仓今天本身就不过这条判据 —— 真因在「${realCase}」那一格：\n${failures.join("\n")}`);
+    }
+  };
+
+  /* ── (A) 五份 DEPLOY.md → 同目录 README 的「快速部署」节 ─────────────────── */
+
+  /**
+   * 逐语言登记：DEPLOY.md 里那句指认写的是哪一节、那一节在同目录 README 里长什么样。
+   *
+   * ⚠️ **`section` 必须是该语言 README 里那行标题的逐字全文**（含 `## ` 与 emoji）：
+   * 判据在 README 一侧按**行首整行**匹配，只写「快速部署」四个字的话，正文里随便
+   * 一句提到这个词都能让它绿，那就又成了一条看着像在守、其实什么都没守的判据。
+   * ⚠️ **DEPLOY 一侧按行内 code span 匹配**（文档里写成 `` `## ⚡ 快速部署` ``）：
+   * en/ko 的正文不许有汉字假名（见上面那一组），把节名放进 code span 是那一组
+   * 指定的载体；这里顺带也就有了一个稳定、不会被翻译改写的锚。
+   */
+  const README_SECTION_CLAIMS: Readonly<Record<Lang, string>> = {
+    "zh-CN": "## ⚡ 快速部署",
+    "zh-TW": "## ⚡ 快速部署",
+    en: "## ⚡ Quick Deployment",
+    ja: "## ⚡ クイックデプロイ",
+    ko: "## ⚡ 빠른 배포",
+  };
+
+  /** 五份 DEPLOY.md 里允许出现的 README 链接目标。**同目录那一条，不是根那一条。** */
+  const ALLOWED_README_LINK_TARGETS = ["README.md"] as const;
+
+  const readmeLinkTargets = (body: string): string[] =>
+    [...outsideFences(body).matchAll(/\]\(([^)\s]+)\)|href="([^"]+)"/g)]
+      .map((m) => m[1] ?? m[2] ?? "")
+      .filter((t) => t.split("#")[0]?.endsWith("README.md") === true)
+      .sort();
+
+  const sectionClaimFailures = (read: (p: string) => string): string[] => {
+    const out: string[] = [];
+    let checked = 0;
+    for (const lang of LANGS) {
+      const deployPath = docPath(".", lang, "DEPLOY");
+      const readmePath = docPath(".", lang, "README");
+      const section = README_SECTION_CLAIMS[lang];
+      const deployBody = read(deployPath);
+      const readmeBody = read(readmePath);
+
+      // 指认端：DEPLOY.md 里那句话还在不在。没了就不是「指认为假」，是「指认没了」——
+      // 同样要红：这一格是它唯一的守卫，静默消失等于本组从此对这一语言失明。
+      if (!deployBody.includes(`\`${section}\``)) {
+        out.push(`${deployPath} 里找不到指着 \`${section}\` 的那句话 —— 要么它被删了（那本组对 ${lang} 就没在守任何东西了），要么节名改了而登记表没跟上`);
+        continue;
+      }
+      checked += 1;
+      // 被指认端：那一节必须在同目录 README 里以**标题行**的形态真实存在。
+      const alive = readmeBody.split("\n").some((l) => l === section);
+      if (!alive) {
+        out.push(`${deployPath} 指着 ${readmePath} 的 \`${section}\` 一节，但那份 README 里没有这行标题 —— 读者点过去会扑空`);
+      }
+    }
+    if (checked === 0) {
+      throw new Error("五份 DEPLOY.md 里一句跨文档指认都没抽到 —— 判据坏了，不许静默当成「指认都为真」");
+    }
+    return out;
+  };
+
+  const linkTargetFailures = (read: (p: string) => string): string[] => {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const deployPath = docPath(".", lang, "DEPLOY");
+      const got = readmeLinkTargets(read(deployPath));
+      const want = [...ALLOWED_README_LINK_TARGETS];
+      if (got.length !== want.length || got.some((t, i) => t !== want[i])) {
+        out.push(`${deployPath} 里指向 README 的链接目标与登记表对不上：\n  want: ${JSON.stringify(want)}\n  got:  ${JSON.stringify(got)}`);
+      }
+    }
+    return out;
+  };
+
+  const REAL_A = "(A) 五份 DEPLOY.md 指着同目录 README 的那一节，五份 README 里都真有这行标题";
+
+  it(REAL_A, () => {
+    const failures = sectionClaimFailures(readFile);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("(A) 该红时红：把 docs/ja/README.md 的那行标题改名 —— 链接照样解析得开，⑤ 不会红，本格必须红并点名两份文档", () => {
+    probeGreen(sectionClaimFailures(readFile), REAL_A);
+    const at = docPath(".", "ja", "README");
+    const mutated = readFile(at).replace("## ⚡ クイックデプロイ", "## ⚡ 別の名前");
+    expect(mutated, "变异没落地").not.toBe(readFile(at));
+    const failures = sectionClaimFailures(patchPath(readFile, at, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("docs/ja/DEPLOY.md");
+    expect(failures[0] ?? "").toContain("docs/ja/README.md");
+  });
+
+  it("(A) 该红时红：把 docs/ko/DEPLOY.md 里那句指认整段删掉 —— 指认没了也要红，不许静默失明", () => {
+    probeGreen(sectionClaimFailures(readFile), REAL_A);
+    const at = docPath(".", "ko", "DEPLOY");
+    const mutated = readFile(at).replace("`## ⚡ 빠른 배포`", "그 절");
+    expect(mutated, "变异没落地").not.toBe(readFile(at));
+    const failures = sectionClaimFailures(patchPath(readFile, at, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("要么它被删了");
+  });
+
+  it("(A) 认不出要吵：五份的指认一句都抽不到时当场抛，不静默当成「指认都为真」", () => {
+    const blind = (p: string) => (p.endsWith("DEPLOY.md") ? "什么指认都没有的一段话\n" : readFile(p));
+    expect(() => sectionClaimFailures(blind)).toThrow(/判据坏了/);
+  });
+
+  it("(A) 闭合：五份 DEPLOY.md 里指向 README 的链接目标恰好是登记的那些（同目录那条）", () => {
+    const failures = linkTargetFailures(readFile);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("(A) 闭合该红时红：往 zh-CN/DEPLOY.md 里加一条指向根 README 的链接 —— 它解析得开，⑤ 不会红，本格必须红", () => {
+    probeGreen(linkTargetFailures(readFile), "(A) 闭合");
+    const at = docPath(".", "zh-CN", "DEPLOY");
+    const mutated = `${readFile(at)}\n见根目录 [README](../../README.md) 里的那颗按钮。\n`;
+    const failures = linkTargetFailures(patchPath(readFile, at, mutated));
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("docs/zh-CN/DEPLOY.md");
+    expect(failures[0] ?? "").toContain("../../README.md");
+  });
+
+  /* ── (B) 那颗按钮：提到它 ⇒ 根 README 里必须真有它 ────────────────────── */
+
+  /** 按钮的两个字面：读者看见的标签，与它在 markdown 里的 markup 主机名。 */
+  const BUTTON_LABEL = "Deploy to Cloudflare";
+  const BUTTON_MARKUP = "deploy.workers.cloudflare.com";
+
+  /** 射程：根 README + `docs/` 下每一份 .md，从磁盘现列，不手抄第二份名单。 */
+  const buttonScanFiles = (): string[] => {
+    const out: string[] = ["README.md"];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith(".md")) out.push(p);
+      }
+    };
+    walk("docs");
+    return out;
+  };
+
+  const buttonClaimFailures = (read: (p: string) => string, files: readonly string[]): string[] => {
+    if (files.length === 0) throw new Error("按钮扫描的射程是空的 —— 判据坏了，不许静默当成「没人提到按钮」");
+    const rootHasButton = read("README.md").includes(BUTTON_MARKUP);
+    const out: string[] = [];
+    for (const f of files) {
+      const body = read(f);
+      if (body.length === 0) throw new Error(`${f} 读出来是空的 —— 判据坏了，不许静默当成「这一份没提到按钮」`);
+      if (f === "README.md") continue; // 根自己不算「指认」，它是被指认的那一方
+      if ((body.includes(BUTTON_LABEL) || body.includes(BUTTON_MARKUP)) && !rootHasButton) {
+        out.push(`${f} 提到了那颗一键部署按钮，可根 README 里没有它（找不到 \`${BUTTON_MARKUP}\`）—— 这是一条指向不存在元素的死指认`);
+      }
+    }
+    return out;
+  };
+
+  const REAL_B = "(B) 提到那颗一键部署按钮的文档，根 README 里必须真有它";
+
+  it(REAL_B, () => {
+    const failures = buttonClaimFailures(readFile, buttonScanFiles());
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("(B) 该红时红：某份 DEPLOY.md 把按钮那句话写回去、而根上没有按钮 ⇒ 红并点名是哪一份", () => {
+    probeGreen(buttonClaimFailures(readFile, buttonScanFiles()), REAL_B);
+    const at = docPath(".", "en", "DEPLOY");
+    const mutated = `${readFile(at)}\n### Option A — ${BUTTON_LABEL} button\n\nClick the button in the root [README](../../README.md).\n`;
+    const failures = buttonClaimFailures(patchPath(readFile, at, mutated), buttonScanFiles());
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("docs/en/DEPLOY.md");
+  });
+
+  it("(B) 不该红时不红：根 README 上真有那颗按钮时，文档指着它是**真话**，不许红", () => {
+    const withButton = (p: string) => (p === "README.md"
+      ? `${readFile(p)}\n[![${BUTTON_LABEL}](https://${BUTTON_MARKUP}/button)](https://${BUTTON_MARKUP}/?url=x)\n`
+      : (p === docPath(".", "en", "DEPLOY")
+        ? `${readFile(p)}\nClick the ${BUTTON_LABEL} button in the root README.\n`
+        : readFile(p)));
+    expect(buttonClaimFailures(withButton, buttonScanFiles())).toEqual([]);
+  });
+
+  it("(B) 认不出要吵：射程为空、或某一份读出来是空的时候当场抛", () => {
+    expect(() => buttonClaimFailures(readFile, [])).toThrow(/判据坏了/);
+    const blind = (p: string) => (p === docPath(".", "ja", "API") ? "" : readFile(p));
+    expect(() => buttonClaimFailures(blind, buttonScanFiles())).toThrow(/判据坏了/);
+  });
+
+  /* ── 非空锚：登记表与射程今天都是活的 ─────────────────────────────────── */
+
+  it("非空锚：五种语言的期望节名两两不同（除同文的两份中文），且射程覆盖根 README + docs/ 全部 .md", () => {
+    // 期望值撞了的话，「这一份抄了那一份」这种坏法就分不出来了。zh-CN / zh-TW 的
+    // `## ⚡ 快速部署` 在两岸用词上确实同文，是**实测同形**不是抄错，单列出来。
+    const distinct = new Set(Object.values(README_SECTION_CLAIMS));
+    expect(distinct.size, `期望节名撞了：${JSON.stringify(README_SECTION_CLAIMS)}`).toBe(LANGS.length - 1);
+    expect(README_SECTION_CLAIMS["zh-CN"]).toBe(README_SECTION_CLAIMS["zh-TW"]);
+
+    const files = buttonScanFiles();
+    expect(files, "射程里没有根 README —— (B) 的被指认方就没人看了").toContain("README.md");
+    expect(files.length, `射程只有 ${files.length} 份，少于「根 1 份 + 五语言 × ${DOCS.length} 份」`)
+      .toBe(1 + LANGS.length * DOCS.length);
+  });
+});

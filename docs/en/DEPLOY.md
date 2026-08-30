@@ -675,13 +675,18 @@ conditioned on the client staying connected.
 
 ## Cloudflare Worker
 
-### Option A — Deploy to Cloudflare button
+### Manual deploy
 
-Click the button in the root [README](../../README.md), authorize Cloudflare, and it will
-fork/clone the repository and deploy it for you. You still need to complete the **secret**
-and **KV namespace** steps below afterward — the button does not set those up.
-
-### Option B — Manual deploy
+> [!NOTE]
+> **This repository ships no one-click Cloudflare deploy button** — that path cannot work
+> here. The KV namespace id in `wrangler.toml` is always a placeholder (a public repo
+> carries no real deployment details; `scripts/check-wrangler-placeholder.mjs` enforces
+> that in CI), and `GATEWAY_TOKEN` is a mandatory sensitive value that can only be
+> injected as a secret — miss either one and it will not start (`src/core/config.ts`
+> throws the moment it cannot read it). A one-click flow can do neither for you, so the
+> steps below have to be walked through by hand. For a command-only overview see the
+> `## ⚡ Quick Deployment` section of the [README](README.md) in this directory;
+> tag-triggered automatic deployment is covered further down.
 
 1. Clone the repository and install dependencies:
 

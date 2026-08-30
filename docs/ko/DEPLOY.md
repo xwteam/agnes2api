@@ -647,14 +647,18 @@ HTTP-triggered Workers"), 개별 아웃바운드 서브요청에도 **시간 제
 
 ## Cloudflare Worker
 
-### 방법 A —— Deploy to Cloudflare 버튼
+### 수동 배포
 
-루트 [README](../../README.md)에 있는 버튼을 클릭하고 Cloudflare를 인증하면
-저장소를 fork/clone하고 배포까지 자동으로 진행됩니다. 이후에도 아래의
-**secret**과 **KV 네임스페이스** 단계는 직접 완료해야 합니다 —— 버튼만으로는
-이 두 가지가 설정되지 않습니다.
-
-### 방법 B —— 수동 배포
+> [!NOTE]
+> **이 저장소는 Cloudflare 원클릭 배포 버튼을 제공하지 않습니다.** 여기서는 그 경로가
+> 성립하지 않기 때문입니다: 저장소의 `wrangler.toml`에 있는 KV 네임스페이스 id는 항상
+> 자리표시자이고(공개 저장소에는 실제 배포 정보를 두지 않습니다. CI에서는
+> `scripts/check-wrangler-placeholder.mjs`가 지키고 있습니다), `GATEWAY_TOKEN`은 필수
+> 민감 값이라 secret으로만 주입할 수 있습니다 —— 둘 중 하나라도 빠지면 기동되지 않습니다
+> (`src/core/config.ts`가 읽지 못하면 곧바로 예외를 던집니다). 원클릭 흐름은 이 두 가지
+> 어느 쪽도 대신해 주지 못하므로 아래 단계는 직접 한 번씩 진행해야 합니다. 명령만 보려면
+> 같은 디렉터리 [README](README.md)의 `## ⚡ 빠른 배포` 절을 참고하세요. tag를 찍는
+> 자동 배포는 뒤에서 다룹니다.
 
 1. 저장소를 클론하고 의존성을 설치합니다.
 

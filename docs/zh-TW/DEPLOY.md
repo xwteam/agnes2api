@@ -535,13 +535,15 @@ key——這兩種狀態被視為「這把 key 已失效」，重試沒有意義
 
 ## Cloudflare Worker
 
-### 方式一：Deploy to Cloudflare 按鈕
+### 手動部署
 
-點擊根目錄 [README](../../README.md) 中的按鈕，授權 Cloudflare 後會自動 fork/clone
-本倉庫並完成部署。之後仍需依下文完成 **secret** 與 **KV 命名空間** 兩步——按鈕本身
-不會幫你設定這兩項。
-
-### 方式二：手動部署
+> [!NOTE]
+> **本倉庫不提供 Cloudflare 一鍵部署按鈕**，那條路在這裡走不通：倉庫裡 `wrangler.toml`
+> 的 KV namespace id 永遠是佔位符（公開倉不放真實部署細節，CI 裡由
+> `scripts/check-wrangler-placeholder.mjs` 守著），而 `GATEWAY_TOKEN` 是必填的敏感值、
+> 只能以 secret 注入——兩項缺任何一項都起不來（`src/core/config.ts` 讀不到它就直接拋錯）。
+> 一鍵流程這兩項都替你辦不了，所以下面這幾步必須自己走一遍。命令速覽見同目錄
+> [README](README.md) 的 `## ⚡ 快速部署` 一節；打 tag 自動部署見下文。
 
 1. 克隆倉庫並安裝相依套件：
 
