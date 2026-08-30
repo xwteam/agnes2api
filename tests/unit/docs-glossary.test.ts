@@ -101,10 +101,22 @@ function termConflicts(read: DocReader): string[] {
 }
 
 /**
- * 今天的全部术语冲突（28 组），逐字登记。
+ * 今天的全部术语冲突，逐字登记。
  *
  * **归属阶段**写在本轮的阶段报告里（不随仓推送），不写进代码：
  * 阶段编号会随排期变，而一个会漂的字段迟早变成谎话。
+ * ⚠️ **条数也不写进这段话**：它落地当天是 28，`docs/ja/README.md` 换成 12 节形态那天
+ * 就变成了 27（`ja｜速查` 那一组真的销账了）。写死的条数会在下一次销账时静静变假，
+ * 而下面那张表自己就是条数的真源。
+ *
+ * ── 阶段 5B-3 之一（`docs/ja/README.md` 扩成 12 节）动了哪几行 ────────────────
+ * · `ja｜速查`：**整行消失**。README 那一侧的 `一覧` 没了（旧标题 `## エンドポイント一覧`
+ *   被 W38 常量表的 `## 📡 API エンドポイント` 取代），只剩 ADMIN 一份用 `早見表` ⇒ 不再打架。
+ * · `ja｜默认`：README 从 `デフォルト+既定` 收敛成 `既定`（**一份文档内部**两种说法并存
+ *   是这张表最刺眼的那一类，先把自己这一份统一掉；`既定` 是 ADMIN / API / USAGE 三份的用词）。
+ * · `ja｜文档`：README 这一侧**新进表**，用的是 ja 里已经占多数的 `ドキュメント`
+ *   ——**没有制造新的分歧**，只是这份文档从此也被这条判据看着了。
+ * · 其余各行的分歧全在 ADMIN / DEPLOY / REGISTRAR 一侧，**不是本步的射程**，原样留着。
  */
 const PENDING_TERM_CONFLICTS: readonly string[] = [
   "en｜仓库｜ADMIN=repo｜API=repo｜DEPLOY=repo+repository｜REGISTRAR=repository｜SPONSORS=repository",
@@ -114,10 +126,9 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   "ja｜凭据｜ADMIN=資格情報｜API=認証情報｜DEPLOY=認証情報+資格情報｜README=認証情報｜REGISTRAR=認証情報+資格情報｜USAGE=認証情報",
   "ja｜并发｜ADMIN=並行｜DEPLOY=並行+同時実行｜REGISTRAR=並行",
   "ja｜排障｜ADMIN=障害対応｜REGISTRAR=トラブルシューティング",
-  "ja｜文档｜ADMIN=ドキュメント+文書｜API=ドキュメント｜DEPLOY=ドキュメント+文書｜SPONSORS=ドキュメント",
+  "ja｜文档｜ADMIN=ドキュメント+文書｜API=ドキュメント｜DEPLOY=ドキュメント+文書｜README=ドキュメント｜SPONSORS=ドキュメント",
   "ja｜注册机｜ADMIN=レジストラ+レジストラー｜DEPLOY=レジストラ+レジストラー｜README=レジストラー｜REGISTRAR=レジストラー｜SPONSORS=レジストラ",
-  "ja｜速查｜ADMIN=早見表｜README=一覧",
-  "ja｜默认｜ADMIN=既定｜API=既定｜DEPLOY=デフォルト+既定｜README=デフォルト+既定｜REGISTRAR=デフォルト+既定｜USAGE=既定",
+  "ja｜默认｜ADMIN=既定｜API=既定｜DEPLOY=デフォルト+既定｜README=既定｜REGISTRAR=デフォルト+既定｜USAGE=既定",
   "ko｜上游｜ADMIN=업스트림｜API=업스트림｜DEPLOY=상류+업스트림｜README=업스트림｜REGISTRAR=업스트림",
   "ko｜免费档｜DEPLOY=무료 등급+무료 요금제｜README=무료 등급",
   "ko｜凭据｜ADMIN=자격 증명｜API=인증 정보+자격 증명｜DEPLOY=자격 증명｜README=인증 정보｜REGISTRAR=자격 증명｜USAGE=인증 정보",
