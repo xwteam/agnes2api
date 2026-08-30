@@ -463,3 +463,92 @@ describe(".env.example 与五语言文档对等", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * ## W125 —— `.env.example` 的「不回退」下限
+ *
+ * P3f 阶段 7 的射程铁律里有一条**否定项**：25 份非 README 文档要补层级、补 alert、
+ * 补 ```env 围栏，而 **`.env.example` 本身一个字都不改**（ADJ ⑬ / 规格 C20）。
+ * 那条裁定在规格里被写了三遍，**却在 W 清单、R 判官、W88 基线三处都没有承载点**——
+ * 一条只写在文档里、没有任何判据兜着的「不许动」，等于没有。
+ *
+ * ⚠️ **这一格守的不是「不许改」，是「不许缩水」。**
+ * 真正会发生的退化有两种，而且都长得很像「顺手整理了一下」：
+ * ① 阶段 7 要把 DEPLOY.md 的长解释搬进 ```env 围栏，搬的时候顺手把
+ *    `.env.example` 里那段同源的注释「去重」掉——那份文件是陌生人 `cp` 的**唯一**
+ *    一份自带说明的配置模板，注释掉了就只剩一串裸变量名；
+ * ② 有人拿它当「示例」而不是「模板」，把不常用的变量整段删掉图清爽。
+ * 两种改法都不会让上面任何一格红：那些格子查的是**名字集合**与**能不能起来**，
+ * 而删注释一个名字都不少、删整段变量也只是让集合两边一起变小（`ENV_LOCK_MAP`
+ * 那半边是真源，但 `EXTRA_ENV` / `RUNTIME_ONLY_ENV` 是手写表，一起删就一起绿）。
+ *
+ * ⚠️ **这两个数是 2026-08-30 的实测值，不是拍脑袋的目标值**，口径逐字写在
+ * `MIN_TOTAL_LINES` / `MIN_COMMENT_LINES` 上，与 `wc -l` / `grep -c '^#'` 一致。
+ * **它是下限不是等式**：往里加变量、加注释都不该红，只有缩水才红。
+ * 数字要往上调的唯一正当理由是「文件真的长大了，把新的实测值钉进来」——
+ * **往下调没有正当理由**，那正是本格要拦的那件事。
+ */
+describe("W125 `.env.example` 不回退", () => {
+  /** `wc -l .env.example` 的口径：数换行符，不是数 `split("\n")` 的段数。 */
+  const totalLines = (src: string): number => (src.match(/\n/g) ?? []).length;
+  /** `grep -c '^#' .env.example` 的口径：以 `#` 起头的行数（含分隔用的 `# ---`）。 */
+  const commentLines = (src: string): number => src.split("\n").filter((l) => l.startsWith("#")).length;
+
+  /** 2026-08-30 实测：`wc -l` = 197。 */
+  const MIN_TOTAL_LINES = 197;
+  /** 2026-08-30 实测：`grep -c '^#'` = 139。 */
+  const MIN_COMMENT_LINES = 139;
+
+  it("整份文件不短于实测下限（`wc -l` ≥ 197）", () => {
+    expect(
+      totalLines(envExample()),
+      `.env.example 比 2026-08-30 的实测值（${MIN_TOTAL_LINES} 行）短了 —— 阶段 7 的裁定是**这份文件一个字都不改**，`
+      + "缩水只有两种来源：整段变量被删，或者注释被「去重」掉。要么把删掉的加回来，要么先来推翻 ADJ ⑬",
+    ).toBeGreaterThanOrEqual(MIN_TOTAL_LINES);
+  });
+
+  it("注释密度不低于实测下限（`grep -c '^#'` ≥ 139）—— 它是陌生人手里唯一一份带说明的模板", () => {
+    expect(
+      commentLines(envExample()),
+      `.env.example 的注释行比 2026-08-30 的实测值（${MIN_COMMENT_LINES} 行）少了 —— `
+      + "每个变量上方那几行 `#` 是 `cp` 出来之后唯一的说明，删掉它等于把这份模板降级成一串裸变量名",
+    ).toBeGreaterThanOrEqual(MIN_COMMENT_LINES);
+  });
+
+  /**
+   * **两条口径各自会红，而且红在自己那一半上。**
+   *
+   * 少了这两格，一对写反的口径（比如两条都去数总行数）也能全绿：删注释时总行数
+   * 跟着掉，两条一起红，看上去像「判据有效」，实际上注释那一半从来没被单独守过。
+   */
+  it("该红时红：删掉 20 行 ⇒ 总行数那条红", () => {
+    const src = envExample();
+    const mutated = src.split("\n").slice(0, -21).join("\n") + "\n";
+    expect(totalLines(mutated), "变异没落地 —— 删了 20 行而行数没变").toBeLessThan(totalLines(src));
+    expect(totalLines(mutated)).toBeLessThan(MIN_TOTAL_LINES);
+  });
+
+  it("该红时红：只删注释、一个变量都不删 ⇒ 注释那条红，而名字集合完全不变", () => {
+    const src = envExample();
+    const kept = src.split("\n").filter((l) => !l.startsWith("#"));
+    const mutated = kept.join("\n");
+    // **没被注释掉的那些声明一个都没少** —— `cp` 出来的 `.env` 逐字节相同，
+    // 上面那些格子（名字集合、能不能起来）对这种改法全都是绿的，这正是本格存在的理由。
+    const liveNames = (s: string) => s.split("\n").flatMap((l) => {
+      const m = new RegExp(DECLARATION).exec(l);
+      return m && m[1] !== "#" ? [`${m[2]!}=${m[3]!}`] : [];
+    });
+    expect(liveNames(mutated), "变异不该动到没被注释掉的那些声明").toEqual(liveNames(src));
+    expect(commentLines(mutated)).toBeLessThan(MIN_COMMENT_LINES);
+  });
+
+  /**
+   * **认不出要吵**：文件读空 / 路径写错时，两条 `toBeGreaterThanOrEqual` 会一起红，
+   * 但报文会指向「文件缩水了」这个**错误的方向**。这一格先把「真的读到东西了」钉下来。
+   */
+  it("认不出要吵：真的读到了一份非空的 .env.example", () => {
+    const src = envExample();
+    expect(src.length, ".env.example 读出来是空的 —— 判据的落点变了，别把它报成「文件缩水」").toBeGreaterThan(0);
+    expect(src, ".env.example 里一条声明都没有 —— 读到的多半不是那份文件").toMatch(new RegExp(DECLARATION, "m"));
+  });
+});
