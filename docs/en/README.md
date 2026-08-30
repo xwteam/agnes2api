@@ -118,7 +118,7 @@
 ## 📋 System Requirements
 
 | Dependency | Version | Notes |
-|------|------|------|
+|----------|-------|------|
 | Node.js | 22.13+ | Only needed to build from source or to run under Node directly; a Docker deployment needs no local install |
 | Docker | 20.10+ | The recommended way to deploy; the official image is multi-architecture |
 | Agnes account | — | At least one valid Agnes API key (or let the registrar refill the pool for you) |
@@ -351,26 +351,26 @@ The task runs asynchronously upstream; the gateway only forwards and polls, and 
 ### OpenAI compatible (`/v1`)
 
 | Method | Endpoint | Purpose |
-|------|------|------|
+|------|--------|-------|
 | GET | `/v1/models` | Model list |
 | POST | `/v1/chat/completions` | Chat completions (streaming supported) |
 
 ### OpenAI Responses (`/v1`)
 
 | Method | Endpoint | Purpose |
-|------|------|------|
+|------|--------|-------|
 | POST | `/v1/responses` | Responses API (streaming supported) |
 
 ### Anthropic compatible (`/v1`)
 
 | Method | Endpoint | Purpose |
-|------|------|------|
+|------|--------|-------|
 | POST | `/v1/messages` | Messages (streaming supported) |
 
 ### Gemini native (`/v1beta`)
 
 | Method | Endpoint | Purpose |
-|------|------|------|
+|------|--------|-------|
 | GET | `/v1beta/models` | Model list |
 | POST | `/v1beta/models/{model}:generateContent` | Content generation (non-streaming) |
 | POST | `/v1beta/models/{model}:streamGenerateContent` | Streaming generation |
@@ -378,7 +378,7 @@ The task runs asynchronously upstream; the gateway only forwards and polls, and 
 ### Images and video
 
 | Method | Endpoint | Purpose |
-|------|------|------|
+|------|--------|-------|
 | POST | `/v1/images/generations` | Image generation (synchronous forwarding) |
 | POST | `/v1/videos` | Create a video task |
 | GET | `/v1/videos/{id}` | Poll a video task |
@@ -386,14 +386,14 @@ The task runs asynchronously upstream; the gateway only forwards and polls, and 
 ### Admin API
 
 | Method | Endpoint | Purpose |
-|------|------|------|
+|------|--------|-------|
 | GET | `/admin` | The admin panel itself (**with no `ADMIN_TOKEN` set the whole tree is never registered and requests get a 404**) |
 | GET · POST · PUT · DELETE | `/admin/api/*` | Admin API: key pool / registrar / events / usage / models / configuration (via `x-admin-key`) |
 
 ### System
 
 | Method | Endpoint | Purpose |
-|------|------|------|
+|------|--------|-------|
 | GET | `/health` | Liveness (unauthenticated; returns the version and storage health) |
 
 > The `localhost:8080` in these URLs is only an example: on Node the port comes from `PORT`, on the Worker it is your own `*.workers.dev` or custom domain — substitute whatever you deployed.
@@ -407,7 +407,7 @@ The task runs asynchronously upstream; the gateway only forwards and polls, and 
 Precedence: **environment variable > configuration in storage > built-in default**. The table below lists only the ones people reach for most often; the full set of variables, their ranges, and how each default is derived are in `.env.example` and in the deployment guide for each language.
 
 | Variable | Required | Default | Description |
-|------|------|--------|------|
+|--------|--------|--------|-----------|
 | `GATEWAY_TOKEN` | ✅ | — | Gateway token; clients use it to call this gateway, and the gateway refuses to start without it |
 | `ADMIN_TOKEN` | ❌ | — | Admin panel token; unset means the whole `/admin` tree is never registered, and if set it must differ from the gateway token and be at least 24 characters |
 | `AGNES_BASE_URL` | ❌ | `https://apihub.agnes-ai.com/v1` | Agnes upstream base URL |

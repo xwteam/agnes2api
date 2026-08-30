@@ -13,7 +13,7 @@ Cloudflare Worker 上，換成你的 `*.workers.dev` 網域（或自訂網域）
 任選其一即可——正好對應各協議官方 SDK 預設發送的憑證形式，通常不需要額外設定：
 
 | 方式 | 範例 |
-|---|---|
+|----|----|
 | `Authorization: Bearer` 標頭 | `Authorization: Bearer your-gateway-token` |
 | `x-api-key` 標頭 | `x-api-key: your-gateway-token` |
 | `x-goog-api-key` 標頭 | `x-goog-api-key: your-gateway-token` |
@@ -33,7 +33,7 @@ Cloudflare Worker 上，換成你的 `*.workers.dev` 網域（或自訂網域）
 閘道暴露四個模型，該傳哪一個取決於呼叫哪個端點：
 
 | 模型 | 用於 |
-|---|---|
+|----|----|
 | `agnes-2.0-flash` | 對話／文字類端點 |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
@@ -44,7 +44,7 @@ Cloudflare Worker 上，換成你的 `*.workers.dev` 網域（或自訂網域）
 若 key 池中沒有可用 key，閘道會在發出上游請求之前直接回傳 `503`：
 
 | `reason` | 是否自癒 | 含義 |
-|---|---|---|
+|--------|--------|----|
 | `pool_empty` | – | 尚未匯入任何 key。 |
 | `all_cooling` | **會** | 全部 key 處於冷卻中（限流、欠費或瞬時故障累積）。回應標頭 `Retry-After` 給出最早恢復時刻。 |
 | `all_disabled` | **不會** | 全部 key 被管理員在管理面板上**手動停用**。在面板上重新啟用即可——**憑證本身沒問題，別去更換 key**。 |
@@ -63,7 +63,7 @@ Cloudflare Worker 上，換成你的 `*.workers.dev` 網域（或自訂網域）
 請求在總預算內嘗試過的每一把 key 都沒有回應時，回傳 `504`：
 
 | `reason` | 含意 |
-|---|---|
+|--------|----|
 | `upstream_timeout` | 本次請求用盡了 `UPSTREAM_SYNC_TIMEOUT_MS` 的總預算，其間嘗試過的 key 都沒在各自的嘗試預算內回應。可能是上游整體變慢或預算設太小，也可能是這幾把 key 對應的上游工作階段被掛起。 |
 
 ```json

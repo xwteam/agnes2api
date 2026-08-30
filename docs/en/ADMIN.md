@@ -35,7 +35,7 @@ do plus troubleshooting.
 ## The eight boards at a glance
 
 | Board | The question it answers | Read-only or writes | Which switch it needs |
-|---|---|---|---|
+|-----|-----------------------|-------------------|---------------------|
 | Overview | What shape is this deployment in, how many usable keys are left | Read-only | – |
 | Key pool | What state is each key in, and why is it unusable | Writes | – |
 | Registrar | Is auto-refill running, what did the last few rounds mint | Writes | `REGISTRAR_ENABLED` |
@@ -140,7 +140,7 @@ channel, which credentials you have to bring, and how to troubleshoot live in
   lit at the same time**:
 
 | Warning bar | What it is saying | What to do about it |
-|---|---|---|
+|-----------|-----------------|-------------------|
 | Dropped | This replica's event buffer pushed out its oldest entries before they were persisted | Events are produced faster than they persist; look for that stretch in container logs / Workers Logs |
 | Budget | This replica's event-write budget for today is used up | Same as above: what was not persisted is still in the logs |
 | Truncated | This page is not showing every matching event | Narrow the filter, or shorten the time range you are looking at |
@@ -209,7 +209,7 @@ channel, which credentials you have to bring, and how to troubleshoot live in
 - **Three modes, each with a different set of controls**:
 
 | Mode | Endpoint it calls | What you can configure here |
-|---|---|---|
+|----|-----------------|---------------------------|
 | Chat | The public path of each of the four chat protocols | Pick a protocol and a model; streaming can be turned on |
 | Image | The single image-generation endpoint | Model only; no protocol picker and no streaming toggle |
 | Video | The create-job and fetch-result endpoints | Model only; the result is polled automatically once the job exists |
@@ -248,7 +248,7 @@ stream too.
 The settings page has five cards today:
 
 | Card | What it covers | Worth knowing |
-|---|---|---|
+|----|--------------|-------------|
 | Credentials | The gateway token and nothing else; the admin token is shown read-only on this card, because the panel cannot change its own key | Credentials are write-only: a blank input means this field is left alone |
 | Upstream & cooldowns | Upstream address, timeouts, and the cooldown / eviction knobs | Two of them are read once when the instance is built, see the end of this section |
 | Registrar | Every refill knob, **each mailbox channel's own credentials** (two symmetric sub-cards), plus an "advanced" collapsed area | The field in that area changes where every automatic registration goes |
@@ -290,7 +290,7 @@ The settings page has five cards today:
 The last card on the settings page. Neither button here can be undone, and there is no undo path.
 
 | Button | What it touches | What it leaves alone | Second confirmation |
-|---|---|---|---|
+|------|---------------|--------------------|-------------------|
 | Reset configuration | The one stored configuration entry, wiped in a single write, including the gateway token and both mailbox channel credentials | The key pool, per-key usage, event records and refill history | The dialog spells out what will be missing after the reset, then asks you to confirm |
 | Purge the key pool | The record of every key in the pool, plus the id index | Configuration, event records and refill history | Besides confirming, you must type the current pool size by hand |
 

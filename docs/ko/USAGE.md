@@ -16,7 +16,7 @@ agnes2api는 프로토콜 수준에서 4가지 프로토콜을 구현하고 있�
 없습니다.
 
 | 방식 | 전송 주체 |
-|---|---|
+|----|---------|
 | `Authorization: Bearer <token>` | OpenAI SDK |
 | `x-api-key: <token>` | Anthropic SDK |
 | `x-goog-api-key: <token>` | Google GenAI SDK |

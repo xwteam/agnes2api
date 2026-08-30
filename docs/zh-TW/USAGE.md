@@ -13,7 +13,7 @@ agnes2api 在協議層實作了四種協議，因此不需要專用的用戶端�
 SDK 做額外設定：
 
 | 方式 | 由誰發送 |
-|---|---|
+|----|--------|
 | `Authorization: Bearer <token>` | OpenAI SDK |
 | `x-api-key: <token>` | Anthropic SDK |
 | `x-goog-api-key: <token>` | Google GenAI SDK |

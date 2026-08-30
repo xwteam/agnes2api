@@ -23,7 +23,7 @@ the mailbox channels below.
 The registrar supports two mailbox channels for receiving verification codes:
 
 | | YYDS Mail | MoeMail |
-|---|---|---|
+|----|---------|-------|
 | Nature | A third-party temporary-mailbox service | A temporary-mailbox service you self-host |
 | API base URL | Has a default (`YYDS_BASE_URL`, its public API endpoint) | No default (`MOEMAIL_BASE_URL`) — fill in the address of your own instance |
 | Getting credentials | Apply for an API key from the service (`YYDS_API_KEY`) | Generate an API key inside your own instance (`MOEMAIL_API_KEY`) |
@@ -62,7 +62,7 @@ set `REGISTRAR_FALLBACK`, prepare credentials for that channel as well.
 ## Configuration
 
 | Variable | Required | Default | Notes |
-|---|---|---|---|
+|--------|--------|-------|-----|
 | `REGISTRAR_ENABLED` | no | `false` | Master switch; must be `true` to enable the registrar. |
 | `REGISTRAR_PRIMARY` | required once enabled | none | Primary channel, `yyds` or `moemail`; the two are equal, no default. |
 | `REGISTRAR_FALLBACK` | no | empty (no fallback) | Fallback channel, `yyds` or `moemail`; used when the primary hits a channel-level failure. |
@@ -87,7 +87,7 @@ variable above must be a positive integer; the gateway refuses to start otherwis
 ## Scheduling differences between the two runtimes
 
 | Deployment target | Trigger | What controls the interval |
-|---|---|---|
+|-----------------|-------|--------------------------|
 | Cloudflare Worker | Cron under `[triggers]` in `wrangler.toml` (default `*/30 * * * *`, every 30 minutes) | Edit the cron expression in `wrangler.toml` |
 | Node / Docker | An in-process timer | `TEND_INTERVAL_MS` (default `1800000` ms) |
 
@@ -95,7 +95,7 @@ Both runtimes ultimately call **the same refill function**. The difference is **
 responsible for triggering it on time**, and **where the trigger interval comes from**:
 
 | | Trigger | Interval source | Effect of changing it |
-|---|---|---|---|
+|----|-------|---------------|---------------------|
 | Node / Docker | An in-process self-rescheduling timer | `TEND_INTERVAL_MS` (env var > stored config > default `1800000`) | Takes effect **next round** (the current round finishes on the old interval first — up to 30 minutes by default). **No restart needed** |
 | Cloudflare Worker | The platform's Cron Trigger | `[triggers].crons` in `wrangler.toml` | **Changing the config has no effect** — you must edit `wrangler.toml` and redeploy |
 
@@ -202,7 +202,7 @@ Gap = `TARGET_KEYS` − **the number of keys that have not been evicted**. There
 criterion: **if `evicted` is false, it occupies a slot.**
 
 | Key state | Occupies a `TARGET_KEYS` slot? | Usable for upstream calls? |
-|---|---|---|
+|---------|------------------------------|--------------------------|
 | Fresh / available | Yes | Yes |
 | **Cooling down** (rate-limited, consecutive failures) | **Yes** | No |
 | **Disabled by an administrator** | **Yes** | No |
@@ -230,7 +230,7 @@ for the outcome — its `trigger` will read `manual`.
 It has **four guardrails**; failing any one of them means the round never starts:
 
 | Guardrail | Response when it fails | What it blocks |
-|---|---|---|
+|---------|----------------------|--------------|
 | In-flight guard within the process / isolate | `409 tend_in_flight` | The scheduled round colliding with the button, and two concurrent clicks on one replica |
 | Storage-level short lock (`registrar_tend_lock`) | `409 locked` | Overlap **across replicas** (several containers on a shared volume; the Worker's two isolates) |
 | At least 10 minutes between two manual rounds | `429 manual_cooldown` | Click-spamming through your temporary-mailbox quota |

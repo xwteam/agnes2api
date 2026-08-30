@@ -16,7 +16,7 @@
 特別な設定は不要です。
 
 | 形式 | 例 |
-|---|---|
+|----|----|
 | `Authorization: Bearer` ヘッダー | `Authorization: Bearer your-gateway-token` |
 | `x-api-key` ヘッダー | `x-api-key: your-gateway-token` |
 | `x-goog-api-key` ヘッダー | `x-goog-api-key: your-gateway-token` |
@@ -37,7 +37,7 @@
 エンドポイントによって決まります。
 
 | モデル | 用途 |
-|---|---|
+|------|----|
 | `agnes-2.0-flash` | 会話／テキスト系エンドポイント |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
@@ -49,7 +49,7 @@
 `503` を返します。
 
 | `reason` | 自動回復 | 意味 |
-|---|---|---|
+|--------|--------|----|
 | `pool_empty` | – | key がまだ登録されていない。 |
 | `all_cooling` | **する** | すべての key がクールダウン中（レート制限・支払い要求・一時的失敗の累積）。`Retry-After` ヘッダーが最短の復帰時刻を示す。 |
 | `all_disabled` | **しない** | すべての key が管理画面で管理者により**手動で無効化**されている。管理画面で再度有効化すればよい——**認証情報自体は正常なので key を入れ替える必要はない**。 |
@@ -69,7 +69,7 @@
 key が応答しなかった場合、`504` を返します:
 
 | `reason` | 意味 |
-|---|---|
+|--------|----|
 | `upstream_timeout` | 本リクエストが `UPSTREAM_SYNC_TIMEOUT_MS` の総予算を使い切り、試した key はいずれも各自の試行予算内に応答しなかった。上流全体が遅い／予算が小さすぎる可能性もあれば、これらの key に対応する上流セッションがハングしている可能性もある。 |
 
 ```json

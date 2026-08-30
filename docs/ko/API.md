@@ -16,7 +16,7 @@ SDK가 기본으로 전송하는 형식과 정확히 일치하므로, 보통 별
 필요 없습니다.
 
 | 방식 | 예시 |
-|---|---|
+|----|----|
 | `Authorization: Bearer` 헤더 | `Authorization: Bearer your-gateway-token` |
 | `x-api-key` 헤더 | `x-api-key: your-gateway-token` |
 | `x-goog-api-key` 헤더 | `x-goog-api-key: your-gateway-token` |
@@ -37,7 +37,7 @@ SDK가 기본으로 전송하는 형식과 정확히 일치하므로, 보통 별
 엔드포인트에 따라 다릅니다.
 
 | 모델 | 용도 |
-|---|---|
+|----|----|
 | `agnes-2.0-flash` | 대화/텍스트 계열 엔드포인트 |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
@@ -49,7 +49,7 @@ SDK가 기본으로 전송하는 형식과 정확히 일치하므로, 보통 별
 `503`을 반환합니다.
 
 | `reason` | 자동 복구 | 의미 |
-|---|---|---|
+|--------|---------|----|
 | `pool_empty` | – | 아직 key가 등록되지 않음. |
 | `all_cooling` | **예** | 모든 key가 쿨다운 중(레이트 리밋·결제 필요·일시적 실패 누적). `Retry-After` 헤더가 가장 이른 복구 시점을 알려줌. |
 | `all_disabled` | **아니오** | 모든 key가 관리 패널에서 관리자에 의해 **수동으로 비활성화**됨. 패널에서 다시 활성화하면 됨 — **자격 증명 자체는 정상이므로 key를 교체할 필요 없음**. |
@@ -69,7 +69,7 @@ SDK가 기본으로 전송하는 형식과 정확히 일치하므로, 보통 별
 응답하지 않으면 `504`를 반환합니다:
 
 | `reason` | 의미 |
-|---|---|
+|--------|----|
 | `upstream_timeout` | 이번 요청이 `UPSTREAM_SYNC_TIMEOUT_MS` 총예산을 모두 소진했고, 시도한 key 중 어느 것도 각자의 시도 예산 안에 응답하지 않음. 업스트림이 전반적으로 느리거나 예산이 너무 작을 수도 있고, 해당 key들의 업스트림 세션이 멈춰 있을 수도 있음. |
 
 ```json

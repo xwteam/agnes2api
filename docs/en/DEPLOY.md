@@ -9,7 +9,7 @@ Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volu
 ## Environment variables
 
 | Variable | Required | Default | Notes |
-|---|---|---|---|
+|--------|--------|-------|-----|
 | `GATEWAY_TOKEN` | **yes** | – | The token clients must present to call this gateway. |
 | `RESET_CONFIG` | no | – | Escape hatch: set it to `1` and startup **ignores the stored `config` key entirely** (ignores it, does not delete it), using only environment variables and built-in defaults. Use it to recover when the stored config has been corrupted badly enough to keep the gateway from starting; remove the line afterwards, or nothing you save in the panel will ever take effect. |
 | `AGNES_BASE_URL` | no | `https://apihub.agnes-ai.com/v1` | Upstream Agnes API base URL. |
@@ -183,7 +183,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   isolates):
 
   | Scenario | puts/day | share of the write quota |
-  |---|---|---|
+  |--------|--------|------------------------|
   | **Registrar off (default)**, nobody operating | **176** | **17.6%** |
   | Registrar on, **every round healthy**, nobody operating | **272** | **27.2%** |
   | Registrar on, **every round producing failure events**, nobody operating | **320** | **32.0%** |
@@ -227,7 +227,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   `13 × 8` = **104** per day, roughly 10.4% of the write quota. Totals for four scenarios:
 
   | Scenario | puts/day | share of the write quota |
-  |---|---|---|
+  |--------|--------|------------------------|
   | **Tier-2 off (default)**, registrar off | **176** | 17.6% |
   | Tier-2 on, registrar off | **280** | 28.0% |
   | Tier-2 on, registrar on and every round producing failure events | **424** | 42.4% |
@@ -412,7 +412,7 @@ number of isolates.
 ### Admin panel variables (P3, disabled by default)
 
 | Variable | Required | Default | Notes |
-|---|---|---|---|
+|--------|--------|-------|-----|
 | `ADMIN_TOKEN` | no | none (panel disabled) | Token for the admin endpoints. **Must differ from `GATEWAY_TOKEN`**, and must be at least 24 characters. It must also have **no leading or trailing whitespace**: HTTP strips whitespace from header values but environment variables keep it, so a padded token can never be sent by any client. The token must also consist solely of **printable ASCII (0x20–0x7E)**. This restriction has three parts with different natures: (1) characters above U+00FF (CJK, emoji, zero-width spaces) plus newlines and NUL make `fetch` **throw** when setting the header — the request is never sent, so you would get a panel that returns 200 yet can never be entered, and the server would not even get one `admin.login_failed`; (2) control characters **other than TAB** (`0x01–0x08`, `0x0B`, `0x0C`, `0x0E–0x1F`, `0x7F` — 29 in total) can be sent by the browser but are rejected as `400` by the HTTP parser; (3) **TAB (`0x09`)** and `0x80–0xFF` bytes such as `é`, `£` or a non-breaking space **can actually be sent and would work** — rejecting them is a **robustness trade-off on our side**, not a physical limit, and **the two have different reasons**. TAB is an **invisible character**: pasted into a `.env` file or a secret, nobody can see it (the same diagnosability problem as leading/trailing whitespace, except that rule is physical and this one is a trade-off). `0x80–0xFF` is an encoding question instead: environment variables are decoded as UTF-8 while header values are decoded as Latin-1, and nothing in the specs guarantees those two agree in that range (we have only verified this on Node; the Cloudflare Workers side is unverified), while RFC 9110 already marks that range as deprecated. Please use an ASCII-only token. **Interior spaces are allowed**: a passphrase like `correct horse battery staple` is perfectly sendable and, under a 24-character minimum, is often easier to get right than a random string. Leading/trailing whitespace is covered by the rule above. Unset or non-compliant ⇒ the whole `/admin` tree is never registered, and the reason is logged as `admin.token_rejected`. |
 | `TRUST_PROXY` | no | unset (**no** forwarded header is trusted) | Set to `1` **only** if the gateway really sits behind a proxy — that includes the Cloudflare Worker form, where you should set it. When set, the client IP recorded in login-failure events comes from `CF-Connecting-IP`, falling back to the first segment of `X-Forwarded-For`. |
 
@@ -590,7 +590,7 @@ how to choose between the two mailbox channels, the Cloudflare Cron wall-clock l
 see [REGISTRAR.md](REGISTRAR.md).
 
 | Variable | Required | Default | Notes |
-|---|---|---|---|
+|--------|--------|-------|-----|
 | `REGISTRAR_ENABLED` | no | `false` | Master switch; must be `true` to enable the registrar. |
 | `REGISTRAR_PRIMARY` | required once enabled | none | Primary channel, `yyds` or `moemail`; the two are equal, no default. |
 | `REGISTRAR_FALLBACK` | no | empty (no fallback) | Fallback channel, `yyds` or `moemail`. |
@@ -611,7 +611,7 @@ The criterion is *when the upstream's first byte can possibly arrive*, not the n
 endpoint:
 
 | Budget | Endpoints | Variable |
-|---|---|---|
+|------|---------|--------|
 | First-byte | **Streaming** chat (`stream: true`), video polling `GET /v1/videos/{id}` | `UPSTREAM_TIMEOUT_MS` |
 | Synchronous | Image generation, video job creation, and **every non-streaming chat request** (all four protocols) | `UPSTREAM_SYNC_TIMEOUT_MS` |
 

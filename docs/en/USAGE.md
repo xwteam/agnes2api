@@ -14,7 +14,7 @@ Whichever SDK you use sends its own default header, and the gateway accepts all 
 these interchangeably — no extra configuration needed to make a particular SDK work:
 
 | Form | Sent by |
-|---|---|
+|----|-------|
 | `Authorization: Bearer <token>` | OpenAI SDK |
 | `x-api-key: <token>` | Anthropic SDK |
 | `x-goog-api-key: <token>` | Google GenAI SDK |

@@ -7884,3 +7884,202 @@ describe("W124 非 README 文档的五语言 `##` 译名常量表", () => {
     }
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W116 — 表格分隔行逐格补齐（R22a / R22b / R22c）
+ *
+ * **为什么这一组不是「数一数补了多少条」。** 旧验收写的是「补齐 ≥100 条」，
+ * 而实测：只把每张表的**第一列**改宽、其余列留 `---`（`|----|---|---|`），
+ * 既能让「极简分隔行」这条计数归零（那条正则要求**整行**每一格都 ≤3 个 `-`），
+ * 又能满足「补齐 ≥100」——**两条旧判据一起放行，而 34 份文档的表格一格都没跟着表头走**。
+ * ⇒ 判据必须是**逐格恒等式**：每一格的 `-` 数 ≥ 该列**表头文字的显示宽度**（CJK 按 2 计）
+ * 且 ≥ 4。下面第 5 格就是拿那种「假补齐」当输入的反向控制。
+ *
+ * **口径**（三条都一样，写在这里一次，不在每一格里重复）：
+ * - 射程 = **出货文档全集**：仓根五份 + `docs/{5 语言}/{7 份}`，共 40 份。
+ *   不含 `.github/**`、不含 `admin-ui/README.md`（Q15：贡献者文档，参照仓无对照物）。
+ * - **先剥围栏再动手**：` ``` ` 开头的行做开关，围栏定界行本身也剥掉。
+ *   围栏里教人写 markdown 表格的示例**不在射程内**，第 6 格是它的反向控制。
+ * - 「表头」= 分隔行的**上一行**。上一行不以 `|` 起头、或列数对不上，这一行**不算表格**，
+ *   本组跳过并计数（今天两者都是 0，第 4 格钉着）。
+ *
+ * ⚠️ **显示宽度与 W88 基线指标 13/13b 的「字符数」是两把尺**（ADJ ㊾）：那两条量的是
+ * `String.length`，本组量的是**终端列宽**。两者在纯 ASCII 上重合、在 CJK 上差一倍，
+ * 谁也不能拿去顶替谁。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 出货文档全集（40 份）。**从磁盘现算**，新增一份文档会自动进射程。 */
+const SHIP_DOCS: readonly string[] = (() => {
+  const rootDocs = readdirSync(".").filter((f) => f.endsWith(".md")).sort();
+  const langDocs = LANGS.flatMap((lang) =>
+    readdirSync(join("docs", lang)).filter((f) => f.endsWith(".md")).sort()
+      .map((f) => join("docs", lang, f)));
+  return [...rootDocs, ...langDocs];
+})();
+
+/** 东亚宽字符（含中日韩、假名、全角标点）与 emoji 按 2 列计，其余按 1 列。 */
+const EAST_ASIAN_WIDE =
+  /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿ꀀ-꓏가-힣豈-﫿︰-﹯＀-｠￠-￦]/u;
+const displayWidth = (s: string): number =>
+  [...s].reduce((n, ch) => n + (EAST_ASIAN_WIDE.test(ch) || (ch.codePointAt(0) ?? 0) > 0x1f000 ? 2 : 1), 0);
+
+/** 剥围栏：返回 `{ line, no }`，围栏内与围栏定界行一律不返回。 */
+const bodyLines = (text: string): ReadonlyArray<{ line: string; no: number }> => {
+  let inFence = false;
+  const out: Array<{ line: string; no: number }> = [];
+  text.split("\n").forEach((line, i) => {
+    if (FENCE_LINE.test(line)) { inFence = !inFence; return; }
+    if (!inFence) out.push({ line, no: i + 1 });
+  });
+  return out;
+};
+
+/** 任意一行表格拆成格子（要求首尾都是 `|`）。 */
+const rowCells = (line: string): string[] => {
+  const t = line.trim();
+  return t.slice(1, t.length - 1).split("|").map((c) => c.trim());
+};
+
+/** 分隔行：整行只由 `|`、`-`、可选冒号与空白构成。 */
+const SEPARATOR_ROW = /^\s*\|(?:\s*:?-+:?\s*\|)+\s*$/;
+/** 极简分隔行：**每一格**都是 1–3 个 `-`（可带对齐冒号）。 */
+const MINIMAL_SEPARATOR = /^\s*\|(?:\s*:?-{1,3}:?\s*\|)+\s*$/;
+
+type SepScan = {
+  readonly minimal: string[];
+  readonly colon: string[];
+  readonly narrow: string[];
+  readonly tables: number;
+  readonly cells: number;
+  readonly skippedNoHeader: number;
+  readonly skippedColMismatch: number;
+};
+
+/**
+ * 一组文档的分隔行体检。**只读文本，不碰磁盘**，反向控制因此可以直接喂变异过的字符串。
+ */
+const scanSeparators = (docs: ReadonlyArray<readonly [path: string, text: string]>): SepScan => {
+  const minimal: string[] = [], colon: string[] = [], narrow: string[] = [];
+  let tables = 0, cells = 0, skippedNoHeader = 0, skippedColMismatch = 0;
+  for (const [path, text] of docs) {
+    const rows = bodyLines(text);
+    rows.forEach((r, i) => {
+      if (!SEPARATOR_ROW.test(r.line)) return;
+      if (MINIMAL_SEPARATOR.test(r.line)) minimal.push(`${path}:${r.no} ${r.line.trim()}`);
+      if (r.line.includes(":")) colon.push(`${path}:${r.no} ${r.line.trim()}`);
+      const header = rows[i - 1]?.line ?? "";
+      if (!header.trim().startsWith("|")) { skippedNoHeader++; return; }
+      const h = rowCells(header), s = rowCells(r.line);
+      if (h.length !== s.length) { skippedColMismatch++; return; }
+      tables++;
+      h.forEach((head, k) => {
+        cells++;
+        const need = Math.max(4, displayWidth(head));
+        const got = (s[k] ?? "").replace(/:/g, "").length;
+        if (got < need) {
+          narrow.push(`${path}:${r.no} 第 ${k + 1} 格：表头「${head}」显示宽度 ${need}，`
+            + `分隔行只有 ${got} 个 \`-\``);
+        }
+      });
+    });
+  }
+  return { minimal, colon, narrow, tables, cells, skippedNoHeader, skippedColMismatch };
+};
+
+/** 真文档，读一次给全组用。 */
+const shipDocPairs = (): ReadonlyArray<readonly [string, string]> =>
+  SHIP_DOCS.map((p) => [p, readFileSync(p, "utf8")] as const);
+
+/** 把某份文档的正文替换一处，其余原样返回——反向控制的公共夹具。 */
+const shipDocsWith = (
+  path: string, mutate: (s: string) => string,
+): ReadonlyArray<readonly [string, string]> =>
+  shipDocPairs().map(([p, t]) => (p === path ? [p, mutate(t)] as const : [p, t] as const));
+
+describe("W116 表格分隔行逐格补齐：宽度跟着表头走，不许有极简格、不许有对齐冒号", () => {
+  it("射程自守：40 份出货文档、每一份都读得到，而且真的扫到了表格", () => {
+    expect(SHIP_DOCS.length, `出货文档从 40 份变成了 ${SHIP_DOCS.length} 份 —— `
+      + "本组的射程是从磁盘现算的，数变了就该有人来确认新增/删除的那份该不该进射程")
+      .toBe(40);
+    expect(SHIP_DOCS.filter((p) => !existsSync(p)), "射程里有读不到的文件").toEqual([]);
+    const scan = scanSeparators(shipDocPairs());
+    expect(scan.tables, "一张表都没扫到 —— 判据在测空气，多半是分隔行正则写坏了")
+      .toBeGreaterThan(100);
+    expect(scan.cells, "格子数不该少于表数").toBeGreaterThan(scan.tables);
+  });
+
+  it("R22a 极简分隔行恒为 0（剥围栏后）", () => {
+    const { minimal } = scanSeparators(shipDocPairs());
+    expect(minimal, `还有极简 \`|---|\` 分隔行：\n${minimal.join("\n")}`).toEqual([]);
+  });
+
+  it("R22c 显式对齐冒号恒为 0（`|:---|` / `|---:|` / `|:---:|` 一概不用）", () => {
+    const { colon } = scanSeparators(shipDocPairs());
+    expect(colon, `分隔行里出现了对齐冒号：\n${colon.join("\n")}`).toEqual([]);
+  });
+
+  it("R22b 逐格恒等式：每格 `-` 数 ≥ 该列表头的显示宽度（CJK 按 2 计）且 ≥ 4", () => {
+    const { narrow } = scanSeparators(shipDocPairs());
+    expect(narrow, `分隔行的宽度没跟着表头走：\n${narrow.join("\n")}`).toEqual([]);
+  });
+
+  it("认不出要吵：表头行认不出（不以 `|` 起头）或列数对不上时不许静静放行 —— 今天两者都是 0", () => {
+    const scan = scanSeparators(shipDocPairs());
+    expect([scan.skippedNoHeader, scan.skippedColMismatch],
+      "有分隔行的上一行不是表头、或表头与分隔行列数对不上 —— 那种表本组量不了，"
+      + "今天是 0；变成非 0 说明仓里出现了本组看不见的表，得先决定怎么量它")
+      .toEqual([0, 0]);
+  });
+
+  it("显示宽度这把尺自身：CJK/假名/韩文按 2 列，ASCII 按 1 列", () => {
+    expect(displayWidth("变量")).toBe(4);
+    expect(displayWidth("必填")).toBe(4);
+    expect(displayWidth("日本語")).toBe(6);
+    expect(displayWidth("한국어")).toBe(6);
+    expect(displayWidth("Required")).toBe(8);
+    expect(displayWidth("`reason`")).toBe(8);
+    expect(displayWidth("说明 / Notes")).toBe(12);
+  });
+
+  it("该红时红（一）：把一条分隔行改回极简 `|---|` —— R22a 与 R22b 同时红并点名文件行号", () => {
+    const target = join("docs", "zh-CN", "DEPLOY.md");
+    const base = scanSeparators(shipDocPairs());
+    expect(base.minimal.length + base.narrow.length, "起点就不干净，这一格测不出东西").toBe(0);
+    const docs = shipDocsWith(target, (s) => s.replace(/^\|-+\|-+\|-+\|-+\|$/m, "|---|---|---|---|"));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地 —— 那份文档里没有四列表格")
+      .not.toEqual(readFileSync(target, "utf8"));
+    const scan = scanSeparators(docs);
+    expect(scan.minimal.join("\n"), "极简分隔行回来了，R22a 却没红").toContain(`${target}:`);
+    expect(scan.narrow.join("\n"), "宽度不达标了，R22b 却没红").toContain(`${target}:`);
+  });
+
+  it("该红时红（二）：**只改第一列**的假补齐 `|----|---|---|` —— R22a 逃得掉，R22b 必须红", () => {
+    const target = join("docs", "zh-CN", "DEPLOY.md");
+    const docs = shipDocsWith(target, (s) => s.replace(/^\|-+\|-+\|-+\|-+\|$/m, "|----|---|---|---|"));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const scan = scanSeparators(docs);
+    // 这一行每一格不全 ≤3 个 `-`（第一格有 4 个）⇒ 「极简分隔行」这条**看不见它**。
+    expect(scan.minimal, "假补齐居然被 R22a 抓到了 —— 那本格的立论（旧判据抓不住它）就不成立了")
+      .toEqual([]);
+    expect(scan.narrow.join("\n"), "假补齐没被 R22b 抓到 —— 这正是 W116 换判据的唯一理由")
+      .toContain(`${target}:`);
+  });
+
+  it("该红时红（三）：给一条分隔行加上对齐冒号 —— R22c 红", () => {
+    const target = join("docs", "en", "API.md");
+    const docs = shipDocsWith(target, (s) => s.replace(/^\|(-+)\|/m, "|:$1|"));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(scanSeparators(docs).colon.join("\n"), "对齐冒号进来了，R22c 却没红").toContain(`${target}:`);
+  });
+
+  it("不许乱红：围栏里教人写 markdown 表格的示例不进射程", () => {
+    const target = join("docs", "zh-CN", "API.md");
+    const decoy = "\n```markdown\n| 表头 | b |\n|:---|---:|\n| x | y |\n```\n";
+    const docs = shipDocsWith(target, (s) => s + decoy);
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const scan = scanSeparators(docs);
+    expect([scan.minimal, scan.colon, scan.narrow],
+      "围栏里的示例被算进来了 —— 剥围栏那一步没生效，本组三条判据全都会误伤示例代码")
+      .toEqual([[], [], []]);
+  });
+});

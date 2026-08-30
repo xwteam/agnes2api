@@ -13,7 +13,7 @@ agnes2api 在协议层实现了四种协议，因此不需要专门的客户端�
 做额外配置：
 
 | 方式 | 由谁发送 |
-|---|---|
+|----|--------|
 | `Authorization: Bearer <token>` | OpenAI SDK |
 | `x-api-key: <token>` | Anthropic SDK |
 | `x-goog-api-key: <token>` | Google GenAI SDK |

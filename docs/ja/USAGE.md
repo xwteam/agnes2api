@@ -17,7 +17,7 @@ agnes2api はワイヤレベルで 4 つのプロトコルを実装している�
 する必要はありません。
 
 | 形式 | 送信元 |
-|---|---|
+|----|------|
 | `Authorization: Bearer <token>` | OpenAI SDK |
 | `x-api-key: <token>` | Anthropic SDK |
 | `x-goog-api-key: <token>` | Google GenAI SDK |

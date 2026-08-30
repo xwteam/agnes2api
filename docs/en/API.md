@@ -14,7 +14,7 @@ of the following four forms is accepted — this matches what each protocol's of
 sends by default, so you normally don't configure anything special:
 
 | Form | Example |
-|---|---|
+|----|-------|
 | `Authorization: Bearer` header | `Authorization: Bearer your-gateway-token` |
 | `x-api-key` header | `x-api-key: your-gateway-token` |
 | `x-goog-api-key` header | `x-goog-api-key: your-gateway-token` |
@@ -34,7 +34,7 @@ reading — the gateway itself does not localize error strings yet.)
 Four models are exposed. Which one you should pass depends on which endpoint you're calling:
 
 | Model | Used for |
-|---|---|
+|-----|--------|
 | `agnes-2.0-flash` | chat/text endpoints |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
@@ -45,7 +45,7 @@ Four models are exposed. Which one you should pass depends on which endpoint you
 If no upstream key is available, the gateway returns `503` before ever calling upstream:
 
 | `reason` | Self-healing? | Meaning |
-|---|---|---|
+|--------|-------------|-------|
 | `pool_empty` | – | No key has been imported yet. |
 | `all_cooling` | **yes** | Every key is cooling down (rate limit, payment required, or repeated transient failures). A `Retry-After` header gives the earliest recovery time. |
 | `all_disabled` | **no** | Every key was **manually disabled** by an administrator in the admin panel. Re-enable them there — **the credentials are fine, do not replace the keys**. |
@@ -65,7 +65,7 @@ protocols) run on the synchronous budget `UPSTREAM_SYNC_TIMEOUT_MS` (default 120
 budget failed to answer, the gateway returns `504`:
 
 | `reason` | Meaning |
-|---|---|
+|--------|-------|
 | `upstream_timeout` | The request used up the whole `UPSTREAM_SYNC_TIMEOUT_MS` budget and none of the keys it tried answered within their attempt budget. Either the upstream is slow / the budget is too small, or the upstream sessions behind those keys are hung. |
 
 ```json

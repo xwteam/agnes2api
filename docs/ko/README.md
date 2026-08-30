@@ -350,26 +350,26 @@ curl http://localhost:8080/v1/videos/task-1 \
 ### OpenAI 호환(`/v1`)
 
 | 메서드 | 엔드포인트 | 기능 |
-|------|------|------|
+|------|----------|------|
 | GET | `/v1/models` | 모델 목록 |
 | POST | `/v1/chat/completions` | 대화 완성(스트리밍 지원) |
 
 ### OpenAI Responses(`/v1`)
 
 | 메서드 | 엔드포인트 | 기능 |
-|------|------|------|
+|------|----------|------|
 | POST | `/v1/responses` | Responses API(스트리밍 지원) |
 
 ### Anthropic 호환(`/v1`)
 
 | 메서드 | 엔드포인트 | 기능 |
-|------|------|------|
+|------|----------|------|
 | POST | `/v1/messages` | Messages(스트리밍 지원) |
 
 ### Gemini 네이티브(`/v1beta`)
 
 | 메서드 | 엔드포인트 | 기능 |
-|------|------|------|
+|------|----------|------|
 | GET | `/v1beta/models` | 모델 목록 |
 | POST | `/v1beta/models/{model}:generateContent` | 콘텐츠 생성(비스트리밍) |
 | POST | `/v1beta/models/{model}:streamGenerateContent` | 스트리밍 생성 |
@@ -377,7 +377,7 @@ curl http://localhost:8080/v1/videos/task-1 \
 ### 이미지와 동영상
 
 | 메서드 | 엔드포인트 | 기능 |
-|------|------|------|
+|------|----------|------|
 | POST | `/v1/images/generations` | 이미지 생성(동기 전달) |
 | POST | `/v1/videos` | 동영상 작업 생성 |
 | GET | `/v1/videos/{id}` | 동영상 작업 폴링 |
@@ -385,14 +385,14 @@ curl http://localhost:8080/v1/videos/task-1 \
 ### 관리 API
 
 | 메서드 | 엔드포인트 | 기능 |
-|------|------|------|
+|------|----------|------|
 | GET | `/admin` | 관리 패널 본체(**`ADMIN_TOKEN`을 설정하지 않으면 트리째 등록되지 않아 접근하면 404입니다**) |
 | GET · POST · PUT · DELETE | `/admin/api/*` | 관리 API: key 풀 / 레지스트라 / 이벤트 / 사용량 / 모델 / 설정(`x-admin-key`로 인증) |
 
 ### 시스템
 
 | 메서드 | 엔드포인트 | 기능 |
-|------|------|------|
+|------|----------|------|
 | GET | `/health` | 생존 확인(인증 없음. 버전과 저장소 건강 상태를 돌려줍니다) |
 
 > URL 안의 `localhost:8080`은 예시일 뿐입니다. Node에서는 포트를 `PORT`가 정하고, Worker에서는 자신의 `*.workers.dev`나 사용자 도메인이 됩니다. 배포한 곳으로 바꿔 주세요.

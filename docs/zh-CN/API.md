@@ -13,7 +13,7 @@ Cloudflare Worker 上，替换成你的 `*.workers.dev` 域名（或自定义域
 其一即可——正好对应各协议官方 SDK 默认发送的凭据形式，通常无需额外配置：
 
 | 方式 | 示例 |
-|---|---|
+|----|----|
 | `Authorization: Bearer` 请求头 | `Authorization: Bearer your-gateway-token` |
 | `x-api-key` 请求头 | `x-api-key: your-gateway-token` |
 | `x-goog-api-key` 请求头 | `x-goog-api-key: your-gateway-token` |
@@ -30,7 +30,7 @@ Cloudflare Worker 上，替换成你的 `*.workers.dev` 域名（或自定义域
 网关暴露四个模型，调用哪个端点决定该传哪个：
 
 | 模型 | 用于 |
-|---|---|
+|----|----|
 | `agnes-2.0-flash` | 对话/文本类端点 |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
@@ -41,7 +41,7 @@ Cloudflare Worker 上，替换成你的 `*.workers.dev` 域名（或自定义域
 若 key 池中没有可用 key，网关会在发起上游请求之前直接返回 `503`：
 
 | `reason` | 是否自愈 | 含义 |
-|---|---|---|
+|--------|--------|----|
 | `pool_empty` | – | 尚未导入任何 key。 |
 | `all_cooling` | **会** | 全部 key 处于冷却中（限流、欠费或瞬时故障累计）。响应头 `Retry-After` 给出最早恢复时刻。 |
 | `all_disabled` | **不会** | 全部 key 被管理员在管理面板上**手工停用**。在面板上重新启用即可——**凭据本身没问题，别去换 key**。 |
@@ -60,7 +60,7 @@ Cloudflare Worker 上，替换成你的 `*.workers.dev` 域名（或自定义域
 请求在总预算内尝试过的每一把 key 都没有响应时，返回 `504`：
 
 | `reason` | 含义 |
-|---|---|
+|--------|----|
 | `upstream_timeout` | 本次请求用尽了 `UPSTREAM_SYNC_TIMEOUT_MS` 的总预算，其间尝试过的 key 都没在各自的尝试预算内响应。可能是上游整体变慢或预算配小，也可能是这几把 key 对应的上游会话被挂起。 |
 
 ```json
