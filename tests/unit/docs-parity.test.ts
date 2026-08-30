@@ -3670,6 +3670,20 @@ describe("根 README 首屏的一行五链与 16 节骨架（P3e Task 27 / P3f �
    * ⚠️ **名册两个方向都查**（下面各有一格）：登记了却在根 README 里指得到五种语言
    * ⇒ 红（登记过期了，删掉它）；根那条指向 `SPONSORS.md` 的链接没了 ⇒ 红
    * （那是这份文档在首屏唯一的入口）。
+   *
+   * ── 这一条登记**不是过渡欠账，别到期就删**（P3f 阶段 5B 收尾，实测过）────────
+   * 它与 `ROOT_ONLY_IDENTS` 长得像、性质相反：那张表兜的是「五语言版还没跟上」这个
+   * **暂时**不成立的前提，跟上来当天必须清空；这一条记的是**模板的固定形态**
+   *（根的 ☕ 节只链根 `SPONSORS.md` 一条），五语言版做完之后它照旧成立。
+   *
+   * 实测：把 `SPONSORS` 从本名册删掉 ⇒ ④A 当场红
+   *「根 README 里指得到 SPONSORS.md 的只有 0 种语言，缺 zh-CN、zh-TW、en、ja、ko」，
+   * 同时上面那格反向控制因为名册空了而红。**那条红是对的**——根那份确实没有、
+   * 按模板也不该有。⇒ 登记留着，删它等于逼人把根 README 写成不合模板的形态。
+   *
+   * 阶段 5A 登记它时挂着的那笔真欠账是**另一件事**：`docs/{lang}/SPONSORS.md` 那五份
+   * 当时在**任何** README 里都没有入口（W49 删掉矩阵表时一并没了）。
+   * 那笔账由下面的 ④B 结清——入口补在**各语言版自己的 ☕ 节**里，不在根。
    */
   const NO_ROOT_FIVE_LANG_ENTRY = ["SPONSORS"] as const;
   const ENTRY_DOCS = DOCS.filter((d) => !(NO_ROOT_FIVE_LANG_ENTRY as readonly string[]).includes(d));
@@ -3960,6 +3974,92 @@ describe("根 README 首屏的一行五链与 16 节骨架（P3e Task 27 / P3f �
     expect(relTargets(body), "根 README 里没有指向根 `SPONSORS.md` 的链接 —— 上一格豁免掉的那份文档"
       + "在首屏就一个入口都没有了；模板的 ☕ 节那条 `> 完整内容请查看 [SPONSORS.md](SPONSORS.md)` 不许删")
       .toContain("SPONSORS.md");
+  });
+
+  /* ── ④B 五份语言版 ☕ 节里的同目录 SPONSORS 入口（ADJ §57 的结清判据）──────────
+   *
+   * §57 登记的空档是：`docs/{lang}/SPONSORS.md` 那五份在**任何** README 里都没有入口。
+   * 阶段 5B 把入口补在各语言版自己的 `## ☕` 节里（模板 `K/README.md:588` 的同一行
+   * 形态，只是目标换成同目录那一份），这一格钉住那五条入口。
+   *
+   * **「同目录」是判据的一部分**：`[SPONSORS.md](SPONSORS.md)` 指的是
+   * `docs/<lang>/SPONSORS.md`。换成 `../../SPONSORS.md`（根那份）或
+   * `../zh-CN/SPONSORS.md`（别的语言那份）都不算——读日文 README 的人点开会掉进
+   * 另一种语言，而 ① 那一格只查「文件在不在」，这两种改法它一个字都不会吭。
+   *
+   * ⚠️ **它验不了什么**：只问「那一节里有没有这条链接」，不问那一节还写了什么，
+   * 也不问 `docs/<lang>/SPONSORS.md` 里面的内容对不对（那是 R2–R6 与 W67 的活）。
+   */
+
+  /** 一份语言版 README 的原文。真扫描与反向控制共用，`edit` 是唯一的注入点。 */
+  const readLangReadme = (lang: Lang) => readFileSync(docPath(".", lang, "README"), "utf8");
+
+  const langReadmeWith = (target: Lang, edit: (s: string) => string) => (lang: Lang) => {
+    const src = readLangReadme(lang);
+    if (lang !== target) return src;
+    const out = edit(src);
+    if (out === src) throw new Error(`变异没落到 docs/${lang}/README.md 上——这一格控制是空的`);
+    return out;
+  };
+
+  /** ☕ 那一节在 `SECTIONS` 里的下标。 */
+  const SPONSOR_AT = 11;
+
+  /** ④B 的失败报文全集。**真扫描与反向控制共用这一份。** */
+  const sponsorEntryFailures = (read: (lang: Lang) => string): string[] => {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const heading = SECTIONS[SPONSOR_AT]!.title[lang].replace(/^## /, "");
+      const sec = sectionBody(read(lang), heading);
+      if (sec === null) {
+        out.push(`docs/${lang}/README.md 里认不出 \`## ${heading}\` 这一节——认不出要吵，`
+          + "不许当成「这一节里没写那条链接」：真坏掉的是标题，报文却会把人指去补一条链接");
+        continue;
+      }
+      if (!sec.includes("](SPONSORS.md)")) {
+        out.push(`docs/${lang}/README.md 的 \`## ${heading}\` 节里没有指向**同目录** \`SPONSORS.md\` 的链接`
+          + ` —— docs/${lang}/SPONSORS.md 于是在整套 README 里一个入口都没有`
+          + "（根那份按模板只链根 `SPONSORS.md`，见 `NO_ROOT_FIVE_LANG_ENTRY` 上方那段）");
+      }
+    }
+    return out;
+  };
+
+  it("④B 五份语言版的 ☕ 节都链着**同目录**的 SPONSORS.md —— ADJ §57 那个空档的结清判据", () => {
+    expect(SECTIONS[SPONSOR_AT]!.title["zh-CN"], "SPONSOR_AT 指错了节——这一格会去找一个不存在的标题")
+      .toBe("## ☕ 赞赏 & 共享");
+    const failures = sponsorEntryFailures(readLangReadme);
+    expect(failures, `语言版的 SPONSORS 入口不齐：\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  it("④B 该红时红：ja 那条改指**根**那份 SPONSORS.md —— 文件在，① 一个字都不吭，只有 ④B 看得见", () => {
+    probeBase(sponsorEntryFailures(readLangReadme), "④B 五份语言版的 ☕ 节都链着**同目录**的 SPONSORS.md —— ADJ §57 那个空档的结清判据");
+    const read = langReadmeWith("ja", (s) => s.replace("](SPONSORS.md)", "](../../SPONSORS.md)"));
+    // 「文件在」这半句要坐实，否则这一格证不了「只有 ④B 看得见」：`docs/ja/` 下的
+    // `../../SPONSORS.md` 解析出来就是仓根那一份，它真实存在 ⇒ 任何只查「文件在不在」
+    // 的判据都会放行。（① 那一格只跑在根 README 上、路径按仓根解析，够不着这里。）
+    expect(existsSync(join("docs", "ja", "..", "..", "SPONSORS.md")),
+      "仓根的 SPONSORS.md 不在，这一格的立论就没了").toBe(true);
+    const failures = sponsorEntryFailures(read);
+    expect(failures, `只改了一份，只该报这一条，实报：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "④B 红了却没点名是哪一份").toContain("docs/ja/README.md");
+  });
+
+  it("④B 该红时红：ko 那条链接整条被删掉 —— 点名 ko", () => {
+    probeBase(sponsorEntryFailures(readLangReadme), "④B 五份语言版的 ☕ 节都链着**同目录**的 SPONSORS.md —— ADJ §57 那个空档的结清判据");
+    const read = langReadmeWith("ko", (s) => s.replace("[SPONSORS.md](SPONSORS.md)", "SPONSORS.md"));
+    const failures = sponsorEntryFailures(read);
+    expect(failures, `只删了一份，只该报这一条，实报：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "④B 红了却没点名是哪一份").toContain("docs/ko/README.md");
+  });
+
+  it("④B 认不出要吵：zh-TW 的 ☕ 标题被改坏 —— 报「认不出这一节」，不是「这一节里没有链接」", () => {
+    probeBase(sponsorEntryFailures(readLangReadme), "④B 五份语言版的 ☕ 节都链着**同目录**的 SPONSORS.md —— ADJ §57 那个空档的结清判据");
+    const read = langReadmeWith("zh-TW", (s) => s.replace("\n## ☕ 贊賞 & 共享\n", "\n## ☕ 贊賞與共享\n"));
+    const failures = sponsorEntryFailures(read);
+    expect(failures, `只改坏了一份的标题，只该报这一条，实报：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "标题坏了却没说「认不出」").toContain("认不出");
+    expect(failures[0] ?? "", "④B 红了却没点名是哪一份").toContain("docs/zh-TW/README.md");
   });
 
   it("⑤ 语言切换行与五条指针行互相印证 —— 同一种语言在两处的自称必须一致", () => {

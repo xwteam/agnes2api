@@ -274,6 +274,14 @@ BANNER='[collection-guard] ✅'
 #   且全部解析得开）+ 五份各一格反向控制（改一个 `## ` 标题不改导航 ⇒ 红并点名死锚点）
 #   + 一格非空锚（五份的**期望**导航两两不同——期望值撞了的话，「这一份抄了那一份」
 #   这种坏法就分不出来了）= 5 + 5 + 1 = 11 格。文件数不变。
+#   P3f 阶段 5B-4 之二从 3851 改到 3855（+4）：ADJ §57 那个空档
+#  （`docs/{lang}/SPONSORS.md` 在**任何** README 里都没有入口）由阶段 5B 补在
+#   各语言版自己的 `## ☕` 节里，新增 ④B 钉住那五条入口 = 1 格真扫描 + 3 格反向控制
+#  （改指根那份 / 整条删掉 / 标题被改坏时报「认不出」）。文件数不变。
+#   ⚠️ **这一步没有删 `NO_ROOT_FIVE_LANG_ENTRY` 里的 SPONSORS 登记**：那条登记记的是
+#   模板的固定形态（根的 ☕ 节只链根 `SPONSORS.md`），不是过渡欠账——实测删掉它
+#   ④A 当场红「根 README 里指得到 SPONSORS.md 的只有 0 种语言」，而那条红是对的。
+#   理由写在该名册上方那段注释里。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -282,7 +290,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=3851
+EXPECT_NODE_TESTS=3855
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
