@@ -409,11 +409,21 @@ const ENV_TABLE_DOCS = [
 /**
  * 一段 markdown 里所有 ```env 围栏的**正文**（不含定界行）。
  *
- * ⚠️ **只认 `env` 这一个标记，别放宽**：同一份 `REGISTRAR.md` 里还有 ```text 围栏
- * （两条日志的形状）与 ```toml 围栏（`wrangler.toml` 的 Cron），前者正文里就有
- * `codeTimeoutMs=...` 这种 `名字=` 形状的片段。放宽到「所有围栏」等于把日志字段
- * 当成环境变量抽进来，而那种脏数据会让下面「文档不许长出网关不认得的变量」那一格
- * 变成一条恒红且解释不清的判据。
+ * ⚠️ **只认 `env` 这一个标记，别放宽。** 理由是**语义**，不是后果：
+ * ```env 是文档里唯一一处**声明**「这一段就是环境变量」的标记；靠正则去猜别的围栏
+ * （```text 的日志形状、```toml 的 Cron）等于**把排版当语义**，抽出来的东西是什么
+ * 全看那一段今天恰好长什么样。
+ *
+ * 🔴 **别把这条收窄说成「放宽会红」——实测不会**（阶段 7C 第 1 轮评审打回来的一条）：
+ * 把 `body = []` 的 `env` 判断去掉、放宽到所有围栏，本文件 26 格**一格都不红**。
+ * 因为下面 `docEnvVarsFrom()` 的抽取正则是 `^#?[ \t]*([A-Z][A-Z0-9_]*)=`：**行首锚定
+ * 且首字母必须大写**，而日志围栏里那些片段是 `codeTimeoutMs=`、Cron 那行是 `crons =`，
+ * 一个都落不进来。此前这里写着「放宽会让下面那一格变成恒红」——那句话是编的。
+ *
+ * ⇒ 收窄本身对（语义），但它**不能靠今天的文本自证**。所以下面
+ * 「只认 ```env 这条收窄」那一对（注入 + 反向控制）用**内存里的变异文本**逼它表态：
+ * 往 ```text 围栏里塞一行 `FAKE_VAR=1` 必须抽不出来，塞进 ```env 围栏必须抽得出来。
+ * 没有那一对，这段注释就只是一句没有判据承重的散文。
  */
 function envFenceBodies(md: string): string[] {
   const out: string[] = [];
@@ -437,12 +447,20 @@ function envFenceBodies(md: string): string[] {
  * · ```env 围栏里的一行声明——`NAME=`，允许前面带一个 `#`（被注释掉的示例也算点名，
  *   与 `.env.example` 自己那条 `DECLARATION` 同一口径，`REGISTRAR.md`）。
  */
-function docEnvVars(lang: string, doc: string): string[] {
-  const md = readFileSync(`docs/${lang}/${doc}.md`, "utf8");
+function docEnvVarsFrom(md: string): string[] {
   const fromTable = [...md.matchAll(/^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|/gm)].map((m) => m[1]!);
   const fromFence = envFenceBodies(md)
     .flatMap((b) => [...b.matchAll(/^#?[ \t]*([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]!));
   return [...new Set([...fromTable, ...fromFence])].sort();
+}
+
+/**
+ * 同上，但读的是磁盘上那一份。
+ * ⚠️ **抽取逻辑只有 `docEnvVarsFrom()` 一份**：探针要拿变异过的文本喂同一条逻辑，
+ * 抄第二份出来会让「探针绿了而真扫描其实走的是别的代码」这种事悄悄发生。
+ */
+function docEnvVars(lang: string, doc: string): string[] {
+  return docEnvVarsFrom(readFileSync(`docs/${lang}/${doc}.md`, "utf8"));
 }
 
 /**
@@ -505,10 +523,7 @@ describe(".env.example 与五语言文档对等", () => {
     const anchorMissing = (lang: string, mutate: boolean): boolean => {
       const raw = readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8");
       const md = mutate ? raw.replace(/^REGISTRAR_PRIMARY=.*$/m, "") : raw;
-      const fromFence = envFenceBodies(md)
-        .flatMap((b) => [...b.matchAll(/^#?[ \t]*([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]!));
-      const fromTable = [...md.matchAll(/^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|/gm)].map((m) => m[1]!);
-      return ![...fromTable, ...fromFence].includes("REGISTRAR_PRIMARY");
+      return !docEnvVarsFrom(md).includes("REGISTRAR_PRIMARY");
     };
     // 变异只落在 ja 这一份上：其余四份照旧认得出，报文才点得出名。
     expect(anchorMissing("ja", true), "变异落地了却还认得出 REGISTRAR_PRIMARY —— 这一格控制是空的").toBe(true);
@@ -516,6 +531,45 @@ describe(".env.example 与五语言文档对等", () => {
     // 而**整份文档里仍然写着这个名字**（正文里到处在讲它）⇒ 证明红的是抽取分支，
     // 不是一条「全文 grep 一下」就能糊弄过去的弱判据。
     expect(readFileSync("docs/ja/REGISTRAR.md", "utf8"), "前提坏了：正文里本来就该提到它").toContain("REGISTRAR_PRIMARY");
+  });
+
+  /**
+   * **「只认 ```env」那条收窄的承重判据**（阶段 7C 第 1 轮评审回填）。
+   *
+   * 收窄的理由写在 `envFenceBodies()` 上面：```env 是唯一声明「这段是环境变量」的标记，
+   * 猜别的围栏 = 把排版当语义。但**今天的文本证不了它**——评审实测把它放宽到所有围栏，
+   * 本文件 26 格一格都不红（日志字段是 `codeTimeoutMs=`、Cron 是 `crons =`，
+   * 都过不了「行首 + 首字母大写」那条正则）。
+   * ⇒ 用**内存里的变异文本**逼收窄表态：同一行 `FAKE_VAR=1`，落在 ```text 围栏里必须
+   * 抽不出来、落在 ```env 围栏里必须抽得出来。两格缺一不可——只留前一格的话，
+   * 一个「什么都抽不出来」的坏正则也能让它绿。
+   * ⚠️ **变异只落在内存里**，磁盘上的 `REGISTRAR.md` 一个字都不动。
+   */
+  const injectIntoFence = (mark: string, line: string): string => {
+    const raw = readFileSync("docs/zh-CN/REGISTRAR.md", "utf8");
+    const at = raw.indexOf("```" + mark + "\n");
+    if (at < 0) throw new Error(`docs/zh-CN/REGISTRAR.md 里没有 \`\`\`${mark} 围栏 —— 这一格测的是空气`);
+    const head = raw.slice(0, at).length + ("```" + mark + "\n").length;
+    return raw.slice(0, head) + line + "\n" + raw.slice(head);
+  };
+
+  it("只认 ```env：往 ```text 围栏里塞一行 `FAKE_VAR=1` ⇒ 抽不出来（收窄真的在承重）", () => {
+    const md = injectIntoFence("text", "FAKE_VAR=1");
+    expect(md, "变异没落地 —— 这一格控制是空的").toContain("FAKE_VAR=1");
+    expect(
+      docEnvVarsFrom(md),
+      "```text 围栏里的一行被当成了环境变量 —— `envFenceBodies()` 的 env 收窄被放宽了，"
+      + "日志字段/Cron 之类的排版噪声会开始漏进环境变量清单",
+    ).not.toContain("FAKE_VAR");
+  });
+
+  it("反向控制：同一行塞进 ```env 围栏 ⇒ 必须抽得出来（否则上一格是靠「什么都抽不出来」绿的）", () => {
+    const md = injectIntoFence("env", "FAKE_VAR=1");
+    expect(md, "变异没落地 —— 这一格控制是空的").toContain("FAKE_VAR=1");
+    expect(
+      docEnvVarsFrom(md),
+      "```env 围栏里的声明都抽不出来 ⇒ 抽取分支已经瞎了，上一格的绿是平凡的",
+    ).toContain("FAKE_VAR");
   });
 
   it(".env.example 里声明的每个变量，五种语言的 DEPLOY.md / REGISTRAR.md 都提到过", () => {
