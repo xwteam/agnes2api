@@ -241,13 +241,18 @@ Worker にデプロイする場合、補充は Cron トリガーによって起�
 （下の「トラブルシューティング」参照。文言は表現の調整で変わり得ますし、読んでいる言語に
 翻訳されているとも限りませんが、イベント名は変わりません）。
 
+下の 2 つのフェンスはゲートウェイが**そのまま**出力する原文です。`msg` はソースに簡体字中国語で
+ハードコードされており、**このページの言語には翻訳されません**。1 件のログは常に**1 行**です
+——`src/adapters/logger-console.ts` が改行を空白に潰しているためで、続き行には `[registrar]`
+接頭辞が付かず失われてしまうからです。したがって grep はイベント名で行い、このページの訳文では
+行わないでください。
+
 **① 起動時**は**警告**（`console.warn`）で、イベント名は
 `registrar.attempt_exceeds_worker_budget`（`grep 'registrar.attempt_exceeds_worker_budget'`）。
 出力はおおよそ次の形です:
 
 ```text
-[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×チャネル数が Worker の 1 ラウンド壁時計予算を超えています
-  codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道数超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。Node/Docker 的定时轮没有平台墙钟上限、不受此限制，但面板的「立即补池」在两种运行时上都带同一份轮级预算，Node/Docker 上同样铸不出来。 codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
 ```
 
 これは**ゲートウェイの起動を止めません**——「認証情報が不足すると起動時にエラーとなり
@@ -260,8 +265,7 @@ Worker だけです。
 （`grep 'registrar.round_budget_impossible'`）。出力はおおよそ次の形です:
 
 ```text
-[registrar] registrar.round_budget_impossible 1 回の発行の最悪所要時間がすでにこのラウンドの壁時計予算を超えており、1 回も開始できません
-  worstAttemptMs=... roundBudgetMs=...
+[registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始，补池将持续零产出——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS 或去掉备通道 worstAttemptMs=... roundBudgetMs=...
 ```
 
 毎ラウンド出るので、一時的な事象ではなく継続状態だと判断できます。

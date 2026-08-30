@@ -10931,6 +10931,114 @@ describe("W112 五份 REGISTRAR.md 的代码围栏", () => {
     expect(drifted, "变异值与今天的真值撞了 —— 这一格控制是空的").not.toBe(realCronLine());
     expect(LANGS.filter((lang) => !realRegSrc(lang).includes(drifted))).toEqual([...LANGS]);
   });
+
+  /* ── 两段 ```text 围栏的源码咬合（阶段 7C 第 1 轮评审回填）─────────────────
+   * 🔴 **这两段围栏此前一个字都没被钉，而没钉的那两处恰好是错的**（评审实测）：
+   * 五份里有四份把 `msg` **翻译**成了本页语言、zh-CN 那份**截断**了半句，
+   * 还被拆成**两条物理行**——而 `src/adapters/logger-console.ts` 把一条日志渲染成
+   * **一行**，那个文件顶上专门写着理由（运维按行 grep `[registrar]`，被撕开的
+   * 后续行拿不到前缀 = 丢失，为此连 U+2028/U+2029 都要清掉）。
+   * 于是这一小节的标题写着「按事件名 grep」，正文却给了四份 grep 零命中的假报文。
+   *
+   * ⇒ 口径与 W109 那格「事件 JSON 的 level / event / msg 逐字等于源码字面量」**同族**：
+   * 期望值从 `src/core/registrar/{config,tender}.ts` **现算**，不手抄第二份；
+   * 五份文档里的 `msg` 一律是源码里的简体中文原文（与五份 `ADMIN.md` 那段事件 JSON
+   * 的 `msg` 同一种做法），译文只写在围栏**外面**的散文里。
+   * ────────────────────────────────────────────────────────────────────────── */
+
+  /**
+   * 一条日志在源码里的 `level` / `msg` 字面量。**真源现算**，抠不出来当场抛。
+   * `msg` 常常是多段字符串相加（`config.ts` 那条有 4 段），因此按
+   * `msg:` → `fields:` 之间的所有字符串片段**顺序拼接**，与 TS 的 `+` 求值同形。
+   */
+  function budgetLog(file: string, event: string): { level: string; event: string; msg: string } {
+    const src = blankComments(readFileSync(file, "utf8"));
+    const at = src.indexOf(`event: "${event}"`);
+    if (at < 0) throw new Error(`${file} 里找不到 event: "${event}" —— 真源改名了，这一格测的是空气`);
+    const levelAt = src.lastIndexOf("level:", at);
+    const fieldsAt = src.indexOf("fields:", at);
+    if (levelAt < 0 || fieldsAt < 0 || levelAt > at) {
+      throw new Error(`${file} 里 ${event} 那条日志的 level/fields 边界抠不出来 —— 判据本身坏了`);
+    }
+    const seg = src.slice(levelAt, fieldsAt);
+    const level = /level:\s*"(\w+)"/.exec(seg)?.[1];
+    const msgAt = seg.indexOf("msg:");
+    if (level === undefined || msgAt < 0) throw new Error(`${file} 里 ${event} 那条日志抠不出 level/msg`);
+    const msg = [...seg.slice(msgAt).matchAll(/"([^"]*)"/g)].map((m) => m[1] ?? "").join("");
+    return { level, event, msg };
+  }
+
+  /** 两条日志按 `ConsoleLogger` 的渲染形态拼出的**行首**：`[registrar] <event> <msg>`。 */
+  const BUDGET_LOGS = [
+    { file: join("src", "core", "registrar", "config.ts"), event: "registrar.attempt_exceeds_worker_budget" },
+    { file: join("src", "core", "registrar", "tender.ts"), event: "registrar.round_budget_impossible" },
+  ] as const;
+
+  it("非空锚：两条日志的 level / msg 真的抠得出来，且 msg 不是被截断的半句", () => {
+    for (const { file, event } of BUDGET_LOGS) {
+      const e = budgetLog(file, event);
+      expect(e.event).toBe(event);
+      expect(["warn", "error"], `${event} 的 level 抠成了 ${e.level}`).toContain(e.level);
+      // 两条 msg 今天都比 60 字符长；抠成空串或半句时下面的逐字比对会退化成永远绿。
+      expect(e.msg.length, `${event} 的 msg 只抠到 ${e.msg.length} 字符 —— 拼接分支没走全`).toBeGreaterThan(60);
+      expect(e.msg.endsWith("\\"), `${event} 的 msg 尾部像是被截断的`).toBe(false);
+    }
+    // 两条 msg 必须不同，否则下面「五份各含两条」会被同一条糊弄过去。
+    expect(budgetLog(BUDGET_LOGS[0].file, BUDGET_LOGS[0].event).msg)
+      .not.toBe(budgetLog(BUDGET_LOGS[1].file, BUDGET_LOGS[1].event).msg);
+  });
+
+  /** 五份 REGISTRAR.md × 两段 ```text 围栏的源码咬合。真扫描与探针**共用这一份**。 */
+  function budgetFenceFailures(read: ApiDocReader): string[] {
+    const out: string[] = [];
+    for (const { file, event } of BUDGET_LOGS) {
+      const want = budgetLog(file, event);
+      const head = `[registrar] ${want.event} ${want.msg}`;
+      for (const lang of LANGS) {
+        const lines = read(lang).split("\n");
+        // 钉的是**整条物理行**，不是「文中某处出现过这段话」：
+        // · 行首必须逐字是 `[registrar] <event> <msg>`——被翻译、被截断、
+        //   被换行撕成两行（7C 引入过的那个回归）时都对不上；
+        // · 余下的部分必须**只剩 logfmt 字段**（`名字=值`），
+        //   所以在 msg 尾巴上多接半句译文/标点也红。
+        if (!lines.some((l) => l.startsWith(head) && /^( [A-Za-z][A-Za-z0-9_]*=\S*)+$/.test(l.slice(head.length)))) {
+          out.push(
+            `docs/${lang}/REGISTRAR.md 里没有一行逐字是 \`${head.slice(0, 60)}…\` + logfmt 字段`
+            + `（真源 \`${file}\` 打的就是这一行；msg 是硬编码简体中文，不随本页语言翻译）`
+            + " —— 要么被翻译/截断/续写了，要么被换行撕成了两行，要么源码改了文档没跟上",
+          );
+        }
+        // level 与 `console.<level>` 一一对应（`METHOD` 是恒等映射），散文里那半句也得跟着源码走。
+        if (!read(lang).includes(`console.${want.level}`)) {
+          out.push(`docs/${lang}/REGISTRAR.md 没提 \`console.${want.level}\`（${want.event} 在源码里是 level: "${want.level}"）`);
+        }
+      }
+    }
+    return out;
+  }
+
+  it("W112 两段 ```text 围栏的一行日志逐字等于源码里的 event + msg 字面量（期望值现算，不手抄）", () => {
+    const failures = budgetFenceFailures(realRegSrc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：源码那条 msg 改一个字而文档没跟上 ⇒ 五份一起红并点名那条日志", () => {
+    const want = budgetLog(BUDGET_LOGS[0].file, BUDGET_LOGS[0].event);
+    const drifted: ApiDocReader = (lang) => realRegSrc(lang).split(want.msg).join(`${want.msg}。`);
+    expect(drifted("en").includes(`${want.msg} codeTimeoutMs=`), "变异没落地 —— 这一格控制是空的").toBe(false);
+    const failures = budgetFenceFailures(drifted);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+    expect(failures[0] ?? "").toContain(BUDGET_LOGS[0].event);
+  });
+
+  it("该红时红：某一份把那条日志折成两行 ⇒ 只红一条并点名那一份（这是 7C 引入过的那个回归）", () => {
+    const want = budgetLog(BUDGET_LOGS[0].file, BUDGET_LOGS[0].event);
+    const cut = want.msg.slice(0, 30);
+    const read = readerWith("ja", (s) => s.replace(`${cut}`, `${cut}\n  `), "REGISTRAR");
+    const failures = budgetFenceFailures(read);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("ja/REGISTRAR.md");
+  });
 });
 
 

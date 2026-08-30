@@ -237,13 +237,18 @@ MoeMail은 1시간 TTL로 만료). 따라서 Worker에서 **`MINT_BATCH`는 라�
 더 확실합니다(아래 "문제 해결" 참고 — 문구는 표현 조정으로 바뀔 수 있고 읽고 있는 언어로
 번역되어 있으리라는 보장도 없지만, 이벤트 이름은 바뀌지 않습니다).
 
+아래 두 펜스는 게이트웨이가 **그대로** 출력하는 원문입니다. `msg`는 소스에 간체 중국어로
+하드코딩되어 있어 **이 페이지의 언어로 번역되지 않습니다**. 한 건의 로그도 항상 **한 줄**입니다
+—— `src/adapters/logger-console.ts`가 줄바꿈을 공백으로 눌러버리기 때문인데, 이어지는 줄에는
+`[registrar]` 접두사가 없어 유실되기 때문입니다. 따라서 grep은 이벤트 이름으로 하고 이 페이지의
+번역문으로는 하지 마세요.
+
 **① 시작 시**에는 **경고**(`console.warn`)가 남습니다. 이벤트 이름은
 `registrar.attempt_exceeds_worker_budget`(`grep 'registrar.attempt_exceeds_worker_budget'`)이며,
 대략 다음과 같은 형태입니다:
 
 ```text
-[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×채널 수가 Worker 라운드 월클록 예산을 초과했습니다
-  codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道数超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。Node/Docker 的定时轮没有平台墙钟上限、不受此限制，但面板的「立即补池」在两种运行时上都带同一份轮级预算，Node/Docker 上同样铸不出来。 codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
 ```
 
 이 경고는 **게이트웨이 시작을 막지 않습니다** — "자격 증명이 없으면 시작 시점에 오류가
@@ -256,8 +261,7 @@ MoeMail은 1시간 TTL로 만료). 따라서 Worker에서 **`MINT_BATCH`는 라�
 (`grep 'registrar.round_budget_impossible'`)이며, 대략 다음과 같은 형태입니다:
 
 ```text
-[registrar] registrar.round_budget_impossible 한 번의 발급에 걸리는 최악 소요 시간이 이미 이번 라운드 월클록 예산을 넘어, 단 한 번도 시작할 수 없습니다
-  worstAttemptMs=... roundBudgetMs=...
+[registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始，补池将持续零产出——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS 或去掉备通道 worstAttemptMs=... roundBudgetMs=...
 ```
 
 매 라운드 반복되므로 일시적인 상황이 아니라 지속 상태임을 확인할 수 있습니다.

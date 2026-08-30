@@ -243,13 +243,18 @@ produces nothing, round after round. Two log lines cover this — grep by **even
 "Troubleshooting" below; more reliable than grepping prose, which can drift across wording
 changes and is not translated into the language you are reading):
 
+The two fences below are what the gateway prints **verbatim**: `msg` is hard-coded Simplified
+Chinese in the source and is **not translated into the language of this page**; one entry is also
+always a **single line** — `src/adapters/logger-console.ts` deliberately flattens newlines into
+spaces, because a continuation line carries no `[registrar]` prefix and is therefore lost. So grep
+by event name, never by the prose on this page.
+
 **(1) At startup**, a **warning** (`console.warn`), event name
 `registrar.attempt_exceeds_worker_budget` (`grep 'registrar.attempt_exceeds_worker_budget'`),
 something like:
 
 ```text
-[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS times the channel count exceeds the Worker per-round wall-clock budget
-  codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道数超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。Node/Docker 的定时轮没有平台墙钟上限、不受此限制，但面板的「立即补池」在两种运行时上都带同一份轮级预算，Node/Docker 上同样铸不出来。 codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
 ```
 
 It does **not** stop the gateway from starting — unlike "missing credentials fail at startup".
@@ -261,8 +266,7 @@ both runtimes print this warning but only Worker is actually affected.
 (`grep 'registrar.round_budget_impossible'`), something like:
 
 ```text
-[registrar] registrar.round_budget_impossible the worst-case time for one mint already exceeds this round's wall-clock budget, not a single attempt can start
-  worstAttemptMs=... roundBudgetMs=...
+[registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始，补池将持续零产出——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS 或去掉备通道 worstAttemptMs=... roundBudgetMs=...
 ```
 
 It repeats every round, which is how you tell this is a standing condition rather than a one-off.

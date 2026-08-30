@@ -212,13 +212,16 @@ TEND_INTERVAL_MS=1800000
 87%），Worker 形态下**一次尝试都无法开始**，补池会持续零产出。有两条日志，按**事件名**
 grep（见下面「排障」一节——比按中文文案 grep 更可靠，措辞怎么调整都不会失配）：
 
+下面两段围栏是网关**逐字**打印的原文：`msg` 在源码里是硬编码的简体中文，**不随本页语言翻译**；
+整条日志也**只有一行**——`src/adapters/logger-console.ts` 刻意把换行清成空格，因为被撕开的后续行
+拿不到 `[registrar]` 前缀就等于丢失。所以请按事件名 grep，别按本页的译文 grep。
+
 **① 启动时**打印一条**警告**（`console.warn`），事件名
 `registrar.attempt_exceeds_worker_budget`（`grep 'registrar.attempt_exceeds_worker_budget'`），
 形如：
 
 ```text
-[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道数超过 Worker 单轮墙钟预算
-  codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道数超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。Node/Docker 的定时轮没有平台墙钟上限、不受此限制，但面板的「立即补池」在两种运行时上都带同一份轮级预算，Node/Docker 上同样铸不出来。 codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
 ```
 
 它**不会阻止网关启动**——这一点与「缺凭据启动即报错」不同：Node/Docker 没有平台墙钟上限，
@@ -229,8 +232,7 @@ grep（见下面「排障」一节——比按中文文案 grep 更可靠，措�
 形如：
 
 ```text
-[registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始
-  worstAttemptMs=... roundBudgetMs=...
+[registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始，补池将持续零产出——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS 或去掉备通道 worstAttemptMs=... roundBudgetMs=...
 ```
 
 每轮都会出现，可据此确认这是持续状态而不是偶发。

@@ -605,6 +605,16 @@ BANNER='[collection-guard] ✅'
 #   R23'本地版只用在两份散文上（issue 模板是表单不是散文）。
 #   ⚠️ 「该红时红」那一格**删的是两个 `###` 不是一个**：实测单删一个合并出来最大
 #   1047 字符，仍在 1200 以内。写成「删一个就红」是假话，理由记在那一格上方。
+# P3f 阶段 7C 第 1 轮评审回填（其一）从 4047 改到 4051（+4）：
+#   **W112 那两段 ```text 围栏此前一个字都没被钉，而没钉的那两处恰好是错的**：
+#   五份里四份把 `msg` 翻译成了本页语言、zh-CN 那份截断了半句，还被拆成两条物理行
+#   （`src/adapters/logger-console.ts` 把一条日志渲染成**一行**，那个文件顶上写着理由）。
+#   围栏改成源码字面量原文 + 收成一行，并在 `docs-parity.test.ts` 的
+#   「W112 五份 REGISTRAR.md 的代码围栏」补 4 格：非空锚（两条 msg 抠得出、不是半句、
+#   彼此不同）+ 逐字咬合（期望值从 `src/core/registrar/{config,tender}.ts` 现算）+
+#   该红时红 ×2（源码 msg 漂一个字 ⇒ 五份齐红；某一份折成两行 ⇒ 只红那一份）。
+#   口径与同批 W109 给 ADMIN 那段事件 JSON 的做法同族。
+#   ⚠️ **实测：把改前的 `docs/en/REGISTRAR.md` 放回去，新那格当场红并点名两条日志。**
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -613,7 +623,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=4047
+EXPECT_NODE_TESTS=4051
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

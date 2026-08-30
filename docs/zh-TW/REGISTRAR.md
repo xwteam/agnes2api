@@ -212,13 +212,16 @@ TEND_INTERVAL_MS=1800000
 87%），Worker 形態下**一次嘗試都無法開始**，補池會持續零產出。有兩條日誌，按**事件名**
 grep（見下面「疑難排解」一節——比按中文文案 grep 更可靠，措辭怎麼調整都不會失配）：
 
+下面兩段圍欄是閘道**逐字**印出的原文：`msg` 在原始碼裡是硬編碼的簡體中文，**不隨本頁語言翻譯**；
+整條日誌也**只有一行**——`src/adapters/logger-console.ts` 刻意把換行清成空格，因為被撕開的後續行
+拿不到 `[registrar]` 前綴就等於遺失。所以請按事件名 grep，別按本頁的譯文 grep。
+
 **① 啟動時**印出一條**警告**（`console.warn`），事件名
 `registrar.attempt_exceeds_worker_budget`（`grep 'registrar.attempt_exceeds_worker_budget'`），
 形如：
 
 ```text
-[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道數超過 Worker 單輪牆鐘預算
-  codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道数超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。Node/Docker 的定时轮没有平台墙钟上限、不受此限制，但面板的「立即补池」在两种运行时上都带同一份轮级预算，Node/Docker 上同样铸不出来。 codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
 ```
 
 它**不會阻止閘道啟動**——這一點與「缺憑證啟動即報錯」不同：Node/Docker 沒有平台牆鐘上限，
@@ -229,8 +232,7 @@ grep（見下面「疑難排解」一節——比按中文文案 grep 更可靠�
 形如：
 
 ```text
-[registrar] registrar.round_budget_impossible 單次鑄 key 的最壞耗時已超過本輪牆鐘預算，一次嘗試都無法開始
-  worstAttemptMs=... roundBudgetMs=...
+[registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始，补池将持续零产出——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS 或去掉备通道 worstAttemptMs=... roundBudgetMs=...
 ```
 
 每輪都會出現，可據此確認這是持續狀態而非偶發。
