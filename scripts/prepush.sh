@@ -633,8 +633,8 @@ BANNER='[collection-guard] ✅'
 # 把其中一处数字悄悄改错之后计数从 3 掉到 2、仍然满足「≥ 1」，门禁一声不吭。
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
-EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=4054
+EXPECT_NODE_FILES=139
+EXPECT_NODE_TESTS=4100
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
