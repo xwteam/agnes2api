@@ -1099,17 +1099,19 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 
 The Tier-2 usage aggregate over a range. Dates are always UTC, and **the response says so**.
 
+Both parameters take **epoch milliseconds as an integer, and nothing else**: a non-integer or a negative value is a `400`, with no well-meaning correction on the server side — a date string such as `2026-08-01` is rejected. **`days` is not a parameter**: it is a preset button on the panel, the server does not know it, and the frontend only ever sends `from` / `to`.
+
 **Request body**: this endpoint takes query parameters only, no body.
 
 | Parameter | Type | Required | Description |
 |---------|----|--------|-----------|
-| `from` | string | No | Start of the range; anything unparsable is a `400` regardless of whether Tier-2 is on. |
-| `to` | string | No | End of the range; anything beyond the retention window is clamped and said so in `note`. |
+| `from` | number | No | Start of the range, **epoch milliseconds as an integer**; defaults to `to - 86400000`. Earlier than the retention start is clamped there, `range.clamped` turns true. |
+| `to` | number | No | End of the range, **epoch milliseconds as an integer**; defaults to the server clock. Anything later than now is clamped to now and `range.clamped` turns true. |
 
 **Request**:
 
 ```bash
-curl "http://localhost:8080/admin/api/usage?from=2026-08-01&to=2026-08-30" \
+curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999" \
   -H "x-admin-key: your-admin-token"
 ```
 
@@ -1138,7 +1140,7 @@ curl "http://localhost:8080/admin/api/usage?from=2026-08-01&to=2026-08-30" \
 
 The detail for one day: three slices, by hour, by model and by protocol.
 
-**Request body**: this endpoint takes no body; the date lives in the path and must be a UTC `YYYY-MM-DD`, otherwise `400`.
+**Request body**: this endpoint takes no body; the date lives in the path and must be a UTC `YYYY-MM-DD`, otherwise `400`. **The convention here deliberately differs from the range endpoint above**: that one takes epoch milliseconds as an integer, this one takes a date string, and the two are not interchangeable.
 
 **Request**:
 

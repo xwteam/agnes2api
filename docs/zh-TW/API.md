@@ -1099,17 +1099,19 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 
 Tier-2 用量的區間彙總。日期一律 UTC，並且**在回應裡說出來**。
 
+兩個參數**只認 epoch 毫秒整數**：不是整數、或者是負數，一律 `400`，伺服端不做「善意修正」——`2026-08-01` 這種日期字串會被判成非法。**`days` 不是參數**：它是面板按鈕的檔位，伺服端不認，前端只發 `from` / `to`。
+
 **請求體**：本端點只收查詢參數，不收請求內容。
 
 | 參數 | 型別 | 必填 | 說明 |
 |----|----|----|----|
-| `from` | string | 否 | 區間起點；解析不了就 `400`，與 Tier-2 開沒開無關。 |
-| `to` | string | 否 | 區間終點；超出保留期時會被夾取並在 `note` 裡說明。 |
+| `from` | number | 否 | 區間起點，**epoch 毫秒整數**；預設是 `to - 86400000`。早於保留期起點的會被夾到起點，並把 `range.clamped` 設為真。 |
+| `to` | number | 否 | 區間終點，**epoch 毫秒整數**；預設是伺服端當前時刻。晚於當前時刻的會被夾到當前時刻，並把 `range.clamped` 設為真。 |
 
 **請求**：
 
 ```bash
-curl "http://localhost:8080/admin/api/usage?from=2026-08-01&to=2026-08-30" \
+curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999" \
   -H "x-admin-key: your-admin-token"
 ```
 
@@ -1138,7 +1140,7 @@ curl "http://localhost:8080/admin/api/usage?from=2026-08-01&to=2026-08-30" \
 
 某一天的用量明細：按小時、按模型、按協議三張切片。
 
-**請求體**：本端點不收請求內容，日期寫在路徑裡，必須是 UTC 的 `YYYY-MM-DD`，否則 `400`。
+**請求體**：本端點不收請求內容，日期寫在路徑裡，必須是 UTC 的 `YYYY-MM-DD`，否則 `400`。**與上面那條區間端點的口徑刻意不同**：那條只認 epoch 毫秒整數，這條只認日期字串，兩者不通用。
 
 **請求**：
 

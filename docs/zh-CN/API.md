@@ -1099,17 +1099,19 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 
 Tier-2 用量的区间聚合。日期一律 UTC，并且**在响应里说出来**。
 
+两个参数**只认 epoch 毫秒整数**：不是整数、或者是负数，一律 `400`，服务端不做「善意纠正」——`2026-08-01` 这种日期串会被判成非法。**`days` 不是参数**：它是面板按钮的档位，服务端不认，前端只发 `from` / `to`。
+
 **请求体**：本端点只收查询参数，不收请求体。
 
 | 参数 | 类型 | 必填 | 说明 |
 |----|----|----|----|
-| `from` | string | 否 | 区间起点；解析不了就 `400`，与 Tier-2 开没开无关。 |
-| `to` | string | 否 | 区间终点；超出保留期时会被夹取并在 `note` 里说明。 |
+| `from` | number | 否 | 区间起点，**epoch 毫秒整数**；缺省是 `to - 86400000`。早于保留期起点的会被夹到起点，并把 `range.clamped` 置真。 |
+| `to` | number | 否 | 区间终点，**epoch 毫秒整数**；缺省是服务端当前时刻。晚于当前时刻的会被夹到当前时刻，并把 `range.clamped` 置真。 |
 
 **请求**：
 
 ```bash
-curl "http://localhost:8080/admin/api/usage?from=2026-08-01&to=2026-08-30" \
+curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999" \
   -H "x-admin-key: your-admin-token"
 ```
 
@@ -1138,7 +1140,7 @@ curl "http://localhost:8080/admin/api/usage?from=2026-08-01&to=2026-08-30" \
 
 某一天的用量明细：按小时、按模型、按协议三张切片。
 
-**请求体**：本端点不收请求体，日期写在路径里，必须是 UTC 的 `YYYY-MM-DD`，否则 `400`。
+**请求体**：本端点不收请求体，日期写在路径里，必须是 UTC 的 `YYYY-MM-DD`，否则 `400`。**与上面那条区间端点的口径刻意不同**：那条只认 epoch 毫秒整数，这条只认日期串，两者不通用。
 
 **请求**：
 
