@@ -775,7 +775,7 @@ curl -X POST http://localhost:8080/admin/api/keys/purge \
 { "deleted": 3, "remaining": 0, "expected": 3 }
 ```
 
-> [!CAUTION]
+> [!WARNING]
 > Each key's usage history lives **inside** its record, so deleting the record deletes the history and there is no second copy. `remaining` is **read back** from storage rather than being the constant `0` — which is also how "the index says empty while records are still sitting in storage" gets reported honestly.
 
 ### GET /admin/api/keys/{id}/usage

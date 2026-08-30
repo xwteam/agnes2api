@@ -775,7 +775,7 @@ curl -X POST http://localhost:8080/admin/api/keys/purge \
 { "deleted": 3, "remaining": 0, "expected": 3 }
 ```
 
-> [!CAUTION]
+> [!WARNING]
 > 各 key の使用履歴はそのレコードの**中**にあるので、レコードを消すことは履歴を消すことであり、二つ目の写しはありません。`remaining` は定数 `0` ではなく**読み戻した**値です——「インデックスは空と言っているのにストレージにはまだレコードが残っている」という状態も、これが正直に報告します。
 
 ### GET /admin/api/keys/{id}/usage

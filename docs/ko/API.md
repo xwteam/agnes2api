@@ -775,7 +775,7 @@ curl -X POST http://localhost:8080/admin/api/keys/purge \
 { "deleted": 3, "remaining": 0, "expected": 3 }
 ```
 
-> [!CAUTION]
+> [!WARNING]
 > 각 key의 사용 이력은 그 레코드 **안에** 살고 있어서, 레코드를 지우는 것이 곧 이력을 지우는 것이며 두 번째 사본은 없습니다. `remaining`은 상수 `0`이 아니라 **되읽은** 값입니다 — "인덱스는 비었다는데 스토리지에는 레코드가 남아 있다"는 상황도 이것이 정직하게 알려 줍니다.
 
 ### GET /admin/api/keys/{id}/usage

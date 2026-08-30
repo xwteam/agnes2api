@@ -61,11 +61,14 @@ redirects to `/admin`, so either of the two ways people type it by hand works.
 | Settings | What the runtime configuration is now, and which items the environment locked | Writes | – |
 
 "Writes" means **the actions you press on that page write to storage**; "calls upstream" means
-it really does send one request to the upstream. ⚠️ **"Calls upstream" does not mean "writes
-nothing"**: the playground sends a real request at this gateway's own forwarding endpoint and
-travels the very same path any forwarded request does — the key that served it is accounted for
-just the same, persisted on exactly the forwarding path's terms (batched the same way), plus one
-more usage record when the second tier is on.
+it really does send one request to the upstream.
+
+> [!IMPORTANT]
+> **"Calls upstream" does not mean "writes
+> nothing"**: the playground sends a real request at this gateway's own forwarding endpoint and
+> travels the very same path any forwarded request does — the key that served it is accounted for
+> just the same, persisted on exactly the forwarding path's terms (batched the same way), plus one
+> more usage record when the second tier is on.
 
 ## Overview
 
@@ -285,24 +288,32 @@ go by it and never parse `msg`:
   protocol column of image and video models is empty — they belong to no chat protocol and go
   through their own media endpoints.
 - **Protocol availability is a badge per cell**, not one blanket "supported" or "unsupported":
-  the column is filled in model by model. ⚠️ **No model in today's catalog is available on one
-  protocol and unavailable on another**: the one chat model is available on all four, and the
-  three media models have an empty column. You can filter by protocol; when the filter matches
-  nothing, this page says "no models are available on this protocol" instead of drawing an
-  empty table.
+  the column is filled in model by model.
+
+  > [!WARNING]
+  > **No model in today's catalog is available on one
+  > protocol and unavailable on another**: the one chat model is available on all four, and the
+  > three media models have an empty column. You can filter by protocol; when the filter matches
+  > nothing, this page says "no models are available on this protocol" instead of drawing an
+  > empty table.
 
 ### The endpoint column, and read failures
 
 - **The endpoint column says which path a client should call**, from the same single source as
   [API.md](API.md), and this page keeps no second copy.
 - **When the catalog cannot be read this page shows a dash**, next to a load-failure banner and
-  a retry button. ⚠️ **"cannot be read" and "there are no models" are two different things, and
-  today the sentence that spells that out lives only in the dash's hover tooltip** (`title=`):
-  visible with a mouse, out of reach on a touch screen.
-- ⚠️ **One known divergence in the public contract, recorded as it is**: the Gemini model-list
-  endpoint declares `generateContent` for **every** model, **including the video one**, while
-  the real path for video is the two-step "create the job, then poll". This page is filled in
-  by real availability; when the two disagree, this page is the one to believe.
+  a retry button.
+
+  > [!IMPORTANT]
+  > **"cannot be read" and "there are no models" are two different things, and
+  > today the sentence that spells that out lives only in the dash's hover tooltip** (`title=`):
+  > visible with a mouse, out of reach on a touch screen.
+
+> [!WARNING]
+> **One known divergence in the public contract, recorded as it is**: the Gemini model-list
+> endpoint declares `generateContent` for **every** model, **including the video one**, while
+> the real path for video is the two-step "create the job, then poll". This page is filled in
+> by real availability; when the two disagree, this page is the one to believe.
 
 ## Playground
 
@@ -343,12 +354,14 @@ stream too.
   today the two caps coincide exactly (60 attempts × 5 seconds is exactly 5 minutes); if the
   page has been hidden, ticking pauses while the wall clock keeps going, and then the duration
   cap is the one that fires.
-- ⚠️ **How long a real upstream takes to generate a video has never been measured by this
-  repo.** These two caps exist to shut down "a forgotten tab turns into a perpetual polling
-  machine"; they were not derived from real generation times, and this page draws no conclusion
-  about how they relate to those times. On reaching a cap the panel says plainly that polling
-  stopped at its limit and leaves the task ID on screen — the job itself may still be running,
-  and you can come back later and query that ID yourself.
+
+> [!WARNING]
+> **How long a real upstream takes to generate a video has never been measured by this
+> repo.** These two caps exist to shut down "a forgotten tab turns into a perpetual polling
+> machine"; they were not derived from real generation times, and this page draws no conclusion
+> about how they relate to those times. On reaching a cap the panel says plainly that polling
+> stopped at its limit and leaves the task ID on screen — the job itself may still be running,
+> and you can come back later and query that ID yourself.
 
 ### Every Send really hits upstream
 
@@ -399,19 +412,22 @@ The settings page has five cards today:
   instance already picked it up"**, and only then states how long other replicas / isolates may
   take to see the change — it says this instance is already using the new value, not that
   nothing is live yet. That bound is the sum of the configuration cache and the KV edge cache.
-  ⚠️ **Neither number is in the environment-variable table**: both are hard-coded constants in
-  `src/http/config-holder.ts` that nobody can tune; the values are written out in the **prose** of
-  [DEPLOY.md](DEPLOY.md), in the part about what the settings page returns after a save.
+
+  > [!IMPORTANT]
+  > **Neither number is in the environment-variable table**: both are hard-coded constants in
+  > `src/http/config-holder.ts` that nobody can tune; the values are written out in the **prose** of
+  > [DEPLOY.md](DEPLOY.md), in the part about what the settings page returns after a save.
 
 ### The two exception fields
 
-- ⚠️ **Two fields are the exception**: the pool snapshot cache and the write-coalescing interval
-  (`POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS`) are **read once when the instance is
-  built** ⇒ after saving, **not even this instance has picked them up**; the container has to
-  restart or the isolate has to be recycled. When a save touches **only** those two, the
-  "already picked it up + upper bound" sentence **is not shown at all** and is replaced by
-  "persisted, but this instance has not picked it up either"; when a save touches both kinds,
-  both sentences appear.
+> [!IMPORTANT]
+> **Two fields are the exception**: the pool snapshot cache and the write-coalescing interval
+> (`POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS`) are **read once when the instance is
+> built** ⇒ after saving, **not even this instance has picked them up**; the container has to
+> restart or the isolate has to be recycled. When a save touches **only** those two, the
+> "already picked it up + upper bound" sentence **is not shown at all** and is replaced by
+> "persisted, but this instance has not picked it up either"; when a save touches both kinds,
+> both sentences appear.
 
 ### The panel cannot rotate its own key
 
@@ -450,11 +466,14 @@ The last card on the settings page. Neither button here can be undone, and there
   replicas or isolates only see it once the config cache and the edge cache have expired; after
   a purge, the forwarding path can keep selecting those keys for up to one pool-snapshot TTL
   plus the edge cache. The knob behind the pool-snapshot bound (`POOL_CACHE_TTL_MS`) is in the
-  environment table of [DEPLOY.md](DEPLOY.md); ⚠️ **the config bound is not in that table** — it is
-  the sum of two hard-coded constants in `src/http/config-holder.ts` that nobody can tune, and its
-  value is written out in the prose of the same document. On this page, the config one is also
-  mentioned in the settings card notes above, and the pool-snapshot one in the overview bullet
-  about the two freshness clocks.
+  environment table of [DEPLOY.md](DEPLOY.md);
+
+  > [!IMPORTANT]
+  > **the config bound is not in that table** — it is
+  > the sum of two hard-coded constants in `src/http/config-holder.ts` that nobody can tune, and its
+  > value is written out in the prose of the same document. On this page, the config one is also
+  > mentioned in the settings card notes above, and the pool-snapshot one in the overview bullet
+  > about the two freshness clocks.
 
 ### Quota and credentials
 
@@ -508,10 +527,13 @@ are listed at the top of this page), then redeploy or rebuild the container.
 
 **Cause**: the token itself is wrong, most likely because it has been rotated.
 
-**Fix**: type the current `ADMIN_TOKEN` in again. ⚠️ **Do not lump this together with the panel
-bouncing you back to the login box**: the 12 hours window is decided by the panel itself, and
-when it runs out no request leaves the browser at all, so the server has nothing on record.
-Either way, typing the token again is the fix.
+**Fix**: type the current `ADMIN_TOKEN` in again.
+
+> [!IMPORTANT]
+> **Do not lump this together with the panel
+> bouncing you back to the login box**: the 12 hours window is decided by the panel itself, and
+> when it runs out no request leaves the browser at all, so the server has nothing on record.
+> Either way, typing the token again is the fix.
 
 ### It will not open, and the answer is `503`
 
@@ -519,9 +541,11 @@ Either way, typing the token again is the fix.
 every admin request, and the Events board and the logs carry an `admin.token_conflict` entry.
 
 **Fix**: change the stored gateway token to a value that differs from `ADMIN_TOKEN`.
-⚠️ **That step only restores availability**: the admin token has to be treated as leaked, the
-full procedure is in [DEPLOY.md](DEPLOY.md), and both steps have to be done before it counts as
-handled.
+
+> [!WARNING]
+> **That step only restores availability**: the admin token has to be treated as leaked, the
+> full procedure is in [DEPLOY.md](DEPLOY.md), and both steps have to be done before it counts as
+> handled.
 
 ### You paste the token and the login box rejects the characters
 
@@ -531,9 +555,12 @@ NUL / LF / CR cannot be sent by the browser at all; `é` / `£` can be sent, yet
 declines them too, as a cross-runtime encoding decision. On this path **no request leaves the
 browser**, so the server does not even have a failed login to show.
 
-**Fix**: use a token made of printable ASCII only and paste it again. ⚠️ **You never see this
-message when the deployment side is the one carrying such a token**: the whole tree is then
-never registered, and what you get is the `404` above.
+**Fix**: use a token made of printable ASCII only and paste it again.
+
+> [!IMPORTANT]
+> **You never see this
+> message when the deployment side is the one carrying such a token**: the whole tree is then
+> never registered, and what you get is the `404` above.
 
 ### The screen is showing stale values
 
@@ -552,9 +579,12 @@ recycled; the two "read N seconds ago" lines on Overview are there for exactly t
 it does not recognise it puts the backend's sentence on screen and marks it with "raw text from
 the backend; this panel has no translation for that error code yet".
 
-**Fix**: take the backend's sentence to the logs and the Events board. ⚠️ **Do not read that as
-"every error appears in your language"** — the unrecognised ones do not, and the panel would
-rather mark the fact than pass the text off as a translation.
+**Fix**: take the backend's sentence to the logs and the Events board.
+
+> [!IMPORTANT]
+> **Do not read that as
+> "every error appears in your language"** — the unrecognised ones do not, and the panel would
+> rather mark the fact than pass the text off as a translation.
 
 ## Next Steps
 

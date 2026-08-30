@@ -775,7 +775,7 @@ curl -X POST http://localhost:8080/admin/api/keys/purge \
 { "deleted": 3, "remaining": 0, "expected": 3 }
 ```
 
-> [!CAUTION]
+> [!WARNING]
 > 每把 key 的用量歷史住在這條記錄**裡面**，刪記錄就是刪歷史，沒有第二份。`remaining` 是**回讀**出來的，不是常數 `0`——它順帶把「索引說空了、而儲存裡還躺著記錄」那一檔如實報出來。
 
 ### GET /admin/api/keys/{id}/usage

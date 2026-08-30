@@ -118,20 +118,22 @@ pnpm dev:worker   # Worker shape: build the panel assets first, then wrangler de
 pnpm dev:node     # Node shape: build the panel assets, pnpm build, then run dist/entry/node.js
 ```
 
-⚠️ **Both start with `node scripts/build-ui.mjs`, and that is not incidental**: the panel assets
-are a build product (`src/ui/assets.generated.ts`). A bare `npx wrangler dev` still starts, but the
-panel stays on whatever was generated last — if you changed `admin-ui/` and see nothing, this is
-usually why.
+> [!IMPORTANT]
+> **Both start with `node scripts/build-ui.mjs`, and that is not incidental**: the panel assets
+> are a build product (`src/ui/assets.generated.ts`). A bare `npx wrangler dev` still starts, but the
+> panel stays on whatever was generated last — if you changed `admin-ui/` and see nothing, this is
+> usually why.
 
 Put `GATEWAY_TOKEN` into a local `.dev.vars` file next to `wrangler.toml` (already
 git-ignored) — do not put secrets directly in `wrangler.toml`.
 
-⚠️ This file is read unconditionally into workerd's `env` by `pnpm test:workers`
-(`@cloudflare/vitest-pool-workers` does not pass `envFiles` when it calls wrangler),
-and CI has no such file ⇒ run `mv .dev.vars .dev.vars.off` before the tests. The
-repository has one assertion that turns red on the spot once the file brings **an extra
-binding name** into `env` — it compares the set of key names, so an empty file, or one
-that only sets `POOL` (the same name as the KV binding), stays green.
+> [!TIP]
+> This file is read unconditionally into workerd's `env` by `pnpm test:workers`
+> (`@cloudflare/vitest-pool-workers` does not pass `envFiles` when it calls wrangler),
+> and CI has no such file ⇒ run `mv .dev.vars .dev.vars.off` before the tests. The
+> repository has one assertion that turns red on the spot once the file brings **an extra
+> binding name** into `env` — it compares the set of key names, so an empty file, or one
+> that only sets `POOL` (the same name as the KV binding), stays green.
 
 Put `GATEWAY_TOKEN` in that file, in the same format as `.env`:
 
@@ -415,20 +417,27 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   - **Tend event persistence**: at most one put per round. **What decides whether a write
     happens is whether this round's event buffer is empty** — not what the events are
     named. A round that is healthy *and* whose configuration is healthy emits no events at
-    all, so it costs 0. ⚠️ **"0 when healthy" has a precondition that must be stated**:
-    `loadConfig` emits one configuration warning **on every single round** when
-    `TEND_INTERVAL_MS` is below `MINT_BATCH × CODE_TIMEOUT_MS × channel count`
-    (by default `5 × 120000 × 1 = 600000`, i.e. 10 minutes). Under that setting **every
-    round writes once**, even a round that mints nothing.
+    all, so it costs 0.
+
+    > [!IMPORTANT]
+    > **"0 when healthy" has a precondition that must be stated**:
+    > `loadConfig` emits one configuration warning **on every single round** when
+    > `TEND_INTERVAL_MS` is below `MINT_BATCH × CODE_TIMEOUT_MS × channel count`
+    > (by default `5 × 120000 × 1 = 600000`, i.e. 10 minutes). Under that setting **every
+    > round writes once**, even a round that mints nothing.
+
   - **Tend history (`tend:history`)**: one get + one put per round, **unconditionally**.
     Single key, no fan-out.
-  ⚠️ **Do not read these three through `EVENT_WRITES_PER_DAY` (12 per isolate per day).**
-  That gate is built for the `fetch` path, where the premise is "one isolate serves many
-  requests, so the budget is consumed repeatedly on a long-lived instance". On the tend path
-  each round is very likely a **brand-new isolate** (Worker's `scheduled()`) that flushes once
-  in its life and carries a fresh budget every time ⇒ **on this axis that gate neither stops
-  anything nor constitutes any upper bound**. The real bound is the tend frequency itself:
-  **tightening the Cron or lowering `TEND_INTERVAL_MS` scales all three items proportionally.**
+
+  > [!IMPORTANT]
+  > **Do not read these three through `EVENT_WRITES_PER_DAY` (12 per isolate per day).**
+  > That gate is built for the `fetch` path, where the premise is "one isolate serves many
+  > requests, so the budget is consumed repeatedly on a long-lived instance". On the tend path
+  > each round is very likely a **brand-new isolate** (Worker's `scheduled()`) that flushes once
+  > in its life and carries a fresh budget every time ⇒ **on this axis that gate neither stops
+  > anything nor constitutes any upper bound**. The real bound is the tend frequency itself:
+  > **tightening the Cron or lowering `TEND_INTERVAL_MS` scales all three items proportionally.**
+
 #### What each panel write operation costs — "only when a human clicks"
 
 - **Write side of the panel's write operations (new in P3c) — these only happen when a human
@@ -453,11 +462,14 @@ its writes grow with request count, so the budget is "so many per day", not "so 
     reset usage counters): 1 get + 1 put. **Every action above costs the same**: they go through the
     same handler and the same single persist, and resetting the counters reads or writes nothing
     extra (what it clears is the in-memory persist baseline).
-    ⚠️ **The last item in those parentheses is the one thing in this section you cannot click**:
-    resetting the usage counters is **API only today — the panel has no button
-    for it** (same as the `POOL_TOUCH_INTERVAL_MS` row above). That list enumerates every action
-    the handler understands, not the buttons on the panel; it is written up here because the
-    unit price is identical to all the others, so that nobody assumes the other route costs more.
+
+    > [!IMPORTANT]
+    > **The last item in those parentheses is the one thing in this section you cannot click**:
+    > resetting the usage counters is **API only today — the panel has no button
+    > for it** (same as the `POOL_TOUCH_INTERVAL_MS` row above). That list enumerates every action
+    > the handler understands, not the buttons on the panel; it is written up here because the
+    > unit price is identical to all the others, so that nobody assumes the other route costs more.
+
   - **Deleting one key**: 2 gets + 1 put (index) + 1 delete.
   - **Bulk disable / bulk clear-cooldown of N keys**: N gets + N puts.
   - **Bulk delete of N keys**: `N + 1` gets + **1** put (the index is written once) + N deletes.
@@ -491,23 +503,28 @@ its writes grow with request count, so the budget is "so many per day", not "so 
     **N deletes (N = pool size) + 1 put** (the index is written exactly once, the same rule as
     bulk delete).
 
-    ⚠️ **The free tier's delete bucket is 1,000 per day** (independent of read, write and
-    list) ⇒ **with N approaching 1,000 this one button blows the day's delete quota on its
-    own**, and the bigger the pool the more it costs. On the read side it is one pool snapshot
-    (0 gets when the isolate cache is warm) plus one read-back; clicking again on an empty
-    pool is 0 deletes and 0 puts.
-  ⚠️⚠️ **"Saving the settings" and "clearing one credential" have no daily cap. That is
-  deliberate, not an oversight.** Both require the admin token and both only happen when a human
-  clicks; no automatic path can trigger them. Putting a storage guardrail on them would itself
-  add a read-modify-write (the guard key) — paying an extra write in order to save one.
-  **The cost is spelled out here rather than left to silence, so nobody assumes some budget is
-  minding them**: a single tuning session running to a few dozen saves is entirely normal
-  operations, a few dozen puts is a few percent of the daily write quota, and the 24-per-day
-  gate on "tend now" **does not cover these two**. Plan your headroom accordingly.
-  ⚠️ These do **not** add up with the three columns below: those say "how many times a day with
-  nobody touching anything", this section says "what each click costs you". The only shape worth
-  watching is **importing several hundred keys at once** — it is the most expensive single click
-  in the panel.
+    > [!WARNING]
+    > **The free tier's delete bucket is 1,000 per day** (independent of read, write and
+    > list) ⇒ **with N approaching 1,000 this one button blows the day's delete quota on its
+    > own**, and the bigger the pool the more it costs. On the read side it is one pool snapshot
+    > (0 gets when the isolate cache is warm) plus one read-back; clicking again on an empty
+    > pool is 0 deletes and 0 puts.
+
+  > [!CAUTION]
+  > **"Saving the settings" and "clearing one credential" have no daily cap. That is
+  > deliberate, not an oversight.** Both require the admin token and both only happen when a human
+  > clicks; no automatic path can trigger them. Putting a storage guardrail on them would itself
+  > add a read-modify-write (the guard key) — paying an extra write in order to save one.
+  > **The cost is spelled out here rather than left to silence, so nobody assumes some budget is
+  > minding them**: a single tuning session running to a few dozen saves is entirely normal
+  > operations, a few dozen puts is a few percent of the daily write quota, and the 24-per-day
+  > gate on "tend now" **does not cover these two**. Plan your headroom accordingly.
+
+  > [!IMPORTANT]
+  > These do **not** add up with the three columns below: those say "how many times a day with
+  > nobody touching anything", this section says "what each click costs you". The only shape worth
+  > watching is **importing several hundred keys at once** — it is the most expensive single click
+  > in the panel.
 
 #### Write-side totals, keyed on `registrar.enabled`
 
@@ -520,15 +537,18 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   | Registrar on, **every round healthy**, nobody operating | **272** | **27.2%** |
   | Registrar on, **every round producing failure events**, nobody operating | **320** | **32.0%** |
 
-  ⚠️ **None of these three is an upper bound; each is a current value.** The 96/day item equals
-  `12 × concurrent isolate count`, and that count varies with the geographic distribution of
-  your traffic — **you cannot set it yourself**. Plan headroom accordingly; do not treat 272 or
-  320 as a ceiling.
-  The **`delete` bucket** is counted separately: the tend lock releases 48 times a day, and
-  that bucket is nearly idle today.
+  > [!WARNING]
+  > **None of these three is an upper bound; each is a current value.** The 96/day item equals
+  > `12 × concurrent isolate count`, and that count varies with the geographic distribution of
+  > your traffic — **you cannot set it yourself**. Plan headroom accordingly; do not treat 272 or
+  > 320 as a ceiling.
+  > The **`delete` bucket** is counted separately: the tend lock releases 48 times a day, and
+  > that bucket is nearly idle today.
 
-  ⚠️ **All three items are billed per round, and "rounds per day" has two independent axes.
-  Do not conflate them:**
+  > [!IMPORTANT]
+  > **All three items are billed per round, and "rounds per day" has two independent axes.
+  > Do not conflate them:**
+
   - **Frequency axis**: tightening the tend frequency scales all three **proportionally**
     (that is the sentence above). **On Worker the knob is the Cron in `wrangler.toml`**;
     on Node it is `TEND_INTERVAL_MS`. `TEND_INTERVAL_MS` is **consumed only by the Node
@@ -567,13 +587,14 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   | Tier-2 on, registrar on and every round producing failure events | **424** | 42.4% |
   | Previous row + "Tend now" clicked until the 24-per-day gate is spent | **496** | 49.6% |
 
-  ⚠️ **Like the three columns above, this table is not an upper bound.** Read it this way:
-  **two items in this table carry a hard gate** — the 104 from Tier-2 (13 puts per instance
-  per day, point ③ below) and the 72 from "Tend now" (24 per day, see the "clicking Tend now
-  once" bullet above). None of the others has a gate, and what they cost depends on whoever
-  is operating the panel. The last row assumes **no new keys are minted** (a flat 3 puts per
-  click); minting on every click costs more, but that column hits the temporary-mailbox quota
-  first and is not sustainable — the arithmetic is in that same bullet.
+  > [!WARNING]
+  > **Like the three columns above, this table is not an upper bound.** Read it this way:
+  > **two items in this table carry a hard gate** — the 104 from Tier-2 (13 puts per instance
+  > per day, point ③ below) and the 72 from "Tend now" (24 per day, see the "clicking Tend now
+  > once" bullet above). None of the others has a gate, and what they cost depends on whoever
+  > is operating the panel. The last row assumes **no new keys are minted** (a flat 3 puts per
+  > click); minting on every click costs more, but that column hits the temporary-mailbox quota
+  > first and is not sustainable — the arithmetic is in that same bullet.
 
 <details>
 <summary><b>Click to expand: where those 13 come from (all six points matter)</b></summary>
@@ -598,22 +619,27 @@ Those 13 come from the following, and all six points matter:
    written that day, it **recovers automatically on the next UTC day**, and the days it owed
    are written out after recovery (the in-memory accumulator is never cleared) —
    **provided the instance is still alive**.
-   ⚠️ **That half-sentence is structurally out of reach on Workers**: those accumulators live
-   only in memory, and a Worker isolate usually does not survive into the next UTC day (see
-   point ② above: an isolate that lived 10 minutes stores nothing at all). So on Workers
-   "written out after recovery" requires **the same isolate to have crossed UTC midnight**,
-   which is the exception, not the rule; when it does not, those days' counts **vanish with
-   the instance — they are not merely posted late**.
 
-   ⚠️⚠️ **On Docker this gate does not exist at all**, so the promise simply does not apply
-   on that side: whether there is a daily write budget depends only on **whether your storage
-   has a write quota** (the criterion is in point ④ below), and file storage does not ⇒ the
-   budget is empty (`budgetPerDay = null`), nothing is ever exhausted, and there is no
-   "recovery" or "catch-up" to speak of. **Do not read it as "on Docker you hit the 13-put
-   gate and lose nothing" — on Docker there is no such gate**; what you do lose there is the
-   tail from point ② above (up to 2 hours not yet flushed when the process stops).
-   ⚠️ This gate **only applies inside a single instance** — 8 isolates means 8 independent
-   allowances of 13, exactly like the events gate above, with no cross-instance coordination.
+   > [!IMPORTANT]
+   > **That half-sentence is structurally out of reach on Workers**: those accumulators live
+   > only in memory, and a Worker isolate usually does not survive into the next UTC day (see
+   > point ② above: an isolate that lived 10 minutes stores nothing at all). So on Workers
+   > "written out after recovery" requires **the same isolate to have crossed UTC midnight**,
+   > which is the exception, not the rule; when it does not, those days' counts **vanish with
+   > the instance — they are not merely posted late**.
+
+   > [!CAUTION]
+   > **On Docker this gate does not exist at all**, so the promise simply does not apply
+   > on that side: whether there is a daily write budget depends only on **whether your storage
+   > has a write quota** (the criterion is in point ④ below), and file storage does not ⇒ the
+   > budget is empty (`budgetPerDay = null`), nothing is ever exhausted, and there is no
+   > "recovery" or "catch-up" to speak of. **Do not read it as "on Docker you hit the 13-put
+   > gate and lose nothing" — on Docker there is no such gate**; what you do lose there is the
+   > tail from point ② above (up to 2 hours not yet flushed when the process stops).
+
+   > [!IMPORTANT]
+   > This gate **only applies inside a single instance** — 8 isolates means 8 independent
+   > allowances of 13, exactly like the events gate above, with no cross-instance coordination.
 
 ④ **Both runtimes behave identically; no runtime sniffing is done.** The **default** flush
    interval is the same on both sides, along the same code path (the request tail **waits for
@@ -665,15 +691,21 @@ Those 13 come from the following, and all six points matter:
   whole `days` series comes back as `null`** (the panel shows `—`) with `note` set to
   `read_failed`; it never returns 500 and never passes off the shards it did read as the full
   picture.
-  ⚠️ **Do not cite the events board's 48 cold gets below as evidence** — 48 is within limits
-  under both readings, so it says nothing at all about whether 60 is fine. To rely on this
-  range on the free plan, measure it on real hardware first.
+
+  > [!WARNING]
+  > **Do not cite the events board's 48 cold gets below as evidence** — 48 is within limits
+  > under both readings, so it says nothing at all about whether 60 is fine. To rely on this
+  > range on the free plan, measure it on real hardware first.
+
 - **Playground video runs: at most `1 + 60` upstream requests per task** (1 create + at most
-  60 polls, `VIDEO_POLL_MAX_ATTEMPTS`). ⚠️ **That 61× multiplies the upstream quota and the
-  keys' use counts only; it does not multiply the KV daily write quota**: `lastUsedAt` and the
-  usage counters are gated by `POOL_TOUCH_INTERVAL_MS` (6 hours by default), and one polling
-  run cannot fill a single flush interval; cooldown and eviction are still counted per failure.
-  **Do not read the two as one** — what gets exhausted first is the upstream side, not KV.
+  60 polls, `VIDEO_POLL_MAX_ATTEMPTS`).
+
+  > [!IMPORTANT]
+  > **That 61× multiplies the upstream quota and the
+  > keys' use counts only; it does not multiply the KV daily write quota**: `lastUsedAt` and the
+  > usage counters are gated by `POOL_TOUCH_INTERVAL_MS` (6 hours by default), and one polling
+  > run cannot fill a single flush interval; cooldown and eviction are still counted per failure.
+  > **Do not read the two as one** — what gets exhausted first is the upstream side, not KV.
 
 - **Events board reads (post-C4/C4b-fix figures, more conservative than the earlier draft)**:
   polling no longer depends on an index, so the number of candidate keys is **hard-bounded** —
@@ -698,10 +730,11 @@ Those 13 come from the following, and all six points matter:
     steady state is `(86400 ÷ 60) × (48 + 1) = 70,560` gets/day (about **71%** of the read
     quota).
 
-    ⚠️ **That figure is a steady-state *idle* envelope, not an upper bound.** It assumes the
-    board is simply left open with nobody touching it. Interactive paths are not in it: every
-    click on a level filter is a full cold read, and returning to this board or making the tab
-    visible again also triggers a round immediately — **none of these are throttled today**.
+    > [!WARNING]
+    > **That figure is a steady-state *idle* envelope, not an upper bound.** It assumes the
+    > board is simply left open with nobody touching it. Interactive paths are not in it: every
+    > click on a level filter is a full cold read, and returning to this board or making the tab
+    > visible again also triggers a round immediately — **none of these are throttled today**.
 
     The `+1` is **the configuration read each poll round triggers on its own**: the
     config-refresh middleware runs ahead of every route and the config cache TTL is 30
@@ -925,13 +958,14 @@ has to happen on the deployment side. `PUT /admin/api/config` answers `400 locke
 fields and **writes nothing**: writing would produce "saved successfully, effective value unchanged",
 and the operator would blame a stale cache and wait for two refresh cycles for nothing.
 
-⚠️ **From P3c the registrar family is in that lock table too** (`REGISTRAR_ENABLED`,
-`REGISTRAR_PRIMARY`, `REGISTRAR_FALLBACK`, `TARGET_KEYS`, `MINT_BATCH`, `TEND_INTERVAL_MS`,
-`CODE_TIMEOUT_MS`, `MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `MAX_DOMAIN_ATTEMPTS`,
-`REGISTRAR_TOKEN_NAME`, `AGNES_PLATFORM_URL`, `YYDS_BASE_URL`, `YYDS_API_KEY`,
-`MOEMAIL_BASE_URL`, `MOEMAIL_API_KEY`). Before that they were not: with `TARGET_KEYS=30` in
-`docker-compose.yml`, changing it to 20 in the panel saved fine while the effective value stayed 30
-**even across restarts**, and the panel said nothing about it.
+> [!IMPORTANT]
+> **From P3c the registrar family is in that lock table too** (`REGISTRAR_ENABLED`,
+> `REGISTRAR_PRIMARY`, `REGISTRAR_FALLBACK`, `TARGET_KEYS`, `MINT_BATCH`, `TEND_INTERVAL_MS`,
+> `CODE_TIMEOUT_MS`, `MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `MAX_DOMAIN_ATTEMPTS`,
+> `REGISTRAR_TOKEN_NAME`, `AGNES_PLATFORM_URL`, `YYDS_BASE_URL`, `YYDS_API_KEY`,
+> `MOEMAIL_BASE_URL`, `MOEMAIL_API_KEY`). Before that they were not: with `TARGET_KEYS=30` in
+> `docker-compose.yml`, changing it to 20 in the panel saved fine while the effective value stayed 30
+> **even across restarts**, and the panel said nothing about it.
 
 **Credentials are write-only.** The gateway token and both channel API keys are **never returned in
 plaintext**; the API returns only "configured or not" and the **last 4 characters** (and not even
@@ -944,20 +978,23 @@ those if the secret is shorter than 5 — showing them would be showing all of i
   until the next restart;
 - clearing is only possible through the dedicated "Clear" button, which asks for confirmation.
 
-⚠️ **Credentials written from the panel are stored in plaintext** in KV / `store.json`, at the same
-level as P1's "keys are stored in plaintext". Do not assume what you type here is an encrypted
-secret. Treat the data directory / KV namespace as credential material.
+> [!WARNING]
+> **Credentials written from the panel are stored in plaintext** in KV / `store.json`, at the same
+> level as P1's "keys are stored in plaintext". Do not assume what you type here is an encrypted
+> secret. Treat the data directory / KV namespace as credential material.
 
-⚠️ **If you clear the gateway token while `GATEWAY_TOKEN` is not in the environment either**, the
-current process keeps running, but **the next restart or isolate recycle will fail to start**. The
-panel says so in a red notice at that moment; recover by setting a new gateway token on the same page
-right away. **Clearing is safe when the environment does supply the value**: only the stored copy goes away and the effective value falls back to the environment variable, unchanged. The panel says two different things in these two states rather than leaving you to guess.
+> [!WARNING]
+> **If you clear the gateway token while `GATEWAY_TOKEN` is not in the environment either**, the
+> current process keeps running, but **the next restart or isolate recycle will fail to start**. The
+> panel says so in a red notice at that moment; recover by setting a new gateway token on the same page
+> right away. **Clearing is safe when the environment does supply the value**: only the stored copy goes away and the effective value falls back to the environment variable, unchanged. The panel says two different things in these two states rather than leaving you to guess.
 
-⚠️ **The registration backend URL (`AGNES_PLATFORM_URL`) inside the *Advanced* disclosure is not an
-ordinary setting.** It is **where every automated registration goes**: point it elsewhere and that
-server receives the mailbox, password and verification code used for each registration. That is why
-it lives behind a disclosure, carries a red warning, and has its own confirmation button instead of
-riding along with the main Save.
+> [!WARNING]
+> **The registration backend URL (`AGNES_PLATFORM_URL`) inside the *Advanced* disclosure is not an
+> ordinary setting.** It is **where every automated registration goes**: point it elsewhere and that
+> server receives the mailbox, password and verification code used for each registration. That is why
+> it lives behind a disclosure, carries a red warning, and has its own confirmation button instead of
+> riding along with the main Save.
 
 **After saving, the panel does not claim "saved and in effect".** It **reads the effective values
 back**, highlights the fields that actually changed, and states **how long other replicas/isolates

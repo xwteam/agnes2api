@@ -9064,11 +9064,24 @@ describe("W98 `### 配额账` 的折叠与分层（`<details>` 是 C23 的具名
     expect(withDetails, "非 README 文档多长出一个折叠块却没红").toContain(target);
   });
 
-  it("该红时红：把 en 那两段合回一段（`60 is over` 那处）⇒ 1500 那格点名 en", () => {
+  it("该红时红：把 en 那两段合回一段、并把 W118 提出去的那条 alert 退回散文 ⇒ 1500 那格点名 en", () => {
     // ⚠️ 变异用的是**仓里真实存在过的形状**：这两段今天之所以是两段，正是 W98 拆的。
-    const src = readFileSync(docPath(".", "en", "DEPLOY"), "utf8")
-      .split("**60 is over**.\n\n  So the `30d` range").join("**60 is over**.\n  So the `30d` range");
-    expect(src, "变异没落地").not.toEqual(readFileSync(docPath(".", "en", "DEPLOY"), "utf8"));
+    //
+    // 🔴【P3f 阶段 7D-1 补】变异要多做一步。7C 时只合这两段就能顶穿 1500，因为紧跟其后的
+    // 「别拿 48 次冷读当佐证」那三行当时是**同一个 run 里的散文**；W118 把它判成
+    // `> [!WARNING]` 之后，`>` 起头 = run 的分界 ⇒ 只合前两段只剩 ~1.2k，这一格会
+    // 「变异落地了却打不中」——那是**假绿**，不是判据变宽松了。
+    // ⇒ 变异改成「退回 W98 之前 **且** W118 之前的形状」，实测 max run = 1552 > 1500。
+    const real = readFileSync(docPath(".", "en", "DEPLOY"), "utf8");
+    const ALERT_HEAD = "  picture.\n\n  > [!WARNING]\n  > ";
+    expect(real.split(ALERT_HEAD).length - 1, "变异的支点不在了 —— `60 is over` 那段后面那条 alert 换形状了")
+      .toBe(1);
+    const src = real
+      .split("**60 is over**.\n\n  So the `30d` range").join("**60 is over**.\n  So the `30d` range")
+      .split(ALERT_HEAD).join("  picture.\n  ")
+      .split("\n  > under both readings").join("\n  under both readings")
+      .split("\n  > range on the free plan").join("\n  range on the free plan");
+    expect(src, "变异没落地").not.toEqual(real);
     const over = textRuns(quotaSection("en", src)).filter((r) => [...r.text].length > W98_MAX_RUN);
     expect(over.length, "合回一段之后没有任何 run 超过 1500 —— 这一格没打中，回来换一处变异")
       .toBeGreaterThan(0);
@@ -10763,14 +10776,30 @@ describe("W111 五份 REGISTRAR.md 的两级分层与 Cron 那一节的拆分", 
  * **同级，本项目不替用户选主备**。同一句话此前只是一行加粗正文，与它上下那几段
  * 说明混在一起；提升成 alert 之后，它在渲染出来的页面上是唯一被框起来的一句。
  *
- * ⚠️ **判据钉的是「恰 1 条」而不是「至少 1 条」**：alert 撒得到处都是等于没有重点，
- * 而「至少 1 条」拦不住这种退化。今天这五份文档里它就是唯一一条 alert。
- * ⚠️ **同时钉内容**：只数条数的话，把这条 alert 换成任何别的话都不会红，
- * 而那正好会让「不替用户选主备」这条承诺**在有判据看着的假象下**消失。
+ * ⚠️ **判据钉的是精确条数而不是「至少 1 条」**：alert 撒得到处都是等于没有重点，
+ * 而「至少 1 条」拦不住这种退化。
+ *
+ * 🔴 **【P3f 阶段 7D-1 重新基线：1 → 2，并同批加强】**
+ * 7C 落地时这五份里只有这一条 alert，判据因此写「恰 1 条」。阶段 7D-1 的 W118
+ * （195 处正文裸警告 emoji 逐处判型转 alert）在同一份文档里又判出一条 IMPORTANT：
+ * `> [!IMPORTANT] **但面板的「立即补池」是例外，两种运行时都带同一份轮级预算**`
+ * ——W118 给的判型规则里「**有两个例外 / 别读成 X**」这一类就是 IMPORTANT，
+ * 而这一句正是「别把上一句读成『Node 上永远跑满』」。
+ *
+ * ⚠️ **这不是为了变绿而放宽**：条数仍然是**恒等**（恰 2，多一条少一条都红），
+ * 而且两条**各自**配了内容锚（原来只有一条有）：
+ *   ① 平级承诺那条（用户的硬约束：YYDS / MoeMail 同级，不替用户选主备）
+ *   ② 「立即补池是例外」那条（W118 判型的落点）
+ * 也就是说这一版比 7C 那一版**多守住一条内容**，而不是少守。
+ * 数字从 1 改成 2 的**唯一**合法理由是「文档里真的多了一条判过型的 IMPORTANT」，
+ * 不是「判据碍事」——下一个人要再改这个数，同样得先说清多出来的那条是什么。
  * ══════════════════════════════════════════════════════════════════════════ */
 
-describe("W113 五份 REGISTRAR.md 的那条平级承诺", () => {
+describe("W113 五份 REGISTRAR.md 的那两条 `> [!IMPORTANT]`", () => {
   const realRegSrc: ApiDocReader = realDoc("REGISTRAR");
+
+  /** 这五份里 `> [!IMPORTANT]` 的条数。**恒等**，不是下限。 */
+  const REG_IMPORTANT_COUNT = 2;
 
   /** 那条 `> [!IMPORTANT]` 里必须写着的话，逐语言。**不是现找的**——对不上就红。 */
   const EQUAL_CHANNELS: Record<Lang, string> = {
@@ -10779,6 +10808,15 @@ describe("W113 五份 REGISTRAR.md 的那条平级承诺", () => {
     en: "The two channels are fully equal",
     ja: "2 つのチャネルは完全に対等であり",
     ko: "두 채널은 완전히 대등하며",
+  };
+
+  /** 第 2 条（W118 判型落点）里必须写着的话，逐语言。同样是逐字抄自五份真文档。 */
+  const TEND_EXCEPTION: Record<Lang, string> = {
+    "zh-CN": "但面板的「立即补池」是例外",
+    "zh-TW": "但面板的「立即補池」是例外",
+    en: 'The panel\'s "Refill now" is the exception',
+    ja: "ただしパネルの「今すぐ補充」は例外で",
+    ko: "다만 패널의 「지금 보충」은 예외로",
   };
 
   /** 一份文档里全部 `> [!IMPORTANT]` 块的正文（不含那一行标记本身）。 */
@@ -10794,43 +10832,64 @@ describe("W113 五份 REGISTRAR.md 的那条平级承诺", () => {
     return out;
   };
 
-  it("W113 五份各恰 1 条 `> [!IMPORTANT]`，且那条 alert 里写着两条通道平级", () => {
+  it(`W113 五份各恰 ${REG_IMPORTANT_COUNT} 条 \`> [!IMPORTANT]\`，且两条各自写着自己那句话`, () => {
     const failures: string[] = [];
     for (const lang of LANGS) {
       const bodies = alertBodies(realRegSrc(lang));
-      if (bodies.length !== 1) {
-        failures.push(`docs/${lang}/REGISTRAR.md 有 ${bodies.length} 条 \`> [!IMPORTANT]\`，应当恰好 1 条`);
+      if (bodies.length !== REG_IMPORTANT_COUNT) {
+        failures.push(
+          `docs/${lang}/REGISTRAR.md 有 ${bodies.length} 条 \`> [!IMPORTANT]\`，应当恰好 ${REG_IMPORTANT_COUNT} 条`,
+        );
         continue;
       }
-      if (!(bodies[0] ?? "").includes(EQUAL_CHANNELS[lang])) {
-        failures.push(`docs/${lang}/REGISTRAR.md 的那条 alert 里没写「${EQUAL_CHANNELS[lang]}」：\n${bodies[0]}`);
+      for (const [what, want] of [["平级承诺", EQUAL_CHANNELS[lang]], ["立即补池是例外", TEND_EXCEPTION[lang]]] as const) {
+        const hits = bodies.filter((b) => b.includes(want)).length;
+        if (hits !== 1) {
+          failures.push(
+            `docs/${lang}/REGISTRAR.md 的两条 alert 里写着「${want}」（${what}）的有 ${hits} 条，应当恰 1 条：\n${bodies.join("\n---\n")}`,
+          );
+        }
       }
     }
     expect(
       failures,
       `${failures.join("\n")}\n`
-      + "⇒ 这条 alert 对着的是用户的硬约束：YYDS 与 MoeMail 同级，不替用户选主备。",
+      + "⇒ 第 1 条对着的是用户的硬约束：YYDS 与 MoeMail 同级，不替用户选主备；"
+      + "第 2 条是 W118 判型的落点（「有例外」⇒ IMPORTANT）。两条都不许悄悄消失。",
     ).toEqual([]);
   });
 
-  it("该红时红：某一份把那条 alert 退回加粗正文 ⇒ 条数那格红并点名语言", () => {
+  it("该红时红：某一份把平级那条 alert 退回加粗正文 ⇒ 条数那格红并点名语言", () => {
     const read = readerWith("ko", (s) => s.replace("> [!IMPORTANT]\n> ", ""), "REGISTRAR");
     const failures = LANGS
       .map((lang) => [lang, alertBodies(read(lang)).length] as const)
-      .filter(([, n]) => n !== 1)
+      .filter(([, n]) => n !== REG_IMPORTANT_COUNT)
       .map(([lang, n]) => `docs/${lang}/REGISTRAR.md 有 ${n} 条 \`> [!IMPORTANT]\``);
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
     expect(failures[0] ?? "").toContain("ko/REGISTRAR.md");
   });
 
-  it("该红时红：alert 还在、承诺被换成别的话 ⇒ 内容那格红（只数条数是拦不住的）", () => {
+  it("该红时红：条数没变、但「立即补池是例外」那条被换成别的话 ⇒ 第 2 条内容锚红", () => {
+    const read = readerWith(
+      "zh-TW",
+      (s) => s.replace("> **但面板的「立即補池」是例外，", "> **面板的「立即補池」與定時輪一樣，"),
+      "REGISTRAR",
+    );
+    expect(alertBodies(read("zh-TW")), "条数变了 —— 这一格要证的是「条数不变而内容变了」")
+      .toHaveLength(REG_IMPORTANT_COUNT);
+    const failures = LANGS.filter((lang) => alertBodies(read(lang)).filter((b) => b.includes(TEND_EXCEPTION[lang])).length !== 1);
+    expect(failures, `报文：\n${failures.join("\n")}`).toEqual(["zh-TW"]);
+  });
+
+  it("该红时红：alert 还在、平级承诺被换成别的话 ⇒ 内容那格红（只数条数是拦不住的）", () => {
     const read = readerWith(
       "ja",
       (s) => s.replace("> **2 つのチャネルは完全に対等であり、", "> **主チャネルには YYDS を推奨します。"),
       "REGISTRAR",
     );
-    expect(alertBodies(read("ja")), "条数变了 —— 这一格要证的是「条数不变而内容变了」").toHaveLength(1);
-    const failures = LANGS.filter((lang) => !(alertBodies(read(lang))[0] ?? "").includes(EQUAL_CHANNELS[lang]));
+    expect(alertBodies(read("ja")), "条数变了 —— 这一格要证的是「条数不变而内容变了」")
+      .toHaveLength(REG_IMPORTANT_COUNT);
+    const failures = LANGS.filter((lang) => alertBodies(read(lang)).filter((b) => b.includes(EQUAL_CHANNELS[lang])).length !== 1);
     expect(failures, `报文：\n${failures.join("\n")}`).toEqual(["ja"]);
   });
 });

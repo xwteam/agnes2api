@@ -219,15 +219,17 @@ YYDS via `expiresAt`, or after the 1h TTL on MoeMail). So on Worker **`MINT_BATC
 ceiling, not a guarantee**: the round may simply not fill it. Node/Docker has no platform wall
 clock, so the **scheduled** round does not engage this mechanism and uses `MINT_BATCH` in full.
 
-> ⚠️ **The panel's "Refill now" is the exception: both runtimes carry the same per-round budget.**
+> [!IMPORTANT]
+> **The panel's "Refill now" is the exception: both runtimes carry the same per-round budget.**
 > How long a single click may run is a property of that button, not of the runtime, so a manual
 > refill on Node/Docker can also mint fewer keys; the next scheduled round picks up the rest.
 
-**⚠️ The budget is not a blanket guarantee — a residual case remains.** The check only counts the
-dominant term, `CODE_TIMEOUT_MS × number of channels`. It deliberately does **not** include the
-15-second per-request timeouts or the 403 back-offs: including them would mean no attempt ever
-dares to start, since the "theoretical worst case" above already exceeds 900s on its own. The
-budget is 87% of the wall clock, and the ~120s left over is what covers those tails:
+> [!WARNING]
+> **The budget is not a blanket guarantee — a residual case remains.** The check only counts the
+> dominant term, `CODE_TIMEOUT_MS × number of channels`. It deliberately does **not** include the
+> 15-second per-request timeouts or the 403 back-offs: including them would mean no attempt ever
+> dares to start, since the "theoretical worst case" above already exceeds 900s on its own. The
+> budget is 87% of the wall clock, and the ~120s left over is what covers those tails:
 
 | Where the slowness is | Does the budget cover it | Consequence |
 |---------------------|------------------------|-----------|
@@ -332,20 +334,22 @@ the endpoint answers `409 registrar_disabled`.
 
 ### The honest limits and the residual risk
 
-⚠️ **An honest limit — do not read this as "concurrency is solved".** KV is eventually
-consistent, so that storage lock is **best-effort, not a mutual-exclusion primitive**. What it
-blocks is the common case — "the previous round is clearly still running"; two clicks issued in
-the same millisecond can still both take it. The guard key and the tend history are read-modify-write
-as well, so updates can be lost inside a concurrency window — bounded by "the gate lets through at
-most (concurrency − 1) extra rounds, and the tend history misses at most (concurrency − 1) rows".
+> [!WARNING]
+> **An honest limit — do not read this as "concurrency is solved".** KV is eventually
+> consistent, so that storage lock is **best-effort, not a mutual-exclusion primitive**. What it
+> blocks is the common case — "the previous round is clearly still running"; two clicks issued in
+> the same millisecond can still both take it. The guard key and the tend history are read-modify-write
+> as well, so updates can be lost inside a concurrency window — bounded by "the gate lets through at
+> most (concurrency − 1) extra rounds, and the tend history misses at most (concurrency − 1) rows".
 
-⚠️ **Residual risk**: a manual round carries **the same per-round wall-clock budget as the
-Worker's Cron (780 s)**. Its job is "never start an attempt that is known not to fit"; it
-**does not eliminate leaks, it only lowers the probability** — the platform can still abort the
-call inside the budget window, and the temporary mailbox being minted at that moment is not
-deleted. Note this differs from the scheduled round: **the Node/Docker timer carries no such
-budget, while the manual round does**, so under the same configuration a manual round may mint
-fewer keys than a scheduled one; the remaining slots go to the next scheduled round.
+> [!WARNING]
+> **Residual risk**: a manual round carries **the same per-round wall-clock budget as the
+> Worker's Cron (780 s)**. Its job is "never start an attempt that is known not to fit"; it
+> **does not eliminate leaks, it only lowers the probability** — the platform can still abort the
+> call inside the budget window, and the temporary mailbox being minted at that moment is not
+> deleted. Note this differs from the scheduled round: **the Node/Docker timer carries no such
+> budget, while the manual round does**, so under the same configuration a manual round may mint
+> fewer keys than a scheduled one; the remaining slots go to the next scheduled round.
 
 ### These three keys never expire on their own
 
