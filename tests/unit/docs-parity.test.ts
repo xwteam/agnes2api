@@ -501,16 +501,31 @@ const realDoc = (doc: string): ApiDocReader => (lang) => readFileSync(docPath(".
 const realApiDoc: ApiDocReader = realDoc("API");
 
 /**
- * `## <heading>` 到下一个 `## ` 之间的正文。**找不到那个小节返回 `null`——认不出要吵，
+ * `### <heading>` 到下一个 `##`/`###` 之间的正文。**找不到那个小节返回 `null`——认不出要吵，
  * 不许装没看见**：小节标题写错时若当成「这一份没有这句话」，报文会把人指向
  * 「去补一句限定」，而真正坏掉的是表里那个标题。
+ *
+ * ⚠️ **W104（P3f 阶段 7B）把层级降了一级**：五份 `API.md` 的端点从 `##` 变成协议族
+ * `##` 之下的 `###`（模板实测：kiro / gemini 两仓的端点全是 `### METHOD /path`），
+ * 于是 `UPSTREAM_FACTS[].docSections` 里那三条也跟着从 `` `POST /v1/videos` `` 变成
+ * `POST /v1/videos`（去掉反引号，与模板一致）。**这两处必须同批改**：只改文档不改这里，
+ * 上面那两组会整片报「找不到小节」——而那正是本函数「认不出要吵」想避免的误导报文。
+ * 终点用正则找**下一个 `##` 或 `###`**：只找 `\n## ` 会把同一个协议族下面的兄弟端点
+ * 一起吞进来，于是「限定句贴在哪一节」这件事又变回了「整族里有没有这句话」。
  */
 function sectionBody(src: string, heading: string): string | null {
-  const at = src.indexOf(`\n## ${heading}\n`);
-  if (at === -1) return null;
-  const from = at + 1;
-  const next = src.indexOf("\n## ", from);
-  return next === -1 ? src.slice(from) : src.slice(from, next);
+  for (const level of ["## ", "### "] as const) {
+    const at = src.indexOf(`\n${level}${heading}\n`);
+    if (at === -1) continue;
+    const from = at + 1;
+    const rest = src.slice(from + 1);
+    // 终点跟着起点的层级走：`##` 的射程**含**它下面那些 `###`（④B 那组要的就是整节），
+    // `###` 的射程**到下一个同级或上级标题为止**（不然同一个协议族里的兄弟端点会被
+    // 一起吞进来，「限定句贴在哪一节」就退回成「整族里有没有这句话」）。
+    const m = (level === "## " ? /\n## / : /\n#{2,3} /).exec(rest);
+    return m === null ? src.slice(from) : src.slice(from, from + 1 + m.index);
+  }
+  return null;
 }
 
 /**
@@ -7804,8 +7819,7 @@ function sectionFailures(doc: SectionDoc, lang: (typeof LANGS)[number], actual: 
  *
  * ⚠️ **但「全等才到期」这一条自己有个洞**，见下面 `SECTIONS_DRIFT_BASELINE` 的注释。
  */
-const SECTIONS_NOT_YET_APPLIED: ReadonlyArray<readonly [SectionDoc, (typeof LANGS)[number]]> =
-  (["API"] as const).flatMap((doc) => LANGS.map((lang) => [doc, lang] as const));
+const SECTIONS_NOT_YET_APPLIED: ReadonlyArray<readonly [SectionDoc, (typeof LANGS)[number]]> = [];
 
 /**
  * **已经接到真文档上的那一档（W99 落地，P3f 阶段 7B）。**
@@ -7819,7 +7833,7 @@ const SECTIONS_NOT_YET_APPLIED: ReadonlyArray<readonly [SectionDoc, (typeof LANG
  * 走不到全等而硬搬过来，下面「已接线的那几格：`##` 序列 `toEqual` DOC_SECTIONS」当场红。
  */
 const SECTIONS_APPLIED: ReadonlyArray<readonly [SectionDoc, (typeof LANGS)[number]]> =
-  (["DEPLOY"] as const).flatMap((doc) => LANGS.map((lang) => [doc, lang] as const));
+  (["DEPLOY", "API"] as const).flatMap((doc) => LANGS.map((lang) => [doc, lang] as const));
 
 /**
  * **今天每一格差多少，逐格钉死。**
@@ -7860,13 +7874,16 @@ const SECTIONS_APPLIED: ReadonlyArray<readonly [SectionDoc, (typeof LANGS)[numbe
  * **不许把这条判据删掉、也不许改回 `> 0` 了事** —— 那等于把上面那个窗口原样放回来。
  */
 const SECTIONS_DRIFT_BASELINE: Readonly<Record<string, number>> = {
-  // DEPLOY 五份**已经全等**（W99，P3f 阶段 7B）⇒ 它们搬去了 `SECTIONS_APPLIED`，
-  // 由「已接线的那几格」那一格用 `toEqual` 直接守着，不再走差距基线这条路。
-  "API/zh-CN": 16,
-  "API/zh-TW": 16,
-  "API/en": 15,
-  "API/ja": 15,
-  "API/ko": 15,
+  // **这张表今天是空的，而空是它的终点、不是它坏了。** DEPLOY 五份在 W99（阶段 7B 之三）
+  // 走到全等，API 五份在 W104（阶段 7B 之四）走到全等 ⇒ 十格全部搬进 `SECTIONS_APPLIED`，
+  // 由「已接线的那几格」那一格用 `toEqual` 直接守着，不再需要「离目标还有多远」这条路。
+  //
+  // ⚠️ **空表会让上面两个 `for` 一次都不进循环，这件事必须被说出来而不是靠人发现**
+  //（本仓 `EMPTY_BY_DESIGN` 那条同款教训：一个空转的判据比没有判据更贵）。
+  // 承接它的是下面那一格「名册到期了：两批骨架都已接到真文档上」——
+  // 它正面断言这两张表就该是空的、且 `SECTIONS_APPLIED` 覆盖了 `DOC_SECTIONS × LANGS` 全集。
+  // **别把这张表删掉**：下一次给 `DOC_SECTIONS` 加一类文档（USAGE/ADMIN/REGISTRAR 迟早会来），
+  // 那一格会先红并把人带回这里重新量一轮差距。
 };
 
 /**
@@ -8057,17 +8074,21 @@ describe("W124 非 README 文档的五语言 `##` 译名常量表", () => {
     ).toEqual([]);
   });
 
-  it("反向控制：「15 节做对 14 节」这一档基线守得住 —— 旧写法 `> 0` 在这一档是绿的", () => {
+  it("反向控制：「15 节做对 14 节」这一档今天由 `toEqual` 接住 —— 旧写法 `> 0` 在这一档是绿的", () => {
     // 补漏评审端到端复现过的那个状态：把 docs/ja/DEPLOY.md 写成 15 节目标骨架、
     // 只把第 7 个 `##` 换掉 ⇒ 名册不到期（不全等）、失败条数 = 1（> 0）⇒ 旧判据全绿。
     const near: string[] = [...DOC_SECTIONS.DEPLOY.ja];
     near[6] = "## アカウント設定";
     const failures = sectionFailures("DEPLOY", "ja", sectionTitles(renderSectionDoc(near)));
     expect(failures, "这一档正是旧写法 `toBeGreaterThan(0)` 放行的那一格").toHaveLength(1);
-    expect(
-      SECTIONS_DRIFT_BASELINE["DEPLOY/ja"],
-      "DEPLOY/ja 的基线被调成了「15 节做对 14 节」也算数的值 —— 那等于把窗口原样放回来",
-    ).not.toBe(failures.length);
+    // ⚠️ **接住它的东西换了人**（P3f 阶段 7B 之四）：DEPLOY/ja 已经走到全等并搬进
+    // `SECTIONS_APPLIED`，差距基线那张表因此是空的 —— 再去读
+    // `SECTIONS_DRIFT_BASELINE["DEPLOY/ja"]` 只会拿到 `undefined`，那种断言恒真。
+    // 今天这一档由上面那格「已接线的那几格：`##` 序列逐字 `toEqual`」接住，
+    // 而它的判据就是「`sectionFailures()` 非空即红」——所以这里正面钉那一条：
+    expect(failures.length, "只错一节时比较器报的条数为 0 ⇒ `toEqual` 那一格会放行").toBeGreaterThan(0);
+    expect(failures[0] ?? "", "报文没点名是哪一份、第几节 —— 报文是唯一会被看见的护栏")
+      .toContain("ja 第 7 节对不上");
   });
 
   it("差距基线与名册逐格对齐：名册里有的格，本表必须有一条基线（少一条 = 那一格的差距没人守）", () => {
@@ -8077,6 +8098,34 @@ describe("W124 非 README 文档的五语言 `##` 译名常量表", () => {
       + "少登记一格，那一格就退回「只要还没全等就放行」的老样子（14/15 做对也不红）；"
       + "多登记一格则是给一份没在名册里的文档钉死差距，同样要回来对齐",
     ).toEqual(SECTIONS_NOT_YET_APPLIED.map(([doc, lang]) => `${doc}/${lang}`).sort());
+  });
+
+  /**
+   * **两张表都空了 —— 正面把它说出来，别让空转冒充绿。**
+   *
+   * `SECTIONS_NOT_YET_APPLIED` 与 `SECTIONS_DRIFT_BASELINE` 今天都是空的（DEPLOY 在 W99、
+   * API 在 W104 先后走到逐字全等），于是上面那两个 `for` **一次都不进循环**。
+   * 本仓对这种形态有过一条明确的教训（`EMPTY_BY_DESIGN` 那一组）：一个空转的判据比
+   * 没有判据更贵，因为它看起来在守着什么。这一格就是那条教训的落地——
+   * 它断言「空」是**当前的正确状态**，并且**全集真的被 `SECTIONS_APPLIED` 接住了**。
+   *
+   * ⇒ 谁往 `DOC_SECTIONS` 里加一类文档（USAGE / ADMIN / REGISTRAR 迟早会来）而没有
+   * 同时表态它属于哪一档，本格与「名册不许悄悄长出第三类」会一起红。
+   */
+  it("名册到期了：两张待办表都空了，而 `DOC_SECTIONS × LANGS` 全集由 `SECTIONS_APPLIED` 接住", () => {
+    expect(
+      SECTIONS_NOT_YET_APPLIED,
+      "名册又非空了 —— 那意味着某一类文档退回了「允许对不上」，"
+      + "回来把差距逐格量出来写进 SECTIONS_DRIFT_BASELINE，别只改一张表",
+    ).toEqual([]);
+    expect(
+      Object.keys(SECTIONS_DRIFT_BASELINE),
+      "差距基线又非空了 —— 它必须与名册同进同退（上一格钉着这件事）",
+    ).toEqual([]);
+    expect(
+      SECTIONS_APPLIED.length,
+      "已接线的格数与 `DOC_SECTIONS × LANGS` 对不上 —— 有文档类型从两条判据之间掉出去了",
+    ).toBe(Object.keys(DOC_SECTIONS).length * LANGS.length);
   });
 
   /**
@@ -8546,10 +8595,10 @@ describe("W97 非 README 文档里位置不对的 `---` 删掉（页脚块之前
       "这个数从 0 变了就该有人来确认：加回来的那条是不是真在页脚块之前").toBe(0);
   });
 
-  it("该红时红（一）：把 `---` 加回 `docs/zh-CN/API.md` 的 `## \\`GET /health\\`` 之前 —— ① 与 ② 同时红", () => {
+  it("该红时红（一）：把 `---` 加回 `docs/zh-CN/API.md` 的 `## 系统 API` 之前 —— ① 与 ② 同时红", () => {
     const target = join("docs", "zh-CN", "API.md");
     const docs = non25Pairs().map(([p, t]) => (p === target
-      ? [p, t.replace(/^## `GET \/health`$/m, "---\n\n## `GET /health`")] as const : [p, t] as const));
+      ? [p, t.replace(/^## 系统 API$/m, "---\n\n## 系统 API")] as const : [p, t] as const));
     expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
     const scan = scanHorizontalRules(docs);
     expect(scan.beforeH2.join("\n"), "hr-before-h2 回来了却没红").toContain(`${target}:`);
@@ -9270,5 +9319,325 @@ describe("W99–W102 五份 DEPLOY.md 的 15 节骨架之下的四条验收", ()
 
   it("认不出要吵：`##` 标题被改名时 `h2Section` 当场抛，不许扫一段空文本", () => {
     expect(() => h2Section("# T\n\n## 别的\n\n正文\n", "## 安全建议")).toThrow(/判据的落点变了/);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W104 / W105 / W106 / W107 —— 五份 `API.md` 的 13 节骨架**之下**的四条验收
+ *
+ * `##` 骨架那一层由 W124 那组的「已接线的那几格：`##` 序列逐字 `toEqual` DOC_SECTIONS」
+ * 守着（P3f 阶段 7B 之四把 API 五格从「允许对不上」的名册搬了过去）。**本组守的是它下面**：
+ *
+ * · **W104**：端点从 `##` 降为协议族 `##` 之下的 `###`（模板实测：kiro / gemini 两仓的
+ *   端点全写成 `### METHOD /path`，不带反引号）；`## 认证` 之下补 `### 方式 N`；
+ *   `## 错误响应` 之下补一张状态码**升序**总表 `### 常见错误码`。
+ * · **W105**：每个端点块的固定五件套 —— 功能说明 → `**请求体**：`+参数表 →
+ *   `**请求**：`+```bash → `**响应**：`+```json/```text → 可选 alert。
+ *   验收是「`**请求**` 与 `**响应**` 各 ≥10 条/份」（两个参照仓实测 42/28 与 48/18）。
+ * · **W106**：参数表表头逐字固定，**必填列写「是/否」不写 `✅`/`❌`**（C26）。
+ *   ⚠️ 这与 README 的配置表刻意**不同**：那一张用 `✅`/`❌`，两处不是同一条规矩。
+ * · **W107**：`## 请求示例` 之下恰三个 `###`，cURL 块内两条注释逐条在。
+ *
+ * ⚠️ **为什么不写死 `###` 的条数**：那个数每加一条端点就过期一次（管理接口今天 24 条，
+ * 源码里再注册一条它就变）。本组钉的是**五语言彼此相等 + 不回退下限**，与 W101 同一形态。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 五份 `API.md` 的正文，读一次给全组用。 */
+const apiSrc = (lang: Lang): string => readFileSync(join("docs", lang, "API.md"), "utf8");
+
+/** 一段正文行里 `### ` 标题的**文本**（去掉 `### ` 前缀）。 */
+const h3TextsOf = (sectionLines: readonly string[]): string[] =>
+  sectionLines.filter((l) => /^### /.test(l)).map((l) => l.slice(4).trim());
+
+/** 逐语言的双粗体标签（W105 的五件套）。**必须逐语言给**：`**请求**：` 在 en 上一次都命中不了。 */
+const API_LABELS: Record<Lang, { readonly req: string; readonly res: string; readonly body: string }> = {
+  "zh-CN": { req: "**请求**：", res: "**响应**：", body: "**请求体**：" },
+  "zh-TW": { req: "**請求**：", res: "**回應**：", body: "**請求體**：" },
+  en: { req: "**Request**:", res: "**Response**:", body: "**Request body**:" },
+  ja: { req: "**リクエスト**：", res: "**レスポンス**：", body: "**リクエストボディ**：" },
+  ko: { req: "**요청**:", res: "**응답**:", body: "**요청 본문**:" },
+};
+
+/** W106 的参数表表头，逐字固定。 */
+const PARAM_TABLE_HEADER: Record<Lang, string> = {
+  "zh-CN": "| 参数 | 类型 | 必填 | 说明 |",
+  "zh-TW": "| 參數 | 型別 | 必填 | 說明 |",
+  en: "| Parameter | Type | Required | Description |",
+  ja: "| パラメータ | 型 | 必須 | 説明 |",
+  ko: "| 파라미터 | 타입 | 필수 | 설명 |",
+};
+
+/** 必填列只许是这两个词之一（C26：**不用 `✅`/`❌`**）。 */
+const REQUIRED_WORDS: Record<Lang, readonly [yes: string, no: string]> = {
+  "zh-CN": ["是", "否"],
+  "zh-TW": ["是", "否"],
+  en: ["Yes", "No"],
+  ja: ["はい", "いいえ"],
+  ko: ["예", "아니오"],
+};
+
+/** `## 认证` 之下那几条 `### 方式 N` 的前缀。 */
+const AUTH_METHOD_PREFIX: Record<Lang, string> = {
+  "zh-CN": "方式 ", "zh-TW": "方式 ", en: "Method ", ja: "方式 ", ko: "방식 ",
+};
+
+/** `## 错误响应` 之下那张状态码总表的标题（V18）。 */
+const ERROR_CODE_H3: Record<Lang, string> = {
+  "zh-CN": "常见错误码",
+  "zh-TW": "常見錯誤碼",
+  en: "Common status codes",
+  ja: "よくあるエラーコード",
+  ko: "자주 나오는 오류 코드",
+};
+
+/** `## 请求示例` 之下那三个 `###`，**五语言逐字相同**（模板实测就是英文原样）。 */
+const EXAMPLE_H3S = ["Python - OpenAI SDK", "JavaScript - Node.js", "cURL"] as const;
+
+/** cURL 块内那两条注释，逐语言。 */
+const CURL_COMMENTS: Record<Lang, readonly [nonStream: string, stream: string]> = {
+  "zh-CN": ["# 非流式请求", "# 流式请求"],
+  "zh-TW": ["# 非流式請求", "# 流式請求"],
+  en: ["# Non-streaming request", "# Streaming request"],
+  ja: ["# 非ストリーミングリクエスト", "# ストリーミングリクエスト"],
+  ko: ["# 비스트리밍 요청", "# 스트리밍 요청"],
+};
+
+/** 端点标题的形状：`METHOD /path`。五种方法都收。 */
+const ENDPOINT_TITLE = /^(GET|POST|PUT|PATCH|DELETE) \//;
+
+/** 剥围栏后，命中给定正则的标题行（原样，含 `#` 前缀）。 */
+const headingLinesOf = (src: string): string[] =>
+  outsideFences(src).split("\n").filter((l) => /^#{1,6} /.test(l));
+
+/** 一张 markdown 表的数据行（从表头行下标出发，跳过分隔行，到第一条非 `|` 行为止）。 */
+function tableDataRows(lines: readonly string[], headerIdx: number): string[] {
+  const out: string[] = [];
+  for (let i = headerIdx + 2; i < lines.length; i++) {
+    const l = lines[i] ?? "";
+    if (!l.trimStart().startsWith("|")) break;
+    out.push(l);
+  }
+  return out;
+}
+
+describe("W104–W107 五份 API.md 的 13 节骨架之下的四条验收", () => {
+  it("射程自守：五份都读得到、各 13 个 `##`，`###` 数五份彼此相等且不回退（今天 49）", () => {
+    for (const lang of LANGS) {
+      const heads = headingLinesOf(apiSrc(lang));
+      expect(heads.filter((l) => /^## /.test(l)).length, `docs/${lang}/API.md 的 \`##\` 数`).toBe(13);
+    }
+    const h3Counts = LANGS.map((lang) => headingLinesOf(apiSrc(lang)).filter((l) => /^### /.test(l)).length);
+    expect(new Set(h3Counts).size, `五份的 \`###\` 数不一致：${JSON.stringify(h3Counts)} —— `
+      + "R2 已经钉死层级序列，条数就该一样；这一格是给报文用的（R2 只说「第 N 个下标对不上」）")
+      .toBe(1);
+    // **不回退下限**（与 W101 同一形态，刻意不写 `toBe(49)`）：这个数每加一条端点就变，
+    // 写死等于每次加端点都要回来改一个与判据无关的数。
+    expect(h3Counts[0], "`###` 数掉到 40 以下 —— 端点块被整片删掉了？").toBeGreaterThanOrEqual(40);
+  });
+
+  it("W104 端点全部降为 `###`：`## METHOD /path` 恒为 0，而 `### METHOD /path` 五份相等且 ≥ 30", () => {
+    const bad: string[] = [];
+    const counts: number[] = [];
+    for (const lang of LANGS) {
+      const heads = headingLinesOf(apiSrc(lang));
+      for (const h of heads) {
+        if (/^## /.test(h) && ENDPOINT_TITLE.test(h.slice(3).trim())) bad.push(`docs/${lang}/API.md：${h}`);
+      }
+      counts.push(heads.filter((h) => /^### /.test(h) && ENDPOINT_TITLE.test(h.slice(4).trim())).length);
+    }
+    expect(
+      bad,
+      `这些端点还挂在 \`##\` 上：\n${bad.join("\n")}\n`
+      + "⇒ W104 的落法是「七个协议族占 `##`，端点降为它们之下的 `###`」。"
+      + "⚠️ 提回 `##` 的同时「已接线的那几格：`##` 序列逐字 `toEqual` DOC_SECTIONS」也会红 —— "
+      + "两格说的是同一件事的两面：那一格说「多了一节」，本格说「多的那一节是个端点」。",
+    ).toEqual([]);
+    expect(new Set(counts).size, `五份的端点 \`###\` 数不一致：${JSON.stringify(counts)}`).toBe(1);
+    expect(counts[0], "端点 `###` 少于 30 条 —— 管理接口那一节今天就有 24 条").toBeGreaterThanOrEqual(30);
+  });
+
+  it("W104 `## 认证` 之下恰 4 条 `### 方式 N`，编号 1..4 严格递增（五语言同构）", () => {
+    for (const lang of LANGS) {
+      const sec = h2Section(apiSrc(lang), DOC_SECTIONS.API[lang][0]);
+      const nums = h3TextsOf(sec)
+        .filter((t) => t.startsWith(AUTH_METHOD_PREFIX[lang]))
+        .map((t) => Number.parseInt(t.slice(AUTH_METHOD_PREFIX[lang].length), 10));
+      expect(nums, `docs/${lang}/API.md 的 \`## 认证\` 之下的方式编号`).toEqual([1, 2, 3, 4]);
+    }
+  });
+
+  it("W104 `## 错误响应` 之下有状态码总表，且状态码列**严格升序**（V18）", () => {
+    for (const lang of LANGS) {
+      const src = apiSrc(lang);
+      const sec = h2Section(src, DOC_SECTIONS.API[lang][2]);
+      expect(h3TextsOf(sec), `docs/${lang}/API.md 的错误响应节里没有「${ERROR_CODE_H3[lang]}」这一节`)
+        .toContain(ERROR_CODE_H3[lang]);
+      const at = sec.indexOf(`### ${ERROR_CODE_H3[lang]}`);
+      const headerIdx = sec.findIndex((l, i) => i > at && l.trimStart().startsWith("|"));
+      expect(headerIdx, `docs/${lang}/API.md 的「${ERROR_CODE_H3[lang]}」之下一张表都没有`).toBeGreaterThan(at);
+      const codes = tableDataRows(sec, headerIdx)
+        .map((r) => /^\|\s*`(\d{3})`\s*\|/.exec(r.trim())?.[1])
+        .map((c) => (c === undefined ? Number.NaN : Number(c)));
+      expect(codes.length, `docs/${lang}/API.md 的状态码总表一行数据都没有`).toBeGreaterThanOrEqual(6);
+      expect(codes.filter((c) => Number.isNaN(c)), `docs/${lang}/API.md 的状态码总表里有一行第一格不是 \`NNN\``)
+        .toEqual([]);
+      const sorted = [...codes].sort((a, b) => a - b);
+      expect(codes, `docs/${lang}/API.md 的状态码不是升序：${JSON.stringify(codes)}`).toEqual(sorted);
+      expect(new Set(codes).size, "状态码总表里有重复的码").toBe(codes.length);
+    }
+  });
+
+  it("W105 `**请求**` 与 `**响应**` 各 ≥10 条/份，且五语言条数彼此相等", () => {
+    const req: number[] = [], res: number[] = [];
+    for (const lang of LANGS) {
+      const lines = apiSrc(lang).split("\n");
+      req.push(lines.filter((l) => l.trim() === API_LABELS[lang].req).length);
+      res.push(lines.filter((l) => l.trim() === API_LABELS[lang].res).length);
+    }
+    expect(Math.min(...req), `\`**请求**\` 条数：${JSON.stringify(req)}（两个参照仓 42 / 48）`)
+      .toBeGreaterThanOrEqual(10);
+    expect(Math.min(...res), `\`**响应**\` 条数：${JSON.stringify(res)}（两个参照仓 28 / 18）`)
+      .toBeGreaterThanOrEqual(10);
+    expect(new Set(req).size, `五份的 \`**请求**\` 条数不一致：${JSON.stringify(req)}`).toBe(1);
+    expect(new Set(res).size, `五份的 \`**响应**\` 条数不一致：${JSON.stringify(res)}`).toBe(1);
+  });
+
+  it("W105 五件套的次序：每个 `**请求**` 之后紧跟 ```bash，每个 `**响应**` 之后紧跟 ```json / ```text", () => {
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      const lines = apiSrc(lang).split("\n");
+      lines.forEach((l, i) => {
+        const t = l.trim();
+        const after = (lines[i + 2] ?? "").trim();
+        if (t === API_LABELS[lang].req && after !== "```bash") {
+          bad.push(`docs/${lang}/API.md:${i + 1} \`**请求**\` 之后不是 \`\`\`bash，而是 ${JSON.stringify(after)}`);
+        }
+        if (t === API_LABELS[lang].res && after !== "```json" && after !== "```text") {
+          bad.push(`docs/${lang}/API.md:${i + 1} \`**响应**\` 之后不是 \`\`\`json / \`\`\`text，而是 ${JSON.stringify(after)}`);
+        }
+      });
+    }
+    expect(bad, `五件套的次序被打乱了：\n${bad.join("\n")}\n`
+      + "⇒ 固定次序是：功能说明 → `**请求体**：`+参数表 → `**请求**：`+```bash → `**响应**：`+```json").toEqual([]);
+  });
+
+  it("W106 参数表：表头逐字固定，必填列只许是本语言的「是/否」", () => {
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      const lines = apiSrc(lang).split("\n");
+      const [yes, no] = REQUIRED_WORDS[lang];
+      let tables = 0;
+      lines.forEach((l, i) => {
+        if (l.trim() !== API_LABELS[lang].body) return;
+        // `**请求体**：` 之后**未必**有表（几条端点写的是「本端点只收查询参数」那一句），
+        // 只有真的跟着一张表时才校验它。
+        const headerIdx = lines.findIndex((x, j) => j > i && j <= i + 3 && x.trimStart().startsWith("|"));
+        if (headerIdx < 0) return;
+        tables += 1;
+        if (lines[headerIdx] !== PARAM_TABLE_HEADER[lang]) {
+          bad.push(`docs/${lang}/API.md:${headerIdx + 1} 参数表表头不是 ${JSON.stringify(PARAM_TABLE_HEADER[lang])}`
+            + `，而是 ${JSON.stringify(lines[headerIdx])}`);
+          return;
+        }
+        for (const row of tableDataRows(lines, headerIdx)) {
+          const cell = rowCells(row)[2] ?? "";
+          if (cell !== yes && cell !== no) {
+            bad.push(`docs/${lang}/API.md 的参数表里必填列写的是 ${JSON.stringify(cell)}`
+              + `——只许是「${yes}」或「${no}」（C26：README 的配置表才用 ✅/❌，这里不用）`);
+          }
+        }
+      });
+      expect(tables, `docs/${lang}/API.md 里一张参数表都没扫到 —— 本格在测空气`).toBeGreaterThanOrEqual(10);
+    }
+    expect(bad, bad.join("\n")).toEqual([]);
+  });
+
+  it("W106 五份 API.md 的正文里 `✅` / `❌` 恒为 0（C26：那是 README 配置表的写法）", () => {
+    const hits = bodyHits(LANGS.map((lang) => [join("docs", lang, "API.md"), apiSrc(lang)] as const), /[✅❌]/u);
+    expect(hits, `API.md 里出现了 ✅/❌：\n${hits.join("\n")}\n`
+      + "⇒ 必填列写「是/否」。两处不同：README 的配置表用 ✅/❌，API 的参数表不用。").toEqual([]);
+  });
+
+  it("W107 `## 请求示例` 之下恰三个 `###`，逐字且同序", () => {
+    for (const lang of LANGS) {
+      const sec = h2Section(apiSrc(lang), DOC_SECTIONS.API[lang][11]);
+      expect(h3TextsOf(sec), `docs/${lang}/API.md 的请求示例节的三个 \`###\``).toEqual([...EXAMPLE_H3S]);
+    }
+  });
+
+  it("W107 cURL 块内两条注释逐条在（非流式 / 流式），且五语言各恰 1 组", () => {
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      const sec = h2Section(apiSrc(lang), DOC_SECTIONS.API[lang][11]).join("\n");
+      const at = sec.indexOf("### cURL");
+      expect(at, `docs/${lang}/API.md 的请求示例节里没有 \`### cURL\``).toBeGreaterThanOrEqual(0);
+      const curl = sec.slice(at);
+      for (const c of CURL_COMMENTS[lang]) {
+        const n = curl.split(`\n${c}\n`).length - 1;
+        if (n !== 1) bad.push(`docs/${lang}/API.md 的 cURL 块里「${c}」出现了 ${n} 次（要恰 1 次）`);
+      }
+    }
+    expect(bad, bad.join("\n")).toEqual([]);
+  });
+
+  /* ── 反向控制：该红时红 / 不许乱红 ───────────────────────────────────────── */
+
+  it("该红时红：把 `docs/ja/API.md` 的一个端点从 `###` 提回 `##` ⇒ 端点降级那一格红并点名", () => {
+    const mutated = apiSrc("ja").replace("\n### GET /health\n", "\n## GET /health\n");
+    expect(mutated, "变异没落地 —— 这一格控制是空的").not.toEqual(apiSrc("ja"));
+    const heads = headingLinesOf(mutated).filter((h) => /^## /.test(h) && ENDPOINT_TITLE.test(h.slice(3).trim()));
+    expect(heads, "端点被提回 `##` 却没被抓到").toEqual(["## GET /health"]);
+  });
+
+  it("该红时红：把 `docs/ko/API.md` 的 `### 방식 4` 删掉 ⇒ 方式编号那一格报的是 `[1,2,3]`", () => {
+    const mutated = apiSrc("ko").replace("### 방식 4: key 쿼리 파라미터", "### key 쿼리 파라미터");
+    expect(mutated, "变异没落地").not.toEqual(apiSrc("ko"));
+    const sec = h2Section(mutated, DOC_SECTIONS.API.ko[0]);
+    const nums = h3TextsOf(sec)
+      .filter((t) => t.startsWith(AUTH_METHOD_PREFIX.ko))
+      .map((t) => Number.parseInt(t.slice(AUTH_METHOD_PREFIX.ko.length), 10));
+    expect(nums, "少了一条方式却没被抓到").toEqual([1, 2, 3]);
+  });
+
+  it("该红时红：把 `docs/en/API.md` 参数表的一个 `No` 换成 `❌` ⇒ 必填列与 emoji 两格同时红", () => {
+    const target = join("docs", "en", "API.md");
+    const mutated = apiSrc("en").replace("| `stream` | boolean | No |", "| `stream` | boolean | ❌ |");
+    expect(mutated, "变异没落地").not.toEqual(apiSrc("en"));
+    // ① emoji 那一格
+    expect(bodyHits([[target, mutated] as const], /[✅❌]/u).join("\n"), "❌ 进来了却没红").toContain(`${target}:`);
+    // ② 必填列那一格：把同一份文本喂进去，必填列必须报出那个 `❌`
+    const lines = mutated.split("\n");
+    const cells = lines
+      .filter((l) => l.startsWith("| `stream` | boolean |"))
+      .map((l) => rowCells(l)[2] ?? "");
+    expect(cells, "必填列的取值没被改动 —— 这一格控制是空的").toContain("❌");
+  });
+
+  it("该红时红：`docs/zh-CN/API.md` 的状态码总表被打乱顺序 ⇒ 升序那一格红", () => {
+    const src = apiSrc("zh-CN");
+    const sec = h2Section(src, DOC_SECTIONS.API["zh-CN"][2]);
+    const at = sec.indexOf(`### ${ERROR_CODE_H3["zh-CN"]}`);
+    const headerIdx = sec.findIndex((l, i) => i > at && l.trimStart().startsWith("|"));
+    const rows = tableDataRows(sec, headerIdx);
+    expect(rows.length, "真表没抽到 —— 这一格控制是空的").toBeGreaterThanOrEqual(6);
+    const swapped = [...rows];
+    [swapped[0], swapped[1]] = [swapped[1]!, swapped[0]!];
+    const codes = swapped.map((r) => Number(/^\|\s*`(\d{3})`\s*\|/.exec(r.trim())?.[1] ?? "0"));
+    expect(codes, "换了顺序却还是升序 —— 这一格控制是空的").not.toEqual([...codes].sort((a, b) => a - b));
+  });
+
+  it("不许乱红：围栏里写着 `## GET /x` 的示例不算标题", () => {
+    const withFence = `${apiSrc("zh-CN")}\n\`\`\`markdown\n## GET /x\n\`\`\`\n`;
+    const heads = headingLinesOf(withFence).filter((h) => /^## /.test(h) && ENDPOINT_TITLE.test(h.slice(3).trim()));
+    expect(heads, "围栏里的示例被当成了真标题 —— 剥围栏那一步没生效").toEqual([]);
+  });
+
+  it("认不出要吵：参数表表头常量与真文档对不上时，报的是「表头不是…」而不是「必填列写错了」", () => {
+    const broken: Record<Lang, string> = { ...PARAM_TABLE_HEADER, "zh-CN": "| 参数 | 类型 | 是否必填 | 说明 |" };
+    const lines = apiSrc("zh-CN").split("\n");
+    const i = lines.indexOf(API_LABELS["zh-CN"].body);
+    const headerIdx = lines.findIndex((x, j) => j > i && j <= i + 3 && x.trimStart().startsWith("|"));
+    expect(headerIdx, "真文档里第一处 `**请求体**：` 之后没有表 —— 这一格控制是空的").toBeGreaterThan(i);
+    expect(lines[headerIdx], "表头与常量对不上时本格才有意义").not.toBe(broken["zh-CN"]);
   });
 });

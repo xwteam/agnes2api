@@ -113,7 +113,7 @@ const FACTS: readonly UpstreamFact[] = [
     source: "tests/contract/media.test.ts 里我们自己写的那份假上游 —— 这不是上游依据",
     anchorFile: "admin-ui/js/pure/playground.mjs",
     anchor: "VIDEO_TASK_ID_SLOTS",
-    docSections: ["`POST /v1/videos`"],
+    docSections: ["POST /v1/videos"],
     docHints: {
       "zh-CN": "下面这段响应体的形状未经真实上游核实",
       "zh-TW": "下面這段回應內容的形狀未經真實上游核實",
@@ -130,7 +130,7 @@ const FACTS: readonly UpstreamFact[] = [
     source: "tests/contract/media.test.ts 里我们自己写的那份假上游 —— 与上一条同源（同一句造出来的标识）",
     anchorFile: "src/core/admin/protocol-catalog.ts",
     anchor: "VIDEO_TASK_ID_RE",
-    docSections: ["`GET /v1/videos/{id}`"],
+    docSections: ["GET /v1/videos/{id}"],
     docHints: {
       "zh-CN": "任务标识的形状判据未经真实上游核实",
       "zh-TW": "任務識別碼的形狀判據未經真實上游核實",
@@ -152,7 +152,7 @@ const FACTS: readonly UpstreamFact[] = [
      * （字段还在、登记没了，锚照样匹配得上）。裁定原句与那段登记同生共死。
      */
     anchor: "需要一次真上游才能定案",
-    docSections: ["`POST /v1/chat/completions`"],
+    docSections: ["POST /v1/chat/completions"],
     docHints: {
       "zh-CN": "流式末帧带不带 usage 未经真实上游核实",
       "zh-TW": "串流末幀帶不帶 usage 未經真實上游核實",

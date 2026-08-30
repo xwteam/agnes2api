@@ -149,39 +149,65 @@ function termConflicts(read: DocReader): string[] {
  *   四条本来就写的是多数用词，重写时照原样搬了过去。
  *   ⚠️ `zh-TW｜排障` 那一行 README 两侧都不沾（`排障` / `疑難排解` 一次都没写），
  *   它是下面反向控制 ①② 的支点，本步一个字都不许碰。
+ * ── 阶段 7B 之四（W104 把五份 `API.md` 重写成 13 节）动了哪十行 ─────────────
+ * 🔴 **销账数是 0，十行里没有一行消失** —— 别把「动了十行」读成「统一了十个词」。
+ * 两类各占一半，逐条写清是哪一类：
+ *
+ * **① API 这一侧收敛（两行）**：一份文档内部两种说法并存，是这张表最刺眼的那一类，
+ *    重写时先把自己这一份写统一，跟的是**多数用词**：
+ * · `ko｜凭据`：API 从 `인증 정보+자격 증명` 收敛成 `자격 증명`（ADMIN/DEPLOY/README/
+ *   REGISTRAR 四份用的都是后者；USAGE 那一份仍是 `인증 정보`，归后续）。
+ * · `zh-TW｜协议`：API 从 `協定+協議` 收敛成 `協議`（README/SPONSORS/USAGE 同）。
+ * **⚠️ 两条都不是销账**：分歧本来就在 API 之外的那几份之间，API 这一侧改成什么都消不掉。
+ *
+ * **② API 这一侧新进表（八行）**：这几个词在旧版 API.md 里一次都没出现（旧版是 15 个
+ *    平铺端点、没有管理接口一节），13 节重写把它们写了进来，于是这一份从此也被看着了：
+ * · `en｜仓库` API=`repository`（跟上 REGISTRAR/SPONSORS 与 DEPLOY 的主用词，不写 `repo`）。
+ * · `en｜补池` API=`refill+tend`。⚠️ **这一条躲不掉**：`tend` 是端点路径
+ *   `/admin/api/registrar/tend` 的字面量，而本表 `scope: "all"` **不剥围栏也不剥行内 code**
+ *   ——改掉散文里的 `refill` 也去不掉它，除非不写这条端点。如实登记，不为它开豁免。
+ * · `ja｜并发` API=`並行`、`zh-TW｜并发` API=`並行`（与 ADMIN/REGISTRAR 同）。
+ * · `ja｜注册机` API=`レジストラー`。**落地时改过一次**：初稿写的是短写法 `レジストラ`，
+ *   那会给这一行再添一个说法，而 README/REGISTRAR 用的是长音写法 ⇒ 全文改齐。
+ * · `ko｜邮箱` API=`메일함`、`zh-TW｜邮箱` API=`信箱`（与 README/REGISTRAR 同）。
+ * · `zh-TW｜调试台` API=`除錯台`（与 ADMIN/README 同，不写 DEPLOY 的 `偵錯台`）。
+ *
+ * ⚠️ **另有一条是本轮改出来又改回去的，记在这里备查**：`zh-TW｜客户端` 初稿把
+ * API 从 `用戶端`（台标）写成了 `客戶端`（大陆用词）——**判据当场逮到**，落地前已改回，
+ * 所以那一行在本表里逐字未动。这是这条判官第一次抓到本轮自己造的回归。
  */
 const PENDING_TERM_CONFLICTS: readonly string[] = [
-  "en｜仓库｜ADMIN=repo｜API=repo｜DEPLOY=repo+repository｜REGISTRAR=repository｜SPONSORS=repository",
+  "en｜仓库｜ADMIN=repo｜API=repository｜DEPLOY=repo+repository｜REGISTRAR=repository｜SPONSORS=repository",
   "en｜免费档｜DEPLOY=free plan+free tier",
-  "en｜补池｜ADMIN=refill+tend｜DEPLOY=refill+tend｜README=refill｜REGISTRAR=refill+tend+top-up",
+  "en｜补池｜ADMIN=refill+tend｜API=refill+tend｜DEPLOY=refill+tend｜README=refill｜REGISTRAR=refill+tend+top-up",
   "ja｜免费档｜DEPLOY=無料プラン+無料枠｜README=無料枠",
   "ja｜凭据｜ADMIN=資格情報｜API=認証情報｜DEPLOY=認証情報+資格情報｜README=認証情報｜REGISTRAR=認証情報+資格情報｜USAGE=認証情報",
-  "ja｜并发｜ADMIN=並行｜DEPLOY=並行+同時実行｜REGISTRAR=並行",
+  "ja｜并发｜ADMIN=並行｜API=並行｜DEPLOY=並行+同時実行｜REGISTRAR=並行",
   // ⚠️ P3f 阶段 7B（W99）新增 `DEPLOY=トラブルシューティング` 那一格：DEPLOY.md 的 15 节骨架
   // 由 `DOC_SECTIONS` 钉死，ja 第 9 槽的译名就是 `## トラブルシューティング`（W124 从两仓实测
   // 出来的 K∩G 值）。⇒ 这一格**不是新的漏翻，是骨架落地的必然结果**，而且它让这一条欠账
   // 从「ADMIN 与 REGISTRAR 两份打架」变成「ADMIN 一份孤立」——修的时候动 ADMIN 那一份即可。
   "ja｜排障｜ADMIN=障害対応｜DEPLOY=トラブルシューティング｜REGISTRAR=トラブルシューティング",
   "ja｜文档｜ADMIN=ドキュメント+文書｜API=ドキュメント｜DEPLOY=ドキュメント+文書｜README=ドキュメント｜SPONSORS=ドキュメント",
-  "ja｜注册机｜ADMIN=レジストラ+レジストラー｜DEPLOY=レジストラ+レジストラー｜README=レジストラー｜REGISTRAR=レジストラー｜SPONSORS=レジストラ",
+  "ja｜注册机｜ADMIN=レジストラ+レジストラー｜API=レジストラー｜DEPLOY=レジストラ+レジストラー｜README=レジストラー｜REGISTRAR=レジストラー｜SPONSORS=レジストラ",
   "ja｜默认｜ADMIN=既定｜API=既定｜DEPLOY=デフォルト+既定｜README=既定｜REGISTRAR=デフォルト+既定｜USAGE=既定",
   "ko｜上游｜ADMIN=업스트림｜API=업스트림｜DEPLOY=상류+업스트림｜README=업스트림｜REGISTRAR=업스트림",
   "ko｜免费档｜DEPLOY=무료 등급+무료 요금제｜README=무료 등급",
-  "ko｜凭据｜ADMIN=자격 증명｜API=인증 정보+자격 증명｜DEPLOY=자격 증명｜README=자격 증명｜REGISTRAR=자격 증명｜USAGE=인증 정보",
-  "ko｜邮箱｜ADMIN=메일박스｜DEPLOY=메일박스+메일함｜README=메일함｜REGISTRAR=메일박스+메일함",
+  "ko｜凭据｜ADMIN=자격 증명｜API=자격 증명｜DEPLOY=자격 증명｜README=자격 증명｜REGISTRAR=자격 증명｜USAGE=인증 정보",
+  "ko｜邮箱｜ADMIN=메일박스｜API=메일함｜DEPLOY=메일박스+메일함｜README=메일함｜REGISTRAR=메일박스+메일함",
   "zh-TW｜仓库｜DEPLOY=倉庫｜README=儲存庫｜REGISTRAR=儲存庫｜SPONSORS=倉庫",
   "zh-TW｜余量｜DEPLOY=餘量｜REGISTRAR=餘裕+餘量",
   "zh-TW｜免费档｜DEPLOY=免費方案+免費檔｜README=免費方案",
   "zh-TW｜凭据｜ADMIN=憑證｜API=憑證｜DEPLOY=憑據+憑證｜README=憑證｜REGISTRAR=憑證｜USAGE=憑證",
   "zh-TW｜判据｜API=判據｜DEPLOY=判據+判準｜REGISTRAR=判據+判準",
-  "zh-TW｜协议｜ADMIN=協定｜API=協定+協議｜DEPLOY=協定｜README=協議｜SPONSORS=協議｜USAGE=協議",
+  "zh-TW｜协议｜ADMIN=協定｜API=協議｜DEPLOY=協定｜README=協議｜SPONSORS=協議｜USAGE=協議",
   "zh-TW｜客户端｜ADMIN=客戶端｜API=用戶端｜DEPLOY=客戶端+用戶端｜README=用戶端｜USAGE=用戶端",
   "zh-TW｜密钥｜ADMIN=密鑰｜DEPLOY=密鑰｜README=金鑰｜REGISTRAR=金鑰",
-  "zh-TW｜并发｜ADMIN=並行｜DEPLOY=並發+並行｜REGISTRAR=並行",
+  "zh-TW｜并发｜ADMIN=並行｜API=並行｜DEPLOY=並發+並行｜REGISTRAR=並行",
   "zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解",
   "zh-TW｜网关｜ADMIN=閘道｜API=閘道｜DEPLOY=網關+閘道｜README=閘道｜REGISTRAR=閘道｜USAGE=閘道",
-  "zh-TW｜调试台｜ADMIN=除錯台｜DEPLOY=偵錯台｜README=除錯台",
-  "zh-TW｜邮箱｜ADMIN=郵箱｜DEPLOY=信箱+郵箱｜README=信箱｜REGISTRAR=信箱",
+  "zh-TW｜调试台｜ADMIN=除錯台｜API=除錯台｜DEPLOY=偵錯台｜README=除錯台",
+  "zh-TW｜邮箱｜ADMIN=郵箱｜API=信箱｜DEPLOY=信箱+郵箱｜README=信箱｜REGISTRAR=信箱",
 ];
 
 describe("W134 五语言术语表：同一源词在同一语言的不同文档里必须用同一译词", () => {
