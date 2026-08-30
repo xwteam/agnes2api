@@ -10933,3 +10933,247 @@ describe("W112 五份 REGISTRAR.md 的代码围栏", () => {
   });
 });
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W114 / W115 —— 五份 `USAGE.md` 从「SDK 接线纸」扩成使用指南
+ *（P3f 阶段 7C）
+ *
+ * · **W114（扩容）**：`##` 从 5 个扩到 12 个、`###` 从 0 补到 31 个、代码围栏从
+ *   4 段扩到 11 段。素材**全部从已完工的 `API.md` / `DEPLOY.md` 与源码抽**，一条都不许编。
+ * · **W115（最小排版项）**：三处 `base_url` 的坑从散文提升为 `> [!IMPORTANT]`；
+ *   三种 SDK 各补一段流式围栏；页脚换成形态 A（ADJ ㊷ / R26e'）。
+ *
+ * 🔴 **本组只判「`###` 数量相等 + 层级序列相等 + 不回退下限」，一个 `##` 的文本都不钉**
+ * ——§1.9.3 把 `USAGE` 明确挡在 `DOC_SECTIONS` 之外（钉文本 = 拿今天的现状当模板，
+ * 那是 C1 犯过的病）。这条射程登记由 W124 那组的
+ * 「射程登记：只有 DEPLOY 与 API 进这张表」双向守着，**本组不复制第二份**。
+ * 层级序列那一半由本文件上方 R1–R6 的 `R2 heading 层级序列` 守着；
+ * R2 只比五份**彼此**相等，五份一起缩水它一格都不红 ⇒ 这里配不回退下限。
+ *
+ * ⚠️ **`base_url` 那三格为什么不按语言查表**：`base_url` 是**标识符**，五种语言的标题里
+ * 都逐字带着它（`### base_url 要带 /v1` / `### The base_url does include /v1` /
+ * `### base_url には /v1 を付ける` …）。拿标识符当锚，比给五种语言各写一份译名表更难漂——
+ * 译名表要人记得跟着改，标识符改了代码就跟着红。
+ * 三格各自的内容锚同理，取的是路径字面量（`/chat/completions` / `/v1/messages` /
+ * `/v1beta/models`），不是任何一种语言的措辞。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("W114–W115 五份 USAGE.md 的扩容、base_url 三坑与流式围栏", () => {
+  const realUsageSrc: ApiDocReader = realDoc("USAGE");
+
+  /** 今天的实测值，同时是**不回退下限**（与 W108 / W111 同一种形态）。 */
+  const H2_COUNT = 12;
+  const H3_FLOOR = 31;
+  const FENCE_FLOOR = 11;
+
+  /** 页脚（形态 A）四条 bullet 各自该指向的兄弟文档，顺序不限但每份恰一次。 */
+  const FOOTER_TARGETS = ["API.md", "DEPLOY.md", "ADMIN.md", "REGISTRAR.md"] as const;
+
+  const headingsAtLevel = (src: string, level: number): string[] =>
+    outsideFences(src).split("\n").filter((l) => new RegExp(`^#{${level}} `).test(l));
+
+  /** **开围栏**的语言标记序列（闭合行不算）。理由见 W108 那一组里同名函数上方的注释。 */
+  const openFences = (src: string): string[] => {
+    const out: string[] = [];
+    let inFence = false;
+    for (const line of src.split("\n")) {
+      const m = /^[ \t]*```(\w*)/.exec(line);
+      if (m === null) continue;
+      if (!inFence) out.push(m[1] ?? "");
+      inFence = !inFence;
+    }
+    return out;
+  };
+
+  /**
+   * 标题行里含 `base_url` 的那几个 `###` 小节，按出现顺序返回每一节的正文行。
+   * 抽不到三节时当场抛——判据的落点变了要吵，不许扫一段空文本。
+   */
+  const baseUrlSections = (src: string): string[][] => {
+    const lines = outsideFences(src).split("\n");
+    const starts = lines
+      .map((l, i) => [l, i] as const)
+      .filter(([l]) => /^### /.test(l) && l.includes("base_url"))
+      .map(([, i]) => i);
+    if (starts.length !== 3) {
+      throw new Error(`判据的落点变了：含 \`base_url\` 的 \`###\` 有 ${starts.length} 个，应当是 3 个`);
+    }
+    return starts.map((start) => {
+      const rest = lines.slice(start + 1);
+      const end = rest.findIndex((l) => /^#{1,3} /.test(l));
+      return end === -1 ? rest : rest.slice(0, end);
+    });
+  };
+
+  /** 三节各自的**内容锚**：取路径字面量，不取任何一种语言的措辞。 */
+  const BASE_URL_ANCHORS = ["/chat/completions", "/v1/messages", "/v1beta/models"] as const;
+
+  /* ── W114 ───────────────────────────────────────────────────────────────── */
+
+  it("W114 扩容落地：五份各恰 12 个 `##`（旧形态是 5 个平铺 `##`）", () => {
+    for (const lang of LANGS) {
+      const n = headingsAtLevel(realUsageSrc(lang), 2).length;
+      expect(n, `docs/${lang}/USAGE.md 的 \`##\` 数是 ${n}，本期扩容的落点是 ${H2_COUNT}`
+        + " —— 改骨架要先回来改这条判据并说明理由").toBe(H2_COUNT);
+    }
+  });
+
+  it("W114 `###` 分层：五份数量彼此相等，且不回退（今天 31，旧形态是 0）", () => {
+    const h3 = LANGS.map((l) => headingsAtLevel(realUsageSrc(l), 3).length);
+    expect(
+      new Set(h3).size,
+      `五份的 \`###\` 数不一致：${JSON.stringify(Object.fromEntries(LANGS.map((l, i) => [l, h3[i]])))}`,
+    ).toBe(1);
+    // ⚠️ 下限是这一格**唯一**能挡住「五份一起缩水」的东西：上面那条只比彼此相等，
+    // R2 的层级序列同理。五份同时删掉一层 `###`，那两处一格都不会红。
+    expect(h3[0], `\`###\` 掉到 ${h3[0]} 了（下限 ${H3_FLOOR}）`).toBeGreaterThanOrEqual(H3_FLOOR);
+  });
+
+  it("该红时红：某一份把一个 `###` 降回正文 ⇒ 数量对等那格红并报出逐语言的数", () => {
+    const read = readerWith("ko", (s) => s.replace("\n### 작업 상태 조회하기\n", "\n작업 상태 조회하기\n"), "USAGE");
+    const h3 = LANGS.map((l) => headingsAtLevel(read(l), 3).length);
+    expect(new Set(h3).size, "变异落地了却没红 —— 这一格控制是空的").toBe(2);
+    expect(h3[LANGS.indexOf("ko")], "少掉的不是 1 个").toBe(H3_FLOOR - 1);
+  });
+
+  it("W114 五份各 ≥11 段代码围栏，且**开围栏**语言标注率 100%（裸 ``` 开围栏一处都不许有）", () => {
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const open = openFences(realUsageSrc(lang));
+      if (open.length < FENCE_FLOOR) failures.push(`docs/${lang}/USAGE.md 只有 ${open.length} 段围栏（下限 ${FENCE_FLOOR}）`);
+      const bare = open.filter((m) => m === "").length;
+      if (bare > 0) failures.push(`docs/${lang}/USAGE.md 有 ${bare} 段围栏没带语言标记`);
+    }
+    expect(failures, `报文：\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  it("W114 围栏语言构成五份逐份相同：6 段 ```python + 5 段 ```bash（三种 SDK 各两段、裸 HTTP 与图片视频五段）", () => {
+    for (const lang of LANGS) {
+      const open = openFences(realUsageSrc(lang));
+      const tally = { python: open.filter((m) => m === "python").length, bash: open.filter((m) => m === "bash").length };
+      expect(tally, `docs/${lang}/USAGE.md 的围栏语言构成变了`).toEqual({ python: 6, bash: 5 });
+    }
+  });
+
+  /* ── W115：三处 `base_url` 的坑 ─────────────────────────────────────────── */
+
+  it("W115 三处 `base_url` 各恰 1 条 `> [!IMPORTANT]`，且各自点着自己那条路径", () => {
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const sections = baseUrlSections(realUsageSrc(lang));
+      sections.forEach((body, i) => {
+        const alerts = body.filter((l) => l.trim() === "> [!IMPORTANT]").length;
+        if (alerts !== 1) failures.push(`docs/${lang}/USAGE.md 第 ${i + 1} 处 base_url 有 ${alerts} 条 \`> [!IMPORTANT]\`，要恰 1 条`);
+        const anchor = BASE_URL_ANCHORS[i] ?? "";
+        if (!body.join("\n").includes(anchor)) {
+          failures.push(`docs/${lang}/USAGE.md 第 ${i + 1} 处 base_url 里找不到 \`${anchor}\` —— 提示还在，坑本身没了`);
+        }
+      });
+    }
+    expect(failures, `报文：\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  it("该红时红：某一份把 base_url 的 alert 退回加粗散文 ⇒ 条数那格红并点名语言与第几处", () => {
+    const read = readerWith("en", (s) => s.replace("> [!IMPORTANT]\n> This SDK's `base_url` does **not** include `/v1` —", "This SDK's `base_url` does **not** include `/v1` —"), "USAGE");
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      baseUrlSections(read(lang)).forEach((body, i) => {
+        const alerts = body.filter((l) => l.trim() === "> [!IMPORTANT]").length;
+        if (alerts !== 1) failures.push(`docs/${lang}/USAGE.md 第 ${i + 1} 处 base_url 有 ${alerts} 条`);
+      });
+    }
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("en/USAGE.md 第 2 处");
+  });
+
+  it("该红时红：alert 还在、但那条路径被抹掉 ⇒ 内容锚那格红（只数条数抓不住它）", () => {
+    // ⚠️ **必须 `replaceAll`**：那一段里 `/v1/messages` 出现两次
+    //（第二次藏在反例 `/v1/v1/messages` 的**子串**里）。只换第一处的话内容锚照旧命中，
+    //    这一格会平凡地全绿 —— 本组落地时实测栽过一次。
+    const read = readerWith("ja", (s) => s.replaceAll("/v1/messages", "/v1/msgs"), "USAGE");
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      baseUrlSections(read(lang)).forEach((body, i) => {
+        const anchor = BASE_URL_ANCHORS[i] ?? "";
+        if (!body.join("\n").includes(anchor)) failures.push(`docs/${lang}/USAGE.md 第 ${i + 1} 处 base_url 里找不到 \`${anchor}\``);
+      });
+    }
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("ja/USAGE.md 第 2 处");
+  });
+
+  it("认不出要吵：含 `base_url` 的 `###` 不是三个时当场抛，不许扫一段空文本", () => {
+    expect(() => baseUrlSections("# T\n\n## A\n\n### base_url\n\n正文\n")).toThrow(/判据的落点变了/);
+  });
+
+  /* ── W115：流式围栏 ─────────────────────────────────────────────────────── */
+
+  it("W115 三种 SDK 与裸 HTTP 各自的流式开关逐份都在（形态而不是措辞）", () => {
+    const MARKERS = ["stream=True", "client.messages.stream(", "generate_content_stream(", '"stream": true'] as const;
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const src = realUsageSrc(lang);
+      for (const m of MARKERS) if (!src.includes(m)) failures.push(`docs/${lang}/USAGE.md 里没有 \`${m}\``);
+    }
+    expect(failures, `报文：\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  it("该红时红：某一份的 Anthropic 流式围栏被删掉 ⇒ 那格红并点名语言与缺的那一句", () => {
+    const read = readerWith("zh-TW", (s) => s.replace("client.messages.stream(", "client.messages.create("), "USAGE");
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      if (!read(lang).includes("client.messages.stream(")) failures.push(`docs/${lang}/USAGE.md 里没有 \`client.messages.stream(\``);
+    }
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("zh-TW/USAGE.md");
+  });
+
+  /* ── W115：页脚形态 A（R26e'）───────────────────────────────────────────── */
+
+  function footerFailures(read: ApiDocReader): string[] {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const api = DOC_SECTIONS.API[lang];
+      const want = api[api.length - 1] ?? "";
+      const lines = outsideFences(read(lang)).split("\n");
+      const h2s = lines.map((l, i) => [l, i] as const).filter(([l]) => /^## /.test(l));
+      const last = h2s[h2s.length - 1];
+      if (last === undefined) { out.push(`docs/${lang}/USAGE.md 里一个 \`##\` 都没有`); continue; }
+      if (last[0] !== want) {
+        out.push(`docs/${lang}/USAGE.md 的末节是「${last[0]}」，译名表同一下标是「${want}」`);
+        continue;
+      }
+      const bullets = lines.slice(last[1] + 1).filter((l) => /^- /.test(l));
+      if (bullets.length !== 4) {
+        out.push(`docs/${lang}/USAGE.md 的页脚有 ${bullets.length} 条 bullet，形态 A 固定是 4 条`);
+      }
+      for (const target of FOOTER_TARGETS) {
+        const n = bullets.filter((b) => b.includes(`](${target})`)).length;
+        if (n !== 1) out.push(`docs/${lang}/USAGE.md 的页脚里指向 ${target} 的 bullet 有 ${n} 条，要恰 1 条`);
+      }
+    }
+    return out;
+  }
+
+  it("W115 页脚统一成形态 A：末节 == 译名表同一下标，恰 4 条 bullet，四份兄弟文档各恰 1 条", () => {
+    const failures = footerFailures(realUsageSrc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：页脚少一条 bullet ⇒ 条数那格红并点名条数", () => {
+    const read = readerWith("zh-CN", (s) => s.replace(/\n- [^\n]*\[REGISTRAR\.md\]\(REGISTRAR\.md\)\n/, "\n"), "USAGE");
+    const failures = footerFailures(read);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(2);
+    expect(failures[0] ?? "").toContain("有 3 条 bullet");
+    expect(failures[1] ?? "").toContain("指向 REGISTRAR.md 的 bullet 有 0 条");
+  });
+
+  it("该红时红：某一份把末节标题写成自己那一族的别名 ⇒ 形态 A 那格红并点名两个译名", () => {
+    const api = DOC_SECTIONS.API.ja;
+    const last = api[api.length - 1] ?? "";
+    const read = readerWith("ja", (s) => s.replace(`\n${last}\n`, "\n## 関連ドキュメント\n"), "USAGE");
+    const failures = footerFailures(read);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["## 関連ドキュメント", last]) expect(failures[0] ?? "").toContain(h);
+  });
+});

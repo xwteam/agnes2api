@@ -568,6 +568,30 @@ BANNER='[collection-guard] ✅'
 #   ⚠️ **同批删掉 `docs-parity.test.ts` 的 `EMPTY_BY_DESIGN` 里
 #   `["R3 代码围栏语言标记序列","REGISTRAR"]` 那条登记**（W123 的另一半）：补了围栏之后
 #   那条登记当场发霉，名册两个方向都查。**格数不变**（那一格本来就在跑）。
+# P3f 阶段 7C（W114 + W115）从 4025 改到 4039（+14）：五份 `USAGE.md` 从「5 个平铺 `##`、
+#   0 个 `###`、4 段围栏」的 SDK 接线纸，扩成 12 节 / 31 个 `###` / 11 段围栏的使用指南
+#   （zh-CN·zh-TW·ja·ko 各 342 行、en 402 行；旧形态是 93–101 行）。
+#   新增 14 格，全在 `docs-parity.test.ts` 的「W114–W115 五份 USAGE.md 的扩容、
+#   base_url 三坑与流式围栏」一组：
+#   + W114 四格：`##` 恰 12 / `###` 五份相等且 ≥31 / 围栏 ≥11 段且**开围栏**语言标注率 100% /
+#     围栏语言构成逐份是 6 段 ```python + 5 段 ```bash；配一格「某份把 `###` 降回正文
+#     ⇒ 数量对等那格红」的反向控制。
+#   + W115 base_url 三格：三处 `base_url` 小节各恰 1 条 `> [!IMPORTANT]` 且各自点着
+#     自己那条路径（`/chat/completions` / `/v1/messages` / `/v1beta/models`）；
+#     两格反向控制（退回加粗散文 ⇒ 条数红；alert 还在而路径被抹掉 ⇒ 内容锚红）；
+#     一格「含 `base_url` 的 `###` 不是三个时当场抛」。
+#   + W115 流式两格：四个流式开关（`stream=True` / `client.messages.stream(` /
+#     `generate_content_stream(` / `"stream": true`）逐份都在 + 该红时红。
+#   + W115 页脚三格：形态 A（末节 == 译名表同一下标、恰 4 条 bullet、四份兄弟各恰 1 条）
+#     + 少一条 bullet 该红 + 末节改名该红。
+#   🔴 **一个 `##` 的文本都没钉**：§1.9.3 把 `USAGE` 挡在 `DOC_SECTIONS` 之外
+#   （钉文本 = 拿今天的现状当模板）。那条射程登记由 W124 那组的
+#   「射程登记：只有 DEPLOY 与 API 进这张表」双向守着，本组不复制第二份。
+#   ⚠️ **同批改 `docs-glossary.test.ts` 的 `PENDING_TERM_CONFLICTS`**：**格数不变**
+#   （那三格本来就在跑）。销账 1 行（`ko｜凭据`：USAGE 从 `인증 정보` 改成 `자격 증명`，
+#   六份从此同词 —— 这是那张表建起来之后第一条真正消失的行），另有 5 行是
+#   「USAGE 这一侧也被看着了」。反向控制 ①② 的支点（`zh-TW｜排障`）跟着多了
+#   `｜USAGE=疑難排解`，两格的期望值同批改，**支点没被抽掉**。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -576,7 +600,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=4025
+EXPECT_NODE_TESTS=4039
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

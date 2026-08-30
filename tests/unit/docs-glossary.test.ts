@@ -175,11 +175,38 @@ function termConflicts(read: DocReader): string[] {
  * ⚠️ **另有一条是本轮改出来又改回去的，记在这里备查**：`zh-TW｜客户端` 初稿把
  * API 从 `用戶端`（台标）写成了 `客戶端`（大陆用词）——**判据当场逮到**，落地前已改回，
  * 所以那一行在本表里逐字未动。这是这条判官第一次抓到本轮自己造的回归。
+ *
+ * ── 阶段 7C 之三（W114/W115 把五份 `USAGE.md` 从 95–103 行扩到 334–394 行）动了哪六行 ──
+ * 🔴 **销账 1 行，另外五行只是「USAGE 这一侧也被看着了」。** 逐条分清是哪一类：
+ *
+ * **① 真销账（一行，从表里整条消失）**：
+ * · `ko｜凭据`：USAGE 从 `인증 정보` 改成 `자격 증명`。这是**这张表建起来之后第一条
+ *   真正消失的行**——ADMIN/API/DEPLOY/README/REGISTRAR 五份早已一致写 `자격 증명`，
+ *   USAGE 是最后一个钉子户（上面阶段 5B-3 与 7B 之四两处注释都写着「USAGE 那一份
+ *   仍是 `인증 정보`，归后续」，这里就是那个「后续」）。六份从此同词 ⇒ 无冲突 ⇒ 行消失。
+ *
+ * **② USAGE 这一侧新进表（五行，分歧一条没少）**：旧版 USAGE.md 只有 95–103 行、
+ *    五个平铺 `##`，这几个词一次都没出现；扩容之后这一份从此也被看着了：
+ * · `en｜补池` USAGE=`refill`（页脚那条 `automatic pool refill`，与 README 同）。
+ * · `ja｜排障` USAGE=`トラブルシューティング`（与 DEPLOY/REGISTRAR 同，不写 ADMIN 的 `障害対応`）。
+ * · `ja｜注册机` USAGE=`レジストラー`（长音写法，与 README/API/REGISTRAR 同）。
+ * · `ko｜上游` USAGE=`업스트림`（多数用词，不写 DEPLOY 里那处 `상류`）。
+ * · `zh-TW｜排障` USAGE=`疑難排解`（台标，与 REGISTRAR 同，不写 ADMIN 的大陆用词 `排障`）。
+ *   ⚠️ 这一条**动到了反向控制 ①② 的支点**：那两格原来断言「`zh-TW｜排障` 恰是
+ *   `ADMIN=排障｜REGISTRAR=疑難排解`」，现在这一行多了 `｜USAGE=疑難排解`。
+ *   两格的期望值已跟着改，**支点本身没被抽掉**（把 REGISTRAR 那份改口仍然让这一行消失）。
+ *
+ * ⚠️ **本轮同样有一条改出来又改回去的**：ja 的「客户端拉不到模型列表时」初稿写成
+ * `### クライアントがモデル一覧を取れないとき`，`一覧` 正是 `速查` 那条 `scope: "headings"`
+ * 的 ja 译法之一 ⇒ 判据当场造出一条 `ja｜速查｜ADMIN=早見表｜USAGE=一覧` 的**假冲突**
+ * （那里的 `一覧` 是「列表」不是「速查」，正是表头注释里写的那类假阳性）。
+ * 标题改成 `モデルリスト` 后消失，**正文里的 `モデル一覧` 一个字没动**——`scope: "headings"`
+ * 本来就看不见正文，这也顺手证实了那条射程注释不是传说。
  */
 const PENDING_TERM_CONFLICTS: readonly string[] = [
   "en｜仓库｜ADMIN=repo｜API=repository｜DEPLOY=repo+repository｜REGISTRAR=repository｜SPONSORS=repository",
   "en｜免费档｜DEPLOY=free plan+free tier",
-  "en｜补池｜ADMIN=refill+tend｜API=refill+tend｜DEPLOY=refill+tend｜README=refill｜REGISTRAR=refill+tend+top-up",
+  "en｜补池｜ADMIN=refill+tend｜API=refill+tend｜DEPLOY=refill+tend｜README=refill｜REGISTRAR=refill+tend+top-up｜USAGE=refill",
   "ja｜免费档｜DEPLOY=無料プラン+無料枠｜README=無料枠",
   "ja｜凭据｜ADMIN=資格情報｜API=認証情報｜DEPLOY=認証情報+資格情報｜README=認証情報｜REGISTRAR=認証情報+資格情報｜USAGE=認証情報",
   "ja｜并发｜ADMIN=並行｜API=並行｜DEPLOY=並行+同時実行｜REGISTRAR=並行",
@@ -187,7 +214,7 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   // 由 `DOC_SECTIONS` 钉死，ja 第 9 槽的译名就是 `## トラブルシューティング`（W124 从两仓实测
   // 出来的 K∩G 值）。⇒ 这一格**不是新的漏翻，是骨架落地的必然结果**，而且它让这一条欠账
   // 从「ADMIN 与 REGISTRAR 两份打架」变成「ADMIN 一份孤立」——修的时候动 ADMIN 那一份即可。
-  "ja｜排障｜ADMIN=障害対応｜DEPLOY=トラブルシューティング｜REGISTRAR=トラブルシューティング",
+  "ja｜排障｜ADMIN=障害対応｜DEPLOY=トラブルシューティング｜REGISTRAR=トラブルシューティング｜USAGE=トラブルシューティング",
   // ⚠️ P3f 阶段 7C（W110 / ADJ ㊷）把 ADMIN 这一侧从 `ドキュメント+文書` 收敛成 `文書`：
   // 那一份里 `ドキュメント` **只在旧页脚标题 `## 関連ドキュメント` 出现过一次**（实测 1 处），
   // 而五类子文档的页脚统一成形态 A 之后它变成 `## 次のステップ`，那一处随之消失；
@@ -195,11 +222,10 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   // 收敛，与 5B-3 给 `ja｜默认` 做的是同一件事。**不是销账**：分歧照旧在 ADMIN 与
   // API/README/SPONSORS 之间，只是 ADMIN 这一侧不再自相矛盾。
   "ja｜文档｜ADMIN=文書｜API=ドキュメント｜DEPLOY=ドキュメント+文書｜README=ドキュメント｜SPONSORS=ドキュメント",
-  "ja｜注册机｜ADMIN=レジストラ+レジストラー｜API=レジストラー｜DEPLOY=レジストラ+レジストラー｜README=レジストラー｜REGISTRAR=レジストラー｜SPONSORS=レジストラ",
+  "ja｜注册机｜ADMIN=レジストラ+レジストラー｜API=レジストラー｜DEPLOY=レジストラ+レジストラー｜README=レジストラー｜REGISTRAR=レジストラー｜SPONSORS=レジストラ｜USAGE=レジストラー",
   "ja｜默认｜ADMIN=既定｜API=既定｜DEPLOY=デフォルト+既定｜README=既定｜REGISTRAR=デフォルト+既定｜USAGE=既定",
-  "ko｜上游｜ADMIN=업스트림｜API=업스트림｜DEPLOY=상류+업스트림｜README=업스트림｜REGISTRAR=업스트림",
+  "ko｜上游｜ADMIN=업스트림｜API=업스트림｜DEPLOY=상류+업스트림｜README=업스트림｜REGISTRAR=업스트림｜USAGE=업스트림",
   "ko｜免费档｜DEPLOY=무료 등급+무료 요금제｜README=무료 등급",
-  "ko｜凭据｜ADMIN=자격 증명｜API=자격 증명｜DEPLOY=자격 증명｜README=자격 증명｜REGISTRAR=자격 증명｜USAGE=인증 정보",
   "ko｜邮箱｜ADMIN=메일박스｜API=메일함｜DEPLOY=메일박스+메일함｜README=메일함｜REGISTRAR=메일박스+메일함",
   "zh-TW｜仓库｜DEPLOY=倉庫｜README=儲存庫｜REGISTRAR=儲存庫｜SPONSORS=倉庫",
   "zh-TW｜余量｜DEPLOY=餘量｜REGISTRAR=餘裕+餘量",
@@ -210,7 +236,7 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   "zh-TW｜客户端｜ADMIN=客戶端｜API=用戶端｜DEPLOY=客戶端+用戶端｜README=用戶端｜USAGE=用戶端",
   "zh-TW｜密钥｜ADMIN=密鑰｜DEPLOY=密鑰｜README=金鑰｜REGISTRAR=金鑰",
   "zh-TW｜并发｜ADMIN=並行｜API=並行｜DEPLOY=並發+並行｜REGISTRAR=並行",
-  "zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解",
+  "zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解｜USAGE=疑難排解",
   "zh-TW｜网关｜ADMIN=閘道｜API=閘道｜DEPLOY=網關+閘道｜README=閘道｜REGISTRAR=閘道｜USAGE=閘道",
   "zh-TW｜调试台｜ADMIN=除錯台｜API=除錯台｜DEPLOY=偵錯台｜README=除錯台",
   "zh-TW｜邮箱｜ADMIN=郵箱｜API=信箱｜DEPLOY=信箱+郵箱｜README=信箱｜REGISTRAR=信箱",
@@ -252,21 +278,31 @@ describe("W134 判官的反向控制（换掉读文件那一步，注入夹具�
       return l === lang && d === doc ? text.split(from).join(to) : text;
     };
 
-  it("① 把 zh-TW/REGISTRAR.md 的「疑難排解」改成「排障」⇒ 冲突消失、台账对不上，红里点名是哪个词哪两份文档", () => {
+  /**
+   * ⚠️ **P3f 阶段 7C 之三改过这一格的措辞。** 旧标题写的是「冲突消失」——那在
+   * `zh-TW｜排障` 只有 ADMIN / REGISTRAR 两份沾边的时候是对的。USAGE.md 扩容之后
+   * 那一行成了三份（`USAGE=疑難排解`），把 REGISTRAR 改口只会让它**换个形状**
+   * （`ADMIN=排障｜REGISTRAR=排障｜USAGE=疑難排解`），并不会让它从表里消失。
+   * **断言一个字没放松**：`gone` 仍然恰好是那一行，红报文照旧点名源词与文档。
+   * 真会让整行消失的是下面那一格 ②（把最后一个用 `排障` 的 ADMIN 也改口）。
+   */
+  it("① 把 zh-TW/REGISTRAR.md 的「疑難排解」改成「排障」⇒ 那一行换了形状、台账对不上，红里点名是哪个词哪几份文档", () => {
     const after = termConflicts(patched("zh-TW", "REGISTRAR", "疑難排解", "排障"));
     expect(after).not.toEqual([...PENDING_TERM_CONFLICTS]);
-    // 少掉的正是那一行，而那一行自己就写着源词与两份文档。
+    // 少掉的正是那一行，而那一行自己就写着源词与那几份文档。
     const gone = PENDING_TERM_CONFLICTS.filter((c) => !after.includes(c));
-    expect(gone).toEqual(["zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解"]);
+    expect(gone).toEqual(["zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解｜USAGE=疑難排解"]);
     expect(gone[0]).toContain("排障");
     expect(gone[0]).toContain("ADMIN");
     expect(gone[0]).toContain("REGISTRAR");
+    // 换形状不是销账：新形状必须还在，否则上面那句解释就成了假话。
+    expect(after).toContain("zh-TW｜排障｜ADMIN=排障｜REGISTRAR=排障｜USAGE=疑難排解");
   });
 
-  it("② 反过来：把 zh-TW/ADMIN.md 的「排障」也改成「疑難排解」⇒ 同样红，因为两份就此一致了", () => {
+  it("② 反过来：把 zh-TW/ADMIN.md 的「排障」也改成「疑難排解」⇒ 同样红，因为三份就此一致了", () => {
     const after = termConflicts(patched("zh-TW", "ADMIN", "排障", "疑難排解"));
     expect(after).not.toEqual([...PENDING_TERM_CONFLICTS]);
-    expect(after).not.toContain("zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解");
+    expect(after).not.toContain("zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解｜USAGE=疑難排解");
   });
 
   it("③ 登记在案的射程边界：换成表外的词（`관문`）判据看不见，一行都不多", () => {
