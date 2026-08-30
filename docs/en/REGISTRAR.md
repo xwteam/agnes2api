@@ -20,15 +20,21 @@ the mailbox channels below.
 
 The registrar supports two mailbox channels for receiving verification codes:
 
+### The two channels side by side
+
 | | YYDS Mail | MoeMail |
 |----|---------|-------|
 | Nature | A third-party temporary-mailbox service | A temporary-mailbox service you self-host |
 | API base URL | Has a default (`YYDS_BASE_URL`, its public API endpoint) | No default (`MOEMAIL_BASE_URL`) — fill in the address of your own instance |
 | Getting credentials | Apply for an API key from the service (`YYDS_API_KEY`) | Generate an API key inside your own instance (`MOEMAIL_API_KEY`) |
 
+### Configuring the primary and the fallback
+
 **The two channels are fully equal — this project sets neither as primary and recommends
-neither.** `REGISTRAR_PRIMARY` has no default; you must explicitly set it to `yyds` or `moemail`
-when enabling the registrar. `REGISTRAR_FALLBACK` is optional: when the primary channel hits a
+neither.**
+
+`REGISTRAR_PRIMARY` has no default; you must explicitly set it to `yyds` or `moemail` when
+enabling the registrar. `REGISTRAR_FALLBACK` is optional: when the primary channel hits a
 **channel-level failure** (listing domains fails, mailbox creation fails repeatedly, invalid
 credentials, the verification code never arrives), the registrar falls back to it automatically
 for that attempt. Leave it empty to disable fallback.
@@ -37,6 +43,8 @@ for that attempt. Leave it empty to disable fallback.
 > *through* that mailbox channel, so a broken MX record or a deleted mail-forwarding rule — every
 > API call returns 2xx, the mail simply never shows up — likewise means "this channel cannot
 > produce a key right now".
+
+### How to pick your primary
 
 What to base the choice on: the registrar works around Agnes blocking disposable-mailbox domains
 by rotating domains, so the more usable domains you have, the longer it keeps working. Check how
@@ -48,11 +56,15 @@ that depends only on your own account or self-hosted setup, not on which service
 This repository does not ship any real keys, accounts, or private domains. Before enabling the
 registrar you need to prepare, on your own:
 
+### What each channel needs
+
 - **Using YYDS Mail**: apply for an API key from the service and set `YYDS_API_KEY`
   (`YYDS_BASE_URL` already has a default and usually doesn't need to change).
 - **Using MoeMail**: self-host a MoeMail instance, put its address in `MOEMAIL_BASE_URL`, and put
   the API key generated inside that instance in `MOEMAIL_API_KEY` (neither has a default — both
   must be set explicitly).
+
+### The minimum you have to prepare
 
 At minimum, prepare credentials for whichever channel `REGISTRAR_PRIMARY` points to. If you also
 set `REGISTRAR_FALLBACK`, prepare credentials for that channel as well.
@@ -84,6 +96,8 @@ variable above must be a positive integer; the gateway refuses to start otherwis
 
 ## Scheduling differences between the two runtimes
 
+### Who triggers it, and where the interval comes from
+
 | Deployment target | Trigger | What controls the interval |
 |-----------------|-------|--------------------------|
 | Cloudflare Worker | Cron under `[triggers]` in `wrangler.toml` (default `*/30 * * * *`, every 30 minutes) | Edit the cron expression in `wrangler.toml` |
@@ -102,99 +116,115 @@ credentials, …) really is identical between the two runtimes.
 
 ### Cloudflare Cron Trigger's wall-clock limit (read before tuning the numbers)
 
-If you deploy to the Worker, refills are triggered by a Cron Trigger. Be aware of the following:
+If you deploy to the Worker, refills are triggered by a Cron Trigger. Read this section before
+touching any of the numbers.
 
-- A single Cron Trigger invocation has a wall-clock limit of **15 minutes (900 seconds)**.
-- **`ctx.waitUntil()` does not extend this limit** — that grace period only applies to HTTP
-  requests, not to Cron-triggered invocations.
-- The CPU time limit is 30 seconds, but the `await`ed network calls during a refill (sending and
-  polling for the verification code) don't count against CPU time, so the CPU limit isn't the
-  real constraint.
-- Every HTTP request on the registrar's path carries a **15-second per-request timeout**
-  (a fixed value, not configurable). It is what makes the two estimates below meaningful:
-  without it, a single hung connection can stretch a round indefinitely.
-- **Typical duration** (every request returns quickly and the first domain isn't blocked) is
-  dominated by waiting for the verification code: roughly `MINT_BATCH × CODE_TIMEOUT_MS` =
-  5 × 120s = 600s, plus up to ~20s from the random delays between mint attempts within a round
-  (at most 4 gaps, up to 5s each) — about **600–620s** total, leaving roughly **30% headroom**
-  under the 900s wall-clock limit.
-- **Theoretical worst case** has to include the per-request timeout. Besides polling for the
-  code, one mint issues "1 request to list domains + 3 per domain attempted (create mailbox,
-  send code, delete mailbox) + 3 more (register, log in, create key)", i.e.
-  `CODE_TIMEOUT_MS + (1 + 3 × MAX_DOMAIN_ATTEMPTS + 3) × 15s`, which is about
-  120 + 420 = **540s** with the defaults; multiplied by `MINT_BATCH` that is far beyond 900s.
-  In other words, **the default configuration can hit the wall-clock limit in pathological
-  cases** — a deliberate trade-off: each key is persisted the moment it is minted, so being
-  aborted only leaves the round incomplete (see the next bullet). If you want even the
-  pathological case to stay within the wall clock, set `MINT_BATCH` to 1–2, or lower
-  `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
-- **With `REGISTRAR_FALLBACK` configured, multiply the *worst case* by the number of channels
-  (i.e. ×2); the typical duration is unchanged.** In the typical case the code arrives and the
-  fallback is never engaged; only a channel-level failure such as "the verification code never
-  arrives" makes the same refill slot wait out another `CODE_TIMEOUT_MS` on the fallback. The
-  startup warning `TEND_INTERVAL_MS is below the worst-case round duration` uses exactly this
-  model: `MINT_BATCH × CODE_TIMEOUT_MS × number of channels`.
-- **On Worker the registrar stops on its own before the wall clock runs out** — this covers the
-  "worst case" bullet above, but *not* the "theoretical worst case" one. Before starting each
-  mint it checks whether the remaining wall clock can hold one complete mint
-  (`CODE_TIMEOUT_MS × number of channels`, plus the inter-attempt delay). If it cannot, that
-  attempt is **never started**: the round ends early, a `registrar.round_budget_exhausted`
-  warning is logged (something like "not enough wall-clock budget left to complete another
-  mint, ending the round early"), keys already minted are kept, and the remaining slots roll
-  over to the next scheduled round. (If even the *first* attempt doesn't fit, a different event
-  fires instead — `registrar.round_budget_impossible`, at error level; see "Do not set
-  `CODE_TIMEOUT_MS` too high" below.)
-  Not starting is the whole point, as opposed to being cut off mid-flight: when the platform
-  aborts a round, the temporary mailbox in use at that moment is never deleted (it expires ~24h
-  later on YYDS via `expiresAt`, or after the 1h TTL on MoeMail).
-  So on Worker **`MINT_BATCH` is a per-round ceiling, not a guarantee**: the round may simply not
-  fill it. Node/Docker has no platform wall clock, so the **scheduled** round does not engage this
-  mechanism and uses `MINT_BATCH` in full.
-  ⚠️ **The panel's "Refill now" is the exception: both runtimes carry the same per-round budget.**
-  How long a single click may run is a property of that button, not of the runtime, so a manual
-  refill on Node/Docker can also mint fewer keys; the next scheduled round picks up the rest.
-- **⚠️ The budget is not a blanket guarantee — a residual case remains.** The check only counts
-  the dominant term, `CODE_TIMEOUT_MS × number of channels`. It deliberately does **not** include
-  the 15-second per-request timeouts or the 403 back-offs: including them would mean no attempt
-  ever dares to start, since the "theoretical worst case" above already exceeds 900s on its own.
-  The budget is 87% of the wall clock, and the ~120s left over is what covers those tails. So:
-  - **"the upstream simply isn't delivering the verification code"** — the common slow case in
-    this section — **is fully covered**;
-  - **"nearly every HTTP request hangs for its full 15s"** is pathological: a single attempt can
-    exceed the reserved headroom and still be aborted by the platform, leaving that temporary
-    mailbox behind. If that worries you, work the "theoretical worst case" formula above and set
-    `MINT_BATCH` to 1–2, or lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
-- **Do not set `CODE_TIMEOUT_MS` too high.** Once `CODE_TIMEOUT_MS × number of channels` exceeds
-  the per-round budget (87% of the wall clock), **no attempt can start at all** on Worker and the
-  refill produces nothing, round after round. Two log lines cover this — grep by **event name**
-  (see "Troubleshooting" below; more reliable than grepping prose, which can drift across
-  wording changes, and — being Chinese in this doc's examples until now — was never greppable
-  for non-Chinese-reading operators in the first place):
-  - **At startup**, a **warning** (`console.warn`), event name
-    `registrar.attempt_exceeds_worker_budget` (`grep 'registrar.attempt_exceeds_worker_budget'`),
-    something like
-    `[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS times the channel
-    count exceeds the Worker per-round wall-clock budget codeTimeoutMs=... chainLength=...
-    worstAttemptMs=... workerRoundBudgetMs=...`.
-    It does **not** stop the gateway from starting — unlike "missing credentials fail at
-    startup". Node/Docker has no platform wall clock and the same configuration is perfectly
-    valid there, so both runtimes print this warning but only Worker is actually affected.
-  - **On every Worker refill round** where not even the first attempt fits, an **error**
-    (`console.error`), event name `registrar.round_budget_impossible`
-    (`grep 'registrar.round_budget_impossible'`), something like
-    `[registrar] registrar.round_budget_impossible the worst-case time for one mint already
-    exceeds this round's wall-clock budget, not a single attempt can start
-    worstAttemptMs=... roundBudgetMs=...`.
-    It repeats every round, which is how you tell this is a standing condition rather than a
-    one-off.
-- **Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers
-  out with both formulas above.** When the limit is hit, the platform aborts that Cron
-  invocation.
-- Being aborted does not lose any key that was already minted — each key is written to storage
-  as soon as it's minted, so an interrupted round is simply incomplete; the next scheduled round
-  picks up where it left off.
+#### The four hard limits the platform gives you
+
+| Limit | Value | Notes |
+|-----|-----|-----|
+| Wall clock per invocation | **15 minutes (900 seconds)** | The Cron Trigger's hard limit; hitting it means the platform aborts the invocation. |
+| `ctx.waitUntil()` | **Does not extend this limit** | That grace period only applies to HTTP requests, not to Cron-triggered invocations. |
+| CPU time | 30 seconds | The `await`ed network calls during a refill (sending and polling for the verification code) don't count against CPU time, so the CPU limit isn't the real constraint. |
+| Per-request timeout | 15 seconds | Carried by **every** HTTP request on the registrar's path; a fixed value, not configurable. |
+
+**The per-request timeout is what makes the two estimates below meaningful**: without it, a
+single hung connection can stretch a round indefinitely.
+
+#### Two estimates for a single round
+
+| Estimate | Formula | Result with the defaults |
+|--------|-------|------------------------|
+| **Typical duration** | `MINT_BATCH × CODE_TIMEOUT_MS` + the random delays within a round | 600 + 20 ≈ **600–620s**, leaving roughly **30% headroom** under the 900s wall-clock limit |
+| **Theoretical worst case** (one mint) | `CODE_TIMEOUT_MS + (1 + 3 × MAX_DOMAIN_ATTEMPTS + 3) × 15s` | 120 + 420 = **540s**; multiplied by `MINT_BATCH` that is far beyond 900s |
+| With `REGISTRAR_FALLBACK` set | the *worst case* × the number of channels (i.e. ×2) | the typical duration is unchanged |
+
+- **Typical** means every request returns quickly and the first domain isn't blocked, so the time
+  is dominated by waiting for the verification code: roughly `MINT_BATCH × CODE_TIMEOUT_MS` =
+  5 × 120s = 600s, plus at most 4 random delays of up to 5s each, about 20s.
+- **The request count in the worst case** comes from this: besides polling for the code, one mint
+  issues "1 request to list domains + 3 per domain attempted (create mailbox, send code, delete
+  mailbox) + 3 more (register, log in, create key)". In other words, **the default configuration
+  can hit the wall-clock limit in pathological cases** — a deliberate trade-off: each key is
+  persisted the moment it is minted, so being aborted only leaves the round incomplete. If you
+  want even the pathological case to stay within the wall clock, set `MINT_BATCH` to 1–2, or
+  lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
+- **The fallback raises the worst case only, never the typical one.** In the typical case the
+  code arrives and the fallback is never engaged; only a channel-level failure such as "the
+  verification code never arrives" makes the same refill slot wait out another `CODE_TIMEOUT_MS`
+  on the fallback. The startup warning `TEND_INTERVAL_MS is below the worst-case round duration`
+  uses exactly this model: `MINT_BATCH × CODE_TIMEOUT_MS × number of channels`.
+
+#### On Worker the registrar stops on its own before the wall clock runs out
+
+**This covers the "worst case" row above, but *not* the "theoretical worst case" one.** Before
+starting each mint it checks whether the remaining wall clock can hold one complete mint
+(`CODE_TIMEOUT_MS × number of channels`, plus the inter-attempt delay). If it cannot, that
+attempt is **never started**: the round ends early, a `registrar.round_budget_exhausted` warning
+is logged (something like "not enough wall-clock budget left to complete another mint, ending the
+round early"), keys already minted are kept, and the remaining slots roll over to the next
+scheduled round. If even the *first* attempt doesn't fit, a different event fires instead —
+`registrar.round_budget_impossible`, at error level; see the next subsection.
+
+Not starting is the whole point, as opposed to being cut off mid-flight: when the platform aborts
+a round, the temporary mailbox in use at that moment is never deleted (it expires ~24h later on
+YYDS via `expiresAt`, or after the 1h TTL on MoeMail). So on Worker **`MINT_BATCH` is a per-round
+ceiling, not a guarantee**: the round may simply not fill it. Node/Docker has no platform wall
+clock, so the **scheduled** round does not engage this mechanism and uses `MINT_BATCH` in full.
+
+> ⚠️ **The panel's "Refill now" is the exception: both runtimes carry the same per-round budget.**
+> How long a single click may run is a property of that button, not of the runtime, so a manual
+> refill on Node/Docker can also mint fewer keys; the next scheduled round picks up the rest.
+
+**⚠️ The budget is not a blanket guarantee — a residual case remains.** The check only counts the
+dominant term, `CODE_TIMEOUT_MS × number of channels`. It deliberately does **not** include the
+15-second per-request timeouts or the 403 back-offs: including them would mean no attempt ever
+dares to start, since the "theoretical worst case" above already exceeds 900s on its own. The
+budget is 87% of the wall clock, and the ~120s left over is what covers those tails:
+
+| Where the slowness is | Does the budget cover it | Consequence |
+|---------------------|------------------------|-----------|
+| **The upstream isn't delivering the code** (the common slow case) | **Fully covered** | The round ends early; remaining slots roll over to the next scheduled round |
+| **Nearly every HTTP request hangs for its full 15s** (pathological) | A single attempt can exceed the reserved headroom | It is still aborted by the platform, leaving that temporary mailbox behind |
+
+If the second row worries you, work the "theoretical worst case" formula above and set
+`MINT_BATCH` to 1–2, or lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
+
+#### Two log lines: grep them by event name when the limit is exceeded
+
+**Do not set `CODE_TIMEOUT_MS` too high.** Once `CODE_TIMEOUT_MS × number of channels` exceeds the
+per-round budget (87% of the wall clock), **no attempt can start at all** on Worker and the refill
+produces nothing, round after round. Two log lines cover this — grep by **event name** (see
+"Troubleshooting" below; more reliable than grepping prose, which can drift across wording
+changes and is not translated into the language you are reading):
+
+- **At startup**, a **warning** (`console.warn`), event name
+  `registrar.attempt_exceeds_worker_budget` (`grep 'registrar.attempt_exceeds_worker_budget'`),
+  something like
+  `[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS times the channel
+  count exceeds the Worker per-round wall-clock budget codeTimeoutMs=... chainLength=...
+  worstAttemptMs=... workerRoundBudgetMs=...`.
+  It does **not** stop the gateway from starting — unlike "missing credentials fail at startup".
+  Node/Docker has no platform wall clock and the same configuration is perfectly valid there, so
+  both runtimes print this warning but only Worker is actually affected.
+- **On every Worker refill round** where not even the first attempt fits, an **error**
+  (`console.error`), event name `registrar.round_budget_impossible`
+  (`grep 'registrar.round_budget_impossible'`), something like
+  `[registrar] registrar.round_budget_impossible the worst-case time for one mint already
+  exceeds this round's wall-clock budget, not a single attempt can start
+  worstAttemptMs=... roundBudgetMs=...`.
+  It repeats every round, which is how you tell this is a standing condition rather than a
+  one-off.
+
+**Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers out
+with both formulas above.** When the limit is hit, the platform aborts that Cron invocation.
+Being aborted does not lose any key that was already minted — each key is written to storage as
+soon as it's minted, so an interrupted round is simply incomplete; the next scheduled round picks
+up where it left off.
 
 ## How the gap is computed (which keys occupy a `TARGET_KEYS` slot)
+
+### Which of the four key states occupy a slot
 
 Gap = `TARGET_KEYS` − **the number of keys that have not been evicted**. There is exactly one
 criterion: **if `evicted` is false, it occupies a slot.**
@@ -205,6 +235,8 @@ criterion: **if `evicted` is false, it occupies a slot.**
 | **Cooling down** (rate-limited, consecutive failures) | **Yes** | No |
 | **Disabled by an administrator** | **Yes** | No |
 | Evicted (401/403, credentials dead) | No | No |
+
+### Why a cooling key still occupies a slot
 
 **"Cooling counts as occupied" is deliberate.** A cooldown is a state that **comes back on its
 own**; treating it as a gap mints new accounts that **never go away** — one transient failure
@@ -225,6 +257,8 @@ That's the button in the admin panel (`POST /admin/api/registrar/tend`). A `202`
 **has started**; it keeps running after the response returns. Look at the "tend history" section
 for the outcome — its `trigger` will read `manual`.
 
+### The four guardrails
+
 It has **four guardrails**; failing any one of them means the round never starts:
 
 | Guardrail | Response when it fails | What it blocks |
@@ -238,6 +272,8 @@ The `429` body carries `remaining` (how many are left today), `resetAt` (recover
 midnight) and `retryAfterMs`. **The `202` body carries `remaining` too**, so the panel can state
 the truth up front instead of waiting until the button stops working. When the registrar is off,
 the endpoint answers `409 registrar_disabled`.
+
+### The honest limits and the residual risk
 
 ⚠️ **An honest limit — do not read this as "concurrency is solved".** KV is eventually
 consistent, so that storage lock is **best-effort, not a mutual-exclusion primitive**. What it
@@ -305,6 +341,8 @@ attempt, whether it succeeded or failed.
 
 ## Troubleshooting
 
+### Startup and logging conventions
+
 - **If credentials are missing while enabled, the process fails to start and tells you which
   variable is missing.** The registrar follows a fail-closed policy — missing credentials never
   degrade silently, they fail the gateway loudly so the problem is easy to spot.
@@ -314,6 +352,8 @@ attempt, whether it succeeded or failed.
   the human-readable message: the message is prose and can change wording; the event name is
   the one part of this logging that's a stable public contract, and it doubles as a
   language-neutral anchor for operators who don't read Chinese.
+### Reading the failure reasons in `reasons=`
+
 - **When a round leaves slots unminted, the closing log adds a warning containing `reasons=`**,
   e.g. `reasons=yyds:register_failed×3 moemail:code_timeout×1`. Read that line first to tell
   which layer broke: `code_timeout` = this channel is not receiving Agnes' mail (MX record /
@@ -328,6 +368,8 @@ attempt, whether it succeeded or failed.
   most likely make forwarding fail every time it is selected, so disable or delete it from the
   admin panel. An error event `registrar.minted_key_suspicious` is emitted alongside it (it records
   only the channel and the length, **never the plaintext**).
+### When a channel keeps failing
+
 - If a channel keeps failing to register (for example, Agnes has tightened its verification-code
   or CAPTCHA policy), that's an upstream change no amount of code can work around. You can disable
   the registrar and switch to manually importing keys instead (see [DEPLOY.md](DEPLOY.md)).

@@ -524,6 +524,21 @@ BANNER='[collection-guard] ✅'
 #   `ドキュメント` 在 `docs/ja/ADMIN.md` 里零命中（它此前**只**出现在旧页脚标题
 #   `## 関連ドキュメント`），该份收敛成 `文書`。**不是销账**，分歧照旧在 ADMIN 与
 #   API/README/SPONSORS 之间；`toEqual` 是逐行的，不改台账就红。
+# P3f 阶段 7C（W111）从 4010 改到 4017（+7）：五份 `REGISTRAR.md` 补 `###`/`####` 两级
+#   （2 → 15 / 4）、`### Cloudflare Cron 触发器的墙钟上限` 那一段的 bullet 洪流拆成
+#   4 个 `####` + 3 张表。新增 7 格（全在 `docs-parity.test.ts` 的
+#   「W111 五份 REGISTRAR.md 的两级分层与 Cron 那一节的拆分」一组）：
+#   + 3 格数分层（`##` 恰 11 个「骨架不动」/ `###`/`####` 五份相等且不回退（15 / 4）/
+#     该红时红「把一个 `###` 降回正文」）
+#   + 1 格 Cron 那一节的形状（五份各恰 4 个 `####` + ≥3 张表）
+#   + 3 格**位置**判据（🔴 本组的重点）：W129 钉死的那几条串
+#     （`87%` / `registrar.attempt_exceeds_worker_budget` / `console.warn` / `console.error`
+#     ＋残余场景那句的逐语言正典）必须留在 Cron 那一节**之内** /
+#     该红时红「把 `87%` 挪到文档末尾 ⇒ 只有位置那格红，整份文档照旧查得到它」/
+#     认不出要吵「小节标题被改写当场抛」。
+#   ⚠️ 为什么要补位置这一层：`tests/unit/registrar/config.test.ts` 那一组是
+#   `toContain(整份文档)`，串被挪进隔壁小节它**一格都不会红**，而读者在这一节里读到的
+#   那个数就此没了出处。两组射程不同，都要留着。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -532,7 +547,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=4010
+EXPECT_NODE_TESTS=4017
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

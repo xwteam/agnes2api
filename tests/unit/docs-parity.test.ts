@@ -10586,3 +10586,173 @@ describe("W108–W110 五份 ADMIN.md 的分层、围栏与排障三段式", () 
     for (const h of ["## 相关文档", last]) expect(failures[0] ?? "").toContain(h);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W111 —— 五份 `REGISTRAR.md` 的 11 节 `##` 骨架**之下**补两级
+ *（P3f 阶段 7C）
+ *
+ * · `##` 骨架**不动**（实测 11 个）。改的是它下面两级：`##` 内的话题降 `###`，
+ *   `### Cloudflare Cron 触发器的墙钟上限` 那一段的 bullet 洪流拆成 **4 个 `####`
+ *   + 3 张表**。
+ *   🔴 **五份只判「`###`/`####` 数量相等 + 层级序列相等 + 不回退下限」，不钉标题文本**
+ *   （与 W108 同一条纪律，§1.9.4：`##` 维持现状的文档钉文本 = 拿现状当模板）。
+ *   层级序列那一半由 `R2 heading 层级序列` 守着（本文件上方 R1–R6 那一组），
+ *   本组补的是它做不到的那一半：R2 只比五份**彼此**相等，五份一起缩水它一格都不红。
+ *
+ * ⚠️ 🔴 **本组最要紧的是最后两格，不是数数那两格。**
+ * `tests/unit/registrar/config.test.ts:297`/`:303`/`:323` 把五语言 REGISTRAR.md 的
+ * 正文**逐串钉死**（残余场景那句、`87%`、事件名、`console.warn` / `console.error`），
+ * 而那些串**恰好住在本轮要拆的这一节里**。那一组判据只查「整份文档里有没有」——
+ * 把串挪进隔壁小节、甚至挪到文档末尾，它**一格都不会红**，而读者在这一节里读到的
+ * 「预算取墙钟的 87%」就此失去出处。⇒ 这里把**位置**也钉住：这几条串必须留在
+ * Cron 墙钟那一节之内。两组射程不同，**都要留着**。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("W111 五份 REGISTRAR.md 的两级分层与 Cron 那一节的拆分", () => {
+  const realRegSrc: ApiDocReader = realDoc("REGISTRAR");
+
+  /** Cron 墙钟那一节的 `###` 标题，逐语言。**不是现找的**——找不到时下面当场抛。 */
+  const CRON_HEADING: Record<Lang, string> = {
+    "zh-CN": "### Cloudflare Cron 触发器的墙钟上限（务必读完再调参数）",
+    "zh-TW": "### Cloudflare Cron 觸發器的牆鐘上限（務必讀完再調整參數）",
+    en: "### Cloudflare Cron Trigger's wall-clock limit (read before tuning the numbers)",
+    ja: "### Cloudflare Cron トリガーの壁時計時間の上限（パラメータ調整前に必読）",
+    ko: "### Cloudflare Cron 트리거의 월클록(wall-clock) 상한(파라미터 조정 전 필독)",
+  };
+
+  /**
+   * W129 钉死的那几条串里，**住在 Cron 那一节**的部分。
+   *
+   * 前四条五语言共用（数字、事件名、两个 `console.*` 级别都是语言无关的锚点），
+   * 第五条是残余场景那句的逐语言正典——与 `config.test.ts` 的 `LANGS` 表同源，
+   * **那里改了这里不改就会两边打架**，而两边都是 `toContain`，谁也不会替对方红。
+   */
+  const CRON_PINNED_SHARED = [
+    "87%",
+    "registrar.attempt_exceeds_worker_budget",
+    "console.warn",
+    "console.error",
+  ] as const;
+  const CRON_PINNED_RESIDUAL: Record<Lang, string> = {
+    "zh-CN": "残余场景仍然存在",
+    "zh-TW": "殘餘場景仍然存在",
+    en: "a residual case remains",
+    ja: "残るケースがあります",
+    ko: "남는 시나리오가 있습니다",
+  };
+
+  /** 今天的实测值，同时是**不回退下限**（只许升不许降，与 W108 同一种形态）。 */
+  const H2_COUNT = 11;
+  const H3_FLOOR = 15;
+  const H4_FLOOR = 4;
+  /** Cron 那一节里的 `####` 恰好几个、至少几张表（`W111` 的靶子是「4 个 `####` + 3 张表」）。 */
+  const CRON_H4 = 4;
+  const CRON_TABLE_FLOOR = 3;
+
+  const headingsAtLevel = (src: string, level: number): string[] =>
+    outsideFences(src).split("\n").filter((l) => new RegExp(`^#{${level}} `).test(l));
+
+  /**
+   * Cron 那一节的正文（含它自己的标题行），到下一个 `##` 为止。
+   *
+   * ⚠️ **认不出要吵**：标题被改写时若返回空串，下面几格会变成「这一节里什么都没有」
+   * 的假红，报文会把人指向「串被挪走了」，而真正坏掉的是上面那张 `CRON_HEADING`。
+   */
+  function cronSection(src: string, lang: Lang): string {
+    const body = outsideFences(src);
+    const head = CRON_HEADING[lang];
+    const from = body.indexOf(`\n${head}\n`);
+    if (from < 0) {
+      throw new Error(`docs/${lang}/REGISTRAR.md 里找不到「${head}」`
+        + " —— 小节标题改了就回来改这张表，别让下面几格变成假红");
+    }
+    const rest = body.slice(from + 1);
+    const end = rest.search(/\n## /);
+    return end < 0 ? rest : rest.slice(0, end);
+  }
+
+  /** 一段正文里的表格数：数「分隔行」——一张表恰好一行。 */
+  const tableCount = (section: string): number =>
+    section.split("\n").filter((l) => /^\s*\|(?:\s*:?-+:?\s*\|)+\s*$/.test(l)).length;
+
+  it("W111 `##` 骨架维持现状：五份各恰 11 个 `##`（骨架不动是这一条的全部内容）", () => {
+    for (const lang of LANGS) {
+      const n = headingsAtLevel(realRegSrc(lang), 2).length;
+      expect(n, `docs/${lang}/REGISTRAR.md 的 \`##\` 数从 ${H2_COUNT} 变成了 ${n}`
+        + " —— W111 明写骨架不动，改骨架要先回来改这条判据并说明理由").toBe(H2_COUNT);
+    }
+  });
+
+  it("W111 `###`/`####` 两级：五份数量彼此相等，且不回退（今天 15 / 4）", () => {
+    const h3 = LANGS.map((l) => headingsAtLevel(realRegSrc(l), 3).length);
+    const h4 = LANGS.map((l) => headingsAtLevel(realRegSrc(l), 4).length);
+    expect(new Set(h3).size, `五份的 \`###\` 数不一致：${JSON.stringify(Object.fromEntries(LANGS.map((l, i) => [l, h3[i]])))}`)
+      .toBe(1);
+    expect(new Set(h4).size, `五份的 \`####\` 数不一致：${JSON.stringify(Object.fromEntries(LANGS.map((l, i) => [l, h4[i]])))}`)
+      .toBe(1);
+    // 下限是这一格**唯一**能挡住「五份一起缩水」的东西（同 W108 那一格的论证）。
+    expect(h3[0], `\`###\` 掉到 ${h3[0]} 了（下限 ${H3_FLOOR}）`).toBeGreaterThanOrEqual(H3_FLOOR);
+    expect(h4[0], `\`####\` 掉到 ${h4[0]} 了（下限 ${H4_FLOOR}）`).toBeGreaterThanOrEqual(H4_FLOOR);
+  });
+
+  it("该红时红：某一份把一个 `###` 降回正文 ⇒ 数量对等那格红并报出逐语言的数", () => {
+    const read = readerWith("ko", (s) => s.replace("\n### 두 채널 비교\n", "\n두 채널 비교\n"), "REGISTRAR");
+    const h3 = LANGS.map((l) => headingsAtLevel(read(l), 3).length);
+    expect(new Set(h3).size, "变异落地了却没红 —— 这一格控制是空的").toBe(2);
+    expect(h3[LANGS.indexOf("ko")], "少掉的不是 1 个").toBe(H3_FLOOR - 1);
+  });
+
+  it("W111 Cron 墙钟那一节：五份各恰 4 个 `####` + ≥3 张表（bullet 洪流真的拆开了）", () => {
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const sec = cronSection(realRegSrc(lang), lang);
+      const h4 = sec.split("\n").filter((l) => l.startsWith("#### ")).length;
+      const tables = tableCount(sec);
+      if (h4 !== CRON_H4) failures.push(`docs/${lang}/REGISTRAR.md 的 Cron 那一节有 ${h4} 个 \`####\`，应当是 ${CRON_H4}`);
+      if (tables < CRON_TABLE_FLOOR) {
+        failures.push(`docs/${lang}/REGISTRAR.md 的 Cron 那一节只有 ${tables} 张表，下限是 ${CRON_TABLE_FLOOR}`);
+      }
+    }
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("🔴 W129 钉死的那几条串仍然住在 Cron 那一节里 —— 挪出这一节，registrar 那一组一格都不会红", () => {
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const sec = cronSection(realRegSrc(lang), lang);
+      for (const token of [...CRON_PINNED_SHARED, CRON_PINNED_RESIDUAL[lang]]) {
+        if (!sec.includes(token)) {
+          failures.push(`docs/${lang}/REGISTRAR.md：「${token}」不在 Cron 墙钟那一节里了`);
+        }
+      }
+    }
+    expect(
+      failures,
+      `${failures.join("\n")}\n`
+      + "⇒ tests/unit/registrar/config.test.ts 那一组只查「整份文档里有没有」，"
+      + "串被挪进隔壁小节它一格都不红，而读者在这一节里读到的那个数就此没了出处。",
+    ).toEqual([]);
+  });
+
+  it("该红时红：把 `87%` 从 Cron 那一节挪到文档末尾 ⇒ 位置那格红并点名语言，而整份文档仍然查得到它", () => {
+    const read = readerWith(
+      "ja",
+      (s) => `${s.replace(/87%/g, "**87 パーセント**")}\n\n<!-- 87% -->\n`,
+      "REGISTRAR",
+    );
+    // 前提：整份文档照旧查得到 `87%` ⇒ config.test.ts 那一组**不会**红，只有本格会红。
+    expect(read("ja"), "变异把整份文档里的 `87%` 也弄没了 —— 那样两组一起红，证不出射程差").toContain("87%");
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      if (!cronSection(read(lang), lang).includes("87%")) failures.push(`${lang} 的 Cron 那一节里没有 87%`);
+    }
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("ja");
+  });
+
+  it("认不出要吵：Cron 那一节的标题被改写 ⇒ 当场抛，不许退化成「串被挪走了」的假红", () => {
+    const read = readerWith("en", (s) => s.replace(CRON_HEADING.en, "### Cron limits"), "REGISTRAR");
+    expect(() => cronSection(read("en"), "en")).toThrow(/找不到/);
+  });
+});
+
