@@ -252,6 +252,12 @@ BANNER='[collection-guard] ✅'
 #   （compose 规范里这一键把**这一份** healthcheck 整个关掉，Dockerfile 那条照常跑
 #   ⇒「两份逐个相同」当场变成假话），补之前全量 68 格一格不红。
 #   `healthcheckParityFailures` 补上对称的 `knownC` 扫描 + 两条负例 = 2 格。文件数不变。
+#   P3f 阶段 5B-1 从 3828 改到 3843（3840 是阶段 5A 三个提交落定后的实测值，本轮 +3）：
+#   五份 `docs/{lang}/README.md` 换成模板 12 节形态是**分步**做的，换到一半时
+#   R2–R6 的「五份逐份相同」前提不成立。`parityFailure` 改成**按内容现算分组**
+#  （已换 / 未换各成一组，组内照旧逐份相同），另加三格把这件事钉住：进度登记与磁盘
+#   现算 `toEqual`、五份全搬完时自毁的开关、一份标题改坏就不再算「已搬完」= 3 格。
+#   文件数不变。
 # 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
@@ -260,7 +266,7 @@ BANNER='[collection-guard] ✅'
 # 推送前的仓库状态是确定的，一个确定的数才拦得住「悄悄少了一格用例」；
 # 数字变了就该有人来改这四行。
 EXPECT_NODE_FILES=138
-EXPECT_NODE_TESTS=3840
+EXPECT_NODE_TESTS=3843
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

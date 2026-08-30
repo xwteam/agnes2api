@@ -1252,10 +1252,62 @@ function emptinessFailure(
   return null;
 }
 
+/**
+ * ── README 的对等分组：五语言重写期间的过渡形态（P3f 阶段 5B）────────────────
+ *
+ * R2–R6 比的是「同一份文档的五个语言版结构相同」。阶段 5B 把五份 `docs/{lang}/README.md`
+ * 从旧的 9 节骨架逐份换成模板的 12 节形态，**一次换不完**（一步两份）——换到一半时
+ * 「五份结构相同」这个前提在事实上不成立，五格 R2–R6 会一起红，而那种红说的是
+ * 「五语言之间分叉」，真因却是「有几份还没轮到」。
+ *
+ * 处置不是 `skip` 掉这五格（一条被绕过去的判据比没有更坏），而是把五份**分成两组**：
+ * 已经换成 12 节形态的一组、还是旧骨架的一组，**每组内部照旧逐份相同**。
+ * 落在同一组里的份数 ≥ 2 时这一组就是一条真判据；只剩 1 份的那一组没有可比对象，
+ * 跳过——**这是这个过渡形态真实的射程缺口**，不是豁免：它只在「某一步只搬了一份」
+ * 的那个中间态存在，两份一步就不出现。
+ *
+ * ⚠️ 分组**按内容现算**（这一份的 `## ` 全行是否恰好等于 W38 常量表那 12 行），
+ * 不靠手写名册：手写的名册会漂，而漂了的名册会把两份形态不同的文档分进同一组，
+ * 让这五格静静放行。`README_MIGRATED` 那张登记表是**给人看的进度**，
+ * 由下面两格拿现算结果 `toEqual` 两个方向对着查。
+ */
+const H2_LINES = (s: string) => outsideFences(s).split("\n").filter((l) => /^## /.test(l));
+
+/** 语言版承载的那 12 节（去掉 4 节根专属），取 W38 常量表。 */
+const langSectionTitles = (lang: string): string[] =>
+  SECTIONS.filter((s) => s.rootOnly !== true).map((s) => s.title[lang as keyof typeof s.title]);
+
+/** 这一份 README 正文是否已经换成模板的 12 节形态。**真扫描与探针共用这一份。** */
+const isMigratedBody = (body: string, lang: string): boolean =>
+  JSON.stringify(H2_LINES(body)) === JSON.stringify(langSectionTitles(lang));
+
+/** 这一份 `docs/{lang}/README.md` 是否已经换成模板的 12 节形态。 */
+const isMigratedReadme = (root: string, lang: string): boolean =>
+  isMigratedBody(readFileSync(docPath(root, lang, "README"), "utf8"), lang);
+
+/** 已换成 12 节形态的语言（按 `LANGS` 的顺序）。夹具树上恒为空 ⇒ 夹具照旧只有一组。 */
+const migratedReadmeLangs = (root: string): string[] => LANGS.filter((l) => isMigratedReadme(root, l));
+
+/** R2–R6 的分组：README 分两组，其余文档只有一组（全五种语言）。 */
+function cohortsOf(root: string, doc: string): string[][] {
+  if (doc !== "README") return [[...LANGS]];
+  const done = migratedReadmeLangs(root);
+  const todo = LANGS.filter((l) => !done.includes(l));
+  return [done, todo].filter((c) => c.length > 0);
+}
+
 /** R2–R6 的单格：一份文档 × 一条判据。返回失败报文或 `null`。真扫描与反向控制共用这一份。 */
 function parityFailure(root: string, doc: string, name: string, fingerprint: (s: string) => unknown): string | null {
-  const body = divergenceReport(LANGS, LANGS.map((l) => fingerprint(readFileSync(docPath(root, l, doc), "utf8"))));
-  return body === null ? null : `${doc}.md 的「${name}」在五语言之间分叉：\n${body}`;
+  const out: string[] = [];
+  for (const cohort of cohortsOf(root, doc)) {
+    // 一组只剩一份时没有可比对象——上面那段注释里登记的射程缺口就是这一行。
+    if (cohort.length < 2) continue;
+    const body = divergenceReport(cohort, cohort.map((l) => fingerprint(readFileSync(docPath(root, l, doc), "utf8"))));
+    if (body === null) continue;
+    const where = cohort.length === LANGS.length ? "五语言" : `这一组（${cohort.join(" / ")}）`;
+    out.push(`${doc}.md 的「${name}」在${where}之间分叉：\n${body}`);
+  }
+  return out.length === 0 ? null : out.join("\n");
 }
 
 /**
@@ -1277,35 +1329,17 @@ function parityFailure(root: string, doc: string, name: string, fingerprint: (s:
  * ⚠️ **阶段 5B 完工那天这张表必须清空**，清空之后这一格自动退回「六份全等」
  * （`extra` 与 `missing` 都空 = 多重集相同）。它是一张**会自己过期的**登记表，
  * 不是一条豁免。
+ *
+ * ✅ **它已经过期并被清空了（P3f 阶段 5B-1，`docs/zh-CN/README.md` 扩成 12 节那一步）。**
+ * 「多出来的」这一侧拿 zh-CN 那份当基准（见 `rootReadmeFailure`），而根专属那 4 节
+ * （技术架构 / 项目结构 / Star History / 免责声明）里**一个 `IDENTIFIER` 型 code span
+ * 都没有**——框图与目录树是裸围栏（围栏内的反引号本来就不算 span），
+ * Star History 与免责声明是纯散文与图片。所以 zh-CN 一换成 12 节，
+ * 根与它的标识符多重集当场逐条相等，26 条登记一条不剩。
+ * 空表**不是摆设**：它就是「六份全等」的原形态，两个方向照旧会红
+ * （根上新写一个没登记的标识符 ⇒ 多出来；zh-CN 里写一个根上没有的 ⇒ 少掉）。
  */
-const ROOT_ONLY_IDENTS: Readonly<Record<string, number>> = {
-  "/admin": 4,
-  "/admin/": 1,
-  "/admin/api/*": 1,
-  "/app/data": 1,
-  "/health": 1,
-  "/v1": 5,
-  "/v1/images/generations": 1,
-  "/v1/messages": 1,
-  "/v1/videos": 1,
-  "/v1/videos/{id}": 1,
-  "/v1beta": 3,
-  "/v1beta/models/...": 1,
-  ADMIN_TOKEN: 6,
-  ADMIN_TOKEN_MIN_LENGTH: 1,
-  AGNES_BASE_URL: 2,
-  DATA_DIR: 1,
-  GATEWAY_TOKEN: 5,
-  MAX_STRIKES: 2,
-  POOL_CACHE_TTL_MS: 2,
-  PORT: 2,
-  REGISTRAR_ENABLED: 2,
-  TARGET_KEYS: 1,
-  TRUST_PROXY: 1,
-  UPSTREAM_SYNC_TIMEOUT_MS: 1,
-  UPSTREAM_TIMEOUT_MS: 1,
-  USAGE_STATS_ENABLED: 1,
-};
+const ROOT_ONLY_IDENTS: Readonly<Record<string, number>> = {};
 
 /** 多重集计数。 */
 const tallyOf = (xs: readonly string[]): Map<string, number> => {
@@ -1416,6 +1450,42 @@ describe("五语言文档的派生结构对等（R1–R6）", () => {
     const failure = rootReadmeFailure(".", { ...ROOT_ONLY_IDENTS, GATEWAY_TOKEN: 4 });
     expect(failure ?? "", "把登记表里 GATEWAY_TOKEN 的条数改小了，这一格却没红")
       .toContain("GATEWAY_TOKEN");
+  });
+
+  /* ── 阶段 5B 的进度登记（README 的对等分组）────────────────────────────────
+   *
+   * 上面 R2–R6 那五格对 README 走的是**分组**对等（见 `cohortsOf` 上方那段）。
+   * 分组按内容现算，所以它不会说谎；这里再摆一张**给人看的进度表**，
+   * 用 `toEqual` 两个方向对着查现算结果：
+   * · 又搬完一份却没登记 ⇒ 红（提醒：这一步还得刷 `ROOT_ONLY_IDENTS` 与术语欠账）；
+   * · 登记了却没真的搬（或搬坏了、标题对不上 W38 常量表）⇒ 也红。
+   *
+   * 🔴 **五份全搬完那天，这张表连同 `cohortsOf` 的分组逻辑一起删掉**，
+   * R2–R6 退回「五语言之间逐份相同」的原形态。下面第二格就是那个自毁开关：
+   * 表满 5 项时它会红，报文写明该删什么。
+   */
+  const README_MIGRATED = ["zh-CN"] as const;
+
+  it("阶段 5B 进度登记：已换成 12 节形态的 README 与磁盘现算逐条相等", () => {
+    expect(migratedReadmeLangs("."), "登记表与磁盘对不上：多出来的是「搬完没登记」，少掉的是「登记了没搬（或标题与 W38 常量表对不上）」")
+      .toEqual([...README_MIGRATED]);
+  });
+
+  it("阶段 5B 进度登记 该红时红（自毁开关）：五份全搬完之后这张过渡表必须删掉", () => {
+    expect(
+      README_MIGRATED.length,
+      "五份 README 都换成 12 节形态了 —— 把 README_MIGRATED 这张表、cohortsOf 的分组分支、"
+      + "以及这两格一起删掉，R2–R6 退回「五语言之间逐份相同」的原形态。留着它只会让一份掉队时静静放行",
+    ).toBeLessThan(LANGS.length);
+  });
+
+  it("阶段 5B 进度登记 该红时红：一份 README 的标题被改坏 ⇒ 它就不再算「已搬完」", () => {
+    const lang = README_MIGRATED[0];
+    const body = readFileSync(docPath(".", lang, "README"), "utf8");
+    expect(isMigratedBody(body, lang), `docs/${lang}/README.md 今天本身就不是 12 节形态——别从这一格找原因，先看上面那格进度登记`).toBe(true);
+    const mutated = body.replace("\n## ⚙ 配置说明\n", "\n## ⚙ 配置项说明\n");
+    expect(mutated, "变异没落地——那份 README 里没找到 `## ⚙ 配置说明` 那一行").not.toEqual(body);
+    expect(isMigratedBody(mutated, lang), "改了一个 `## ` 标题，分组却照旧把它算进「已搬完」那一组").toBe(false);
   });
 
   /**
@@ -6801,7 +6871,12 @@ describe("五份 SPONSORS.md 的字面恒等式（W33 的验收 ①②③⑤）"
   });
 
   it("⑤ 认不出要吵：一条相对链接都抽不到时当场抛，不静默当成「零 broken」", () => {
-    const blind = (p: string) => realFileRead(p).split("](").join("] (");
+    // ⚠️ `relTargetsOf` 收的是**两种载体**：markdown 的 `](…)` 与 HTML 的 `href="…"`。
+    //   这条变异原先只弄瞎前一种——阶段 5B 给 `docs/{lang}/README.md` 换上模板的 HTML
+    //   头部块（语言切换行是 `<a href="../zh-TW/README.md">`）之后，弄瞎 markdown 那一半
+    //   照旧抽得到 HTML 那一半，`scanned` 不为 0，这一格当场变成「不该抛却没抛」。
+    //   **两种载体都得弄瞎**，否则这一格证明不了「抽不到就抛」。
+    const blind = (p: string) => realFileRead(p).split("](").join("] (").split('href="').join('hre f="');
     expect(() => brokenDocLinks(blind, docsMdFiles())).toThrow(/判据坏了/);
   });
 
