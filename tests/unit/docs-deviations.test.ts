@@ -26,6 +26,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { blankHtmlComments } from "../helpers/strip-comments.js";
+import { shipDocs } from "../helpers/ship-docs.js";
 import { join } from "node:path";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
@@ -43,6 +44,18 @@ const COMMUNITY_MD = [
 
 // P3f 整分支评审发现 19：`.md` 的正文先把 HTML 注释换成空格再判（换行保留 ⇒ 行号不变）。
 // `.ts`/`.mjs` 不走这一支：那边的注释语法是 JS 的，`<!--` 在源码里只可能是字符串内容。
+/**
+ * 偏离名册第 17 条的判定本体。**真扫描与反向控制共用它**——
+ * 反向控制喂的是一份人为塞进 `admin-ui/README.md` 的射程。
+ */
+const adminUiScopeFault = (ship: readonly string[]): string[] => {
+  const p = join("admin-ui", "README.md");
+  const bad: string[] = [];
+  if (!existsSync(p)) bad.push(`${p} 不见了 —— 这条登记说的是「它在，但不进射程」`);
+  if (ship.includes(p)) bad.push(`${p} 进了出货射程（那 40 份），而这条登记说的是它不该进`);
+  return bad;
+};
+
 const read = (p: string) =>
   (p.endsWith(".md") ? blankHtmlComments(readFileSync(p, "utf8")) : readFileSync(p, "utf8"));
 const FENCE_LINE = /^[ \t]*```/;
@@ -263,14 +276,13 @@ const REGISTRY: readonly Deviation[] = [
     why: "它是写给改面板源码的人的开发笔记，参照仓没有对照物；套 16 节骨架毫无意义",
     until: "哪天决定把它也当出货文档",
     // ⚠️ **两个方向**：文件必须还在（不是被删了才「不在射程里」），且确实不在 40 份射程里。
-    assert: () => {
-      const p = join("admin-ui", "README.md");
-      const bad: string[] = [];
-      if (!existsSync(p)) bad.push(`${p} 不见了 —— 这条登记说的是「它在，但不进射程」`);
-      const ship = [...readdirSync(".").filter((f) => f.endsWith(".md"))];
-      if (ship.includes(p)) bad.push(`${p} 进了出货射程`);
-      return bad;
-    },
+    // ⚠️ **第二个方向曾经是结构性死代码**（P3f 整分支评审发现 17）：它拿
+    // `readdirSync(".")` 自己凑了一份射程，而那个数组里全是**当前目录的裸文件名**、
+    // 永远不含斜杠 ⇒ 那句 `includes` **恒为 false** —— 不是今天恰好没红，是结构上不可能红。
+    // 现在读的是排版判官真正在用的那一份
+    // （`tests/helpers/ship-docs.ts`），它红不红与那 40 份射程真的绑在一起；
+    // 本文件末尾另有一格反向控制，喂一份含它的射程必须点名。
+    assert: () => adminUiScopeFault(shipDocs()),
   },
   {
     id: 18,
@@ -382,6 +394,27 @@ describe("W94 名册自守：编号不重、三样东西齐全、机器验不了
       return [];
     });
     expect(wrong, wrong.join("\n")).toEqual([]);
+  });
+
+  it("🔴 第 17 条的第二个方向真的红得起来：喂一份含 `admin-ui/README.md` 的射程 —— 必须点名", () => {
+    // 这一格是评审发现 17 的**永久探针**：上一版那段代码拿 `readdirSync(".")` 的裸文件名
+    // 去比一条带目录分隔符的路径，**结构上恒为 false**。
+    // 本文件另一处注释自己写着「一条恒绿的登记比没有登记更坏」——这一格就是那句话的兑现。
+    expect(adminUiScopeFault(shipDocs()), "真仓今天本身就不过第 17 条 —— 先看名册那一格").toEqual([]);
+    const faults = adminUiScopeFault([...shipDocs(), join("admin-ui", "README.md")]);
+    expect(faults, "把 `admin-ui/README.md` 塞进射程之后第 17 条居然还绿 —— 那它就是恒绿的")
+      .toHaveLength(1);
+    expect(faults[0] ?? "").toContain("进了出货射程");
+  });
+
+  it("🔴 第 17 条的射程真源就是排版判官在用的那一份（不是本文件自己凑的第二份）", () => {
+    // ⚠️ 恒绿的成因不是「忘了写断言」，而是**拿错了射程**：自己凑的那份里全是裸文件名。
+    // 这一格钉住「用的是共享真源」这件事：40 份里必须真的有带目录分隔符的路径。
+    const ship = shipDocs();
+    expect(ship.length, `出货文档从 40 份变成了 ${ship.length} 份`).toBe(40);
+    expect(ship.filter((p) => p.includes("/") || p.includes("\\")).length,
+      "射程里一条带目录分隔符的路径都没有 —— 那多半又是拿 `readdirSync(\".\")` 凑的裸文件名，"
+      + "第 17 条的第二个方向会重新变成恒绿").toBe(35);
   });
 
   it("规格名册里那两条**已经结清**的条目今天确实不在名册里（结清了就该删，不是留着当摆设）", () => {

@@ -35,6 +35,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { SECTIONS, SECTION_LANGS } from "../helpers/readme-sections.js";
+import { shipDocs } from "../helpers/ship-docs.js";
 // P3f 整分支评审发现 19：`includes` 型判定之前必须先做载体过滤。围栏本来就剥，
 // HTML 注释此前一处都没剥 —— 把一行整行包进 `<!-- -->` 就能让本文件全部判据看不见它，
 // 而 GitHub 上那一行同时消失。换空格（不是删）以保住 `文件:行号`。
@@ -46,14 +47,14 @@ type Lang = (typeof LANGS)[number];
 /** 非 README 的五类文档。**这 25 份是阶段 7 的射程铁律所在**。 */
 const NON_README_DOCS = ["ADMIN", "API", "DEPLOY", "REGISTRAR", "USAGE"] as const;
 
-/** 出货文档全集（40 份）。**从磁盘现算**，新增一份文档会自动进射程。 */
-const SHIP_DOCS: readonly string[] = (() => {
-  const rootDocs = readdirSync(".").filter((f) => f.endsWith(".md")).sort();
-  const langDocs = LANGS.flatMap((lang) =>
-    readdirSync(join("docs", lang)).filter((f) => f.endsWith(".md")).sort()
-      .map((f) => join("docs", lang, f)));
-  return [...rootDocs, ...langDocs];
-})();
+/**
+ * 出货文档全集（40 份）。**从磁盘现算**，新增一份文档会自动进射程。
+ * ⚠️ **实现挪到了 `tests/helpers/ship-docs.ts`**（P3f 整分支评审发现 17）：
+ * 偏离名册第 17 条要断言「`admin-ui/README.md` 不在这 40 份里」，而它够不着这里的
+ * 模块级常量，只好自己拿 `readdirSync(".")` 凑一个 —— 那个凑法**结构上不可能红**。
+ * 两个消费者现在 import 同一份，那条登记才真的盯得住射程。
+ */
+const SHIP_DOCS: readonly string[] = shipDocs();
 
 const SIX_READMES: readonly string[] = ["README.md", ...LANGS.map((l) => join("docs", l, "README.md"))];
 const SIX_SPONSORS: readonly string[] = ["SPONSORS.md", ...LANGS.map((l) => join("docs", l, "SPONSORS.md"))];

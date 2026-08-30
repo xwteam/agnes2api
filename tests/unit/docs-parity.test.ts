@@ -4210,7 +4210,16 @@ describe("根 README 首屏的一行五链与 16 节骨架（P3e Task 27 / P3f �
   it("⑤ 该红时红：切换行里少一种语言", () => {
     const body = readFileSync("README.md", "utf8");
     probeBase(switcherFailures(body), "⑤ 语言切换行与五条指针行互相印证 —— 同一种语言在两处的自称必须一致");
-    const mutated = body.replace(' | <a href="docs/ko/README.md">한국어</a>', "");
+    // ⚠️ **不许把这一段写成硬编码的子串**（P3f 整分支评审发现 22 实测）：
+    // 上一版写死的是那条带前导 ` | ` 的 HTML 链接子串（`한국어` 那一格）。
+    // 五格一旦重排（比如把它挪到行首），那个子串就找不到，抛的是「变异没落地」——
+    // 报文把人引去修夹具，而真正的缺陷（顺序没人守）在旁边一声不吭。
+    // ⇒ 从切换行现切：找到含 `한국어` 的那一格，连同它前面那个分隔符一起删。
+    const switcher = switcherLine(body) ?? "";
+    const koCell = switcher.split(" | ").find((c) => c.includes("한국어")) ?? "";
+    expect(koCell, "语言切换行里切不出 한국어 那一格 —— 变异的支点没了").not.toBe("");
+    const mutated = body.replace(switcher,
+      switcher.split(" | ").filter((c) => c !== koCell).join(" | "));
     expect(mutated, "变异没落地——语言切换行里没找到 한국어 那一段").not.toEqual(body);
     const failures = switcherFailures(mutated);
     expect(failures.join("\n"), "切换行少了一种语言，⑤ 却没红").toContain("语言切换行缺这几种语言：ko");
@@ -7127,6 +7136,124 @@ describe("五份 SPONSORS.md 的字面恒等式（W33 的验收 ①②③⑤）"
     const at = docPath(".", "ko", "SPONSORS");
     const mutated = `${realFileRead(at)}\n[a](https://example.com/nope)\n[b](mailto:nobody@example.com)\n[c](#기여하기)\n`;
     expect(brokenDocLinks(patchFile(realFileRead, at, mutated), docsMdFiles())).toEqual([]);
+  });
+
+
+  /* ── ⑥ 跨文档**锚点**也得解析得开（R17 的另一半，评审发现 16 的回填）─────────
+   * 上面 ⑤ 的注释自己写着「`#锚点` 那一段截掉不查…那是 R17 统一治理的活，本轮不做」。
+   * 规格 P3F-SPEC-FINAL.md:1512【R2 补】把这件事定成必须有人守：「第 1 版只对文件路径
+   * `existsSync`，`[参数表](API.md#不存在的锚点)` 这种跨文档死锚点零覆盖…W49/W64/W110
+   * 都会造这类链接，必须有人守」。
+   *
+   * ⚠️ **今天仓里真有 10 条这类链接**（阶段 7C 的 W104/W114 造的，五份 API.md 与五份
+   * USAGE.md 各一条，全部指向 `DEPLOY.md#{环境变量的五语言 slug}`）。逐条核对过它们
+   * 今天都解析得开 ⇒ 这是「一族没人守的链接」，不是「已经坏掉的链接」：
+   * **改一次 `## 环境变量` 的标题**（W124 名册里 DEPLOY 的第 6 槽正是它）
+   * 就会静默变成 10 条死锚点，而 ⑤ 一格都不会红。
+   *
+   * **slug 规则按 GitHub 的**：去掉 `#` 与首尾空白 → 小写 → 删掉不是字母/数字/组合记号/
+   * 空白/连字符/下划线的字符（反引号、标点、emoji 都在这一档；`_` 是 GitHub 保留的）→ 空白折成 `-` → 同名重复的
+   * 依次接 `-1`/`-2`。⚠️ **emoji 删掉之后留下的那个前导空格会变成前导 `-`**
+   *（`## ⚡ Quick Deployment` ⇒ `#-quick-deployment`），GitHub 就是这么干的，别顺手 trim 掉。
+   * **它验不了什么**：同一份文档内部的纯锚点（`#foo`）—— 那一族由 ⑤ 显式排除，本组也不收。
+   * ──────────────────────────────────────────────────────────────────────── */
+
+  /** GitHub 的标题 slug。同名重复由调用方按出现顺序接后缀。 */
+  const githubSlug = (heading: string): string => heading
+    .replace(/^#+\s*/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\p{M}_\s-]/gu, "")
+    .replace(/\s+/gu, "-");
+
+  /** 一份文档里全部标题的 slug 集合（含重复标题的 `-1`/`-2` 变体）。 */
+  const anchorsOf = (body: string): Set<string> => {
+    const seen = new Map<string, number>();
+    const out = new Set<string>();
+    for (const line of outsideFences(body).split("\n")) {
+      if (!/^#{1,6} /.test(line)) continue;
+      const base = githubSlug(line);
+      const n = seen.get(base) ?? 0;
+      seen.set(base, n + 1);
+      out.add(n === 0 ? base : `${base}-${n}`);
+    }
+    return out;
+  };
+
+  /** 形如 `目标.md#锚点` 的跨文档链接，逐条查目标文件里有没有那个锚点。 */
+  const brokenDocAnchors = (read: (p: string) => string, files: readonly string[]): string[] => {
+    const out: string[] = [];
+    let scanned = 0;
+    for (const f of files) {
+      for (const t of relTargetsOf(read(f))) {
+        const [path, anchor] = [t.split("#")[0] ?? "", t.split("#")[1] ?? ""];
+        if (path === "" || anchor === "") continue;
+        const target = join(dirname(f), path);
+        if (!existsSync(target)) continue;   // 文件不存在那一族由 ⑤ 管，本组不重复报
+        scanned += 1;
+        if (!anchorsOf(read(target)).has(anchor)) {
+          out.push(`${f} 里的 \`${t}\` —— ${target} 里没有这个锚点`
+            + "（标题改了就得同批改链接；GitHub 上点过去只会停在文件开头，不报错）");
+        }
+      }
+    }
+    if (scanned === 0) {
+      throw new Error("docs/ 下一条跨文档锚点链接都没抽到 —— 判据坏了，"
+        + "不许静默当成「零死锚点」（阶段 7C 的 W104/W114 造了 10 条，它们应当都在射程里）");
+    }
+    return out;
+  };
+
+  const REAL_6 = "⑥ docs/ 下形如 `目标.md#锚点` 的跨文档链接，锚点在目标文档里真的存在";
+
+  it(REAL_6, () => {
+    const failures = brokenDocAnchors(realFileRead, docsMdFiles());
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("⑥ 射程自守：今天扫得到的跨文档锚点链接不少于 10 条（W104/W114 造的那一族）", () => {
+    const n = docsMdFiles().reduce((acc, f) => acc + relTargetsOf(realFileRead(f))
+      .filter((t) => (t.split("#")[1] ?? "") !== "" && (t.split("#")[0] ?? "") !== "").length, 0);
+    expect(n, `跨文档锚点链接只扫到 ${n} 条 —— 少于 10 条就该回来确认是不是抽取写坏了`)
+      .toBeGreaterThanOrEqual(10);
+  });
+
+  it("⑥ 该红时红：把某一条锚点改成一个不存在的 —— ⑤ 不会红（文件还在），本格必须红", () => {
+    probeGreen(brokenDocAnchors(realFileRead, docsMdFiles()), REAL_6);
+    const at = docPath(".", "zh-CN", "API");
+    const mutated = realFileRead(at).replace("DEPLOY.md#环境变量", "DEPLOY.md#this-anchor-does-not-exist");
+    expect(mutated, "变异没落地 —— zh-CN/API.md 里已经没有那条锚点链接了").not.toEqual(realFileRead(at));
+    expect(brokenDocLinks(patchFile(realFileRead, at, mutated), docsMdFiles()),
+      "⑤ 也跟着红了 —— 那本格就证明不了「⑤ 看不见锚点」这件事").toEqual([]);
+    const failures = brokenDocAnchors(patchFile(realFileRead, at, mutated), docsMdFiles());
+    expect(failures).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("this-anchor-does-not-exist");
+  });
+
+  it("⑥ 该红时红：改掉 `docs/zh-CN/DEPLOY.md` 的 `## 环境变量` 标题 —— 指着它的那条链接当场变死", () => {
+    const at = docPath(".", "zh-CN", "DEPLOY");
+    const mutated = realFileRead(at).replace("\n## 环境变量\n", "\n## 全部环境变量\n");
+    expect(mutated, "变异没落地 —— DEPLOY.md 里已经不是 `## 环境变量` 了").not.toEqual(realFileRead(at));
+    const failures = brokenDocAnchors(patchFile(realFileRead, at, mutated), docsMdFiles());
+    expect(failures.length, "改标题之后指着它的链接一条都没红 —— "
+      + "那这一族链接仍然是没人守的").toBeGreaterThanOrEqual(1);
+    expect(failures.join("\n")).toContain("#环境变量");
+  });
+
+  it("⑥ slug 规则自守：emoji / 反引号 / 空格三种形态各钉一格", () => {
+    expect(githubSlug("## ⚡ Quick Deployment"), "emoji 删掉后留下的前导空格应当变成前导 `-`")
+      .toBe("-quick-deployment");
+    expect(githubSlug("### `ADMIN_TOKEN` 的三条硬规则")).toBe("admin_token-的三条硬规则");
+    expect(githubSlug("## 환경 변수")).toBe("환경-변수");
+    const dup = anchorsOf("## 验证\n\nx\n\n## 验证\n");
+    expect([...dup].sort(), "同名标题的第二个应当接 `-1`").toEqual(["验证", "验证-1"]);
+  });
+
+  it("⑥ 不乱红：同一份文档内部的纯锚点（`#foo`）不进射程 —— 那一族由 ⑤ 显式排除", () => {
+    const at = docPath(".", "ko", "SPONSORS");
+    const mutated = `${realFileRead(at)}\n[c](#존재하지-않는-앵커)\n`;
+    expect(brokenDocAnchors(patchFile(realFileRead, at, mutated), docsMdFiles()),
+      "纯锚点被算进来了 —— 本组的射程写错了").toEqual([]);
   });
 
   it("⑤ 的射程边界：五份 SPONSORS.md 今天一条相对链接都没有 —— 所以 ⑤ 对它是空判据，看着那条 Issue 链接的是 R4", () => {
@@ -12678,5 +12805,113 @@ describe("W138 页脚形态 A：25 份非 README 文档，条数与目标按公�
     const failures = footerFailures(read);
     expect(failures.join("\n"), "报障入口被换成别处却没被抓到")
       .toContain(`指向 ${issuesUrl()} 的 bullet 有 0 条`);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W139 —— **五链的语言顺序恒定**（R16 补①，整分支评审发现 22 的回填）
+ *
+ * 规格 P3F-SPEC-FINAL.md:1500-1502 要求 `> 📖` 指针行与语言切换行的五格顺序恒为
+ * 简体中文 → 繁體中文 → English → 日本語 → 한국어，并写着「同一条模板规律，
+ * **两个载体**第 1 版只落了一个」。实测两个载体**一个都没落**：
+ * `lineLangLabels` 用 `Map` 只查重复 / 缺失 / 多出，**零顺序断言**。
+ * · M-A：把根 README 的 API 指针行五格重排 ⇒ `Tests 668 passed`；
+ * · M-B：把语言切换行重排 ⇒ `Tests 713 passed`。
+ *
+ * ⚠️ **M-B 第一次做的时候「看着红了」，查下去是判据自己的反向控制崩了**：
+ * 那一格里硬编码着一条带前导 ` | ` 的 HTML 链接子串（`한국어` 那一格），
+ * 重排之后那个子串找不到，抛的是「变异没落地」。报文会把人引去修夹具，
+ * 不会想到顺序根本没人守 —— 任务书硬约束 5 点名的「看着绿其实没打中」。
+ * 那处硬编码已经改成从 `LANGS` 现拼（见 ⑤ 那一组）。
+ *
+ * **射程**：根 README 的五条 `> 📖` 指针行（R16：根侧五语言并列）
+ * + 六份 README 的语言切换行。语言版的指针行是**同目录单链接**，本来就没有五格。
+ * **判据**：五个语言自名在行内的 `indexOf` 严格单调递增（不看链接目标，只看顺序）。
+ * **它验不了什么**：标签与目标配不配对（那是 ④/⑤ 的活）；也不管这一行长什么样。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("W139 五链的语言顺序恒定：指针行与语言切换行两个载体一起守（R16 补①）", () => {
+  /** 一行里五个语言自名的出现顺序是否严格单调递增。返回「哪儿不对」。 */
+  const orderFault = (where: string, line: string): string[] => {
+    const at = LANG_SELF_NAMES.map((n) => [n, line.indexOf(n)] as const);
+    const missing = at.filter(([, i]) => i < 0).map(([n]) => n);
+    if (missing.length > 0) return [`${where}里缺这几种语言的自称：${missing.join("、")}`];
+    const idx = at.map(([, i]) => i);
+    const ok = idx.every((v, k) => k === 0 || v > (idx[k - 1] ?? -1));
+    return ok ? [] : [`${where}的语言顺序不是 ${LANG_SELF_NAMES.join(" → ")}，`
+      + `实际是 ${[...at].sort((a, b) => a[1] - b[1]).map(([n]) => n).join(" → ")}`];
+  };
+
+  /** 射程：根 README 的五条 `> 📖` 指针行 + 六份 README 的语言切换行。 */
+  const orderScope = (read: (p: string) => string): ReadonlyArray<readonly [string, string]> => {
+    const out: Array<readonly [string, string]> = [];
+    const root = read("README.md").split("\n");
+    root.forEach((l, i) => {
+      if (l.trimStart().startsWith("> 📖")) out.push([`README.md:${i + 1}（指针行）`, l]);
+    });
+    for (const p of ["README.md", ...LANGS.map((l) => join("docs", l, "README.md"))]) {
+      const lines = read(p).split("\n");
+      const i = lines.findIndex((l) => l.includes("📖") && !l.trimStart().startsWith(">"));
+      if (i < 0) { out.push([`${p}（语言切换行）`, ""]); continue; }
+      out.push([`${p}:${i + 1}（语言切换行）`, lines[i] ?? ""]);
+    }
+    return out;
+  };
+
+  const orderFaults = (read: (p: string) => string): string[] =>
+    orderScope(read).flatMap(([where, line]) => orderFault(where, line));
+
+  const realRead = (p: string) => readFileSync(p, "utf8");
+
+  it("射程自守：根的五条指针行 + 六条语言切换行，恰 11 行，逐行都取得到", () => {
+    const scope = orderScope(realRead);
+    expect(scope.length, `射程扫到 ${scope.length} 行，应当是 5 条指针行 + 6 条切换行 = 11 行`)
+      .toBe(11);
+    expect(scope.filter(([, l]) => l === "").map(([w]) => w), "这几行取不到 —— 判据对它们是瞎的")
+      .toEqual([]);
+  });
+
+  it("五链顺序恒为 简体中文 → 繁體中文 → English → 日本語 → 한국어", () => {
+    const faults = orderFaults(realRead);
+    expect(faults, `五链的语言顺序不对：\n${faults.join("\n")}\n`
+      + "⇒ 这是模板的固定顺序，两个载体（指针行 / 语言切换行）用的是同一条规律").toEqual([]);
+  });
+
+  it("该红时红（M-A）：把根 README 的 API 指针行五格重排 —— 必须点名那一行", () => {
+    const target = "README.md";
+    const line = realRead(target).split("\n")
+      .find((l) => l.trimStart().startsWith("> 📖") && l.includes("](docs/en/API.md)")) ?? "";
+    expect(line, "根 README 里找不到 API 那条指针行 —— 变异的支点没了").not.toBe("");
+    const lead = line.slice(0, line.indexOf("[")) ;
+    const cells = line.slice(lead.length).split(" | ");
+    const reordered = `${lead}${[cells[4], cells[2], cells[0], cells[3], cells[1]].join(" | ")}`;
+    const read = (p: string) => (p === target ? realRead(p).replace(line, reordered) : realRead(p));
+    expect(read(target), "变异没落地").not.toEqual(realRead(target));
+    expect(orderFaults(read).join("\n"), "指针行重排了却没被抓到 —— 那这个载体仍然没人守")
+      .toContain("的语言顺序不是");
+  });
+
+  it("该红时红（M-B）：把语言切换行五格重排 —— 必须点名那一行", () => {
+    const target = "README.md";
+    const line = realRead(target).split("\n")
+      .find((l) => l.includes("📖") && !l.trimStart().startsWith(">")) ?? "";
+    expect(line, "根 README 里找不到语言切换行").not.toBe("");
+    const lead = line.slice(0, line.indexOf("<a"));
+    const cells = line.slice(lead.length).split(" | ");
+    const reordered = `${lead}${[cells[2], cells[3], cells[1], cells[0], cells[4]].join(" | ")}`;
+    const read = (p: string) => (p === target ? realRead(p).replace(line, reordered) : realRead(p));
+    expect(read(target), "变异没落地").not.toEqual(realRead(target));
+    expect(orderFaults(read).join("\n"), "语言切换行重排了却没被抓到")
+      .toContain("的语言顺序不是");
+  });
+
+  it("该红时红：某一份语言 README 的切换行少一种语言 —— 缺格那一支点名", () => {
+    const target = join("docs", "ja", "README.md");
+    const read = (p: string) => (p === target
+      ? realRead(p).split("\n").map((l) => (l.includes("📖") && !l.trimStart().startsWith(">")
+        ? l.split(" | ").filter((c) => !c.includes("한국어")).join(" | ") : l)).join("\n")
+      : realRead(p));
+    expect(read(target), "变异没落地").not.toEqual(realRead(target));
+    expect(orderFaults(read).join("\n"), "切换行少了一种语言却没被抓到").toContain("缺这几种语言");
   });
 });
