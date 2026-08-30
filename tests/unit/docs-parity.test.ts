@@ -38,6 +38,10 @@ import {
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 // P3e Task 31：危险区那两条端点的路径**一律从真源常量现算**，不在本文件手抄字符串。
 import { CONFIG_RESET_PATH } from "../../src/http/admin/handlers/config.js";
+// W136（整分支评审发现 1–6 的回填）：文档真值锚需要的三样真源。
+import { applyEvict, applyStrike } from "../../src/core/keypool.js";
+import type { KeyRecord } from "../../src/core/types.js";
+import { TEST_ADMIN_TOKEN, makeApp } from "../helpers/make-app.js";
 import { DEFAULTS } from "../../src/core/config-provenance.js";
 import { buildApp } from "../../src/http/wire.js";
 import { nodeRuntime } from "../../src/adapters/runtime-node.js";
@@ -12009,5 +12013,472 @@ describe("W131 R27 的源码锚：口令那两条门槛的数字从 `src/` 现�
 
   it("不许乱红：表格分隔行 `|---|---|` 不进射程", () => {
     expect(gatewayLengthClaims([["x.md", "| a | b |\n|---|---|\n| 1 | 2 |\n"]])).toEqual([]);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W136 —— **文档真值锚**（整分支评审发现 1–6 的回填）
+ *
+ * 这一组守的是同一族缺陷：**六份 README / 五份 DEPLOY / 五份 API 里那几句关于
+ * 网关行为的断言，与 `src/` 里真正跑着的代码相反**。四条都是评审逐字复现出来的：
+ * · 发现 1：「`stream:false` 时内部仍解码事件流」+「断流以协议自身的错误事件收尾」
+ *   —— 两句都是从 kiro2api 逐字照抄进来的，本仓一句都不成立。
+ * · 发现 2：「当前版本没有提供导入 key 的 HTTP 接口」—— `POST /admin/api/keys` 就是。
+ * · 发现 3：「连续瞬时故障累计到 MAX_STRIKES 后同样剔除」—— 实际是进长冷却并自愈。
+ * · 发现 5：「没停用的 key 删不掉」—— 已剔除的不必停用也删得掉。
+ * · 发现 6：「与 `GATEWAY_TOKEN` 相同 ⇒ 整棵 /admin 树不注册」—— 树照常注册，回 503。
+ * · 发现 4：`400`/`409`/`429` 三张「四类成因」的枚举，三条全错。
+ *
+ * **做法：一律把真源跑起来或现算，绝不写第二份期望表。** 文档侧只做两件事：
+ * ① 正面：该出现的说法必须在场（射程收窄到那几句所在的行）；
+ * ② 负面：**被证伪的原句一个字都不许回来**——这一半是专为「下一轮又照模板抄回去」
+ *    设计的，`ADJ ⑧` 已实测模板原句就长那样。
+ *
+ * **它验不了什么**：这几句话**写得好不好**、译文地不地道、有没有别的假话。
+ * 它只钉住这六条被实证过的命题。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 六张禁用字面表 ───────────────────────────────────────────────────────────
+ * 表里每一条都是**评审在本分支里逐字复现出来的原句**（多数是从 kiro2api 照抄来的）。
+ * 收在这里而不是散在各格里：`ADJ ⑧` 记着「照模板走」是这一族缺陷的主路径，
+ * 下一轮再抄一次时，红的是这几张表，报文里直接写着「被证伪的原句」。
+ * ⚠️ 射程只在六份 README / 五份 DEPLOY / 五份 API 的**正文**（已剥围栏），
+ *    刻意不做全仓 grep —— 本文件与 `docs-typography.test.ts` 的注释里就写着这些句子。
+ * ── ──────────────────────────────────────────────────────────────────────── */
+
+const STRIKE_FORBIDDEN: Record<string, readonly string[]> = {
+  "zh-CN": ["累计到阈值后同样剔除", "后同样剔除", "累计到上限后同样剔除"],
+  "zh-TW": ["累積到閾值後同樣剔除", "後同樣剔除", "累積到上限後同樣剔除"],
+  en: ["accumulate up to a threshold and evict it too", "transient failures evict it"],
+  ja: ["に達した場合も同じく排除", "に達した場合も排除", "上限に達した場合も排除"],
+  ko: ["임계값에 닿으면 그때도 제거", "에 닿으면 그때도 제거", "상한에 닿으면 그때도 제거"],
+};
+
+const STREAM_FORBIDDEN: Record<string, readonly string[]> = {
+  "zh-CN": ["内部仍解码事件流", "错误事件收尾"],
+  "zh-TW": ["內部仍解碼事件流", "錯誤事件收尾"],
+  en: ["still decodes the event stream", "own error event"],
+  ja: ["内部ではイベントストリームを解", "内部でイベントストリームを解", "エラーイベントで終わ"],
+  ko: ["내부에서는 이벤트 스트림을 풀", "내부에서 이벤트 스트림을 풀", "오류 이벤트로 끝맺"],
+};
+
+const IMPORT_FORBIDDEN: Record<string, readonly string[]> = {
+  "zh-CN": ["没有提供导入 key 的 HTTP 接口"],
+  "zh-TW": ["沒有提供匯入 key 的 HTTP 介面"],
+  en: ["does not expose an HTTP endpoint for adding keys"],
+  ja: ["エンドポイントはありません"],
+  ko: ["HTTP 엔드포인트를 제공하지"],
+};
+
+const DELETE_FORBIDDEN: Record<string, readonly string[]> = {
+  "zh-CN": ["没停用的 key 删不掉", "删 key 之前没先停用"],
+  "zh-TW": ["沒停用的 key 刪不掉", "刪 key 之前沒先停用"],
+  en: ["was not disabled cannot be deleted", "deleting a key that was not disabled"],
+  ja: ["無効化していない key は削除できず", "無効化せずに key を削除しよう"],
+  ko: ["비활성화하지 않은 key는 지울 수 없", "비활성화하지 않고 key를 지우려"],
+};
+
+const ADMIN_TOKEN_FORBIDDEN: Record<string, readonly string[]> = {
+  "zh-CN": ["未设置或不合规时整棵"],
+  "zh-TW": ["未設定或不合規時整棵"],
+  en: ["Unset or non-compliant ⇒ the `/admin` tree is never registered"],
+  ja: ["未設定または規則違反の場合、`/admin` ツリー全体が登録されず"],
+  ko: ["미설정이거나 규칙에 어긋나면 `/admin` 트리 전체가 등록되지"],
+};
+
+const ERRCODE_FORBIDDEN: Record<string, readonly string[]> = {
+  "zh-CN": ["`400` 的四类成因", "`409` 的四类"],
+  "zh-TW": ["`400` 的四類成因", "`409` 的四類"],
+  en: ["The four causes behind `400`", "The four behind `409`"],
+  ja: ["`400` の四つの原因", "`409` の四つ"],
+  ko: ["`400`의 네 가지 원인", "`409`의 네 가지"],
+};
+
+/** 六份 README。根 README 与 `docs/zh-CN/README.md` 同族，语言口径都按 zh-CN 算。 */
+const TRUTH_READMES: ReadonlyArray<readonly [path: string, lang: string]> = [
+  ["README.md", "zh-CN"],
+  ...LANGS.map((l) => [join("docs", l, "README.md"), l] as const),
+];
+const TRUTH_DEPLOYS: ReadonlyArray<readonly [path: string, lang: string]> =
+  LANGS.map((l) => [join("docs", l, "DEPLOY.md"), l] as const);
+const TRUTH_APIS: ReadonlyArray<readonly [path: string, lang: string]> =
+  LANGS.map((l) => [join("docs", l, "API.md"), l] as const);
+
+/** 剥围栏之后的正文行（带行号）。与本文件 W131 用的那一份口径相同。 */
+const truthBody = (text: string): ReadonlyArray<{ no: number; line: string }> => {
+  let inFence = false;
+  const out: Array<{ no: number; line: string }> = [];
+  text.split("\n").forEach((line, i) => {
+    if (/^[ \t]*```/.test(line)) { inFence = !inFence; return; }
+    if (!inFence) out.push({ no: i + 1, line });
+  });
+  return out;
+};
+
+/** 一批 `[路径, 语言, 正文]`，允许把其中一份换成变异过的文本（反向控制用）。 */
+const truthDocs = (
+  set: ReadonlyArray<readonly [string, string]>,
+  mutate?: readonly [path: string, fn: (s: string) => string],
+): ReadonlyArray<readonly [path: string, lang: string, text: string]> =>
+  set.map(([p, lang]) => {
+    const raw = readFileSync(p, "utf8");
+    return [p, lang, mutate && mutate[0] === p ? mutate[1](raw) : raw] as const;
+  });
+
+/** 五语言的禁用字面：**被源码证伪的原句**，一处都不许出现（含否定句里）。 */
+const forbidden = (
+  docs: ReadonlyArray<readonly [string, string, string]>,
+  words: Record<string, readonly string[]>,
+): string[] => docs.flatMap(([p, lang, text]) =>
+  truthBody(text).flatMap((r) => (words[lang] ?? [])
+    .filter((w) => r.line.includes(w))
+    .map((w) => `${p}:${r.no} 命中被证伪的原句「${w}」：${r.line.trim().slice(0, 60)}`)));
+
+/** 正面表：射程内**每一份**都必须至少命中一次本语言的说法。 */
+const missingClaim = (
+  docs: ReadonlyArray<readonly [string, string, string]>,
+  words: Record<string, readonly string[]>,
+  pick: (r: { no: number; line: string }) => boolean,
+): string[] => docs.flatMap(([p, lang, text]) => {
+  const lines = truthBody(text).filter(pick);
+  const want = words[lang] ?? [];
+  const hit = lines.some((r) => want.some((w) => r.line.includes(w)));
+  if (lines.length === 0) return [`${p}：射程内一行都没扫到 —— 判据对这一份是瞎的`];
+  return hit ? [] : [`${p}：${lines.length} 行射程内一条都没写「${want.join(" / ")}」`];
+});
+
+describe("W136 文档真值锚：key 池自愈那三句从 `applyStrike` 现算（评审发现 3）", () => {
+  /** 一条刚建好的记录。字段照 `KeyRecord` 的形状写，缺字段会是编译错误。 */
+  const freshRecord = (): KeyRecord => ({
+    id: "w136", key: "sk-w136", addedAt: 0, lastUsedAt: null,
+    cooldownUntil: 0, cooldownReason: null, strikes: 0, evicted: false, evictedReason: null,
+  });
+  const CFG = { maxStrikes: DEFAULTS.maxStrikes, cooldownStrikeMs: DEFAULTS.cooldownStrikeMs };
+  /** 文档里写的那个分钟数**从 `DEFAULTS` 现算**，不手抄。 */
+  const COOLDOWN_MINUTES = String(DEFAULTS.cooldownStrikeMs / 60_000);
+
+  it("源码现算：喂满 `MAX_STRIKES` 次失败之后，记录进长冷却且**没有**被剔除", () => {
+    let r = freshRecord();
+    for (let i = 0; i < CFG.maxStrikes; i++) r = applyStrike(r, 1_000, CFG, "transient");
+    expect(r.evicted, "累计到阈值居然把记录剔除了 —— 那么六份 README 那三句「同样剔除」"
+      + "就该是真的，本组连同文档一起要重写").toBe(false);
+    expect(r.cooldownUntil, "累计到阈值没有进入长冷却").toBe(1_000 + CFG.cooldownStrikeMs);
+    expect(r.strikes, "进入冷却时 strikes 应当归零").toBe(0);
+    expect(applyEvict(freshRecord(), "invalid").evicted,
+      "`applyEvict` 才是永久剔除那一条路（只给上游 401/403 用）").toBe(true);
+    expect(COOLDOWN_MINUTES, "`COOLDOWN_STRIKE_MS` 的默认值不是整数分钟了 —— "
+      + "文档里那个「30 分钟」的写法要跟着改，别在这里改常量").toBe("30");
+  });
+
+  it("六份 README 里提到 `MAX_STRIKES` 的每一行，都写着本语言的「冷却」与现算出来的分钟数", () => {
+    const COOLDOWN_WORD: Record<string, readonly string[]> = {
+      "zh-CN": ["冷却"], "zh-TW": ["冷卻"], en: ["cooldown"], ja: ["クールダウン"], ko: ["쿨다운"],
+    };
+    const docs = truthDocs(TRUTH_READMES);
+    const bad = docs.flatMap(([p, lang, text]) => {
+      // 环境变量表那一行（`| \`MAX_STRIKES\` | ❌ | \`3\` | … |`）不进射程：
+      // 它是一格「默认值 + 一句话」的表，本组要钉的是那三句**行为陈述**。
+      const rows = truthBody(text)
+        .filter((r) => r.line.includes("MAX_STRIKES") && !r.line.trim().startsWith("|"));
+      if (rows.length !== 3) return [`${p}：提到 \`MAX_STRIKES\` 的行为陈述有 ${rows.length} 条，应当是 3 条`];
+      return rows.flatMap((r) => {
+        const miss: string[] = [];
+        if (!(COOLDOWN_WORD[lang] ?? []).some((w) => r.line.includes(w))) miss.push("本语言的「冷却」");
+        if (!r.line.includes(COOLDOWN_MINUTES)) miss.push(`现算的分钟数 ${COOLDOWN_MINUTES}`);
+        return miss.length === 0 ? [] : [`${p}:${r.no} 缺 ${miss.join(" 与 ")}：${r.line.trim().slice(0, 60)}`];
+      });
+    });
+    expect(bad, `key 池自愈那几句与 \`applyStrike\` 对不上：\n${bad.join("\n")}\n`
+      + "⇒ 累计到 `MAX_STRIKES` 是**进长冷却并自愈**，永久剔除只发生在上游 `401`/`403`").toEqual([]);
+  });
+
+  it("负面表：被证伪的「累计到阈值后同样剔除」一个字都不许回来", () => {
+    expect(forbidden(truthDocs(TRUTH_READMES), STRIKE_FORBIDDEN), "").toEqual([]);
+  });
+
+  it("该红时红：把 zh-CN 那三句换回「同样剔除」的原句 —— 正负两侧同时点名", () => {
+    const target = "README.md";
+    const revert = (s: string) => s
+      .replace("连续瞬时故障累计到 `MAX_STRIKES` 后让它进入长冷却（`COOLDOWN_STRIKE_MS`，默认 30 分钟）而不是剔除。",
+        "连续瞬时故障累计到阈值后同样剔除，")
+      .replace("连续瞬时故障累计到 `MAX_STRIKES` 后进入长冷却（默认 30 分钟）、到期自动恢复",
+        "连续瞬时故障累计到 `MAX_STRIKES` 后同样剔除");
+    const docs = truthDocs(TRUTH_READMES, [target, revert]);
+    expect(docs.find(([p]) => p === target)?.[2], "变异没落地 —— README 里已经不是那两句了")
+      .not.toEqual(readFileSync(target, "utf8"));
+    expect(forbidden(docs, STRIKE_FORBIDDEN).join("\n"), "「同样剔除」那句回来了却没被抓到")
+      .toContain(`${target}:`);
+  });
+});
+
+describe("W136 文档真值锚：流式那两句拿真装配现算（评审发现 1）", () => {
+  it("源码现算：`stream:false` 的请求原样以 `stream:false` 发给上游，回来的是 JSON 不是事件流", async () => {
+    const upstream = {
+      id: "c1", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+      usage: { prompt_tokens: 1, completion_tokens: 2 },
+    };
+    const { app, fetcher } = await makeApp([{ status: 200, body: JSON.stringify(upstream) }]);
+    const res = await app.request("/v1/messages", {
+      method: "POST",
+      headers: { authorization: "Bearer t", "content-type": "application/json" },
+      body: JSON.stringify({ model: "agnes-2.0-flash", max_tokens: 8, messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type") ?? "", "非流式那一趟居然回了事件流 —— "
+      + "那六份 README 里「内部仍解码事件流」就该是真的").not.toContain("text/event-stream");
+    const sent = JSON.parse(fetcher.sentBodies[0] ?? "{}") as { stream?: unknown };
+    expect(sent.stream, "发给上游的请求体里 `stream` 不是 false —— "
+      + "网关并没有把非流式原样转成非流式").toBe(false);
+    expect((await res.json() as { type?: string }).type).toBe("message");
+  });
+
+  it("源码现算：上游流中途断开时，客户端拿到的是一次**外观正常**的收尾，没有任何错误事件", async () => {
+    // 上游只吐半条 SSE 就把流关掉（既没有 `[DONE]`，也没有任何错误帧）——
+    // 这正是「中途断流」在网关看来的样子：`parseSseStream` 的 `read()` 直接 done。
+    const half = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(
+          "data: {\"choices\":[{\"delta\":{\"content\":\"半\"}}]}\n\n"));
+        c.close();
+      },
+    });
+    const { app } = await makeApp([{ status: 200, body: half }]);
+    const res = await app.request("/v1/messages", {
+      method: "POST",
+      headers: { authorization: "Bearer t", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "agnes-2.0-flash", max_tokens: 8, stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    const text = await res.text();
+    expect(text, "断流的那一条流里出现了错误事件 —— 文档那句「以该协议自身的错误事件收尾」"
+      + "就该是真的，本组连同文档一起要重写").not.toMatch(/^event: error$/m);
+    expect(text.trimEnd().endsWith("data: {\"type\":\"message_stop\"}"),
+      `断流之后的末帧不是 message_stop：\n${text.slice(-160)}`).toBe(true);
+    expect(text, "断流之后 `stop_reason` 不是 `end_turn` —— "
+      + "「客户端看到的是一次外观正常收尾的流」这句就该改").toContain("\"stop_reason\":\"end_turn\"");
+  });
+
+  it("负面表：被证伪的「内部仍解码事件流」「以错误事件收尾」一个字都不许回来", () => {
+    expect(forbidden(truthDocs(TRUTH_READMES), STREAM_FORBIDDEN), "").toEqual([]);
+  });
+
+  it("正面表：六份 README 的流式那一条都写着 `finish_reason` 这条真正的截断判据", () => {
+    const bad = missingClaim(truthDocs(TRUTH_READMES),
+      Object.fromEntries(["zh-CN", "zh-TW", "en", "ja", "ko"].map((l) => [l, ["finish_reason"]])),
+      (r) => r.line.includes("`stream:false`"));
+    expect(bad, `流式那一条没给出可用的截断判据：\n${bad.join("\n")}`).toEqual([]);
+  });
+
+  it("该红时红：把 zh-CN 那句换回「以该协议自身的错误事件收尾」 —— 必须点名", () => {
+    const target = join("docs", "zh-CN", "README.md");
+    const docs = truthDocs(TRUTH_READMES, [target, (s) => s.replace(
+      "**上游流中途断开时网关不会插入错误事件**",
+      "上游报错或中途断流时，流会以该协议自身的错误事件收尾")]);
+    expect(docs.find(([p]) => p === target)?.[2], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(forbidden(docs, STREAM_FORBIDDEN).join("\n"), "照抄回来的那句没被抓到")
+      .toContain(`${target}:`);
+  });
+});
+
+describe("W136 文档真值锚：导入 key 的 HTTP 接口真的存在（评审发现 2）", () => {
+  it("源码现算：`POST /admin/api/keys` 接得住一次导入，上限是 `MAX_IMPORT_KEYS`", async () => {
+    const { app, repo } = await makeApp([], []);
+    const res = await app.request("/admin/api/keys", {
+      method: "POST",
+      headers: { "x-admin-key": TEST_ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ keys: ["sk-imported-by-w136"] }),
+    });
+    expect([200, 201], `导入端点回了 ${res.status} —— 五份 DEPLOY 那句「没有提供导入 key 的 `
+      + "HTTP 接口」如果是真的，这一格就该是 404").toContain(res.status);
+    expect((await repo.all()).length, "导入之后池子里应当真的多了一把").toBe(1);
+    expect(MAX_IMPORT_KEYS, "一次导入的上限不是正整数").toBeGreaterThan(0);
+  });
+
+  it("五份 DEPLOY 都写着这条路径与现算出来的上限，且不再说「没有这个接口」", () => {
+    const docs = truthDocs(TRUTH_DEPLOYS);
+    const bad = docs.flatMap(([p, , text]) => {
+      const body = truthBody(text).map((r) => r.line).join("\n");
+      const miss: string[] = [];
+      if (!body.includes("POST /admin/api/keys")) miss.push("`POST /admin/api/keys` 这条路径");
+      if (!body.includes(String(MAX_IMPORT_KEYS))) miss.push(`一次导入的上限 ${MAX_IMPORT_KEYS}`);
+      return miss.length === 0 ? [] : [`${p} 缺 ${miss.join(" 与 ")}`];
+    });
+    expect(bad, `「多账号配置」那一节还在把手写存储当唯一入口：\n${bad.join("\n")}`).toEqual([]);
+    expect(forbidden(docs, IMPORT_FORBIDDEN), "").toEqual([]);
+  });
+
+  it("该红时红：把 zh-CN 那句「没有提供导入 key 的 HTTP 接口」放回去 —— 必须点名", () => {
+    const target = join("docs", "zh-CN", "DEPLOY.md");
+    const docs = truthDocs(TRUTH_DEPLOYS, [target, (s) => s.replace(
+      "导入 key 的常规路径是管理面板，或者直接调 `POST /admin/api/keys`（一次最多 200 把，",
+      "当前版本的网关没有提供导入 key 的 HTTP 接口，需要直接写入存储后端。（")]);
+    expect(docs.find(([p]) => p === target)?.[2], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(forbidden(docs, IMPORT_FORBIDDEN).join("\n"), "那句假话放回来了却没被抓到")
+      .toContain(`${target}:`);
+  });
+});
+
+describe("W136 文档真值锚：删 key 的前置条件是**或**不是**且**（评审发现 5）", () => {
+  const importOne = () => makeApp([], ["k-live"]);
+
+  it("源码现算：已停用的删得掉、已剔除的**不必再停用**也删得掉、两者都不是才 409", async () => {
+    const { app, repo } = await importOne();
+    const [live] = await repo.all();
+    expect(live, "夹具里应当有一把 key").toBeDefined();
+    const del = (id: string) => app.request(`/admin/api/keys/${id}`, {
+      method: "DELETE", headers: { "x-admin-key": TEST_ADMIN_TOKEN },
+    });
+    const stillServing = await del(live!.id);
+    expect(stillServing.status, "仍在服役的那把居然删掉了").toBe(409);
+    expect((await stillServing.json() as { reason?: string }).reason).toBe("must_disable_first");
+
+    // ① 停用之后删得掉。
+    await repo.save({ ...live!, disabled: true }, live!);
+    expect((await del(live!.id)).status, "已停用的那把删不掉").toBe(204);
+
+    // ② 只被剔除、**从没停用过**的那把也删得掉 —— 这正是 `deletable()` 的第二个分支。
+    const evicted = await repo.add("k-evicted");
+    await repo.save({ ...evicted, evicted: true, evictedReason: "invalid" }, evicted);
+    expect((await del(evicted!.id)).status, "只被剔除、没停用过的那把删不掉 —— "
+      + "那么 API.md 那句「没停用的 key 删不掉」才是对的，本组连同文档一起要重写").toBe(204);
+  });
+
+  it("五份 API.md 不再说「没停用的 key 删不掉」", () => {
+    expect(forbidden(truthDocs(TRUTH_APIS), DELETE_FORBIDDEN), "").toEqual([]);
+  });
+
+  it("该红时红：把 zh-CN 那句「没停用的 key 删不掉」放回去 —— 必须点名", () => {
+    const target = join("docs", "zh-CN", "API.md");
+    const docs = truthDocs(TRUTH_APIS, [target, (s) => s.replace(
+      "**已停用、或已被系统剔除（上游 401/403）的 key 才删得掉，两者满足其一即可**",
+      "**没停用的 key 删不掉**")]);
+    expect(docs.find(([p]) => p === target)?.[2], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(forbidden(docs, DELETE_FORBIDDEN).join("\n"), "那句假话放回来了却没被抓到")
+      .toContain(`${target}:`);
+  });
+});
+
+describe("W136 文档真值锚：两把口令撞了是 503 不是 404（评审发现 6）", () => {
+  const SAME = "same-token-for-w136-0123456789";
+
+  it("源码现算：口令撞车时 `/admin` 树**照常注册**、面板本体打得开，管理接口回 503", async () => {
+    const { app } = await makeApp([], ["k1"], { gatewayToken: SAME }, () => 1000, { adminToken: SAME });
+    // **树注册了没有**：没注册 ⇒ 404（连 401 都拿不到，这是刻意的不泄漏）。
+    const anonymous = await app.request("/admin/api/keys");
+    expect(anonymous.status, "口令撞车时拿到了 404 —— 那就是「整棵树都不注册」，"
+      + "五份 DEPLOY 那句合并写法反而是真的，本组连同文档一起要重写").not.toBe(404);
+    const api = await app.request("/admin/api/keys", { headers: { "x-admin-key": SAME } });
+    expect(api.status, "口令撞车时管理接口应当回 503").toBe(503);
+  });
+
+  it("源码现算：口令自身不合规（太短）时，整棵树才真的不注册（404）", async () => {
+    const { app } = await makeApp([], ["k1"], {}, () => 1000, { adminToken: "too-short" });
+    expect((await app.request("/admin/api/keys")).status, "不合规的口令没有让整棵树消失").toBe(404);
+    expect((await app.request("/admin/api/keys", { headers: { "x-admin-key": "too-short" } })).status)
+      .toBe(404);
+  });
+
+  it("五份 DEPLOY 都把两种后果分开写，并各自带上对应的事件名", () => {
+    const docs = truthDocs(TRUTH_DEPLOYS);
+    const bad = docs.flatMap(([p, , text]) => {
+      const body = truthBody(text).map((r) => r.line).join("\n");
+      const miss = ["admin.token_rejected", "admin.token_conflict"].filter((w) => !body.includes(w));
+      return miss.length === 0 ? [] : [`${p} 缺事件名 ${miss.join(" / ")}`];
+    });
+    expect(bad, `两种不合规没有各自的事件名：\n${bad.join("\n")}`).toEqual([]);
+    expect(forbidden(docs, ADMIN_TOKEN_FORBIDDEN), "").toEqual([]);
+  });
+
+  it("该红时红：把「未设置或不合规时整棵 /admin 树都不注册」那种合并写法放回去 —— 必须点名", () => {
+    const target = join("docs", "zh-CN", "DEPLOY.md");
+    const docs = truthDocs(TRUTH_DEPLOYS, [target, (s) => s.replace(
+      "字符集、长度下限、与网关口令不同这三条的理由，以及两种不合规各自的后果，见下文。",
+      "三条规则各自的理由见下文。未设置或不合规时整棵 `/admin` 树都不注册。")]);
+    expect(docs.find(([p]) => p === target)?.[2], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(forbidden(docs, ADMIN_TOKEN_FORBIDDEN).join("\n"), "合并写法放回来了却没被抓到")
+      .toContain(`${target}:`);
+  });
+});
+
+describe("W136 文档真值锚：`409` / `429` 的 `reason` 闭集从 `src/http/admin/handlers/` 现算（评审发现 4）", () => {
+  /**
+   * 从源码里把两类拒绝的 `reason` **字面量**捞出来。
+   * 手写的只有「去哪儿捞」，捞到什么由源码说了算 ⇒ 新增一条拒绝而文档没跟上，本组会红。
+   */
+  const reasonConstants = (): { conflict: string[]; rateLimited: string[] } => {
+    const dir = join("src", "http", "admin", "handlers");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
+    const conflict = new Set<string>();
+    for (const f of files) {
+      const lines = readFileSync(join(dir, f), "utf8").split("\n");
+      // 文件级常量表：`const MUST_DISABLE_FIRST = "must_disable_first";`
+      const consts = new Map<string, string>();
+      for (const line of lines) {
+        const m = /const ([A-Z][A-Z0-9_]*) = "([a-z_]+)";/.exec(line);
+        if (m !== null) consts.set(m[1] ?? "", m[2] ?? "");
+      }
+      // **只认真的以 409 收尾的那几处**：往回看 8 行找 `reason:`，
+      // 常量名查表、字面量直接取。一行里出现两个（三元）就都算。
+      lines.forEach((line, i) => {
+        if (!/,\s*409\);\s*$/.test(line)) return;
+        for (let k = i; k >= Math.max(0, i - 8); k--) {
+          const row = lines[k] ?? "";
+          if (!row.includes("reason:")) continue;
+          for (const m of row.matchAll(/([A-Z][A-Z0-9_]{2,})|"([a-z_]+)"/g)) {
+            const v = m[1] === undefined ? m[2] : consts.get(m[1]);
+            if (v !== undefined && v !== "") conflict.add(v);
+          }
+          break;
+        }
+      });
+    }
+    return {
+      conflict: [...conflict].sort(),
+      // 429 的两条 reason 是 `tend-guard` 的判决值，不是 handler 里的常量。
+      rateLimited: ["manual_cooldown", "write_budget_exhausted"],
+    };
+  };
+
+  it("射程自守：源码里真的捞得出那几条 `reason`，判据不是在测空气", () => {
+    const { conflict } = reasonConstants();
+    expect(conflict, `从 handlers 里捞到的 reason 常量：${conflict.join(" / ")}`)
+      .toEqual(expect.arrayContaining([
+        "channel_not_configured", "locked", "must_disable_first",
+        "pool_size_changed", "registrar_disabled", "tend_in_flight",
+      ]));
+    const src = readFileSync(join("src", "http", "admin", "handlers", "registrar.ts"), "utf8");
+    for (const r of reasonConstants().rateLimited) {
+      expect(src.includes(r) || readFileSync(join("src", "core", "admin", "tend-guard.ts"), "utf8").includes(r),
+        `429 的 reason \`${r}\` 在源码里找不到了`).toBe(true);
+    }
+  });
+
+  it("五份 API.md 逐份写全了这两类 `reason` —— 少一条就是那张「四类」枚举表的旧病", () => {
+    const { conflict, rateLimited } = reasonConstants();
+    const bad = truthDocs(TRUTH_APIS).flatMap(([p, , text]) => {
+      const body = truthBody(text).map((r) => r.line).join("\n");
+      const miss = [...conflict, ...rateLimited].filter((r) => !body.includes(r));
+      return miss.length === 0 ? [] : [`${p} 缺 ${miss.join(" / ")}`];
+    });
+    expect(bad, `\`409\`/\`429\` 的成因枚举不全：\n${bad.join("\n")}\n`
+      + "⇒ 这两张枚举与 REGISTRAR.md 的「四条护栏」表指同一份真源，别只改一处").toEqual([]);
+  });
+
+  it("负面表：那三句「四类成因」的旧措辞一个字都不许回来", () => {
+    expect(forbidden(truthDocs(TRUTH_APIS), ERRCODE_FORBIDDEN), "").toEqual([]);
+  });
+
+  it("该红时红：源码新增一条 409 的 `reason` 而文档没跟上 —— 逐份点名", () => {
+    const { conflict, rateLimited } = reasonConstants();
+    const invented = [...conflict, ...rateLimited, "brand_new_conflict_reason"];
+    const bad = truthDocs(TRUTH_APIS).flatMap(([p, , text]) => {
+      const body = truthBody(text).map((r) => r.line).join("\n");
+      const miss = invented.filter((r) => !body.includes(r));
+      return miss.length === 0 ? [] : [`${p} 缺 ${miss.join(" / ")}`];
+    });
+    expect(bad.length, "源码多一条 reason 而文档没跟上，居然一份都不红 —— 那这一格是恒绿的")
+      .toBe(TRUTH_APIS.length);
   });
 });

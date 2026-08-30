@@ -1209,8 +1209,8 @@ const RISK_WORDS: ReadonlyArray<readonly [concept: string, cells: Readonly<Recor
  *   **这就是双向登记该起的作用**，记一笔。）
  */
 const P5_OUTSIDE_ALERT: ReadonlyArray<readonly [path: string, no: number, why: string]> = [
-  [join("docs", "en", "DEPLOY.md"), 832, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
-  [join("docs", "ja", "DEPLOY.md"), 819, "同上，ja 那一份的对应括注"],
+  [join("docs", "en", "DEPLOY.md"), 840, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
+  [join("docs", "ja", "DEPLOY.md"), 826, "同上，ja 那一份的对应括注"],
 ];
 
 describe("R20/P5 风险语义句必须住在 alert 块里（内容锚定的下限，不可灌水）", () => {

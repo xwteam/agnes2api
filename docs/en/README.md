@@ -48,7 +48,7 @@
 > This project is neither affiliated with nor endorsed by Agnes AI. It wraps the Agnes AI service into a multi-protocol compatible API, and that usage may not comply with the upstream terms of service; acquiring free quota in bulk is in tension with those terms as well. Use it at your own risk — the author is not responsible for any account penalty or data loss.
 
 > [!TIP]
-> The upstream is served by a pool of Agnes API keys: chat runs on `agnes-2.0-flash`, images on `agnes-image-2.1-flash` and `agnes-image-2.0-flash`, video on `agnes-video-v2.0` (create a task, then poll it). The key pool heals itself — an upstream `429`/`402` puts that key into cooldown, `401`/`403` evicts it permanently, and repeated transient failures accumulate up to a threshold and evict it too; the cases that recover on expiry need no manual intervention.
+> The upstream is served by a pool of Agnes API keys: chat runs on `agnes-2.0-flash`, images on `agnes-image-2.1-flash` and `agnes-image-2.0-flash`, video on `agnes-video-v2.0` (create a task, then poll it). The key pool heals itself — an upstream `429`/`402` puts that key into cooldown, `401`/`403` evicts it permanently, and repeated transient failures accumulate up to `MAX_STRIKES` and then put it into a long cooldown (`COOLDOWN_STRIKE_MS`, 30 minutes by default) rather than evicting it. The cases that recover on expiry need no manual intervention.
 
 > [!IMPORTANT]
 > **This gateway is fail-closed: there is no mode in which it serves traffic while no token is configured.** `GATEWAY_TOKEN` is mandatory, and when it is missing the gateway **refuses to start** (`src/core/config.ts` throws `缺少 GATEWAY_TOKEN，网关无法启动`); note that this startup path **only checks presence, never length**, so a short token still brings the gateway up and how strong it is remains your call. The admin panel does not exist by default: with no `ADMIN_TOKEN` set, the whole `/admin` tree is never registered at all and requests get a 404; set one shorter than 24 characters (`ADMIN_TOKEN_MIN_LENGTH`) and it stays disabled too, with a log line saying the panel is not enabled while gateway forwarding is unaffected; set one that is long enough but **identical** to `GATEWAY_TOKEN` and the admin API keeps returning 503 (forwarding still works). `ADMIN_TOKEN` is read from the environment only, never from storage, so the panel cannot rotate its own key.
@@ -86,7 +86,7 @@
 
 > 📖 Detailed registrar guide: [REGISTRAR.md](REGISTRAR.md)
 
-- An upstream `429`/`402` puts that key into tiered cooldown, `401`/`403` evicts it permanently, and consecutive transient failures evict it once they reach `MAX_STRIKES`
+- An upstream `429`/`402` puts that key into tiered cooldown, `401`/`403` evicts it permanently, and consecutive transient failures put it into a long cooldown (30 minutes by default, recovered automatically) once they reach `MAX_STRIKES`
 - When not a single key is usable it honestly answers `503` with a distinguishable `reason` (nothing imported yet / all cooling / all disabled / all evicted / upstream keeps failing), and the cooling case carries `Retry-After`
 - **Automatic refill is off by default**: turn on `REGISTRAR_ENABLED` and the gateway registers Agnes accounts to top the pool back up whenever usable keys fall below `TARGET_KEYS`
 - The registrar's two temporary-mailbox channels (`yyds` / `moemail`) are **strictly equal peers**; which one is primary is your call, and no default preference is baked in
@@ -109,7 +109,7 @@
 ### ⚡ High-performance architecture
 
 - Built on **TypeScript + Hono**, with the Worker entry and the Node entry sharing one routing tree
-- Upstream responses are forwarded as streams by default; a non-streaming request still decodes the event stream internally and returns everything in one piece once it is complete
+- Upstream responses are forwarded as streams by default; a non-streaming request goes upstream with `stream:false` as-is, and the gateway parses that upstream JSON and translates it into the shape of the protocol you called
 - Ports are separated from adapters (storage, fetch, logging and mailbox are all replaceable ports), and the contract tests run once on each runtime
 - Multi-stage Docker build, non-root runtime, multi-architecture images (amd64 / arm64), health check
 
@@ -434,9 +434,9 @@ npx wrangler secret put ADMIN_TOKEN
 
 1. **A public deployment must set `GATEWAY_TOKEN`, and must also set `ADMIN_TOKEN` if you want the panel**: without the former the gateway **will not come up at all**, so there is no such thing as running it unconfigured; without the latter the whole `/admin` tree is **never registered** (404), and if you do set it, it must differ from the gateway token and be no shorter than 24 characters, otherwise the panel stays disabled (gateway forwarding is unaffected).
 
-2. **Streaming**: all four protocols support streaming; with `stream:false` the service still decodes the event stream internally and returns one complete JSON once it has collected everything. If upstream errors out or the stream breaks midway, the stream ends with that protocol's own error event — never disguised as a normal completion.
+2. **Streaming**: all four protocols support streaming; with `stream:false` the gateway also asks upstream with `stream:false`, then translates that upstream JSON into the shape of the protocol you called and returns it in one piece (upstream answering `200` with a non-JSON body gives you a `502`). Upstream errors are passed through verbatim, except for `401`/`403` bodies, which may echo a key fragment; **when the upstream stream breaks midway the gateway inserts no error event** — the client sees a stream that ends looking perfectly normal, so rely on the upstream's own `finish_reason` to tell truncation apart.
 
-3. **Key pool self-healing**: an upstream `429`/`402` cools the key down, `401`/`403` evicts it permanently, and consecutive transient failures evict it once they hit the ceiling. When no usable key is left it returns `503` with a distinguishable reason; the synchronous path returns `504` for the case where the whole budget was spent and no key ever answered.
+3. **Key pool self-healing**: an upstream `429`/`402` cools the key down, and consecutive transient failures put it into a long cooldown (`COOLDOWN_STRIKE_MS`, 30 minutes by default) once they hit `MAX_STRIKES`, recovered automatically on expiry; **permanent eviction only happens on an upstream `401`/`403`**. When no usable key is left it returns `503` with a distinguishable reason; the synchronous path returns `504` for the case where the whole budget was spent and no key ever answered.
 
 4. **Cloudflare's free KV quota**: the daily read count depends only on the refresh interval and the number of active isolates, not on request volume — but the defaults already sit close to the line at the recommended settings. Work through the "quota budget" in the deployment guide before going live, and raise `POOL_CACHE_TTL_MS` if you need to.
 

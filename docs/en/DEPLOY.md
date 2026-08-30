@@ -798,7 +798,7 @@ number of isolates.
 
 | Variable | Required | Default | Notes |
 |--------|--------|-------|-----|
-| `ADMIN_TOKEN` | no | none (panel disabled) | Token for the admin endpoints. **Must differ from `GATEWAY_TOKEN`**, at least 24 characters, **no leading/trailing whitespace**, **printable ASCII (0x20–0x7E)** only; reasoning below. Unset or non-compliant ⇒ the `/admin` tree is never registered, logged as `admin.token_rejected`. |
+| `ADMIN_TOKEN` | no | none (panel disabled) | Token for the admin endpoints. **Must differ from `GATEWAY_TOKEN`**, at least 24 characters, **no leading/trailing whitespace**, **printable ASCII (0x20–0x7E)** only. The reasoning for these rules, and what each kind of non-compliance costs you, are below. |
 | `TRUST_PROXY` | no | unset (**no** forwarded header is trusted) | Set to `1` **only** if the gateway really sits behind a proxy — that includes the Cloudflare Worker form, where you should set it. It decides where the client IP in login-failure events comes from; see below. |
 
 **Not set ⇒ the panel is simply unavailable, and the gateway keeps forwarding.** Requests to
@@ -807,6 +807,14 @@ fact that there is a panel here. This mirrors the registrar being disabled by de
 or bad `ADMIN_TOKEN` must never stop the gateway from forwarding.
 
 #### The three hard rules on `ADMIN_TOKEN`
+
+**"Non-compliant" comes in two flavours with completely different consequences — do not fold
+them into one sentence.** Unset, or non-compliant on its own terms (leading/trailing whitespace,
+non-printable ASCII, shorter than 24) ⇒ the whole `/admin` tree is never registered and the log
+says `admin.token_rejected`. Compliant but equal to the effective `GATEWAY_TOKEN` ⇒ the tree is
+registered **as usual** and the panel itself opens; only the admin endpoints keep answering
+`503`, and the log says `admin.token_conflict` (that rule is rechecked on every admin request,
+never at startup).
 
 **No leading or trailing whitespace**: HTTP strips whitespace from header values but environment
 variables keep it, so a padded token can never be sent by any client.
@@ -1124,8 +1132,14 @@ conditioned on the client staying connected.
 
 ## Multi-Account Configuration
 
-This version of the gateway does not expose an HTTP endpoint for adding keys to the pool —
-you write directly into the storage backend. Each entry is a JSON object keyed as
+The normal way to import keys is the admin panel, or `POST /admin/api/keys` directly (at
+most 200 per call — see [API.md](API.md) and [ADMIN.md](ADMIN.md)). The **write-straight-
+into-the-storage-backend** recipe below is for two situations only: `ADMIN_TOKEN` is not
+set yet (the whole panel tree is unregistered), or the panel is down and you need an
+emergency recovery path. It does **not** update `pool:index`, so a new record is not
+necessarily visible right away; the cost is in "The index and how
+long changes take to show up" below.
+Each entry is a JSON object keyed as
 `key:<id>`, where `<id>` can be any string unique within the pool (the gateway derives one
 from a hash of the key when it creates records itself, but nothing validates that on read,
 so any unique identifier works for a manual import):
@@ -1296,7 +1310,7 @@ numbered steps are meant to be worked through in order.
 
 **Fix**:
 
-1. Import at least one key following the "Multi-Account Configuration" section.
+1. Import at least one key from the key-pool page of the admin panel, or call `POST /admin/api/keys` (see [API.md](API.md)); with no `ADMIN_TOKEN` set, follow the "Multi-Account Configuration" section and write into the storage backend directly.
 2. Already imported and still empty: a hand-written record **does not touch `pool:index`**, so either wait for one reconciliation (30 minutes by default) or add the id to the index by hand.
 3. The registrar is on but the pool never grows: check the panel's events board, or follow [REGISTRAR.md](REGISTRAR.md) to debug the two mailbox channels.
 

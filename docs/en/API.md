@@ -110,7 +110,7 @@ Errors the gateway itself produces always use the envelope `{ "error": { "type":
 | `504` | A synchronous endpoint burned the whole `UPSTREAM_SYNC_TIMEOUT_MS` budget (see the section below). |
 
 > [!NOTE]
-> The four causes behind `400`: a non-`text` content block on the Anthropic protocol, a malformed video task identifier, an unknown field on an admin endpoint, a missing required field on an admin endpoint. The four behind `409`: deleting a key that was not disabled first, purging while the pool size differs from what you saw, the registrar being off, a channel with no credentials. `429` covers both outbound probes — single-key verification and the channel connectivity test — and each is **rate limited per identifier**, so they never block each other.
+> Common causes behind `400` (not an exhaustive list): a non-`text` content block on the Anthropic protocol, a Gemini path with no method name, a malformed video task identifier, an unknown or missing required field on an admin endpoint, a field value out of range (note too long / more than 200 keys in one import / an illegal `op`), a malformed query parameter (`from` / `to` on the usage endpoints). There are six behind `409`: deleting a key that is neither disabled nor evicted, purging while the pool size differs from what you saw, the registrar being off, a channel with no credentials, a tend already in flight (`tend_in_flight`), and the cross-replica short lock being held by someone else (`locked`). `429` comes in two kinds: outbound probes (single-key verification, the channel connectivity test) are **rate limited per identifier** and never block each other; the quota guardrails on a manual tend (minimum interval and daily count) are in the "Four Guardrails" of [REGISTRAR.md](REGISTRAR.md).
 
 ### Pool exhaustion (`503`)
 
@@ -735,7 +735,7 @@ curl -X PATCH http://localhost:8080/admin/api/keys/9f2c \
 Deletes one key. Success is `204` with no body.
 
 > [!WARNING]
-> Deletion is **irreversible**: the key material in that record is gone and nothing anywhere still holds it. That is why it is the only write with a precondition — **a key that was not disabled cannot be deleted** and gets a `409` plus a top-level `reason: "must_disable_first"`.
+> Deletion is **irreversible**: the key material in that record is gone and nothing anywhere still holds it. That is why it is the only write with a precondition — **a key can be deleted once it is disabled or has been evicted by the system (upstream 401/403); either one is enough**, and a key that is neither gets a `409` plus a top-level `reason: "must_disable_first"`.
 
 **Request**:
 
@@ -758,7 +758,7 @@ Empties the whole key pool. One of the two danger-zone buttons.
 
 | Parameter | Type | Required | Description |
 |---------|----|--------|-----------|
-| `expect` | number | Yes | The pool size you saw on screen, a non-negative integer; a mismatch is a `409` and nothing is deleted. |
+| `expect` | number | Yes | The pool size you saw on screen, a non-negative integer; a mismatch is a `409` with a top-level `reason: "pool_size_changed"` and nothing is deleted. |
 
 **Request**:
 
@@ -1073,7 +1073,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```
 
 > [!NOTE]
-> `remaining` is returned on the success branch too: giving it only when the budget is exhausted means an operator walks into a wall with no warning. A disabled registrar is a `409` with a `reason`, and so is a channel with no credentials — **that is not "this route does not exist"**.
+> `remaining` is returned on the success branch too: giving it only when the budget is exhausted means an operator walks into a wall with no warning. There are six rejections in all, and **none of them means "this route does not exist"**: `409 registrar_disabled` (the registrar is off), `409 channel_not_configured` (the channel has no credentials), `409 tend_in_flight` (a round is already running on this replica), `409 locked` (another replica holds the short lock), `429 manual_cooldown` (the minimum interval between two manual tends), `429 write_budget_exhausted` (the daily ceiling) — the last two point at the same source of truth as the "Four Guardrails" table in [REGISTRAR.md](REGISTRAR.md).
 
 ### GET /admin/api/registrar/status
 
