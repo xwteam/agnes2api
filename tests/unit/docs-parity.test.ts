@@ -1266,6 +1266,11 @@ function emptinessFailure(
  * 跳过——**这是这个过渡形态真实的射程缺口**，不是豁免：它只在「某一步只搬了一份」
  * 的那个中间态存在，两份一步就不出现。
  *
+ * ✅ **阶段 5B-2（`docs/en/README.md`）之后这个缺口关上了**：已换那组 2 份
+ *（zh-CN / en）、未换那组 3 份（zh-TW / ja / ko），两组都 ≥ 2，五格 R2–R6 对
+ * 每一份 README 都有可比对象。5B-1 那一步「zh-CN 独自一份、当天无人看着」的
+ * 状态到此结束——en 这一份的 R2–R6 是照着 zh-CN 那份现算比出来的。
+ *
  * ⚠️ 分组**按内容现算**（这一份的 `## ` 全行是否恰好等于 W38 常量表那 12 行），
  * 不靠手写名册：手写的名册会漂，而漂了的名册会把两份形态不同的文档分进同一组，
  * 让这五格静静放行。`README_MIGRATED` 那张登记表是**给人看的进度**，
@@ -1464,7 +1469,7 @@ describe("五语言文档的派生结构对等（R1–R6）", () => {
    * R2–R6 退回「五语言之间逐份相同」的原形态。下面第二格就是那个自毁开关：
    * 表满 5 项时它会红，报文写明该删什么。
    */
-  const README_MIGRATED = ["zh-CN"] as const;
+  const README_MIGRATED = ["zh-CN", "en"] as const;
 
   it("阶段 5B 进度登记：已换成 12 节形态的 README 与磁盘现算逐条相等", () => {
     expect(migratedReadmeLangs("."), "登记表与磁盘对不上：多出来的是「搬完没登记」，少掉的是「登记了没搬（或标题与 W38 常量表对不上）」")
@@ -6397,8 +6402,16 @@ const KO_HANJA_GLOSS = /[가-힣]\s*[(（][㐀-䶿一-鿿]+[)）]/gu;
  * 排版漂，写死自名等于把「简体中文」四个字加进一张豁免名册。
  * ⚠️ **边界**：正文里若真出现一行同时挂着三条以上跨语言链接，那一行的 CJK 会被一起
  * 跳过。今天全仓只有切换行是这个形状（下面那格夹具从反面钉着「两条链接不够」）。
+ *
+ * ⚠️ **两种载体都要收（P3f 阶段 5B）**：模板的头部块是 HTML，切换行从
+ * `[简体中文](../zh-CN/README.md)` 变成 `<a href="../zh-CN/README.md">简体中文</a>`。
+ * 只认 markdown 那一种的话，`docs/en/README.md` 换上 HTML 头部块的当天，切换行里
+ * 另外三种语言的自名（简体中文 / 繁體中文 / 日本語）会被整行判成「没翻译」——
+ * 而那正是这条判据**唯一**打算放过去的东西。判据要的是「这一行有 ≥3 条跨语言链接」，
+ * 那是语义；markdown 与 HTML 只是同一件事的两种写法，认一种就是把判据绑在了排版上。
+ * 下面那格夹具对两种载体各钉了一条正例，且「两条不够」的反例照旧。
  */
-const CROSS_LANG_LINK = /\]\(\.\.\/(?:zh-CN|zh-TW|en|ja|ko)\//g;
+const CROSS_LANG_LINK = /(?:\]\(|href=")\.\.\/(?:zh-CN|zh-TW|en|ja|ko)\//g;
 const isSwitcherLine = (line: string): boolean => (line.match(CROSS_LANG_LINK) ?? []).length >= 3;
 
 /**
@@ -6470,9 +6483,18 @@ describe("「某一份根本没翻译」：en 与 ko 的正文里不许有汉字
     const SWITCH = "**Language:** English | [简体中文](../zh-CN/X.md) | [繁體中文](../zh-TW/X.md)"
       + " | [日本語](../ja/X.md) | [한국어](../ko/X.md)";
     expect(untranslatedLines(SWITCH, "en"), "语言切换行被当成了没翻译").toEqual([]);
+    // 模板头部块那一种载体：同一行同一件事，写法是 HTML。当前语言按 W51 不带链接。
+    const SWITCH_HTML = "  📖 Documentation: <a href=\"../zh-CN/X.md\">简体中文</a>"
+      + " | <a href=\"../zh-TW/X.md\">繁體中文</a> | English"
+      + " | <a href=\"../ja/X.md\">日本語</a> | <a href=\"../ko/X.md\">한국어</a>";
+    expect(untranslatedLines(SWITCH_HTML, "en"), "HTML 写法的语言切换行被当成了没翻译").toEqual([]);
     expect(
       untranslatedLines("See two docs: [简体中文](../zh-CN/X.md) and [日本語](../ja/X.md).", "en"),
       "只有两条跨语言链接的一行不该被当成切换行放过去",
+    ).not.toEqual([]);
+    expect(
+      untranslatedLines("See two docs: <a href=\"../zh-CN/X.md\">简体中文</a> and <a href=\"../ja/X.md\">日本語</a>.", "en"),
+      "HTML 写法里只有两条跨语言链接的一行同样不该被当成切换行放过去",
     ).not.toEqual([]);
 
     expect(untranslatedLines("The body reads `请求体里没有 model 字段`.", "en"), "行内 code 被当成了没翻译")
