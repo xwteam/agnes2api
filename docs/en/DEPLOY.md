@@ -303,6 +303,8 @@ there is no second one.
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
 
+### Accepted ranges, and the two "read once at construction" exceptions
+
 Every variable in the table above has its own line in `.env.example`; run `cp .env.example .env`
 and edit what you need. Comments in that file vary in depth — most variables get a single line,
 a few carry a dozen lines or more — so treat this table as the complete reference for ranges and
@@ -809,6 +811,8 @@ or bad `ADMIN_TOKEN` must never stop the gateway from forwarding.
 **No leading or trailing whitespace**: HTTP strips whitespace from header values but environment
 variables keep it, so a padded token can never be sent by any client.
 
+##### Why only printable ASCII is accepted
+
 The token must also consist solely of **printable ASCII (0x20–0x7E)**. This restriction has three
 parts with different natures:
 
@@ -833,16 +837,22 @@ Please use an ASCII-only token. **Interior spaces are allowed**: a passphrase li
 easier to get right than a random string. Leading/trailing whitespace is covered by the rule
 above.
 
+##### Why the 24-character minimum
+
 **Why the 24-character minimum.** The Worker form has no distributed login rate limiting.
 Building one would mean using KV as the counting window, which hands an attacker a lever to burn
 your write quota — widening the attack from "guess the password" to "kill the key pool's state
 writes". Token entropy is therefore the only defense here, and the minimum is not a suggestion.
 Below it the panel is not enabled and an `admin.token_rejected` line goes to the container log.
 
+##### Why it must differ from `GATEWAY_TOKEN`
+
 **Why it must differ from `GATEWAY_TOKEN`.** `GATEWAY_TOKEN` is the relay token you hand to
 **every downstream user**. Reusing it as the panel token means anyone holding it can read your
 entire key pool, switch the registrar off, and repoint the registration backend at their own
 server — harvesting the mailbox, password and verification code of every account minted from then on.
+
+##### How a conflict surfaces, and how to deal with it
 
 This rule is **re-checked on every admin request, and deliberately not enforced at startup**. If
 the two are equal — for example because `gatewayToken` was written into storage by hand with
@@ -862,6 +872,8 @@ has it (or is about to be given it) can simply open your admin panel. Changing `
 is a fine way to restore availability first, but you **still have to rotate `ADMIN_TOKEN`**
 afterwards; the incident is only handled once both steps are done.
 
+##### Why this one deliberately does not fail at startup
+
 **Why this one rule is not enforced at startup.** `gatewayToken` can change while the gateway
 runs, and a startup decision never gets a second evaluation: if the whole `/admin` tree were
 withheld there, every isolate that cold-starts during the conflict — and every Docker container
@@ -873,6 +885,8 @@ concern `ADMIN_TOKEN` alone (leading/trailing whitespace, unsendable characters,
 length) do not have this
 problem: their only input is an environment variable that cannot change at runtime, so they are
 still enforced at startup and their failure mode remains `404`.
+
+##### How to rotate it, and what to do if it leaks
 
 `ADMIN_TOKEN` is read **from environment variables only, never from storage**: the panel cannot
 rotate its own key. To rotate it, run `npx wrangler secret put ADMIN_TOKEN` and redeploy on the
@@ -917,6 +931,8 @@ not equally forgeable:
 - `X-Forwarded-For` is a chain any middlebox can append to, and a client can send a fake one, so
   how much of it you can believe depends entirely on what your proxy chain looks like.
 
+##### How to configure it in each of the two topologies
+
 **On the Worker, set `TRUST_PROXY=1`.** Cloudflare is by definition in front there, which makes
 `CF-Connecting-IP` the authoritative value; preferring `X-Forwarded-For` in that shape would be
 wrong, because the chain may carry whatever the client stuffed into it. Without the switch the
@@ -932,6 +948,8 @@ proxy_set_header CF-Connecting-IP "";
 ```
 
 Caddy uses `header_up CF-Connecting-IP ""`; Traefik uses a middleware's `customRequestHeaders`.
+
+##### Shape checking, and recording `null` honestly when nothing is available
 
 **Both headers are shape-checked first**: only dotted-quad IPv4 and IPv6 shapes (hex digits, colons,
 and the dots inside `::ffff:` mappings) reach the event; anything else is recorded as `null`. This
@@ -952,6 +970,8 @@ disclosure). It writes to the `config` key **in storage**, never to environment 
 "what you saved", "what the deployment supplies", and "what the gateway is actually using".
 The precedence is always **environment variable > storage > built-in value**.
 
+#### Fields locked by environment variables cannot be edited at all
+
 **Fields locked by an environment variable cannot take effect from the panel, so the panel
 refuses to edit them.** The input is greyed out and a note names the variable and says the change
 has to happen on the deployment side. `PUT /admin/api/config` answers `400 locked_by_env` for those
@@ -967,6 +987,8 @@ and the operator would blame a stale cache and wait for two refresh cycles for n
 > `docker-compose.yml`, changing it to 20 in the panel saved fine while the effective value stayed 30
 > **even across restarts**, and the panel said nothing about it.
 
+#### Credentials are write-only
+
 **Credentials are write-only.** The gateway token and both channel API keys are **never returned in
 plaintext**; the API returns only "configured or not" and the **last 4 characters** (and not even
 those if the secret is shorter than 5 — showing them would be showing all of it). Therefore:
@@ -977,6 +999,8 @@ those if the secret is shorter than 5 — showing them would be showing all of i
   and **the running process would keep going on its last good snapshot**, so nothing would look wrong
   until the next restart;
 - clearing is only possible through the dedicated "Clear" button, which asks for confirmation.
+
+##### How credentials written from the panel are persisted
 
 > [!WARNING]
 > **Credentials written from the panel are stored in plaintext** in KV / `store.json`, at the same
@@ -989,12 +1013,16 @@ those if the secret is shorter than 5 — showing them would be showing all of i
 > panel says so in a red notice at that moment; recover by setting a new gateway token on the same page
 > right away. **Clearing is safe when the environment does supply the value**: only the stored copy goes away and the effective value falls back to the environment variable, unchanged. The panel says two different things in these two states rather than leaving you to guess.
 
+#### The registration backend URL in the "Advanced" area
+
 > [!WARNING]
 > **The registration backend URL (`AGNES_PLATFORM_URL`) inside the *Advanced* disclosure is not an
 > ordinary setting.** It is **where every automated registration goes**: point it elsewhere and that
 > server receives the mailbox, password and verification code used for each registration. That is why
 > it lives behind a disclosure, carries a red warning, and has its own confirmation button instead of
 > riding along with the main Save.
+
+#### The save receipt and how long propagation takes
 
 **After saving, the panel does not claim "saved and in effect".** It **reads the effective values
 back**, highlights the fields that actually changed, and states **how long other replicas/isolates
