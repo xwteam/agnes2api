@@ -8252,3 +8252,136 @@ describe("W75 非 README 文档不带 `**语言：**` 切换行（参照仓一�
     expect(bodyHits(docs, LANG_SWITCHER_LINE), "围栏里的示例被算进来了 —— 剥围栏没生效").toEqual([]);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W97 — 25 份非 README 文档里位置不对的 `---` 删掉（R20/P4②）
+ *
+ * **【ADJ 改判】这一条不是「删掉全部 `---`」。** 模板允许**页脚节之前**留一条：
+ * 参照仓 kiro2api 的非 README 文档实测有 **5 处**（`ja/API`、`ja/DEPLOY`、`ko/API`、
+ * `ko/USAGE`、`zh-TW/API`），而**每一处都在该文档最后一个 `##` 之后**、紧跟着一段
+ * 页脚块（`> 📖 関連ドキュメント…` 或 `<div align="center">`）——**没有一处横在
+ * 两个 `##` 之间**。agnes 此前那 5 条恰恰相反：五份 `API.md` 各 1 条，
+ * 都夹在正文与 `## \`GET /health\`` 之间，全文后面还有几百行。
+ *
+ * ⇒ 判据分两条，正好对上这个形状：
+ * ① **hr-before-h2 恒为 0** —— `---` 后面第一个非空行是 `## ` 标题的，一条都不许有；
+ * ② **`^---$` 总数 ≤ 1，且若有那一条必须在全文最后一个 `## ` 之后**（页脚区）。
+ *
+ * 这两条**必须一起立**：只有 ① 的话，把 `---` 塞到两个 `###` 之间就能逃；
+ * 只有 ② 的话，把 `---` 放在倒数第二节的末尾（下一行就是页脚 `##`）也能逃。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+const HR_LINE = /^---$/;
+const H2_LINE = /^## /;
+
+type HrScan = { readonly beforeH2: string[]; readonly misplaced: string[]; readonly total: number };
+
+/** 25 份非 README 文档的 `---` 体检。剥围栏后再看，围栏里的 yaml 文档分隔符不算。 */
+const scanHorizontalRules = (docs: ReadonlyArray<readonly [string, string]>): HrScan => {
+  const beforeH2: string[] = [], misplaced: string[] = [];
+  let total = 0;
+  for (const [path, text] of docs) {
+    const rows = bodyLines(text);
+    const lastH2 = rows.reduce((acc, r, i) => (H2_LINE.test(r.line) ? i : acc), -1);
+    const hits = rows.map((r, i) => [r, i] as const).filter(([r]) => HR_LINE.test(r.line));
+    total += hits.length;
+    for (const [r, i] of hits) {
+      const next = rows.slice(i + 1).find((x) => x.line.trim() !== "");
+      if (next !== undefined && H2_LINE.test(next.line)) {
+        beforeH2.push(`${path}:${r.no} 这条 \`---\` 横在正文与 \`${next.line.trim()}\` 之间`);
+      }
+      if (i < lastH2) {
+        misplaced.push(`${path}:${r.no} 这条 \`---\` 在最后一个 \`##\` 之前 —— `
+          + "模板只在页脚块之前留分隔线（kiro2api 那 5 处全在最后一个 `##` 之后）");
+      }
+    }
+    if (hits.length > 1) {
+      misplaced.push(`${path} 有 ${hits.length} 条 \`---\`，上限是 1 条`);
+    }
+  }
+  return { beforeH2, misplaced, total };
+};
+
+describe("W97 非 README 文档里位置不对的 `---` 删掉（页脚块之前允许留 ≤1 条）", () => {
+  it("R20/P4② ① hr-before-h2 恒为 0（剥围栏后，25 份）", () => {
+    const { beforeH2 } = scanHorizontalRules(non25Pairs());
+    expect(beforeH2, `还有横在两节之间的 \`---\`：\n${beforeH2.join("\n")}`).toEqual([]);
+  });
+
+  it("R20/P4② ② 每份 `^---$` ≤ 1 条，且那一条必须落在最后一个 `##` 之后（页脚区）", () => {
+    const { misplaced } = scanHorizontalRules(non25Pairs());
+    expect(misplaced, `\`---\` 的位置不对：\n${misplaced.join("\n")}`).toEqual([]);
+  });
+
+  it("今天的实测值：这 25 份一条 `---` 都没有（阶段 7 后续给页脚块时可以加回 1 条/份）", () => {
+    expect(scanHorizontalRules(non25Pairs()).total,
+      "这个数从 0 变了就该有人来确认：加回来的那条是不是真在页脚块之前").toBe(0);
+  });
+
+  it("该红时红（一）：把 `---` 加回 `docs/zh-CN/API.md` 的 `## \\`GET /health\\`` 之前 —— ① 与 ② 同时红", () => {
+    const target = join("docs", "zh-CN", "API.md");
+    const docs = non25Pairs().map(([p, t]) => (p === target
+      ? [p, t.replace(/^## `GET \/health`$/m, "---\n\n## `GET /health`")] as const : [p, t] as const));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const scan = scanHorizontalRules(docs);
+    expect(scan.beforeH2.join("\n"), "hr-before-h2 回来了却没红").toContain(`${target}:`);
+    expect(scan.misplaced.join("\n"), "位置不对却没被 ② 抓到").toContain(`${target}:`);
+  });
+
+  it("该红时红（二）：`---` 放在倒数第二节末尾（下一行不是 `##`）—— ① 逃得掉，② 必须红", () => {
+    const target = join("docs", "en", "API.md");
+    const lines = readFileSync(target, "utf8").split("\n");
+    const lastH2 = lines.reduce((acc, l, i) => (H2_LINE.test(l) ? i : acc), -1);
+    expect(lastH2, "抽不到最后一个 `##`，这一格测不出东西").toBeGreaterThan(0);
+    // ⚠️ 只能插在最后一个 `##` 这一行的**正前方**：往前挪几行会掉进 ```json 围栏里，
+    //    那样整段夹具会被剥围栏那一步吃掉，这一格就变成在测空气（本轮实测栽过一次）。
+    lines.splice(lastH2, 0, "---", "", "还有一段正文，所以下一行不是 `##`。", "");
+    const docs = non25Pairs().map(([p, t]) => (p === target ? [p, lines.join("\n")] as const : [p, t] as const));
+    const scan = scanHorizontalRules(docs);
+    expect(scan.beforeH2, "这一格的立论是 ① 抓不住它；① 抓住了说明夹具没摆对").toEqual([]);
+    expect(scan.misplaced.join("\n"), "`---` 在最后一个 `##` 之前却没被 ② 抓到").toContain(`${target}:`);
+  });
+
+  it("不许乱红（一）：模板那种页脚分隔线（最后一个 `##` 之后、页脚块之前）放行", () => {
+    const target = join("docs", "ko", "USAGE.md");
+    const docs = non25Pairs().map(([p, t]) => (p === target
+      ? [p, `${t}\n---\n\n> 자세한 내용은 [API](API.md)를 참고하세요.\n`] as const : [p, t] as const));
+    const scan = scanHorizontalRules(docs);
+    expect([scan.beforeH2, scan.misplaced],
+      "kiro2api 那 5 处页脚分隔线就是这个形状，判据把模板自己的写法判红了")
+      .toEqual([[], []]);
+    expect(scan.total, "夹具没落地").toBe(1);
+  });
+
+  /* ── W97 的另一半：标题 emoji 今天是 0，本组只守住不回退（R25f）──────────────
+   * §1.3(e) 固化的 `EMOJI` 常量正则**必须含 BMP 那一段**：窄义 `[\u{1F300}-\u{1FAFF}]`
+   * 会让 `⚡⚙⚠☕⭐→` 全部漏网，而 README 那 16 个 emoji 标题用的正是这一族。
+   * 两个参照仓剥围栏后的非 README 标题 emoji 数同样是 0（那 4 处「反例」实测全在
+   * 代码围栏里，是 shell 注释不是标题）。 */
+  it("R25f 这 25 份的标题 emoji 恒为 0（剥围栏后）", () => {
+    const hits = bodyHits(non25Pairs(), /^#{1,6} .*[←-⇿⌀-⏿■-➿⬀-⯿️\u{1F000}-\u{1FAFF}]/u);
+    expect(hits, `非 README 文档的标题带上了 emoji（射程铁律：这 25 份不给标题加 emoji）：\n${hits.join("\n")}`)
+      .toEqual([]);
+  });
+
+  it("R25f 该红时红：给一个 `##` 加上 emoji —— 报文点名该文件与行号", () => {
+    const target = join("docs", "zh-TW", "ADMIN.md");
+    const docs = non25Pairs().map(([p, t]) => (p === target
+      ? [p, t.replace(/^## /m, "## \u26a1 ")] as const : [p, t] as const));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const hits = bodyHits(docs, /^#{1,6} .*[←-⇿⌀-⏿■-➿⬀-⯿️\u{1F000}-\u{1FAFF}]/u);
+    expect(hits.join("\n"), "BMP 段的 `⚡` 没被抓到 —— 谓词退回窄义了，README 那 16 个 emoji 标题也会一起漏")
+      .toContain(`${target}:`);
+  });
+
+  it("不许乱红（二）：围栏里的 yaml 文档分隔符 `---` 不进射程", () => {
+    const target = join("docs", "ja", "DEPLOY.md");
+    const docs = non25Pairs().map(([p, t]) => (p === target
+      ? [p, `${t}\n\`\`\`yaml\n---\nservices:\n  app:\n    image: x\n\`\`\`\n`] as const : [p, t] as const));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const scan = scanHorizontalRules(docs);
+    expect([scan.beforeH2, scan.misplaced, scan.total],
+      "围栏里的 `---` 被算进来了 —— 剥围栏没生效，本组会误伤 compose 与 front-matter 示例")
+      .toEqual([[], [], 0]);
+  });
+});

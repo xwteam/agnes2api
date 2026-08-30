@@ -85,8 +85,6 @@ Upstream response headers are not forwarded either: only `content-type`, `cache-
 is dropped, since the pool rotates keys per request and those headers describe the upstream
 account, not your gateway.
 
----
-
 ## `GET /health`
 
 No auth required.
