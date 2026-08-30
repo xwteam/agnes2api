@@ -543,7 +543,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ### GET /admin/api/overview
 
-One fetch for the overview page: version, server clock, runtime, storage health, pool health and the Tier-1 pool-level aggregate.
+One fetch for the overview page: version, server clock, runtime, process metrics, storage health, pool health, the Tier-1 pool-level aggregate, the two freshness lines and the configuration summary.
 
 > [!NOTE]
 > `poolStats` is **approximate** (`approximate: true`): concurrent requests undercount it and it lands on disk at most one `POOL_TOUCH_INTERVAL_MS` late. The panel has to render that approximation marker rather than quietly treating it as exact.
@@ -562,9 +562,26 @@ curl http://localhost:8080/admin/api/overview \
   "version": "0.1.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
+  "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
   "storage": { "backend": "file", "writable": true, "checkedAt": 1735689600000 },
   "pool": { "total": 3, "fresh": 2, "cooling": 1, "evicted": 0, "disabled": 0 },
-  "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true }
+  "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true },
+  "freshness": {
+    "poolCacheTtlMs": 60000,
+    "poolVisibilityUpperBoundMs": 120000,
+    "poolTouchIntervalMs": 21600000,
+    "configTtlMs": 30000,
+    "configVisibilityUpperBoundMs": 90000,
+    "kvEdgeCacheMs": 60000
+  },
+  "config": {
+    "registrarEnabled": true,
+    "primary": "moemail",
+    "fallback": "yyds",
+    "targetKeys": 20,
+    "envLocked": ["gatewayToken"],
+    "degraded": false
+  }
 }
 ```
 

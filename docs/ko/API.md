@@ -543,7 +543,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ### GET /admin/api/overview
 
-개요 페이지의 한 번치 조회: 버전, 서버 시계, 런타임, 스토리지 건강도, 풀 건강도, 그리고 Tier-1 풀 집계.
+개요 페이지의 한 번치 조회: 버전, 서버 시계, 런타임, 프로세스 지표, 스토리지 건강도, 풀 건강도, Tier-1 풀 집계, 두 줄의 신선도, 그리고 설정 요약.
 
 > [!NOTE]
 > `poolStats`는 **근사값**입니다(`approximate: true`): 동시 요청에서는 적게 세고, 디스크에는 최대 `POOL_TOUCH_INTERVAL_MS` 한 주기만큼 늦게 내려갑니다. 패널은 이 근사 표시를 반드시 그려야 하며 조용히 정확한 값처럼 다루면 안 됩니다.
@@ -562,9 +562,26 @@ curl http://localhost:8080/admin/api/overview \
   "version": "0.1.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
+  "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
   "storage": { "backend": "file", "writable": true, "checkedAt": 1735689600000 },
   "pool": { "total": 3, "fresh": 2, "cooling": 1, "evicted": 0, "disabled": 0 },
-  "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true }
+  "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true },
+  "freshness": {
+    "poolCacheTtlMs": 60000,
+    "poolVisibilityUpperBoundMs": 120000,
+    "poolTouchIntervalMs": 21600000,
+    "configTtlMs": 30000,
+    "configVisibilityUpperBoundMs": 90000,
+    "kvEdgeCacheMs": 60000
+  },
+  "config": {
+    "registrarEnabled": true,
+    "primary": "moemail",
+    "fallback": "yyds",
+    "targetKeys": 20,
+    "envLocked": ["gatewayToken"],
+    "degraded": false
+  }
 }
 ```
 

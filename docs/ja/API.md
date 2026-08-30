@@ -543,7 +543,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ### GET /admin/api/overview
 
-概要ページの一回分の取得：バージョン、サーバー時計、ランタイム、ストレージの健康状態、プールの健康状態、そして Tier-1 のプール集計。
+概要ページの一回分の取得：バージョン、サーバー時計、ランタイム、プロセス指標、ストレージの健康状態、プールの健康状態、Tier-1 のプール集計、2 本の鮮度、そして設定の要約。
 
 > [!NOTE]
 > `poolStats` は**近似値**です（`approximate: true`）：並行時には少なめに数え、書き込みは最大で `POOL_TOUCH_INTERVAL_MS` 一回分だけ遅れます。パネルはこの近似マーカーを必ず描かねばならず、黙って正確値として扱ってはいけません。
@@ -562,9 +562,26 @@ curl http://localhost:8080/admin/api/overview \
   "version": "0.1.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
+  "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
   "storage": { "backend": "file", "writable": true, "checkedAt": 1735689600000 },
   "pool": { "total": 3, "fresh": 2, "cooling": 1, "evicted": 0, "disabled": 0 },
-  "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true }
+  "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true },
+  "freshness": {
+    "poolCacheTtlMs": 60000,
+    "poolVisibilityUpperBoundMs": 120000,
+    "poolTouchIntervalMs": 21600000,
+    "configTtlMs": 30000,
+    "configVisibilityUpperBoundMs": 90000,
+    "kvEdgeCacheMs": 60000
+  },
+  "config": {
+    "registrarEnabled": true,
+    "primary": "moemail",
+    "fallback": "yyds",
+    "targetKeys": 20,
+    "envLocked": ["gatewayToken"],
+    "degraded": false
+  }
 }
 ```
 

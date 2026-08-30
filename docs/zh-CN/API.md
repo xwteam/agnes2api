@@ -543,7 +543,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ### GET /admin/api/overview
 
-概览页的一次取数：版本、服务端时钟、运行时、存储健康、池健康与 Tier-1 池级聚合。
+概览页的一次取数：版本、服务端时钟、运行时、进程指标、存储健康、池健康、Tier-1 池级聚合、两条新鲜度与配置摘要。
 
 > [!NOTE]
 > `poolStats` 是**近似值**（`approximate: true`）：并发下少计，且最多晚一个 `POOL_TOUCH_INTERVAL_MS` 落盘。面板必须把这个近似标记画出来，不许悄悄当精确值用。
@@ -562,9 +562,26 @@ curl http://localhost:8080/admin/api/overview \
   "version": "0.1.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
+  "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
   "storage": { "backend": "file", "writable": true, "checkedAt": 1735689600000 },
   "pool": { "total": 3, "fresh": 2, "cooling": 1, "evicted": 0, "disabled": 0 },
-  "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true }
+  "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true },
+  "freshness": {
+    "poolCacheTtlMs": 60000,
+    "poolVisibilityUpperBoundMs": 120000,
+    "poolTouchIntervalMs": 21600000,
+    "configTtlMs": 30000,
+    "configVisibilityUpperBoundMs": 90000,
+    "kvEdgeCacheMs": 60000
+  },
+  "config": {
+    "registrarEnabled": true,
+    "primary": "moemail",
+    "fallback": "yyds",
+    "targetKeys": 20,
+    "envLocked": ["gatewayToken"],
+    "degraded": false
+  }
 }
 ```
 
