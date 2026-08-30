@@ -11344,3 +11344,536 @@ describe("W114–W115 五份 USAGE.md 的扩容、base_url 三坑与流式围栏
     for (const h of ["## 関連ドキュメント", last]) expect(failures[0] ?? "").toContain(h);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W130 —— R13c' 的射程扩展：语种判定从「一张 0 行的表」扩到**全部正文行**
+ *
+ * ── 为什么必须扩 ────────────────────────────────────────────────────────
+ * R13c 原本只挂在六份 README 的「📝 最近更新」表上，而**那张表今天是 0 行**
+ *（六份 README 里以 `| 20` 起头的数据行，实测零命中）⇒ 它守的是一张空表。
+ * 而 kiro2api 那个事故（该仓 CHANGELOG 第 13–15 行：多语言 README 的更新表里有 9 行是错的语言）
+ * 的**成因**是「拿两份文案去套六个文件」，那个坏习惯不会只发生在一张表里 ——
+ * 阶段 7 把 25 份文档五语言全部重写了一遍，面积比那次事故大 30 倍。
+ *
+ * ── 判「不得含」，不判「必须含」（把下限翻译成上限）─────────────────────
+ * 第 1 版判「该行必须含假名 / 谚文」，**加一个字符就能绕过**：ja 那份整行抄中文、
+ * 句尾加个「です」就有假名了。所以这里全部改成互斥性判定：
+ * | 文件语言 | 断言 |
+ * |---|---|
+ * | `en`    | 不得含假名、谚文、汉字（阈值 0） |
+ * | `ja`    | 不得含谚文；不得有 **≥10 个连续汉字**（日文正文里汉字被假名打断，实测最长 6） |
+ * | `ko`    | 不得含假名；不得有 ≥10 个连续汉字（实测最长 2，还是那处谚文汉字注） |
+ * | `zh-CN` | 不得含假名、谚文；**不得含繁体独有字** |
+ * | `zh-TW` | 不得含假名、谚文；**不得含简体独有字** |
+ * 另加一条**跨语言**的：非 en 文档里，一行非标题正文若有 ≥6 个拉丁词而**一个本语种字符都没有**
+ * ⇒ 判为「这一行不是这门语言」（反向控制 ① 那种「整行换成英文原句」只有这一条抓得住）。
+ *
+ * ── 简繁字表：为什么必须扩到 300 对以上，以及「无法判定率」这条 ─────────
+ * 第 1 版把简繁特征字写死成 16 对。在 agnes 自己的中文文档上实测覆盖率：
+ * `docs/zh-CN/DEPLOY.md` 含汉字的行 31% 一个特征字都不含、`API.md` 45%、`README.md` 55%。
+ * ⇒ 按字面实现（`简体字数 > 繁体字数`）会把三分之一到一半的正常中文行判红；
+ * 按唯一可用的放宽实现，那 31–55% 的行**完全不判**。两种都坏。
+ * 所以这里做三件事：① 字表扩到**数千字**（下面两串，来源见注）；
+ * ② 零特征字的行判为「无法判定」而不是红；③ **单份文件的无法判定率 >20% 即红** ——
+ * 这一条把「表覆盖率不足」这个真实失效模式本身变成了会红的东西。
+ *
+ * ── 两串字表的来源与口径（写清楚，别让后人以为是手抄的）─────────────────
+ * 由 OpenCC（Apache-2.0）的 `STCharacters` / `TSCharacters` **单字**映射表离线现算后固化：
+ * · 「繁体合法字集」= `TSCharacters` 的全部键 ∪ `STCharacters` 全部值里出现过的字；
+ *   **简体独有字** = `STCharacters` 的键里**不在**该集合的那些。
+ * · 「简体合法字集」对称地算，**繁体独有字**同法。
+ * · 再只保留 BMP 的 CJK 统一表意文字区（`一`–`鿿`），避免代理对与生僻扩展区。
+ * 🔴 **这一步的关键在「独有」二字**：直接拿 `STCharacters` 的键当「简体字」会把
+ * `回 面 只 同 它 板 了 游 出 台 才 表 合 向 制 致 核 修 系 注 布 占 升` 这些
+ * **繁体里同样合法**的字算进去（它们只是各自另有 `迴 麵 祇 衕 牠 闆 瞭 遊 齣 檯 纔 錶 閤 嚮 製 緻 覈 脩 係 註 佈 佔 陞` 这些异体），
+ * 实测会在 `docs/zh-TW/` 上误报 2270 处。**这不是理论风险，是实际跑出来的数。**
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 简体独有字（繁体文本里出现即红）。来源与口径见上面那段。 */
+const SIMPLIFIED_ONLY: string =
+  "与专业丛东丝丢两严丧个临为丽举么义乌乐乔习乡书买乱争亏亚产亩亲亵亸亿仅从仑仓仪们众优会伛伞伟传伡伣伤伥伦伧伪伫体佥侠侣侥侦侧侨侩侪侬侭俣俦俨俩俪俫俭债倾偬偻"
+  + "偾偿傤傥傧储傩儿兑兖兰关兴兹养兽冁内冈册写军农冯冲决况冻净凄凉减凑凛凤凫凭凯击凿刍刘则刚创删别刬刭刹刽刾刿剀剂剐剑剥剧劝办务劢动励劲劳势勋勚匀匦匮区医华协单"
+  + "卖卢卤卧卫却卺厅历厉压厌厍厐厕厢厣厦厨厩厮县叁参叆叇双发变叙叠号叹叽吓吕吗吨听启吴呐呒呓呕呖呗员呙呛呜咏咙咛咝咤响哑哒哓哔哕哗哙哜哝哟唛唝唠唡唢唤啧啬啭啮啯"
+  + "啰啴啸喷喽喾嗫嗳嘘嘤嘱噜嚣团园囱围囵国图圆圣圹场坏块坚坛坜坝坞坟坠垄垅垆垒垦垩垫垭垯垱垲垴埘埙埚堑堕塆墙壮声壳壶壸处备复够头夹夺奁奂奋奖奥妆妇妈妩妪妫姗姹娄"
+  + "娅娆娇娈娱娲娴婳婴婵婶媪媭嫒嫔嫱嬷孙学孪宁宝实宠审宪宫宽宾寝对寻导寿将尔尘尝尧尴尽层屃屉届属屡屦屿岁岂岖岗岘岚岛岭岽岿峃峄峡峣峤峥峦峰崂崃崄崭嵘嵚嵝巅巩巯币"
+  + "帅师帏帐帜带帧帮帱帻帼幂并庄庆床庐庑库应庙庞废庼廪开异弃弑张弥弪弯弹强归当录彟彦彨彻径徕忆忏忧忾怀态怂怃怄怅怆怜总怼怿恋恒恳恶恸恹恺恻恼恽悦悫悬悭悮悯惊惧惨"
+  + "惩惫惬惭惮惯愠愤愦慑慭懑懒懔戆戋戏戗战戬戯户扑执扩扪扫扬扰抚抛抟抠抡抢护报担拟拢拣拥拦拧拨择挚挛挜挝挞挟挠挡挢挣挤挥挦捝捞损捡换捣掳掴掷掸掺掼揽揾揿搀搁搂搄"
+  + "搅携摄摅摆摇摈摊撄撑撵撷撸撺擜擞攒敌敚敛敩数斋斓斩断无旧时旷旸昙昵昼昽显晋晒晓晔晕晖暂暅暧术机杀杂权条来杨杩构枞枢枣枥枧枨枪枫枭柠柽栀栅标栈栉栊栋栌栎栏树栖"
+  + "样栾桠桡桢档桤桥桦桧桨桩桪梦梼梾梿检棁棂椁椝椟椠椢椤椫椭椮楼榄榅榇榈榉榝槚槛槟槠横樯樱橥橱橹橼檩欢欤欧歼殁殇残殒殓殚殡殴毁毂毕毙毡毵毶氇气氢氩氲汇汉汤汹沄沟"
+  + "没沣沤沥沦沧沨沩沪泞泪泶泷泸泺泻泼泽泾洁洒洼浃浅浆浇浈浉浊测浍济浏浐浑浒浓浔浕涚涛涝涞涟涠涡涢涣涤润涧涨涩渊渌渍渎渐渑渔渖渗温湾湿溁溃溅溆溇滗滚滞滟滠满滢滤"
+  + "滥滦滨滩滪潆潇潋潍潜潴澛澜濑濒灏灭灯灵灶灾灿炀炉炖炜炝点炼炽烁烂烃烛烟烦烧烨烩烫烬热焕焖焘煴爱爷牍牦牵牺犊状犷犸犹狈狝狞独狭狮狯狰狱狲猃猎猕猡猪猫猬献獭玑玙"
+  + "玚玛玮环现玱玺珐珑珰珲琎琏琐琼瑶瑷瑸璎瓒瓮瓯电画畅畴疖疗疟疠疡疬疭疮疯疱疴痈痉痒痖痨痪痫痴瘅瘆瘗瘘瘪瘫瘾瘿癞癣癫皑皱皲盏盐监盖盗盘眍眦眬睁睐睑瞆瞒瞩矫矶矾矿"
+  + "砀码砖砗砚砜砺砻砾础硁硕硖硗硙硚硵硷碍碛碜碱礼祃祎祢祯祷祸禀禄禅离秃秆秘积称秽秾稆税稣稳穑穞穷窃窍窎窑窜窝窥窦窭竖竞笃笋笔笕笺笼笾筚筛筜筝筹筼签筿简箓箦箧箨"
+  + "箩箪箫篑篓篮篯篱簖籁籴类籼粜粝粤粪粮粽糁糇糍紧絷縆纟纠纡红纣纤纥约级纨纩纪纫纬纭纮纯纰纱纲纳纴纵纶纷纸纹纺纻纼纽纾线绀绁绂练组绅细织终绉绊绋绌绍绎经绐绑绒结"
+  + "绔绕绖绗绘给绚绛络绝绞统绠绡绢绣绤绥绦继绨绩绪绫绬续绮绯绰绱绲绳维绵绶绷绸绹绺绻综绽绾绿缀缁缂缃缄缅缆缇缈缉缊缋缌缍缎缏缐缑缒缓缔缕编缗缘缙缚缛缜缝缞缟缠缡"
+  + "缢缣缤缥缦缧缨缩缪缫缬缭缮缯缰缱缲缳缴缵罂网罗罚罢罴羁羟羡群翘翙翚耢耧耸耻聂聋职聍联聩聪肃肠肤肮肴肾肿胀胁胆胧胨胪胫胶脉脍脏脐脑脓脔脚脱脶脸腘腭腻腼腽腾膑臜"
+  + "舆舣舰舱舻艰艳艺节芈芗芜芦苁苇苈苋苌苍苎苏茎茏茑茔茕茧荆荙荚荛荜荝荞荟荠荡荣荤荥荦荧荨荩荪荫荬荭荮药莅莱莲莳莴莶获莸莹莺莼萚萝萤营萦萧萨葱蒀蒇蒉蒋蒌蒏蓝蓟蓠"
+  + "蓣蓥蓦蔂蔷蔹蔺蔼蕰蕲蕴薮藓蘖虏虑虚虬虮虱虽虾虿蚀蚁蚂蚃蚕蚬蛊蛎蛏蛮蛰蛱蛲蛳蛴蜕蜗蝇蝈蝉蝼蝾螀螨蟏衅衔补衬衮袄袅袆袜袭袯装裆裈裢裣裤裥褛褴襕见观觃规觅视觇览觉"
+  + "觊觋觌觍觎觏觐觑觞触觯訚詟誉誊讠计订讣认讥讦讧讨让讪讫讬训议讯记讱讲讳讴讵讶讷许讹论讻讼讽设访诀证诂诃评诅识诇诈诉诊诋诌词诎诏诐译诒诓诔试诖诗诘诙诚诛诜话诞"
+  + "诟诠诡询诣诤该详诧诨诩诪诫诬语诮误诰诱诲诳说诵诶请诸诹诺读诼诽课诿谀谁谂调谄谅谆谇谈谉谊谋谌谍谎谏谐谑谒谓谔谕谖谗谘谙谚谛谜谝谞谟谠谡谢谣谤谥谦谧谨谩谪谫谬"
+  + "谭谮谯谰谱谲谳谴谵谶豮贝贞负贠贡财责贤败账货质贩贪贫贬购贮贯贰贱贲贳贴贵贶贷贸费贺贻贼贽贾贿赀赁赂赃资赅赆赇赈赉赊赋赌赍赎赏赐赑赒赓赔赕赖赗赘赙赚赛赜赝赞赟"
+  + "赠赡赢赣赪赵赶趋趱趸跃跄跞践跶跷跸跹跻踌踪踬踯蹑蹒蹰蹿躏躜躯车轧轨轩轪轫转轭轮软轰轱轲轳轴轵轶轷轸轹轺轻轼载轾轿辀辁辂较辄辅辆辇辈辉辊辋辌辍辎辏辐辑辒输辔辕"
+  + "辖辗辘辙辚辞辩辫边辽达迁过迈运还这进远违连迟迩迳迹选逊递逦逻遗遥邓邝邬邮邹邺邻郏郐郑郓郦郧郸酂酝酦酱酽酾酿释鉴銮錾钅钆钇针钉钊钋钌钍钎钏钐钑钒钓钔钕钖钗钘钙"
+  + "钚钛钜钝钞钟钠钡钢钣钤钥钦钧钨钩钪钫钬钭钮钯钰钱钲钳钴钵钶钷钸钹钺钻钼钽钾钿铀铁铂铃铄铅铆铇铈铉铊铋铌铍铎铏铐铑铒铓铔铕铖铗铘铙铚铛铜铝铞铟铠铡铢铣铤铥铦铧"
+  + "铨铩铪铫铬铭铮铯铰铱铲铳铴铵银铷铸铹铺铻铼铽链铿销锁锂锃锄锅锆锇锈锉锊锋锌锍锎锏锐锑锒锓锔锕锖锗锘错锚锛锜锝锞锟锠锡锢锣锤锥锦锧锨锩锪锫锬锭键锯锰锱锲锳锴锵"
+  + "锶锷锸锹锺锻锼锽锾锿镀镁镂镃镄镅镆镇镈镉镊镋镌镍镎镏镐镑镒镓镔镕镖镗镘镙镚镛镜镝镞镟镠镡镢镣镤镥镦镧镨镩镪镫镬镭镮镯镰镱镲镳镴镵镶长门闩闪闫闬闭问闯闰闱闲闳"
+  + "间闵闶闷闸闹闺闻闼闽闾闿阀阁阂阃阄阅阆阇阈阉阊阋阌阍阎阏阐阑阒阓阔阕阖阗阘阙阚阛队阳阴阵阶际陆陇陈陉陕陦陧陨险随隐隶隽难雇雏雠雳雾霁霉霡霭靓靔静靥鞑鞒鞯鞲韦"
+  + "韧韨韩韪韫韬韵页顶顷顸项顺须顼顽顾顿颀颁颂颃预颅领颇颈颉颊颋颌颍颎颏颐频颒颓颔颕颖颗题颙颚颛颜额颞颟颠颡颢颣颤颥颦颧风飏飐飑飒飓飔飕飖飗飘飙飚飞飨餍饣饤饥饦"
+  + "饧饨饩饪饫饬饭饮饯饰饱饲饳饴饵饶饷饸饹饺饻饼饽饾饿馀馁馂馃馄馅馆馇馈馉馊馋馌馍馎馏馐馑馒馓馔馕马驭驮驯驰驱驲驳驴驵驶驷驸驹驺驻驼驽驾驿骀骁骂骃骄骅骆骇骈骉骊"
+  + "骋验骍骎骏骐骑骒骓骔骕骖骗骘骙骚骛骜骝骞骟骠骡骢骣骤骥骦骧髅髋髌鬓鬶魇魉鱼鱽鱾鱿鲀鲁鲂鲃鲄鲅鲆鲇鲈鲉鲊鲋鲌鲍鲎鲏鲐鲑鲒鲓鲔鲕鲖鲗鲘鲙鲚鲛鲜鲝鲞鲟鲠鲡鲢鲣鲤鲥"
+  + "鲦鲧鲨鲩鲪鲫鲬鲭鲮鲯鲰鲱鲲鲳鲴鲵鲶鲷鲸鲹鲺鲻鲼鲽鲾鲿鳀鳁鳂鳃鳄鳅鳆鳇鳈鳉鳊鳋鳌鳍鳎鳏鳐鳑鳒鳓鳔鳕鳖鳗鳘鳙鳚鳛鳜鳝鳞鳟鳠鳡鳢鳣鳤鸟鸠鸡鸢鸣鸤鸥鸦鸧鸨鸩鸪鸫鸬鸭"
+  + "鸮鸯鸰鸱鸲鸳鸴鸵鸶鸷鸸鸹鸺鸻鸼鸽鸾鸿鹀鹁鹂鹃鹄鹅鹆鹇鹈鹉鹊鹋鹌鹍鹎鹏鹐鹑鹒鹓鹔鹕鹖鹗鹘鹙鹚鹛鹜鹝鹞鹟鹠鹡鹢鹣鹤鹥鹦鹧鹨鹩鹪鹫鹬鹭鹮鹯鹰鹱鹲鹳鹴鹾麦麸麹麺黄黉"
+  + "黡黩黪黾鼋鼌鼍鼹齐齑齿龀龁龂龃龄龅龆龇龈龉龊龋龌龙龚龛龟鿎鿏鿒鿔";
+
+/** 繁体独有字（简体文本里出现即红）。同一口径的另一侧。 */
+const TRADITIONAL_ONLY: string =
+  "丟並亂亙亞佇佈佔併來侖侶侷俁係俓俔俠俥俬倀倆倈倉個們倖倫倲偉偑側偵偽傌傑傖傘備傢傭傯傳傴債傷傾僂僅僉僑僕僞僤僥僨僱價儀儁儂億儈儉儎儐儔儕儘償儣優儭儲儷儸儺儻"
+  + "儼兇兌兒兗內兩冊冑冪凈凍凙凜凱別刪剄則剎剗剛剝剮剴創剷剾劃劇劉劊劌劍劏劑劚勁勑動務勛勝勞勢勣勩勱勳勵勸勻匭匯匱區協卹卻卽厙厠厤厭厲厴參叄叢吒吳吶呂咼員哯唄唓"
+  + "唸問啓啞啟啢喎喚喪喫喬單喲嗆嗇嗊嗎嗚嗩嗰嗶嗹嘆嘍嘓嘔嘖嘗嘜嘩嘪嘮嘯嘰嘳嘵嘸嘺嘽噁噅噓噚噝噞噠噥噦噯噲噴噸噹嚀嚇嚌嚐嚕嚙嚛嚥嚦嚧嚨嚮嚲嚳嚴嚶嚽囀囁囂囃囅囈囉囌"
+  + "囑囒囪圇國圍園圓圖團圞垻埡埨埬埰執堅堊堖堚堝堯報場塊塋塏塒塗塚塢塤塵塸塹塿墊墜墠墮墰墲墳墶墻墾壇壈壋壎壓壗壘壙壚壜壞壟壠壢壣壩壪壯壺壼壽夠夢夾奐奧奩奪奬奮奼"
+  + "妝姍姦娙娛婁婡婦婭媈媧媯媰媼媽嫋嫗嫵嫺嫻嫿嬀嬃嬇嬈嬋嬌嬙嬡嬣嬤嬦嬪嬰嬸嬻孃孄孆孇孋孌孎孫學孻孾孿宮寀寠寢實寧審寫寬寵寶將專尋對導尷屆屍屓屜屢層屨屩屬岡峯峴島"
+  + "峽崍崑崗崙崢崬嵐嵗嵼嵽嵾嶁嶄嶇嶈嶔嶗嶘嶠嶢嶧嶨嶮嶸嶹嶺嶼嶽巊巋巒巔巖巗巘巰巹帥師帳帶幀幃幓幗幘幝幟幣幩幫幬幹幾庫廁廂廄廈廎廕廚廝廞廟廠廡廢廣廧廩廬廳弒弔弳張"
+  + "強彃彄彆彈彌彎彔彙彠彥彫彲彿後徑從徠復徹徿恆恥悅悞悵悶悽惡惱惲惻愛愜愨愴愷愻愾慄態慍慘慚慟慣慤慪慫慮慳慶慺慼慾憂憊憐憑憒憖憚憢憤憫憮憲憶憸憹懀懇應懌懍懎懞懟"
+  + "懣懤懨懲懶懷懸懺懼懾戀戇戔戧戩戰戱戲戶拋挩挱挾捨捫捱捲掃掄掆掗掙掚掛採揀揚換揮揯損搖搗搵搶摋摐摑摜摟摯摳摶摺摻撈撊撏撐撓撝撟撣撥撧撫撲撳撻撾撿擁擄擇擊擋擓擔"
+  + "據擟擠擣擫擬擯擰擱擲擴擷擺擻擼擽擾攄攆攋攏攔攖攙攛攜攝攢攣攤攪攬敎敓敗敘敵數斂斃斅斆斕斬斷斸旂旣昇時晉晛晝暈暉暐暘暢暫曄曆曇曉曊曏曖曠曥曨曬書會朥朧朮東枴柵"
+  + "柺査桱桿梔梖梘梜條梟梲棄棊棖棗棟棡棧棲棶椏椲楇楊楓楨業極榘榦榪榮榲榿構槍槓槤槧槨槫槮槳槶槼樁樂樅樑樓標樞樠樢樣樤樧樫樳樸樹樺樿橈橋機橢橫橯檁檉檔檜檟檢檣檭檮"
+  + "檯檳檵檸檻櫃櫅櫍櫓櫚櫛櫝櫞櫟櫠櫥櫧櫨櫪櫫櫬櫱櫳櫸櫻欄欅欇權欍欏欐欑欒欓欖欘欞欽歎歐歟歡歲歷歸歿殘殞殢殤殨殫殭殮殯殰殲殺殻殼毀毆毊毿氂氈氌氣氫氬氭氳氾汎汙決沒"
+  + "沖況泝洩洶浹浿涇涗涼淒淚淥淨淩淪淵淶淺渙減渢渦測渾湊湋湞湧湯溈準溝溡溫溮溳溼滄滅滌滎滙滬滯滲滷滸滻滾滿漁漊漍漚漢漣漬漲漵漸漿潁潑潔潕潙潚潛潣潤潯潰潷潿澀澅澆"
+  + "澇澐澗澠澤澦澩澫澬澮澱澾濁濃濄濆濕濘濚濛濜濟濤濧濫濰濱濺濼濾濿瀂瀃瀅瀆瀇瀉瀋瀏瀕瀘瀝瀟瀠瀦瀧瀨瀰瀲瀾灃灄灍灑灒灕灘灙灝灡灣灤灧灩災為烏烴無煇煉煒煙煢煥煩煬煱"
+  + "熂熅熉熌熒熓熗熚熡熰熱熲熾燀燁燈燉燒燖燙燜營燦燬燭燴燶燻燼燾爃爄爇爍爐爖爛爥爧爭爲爺爾牀牆牘牽犖犛犞犢犧狀狹狽猌猙猶猻獁獃獄獅獊獎獨獩獪獫獮獰獱獲獵獷獸獺獻"
+  + "獼玀玁珼現琱琺琿瑋瑒瑣瑤瑩瑪瑲瑻瑽璉璊璕璗璝璡璣璦璫璯環璵璸璼璽璾璿瓄瓅瓊瓏瓔瓕瓚瓛甌甕產産甦甯畝畢畫異畵當畼疇疊痙痠痮痾瘂瘋瘍瘓瘞瘡瘧瘮瘱瘲瘺瘻療癆癇癉癐"
+  + "癒癘癟癡癢癤癥癧癩癬癭癮癰癱癲發皁皚皟皰皸皺盃盜盞盡監盤盧盨盪眝眞眥眾睍睏睜睞瞘瞜瞞瞤瞶瞼矇矉矑矓矚矯硃硜硤硨硯碕碙碩碭碸確碼碽磑磚磠磣磧磯磽磾礄礆礎礐礒礙"
+  + "礦礪礫礬礮礱祕祿禍禎禕禡禦禪禮禰禱禿秈稅稈稏稜稟種稱穀穇穌積穎穠穡穢穩穫穭窩窪窮窯窵窶窺竄竅竇竈竊竚竪竱競筆筍筧筴箇箋箏節範築篋篔篘篠篢篤篩篳篸簀簂簍簑簞簡"
+  + "簢簣簫簹簽簾籃籅籋籌籔籙籛籜籟籠籤籩籪籬籮籲粵糉糝糞糧糰糲糴糶糹糺糾紀紂紃約紅紆紇紈紉紋納紐紓純紕紖紗紘紙級紛紜紝紞紟紡紬紮細紱紲紳紵紹紺紼紿絀絁終絃組絅絆"
+  + "絍絎結絕絙絛絝絞絡絢絥給絧絨絪絰統絲絳絶絹絺綀綁綃綄綆綇綈綉綋綌綎綏綐綑經綖綜綝綞綟綠綡綢綣綧綪綫綬維綯綰綱網綳綴綵綸綹綺綻綽綾綿緄緇緊緋緍緑緒緓緔緗緘緙線"
+  + "緝緞緟締緡緣緤緦編緩緬緮緯緰緱緲練緶緷緸緹緻縈縉縊縋縍縎縐縑縕縗縛縝縞縟縣縧縫縬縭縮縯縰縱縲縳縴縵縶縷縸縹縺總績繂繃繅繆繈繏繐繒繓織繕繚繞繟繡繢繨繩繪繫繬繭"
+  + "繮繯繰繳繶繷繸繹繻繼繽繾繿纁纆纇纈纊續纍纏纓纔纕纖纗纘纚纜缽罃罈罌罎罰罵罷羅羆羈羋羣羥羨義羵羶習翫翬翹翽耬耮聖聞聯聰聲聳聵聶職聹聻聽聾肅脅脈脛脣脥脩脫脹腎腖"
+  + "腡腦腪腫腳腸膃膕膚膞膠膢膩膹膽膾膿臉臍臏臗臘臚臟臠臢臥臨臺與興舉舊舘艙艣艤艦艫艱艷芻茲荊莊莖莢莧菕華菴菸萇萊萬萴萵葉葒葝葤葦葯葷蒍蒐蒓蒔蒕蒞蒭蒼蓀蓆蓋蓧蓮蓯"
+  + "蓴蓽蔄蔔蔘蔞蔣蔥蔦蔭蔯蔿蕁蕆蕎蕒蕓蕕蕘蕝蕢蕩蕪蕭蕳蕷蕽薀薆薈薊薌薑薔薘薟薦薩薳薴薵薺藍藎藝藥藪藭藶藷藹藺蘀蘄蘆蘇蘊蘋蘚蘞蘟蘢蘭蘺蘿虆虉處虛虜號虧虯蛺蛻蜆蝀蝕"
+  + "蝟蝦蝨蝸螄螞螢螮螻螿蟂蟄蟈蟎蟘蟜蟣蟬蟯蟲蟳蟶蟻蠀蠁蠅蠆蠍蠐蠑蠔蠙蠟蠣蠦蠨蠱蠶蠻蠾衆衊術衕衚衛衝袞裊裏補裝裡製複褌褘褲褳褸褻襀襇襉襏襓襖襗襘襝襠襤襪襬襯襰襲襴"
+  + "襵覈見覎規覓視覘覛覡覥覦親覬覯覲覷覹覺覼覽覿觀觴觶觸訁訂訃計訊訌討訏訐訑訒訓訕訖託記訛訜訝訞訟訢訣訥訨訩訪設許訴訶診註証詀詁詆詊詎詐詑詒詓詔評詖詗詘詛詝詞詠"
+  + "詡詢詣試詩詪詫詬詭詮詰話該詳詵詷詼詿誂誄誅誆誇誋誌認誑誒誕誘誚語誠誡誣誤誥誦誨說誫説誰課誳誴誶誷誹誺誼誾調諂諄談諉請諍諏諑諒諓論諗諛諜諝諞諟諡諢諣諤諥諦諧諫"
+  + "諭諮諯諰諱諲諳諴諶諷諸諺諼諾謀謁謂謄謅謆謉謊謎謏謐謔謖謗謙謚講謝謠謡謨謫謬謭謯謱謳謸謹謾譁譂譅譆證譊譎譏譑譓譖識譙譚譜譞譟譨譫譭譯議譴護譸譽譾讀讅變讋讌讎讒"
+  + "讓讕讖讚讜讞豈豎豐豔豬豵豶貓貗貙貝貞貟負財貢貧貨販貪貫責貯貰貲貳貴貶買貸貺費貼貽貿賀賁賂賃賄賅資賈賊賑賒賓賕賙賚賜賝賞賟賠賡賢賣賤賦賧質賫賬賭賰賴賵賺賻購賽"
+  + "賾贃贄贅贇贈贉贊贋贍贏贐贑贓贔贖贗贚贛贜赬趕趙趨趲跡踐踰踴蹌蹔蹕蹟蹠蹣蹤蹳蹺蹻躂躉躊躋躍躎躑躒躓躕躘躚躝躡躥躦躪軀軉車軋軌軍軏軑軒軔軕軗軛軜軝軟軤軨軫軬軲軷"
+  + "軸軹軺軻軼軾軿較輄輅輇輈載輊輋輒輓輔輕輖輗輛輜輝輞輟輢輥輦輨輩輪輬輮輯輳輶輷輸輻輾輿轀轂轄轅轆轇轉轊轍轎轐轔轗轟轠轡轢轣轤辦辭辮辯農迴逕這連週進遊運過達違遙"
+  + "遜遞遠遡適遱遲遷選遺遼邁還邇邊邏邐郟郵鄆鄉鄒鄔鄖鄟鄧鄩鄭鄰鄲鄳鄴鄶鄺酇酈醃醜醞醟醣醫醬醱醲醶釀釁釃釅釋釐釒釓釔釕釗釘釙釚針釟釣釤釦釧釨釩釲釳釴釵釷釹釺釾釿鈀"
+  + "鈁鈃鈄鈅鈆鈇鈈鈉鈋鈍鈎鈐鈑鈒鈔鈕鈖鈗鈛鈞鈠鈡鈣鈥鈦鈧鈮鈯鈰鈲鈳鈴鈷鈸鈹鈺鈽鈾鈿鉀鉁鉅鉆鉈鉉鉊鉋鉍鉑鉔鉕鉗鉚鉛鉝鉞鉠鉢鉤鉥鉦鉧鉬鉭鉮鉳鉶鉷鉸鉺鉻鉽鉾鉿銀銁銂銃"
+  + "銅銈銊銍銏銑銓銖銘銚銛銜銠銣銥銦銨銩銪銫銬銱銳銶銷銹銻銼鋁鋂鋃鋅鋇鋉鋌鋏鋐鋒鋗鋙鋝鋟鋠鋣鋤鋥鋦鋨鋩鋪鋭鋮鋯鋰鋱鋶鋸鋹鋼錀錁錂錄錆錇錈錏錐錒錕錘錙錚錛錜錝錞錟"
+  + "錠錡錢錤錥錦錨錩錫錮錯録錳錶錸錼錽鍀鍁鍃鍄鍅鍆鍇鍈鍉鍊鍋鍍鍒鍔鍘鍚鍛鍠鍤鍥鍩鍬鍭鍮鍰鍵鍶鍺鍼鍾鎂鎄鎇鎈鎊鎌鎍鎓鎔鎖鎘鎙鎚鎛鎝鎞鎡鎢鎣鎦鎧鎩鎪鎬鎭鎮鎯鎰鎲鎳鎵"
+  + "鎶鎷鎸鎿鏃鏆鏇鏈鏉鏌鏍鏏鏐鏑鏗鏘鏚鏜鏝鏞鏟鏡鏢鏤鏥鏦鏨鏰鏵鏷鏹鏺鏻鏽鏾鐃鐄鐇鐈鐋鐍鐎鐏鐐鐒鐓鐔鐘鐙鐝鐠鐥鐦鐧鐨鐩鐪鐫鐮鐯鐲鐳鐵鐶鐸鐺鐼鐽鐿鑀鑄鑉鑊鑌鑑鑒鑔鑕"
+  + "鑞鑠鑣鑥鑪鑭鑰鑱鑲鑴鑷鑹鑼鑽鑾鑿钁钂長門閂閃閆閈閉開閌閍閎閏閐閑閒間閔閗閘閝閞閡閣閤閥閨閩閫閬閭閱閲閵閶閹閻閼閽閾閿闃闆闇闈闉闊闋闌闍闐闑闒闓闔闕闖關闞闠闡"
+  + "闢闤闥陘陝陞陣陰陳陸陽隉隊階隑隕際隤隨險隮隯隱隴隸隻雋雖雙雛雜雞離難雲電霑霢霣霧霼霽靂靄靆靈靉靚靜靝靦靧靨鞏鞝鞦鞽鞾韁韃韆韉韋韌韍韓韙韚韛韜韝韞韠韻響頁頂頃"
+  + "項順頇須頊頌頍頎頏預頑頒頓頔頗領頜頠頡頤頦頫頭頮頰頲頴頵頷頸頹頻頽顂顃顅顆題額顎顏顒顓顔顗願顙顛類顢顣顥顧顫顬顯顰顱顳顴風颭颮颯颰颱颳颶颷颸颺颻颼颾飀飄飆飈"
+  + "飋飛飠飢飣飥飦飩飪飫飭飯飱飲飴飵飶飼飽飾飿餃餄餅餈餉養餌餎餏餑餒餓餔餕餖餗餘餚餛餜餞餡餦餧館餪餫餬餭餱餳餵餶餷餸餺餼餾餿饁饃饅饈饉饊饋饌饑饒饗饘饜饞饟饠饢馬"
+  + "馭馮馯馱馳馴馹馼駁駃駉駊駎駐駑駒駓駔駕駘駙駚駛駝駞駟駡駢駤駧駩駪駫駭駰駱駶駸駻駼駿騁騂騃騄騅騉騊騌騍騎騏騑騔騖騙騚騜騝騞騟騠騤騧騪騫騭騮騰騱騴騵騶騷騸騻騼騾"
+  + "驀驁驂驃驄驅驊驋驌驍驎驏驓驕驗驙驚驛驟驢驤驥驦驨驪驫骯髏髒體髕髖髮鬆鬍鬖鬚鬠鬢鬥鬧鬨鬩鬮鬱鬹魎魘魚魛魟魢魥魦魨魯魴魵魷魺魽鮀鮁鮃鮄鮅鮆鮈鮊鮋鮍鮎鮐鮑鮒鮓鮚鮜"
+  + "鮝鮞鮟鮠鮡鮣鮤鮦鮪鮫鮭鮮鮯鮰鮳鮵鮶鮸鮺鮿鯀鯁鯄鯆鯇鯉鯊鯒鯔鯕鯖鯗鯛鯝鯞鯡鯢鯤鯧鯨鯪鯫鯬鯰鯱鯴鯶鯷鯻鯽鯾鯿鰁鰂鰃鰆鰈鰉鰊鰋鰌鰍鰏鰐鰑鰒鰓鰕鰛鰜鰟鰠鰣鰤鰥鰦鰧鰨"
+  + "鰩鰫鰭鰮鰱鰲鰳鰵鰶鰷鰹鰺鰻鰼鰽鰾鱀鱂鱄鱅鱆鱇鱈鱉鱊鱒鱔鱖鱗鱘鱚鱝鱟鱠鱢鱣鱤鱧鱨鱭鱮鱯鱲鱷鱸鱺鳥鳧鳩鳬鳲鳳鳴鳶鳷鳼鳽鳾鴀鴃鴅鴆鴇鴉鴐鴒鴔鴕鴗鴛鴜鴝鴞鴟鴣鴥鴦鴨"
+  + "鴮鴯鴰鴲鴳鴴鴷鴻鴽鴿鵁鵂鵃鵊鵏鵐鵑鵒鵓鵚鵜鵝鵟鵠鵡鵧鵩鵪鵫鵬鵮鵯鵰鵲鵷鵾鶄鶇鶉鶊鶌鶒鶓鶖鶗鶘鶚鶠鶡鶥鶦鶩鶪鶬鶭鶯鶰鶱鶲鶴鶹鶺鶻鶼鶿鷀鷁鷂鷄鷅鷉鷊鷐鷓鷔鷖鷗鷙"
+  + "鷚鷟鷣鷤鷥鷦鷨鷩鷫鷭鷯鷲鷳鷴鷷鷸鷹鷺鷽鷿鸂鸇鸊鸋鸌鸏鸑鸕鸗鸘鸚鸛鸝鸞鹵鹹鹺鹼鹽麗麥麨麩麪麫麬麯麲麳麴麵麷麼黃黌點黨黲黴黶黷黽黿鼂鼉鼕鼴齊齋齎齏齒齔齕齗齘齙齜"
+  + "齟齠齡齣齦齧齩齪齬齭齮齯齰齲齴齶齷齼齾龍龎龐龑龓龔龕龜龭龯鿁鿓";
+
+/**
+ * 每一份出货文档该是哪种语言。`docs/{lang}/` 按目录名；仓根五份按内容实情：
+ * README / CHANGELOG / SPONSORS 是简体中文，CONTRIBUTING / SECURITY 是英文
+ *（它们写给贡献者与安全研究者，参照仓同样只有英文一份）。
+ * **登记在这里而不是猜**：猜错的那一份会被整片判成「没翻译」。
+ */
+const DOC_LANG: Readonly<Record<string, Lang | "en">> = {
+  "README.md": "zh-CN", "CHANGELOG.md": "zh-CN", "SPONSORS.md": "zh-CN",
+  "CONTRIBUTING.md": "en", "SECURITY.md": "en",
+};
+const langOfDoc = (path: string): Lang =>
+  (path.startsWith("docs") ? (path.split("/")[1] as Lang) : (DOC_LANG[path] ?? "zh-CN") as Lang);
+
+/**
+ * 两处**刻意保留**的异语字形，P3f 阶段 5B 登记过，判据必须豁免它们：
+ * ① 语言切换行 / 指针行里的语言**自称**（`简体中文` / `繁體中文` / `日本語` / `한국어`）——
+ *    它们是语言的专名，五份逐字相同，繁体那份里也必须写得出 `简体中文` 四个字；
+ * ② 源码抛的那句报文原文 —— 它是 `src/core/config.ts` 的字面量，
+ *    五种语言的文档引用它时都得逐字照抄，不能翻译。
+ * **双向登记**：下面有一格查这两类今天真的还在文档里出现着；哪天没了，豁免就该删。
+ */
+const LANG_SELF_NAMES: readonly string[] = ["简体中文", "繁體中文", "English", "日本語", "한국어"];
+const SOURCE_LITERAL_ZH = "缺少 GATEWAY_TOKEN，网关无法启动";
+
+const KANA = /[぀-ヿ]/u;
+const HANGUL = /[가-힣]/u;
+const HAN_CHAR = /[㐀-䶿一-鿿]/u;
+const HAN_RUN = /[㐀-䶿一-鿿]+/gu;
+const LATIN_WORD = /[A-Za-z][A-Za-z'’-]*/g;
+/* ko 的「谚文词 + 括号汉字注」形态复用本文件上面那条 `KO_HANJA_GLOSS`，不另写第二份。 */
+/** 一行里 ≥3 条跨语言链接 ⇒ 语言切换行 / 五语言指针行。根 README 用 `docs/`，语言版用 `../`。 */
+const CROSS_LANG_ANY = /(?:\]\(|href=")(?:\.\.\/|docs\/)(?:zh-CN|zh-TW|en|ja|ko)\//g;
+
+/** ja / ko 正文里连续汉字的上限。实测 ja 最长 6、ko 最长 2；中文句子随手就是 11–12。 */
+const HAN_RUN_LIMIT = 10;
+/** 非本语种的拉丁散文行：≥6 个拉丁词且一个本语种字符都没有。标题行不算（端点路径全是拉丁词）。 */
+const LATIN_PROSE_WORDS = 6;
+/** 单份文件里「含汉字却判不出简繁」的行占比上限。 */
+const UNDECIDABLE_RATIO = 20;
+
+/**
+ * 一份文档里进入语种判定的正文行。剥：围栏、表格分隔行、语言切换行、行内 code、
+ * 徽章与外链 URL、HTML 标签、语言自称、源码报文原文。
+ *
+ * ⚠️ **只在 en 文档里**再多剥一层 `「…」`：直角引号在英文行文里**根本不是标点**，
+ * 它在本仓的 `CONTRIBUTING.md` / `SECURITY.md` 里唯一的用途是**逐字引用仓内的中文用例名**
+ *（`「响应体整段文本里都找不到明文 key」` 那一族，实测 6 处）。这与行内 code 同档：
+ * 引用的是一件东西的名字，不是一段没翻译的正文。
+ * **不给中文文档开这一层**——`「」` 在中文里就是普通引号，剥了会把引号里的简繁判据弄瞎。
+ */
+const langProbeLines = (text: string, isEnglishDoc = false): ReadonlyArray<{ no: number; probe: string }> => {
+  const out: Array<{ no: number; probe: string }> = [];
+  let inFence = false;
+  text.split("\n").forEach((raw, i) => {
+    if (/^[ \t]*```/.test(raw)) { inFence = !inFence; return; }
+    if (inFence) return;
+    if (/^\s*\|(?:\s*:?-+:?\s*\|)+\s*$/.test(raw)) return;
+    if ((raw.match(CROSS_LANG_ANY) ?? []).length >= 3) return;
+    let probe = raw.split(SOURCE_LITERAL_ZH).join(" ");
+    probe = probe.replace(/`[^`]*`/g, " ").replace(/https?:\/\/\S+/g, " ").replace(/<[^>]*>/g, " ");
+    probe = probe.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+    if (isEnglishDoc) probe = probe.replace(/「[^」]*」/g, " ");
+    for (const self of LANG_SELF_NAMES) probe = probe.split(self).join(" ");
+    out.push({ no: i + 1, probe });
+  });
+  return out;
+};
+
+/** R15 页脚那一行是**刻意的英文**，六份 README 逐字相同 —— 拉丁散文那一条要放它过。 */
+const ENGLISH_FOOTER = "Built with TypeScript + Hono + Cloudflare Workers";
+
+/** 一份文档的语种体检。返回逐条人话，空数组 = 干净。 */
+function languageFaults(path: string, text: string): string[] {
+  const lang = langOfDoc(path);
+  const faults: string[] = [];
+  for (const { no, probe } of langProbeLines(text, lang === "en")) {
+    const say = (why: string) => faults.push(`${path}:${no} ${why}：${probe.trim().slice(0, 70)}`);
+    const koProbe = lang === "ko" ? probe.replace(KO_HANJA_GLOSS, " ") : probe;
+    if (lang !== "ja" && KANA.test(probe)) say("出现了假名");
+    if (lang !== "ko" && HANGUL.test(probe)) say("出现了谚文");
+    if (lang === "en" && HAN_CHAR.test(probe)) say("出现了汉字（en 的阈值是 0）");
+    if (lang === "ja" || lang === "ko") {
+      const longest = Math.max(0, ...(koProbe.match(HAN_RUN) ?? []).map((r) => r.length));
+      if (longest >= HAN_RUN_LIMIT) say(`有 ${longest} 个连续汉字（上限 ${HAN_RUN_LIMIT - 1}）—— 这一行像中文`);
+    }
+    if (lang === "zh-CN") {
+      const hit = [...probe].filter((c) => TRADITIONAL_ONLY.includes(c));
+      if (hit.length > 0) say(`出现了繁体独有字「${hit.join("")}」`);
+    }
+    if (lang === "zh-TW") {
+      const hit = [...probe].filter((c) => SIMPLIFIED_ONLY.includes(c));
+      if (hit.length > 0) say(`出现了简体独有字「${hit.join("")}」`);
+    }
+    if (lang !== "en" && !/^#{1,6} /.test(probe.trim()) && !probe.includes(ENGLISH_FOOTER)) {
+      const native = lang === "ja" ? KANA : lang === "ko" ? HANGUL : HAN_CHAR;
+      if (!native.test(probe) && (probe.match(LATIN_WORD) ?? []).length >= LATIN_PROSE_WORDS) {
+        say(`一行 ${(probe.match(LATIN_WORD) ?? []).length} 个拉丁词而一个 ${lang} 字符都没有 —— 这一行没翻译`);
+      }
+    }
+  }
+  return faults;
+}
+
+/** 简繁那一档的「无法判定率」：含汉字的行里，一个简繁特征字都没有的占比。 */
+function undecidableRatio(text: string): { withHan: number; undecidable: number; ratio: number } {
+  let withHan = 0, undecidable = 0;
+  for (const { probe } of langProbeLines(text)) {
+    if (!HAN_CHAR.test(probe)) continue;
+    withHan++;
+    const s = [...probe].some((c) => SIMPLIFIED_ONLY.includes(c));
+    const t = [...probe].some((c) => TRADITIONAL_ONLY.includes(c));
+    if (!s && !t) undecidable++;
+  }
+  return { withHan, undecidable, ratio: withHan === 0 ? 0 : (100 * undecidable) / withHan };
+}
+
+describe("W130 R13c' 的射程扩展：40 份出货文档的**全部正文行**逐行判语种", () => {
+  const SHIP_ALL: readonly string[] = (() => {
+    const root = readdirSync(".").filter((f) => f.endsWith(".md")).sort();
+    const lang = LANGS.flatMap((l) => readdirSync(join("docs", l))
+      .filter((f) => f.endsWith(".md")).sort().map((f) => join("docs", l, f)));
+    return [...root, ...lang];
+  })();
+  const pairs = (): ReadonlyArray<readonly [string, string]> =>
+    SHIP_ALL.map((p) => [p, readFileSync(p, "utf8")] as const);
+
+  it("射程自守：40 份，逐份判得出语言，且每一份都真的扫到了正文行", () => {
+    expect(SHIP_ALL.length, "射程不是 40 份了").toBe(40);
+    const empty = pairs().filter(([, t]) => langProbeLines(t).length < 10).map(([p]) => p);
+    expect(empty, `这几份扫出来的正文行少于 10 行 —— 载体过滤多半剥过头了：\n${empty.join("\n")}`)
+      .toEqual([]);
+  });
+
+  it("字表自守：两串都远超「≥300 对」的下限，且没有一个字同时出现在两串里", () => {
+    expect(SIMPLIFIED_ONLY.length, "简体独有字表缩水了 —— 覆盖率一掉，判据就变成「大面积无法判定」")
+      .toBeGreaterThan(1000);
+    expect(TRADITIONAL_ONLY.length, "繁体独有字表缩水了").toBeGreaterThan(1000);
+    const both = [...SIMPLIFIED_ONLY].filter((c) => TRADITIONAL_ONLY.includes(c));
+    expect(both, `这些字被同时算成了简体独有与繁体独有：${both.join("")}`).toEqual([]);
+    // 「独有」那一步真的做了：这些字**两串都不许有**（它们在简繁里都合法，只是各有异体）。
+    const BOTH_LEGAL = "回面只同它板了游出台才表合向制致核修系注布占升症吃旋卷克私";
+    const leaked = [...BOTH_LEGAL].filter((c) => SIMPLIFIED_ONLY.includes(c) || TRADITIONAL_ONLY.includes(c));
+    expect(leaked, `这些在简繁里都合法的字漏进了字表：${leaked.join("")} —— `
+      + "多半是把 `STCharacters` 的键直接当成了「简体字」；实测那样会在 docs/zh-TW 上误报 2270 处")
+      .toEqual([]);
+  });
+
+  it("真扫描：40 份逐行都是自己那门语言", () => {
+    const faults = pairs().flatMap(([p, t]) => languageFaults(p, t));
+    expect(faults, `这些行不是所在文件那门语言：\n${faults.join("\n")}\n`
+      + "⇒ 事故形态是「拿两份文案去套六个文件」。**逐语言独立写**，不要复制粘贴后再改几个词")
+      .toEqual([]);
+  });
+
+  it("无法判定率：每一份中文文档 >20% 就红（把「字表覆盖率不足」本身变成会红的东西）", () => {
+    const wrong = pairs()
+      .filter(([p]) => langOfDoc(p) === "zh-CN" || langOfDoc(p) === "zh-TW")
+      .flatMap(([p, t]) => {
+        const r = undecidableRatio(t);
+        return r.ratio > UNDECIDABLE_RATIO
+          ? [`${p}: ${r.undecidable}/${r.withHan} = ${r.ratio.toFixed(1)}%`] : [];
+      });
+    expect(wrong, `这几份文件里的中文短到判不出简繁，判据的射程在这里是假的：\n${wrong.join("\n")}`)
+      .toEqual([]);
+  });
+
+  it("豁免双向（一）：两类刻意保留的异语字形今天真的还在（没了就该删豁免）", () => {
+    const selfNameHits = pairs().filter(([, t]) =>
+      LANG_SELF_NAMES.every((s) => t.includes(s))).length;
+    expect(selfNameHits, "没有一份文档同时写着五种语言的自称 —— 语言切换行那条豁免守的是空气")
+      .toBeGreaterThan(0);
+    const literalHits = pairs().filter(([, t]) => t.includes(SOURCE_LITERAL_ZH)).map(([p]) => p);
+    expect(literalHits.length, `源码报文原文「${SOURCE_LITERAL_ZH}」在出货文档里一次都没出现 —— `
+      + "那条豁免过期了，删掉它").toBeGreaterThan(4);
+  });
+
+  it("豁免双向（二）：把豁免关掉之后，正是这两类会红 —— 证明它们确实需要豁免", () => {
+    // ① 语言切换行：`docs/zh-TW/README.md` 那一行里逐字写着 `简体中文`，
+    //    不剥它 ⇒ 简繁那一档当场把繁体那份判成「混进了简体」。
+    const switcher = readFileSync(join("docs", "zh-TW", "README.md"), "utf8").split("\n")
+      .find((l) => (l.match(CROSS_LANG_ANY) ?? []).length >= 3) ?? "";
+    expect(switcher, "zh-TW 的 README 里找不到语言切换行 —— 那这条豁免守的是空气").not.toBe("");
+    expect([...switcher].filter((c) => SIMPLIFIED_ONLY.includes(c)).join(""),
+      "切换行里居然没有简体独有字 —— 那不剥它也不会红，这条豁免可以删").not.toBe("");
+    // ② 源码报文原文：`docs/ja/README.md` 把它写在 `「」` 里（不是行内 code），
+    //    不剥它 ⇒ ja 那一行会被「连续汉字」那条判成中文。
+    const jaLine = readFileSync(join("docs", "ja", "README.md"), "utf8").split("\n")
+      .find((l) => l.includes(SOURCE_LITERAL_ZH)) ?? "";
+    expect(jaLine, "ja 的 README 里找不到那句源码报文").not.toBe("");
+    expect(SOURCE_LITERAL_ZH.replace(/[^㐀-䶿一-鿿]/gu, "").length,
+      "源码报文原文里的汉字少到不会触发任何一条判据 —— 那这条豁免也守的是空气").toBeGreaterThan(3);
+  });
+
+  it("① 该红时红：把 `docs/ja/README.md` 的一行换成英文原句 —— 红并点名 ja", () => {
+    const p = join("docs", "ja", "README.md");
+    const t = `${readFileSync(p, "utf8")}\nThis gateway forwards every protocol request to one shared upstream pool.\n`;
+    const faults = languageFaults(p, t);
+    expect(faults.join("\n"), "整行换成英文之后居然还绿 —— 判「不得含」的那几条对英文行是瞎的，"
+      + "拉丁散文那一条就是专为这个加的").toContain(`${p}:`);
+  });
+
+  it("② 该红时红：把 `docs/zh-TW/README.md` 的一行换成简体 —— 红并点名 zh-TW", () => {
+    const p = join("docs", "zh-TW", "README.md");
+    const t = `${readFileSync(p, "utf8")}\n这一行是简体中文，用来验证繁体那份能不能认出简体。\n`;
+    const faults = languageFaults(p, t);
+    expect(faults.join("\n"), "繁体那份拿到简体行没被抓到 —— 事故里错的正是这一档")
+      .toContain("出现了简体独有字");
+  });
+
+  it("③ 该红时红：`docs/ja/API.md` 一整段换成中文、只在句尾加一个「です」（专打「必须含」那条绕过）", () => {
+    const p = join("docs", "ja", "API.md");
+    const t = `${readFileSync(p, "utf8")}\n本節では四つのプロトコルの共通誤りと再試行の規則を説明しますです。\n`;
+    // 上面那一行是**合法日文**（长汉字串被假名打断），不许红：
+    expect(languageFaults(p, t), "合法的日文行被误判了 —— 连续汉字那条线定得太紧").toEqual([]);
+    const t2 = `${readFileSync(p, "utf8")}\n本节逐条说明四种协议的通用错误与重试规则です。\n`;
+    expect(languageFaults(p, t2).join("\n"),
+      "整段中文只在句尾加个「です」就绕过去了 —— 这正是「必须含假名」那条判据的死法")
+      .toContain("连续汉字");
+  });
+
+  it("④ 该红时红：`docs/zh-TW/DEPLOY.md` 塞一句**零特征字**的简体文案 —— 由无法判定率那条兜住", () => {
+    const p = join("docs", "zh-TW", "DEPLOY.md");
+    // ⚠️ 规格举的例子（「新增 Gemini 原生协议支持」）**其实含特征字**（`协` / `议`）——
+    // 扩表之后它是判得出来的。真正零特征字的句子要短得多，下面这句实测 7 个汉字、0 个特征字。
+    const line = "日志里只有一行";
+    expect([...line].some((c) => SIMPLIFIED_ONLY.includes(c) || TRADITIONAL_ONLY.includes(c)),
+      "这句话居然含特征字 —— 那它就不是「零特征字」的例子，本格的立论不成立").toBe(false);
+    const base = undecidableRatio(readFileSync(p, "utf8"));
+    const filler = Array.from({ length: 400 }, () => line).join("\n");
+    const after = undecidableRatio(`${readFileSync(p, "utf8")}\n${filler}\n`);
+    expect(languageFaults(p, `${readFileSync(p, "utf8")}\n${line}\n`),
+      "零特征字的简体行本来就判不出来 —— 这是这条判据真实的射程边界，如实钉在这里").toEqual([]);
+    expect(after.ratio, `灌了 400 行零特征字之后无法判定率才 ${after.ratio.toFixed(1)}%`
+      + `（原本 ${base.ratio.toFixed(1)}%）—— 那条 20% 的线拦不住「大段中文短到判不出简繁」`)
+      .toBeGreaterThan(UNDECIDABLE_RATIO);
+  });
+
+  it("不许乱红：围栏里的中文报文、行内 code、语言切换行、ko 的谚文汉字注都不进射程", () => {
+    const fixture = "# X\n\n한 줄。\n\n```ts\nthrow new Error(\"缺少 GATEWAY_TOKEN\");\n```\n\n"
+      + "`缺少 GATEWAY_TOKEN，网关无法启动` 한 줄입니다.\n\n대사(對帳) 화면입니다.\n";
+    expect(languageFaults(join("docs", "ko", "USAGE.md"), fixture),
+      "载体过滤失效了 —— 围栏 / 行内 code / 谚文汉字注里的汉字被当成了没翻译").toEqual([]);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W131 —— R27 的**源码锚**（真实性轴）
+ *
+ * 词表判据永远追不上换说法：R27 的 fail-open 黑名单是按字面扫的，换一句
+ *「未设 `ADMIN_TOKEN` 时 `/admin` 仍会注册，但不做鉴权」就一个词都不撞。
+ * ⇒ 这一组**从源码现算**两件事，文档写的与之矛盾即红：
+ * ① `src/core/config.ts`：缺 `GATEWAY_TOKEN` ⇒ 抛错，**而且那条路径只判存在、不判长度**；
+ * ② `src/http/admin/auth.ts`：`ADMIN_TOKEN_MIN_LENGTH` 的**数值**。
+ *
+ * 🔴 为什么必须有它：V33 那句「`GATEWAY_TOKEN` 长度不得少于 24 位」是一条
+ * **源码不支持的假话**，而只有词表的 R27 对它完全放行 —— 24 位这条门槛只在
+ * `ADMIN_TOKEN` 上。同族先例是本文件里「`## 管理 API` 的硬编码数字从真源现算」那一组。
+ *
+ * **它验不了什么**：文档把这两件事**解释**得对不对（N7）；也不管别的源码事实。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+
+/**
+ * 「把长度门槛按在 `GATEWAY_TOKEN` 头上」的散文行。
+ *
+ * 归属判定按**小句**（以 `。`/`；`/`;`/`.` 切）里**最后一个** token 名：
+ * · 小句里最后出现的是 `GATEWAY_TOKEN` ⇒ 这条长度陈述归网关口令 ⇒ 红；
+ * · 最后出现的是 `ADMIN_TOKEN`（含 `ADMIN_TOKEN_MIN_LENGTH`）或一个都没有 ⇒ 放行。
+ *
+ * ⚠️ **不扫表格行**：五份 DEPLOY 的环境变量表把整段解释压进一格，
+ *「`ADMIN_TOKEN` … 必须与 `GATEWAY_TOKEN` 不同，且至少 24 位」这种写法里
+ * 最近的 token 名是网关口令，而句子说的是管理口令 —— 按行归属会当场误红。
+ * 表格那一侧由方向① 的「与 `ADMIN_TOKEN` 同行的数字必须等于常量」覆盖。
+ */
+const gatewayLengthClaims = (docs: ReadonlyArray<readonly [string, string]>): string[] => {
+  const LEN = /(\d+)\s*(位|個字元|个字符|字符|字元|文字|자리|자|characters|character|chars|char)/g;
+  const TOKEN_NAME = /GATEWAY_TOKEN|ADMIN_TOKEN/g;
+  const out: string[] = [];
+  for (const [path, text] of docs) {
+    let inFence = false;
+    text.split("\n").forEach((line, i) => {
+      if (/^[ \t]*```/.test(line)) { inFence = !inFence; return; }
+      if (inFence || line.trim().startsWith("|")) return;
+      for (const clause of line.split(/[。；;.]/)) {
+        for (const m of clause.matchAll(LEN)) {
+          const names = clause.slice(0, m.index).match(TOKEN_NAME) ?? [];
+          if (names[names.length - 1] === "GATEWAY_TOKEN") {
+            out.push(`${path}:${i + 1} 「${m[0]}」被按在了 \`GATEWAY_TOKEN\` 头上：${clause.trim().slice(0, 70)}`);
+          }
+        }
+      }
+    });
+  }
+  return out;
+};
+
+describe("W131 R27 的源码锚：口令那两条门槛的数字从 `src/` 现算，不抄文档", () => {
+  const ELEVEN: readonly string[] = [
+    "README.md",
+    ...LANGS.map((l) => join("docs", l, "README.md")),
+    ...LANGS.map((l) => join("docs", l, "DEPLOY.md")),
+  ];
+  /** 长度陈述：数字 + 五语言的「位 / 字符 / 文字 / 자 / characters」。 */
+  const LENGTH_CLAIM = /(\d+)\s*(位|個字元|个字符|字符|字元|文字|자리|자|characters|character|chars|char)/g;
+
+  /**
+   * `ADMIN_TOKEN_MIN_LENGTH` **直接 import 自源码**（本文件头部那一行），不抄第二份数字：
+   * 常量被改名会变成编译错误，比正则读文件更硬。
+   * 下面另有一格钉住「这个值真的就是 `src/http/admin/auth.ts` 里那个字面量」——
+   * 少了它，哪天有人把 import 换成本地常量，这条锚会静静地变成拿文档跟文档比。
+   */
+  const adminMinLength = (): number => ADMIN_TOKEN_MIN_LENGTH;
+
+  /** 从 `src/core/config.ts` 现算「缺 `GATEWAY_TOKEN` 抛错」与「那条路径判不判长度」。 */
+  const gatewayGate = (): { throwsWhenMissing: boolean; checksLength: boolean } => {
+    const src = readFileSync(join("src", "core", "config.ts"), "utf8");
+    const fn = src.slice(src.indexOf("export function configFromEnv"));
+    const body = fn.slice(0, fn.indexOf("\n}\n") + 1);
+    return {
+      throwsWhenMissing: /if \(!gatewayToken\) throw new Error\(/.test(body),
+      checksLength: /gatewayToken\.length\s*[<>=]/.test(body),
+    };
+  };
+
+  const bodyOf = (text: string): ReadonlyArray<{ no: number; line: string }> => {
+    let inFence = false;
+    const out: Array<{ no: number; line: string }> = [];
+    text.split("\n").forEach((line, i) => {
+      if (/^[ \t]*```/.test(line)) { inFence = !inFence; return; }
+      if (!inFence) out.push({ no: i + 1, line });
+    });
+    return out;
+  };
+
+  it("源码侧读得出来：缺 `GATEWAY_TOKEN` 抛错、那条路径不判长度、`ADMIN_TOKEN_MIN_LENGTH` 是个正整数", () => {
+    const g = gatewayGate();
+    expect(g.throwsWhenMissing, "`configFromEnv` 里那句「缺 GATEWAY_TOKEN 就抛」没了 —— "
+      + "六份 README 头部那条 fail-closed 承诺当场变成假话，先去核对源码").toBe(true);
+    expect(g.checksLength, "`configFromEnv` 开始判 `gatewayToken.length` 了 —— "
+      + "那么「只判存在、不判长度」这句话就该从 11 份文档里改掉，本组的第二个方向也要跟着重写").toBe(false);
+    expect(adminMinLength(), "`ADMIN_TOKEN_MIN_LENGTH` 不是正整数").toBeGreaterThan(0);
+    const authSrc = readFileSync(join("src", "http", "admin", "auth.ts"), "utf8");
+    expect(authSrc, `import 进来的 ${ADMIN_TOKEN_MIN_LENGTH} 在 \`src/http/admin/auth.ts\` 里找不到对应的字面量 —— `
+      + "这条锚可能已经指向了别处").toContain(`export const ADMIN_TOKEN_MIN_LENGTH = ${ADMIN_TOKEN_MIN_LENGTH};`);
+  });
+
+  it("方向①：11 份文档里凡是与 `ADMIN_TOKEN` 同行的长度数字，逐个等于源码常量", () => {
+    const want = adminMinLength();
+    const claims = ELEVEN.flatMap((p) => bodyOf(readFileSync(p, "utf8"))
+      .filter((r) => r.line.includes("ADMIN_TOKEN"))
+      .flatMap((r) => [...r.line.matchAll(LENGTH_CLAIM)]
+        .map((m) => ({ path: p, no: r.no, text: m[0], n: Number(m[1]) }))));
+    expect(claims.length, "一条「ADMIN_TOKEN + 长度」的陈述都没扫到 —— 判据在测空气")
+      .toBeGreaterThanOrEqual(11);
+    expect(new Set(ELEVEN).size - new Set(claims.map((c) => c.path)).size,
+      `这几份里没有任何一条长度陈述：${ELEVEN.filter((p) => !claims.some((c) => c.path === p)).join(" / ")}`)
+      .toBe(0);
+    const wrong = claims.filter((c) => c.n !== want)
+      .map((c) => `${c.path}:${c.no} 写的是「${c.text}」，源码常量是 ${want}`);
+    expect(wrong, `文档里的口令长度下限与 \`ADMIN_TOKEN_MIN_LENGTH\` 对不上：\n${wrong.join("\n")}`)
+      .toEqual([]);
+  });
+
+  it("方向②：没有任何一句把长度门槛按在 `GATEWAY_TOKEN` 头上（源码那条路径没有长度门槛）", () => {
+    const wrong = gatewayLengthClaims(ELEVEN.map((p) => [p, readFileSync(p, "utf8")] as const));
+    expect(wrong, `这些话给 \`GATEWAY_TOKEN\` 按了一条源码里不存在的长度门槛：\n${wrong.join("\n")}\n`
+      + "⇒ `src/core/config.ts` 那条启动路径**只判存在、不判长度**；24 位那条门槛只在 `ADMIN_TOKEN` 上")
+      .toEqual([]);
+  });
+
+  it("① 该红时红：把 `ADMIN_TOKEN_MIN_LENGTH` 改成 32 而不改文档 —— 逐条点名 23 处", () => {
+    const want = 32;
+    const claims = ELEVEN.flatMap((p) => bodyOf(readFileSync(p, "utf8"))
+      .filter((r) => r.line.includes("ADMIN_TOKEN"))
+      .flatMap((r) => [...r.line.matchAll(LENGTH_CLAIM)]
+        .map((m) => `${p}:${r.no} 写的是「${m[0]}」，源码常量是 ${want}`)));
+    expect(claims.length, "常量改成 32 之后居然没有一条文档陈述对不上 —— 那这条判据是恒绿的")
+      .toBeGreaterThan(20);
+  });
+
+  it("② 该红时红：把「24 位」搬到 `GATEWAY_TOKEN` 头上 —— 方向② 红并点名那一行", () => {
+    const target = "README.md";
+    const docs = ELEVEN.map((p) => {
+      const t = readFileSync(p, "utf8");
+      return p === target
+        ? [p, t.replace("`GATEWAY_TOKEN` 是必填项，缺失时", "`GATEWAY_TOKEN` 长度不得少于 24 位，缺失时")] as const
+        : [p, t] as const;
+    });
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const wrong = gatewayLengthClaims(docs);
+    expect(wrong.join("\n"), "把长度门槛安到网关口令上没被抓到 —— 而那正是 V33 犯过的那句假话")
+      .toContain(`${target}:`);
+  });
+
+  it("不许乱红：`ADMIN_TOKEN` 那一行里顺带提到 `GATEWAY_TOKEN`（「必须与它不同」）不算", () => {
+    // 五份 DEPLOY 的环境变量表里，`ADMIN_TOKEN` 那一行写着
+    //「必须与 `GATEWAY_TOKEN` 不同，且至少 24 位」——「最近的那个 token 名」是网关口令，
+    // 但这句话说的是管理口令。⇒ 方向② **不扫表格行**，只扫散文；散文按小句切开再看归属。
+    const row = "| `ADMIN_TOKEN` | 否 | — | 管理接口的口令。**必须与 `GATEWAY_TOKEN` 不同**，且至少 24 位。|";
+    expect(gatewayLengthClaims([["x.md", `# X\n\n一句。\n\n${row}\n`]]),
+      "表格行被扫进来了 —— 那五份 DEPLOY 的环境变量表会当场误红").toEqual([]);
+  });
+});
