@@ -1054,7 +1054,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 보충 구역의 조회: 레지스트라가 켜져 있는지, 두 채널 각각의 연결 상태, 가드가 몇 번 남았는지, 보충 이력.
 
 > [!IMPORTANT]
-> 여기 필드는 `available`이 **아니라** `counted`입니다: 판정 기준이 "목표 수에 센다"여서 비활성화된 key와 쿨다운 중인 key가 모두 들어가는데, 그 둘은 업스트림과 말을 섞을 수 없습니다. 진짜 쓸 수 있는 수는 옆에 나란히 있는 `fresh`입니다.
+> 여기 필드는 `available`이 **아니라** `counted`입니다: 판정 기준이 "목표 수에 센다"여서 비활성화된 key와 쿨다운 중인 key가 모두 들어가는데, 그 둘은 업스트림과 말을 섞을 수 없습니다. 진짜 쓸 수 있는 수는 옆에 나란히 있는 `fresh`입니다 — **둘 다 `pool` 객체 안에 있고 최상위에는 없습니다**.
 
 **요청**:
 
@@ -1071,8 +1071,26 @@ curl http://localhost:8080/admin/api/registrar/status \
   "enabled": true,
   "primary": "moemail",
   "fallback": "yyds",
-  "counted": 3,
-  "fresh": 2
+  "channels": {
+    "moemail": { "configured": true, "role": "primary" },
+    "yyds": { "configured": true, "role": "fallback" }
+  },
+  "pool": { "target": 20, "counted": 3, "gap": 17, "fresh": 2, "mintBatch": 5 },
+  "lockedUntil": null,
+  "manual": {
+    "used": 1, "remaining": 23, "perDay": 24, "resetAt": 1735775999999,
+    "cooldownUntil": null, "retryAfterMs": null
+  },
+  "history": {
+    "entries": [
+      {
+        "at": 1735689000000, "trigger": "cron", "primaryChannel": "moemail",
+        "skipped": false, "available": 2, "attempted": 1, "minted": 1,
+        "mintedByChannel": { "moemail": 1 }, "failures": [], "durationMs": 8421
+      }
+    ],
+    "malformed": 0
+  }
 }
 ```
 

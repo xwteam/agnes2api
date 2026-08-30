@@ -1054,7 +1054,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 補充区画の取得：レジストラーが有効かどうか、二つのチャネルそれぞれの配線状態、ガードの残り回数、補充履歴。
 
 > [!IMPORTANT]
-> ここのフィールドは `available` **ではなく** `counted` です：判定基準は「目標数に数える」であり、無効化された key もクールダウン中の key も含まれます。そしてそのどちらも上流とは話せません。本当に使える数は隣にある `fresh` です。
+> ここのフィールドは `available` **ではなく** `counted` です：判定基準は「目標数に数える」であり、無効化された key もクールダウン中の key も含まれます。そしてそのどちらも上流とは話せません。本当に使える数は隣にある `fresh` です——**どちらも `pool` オブジェクトの中にあり、トップレベルにはありません**。
 
 **リクエスト**：
 
@@ -1071,8 +1071,26 @@ curl http://localhost:8080/admin/api/registrar/status \
   "enabled": true,
   "primary": "moemail",
   "fallback": "yyds",
-  "counted": 3,
-  "fresh": 2
+  "channels": {
+    "moemail": { "configured": true, "role": "primary" },
+    "yyds": { "configured": true, "role": "fallback" }
+  },
+  "pool": { "target": 20, "counted": 3, "gap": 17, "fresh": 2, "mintBatch": 5 },
+  "lockedUntil": null,
+  "manual": {
+    "used": 1, "remaining": 23, "perDay": 24, "resetAt": 1735775999999,
+    "cooldownUntil": null, "retryAfterMs": null
+  },
+  "history": {
+    "entries": [
+      {
+        "at": 1735689000000, "trigger": "cron", "primaryChannel": "moemail",
+        "skipped": false, "available": 2, "attempted": 1, "minted": 1,
+        "mintedByChannel": { "moemail": 1 }, "failures": [], "durationMs": 8421
+      }
+    ],
+    "malformed": 0
+  }
 }
 ```
 

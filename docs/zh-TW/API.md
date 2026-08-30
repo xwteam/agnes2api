@@ -1054,7 +1054,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 補池板塊的取數：註冊機開沒開、兩條通道各自的接入狀態、護欄還剩幾次、補池歷史。
 
 > [!IMPORTANT]
-> 這裡的 `counted` **不叫 `available`**：它的判據是「佔名額數」，被停用的與正在冷卻的 key 都算在裡面，而這兩種恰恰都不能打上游。真正的可用數是並列的那個 `fresh`。
+> 這裡的 `counted` **不叫 `available`**：它的判據是「佔名額數」，被停用的與正在冷卻的 key 都算在裡面，而這兩種恰恰都不能打上游。真正的可用數是並列的那個 `fresh`——**兩者都住在 `pool` 物件裡，不在頂層**。
 
 **請求**：
 
@@ -1071,8 +1071,26 @@ curl http://localhost:8080/admin/api/registrar/status \
   "enabled": true,
   "primary": "moemail",
   "fallback": "yyds",
-  "counted": 3,
-  "fresh": 2
+  "channels": {
+    "moemail": { "configured": true, "role": "primary" },
+    "yyds": { "configured": true, "role": "fallback" }
+  },
+  "pool": { "target": 20, "counted": 3, "gap": 17, "fresh": 2, "mintBatch": 5 },
+  "lockedUntil": null,
+  "manual": {
+    "used": 1, "remaining": 23, "perDay": 24, "resetAt": 1735775999999,
+    "cooldownUntil": null, "retryAfterMs": null
+  },
+  "history": {
+    "entries": [
+      {
+        "at": 1735689000000, "trigger": "cron", "primaryChannel": "moemail",
+        "skipped": false, "available": 2, "attempted": 1, "minted": 1,
+        "mintedByChannel": { "moemail": 1 }, "failures": [], "durationMs": 8421
+      }
+    ],
+    "malformed": 0
+  }
 }
 ```
 

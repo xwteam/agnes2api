@@ -1054,7 +1054,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 补池板块的取数：注册机开没开、两条通道各自的接入状态、护栏还剩几次、补池历史。
 
 > [!IMPORTANT]
-> 这里的 `counted` **不叫 `available`**：它的判据是「占名额数」，被停用的与正在冷却的 key 都算在里面，而这两种恰恰都不能打上游。真正的可用数是并列的那个 `fresh`。
+> 这里的 `counted` **不叫 `available`**：它的判据是「占名额数」，被停用的与正在冷却的 key 都算在里面，而这两种恰恰都不能打上游。真正的可用数是并列的那个 `fresh`——**两者都住在 `pool` 对象里，不在顶层**。
 
 **请求**：
 
@@ -1071,8 +1071,26 @@ curl http://localhost:8080/admin/api/registrar/status \
   "enabled": true,
   "primary": "moemail",
   "fallback": "yyds",
-  "counted": 3,
-  "fresh": 2
+  "channels": {
+    "moemail": { "configured": true, "role": "primary" },
+    "yyds": { "configured": true, "role": "fallback" }
+  },
+  "pool": { "target": 20, "counted": 3, "gap": 17, "fresh": 2, "mintBatch": 5 },
+  "lockedUntil": null,
+  "manual": {
+    "used": 1, "remaining": 23, "perDay": 24, "resetAt": 1735775999999,
+    "cooldownUntil": null, "retryAfterMs": null
+  },
+  "history": {
+    "entries": [
+      {
+        "at": 1735689000000, "trigger": "cron", "primaryChannel": "moemail",
+        "skipped": false, "available": 2, "attempted": 1, "minted": 1,
+        "mintedByChannel": { "moemail": 1 }, "failures": [], "durationMs": 8421
+      }
+    ],
+    "malformed": 0
+  }
 }
 ```
 

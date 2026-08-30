@@ -1054,7 +1054,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 The fetch behind the refill section: whether the registrar is on, the wiring state of both channels, how many guard slots are left, and the refill history.
 
 > [!IMPORTANT]
-> The field here is called `counted`, **not `available`**: its predicate is "counts toward the target", which includes keys that are disabled and keys that are cooling down — and neither of those can talk to upstream. The genuinely usable number is the `fresh` field next to it.
+> The field here is called `counted`, **not `available`**: its predicate is "counts toward the target", which includes keys that are disabled and keys that are cooling down — and neither of those can talk to upstream. The genuinely usable number is the `fresh` field next to it — **both of them live inside the `pool` object, not at the top level**.
 
 **Request**:
 
@@ -1071,8 +1071,26 @@ curl http://localhost:8080/admin/api/registrar/status \
   "enabled": true,
   "primary": "moemail",
   "fallback": "yyds",
-  "counted": 3,
-  "fresh": 2
+  "channels": {
+    "moemail": { "configured": true, "role": "primary" },
+    "yyds": { "configured": true, "role": "fallback" }
+  },
+  "pool": { "target": 20, "counted": 3, "gap": 17, "fresh": 2, "mintBatch": 5 },
+  "lockedUntil": null,
+  "manual": {
+    "used": 1, "remaining": 23, "perDay": 24, "resetAt": 1735775999999,
+    "cooldownUntil": null, "retryAfterMs": null
+  },
+  "history": {
+    "entries": [
+      {
+        "at": 1735689000000, "trigger": "cron", "primaryChannel": "moemail",
+        "skipped": false, "available": 2, "attempted": 1, "minted": 1,
+        "mintedByChannel": { "moemail": 1 }, "failures": [], "durationMs": 8421
+      }
+    ],
+    "malformed": 0
+  }
 }
 ```
 
