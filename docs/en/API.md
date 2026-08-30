@@ -777,7 +777,7 @@ curl http://localhost:8080/admin/api/keys/9f2c/usage \
 ```json
 {
   "id": "9f2c",
-  "stats": { "requests": 12, "success": 11, "failed": 1, "clientErrors": 0 },
+  "stats": { "requests": 12, "success": 11, "failed": 1, "clientErrors": 0, "lastErrorAt": 1735689500000, "lastErrorKind": "rate limited" },
   "approximate": true,
   "generatedAt": 1735689600000
 }
@@ -882,7 +882,9 @@ curl http://localhost:8080/admin/api/config \
   "configDegraded": false,
   "loadBlocked": [],
   "editable": ["upstreamTimeoutMs"],
-  "secrets": ["gatewayToken"]
+  "secrets": ["gatewayToken"],
+  "resetBlocked": [],
+  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
 }
 ```
 
@@ -914,7 +916,9 @@ curl -X PUT http://localhost:8080/admin/api/config \
   "configDegraded": false,
   "loadBlocked": [],
   "changed": ["upstreamTimeoutMs"],
-  "credentialsChanged": []
+  "credentialsChanged": [],
+  "appliedAt": 1735689600000,
+  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
 }
 ```
 
@@ -971,7 +975,9 @@ curl -X POST http://localhost:8080/admin/api/config/secrets/clear \
   "loadBlocked": [],
   "fields": { "upstreamTimeoutMs": { "stored": 90000, "env": null, "effective": 90000, "lockedBy": null } },
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
-  "configDegraded": false
+  "configDegraded": false,
+  "resetBlocked": [],
+  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
 }
 ```
 
