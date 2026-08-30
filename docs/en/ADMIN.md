@@ -9,9 +9,11 @@ This page covers the half you can see on screen — what question each board ans
 > do plus troubleshooting.
 
 > [!IMPORTANT]
-> **Every variable itself (default, accepted range, cost) is defined
-> in exactly one place, the environment-variable table in [DEPLOY.md](DEPLOY.md)**; this page
+> **The complete definition of every variable (default, accepted range, cost) lives
+> in the environment-variable table in [DEPLOY.md](DEPLOY.md)**; this page
 > only points at it and never keeps a second copy.
+> (The README carries a 12-row quick-reference table of the common ones — that is a
+> front-page excerpt, not a second source of truth.)
 
 ## Getting in
 

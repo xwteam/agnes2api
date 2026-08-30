@@ -12915,3 +12915,300 @@ describe("W139 五链的语言顺序恒定：指针行与语言切换行两个�
     expect(orderFaults(read).join("\n"), "切换行少了一种语言却没被抓到").toContain("缺这几种语言");
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W140 —— **头部徽章 / logo 引用 / 页脚 `<sub>` 的真源锚**（评审发现 14 / 23 的回填）
+ *
+ * 规格对 R8 / R15 / R18 三条的措辞是同一句：**「纯自等式，必须再挂一个从真源现算的锚」**。
+ * 三条的引用侧今天一条都没落，评审逐条实测：
+ * · **R15**（spec:1474）：规格自己举的反例是「六份全抄
+ *   `<sub>Built with Rust + axum + tokio | Powered by Kiro (CodeWhisperer)</sub>` 也满足
+ *   『六份相同』—— 那正是 V28 要防的那件事」。实测只改 ja 那一份的 `<sub>` 行 ⇒ 全绿，
+ *   **连「六份逐字节相同」那一半都不存在**。
+ * · **R18 引用侧**（spec:1525）：`existsSync` 那一半有（本文件另一组），
+ *   **尺寸那一半没有** —— 去掉 `docs/ko/README.md` 第 3 行的 `width`/`height` ⇒ 全绿，
+ *   首屏 logo 被拉伸而门禁不吭声。
+ * · **R8**（spec:1267）：7 枚静态徽章今天只有 version 那一枚从 `VERSION` 现算、
+ *   CI 那一枚查 workflow 存在性。把 `docs/ko/README.md` 的 Hono 徽章换成
+ *   `axum-0.8-000000?...&logo=rust` ⇒ 778 格全绿。
+ *
+ * ⇒ 本组三件一起做，**自等式 + 真源锚各一半**：
+ * ① 六份的徽章 URL 有序数组 `toEqual`、`<sub>` 串 `toEqual`、`<img>` 尺寸 `toBe`；
+ * ② 槽 1–3 与 `<sub>` 的技术栈名从 `package.json` 的依赖现算，
+ *    `Powered by` 之后的上游名从 `DEFAULTS.agnesBaseUrl` 的主机名现算。
+ *
+ * **它验不了什么**：徽章的**颜色**与 `logo=` 参数选得好不好；`<sub>` 那句话读起来顺不顺；
+ * logo 图片本身（那是 `scripts/check-png.mjs` + `tests/unit/check-png.test.ts` 的活，
+ * 128×128 的**像素尺寸**在那边，本组管的是 HTML 里写的**引用尺寸**）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("W140 头部徽章 / logo 引用 / 页脚 `<sub>`：六份自等式 + 从 `package.json` 现算的锚", () => {
+  const SIX: readonly string[] = ["README.md", ...LANGS.map((l) => join("docs", l, "README.md"))];
+
+  type Pkg = {
+    name?: string;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const pkg = (): Pkg => JSON.parse(readFileSync("package.json", "utf8")) as Pkg;
+
+  /** `4.13.2` ⇒ `4.13`。徽章上写的是 major.minor。 */
+  const minor = (v: string): string => v.replace(/^[^\d]*/, "").split(".").slice(0, 2).join(".");
+
+  /** 头部那一组 `img.shields.io/badge/…` 的 URL，按出现顺序。 */
+  const staticBadges = (body: string): string[] =>
+    [...body.matchAll(/<img src="(https:\/\/img\.shields\.io\/badge\/[^"]+)"/g)].map((m) => m[1] ?? "");
+
+  /** 第 3 行那条 logo 引用（整行）。取不到返回空串。 */
+  const logoLine = (body: string): string => body.split("\n")[2] ?? "";
+
+  /** 页脚 `<sub>` 那一行的内容（去掉标签与缩进）。取不到返回空串。 */
+  const subText = (body: string): string => {
+    const m = /<sub>([^<]*)<\/sub>/.exec(body);
+    return m === null ? "" : (m[1] ?? "").trim();
+  };
+
+  const read = (p: string) => readFileSync(p, "utf8");
+  const withOne = (at: string, mutate: (s: string) => string) =>
+    (p: string) => (p === at ? mutate(read(p)) : read(p));
+
+  it("射程自守：六份都取得到 7 枚静态徽章、logo 行与 `<sub>` 行", () => {
+    for (const p of SIX) {
+      const body = read(p);
+      expect(staticBadges(body).length, `${p} 的静态徽章数不是 7`).toBe(7);
+      expect(logoLine(body), `${p} 第 3 行不是 logo 引用`).toContain("<img src=");
+      expect(subText(body), `${p} 里没有 \`<sub>\` 页脚行`).not.toBe("");
+    }
+  });
+
+  it("R8 自等式：六份的 7 枚静态徽章 URL **有序**逐字节相同", () => {
+    const base = staticBadges(read("README.md"));
+    for (const p of SIX.slice(1)) {
+      expect(staticBadges(read(p)), `${p} 的徽章与根 README 不同 —— `
+        + "静态徽章是模板形态，六份必须一模一样（连顺序）").toEqual(base);
+    }
+  });
+
+  it("R8 真源锚：槽 1–3 从 `package.json` 的依赖现算（自等式挡不住「六份一起抄错」）", () => {
+    const p = pkg();
+    const ts = p.devDependencies?.typescript ?? "";
+    const hono = p.dependencies?.hono ?? "";
+    expect([ts, hono].filter((v) => v === ""), "`package.json` 里读不出 typescript / hono 的版本")
+      .toEqual([]);
+    const badges = staticBadges(read("README.md"));
+    expect(badges[0], `槽 1 应当是 TypeScript-${minor(ts)}（从 devDependencies.typescript 现算）`)
+      .toContain(`/badge/TypeScript-${minor(ts)}-`);
+    expect(badges[1], `槽 2 应当是 Hono-${minor(hono)}（从 dependencies.hono 现算）`)
+      .toContain(`/badge/Hono-${minor(hono)}-`);
+    // 槽 3 说的是「这个仓能部署到 Workers」——真源是 wrangler 这个依赖 + wrangler.toml。
+    expect(p.devDependencies?.wrangler ?? "", "`devDependencies.wrangler` 没了，"
+      + "槽 3 那枚 Cloudflare Workers 徽章就没有真源了").not.toBe("");
+    expect(existsSync("wrangler.toml"), "`wrangler.toml` 不在了，同上").toBe(true);
+    expect(badges[2]).toContain("/badge/Cloudflare%20Workers-");
+  });
+
+  it("R15 自等式 + 真源锚：六份的 `<sub>` 逐字节相同，且技术栈名与上游名都现算得出来", () => {
+    const base = subText(read("README.md"));
+    for (const p of SIX.slice(1)) {
+      expect(subText(read(p)), `${p} 的 \`<sub>\` 与根 README 不同 —— `
+        + "这一行连语言都不翻译，六份逐字节相同（两个参照仓实测 6/6 一致）").toBe(base);
+    }
+    const p = pkg();
+    // 技术栈那三个名字，逐个挂到真源上：依赖不在了，这句话就该改。
+    expect(p.devDependencies?.typescript ?? "", "").not.toBe("");
+    expect(base, "`<sub>` 里没提 TypeScript，而 `devDependencies.typescript` 在").toContain("TypeScript");
+    expect(p.dependencies?.hono ?? "", "").not.toBe("");
+    expect(base, "`<sub>` 里没提 Hono，而 `dependencies.hono` 在").toContain("Hono");
+    expect(base, "`<sub>` 里没提 Cloudflare Workers，而 `wrangler.toml` 在").toContain("Cloudflare Workers");
+    // 上游名从 `DEFAULTS.agnesBaseUrl` 的主机名现算 —— 换了上游，这句话必须跟着改。
+    const host = new URL(DEFAULTS.agnesBaseUrl).hostname;
+    const brand = (host.split(".").find((seg) => seg !== "" && seg !== "www" && seg !== "apihub") ?? "")
+      .split("-")[0] ?? "";
+    expect(brand, `从 ${host} 里切不出上游品牌名`).not.toBe("");
+    const powered = base.slice(base.indexOf("Powered by"));
+    expect(powered.toLowerCase(), `\`Powered by\` 之后写的不是 ${brand}（上游主机名是 ${host}）`)
+      .toContain(brand.toLowerCase());
+  });
+
+  it("R18 引用侧：六份第 3 行的 `<img>` 尺寸恒 128×128，`alt` 就是包名，目标文件真的在", () => {
+    const name = pkg().name ?? "";
+    expect(name, "`package.json` 里读不出包名").not.toBe("");
+    for (const p of SIX) {
+      const line = logoLine(read(p));
+      const m = /<img src="([^"]+)" width="(\d+)" height="(\d+)" alt="([^"]+)">/.exec(line.trim());
+      expect(m, `${p} 第 3 行不是 \`<img src=… width=… height=… alt=…>\` 的形态：${line.trim()}`)
+        .not.toBeNull();
+      expect([m?.[2], m?.[3]], `${p} 的 logo 引用尺寸不是 128×128 —— 首屏 logo 会被拉伸`)
+        .toEqual(["128", "128"]);
+      expect(m?.[4], `${p} 的 logo \`alt\` 不是包名`).toBe(name);
+      expect(existsSync(join(dirname(p), m?.[1] ?? "")), `${p} 的 logo 指向的文件不存在`).toBe(true);
+    }
+  });
+
+  it("该红时红（评审 R8 那条）：把 `docs/ko/README.md` 的 Hono 徽章换成 axum —— 自等式与真源锚同时红", () => {
+    const at = join("docs", "ko", "README.md");
+    const r = withOne(at, (s) => s.replace(
+      "Hono-4.13-E36002?style=flat-square&logo=hono&logoColor=white",
+      "axum-0.8-000000?style=flat-square&logo=rust&logoColor=white"));
+    expect(r(at), "变异没落地 —— Hono 徽章的字面变了，回来改这条变异").not.toEqual(read(at));
+    expect(staticBadges(r(at)), "换掉一枚徽章之后六份居然还相等").not.toEqual(staticBadges(read("README.md")));
+    expect(staticBadges(r(at))[1] ?? "", "").not.toContain("/badge/Hono-");
+  });
+
+  it("该红时红（评审 R18 那条）：去掉 `docs/ko/README.md` 的 `width`/`height` —— 尺寸那格红", () => {
+    const at = join("docs", "ko", "README.md");
+    const r = withOne(at, (s) => s.replace(' width="128" height="128"', ""));
+    expect(r(at), "变异没落地").not.toEqual(read(at));
+    const m = /<img src="([^"]+)" width="(\d+)" height="(\d+)" alt="([^"]+)">/.exec(logoLine(r(at)).trim());
+    expect(m, "去掉尺寸之后仍然匹配得上带尺寸的形态 —— 那这一格是恒绿的").toBeNull();
+  });
+
+  it("该红时红（评审 R15 那条，规格自己举的反例）：ja 的 `<sub>` 抄成 kiro 的技术栈 —— 自等式与真源锚同时红", () => {
+    const at = join("docs", "ja", "README.md");
+    const r = withOne(at, (s) => s.replace(
+      "Built with TypeScript + Hono + Cloudflare Workers | Powered by Agnes AI",
+      "Built with Rust + axum + tokio | Powered by Kiro (CodeWhisperer)"));
+    expect(r(at), "变异没落地 —— `<sub>` 的字面变了，回来改这条变异").not.toEqual(read(at));
+    expect(subText(r(at)), "改掉一份的 `<sub>` 之后六份居然还相等").not.toBe(subText(read("README.md")));
+    const host = new URL(DEFAULTS.agnesBaseUrl).hostname;
+    const brand = (host.split(".").find((seg) => seg !== "" && seg !== "www" && seg !== "apihub") ?? "")
+      .split("-")[0] ?? "";
+    const powered = subText(r(at)).slice(subText(r(at)).indexOf("Powered by"));
+    expect(powered.toLowerCase(), "抄成 kiro 的上游名之后真源锚居然还绿 —— "
+      + "那「六份相同」就是唯一的判据，而六份一起抄正是 V28 要防的那件事")
+      .not.toContain(brand.toLowerCase());
+    expect(subText(r(at)), "").not.toContain("Hono");
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W141 —— **六份 README 那张 12 行配置表也要有真源锚**（整分支评审发现 15 的回填）
+ *
+ * `docs-parity.test.ts` 里 D 格的立法理由写着「本格把 `API.md` 与 `DEPLOY.md` 两处
+ * 同时钉在同一个常量上，正是为了让那种分叉当场红」——**而同一批数字的第三处落点
+ *（六份 README 的配置表）没被钉**。评审两条变异都全绿：
+ * · A：六份一起把 `UPSTREAM_TIMEOUT_MS` 的默认值改成 `9999`（与 `DEFAULTS` 和
+ *   `DEPLOY.md` 的表格行同时矛盾）⇒ 778 格全绿（六份一起改，R5/R6 的对等还在）。
+ * · B：六份各加一行 `| \`NONEXISTENT_FAKE_VAR\` | ❌ | — | 编出来的变量 |` ⇒ 778 格全绿。
+ *
+ * **根因**：`ENV_TABLE_DOCS` 只有 `{DEPLOY, REGISTRAR}`，README 不在名单里。
+ * 而那条收窄在文件里给的理由是 `ADMIN.md:7-8` 那句「变量本身全仓只有一份，
+ * 在 `DEPLOY.md` 的环境变量表里」—— **那句话今天并不成立**：六份 README 各有一张
+ * 12 行、带默认值列的环境变量表。（那句文案已同批改成「完整的那一份在 DEPLOY.md」。）
+ *
+ * ⇒ 本组补两件：
+ * ① **名单侧对等**：六份 README 表里的变量名 ⊆ `.env.example` 的声明集
+ *   （编一个不存在的变量当场红）；六份彼此相同。
+ * ② **默认值锚**：四个有内置默认值的旋钮，表里写的数字 == `DEFAULTS` 现算
+ *   （改错一个当场红，六份一起改也没用）。
+ *
+ * **它验不了什么**：说明列写得对不对；也不管 `DEPLOY.md` 那张更全的表——那一张
+ * 由 `ENV_TABLE_DOCS` 那一组管，两组射程不重叠。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("W141 六份 README 的配置表：名单 ⊆ `.env.example`，默认值从 `DEFAULTS` 现算", () => {
+  const SIX: readonly string[] = ["README.md", ...LANGS.map((l) => join("docs", l, "README.md"))];
+
+  /** 一份 README 里那张配置表的行：`| \`NAME\` | 必填 | 默认值 | 说明 |`。 */
+  const tableRows = (body: string): ReadonlyArray<{ name: string; def: string }> =>
+    outsideFences(body).split("\n").flatMap((line) => {
+      const m = /^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|[^|]*\|\s*([^|]*)\s*\|/.exec(line.trim());
+      return m === null ? [] : [{ name: m[1] ?? "", def: (m[2] ?? "").trim() }];
+    });
+
+  /** `.env.example` 里声明过的变量名。真源是那份文件本身。 */
+  const declared = (): ReadonlySet<string> => new Set(
+    readFileSync(".env.example", "utf8").split("\n")
+      .flatMap((l) => {
+        const m = /^#?[ \t]*([A-Z][A-Z0-9_]*)=/.exec(l);
+        return m === null ? [] : [m[1] ?? ""];
+      }));
+
+  /** 四个有内置默认值的旋钮：表里写的数字必须 == `DEFAULTS` 现算。 */
+  const NUMERIC_DEFAULTS: ReadonlyArray<readonly [name: string, value: number]> = [
+    ["UPSTREAM_TIMEOUT_MS", DEFAULTS.upstreamTimeoutMs],
+    ["UPSTREAM_SYNC_TIMEOUT_MS", DEFAULTS.upstreamSyncTimeoutMs],
+    ["MAX_STRIKES", DEFAULTS.maxStrikes],
+    ["POOL_CACHE_TTL_MS", DEFAULTS.poolCacheTtlMs],
+  ];
+
+  const read = (p: string) => readFileSync(p, "utf8");
+  const withOne = (at: string, mutate: (s: string) => string) =>
+    (p: string) => (p === at ? mutate(read(p)) : read(p));
+
+  const nameFaults = (r: (p: string) => string): string[] => {
+    const decl = declared();
+    return SIX.flatMap((p) => tableRows(r(p))
+      .filter((row) => !decl.has(row.name))
+      .map((row) => `${p} 的配置表里有 \`${row.name}\`，而 \`.env.example\` 里没有这一行`
+        + "（要么它是拼错/过期的，要么它是真变量而 `.env.example` 漏了一行）"));
+  };
+
+  const defaultFaults = (r: (p: string) => string): string[] =>
+    SIX.flatMap((p) => {
+      const rows = tableRows(r(p));
+      return NUMERIC_DEFAULTS.flatMap(([name, want]) => {
+        const row = rows.find((x) => x.name === name);
+        if (row === undefined) return [`${p} 的配置表里没有 \`${name}\` 这一行`];
+        return row.def.includes(String(want)) ? []
+          : [`${p} 的 \`${name}\` 默认值写的是「${row.def}」，\`DEFAULTS\` 现算是 \`${want}\``];
+      });
+    });
+
+  it("射程自守：六份都取得到那张 12 行配置表，且 `.env.example` 读得出声明集", () => {
+    for (const p of SIX) {
+      const n = tableRows(read(p)).length;
+      expect(n, `${p} 的配置表只抽到 ${n} 行 —— 少于 12 行多半是表格排版变了而本组已经瞎了`)
+        .toBeGreaterThanOrEqual(12);
+    }
+    expect(declared().size, "`.env.example` 里一个变量都没抽到 —— 判据在测空气")
+      .toBeGreaterThan(10);
+  });
+
+  it("六份的配置表变量名**逐份相同**（某一份漏一行/多一行会红）", () => {
+    const base = tableRows(read("README.md")).map((r) => r.name);
+    for (const p of SIX.slice(1)) {
+      expect(tableRows(read(p)).map((r) => r.name), `${p} 的配置表与根 README 的变量清单对不上`)
+        .toEqual(base);
+    }
+  });
+
+  it("名单侧：表里的每个变量都在 `.env.example` 里声明过", () => {
+    expect(nameFaults(read), "").toEqual([]);
+  });
+
+  it("默认值：四个旋钮写的数字逐个等于 `DEFAULTS` 现算", () => {
+    expect(defaultFaults(read), "").toEqual([]);
+  });
+
+  it("该红时红（评审变异 A）：六份一起把 `UPSTREAM_TIMEOUT_MS` 改成 9999 —— 默认值那格逐份点名", () => {
+    const r = (p: string) => (SIX.includes(p)
+      ? read(p).replace("| `UPSTREAM_TIMEOUT_MS` | ❌ | `8000` |", "| `UPSTREAM_TIMEOUT_MS` | ❌ | `9999` |")
+      : read(p));
+    expect(r("README.md"), "变异没落地 —— 那一行的字面变了").not.toEqual(read("README.md"));
+    const faults = defaultFaults(r);
+    expect(faults.length, "六份一起改默认值居然一格都不红 —— "
+      + "R5/R6 的对等在「六份一起改」面前是零判别力，真源锚才是唯一的拦截点").toBe(SIX.length);
+    expect(faults[0] ?? "").toContain("`DEFAULTS` 现算是");
+  });
+
+  it("该红时红（评审变异 B）：六份各加一行编出来的变量 —— 名单那格逐份点名", () => {
+    const r = (p: string) => (SIX.includes(p)
+      ? `${read(p)}\n| \`NONEXISTENT_FAKE_VAR\` | ❌ | — | 编出来的变量 |\n`
+      : read(p));
+    const faults = nameFaults(r);
+    expect(faults.length, "编一个 `.env.example` 里没有的变量居然一格都不红").toBe(SIX.length);
+    expect(faults[0] ?? "").toContain("NONEXISTENT_FAKE_VAR");
+  });
+
+  it("不许乱红：`.env.example` 里被注释掉的那些声明（`# FOO=`）照样算声明过", () => {
+    // `.env.example` 里可选项常以 `# NAME=` 的形态给出，抽取正则认 `^#?` 正是为此。
+    const decl = declared();
+    const commented = readFileSync(".env.example", "utf8").split("\n")
+      .flatMap((l) => {
+        const m = /^#[ \t]*([A-Z][A-Z0-9_]*)=/.exec(l);
+        return m === null ? [] : [m[1] ?? ""];
+      });
+    expect(commented.filter((k) => !decl.has(k)), "被注释掉的声明没进声明集").toEqual([]);
+  });
+});
