@@ -11822,11 +11822,29 @@ const gatewayLengthClaims = (docs: ReadonlyArray<readonly [string, string]>): st
 };
 
 describe("W131 R27 的源码锚：口令那两条门槛的数字从 `src/` 现算，不抄文档", () => {
-  const ELEVEN: readonly string[] = [
+  /**
+   * ⚠️ **射程曾经是写死的 11 份**（README × 6 + DEPLOY × 5），而那是**立组当天的仓库形状**：
+   * 那时另外 25 份非 README 文档里一个 `GATEWAY_TOKEN` 都没有。
+   * 阶段 7C 的 `933f3f7` 把五份 `USAGE.md` 从接线纸扩成使用指南之后，
+   * 五份 `USAGE.md`、五份 `API.md`、`docs/en/ADMIN.md` 里都出现了 `GATEWAY_TOKEN`
+   * （⚠️ 这一段原先写成 `docs/{星}/USAGE.md` 那种通配写法，**`*` 后面紧跟 `/` 会把块注释提前闭合**，
+   *   整份文件当场 PARSE_ERROR、`Tests no tests`。本仓 `strip-comments` 那一族机制防的就是这类，
+   *   而注释自己写坏是它够不着的——这里改成中文描述，不写通配路径。）
+   * ⇒ **同一句 V33 假话写进那 25 份里，这一组一格都不会红**（P3f 阶段 7D 复评实测指出）。
+   *
+   * 所以射程改成**从磁盘现算**：全部出货文档里**凡提到 `GATEWAY_TOKEN` 的**都进射程。
+   * 这样它跟着仓库形状走，不会再因为「立组那天还没有」而留下静默盲区。
+   * ⚠️ 主控落地前已实测：扩射程后**零新增失败**——那 25 份里今天的长度陈述
+   * 逐条都归属 `ADMIN_TOKEN`（`docs/en/ADMIN.md:33` 那句主语是 `ADMIN_TOKEN`，不是假话）。
+   */
+  const SCOPE: readonly string[] = [
     "README.md",
     ...LANGS.map((l) => join("docs", l, "README.md")),
-    ...LANGS.map((l) => join("docs", l, "DEPLOY.md")),
-  ];
+    ...LANGS.flatMap((l) => ["API", "DEPLOY", "USAGE", "ADMIN", "REGISTRAR"]
+      .map((d) => join("docs", l, `${d}.md`))),
+  ].filter((p) => readFileSync(p, "utf8").includes("GATEWAY_TOKEN"));
+  /** 保留旧名以免下面几格全改；它已不是「11 份」而是现算集合。 */
+  const ELEVEN = SCOPE;
   /** 长度陈述：数字 + 五语言的「位 / 字符 / 文字 / 자 / characters」。 */
   const LENGTH_CLAIM = /(\d+)\s*(位|個字元|个字符|字符|字元|文字|자리|자|characters|character|chars|char)/g;
 
@@ -11879,9 +11897,20 @@ describe("W131 R27 的源码锚：口令那两条门槛的数字从 `src/` 现�
         .map((m) => ({ path: p, no: r.no, text: m[0], n: Number(m[1]) }))));
     expect(claims.length, "一条「ADMIN_TOKEN + 长度」的陈述都没扫到 —— 判据在测空气")
       .toBeGreaterThanOrEqual(11);
-    expect(new Set(ELEVEN).size - new Set(claims.map((c) => c.path)).size,
-      `这几份里没有任何一条长度陈述：${ELEVEN.filter((p) => !claims.some((c) => c.path === p)).join(" / ")}`)
-      .toBe(0);
+    // ⚠️ **自守射程与断言射程是两个集合，别混用**（P3f 阶段 7D 主控扩射程时踩到）：
+    //   · **断言射程** = 全部提到 `GATEWAY_TOKEN` 的出货文档（现算，今天 26 份）——
+    //     真话假话在这些里逐条查，射程越宽越好。
+    //   · **自守射程** = 其中**必须写着长度陈述**的那些（README × 6 + DEPLOY × 5，共 11 份）——
+    //     它防的是「判据瞎了」：这 11 份任一份的长度句被删光，说明抽取正则与文档排版脱节了。
+    // 把自守也套到断言射程上会**恒红**：`USAGE.md` / `ADMIN.md` 只是提到了 `GATEWAY_TOKEN`，
+    // 本来就没有长度句，而那不是缺陷。第一版就是这么写的，扩射程当场红 6 份。
+    const SELF_GUARD: readonly string[] = [
+      "README.md",
+      ...LANGS.map((l) => join("docs", l, "README.md")),
+      ...LANGS.map((l) => join("docs", l, "DEPLOY.md")),
+    ];
+    const missing = SELF_GUARD.filter((p) => !claims.some((c) => c.path === p));
+    expect(missing, `这几份里没有任何一条长度陈述：${missing.join(" / ")}`).toEqual([]);
     const wrong = claims.filter((c) => c.n !== want)
       .map((c) => `${c.path}:${c.no} 写的是「${c.text}」，源码常量是 ${want}`);
     expect(wrong, `文档里的口令长度下限与 \`ADMIN_TOKEN_MIN_LENGTH\` 对不上：\n${wrong.join("\n")}`)
@@ -11938,8 +11967,12 @@ describe("W131 R27 的源码锚：口令那两条门槛的数字从 `src/` 现�
     const rows = ELEVEN.flatMap((p) => bodyOf(readFileSync(p, "utf8"))
       .filter((r) => r.line.trim().startsWith("|") && /^\|\s*`GATEWAY_TOKEN`\s*\|/.test(r.line.trim()))
       .map((r) => ({ path: p, no: r.no, subject: tableRowSubject(r.line) })));
+    // ⚠️ 期望值取的是**自守射程**（README × 6 + DEPLOY × 5 = 11）而不是断言射程
+    //   （现算的 26 份）：那 11 份各有一张环境变量表、各恰 1 行；
+    //   `USAGE.md` / `ADMIN.md` / `API.md` / `REGISTRAR.md` 只是提到了 `GATEWAY_TOKEN`，
+    //   本来就没有那张表。拿断言射程的大小当期望值会恒红（主控扩射程时踩到）。
     expect(rows.length, "环境变量表里那条 `GATEWAY_TOKEN` 行一条都没扫到 —— 表格档在测空气")
-      .toBe(ELEVEN.length);
+      .toBe(1 + LANGS.length * 2);
     const blind = rows.filter((r) => r.subject !== "GATEWAY_TOKEN")
       .map((r) => `${r.path}:${r.no} 的键列点不出 \`GATEWAY_TOKEN\``);
     expect(blind, `这几行的主语判不出来，方向② 对它们仍然是瞎的：\n${blind.join("\n")}`).toEqual([]);
