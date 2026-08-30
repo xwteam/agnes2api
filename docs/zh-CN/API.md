@@ -815,7 +815,7 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 |----|----|----|----|
 | `after` | number | 否 | 游标，只要比它新的条目。 |
 | `level` | string | 否 | 按级别筛选；不是合法级别时整个忽略。 |
-| `limit` | number | 否 | 本页条数，默认 50，上限 200。 |
+| `limit` | number | 否 | 本页条数，默认 200，上限 500。 |
 
 **请求**：
 

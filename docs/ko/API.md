@@ -815,7 +815,7 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 |--------|----|----|----|
 | `after` | number | 아니오 | 커서. 이보다 새로운 항목만. |
 | `level` | string | 아니오 | 레벨로 거르기; 올바른 값이 아니면 통째로 무시됩니다. |
-| `limit` | number | 아니오 | 이 페이지의 개수. 기본 50, 최대 200. |
+| `limit` | number | 아니오 | 이 페이지의 개수. 기본 200, 최대 500. |
 
 **요청**:
 

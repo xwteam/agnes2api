@@ -815,7 +815,7 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 |----------|----|----|----|
 | `after` | number | いいえ | カーソル。これより新しい項目だけ。 |
 | `level` | string | いいえ | レベルで絞り込み；正しくない値は丸ごと無視されます。 |
-| `limit` | number | いいえ | このページの件数。既定 50、上限 200。 |
+| `limit` | number | いいえ | このページの件数。既定 200、上限 500。 |
 
 **リクエスト**：
 

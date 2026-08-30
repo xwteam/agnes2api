@@ -815,7 +815,7 @@ The fetch behind the events section. Merged results are sorted by `ts` descendin
 |---------|----|--------|-----------|
 | `after` | number | No | Cursor; only entries newer than this. |
 | `level` | string | No | Filter by level; anything that is not a valid level is ignored entirely. |
-| `limit` | number | No | Items on this page, 50 by default, 200 at most. |
+| `limit` | number | No | Items on this page, 200 by default, 500 at most. |
 
 **Request**:
 
