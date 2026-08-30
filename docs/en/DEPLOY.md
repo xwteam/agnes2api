@@ -118,8 +118,9 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   land on many different Cloudflare edge locations, and you don't fully control how many
   concurrent isolates that produces): `12 × 8 = 96` writes/day, **9.6%** of the write quota.
   Added to the key-pool write side above (80/day, 8%), the total is about 176/day
-  (**17.6%**), leaving roughly 82% headroom. **This accounting exists because review caught
-  a real problem**: an earlier version budgeted per hour with each isolate counting
+  (**17.6%**), leaving roughly 82% headroom.
+
+  **This accounting exists because review caught a real problem**: an earlier version budgeted per hour with each isolate counting
   independently up to 12/hour, so 4 isolates alone could blow through the write quota
   (`4 × 12 × 24 = 1,152`, over 1,000). The fix was to switch the budget window from
   "per hour" to "per day" and write this account down here; the same round also closed a gap
@@ -150,6 +151,8 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   in its life and carries a fresh budget every time ⇒ **on this axis that gate neither stops
   anything nor constitutes any upper bound**. The real bound is the tend frequency itself:
   **tightening the Cron or lowering `TEND_INTERVAL_MS` scales all three items proportionally.**
+#### What each panel write operation costs — "only when a human clicks"
+
 - **Write side of the panel's write operations (new in P3c) — these only happen when a human
   clicks, so they are not part of the steady-state accounts above.** There is no frequency
   bound to speak of (the bound is the operator's hand), so what follows is the **unit price of
@@ -209,6 +212,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   - **Purging the key pool** (`/admin/api/keys/purge`, the second danger-zone button):
     **N deletes (N = pool size) + 1 put** (the index is written exactly once, the same rule as
     bulk delete).
+
     ⚠️ **The free tier's delete bucket is 1,000 per day** (independent of read, write and
     list) ⇒ **with N approaching 1,000 this one button blows the day's delete quota on its
     own**, and the bigger the pool the more it costs. On the read side it is one pool snapshot
@@ -226,6 +230,8 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   nobody touching anything", this section says "what each click costs you". The only shape worth
   watching is **importing several hundred keys at once** — it is the most expensive single click
   in the panel.
+
+#### Write-side totals, keyed on `registrar.enabled`
 
 - **Write-side totals, in three columns keyed on `registrar.enabled`** (20 keys, 8 concurrent
   isolates):
@@ -263,6 +269,8 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   The three rows above all assume the default Cron (one round every 30 minutes); **do not
   read them as constants independent of the frequency**.
 
+#### Write side of Tier-2 usage statistics (off by default)
+
 - **Write side of Tier-2 usage statistics (new in P3d, `USAGE_STATS_ENABLED`, **off by default**)
   — it is the only new writer this phase.**
 
@@ -289,70 +297,78 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   click); minting on every click costs more, but that column hits the temporary-mailbox quota
   first and is not sustainable — the arithmetic is in that same bullet.
 
-  Those 13 come from the following, and all four points matter:
+<details>
+<summary><b>Click to expand: where those 13 come from (all six points matter)</b></summary>
 
-  ① **12 flushes + 1.** The minimum flush interval is **2 hours**, so a full day holds at most
-     12 of them; the `+1` is not slack, it is the fact that **the flush that crosses UTC
-     midnight writes two keys** (one for the previous day, one for the current day). With 12,
-     exactly one write per 24 hours would be refused by the budget — no data is lost (that day
-     stays marked as pending and is picked up on the next round), but the "at most 2 hours"
-     promise in point ② would become 4 hours.
+Those 13 come from the following, and all six points matter:
 
-  ② **The unflushed tail is at most 2 hours, and its two symptoms are one fact, not two**: the
-     "today" figures on the panel can be up to 2 hours stale, and **any instance that lives
-     less than 2 hours** (a short-lived Worker isolate, a fast Docker restart) **loses the
-     counts it accumulated along with itself**. The clock starts when the instance starts, so
-     an isolate that lived 10 minutes stores nothing at all. This is one of the reasons usage
-     figures carry an "≈" throughout; it is not a defect.
+① **12 flushes + 1.** The minimum flush interval is **2 hours**, so a full day holds at most
+   12 of them; the `+1` is not slack, it is the fact that **the flush that crosses UTC
+   midnight writes two keys** (one for the previous day, one for the current day). With 12,
+   exactly one write per 24 hours would be refused by the budget — no data is lost (that day
+   stays marked as pending and is picked up on the next round), but the "at most 2 hours"
+   promise in point ② would become 4 hours.
 
-  ③ **The 13 puts per day per instance is a hard gate**: once exhausted, nothing more is
-     written that day, it **recovers automatically on the next UTC day**, and the days it owed
-     are written out after recovery (the in-memory accumulator is never cleared) —
-     **provided the instance is still alive**.
-     ⚠️ **That half-sentence is structurally out of reach on Workers**: those accumulators live
-     only in memory, and a Worker isolate usually does not survive into the next UTC day (see
-     point ② above: an isolate that lived 10 minutes stores nothing at all). So on Workers
-     "written out after recovery" requires **the same isolate to have crossed UTC midnight**,
-     which is the exception, not the rule; when it does not, those days' counts **vanish with
-     the instance — they are not merely posted late**.
-     ⚠️⚠️ **On Docker this gate does not exist at all**, so the promise simply does not apply
-     on that side: whether there is a daily write budget depends only on **whether your storage
-     has a write quota** (the criterion is in point ④ below), and file storage does not ⇒ the
-     budget is empty (`budgetPerDay = null`), nothing is ever exhausted, and there is no
-     "recovery" or "catch-up" to speak of. **Do not read it as "on Docker you hit the 13-put
-     gate and lose nothing" — on Docker there is no such gate**; what you do lose there is the
-     tail from point ② above (up to 2 hours not yet flushed when the process stops).
-     ⚠️ This gate **only applies inside a single instance** — 8 isolates means 8 independent
-     allowances of 13, exactly like the events gate above, with no cross-instance coordination.
+② **The unflushed tail is at most 2 hours, and its two symptoms are one fact, not two**: the
+   "today" figures on the panel can be up to 2 hours stale, and **any instance that lives
+   less than 2 hours** (a short-lived Worker isolate, a fast Docker restart) **loses the
+   counts it accumulated along with itself**. The clock starts when the instance starts, so
+   an isolate that lived 10 minutes stores nothing at all. This is one of the reasons usage
+   figures carry an "≈" throughout; it is not a defect.
 
-  ④ **Both runtimes behave identically; no runtime sniffing is done.** The **default** flush
-     interval is the same on both sides, along the same code path (the request tail **waits for
-     the write to finish**, it is not a background task — a background task on Workers gets
-     silently truncated when the isolate stops after the response returns).
-     `USAGE_FLUSH_INTERVAL_MS` can override it, and **the criterion is "does your storage have a
-     write quota", not "which runtime are you on"**:
-     · **File storage (Docker) has no write quota** ⇒ any positive integer is accepted, **and
-       there is no longer a per-day write budget**; the interval itself is the bound. Turning it
-       back down to 300000 (5 minutes) is entirely reasonable.
-     · **KV (Workers) has a write quota** ⇒ the budget stays at 13 per instance per day, and the
-       interval must satisfy `interval × (13 − 1) >= one day`. Violating it **fails at startup**
-       and tells you the smallest usable value (7200000). Refusing silently is deliberate: with
-       such a value the write volume still looks fine **while the data goes wrong from midday
-       onward**, which is harder to notice than a failure to start.
+③ **The 13 puts per day per instance is a hard gate**: once exhausted, nothing more is
+   written that day, it **recovers automatically on the next UTC day**, and the days it owed
+   are written out after recovery (the in-memory accumulator is never cleared) —
+   **provided the instance is still alive**.
+   ⚠️ **That half-sentence is structurally out of reach on Workers**: those accumulators live
+   only in memory, and a Worker isolate usually does not survive into the next UTC day (see
+   point ② above: an isolate that lived 10 minutes stores nothing at all). So on Workers
+   "written out after recovery" requires **the same isolate to have crossed UTC midnight**,
+   which is the exception, not the rule; when it does not, those days' counts **vanish with
+   the instance — they are not merely posted late**.
 
-  ⑤ **At most 2 instances' data survives for a given day; anything beyond that overwrites.**
-     Usage shards are stored as `usage:<UTC day>:<slot>` and **there are only 2 slots**;
-     each instance hashes into one stably by its shard id. ⇒ the 104/day computed above for 8
-     isolates is a **write volume**, not "all 8 sets of data were kept" — within a slot it is
-     last-write-wins. **This is one of the reasons usage figures carry an "≈"** (the other is
-     the tail in point ②). It does not affect the write quota, only how complete the numbers
-     are; that is exactly what the "≈" means.
+   ⚠️⚠️ **On Docker this gate does not exist at all**, so the promise simply does not apply
+   on that side: whether there is a daily write budget depends only on **whether your storage
+   has a write quota** (the criterion is in point ④ below), and file storage does not ⇒ the
+   budget is empty (`budgetPerDay = null`), nothing is ever exhausted, and there is no
+   "recovery" or "catch-up" to speak of. **Do not read it as "on Docker you hit the 13-put
+   gate and lose nothing" — on Docker there is no such gate**; what you do lose there is the
+   tail from point ② above (up to 2 hours not yet flushed when the process stops).
+   ⚠️ This gate **only applies inside a single instance** — 8 isolates means 8 independent
+   allowances of 13, exactly like the events gate above, with no cross-instance coordination.
 
-  ⑥ **The three media endpoints (image generation, video creation, video polling) are not
-     counted.** They burn the **same** pool of upstream keys as the four chat protocols but
-     record nothing ⇒ the panel's "total requests" is systematically lower than the real
-     forwarded volume. This is a known boundary of this phase, not a defect; judge key
-     consumption from the key-pool side instead.
+④ **Both runtimes behave identically; no runtime sniffing is done.** The **default** flush
+   interval is the same on both sides, along the same code path (the request tail **waits for
+   the write to finish**, it is not a background task — a background task on Workers gets
+   silently truncated when the isolate stops after the response returns).
+   `USAGE_FLUSH_INTERVAL_MS` can override it, and **the criterion is "does your storage have a
+   write quota", not "which runtime are you on"**:
+   · **File storage (Docker) has no write quota** ⇒ any positive integer is accepted, **and
+     there is no longer a per-day write budget**; the interval itself is the bound. Turning it
+     back down to 300000 (5 minutes) is entirely reasonable.
+   · **KV (Workers) has a write quota** ⇒ the budget stays at 13 per instance per day, and the
+     interval must satisfy `interval × (13 − 1) >= one day`. Violating it **fails at startup**
+     and tells you the smallest usable value (7200000). Refusing silently is deliberate: with
+     such a value the write volume still looks fine **while the data goes wrong from midday
+     onward**, which is harder to notice than a failure to start.
+
+⑤ **At most 2 instances' data survives for a given day; anything beyond that overwrites.**
+   Usage shards are stored as `usage:<UTC day>:<slot>` and **there are only 2 slots**;
+   each instance hashes into one stably by its shard id. ⇒ the 104/day computed above for 8
+   isolates is a **write volume**, not "all 8 sets of data were kept" — within a slot it is
+   last-write-wins. **This is one of the reasons usage figures carry an "≈"** (the other is
+   the tail in point ②). It does not affect the write quota, only how complete the numbers
+   are; that is exactly what the "≈" means.
+
+⑥ **The three media endpoints (image generation, video creation, video polling) are not
+   counted.** They burn the **same** pool of upstream keys as the four chat protocols but
+   record nothing ⇒ the panel's "total requests" is systematically lower than the real
+   forwarded volume. This is a known boundary of this phase, not a defect; judge key
+   consumption from the key-pool side instead.
+
+</details>
+
+#### Three read-side accounts of their own
 
 - **Tier-2 usage reads — what they burn is not the daily read quota but "how many subrequests
   one invocation may issue".** The `30d` range of `/admin/api/usage` issues
@@ -365,6 +381,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   falls under; KV's own limits page separately states "Operations/Worker invocation" **1,000**
   (identical on free and paid). **The two pages disagree, and we have not settled it on real
   hardware** ⇒ read against the KV page, 60 is 6%; read against the 50 row, **60 is over**.
+
   So the `30d` range may behave differently on Workers than on Node, and the gateway only
   guarantees that it **fails honestly**: when the read fan-out fails part way through, **the
   whole `days` series comes back as `null`** (the panel shows `—`) with `note` set to
@@ -400,12 +417,15 @@ its writes grow with request count, so the budget is "so many per day", not "so 
     cursor never advances, and once the frozen cursor falls out of the 24-hour retention
     window, **every subsequent poll costs the full 48 gets**; at the same time, with no new
     content, exponential backoff pushes the poll interval up to the 60-second cap. The
+    steady state is `(86400 ÷ 60) × (48 + 1) = 70,560` gets/day (about **71%** of the read
+    quota).
+
     ⚠️ **That figure is a steady-state *idle* envelope, not an upper bound.** It assumes the
     board is simply left open with nobody touching it. Interactive paths are not in it: every
     click on a level filter is a full cold read, and returning to this board or making the tab
     visible again also triggers a round immediately — **none of these are throttled today**.
-    steady state is `(86400 ÷ 60) × (48 + 1) = 70,560` gets/day (about **71%** of the read
-    quota). The `+1` is **the configuration read each poll round triggers on its own**: the
+
+    The `+1` is **the configuration read each poll round triggers on its own**: the
     config-refresh middleware runs ahead of every route and the config cache TTL is 30
     seconds, shorter than the 60-second poll interval, so every round costs exactly one
     extra read. It draws on **the same bucket** as the `86400 ÷ config TTL seconds` term in
@@ -421,6 +441,8 @@ its writes grow with request count, so the budget is "so many per day", not "so 
     manual click and is negligible at that scale; noted here purely for completeness.
   Both scenarios' ceilings stay **flat regardless of how many days the deployment has been
   running** — that part of the original claim still holds after the C4 fix.
+#### The `list` and `delete` buckets
+
 - **`list` and `delete` are two further buckets, 1,000/day each**, separate from the read and
   write buckets. Steady-state forwarding never issues a `list` — that is exactly why the
   `pool:index` key exists. **Four** things consume it: the 48–96 daily index reconciliations
@@ -434,7 +456,9 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   a hand-imported record is missing from the index); and the **missing-index fallback** (when
   `pool:index` itself cannot be read or fails to parse, the gateway likewise issues one `list`
   and tries to rebuild the index — usually because the write bucket got exhausted and the index
-  could never be built). The latter two **share the same** built-in **10-minute** backoff (a
+  could never be built).
+
+  The latter two **share the same** built-in **10-minute** backoff (a
   fixed constant, not an environment variable) — they draw on the same `list` bucket, so opening
   a separate window for each would be pointless — so an empty or broken-index pool costs at most
   144 `list` calls per isolate per day, with headroom left over the 48–96 from reconciliation

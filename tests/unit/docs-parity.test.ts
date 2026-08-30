@@ -8691,3 +8691,219 @@ describe("W103 表格行与单元格的长度上限（R22e ≤ 340 / R22e2 ≤ 3
     expect(scan.rows, "掺进一份无表格文档之后一行都扫不到了 —— 扫描器坏了").toBeGreaterThan(300);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W98 — `### 配额账` 那一节：`<details>` 折叠 + `###`/`####` 分层
+ *
+ * **这一节是全仓最大的一块散文**（改写前 283 行 / en 373 行），而 V27 已裁定
+ * **不拆出 QUOTA.md**（ADJ ㉑：参照仓只有五类文档，不新增文档类型）。
+ * ⇒ 只能就地压缩观感：`####` 分层 + 一处 `<details>` 折叠最深的那段推导。
+ *
+ * ⚠️⚠️ **`<details>` 是 C23「这 25 份不用折叠块」那条射程铁律的具名例外**，
+ * 而具名例外必须**同时**写进偏离名册，否则下一个人「顺手删掉 details」就把
+ * ADJ ㉑ 的裁定推翻了，而且删掉时一格都不会红。W94 那份名册（阶段 6 的落点：一份新文档
+ * 或测试内常量表，二选一）本期还没落地 ⇒ **本组先以测试内常量表的形态承担它**：
+ * 下面的 `DETAILS_ALLOWLIST` 就是那条登记，双向钉死（多一处红、少一处也红）。
+ * W94 落地那天把这张表搬过去，**别把它删掉了事**。
+ *
+ * ⚠️ **「text-run ≤1500」的口径写死在这里，不许换算法**：一个 run = 剥围栏后
+ * **连续的正文行**，遇到空行 / 标题 / 表格行 / 围栏 / `<details>`·`<summary>` 标签
+ * **中断**，遇到列表项起始（`- ` / `1. `）或引用块起始（`> `）**另起一个 run**。
+ * 也就是「读者中间一个视觉锚点都没有的最长一段」。
+ * 落地前实测：zh-CN 768 / zh-TW 772 / **en 1764** / ja 1020 / ko 1054
+ * ⇒ **只有 en 顶穿**，而顶穿的 6 段里有一段是 en 独有的真错（一句话被 ⚠️ 段拦腰
+ * 截断，其余四种语言都没有这个形状）。**这条判据是靠它才被发现的。**
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** `### 配额账` 那一节的五语言标题（逐字，取自五份真文档）。 */
+const QUOTA_SECTION_HEADING: Record<Lang, string> = {
+  "zh-CN": "### 配额账：Worker + 免费档 KV 能撑多少请求",
+  "zh-TW": "### 配額帳：Worker + 免費方案 KV 能撐多少請求",
+  en: "### Quota budget: how many requests a Worker on the free KV tier can serve",
+  ja: "### クォータの見積もり: Worker + 無料枠 KV で 1 日に何リクエストさばけるか",
+  ko: "### 할당량 계산: Worker + 무료 등급 KV로 하루 몇 건을 처리할 수 있나",
+};
+
+/**
+ * **`<details>` 的偏离名册（C23 的具名例外，W98 那一处）。**
+ *
+ * 双向：名册之外出现 `<details>` ⇒ 红（射程铁律被破）；名册之内没有 ⇒ 也红
+ * （具名例外被人顺手删掉，而 ADJ ㉑「不拆 QUOTA.md」的前提就没了）。
+ */
+const DETAILS_ALLOWLIST: readonly string[] =
+  LANGS.map((lang) => join("docs", lang, "DEPLOY.md"));
+
+/** 一份文档里 `### 配额账` 那一节的正文行（含标题行），到下一个 `###`/`##` 为止。 */
+function quotaSection(lang: Lang, src: string): string[] {
+  const lines = src.split("\n");
+  const at = lines.findIndex((l) => l === QUOTA_SECTION_HEADING[lang]);
+  if (at < 0) {
+    throw new Error(
+      `docs/${lang}/DEPLOY.md 里找不到 ${JSON.stringify(QUOTA_SECTION_HEADING[lang])} ——`
+      + " 判据的落点变了（标题被改名了？），先回来改 QUOTA_SECTION_HEADING，"
+      + "不许让它静静地扫一段空文本",
+    );
+  }
+  let to = at + 1;
+  while (to < lines.length && !/^#{2,3} /.test(lines[to] ?? "")) to += 1;
+  return lines.slice(at, to);
+}
+
+/**
+ * 「读者中间一个视觉锚点都没有的最长一段」。口径见本组文件头，**别在别处再写第二份**。
+ */
+function textRuns(sectionLines: readonly string[]): Array<{ at: number; text: string }> {
+  const isBreak = (s: string): boolean =>
+    s.trim() === "" || /^#{1,6} /.test(s) || /^\s*\|/.test(s)
+    || FENCE_LINE.test(s) || /^\s*<\/?(?:details|summary)/.test(s);
+  const isNewRun = (s: string): boolean => /^\s*(?:[-*+]|\d+\.)\s/.test(s) || /^\s*>/.test(s);
+  const out: Array<{ at: number; text: string }> = [];
+  let cur: string[] = [];
+  let curAt = 0;
+  const flush = (): void => {
+    if (cur.length > 0) out.push({ at: curAt, text: cur.join("") });
+    cur = [];
+  };
+  sectionLines.forEach((s, i) => {
+    if (isBreak(s)) { flush(); return; }
+    if (isNewRun(s)) { flush(); curAt = i; } else if (cur.length === 0) { curAt = i; }
+    cur.push(s.trim());
+  });
+  flush();
+  return out;
+}
+
+/** 一份文档里剥围栏之后的 `<details>` / `</details>` / `<summary>` 行数。 */
+const detailsTags = (src: string): { open: number; close: number; summary: number } => {
+  let open = 0, close = 0, summary = 0;
+  for (const { line } of bodyLines(src)) {
+    if (/^\s*<details>/.test(line)) open += 1;
+    if (/^\s*<\/details>/.test(line)) close += 1;
+    if (/^\s*<summary>/.test(line)) summary += 1;
+  }
+  return { open, close, summary };
+};
+
+/** W98 的 text-run 上限。**这个数是规格给的验收值，不是量出来的**（W98 那一行）。 */
+const W98_MAX_RUN = 1500;
+
+describe("W98 `### 配额账` 的折叠与分层（`<details>` 是 C23 的具名例外）", () => {
+  const realDeploy = (lang: Lang): string => readFileSync(docPath(".", lang, "DEPLOY"), "utf8");
+
+  it("射程自守：五份 DEPLOY 都定位得到那一节，且那一节确实是全仓最大的一块散文", () => {
+    for (const lang of LANGS) {
+      const sec = quotaSection(lang, realDeploy(lang));
+      expect(sec.length, `docs/${lang}/DEPLOY.md 的配额账只有 ${sec.length} 行 —— `
+        + "定位器多半在下一个 `###` 上提前收尾了，本组会在一段空文本上全绿")
+        .toBeGreaterThan(200);
+      expect(textRuns(sec).length, `docs/${lang}/DEPLOY.md 的配额账一个 text-run 都没抽到`)
+        .toBeGreaterThan(20);
+    }
+  });
+
+  it("偏离名册（W94 的具名例外）：25 份非 README 文档里的 `<details>` 恰好就是名册那 5 处", () => {
+    const withDetails = non25Pairs()
+      .filter(([, t]) => detailsTags(t).open > 0)
+      .map(([p]) => p)
+      .sort();
+    expect(
+      withDetails,
+      "非 README 文档的 `<details>` 与偏离名册对不上。\n"
+      + "· 多出来 ⇒ 射程铁律（C23：这 25 份不用折叠块）被破，要么撤掉，要么先来改名册；\n"
+      + "· 少掉 ⇒ W98 那处**具名例外**被人顺手删了，而 ADJ ㉑「不拆 QUOTA.md」的前提"
+      + "就是「那一节可以就地折叠起来」——删掉它等于把那条裁定推翻，却一格都不红。",
+    ).toEqual([...DETAILS_ALLOWLIST].sort());
+  });
+
+  it("名册里那 5 份各恰 1 组 `<details>`/`</details>`/`<summary>`，且折叠块落在配额账那一节里", () => {
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      const src = realDeploy(lang);
+      const { open, close, summary } = detailsTags(src);
+      if (open !== 1 || close !== 1 || summary !== 1) {
+        bad.push(`docs/${lang}/DEPLOY.md：<details> ${open} / </details> ${close} / <summary> ${summary}，各应恰 1`);
+      }
+      const sec = quotaSection(lang, src).join("\n");
+      if (!sec.includes("<details>") || !sec.includes("</details>")) {
+        bad.push(`docs/${lang}/DEPLOY.md 的折叠块不在 \`### 配额账\` 那一节里 —— `
+          + "具名例外是给那一节的，挪到别处就是新开了一处偏离");
+      }
+    }
+    expect(bad, bad.join("\n")).toEqual([]);
+  });
+
+  it(`那一节的最长 text-run ≤ ${W98_MAX_RUN} 字符（W98 的验收）`, () => {
+    const over: string[] = [];
+    for (const lang of LANGS) {
+      const sec = quotaSection(lang, realDeploy(lang));
+      for (const r of textRuns(sec)) {
+        const n = [...r.text].length;
+        if (n > W98_MAX_RUN) {
+          over.push(`docs/${lang}/DEPLOY.md 配额账第 ${r.at + 1} 行起：${n} 字符 > ${W98_MAX_RUN}`
+            + `\n      ${r.text.slice(0, 70)}…`);
+        }
+      }
+    }
+    expect(
+      over,
+      `这几段读者中间一个视觉锚点都没有：\n${over.join("\n")}\n`
+      + "⇒ 处置是 W98 那一条：拆成 `####` 小节、拆成子列表、或在句号处另起一段。"
+      + "**不许靠删句子达标**。",
+    ).toEqual([]);
+  });
+
+  it("那一节真的分了层：五份各 ≥5 个 `####`（只折叠不分层等于把问题藏起来）", () => {
+    for (const lang of LANGS) {
+      const sec = quotaSection(lang, realDeploy(lang));
+      const h4 = sec.filter((l) => /^#### /.test(l)).length;
+      expect(h4, `docs/${lang}/DEPLOY.md 的配额账只有 ${h4} 个 \`####\` —— `
+        + "W98 要的是「折叠 + 分层」两件事，只做前一件等于把 283 行原样塞进一个折叠块")
+        .toBeGreaterThanOrEqual(5);
+    }
+  });
+
+  /* ── 反向控制 ───────────────────────────────────────────────────────────── */
+
+  it("该红时红：把某一份的 `<details>` 标签删掉（正文一个字不动）⇒ 名册那格点名那一份", () => {
+    const target = join("docs", "ja", "DEPLOY.md");
+    const flattened = readFileSync(target, "utf8")
+      .split("\n").filter((l) => !/^\s*<\/?(?:details|summary)/.test(l)).join("\n");
+    expect(flattened, "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    const withDetails = non25Pairs()
+      .map(([p, t]) => (p === target ? [p, flattened] as const : [p, t] as const))
+      .filter(([, t]) => detailsTags(t).open > 0).map(([p]) => p).sort();
+    expect(withDetails, "折叠块被删掉了却没红 —— 具名例外就白登记了")
+      .not.toEqual([...DETAILS_ALLOWLIST].sort());
+    expect(withDetails).not.toContain(target);
+  });
+
+  it("该红时红：往 USAGE.md 里加一个折叠块 ⇒ 名册那格点名它（射程铁律的另一个方向）", () => {
+    const target = join("docs", "ko", "USAGE.md");
+    const docs = non25Pairs().map(([p, t]) => (p === target
+      ? [p, `${t}\n<details>\n<summary><b>x</b></summary>\n\ny\n\n</details>\n`] as const
+      : [p, t] as const));
+    const withDetails = docs.filter(([, t]) => detailsTags(t).open > 0).map(([p]) => p).sort();
+    expect(withDetails, "非 README 文档多长出一个折叠块却没红").toContain(target);
+  });
+
+  it("该红时红：把 en 那两段合回一段（`60 is over` 那处）⇒ 1500 那格点名 en", () => {
+    // ⚠️ 变异用的是**仓里真实存在过的形状**：这两段今天之所以是两段，正是 W98 拆的。
+    const src = readFileSync(docPath(".", "en", "DEPLOY"), "utf8")
+      .split("**60 is over**.\n\n  So the `30d` range").join("**60 is over**.\n  So the `30d` range");
+    expect(src, "变异没落地").not.toEqual(readFileSync(docPath(".", "en", "DEPLOY"), "utf8"));
+    const over = textRuns(quotaSection("en", src)).filter((r) => [...r.text].length > W98_MAX_RUN);
+    expect(over.length, "合回一段之后没有任何 run 超过 1500 —— 这一格没打中，回来换一处变异")
+      .toBeGreaterThan(0);
+  });
+
+  it("认不出要吵：配额账的标题被改名时当场抛，不许静静地扫一段空文本", () => {
+    expect(() => quotaSection("zh-CN", "# 部署指南\n\n### 别的标题\n\n正文。\n"))
+      .toThrow(/判据的落点变了/);
+  });
+
+  it("不许乱红：围栏里教人写折叠块的示例不算数（剥围栏之后才数）", () => {
+    const fenced = "# T\n\n```html\n<details>\n<summary>x</summary>\n</details>\n```\n";
+    expect(detailsTags(fenced), "围栏里的 `<details>` 被数进来了 —— 剥围栏没生效")
+      .toEqual({ open: 0, close: 0, summary: 0 });
+  });
+});
