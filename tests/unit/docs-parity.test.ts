@@ -1219,20 +1219,28 @@ function divergenceReport(labels: readonly string[], values: readonly unknown[])
  *
  * **真数据上已经踩上去了**：`R3 × REGISTRAR.md`（五份一条围栏都没有）与
  * `R3 × ADMIN.md`（Task 26 加进 `DOCS` 之后新增的一格，同样整份无围栏）——30 格里
- * **2 格结构上不可能变红**，而文件里原本一个字都没说这件事。诊断当时（**这道护栏还没加**）
+ * **2 格结构上不可能变红**，而文件里原本一个字都没说这件事。
+ * 🔴 **`ADMIN` 那一格已经在 P3f 阶段 7C（W109/W123）销账**：五份 `ADMIN.md` 各补了
+ * 4 段带语言标记的围栏（```text 面板地址 / ```bash 一次 `PATCH /admin/api/keys/{id}` /
+ * ```json 该请求的回执 / ```json 一条 `key.disabled` 事件），登记当场发霉——
+ * 先补文档再跑一次 `docs-parity`，报的正是下面那句「登记在名册里可是今天抽到东西了」，
+ * **1 failed / 474 passed**，删掉登记之后转绿。诊断当时（**这道护栏还没加**）
  * 把 `fences` 改成恒返回 `[]`：真仓 6 格 R3 **全绿**，只有夹具那一条控制吵
  * ——**判据用错工具时静静放行**，正是本组自己在变异 M1 里登记过的那个形态，
  * 只是这一次真数据已经站在上面了。（护栏加上之后同一条变异实测红 **8** 格，
  * 其中 **4 格正是这道护栏**——`API` / `DEPLOY` / `README` / `USAGE` 的 R3 一起变成
- * "抽不到东西"；名册里那两格照旧不动，因为它们本来就登记着"无从取样"。）
+ * "抽不到东西"；名册里当时那两格（`ADMIN` / `REGISTRAR`）照旧不动，因为它们
+ * 本来就登记着"无从取样"——`ADMIN` 那条今天已随 W109 销账，见下面名册里的说明。）
  *
  * ⚠️ 名册**两个方向都查**，这是它与「待办清单」的区别：
  * · 不在名册里却五份全空 ⇒ 红（这一格是空判据，要么改判据要么登记进来）；
  * · 在名册里却抽到了东西 ⇒ 红（名册过期了，删掉登记——**豁免名册会变成永久的洞**）。
  */
 const EMPTY_BY_DESIGN: ReadonlyArray<readonly [rule: string, doc: string]> = [
-  // 这三份文档整份没有代码围栏（不是"缩进围栏认不出"——`fences` 今天顶格与缩进一视同仁）。
-  ["R3 代码围栏语言标记序列", "ADMIN"],
+  // 这两份文档整份没有代码围栏（不是"缩进围栏认不出"——`fences` 今天顶格与缩进一视同仁）。
+  // ⚠️ 这里原来还有一条 `["R3 …", "ADMIN"]`，**P3f 阶段 7C 随 W109 一并删掉**（W123 的一半）：
+  // 那五份文档今天各有 4 段围栏，登记留着就是"在名册里却抽到了东西"⇒ 恒红。
+  // 剩下的 `REGISTRAR` 那条归阶段 7D 的 W112 销账，别提前删——它今天仍然真的一条围栏都没有。
   ["R3 代码围栏语言标记序列", "REGISTRAR"],
   ["R3 代码围栏语言标记序列", "SPONSORS"],
   // ⚠️ `SPONSORS.md` 一份文档独占三格，理由是它的**体裁**：它是一页号召 Star / 提 Issue /
@@ -10228,5 +10236,353 @@ describe("`## 管理 API` 的响应体形状：拿**活响应**比文档，不�
     const block = endpointJsonBlock(apiSrc("zh-TW"), "GET /admin/api/config");
     expect(block, "串到 `PUT` 那一段去了").not.toContain('"changed"');
     expect(JSON.parse(block), "抠出来的不是那条端点的响应").toHaveProperty("editable");
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W108 / W109 / W110 —— 五份 `ADMIN.md` 的 14 节 `##` 骨架**之下**的三条验收
+ *（P3f 阶段 7C）
+ *
+ * · **W108**：`##` 骨架**不动**（实测 14 个，规格第 1 版说的「8 个板块」是
+ *   `## 八个板块速查` 那张**表的行数**，不是标题数）。改的是它下面两级：板块内的话题
+ *   降 `###`，板块内的卡片 / 动作降 `####`。
+ *   🔴 **五份只判「`###`/`####` 数量相等 + 层级序列相等 + 不回退下限」，不钉标题文本**
+ *   （§1.9.4：`##` 维持现状的文档钉文本 = 拿现状当模板，那是 C1 犯过的病）。
+ *   层级序列那一半由 `R2 heading 层级序列` 守着（本文件上方 R1–R6 那一组），
+ *   **本组补的是它结构上做不到的那一半**：R2 比的是五份**彼此**相等，
+ *   五份一起缩水它一格都不红 ⇒ 这里配一条不回退下限。
+ * · **W109**：补 ≥3 段代码围栏（现状 0），带语言标注率 100%。
+ *   🔴 **围栏内容从源码抽，不许编**：请求体字段必须全在 `PATCH_FIELDS` 里，
+ *   事件那段 JSON 的 `level`/`event`/`msg` 逐字等于 `keyPatchHandler` 里那条
+ *   `deps.logger.log({...})` 的字面量——**期望值现算，不手抄第二份**。
+ * · **W110**：排障节改成 `### {症状}` + `**原因**：` + `**解决**：`（逐语言查表），
+ *   `## 相关文档` 那第三种页脚形态换成**形态 A**（ADJ ㊷：末节标题 == 译名表同一下标、
+ *   恰 4 条 bullet，与 DEPLOY / API 同族）。
+ *
+ * ⚠️ **W123 的一半与本组同批**：五份补了围栏之后，`EMPTY_BY_DESIGN` 里
+ * `["R3 代码围栏语言标记序列", "ADMIN"]` 那条登记**当场发霉**（名册两个方向都查）。
+ * 先补文档、后删登记的中间态实测是 `1 failed / 474 passed`，报文逐字是
+ * 「登记在 EMPTY_BY_DESIGN 里…可是今天抽到东西了」。那条登记已删。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("W108–W110 五份 ADMIN.md 的分层、围栏与排障三段式", () => {
+  const realAdminSrc: ApiDocReader = realDoc("ADMIN");
+
+  /** 排障那一节的 `##` 标题，逐语言。**不是从文档里现找的**——找不到时下面会当场抛。 */
+  const TROUBLE_HEADING: Record<Lang, string> = {
+    "zh-CN": "## 排障",
+    "zh-TW": "## 排障",
+    en: "## Troubleshooting",
+    ja: "## 障害対応",
+    ko: "## 문제 해결",
+  };
+
+  /** 排障那一节的两个双粗体标签，逐语言（USAGE 族的固定标签）。 */
+  const TROUBLE_LABELS: Record<Lang, readonly [cause: string, fix: string]> = {
+    "zh-CN": ["**原因**：", "**解决**："],
+    "zh-TW": ["**原因**：", "**解決**："],
+    en: ["**Cause**:", "**Fix**:"],
+    ja: ["**原因**：", "**対処**："],
+    ko: ["**원인**:", "**해결**:"],
+  };
+
+  /** 页脚（形态 A）四条 bullet 各自该指向的兄弟文档，顺序不限但每份恰一次。 */
+  const FOOTER_TARGETS = ["API.md", "DEPLOY.md", "USAGE.md", "REGISTRAR.md"] as const;
+
+  /** 今天的实测值，同时是**不回退下限**（只许升不许降，与 W101 同一种形态）。 */
+  const H2_COUNT = 14;
+  const H3_FLOOR = 48;
+  const H4_FLOOR = 2;
+  const FENCE_FLOOR = 3;
+
+  const headingsAtLevel = (src: string, level: number): string[] =>
+    outsideFences(src).split("\n").filter((l) => new RegExp(`^#{${level}} `).test(l));
+
+  /**
+   * **开围栏**的语言标记序列。
+   *
+   * ⚠️ 这里不能直接用 R3 的 `fences()`：那一份把**每一条** ` ``` ` 行都算一格，
+   * 于是四段围栏抽出来是 8 格、其中 4 格（闭合行）恒为空串 —— 拿它算「语言标注率」
+   * 会得出「五份各有 4 段没带语言标记」这种恒红的假话（本组落地时实测踩过一次）。
+   * R3 那一份是**指纹**（只比五份彼此相等，开闭都算反而更严），这一份是**语言标注率**，
+   * 两者射程不同，各留各的。
+   */
+  const openFences = (src: string): string[] => {
+    const out: string[] = [];
+    let inFence = false;
+    for (const line of src.split("\n")) {
+      const m = /^[ \t]*```(\w*)/.exec(line);
+      if (m === null) continue;
+      if (!inFence) out.push(m[1] ?? "");
+      inFence = !inFence;
+    }
+    return out;
+  };
+
+  /* ── W108 ───────────────────────────────────────────────────────────────── */
+
+  it("W108 `##` 骨架维持现状：五份各恰 14 个 `##`（骨架不动是这一条的全部内容）", () => {
+    for (const lang of LANGS) {
+      const n = headingsAtLevel(realAdminSrc(lang), 2).length;
+      expect(n, `docs/${lang}/ADMIN.md 的 \`##\` 数从 ${H2_COUNT} 变成了 ${n}`
+        + " —— W108 明写骨架不动，改骨架要先回来改这条判据并说明理由").toBe(H2_COUNT);
+    }
+  });
+
+  it("W108 `###`/`####` 两级：五份数量彼此相等，且不回退（今天 48 / 2）", () => {
+    const h3 = LANGS.map((l) => headingsAtLevel(realAdminSrc(l), 3).length);
+    const h4 = LANGS.map((l) => headingsAtLevel(realAdminSrc(l), 4).length);
+    expect(new Set(h3).size, `五份的 \`###\` 数不一致：${JSON.stringify(Object.fromEntries(LANGS.map((l, i) => [l, h3[i]])))}`)
+      .toBe(1);
+    expect(new Set(h4).size, `五份的 \`####\` 数不一致：${JSON.stringify(Object.fromEntries(LANGS.map((l, i) => [l, h4[i]])))}`)
+      .toBe(1);
+    // ⚠️ 下限是这一格**唯一**能挡住「五份一起缩水」的东西：上面两条只比彼此相等，
+    // R2 的层级序列同理。五份同时删掉一层 `###`，那三处一格都不会红。
+    expect(h3[0], `\`###\` 掉到 ${h3[0]} 了（下限 ${H3_FLOOR}）`).toBeGreaterThanOrEqual(H3_FLOOR);
+    expect(h4[0], `\`####\` 掉到 ${h4[0]} 了（下限 ${H4_FLOOR}）`).toBeGreaterThanOrEqual(H4_FLOOR);
+  });
+
+  it("该红时红：某一份把一个 `###` 降回正文 ⇒ 数量对等那格红并报出逐语言的数", () => {
+    const read = readerWith("ja", (s) => s.replace("\n### 3 つのモード\n", "\n3 つのモード\n"), "ADMIN");
+    const h3 = LANGS.map((l) => headingsAtLevel(read(l), 3).length);
+    expect(new Set(h3).size, "变异落地了却没红 —— 这一格控制是空的").toBe(2);
+    expect(h3[LANGS.indexOf("ja")], "少掉的不是 1 个").toBe(H3_FLOOR - 1);
+  });
+
+  it("不许乱红：`####` 不会被当成 `###` 数进去（正则钉的是恰好 N 个井号）", () => {
+    const fixture = "# T\n\n## A\n\n### B\n\n#### C\n\n#### D\n";
+    expect(headingsAtLevel(fixture, 3)).toEqual(["### B"]);
+    expect(headingsAtLevel(fixture, 4)).toEqual(["#### C", "#### D"]);
+  });
+
+  /* ── W109 ───────────────────────────────────────────────────────────────── */
+
+  it("W109 五份各 ≥3 段代码围栏，且带语言标注率 100%（裸 ``` 开围栏一处都不许有）", () => {
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const marks = openFences(realAdminSrc(lang));
+      if (marks.length < FENCE_FLOOR) {
+        failures.push(`docs/${lang}/ADMIN.md 只有 ${marks.length} 段围栏，下限是 ${FENCE_FLOOR}`);
+      }
+      const bare = marks.filter((m) => m === "").length;
+      if (bare > 0) failures.push(`docs/${lang}/ADMIN.md 有 ${bare} 段围栏没带语言标记`);
+    }
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：某一份把 ```json 写成裸 ``` ⇒ 语言标注率那格红并点名那一份", () => {
+    const read = readerWith("ko", (s) => s.replace("```json", "```"), "ADMIN");
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const bare = openFences(read(lang)).filter((m) => m === "").length;
+      if (bare > 0) failures.push(`docs/${lang}/ADMIN.md 有 ${bare} 段围栏没带语言标记`);
+    }
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("ko/ADMIN.md");
+  });
+
+  /**
+   * `keyPatchHandler` 里那条「停用」事件的三个字面量，**从源码现算**。
+   * 只切 `keyPatchHandler` 自己那一段：同一份源码里 `key.disabled` 还有一处
+   * （批量路径的 `bulkEvent`），全文正则会先撞上谁全看行序。
+   */
+  function patchDisabledEvent(): { level: string; event: string; msg: string } {
+    const file = join("src", "http", "admin", "handlers", "keys-write.ts");
+    const src = blankComments(readFileSync(file, "utf8"));
+    const from = src.indexOf("export function keyPatchHandler(");
+    if (from < 0) throw new Error(`${file} 里找不到 keyPatchHandler —— 真源改名了，这一格测的是空气`);
+    const rest = src.slice(from + 1);
+    const end = rest.indexOf("\nexport ");
+    const body = end < 0 ? rest : rest.slice(0, end);
+    const m = /level:\s*"(\w+)",\s*event:\s*"([\w.]+)",\s*\n\s*msg:\s*"([^"]+)"/.exec(body);
+    if (m === null || m[1] === undefined || m[2] === undefined || m[3] === undefined) {
+      throw new Error(`${file} 的 keyPatchHandler 里抠不出那条事件的三个字面量 —— 判据本身坏了`);
+    }
+    return { level: m[1], event: m[2], msg: m[3] };
+  }
+
+  it("非空锚：那条事件的三个字面量真的抠得出来，而且就是「停用」那一条", () => {
+    const e = patchDisabledEvent();
+    expect(e.event, "抠到的不是停用那条事件").toBe("key.disabled");
+    expect(e.level).toBe("warn");
+    expect(e.msg.length, "msg 抠成了空串 —— 下面的逐字比对会退化成永远绿").toBeGreaterThan(4);
+  });
+
+  /** 五份 ADMIN.md × 一段事件 JSON 的源码咬合。真扫描与探针**共用这一份**。 */
+  function eventFenceFailures(read: ApiDocReader): string[] {
+    const want = patchDisabledEvent();
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const src = read(lang);
+      for (const [what, literal] of [["level", want.level], ["event", want.event], ["msg", want.msg]] as const) {
+        if (!src.includes(`"${what}": "${literal}"`)) {
+          out.push(
+            `docs/${lang}/ADMIN.md 那段事件 JSON 里的 "${what}" 与源码对不上`
+            + `（真源 \`src/http/admin/handlers/keys-write.ts\` 的 keyPatchHandler 打的是 ${JSON.stringify(literal)}）`
+            + " —— 要么源码改了文档没跟上，要么这段例子是编的",
+          );
+        }
+      }
+    }
+    return out;
+  }
+
+  it("W109 那段事件 JSON 的 level / event / msg 逐字等于源码里的字面量（期望值现算，不手抄）", () => {
+    const failures = eventFenceFailures(realAdminSrc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：源码那条 msg 改一个字而文档没跟上 ⇒ 五份一起红并点名 msg", () => {
+    const want = patchDisabledEvent();
+    const drifted: ApiDocReader = (lang) => realAdminSrc(lang).split(want.msg).join(`${want.msg}。`);
+    expect(drifted("en").includes(`"msg": "${want.msg}"`), "变异没落地 —— 这一格控制是空的").toBe(false);
+    const failures = eventFenceFailures(drifted);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
+    expect(failures[0] ?? "").toContain('"msg"');
+  });
+
+  it("W109 那段 curl 例子里的请求体字段全在 `PATCH_FIELDS` 里，且路由在 `router.ts` 上真的注册着", () => {
+    const router = blankComments(readFileSync(ADMIN_ROUTER_FILE, "utf8"));
+    expect(router, "PATCH 那条路由不在 router.ts 上 —— 文档教的是一条不存在的端点")
+      .toContain('admin.patch("/admin/api/keys/:id"');
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const m = /-d '(\{[^']*\})'/.exec(realAdminSrc(lang));
+      if (m === null || m[1] === undefined) {
+        failures.push(`docs/${lang}/ADMIN.md 的 \`\`\`bash 围栏里抠不出 \`-d '{…}'\` —— 例子被改形了`);
+        continue;
+      }
+      const keys = Object.keys(JSON.parse(m[1]) as Record<string, unknown>);
+      const alien = keys.filter((k) => !(PATCH_FIELDS as readonly string[]).includes(k));
+      if (alien.length > 0) {
+        failures.push(`docs/${lang}/ADMIN.md 的请求体里有 \`PATCH_FIELDS\` 之外的字段 ${JSON.stringify(alien)}`);
+      }
+      if (keys.length < 2) {
+        failures.push(`docs/${lang}/ADMIN.md 的请求体只带了 ${keys.length} 个字段 —— 例子要示范「一次带上多个动作」`);
+      }
+      if (!realAdminSrc(lang).includes("x-admin-key")) {
+        failures.push(`docs/${lang}/ADMIN.md 的例子没带 \`x-admin-key\` —— 那把钥匙是这一页最要紧的一件事`);
+      }
+    }
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：例子里混进一个 `PATCH_FIELDS` 之外的字段 ⇒ 只红一条并点名那个字段", () => {
+    const read = readerWith("zh-CN", (s) => s.replace('"clearCooldown": true', '"clearEverything": true'), "ADMIN");
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const m = /-d '(\{[^']*\})'/.exec(read(lang));
+      const keys = Object.keys(JSON.parse(m?.[1] ?? "{}") as Record<string, unknown>);
+      const alien = keys.filter((k) => !(PATCH_FIELDS as readonly string[]).includes(k));
+      if (alien.length > 0) failures.push(`docs/${lang}/ADMIN.md：${JSON.stringify(alien)}`);
+    }
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("clearEverything");
+  });
+
+  /* ── W110 ───────────────────────────────────────────────────────────────── */
+
+  /** 排障节 × 五份的三段式体检。真扫描与探针**共用这一份**。 */
+  function troubleFailures(read: ApiDocReader): { counts: Record<Lang, number>; failures: string[] } {
+    const counts = Object.fromEntries(LANGS.map((l) => [l, 0])) as Record<Lang, number>;
+    const failures: string[] = [];
+    for (const lang of LANGS) {
+      const section = h2Section(read(lang), TROUBLE_HEADING[lang]);
+      const [cause, fix] = TROUBLE_LABELS[lang];
+      // 逐条切：一个 `###` 到下一个 `###`（或本节末尾）。
+      const heads = section.flatMap((l, i) => (/^### /.test(l) ? [i] : []));
+      counts[lang] = heads.length;
+      for (let k = 0; k < heads.length; k += 1) {
+        const from = heads[k] ?? 0;
+        const to = heads[k + 1] ?? section.length;
+        const body = section.slice(from + 1, to).join("\n");
+        const nCause = body.split(cause).length - 1;
+        const nFix = body.split(fix).length - 1;
+        if (nCause !== 1 || nFix !== 1) {
+          failures.push(
+            `docs/${lang}/ADMIN.md 的排障第 ${k + 1} 条（${JSON.stringify(section[from])}）`
+            + `里 ${JSON.stringify(cause)} 出现 ${nCause} 次、${JSON.stringify(fix)} 出现 ${nFix} 次，各要恰 1 次`,
+          );
+        }
+      }
+    }
+    return { counts, failures };
+  }
+
+  it("W110 排障节逐条是 `### {症状}` + `**原因**` + `**解决**`，两个标签各恰 1 次", () => {
+    const { failures } = troubleFailures(realAdminSrc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("W110 排障条数五份彼此相等，且不回退（今天各 6 条）", () => {
+    const { counts } = troubleFailures(realAdminSrc);
+    const first = counts[LANGS[0]];
+    expect(counts, `五份的排障条数不一致：${JSON.stringify(counts)} —— 某一份漏翻了一条`)
+      .toEqual(Object.fromEntries(LANGS.map((l) => [l, first])));
+    expect(first, `排障只剩 ${first} 条了`).toBeGreaterThanOrEqual(6);
+  });
+
+  it("该红时红：某一份把一条的 `**解决**` 删了 ⇒ 只红一条并点名那一份与那一条", () => {
+    const read = readerWith("zh-TW", (s) => s.replace("**解決**：把目前那把", "把目前那把"), "ADMIN");
+    const { failures } = troubleFailures(read);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["zh-TW/ADMIN.md", "**解決**："]) expect(failures[0] ?? "").toContain(h);
+  });
+
+  it("认不出要吵：排障那一节被改名时 `h2Section` 当场抛，不许扫一段空文本", () => {
+    expect(() => h2Section(realAdminSrc("en"), "## Nope")).toThrow(/判据的落点变了/);
+  });
+
+  /** 页脚（形态 A）× 五份。真扫描与探针**共用这一份**。 */
+  function footerFailures(read: ApiDocReader): string[] {
+    const out: string[] = [];
+    for (const lang of LANGS) {
+      const api = DOC_SECTIONS.API[lang];
+      const heading = api[api.length - 1] ?? "";
+      const src = read(lang);
+      const h2s = headingsAtLevel(src, 2);
+      if (h2s[h2s.length - 1] !== heading) {
+        out.push(
+          `docs/${lang}/ADMIN.md 的末节是 ${JSON.stringify(h2s[h2s.length - 1])}，`
+          + `而形态 A 要求它就是译名表同一下标的 ${JSON.stringify(heading)}（ADJ ㊷：五类子文档统一页脚）`,
+        );
+        continue;
+      }
+      const bullets = h2Section(src, heading).filter((l) => /^- /.test(l));
+      if (bullets.length !== FOOTER_TARGETS.length) {
+        out.push(`docs/${lang}/ADMIN.md 的页脚节有 ${bullets.length} 条 bullet，形态 A 固定是 ${FOOTER_TARGETS.length} 条`);
+        continue;
+      }
+      for (const target of FOOTER_TARGETS) {
+        const n = bullets.filter((b) => b.includes(`](${target})`)).length;
+        if (n !== 1) out.push(`docs/${lang}/ADMIN.md 的页脚里指向 ${target} 的 bullet 有 ${n} 条，要恰 1 条`);
+      }
+    }
+    return out;
+  }
+
+  it("W110 页脚统一成形态 A：末节 == 译名表同一下标，恰 4 条 bullet，四份兄弟文档各恰 1 条", () => {
+    const failures = footerFailures(realAdminSrc);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：页脚退回旧的单行 ` · ` 形态 ⇒ bullet 那格红并点名条数", () => {
+    const read = readerWith(
+      "zh-CN",
+      (s) => s.replace(/\n- [^\n]*\[REGISTRAR\.md\]\(REGISTRAR\.md\)\n/, "\n"),
+      "ADMIN",
+    );
+    const failures = footerFailures(read);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "").toContain("有 3 条 bullet");
+  });
+
+  it("该红时红：某一份把末节标题改回 `## 相关文档` ⇒ 形态 A 那格红并点名译名", () => {
+    const api = DOC_SECTIONS.API["zh-CN"];
+    const last = api[api.length - 1] ?? "";
+    const read = readerWith("zh-CN", (s) => s.replace(`\n${last}\n`, "\n## 相关文档\n"), "ADMIN");
+    const failures = footerFailures(read);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    for (const h of ["## 相关文档", last]) expect(failures[0] ?? "").toContain(h);
   });
 });

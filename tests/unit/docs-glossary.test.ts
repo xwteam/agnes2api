@@ -188,7 +188,13 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   // 出来的 K∩G 值）。⇒ 这一格**不是新的漏翻，是骨架落地的必然结果**，而且它让这一条欠账
   // 从「ADMIN 与 REGISTRAR 两份打架」变成「ADMIN 一份孤立」——修的时候动 ADMIN 那一份即可。
   "ja｜排障｜ADMIN=障害対応｜DEPLOY=トラブルシューティング｜REGISTRAR=トラブルシューティング",
-  "ja｜文档｜ADMIN=ドキュメント+文書｜API=ドキュメント｜DEPLOY=ドキュメント+文書｜README=ドキュメント｜SPONSORS=ドキュメント",
+  // ⚠️ P3f 阶段 7C（W110 / ADJ ㊷）把 ADMIN 这一侧从 `ドキュメント+文書` 收敛成 `文書`：
+  // 那一份里 `ドキュメント` **只在旧页脚标题 `## 関連ドキュメント` 出现过一次**（实测 1 处），
+  // 而五类子文档的页脚统一成形态 A 之后它变成 `## 次のステップ`，那一处随之消失；
+  // 正文里本来就一直写 `文書`（实测 8 处）。⇒ 这是**一份文档内部两种说法并存**那一类的
+  // 收敛，与 5B-3 给 `ja｜默认` 做的是同一件事。**不是销账**：分歧照旧在 ADMIN 与
+  // API/README/SPONSORS 之间，只是 ADMIN 这一侧不再自相矛盾。
+  "ja｜文档｜ADMIN=文書｜API=ドキュメント｜DEPLOY=ドキュメント+文書｜README=ドキュメント｜SPONSORS=ドキュメント",
   "ja｜注册机｜ADMIN=レジストラ+レジストラー｜API=レジストラー｜DEPLOY=レジストラ+レジストラー｜README=レジストラー｜REGISTRAR=レジストラー｜SPONSORS=レジストラ",
   "ja｜默认｜ADMIN=既定｜API=既定｜DEPLOY=デフォルト+既定｜README=既定｜REGISTRAR=デフォルト+既定｜USAGE=既定",
   "ko｜上游｜ADMIN=업스트림｜API=업스트림｜DEPLOY=상류+업스트림｜README=업스트림｜REGISTRAR=업스트림",
