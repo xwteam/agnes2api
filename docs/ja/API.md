@@ -1,7 +1,5 @@
 # API リファレンス
 
-**Language:** [English](../en/API.md) | [简体中文](../zh-CN/API.md) | [繁體中文](../zh-TW/API.md) | 日本語 | [한국어](../ko/API.md)
-
 以下の例はすべて `http://localhost:8080`（Docker/Node のリッスンアドレス）を
 使用しています。Cloudflare Worker にデプロイしている場合は、あなたの
 `*.workers.dev` ドメイン（またはカスタムドメイン）に置き換えてください。

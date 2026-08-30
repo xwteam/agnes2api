@@ -1,7 +1,5 @@
 # API 參考
 
-**語言：** [English](../en/API.md) | [简体中文](../zh-CN/API.md) | 繁體中文 | [日本語](../ja/API.md) | [한국어](../ko/API.md)
-
 以下範例統一使用 `http://localhost:8080`（Docker/Node 的監聽位址）。若部署在
 Cloudflare Worker 上，換成你的 `*.workers.dev` 網域（或自訂網域）即可。
 

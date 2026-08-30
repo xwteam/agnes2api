@@ -1,7 +1,5 @@
 # SDK로 게이트웨이 사용하기
 
-**언어:** [English](../en/USAGE.md) | [简体中文](../zh-CN/USAGE.md) | [繁體中文](../zh-TW/USAGE.md) | [日本語](../ja/USAGE.md) | 한국어
-
 agnes2api는 프로토콜 수준에서 4가지 프로토콜을 구현하고 있으므로 전용
 클라이언트가 필요 없습니다. 각 프로토콜의 공식 SDK가 사용하는 base URL을
 이 게이트웨이로 향하게 하고, `GATEWAY_TOKEN`을 API key로 전달하면 됩니다.

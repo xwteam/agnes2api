@@ -1,7 +1,5 @@
 # Deployment Guide
 
-**Language:** English | [简体中文](../zh-CN/DEPLOY.md) | [繁體中文](../zh-TW/DEPLOY.md) | [日本語](../ja/DEPLOY.md) | [한국어](../ko/DEPLOY.md)
-
 agnes2api ships as two deployment targets built from the same codebase and request-handling
 logic — pick whichever fits your infrastructure. They differ only in storage backend: the
 Worker uses a Cloudflare KV namespace, Docker uses a JSON file on a mounted volume.

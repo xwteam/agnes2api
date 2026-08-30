@@ -8163,3 +8163,92 @@ describe("W117 列表嵌套只用 2 空格，深度硬上限 1 层", () => {
       + "多半是正则或剥围栏写坏了").toBeGreaterThan(50);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * W75 — 25 份非 README 文档不带 `**语言：**` 切换行
+ *
+ * 两个参照仓的**非 README 文档一条都没有**（`grep -l '^\*\*语言\|^\*\*Language'`
+ * 在 K/G 上共 10 处命中，**全在各语言版 README**）。模板的做法是在 README 正文里
+ * 写 `> 📖 详细XX文档：…` 那种引用行，那些已在阶段 5 落地。
+ *
+ * ⚠️ **这一组配一条同批的「删了还进得去」**：切换行是这 25 份此前**唯一**的跨语言
+ * 导航件。只判「没了」而不判「另有入口」，等于把可达性删掉还判绿。
+ * 下面第 2 格因此钉住：每一份都被**同语言的** `docs/{lang}/README.md` 链着。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 25 份非 README 文档（`API/DEPLOY/USAGE/ADMIN/REGISTRAR` × 5 语言）。 */
+const NON_README_DOCS = ["API", "DEPLOY", "USAGE", "ADMIN", "REGISTRAR"] as const;
+const NON_README_25: readonly string[] =
+  LANGS.flatMap((lang) => NON_README_DOCS.map((d) => join("docs", lang, `${d}.md`)));
+const non25Pairs = (): ReadonlyArray<readonly [string, string]> =>
+  NON_README_25.map((p) => [p, readFileSync(p, "utf8")] as const);
+
+/** 语言切换行：`**语言：**` / `**Language:**` / `**언어:**` —— **冒号在加粗内部**。 */
+const LANG_SWITCHER_LINE = /^\*\*(语言|語言|Language|言語|언어)/;
+
+/** 每份非 README 文档在**同语言** README 里的入口。读取器可替换，反向控制因此不用碰磁盘。 */
+const siblingEntryFailures = (readReadme: (lang: string) => string): string[] => {
+  const out: string[] = [];
+  for (const lang of LANGS) {
+    const readme = readReadme(lang);
+    for (const doc of NON_README_DOCS) {
+      if (!readme.includes(`](${doc}.md)`)) {
+        out.push(`docs/${lang}/README.md 里没有指向同目录 ${doc}.md 的链接 —— `
+          + "切换行删掉之后，那份文档在本语言的文档树里一个入口都没有了");
+      }
+    }
+  }
+  return out;
+};
+const realLangReadme = (lang: string) => readFileSync(join("docs", lang, "README.md"), "utf8");
+
+describe("W75 非 README 文档不带 `**语言：**` 切换行（参照仓一条都没有）", () => {
+  it("射程自守：25 份都在，而且切换行正则今天在 README 上仍然认得出东西", () => {
+    expect(NON_README_25.length).toBe(25);
+    expect(NON_README_25.filter((p) => !existsSync(p)), "射程里有读不到的文件").toEqual([]);
+    // ⚠️ 认不出要吵：若正则写坏了（例如写成闭合的 `^\*\*语言\*\*`），下面那一格会**静默全绿**。
+    // 拿一条合成的真样本反过来证明它认得出。
+    expect(LANG_SWITCHER_LINE.test("**语言：** [English](../en/API.md) | 简体中文"), "切换行正则认不出中文写法").toBe(true);
+    expect(LANG_SWITCHER_LINE.test("**Language:** English | [简体中文](../zh-CN/API.md)"), "认不出英文写法").toBe(true);
+    expect(LANG_SWITCHER_LINE.test("**언어:** [English](../en/USAGE.md) | 한국어"), "认不出韩文写法").toBe(true);
+  });
+
+  it("R26 `docs/*/{API,DEPLOY,USAGE,ADMIN,REGISTRAR}.md` 上零命中（剥围栏后）", () => {
+    const hits = bodyHits(non25Pairs(), LANG_SWITCHER_LINE);
+    expect(hits, `还留着语言切换行：\n${hits.join("\n")}`).toEqual([]);
+  });
+
+  it("删了切换行之后还进得去：25 份各自被**同语言**的 README 链着", () => {
+    expect(siblingEntryFailures(realLangReadme), siblingEntryFailures(realLangReadme).join("\n")).toEqual([]);
+  });
+
+  it("该红时红：把切换行加回 `docs/ko/USAGE.md` —— 报文点名该文件与行号", () => {
+    const target = join("docs", "ko", "USAGE.md");
+    const docs = non25Pairs().map(([p, t]) => (p === target
+      ? [p, t.replace(/^(# .*\n)/m, "$1\n**언어:** [English](../en/USAGE.md) | 한국어\n")] as const
+      : [p, t] as const));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(bodyHits(docs, LANG_SWITCHER_LINE).join("\n"), "切换行回来了却没红").toContain(`${target}:`);
+  });
+
+  it("该红时红：`docs/ja/README.md` 丢掉指向 REGISTRAR.md 的链接 —— 「还进得去」那一格红并点名", () => {
+    const read = (lang: string) => {
+      const t = readFileSync(join("docs", lang, "README.md"), "utf8");
+      return lang === "ja" ? t.replace("](REGISTRAR.md)", "](#)") : t;
+    };
+    expect(read("ja"), "变异没落地 —— ja 的 README 里没有那条链接的原字面")
+      .not.toEqual(readFileSync(join("docs", "ja", "README.md"), "utf8"));
+    const failures = siblingEntryFailures(read);
+    expect(failures.join("\n"), "入口没了却没红").toContain("docs/ja/README.md 里没有指向同目录 REGISTRAR.md");
+    expect(failures, "只该红这一条").toHaveLength(1);
+  });
+
+  it("不许乱红：围栏里演示切换行写法的示例不进射程", () => {
+    const target = join("docs", "zh-CN", "DEPLOY.md");
+    const docs = non25Pairs().map(([p, t]) => (p === target
+      ? [p, `${t}\n\`\`\`markdown\n**语言：** [English](../en/X.md) | 简体中文\n\`\`\`\n`] as const
+      : [p, t] as const));
+    expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
+    expect(bodyHits(docs, LANG_SWITCHER_LINE), "围栏里的示例被算进来了 —— 剥围栏没生效").toEqual([]);
+  });
+});

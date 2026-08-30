@@ -1,7 +1,5 @@
 # Admin panel
 
-**Language:** English | [简体中文](../zh-CN/ADMIN.md) | [繁體中文](../zh-TW/ADMIN.md) | [日本語](../ja/ADMIN.md) | [한국어](../ko/ADMIN.md)
-
 The admin panel is **optional**: with no `ADMIN_TOKEN` set, the whole `/admin` tree is never
 registered at all, and the gateway keeps forwarding as usual. This page covers the half you
 can see on screen — what question each board answers, what the numbers on it actually mean,

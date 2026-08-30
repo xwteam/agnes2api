@@ -1,7 +1,5 @@
 # API 레퍼런스
 
-**언어:** [English](../en/API.md) | [简体中文](../zh-CN/API.md) | [繁體中文](../zh-TW/API.md) | [日本語](../ja/API.md) | 한국어
-
 아래 예시는 모두 `http://localhost:8080`(Docker/Node의 리스닝 주소)을
 사용합니다. Cloudflare Worker에 배포한 경우 여러분의 `*.workers.dev` 도메인
 (또는 커스텀 도메인)으로 바꿔서 사용하세요.

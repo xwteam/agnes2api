@@ -1,7 +1,5 @@
 # API Reference
 
-**Language:** English | [简体中文](../zh-CN/API.md) | [繁體中文](../zh-TW/API.md) | [日本語](../ja/API.md) | [한국어](../ko/API.md)
-
 All examples use `http://localhost:8080` (the Docker/Node listen address). Replace it with
 your Worker's `*.workers.dev` URL (or custom domain) when running on Cloudflare.
 

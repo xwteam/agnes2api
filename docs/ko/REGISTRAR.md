@@ -1,7 +1,5 @@
 # 레지스트라(자동 키 풀 보충)
 
-**언어:** [English](../en/REGISTRAR.md) | [简体中文](../zh-CN/REGISTRAR.md) | [繁體中文](../zh-TW/REGISTRAR.md) | [日本語](../ja/REGISTRAR.md) | 한국어
-
 > **기본값은 비활성화입니다.** `REGISTRAR_ENABLED`의 기본값은 `false`이며, 설치만으로는
 > 어떠한 계정 등록도 자동으로 시작되지 않습니다. 명시적으로 `true`로 설정해야만 레지스
 > 트라가 작동합니다.

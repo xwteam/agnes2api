@@ -1,7 +1,5 @@
 # レジストラー（自動プール補充）
 
-**Language:** [English](../en/REGISTRAR.md) | [简体中文](../zh-CN/REGISTRAR.md) | [繁體中文](../zh-TW/REGISTRAR.md) | 日本語 | [한국어](../ko/REGISTRAR.md)
-
 > **デフォルトで無効です。** `REGISTRAR_ENABLED` のデフォルトは `false` で、導入しただけ
 > では一切アカウント登録を開始しません。明示的に `true` に設定した場合のみ有効になり
 > ます。

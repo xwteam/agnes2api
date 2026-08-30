@@ -1,7 +1,5 @@
 # Registrar (auto-refill)
 
-**Language:** English | [简体中文](../zh-CN/REGISTRAR.md) | [繁體中文](../zh-TW/REGISTRAR.md) | [日本語](../ja/REGISTRAR.md) | [한국어](../ko/REGISTRAR.md)
-
 > **Disabled by default.** `REGISTRAR_ENABLED` defaults to `false`. Installing the project does
 > not start any account registration on its own — you must explicitly set it to `true`.
 

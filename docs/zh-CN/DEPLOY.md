@@ -1,7 +1,5 @@
 # 部署指南
 
-**语言：** [English](../en/DEPLOY.md) | 简体中文 | [繁體中文](../zh-TW/DEPLOY.md) | [日本語](../ja/DEPLOY.md) | [한국어](../ko/DEPLOY.md)
-
 agnes2api 提供两种部署形态，构建自同一套代码与请求处理逻辑，按你的基础设施二选一即可。
 两者仅在存储后端上有区别：Worker 用 Cloudflare KV 命名空间，Docker 用挂载卷上的 JSON
 文件。

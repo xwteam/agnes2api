@@ -1,7 +1,5 @@
 # 배포 가이드
 
-**언어:** [English](../en/DEPLOY.md) | [简体中文](../zh-CN/DEPLOY.md) | [繁體中文](../zh-TW/DEPLOY.md) | [日本語](../ja/DEPLOY.md) | 한국어
-
 agnes2api는 동일한 코드베이스와 요청 처리 로직으로 만들어진 두 가지 배포
 대상을 제공합니다. 여러분의 인프라에 맞는 쪽을 선택하면 됩니다. 두 방식의
 차이는 저장소 백엔드뿐입니다. Worker는 Cloudflare KV 네임스페이스를, Docker는

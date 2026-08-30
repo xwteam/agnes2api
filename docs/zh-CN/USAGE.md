@@ -1,7 +1,5 @@
 # 用 SDK 接入网关
 
-**语言：** [English](../en/USAGE.md) | 简体中文 | [繁體中文](../zh-TW/USAGE.md) | [日本語](../ja/USAGE.md) | [한국어](../ko/USAGE.md)
-
 agnes2api 在协议层实现了四种协议，因此不需要专门的客户端——把各协议官方 SDK 的基址
 指向本网关，`GATEWAY_TOKEN` 当作 API key 传入即可。下文的 `http://localhost:8080`
 请替换成你实际部署的地址（Worker 的 `*.workers.dev` 域名、自定义域名，或 Docker 部署

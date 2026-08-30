@@ -1,7 +1,5 @@
 # Using the Gateway with SDKs
 
-**Language:** English | [简体中文](../zh-CN/USAGE.md) | [繁體中文](../zh-TW/USAGE.md) | [日本語](../ja/USAGE.md) | [한국어](../ko/USAGE.md)
-
 agnes2api implements four protocols on the wire, so you don't need a special client — point
 each protocol's official SDK at the gateway's base URL and use your `GATEWAY_TOKEN` as the
 API key. Replace `http://localhost:8080` below with your deployment's real URL (a Worker's

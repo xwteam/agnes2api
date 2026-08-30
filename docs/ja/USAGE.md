@@ -1,7 +1,5 @@
 # SDK でゲートウェイを利用する
 
-**Language:** [English](../en/USAGE.md) | [简体中文](../zh-CN/USAGE.md) | [繁體中文](../zh-TW/USAGE.md) | 日本語 | [한국어](../ko/USAGE.md)
-
 agnes2api はワイヤレベルで 4 つのプロトコルを実装しているため、専用クライアント
 は不要です。各プロトコルの公式 SDK のベース URL をこのゲートウェイに向け、
 `GATEWAY_TOKEN` を API key として渡すだけで使えます。以下の

@@ -1,7 +1,5 @@
 # 註冊機（自動補池）
 
-**語言：** [English](../en/REGISTRAR.md) | [简体中文](../zh-CN/REGISTRAR.md) | 繁體中文 | [日本語](../ja/REGISTRAR.md) | [한국어](../ko/REGISTRAR.md)
-
 > **預設關閉。** `REGISTRAR_ENABLED` 預設為 `false`，裝上本專案不會自動開始註冊任何帳號；
 > 只有明確把它設為 `true` 才會啟用註冊機。
 

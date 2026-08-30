@@ -1,7 +1,5 @@
 # 注册机（自动补池）
 
-**语言：** [English](../en/REGISTRAR.md) | 简体中文 | [繁體中文](../zh-TW/REGISTRAR.md) | [日本語](../ja/REGISTRAR.md) | [한국어](../ko/REGISTRAR.md)
-
 > **默认关闭。** `REGISTRAR_ENABLED` 默认为 `false`，装上本项目不会自动开始注册任何账号；
 > 只有显式把它设为 `true` 才会启用注册机。
 

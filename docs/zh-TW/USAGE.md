@@ -1,7 +1,5 @@
 # 用 SDK 接入閘道
 
-**語言：** [English](../en/USAGE.md) | [简体中文](../zh-CN/USAGE.md) | 繁體中文 | [日本語](../ja/USAGE.md) | [한국어](../ko/USAGE.md)
-
 agnes2api 在協議層實作了四種協議，因此不需要專用的用戶端——把各協議官方 SDK 的基底
 位址指向本閘道，`GATEWAY_TOKEN` 當作 API key 傳入即可。下文的 `http://localhost:8080`
 請換成你實際部署的位址（Worker 的 `*.workers.dev` 網域、自訂網域，或 Docker 部署時的

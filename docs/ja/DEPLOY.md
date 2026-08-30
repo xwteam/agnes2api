@@ -1,7 +1,5 @@
 # デプロイガイド
 
-**Language:** [English](../en/DEPLOY.md) | [简体中文](../zh-CN/DEPLOY.md) | [繁體中文](../zh-TW/DEPLOY.md) | 日本語 | [한국어](../ko/DEPLOY.md)
-
 agnes2api は同一のコードベースとリクエスト処理ロジックから構築された 2 つの
 デプロイ先を提供します。あなたのインフラに合わせてどちらかを選んでください。
 両者の違いはストレージバックエンドのみです。Worker は Cloudflare KV
