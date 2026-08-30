@@ -7663,7 +7663,7 @@ const DOC_SECTIONS = {
     ],
     ko: [
       "## 인증",                        // K∩G
-      "## 표준 베어 경로",              // K∩G(G ko；K 写 `이중 프리픽스 경로`，取 G 与 zh-CN/en 同义的那个)
+      "## 표준 베어 경로",              // G 实测（**不在 K∩G**：K ko 写 `이중 프리픽스 경로`）⇒ 取与 zh-CN/en 同义的 G 值
       "## 에러 응답 형식",              // K∩G(ko API)
       "## 모델",                        // agnes 现名
       "## OpenAI 호환 API",             // K∩G
