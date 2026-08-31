@@ -8,7 +8,7 @@ import { blankComments, blankHtmlComments } from "../helpers/strip-comments.js";
 import { SECTIONS } from "../helpers/readme-sections.js";
 import { FAIL_REASONS } from "../../src/core/dispatcher.js";
 import { UPSTREAM_FACTS, type UpstreamFact } from "../../src/core/admin/upstream-facts.js";
-import { MODEL_CATALOG, PROTOCOLS, VIDEO_TASK_ID_SHAPE } from "../../src/core/admin/protocol-catalog.js";
+import { MEDIA_ENDPOINTS, MODEL_CATALOG, PROTOCOLS, VIDEO_TASK_ID_SHAPE } from "../../src/core/admin/protocol-catalog.js";
 // ADMIN.md 那一组的期望值一律从这些真源常量派生，不手写字面量。
 import { ADMIN_TOKEN_MIN_LENGTH } from "../../src/http/admin/auth.js";
 import { MAX_IMPORT_KEYS, PATCH_FIELDS } from "../../src/http/admin/handlers/keys-write.js";
@@ -5440,6 +5440,278 @@ describe(TASK29_GROUP, () => {
     });
   });
 
+  /* ───────────────────────────────────────────────────────────────────────────
+   * **W143 —— 版本条目里那三条 bullet 的真源锚**（P3g 复评发现 2 ①）。
+   *
+   * 复评实测：把 `- **鉴权闸**` 与 `- **流式与媒体**` 两整条从 `CHANGELOG.md` 删掉，
+   * 全量 `tests/unit` 69 个文件 **零红**。上面那几格看的是协议 id / 板块 / 通道 /
+   * 中文计数 / 存储实现 / 状态码 / 门禁短名 —— 这三条 bullet 写下的**别的**事实
+   *（鉴权走哪几条通道、流式怎么切、媒体有哪几条端点、推什么标签才发镜像）
+   * 一格都没人看。一条谁都删得掉的版本条目等于没有版本条目。
+   *
+   * ⇒ 逐条接真源，与本组既有那几格同轨（真源现算 → 版本条目里必须提到 → 该红时红）：
+   *   · 鉴权通道：`src/http/middleware/auth.ts` 里 `c.req.header("…")` 与
+   *     `searchParams.get("…")` 现算，**取几条就得写几条**。
+   *   · 流式：`PROTOCOLS` 的 `streamMode` 现算——body 档几条、path 档那条换走的
+   *     方法名后缀是什么。
+   *   · 媒体端点：`MEDIA_ENDPOINTS` 的 id 逐条点名。
+   *   · 发镜像：`.github/workflows/docker-publish.yml` 的触发标签与镜像仓库现算。
+   *     ⚠️ 这一条尤其不许手抄：本仓的 ghcr 镜像**只由推 `v*` 标签触发**，
+   *     CHANGELOG 那句话是读者知道「怎么才拿得到镜像」的唯一出处。
+   * ─────────────────────────────────────────────────────────────────────────── */
+
+  /**
+   * 鉴权闸的几条通道，从 `src/http/middleware/auth.ts` 现算。**认不出返回 `null`**：
+   * 返回空表会让下面那一格在正则瞎掉时静静全绿（一条都不用比 = 恒真）。
+   */
+  const authChannels = (read: (p: string) => string = readReal): { headers: string[]; query: string } | null => {
+    const src = read("src/http/middleware/auth.ts");
+    const headers = [...new Set([...src.matchAll(/\.header\("([a-z][a-z0-9-]*)"\)/g)].map((m) => m[1]!))];
+    const query = /searchParams\.get\("([a-zA-Z][\w-]*)"\)/.exec(src)?.[1] ?? null;
+    if (headers.length === 0 || query === null) return null;
+    return { headers, query };
+  };
+
+  /** `.github/workflows/docker-publish.yml` 的触发标签与镜像仓库。**认不出返回 `null`**。 */
+  const dockerPublishFacts = (read: (p: string) => string = readReal): { tagGlob: string; registry: string } | null => {
+    const yml = read(".github/workflows/docker-publish.yml");
+    const tagGlob = /^\s*tags: \["([^"]+)"\]/m.exec(yml)?.[1] ?? null;
+    const registry = /^\s*REGISTRY: (\S+)/m.exec(yml)?.[1] ?? null;
+    if (tagGlob === null || registry === null) return null;
+    return { tagGlob, registry };
+  };
+
+  const bulletFailures = (readLog: () => string): string[] => {
+    const v = realVersion();
+    const sec = logSection(readLog(), v);
+    if (sec === null) return [`CHANGELOG.md 里没有 ${v} 的条目 —— 这一格无从判起`];
+    const text = sec.join("\n");
+    const lower = text.toLowerCase();
+    const out: string[] = [];
+    /** 一个中文计数必须以某个可辨认的后缀出现（体例与上面那格 `counts` 一致）。 */
+    const needCount = (n: number, suffix: string, source: string): void => {
+      const forms = cnForms(n);
+      if (forms === null) {
+        out.push(`${source} 现在算出 ${n}，超出这张中文数字表 —— 认不出要吵，不许静静放行`);
+        return;
+      }
+      const wanted = forms.map((f) => `${f}${suffix}`);
+      if (!wanted.some((w) => text.includes(w))) {
+        out.push(`CHANGELOG 那条版本条目里没有「${wanted.join("」/「")}」（${source} 现算是 ${n}）`);
+      }
+    };
+
+    // ── ① 鉴权闸：几条通道就得写几条，一条都不许漏 ──
+    const ch = authChannels();
+    if (ch === null) {
+      out.push("src/http/middleware/auth.ts 里认不出 `.header(\"…\")` / `searchParams.get(\"…\")`"
+        + " —— 认不出要吵，不是 CHANGELOG 写对了");
+    } else {
+      for (const h of ch.headers) {
+        if (!lower.includes(h)) {
+          out.push(`CHANGELOG 那条版本条目里没提鉴权通道 \`${h}\`（src/http/middleware/auth.ts 现算）`
+            + " —— 漏写一条通道，用那个 SDK 的人会以为本网关不认他默认发的那个头");
+        }
+      }
+      if (!text.includes(`?${ch.query}=`)) {
+        out.push(`CHANGELOG 那条版本条目里没提查询参数 \`?${ch.query}=\` 这条鉴权通道`
+          + "（src/http/middleware/auth.ts 现算）");
+      }
+      needCount(ch.headers.length + 1, "条通道", "src/http/middleware/auth.ts 里取值的那几处");
+    }
+
+    // ── ② 流式：body 档几条、path 档换走哪个方法名 ──
+    const byBody = PROTOCOLS.filter((p) => p.streamMode === "body");
+    const byPath = PROTOCOLS.filter((p) => p.streamMode === "path");
+    if (byBody.length === 0 || byPath.length === 0) {
+      out.push("`PROTOCOLS` 里 `streamMode` 的两档有一档是空的 —— 这一格无从判起，认不出要吵");
+    } else {
+      needCount(byBody.length, "条协议", "PROTOCOLS 里 streamMode === \"body\" 的那几条");
+      const keys = [...new Set(byBody.map((p) => p.streamKey))];
+      for (const k of keys) {
+        if (!text.includes(`\`${k}\``)) {
+          out.push(`CHANGELOG 那条版本条目里没写请求体里那个切流式的字段 \`${k}\`（PROTOCOLS 现算）`);
+        }
+      }
+      for (const p of byPath) {
+        // `/v1beta/models/{model}:streamGenerateContent` ⇒ 取最后一个冒号起的那一段。
+        const suffix = p.streamKey.slice(p.streamKey.lastIndexOf(":"));
+        if (!text.includes(suffix)) {
+          out.push(`CHANGELOG 那条版本条目里没写 \`${p.id}\` 走的那条流式路径后缀 \`${suffix}\``
+            + "（PROTOCOLS 里那条的 `streamKey` 现算）—— 这条协议不看请求体里的字段，说法不一样");
+        }
+      }
+    }
+
+    // ── ③ 媒体端点：逐条点名 ──
+    if (MEDIA_ENDPOINTS.length === 0) {
+      out.push("`MEDIA_ENDPOINTS` 是空的 —— 这一格测的是空气，认不出要吵");
+    } else {
+      for (const e of MEDIA_ENDPOINTS) {
+        if (!text.includes(`\`${e.id}\``)) {
+          out.push(`CHANGELOG 那条版本条目里没点名媒体端点 \`${e.id}\`（MEDIA_ENDPOINTS 现算）`);
+        }
+      }
+      needCount(MEDIA_ENDPOINTS.length, "条媒体端点", "MEDIA_ENDPOINTS");
+    }
+
+    // ── ④ 发镜像：推什么标签、发到哪个仓库 ──
+    const dp = dockerPublishFacts();
+    if (dp === null) {
+      out.push(".github/workflows/docker-publish.yml 里认不出 `tags: [\"…\"]` / `REGISTRY: …`"
+        + " —— 认不出要吵，不是 CHANGELOG 写对了");
+    } else {
+      if (!text.includes(`\`${dp.tagGlob}\``)) {
+        out.push(`CHANGELOG 那条版本条目里没写触发发镜像的标签 \`${dp.tagGlob}\``
+          + "（.github/workflows/docker-publish.yml 现算）—— 读者拿不到镜像就是卡在这一句上");
+      }
+      if (!text.includes(dp.registry)) {
+        out.push(`CHANGELOG 那条版本条目里没写镜像仓库 ${dp.registry}`
+          + "（.github/workflows/docker-publish.yml 的 `REGISTRY` 现算）");
+      }
+    }
+    return out;
+  };
+
+  const BULLET_CELL = "CHANGELOG 版本条目里的鉴权通道 / 流式切法 / 媒体端点 / 发镜像标签都从真源现算";
+
+  it(BULLET_CELL, () => {
+    const failures = bulletFailures(realChangelog);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：`- **鉴权闸**` 整条被删 —— 逐条点名 auth.ts 现算出来的那几条通道", () => {
+    probeBase(bulletFailures(realChangelog), BULLET_CELL);
+    const mutated = realChangelog().split("\n").filter((l, i, a) => {
+      // 删掉这条 bullet 的首行与它的续行（下一条 `- ` 之前的缩进行）。
+      let j = i;
+      while (j >= 0 && !a[j]!.startsWith("- ")) j -= 1;
+      return j < 0 || !a[j]!.startsWith("- **鉴权闸**");
+    }).join("\n");
+    expect(mutated, "变异没落地——CHANGELOG 里没找到 `- **鉴权闸**` 这条 bullet").not.toEqual(realChangelog());
+    const ch = authChannels();
+    expect(ch, "认不出 auth.ts 的通道——这一格的前提没了").not.toBeNull();
+    const failures = bulletFailures(() => mutated);
+    expect(failures.length, `报文：\n${failures.join("\n")}`).toBe(ch!.headers.length + 2);
+    for (const h of ch!.headers) {
+      expect(failures.join("\n"), `红了但报文没点名通道 ${h}`).toContain(h);
+    }
+    expect(failures.join("\n"), "红了但报文没点名查询参数那条通道").toContain(`?${ch!.query}=`);
+  });
+
+  it("该红时红：`- **流式与媒体**` 整条被删 —— 点名 MEDIA_ENDPOINTS 的每一条 id", () => {
+    probeBase(bulletFailures(realChangelog), BULLET_CELL);
+    const mutated = realChangelog().split("\n").filter((l, i, a) => {
+      let j = i;
+      while (j >= 0 && !a[j]!.startsWith("- ")) j -= 1;
+      return j < 0 || !a[j]!.startsWith("- **流式与媒体**");
+    }).join("\n");
+    expect(mutated, "变异没落地——CHANGELOG 里没找到 `- **流式与媒体**` 这条 bullet").not.toEqual(realChangelog());
+    const failures = bulletFailures(() => mutated).join("\n");
+    for (const e of MEDIA_ENDPOINTS) {
+      expect(failures, `红了但报文没点名媒体端点 ${e.id}`).toContain(e.id);
+    }
+    expect(failures, "红了但没点名 path 档那条流式路径后缀").toContain(":streamGenerateContent");
+  });
+
+  it("该红时红：真源改了而 CHANGELOG 没跟 —— docker-publish.yml 的触发标签换成别的，点名新的那个", () => {
+    probeBase(bulletFailures(realChangelog), BULLET_CELL);
+    const real = dockerPublishFacts();
+    expect(real, "认不出 docker-publish.yml 的触发标签与镜像仓库——这一格的前提没了").not.toBeNull();
+    const moved = (p: string): string => (p === ".github/workflows/docker-publish.yml"
+      ? readReal(p).replace(`tags: ["${real!.tagGlob}"]`, 'tags: ["release/*"]')
+      : readReal(p));
+    expect(dockerPublishFacts(moved)?.tagGlob, "变异没落地——yml 里没找到那行 `tags:`").toBe("release/*");
+    // ⚠️ 变异的是**真源**不是文档：CHANGELOG 一个字没动，它写的 `v*` 就此成了假话。
+    const sec = logSection(realChangelog(), realVersion());
+    expect(sec, "取节认不出真 CHANGELOG 的版本条目——这一格的前提没了").not.toBeNull();
+    expect(sec!.join("\n").includes("`release/*`"), "CHANGELOG 里居然已经写着 `release/*` 了 —— 这一格测的是空气")
+      .toBe(false);
+  });
+
+  /* ───────────────────────────────────────────────────────────────────────────
+   * **W144 —— 发版日期七处同一天**（P3g 复评发现 2 ②）。
+   *
+   * 复评实测：把 `docs/ko/README.md` 那张「最近更新」表首行的日期改回上一版的日子，
+   * 全量 `tests/unit` **零红**。上面 `CHANGELOG_CELL` 只看「这个版本号有没有一条非空条目」，
+   * **日期一个字都没人看**。而这七处（CHANGELOG 的 `## [x.y.z] - 日期` + 六份 README
+   * 那张表的首行）今天靠一次手工 `sed` 保持一致 —— 少写一个路径、或者某一份的行格式
+   * 有出入，公开仓就会带着两个不同的发版日出门，而门禁全绿。
+   * ⇒ 这一格把那次手工 sed 变成有安全网的操作：**缺哪份点哪份**。
+   * ⚠️ 顺带钉住版本号：那一行同时得写着 `v<VERSION>`，否则改版本号时这张表会留在上一版。
+   * ─────────────────────────────────────────────────────────────────────────── */
+
+  const SIX_READMES: readonly string[] = ["README.md", ...LANGS.map((l) => join("docs", l, "README.md"))];
+
+  /** 一份 README「最近更新」表首行的 `| 日期 | …` 那一行。**认不出返回 `null`**。 */
+  const readmeTopUpdate = (body: string): { date: string; row: string } | null => {
+    const row = body.split("\n").find((l) => /^\|\s*\d{4}-\d{2}-\d{2}\s*\|/.test(l));
+    if (row === undefined) return null;
+    return { date: /^\|\s*(\d{4}-\d{2}-\d{2})\s*\|/.exec(row)![1]!, row };
+  };
+
+  /** CHANGELOG 顶上那条版本条目的日期（`## [x.y.z] - YYYY-MM-DD`）。**认不出返回 `null`**。 */
+  const changelogReleaseDate = (body: string, v: string): string | null =>
+    new RegExp(`^## \\[${v.replace(/\./g, "\\.")}\\] - (\\d{4}-\\d{2}-\\d{2})\\s*$`, "m").exec(body)?.[1] ?? null;
+
+  const releaseDateFailures = (readLog: () => string, read: (p: string) => string = readReal): string[] => {
+    const v = realVersion();
+    const want = changelogReleaseDate(readLog(), v);
+    if (want === null) {
+      return [`CHANGELOG.md 顶上认不出 \`## [${v}] - YYYY-MM-DD\` 那一行 —— 发版日期的真源没了，认不出要吵`];
+    }
+    const out: string[] = [];
+    for (const p of SIX_READMES) {
+      const top = readmeTopUpdate(read(p));
+      if (top === null) {
+        out.push(`${p} 里认不出「最近更新」表首行那个 \`| YYYY-MM-DD |\` —— 认不出要吵，不是它写对了`);
+        continue;
+      }
+      if (top.date !== want) {
+        out.push(`${p} 的「最近更新」首行写的是 ${top.date}，CHANGELOG 里 ${v} 的发版日是 ${want}`
+          + " —— 七处发版日期必须是同一天，公开仓不许带着两个发版日出门");
+      }
+      if (!top.row.includes(`v${v}`)) {
+        out.push(`${p} 的「最近更新」首行没写 \`v${v}\`（VERSION 现算）—— 这张表还停在上一版`);
+      }
+    }
+    return out;
+  };
+
+  const RELEASE_DATE_CELL = "六份 README「最近更新」首行的日期与版本号都跟 CHANGELOG 那条版本条目逐字相同";
+
+  it(RELEASE_DATE_CELL, () => {
+    const failures = releaseDateFailures(realChangelog);
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：某一份 README 的发版日期漏了没跟着改（手工 sed 少写一个路径）—— 只点名那一份", () => {
+    probeBase(releaseDateFailures(realChangelog), RELEASE_DATE_CELL);
+    const target = join("docs", "ko", "README.md");
+    const want = changelogReleaseDate(realChangelog(), realVersion());
+    expect(want, "认不出 CHANGELOG 的发版日期——这一格的前提没了").not.toBeNull();
+    const read = (p: string): string =>
+      (p === target ? readReal(p).replace(`| ${want} |`, "| 2026-08-28 |") : readReal(p));
+    expect(read(target), `变异没落地——${target} 里没找到 \`| ${want} |\``).not.toEqual(readReal(target));
+    const failures = releaseDateFailures(realChangelog, read);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
+    expect(failures[0] ?? "", "红了但报文没点名是哪一份 README").toContain(target);
+  });
+
+  it("该红时红：CHANGELOG 那条版本条目的日期被改掉而六份 README 没动 —— 六份齐红", () => {
+    probeBase(releaseDateFailures(realChangelog), RELEASE_DATE_CELL);
+    const v = realVersion();
+    const want = changelogReleaseDate(realChangelog(), v);
+    expect(want, "认不出 CHANGELOG 的发版日期——这一格的前提没了").not.toBeNull();
+    const mutated = realChangelog().replace(`## [${v}] - ${want}`, `## [${v}] - 2026-09-09`);
+    expect(mutated, "变异没落地——CHANGELOG 里没找到那条带日期的版本条目").not.toEqual(realChangelog());
+    const failures = releaseDateFailures(() => mutated);
+    expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(SIX_READMES.length);
+    for (const p of SIX_READMES) {
+      expect(failures.join("\n"), `红了但报文没点名 ${p}`).toContain(p);
+    }
+  });
+
   /**
    * 「已知限制」那一节里那条**零真上游样本**的欠账。
    *
@@ -5535,6 +5807,13 @@ describe(TASK29_GROUP, () => {
     expect(entryStorages(() => "import { Whatever } from \"./x.js\";"), "认不出 entry 的存储实现时没返回 null").toBeNull();
     expect(dispatcherStatuses(() => "function fail() { status: 503 }"), "认不出 504 时没返回 null").toBeNull();
     expect(nativeLangLabels(() => "# 没有语言切换行\n"), "认不出语言切换行时没返回 null").toBeNull();
+    // W143 / W144 那两组的取数函数同理（P3g 复评发现 2）。
+    expect(authChannels(() => "export function auth() {}"), "认不出鉴权通道时 authChannels 没返回 null").toBeNull();
+    expect(authChannels(() => 'c.req.header("x-api-key");'), "取不到查询参数那条通道时 authChannels 没返回 null").toBeNull();
+    expect(dockerPublishFacts(() => "on:\n  push:\n"), "认不出触发标签时 dockerPublishFacts 没返回 null").toBeNull();
+    expect(dockerPublishFacts(() => '    tags: ["v*"]\n'), "认不出 REGISTRY 时 dockerPublishFacts 没返回 null").toBeNull();
+    expect(readmeTopUpdate("## 最近更新\n\n| 日期 | 更新内容 |\n"), "表里一行日期都没有时 readmeTopUpdate 没返回 null").toBeNull();
+    expect(changelogReleaseDate("## [0.1.0]\n", "0.1.0"), "版本条目没带日期时 changelogReleaseDate 没返回 null").toBeNull();
     expect(nativeLangLabels(() => '  📖 文档语言：<a href="docs/en/README.md">English</a> | <a href="docs/ja/README.md">日本語</a>\n'),
       "语言切换行只列了 2 种语言时没返回 null").toBeNull();
   });

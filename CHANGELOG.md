@@ -23,7 +23,7 @@ Cloudflare Worker 与 Node / Docker 两种运行时。
   查询参数 `?key=` 四条通道，`src/http/middleware/auth.ts` 按这个先后取值，
   正好覆盖各协议官方 SDK 默认发送的那一种，只换基址即可直连；任何通道里传的
   都是**本网关**的口令，不是上游厂商的密钥。
-- **流式与媒体**：`openai` / `anthropic` / `responses` 三条按请求体里的 `stream`
+- **流式与媒体**：`openai` / `anthropic` / `responses` 三条协议按请求体里的 `stream`
   字段切流式，`gemini` 换走 `:streamGenerateContent` 那条路径；另有图片与视频
   三条媒体端点 `image.generate` / `video.create` / `video.poll`。这几条的路径、
   上游路径与取正文的位置都从 `src/core/admin/protocol-catalog.ts` 一份真源现取。
