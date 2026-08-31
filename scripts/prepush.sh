@@ -757,8 +757,22 @@ BANNER='[collection-guard] ✅'
 #   HEAD 超前远端 / 工作树脏 / 不在 main 上 / CHANGELOG 没这个版本的条目）
 #   + tag 已存在时默认拒、`--allow-retag` 才放（且 CI 那格照旧一票否决）1 + 坏参数退 2 一格
 #   ⇒ 16 格。
+# 4301 → 4303：**P3g 复评第 3 轮发现 1 的回填**，净 +2 格，文件数仍是 141。
+#   上一轮给「两种部署形态各自的入口」那条 bullet 补了「六份 README」与「两处 healthcheck」
+#   两处真源，但同一条 bullet 的**第二行**——「按完仍要自己补 `wrangler.toml` 里的
+#   KV 命名空间 id 与 `GATEWAY_TOKEN`，缺一个网关都起不来」——仍然一个断言都打不中。
+#   复评实测：把这半句整个换成语义相反的「按完开箱即用，什么都不用补」，docs-parity 那份
+#   623 格全绿，全仓所有会读 CHANGELOG 的测试文件一起跑也是零红。而这一行恰恰是读者按完
+#   一键部署按钮之后能不能把网关跑起来的唯一说明，写反了比不写更坏。
+#   ⇒ 第 ⑥ 组从 `wrangler.toml` 现算那两格的实际状态（`[[kv_namespaces]]` 段里的 `id` 是不是
+#   还等于 `scripts/check-wrangler-placeholder.mjs` 里那个占位符字面；`GATEWAY_TOKEN` 是不是
+#   只以 `.dev.vars` / `wrangler secret put` 的说法出现、文件里没有明文赋值），据此要求那条
+#   bullet 逐个点名 `wrangler.toml`、「KV 命名空间 id」、`GATEWAY_TOKEN`；两格一格都认不出时
+#   吵，不静静放行。**真扫描那格不新增**（断言加在同一个 `it` 里）
+#   ⇒ 该红时红 2（文档侧改写成「开箱即用」/ 真源侧把占位符换成一个真 id）= +2；
+#   「认不出要吵」那格也多了一条断言，同样不新增用例。
 EXPECT_NODE_FILES=141
-EXPECT_NODE_TESTS=4301
+EXPECT_NODE_TESTS=4303
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

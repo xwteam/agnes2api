@@ -5518,7 +5518,49 @@ describe(TASK29_GROUP, () => {
     return out;
   };
 
-  const bulletFailures = (readLog: () => string): string[] => {
+  /** 那份 Worker 配置的路径。下面两处（读它、点名它）共用这一份字面。 */
+  const WRANGLER = "wrangler.toml";
+
+  /** 「KV 命名空间 id 还是不是占位符」认的那个占位符字面：从门禁脚本现读，不手抄。 */
+  const kvPlaceholder = (read: (p: string) => string = readReal): string | null =>
+    /^const PLACEHOLDER = "([^"]+)";/m.exec(read("scripts/check-wrangler-placeholder.mjs"))?.[1] ?? null;
+
+  /**
+   * `wrangler.toml` 里那两处「一键部署按完仍得自己补」的空位，现算：
+   *   · `kvId`：`[[kv_namespaces]]` 段里 `id = "…"` 的实际取值（认不出为 `null`）；
+   *     它等于 `placeholder` 时，才说明这一格还空着、读者非补不可。
+   *   · `token`：`GATEWAY_TOKEN` 在这份文件里的形态——`"secret"` 表示只在注释里以
+   *     `.dev.vars` / `wrangler secret put` 的说法出现（还得自己补）；`"plain"` 表示
+   *     文件里有 `GATEWAY_TOKEN = …` 这样的明文赋值（那既让「仍要自己补」成了假话，
+   *     也是一条内置凭据）；`null` 表示整份文件没提过它。
+   *
+   * **两样都认不出返回 `null`**：返回一个「两样都空着」的对象会让下面那一格在 toml
+   * 换了写法时静静地改判成「文档写错了」，方向正好反了。
+   */
+  const wranglerBlanks = (read: (p: string) => string = readReal): {
+    kvId: string | null;
+    placeholder: string | null;
+    token: "secret" | "plain" | null;
+  } | null => {
+    const toml = read(WRANGLER);
+    const kvSection = /\[\[kv_namespaces\]\]([\s\S]*?)(?=\n\[|$)/.exec(toml)?.[1] ?? null;
+    const kvId = kvSection === null ? null : (/^\s*id\s*=\s*"([^"]*)"/m.exec(kvSection)?.[1] ?? null);
+    const tokenLines = toml.split("\n").filter((l) => l.includes("GATEWAY_TOKEN"));
+    const token = tokenLines.length === 0
+      ? null
+      : (tokenLines.some((l) => /^\s*GATEWAY_TOKEN\s*=/.test(l)) ? "plain" : "secret");
+    if (kvId === null && token === null) return null;
+    return { kvId, placeholder: kvPlaceholder(read), token };
+  };
+
+  /** 那条 bullet 里指代「KV 命名空间 id 这一格还空着」的字面。 */
+  const KV_BLANK_PHRASE = "KV 命名空间 id";
+
+  /**
+   * `readLog` 是 CHANGELOG 的注入点，`readSrc` 是**真源侧**的注入点（今天只有 ⑥ 组用得上：
+   * 那一组唯一能红的真源变异是「占位符被换成真 id」，不注进来就只能测探测器、测不到判据）。
+   */
+  const bulletFailures = (readLog: () => string, readSrc: (p: string) => string = readReal): string[] => {
     const v = realVersion();
     const sec = logSection(readLog(), v);
     if (sec === null) return [`CHANGELOG.md 里没有 ${v} 的条目 —— 这一格无从判起`];
@@ -5633,11 +5675,51 @@ describe(TASK29_GROUP, () => {
       }
       needCount(hc.length, "处各带一条 healthcheck", "Dockerfile 的 `HEALTHCHECK` 与 docker-compose.yml 的 `healthcheck:`");
     }
+
+    // ── ⑥ 按完按钮还得自己补的那两格：wrangler.toml 的 KV 命名空间 id 与 GATEWAY_TOKEN ──
+    //   同一条 bullet 的第二行。P3g 复评发现 1 实测：⑤ 补上「六份 README」「两处 healthcheck」
+    //   之后，这一行仍然一个断言都打不中——把它整句换成语义相反的「按完开箱即用，什么都
+    //   不用补」，全仓会读 CHANGELOG 的测试文件一起跑仍是零红。这一行恰恰是读者按完按钮
+    //   之后能不能把网关跑起来的唯一说明，写反了比不写更坏。
+    const wb = wranglerBlanks(readSrc);
+    if (wb === null) {
+      out.push(`${WRANGLER} 里 KV 命名空间的 \`id = "…"\` 与 \`GATEWAY_TOKEN\` 两样一样都认不出`
+        + " —— 认不出要吵，不是 CHANGELOG 写对了");
+    } else {
+      if (!text.includes(`\`${WRANGLER}\``)) {
+        out.push(`CHANGELOG 那条版本条目里没点名 \`${WRANGLER}\` —— 按完一键部署按钮还得回去补的就是这份文件`);
+      }
+      // KV 命名空间 id
+      if (wb.kvId === null || wb.placeholder === null) {
+        out.push(`${WRANGLER} 的 \`[[kv_namespaces]]\` 段里认不出 \`id = "…"\`，`
+          + "或 scripts/check-wrangler-placeholder.mjs 里认不出 `const PLACEHOLDER = \"…\"`"
+          + " —— 认不出要吵，不是 CHANGELOG 写对了");
+      } else if (wb.kvId !== wb.placeholder) {
+        out.push(`${WRANGLER} 里的 KV 命名空间 id 已经不是占位符（现在是 "${wb.kvId}"，`
+          + `占位符应为 "${wb.placeholder}"）—— CHANGELOG 那句「按完仍要自己补 ${KV_BLANK_PHRASE}」就此成了假话，`
+          + "而且这个 id 会随仓库一起出门");
+      } else if (!text.includes(KV_BLANK_PHRASE)) {
+        out.push(`CHANGELOG 那条版本条目里没说还得补「${KV_BLANK_PHRASE}」`
+          + `（${WRANGLER} 里那一格现算仍是占位符 "${wb.placeholder}"）`
+          + " —— 不补它 `env.POOL` 就是 undefined，网关起不来");
+      }
+      // GATEWAY_TOKEN
+      if (wb.token === null) {
+        out.push(`${WRANGLER} 里一处都没提过 \`GATEWAY_TOKEN\` —— 认不出要吵，不是 CHANGELOG 写对了`);
+      } else if (wb.token === "plain") {
+        out.push(`${WRANGLER} 里有 \`GATEWAY_TOKEN = …\` 这样的明文赋值 —— CHANGELOG 那句「仍要自己补`
+          + " `GATEWAY_TOKEN`」成了假话，而且这是一条会被提交进公开仓的内置凭据");
+      } else if (!text.includes("`GATEWAY_TOKEN`")) {
+        out.push("CHANGELOG 那条版本条目里没点名 `GATEWAY_TOKEN`"
+          + `（${WRANGLER} 现算：它只以 \`.dev.vars\` / \`wrangler secret put\` 的说法出现，文件里没有值）`
+          + " —— 不补它网关同样起不来");
+      }
+    }
     return out;
   };
 
   const BULLET_CELL = "CHANGELOG 版本条目里的鉴权通道 / 流式切法 / 媒体端点 / 发镜像标签"
-    + " / 按钮份数 / healthcheck 两处都从真源现算";
+    + " / 按钮份数 / healthcheck 两处 / 按完还得补的那两格都从真源现算";
 
   it(BULLET_CELL, () => {
     const failures = bulletFailures(realChangelog);
@@ -5718,15 +5800,50 @@ describe(TASK29_GROUP, () => {
     expect(failures, "把带 healthcheck 说成不带居然还绿").toContain("处各带一条 healthcheck");
   });
 
-  it("认不出要吵：按钮字面全被删 / 两份部署文件里的 healthcheck 全被删 ⇒ 两个探测器分别返回 null 与空表", () => {
+  it("该红时红：那条 bullet 把「按完还得补两格」改写成「开箱即用」—— 逐个点名 wrangler.toml / KV 命名空间 id / GATEWAY_TOKEN", () => {
+    probeBase(bulletFailures(realChangelog), BULLET_CELL);
+    const wb = wranglerBlanks();
+    expect(wb, `${WRANGLER} 里两格一格都认不出——这一格的前提没了`).not.toBeNull();
+    expect(wb!.kvId, "KV 命名空间 id 现在已不是占位符——这一格的前提没了").toBe(wb!.placeholder);
+    expect(wb!.token, "GATEWAY_TOKEN 不是「只以 secret / .dev.vars 形式出现」——这一格的前提没了").toBe("secret");
+    // 变异的是**文档**：把那半句整个换成语义相反的说法，磁盘上两格照旧空着。
+    const half = "按完仍要自己补 `wrangler.toml` 里的 KV 命名空间 id 与 `GATEWAY_TOKEN`，缺一个网关都起不来；";
+    const mutated = realChangelog().replace(half, "按完开箱即用，什么都不用补，网关立刻就能跑；");
+    expect(mutated, "变异没落地——CHANGELOG 里没找到那半句").not.toEqual(realChangelog());
+    const failures = bulletFailures(() => mutated);
+    expect(failures.length, `报文：\n${failures.join("\n")}`).toBe(3);
+    for (const lit of [WRANGLER, KV_BLANK_PHRASE, "GATEWAY_TOKEN"]) {
+      expect(failures.join("\n"), `红了但报文没点名「${lit}」`).toContain(lit);
+    }
+  });
+
+  it("该红时红：真源改了而 CHANGELOG 没跟 —— wrangler.toml 的 KV id 换成一个真 id，占位符没了", () => {
+    probeBase(bulletFailures(realChangelog), BULLET_CELL);
+    const wb = wranglerBlanks();
+    expect(wb?.placeholder, "认不出门禁脚本里那个占位符字面——这一格的前提没了").not.toBeNull();
+    const REAL_ID = "0123456789abcdef0123456789abcdef";
+    const swapped = (p: string): string => (p === WRANGLER
+      ? readReal(p).replace(wb!.placeholder!, REAL_ID)
+      : readReal(p));
+    expect(wranglerBlanks(swapped)?.kvId, `变异没落地——${WRANGLER} 里没找到那个占位符`).toBe(REAL_ID);
+    // ⚠️ 变异的是**真源**不是文档：CHANGELOG 一个字没动，它写的「仍要自己补」就此成了假话。
+    const failures = bulletFailures(realChangelog, swapped);
+    expect(failures.length, `报文：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0], "红了但报文没点名换上去的那个真 id").toContain(REAL_ID);
+  });
+
+  it("认不出要吵：按钮字面全被删 / 两份部署文件里的 healthcheck 全被删 / wrangler.toml 两格都认不出 ⇒ 三个探测器分别返回 null、空表、null", () => {
     // 这两条分支上，`bulletFailures` 走的是 `out.push("… 认不出要吵 …")`——不是静静放行。
     expect(deployButtonReadmes(() => "一份没有按钮的 README\n"),
       "按钮全被删了还能扫出份数——那这个份数是编的").toBeNull();
     expect(healthcheckPlaces(() => "FROM node:22-alpine\nservices:\n  gateway:\n    image: x\n"),
       "两份部署文件里都没有 healthcheck 了还能认出来").toEqual([]);
-    // 反向：真源没被动的时候两个探测器都认得出，上面那两条不是恒真。
+    expect(wranglerBlanks(() => "name = \"agnes2api\"\nmain = \"src/entry/worker.ts\"\n"),
+      "toml 里既没有 KV 段也没提 GATEWAY_TOKEN 了，还能算出「两格都空着」——那这个判断是编的").toBeNull();
+    // 反向：真源没被动的时候三个探测器都认得出，上面那三条不是恒真。
     expect(deployButtonReadmes()).not.toBeNull();
     expect(healthcheckPlaces().length).toBe(2);
+    expect(wranglerBlanks()).not.toBeNull();
   });
 
   /* ───────────────────────────────────────────────────────────────────────────
