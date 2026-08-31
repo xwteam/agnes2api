@@ -23,7 +23,7 @@ describe("KeyView 永不含明文", () => {
     // ⚠️ **`?? null` 不是防御性写法，它是这条断言能不能成立的前提**（评审 M-d）：
     // `JSON.stringify(undefined)` 返回的是 `undefined` 而不是字符串，`.not.toContain`
     // 会当场抛 TypeError——**那是一次崩溃，不是一次检查**。今天 `KeyView` 的字段
-    // 恰好都不是 undefined 所以无害，但 Task 4 要往这里加 `note`，只要它是
+    // 恰好都不是 undefined 所以无害，但后来要往这里加 `note`，只要它是
     // `string | undefined`，这条安全断言就会变成一个莫名其妙的报错而不是真的扫过。
     for (const val of Object.values(v!)) {
       expect(JSON.stringify(val ?? null)).not.toContain("WHOLE-SECRET");
@@ -32,7 +32,7 @@ describe("KeyView 永不含明文", () => {
   /**
    * @refs-ignore（本段要点名那个已被删掉的前端副本）
    * ⚠️ **这里原来还有一格「maskKey 与前端那份 `pure/mask.mjs` 在同一组夹具上结果
-   * 一致」，随 `admin-ui/js/pure/mask.mjs` 一起删掉了**（全分支评审 B3）。
+   * 一致」，随 `admin-ui/js/pure/mask.mjs` 一起删掉了**（评审发现 B3）。
    *
    * 理由不是"那条断言不好"，而是**它守的东西没有消费者**：`mask.mjs` 在
    * `admin-ui/js/` 里零导入者——面板显示的 `masked` 是后端这一份算好之后放进
@@ -59,14 +59,14 @@ describe("KeyView 永不含明文", () => {
  *
  * @refs-ignore（本段要点名那两个已被删掉的前端文件）
  * ⚠️ **这组 CASES 原本是从 `tests/ui/bucket.test.ts` 逐格搬过来的，别再"精简"回去。**
- *（那份前端副本与 `admin-ui/js/pure/bucket.mjs` 已在全分支评审 B3 一并删除——
+ *（那份前端副本与 `admin-ui/js/pure/bucket.mjs` 已在评审发现 B3 一并删除——
  *  面板显示的 `bucket` 来自本文件测的这一份，前端那份零导入者。**这里就是这条
  *  等价关系今天唯一的护栏了**，删一格就没有第二处兜着。）
  * 那边用一整段注释记着一次实测：如果没有一格真的把 `disabled` 设成 `true`，
  * 「给 keyBucket 加一档 disabled 但不改 isAvailable」这个变异**不会被等价关系循环抓住**
  * ——所有 fixture 的 `disabled` 都是 `undefined`，变异后的 keyBucket 对它们仍然走到
  * `return "fresh"`，与 isAvailable 继续一致，循环全绿。本文件第一版正是那样写的，
- * 而 `key-view.ts` 里却写着"加档而不改调度会让它变红"——**那句话当时是假的**（评审 I3）。
+ * 而 `key-view.ts` 里却写着"加档而不改调度会让它变红"——**那句话当时是假的**（评审发现）。
  */
 describe("keyBucket 与 isAvailable 等价（后端这一份同样要钉）", () => {
   const NOW = 1000;
@@ -78,9 +78,9 @@ describe("keyBucket 与 isAvailable 等价（后端这一份同样要钉）", ()
     { name: "已剔除且冷却中（两者同时成立——单状态用例区分不了优先级，第 5 种假阳性）", rec: mk({ evicted: true, cooldownUntil: NOW + 1 }) },
     { name: "有 strikes 但未冷却（strikes 不参与可用性判定）", rec: mk({ strikes: 2 }) },
     /**
-     * ⚠️ **这一格是 P3b 的人预先埋下的靶子，P3c Task 2 落地时它照约定生效了。**
+     * ⚠️ **这一格是预先埋下的靶子，第四条 reason 落地时它照约定生效了。**
      * 原注释写着「KeyRecord 今天还没有这个字段，未来加了却忘改 isAvailable 时，
-     * 这一格必须能把它抓出来」——Task 2 开工前按计划复跑了那次实验（给 BUCKETS 加
+     * 这一格必须能把它抓出来」——开工前按计划复跑了那次实验（给 BUCKETS 加
      * 第四档 + keyBucket 加分支、**不动** isAvailable）：**实测 2 条红**，正是这一格
      * 与下面那条档位字面量。**别删它**，`disabled` 的等价关系今天仍然只靠它。
      */
@@ -164,7 +164,7 @@ describe("keyBucket 与 isAvailable 等价（后端这一份同样要钉）", ()
 
 describe("序号与返回顺序", () => {
   /**
-   * ⚠️ **返回顺序本身就是契约**（评审 I1）：`keysHandler` 的分页直接切这个数组，
+   * ⚠️ **返回顺序本身就是契约**（评审发现）：`keysHandler` 的分页直接切这个数组，
    * 而传入顺序来自 `pool:index`，`pool-index.ts` 明写"顺序无语义"、对账会整体重排它。
    * 只断言 `seq` 不断言顺序的话，「按传入顺序返回」与「按 seq 返回」在**顺序导入的
    * 夹具上数学等价**（第 5 种假阳性）——所以这里的输入刻意是乱序的。
@@ -243,7 +243,7 @@ describe("KeyView.disabled 恒是布尔、恒存在", () => {
     expect(roundTripped.disabled).toBe(false);
   });
   /**
-   * `v.disabled` 与 `v.bucket === "disabled"` 今天**恒等价**，而 Task 4 会
+   * `v.disabled` 与 `v.bucket === "disabled"` 今天**恒等价**，而后来会
    * **一边读 `v.disabled` 渲染开关、一边读 `v.bucket` 渲染徽章**（评审 M-b）——
    * 两个字段一旦漂开，面板就会出现「徽章说已剔除、开关说没停用」这种自相矛盾的行。
    * 所以夹具里必须有 `disabled + evicted` 那一格：**那正是两者最可能漂开的地方**

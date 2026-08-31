@@ -87,7 +87,7 @@ describe("registrarFromEnv", () => {
     expect(() => registrarFromEnv({}, { targetKeys: -1 })).toThrow(/targetKeys/);
   });
 
-  // P1 遗留：配置校验此前只覆盖环境变量层，没覆盖存储层。primary/fallback 是决定
+  // 早期遗留：配置校验此前只覆盖环境变量层，没覆盖存储层。primary/fallback 是决定
   // 走哪条代码分支的枚举值，若存储里的垃圾值能绕过校验静默流入，下游按通道分支的
   // 代码（例如选哪个 MailProvider 适配器）会拿到既不是 yyds 也不是 moemail 的值。
   // 通道格式校验现在受 enabled 门控（见下面"未启用时…只 warn"的用例），故这里要
@@ -102,7 +102,7 @@ describe("registrarFromEnv", () => {
       .toThrow(/fallback/);
   });
 
-  // 注册机关闭时，一个用不到的字段不该让整个网关起不来（例如 P3 面板写入 bug、
+  // 注册机关闭时，一个用不到的字段不该让整个网关起不来（例如面板写入 bug、
   // 手工改存储、跨版本迁移遗留）。只留痕，不阻断启动。
   it("未启用时存储中通道格式脏数据只记事件不抛错，网关仍能正常启动", () => {
     // console.* 已经被换成注入的 Logger（第 3 个可选参数）：spy console 只会看到空
@@ -165,7 +165,7 @@ describe("registrarFromEnv", () => {
     expect(registrarFromEnv({ TOKEN_NAME: "someone-elses" }, {}).tokenName).toBe("auto");
   });
 
-  // === C4：补池间隔与单轮最坏耗时的交叉校验（只 warn，不抛错） ===
+  // === 补池间隔与单轮最坏耗时的交叉校验（只 warn，不抛错） ===
 
   const ENABLED = { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" };
 
@@ -328,7 +328,7 @@ describe("I-2 五语言文档对轮级预算的表述必须有条件、且与代
     //
     // console.* 已经被换成注入的 Logger：spy console 只会看到空 mock，必须改成
     // recordingLogger 断言事件名 + 级别。五语言的可 grep 锚点也从「按中文文案 grep」
-    // 改成「按事件名 grep」——英日韩用户此前永远搜不到中文片段（P2 M-5 遗留）。
+    // 改成「按事件名 grep」——英日韩用户此前永远搜不到中文片段（评审发现 M-5 遗留）。
     const logger = recordingLogger();
     registrarFromEnv(
       {

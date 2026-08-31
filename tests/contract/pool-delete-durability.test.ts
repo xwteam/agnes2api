@@ -17,9 +17,9 @@ import { IS_WORKERD } from "../helpers/is-workerd.js";
  * 60 秒快照、运维在容器运行中改 `store.json`** 这一种。
  *
  * 两条删除路径都要覆盖，且第二条才是今天真正会发生的那条：
- * ① `repo.delete()`（P3c 面板的删除按钮将来走它）；
+ * ① `repo.delete()`（面板的删除按钮将来走它）；
  * ② **裸存储删除**——`wrangler kv key delete "key:<id>"` / 手工编辑 `store.json`。
- *    P3a 没有面板，这是**今天唯一存在的吊销姿势**，而它不动 `pool:index`：
+ *    那时还没有面板，这是**今天唯一存在的吊销姿势**，而它不动 `pool:index`：
  *    一次陈旧写回就能让记录复活并**立刻**重新可用，连对账都不用等。
  */
 

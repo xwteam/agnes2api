@@ -50,7 +50,7 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
    * 这句话必须由断言钉死，不能靠自觉。
    *
    * ⚠️ **这段原来的措辞是「admin-ui/index.html 用浏览器直接打开（file://）仍然是一个
-   * 完整可调试的面板」，那句是假的**（P3b Task 7 的阶段验收实测推翻；同一句假话在三处
+   * 完整可调试的面板」，那句是假的**（阶段验收实测推翻；同一句假话在三处
    * 出现，本文件、scripts/build-ui.mjs 的文件头、admin-ui/README.md，一起订正）。
    * index.html 的资源引用是绝对路径（`/admin/js/app.js` 等），file:// 下解析成
    * `file:///admin/...` 而全部 404；且现代浏览器把 file:// 文档的源当成 null，
@@ -74,7 +74,7 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
   /**
    * 下限绊线：防「walk 扫了个空目录也全绿」。上面那条「源目录 == 生成物」在两边
    * 一起变空时同样成立，是这个项目第 1 类假阳性的经典形态——所以单独钉一个
-   * 与磁盘扫描无关的下限。17 是本期（Task 3）落地后源文件的实际数量，手写字面量。
+   * 与磁盘扫描无关的下限。17 是那一轮落地后源文件的实际数量，手写字面量。
    */
   it("源文件数量不低于 17——防扫描本身坏成空目录", () => {
     expect(SOURCES.length, "扫描本身坏了").toBeGreaterThanOrEqual(17);
@@ -100,11 +100,11 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
    * 评审看见」——两处是同一个决定的两半。想把它自动化，需要的是别的东西
    * （出网域名白名单 / CSP 的 connect-src 收紧到自身），不是把这条快照写得更长。
    *
-   * Task 3（前端基础设施 + i18n 门禁）一次加了 12 个文件：`css/shell.css`、
+   * 前端基础设施 + i18n 门禁那一轮一次加了 12 个文件：`css/shell.css`、
    * `css/sections.css`、`js/api.js`、`js/i18n-dict.js`、`js/i18n.js`、`js/theme.js`、
    * `js/ui.js`、`js/pure/format.mjs`，以及三个空板块桩
    * `js/sec-overview.js` / `js/sec-keys.js` / `js/sec-events.js`。逐个确认过：
-   *（Task 3 当时还加了 `js/pure/bucket.mjs`，它与 `js/pure/mask.mjs` 已在全分支
+   *（那一轮还加了 `js/pure/bucket.mjs`，它与 `js/pure/mask.mjs` 已在
    *  评审 B3 一并删除——两者在 `admin-ui/js/` 里零导入者，后端的
    *  `src/core/admin/key-view.ts` 早就把 `masked`/`bucket` 算好放进响应了。）
    * 全部是面板自己的 HTML/CSS/JS，没有配置、没有笔记、没有任何含数据的文件，
@@ -120,7 +120,7 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       "/admin/js/api.js",
       "/admin/js/app.js",
       "/admin/js/boot.js",
-      // Task 10（P3d）新增：Playground **专用**的对外出口，与 `js/api.js` 严格隔离
+      // Playground **专用**的对外出口，与 `js/api.js` 严格隔离
       // （设计 §10.5「两把钥匙」）。**逐条确认过：无配置、无数据、无凭据**——
       // 它读的那把网关口令由用户手动粘贴、存在浏览器里，源码里一个字节都没有；
       // 它也不认识任何一条端点路径（整条 URL 由 `js/pure/playground.mjs` 拿
@@ -129,10 +129,10 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       "/admin/js/gw-api.js",
       "/admin/js/i18n-dict.js",
       "/admin/js/i18n.js",
-      // Task 6（P3b）新增：事件板块的取值决策（查询串拼装、分组、轮询退避等），
+      // 事件板块的取值决策（查询串拼装、分组、轮询退避等），
       // 同一条硬规则、同一份理由，由 tests/ui/events.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/events.mjs",
-      // Task 7（P3d）新增：设置页第 4 张卡（集成示例）拼那 12 段代码的纯函数。
+      // 设置页第 4 张卡（集成示例）拼那 12 段代码的纯函数。
       // 同一条硬规则、同一份理由，由 tests/ui/examples.test.ts 跑着。
       // **逐条确认过：纯函数、无配置、无数据**——它连一条端点路径都不认识
       //（路径、方法、鉴权头名、最小请求体全部以参数形式从 `GET /admin/api/models`
@@ -140,56 +140,56 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // base URL 由调用方在运行期取，文件里连一个地址字面量都没有，公开可取没有问题。
       "/admin/js/pure/examples.mjs",
       "/admin/js/pure/format.mjs",
-      // Task 4（P3c）新增：Key 池板块**写操作**的取值决策（按钮可用性、确认文案、
+      // Key 池板块**写操作**的取值决策（按钮可用性、确认文案、
       // 批量选择边界、导入行拆分、bulk 结果汇总）。同一条硬规则、同一份理由，
       // 由 tests/ui/keys-write.test.ts 跑着。纯函数、无配置、无数据。
       // `-` 的字符码比 `.` 小，字典序排在 keys.mjs 之前。
       "/admin/js/pure/keys-write.mjs",
-      // Task 4（P3b）新增：Key 池板块的取值决策。admin-ui/README.md 硬规则 1 要求
+      // Key 池板块的取值决策。admin-ui/README.md 硬规则 1 要求
       // 需要测试的逻辑必须落在 js/pure/ 下，它由 tests/ui/keys.test.ts 跑着。
       // 逐条确认过：纯函数、无配置、无数据，公开可取没有问题。
       "/admin/js/pure/keys.mjs",
-      // Task 6（P3d）新增：模型 × 协议可用性矩阵的取值决策（四个徽章恒在、
+      // 模型 × 协议可用性矩阵的取值决策（四个徽章恒在、
       // 按协议筛选、响应窄化的「读不出来 ≠ 空清单」、形态 → 文案 key）。
       // 同一条硬规则、同一份理由，由 tests/ui/models.test.ts 跑着。
       // **逐条确认过：纯函数、无配置、无数据**——它连一个协议 id 都不认识
       //（判据全部以参数形式从 `GET /admin/api/models` 的响应里进来），
       // 唯一的三个字面量是 chat / image / video 这三个形态名，公开可取没有问题。
       "/admin/js/pure/models.mjs",
-      // Task 5（P3b）新增：概览板块的取值决策，同一条硬规则、同一份理由，
+      // 概览板块的取值决策，同一条硬规则、同一份理由，
       // 由 tests/ui/overview.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/overview.mjs",
-      // Task 10（P3d）新增：Playground 的请求构造（目录 → 一次请求的四样东西）。
+      // Playground 的请求构造（目录 → 一次请求的四样东西）。
       // 同一条硬规则、同一份理由，由 tests/ui/playground.test.ts 跑着。
       // **逐条确认过：纯函数、无配置、无数据、不碰凭据**——它连一条端点路径、
       // 一个协议 id 都不认识（全部以参数形式从 `GET /admin/api/models` 的响应里进来），
       // 而且它按定义只交出**鉴权头的名字**、不交出值，网关口令进不了它的任何返回值。
       "/admin/js/pure/playground.mjs",
-      // Task 6（P3c）新增：注册机板块的取值决策（通道顺序与两条通道的标签/事实键、
+      // 注册机板块的取值决策（通道顺序与两条通道的标签/事实键、
       // 失败归因与拒绝原因的穷尽映射、补池历史的倒序与逐行归因、确认弹窗要明示的
       // 消耗、名额与冷却的成对时间字段）。同一条硬规则、同一份理由，由
       // tests/ui/registrar.test.ts 跑着。**逐条确认过：纯函数、无配置、无数据**
       // ——它一个字节的部署信息都不带（通道名 `moemail`/`yyds` 是本仓写死的两个
       // 枚举值，不是这套部署配了什么），公开可取没有问题。
       "/admin/js/pure/registrar.mjs",
-      // Task 7（P3b）新增：会话绝对上限的判定（`sessionExpired`）。计划原本把它
+      // 会话绝对上限的判定（`sessionExpired`）。计划原本把它
       // 归给人工冒烟（理由是「碰 localStorage 与 Date」），执行时订正：把两个时刻
       // 都变成参数之后判定是纯函数，于是照硬规则 1 落在这里，由
       // tests/ui/session.test.ts 的「sessionExpired：一份 localStorage 里的口令还能用多久」
       // 跑着。纯函数、无配置、无数据。
-      // Task 7（P3b）评审必修 ④ 新增：口令字符集判定。它原本留在
+      // 评审必修 ④ 新增：口令字符集判定。它原本留在
       // `admin-ui/js/app.js` 里——那违反硬规则 1（纯函数必须落在 js/pure/），
       // 而直接后果是 `sendable-parity` 只能做源码文本比对、拦不住语义分叉。
       // 搬过来之后那条用例升级成了逐码位行为等价断言。纯函数、无配置、无数据。
       "/admin/js/pure/sendable.mjs",
       "/admin/js/pure/session.mjs",
       "/admin/js/pure/settings.mjs",
-      // 全分支评审 C4 新增：浏览器存储键名的单一真源。原来两个凭据键的名字在
+      // 评审新增：浏览器存储键名的单一真源。原来两个凭据键的名字在
       // `js/app.js`（写入方）与 `js/api.js`（读取方）各声明一遍，改一处就能让面板
       // 登录成功之后每请求送空口令头、进登出循环，而全套用例照绿。
       // 只有六个字符串常量，纯文本、无配置、无数据，公开可取没有问题。
       "/admin/js/pure/storage-keys.mjs",
-      // Task 5（P3d）新增：用量板块的取值决策（四态判定、两根破折号该用哪一根、
+      // 用量板块的取值决策（四态判定、两根破折号该用哪一根、
       // 档位 → `(from, to)`、分片畸形到什么程度、note code → i18n key 的穷尽映射）。
       // 同一条硬规则、同一份理由，由 tests/ui/usage.test.ts 跑着。
       // **逐条确认过：纯函数、无配置、无数据**——它一个字节的部署信息都不带
@@ -198,22 +198,22 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       "/admin/js/pure/usage.mjs",
       "/admin/js/sec-events.js",
       "/admin/js/sec-keys.js",
-      // Task 6（P3d）新增：模型板块本体（DOM 拼装 + 一条端点的网络调用）。
+      // 模型板块本体（DOM 拼装 + 一条端点的网络调用）。
       // 与其余六个板块文件同一性质：**没有任何机密**，它拿到的每一个字段都来自
       // 一次鉴权后的接口调用，文件自身只有结构与 i18n 键
       //（**连一条端点路径、一个协议 id 都没有**，见该文件的文件头）。
       "/admin/js/sec-models.js",
       "/admin/js/sec-overview.js",
-      // Task 6（P3c）新增：注册机板块本体（DOM 拼装 + 三条端点的网络调用）。
+      // 注册机板块本体（DOM 拼装 + 三条端点的网络调用）。
       // 与其余三个板块文件同一性质：**没有任何机密**，它拿到的每一个数字都来自
       // 一次鉴权后的接口调用，文件自身只有结构与 i18n 键。
-      // Task 10（P3d）新增：Playground 板块（左栏配请求、右栏看对话）。
+      // Playground 板块（左栏配请求、右栏看对话）。
       // 与其余七个板块同一条理由：面板自己的 JS，无配置、无数据。
       // `-p` 排在 `-r` 之前。
       "/admin/js/sec-playground.js",
       "/admin/js/sec-registrar.js",
       "/admin/js/sec-settings.js",
-      // Task 5（P3d）新增：用量板块本体（DOM 拼装 + 三条端点的网络调用）。
+      // 用量板块本体（DOM 拼装 + 三条端点的网络调用）。
       // 与其余五个板块文件同一性质：**没有任何机密**，它拿到的每一个数字都来自
       // 一次鉴权后的接口调用，文件自身只有结构与 i18n 键。
       "/admin/js/sec-usage.js",
@@ -526,11 +526,11 @@ describe("生成器对违规输入 exit 1", () => {
 /**
  * ⚠️⚠️ **本仓在 CSS 上栽过一次，而那次「没有护栏」是我自己登记的、且登记得过头。**
  *
- * P3c Task 7 的真机冒烟量到：`.card + .card { margin-top: … }` 是给**竖排卡**用的，
+ * 设置页那一轮的真机冒烟量到：`.card + .card { margin-top: … }` 是给**竖排卡**用的，
  * 而 `.card-row` 是 flex 行 ⇒ 第二张及以后的卡拿到一个上边距，被拉伸后**矮 8px、
  * 整体下沉 8px**（实测 moemail 367px/top 2766，yyds 359px/top 2774）。
  * 两张「完全对称」的通道卡因此不等高、不对齐——**而面板在视觉上暗示一个层级，
- * 正是硬约束「两条邮箱通道完全平级」存在的全部理由**。这条缺陷从 P3b 就已上线。
+ * 正是硬约束「两条邮箱通道完全平级」存在的全部理由**。这条缺陷从面板第一版就已上线。
  *
  * 我当时把它登记成「CSS 层零自动化护栏（假 DOM 不做布局），修法只写进注释」。
  * **那个登记过头了**：布局正确性确实验不了（真），但**「这条修法还在不在」是纯文本
@@ -543,7 +543,7 @@ describe("CSS：横排卡片行里不许继承竖排卡的上边距", () => {
   const css = () => readFileSync("admin-ui/css/sections.css", "utf8");
   // 抠注释走 `scripts/lib/strip-comments.mjs` 那一份真源的 **CSS 方言**出口。
   //
-  // ⚠️⚠️ **P3e Task 1 第一版在这里栽了一次，别再改回 `stripComments`。**
+  // ⚠️⚠️ **第一版在这里栽了一次，别再改回 `stripComments`。**
   // 那一版把 JS 的行注释语义搬进了这两处 CSS 消费者（收编前它们各自那份副本只认块注释，
   // 对 CSS 恰好是对的）。**CSS 没有 `//` 行注释**，`background: url(//cdn…)` 里的双斜杠
   // 是地址的一部分 —— 按 JS 语义抠会把那一行其后的样式整段吃掉。
@@ -569,7 +569,7 @@ describe("CSS：横排卡片行里不许继承竖排卡的上边距", () => {
     expect(
       RULE.test(strip(css())),
       "`.card-row > .card + .card { margin-top: 0 }` 没了 —— 两张通道卡会重新变成"
-      + "不等高、不对齐，而那是硬约束「两条通道完全平级」在视觉层的破口（P3b 上线过一次）",
+      + "不等高、不对齐，而那是硬约束「两条通道完全平级」在视觉层的破口（上线过一次）",
     ).toBe(true);
   });
 

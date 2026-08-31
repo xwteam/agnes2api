@@ -12,7 +12,7 @@ const CI_FILE = resolve(".github/workflows/ci.yml");
 /**
  * **打 tag 前那道门禁（`scripts/pretag.sh`）自身的正确性。**
  *
- * 这个文件存在的直接理由（P3g 复评第 2 轮发现 1）：本仓的**首个版本就是从一棵红树上发出去的**。
+ * 这个文件存在的直接理由（复评发现）：本仓的**首个版本就是从一棵红树上发出去的**。
  * `v0.1.0` 落在 `5f4bc0b`，而 GitHub 记着那个提交的 `lint-and-test` 是 **failure**
  *（`.github/workflows/ci.yml` 里 pnpm 版本给了两处 ⇒ `Multiple versions of pnpm specified`，
  * 那十三步一步没跑；修完 pnpm 之后又露出 `tests/ui/dom` 在 `node-version: 22` 上 119 格红），
@@ -137,7 +137,7 @@ function commitMore(repo: Repo): void {
   execFileSync("git", ["commit", "-q", "--no-gpg-sign", "-m", "又一笔"], { cwd: repo.root });
 }
 
-describe("打 tag 前的门禁：tag 只许落在「远端 main 那个提交」且「GitHub 记着它是绿的」（P3g 复评 2 轮发现 1）", () => {
+describe("打 tag 前的门禁：tag 只许落在「远端 main 那个提交」且「GitHub 记着它是绿的」（复评发现）", () => {
   it("非空锚：ci.yml 里真的抽得出 job 名单 —— 抽不出的话下面每一格测的都是空气", () => {
     const jobs = CI_JOBS();
     expect(jobs.length, ".github/workflows/ci.yml 里一个 job 都认不出").toBeGreaterThan(0);

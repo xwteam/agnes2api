@@ -37,7 +37,7 @@ describe("normalizeStats", () => {
 });
 
 /**
- * `maxStats` 是 C2 那条缺陷的修复面：落盘基线**只增不减**。
+ * `maxStats` 是评审那条缺陷的修复面：落盘基线**只增不减**。
  * 它同时要处理两个方向——调用方视图比存储旧（dispatcher 回写未合并的 next），
  * 以及比存储新（快照过 TTL 之后带回别的 isolate 写得更高的值）。
  */

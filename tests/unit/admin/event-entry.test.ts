@@ -2,12 +2,12 @@ import { describe, it, expect } from "vitest";
 import { narrowEntries, narrowShard } from "../../../src/core/admin/event-entry.js";
 
 /**
- * 防住的真实故障（本计划 W2 实测，五种形态穷举）：
+ * 防住的真实故障（五种形态穷举实测）：
  * 存储里的一条畸形事件条目会让 `/admin/api/events` 直接 500，或者更糟——
  * **不 500，但把 `cursor` 变成 undefined**，让面板游标永远推不动，
  * 稳态读吞吐涨到 276,480 次/天（包线 70,560 的 3.9 倍）。
  * **这一条只在默认的「全部级别」档位下成立**：点任一个级别按钮，畸形条目被
- * `e.level === level` 滤掉、游标立刻恢复（W3 轴 ④）。默认档恰恰是最常用的一档，
+ * `e.level === level` 滤掉、游标立刻恢复（按级别过滤那一轴）。默认档恰恰是最常用的一档，
  * 所以等级不降，但**不许写成「永不自愈」**。
  *
  * ⚠️ `src/adapters/logger-store.ts` 原来那句注释**没有说错**：它写的是

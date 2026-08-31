@@ -36,7 +36,7 @@ describe("协议目录", () => {
     }
   });
 
-  // ── 评审 I7：`"ping"` 不许是散在四处的魔法字符串 ────────────────────────
+  // ── `"ping"` 不许是散在四处的魔法字符串 ─────────────────────────────────
   it("每条 sample() 的 JSON 里 SAMPLE_PROMPT 恰好出现一次 —— "
      + "Playground 靠替换它来注入用户输入，改掉它会让那条协议静默丢弃用户输入", () => {
     // 变红条件：把 responses 那条的 `input: SAMPLE_PROMPT` 改回字面量 "pong"
@@ -64,7 +64,7 @@ describe("协议目录", () => {
     expect(PROTOCOLS.filter((p) => p.usagePath === null).map((p) => p.id)).toEqual(["openai"]);
   });
 
-  it("upstreamPath 四条都是 /chat/completions，且与对外路径不是同一个东西（评审 C3）", () => {
+  it("upstreamPath 四条都是 /chat/completions，且与对外路径不是同一个东西（评审发现）", () => {
     // 变红条件：把任一条 upstreamPath 写成它自己的 pathTemplate
     expect(PROTOCOLS.map((p) => p.upstreamPath)).toEqual([
       "/chat/completions", "/chat/completions", "/chat/completions", "/chat/completions",
@@ -163,7 +163,7 @@ describe("协议目录", () => {
   });
 
   /**
-   * ── **媒体端点表本身（P3d Task 12 搬进来的三条）** ──────────────────────────
+   * ── **媒体端点表本身（后来搬进来的三条）** ──────────────────────────────────
    *
    * 逐条手写字面量，**不从 `MEDIA_ENDPOINTS` 自己推**（第 6 种假阳性）。
    * 这一格钉的是「这三条端点是哪三条」；它们**真的通**由

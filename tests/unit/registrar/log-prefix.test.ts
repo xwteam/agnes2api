@@ -14,7 +14,7 @@ import type { Logger } from "../../../src/ports/logger.js";
  * （`docker logs … | grep '[registrar]'` / `wrangler tail --search '[registrar]'`）
  * 排障时，M1/M2 新增的那些诊断信号会被整段过滤掉，等于白修。
  *
- * P3a 把裸 console.* 换成注入的 Logger 之后，前缀不再由每个调用点手写字符串，
+ * 把裸 console.* 换成注入的 Logger 之后，前缀不再由每个调用点手写字符串，
  * 而是由 `ConsoleLogger` 按事件名的命名空间（`registrar.` 前缀）派生——这正是
  * 这条不变量此前会被漏掉 14 条的成因。守门方式也跟着换了两层：
  * - 源码层：这些文件里**一个 console 调用点都不许有**——新加一条 console.warn
@@ -28,7 +28,7 @@ import type { Logger } from "../../../src/ports/logger.js";
  * info|debug)( 调用点都不该有**。
  *
  * 注意正则要求调用点后面紧跟左括号——`grep "console\."` 这种不带括号的裸子串匹配
- * 会把「注释里提到 console.warn」这类散文也算进去（P3a Task 1 开工时的真实教训：
+ * 会把「注释里提到 console.warn」这类散文也算进去（开工时的真实教训：
  * `config.ts` 曾有一行中文注释写「`console.warn`」，裸 grep 会把它误算成一个调用点，
  * 得到与这里断言的 0 不一致的数字）。下面两条断言用的正则始终是
  * `console\.(log|warn|error|info|debug)\(`，只匹配真实调用，不匹配注释里的提及。
@@ -65,10 +65,10 @@ it("这些文件里一个 console 调用点都没有——core 零 IO 与「事�
 });
 
 /**
- * ⚠️ 这条只扫 `src/core`。Task 5/6 新增的 `src/http/**`、`src/ui/**` 两棵树由
+ * ⚠️ 这条只扫 `src/core`。后来新增的 `src/http/**`、`src/ui/**` 两棵树由
  * `tests/unit/source-guards.test.ts` 扫（那里还有 `src/core` 零 IO 的源码门禁）。
  * 分成两处不是遗漏：这一条的存在理由是五语言 REGISTRAR.md 的 `[registrar]` 前缀契约，
- * 与它下面那几条行为断言同源；那一条守的是「事件要能被 P3b 的面板消费」。
+ * 与它下面那几条行为断言同源；那一条守的是「事件要能被面板消费」。
  */
 it("src/core 全目录零 console——只列白名单会漏掉将来新增的文件", () => {
   const offenders: string[] = [];
@@ -101,7 +101,7 @@ describe("注册机日志事件（文档对外承诺 [registrar] 前缀 + 稳定
 
   it("两家适配器删邮箱失败时都记 registrar.delete_mailbox_failed，且带 provider 字段", async () => {
     const clock = { sleep: async () => {}, now: () => 0 };
-    // 404 是「删除没生效」的真实形态（P2 RM1 实测过），stub 必须真的返回它而不是 200。
+    // 404 是「删除没生效」的真实形态（评审发现 RM1 实测过），stub 必须真的返回它而不是 200。
     const fetcher = { async fetch() { return new Response("{}", { status: 404 }); } };
     for (const [name, make] of [
       ["yyds", (l: Logger) => new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", ...clock, logger: l })],

@@ -155,7 +155,7 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
 ];
 
 /**
- * **手写的豁免清单。P1/P2 留下的 6 处，P3a 与本修复轮都一处没新增。**
+ * **手写的豁免清单。早期留下的 6 处，之后一处没新增。**
  *
  * 每一条都要能一句话说清为什么它不是「环境能力注入」的漏网之鱼：
  * - `dispatcher.ts` 的 `setTimeout`：`AbortController` 的超时闸。注入它就要注入一整套
@@ -225,21 +225,21 @@ describe("硬约束：src/core 零 IO", () => {
 /**
  * `src/core` 那半边由 `tests/unit/registrar/log-prefix.test.ts` 的
  * 「src/core 全目录零 console……」守着（那里还连带守
- * 五语言 REGISTRAR.md 承诺的 `[registrar]` 前缀契约）。这里守的是 Task 5/6 新增的
- * `src/http/**`（含 `admin/`）与 `src/ui/**`，以及 Task 2（本轮）新加进来的
+ * 五语言 REGISTRAR.md 承诺的 `[registrar]` 前缀契约）。这里守的是后来新增的
+ * `src/http/**`（含 `admin/`）与 `src/ui/**`，以及本轮新加进来的
  * `src/adapters/**` 与 `src/ports/**`。
  *
  * 为什么要扩到 adapters/ports：`storage-kv` / `storage-file` / `fetcher-native` /
  * `mailbox-*` 直接面对 IO 故障，是最容易出现「绕过 sink 的 `console.warn`」的地方，
  * 而原来的扫描范围只有 http 与 ui，一处没扫到。
  *
- * 为什么要守：Task 1 把裸 `console.*` 归零的理由是「事件要能落库」——P3b 的事件板块
+ * 为什么要守：把裸 `console.*` 归零的理由是「事件要能落库」——事件板块
  * 要消费的是注入 Logger 打出来的结构化事件，绕过 sink 直接 `console.warn` 的那条
- * 信息**永远进不了面板**，而且没有任何报错。P3b 恰恰要往 `src/http/admin/handlers/`
+ * 信息**永远进不了面板**，而且没有任何报错。面板恰恰要往 `src/http/admin/handlers/`
  * 里大量新增文件。
  *
  * **边界（明写，别再宣称成「全部」）**：判据是 `console.(log|warn|error|info|debug)(`，
- * 要求紧跟左括号（否则注释里提一句 `console.warn` 就误报，那是 Task 1 开工时的真实
+ * 要求紧跟左括号（否则注释里提一句 `console.warn` 就误报，那是开工时的真实
  * 教训）。`globalThis.console.warn(` 抓得住（没有 lookbehind）；`const c = console;
  * c.warn(…)` 这类间接引用抓不住，留给评审。
  *
@@ -290,11 +290,11 @@ describe("src/adapters、src/http、src/ports、src/ui 里的裸 console", () =>
         // ⚠️ **`src/ui/assets.generated.ts` 是范畴错误意义上的排除，不是遗漏。**
         //
         // 这个文件由 scripts/build-ui.mjs 逐字节生成：它把 admin-ui/ 下每个前端源文件
-        // 的整份文本原样塞进一个字符串字面量。Task 3 的 admin-ui/js/i18n.js 里有一处
+        // 的整份文本原样塞进一个字符串字面量。admin-ui/js/i18n.js 里有一处
         // **浏览器控制台**的开发期告警（`localStorage["agnes2api_debug"]` 为真时才打，
         // 生产期不打扰），字面文本 `console.warn(` 随之被逐字节烧进这份生成物。
         //
-        // 这条门禁要防的是「服务端事件绕过注入的 Logger、进不了 P3b 事件面板」——
+        // 这条门禁要防的是「服务端事件绕过注入的 Logger、进不了事件面板」——
         // 前端自己在用户浏览器里打的 console 是完全不同的东西，与「事件能不能落库」
         // 毫无关系（浏览器控制台从来就不通向服务端事件流）。拿同一份正则去扫一份
         // **内嵌前端字符串**的生成物，抓到的是文本巧合，不是违规调用点。
@@ -311,7 +311,7 @@ describe("src/adapters、src/http、src/ports、src/ui 里的裸 console", () =>
     expect(
       tally(hits),
       "src/adapters / src/http / src/ports / src/ui 出现了新的裸 console。事件要能被 "
-      + "P3b 的面板消费就必须走注入的 Logger（`logger.log({ level, event, msg, fields })`）；"
+      + "面板消费就必须走注入的 Logger（`logger.log({ level, event, msg, fields })`）；"
       + "确实需要 console 的话，把它连同理由加进 CONSOLE_EXEMPTIONS",
     ).toEqual([...CONSOLE_EXEMPTIONS]);
   });
@@ -346,11 +346,11 @@ describe("src/adapters、src/http、src/ports、src/ui 里的裸 console", () =>
 // ── ③ 用正则抠注释的副本 ─────────────────────────────────────────────────────
 
 /**
- * **判据从「按名字」改成「按行为」（P3e Task 1），再从「一种逐字拼法」扩到「一族拼法」（本轮）。**
+ * **判据先从「按名字」改成「按行为」，再从「一种逐字拼法」扩到「一族拼法」。**
  *
  * 旧判据是 `OWN_STRIP_DEF`：扫「有没有一个叫 `stripComments` 的定义」。
  * 它**结构上看不见**三份实现同样的东西但取了别的名字的副本（`codeOnly` / `strip` / 匿名内联）
- * ——P3e 开工勘察实测：真源之外有 5 份，旧守卫只登记了 2 份，另外 3 份**永不可见**。
+ * ——开工勘察实测：真源之外有 5 份，旧守卫只登记了 2 份，另外 3 份**永不可见**。
  * 而看不见的那三份里，`codeOnly` 是网络出口扫描的底座，也就是本仓
  * 「面板只打自己 origin」的唯一机器保障。
  *
@@ -491,7 +491,7 @@ function regexStripScanFiles(): string[] {
 /**
  * **这张表只许变短、不许变长。**
  *
- * 它记的是「真源之外还有几份用正则抠注释的实现」。P3e Task 1 之前是 5 份（外加
+ * 它记的是「真源之外还有几份用正则抠注释的实现」。收编之前是 5 份（外加
  * `tests/helpers/strip-comments.ts` 文件头里那句复述史实），收编之后**恰好为空**。
  * ⚠️ **空表不等于没有守卫**：下面那一格拿它当期望值逐条比对，抄回第六份当场红并点名。
  */
@@ -657,7 +657,7 @@ describe("用正则抠注释的副本", () => {
  * **真源交出来的三个出口，各自的语义就是它们分叉的那一件事。**
  *
  * `blankComments` 的生产消费者今天是 `tests/ui/api-session.test.ts` 的 `braceInterpLinesIn()`
- *（P3e Task 2 接上的）。**这一格不因为有了消费者就可以撤**：它验的是「留空版换出来的是空格、
+ *（后来接上的）。**这一格不因为有了消费者就可以撤**：它验的是「留空版换出来的是空格、
  * 不是删掉」这一件事本身，而消费者那边验的是「按行对齐之后数得对」——
  * 上一版这里写的是「今天还没有消费者」，那句已经不成立，留着就是一条会腐的散文。
  */
@@ -734,7 +734,7 @@ describe("抠注释真源的三个出口", () => {
   /**
    * **反向控制：前三个导出在同一份 HTML 上都不能用。**
    * 少了这一格，「HTML 需要第四个方言」就只是一句散文——而本仓已经为
-   * 「拿错方言去抠」栽过一次（P3e Task 1 把两处 CSS 消费者改成 JS 语义）。
+   * 「拿错方言去抠」栽过一次（把两处 CSS 消费者改成了 JS 语义）。
    */
   it("同一份 HTML 喂给前三个导出：JS 方言当场抛、CSS 方言一声不吭地什么都没抠", () => {
     const html = '<title>a/b</title>\n<!-- 抠掉我 -->\n';
@@ -763,7 +763,7 @@ describe("抠注释真源的三个出口", () => {
   /**
    * ⚠️⚠️ **「没闭合就抛」的反向控制 —— 只做「会抛」那一半等于把一族合法 HTML 打红。**
    *
-   * P3e Task 3 复评（F2）实测：`admin-ui/index.html` 少一个 `-->` ⇒ i18n 门禁的引用数
+   * 复评（F2）实测：`admin-ui/index.html` 少一个 `-->` ⇒ i18n 门禁的引用数
    * 从 496 掉到 480（整份文件尾的 `data-i18n=` 被静默吞掉），而门禁打着 ✅ 横幅 exit 0。
    * 修法是「未闭合就抛」，**而修它的时候最容易顺手搬来的新问题就是把合法注释一起打红**：
    * HTML5 里 `<!-->` 与 `<!--->` 是 **abrupt-closing-of-empty-comment**，
@@ -871,7 +871,7 @@ function firstStringLiteral(code: string, openParen: number): string | null {
 }
 
 /**
- * **这一节是 P3e Task 1 复评那条 CRITICAL 的直接产物，读完再改。**
+ * **这一节是复评那条 CRITICAL 的直接产物，读完再改。**
  *
  * 上一版真源逐字符扫，但**不认正则字面量**，而且它的「边界明写」段把危害判据写错了
  *（写的是「正则里带斜杠星号」，真判据是「正则里有奇数个引号」与 `\/`+`/`）。后果实测：
@@ -933,7 +933,7 @@ describe("抠注释真源的扫描器边界", () => {
         const stripped = stripComments(src);
         const blanked = blankComments(src);
         // 顺带把 `blankComments` 的行列不变量也钉在同一遍里：它是按行号/列位置扫的
-        // 消费者（Task 2 的 `braceInterpLines()`）的全部前提。
+        // 消费者（`braceInterpLines()`）的全部前提。
         if (blanked.length !== src.length) broken.push(`${rel} :: blankComments 改了总长度`);
         if (blanked.split("\n").length !== src.split("\n").length) broken.push(`${rel} :: blankComments 改了行数`);
         if (stripped.length > src.length) broken.push(`${rel} :: stripComments 输出比原文还长`);
@@ -1213,7 +1213,7 @@ describe("抠注释真源的扫描器边界", () => {
     [
       // 这一行走的是**第四方言**（`stripHtmlComments`），不是上面那个出口。
       // 上一版这里不抛：`<!--` 没有闭合记号时一路吃到文件尾，理由写的是「这是 HTML5 的
-      // 规定行为」。P3e Task 3 复评实测了那一支的代价：`admin-ui/index.html` 少一个
+      // 规定行为」。复评实测了那一支的代价：`admin-ui/index.html` 少一个
       // `-->` ⇒ i18n 门禁的引用数从 496 掉到 480、整份文件尾的 `data-i18n=` 全部消失，
       // 而门禁**打着 ✅ 横幅 exit 0**。⇒ 现在按本仓裁定办：认不出要吵。
       "HTML 注释开了没有闭合记号，一路吃到文件尾 ⇒ 再抠下去就是静默吞掉半份文件",
@@ -1683,7 +1683,7 @@ describe("全射程与真解析器对拍", () => {
 /**
  * ── 两份 `frameEnd()` 的**函数体**必须逐字节相同 ──────────────────────────────
  *
- * **它为什么存在（实测，不是预防性扩容）**：P3e Task 11 把两处内联的 `indexOf("\n\n")`
+ * **它为什么存在（实测，不是预防性扩容）**：当时把两处内联的 `indexOf("\n\n")`
  * 提炼成了**两个同名同体的 `frameEnd()`**——`src/core/protocol/sse.ts`（网关读上游）
  * 与 `admin-ui/js/pure/playground.mjs`（面板渲染）。提炼本身是好事，但它把「隐式的重复」
  * 变成了「显式的、跨运行时边界的、有名字的重复」，而**当时没有任何机器要求这两份一致**：
@@ -1702,7 +1702,7 @@ describe("全射程与真解析器对拍", () => {
  * 「同一段字节喂进去必须给出同一串负载」），5 条样本**全是 LF**
  * ——**被点名的守卫恰好不覆盖新写进去的那条判据。**
  *
- * ⚠️ **P3d 的全分支评审已经因为这两份实现在 `[DONE]` 上分叉记过一条 HIGH，这是同一处
+ * ⚠️ **评审已经因为这两份实现在 `[DONE]` 上分叉记过一条 HIGH，这是同一处
  * 的第二次。** 所以这里不再往行为层补第 N 条样本（那是在追已经想到的那几条轴），
  * 而是**把「两份必须一样」这件事本身钉成一格**：判据从两个真源现抠，不写第三份实现，
  * 任何一侧单独漂——不管漂在哪条轴上——都当场红。
@@ -1783,13 +1783,13 @@ describe("两份 frameEnd 是跨运行时边界的孪生体", () => {
  * ── 分段选择器（`.btn-toggle`）：每个创建点都要带 `aria-pressed` ─────────────────
  *
  * **为什么是源码扫描而不是只写四格 DOM 用例**：DOM 用例只能覆盖它自己点得到的那几组，
- * 而这个控件今天分布在五个板块文件里、还在长。P3e Task 20 开工时的实测形态是
+ * 而这个控件今天分布在五个板块文件里、还在长。开工时的实测形态是
  * **调试台那两组带 `aria-pressed` 并且有对应断言，另外四个板块一处都没有**
  * ——做法早就定下了，只是没铺开，而"没铺开"这件事**在这一格出现之前零信号**。
  *
  * ⚠️ **扫的是「创建点」，不是 grep 命中。** 裸 `grep -n 'btn-toggle' admin-ui/js/sec-*.js`
  * 今天会把三处横向说明的注释一起数进来（models / playground / usage 各一处），
- * 而"把注释也数进去"正是本期 Task 2 刚拆掉的那个形态。所以先走
+ * 而"把注释也数进去"正是刚拆掉的那个形态。所以先走
  * `scripts/lib/strip-comments.mjs` 的 `blankComments`（注释换空格、**行号列位置不变**，
  * 报文才点得准落点），再在**属性对象字面量**这个窗口里判。
  *
@@ -1815,7 +1815,7 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
    * ⚠️ **但 `sec-` 这个前缀本身就是一份隐式名册**：`admin-ui/js/` 下所有**不以 `sec-` 开头**
    * 的 `.js`、以及 `admin-ui/js/pure/*.mjs`，全都天然在射程外
    *（那一批不在这里手抄，由下面那条绊线的 `offScopeFiles()` 从盘上枚举）。
-   * P3e Task 20 复评实测：在 `admin-ui/js/app.js` 插一处不带 `aria-pressed` 的
+   * 复评实测：在 `admin-ui/js/app.js` 插一处不带 `aria-pressed` 的
    * `class: "btn-toggle"` 创建点 ⇒ **全绿，零信号**。而 `app.js` 自己就在管一组
    * 分段式控件（`.nav-item` + 就地 `classList.toggle("active")`）、`ui.js` 是共用的
    * `el()/elI18n()` 元素工厂 —— 把共用控件工厂挪进 `ui.js` 是很自然的下一步。
@@ -1845,7 +1845,7 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
    * 字符串感知的大括号配对。引号 / 模板字面量整段跳过（模板里的 `${…}` 一并跳过，
    * 那对我们要找的属性对象没有影响）。**配不平就抛**，绝不返回一份残缺的配对表。
    *
-   * ⚠️ **登记：这是本仓第二个手写的字符串感知扫描器，比真源弱**（P3e Task 20 复评 F7）。
+   * ⚠️ **登记：这是本仓第二个手写的字符串感知扫描器，比真源弱**（复评 F7）。
    * `scripts/lib/strip-comments.mjs` 里那套 JS 词法扫描认得出正则字面量（`unclosedRegex`），
    * 这一份不认。**本轮没有改**，理由写在这里而不是在报告里：那份真源今天只导出四个
    * 抠注释函数与 `FAIL_KINDS`，没有「大括号配对」或「把正则字面量一并抹掉」的入口；
@@ -1947,7 +1947,7 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
    *   ② **连它自己的 DOM 行为用例一起补**（「值真的跟着点击走」那一族，每个板块一格）。
    * **只做 ① 就是把这条覆盖悄悄放掉**：源码扫描不判值，`aria-pressed` 全写死成 `"false"`
    * 它照样绿。这半句以前只写在被 `.gitignore` 掉的任务报告里，等于不在仓库里 ——
-   * P3e Task 20 复评点名，现在它同时写在 docblock 和下面那条报文里。
+   * 复评点名，现在它同时写在 docblock 和下面那条报文里。
    */
   it("反向控制：今天扫得到的 btn-toggle 创建点逐文件列全", () => {
     const byFile: Record<string, number> = {};
@@ -1971,7 +1971,7 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
    *
    * 上面那格扫的是**创建点**，拦「漏写」；它拦不住另一族：一个板块**不重建按钮、
    * 就地改 `.active`**，于是屏幕上换了档而属性还停在首帧
-   *（P3d 那次「就地更新够不着盒子外的节点」的同一个形状）。
+   *（那次「就地更新够不着盒子外的节点」的同一个形状）。
    * `sec-events.js` 的 `setLevel()` 就是这一族，它因此多写了一行 `setAttribute`。
    * 这一格把「别处没有第二处就地改」变成一条会红的断言 ——
    * 哪天别的板块也改成就地更新，先在这里被看见，再去补它自己的 DOM 用例。
@@ -2011,7 +2011,7 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
   /**
    * **绊线：射程外的面板 JS 里今天一处 `btn-toggle` 都没有。**
    *
-   * 这一格补的是 `sec-` 前缀那份**隐式豁免名册**（P3e Task 20 复评 F2）：上面几格全都
+   * 这一格补的是 `sec-` 前缀那份**隐式豁免名册**（复评 F2）：上面几格全都
    * 只看 `sec-*.js`，于是 `app.js` / `ui.js` / `pure/*.mjs` 里冒出来的分段按钮**零信号**
    *（复评实测：在 `app.js` 插一处不带 `aria-pressed` 的创建点 ⇒ 全绿，什么都没说；
    * 本轮回填后把同一处变异再打一次 ⇒ **这一格红并点名 `admin-ui/js/app.js×1`**）。
@@ -2047,7 +2047,7 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
 /**
  * ── `.btn-toggle.active` 与 `.badge` 一族：状态不许只由颜色表达（WCAG 1.4.1）──────
  *
- * `.btn-toggle.active` 原来只改 `color` 与 `border-color`。P3e Task 20 在真浏览器上
+ * `.btn-toggle.active` 原来只改 `color` 与 `border-color`。后来在真浏览器上
  * 量过（触屏模拟 `(hover: none)` + `(pointer: coarse)`）：选中与未选中两颗按钮的
  * `font-weight` 都是 400、`text-decoration` 都是 none、`::before` / `::after` 都没有
  * ⇒ **差别只有颜色**。这一格钉的就是"至少还有一条非颜色声明"。
@@ -2056,7 +2056,7 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
  * 声明**看不看得出来**（把 `font-weight: 600` 改成 `font-weight: 401` 它照样绿）。
  * 那一族只能靠真机截图，而截图不是会自己红的守卫——两半分工不同，都不许省。
  *
- * ⚠️⚠️ **判据是逐条声明的属性名，不是「整块里找子串」**（P3e Task 20 复评实测打穿过一次，
+ * ⚠️⚠️ **判据是逐条声明的属性名，不是「整块里找子串」**（复评实测打穿过一次，
  * 回填时换掉）：第一版写的是 `body.includes("text-decoration")` / `body.includes("outline")`，
  * 而 `text-decoration-color` / `outline-color` **本身就是颜色属性**、却逐字包含那两个串
  * ⇒ 把两条声明分别换成它们，两个测试文件**全绿放行**，真机 computed 退回
@@ -2139,7 +2139,7 @@ describe("状态不许只由颜色表达", () => {
    * 「反向控制：.btn-toggle.active 那三条声明的颜色/非颜色分类逐条对得上」用真串守着）——
    * 所以它只能是夹具。它守的是**判据本身**：`isColorProp()` 一旦放松，这一格立刻红，
    * 不必等到有人真去改 `sections.css`。真仓那一侧由上面第一格守着，两层分工不同。
-   * 夹具里的字符串逐字取自 P3e Task 20 复评的 M-G-a / M-G-b 两条变异。
+   * 夹具里的字符串逐字取自复评的 M-G-a / M-G-b 两条变异。
    */
   it("判据自证：text-decoration-color / outline-color 不算「非颜色线索」", () => {
     expect(
@@ -2202,7 +2202,7 @@ function contrast(a: string, b: string): number {
 }
 
 /**
- * ── 轮询状态灯：**非文字**状态指示的对比度下限（WCAG 1.4.11，P3e Task 20 复评 F3）──
+ * ── 轮询状态灯：**非文字**状态指示的对比度下限（WCAG 1.4.11，复评 F3）──
  *
  * 上一版这里只量了**文字**对比度（下一个 describe），于是同一个板块里的
  * `.poll-dot` 三态**在两个主题下都看不见**却零信号：`--ok-fg` / `--danger-fg` 是
@@ -2320,7 +2320,7 @@ describe("轮询状态灯：非文字状态指示（WCAG 1.4.11）", () => {
 });
 
 /**
- * ── `--muted` 的对比度下限（WCAG 1.4.3 AA，P3e Task 20 真机实测）────────────────
+ * ── `--muted` 的对比度下限（WCAG 1.4.3 AA，真机实测）────────────────────────────
  *
  * `--muted` 不只画"次要说明文字"：`.badge` 的底样式、表头 `th`、未选中的 `.btn-toggle`
  * 全是 `--muted` 画在 `--panel-2` 上，而那是本面板对比度最紧的一对。
@@ -2329,7 +2329,7 @@ describe("轮询状态灯：非文字状态指示（WCAG 1.4.11）", () => {
  * 真浏览器五语言 × 两主题冒烟（每格逐板块遍历所有带文字的元素）：
  * **亮色那五格逐格都量出不达标元素、深色那五格 0 处，五种语言逐格同数**
  * ⇒ 是 token 的事，不是文案的事。
- * ⚠️ **具体条数刻意不写**（P3e Task 20 复评 F4）：它随当时渲染了几行模型目录漂
+ * ⚠️ **具体条数刻意不写**（复评 F4）：它随当时渲染了几行模型目录漂
  *（`.badge-off` 是大头），写下来就是一个复现不出来、又没有测法的数。
  *
  * **它接不住什么，明写**：

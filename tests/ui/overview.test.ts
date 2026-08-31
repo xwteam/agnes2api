@@ -27,7 +27,7 @@ const body = {
 };
 
 /**
- * **产品不变式：绝不伪造 0。**（同 keys.mjs 的 cardCounts，评审 C1 在那一侧栽过一次，
+ * **产品不变式：绝不伪造 0。**（同 keys.mjs 的 cardCounts，评审在那一侧栽过一次，
  * 这里从第一天就照着写。）`pool` 块失败（`null`）时五张汇总卡必须显示 `—`。
  */
 describe("poolCounts：没有数据就是没有数据", () => {
@@ -92,7 +92,7 @@ describe("processCells：判据是 process === null，不是 runtime.name", () =
 });
 
 /**
- * **I1（评审必修，Task 4 I4 的原样复发）**：`≈` 必须由后端的 `approximate` 字段
+ * **评审必修（同一条发现的原样复发）**：`≈` 必须由后端的 `approximate` 字段
  * 驱动，不许硬编码。第一版 `usageStats()` 丢掉了这个字段、注释却写着「由
  * approximate 驱动」——那句话当时是假的，`sec-overview.js` 把 `（≈）` 焊死在标题里。
  */
@@ -189,11 +189,11 @@ describe("freshnessValues", () => {
 });
 
 /**
- * **carry-forward（Task 4 → Task 5 → P3c Task 4）**：Key 池板块的 `{ttl}` /
- * `{touch}` 占位符在 P3b Task 4 交付时没有数据源，暂用「点名旋钮 + 括注默认值」。
+ * **carry-forward（跨三轮接力）**：Key 池板块的 `{ttl}` /
+ * `{touch}` 占位符在最初交付时没有数据源，暂用「点名旋钮 + 括注默认值」。
  * 这个函数是它们现在唯一的数据源——两个板块共用同一份取值，不许各写各的。
  *
- * ⚠️ **`edge` 是 P3c Task 4 加的第三个旋钮**（P3b 待办第 4 条的收尾）：
+ * ⚠️ **`edge` 是后来加的第三个旋钮**（待办第 4 条的收尾）：
  * `keys.freshness` 那句文案曾经把「约 60 秒」的 KV 边缘缓存耗时硬编码进
  * 五语言字典，现在与 `ov.freshness.pool` 一样由 `kvEdgeCacheMs` 驱动。
  */
@@ -207,7 +207,7 @@ describe("poolKnobs：Key 池板块与概览板块共用的三个旋钮当前值
 });
 
 /**
- * **offsetMs：P3b 待办第 8 条**——概览 / Key 池 / 事件三个板块曾经各自手抄同一行
+ * **offsetMs：待办第 8 条**——概览 / Key 池 / 事件三个板块曾经各自手抄同一行
  * `-new Date().getTimezoneOffset() * 60000`，现在只有这一份。
  */
 describe("offsetMs：三个板块共用的本地时区偏移", () => {

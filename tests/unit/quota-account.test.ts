@@ -94,7 +94,7 @@ describe("配额账（改造后：list 与 put 都归零，get 与请求数解�
     expect(res.status).toBe(200);
 
     // 四个数字一起断言：
-    //   list 0  —— Task 3 用 pool:index 索引键归的零（改造前实测为 1）。
+    //   list 0  —— 用 pool:index 索引键归的零（改造前实测为 1）。
     //   get  21 —— 1 次索引 + N 次记录。**只有每个 TTL 的第一次**是这个数，
     //              TTL 内的后续请求是 0（下一条用例），所以它与请求数无关。
     //   put  0  —— 从 1 变成 0。这一次只改了 lastUsedAt，是纯遥测字段，

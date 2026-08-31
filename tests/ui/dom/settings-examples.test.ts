@@ -6,7 +6,7 @@ import { I18N } from "../../../admin-ui/js/i18n-dict.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
- * **设置页第 4 张卡（集成示例）的渲染与接线（P3d Task 7 Step 4）。**
+ * **设置页第 4 张卡（集成示例）的渲染与接线。**
  *
  * `tests/ui/examples.test.ts`「URL 由 origin 加真源的 pathTemplate 拼出来 —— 换一条路径，示例里那条必须跟着换」
  * 把拼代码那一步测得很细，**但没有任何东西验证板块文件真的把 `origin` 读进来、
@@ -396,7 +396,7 @@ describe("设置页第 4 张卡：集成示例", () => {
 });
 
 /**
- * ── `aria-pressed`：示例卡那两排分段的选中态得读得出来（P3e Task 20）─────────────
+ * ── `aria-pressed`：示例卡那两排分段的选中态得读得出来 ───────────────────────────
  *
  * 这张卡上**有两排**分段选择器（协议一排、语言一排），它们共用 `.btn-group` /
  * `.btn-toggle`。⚠️ **两排都要断言**：只测一排的话，另一排漏写 `aria-pressed`

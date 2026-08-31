@@ -106,9 +106,9 @@ const EXPECTED_REFUSE_KEY: ReadonlyArray<readonly [string, string]> = [
   ["not_wired", "reg.refuse.not_wired"],
   ["unknown_channel", "reg.refuse.unknown_channel"],
   ["channel_not_configured", "reg.refuse.channel_not_configured"],
-  // ── P3d Task 8：出站探测护栏的两种 ────────────────────────────────────────
+  // ── 出站探测护栏的两种 ────────────────────────────────────────────────────
   //
-  // ⚠️ **这两条是「后端加了拒绝原因、前端没跟上」的真实形态**：Task 8 给通道测试
+  // ⚠️ **这两条是「后端加了拒绝原因、前端没跟上」的真实形态**：后端给通道测试
   // 上了护栏（此前连点必成功），而这张表当时**没有跟着加**⇒ `refuseReasonKey`
   // 返回 `null` ⇒ `sec-registrar.js` 退回通用的 `reg.channel.testError`
   // ⇒ **「刚测过，隔几秒再来」与「这条通道真的连不上」在面板上一模一样**，
@@ -131,7 +131,7 @@ describe("refuseReasonKey：拒绝原因 → 文案（状态码不是判据）",
   it("同一个状态码下的几种映射到互不相同的键 —— 三种 409、四种 429 不许说成同一句话", () => {
     const conflict = ["tend_in_flight", "locked", "registrar_disabled"].map(refuseReasonKey);
     expect(new Set(conflict).size, "三种 409 里有两种共用了同一句文案").toBe(3);
-    // ⚠️ **429 从两种变成四种了**（P3d Task 8 加了护栏那两种）。
+    // ⚠️ **429 从两种变成四种了**（护栏加了那两种）。
     // 「今天的额度用完了」「再等几分钟」「上一次还在飞」「刚探过」——四种处置各不相同，
     // 而它们的状态码**一模一样**。这正是「状态码不是判据」这条规矩的最强证据。
     const rateLimited = ["manual_cooldown", "write_budget_exhausted", "probe_in_flight", "probe_cooldown"]
@@ -189,7 +189,7 @@ describe("两条通道完全平级（设计 §10.3）", () => {
    * ⚠️⚠️ **这一格只能钉住「没有出现某些具体的词」，钉不住「这句话是事实不是偏好」。**
    * 「两条里挑一条的话就用 X」这种不含任何禁用词的偏好表述，任何词面匹配都抓不住
    *（`tests/unit/i18n-dict.test.ts` 的「通道相关命名空间不出现任何偏好词（含繁体变体）」
-   *  那一格自己也明写了这条边界；⚠️ **那一格的作用域在 P3e Task 7 从「只有 `reg.*`」
+   *  那一格自己也明写了这条边界；⚠️ **那一格的作用域后来从「只有 `reg.*`」
    *  扩到了设置页那几个通道前缀，用例名跟着改过**——边界那句话没变）。
    * ⇒ **第 5 条如实登记为人工勾选项**，下面这一格是它的下界，不是它本身。
    *
@@ -383,7 +383,7 @@ describe("roundFailures / mintedByChannelText", () => {
 
   /**
    * ⚠️⚠️ **这一格是「两条通道完全平级」在补池历史上的落点**（`TendResult.mintedByChannel`
-   * 上那段评审 I8）：`minted` 只有总数，一轮全靠**备**通道铸出来时，总数记在哪条
+   * 上那段评审发现）：`minted` 只有总数，一轮全靠**备**通道铸出来时，总数记在哪条
    * 通道名下是看不出来的。没有这一格，备通道的战绩会被持续记到主通道头上。
    */
   it("逐通道铸出数：全靠备通道铸出来的那一轮，功劳记在备通道名下", () => {

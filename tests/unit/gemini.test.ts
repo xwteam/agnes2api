@@ -104,7 +104,7 @@ describe("toGeminiStream", () => {
 
   /**
    * 与 `tests/unit/anthropic.test.ts「首个事件在上游尚未结束时就已产出（真流式）」`
-   * **同形的一格**。P3e Task 12 补。
+   * **同形的一格**，后来补的。
    *
    * **在这一格之前 gemini 是四条协议里唯一没有 unit 级逐块性观测的**：把
    * `src/core/protocol/sse.ts` 的 `toSseStream` 从逐块 `pull` 改成整段缓冲，
@@ -175,7 +175,7 @@ describe("toGeminiStream", () => {
   });
 
   /**
-   * ── **这一格是 Playground 那句文案的红线之一（P3e Task 22 回填 F1）** ────────────
+   * ── **这一格是 Playground 那句文案的红线之一（回填时补的）** ─────────────────────
    *
    * 与 `tests/unit/responses.test.ts` 的
    * 「toResponsesStream() 吐出去的字节里一个 usage 字段都没有」是**同一句全称句的另一半**：

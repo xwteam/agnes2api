@@ -15,7 +15,7 @@ import type { Storage } from "../../src/ports/storage.js";
 import type { KeyRecord } from "../../src/core/types.js";
 
 /**
- * **四种操作全数上**：Task 2 的教训是既有的 CountingStorage 只数 `put`/`delete`
+ * **四种操作全数上**：早先的教训是既有的 CountingStorage 只数 `put`/`delete`
  * 不数 `get`，于是一条关于 `get` 的变异完全测不出来。计数桩漏掉哪一种，
  * 关于那一种的断言就是假的。
  */
@@ -258,7 +258,7 @@ describe("all()：热路径零 list", () => {
 describe("空结果兜底：权威的空索引不许让手工导入的 key 隐身", () => {
   /**
    * 评审用真 KV 复现的回退场景，逐步跑一遍。
-   * P3a 还没有面板、注册机默认关闭 ⇒ 手工导入就是 Worker 用户装 key 的**唯一**路径，
+   * 那时还没有面板、注册机默认关闭 ⇒ 手工导入就是 Worker 用户装 key 的**唯一**路径，
    * 而改造前 `all()` 直接 list("key:")，导入即刻生效。
    */
   it("对账在空池写下权威空索引之后，手工导入的 key 仍然看得见", async () => {
@@ -315,7 +315,7 @@ describe("空结果兜底：权威的空索引不许让手工导入的 key 隐�
     // ① 造一个幽灵索引项：add 之后只删记录，索引里把 id 留着。
     const ghost = await repo.add("sk-ghost-key-aaaaaaaa");
     s.m.delete(KEY_PREFIX + ghost.id);
-    // ② 再塞一条索引不知道的记录（手工导入，或将来 P3c 面板新增）。
+    // ② 再塞一条索引不知道的记录（手工导入，或将来面板新增）。
     const manual = orphanRecord();
     s.m.set(KEY_PREFIX + manual.id, JSON.stringify(manual));
     s.reset();
@@ -686,7 +686,7 @@ describe("一次瞬时 list 失败不许粘住十分钟", () => {
     }
     const afterThree = st.lists;
     /**
-     * ⚠️ **「恰好三次」这一条以前没有被断言过**（全分支评审 A9）：这一格原来只
+     * ⚠️ **「恰好三次」这一条以前没有被断言过**（评审发现 A9）：这一格原来只
      * 检查第 4 次之后 `st.lists` 不再增长，而 `keypool-repo.ts` 的注释却写着
      * 「按这个时序实测钉住：三次真实尝试恰好落在 t0 / t0+60s / t0+120s」。
      * 把 `LIST_FAIL_ESCALATE_AFTER` 从 3 改成 2 或 5，那句话就不成立了，
@@ -728,7 +728,7 @@ describe("索引写失败的退避常数不许是死条件", () => {
     expect(INDEX_WRITE_RETRY_MS).toBeGreaterThanOrEqual(5 * DEFAULT_POOL_CACHE_TTL_MS);
     expect(READ_PATH_LIST_BACKOFF_MS).toBe(600_000);
     expect(LIST_FAIL_FAST_RETRY_MS).toBe(60_000);
-    // ⚠️ **LIST_FAIL_ESCALATE_AFTER 以前不在这张表里**（全分支评审 A9）——它是
+    // ⚠️ **LIST_FAIL_ESCALATE_AFTER 以前不在这张表里**（评审发现 A9）——它是
     // keypool-repo.ts 里**唯一一个缺席常数表的导出常数**，而 keypool-repo.ts 的
     // 注释恰恰拿"三次"当它整段时序论证的支点。
     expect(LIST_FAIL_ESCALATE_AFTER).toBe(3);

@@ -16,7 +16,7 @@ import { WORKER_ROUND_BUDGET_MS } from "../../src/core/registrar/types.js";
 
 /**
  * `GET /admin/api/registrar/status` 与
- * `POST /admin/api/registrar/channels/:channel/test`（P3c Task 6，设计 §10.3 / §11），
+ * `POST /admin/api/registrar/channels/:channel/test`（设计 §10.3 / §11），
  * 外加 `POST /admin/api/registrar/tend` 本任务新增的 `channel` 参数。
  *
  * ⚠️⚠️ **两个夹具，作用不同，别混着用**（与 `tests/contract/manual-tend.test.ts` 同一套）：
@@ -25,7 +25,7 @@ import { WORKER_ROUND_BUDGET_MS } from "../../src/core/registrar/types.js";
  * · **B（`buildApp`，真装配）**：跑的是 `wire.ts` 里那份真的 `runManualTendRound`
  *   与真的 `probeChannel`，**不 mock**。
  *
- * ⚠️⚠️ **本文件第一版 28 格全部只有夹具 A，那是一整个边界的零覆盖**（评审 C1/I7）。
+ * ⚠️⚠️ **本文件第一版 28 格全部只有夹具 A，那是一整个边界的零覆盖**（评审发现）。
  * 实测过的两条逃逸：
  * · `wire.ts` 的 `tend: (channel) => runManualTendRound(env, storage, channel)`
  *   改成传 `null` ⇒ **1931/1931 全绿**。而那正是「面板写着 MoeMail、实际按主通道跑」
@@ -55,7 +55,7 @@ const DAY_END = 20_001 * 86_400_000;
 /** 注册机开着、两条通道都配齐（`channel_not_configured` 那几格需要它们真的存在）。 */
 /**
  * ⚠️⚠️ **`TARGET_KEYS` 与 `MINT_BATCH` 刻意挑成让 `pool` 那五个数字两两不同**
- *（评审 I9 / M-5）：夹具里 `target=9`、`counted=4`、`gap=5`、`fresh=2`、`mintBatch=3`。
+ *（评审发现 / M-5）：夹具里 `target=9`、`counted=4`、`gap=5`、`fresh=2`、`mintBatch=3`。
  *
  * 第一版是 `target=4 / counted=4 / gap=0 / fresh=2 / mintBatch=2` ⇒
  * **`counted === target` 且 `fresh === mintBatch`**，于是把 `counted` 写成 `reg.targetKeys`、
@@ -80,7 +80,7 @@ const jsonHeaders = { ...withKey, "content-type": "application/json" };
 interface FixtureOptions {
   storage?: MemoryStorage | CountingStorage;
   /**
-   * **一个会走的时钟**（评审 I8）。缺省是冻结在 `NOW`。
+   * **一个会走的时钟**（评审发现）。缺省是冻结在 `NOW`。
    *
    * ⚠️ 冻结时钟下 `latencyMs` 的**真值恒为 0**，于是把 `deps.now() - startedAt`
    * 整个换成字面量 `0`，全套用例照样绿——「延迟」这一半在那种夹具里根本不可观测，
@@ -229,7 +229,7 @@ describe("GET /admin/api/registrar/status", () => {
   });
 
   /**
-   * ⚠️⚠️ **跨任务复验：Task 1 的 `narrowTendHistory` 在这条读路径上真的挡着。**
+   * ⚠️⚠️ **跨任务复验：`narrowTendHistory` 在这条读路径上真的挡着。**
    * 往 `tend:history` 里塞一条 `null`（外部写坏存储的最小形态），这条端点**不许 500**，
    * 而且必须**说出来丢了几条**——丢掉 `malformed` 就等于把证据静默抹掉。
    */
@@ -355,7 +355,7 @@ describe("GET /admin/api/registrar/status", () => {
   });
 
   /**
-   * ⚠️⚠️ **上一格的夹具是 `probe: ok:true` —— 它只量了成功那一支（全分支评审 I3）。**
+   * ⚠️⚠️ **上一格的夹具是 `probe: ok:true` —— 它只量了成功那一支（评审发现）。**
    *
    * `channelTestHandler` 的 `catch` 会打一条 `registrar.channel_test_failed`
    *（`src/http/admin/handlers/registrar.ts` 那条 `deps.logger.log`），而生产装配里
@@ -455,8 +455,8 @@ describe("GET /admin/api/registrar/status", () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * ⚠️ **P3d Task 8 起这条端点带护栏了，这是一次行为变更**：同一条通道在
- * `PROBE_MIN_INTERVAL_MS` 内的第二次点击会拿到 **429**（P3c 账本第 799 行登记的
+ * ⚠️ **这条端点后来带护栏了，这是一次行为变更**：同一条通道在
+ * `PROBE_MIN_INTERVAL_MS` 内的第二次点击会拿到 **429**（账本第 799 行登记的
  * 「通道连通性端点无冷却/预算护栏」那个缺口，补法是与单把 key 验活**共用一套**，
  * 见 `src/http/admin/probe-guard.ts`）。
  *
@@ -516,7 +516,7 @@ describe("POST /admin/api/registrar/channels/:channel/test", () => {
   });
 
   /**
-   * ⚠️⚠️ **I8：`latencyMs` 必须是真的量出来的，不是一个恒为 0 的字面量。**
+   * ⚠️⚠️ **`latencyMs` 必须是真的量出来的，不是一个恒为 0 的字面量。**
    *
    * 两格成对，方向相反：
    * · 时钟会走 ⇒ `latencyMs > 0`（把两处 `deps.now() - startedAt` 换成 `0` ⇒ 红）；
@@ -609,7 +609,7 @@ describe("POST /admin/api/registrar/channels/:channel/test", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// POST /admin/api/registrar/tend 的 channel 参数（Task 6 新增）
+// POST /admin/api/registrar/tend 的 channel 参数（后来新增）
 // ───────────────────────────────────────────────────────────────────────────
 
 describe("立即补池的 channel 参数：「只用这一条通道」", () => {
@@ -644,7 +644,7 @@ describe("立即补池的 channel 参数：「只用这一条通道」", () => {
    * ⚠️⚠️ **拒绝那一支一格名额都不许消费。**
    * 校验排在四条护栏之前，所以护栏键不该被写、执行体不该被调。写在护栏之后的话，
    * 一次拼错通道名的点击会白白吃掉一格日预算 + 起算一次 10 分钟冷却，
-   * 而**什么都没跑**——这与 Task 5 把「抢锁失败」挪到护栏之前是同一条理由。
+   * 而**什么都没跑**——这与把「抢锁失败」挪到护栏之前是同一条理由。
    */
   it("通道名不认识：400，护栏键没被写、执行体没被调", async () => {
     const st = new CountingStorage(new MemoryStorage(undefined, () => NOW));
@@ -763,7 +763,7 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
   }
 
   /**
-   * ⚠️⚠️ **C1：这一格是「面板写着 MoeMail、实际按主通道跑」唯一的护栏。**
+   * ⚠️⚠️ **这一格是「面板写着 MoeMail、实际按主通道跑」唯一的护栏。**
    *
    * 观测点是 **`tend:history` 那一行的 `primaryChannel`**，不是状态码、也不是响应体。
    * 三样东西在变异体里全都不会变：
@@ -801,7 +801,7 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
   });
 
   /**
-   * ⚠️⚠️ **I7：真的 `probeChannel` 走没走到 `listDomains`。**
+   * ⚠️⚠️ **真的 `probeChannel` 走没走到 `listDomains`。**
    *
    * 把全局 `fetch` 换成桩（`NativeFetcher.fetch` 调的就是它），于是这一格同时钉住三件事，
    * 而**任何一件都不是「返回了个数字」能冒充的**：
@@ -875,7 +875,7 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
   });
 
   /**
-   * **上一格的夹具是 200 —— 它同样只量了成功那一支（全分支评审 I3 的镜像另一半）。**
+   * **上一格的夹具是 200 —— 它同样只量了成功那一支（评审发现的镜像另一半）。**
    *
    * 真装配这一侧要单独量的是：`buildTendDeps` 那一截 + 真 `StoreLogger` 合起来，
    * 失败请求**自己**这一次到底写不写。量出来是 **0**：事件进缓冲，

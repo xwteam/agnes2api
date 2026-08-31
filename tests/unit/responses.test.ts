@@ -193,7 +193,7 @@ describe("toResponsesStream", () => {
   });
 
   /**
-   * ── **这一格是 Playground 那句文案的红线之一（P3e Task 22 回填 F1）** ────────────
+   * ── **这一格是 Playground 那句文案的红线之一（回填时补的）** ─────────────────────
    *
    * `admin-ui/js/sec-playground.js` 文件头「流式那一轮为什么不显示 token 用量」那段里
    * 写着一句**全称句**：「responses 与 gemini 那两条**一个 usage 字段都不发**」。

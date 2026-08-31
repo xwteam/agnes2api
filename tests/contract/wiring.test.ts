@@ -187,7 +187,7 @@ describe("buildApp 的存储可写性探测", () => {
 /**
  * 记账用的存储：统计 get / put / delete，用来证明 `/health` 不触发任何存储 I/O。
  *
- * ⚠️ **它原来只统计 `get`，名字也叫 `GetCountingStorage`**（全分支评审 I1）。
+ * ⚠️ **它原来只统计 `get`，名字也叫 `GetCountingStorage`**（评审发现）。
  * 注释写的是「不触发任何存储读取」，而 `src/http/routes/health.ts:17` 与
  * `src/http/config-refresh.ts:17` 两处的措辞都是**「不触发任何存储 I/O」**——
  * 写那一侧当时根本不可观测，而那一侧恰恰是真的被违反着的：`logFlush` 也挂在 `*`
@@ -242,7 +242,7 @@ describe("/health 的零存储 I/O 契约（configRefresh 与 logFlush 两处例
   });
 
   /**
-   * **写那一侧**（全分支评审 I1）。
+   * **写那一侧**（评审发现）。
    *
    * 关键在于**先把事件缓冲喂满**：`maybeFlush()` 第一行就是 `buffer.length === 0`
    * 时直接返回，缓冲空着的话 `/health` 走不走 `logFlush` 完全一样，这条豁免又变成
@@ -423,7 +423,7 @@ describe("记账失败不许把成功的转发变成 500", () => {
     // 行为断言，不是形状断言：状态码 **和** 响应体都要对。
     expect(res.status, "记账失败被当成了请求失败").toBe(200);
     expect(await res.text()).toContain('"ok"');
-    // 而且这件事必须留下痕迹——P3b 的事件板块要按事件名筛选。
+    // 而且这件事必须留下痕迹——事件板块要按事件名筛选。
     expect(logger.events(), "记账失败必须落一条可筛选的事件").toContain("pool.commit_failed");
   });
 });

@@ -190,7 +190,7 @@ function fail(reason: FailReason, message: string, retryAfterSec?: number): Resp
  * **「message 也没变」这半是靠下面那两处条件拼接做到的，不是白来的**：无条件拼上
  * 「0 把被管理员停用」会让**每一条既有的 503 都多出一句废话**，而全仓没有任何一条
  * 用例断言过 `all_cooling` 的 message 文本（评审实测），**全绿在这件事上什么都
- * 不证明**。现在由 `tests/unit/dispatcher.test.ts「503 的 message 文本：没有停用的 key 时与 P3b 逐字相同」`
+ * 不证明**。现在由 `tests/unit/dispatcher.test.ts「503 的 message 文本：没有停用的 key 时与旧版逐字相同」`
  * 逐字节钉着两种变体。
  */
 function unavailable(records: KeyRecord[], now: number): Response {

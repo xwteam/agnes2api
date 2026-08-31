@@ -3,7 +3,7 @@ import { startTendScheduler } from "../../src/core/tend-scheduler.js";
 
 /**
  * 假定时器队列。**注意 flush 用的是真 setTimeout(0) 这个宏任务**，
- * 不是 `await Promise.resolve()` 那种微任务自旋——P2 栽过一次「微任务饥饿式挂起」：
+ * 不是 `await Promise.resolve()` 那种微任务自旋——本仓栽过一次「微任务饥饿式挂起」：
  * 变异之后测试挂死到连 vitest 自身的超时都排不上号，看起来像卡住而不是失败。
  */
 function fakeTimers() {
@@ -38,7 +38,7 @@ describe("startTendScheduler", () => {
     expect(t.pending[0]!.ms).toBe(1_800_000);
   });
 
-  it("**间隔改了，第二次重排就用新值**——I4 的全部内容", async () => {
+  it("**间隔改了，第二次重排就用新值**——这条评审发现的全部内容", async () => {
     const t = fakeTimers();
     // 两次读到不同的值。fixture 刻意给不同值：都给 1800000 的话，
     // 把实现改回「读启动快照」也会通过——那是典型的无冲突 fixture。
@@ -186,7 +186,7 @@ describe("startTendScheduler", () => {
   // （约 24.8 天）时 node:timers **既不抛错也不钳到上限**，而是静默把延迟当成
   // `1`（已实测：`setTimeout(fn, 5_000_000_000)` 约 1ms 后就触发）。方向与直觉
   // 相反：把 TEND_INTERVAL_MS 设成超大值不是「补池几乎永不触发」，而是变成
-  // 只受一次 readIntervalMs IO 往返约束的紧循环。posInt 从 P1/P2 起就没有给
+  // 只受一次 readIntervalMs IO 往返约束的紧循环。posInt 从一开始就没有给
   // 这个字段设上界，本任务把它从「只能重启进程改」变成「面板保存热更新」，
   // 可达性因此实质性提升，必须在这里钳一道。
 

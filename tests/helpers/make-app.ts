@@ -27,7 +27,7 @@ export const TEST_ADMIN_TOKEN = "test-admin-token-0123456789";
 export interface MakeAppOptions {
   /**
    * **显式传 `undefined` 表示「没配 ADMIN_TOKEN」**，与「不传这个键」是两回事：
-   * 后者取默认值 `TEST_ADMIN_TOKEN`。所以下面用 `in` 判断而不是 `??`——P1 那次
+   * 后者取默认值 `TEST_ADMIN_TOKEN`。所以下面用 `in` 判断而不是 `??`——早期那次
    * 实际发生的鉴权绕过，成因正是 `??` 对空串/undefined 的下坠语义。
    */
   adminToken?: string | undefined;
@@ -36,7 +36,7 @@ export interface MakeAppOptions {
    * 注入的存储。默认 `new MemoryStorage()`。
    * 存在的理由：好几条不变量（记账失败不影响响应、overview 逐块降级、事件落库）
    * 只有在「存储会在指定时机抛错」时才可观测，而照抄一遍 wire.ts 的装配去验证，
-   * 验证的永远是抄件不是原件（P3a Task 4 已实测过这个陷阱）。
+   * 验证的永远是抄件不是原件（已实测过这个陷阱）。
    */
   storage?: Storage;
   /**
@@ -49,7 +49,7 @@ export interface MakeAppOptions {
   /** 被环境变量锁定的字段清单。默认空数组。 */
   envLocked?: readonly string[];
   /**
-   * 事件落库分片 id（Task 6）。默认固定字符串——测试要断言可预测的存储键
+   * 事件落库分片 id。默认固定字符串——测试要断言可预测的存储键
    * （`event:<shardId>`），不能用生产那种每次随机的 `crypto.randomUUID()`。
    */
   shardId?: string;
@@ -57,7 +57,7 @@ export interface MakeAppOptions {
    * 用**生产那一个** `ConfigHolder`（`createConfigHolder` + `CONFIG_TTL_MS`），
    * 而不是 `fixedConfigHolder`。
    *
-   * ⚠️ **配额类用例必须传它**（全分支评审 C2）。`fixedConfigHolder.ensureFresh`
+   * ⚠️ **配额类用例必须传它**（评审发现）。`fixedConfigHolder.ensureFresh`
    * 是一个空函数，于是**生产上每请求都会经过的那次配置读在夹具里根本不存在**：
    * `configRefresh` 中间件挂在 `createApp` 的第一位，TTL 是 30 秒，而事件板块稳态
    * 的轮询间隔是 60 秒 ⇒ 生产上**每一轮轮询恰好多一次 `storage.get("config")`**。
@@ -71,7 +71,7 @@ export interface MakeAppOptions {
    */
   realConfigHolder?: boolean;
   /**
-   * 注册机的接线（P3c Task 5 建，Task 6 扩到三样成套）。
+   * 注册机的接线（先建了一样，后来扩到三样成套）。
    * **默认不传 ⇒ `createApp` 收到 `undefined`**，三条端点会如实回 `503 not_wired`。
    *
    * 需要真的验四条护栏的用例传一个可控的执行体进来（例如一个手动 resolve 的
@@ -87,7 +87,7 @@ export interface MakeAppOptions {
    */
   tendGate?: TendGate;
   /**
-   * 配置读写的接线（P3c Task 7）。**默认不传 ⇒ `createApp` 收到 `undefined`**，
+   * 配置读写的接线。**默认不传 ⇒ `createApp` 收到 `undefined`**，
    * 四条端点会如实回 `503 not_wired`。
    *
    * ⚠️ **`storage` 必须与用例自己观测的那一个是同一个实例**：`config` 键就写在
@@ -97,7 +97,7 @@ export interface MakeAppOptions {
    */
   config?: ConfigWiring;
   /**
-   * Tier-2 用量 sink（P3d Task 3）。**默认不传 ⇒ `createApp` 收到 `undefined`
+   * Tier-2 用量 sink。**默认不传 ⇒ `createApp` 收到 `undefined`
    * ⇒ Tier-2 关着**，与生产默认值一致，既有的几百条用例行为一个字节都没变。
    *
    * ⚠️ **传它只覆盖「sink 存在之后会发生什么」那一半**：「`USAGE_STATS_ENABLED`
@@ -120,7 +120,7 @@ export const TEST_CONFIG: GatewayConfig = {
   // 注册机默认关闭，测试夹具无需凭据。
   registrar: registrarFromEnv({}, {}),
   degraded: false,
-  // **Tier-2 默认关，与生产默认值逐字相同**（P3d 计划全局约束 16）。
+  // **Tier-2 默认关，与生产默认值逐字相同**（全局约束）。
   // ⚠️ 把它改成 true 在这里是**无效**的：`createApp` 认的是 `AppDeps.usageSink`
   // 那一格（建没建 sink），不是配置里这个开关——真正读这个开关的是 `wire.ts`。
   // ⇒ 要验 Tier-2 的用例走 `buildApp` + `USAGE_STATS_ENABLED`，
@@ -143,12 +143,12 @@ export async function makeApp(
   options: MakeAppOptions = {},
 ) {
   const config = { ...TEST_CONFIG, ...configOverride };
-  // **评审 C5 追加**：默认存储与下面的 StoreLogger 必须共用同一个 `now`——
+  // **评审追加**：默认存储与下面的 StoreLogger 必须共用同一个 `now`——
   // `MemoryStorage` 的 TTL 判定默认走真实 `Date.now()`，本仓测试里的假时钟
   // 几乎全是贴近纪元零点的小数值（`() => 1000`/`let t = 0` 这类），如果不对齐，
   // `StoreLogger` 算出来的 `expiresAt`（同样基于这个假时钟）相对于 `MemoryStorage`
   // 的真实内部时钟必然"生下来就已经过期"，任何经这条默认路径落盘的事件都会立刻
-  // 读不到——已实测过一次（详见 P3b Task 6 报告"评审修复轮 4"）。
+  // 读不到——已实测过一次（当时的"评审修复轮 4"登记在案）。
   const storage = options.storage ?? new MemoryStorage(undefined, now);
   // 生产 holder 那一支的 `prime()` 会真的读一次 `config` 键（配额类用例都在
   // makeApp 返回之后才开始计数，所以这一次落在量测窗口之外）。
@@ -175,7 +175,7 @@ export async function makeApp(
   // 是鉴权唯一对外可断言的行为，静默掉就没法验。repo 仍旧静默——它的日志与本组
   // 断言无关，混进来只会让 entries 变吵。
   const recording = recordingLogger();
-  // 事件落库 sink（Task 6）。**与 repo 共用同一个 `storage`/`now`**——这样
+  // 事件落库 sink。**与 repo 共用同一个 `storage`/`now`**——这样
   // `tests/contract/admin-events.test.ts` 注入自己的 `CountingStorage` 时，落盘
   // 真的打在调用方能观测到的那个实例上，不是另一份照抄的装配（同一条理由见
   // wire.ts 的 buildApp）。`recording` 仍旧是外部看到的 `logger`（保留

@@ -8,7 +8,7 @@ import { FakeFetcher } from "../helpers/fake-fetcher.js";
 import type { Storage } from "../../src/ports/storage.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 
-// I3：app.ts 原本没有 onError，`c.req.json()` 与 `res.json()` 的异常直接冒泡，
+// app.ts 原本没有 onError，`c.req.json()` 与 `res.json()` 的异常直接冒泡，
 // 五条路由实测全部返回 `500 Internal Server Error`（text/plain）：
 // 既把客户端错误报成了服务端错误，响应也不是 JSON，四种协议的 SDK 都解析不了。
 

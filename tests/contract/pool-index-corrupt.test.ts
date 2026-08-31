@@ -80,7 +80,7 @@ runCorruptIndexContract("MemoryStorage", () => {
 //
 // **刻意不跑 FileStorage**：它把整个 `store.json` 当一份 JSON 读，「只有 pool:index
 // 这一个值坏了」在文件形态下压根不是一个能存在的状态——真把那一段写坏，坏掉的是
-// 整份存储，`get`/`list`/`put` 全都抛，那是另一个（P1 遗留的）问题，不是这条契约。
+// 整份存储，`get`/`list`/`put` 全都抛，那是另一个（早期遗留的）问题，不是这条契约。
 // 硬把它塞进来只会得到一条断言了假命题的用例。
 if (IS_WORKERD) {
   const { env } = await import("cloudflare:test");

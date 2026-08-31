@@ -14,7 +14,7 @@ async function rawStore(dir: string): Promise<Record<string, unknown>> {
 }
 
 /**
- * **评审 C5（第二次修复）**：`FileStorage` 的 TTL 不能只是"逻辑上读不到"（那
+ * **评审发现（第二次修复）**：`FileStorage` 的 TTL 不能只是"逻辑上读不到"（那
  * `MemoryStorage` 的惰性隐藏也做得到），必须是**物理上从 `store.json` 里消失**
  * ——`Storage` 契约测试（`tests/contract/storage.test.ts`）已经覆盖了"逻辑可见性"
  * 这条通用行为，这里专门补 `FileStorage` 独有的"磁盘字节数不再无上限增长"这条

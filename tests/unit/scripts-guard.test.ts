@@ -21,7 +21,7 @@ describe("wrangler.toml 的 KV id 必须仍是占位符", () => {
 });
 
 /**
- * Task 8 复验登记的缺口：占位符门禁只查 id，不查 binding 名——把 `[[kv_namespaces]]`
+ * 复验登记的缺口：占位符门禁只查 id，不查 binding 名——把 `[[kv_namespaces]]`
  * 的 `binding = "POOL"` 改成别的名字，占位符检查照样通过，契约测试的 miniflare
  * `kvNamespaces: ["POOL"]` 也不读 wrangler.toml 所以照样通过，唯独真机部署时
  * `env.POOL`（`src/entry/worker.ts`）会是 `undefined`，运行时才炸。
@@ -127,7 +127,7 @@ describe("check-no-binary 在 CI 门禁列表里", () => {
 });
 
 /**
- * ── i18n 门禁在 CI 上是**自己一步**（P3e Task 15 复评的配套）──────────────────
+ * ── i18n 门禁在 CI 上是**自己一步**（复评的配套）──────────────────────────────
  *
  * `scripts/check-i18n.mjs` 与 `tests/unit/i18n-dict.test.ts` 是**故意的两份独立实现**，
  * 两边的文件头都写着这件事。上一版那句话是靠**序号**说的（「CI 第 N 道跑这个脚本、
@@ -270,7 +270,7 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
    * 而 ci.yml 里"这一档红该怎么处置"那段话只写在 `#` 注释里，他一个字也看不到。
    * **最省事的处置就变成了把这道门禁放宽。**
    *
-   * ⚠️ **那段话本身在 P3e 全分支评审 HIGH-1 里改过一次**：它原来写的是「在历史被重写
+   * ⚠️ **那段话本身在评审里改过一次**：它原来写的是「在历史被重写
    * 干净之前这是已登记的预期」，而一次性历史重写早已落地（全历史 0 命中）——
    * 那句话会把一次**新回归**说成一笔**已了结的欠账**，并把处置指向一个已经跑过的
    * 不可逆操作。**这一格没有跟着改，也不需要跟着改**，因为它锚的是下面那个前缀。
@@ -317,16 +317,16 @@ it("CI 恰好十三道门，编号 1/13 到 13/13 各出现一次", () => {
     const n = ci.split(`name: ${i}/13 `).length - 1;
     expect(n, `编号 ${i}/13 出现了 ${n} 次`).toBe(1);
   }
-  // 反向：不许还剩下旧编号（评审 F3 从十道扩到十一道；全分支评审 B2 又插入
+  // 反向：不许还剩下旧编号（评审 F3 从十道扩到十一道；评审发现 B2 又插入
   // check-comment-refs 又插了一步进去，原来的 8/11..11/11 全部跟着挪一位；
-  // P3f 阶段 2 给 docs/logo.png 配的那道 PNG 结构审计插在第二位，2/12..12/12 又挪了一位）。
+  // 后来给 docs/logo.png 配的那道 PNG 结构审计插在第二位，2/12..12/12 又挪了一位）。
   for (const stale of [10, 11, 12]) {
     expect(ci, `还有步骤写着 N/${stale}`).not.toMatch(new RegExp(`name: \\d+\\/${stale} `));
   }
 });
 
 /**
- * ── ci.yml 自己的注释行里不许写门禁序号（P3e Task 15 复评 MED-5）──────────────
+ * ── ci.yml 自己的注释行里不许写门禁序号（复评 MED-5）──────────────────────────
  *
  * `scripts/check-comment-refs.mjs` 的规则 E 把「注释里写门禁的绝对序号」判成错，
  * 理由是 CI 里增删或重排一步、全仓序号一次性变假。**但那道门禁的 `walk()`
@@ -369,7 +369,7 @@ it("ci.yml 的注释行里不许写门禁的绝对序号（这道门禁的射程
 });
 
 /**
- * **注释指向门禁（`scripts/check-comment-refs.mjs`，全分支评审 B2）在 CI 里**：注释里写「这条由某某用例钉着」时，
+ * **注释指向门禁（`scripts/check-comment-refs.mjs`，评审发现 B2）在 CI 里**：注释里写「这条由某某用例钉着」时，
  * 那个指向必须解析得开。与上面 `check-no-binary` 那条同一个模式——这里只钉
  * 「CI 里确实跑了这一步」，脚本自身的正确性由
  * `tests/unit/check-comment-refs.test.ts` 的「干净的树：exit 0」一带单独验证。
@@ -386,7 +386,7 @@ describe("check-comment-refs 在 CI 门禁列表里", () => {
  * 它们是 `pnpm test 2>&1 | tee ... ; grep ...`，没有 pipefail 时管道的退出码取最后一条命令，
  * **测试失败会被 tee/grep 的成功退出码吃掉，CI 全绿**。
  * 上面那组断言了这两步的裸命令、grep 次数、pnpm build——**唯独没断言它**。
- * 今天它在位（P3a Task 8 评审核过），所以这是「护栏的护栏」，不是现存缺陷。
+ * 今天它在位（评审核过），所以这是「护栏的护栏」，不是现存缺陷。
  */
 it("跑测试的两步显式声明 shell: bash（pipefail 的唯一来源）", () => {
   const yml = readFileSync(".github/workflows/ci.yml", "utf8");
@@ -408,7 +408,7 @@ it("跑测试的两步显式声明 shell: bash（pipefail 的唯一来源）", (
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * **pnpm 版本只有一处真源**（P3g 复评顺手抓到的、公开仓上一直红着的那一步）。
+ * **pnpm 版本只有一处真源**（复评顺手抓到的、公开仓上一直红着的那一步）。
  *
  * 实测：`.github/workflows/ci.yml` 里 `pnpm/action-setup@v4` 同时带着
  * `with: { version: 9 }`，而 `package.json` 里也写着 `"packageManager": "pnpm@9.15.4"`。

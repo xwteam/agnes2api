@@ -1,5 +1,5 @@
 /**
- * P3f —— **刻意偏离名册**（W94 / W133）与 **目录树路径真实性**（W135）。
+ * **刻意偏离名册**与**目录树路径真实性**。
  *
  * ── 名册是干什么的 ────────────────────────────────────────────────────────
  * 本仓有一批地方**故意**不跟参照仓走。没有这张表，后续任何一次对齐检查都会把它们
@@ -42,7 +42,7 @@ const COMMUNITY_MD = [
   join(".github", "ISSUE_TEMPLATE", "feature_request.md"),
 ];
 
-// P3f 整分支评审发现 19：`.md` 的正文先把 HTML 注释换成空格再判（换行保留 ⇒ 行号不变）。
+// 评审发现：`.md` 的正文先把 HTML 注释换成空格再判（换行保留 ⇒ 行号不变）。
 // `.ts`/`.mjs` 不走这一支：那边的注释语法是 JS 的，`<!--` 在源码里只可能是字符串内容。
 /**
  * 偏离名册第 17 条的判定本体。**真扫描与反向控制共用它**——
@@ -111,7 +111,7 @@ const REGISTRY: readonly Deviation[] = [
   {
     id: 2,
     what: "根 README 的动态徽章区是 3 枚（CI / Issues / Stars），模板是 2 枚（V30）",
-    why: "多出来的那枚是 CI 状态徽章；删掉它 `repo-front-door` 的 (c) 会当场红（C6）",
+    why: "多出来的那枚是 CI 状态徽章；删掉它 `repo-front-door` 的 (c) 会当场红",
     until: "哪天 CI 徽章被换掉或动态区改成别的枚数 —— 先去看 `repo-front-door` 的 (c) 再改这里",
     assert: () => {
       const head = read("README.md").split("\n## ")[0] ?? "";
@@ -202,11 +202,11 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 10,
-    what: "非 README 文档里唯一的 `<details>`：五份 DEPLOY.md 的 `### 配额账` 各 1 处（V27，C23 的具名例外）",
+    what: "非 README 文档里唯一的 `<details>`：五份 DEPLOY.md 的 `### 配额账` 各 1 处（V27，射程铁律的具名例外）",
     why: "那一节 283 行全是账目推导，不折叠会把整份 DEPLOY 压垮；除它之外非 README 一概不折叠",
-    until: "哪天配额账拆成独立文档，或者决定非 README 全面允许折叠 —— 后者要先推翻 C23",
+    until: "哪天配额账拆成独立文档，或者决定非 README 全面允许折叠 —— 后者要先推翻那条射程铁律",
     // 🔴 这就是 ADJ §77 记的那笔登记债：7B 用测试内的 `DETAILS_ALLOWLIST` 暂代名册，
-    //    **W94 落地那天必须把它搬进正式名册，别删掉了事**。这一条就是搬过来的正本。
+    //    **名册落地那天必须把它搬进正式名册，别删掉了事**。这一条就是搬过来的正本。
     //    `tests/unit/docs-parity.test.ts` 里那份仍然在跑（它多守一层「summary 的形态」），
     //    两处是同一条裁定的两个消费者，不是两份互相抄的清单。
     assert: () => {
@@ -223,7 +223,7 @@ const REGISTRY: readonly Deviation[] = [
   {
     id: 12,
     what: "六份 README 的「📝 最近更新」表数据行 <10 行（V43）",
-    why: "C9 / ADJ ⑩ 明令「不许为了凑满 10 行而编造版本条目」；这个仓才发到 v0.1.0",
+    why: "ADJ ⑩ 明令「不许为了凑满 10 行而编造版本条目」；这个仓才发到 v0.1.0",
     until: "行数涨到 10 之后这条登记必须删（那时它就不是偏离了）",
     assert: () => SIX_READMES.flatMap((p) => {
       const n = read(p).split("\n").filter((l) => /^\| 20\d\d-/.test(l)).length;
@@ -276,7 +276,7 @@ const REGISTRY: readonly Deviation[] = [
     why: "它是写给改面板源码的人的开发笔记，参照仓没有对照物；套 16 节骨架毫无意义",
     until: "哪天决定把它也当出货文档",
     // ⚠️ **两个方向**：文件必须还在（不是被删了才「不在射程里」），且确实不在 40 份射程里。
-    // ⚠️ **第二个方向曾经是结构性死代码**（P3f 整分支评审发现 17）：它拿
+    // ⚠️ **第二个方向曾经是结构性死代码**（评审发现）：它拿
     // `readdirSync(".")` 自己凑了一份射程，而那个数组里全是**当前目录的裸文件名**、
     // 永远不含斜杠 ⇒ 那句 `includes` **恒为 false** —— 不是今天恰好没红，是结构上不可能红。
     // 现在读的是排版判官真正在用的那一份
@@ -290,7 +290,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 18,
-    what: "根级多两份参照仓没有的 dotfile（`.gitattributes` / `.npmrc`）；社区五份 md 的 `---` 走 ADJ ⑮ 不走 C16（C28）",
+    what: "根级多两份参照仓没有的 dotfile（`.gitattributes` / `.npmrc`）；社区五份 md 的 `---` 走 ADJ ⑮，不套 README 那套恒等式",
     why: "两份 dotfile 管的是换行符与 pnpm 行为，与文档形态无关；社区文件不套 README 那套 `hr-before-h2` 恒等式 —— 两份 issue 模板整份没有 `##`，套了会恒真",
     until: "dotfile 那半：哪天不再需要钉换行符或 registry；`---` 那半：哪天社区文件也套 16 节骨架",
     assert: () => {
@@ -303,9 +303,9 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 19,
-    what: "五份语言版 README 的 `## 📡 API 端点` 节**不折叠**（C8 的平局裁决，不是模板铁律）",
+    what: "五份语言版 README 的 `## 📡 API 端点` 节**不折叠**（平局裁决，不是模板铁律）",
     why: "kiro 自己五份里有 3 份是折叠的（en/ja/ko）、2 份不折叠，gemini 五份全不折叠 ⇒ 取「K 与 G 一致的那一形」",
-    until: "哪天认为该跟随 kiro 的 en/ja/ko 折叠 —— 那是推翻 C8，不是顺手改",
+    until: "哪天认为该跟随 kiro 的 en/ja/ko 折叠 —— 那是推翻那条平局裁决，不是顺手改",
     // ⚠️ 不标注的话，后续任何一次「kiro 的 en/ja 明明折叠了」的质疑都会变成返工压力。
     assert: () => LANGS.flatMap((l) => {
       const p = join("docs", l, "README.md");
@@ -325,7 +325,7 @@ const REGISTRY: readonly Deviation[] = [
     why: "`## Docker 部署` 拆成「选哪种形态 + 两条部署路」是 +3；ADJ ㊵ 又保留了 `## 环境变量` 是 +1，12−1+3+1 = 15",
     until: "哪天只剩一条部署形态 —— 那时要退回 12 节，这条登记跟着删",
     // ⚠️ 规格 §4 R19 名册表第 20 行写的是「恰 14」，**那个数已经过期**：
-    //    它是在 ADJ ㊵ 把 `## 环境变量` 加回来之前写的。以 `W124` 的 `DOC_SECTIONS` 为准（DEPLOY = 15）。
+    //    它是在 ADJ ㊵ 把 `## 环境变量` 加回来之前写的。以译名表那份 `DOC_SECTIONS` 为准（DEPLOY = 15）。
     assert: () => FIVE_DEPLOY.flatMap((p) => {
       const n = bodyLines(read(p)).filter((l) => l.startsWith("## ")).length;
       return n === 15 ? [] : [`${p} 有 ${n} 个 \`##\`，登记的是 15 个`];
@@ -355,10 +355,10 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 23,
-    what: "【阶段 P3g 新增】六份 README 的 `#### Cloudflare Worker` 之下各有一颗 Cloudflare 一键部署按钮，两个参照仓一颗都没有",
+    what: "【后期新增】六份 README 的 `#### Cloudflare Worker` 之下各有一颗 Cloudflare 一键部署按钮，两个参照仓一颗都没有",
     why: "kiro2api / gemini2api 是**纯 Docker 形态、根本没有 Worker 这条部署路**，所以「它们没有按钮」不是取舍而是没有这个东西可放；agnes 有 Worker 形态，这颗按钮对不想克隆仓库的读者是真实可用的入口（实测按钮图回 200 且 `image/svg+xml`，部署入口回 307）⇒ 这是本仓独有的合理增项，不是模板对齐项，照「模板没有所以删掉」办反而是错的",
-    until: "哪天 Worker 形态被砍掉（那按钮就没有落点了），或 Cloudflare 停掉 `deploy.workers.cloudflare.com` 这个入口 —— 那时六份的按钮与这条登记一起删，`docs-parity.test.ts` 的 W142 整组跟着删",
-    // 形态细节（六份逐字节相同、位置在 clone 围栏之前、slug 取自 package.json）由 W142 管；
+    until: "哪天 Worker 形态被砍掉（那按钮就没有落点了），或 Cloudflare 停掉 `deploy.workers.cloudflare.com` 这个入口 —— 那时六份的按钮与这条登记一起删，`docs-parity.test.ts` 里按钮形态锚整组跟着删",
+    // 形态细节（六份逐字节相同、位置在 clone 围栏之前、slug 取自 package.json）由按钮形态锚那一组管；
     // 这里只钉「这个偏离今天确实存在」这一件事 —— 名册的职责是记住裁定，不是重复判据。
     assert: () => {
       const bad = SIX_READMES.filter((p) => !read(p).includes("deploy.workers.cloudflare.com"));
@@ -367,7 +367,7 @@ const REGISTRY: readonly Deviation[] = [
   },
 ];
 
-describe("W94 / W133 刻意偏离名册：每条今天都真成立（方向 ①）", () => {
+describe("刻意偏离名册：每条今天都真成立（方向 ①）", () => {
   for (const d of REGISTRY) {
     it(`第 ${d.id} 条：${d.what}`, () => {
       const faults = d.assert();
@@ -378,7 +378,7 @@ describe("W94 / W133 刻意偏离名册：每条今天都真成立（方向 ①�
   }
 });
 
-describe("W94 名册自守：编号不重、三样东西齐全、机器验不了的那条如实标注", () => {
+describe("名册自守：编号不重、三样东西齐全、机器验不了的那条如实标注", () => {
   it("编号唯一且单调递增（删掉一条不把后面的号往前挪 —— 历史里引用过的编号不许改指向）", () => {
     const ids = REGISTRY.map((d) => d.id);
     expect(new Set(ids).size, `名册里有重复编号：${ids.join(",")}`).toBe(ids.length);
@@ -470,7 +470,7 @@ describe("W94 名册自守：编号不重、三样东西齐全、机器验不了
 });
 
 /**
- * ── W135 —— 根 README 目录树里的每一条路径都必须真的在（ADJ §59）────────────
+ * ── 根 README 目录树里的每一条路径都必须真的在（ADJ §59）────────────────────
  *
  * `## 🗂 项目结构` 那段裸围栏此前**内容正确性零判据**：判据只保证它是个裸 ``` 块、
  * 块内没有 code span，**目录树列的文件在不在，一格都没在守**。
@@ -481,7 +481,7 @@ describe("W94 名册自守：编号不重、三样东西齐全、机器验不了
  * ⚠️ **同一节里的 ASCII 框图（`## 🏗 技术架构`）接受无判据**：它画的是逻辑关系不是文件，
  * 没有可机器核的真源。这一条边界写在这里，免得后人以为漏掉了。
  */
-describe("W135 根 README 的 `## 🗂 项目结构` 目录树：每一条路径都真的存在", () => {
+describe("根 README 的 `## 🗂 项目结构` 目录树：每一条路径都真的存在", () => {
   /** 从目录树里把「缩进 + ├──/└── + 名字」解析成仓库相对路径。 */
   const treeEntries = (): ReadonlyArray<{ line: number; path: string; isDir: boolean }> => {
     const src = read("README.md");

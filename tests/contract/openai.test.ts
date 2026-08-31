@@ -47,7 +47,7 @@ describe("POST /v1/chat/completions", () => {
   });
 
   // 补 Content-Type 时是在既有响应头基础上追加，而不是整体替换——白名单里的
-  // cache-control 必须活下来。白名单之外的上游头则一律不转发（见 I2 的用例）。
+  // cache-control 必须活下来。白名单之外的上游头则一律不转发（见「上游响应头与 401 错误体绝不外泄」那组用例）。
   it("流式请求补 Content-Type 时保留白名单内的其余响应头", async () => {
     const sse = 'data: {"choices":[{"delta":{"content":"a"}}]}\n\ndata: [DONE]\n\n';
     const { app } = await makeApp([

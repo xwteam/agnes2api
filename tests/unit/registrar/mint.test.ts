@@ -232,7 +232,7 @@ describe("mintOne", () => {
     await expect(mintOne({ provider, agnes, ...BASE })).resolves.toEqual({ ok: true, key: "sk-ok" });
   });
 
-  // === I1：网络层错误不再穿透整轮 ===
+  // === 网络层错误不再穿透整轮 ===
 
   it("注册链路中途 fetch 抛错（网络层）时返回 network_error，而不是让异常穿透出去", async () => {
     const provider = new FakeMailProvider({ domains: ["only.test"] });

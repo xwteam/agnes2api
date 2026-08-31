@@ -5,8 +5,8 @@ import { makeApp, TEST_ADMIN_TOKEN, TEST_CONFIG } from "../helpers/make-app.js";
 /**
  * 全应用级安全头。
  *
- * Task 6 之前整个网关**一条安全响应头都没有**（`/health` 的
- * `x-content-type-options` 实测是 null），而 Task 6 又正是第一次在这个 origin 上
+ * 面板落地之前整个网关**一条安全响应头都没有**（`/health` 的
+ * `x-content-type-options` 实测是 null），而面板又正是第一次在这个 origin 上
  * 建立凭据存储的提交：面板把 `ADMIN_TOKEN` 原样放进 localStorage，作用域是
  * **origin 而不是 path** ⇒ `/admin` 之外任何一条能被浏览器当 HTML 解析的响应，
  * 都是这份凭据的攻击面。
@@ -59,7 +59,7 @@ describe("全应用级 nosniff", () => {
    *
    * ⚠️ **这段注释原来接着写「因为在本仓当前的路由清单下，把 `c.header` 挪到
    * next() 之前是不可观测的……那个变异今天不是缺陷，是留给下一个 handler 的
-   * 陷阱」——那已经不成立了**（全分支评审 A9）。P3b 之后确实加了返回裸
+   * 陷阱」——那已经不成立了**（评审发现 A9）。面板落地之后确实加了返回裸
    * `Response` 的端点，而它正是那句话预言的东西。重新实测（**移动**这一行，
    * 不是新增）：**2 failed** ——
    * `tests/contract/admin-events.test.ts` 的

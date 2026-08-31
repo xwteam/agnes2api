@@ -6,7 +6,7 @@ import type { Fetcher } from "../../src/ports/fetcher.js";
  * 同步端点导致图片生成 100% 失败的缺陷，正是因此在全部单测里都看不见。
  */
 /**
- * ⚠️ **`body` 收 `ReadableStream`，不只是 `string`**（P3d Task 11 补的）。
+ * ⚠️ **`body` 收 `ReadableStream`，不只是 `string`**（后来补的）。
  *
  * 原来只吃字符串 ⇒ 上游是「一次性给完整段文本」，**缓冲与不缓冲在观测上完全等价**
  * ——那是第 8 种假阳性（瞬时替身让时序性质不可观测）。要断言「网关没有把整条流攒完

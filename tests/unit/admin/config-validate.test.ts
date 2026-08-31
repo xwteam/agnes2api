@@ -145,7 +145,7 @@ describe("凭据：缺席或空串 = 不改（设计 §8.6）", () => {
 
   /**
    * ⚠️ **夹具从 `"brand-new-secret"`（16 位）换成了 30 位，那不是凑数**：
-   * 评审 C3 之后 `gatewayToken` 吃 24 位下限（与 `ADMIN_TOKEN` 同一个数、同一条理由），
+   * 评审之后 `gatewayToken` 吃 24 位下限（与 `ADMIN_TOKEN` 同一个数、同一条理由），
    * 16 位那把现在会被 `too_short` 正当拦下。**这一格测的是「非空串真的会落盘」，
    * 不是「长度规则存不存在」**，所以换夹具、不动规则；下限本身由
    * 「短于 24 位被拒，正好 24 位放行」单独钉着。
@@ -311,7 +311,7 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
   it("FIELD_EXPOSURE 里每一格要么可编辑，要么在手写的「刻意只读」清单里", () => {
     // **手写清单。** `degraded` 是装载的产物（本次有没有降级），不是旋钮。
     //
-    // `usageStatsEnabled`（P3d Task 3）是这份清单里第一条**理由不同**的：它是个
+    // `usageStatsEnabled` 是这份清单里第一条**理由不同**的：它是个
     // 真旋钮，只是**本期设置页没有它的入口**。进 `EDITABLE` 而设置页不给入口的话，
     // `GET /admin/api/config` 会返回一份「说能改、却没有任何地方能改」的字段清单
     //（`admin-ui/js/pure/settings.mjs` 的 `CARD_UPSTREAM` 上方那段逐字裁过同一形态）。
@@ -382,7 +382,7 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
       },
       { patch: { "registrar.mintDelayMinMs": 9_000, "registrar.mintDelayMaxMs": 5_000 }, stored: {}, env: GW },
       { patch: { "registrar.enabled": true, "registrar.primary": "yyds" }, stored: {}, env: GW },
-      // ── 评审 C1/C3 新增的五个码，各配一个能真的触发它的样本 ──────────────
+      // ── 评审新增的五个码，各配一个能真的触发它的样本 ─────────────────────
       // ⚠️ 这五格的 `env` 里刻意**没有** `GATEWAY_TOKEN`：设了的话 `gatewayToken`
       // 会先吃 `locked_by_env`，测的就不是这五条了（第 1 种假阳性）。
       { patch: { maxStrikes: 9 }, stored: {}, env: {} },
@@ -531,7 +531,7 @@ describe("防漂：validateConfigPatch 放行的，loadConfigWithProvenance 必�
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 评审 C3：gatewayToken 第一次面板可写，ADMIN_TOKEN 的四条硬规则必须跟过来
+// gatewayToken 第一次面板可写，ADMIN_TOKEN 的四条硬规则必须跟过来
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -547,7 +547,7 @@ describe("防漂：validateConfigPatch 放行的，loadConfigWithProvenance 必�
  * 把网关口令设成 ADMIN_TOKEN -> 200，之后 GET /config -> 503，想改回去 PUT -> 503
  * ```
  */
-describe("C3：面板写 gatewayToken 时的四条硬规则", () => {
+describe("面板写 gatewayToken 时的四条硬规则", () => {
   const stored = { gatewayToken: "original-gateway-token-000666" };
   const NO_GW: Record<string, string | undefined> = {};
   const OK_TOKEN = "a-perfectly-fine-gateway-token";
@@ -646,7 +646,7 @@ describe("C3：面板写 gatewayToken 时的四条硬规则", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 评审 C1/C2：configLoadBlockers —— 「这份配置装载得起来吗」
+// configLoadBlockers —— 「这份配置装载得起来吗」
 // ───────────────────────────────────────────────────────────────────────────
 
 describe("configLoadBlockers：逐条对应 loadConfigWithProvenance 会抛的地方", () => {

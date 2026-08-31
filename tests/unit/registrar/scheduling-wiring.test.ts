@@ -30,7 +30,7 @@ vi.mock("../../../src/core/registrar/tender.js", async (importOriginal) => {
  * 捕获 Node 入口注册的定时器。入口是显式从 `node:timers` 具名导入的
  * （为了拿到带 `unref()` 的 Node 版本），其余照搬真实模块。
  *
- * I4 修复后调度循环是**自重排的 setTimeout 递归**（`src/core/tend-scheduler.ts`），
+ * 「每轮重读配置」修复后调度循环是**自重排的 setTimeout 递归**（`src/core/tend-scheduler.ts`），
  * 不再是启动时注册一次、之后固定不变的 `setInterval`——每一轮结束（含重新读一次
  * 间隔）之后才会 push 新的一项，因此 `timers` 是一条随轮次增长的队列，不是「注册
  * 一次、以后复用同一个 fn」。取用时一律要显式等这一轮的重排落地（`timers.length`
@@ -88,7 +88,7 @@ const flush = () => new Promise<void>((r) => setTimeout(r, 0));
  * 本文件下面大多数 `waitFor(() => timers.length === N)` 用它的 2 秒超时兜底
  * ——如果 `node.ts` 回退成 `nodeSetInterval`，`timers` 永远不会变化，这些调用
  * 会各自等满 2 秒才报「等待条件超时」。这是已知的、**刻意接受**的次要信号：
- * 真正快、且给出明确断言消息的检测已经单独放在 C3 描述块最前面那条用例里
+ * 真正快、且给出明确断言消息的检测已经单独放在「调度接线」描述块最前面那条用例里
  * （拦 `setInterval` 单独计数，断言它恒为空，不依赖任何超时）。没有把这个模式
  * 铺开到本文件其余每一处 `waitFor` 调用，是因为那些调用各自还承担着别的、与
  * 这条回归无关的主要职责（等某一轮补池跑完、等某个存储写生效……），硬塞一条
@@ -129,7 +129,7 @@ interface KvCounts { list: number; get: number; put: number; delete: number }
 
 /**
  * 只实现 KvStorage 用到的四个方法，行为对齐真实 KV（存字符串、按 json 取回）。
- * 四种操作全数上：只数其中几种的计数桩，关于漏掉那几种的断言就是假的（Task 2 的教训）。
+ * 四种操作全数上：只数其中几种的计数桩，关于漏掉那几种的断言就是假的（早先的教训）。
  */
 function fakeKv(counts: KvCounts = { list: 0, get: 0, put: 0, delete: 0 }): Env["POOL"] {
   const store = new Map<string, string>();
@@ -189,7 +189,7 @@ beforeEach(() => {
   intervalCalls.length = 0;
 });
 
-describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
+describe("调度接线：两个入口确实会调到 tendOnce", () => {
   it("确实用 setTimeout 自重排，不是 setInterval——回退成 setInterval 要能被一句断言快速抓住，不必靠某个 waitFor 熬满 2 秒超时", async () => {
     // 简报变异表最后一行原判定「回退到 nodeSetInterval 需人工核对，单测覆盖不到」
     // 已经不成立——本文件其余每一条依赖 `timers.length` 的 waitFor 事实上都会在
@@ -210,7 +210,7 @@ describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
       await waitFor(() => timers.length + intervalCalls.length >= 1);
       expect(
         intervalCalls,
-        "回退成 setInterval 会让补池间隔重新冻结在启动时刻——这正是 I4 要修的缺陷",
+        "回退成 setInterval 会让补池间隔重新冻结在启动时刻——这正是「每轮重读配置」要修的缺陷",
       ).toHaveLength(0);
       expect(timers).toHaveLength(1);
     } finally {
@@ -267,7 +267,7 @@ describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
   });
 
   it("Node 侧：REGISTRAR_ENABLED=false（默认）时一次都不调 tendOnce", async () => {
-    // 定时器照常存在（见下面 I4 那条：关着的时候也要能从存储打开），但每一轮
+    // 定时器照常存在（见下面「每轮重读配置」那条：关着的时候也要能从存储打开），但每一轮
     // buildTendDeps 都会在构造任何 provider 之前返回 null，tendOnce 一次也不该被调到
     // ——这正是设计 §8 要求的后半句。
     tendOnceMock.mockResolvedValue(RESULT);
@@ -306,7 +306,7 @@ describe("C3 调度接线：两个入口确实会调到 tendOnce", () => {
 
   it("Worker 侧：REGISTRAR_ENABLED 未开时不调 tendOnce（不触达邮箱/Agnes）", async () => {
     // 注意口径：这里承诺的是**不产生外部副作用**（不触达邮箱服务、不触达 Agnes），
-    // 而不是「一次存储访问都没有」——loadConfig 本来就要读一次配置，P3a Task 3
+    // 而不是「一次存储访问都没有」——loadConfig 本来就要读一次配置，从某一版
     // 起索引对账也会读一次存储，见下面那条用例。
     tendOnceMock.mockResolvedValue(RESULT);
     const { ctx, waited } = fakeCtx();
@@ -377,7 +377,7 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
   });
 
   /**
-   * **Node 入口的补池事件落库（P3c Task 1）。**
+   * **Node 入口的补池事件落库。**
    *
    * ⚠️ **这一格是变异验证逼出来的，成因如实登记**：M7 的 Node 那一半
    * （`src/entry/node.ts` 的 `finally` 里删掉 `await deps.flush()`）在补上这一格
@@ -492,7 +492,7 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
     }
   });
   /**
-   * **C1 的 Node 那一半。**
+   * **评审那条发现的 Node 那一半。**
    *
    * ⚠️ **成因如实登记**：`ee07fd3` 只给 Worker 侧补了覆盖，Node 侧那两段
    *（`logger.log(round_failed)` + `recordCrashedRound`）**整个删掉，全量 1541 全绿**
@@ -552,9 +552,9 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
 
 });
 
-describe("I4 Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）", () => {
+describe("Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）", () => {
   it("从存储把注册机打开/关掉，都无需重启进程就能生效", async () => {
-    // P3 的面板就是这份配置的编辑器（设计 §11）。此前 Node 侧把配置冻结在启动
+    // 面板就是这份配置的编辑器（设计 §11）。此前 Node 侧把配置冻结在启动
     // 时刻：启动时关着就根本没有定时器（怎么改存储都打不开），启动时开着就从
     // 存储关也关不掉，而 Worker 侧每次 Cron 都重读——同一个面板操作两种形态
     // 行为不同。
@@ -595,9 +595,9 @@ describe("I4 Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）
     }
   });
 
-  it("从存储把 TEND_INTERVAL_MS 本身改掉，下一轮重排就跟着用新值——I4 不能只挡住 enabled/disabled 这一半", async () => {
+  it("从存储把 TEND_INTERVAL_MS 本身改掉，下一轮重排就跟着用新值——「每轮重读配置」不能只挡住 enabled/disabled 这一半", async () => {
     // 上面那条只验证了「关/开」会热更新，没验证「间隔本身」会热更新——这正是
-    // I4 要修的缺陷本体：此前间隔冻结在启动时刻，其余配置项每一轮都重读。
+    // 那条要修的缺陷本体：此前间隔冻结在启动时刻，其余配置项每一轮都重读。
     // 用 mutation 实测过：把 node.ts 里 readIntervalMs 换回返回启动快照
     // （`registrar.tendIntervalMs`），上面那条「打开/关掉」用例照样全绿——
     // 只测 enabled/disabled 逃不出这个变异，必须单独测间隔值本身。
@@ -723,7 +723,7 @@ describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
       expect(line).toContain("moemail:code_timeout×1");
       // warn 落地时这一轮的 tick() 还没走到重排那一步——等它自己也重排完再
       // 收尾，否则残留的 tick() 链会在后面某条用例重置 timers 之后才落地，
-      // 往里面塞一条幽灵记录（本任务复验时实测抓到过：C4 用例因此间歇性超时）。
+      // 往里面塞一条幽灵记录（本任务复验时实测抓到过：「不可并发重入」用例因此间歇性超时）。
       await waitFor(() => timers.length === 1);
     } finally {
       warnSpy.mockRestore();
@@ -769,12 +769,12 @@ describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
   });
 });
 
-describe("C4 补池轮次不可并发重入", () => {
+describe("补池轮次不可并发重入", () => {
   it("Node 侧：上一轮还没结束时，同一回调被并发触发会被跳过并留痕", async () => {
     // 递归 setTimeout 天然不会自己和自己重叠——下一轮的定时器要等本轮 resolve
     // 之后才排上，这正是它与 setInterval 的本质差别（见下面另一条用例）。
-    // I4 修复后 inFlight 守卫防的不再是「定时器自己撞自己」，而是「同一个回调
-    // 被并发触发两次」——生产里对应 P3c 面板的『立即补池』按钮与定时轮本身
+    // 改成自重排之后 inFlight 守卫防的不再是「定时器自己撞自己」，而是「同一个回调
+    // 被并发触发两次」——生产里对应面板的『立即补池』按钮与定时轮本身
     // 撞在一起（两者都会调用 runOnce）。这里用手动把同一个 fn 连续调用两次来
     // 模拟这种撞车。
     const gate = deferred();

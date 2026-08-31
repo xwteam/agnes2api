@@ -10,7 +10,7 @@ import {
 } from "../../src/core/admin/admin-errors.js";
 
 /**
- * Key 池的四条写端点（P3c Task 3）。
+ * Key 池的四条写端点。
  *
  * **contract ⇒ node 与 workerd 各跑一遍**（两份 vitest 配置的 include 都收
  * `tests/contract`）。
@@ -20,7 +20,7 @@ import {
  *   · **`note` 的写消除**：一次「只改备注」的写会被整个丢掉，而
  *     `tests/unit/pool-cache.test.ts` 的
  *     「MAY_ELIDE 的每个字段变化都被消除——这才是写消除的全部收益」
- *     在「修对了」和「写错了」两种情况下**都是绿的**（P3c Task 2 评审实证）
+ *     在「修对了」和「写错了」两种情况下**都是绿的**（评审实证）
  *     ——护栏只能长在这里；
  *   · **写端点看的是当前真值**，不是最多一个 `POOL_CACHE_TTL_MS` 前的快照。
  */
@@ -61,7 +61,7 @@ async function viewOf(app: App, id: string): Promise<KeyView> {
 /**
  * ⚠️ **`invalid` 是 `number[]` 不是 `string[]`，这不是笔误**：前两个数组装 id、
  * 它装的是**输入里的位置**（1 基）。三个都写成 `string[]` 时类型完全一样，
- * 前端没有任何东西能提醒它「这一个不是 id 数组」（评审 I6）。
+ * 前端没有任何东西能提醒它「这一个不是 id 数组」（评审发现）。
  * `reset` 是**被重置的把数**，与 `duplicated.length` 不是一回事，见下面那一格。
  */
 interface ImportBody { added: string[]; duplicated: string[]; invalid: number[]; reset: number }
@@ -73,7 +73,7 @@ interface ImportBody { added: string[]; duplicated: string[]; invalid: number[];
 /**
  * **三个边界常量本身就是策略，必须被独立钉住。**
  *
- * ⚠️ **评审 I1 实测：把 `MAX_IMPORT_KEYS` 改成 500、`MAX_NOTE_LENGTH` 改成 5000，
+ * ⚠️ **评审实测：把 `MAX_IMPORT_KEYS` 改成 500、`MAX_NOTE_LENGTH` 改成 5000，
  * tsc=0，全量 1636 条一条不红。** 成因是三处边界用例当时都写成
  * `MAX_IMPORT_KEYS + 1` —— 输入从被测的那个常量推导出来，**改了常量输入跟着改**，
  * 于是永远测不到那个数字本身。本仓已有一条同名纪律：
@@ -188,7 +188,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
    * 一个要显式勾选的知情动作。但它同时意味着**一个能调这个端点的人可以绕过
    * `evicted`**，所以它必须留痕：事件板块是运维唯一能看到「池子为什么变了」的地方。
    *
-   * 同一格还钉住 `disabled` **不**被它清掉：那是运维自己按下的开关（Task 2 的裁定），
+   * 同一格还钉住 `disabled` **不**被它清掉：那是运维自己按下的开关（当时的裁定），
    * 让一次粘贴顺手把它翻回去，等于把「停用一把可疑 key」这个安全动作静默撤销。
    */
   it("勾了 resetExisting 才重置，且必须留下 key.restored 事件；disabled 不在重置范围里", async () => {
@@ -226,7 +226,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
   /**
    * **`resetExisting` 那条分支「不传 prev」的理由，必须有一格会红的东西守着。**
    *
-   * ⚠️ **评审 I5：那句话第一版是写死在注释里、没人验过的断言，而且当时 ESCAPED**
+   * ⚠️ **评审发现：那句话第一版是写死在注释里、没人验过的断言，而且当时 ESCAPED**
    * ——把它改成 `save({...}, existing)`，tsc=0、全量**一条不红**；它自己又不含
    * `scripts/check-comment-refs.mjs` 那张词表里的任何一个词 ⇒ 门禁也看不见它。
    *
@@ -260,7 +260,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
    * 在计数这一侧的另一半。**
    *
    * `src/core/keypool-repo.ts` 里 `resetExisting` 上方逐字写着「`stats`——用量是历史，
-   * 不是失败态」，而在 P3e Task 31A 之前**没有任何一格守着它**：真把
+   * 不是失败态」，而在那之前**没有任何一格守着它**：真把
    * `stats: { ...EMPTY_STATS }` 加进那个字段集，全量一条不红。
    * Task 31A 新增的 `clearStats` 恰好让这条边界第一次有了被抹掉的动机
    * （「都是清零，顺手一起清了吧」）⇒ 它必须在这一侧留一条绊线。
@@ -324,7 +324,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
       "三个数组必须逐条对应输入：5 行进来，5 条出去",
     ).toEqual({ added: 1, duplicated: 4, invalid: 0 });
     expect(logger.entries.find((x) => x.event === "key.restored")?.fields?.reset).toBe(1);
-    // **同一个数字必须同时出现在响应体里**（评审 I2）：只写进事件的话，面板要么显示
+    // **同一个数字必须同时出现在响应体里**（评审发现）：只写进事件的话，面板要么显示
     // `duplicated.length`（这里是 4，**撒谎**），要么在前端把这条判据再实现一遍。
     // 一个动作两个数字，正是面板开始撒谎的方式。
     expect(body.reset, "算出来的那个诚实数字没有交到面板手上").toBe(1);
@@ -395,7 +395,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
   /**
    * **空行整条跳过，不进任何一个数组——这一格把前端的口径定死在这里。**
    *
-   * ⚠️ **评审 I6：第一版把空行判成非法项，那让 Task 4 只剩两个都不对的选项**：
+   * ⚠️ **评审发现：第一版把空行判成非法项，那让前端只剩两个都不对的选项**：
    * 原样发 ⇒ 文本框末尾那个换行被报成「第 N 行不合法」，一条**用户没犯过的错误**；
    * 先过滤空行 ⇒ 位置与运维眼里的行号**错位**，而位置正是它唯一的用途。
    * 现在两难没了：**前端原样发（一行一个元素，空行也发），位置就是行号。**
@@ -604,14 +604,14 @@ describe("DELETE /admin/api/keys/:id", () => {
 
 describe("PATCH /admin/api/keys/:id", () => {
   /**
-   * ⚠️⚠️ **端到端那一半照留，但它守的东西在 P3c Task 5 换了个位置——两半都要写清楚。**
+   * ⚠️⚠️ **端到端那一半照留，但它守的东西后来换了个位置——两半都要写清楚。**
    *
-   * **Task 3/4 时期**：`note` 在写消除的黑名单式判据下与 `lastUsedAt` 同档，一次
+   * **早期**：`note` 在写消除的黑名单式判据下与 `lastUsedAt` 同档，一次
    * 「只改备注」的写同时满足两条判据（scheduling 字段没变 + `lastUsedAt` 没走远）
    * ⇒ 传 `prev` 就被**整个丢掉**：面板显示保存成功，备注既不在存储也不在快照。
    * 那时这一格是全仓唯一能报警的地方，靠的是 `keyPatchHandler` **记得不传 `prev`**。
    *
-   * **Task 5 起**：写消除的判据翻成白名单（`MAY_ELIDE_FIELDS = ["lastUsedAt","stats"]`），
+   * **后来**：写消除的判据翻成白名单（`MAY_ELIDE_FIELDS = ["lastUsedAt","stats"]`），
    * `note` 不在里面 ⇒ **传不传 `prev` 都不会再丢备注**。所以下面那个对照组的期望
    * **反过来了**：同一个「写消除会咬」的夹具上，一次传 `prev` 的「只改备注」现在
    * 必须真的落 1 次盘。
@@ -641,7 +641,7 @@ describe("PATCH /admin/api/keys/:id", () => {
     // 前置条件③之一（新机制）：同一个夹具上，**传 prev** 的「只改备注」真的落盘。
     const control2 = (await repo.all()).find((x) => x.id === control.id) as KeyRecord;
     const beforeNote = st.puts;
-    await repo.save({ ...control2, note: "对照组：这次写从 Task 5 起不许被消除" }, control2);
+    await repo.save({ ...control2, note: "对照组：这次写从判据翻成白名单起不许被消除" }, control2);
     expect(
       st.puts - beforeNote,
       "只改备注的写又被写消除吃掉了 —— MAY_ELIDE_FIELDS 里混进了 note？",
@@ -663,7 +663,7 @@ describe("PATCH /admin/api/keys/:id", () => {
 
     expect((await viewOf(app, target.id)).note, "只改备注的写被写消除吃掉了").toBe(NOTE);
     // 对照组那条备注确实也落了盘（新机制的端到端一半）。
-    expect((await viewOf(app, control.id)).note).toBe("对照组：这次写从 Task 5 起不许被消除");
+    expect((await viewOf(app, control.id)).note).toBe("对照组：这次写从判据翻成白名单起不许被消除");
   });
 
   it("note: null 清空备注；备注超长 400", async () => {
@@ -775,9 +775,9 @@ describe("PATCH /admin/api/keys/:id", () => {
     expect((await send(app, "PATCH", `/admin/api/keys/${r.id}`, body)).status).toBe(400);
   });
 
-  // ── clearStats：R10 承诺过的那条「经过 repo 的正式重置路径」（P3e Task 31A）──
+  // ── clearStats：R10 承诺过的那条「经过 repo 的正式重置路径」──
   //
-  // 五份 DEPLOY.md 在 `POOL_TOUCH_INTERVAL_MS` 那一行同步承诺过它，P3c 完成时
+  // 五份 DEPLOY.md 在 `POOL_TOUCH_INTERVAL_MS` 那一行同步承诺过它，面板完成时
   // `PATCH_FIELDS` 里却没有 stats ⇒ 五份齐说一句假话。裁定「做」与它的形态
   // （加一个字段，**不做**危险区第三颗按钮）写死在设计小节「第三颗按钮的去向」里。
 
@@ -1143,7 +1143,7 @@ describe("POST /admin/api/keys/bulk", () => {
   /**
    * **同一条「读当前真值」的判据，落在最常见的那条路上。**
    *
-   * ⚠️ **评审 I4：把 `bulk` 的 `repo.get(id)` 换成快照查找，全量只红 1 条，
+   * ⚠️ **评审发现：把 `bulk` 的 `repo.get(id)` 换成快照查找，全量只红 1 条，
    * 而且红的是「单把写操作的存储开销」那格计数** ⇒ 这条性质当时靠一条**不相干的
    * 计数断言偶然接住**，一旦那格计数被调整就彻底裸奔。
    * 而批量停用比单把 PATCH **更常见**（运维在面板上勾一整页），
@@ -1179,7 +1179,7 @@ describe("POST /admin/api/keys/bulk", () => {
   /**
    * **批量事件要说得出「变的是哪几把」。**
    *
-   * ⚠️ **评审 I3：单条 `DELETE` 记 `{ id, wasEvicted, wasDisabled }`，而批量只记
+   * ⚠️ **评审发现：单条 `DELETE` 记 `{ id, wasEvicted, wasDisabled }`，而批量只记
    * `{ count }`** ⇒ 一次删 200 把之后，事件板块只能说「少了 200 把」，
    * 说不出是哪 200 把——而删除不可撤销，事后追查时那正是唯一要问的问题。
    * 逐条打 200 条事件会直接撞穿 `EVENT_WRITES_PER_DAY`，所以取中间：
@@ -1238,9 +1238,9 @@ describe("POST /admin/api/keys/bulk", () => {
 });
 
 /**
- * **面板会渲染的那一族 400/404/409：机器可读的码，而不是一句中文散文**（P3e Task 22A）。
+ * **面板会渲染的那一族 400/404/409：机器可读的码，而不是一句中文散文**。
  *
- * ⚠️⚠️ **这是那条「归属定死归 P3e」的破口的后端半身。** 在它之前，这一族错误的
+ * ⚠️⚠️ **这是那条「归属定死」的破口的后端半身。** 在它之前，这一族错误的
  * `error.message` 是中文散文（`note 最长 200 个字符` / `不认识的字段：…`），
  * 而 `admin-ui/js/sec-keys.js` 的 `errorMessage()` 把它**原样**画给 ja / en / ko 用户。
  * 前端半身（拿码查五语言字典、表外的码回落并带标记）在

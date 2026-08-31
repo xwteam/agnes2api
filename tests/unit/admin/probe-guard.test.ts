@@ -5,7 +5,7 @@ import { createProbeGuard, PROBE_MIN_INTERVAL_MS } from "../../../src/http/admin
 import { stripComments } from "../../helpers/strip-comments.js";
 
 /**
- * 出站探测护栏的两道闸（P3d Task 8，全局约束 14）。
+ * 出站探测护栏的两道闸（全局约束 14）。
  *
  * ⚠️ **两道闸必须各自有一格能把另一道闸排除掉的用例，否则它们互相冒充。**
  * 冻住时钟连按两次时，**在途去重与最小间隔都会拒绝第二次** ⇒ 那种夹具下
@@ -46,7 +46,7 @@ describe("出站探测护栏：两道闸", () => {
     expect(PROBE_MIN_INTERVAL_MS).toBe(3_000);
   });
 
-  it("kind 各管各的：验 A 把 key 不挡验 B 把，也不挡通道测试（评审 I11）", () => {
+  it("kind 各管各的：验 A 把 key 不挡验 B 把，也不挡通道测试（评审发现）", () => {
     const g = createProbeGuard();
     expect(g.tryAcquire("verify:a", 0)).toEqual({ ok: true });
     // **不 release**：闸最紧的那一刻。
@@ -129,7 +129,7 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
   /**
    * 去掉注释再扫，用的是 `tests/helpers/strip-comments.ts` 那**一份**逐字符实现。
    *
-   * ⚠️⚠️ **本地那份副本在 P3d Task 9 被搬走了，搬走本身就是那条裁定**：
+   * ⚠️⚠️ **本地那份副本后来被搬走了，搬走本身就是那条裁定**：
    * 本仓一度有五份手写的 `stripComments`、实现并不一致（有的是会把字符串里的
    * `/*` 当块注释开头的正则版），而这个文件正是被那种正则版当场咬过的地方
    * ——正则版翻车的完整成因、以及这份实现的边界（不认正则字面量），
@@ -318,7 +318,7 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
    * ⚠️ **这一格补的是行为测试**明说**抓不住的那个方向。**
    *
    * `tests/contract/admin-verify.test.ts`「出站 URL 是 agnesBaseUrl + 协议目录的
-   * upstreamPath，不是对外的 pathTemplate（评审 C3）」拿的是手写字面量
+   * upstreamPath，不是对外的 pathTemplate（评审发现）」拿的是手写字面量
    * `https://upstream.test/v1/chat/completions`——它抓得住「误用 `pathTemplate`」，
    * **但抓不住「handler 里硬编码一份 `/chat/completions`」**：两种写法今天产出
    * 逐字节相同的 URL。而硬编码正是全局约束 15 点名要防的那件事

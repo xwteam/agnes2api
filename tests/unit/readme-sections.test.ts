@@ -1,5 +1,5 @@
 /**
- * W38 —— README 章节标题常量表的自守判据。
+ * README 章节标题常量表的自守判据。
  *
  * 表在 `tests/helpers/readme-sections.ts`，那里写了它是什么、译名从哪来、
  * 哪几格是新定的。这里只放**判据**。
@@ -65,7 +65,7 @@ function tableFaults(table: readonly ReadmeSection[]): string[] {
   return faults;
 }
 
-describe("W38 README 章节标题常量表", () => {
+describe("README 章节标题常量表", () => {
   it("恰 16 节；根专属恰 4 节，落在下标 2 / 9 / 13 / 15；语言版承载 12 节", () => {
     expect(SECTIONS).toHaveLength(16);
     const rootOnlyAt = SECTIONS.flatMap((x, i) => (x.rootOnly === true ? [i] : []));
@@ -122,7 +122,7 @@ describe("W38 README 章节标题常量表", () => {
   });
 });
 
-describe("W38 的反向控制（拿改坏的表喂同一个检查函数）", () => {
+describe("README 章节标题常量表的反向控制（拿改坏的表喂同一个检查函数）", () => {
   const mutate = (i: number, lang: SectionLang, title: string): ReadmeSection[] =>
     SECTIONS.map((sec, k) =>
       k === i ? { ...sec, title: { ...sec.title, [lang]: title } } : sec,

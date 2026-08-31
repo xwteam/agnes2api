@@ -7,7 +7,7 @@ import { playgroundProtocols, buildRequest } from "../../admin-ui/js/pure/playgr
 import { catalogPayload } from "../../src/core/admin/protocol-catalog.js";
 
 /**
- * **Playground 的对外出口（P3d Task 10 Step 2）。**
+ * **Playground 的对外出口。**
  *
  * 被守护的是设计 §10.5 那条「两把钥匙严格隔离」的**另一半**。
  * `tests/ui/api-session.test.ts` 的「凭据头只有 x-admin-key —— 没有任何网关口令头」
@@ -319,9 +319,9 @@ describe("网关口令的存取", () => {
 });
 
 /**
- * ── **P3d Task 11：流式那条路** ────────────────────────────────────────────────
+ * ── **流式那条路** ─────────────────────────────────────────────────────────────
  *
- * ⚠️⚠️ **本组存在的全部理由**：Task 10 把四条安全性质（同源自查、`redirect: "error"`、
+ * ⚠️⚠️ **本组存在的全部理由**：上一期把四条安全性质（同源自查、`redirect: "error"`、
  * `credentials: "omit"`、口令只走请求头）**逐条钉在了非流式那条路上**。
  * 流式是一条**新的**代码路径 —— 上面那四格**一格都不覆盖它**。
  * 「两条路共用同一个 `openGateway()`」是实现上的选择，而**选择是会被改掉的**：
@@ -385,7 +385,7 @@ describe("流式那条路：与非流式同一组安全判据，逐条各断言�
     // **观测点在「有没有发出去」上**，不在返回值上。
     expect(fetchCalls, "流式那条路把口令发去了别处").toEqual([]);
 
-    // `origin` 传空同样 fail closed（Task 10 交接第 1 条：`origin` 是硬前提）。
+    // `origin` 传空同样 fail closed（交接第 1 条：`origin` 是硬前提）。
     const err2 = await streamFromGateway(req, GW_TOKEN, { origin: "", onPayload: () => {} }).catch((e) => e);
     expect((err2 as GatewayError).code).toBe("cross_origin");
     expect(fetchCalls).toEqual([]);

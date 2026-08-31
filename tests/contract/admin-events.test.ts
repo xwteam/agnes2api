@@ -96,7 +96,7 @@ describe("GET /admin/api/events", () => {
   it("一次请求之后，存储里确实有事件分片落盘（两种运行时各跑一遍）", async () => {
     let t = 0;
     // `st` 的内部 MemoryStorage 与下面 makeApp 的 `now` 必须共用同一个 `t`
-    // （评审 C5：TTL 判定默认走真实 Date.now()，不对齐会让刚落盘的事件"生下来
+    // （评审发现：TTL 判定默认走真实 Date.now()，不对齐会让刚落盘的事件"生下来
     // 就已经过期"，见 tests/helpers/make-app.ts 的同一条说明）。
     const st = new CountingStorage(new MemoryStorage(undefined, () => t));
     const { app } = await makeApp([], ["k1"], {}, () => (t += 61_000), { storage: st });
@@ -151,7 +151,7 @@ describe("GET /admin/api/events", () => {
    */
   it("响应返回的那一刻（不是之后某个时刻），事件已经落盘（真实异步延迟下可观测）", async () => {
     let t = 0;
-    // storage 与 now 必须共用同一个假时钟（评审 C5，理由见 tests/helpers/make-app.ts
+    // storage 与 now 必须共用同一个假时钟（评审发现，理由见 tests/helpers/make-app.ts
     // 的同一条说明），否则 list() 前置条件本身先假到把这条用例的意义架空。
     const st = new MemoryStorage(5, () => t);
     const { app } = await makeApp([], ["k1"], {}, () => (t += 61_000), { storage: st });
@@ -233,7 +233,7 @@ describe("GET /admin/api/events", () => {
   });
 
   /**
-   * **评审 C4**：负数 `after` 是敌意/无意义输入，`afterParam` 直接当缺失处理
+   * **评审发现**：负数 `after` 是敌意/无意义输入，`afterParam` 直接当缺失处理
    * （回落成冷读），不是让它原样流进 `candidateKeys`。
    */
   it("?after 是负数时当缺失处理（冷读，不 400、不放大）", async () => {
@@ -248,7 +248,7 @@ describe("GET /admin/api/events", () => {
   });
 
   /**
-   * **评审 C6**：`after` 所在的时间窗比当前请求的 `now` 所在的窗口还晚时
+   * **评审发现**：`after` 所在的时间窗比当前请求的 `now` 所在的窗口还晚时
    * （时钟回拨，或者某个 isolate 的时钟偏快、写出的 ts 是"未来值"），
    * `items` 会是空的——`cursorAhead` 必须如实报出来，不能让调用方把这种情况
    * 误判成"确实没有新事件"。
@@ -273,7 +273,7 @@ describe("GET /admin/api/events", () => {
   });
 
   /**
-   * **评审 C6 二审（d）：如实记录一个盲区，不是修它。**
+   * **评审二审：如实记录一个盲区，不是修它。**
    *
    * `after` 领先 `now` 但仍落在**同一个时间窗**内时（这里 `after = now + 10min`，
    * 窗口宽度 `EVENT_WINDOW_MS` 是 1 小时），`cursorAhead` 的判据
@@ -282,7 +282,7 @@ describe("GET /admin/api/events", () => {
    * 盲区钉成一条断言（不是当作 bug 修掉）：`events.ts` 的 JSDoc 已经订正过这一段，
    * 这里补上真实证据，不让文字描述空转。
    */
-  it("after 领先 now 但仍在同一个时间窗内：items 为空、cursorAhead 仍是 false（评审 C6 二审 d，已知盲区，非 bug）", async () => {
+  it("after 领先 now 但仍在同一个时间窗内：items 为空、cursorAhead 仍是 false（评审二审，已知盲区，非 bug）", async () => {
     const now = 1_000_000;
     const { app } = await makeApp([], ["k1"], {}, () => now);
     const nearFutureAfter = now + 10 * 60_000; // +10 分钟，仍在同一个 1 小时窗口内
@@ -318,7 +318,7 @@ describe("GET /admin/api/events", () => {
     expect(body.items.map((e) => e.event)).toEqual(["e.info"]);
   });
 
-  it("?limit=<n> 截断结果，truncated 如实报 true（评审 I3）", async () => {
+  it("?limit=<n> 截断结果，truncated 如实报 true（评审发现）", async () => {
     let t = 100_000;
     const { app, storeLogger } = await makeApp([], ["k1"], {}, () => t);
     for (let i = 0; i < 5; i++) storeLogger.log({ level: "info", event: `e${i}` });
@@ -428,7 +428,7 @@ describe("GET /admin/api/events/download", () => {
 });
 
 /**
- * **W2 那条 Critical 的端点级回归，五种形态逐条穷举（不是抽样）。**
+ * **畸形事件条目那条 Critical 的端点级回归，五种形态逐条穷举（不是抽样）。**
  *
  * 触发条件如实写：`src/` 里今天没有产出畸形分片值的代码路径，已知的现实来源是
  * **存储外部**——运维手改 KV / `store.json`、KV 值损坏、Node 侧进程被杀时
@@ -547,7 +547,7 @@ describe("存储里的畸形事件条目：端点必须活着，且游标契约�
   });
 
   /**
-   * **W3 轴 ④ 的代价，明写成用例，别让它变成一句没人验的话。**
+   * **按级别过滤那一轴的代价，明写成用例，别让它变成一句没人验的话。**
    * 畸形 `level` 的条目在「按级别筛选」时选不中（`e.level === level` 恒假），
    * 只在「全部级别」下可见。**这是已知限制，登记不修。**
    */
@@ -560,7 +560,7 @@ describe("存储里的畸形事件条目：端点必须活着，且游标契约�
   });
 
   /**
-   * **下载端点不是同样的行为，W2 详表第 2 行**：单条 `[null]` 修复前它返回
+   * **下载端点不是同样的行为，详表第 2 行**：单条 `[null]` 修复前它返回
    * **200，正文是字面量 `null`**（`JSON.stringify(null)`），账本里没有这条。
    * 两条以上时才 500。修复后两种都回空正文。
    */

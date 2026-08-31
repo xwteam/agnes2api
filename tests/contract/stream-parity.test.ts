@@ -5,7 +5,7 @@ import { toSseStream } from "../../src/core/protocol/sse.js";
 import { deltaText, sseFrames, playgroundProtocols } from "../../admin-ui/js/pure/playground.mjs";
 
 /**
- * **P3d Task 11：流式那条路的双运行时契约。**
+ * **流式那条路的双运行时契约。**
  *
  * ── **这一组能给 U-A 结案吗：不能，而且这句话必须写在最前面** ──────────────────
  * U-A 问的是「**workerd 的 HTTP 服务层**会不会把一条 SSE 响应整体缓冲」。
@@ -16,7 +16,7 @@ import { deltaText, sseFrames, playgroundProtocols } from "../../admin-ui/js/pur
  *
  * ⇒ **U-A 由真机仪器结案，不由本文件结案**：`wrangler dev` 起真 workerd，
  * 假上游 1 秒/块 × 4 块，`curl -N` 逐块打时间戳。实测结论（两种运行时各一行，
- * 到达间隔都约 1 秒 ⇒ 都是逐块透传）写在 Task 11 报告里。
+ * 到达间隔都约 1 秒 ⇒ 都是逐块透传）写在当时的报告里。
  * **本文件是那条结论的回归网**，不是它的证据。
  *
  * ── **第 8 种假阳性：不许用零延迟替身** ────────────────────────────────────────
@@ -93,7 +93,7 @@ describe("流式：网关不整体缓冲（U-A 的回归网，不是它的证据
    * **变红条件**：把 `src/core/dispatcher.ts` 的 `sanitize(res)` 改成
    * 先 `await res.text()` 再用那段文本重建一个 Response。
    *
-   * ── **这一格的射程，三句话（P3e Task 12 改真）** ─────────────────────────────
+   * ── **这一格的射程，三句话（后来改真）** ─────────────────────────────────────
    * ① **它只覆盖 openai 纯透传那条路**（`/v1/chat/completions`）。openai 是唯一
    *    原样透传上游字节的协议，这一格连着的就是那条路。**实测**：把
    *    `src/core/protocol/sse.ts` 的 `toSseStream` 从逐块 `pull` 改成 `start` 里
@@ -103,7 +103,7 @@ describe("流式：网关不整体缓冲（U-A 的回归网，不是它的证据
    *    `tests/unit/anthropic.test.ts「首个事件在上游尚未结束时就已产出（真流式）」`、
    *    `tests/unit/responses.test.ts「首个事件在上游尚未结束时就已产出（真流式）」`、
    *    `tests/unit/gemini.test.ts「首个事件在上游尚未结束时就已产出（真流式）」`
-   *    （gemini 那格 P3e Task 12 才补上——在那之前它在 unit 侧只有取消那一格）。
+   *    （gemini 那格是后来才补上的——在那之前它在 unit 侧只有取消那一格）。
    *    本文件下方 CRLF 那一组另外各带一行，同一个缓冲式变异下那三条协议的
    *    CRLF / LF 六行全红；**四条协议共用的那个原语**由
    *    `tests/contract/stream-parity.test.ts`
@@ -114,7 +114,7 @@ describe("流式：网关不整体缓冲（U-A 的回归网，不是它的证据
    * ③ **`app.request()` 不经过 workerd 的 HTTP 服务层，也不经过
    *    `src/entry/worker.ts` 的 `fetch()` 导出**（真机上请求先落在那儿，再由它
    *    转交 `app.fetch`）。那一层仍然只能靠真机结案（`wrangler dev` 起真 workerd +
-   *    `curl -N` 逐块打时间戳，结论在 P3d Task 11 的报告里），本文件是那条结论的
+   *    `curl -N` 逐块打时间戳，结论在当时的报告里），本文件是那条结论的
    *    回归网、不是它的证据。
    */
   it("上游第二块还没 enqueue 时客户端已经读到了第一块 —— 被整体缓冲的话 Playground 的流式开关就是假话", async () => {
@@ -131,7 +131,7 @@ describe("流式：网关不整体缓冲（U-A 的回归网，不是它的证据
       },
     });
     // ⚠️ **`makeApp` 是 async，必须 await**（`tests/helpers/make-app.ts` 的 `export async function`）。
-    // ⚠️ `Outcome.body` 收 `ReadableStream` 是 Task 11 给 `tests/helpers/fake-fetcher.ts` 扩的：
+    // ⚠️ `Outcome.body` 收 `ReadableStream` 是后来给 `tests/helpers/fake-fetcher.ts` 扩的：
     //    在那之前它只吃 `string`，于是上游只能一次性给完 ⇒ 本格的挂起点根本不存在。
     const { app } = await makeApp([{ status: 200, body: upstream }], ["sk-stream-probe-0001"]);
     const res = await app.request("/v1/chat/completions", {
@@ -159,7 +159,7 @@ describe("流式：网关不整体缓冲（U-A 的回归网，不是它的证据
 });
 
 /**
- * ── **P3e Task 12：四条协议共用的那个原语本身，逐块性上装一个观测点** ──────────
+ * ── **四条协议共用的那个原语本身，逐块性上装一个观测点** ───────────────────────
  *
  * 上面那一格与下面 CRLF 那一组都是**整条路**的观测：它们要起 app、要过路由、
  * 要挂闸，红起来的报文说的是「哪条协议的哪一头坏了」。而 anthropic / responses /
@@ -176,15 +176,15 @@ describe("流式：网关不整体缓冲（U-A 的回归网，不是它的证据
  * 装置就是**一个由用例握着的闸**：生成器 yield 完第一块就卡在闸上不结束，
  * 于是「第一块已经到了下游、而生成器还没跑完」成为一个可观测的状态。
  *
- * ⚠️⚠️ **不许用「数 `next()` 调用次数」那把尺子**（P3e Task 12 实测撞掉的一版）：
+ * ⚠️⚠️ **不许用「数 `next()` 调用次数」那把尺子**（实测撞掉的一版）：
  * 派发单原本写的是「第一块交出来时生成器只被 `next()` 过 1 次」。**node 下它是 1，
  * workerd 下它是 2 —— 而 `toSseStream` 是同一份逐块实现、一个字没改。**
  * 两个运行时对「交付第一块之后什么时候再 pull 一次」的调度本来就不一样，
  * 那把尺子量的是**运行时的 pull 调度**，不是「第一块什么时候交给下游」
  * ⇒ 它在 workerd 下对**正确实现**恒红（报告变异表 M0）。**判据用错工具，
- * 这次是恒红；上一次（Task 9 的 M1）是恒绿——两种都得靠实测才看得见。**
+ * 这次是恒红；上一次（评审发现 M1）是恒绿——两种都得靠实测才看得见。**
  */
-describe("流式：toSseStream 这个原语自己是逐块的（P3e Task 12）", () => {
+describe("流式：toSseStream 这个原语自己是逐块的", () => {
   const TIMED_OUT = "__闸还没放，下游一块都没拿到__";
   const CLOSED_EARLY = "__流提前结束了，这一格的挂起点没建起来__";
 
@@ -268,7 +268,7 @@ describe("流式：toSseStream 这个原语自己是逐块的（P3e Task 12）",
 });
 
 /**
- * ── **P3e Task 11：上游把行尾改写成 CRLF 时，流式还是不是流式** ────────────────
+ * ── **上游把行尾改写成 CRLF 时，流式还是不是流式** ─────────────────────────────
  *
  * **为什么必须写在 `tests/contract/` 而不是只写 `tests/unit/sse.test.ts`**：
  * 「网关不整体缓冲」是一条**双运行时**性质，而 `tests/unit/**` 只有 node 那份配置
@@ -349,7 +349,7 @@ describe("流式：上游换成 CRLF 换行时，第一个正文字仍然要在�
    * 读起来像「一个字都不会出现」，而实测的形态是「等很久、然后整段蹦出来」
    * ——`admin-ui/js/gw-api.js` 收尾那句会把整个缓冲当最后一帧再切一次，
    * **负载一条都不少**。缺了限定词，下一个人会照着「屏幕空白」去找一条根本不存在的
-   * 「解析不出来」的缺陷（P3e Task 11 就是这么被上一版的措辞带偏过一次的）。
+   * 「解析不出来」的缺陷（当时就是这么被上一版的措辞带偏过一次的）。
    *
    * **变红条件（逐条实测过，见报告变异表 M1 / M2）**：把
    * `src/core/protocol/sse.ts` 或 `admin-ui/js/pure/playground.mjs` 里认
@@ -466,7 +466,7 @@ describe("流式：协议目录的 streamTextPath 与网关真吐出去的字节
   );
 });
 
-describe("协议目录：samplePrompt 这一格（Task 11 加，消掉前端那份副本）", () => {
+describe("协议目录：samplePrompt 这一格（后来加的，消掉前端那份副本）", () => {
   /**
    * **防住的真实故障**：面板靠「在 `sampleBody` 里找到这句话并把它换成用户输入」
    * 注入提示词。端点交出来的 `samplePrompt` 与 `sampleBody` 里那句话一旦不是同一个，

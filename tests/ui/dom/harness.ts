@@ -42,7 +42,7 @@ type SectionName = (typeof NAV_SECTIONS)[number];
 export const PANEL_ORIGIN = "https://panel-probe.invalid";
 
 /**
- * `raw`：**不走 `JSON.stringify`，原样当响应体**（P3d Task 11 加的）。
+ * `raw`：**不走 `JSON.stringify`，原样当响应体**（后来加的）。
  *
  * 存在的理由：流式那条路读的是 `text/event-stream`，而 `JSON.stringify` 出来的
  * 永远是一段 JSON —— 没有它，**Playground 的流式那一档在 DOM 层一格都测不到**。
@@ -60,7 +60,7 @@ type Resp = {
   body: unknown;
   /**
    * `string` = 一段固定字节；`ReadableStream` = **由用例自己控制吐法的流**
-   *（P3d Task 11 评审 F1/F4：中途 `controller.error()` 才走得到「读到一半断了」那条路，
+   *（评审发现 F1/F4：中途 `controller.error()` 才走得到「读到一半断了」那条路，
    * 而那条路上的渲染与口令扫描原来一格都没覆盖）。
    */
   raw?: string | ReadableStream<Uint8Array>;
@@ -74,7 +74,7 @@ export interface Harness {
   /**
    * 每次 `fetch` 的记录（url + 方法 + 头 + 请求体）。
    *
-   * `body` 是**解析过的 JSON**，不是原始字符串——P3c Task 4 起有断言需要直接核对
+   * `body` 是**解析过的 JSON**，不是原始字符串——有断言需要直接核对
    * 请求体的形状（导入框「原样按行发」那条判据只有从这里才验得到：响应体和
    * 网络调用记录都不会告诉你请求当初长什么样）。解析失败（非 JSON body，例如
    * `undefined`）时是 `undefined`，不是抛异常。
@@ -83,7 +83,7 @@ export interface Harness {
   /**
    * 下一次（及之后）`fetch` 的应答，按 url 前缀匹配；缺省 200 + `{}`。
    *
-   * ⚠️ **应答可以返回一个 Promise**（P3c Task 7 加的）。加它是因为
+   * ⚠️ **应答可以返回一个 Promise**（后来加的）。加它是因为
    * 「成功提示不得早于回读」这条产品不变式**在零延迟下整个不可观测**：
    * 请求与响应落在同一条微任务链里，「早于」这件事没有可以插进去断言的缝。
    * 本仓在 storage 轴上为同一形态栽过一次（第 8 种候选假阳性）。
@@ -174,7 +174,7 @@ export async function bootPanel(opts: {
    * 面板部署在哪个域名下。
    *
    * ⚠️ **它必须是一个替身，而且必须与本仓任何真实部署都不像**：设置页第 4 张卡
-   *（集成示例，P3d Task 7）里那条 base URL 是**运行期**从这里取的，
+   *（集成示例）里那条 base URL 是**运行期**从这里取的，
    * 用例正是靠「渲染出来的地址逐字等于这里这个值」证明它没被写死。
    * 取一个显然是探针的值，写死的那一版就绝不可能碰巧通过。
    *

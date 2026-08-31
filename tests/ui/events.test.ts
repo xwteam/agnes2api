@@ -43,7 +43,7 @@ describe("levelLabelKey：工具栏筛选按钮专用，四个级别各自映射
 });
 
 /**
- * **评审 I4**：`effectiveLevel` 是"一条事件真实显示成哪个级别"的唯一判据——
+ * **评审发现**：`effectiveLevel` 是"一条事件真实显示成哪个级别"的唯一判据——
  * 四个已知级别透传，其余一律显式归到 "unknown"，不冒充任何已知级别（尤其不冒充
  * "info"，那会让脏数据顶着绿色徽章蒙混过去）。
  */
@@ -129,7 +129,7 @@ describe("eventsListMessageKey：列表区该显示哪条消息", () => {
   });
 
   /**
-   * **全分支评审 I5：面板对运维说假话（这是一个已经上线的缺陷）。**
+   * **评审发现：面板对运维说假话（这是一个已经上线的缺陷）。**
    *
    * 点「清空」之后 `view` 变成 `[]`，原来只看 `viewLength === 0` ⇒ 列表区显示
    * 「还没有事件。」——与同一个按钮的 tooltip（「不影响服务端已落盘的事件」）
@@ -208,7 +208,7 @@ describe("bufferStatus：dropped / budgetExhausted / truncated / buffered / curs
     expect(bufferStatus({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: "3", cursorAhead: false, malformed: 0 }))
       .toEqual({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: null, cursorAhead: false, malformed: 0 });
   });
-  it("cursorAhead 单独缺失/畸形时只有它是 null，其余字段不受影响（评审 C6）", () => {
+  it("cursorAhead 单独缺失/畸形时只有它是 null，其余字段不受影响（评审发现）", () => {
     expect(bufferStatus({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: 1, malformed: 0 }))
       .toEqual({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: 0, cursorAhead: null, malformed: 0 });
   });
@@ -245,10 +245,10 @@ describe("shouldWarn：黄条是否出现，完全由后端字段驱动", () => 
   it("budgetExhausted=true ⇒ 警告（即使其余项都是 false）", () => {
     expect(shouldWarn({ ...allClear, budgetExhausted: true })).toBe(true);
   });
-  it("truncated=true ⇒ 警告（评审 I3，即使其余项都是 false）", () => {
+  it("truncated=true ⇒ 警告（评审发现，即使其余项都是 false）", () => {
     expect(shouldWarn({ ...allClear, truncated: true })).toBe(true);
   });
-  it("cursorAhead=true ⇒ 警告（评审 C6，即使其余项都是 false）", () => {
+  it("cursorAhead=true ⇒ 警告（评审发现，即使其余项都是 false）", () => {
     expect(shouldWarn({ ...allClear, cursorAhead: true })).toBe(true);
   });
   it("buffered 单独很大 ⇒ 不警告——单纯缓冲区里有事件是正常运行态，不占用黄条（评审 N1 的取舍）", () => {
@@ -262,12 +262,12 @@ describe("shouldWarn：黄条是否出现，完全由后端字段驱动", () => 
   });
 
   /**
-   * **`cursorBroken=true` ⇒ 黄条**（评审 I6）。它比在座任何一条都更该在：
+   * **`cursorBroken=true` ⇒ 黄条**（评审发现）。它比在座任何一条都更该在：
    * 意味着后端**此刻正在违约**，游标推不动、面板可能**永远看不到新事件**；
    * 而判据里那条 `cursorAhead` 反倒是会自愈的时钟纠纷。
    * 第一版只把它接进 tooltip —— 等于把「面板在撒谎」降级成「面板在小声说」。
    */
-  it("cursorBroken=true ⇒ 警告（评审 I6，即使其余项都是 false）", () => {
+  it("cursorBroken=true ⇒ 警告（评审发现，即使其余项都是 false）", () => {
     expect(shouldWarn({ ...allClear, cursorBroken: true })).toBe(true);
   });
 
@@ -292,7 +292,7 @@ describe("nextAfter：轮询游标推进", () => {
 /**
  * **本任务的核心前端断言：三种输入，三种语义，不许合并成两种。**
  *
- * 防住的真实故障（本计划 W2/W3 实测）：存储里一条畸形事件让后端的 `cursor` 变成
+ * 防住的真实故障（实测）：存储里一条畸形事件让后端的 `cursor` 变成
  * `undefined` ⇒ `c.json` 把该字段整个丢掉 ⇒ 前端读到"字段不存在"。原来这一支
  * 与「`cursor: null` = 本页没有新事件」**合并**，于是「后端在吐畸形数据」被显示成
  * 「一切正常」——面板在撒谎，而且撒的正是让人查不下去的那种。
@@ -322,7 +322,7 @@ describe("cursorOutcome：把「没有新事件」与「后端契约被破坏」
 });
 
 /**
- * **评审 C6 二审**：轮询结果的完整决策（after 自愈 + view 清空 + hadNewItems
+ * **评审二审**：轮询结果的完整决策（after 自愈 + view 清空 + hadNewItems
  * 信号），原来摊在 `sec-events.js` 里裸写、零测试覆盖，两个联带 bug（视图重复、
  * 退避永远回不到最长间隔）都是从这个洞里漏出来的——见 `pure/events.mjs` 的说明。
  */
@@ -355,10 +355,10 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
       next: { after: null, healing: true, delayMs: 30_000 },
     });
   });
-  it("cursorAhead 为 true 时 resetView 恒为 true——这是评审 C6 二审(b) 点名的那条视图重复 bug 的直接防线", () => {
+  it("cursorAhead 为 true 时 resetView 恒为 true——这是评审二审(b) 点名的那条视图重复 bug 的直接防线", () => {
     expect(pollOutcome({ after: 5000, healing: false, delayMs: 15_000 }, [], null, true).resetView).toBe(true);
   });
-  it("hadNewItems 只看 items.length，不看 after 有没有变——这是评审 C6 二审(a) 点名的那条退避 bug 的直接防线", () => {
+  it("hadNewItems 只看 items.length，不看 after 有没有变——这是评审二审(a) 点名的那条退避 bug 的直接防线", () => {
     // after 从 1000 自愈成 null（明显"变了"），但 items 是空的：hadNewItems 必须是 false，
     // 不能因为"游标变了"就误判成"来了新内容"。
     expect(pollOutcome(idle, [], null, true).hadNewItems).toBe(false);
@@ -381,7 +381,7 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
    *
    * 这两件事是同一条链的两端，必须写在同一格里（第 5 种假阳性：分开写的话，
    * 各自单独覆盖的状态下两种实现数学上等价）。喂进去的是一份**有 items、
-   * 但缺 `cursor` 字段**的响应——那正是 W2 实测出的真实响应体形状。
+   * 但缺 `cursor` 字段**的响应——那正是那条畸形条目实测出的真实响应体形状。
    */
   it("后端吐畸形游标（缺 cursor 字段）：cursorBroken 为真，且退避不回 15 秒", () => {
     const out = pollOutcome({ after: null, healing: false, delayMs: 15_000 }, [{ ts: 1 }], undefined, false);
@@ -399,9 +399,9 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
   });
 
   /**
-   * **W3 那条 Critical 的稳态吞吐，做成一条会变红的用例。**
+   * **稳态吞吐那条 Critical，做成一条会变红的用例。**
    *
-   * 量法与 W3 的临时探针同形（直接驱动发货的 `pollOutcome`，不抄一份循环——
+   * 量法与当时的临时探针同形（直接驱动发货的 `pollOutcome`，不抄一份循环——
    * 第 7 种假阳性），只是把结论钉住：畸形游标下 `after` 恒为 `null` ⇒ 每一轮都是
    * **满额冷读**。冷读的候选键数是 `EVENT_WINDOW_RETAIN × EVENT_SLOTS = 24 × 2`，
    * **手写字面量 48**，不从常量反算（第 6 种假阳性）。
@@ -411,7 +411,7 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
    *   是 DEPLOY.md 承诺的包线 **70,560** 的 **3.9 倍**。
    * · 修复后：退避正常爬到 60 秒封顶 ⇒ `(86400 ÷ 60) × 48 = 69,120` 次/天，**在包线内**。
    *
-   * ⚠️ **这条只在默认的「全部级别」档位下成立**（W3 轴 ④）：点任一个级别按钮，
+   * ⚠️ **这条只在默认的「全部级别」档位下成立**（按级别过滤那一轴）：点任一个级别按钮，
    * 畸形条目被后端 `e.level === level` 滤掉、游标立刻恢复。**不许写成「永不自愈」。**
    */
   it("畸形游标的稳态读吞吐落在 70,560 包线内（修复前是 276,480 = 3.9 倍）", () => {
@@ -433,7 +433,7 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
   });
 
   /**
-   * **评审 C6 三审(a) + 四审 B2**：`healing` 是"上一次自愈之后、还没有重新建立起
+   * **评审三审(a) + 四审 B2**：`healing` 是"上一次自愈之后、还没有重新建立起
    * 游标"的那一整段（不是"刚好上一轮"）。这段里即使真的拉到了 items，也不算
    * "来了新内容"——那批 items 正是自愈时 resetView 刚扔掉的同一批。
    *
@@ -594,7 +594,7 @@ describe("formatFields", () => {
 });
 
 /**
- * **评审 I4**：这个函数原来是 `sec-events.js` 里的纯取值逻辑，零测试覆盖，
+ * **评审发现**：这个函数原来是 `sec-events.js` 里的纯取值逻辑，零测试覆盖，
  * 搬进 pure 之后由这里的用例跑到。
  */
 describe("buildDetailText：说明 / 字段列的文本拼装", () => {
@@ -619,7 +619,7 @@ describe("buildDetailText：说明 / 字段列的文本拼装", () => {
 
 describe("groupEvents：按 corr 相邻折叠成时间线（P-1）", () => {
   /**
-   * **人工冒烟项**：本期几乎没有事件带 corr（P3c 才串进注册机），
+   * **人工冒烟项**：本期几乎没有事件带 corr（后来才串进注册机），
    * 所以分组必须在「一个都没有」时也表现正常——不崩、不把互不相关的事件粘在一起。
    */
   it("全部无 corr 时：每条各自独立成组（人工冒烟：零 corr 场景）", () => {
@@ -637,7 +637,7 @@ describe("groupEvents：按 corr 相邻折叠成时间线（P-1）", () => {
   });
 
   /**
-   * **人工冒烟项**：手工构造带 corr 的批次（生产今天还打不出这种数据，P3c 才有），
+   * **人工冒烟项**：手工构造带 corr 的批次（生产今天还打不出这种数据，后来才有），
    * 验证相邻折叠的核心逻辑本身是对的。
    */
   it("相邻的同 corr 事件折叠成一条时间线", () => {

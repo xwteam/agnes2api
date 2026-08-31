@@ -298,7 +298,7 @@ describe("YydsProvider", () => {
     await expect(p.listDomains()).rejects.toThrow(/401/);
   });
 
-  it("I2 四类请求（列域名/建邮箱/轮询/删邮箱）都带单请求超时的 signal", async () => {
+  it("四类请求（列域名/建邮箱/轮询/删邮箱）都带单请求超时的 signal", async () => {
     // pollCode 的截止判断只在每轮循环开头做一次，请求本身挂起是不计入的——
     // 单请求超时是这条链路上唯一能兜住挂起连接的东西。
     let t = 0;

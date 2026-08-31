@@ -8,7 +8,7 @@ import { catalogPayload } from "../../../src/core/admin/protocol-catalog.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
- * **模型板块的渲染行为（P3d Task 6 Step 2 的 DOM 那一半，评审 I22 ①）。**
+ * **模型板块的渲染行为（DOM 那一半，评审发现 ①）。**
  *
  * `tests/ui/models.test.ts` 把取值判定测得很细，**但没有任何东西验证板块文件真的
  * 把那些判定画了出来**。把错误分支改成「渲染一张空表」，纯函数用例一条都不红，
@@ -72,7 +72,7 @@ function dataRows(section: FakeElement): FakeElement[] {
 /**
  * 某一行上的四个徽章。
  *
- * ⚠️ **`title` 必须一起收**（P3d Task 6 评审 Important 3，实测）：上一版只收
+ * ⚠️ **`title` 必须一起收**（评审 Important 3，实测）：上一版只收
  * `textContent` / `data-available` / `data-protocol` ⇒ **删掉徽章上的 `title` 全绿**，
  * 而「可用 / 不可用」这件事**不只靠颜色**这条承诺全靠那句 tooltip 兑现，
  * `models.badge.yes` / `models.badge.no` 两个 key 的渲染当时零覆盖。
@@ -92,7 +92,7 @@ function badgesOf(row: FakeElement): Array<{
       available: span.getAttribute("data-available"),
       protocol: span.getAttribute("data-protocol"),
       title: span.getAttribute("title"),
-      // ⚠️ **class 一起收**（P3e Task 20）：`title` 是 hover-only，`data-available` 读不出来
+      // ⚠️ **class 一起收**：`title` 是 hover-only，`data-available` 读不出来
       // ⇒ 两态徽章可见文字逐字相同时，class 是唯一还能挂非颜色线索的地方。
       classes: String(span.getAttribute("class") ?? "").split(/\s+/).filter(Boolean).sort(),
     });
@@ -385,7 +385,7 @@ describe("按协议筛选（工具栏）", () => {
   });
 
   /**
-   * ── **P3d Task 6 评审 Important 2：`filterEmpty` 那一支原来零覆盖** ────────────
+   * ── **评审 Important 2：`filterEmpty` 那一支原来零覆盖** ───────────────────────
    *
    * 实测：把 `buildTable()` 里那个三元的两支都改成 `"models.empty"` ⇒ **全绿**，
    * 而 `grep -rn 'filterEmpty' tests/` 当时命中 **0**。
@@ -520,7 +520,7 @@ describe("网络行为", () => {
   /**
    * 错误横幅上那颗「再读一次」真的重发请求。
    * **变红条件**：把 `retry.addEventListener("click", …)` 那一行删掉
-   * ⇒ 一颗按了不解决问题的按钮（P3d Task 5 评审 M1 记过同一个形态）。
+   * ⇒ 一颗按了不解决问题的按钮（评审 M1 记过同一个形态）。
    */
   it("错误横幅上那颗「再读一次」真的重发请求，成功之后表就出来了", async () => {
     const h = await openModels(respondWithCatalog(500, {}));
@@ -537,7 +537,7 @@ describe("网络行为", () => {
   });
 
   /**
-   * ── **P3d Task 6 评审 Important 1：两条读并存，而晚到的失败会抹掉已经画好的表** ──
+   * ── **评审 Important 1：两条读并存，而晚到的失败会抹掉已经画好的表** ──
    *
    * `load()` 有**两个**入口：`onShow()`（`catalog === null` 时）与错误横幅上那颗
    * 「再读一次」。第一条读**还在飞着**的时候切走再切回来，`catalog` 仍然是 `null`
@@ -617,7 +617,7 @@ describe("网络行为", () => {
   });
 
   /**
-   * ── **P3d Task 6 定向复评 F1：一条永不落地的读，把板块变成一片空白** ─────────
+   * ── **定向复评 F1：一条永不落地的读，把板块变成一片空白** ────────────────────
    *
    * `admin-ui/js/api.js` 这条链**没有超时**（`raw()` 的 `signal` 只透传调用方给的），
    * 所以一条读可以永远飞着（连接卡死 / 黑洞代理 / 睡眠唤醒）。
@@ -752,7 +752,7 @@ describe("网络行为", () => {
 });
 
 /**
- * ── WCAG 1.4.1：状态不许只由颜色表达（P3e Task 20）──────────────────────────────
+ * ── WCAG 1.4.1：状态不许只由颜色表达 ────────────────────────────────────────────
  *
  * 协议矩阵里可用 / 不可用两个徽章的**可见文字逐字相同**（都是协议专名），
  * 原来的差别只有三样：颜色、hover 才出得来的 `title`、读不出来的 `data-available`。
@@ -789,7 +789,7 @@ describe("徽章的状态不只靠颜色", () => {
    * 那一族只能靠真机截图，而截图不是会自己红的守卫。
    *
    * ⚠️⚠️ **判据是逐条声明的属性名，不是 `toContain("text-decoration")`**
-   *（P3e Task 20 复评实测打穿过：`text-decoration-color: red` 逐字包含那个串，
+   *（复评实测打穿过：`text-decoration-color: red` 逐字包含那个串，
    * 却**本身就是颜色属性** ⇒ 这一格照样绿，而真机 computed 退回 `text-decoration-line: none`）。
    * 判据住在 `tests/helpers/css-decls.ts` 的 `visibleNonColorDecls()`，与
    * `tests/unit/source-guards.test.ts「.btn-toggle.active 至少有一条非颜色声明 —— 只改颜色的话触屏与色觉障碍用户拿不到选中态」`
@@ -827,7 +827,7 @@ describe("徽章的状态不只靠颜色", () => {
 });
 
 /**
- * ── `aria-pressed`：分段选择器的选中态得读得出来（P3e Task 20）──────────────────
+ * ── `aria-pressed`：分段选择器的选中态得读得出来 ────────────────────────────────
  *
  * `.active` 只改颜色（外加一条加粗），读屏用户拿不到。
  * **"每个创建点都带 `aria-pressed`"由

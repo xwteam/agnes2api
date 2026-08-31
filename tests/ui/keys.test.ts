@@ -21,7 +21,7 @@ const body = {
 };
 
 /**
- * **产品不变式：绝不伪造 0。**（评审 C1）
+ * **产品不变式：绝不伪造 0。**（评审发现）
  *
  * 接口读失败时四张汇总卡与筛选下拉都必须显示 `—`。显示 `0/0/0/0` 的后果不是"不好看"：
  * 运维看到「可用 0」的第一反应是整池死了，而真相可能只是面板自己的一次请求失败。
@@ -138,7 +138,7 @@ describe("行内每个格子的取值决策", () => {
 });
 
 /**
- * **`≈` 必须由后端那个诚实标记驱动**（评审 I4）。
+ * **`≈` 必须由后端那个诚实标记驱动**（评审发现）。
  *
  * 板块第一版无条件拼 `≈`，于是契约测试里那句"面板要靠 approximate 决定打不打 ≈"
  * 是假的——后端改成 `false`，面板照样打。一个没有消费者的响应字段迟早会漂。
@@ -154,7 +154,7 @@ describe("≈ 由 approximate 驱动", () => {
     expect(usageParts(view, undefined).approx).toBe(true);
   });
   it("条目缺 stats 时两个数都是 null（渲染成 ≈ —），不是 0", () => {
-    // 存量记录没有 stats（P1 时期写下的）。后端投影会补零，但**前端不许自己假设**：
+    // 存量记录没有 stats（早期写下的）。后端投影会补零，但**前端不许自己假设**：
     // 拿不到就是拿不到，伪造 0 会让运维以为这把 key 一次都没成功过。
     expect(usageParts({}, true)).toEqual({ approx: true, requests: null, success: null });
     expect(usageParts({ stats: {} }, true)).toEqual({ approx: true, requests: null, success: null });

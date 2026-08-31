@@ -101,7 +101,7 @@ describe("MoeMailProvider", () => {
     expect(new Headers(calls[0]!.init.headers).get("x-api-key")).toBe("k");
   });
 
-  it("I2 四类请求（列域名/建邮箱/轮询/删邮箱）都带单请求超时的 signal", async () => {
+  it("四类请求（列域名/建邮箱/轮询/删邮箱）都带单请求超时的 signal", async () => {
     let t = 0;
     const { calls, fetcher } = stubFetcher((url, init) => {
       if (url.includes("/api/config")) return { status: 200, body: { emailDomains: "a.test" } };
@@ -181,11 +181,11 @@ describe("MoeMailProvider", () => {
     expect(body.name).toMatch(/^u[a-z0-9]{10}$/);
   });
 
-  // === I7：建邮箱的不可恢复泄漏（MoeMail 侧只能留痕） ===
+  // === 建邮箱的不可恢复泄漏（MoeMail 侧只能留痕） ===
   // MoeMail 用服务端生成的 id 定位邮箱，请求侧推断不出，没法像 YYDS 那样兜底
   // 删除；这里明确其泄漏语义：抛错、留痕、指明只能等 TTL 自愈。
 
-  it("I7 createMailbox 响应 2xx 但缺 id 时抛错，并记事件说明只能等 TTL 自愈", async () => {
+  it("createMailbox 响应 2xx 但缺 id 时抛错，并记事件说明只能等 TTL 自愈", async () => {
     const logger = recordingLogger();
     const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { email: "u@a.test" } }));
     const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
@@ -199,7 +199,7 @@ describe("MoeMailProvider", () => {
     expect(e?.fields?.ttlMinutes).toBe(60);
   });
 
-  it("I7 createMailbox 响应 2xx 但正文非 JSON 时同样抛错并留痕（而不是抛出解析异常）", async () => {
+  it("createMailbox 响应 2xx 但正文非 JSON 时同样抛错并留痕（而不是抛出解析异常）", async () => {
     const logger = recordingLogger();
     const fetcher = { async fetch() { return new Response("<html>502</html>", { status: 200 }); } };
     const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });

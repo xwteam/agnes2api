@@ -18,12 +18,12 @@ interface OverviewBody {
   pool: { total: number; fresh: number; cooling: number; evicted: number; disabled: number } | null;
   /**
    * **不含 `lastErrorAt`/`lastErrorKind`**（评审裁定，见 overview.ts 的说明）：
-   * 概览面板不消费这两个字段，错误面正经的归宿是 Task 6 的事件板块。
+   * 概览面板不消费这两个字段，错误面正经的归宿是事件板块。
    */
   poolStats: {
     requests: number; success: number; failed: number; clientErrors: number; approximate: boolean;
   } | null;
-  /** `cfg` 恒有值（见 I2 的说明），两个 TTL 因此恒是数字，不再是 `number | null`。 */
+  /** `cfg` 恒有值（见下面那条「`config` 块四个透传字段」的说明），两个 TTL 因此恒是数字，不再是 `number | null`。 */
   freshness: {
     poolCacheTtlMs: number; poolVisibilityUpperBoundMs: number;
     poolTouchIntervalMs: number; configTtlMs: number; configVisibilityUpperBoundMs: number;
@@ -85,7 +85,7 @@ describe("GET /admin/api/overview", () => {
    * ⚠️ 关键是**同时**断言「该块 null」与「别的块没跟着塌」（`version`/`runtime`/
    * `config` 仍有值）——只断言前者的话，「整个 handler 返回一堆 null」这种实现也能过
    * （第 4 种假阳性）。**`config` 现在恒有值**（`ConfigHolder.current()` 不碰存储，
-   * 见 overview.ts I2 的说明），这里显式断言它也没被存储故障连累。
+   * 见 overview.ts 那句「`cfg` 恒有值」），这里显式断言它也没被存储故障连累。
    */
   /**
    * `pool` 块的**字段集合**是契约：概览的五张卡直接按这几个键取数
@@ -119,7 +119,7 @@ describe("GET /admin/api/overview", () => {
   });
 
   /**
-   * **I2（评审必修）**：`config` 块的四个透传字段与 `degraded` 真的从
+   * **评审必修**：`config` 块的四个透传字段与 `degraded` 真的从
    * `ConfigHolder.current()` 读出来，不是恰好蒙对了夹具默认值。
    *
    * 这条防住的真实回归：评审实测原实现在 `BrokenStorage` 下把这几个字段全部硬编码
@@ -185,7 +185,7 @@ describe("GET /admin/api/overview", () => {
   /**
    * **评审裁定**：`poolStats` 不再携带 `lastErrorAt`/`lastErrorKind`——概览面板
    * 没有任何消费者读它们（`grep -rn lastError admin-ui/js/sec-overview.js` 零命中），
-   * 没有消费者的响应字段迟早会漂（Task 4 I4）。断言的是**整段响应文本**不含这两个
+   * 没有消费者的响应字段迟早会漂（评审发现）。断言的是**整段响应文本**不含这两个
    * 键名，不是「字段值为 undefined」——后者对「顺手把字段塞回去，只是恰好没赋值」
    * 这种实现完全无感。
    */

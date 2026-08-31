@@ -11,7 +11,7 @@ import { join } from "node:path";
  * 这与 `scripts/check-i18n.mjs:145-149` 记着的那次翻车是同一个错的镜像。
  *
  * ⚠️ **不许排除 `js/pure/`。** 那里正是唯二拼 URL 的两个模块所在地
- *（本期 Task 7 的 `examples.mjs` 与 Task 10 的 `playground.mjs`）。
+ *（集成示例的 `examples.mjs` 与调试台的 `playground.mjs`）。
  *
  * 形态照抄 `tests/ui/storage-keys.test.ts:52` 那一格——它扫的就是 `["'\`]` 三种引号，
  * 已经证明这种扫描在本仓能落地。
@@ -40,11 +40,11 @@ import { join } from "node:path";
  * `/* … *\\/` 中间那些不以 `*` 起首的行，判据会误判成代码行、或反之）；
  * ③ **跳过逻辑自己需要一格自检**，否则「跳过范围悄悄变大」和现在这条 `lastIndex`
  * 致盲通道是同一类无声失效。
- * ⇒ **今天不做的理由**：Task 1 已经够长，而这三条代价里的每一条都要各自的实测。
- * **登记给 P3e，连同上面那组实跑数据一起——不必重量。**
+ * ⇒ **今天不做的理由**：那一轮已经够长，而这三条代价里的每一条都要各自的实测。
+ * **登记在案，连同上面那组实跑数据一起——不必重量。**
  *
  * **(C) 登记成盲点（今天采纳）。** 拼接形态靠评审 +
- * Task 7 / Task 10 各自检查单上那句「端点只许来自 /admin/api/models」。
+ * 集成示例 / 调试台各自检查单上那句「端点只许来自 /admin/api/models」。
  *
  * ⚠️ **别把这份文件读成「前端从此不可能硬编码端点」。** 它挡住的是**顺手写下一条路径**，
  * 不是**刻意绕开**。
@@ -63,7 +63,7 @@ function walk(dir: string): string[] {
 // ⚠️ **字符类里的 `$` `?` `=` 是评审 Important 2 之后补的，每一个都堵着一条实测逃逸**：
 // 补之前 `` `/v1beta/models/${m}:generateContent` ``（`$` 断在类外）与
 // `"/v1/chat/completions?stream=1"`（`?`/`=` 断在类外）**两种写法都逃得掉**。
-// 前一条最要命：**Task 10 的 Playground 拼 Gemini URL 时最自然的写法就是它**
+// 前一条最要命：**Playground 拼 Gemini URL 时最自然的写法就是它**
 // ——护栏原来在它最该守的那个消费者身上有洞。两条的变红实测见下面 COVERED 那一格。
 const ENDPOINT_RE = /["'`](\/v1(?:beta)?\/[A-Za-z0-9_{}$?=:/.-]*)["'`]/g;
 
@@ -124,7 +124,7 @@ function matchesIn(src: string): string[] {
 const COVERED: ReadonlyArray<{ probe: string; why: string }> = [
   {
     probe: "const url = `/v1beta/models/${model}:generateContent`;",
-    why: "模板插值（**Task 10 拼 Gemini URL 最自然的写法**，字符类缺 `$` 时整条逃掉）",
+    why: "模板插值（**拼 Gemini URL 最自然的写法**，字符类缺 `$` 时整条逃掉）",
   },
   {
     probe: 'fetch("/v1/chat/completions?stream=1");',
@@ -132,7 +132,7 @@ const COVERED: ReadonlyArray<{ probe: string; why: string }> = [
   },
   {
     probe: "const p = `/v1/videos/${id}`;",
-    why: "模板插值 + 媒体两段式的第二段（Task 12 会写它）",
+    why: "模板插值 + 媒体两段式的第二段（媒体那一轮会写它）",
   },
 ];
 
@@ -146,7 +146,7 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
     probe: 'const u = "/v1" + "/messages";',
     why: "字符串拼接 —— 整条路径不在同一对引号里，扫字面量的判据按定义看不见它。"
       + "处置有三条路：(A) 放宽到「裸 `/v1` 前缀也算」⇒ 实测 2 处系统性误报，否掉；"
-      + "(B) 按行扫描 + 跳过注释行 ⇒ 实测零误报且能抓住它，**可行但今天不做**（三条代价见文件头，登记 P3e）；"
+      + "(B) 按行扫描 + 跳过注释行 ⇒ 实测零误报且能抓住它，**可行但今天不做**（三条代价见文件头，登记在案）；"
       + "(C) 登记成盲点 ⇒ 今天采纳",
   },
 ];
@@ -253,7 +253,7 @@ describe("前端不许硬编码网关端点", () => {
    * ⚠️ 这里**不往仓库里种探针**（那会污染工作树，也会让这一格依赖文件系统状态）：
    * 判据是同一条 `ENDPOINT_RE` 对着六条手写的字符串样本跑，
    * 六条覆盖三种引号 × `/v1/` 与 `/v1beta/` 两种路径 × 一条**不该命中**的上游路径。
-   * 真正「种一行进 admin-ui/ 再跑一遍」的动作在 Task 1 Step 6b 当场做过一次。
+   * 真正「种一行进 admin-ui/ 再跑一遍」的动作当场做过一次。
    */
   it("正则认得三种引号下的 /v1 与 /v1beta，且不误伤上游路径 —— 否则上面那个空数组什么都没证明", () => {
     expect(hit('const __probe = "/v1/messages";'), "双引号 + /v1/（Step 6b 的探针形态）").toBe(true);
@@ -269,7 +269,7 @@ describe("前端不许硬编码网关端点", () => {
    * **声称抓得住的写法真的抓得住。**（评审 Important 2 补的两条，都是当时正在漏的活口子）
    *
    * 这一格红了只有一种意思：`ENDPOINT_RE` 的字符类又被改窄了，
-   * 而窄回去的那一刻 Task 10 的 Playground 就能免检硬编码 Gemini 的 URL。
+   * 而窄回去的那一刻 Playground 就能免检硬编码 Gemini 的 URL。
    */
   it.each(COVERED)("声称抓得住的写法真的抓得住：$why", ({ probe }) => {
     expect(hit(probe), `这条写法逃掉了：${probe}`).toBe(true);
@@ -289,7 +289,7 @@ describe("前端不许硬编码网关端点", () => {
   });
 
   /**
-   * ── **全局约束 15 的另外两轴今天没有任何机器在守（P3d Task 10 评审 M3）** ──────
+   * ── **全局约束 15 的另外两轴今天没有任何机器在守（评审发现 M3）** ──────────────
    *
    * 这道扫描的名字里写着「端点只许来自 /admin/api/models」，而全局约束 15 管的是**三样**：
    * **端点路径 / 请求体形状 / 协议名**。这道扫描只覆盖第一样。

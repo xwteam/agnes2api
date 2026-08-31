@@ -11,13 +11,13 @@ import type { KeyRecord } from "../../src/core/types.js";
 
 /**
  * `POST /admin/api/keys/:id/verify` —— 单把 key 的验活，以及与通道连通性测试
- * **共用的**出站探测护栏（P3d Task 8，设计 §10.2 / §11 + 订正 D1 / F8）。
+ * **共用的**出站探测护栏（设计 §10.2 / §11 + 订正 D1 / F8）。
  *
  * **contract ⇒ node 与 workerd 各跑一遍**（`tests/global-setup.ts` 的 `POLICY` 强制）。
  *
  * ── 这一组的头等纪律：观测点一律不落在响应体上 ──────────────────────────────
  *
- * P3c 收口给出的判别法：**「凡是观测点落在响应体的某个字段上，先问这个字段是谁写的」**
+ * 收口时给出的判别法：**「凡是观测点落在响应体的某个字段上，先问这个字段是谁写的」**
  * ——这条端点回的 `{ ok, status, latencyMs }` **三个全是 handler 自报**，
  * 拿它们做判据只能证明 handler 说了什么。所以下面每一格的观测点都落在：
  * · **被桩掉的 fetcher 收到了什么**（URL、`authorization` 里是哪一把 key、请求体）；
@@ -83,7 +83,7 @@ describe("POST /admin/api/keys/:id/verify —— 验的是哪一把、打的是�
     expect(fetcher.usedKeys, "出站带的不是 :id 指的那一把 key").toEqual(["sk-verify-second-0002"]);
   });
 
-  it("出站 URL 是 agnesBaseUrl + 协议目录的 upstreamPath，不是对外的 pathTemplate（评审 C3）", async () => {
+  it("出站 URL 是 agnesBaseUrl + 协议目录的 upstreamPath，不是对外的 pathTemplate（评审发现）", async () => {
     const { app, repo, fetcher } = await makeApp([], ["sk-verify-url-0001"], {}, () => NOW);
     await verify(app, await idOf(repo, "sk-verify-url-0001"));
 
@@ -246,7 +246,7 @@ describe("明文 key 一个字节都不许回到面板（全局约束 11a）", (
    * 事件板块不但能在面板上读，还能**整份下载**（`GET /admin/api/events/download`）。
    * `verify.ts` 的文件头声称「`VerifyDeps` 里刻意一格 `Logger` 都没有 ⇒ 这条端点
    * 在结构上打不出日志」——**那是一句结构声明，而声明本身当时零断言**：
-   * 实测（变异 C2：给 `VerifyDeps` 加一格 logger 并在失败支打一条带 `rec.key` 的事件）
+   * 实测（那次变异：给 `VerifyDeps` 加一格 logger 并在失败支打一条带 `rec.key` 的事件）
    * ⇒ **2421/2421 全绿**。这一格就是那句声明的钉子。
    *
    * 判据落在**面板真的读得到的那两条端点的整份响应文本**上，不是落在
@@ -259,7 +259,7 @@ describe("明文 key 一个字节都不许回到面板（全局约束 11a）", (
     // 事件先进内存缓冲，落盘由 `logFlush` → `maybeFlush()` 决定，而它被
     // `EVENT_FLUSH_MIN_INTERVAL_MS`（60 秒）挡着 ⇒ **冻结时钟下什么都不会落盘**，
     // 于是 `GET /admin/api/events` 恒读到空，三条 `not.toContain` 全是空的。
-    // 实测：第一版在变异 C2（给 handler 加 logger 并把 `rec.key` 打进事件）下
+    // 实测：第一版在那次变异（给 handler 加 logger 并把 `rec.key` 打进事件）下
     // **24/24 全绿、完整逃逸**。
     let t = NOW;
     const { app, repo } = await makeApp(
@@ -483,7 +483,7 @@ describe("出站探测护栏：与通道测试共用的那一套（全局约束 
     expect(await (await first).json()).toMatchObject({ ok: false, reason: "timeout" });
   });
 
-  it("两把**不同**的 key 连着验，第二把不该被挡 —— 闸的粒度是 verify:<id>（评审 I11）", async () => {
+  it("两把**不同**的 key 连着验，第二把不该被挡 —— 闸的粒度是 verify:<id>（评审发现）", async () => {
     // ⚠️ 没有这一格的话，「同一把 key 连点两次」在**全局粒度**与 **per-id 粒度**
     // 两种实现下都绿——而全局粒度意味着 20 把 key 逐个验要串行等 60 秒。
     const { app, repo, fetcher } = await makeApp(

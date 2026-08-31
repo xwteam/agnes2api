@@ -77,7 +77,7 @@ async function makeDeps(over: Partial<RegistrarConfig> = {}, provider: MailProvi
 }
 
 describe("tendOnce", () => {
-  it("failures[].reason 是联合类型而不是裸 string（P3 消费时要能拿到穷尽检查）", () => {
+  it("failures[].reason 是联合类型而不是裸 string（消费时要能拿到穷尽检查）", () => {
     // 这条断言真正生效的地方是 `tsc --noEmit`：把 reason 退回 string 之后，下面
     // 的 @ts-expect-error 会变成"未使用的指令"从而让类型检查失败。运行时断言只是
     // 顺带确认取值。
@@ -108,7 +108,7 @@ describe("tendOnce", () => {
    *
    * ⚠️ **成因如实登记**：上一轮只补了「备通道铸出时不记到主通道名下」那一半，
    * 变异「主通道铸出来的一律不记」（`if (ch !== primary) …`）**1541 全绿、ESCAPED**。
-   * **而生产上绝大多数轮次就是主通道铸出来的**——那正是 Task 6 每天要渲染的那一栏。
+   * **而生产上绝大多数轮次就是主通道铸出来的**——那正是面板每天要渲染的那一栏。
    * 两格必须并排放：单独任何一格都留着一半可以随便改。
    */
   it("主通道铸出来时 mintedByChannel 记在主通道名下（不是空表）", async () => {
@@ -133,7 +133,7 @@ describe("tendOnce", () => {
   });
 
   /**
-   * 名额判据的**排除清单只有一项：`evicted`**（P3c Task 5 收窄，此前是三项里的两项）。
+   * 名额判据的**排除清单只有一项：`evicted`**（后来收窄，此前是三项里的两项）。
    * 三把 key **给的是不同的字段组合**，所以这一格能分辨「判据看错了字段」与
    * 「判据压根没生效」：只有被剔除的那把腾出名额 ⇒ `available` 2、缺口 1。
    */
@@ -148,7 +148,7 @@ describe("tendOnce", () => {
   });
 
   /**
-   * ⚠️ **评审 C1：这一格守的是「停用一把 key 不许触发一次自动注册」。**
+   * ⚠️ **评审发现：这一格守的是「停用一把 key 不许触发一次自动注册」。**
    *
    * `tendOnce` 拿 `targetKeys - available` 当缺口，**差多少就真的去注册多少个 Agnes 账号**。
    * 名额判据若用 `isAvailable`（它现在排除被停用的 key），后果实测为：
@@ -159,9 +159,9 @@ describe("tendOnce", () => {
    * **变红条件**：`tender.ts` 的 `countsTowardTarget` 换回 `isAvailable`。
    * 断言分两半，缺一不可：`minted`（这一轮铸没铸）与**池子实际条数**（真落盘没有）。
    *
-   * ✅ **P3c Task 5：这条保证从「有条件」变成无条件了**，用例名里原来那三个字
+   * ✅ **这条保证后来从「有条件」变成无条件了**，用例名里原来那三个字
    *（「不在冷却」）已经去掉。判据现在是 `!r.evicted`，`disabled + cooling` 的组合
-   * 由下面那一格正面钉着——那一格在 Task 5 之前断言的是相反的行为。
+   * 由下面那一格正面钉着——那一格在此之前断言的是相反的行为。
    */
   it("停用一把 key 不触发补池——停用不是「这把死了」，别拿它当缺口", async () => {
     const { repo, deps } = await makeDeps();          // targetKeys: 3
@@ -182,7 +182,7 @@ describe("tendOnce", () => {
   /**
    * **同一条不变量的另一半：停用一把**正在冷却**的 key 同样不触发补池。**
    *
-   * ⚠️ **这一格在 P3c Task 5 之前断言的是相反的行为**（它当时叫「【已知残留】…仍会
+   * ⚠️ **这一格早先断言的是相反的行为**（它当时叫「【已知残留】…仍会
    * 触发补池」，如实钉着一个错着的行为）。当时的判据是
    * `!evicted && cooldownUntil <= now`：`disabled + cooling` 落在冷却那一支上 ⇒
    * 不占名额 ⇒ 照样铸一把新的，而冷却到期之后 `need` 转负、**多铸的那一把再也不会
@@ -228,7 +228,7 @@ describe("tendOnce", () => {
   /**
    * **全池限流风暴不再让池子永久变大。**
    *
-   * ⚠️ **这一格钉的是 P3c Task 5 修掉的第二条同族缺陷，实测数字如下**
+   * ⚠️ **这一格钉的是当时修掉的第二条同族缺陷，实测数字如下**
    *（`targetKeys = 3`，修复前）：稳态 3 → 全池冷却那一轮 `minted = 3` ⇒ 池子 **6**；
    * 冷却到期 `need = -3` 不再铸 ⇒ **永久停在 6**；下一次风暴 **9**，再下一次 **12**。
    * **线性，每一次全池风暴永久 `+targetKeys`，不是翻倍，也不会自己退回去**——
@@ -270,7 +270,7 @@ describe("tendOnce", () => {
   /**
    * **名额判据与「能不能打上游」是两个问题，逐格穷举它们的分歧。**
    *
-   * ⚠️ **P3c Task 5 把判据收成 `!r.evicted`，分歧从一格变成三格**（这一格在 Task 5
+   * ⚠️ **后来把判据收成 `!r.evicted`，分歧从一格变成三格**（这一格在那
    * 之前叫「…只在『已停用』这一项上分歧」，并且带着一行标了 🔴 的已知残留）。
    * 现在 `countsTowardTarget` **与时间无关**：占不占名额只看有没有被剔除。
    *
@@ -306,7 +306,7 @@ describe("tendOnce", () => {
   });
 
   /**
-   * **铸号侧的可疑 key：照存不误 + 如实报可疑**（Task 3 的 m5 裁定，Task 5 落地）。
+   * **铸号侧的可疑 key：照存不误 + 如实报可疑**（评审 m5 裁定，后来落地）。
    *
    * `isImportableKey` 此前**只挂在面板导入这条「人点一下」的路径上**，而稳态下 key
    * 进池子的主路径是 `tendOnce` 里那行 `repo.add(out.key)`——既不校验也不 trim。
@@ -468,7 +468,7 @@ describe("tendOnce", () => {
     expect(all).toHaveLength(1);
     expect(all[0]!.key).toBe("sk-from-fallback");
 
-    // **战绩必须记在真正铸出来的那条通道名下**（评审 I8）。
+    // **战绩必须记在真正铸出来的那条通道名下**（评审发现）。
     // 防住的真实故障：`minted` 只有总数，而 `minted++` 发生在 `for (const ch of chain)`
     // 里——**一轮全靠备通道铸出来时，总数记在谁名下是看不出来的**。没有这个字段，
     // 面板只能拿 `primaryChannel` 去顶，于是备通道的战绩被持续记到主通道头上，
@@ -546,8 +546,8 @@ describe("tendOnce", () => {
   });
 
   it("网络层错误不让整轮 reject：TendResult 照常返回，剩余名额继续尝试，且不换通道", async () => {
-    // I1：五处 fetcher.fetch 任何一处 reject 此前都会穿透 mintOne → tendOnce 整轮
-    // reject，剩余名额作废、TendResult（P3 面板要展示的数据）也拿不到。
+    // 五处 fetcher.fetch 任何一处 reject 此前都会穿透 mintOne → tendOnce 整轮
+    // reject，剩余名额作废、TendResult（面板要展示的数据）也拿不到。
     const provider = new FakeMailProvider({ domains: ["x.test"] });
     const backup = new FakeMailProvider();
     const { repo, deps } = await makeDeps({ targetKeys: 3, fallback: "moemail" }, provider);
@@ -752,7 +752,7 @@ describe("tendOnce", () => {
 
   it("通道缺 provider 时记录一条失败，而不是静默空转", async () => {
     // 主通道 yyds 在 chain 里，但 providers 里根本没构造它——这是接线错误
-    // （Task 7 最容易触发的那种），不是"这条通道没配"的正常状态。
+    // （最容易触发的那种），不是"这条通道没配"的正常状态。
     const { repo, deps } = await makeDeps({ targetKeys: 1, mintBatch: 1 });
     deps.providers = {};
     const out = await tendOnce(deps);

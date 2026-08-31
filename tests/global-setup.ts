@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
  * 于是删掉 `tests/unit/**` 这个变异现在也拦得住（本文件末尾的变异表有输出）。
  *
  * 教训记在这里：这个项目已经四次栽在「注释里的断言被后人信任」上，
- * 那句「进程内无解」当时还被写成给 Task 8 的指令，差点让它去绕远路。
+ * 那句「进程内无解」当时还被写成一条给后续任务的指令，差点让它去绕远路。
  *
  * 反同义反复（与第一版相同的纪律）：
  * · 期望侧 = `readdirSync` 扫出来的磁盘真实文件清单，**与任何 vitest 配置无关**；
@@ -100,7 +100,7 @@ const WORKERS = "vitest.workers.config.ts";
  * `git mv` 在任何 PR diff 里都是显眼的 rename；而 include 收窄是配置文件里
  * 一行不起眼的改动，正是评审最容易滑过去的形态。
  *
- * **为什么不加「双跑计数必须等于 N」的绊线**：P3b–P3d 要新增大量契约测试，
+ * **为什么不加「双跑计数必须等于 N」的绊线**：后续几期要新增大量契约测试，
  * 每次都得改那个数字，久了就变成机械 bump，绊线自己先失效——成本是长期反复的，
  * 而收益已经被上面那条高可见度信号覆盖了。
  *
@@ -176,7 +176,7 @@ export default function setup(project?: MaybeProject): void {
    *
    * ⚠️ **这条分档依赖一个前提：CI 跑的是全量、不带测试文件过滤器。**
    * 前提一旦破了（比如有人为了分片把 CI 命令改成按文件名过滤），这道门禁在 CI 上
-   * 就完全不生效，而且**没有任何迹象**。Task 8 的必做项里有一条断言钉这个前提，
+   * 就完全不生效，而且**没有任何迹象**。本仓另有一条断言钉这个前提，
    * 改 CI 命令前先去看那一条。
    */
   const filters = fileFilters(project);
@@ -258,7 +258,7 @@ export default function setup(project?: MaybeProject): void {
    * 成功也打一行。**这行不是噪音，是给 CI 的抓手**：
    * 门禁失效的形态是「静默跳过」——比如有人把上面的过滤器检测改成裸解析
    * process.argv，于是每次调用都被判成带过滤器，门禁再也不跑而 CI 全绿。
-   * 那种情况下这行**不会出现**，Task 8 的 CI 断言 grep 它即可发现。
+   * 那种情况下这行**不会出现**，CI 那条断言 grep 它即可发现。
    */
   const dual = onDisk.filter((f) => (POLICY.find((r) => f.startsWith(r.dir))?.configs.length ?? 0) > 1);
   console.log(

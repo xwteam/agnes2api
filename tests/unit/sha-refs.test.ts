@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { UI_BUILD_HASH } from "../../src/ui/assets.generated.js";
 
 /**
- * ── tracked 文件里的提交 sha 引用必须解析得开（P3e Task 35 补漏评审 发现 3）─────────
+ * ── tracked 文件里的提交 sha 引用必须解析得开（补漏评审发现）────────────────────────
  *
- * **这个文件存在的理由是一次实测的盲区。** Task 35 那次一次性历史重写把全部提交的 sha
+ * **这个文件存在的理由是一次实测的盲区。** 那次一次性历史重写把全部提交的 sha
  * 换了一遍，随后往 12 份 tracked 文件里回填了一批新 sha。补漏评审拿变异探针一试就穿了：
  *
  * · 把 `docs/**.md` 里一个真 sha 换成死 sha ⇒ `scripts/check-comment-refs.mjs`、
@@ -346,7 +346,7 @@ describe("tracked 文件里的提交 sha 引用", () => {
     const fixtures: { file: string; snippet: string }[] = [
       { file: "tests/contract/admin-usage.test.ts", snippet: "1.157e292" },
       { file: ".env.example", snippet: "COOLDOWN_STRIKE_MS=1800000" },
-      // ⚠️ **这一条的值从真源现算，不写死**（P3e 全分支评审回填）：它是一个**生成物**里的
+      // ⚠️ **这一条的值从真源现算，不写死**（评审回填）：它是一个**生成物**里的
       //    构建哈希，`admin-ui/` 改一个字它就换一个值 —— 写死的那一版每改一次面板源码
       //    就会红一次，而红的报文说的是「夹具串已经不在文件里了」，指的方向与真因无关。
       //    现算之后这一格问的仍是它该问的那件事：**一段真实存在于 tracked 文件里的十六进制

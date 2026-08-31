@@ -6,7 +6,7 @@ import { dirname, join, normalize } from "node:path";
 import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/session.mjs";
 
 /**
- * ── 公开仓的门面（P3e Task 29A）──────────────────────────────────────────────
+ * ── 公开仓的门面 ─────────────────────────────────────────────────────────────
  *
  * 这一组守的是**陌生人第一次打开这个仓**那条路上的几件事，它们此前一件都没有机器看着：
  *
@@ -19,7 +19,7 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  *   现在射程从磁盘长出来，并另配一条「表 == 磁盘」断言逼新文件回来表态；那条断言的
  *   写法抄自 `tests/unit/docs-parity.test.ts` 的
  *   「R1 五个语言目录下同名文件都存在，且 DOCS 表恰好等于每一个语言目录的 .md 全集」。
- *   ⚠️ 那条用例的标题在 P3e Task 9 的补漏回填里改过一次（原文说的是「等于 zh-CN 目录的
+ *   ⚠️ 那条用例的标题在补漏回填里改过一次（原文说的是「等于 zh-CN 目录的
  *   .md 全集」，而那正是它当时的缺陷：只扫一个语言目录）——本行随之改真。
  *   ⚠️ **判据不是「文件非空」**：一份只有标题的 `SECURITY.md` 比没有更糟——它向读者
  *   承诺了一条不存在的上报流程。所以 `SECURITY.md` 还要真的写出**去哪儿报**。
@@ -38,7 +38,7 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  *   ⚠️ **判据不是「不许引用」**：那些引用是真实的溯源记录，删掉等于抹掉出处。
  *   判据是「引用它的文件必须自己说清读者打不开」——把一条死链变成一条诚实的标注。
  *   该目录被 `.gitignore` 排除（`git ls-files .superpowers` = 0），公开仓读者点不开它。
- *   ⚠️ **`.sh` 那一半是 Task 34 复评 F5 补的**，理由写在 `trackedProse()` 上：
+ *   ⚠️ **`.sh` 那一半是复评 F5 补的**，理由写在 `trackedProse()` 上：
  *   `.md` 与 `.ts/.js/.mjs` 两侧各有门禁，`.sh` 正好漏在中间，于是同一个问题被原样搬了进去。
  *   ⚠️ 限定串是一个**候选集**（中英各一版），且报文把候选逐条摆出来。复评 F5 实测出
  *   上一版的两个毛病：文档里明明写了「读者打不开它」，报文却断言「却没说读者打不开」；
@@ -56,23 +56,23 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  *   ⚠️ 理由是复评 F6：这三份模板的正文**不只在仓库文件视图里被渲染**，它会被整段塞进
  *   issue / PR 的正文，而那里的相对链接由浏览器按 issue / PR 的 URL 解析
  *  （`.github/ISSUE_TEMPLATE/` 下的 `../../SECURITY.md` 会落到 `/<owner>/SECURITY.md`）
- *   ⇒ **格子全绿而屏幕上是死链**，与 P3d「就地更新够不着盒子外的节点」同一族。
+ *   ⇒ **格子全绿而屏幕上是死链**，与「就地更新够不着盒子外的节点」同一族。
  *   绝对链接在两个面上都成立，代价是多这一条判据看着它。
  * · **(g) 社区文件里那几句「这件事由某某守着」必须点得出是哪一格**：用本仓的名字锚写法，
  *   引契约用例时标题要逐字对得上 `it("…"`，引其它文件时那段文字要逐字在那个文件里。
  *   会话上限那个「12 小时」同样从 `SESSION_MAX_AGE_MS` 现算，不手抄。
  * · **(k) `docker-compose.yml` 那条 `/etc/localtime` 挂载的说明，它的前提得在同一份文件里成立**
- *  （P3f 阶段 3 评审回填）。那段注释上一版给的理由是假的，而它假在哪儿本机三条 `docker run`
+ *  （评审回填）。那段注释上一版给的理由是假的，而它假在哪儿本机三条 `docker run`
  *   就量得出来：`TZ` 与那条挂载**不是互补的两件事，是互相排斥的两条路**，`TZ` 一有值就赢。
  *   本格钉的是那句话赖以成立的那半件事——`environment` 里 `TZ` 无条件带一个非空默认值。
  * · **(l) healthcheck 的四个参数与探针命令，在 `Dockerfile` 与 `docker-compose.yml` 两份
- *   副本之间逐字节相同**（P3f 阶段 3 评审回填）。两份副本是有意的，而
+ *   副本之间逐字节相同**（评审回填）。两份副本是有意的，而
  *   `docker-compose.yml` 那段注释要求它们「逐个相同」——**这句话此前没有任何判据看着**，
  *   改一边不改另一边，全仓一格都不会红。
- * · **(m) 仓库根目录的顶层文件集合 == 一张具名白名单**（P3f 阶段 7D 评审回填）。
+ * · **(m) 仓库根目录的顶层文件集合 == 一张具名白名单**（评审回填）。
  *   补的是一次真实事故：一次 shell 重定向意外把两个 0 字节的空文件提交进了公开仓根目录，
  *   **十三道门禁一格都没拦住**——「工作树干净」查的是未提交的改动，`topLevelDirs()` 现算的是
- *   顶层**目录**，W135 只查「目录树写的路径 ⇒ 磁盘存在」这一个方向。三条射程边界正好对齐成一个洞。
+ *   顶层**目录**，目录树那一组只查「目录树写的路径 ⇒ 磁盘存在」这一个方向。三条射程边界正好对齐成一个洞。
  *
 
 
@@ -337,7 +337,7 @@ const notesHint = () => NOTES.map((n) => `「${n}」`).join(" 或 ");
 /**
  * 射程 = tracked 的 `*.md` **与 `*.sh`**。
  *
- * ⚠️ **`.sh` 那一半是 Task 34 复评 F5 补的**：那一轮在 `scripts/prepush.sh` 的注释里新写下
+ * ⚠️ **`.sh` 那一半是复评 F5 补的**：那一轮在 `scripts/prepush.sh` 的注释里新写下
  * 两条指向 `.superpowers/…` 的引用，而两边的门禁正好把 `.sh` 漏在中间——本格上一版
  * 只认 tracked 的 `*.md`，`scripts/check-comment-refs.mjs` 的 `walk()` 又自己写明
  * 「`.sh` 与 `.yml` 一个文件都不打开」⇒ [V7] 刚在 `.md` 那一侧解决掉的问题被原样搬进了 `.sh`，
@@ -418,12 +418,12 @@ const looksLikeRepoPath = (t: string, topDirs: readonly string[]): boolean =>
 /**
  * 🔴 **这一格是补漏，补的是一次真实事故。**
  *
- * P3f 阶段 7 的 `dd37d5a` 里，转换脚本跑 shell 时一次重定向事故把两个 **0 字节**的空文件
+ * `dd37d5a` 那一笔里，转换脚本跑 shell 时一次重定向事故把两个 **0 字节**的空文件
  * （`range` / `under`）提交进了公开仓根目录，**十三道门禁一格都没拦住**，两轮评审也都没提。
  * 漏的原因是三条各自都成立的射程边界正好在这里对齐成了一个洞：
  * · 「工作树干净」那道门禁查的是**未提交的改动** —— 文件已经提交，所以工作树确实是干净的；
  * · 上面那个 `topLevelDirs()` 从 `git ls-files` 现算的是顶层**目录**，顶层**文件**不在它眼里；
- * · W135 查的是「目录树里写的路径 ⇒ 磁盘上真的存在」**单向**，
+ * · 目录树那一组查的是「目录树里写的路径 ⇒ 磁盘上真的存在」**单向**，
  *   反方向（磁盘/索引上多出来的东西要不要进目录树）没人查。
  *
  * ⇒ 这一格补的正是那个反方向：**索引里的顶层文件集合 == 一张具名表**，多一份少一份都得有人来表态。
@@ -958,14 +958,14 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
    * 有意的（镜像内那条管「拿这个镜像跑」，compose 那条连 `build:` 回落出来的本地镜像
    * 一起管住，且改它不用重建镜像）。`docker-compose.yml` 那段注释白纸黑字要求两份
    * 「逐个相同」——**而这句话此前没有任何东西看着**：改一边不改另一边，CI 那一串门禁
-   * 与 prepush 的逐格表一格都不会红（P3f 阶段 3 评审实测）。
+   * 与 prepush 的逐格表一格都不会红（评审实测）。
    * 这正是 `CONTRIBUTING.md`「a checklist that cannot go red is not a guard, it is a to-do list」
    * 判过死刑的那个形态。
    * ⚠️ 判据不是「两边都有 healthcheck」，是**四个参数逐个相等 + 探针命令整串相等**。
    *   参数名两边写法不同（`--start-period` vs `start_period`），映射表写在 `HEALTH_KEYS`。
    * ⚠️ **任一侧多出一个没登记的参数都要红**：docker 后来加过 `--start-interval`
    *   这类新旗标，只对四个已知名字取值比对的话，新旗标会安安静静地只存在于一边。
-   *   **这条对两侧对称成立，而它此前只落地了 Dockerfile 那一半**（P3f 阶段 3/4 复评实测）：
+   *   **这条对两侧对称成立，而它此前只落地了 Dockerfile 那一半**（复评实测）：
    *   给 compose 的 healthcheck 加 `disable: true`（规范里这一键把**这一份**整个关掉，
    *   Dockerfile 那条照常跑）⇒ 全量 68 格一格不红。补齐的是 `knownC` 那个循环。
    * ⚠️ 两侧抽不出来一律**当场抛**，不许静默当成「这里没有约束」——那正是「探针绿了
@@ -1024,7 +1024,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     for (const dk of d.flags.keys()) {
       if (!knownD.has(dk)) out.push(`Dockerfile 那条 HEALTHCHECK 多出一个 \`--${dk}=\`，${COMPOSE} 那边没有对应的键，也没人把它登记进 HEALTH_KEYS`);
     }
-    // ⚠️ **这一段是对称的另一半**（P3f 阶段 3/4 复评实测补）：上面只扫了 Dockerfile 侧的未知旗标，
+    // ⚠️ **这一段是对称的另一半**（复评实测补）：上面只扫了 Dockerfile 侧的未知旗标，
     // compose 侧加键**一个都不会红**。实测过两个真实形态：
     //   · `start_interval: 5s` —— 新参数只存在于一边，正是上面 ⚠️ 那条推理要挡的事；
     //   · `disable: true`     —— compose 规范里这一键会把**这一份 healthcheck 整个关掉**，
@@ -1094,7 +1094,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
    * 这一格比上一格要紧：`disable` 不是「多一个无害的新参数」，它是 compose 规范里
    * **把这一份 healthcheck 整个关掉**的开关。加上它之后 compose 那条不再跑，
    * 而 Dockerfile 那条照常生效 ⇒ 上面注释里「两份逐个相同」那句话当场变成假话。
-   * 补这一格之前，全量 68 格一格不红（P3f 阶段 3/4 复评实测）。
+   * 补这一格之前，全量 68 格一格不红（复评实测）。
    */
   it("(l) 该红时红：compose 的 healthcheck 被 `disable: true` 整个关掉 —— 两份逐个相同当场变假话", () => {
     probeBase(healthcheckParityFailures(realRead), REAL_L);
@@ -1177,7 +1177,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   /**
-   * Task 34 复评 F5 的正面回应。`scripts/prepush.sh` 的注释里有两条真实的工作账本引用，
+   * 复评 F5 的正面回应。`scripts/prepush.sh` 的注释里有两条真实的工作账本引用，
    * 它必须落在射程里——否则「`.md` 那一侧解决掉的问题被原样搬进 `.sh`」会再发生一次。
    * ⚠️ 这一格钉的是**射程**（`.sh` 真的被扫到了），不是那两条引用本身；
    * 它们合不合规由上面那格真扫描判。
@@ -1458,21 +1458,21 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
- * W120 / W121 —— 五份社区文件的排版（P3f 阶段 7C）
+ * 五份社区文件的排版
  *
  * 🔴 **这一组的形状是推导，不是模板照搬。** 两个参照仓（kiro2api / gemini2api）
  * **根本没有** `SECURITY.md` / `CONTRIBUTING.md` / `.github/**` 这几份文件 ——
  * ADJ ⑮⑯ 裁的是「保留它们，按本仓自己的排版词汇轻改」。所以下面每一条都写清
  * **为什么是这个形状**，别当成「模板上就是这么写的」。
  *
- * · **W120**（`SECURITY.md` / `CONTRIBUTING.md`）：补 `---`（C28：ADJ ⑮ 赢，C16 的射程
+ * · **`SECURITY.md` / `CONTRIBUTING.md`**：补 `---`（ADJ ⑮ 赢，README 那套恒等式的射程
  *   收窄到「参照仓有对照物的五类文档」，而参照仓根本没有这几份）、关键提示改
  *   `> [!IMPORTANT]` / `> [!WARNING]`、把「4 条安全行为」与「Ground rules」改成表；
- *   **不套 16 节骨架**、**不补「支持的版本」表**（C25）。
- * · **W121**（`.github/**` 三份）：补 `---`、关键提示改 alert。**不套骨架、不瘦身、不中文化**（Q11）。
+ *   **不套 16 节骨架**、**不补「支持的版本」表**。
+ * · **`.github/**` 三份**：补 `---`、关键提示改 alert。**不套骨架、不瘦身、不中文化**（Q11）。
  *
  * ⚠️ **R23' 在这里是本地版**：全仓那条「相邻标题间正文 ≤1200 字符」今天还没启用
- * （W92b 排在阶段 7 末尾）。本组先把它用在**这两份散文**上，理由是 X9 的实测：
+ * （排版判官的下半排在那一期末尾）。本组先把它用在**这两份散文**上，理由是 X9 的实测：
  * `SECURITY.md` 段均 496.2 字符、最长 2164，是全仓最糟的几份之一，而规格第 1 版的
  * R23i 声称「今天已达标」——那句话是假的。**两份 issue 模板不进这一格**：它们整份
  * 一个标题都没有，是表单不是散文，插标题会把它们变成另一种东西。
@@ -1552,10 +1552,10 @@ const R23_CAP = 1200;
 /** R23' 本地版的射程：**只有这两份散文**。两份 issue 模板整份没有标题，是表单不是散文。 */
 const PROSE_COMMUNITY = ["SECURITY.md", "CONTRIBUTING.md"] as const;
 
-describe("W120 / W121 五份社区文件的排版（推导，不是模板照搬）", () => {
+describe("五份社区文件的排版（推导，不是模板照搬）", () => {
   const scans = (read: Read) => communityFiles(realList).map((f) => layoutScan(f, read(f)));
 
-  it("W120/W121 每份社区文件恰 1 条正文 `---`（front matter 的那两条不算）", () => {
+  it("每份社区文件恰 1 条正文 `---`（front matter 的那两条不算）", () => {
     const wrong = scans(realRead).filter((s) => s.hr !== 1).map((s) => `${s.path} 有 ${s.hr} 条 \`---\``);
     expect(wrong, `报文：\n${wrong.join("\n")}`).toEqual([]);
   });
@@ -1568,7 +1568,7 @@ describe("W120 / W121 五份社区文件的排版（推导，不是模板照搬�
     expect(wrong[0] ?? "").toContain(`${at} 有 2 条`);
   });
 
-  it("W120/W121 每份至少 1 条 GitHub alert，且裸 `⚠️` 段落恒为 0（本期就是把它们换掉的）", () => {
+  it("每份至少 1 条 GitHub alert，且裸 `⚠️` 段落恒为 0（本期就是把它们换掉的）", () => {
     const wrong: string[] = [];
     for (const s of scans(realRead)) {
       if (s.alerts < 1) wrong.push(`${s.path} 一条 GitHub alert 都没有`);
@@ -1586,7 +1586,7 @@ describe("W120 / W121 五份社区文件的排版（推导，不是模板照搬�
     expect(s.alerts, "alert 少了一条却没被数到").toBe(layoutScan(at, realRead(at)).alerts - 1);
   });
 
-  it("W120 R23' 本地版：`SECURITY.md` / `CONTRIBUTING.md` 相邻标题之间的正文 ≤1200 字符", () => {
+  it("R23' 本地版：`SECURITY.md` / `CONTRIBUTING.md` 相邻标题之间的正文 ≤1200 字符", () => {
     const over = PROSE_COMMUNITY.flatMap((f) => overlongSections(f, realRead(f), R23_CAP));
     expect(over, `报文：\n${over.join("\n")}`).toEqual([]);
   });
@@ -1611,7 +1611,7 @@ describe("W120 / W121 五份社区文件的排版（推导，不是模板照搬�
     expect(over[0] ?? "", "报文没说这一节到底多长，读的人还得自己去数").toMatch(/有 \d+ 个字符/);
   });
 
-  it("W120 那两组 bullet 已经是表：`If you operate one` 与 `Ground rules` 各 ≥4 行数据", () => {
+  it("那两组 bullet 已经是表：`If you operate one` 与 `Ground rules` 各 ≥4 行数据", () => {
     const rows = [
       ["SECURITY.md", "## If you operate one"] as const,
       ["CONTRIBUTING.md", "## Ground rules"] as const,

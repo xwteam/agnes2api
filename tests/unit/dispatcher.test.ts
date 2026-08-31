@@ -40,7 +40,7 @@ const CONFIG = {
   registrar: registrarFromEnv({}, {}),
   degraded: false,
   // Tier-2 与 `dispatch()` 完全无关：**归因由路由层记，`dispatch` 的签名一个字没改**
-  //（P3d Task 3）。这一格在这里只是让 `GatewayConfig` 完整。
+  //（这是后来加的）。这一格在这里只是让 `GatewayConfig` 完整。
   usageStatsEnabled: false,
 };
 
@@ -191,7 +191,7 @@ describe("dispatch", () => {
     expect(await res.json()).toMatchObject({ error: { reason: "upstream_error" } });
   });
 
-  // ── C2：上游一次抖动不得永久摧毁整个 key 池 ──────────────────────────────
+  // ── 上游一次抖动不得永久摧毁整个 key 池 ──────────────────────────────────
   // 复现评审实测：3 把 key、上游持续 503，原实现只需 5 个请求就把整池打成永久剔除，
   // 上游恢复后网关永久返回 503。现在改为长冷却，到期自动恢复。
 
@@ -278,7 +278,7 @@ describe("dispatch", () => {
     expect((await repo.all()).every((r) => r.evicted)).toBe(true);
   });
 
-  // ── P3c Task 2：第四条 reason `all_disabled` ────────────────────────────
+  // ── 第四条 reason `all_disabled` ────────────────────────────────────────
   //
   // **全部是行为断言**：构造真实的池子状态，打真 `dispatch`，断言响应体里的
   // reason **字面量**与 Retry-After 头，不去看 `poolHealth` 返回了什么。
@@ -359,7 +359,7 @@ describe("dispatch", () => {
   });
 
   /**
-   * ⚠️ **评审 I1：`disabled === 0` 时 message 必须与 P3b 逐字相同。**
+   * ⚠️ **评审发现：`disabled === 0` 时 message 必须与旧版逐字相同。**
    *
    * 这一格是**逐字节**断言，不是 `toContain`。理由是评审实测出来的：全仓没有任何
    * 一条用例断言过 `all_cooling` 的 message 文本，**所以"既有用例一条都没红"在
@@ -369,7 +369,7 @@ describe("dispatch", () => {
    * 两种变体并排放：只钉一种的话，「无条件拼接」与「永远不拼」各能溜过去一个。
    * **变红条件**：把 `unavailable()` 里那个 `h.disabled > 0 ? … : ""` 拿掉。
    */
-  it("503 的 message 文本：没有停用的 key 时与 P3b 逐字相同", async () => {
+  it("503 的 message 文本：没有停用的 key 时与旧版逐字相同", async () => {
     const at = 1000;
     const mkPool = async (disabledCount: number) => {
       const repo = await makeRepo(["k1", "k2"]);
@@ -384,7 +384,7 @@ describe("dispatch", () => {
       return (await res.json() as { error: { message: string } }).error.message;
     };
 
-    // 一把冷却 + 一把剔除、零停用 ⇒ P3b 那句话，一个字都不多。
+    // 一把冷却 + 一把剔除、零停用 ⇒ 旧版那句话，一个字都不多。
     expect(await mkPool(0))
       .toBe("全部 key 暂不可用：1 把冷却中（到期自动恢复）、1 把已永久剔除");
     // 一把冷却 + 一把停用 ⇒ 中间多出停用那一段，而且必须真的说出来。
@@ -444,7 +444,7 @@ describe("dispatch", () => {
       .toContain("1 把被管理员停用");
   });
 
-  // ── I2：上游响应头与 401 错误体绝不外泄 ─────────────────────────────────
+  // ── 上游响应头与 401 错误体绝不外泄 ─────────────────────────────────────
 
   it("上游响应头不原样转发（set-cookie / x-* 一律剥掉）", async () => {
     const repo = await makeRepo(["k1"]);
@@ -555,7 +555,7 @@ describe("dispatch", () => {
     expect(await res.text()).not.toContain("secret");
   });
 
-  // ── I6：换 key 重试时被丢弃的上游响应体必须被取消 ───────────────────────
+  // ── 换 key 重试时被丢弃的上游响应体必须被取消 ───────────────────────────
 
   it("换 key 重试时取消掉被丢弃的上游响应体", async () => {
     const repo = await makeRepo(["k1", "k2", "k3"]);
@@ -582,7 +582,7 @@ describe("dispatch", () => {
     expect(cancelled.sort()).toEqual(["err1", "err2"]);
   });
 
-  // ── I3：上游 200 但不是 JSON ────────────────────────────────────────────
+  // ── 上游 200 但不是 JSON ────────────────────────────────────────────────
 
   it("expectJson 时上游返回非 JSON 的 200 会记 strike 并换下一把 key", async () => {
     const repo = await makeRepo(["k1", "k2"]);

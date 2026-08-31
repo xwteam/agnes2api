@@ -8,7 +8,7 @@
  *
  * ── 它为什么长这样（不是「子串包含」）─────────────────────────────────────────
  * 第一版用的是**子串白名单** `body.includes("text-decoration")` / `body.includes("outline")`。
- * P3e Task 20 复评实测把它打穿了：`text-decoration-color: red` 与 `outline-color: red`
+ * 复评实测把它打穿了：`text-decoration-color: red` 与 `outline-color: red`
  * **本身就是颜色属性**，却逐字包含白名单里的串 ⇒ 那两条 CSS 断言**全绿放行**，
  * 而真机 computed 退回 `text-decoration-line: none` / `outline-style: none` / `font-weight: 400`，
  * **屏幕上与缺陷修复前一模一样**。一格叫「状态不许只由颜色表达」的守卫放行了纯颜色声明，

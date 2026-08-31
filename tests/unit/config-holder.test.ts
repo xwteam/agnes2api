@@ -10,7 +10,7 @@ function clock(start = 0) {
 }
 
 describe("ConfigHolder", () => {
-  it("冷启动缺 GATEWAY_TOKEN 时 create 直接抛——P1 的三条不变量之一，不许被 TTL 兜底吞掉", async () => {
+  it("冷启动缺 GATEWAY_TOKEN 时 create 直接抛——网关的三条不变量之一，不许被 TTL 兜底吞掉", async () => {
     await expect(createConfigHolder({
       env: {}, storage: new MemoryStorage(), logger: recordingLogger(), now: () => 0,
     })).rejects.toThrow(/GATEWAY_TOKEN/);

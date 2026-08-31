@@ -10,7 +10,7 @@ import type { FakeElement } from "../../helpers/fake-dom.js";
 /**
  * **B1 目标 ⑤：五种语言 × 七个板块，渲染出来的字里零裸 key、零未替换的 `{}`。**
  *
- * ⚠️ **「七个板块 × 字典全部命名空间」是 P3e Task 6 扩出来的，扩之前是「三个板块 ×
+ * ⚠️ **「七个板块 × 字典全部命名空间」是后来扩出来的，扩之前是「三个板块 ×
  * 手写 8 个命名空间」。** 扩容的直接理由是一次实测：`elI18n('h2','usage.titel')`
  * 这种拼写错误在当时**全仓用例 + 六道脚本门禁下一格都不红**，而同一个错误换成
  * `ov.titel` 当场红 5 格——差别只在于命名空间在不在那张手写表里、板块在不在那三个里。
@@ -22,8 +22,8 @@ import type { FakeElement } from "../../helpers/fake-dom.js";
  *   只认双引号——把同一个缺陷换成单引号原样重放，门禁 exit 0、零报错。
  * · `elI18n("h2", "ov.title")` 打成 `"ov.titel"`：**当时三道 i18n 门禁全部沉默**，
  *   概览页主标题在五种语言下原样显示 `ov.titel`。
- *   ⚠️ **这一条记的是 P3b 当时的状况，别当现状读**（P3e Task 4 复评 F1 补登记）：
- *   `scripts/check-i18n.mjs` 的第 ① 条在 P3e Task 3 换成了抠完注释的命名空间广扫
+ *   ⚠️ **这一条记的是当时的状况，别当现状读**（复评补登记）：
+ *   `scripts/check-i18n.mjs` 的第 ① 条后来换成了抠完注释的命名空间广扫
  *   ⇒ 同一个变异今天当场 exit 1。**但它证明的那件事没有变**——那次补救靠的是
  *   又一条源码文本判据，而源码文本判据每一次都要先猜对缺陷的语法。
  *
@@ -177,7 +177,7 @@ function respond(url: string): { status: number; body: unknown } {
  * 不动，这里一格都不红**（`admin-ui/js/sec-playground.js` 504/505 就是这个形状，
  * `sec-events.js` 312/313 同形）：首屏走的是那句直调 `t()`，属性上的那份只在**切语言**
  * 时才被读到，而本文件只在概览板块切过一次语言。
- * ⇒ 那一半今天**仍然无人守**，处置在 P3e Task 5 交接的 L10（给两个变体各加正向探针）。
+ * ⇒ 那一半今天**仍然无人守**，处置在交接的 L10（给两个变体各加正向探针）。
  */
 function visibleTexts(root: FakeElement): Array<{ text: string; where: string }> {
   const out: Array<{ text: string; where: string }> = [];
@@ -239,7 +239,7 @@ const LEFTOVER_PLACEHOLDER = /\{[A-Za-z_][A-Za-z0-9_]*\}/;
  * 「测试报几格」是两件事，别混着读）。那次故障是被 `models` 这一格单独抓住的——
  * 顺着 `SECTIONS` 排在它后面的板块，只要它先红，一律没机会真正被断言到。
  *
- * ⚠️ **`registrar` 不在这里**：它是第八个板块，本任务（P3e Task 6）只扩到七个。
+ * ⚠️ **`registrar` 不在这里**：它是第八个板块，这一轮只扩到七个。
  * 少的那一个不是被判定为不需要，而是还没有做——别把这份清单读成「全部板块都覆盖了」。
  */
 const SECTIONS = [

@@ -500,7 +500,7 @@ describe("importResultPresentation：导入结果 toast 的插值参数 + 要不
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 单把 key 的验活（P3d Task 9）。端点与出站探测护栏是 Task 8 交付的。
+// 单把 key 的验活。端点与出站探测护栏由后端交付。
 // ───────────────────────────────────────────────────────────────────────────
 
 describe("verifyDisabledReason：三条 disable 理由各自可区分", () => {
@@ -606,7 +606,7 @@ describe("verifyResultCode：200 响应体 → 文案 code", () => {
 
   /**
    * ⚠️⚠️ **表外的 reason 必须落进 `unknown_reason`，不许当成 `network_error`。**
-   * 「后端加了一种、面板还不认识」在 P3d Task 8 上真实发生过一次；落进
+   * 「后端加了一种、面板还不认识」在护栏那一轮上真实发生过一次；落进
    * `network_error` 的后果是面板对运维说一句**确定的假话**（「连不上上游」）。
    * **变红条件**：把 `verifyBodyReasonCode` 的表外分支改成 `return "network_error"`。
    */
@@ -626,10 +626,10 @@ describe("verifyTransportCode：管理层传输错误 → 文案 code（判据�
   /**
    * ⚠️⚠️ **这是本任务的头等一格。** 探测闸占用返回的 **429** 一次上游请求都没发出去，
    * 交给 `verifyResultCode` 会落进 `rate_limited`——那句文案是「上游在限流」，
-   * 是一句对运维说的假话（评审 I14）。
+   * 是一句对运维说的假话（评审发现）。
    * **变红条件**：把 429 也交给 `verifyResultCode` 处理（`rate_limited ≠ probe_*`）。
    */
-  it("429 走 verifyTransportCode，不是 rate_limited —— 探测闸占用时一次上游请求都没发出去，说成「上游在限流」就是对运维撒谎（评审 I14）", () => {
+  it("429 走 verifyTransportCode，不是 rate_limited —— 探测闸占用时一次上游请求都没发出去，说成「上游在限流」就是对运维撒谎（评审发现）", () => {
     const busy = { status: 429, body: { error: { type: "rate_limit_error" }, reason: "probe_in_flight" } };
     expect(verifyTransportCode(busy)).not.toBe("rate_limited");
     expect(verifyResultLabelKey(verifyTransportCode(busy))).not.toBe("keys.verify.rateLimited");
@@ -721,7 +721,7 @@ describe("verifyResultLabelKey：code → 文案 key（十二条逐条对，外�
    * `elI18n(tag, key)` 都看不见）。守这一条的**就是这一格**，
    * **不许在任何地方把它写成「由 i18n 门禁保证」**。
    */
-  it("十二个 code 每一个都有对应的五语言字典键，且 key 由 verifyResultLabelKey 给出 —— 少一个面板上会出现裸的 key，而 i18n 门禁对拼出来的 key 是瞎的（评审 I19）", () => {
+  it("十二个 code 每一个都有对应的五语言字典键，且 key 由 verifyResultLabelKey 给出 —— 少一个面板上会出现裸的 key，而 i18n 门禁对拼出来的 key 是瞎的（评审发现）", () => {
     for (const [code, key] of EXPECTED_VERIFY_KEY) {
       expect(verifyResultLabelKey(code), code).toBe(key);
       expect(key in I18N, `${key} 不在字典里`).toBe(true);
@@ -744,7 +744,7 @@ describe("verifyResultLabelKey：code → 文案 key（十二条逐条对，外�
    * `scripts/check-i18n.mjs` 的第 ① 条与
    * `tests/unit/i18n-dict.test.ts`「板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里」
    * 那两条扫描**同时隐身**。
-   * ⚠️ **后果不是「全绿」了**（P3e Task 4 复评 F1；上一版这里写的是
+   * ⚠️ **后果不是「全绿」了**（复评 F1；上一版这里写的是
    *「拼错一个字母，面板显示裸 key、三道 i18n 门禁全绿」）：第 ④ 条已升成硬错
    * ⇒ 拼的话这十二个**正在用**的 key 落进「未被引用」、CI 当场红，
    * 而顺着报文去「清理未被引用的 key」删掉的就是活文案。
@@ -767,13 +767,13 @@ describe("verifyResultLabelKey：code → 文案 key（十二条逐条对，外�
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 「后端加了 reason、前端没跟上」—— 跨 src/ 与 admin-ui/ 的源码级对表（P3d Task 9）
+// 「后端加了 reason、前端没跟上」—— 跨 src/ 与 admin-ui/ 的源码级对表
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * ⚠️⚠️⚠️ **这一格存在的全部理由，是 P3d Task 8 自己就是那个案例。**
+ * ⚠️⚠️⚠️ **这一格存在的全部理由，是护栏那一轮自己就是那个案例。**
  *
- * Task 8 给出站探测加了护栏，`ProbeAcquire` 因此多出两条顶层 `reason`
+ * 那一轮给出站探测加了护栏，`ProbeAcquire` 因此多出两条顶层 `reason`
  *（`probe_in_flight` / `probe_cooldown`）——而 `admin-ui/js/pure/registrar.mjs`
  * 的 `refuseReasonKey()` 表**当时没有跟着加**，于是「刚测过，隔几秒再来」与
  *「这条通道真的连不上」在面板上长得一模一样，而运维恰恰会在一次失败之后立刻重试。
@@ -801,7 +801,7 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
    * 从一份 TS 源码里把**写成 `reason:` 这一种形态**的位置读出来。
    *
    * ⚠️⚠️⚠️ **它读的不是「所有 reason 位置」，只是「`reason:` 后面紧跟着东西」这一种
-   * 书写形态。这句话是 P3d Task 9 复评订正的——上一版的文档写的是「把所有 `reason:`
+   * 书写形态。这句话是复评订正的——上一版的文档写的是「把所有 `reason:`
    * 位置读出来」，而那句话在两种零成本的合法改法下当场为假**（复评用本任务自己那套
    * 方法实测：条件恒假、行为逐字节不变，只换书写形态）：
    * · **shorthand**：`const reason = "..."; return c.json({ …, reason })`
@@ -873,7 +873,7 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
 
   /**
    * ⭐ **写完一条形状判据，先拿仓里真实那一行去喂它。**
-   * 本仓在 P3d Task 8 上连续三次栽在「探针探在了会过的那一侧」，
+   * 本仓在护栏那一轮上连续三次栽在「探针探在了会过的那一侧」，
    * 所以这一格先证明扫描器在**真文件**上给出的就是手写的那两个集合，
    * 再用一份手写探针证明它**不是**被写死成两条。
    *
@@ -945,7 +945,7 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
    * **护栏那两条：两个消费者都必须认得。**
    *
    * 它们是**同一份护栏**服务的两条端点（通道连通性测试 / 单把 key 验活），
-   * 所以两个前端映射表都要跟上——Task 8 当时漏的正是其中一个。
+   * 所以两个前端映射表都要跟上——当时漏的正是其中一个。
    *
    * **变红条件（逐条实测）**：
    * ① 往 `ProbeAcquire` 的 reason 联合里加第三条（后端一行 diff）而前端不动
@@ -954,7 +954,7 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
    *    `transport_error`，第一条断言红；
    * ③ 删掉 `refuseReasonKey` 里任意一支 ⇒ 它回 `null`，第二条断言红。
    */
-  it("护栏产出的每一条 reason，验活与通道测试两个前端都认得 —— Task 8 就是「后端加了两条、前端没跟上」的那个案例", () => {
+  it("护栏产出的每一条 reason，验活与通道测试两个前端都认得 —— 护栏那一轮就是「后端加了两条、前端没跟上」的那个案例", () => {
     const { literals } = reasonSites(readFileSync(GUARD_FILE, "utf8"));
     expect(literals.length, "一条都没扫到，扫描本身坏了").toBeGreaterThanOrEqual(2);
 
@@ -1007,9 +1007,9 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
 });
 
 /**
- * **面板这一侧：拿码查五语言字典，表外的码回落并带一个看得见的标记**（P3e Task 22A）。
+ * **面板这一侧：拿码查五语言字典，表外的码回落并带一个看得见的标记**。
  *
- * ⚠️⚠️ **这是那条「归属定死归 P3e」的破口的前端半身。** 后端半身（400/404/409 带不带
+ * ⚠️⚠️ **这是那条「归属定死」的破口的前端半身。** 后端半身（400/404/409 带不带
  * 闭集里的码）在 `tests/contract/admin-keys-write.test.ts` 的
  * 「每一条失败都带 error.code，而且 code 在闭集里」那一格，**跑在两份配置上**。
  *

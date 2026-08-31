@@ -42,7 +42,7 @@ export function runStorageContract(name: string, make: () => Storage) {
       expect(await s.list("nothing:")).toEqual([]);
     });
 
-    // 以下并发用例针对全分支评审的 C1：原有 6 条全是单线程顺序操作，
+    // 以下并发用例针对评审那条并发缺陷：原有 6 条全是单线程顺序操作，
     // 这正是 FileStorage 的并发缺陷（固定 .tmp 互抢 + 读改写竞态）能逃过
     // 15 轮评审的原因。dispatch 在返回成功响应前就要写回 key 状态，
     // 所以「两个并发请求」在生产里是常态而非边角场景。
@@ -74,7 +74,7 @@ export function runStorageContract(name: string, make: () => Storage) {
     });
 
     /**
-     * **评审 C5（第二次修复）**：`put()` 的第三个参数 `expiresAt`。
+     * **评审发现（第二次修复）**：`put()` 的第三个参数 `expiresAt`。
      *
      * ⚠️ **`KvStorage` 单独分支，诚实记录一个测不到的角落**：真实 Cloudflare KV
      * 的 `expiration` 要求至少比当下晚 60 秒，过近或过去的值会被 API 直接拒绝

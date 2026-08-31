@@ -82,7 +82,7 @@ describe("GET /admin/api/capabilities", () => {
    * **断言字面量 `false`**，不是 `toBeFalsy()`：将来打开时这条会红，
    * 逼人来确认面板那边也跟着改了。
    *
-   * ⚠️ **`stats.tier2Enabled` 从 P3d Task 3 起不再是那一类了，这段说明跟着改**：
+   * ⚠️ **`stats.tier2Enabled` 后来不再是那一类了，这段说明跟着改**：
    * 它现在是**真值**，来源是「这个 app 建没建用量 sink」。这里之所以还是 `false`，
    * 是因为 `makeApp` 默认不传 `usageSink`（= Tier-2 关着，与生产默认值一致）
    * ——**不是因为它被写死了**。写死那一条由 `tests/contract/usage-tier2.test.ts` 的
@@ -146,7 +146,7 @@ describe("GET /admin/api/capabilities", () => {
 
   /**
    * ⚠️ **下面这一格就是补上那条防线的那一格——别把这段读成"现在还缺"**
-   *（全分支评审 A9：原文用现在时写着"今天没有用例守…"，而它描述的是**它自己
+   *（评审发现 A9：原文用现在时写着"今天没有用例守…"，而它描述的是**它自己
    * 已经修好**的那个旧状态）。
    *
    * 补之前的实测（Step 9 变异表点名）：把 `capabilitiesHandler` 里的

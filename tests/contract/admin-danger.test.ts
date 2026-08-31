@@ -16,7 +16,7 @@ import type { Storage } from "../../src/ports/storage.js";
 import type { KeyRecord } from "../../src/core/types.js";
 
 /**
- * 危险区那两条端点（P3e Task 31）：`POST /admin/api/config/reset` 与
+ * 危险区那两条端点：`POST /admin/api/config/reset` 与
  * `POST /admin/api/keys/purge`。设计侧的语义在不带编号的那一节
  * 「重置到底重置了什么」里，本文件是它的绊线。
  *
@@ -320,7 +320,7 @@ describe("POST /admin/api/config/reset", () => {
   /**
    * 【落盘类】**面板会拿哪条响应换掉手上那份 `data`，就必须在哪条响应里给出 `resetBlocked`。**
    *
-   * ⚠️⚠️ 这一格是 P3e Task 31 复评回填（F4）补的，起因是前端那一半：
+   * ⚠️⚠️ 这一格是复评回填补的，起因是前端那一半：
    * `admin-ui/js/pure/settings.mjs` 的 `resetWarnings()` 上一版把「读不到 `resetBlocked`」
    * 与「`resetBlocked` 是空数组」折进同一档，于是读不到时弹窗照说一句
    * 「重置之后这份配置仍然装载得起来」——**背后一条数据都没有**。那一档现在单独报

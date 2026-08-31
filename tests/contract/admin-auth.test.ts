@@ -63,7 +63,7 @@ describe("checkAdminToken", () => {
     expect(checkAdminToken(" ".repeat(24), "g")).toEqual({ ok: false, reason: "whitespace_padded" });
     // 中间的空白不管：那是口令自己的一部分，客户端送得出来。
     //
-    // ⚠️ **这一格在 Task 7 期间被改成过 `not_sendable`，评审裁定后改了回来，
+    // ⚠️ **这一格一度被改成过 `not_sendable`，评审裁定后改了回来，
     // 记在这里免得下一个人再走一遍。** 当时的理由是「中间带空格只会让人在复制粘贴
     // 时出错」——那是替运维做主，不是物理。判据是**留物理、去口味**：
     // 送不出去的字符（非 Latin-1 / 控制字符）拦，送得出去的空格放行。
@@ -84,7 +84,7 @@ describe("checkAdminToken", () => {
    *
    * ⚠️ **不可见字符一律用 `String.fromCharCode` 拼**，不往源码里粘裸字符：
    * 本仓刚被「源文件里的裸 NUL 让整份文件对 git diff / grep / scan-secrets 隐身」
-   * 咬过一次（Task 6），审计工具看不见的字符不该出现在源码里。
+   * 咬过一次，审计工具看不见的字符不该出现在源码里。
    */
   describe("送不出去的字符：checkAdminTokenShape 只查空白与长度会装出一棵进不去的面板", () => {
     const ZWSP = String.fromCharCode(0x200b);
@@ -95,7 +95,7 @@ describe("checkAdminToken", () => {
       { name: "emoji", token: "admin-token-0123456789-🔑" },
       { name: "零宽空格", token: `admin-token-0123456789${ZWSP}xx` },
       // 这一格不在计划的四格里，是执行时补的：裸 NUL 既是控制字符，又正是本仓刚被
-      // 咬过一次的那个字符（Task 6：源文件里的裸 NUL 让整份文件对 git diff / grep /
+      // 咬过一次的那个字符（源文件里的裸 NUL 让整份文件对 git diff / grep /
       // scan-secrets 隐身）。它同样是浏览器发不出去的。
       { name: "内含裸 NUL", token: `admin-token${NUL}0123456789abcd` },
     ];
@@ -309,7 +309,7 @@ describe("ADMIN_TOKEN 不合规时同样整棵树 404，但网关照常转发", 
     expect(e?.level).toBe("error");
     expect(e?.fields?.reason).toBe("same_as_gateway_token");
     expect(String(e?.msg)).toContain("GATEWAY_TOKEN");
-    // **处置建议必须是「轮换 ADMIN_TOKEN」，不许是「改掉任一把」**（全分支评审 C1）。
+    // **处置建议必须是「轮换 ADMIN_TOKEN」，不许是「改掉任一把」**（评审发现）。
     // 改 gatewayToken 只恢复可用性：冲突期间这把管理口令与中转口令是同一个值，
     // 而中转口令是发给每一个下游用户的。这一格断言的是**运维实际读到的那句话**。
     expect(String(e?.msg), "没告诉运维要轮换 ADMIN_TOKEN").toContain("轮换");
@@ -450,7 +450,7 @@ describe("客户端 IP", () => {
   // 「门控之内 ⇒ 值一定干净」是错的。`TRUST_PROXY=1` 的另一种常见形态是网关挂在
   // 自建 nginx / Caddy 后面，那里**没有任何人会覆盖 `CF-Connecting-IP`**，攻击者
   // 自己带一个就会优先于反代写的 XFF 胜出，而这个值原样进 `admin.login_failed`
-  // 的 `ip=` 字段——P3b 的事件板块正要按它做筛选、聚合、展示。
+  // 的 `ip=` 字段——事件板块正要按它做筛选、聚合、展示。
 
   it("形态不合法的 CF-Connecting-IP 一律记 null，而不是把任意文本写进审计行", async () => {
     for (const bogus of [
@@ -548,11 +548,11 @@ describe("审计字段不原样承载请求数据", () => {
 //
 // 装配期那次 checkAdminToken 挡不住这个：`loadConfig` 是
 // `env.GATEWAY_TOKEN ?? stored.gatewayToken`，部署者**没设**环境变量、改由存储提供时
-// （文档里教的 `wrangler kv key put` / 直接编辑 store.json，以及将来 P3c 的面板，
+// （文档里教的 `wrangler kv key put` / 直接编辑 store.json，以及将来的面板，
 // 都能写这个键），gatewayToken 可以在运行中被改成等于 ADMIN_TOKEN——而中转口令是发给
 // **每一个下游用户**的，届时任何下游用户都能开后台，直到重启 / isolate 回收为止。
 //
-// 这不是「留给 P3c 在写入路径上拒绝」能解决的：手工改存储绕得过写入路径校验。
+// 这不是「留给写入路径去拒绝」能解决的：手工改存储绕得过写入路径校验。
 describe("运行期复查：gatewayToken 在运行中变成 ADMIN_TOKEN 时管理端 fail closed", () => {
   /** 配置**只从存储来**（env 不设 GATEWAY_TOKEN）——这正是这个洞可达的部署形态。 */
   async function appWithStoredConfig(gatewayToken: string) {
@@ -626,7 +626,7 @@ describe("运行期复查：gatewayToken 在运行中变成 ADMIN_TOKEN 时管�
     expect(e?.level, "运维必须看得见，且要 error 级").toBe("error");
     expect(e?.fields?.reason).toBe("same_as_gateway_token");
     expect(String(e?.msg), "日志里要讲清楚怎么修").toContain("GATEWAY_TOKEN");
-    // 与装配期那条同一条纪律（全分支评审 C1）：怎么修必须说准。
+    // 与装配期那条同一条纪律（评审发现）：怎么修必须说准。
     expect(String(e?.msg), "没告诉运维要轮换 ADMIN_TOKEN").toContain("轮换");
     for (const wrong of ["任一把", "其中一把"]) {
       expect(String(e?.msg), `又把「${wrong}」这种只恢复可用性的说法写回去了`).not.toContain(wrong);
@@ -637,7 +637,7 @@ describe("运行期复查：gatewayToken 在运行中变成 ADMIN_TOKEN 时管�
 
   /**
    * ⚠️ **这一格证明的是可用性恢复，不是处置完成。** 冲突一旦发生过，`ADMIN_TOKEN`
-   * 就等于一把发给每个下游用户的中转口令，必须轮换（全分支评审 C1，五语言
+   * 就等于一把发给每个下游用户的中转口令，必须轮换（评审发现，五语言
    * DEPLOY.md 与上面两格断言的日志文案都这么写）。这里断言的仅仅是「复查是每请求
    * 做的、不是一次性锁死」这条机制性质——别把它读成「改回 gatewayToken 就完事了」。
    */
@@ -736,7 +736,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
   /**
    * 免鉴权路径。**显式常量**，改动它必须在评审里被看见。
    *
-   * `/admin` 与 `/admin/*` 是 Task 6 加的静态资源：登录闸得先能打开，否则没法登录。
+   * `/admin` 与 `/admin/*` 是静态资源：登录闸得先能打开，否则没法登录。
    * 它们只投递编译期常量表 `UI_ASSETS`（src/ui/serve.ts），**不读任何运行时状态**
    *（`tests/contract/ui-serve.test.ts` 的「GET /admin 免鉴权返回 index.html，字节与生成物一致」
    *  守着它——那里断言的是逐字节相等，比「页面里大概没有敏感内容」强得多）。
@@ -751,13 +751,13 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * `tests/contract/ui-serve.test.ts` 的「200 / 304 / 301 / 404 四个分支都带 cache-control: no-cache」
    * 一带的三条专门用例守着。
    *
-   * **Task 3（P3c）的表态：这张表不增长。** 新增的四条 Key 写端点全在
+   * **Key 写那一轮的表态：这张表不增长。** 新增的四条 Key 写端点全在
    * `/admin/api/` 下 ⇒ `domainOf` 判它们进 `admin` 域 ⇒ 除管理口令外每一种凭据
    * 状态都必须 401。**免鉴权白名单里永远不该出现任何一条写端点**，这句话在这里
    * 是有护栏的：往这张表里塞一条 `/admin/api/keys`，下面
    * 「免鉴权路径不带任何凭据也是 200」会立刻红（它拿不到 200，只会拿到 401/400）。
    *
-   * **Task 4（P3d）的表态：这张表同样不增长。** 新增的三条用量端点全在
+   * **用量那一轮的表态：这张表同样不增长。** 新增的三条用量端点全在
    * `/admin/api/` 下 ⇒ `domainOf` 判它们进 `admin` 域。三条**都**是 GET，
    * 其中两条在 Tier-2 关着时连存储都不读，看上去比协议目录那条更像
    * 「反正没什么可泄漏的」——**仍然不许**：
@@ -800,21 +800,21 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     "POST /v1/videos",
     "GET /v1/videos/:id",
     "GET /admin/api/session",
-    // Task 4（P3b）的 Key 池只读列表。同样用 `admin.get()` 注册，**不产生 ALL 条目**
+    // Key 池只读列表。同样用 `admin.get()` 注册，**不产生 ALL 条目**
     // ——这正是下面 EXPECTED_MIDDLEWARE 那张快照存在的理由，它因此保持不变。
     "GET /admin/api/keys",
-    // Task 5（P3b）的 capabilities + overview。同样用 `admin.get()` 注册，
+    // capabilities + overview。同样用 `admin.get()` 注册，
     // 不产生 ALL 条目——EXPECTED_MIDDLEWARE 因此仍然不变。
     "GET /admin/api/capabilities",
     "GET /admin/api/overview",
-    // Task 6（P3b）的事件。同样用 `admin.get()` 注册，不产生 ALL 条目——
+    // 事件。同样用 `admin.get()` 注册，不产生 ALL 条目——
     // 这两条不影响 EXPECTED_MIDDLEWARE，真正让那张表变化的是 logFlush（见下）。
     "GET /admin/api/events",
     "GET /admin/api/events/download",
-    // Task 6 的静态资源。**刻意用 get() 而不是 use()**，见 EXPECTED_MIDDLEWARE 的说明。
+    // 静态资源。**刻意用 get() 而不是 use()**，见 EXPECTED_MIDDLEWARE 的说明。
     "GET /admin",
     "GET /admin/*",
-    // ── Task 3（P3c）的 Key 写端点：这张表**第一次**出现非 GET 条目 ──────────
+    // ── Key 写端点：这张表**第一次**出现非 GET 条目 ──────────────────────────
     //
     // 在它们出现之前，`/admin/api/*` 六条全是 `admin.get()`，于是「鉴权挂没挂上」
     // 这件事唯一的可观测差异是「读得到 / 401」。现在它变成了「**删得掉** / 401」
@@ -828,7 +828,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 明确表一次态，而不是默认它不变）。
     "POST /admin/api/keys",
     "POST /admin/api/keys/bulk",
-    // ── Task 31（P3e）的危险区第二颗按钮：清空整个 Key 池 ─────────────────────
+    // ── 危险区第二颗按钮：清空整个 Key 池 ─────────────────────────────────────
     //
     // 它用 `admin.post()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
     // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
@@ -847,7 +847,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     "POST /admin/api/keys/purge",
     "DELETE /admin/api/keys/:id",
     "PATCH /admin/api/keys/:id",
-    // ── Task 5（P3c）的「立即补池」──────────────────────────────────────────
+    // ── 「立即补池」─────────────────────────────────────────────────────────
     //
     // **这张表上第一条会产生真实上游副作用的端点**：上面四条只动本地存储，这一条会
     // 去建临时邮箱、注册 Agnes 账号、领 key。一个鉴权失效的 GET 泄露数据、一个鉴权
@@ -862,7 +862,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 于是这条端点会**静默地从整个鉴权矩阵里消失**。「注册机没开」是 handler 里的
     // 一条 409，不是"这条路由不存在"。
     "POST /admin/api/registrar/tend",
-    // ── Task 6（P3c）的注册机板块取数与通道连通性测试 ─────────────────────────
+    // ── 注册机板块取数与通道连通性测试 ────────────────────────────────────────
     //
     // 两条都用 `admin.get()` / `admin.post()` 注册（不是 `use()`）⇒ 不产生 ALL 条目，
     // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
@@ -880,7 +880,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 一个任何人都能驱动的探测器**，所以它同样只能待在 admin 域里。
     "GET /admin/api/registrar/status",
     "POST /admin/api/registrar/channels/:channel/test",
-    // ── Task 7（P3c）的配置读写 ────────────────────────────────────────────────
+    // ── 配置读写 ───────────────────────────────────────────────────────────────
     //
     // **这四条是这张表上第一次出现「能改网关自己怎么跑」的端点**，而且第一次出现
     // `PUT`。前面的分级还可以接着往下排：一个鉴权失效的 GET 泄露数据、一个鉴权失效
@@ -905,7 +905,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     "PUT /admin/api/config",
     "POST /admin/api/config/validate",
     "POST /admin/api/config/secrets/clear",
-    // ── Task 31（P3e）的危险区第一颗按钮：`config` 整把写回 `{}` ────────────────
+    // ── 危险区第一颗按钮：`config` 整把写回 `{}` ────────────────────────────────
     //
     // 它用 `admin.post()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
     // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态。**
@@ -919,7 +919,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // `POST /admin/api/keys/purge` 那段逐字同源：矩阵发的是不带请求体的 POST，
     // 在 `readAdminJson` 那一步就 400，一个字节都不写。
     "POST /admin/api/config/reset",
-    // ── Task 1（P3d）的协议与模型目录 ─────────────────────────────────────────
+    // ── 协议与模型目录 ────────────────────────────────────────────────────────
     //
     // 它用 `admin.get()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
     // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
@@ -936,7 +936,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 往 `PUBLIC_PATHS` 里塞它的话，下面「免鉴权路径不带任何凭据也是 200」
     // 那一格拿到的会是 401，当场变红。
     "GET /admin/api/models",
-    // ── Task 4（P3d）的用量三条 ───────────────────────────────────────────────
+    // ── 用量三条 ──────────────────────────────────────────────────────────────
     //
     // 三条都用 `admin.get()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
     // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
@@ -955,7 +955,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     "GET /admin/api/keys/:id/usage",
     "GET /admin/api/usage",
     "GET /admin/api/usage/:date",
-    // ── Task 8（P3d）的单把 key 验活 ───────────────────────────────────────────
+    // ── 单把 key 验活 ──────────────────────────────────────────────────────────
     //
     // 它用 `admin.post()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
     // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
@@ -982,7 +982,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 静态兜底：拿 `/admin/*` 当字面路径请求只会得到 404（查表命中制），
     // 那样这一格什么都没验到，必须换成一条真的在 UI_ASSETS 里的路径。
     "/admin/*": "/admin/css/base.css",
-    // Task 3 的 `DELETE` / `PATCH` 共用这条模式。**用一个不存在的 id，是为了不让这一格
+    // Key 写的 `DELETE` / `PATCH` 共用这条模式。**用一个不存在的 id，是为了不让这一格
     // 依赖夹具状态**：矩阵会拿正确的管理口令把每条路由真的打一遍（那些格子断言的是
     // 「不该被判 401」），而 `DELETE` 是有副作用的。
     //
@@ -992,7 +992,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 选择本身保留（换一个夹具、或「必须先停用」那条判据一旦被改坏，它立刻变真），
     // 但**理由要写成真的**：判据是"不依赖夹具状态"，不是"否则会被删掉"。
     "/admin/api/keys/:id": "/admin/api/keys/deadbeefdeadbeef",
-    // Task 6 的通道测试。**用一条真的存在的通道名**（`moemail`），不用占位串：
+    // 通道测试。**用一条真的存在的通道名**（`moemail`），不用占位串：
     // 矩阵那一格断言的是「拿对口令时不该被判 401」，而一个不认识的通道名会在
     // handler 第一行就被 400 挡掉——那样这一格验的是参数校验，不是鉴权。
     //
@@ -1000,13 +1000,13 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 构造任何 provider 之前就返回 `409 registrar_disabled`。矩阵里那 16 次请求
     // 因此一次外部调用都不产生（否则整个鉴权矩阵会变成一个会打网络的测试）。
     "/admin/api/registrar/channels/:channel/test": "/admin/api/registrar/channels/moemail/test",
-    // Task 4（P3d）的逐 key 用量。**用一个不存在的 id**，与上面 `keys/:id` 同一条
+    // 逐 key 用量。**用一个不存在的 id**，与上面 `keys/:id` 同一条
     // 理由：矩阵那一格断言的是「拿对口令时不该被判 401」，而它会如实 404。
     "/admin/api/keys/:id/usage": "/admin/api/keys/deadbeefdeadbeef/usage",
-    // Task 4（P3d）的单日下钻。**必须用一个真的解析得开的 UTC 日期串**：
+    // 单日下钻。**必须用一个真的解析得开的 UTC 日期串**：
     // 占位串会在 handler 第一行就被 400 挡掉——那样这一格验的是参数校验，不是鉴权。
     "/admin/api/usage/:date": "/admin/api/usage/2024-10-04",
-    // Task 8（P3d）的验活。**必须用一个不存在的 id**，理由比上面那两条更硬：
+    // 验活。**必须用一个不存在的 id**，理由比上面那两条更硬：
     // 矩阵会拿正确的管理口令把每条路由真的打一遍，而这一条打通了就是**一次真的
     // 出站请求**（默认夹具的 `FakeFetcher` 会收下它，但整个鉴权矩阵不该是一个
     // 会发出站请求的测试——`channels/:channel/test` 那一格上面记的是同一句话）。
@@ -1074,32 +1074,32 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * 所以改为**把 ALL 条目也列成显式快照**：任何新增的 use()（无论中间件还是通配
    * handler）都会让这条变红，必须在评审里表态。
    *
-   * **Task 6（P3a）的表态：这张表不增长。** 静态资源用 `app.get("/admin", h)` +
+   * **静态资源那一轮的表态：这张表不增长。** 静态资源用 `app.get("/admin", h)` +
    * `app.get("/admin/*", h)` 注册（src/ui/serve.ts），产生的是两条 `GET` 条目，
    * 已列进上面的 `EXPECTED`、并逐格跑过矩阵。刻意不用 Hono 那个
    * `app.use("/admin/*", serveStatic(...))` 的惯用写法——那会产生一条 `ALL /admin/*`
    * 通配 handler，正是这张快照存在的理由。将来谁改回 use()，这条会立刻变红。
    *
-   * **Task 6（P3b）的表态：这张表加一条。** `src/http/log-flush.ts` 的 `logFlush`
+   * **事件落盘那一轮的表态：这张表加一条。** `src/http/log-flush.ts` 的 `logFlush`
    * 中间件挂在 `app.use("*", ...)`（挂在 `configRefresh` 之后、其余中间件之前，
    * 见 `app.ts` 的注释），产生第三条 `ALL /*`。**这张快照红了正是它在起作用**——
    * 事件要能在响应返回前落盘，这条中间件必须真的挂上；别把它改绿了事。
    *
-   * **Task 3（P3c）的表态：这张表同样不增长。** 四条 Key 写端点用
+   * **Key 写那一轮的表态：这张表同样不增长。** 四条 Key 写端点用
    * `admin.post/delete/patch()` 注册，产生的是四条具名方法条目（已列进 `EXPECTED`、
    * 并逐格跑过矩阵）。**这一次的表态比前几次值钱**：写端点是第一次出现，而
    * `app.use("/admin/api/keys/*", handler)` 这种写法能造出一个**免鉴权的写端点**
    * ——鉴权 `use` 挂的是 `/admin/api/*`，顺序在它之前的任何 `use` 都跑在鉴权之前。
    *
-   * **Task 5（P3c）的表态：这张表同样不增长。** `POST /admin/api/registrar/tend`
+   * **「立即补池」那一轮的表态：这张表同样不增长。** `POST /admin/api/registrar/tend`
    * 用 `admin.post()` 注册，产生的是一条具名方法条目（已列进 `EXPECTED`、并逐格跑过
-   * 矩阵）。这一次的表态比 Task 3 那次更值钱：一个免鉴权的「立即补池」不是泄露数据、
+   * 矩阵）。这一次的表态比 Key 写那次更值钱：一个免鉴权的「立即补池」不是泄露数据、
    * 也不是销毁数据，而是**让任何人都能远程消耗你在外部服务上的配额**。
    *
-   * **Task 1（P3d）的表态：这张表同样不增长。** `GET /admin/api/models` 用
+   * **协议与模型目录那一轮的表态：这张表同样不增长。** `GET /admin/api/models` 用
    * `admin.get()` 注册，产生的是一条具名方法条目（已列进 `EXPECTED`、并逐格跑过矩阵）。
    *
-   * **Task 4（P3d）的表态：这张表同样不增长。** 用量三条同样用 `admin.get()` 注册，
+   * **用量那一轮的表态：这张表同样不增长。** 用量三条同样用 `admin.get()` 注册，
    * 产生的是三条具名方法条目（已列进 `EXPECTED`、并逐格跑过矩阵）。
    * ⚠️ **这里有一个真实的诱惑要点名**：`/admin/api/usage` 与 `/admin/api/usage/:date`
    * 是同一个前缀下的两条，写成 `admin.use("/admin/api/usage/*", handler)` 一条通配
@@ -1115,7 +1115,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    */
   const EXPECTED_MIDDLEWARE = [
     "ALL /*",              // configRefresh
-    "ALL /*",              // logFlush（事件落盘，Task 6/P3b）
+    "ALL /*",              // logFlush（事件落盘）
     "ALL /*",              // 全局 nosniff（三条同名条目；少一条这里立刻变红）
     "ALL /v1/*",           // 网关鉴权
     "ALL /v1beta/*",       // 网关鉴权
@@ -1209,12 +1209,12 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
 
     // 反向控制：filter 写坏后上面那两格会恒绿（空数组 `toEqual([])` 恒真）。
     //
-    // ⚠️ **手写字面量等号，不许写成 `toBeGreaterThanOrEqual`**（P3e 回填，评审「可执行性」M3）：
+    // ⚠️ **手写字面量等号，不许写成 `toBeGreaterThanOrEqual`**（回填，评审「可执行性」M3）：
     // 第一版写的是 `toBeGreaterThanOrEqual(20)` 而今天实测正好 **22** 条
     // ⇒ **静默丢掉 2 条路由这一格仍然绿**，而这一格存在的全部理由就是「filter 写坏后会恒绿」，
     // 留 2 条余量把它自己削掉了一半。这正是本计划 §通用纪律「禁止的断言形态」里逐字点名的那一条
     // （`tests/unit/docs-parity.test.ts「第一版在这里又踩了一次同类的坑」` 那段记着它为什么不行）。
-    // ⚠️ **Task 31 已经新增了那两条端点（危险区），所以这个数从 22 改成了 24。
+    // ⚠️ **危险区那两条端点已经新增了，所以这个数从 22 改成了 24。
     // 改数字不是削弱，是它在按设计工作。**
     // 它排在上面两格之后的理由见本格上方的 docblock 最后一段。
     //
@@ -1228,7 +1228,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 鉴权矩阵逐字写着「400 之类不在本矩阵的断言范围内」。
     // ⇒ 下面新增的那一格（窗口内更宽的模式不许排在更窄的之前）才是真正接住它的网，
     // 本格的报文只**把人指过去**。
-    //（⚠️ 原文这里多两个字，用的是**归属式**那个动词——P3e Task 15A 把那一族补进了
+    //（⚠️ 原文这里多两个字，用的是**归属式**那个动词——后来把那一族补进了
     // `scripts/check-comment-refs.mjs` 的注释断言词表。而**命中是按整段算的**：
     // 那两个字说的是报文，却会连坐同一段里上面那条指向 `tests/unit/docs-parity.test.ts`
     // 的**纯描述性**引用——它指的是那份测试文件头里的一段说明、不是一条用例，
@@ -1380,7 +1380,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     const st = new CountingStorage();
     const { app, repo } = await makeApp(
       [], ["sk-side-effect-probe-key"], {}, () => 1000,
-      // **配置接线必须给**（P3e Task 31）：不给的话 `POST /admin/api/config/reset`
+      // **配置接线必须给**（危险区那两条）：不给的话 `POST /admin/api/config/reset`
       // 在带对口令时是 `503 not_wired`，下面那条「它真的会写」的反向自检就成了空转
       // ——而「零副作用」的四个 0 全靠反向自检才有意义。
       { storage: st, config: { storage: st, env: {}, adminToken: TEST_ADMIN_TOKEN } },
@@ -1398,7 +1398,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
         name: "POST 批量删除", path: "/admin/api/keys/bulk", method: "POST",
         body: { op: "delete", ids: [target.id] },
       },
-      // ── 危险区那两条（P3e Task 31）───────────────────────────────────────────
+      // ── 危险区那两条 ─────────────────────────────────────────────────────────
       // **两条的请求体都是「鉴权若不存在就一定会成功」的那一份**，与上面四条同一条
       // 判据：`confirm: true` / `expect: 1`（此刻池里恰好一把）都带齐了 ⇒ 鉴权失效
       // 时它们会真的清掉整份配置、真的删掉整池。它们各自的反向自检在本格末尾。
@@ -1424,7 +1424,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     expect(ok.status, "夹具本身删不掉 ⇒ 上面那四个「零副作用」是空的").toBe(204);
     expect(st.deletes, "带对口令的那次 DELETE 也没碰存储").toBeGreaterThan(0);
 
-    // ── 危险区那两条的反向自检（P3e Task 31）─────────────────────────────────────
+    // ── 危险区那两条的反向自检 ───────────────────────────────────────────────────
     // **顺序是有讲究的**：上面那次 DELETE 已经把池子清空了，所以清空 Key 池这一条
     // 必须先补一把 key 回去，否则 `expect: 0` 打过去也是 200 而一次 delete 都不发
     // ——那样它就成了一个「永远绿」的自检，正是本仓反复裁过的形态。

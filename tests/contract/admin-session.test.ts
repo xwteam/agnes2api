@@ -30,7 +30,7 @@ function adminApp(version: string) {
     // /admin/api/keys 要的两样。本文件只测 session，给一个空池子就够——
     // 但**必须真给**：`adminRouter` 现在会用它注册 keys 端点。
     repo: new KeyPoolRepo(new MemoryStorage(undefined, () => 1000), { now: () => 1000, logger: NULL_LOGGER, cacheTtlMs: 0 }),
-    // 单把 key 验活要的出站端口（P3d Task 8）。本文件只测 session，**给一个会抛错的
+    // 单把 key 验活要的出站端口。本文件只测 session，**给一个会抛错的
     // 桩**：这个 app 上没有任何 key，那条端点在 `repo.get()` 那一步就 404 了，
     // 走不到出站。给 `globalThis.fetch` 反而会让「哪天它真的被打到」变成一次真外网请求。
     fetcher: { fetch: () => { throw new Error("本文件只测 session，不该有任何出站请求"); } },
@@ -40,24 +40,24 @@ function adminApp(version: string) {
     storageHealth: createStorageHealth(),
     runtime: nodeRuntime(),
     envLocked: [],
-    // events 端点要的一样（Task 6）。本文件只测 session，给一个未接入任何日志链路
+    // events 端点要的一样。本文件只测 session，给一个未接入任何日志链路
     // 的独立实例即可——不需要真的落过事件。
     storeLogger: new StoreLogger({
       storage: new MemoryStorage(undefined, () => 1000), now: () => 1000, shardId: "session-test-shard",
       onError: () => {},
     }),
-    // 注册机那三条端点要的接线（P3c Task 5/6）。本文件只测 session，**刻意传 `null`**：
+    // 注册机那三条端点要的接线。本文件只测 session，**刻意传 `null`**：
     // 那正是「这个 app 没接注册机执行体」的形态，三条端点会如实回 503 而不是假装。
     registrar: null,
     tendGate: createTendGate(),
-    // 配置那四条端点要的接线（P3c Task 7）。同上，**刻意传 `null`**：
+    // 配置那四条端点要的接线。同上，**刻意传 `null`**：
     // 那是「这个 app 没接配置读写」的形态，四条端点会如实回 503。
     config: null,
-    // capabilities 的 `stats.tier2Enabled`（P3d Task 3）。本文件只测 session，
+    // capabilities 的 `stats.tier2Enabled`。本文件只测 session，
     // 给**默认那一侧**（Tier-2 关着）即可。生产上这一格由 `createApp` 按
     // 「建没建 sink」填，不是从配置现读。
     usageStatsEnabled: false,
-    // 用量那两条端点要的读侧接线（P3d Task 4）。**刻意传 `null`**，与上面那一格
+    // 用量那两条端点要的读侧接线。**刻意传 `null`**，与上面那一格
     // 同真同假：那是 Tier-2 关着的形态，两条端点如实回 `tier: "off"`（不是 503）。
     usage: null,
     // 同上：本文件只测 session，给后端常量那个默认值即可。

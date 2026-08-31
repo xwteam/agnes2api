@@ -57,7 +57,7 @@ describe("Entry fail-closed 行为", () => {
         cooldownRateLimitMs: 60_000,
         cooldownPaymentMs: 3_600_000,
         cooldownStrikeMs: 1_800_000,
-        // Tier-2 **默认关**（P3d 计划全局约束 16）。这一格与下面那条
+        // Tier-2 **默认关**（这是一条全局约束）。这一格与下面那条
         // 「覆盖所有默认值」里的 `usageStatsEnabled: true` 是一对：
         // 两条给的值必须不同，否则「configFromEnv 到底读没读 USAGE_STATS_ENABLED」
         // 在这两条上是不可观测的（第 1 种假阳性：夹具 A/B 同值）。

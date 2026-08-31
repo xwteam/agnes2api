@@ -20,7 +20,7 @@ describe("toInternalRequest", () => {
     expect(r.messages).toHaveLength(1);
   });
 
-  // I4：Anthropic 官方允许 system 是内容块数组，所有开启 prompt caching 的 SDK
+  // Anthropic 官方允许 system 是内容块数组，所有开启 prompt caching 的 SDK
   // 都这么发。原实现把裸数组直接塞进 messages，上游收到的 content 不是字符串。
   it("system 为内容块数组时压平成字符串，而不是把裸数组发给上游", () => {
     const r = toInternalRequest({

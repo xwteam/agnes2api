@@ -70,7 +70,7 @@ describe("slotOf：确定性、稳定，值域在 [0, EVENT_SLOTS)", () => {
   });
 });
 
-describe("shardKey / candidateKeys：有界且可从时钟直接算出来（C2 根治的依据）", () => {
+describe("shardKey / candidateKeys：有界且可从时钟直接算出来（「索引无上限增长」根治的依据）", () => {
   it("shardKey 格式（手写字面量）", () => {
     expect(shardKey(0, 0)).toBe("event:0:0");
     expect(shardKey(5, 1)).toBe("event:5:1");
@@ -109,12 +109,12 @@ describe("shardKey / candidateKeys：有界且可从时钟直接算出来（C2 �
   });
 
   /**
-   * **评审 C4/C4b：这是取代原来那条「暖读候选键数与 EVENT_WINDOW_RETAIN 无关」用例
+   * **评审那两条读放大发现：这是取代原来那条「暖读候选键数与 EVENT_WINDOW_RETAIN 无关」用例
    * 的版本。原用例是本项目登记的第五种假阳性**——它把 `now` 推到第 10,000 个窗口，
    * 却把 `after` **钉在同一个窗口里**，唯一能让候选键数增长的自由度（`after` 相对
    * `now` 的陈旧程度）被按住了，用例名字声称的性质（"与保留窗口数无关"）比用例体
    * 实际检验的性质（"两者在同一个窗口时是 2 个"）强得多——它只能证明"新鲜游标下
-   * 候选键数很小"，证明不了"陈旧游标下候选键数不会爆炸"，而后者才是 C4/C4b 真正
+   * 候选键数很小"，证明不了"陈旧游标下候选键数不会爆炸"，而后者才是那两条发现真正
    * 要守住的性质。
    *
    * 这条改成让 `after` **真的陈旧**（比 `now` 早 100 个窗口，远超 `EVENT_WINDOW_RETAIN`
@@ -122,7 +122,7 @@ describe("shardKey / candidateKeys：有界且可从时钟直接算出来（C2 �
    * 随陈旧程度继续增长——这正是评审实测出"单次请求 99 万次 get"的那个口子，
    * 也是这条用例现在真正在守的东西。
    */
-  it("after 严重陈旧（远超保留窗口数）时，候选键数被钳位，不随陈旧程度继续增长（评审 C4/C4b）", () => {
+  it("after 严重陈旧（远超保留窗口数）时，候选键数被钳位，不随陈旧程度继续增长（评审发现）", () => {
     const now = 10_000 * EVENT_WINDOW_MS + 1000;
     const veryStaleAfter = 9_900 * EVENT_WINDOW_MS; // 比 now 早 100 个窗口，远超 RETAIN=24
     const keys = candidateKeys(now, veryStaleAfter);
@@ -130,19 +130,19 @@ describe("shardKey / candidateKeys：有界且可从时钟直接算出来（C2 �
     expect(keys.length).toBe(48);
   });
 
-  it("after=0（评审 C4 点名的敌意/极端输入）时，候选键数与冷读完全相同，恰好 48（手写字面量）", () => {
+  it("after=0（评审点名的敌意/极端输入）时，候选键数与冷读完全相同，恰好 48（手写字面量）", () => {
     const now = 10_000 * EVENT_WINDOW_MS + 1000;
     expect(candidateKeys(now, 0).length).toBe(48);
     expect(candidateKeys(now, 0)).toEqual(candidateKeys(now, null));
   });
 
-  it("after 是很大的负数（评审 C4 点名的敌意输入）时，candidateKeys 自身也钳位安全（不依赖 HTTP 层已经拒绝负数这个前提）", () => {
+  it("after 是很大的负数（评审点名的敌意输入）时，candidateKeys 自身也钳位安全（不依赖 HTTP 层已经拒绝负数这个前提）", () => {
     const now = 10_000 * EVENT_WINDOW_MS + 1000;
     expect(candidateKeys(now, -1e11).length).toBe(48);
   });
 
   /**
-   * **评审 C6**：`after` 所在的窗口比 `now` 所在的窗口还晚（时钟回拨 / isolate 间
+   * **评审发现**：`after` 所在的窗口比 `now` 所在的窗口还晚（时钟回拨 / isolate 间
    * 时钟偏移写出的未来 `ts` 被当成 cursor）时，扫描区间是空的——这不是一个"读到
    * 0 条事件"的正常结果，`events.ts` 的 `cursorAhead` 字段就是为了让调用方能把
    * 这种情况和"确实没有新事件"区分开。这里先钉住 `candidateKeys` 本身的行为：
@@ -156,11 +156,11 @@ describe("shardKey / candidateKeys：有界且可从时钟直接算出来（C2 �
 });
 
 /**
- * **评审 C5（第二次修复）**：存储侧的有界性改走 TTL，`eventExpiresAt(at)` 是
+ * **评审发现（第二次修复）**：存储侧的有界性改走 TTL，`eventExpiresAt(at)` 是
  * `Storage.put()` 第三个参数的来源，见该函数与 `src/adapters/logger-store.ts`
  * 的说明。
  */
-describe("eventExpiresAt：TTL 精确到手算字面量（评审 C5）", () => {
+describe("eventExpiresAt：TTL 精确到手算字面量（评审发现）", () => {
   it("EVENT_TTL_MARGIN_MS 就是 EVENT_WINDOW_MS 本身——钉住这条关系，不是钉住某个具体数值", () => {
     expect(EVENT_TTL_MARGIN_MS).toBe(EVENT_WINDOW_MS);
   });
@@ -240,7 +240,7 @@ describe("appendRing：超限时丢最旧的", () => {
   });
 });
 
-describe("truncatedCount：算出 appendRing 这一次会截掉多少条已落盘的旧事件（评审 I1）", () => {
+describe("truncatedCount：算出 appendRing 这一次会截掉多少条已落盘的旧事件（评审发现）", () => {
   it("不超限时是 0", () => {
     expect(truncatedCount(50, 30, 100)).toBe(0);
     expect(truncatedCount(0, 100, 100)).toBe(0);

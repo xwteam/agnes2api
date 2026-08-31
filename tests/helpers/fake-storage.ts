@@ -15,7 +15,7 @@ import type { Storage } from "../../src/ports/storage.js";
  */
 export class MemoryStorage implements Storage {
   private readonly map = new Map<string, string>();
-  /** 评审 C5：`put(key, value, expiresAt)` 的过期时刻表，key → epoch ms。 */
+  /** 评审发现：`put(key, value, expiresAt)` 的过期时刻表，key → epoch ms。 */
   private readonly expiry = new Map<string, number>();
 
   /**
@@ -28,7 +28,7 @@ export class MemoryStorage implements Storage {
    * 用例全部 5 秒超时失败）。`FakeFetcher` 的 `delayMs` 正是同一条判据
    * （`if (o.delayMs !== undefined) await waitOrAbort(...)`），这里照抄。
    *
-   * `now`：过期判定用的时钟，默认 `Date.now`。**评审 C5** 新增——需要在测试里
+   * `now`：过期判定用的时钟，默认 `Date.now`。**评审发现**新增——需要在测试里
    * 模拟"时间流逝、key 过期"（例如 365 天后旧事件键该消失了）又不想真的等待时，
    * 传一个假时钟进来（`new MemoryStorage(undefined, () => t)`）。
    */

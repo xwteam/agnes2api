@@ -142,9 +142,9 @@ describe("worker 入口: app 只装配一次，配置改由 ConfigHolder 每请�
   });
 });
 
-// ── P3c Task 5：`fetch` 必须把 ExecutionContext 一路递给 app ──────────────────
+// ── `fetch` 必须把 ExecutionContext 一路递给 app ──────────────────────────────
 //
-// **入口那一行在 Task 5 之前是 `return app.fetch(req)`，只有一个参数**——当时全仓
+// **入口那一行原本是 `return app.fetch(req)`，只有一个参数**——当时全仓
 // 只有 `scheduled()` 用得上 ctx，所以没人发现少了它。
 // 「立即补池」返回 202 之后补池还要继续跑，Worker 形态下那需要 `ctx.waitUntil`；
 // 不递进去的话 handler 里的 `c.executionCtx` 直接抛错 ⇒ 退化成 fire-and-forget ⇒
