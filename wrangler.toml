@@ -10,7 +10,7 @@ enabled = true
 binding = "POOL"
 id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 
-# 注册机（P2，默认关闭）的补池调度：每 30 分钟触发一次 scheduled()，与
+# 注册机（默认关闭）的补池调度：每 30 分钟触发一次 scheduled()，与
 # TEND_INTERVAL_MS 的默认值（1_800_000ms）一致。
 #
 # ⚠ **不用注册机也不要删掉这个触发器。** scheduled() 在判断「注册机是否启用」
@@ -45,7 +45,7 @@ id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 #
 # 预算判据只算了占大头的 CODE_TIMEOUT_MS 项；单次尝试还会花掉若干个 15 秒的单请求
 # 超时与 403 退避，那正是 780s 与 900s 之间那 120 秒余量的用途。「每个请求都挂满
-# 15 秒」这种病态情形仍可能顶到上限，这一条是 P2 之前就存在并已接受的取舍：每铸出
+# 15 秒」这种病态情形仍可能顶到上限，这一条是早先就存在并已接受的取舍：每铸出
 # 一把 key 就立即落库，中止只让当轮不完整。
 [triggers]
 crons = ["*/30 * * * *"]
