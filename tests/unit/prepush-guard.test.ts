@@ -655,3 +655,163 @@ describe("prepush.sh 的报文：方向要说对，别把人指到与这次失�
       .not.toContain("日志里实际那两行是");
   });
 });
+
+/**
+ * ── ⑧ 未推送提交信息格 ──────────────────────────────────────────────────────
+ *
+ * 这一格补的是本仓栽过一次的那个洞：**没有任何判据看得住提交信息**。
+ * `scan-secrets.sh --history` 只扫凭据，`docs-internal-refs.test.ts` 的射程按定义
+ * 是那 44 份公开 markdown ——而提交信息随 push 一起发出去，公开仓的 `git log` 谁都读得到。
+ * 结果就是：判据刚扩到第二批字母那一族，紧接着的五个 refactor 提交在**自己的提交信息里**
+ * 又写回了上百处本族编号，且当场没有一道门禁红。
+ *
+ * ⚠️ **这一族最要紧的一条是「族定义不许手抄」**：`cell_commit_msgs` 是从
+ * `docs-internal-refs.test.ts` 里那几行 `re:` 当场抽的。抽取器最坏的死法不是抛错，
+ * 是**一族都没抽到还照样 exit 0**（「零族零命中」长得和「干净」一模一样）。
+ * 所以下面既有正向控制（真的会红、逐族点名），也有两条针对抽取器自己的反向控制。
+ *
+ * ⚠️ **下面一个族串都不在这份文件里手写**：证据串是运行时从那份真源里读出来的。
+ * 手写一份进来，这份测试自己就成了下一处泄漏点（它是跟踪文件，读者克隆就看得到）。
+ */
+describe("⑧ 未推送提交信息格：族定义抽真源、脏提交点名、已推送的不进射程", () => {
+  const FAMILY_SRC = "tests/unit/docs-internal-refs.test.ts";
+  const script = [
+    "set -uo pipefail",
+    constOf("FAMILY_SRC"),
+    fnOf("cell_commit_msgs"),
+    "cell_commit_msgs",
+  ].join("\n");
+
+  /** 真源里逐族登记的那个正向证据串，**运行时读**，不在本文件里手写一份。 */
+  function evidenceStrings(): string[] {
+    const out = readFileSync(FAMILY_SRC, "utf8")
+      .split("\n")
+      .map((l) => /^ +evidence: "(.*)",$/.exec(l))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => m[1]!);
+    if (out.length === 0) {
+      throw new Error(`${FAMILY_SRC} 里一个 evidence: 都读不出来 —— 判据坏了，不许静默跳过`);
+    }
+    return out;
+  }
+
+  /** 真源里逐族登记的族名，报文点名点的就是它。 */
+  function familyIds(): string[] {
+    return readFileSync(FAMILY_SRC, "utf8")
+      .split("\n")
+      .map((l) => /^ +id: "(.*)",$/.exec(l))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => m[1]!);
+  }
+
+  const withRealSource = (cwd: string, srcOverride?: string) =>
+    runBash(`FAMILY_SRC=${JSON.stringify(srcOverride ?? join(process.cwd(), FAMILY_SRC))}\n${script}`,
+      { cwd });
+
+  it("⑧ 接上了：逐格表里有它，跑的是 cell_commit_msgs，族定义的真源在仓里", () => {
+    const s = readFileSync(PREPUSH, "utf8");
+    expect(s, "⑧ 那一格没接上").toContain(`run_cell "⑧"`);
+    expect(/run_cell "⑧"[^\n]*cell_commit_msgs/.test(s), "⑧ 接的不是 cell_commit_msgs").toBe(true);
+    expect(constOf("FAMILY_SRC"), "族定义的真源那一行指的不是那份判据").toContain(FAMILY_SRC);
+    expect(existsSync(FAMILY_SRC), `${FAMILY_SRC} 不在仓里 —— ⑧ 会红在一个说不清真因的报文上`)
+      .toBe(true);
+  });
+
+  it("正向控制：提交信息干净的仓 ⇒ 绿，且屏幕上写着抽到几族、扫了几条", () => {
+    const { root, src } = makeRepos();
+    try {
+      const r = withRealSource(src);
+      expect(r.code, `干净的仓被判红了：\n${r.stdout}${r.stderr}`).toBe(0);
+      expect(r.stdout, "没说抽到几族 ⇒ 分不出「零命中」和「零族」").toMatch(/抽到 \d+ 族/);
+      expect(r.stdout, "正向自检那一步没跑").toContain("正向自检");
+      expect(r.stdout).toMatch(/射程：\d+ 条未推送提交/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("反向控制：五族逐族各塞一个证据串进提交信息 ⇒ 红，且逐族点名、点到提交", () => {
+    const { root, src } = makeRepos();
+    try {
+      const evidence = evidenceStrings();
+      git(src, "commit", "-q", "--allow-empty", "-m", `chore: 变异探针\n\n${evidence.join(" / ")}\n`);
+      const sha = git(src, "rev-parse", "--short", "HEAD").trim();
+      const r = withRealSource(src);
+      expect(r.code, `提交信息里塞了 ${evidence.length} 族证据串却没红`).toBe(1);
+      expect(r.stderr, "没点名是哪一条提交").toContain(sha);
+      for (const id of familyIds()) {
+        expect(r.stderr, `报文里没点名族「${id}」`).toContain(id);
+      }
+      for (const s of evidence) {
+        expect(r.stderr, `报文里没把原串「${s}」摆出来`).toContain(s);
+      }
+      expect(r.stderr, "报文没给出处置办法").toContain("只动信息不动树");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("射程：已经推出去的那几条不进射程 —— clone 里只点名 clone 之后新提交的那条", () => {
+    const { root, src, clone } = makeRepos();
+    try {
+      const evidence = evidenceStrings();
+      // 先在源仓里造一条脏的并推上去 —— 它对 clone 来说就是「已经推出去的」。
+      git(src, "commit", "-q", "--allow-empty", "-m", `chore: 已推送的脏提交\n\n${evidence[0]}\n`);
+      git(clone, "fetch", "-q", "origin");
+      git(clone, "reset", "-q", "--hard", "origin/main");
+      const pushed = git(clone, "rev-parse", "--short", "HEAD").trim();
+
+      const before = withRealSource(clone);
+      expect(before.code, `已推送的那条被算进了射程：\n${before.stdout}${before.stderr}`).toBe(0);
+      expect(before.stdout, "没说基线是哪几条远端跟踪引用").toContain("origin/main");
+
+      git(clone, "commit", "-q", "--allow-empty", "-m", `chore: 还没推的脏提交\n\n${evidence[0]}\n`);
+      const fresh = git(clone, "rev-parse", "--short", "HEAD").trim();
+      const after = withRealSource(clone);
+      expect(after.code, "还没推的那条脏提交没红").toBe(1);
+      expect(after.stderr, "没点名还没推的那条").toContain(fresh);
+      expect(after.stderr, `已推送的那条 ${pushed} 被点名了 ⇒ 射程没有停在未推送那一段`)
+        .not.toContain(pushed);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("抽取器反向控制：族表一族都抽不到 ⇒ 红并说「抽取器坏了」，不许当成零命中", () => {
+    const { root, src } = makeRepos();
+    const dir = mkdtempSync(join(tmpdir(), "prepush-families-"));
+    try {
+      const empty = join(dir, "no-families.ts");
+      writeFileSync(empty, "export const FAMILIES = [];\n", "utf8");
+      const r = withRealSource(src, empty);
+      expect(r.code, "一族都没抽到却照样 exit 0 ⇒ 这一格恒绿").toBe(1);
+      expect(r.stderr).toContain("一族都没抽出来");
+      expect(r.stderr, "报文得说清「恒绿比没有这一格更坏」").toContain("恒绿");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("抽取器反向控制之二：正则抓不住自己那条证据串 ⇒ 红在「判据坏了」，不是「提交信息干净」", () => {
+    const { root, src } = makeRepos();
+    const dir = mkdtempSync(join(tmpdir(), "prepush-families-"));
+    try {
+      // 只动一处：把每一族的正则整条换成一个绝不可能匹配的形状，其余照抄真源。
+      const broken = readFileSync(FAMILY_SRC, "utf8")
+        .split("\n")
+        .map((l) => (/^ +re: \//.test(l) ? "    re: /(?!x)x/g," : l))
+        .join("\n");
+      const p = join(dir, "broken.ts");
+      writeFileSync(p, broken, "utf8");
+      const r = withRealSource(src, p);
+      expect(r.code, "正则被换成恒不匹配却照样 exit 0 ⇒ 自检那一步是摆设").toBe(1);
+      expect(r.stderr).toContain("没被它自己那条正则抓住");
+      expect(r.stderr, "报文说成「干净」会把人指反方向").toContain("判据坏了");
+      expect(r.stdout, "自检没过却还打了「零命中」").not.toContain("零命中");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

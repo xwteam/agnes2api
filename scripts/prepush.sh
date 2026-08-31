@@ -856,8 +856,18 @@ BANNER='[collection-guard] ✅'
 #   （4 格逐条钉住 `M1`/`M2`、`H1`/`H2`、`L4`/`L7`、`F1` **真的会咬**，
 #   1 格钉住「这几句今天都不在任何一份公开文档里」⇒「代价为零」不是散文）。
 #   1 + 2 + 5 = 8。
+# 4382 → 4388 格（+6），文件数仍是 142：**⑧ 未推送提交信息格，连同它自己的四侧**。
+#   上一条（泄漏轴扩一族）落地的**同一轮**里，紧接着的五个 refactor 提交在**自己的
+#   提交信息**里写回了 112 处刚被判定为「真的内部编号」的那一族——而那条
+#   「内部标识符连提交信息里的也要抹掉」的裁定早就下过、一次性历史重写就是照它做的。
+#   它第二次回潮的原因不是没人裁定过，是**从来没有一格盯着提交信息**：
+#   历史扫描那一格只管凭据，泄漏轴那份判据的射程按定义是 44 份公开 markdown。
+#   ⇒ 新开 `cell_commit_msgs`：族定义从 `docs-internal-refs.test.ts` 当场抽
+#   （与 ③ 抽 `ci.yml` 同一个理由），射程 = `git rev-list HEAD --not <各远端>/main`。
+#   格数（都在 `tests/unit/prepush-guard.test.ts`）：接线 1 + 正向控制 1 +
+#   「五族逐族点名」1 + 「已推送的不进射程」1 + 抽取器反向控制 2 = 6。
 EXPECT_NODE_FILES=142
-EXPECT_NODE_TESTS=4382
+EXPECT_NODE_TESTS=4388
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
@@ -1190,6 +1200,151 @@ cell_smoke() {
   bash scripts/smoke-dual-runtime.sh
 }
 
+# ── ⑧ 未推送提交的提交信息里不许有内部研发标识符 ─────────────────────────────
+#
+# **它为什么存在。** 本仓有一条早就下过的裁定：内部研发标识符不只从文档与源码里清掉，
+# **提交信息里的也要抹掉**（那次一次性历史重写就是照这条做的，改写稿逐条复验过）。
+# 而那条裁定当时只被「评审看着」——没有任何一格盯着它。结果是：判据扩到第二批字母
+# 那一族之后，紧接着的五个 refactor 提交**在自己的提交信息里**又写回了 112 处本族编号，
+# 字面守住了那次复验的口径（旧四族确实全 0），精神上把那条裁定整条推翻。
+# 评审逮到时它们还没推出去，但没有任何一道门禁看得住它：
+# `scripts/scan-secrets.sh --history` 只扫凭据，`tests/unit/docs-internal-refs.test.ts`
+# 的射程按定义是那 44 份公开 markdown。**提交信息随 push 一起发出去，公开仓的
+# `git log` 谁都读得到，而它不在任何一条判据的射程里。** 这一格就是补上的那一条。
+#
+# 🔴 **射程只到「还没推出去的那几条」，而这不是偷懒，是这一格唯一能真的守住的东西。**
+#   落地当天实测：已经推出去的 440 条提交里，**83 条的提交信息命中本族，共 381 处**。
+#   按形状剔掉那张同形真词表里登记过的形（标题层级那几个、Apple 芯片那两个、
+#   网络分层那两个、功能键那一个）之后，**仍剩 59 条提交、254 处只可能是发现号**
+#   （抽样逐条读过原句，确实是当时的评审发现号），随 v0.1.0 / v0.1.1 一起公开了。
+#   它们**改不动**：改了就是重写已发布历史 + 对公开仓强推，还会把两个 tag 指到空处。
+#   ⇒ **那 254 处是一笔已经公开、本格按定义够不着的欠账，登记在这里，不假装它不存在。**
+#   要不要清，是仓主对「公开仓强推一次」的取舍，不是这道门禁能悄悄替他做的决定。
+#   本格能保证的只有一件事：**从今天起，新的不再往上加。**
+#
+# ⚠️ **射程怎么算出来的**：以每个远端的 `<远端>/main` 远端跟踪引用为基线，
+#   `git rev-list HEAD --not <那几条基线>`。一个远端都没有（或都没有 `main` 跟踪引用）时，
+#   **按「一条都没推出去」处置，整条 HEAD 全进射程**——那正是本地新建仓的真实情形。
+#   ⚠️ 远端跟踪引用**过期只会把射程放宽**（基线更老 ⇒ 多扫几条），方向是安全的那一侧；
+#   它不可能比真的已推送状态更新，除非有人手动 `update-ref` 往前拨。
+#
+# ⚠️ **族定义一个字都不在这里手抄**：五族的正则与 flag 是从
+#   `tests/unit/docs-internal-refs.test.ts` 里那几行 `re:` **当场抽**出来的
+#   ——与 ③ 抽 `ci.yml` 同一个理由：手抄的那份会漂，而且漂了没人会发现。
+# ⚠️ **抽取器最坏的死法是「一族都没抽到还照样绿」**，所以抽完先跑一遍**正向自检**：
+#   同一份文件里每一族各自登记着一个证据串，逐条喂给刚抽出来的那条正则，
+#   **有一条抓不住就当场把这一格弄红**，报文说的是「判据坏了」，不是「提交信息干净」。
+#
+# ⚠️ **同形真词没有豁免名单，出路与 markdown 那边是同一条**：写提交信息时改用那个词
+#   本来的写法（`##` / `###`、Apple 芯片、网络四层 / 七层、功能键），别来这里加白名单。
+#   这一族的代价清单逐条登记在 `docs-internal-refs.test.ts` 的 `KNOWN_FALSE_POSITIVES` 里。
+#
+# ⚠️ 这一格的四侧由 `tests/unit/prepush-guard.test.ts` 的
+#   「⑧ 未推送提交信息格：族定义抽真源、脏提交点名、已推送的不进射程」一族钉着
+#   （真造仓、真 clone、真提交，逐字抽这个函数去跑）。
+# ⚠️ 允许从环境里覆盖，**只为把这一格抠出来单跑时能指向真源**（判据在临时仓里跑，
+#   而真源在本仓）。整跑档没人设它，走的永远是仓里那一份。
+FAMILY_SRC="${FAMILY_SRC:-tests/unit/docs-internal-refs.test.ts}"
+
+cell_commit_msgs() {
+  local src="$FAMILY_SRC"
+  if [[ ! -f $src ]]; then
+    echo "❌ 族定义的真源 $src 不在 —— 这一格没有判据可用，不许静默放行" >&2
+    return 1
+  fi
+
+  # ── 从真源当场抽五族：正则、flag、族名，以及各自那个正向证据串 ──
+  local -a res=() flg=() ids=() evi=()
+  mapfile -t res < <(grep -oP '^ +re: /\K.*(?=/[a-z]*,$)' "$src" || true)
+  mapfile -t flg < <(grep -oP '^ +re: /.*/\K[a-z]*(?=,$)' "$src" || true)
+  mapfile -t ids < <(grep -oP '^ +id: "\K.*(?=",$)' "$src" || true)
+  mapfile -t evi < <(grep -oP '^ +evidence: "\K.*(?=",$)' "$src" || true)
+  local n=${#res[@]}
+  if (( n == 0 )); then
+    echo "❌ 从 $src 一族都没抽出来 —— 抽取器坏了。" >&2
+    echo "   一个抽空了的族表会让这一格恒绿（「零族零命中」），那比没有这一格更坏。" >&2
+    return 1
+  fi
+  if (( ${#flg[@]} != n || ${#ids[@]} != n || ${#evi[@]} != n )); then
+    echo "❌ 抽出来的四栏对不齐：正则 $n / flag ${#flg[@]} / 族名 ${#ids[@]} / 证据串 ${#evi[@]}" >&2
+    echo "   $src 里那张族表的写法变了（id: / re: / evidence: 各占一行、按族相邻）。" >&2
+    return 1
+  fi
+  echo "   从 $src 抽到 $n 族"
+
+  # ── 正向自检：每一族登记的证据串必须被它自己那条正则抓住 ──
+  local k broke=0
+  local -a gopts
+  for k in "${!res[@]}"; do
+    gopts=(-oP -e "${res[k]}")
+    if [[ ${flg[k]} == *i* ]]; then gopts=(-oPi -e "${res[k]}"); fi
+    if ! printf '%s\n' "${evi[k]}" | grep -q "${gopts[@]}"; then
+      echo "❌ 第 $((k + 1)) 族「${ids[k]}」的证据串没被它自己那条正则抓住 —— 判据坏了" >&2
+      broke=1
+    fi
+  done
+  if (( broke != 0 )); then
+    echo "   报文说的是「判据坏了」，不是「提交信息干净」：抽出来的正则与真源已经对不上，" >&2
+    echo "   这时候的「零命中」是抽取器的产物，不是事实。先修 $src 的抽取形态。" >&2
+    return 1
+  fi
+  echo "   正向自检：$n 族的证据串逐条被自己那条正则抓住"
+
+  # ── 射程：以每个远端的 <远端>/main 为基线，算还没推出去的那几条 ──
+  local -a bases=() shas=()
+  local r
+  while IFS= read -r r; do
+    if [[ -z $r ]]; then continue; fi
+    if git rev-parse --verify --quiet "refs/remotes/$r/main" >/dev/null; then
+      bases+=("refs/remotes/$r/main")
+    fi
+  done < <(git remote)
+  if (( ${#bases[@]} == 0 )); then
+    echo "   没有任何 <远端>/main 远端跟踪引用 ⇒ 按「一条都没推出去」处置，整条 HEAD 都进射程"
+    mapfile -t shas < <(git rev-list HEAD)
+  else
+    echo "   基线：${bases[*]}（过期只会把射程放宽，方向是安全的那一侧）"
+    mapfile -t shas < <(git rev-list HEAD --not "${bases[@]}")
+  fi
+  echo "   射程：${#shas[@]} 条未推送提交"
+
+  # ── 逐条扫 ──
+  # ⚠️ **`grep -c` 数的是「有命中的行数」，不是命中处数**（同一行里两处只算一处）。
+  #   要的是处数，所以拿 `-o` 那一份输出自己数行；`sort -u` 那一份只用来打印，不用来计数。
+  local sha short raw hits cnt bad=0 total=0
+  for sha in "${shas[@]}"; do
+    if [[ -z $sha ]]; then continue; fi
+    short=$(git rev-parse --short "$sha")
+    for k in "${!res[@]}"; do
+      gopts=(-oP -e "${res[k]}")
+      if [[ ${flg[k]} == *i* ]]; then gopts=(-oPi -e "${res[k]}"); fi
+      raw=$(git log -1 --format=%B "$sha" | grep "${gopts[@]}" || true)
+      if [[ -n $raw ]]; then
+        cnt=$(printf '%s\n' "$raw" | grep -c . || true)
+        hits=$(printf '%s\n' "$raw" | sort -u | tr '\n' ' ')
+        total=$((total + cnt))
+        bad=1
+        echo "❌ $short 的提交信息里有 $cnt 处${ids[k]}：$hits" >&2
+        echo "   $(git log -1 --format=%s "$sha")" >&2
+      fi
+    done
+  done
+
+  if (( bad != 0 )); then
+    echo "❌ 未推送的提交信息里共 $total 处内部研发标识符（逐条见上）。" >&2
+    echo "   提交信息随 push 一起发出去，公开仓的 git log 谁都读得到 ——" >&2
+    echo "   而它不在任何一份 markdown 的射程里，历史扫描那一格又只管凭据。" >&2
+    echo "   处置：趁它们还没推出去就地改写（git commit-tree 逐条重放，或 filter-repo" >&2
+    echo "   --message-callback），把编号换成「讲那一轮 + 讲那件事」的写法；" >&2
+    echo "   **只动信息不动树**，改完 git diff <旧HEAD> HEAD 必须为空。" >&2
+    echo "   命中的是同形真词（HTML 标题层级 / Apple 芯片 / 网络分层 / 功能键）时，" >&2
+    echo "   出路与 markdown 那边同一条：在提交信息里改用它本来的写法，不是放宽这道门禁。" >&2
+    return 1
+  fi
+  echo "✅ ${#shas[@]} 条未推送提交的提交信息里，$n 族零命中"
+  return 0
+}
+
 # ── 跑 ──────────────────────────────────────────────────────────────────────
 if ! load_gates "$CI_FILE"; then exit 2; fi
 rm -f "$NODE_LOG" "$WORKERS_LOG"
@@ -1205,6 +1360,7 @@ if (( SKIP_SMOKE == 1 )); then
 else
   run_cell "⑦" "双形态真机冒烟"               cell_smoke
 fi
+run_cell "⑧" "未推送提交信息零内部标识符"      cell_commit_msgs
 
 # ── 逐格表 ──────────────────────────────────────────────────────────────────
 # ⚠️ **补齐的那一列必须是状态、不是标题**（复评发现）：`printf` 的 `%-28s` 按**字节**补，
