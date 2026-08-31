@@ -349,6 +349,18 @@ const REGISTRY: readonly Deviation[] = [
       return hasTick ? [`${p} 的变量表用上了 \`✅\`/\`❌\` —— 那这条登记该删了`] : [];
     }),
   },
+  {
+    id: 23,
+    what: "【阶段 P3g 新增】六份 README 的 `#### Cloudflare Worker` 之下各有一颗 Cloudflare 一键部署按钮，两个参照仓一颗都没有",
+    why: "kiro2api / gemini2api 是**纯 Docker 形态、根本没有 Worker 这条部署路**，所以「它们没有按钮」不是取舍而是没有这个东西可放；agnes 有 Worker 形态，这颗按钮对不想克隆仓库的读者是真实可用的入口（实测按钮图回 200 且 `image/svg+xml`，部署入口回 307）⇒ 这是本仓独有的合理增项，不是模板对齐项，照「模板没有所以删掉」办反而是错的",
+    until: "哪天 Worker 形态被砍掉（那按钮就没有落点了），或 Cloudflare 停掉 `deploy.workers.cloudflare.com` 这个入口 —— 那时六份的按钮与这条登记一起删，`docs-parity.test.ts` 的 W142 整组跟着删",
+    // 形态细节（六份逐字节相同、位置在 clone 围栏之前、slug 取自 package.json）由 W142 管；
+    // 这里只钉「这个偏离今天确实存在」这一件事 —— 名册的职责是记住裁定，不是重复判据。
+    assert: () => {
+      const bad = SIX_READMES.filter((p) => !read(p).includes("deploy.workers.cloudflare.com"));
+      return bad.length === 0 ? [] : [`这几份 README 里没有那颗一键部署按钮：${bad.join("、")} —— 要么按钮被误删了，要么这个偏离结束了（那这条登记该删）`];
+    },
+  },
 ];
 
 describe("W94 / W133 刻意偏离名册：每条今天都真成立（方向 ①）", () => {

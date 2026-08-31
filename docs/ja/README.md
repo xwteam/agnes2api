@@ -143,6 +143,10 @@ Agnes AI のプラットフォームで API key を 1 本作って手元に置�
 
 #### Cloudflare Worker
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xwteam/agnes2api)
+
+ワンクリックデプロイはローカルへのクローンを省けますが、代行できないものが 2 つあります：`wrangler.toml` の KV ネームスペース id（リポジトリのものは常にプレースホルダーです）と `GATEWAY_TOKEN` secret——どちらか一方でも欠けるとゲートウェイは起動しません。すべて自分で進める場合、またはデプロイ後にこの 2 つを補う場合は以下のコマンドを使ってください：
+
 ```bash
 git clone https://github.com/xwteam/agnes2api.git
 cd agnes2api

@@ -995,7 +995,7 @@ describe("R23' 结构分层：相邻标题间的长度、薄标题占比、五�
       .toBeLessThanOrEqual(R23A_OVERLONG_RATCHET);
   });
 
-  it("B（棘轮）：薄标题（相邻标题间 <40 字符）占比 ≤15% —— 今天 13.9%，余量 21 个空壳标题", () => {
+  it("B（棘轮）：薄标题（相邻标题间 <40 字符）占比 ≤15% —— 今天 13.5%，余量 29 个空壳标题", () => {
     const ints = all();
     const thin = ints.filter((x) => x.chars < R23B_THIN).length;
     const ratio = (100 * thin) / ints.length;
@@ -1023,17 +1023,20 @@ describe("R23' 结构分层：相邻标题间的长度、薄标题占比、五�
     expect(faults, "删掉 5 个 `###` 之后 C 居然还绿").toContain("API: ja 有");
   });
 
-  it("② 该红时红：加 23 个空壳 `### 占位` —— B 被顶穿（专门证明「填充不管用」）", () => {
-    // 今天 232/1674 = 13.86%。要顶穿 15% 需要 x 满足 (232+x)/(1674+x) > 0.15 ⇒ x ≥ 23。
-    // **余量只有 22 个空壳标题**，这个数写在这里是为了让后来的人知道这条线有多紧。
-    // ⚠️ 22 → 23 是分母变了（ADJ ㊷ 给五份 REGISTRAR 各补了一个页脚节 ⇒ 区间数 1669 → 1674，
-    // 而那 5 个新区间都不薄），**不是把线放松**：分子 232 一个没动，占比反而从 13.90% 降到 13.86%。
+  it("② 该红时红：加 30 个空壳 `### 占位` —— B 被顶穿（专门证明「填充不管用」）", () => {
+    // 今天 226/1674 = 13.50%。要顶穿 15% 需要 x 满足 (226+x)/(1674+x) > 0.15 ⇒ x ≥ 30。
+    // **余量只有 29 个空壳标题**，这个数写在这里是为了让后来的人知道这条线有多紧。
+    // ⚠️ 23 → 30 是**分子降了**：P3g 给六份 README 的 `#### Cloudflare Worker` 节各补了
+    // 一颗一键部署按钮 + 一句「它替不了你两件事」的白话，那 6 个此前近乎空的区间
+    // 一次性脱离了薄标题档 ⇒ 分子 232 → 226、占比 13.86% → 13.50%。
+    // **这不是把线放松**：`R23B_RATIO` 还是 15，分母 1674 一个没动（没加任何新标题），
+    // 余量变大恰恰是因为文档变实了。ADJ ㊷ 那次是分母变（1669 → 1674），这次是分子变。
     const target = join("docs", "zh-CN", "USAGE.md");
-    const filler = Array.from({ length: 23 }, (_, i) => `### 占位 ${i + 1}\n`).join("\n");
+    const filler = Array.from({ length: 30 }, (_, i) => `### 占位 ${i + 1}\n`).join("\n");
     const docs = withMutation(pairsOf(SHIP_DOCS), target, (s) => `${s}\n${filler}`);
     const ints = intervalsOf(docs);
     const ratio = (100 * ints.filter((x) => x.chars < R23B_THIN).length) / ints.length;
-    expect(ratio, `塞了 23 个空壳标题之后占比才 ${ratio.toFixed(2)}% —— B 没被顶穿，那它拦不住刷密度`)
+    expect(ratio, `塞了 30 个空壳标题之后占比才 ${ratio.toFixed(2)}% —— B 没被顶穿，那它拦不住刷密度`)
       .toBeGreaterThan(R23B_RATIO);
   });
 

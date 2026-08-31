@@ -71,15 +71,15 @@ stores know nothing about each other, and the same key ends up judged twice.
 ### Prerequisites
 
 > [!NOTE]
-> **This repository ships no one-click Cloudflare deploy button** — that path cannot work
-> here. The KV namespace id in `wrangler.toml` is always a placeholder (a public repo
-> carries no real deployment details; `scripts/check-wrangler-placeholder.mjs` enforces
-> that in CI), and `GATEWAY_TOKEN` is a mandatory sensitive value that can only be
-> injected as a secret — miss either one and it will not start (`src/core/config.ts`
-> throws the moment it cannot read it). A one-click flow can do neither for you, so the
-> steps below have to be walked through by hand. For a command-only overview see the
-> `## ⚡ Quick Deployment` section of the [README](README.md) in this directory;
-> tag-triggered automatic deployment is covered further down.
+> The `## ⚡ Quick Deployment` section of the [README](README.md) in this directory
+> carries a one-click Cloudflare deploy button; clicking it skips the clone and install
+> below. **Two things it cannot do for you**, though: the KV namespace id in
+> `wrangler.toml` is always a placeholder (a public repo carries no real deployment
+> details; `scripts/check-wrangler-placeholder.mjs` enforces that in CI), and
+> `GATEWAY_TOKEN` is a mandatory sensitive value that can only be injected as a secret —
+> miss either one and it will not start (`src/core/config.ts` throws the moment it
+> cannot read it). So if you take the one-click route, come back to Configuration below
+> and fill those two in; tag-triggered automatic deployment is covered further down.
 
 Clone the repository and install dependencies:
 

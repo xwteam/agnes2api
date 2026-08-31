@@ -143,6 +143,10 @@
 
 #### Cloudflare Worker
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xwteam/agnes2api)
+
+一鍵部署省掉本機複製這一步，但有兩件事它替不了你：`wrangler.toml` 裡的 KV 命名空間 id（儲存庫裡那個恆為佔位符）與 `GATEWAY_TOKEN` secret——缺任何一項閘道都起不來。想全程自己走，或者部署完回來補這兩項，用下面這幾條指令：
+
 ```bash
 git clone https://github.com/xwteam/agnes2api.git
 cd agnes2api

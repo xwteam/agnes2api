@@ -143,6 +143,10 @@ Agnes AI 플랫폼에서 API key를 하나 만들어 두세요. 손으로 준비
 
 #### Cloudflare Worker
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xwteam/agnes2api)
+
+원클릭 배포는 로컬 클론 단계를 생략해 주지만 대신해 주지 못하는 것이 두 가지 있습니다: `wrangler.toml`의 KV 네임스페이스 id(저장소에 있는 값은 항상 자리표시자입니다)와 `GATEWAY_TOKEN` secret——둘 중 하나라도 빠지면 게이트웨이가 기동되지 않습니다. 전 과정을 직접 진행하거나 배포 후에 이 두 가지를 채우려면 아래 명령을 사용하세요:
+
 ```bash
 git clone https://github.com/xwteam/agnes2api.git
 cd agnes2api

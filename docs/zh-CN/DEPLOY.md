@@ -62,12 +62,12 @@ Cloudflare Cron 的墙钟上限，完整说明见 [REGISTRAR.md](REGISTRAR.md)�
 ### 前置条件
 
 > [!NOTE]
-> **本仓库不提供 Cloudflare 一键部署按钮**，那条路在这里走不通：仓库里 `wrangler.toml`
+> 同目录 [README](README.md) 的 `## ⚡ 快速部署` 一节里有一颗 Cloudflare 一键部署按钮，
+> 点它就能跳过下面的克隆与安装。**但有两件事它替不了你**：仓库里 `wrangler.toml`
 > 的 KV namespace id 永远是占位符（公开仓不放真实部署细节，CI 里由
 > `scripts/check-wrangler-placeholder.mjs` 守着），而 `GATEWAY_TOKEN` 是必填的敏感值、
 > 只能以 secret 注入——两项缺任何一项都起不来（`src/core/config.ts` 读不到它就直接抛错）。
-> 一键流程这两项都替你办不了，所以下面这几步必须自己走一遍。命令速览见同目录
-> [README](README.md) 的 `## ⚡ 快速部署` 一节；打 tag 自动部署见下文。
+> 所以走一键入口的人，部署完仍要回到下面的「配置」把这两项补齐；打 tag 自动部署见下文。
 
 克隆仓库并安装依赖：
 

@@ -143,6 +143,10 @@ Create an API key on the Agnes AI platform and keep it handy. If you would rathe
 
 #### Cloudflare Worker
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xwteam/agnes2api)
+
+The one-click flow saves you the local clone, but there are two things it cannot do for you: the KV namespace id in `wrangler.toml` (the one in the repository is always a placeholder) and the `GATEWAY_TOKEN` secret — miss either and the gateway will not start. To walk every step yourself, or to fill those two in after deploying, use the commands below:
+
 ```bash
 git clone https://github.com/xwteam/agnes2api.git
 cd agnes2api

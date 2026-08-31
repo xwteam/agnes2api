@@ -62,12 +62,12 @@ Cloudflare Cron 的牆鐘上限，完整說明見 [REGISTRAR.md](REGISTRAR.md)�
 ### 前置條件
 
 > [!NOTE]
-> **本倉庫不提供 Cloudflare 一鍵部署按鈕**，那條路在這裡走不通：倉庫裡 `wrangler.toml`
+> 同目錄 [README](README.md) 的 `## ⚡ 快速部署` 一節裡有一顆 Cloudflare 一鍵部署按鈕，
+> 點它就能跳過下面的複製與安裝。**但有兩件事它替不了你**：倉庫裡 `wrangler.toml`
 > 的 KV namespace id 永遠是佔位符（公開倉不放真實部署細節，CI 裡由
 > `scripts/check-wrangler-placeholder.mjs` 守著），而 `GATEWAY_TOKEN` 是必填的敏感值、
 > 只能以 secret 注入——兩項缺任何一項都起不來（`src/core/config.ts` 讀不到它就直接拋錯）。
-> 一鍵流程這兩項都替你辦不了，所以下面這幾步必須自己走一遍。命令速覽見同目錄
-> [README](README.md) 的 `## ⚡ 快速部署` 一節；打 tag 自動部署見下文。
+> 所以走一鍵入口的人，部署完仍要回到下面的「設定」把這兩項補齊；打 tag 自動部署見下文。
 
 克隆倉庫並安裝相依套件：
 

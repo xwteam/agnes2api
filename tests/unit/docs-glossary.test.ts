@@ -204,7 +204,12 @@ function termConflicts(read: DocReader): string[] {
  * 本来就看不见正文，这也顺手证实了那条射程注释不是传说。
  */
 const PENDING_TERM_CONFLICTS: readonly string[] = [
-  "en｜仓库｜ADMIN=repo｜API=repository｜DEPLOY=repo+repository｜REGISTRAR=repository｜SPONSORS=repository",
+  // ⚠️ P3g 新增 `README=repository` 那一格：一键部署按钮下方那句「它替不了你两件事」的
+  // 白话是 `docs/en/README.md` 里**第一次**出现这个源词（此前 en 的 README 两种译法一个
+  // 都没有，所以这一行里没有它）。写的是多数派 `repository`，**分歧一条都没多**——
+  // 打架的仍然是 ADMIN/DEPLOY 里那几处 `repo`。初稿曾写成 `the one in the repo`，
+  // 被这条判官当场逮住（那会真的多出一份用少数派译法的文档），已改。
+  "en｜仓库｜ADMIN=repo｜API=repository｜DEPLOY=repo+repository｜README=repository｜REGISTRAR=repository｜SPONSORS=repository",
   "en｜免费档｜DEPLOY=free plan+free tier",
   "en｜补池｜ADMIN=refill+tend｜API=refill+tend｜DEPLOY=refill+tend｜README=refill｜REGISTRAR=refill+tend+top-up｜USAGE=refill",
   "ja｜免费档｜DEPLOY=無料プラン+無料枠｜README=無料枠",

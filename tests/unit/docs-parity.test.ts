@@ -7295,27 +7295,39 @@ describe("五份 SPONSORS.md 的字面恒等式（W33 的验收 ①②③⑤）"
  *        不是空判据。
  *   **(B) 蕴含式那一半**：根 README + `docs/` 下任何一份 .md 只要提到那颗按钮
  *        （标签字面或 `deploy.workers.cloudflare.com` 那个 markup），根 README 里就
- *        必须真的有它。**今天前件为空**（全仓零命中，按钮已按下面那条裁定弃用），
- *        所以它今天是恒真的——恒真的判据在本仓不许白挂着，因此它配了**两侧夹具**：
- *        「文档提到、根上没有」必须红并点名是哪一份；「文档提到、根上真有」必须绿。
- *        少了这两格，(B) 就是一段没有任何东西触发的死代码。
+ *        必须真的有它。
  *
- * ── 按钮为什么是弃用而不是恢复（回填时的裁定，理由可机器复核）────────────────
- * 评审建议过「把按钮放回根 README，让方式一当场重新为真，净损失归零」。**不采纳**，
- * 因为那条路在本仓**证明走不通**，恢复它等于把一句假话换成另一句假话：
+ * ── 🔴 阶段 P3g：按钮回来了，(B) 的前提**变了**（用户裁定，本组据此改写）────────
+ * 回填本组时按钮全仓零命中，(B) 的**前件是空的**、因而恒真；那一版只好给它配两侧夹具
+ *（「文档提到、根上没有」必须红；「文档提到、根上真有」必须绿），靠夹具证明这段代码
+ * 不是死的。**P3g 用户裁定把按钮加回六份 README 的 `## ⚡ 快速部署` 节** ⇒
+ * 前件从「零命中」变成「五份语言版 README 逐份命中」，(B) 从**恒真的空判据**变成
+ * **今天真的在守一件事的活判据**：
+ *   · 谁把根 README 那颗按钮删了、而五份语言版还留着 ⇒ (B) 当场红并点名那五份；
+ *   · 反过来，删语言版留根 ⇒ (B) 不红（它守的是「指认 ⇒ 被指认者存在」这一个方向），
+ *     那个方向由 P3g 新加的 **W142** 六份自等式接住。两组的分界写在 W142 顶上。
+ * ⇒ **结论：W136 守的仍是同一件真事，而且比回填时更真**——(A) 五条断言一条没动，
+ *   (B) 从空判据升级成活判据。变的是夹具：老的「某份 DEPLOY 写回按钮那句话 ⇒ 必红」
+ *   在根上有按钮之后**必然绿**（那句话现在是真话），留着它就是一格恒绿的假探针 ⇒
+ *   换成「把根上那颗按钮删掉 ⇒ 必红并点名语言版」，红的是同一条蕴含式的同一个方向。
+ *   另外补一格**非空锚**，把「前件今天真的非空」钉死：哪天按钮又被全仓删干净，
+ *   (B) 会悄悄退回恒真，那一格会红着提醒人回来重读这一段。
+ *
+ * ── 恢复按钮**没有**推翻那两条技术事实（它们仍然为真，只是改了写法）────────────
  * ① `wrangler.toml` 的 KV namespace id 恒为占位符 `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`，
- *    而且这件事由 `scripts/check-wrangler-placeholder.mjs` 在 CI 里钉死（ci.yml 第 8 道）
- *    —— 一键流程克隆的就是这份 `wrangler.toml`，`wrangler deploy` 拿着这个 id 起不来。
+ *    而且这件事由 `scripts/check-wrangler-placeholder.mjs` 在 CI 里钉死（ci.yml 第 8 道）。
  * ② `GATEWAY_TOKEN` 是必填值，`src/core/config.ts` 读不到它直接
- *    `throw new Error("缺少 GATEWAY_TOKEN，网关无法启动")` —— 一键流程设不了 secret。
- * 被删那段原文自己就承认了这两点（「按钮本身不会帮你配置这两项」）。⇒ 弃用是对的，
- * 五份 DEPLOY.md 的方式一同批改写成不依赖按钮的说法，并把「为什么没有一键按钮」
- * 写成读者看得见的 `[!NOTE]`。**净损失不是零，但被删掉的那件事本来就办不成。**
+ *    `throw new Error("缺少 GATEWAY_TOKEN，网关无法启动")`。
+ * 回填时据此把按钮判成「弃用」，理由是**一键流程办不了这两项**。P3g 的做法不是否认
+ * 这两条，而是**不再让读者以为按钮能一键办完**：六份 README 的按钮下方各有一句
+ * 「它替不了你这两件事」的白话，五份 DEPLOY.md 的 `[!NOTE]` 从「本仓不提供按钮」
+ * 改写成「按钮在同目录 README 里，但部署完仍要回来补这两项」。
+ * ⇒ 少掉的不是警告，是那句**已经变成假话**的「本仓不提供」。
  *
- * ⚠️ 本组按 ADJ §61 那条规矩写：被弃用的字面**只出现在判据里，不出现在文档里**。
- * 五份 DEPLOY.md 的 `[!NOTE]` 里一个 `Deploy to Cloudflare` 都没有（写的是
+ * ⚠️ ADJ §61（被弃用的字面只出现在判据里）**对这颗按钮已经失效**：它不再是弃用件，
+ * 六份 README 里就写着 `Deploy to Cloudflare`。五份 DEPLOY.md 仍然只写各语言的
  * 「一键部署按钮 / one-click Cloudflare deploy button / ワンクリックデプロイボタン /
- * 원클릭 배포 버튼」），否则 (B) 会被自己的否定句触发。
+ * 원클릭 배포 버튼」，那不是为了躲 (B)（现在躲不躲都绿），而是**译文本来就该用译名**。
  */
 describe("跨文档指认的真实性：文档里说「那份 README 里有 X」，X 就得真在（W136）", () => {
   /** 变异的唯一注入点：换掉某一条路径的内容，其余照旧。 */
@@ -7501,22 +7513,60 @@ describe("跨文档指认的真实性：文档里说「那份 README 里有 X」
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("(B) 该红时红：某份 DEPLOY.md 把按钮那句话写回去、而根上没有按钮 ⇒ 红并点名是哪一份", () => {
-    probeGreen(buttonClaimFailures(readFile, buttonScanFiles()), REAL_B);
-    const at = docPath(".", "en", "DEPLOY");
-    const mutated = `${readFile(at)}\n### Option A — ${BUTTON_LABEL} button\n\nClick the button in the root [README](../../README.md).\n`;
-    const failures = buttonClaimFailures(patchPath(readFile, at, mutated), buttonScanFiles());
-    expect(failures).toHaveLength(1);
-    expect(failures[0] ?? "").toContain("docs/en/DEPLOY.md");
+  /**
+   * (B) 的前件今天有多大：`docs/` 下真的提到那颗按钮的文档。
+   * **今天是五份语言版 README**（P3g 把按钮加了回去）。回填本组时这个数是 0 ——
+   * 那时 (B) 是恒真的，全靠夹具证明它不是死代码。
+   */
+  const buttonMentioners = (read: (p: string) => string): string[] =>
+    buttonScanFiles().filter((f) => f !== "README.md")
+      .filter((f) => read(f).includes(BUTTON_LABEL) || read(f).includes(BUTTON_MARKUP));
+
+  it("🔴 (B) 的非空锚：前件今天真的非空 —— 五份语言版 README 各自提到了那颗按钮", () => {
+    // ⚠️ 这一格是 P3g 换掉老夹具之后 (B) 的**唯一活性证明**。哪天按钮又被全仓删干净，
+    // (B) 会悄悄退回「前件为空 ⇒ 恒真」，那时这一格会红着把人叫回本组顶上那段读一遍：
+    // 要么按钮是有意再次弃用（那 (B) 得重新配两侧夹具），要么是谁误删了。
+    expect(buttonMentioners(readFile).sort(),
+      "提到按钮的文档不再是那五份语言版 README —— (B) 的前件变了，回本组顶上那段重新表态")
+      .toEqual(LANGS.map((l) => docPath(".", l, "README")).sort());
   });
 
-  it("(B) 不该红时不红：根 README 上真有那颗按钮时，文档指着它是**真话**，不许红", () => {
-    const withButton = (p: string) => (p === "README.md"
-      ? `${readFile(p)}\n[![${BUTTON_LABEL}](https://${BUTTON_MARKUP}/button)](https://${BUTTON_MARKUP}/?url=x)\n`
-      : (p === docPath(".", "en", "DEPLOY")
-        ? `${readFile(p)}\nClick the ${BUTTON_LABEL} button in the root README.\n`
-        : readFile(p)));
-    expect(buttonClaimFailures(withButton, buttonScanFiles())).toEqual([]);
+  it("(B) 该红时红：把根 README 那颗按钮删掉、五份语言版照旧留着 ⇒ 红并逐份点名", () => {
+    probeGreen(buttonClaimFailures(readFile, buttonScanFiles()), REAL_B);
+    const at = "README.md";
+    const mutated = readFile(at).split("\n").filter((l) => !l.includes(BUTTON_MARKUP)).join("\n");
+    expect(mutated, "变异没落地 —— 根 README 里本来就没有按钮？").not.toBe(readFile(at));
+    const failures = buttonClaimFailures(patchPath(readFile, at, mutated), buttonScanFiles());
+    expect(failures, `删掉根上的按钮之后 (B) 居然还绿：\n${failures.join("\n")}`)
+      .toHaveLength(LANGS.length);
+    for (const l of LANGS) {
+      expect(failures.join("\n"), `没点名 ${l} 那一份`).toContain(docPath(".", l, "README"));
+    }
+  });
+
+  it("(B) 该红时红（另一侧）：某份 DEPLOY.md 也写上按钮字面、而根上那颗被删了 ⇒ 连它一起点名", () => {
+    // 老版本的这一格只删 DEPLOY 那一侧、不动根，按钮回来之后它**必然绿**（那句话成了真话）。
+    // ⇒ 改成两处一起变异：证明 (B) 的射程真的覆盖 README 之外的文档，不只覆盖那五份。
+    probeGreen(buttonClaimFailures(readFile, buttonScanFiles()), REAL_B);
+    const noButton = readFile("README.md").split("\n").filter((l) => !l.includes(BUTTON_MARKUP)).join("\n");
+    const at = docPath(".", "en", "DEPLOY");
+    const read = (p: string) => {
+      if (p === "README.md") return noButton;
+      if (p === at) return `${readFile(p)}\n### Option A — ${BUTTON_LABEL} button\n\nClick the button in the root [README](../../README.md).\n`;
+      return readFile(p);
+    };
+    const failures = buttonClaimFailures(read, buttonScanFiles());
+    expect(failures).toHaveLength(LANGS.length + 1);
+    expect(failures.join("\n")).toContain("docs/en/DEPLOY.md");
+  });
+
+  it("(B) 不该红时不红：谁都没提按钮、根上也没有 ⇒ 前件为假，不许红", () => {
+    // 蕴含式的另一半：没有指认就没有假指认。这一格钉住 (B) 不是「根上必须有按钮」——
+    // 那个方向归 W142（六份自等式）与偏离名册第 23 条管，不是本组。
+    const stripped = (p: string) => readFile(p).split("\n")
+      .filter((l) => !l.includes(BUTTON_MARKUP) && !l.includes(BUTTON_LABEL)).join("\n");
+    expect(buttonMentioners(stripped), "变异没落地").toEqual([]);
+    expect(buttonClaimFailures(stripped, buttonScanFiles())).toEqual([]);
   });
 
   it("(B) 认不出要吵：射程为空、或某一份读出来是空的时候当场抛", () => {
@@ -7538,6 +7588,186 @@ describe("跨文档指认的真实性：文档里说「那份 README 里有 X」
     expect(files, "射程里没有根 README —— (B) 的被指认方就没人看了").toContain("README.md");
     expect(files.length, `射程只有 ${files.length} 份，少于「根 1 份 + 五语言 × ${DOCS.length} 份」`)
       .toBe(1 + LANGS.length * DOCS.length);
+  });
+});
+
+/**
+ * W142 —— **Cloudflare 一键部署按钮的形态锚**（P3g，用户裁定把按钮加回来之后配的）。
+ *
+ * ── 它跟 W136 (B) 的分界（两组守的**不是**同一个方向）─────────────────────────
+ * · W136 (B)：**指认 ⇒ 被指认者存在**。谁提到按钮，根 README 里就得真有。
+ *   它对「五份语言版里少了一颗」**看不见**——语言版少一颗只是少一个提及方，
+ *   蕴含式照样成立。
+ * · W142（本组）：**六份 README 里那颗按钮的形态本身**——份数、位置、逐字节相同、
+ *   仓库 slug 取自真源。少一份、挪到 `git clone` 围栏后面、alt 被翻译，都在这里红。
+ * ⇒ 删干净了谁红？六份全删 ⇒ W136 的非空锚红 + 偏离名册第 23 条红 + 本组红；
+ *   只删语言版一份 ⇒ 只有本组红。这就是本组存在的理由。
+ *
+ * ── 为什么按钮**回来了**（P3g 用户裁定）────────────────────────────────────
+ * 它在 `21861c5` 引入、阶段 5 重写六份 README 时被删（根 `016d89c` + 五份语言版
+ * W40–W44 那五笔），W136 就是因为「五份 DEPLOY.md 还指着一颗不存在的按钮」才建的。
+ * ⚠️ P3g 的交接材料把根那一笔记成了**另一个 sha**，那个串在本仓解析不开（三次历史重写
+ * 之后已经不存在），这里刻意不抄它——`tests/unit/sha-refs.test.ts「(a) 每一处 sha 引用要么
+ * 解析得开是 commit，要么在已销毁名册上」`会把任何解析不开的 sha 引用当场判红，而它判得对：
+ * 读者点过去只会看到 Not a valid object name（本轮初稿抄了那个 sha，就是被这一格逮住的）。
+ * 真正删掉根 README 那颗按钮的是 `016d89c`，`git log -S deploy.workers.cloudflare.com`
+ * 的命中集合可复核 —— 与本组上方那段的归因一致。
+ * P3g 用户裁定要它回来。实测过入口是活的：按钮图 `https://deploy.workers.cloudflare.com/button`
+ * 回 200 且 `image/svg+xml`，部署入口 `?url=https://github.com/xwteam/agnes2api` 回 307。
+ * 两个参照仓（kiro2api / gemini2api）**都没有同类按钮**——它们是纯 Docker、没有 Worker
+ * 形态，所以这不是模板对齐项而是**本仓独有的增项**，登记在偏离名册第 23 条。
+ *
+ * ── 🔴 alt 文本为什么是**六份逐字相同的英文**，而不是各按语言翻译 ────────────
+ * 这是本组要钉的那个选择，理由三条，都可机器复核：
+ * ① **图本身是英文的**。`deploy.workers.cloudflare.com/button` 渲染出来的 SVG 上印着
+ *    "Deploy to Cloudflare"；alt 的职责是替代**看不见的那张图**，写成「一键部署到
+ *    Cloudflare」会与读者（或读屏软件用户之外的任何人）实际看到的字不一致。
+ * ② **本仓已有的成例就是这样**：六份 README 头部 7 枚 `img.shields.io` 徽章的 alt
+ *    （`TypeScript` / `Hono` / `Cloudflare Workers` / `Docker` / `Arch` / `License` /
+ *    `Version`）与两枚动态徽章的 alt（`Issues` / `Stars`）**六份逐字全同、一个都没翻译**，
+ *    W140 的「六份徽章 URL 有序逐字节相同」那一格已经把这条成例钉死了。按钮是同一类
+ *    徽章型图片，跟着同一条成例走；单给它开翻译的口子，才是本仓里那个不一致的东西。
+ *    ⇒ 下面「与徽章成例同轨」那一格**从磁盘现数**这九枚 alt 的六份自等式，
+ *    成例哪天变了，这条理由会跟着红，而不是留在注释里发霉。
+ * ③ 混着来是明确禁止的：本组要求六份**逐字节相同**，所以不存在「zh 翻译、en 不翻译」
+ *    这种半吊子状态——要改就六份一起改，改了本组当场红，人会被迫回来重读 ① 和 ②。
+ *
+ * ── 它验不了什么 ──────────────────────────────────────────────────────────
+ * 按钮点下去到底能不能部署成功（那要真去 Cloudflare 走一遍，不是仓内可判的事）；
+ * 按钮下方那句「它替不了你两件事」的白话译得好不好——**但那两件事本身是真的**：
+ * KV 占位符由 `scripts/check-wrangler-placeholder.mjs` 钉着，`GATEWAY_TOKEN` 缺失由
+ * `src/core/config.ts` 抛错钉着，两处都在别的判据射程里。
+ */
+describe("W142 Cloudflare 一键部署按钮：六份逐字节相同、位置在 clone 围栏之前、slug 取自 package.json", () => {
+  const SIX_README: readonly string[] = ["README.md", ...LANGS.map((l) => docPath(".", l, "README"))];
+  const readFile = (p: string) => readFileSync(p, "utf8");
+  const patchPath = (base: (p: string) => string, at: string, body: string) =>
+    (p: string) => (p === at ? body : base(p));
+
+  /** 按钮那一行（整行）。一份里可能有 0 行、1 行或多行 —— 三种都要能分辨。 */
+  const buttonLines = (body: string): string[] =>
+    body.split("\n").filter((l) => l.includes("deploy.workers.cloudflare.com"));
+
+  /** 从 `package.json` 现算仓库 slug —— 按钮 URL 里那个 `xwteam/agnes2api` 的真源。 */
+  const slugFromPackageJson = (): string => {
+    const url = (JSON.parse(readFile("package.json")) as { repository?: { url?: string } }).repository?.url ?? "";
+    const m = /github\.com\/([^/]+\/[^/.]+)/.exec(url);
+    if (m === null) throw new Error(`package.json 的 repository.url 里取不出 slug：${url}`);
+    return m[1] ?? "";
+  };
+
+  /** 形态判定本体。**真扫描与反向控制共用它**，`read` 是唯一注入点。 */
+  const shapeFaults = (read: (p: string) => string): string[] => {
+    const out: string[] = [];
+    const slug = slugFromPackageJson();
+    let base: string | null = null;
+    for (const p of SIX_README) {
+      const body = read(p);
+      const lines = buttonLines(body);
+      if (lines.length !== 1) {
+        out.push(`${p} 里的一键部署按钮有 ${lines.length} 行，登记的是恰 1 行`);
+        continue;
+      }
+      const line = lines[0] ?? "";
+      base ??= line;
+      if (line !== base) {
+        out.push(`${p} 的按钮那一行与根 README 不同 —— 六份必须逐字节相同（含 alt）：\n  根：${base}\n  它：${line}`);
+      }
+      if (!line.includes(`/?url=https://github.com/${slug}`)) {
+        out.push(`${p} 的按钮入口没指向 package.json 里那个仓库（${slug}）：${line}`);
+      }
+      // 位置：必须落在 `#### Cloudflare Worker` 这一节里，且在那节第一道围栏**之前**
+      //（一键入口是给不想克隆的人看的，排在 `git clone` 后面就本末倒置了）。
+      const rows = body.split("\n");
+      const head = rows.findIndex((l) => l === "#### Cloudflare Worker");
+      if (head < 0) { out.push(`${p} 里找不到 \`#### Cloudflare Worker\` 这行标题 —— 按钮的落点没了`); continue; }
+      const at = rows.indexOf(line);
+      const fence = rows.findIndex((l, i) => i > head && l.startsWith("```"));
+      if (at < head) out.push(`${p} 的按钮跑到了 \`#### Cloudflare Worker\` 前面（第 ${at + 1} 行 vs 第 ${head + 1} 行）`);
+      else if (fence >= 0 && at > fence) out.push(`${p} 的按钮排在了 \`git clone\` 围栏之后（第 ${at + 1} 行 vs 第 ${fence + 1} 行）—— 一键入口要在前面`);
+    }
+    if (base === null) throw new Error("六份 README 里一行按钮都没抽到 —— 判据坏了，不许静默当成「形态都对」");
+    return out;
+  };
+
+  const REAL = "六份 README 各恰有 1 行按钮，逐字节相同、slug 取自 package.json、位置在 clone 围栏之前";
+
+  it(REAL, () => {
+    const faults = shapeFaults(readFile);
+    expect(faults, faults.join("\n")).toEqual([]);
+  });
+
+  it("alt 就是六份共用的那个英文字面（① 图上印的就是它）", () => {
+    for (const p of SIX_README) {
+      const line = buttonLines(readFile(p))[0] ?? "";
+      expect(line, `${p} 的按钮 alt 不是 \`Deploy to Cloudflare\``).toContain("[![Deploy to Cloudflare](");
+    }
+  });
+
+  it("🔴 与徽章成例同轨：九枚徽章 alt 六份逐字全同 —— alt 不翻译这条成例今天真的成立", () => {
+    // 这一格是「为什么 alt 用英文」那条理由 ② 的**机器复核**：成例是从磁盘现数出来的，
+    // 不是注释里的一句断言。哪天有人把某一份的徽章 alt 翻译了，这一格会红，
+    // 那时按钮 alt 该不该跟着翻译就得重新裁一次，而不是默认沿用。
+    const alts = (body: string) => [...body.matchAll(/<img src="https:\/\/img\.shields\.io\/[^"]+" alt="([^"]+)">/g)]
+      .map((m) => m[1] ?? "");
+    const base = alts(readFile("README.md"));
+    expect(base.length, "根 README 头部数不到 9 枚徽章 alt —— 成例的射程写错了").toBe(9);
+    expect(base.some((a) => /[぀-ヿ一-鿿가-힯]/.test(a)),
+      "徽章 alt 里出现了非拉丁字面 —— 成例变了").toBe(false);
+    for (const p of SIX_README) {
+      expect(alts(readFile(p)), `${p} 的徽章 alt 与根 README 不同 —— 「alt 六份不翻译」这条成例破了`).toEqual(base);
+    }
+  });
+
+  it("该红时红：把 docs/ja/README.md 的 alt 翻成日文 —— 六份不再逐字节相同，必须红并点名它", () => {
+    const at = docPath(".", "ja", "README");
+    const mutated = readFile(at).replace("[![Deploy to Cloudflare](", "[![Cloudflare にワンクリックでデプロイ](");
+    expect(mutated, "变异没落地").not.toBe(readFile(at));
+    const faults = shapeFaults(patchPath(readFile, at, mutated));
+    expect(faults).toHaveLength(1);
+    expect(faults[0] ?? "").toContain(at);
+    expect(faults[0] ?? "").toContain("逐字节相同");
+  });
+
+  it("该红时红：把 docs/ko/README.md 的按钮挪到 `git clone` 围栏之后 —— 逐字节还相同，本格必须红", () => {
+    const at = docPath(".", "ko", "README");
+    const rows = readFile(at).split("\n");
+    const i = rows.findIndex((l) => l.includes("deploy.workers.cloudflare.com"));
+    const line = rows[i] ?? "";
+    // 拎出来，塞到同一节末尾（`#### Docker` 之前）—— 还在那一节里，但落在围栏后面了。
+    const mutated = rows.filter((_, k) => k !== i).join("\n")
+      .replace("#### Docker", `${line}\n\n#### Docker`);
+    expect(mutated, "变异没落地").not.toBe(readFile(at));
+    expect(buttonLines(mutated), "变异之后按钮不是恰 1 行 —— 这一格要单独测「位置」，别把份数一起搅进来")
+      .toHaveLength(1);
+    const faults = shapeFaults(patchPath(readFile, at, mutated));
+    expect(faults, faults.join("\n")).toHaveLength(1);
+    expect(faults[0] ?? "").toContain("围栏之后");
+  });
+
+  it("该红时红：从 docs/en/README.md 删掉那颗按钮 —— W136 (B) 不会红（少一个提及方而已），本格必须红", () => {
+    const at = docPath(".", "en", "README");
+    const mutated = readFile(at).split("\n").filter((l) => !l.includes("deploy.workers.cloudflare.com")).join("\n");
+    expect(mutated, "变异没落地").not.toBe(readFile(at));
+    const faults = shapeFaults(patchPath(readFile, at, mutated));
+    expect(faults).toHaveLength(1);
+    expect(faults[0] ?? "").toContain("有 0 行");
+  });
+
+  it("该红时红：把按钮 URL 换成另一个仓 —— slug 与 package.json 对不上，必须红", () => {
+    const at = "README.md";
+    const mutated = readFile(at).replace("/?url=https://github.com/xwteam/agnes2api", "/?url=https://github.com/someone/else");
+    expect(mutated, "变异没落地").not.toBe(readFile(at));
+    const faults = shapeFaults(patchPath(readFile, at, mutated));
+    // 根变了 ⇒ 它自己 slug 不对（1 条）+ 另外五份与它逐字节不同（5 条）。
+    expect(faults.length, faults.join("\n")).toBe(1 + LANGS.length);
+    expect(faults.join("\n")).toContain("没指向 package.json 里那个仓库");
+  });
+
+  it("认不出要吵：六份都读不到按钮时当场抛，不静默当成「形态都对」", () => {
+    const blind = (p: string) => readFile(p).split("\n")
+      .filter((l) => !l.includes("deploy.workers.cloudflare.com")).join("\n");
+    expect(() => shapeFaults(blind)).toThrow(/判据坏了/);
   });
 });
 
