@@ -703,8 +703,20 @@ BANNER='[collection-guard] ✅'
 #   ⚠️ 同批把 CHANGELOG 那句「三条按请求体…」改成「三条**协议**按请求体…」：
 #      中文计数要有一个辨认得出的后缀才盯得住（体例与上面 `counts` 那格一致），
 #      光一个「三条」会跟同一条 bullet 里的「三条媒体端点」撞车。**只加一个词，不改事实。**
+# 4278 → 4280：**公开仓上的 CI 从来没绿过**——`.github/workflows/ci.yml` 里
+#   `pnpm/action-setup@v4` 带着 `with: { version: 9 }`，而 `package.json` 里也写着
+#   `"packageManager": "pnpm@9.15.4"`。两处都给对那个 action 不是二选一而是**硬失败**
+#  （`Error: Multiple versions of pnpm specified`）⇒ pnpm 装都没装上，后面那十三步
+#   一步都没跑。⚠️ **本脚本七格全过看不见它**：这里是在本机用已装好的 pnpm 直接跑那十三步，
+#   复刻的是**步骤与顺序**，不是 runner 上「怎么把 pnpm 装起来」那一层。
+#   ⇒ 两份 workflow 各删掉那一行（版本只由 `packageManager` 一处给），
+#   `scripts-guard.test.ts` 新增一组盯**冲突本身**（不是盯某个版本号，换大版本不会被拦）：
+#   真扫描 1 + 该红时红 1 = +2。
+#   同批把那份文件里「剥注释不许下手过重」拿来举例的那一行从 `with: { version: 9 }`
+#   换成 `with: { node-version: 22, cache: pnpm }` —— 它要的只是「一行不带 `#` 的真源行」，
+#   而被举例的那一行已经删了。**换的是样本，不是判据。**
 EXPECT_NODE_FILES=140
-EXPECT_NODE_TESTS=4278
+EXPECT_NODE_TESTS=4280
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

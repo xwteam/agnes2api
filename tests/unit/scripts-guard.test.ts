@@ -212,8 +212,11 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
     // no-op 反向控制**只管它剥得够不够，不管它剥过了头**。这两行是 ci.yml 里真实
     // 存在的、不带任何 `#` 的行。
     const stripped = stripHashComments(yml);
-    expect(stripped, "剥注释把 `with: { version: 9 }` 这一行也削掉了 —— 砍行尾注释下手过重").toContain(
-      "with: { version: 9 }",
+    // ⚠️ 这一行原本取的是 `with: { version: 9 }`。那一行已经删了（它让
+    // `pnpm/action-setup@v4` 硬失败，见下面 `pnpm 版本只有一处真源` 那一格），
+    // 换成同样不带 `#` 的 setup-node 那一行 —— 这里要的只是「一行没有注释的真源行」。
+    expect(stripped, "剥注释把 `with: { node-version: 22, cache: pnpm }` 这一行也削掉了 —— 砍行尾注释下手过重").toContain(
+      "with: { node-version: 22, cache: pnpm }",
     );
     expect(stripped, "剥注释把 `run: node scripts/build-ui.mjs` 这一行也削掉了 —— 砍行尾注释下手过重").toContain(
       "run: node scripts/build-ui.mjs",
@@ -402,4 +405,56 @@ it("跑测试的两步显式声明 shell: bash（pipefail 的唯一来源）", (
     const chunk = yml.slice(i, nextStep === -1 ? yml.length : nextStep);
     expect(chunk, `${name} 缺 shell: bash，管道里的失败会被 tee/grep 吃掉`).toContain("shell: bash");
   }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * **pnpm 版本只有一处真源**（P3g 复评顺手抓到的、公开仓上一直红着的那一步）。
+ *
+ * 实测：`.github/workflows/ci.yml` 里 `pnpm/action-setup@v4` 同时带着
+ * `with: { version: 9 }`，而 `package.json` 里也写着 `"packageManager": "pnpm@9.15.4"`。
+ * `action-setup@v4` 遇到两处都给**不是二选一而是硬失败**：
+ *   `Error: Multiple versions of pnpm specified` —— pnpm 装都没装上，
+ *   后面那十三步一步都没跑。公开仓上 `main` 的 CI 从来没绿过。
+ *
+ * ⚠️ **为什么 `scripts/prepush.sh` 七格全过却看不见它**：prepush 是在本机
+ * 用已经装好的 pnpm 直接跑那十三步，它复刻的是**步骤与顺序**，不是 runner 上
+ * 「怎么把 pnpm 装起来」这一层。⇒ 这一层得由一格静态判据来守。
+ *
+ * 这一格盯的是**冲突本身**，不是某个版本号：哪天想换 pnpm 大版本，改
+ * `package.json` 的 `packageManager` 一处即可，这一格不会拦。
+ * ───────────────────────────────────────────────────────────────────────────── */
+describe("pnpm 版本只有一处真源：workflow 里不许再给 `pnpm/action-setup` 传 version", () => {
+  const WORKFLOWS = [".github/workflows/ci.yml", ".github/workflows/deploy-worker.yml"] as const;
+
+  /** 一份 workflow 里 `pnpm/action-setup` 那一步之后紧跟的 `with:` 行。没有则返回 `null`。 */
+  const setupWith = (yml: string): string | null => {
+    const lines = yml.split("\n");
+    const i = lines.findIndex((l) => l.includes("uses: pnpm/action-setup@"));
+    if (i < 0) return null;
+    const next = lines.slice(i + 1).find((l) => l.trim() !== "" && !l.trim().startsWith("#"));
+    return next !== undefined && /^\s*with:/.test(next) ? next : null;
+  };
+
+  it("`package.json` 有 `packageManager`，因此每一份 workflow 的 action-setup 都不许再带 `version:`", () => {
+    const pm = /"packageManager":\s*"(pnpm@[^"]+)"/.exec(readFileSync("package.json", "utf8"))?.[1] ?? null;
+    // 认不出要吵：`packageManager` 没了的话，不带 version 的 action-setup 会装不上 pnpm，
+    // 这一格的方向就整个反过来了 —— 不许静静放行。
+    expect(pm, "package.json 里认不出 `packageManager`：那 workflow 里不带 version 反而会装不上 pnpm").not.toBeNull();
+    for (const p of WORKFLOWS) {
+      const yml = readFileSync(p, "utf8");
+      expect(yml, `${p} 里没有 pnpm/action-setup 这一步 —— 这一格测的是空气`).toContain("uses: pnpm/action-setup@");
+      expect(setupWith(yml),
+        `${p} 的 pnpm/action-setup 又带上 \`with:\` 了。package.json 已经给了 ${pm}，`
+        + "两处都给会让这一步硬失败（`Error: Multiple versions of pnpm specified`），"
+        + "pnpm 装不上 ⇒ 后面每一步都不会跑。要换版本请只改 package.json 那一处。").toBeNull();
+    }
+  });
+
+  it("该红时红：把 `with: { version: 9 }` 加回 ci.yml —— 当场认出那一行", () => {
+    const real = readFileSync(".github/workflows/ci.yml", "utf8");
+    expect(setupWith(real), "真 ci.yml 现在就带着 with: —— 这一格的前提没了").toBeNull();
+    const mutated = real.replace("- uses: pnpm/action-setup@v4\n", "- uses: pnpm/action-setup@v4\n        with: { version: 9 }\n");
+    expect(mutated, "变异没落地——ci.yml 里没找到 action-setup 那一行").not.toEqual(real);
+    expect(setupWith(mutated), "把 version 加回去之后这一格居然还认不出").toContain("version: 9");
+  });
 });

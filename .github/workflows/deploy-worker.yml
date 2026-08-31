@@ -31,8 +31,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # ⚠️ 与 `ci.yml` 同一条：版本只由 `package.json` 的 `packageManager` 一处给，
+      # 两处都给会让这一步硬失败（`Error: Multiple versions of pnpm specified`）。
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile

@@ -30,8 +30,13 @@ jobs:
         # 「拿不到全部历史」上，而不是悄悄地一个历史对象都不扫。
         # 代价：全克隆要多拉整个 `.git`（本仓今天是几十 MB 量级），可接受。
         with: { fetch-depth: 0 }
+      # ⚠️ **这里不许再写 `with: { version: … }`。** `pnpm/action-setup@v4` 会自己读
+      # `package.json` 的 `packageManager`（今天是 `pnpm@9.15.4`）；两处都给的话它
+      # **不是二选一而是硬失败**：`Error: Multiple versions of pnpm specified` ——
+      # 装都没装上，后面十三步一步都没跑。本仓在公开仓上一直红在这一步，而
+      # `scripts/prepush.sh` 是在本机直接跑那十三步的、看不见这一层。
+      # 判据在 `tests/unit/scripts-guard.test.ts`（`packageManager` 与 `version:` 不许同时在场）。
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
