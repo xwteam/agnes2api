@@ -31,7 +31,15 @@ export const shipDocs = (): readonly string[] => {
   return [...rootDocs, ...langDocs];
 };
 
-/** `.github` 下（含子目录）全部 `.md`，**递归现算**：新加一份模板会自动进射程。 */
+/**
+ * `.github` 下（含子目录）全部 `.md`，**递归现算**：
+ * 往 `.github` 里（含它的任何一层子目录）新加一份模板会自动进射程。
+ *
+ * ⚠️ **「自动」的范围就到 `.github` 为止**，别把这三个字读成整个仓
+ * ——`.github` 这个根本身是写死在这里的，仓里**新开一个别的目录**它一份都看不见。
+ * 那条边界由 `tests/unit/docs-internal-refs.test.ts`
+ * 的「🔴 射程恰好等于 `git` 列出来的 markdown 全集 —— 新建目录下的 `.md` 不许溜过去」守着。
+ */
 const githubDocs = (dir = ".github"): string[] => {
   const out: string[] = [];
   for (const name of readdirSync(dir).sort()) {
@@ -56,6 +64,14 @@ const githubDocs = (dir = ".github"): string[] => {
  *
  * ⚠️ **别改成「`shipDocs()` 也返回这 44 份」来省一个函数**：排版判官与名册第 17 条
  * 都靠 `shipDocs()` 恰好是那 40 份，混成一份两边都会当场红，且第 17 条会失去意义。
+ *
+ * ⚠️⚠️ **「从磁盘现算」只在这几个根之内成立，本函数的根是手抄的。**
+ * 仓根、`docs/{5 语言}`、`admin-ui/README.md`、`.github` —— 这四处是写死在代码里的，
+ * 一个**新目录**下的 `.md` 本函数一份都看不见（实测：`examples/README.md` 整份溜过去）。
+ * 这不是它可以放着不管的边界：射程靠手抄，正是本仓已经栽过一次的那种失效模式。
+ * ⇒ `tests/unit/docs-internal-refs.test.ts` 的
+ * 「🔴 射程恰好等于 `git` 列出来的 markdown 全集 —— 新建目录下的 `.md` 不许溜过去」
+ * 拿 `git` 列出来的 markdown 全集**两个方向**对齐本函数的输出，多一份少一份都点名。
  */
 export const publicDocs = (): readonly string[] => [
   ...shipDocs(),

@@ -11,7 +11,15 @@
  * ── 射程：44 份公开 markdown，从磁盘现算 ────────────────────────────────────
  * `publicDocs()` = 排版判官那 40 份（仓根全部 `.md` + `docs/{5 语言}` 下的 `.md`）
  * ＋ `admin-ui/README.md` ＋ `.github` 下（含子目录）全部 `.md`（今天 3 份）。
- * 都从磁盘现算 —— 新增一份文档会**自动**进射程，不用回来改这里。
+ *
+ * ⚠️ **「从磁盘现算」只在那几个根**之内**成立，别读成「新增一份文档一定会自动进射程」**
+ *（这一版之前这里就是这么写的，而它是假的）：那几个根是**手抄**的，
+ * 一个**新目录**下的 `.md` 谁也没在枚举它。实测：`examples/README.md` 里写一句带
+ * 内部标识符的话，本文件全部用例照绿。这与本轮修掉的那条 Critical（射程接错了函数）
+ * 是**同一种失效模式**——射程靠手抄，而不是从「读者读得到什么」这个真源推导出来。
+ * ⇒ 下面「射程自守」那一组里多一格，拿 `git` 列出来的 markdown 全集**两个方向**对齐：
+ * 多一份少一份都点名。今天两边都是那 44 份、零行为差异，
+ * 这一格买的是**判据**：射程等于读者读得到的东西，从此不是巧合。
  *
  * 🔴 **这里刻意不用 `shipDocs()`，理由必须写死在这里，不然下一个人还会接错。**
  * 第一版接的就是 `shipDocs()`，于是 `admin-ui/README.md` 一并落在射程外，
@@ -37,10 +45,35 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 import { sep } from "node:path";
 
 import { publicDocs, shipDocs } from "../helpers/ship-docs.js";
+
+/**
+ * **仓里读者读得到的 markdown 全集，从 `git` 现列**——射程那一格的对照真源。
+ *
+ * ⚠️ **`--others --exclude-standard` 不是可选项，去掉它这一格就守不住它存在的理由。**
+ * 只列 `--cached` 的话，一份**还没 `git add`** 的新文档 `git` 压根不认，
+ * 而本格要抓的恰恰是「新建一个目录、往里放一份 `.md`」这个动作——
+ * 实测的复现步骤里那份 `examples/README.md` 就是未跟踪的，
+ * 只列已跟踪时这一格照绿，等于把判据摆在了它要防的那件事够不着的地方。
+ * `--exclude-standard` 让 `.gitignore` 照常生效（`node_modules` 之类不会涌进来）。
+ *
+ * ⚠️ 空集不许静默通过：`git` 一份都没列出来时是**扫描坏了**，
+ * 而一个恒等于空集的射程会让下面两个方向的比对同时变成「多出来的都是射程里那 44 份」，
+ * 报文还长得像真的。⇒ 直接抛。
+ */
+function trackedMarkdown(): readonly string[] {
+  const raw = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard",
+    "--", "*.md"], { encoding: "utf8" });
+  const files = raw.split("\0").filter(Boolean);
+  if (files.length === 0) {
+    throw new Error("`git ls-files -- '*.md'` 一份 markdown 都没列出来 —— 扫描坏了，不许静默当成空集");
+  }
+  return files.map((p) => p.split("/").join(sep)).sort();
+}
 
 /**
  * 公开 markdown 全集（今天 44 份）。**从磁盘现算**。
@@ -162,6 +195,40 @@ describe("射程自守：44 份公开 markdown，逐份读得到", () => {
       `公开 markdown 从 44 份变成了 ${PUBLIC_DOCS.length} 份 —— 数变了就该有人来确认`
       + "新增/删除的那一份该不该进射程").toBe(44);
     expect(PUBLIC_DOCS.filter((p) => !existsSync(p)), "射程里有读不到的文件").toEqual([]);
+  });
+
+  /**
+   * 🔴 **射程 = 仓里读者读得到的 markdown 全集。两个方向都查，多一份少一份都点名。**
+   *
+   * ── 它补的是哪个洞 ────────────────────────────────────────────────────────
+   * `publicDocs()` 是从**三个手抄的根**枚举出来的（仓根 / `docs` 五语言 /
+   * `admin-ui/README.md` / `.github`）。三个根之内确实是现算的，
+   * 而**新建目录一个人都没在管**：实测 `mkdir examples` 再往
+   * `examples/README.md` 里写一句带内部标识符的话，本文件全部用例照绿——
+   * 一份读者点得开的文档，带着内部研发轨迹，从判据底下整份溜了过去。
+   *
+   * ⚠️ **这与本轮那条 Critical（泄漏轴接了排版轴的射程）是同一种失效模式**，
+   * 不是两件事：**射程靠手抄，而不是从「读者读得到什么」这个真源推导**。
+   * 上一条的表现是漏了一份具体文档，这一条的表现是漏了一整个还没被建出来的目录；
+   * 成因一模一样，所以处置也该一样——把真源换成机器算得出的那一份。
+   *
+   * ⚠️ **今天零行为差异**：两边都是那 44 份，一份不差（落地当天实测）。
+   * 这一格买的不是「今天多抓到几处」，是**判据**：
+   * 「射程恰好等于读者读得到的东西」从一个巧合变成一条会变红的断言。
+   * 保留枚举而不是直接改用 `git` 的输出，是因为 `shipDocs()` 那 40 份还被排版轴与
+   * 偏离名册第 17 条按份数钉着，两根轴的射程今天必须各是各的。
+   */
+  it("🔴 射程恰好等于 `git` 列出来的 markdown 全集 —— 新建目录下的 `.md` 不许溜过去", () => {
+    const tracked = trackedMarkdown();
+    const scope = [...PUBLIC_DOCS].sort();
+    expect(tracked.filter((p) => !scope.includes(p)),
+      "仓里有读者读得到的 markdown 落在射程外 —— 多半是新建了一个目录，"
+      + "而 `publicDocs()` 那三个根是手抄的、谁也没在枚举新目录。"
+      + "把它接进射程（或说明白它为什么不算读者读得到的东西）").toEqual([]);
+    expect(scope.filter((p) => !tracked.includes(p)),
+      "射程里有 `git` 不认的 markdown —— 要么文件被删了没同步射程，要么它被 `.gitignore` 排除，"
+      + "而一份推不上去的文档不该占着泄漏轴的射程").toEqual([]);
+    expect(scope, "两个方向单独看都对、合起来却不相等 —— 比对写坏了").toEqual([...tracked]);
   });
 
   it("射程盖住仓根与五个语言目录，不是只盯着 `CHANGELOG.md` 那一份", () => {

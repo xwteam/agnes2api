@@ -829,8 +829,20 @@ BANNER='[collection-guard] ✅'
 #   它们服务的本来就是 `VERSION` 那根轴。
 #   净 +1 格：一条反向控制（只有 `## [Unreleased]` ⇒ 返回 `null`；未发布段的正文
 #   不许算进射程；再压一条只讲自己的补丁条目 ⇒ 存储与 bullet 两格都不许因此红）。
+# 4373 → 4374 格，文件数仍是 142：**泄漏轴的射程改成从「读者读得到什么」推导出来的**。
+#   `publicDocs()` 是从三个**手抄**的根枚举的（仓根 / `docs` 五语言 /
+#   `admin-ui/README.md` / `.github`），三个根之内是现算的，而**新建目录没人在管**：
+#   实测 `mkdir examples` 再往 `examples/README.md` 里写一句带阶段编号的话，
+#   `docs-internal-refs.test.ts` 那 68 格照绿——一份读者点得开的文档整份溜出判据。
+#   与上面那条 Critical（泄漏轴接了排版轴的射程）**是同一种失效模式**：
+#   射程靠手抄，而不是从真源推导。
+#   ⇒ `docs-internal-refs.test.ts` 多一格，拿 `git ls-files --cached --others
+#   --exclude-standard -- '*.md'` 的输出与 `publicDocs()` **两个方向**对齐，
+#   多一份少一份都点名。今天两边都是那 44 份、零行为差异，买的是判据不是新命中。
+#   `publicDocs()` 的枚举**不动**：`shipDocs()` 那 40 份还被排版轴与名册第 17 条
+#   按份数钉着，两根轴的射程今天必须各是各的。
 EXPECT_NODE_FILES=142
-EXPECT_NODE_TESTS=4373
+EXPECT_NODE_TESTS=4374
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
