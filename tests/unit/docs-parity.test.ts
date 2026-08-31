@@ -1098,6 +1098,19 @@ const RULES: ReadonlyArray<readonly [name: string, fingerprint: (s: string) => u
 const docPath = (root: string, lang: string, doc: string) => join(root, "docs", lang, `${doc}.md`);
 
 /**
+ * 那颗一键部署按钮的两个字面：读者看见的标签，与它在 markdown 里的 markup 主机名。
+ *
+ * ⚠️ **提到模块级是有意的，不是整理**：这两个字面今天有两个消费方——W136 (B)
+ * 「提到按钮的文档，根 README 里必须真有它」，和 W143 里「CHANGELOG 那条部署 bullet
+ * 写的份数得是现扫出来的份数」。P3g 复评发现 2 第二轮实测：把 CHANGELOG 里
+ * 「六份 README 上各有一颗一键部署按钮」改成「三份」，全量 140 份 4282 格**零红**——
+ * 那条 bullet 当时只有 `v*` / `ghcr.io` 一句接了真源。两个消费方各自手抄一份主机名
+ * 的话，改了一处漏了另一处就又是同一种失明，所以只留这一份。
+ */
+const BUTTON_LABEL = "Deploy to Cloudflare";
+const BUTTON_MARKUP = "deploy.workers.cloudflare.com";
+
+/**
  * R1 的语言轴：`docs/` 下的子目录集合恰好等于 `LANGS` + 非语言目录豁免名册。
  * **这是全仓唯一一处把 `LANGS` 钉在磁盘上的地方**（补漏评审 H3），返回失败报文或 `null`。
  */
@@ -5481,6 +5494,30 @@ describe(TASK29_GROUP, () => {
     return { tagGlob, registry };
   };
 
+  /**
+   * 那颗一键部署按钮今天铺在哪几份 README 上：根 README + 五语言各一份，从磁盘现扫
+   *（认的是模块级那个 `BUTTON_MARKUP`，与 W136 (B) 同一份字面）。
+   * **一份都扫不到返回 `null`**：返回空表会让下面那条份数锚在按钮被全仓删干净时
+   * 静静地改判成「零份」，而 CHANGELOG 那句话已经成了假话。
+   */
+  const deployButtonReadmes = (read: (p: string) => string = readReal): string[] | null => {
+    const files = ["README.md", ...LANGS.map((l) => docPath(".", l, "README"))];
+    const hit = files.filter((f) => read(f).includes(BUTTON_MARKUP));
+    return hit.length === 0 ? null : hit;
+  };
+
+  /**
+   * Node / Docker 那一侧的两处 healthcheck 各自在不在：`Dockerfile` 的 `HEALTHCHECK`
+   * 指令、`docker-compose.yml` 服务下的 `healthcheck:` 块。返回**认得出的那几处**。
+   * 两处都认不出时返回空表，下面那一格据此吵——不是静静放行。
+   */
+  const healthcheckPlaces = (read: (p: string) => string = readReal): string[] => {
+    const out: string[] = [];
+    if (/^HEALTHCHECK\s/m.test(read("Dockerfile"))) out.push("Dockerfile");
+    if (/^\s+healthcheck:\s*$/m.test(read("docker-compose.yml"))) out.push("docker-compose.yml");
+    return out;
+  };
+
   const bulletFailures = (readLog: () => string): string[] => {
     const v = realVersion();
     const sec = logSection(readLog(), v);
@@ -5570,10 +5607,37 @@ describe(TASK29_GROUP, () => {
           + "（.github/workflows/docker-publish.yml 的 `REGISTRY` 现算）");
       }
     }
+
+    // ── ⑤ 两种部署形态的入口：按钮铺了几份 README、healthcheck 落在哪两处 ──
+    //   这两条与 ④ 同在「两种部署形态各自的入口」那一条 bullet 里。P3g 复评发现 2
+    //   第二轮实测：④ 接了真源之后，同一条 bullet 里的**前三行**仍然一个锚都没有——
+    //   「六份 README」改成「三份」、「两处各带一条 healthcheck」改成「两处都没有
+    //   healthcheck」，全量 4282 格零红。一条 bullet 里只锚住最后一句，等于前三句
+    //   随便写。
+    const btn = deployButtonReadmes();
+    if (btn === null) {
+      out.push(`根 README 与五语言 README 里一颗一键部署按钮都扫不到（找不到 \`${BUTTON_MARKUP}\`）`
+        + " —— 认不出要吵，不是 CHANGELOG 写对了");
+    } else {
+      needCount(btn.length, "份 README", `根 README + 五语言 README 里带 \`${BUTTON_MARKUP}\` 的那几份`);
+    }
+    const hc = healthcheckPlaces();
+    if (hc.length === 0) {
+      out.push("`Dockerfile` 的 `HEALTHCHECK` 与 `docker-compose.yml` 的 `healthcheck:` 两处一处都认不出"
+        + " —— 认不出要吵，不是 CHANGELOG 写对了");
+    } else {
+      for (const p of hc) {
+        if (!text.includes(`\`${p}\``)) {
+          out.push(`CHANGELOG 那条版本条目里没点名带 healthcheck 的那一处 \`${p}\`（从磁盘现算）`);
+        }
+      }
+      needCount(hc.length, "处各带一条 healthcheck", "Dockerfile 的 `HEALTHCHECK` 与 docker-compose.yml 的 `healthcheck:`");
+    }
     return out;
   };
 
-  const BULLET_CELL = "CHANGELOG 版本条目里的鉴权通道 / 流式切法 / 媒体端点 / 发镜像标签都从真源现算";
+  const BULLET_CELL = "CHANGELOG 版本条目里的鉴权通道 / 流式切法 / 媒体端点 / 发镜像标签"
+    + " / 按钮份数 / healthcheck 两处都从真源现算";
 
   it(BULLET_CELL, () => {
     const failures = bulletFailures(realChangelog);
@@ -5627,6 +5691,42 @@ describe(TASK29_GROUP, () => {
     expect(sec, "取节认不出真 CHANGELOG 的版本条目——这一格的前提没了").not.toBeNull();
     expect(sec!.join("\n").includes("`release/*`"), "CHANGELOG 里居然已经写着 `release/*` 了 —— 这一格测的是空气")
       .toBe(false);
+  });
+
+  it("该红时红：那条 bullet 把一键部署按钮的份数写小 —— 点名现扫出来的那个份数", () => {
+    probeBase(bulletFailures(realChangelog), BULLET_CELL);
+    const btn = deployButtonReadmes();
+    expect(btn, "根 + 五语言 README 里一颗按钮都扫不到——这一格的前提没了").not.toBeNull();
+    const forms = cnForms(btn!.length);
+    expect(forms, `现扫出 ${btn!.length} 份，超出中文数字表——这一格的前提没了`).not.toBeNull();
+    // 变异的是**文档**：把「六份 README」写成「三份 README」，磁盘上那六份一个没动。
+    const mutated = realChangelog().replace(`${forms![0]}份 README`, "三份 README");
+    expect(mutated, `变异没落地——CHANGELOG 里没找到「${forms![0]}份 README」`).not.toEqual(realChangelog());
+    const failures = bulletFailures(() => mutated).join("\n");
+    expect(failures, `写小了份数居然还绿（现扫 ${btn!.length} 份）`).toContain(`${forms![0]}份 README`);
+    expect(failures, "红了但报文没说这个数是从哪儿现算的").toContain(BUTTON_MARKUP);
+  });
+
+  it("该红时红：那条 bullet 把两处 healthcheck 说成没有 —— 点名 Dockerfile 与 docker-compose.yml 现算的处数", () => {
+    probeBase(bulletFailures(realChangelog), BULLET_CELL);
+    const hc = healthcheckPlaces();
+    expect(hc, "两处 healthcheck 一处都认不出——这一格的前提没了")
+      .toEqual(["Dockerfile", "docker-compose.yml"]);
+    const mutated = realChangelog().replace("两处各带一条 healthcheck", "两处都没有 healthcheck");
+    expect(mutated, "变异没落地——CHANGELOG 里没找到「两处各带一条 healthcheck」").not.toEqual(realChangelog());
+    const failures = bulletFailures(() => mutated).join("\n");
+    expect(failures, "把带 healthcheck 说成不带居然还绿").toContain("处各带一条 healthcheck");
+  });
+
+  it("认不出要吵：按钮字面全被删 / 两份部署文件里的 healthcheck 全被删 ⇒ 两个探测器分别返回 null 与空表", () => {
+    // 这两条分支上，`bulletFailures` 走的是 `out.push("… 认不出要吵 …")`——不是静静放行。
+    expect(deployButtonReadmes(() => "一份没有按钮的 README\n"),
+      "按钮全被删了还能扫出份数——那这个份数是编的").toBeNull();
+    expect(healthcheckPlaces(() => "FROM node:22-alpine\nservices:\n  gateway:\n    image: x\n"),
+      "两份部署文件里都没有 healthcheck 了还能认出来").toEqual([]);
+    // 反向：真源没被动的时候两个探测器都认得出，上面那两条不是恒真。
+    expect(deployButtonReadmes()).not.toBeNull();
+    expect(healthcheckPlaces().length).toBe(2);
   });
 
   /* ───────────────────────────────────────────────────────────────────────────
@@ -7752,9 +7852,8 @@ describe("跨文档指认的真实性：文档里说「那份 README 里有 X」
 
   /* ── (B) 那颗按钮：提到它 ⇒ 根 README 里必须真有它 ────────────────────── */
 
-  /** 按钮的两个字面：读者看见的标签，与它在 markdown 里的 markup 主机名。 */
-  const BUTTON_LABEL = "Deploy to Cloudflare";
-  const BUTTON_MARKUP = "deploy.workers.cloudflare.com";
+  // 按钮的两个字面（`BUTTON_LABEL` / `BUTTON_MARKUP`）在本文件模块级，理由见那里的注释：
+  // W143 里 CHANGELOG 那条部署 bullet 的份数锚也拿同一个主机名去扫，不许各抄一份。
 
   /** 射程：根 README + `docs/` 下每一份 .md，从磁盘现列，不手抄第二份名单。 */
   const buttonScanFiles = (): string[] => {

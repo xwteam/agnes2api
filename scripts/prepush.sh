@@ -728,8 +728,20 @@ BANNER='[collection-guard] ✅'
 #   `fake-dom-parity.test.ts` 补一组盯这条性质：一条 200 层深的链一次 `settle()`
 #   跑到底（数 tick 的实现在这里必红，实测只推进 7 层）+ 不乱红（始终没解决的 promise
 #   抽多久也抽不出结果，中间态那几格靠的正是这条）⇒ +2。
+# 4282 → 4285：**P3g 复评第 2 轮发现 2 的回填**，净 +3 格，文件数仍是 140。
+#   W143 上一轮只给「两种部署形态各自的入口」那条 bullet 的**最后一句**接了真源
+#  （`v*` 与 `ghcr.io` 从 `docker-publish.yml` 现算），同一条 bullet 的前三行一个锚都没有。
+#   复评实测：把「六份 README 上各有一颗一键部署按钮」改成「三份」、把「两处各带一条
+#   healthcheck」改成「两处都没有 healthcheck」，全量 140 份 4282 格**零红** ——
+#   一条 bullet 里只锚住最后一句，等于前三句随便写。
+#   ⇒ 份数从模块级 `BUTTON_MARKUP` 现扫（根 README + 五语言各一份，走既有的 `needCount`
+#   体例）、healthcheck 两处从 `Dockerfile` 的 `HEALTHCHECK` 与 `docker-compose.yml` 的
+#   `healthcheck:` 现算存在性（两处都认不出要吵）。**同一个 `it` 里加断言，真扫描那格不新增**
+#   ⇒ 该红时红 2（把份数写小 / 把 healthcheck 说成没有）+ 认不出要吵 1 = +3。
+#   顺带把 `BUTTON_LABEL` / `BUTTON_MARKUP` 提到模块级：W136 (B) 与本组两个消费方
+#   合用同一份字面，各抄一份的话改一处漏一处又是同一种失明。
 EXPECT_NODE_FILES=140
-EXPECT_NODE_TESTS=4282
+EXPECT_NODE_TESTS=4285
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
