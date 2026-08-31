@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
  * · 它**只看脚本文本**：那五格在真机上跑出来是什么结果，这里一个字都不知道。
  *   ⑦ 真的跑起来是 `scripts/prepush.sh` 的事，而那份清单不是 CI 的一道门禁
  *   ⇒ **这份冒烟今天仍然没有自动回归网，只有「有人跑它的时候会红」**。
- * · G3 只查脚本里**写死的 URL**：一个从环境变量拼出来的地址它看不见。
+ * · 「零联网真上游」那一组只查脚本里**写死的 URL**：一个从环境变量拼出来的地址它看不见。
  *   本脚本今天没有那种写法，这条边界如实登记，没有护栏。
  */
 
@@ -54,9 +54,9 @@ const run = (...args: string[]) => {
   return { code: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
 };
 
-/* ── G1：③ 的判据是到达间隔，不是块数 ─────────────────────────────────────── */
+/* ── ③ 的判据是到达间隔，不是块数 ─────────────────────────────────────────── */
 
-const REAL_G1 = "③ 的判据是「正文首末两块的到达间隔」，三个时刻一律只从带上游时间戳的正文行里取";
+const REAL_INTERVAL = "③ 的判据是「正文首末两块的到达间隔」，三个时刻一律只从带上游时间戳的正文行里取";
 
 /**
  * ⚠️⚠️ **这一条被实测推翻过一次，推翻它的正是本文件顶上写的那种死法。**
@@ -97,12 +97,12 @@ const intervalCriterionFailures = (read: Read): string[] => {
   return out;
 };
 
-/* ── G6：③ 的结论真的被那一格采纳（D4）───────────────────────────────────── */
+/* ── ③ 的结论真的被那一格采纳（D4）───────────────────────────────────────── */
 
-const REAL_G6 = "cell_stream_interval 真的把 check_stream 的返回值当成这一格的成败，两个形态各一处";
+const REAL_VERDICT_ADOPTED = "cell_stream_interval 真的把 check_stream 的返回值当成这一格的成败，两个形态各一处";
 
 /**
- * ⚠️ **一个不会自己红的清单不是守卫，是待办。** G1 只看 `check_stream` 的函数体文本，
+ * ⚠️ **一个不会自己红的清单不是守卫，是待办。** 到达间隔那一组只看 `check_stream` 的函数体文本，
  * 而「函数写得再对，调用方把返回值吞掉」这一种死法它一个字都看不见 ——
  * 实测：把两处 `if ! check_stream …; then bad=1; fi` 换成 `check_stream … || true`，
  * 这份守卫 20 格全绿。这条判据补的就是那一格。
@@ -121,9 +121,9 @@ const streamVerdictAdoptedFailures = (read: Read): string[] => {
   return out;
 };
 
-/* ── G7：块数与门槛只有一份真源（D5）─────────────────────────────────────── */
+/* ── 块数与门槛只有一份真源（D5）─────────────────────────────────────────── */
 
-const REAL_G7 = "stub 发几块、判据期望几块、铺开门槛多少 —— 三者同出 STUB_CHUNKS / STUB_GAP_MS 这一份定义";
+const REAL_CHUNK_SOURCE = "stub 发几块、判据期望几块、铺开门槛多少 —— 三者同出 STUB_CHUNKS / STUB_GAP_MS 这一份定义";
 
 /**
  * ⚠️ 上一版是**两个手抄数**：stub 里 `const CHUNKS = 4`，判据里 `(( deltas < 4 ))`。
@@ -170,10 +170,10 @@ const chunkSourceFailures = (read: Read): string[] => {
   return out;
 };
 
-/* ── G8：override 不碰开发者的 ./data 与 .env（D2）───────────────────────── */
+/* ── override 不碰开发者的 ./data 与 .env（D2）───────────────────────────── */
 
 const COMPOSE_FILE = "docker-compose.yml";
-const REAL_G8 = "override 把 /app/data 那条挂载改指临时目录、把 env_file 整条 !reset 掉，并在 up 之前回读核对";
+const REAL_DATA_ISOLATION = "override 把 /app/data 那条挂载改指临时目录、把 env_file 整条 !reset 掉，并在 up 之前回读核对";
 
 /**
  * ⚠️ 实测过的后果（不是推的）：预置一份真 `data/store.json` 再整跑一次冒烟 ⇒
@@ -234,9 +234,9 @@ const dataIsolationFailures = (read: Read): string[] => {
   return out;
 };
 
-/* ── G2：收尾无条件 ───────────────────────────────────────────────────────── */
+/* ── 收尾无条件 ───────────────────────────────────────────────────────────── */
 
-const REAL_G2 = "收尾是无条件的：trap 挂在 EXIT 上，容器 / wrangler / 临时目录三样都收，最后比一遍工作树";
+const REAL_CLEANUP = "收尾是无条件的：trap 挂在 EXIT 上，容器 / wrangler / 临时目录三样都收，最后比一遍工作树";
 
 const cleanupFailures = (read: Read): string[] => {
   const src = read(SMOKE);
@@ -255,9 +255,9 @@ const cleanupFailures = (read: Read): string[] => {
   return out;
 };
 
-/* ── G3：零联网真上游 ─────────────────────────────────────────────────────── */
+/* ── 零联网真上游 ─────────────────────────────────────────────────────────── */
 
-const REAL_G3 = "脚本里写死的每一个地址都指向本机或 compose 网络里那份 stub，没有一个真上游";
+const REAL_UPSTREAM = "脚本里写死的每一个地址都指向本机或 compose 网络里那份 stub，没有一个真上游";
 
 /** 允许出现的主机名。**这是一张白名单，不是黑名单**：多一个陌生主机就该红。 */
 const LOCAL_HOSTS: readonly string[] = ["127.0.0.1", "smoke-upstream"];
@@ -273,9 +273,9 @@ const realUpstreamFailures = (read: Read): string[] => {
     .map((h) => `脚本里写着一个不是本机也不是 compose 网络内的地址：${h} —— 本期硬约束是「一个字节的真上游都不联网」`);
 };
 
-/* ── G4：④ 那一档的天数是现读的，不是手抄的 ──────────────────────────────── */
+/* ── ④ 那一档的天数是现读的，不是手抄的 ──────────────────────────────────── */
 
-const REAL_G4 = "④ 那一格的天数与 admin-ui/js/pure/usage.mjs 的 rangeToQuery() 对得上，且窗口按 (N−1) 天算";
+const REAL_USAGE_DAYS = "④ 那一格的天数与 admin-ui/js/pure/usage.mjs 的 rangeToQuery() 对得上，且窗口按 (N−1) 天算";
 
 const usageDaysFailures = (read: Read): string[] => {
   const pure = read(USAGE_PURE);
@@ -299,9 +299,9 @@ const usageDaysFailures = (read: Read): string[] => {
   return out;
 };
 
-/* ── G5：干跑档与真跑的那几格是同一份表 ──────────────────────────────────── */
+/* ── 干跑档与真跑的那几格是同一份表 ──────────────────────────────────────── */
 
-const REAL_G5 = "CELL_PLAN 里每一格的函数名都在脚本里真的定义了";
+const REAL_CELL_FN = "CELL_PLAN 里每一格的函数名都在脚本里真的定义了";
 
 const cellFnFailures = (read: Read): string[] => {
   const src = read(SMOKE);
@@ -356,14 +356,14 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(iExec, "合并写在了参数分派之前 ⇒ 干跑档的 stderr 也被并走").toBeGreaterThan(iEsac);
   });
 
-  it(REAL_G1, () => {
+  it(REAL_INTERVAL, () => {
     const failures = intervalCriterionFailures(realRead);
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  /** M3 的机器侧：把那句铺开量比较换成一句数块数的 —— 判据必须点名。 */
-  it("(G1) 该红时红：③ 的判据被换成「拿到了几块」—— 点名它是零鉴别力", () => {
-    probeBase(intervalCriterionFailures(realRead), REAL_G1);
+  /** 那条发现的机器侧：把那句铺开量比较换成一句数块数的 —— 判据必须点名。 */
+  it("(到达间隔) 该红时红：③ 的判据被换成「拿到了几块」—— 点名它是零鉴别力", () => {
+    probeBase(intervalCriterionFailures(realRead), REAL_INTERVAL);
     const mutated = realRead(SMOKE)
       .replace("(( spread < STREAM_SPREAD_MIN_MS ))", "(( deltas < STUB_CHUNKS ))");
     expect(mutated, "变异没落地 —— 脚本里已经不是那句比较").not.toBe(realRead(SMOKE));
@@ -376,8 +376,8 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
    * ⚠️ **这一格钉的是被实测推翻的那个上一版**：`first_ms` 取探针输出的第一行。
    * 变异写的就是上一版那两行的原文 —— 它今天必须让判据红，而且要点名 message_start。
    */
-  it("(G1) 该红时红：first_ms 退回「探针输出的第一行」—— 点名那是 message_start，对正文缓冲零鉴别力", () => {
-    probeBase(intervalCriterionFailures(realRead), REAL_G1);
+  it("(到达间隔) 该红时红：first_ms 退回「探针输出的第一行」—— 点名那是 message_start，对正文缓冲零鉴别力", () => {
+    probeBase(intervalCriterionFailures(realRead), REAL_INTERVAL);
     const mutated = realRead(SMOKE)
       .replace(`first_ms=$(printf '%s\\n' "$body" | head -n 1 | cut -f1)`,
                `first_ms=$(awk -F'\\t' 'NR==1 { print $1; exit }' "$out")`);
@@ -388,8 +388,8 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures.join("\n")).toContain("message_start");
   });
 
-  it("(G1) 该红时红：把「首块领先上游末块」那句佐证删掉 —— 判据得点名它少了", () => {
-    probeBase(intervalCriterionFailures(realRead), REAL_G1);
+  it("(到达间隔) 该红时红：把「首块领先上游末块」那句佐证删掉 —— 判据得点名它少了", () => {
+    probeBase(intervalCriterionFailures(realRead), REAL_INTERVAL);
     const mutated = realRead(SMOKE).replace("(( lead <= 0 ))", "(( lead <= -999999999 ))");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
     const failures = intervalCriterionFailures(patchRead(realRead, SMOKE, mutated));
@@ -397,18 +397,18 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("佐证比较");
   });
 
-  it("(G1) 认不出要吵：check_stream 整个不见了时当场抛，不静默当成「判据还在」", () => {
+  it("(到达间隔) 认不出要吵：check_stream 整个不见了时当场抛，不静默当成「判据还在」", () => {
     const gutted = realRead(SMOKE).replace(/^check_stream\(\) \{/m, "check_stream_disabled() {");
     expect(() => intervalCriterionFailures(patchRead(realRead, SMOKE, gutted))).toThrow(/判据坏了/);
   });
 
-  it(REAL_G2, () => {
+  it(REAL_CLEANUP, () => {
     const failures = cleanupFailures(realRead);
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("(G2) 该红时红：把 trap 那一行删掉 —— 点名容器与 wrangler 会留在机器上", () => {
-    probeBase(cleanupFailures(realRead), REAL_G2);
+  it("(收尾) 该红时红：把 trap 那一行删掉 —— 点名容器与 wrangler 会留在机器上", () => {
+    probeBase(cleanupFailures(realRead), REAL_CLEANUP);
     const mutated = realRead(SMOKE).replace(/^trap cleanup EXIT$/m, "# trap cleanup EXIT");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
     const failures = cleanupFailures(patchRead(realRead, SMOKE, mutated));
@@ -416,8 +416,8 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("留在机器上");
   });
 
-  it("(G2) 该红时红：收尾不再拿工作树与开跑前比 —— 那条绊线没了，探针留在树里没人会发现", () => {
-    probeBase(cleanupFailures(realRead), REAL_G2);
+  it("(收尾) 该红时红：收尾不再拿工作树与开跑前比 —— 那条绊线没了，探针留在树里没人会发现", () => {
+    probeBase(cleanupFailures(realRead), REAL_CLEANUP);
     const mutated = realRead(SMOKE)
       .replace('if [[ $after != "$GIT_BASELINE" ]]; then', "if false; then");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
@@ -426,13 +426,13 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("探针留在树里");
   });
 
-  it(REAL_G3, () => {
+  it(REAL_UPSTREAM, () => {
     const failures = realUpstreamFailures(realRead);
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("(G3) 该红时红：把上游指回真的 Agnes —— 点名那个主机名", () => {
-    probeBase(realUpstreamFailures(realRead), REAL_G3);
+  it("(零联网) 该红时红：把上游指回真的 Agnes —— 点名那个主机名", () => {
+    probeBase(realUpstreamFailures(realRead), REAL_UPSTREAM);
     const mutated = realRead(SMOKE)
       .replace("http://127.0.0.1:$STUB_PORT/worker/v1", "https://apihub.agnes-ai.com/v1");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
@@ -441,18 +441,18 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("apihub.agnes-ai.com");
   });
 
-  it("(G3) 认不出要吵：脚本里一个 URL 都扫不到时当场抛，不静默当成「没有真上游」", () => {
+  it("(零联网) 认不出要吵：脚本里一个 URL 都扫不到时当场抛，不静默当成「没有真上游」", () => {
     const gutted = realRead(SMOKE).replaceAll("http://", "hxxp://");
     expect(() => realUpstreamFailures(patchRead(realRead, SMOKE, gutted))).toThrow(/判据坏了/);
   });
 
-  it(REAL_G4, () => {
+  it(REAL_USAGE_DAYS, () => {
     const failures = usageDaysFailures(realRead);
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("(G4) 该红时红：面板那个按钮改成别的天数而冒烟没跟上 —— 两边都点出来", () => {
-    probeBase(usageDaysFailures(realRead), REAL_G4);
+  it("(天数) 该红时红：面板那个按钮改成别的天数而冒烟没跟上 —— 两边都点出来", () => {
+    probeBase(usageDaysFailures(realRead), REAL_USAGE_DAYS);
     const mutated = realRead(USAGE_PURE).replace('"30d": 30', '"30d": 60');
     expect(mutated, "变异没落地 —— rangeToQuery 里已经不是那张表").not.toBe(realRead(USAGE_PURE));
     const failures = usageDaysFailures(patchRead(realRead, USAGE_PURE, mutated));
@@ -460,8 +460,8 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("而面板那个按钮今天是 60 天");
   });
 
-  it("(G4) 该红时红：窗口从 (N−1) 天改成 N 天 —— clamped 会恒为真，判据得看得见", () => {
-    probeBase(usageDaysFailures(realRead), REAL_G4);
+  it("(天数) 该红时红：窗口从 (N−1) 天改成 N 天 —— clamped 会恒为真，判据得看得见", () => {
+    probeBase(usageDaysFailures(realRead), REAL_USAGE_DAYS);
     const mutated = realRead(SMOKE)
       .replace("from=$(( to - (USAGE_RANGE_DAYS - 1) * DAY_MS ))", "from=$(( to - USAGE_RANGE_DAYS * DAY_MS ))");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
@@ -470,13 +470,13 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("clamped 恒为真");
   });
 
-  it(REAL_G5, () => {
+  it(REAL_CELL_FN, () => {
     const failures = cellFnFailures(realRead);
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("(G5) 该红时红：CELL_PLAN 里的函数名打错 —— 点名它并说清失败形态", () => {
-    probeBase(cellFnFailures(realRead), REAL_G5);
+  it("(逐格表) 该红时红：CELL_PLAN 里的函数名打错 —— 点名它并说清失败形态", () => {
+    probeBase(cellFnFailures(realRead), REAL_CELL_FN);
     const mutated = realRead(SMOKE).replace("\tcell_usage_30d\"", "\tcell_usage_30days\"");
     expect(mutated, "变异没落地 —— CELL_PLAN 里已经不是那个名字").not.toBe(realRead(SMOKE));
     const failures = cellFnFailures(patchRead(realRead, SMOKE, mutated));
@@ -484,18 +484,18 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("cell_usage_30days");
   });
 
-  it("(G5) 认不出要吵：CELL_PLAN 整个读不出来时当场抛", () => {
+  it("(逐格表) 认不出要吵：CELL_PLAN 整个读不出来时当场抛", () => {
     const gutted = realRead(SMOKE).replace(/^CELL_PLAN=\(/m, "CELL_PLAN_DISABLED=(");
     expect(() => cellFnFailures(patchRead(realRead, SMOKE, gutted))).toThrow(/判据坏了/);
   });
 
-  it(REAL_G6, () => {
+  it(REAL_VERDICT_ADOPTED, () => {
     const failures = streamVerdictAdoptedFailures(realRead);
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("(G6) 该红时红：check_stream 的返回值被 `|| true` 吞掉 —— 点名 ③ 可以被静默阉割", () => {
-    probeBase(streamVerdictAdoptedFailures(realRead), REAL_G6);
+  it("(结论采纳) 该红时红：check_stream 的返回值被 `|| true` 吞掉 —— 点名 ③ 可以被静默阉割", () => {
+    probeBase(streamVerdictAdoptedFailures(realRead), REAL_VERDICT_ADOPTED);
     const mutated = realRead(SMOKE)
       .replace('if ! check_stream "Docker" "$TMP/stream-docker.txt"; then bad=1; fi',
                'check_stream "Docker" "$TMP/stream-docker.txt" || true');
@@ -506,8 +506,8 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("静默阉割");
   });
 
-  it("(G6) 该红时红：那一格不再按 bad 决定成败 —— 红了也会算 PASS", () => {
-    probeBase(streamVerdictAdoptedFailures(realRead), REAL_G6);
+  it("(结论采纳) 该红时红：那一格不再按 bad 决定成败 —— 红了也会算 PASS", () => {
+    probeBase(streamVerdictAdoptedFailures(realRead), REAL_VERDICT_ADOPTED);
     // `replace` 只换第一处，而 cell_stream_interval 在 cell_admin_html 之前 —— 打中的是它。
     const mutated = realRead(SMOKE)
       .replace("if (( bad != 0 )); then return 1; fi", "if false; then return 1; fi");
@@ -519,18 +519,18 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("红了也会算 PASS");
   });
 
-  it("(G6) 认不出要吵：cell_stream_interval 整个不见了时当场抛", () => {
+  it("(结论采纳) 认不出要吵：cell_stream_interval 整个不见了时当场抛", () => {
     const gutted = realRead(SMOKE).replace(/^cell_stream_interval\(\) \{/m, "cell_stream_gone() {");
     expect(() => streamVerdictAdoptedFailures(patchRead(realRead, SMOKE, gutted))).toThrow(/判据坏了/);
   });
 
-  it(REAL_G7, () => {
+  it(REAL_CHUNK_SOURCE, () => {
     const failures = chunkSourceFailures(realRead);
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("(G7) 该红时红：stub 的块数写回字面量 —— 两侧会各自漂，报文把人指错方向", () => {
-    probeBase(chunkSourceFailures(realRead), REAL_G7);
+  it("(块数真源) 该红时红：stub 的块数写回字面量 —— 两侧会各自漂，报文把人指错方向", () => {
+    probeBase(chunkSourceFailures(realRead), REAL_CHUNK_SOURCE);
     const mutated = realRead(SMOKE).replace("const CHUNKS = Number(process.argv[4]);", "const CHUNKS = 6;");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
     const failures = chunkSourceFailures(patchRead(realRead, SMOKE, mutated));
@@ -539,8 +539,8 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures.join("\n")).toContain("字面量");
   });
 
-  it("(G7) 该红时红：判据里把期望块数写死成 4 —— 点名那个数", () => {
-    probeBase(chunkSourceFailures(realRead), REAL_G7);
+  it("(块数真源) 该红时红：判据里把期望块数写死成 4 —— 点名那个数", () => {
+    probeBase(chunkSourceFailures(realRead), REAL_CHUNK_SOURCE);
     const mutated = realRead(SMOKE).replace("(( deltas != STUB_CHUNKS ))", "(( deltas < 4 ))");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
     const failures = chunkSourceFailures(patchRead(realRead, SMOKE, mutated));
@@ -548,8 +548,8 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures.join("\n")).toContain("写死的块数（4）");
   });
 
-  it("(G7) 该红时红：compose 那份 stub 没拿到块数 —— 两份 stub 会发不一样多的块", () => {
-    probeBase(chunkSourceFailures(realRead), REAL_G7);
+  it("(块数真源) 该红时红：compose 那份 stub 没拿到块数 —— 两份 stub 会发不一样多的块", () => {
+    probeBase(chunkSourceFailures(realRead), REAL_CHUNK_SOURCE);
     const mutated = realRead(SMOKE)
       .replace('"${STUB_PORT_IN_NET}", "${STUB_GAP_MS}", "${STUB_CHUNKS}"', '"${STUB_PORT_IN_NET}", "${STUB_GAP_MS}"');
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
@@ -558,18 +558,18 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("两份 stub 会发不一样多的块");
   });
 
-  it("(G7) 认不出要吵：STUB_CHUNKS 整个读不出来时当场抛", () => {
+  it("(块数真源) 认不出要吵：STUB_CHUNKS 整个读不出来时当场抛", () => {
     const gutted = realRead(SMOKE).replace(/^STUB_CHUNKS=\d+$/m, "STUB_CHUNKS_DISABLED=4");
     expect(() => chunkSourceFailures(patchRead(realRead, SMOKE, gutted))).toThrow(/判据坏了/);
   });
 
-  it(REAL_G8, () => {
+  it(REAL_DATA_ISOLATION, () => {
     const failures = dataIsolationFailures(realRead);
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("(G8) 该红时红：override 把挂载指回仓库根下的 ./data —— 点名开发者那份 store.json", () => {
-    probeBase(dataIsolationFailures(realRead), REAL_G8);
+  it("(数据隔离) 该红时红：override 把挂载指回仓库根下的 ./data —— 点名开发者那份 store.json", () => {
+    probeBase(dataIsolationFailures(realRead), REAL_DATA_ISOLATION);
     const mutated = realRead(SMOKE)
       .replace('- "${SMOKE_DATA_DIR}:${COMPOSE_DATA_TARGET}"', '- "./data:/app/data"');
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
@@ -578,8 +578,8 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("改指临时目录");
   });
 
-  it("(G8) 该红时红：env_file 那条 !reset 没了 —— 点名开发者的真 .env 会被整份灌进去", () => {
-    probeBase(dataIsolationFailures(realRead), REAL_G8);
+  it("(数据隔离) 该红时红：env_file 那条 !reset 没了 —— 点名开发者的真 .env 会被整份灌进去", () => {
+    probeBase(dataIsolationFailures(realRead), REAL_DATA_ISOLATION);
     const mutated = realRead(SMOKE).replace("    env_file: !reset []\n", "");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
     const failures = dataIsolationFailures(patchRead(realRead, SMOKE, mutated));
@@ -587,8 +587,8 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("整份灌进冒烟容器");
   });
 
-  it("(G8) 该红时红：up 之前不再回读 compose config —— 点名合并语义的假定会静静地放行", () => {
-    probeBase(dataIsolationFailures(realRead), REAL_G8);
+  it("(数据隔离) 该红时红：up 之前不再回读 compose config —— 点名合并语义的假定会静静地放行", () => {
+    probeBase(dataIsolationFailures(realRead), REAL_DATA_ISOLATION);
     const mutated = realRead(SMOKE).replace("  if ! assert_override_took; then return 1; fi\n", "");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
     const failures = dataIsolationFailures(patchRead(realRead, SMOKE, mutated));
@@ -596,8 +596,8 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("静静地放行");
   });
 
-  it("(G8) 该红时红：回读里不再查多出来的环境变量键 —— env_file 没抹掉时它是唯一会说话的地方", () => {
-    probeBase(dataIsolationFailures(realRead), REAL_G8);
+  it("(数据隔离) 该红时红：回读里不再查多出来的环境变量键 —— env_file 没抹掉时它是唯一会说话的地方", () => {
+    probeBase(dataIsolationFailures(realRead), REAL_DATA_ISOLATION);
     const mutated = realRead(SMOKE).replace("if (extra.length > 0) {", "if (false) {");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
     const failures = dataIsolationFailures(patchRead(realRead, SMOKE, mutated));
@@ -605,13 +605,13 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures[0] ?? "").toContain("多出来的环境变量键");
   });
 
-  it("(G8) 认不出要吵：override 那段整个读不出来时当场抛，不静默当成「它还在」", () => {
+  it("(数据隔离) 认不出要吵：override 那段整个读不出来时当场抛，不静默当成「它还在」", () => {
     const gutted = realRead(SMOKE).replace('  cat >"$OVERRIDE" <<YML', '  cat >"$OVERRIDE" <<NOPE');
     expect(gutted, "变异没落地").not.toBe(realRead(SMOKE));
     expect(() => dataIsolationFailures(patchRead(realRead, SMOKE, gutted))).toThrow(/判据坏了/);
   });
 
-  it("(G8) 认不出要吵：docker-compose.yml 里认不出 ./data 那条挂载时当场抛", () => {
+  it("(数据隔离) 认不出要吵：docker-compose.yml 里认不出 ./data 那条挂载时当场抛", () => {
     const gutted = realRead(COMPOSE_FILE).replace(/^\s*-\s*\.\/data:\/\S+\s*$/m, "      - agnes-data:/app/data");
     expect(gutted, "变异没落地").not.toBe(realRead(COMPOSE_FILE));
     expect(() => dataIsolationFailures(patchRead(realRead, COMPOSE_FILE, gutted))).toThrow(/判据坏了/);
