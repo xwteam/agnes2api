@@ -1408,13 +1408,17 @@ describe("scripts/check-comment-refs.mjs 元测试：豁免标记与它的边界
    * 整个 `scripts/check-comment-refs.mjs` 免检、门禁照报绿。
    */
   it("门禁自己不在整份豁免的名单里（自我豁免的门禁比没有门禁更糟）", () => {
+  // ⚠️ **显式给 60s 预算，不是「放宽断言」**：这一格 `spawnSync` 整跑一次门禁本体，
+  //   独占实测 2.6–5.8s，而 vitest 默认超时恰是 5s —— 它一直卡在边界上，
+  //   仓库越大越容易红，且红的报文是 `Test timed out` 而不是它真正要守的那件事。
+  //   **断言一个字没动**，改的只有时间预算。
     const r = spawnSync("node", [SCRIPT], {
       encoding: "utf8",
       env: { ...process.env, COMMENT_REFS_LIST_IGNORED: "1" },
     });
     // `:0` 是整份文件豁免的标记（逐块豁免带的是真实行号）。
     expect(r.stdout).not.toContain("ignored scripts/check-comment-refs.mjs:0");
-  });
+  }, 60_000);
 });
 
 /**
@@ -1426,6 +1430,10 @@ describe("scripts/check-comment-refs.mjs 元测试：豁免标记与它的边界
  */
 describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
   it("豁免清单与手写的这份一致", () => {
+  // ⚠️ **显式给 60s 预算，不是「放宽断言」**：这一格 `spawnSync` 整跑一次门禁本体，
+  //   独占实测 2.6–5.8s，而 vitest 默认超时恰是 5s —— 它一直卡在边界上，
+  //   仓库越大越容易红，且红的报文是 `Test timed out` 而不是它真正要守的那件事。
+  //   **断言一个字没动**，改的只有时间预算。
     const r = spawnSync("node", [SCRIPT], {
       encoding: "utf8",
       env: { ...process.env, COMMENT_REFS_LIST_IGNORED: "1" },
@@ -1480,7 +1488,7 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       // 举例说明「带了过滤器」长什么样。
       "tests/unit/scripts-guard.test.ts",
     ]);
-  });
+  }, 60_000);
 
   /**
    * **规则 F 的豁免是另一份名册，单独钉。**
@@ -1492,6 +1500,10 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
    * 期望值手写字面量，不从扫描结果反算（回填出来的期望值恒等于实际值，永远绿）。
    */
   it("裁定计数的豁免逐处列名 —— 多一处就红", () => {
+  // ⚠️ **显式给 60s 预算，不是「放宽断言」**：这一格 `spawnSync` 整跑一次门禁本体，
+  //   独占实测 2.6–5.8s，而 vitest 默认超时恰是 5s —— 它一直卡在边界上，
+  //   仓库越大越容易红，且红的报文是 `Test timed out` 而不是它真正要守的那件事。
+  //   **断言一个字没动**，改的只有时间预算。
     const r = spawnSync("node", [SCRIPT], {
       encoding: "utf8",
       env: { ...process.env, COMMENT_REFS_LIST_IGNORED: "1" },
@@ -1510,7 +1522,7 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       "src/http/admin/probe-guard.ts",
       "tests/unit/admin/probe-guard.test.ts",
     ]);
-  });
+  }, 60_000);
 });
 
 /**
