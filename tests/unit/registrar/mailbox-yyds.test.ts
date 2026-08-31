@@ -370,13 +370,13 @@ describe("YydsProvider", () => {
     expect(await p.pollCode({ address: "u1@a.test", handle: "acct-42" }, 5000)).toBe("135791");
   });
 
-  // === M3：轮询期间 fetch reject 与非 2xx 的容错必须对称 ===
+  // === 轮询期间 fetch reject 与非 2xx 的容错必须对称 ===
   //
   // 同一个瞬时故障，返回 HTTP 500 时轮询继续、fetch reject（TCP reset / 单请求超时
   // 到点的 TimeoutError）时却穿出 pollCode、被 mint.ts 收成 network_error 作废整次
   // 铸 key——而那一刻验证码往往已经在邮箱里、窗口还剩 100 多秒。
 
-  it("M3 列表请求 reject（网络抖动/超时）后不中断轮询，下一轮仍能取到验证码", async () => {
+  it("列表请求 reject（网络抖动/超时）后不中断轮询，下一轮仍能取到验证码", async () => {
     let listAttempts = 0;
     let t = 0;
     const fetcher = {
@@ -398,7 +398,7 @@ describe("YydsProvider", () => {
     expect(listAttempts).toBe(2);
   });
 
-  it("M3 详情请求 reject 时不写 seen，下一轮重新拉同一封仍能取到验证码", async () => {
+  it("详情请求 reject 时不写 seen，下一轮重新拉同一封仍能取到验证码", async () => {
     // 与「详情非 2xx」那条同构：reject 也不能让这封邮件被永久跳过，否则会一路空转到
     // 超时。断言 detailAttempts=2 才能证明真的重试了同一封，而不是靠别的邮件蒙对。
     let detailAttempts = 0;
@@ -421,7 +421,7 @@ describe("YydsProvider", () => {
     expect(detailAttempts).toBe(2);
   });
 
-  it("M3 全程 reject 时按超时返回 null，而不是把异常抛给调用方", async () => {
+  it("全程 reject 时按超时返回 null，而不是把异常抛给调用方", async () => {
     // 成对用例：容错不等于吞掉一切——CODE_TIMEOUT_MS 仍是唯一的轮询截止依据。
     let t = 0;
     const fetcher = { async fetch(): Promise<Response> { throw new Error("ECONNRESET"); } };

@@ -41,7 +41,7 @@ describe("媒体裁定：不内嵌远端、不放宽 CSP", () => {
    * · 一侧是 `src/ui/serve.ts` 里那条**真的会被发出去**的 CSP 字符串；
    * · 另一侧是 `js/pure/playground.mjs` 里 `mediaEmbeddable()` 那条正则。
    *
-   * **变红条件（三条，逐条实测，见 progress note 的 M1/M2/M3）**：
+   * **变红条件（三条，逐条实测，见当时的变异表）**：
    * ① 往 `img-src` 里加任何一个远端来源（`https:` / 通配主机）⇒ 源列表那条断言红；
    * ② 给 CSP 加一条 `media-src` ⇒ 「没有 media-src」那条断言红；
    * ③ 把 `mediaEmbeddable()` 放宽成 `/^https?:/` （「远端图片也画出来吧」最自然的写法）
@@ -232,7 +232,7 @@ describe("视频两段式：任务标识与轮询", () => {
    * 另一侧是 `src/core/admin/protocol-catalog.ts` 的 `VIDEO_TASK_ID_RE`
    * （`src/http/routes/media.ts` 用的就是它）。
    *
-   * **变红条件（两个方向，逐条实测，见 progress note 的 M6/M7）**：
+   * **变红条件（两个方向，逐条实测，见当时的变异表）**：
    * ① 把面板那条收紧（比如去掉 `-`）⇒ 面板会拦下一个网关其实收的 id ⇒ 红；
    * ② 把面板那条放宽（比如允许 `.`）⇒ 面板会发一条注定 400 的请求 ⇒ 红。
    * 探针表覆盖两侧边界：长度 1 / 128 / 129、四类允许字符、以及穿越用的那几个字符。

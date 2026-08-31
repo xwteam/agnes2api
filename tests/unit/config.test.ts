@@ -145,7 +145,7 @@ describe("loadConfig", () => {
     ).toBe(120_000);
   });
 
-  // M4：只校验 Number.isFinite 是不够的。
+  // 只校验 Number.isFinite 是不够的。
   // UPSTREAM_TIMEOUT_MS=-1 会让 setTimeout 立即触发（一个请求打满全池）；
   // MAX_STRIKES=0 让 `strikes >= maxStrikes` 在第一次失败时即成立，等于跳过容错。
   describe("数值下界", () => {

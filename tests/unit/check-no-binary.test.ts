@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 const SCRIPT = resolve("scripts/check-no-binary.mjs");
 
 /**
- * **评审 F3 新增的那道门禁**（`scripts/check-no-binary.mjs`）本身的正确性——
+ * **评审发现新增的那道门禁**（`scripts/check-no-binary.mjs`）本身的正确性——
  * 不在真实仓库上做变异（那会真的往仓库里塞一个二进制文件），改用一个独立的临时
  * git 仓库：`execFileSync` 的 `cwd` 选项让被测脚本内部的 `git ls-files`/`git grep`
  * 全部落在这个临时仓库上，不碰真实仓库的索引。
@@ -108,7 +108,7 @@ describe("scripts/check-no-binary.mjs", () => {
    *
    * 内容是不是文本、与 git 愿不愿意把它当文本 diff 是两件事。标了 `-diff` 的纯
    * 文本文件在 `git ls-files --eol` 里照样是 `i/lf`，但 `git diff` 只吐一行
-   * `Binary files … differ`——**正是 F3 的原始症状**（评审包里看不见这份代码改了
+   * `Binary files … differ`——**正是那条评审发现的原始症状**（评审包里看不见这份代码改了
    * 什么）。只查字节的门禁会放行它。
    */
   it("scope 内的纯文本文件被 .gitattributes 标了 -diff：exit 1，报出文件名与原因", () => {

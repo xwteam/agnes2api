@@ -190,7 +190,7 @@ describe("POST /admin/api/config/reset", () => {
   });
 
   /**
-   * 【落盘/回读类】**变异 M1 的靶子：把回执改成 handler 自己拼的一份空配置。**
+   * 【落盘/回读类】**变异的靶子：把回执改成 handler 自己拼的一份空配置。**
    *
    * 判别力全部来自 `SwapAfterFirstPut`：写完之后存储里被换成了第三种样子
    *（`maxStrikes: 7`），回执必须报出那个 7。自己拼的那一版只知道 `{}`，
@@ -222,7 +222,7 @@ describe("POST /admin/api/config/reset", () => {
   });
 
   /**
-   * 【落盘/回读类】**变异 M2 的靶子：把 `configHolder.invalidate()` 删掉。**
+   * 【落盘/回读类】**变异的靶子：把 `configHolder.invalidate()` 删掉。**
    *
    * 观测点刻意在**另一条端点**上（`GET /admin/api/overview` 走的是真 holder），
    * 不在 reset 自己的响应体上——回读证明「落盘了」，`invalidate()` 保证的是

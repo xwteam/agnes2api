@@ -426,7 +426,7 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
       },
       {
         code: "gateway_token_required",
-        // ⚠️ **它是 F6（只拒新引入的 blocker）的正确后果，不是回归。**
+        // ⚠️ **它是「只拒新引入的 blocker」的正确后果，不是回归。**
         // 一个 patch 没有任何办法**新引入**这一条：凭据分支只会写入、从不删除，
         // 所以「两边都没有口令」这个状态只可能**本来就**存在 ⇒ 落在 `before` 里
         // ⇒ 被差集滤掉。

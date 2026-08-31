@@ -104,7 +104,7 @@ describe("itemsOf：全模块唯一的\"有没有可渲染条目\"判据", () =>
 });
 
 /**
- * **评审 M5**：判据必须是"视图里有没有数据"，不是"这一次有没有成功过"——后者
+ * **评审发现**：判据必须是"视图里有没有数据"，不是"这一次有没有成功过"——后者
  * 会让重新进入本板块时，只要第一轮轮询恰好失败，就把已经攒下的历史事件整个
  * 换成"读取失败"。
  */
@@ -112,7 +112,7 @@ describe("eventsListMessageKey：列表区该显示哪条消息", () => {
   it("视图为空且读取失败 ⇒ loadFailed", () => {
     expect(eventsListMessageKey(true, 0, 0)).toBe("common.loadFailed");
   });
-  it("视图有数据，即使这一轮读取失败，也不显示 loadFailed——继续显示已有数据（评审 M5 的核心断言）", () => {
+  it("视图有数据，即使这一轮读取失败，也不显示 loadFailed——继续显示已有数据（评审发现的核心断言）", () => {
     expect(eventsListMessageKey(true, 3, 3)).toBeNull();
   });
   it("视图有数据、读取失败、但搜索过滤后恰好一条都不剩 ⇒ noMatch（不是 loadFailed）", () => {
@@ -157,7 +157,7 @@ describe("eventsListMessageKey：列表区该显示哪条消息", () => {
   });
 });
 
-describe("shardIdOf：本 isolate 的分片 id（评审 M2），绝不伪造", () => {
+describe("shardIdOf：本 isolate 的分片 id（评审发现），绝不伪造", () => {
   it("缺失/畸形时是 null，不是空串", () => {
     for (const bad of [null, undefined, {}, { shardId: 1 }, { shardId: "" }, { shardId: null }]) {
       expect(shardIdOf(bad), String(bad)).toBeNull();
@@ -168,7 +168,7 @@ describe("shardIdOf：本 isolate 的分片 id（评审 M2），绝不伪造", (
   });
 });
 
-describe("generatedAtOf：响应生成时刻（评审 N1 [LOW]），绝不伪造", () => {
+describe("generatedAtOf：响应生成时刻（评审发现 [LOW]），绝不伪造", () => {
   it("缺失/畸形时是 null", () => {
     for (const bad of [null, undefined, {}, { generatedAt: "4000" }, { generatedAt: NaN }]) {
       expect(generatedAtOf(bad), String(bad)).toBeNull();
@@ -204,7 +204,7 @@ describe("bufferStatus：dropped / budgetExhausted / truncated / buffered / curs
       dropped: 50, budgetExhausted: true, truncated: true, buffered: 7, cursorAhead: true, malformed: 3,
     });
   });
-  it("buffered 单独缺失/畸形时只有它是 null，其余字段不受影响（评审 N1）", () => {
+  it("buffered 单独缺失/畸形时只有它是 null，其余字段不受影响（评审发现）", () => {
     expect(bufferStatus({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: "3", cursorAhead: false, malformed: 0 }))
       .toEqual({ ...NONE, dropped: 0, budgetExhausted: false, truncated: false, buffered: null, cursorAhead: false, malformed: 0 });
   });
@@ -251,7 +251,7 @@ describe("shouldWarn：黄条是否出现，完全由后端字段驱动", () => 
   it("cursorAhead=true ⇒ 警告（评审发现，即使其余项都是 false）", () => {
     expect(shouldWarn({ ...allClear, cursorAhead: true })).toBe(true);
   });
-  it("buffered 单独很大 ⇒ 不警告——单纯缓冲区里有事件是正常运行态，不占用黄条（评审 N1 的取舍）", () => {
+  it("buffered 单独很大 ⇒ 不警告——单纯缓冲区里有事件是正常运行态，不占用黄条（评审发现的取舍）", () => {
     expect(shouldWarn({ ...allClear, buffered: 999 })).toBe(false);
   });
   it("全部是 null（没有数据）⇒ 不警告——不知道不等于有问题", () => {

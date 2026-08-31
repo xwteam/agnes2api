@@ -21,7 +21,7 @@ import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 
 /**
- * `POST /admin/api/registrar/tend` —— 面板「立即补池」的四条护栏（设计 §10.2，风险 L6）。
+ * `POST /admin/api/registrar/tend` —— 面板「立即补池」的四条护栏（设计 §10.2）。
  *
  * **这是本仓第一条会产生真实上游副作用的写端点**：Key 池那四条只动本地存储，
  * 这一条会去建临时邮箱、注册 Agnes 账号、领 key。一个失效的护栏在这里的后果不是
@@ -107,7 +107,7 @@ const guardOf = (s: MemoryStorage | CountingStorage) => s.get<ManualGuard>(MANUA
 
 describe("护栏 1：两个副本 / 两个并发请求，只有一个真的跑起来", () => {
   /**
-   * **设计文档点名要求的那一条测试（§10.2 第 1 条 / 风险 L6）。**
+   * **设计文档点名要求的那一条测试（§10.2 第 1 条）。**
    *
    * 防住的真实故障：Node 侧此前**只有进程内的 `inFlight`**，而 Docker 多副本共卷
    *（同一个 `DATA_DIR` 挂给两个容器）下它形同虚设——两个副本各有各的布尔，
@@ -209,7 +209,7 @@ describe("护栏 1：两个副本 / 两个并发请求，只有一个真的跑�
 
   /**
    * **锁必须在 `finally` 里释放。**
-   * **变红条件（M7）**：把 `releaseTendLock` 从 `finally` 挪进 `try` 的末尾
+   * **变红条件**：把 `releaseTendLock` 从 `finally` 挪进 `try` 的末尾
    * ——一次抛错的补池会让锁留到自然过期（最长 15 分钟）才肯放下一轮进来，
    * 也就是**一次失败换一段停摆**。
    */
@@ -248,7 +248,7 @@ describe("护栏 2 与 4：手动冷却 + 每日写预算闸（评审那条护�
    * · **读法 B（本仓采用）**：`{ day, used, cooldownUntil }`，**一律不传 `expiresAt`**，
    *   跨天靠 `day` 的值比较、冷却靠 `cooldownUntil` 的值比较，互不借用。
    *
-   * **变红条件（M4）**：给 `registrar_manual_guard` 加一个跟着 `cooldownUntil` 走的
+   * **变红条件**：给 `registrar_manual_guard` 加一个跟着 `cooldownUntil` 走的
    * `expiresAt` —— 第二次点之前那把键已经蒸发 ⇒ `used` 读回 0 ⇒ 写回 1 ⇒ 这里变红。
    * 第一版计划给的三条判据对这条变异**全部无感**，所以它们被作废了。
    */
@@ -347,12 +347,12 @@ describe("护栏 2 与 4：手动冷却 + 每日写预算闸（评审那条护�
   });
 
   /**
-   * ⚠️ **预算必须落在存储里，不是实例字段**（计划 F11 / F4 是同一个错）。
+   * ⚠️ **预算必须落在存储里，不是实例字段**（计划里那两条是同一个错）。
    *
    * 手动补池是人驱动的、可能打到任意 isolate。计数做成实例字段的话，
    * **每一个新 isolate 都带着一份全新的预算** ⇒ 那道闸既拦不住什么也不构成上界，
    * 而 Worker 上 isolate 是逐请求随机新建/回收的。
-   * **变红条件（M6）**：把 `used` 搬进 handler 闭包 / app 实例字段。
+   * **变红条件**：把 `used` 搬进 handler 闭包 / app 实例字段。
    */
   it("两个 app 实例不许各拿一份新预算 —— 计数在存储里，不在实例上", async () => {
     const storage = new MemoryStorage(undefined, () => NOW);
@@ -399,8 +399,8 @@ describe("202 之后由谁驱动补池 —— 两种运行时的差异必须是�
    * 不挂的话响应一返回 isolate 就可能停摆，补池被从中间砍断 ⇒ `mintOne` 的 `finally`
    * 不跑 ⇒ **临时邮箱漏删**，攒够几个就把活跃邮箱名额吃光。
    *
-   * **变红条件（M10）**：`workerRuntime().background` 改成裸 `void task`。
-   * ⚠️ **只断言「补池被调用过」抓不住 M10**（fire-and-forget 同样会调用它），
+   * **变红条件**：`workerRuntime().background` 改成裸 `void task`。
+   * ⚠️ **只断言「补池被调用过」抓不住这一条**（fire-and-forget 同样会调用它），
    * 所以判据是**那个 promise 真的交到了 `waitUntil` 手里**，而且**它落定的那一刻
    * 补池才算跑完**（执行体是 gated 的，202 返回时它还挂着）。
    */
@@ -561,7 +561,7 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
       // 比 WORKER_ROUND_BUDGET_MS 大 ⇒ 一次尝试都开不了，零网络。
       CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1),
       // ⚠️ **第二道保险，不是装饰**：本夹具"零网络"的第一道保险是生产代码真的传了
-      // `roundBudgetMs`（`tendOnce` 一次尝试都不开始）。**变异测试 M8 把那一行删掉之后，
+      // `roundBudgetMs`（`tendOnce` 一次尝试都不开始）。**变异把那一行删掉之后，
       // 这条用例当场打了 YYDS 的线上接口**（拿到真实域名与 HTTP 403/429）——
       // 也就是说第一道保险成立与否取决于被测代码本身。把 baseUrl 指到保留 TLD
       // `.invalid`（RFC 6761，永不解析），即使那道保险失效也只会 DNS 失败，
@@ -602,8 +602,8 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
    * 彻底铸不出 key，而面板上没有任何东西会说明原因。
    *
    * **观测点是那条 error 事件里的 `roundBudgetMs` 字段**，于是两条变异各自都拦得住：
-   * · **M8（不传）** ⇒ `tendOnce` 根本不做预算判断 ⇒ 这条事件不会出现 ⇒ 红；
-   * · **M9（传另一个值）** ⇒ 字段值对不上那个手写字面量 ⇒ 红。
+   * · **不传** ⇒ `tendOnce` 根本不做预算判断 ⇒ 这条事件不会出现 ⇒ 红；
+   * · **传另一个值** ⇒ 字段值对不上那个手写字面量 ⇒ 红。
    *
    * ⚠️ **期望值写手写字面量 `780_000`，不写 `WORKER_ROUND_BUDGET_MS`**：从被测对象
    * 推导出来的期望值恒等于实际值，那样「两边一起改」就绕过去了。

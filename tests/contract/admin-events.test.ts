@@ -88,7 +88,7 @@ describe("GET /admin/api/events", () => {
   });
 
   /**
-   * **U-C（订正 F7 / 待验证）：这是本期唯一一处依赖运行时调度时序的地方。**
+   * **U-C（订正 / 待验证）：这是本期唯一一处依赖运行时调度时序的地方。**
    * 事件落库的 `put` 在中间件里被 `await`，必须在响应返回前完成。
    * 两种运行时**各断言一遍**——workerd 的 isolate 生命周期与 node 完全不同，
    * 只在 node 侧验过就假设 worker 侧一样，正是这个项目栽过的那类「未经核实的前提」。
@@ -384,7 +384,7 @@ describe("GET /admin/api/events/download", () => {
   });
 
   /**
-   * **N2 从陷阱变成断言**：这里刻意验证下载端点是裸 `Response`（`content-type`
+   * **那条陷阱变成断言**：这里刻意验证下载端点是裸 `Response`（`content-type`
    * 由 handler 自己设，不是 Hono 的 `c.text()` 那条自动路径）**仍然**带全局
    * nosniff——把 `app.ts` 的 `c.header` 挪到 `next()` 之前，这条会变红。
    */
@@ -448,7 +448,7 @@ describe("存储里的畸形事件条目：端点必须活着，且游标契约�
   }
 
   it("单条 [null]：修复前 500，现在 200 且 items 为空、cursor 为 null", async () => {
-    // 变红条件（M1）：narrowShard 退回 `Array.isArray(s) ? s : []`
+    // 变红条件：narrowShard 退回 `Array.isArray(s) ? s : []`
     const { app } = await withShard([null]);
     const { status, body } = await getEvents(app);
     expect(status, "一条 null 让整个事件板块 500").toBe(200);
@@ -480,7 +480,7 @@ describe("存储里的畸形事件条目：端点必须活着，且游标契约�
    * 所以这两格除了断言条目被丢掉，**还必须断言 `cursor` 这个字段本身存在**。
    */
   it("字符串条目：被丢掉，且响应体里 cursor 字段必须存在（修复前它整个消失）", async () => {
-    // 变红条件（M3）：handler 退回 `cursor: items[0]!.ts`
+    // 变红条件：handler 退回 `cursor: items[0]!.ts`
     const { app } = await withShard(["evil-string", { ts: 5, level: "info", event: "good" }]);
     const { status, body } = await getEvents(app);
     expect(status).toBe(200);
@@ -584,7 +584,7 @@ describe("存储里的畸形事件条目：端点必须活着，且游标契约�
   /**
    * **handler 自己那道闸，单独钉一次。**
    *
-   * ⚠️ **这一格是变异验证逼出来的，成因如实登记**：M3（`cursor` 退回
+   * ⚠️ **这一格是变异验证逼出来的，成因如实登记**：那条变异（`cursor` 退回
    * `items[0]!.ts`）在**端到端**用例下 **ESCAPED** —— 因为经过 `narrowShard`
    * 之后 `items[0].ts` 必然已经是有限数字，两种写法在那些状态下**数学上等价**
    * （本仓登记的第 5 种假阳性：覆盖的状态让被测的选择不可观测）。
@@ -595,7 +595,7 @@ describe("存储里的畸形事件条目：端点必须活着，且游标契约�
    * `readEvents` 换掉，让 handler 收到一批畸形条目。跑的仍然是**真的**
    * `eventsHandler` 与真的路由，只替换了它下面那一层。
    *
-   * 换掉之后 M3 **CAUGHT**：`cursor` 变成 `undefined` ⇒ `c.json` 把字段整个丢掉。
+   * 换掉之后那条变异 **CAUGHT**：`cursor` 变成 `undefined` ⇒ `c.json` 把字段整个丢掉。
    */
   it("handler 自己保证 cursor 是 number 或 null —— 即便下层交上来的是畸形条目", async () => {
     const { app, storeLogger } = await makeApp();

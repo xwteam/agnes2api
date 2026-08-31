@@ -269,7 +269,7 @@ describe("GET /admin/api/usage 的查询参数契约", () => {
    * （`src/core/admin/usage-stats.ts` 的 `usageCandidateKeys` 上方那张四行实测表）。
    *
    * ⚠️⚠️ **两格里只有 `to=1e24` 那一格真的在验 `Number.isSafeInteger`，这条差别
-   * 必须写下来**（本任务变异 M7 实测：把判据换成 `Number.isInteger` 之后，
+   * 必须写下来**（本任务变异实测：把判据换成 `Number.isInteger` 之后，
    * **只有 `to 超出安全整数` 那一格变红**，`from 超出安全整数` 那一格照绿）——
    * 后者被 `from > to` 那道判据先接住了（`to` 缺省是 `now`，而 `1e24 > now`）。
    * ⇒ **别把 `from=1e24` 那一格当成这条性质的证据**，它证明的是另一件事。
@@ -343,7 +343,7 @@ describe("GET /admin/api/usage 的查询参数契约", () => {
    * **30 这个数手写死**，不写成 `USAGE_DAY_RETAIN`（第 6 种假阳性）。
    *
    * ⚠️ **它不是那个 `n < USAGE_DAY_RETAIN` 计数闸的护栏**——把那道闸删掉，本文件
-   * **整份全绿**（本任务变异 M15 实测）。那道闸今天走不到，理由算在
+   * **整份全绿**（本任务变异实测）。那道闸今天走不到，理由算在
    * `src/http/admin/handlers/usage.ts` 那个循环上方。**别把这两件事读成一件。**
    */
   it("要一整年的区间也只回 30 格 days —— 上界来自夹逼，不许随请求的区间涨", async () => {
@@ -441,7 +441,7 @@ describe("GET /admin/api/usage 的查询参数契约", () => {
     expect(off1.range.clamped, "30d 发成 30 天回退 ⇒ 每一次都被夹，那句警告就永久常驻").toBe(true);
     expect(off1.days.length, "被夹之后仍然只有 30 格 —— 多要的那一天根本拿不到").toBe(30);
     // ⚠️ **这一条守的不是「一律 true」——那件事由上面那个正向循环守着，
-    //    而且它先炸**（定向复评 N5 实测：把 `clamped` 改成恒真之后，
+    //    而且它先炸**（定向复评实测：把 `clamped` 改成恒真之后，
     //    先红的是同一格里 `24h：按契约发不该被夹` 那句，这一行**根本跑不到**）。
     //    它真正守的是**「差一天到底会不会撞上保留期起点」这件事取决于 N**：
     //    `30d` 差一天撞得上（`N = USAGE_DAY_RETAIN`），`7d` 差一天撞不上。
@@ -686,7 +686,7 @@ describe("八种状态在响应字段上分得开", () => {
    * ——**那句话是假的**，而两者的处置完全不同：
    * 前者「没人用这台网关」，后者「存储里的东西坏了，去查是谁写的」。
    *
-   * ⚠️⚠️ **立案理由订正（定向复评 N1）**：上一版这里写「它与 ③ 的响应体**逐字相同**」
+   * ⚠️⚠️ **立案理由订正（定向复评）**：上一版这里写「它与 ③ 的响应体**逐字相同**」
    * ——**那句是假的**。`malformed` 在评审之前就已经在响应体里，
    * ③ 是 `"malformed":0`、本格是 `"malformed":2`，**一直分得开**。
    * ⇒ **缺陷只有「`note` 撒谎」这一条，而它本来就够立案了。**
@@ -727,7 +727,7 @@ describe("八种状态在响应字段上分得开", () => {
   });
 
   /**
-   * ── ⑧ 定向复评 N2 抓出来的第八种状态 ────────────────────────────────────
+   * ── ⑧ 定向复评抓出来的第八种状态 ────────────────────────────────────────
    *
    * **一部分分片是好的、另一部分坏了 ⇒ 面板上那些数字是不完整的。**
    * 上一版这一档走的是 `note: null`，也就是**「一切正常」那一支**
@@ -774,7 +774,7 @@ describe("八种状态在响应字段上分得开", () => {
   });
 
   /**
-   * ── N6 的落点：被夹过**且**有畸形分片时，`note` 归谁 ──────────────────────
+   * ── 优先级那条的落点：被夹过**且**有畸形分片时，`note` 归谁 ───────────────
    *
    * `note` 只有一格，所以要定优先级。上一版把 `range_clamped` 排在畸形那两条**之前**，
    * 判据是「你要的窗口被缩小了更该先说」。⚠️ **那个顺序与档位差一天那件事叠起来
@@ -784,7 +784,7 @@ describe("八种状态在响应字段上分得开", () => {
    * 面板都只会说「这段时间早于保留期」。
    * ⇒ 判据换成**「谁需要人去查」**：畸形要人去查存储，被夹只是一句提示。
    *
-   * ⚠️ **这一格是那条优先级唯一的护栏，而它上一版不存在**（定向复评 N6 实测：
+   * ⚠️ **这一格是那条优先级唯一的护栏，而它上一版不存在**（定向复评实测：
    * 把顺序改回去 ⇒ **整份全绿、完整逃逸**）。成因是**没有任何一格同时摆出
    * 「被夹」与「有畸形分片」这两个状态** —— 第 5 种假阳性的标准形态：
    * 几条测试各自只覆盖单一状态，而在那些状态下两种优先级数学上等价。
@@ -840,7 +840,7 @@ describe("八种状态在响应字段上分得开", () => {
    * · 第一次：这一格断言 `size === 6` 时，**第七种（分片都在但全是畸形的）
    *   落在那六格之外**，评审抓到了它，而这一格当时全绿；
    * · 第二次：改成 `size === 7` 之后，**第八种（一部分分片畸形）又落在七格之外**，
-   *   定向复评 N2 抓到了它，这一格**又是全绿**。
+   *   定向复评抓到了它，这一格**又是全绿**。
    * ⇒ **一个「所有已知状态互不相同」的断言，对未知状态一言不发 —— 连续两轮都这样。**
    * 加一种状态的时候，**先在上面补一格，再把这里的期望数一起加**——
    * 光改这个数字不会让任何东西变红。
@@ -860,10 +860,10 @@ describe("八种状态在响应字段上分得开", () => {
    * `note` 相同，那时全靠这一格分。
    *
    * ⚠️⚠️ **它守的是「两两不同」，不是任何一种状态自己的形状 —— 这条边界是实测出来的**
-   *（本任务变异 M8：把 `parseRange` 里那道时钟有限性闸删掉）：删掉之后 `nowMs = NaN`
+   *（本任务变异：把 `parseRange` 里那道时钟有限性闸删掉）：删掉之后 `nowMs = NaN`
    * 会一路算出 `range: { from: null, to: null, clamped: true }` + `days: []`
    * + `note: "range_clamped"` ——**那仍然是一份与其余几种都不同的签名，所以这一格照绿**。
-   * **M8 实测红的是 2 格**（上一版这里写「红的是上面那格」，只数了一格，评审发现）：
+   * **那条变异实测红的是 2 格**（上一版这里写「红的是上面那格」，只数了一格，评审发现）：
    * 「⑤ 时钟给不出有限数字：range 与 days 一起是 null，note 是 clock_unavailable」
    * 与「USAGE_NOTES 里每一条 code 都真的被某一条端点产出过 ——……」。
    */
@@ -922,7 +922,7 @@ describe("八种状态在响应字段上分得开", () => {
       await seed(broken, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":"nope"}`);
       await sig("分片都在但全是畸形的", await g6.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));
 
-      // ⑧ 一部分分片畸形（定向复评 N2）。**一好一坏**，与 ⑦ 只差一个槽位。
+      // ⑧ 一部分分片畸形（定向复评）。**一好一坏**，与 ⑦ 只差一个槽位。
       const partial = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
       const g7 = await tier2On({ now: () => NOW, storage: partial });
       await seed(partial, DAY0, 0, shardJson(DAY0, { requests: 5 }));
@@ -1105,12 +1105,12 @@ describe("GET /admin/api/usage/:date（单日下钻）", () => {
    *
    * 两个方向都由这一格接住，**而第二个方向只对一半，写清楚**（本任务变异实测）：
    * · handler 在那三个 map 上调 `Object.prototype` 的方法（`.hasOwnProperty(k)` /
-   *   `.toString()`）⇒ **直接 `TypeError`** ⇒ 这条端点 500，本格红（变异 M11 ⇒ 多格红，含本格）；
+   *   `.toString()`）⇒ **直接 `TypeError`** ⇒ 这条端点 500，本格红（变异 ⇒ 多格红，含本格）；
    * · handler **逐键赋值**搬进普通 `{}`（`out[k] = m[k]`）⇒ `__proto__` 那一条
-   *   **彻底消失**，本格红（变异 M10' ⇒ **只有本格红**）。
+   *   **彻底消失**，本格红（逐键赋值那一版 ⇒ **只有本格红**）。
    * ⚠️ **但用展开搬（`{ ...m }`）不会坏，本格也抓不住**——展开走
    *   `CreateDataPropertyOrThrow`，绕过 `Object.prototype.__proto__` 那个访问器，
-   *   四个键一个不少（变异 M10 实测：**整份全绿，完整逃逸**）。
+   *   四个键一个不少（变异实测：**整份全绿，完整逃逸**）。
    *   那不是漏网，是**那个写法本来就不是缺陷**；记在这里免得下一个人拿它当反例
    *   去证明这一格没用。
    *
@@ -1309,14 +1309,14 @@ describe("note 是 code 不是句子", () => {
     await seed(broken, DAY0, 0, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
     cases.push(() => g4.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));
 
-    // ⑧ 一部分分片畸形（定向复评 N2）。**同理必须进这一组**。
+    // ⑧ 一部分分片畸形（定向复评）。**同理必须进这一组**。
     const partial = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
     const g5 = await tier2On({ now: () => NOW, storage: partial });
     await seed(partial, DAY0, 0, shardJson(DAY0, { requests: 5 }));
     await seed(partial, DAY0, 1, String.raw`{"shardId":"u2","day":20000,"total":[]}`);
     cases.push(() => g5.get(`/admin/api/usage?from=${NOW}&to=${NOW}`));
 
-    // **被夹 + 有畸形分片**（定向复评 N6）。**这一条是下面那两行双条件里
+    // **被夹 + 有畸形分片**（定向复评）。**这一条是下面那两行双条件里
     //「不带 `!clamped`」那一半唯一能被观测到的状态** —— 少了它，畸形族与
     // `range_clamped` 谁先谁后在数学上等价（第 5 种假阳性）。
     cases.push(() => g5.get(`/admin/api/usage?from=0&to=${NOW}`));
@@ -1333,7 +1333,7 @@ describe("note 是 code 不是句子", () => {
         .toBe(b.tier === "off");
       expect(b.note === "read_failed", `${label}：read_failed ⟺ tier2 开着而 days 是 null`)
         .toBe(b.tier === "tier2" && b.days === null && b.range !== null);
-      // ⚠️ **右半带着 `malformed === 0`，那是优先级订正的直接后果**（定向复评 N6）：
+      // ⚠️ **右半带着 `malformed === 0`，那是优先级订正的直接后果**（定向复评）：
       //    畸形族排在 `range_clamped` **之上**，所以「被夹了」不再蕴含
       //    `note === "range_clamped"`。上一版这里写的是干净的
       //    `⟺ range.clamped`，**改优先级时它当场变红** —— 那正是想要的。
@@ -1342,7 +1342,7 @@ describe("note 是 code 不是句子", () => {
       // ⚠️ 这两条的右半带着 `!clamped`，那是优先级 `range_clamped > all_malformed >
       //    no_shards` 的直接后果（判据写在 `usageHandler` 上方那张表底下）。
       //    优先级一改，这两条会当场红——那正是想要的。
-      // ⚠️ **畸形那两条的右半刻意**不带** `!clamped`**（定向复评 N6）：
+      // ⚠️ **畸形那两条的右半刻意**不带** `!clamped`**（定向复评）：
       //    它们的优先级在 `range_clamped` **之上**，所以被夹过也照样报它们。
       //    这两行与那条优先级是**同一件事的两种写法**，顺序一改这里就红。
       expect(b.note === "all_malformed", `${label}：all_malformed ⟺ 读成功了、shards 是 0、而 malformed 大于 0`)
@@ -1351,8 +1351,8 @@ describe("note 是 code 不是句子", () => {
         .toBe(b.days !== null && (b.shards ?? 0) > 0 && (b.malformed ?? 0) > 0);
       expect(b.note === "no_shards", `${label}：no_shards ⟺ 读成功了、shards 与 malformed 都是 0、且没被夹`)
         .toBe(b.days !== null && b.shards === 0 && b.malformed === 0 && !clamped);
-      // ⚠️⚠️ **`note === null` 也必须有判据 —— 少了这一行就是上一轮 N2 的逃逸口**
-      //    （定向复评 N2 的根因：五条 code 各有双条件，而「一切正常」那一支没有，
+      // ⚠️⚠️ **`note === null` 也必须有判据 —— 少了这一行就是上一轮那条发现的逃逸口**
+      //    （定向复评的根因：五条 code 各有双条件，而「一切正常」那一支没有，
       //    于是任何一种没被列出来的状态都能悄悄落进 `null` 而不被任何东西发现）。
       expect(b.note === null, `${label}：null ⟺ 读成功了、有好分片、没有畸形分片、且没被夹`)
         .toBe(b.days !== null && (b.shards ?? 0) > 0 && b.malformed === 0 && !clamped);

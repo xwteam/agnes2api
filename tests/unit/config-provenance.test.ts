@@ -26,7 +26,7 @@ async function withStored(stored: unknown, env: Record<string, string | undefine
 
 describe("四元组：env > 存储 > 内置默认值，逐字段说清是谁赢了", () => {
   /**
-   * **这一格是变异 M3（把来源推导写进 handler）的靶子。**
+   * **这一格是变异（把来源推导写进 handler）的靶子。**
    *
    * 三个字段各代表一种赢法，而且刻意**让存储与 env 给出不同的值**——两边同值的话
    * 「谁赢了」这件事整个不可观测（本仓第 1 种假阳性：夹具无冲突数据）。
@@ -66,11 +66,11 @@ describe("四元组：env > 存储 > 内置默认值，逐字段说清是谁赢�
    * **变红条件**：在 `loadConfig` 里补任何一条「顺手的」优先级判断。
    *
    * ⚠️⚠️ **夹具必须让 env 与存储在同一个字段上给出不同的值，这一行是本格判别力的
-   * 全部来源。** 变异 M3 第一次跑的时候**完整逃逸（14/14 全绿）**：当时夹具里
+   * 全部来源。** 变异第一次跑的时候**完整逃逸（14/14 全绿）**：当时夹具里
    * `maxStrikes` 只有存储那一份，env 没有 ⇒ 「按存储再判一次」这条第二实现是个
    * 空操作，两边照样逐字节相同。**那正是本项目第 1 种假阳性（夹具无冲突数据），
    * 而它出现在专门用来抓「有没有第二份实现」的那一格上。**
-   * 加上 `MAX_STRIKES: "9"`（存储里是 4）之后 M3 才真的变红。
+   * 加上 `MAX_STRIKES: "9"`（存储里是 4）之后那条变异才真的变红。
    */
   it("loadConfig 与 loadConfigWithProvenance 对同一组输入给出逐字节相同的 config", async () => {
     const { storage, env } = await withStored(
@@ -88,7 +88,7 @@ describe("四元组：env > 存储 > 内置默认值，逐字段说清是谁赢�
     expect(config.agnesBaseUrl).toBe("https://stored.example.com/v1");
     // **冲突数据的前置条件**：存储里是 4、env 里是 9，生效值必须是 9。
     // 这一行不成立的话，上面那条逐字节比对对「第二份实现」就完全不敏感。
-    expect(config.maxStrikes, "夹具里 env 与存储没冲突 —— 这一格对 M3 会完全无感").toBe(9);
+    expect(config.maxStrikes, "夹具里 env 与存储没冲突 —— 这一格对那条变异会完全无感").toBe(9);
   });
 
   /**
@@ -116,7 +116,7 @@ describe("四元组：env > 存储 > 内置默认值，逐字段说清是谁赢�
    * **判据是「这个键在 env 里存在」，不是「值合法」。**
    * `MAX_STRIKES=`（空串）会走进 `num()` 的 env 分支然后抛错——面板必须显示它是
    * 锁定的，否则用户会一直改存储、一直没效果。
-   * **变红条件**：把 `lockedBy` 的判据从「键存在」改成「值合法」（变异 M8）。
+   * **变红条件**：把 `lockedBy` 的判据从「键存在」改成「值合法」（变异实测）。
    */
   it("空串的环境变量也算锁定 —— 判据是键存在，不是值合法", async () => {
     const { storage, env } = await withStored(undefined, {
@@ -250,7 +250,7 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// F10：锁定表的防漂断言（分支矩阵的并集，不是单次调用）
+// 锁定表的防漂断言（分支矩阵的并集，不是单次调用）
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -266,7 +266,7 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
  * **变红条件**：① 给 `registrarFromEnv` 或 `creds()` 任一分支加一个新读取点而不进
  * 锁定表；② 把矩阵砍成一种配置（则 `creds()` 那 4 个名字漏出）。
  */
-describe("F10：registrarFromEnv 读到的 env 名字，全部进了锁定表", () => {
+describe("registrarFromEnv 读到的 env 名字，全部进了锁定表", () => {
   /** 用 Proxy 记下一次 `registrarFromEnv` 摸过哪些 env 键。**抛错也要把已访问的收下。** */
   function tracked(base: Record<string, string | undefined>): string[] {
     const seen = new Set<string>();

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { KvStorage } from "../../src/adapters/storage-kv.js";
 
 /**
- * **评审 F1**：`KvStorage.put()` 里"把 `expiresAt` 转成 KV 的 `expiration`"这一行
+ * **评审发现**：`KvStorage.put()` 里"把 `expiresAt` 转成 KV 的 `expiration`"这一行
  * 之前**零测试守护**——`tests/contract/storage.test.ts` 的
  * 「expiresAt 是合法的未来值：put 不抛错，且立刻可读」跑的是真实（miniflare 模拟
  * 的）KV，只验证了"合法调用不抛错、立刻可读"这个功能性结果，没有验证**我们的
@@ -39,7 +39,7 @@ function makeStorage(): { storage: KvStorage; spy: SpyKvNamespace } {
   return { storage, spy };
 }
 
-describe("KvStorage：expiresAt → KV 原生 expiration 的转换（评审 F1）", () => {
+describe("KvStorage：expiresAt → KV 原生 expiration 的转换（评审发现）", () => {
   it("不传 expiresAt 时，KV 侧不带任何过期 option（原有行为，永不过期）", async () => {
     const { storage, spy } = makeStorage();
     await storage.put("k", { v: 1 });

@@ -379,7 +379,7 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
   /**
    * **Node 入口的补池事件落库。**
    *
-   * ⚠️ **这一格是变异验证逼出来的，成因如实登记**：M7 的 Node 那一半
+   * ⚠️ **这一格是变异验证逼出来的，成因如实登记**：那条变异的 Node 那一半
    * （`src/entry/node.ts` 的 `finally` 里删掉 `await deps.flush()`）在补上这一格
    * **之前是 ESCAPED 的**——`tests/contract/registrar-events.test.ts` 的
    * 「一轮补池之后，event: 键空间里确实有 registrar.* 事件」只驱动
@@ -689,7 +689,7 @@ describe("轮级墙钟预算只装在有平台墙钟上限的那个入口上", (
   });
 });
 
-describe("M2 收尾日志要把 TendResult.failures 的归因打出来", () => {
+describe("收尾日志要把 TendResult.failures 的归因打出来", () => {
   // failures 此前从未被任何一处代码引用（全仓 grep 只命中 tender.ts 自身），
   // 于是「Agnes 加了人机校验」「备通道凭据没配」这类持续性故障在生产里唯一的
   // 信号就是一行 minted=0。两个入口必须给出同一份口径。

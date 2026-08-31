@@ -59,7 +59,7 @@ describe("协议目录", () => {
     ]);
   });
 
-  it("只有 openai 那条的 usagePath 是 null —— 它是四条里唯一不传 expectJson 的（订正 F1）", () => {
+  it("只有 openai 那条的 usagePath 是 null —— 它是四条里唯一不传 expectJson 的（订正）", () => {
     // 变红条件：给 openai 填上 usagePath: ["usage"]
     expect(PROTOCOLS.filter((p) => p.usagePath === null).map((p) => p.id)).toEqual(["openai"]);
   });

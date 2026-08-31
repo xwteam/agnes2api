@@ -258,9 +258,9 @@ describe("MoeMailProvider", () => {
     expect(await p.pollCode({ address: "u@a.test", handle: "eid-1" }, 5000)).toBe("246813");
   });
 
-  // === M3：轮询期间 fetch reject 与非 2xx 的容错必须对称（同 YYDS 适配器） ===
+  // === 轮询期间 fetch reject 与非 2xx 的容错必须对称（同 YYDS 适配器） ===
 
-  it("M3 轮询请求 reject（网络抖动/超时）后不中断，下一轮仍能取到验证码", async () => {
+  it("轮询请求 reject（网络抖动/超时）后不中断，下一轮仍能取到验证码", async () => {
     let attempts = 0;
     let t = 0;
     const fetcher = {
@@ -281,7 +281,7 @@ describe("MoeMailProvider", () => {
     expect(attempts).toBe(2);
   });
 
-  it("M3 全程 reject 时按超时返回 null，而不是把异常抛给调用方", async () => {
+  it("全程 reject 时按超时返回 null，而不是把异常抛给调用方", async () => {
     let t = 0;
     const fetcher = { async fetch(): Promise<Response> { throw new Error("ECONNRESET"); } };
     const p = new MoeMailProvider({

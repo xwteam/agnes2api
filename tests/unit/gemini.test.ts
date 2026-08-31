@@ -117,7 +117,7 @@ describe("toGeminiStream", () => {
    * 就是第一条**带正文**的 `candidates` 负载——断言只能落在「甲」上，
    * 落在 `message_start` 之类事件名上的话这一格恒绿。
    *
-   * **变红条件（实测，报告变异表 M1）**：`toSseStream` 改成 `start` 里整段
+   * **变红条件（实测，当时的变异表）**：`toSseStream` 改成 `start` 里整段
    * 缓冲后一次 enqueue。缓冲式实现要等生成器跑完，而上游卡在 `gate` 上永不
    * 结束 ⇒ 下面第一次 `read()` 永久挂起，这一格以超时红。
    */

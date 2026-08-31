@@ -11,7 +11,7 @@ import type { KeyRecord } from "../../src/core/types.js";
 
 /**
  * `POST /admin/api/keys/:id/verify` —— 单把 key 的验活，以及与通道连通性测试
- * **共用的**出站探测护栏（设计 §10.2 / §11 + 订正 D1 / F8）。
+ * **共用的**出站探测护栏（设计 §10.2 / §11 + 订正 D1）。
  *
  * **contract ⇒ node 与 workerd 各跑一遍**（`tests/global-setup.ts` 的 `POLICY` 强制）。
  *
@@ -140,7 +140,7 @@ describe("POST /admin/api/keys/:id/verify —— 验的是哪一把、打的是�
   });
 });
 
-describe("验活是只读探针：写零个存储字段（订正 F8）", () => {
+describe("验活是只读探针：写零个存储字段（订正）", () => {
   it("验活之后 storage 的 put / delete 计数都是 0 —— 失败记 strike 与成功清 strike 各自是一颗自毁按钮", async () => {
     const st = new CountingStorage(new MemoryStorage(undefined, () => NOW));
     // **上游回 401**：这是最想记 strike 的那一支，判别力全在这里。
@@ -161,14 +161,14 @@ describe("验活是只读探针：写零个存储字段（订正 F8）", () => {
 
     expect(
       { puts: st.puts - before.puts, deletes: st.deletes - before.deletes },
-      "验活写了存储 —— 它必须是只读探针（订正 F8）",
+      "验活写了存储 —— 它必须是只读探针（订正）",
     ).toEqual({ puts: 0, deletes: 0 });
     // **逐字段比一遍**：put 计数为 0 已经很强，但记录本身没变是它想守的那件事，
     // 直说比推导好（将来若出现一条不经 `storage.put` 的写路径，计数那条会漏）。
     expect(await st.get<KeyRecord>(KEY_PREFIX + id), "这把 key 的记录被验活改过").toEqual(recBefore);
   });
 
-  it("上游 2xx 也一样不写 —— 「成功清 strike」是 L4『重新导入即解封』后门换个入口复发", async () => {
+  it("上游 2xx 也一样不写 —— 「成功清 strike」是『重新导入即解封』后门换个入口复发", async () => {
     const st = new CountingStorage(new MemoryStorage(undefined, () => NOW));
     const { app, repo } = await makeApp(
       [{ status: 200, body: "{}" }], ["sk-verify-readonly-0002"], {}, () => NOW, { storage: st },
@@ -545,7 +545,7 @@ describe("出站探测护栏：与通道测试共用的那一套（全局约束 
   });
 
   /**
-   * ⚠️ **这两格是本任务变异实测补出来的，计划的变异表里没有**（M14a / M14b）。
+   * ⚠️ **这两格是本任务变异实测补出来的，计划的变异表里没有**（两条）。
    *
    * 把 `guard.release(kind)` 从 `finally` 挪到成功支的末尾——**上面所有格子照样全绿**。
    * 而那条改动的真实后果是：**一次探测失败之后，这颗按钮从此再也点不动**

@@ -114,7 +114,7 @@ export function runStorageContract(name: string, make: () => Storage) {
     });
 
     /**
-     * **评审 F4**：`src/ports/storage.ts` 的端口文档明写"过期之后 `get`/`list`
+     * **评审发现**：`src/ports/storage.ts` 的端口文档明写"过期之后 `get`/`list`
      * 都不再能看到它"——`list()` 那一半此前没有任何用例守护（删掉
      * `FileStorage.list()`/`MemoryStorage.list()` 里的过期过滤，`pnpm test` +
      * `pnpm test:workers` 全绿存活，已实测）。这里补上，与 `KvStorage` 分支同一条

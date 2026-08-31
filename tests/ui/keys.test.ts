@@ -186,7 +186,7 @@ describe("pagerState：两条早退分支都要复位", () => {
 });
 
 /**
- * **三处判据统一到 `itemsOf`**（评审 N4）：畸形响应（`items` 不是数组）以前一处当空列表、
+ * **三处判据统一到 `itemsOf`**（评审发现）：畸形响应（`items` 不是数组）以前一处当空列表、
  * 一处放行去建表，板块就会走到 `for (const v of data.items)` 抛异常。
  */
 describe("itemsOf：全模块唯一的「有没有条目」判据", () => {

@@ -27,7 +27,7 @@ const view = {
 };
 
 /**
- * **M1 的判别力全在这一组。**
+ * **那条变异的判别力全在这一组。**
  *
  * ⚠️ **变异点**：`isDeletable` 判据只看 `evicted`（即 `return view.evicted === true`）。
  * 夹具必须给 `{disabled:true,evicted:false}` 与 `{disabled:false,evicted:true}`
@@ -127,7 +127,7 @@ describe("canClearStrikes：只在确实有连续失败计数时才有意义", (
 });
 
 /**
- * **M2 的判别力全在这一组。**
+ * **另一条变异的判别力全在这一组。**
  *
  * ⚠️ **变异点**：把「全选」改成选中全部筛选结果（例如凭空构造出超出 `items`
  * 长度的一批 id）。`selectAllIds` 的入参就是唯一的信任边界——它没有办法访问
@@ -744,7 +744,7 @@ describe("verifyResultLabelKey：code → 文案 key（十二条逐条对，外�
    * `scripts/check-i18n.mjs` 的第 ① 条与
    * `tests/unit/i18n-dict.test.ts`「板块里当参数传的 i18n key（elI18n / labelKey 这类）同样必须在字典里」
    * 那两条扫描**同时隐身**。
-   * ⚠️ **后果不是「全绿」了**（复评 F1；上一版这里写的是
+   * ⚠️ **后果不是「全绿」了**（复评发现；上一版这里写的是
    *「拼错一个字母，面板显示裸 key、三道 i18n 门禁全绿」）：第 ④ 条已升成硬错
    * ⇒ 拼的话这十二个**正在用**的 key 落进「未被引用」、CI 当场红，
    * 而顺着报文去「清理未被引用的 key」删掉的就是活文案。
@@ -826,7 +826,7 @@ describe("源码级对表：后端可能产出的顶层 reason ⊆ 前端映射�
    * 当成一条真实的产出。去注释用的是 `tests/helpers/strip-comments.ts` 那**一份**
    * 逐字符实现（正则版会把字符串里的 `/*` 当块注释开头，本仓踩过）。
    *
-   * **还有一条边界，方向是安全的那一侧**（复评 L6）：去注释之后**字符串字面量还在**，
+   * **还有一条边界，方向是安全的那一侧**（复评发现）：去注释之后**字符串字面量还在**，
    * 所以一句 `const msg = "reason: xxx";` 会被当成一处产出而误报。
    * 那是**假红不是假绿**——有人来看一眼就能判掉，代价远小于为它放宽判据。
    */
@@ -1127,7 +1127,7 @@ describe("管理接口错误码 → 面板文案", () => {
     // 上面那些行为断言全绿而屏幕上照旧漏中文（第一版的破口就是这个形状）。
     // ⚠️ **它是源码文本门禁，得猜缺陷长成什么语法形态**（`tests/helpers/fake-dom.ts` 文件头
     // 逐字反对只靠这一种）。真正走一遍渲染的那一格在
-    // `tests/ui/dom/keys-actions.test.ts`「复评 F2：ja 面板上写失败画的是日文那句 —— 不是中文原话，也不是裸占位符」。
+    // `tests/ui/dom/keys-actions.test.ts`「复评发现：ja 面板上写失败画的是日文那句 —— 不是中文原话，也不是裸占位符」。
     const src = stripComments(readFileSync("admin-ui/js/sec-keys.js", "utf8"));
     expect(src).toContain("adminErrorText(adminErrorFields(e), t, \"keys.writeFailed\")");
     // 反向控制：同一份源码里确实还有别的 `t(` 调用 —— 上一格不是在一份空文本上比对。
@@ -1135,10 +1135,10 @@ describe("管理接口错误码 → 面板文案", () => {
   });
 
   /**
-   * **「全面板只有一处会碰到后端 `message`」这句话的牙**（复评 F4）。
+   * **「全面板只有一处会碰到后端 `message`」这句话的牙**（复评发现）。
    *
    * ⚠️⚠️ 上一版这句射程声明只是**散文**：新守卫只扫 `sec-keys.js` 一个文件。
-   * 复评实测（N10）把 `admin-ui/js/sec-registrar.js:137` 的 `t("reg.channel.testError")`
+   * 复评实测把 `admin-ui/js/sec-registrar.js:137` 的 `t("reg.channel.testError")`
    * 改成回落显示 `e.message` ⇒ **`tests/ui` + `tests/unit` 92 文件 2547 条全绿**，
    * 而那条路上后端给的正是「注册机未启用……」这种**无 code 的中文**
    * ——本任务刚关掉的破口，在隔壁板块里零阻力重开。
@@ -1178,7 +1178,7 @@ describe("管理接口错误码 → 面板文案", () => {
   });
 
   /**
-   * **`tFor()` 是 `admin-ui/js/i18n.js` 里 `t()` 的手抄副本**（复评 F5）。
+   * **`tFor()` 是 `admin-ui/js/i18n.js` 里 `t()` 的手抄副本**（复评发现）。
    *
    * 上面那十格全部经它取词，而真源 `t()` 的插值 / 回落语义改一个字它不跟 ⇒
    * 十格照样绿而屏幕会变。这里把两者**对拍**：真 `t()` 在 node 里绑到 `zh-CN`

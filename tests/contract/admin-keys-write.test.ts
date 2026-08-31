@@ -16,7 +16,7 @@ import {
  * `tests/contract`）。
  *
  * 本文件的三条主线，每一条都对应一个**今天没有任何其它自动化守着**的性质：
- *   · **L4**：重复导入不许静默重置状态（「重新导入即解封」是个后门）；
+ *   · **重复导入**：不许静默重置状态（「重新导入即解封」是个后门）；
  *   · **`note` 的写消除**：一次「只改备注」的写会被整个丢掉，而
  *     `tests/unit/pool-cache.test.ts` 的
  *     「MAY_ELIDE 的每个字段变化都被消除——这才是写消除的全部收益」
@@ -117,12 +117,12 @@ describe("POST /admin/api/keys（批量导入）", () => {
     expect(st.puts - base.puts, "20 条记录 + 1 次索引；循环调 add() 会是 40 次").toBe(21);
     expect(st.lists - base.lists, "导入路径出现了 list()——它与转发共用同一个每天 1,000 次的桶").toBe(0);
     // 读侧同样如实钉住：1 次索引读 + 每把 key 一次「这个 id 在不在」的存在性探测。
-    // 那 20 次读正是 L4 的判据（见下面「索引缺失时」那一格），不是可以省掉的开销。
+    // 那 20 次读正是那个后门的判据（见下面「索引缺失时」那一格），不是可以省掉的开销。
     expect(st.gets - base.gets, "1 次索引 + 20 次存在性探测").toBe(21);
   });
 
   /**
-   * ── L4 本体 ────────────────────────────────────────────────────────────
+   * ── 那个后门本体 ───────────────────────────────────────────────────────
    *
    * `keyId` 是内容哈希，同一把 key 恒得同一个 id。重复粘贴若走覆盖，
    * `strikes` / `cooldownUntil` / `evicted` 会被一次性清零而**没有任何提示**
@@ -153,7 +153,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
     const v = await viewOf(app, r!.id);
     expect(
       { strikes: v.strikes, cooldownUntil: v.cooldownUntil, bucket: v.bucket, reason: v.evictedReason },
-      "重复导入把状态洗掉了 —— 这正是 L4 那个后门",
+      "重复导入把状态洗掉了 —— 这正是那个后门",
     ).toEqual({ strikes: 7, cooldownUntil: NOW + 50_000, bucket: "evicted", reason: "upstream 401" });
 
     // 重复项**一次盘都不落**：记录不写（跳过），索引集合没变（`sameIdSet` 短路）。
@@ -164,7 +164,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
    * **重复判定建在「记录在不在」上，不建在索引上。**
    *
    * 拿索引当判据的话，索引缺失/损坏时已知集合是空的 ⇒ **整池每一把都被当成新 key
-   * 覆盖一遍** ⇒ L4 那个后门从另一扇门原样回来。而索引读不出来恰恰是写桶被打穿
+   * 覆盖一遍** ⇒ 那个后门从另一扇门原样回来。而索引读不出来恰恰是写桶被打穿
    * 时的常态（`pool:index` 一直建不起来），也就是最可能有人去重新导入的时刻。
    */
   it("索引缺失时重复项照样被认出来 —— 判据是记录在不在，不是索引说什么", async () => {
@@ -256,7 +256,7 @@ describe("POST /admin/api/keys（批量导入）", () => {
   });
 
   /**
-   * **`resetExisting` 不许动 `stats`，这是「重新导入即解封」那个后门（L4）的收口结论
+   * **`resetExisting` 不许动 `stats`，这是「重新导入即解封」那个后门的收口结论
    * 在计数这一侧的另一半。**
    *
    * `src/core/keypool-repo.ts` 里 `resetExisting` 上方逐字写着「`stats`——用量是历史，
@@ -533,7 +533,7 @@ describe("DELETE /admin/api/keys/:id", () => {
     // 那句话会在零信号下变假。
     // ⚠️ 这里原来只数 `disabled` 与 `clearStats` 两支，文档那半句却写着「六个动作同价」
     // ——一个手抄自 `PATCH_FIELDS` 今天长度的数，表长一格它就成假话而没有任何东西会红
-    //（复评 H2）。现在数的是 `PATCH_FIELDS` 本身，**表长一格这一格当场红**。
+    //（复评发现）。现在数的是 `PATCH_FIELDS` 本身，**表长一格这一格当场红**。
     const SAMPLE: Record<string, unknown> = {
       disabled: true, note: "配额账要数的那条备注", clearCooldown: true,
       clearStrikes: true, unevict: true, clearStats: true,
@@ -792,7 +792,7 @@ describe("PATCH /admin/api/keys/:id", () => {
    * 只断言 `stats` 归零的话，一个把整条记录覆盖成新建态的实现照样满足它，
    * 而那样会顺手抹掉 `resetExisting` 明列刻意不动的那四样
    * （`disabled` / `addedAt` / `stats` / `note`）——那正是「重新导入即解封」
-   * 那个后门（L4）的收口结论。所以这一格拿**整条记录**做等值比对：
+   * 那个后门的收口结论。所以这一格拿**整条记录**做等值比对：
    * 除 `stats` 之外任何一个字段被动了，它当场红并把那个字段指出来。
    *
    * 夹具让每个字段各取一个**非默认**值：全是默认值时，「整条记录被重建」与
@@ -928,7 +928,7 @@ describe("PATCH /admin/api/keys/:id", () => {
   });
 
   /**
-   * **④ 「那个实例不会再把旧值顶回去」那半句的真实射程（复评 H1 实测订正）。**
+   * **④ 「那个实例不会再把旧值顶回去」那半句的真实射程（复评实测订正）。**
    *
    * 改话之前五份 DEPLOY.md 与本文件对应的 handler 注释都写着「所以**那个实例**不会
    * 再把旧值顶回去」。**那是一句假话**：`dispatch` 开头 `repo.all()` 交出的是
@@ -939,7 +939,7 @@ describe("PATCH /admin/api/keys/:id", () => {
    * 屏幕上那个 0 会在一个请求的时间里自己跳回去，**与「别的实例」无关，同一个进程内就够**。
    *
    * ⚠️ **这一格钉的是今天真实的行为，不是它「应该」的样子。** 它没有被修：要修得在 repo
-   * 里给「刚重置过」立一个不吸收 `seen` 的标记，而 `trackBaseline` 的 N1 恰恰靠吸收
+   * 里给「刚重置过」立一个不吸收 `seen` 的标记，而 `trackBaseline` 恰恰靠吸收
    * `seen` 才不会把别的 isolate 写得更高的计数压回去——同一个旋钮的两个方向。
    * 这条代价现在五份 DEPLOY.md、handler 注释、设计文档三处逐份写着，
    * **哪天有人真把它修好了，这一格会红**——那时候要改的是这一格与那三处文字，别删了了事。
@@ -1009,7 +1009,7 @@ describe("PATCH /admin/api/keys/:id", () => {
   });
 
   /**
-   * **⑥ 屏幕上那两处「请求数」会当场对不上，这一格把那件事钉下来（复评 L5）。**
+   * **⑥ 屏幕上那两处「请求数」会当场对不上，这一格把那件事钉下来（复评发现）。**
    *
    * `clearStats` 清的是 `KeyRecord.stats`，而概览页的 Tier-1 池级聚合就是
    * `sumStats(records.map((r) => r.stats))`（`src/http/admin/handlers/overview.ts`）
@@ -1282,9 +1282,9 @@ describe("写端点的错误体：码在闭集里，message 仍在", () => {
   /**
    * **一条码一次真 HTTP，以码为键，闭集里一条都不许缺。**
    *
-   * ⚠️⚠️ **复评 F1 订正的就是这张表。** 上一版是一张手写的六条路径表，而用例名
+   * ⚠️⚠️ **复评订正的就是这张表。** 上一版是一张手写的六条路径表，而用例名
    * 与 `src/core/admin/admin-errors.ts` 的两处注释写的是「**每条**错误响应……」
-   * ——那两句全称句当时只对 6/16 成立。实测（复评 N8 / N9）：
+   * ——那两句全称句当时只对 6/16 成立。实测（复评发现）：
    * `handlers/keys-write.ts:77` 去掉 `{ field: name }`、`:381` 去掉
    * `{ max: MAX_IMPORT_KEYS }`，**全量 node 套件 EXIT=0**，而 ja 面板上画的是
    * `項目 {field} は…` 与 `1 回のバッチ操作は最大 {max} 件です` 两个裸占位符
@@ -1364,7 +1364,7 @@ describe("写端点的错误体：码在闭集里，message 仍在", () => {
     const failures = await allFailures();
     expect(
       Object.keys(failures).sort(),
-      "有码没有配一次真请求 —— 那条码一侧都没有（N8/N9 就是这么逃掉的）",
+      "有码没有配一次真请求 —— 那条码一侧都没有（那两条就是这么逃掉的）",
     ).toEqual([...ADMIN_ERROR_CODES].sort());
     for (const [name, f] of Object.entries(failures)) {
       expect(f.error.code, `${name} 没有 error.code —— 面板只能回去解析中文`).toBeDefined();
@@ -1374,7 +1374,7 @@ describe("写端点的错误体：码在闭集里，message 仍在", () => {
   });
 
   it("每条路径打出的正是它那一条码 —— 否则这一族码只是换个地方说「出错了」", async () => {
-    // **这一格比「各个码互不相同」更强**：全部退化成同一个兜底值会红（复评 M2），
+    // **这一格比「各个码互不相同」更强**：全部退化成同一个兜底值会红（复评发现），
     // 而「两条码互换」这种保持互异的错法也会红。
     const failures = await allFailures();
     for (const code of ADMIN_ERROR_CODES) {
@@ -1420,7 +1420,7 @@ describe("写端点的错误体：码在闭集里，message 仍在", () => {
   });
 
   /**
-   * **`params` 里放什么、不放什么**（复评 F3）。
+   * **`params` 里放什么、不放什么**（复评发现）。
    *
    * ⚠️⚠️ 上一版 `src/http/admin/errors.ts` 在这一格上写的是「`params` 只放数字与短标识，
    * **永不放用户输入**」——**那句话是假的，而且零测法**：`rejectUnknown()` 把调用方送来的

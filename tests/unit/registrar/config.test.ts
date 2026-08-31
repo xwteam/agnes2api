@@ -41,7 +41,7 @@ describe("registrarFromEnv", () => {
     )).toThrow(/MOEMAIL/);
   });
 
-  it("M5 yyds 作**备**通道时 YYDS_API_KEY 同样必填（不是「主通道才要」）", () => {
+  it("yyds 作**备**通道时 YYDS_API_KEY 同样必填（不是「主通道才要」）", () => {
     // 与上一条镜像：上一条只覆盖了 moemail 作备通道，yyds 那一半零覆盖，而
     // .env.example 的错误注释（「主通道启用时必填」）正是把用户往这个配置上引——
     // 结果 Node 进程 process.exit(1)、Worker 全部请求 500，整个网关的转发能力被
@@ -56,7 +56,7 @@ describe("registrarFromEnv", () => {
     )).toThrow(/YYDS_API_KEY/);
   });
 
-  it("M5 .env.example 的凭据注释按「主通道或备通道任一」措辞，两条通道对称", () => {
+  it(".env.example 的凭据注释按「主通道或备通道任一」措辞，两条通道对称", () => {
     // .env.example 是用户复制来改的那份文件，它的措辞就是这条约束对外的唯一说明；
     // 上面那条断言的是代码行为，这条断言的是文档不与代码矛盾。
     const env = readFileSync(".env.example", "utf8");
@@ -191,7 +191,7 @@ describe("registrarFromEnv", () => {
   });
 
   it("配了备通道时单轮最坏耗时按两条通道算（code_timeout 会降级重试一次）", () => {
-    // M1 之后 code_timeout 属于通道级失败，配了备通道时同一个补池名额最坏要等
+    // 后来 code_timeout 属于通道级失败，配了备通道时同一个补池名额最坏要等
     // 两次 CODE_TIMEOUT_MS。墙钟模型跟着变，这条告警的阈值必须同步，否则用户按
     // 「没告警＝安全」调参会直接撞上轮次重叠。
     const logger = recordingLogger();

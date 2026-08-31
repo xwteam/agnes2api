@@ -371,7 +371,7 @@ describe("buildApp 对管理端的接线", () => {
 /**
  * 「记账失败」与「请求失败」是两回事。
  *
- * M1（写回前确认记录还在）给 save() 加了一次 storage.get，写路径的失败面因此从
+ * 那条发现（写回前确认记录还在）给 save() 加了一次 storage.get，写路径的失败面因此从
  * 「1 次 put」变成「1 次 get + 1 次 put」。而 dispatch 的成功分支是
  * `await commit(...)` 紧接着 `return done(...)`——commit 抛错会一路冒到
  * app.onError，**把一次已经成功的上游转发变成 500**，客户端拿不到那份它本该

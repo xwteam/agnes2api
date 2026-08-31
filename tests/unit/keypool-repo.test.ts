@@ -667,7 +667,7 @@ describe("一次瞬时 list 失败不许粘住十分钟", () => {
     st.listFails = false;
     t += LIST_FAIL_FAST_RETRY_MS;                          // 只等快重试窗口
     // 不再抛，且真的重新 list 了一次——两条都要断言：只断言「不抛」的话，
-    // 「退避窗口内返回空数组」这种实现也能过（那正是 M2 要修掉的伪装）。
+    // 「退避窗口内返回空数组」这种实现也能过（那正是当初要修掉的伪装）。
     expect(await repo.all()).toEqual([]);
     expect(st.lists, "快重试窗口过后必须真的重试 list").toBe(afterFirst + 1);
   });

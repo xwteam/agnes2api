@@ -60,7 +60,7 @@ function hanLiterals(file: string): string[] {
  *   ⇒ 「新增任何一条会进错误响应体的中文串都会红」是**假的**，别这么写；
  *   真话是「新增任何一条 `message:` 或那三个构造函数实参位上的中文串会红」。
  * · ⚠️ 它数的是**落点条数**，所以「原地把某条 message 改成另一句中文」永远绿
- *   （与实施报告里那条 M1' 同源）。这道扫描守的是**面不许增长**，不是措辞。
+ *   （与实施报告里那条同源）。这道扫描守的是**面不许增长**，不是措辞。
  */
 function messageSites(root: string): string[] {
   const out: string[] = [];

@@ -113,7 +113,7 @@ describe("CI 的测试命令不带文件过滤器（收集门禁分档的前提�
 });
 
 /**
- * **评审 F3 新增的那道门禁**（`scripts/check-no-binary.mjs`）：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/`
+ * **评审发现新增的那道门禁**（`scripts/check-no-binary.mjs`）：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/`
  * 下不许存在被 git 判为二进制的跟踪文件，理由与起因见
  * `scripts/check-no-binary.mjs` 文件头。这里只钉"CI 里确实跑了这一步"（与下面
  * "pnpm build 在门禁列表里"那条同一个模式），脚本自身的正确性由
@@ -317,7 +317,7 @@ it("CI 恰好十三道门，编号 1/13 到 13/13 各出现一次", () => {
     const n = ci.split(`name: ${i}/13 `).length - 1;
     expect(n, `编号 ${i}/13 出现了 ${n} 次`).toBe(1);
   }
-  // 反向：不许还剩下旧编号（评审 F3 从十道扩到十一道；评审发现 B2 又插入
+  // 反向：不许还剩下旧编号（评审发现从十道扩到十一道；评审发现 B2 又插入
   // check-comment-refs 又插了一步进去，原来的 8/11..11/11 全部跟着挪一位；
   // 后来给 docs/logo.png 配的那道 PNG 结构审计插在第二位，2/12..12/12 又挪了一位）。
   for (const stale of [10, 11, 12]) {

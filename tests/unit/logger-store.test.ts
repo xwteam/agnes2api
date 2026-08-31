@@ -318,7 +318,7 @@ describe("StoreLogger", () => {
     expect(logger.status()).toEqual({ shardId: "s1", buffered: 0, dropped: 0, budgetExhausted: false });
   });
 
-  it("status() 带着 shardId（评审 M2：面板据此说清『本 isolate』说的是哪一个）", () => {
+  it("status() 带着 shardId（评审发现：面板据此说清『本 isolate』说的是哪一个）", () => {
     const logger = new StoreLogger({
       storage: new MemoryStorage(), now: () => 0, shardId: "distinctive-shard-id", onError: () => {},
     });
@@ -354,7 +354,7 @@ describe("StoreLogger", () => {
      * 修复前实测：`stored=["a","b","c",{…}] | errs=0 | dropped=0` ——**不抛、不报、
      * 不留痕**，而 `"a".ts` 是 `undefined`，**正是让读侧游标冻住的那一种条目**。
      * 一个标量进来，出去的是三份 Critical 的燃料。
-     * 变红条件（M2 的一半）：写侧 `narrowShard` 退回 `?? []`。
+     * 变红条件（一半）：写侧 `narrowShard` 退回 `?? []`。
      */
     it("分片值是字符串：落回存储的数组里不许出现非对象元素", async () => {
       const { stored, errs } = await flushOnto("abc");
@@ -375,7 +375,7 @@ describe("StoreLogger", () => {
      * ⇒ `NaN > 0` 是 `false` ⇒ 面板黄条永远不亮；`c.json` 又把 `NaN` 序列化成
      * `null` ⇒ 面板读到"没有数据"。
      * **⇒ 事件缺口是一小时的（键每小时换一把），而"面板说不出自己缺了东西"是终生的。**
-     * 变红条件（M2 的另一半）：写侧 `narrowShard` 退回 `?? []`。
+     * 变红条件（另一半）：写侧 `narrowShard` 退回 `?? []`。
      */
     it.each([["数字", 12345], ["对象", { a: 1 }], ["布尔", true]] as const)(
       "分片值是%s：这一批事件照样落得进去，且 status().dropped 恒为有限数（不是 NaN）",

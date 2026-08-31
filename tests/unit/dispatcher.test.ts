@@ -178,7 +178,7 @@ describe("dispatch", () => {
     expect(k1.cooldownReason).toBe("timeout");
   });
 
-  // M3：网络全失败时 key 本身还没冷却也没被剔除，报 all_cooling 是自相矛盾的
+  // 网络全失败时 key 本身还没冷却也没被剔除，报 all_cooling 是自相矛盾的
   // （message 写「全部 key 均已尝试且失败」，reason 却暗示「在冷却，会自愈」）。
   it("所有 key 都抛网络错误时报 upstream_error，而不是 all_cooling", async () => {
     const repo = await makeRepo(["k1", "k2"]);
@@ -244,7 +244,7 @@ describe("dispatch", () => {
     expect(await after.json()).toEqual({ ok: true });
   });
 
-  // ── M3：reason 必须区分「会自愈」与「不会自愈」 ─────────────────────────
+  // ── reason 必须区分「会自愈」与「不会自愈」 ─────────────────────────────
 
   it("全池因 strike 冷却时报 all_cooling 并给出 Retry-After", async () => {
     const repo = await makeRepo(["k1"]);

@@ -13,7 +13,7 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  * · **(a) 社区文件在不在——而「有哪几份」这件事本身从磁盘现算**：
  *   `CONTRIBUTING.md`、`SECURITY.md`、`.github/pull_request_template.md` 这三份的位置
  *   由 GitHub 定死；issue 模板那一档取 `.github/ISSUE_TEMPLATE/` 下的**全量**，不写死清单。
- *   ⚠️ **复评 F2 就栽在这儿**：上一版把五份社区文件写成一张冻结的字面量表，于是往
+ *   ⚠️ **复评就栽在这儿**：上一版把五份社区文件写成一张冻结的字面量表，于是往
  *   `.github/ISSUE_TEMPLATE/` 里新加第六份模板（那正是本仓最会长文件的目录）、里面
  *   死链 / 查无此处的仓内路径 / 不存在的 `pnpm` 命令三种错一起犯——**二十余格全绿**。
  *   现在射程从磁盘长出来，并另配一条「表 == 磁盘」断言逼新文件回来表态；那条断言的
@@ -31,16 +31,16 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  * · **(d) node 大版本在所有钉它的地方彼此相等**：`Dockerfile` 的 `FROM node:<大版本>-…`、
  *   `.github/workflows/` 下**每一份** yml 里的每一处 `node-version:`、`package.json` 的
  *   `engines.node`。
- *   ⚠️ **处数不写进这段话**（复评 F9：上一版写「三处」，而报文实际摆出来的是六个取值，
+ *   ⚠️ **处数不写进这段话**（复评发现：上一版写「三处」，而报文实际摆出来的是六个取值，
  *   且随 workflow 数量增长）——要处数就去看报文，它把每一处逐个摆出来。
  *   ⚠️ 判据是**这些取值彼此相等**，不是「有没有 `engines` 字段」——后者填个 `>=1` 也能绿。
  * · **(e) tracked 的 `*.md` 与 `*.sh` 里对工作账本 `.superpowers` 的引用必须自带溯源限定**。
  *   ⚠️ **判据不是「不许引用」**：那些引用是真实的溯源记录，删掉等于抹掉出处。
  *   判据是「引用它的文件必须自己说清读者打不开」——把一条死链变成一条诚实的标注。
  *   该目录被 `.gitignore` 排除（`git ls-files .superpowers` = 0），公开仓读者点不开它。
- *   ⚠️ **`.sh` 那一半是复评 F5 补的**，理由写在 `trackedProse()` 上：
+ *   ⚠️ **`.sh` 那一半是复评补的**，理由写在 `trackedProse()` 上：
  *   `.md` 与 `.ts/.js/.mjs` 两侧各有门禁，`.sh` 正好漏在中间，于是同一个问题被原样搬了进去。
- *   ⚠️ 限定串是一个**候选集**（中英各一版），且报文把候选逐条摆出来。复评 F5 实测出
+ *   ⚠️ 限定串是一个**候选集**（中英各一版），且报文把候选逐条摆出来。复评实测出
  *   上一版的两个毛病：文档里明明写了「读者打不开它」，报文却断言「却没说读者打不开」；
  *   而真正要求的那个字面串在报文里一次都没出现，且只认中文——英文文档要变绿只能塞中文。
  *
@@ -53,7 +53,7 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  *   `package.json` 的 `repository` 一致、`blob/main/` 之后那段必须在仓里真的存在；
  *   反过来，这几份文件里**一条跨文件的相对链接都不许剩**（「一律」这两个字的另一半，
  *   只查绝对链接对不对是挡不住有人再加一条相对的）。
- *   ⚠️ 理由是复评 F6：这三份模板的正文**不只在仓库文件视图里被渲染**，它会被整段塞进
+ *   ⚠️ 理由是复评发现：这三份模板的正文**不只在仓库文件视图里被渲染**，它会被整段塞进
  *   issue / PR 的正文，而那里的相对链接由浏览器按 issue / PR 的 URL 解析
  *  （`.github/ISSUE_TEMPLATE/` 下的 `../../SECURITY.md` 会落到 `/<owner>/SECURITY.md`）
  *   ⇒ **格子全绿而屏幕上是死链**，与「就地更新够不着盒子外的节点」同一族。
@@ -80,7 +80,7 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  * 每条判据都写成 `(read, exists, list) => 失败报文[]` 的纯函数，真扫描传真 fs，反向控制传
  * 打过补丁的 `read` / `exists` / `list`。**没有第二份判据**，所以「探针绿了而真扫描是另一套
  * 逻辑」这种事在这里不成立。
- * ⚠️ `list`（目录列举）是复评 F10 补的第三个注入点：上一版 (g) 直接调真 `existsSync` /
+ * ⚠️ `list`（目录列举）是复评补的第三个注入点：上一版 (g) 直接调真 `existsSync` /
  * `readFileSync` 去读被引文件，绕开了文件头自己声明的唯一注入点，于是「被引文件改名或被删」
  * 那一侧没法用同一套注入做反向控制。
  * 每一格反向控制在变异之前先跑一遍**基**：基本身就红的话，报文会直说「先去看真扫描那一格」，
@@ -89,7 +89,7 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  * ── 它做不到什么（明写，别读成「门面从此都是真的」）────────────────────────────
  * · (a) 只查**上报路径这句话在不在**，不查那条路径今天通不通——GitHub 侧把 Security
  *   Advisory 关掉了，这里一个字都不会吭。**推仓当天必须人手确认那个开关**，
- *   已登记在 Task 34A Step 6 的 L7。
+ *   已登记在 Task 34A Step 6。
  * · (b) 是**子串匹配的黑名单**，不是语义判断：换一句没在 `SOFT` 表里的措辞
  *   （“battle-tested”、“无需担心”）照样能把同一个意思写进去，它看不见。
  *   这条边界没有护栏，登记为已知盲点。
@@ -108,7 +108,7 @@ import { SESSION_MAX_AGE_MS, sessionExpired } from "../../admin-ui/js/pure/sessi
  *   （`pnpm/action-setup`、`actions/setup-node` 就长这样）。收了就会把外部名字判成死链。
  *   代价是同样形态的假仓内路径也跟着漏掉，这条边界由下面「不乱红」那一格钉着**今天的行为**。
  * · (f2) 只查**绝对链接的形态与落点**，**不查 GitHub 那一面到底怎么渲染**——本机验不到，
- *   推仓当天仍须在真 issue / PR 页面上人手点一次，已登记在 Task 34A Step 6 的 L8。
+ *   推仓当天仍须在真 issue / PR 页面上人手点一次，已登记在 Task 34A Step 6。
  *   它也不查 `main` 这个分支名今天存不存在于远端。
  * · (g) 只查**被引的那段文字今天还在**，不查那条用例真的守着社区文件声称的那件事——
  *   一条改成 `expect(1).toBe(1)` 的用例，标题不动的话这里照样绿。
@@ -217,7 +217,7 @@ function communityFailures(exists: Exists, read: Read, list: List): string[] {
 
 /**
  * 社区文件里今天读得到的那几份、读不到的那几份。
- * ⚠️ **缺文件不许让别的格子抛裸 `ENOENT`**（复评 F11 实测：真删 `SECURITY.md` 之后 18 格红，
+ * ⚠️ **缺文件不许让别的格子抛裸 `ENOENT`**（复评实测：真删 `SECURITY.md` 之后 18 格红，
  * 只有 (a) 给了人话，其余抛 `ENOENT: no such file or directory`）——文件不存在这件事已经由
  * (a) 逐份点名了，别的格子再抛一次只会把人从「谁缺了」引到「哪行代码炸了」。
  */
@@ -314,7 +314,7 @@ const LEDGER = ".superpowers";
 
 /**
  * 溯源限定的**候选集**，任一出现即算数。
- * ⚠️ **中英各留一版是复评 F5 的处置**：`CONTRIBUTING.md` / 根 `README.md` / `docs/en/**` 都是
+ * ⚠️ **中英各留一版是复评发现的处置**：`CONTRIBUTING.md` / 根 `README.md` / `docs/en/**` 都是
  * 英文文档，只认中文串的话，它们哪天要合法引用工作账本，**只能塞一句中文**才能变绿。
  * 英文那一版今天没有消费者，但它不是摆设：下面「(e) 英文候选也算数」那一格用真形态验它。
  */
@@ -331,13 +331,13 @@ const NOTES: readonly string[] = ["不随仓库推送", "not pushed to the publi
  */
 const SELF_REFERRER = "scripts/prepush.sh";
 
-/** 报文里把候选逐条摆出来——复评 F5：真正的要求在上一版报文里一次都没出现过。 */
+/** 报文里把候选逐条摆出来——复评发现：真正的要求在上一版报文里一次都没出现过。 */
 const notesHint = () => NOTES.map((n) => `「${n}」`).join(" 或 ");
 
 /**
  * 射程 = tracked 的 `*.md` **与 `*.sh`**。
  *
- * ⚠️ **`.sh` 那一半是复评 F5 补的**：那一轮在 `scripts/prepush.sh` 的注释里新写下
+ * ⚠️ **`.sh` 那一半是复评补的**：那一轮在 `scripts/prepush.sh` 的注释里新写下
  * 两条指向 `.superpowers/…` 的引用，而两边的门禁正好把 `.sh` 漏在中间——本格上一版
  * 只认 tracked 的 `*.md`，`scripts/check-comment-refs.mjs` 的 `walk()` 又自己写明
  * 「`.sh` 与 `.yml` 一个文件都不打开」⇒ [V7] 刚在 `.md` 那一侧解决掉的问题被原样搬进了 `.sh`，
@@ -377,7 +377,7 @@ const ledgerUnqualified = (files: readonly string[], read: Read, exists: Exists)
  *   `.github/ISSUE_TEMPLATE/bug_report.md` 里那种 `../../` 只有这样才判得对；
  * · 行内 code span 里的仓内路径（`scripts/scan-secrets.sh` 这种）。
  *
- * ⚠️ **「像不像仓内路径」这件事不写死**（复评 F2 的另一半）：上一版只认「首段是一张写死的
+ * ⚠️ **「像不像仓内路径」这件事不写死**（复评发现的另一半）：上一版只认「首段是一张写死的
  * 顶层目录表里的名字」，于是 `packages/gateway/index.ts` / `deploy/nope.yaml` 这类查无此目录的
  * 假路径被静默跳过。现在两条规则取并集：
  * ① 首段是 `git ls-files` 现算出来的**真实顶层目录**（这一条不再写死，加一个顶层目录时自动进射程）；
@@ -664,7 +664,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   /**
-   * 复评 F2 的正面回应。上一版这里是一张冻结的字面量表，新加第六份模板 ⇒ 二十余格全绿。
+   * 复评发现的正面回应。上一版这里是一张冻结的字面量表，新加第六份模板 ⇒ 二十余格全绿。
    * 现在射程从磁盘长出来，而「表 == 磁盘」那条断言逼新文件回来表态。
    */
   it("(a) 该红时红：`.github/ISSUE_TEMPLATE/` 里凭空多出第六份模板 —— 点名它，不许静默扩容", () => {
@@ -800,7 +800,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  /** M1 的机器侧：把那三行删掉 —— 判据必须点名，而不是安安静静放行。 */
+  /** 那条发现的机器侧：把那三行删掉 —— 判据必须点名，而不是安安静静放行。 */
   it("(h) 该红时红：把 build 那三行整段删掉 —— 点名「没有已发布镜像时会直接失败」", () => {
     probeBase(composeFailures(realRead, realExists), REAL_H);
     const mutated = realRead(COMPOSE).replace(/^\s{4}build:\n(?:^\s{6}\S.*\n)+/m, "");
@@ -1177,7 +1177,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   /**
-   * 复评 F5 的正面回应。`scripts/prepush.sh` 的注释里有两条真实的工作账本引用，
+   * 复评发现的正面回应。`scripts/prepush.sh` 的注释里有两条真实的工作账本引用，
    * 它必须落在射程里——否则「`.md` 那一侧解决掉的问题被原样搬进 `.sh`」会再发生一次。
    * ⚠️ 这一格钉的是**射程**（`.sh` 真的被扫到了），不是那两条引用本身；
    * 它们合不合规由上面那格真扫描判。
@@ -1237,7 +1237,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   const REAL_F = "社区文件写下的每一条仓内指向都解析得开";
-  const REAL_F2 = "issue / PR 模板里的绝对链接，仓名与落点都对得上";
+  const REAL_REPO_BLOB = "issue / PR 模板里的绝对链接，仓名与落点都对得上";
   const REAL_G = "社区文件里那几条名字锚，文件与被引的文字都对得上";
 
   it(REAL_F, () => {
@@ -1262,7 +1262,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     expect(communityRefFailures(patchRead(realRead, at, mutated), realExists, realList)).toEqual([]);
   });
 
-  /** 复评 F2 的另一半：首段不是顶层目录、但末段带扩展名的假路径不许再被静默跳过。 */
+  /** 复评发现的另一半：首段不是顶层目录、但末段带扩展名的假路径不许再被静默跳过。 */
   it("(f) 该红时红：code span 里一条首段查无此目录、末段带扩展名的假路径 —— 点名它", () => {
     probeBase(communityRefFailures(realRead, realExists, realList), REAL_F);
     const at = "CONTRIBUTING.md";
@@ -1342,13 +1342,13 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     expect(failures).toEqual([`${at} 让人跑 \`pnpm test:worker\`，而 package.json 里没有这个 script`]);
   });
 
-  it(REAL_F2, () => {
+  it(REAL_REPO_BLOB, () => {
     const failures = repoBlobFailures(realRead, realExists, realList);
     expect(failures, `报文：\n${failures.join("\n")}`).toEqual([]);
   });
 
   it("(f2) 该红时红：绝对链接的落点在仓里查无此处 —— 点名那个位置", () => {
-    probeBase(repoBlobFailures(realRead, realExists, realList), REAL_F2);
+    probeBase(repoBlobFailures(realRead, realExists, realList), REAL_REPO_BLOB);
     const at = `${ISSUE_TEMPLATE_DIR}/bug_report.md`;
     const mutated = realRead(at).replace("/blob/main/SECURITY.md", "/blob/main/NOPE-SECURITY.md");
     expect(mutated, "变异没落地 —— 那份模板里已经不是 /blob/main/SECURITY.md").not.toBe(realRead(at));
@@ -1358,7 +1358,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   it("(f2) 该红时红：模板里留下一条跨文件的相对链接 —— 点名它并写出该改成什么", () => {
-    probeBase(repoBlobFailures(realRead, realExists, realList), REAL_F2);
+    probeBase(repoBlobFailures(realRead, realExists, realList), REAL_REPO_BLOB);
     const at = `${ISSUE_TEMPLATE_DIR}/bug_report.md`;
     const mutated = `${realRead(at)}\n\n见 [安全政策](../../SECURITY.md)。\n`;
     const failures = repoBlobFailures(patchRead(realRead, at, mutated), realExists, realList);
@@ -1369,7 +1369,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   it("(f2) 该红时红：仓改了名而模板没跟上 —— 报文把两边的 <owner>/<repo> 都摆出来", () => {
-    probeBase(repoBlobFailures(realRead, realExists, realList), REAL_F2);
+    probeBase(repoBlobFailures(realRead, realExists, realList), REAL_REPO_BLOB);
     const pkg = JSON.parse(realRead("package.json")) as { repository?: { url?: string } };
     const renamed = { ...pkg, repository: { ...pkg.repository, url: "git+https://github.com/xwteam/agnes2api-renamed.git" } };
     const failures = repoBlobFailures(patchRead(realRead, "package.json", JSON.stringify(renamed)), realExists, realList);
@@ -1378,7 +1378,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   it("(f2) 认不出要吵：模板里的绝对链接被改回相对链接时当场抛，不静默放行", () => {
-    probeBase(repoBlobFailures(realRead, realExists, realList), REAL_F2);
+    probeBase(repoBlobFailures(realRead, realExists, realList), REAL_REPO_BLOB);
     const stripped: Read = (p) => realRead(p).replaceAll("https://github.com/", "https://nope.example/");
     expect(() => repoBlobFailures(stripped, realExists, realList)).toThrow(/判据坏了|死链/);
   });
@@ -1398,7 +1398,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   /**
-   * 复评 F1 的守卫：`CONTRIBUTING.md` 那句「收集门禁管到哪儿为止」不许再变回一句好听的假话。
+   * 复评发现的守卫：`CONTRIBUTING.md` 那句「收集门禁管到哪儿为止」不许再变回一句好听的假话。
    * 变异落在**被引的那一侧**（把 `tests/global-setup.ts` 里那段实测结论改掉），
    * 这正是上一版做不到的那一半——(g) 当时用真 fs 读被引文件，绕开了唯一注入点。
    */
@@ -1436,7 +1436,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   });
 
   it("SECURITY.md 写的会话上限与 `SESSION_MAX_AGE_MS` 一致 —— 那个「12 小时」不是手抄的", () => {
-    // 缺文件给人话，不抛裸 ENOENT——与 (b)/(e)/(f)/(g) 同一条纪律（复评 F11）。
+    // 缺文件给人话，不抛裸 ENOENT——与 (b)/(e)/(f)/(g) 同一条纪律（复评发现）。
     expect(realExists("SECURITY.md"), "SECURITY.md 不存在 —— 会话上限无从查起，先看 (a) 那一格").toBe(true);
     const hours = SESSION_MAX_AGE_MS / 3_600_000;
     expect(Number.isInteger(hours), `会话上限不再是整数小时（${SESSION_MAX_AGE_MS} ms），SECURITY.md 的措辞要跟着改`).toBe(true);

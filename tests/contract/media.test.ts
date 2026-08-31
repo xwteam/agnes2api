@@ -162,7 +162,7 @@ describe("GET /v1/videos/{id} 的字符集硬闸：400 说得清", () => {
     const body = await res.json() as { error: { message: string } };
     expect(body.error.message, "报文里没有那个形状 —— 读者只知道「不合法」，不知道该改成什么")
       .toContain(VIDEO_TASK_ID_SHAPE);
-    // **右边这一半取自真源，不是同一个字面量抄两遍**（复评 F1）：上一版两边都写死
+    // **右边这一半取自真源，不是同一个字面量抄两遍**（复评发现）：上一版两边都写死
     // `"POST /v1/videos"`，于是目录里那条路径改了名、报文把读者指去一条不存在的端点时，
     // 这一格照样绿。
     expect(
@@ -306,7 +306,7 @@ describe("VIDEO_TASK_ID_SHAPE 说的是真话", () => {
     const hi = Number(PARTS![3]);
     // 填充字符**从形状自己点名的字符集里取**，不写死一个 `a`：写死的话，字符集哪天
     // 不再含 `a`，这一格会红在「长度界不对」上，而真因是字符 —— 报文把人指错地方。
-    // （M2 变异实测过这条：正则收紧成只收 `Z` 之后，写死 `a` 的版本红的是长度那句话。）
+    // （变异实测过这条：正则收紧成只收 `Z` 之后，写死 `a` 的版本红的是长度那句话。）
     const fill = expandClass(PARTS![1]!)[0]!;
     const s = (n: number) => fill.repeat(n);
     expect(VIDEO_TASK_ID_RE.test(s(lo)), `长度 ${lo}（形状说的下界）被拒了`).toBe(true);
@@ -317,7 +317,7 @@ describe("VIDEO_TASK_ID_SHAPE 说的是真话", () => {
 
   /**
    * `protocol-catalog.ts` 里 `VIDEO_TASK_ID_SHAPE` 上方那句「**它必须是纯 ASCII**」
-   * 此前是一张**不会自己红的清单**（复评 F4 实测：把正则字符类改成含非 ASCII、再把
+   * 此前是一张**不会自己红的清单**（复评实测：把正则字符类改成含非 ASCII、再把
    * 五份文档同步改，十二道门禁全绿，而 `en`/`ja`/`ko` 三份里真的多出一段中文）。
    * 这两格就是那句话的机器形态：上一格钉真值、下一格证明这个判据不是瞎的。
    */

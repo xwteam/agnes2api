@@ -142,8 +142,8 @@ function storedHistory(store: Map<string, string>): TendRecord[] {
 describe("注册机事件落库（两种运行时各跑一遍）", () => {
   /**
    * **本任务的核心断言。**
-   * 变红条件（M6）：`buildTendDeps` 的 logger 退回裸 `ConsoleLogger`。
-   * 变红条件（M7）：入口层 `finally` 里删掉 `await deps.flush()`。
+   * 变红条件：`buildTendDeps` 的 logger 退回裸 `ConsoleLogger`。
+   * 变红条件：入口层 `finally` 里删掉 `await deps.flush()`。
    */
   it("一轮补池之后，event: 键空间里确实有 registrar.* 事件", async () => {
     const store = new Map<string, string>();
@@ -217,10 +217,10 @@ describe("注册机事件落库（两种运行时各跑一遍）", () => {
    * **存储里混进一条 `null`，下一轮照样能写进去，且那条坏的被清掉。**
    * `tend:history` 是本期新增的第二个「从存储读回来直接喂给面板」的结构；
    * 不做窄化就是在同一天里再制造一次那条畸形条目缺陷。
-   * 变红条件（M9 的可测等价形态）：`narrowTendHistory` 整个去掉 ⇒ 这一轮的
+   * 变红条件（可测等价形态）：`narrowTendHistory` 整个去掉 ⇒ 这一轮的
    * `appendTendHistory` 会把那条 `null` 原样留在数组里。
    *
-   * ⚠️ **诚实登记**：计划 M9 写的变红条件是「`/admin/api/registrar/status` 不许
+   * ⚠️ **诚实登记**：计划写的变红条件是「`/admin/api/registrar/status` 不许
    * 500」，而那个端点是事件板块的产物、**今天还不存在**（`adminRouter` 今天只有
    * 6 条路由，全是 GET）。这一格是它在本任务里能落地的最强形态：同一条不变量，
    * 观测点从"读端点"换成"下一轮的写"。
@@ -240,7 +240,7 @@ describe("注册机事件落库（两种运行时各跑一遍）", () => {
    * 这是写侧窄化（Step 3）在真实入口上的对照：修复前分片里是字符串时
    * `appendRing` 的 `[...cur]` 会把它**逐字符展开**成 N 条畸形条目原样写回，
    * `errs=0`、`dropped=0`、不抛不报。
-   * 变红条件（M2 的一半）：写侧 `narrowShard` 退回 `?? []`。
+   * 变红条件（一半）：写侧 `narrowShard` 退回 `?? []`。
    */
   it("事件分片里预置一个字符串：落回存储的数组里不许出现非对象元素", async () => {
     const store = new Map<string, string>();
@@ -275,7 +275,7 @@ describe("注册机事件落库（两种运行时各跑一遍）", () => {
    * 就跑了、`cur.length` 是 `undefined` ⇒ `persistedDropped` 变成 `NaN` 并对
    * 那个 isolate **终生粘住** ⇒ `NaN > 0` 是 false ⇒ 黄条永远不亮；
    * `c.json` 又把 `NaN` 序列化成 `null` ⇒ 面板读到"没有数据"。
-   * 变红条件（M2 的另一半）：写侧 `narrowShard` 退回 `?? []`。
+   * 变红条件（另一半）：写侧 `narrowShard` 退回 `?? []`。
    *
    * 这里的观测点是**落盘本身有没有成功**：`NaN` 那条链的上游就是那次 `TypeError`，
    * 而 `TypeError` 发生在 `this.buffer = []` 之后 ⇒ 那一批事件永久丢失。

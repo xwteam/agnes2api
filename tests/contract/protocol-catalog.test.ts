@@ -17,7 +17,7 @@ function realRoutes(app: Awaited<ReturnType<typeof makeApp>>["app"]) {
 
 /**
  * 媒体三条端点**真正应该打到上游哪条地址**——**逐条手写整串，一个字符都不从
- * `MEDIA_ENDPOINTS` 推**（第 6 种假阳性，实测见变异 M14）。
+ * `MEDIA_ENDPOINTS` 推**（第 6 种假阳性，实测见变异）。
  * 主机那一半是 `tests/helpers/make-app.ts` 里 `TEST_CONFIG.agnesBaseUrl` 的值，
  * 同样手写——从那个常量拼出来的话，改掉它这几格会跟着变而不红。
  */
@@ -28,9 +28,9 @@ const MEDIA_UPSTREAM: Readonly<Record<string, string>> = {
 };
 
 /**
- * 媒体三条端点**客户端该打的对外路径**——同样逐条手写（评审 M1）。
+ * 媒体三条端点**客户端该打的对外路径**——同样逐条手写（评审发现）。
  *
- * ⚠️ **这张表是 M14 那条修复漏掉的另一半**：`media.ts` 注册路由用的也是
+ * ⚠️ **这张表是那条修复漏掉的另一半**：`media.ts` 注册路由用的也是
  * `MEDIA_ENDPOINTS[].pathTemplate`，所以拿 `m.pathTemplate` 去 `app.request()`
  * 是在问「你注册的那条你自己打得通吗」——**恒真**。评审实测把 `/v1/videos`
  * 改成 `/v1/videoz`，那一格照绿。
@@ -172,9 +172,9 @@ describe("协议目录的示例请求真的调得通", () => {
   );
 
   /**
-   * ── 变异 M2 的落点（**本任务实测之后补的一格，计划里没有**）────────────────
+   * ── 变异的落点（**本任务实测之后补的一格，计划里没有**）────────────────────
    *
-   * 变异表里 M2 是「把 anthropic 的 `sample()` 去掉 `max_tokens`，期望
+   * 变异表里那一条是「把 anthropic 的 `sample()` 去掉 `max_tokens`，期望
    * 『anthropic 的 sample() 经真 app 发出去拿到 200』那一格变红」。**实测 ESCAPED**：
    * 上游是 `FakeFetcher`，它无条件回 200；而网关自己**不校验** `max_tokens`
    *（`src/core/protocol/anthropic.ts:46` 只是原样透传，缺了就是 `undefined`，
@@ -218,12 +218,12 @@ describe("协议目录的示例请求真的调得通", () => {
    * 搬之前那三条路径只住在 `src/http/routes/media.ts` 里，**对外那半与上游那半各写一遍
    * 字面量**；搬之后它们是 `MEDIA_ENDPOINTS` 的两个字段。
    *
-   * ⚠️⚠️ **两半的期望值都必须手写，这两条都是实测补上的（变异 M14 + 评审 M1）。**
+   * ⚠️⚠️ **两半的期望值都必须手写，这两条都是实测补上的（变异 + 评审发现）。**
    * `src/http/routes/media.ts` **注册路由读 `pathTemplate`、调 `dispatch()` 读 `upstreamPath`**
    * ——两半都是从这张表读的。⇒ 任何一半只要把期望值写成
    * ``m.pathTemplate`` / ```${agnesBaseUrl}${m.upstreamPath}` ``，改一个字符两侧一起动、
    * **这一格照绿**（第 6 种假阳性：期望值从被测对象自己推导）：
-   * · **上游那半**我第一版就是这么写的 ⇒ 变异 M14 实测 **11/11 全绿**；
+   * · **上游那半**我第一版就是这么写的 ⇒ 变异实测 **11/11 全绿**；
    * · **对外那半我修上游那半的时候漏了**，而且**在注释里写了一句「它会红」** ⇒
    *   评审实测（`/v1/videos` → `/v1/videoz`）**新增的这一格照绿**（红的是另一格）。
    *   **那句注释是本仓第 36 句实测为假的断言，已改真。**
@@ -232,7 +232,7 @@ describe("协议目录的示例请求真的调得通", () => {
    * ⚠️ **四条对话协议那一格没有这个毛病**：它们的路由文件传的是各自的字面量、不读这张表。
    * **同一个写法在两张表上一个成立一个不成立** —— 这就是「全称句落笔前先找反例」。
    *
-   * **变红条件（四条，逐条实测，见 progress note 的 M13/M14/M15/M30）**：
+   * **变红条件（四条，逐条实测，见当时的变异表）**：
    * ① 把某条的 `pathTemplate` 改一个字符 ⇒ 与 `MEDIA_OUTWARD` 对不上 ⇒ 红
    *    （**先红在手写表那条**；路由按新值注册、手写路径打过去 404 那条断言
    *    **同一次运行里根本跑不到**——vitest 在第一条 `expect` 就中止了这一格。
@@ -256,7 +256,7 @@ describe("协议目录的示例请求真的调得通", () => {
       // 而不是让后面那些断言红成一个看不懂的病因。
       expect(MEDIA_OUTWARD[m.id], `手写表里没有 ${m.id} 的对外路径`).toBeDefined();
       expect(MEDIA_UPSTREAM[m.id], `手写表里没有 ${m.id} 的上游地址`).toBeDefined();
-      // **目录里那一格必须等于手写的那一条**（评审 M1：这条断言就是对外那半的独立锚）。
+      // **目录里那一格必须等于手写的那一条**（评审发现：这条断言就是对外那半的独立锚）。
       expect(m.pathTemplate, `${m.id} 的对外路径与手写表对不上`).toBe(MEDIA_OUTWARD[m.id]);
 
       const { app, fetcher } = await makeApp(
@@ -307,7 +307,7 @@ describe("协议目录的示例请求真的调得通", () => {
     expect(fetcher.sentUrls.at(-1)).toBe(MEDIA_UPSTREAM["video.poll"]);
     // 反向自检：**出站 URL 里不许还留着那个占位符**。它与上面那句不重复——
     // 上面那句钉的是「等于哪一条」，这一句钉的是「占位符这件事本身被处理过」，
-    // 而 `taskSlot` 改名（变异 M29）时前者的失败信息看不出是这个原因。
+    // 而 `taskSlot` 改名（变异实测）时前者的失败信息看不出是这个原因。
     expect(fetcher.sentUrls.at(-1), "出站 URL 里还留着未展开的任务标识占位符")
       .not.toContain(String(m.taskSlot));
   });

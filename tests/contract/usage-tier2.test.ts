@@ -39,7 +39,7 @@ const DAY0 = 20_000;
 const DAY_MS = 86_400_000;
 const DAY0_MS = DAY0 * DAY_MS;
 /**
- * 「等链上其它挂起点结清」那一格的预算（收口复评 M2）。
+ * 「等链上其它挂起点结清」那一格的预算（收口复评）。
  *
  * `WAIT_ROUNDS` 轮 × 每轮一次被钳到约 1 毫秒的 `setTimeout(0)` ⇒ 约 3 秒；
  * `WAIT_TIMEOUT_MS` 把它连同请求本身一起兜住，**并且刻意留出余量**，
@@ -82,7 +82,7 @@ class UsagePutCounter implements Storage {
   /**
    * **非 `usage:` 的存储操作里，此刻还有几个没返回。**
    *
-   * ⚠️ **它是「链上其它挂起点跑完了没有」的事件驱动信号**（定向复评 N6）：
+   * ⚠️ **它是「链上其它挂起点跑完了没有」的事件驱动信号**（定向复评）：
    * 上一版那格时序用例靠「50 轮宏任务 + 一次 20ms」去等，**那不是摆脱了时序依赖，
    * 只是把阈值从约 1 毫秒抬到了约 70 毫秒** —— 把 `MemoryStorage` 的 `delayMs`
    * 调到 200，那条 fire-and-forget 变异就又逃逸了，**我点名要消灭的失效形态原样保留**。
@@ -206,7 +206,7 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
 
   /**
    * **一个「转不成字符串」的 model 不许把网关打成 500 —— 开着关着都不许**
-   *（收口复评 H1，这是上一轮为修 N1 而加的防御自己制造的回归）。
+   *（收口复评，这是上一轮为修另一条发现而加的防御自己制造的回归）。
    *
    * 成因值得记成一条判据：那两行 `String(req.model ?? "")` 加在了路由的 `record`
    * **闭包体里**，而 `recordUsage()` 的「sink 缺席就 return」**在它之后** ⇒
@@ -228,7 +228,7 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
     for (const enabled of [false, true]) {
       let t = DAY0_MS;
       const g = await gateway({ enabled, now: () => t });
-      // ⚠️ **四条协议路由一条都不许漏**（末轮复评 F1/F2）：上一版这个数组只有
+      // ⚠️ **四条协议路由一条都不许漏**（末轮复评）：上一版这个数组只有
       // `/v1/messages` 与 `/v1/responses` 两条——**恰好漏掉了 `openai.ts`，
       // 而那条的强转还在，于是同一个缺陷原样活着，只是换了条路由**。
       // 漏的原因很具体：上一轮的问题清单写的是「那两条路由缺 String()」，
@@ -301,17 +301,17 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
       return r;
     })();
 
-    // ★ **等到链上其它挂起点确证跑完，而不是数一个写死的毫秒数**（定向复评 N6）。
+    // ★ **等到链上其它挂起点确证跑完，而不是数一个写死的毫秒数**（定向复评）。
     // 判据：非 `usage:` 的存储操作在途数归零，**并且连续若干轮都还是零**（静默）。
     //
-    // ⚠️ **它有预算，不是「多久都能等」**（收口复评 M2，上一版那句是假的）：
+    // ⚠️ **它有预算，不是「多久都能等」**（收口复评，上一版那句是假的）：
     // 循环上界 `WAIT_ROUNDS` 轮 × 每轮一次被钳到约 1 毫秒的 `setTimeout(0)`
     // ⇒ 这一格实际能等到的时间约 `WAIT_ROUNDS` 毫秒，而 `WAIT_TIMEOUT_MS` 又给了它
     // 一个上限。**超出预算时它的失效方式是「响亮地红掉」，不是「静默变绿」**
     // ——这正是它比上一版（约 70 毫秒之后静默逃逸）强的地方，也是这里不再改机制、
     // 只把话说准的理由。
     //
-    // ⭐ **实测天花板 + 装置一起写下来**（末轮复评 F7；上一版写的「400–600 毫秒」
+    // ⭐ **实测天花板 + 装置一起写下来**（末轮复评；上一版写的「400–600 毫秒」
     // 是抄了评审探针的数字而**没抄它的装置** —— 换一套装置那个数就是假的，
     // 这正是「凡写实测 X 就把入参一起写下」那条规矩）：
     // · **装置**：本用例 + `WAIT_ROUNDS = 3000` + `WAIT_TIMEOUT_MS = 15000`，
@@ -381,7 +381,7 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
    * 只断言其中一边的话，「目录改了而路由没改」或者「路由改了而目录没改」
    * 都不会红，而面板会照着那份清单去解释缺口。
    */
-  it("四条协议各打一次：byProtocol 分出四个键，且只有 anthropic/responses/gemini 三条带 token —— OpenAI 那条网关没解析过响应体（订正 F1），缺口由 tokensCoverage 如实说出去", async () => {
+  it("四条协议各打一次：byProtocol 分出四个键，且只有 anthropic/responses/gemini 三条带 token —— OpenAI 那条网关没解析过响应体（订正），缺口由 tokensCoverage 如实说出去", async () => {
     /** 上游那份 OpenAI 格式的响应体。四条协议共用同一份（网关内部只有这一种）。 */
     const upstream = JSON.stringify({
       id: "c1",
@@ -823,7 +823,7 @@ describe("UsageSink 的落盘契约", () => {
   });
 
   /**
-   * **`record()` 与落盘的 `await` 重叠时，那一条计数不许丢**（定向复评 N3）。
+   * **`record()` 与落盘的 `await` 重叠时，那一条计数不许丢**（定向复评）。
    *
    * `maybeFlush()` 挂在 `await put` 上的那段时间里，`record()` 照样在跑（同一个
    * isolate 里的另一个并发请求）。发起写之前那道间隔闸只挡得住 **flush 与 flush**
@@ -840,10 +840,10 @@ describe("UsageSink 的落盘契约", () => {
     let t = DAY0_MS;
     const storage = new UsagePutCounter(new MemoryStorage(undefined, () => t));
     const sink = new UsageSink({ storage, now: () => t, shardId: SHARD, onError: () => {} });
-    // ⚠️ **alpha 与 beta 必须是同一条协议、不同的模型**（末轮复评 F6）。
+    // ⚠️ **alpha 与 beta 必须是同一条协议、不同的模型**（末轮复评）。
     // 上一版 beta 用的是另一条协议（`anthropic`）⇒ `byProtocol.openai` 那一格的数
     // **根本不会变** ⇒ 「把原地改只施加在 byProtocol 桶值上」那条变异**31 格全绿逃逸**，
-    // 而 M3 加的那个 `openai: 1` 字面量只是看着像有牙。
+    // 而那条复评加的那个 `openai: 1` 字面量只是看着像有牙。
     // 同协议之后：`byProtocol.openai.requests` 在「没有快照」与「原地改桶值」两种
     // 实现下都会变成 2；不同模型则让 `byModel` 那一维照旧钉住「多出一个键」那一支。
     const one = (model: string) => sink.record({
@@ -868,14 +868,14 @@ describe("UsageSink 的落盘契约", () => {
 
     // ① 落下去的那一份**自己和自己对得上**（快照的作用）。
     const first = (await storage.get<UsageDayShard>(KEY_DAY0))!;
-    // ⚠️ **要比桶里的数，不能只比键**（收口复评 M3）：把原地改**只**施加在
+    // ⚠️ **要比桶里的数，不能只比键**（收口复评）：把原地改**只**施加在
     // `byProtocol` 的桶值上（正是快照那段注释所依赖的那条前提）时，
     // 只按 `Object.keys` 比的版本 29 格全绿逃逸——键没变，变的是键指向的那个数。
     expect(
       {
         total: first.total.requests,
         byModel: Object.keys(first.byModel).sort(),
-        // ★ **这一格才是「变的是键指向的那个数」那条变异的牙**（末轮复评 F6）：
+        // ★ **这一格才是「变的是键指向的那个数」那条变异的牙**（末轮复评）：
         // 键表在同协议下不会变，只有桶里的数会。
         openai: first.byProtocol.openai!.requests,
       },
@@ -905,11 +905,11 @@ describe("UsageSink 的落盘契约", () => {
   });
 
   /**
-   * **`model` 不是字符串时不许把网关打成 500**（定向复评 N1，本轮引入的缺陷）。
+   * **`model` 不是字符串时不许把网关打成 500**（定向复评，本轮引入的缺陷）。
    *
    * 请求体的类型是**纯编译期**的（`c.req.json<T>()`），运行时什么都可能来。
    * `boundUsageKey()` 里那个 `raw.slice(...)` 对 `123` / `{}` / `true` 直接抛，
-   * ⚠️ **`record()` 现在有 try/catch 了**（末轮复评 F5：上一版这里写的是「一路没有
+   * ⚠️ **`record()` 现在有 try/catch 了**（末轮复评：上一版这里写的是「一路没有
    * try/catch ⇒ 打开统计就等于多一条 500」，**那句话被同一个提交里加的兜底改成了假的**）。
    * ⇒ 今天缺了 `safeString` 的后果不是 500，是**那一条计数被 catch 静默吞掉、永久消失**
    *（实测：删掉 `safeString` 打 `{"model":123}`，开着关着都是 503）。
@@ -923,7 +923,7 @@ describe("UsageSink 的落盘契约", () => {
    */
   it("model 不是字符串时不许把网关打成 500：123 / 对象 / 布尔 / 数组四种都要照常记账，键退化成它们的字符串形式", async () => {
     const r = rig();
-    // ⚠️ **最后那个是 `String()` 自己也会抛的那一档**（收口复评 H2）：
+    // ⚠️ **最后那个是 `String()` 自己也会抛的那一档**（收口复评）：
     // `JSON.parse('{"toString":1,"valueOf":1}')` 造得出一个两个转换方法都不是函数的
     // 对象，对它取原始值直接 `TypeError`。**上一版四个样本全停在「没有 .slice」
     // 那一层**，把 `raw.slice` 换成 `String(raw).slice` 之后它们就全过了 ——
@@ -936,7 +936,7 @@ describe("UsageSink 的落盘契约", () => {
           latencyMs: 1, tokensIn: 0, tokensOut: 0,
         }),
         // ⚠️ 这一条今天恒真（`record()` 有兜底），保留是为了让「它不该抛」这件事
-        // 在用例里看得见；**真正的牙在下面的键表与 total**（末轮复评 F5）。
+        // 在用例里看得见；**真正的牙在下面的键表与 total**（末轮复评）。
         `model = ${JSON.stringify(bad)} 把 record() 打抛了`,
       ).not.toThrow();
     }
@@ -953,7 +953,7 @@ describe("UsageSink 的落盘契约", () => {
 
   /**
    * **原型链上的名字被当成模型名时，那一条计数不许消失、也不许变成 null**
-   *（收口复评 H3）。
+   *（收口复评）。
    *
    * 两种坏法**不一样，所以两种都要验**：
    * · `__proto__` ⇒ 普通 `{}` 上那次赋值**去改了原型**，自有键里没有它、
@@ -962,7 +962,7 @@ describe("UsageSink 的落盘契约", () => {
    *   `Function.prototype` 上的同名函数，拿函数做加法 ⇒ 那一格序列化成
    *   `{"requests":null,…}`。
    *
-   * **两种都让落盘分片自己和自己对不上（`total` ≠ Σ`byModel`）** —— 正是 N3 那半
+   * **两种都让落盘分片自己和自己对不上（`total` ≠ Σ`byModel`）** —— 正是并发那半
    * 刚消灭掉的失效形态，从另一个入口原样回来。判据因此落在**那条等式**上，
    * 而不只是「键还在不在」。
    */
@@ -991,7 +991,7 @@ describe("UsageSink 的落盘契约", () => {
         `model = ${evil}：落盘分片自己和自己对不上，total ≠ Σ byModel`,
       ).toEqual({ total: 2, sum: 2 });
 
-      // ④ **读侧也要过一遍**（收口复评 H3 的另一半）：那个键会**原样从存储里回来**，
+      // ④ **读侧也要过一遍**（收口复评的另一半）：那个键会**原样从存储里回来**，
       // 而 `mergeDayShards` / `narrowRecord` 里的 map 若是普通 `{}`，同一个洞会在
       // 读路径上重演一次 —— 写侧堵住而读侧没堵，等于把它挪到下一个任务。
       const merged = mergeDayShards([shard]);
@@ -1009,7 +1009,7 @@ describe("UsageSink 的落盘契约", () => {
   });
 
   /**
-   * **满桶之后，已经存在的键仍然认得出来**（定向复评 N4）。
+   * **满桶之后，已经存在的键仍然认得出来**（定向复评）。
    *
    * ⚠️ **这一格是补上来的，因为上一版那个上界用例钉不住它**：那里 200 个模型名
    * **各只出现一次**，满桶之后从不复用旧键 ⇒ 把 `boundUsageKey()` 里那句
@@ -1032,7 +1032,7 @@ describe("UsageSink 的落盘契约", () => {
   });
 
   /**
-   * **预算在发起写之前就扣，失败不回滚**（定向复评 N5）。
+   * **预算在发起写之前就扣，失败不回滚**（定向复评）。
    *
    * ⚠️ **这一格是补上来的**：上一版把 `consume()` 原样挪回 `await` 之后
    *（只留 `lastFlushAt` 在前面）⇒ **全量 2182 全绿**，预算那一半根本没被钉住。
@@ -1132,7 +1132,7 @@ describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 run
   });
 
   /**
-   * **空串与「没设」同等对待**（定向复评 N2，本轮引入的缺陷）。
+   * **空串与「没设」同等对待**（定向复评，本轮引入的缺陷）。
    *
    * `.env.example` 是给 `cp .env.example .env` + `docker-compose` 的 `env_file:` 直接用的，
    * 一个留空的键会以**空字符串**（不是 unset）进到环境里。`Number("") = 0` 过不了

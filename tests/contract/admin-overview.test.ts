@@ -197,7 +197,7 @@ describe("GET /admin/api/overview", () => {
   });
 
   /**
-   * **`/health` 的键集合未扩大**（设计文档 §12 L10 的禁令）：`overview` 里有池子
+   * **`/health` 的键集合未扩大**（设计文档 §12 的禁令）：`overview` 里有池子
    * 健康度，而做概览时最省事的做法就是把 `poolHealth()` 挂到免鉴权的 `/health` 上。
    */
   it("/health 仍然不含任何池子信息——池子规模只走鉴权后的 overview", async () => {

@@ -9,10 +9,10 @@ import { recordingLogger } from "../../helpers/recording-logger.js";
 import type { Logger } from "../../../src/ports/logger.js";
 
 /**
- * M4：五语言 REGISTRAR.md 的排障小节对外承诺「补池过程中的日志统一带 `[registrar]`
+ * 五语言 REGISTRAR.md 的排障小节对外承诺「补池过程中的日志统一带 `[registrar]`
  * 前缀，可据此过滤」，而注册机内部此前一律打 `[agnes2api]`——按文档指定的姿势
  * （`docker logs … | grep '[registrar]'` / `wrangler tail --search '[registrar]'`）
- * 排障时，M1/M2 新增的那些诊断信号会被整段过滤掉，等于白修。
+ * 排障时，那两轮新增的那些诊断信号会被整段过滤掉，等于白修。
  *
  * 把裸 console.* 换成注入的 Logger 之后，前缀不再由每个调用点手写字符串，
  * 而是由 `ConsoleLogger` 按事件名的命名空间（`registrar.` 前缀）派生——这正是

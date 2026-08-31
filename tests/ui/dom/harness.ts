@@ -60,7 +60,7 @@ type Resp = {
   body: unknown;
   /**
    * `string` = 一段固定字节；`ReadableStream` = **由用例自己控制吐法的流**
-   *（评审发现 F1/F4：中途 `controller.error()` 才走得到「读到一半断了」那条路，
+   *（评审发现：中途 `controller.error()` 才走得到「读到一半断了」那条路，
    * 而那条路上的渲染与口令扫描原来一格都没覆盖）。
    */
   raw?: string | ReadableStream<Uint8Array>;

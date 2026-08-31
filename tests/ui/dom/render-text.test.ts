@@ -177,7 +177,7 @@ function respond(url: string): { status: number; body: unknown } {
  * 不动，这里一格都不红**（`admin-ui/js/sec-playground.js` 504/505 就是这个形状，
  * `sec-events.js` 312/313 同形）：首屏走的是那句直调 `t()`，属性上的那份只在**切语言**
  * 时才被读到，而本文件只在概览板块切过一次语言。
- * ⇒ 那一半今天**仍然无人守**，处置在交接的 L10（给两个变体各加正向探针）。
+ * ⇒ 那一半今天**仍然无人守**，处置在交接清单里（给两个变体各加正向探针）。
  */
 function visibleTexts(root: FakeElement): Array<{ text: string; where: string }> {
   const out: Array<{ text: string; where: string }> = [];

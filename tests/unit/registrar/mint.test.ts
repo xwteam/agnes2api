@@ -113,7 +113,7 @@ describe("mintOne", () => {
     expect(provider.created).toHaveLength(1);
   });
 
-  // === M2：限流（403）与上游宕机（其他非 2xx）的退避不同 ===
+  // === 限流（403）与上游宕机（其他非 2xx）的退避不同 ===
 
   it("发验证码遇 403（限流）时先退避再换域名，后续域名仍能成功铸出 key", async () => {
     const provider = new FakeMailProvider({ domains: ["first.test", "second.test"] });
@@ -277,7 +277,7 @@ describe("mintOne", () => {
     expect(provider.deleted).toHaveLength(1);
   });
 
-  // === M2：四种此前完全静默的 reason 必须各留一条日志事件 ===
+  // === 四种此前完全静默的 reason 必须各留一条日志事件 ===
   //
   // 这四条 return 是「注册机停摆但日志里查不出原因」的直接成因：收尾日志只有
   // minted=0，而这四种的处置完全不同（换通道 / 等 Agnes 恢复 / 改配置）。

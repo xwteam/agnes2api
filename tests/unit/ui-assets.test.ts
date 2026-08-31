@@ -458,7 +458,7 @@ describe("生成器对违规输入 exit 1", () => {
   });
 
   /**
-   * **M5 的第四类绕过：`src=` 藏在引号包裹的属性值内部。**
+   * **第四类绕过：`src=` 藏在引号包裹的属性值内部。**
    *
    *   <script data-x="foo src=bar">payload</script>
    *

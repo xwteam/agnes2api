@@ -110,7 +110,7 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
   /**
    * ⚠️⚠️ **这一格的判据被订正过两次，两次都是实测打脸，两次都记在这里。**
    *
-   * · **第一版查 `import`** ⇒ 变异 M11b（另起一份行为完全相同的本地实现）**逃逸**：
+   * · **第一版查 `import`** ⇒ 变异（另起一份行为完全相同的本地实现）**逃逸**：
    *   `import type { ProbeGuard }` 因为 `RegistrarDeps` 那一格仍然用得着而原样留着。
    * · **第二版查 `.tryAcquire(` 出现过** ⇒ 本轮评审的 HIGH-1 **逃逸（68/68 全绿）**：
    *   **把注入那把的调用留成一句死代码**（`void deps.probeGuard.tryAcquire(…)`）
@@ -198,7 +198,7 @@ describe("出站探测：两条端点的单一真源（源码级）", () => {
         + "const localSlots = new Map();\n",
     },
     {
-      why: "M11b 的原形：注入那把整个换掉，只留 import type",
+      why: "那条变异的原形：注入那把整个换掉，只留 import type",
       src: "const g = localTryAcquire(k, n);\nlocalRelease(k);\nconst s = new Map();\n",
     },
     {

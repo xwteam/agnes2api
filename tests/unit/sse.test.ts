@@ -110,7 +110,7 @@ describe("parseSseStream：CRLF 换行下的增量", () => {
    * 而四条协议里三条都走这条路（openai 那条是原样透传，看不见这件事）。
    *
    * **变红条件**：把 `src/core/protocol/sse.ts` 里认 `\r\n\r\n` 的那一支撤掉
-   *（报告变异表 M1）。
+   *（当时的变异表）。
    */
   it("CRLF：上游还没 close 就必须 yield 出第一条 —— 攒到 close 才出等于流式退化成一次性", async () => {
     expect(await firstPayloadBeforeClose("\r\n")).toBe('{"a":1}');
