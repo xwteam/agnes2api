@@ -505,7 +505,7 @@ export const I18N = {
   // **评审提出**：本期只有 config/pool 索引/管理接口/事件落库自身四类运维诊断事件
   // 会出现在本面板（见 src/core/keypool-repo.ts / config.ts / admin/auth.ts /
   // adapters/logger-store.ts 的 logger.log() 调用点）。
-  // **评审 I2b（round 3）修正**：round 2 的文案曾错误地说"注册机（补池）事件还没有
+  // **第三轮评审修正**：上一轮的文案曾错误地说"注册机（补池）事件还没有
   // 产出"——这不属实。`src/core/registrar/{mint,config,tender}.ts` 与
   // `adapters/mailbox-*.ts` 里有二十多处 `registrar.*` logger.log() 调用点，
   // 这些事件是真实产出的，只是走的是裸 `ConsoleLogger`（src/http/wire.ts 的
