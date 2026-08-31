@@ -771,8 +771,19 @@ BANNER='[collection-guard] ✅'
 #   吵，不静静放行。**真扫描那格不新增**（断言加在同一个 `it` 里）
 #   ⇒ 该红时红 2（文档侧改写成「开箱即用」/ 真源侧把占位符换成一个真 id）= +2；
 #   「认不出要吵」那格也多了一条断言，同样不新增用例。
-EXPECT_NODE_FILES=141
-EXPECT_NODE_TESTS=4303
+# 141 → 142 个文件、4303 → 4365 格：**出货文档不许留内部研发轨迹标识符**这条判据落地。
+#   起因：裁定 ㉚（公开仓不暴露内部路线图与阶段编号）此前只有一条判据在守，而那条判据
+#   的射程只有 `CHANGELOG.md` 一份 —— 其余 39 份出货文档一格都没人验过，于是
+#   `docs/{5 语言}/DEPLOY.md` 与 `docs/{5 语言}/SPONSORS.md` 共 11 份带着 56 处
+#   `P1`/`P2`/`P3`/`P3c`/`P3d` 随首个版本发到了公开仓（同批还查出 `Task 6` 5 处、
+#   `全分支评审 I2/I4` 10 处、评审发现号 `C4`/`C4b` 20 处，合计 91 处）。
+#   ⇒ 新开 `tests/unit/docs-internal-refs.test.ts`（+1 文件 / +62 格）：射程改成
+#   `tests/helpers/ship-docs.ts` 那 40 份**从磁盘现算**，四族标识符逐族带反向控制，
+#   40 份逐份各有一格「塞一个 `P3c` 进去必须只红一条并点名那一份那一行」。
+#   净格数 4303 + 62 = 4365；`docs-typography.test.ts` 那份只改了三处标题字面（标题里的
+#   `（P3，默认关闭）` 去掉了期号），格数不变。
+EXPECT_NODE_FILES=142
+EXPECT_NODE_TESTS=4365
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
