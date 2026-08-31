@@ -1,7 +1,7 @@
 /**
  * 面板用到的**全部浏览器存储键名，单一真源**。
  *
- * ⚠️ **这个文件是全分支评审 C4 的直接产物。** 在它出现之前，`agnes2api_admin_key`
+ * ⚠️ **这个文件是一条评审裁定的直接产物。** 在它出现之前，`agnes2api_admin_key`
  * 与 `agnes2api_admin_key_at` 这两个名字**各自在两个文件里被声明了两遍**
  *（写入方 `js/app.js` 一份、读取方 `js/api.js` 一份），而两份之间没有任何东西
  * 把它们绑在一起。实测：只改写入方那一处 ⇒ 登录成功、进壳层，随后每个请求送出去的
@@ -50,7 +50,7 @@ export const LANG_STORE = "agnes2api_lang";
 export const DEBUG_STORE = "agnes2api_debug";
 
 /**
- * **Playground 用的网关口令**（P3d Task 10，设计 §10.5）。
+ * **Playground 用的网关口令**（设计 §10.5）。
  *
  * ⚠️⚠️ **它与上面那把管理口令（`KEY_STORE`）是两把完全不同的钥匙，必须分开存。**
  * 管理口令走 `x-admin-key` 打 `/admin/api` 那棵树；网关口令是发给**每一个下游用户**
@@ -66,7 +66,7 @@ export const DEBUG_STORE = "agnes2api_debug";
  * `{ configured, hint }`。**别想着做「一键填入我的口令」**——那需要在后端开一个
  * 明文回显口子，而那个口子一旦开了，整条「凭据只写不读」就没了。
  *
- * ⚠️⚠️ **登出时必须与上面那两个键一起清掉**（P3d Task 10 评审 M2，控制端裁定）。
+ * ⚠️⚠️ **登出时必须与上面那两个键一起清掉**（评审发现，控制端裁定）。
  * 理由不是洁癖，是**别让面板严格变差**：`js/pure/session.mjs` 的文件头把
  * 「localStorage 里放的是原始 `ADMIN_TOKEN`，无过期、无登出、产品内无撤销路径」
  * 当成设 `SESSION_MAX_AGE_MS` 的**理由**——也就是说，那把口令的存在方式本身

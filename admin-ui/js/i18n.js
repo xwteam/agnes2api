@@ -11,7 +11,7 @@
  * ⇒ **板块内不许再各自监听 langchange**（kiro2api 有 4 处冗余监听，是历史遗留）。
  */
 import { I18N } from "./i18n-dict.js";
-// 键名的单一真源，见该模块文件头（全分支评审 C4）。
+// 键名的单一真源，见该模块文件头（评审裁定：存储键名不许各处各写一份）。
 import { LANG_STORE as STORE, DEBUG_STORE } from "./pure/storage-keys.mjs";
 
 export const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"];

@@ -1,6 +1,6 @@
-/* 表格、卡片、徽章。业务板块（Task 4 概览 / Task 5 Key 池 / Task 6 事件）的公共
+/* 表格、卡片、徽章。业务板块（概览 / Key 池 / 事件）的公共
    内容原语，**只覆盖 base.css 的 token，不重复定义颜色/圆角等原语规则**。
-   Task 3 本身不产出任何业务板块，这份文件先把三类原语定好，供后续任务直接引用。 */
+   这份文件本身不产出任何业务板块，它先把三类原语定好，供后续板块直接引用。 */
 
 .card {
   padding: var(--gap); background: var(--panel);
@@ -8,13 +8,13 @@
 }
 .card + .card { margin-top: var(--gap-sm); }
 /* ⚠️⚠️ **上面那条是给「竖着摞起来的卡」用的，横排的一行里必须取消掉。**
-   P3c Task 7 的真机冒烟量出来的：`.card-row` 是 flex 行，第二张及以后的卡命中
+   真机冒烟量出来的：`.card-row` 是 flex 行，第二张及以后的卡命中
    `.card + .card` 拿到 8px 的 `margin-top` ⇒ 它比第一张**矮 8px、而且整体下沉 8px**
    （实测 moemail 367px / top 2766，yyds 359px / top 2774）。
    两张通道卡因此**不等高、不对齐**——而设计 §10.3 第 2 条要的是「两张卡片布局完全
    对称」，高度差同样会被读成「这条更重要」。
-   **这是 P3b/Task 6 就已经上线的缺陷**（注册机板块那两张卡、以及概览与注册机的四格
-   数字瓦片都在同一条规则下），不是本任务引入的；横排的间距本来就由 `.card-row` 的
+   **这是这条竖排规则一上线就带着的缺陷**（注册机板块那两张卡、以及概览与注册机的四格
+   数字瓦片都在同一条规则下），不是修它的那一轮引入的；横排的间距本来就由 `.card-row` 的
    `gap` 给，这条竖排规则在行里是纯多余。 */
 .card-row > .card + .card { margin-top: 0; }
 .card-row { display: flex; flex-wrap: wrap; gap: var(--gap); }
@@ -46,7 +46,7 @@ tr:last-child td { border-bottom: 0; }
    （删掉它 1583 条全绿，评审 M-a 实测）。**别再加回来**——要区分的话得先给它一个
    真正不同的样式，而不是一个换了名字的同义类。 */
 
-/* 「这个模型在这条协议上不可用」那一档（WCAG 1.4.1，P3e Task 20）。
+/* 「这个模型在这条协议上不可用」那一档（WCAG 1.4.1）。
 
    ⚠️ **它存在的全部理由是「状态不许只由颜色表达」**，所以它必须带一条**非颜色**声明。
    模型板块的协议矩阵里，可用与不可用两个徽章的**可见文字逐字相同**（都是协议专名），
@@ -62,12 +62,12 @@ tr:last-child td { border-bottom: 0; }
    `text-decoration` 这条声明的存在由
    `tests/ui/dom/models-section.test.ts「.badge-off 在 CSS 里声明了一条看得见的 text-decoration」`
    那一格钉着：删掉当场红，**换成 `text-decoration-color` 也当场红**——那一族本身就是颜色属性，
-   算不得非颜色线索（P3e Task 20 复评实测把上一版的子串判据打穿过，判据已换成逐条声明的属性名）。
+   算不得非颜色线索（复评实测把上一版的子串判据打穿过，判据已换成逐条声明的属性名）。
    ⚠️ **锚要写成 `路径「用例名」` 紧挨着的那一种**：实测第 8 道门禁只校验这一种形态的锚内容，
    写成「`路径` 的〈换行〉「用例名」」时用例改名它一声不吭（本轮实测 EXIT=0）。 */
 .badge-off { text-decoration: line-through; }
 
-/* 工具条 / 分页 / 说明文字：Task 4 的 Key 池板块起用，事件与概览板块同样直接引用，
+/* 工具条 / 分页 / 说明文字：Key 池板块起用，事件与概览板块同样直接引用，
    **不许各板块再各写一份**（kiro2api 正是没有这一层，同一个原语出现了三份不同实现）。 */
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-sm); margin: var(--gap-sm) 0; }
 .toolbar input[type="search"] {
@@ -83,7 +83,7 @@ tr:last-child td { border-bottom: 0; }
 /* `≈` 标记：它是产品不变式的一部分（近似值必须打标），不是排版装饰。 */
 .approx { color: var(--muted); cursor: help; }
 
-/* 概览板块（Task 5）：常驻红色横幅（config.degraded 时）+ 内容块卡片。 */
+/* 概览板块：常驻红色横幅（config.degraded 时）+ 内容块卡片。 */
 .banner-danger {
   padding: var(--gap-sm) var(--gap); margin-bottom: var(--gap-sm);
   color: var(--danger-fg); background: var(--danger); border-radius: var(--radius);
@@ -93,13 +93,13 @@ tr:last-child td { border-bottom: 0; }
 .block h3 { margin: 0 0 var(--gap-sm); font-size: 14px; }
 .block p { margin: 4px 0; }
 
-/* 事件板块（Task 6）：级别按钮组 + 轮询状态指示灯 + 滚动容器 + 分组时间线。 */
+/* 事件板块：级别按钮组 + 轮询状态指示灯 + 滚动容器 + 分组时间线。 */
 .btn-group { display: inline-flex; gap: 2px; flex-wrap: wrap; }
 .btn-toggle {
   padding: 6px 10px; font: inherit; color: var(--muted);
   background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
 }
-/* 选中态。**颜色之外必须再有一条非颜色声明**（WCAG 1.4.1，P3e Task 20）：
+/* 选中态。**颜色之外必须再有一条非颜色声明**（WCAG 1.4.1）：
    原来这条只改 `color` 与 `border-color`，真机实测（触屏模拟）里选中与未选中两颗按钮的
    `font-weight` 都是 400、`text-decoration` 都是 none ⇒ 差别**只有颜色**。
    ⚠️ **这是事件 / 用量 / 模型 / 设置 / 调试台五个板块共用的类**，
@@ -109,14 +109,14 @@ tr:last-child td { border-bottom: 0; }
    `tests/unit/source-guards.test.ts「.btn-toggle.active 至少有一条非颜色声明」`
    那一格钉着（简写名白名单在那一格里手写，判据本身在 `tests/helpers/css-decls.ts`）。
    ⚠️ **`outline-color` / `text-decoration-color` 这一族不算数**：它们本身就是颜色属性，
-   上一版的子串判据放行过它们（P3e Task 20 复评实测）。
+   上一版的子串判据放行过它们（复评实测）。
    ⚠️ **代价如实写在这里，别当它不存在**：加粗会让选中的那颗变宽，它右边的按钮跟着右移。
    真机量过（宽屏与 380px 窄屏各一轮，逐档切换）：**按钮组的换行行数不变、页面不横向滚动**。
    位移的具体像素数**刻意不写在这里**——本仓没有布局引擎，写下来就是一个没有测法的数字；
-   要复量的话去 P3e Task 20 的报告，那里记着当时的量法与读数。 */
+   要复量的话按上面那句记着的量法（宽屏与 380px 窄屏各一轮、逐档切换）自己重量一遍。 */
 .btn-toggle.active { color: var(--text); border-color: var(--primary); font-weight: 600; }
 /* 轮询状态指示灯：三态各一个颜色 token，点本身不带文字（文字说明挂在 title/aria-label 上）。
-   ⚠️⚠️ **`--ok-fg` / `--danger-fg` 那一对是坏的，别改回去**（P3e Task 20 复评 F3 真机量出来的）：
+   ⚠️⚠️ **`--ok-fg` / `--danger-fg` 那一对是坏的，别改回去**（复评时真机量出来的）：
    那一族是「画在有色底上的前景色」，亮色主题里两个逐字都是 `#ffffff`
    ⇒ 「轮询中」那颗是**纯白点画在纯白卡（`--panel`）上**、深色主题里同样是深色画在深色上，
    两个主题下都看不见；而且 `--ok-fg` 与 `--danger-fg` 取值逐字相同 ⇒ 「轮询中」与「出错」**同色**。
@@ -139,11 +139,11 @@ tr:last-child td { border-bottom: 0; }
 .poll-dot-paused { background: var(--muted); }
 .poll-dot-error { background: var(--danger); }
 
-/* Key 池板块（P3c Task 4）：批量条复用 .toolbar 布局，行内动作列的按钮组换行。 */
+/* Key 池板块：批量条复用 .toolbar 布局，行内动作列的按钮组换行。 */
 .bulk-bar { background: var(--panel-2); padding: var(--gap-sm); border-radius: var(--radius); }
 .row-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 
-/* 单把 key 的验活（P3d Task 9）：一颗按钮 + 它的行内结果。
+/* 单把 key 的验活：一颗按钮 + 它的行内结果。
    `flex-basis: 100%` 让这一小块**独占一行**——结果文案是整句话（五语言里最长的
    那几句能到一百多个字符），跟六颗按钮挤在同一行会把整列撑爆。
    结果只在这一行就地显示、不落盘（订正 F8），所以这里不需要任何折叠/清除控件。 */
@@ -169,7 +169,7 @@ tr:last-child td { border-bottom: 0; }
 }
 .dropdown-menu button:not([disabled]):hover { background: var(--panel-2); }
 
-/* 注册机板块（P3c Task 6）：两张**完全对称**的通道卡。
+/* 注册机板块：两张**完全对称**的通道卡。
    ⚠️ **这里刻意没有任何 `[data-channel="…"]` 选择器。** 给某一条通道单独一条
    样式规则，就是在样式层引入设计 §10.3 第 2 条禁止的那种不对称——而它比代码里的
    不对称更难被评审看见（两张卡在 DOM 上仍然一模一样，只是画出来不一样）。 */
@@ -186,7 +186,7 @@ tr:last-child td { border-bottom: 0; }
 /* 分组内的行左边一条细线，视觉上把同一条时间线的几行连起来。 */
 .ev-row-grouped td:first-child { border-left: 2px solid var(--border); }
 
-/* 设置页（P3c Task 7）。
+/* 设置页。
    ⚠️ **锁定与「本次变化」两种状态必须有各自的视觉信号，而且不能只靠颜色**：
    一个只用颜色区分的状态对色觉障碍用户等于不存在，而这两个状态一个说
    「你改了也不会生效」、一个说「这一格真的变了」，两句都是运维保存之后唯一
@@ -210,7 +210,7 @@ tr:last-child td { border-bottom: 0; }
 .cfg-errors p { margin: 2px 0; }
 .danger-text { color: var(--danger); }
 
-/* 危险区（P3e Task 31，设计里不带编号的那一节「重置到底重置了什么」）。
+/* 危险区（设计里不带编号的那一节「重置到底重置了什么」）。
 
    ⚠️ **两颗按钮同样 `align-self: flex-start`**，与上面 `.cfg-clear` 那段逐字同源：
    `.cfg-field` 是 column 方向的 flex 容器，不缩的话它们会被拉成两条横贯整张卡的
@@ -224,7 +224,7 @@ tr:last-child td { border-bottom: 0; }
    做成整行宽会让人以为该往里粘点别的东西。 */
 .danger-confirm { max-width: 140px; }
 
-/* 集成示例卡（P3d Task 7，设计 §10.4 第 4 张卡）。
+/* 集成示例卡（设计 §10.4 第 4 张卡）。
 
    ⚠️ **`white-space: pre` 而不是 `pre-wrap`**：示例是要照抄去跑的，curl 那几段靠
    行尾的反斜杠续行，自动折行会在视觉上把一条命令切成好几条、把续行符的位置搞乱。
@@ -241,7 +241,7 @@ tr:last-child td { border-bottom: 0; }
 .examples-bar { display: flex; align-items: center; margin-top: var(--gap-sm); }
 .examples-bar .muted { margin-right: var(--gap-sm); }
 
-/* 用量板块（P3d Task 5，设计 §10.6）。
+/* 用量板块（设计 §10.6）。
 
    ⚠️⚠️ **这一段里最要紧的是那两根破折号**：`–`（EN DASH，`.usage-none`）说的是
    「这一次读成功了，只是没有样本 / 没有分母」，`—`（EM DASH，`.usage-unknown`）
@@ -270,7 +270,7 @@ tr:last-child td { border-bottom: 0; }
    不各写一份取值逐字相同的声明（同 `.badge-danger` 下面那段裁定）。 */
 .usage-retry, .models-retry { margin-left: var(--gap-sm); }
 
-/* 模型板块（P3d Task 6）。 */
+/* 模型板块。 */
 /* 一条端点一行；同一格里的第二条往下挪，别让两段式被读成一条带斜杠的长路径。 */
 .models-endpoint { white-space: nowrap; }
 .models-endpoint + .models-endpoint { margin-top: 2px; }
@@ -284,7 +284,7 @@ tr:last-child td { border-bottom: 0; }
 .usage-breakdown { margin-top: var(--gap); }
 .usage-breakdown h4 { margin: 0 0 var(--gap-sm); font-size: 13px; }
 
-/* Playground 板块（P3d Task 10）。
+/* Playground 板块。
    ⚠️ **一个字节的 CSP 都没有放宽**（全局约束 17）：这里全是文本与边框，
    没有任何图片 / 视频 / iframe，也不为将来「顺手」预留。 */
 /* 左右两栏。窄屏下自动落成上下两块——`min-width` 由内容决定，不写媒体查询：
@@ -318,7 +318,7 @@ tr:last-child td { border-bottom: 0; }
 .pg-unknown { color: var(--danger); }
 /* 错误横幅里那颗「再读一次」，与用量 / 模型板块那两颗是同一件东西。 */
 .pg-retry { margin-left: var(--gap-sm); }
-/* ── 媒体模式（P3d Task 12）────────────────────────────────────────────────
+/* ── 媒体模式 ────────────────────────────────────────────────
    一条结果 = 地址原文 + 复制 + （可链接就）在新标签页打开。
    **地址必须能换行**（`break-all`）：一条带签名的 CDN 地址轻松几百字符，
    不换行会把整块右栏撑破，而运维连它是什么都看不见。 */

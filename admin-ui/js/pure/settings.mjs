@@ -37,11 +37,11 @@ export const CARD_UPSTREAM = [
   // ——那正是本仓反复裁过的「面板说一件事、实际是另一件事」。
   // **它们与别的字段有一条真实差异**：建 app 时读一次，改了要重启容器 / 等 isolate
   // 回收才生效，卡 2 底下那句 `set.card.upstreamNote` 就是说这件事的。
-  // ⚠️ **上面这句话在 P3e Task 4 之前是假的**：那个 key 在字典里躺了整整一期，
+  // ⚠️ **上面这句话曾经是假的**：那个 key 在字典里躺了整整一期，
   // `sec-settings.js` 从来没把它渲染出来（`scripts/check-i18n.mjs` 这道门禁把它报成「未被引用」）。
   // 现在它真的上屏了，并由 tests/ui/dom/settings-save.test.ts 的
   // 「卡 2 底下真的印着那句「改了要重启」」钉着——这一条别再退回成散文。
-  // ⚠️ **那一句只是常驻的静态提示，回执那一半在 P3e Task 23 才补上**：
+  // ⚠️ **那一句只是常驻的静态提示，回执那一半是后来才补上的**：
   // 在那之前保存完一律渲染 `set.propagation`「本实例已经生效」，对这两格是**当面说反话**。
   // 这两格今天在下面的 `BUILD_TIME_FIELDS` 里，回执按那张表分岔。
   "poolCacheTtlMs",
@@ -233,7 +233,7 @@ const ERROR_KEYS = {
   fallback_equals_primary: "set.err.fallback_equals_primary",
   delay_min_gt_max: "set.err.delay_min_gt_max",
   channel_credentials_missing: "set.err.channel_credentials_missing",
-  // 评审 C1/C2/C3 补的五条。**加码就必须补这里 + 补五语言**，由
+  // 评审接连三次点名补的五条。**加码就必须补这里 + 补五语言**，由
   // `tests/ui/settings.test.ts` 的「后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红」
   // 遍历后端的 `CONFIG_ERROR_CODES`（单一真源）钉着。
   gateway_token_required: "set.err.gateway_token_required",
@@ -258,7 +258,7 @@ const ERROR_KEYS = {
  * 那是设计 §10.4 要求的那条 CI 断言。
  *
  * ⚠️ **这里原来写的是「拿 `ConfigErrorCode` 那个联合类型的手写镜像来比对」——
- * 那份镜像已经不存在了**（评审 C4：`satisfies` 只做单向可赋值检查，删得住、加不住，
+ * 那份镜像已经不存在了**（评审当场实测：`satisfies` 只做单向可赋值检查，删得住、加不住，
  * 实测加一个码零信号）。同一个文件下面 `ERROR_KEYS` 上那段是对的，两句一度互相矛盾。
  * ⚠️ **它逃过了 `scripts/check-comment-refs.mjs` 这道门禁**，因为规则 B 查的是「指向存不存在」而不是「那句话真不真」
  * ——正是本仓登记在 `scripts/check-comment-refs.mjs` 里的那个盲区。
@@ -662,7 +662,7 @@ export function displayValue(v) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// 危险区（第 5 张卡，P3e Task 31）
+// 危险区（第 5 张卡）
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -671,7 +671,7 @@ export function displayValue(v) {
  * ⚠️⚠️ **判据不是这里算的，是后端给的 `resetBlocked`。**
  * 那一格由 `configLoadBlockers({}, env)` 产出——与 `PUT` 的跨字段校验、与诊断视图
  * **同一份**。设计小节逐字裁过这条：上一版把两态写成「有没有 `GATEWAY_TOKEN`」，
- * 那是把 P3c 已经收口过一次的缺口原样搬回来（重置连**通道凭据**一起清，
+ * 那是把早先已经收口过一次的缺口原样搬回来（重置连**通道凭据**一起清，
  * 爆炸半径严格大于「清空一把凭据」那条单字段路径）。
  * **面板这一层只负责把码翻成话，一个优先级判断都不做。**
  *

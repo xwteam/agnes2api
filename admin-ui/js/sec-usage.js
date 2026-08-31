@@ -96,7 +96,7 @@ function tile(labelKey, tipKey, tipParams) {
 function block(titleKey) {
   const wrap = el("div", { class: "card block" });
   // **标题节点要交出去**：`≈` 得真的挂在标题上，而不是挂在整张表下面
-  //（P3d Task 5 收口复评 G2：上一版 append 到 `wrap` ⇒ 子节点序是
+  //（收口复评 G2：上一版 append 到 `wrap` ⇒ 子节点序是
   // `h3, div, span.approx`，`≈` 落在表格**下面**，与注释和用例名都对不上，
   // 而用例只数个数 ⇒ 改 append 目标那一行**不会红**）。
   const head = elI18n("h3", titleKey);
@@ -162,7 +162,7 @@ function fillCell(node, kind, text, marks) {
  * `CARD_REGISTRAR`）里确实一格都没有它。
  * ⇒ 那颗按钮会是本仓反复裁过的同一个形态：**面板说一件事、实际是另一件事**。
  * 换成写清「怎么开」——环境变量 + 重启，那是今天唯一真的能开它的路径。
- * **这条偏离是刻意的，登记在 P3d Task 5 的报告里。**
+ * **这条偏离是刻意的，理由整段就写在上面。**
  */
 function buildOffCard() {
   const { wrap, body } = block("usage.off.title");
@@ -260,7 +260,7 @@ function buildNoteBanner(note, onRetry) {
 /**
  * 重试按钮。**`onRetry` 是必填的**：上一版无参数、一律调 `load()`，
  * 于是单日下钻那条错误横幅上的「刷新」重拉的是**汇总**而不是那一天
- * ——一颗按了不解决问题的按钮（P3d Task 5 评审 M1）。
+ * ——一颗按了不解决问题的按钮（评审 M1）。
  */
 function retryButton(onRetry) {
   const btn = elI18n("button", "common.refresh", { type: "button", class: "usage-retry" });
@@ -273,7 +273,7 @@ function retryButton(onRetry) {
  * `≈` 看 `approximate`，「不完整」看 `malformedKind`。**一个都不许在前端硬编码。**
  *
  * ⚠️⚠️ **`incompleteOf` 判据直接走 `malformedKind()`，刻意不经 `summaryCards().complete`**
- *（P3d Task 5 定向复评 N2）：`complete` 是拿 `total` 算的
+ *（定向复评 N2）：`complete` 是拿 `total` 算的
  *（`total === null ? true : …`），而 **`GET /admin/api/usage/:date` 的响应里
  * 根本没有 `total` 字段**（`src/http/admin/handlers/usage.ts` 的 `usageDateHandler`
  * 返回的是 `hours` / `byModel` / `byProtocol` / `shards` / `malformed`）
@@ -351,7 +351,7 @@ function buildCards(state, marks) {
   specs.push(errorRate.card);
 
   // ⚠️ **协议 id → 展示名走 `GET /admin/api/models` 的 `protocols[].label`**，
-  //    id 本身来自 `capabilities.stats.tokensCoverage`（评审 I20）。
+  //    id 本身来自 `capabilities.stats.tokensCoverage`（评审要求）。
   //    三条都不许走：本地再写一张映射、把 id 拼进一个 i18n key、直接渲染裸 id。
   const coverage = caps && caps.stats ? caps.stats.tokensCoverage : null;
   const labels = tokensCoverageLabels(coverage, catalog === null ? null : catalog.protocols);
@@ -382,8 +382,8 @@ function headRow(keys) {
 /**
  * 往一行里塞那六个数字格。**日汇总表与三张分解表共用它。**
  *
- * ⚠️⚠️ **`state` 是整块的状态，不是这一行自己看出来的** —— 这是 P3d Task 5
- * 评审 C1 的根因那一句话在代码里的样子。上一版两张表各自写
+ * ⚠️⚠️ **`state` 是整块的状态，不是这一行自己看出来的** —— 这是「整块状态
+ * 一步都没往下传」那条评审的根因在代码里的样子。上一版两张表各自写
  * `row.total === null ? "unavailable" : "data"`（**完全不看整块状态**），
  * 于是 `usageState` 判出来的 `unavailable` 一步都没往下传：
  * `all_malformed` 时六张卡正确地全是 EM DASH，**而紧挨着的日表把同一段区间
@@ -493,7 +493,7 @@ function breakdownTable(titleKey, keyLabelKey, map, numeric, state) {
   wrap.appendChild(elI18n("h4", titleKey));
   const rows = breakdownRows(map, numeric);
   if (rows.length === 0) {
-    // 同上：**这一天读不出来**与**这一天没有记录**是两句话。C1 点名的「第三屏」。
+    // 同上：**这一天读不出来**与**这一天没有记录**是两句话。那条评审点名的「第三屏」。
     // 判据与日表共用同一个 `readSucceeded()`（定向复评 N6）。
     wrap.appendChild(elI18n(
       "p", readSucceeded(state) ? "usage.detail.empty" : "usage.detail.unavailable",
@@ -636,7 +636,7 @@ function render() {
     host.appendChild(empty);
   }
 
-  // ⚠️ **两个诚实标记算一次，卡片与日表共用同一份**（评审 C1 / I1）：
+  // ⚠️ **两个诚实标记算一次，卡片与日表共用同一份**（评审前后点了两次）：
   //    各算各的迟早分叉，而分叉的那一边正好是「表」时，后果就是
   //    卡片说「不完整」而紧挨着的表把同一份数字写成完整的。
   const marks = honestyMarks(data);

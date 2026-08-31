@@ -105,7 +105,7 @@ export function failureReasonKey(reason) {
  *
  * ⚠️⚠️ **状态码不是判据。** `409` 有三种（`tend_in_flight` / `locked` /
  * `registrar_disabled`）、**`429` 有四种**（`manual_cooldown` / `write_budget_exhausted` /
- * `probe_in_flight` / `probe_cooldown`——后两种是 P3d Task 8 的出站探测护栏加的）。
+ * `probe_in_flight` / `probe_cooldown`——后两种是出站探测护栏加的）。
  * 拿状态码选文案的前端会把「另一个副本在跑」（等对面跑完）与「注册机压根没开」
  *（去设置里打开它）说成同一句话——两者的处置毫无共同之处。
  * 这与 Key 池那条 `must_disable_first` 在批量路径上「200 一路走过去」是同一个形状。
@@ -122,7 +122,7 @@ export function refuseReasonKey(reason) {
     case "not_wired": return "reg.refuse.not_wired";
     case "unknown_channel": return "reg.refuse.unknown_channel";
     case "channel_not_configured": return "reg.refuse.channel_not_configured";
-    // 出站探测护栏的两种（P3d Task 8）。**两条都必须在这张表里**：漏了的话
+    // 出站探测护栏的两种。**两条都必须在这张表里**：漏了的话
     // `refuseReasonKey` 返回 null，调用方退回通用的 `reg.channel.testError`，
     // 于是「刚测过，隔几秒再来」与「这条通道真的连不上」在面板上长得一模一样——
     // 而运维恰恰会在失败之后立刻重试，也就是必然撞上这一格。
@@ -304,7 +304,7 @@ export function roundFailures(row) {
  * 逐通道的铸出数，渲染成 `moemail 2 · yyds 1`。
  *
  * ⚠️ **这一格存在的理由是硬约束「两条通道完全平级」**（`TendResult.mintedByChannel`
- * 上那段评审 I8）：`minted` 只有总数，而一轮全靠备通道铸出来时，总数记在哪条通道
+ * 上那段评审记录）：`minted` 只有总数，而一轮全靠备通道铸出来时，总数记在哪条通道
  * 名下是看不出来的——没有这一格，备通道的战绩会被持续记到主通道头上。
  *
  * 顺序：先按 `CHANNELS`（字母序），再把表里出现过的其它通道名按字典序接在后面

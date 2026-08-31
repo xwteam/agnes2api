@@ -1,6 +1,6 @@
 /**
  * 设置页：认证密钥 / 上游与冷却 / 注册机（设计 §10.4 的前三张卡）
- * + 集成示例（P3d Task 7）+ 危险区（P3e Task 31，设计里不带编号的那一节
+ * + 集成示例 + 危险区（设计里不带编号的那一节
  * 「重置到底重置了什么」）。**卡数是五份 ADMIN.md 设置卡那张表的行数真源**，
  * 由 `tests/unit/docs-parity.test.ts` 的
  * 「五份 ADMIN.md 里五张表的行数，逐张等于屏幕那边对应的那个计数」钉着。
@@ -44,7 +44,7 @@ import {
   buildPatch, localErrors, changedFields, changedSecrets, propagationView,
   errorRows, clearResultView, displayValue, clearWarning, isDiagnostic, loadBlockedRows,
   isSaveReceipt, touchesLiveField, touchesBuildTimeField,
-  // 第 5 张卡（危险区，P3e Task 31）。**取值决策一律在纯函数里**，见本文件纪律 ②。
+  // 第 5 张卡（危险区）。**取值决策一律在纯函数里**，见本文件纪律 ②。
   DANGER_ACTIONS, resetWarnings, poolSizeOf, purgeConfirmed, purgeResultView, isPoolSizeChanged,
 } from "./pure/settings.mjs";
 
@@ -63,7 +63,7 @@ let touched = new Set();
 let data = null;
 
 // ───────────────────────────────────────────────────────────────────────────
-// 第 4 张卡：集成示例（P3d Task 7，设计 §10.4）的那几格状态
+// 第 4 张卡：集成示例（设计 §10.4）的那几格状态
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -282,7 +282,7 @@ function render() {
   for (const path of Object.keys(nodes.fields)) renderOne(nodes.fields[path]);
 
   const p = propagationView(data);
-  // ── 传播说明：两句话，各自有各自的前提（P3e Task 23）────────────────────────
+  // ── 传播说明：两句话，各自有各自的前提───────────────────────────────────────
   //
   // `set.propagation` 逐字说的是「**本实例已经生效**；别的副本最长 {bound} 之后才看得到」，
   // 而 `BUILD_TIME_FIELDS` 那两格是建实例时读一次的（`src/http/wire.ts`）⇒
@@ -295,7 +295,7 @@ function render() {
   // 而「这次改动」那句回执**一个字都不说**（无中生有的回执与假回执一样坏）。
   const saved = isSaveReceipt(data) ? changedFields(data).concat(changedSecrets(data)) : null;
 
-  // ⚠️⚠️ **回到读取态时，上一次保存的回读行与各格高亮必须一起作废**（Task 23 复评发现 1）。
+  // ⚠️⚠️ **回到读取态时，上一次保存的回读行与各格高亮必须一起作废**（复评发现）。
   //
   // 复评实测出来的形状：保存了一个旋钮（屏幕上正确地说「本实例也还没生效」）之后，
   // 运维**点一下这个面板自己的「刷新」**去看生效没有 ⇒ `load()` 拿回一份 GET（没有
@@ -303,10 +303,10 @@ function render() {
   // 光是这一句本身讲的是这个部署的传播上界（读取态照旧要显示，见下），**但它不是一个人
   // 站在那里**：`nodes.readback` 还挂着「已回读生效值，1 个字段发生了变化（已高亮）」、
   // 那一格还带着 `.changed` —— 三个信号一起指向刚才那次保存，运维读到的就是
-  // 「你刚改的那格本实例已经生效」，而那是假的。P3d 那次「屏幕上编出一个状态码」是同一个形状。
+  // 「你刚改的那格本实例已经生效」，而那是假的。早先那次「屏幕上编出一个状态码」是同一个形状。
   // 切板块回来、切语言（`admin-ui/js/app.js` 的 `langchange` 兜底）走的都是同一个 `load()`。
   //
-  // ⚠️ **修的是放大器，不是那句话本身**：`set.propagation` 的措辞是 P3c 论证出来的、
+  // ⚠️ **修的是放大器，不是那句话本身**：`set.propagation` 的措辞是早先论证出来的、
   // 五语言 DEPLOY.md 对用户的承诺，本任务不许改（读取态下它必须在，由
   // `tests/ui/dom/settings-save.test.ts`
   // 「④ 只是读了一次配置（还没保存过）：重启那句不出现，传播上界照常在」钉着；
@@ -315,10 +315,10 @@ function render() {
   // ⚠️ **边界：这里只清这两样。** 错误行（`nodes.errors`）与 `.invalid` 归 `clearMarks()`
   // 管（每次保存前清），读取态不动它们——那是**上一次保存失败**留下的东西，与这句
   // 传播说明不发生任何组合，扩到这里就是一次没被评审过的行为改动。这条边界如实登记在
-  // Task 23 报告的遗留里，别把它读成「读取态会把屏幕清干净」。
+  // 遗留待办里，别把它读成「读取态会把屏幕清干净」。
   if (saved === null) clearReadback();
 
-  // ⚠️⚠️ **危险区那一行回执同样必须在这里作废**（P3e Task 31 复评回填 F1）。
+  // ⚠️⚠️ **危险区那一行回执同样必须在这里作废**（复评回填 F1）。
   //
   // 它与上面那段是**同一个形状的第二例**，而它逃过了上面那段：上面清的是
   // `nodes.readback`，判据是「这份数据是不是保存回执」；危险区那一行由 `doReset()` /
@@ -362,7 +362,7 @@ function render() {
  * 第 4 张卡的卡内内容，整块重画。
  *
  * ── **本函数里没有任何一条端点路径、请求体形状或协议名** ──────────────────────
- * P3d 核心设计决定（全局约束 15）：四个消费者只许有一份「怎么调这个网关」的知识。
+ * 核心设计决定（全局约束 15）：四个消费者只许有一份「怎么调这个网关」的知识。
  * 协议 id 与展示名、方法、路径模板、鉴权头、最小请求体全部来自
  * `GET /admin/api/models` 的响应，拼代码那一步在 `admin-ui/js/pure/examples.mjs` 里；
  * 这里只负责选哪一档、把它画出来。
@@ -465,7 +465,7 @@ async function loadCatalog() {
     exInFlight = false;
   }
   // ⚠️ **这里不判 `nodes !== null`，上面那条早退也不判——两条路径对同一个不变量
-  //    必须给出同一个表态**（P3d Task 7 评审 F-10：上一版一条判一条不判，
+  //    必须给出同一个表态**（评审 F-10：上一版一条判一条不判，
   //    而「一处判空」会被下一个人读成「这里真的可能是 null」）。
   //    不变量与它的出处：`loadCatalog()` 只有 `onShow()` 一个调用方，而
   //    `admin-ui/js/app.js` 的 `showSection` 是**先 init 再 onShow**
@@ -481,7 +481,7 @@ async function loadCatalog() {
  * 上一次保存留下的**回读行与各格高亮**一并作废。
  *
  * ⚠️ **抽成函数是因为它有三个调用点**（`render()` 的读取态那一支、`clearMarks()`、
- * `doReset()`），而抄三份的话迟早有一份忘了清其中一样——Task 23 复评那次
+ * `doReset()`），而抄三份的话迟早有一份忘了清其中一样——复评那次
  * 「三个信号一起指向一次没有发生的变化」就是漏清其中一样的后果。
  */
 function clearReadback() {
@@ -655,7 +655,7 @@ async function doClear(path) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// 卡 5：危险区（P3e Task 31）
+// 卡 5：危险区
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -707,7 +707,7 @@ async function doReset() {
     // `configResetHandler` 逐字如此）⇒ `saved !== null` ⇒ 那段清理**恒不跑**。
     // 复评实测：先改一格保存（回读行说「1 个字段发生了变化（已高亮）」、maxStrikes 带
     // `.changed`），再点重置、回执 `changed: []` ⇒ 回读行与高亮**原样留着**，
-    // 而那个 `1` 来自上一次保存 —— 与 Task 23 复评发现 1 逐字同形。
+    // 而那个 `1` 来自上一次保存 —— 与上面那条复评发现逐字同形。
     // ⚠️ **不改 `isSaveReceipt()` 去把重置排除掉**：那条判据「跟着数据走、不跟着时间走」
     // 是它存在的全部理由，而重置回执确实是一次写回执（`changed` 那一格的语义与 `PUT` 同源）。
     // 该作废的是**上一次那件事**留下的痕迹，落点就在这里。
@@ -824,7 +824,7 @@ async function load() {
   }
   // 与 `loadCatalog()` 结尾同一条裁定：**不判 `nodes !== null`。**
   // ⚠️ 上一版这里判、那边不判，而两个函数是同一个 `onShow()` 里的兄弟调用、
-  //    读的是同一个变量（P3d Task 7 定向复评 M-4：我上一轮只修了一半，
+  //    读的是同一个变量（定向复评 M-4：上一轮只修了一半，
   //    新写的那句「一处判空会被下一个人读成这里真的可能是 null」在自己上方十行处被反证）。
   //    不变量与出处见 `loadCatalog()` 结尾那一段。
   render();
@@ -906,7 +906,7 @@ export const settingsSection = {
     reg.body.appendChild(advanced);
     section.appendChild(reg.wrap);
 
-    // ── 卡 4：集成示例（P3d Task 7，设计 §10.4 第 4 张卡）──────────────────────
+    // ── 卡 4：集成示例（设计 §10.4 第 4 张卡）──────────────────────────────────
     // 板块文件允许碰浏览器全局，**base URL 在这里读一次再传给纯函数**——
     // `js/pure/` 下禁止出现浏览器那两个顶层全局（`scripts/build-ui.mjs` 的静态校验，
     // 含注释里的字样），所以纯函数只收一个 `origin` 参数。
@@ -915,9 +915,9 @@ export const settingsSection = {
     nodes.examples = examples.body;
     section.appendChild(examples.wrap);
 
-    // ── 卡 5：危险区（P3e Task 31，设计小节「重置到底重置了什么」）───────────────
+    // ── 卡 5：危险区（设计小节「重置到底重置了什么」）────────────────────────────
     //
-    // ⚠️ **这张卡在 P3e 之前刻意不存在**：设计订正 D1 把它推迟到 P3e，逐字理由是
+    // ⚠️ **这张卡一度刻意不存在**：设计订正 D1 把它往后推过一期，逐字理由是
     // 「『重置』到底重置了什么本身就需要一节设计，而本文档没有这一节」——
     // **让一颗后果不可挽回的按钮先于它的语义上线，正是会变成 Critical 的形状。**
     // 那一节现在写好了，这张卡才落地。
@@ -962,7 +962,7 @@ export const settingsSection = {
     section.appendChild(propagation);
     nodes.propagation = propagation;
 
-    // 上面那句的**例外分支**（P3e Task 23）：这次保存碰到了建实例时读一次的字段。
+    // 上面那句的**例外分支**：这次保存碰到了建实例时读一次的字段。
     // ⚠️ **它是保存回执，不是又一条常驻说明**——常驻的那句在卡 2 底下
     //（`set.card.upstreamNote`，改之前就该看见）。默认藏着，由 `render()` 按
     // `touchesBuildTimeField()` 打开，见那里那一段。

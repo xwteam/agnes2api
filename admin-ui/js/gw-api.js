@@ -25,8 +25,8 @@
  * ⚠️⚠️ **这是全站第三个网络出口。** 另两个是 `js/api.js` 的 `raw()` 与 `js/app.js` 的
  * 登录探针。三个出口这件事由 `tests/ui/api-session.test.ts` 的
  * 「恰好三处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口」那格数着钉住。
- * ⚠️ 那张枚举表**在 P3d Task 10 之前漏三种写法**（`new WebSocket(` / 动态 `import(` /
- * 把 fetch 先存进变量再调），本任务把三种一并补进去并各种了一次探针。
+ * ⚠️ 那张枚举表**曾经漏掉三种写法**（`new WebSocket(` / 动态 `import(` /
+ * 把 fetch 先存进变量再调），本模块落地时把三种一并补进去并各种了一次探针。
  * 它仍然沿另一条轴漏一族：**带花括号的插值会被整条抠掉**——本模块因此**不许**把
  * 这里唯一那次真调用写进任何模板串的插值里。
  *
@@ -146,7 +146,7 @@ async function readJson(res) {
  * @param token  网关口令。**调用方负责拦「还没粘口令」那一档**，见 `buildRequest` 的说明。
  * @param opts   `{ origin, signal }`。**`origin` 不传就是一个字节都不发**（见 `openGateway`）。
  *
- * ⚠️ **`contentType` 是 P3d Task 12 加的一格，它把一个二义性拆开了。**
+ * ⚠️ **`contentType` 是媒体模式落地时补的一格，它把一个二义性拆开了。**
  * 在它之前，`body === null` 同时表示两件事：「响应是 JSON 但解析不了」与
  * 「响应根本不是 JSON」。对话四条协议下后者不会发生，**媒体那两档下它是常态**
  * ——`src/http/routes/media.ts` 的文件头写着「上游返回什么（地址或字节流）就原样转发」，
@@ -220,7 +220,7 @@ export async function streamFromGateway(req, token, opts) {
     // ⚠️ **补一个 `\n\n` 对 CRLF 尾巴同样成立**：尾巴是 `…\r\n` 时接上这两个 `\n`
     // 就凑出了一个 `\n\n` 边界，`\r` 由 `sseFrames()` 里那句 `.trim()` 吃掉。
     // ⚠️⚠️ **但这一句只在正常读完时才跑**：下面 `catch` 那条路上它根本不跑
-    //（`throw` 从循环里直接跳出去）。P3e Task 11 之前 `sseFrames()` 不认 `\r\n\r\n`，
+    //（`throw` 从循环里直接跳出去）。早先 `sseFrames()` 不认 `\r\n\r\n`，
     // 于是 CRLF 上游的全部负载都攒在 `buf` 里等着这一句来捞
     // ⇒ **中途断流时一条都交不出去（实测 LF 2 条 / CRLF 0 条）**。
     // ⇒ **这一句是兜底，不是分帧**；真正的分帧必须发生在上面那个循环里。

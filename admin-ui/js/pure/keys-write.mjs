@@ -1,5 +1,5 @@
 /**
- * Key 池板块**写操作**的绝大多数取值决策（P3c Task 4）。
+ * Key 池板块**写操作**的绝大多数取值决策。
  *
  * ⚠️⚠️ **这里原来写着"板块文件只剩 DOM 拼装、事件绑定与网络调用"，是一句被
  * 复评证伪过的"一律"**：`js/sec-keys.js` 自己的文件头如实登记了一条至今仍然
@@ -8,7 +8,7 @@
  * 这条纪律的诚实版本与 `sec-keys.js` 那句是同一句：**"取值决策原则上住在这里，
  * 例外必须在留下它的那个文件里说清楚是哪些、为什么"**，不是一句无条件的"只剩"。
  *
- * 这一批判据尤其容易被漏放在这里——上一期（P3b）在同一条规则上栽了四次，
+ * 这一批判据尤其容易被漏放在这里——上一期在同一条规则上栽了四次，
  * 每次都是「先写在板块文件里，下一期再搬」。本文件覆盖简报点名的三类判据：
  * **按钮可用性、确认文案要不要出现、批量选择的边界**。
  *
@@ -269,7 +269,7 @@ export function bulkResultPresentation(summary) {
 }
 
 /**
- * 导入框的原始文本按行拆开。**逐行原样返回，含空行**——这是 Task 3 在
+ * 导入框的原始文本按行拆开。**逐行原样返回，含空行**——这是
  * `src/core/keypool-repo.ts` 的 `addMany()` 里定死的口径：后端把空行整条跳过、
  * 但非法项的位置仍按**原始下标**算（1 基）。前端如果先过滤掉空行再发，
  * 位置就与运维在文本框里数到的行号错位；如果把空行也报成"第 N 行不合法"，
@@ -292,7 +292,7 @@ export function hasImportableContent(lines) {
  * `POST /admin/api/keys` 响应体投影成面板要显示的计数。
  *
  * ⚠️⚠️ **`reset` 必须原样取自响应字段，不许用 `duplicated.length` 代替**
- * （评审 I2）。两者不是一回事：本批之前就已经在池子里、又勾了 `resetExisting`
+ * （评审点名）。两者不是一回事：本批之前就已经在池子里、又勾了 `resetExisting`
  * 的那些才算"被重置"；本批刚新建的那把即使被粘了两遍也谈不上重置。
  * `src/core/keypool-repo.ts` 的 `addMany()` 原话：「一个动作两个数字，
  * 正是面板开始撒谎的方式」——这里就是那两个数字第一次分道扬镳的地方。
@@ -338,7 +338,7 @@ export function importResultPresentation(counts) {
  * 落成字面量 `"unauthorized"` / `"session_expired"`——三种都是非空字符串，
  * 会原样出现在 toast 里。
  *
- * ⚠️⚠️ **它上面那段「归属定死：这条破口归 P3e」已经结案（P3e Task 22A），
+ * ⚠️⚠️ **它上面那段「归属定死：这条破口留给后续」已经结案，
  * 这一段是结案陈述，不是待办。**
  *
  * **当时的破口**：后端校验类 400 的 `error.message` 是中文散文（例如 note 超长时的
@@ -357,7 +357,7 @@ export function importResultPresentation(counts) {
  * **边界（如实写，别读成全称承诺）**：闭集只覆盖**面板真的会把后端 `message`
  * 画到屏幕上**的那一族（`js/sec-keys.js` 的 `errorMessage()` 够得着的端点）。
  * **网关业务口**（`/v1` 那棵树的 401/400、dispatcher、worker 兜底）对 API 客户端
- * 仍然只说中文，P3e 明确不做，理由与档位在 `src/core/admin/admin-errors.ts` 的文件头。
+ * 仍然只说中文，明确不做，理由与档位在 `src/core/admin/admin-errors.ts` 的文件头。
  *
  * 结案后的行为由 `tests/ui/keys-write.test.ts` 的
  * 「已知 code ⇒ 渲染五语言字典里的那句，不是后端那句中文」与
@@ -389,7 +389,7 @@ export const ADMIN_ERROR_TEXT_KEY = {
   "body_not_an_object": "err.body_not_an_object",
   "unknown_field": "err.unknown_field",
   "key_not_found": "err.key_not_found",
-  // ⚠️ **刻意指向 `err.*` 之外那条已经存在的 key**：同一句话在 P3c 就写全了五语言
+  // ⚠️ **刻意指向 `err.*` 之外那条已经存在的 key**：同一句话早就写全了五语言
   //（行内删除那颗按钮走 409 顶层 `reason` 那条路时用的就是它）。
   // 在 `err.` 底下再写一份等于同一批文案两份真源。**这也顺带证明这张表不是
   // 「`err.` + code」那种可以被拼出来的映射**——它必须一行一行写。
@@ -496,7 +496,7 @@ export function noteToPatch(text) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// 单把 key 的验活入口（P3d Task 9）。端点与它的出站探测护栏是 Task 8 交付的。
+// 单把 key 的验活入口。端点与它的出站探测护栏是更早交付的。
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -555,7 +555,7 @@ export function verifyDisabledReason(row, state, now) {
 
 /**
  * disable 理由 → 按钮 `title` 的 i18n key。**返回字面量，一个都不许拼**
- * （全局约束 12。⚠️ 上一版这里写的后果是「全部门禁绿」，那句话在 P3e Task 4 之后是假的：
+ * （全局约束 12。⚠️ 上一版这里写的后果是「全部门禁绿」，那句话今天是假的：
  * `scripts/check-i18n.mjs` 的第 ① 条仍然认不得 `+` 拼出来的 key，**而第 ④ 条已升成硬错**
  * ⇒ 拼的话这几个**正在用**的 key 会落进「未被引用」并把 CI 打红，
  * 而顺着报文去「清理未被引用的 key」删掉的就是活文案）。
@@ -577,7 +577,7 @@ export function verifyDisabledTitleKey(reason) {
  * ⚠️⚠️ **这张表必须是显式的，不许写成「不认识就当网络错误」。** 后端
  * `src/http/admin/handlers/verify.ts` 的 catch 分支今天只产出 `timeout` /
  * `network_error` 两种，但**加一种是一行 diff**，而「面板没跟上」这件事
- * 在 P3d Task 8 上已经真实发生过一次（护栏加了两条 reason，
+ * 在出站探测护栏那次已经真实发生过一次（护栏加了两条 reason，
  * `admin-ui/js/pure/registrar.mjs` 的表当时没跟上）。落进 `network_error`
  * 的后果是面板对运维说「连不上上游」，而真相可能完全不是那回事。
  * 由 `tests/ui/keys-write.test.ts` 的
@@ -660,10 +660,10 @@ export function verifyTransportCode(err) {
  * 形态照抄 `js/pure/events.mjs` 的 `eventLevelLabelKey()`。
  *
  * ⚠️ 把前缀字面量与 `code` 拼起来再交给 `t()` 违反约束 12。
- * ⚠️⚠️ **后果在 P3e 翻过，上一版这里两句都不能照旧读**（Task 4 复评 F1）：
+ * ⚠️⚠️ **后果翻过一次，上一版这里两句都不能照旧读**（复评 F1）：
  * · 上一版写着「对 `scripts/check-i18n.mjs` 里 `/\bt\("([^"]+)"/` 那条判据完全隐身
- *   ⇒ 全部门禁绿」——那条窄正则 P3e Task 3 已经换成命名空间广扫，而**第 ④ 条
- *   在 Task 4 升成了硬错** ⇒ 拼的话这十二个**正在用**的 key 会落进「未被引用」、
+ *   ⇒ 全部门禁绿」——那条窄正则已经换成命名空间广扫，而**第 ④ 条
+ *   也已升成硬错** ⇒ 拼的话这十二个**正在用**的 key 会落进「未被引用」、
  *   把 CI 打红，顺着报文去清理删掉的就是活文案；
  * · 上一版写着「这段说明刻意不把反例写成可扫描的形态，因为那道门禁不去注释」——
  *   **归到 `check-i18n.mjs` 头上这一条今天是假的**：它的第 ① 条现在先抠注释再广扫

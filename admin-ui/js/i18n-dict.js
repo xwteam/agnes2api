@@ -70,12 +70,12 @@ export const I18N = {
   "common.copyFailed":{ "zh-CN": "复制失败", "zh-TW": "複製失敗", en: "Copy failed", ja: "コピーに失敗しました", ko: "복사에 실패했습니다" },
   "common.cancel":    { "zh-CN": "取消", "zh-TW": "取消", en: "Cancel", ja: "キャンセル", ko: "취소" },
   "common.confirm":   { "zh-CN": "确定", "zh-TW": "確定", en: "Confirm", ja: "確認", ko: "확인" },
-  // 需要手动关闭的 toast 上那颗「×」按钮的无障碍标签（P3c Task 4：批量操作部分
+  // 需要手动关闭的 toast 上那颗「×」按钮的无障碍标签（批量操作部分
   // 失败这类信息不自动消失，见 js/ui.js 的 toast() 说明）。
   "common.dismiss":   { "zh-CN": "关闭提示", "zh-TW": "關閉提示", en: "Dismiss", ja: "閉じる", ko: "닫기" },
   "common.sessionExpired": { "zh-CN": "会话已过期，请重新输入管理口令", "zh-TW": "工作階段已過期，請重新輸入管理口令", en: "Session expired, please sign in again", ja: "セッションが失効しました。再度サインインしてください", ko: "세션이 만료되었습니다. 다시 로그인하세요" },
 
-  // ── 管理接口错误码 → 五语言文案（P3e Task 22A）───────────────────────────
+  // ── 管理接口错误码 → 五语言文案 ──────────────────────────────────────────
   //
   // ⚠️⚠️ **这一族存在的全部理由：在它之前，后端那句中文 `error.message` 被
   // `js/sec-keys.js` 原样画到 ja / en / ko 的屏幕上。** 现在后端只回一个闭集里的
@@ -102,7 +102,7 @@ export const I18N = {
   "err.ids_not_a_string_array": { "zh-CN": "批量操作的 id 列表必须是一组文本，面板与网关的版本可能对不上", "zh-TW": "批次操作的 id 清單必須是一組文字，面板與網關的版本可能對不上", en: "The id list for a bulk operation must be an array of strings; the panel and the gateway may be on different versions", ja: "バッチ操作の id 一覧は文字列の配列である必要があります。パネルとゲートウェイのバージョンが異なる可能性があります", ko: "일괄 작업의 id 목록은 문자열 배열이어야 합니다. 패널과 게이트웨이의 버전이 다를 수 있습니다" },
   "err.too_many_bulk_ids": { "zh-CN": "一次最多操作 {max} 把 key，请分几次来", "zh-TW": "一次最多操作 {max} 把 key，請分幾次來", en: "At most {max} keys per bulk operation; split it into several rounds", ja: "1 回のバッチ操作は最大 {max} 件です。数回に分けてください", ko: "일괄 작업은 한 번에 최대 {max}개까지입니다. 여러 번에 나눠 주세요" },
 
-  // ── 补池失败归因（P3c 的注册机板块才渲染；本期先把键写齐，好让门禁从第一天就是活的）──
+  // ── 补池失败归因（注册机板块才渲染；本期先把键写齐，好让门禁从第一天就是活的）────────
   "reg.fail.domain_blocked_all": { "zh-CN": "所有域名都被上游拦下", "zh-TW": "所有網域都被上游擋下", en: "Every domain was blocked upstream", ja: "すべてのドメインが上流でブロックされました", ko: "모든 도메인이 업스트림에서 차단되었습니다" },
   "reg.fail.upstream_error":     { "zh-CN": "上游返回错误", "zh-TW": "上游回傳錯誤", en: "Upstream returned an error", ja: "上流がエラーを返しました", ko: "업스트림이 오류를 반환했습니다" },
   "reg.fail.code_timeout":       { "zh-CN": "等验证码超时", "zh-TW": "等驗證碼逾時", en: "Timed out waiting for the verification code", ja: "認証コードの待機がタイムアウトしました", ko: "인증 코드 대기 시간이 초과되었습니다" },
@@ -112,18 +112,18 @@ export const I18N = {
   "reg.fail.provider_error":     { "zh-CN": "邮箱通道报错", "zh-TW": "郵箱通道報錯", en: "The mailbox channel returned an error", ja: "メールボックスチャネルがエラーを返しました", ko: "메일박스 채널이 오류를 반환했습니다" },
   "reg.fail.network_error":      { "zh-CN": "网络错误", "zh-TW": "網路錯誤", en: "Network error", ja: "ネットワークエラー", ko: "네트워크 오류" },
   "reg.fail.rate_limited":       { "zh-CN": "被上游限流", "zh-TW": "被上游限流", en: "Rate limited upstream", ja: "上流でレート制限されました", ko: "업스트림에서 속도 제한되었습니다" },
-  // 评审 C1：整轮抛错。它不是一次铸 key 失败，是「这一轮根本没跑完」——
+  // 评审提出：整轮抛错。它不是一次铸 key 失败，是「这一轮根本没跑完」——
   // 加它是为了让崩掉的那一轮在补池历史的时间线上**占一格**，而不是与
   // 「注册机根本没跑」长得一模一样。
   "reg.fail.round_crashed": { "zh-CN": "整轮补池抛错中断", "zh-TW": "整輪補池拋錯中斷", en: "The whole tend round threw and was aborted", ja: "補充ラウンド全体が例外で中断しました", ko: "보충 라운드 전체가 예외로 중단되었습니다" },
   "reg.fail.provider_missing":   { "zh-CN": "这条通道没有配好凭据，未构造出提供方", "zh-TW": "這條通道沒有配好憑據，未建立提供方", en: "This channel has no credentials configured, so no provider was constructed", ja: "このチャネルは資格情報が未設定のため、プロバイダーが構築されませんでした", ko: "이 채널에 자격 증명이 없어 공급자가 생성되지 않았습니다" },
-  // ⚠️ P3c Task 5：这一条**不是失败**——那一轮真的铸出来了（`minted` 照常 +1，
+  // ⚠️ 这一条**不是失败**——那一轮真的铸出来了（`minted` 照常 +1，
   // 上游账号与临时邮箱都真的花掉了），只是发回来的 key 材料含不可打印字符或空白。
   // 它照常存进池子（拒收 = 销毁凭据），但多半每次被选中都会让转发失败。
   // 五种语言的措辞都必须说清「已存下来 + 请去处理它」，不许写成「铸失败了」。
   "reg.fail.key_suspicious": { "zh-CN": "铸出来的 key 材料可疑（已存入池子，请手动停用或删除）", "zh-TW": "鑄出來的 key 材料可疑（已存入池子，請手動停用或刪除）", en: "The minted key material looks malformed (stored in the pool anyway — disable or delete it)", ja: "発行されたキーの内容が不正に見えます（プールには保存済み — 無効化または削除してください）", ko: "발급된 키 내용이 손상된 것으로 보입니다(풀에는 저장되었으니 비활성화하거나 삭제하세요)" },
 
-  // ── 注册机板块（P3c Task 6）───────────────────────────────────────────────
+  // ── 注册机板块 ────────────────────────────────────────────────────────────
   //
   // ⚠️⚠️ **整个 `reg.*` 命名空间受禁用词门禁管**（`scripts/check-i18n.mjs` 第 ⑥ 条 +
   // `tests/unit/i18n-dict.test.ts` 那条同名断言，两份独立实现）：
@@ -225,7 +225,7 @@ export const I18N = {
   "reg.row.byChannel": { "zh-CN": "逐通道：{detail}", "zh-TW": "逐通道：{detail}", en: "By channel: {detail}", ja: "チャネル別: {detail}", ko: "채널별: {detail}" },
   "reg.fail.unknownReason": { "zh-CN": "这个版本的面板不认识的失败归因：{reason}", "zh-TW": "這個版本的面板不認識的失敗歸因：{reason}", en: "A failure reason this panel build does not know: {reason}", ja: "このパネルのビルドが認識できない失敗理由: {reason}", ko: "이 패널 빌드가 알지 못하는 실패 원인: {reason}" },
 
-  // ── 后端拒绝的八种 reason，各自一句五语言（P3c Task 6）────────────────────
+  // ── 后端拒绝的八种 reason，各自一句五语言 ─────────────────────────────────
   //
   // ⚠️⚠️ **状态码不是判据，`reason` 才是。** `409` 有三种、`429` 有两种，
   // 而它们的处置毫无共同之处。逐条的语义差别必须在文案里体现出来，尤其：
@@ -245,7 +245,7 @@ export const I18N = {
   "reg.refuse.probe_in_flight": { "zh-CN": "上一次探测还没有返回，等它结束再试（这颗按钮每按一次都会真的向邮箱服务发一次请求）。", "zh-TW": "上一次探測還沒有回來，等它結束再試（這顆按鈕每按一次都會真的向郵箱服務發一次請求）。", en: "The previous probe has not returned yet; wait for it to finish before retrying (each click really does send a request to the mailbox service).", ja: "前回のプローブがまだ返っていません。終了してから再試行してください（このボタンは押すたびにメールサービスへ実際にリクエストを送ります）。", ko: "이전 탐지가 아직 반환되지 않았습니다. 끝난 뒤에 다시 시도하세요(이 버튼은 누를 때마다 메일 서비스로 실제 요청을 보냅니다)." },
   "reg.refuse.probe_cooldown": { "zh-CN": "两次探测之间至少要隔一小段时间，请稍后再试。这不是通道故障。", "zh-TW": "兩次探測之間至少要隔一小段時間，請稍後再試。這不是通道故障。", en: "There is a minimum interval between two probes; please retry shortly. This is not a channel failure.", ja: "プローブとプローブの間には最小間隔があります。少し待ってから再試行してください。チャネルの障害ではありません。", ko: "탐지와 탐지 사이에는 최소 간격이 있습니다. 잠시 후 다시 시도하세요. 채널 장애가 아닙니다." },
 
-  // ── Key 池板块（只读部分，Task 4）─────────────────────────────────────────
+  // ── Key 池板块（只读部分）─────────────────────────────────────────────────
   "keys.title":       { "zh-CN": "Key 池", "zh-TW": "Key 池", en: "Key pool", ja: "キープール", ko: "키 풀" },
   "keys.search":      { "zh-CN": "搜索 id 或掩码", "zh-TW": "搜尋 id 或遮罩", en: "Search by id or masked key", ja: "id またはマスクで検索", ko: "id 또는 마스크로 검색" },
   "keys.filter":      { "zh-CN": "按状态筛选", "zh-TW": "依狀態篩選", en: "Filter by state", ja: "状態で絞り込み", ko: "상태로 필터" },
@@ -254,11 +254,11 @@ export const I18N = {
   "keys.auto.30":     { "zh-CN": "30 秒", "zh-TW": "30 秒", en: "30s", ja: "30 秒", ko: "30초" },
   "keys.auto.60":     { "zh-CN": "60 秒", "zh-TW": "60 秒", en: "60s", ja: "60 秒", ko: "60초" },
   // 开销说明**如实写**，不抄一个吓人的估算数字：这个板块与转发共用同一份 isolate
-  // 快照，P3b 的形态下自动刷新确实不烧存储配额。
+  // 快照，本期的形态下自动刷新确实不烧存储配额。
   //
-  // ⚠️ **carry-forward（Task 4 → Task 5）**：`{ttl}` / `{touch}` / `{poolTtl}` 三个
-  // 占位符在 Task 4 交付时没有数据源（capabilities/overview 是 Task 5 才有的），
-  // 当时暂用「点名旋钮 + 括注默认值」。Task 5 拿到 `GET /admin/api/overview` 之后
+  // ⚠️ **carry-forward（Key 池板块 → 概览板块）**：`{ttl}` / `{touch}` / `{poolTtl}` 三个
+  // 占位符在 Key 池板块交付时没有数据源（capabilities/overview 要到概览板块才有），
+  // 当时暂用「点名旋钮 + 括注默认值」。概览板块拿到 `GET /admin/api/overview` 之后
   // 已把它们换成真实生效值——由 `js/pure/overview.mjs` 的 `poolKnobs()` 统一取数
   // （两个板块共用同一份，不许各写各的），点名旋钮的写法保留（运维要知道该改哪个
   // 环境变量），括注的默认值换成当前生效值。
@@ -266,7 +266,7 @@ export const I18N = {
   // 新鲜度提示条：与概览页共用同一份文案（组织方式不同——概览页的 ov.freshness.pool
   // 还多了 configTtl 那一半，键池板块本来就没有配置卡，只留池子那一半）。
   //
-  // ⚠️ **P3b 待办第 4 条的收尾**：`{edge}` 原来是硬编码的「约 60 秒」，现在与
+  // ⚠️ **一条待办的收尾**：`{edge}` 原来是硬编码的「约 60 秒」，现在与
   // `ov.freshness.pool` 一样由响应的 `kvEdgeCacheMs` 驱动（两个板块共用
   // `pure/overview.mjs` 的 `poolKnobs()` 取同一个数字，见该函数的说明）。
   "keys.freshness":   { "zh-CN": "别的实例判定的冷却 / 剔除，这里最多晚 {poolTtl} + {edge}（KV 边缘缓存）才看到；而且这个窗口里本实例的写会覆盖对方刚写下的调度状态。", "zh-TW": "別的實例判定的冷卻 / 剔除，這裡最多晚 {poolTtl} + {edge}（KV 邊緣快取）才看得到；而且這個視窗裡本實例的寫入會覆蓋對方剛寫下的排程狀態。", en: "Cooldowns and evictions decided by another instance take up to {poolTtl} plus {edge} (KV edge cache) to show up here. Within that window, writes from this instance also overwrite the scheduling state the other one just wrote.", ja: "他のインスタンスが判定したクールダウン／除外がここに反映されるまで、最大で {poolTtl} + {edge}（KV のエッジキャッシュ）かかります。しかもその間、このインスタンスの書き込みは相手が書いたばかりのスケジューリング状態を上書きします。", ko: "다른 인스턴스가 판정한 쿨다운/제외가 여기에 보이기까지 최대 {poolTtl} + {edge}(KV 엣지 캐시)가 걸립니다. 게다가 그 구간에서는 이 인스턴스의 쓰기가 상대가 방금 기록한 스케줄링 상태를 덮어씁니다." },
@@ -294,7 +294,7 @@ export const I18N = {
   "keys.prev":        { "zh-CN": "上一页", "zh-TW": "上一頁", en: "Previous", ja: "前へ", ko: "이전" },
   "keys.next":        { "zh-CN": "下一页", "zh-TW": "下一頁", en: "Next", ja: "次へ", ko: "다음" },
 
-  // ── Key 池板块：写操作（P3c Task 4）─────────────────────────────────────────
+  // ── Key 池板块：写操作 ──────────────────────────────────────────────────────
   // 行内动作列。**停用/启用/清冷却/清连续失败/解除剔除/删除**，与后端
   // `PATCH /admin/api/keys/:id` 支持的五个字段逐一对应（见下面 `keys.action.clearStrikes`
   // 那条注释——它是控制端追加裁定补的，简报第一版的动作清单漏列了它）。
@@ -302,7 +302,7 @@ export const I18N = {
   "keys.action.enable":       { "zh-CN": "启用", "zh-TW": "啟用", en: "Enable", ja: "有効化", ko: "활성화" },
   "keys.action.clearCooldown":{ "zh-CN": "清冷却", "zh-TW": "清冷卻", en: "Clear cooldown", ja: "クールダウン解除", ko: "쿨다운 해제" },
   // ⚠️ 控制端追加裁定（评审前）：设计 §10.2 的行内动作清单本来就有「清 strikes」，
-  // 后端 PATCH 的 clearStrikes 字段 Task 3 也已经实现全，是简报的动作清单第一版
+  // 后端 PATCH 的 clearStrikes 字段也早已实现全，是简报的动作清单第一版
   // 漏列了它——补的是遗漏，不是新范围。命名跟着 keys.col.strikes（「连续失败」）
   // 走，不叫「清 strikes」：面板上不该出现只有开发者认得的英文字段名。
   "keys.action.clearStrikes": { "zh-CN": "清连续失败", "zh-TW": "清連續失敗", en: "Clear strikes", ja: "連続失敗をクリア", ko: "연속 실패 초기화" },
@@ -337,18 +337,18 @@ export const I18N = {
   "keys.bulk.notFoundSuffix":         { "zh-CN": "；{notFound} 把已经不存在。", "zh-TW": "；{notFound} 把已經不存在。", en: "; {notFound} key(s) no longer exist.", ja: "；{notFound} 件はすでに存在しません。", ko: "; {notFound}개는 이미 존재하지 않습니다." },
 
   // 「添加 Key」分组下拉（设计 §10.2，控制端裁定现在就建容器）。
-  // 【自动注册】两项先占位禁用，留给 Task 6 接线到注册机端点；容器与两组
-  // 平级的结构现在定死，Task 6 只需要摘掉 disabled、接上真实 onClick。
+  // 【自动注册】两项先占位禁用，留给注册机板块接线到注册机端点；容器与两组
+  // 平级的结构现在定死，到时候只需要摘掉 disabled、接上真实 onClick。
   "keys.addMenu.open":          { "zh-CN": "添加 Key", "zh-TW": "新增 Key", en: "Add key", ja: "Key を追加", ko: "Key 추가" },
   "keys.addMenu.autoGroup":     { "zh-CN": "自动注册", "zh-TW": "自動註冊", en: "Auto-register", ja: "自動登録", ko: "자동 등록" },
   "keys.addMenu.autoMoemail":   { "zh-CN": "通过 MoeMail 通道立即补池", "zh-TW": "透過 MoeMail 通道立即補池", en: "Mint via the MoeMail channel now", ja: "MoeMail チャネルで今すぐ補充", ko: "MoeMail 채널로 즉시 보충" },
   "keys.addMenu.autoYyds":      { "zh-CN": "通过 YYDS 通道立即补池", "zh-TW": "透過 YYDS 通道立即補池", en: "Mint via the YYDS channel now", ja: "YYDS チャネルで今すぐ補充", ko: "YYDS 채널로 즉시 보충" },
-  // ⚠️ **`keys.addMenu.autoPlaceholder` 在 P3c Task 6 被删掉了，不是漏了。**
-  // 它是 Task 4 给【自动注册】那两项占位时用的 tooltip（「这个通道还没有接入本面板」），
+  // ⚠️ **`keys.addMenu.autoPlaceholder` 是被删掉的，不是漏了。**
+  // 它是当初给【自动注册】那两项占位时用的 tooltip（「这个通道还没有接入本面板」），
   // 本任务把两项真的接上了 ⇒ 那句话变成假话。**留一条零消费者的死文案比删掉它更贵**：
   // 下一个读字典的人会以为面板上还有这么一句提示。
-  // ⚠️ **上一版这里写的理由是「check-i18n 只会把它报成一条警告」，那句话在 P3e Task 4
-  // 之后是假的**：第 ④ 条已升成硬错 ⇒ 真留着它，`scripts/check-i18n.mjs` 这道门禁当场 exit 1。
+  // ⚠️ **上一版这里写的理由是「check-i18n 只会把它报成一条警告」，那句话
+  // 今天是假的**：第 ④ 条已升成硬错 ⇒ 真留着它，`scripts/check-i18n.mjs` 这道门禁当场 exit 1。
   // 删它的理由因此不再是「门禁拦不住」，而是上面那句——**死文案本身会骗人**。
   "keys.addMenu.manualGroup":   { "zh-CN": "手动", "zh-TW": "手動", en: "Manual", ja: "手動", ko: "수동" },
   "keys.addMenu.pasteSingle":   { "zh-CN": "粘贴单个 Key", "zh-TW": "貼上單一 Key", en: "Paste a single key", ja: "単一の key を貼り付け", ko: "단일 key 붙여넣기" },
@@ -367,7 +367,7 @@ export const I18N = {
   "keys.import.resetExistingWarn":{ "zh-CN": "这会让一把被剔除的 key 重新可用，请确认这是你想要的。", "zh-TW": "這會讓一把被剔除的 key 重新可用，請確認這是你想要的。", en: "This can bring an evicted key back into service — make sure this is what you want.", ja: "これにより除外済みの key が再び使用可能になります。意図した操作か確認してください。", ko: "이렇게 하면 제외된 key가 다시 사용 가능해집니다. 의도한 작업인지 확인하세요." },
   "keys.import.submit":     { "zh-CN": "导入", "zh-TW": "匯入", en: "Import", ja: "インポート", ko: "가져오기" },
   "keys.import.emptyErr":   { "zh-CN": "请至少输入一把 key", "zh-TW": "請至少輸入一把 key", en: "Enter at least one key", ja: "少なくとも 1 つの key を入力してください", ko: "key를 하나 이상 입력하세요" },
-  // ⚠️⚠️ **`reset` 直接取响应字段，不是 `duplicated.length`**（评审 I2）——
+  // ⚠️⚠️ **`reset` 直接取响应字段，不是 `duplicated.length`**（评审提出）——
   // 两个数字不是一回事，见 `js/pure/keys-write.mjs` 的 `importResultCounts()`。
   "keys.import.result":       { "zh-CN": "已添加 {added} 把，{duplicated} 把重复被跳过（其中 {reset} 把已重置状态），{invalid} 行不是合法的 key。", "zh-TW": "已新增 {added} 把，{duplicated} 把重複被跳過（其中 {reset} 把已重設狀態），{invalid} 行不是合法的 key。", en: "Added {added}, skipped {duplicated} duplicate(s) ({reset} of them reset), {invalid} line(s) are not valid keys.", ja: "{added} 件を追加、{duplicated} 件の重複をスキップ（うち {reset} 件をリセット）、{invalid} 行は無効な key です。", ko: "{added}개 추가, 중복 {duplicated}개 건너뜀(그중 {reset}개 재설정), {invalid}줄은 유효한 key가 아닙니다." },
   "keys.import.invalidLines": { "zh-CN": "不合法的行：{lines}", "zh-TW": "不合法的行：{lines}", en: " Invalid line(s): {lines}", ja: "無効な行：{lines}", ko: " 잘못된 줄: {lines}" },
@@ -389,7 +389,7 @@ export const I18N = {
   "keys.actionOk":     { "zh-CN": "操作成功", "zh-TW": "操作成功", en: "Done", ja: "操作が完了しました", ko: "작업 완료" },
   "keys.writeFailed":  { "zh-CN": "操作失败，请稍后重试", "zh-TW": "操作失敗，請稍後重試", en: "Action failed, please try again", ja: "操作に失敗しました。しばらくしてから再試行してください", ko: "작업에 실패했습니다. 잠시 후 다시 시도하세요" },
 
-  // ── Key 池板块：单把 key 的验活（P3d Task 9）───────────────────────────────
+  // ── Key 池板块：单把 key 的验活 ────────────────────────────────────────────
   //
   // ⚠️⚠️ **这一整段刻意一个 `{占位符}` 都没有。** 它们全部经
   // `js/pure/keys-write.mjs` 的 `verifyResultLabelKey()` / `verifyDisabledTitleKey()`
@@ -428,7 +428,7 @@ export const I18N = {
   "keys.verify.unauthorizedAdmin": { "zh-CN": "管理会话已失效，请重新输入管理口令。", "zh-TW": "管理工作階段已失效，請重新輸入管理口令。", en: "The admin session has expired; enter the admin token again.", ja: "管理セッションの有効期限が切れました。管理トークンを入力し直してください。", ko: "관리 세션이 만료되었습니다. 관리 토큰을 다시 입력하세요." },
   "keys.verify.transportError": { "zh-CN": "这次探测没有发出去：请求本身失败了，与上游状态无关。", "zh-TW": "這次探測沒有發出去：請求本身失敗了，與上游狀態無關。", en: "This probe never left the panel: the request itself failed, which says nothing about upstream.", ja: "今回のプローブは送信されていません：リクエスト自体が失敗しており、上流の状態とは無関係です。", ko: "이번 탐지는 전송되지 않았습니다: 요청 자체가 실패한 것이며 업스트림 상태와는 무관합니다." },
 
-  // ── 概览板块（Task 5）──────────────────────────────────────────────────────
+  // ── 概览板块 ───────────────────────────────────────────────────────────────
   "ov.title":            { "zh-CN": "概览", "zh-TW": "概覽", en: "Overview", ja: "概要", ko: "개요" },
   "ov.pool.total":       { "zh-CN": "总数", "zh-TW": "總數", en: "Total", ja: "総数", ko: "총계" },
   "ov.pool.fresh":       { "zh-CN": "可用", "zh-TW": "可用", en: "Available", ja: "利用可能", ko: "사용 가능" },
@@ -498,11 +498,11 @@ export const I18N = {
   "ov.storageCard.workerNoteUnknown": { "zh-CN": "本部署的 KV 读写与请求数无关，只取决于刷新频率与池子规模；相关数字暂时读不到，无法给出估算，详见 DEPLOY.md 的配额账小节。", "zh-TW": "本部署的 KV 讀寫與請求數無關，只取決於重新整理頻率與池子規模；相關數字暫時讀不到，無法給出估算，詳見 DEPLOY.md 的配額帳小節。", en: "This deployment's KV reads/writes are independent of request volume — driven only by refresh frequency and pool size. The numbers needed for an estimate are unavailable right now. See the quota section in DEPLOY.md.", ja: "このデプロイの KV 読み書きはリクエスト数とは無関係で、更新頻度とプール規模だけで決まります。見積もりに必要な数値が現在取得できません。詳しくは DEPLOY.md の割り当てのセクションを参照してください。", ko: "이 배포의 KV 읽기/쓰기는 요청 수와 무관하며 새로고침 빈도와 풀 규모에만 좌우됩니다. 추정에 필요한 수치를 현재 가져올 수 없습니다. 자세한 내용은 DEPLOY.md의 할당량 섹션을 참고하세요." },
   "ov.storageCard.nodeNote":  { "zh-CN": "文件存储没有配额限制，但每次写都会重写整个 store.json。", "zh-TW": "檔案儲存沒有配額限制，但每次寫入都會重寫整個 store.json。", en: "File storage has no quota limit, but every write rewrites the entire store.json.", ja: "ファイルストレージには割り当て制限はありませんが、書き込みのたびに store.json 全体を書き直します。", ko: "파일 스토리지는 할당량 제한이 없지만, 쓸 때마다 store.json 전체를 다시 씁니다." },
 
-  // ── 事件板块（Task 6）────────────────────────────────────────────────────
+  // ── 事件板块 ─────────────────────────────────────────────────────────────
   "ev.title":  { "zh-CN": "事件", "zh-TW": "事件", en: "Events", ja: "イベント", ko: "이벤트" },
-  // 顶部常驻说明（两种运行时同一句，见 Task 5 Step 4 的 logs.processLog: false 那条先例）：
+  // 顶部常驻说明（两种运行时同一句，见概览板块 logs.processLog: false 那条先例）：
   // Serverless 没有常驻进程，逐请求日志流在这里物理上不可能是完整的。
-  // **评审 I2**：本期只有 config/pool 索引/管理接口/事件落库自身四类运维诊断事件
+  // **评审提出**：本期只有 config/pool 索引/管理接口/事件落库自身四类运维诊断事件
   // 会出现在本面板（见 src/core/keypool-repo.ts / config.ts / admin/auth.ts /
   // adapters/logger-store.ts 的 logger.log() 调用点）。
   // **评审 I2b（round 3）修正**：round 2 的文案曾错误地说"注册机（补池）事件还没有
@@ -511,15 +511,15 @@ export const I18N = {
   // 这些事件是真实产出的，只是走的是裸 `ConsoleLogger`（src/http/wire.ts 的
   // buildTendDeps()，Worker 的 scheduled() 与 fetch() 是两个不同的 isolate
   // 生命周期，没有请求/响应边界可挂 logFlush，接上去需要 ctx.waitUntil 一类的
-  // 独立落盘机制，留给 P3c 与注册机板块一起做），从未接进 `StoreLogger`，因此
+  // 独立落盘机制，留给后续与注册机板块一起做），从未接进 `StoreLogger`，因此
   // 从不落库、也就从不出现在本面板——"产出了但没接线"与"压根没产出"是两件不同
   // 的事，前一版文案把它们混成了一件。key 的冷却/剔除**确实**目前压根不为这两类
   // 状态变化打事件，这半句评审确认属实，未改动。
-  // ⚠️ P3c Task 7 订正（§0.1 的禁令到这一步才解除，且**改之前跑过一次真机冒烟**：
+  // ⚠️ 订正（§0.1 的禁令到这一步才解除，且**改之前跑过一次真机冒烟**：
   // Node 真进程 + 真存储 + 真跑一轮补池，事件板块里数出 registrar.list_domains_failed ×4 /
   // registrar.manual_tend_started ×1 / registrar.manual_tend_partial ×1 / config.updated ×1 /
   // key.added ×2，凭据明文一个字都没有）。上一版说「注册机事件还没接入本面板」——
-  // **那句话从 P3c Task 1 起就不成立了**。同时补两件当时没说的事：面板自己的写操作也进这里；
+  // **那句话早就不成立了**。同时补两件当时没说的事：面板自己的写操作也进这里；
   // 事件要等攒批或一个触达间隔才落盘，刚发生的那条最长晚一分钟。
   // **没变的那一半仍然如实写着**：转发路径自动打的冷却/剔除今天还是不产出事件。
   "ev.notice": {"zh-CN": "这里只有低频结构化事件：配置读取失败、池索引重建、管理接口登录失败这类运维诊断，加上注册机的补池事件与面板自己的写操作（导入 / 停用 / 删除 key、改配置）。**key 被转发路径自动打进冷却或剔除时目前仍然不产出事件**，那一段要看池子里那把 key 自己的状态。事件是攒够一批或隔满一个触达间隔才落盘的，所以刚发生的那条最长要等一分钟才出现在这里。逐请求日志请看容器 stdout / Cloudflare 控制台的 Workers Logs——Serverless 形态没有常驻进程，逐请求日志流在这里物理上不可能是完整的。", "zh-TW": "這裡只有低頻結構化事件：設定讀取失敗、池索引重建、管理接口登入失敗這類維運診斷，加上註冊機的補池事件與面板自己的寫操作（匯入 / 停用 / 刪除 key、改設定）。**key 被轉發路徑自動打進冷卻或剔除時目前仍然不產出事件**，那一段要看池子裡那把 key 自己的狀態。事件是攢夠一批或隔滿一個觸達間隔才寫入的，所以剛發生的那條最長要等一分鐘才出現在這裡。逐請求日誌請看容器 stdout / Cloudflare 主控台的 Workers Logs——Serverless 形態沒有常駐行程，逐請求日誌流在這裡物理上不可能是完整的。", en: "This board shows only low-frequency structured events: operational diagnostics such as config read failures, pool index rebuilds and failed admin logins, plus the registrar's pool-refill events and the panel's own write operations (importing / disabling / deleting keys, changing configuration). **Cooldowns and evictions applied automatically by the forwarding path still produce no events** — for those, look at the state of the key itself in the pool. Events are persisted in batches or once a flush interval has elapsed, so a just-happened event can take up to a minute to appear here. For per-request logs, check container stdout or Cloudflare's Workers Logs — the serverless shape has no long-lived process, so a complete per-request log stream is physically impossible here.", ja: "ここには低頻度の構造化イベントのみが表示されます：設定読み込み失敗、プール索引の再構築、管理者ログイン失敗などの運用診断に加え、レジストラーの補充イベントと、パネル自身の書き込み操作（キーのインポート／無効化／削除、設定変更）です。**転送経路が自動で付けたクールダウンや除外は、今のところイベントを出力しません**——その分はプール内のキー自身の状態を見てください。イベントはまとめて、またはフラッシュ間隔が経過してから保存されるため、たった今起きたものがここに現れるまで最大 1 分かかることがあります。リクエストごとのログはコンテナの stdout または Cloudflare コンソールの Workers Logs をご覧ください——サーバーレス形態には常駐プロセスがなく、ここで完全なリクエストごとのログストリームを見ることは物理的に不可能です。", ko: "여기에는 저빈도 구조화 이벤트만 표시됩니다: 설정 읽기 실패, 풀 인덱스 재구축, 관리자 로그인 실패 같은 운영 진단에 더해, 등록기의 풀 보충 이벤트와 패널 자신의 쓰기 작업(키 가져오기/정지/삭제, 설정 변경)입니다. **전달 경로가 자동으로 적용한 쿨다운·제외는 아직 이벤트를 생성하지 않습니다** — 그 부분은 풀에 있는 키 자체의 상태를 보세요. 이벤트는 일정량이 모이거나 플러시 간격이 지난 뒤에 저장되므로, 방금 발생한 이벤트가 여기에 나타나기까지 최대 1분이 걸릴 수 있습니다. 요청별 로그는 컨테이너 stdout 또는 Cloudflare 콘솔의 Workers Logs를 확인하세요 — 서버리스 형태에는 상주 프로세스가 없어 여기서 완전한 요청별 로그 스트림을 보는 것은 물리적으로 불가능합니다."},
@@ -530,7 +530,7 @@ export const I18N = {
   "ev.level.info":  { "zh-CN": "信息", "zh-TW": "資訊", en: "Info", ja: "情報", ko: "정보" },
   "ev.level.warn":  { "zh-CN": "警告", "zh-TW": "警告", en: "Warn", ja: "警告", ko: "경고" },
   "ev.level.error": { "zh-CN": "错误", "zh-TW": "錯誤", en: "Error", ja: "エラー", ko: "오류" },
-  // 评审 I4：一条事件的 level 字段缺失/畸形时，显式归到这一档，不冒充任何已知级别。
+  // 评审提出：一条事件的 level 字段缺失/畸形时，显式归到这一档，不冒充任何已知级别。
   "ev.level.unknown": { "zh-CN": "未知", "zh-TW": "未知", en: "Unknown", ja: "不明", ko: "알 수 없음" },
 
   "ev.pause":   { "zh-CN": "暂停", "zh-TW": "暫停", en: "Pause", ja: "一時停止", ko: "일시 정지" },
@@ -565,12 +565,12 @@ export const I18N = {
   // shouldWarn 说明）。
   "ev.warnDropped": { "zh-CN": "本 isolate 的事件缓冲已丢弃 {count} 条最旧的事件（环形缓冲上限 100 条，落盘前被新事件顶掉）。", "zh-TW": "本 isolate 的事件緩衝已丟棄 {count} 條最舊的事件（環形緩衝上限 100 條，寫入前被新事件頂掉）。", en: "This isolate's event buffer has dropped {count} of the oldest events (ring buffer caps at 100 entries; new events pushed them out before they were persisted).", ja: "この isolate のイベントバッファは最も古い {count} 件のイベントを破棄しました（リングバッファの上限は 100 件で、書き込み前に新しいイベントに押し出されました）。", ko: "이 isolate의 이벤트 버퍼가 가장 오래된 이벤트 {count}건을 삭제했습니다(링 버퍼 상한 100건, 저장 전에 새 이벤트에 밀려남)." },
   "ev.warnBudget":  { "zh-CN": "本 isolate 今天的事件写入预算已用完，未落盘的事件仍在容器日志 / Cloudflare 控制台的 Workers Logs 里。", "zh-TW": "本 isolate 今天的事件寫入預算已用完，未寫入的事件仍在容器日誌 / Cloudflare 主控台的 Workers Logs 裡。", en: "This isolate's event-write budget for today is used up. Events that were not persisted are still available in container logs / Cloudflare's Workers Logs.", ja: "この isolate の本日のイベント書き込み予算を使い切りました。書き込まれなかったイベントはコンテナログ／Cloudflare コンソールの Workers Logs に残っています。", ko: "이 isolate의 오늘 이벤트 쓰기 예산을 모두 사용했습니다. 저장되지 않은 이벤트는 컨테이너 로그/Cloudflare 콘솔의 Workers Logs에 남아 있습니다." },
-  // 评审 I3：after+limit 组合截掉了一部分本该出现的旧事件，必须如实说，不能悄悄吞掉。
+  // 评审提出：after+limit 组合截掉了一部分本该出现的旧事件，必须如实说，不能悄悄吞掉。
   "ev.warnTruncated": { "zh-CN": "这一页没有显示全部符合条件的事件（超出了每次拉取的上限），更早的一部分被截掉了。", "zh-TW": "這一頁沒有顯示全部符合條件的事件（超出了每次拉取的上限），更早的一部分被截掉了。", en: "This page doesn't show every matching event (the per-fetch limit was exceeded); some older ones were cut off.", ja: "このページには条件に一致するすべてのイベントが表示されていません（取得件数の上限を超えました）。より古い一部が省略されています。", ko: "이 페이지에는 조건에 맞는 모든 이벤트가 표시되지 않습니다(가져오기 상한 초과). 더 오래된 일부가 잘렸습니다." },
-  // 评审 C6：游标领先于本次请求的时钟（时钟回拨 / isolate 间时钟偏移），空结果
+  // 评审提出：游标领先于本次请求的时钟（时钟回拨 / isolate 间时钟偏移），空结果
   // 不代表没有新事件。前端已经自动把冻结的游标丢掉重新冷读（见 sec-events.js 的
   // poll()），这条只是如实告诉运维"刚刚发生过一次自动恢复"，不需要手动操作。
-  // 评审 I6：后端吐的 `cursor` 既不是有限数字也不是 null ⇒ **后端契约当场被破坏**。
+  // 评审要求：后端吐的 `cursor` 既不是有限数字也不是 null ⇒ **后端契约当场被破坏**。
   // **上黄条**（不是只进 tooltip）：它意味着游标推不动、面板可能永远看不到新事件，
   // 而旁边那条会自愈的 `cursorAhead` 反倒在判据里。一个悬停才看得见的提示，
   // 把「面板在撒谎」降级成了「面板在小声说」。
@@ -578,7 +578,7 @@ export const I18N = {
   "ev.warnCursorAhead": { "zh-CN": "检测到游标领先于服务端时钟（可能是时钟回拨或 isolate 间时钟偏移），已自动重新拉取最新数据。", "zh-TW": "偵測到游標領先於服務端時鐘（可能是時鐘回撥或 isolate 間時鐘偏移），已自動重新擷取最新資料。", en: "Detected a cursor ahead of the server clock (possibly a clock rollback or skew between isolates); automatically re-fetched from a fresh cursor.", ja: "カーソルがサーバー時刻より先行していることを検出しました（時刻の巻き戻し、または isolate 間の時刻ずれの可能性）。自動的に新しいカーソルから再取得しました。", ko: "커서가 서버 시계보다 앞서 있는 것을 감지했습니다(시계 롤백 또는 isolate 간 시계 편차 가능성). 새 커서로 자동으로 다시 가져왔습니다." },
 
   "ev.empty":   { "zh-CN": "还没有事件。", "zh-TW": "還沒有事件。", en: "No events yet.", ja: "まだイベントはありません。", ko: "아직 이벤트가 없습니다." },
-  // 全分支评审 I5：点过「清空」之后**不许**再显示 ev.empty ——那是在对运维说
+  // 通读评审提出：点过「清空」之后**不许**再显示 ev.empty ——那是在对运维说
   // "这个部署从来没出过事"，而服务端明明有事件。这一句同时说清恢复路径。
   "ev.cleared": { "zh-CN": "已清空本页显示。服务端已落盘的事件不受影响——点「下载」可取到全部，或刷新页面重新拉取。", "zh-TW": "已清空本頁顯示。服務端已寫入的事件不受影響——點「下載」可取得全部，或重新整理頁面重新拉取。", en: "Cleared the list shown here. Events already persisted server-side are unaffected — use Download to get them all, or reload the page to fetch them again.", ja: "このページの表示をクリアしました。サーバー側に保存済みのイベントには影響しません——「ダウンロード」で全件取得できます。ページを再読み込みすれば再取得されます。", ko: "이 페이지의 표시를 지웠습니다. 서버에 이미 저장된 이벤트에는 영향이 없습니다 — 「다운로드」로 전부 받을 수 있고, 페이지를 새로고침하면 다시 불러옵니다." },
   "ev.noMatch": { "zh-CN": "没有符合筛选条件的事件。", "zh-TW": "沒有符合篩選條件的事件。", en: "No events match the current filters.", ja: "現在のフィルター条件に一致するイベントはありません。", ko: "현재 필터 조건에 맞는 이벤트가 없습니다." },
@@ -591,7 +591,7 @@ export const I18N = {
   // 分组时间线的组头文案（P-1：按 corr 相邻折叠）。
   "ev.timeline": { "zh-CN": "时间线 · {count} 条 · {corr}", "zh-TW": "時間線 · {count} 條 · {corr}", en: "Timeline · {count} events · {corr}", ja: "タイムライン · {count} 件 · {corr}", ko: "타임라인 · {count}건 · {corr}" },
 
-  // ── 设置页（P3c Task 7，设计 §10.4 的前三张卡）────────────────────────────
+  // ── 设置页（设计 §10.4 的前三张卡）────────────────────────────────────────
   //
   // ⚠️ **命名空间刻意用 `set.*` 而不是 `reg.*`**，两条理由：
   // ① `reg.*` 是禁用词门禁（`scripts/check-i18n.mjs` 第 ⑥ 条）的作用域，而那道门禁
@@ -605,8 +605,8 @@ export const I18N = {
   //
   // ⚠️⚠️ **`set.field.*` 这一整族的完整名字，静态判据看不出来**：`fieldLabelKey()`
   // 返回的是**模板字面量** `` `set.field.${path}` ``（`reg.fail.*` 那一族因为在 switch 里
-  // 直接 return 字面量，已经踩过同一个坑，见 P3c Task 6 报告 §2.4）。
-  // ⚠️ **上一版这里写的两句在 P3e Task 3 之后是假的，订正如下**：
+  // 直接 return 字面量，已经踩过同一个坑）。
+  // ⚠️ **上一版这里写的两句今天是假的，订正如下**：
   // ①「这一族对三道 i18n 门禁是隐身的」—— 今天 `scripts/check-i18n.mjs` 把
   //   `` `set.field.${…}` `` 收成一条**拼键前缀**（横幅第二行逐字打出来），
   //   这一族落进「拼键覆盖」桶。**代价换了个形状但没消失**：那一桶等于**永久豁免
@@ -616,8 +616,8 @@ export const I18N = {
   //   拼错的完整属性形态 ⇒ EXIT=0；同一串挪到注释之外 ⇒ EXIT=1）。
   //   ⚠️ **但「别在注释里把形态写全」这条纪律没作废，只是换了个引信**：真正不抠注释的是
   //   `tests/unit/i18n-dict.test.ts` 的「admin-ui 里引用的每个 key 都在字典里」那一格，
-  //   它对整份原文跑两条窄正则 —— P3e Task 4 改注释时当场把它踩响过一次。
-  //   ⚠️ **P3e Task 5 起那两条正则是引号无关的**（单双引号都认，反引号仍不认）
+  //   它对整份原文跑两条窄正则 —— 改注释时当场把它踩响过一次。
+  //   ⚠️ **那两条正则今天是引号无关的**（单双引号都认，反引号仍不认）
   //   ⇒ 这条纪律的射程**变大了**：从前写成单引号能躲过去，今天躲不掉。
   // ⇒ **补一道自己的**：`tests/ui/settings.test.ts` 的
   // 「后端 EDITABLE_FIELDS 的每条路径都有一条 set.field.* 文案」从后端那份
@@ -627,7 +627,7 @@ export const I18N = {
   "set.card.auth": { "zh-CN": "认证密钥", "zh-TW": "認證密鑰", en: "Credentials", ja: "認証キー", ko: "인증 키" },
   "set.card.upstream": { "zh-CN": "上游与冷却", "zh-TW": "上游與冷卻", en: "Upstream & cooldowns", ja: "上流とクールダウン", ko: "업스트림 및 쿨다운" },
   "set.card.registrar": { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
-  // ── 第 4 张卡：集成示例（P3d Task 7，设计 §10.4）────────────────────────────
+  // ── 第 4 张卡：集成示例（设计 §10.4）────────────────────────────────────────
   // ⚠️ **这几条里一个地址字面量都不许出现。** 示例里的 base URL 只能在运行期从
   // 面板自己的 origin 取（`admin-ui/js/sec-settings.js` 读一次再传给纯函数），
   // 写死任何一个都是错的；占位口令走 `{key}` 插值，取值是
@@ -673,7 +673,7 @@ export const I18N = {
   "set.clear.gatewayMissing": { "zh-CN": "网关口令已经被清空，而环境变量里也没有：请立刻在这一页写一把新的，否则下一次重启会起不来。", "zh-TW": "網關口令已經被清空，而環境變數裡也沒有：請立刻在這一頁寫一把新的，否則下一次重啟會起不來。", en: "The gateway token has been cleared and there is none in the environment either. Set a new one on this page now, or the next restart will fail.", ja: "ゲートウェイトークンがクリアされ、環境変数にもありません。今すぐこのページで新しいものを設定してください。さもないと次回の起動に失敗します。", ko: "게이트웨이 토큰이 지워졌고 환경 변수에도 없습니다. 지금 이 페이지에서 새로 설정하지 않으면 다음 재시작에 실패합니다." },
   "set.clear.done": { "zh-CN": "「{field}」已从存储里清空", "zh-TW": "「{field}」已從儲存裡清空", en: "\\u201c{field}\\u201d cleared from storage", ja: "「{field}」をストレージからクリアしました", ko: "「{field}」을(를) 저장소에서 지웠습니다" },
 
-  // ── 第 5 张卡：危险区（P3e Task 31，设计里不带编号的那一节「重置到底重置了什么」）──
+  // ── 第 5 张卡：危险区（设计里不带编号的那一节「重置到底重置了什么」）───────────────
   //
   // ⚠️⚠️ **这一族文案里一个「立即生效」都不许有**（设计 §5.3 那句同源）：两颗按钮的
   // 后果都要等传播窗口才在别的副本上成立，说成「立即生效」就是当面说反话。
@@ -770,7 +770,7 @@ export const I18N = {
   "set.field.channel.baseUrl": { "zh-CN": "服务地址", "zh-TW": "服務位址", en: "Service URL", ja: "サービス URL", ko: "서비스 URL" },
   "set.field.channel.apiKey": { "zh-CN": "API Key", "zh-TW": "API Key", en: "API key", ja: "API キー", ko: "API 키" },
 
-  // ── 用量板块（P3d Task 5，设计 §10.6）──────────────────────────────────────
+  // ── 用量板块（设计 §10.6）──────────────────────────────────────────────────
   //
   // ⚠️ **这一段的每一条文案都在回答「这个数字为什么长这样」，而不是给一个数配一个名字。**
   // 这个板块的全部难点是「今天真的是 0 次请求」「Tier-2 没开」「读不出来」
@@ -797,7 +797,7 @@ export const I18N = {
   "usage.card.successRate": { "zh-CN": "成功率", "zh-TW": "成功率", en: "Success rate", ja: "成功率", ko: "성공률" },
   // ⚠️ **单位写进标题，值那一格只放数字**：`format.mjs` 的 `fmtDuration` 只到
   //    「秒 / 分」两档精度（那是给运行时长设计的），拿它渲染 300 毫秒会写出
-  //    「0秒」——而本模块不许再写第三个格式化函数（评审 I17）。
+  //    「0秒」——而本模块不许再写第三个格式化函数（评审点名）。
   "usage.card.latency":   { "zh-CN": "平均延迟（毫秒）", "zh-TW": "平均延遲（毫秒）", en: "Avg latency (ms)", ja: "平均レイテンシ（ミリ秒）", ko: "평균 지연(밀리초)" },
   "usage.card.errorRate": { "zh-CN": "错误率", "zh-TW": "錯誤率", en: "Error rate", ja: "エラー率", ko: "오류율" },
   // 标题里**直接写「仅非流式」**：流式请求的 token 网关根本看不到，
@@ -809,7 +809,7 @@ export const I18N = {
   "usage.card.tokensTipUnknown": { "zh-CN": "覆盖了哪几条协议这一次没读出来。这个数只统计非流式响应，流式的 token 网关看不到。", "zh-TW": "涵蓋了哪幾條協定這一次沒讀出來。這個數只統計非串流回應，串流的 token 網關看不到。", en: "Could not read which protocols are covered this time. This number counts non-streaming responses only; streaming tokens are invisible to the gateway.", ja: "どのプロトコルが対象かを今回は取得できませんでした。この数値は非ストリーミング応答のみを集計しており、ストリーミングのトークンはゲートウェイからは見えません。", ko: "이번에는 어떤 프로토콜이 포함되는지 읽지 못했습니다. 이 값은 비스트리밍 응답만 집계하며 스트리밍 토큰은 게이트웨이에서 볼 수 없습니다." },
   "usage.card.streamingTip": { "zh-CN": "单列一栏，好让 Token 那一格缺掉的正是这些请求这件事看得见。", "zh-TW": "單列一欄，好讓 Token 那一格缺掉的正是這些請求這件事看得見。", en: "Listed separately so that the gap in the token count is visible: these are exactly the requests it cannot see.", ja: "トークン数に欠けているのがまさにこれらのリクエストであることが分かるよう、独立した項目にしています。", ko: "토큰 수에서 빠진 것이 바로 이 요청들이라는 사실이 보이도록 별도 항목으로 둡니다." },
 
-  // ── 单元格的两根破折号（P3d Task 5 评审 I15 的裁定）────────────────────────
+  // ── 单元格的两根破折号（一条评审裁定）──────────────────────────────────────
   // ⚠️ **`–`（EN DASH）与 `—`（EM DASH）说的是两件事，视觉上必须分得开。**
   // 前者：这一次读成功了，只是这一格没有样本 / 没有分母；
   // 后者：整块就没读出来，我们不知道。
@@ -865,7 +865,7 @@ export const I18N = {
   "usage.table.streaming": { "zh-CN": "流式", "zh-TW": "串流", en: "Streaming", ja: "ストリーミング", ko: "스트리밍" },
   "usage.table.latency":   { "zh-CN": "平均延迟（毫秒）", "zh-TW": "平均延遲（毫秒）", en: "Avg latency (ms)", ja: "平均レイテンシ（ミリ秒）", ko: "평균 지연(밀리초)" },
   "usage.table.empty":     { "zh-CN": "这段区间里没有可以列出的日子。", "zh-TW": "這段區間裡沒有可以列出的日子。", en: "There are no days to list in this range.", ja: "この期間に一覧できる日はありません。", ko: "이 구간에 나열할 날짜가 없습니다." },
-  // ⚠️ **「读不出来」与「没有可以列出的日子」是两句话**（P3d Task 5 评审 C1）：
+  // ⚠️ **「读不出来」与「没有可以列出的日子」是两句话**（评审点名）：
   //    `read_failed` 那一档 `days` 是 null ⇒ 行数也是 0，照上面那句渲染
   //    等于把一次读取失败说成「这段时间本来就没有日子」。
   "usage.table.unavailable": { "zh-CN": "这段区间的按天数据读不出来，所以这里是空的——不是这段时间没有日子。", "zh-TW": "這段區間的按天資料讀不出來，所以這裡是空的——不是這段時間沒有日子。", en: "The per-day data for this range could not be read, so this is empty — it is not that the range has no days.", ja: "この期間の日次データを取得できなかったため空になっています。期間に日がないという意味ではありません。", ko: "이 구간의 일별 데이터를 읽지 못해 비어 있습니다. 구간에 날짜가 없다는 뜻이 아닙니다." },
@@ -879,7 +879,7 @@ export const I18N = {
   "usage.detail.protocol": { "zh-CN": "协议", "zh-TW": "協定", en: "Protocol", ja: "プロトコル", ko: "프로토콜" },
   "usage.detail.close":    { "zh-CN": "收起", "zh-TW": "收起", en: "Collapse", ja: "閉じる", ko: "접기" },
   "usage.detail.empty":    { "zh-CN": "这一天没有可以分解的记录。", "zh-TW": "這一天沒有可以分解的記錄。", en: "There is nothing to break down for this day.", ja: "この日は内訳を表示できる記録がありません。", ko: "이 날짜에는 분해할 기록이 없습니다." },
-  // ⚠️ 与 `usage.table.unavailable` 同一条理由，C1 点名的「第三屏」：分片全坏 /
+  // ⚠️ 与 `usage.table.unavailable` 同一条理由，同一条评审点名的「第三屏」：分片全坏 /
   //    读取失败 / 落在保留期外时三个 map 合出来都是空的，照上面那句渲染就是
   //    把「我们什么都不知道」说成「这一天没有记录」。
   // ⚠️ **单日口径，不能拿 `usage.incompleteTip` 顶替**（定向复评 N7）：
@@ -893,8 +893,8 @@ export const I18N = {
   "usage.pending":          { "zh-CN": "还有 {count} 条计数没有落盘，上面的数字少了这一截。", "zh-TW": "還有 {count} 條計數沒有落盤，上面的數字少了這一截。", en: "{count} counter(s) have not been flushed yet; the numbers above are short by that much.", ja: "未書き込みのカウントが {count} 件あります。上の数値はその分少なくなっています。", ko: "아직 기록되지 않은 카운트가 {count}건 있습니다. 위 수치는 그만큼 적습니다." },
   "usage.pendingExhausted": { "zh-CN": "写配额已经耗尽，还有 {count} 条计数暂时写不进存储。这不是「没有尾巴」，是写不进去。", "zh-TW": "寫配額已經耗盡，還有 {count} 條計數暫時寫不進儲存。這不是「沒有尾巴」，是寫不進去。", en: "The write budget is exhausted; {count} counter(s) cannot be written to storage for now. This is not “nothing pending” — the writes are failing.", ja: "書き込み予算を使い切ったため、{count} 件のカウントを当面ストレージへ書き込めません。「未書き込みがない」のではなく、書き込めていません。", ko: "쓰기 예산이 소진되어 {count}건의 카운트를 당분간 스토리지에 기록할 수 없습니다. “대기 중인 것이 없음”이 아니라 기록에 실패하고 있습니다." },
 
-  // ── 模型板块（P3d Task 6，设计 §10.7 / §11）────────────────────────────────
-  // ⚠️⚠️ **这一段里一个端点路径、一个协议 id 都没有，是刻意的**（P3d 全局约束 15）：
+  // ── 模型板块（设计 §10.7 / §11）────────────────────────────────────────────
+  // ⚠️⚠️ **这一段里一个端点路径、一个协议 id 都没有，是刻意的**（全局约束 15）：
   //    协议的展示名是**专名**，由 `GET /admin/api/models` 的 `protocols[].label` 直接
   //    给出，翻译它只会制造歧义；端点由响应的 `endpoints[]` 原样渲染。
   //    ⇒ 字典里只放**要翻译的东西**：列名、三个形态名、两句 tooltip、三句空态说明。
@@ -921,7 +921,7 @@ export const I18N = {
   "models.filterEmpty":      { "zh-CN": "这条协议上没有可用的模型。", "zh-TW": "這條協定上沒有可用的模型。", en: "No models are available on this protocol.", ja: "このプロトコルで利用できるモデルはありません。", ko: "이 프로토콜에서 사용할 수 있는 모델이 없습니다." },
   "models.unavailable":      { "zh-CN": "模型目录读不出来，所以这里是一根破折号——不是这个网关一个模型都没有。", "zh-TW": "模型目錄讀不出來，所以這裡是一根破折號——不是這個閘道一個模型都沒有。", en: "The model catalog could not be read, so this shows a dash — it is not that the gateway has no models.", ja: "モデルカタログを取得できなかったためダッシュを表示しています。ゲートウェイにモデルがないという意味ではありません。", ko: "모델 카탈로그를 읽지 못해 대시를 표시합니다. 게이트웨이에 모델이 없다는 뜻이 아닙니다." },
 
-  // ── Playground 板块（P3d Task 10）────────────────────────────────────────
+  // ── Playground 板块 ──────────────────────────────────────────────────────
   // ⚠️ **这一段一个 `{占位符}` 都没有，是刻意的**：`scripts/check-i18n.mjs` 的第 ⑧ 条
   //    要求带占位符的 key 每一次以字面量出现时后面都紧跟一个 `,`，而本板块把大量
   //    key 交给 `elI18n(tag, key)`（第二个参数后面确实是 `,` 或 `)`），
@@ -977,7 +977,7 @@ export const I18N = {
   "pg.turn.streamEmpty":     { "zh-CN": "这条流读完了，但里面一个字的正文都没有。", "zh-TW": "這條串流讀完了，但裡面一個字的正文都沒有。", en: "This stream finished without carrying a single character of answer text.", ja: "このストリームは完了しましたが、本文が 1 文字も含まれていませんでした。", ko: "이 스트림은 끝났지만 본문이 한 글자도 들어 있지 않았습니다." },
   "pg.turn.cancelled":       { "zh-CN": "这一次被你取消了，上面那段是取消之前真的收到的内容。", "zh-TW": "這一次被你取消了，上面那段是取消之前真的收到的內容。", en: "You cancelled this request; the text above is what really arrived before it stopped.", ja: "このリクエストは中止されました。上の本文は中止前に実際に届いた内容です。", ko: "이 요청은 취소되었습니다. 위 본문은 중단되기 전에 실제로 도착한 내용입니다." },
   "pg.turn.malformed":       { "zh-CN": "这条流里有 {count} 块数据读不出来，已跳过——上面这段回答可能是缺字的。", "zh-TW": "這條串流裡有 {count} 塊資料讀不出來，已跳過——上面這段回答可能是缺字的。", en: "{count} chunk(s) in this stream could not be read and were skipped — the answer above may be missing characters.", ja: "このストリームでは {count} 個のチャンクを読み取れず、スキップしました。上の回答は文字が欠けている可能性があります。", ko: "이 스트림에서 {count}개의 청크를 읽지 못해 건너뛰었습니다. 위 답변은 글자가 빠졌을 수 있습니다." },
-  // ⚠️ **这一句在 P3e 被降过一级，别改回去**：原文是「流式响应不带 token 用量」
+  // ⚠️ **这一句被降过一级，别改回去**：原文是「流式响应不带 token 用量」
   // ——那是一句关于**上游**的全称句，而四条协议里 openai 那条是上游字节原样透传，
   // 上游会不会在流末发一块 usage **本仓从没量过**。改成「**本面板**不读」之后，
   // 它说的是本面板自己的行为，**与上游无关、恒为真**。论证与那条未定案的边界见

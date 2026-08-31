@@ -28,7 +28,7 @@ export function levelLabelKey(level) {
 }
 
 /**
- * **评审 I4**：一条事件真实的 `level` 字段来自接口响应，可能缺失/畸形——
+ * **评审裁定**：一条事件真实的 `level` 字段来自接口响应，可能缺失/畸形——
  * 原来 `eventRow` 里 `typeof item.level === "string" ? item.level : "info"` 会把
  * 这类数据**伪装成 info**（绿色徽章），与"绝不伪造"的产品不变式矛盾。这里给出
  * 唯一的判据：四个已知级别原样透传，其余（含 `undefined`/数字/畸形字符串）一律
@@ -92,7 +92,7 @@ export function itemsOf(body) {
  * 会转成"出错"提示这件事，不需要靠替换整个列表区来提示）；只有视图本身是空的
  * 且这一轮又失败了，才说"读取失败"。
  *
- * ⚠️ **`cleared` 这一档是全分支评审 I5，修的是一个已经上线的、面板对运维说假话的
+ * ⚠️ **`cleared` 这一档是通读评审提出的，修的是一个已经上线的、面板对运维说假话的
  * 缺陷。** 点"清空"之后 `view` 变成 `[]`，而原来这里只看 `viewLength === 0`，
  * 于是列表区显示**「还没有事件。」**——与同一个按钮的 tooltip（"只清前端当前显示的
  * 列表，不影响服务端已落盘的事件"）当场自相矛盾，而且它说的那件事是假的：服务端
@@ -139,13 +139,13 @@ export function generatedAtOf(body) {
  * 响应自述状态。**没有数据时逐项 null**（不是 0/false）——那几个字面上恰好
  * 也是"一切正常"的值，混进"读不出来"里会把面板变成在撒谎。
  *
- * - `truncated`（评审 I3）：`after`+`limit` 组合截掉了一部分本该出现的旧事件。
+ * - `truncated`（评审补的）：`after`+`limit` 组合截掉了一部分本该出现的旧事件。
  * - `buffered`（评审 N1）：本 isolate 缓冲里还有多少条事件没有落盘。isolate 在
  *   下一次成功 flush 之前被回收（Worker 上是常态）时，这些事件会**永久丢失**，
  *   而 `dropped` 不计它（`dropped` 只统计已经落盘/已经在内存环里明确丢弃的那些，
  *   还"活在"缓冲区里、尚未有机会落盘或丢弃的不算）。字段消费者审计发现这是
  *   唯一一个响应里给了但没有任何地方读的字段，这里补上。
- * - `cursorAhead`（评审 C6）：`after` 领先于本次请求的时钟（时钟回拨 / isolate
+ * - `cursorAhead`（评审补的）：`after` 领先于本次请求的时钟（时钟回拨 / isolate
  *   间时钟偏移），`items` 恒为空但这**不代表没有新事件**，前端必须能区分开。
  * - `malformed`（本任务）：这一次读里被逐条丢掉的畸形条目数。`src/` 里没有任何
  *   路径能产出它，**恒为 0 正是它的价值**——运维手改存储 / KV 值损坏 /
@@ -171,8 +171,8 @@ export function bufferStatus(body) {
 }
 
 /**
- * 顶部黄条要不要出现。**诚实标记必须由后端字段驱动**（Task 4 评审 I4 的裁定，
- * 在 Task 5 隔了一个任务原样复发过一次）：判据只看 `status.dropped` /
+ * 顶部黄条要不要出现。**诚实标记必须由后端字段驱动**（一条评审裁定，
+ * 隔了一个板块又原样复发过一次）：判据只看 `status.dropped` /
  * `status.budgetExhausted` / `status.truncated` / `status.cursorAhead` 这几个
  * 从响应里取出来的值，不许在这里或调用方硬编码一个 true/false。
  * `null`（没有数据）不触发——不知道不等于"有问题"。**不含 `buffered`**：单纯
@@ -184,7 +184,7 @@ export function bufferStatus(body) {
  * 它恒为 0，挂上来只会让黄条的判据多一条**永远为假**的分支——那是「形状断言
  * 冒充行为断言」在产品面上的等价物。它与 `buffered` 一样走 tooltip。
  *
- * ⚠️ **但 `cursorBroken` 进来了（评审 I6）**，而且它比在座任何一条都更该在：
+ * ⚠️ **但 `cursorBroken` 进来了（评审要求）**，而且它比在座任何一条都更该在：
  * 它意味着**后端此刻正在违约**——`cursor` 既不是有限数字也不是 `null`，于是游标
  * 推不动、面板可能**永远看不到新事件**。判据里那条 `cursorAhead` 反倒是会自愈的
  * 时钟纠纷。第一版只把它接进 tooltip，**等于把「面板在撒谎」降级成「面板在小声说」**
@@ -256,7 +256,7 @@ export function resumePollState(prev) {
 }
 
 /**
- * 一轮轮询成功之后的**完整状态转换**（评审 C6 二审 / 三审(a) / 四审 B1）。这条
+ * 一轮轮询成功之后的**完整状态转换**（游标那一条的二审 / 三审(a) / 四审 B1）。这条
  * 判断原来直接摊在 `sec-events.js` 的 `poll()` 里，是纯状态转换却没有测试覆盖，
  * 两个联带 bug 都是从这个洞里漏出来的——**这不是渲染逻辑，是决策逻辑**，与
  * `admin-ui/README.md` 硬规则 1 管的是同一类东西。
@@ -310,7 +310,7 @@ export function resumePollState(prev) {
  * k=4 → 53,280、k=6 → 59,040、k=8 → 61,920，**k 再大也只是从下方逼近 70,560，
  * 不会越过**（k→∞ 就是"没有时钟偏移"那条基准线本身，恰好等于 70,560）。
  *
- * ⚠️ 上面这一组数与那一行 `+1,440`（全分支评审 C2）：**每一轮轮询自己还会顺带
+ * ⚠️ 上面这一组数与那一行 `+1,440`（通读评审点出来的）：**每一轮轮询自己还会顺带
  * 触发一次配置读**（配置刷新中间件挂在所有路由之前，配置缓存 TTL 30 秒 < 稳态
  * 轮询间隔 60 秒 ⇒ 每轮恰好一次）。上一版的夹具用固定 holder，把这一项整个漏掉，
  * 于是那时写下的 34,560 / 46,080 / 51,840 / 57,600 / 60,480 与包线 69,120
@@ -341,7 +341,7 @@ export function pollOutcome(prev, items, cursor, cursorAhead) {
   const wasHealing = state.healing === true;
   const outcome = cursorOutcome(currentAfter, cursor);
   const nextAfterValue = healed ? null : outcome.after;
-  // **`broken` 时不许把 `hadNewItems` 判成真** —— 那正是 W3 那条 276,480 的直接
+  // **`broken` 时不许把 `hadNewItems` 判成真** —— 那正是 `cursorOutcome()` 上那段写的 276,480 的直接
   // 成因：游标畸形 ⇒ 每轮都是冷读 ⇒ `items` 恒非空 ⇒ 退避每轮被顶回 15 秒。
   // 判据放在这里而不是板块文件里：它是跨轮状态转换，不是渲染（硬规则 1）。
   const hadNewItems = (wasHealing || outcome.broken)
@@ -415,7 +415,7 @@ export function formatFields(fields) {
 }
 
 /**
- * 一条事件"说明 / 字段"列要显示的文本（评审 I4：原来这是 `sec-events.js` 里的
+ * 一条事件"说明 / 字段"列要显示的文本（评审提出：原来这是 `sec-events.js` 里的
  * 纯取值函数，零测试覆盖，搬进来）。`msg` 与格式化后的 `fields` 用 `·` 连接，
  * 缺一段就不留多余的分隔符。
  */
@@ -431,7 +431,7 @@ export function buildDetailText(item) {
  * 与设计意图一致：同一次操作打出的几条事件在时间上天然挨在一起，
  * 隔着别的事件的两条同名 corr 更可能是巧合，不该被强行拼进同一条时间线。
  *
- * 本期几乎没有事件带 `corr`（P3c 才串进注册机），**无 corr 的每条都是独立的单条组**
+ * 本期几乎没有事件带 `corr`（要等注册机把它串进来才有），**无 corr 的每条都是独立的单条组**
  * ——这条函数在"一个 corr 都没有"时必须一样能正确工作
  * （见 `tests/ui/events.test.ts` 的「groupEvents：按 corr 相邻折叠」那一组）。
  */

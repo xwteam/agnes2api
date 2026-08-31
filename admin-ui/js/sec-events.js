@@ -1,5 +1,5 @@
 /**
- * 事件板块（设计文档 §10.7，本期形状见 P3b 计划 Task 6 Step 7）：
+ * 事件板块（设计文档 §10.7）：
  * 搜索框 + 级别按钮组 + 暂停 + 清空（仅清前端视图）+ 下载 + 自动滚动 + 轮询状态指示灯。
  *
  * 板块契约（设计文档 §9.3）：`{ init?, onShow?, onHide? }`，见 admin-ui/js/app.js
@@ -23,7 +23,7 @@ import {
   initialPollState, resumePollState, pollOutcome, pollIndicatorState, pollIndicatorLabelKey,
   matchesSearch, buildDetailText, groupEvents, orderForDisplay, mergeIntoView,
 } from "./pure/events.mjs";
-// P3b 待办第 8 条：本地时区偏移三个板块共用同一个函数，见 pure/overview.mjs
+// 一条待办的落点：本地时区偏移三个板块共用同一个函数，见 pure/overview.mjs
 // 的 offsetMs() 文件头——事件板块并不比它更"是概览板块的事"，只是那个函数
 // 已经是三个板块公认的共用取值落脚点。
 import { offsetMs } from "./pure/overview.mjs";
@@ -39,7 +39,7 @@ let abort = null;
 /** 客户端已攒下的视图（ts 降序，与后端契约一致；渲染前用 orderForDisplay 反转）。 */
 let view = [];
 /**
- * 「视图是被『清空』按钮清掉的，不是本来就没有事件」（全分支评审 I5）。
+ * 「视图是被『清空』按钮清掉的，不是本来就没有事件」（通读评审提出）。
  *
  * 只影响列表区那句话该怎么写（判据在 `pure/events.mjs` 的 `eventsListMessageKey`），
  * 不影响游标——被清掉的事件**刻意**不会自动回来，理由见那个函数的说明。
@@ -50,7 +50,7 @@ let cleared = false;
  * 最近一次成功响应的自述状态。`cursorBroken` 不来自响应字段，来自
  * `pure/events.mjs` 的 `cursorOutcome`（后端契约有没有被破坏是**前端判出来的**，
  * 后端自己不会承认），但它与其余几项走同一条渲染路径：都由 `shouldWarn` 决定
- * 黄条出不出现（评审 I6）。
+ * 黄条出不出现（评审要求）。
  */
 let lastStatus = {
   dropped: null, budgetExhausted: null, truncated: null, buffered: null,
@@ -91,7 +91,7 @@ function renderWarnings() {
   nodes.warnTruncated.style.display = lastStatus.truncated === true ? "" : "none";
   if (lastStatus.truncated === true) nodes.warnTruncated.textContent = t("ev.warnTruncated");
 
-  // 评审 C6：`cursorAhead` 为 true 时 `poll()` 已经把 `pollState.after` 自愈成
+  // 评审提出：`cursorAhead` 为 true 时 `poll()` 已经把 `pollState.after` 自愈成
   // null（见下方 poll()），下一轮就会带着新游标重新冷读——这条提示只是让运维知道
   // "刚刚发生过一次自动恢复"，不是要人手动做什么。
   // ⚠️ 评审四审：这条黄条**逐轮覆盖、没有粘性**——`cursorAhead=false` 的那一轮
@@ -108,12 +108,12 @@ function renderWarnings() {
   // `tests/contract/events-cursor-heal.test.ts`
   // 的「交替命中两个时钟不同步的 isolate……不是永远卡在 15 秒」钉住的是它的**输入**
   // ——后端 cursorAhead 字段逐轮交替这个根因。
-  // ⚠️ **这个锚是 P3c Task 1 改过的**：原文写的是「持续偏移下……黄条」，
+  // ⚠️ **这个锚改过一次**：原文写的是「持续偏移下……黄条」，
   // 那个文件里**根本没有**这个标题的用例，旧判据拿整份文件当干草堆才没抓住。
   nodes.warnCursorAhead.style.display = lastStatus.cursorAhead === true ? "" : "none";
   if (lastStatus.cursorAhead === true) nodes.warnCursorAhead.textContent = t("ev.warnCursorAhead");
 
-  // 评审 I6：后端契约被破坏（`cursor` 既不是有限数字也不是 null）。**上黄条，
+  // 评审要求：后端契约被破坏（`cursor` 既不是有限数字也不是 null）。**上黄条，
   // 不是只进 tooltip**——它意味着后端此刻正在违约、面板可能永远看不到新事件，
   // 而一个悬停才看得见的提示把「面板在撒谎」降级成了「面板在小声说」。
   nodes.warnCursorBroken.style.display = lastStatus.cursorBroken === true ? "" : "none";
@@ -211,7 +211,7 @@ async function poll() {
     lastGeneratedAt = generatedAtOf(body);
     loadError = false;
     lastError = false;
-    // 评审 C6 二审 / 四审 B1：游标自愈、视图要不要跟着清空、退避间隔看不看到
+    // 游标那一条的二审 / 四审 B1：游标自愈、视图要不要跟着清空、退避间隔看不看到
     // "新内容"、自愈状态什么时候清位——同一个纯状态转换的四个面，**全部**在
     // pollOutcome() 里（admin-ui/README.md 硬规则 1）。这里只剩两件拼装：视图
     // 要不要清、把返回的下一轮状态整体收下。一个判据都不许再回到这个文件。
@@ -318,7 +318,7 @@ function buildToolbar() {
 
   const clearBtn = elI18n("button", "ev.clear", { type: "button", "data-i18n-title": "ev.clearTip" });
   clearBtn.title = t("ev.clearTip");
-  // **清空之后必须置位 `cleared`**（全分支评审 I5）：不置位的话列表区会显示
+  // **清空之后必须置位 `cleared`**（通读评审提出）：不置位的话列表区会显示
   // 「还没有事件。」，与这个按钮自己的 tooltip 当场矛盾，而且那是假话——服务端
   // 明明有事件。游标刻意不回退（理由见 pure/events.mjs 的 eventsListMessageKey）。
   clearBtn.addEventListener("click", () => { view = []; cleared = true; render(); });
