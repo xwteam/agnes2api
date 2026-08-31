@@ -59,7 +59,7 @@
 
 | Date | What changed |
 |------|--------------|
-| 2026-08-31 | v0.1.1 - 🧹 **Housekeeping release**: internal development identifiers are gone from the public repository. The 202 in the panel assets were the only ones genuinely leaking — they went out in the body of /admin/js/*.js to every visitor who opened the panel; the rest sat in the sources, the tests, the gate scripts, the shipped documents and the commit messages. Also fixed: an exemption granted on typography grounds had silently become an exemption from leak checking, and three test cases were sitting on the default timeout boundary. Behaviour is unchanged |
+| 2026-08-31 | v0.1.1 - 🧹 **Housekeeping release**: most internal development identifiers are gone from the public repository. The 470 in the panel assets were the only ones genuinely leaking — they went out in the body of /admin/js/*.js to every visitor who opened the panel; the rest sat in the sources, the tests, the gate scripts, the shipped documents and the commit messages. Also fixed: an exemption granted on typography grounds had silently become one from leak checking, and three test cases were sitting on the default timeout boundary. Behaviour is unchanged |
 | 2026-08-31 | v0.1.0 - 🎉 **First release**: the four-protocol gateway, the registrar, and the admin panel all land at once, and one codebase runs on both the Cloudflare Worker and the Node / Docker runtime. The four inbound protocols share one upstream scheduler, one key pool, and one failure-attribution path; the registrar's two temporary-mailbox channels are strictly equal peers; the panel has eight sections and needs no build step; documentation ships as one copy per language, five in total |
 
 > The full changelog lives in [CHANGELOG.md](../../CHANGELOG.md).
