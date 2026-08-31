@@ -23,7 +23,7 @@ export function openaiRoutes(deps: DispatchDeps & UsageRecording): Hono {
     });
     // Tier-2 记账。**放在 dispatch 之后、返回之前**，且**恒调用**——
     // sink 缺席时（`USAGE_STATS_ENABLED` 不为 true）`recordUsage` 第一行就 return，
-    // 不建累加器、不碰存储（P3d 计划全局约束 16）。
+    // 不建累加器、不碰存储（那条「关必须是零成本」的全局约束）。
     recordUsage(deps, {
       // ⚠️ **这里刻意不做 `String(...)` 强转**（末轮复评 F1）：这一段在 handler 顶层，
       // **无条件求值**，比 anthropic/responses 那两条（在 `record` 闭包体里）还早

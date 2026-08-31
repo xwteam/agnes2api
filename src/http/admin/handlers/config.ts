@@ -16,7 +16,7 @@ import { httpError } from "../../errors.js";
 // ⚠️ 本文件其余几处 `httpError()` 刻意仍是不带码的网关信封：设置页**从不渲染**
 // `error.message`（`admin-ui/js/sec-settings.js` 的 `save()` 拿的是顶层 `errors[]`
 // 里的逐字段 `code`，取不到就退回 `set.saveFailed` 那句五语言文案）
-// ⇒ 它们够不着屏幕，不在 P3e Task 22A 的射程里。**这不是漏了，是边界。**
+// ⇒ 它们够不着屏幕，不在那次错误码收口的射程里。**这不是漏了，是边界。**
 import { readAdminJson } from "../errors.js";
 
 /**
@@ -86,7 +86,7 @@ export interface ConfigWiring {
   /**
    * 当前的 `ADMIN_TOKEN`（只从环境变量来）。**只用来查一条**：面板写进去的
    * `gatewayToken` 不许等于它——写成相等的后果是 `adminAuth` 的每请求复查把整个管理面
-   * 判成 503，**而改回去的那条 `PUT` 也是 503**，面板把自己锁死（评审 C3，已实测）。
+   * 判成 503，**而改回去的那条 `PUT` 也是 503**，面板把自己锁死（评审发现，已实测）。
    */
   adminToken?: string;
 }
@@ -164,7 +164,7 @@ export interface ConfigSnapshot {
 /**
  * 一次装载 + 切块，**装载不起来时降级成诊断视图而不是 500**。
  *
- * ⚠️⚠️ **「降级成诊断视图」这件事是评审 C2 的收口点，它是运维唯一的出路。**
+ * ⚠️⚠️ **「降级成诊断视图」这件事是那条评审发现的收口点，它是运维唯一的出路。**
  *
  * 在它之前：存储里那份 `config` 一旦装载不起来（缺 `gatewayToken`、或注册机开着却
  * 缺链上通道的凭据），`GET /admin/api/config` 与 `PUT /admin/api/config` **全是 500**
@@ -203,8 +203,8 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
      * **只覆盖存储那一侧**，靠的是「`env` 里的非法值在 `buildApp` 那一刻就 fail-fast、
      * 进程根本起不来」。**「进程已启动」这个前提一旦不成立，三分就不完备**：
      * 例如 `env` 里 `TARGET_KEYS=abc`，今天它在 boot 就抛、走不到这里。
-     * ⚠️ **而这条前提不是永恒的**：`src/core/registrar/config.ts` 的 `posInt()`
-     * 自己登记着它是「P1 遗留」、与 `num()` 的字段级降级策略并不一致；
+     * ⚠️ **而这条前提不是永恒的**：`src/core/registrar/config.ts` 里那套校验
+     * 自己登记着它沿用的是网关那一层留下的口径、与 `num()` 的字段级降级策略并不一致；
      * **哪天有人去抹平那个不一致、让 boot 侧变宽松，这一类就会变活**，
      * 到那时这段切分要跟着补一条。
      *
@@ -233,7 +233,7 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
     } catch {
       const blockers = configLoadBlockers(stored ?? {}, wiring.env);
       // 具体原因（`posInt` 那类）只进事件板块，**不进响应体**。
-      // ⚠️ **P3e Task 22A 已经裁完，这里改写成结论**：管理接口的对外契约是
+      // ⚠️ **那件事已经裁完，这里改写成结论**：管理接口的对外契约是
       // `error.code`（闭集，见 `src/core/admin/admin-errors.ts`），**`message` 不是**
       // ——它是给日志与 API 客户端读的，措辞随时可以改而不算破坏兼容。
       // 一句后端中文 `Error.message` 因此**更不能**进响应体：它既不是契约，
@@ -383,7 +383,7 @@ export function configPutHandler(deps: ConfigDeps) {
     // **写之前先把当前状态读出来**：校验要拿它做合并（「缺席 = 不改」），
     // 回执里的 `changed` 也要拿它做对照。这一次读发生在任何写之前。
     //
-    // ⚠️ **走 `readAll` 而不是裸 `loadConfigWithProvenance`**（评审 C2）：存储里那份
+    // ⚠️ **走 `readAll` 而不是裸 `loadConfigWithProvenance`**（评审发现）：存储里那份
     // 配置已经装载不起来时，裸调用会抛 ⇒ 整条 `PUT` 变成 500 ⇒ **「把那把 key 重新
     // 填回去」这条自救路径自己也走不通**（实测：关注册机 / 重填 key / 换主通道全 500）。
     // 校验只需要 `storedBefore`（原始读，永远不抛），所以写这条路完全不依赖装载成功。
@@ -677,7 +677,7 @@ export function configResetHandler(deps: ConfigDeps) {
     }
 
     // **写之前先回读一次**：`changed` 要拿它做对照。这一次读发生在任何写之前。
-    // 走 `readAll` 而不是裸 `loadConfigWithProvenance`（评审 C2）：存储里那份配置
+    // 走 `readAll` 而不是裸 `loadConfigWithProvenance`（同一条评审发现）：存储里那份配置
     // 已经装载不起来时，裸调用会抛 ⇒ 整条重置变成 500，而「装不起来」恰恰是运维
     // 最可能来按这颗按钮的时候。
     const before = await readAll(wiring, deps.logger);

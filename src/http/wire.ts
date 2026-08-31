@@ -56,7 +56,7 @@ export interface BuildOptions {
    * key 池、用量 sink、`createApp`），**不许只喂其中一个**：不同组件看到不同的
    * 「现在」是一种自造的假阳性——例如 `MemoryStorage` 的 TTL 按真实时钟判、
    * 而 sink 按假时钟算 `expiresAt`，落下去的键会「生下来就已经过期」
-   *（P3b Task 6 实测踩过一次）。
+   *（实测踩过一次）。
    */
   now?: () => number;
 }
@@ -70,7 +70,7 @@ export interface BuiltApp {
    * app 实际在用的那个 key 池仓储。
    *
    * 交出来的理由有两个，都不是「为了测试方便」：
-   * ① P3c 的面板写完 key 之后要调 `repo.invalidate()`，而它必须是**这一个**实例
+   * ① 面板写完 key 之后要调 `repo.invalidate()`，而它必须是**这一个**实例
    *    ——另建一个实例调 invalidate 是纯粹的空操作，快照仍然是旧的。
    * ② 不交出来的话，「两个池子旋钮有没有真的接到 app 的 repo 上」就只能靠在测试里
    *    照抄一遍 wire.ts 的装配来验证，而照抄的那份永远验证不了原件（变异实测：
@@ -102,7 +102,7 @@ export interface BuiltApp {
  * 返回值带上 `configHolder`（而不只是 `app`）：调用方若还需要读一次配置
  * （目前只有 node.ts 的定时器要取 `registrar.tendIntervalMs`），复用这一份
  * 而不是自己再调一次 loadConfig——那样会产生第二次独立的存储读取，且很容易
- * 忘记传 logger，导致配置告警在生产里静默消失（P3a Task 1 评审登记的隐患）。
+ * 忘记传 logger，导致配置告警在生产里静默消失（评审登记过的隐患）。
  */
 export async function buildApp(
   env: Record<string, string | undefined>,
@@ -136,7 +136,7 @@ export async function buildApp(
   const shardId = (options.newShardId ?? (() => crypto.randomUUID().slice(0, 8)))();
 
   /**
-   * 事件落库 sink（Task 6）。`onError` 走 `consoleLogger` 直接打（**通常是
+   * 事件落库 sink。`onError` 走 `consoleLogger` 直接打（**通常是
    * ConsoleLogger**，见 `StoreLogger` 构造参数的说明）而不是 fan-out 之后的
    * `logger`：sink 自己出故障时把诊断信息再塞回同一个正在故障的 sink 没有意义，
    * 而 console 这条路径与存储无关，永远打得出来。
@@ -172,7 +172,7 @@ export async function buildApp(
   // 等 isolate 回收——`.env.example` 与五语言 DEPLOY.md 的环境变量表**那两格逐格写明了**，
   // 面板文案同样不许写「立即生效」。
   //
-  // ⚠️ **上面那半句在 P3e Task 23 之前是假的，如实登记（勘察当日逐份读过）**：
+  // ⚠️ **上面那半句一度是假的，如实登记（勘察当日逐份读过）**：
   // `.env.example` 里只有 `POOL_CACHE_TTL_MS` 那格写了这件事，`POOL_TOUCH_INTERVAL_MS`
   // 那格一个字都没有；五份 DEPLOY.md 是环境变量表**下面**的正文段落写了、**表格那两格没写**，
   // 而那张表的开场白自己声明「完整的取值范围与代价以本表为准」——照着表逐格读参数的人
@@ -186,7 +186,7 @@ export async function buildApp(
   // · 五语言那一半：「五语言 DEPLOY.md 的那两格里，正文逐格写着「面板改它不会立刻生效」，
   //   而且指着出处」——**逐语言查的是本地化正文，不是只查一个路径锚**，配同形反向控制。
   //
-  // ⚠️ **「不再靠人守」这句话在 Task 23 复评时对五语言那一半还是过头话，如实登记**：
+  // ⚠️ **「不再靠人守」这句话在复评时对五语言那一半还是过头话，如实登记**：
   // 当时那一半只有 `tests/unit/docs-parity.test.ts` 的
   // 「五语言 DEPLOY.md 里……的出现次数彼此一致」那条路径 token 计数守着，而复评 R8 实测
   // 「五份**同步**删掉那句正文、只留 `src/http/wire.ts` 这个路径」——docs-parity 那份
@@ -208,10 +208,10 @@ export async function buildApp(
   const tendGate = createTendGate();
 
   /**
-   * Tier-2 用量 sink（P3d Task 3）。**这一行是「默认关」的唯一落点。**
+   * Tier-2 用量 sink。**这一行是「默认关」的唯一落点。**
    *
    * ⚠️ **开关为假时这里必须是 `undefined`，不是「建好再用一个 if 拦住写」**
-   *（P3d 计划全局约束 16，原话：关闭时一次存储访问都不许有、**一个内存累加器都不许建**）。
+   *（那条全局约束的原话：关闭时一次存储访问都不许有、**一个内存累加器都不许建**）。
    * 设计 §7.1 给的理由是「统计吃掉写配额会连带打死 key 池的状态回写」——两者抢的是
    * 同一个每天 1,000 次的写桶。而一条「反正没写盘」的累加路径挂在那里，
    * **迟早会被某次改动接上写**，那时没有任何东西会响。
@@ -242,7 +242,7 @@ export async function buildApp(
       shardId,
       flushIntervalMs: usageFlush.flushIntervalMs,
       budgetPerDay: usageFlush.budgetPerDay,
-      // ⚠️ **查表，不在这里写三元**（P3d Task 4 认账修正）：两个 phase 的事件名与
+      // ⚠️ **查表，不在这里写三元**（认账修正）：两个 phase 的事件名与
       // 文案住在 `USAGE_ERROR_REPORT` 里，连同「为什么两句话必须分家」「record 那条
       // 今天到底可不可达」的全文。在这里再写一份三元的后果是加新 phase 时 else
       // 分支会把它**误报成**旧的那条，而 `tsc` 一个字都不会说。
@@ -267,7 +267,7 @@ export async function buildApp(
       tend: (channel) => runManualTendRound(env, storage, channel),
       probeChannel: (channel) => probeChannel(env, storage, channel),
     },
-    // 配置读写（P3c Task 7）。**与上面的 `registrar` 同一条理由：只有这里有 `env`。**
+    // 配置读写。**与上面的 `registrar` 同一条理由：只有这里有 `env`。**
     // 传的是 `storage` 而不是 `watched`：写配置失败不该被记进 `/health` 的可写性信号
     // ——那是转发能力的信号，而一次配置保存失败只影响这一次点击（面板会当场看到 500）。
     // ⚠️ 这与 `configHolder` 用的是 `watched` 并不矛盾：**读**配置在每个请求的
@@ -331,13 +331,13 @@ async function runManualTendRound(
   storage: Storage,
   /**
    * 只用这一条通道（面板「添加 Key」菜单里【自动注册】那两项，设计 §10.2）。
-   * `null` = 按配置里的主/备通道链跑，与本函数在 Task 5 的行为逐字相同。
+   * `null` = 按配置里的主/备通道链跑，与加通道参数之前的行为逐字相同。
    *
    * ⚠️ **实现方式是给这一轮换一份 `config`，`src/core/registrar/tender.ts` 一个字都没改。**
    * `tendOnce` 的通道链就是 `config.fallback ? [primary, fallback] : [primary]`，
    * 把 `primary` 换成选中的通道、`fallback` 置空，得到的正是「只用这一条」——
    * 而给核心加一个 `onlyChannel` 参数要在那个函数里多一条分支，那是全仓最热的
-   * 补池路径，本任务不该为一个面板入口去动它。
+   * 补池路径，不该为一个面板入口去动它。
    * **代价明写**：`TendResult.primaryChannel` 记的是**这一轮实际用的那条**，
    * 不是配置里的主通道——补池历史里由 `trigger: "manual"` 那一列把它们分开。
    */
@@ -403,7 +403,7 @@ async function runManualTendRound(
       });
     }
   } catch (err) {
-    // **抛错那一轮也必须在面板上占一格**（与两个入口的 Cron 轮同一条口径，评审 C1）：
+    // **抛错那一轮也必须在面板上占一格**（与两个入口的 Cron 轮同一条口径，评审发现）：
     // `recordRound` 排在 `tendOnce` 之后、一抛就整个跳过 ⇒ 不补这两件事的话，
     // 面板上这一轮什么都没有，与「压根没点过」逐字节不可区分。
     deps.logger.log({
@@ -464,7 +464,7 @@ export type TendRoundDeps = TendDeps & {
   /** 把这一轮的汇总追加进 `tend:history`。 */
   recordRound: (result: TendResult, trigger: TendTrigger) => Promise<void>;
   /**
-   * 这一轮**抛错了**，补一条如实的记录（评审 C1）。
+   * 这一轮**抛错了**，补一条如实的记录（评审发现）。
    * 与 `recordRound` 分成两个入口而不是让调用方自己拼一个 `TendResult`：
    * 拼的那一份会漂，而且很容易顺手把 `skipped` 当成"崩了"用——**`skipped` 有且
    * 只有一个含义**（注册机关着），拿它表示别的就是伪造。
@@ -502,9 +502,9 @@ export async function buildTendDeps(
     flush?: () => Promise<void>;
   } = {},
 ): Promise<TendRoundDeps | null> {
-  // **本任务接线之前，这里是裸 `ConsoleLogger`**，`registrar.*` 事件因此进不了
-  // `/admin/api/events`——P3b 阶段验收「看到最近的补池发生了什么」实测为零就是
-  // 这么来的（账本 progress.md:1041-1046）。当时不接的理由记在这里，因为它同时
+  // **接上这条线之前，这里是裸 `ConsoleLogger`**，`registrar.*` 事件因此进不了
+  // `/admin/api/events`——早先验收「看到最近的补池发生了什么」实测为零就是
+  // 这么来的。当时不接的理由记在这里，因为它同时
   // 解释了现在这个形状：Worker 的 `scheduled()` 与 `fetch()` 是**两个独立的
   // isolate 生命周期**，没有请求/响应边界可以挂 `logFlush` 那种"收尾 await"的
   // 中间件 ⇒ 落盘触发点只能由入口层在补池收尾时自己给（Worker 走 `ctx.waitUntil`
@@ -533,10 +533,10 @@ export async function buildTendDeps(
 
   /**
    * 读改写 `tend:history` 一次。**读侧的窄化结果里那个 `malformed` 必须被说出去**
-   *（评审 I4）：这里是 `tend:history` **唯一的窄化点**——事件那一侧读路径每次都会
+   *（评审发现）：这里是 `tend:history` **唯一的窄化点**——事件那一侧读路径每次都会
    * 独立报出 `malformed`，而这份历史今天只有写侧一个人看得见它。丢掉它意味着
    * **被外部写坏的那几行在下一次补池时被永久抹掉，无事件、无 warn、无计数**，
-   * 等 Task 6 的读端点建好时证据早就没了。
+   * 等这份历史的读端点建好时证据早就没了。
    */
   const appendHistory = async (record: TendRecord): Promise<void> => {
     try {
@@ -599,7 +599,7 @@ export async function buildTendDeps(
      *
      * **放在这里而不是让两个入口各写一遍**：读改写 + 窄化 + 环形追加是四步，
      * 抄两份必漂，而漂了没人会发现——这与 `summarizeFailures()` 当初被提到
-     * `tender.ts` 去的理由是同一条。Task 5 的「立即补池」按钮会走同一份
+     * `tender.ts` 去的理由是同一条。面板那颗「立即补池」按钮会走同一份
      * （`trigger: "manual"`）。
      *
      * 失败只记一条 warn 就算了：补池本身已经成功了，让一次历史写失败把它变成

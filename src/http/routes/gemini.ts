@@ -29,7 +29,7 @@ export function geminiRoutes(deps: DispatchDeps & UsageRecording): Hono {
       path: "/chat/completions", body: internal, stream,
       timeout: stream ? "firstByte" : "sync", expectJson: !stream, deps,
     });
-    // Tier-2 记账（P3d Task 3）。三条返回路径各记一次，完整理由见 `routes/anthropic.ts`
+    // Tier-2 记账。三条返回路径各记一次，完整理由见 `routes/anthropic.ts`
     // 里同位置那段。
     // ⚠️ **模型名取的是路径里切出来的那个 `model`**，不是请求体——Gemini 协议把模型名
     // 放在路径上（`/v1beta/models/{model}:generateContent`），请求体里根本没有这一格。

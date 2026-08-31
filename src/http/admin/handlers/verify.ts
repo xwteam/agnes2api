@@ -21,7 +21,7 @@ import { protocolById, MODEL_CATALOG } from "../../../core/admin/protocol-catalo
  *    这把 key 的状态做什么**，而两个「显然」的答案各自是一颗自毁按钮：
  *    · **失败记 strike** ⇒ 面板上连点几次就能把一把好 key 打进长冷却甚至剔除；
  *    · **成功清 strike / 解除 evicted** ⇒ **L4「重新导入即解封」后门的同型复发**，
- *      入口从「重新导入」换成「点一下验活」，而 P3c 已经为 L4 专门设计过知情勾选框。
+ *      入口从「重新导入」换成「点一下验活」，而面板已经为 L4 专门设计过知情勾选框。
  *    连 Tier-1 的 `stats` 也不写——`stats` 是「真实流量的证据」（设计订正 D1 原话），
  *    掺进人造探测就不再是证据了。
  *    **代价，明写**：刷新面板后看不到「上次验活结果」。这是对的：面板已有的
@@ -62,7 +62,7 @@ import { protocolById, MODEL_CATALOG } from "../../../core/admin/protocol-catalo
  *    `POOL_CACHE_TTL_MS` 之前的视图，拿它去验一把刚被改过的 key 是在验旧值——
  *    而「刚改过就想验一下」正是运维点这颗按钮的主要场景。
  *
- * 6. **上游路径从协议目录的 `upstreamPath` 取，不许硬编码**（评审 C3）。
+ * 6. **上游路径从协议目录的 `upstreamPath` 取，不许硬编码**（评审发现）。
  *    目录的 `pathTemplate` 是**网关对外**的路径（`/v1/chat/completions`），
  *    `upstreamPath` 才是**网关对上游**的那一条（`/chat/completions`，与
  *    `src/core/dispatcher.ts` 里 `${config.agnesBaseUrl}${args.path}` 那一句同源）。
@@ -118,7 +118,7 @@ export function verifyHandler(deps: VerifyDeps) {
 
     // ── 护栏（全局约束 14：按一下就打上游的按钮必须连同护栏一起交付）──────────
     //
-    // ⚠️ **粒度是 `verify:<id>`，不是全局的 `"verify"`**（评审 I11）：
+    // ⚠️ **粒度是 `verify:<id>`，不是全局的 `"verify"`**（评审发现）：
     // 全局粒度下「验 A 把手」会把「验 B 把手」一起挡掉一个 PROBE_MIN_INTERVAL_MS，
     // 20 把 key 逐个验要串行等 60 秒，而在飞去重让它连并行都不行。
     // 通道测试那边用的是 `channel:<name>`，**同样带标识**，两处口径必须一致。
@@ -154,7 +154,7 @@ export function verifyHandler(deps: VerifyDeps) {
     try {
       // 探测固定用 openai 那一条。**四条协议的 upstreamPath 今天完全相同 ⇒ 选哪条对
       // 出站毫无差别**，选它只因为它是四条的参照系（对外 `/v1/chat/completions` 是
-      // 这台网关的门面）。**仍然经目录取**——「今天一样」不是硬编码的理由（评审 C3，约束 6）。
+      // 这台网关的门面）。**仍然经目录取**——「今天一样」不是硬编码的理由（约束 6）。
       // ⚠️ 上一版这里写的是「最短的一条协议」，**实测为假**：四条 `sample()` 序列化之后
       // 是 responses 42 < gemini 56 < openai 73 < anthropic 89 字节，**openai 是第三短**。
       const proto = protocolById("openai")!;

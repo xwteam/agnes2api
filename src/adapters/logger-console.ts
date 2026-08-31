@@ -2,7 +2,7 @@ import type { Logger, LogEntry, LogLevel } from "../ports/logger.js";
 
 /**
  * 前缀标签。五语言 REGISTRAR.md 的排障小节对外承诺「补池过程中的日志统一带
- * `[registrar]` 前缀，可据此过滤」（P2 的 M4）。事件名的命名空间就是这个前缀的
+ * `[registrar]` 前缀，可据此过滤」（评审发现 M4）。事件名的命名空间就是这个前缀的
  * 唯一依据——不再靠每个调用点自己手写字符串，那正是 M4 当初漏掉 14 条的成因。
  */
 function prefixOf(event: string): string {
@@ -45,7 +45,7 @@ function flatten(v: string | number | boolean | null): string {
  * `curl 'http://gw/admin/api/x%20ip=8.8.8.8%20evil=1'`（零凭据）落盘的是
  *   `… admin.login_failed 管理接口凭据无效 ip=null path=/admin/api/x ip=8.8.8.8 evil=1 hasHeader=false`
  * ——一个未鉴权的调用方伪造出了 `ip=` 字段，而这条日志是设计文档承诺的**唯一爆破痕迹**，
- * P3b 的事件板块还要按它做面板筛选。
+ * 面板的事件板块还要按它做筛选。
  *
  * `JSON.stringify` 顺带把内部的 `"` 与 `\` 转义掉，因此引号本身也撕不开字段。
  * 空串一律加引号：`k=` 与「这个字段不存在」在 logfmt 里长得一样。

@@ -27,14 +27,14 @@ function levelParam(raw: string | undefined): LogLevel | null {
 
 /**
  * `after` 不是一个可信输入——它是客户端回传给我们的一个数字，任何人都能直接
- * 拿 curl 打 `?after=` 任意值。**负数一律当缺失处理（评审 C4）**：时间戳没有
+ * 拿 curl 打 `?after=` 任意值。**负数一律当缺失处理（评审发现）**：时间戳没有
  * 负数这回事，放行负数除了让语义变得含糊之外没有任何好处。这里拒绝纯粹是让参数
  * 语义干净，**不是**候选键数有上界那条安全性质的必要条件——那条性质来自
  * `candidateKeys()` 里的 `Math.max(floor, …)` 本身：`fromWindow` 恒 `>= floor`，
  * 于是候选窗口数恒 `<= EVENT_WINDOW_RETAIN`，与 `after` 是什么值无关。
  *
  * ⚠️ **这里原来写的是「`Math.max(floor, windowIndex(负数))` 恒等于 `floor`」，
- * 那句只在真实纪元时钟下成立**（全分支评审 A9）：生产上 `now` 是真实时间戳，
+ * 那句只在真实纪元时钟下成立**（通读评审 A9）：生产上 `now` 是真实时间戳，
  * `floor = nowWindow - 23` 是个很大的正数，任何负数都被它盖过去 ⇒ 确实恒等于
  * `floor`。但在贴近纪元零点的假时钟下（本仓不少用例用 `() => 1000`），
  * `floor` 自己就是 `-23`，`after = -1` 时 `Math.max(-23, -1) === -1 ≠ floor`。
@@ -51,18 +51,18 @@ function afterParam(raw: string | undefined): number | null {
  *
  * **零 `list()`、零索引读**：`deps.storeLogger.readEvents(after)` 只按
  * `candidateKeys()` 算出来的候选键各 get 一次，且这个次数**对任何 `after` 值都有
- * 硬上界**（`EVENT_WINDOW_RETAIN × EVENT_SLOTS`，评审 C4/C4b 修复），不随"游标
+ * 硬上界**（`EVENT_WINDOW_RETAIN × EVENT_SLOTS`，那次钳位修复），不随"游标
  * 陈旧了多久""部署跑了多久"增长——由 `quota-panel.test.ts` 数着次数钉住。
  *
  * `?after=<ts>&level=<lvl>&limit=<n>`：**归并 → 过滤（after / level）→ 截到 limit**，
  * 顺序不能倒过来——先截断再过滤会把本该出现的旧事件漏掉。
  *
- * **`truncated`（评审 I3）**：`after` + `limit` 组合会让"被截掉的较旧事件永远拉不回来"
+ * **`truncated`（评审发现）**：`after` + `limit` 组合会让"被截掉的较旧事件永远拉不回来"
  * 这件事在默认参数下天然发生（K 个分片、每片最多 100 条，K≥3 就可能触发默认
  * `limit=200`）。**这本身不是 bug**——环形缓冲的本意就是"新事件比旧事件更值得看"，
  * 但面板必须如实说"这一页不是全部"，不能悄悄吞掉一部分历史却什么都不说。
  *
- * **`cursorAhead`（评审 C6）**：`after` 所在的时间窗比 `now` 所在的时间窗还晚时，
+ * **`cursorAhead`（评审发现）**：`after` 所在的时间窗比 `now` 所在的时间窗还晚时，
  * `candidateKeys()` 的扫描区间是空的（`fromWindow > nowWindow`，循环一次都不进），
  * 于是 `items` 恒为空、`cursor` 恒为 `null`——**这与"确实没有新事件"在响应体里
  * 完全无法区分**，而触发条件不止运维手动改错时钟：任何一个 isolate 的时钟只要
@@ -71,7 +71,7 @@ function afterParam(raw: string | undefined): number | null {
  * 如实报出来，前端据此把冻结的游标丢掉重新冷读（见 `pure/events.mjs` 的
  * `bufferStatus`/`sec-events.js` 的 `poll()`）。
  *
- * ⚠️ **评审 C6 二审订正：上一段"任何一个 isolate 的时钟只要快"这句话本身写得
+ * ⚠️ **评审二审订正：上一段"任何一个 isolate 的时钟只要快"这句话本身写得
  * 过宽**——判据是 `windowIndex(after) > windowIndex(now)`，**必须跨过一个完整的
  * 时间窗边界（`EVENT_WINDOW_MS`，1 小时）才会触发**，单纯"快了几分钟但还在
  * 同一个窗口内"不会。
@@ -115,7 +115,7 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
 
     // `cursor` 只有两种合法值：**有限数字，或 `null`。永远不许是 `undefined`**——
     // `undefined` 会被 `c.json` 整个丢掉，前端的游标判据读到"字段不存在"，
-    // 与"没有新事件"完全无法区分（本计划 W2/W3 实测：游标就此冻结，稳态读吞吐
+    // 与"没有新事件"完全无法区分（实测：游标就此冻结，稳态读吞吐
     // 276,480 次/天 = 包线 70,560 的 3.9 倍，且默认「全部级别」档位下不会自愈）。
     // 经过 `narrowShard` 之后 `items[0].ts` 必然已经是有限数字，**但契约要被钉住
     // 而不是被推理保证**：这一行与那次窄化是两道独立的闸，删掉任何一道另一道都还在。
@@ -145,7 +145,7 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
       buffered: status.buffered,
       dropped: status.dropped,
       budgetExhausted: status.budgetExhausted,
-      // 过滤/截断确实丢掉了一部分本该出现的旧事件（评审 I3）。
+      // 过滤/截断确实丢掉了一部分本该出现的旧事件（评审发现）。
       truncated: filtered.length > items.length,
       // **这次读里被逐条丢掉的畸形条目数。`src/` 里没有任何路径能产出它，所以它
       // 恒为 0 ——「恒为 0」正是它的价值**：它是那几条 `narrowEntries` 用例在生产
@@ -153,10 +153,10 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
       // **唯一**能把「面板少了几条事件」和「本来就没有事件」区分开的信号。
       // **刻意不进 `shouldWarn`**：黄条是给「现在有问题」用的，一个恒为 0 的字段
       // 挂上去只会让判据多一条永远为假的分支——那是「形状断言冒充行为断言」在
-      // 产品面上的等价物。改成接进轮询指示灯的 tooltip（`buffered` 在 P3b 走的
+      // 产品面上的等价物。改成接进轮询指示灯的 tooltip（`buffered` 早先走的
       // 就是这条路）。**代价明写**：它平时不显眼，出事时要运维去看 tooltip 才发现。
       malformed,
-      // 游标领先于本次请求的时钟（评审 C6）：空结果不代表没有事件，是时钟纠纷。
+      // 游标领先于本次请求的时钟（评审发现）：空结果不代表没有事件，是时钟纠纷。
       cursorAhead: after !== null && windowIndex(after) > windowIndex(now),
       generatedAt: now,
     });
@@ -167,14 +167,14 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
  * `GET /admin/api/events/download`（订正 F8）。
  *
  * **刻意返回裸 `Response` 而不是 `c.text()`**：progress.md 登记的 N2 说「第一个返回
- * 裸 Response 的管理端点一出现，写反的 nosniff 顺序就让它静默少一条头」，而 P3a 的
+ * 裸 Response 的管理端点一出现，写反的 nosniff 顺序就让它静默少一条头」，而当时的
  * 路由清单下那条变异是**不可观测**的。这里主动把它变成可观测的，并配一条契约断言
  * （见 `tests/contract/admin-events.test.ts` 的
  * 「下载端点是裸 Response，且**仍然**带全局 nosniff」）。**别顺手改成 `c.text()`**——那会把这条
  * 护栏又变回摆设（变异表已实测：`c.text()` 抓不住这条，两种写法都带 nosniff，
  * 这条差异只能靠注释 + 评审守住）。
  *
- * **同样clamp 到 `MAX_LIMIT`（评审 M3）**：候选键空间在 C2 修完之后已经结构性有界
+ * **同样clamp 到 `MAX_LIMIT`（评审发现 M3）**：候选键空间在「索引无上限增长」修完之后已经结构性有界
  * （`EVENT_WINDOW_RETAIN × EVENT_SLOTS`，不再随部署年龄增长），但单次归并结果的
  * 理论上限仍是"候选键数 × 每键 100 条"，直接全量序列化没有必要——与列表端点用
  * 同一个上限，行为可预期。

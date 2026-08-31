@@ -33,7 +33,7 @@ export const DEFAULT_POOL_TOUCH_INTERVAL_MS = 21_600_000; // 6 小时
  *   （吃掉一次 strike ⇒ 坏 key 被无限重试，而且测试全绿——这是本模块最危险的失败形态）。
  * - `telemetry`：纯展示，任何调度逻辑都不读它。
  *
- * ⚠️ **这张表从 P3c Task 5 起不再是写消除的判据**（那句话原来写在这里，
+ * ⚠️ **这张表已经不再是写消除的判据**（那句话原来写在这里，
  * 而它正是 `note` / `addedAt` 被静默丢弃的成因）：写消除的判据是白名单
  * `MAY_ELIDE_FIELDS`，**`telemetry` 不再自动等于「可以被丢弃」**。
  * 这张表现在回答的是它本来的那个问题——**这个字段变了要不要紧**——
@@ -65,7 +65,7 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
    * `isAvailable` 读它（`src/core/keypool.ts` 的 `isDisabled`）⇒ 它改变「这把 key 还能
    * 不能用」⇒ 按本表开头那条判据就是 scheduling，没有第二种读法。
    *
-   * ⚠️ **填错的后果**（Task 5 的白名单翻转之后仍然成立，只是入口换了一个）：
+   * ⚠️ **填错的后果**（白名单翻转之后仍然成立，只是入口换了一个）：
    * 把 `disabled` 加进 `MAY_ELIDE_FIELDS`，「停用一把 key」这次写就会**被写消除整个
    * 吃掉**——面板显示已停用、调度器照常用它。而且它只在「这把 key 的 `lastUsedAt`
    * 距今不足 `touchIntervalMs`（默认 6 小时）」时发生，也就是**只对正在被使用的那些
@@ -76,7 +76,7 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
   /**
    * 建号时刻。纯展示，调度逻辑一个字段都不读它。
    *
-   * ✅ **P3c Task 5 之前这里挂着一条「靠路径不可达」的保证**：`addedAt` 变化的那次写
+   * ✅ **白名单翻转之前这里挂着一条「靠路径不可达」的保证**：`addedAt` 变化的那次写
    * 会被无条件丢弃（它连 `lastUsedAt` 那样的 `touchIntervalMs` 兜底都没有），
    * 而"安全"的唯一理由是"全仓今天没有任何代码会产生一个 `addedAt` 不同的 next"。
    * 白名单翻转之后这条保证变成了机制：`addedAt` **不在** `MAY_ELIDE_FIELDS` 里，
@@ -100,7 +100,7 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
    * 运维备注。**telemetry**：调度逻辑一个字段都不读它（`isAvailable` / `selectKey` /
    * `apply*` / `poolHealth` / `keyBucket` 全都不碰），它只会被显示。
    *
-   * ✅ **P3c Task 5 之前这一格是全表最危险的一处，成因不在这一行、在判据的方向**：
+   * ✅ **白名单翻转之前这一格是全表最危险的一处，成因不在这一行、在判据的方向**：
    * 当时「telemetry」自动等于「可以被丢弃」，于是一次「只改备注」的写会被写消除
    * **整个吃掉**（实测：`save({...r, note:"x"}, r)` ⇒ `puts === 0`，`note` 既不在存储
    * 也不在快照），而当时这段注释只能写下一句「🔴 没有任何自动化会在你写错时变红，
@@ -111,7 +111,7 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
    * 只改备注的写一定落盘，`keyPatchHandler` 传不传 `prev` 都不会再丢备注。
    * 由 `tests/unit/pool-cache.test.ts` 的
    * 「MUST_PERSIST 的每个字段变化都落盘——丢一个就是坏 key 被无限重试」钉着
-   *（`note` 从 Task 5 起就在那张 `MUST_PERSIST` 清单里）。
+   *（`note` 自翻转之后就在那张 `MUST_PERSIST` 清单里）。
    */
   note: "telemetry",
 };
@@ -119,7 +119,7 @@ export const FIELD_ROLE: Record<keyof KeyRecord, "scheduling" | "telemetry"> = {
 /**
  * **写消除的白名单：只有这两个字段的变化可以让一次写整个被丢弃。**
  *
- * ⚠️ **这是 P3c Task 5 的判据翻转，方向很重要，别再翻回去。**
+ * ⚠️ **这是一次判据翻转，方向很重要，别再翻回去。**
  * 在此之前判据是**黑名单式**的——「`scheduling` 字段都没变 ⇒ 可以消除」，
  * 于是 `telemetry` 那一档里的**每一个**字段都自动获得了「可以被静默丢弃」的许可，
  * 而其中两个根本不该有：
@@ -218,7 +218,7 @@ export const READ_PATH_LIST_BACKOFF_MS = 600_000;
  *
  * ⚠️ **这里原来写着「`tests/unit/keypool-repo.test.ts` 的『连续失败三次之后升到
  * 长退避』按这个时序实测钉住：三次真实尝试恰好落在 `t0`、`t0+60s`、`t0+120s`」
- * ——那句是假的**（全分支评审 A9）：那条用例只断言第 4 次尝试之后 `st.lists`
+ * ——那句是假的**（通读评审 A9）：那条用例只断言第 4 次尝试之后 `st.lists`
  * **不再增长**，从头到尾没有断言过"恰好三次"这个数。把 `LIST_FAIL_ESCALATE_AFTER`
  * 从 3 改成 2 或 5，它照样全绿。现在补上了：那条用例数了次数
  *（`tests/unit/keypool-repo.test.ts:685`），常数表也把
@@ -258,7 +258,7 @@ export const MAX_KEY_LENGTH = 1024;
 /**
  * 这一串能不能当上游 key 用。**判据：可打印 ASCII 且不含空白**（`0x21–0x7E`）。
  *
- * 物理那一半（W6：说清是物理还是口味）：key 唯一的用途是拼进
+ * 物理那一半（评审要求：说清是物理还是口味）：key 唯一的用途是拼进
  * `authorization: Bearer <key>`（`src/core/dispatcher.ts:422`），而请求头的值是
  * ByteString——码点 > U+00FF 与 NUL/CR/LF 在构造 `Headers` 时**直接抛
  * TypeError**。放进池子就是一把每次被选中都让转发炸掉的 key，而它看起来完全正常。
@@ -276,7 +276,7 @@ export const MAX_KEY_LENGTH = 1024;
  * Latin-1 解，两边在这一段并不由规范保证一致；RFC 9110 已把它标为弃用）。
  *
  * ⚠️⚠️ **两条路都用这个判据，但处置不同，而这个不对称是刻意的**
- *（Task 3 的 m5 裁定，Task 5 落地）。**同一个判据在两条路上不能有同一种处置**：
+ *（裁定 m5）。**同一个判据在两条路上不能有同一种处置**：
  *   · **导入**（本文件 `addMany`）：**拒绝**。那串东西还在运维的剪贴板里，
  *     报一行「第 N 行不合法」他改一下再粘一次就是了，拒绝是免费的。
  *   · **铸号**（`src/core/registrar/tender.ts` 的 `repo.add(out.key)`）：**照存不误，
@@ -290,7 +290,7 @@ export const MAX_KEY_LENGTH = 1024;
  * 走的是 strike → 长冷却 → 再来一遍，**不会自己退出池子**；而 `countsTowardTarget`
  * 现在是 `!evicted`，所以它还会一直占着一个 `targetKeys` 名额。
  * **处置是人工的**：那条 error 事件 + 补池历史里的 `key_suspicious` 会说出来，
- * 运维在面板上停用/删除它即可（Task 3 的四条写端点就是干这个的）。
+ * 运维在面板上停用/删除它即可（Key 池那四条写端点就是干这个的）。
  * **评估过、没有选的那条**：自动 `evicted` 掉它。那样下一轮就会自动补一把——
  * 而如果上游正在持续返回坏 key，"自动剔除 + 自动补铸"会变成一个**自动烧邮箱名额**
  * 的循环，比一把占着名额的死 key 糟得多。
@@ -417,7 +417,7 @@ export class KeyPoolRepo {
    * 上一起带下去，写配额一次不增，而计数的误差收敛成
    * 「最多晚一个 `touchIntervalMs` 落盘 + isolate 在落盘前被回收时丢这一段」。
    *
-   * ⚠️ **为什么必须存 `base` 而不只是 `delta`（C2，评审实测）**：只存 delta 时，
+   * ⚠️ **为什么必须存 `base` 而不只是 `delta`（评审实测）**：只存 delta 时，
    * 落盘写的是「调用方交上来的 `next.stats` + 攒着的」，而这**默认了调用方的视图
    * 不落后于存储**。`dispatch` 的 `commit()` 恰恰打破这条：它 `records[at] = updated`
    * 存的是**未合并的 next**，于是同一次请求里第二次提交同一把 key 时，
@@ -466,7 +466,7 @@ export class KeyPoolRepo {
     await this.snapshot.ensureFresh();
     const cur = this.snapshot.current();
     // 从未成功装载过（冷启动就撞上存储故障）：再走一次真加载把**真实异常**抛出来，
-    // 保持 P1「存储读失败 → app.onError → JSON 500」的既有行为，
+    // 保持「存储读失败 → app.onError → JSON 500」的既有行为，
     // 而不是换成一句自造的、排障时毫无信息量的错误。
     //
     // **代价要说清楚**：这条分支下每个请求会读两遍存储（`ensureFresh` 内部那次
@@ -546,7 +546,7 @@ export class KeyPoolRepo {
     }
   }
 
-  /** 面板写 key 之后调用（P3c）。与 `ConfigHolder.invalidate()` 是两把独立的钥匙，不互相代劳。 */
+  /** 面板写 key 之后调用。与 `ConfigHolder.invalidate()` 是两把独立的钥匙，不互相代劳。 */
   invalidate(): void {
     this.snapshot.invalidate();
   }
@@ -556,7 +556,7 @@ export class KeyPoolRepo {
    *
    * **不加这一步会出人命的场景**（评审实测，真 KV 复现）：全新部署的 Worker 上
    * cron 先在空 KV 上跑了一次对账，写下**权威的空索引** `{"v":1,"ids":[]}`；用户
-   * 随后按 DEPLOY.md 手工 `wrangler kv key put` 导入 key——而 P3a 还没有面板、
+   * 随后按 DEPLOY.md 手工 `wrangler kv key put` 导入 key——而那时还没有面板、
    * 注册机默认关闭，手工导入就是 Worker 用户装 key 的唯一路径。此时索引「合法」，
    * 永远不会走缺失回落，`all()` 恒返回 0 条，网关一直 503 pool_empty。
    * 改造前 `all()` 直接 `list("key:")`，导入即刻生效——这是本次改造引入的回退。
@@ -661,7 +661,7 @@ export class KeyPoolRepo {
     }
 
     // 落盘 = **本实例记的基线** + 先前被消除掉的那些 + 本次这一笔。
-    // 刻意**不**用 `next.stats` 当基数：那是调用方的视图，它可能落后于存储（C2）。
+    // 刻意**不**用 `next.stats` 当基数：那是调用方的视图，它可能落后于存储（同一条评审发现）。
     const stats = applyDelta(entry.base, addDelta(entry.delta, delta));
     const merged: KeyRecord = { ...next, stats };
     await this.storage.put(KEY_PREFIX + merged.id, merged);
@@ -737,7 +737,7 @@ export class KeyPoolRepo {
    * 更新落盘前确认记录还在。**这是「删除不许被陈旧写回撤销」这条不变量的全部实现。**
    *
    * 缺它时的失效链（评审实测复现，Worker 与单副本 Docker 都中招）：
-   * Task 4 之后 `all()` 交出的是一份最长 `poolCacheTtlMs` 的 isolate 级快照，
+   * 加了池快照缓存之后 `all()` 交出的是一份最长 `poolCacheTtlMs` 的 isolate 级快照，
    * 而运维吊销一把泄漏的 key 只有一种姿势——`wrangler kv key delete "key:<id>"`
    * 或直接编辑 `store.json`。记录没了，可**本 isolate 的快照里它还在**：下一个
    * 落到这里的请求照样选中它，上游一报错就 `applyStrike` ⇒ 调度字段变了 ⇒
@@ -749,7 +749,7 @@ export class KeyPoolRepo {
    *
    * **为什么选「写回前确认存在」，而不是墓碑法或让对账不再收养孤儿**（三条都评估过）：
    * · **墓碑法**（delete 先写 `evicted:true` 的墓碑再摘索引，物理删交给对账）只护得住
-   *   `delete()` 这一条路径。而 P3a 还没有面板，**今天唯一存在的吊销姿势恰恰是绕过
+   *   `delete()` 这一条路径。而那时还没有面板，**唯一存在的吊销姿势恰恰是绕过
    *   `delete()` 的裸存储删除**——它压根不会写下墓碑。修的是还不存在的路径，漏的是
    *   正在用的那条。何况墓碑里仍然躺着 key 材料，对「吊销一把泄漏的 key」而言是反效果。
    * · **对账不再无条件收养孤儿**要求一份「已删 id」的持久集合，同样在裸存储删除下拿不到；
@@ -767,7 +767,7 @@ export class KeyPoolRepo {
    * 所以刚删掉的记录在**本 colo** 可能还能被读到，这一窗口内确认仍会通过。也就是说
    * 在 KV 上它把「永久复活且不自愈」压成「最多一个 KV 传播窗口内可能复活」，
    * 不是零。FileStorage（Docker）没有这层缓存，那里是精确的。要彻底消掉那个窗口，
-   * 得等 P3c 的面板删除按钮落地后再叠一层墓碑——两者不冲突。
+   * 得等面板的删除按钮落地后再叠一层墓碑——两者不冲突。
    */
   private async stillExists(id: string): Promise<boolean> {
     if ((await this.storage.get<KeyRecord>(KEY_PREFIX + id)) !== null) return true;
@@ -845,7 +845,7 @@ export class KeyPoolRepo {
       // （Worker 上还要 × 每个活跃 isolate 各自的 TTL）。为什么不去改接线：见 wire.ts
       // 的 `buildTendDeps` 注释——那里说明了「共用一个实例」会踩到哪三条。
       //
-      // 那这一行还有什么用？**P3c 的面板**：它跟转发路径共用 `BuiltApp.repo`
+      // 那这一行还有什么用？**面板**：它跟转发路径共用 `BuiltApp.repo`
       // （wire.ts 为此把 repo 交了出来），面板写完 key 之后不失效就等于「加了 key，
       // 一分钟内没反应」。今天守它的是同实例的用例，那正是它今天唯一真实的用法。
       this.invalidate();
@@ -885,7 +885,7 @@ export class KeyPoolRepo {
    * 的原话是「另给一个显式勾选框」）。它重置的是**系统判定的失败态**
    * （`strikes` / `cooldownUntil` / `cooldownReason` / `evicted` / `evictedReason`），
    * 刻意**不动**这四样：
-   *   · `disabled`——那是运维自己按下的开关（Task 2 的裁定：人的决定，随时可撤销），
+   *   · `disabled`——那是运维自己按下的开关（裁定：人的决定，随时可撤销），
    *     让一次粘贴顺手把它翻回去，就是把「停用一把可疑 key」这个安全动作静默撤销；
    *     它在面板上看得见、点一下就能开，不需要靠导入来代劳；
    *   · `addedAt`——设计文档把「`addedAt` 被刷新」列为 L4 缺陷的一部分，重置状态
@@ -923,7 +923,7 @@ export class KeyPoolRepo {
    *
    * ── 空行：整条跳过，不进任何一个数组（**这一条定死前端的口径**）───────────
    *
-   * ⚠️ **第一版把空行判成非法项，那让前端只剩两个都不对的选项**（评审 I6）：
+   * ⚠️ **第一版把空行判成非法项，那让前端只剩两个都不对的选项**（评审发现）：
    * 原样发 ⇒ 文本框末尾那个换行被报成「第 N 行不合法」，一条**不存在的错误**；
    * 前端先过滤空行 ⇒ 位置与运维眼里的行号**错位**，而位置正是它唯一的用途。
    * 现在空行整条跳过、**位置仍按原始下标算**，两难就没了：
@@ -1068,13 +1068,13 @@ export class KeyPoolRepo {
    *
    * 这是全系统除「索引缺失回落」之外唯一用 `list()` 的地方，且不在热路径上。
    *
-   * **今天调用它的一共三处**（全分支评审 I2 重数出来的，原来这里写的是
+   * **今天调用它的一共三处**（通读评审重数出来的，原来这里写的是
    * 「两个入口的补池调度各在开头调一次」，**漏了第三处**）：
    * · `src/entry/node.ts` —— Node 调度器每一轮开头；
    * · `src/entry/worker.ts` —— Worker Cron 每一轮开头（每 30 分钟 ⇒ 48 次/天，
    *   占免费档 list 配额的 4.8%）；
    * · `src/core/registrar/tender.ts` 的 `reconcileAfterMint()` —— **那一轮真的铸出了 key
-   *   才走**。它本身是 P3b 就有的，但 P3c 把 `POST /admin/api/registrar/tend` 接上了
+   *   才走**。它本身早就有了，但面板把 `POST /admin/api/registrar/tend` 接上了
    *   同一条路 ⇒ 它从「定时任务的成本」变成了**一次点击的成本**，上界是
    *   `MANUAL_TENDS_PER_DAY` = 24 次/天。五语言 DEPLOY.md 的 list 消费者清单
    *   同一批已从「三处」改成「四处」并点名面板。
@@ -1099,7 +1099,7 @@ export class KeyPoolRepo {
       //
       // **今天这一行在生产里是空操作，别误以为它在兜什么底**：两个入口的对账都是
       // 现建一个 repo、调完就扔（快照本来就是空的），`tendOnce` 收尾那次用的又是
-      // `cacheTtlMs: 0` 的实例。真正会用到它的是 P3c——面板上的「立即对账」按钮跟
+      // `cacheTtlMs: 0` 的实例。真正会用到它的是面板——上面那颗「立即对账」按钮跟
       // 转发路径共用同一个 repo 实例，那时不失效就等于「点了对账，池子一分钟内没反应」。
       // 现在就写对，好过等到那天再想起来。有用例钉着（reconcileIndex 那条）。
       this.invalidate();
@@ -1205,11 +1205,11 @@ export class KeyPoolRepo {
    * 写路径专用：不走读路径的退避闸。
    *
    * 理由：`indexAdd` 只在**索引缺失**时才走到这里，而它的调用方是 `add()`
-   *（注册机铸出一把新 key，或 P3c 的面板导入）——那是低频操作，且这次 list 的结果
+   *（注册机铸出一把新 key，或面板导入）——那是低频操作，且这次 list 的结果
    * 会立刻被写成索引。拿一份最多 10 分钟前的陈旧清单去**写索引**，会把窗口内
    * 别人加进来的 id 从索引里抹掉，那是正确性问题，不是配额问题。
    *
-   * ⚠️ **P3c 的批量导入不许循环调 `add()`**（K10）：那会是 `M × (1 list + 1 put)`。
+   * ⚠️ **面板的批量导入不许循环调 `add()`**：那会是 `M × (1 list + 1 put)`。
    * 批量路径要「一次读索引 → 内存合并 → 一次写索引」。
    */
   private async listForIndexWrite(): Promise<string[]> {
@@ -1217,7 +1217,7 @@ export class KeyPoolRepo {
   }
 
   /**
-   * ⚠️ **P3c 的批量导入不许循环调 `add()`。**
+   * ⚠️ **面板的批量导入不许循环调 `add()`。**
    * `add()` 是「一次记录 put + 一次索引读 + 一次索引 put」，循环 M 次就是 `3M` 次操作，
    * 而写桶只有 1,000/天。批量路径必须是「一次读索引 → 内存合并 → 一次写索引 → M 次记录 put」。
    * 另外在 FileStorage 形态下 `pool:index` 是**纯成本**（读侧零收益、每次 put 都重写整个

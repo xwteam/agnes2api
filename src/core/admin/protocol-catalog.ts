@@ -10,7 +10,7 @@
  * `tsconfig*.json` / `src`（`Dockerfile:4-7`），**没有 `admin-ui`**
  * ⇒ `src/**` 一旦 import `admin-ui/**` 的任何文件，镜像构建立刻断。
  *
- * ⚠️ **零 IO**：纯数据 + 纯函数。真正发请求的是本期 Task 8 的验活 handler（还没建）
+ * ⚠️ **零 IO**：纯数据 + 纯函数。真正发请求的是验活 handler（当时还没建）
  * 与浏览器。这条由 `tests/unit/source-guards.test.ts`「硬约束：src/core 零 IO」
  * 的全目录扫描守着。
  *
@@ -19,7 +19,7 @@
  * `supportedGenerationMethods: ["generateContent","streamGenerateContent"]`，
  * **包括那个视频模型**——而视频真正的路径是 `POST /v1/videos` + `GET /v1/videos/:id`
  * 的两段式（见下面的 `MEDIA_ENDPOINTS`）。本目录按**真实可用性**填，
- * 那条对外契约的不实登记给 P4（同一期里既改契约又建面板，出问题时分不清是哪一半）。
+ * 那条对外契约的不实登记另行处置（同一轮里既改契约又建面板，出问题时分不清是哪一半）。
  * 别把面板与 `/v1beta/models` 的差异当成本目录算错了。
  */
 export type ProtocolId = "openai" | "anthropic" | "responses" | "gemini";
@@ -29,7 +29,7 @@ export type Modality = "chat" | "image" | "video";
  * 四条协议的样例请求里那句用户输入。**具名导出，不是散在四个 `sample()` 里的魔法字符串。**
  *
  * ⚠️ Playground 的 `withPrompt()` 靠「在 `sampleBody` 里找到这句话并替换掉」来注入用户输入
- *（见 Task 10）。第一版把它留成四个字面量 `"ping"`，**没有具名导出、没有任何断言钉住**
+ *（见 Playground 那一侧）。第一版把它留成四个字面量 `"ping"`，**没有具名导出、没有任何断言钉住**
  * ⇒ 谁把某条协议的样例文本改成别的，Playground 对那条协议**静默丢弃用户输入、恒发 "ping"**，
  * 面板上完全看不出来。那是把「第二份知识」从一张表挪成一个魔法字符串，形态没变。
  * 由 `tests/unit/admin/protocol-catalog.test.ts`
@@ -50,7 +50,7 @@ export interface ProtocolEntry {
   /**
    * **网关对上游**的路径（网关转手打这一条，拼在 `config.agnesBaseUrl` 之后）。
    *
-   * ⚠️ **它与 `pathTemplate` 是两个问题，第一版把两者混为一谈**（评审 C3）：
+   * ⚠️ **它与 `pathTemplate` 是两个问题，第一版把两者混为一谈**（评审发现）：
    * 前者回答「客户端怎么调这个网关」，后者回答「网关怎么调上游」。
    * 今天四条协议的上游路径**全部**是 `/chat/completions`——四条对话协议在网关内被转成同一份
    * 内部格式再转发（四条路由文件各自把字面量 `"/chat/completions"` 传给 `dispatch()`，
@@ -62,15 +62,15 @@ export interface ProtocolEntry {
    * 「出站 URL 逐字等于 agnesBaseUrl + upstreamPath」——**观测点在真实出站 URL 上，
    * 不是比对本文件自己的两个字段**（那是同义反复）。
    *
-   * ⚠️ **边界，明写（评审 R3-m3）**：这个字段**只覆盖四条对话协议**。
+   * ⚠️ **边界，明写（评审发现 m3）**：这个字段**只覆盖四条对话协议**。
    * 媒体那三条住在下面的 `MEDIA_ENDPOINTS` 里，**不在本表内**——两张表的分界不是
    * 「对话 vs 媒体」这个分类癖，而是**形状真的不同**：对话四条有 `streamMode` /
    * `streamTextPath` / `usagePath` 三格媒体一格都用不上，媒体那三条有 `op` / `taskSlot`
    * 两格对话一格都用不上。合成一张表的代价是每一条都带着一半恒为 `null` 的字段，
    * 而**恒为 null 的字段与「这一条没填」在消费侧长得一模一样**（全局约束 9 的同型）。
-   * ⚠️ **P3d Task 12 之前那三条还只住在 `src/http/routes/media.ts` 里**，
+   * ⚠️ **那三条原先还只住在 `src/http/routes/media.ts` 里**，
    * 当时登记的裁定是「哪天出现第二个需要『网关怎么调上游』的媒体消费者就必须搬进来，
-   * 别在那之前预先搬」。**Task 12 就是那一天**：Playground 的媒体模式要拿**对外**路径
+   * 别在那之前预先搬」。**Playground 的媒体模式就是那一天**：它要拿**对外**路径
    * 发请求，而那条对外路径与上游路径是同一条路由的两半——把对外那半搬进真源、
    * 把上游那半留在路由文件里，等于让下一个改动的人只看见一半。
    */
@@ -90,12 +90,12 @@ export interface ProtocolEntry {
    * 消费方按空串处理。
    *
    * ── **这一格为什么在这里，而不是在前端** ──────────────────────────────────────
-   * P3d Task 10 收口时登记过一条：Playground 的右栏只能展示响应体原文，因为
+   * Playground 刚落地时登记过一条：它的右栏只能展示响应体原文，因为
    * 「这条协议的回答那句话在哪一格」是**第四份「四条协议长什么样」的知识**，而当时
    * 这份目录没有它。**流式把这件事顶到了台面上**——流式天然没有「原文」可展示，
    * 它必须一块一块地把正文取出来拼。那一刻只有两条路：往这份真源加一格，
    * 或者在浏览器里再写一张四行的对照表。**后者正是全局约束 15 禁止的那件事**
-   *（订正 D1 的原话：「它们是同一份知识，做两遍必漂，而漂了没人会发现」）。
+   *（订正的原话：「它们是同一份知识，做两遍必漂，而漂了没人会发现」）。
    *
    * ⚠️⚠️ **这四条路径不是照着协议规范抄的，是照着本网关真正吐出去的字节填的。**
    * 四条协议里三条的流式事件由本仓自己合成（`src/core/protocol/{anthropic,responses,gemini}.ts`
@@ -110,7 +110,7 @@ export interface ProtocolEntry {
    * 流式没有正文」这一档。哪天真出现了，加的是一个新档位、不是往这里塞 `null`
    * ——`null` 会和「路径写错了、取不到」在消费侧长成同一个空串。
    *
-   * ⚠️⚠️ **一条今天定不了案的边界，登记在这里**（P3d Task 11 评审提出）：
+   * ⚠️⚠️ **一条今天定不了案的边界，登记在这里**（评审提出）：
    * **openai 是四条里唯一网关不解析响应体的一条**（不传 `expectJson`，原样透传）。
    * 真实 Agnes 上游若在流末发一块 usage（不少 OpenAI 兼容实现会发，或客户端带了
    * `stream_options.include_usage` 时），**那些字节会原样到达浏览器**——
@@ -118,14 +118,14 @@ export interface ProtocolEntry {
    * 假上游下量不到（我们自己的假上游不发那一块），**需要一次真上游才能定案** ⇒
    * **不猜着加解析分支**：本目录今天不新增任何「流末 usage 在哪一格」的字段。
    *
-   * ⚠️ **这条边界今天仍未定案，但它已经不再让面板说假话了（P3e Task 22）。**
+   * ⚠️ **这条边界今天仍未定案，但它已经不再让面板说假话了。**
    * 上一版这里接着写的是「而 Playground 仍会无条件画那句『流式响应不带 token 用量』
    * ⇒ 那一刻那句话对 openai 就不再为真」，并据此裁定「**定案之前不改文案**」。
    * 那条裁定被执行成了「一句可能为假的全称句一直挂在屏幕上」，而它真正要防的只是
    * **猜着加解析分支**。⇒ 面板那句话已改成只讲本面板自己的行为
    *（`admin-ui/js/i18n-dict.js`「本面板在流式这一档不读 token 用量」，key 名 pg.turn.noTokens），
    * **与上游有没有 usage 无关、恒为真**；解析逻辑一个字节都没动。
-   * ⚠️ **引文与路径紧挨着写是刻意的**（P3e Task 22 复评 F2）：上一版在两者之间隔了
+   * ⚠️ **引文与路径紧挨着写是刻意的**（复评发现）：上一版在两者之间隔了
    * 「的 pg.turn.noTokens：」，注释指向那道门禁**认不出这是个名字锚**，于是这条引文
    * 一个字都没人验 —— 复评实测把字典里的「本面板」改成「此面板」⇒ 那道门禁 **EXIT=0**。
    * 改成现在这个形态之后重跑同一次变异（回填时亲手跑的）：**EXIT=1**，本文件这一处
@@ -156,8 +156,8 @@ export const PROTOCOLS: readonly ProtocolEntry[] = [
     // ⚠️ **null 不是「这条协议没有 usage」，是「网关这条路径不解析响应体」**（订正 F1）：
     // `src/http/routes/openai.ts` 是四条协议路由里唯一**不传 `expectJson`** 的一条，
     // 于是 `dispatch()` 走 `sanitize(res)` 原样搬运（`src/core/dispatcher.ts:469`），
-    // 从头到尾没有 `JSON.parse` 过。usage 确实在响应里、确实到得了客户端（本计划 W7 实测），
-    // 只是网关没读它。给它加 `expectJson` 是热路径改动，本期不做。
+    // 从头到尾没有 `JSON.parse` 过。usage 确实在响应里、确实到得了客户端（实测过），
+    // 只是网关没读它。给它加 `expectJson` 是热路径改动，暂不做。
     usagePath: null,
     // 上游字节原样透传（本条不传 `expectJson`）⇒ 这里填的是**上游 chat 增量块**的形状。
     // 真机实测到达客户端的那一行：`{"id":"c1","choices":[{"delta":{"content":"a"}}]}`
@@ -273,7 +273,7 @@ export const MODEL_CATALOG: readonly ModelEntry[] = [
  * 故先按白名单校验形状（不匹配直接 400），再 `encodeURIComponent` 做纵深防御。
  *
  * ⚠️ **它从 `src/http/routes/media.ts` 搬到这里，是因为出现了第二个判它的地方**
- * （P3d Task 12：面板在发那次轮询之前先自己判一遍，否则运维只会看到一个 400 而不知道
+ * （面板在发那次轮询之前先自己判一遍，否则运维只会看到一个 400 而不知道
  * 为什么）。两处各写一份的话，**收紧的那一侧会让另一侧发出注定 400 的请求、
  * 放宽的那一侧会让面板拦下一个网关其实收的 id**——两个方向都无声。
  * ⚠️ **它刻意不进 `catalogPayload()`。** 浏览器那一份是
@@ -311,7 +311,7 @@ export const VIDEO_TASK_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
  * **未核实的假设**，登记在 `src/core/admin/upstream-facts.ts` 的 `video.taskIdCharset`：
  * 标识是**上游签发的**，本仓从没见过真上游签发的样本。真上游若用了 `.` `:` `+` `/` `=`，
  * 两段式视频接口对所有客户端结构性不可用。⇒ **本函数与它的消费者只做文档化与错误
- * 文案，`VIDEO_TASK_ID_RE` 一个字符都不许跟着放宽**：放宽它会把 P1 已解决的路径穿越 /
+ * 文案，`VIDEO_TASK_ID_RE` 一个字符都不许跟着放宽**：放宽它会把早已解决的路径穿越 /
  * 查询参数注入搬回来（`..%2F..%2Fadmin`、`x%3Fsecret%3D1`）。
  */
 export function videoTaskIdShape(source: string): string {
@@ -331,7 +331,7 @@ export function videoTaskIdShape(source: string): string {
  *
  * ⚠️ **它必须是纯 ASCII**：五份 API.md 逐字带着它，字符类哪天被放宽到收非 ASCII，
  * `en` / `ja` / `ko` 三份里会凭空出现一段中文。
- * **这句话有机器守着**（P3e Task 25 回填补的；在那之前它是一张不会自己红的清单，
+ * **这句话有机器守着**（后来回填补的；在那之前它是一张不会自己红的清单，
  * 复评实测把字符类改成含非 ASCII、五份文档同步改，十二道门禁全绿）：
  * `tests/contract/media.test.ts` 的「形状串必须是纯 ASCII —— en / ja / ko 三份 API.md
  * 逐字带着它」钉真值，同组「不乱红：判据真认得出非 ASCII……」证明那个判据不是瞎的。
@@ -435,10 +435,10 @@ export function endpointFor(p: ProtocolEntry, model: string, stream: boolean): s
 /**
  * 序列化给面板的那一份。**函数（`sample`）不能过网络，这里替换成算好的请求体。**
  *
- * ⚠️ **`samplePrompt` 是 Task 11 补上的一格，它消掉的是一份已登记的副本。**
- * P3d Task 10 在 `admin-ui/js/pure/playground.mjs` 里留了一个 `PROMPT_SLOT_SAMPLE = "ping"`，
+ * ⚠️ **`samplePrompt` 是后来补上的一格，它消掉的是一份已登记的副本。**
+ * Playground 落地时在 `admin-ui/js/pure/playground.mjs` 里留了一个 `PROMPT_SLOT_SAMPLE = "ping"`，
  * 并把它登记成「必然的副本」——理由是「`js/pure/` 禁 `import`，而它不在这份响应里」。
- * **那个理由的后半句是可以被改掉的，改法就是这一行。** Task 10 报告自己也写了
+ * **那个理由的后半句是可以被改掉的，改法就是这一行**，当时的登记自己也写了
  *「下一次有人碰那份真源时，这是该顺手做掉的事」。
  *
  * ⚠️ **它必须与 `sampleBody` 里那句话是同一个来源**（都从 `SAMPLE_PROMPT` 来）：

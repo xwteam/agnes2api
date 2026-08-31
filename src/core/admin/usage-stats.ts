@@ -4,7 +4,7 @@
  * ── 存储形态：保留设计的「日键 + 值里装 24 个小时槽」，只换掉有界性机制 ─────────
  *
  * 设计 §7.1 写的是 `stat:<YYYY-MM-DD>:<shardId>` + Cron 压实成 `stat:<date>` + **删掉分片**。
- * **压实那一半必须换掉**：它正是事件分片第一版被评审 C5 推翻的形态
+ * **压实那一半必须换掉**：它正是事件分片第一版被评审推翻的形态
  * （`src/ports/storage.ts:7-10` 与 `src/adapters/logger-store.ts:31-35` 记着推翻的理由：
  * ⚠️ 后者**不是文件头**——`logger-store.ts` 的**首行就是 `import`**，那段话在 `StoreLogger`
  * 的类说明块里；本仓自己区分这两者，`logger-store.ts:35` 的原话就是「详见
@@ -15,7 +15,7 @@
  * ⇒ 有界性改用 `Storage.put` 的 `expiresAt`（TTL）：它是**存储自己的性质**，
  * 与落盘节奏、槽位选择、isolate 会不会被回收全部无关。**不做压实、不 delete。**
  *
- * **但「日键 + 值里装小时槽」这一半必须保留，第一版把它一起换掉是过度类比**（评审 C1）：
+ * **但「日键 + 值里装小时槽」这一半必须保留，第一版把它一起换掉是过度类比**（评审发现）：
  * 事件与用量有一处决定性差异 ——
  * **事件分片的值是「这一小时里发生的那些条目」，日历上互不重叠，所以必须按小时分键；
  * 而用量的值是「累计计数」，一次写就能把当天全部 24 个小时槽一起覆盖掉。**
@@ -29,11 +29,11 @@
  * 读路径按「天」取键所以扇出小，而「小时」这一维住在值里面、不额外花键。**
  *
  * ── 零 IO ──────────────────────────────────────────────────────────────
- * 纯数据 + 纯函数，时间一律从参数进。落盘由 Task 3 的 `UsageSink` 负责，
+ * 纯数据 + 纯函数，时间一律从参数进。落盘由 `UsageSink` 负责，
  * **那个文件今天还不存在，所以这里刻意不写它的路径**——`scripts/check-comment-refs.mjs` 这道门禁校验的是
  * 「注释里的仓内路径必须解析得开」，一条指向未来文件的引用会让它红（本任务实测过一次）。
  *
- * ⚠️ **本文件不接线，也不许预先埋任何会被接上写的累加路径**（全局约束 16：
+ * ⚠️ **本文件不接线，也不许预先埋任何会被接上写的累加路径**（那条全局约束：
  * Tier-2 的默认值是关，且「关」必须是零成本——关闭时一次存储访问都不许有、
  * 一个内存累加器都不许建）。这里全部是「状态进、状态出」的纯函数，
  * **一个模块级可变状态都没有**。
@@ -45,9 +45,9 @@ import { type WriteBudget, FRESH_BUDGET, canWrite, consume } from "./event-ring.
  *
  * ⚠️ **`canWrite` 的第三个参数 `perDay` 有默认值，而那个默认值是
  * `EVENT_WRITES_PER_DAY`（12）、不是 `USAGE_WRITES_PER_DAY`（13）**
- * （`src/core/admin/event-ring.ts:294`）。Task 3 调它的时候**必须把
+ * （`src/core/admin/event-ring.ts:294`）。`UsageSink` 调它的时候**必须把
  * `USAGE_WRITES_PER_DAY` 显式传进去**：漏传**不会有类型错误、不会有任何编译期信号**，
- * 它会静默按 12 计——而 12 恰好就是评审 R3-I1 判定为「每 24 小时恰好有一次 put
+ * 它会静默按 12 计——而 12 恰好就是评审判定为「每 24 小时恰好有一次 put
  * 被预算拒绝」的那个值。**缺陷会从一个默认参数悄悄回来，而两边的常量各自都还是对的。**
  * 由 `tests/unit/admin/usage-stats.test.ts` 的
  * 「canWrite 的默认 perDay 是事件板块的 12，不是用量的 13」那一格钉着。
@@ -62,7 +62,7 @@ export interface UsageBucket {
   /** 流式请求单列一栏，让 token 的缺口可见（设计 §7.1「`streamingRequests` 单列一栏」）。 */
   streamingRequests: number;
   /**
-   * ⚠️ **只累计成功请求的延迟**（评审 I12）。
+   * ⚠️ **只累计成功请求的延迟**（评审发现）。
    * 第一版的注释写「延迟只统计有意义的那些：请求真的完成了才有延迟可言」，
    * **而代码对失败请求同样 `+1`** —— 注释与代码互相矛盾，两边都没有用例，
    * 而 `scripts/check-comment-refs.mjs` 这道门禁看不见这类矛盾（V24：规则 B 查的是指向存不存在，不是那句话真不真）。
@@ -143,7 +143,7 @@ export const USAGE_SLOTS = 2;
  * ⇒ **U-H 只被了结了一半**：「代码路径跑不跑得完」有实测了，「线上免费档会不会超」
  * 仍然没有平台承诺，照旧按「没有承诺」处置，仍然不许把 60 写成安全的。
  *
- * 实际影响：`30d` 那一档在 Worker 上可能与 Node 表现不同 ⇒ **Task 4 让它失败得诚实**
+ * 实际影响：`30d` 那一档在 Worker 上可能与 Node 表现不同 ⇒ **读端点让它失败得诚实**
  * ——读不出来按全局约束 9 显示 `—`，**不许 500、更不许把半份数据当成全份**。
  * 那一格是 `tests/contract/admin-usage.test.ts` 的
  * 「读 30 天时第 47 次 get 抛错：整条仍然是 200，days 是 null，绝不把读到的那 46 个当成全份」
@@ -162,7 +162,7 @@ export const USAGE_SLOTS = 2;
 export const USAGE_DAY_RETAIN = 30;
 
 /**
- * 每个 isolate 每天最多写几次。**这个数数的是 `put` 次数，不是 flush 次数**（评审 C1）。
+ * 每个 isolate 每天最多写几次。**这个数数的是 `put` 次数，不是 flush 次数**（评审发现）。
  *
  * 第一版的不变量数的是 flush 次数，而当时的键形状让一次 flush 写 2–3 个键
  * ⇒ 真实写量是它算出来的 2–3 倍，而不变量照样绿。
@@ -173,7 +173,7 @@ export const USAGE_DAY_RETAIN = 30;
  * ⚠️ **13 = 12 次落盘 + 1**。那个 `+1` 不是余量，是**跨 UTC 零点的那一次落盘要写两个键**
  * （前一天一个、当天一个）。第一版取 12，于是每 24 小时恰好有一次 put 被预算拒绝
  * ——**数据不丢**（那天的 `dirty` 不清，下一轮补上），**但「尾巴 ≤2 小时」这句对外承诺变假**
- * （那一次的尾巴是 ≤4 小时）。评审 R3-I1 用 3 天仿真确认它是确定性发生的，不是边角。
+ * （那一次的尾巴是 ≤4 小时）。评审用 3 天仿真确认它是确定性发生的，不是边角。
  *
  * 取 13 的判据、与设计原值 300s 的正面权衡、以及重算后的配额账，全文在计划的
  * 「§配额账 → 落盘间隔取值」一节。**别在这里重复那段推理，也别只改这一个数**：
@@ -230,7 +230,7 @@ export const USAGE_WRITES_PER_DAY = 13;
  * 「Cloudflare Worker + KV 免费档才需要关心」。）
  * 设计 §7.1「默认在两种运行时相同……不做运行时嗅探」这一句因此**被遵守，不是被绕过**。
  *
- * ⚠️ **这一段有过一次「从假前提推出的论证」，如实记着**（P3d Task 3 评审 I1）：
+ * ⚠️ **这一段有过一次「从假前提推出的论证」，如实记着**（评审发现）：
  * 上一版在**旋钮还没接线**的时候就写着「运维可经 `USAGE_FLUSH_INTERVAL_MS` 覆盖它…
  * Docker 部署者调回 300s 是合理的」，而当时设了它不起任何作用，
  * 后面那整段「这不是运行时嗅探」的论证因此**建立在一个不成立的前提上**。
@@ -252,13 +252,13 @@ export function usageHourOf(at: number): string {
  * 与 `slotOf` 同一套（算法逐字相同，只把 `EVENT_SLOTS` 换成 `USAGE_SLOTS`）：
  * 由 shardId 稳定地散到一个槽位。
  *
- * ⚠️ **「构造时算一次、终生不变」是对 Task 3 的 `UsageSink` 的要求，不是本函数的性质**
+ * ⚠️ **「构造时算一次、终生不变」是对 `UsageSink` 的要求，不是本函数的性质**
  * ——本函数是纯函数，谁调都一样；**今天没有任何东西能证实或证伪那句话**（评审登记）。
- * Task 3 必须自己有一格钉住它。
+ * `UsageSink` 必须自己有一格钉住它。
  *
  * 散布性本身由 `tests/unit/admin/usage-stats.test.ts` 的
  * 「usageSlotOf 真的把不同 shardId 散到不同槽位」钉着——**这一格不许只用 `"s1"` 当样本**，
- * `usageSlotOf("s1")` 恰好是 0，写死成 `return 0` 时它不可观测（评审 I-2 实测 ESCAPED）。
+ * `usageSlotOf("s1")` 恰好是 0，写死成 `return 0` 时它不可观测（评审实测 ESCAPED）。
  */
 export function usageSlotOf(shardId: string): number {
   let h = 0;
@@ -315,14 +315,14 @@ export const USAGE_MODEL_KEY_MAX_LEN = 64;
 /**
  * `byModel` 最多留几个具名键，**超出的一律并进 `USAGE_OTHER_BUCKET`**。
  *
- * ⚠️ **这条上界不是防御性代码，是有界性本身**（评审 I4）：`byModel` 的键**完全由
+ * ⚠️ **这条上界不是防御性代码，是有界性本身**（评审发现）：`byModel` 的键**完全由
  * 客户端控制**（模型名来自请求体），每个不同的串就是一个新 `UsageBucket`，
  * 而那份 map **永不清理、每次落盘整份覆写进一个键**。没有上界的三个后果，
  * 一个比一个糟：
  * ① Node 长驻进程的内存无上界；
  * ② **KV 单值 25MB 上限撞上之后 `put` 抛错 ⇒ 那天永远 dirty ⇒ 每个落盘间隔重试一次、
  *    白烧预算**，而这一天的数据再也写不出去；
- * ③ 读路径（Task 4）要把最多 60 个这样的分片合并。
+ * ③ 读路径要把最多 60 个这样的分片合并。
  * 事件侧一直是有界的（`event-ring.ts` 的环形截断），Tier-2 不该打破这个先例。
  *
  * **`byProtocol` 刻意不设上界**：那一维的值来自四条路由里的字面量
@@ -333,12 +333,12 @@ export const USAGE_MODEL_MAX_KEYS = 32;
 
 /**
  * 超出 `USAGE_MODEL_MAX_KEYS` 之后的模型都并进这一格。
- * **渲染成「其它」是面板的事（P3d Task 5），不是端点的事**——Task 4 的
+ * **渲染成「其它」是面板的事，不是端点的事**——读端点
  * `GET /admin/api/usage/:date` 把 `byModel` 原样交出去，这个键在里面就是一个普通的键
- *（上一版这里写的是「Task 4 要把它渲染成『其它』」，那句话点错了任务）。
+ *（上一版这里把这件事说成了读端点的活，那是点错了地方）。
  */
 /*
- * ⚠️ **P3e Task 30 把它的名字从「以 _KEY 结尾」改成了 `USAGE_OTHER_BUCKET`，为的是让一条
+ * ⚠️ **它的名字后来从「以 _KEY 结尾」改成了 `USAGE_OTHER_BUCKET`，为的是让一条
  * 命名约定变成无例外的**：`docs-parity` 那一组新增的
  * 「源码里每一个存储键常量都被那张 import 清单收着」是**按名字扫**的
  *（`export const …_KEY / …_KEY_PREFIX = "字面量"`）。它撞上这个名字时会得到一个假阳性——
@@ -507,7 +507,7 @@ export function usageCandidateKeys(nowMs: number, fromMs: number, toMs: number):
 /**
  * 一次终态往桶里加。**纯函数、不改入参**，与 `withOutcome` 同一套语义。
  *
- * ⚠️ **延迟只在 `ok` 时累计**（评审 I12）：见 `UsageBucket.latencySum` 的说明。
+ * ⚠️ **延迟只在 `ok` 时累计**（评审发现）：见 `UsageBucket.latencySum` 的说明。
  */
 export function addToBucket(b: UsageBucket, o: {
   ok: boolean; stream: boolean; latencyMs: number;
@@ -554,7 +554,7 @@ function addBuckets(a: UsageBucket, b: UsageBucket): UsageBucket {
  * 它们之所以必须无原型，见 `mergeDayShards` 函数体里那段（键来自客户端填的模型名，
  * 普通 `{}` 上 `__proto__` / `toString` 会静默坏掉）。
  * ⚠️ **这条契约现在有一格守着了，但护栏只盖住其中一半，两半要分开记**
- * （P3d Task 4 落地时实测；在那之前这里写的是「今天没有任何机器守着」，
+ * （读端点落地时实测；在那之前这里写的是「今天没有任何机器守着」，
  * 因为消费者还不存在）。类型上仍然没有区分（`Record<string, UsageBucket>`
  * 对有原型和无原型一视同仁），护栏是行为上的那一条：
  * `tests/contract/admin-usage.test.ts` 的
@@ -621,7 +621,7 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
  * 变成「`"13"` 这个键静默消失」**（分片本身仍算合法，`malformed` 不加）。
  * 方向是无害的（少一个假的 0 好过多一个假的 0），**但它确实是一次静默丢弃**，
  * 与上面那句口径轻微相左：`malformed` today 只数**分片级**的畸形，**不数桶级的**。
- * 要把桶级也数进去得改返回形状，那属于 Task 4 的显示口径，不在本任务范围内。
+ * 要把桶级也数进去得改返回形状，那属于读端点的显示口径，不在这一层的范围内。
  */
 function narrowBucket(v: unknown): UsageBucket | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;

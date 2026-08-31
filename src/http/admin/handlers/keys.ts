@@ -10,7 +10,7 @@ import { toKeyViews, bucketCounts, matchesQuery, BUCKETS, type Bucket } from "..
  * 从这里现算 ⇒ 改了这两个数而文档没跟上，那一格当场红
  *（**这类数改一次，文档就静静变假一次**，而变假之后没有任何自然信号）。
  * **不导出的话判据只能在文档侧手抄第二份**，而那正是被咬过的形态
- *（P3f 阶段 7B：`GET /admin/api/events` 的 `limit` 文档写 50/200、源码是 200/500，
+ *（真实发生过：`GET /admin/api/events` 的 `limit` 文档写 50/200、源码是 200/500，
  * 五种语言逐份同错，全仓零判据）。
  */
 export const DEFAULT_SIZE = 20;

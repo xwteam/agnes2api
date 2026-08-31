@@ -19,7 +19,7 @@ import type { Storage } from "../ports/storage.js";
  */
 /**
  * 保留键：一张「key → 过期时刻（epoch ms）」的表，与真实业务键存在**同一份** JSON
- * 里（评审 C5：单文件、单次 `readAll`/`writeAll`，不另开一个 sidecar 文件、不引入
+ * 里（评审裁定：单文件、单次 `readAll`/`writeAll`，不另开一个 sidecar 文件、不引入
  * 第二次跨文件一致性问题）。真实业务键全部带可打印 ASCII 前缀（`event:`/`key:`/
  * `pool:index`/`configHolder`/`admin:session:`/`tend:lock`……），这个保留键用一个
  * **前导空格**开头——业务代码不可能写出这样的键，不存在碰撞可能。
@@ -122,7 +122,7 @@ export class FileStorage implements Storage {
    * （那条规矩管 `src/core/`；这里是 `src/adapters/`）。
    *
    * ⚠️ **这里原来写着「本文件里唯一读 `Date.now()` 的地方」，那是假的**
-   *（全分支评审 A9）：本文件有**两处**调用点——这个 `isExpired()`，以及
+   *（通读评审 A9）：本文件有**两处**调用点——这个 `isExpired()`，以及
    * `pruneExpired()`（写路径上顺手清过期键的那个）。两处用的是同一个墙钟、
    * 同一条理由，说成"唯一"只会让下一个读到这句话的人以为写路径不碰时钟。
    */
@@ -132,7 +132,7 @@ export class FileStorage implements Storage {
   }
 
   /**
-   * 顺手清掉 ttl 表里已经过期的键（评审 C5：有界性必须是"存储自己的性质"）。
+   * 顺手清掉 ttl 表里已经过期的键（评审裁定：有界性必须是"存储自己的性质"）。
    * **每次写都扫一遍整张 ttl 表，不止清这次自己写的那个键**——旧方案只 delete
    * 一个按固定偏移算出来的键，稀疏落盘（gap 超过保留期）或多 isolate 各写各的
    * 随机分片时，那个算出来的键很可能压根不是"真正该被清掉的那个"，清理率归零。

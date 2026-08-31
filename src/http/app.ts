@@ -53,7 +53,7 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
   /** 被环境变量锁定的字段清单（`envLockedFields` 的结果）。默认空数组，理由同 `runtime`。 */
   envLocked?: readonly string[];
   /**
-   * 事件落库 sink（Task 6）。**可选，默认建一个独立的、与 `deps.logger` 无关的
+   * 事件落库 sink。**可选，默认建一个独立的、与 `deps.logger` 无关的
    * `StoreLogger`**——与 `runtime`/`envLocked` 同一条理由：这里是被海量既有测试
    * 直接调用的底层装配函数，给它一个安全默认值换来的是不必为一个与事件持久化无关
    * 的测试改动去牵连几十个调用点。
@@ -65,7 +65,7 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
    */
   storeLogger?: StoreLogger;
   /**
-   * 注册机的执行体与它的存储（P3c Task 5 建，Task 6 扩到三样成套）。
+   * 注册机的执行体与它的存储（先建了补池，后来扩到三样成套）。
    * **可选，缺省 `undefined`**。
    *
    * 只有 `wire.ts` 的 `buildApp` 装配得出来（它要 `env`），所以直接调 `createApp` 的
@@ -83,7 +83,7 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
    */
   tendGate?: TendGate;
   /**
-   * 配置读写的接线（P3c Task 7）。**可选，缺省 `undefined`**，理由与 `registrar`
+   * 配置读写的接线。**可选，缺省 `undefined`**，理由与 `registrar`
    * 完全相同：只有 `wire.ts` 的 `buildApp` 手上才有 `env`。
    *
    * **缺省时四条端点照常注册、照常鉴权，但如实回 `503 not_wired`**——不假装读到了
@@ -92,11 +92,11 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
    */
   config?: ConfigWiring;
   /**
-   * Tier-2 用量 sink（P3d Task 3）。**可选，缺省 `undefined` = Tier-2 关着。**
+   * Tier-2 用量 sink。**可选，缺省 `undefined` = Tier-2 关着。**
    *
    * ⚠️ **缺席时这里一个兜底实例都不建**，与 `storeLogger` 那条刻意相反：
    * 那一份缺省会 new 一个背后接 no-op `Storage` 的 `StoreLogger`，因为两个 handler
-   * 需要一个总能调的实例；这一份**必须真的不存在**——全局约束 16 的原话是
+   * 需要一个总能调的实例；这一份**必须真的不存在**——那条全局约束的原话是
    * 「关闭时一次存储访问都不许有、**一个内存累加器都不许建**」，
    * 一个「反正没写盘」的累加路径迟早会被某次改动接上写。
    * 缺席的三处后果都是结构性的、不靠 `if` 维持：
@@ -108,7 +108,7 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
    */
   usageSink?: UsageSink;
   /**
-   * 生效的落盘间隔（P3d Task 3）。**可选，缺省 = 后端常量**
+   * 生效的落盘间隔。**可选，缺省 = 后端常量**
    *（`USAGE_FLUSH_MIN_INTERVAL_MS`），理由与 `runtime`/`envLocked` 同一条：
    * 这里是被海量既有测试直接调用的底层装配函数。
    *
@@ -154,7 +154,7 @@ function defaultStoreLogger(now: () => number): StoreLogger {
  *
  * ⚠️ **返回值不许被展开（`{ ...dispatchDeps(deps) }`）。** 展开会**当场求值**那个
  * getter 并把结果拷成一个普通属性 ⇒ 配置重新冻结在建 app 那一刻，缺陷 D2 原样复活，
- * 而 `tsc` 一个字都不会说。P3d Task 3 加 `usageSink` 那一格时差点这么写
+ * 而 `tsc` 一个字都不会说。加 `usageSink` 那一格时差点这么写
  * ——**要加字段就加在下面这个对象字面量里**，别在调用点拼。
  */
 function dispatchDeps(deps: AppDeps): DispatchDeps & UsageRecording {
@@ -164,7 +164,7 @@ function dispatchDeps(deps: AppDeps): DispatchDeps & UsageRecording {
     now: deps.now,
     logger: deps.logger,
     /**
-     * Tier-2 归因（P3d Task 3）。**协议名由路由层传，不改 `dispatch()` 的签名**：
+     * Tier-2 归因。**协议名由路由层传，不改 `dispatch()` 的签名**：
      * 那个函数的参数里没有「这是哪条协议」这一维（V5），加一维要牵动 30 多处测试
      * 构造点，而路由层本来就是唯一知道答案的那一层。
      * 缺席（Tier-2 关着）时四条路由的 `recordUsage()` 第一行就 return。
@@ -190,7 +190,7 @@ export function createApp(deps: AppDeps): Hono {
   // 不许混进下面那堆 route 中间。
   app.use("*", configRefresh(deps.configHolder));
 
-  // 事件落库中间件（Task 6）。**挂在 configRefresh 之后、其余中间件（含下面的全局
+  // 事件落库中间件。**挂在 configRefresh 之后、其余中间件（含下面的全局
   // nosniff）之前**——它必须在 `await next()` 之后才 flush（本次请求自己产生的事件
   // 要先进缓冲），这条与全局 nosniff 必须挂在 `next()` 之后是同一条理由的另一面，
   // 见 `src/http/log-flush.ts` 的说明。
@@ -201,8 +201,8 @@ export function createApp(deps: AppDeps): Hono {
   const storeLogger = deps.storeLogger ?? defaultStoreLogger(deps.now);
   app.use("*", logFlush(() => storeLogger.maybeFlush()));
 
-  // Tier-2 用量落盘（P3d Task 3）。**`usageSink` 缺席时整条不挂**——见 `AppDeps.usageSink`
-  // 的说明（全局约束 16：「关」不是一个 if，是这条路径压根不存在）。
+  // Tier-2 用量落盘。**`usageSink` 缺席时整条不挂**——见 `AppDeps.usageSink`
+  // 的说明（那条全局约束：「关」不是一个 if，是这条路径压根不存在）。
   //
   // 相对 `logFlush` 的位置**不承载语义**，两个 sink 各有各的键空间、各有各的写预算，
   // 谁先落都一样（用量 sink 的 `onError` 刻意走 console 而不是事件链路，所以它也不会
@@ -223,8 +223,8 @@ export function createApp(deps: AppDeps): Hono {
   /**
    * 全应用级 `nosniff`。
    *
-   * Task 6 之前**整个网关一条安全响应头都没有**（实测 `/health` 的
-   * `x-content-type-options` 是 null），而 Task 6 又正是第一次在这个 origin 上
+   * 事件板块落地之前**整个网关一条安全响应头都没有**（实测 `/health` 的
+   * `x-content-type-options` 是 null），而那一轮又正是第一次在这个 origin 上
    * 建立凭据存储的提交——面板把 `ADMIN_TOKEN` 原样放进 localStorage，作用域是
    * **origin 而不是 path**，所以 `/admin` 之外任何一条能被浏览器当 HTML 解析的
    * 响应，都是这份凭据的攻击面。
@@ -244,7 +244,7 @@ export function createApp(deps: AppDeps): Hono {
    *
    * ⚠️ **这里原来写着「今天这条变异在本仓是不可观测的（唯一返回裸 Response 的
    * /admin 那棵树自己也设了 nosniff）」——那句现在是假的，两处都假**
-   *（全分支评审 A9）：
+   *（通读评审 A9）：
    * ① 把这一行**移动**到 `next()` 之前（不是新增一行）之后实测 **2 failed**：
    *    `tests/contract/admin-events.test.ts` 的「下载端点是裸 Response，且**仍然**带全局 nosniff」
    *    （`/admin/api/events/download` 是裸 `Response`，且它自己**不**设 nosniff——
@@ -286,7 +286,7 @@ export function createApp(deps: AppDeps): Hono {
     // **原样传转发路径那一个 repo**，不新建：面板与转发共用同一份 isolate 快照，
     // 面板轮询才不会各自去读一遍存储（设计文档 §2.4 第 1、2 条）。
     repo: deps.repo,
-    // **原样传转发路径那一个 fetcher**（P3d Task 8）：单把 key 验活不经 `dispatch()`，
+    // **原样传转发路径那一个 fetcher**：单把 key 验活不经 `dispatch()`，
     // 得自己出站，而它必须走注入的端口——见 `admin/handlers/verify.ts` 的约束 3。
     fetcher: deps.fetcher,
     now: deps.now,
@@ -296,7 +296,7 @@ export function createApp(deps: AppDeps): Hono {
     runtime: deps.runtime ?? nodeRuntime(),
     envLocked: deps.envLocked ?? [],
     storeLogger,
-    // 注册机接线（P3c Task 5/6）。两者都可选，缺省的后果各自写在 `AppDeps` 上：
+    // 注册机接线。两者都可选，缺省的后果各自写在 `AppDeps` 上：
     // 没接执行体 ⇒ 三条端点如实回 503；没传守卫 ⇒ 这个 app 自己一把（Worker 形态本来就该这样）。
     registrar: deps.registrar ?? null,
     tendGate: deps.tendGate ?? createTendGate(),
@@ -306,11 +306,11 @@ export function createApp(deps: AppDeps): Hono {
     // `usageStatsEnabled`——那个开关是建 app 时读一次的，现读会与事实分叉，
     // 见 `capabilitiesHandler` 的同名参数。
     usageStatsEnabled: usageSink !== undefined,
-    // Tier-2 读侧的接线（P3d Task 4）。**与上面那一行从同一个 `usageSink` 变量算出来**
+    // Tier-2 读侧的接线。**与上面那一行从同一个 `usageSink` 变量算出来**
     // ——两者必须同真同假，见 `AdminRouterDeps.usageStatsEnabled` 上方那段。
     //
     // ⚠️ **`storage` 取自 `usageSink.storage`，不另外注入一个。两条理由，都不是
-    // 「否则会读到空」**——上一版那么写过，而那句话是假的（评审 I6，详细实测与
+    // 「否则会读到空」**——上一版那么写过，而那句话是假的（评审发现，详细实测与
     // 订正全文在 `src/http/admin/handlers/usage.ts` 的 `UsageWiring` 上方，
     // **这里不复述，同一段推理抄两份改的时候必然只改一份**）：
     // ① `createApp` 手上根本没有 `Storage`，为读侧单开一格要牵动装配与几十个夹具；

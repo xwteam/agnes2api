@@ -70,7 +70,7 @@ function emptyDay(): DayAcc {
  *
  * 协议目录在这条路径上仍然是唯一真源，只是它回答的是**另一个问题**：
  * 「哪几条协议的 token 是网关看得到的」=`usagePath !== null`，那一份由
- * `GET /admin/api/capabilities` 的 `stats.tokensCoverage` 发出去（P3d Task 3 Step 5），
+ * `GET /admin/api/capabilities` 的 `stats.tokensCoverage` 发出去，
  * **前端不许自己再写一份**。
  *
  * ⚠️ **一律 `unknown` + 窄化**（硬约束 8）：上游返回什么形状都可能，
@@ -103,7 +103,7 @@ export type UsagePhase = "record" | "flush";
  * **`tsc` 会先在这里报错**；写成三元的话 else 分支会把新阶段**误报成**旧的那条，
  * 而运维照着一句错的诊断去处置是查不出问题的。
  *
- * ⚠️⚠️ **两句话的意思是相反的，这正是它们必须分家的全部理由**（P3d Task 4 认账修正）：
+ * ⚠️⚠️ **两句话的意思是相反的，这正是它们必须分家的全部理由**（认账修正）：
  * · `flush` ⇒ **累加器保留，下一次落盘会把这一段带上** ——数据没丢；
  * · `record` ⇒ **这一条计数已经永久丢失** ——`record()` 里可能抛的那些步骤全都排在
  *   任何一次写入累加器**之前**（见 `record()` 上方那段对 `try` 边界的说明），
@@ -235,7 +235,7 @@ export function resolveUsageFlushInterval(
  * 在面板上完全看不出来）。
  *
  * ⚠️ **`usageSink` 缺席时这个函数体第一行就 return**：不建累加器、不碰存储
- *（P3d 计划全局约束 16）。它与「sink 存在但没到落盘间隔」是**两件事**：
+ *（那条「关必须是零成本」的全局约束）。它与「sink 存在但没到落盘间隔」是**两件事**：
  * 后者仍然在内存里累加，只是不写盘。
  */
 export function recordUsage(deps: UsageRecording, u: UsageOutcome): void {
@@ -260,28 +260,28 @@ export function recordUsage(deps: UsageRecording, u: UsageOutcome): void {
  * 分桶之后每个键装的就只是那一天的量，落盘时**每个有未落盘增量的日各写一个键**，
  * 写成功的那个日才从待落盘集合里移除。
  *
- * ⚠️ **预算 `consume()` 每写一个键调一次，不是每次 flush 调一次**（评审 C1）。
+ * ⚠️ **预算 `consume()` 每写一个键调一次，不是每次 flush 调一次**（评审发现）。
  * 一次 flush 通常只写 1 个键（间隔 2 小时 < 一天），跨 UTC 零点那一次写 2 个。
  * 数 flush 的话那一次会少扣一格，而配额账是按 put 算的。
  *
  * ⚠️ **`canWrite` 的第三个参数必须显式传。**
  * 它的默认值是事件板块的 `EVENT_WRITES_PER_DAY`（12），漏传**不会有类型错误、
- * 不会有任何编译期信号**，预算却静默按 12 计——而 12 恰好是评审 R3-I1 判定为
+ * 不会有任何编译期信号**，预算却静默按 12 计——而 12 恰好是评审判定为
  * 「每 24 小时恰好有一次 put 被预算拒绝」的那个值
  *（`src/core/admin/usage-stats.ts` 的 `USAGE_WRITES_PER_DAY` 说明写着这条缝的全文）。
  *
- * 本文件有**两处**调用点，**各自被一格钉着**（评审 I2：上一版只钉住了 `maybeFlush`
+ * 本文件有**两处**调用点，**各自被一格钉着**（评审发现：上一版只钉住了 `maybeFlush`
  * 那一处，`status()` 那一处改成漏传之后 `tsc` 通过、全量 2172 格全绿完全逃逸，
- * 而它的后果是面板上的「预算耗尽」提前一格变成一句假话——全局约束 10 的原话正是
+ * 而它的后果是面板上的「预算耗尽」提前一格变成一句假话——那条全局约束的原话正是
  * 「诚实标记由后端字段驱动」）：
  * · `maybeFlush()` ⇒ 「预算按 13 计而不是事件板块的 12 —— 一次 flush 面对 20 个待落盘的日时……」；
  * · `status()`     ⇒ 「status() 的三个字段：budgetExhausted 在第 13 次 put 之后才翻真……」。
  *   **后者的判别状态是「已用 12 格」**：那一刻两种实现分叉（13 说还能写、12 说已耗尽），
  *   而在「已用 13 格」上两者都说耗尽 ⇒ 只测 13 是测不出来的（第 5 种假阳性）。
  *
- * ⚠️ **构造时 `lastFlushAt = now()` 而不是 null**，照抄 `StoreLogger` 的评审 C1 结论：
+ * ⚠️ **构造时 `lastFlushAt = now()` 而不是 null**，照抄 `StoreLogger` 那条评审结论：
  * 判到 `null` 就跳过间隔检查 ⇒ 每次 isolate 冷启动送一次零门槛写。
- * 代价（未落盘的尾巴最长一个间隔）见 P3d 计划 §配额账，
+ * 代价（未落盘的尾巴最长一个间隔）已经算进配额账，
  * **那是一条代价，不是「默认关」的理由**。
  */
 export class UsageSink {
@@ -353,7 +353,7 @@ export class UsageSink {
    *
    * ⚠️ **它存在的理由是让「读的和写的是同一份存储」变成结构性的**，而不是靠装配
    * 时记得传对；外加 `createApp` 手上根本没有 `Storage` 可传。
-   * ⚠️⚠️ **不是「否则会读到空」** —— 上一版这么写过，而那句话被实测证伪（评审 I6）：
+   * ⚠️⚠️ **不是「否则会读到空」** —— 上一版这么写过，而那句话被实测证伪（评审发现）：
    * `WatchedStorage` 的 `get`/`list` 是直通的。**订正全文只在一处**，在
    * `src/http/admin/handlers/usage.ts` 的 `UsageWiring` 上方，
    * 这里不复述——同一段推理抄三份，改的时候必然只改一份，本条正是那么坏掉的。
@@ -375,7 +375,7 @@ export class UsageSink {
      * sink 自身故障绝不许拖垮响应；出错走这里（通常是 ConsoleLogger）。
      *
      * ⚠️⚠️ **第二个参数 `phase` 不是装饰，它决定这条错误该对运维说什么，
-     * 而两句话的意思是相反的**（P3d Task 4 认账修正）。两句原文、它们为什么必须
+     * 而两句话的意思是相反的**（认账修正）。两句原文、它们为什么必须
      * 分家、以及**这条 record 通道今天到底可不可达**，全文在 `USAGE_ERROR_REPORT`
      * 上方——**别在这里复述，同一段推理抄两份改的时候必然只改一份。**
      */
@@ -411,7 +411,7 @@ export class UsageSink {
    * 都要先问它会不会抛。**
    *
    * ⚠️⚠️ **上一版这里写的是「唯一可能抛的一步是 `boundUsageKey`」，那句话今天已经是假的
-   * ——订正如下（评审 I7）**：`boundUsageKey` 现在走
+   * ——订正如下（评审发现）**：`boundUsageKey` 现在走
    * `src/core/admin/usage-stats.ts` 里的 `safeString()`，**它自己不抛**
    *（实测：拿 `JSON.parse('{"toString":1,"valueOf":1}')` 当 `model` 走真装配打一次
    * `/v1/chat/completions`，`onError` 一次都没被调到）。
@@ -428,7 +428,7 @@ export class UsageSink {
       const day = usageDayIndex(at);
       const hour = usageHourOf(at);
       const acc = this.days.get(day) ?? emptyDay();
-      // ★ **模型名是客户端随便填的**，收进上界再当键用（评审 I4）。
+      // ★ **模型名是客户端随便填的**，收进上界再当键用（评审发现）。
       // **这一步排在所有写入之前**，理由见上面那段。
       // `byProtocol` 刻意不收：它的值是四条路由里的字面量，外部碰不到。
       const modelKey = boundUsageKey(acc.byModel, u.model);
@@ -493,7 +493,7 @@ export class UsageSink {
    * 由 `tests/contract/usage-tier2.test.ts` 的
    * 「空转的 flush 不许把落盘时钟往前推……」钉着（那一格红，上面那条不红）。
    *
-   * ── 可重入（评审 C1）────────────────────────────────────────────────
+   * ── 可重入（评审发现）───────────────────────────────────────────────
    * ⚠️ **`lastFlushAt` 与 `budget` 都必须在发起 `await` 之前推进。**
    * 这个方法由**每一个请求的收尾**调用，而请求是并发的：两个请求的 flush 若双双
    * 停在 `await put` 上，就会**各写一遍同一个键、各扣一格预算**。
@@ -518,7 +518,7 @@ export class UsageSink {
     const since = at - this.lastFlushAt;
     // `since < 0` = 时钟回拨：立刻恢复，与本仓其余四处同一套语义。
     if (since >= 0 && since < this.intervalMs) return;
-    // ★ **在任何 `await` 之前就把闸关上**（评审 C1）。到这一行为止全都是同步代码，
+    // ★ **在任何 `await` 之前就把闸关上**（评审发现）。到这一行为止全都是同步代码，
     // 所以后来的并发 **flush** 一定会在上面那道间隔闸前掉头，不会与本次重叠。
     // ⚠️ **它只挡 flush 与 flush，挡不住 `record()` 与 flush 的重叠**（定向复评 N3）——
     // 那一半由循环体里的「快照 + 版本比对」负责，两者合起来才是完整的。
@@ -526,7 +526,7 @@ export class UsageSink {
 
     // 从最早的那天开始写：预算不够时先落旧的，新的那天下一轮还有机会。
     for (const day of [...this.dirty].sort((a, b) => a - b)) {
-      // ★ 每写一个键之前各查一次预算，**每写成功一个各扣一格**（评审 C1）。
+      // ★ 每写一个键之前各查一次预算，**每写成功一个各扣一格**（评审发现）。
       if (this.budgetPerDay !== null && !canWrite(this.budget, at, this.budgetPerDay)) break;
       const acc = this.days.get(day);
       if (!acc) { this.dirty.delete(day); continue; }

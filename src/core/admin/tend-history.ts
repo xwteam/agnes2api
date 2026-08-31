@@ -1,8 +1,8 @@
 import { TEND_FAILURE_REASONS, type TendResult } from "../registrar/tender.js";
 
 /**
- * 一轮补池的结构化记录。设计文档 §7.3，兑现 P2 design §11 的承诺
- *（「面板会展示 `TendResult` 的历史」——**这份历史在本任务之前根本不存在**，
+ * 一轮补池的结构化记录。设计文档 §7.3，兑现设计 §11 的承诺
+ *（「面板会展示 `TendResult` 的历史」——**这份历史在它出现之前根本不存在**，
  * `tendOnce` 的返回值只被两个入口 `console.log` 一行）。
  *
  * **零 IO 纯函数**（硬约束 2）。落盘在入口层，不在这里。
@@ -27,7 +27,7 @@ export const TEND_HISTORY_SIZE = 50;
 /**
  * 存储键。**单键、无扇出、名字是固定字面量**——它的**数量**恒为 1，
  * 与 `event:<窗口>:<槽位>` 那个随部署年龄增长的键空间**不是同一类东西**，
- * 因此**不需要 TTL**：C5 治的是「键空间无界」，而这里根本没有那根增长轴可关。
+ * 因此**不需要 TTL**：那条有界性裁定治的是「键空间无界」，而这里根本没有那根增长轴可关。
  * （给它按 `event:` 的样子配一个 `expiresAt` 是一次类比论证，而参照物不具备
  * 被论证的那条性质——本仓明令禁止的那一种。）
  */
@@ -39,15 +39,15 @@ export function toTendRecord(result: TendResult, trigger: TendTrigger): TendReco
 }
 
 /**
- * **这一轮抛错了**，给它造一条如实的记录（评审 C1）。
+ * **这一轮抛错了**，给它造一条如实的记录（评审发现）。
  *
  * 防住的真实故障：`tendOnce` 一抛，`recordRound` 整个被跳过（它排在 `try` 里、
  * 在 `tendOnce` 之后），而 `catch` 里原来是**裸 `console.error`**、进不了事件缓冲
  * ⇒ `flush()` 首行 `buffer.length === 0` 就 return。实测结果是
  * `{"events": [], "history": null}` ——**面板上这一轮什么都没有，与「注册机根本
- * 没跑」逐字节不可区分**，正是本任务开篇引的那条 P3b「实测为零」的同一形态。
+ * 没跑」逐字节不可区分**，正是早先那条「实测为零」的同一形态。
  *
- * ⚠️ **它也证伪了本任务 Step 6b 选 (a) 时写下的那句「`tend:history` 每轮汇总
+ * ⚠️ **它也证伪了当初写下的那句「`tend:history` 每轮汇总
  * 一定在」**：那句话只对**跑完**的轮次成立。`tend:history` 免疫的是**槽位碰撞**
  * （它是固定字面量单键，不在 `event:` 键空间里），不是丢失更新、更不是崩轮。
  *
@@ -90,7 +90,7 @@ const FIELD_CHECKS: Record<keyof TendRecord, (v: unknown) => boolean> = {
   at: (v) => Number.isFinite(v),
   trigger: (v) => TRIGGERS.includes(v as TendTrigger),
   primaryChannel: (v) => typeof v === "string",
-  // 逐通道铸出数（评审 I8）：值必须是有限数字，键不限（通道名是配置来的）。
+  // 逐通道铸出数（评审发现）：值必须是有限数字，键不限（通道名是配置来的）。
   mintedByChannel: (v) => typeof v === "object" && v !== null && !Array.isArray(v)
     && Object.values(v as Record<string, unknown>).every((n) => Number.isFinite(n)),
   skipped: (v) => typeof v === "boolean",
@@ -122,7 +122,7 @@ function isTendRecord(v: unknown): v is TendRecord {
 /**
  * 从存储里读回来的补池历史。**与 `src/core/admin/event-entry.ts` 的 `narrowShard`
  * 同一条理由：存储里的东西一律不可信。** `tend:history` 是本期新增的第二个
- * 「从存储读回来直接喂给面板」的结构，不做它就是在同一天里制造第二个 W2。
+ * 「从存储读回来直接喂给面板」的结构，不做它就是在同一天里制造第二个「读回来不窄化」的口子。
  *
  * ⚠️ **判据比 `narrowEntries` 严，这是刻意的，理由必须写清楚**：
  * 事件条目里 `level`/`msg`/`fields` 承载的是**上游来的证据**，一条只有 `ts` 的

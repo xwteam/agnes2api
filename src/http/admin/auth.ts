@@ -15,7 +15,7 @@ import { adminErrorBody } from "./errors.js";
  * 被测的性质是「**耗时**不随输入而变」，而测试只能断言返回值。把整个函数换成
  * `a === b`、或把循环体改成 `if (a[i] !== b[i]) return false`，**返回值逐点相同**，
  * 变的只是耗时——所以任何基于返回值的断言都区分不了它们（已实测：两条变异全套测试
- * 照样绿，见 Task 5 报告的变异表 M5/M6）。
+ * 照样绿，两条变异都当场量过）。
  *
  * 那为什么不写计时断言？因为在 CI 上测不准：几十个字节的逐字节差异是纳秒量级，
  * 而 JIT 预热、GC、共享 runner 的调度噪声是毫秒量级，信噪比根本不够，写出来的
@@ -229,7 +229,7 @@ export function adminAuth(
     // 装配期那次 checkAdminToken 只挡得住「启动时就配错」。它挡不住**配置在运行中
     // 变成不安全状态**：`loadConfig` 是 `env.GATEWAY_TOKEN ?? stored.gatewayToken`，
     // 部署者没设环境变量、改由存储提供时，一次 `wrangler kv key put`、一次手工编辑
-    // store.json（这两条恰恰是 DEPLOY.md 里教的操作），或将来 P3c 的面板，都能把
+    // store.json（这两条恰恰是 DEPLOY.md 里教的操作），或者面板，都能把
     // gatewayToken 改成等于 ADMIN_TOKEN——而中转口令是发给**每一个下游用户**的，
     // 届时任何下游用户都能开后台，直到重启 / isolate 回收为止。这是权限提升，
     // 不是配置洁癖；把它交给「写入路径上拒绝」不够，手工改存储绕得过写入路径。

@@ -6,11 +6,11 @@ import type { RuntimeInfo } from "../../../ports/runtime.js";
 import { poolHealth } from "../../../core/keypool.js";
 import { sumStats } from "../../../core/admin/stats.js";
 // **两个数都从 `config-holder.ts` 取，这里一个字面量都没有。**
-// `KV_EDGE_CACHE_MS` 原本是本文件的模块私有常量，P3c Task 7 把它移了过去：
+// `KV_EDGE_CACHE_MS` 原本是本文件的模块私有常量，设置页那一轮把它移了过去：
 // `PUT /admin/api/config` 的 `propagation` 块要报同一个上界，而那个数字在五语言
 // DEPLOY.md 里是对用户的承诺——抄成两份就等于允许概览页与保存回执各说一个数。
 // 面板上的两条「多久能看见」上界都要把它算进去：设计 §5.2 在 config 那条上算了，
-// 池快照那条原来漏了（K4），Task 2 已把五语言文档改准。
+// 池快照那条原来漏了，五语言文档已经改准。
 import { CONFIG_TTL_MS, KV_EDGE_CACHE_MS } from "../../config-holder.js";
 
 /**
@@ -76,9 +76,9 @@ export function overviewHandler(deps: {
        * Tier-1 池级聚合。**近似值**，前端必须打 ≈（`poolStats.approximate` 驱动，
        * 见 `pure/overview.mjs` 的 `usageStats()`）。**只挑用得上的四个计数字段**，
        * 不整段 `...sumStats(...)` 展开——`sumStats()` 还带着 `lastErrorAt`/
-       * `lastErrorKind`，概览面板不消费这两个字段（错误面正经的归宿是 Task 6
-       * 的事件板块，那里有完整上下文），挂两个没人看的字段在响应里只会造成
-       * 「这大概有用吧」的误会，且没有消费者的响应字段迟早会漂（Task 4 I4）。
+       * `lastErrorKind`，概览面板不消费这两个字段（错误面正经的归宿是
+       * 事件板块，那里有完整上下文），挂两个没人看的字段在响应里只会造成
+       * 「这大概有用吧」的误会，且没有消费者的响应字段迟早会漂（评审发现）。
        */
       poolStats: records === null ? null : (() => {
         const s = sumStats(records.map((r) => r.stats));
@@ -115,12 +115,12 @@ export function overviewHandler(deps: {
 
 /**
  * ⚠️ `tend`（最近一次补池 / 下次预计时间）本期不做：`tend:history` 这个键**现在
- * 根本不存在**（设计文档 §12 L5 把它排在 P3c）。渲染一个永远空着的区块正是
- * 设计文档 §10.6 点名禁止的形态（「而不是给一张永远空着的表」）。登记 P3c，
+ * 根本不存在**（设计文档 §12 L5 把它排在注册机板块那一轮）。渲染一个永远空着的区块正是
+ * 设计文档 §10.6 点名禁止的形态（「而不是给一张永远空着的表」）。另行登记，
  * 与注册机板块一起做。
  *
  * ⚠️ 「今日用量」本期改成「累计用量」（F9）：Tier-1 的 `KeyRecord.stats` 是自这把
- * key 加入以来的累计值，没有任何时间维度；按天切分需要 Tier-2 时间序列（P3d）。
+ * key 加入以来的累计值，没有任何时间维度；按天切分需要 Tier-2 时间序列。
  * 把累计值标成「今日」是撒谎，面板标题写「累计」，`≈` 由 `poolStats.approximate`
  * 逐格驱动渲染（不是焊死在标题文案里，见 pure/overview.mjs 的 usageStats()）。
  */

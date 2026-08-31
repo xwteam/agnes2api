@@ -7,7 +7,7 @@ import { normalizeStats } from "./stats.js";
  *
  * @refs-ignore（本段要点名那个**已经被删掉**的前端副本，路径按定义解析不开）
  * ⚠️ 这里原来写着「与 `admin-ui/js/pure/mask.mjs` 是两份实现……由共享夹具一致性
- * 断言钉住（设计文档 §16.1 U4）」。那个前端副本在全分支评审 B3 被删掉了：
+ * 断言钉住（设计文档 §16.1 U4）」。那个前端副本在通读评审里被删掉了：
  * 它在 `admin-ui/js/` 里**零导入者**——面板显示的 `masked` 就是下面 `toKeyViews()`
  * 算好放进 `GET /admin/api/keys` 响应里的那个值。§16.1 U4 处置的是"两边都要"的
  * 情形，而这里并不需要两边。真要在浏览器侧再算一次，把那个模块与那条一致性断言
@@ -38,7 +38,7 @@ export type Bucket = (typeof BUCKETS)[number];
 /**
  * 分档。**顺序即优先级**（`disabled > evicted > cooling > fresh`，设计文档 §10.2）。
  *
- * 第四档（人工停用）在 P3c Task 2 与 `isAvailable` / `poolHealth` 一起落地——
+ * 第四档（人工停用）与 `isAvailable` / `poolHealth` 是一起落地的——
  * 那两者是热路径（`poolHealth` 正被 `unavailable()` 用来决定 503 的四条 reason），
  * 所以每一处的 `disabled` 判据都是**同一个函数** `isDisabled`。
  * **完整的调用处清单只在 `src/core/keypool.ts` 的 `isDisabled` 文件头维护一份**，
@@ -47,8 +47,8 @@ export type Bucket = (typeof BUCKETS)[number];
  * 而没有任何门禁校验得了注释里的数字。
  * `keyBucket(...) === "fresh"` 与 `isAvailable(...)` 的等价关系由
  * `tests/unit/admin/key-view.test.ts「keyBucket === "fresh" 当且仅当 isAvailable」`
- * 那一组用例钉着：**加档而不改调度会让它变红**（P3b 预埋的 `disabled: true` 夹具
- * 实测能抓住，本任务开工前又复跑了一次：2 条红）。
+ * 那一组用例钉着：**加档而不改调度会让它变红**（更早预埋的 `disabled: true` 夹具
+ * 实测能抓住，开工前又复跑了一次：2 条红）。
  */
 export function keyBucket(r: KeyRecord, now: number): Bucket {
   if (isDisabled(r)) return "disabled";
@@ -83,9 +83,9 @@ export interface KeyView {
    * 运维备注。**恒存在、恒是 `string | null`**，理由与上面的 `disabled` 逐字相同：
    * `KeyRecord.note` 是可选的，`c.json` 会把值为 `undefined` 的字段整个丢掉。
    *
-   * ⚠️ **它是 P3c Task 3 才进这个结构的，而在那之前不进是对的**：P3c Task 2 建了
+   * ⚠️ **它是后来才进这个结构的，而在那之前不进是对的**：更早那一轮建了
    * `KeyRecord.note` 的槽位但**没有生产者**，一个恒为 `null` 的响应字段正是本仓
-   * 已经裁掉过四次的形态。Task 3 的 `PATCH /admin/api/keys/:id` 是它的第一个
+   * 已经裁掉过四次的形态。`PATCH /admin/api/keys/:id` 是它的第一个
    * 生产者，**也是它必须同时进这里的原因**：`note` 是 telemetry
    * （`src/core/keypool-repo.ts` 的 `FIELD_ROLE`），一次只改备注的写会被写消除
    * 整个吃掉，而**没有任何自动化会在那时变红**——唯一能把它钉住的护栏就是
@@ -93,7 +93,7 @@ export interface KeyView {
    * 由 `tests/contract/admin-keys-write.test.ts` 的
    * 「只改备注的 PATCH：改完之后 GET 真的读得回来」守着。
    *
-   * ⚠️⚠️ **给 Task 4 的硬要求：它是本结构里第一个「运维自由输入、又会被投影到面板上」
+   * ⚠️⚠️ **给渲染这一列的人一条硬要求：它是本结构里第一个「运维自由输入、又会被投影到面板上」
    * 的字段，渲染必须走 `textContent`，绝不许拼进 innerHTML。**
    * 其余字段要么是后端算出来的枚举（`bucket`）、要么是数字、要么是掩码，
    * **只有它整串来自请求体**。后端刻意不做转义（与事件板块同一条裁定：JSON 响应体的

@@ -31,7 +31,7 @@ import { httpError } from "../../errors.js";
  * 它不是「碰巧现在这样」：配额账（计划「配额账」一节）把面板轮询算成零写，
  * 多一次写就要回去改五语言 DEPLOY.md。
  *
- * ⚠️ **上面那两个限定词是全分支评审 m1 / I3 的订正，原来两格都写着「否，一次都不写」**：
+ * ⚠️ **上面那两个限定词是通读评审的订正，原来两格都写着「否，一次都不写」**：
  * ① `status` 的 `repo.all()` 在**索引缺失或空池兜底**时会 1 次 `list` + 1 次索引 `put`；
  * ② 通道测试的**失败支**会打一条事件，那条事件最终要落盘。
  * 两条的完整量测与代价各自写在下面对应 handler 的说明里，**这里不复述数字**
@@ -51,13 +51,13 @@ import { httpError } from "../../errors.js";
  *（`gap` 与 `mintBatch`），面板取 `min(gap, mintBatch)`。
  *
  * ⚠️⚠️ **两个外部邮箱配额数字（YYDS 15 / MoeMail 30）不进面板文案，也不进响应体。**
- * 理由**不是**「本仓没核实过」——那句话上一版写错了（评审 m2）：P2 设计文档的邮箱
+ * 理由**不是**「本仓没核实过」——那句话上一版写错了（评审发现）：设计文档的邮箱
  * 通道对照表里，MoeMail 那 30 追溯得到上游默认 `MAX_ACTIVE_EMAILS`，YYDS 那 15
  * 追溯得到免费档档位。**真正的理由是它们都不是常数**：MoeMail 那个是**上游默认值、
  * 实例可用 `SITE_CONFIG.MAX_EMAILS` 覆盖**，YYDS 那个**与账号档位绑定**。
  * **把一个「当前默认值」印在面板上，运维会把它当成自己这套部署的事实。**
  *
- * ⇒ P3c Task 6 的取舍（计划给的二选一里的第 ②「改成不写具体数字」）：
+ * ⇒ 取舍是二选一里的第 ②「改成不写具体数字」：
  * 面板的确认弹窗只说「本次最多铸 N 把 key，将消耗最多 N 个临时邮箱；两条通道各自的
  * 活跃邮箱上限请查各自服务商的文档」——N 是本仓自己算得出的数，上限交给出处。
  * 同一次收口也把源码里那几处**当事实用**的注释统一改成「上游默认值 / 与档位绑定」，
@@ -94,8 +94,8 @@ import { httpError } from "../../errors.js";
  * 面板说一句假话。**只有 `wire.ts` 装配得出来**（三样都要 `env`），直接调
  * `createApp` 的调用方一律拿不到，端点因此如实回 `503 not_wired`。
  *
- * ⚠️ 这个接口 P3c Task 5 叫 `ManualTendWiring`（只有 `storage` + `run`）。
- * Task 6 加通道测试时**改名而不是新加一个并列的接线**：两者用的是同一个存储、
+ * ⚠️ 这个接口原来叫 `ManualTendWiring`（只有 `storage` + `run`）。
+ * 加通道测试时**改名而不是新加一个并列的接线**：两者用的是同一个存储、
  * 同一份 `env`、同一条「这个部署接没接注册机」的判据，分成两个可选字段只会
  * 制造出「补池接了、测试没接」这种没有任何人想要的状态。
  */
@@ -150,7 +150,7 @@ export interface RegistrarDeps {
   /** 进程/isolate 内的在途守卫。**与定时轮共用同一把**，见 `tend-lock.ts` 的对照表。 */
   gate: TendGate;
   /**
-   * 出站探测的护栏（P3d Task 8）。**与单把 key 验活共用同一份实现、同一个实例**，
+   * 出站探测的护栏。**与单把 key 验活共用同一份实现、同一个实例**，
    * 见 `../probe-guard.ts`。只有 `channelTestHandler` 用它——「立即补池」有它自己
    * 那四条更重的护栏（存储锁 + 10 分钟冷却 + 每日写预算），两套不叠加。
    */
@@ -179,12 +179,12 @@ function backgroundCtx(c: Context): BackgroundCtx | null {
 
 /**
  * 每一条拒绝都带一个**顶层 `reason`**：面板靠它选五语言文案，**不解析中文 `message`**
- *（与 Task 3 的 `must_disable_first` 同一条口径）。
+ *（与 Key 池写端点那条 `must_disable_first` 同一条口径）。
  *
  * ⚠️⚠️ **`409` 有三种、`429` 有两种、`503` 与 `400` 各一种——状态码不是判据。**
  * 拿状态码当唯一判据的前端会把「另一个副本在跑」（`locked`：你是多副本部署，
  * 等对面跑完）和「注册机压根没开」（`registrar_disabled`：去设置里打开它）
- * 当成同一件事，而两者的处置毫无共同之处。这与 Task 3 那条 `must_disable_first`
+ * 当成同一件事，而两者的处置毫无共同之处。这与那条 `must_disable_first`
  * 在批量路径上「200 一路走过去」是**同一个形状**。
  * 面板侧的映射在 `admin-ui/js/pure/registrar.mjs` 的 `refuseReasonKey()`，
  * 那里是一张逐条列出的表，表外的 `reason` 返回 `null` 而不是冒充任何一档。
@@ -207,7 +207,7 @@ function isChannel(v: unknown): v is Channel {
  * 请求体**可以整个缺席**。
  *
  * `readJson()`（`src/http/errors.ts`）对空体一律 400，而 `POST /registrar/tend`
- * 从 Task 5 起就是**不带体**调用的（面板与既有用例都这样），给它加一个必填体
+ * 从一开始就是**不带体**调用的（面板与既有用例都这样），给它加一个必填体
  * 等于把一条已经上线的端点契约改掉。这里的语义定死：**没有体 ⇒ `{}`**，
  * 有体但不是 JSON 对象 ⇒ 400（不是静默当成 `{}`——那会让 `{"chanel":"yyds"}`
  * 这种拼错变成一次「点了、按默认链跑了」的静默误操作）。
@@ -269,7 +269,7 @@ export function manualTendHandler(deps: RegistrarDeps) {
     // ── 通道参数：**在动任何护栏之前校验完**（校验失败一次写都不产生）──────────
     //
     // 给了通道名 = 「只用这一条」（面板「添加 Key」菜单里【自动注册】那两项）。
-    // 不给 = 按配置里的主/备通道链跑，与 Task 5 的行为逐字相同。
+    // 不给 = 按配置里的主/备通道链跑，与加通道参数之前的行为逐字相同。
     const body = await optionalObjectBody(c);
     let channel: Channel | null = null;
     if (body.channel !== undefined && body.channel !== null) {
@@ -357,7 +357,7 @@ export function manualTendHandler(deps: RegistrarDeps) {
         }, 409);
       }
 
-      // 护栏**在这里才落盘**，且**不传 `expiresAt`**——传了就是评审 C2 那个失效读法
+      // 护栏**在这里才落盘**，且**不传 `expiresAt`**——传了就是评审点过的那个失效读法
       //（键跟着冷却蒸发 ⇒ `used` 每 10 分钟归零 ⇒ 日预算闸永远走不到耗尽）。
       await wiring.storage.put(MANUAL_GUARD_KEY, verdict.next);
 
@@ -424,13 +424,13 @@ export function manualTendHandler(deps: RegistrarDeps) {
  * **稳态下一次存储写都不产生**，读侧是 3 次 `get`（补池历史 + 锁 + 护栏键）加一次
  * 共用 isolate 快照的 `repo.all()`，**没有 `list()`**（红线 1）。
  *
- * ⚠️ **「稳态」这个限定词是订正，不是修饰（全分支评审 m1）**：上面那句话原来是无条件的，
+ * ⚠️ **「稳态」这个限定词是订正，不是修饰（通读评审）**：上面那句话原来是无条件的，
  * 而 `repo.all()` 有两条会 `list()` **并写索引**的支路——`bootstrapFromListThrottled()`
  *（`pool:index` 读不出来/结构损坏）与 `rescanEmptyResult()`（索引合法却一条活记录都
  * 读不到，`writeIndexBestEffort`）。**复现**：KV 里有 `key:` 记录但 `pool:index` 缺失
  *（DEPLOY.md 里「手工写记录不会自动进索引」那个场景）⇒ 冷 isolate 上第一次
  * `GET /admin/api/registrar/status` = **1 次 list + 1 次索引 put**。
- * 两条支路都有 10 分钟退避窗、都是自愈的，且这是 `repo.all()` 从 P1 起就有的固有性质，
+ * 两条支路都有 10 分钟退避窗、都是自愈的，且这是 `repo.all()` 一直就有的固有性质，
  * 不是本端点引入的——**所以订正的是措辞，不是处置**。钉住上面那句零写的用例
  *（`tests/contract/admin-registrar.test.ts` 的「status 与通道测试在稳态下都不写存储、
  * 也不 list」）夹具是 `keys: ["sk-a"]`：索引存在且非空 ⇒ 两条支路都走不到，它量的正是稳态。
@@ -482,7 +482,7 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
      * 设计 §11 那一行写的是 `available`，而 `src/core/registrar/tender.ts` 的
      * `TendResult.available` 上有一整段警告：判据是 `countsTowardTarget`（`!evicted`），
      * **被停用的与正在冷却的 key 都算在里面**，而这两种恰恰都不能打上游。
-     * 那段警告逐字点名了「给 Task 4/5 建补池历史板块的人：这一栏**不许按「可用」渲染**」。
+     * 那段警告逐字点名了「给建补池历史板块的人：这一栏**不许按「可用」渲染**」。
      * 叫它 `available` 就是在把那条警告作废——所以这里叫 `counted`（占名额数），
      * 并**另外**给一个真正的可用数 `fresh`（`poolHealth` 的那一格，判据是
      * 「没被停用、没被剔除、不在冷却中」）。两个数字都在，各自的标签各说各的口径。
@@ -547,7 +547,7 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
  * **成功那一支一次存储写都不产生**；它在那一支上唯一的副作用是一次**上游 GET**
  *（`listDomains()`），不建邮箱、不注册账号、不消耗任何活跃邮箱名额。
  *
- * ⚠️⚠️ **失败那一支不是零写，这句话原来是无条件的（全分支评审 I3）。**
+ * ⚠️⚠️ **失败那一支不是零写，这句话原来是无条件的（通读评审）。**
  * 下面那个 `catch` 会打一条 `registrar.channel_test_failed`，而生产装配里
  * `deps.logger` 是 `multiLogger(ConsoleLogger, StoreLogger)`（`src/http/wire.ts`），
  * 事件最终要落盘。**逐格量出来的形状**（`tests/contract/admin-registrar.test.ts`
@@ -565,14 +565,14 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
  * 连点失败的连通性测试会把事件板块里别的诊断挤出环 —— 而运维去点这颗按钮的时候，
  * 恰恰是他最需要那些事件的时候。
  *
- * ── P3d Task 8：那处已知缺口已经补上，护栏与单把 key 验活**共用一套** ──────────
+ * ── 那处已知缺口已经补上，护栏与单把 key 验活**共用一套** ──────────────────────
  *
- * P3c 收口时这里登记着「本端点没有自己的冷却/预算护栏，这是一处已知缺口，不是
- * 『已经防住了』；真要上护栏，该与验活一起做一套共用的」。**Task 8 就是那一次。**
+ * 更早那一轮收口时这里登记着「本端点没有自己的冷却/预算护栏，这是一处已知缺口，不是
+ * 『已经防住了』；真要上护栏，该与验活一起做一套共用的」。**后来就是那一次。**
  *
  * 现在两道闸落在 `deps.probeGuard` 上（`../probe-guard.ts`）：在途去重挡「连点」，
  * 最小间隔挡「按住不放」。**它是进程/isolate 内的，刻意不是存储级的**——
- * P3c 当时不上护栏的第 ② 条理由（存储护栏要给一条零写端点新增一次无条件的写，
+ * 当时不上护栏的第 ② 条理由（存储护栏要给一条零写端点新增一次无条件的写，
  * 并且要回去改五语言 DEPLOY.md 的配额账）**今天仍然成立，所以那条路仍然没走**。
  * ⇒ **配额账一个字都不用改：本次新增的写是 0。**（全局约束 13 只管「会写存储的
  * 代码路径」，而这把护栏一次都不写。）
@@ -621,7 +621,7 @@ export function channelTestHandler(deps: RegistrarDeps) {
       }, 503);
     }
 
-    // ── 出站探测护栏（P3d Task 8，与单把 key 验活共用）─────────────────────────
+    // ── 出站探测护栏（与单把 key 验活共用）─────────────────────────────────────
     //
     // **必须排在上面那四条校验之后、`probeChannel` 之前**，两个方向各有理由：
     // · 排在校验之前 ⇒ 一次拼错通道名的 400 会把这条通道锁住一个最小间隔

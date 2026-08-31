@@ -26,9 +26,9 @@ export interface ReadEventsResult {
  * ⚠️ **存储形态是评审 3 条 Critical 之后的重写版**：不再有 `event:index`。
  * `event:<窗口>:<槽位>`（`src/core/admin/event-ring.ts` 的 `shardKey`/`candidateKeys`）
  * 是一个键空间——**面板读路径 = K 次 get（K 是 `candidateKeys()` 算出来的候选键数，
- * 对任何 `after` 都有硬上界，见 C4/C4b 的修法），零 `list()`、零索引读改写**。
+ * 对任何 `after` 都有硬上界，见 `candidateKeys()` 的钳位），零 `list()`、零索引读改写**。
  *
- * ⚠️ **存储侧的有界性走 TTL，不是 `delete()`**（评审 C5，第二次修复）：第一版对策
+ * ⚠️ **存储侧的有界性走 TTL，不是 `delete()`**（有界性那条的第二次修复）：第一版对策
  * 是每次成功落盘顺手 delete 一个按固定偏移算出来的旧窗口键，被下一轮评审逐场景
  * 实测推翻——那个方案的有界性绑在"落盘节奏恰好规律"这个前提上，稀疏落盘（gap
  * 超过保留期）或生产 Workers 下随机 `shardId` 各写各的槽位时，前提不成立，清理率
@@ -52,7 +52,7 @@ export class StoreLogger implements Logger {
   private budget: WriteBudget = FRESH_BUDGET;
   /** 内存缓冲溢出丢的条数（`log()` 那一侧）。 */
   private bufferDropped = 0;
-  /** 落盘时分片环形截断丢的条数（`maybeFlush()` 那一侧，见 I1）。 */
+  /** 落盘时分片环形截断丢的条数（`maybeFlush()` 那一侧，见 `status()`）。 */
   private persistedDropped = 0;
   /** 这个 isolate 稳定落在哪个槽位，构造时算一次，终生不变（见 `slotOf` 的说明）。 */
   private readonly slot: number;
@@ -65,7 +65,7 @@ export class StoreLogger implements Logger {
     onError: (err: unknown) => void;
   }) {
     this.slot = slotOf(o.shardId);
-    // **评审 C1 的另一半：冷启动首刷必须受最小间隔节流。**
+    // **评审那条「写预算全局失守」的另一半：冷启动首刷必须受最小间隔节流。**
     // 原来这里是 `null`，`maybeFlush()` 判到 `lastFlushAt === null` 就跳过间隔检查，
     // 等于每次 isolate 冷启动送一次零门槛写（评审实测「每次冷启动 = 2 次 KV 写」）。
     // 初值给 `now()`：冷启动那一刻的时间戳，之后的第一次 `maybeFlush()` 与它做差，
@@ -82,7 +82,7 @@ export class StoreLogger implements Logger {
     }
   }
 
-  /** 面板要看的自述状态。`dropped` 是缓冲侧与落盘侧两类丢弃的**总数**（评审 I1）。 */
+  /** 面板要看的自述状态。`dropped` 是缓冲侧与落盘侧两类丢弃的**总数**（评审发现）。 */
   status(): { shardId: string; buffered: number; dropped: number; budgetExhausted: boolean } {
     return {
       shardId: this.o.shardId, buffered: this.buffer.length,
@@ -131,7 +131,7 @@ export class StoreLogger implements Logger {
    * `EVENT_FLUSH_MIN_INTERVAL_MS` ⇒ **一条都写不出去，而且 `errs=0`、`dropped=0`、
    * 不抛不报**。实测：24 个模拟窗口 × 48 次 Cron，`registrar.*` 写入 432 条、
    * 可见 **0** 条，丢失率 **100%**；把落盘时刻推到构造时刻之后 60 秒，丢失率降到 0%。
-   * 换句话说，不给这条路径一个绕过闸门的出口，Task 1 交付的「`registrar.*` 落库」
+   * 换句话说，不给这条路径一个绕过闸门的出口，「`registrar.*` 事件落库」这件事
    * 在最常见的形态下等于什么都没做。
    *
    * **它的上界不在这里，在调用方**：补池频率（Worker 的 Cron / Node 的
@@ -174,7 +174,7 @@ export class StoreLogger implements Logger {
       // ⇒ **事件缺口是一小时的，「面板说不出自己缺了东西」是终生的。**
       const cur = narrowShard(await this.o.storage.get(key)).entries;
       this.persistedDropped += truncatedCount(cur.length, batch.length, EVENT_RING_SIZE);
-      // **评审 C5（第二次修复）**：第三个参数是这把键的过期时刻——存储实现自己
+      // **评审（有界性那条的第二次修复）**：第三个参数是这把键的过期时刻——存储实现自己
       // 保证过期之后 get/list 都不再能看到它，有界性不再依赖"下一次成功的 flush
       // 恰好落在正确的偏移上"这件事（见文件头与 `eventExpiresAt()` 的说明）。
       await this.o.storage.put(
@@ -189,7 +189,7 @@ export class StoreLogger implements Logger {
 
   /**
    * 面板读路径。**候选键由 `candidateKeys()` 从时钟直接算出来，零 `list()`、零索引读**
-   * ——这是本任务的第一条硬要求，也是评审 C2/C3 的根治方式（详见
+   * ——这是这一层的第一条硬要求，也是「索引无上限增长 / 索引读改写丢更新」的根治方式（详见
    * `src/core/admin/event-ring.ts` 文件头）。
    *
    * `after`：`null` 时是"冷读"（回看 `EVENT_WINDOW_RETAIN` 个窗口），有值时是"暖读"

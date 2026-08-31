@@ -47,7 +47,7 @@ export function normalizeStats(raw: unknown): KeyStats {
  * 逐字段取较大者。**计数只会涨，所以「取大」等价于「绝不回退」。**
  *
  * 它是 `KeyPoolRepo` 那份落盘基线（`pendingStats[].base`）唯一的更新方式，
- * 存在的理由是 C2 那条缺陷的两半：
+ * 存在的理由是「基线被往回写」那条缺陷的两半：
  * · 调用方（`dispatch` 的 `commit`）把**未合并的 next** 写回 `records[at]`，
  *   于是它下一次交上来的 `prev` 比存储**旧**——直接采信就会把已落盘的计数往回写；
  * · 而快照过了 TTL 之后又可能带回**别的 isolate 写得更高**的值，那时该采信它。

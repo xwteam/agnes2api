@@ -13,7 +13,7 @@ export interface RegistrarConfig {
   /**
    * 两条邮箱通道完全平级，没有内置默认值：`enabled=false` 时它可能没有真实取值
    * （下面的 `channel()` 解析结果为 `null`），但接口按启用状态下的合法形状声明为
-   * 非空——消费方在读它之前必须先看 `enabled`，这与 P1 `GatewayConfig` 的
+   * 非空——消费方在读它之前必须先看 `enabled`，这与网关 `GatewayConfig` 的
    * `gatewayToken` 必填不是同一种情况：那里没有"关闭"这个中间态。
    */
   primary: Channel;
@@ -50,7 +50,7 @@ type Env = Record<string, string | undefined>;
 
 /**
  * 读取一个正整数配置项，优先级：环境变量 > 存储 > 内置默认值。
- * 与 P1 `config.ts` 里的 `num()` 同一套语义：只校验 `Number.isFinite` 不够，
+ * 与 `src/core/config.ts` 里的 `num()` 同一套语义：只校验 `Number.isFinite` 不够，
  * 0 或负数会让下游的间隔/次数类字段失去意义（例如 `mintBatch=0` 会让补池永远
  * 补不出 key）。
  */
@@ -88,7 +88,7 @@ function channel(raw: string | undefined, envName: string, strict: boolean, logg
 }
 
 /**
- * 校验存储里的通道值。P1 遗留：数值型校验（`posInt`）本就同时覆盖 env 与存储两条
+ * 校验存储里的通道值。这是网关那一层留下的口径：数值型校验（`posInt`）本就同时覆盖 env 与存储两条
  * 路径，但通道这种枚举值如果只在 env 侧校验、存储侧直接透传，垃圾数据会绕过校验
  * 静默流入一个类型上声明为 `"yyds" | "moemail"` 的字段，后续按通道分支的代码
  * （例如"选哪个 MailProvider 适配器"）就会拿到既不匹配 yyds 也不匹配 moemail 的值。
@@ -198,8 +198,8 @@ export function registrarFromEnv(
   // 只 warn 不抛错：Node/Docker 上**定时轮**没有平台墙钟上限，同一份配置在那边的
   // 定时轮上完全合法，抛错会让一个正当的 Node 部署起不来。文案里点明形态差异。
   //
-  // ⚠️ **末句的措辞是 P3c Task 6 订正过的，别改回去。** 上一版写的是
-  // 「Node/Docker 没有平台墙钟上限，不受此限制」——**那句话从 Task 5 起就不再准确**：
+  // ⚠️ **末句的措辞是订正过的，别改回去。** 上一版写的是
+  // 「Node/Docker 没有平台墙钟上限，不受此限制」——**面板那颗「立即补池」上线之后那句就不再准确**：
   // 面板的「立即补池」在**两种运行时上都**传同一份 `WORKER_ROUND_BUDGET_MS`
   //（见 `src/http/wire.ts` 的 `runManualTendRound`，那里写着理由：一次点击最多跑多久
   // 是这颗按钮自己的性质，不是运行时的性质）。于是同一份把 `CODE_TIMEOUT_MS` 调过头的

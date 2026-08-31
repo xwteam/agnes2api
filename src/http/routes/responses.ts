@@ -18,7 +18,7 @@ export function responsesRoutes(deps: DispatchDeps & UsageRecording): Hono {
       timeout: internal.stream ? "firstByte" : "sync",
       expectJson: !internal.stream, deps,
     });
-    // Tier-2 记账（P3d Task 3）。三条返回路径各记一次，完整理由见 `routes/anthropic.ts`
+    // Tier-2 记账。三条返回路径各记一次，完整理由见 `routes/anthropic.ts`
     // 里同位置那段（三条协议这一段是逐字同构的，那里写一遍就够）。
     const latencyMs = deps.now() - startedAt;
     const record = (tokensIn: number, tokensOut: number) => recordUsage(deps, {

@@ -9,7 +9,7 @@ import { adminError, adminErrorBody, readAdminJson } from "../errors.js";
 import { httpError } from "../../errors.js";
 
 /**
- * Key 池的五条写端点（第五条「清空 Key 池」是 P3e Task 31 的危险区）。
+ * Key 池的五条写端点（第五条「清空 Key 池」是危险区那一颗按钮）。
  * **前四条是本仓第一批 `/admin/api/*` 写方法**——在此之前那棵树上六条路由全是 `admin.get()`。
  *
  * 三条贯穿全文件的纪律，每一条都对应一个已经发生过的失效形态：
@@ -31,7 +31,7 @@ export interface KeysWriteDeps {
   repo: KeyPoolRepo;
   /**
    * 事件 sink。**用 app 那一个（多路 fan-out 到 `StoreLogger`），不是 repo 内部那个**：
-   * 面板的写操作要出现在事件板块里。Task 1 刚把 `registrar.*` 接进那个板块，
+   * 面板的写操作要出现在事件板块里。`registrar.*` 刚接进那个板块，
    * 运维第一次能在一个地方看到「池子为什么变了」——把面板自己的写操作漏在外面，
    * 那个板块就只说了一半真话。
    */
@@ -70,7 +70,7 @@ function asObject(body: unknown, what: string): Record<string, unknown> {
 
 /**
  * 可选布尔。**缺席与 `false` 是两回事**（前者「这次不动它」，后者「把它设成 false」），
- * 所以返回 `undefined` 而不是下坠到 `false`——P1 那次真实发生的鉴权绕过，成因就是
+ * 所以返回 `undefined` 而不是下坠到 `false`——早先那次真实发生的鉴权绕过，成因就是
  * `??` 对 `undefined` / 空串的下坠语义。
  */
 function optBool(o: Record<string, unknown>, name: string): boolean | undefined {
@@ -129,7 +129,7 @@ function rejectUnknown(o: Record<string, unknown>, allowed: readonly string[]): 
  * （`src/http/errors.ts`），而 `reason` 是设计 §11 逐字定死的机器可读判别字段——
  * 面板要靠它选一句五语言文案，靠解析 `message` 的中文是不行的。
  *
- * ⚠️⚠️ **同一条约束在线上有两种形状，Task 4 必须分两支处理**（评审 m8）：
+ * ⚠️⚠️ **同一条约束在线上有两种形状，面板必须分两支处理**（评审发现 m8）：
  *   · 单条 `DELETE /admin/api/keys/:id` ⇒ **HTTP 409** + **顶层** `reason`；
  *   · `POST /admin/api/keys/bulk` ⇒ **HTTP 200** + 逐项结果里那一项的 `reason`
  *     （整批 409 会让运维不知道哪几把成功了）。
@@ -161,7 +161,7 @@ function paramId(c: Context): string {
  * 三个数组装的分别是 id / id / **输入里的位置**（1 基、`number[]`），
  * **没有一项是明文**——那是 `addMany` 的结构性性质，不是这里的自觉，见它的说明。
  *
- * ⚠️ **`reset` 必须进响应体，这不是顺手多给一个字段**（评审 I2）：
+ * ⚠️ **`reset` 必须进响应体，这不是顺手多给一个字段**（评审发现）：
  * `duplicated.length` **不等于**被重置的把数（本批新建的那把被粘第二遍时也算重复），
  * 本文件下面那段计算就是为这件事存在的。只把它写进事件、不写进响应，
  * 面板要么显示 `duplicated.length`（**撒谎**），要么在前端把这条判据再实现一遍——
@@ -306,7 +306,7 @@ export const PATCH_FIELDS = [
  *
  * **`tests/unit/pool-cache.test.ts` 的
  * 「MAY_ELIDE 的每个字段变化都被消除——这才是写消除的全部收益」不会替你报警**
- * （P3c Task 2 评审实证）：它断言的是「只改 `note` 的写被消除**是对的**」，
+ * （评审实证）：它断言的是「只改 `note` 的写被消除**是对的**」，
  * 所以修对了它绿、写错了它也绿。
  * 唯一的护栏是 `tests/contract/admin-keys-write.test.ts` 的
  * 「只改备注的 PATCH：改完之后 GET 真的读得回来」——那一格是端到端读回来的。
@@ -320,9 +320,9 @@ export const PATCH_FIELDS = [
  * （⚠️ 这里原来写的是「更早、**更准**」——那个方向是反的：更早的读对「现在还在不在」
  * 只会**更弱**，不会更强。两者的差是一个窗口，不是一个精度。评审 m4 订正。）
  *
- * ── `clearStats`：R10 承诺过的那条「经过 repo 的正式重置路径」（P3e Task 31A）──
+ * ── `clearStats`：R10 承诺过的那条「经过 repo 的正式重置路径」──────────────────
  *
- * 五份 DEPLOY.md 在 `POOL_TOUCH_INTERVAL_MS` 那一行**同步承诺**过它，而 P3c 完成时
+ * 五份 DEPLOY.md 在 `POOL_TOUCH_INTERVAL_MS` 那一行**同步承诺**过它，而当时
  * `PATCH_FIELDS` 里并没有 stats ⇒ 五份齐说一句假话。裁定「做」与它的形态
  * （**加一个字段，不做危险区第三颗按钮**）写死在设计小节「第三颗按钮的去向」里，
  * 判据是**有界性**：加一个字段 = 单把 key、1 次 put，硬有界；批量重置全池 = N 次 put，
@@ -458,7 +458,7 @@ interface BulkItemResult { id: string; ok: boolean; reason: string | null }
  * 哪几把成功了、要不要重试；而只回一个「成功」则会把那一把的失败吞掉。
  *
  * ⚠️ **「一键全选」的范围是当前页，不是全部筛选结果**——那条约束在前端
- * （Task 4），本端点只按收到的 `ids` 办事。写在这里是因为后端**看不出**这个区别：
+ * （面板那一侧），本端点只按收到的 `ids` 办事。写在这里是因为后端**看不出**这个区别：
  * 一次一千个 id 的删除请求在这里与一次二十个的完全同形。
  */
 export function keysBulkHandler(deps: KeysWriteDeps) {
@@ -531,7 +531,7 @@ const BULK_EVENT_IDS_MAX = 20;
 /**
  * 批量操作的事件。
  *
- * ⚠️ **第一版只记 `count`，评审 I3 指出那与单条路径不对称**：单条 `DELETE` 记
+ * ⚠️ **第一版只记 `count`，评审指出那与单条路径不对称**：单条 `DELETE` 记
  * `{ id, wasEvicted, wasDisabled }`，批量删 200 把却只说「少了 200 把」，
  * 说不出是哪 200 把——而删除不可撤销，事后追查时那正是唯一要问的问题。
  *

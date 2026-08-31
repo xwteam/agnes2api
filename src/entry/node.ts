@@ -61,10 +61,10 @@ export async function main(env: Record<string, string | undefined> = process.env
 
   // 在途守卫。递归 setTimeout **天然不会重叠**（下一轮的定时器要等本轮 resolve 之后
   // 才排上），所以它现在防的不是定时器自己，而是「面板『立即补池』按钮与定时轮撞车」
-  // ——那是第三次把并发放进来的机会，前两次分别是 setInterval 不等 resolve（C4）
+  // ——那是第三次把并发放进来的机会，前两次分别是 setInterval 不等 resolve
   // 和 Worker 的 Cron 重叠。
   //
-  // **P3c Task 5 起它不再是本文件的一个局部变量**：那颗按钮跑在同一个进程里，
+  // **它不再是本文件的一个局部变量**：那颗按钮跑在同一个进程里，
   // 各拿各的布尔等于形同虚设，所以这一把由 `buildApp` 建、由 app 与本文件**共用**
   //（`BuiltApp.tendGate`）。它与下面那把存储级锁**不是冗余**——一把挡同进程重入、
   // 一把挡跨副本重叠，对照表见 `src/http/admin/tend-lock.ts`。
@@ -90,7 +90,7 @@ export async function main(env: Record<string, string | undefined> = process.env
 
       // **每一轮都重新读一次配置**（环境变量 + 存储），与 Worker 侧每次 Cron 都
       // 重新 buildTendDeps 的行为对齐。此前只在启动时装配一次、之后一直复用那份
-      // 快照：P3 的面板是这份配置的编辑器（设计 §11），同一个面板操作在 Worker
+      // 快照：面板是这份配置的编辑器（设计 §11），同一个面板操作在 Worker
       // 上立即生效、在 Node 上却必须重启进程；更糟的是启动时 enabled=false 就
       // 根本没有定时器，此后怎么改存储都打不开，而启动时 enabled=true 则从存储
       // 关也关不掉。
@@ -133,7 +133,7 @@ export async function main(env: Record<string, string | undefined> = process.env
       }
       if (!deps) return; // 注册机未启用：不触达邮箱/Agnes（对账已在上面做过）
 
-      // 存储级短锁。**这在 P3c Task 5 之前是没有的**：Node 侧只有上面那把进程内守卫，
+      // 存储级短锁。**这是后来补的**：早先 Node 侧只有上面那把进程内守卫，
       // 而 Docker 的多副本共卷部署（同一个 DATA_DIR 挂给两个容器）下它形同虚设
       //——两个副本各有各的布尔，两轮补池同时跑，同时撞邮箱建号限流与上游注册风控。
       // 与 Worker 的 Cron 路径**共用同一份实现与同一把键**，见 `tend-lock.ts`。
@@ -160,7 +160,7 @@ export async function main(env: Record<string, string | undefined> = process.env
         }
       } catch (err) {
         // 补池失败不该让网关进程崩掉——转发能力与补池能力是相互独立的。
-        // **但它必须在面板上占一格**（评审 C1）：原来这里只有一行裸
+        // **但它必须在面板上占一格**（评审发现）：原来这里只有一行裸
         // `console.error`，它进不了事件缓冲 ⇒ `flush()` 首行就 return；而
         // `recordRound` 排在 `tendOnce` 之后、一抛就整个跳过 ⇒ 面板上这一轮
         // 什么都没有，**与「注册机根本没跑」逐字节不可区分**。
@@ -213,7 +213,7 @@ export async function main(env: Record<string, string | undefined> = process.env
     runOnce: runTend,
     // **每一轮重排都重新读一次配置**（而不是复用 configHolder 的 30 秒 TTL 缓存），
     // 与 buildTendDeps 每轮都重新 loadConfig 的口径对齐，也是本次要修的缺陷
-    // 本身——I4 之前这里读的是启动时那份快照，永远不变。不能用 buildTendDeps 取
+    // 本身——修它之前这里读的是启动时那份快照，永远不变。不能用 buildTendDeps 取
     // 间隔：它在注册机未启用时返回 null，而定时器必须在关闭状态下也继续存在。
     readIntervalMs: async () => (await loadConfig(env, storage, logger)).registrar.tendIntervalMs,
     // 显式用 node:timers 的 setTimeout（而非全局 setTimeout）：这个项目的

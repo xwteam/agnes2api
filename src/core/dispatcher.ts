@@ -26,7 +26,7 @@
  *    会在 8 秒时被拦腰 abort。**这是热路径上一次真实的行为退化，不划算。**
  *
  * 2. 模块级 `let cursor`
- *    Worker 上每个 isolate 各一份，轮询起点因此不全局一致。已登记 P4；
+ *    Worker 上每个 isolate 各一份，轮询起点因此不全局一致。已另行登记；
  *    在修掉之前，**面板不许展示「下一把 key / 轮换顺序」**——展示了就是给一个
  *    与实际不符的值。
  *
@@ -55,7 +55,7 @@ export interface DispatchDeps {
    * **行为**断言钉住（那一格里 `expect(logger.events()).toContain("pool.commit_failed")`
    * 就是这条留痕）——它走真 `createApp`，抄一份装配骗不过它。
    *
-   * ⚠️ **这个锚是 P3c Task 1 改过的**：原文写的是「记账失败必须落一条可筛选的
+   * ⚠️ **这个锚是后来改过的**：原文写的是「记账失败必须落一条可筛选的
    * 事件」，那是那一格里 **`expect` 的失败提示语**，不是任何一条用例的标题。
    * 旧判据拿整份文件当干草堆，所以它蒙混过关；现在断言性指向必须落在用例标题上。
    */
@@ -150,7 +150,7 @@ async function discard(res: Response | null): Promise<void> {
  * 池子不可用时的全部 `reason` 取值。**写成运行期数组而不是纯类型联合，是为了让它能被
  * 断言**：`reason` 是对外 API 契约的一部分，五份 API.md（`docs/zh-CN/API.md` 等）各有一张表列着它们，
  * 而 `docs-parity` 只比 DEPLOY.md 的数字——**五份一样地漏掉一条时对等仍然成立**
- * （评审 I3：本任务加 `all_disabled` 时五份就是这样一起过时的，没有任何门禁看得见）。
+ * （评审发现：加 `all_disabled` 那一次五份就是这样一起过时的，没有任何门禁看得见）。
  * 现在由 `tests/unit/docs-parity.test.ts「五语言 API.md 的 503 reason 表覆盖全部取值」`
  * 逐条比对，加一条新 reason 而不写文档会让它变红。
  */
@@ -172,7 +172,7 @@ function fail(reason: FailReason, message: string, retryAfterSec?: number): Resp
  * 全失败也报成 `all_cooling`，而 message 却写「全部 key 均已尝试且失败」，自相矛盾，
  * 且暗示会自愈——在 strike 即永久剔除的旧语义下它永远不会自愈。
  *
- * ── 四条 reason 的排序判据（P3c Task 2 加了 `all_disabled` 这一条）─────────────
+ * ── 四条 reason 的排序判据（其中 `all_disabled` 是后加的那一条）────────────────
  * 池子里一把可用的都没有时，成因可能同时有三类（冷却 / 停用 / 剔除），而 `reason`
  * 只有一个位置。**取「最先能让池子重新可用的那一类」**，因为运维读到 reason 之后
  * 要做的正是那件事：冷却会自己好（等）→ 停用是他自己关的（点一下）→ 剔除要换 key（买）。
@@ -182,14 +182,14 @@ function fail(reason: FailReason, message: string, retryAfterSec?: number): Resp
  * 的含义是「凭据都失效了，去换 key」，而这里的真相是「是你自己在面板上关的」。
  * 把后者说成前者，运维会去做一件完全没用的事（设计 §6.2）。
  *
- * ⚠️ **`disabled === 0` 时本函数的输出与 P3b 逐字相同**——reason、**message 文本**、
+ * ⚠️ **`disabled === 0` 时本函数的输出与旧版逐字相同**——reason、**message 文本**、
  * 有没有 Retry-After，三样都没变。判定顺序换了个等价写法：旧的「`evicted === total`」
  * 等价于新的「fresh/cooling/disabled 三格都是 0」，旧的兜底 `upstream_error` 等价于
  * 新的前置 `fresh > 0`。
  *
  * **「message 也没变」这半是靠下面那两处条件拼接做到的，不是白来的**：无条件拼上
  * 「0 把被管理员停用」会让**每一条既有的 503 都多出一句废话**，而全仓没有任何一条
- * 用例断言过 `all_cooling` 的 message 文本（评审 I1 实测），**全绿在这件事上什么都
+ * 用例断言过 `all_cooling` 的 message 文本（评审实测），**全绿在这件事上什么都
  * 不证明**。现在由 `tests/unit/dispatcher.test.ts「503 的 message 文本：没有停用的 key 时与 P3b 逐字相同」`
  * 逐字节钉着两种变体。
  */

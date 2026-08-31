@@ -48,7 +48,7 @@ export const CONFIG_TTL_MS = 30_000;
  * **已核实**：Cloudflare KV 的 `cacheTtl` 最小 30、默认 60（设计文档 §17 U3，2026-08-19）。
  *
  * ⚠️ **它原来是 `src/http/admin/handlers/overview.ts` 里的一个模块私有常量**，
- * P3c Task 7 把它**移**到这里（不是新增第二份）：`PUT /admin/api/config` 的
+ * 设置页那一轮把它**移**到这里（不是新增第二份）：`PUT /admin/api/config` 的
  * `propagation` 块要报同一个「多久能看见」上界，而那个数字在五语言 DEPLOY.md 里
  * 是对用户的承诺。抄第二份的后果是概览页与保存回执可以给出两个不同的数——
  * 「面板不撒谎」这条在本仓已经因为同一形态破过一次。
@@ -80,7 +80,7 @@ export async function createConfigHolder(deps: {
       fields: { err: err instanceof Error ? err.message : String(err) },
     }),
   });
-  // 首次装载**失败必须抛**：缺 GATEWAY_TOKEN 拒绝服务是 P1 的三条不变量之一。
+  // 首次装载**失败必须抛**：缺 GATEWAY_TOKEN 拒绝服务是网关的三条不变量之一。
   await r.prime();
   primed = true;
   return {
@@ -91,7 +91,7 @@ export async function createConfigHolder(deps: {
   };
 }
 
-/** 固定配置的 holder。测试夹具与 P3c 的「干跑校验」用，生产路径不用。 */
+/** 固定配置的 holder。测试夹具与面板的「干跑校验」用，生产路径不用。 */
 export function fixedConfigHolder(config: GatewayConfig): ConfigHolder {
   return { current: () => config, ensureFresh: async () => {}, invalidate: () => {} };
 }

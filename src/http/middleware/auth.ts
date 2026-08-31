@@ -27,7 +27,7 @@ function extract(c: Parameters<MiddlewareHandler>[0]): string | null {
  * 闭包捕获，于是面板改／吊销口令对已经建好的 app 完全无效——这不是「没生效」，
  * 是「撤销不掉的凭据」。
  *
- * 比较仍用朴素 `!==`（非常数时间）。改它不在 P3a 范围，已登记 P4——P3b/c 的管理端点
+ * 比较仍用朴素 `!==`（非常数时间）。改它另行登记，尚未落地——管理端点的
  * 鉴权届时应实现成常数时间比较，本文件这条不是它的参照实现。
  */
 export function auth(getToken: () => string): MiddlewareHandler {

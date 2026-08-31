@@ -10,7 +10,7 @@
  *
  * ⚠️ **为什么是「后端回码 + 前端查字典」而不是「后端按 `Accept-Language` 返回」。**
  * 这就是 `admin-ui/js/pure/keys-write.mjs` 的 `isOpaqueErrorMessage` 上方那段
- * docblock 留给 P3e 的那次裁，理由写死在这里：
+ * docblock 留给后来那次裁的，理由写死在这里：
  * 1. 后端按 `Accept-Language` 返回，等于把**一整份五语言字典搬进 `src/`**——
  *    于是同一批文案有两份真源（面板一份、后端一份），本仓已经为这个形态付过多次代价；
  * 2. 面板的语言是**用户在面板里选的**（`admin-ui/js/i18n.js` 的 `setLang`，
@@ -27,7 +27,7 @@
  * **网关业务口**（`src/http/middleware/auth.ts`、`src/http/routes/gemini.ts`、
  * `src/http/routes/media.ts`、`src/core/dispatcher.ts`、`src/entry/worker.ts`）
  * 对 API 客户端**仍然只说中文**，
- * ⚠️ **条数刻意不写在这里**：P3e 计划 Task 22A 的需求书点的是「四条」，而按
+ * ⚠️ **条数刻意不写在这里**：当初的需求书点的是「四条」，而按
  * `tests/unit/admin/admin-errors.test.ts` 的 `messageSites()` 换根目录现扫是**六处**
  * （多出 `media.ts` 的「视频任务标识格式非法」与 `dispatcher.ts` 的同步预算那句）。
  * **写死一个数只会再漂一次**，要数就去跑那个判据。
@@ -35,7 +35,7 @@
  * 对外契约；而 API 客户端没有「用户选定的语言」，只能走 `Accept-Language`，
  * 正是上面第 1 条论证过不该做的那件事。它们**全部**伴随一个语言无关的
  * `type` / HTTP 状态码，程序化调用方不读 `message` 也能正确处理。
- * ⇒ 档位 MEDIUM，如实登记在 P3e 计划的「P3e 之后仍然欠着的」里，
+ * ⇒ 档位 MEDIUM，作为一笔**仍然欠着的账**如实登记，
  * **不许在任何地方说成「五语言破口已全部了结」**。
  * 「不许顺手给网关那一族也加码」这条由
  * `tests/unit/admin/admin-errors.test.ts` 的
@@ -115,7 +115,7 @@ export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
  *   「每条错误响应带的 params 与它那个 code 声明的逐字相等」（真 HTTP 侧）。
  * **两侧都是现扫现比，没有任何一张手写的期望表。**
  *
- * ⚠️⚠️ **「每条」这个词是 Task 22A 复评订正过的。** 真 HTTP 那一侧第一版只跑六条路径，
+ * ⚠️⚠️ **「每条」这个词是复评订正过的。** 真 HTTP 那一侧第一版只跑六条路径，
  * 于是 `not_a_boolean`（`{field}`）与 `too_many_bulk_ids`（`{max}`）**一侧都没有**：
  * 复评实测把 `handlers/keys-write.ts` 那两处的实参删掉，**全量套件 EXIT=0**，
  * 而 ja 面板上画出的是裸的 `{field}` / `{max}`。现在那一侧是一张

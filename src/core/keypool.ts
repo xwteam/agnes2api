@@ -5,7 +5,7 @@ import type { KeyRecord } from "./types.js";
  *
  * 各写各的后果是「面板显示已停用、调度器照常用它」——本字段最难被发现的失败形态。
  * 所以**问这个问题的地方一处都不许自己判**，全部调它。今天有 **7 处**
- * （`grep -rn "isDisabled(" src/`，2026-08-20 P3c Task 3 收尾时重数）：
+ * （`grep -rn "isDisabled(" src/`，2026-08-20 重数过一遍）：
  *
  * | 位置 | 干什么 |
  * |---|---|
@@ -25,10 +25,10 @@ import type { KeyRecord } from "./types.js";
  * 校验不了一个数字。**它已经在本任务里错过两次**：先写成「三个读取处」（漏了
  * `poolHealth` 与 `dispatcher`，而那两个恰恰是本任务新引入、后果最重的），
  * 改的时候又顺手写下「`isAvailable` 的调用处有四个」——`isAvailable` **从来没有过
- * 四个调用处**：P3b 是 2 个（`selectKey` 与 `tendOnce`），现在是 1 个（只剩 `selectKey`）。
+ * 四个调用处**：早先是 2 个（`selectKey` 与 `tendOnce`），现在是 1 个（只剩 `selectKey`）。
  * **改这段时请当场 `grep -rn "isDisabled(" src/` 重数一遍，别信这段话。**
  *
- * ⚠️ **另一条教训，比条数值钱**：C1 的成因是**给一个共享判据加条件时 grep 错了对象**。
+ * ⚠️ **另一条教训，比条数值钱**：下面那条缺陷的成因是**给一个共享判据加条件时 grep 错了对象**。
  * 我当时 grep 的是新字段名 `\.disabled`，它只能查出「谁读这个记录字段」；
  * 而真正会被改变语义的是**这个判据的每一个调用者**——那次漏掉的
  * `src/core/registrar/tender.ts` 就是这么漏的。**该 grep 判据的名字。**
@@ -57,14 +57,14 @@ export function isAvailable(r: KeyRecord, now: number): boolean {
  * 「这把 key 还算不算在 `targetKeys` 名额里」——**补池专用，与 `isAvailable` 是两个问题**。
  *
  * 两者曾经是同一个函数，而它们只在**被停用**的 key 上分歧，所以那次合并一直没出事。
- * `disabled` 落地的那一刻它就出事了（评审 C1，实测复现）：
+ * `disabled` 落地的那一刻它就出事了（评审实测复现）：
  * `src/core/registrar/tender.ts` 的 `tendOnce` 拿 `targetKeys - available` 当缺口，
  * **差多少就真的去注册多少个 Agnes 账号**（建临时邮箱 → 注册 → 建 token）。
  * 让 `isAvailable` 顺手回答这个问题，等于**「在面板上停用一把 key」＝「自动注册一个新账号」**。
  *
  * ⚠️ **判据是 `!r.evicted`，一个字都不多——`disabled` 与 `cooling` 都占名额。**
- * P3c Task 2 落地时它写的是 `!evicted && cooldownUntil <= now`（只放过 `disabled`），
- * 那一版把两条同族缺陷留在了线上，Task 5 一并关掉：
+ * 「停用」刚落地时它写的是 `!evicted && cooldownUntil <= now`（只放过 `disabled`），
+ * 那一版把两条同族缺陷留在了线上，后来一并关掉：
  *
  * · **停用一把正在冷却的 key 仍会触发一次补池。** `disabled + cooling` 落在
  *   `cooldownUntil > now` 那一支上 ⇒ 不占名额 ⇒ 照样铸一把新的。实测（`targetKeys=3`）：
@@ -86,7 +86,7 @@ export function isAvailable(r: KeyRecord, now: number): boolean {
  * 与邮箱建号限流，而冷却到期本来就会自己恢复。运维想立刻加人手有两条路：
  * 面板上「清冷却」，或者「立即补池」（它同样受这条判据约束，所以真正的手段是前者）。
  *
- * ⚠️ **`now` 参数在 P3c Task 5 去掉了，这不是清理，是判据本身的变化**：这个函数
+ * ⚠️ **`now` 参数是后来去掉的，那不是清理，是判据本身的变化**：这个函数
  * 现在**与时间无关**，「冷却算不算名额」不再是一个可以被时钟影响的问题。
  * 加回一个时间参数就是在把上面两条缺陷的入口重新打开。
  */
@@ -123,7 +123,7 @@ export function applyCooldown(r: KeyRecord, now: number, ms: number, reason: str
  * 达到 `maxStrikes` 时**不是**永久剔除，而是进入 `cooldownStrikeMs` 的长冷却，
  * 到期自动恢复（设计 §7.2.1）。原实现在这里直接置 `evicted`，后果是上游一次
  * 抖动就能永久摧毁整个 key 池：三把 key 的池子在上游持续 503 时只需五个请求
- * 即全部报废，而 P1 没有任何 un-evict 路径，上游恢复后网关也永远起不来。
+ * 即全部报废，而当时没有任何 un-evict 路径，上游恢复后网关也永远起不来。
  * 上游故障是暂时的，不该造成不可逆的池子损毁。
  *
  * strikes 在**进入**冷却时即清零，而不是等冷却到期再清：冷却期内这把 key 根本

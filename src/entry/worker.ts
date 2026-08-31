@@ -24,7 +24,7 @@ export default {
    * 直接抛错 ⇒ `runtime.background()` 拿到 `null` ⇒ 「立即补池」退化成
    * fire-and-forget ⇒ 响应一返回 isolate 就可能停摆，补池被从中间砍断、
    * `mintOne` 的 `finally` 不跑、**临时邮箱漏删**。
-   * 这一行**在 P3c Task 5 之前是没有的**（当时全仓只有 `scheduled()` 用得上 ctx），
+   * 这一行**是后来补的**（早先全仓只有 `scheduled()` 用得上 ctx），
    * 由 `tests/unit/entry-worker.test.ts` 的
    * 「fetch 把 ExecutionContext 一路传给 app —— 不传的话 waitUntil 在生产里根本拿不到」钉着。
    *
@@ -124,7 +124,7 @@ export default {
     // 注册风控），不是性能取舍。KV 是最终一致的，这把锁只是尽力而为、不是互斥
     // 原语；它挡的是"上一轮明明还在跑"这种最常见的重叠，而不是纳秒级的竞态。
     //
-    // **判据与键名从 P3c Task 5 起抽进 `src/http/admin/tend-lock.ts`**，与 Node 入口
+    // **判据与键名已抽进 `src/http/admin/tend-lock.ts`**，与 Node 入口
     // 和面板的「立即补池」共用同一份实现——三处各写各的 `get`→检查→`put`，
     // 迟早有一处把中间那步省掉（那正是「两个都抢到」）。
     const lock = await acquireTendLock(storage, Date.now());
@@ -155,7 +155,7 @@ export default {
             }
           }
         } catch (err) {
-          // **抛错的那一轮也必须在面板上占一格**（评审 C1）。
+          // **抛错的那一轮也必须在面板上占一格**（评审发现）。
           // 原来这里只有一行裸 `console.error`：它进不了事件缓冲 ⇒ `flush()` 首行
           // 就 return；而 `recordRound` 排在 `tendOnce` 之后、一抛就整个跳过
           // ⇒ **面板上这一轮什么都没有，与「注册机根本没跑」逐字节不可区分**。
@@ -167,7 +167,7 @@ export default {
           // 「registrar.* 事件渲染成 [registrar] 前缀」按事件名派生出来。
           // 落库是**加**出来的第二条路，不是替换。
           // ⚠️ **上一版这里指的是 `tests/unit/registrar/log-prefix.test.ts` 的
-          // 「这些文件里一个 console 调用点都没有」，那是错的**（P3e Task 15A：注释断言
+          // 「这些文件里一个 console 调用点都没有」，那是错的**（注释断言
           // 词表补上归属式那一族之后，这条指向第一次被要求给锚，一给就发现它落不下去）：
           // 那份测试守的是「几个 core 文件里没有裸 console」与事件名本身，
           // **前缀怎么从事件名派生**不在它的射程里。
@@ -193,7 +193,7 @@ export default {
           try {
             await releaseTendLock(storage);
           } catch (err) {
-            // **走 `deps.logger` 而不是裸 `console.warn`**（评审 I5）：释放锁失败
+            // **走 `deps.logger` 而不是裸 `console.warn`**（评审发现）：释放锁失败
             // 恰恰是运维要在事件板块里看到的那类事——它意味着下一次 Cron 要空等
             // 到锁自然过期（最长 15 分钟）才肯干活。
             // **这也是下面那行 flush 必须排在最后的唯一真实理由**：这条事件是在
@@ -210,7 +210,7 @@ export default {
           // catch，而事件正是要记录这件事」——**那个理由要求的恰恰是相反的顺序**。
           // 按理由走，不按那句话走。
           //
-          // ⚠️ **评审 I5 二审订正**：这个顺序**在上面那条 `lock_release_failed`
+          // ⚠️ **评审二审订正**：这个顺序**在上面那条 `lock_release_failed`
           // 改走 `logger` 之前是没有东西可守的**——当时"释放锁失败"走裸
           // `console.warn`（根本进不了缓冲）、"写 tend:history 失败"的
           // `recordRound` 整个排在 `finally` 之前，两种顺序都赶得上，把 flush 挪回

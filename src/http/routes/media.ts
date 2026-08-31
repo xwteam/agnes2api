@@ -10,7 +10,7 @@ import { httpError, readJson } from "../errors.js";
 // 成片不在网关落地——上游返回什么（URL 或字节流）就原样转发，
 // 让 Worker 与 Docker 两种部署形态行为一致，也不引入对象存储依赖。
 //
-// ⚠️ **这三条路径（对外那半与上游那半）都不再写在本文件里**（P3d Task 12）：
+// ⚠️ **这三条路径（对外那半与上游那半）都不再写在本文件里**：
 // 它们住在 `src/core/admin/protocol-catalog.ts` 的 `MEDIA_ENDPOINTS` 里，本文件是
 // 它的消费者之一，Playground 的媒体模式是另一个。搬过去的理由与那张表上方那段
 // 一致——**对外路径与上游路径是同一条路由的两半**，把一半搬进真源、另一半留在这里，
@@ -30,8 +30,8 @@ export function mediaRoutes(deps: DispatchDeps): Hono {
   const image = mediaEndpointById("image.generate");
   const create = mediaEndpointById("video.create");
   const poll = mediaEndpointById("video.poll");
-  // 那条 400 要把读者指去 API.md 的哪一节，**取自上游事实登记表那一栏**（P3e Task 25
-  // 回填）：手抄一份的话，那一栏改了名字报文照旧，而读者被指去一节不存在的文档。
+  // 那条 400 要把读者指去 API.md 的哪一节，**取自上游事实登记表那一栏**（后来回填
+  // 补的）：手抄一份的话，那一栏改了名字报文照旧，而读者被指去一节不存在的文档。
   // 取在这里而不是取在 400 那一刻，是为了**建应用时就抛**（见那个函数的第二条 ⚠️）。
   const charsetDocSection = upstreamDocSectionByAnchor("VIDEO_TASK_ID_RE");
 
@@ -50,7 +50,7 @@ export function mediaRoutes(deps: DispatchDeps): Hono {
       // **报文要说得清「该怎么改」，不只是「不合法」。** 形状逐字来自
       // `VIDEO_TASK_ID_SHAPE`（真源是 `VIDEO_TASK_ID_RE` 本身，这里不许手抄第二份）。
       //
-      // ⚠️ **报文里那两处「别处的名字」同样一个字都不手抄**（P3e Task 25 回填补的）：
+      // ⚠️ **报文里那两处「别处的名字」同样一个字都不手抄**（同一次回填补的）：
       // 建任务那条端点的方法与路径取自 `create`（真源 `MEDIA_ENDPOINTS`，与文件头那句
       // 「三条路径都不再写在本文件里」同一条口径——上一版这里手抄着 `POST /v1/videos`，
       // 那句话因此是假的），文档小节名取自上面的 `charsetDocSection`。

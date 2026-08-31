@@ -8,7 +8,7 @@ import type { AdminErrorCode } from "../../core/admin/admin-errors.js";
  * ⚠️⚠️ **它与 `src/http/errors.ts` 的 `httpError()` 刻意是两个函数，别合并。**
  * 那一份是**四协议对外响应体**的形状，被五语言 API.md 逐字写死；这一份多一格
  * `code`，只服务于「面板拿码查五语言字典」。合成一个带可选 `code` 的函数之后，
- * 「顺手给网关那一族也传一个码」就只差一个参数——而那正是 P3e 明确不做的那一半，
+ * 「顺手给网关那一族也传一个码」就只差一个参数——而那正是明确不做的那一半，
  * 半做会造出「一半端点有码一半没有」的第三种状态。
  * 网关那一族一个码都没有，由 `tests/unit/admin/admin-errors.test.ts` 的
  * 「网关业务口那一族一个 code 都不许有 —— 半做会造出第三种状态」钉着。
@@ -39,7 +39,7 @@ import type { AdminErrorCode } from "../../core/admin/admin-errors.js";
  *   钉着「`admin-ui/js` 下零处 `innerHTML`」这件事本身。
  *
  * ⚠️⚠️ **上一版这里写的是「只放数字与短标识，永不放用户输入」——那是一句假话**
- *（Task 22A 复评实测：`params.fields` 回显了调用方送进来的字段名逐字原文），
+ *（复评实测：`params.fields` 回显了调用方送进来的字段名逐字原文），
  * 而且当时零测法。**别再把 ③ 压回 ② 里去。**
  */
 export type AdminErrorParams = Record<string, string | number>;

@@ -11,7 +11,7 @@ import { FIELD_EXPOSURE, type Env, type Exposure } from "../config-provenance.js
  * · **Worker**：冷 isolate 全部 500，转发流量整个挂掉。
  *
  * §5.4 的四重防护里，字段级降级（第 2 条）与热路径保留上一份快照（第 3 条）都已在
- * P1/P3a 落地，但它们**都救不了这一类**：
+ * 更早几轮就落地了，但它们**都救不了这一类**：
  * · `registrarFromEnv` 的 `posInt()` 对存储里的非数字**是抛错，不是降级**；
  * · `enabled=true` + 没选主通道、`fallback === primary`、缺凭据，三条同样是抛；
  * · 而 `ConfigHolder` 的兜底只在**热实例**上成立——冷启动没有「上一份快照」可退。
@@ -21,7 +21,7 @@ import { FIELD_EXPOSURE, type Env, type Exposure } from "../config-provenance.js
  *
  * 试过的形态是「干跑一次 `loadConfigWithProvenance`，抛了就是非法」。它更省代码，
  * 但**给不出逐字段错误码**：`registrarFromEnv` 抛的是一条中文 `Error`，面板要么
- * 原样显示（那就把后端的中文 message 变成了对外契约，本仓已裁定这条归 P3e），
+ * 原样显示（那就把后端的中文 message 变成了对外契约，本仓已裁定不走这条路），
  * 要么去解析它（比中文 message 更脆）。设计 §10.4 要的是
  * `400 { errors: [{ field, code, params }] }`——**逐字段、机器可读、能映射五语言**。
  *
@@ -58,7 +58,7 @@ export interface ConfigError {
  * 全部错误码。**单一真源是下面这个数组，类型从它派生。**
  *
  * ⚠️⚠️ **第一版是手写联合 + 测试里一份 `as const satisfies readonly ConfigErrorCode[]`
- * 的镜像，那条护栏实测是假的**（评审 C4，我自己复现过）：`satisfies` 只做**单向
+ * 的镜像，那条护栏实测是假的**（评审发现，我自己复现过）：`satisfies` 只做**单向
  * 可赋值检查**——它保证镜像里每一项都是合法的码，**不保证每一个码都在镜像里**。
  * 给联合加一个新码而不补 `ERROR_KEYS`、不补五语言 ⇒
  * `tsc exit=0`、`settings.test.ts` 34 passed、`check-i18n exit=0`，**零信号**；
@@ -352,7 +352,7 @@ export function validateConfigPatch(
       // ⚠️ 空串走清空分支的后果：运维保存一次设置页就抹掉 `gatewayToken`，
       // 网关整个停摆（§5.4 的 fail-closed 反噬）。
       //
-      // ⚠️⚠️ **判据是 `trim() === ""` 而不是 `=== ""`**（评审 C3）：一次「粘了几个空格」
+      // ⚠️⚠️ **判据是 `trim() === ""` 而不是 `=== ""`**（评审发现）：一次「粘了几个空格」
       // 的误操作在 `=== ""` 下会被**收下并落盘**，而 `loadConfigWithProvenance` 里那句
       // `if (!gatewayToken)` 对 `"   "` 为**真**（非空字符串）⇒ 一次都不 fail-fast，
       // 面板还显示 `configured: true`。实测：`PUT {"gatewayToken":"   "} → 200`、
@@ -363,7 +363,7 @@ export function validateConfigPatch(
       // ── 下面三条与 `ADMIN_TOKEN` 的四条硬规则同源，顺序也一样：
       //    空白 → 字符集 → 长度 → 相同性（见 `src/http/admin/auth.ts` 的 checkAdminToken）。
       //
-      // ⚠️⚠️ **这一整段是评审 C3 补的。** `gatewayToken` 在本任务里**第一次变成面板可写**，
+      // ⚠️⚠️ **这一整段是评审补的。** `gatewayToken` 是在那一轮**第一次变成面板可写**的，
       // 而 `auth.ts` 早就为 `ADMIN_TOKEN` 立了这四条、每条都带着「为什么」——
       // **那些理由逐字对 `gatewayToken` 同样成立**（`/v1/*` 同样没有分布式限速，
       // 而 `gatewayToken` 是它唯一的凭据）。第一版一条都没跟过来。
@@ -472,7 +472,7 @@ function checkLeaf(field: string, spec: Exclude<Spec, { kind: "secret" }>, value
 /**
  * **这份 `config` 装载得起来吗？** 装载不起来的每一条原因，逐字段列出来。
  *
- * ⚠️⚠️ **这个函数是评审 C1/C2 的收口点，它把三处原本各行其是的判断收成一份。**
+ * ⚠️⚠️ **这个函数是两条评审发现的收口点，它把三处原本各行其是的判断收成一份。**
  *
  * 在它之前：`configClearSecretHandler` 里只有一条 `nowMissing`，而且**只判
  * `gatewayToken`**；同构的「清掉一条在链上的通道凭据」一个字都没写 ⇒ 那条路径上

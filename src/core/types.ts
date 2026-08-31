@@ -41,8 +41,8 @@ export interface KeyRecord {
   /**
    * 运维备注。**可选**，同上。
    *
-   * ⚠️ **本期（P3c Task 2）它既没有生产者也没有消费者**：写它的 `PATCH /admin/api/keys/:id`
-   * 在 Task 3，渲染它的列在 Task 4。这里先建槽位，是因为 `FIELD_ROLE` 的类型
+   * ⚠️ **这个字段建出来的那一刻既没有生产者也没有消费者**：写它的 `PATCH /admin/api/keys/:id`
+   * 与渲染它的那一列都还没有。这里先建槽位，是因为 `FIELD_ROLE` 的类型
    * （`Record<keyof KeyRecord, …>`）要求每个字段都有一次显式表态，而这个表态
    * 放在「正在通盘看 scheduling / telemetry 划分」的这一期做，比放在只顾着写端点的
    * 那一期做更不容易出错。**它今天不进 `KeyView`**——一个没有生产者的响应字段

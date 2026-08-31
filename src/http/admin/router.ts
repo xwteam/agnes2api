@@ -58,7 +58,7 @@ export interface AdminRouterDeps {
   repo: KeyPoolRepo;
   /**
    * **与转发路径同一个 `Fetcher` 实例**（`createApp` 把 `deps.fetcher` 原样交下来）。
-   * 唯一的消费者是单把 key 验活（P3d Task 8）——它不经 `dispatch()`（那个函数会自己
+   * 唯一的消费者是单把 key 验活——它不经 `dispatch()`（那个函数会自己
    * 选 key，而验活要指定某一把），所以出站能力得在这里单独接一条。
    *
    * **不许在 handler 里裸 `fetch`**：没有这个端口，那条端点在测试里桩不掉、
@@ -75,12 +75,12 @@ export interface AdminRouterDeps {
   /** 被环境变量锁定的字段清单（`envLockedFields` 的结果），装配时算好，不逐请求重算。 */
   envLocked: readonly string[];
   /**
-   * 事件落库 sink（Task 6）。`createApp` 已经决定好用调用方传的那个还是默认的
+   * 事件落库 sink。`createApp` 已经决定好用调用方传的那个还是默认的
    * no-op 兜底，这里只管接线，不再做一次「有没有配」的判断。
    */
   storeLogger: StoreLogger;
   /**
-   * 注册机的执行体与存储（P3c Task 5 建，Task 6 扩到三样成套）。**`null` = 这个
+   * 注册机的执行体与存储（先建了补池，后来扩到三样成套）。**`null` = 这个
    * app 没接**，三条端点仍然注册、仍然鉴权，但会如实回 `503 not_wired`。
    * 见 `RegistrarWiring`。
    */
@@ -88,17 +88,17 @@ export interface AdminRouterDeps {
   /** 补池在途守卫（进程/isolate 内）。见 `./tend-lock.ts` 里两把锁的对照表。 */
   tendGate: TendGate;
   /**
-   * 配置读写的接线（P3c Task 7）。**`null` = 这个 app 没接**，四条端点仍然注册、
+   * 配置读写的接线。**`null` = 这个 app 没接**，四条端点仍然注册、
    * 仍然鉴权，但会如实回 `503 not_wired`。见 `ConfigWiring`。
    */
   config: ConfigWiring | null;
   /**
-   * Tier-2 到底有没有在记账（P3d Task 3）。**`createApp` 传的是
+   * Tier-2 到底有没有在记账。**`createApp` 传的是
    * `deps.usageSink !== undefined`，不是配置里那个开关现读的值**——完整理由见
    * `capabilitiesHandler` 的同名参数。
    *
    * ⚠️ **它与下面的 `usage` 必须同真同假，而这件事今天靠的是「`createApp` 里
-   * 两行都从同一个 `usageSink` 变量算出来」，不是一条约束**（P3d Task 4 登记）。
+   * 两行都从同一个 `usageSink` 变量算出来」，不是一条约束**（已登记在案）。
    * 分叉的后果是三态混一里最难查的一种：`capabilities` 说 Tier-2 开着、面板于是
    * 画图表，而 `GET /admin/api/usage` 回 `tier: "off"`。
    * 由 `tests/contract/admin-usage.test.ts` 的
@@ -108,7 +108,7 @@ export interface AdminRouterDeps {
    */
   usageStatsEnabled: boolean;
   /**
-   * Tier-2 读侧的接线（P3d Task 4）。**`null` = 这个 app 没建 sink，也就是关着。**
+   * Tier-2 读侧的接线。**`null` = 这个 app 没建 sink，也就是关着。**
    *
    * 与 `registrar` / `config` 那两处「`null` = 没接，端点仍然注册但回 503」刻意**不同**：
    * 这一条的 `null` 不是「装配不全」，而是**一个正常且默认的部署形态**（Tier-2 默认关），
@@ -117,7 +117,7 @@ export interface AdminRouterDeps {
    */
   usage: UsageWiring | null;
   /**
-   * 生效的落盘间隔（P3d Task 3）。**由 `wire.ts` 从 `USAGE_FLUSH_INTERVAL_MS` 与
+   * 生效的落盘间隔。**由 `wire.ts` 从 `USAGE_FLUSH_INTERVAL_MS` 与
    * `runtime.quotaModel` 算出来**，`capabilities` 原样发给面板——面板据它算
    * 「未落盘的尾巴最长多久」，**不许在前端写死**（全局约束 10）。
    */
@@ -130,7 +130,7 @@ export interface AdminRouterDeps {
  *
  * 类型是 `Record<NonNullable<AdminTokenCheck["reason"]>, string>`，所以给
  * `AdminTokenCheck["reason"]` 加一条新原因时 **`tsc` 会先在这里报错**（已实测：
- * Task 7 加 `not_sendable` 时 `pnpm typecheck` 报 TS2741）——这正是它当初写成
+ * 加 `not_sendable` 那次 `pnpm typecheck` 报 TS2741）——这正是它当初写成
  * 查表而不是三元的理由：三元的 else 分支会把新原因**误报成**旧的那条。
  */
 const REJECT_MESSAGE: Readonly<Record<NonNullable<AdminTokenCheck["reason"]>, string>> = {
@@ -169,10 +169,10 @@ const REJECT_MESSAGE: Readonly<Record<NonNullable<AdminTokenCheck["reason"]>, st
   // 结果是一把所有下游用户都知道的管理口令继续生效。措辞必须把轮换 ADMIN_TOKEN
   // 说成**必做的那一步**，五语言 DEPLOY.md 同一段也是这么写的。
   //
-  // ── P3c 交下来的待办第 5 条的处置：**这条 503 不该收敛成 401，建议关掉这条待办** ──
+  // ── 那条待办的处置：**这条 503 不该收敛成 401，建议关掉它** ───────────────────────
   //
-  // P3c 计划登记过「把 `admin.token_conflict` 的 503 改成 401」并延后到 P3d。
-  // P3d 的裁定是**不做，而且不再往后传**——它不是「暂时没空」，是这个改动方向本身错了：
+  // 早先登记过一条待办「把 `admin.token_conflict` 的 503 改成 401」并一路延后。
+  // 裁定是**不做，而且不再往后传**——它不是「暂时没空」，是这个改动方向本身错了：
   //
   // 面板那一侧有一条**刻意写下的**规则（见 `admin-ui/js/api.js` 文件头）：
   // **401 = 会话失效（清凭据、踢回登录闸）；403 明确不当会话失效。**
@@ -194,7 +194,7 @@ const REJECT_MESSAGE: Readonly<Record<NonNullable<AdminTokenCheck["reason"]>, st
 
 /**
  * `/admin` 子 app。**返回 null 表示整棵 /admin 树都不注册** ⇒ 访问它得到 404 而不是
- * 401，不泄漏「这里有个后台」。与 P1 的显式开关哲学一致。
+ * 401，不泄漏「这里有个后台」。与本仓一贯的显式开关哲学一致。
  *
  * 返回 null 的条件**只有两类，且都只取决于 `ADMIN_TOKEN` 这一个环境变量**：没配
  * （含空串），或者它自己不合规（首尾空白 / 含送不出去的字符 / 长度不足）。这不是
@@ -208,7 +208,7 @@ const REJECT_MESSAGE: Readonly<Record<NonNullable<AdminTokenCheck["reason"]>, st
 export function adminRouter(deps: AdminRouterDeps): Hono | null {
   const token = deps.adminToken;
   // 空字符串一并落进这里：**「配了个空口令」绝不能变成「空 x-admin-key 就能进」**。
-  // P1 出过一次实际的鉴权绕过，成因就是空串在 `??` 下不下坠。
+  // 早先出过一次实际的鉴权绕过，成因就是空串在 `??` 下不下坠。
   if (!token) return null;
 
   // ── 装配期只查「只看 ADMIN_TOKEN 自己」的那两条 ──────────────────────────
@@ -272,7 +272,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.get("/admin/api/events", eventsHandler({ storeLogger: deps.storeLogger, now: deps.now }));
   admin.get("/admin/api/events/download", eventsDownloadHandler({ storeLogger: deps.storeLogger }));
 
-  // ── Key 池的写端点（P3c Task 3）─────────────────────────────────────────
+  // ── Key 池的写端点 ──────────────────────────────────────────────────────
   //
   // **这是这棵树上第一批非 GET 路由。** 在此之前 `/admin/api/*` 六条全是
   // `admin.get()`，于是上面那条 `admin.use` 写对写错的可观测差异只有「读得到 / 401」；
@@ -288,7 +288,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 所以碰不上，但顺序反了之后加一条 `POST /admin/api/keys/:id` 就会静默地
   // 把 bulk 吃掉——与本文件末尾那条静态兜底是同一个坑。
   admin.post("/admin/api/keys/bulk", keysBulkHandler(keysWrite));
-  // ── 危险区第二颗按钮：清空整个 Key 池（P3e Task 31）────────────────────────
+  // ── 危险区第二颗按钮：清空整个 Key 池 ──────────────────────────────────────
   //
   // **路径从 `KEYS_PURGE_PATH` 取，不写第二遍字面量**：五语言 DEPLOY.md 的配额账
   // 里逐份写着这条路径，而 `tests/unit/docs-parity.test.ts` 的
@@ -307,7 +307,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.post(KEYS_PURGE_PATH, keysPurgeHandler(keysWrite));
   admin.delete("/admin/api/keys/:id", keyDeleteHandler(keysWrite));
   admin.patch("/admin/api/keys/:id", keyPatchHandler(keysWrite));
-  // **单把 key 的 Tier-1 计数（P3d Task 4）。挂在上面那两条 `:id` 之后。**
+  // **单把 key 的 Tier-1 计数。挂在上面那两条 `:id` 之后。**
   // 今天它们碰不上：这一条是**四段**（`keys/:id/usage`）而上面两条是三段
   // （`keys/:id`），形状上不可能重叠，而且方法也各不相同。
   // ⚠️ **会出事的是将来有人加一条 `GET /admin/api/keys/:id` 或
@@ -318,7 +318,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // **它与 Tier-2 完全无关**：走 `deps.repo`，Tier-2 关着时照样可用（设计 §10.6）。
   admin.get("/admin/api/keys/:id/usage", keyUsageHandler(deps.repo, deps.now));
 
-  // ── 出站探测的护栏（P3d Task 8）─────────────────────────────────────────────
+  // ── 出站探测的护栏 ──────────────────────────────────────────────────────────
   //
   // **建在这里，一把，交给两处**：单把 key 验活与通道连通性测试。
   // 全局约束 14 的落点——「按一下就打上游的按钮，必须在同一个任务里连同护栏一起交付」。
@@ -331,7 +331,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // ⇒ 在这里 new 一把，「同一个实例」就是结构性的，装配上造不出走样的形态。
   const probeGuard = createProbeGuard();
 
-  // **单把 key 的验活（P3d Task 8）。挂在上面那三条 `keys/...` 之后。**
+  // **单把 key 的验活。挂在上面那三条 `keys/...` 之后。**
   // 今天它们碰不上：这一条是**四段**（`keys/:id/verify`）而 `DELETE`/`PATCH` 那两条是
   // 三段，`keys/:id/usage` 虽然同为四段但方法不同（GET vs POST）。
   // ⚠️ **会出事的还是那个老坑**：将来有人加一条比它更宽的
@@ -348,7 +348,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
     guard: probeGuard,
   }));
 
-  // ── 注册机（P3c Task 5 的「立即补池」+ Task 6 的板块取数与通道测试，风险 L6）──
+  // ── 注册机（「立即补池」+ 板块取数 + 通道测试，风险 L6）───────────────────────
   //
   // **本仓第一批会触发真实上游副作用的端点**：Key 池那四条只动本地存储，`tend` 会
   // 去建临时邮箱、注册 Agnes 账号、领 key，`channels/:channel/test` 会向邮箱服务
@@ -364,7 +364,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
     runtime: deps.runtime,
     configHolder: deps.configHolder,
     gate: deps.tendGate,
-    // **与验活同一个引用**（见上面那段）：P3c 账本登记的「通道测试无护栏」缺口，
+    // **与验活同一个引用**（见上面那段）：早先登记的「通道测试无护栏」缺口，
     // 补法是共用一套，不是各造一套。
     probeGuard,
     repo: deps.repo,
@@ -380,7 +380,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 请把它排在这两条之后。
   admin.post("/admin/api/registrar/channels/:channel/test", channelTestHandler(registrar));
 
-  // ── 配置读写（P3c Task 7 的设置页前三张卡，设计 §5.3 / §5.4 / §8.6 / §10.4）──
+  // ── 配置读写（设置页前三张卡，设计 §5.3 / §5.4 / §8.6 / §10.4）───────────────
   //
   // **这四条是这棵树上唯一会改「网关自己怎么跑」的端点。** Key 池那四条动的是
   // 池子内容，注册机那三条动的是补池行为，而这四条能把 `gatewayToken` 换掉、
@@ -399,8 +399,8 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // `config/validate` 与下面那条 `config/reset`（`config/secrets/clear` 是三段，吃不到），
   // 那时它必须排在这两条之后。
   //
-  // `config/reset` 按范围裁定 ② 移到了 P3e，**P3e Task 31 已经把它落地**（上一版这里
-  // 写的是「本期没有这条端点」——那句话从本任务起就是假的）。它是危险区第一颗按钮，
+  // `config/reset` 按范围裁定 ② 一度推迟，**后来已经把它落地**（上一版这里
+  // 写的是「本期没有这条端点」——那句话从它落地那天起就是假的）。它是危险区第一颗按钮，
   // 路径同样从真源常量 `CONFIG_RESET_PATH` 取，理由与 `KEYS_PURGE_PATH` 那段逐字相同。
   const config = {
     wiring: deps.config,
@@ -412,12 +412,12 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.put("/admin/api/config", configPutHandler(config));
   admin.post("/admin/api/config/validate", configValidateHandler(config));
   admin.post("/admin/api/config/secrets/clear", configClearSecretHandler(config));
-  // 危险区第一颗按钮：`config` 整把写回 `{}`（P3e Task 31）。两段，与上面那条
+  // 危险区第一颗按钮：`config` 整把写回 `{}`。两段，与上面那条
   // `config/validate` 同形，今天与谁都不重叠；将来那条单段通配真出现时，
   // 它与 `validate` 一起必须排在通配之前（上面那段 ⚠️ 说的就是这件事）。
   admin.post(CONFIG_RESET_PATH, configResetHandler(config));
 
-  // ── 协议与模型目录（P3d Task 1）────────────────────────────────────────
+  // ── 协议与模型目录 ─────────────────────────────────────────────────────
   // 「怎么调这个网关」的单一真源经这条端点交给面板。**零存储读、只读、无副作用**。
   // 集成示例卡、Playground、模型表三处都从这里取数，一个端点路径都不在前端硬编码。
   //
@@ -425,7 +425,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 上面那行 `admin.use("/admin/api/*", adminAuth(...))` 与下面那行静态兜底之间**：
   // 挪到前者之前是一条免鉴权的管理端点，挪到后者之后会被静态兜底吃成 404。
   //
-  // **两个方向各由哪一格接住，是实测出来的，不是推出来的**（P3d Task 1 Step 7）：
+  // **两个方向各由哪一格接住，是实测出来的，不是推出来的**：
   // · 挪到 `adminAuth` **之前** ⇒ `tests/contract/admin-auth.test.ts`
   //   「每一条路由 × 每一种凭据状态，逐格断言」与 `tests/contract/admin-models.test.ts`
   //   「没带管理口令是 401」两格同时变红。
@@ -439,13 +439,13 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   //   而带对口令时拿到的是静态兜底的 404——矩阵那一格只断言「不该被判 401」，404 照过。
   //   `tests/contract/ui-serve.test.ts`「/admin/api/* 不会被静态兜底吃掉」也接不住：
   //   它探的是 `/admin/api/session` 那一条，与本端点的注册位置无关。
-  //   ⚠️ **上一版这里写的是「今天唯一的护栏是 `admin-models` 那三格」，P3e Task 10
-  //   自己把它变成了假话**（那一期新加的就是上面 ② 那一格），阶段 D 回填时实测订正。
+  //   ⚠️ **上一版这里写的是「今天唯一的护栏是 `admin-models` 那三格」，后来补的那一格
+  //   自己把它变成了假话**（就是上面 ② 那一格），回填时实测订正。
   //   **「唯一」这种词只要有人补一格网就过期一次**——写「哪几格会红、红了说什么」，
   //   别写「只有谁会红」。
   admin.get("/admin/api/models", modelsHandler());
 
-  // ── Tier-2 用量（P3d Task 4）────────────────────────────────────────────
+  // ── Tier-2 用量 ─────────────────────────────────────────────────────────
   //
   // 两条都是只读的。**唯一会烧配额的是读扇出**：`30d` 那一档一次请求发
   // `30 × USAGE_SLOTS = 60` 次 get（计划 §配额账「读侧」那张表），
@@ -486,8 +486,8 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   //   「拿对口令时不该被判 401」，而被兜底吃掉之后拿到的是 **404，照过**。
   //   ⚠️ **两格判定相反，别当成一格。**
   //   ⚠️ **上一版这里写的是「今天唯一的护栏是 `admin-usage.test.ts` 整个文件」，
-  //   P3e Task 10 补的正是上面那一格，它当场把这句话变成了假话**，阶段 D 回填时实测订正。
-  // ⚠️ **刻意不写死「几格红」**：那个数每加一条用例就过期一次（本任务实测吃过一次，
+  //   后来补的正是上面那一格，它当场把这句话变成了假话**，回填时实测订正。
+  // ⚠️ **刻意不写死「几格红」**：那个数每加一条用例就过期一次（实测吃过一次，
   // 一个补用例的提交让上一版写下的「49 格红」当场变成 51）。**「不红」不会过期**，
   // 而它才是这条记录真正承载的那半。
   // 与 `GET /admin/api/models` 上方那段记的是同一个形态、同一个结论。
@@ -514,11 +514,11 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 的「**/admin/api/* 不会被静态兜底吃掉**——注册顺序错了会让整套管理 API 变成 404」
   // 那一格守着。）**新增任何 /admin/api/* 端点都必须加在这一行之前。**
   //
-  // ⚠️ **这段注释在 P3c Task 1 之前是 `scripts/check-comment-refs.mjs` 那道门禁看不见的**：它上面那行里的
+  // ⚠️ **这段注释一度是 `scripts/check-comment-refs.mjs` 那道门禁看不见的**：它上面那行里的
   // `/admin/api/*` 含有 `/*`，而当时的 `commentBlocks()` 不解析字符串字面量、
   // 也不解析注释里的通配符，把它当成块注释开头一路吞到文件尾 ⇒ **从那里往下
   // 25 行（整张 /admin/api/* 路由表）全部脱离校验，而门禁照常报绿**。
-  // 上面这条裸文件名断言就是这么藏了一整期的。扫描器已改成逐字符扫。
+  // 上面这条裸文件名断言就是这么藏了很久的。扫描器已改成逐字符扫。
   //
   // 静态资源**免鉴权**（登录闸得先能打开），但它整棵树跟着 /admin 一起存在或消失：
   // 没配 ADMIN_TOKEN 时上面已经 return null，连这几行都不会执行。

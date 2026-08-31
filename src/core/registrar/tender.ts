@@ -14,13 +14,13 @@ import type { Logger } from "../../ports/logger.js";
  *
  * 用联合类型而不是裸 `string`：下面的 switch 特意用 `never` 做了穷尽检查，好让
  * `MintOutcome` 新增 reason 时编译期就提醒这里表态；如果对外的 `TendResult` 把
- * 类型信息退化成 string，P3 消费这份结构时就拿不到同样的穷尽保障了。
+ * 类型信息退化成 string，面板消费这份结构时就拿不到同样的穷尽保障了。
  */
 export type TendFailureReason =
   | Extract<MintOutcome, { ok: false }>["reason"]
   | "provider_missing"
   /**
-   * **整轮抛出了异常**（评审 C1）。与上面那些一样不是 `mintOne` 的产物：
+   * **整轮抛出了异常**（评审发现）。与上面那些一样不是 `mintOne` 的产物：
    * 它表示这一轮**根本没跑完**——`tendOnce` 在某处抛了，两个入口的 `catch` 接住。
    *
    * 加它的理由是一条实测出来的缺陷：抛错那一轮原来**什么记录都不产生**
@@ -31,7 +31,7 @@ export type TendFailureReason =
    */
   | "round_crashed"
   /**
-   * **铸出来了，但那串 key 材料本身可疑**（P3c Task 5，Task 3 的 m5 裁定）。
+   * **铸出来了，但那串 key 材料本身可疑**（裁定 m5：可疑必须如实报出来）。
    *
    * ⚠️ **这一条是本表唯一「不是失败」的成员，措辞与消费方都要小心**：这一轮的
    * `minted` 照常 +1、`mintedByChannel` 照常记账，因为**上游那边账号是真的建出来了、
@@ -51,7 +51,7 @@ export type TendFailureReason =
   | "key_suspicious";
 
 /**
- * `TendFailureReason` 的运行期表。类型是编译期的，枚举不出来，而 P3 的面板要按它
+ * `TendFailureReason` 的运行期表。类型是编译期的，枚举不出来，而面板要按它
  * ① 渲染失败归因、② 校验 i18n 键齐全，两件事都发生在运行期。
  *
  * 双向穷尽：`satisfies` 保证每个元素都是合法成员，下面那个类型体操保证**没有遗漏**。
@@ -75,23 +75,23 @@ export interface TendResult {
   /**
    * 本轮开始时**占着 `targetKeys` 名额**的 key 数（判据是 `countsTowardTarget`）。
    *
-   * ⚠️ **不要读成「能打上游的 key 数」，两者从 P3c Task 2 起就不是一回事了，
-   * 而 Task 5 又把差距拉大了一档**：**被管理员停用的、以及正在冷却的 key 都计入
+   * ⚠️ **不要读成「能打上游的 key 数」，自从有了「停用」这个开关两者就不是一回事了，
+   * 后来判据翻转又把差距拉大了一档**：**被管理员停用的、以及正在冷却的 key 都计入
    * 这个数**（它们都占名额，见 `keypool.ts` 的 `countsTowardTarget`），而这两种
    * 恰恰都是不能打上游的。整池 3 把全在冷却时这个数仍然说 3，实际能服务的是 0。
    * 判据现在就是 `!evicted` —— **这一栏等于「池子里没被剔除的把数」**。
    * 名字没改是因为它已经落进 `tend:history` 持久化、也进了运维日志
    * （`[registrar] 补池完成 available=N`），改名会让存量历史条目对不上。
    *
-   * ⚠️ **给 Task 4/5 建补池历史板块的人**：这一栏**不许按「可用」渲染**——那会撞上
+   * ⚠️ **给建补池历史板块的人**：这一栏**不许按「可用」渲染**——那会撞上
    * 「诚实标记由后端字段驱动」。要么如实标成「占名额数」，要么另外给一个真正的
-   * 可用数字段（那需要 `tendOnce` 多数一遍，本任务没有加）。
+   * 可用数字段（那需要 `tendOnce` 多数一遍，今天没有加）。
    */
   available: number;
   attempted: number;
   minted: number;
   /**
-   * **逐通道的铸出数**（评审 I8）。`minted` 只有总数，而 `minted++` 发生在
+   * **逐通道的铸出数**（评审发现）。`minted` 只有总数，而 `minted++` 发生在
    * `for (const ch of chain)` 里——**一轮全靠备通道铸出来时，总数记在哪条通道
    * 名下是看不出来的**。没有这个字段，面板就只能拿 `primaryChannel` 去顶，
    * 于是备通道的战绩会被持续记到主通道头上，**与「两条邮箱通道完全平级」
@@ -100,7 +100,7 @@ export interface TendResult {
    * 没铸出来的通道**不出现在表里**（不是记 0）。
    *
    * ⚠️ **`{}` 有四个产出者，消费方必须靠别的字段把它们分开——单看这个字段分不出来。**
-   * Task 6 要渲染「哪条通道真的铸出来了」，这张表就是判据，所以语义写全：
+   * 面板要渲染「哪条通道真的铸出来了」，这张表就是判据，所以语义写全：
    *
    * | `{}` 的来源 | 怎么认出来 |
    * |---|---|
@@ -126,7 +126,7 @@ export interface TendResult {
   /**
    * 这一轮走的**主**通道。`skipped`（注册机关着）时 `primary` 运行期是 `null`，记空串。
    *
-   * ⚠️ **名字里的 `primary` 不能省**（评审 I8）：它原来叫 `channel`，而那个名字
+   * ⚠️ **名字里的 `primary` 不能省**（评审发现）：它原来叫 `channel`，而那个名字
    * 会被下游读成「这一轮是谁干的」——**实际铸出来的可能是备通道**。
    * 要回答「谁真的铸出来了」请读 `mintedByChannel`。
    */
@@ -140,8 +140,8 @@ export interface TendResult {
  * `yyds:register_failed×3 moemail:code_timeout×1`。
  *
  * 放在这里而不是各自的入口里：两个入口的收尾日志必须给出**同一份口径**，否则
- * Docker 与 Worker 的排障方式就得写两套，而这条日志是 P2 阶段唯一的归因出口
- *（P3 面板才会消费结构化的 `failures` 本身）。没有它，运维只能看到一行
+ * Docker 与 Worker 的排障方式就得写两套，而在面板出现之前这条日志是唯一的归因出口
+ *（面板才会消费结构化的 `failures` 本身）。没有它，运维只能看到一行
  * `minted=0`，无法区分是 Agnes 挂了、邮箱通道挂了、还是自己配错了通道。
  */
 export function summarizeFailures(failures: TendResult["failures"]): string {
@@ -305,9 +305,9 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
         // 在这里拒收 = 销毁凭据 = `keypool-repo.ts` 开头定性的那一类**数据丢失**。
         await deps.repo.add(out.key);
         minted++;
-        // **记在真正铸出来的那条通道名下**（评审 I8），不是主通道。
+        // **记在真正铸出来的那条通道名下**（评审发现），不是主通道。
         mintedByChannel[ch] = (mintedByChannel[ch] ?? 0) + 1;
-        // **如实报可疑**（Task 3 的 m5 裁定，Task 5 落地）。`isImportableKey` 此前
+        // **如实报可疑**（裁定 m5）。`isImportableKey` 此前
         // 只挂在面板导入这条「人点一下」的路径上，而**稳态下 key 进池子的主路径是
         // 这一行**——不对称是登记过的，处置不同是刻意的，但"不报"从来不是选项。
         if (!isImportableKey(out.key)) {
@@ -358,7 +358,7 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
           // 规则被删、上游把 Agnes 的发件方判成垃圾邮件，都是这个形态：API 全 2xx，
           // 建邮箱/删邮箱/列域名一切正常，只是信永远不到。此前它被归进「换通道也
           // 没用」那一组，于是备通道配好了却一次都不会被启用，key 池耗尽后网关整体
-          // 不可用——与 C1 修复前的终态完全一致，只是起点从「建不出邮箱」换成了
+          // 不可用——与备通道那条缺陷修复前的终态完全一致，只是起点从「建不出邮箱」换成了
           // 「收不到验证码」。
           //
           // 只做通道级降级，**不**在 mintOne 内部逐个域名重试（既有生产实现是后者）：
@@ -377,7 +377,7 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
           // Agnes 后端整体故障（发验证码遇到非 400 的非 2xx），换通道打的还是
           // 同一个后端，没有意义；继续本轮只会在故障期间制造更多注定失败的
           // 请求。这里的退避是整轮级别的：立即结束这一轮 tend，把剩余名额
-          // 留给下次调度（Task 7 的定时器），而不是硬着头皮把 mintBatch 耗完。
+          // 留给下次调度（那颗定时器），而不是硬着头皮把 mintBatch 耗完。
           abortRound = true;
           break;
         default: {

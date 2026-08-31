@@ -8,8 +8,8 @@ import { DEFAULTS, num, loadConfigWithProvenance } from "./config-provenance.js"
 
 // `envLockedFields` 与 `ENV_LOCK_MAP` 同住 `config-provenance.ts`（那张表既是「面板
 // 改了也不生效」的依据，又是四元组里 `env`/`lockedBy` 两格的数据源，拆两处必漂）。
-// 这里**原样再导出一次**：它的调用方（`src/http/wire.ts` 与几处测试）从 P1 起
-// 就从本模块拿它，为一次搬家去改那些调用点不值得。
+// 这里**原样再导出一次**：它的调用方（`src/http/wire.ts` 与几处测试）一直
+// 都是从本模块拿它，为一次搬家去改那些调用点不值得。
 export { envLockedFields } from "./config-provenance.js";
 
 export interface GatewayConfig {
@@ -45,7 +45,7 @@ export interface GatewayConfig {
    * 本次装载有没有降级（存储的 config 键读不出来 / 某些字段回落了默认值）。
    *
    * ⚠️ **这段注释原来写着「全仓还没有任何代码读它」，那句已经过期了**
-   *（全分支评审 A9）：消费链在**同一期**（P3b Task 5）就接上了，三级——
+   *（通读评审 A9）：消费链在**同一个提交里**就接上了，三级——
    * `src/http/admin/handlers/overview.ts:112`（放进响应的 `config.degraded`）
    * → `admin-ui/js/pure/overview.mjs:107`（取值并窄化成 `boolean | null`）
    * → `admin-ui/js/sec-overview.js:154`（`=== true` 时把红色横幅显示出来）。
@@ -59,7 +59,7 @@ export interface GatewayConfig {
    */
   degraded: boolean;
   /**
-   * Tier-2 时间序列统计。**默认 false，且「关」必须是零成本**（P3d 计划全局约束 16）：
+   * Tier-2 时间序列统计。**默认 false，且「关」必须是零成本**（这是一条全局约束）：
    * 关闭时不建累加器、不挂中间件、一次 `storage.put` 都没有。
    *
    * 为什么默认关，两条理由（设计 §7.1 只写了第一条）：

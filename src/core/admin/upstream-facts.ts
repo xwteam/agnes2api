@@ -108,7 +108,7 @@ const FACTS: readonly UpstreamFact[] = [
     subject: "建任务响应把任务标识放在哪一格",
     // `assumed` 写成**相对句**（口径见文件头 ②）：那张槽表的第一条到底是哪一格，
     // 由真源与它自己的守卫说了算，本表复述一遍只会在真源改动时静静变假。
-    assumed: "上游把它放在真源那张具名候选槽表的第一条槽位上（P3e Task 21 之后：面板认的是一张表，不是单一格）",
+    assumed: "上游把它放在真源那张具名候选槽表的第一条槽位上（面板认的是一张表，不是单一格）",
     status: "assumed",
     source: "tests/contract/media.test.ts 里我们自己写的那份假上游 —— 这不是上游依据",
     anchorFile: "admin-ui/js/pure/playground.mjs",
@@ -173,7 +173,7 @@ export const UPSTREAM_FACTS: readonly UpstreamFact[] = Object.freeze(FACTS.map((
 /**
  * 锚在某个真源符号上的那条事实，**它的限定该贴在哪一节 API.md**。
  *
- * ⚠️ **这一栏从 P3e Task 25 回填起多了一个运行期消费者**：`src/http/routes/media.ts`
+ * ⚠️ **这一栏后来多了一个运行期消费者**：`src/http/routes/media.ts`
  * 那条 400 要把读者指去 API.md 的某一节，而**小节名只许有这一份**。上一版那里手抄着
  * 同一个串：这一栏改个名字，**报文照旧指着旧名字**，而**盯着报文里那个名字的机器一格
  * 都没有**（那一栏改名本身另有 `docs-parity` 那一侧管，但它管的是文档，不是报文）。

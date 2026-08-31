@@ -30,7 +30,7 @@ export function anthropicRoutes(deps: DispatchDeps & UsageRecording): Hono {
       expectJson: !internal.stream, deps,
     });
     /**
-     * Tier-2 记账（P3d Task 3）。**三条返回路径各记一次，一条都不许漏**：
+     * Tier-2 记账。**三条返回路径各记一次，一条都不许漏**：
      * 少记失败那一条 ⇒ 面板上的错误率恒为 0；少记流式那一条 ⇒ `streamingRequests`
      * 恒为 0，而那一栏存在的唯一理由就是让「这些请求没有 token」这个缺口可见。
      *

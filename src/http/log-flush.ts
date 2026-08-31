@@ -14,7 +14,7 @@ import type { MiddlewareHandler } from "hono";
  * `maybeFlush` 自身**永不抛**（内部全量 try/catch），所以这里不必再包一层——
  * 但仍然包了：多一层的成本是零，而「日志把请求搞挂」的代价是全部流量。
  *
- * ⚠️ **`/health` 免检，与 `configRefresh` 同一条既有契约**（全分支评审 I1）。
+ * ⚠️ **`/health` 免检，与 `configRefresh` 同一条既有契约**（通读评审发现）。
  * 在这条豁免出现之前，`/health` 是**唯一一条会违反那条契约的路径**：缓冲里只要
  * 攒着事件，一次健康检查就会连带一次 `get` + 一次 `put`。而
  * `src/http/routes/health.ts:17` 与 `src/http/config-refresh.ts:17` 两处都白纸黑字
