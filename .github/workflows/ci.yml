@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      # **评审 F3 新增，排第一位**：跟踪文件不许被 git 判定为二进制。放在
+      # **评审发现新增，排第一位**：跟踪文件不许被 git 判定为二进制。放在
       # scan-secrets 之前是有意为之——scan-secrets 用 `git grep` 扫凭据，对二进制
       # 文件天然会打折扣（即便去掉了 -I，也不该让"文件是不是文本"这件事本身要靠
       # 扫凭据的副作用去兜底）；这一步先把"是不是文本"这个前提确认掉，后面的

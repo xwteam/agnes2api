@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 评审 F3 新增的这道门禁（CI 里跑 `scripts/check-no-binary.mjs` 那一步）：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/` 下
+// 评审新增的这道门禁（CI 里跑 `scripts/check-no-binary.mjs` 那一步）：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/` 下
 // 不许存在被 git 判定为二进制的文件。
 // ⚠️ 范围含**未跟踪**的新文件（复评补的，理由见下面 `--others` 那一段）。
 //
@@ -143,7 +143,7 @@ const binaryInScope = inScope.filter(
  *
  * 内容是不是文本、与 git 愿不愿意把它当文本 diff，是**两件事**：给一份纯文本文件
  * 标上 `-diff`，`git ls-files --eol` 照样报 `i/lf`，而 `git diff` 对它只吐一行
- * `Binary files a/… and b/… differ`——**这正是 F3 的原始症状**（评审包里没人看得见
+ * `Binary files a/… and b/… differ`——**这正是那条评审发现的原始症状**（评审包里没人看得见
  * @refs-ignore（本段举的 `src/hidden.ts` 是虚构的示例路径）
  * 这份代码改了什么）。已复现：`.gitattributes` 写 `src/hidden.ts -diff`，纯文本
  * 文件，新判据放行、`git diff --stat` 显示 `Bin 7 -> 8 bytes`。
@@ -180,7 +180,7 @@ if (binaryInScope.length > 0 || noDiffInScope.length > 0) {
   if (binaryInScope.length > 0) {
     console.error(
       "[check-no-binary] 二进制那几个多半是某个字符串字面量里混进了不可见/控制字符" +
-      "（例如 NUL），改成转义写法或可打印字符即可回到文本——见本文件头部的说明（评审 F3）。",
+      "（例如 NUL），改成转义写法或可打印字符即可回到文本——见本文件头部的说明（评审发现）。",
     );
   }
   if (noDiffInScope.length > 0) {

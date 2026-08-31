@@ -315,7 +315,7 @@ UPSTREAM_STUB
 # **正文首块与末块**之间会铺开约 (STUB_CHUNKS − 1) × STUB_GAP_MS；整体缓冲时它们挤在
 # 几毫秒里一起到。门槛取那个跨度的一半：健康态余量约 2 倍，缓冲态差两个数量级
 # ——**它不是一个手抄的阈值，改上面两个数它自己会跟着动**。
-# ⚠️ 这三个数与 check_stream 里的引用由 tests/unit/smoke-guard.test.ts 的 G7 钉着：
+# ⚠️ 这三个数与 check_stream 里的引用由 tests/unit/smoke-guard.test.ts 的「stub 发几块……三者同出 STUB_CHUNKS / STUB_GAP_MS 这一份定义」钉着：
 #   块数只许有这一份，判据里不许再出现第二个写死的块数。
 STUB_CHUNKS=4
 STUB_GAP_MS=1000
