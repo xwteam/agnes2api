@@ -17,7 +17,7 @@ import type { ProbeGuard } from "../probe-guard.js";
 import { httpError } from "../../errors.js";
 
 /**
- * 注册机的三条管理端点（设计 §10.2 / §10.3 / §11，风险 L6）：
+ * 注册机的三条管理端点（设计 §10.2 / §10.3 / §11）：
  *
  * | 方法 | 路径 | 干什么 | 写存储吗 |
  * |---|---|---|---|
@@ -44,7 +44,7 @@ import { httpError } from "../../errors.js";
  * | 1a | 进程/isolate 内在途守卫 | `deps.gate.tryEnter()` | 同副本内的重入（定时轮 × 按钮、两个并发请求） |
  * | 1b | 存储级短锁 | `acquireTendLock()` | **跨副本**的重叠（多容器共卷 / Worker 两个 isolate） |
  * | 2 | 10 分钟手动冷却 | `checkManualTend()` 的 `cooldownUntil` | 连点烧邮箱名额 |
- * | 4 | 每天 K 次写预算闸 | `checkManualTend()` 的 `day` / `used` | 连点烧 **KV 写配额**（三重护栏挡不住这一条，计划 F11） |
+ * | 4 | 每天 K 次写预算闸 | `checkManualTend()` 的 `day` / `used` | 连点烧 **KV 写配额**（三重护栏挡不住这一条） |
  *
  * 第 3 条护栏（确认弹窗明示消耗）在**面板**上，后端做不了；它要的那两个数字
  *（本次最多铸几把 key / 最多消耗几个临时邮箱）由 `status` 的 `pool` 块给出

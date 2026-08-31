@@ -64,7 +64,7 @@ export { type WriteBudget, FRESH_BUDGET, canWrite, consume };
 /** 一个桶。**没有原始延迟数组**：只存和与次数，均值现算（设计 §7.1「明确放弃」P95）。 */
 export interface UsageBucket {
   requests: number; success: number; errors: number;
-  /** **只有非流式、且协议路由传了 `expectJson` 的那三条**才有 token（订正 F1）。 */
+  /** **只有非流式、且协议路由传了 `expectJson` 的那三条**才有 token（订正）。 */
   tokensIn: number; tokensOut: number;
   /** 流式请求单列一栏，让 token 的缺口可见（设计 §7.1「`streamingRequests` 单列一栏」）。 */
   streamingRequests: number;
@@ -123,7 +123,7 @@ export const USAGE_SLOTS = 2;
 
 /**
  * 保留 30 天，正好覆盖设计 §10.6 时间范围按钮组（`24h / 3d / 7d / 30d`）的最长一档
- * （订正 F12）。
+ * （订正）。
  *
  * ⚠️ **它同时决定读扇出的硬上界 `USAGE_DAY_RETAIN × USAGE_SLOTS` = 60 次 get**
  * （见 `usageCandidateKeys`）。U-H 查过 Cloudflare 官方 limits 页，**结论不是一个干净
@@ -223,13 +223,13 @@ export const USAGE_WRITES_PER_DAY = 13;
  * 那一格——`RuntimeInfo` 是本仓双运行时差异的唯一注入点，`quotaModel` 是它里面的一格，
  * 不是说这个接口只有这一格），不是 `runtime.name`。
  *
- * ⚠️ **「相同」只到默认值为止，别写成「两边行为一个字节都不差」**（定向复评 F1，
+ * ⚠️ **「相同」只到默认值为止，别写成「两边行为一个字节都不差」**（定向复评，
  * 上一版这里就是那么写的，而它是假的）：没设这个环境变量时两边的**落盘间隔**逐字相同，
  * 但**预算那道闸本来就只有「有写配额」的一侧才有** —— 同样 20 个待落盘的日，
  * 文件存储一次写 20 个键、KV 写 13 个。**那不是分叉，那就是这个设计本身**：
  * 闸是为写配额存在的，没有配额的一侧没有它可守。
  *
- * 与 `POOL_CACHE_TTL_MS` **只在一点上同构**（定向复评 F7，上一版写的是「完全同构」）：
+ * 与 `POOL_CACHE_TTL_MS` **只在一点上同构**（定向复评，上一版写的是「完全同构」）：
  * 「这个值只在 KV 形态下要紧、而它不按运行时分叉」这一点相同；
  * **配置面上完全不同** —— 那个走 `num()` / `DEFAULTS` / `ENV_LOCK_MAP` / `config-validate`
  * 并出现在 `GET /admin/api/config` 的四元组里，而这一个全仓只在 `src/http/wire.ts`
@@ -289,7 +289,7 @@ export function usageDayKey(day: number, slot: number): string {
  * `byModel` 的键最长多少个字符。**模型名由客户端在请求体里随便填**，不截断就是把
  * 一个无上界的字符串原样搬进要落盘的值里。
  *
- * ⚠️ **佐证要点名真正没有强转的那两条路由**（定向复评 N1：上一版这里举的是
+ * ⚠️ **佐证要点名真正没有强转的那两条路由**（定向复评：上一版这里举的是
  * `src/http/routes/openai.ts`，而**那恰好是唯一一条做了 `String(...)` 强转的**，
  * 等于把危害所在的另外两条挡在了视线外）。真正裸传的是
  * `src/http/routes/anthropic.ts` 与 `src/http/routes/responses.ts` 的 `req.model`：
@@ -297,7 +297,7 @@ export function usageDayKey(day: number, slot: number): string {
  * 运行时零校验** ⇒ `{"model": 123}` 这种请求体在那两条路上会把一个 `number` 交到这里。
  *
  * ⚠️⚠️ **护栏只有这一道，就在本文件里；四条协议路由上都不许再加第二道**
- *（收口复评 H1 + M1，这是本任务最贵的一次教训）：
+ *（收口复评，这是本任务最贵的一次教训）：
  * 上一版为了「冗余」在那两条路由的 `record` 闭包里各加了一个 `String(...)`，
  * 并在这里写下「少任何一道就等于多一条 500」。**那句话两个方向都被实测证伪**：
  * `{"model":123}` 打 `/v1/messages`，三种组合（都在 / 只去路由那道 / 只去这一道）
@@ -309,7 +309,7 @@ export function usageDayKey(day: number, slot: number): string {
  * 把影响面从「开了统计的人」扩大成了「所有部署」，正面违反全局约束 16「关是零成本」。
  * ⇒ **判据记下来：防御要加在「只有开着才跑」的那一侧。** 本文件就是那一侧。
  *
- * ⚠️ **上一版这里写的是「两条路由」，而那是假的**（末轮复评 F1/F3）：
+ * ⚠️ **上一版这里写的是「两条路由」，而那是假的**（末轮复评）：
  * `src/http/routes/openai.ts` 上那一道**一直都在**，还比另外两条更早
  *（在 handler 顶层无条件求值，连闭包都不是）⇒ **同一个「关着也 500」的缺陷
  * 原样活着，只是换了条路由**。成因是注意力停在了上一轮的问题清单上：
@@ -362,7 +362,7 @@ export const USAGE_OTHER_BUCKET = "__other__";
  * 把一个外部可控的桶键收进上界内。
  *
  * ⚠️ **首行的 `safeString(raw)` 今天确实是防御性代码，代价是「静默丢一条计数」而不是 500**
- *（末轮复评 F4，按事实改写）：入参一路来自请求体，运行时**什么类型都可能**
+ *（末轮复评，按事实改写）：入参一路来自请求体，运行时**什么类型都可能**
  *（`c.req.json<T>()` 的泛型是纯编译期的），`123` / `{}` / `true` 都没有 `.slice`。
  * 上一版这里写的是「删掉会让网关 500」——**那句话在写下的那一刻是真的，
  * 却被同一个提交里给 `record()` 加的 try/catch 变成了假的，而这段注释没跟着改。**
@@ -371,7 +371,7 @@ export const USAGE_OTHER_BUCKET = "__other__";
  * 面板上只少一个数，没有任何别的信号。
  * ⇒ **两句话都要留着**：它不再是「防 500」的最后一道，但它是「别丢计数」的唯一一道。
  * ⭐ 记一条形状：**加一处 try/catch 会改变别处注释的真假 —— 加完要回头查谁在依赖那个前提。**
- * ⚠️ **样本必须跨过「`String()` 自己也会抛」那一档**（收口复评 H2）：
+ * ⚠️ **样本必须跨过「`String()` 自己也会抛」那一档**（收口复评）：
  * `123` / `{a:1}` / `true` / `[1,2]` 这四个只覆盖了「没有 `.slice`」这一层
  *（其中 `[1,2]` 还侥幸有 `.slice`），**把 `String()` 一换上去它们就全过了** ——
  * 样本停在缺陷够不到的地方，等于没验。真正还能打穿的是
@@ -382,19 +382,19 @@ export const USAGE_OTHER_BUCKET = "__other__";
  *
  * 先截长度、再判格数：**已经存在的键永远认得出来**（否则同一个模型会因为
  * map 满了而在两次请求之间被分到两个不同的格子，计数直接错位）。
- * ⚠️ 这一条也有一格钉着（定向复评 N4：上一版删掉那句早返回**全量 2182 全绿**，
+ * ⚠️ 这一条也有一格钉着（定向复评：上一版删掉那句早返回**全量 2182 全绿**，
  * 因为那格用例里 200 个模型名各只出现一次，满桶之后从不复用旧键）——
  * 见「满桶之后再打一次早期的模型名，它仍然进自己那一格……」。
  *
  * ⚠️ **上界是 `USAGE_MODEL_MAX_KEYS + 1`，那多出来的一格是 `USAGE_OTHER_BUCKET` 自己。**
  * 明写出来，免得下一个人按 32 去断言然后发现是 33。
  *
- * ⚠️ **已知边界，如实登记（定向复评 N10 + 收口复评 H3）**：
+ * ⚠️ **已知边界，如实登记（定向复评 + 收口复评）**：
  * · 客户端可以把 `model` 直接填成 `__other__` 去抢占那个溢出格。后果**只是「其它」
  *   那一格里混进了一个真实模型**——总数一条不丢、上界照旧成立、别的格子不受影响。
  *   不为它换一个「客户端猜不到的」键名：那是把正确性建在一个秘密上，
  *   而这里根本没有正确性依赖它。
- * · **`"[unstringifiable]"` 这个兜底键同样可以被客户端直接填**（末轮复评 F10），
+ * · **`"[unstringifiable]"` 这个兜底键同样可以被客户端直接填**（末轮复评），
  *   于是它那一格可能混着「真的转不出来的对象」与「照着这个名字填的字符串」。
  *   与上面 `__other__` 那条**同类同处置**：总数不丢、上界照旧，不换成一个
  *   「客户端猜不到的」名字——那是把正确性建在秘密上，而这里没有正确性依赖它。
@@ -407,7 +407,7 @@ export const USAGE_OTHER_BUCKET = "__other__";
 /**
  * 把一个**运行时什么都可能是**的值变成字符串，**并且保证自己不抛**。
  *
- * ⚠️ **`String(x)` 自己就会抛，这不是理论**（收口复评 H2）：
+ * ⚠️ **`String(x)` 自己就会抛，这不是理论**（收口复评）：
  * `JSON.parse('{"toString":1,"valueOf":1}')` 造得出一个两个转换方法都不是函数的对象，
  * 对它取原始值会 `TypeError: Cannot convert object to primitive value`。
  *
@@ -491,7 +491,7 @@ export function usageExpiresAt(day: number): number {
  * ⚠️ **指向订正**：上一版这里指的是本文件加一个绝对行号，
  * **在 `531db44` 上就已经指错了**——**不是本任务引入的，是既有欠账**；
  * 改成「本文件的 `USAGE_TTL_MARGIN_MS`」这个名字锚之后不会再随增删行漂走。
- * ⭐ **而这条订正自己先踩了一次同样的坑（定向复评 N4）**：订正文里曾写
+ * ⭐ **而这条订正自己先踩了一次同样的坑（定向复评）**：订正文里曾写
  * 「（那个常量今天在 XXX 行）」，**而同一个提交在它上方插了几行，那个数出生即过期**
  * ——量的是改动前的自己。**绝对行号一个都不留**，这条现在由 `scripts/check-comment-refs.mjs` 这道门禁的
  * 「散文里不带路径的绝对行号一律拒收」那条规则守着。
@@ -554,7 +554,7 @@ function addBuckets(a: UsageBucket, b: UsageBucket): UsageBucket {
  * **返回值里的 `malformed` 是给面板看的**：静默丢弃就是撒谎。
  *
  * ⚠️⚠️ **返回值里那四个 map 是无原型对象（`Object.create(null)`），这是一条给调用方的
- * 硬契约**（末轮复评 F12）：**不许在它们身上调任何 `Object.prototype` 的方法** ——
+ * 硬契约**（末轮复评）：**不许在它们身上调任何 `Object.prototype` 的方法** ——
  * `merged.byModel.hasOwnProperty(k)` / `.toString()` / `.constructor` 这类**会直接抛
  * `TypeError`**（那条原型链上什么都没有）。改用 `Object.prototype.hasOwnProperty.call(m, k)`、
  * `k in m` 或 `Object.keys(m)`。
@@ -590,7 +590,7 @@ export function mergeDayShards(raw: readonly unknown[]): {
   shards: number; malformed: number;
 } {
   let total = emptyBucket();
-  // ⚠️ **四个都必须是无原型的**（收口复评 H3 的读侧一半）：`byModel` 的键来自
+  // ⚠️ **四个都必须是无原型的**（收口复评那条发现的读侧一半）：`byModel` 的键来自
   // 客户端填的模型名，落盘之后会**原样从存储里回来**。普通 `{}` 上
   // `into["__proto__"] = 桶` 会去改原型而不是加一个键（那一条就此消失），
   // `into["toString"] ?? emptyBucket()` 又会摸到 `Function.prototype.toString`
@@ -643,7 +643,7 @@ function narrowBucket(v: unknown): UsageBucket | null {
 
 function narrowRecord(v: unknown): Record<string, UsageBucket> {
   if (!v || typeof v !== "object") return {};
-  // 无原型，理由同 `mergeDayShards` 里那四个（收口复评 H3 的读侧一半）。
+  // 无原型，理由同 `mergeDayShards` 里那四个（收口复评那条发现的读侧一半）。
   const out: Record<string, UsageBucket> = Object.create(null);
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
     const b = narrowBucket(val);

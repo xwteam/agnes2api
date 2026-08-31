@@ -81,7 +81,7 @@ export interface ProtocolEntry {
   readonly streamMode: "body" | "path";
   /** `streamMode === "body"` 时是那个字段名；`"path"` 时是流式的路径模板。 */
   readonly streamKey: string;
-  /** 非流式响应里 usage 的位置。`null` = 这条协议的 usage 网关看不到（见 F1）。 */
+  /** 非流式响应里 usage 的位置。`null` = 这条协议的 usage 网关看不到（见 openai 那条的 `usagePath: null` 上方那段）。 */
   readonly usagePath: readonly string[] | null;
   /**
    * **流式响应里「这一块新增的回答文本」在一条 SSE 数据行的哪一格。**
@@ -100,7 +100,7 @@ export interface ProtocolEntry {
    * ⚠️⚠️ **这四条路径不是照着协议规范抄的，是照着本网关真正吐出去的字节填的。**
    * 四条协议里三条的流式事件由本仓自己合成（`src/core/protocol/{anthropic,responses,gemini}.ts`
    * 的 `to*Stream()`），只有 openai 那条是上游字节原样透传（`src/http/routes/openai.ts`
-   * 不传 `expectJson`，见 `usagePath` 上面那段 F1）。**照规范抄会在合成那三条上漂**。
+   * 不传 `expectJson`，见 openai 那条 `usagePath: null` 上方那段）。**照规范抄会在合成那三条上漂**。
    * 绑住它的是 `tests/contract/stream-parity.test.ts` 的
    * 「一条真的流式请求，按 streamTextPath 逐块取出来的正是上游那三个字」
    * ——**观测点落在真 app 吐出去的 SSE 字节上**，不是比对本文件自己的两个字段
@@ -153,7 +153,7 @@ export const PROTOCOLS: readonly ProtocolEntry[] = [
     authHeader: "authorization",
     streamMode: "body",
     streamKey: "stream",
-    // ⚠️ **null 不是「这条协议没有 usage」，是「网关这条路径不解析响应体」**（订正 F1）：
+    // ⚠️ **null 不是「这条协议没有 usage」，是「网关这条路径不解析响应体」**（订正）：
     // `src/http/routes/openai.ts` 是四条协议路由里唯一**不传 `expectJson`** 的一条，
     // 于是 `dispatch()` 走 `sanitize(res)` 原样搬运（`src/core/dispatcher.ts:469`），
     // 从头到尾没有 `JSON.parse` 过。usage 确实在响应里、确实到得了客户端（实测过），
@@ -301,7 +301,7 @@ export const VIDEO_TASK_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
  * 要挡的形态。抛的代价是**凡 import 到本模块的用例文件当场加载失败** ——
  * 契约测试里大多数文件都在其中，`tests/contract/media.test.ts` 是其一，
  * 它因此不可能带着绿 CI 溜进生产。
- *（复评 F3 订正：上一版这里写的是「契约测试**全体**都经过它」，而 M7 变异实测下
+ *（复评订正：上一版这里写的是「契约测试**全体**都经过它」，而变异实测下
  * `tests/contract/` 有一部分文件根本不 import 本模块、照样跑得通。具体是多少个文件
  * 属于一次性实测，本仓没有常跑的机器守着，所以这句话不写数字。）
  * 常跑的那格是 `tests/contract/media.test.ts` 的

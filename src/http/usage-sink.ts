@@ -27,7 +27,7 @@ interface DayAcc {
 }
 
 /**
- * ⚠️ **三个 map 都必须是无原型的（`Object.create(null)`）**（收口复评 H3）。
+ * ⚠️ **三个 map 都必须是无原型的（`Object.create(null)`）**（收口复评）。
  *
  * `byModel` 的键**完全由客户端控制**（模型名来自请求体），而普通 `{}` 上有两条
  * 会静默坏掉的路径，实测都不是理论：
@@ -37,12 +37,12 @@ interface DayAcc {
  * · `acc.byModel["toString"] ?? emptyBucket()` 会摸到 **`Function.prototype.toString`**
  *   ⇒ 拿函数去做加法，那一格序列化成 `{"requests":null,…}`
  *   （`constructor` / `hasOwnProperty` 同理）。
- * **两种都让落盘的分片自己和自己对不上（`total` ≠ Σ`byModel`）——正是 N3 那半
+ * **两种都让落盘的分片自己和自己对不上（`total` ≠ Σ`byModel`）——正是并发那半
  * 刚消灭掉的失效形态，从另一个入口原样回来。**
  *
  * `boundUsageKey()` 用 `Object.prototype.hasOwnProperty.call` 守住了「存在性判断」，
  * **但取值那一步 `?? emptyBucket()` 防不住原型** ⇒ 一处改 map 的造法，整类关掉。
- * `JSON.stringify` 与 `{ ...map }`（N3 的快照）对无原型对象都照常工作，已实测。
+ * `JSON.stringify` 与 `{ ...map }`（并发那半的快照）对无原型对象都照常工作，已实测。
  *
  * `hours` / `byProtocol` 的键今天是闭集（`"00"`…`"23"` 与四条协议的字面量），
  * **一起改是因为「三个 map 造法一致」比「记住只有一个需要」可靠**。
@@ -146,10 +146,10 @@ export const USAGE_ERROR_REPORT: Readonly<Record<UsagePhase, { event: string; ms
  * 文件存储没有配额」）。`RuntimeInfo` 是本仓**双运行时差异的唯一注入点**，
  * `quotaModel` 是它里面的一格——**不是说这个接口里只有这一格**（同一个接口里还有
  * `name` 与 `storageBackend`；上一版把「唯一注入点」写到了 `quotaModel` 头上，
- * 而下半句又拿 `runtime.name` 当被否掉的替代方案点名，两句话互相矛盾，定向复评 F6）。
+ * 而下半句又拿 `runtime.name` 当被否掉的替代方案点名，两句话互相矛盾，定向复评发现）。
  * 面板那一侧读的同样是 `GET /admin/api/capabilities` 的 `quota.model`，**不是 `runtime.name`**。
  *
- * ⚠️ **与 `POOL_CACHE_TTL_MS` 只在一点上同构，别读成「完全同构」**（定向复评 F7）：
+ * ⚠️ **与 `POOL_CACHE_TTL_MS` 只在一点上同构，别读成「完全同构」**（定向复评）：
  * 同构的那一点是「这个值只在 KV 形态下要紧，而它不按运行时分叉」。
  * **在配置面上两者完全不同**：那个值走 `num()`、进 `DEFAULTS`、进 `ENV_LOCK_MAP`、
  * 进 `config-validate`，因此出现在 `GET /admin/api/config` 的四元组里；
@@ -157,7 +157,7 @@ export const USAGE_ERROR_REPORT: Readonly<Record<UsagePhase, { event: string; ms
  * 那个取舍与它的代价记在下面「为什么它不走 config-provenance」那一段。
  *
  * ⚠️ **「默认值相同」说的就只是默认值，不是「两边行为一个字节都不差」**
- *（定向复评 F1，上一版那句是假的，而且**被同一个提交里自己写的用例正面证伪**——
+ *（定向复评，上一版那句是假的，而且**被同一个提交里自己写的用例正面证伪**——
  * 「budgetPerDay 真的接到了 sink 上」那一格断言的正是 20 vs 13）：
  * 没设这个环境变量时，两种形态的**落盘间隔**逐字相同（`USAGE_FLUSH_MIN_INTERVAL_MS`），
  * 但**预算那道闸本来就只有「有写配额」的一侧才有** —— 同样 20 个待落盘的日、
@@ -180,7 +180,7 @@ export const USAGE_ERROR_REPORT: Readonly<Record<UsagePhase, { event: string; ms
  * 而且它不可能是面板写坏的（面板永远碰不到环境变量）——与 `num()` 对
  * 环境变量那一支的处置逐字相同。
  *
- * ── 为什么它不走 config-provenance（定向复评 N7 要求把这个决定和代价写下来）──────
+ * ── 为什么它不走 config-provenance（定向复评要求把这个决定和代价写下来）──────────
  * `USAGE_FLUSH_INTERVAL_MS` **只从环境变量读，一个字都不从存储读**，因此它
  * 不进 `GatewayConfig`、不进 `FIELD_EXPOSURE`、不进 `ENV_LOCK_MAP`、不进 `EDITABLE`，
  * 也就不出现在 `GET /admin/api/config` 的四元组里。**判据沿用上一轮 U-C 那一整节，
@@ -204,7 +204,7 @@ export function resolveUsageFlushInterval(
   hasWriteQuota: boolean,
 ): { flushIntervalMs: number; budgetPerDay: number | null } {
   const budgetPerDay = hasWriteQuota ? USAGE_WRITES_PER_DAY : null;
-  // ⚠️ **空串与「没设」同等对待**（定向复评 N2）。理由**不是**「迁就一个坏值」，
+  // ⚠️ **空串与「没设」同等对待**（定向复评）。理由**不是**「迁就一个坏值」，
   // 而是与 `.env.example` 其余 9 个留空项的既有约定一致：那份文件是给
   // `cp .env.example .env` + `env_file:` 直接用的，一个留空的键会以**空字符串**
   // （不是 unset）进到环境里，而本仓其余每一个留空项都容忍它。
@@ -246,7 +246,7 @@ export function recordUsage(deps: UsageRecording, u: UsageOutcome): void {
 /**
  * Tier-2 的内存累加器 + 落盘。
  *
- * ⚠️ **落盘由中间件在请求收尾 `await`，不是 `ctx.waitUntil`、不是定时器**（订正 F3）。
+ * ⚠️ **落盘由中间件在请求收尾 `await`，不是 `ctx.waitUntil`、不是定时器**（订正）。
  * 设计 §7.1 写的是 `ctx.waitUntil(maybeFlush())`，而仓里既定的做法是
  * `src/http/log-flush.ts` 的 `await flush()`，那个文件头逐字写着：
  * 「fire-and-forget 在 Worker 上会被响应返回后的 isolate 停摆截断」。
@@ -299,7 +299,7 @@ export class UsageSink {
   private readonly dirty = new Set<number>();
   /**
    * UTC 日序号 → 这一天被 `record()` 改过多少次。**只用来判「我发起写的那一刻之后，
-   * 有没有新的增量进来」**（定向复评 N3），不参与任何计数。
+   * 有没有新的增量进来」**（定向复评），不参与任何计数。
    *
    * ⚠️ **为什么非有它不可**：`maybeFlush()` 在 `await put` 上挂起期间，`record()`
    * 照样在跑（同一个 isolate 里的另一个并发请求）。挂起之前那道间隔闸只挡得住
@@ -388,7 +388,7 @@ export class UsageSink {
     this.slot = usageSlotOf(o.shardId);
     this.lastFlushAt = o.now();
     this.intervalMs = o.flushIntervalMs ?? USAGE_FLUSH_MIN_INTERVAL_MS;
-    // ⚠️ **判据必须是 `=== undefined`，不能写成 `??`**（定向复评 F8：上一版这句注释
+    // ⚠️ **判据必须是 `=== undefined`，不能写成 `??`**（定向复评：上一版这句注释
     // 写的是「`??` 而不是 `||`」，而代码用的正是 `=== undefined`——**照那句注释的字面
     // 去改就会踩雷**：`null` 在 `??` 下会被下坠成默认值，而 `null` 恰恰是一个有意义的
     // 取值（「没有闸」，给没有写配额的存储）。三者要分清：`||` 连 `0` 都吃掉，
@@ -397,7 +397,7 @@ export class UsageSink {
   }
 
   /**
-   * 记一次终态。**永不抛**（收口复评 H1）。
+   * 记一次终态。**永不抛**（收口复评）。
    *
    * ⚠️ **兜底放在这里，而不是放在四条路由上**：路由那一侧的表达式在
    * `recordUsage()` 的「sink 缺席就 return」**之前**求值 ⇒ 放在那里的任何一行
@@ -407,7 +407,7 @@ export class UsageSink {
    * ⚠️ **`try` 的边界是有讲究的，不是把整个方法包起来了事**：
    * **可能抛的每一步都排在任何一次写入 `acc` 之前**。反过来的话，一次抛会留下
    * 「`total` 加了而 `byModel` 没加」的半截状态 ⇒ 落盘的分片自己和自己对不上，
-   * 正是 N3 那半刚消灭掉的失效形态。**这条顺序约束今天仍然照办，往后加任何一步
+   * 正是并发那半刚消灭掉的失效形态。**这条顺序约束今天仍然照办，往后加任何一步
    * 都要先问它会不会抛。**
    *
    * ⚠️⚠️ **上一版这里写的是「唯一可能抛的一步是 `boundUsageKey`」，那句话今天已经是假的
@@ -477,7 +477,7 @@ export class UsageSink {
    * 到点就落盘。**永不抛**（存储那一步全量 try/catch）：统计是旁路，绝不影响响应。
    *
    * ⚠️ **「没有未落盘增量时一次写都不产生」这条性质，不是下面那个提前 return 给的**
-   *（本任务变异实测 M1，**入参一并记下，否则复现不出来**：在**补上下面那格「空转」用例
+   *（本任务变异实测，**入参一并记下，否则复现不出来**：在**补上下面那格「空转」用例
    * 之前**，把 `if (this.dirty.size === 0) return` 删掉 ⇒ 当时的 11 格全绿；
    * 补上那一格之后同一条变异 ⇒ 1 红 12 绿。**同一条变异在两个时点结论相反，
    * 差别只在「那时还没有那一格」** —— 省掉这半句话，这条实测记录就是假的。）
@@ -520,7 +520,7 @@ export class UsageSink {
     if (since >= 0 && since < this.intervalMs) return;
     // ★ **在任何 `await` 之前就把闸关上**（评审发现）。到这一行为止全都是同步代码，
     // 所以后来的并发 **flush** 一定会在上面那道间隔闸前掉头，不会与本次重叠。
-    // ⚠️ **它只挡 flush 与 flush，挡不住 `record()` 与 flush 的重叠**（定向复评 N3）——
+    // ⚠️ **它只挡 flush 与 flush，挡不住 `record()` 与 flush 的重叠**（定向复评）——
     // 那一半由循环体里的「快照 + 版本比对」负责，两者合起来才是完整的。
     this.lastFlushAt = at;
 
@@ -530,7 +530,7 @@ export class UsageSink {
       if (this.budgetPerDay !== null && !canWrite(this.budget, at, this.budgetPerDay)) break;
       const acc = this.days.get(day);
       if (!acc) { this.dirty.delete(day); continue; }
-      // ★ **发起写之前先取一份快照**（定向复评 N3）。
+      // ★ **发起写之前先取一份快照**（定向复评）。
       // 三个 record 都要浅拷：`record()` 往它们里面**赋新键**（`acc.hours[h] = …`），
       // 而 `acc.total` 是整体重新赋值的。不拷的话，`await` 期间到达的那一条会
       // **只蹭进 `hours`/`byModel`/`byProtocol` 而不进 `total`**
@@ -556,7 +556,7 @@ export class UsageSink {
         this.o.onError(err, "flush");
         break;
       }
-      // ★ **只清「我发起写的那一刻的那个版本」**（定向复评 N3）：`await` 期间若有
+      // ★ **只清「我发起写的那一刻的那个版本」**（定向复评）：`await` 期间若有
       // 新的 `record()` 落在同一天，版本号已经变了 ⇒ 这一天**继续留在 `dirty` 里**，
       // 下一轮把它整份重写一遍（那个键是覆写的，所以补一遍就是对的）。
       if ((this.version.get(day) ?? 0) === version) this.dirty.delete(day);

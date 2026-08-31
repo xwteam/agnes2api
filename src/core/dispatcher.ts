@@ -478,7 +478,7 @@ export async function dispatch(args: {
       // 「不按次数新增写」这句是可证伪的，别当散文读：`tests/unit/pool-cache.test.ts`
       // 的「只有 4xx 直通……攒够一个触达间隔也会落盘」数着 put 次数——10 次 4xx 只落 2 次盘
       // （跨 2 个触达间隔），而不是 10 次。设计文档 §6.1 说要把它按次计进配额账的
-      // 那半因此不成立，订正见计划的 F1。
+      // 那半因此不成立，订正登记在案。
       await commitOutcome(slot, record, "clientError", null);
       return done(sanitize(res));
     }

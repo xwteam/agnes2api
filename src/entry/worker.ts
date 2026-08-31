@@ -86,7 +86,7 @@ export default {
     //    与 Worker 行为对齐（双运行时对等是硬约束）；
     // ② 写预算是实例字段，长寿实例上 48 轮/天会在第 13 轮撞上
     //    `EVENT_WRITES_PER_DAY`（12）并从此静默不写——而那条预算对这根轴本来就
-    //    不适用（订正 F4：真正的上界是补池频率）。每轮一个新实例让上界回到频率本身。
+    //    不适用（订正：真正的上界是补池频率）。每轮一个新实例让上界回到频率本身。
     // **`ConsoleLogger` 那一路一条都不丢**：落库是 fan-out 出来的第二条路。
     const tendConsole = new ConsoleLogger();
     const tendStore = new StoreLogger({

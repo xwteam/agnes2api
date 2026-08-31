@@ -339,7 +339,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 这是本文件里同一个坑的第五处（`bulk` vs `:id`、`channels/:c/test` vs `tend`、
   // `keys/:id/usage`、`usage` vs `usage/:date`），措辞刻意一致。
   //
-  // **它一次存储写都不产生**（订正 F8：验活是只读探针），所以配额账不用改。
+  // **它一次存储写都不产生**（订正：验活是只读探针），所以配额账不用改。
   admin.post("/admin/api/keys/:id/verify", verifyHandler({
     repo: deps.repo, fetcher: deps.fetcher, now: deps.now,
     // **getter 而不是值**：超时档与 `agnesBaseUrl` 都能在运行中被面板改掉，
@@ -348,7 +348,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
     guard: probeGuard,
   }));
 
-  // ── 注册机（「立即补池」+ 板块取数 + 通道测试，风险 L6）───────────────────────
+  // ── 注册机（「立即补池」+ 板块取数 + 通道测试）────────────────────────────────
   //
   // **本仓第一批会触发真实上游副作用的端点**：Key 池那四条只动本地存储，`tend` 会
   // 去建临时邮箱、注册 Agnes 账号、领 key，`channels/:channel/test` 会向邮箱服务
@@ -391,7 +391,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 之后，但这与 Hono 的匹配顺序无关**：三条路径段数不同（一段 / 两段 / 三段，
   // 口径见上面 `registrar` 那段括号里那句），形状上不可能重叠，而且方法也不同。
   // ⚠️ **上一版这里写的是「两段 / 三段 / 四段」，与同文件 15 行之上那段用的口径不是
-  // 同一个**（复评回填 F6：那个口径下 `config/validate` 会算成三段，而下面那条新端点
+  // 同一个**（复评回填：那个口径下 `config/validate` 会算成三段，而下面那条新端点
   // 又按第三种口径写成了「四段」——同一份文件对同一条路径给了两个数）。全文统一成
   // `/admin/api/` 之后的段数，因为「单段通配」这件事本来就发生在那一层。
   // 真正会出事的是将来有人加一条
@@ -472,7 +472,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // `keys/:id/usage`），措辞刻意一致。
   //
   // ⚠️ **「被静态兜底吃掉」这个方向，哪几格会红是实测出来的、不是推出来的**
-  //（本任务变异 M6：把这三条一并挪到下面 `admin.route("/", uiRoutes())` 之后）：
+  //（本任务变异：把这三条一并挪到下面 `admin.route("/", uiRoutes())` 之后）：
   // · `tests/contract/admin-usage.test.ts` 的
   //   「Tier-2 关着时照样交出这把 key 的 Tier-1 计数 —— 两者本来就是两套账」
   //   一带**大面积变红**（三条端点全变 404）；

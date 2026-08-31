@@ -510,7 +510,7 @@ export async function buildTendDeps(
   // 中间件 ⇒ 落盘触发点只能由入口层在补池收尾时自己给（Worker 走 `ctx.waitUntil`
   // 里的 `finally`、Node 走 `runTend` 的 `finally`），所以 `flush` 是参数不是内部行为。
   //
-  // ⚠️ **写预算这根轴换掉了，不许照抄事件 sink 那一套**（订正 F4）：
+  // ⚠️ **写预算这根轴换掉了，不许照抄事件 sink 那一套**（订正）：
   // `EVENT_WRITES_PER_DAY`（每实例每天 12 次）在 `fetch` 路径上有意义，是因为
   // 一个 isolate 服务很多请求、预算在一个长寿实例上被反复消费。**`scheduled()`
   // 那条路上这根轴没了**——每次 Cron 触发很可能是一个新 isolate，一生只有一次

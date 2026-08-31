@@ -59,7 +59,7 @@ import { readAdminJson } from "../errors.js";
  *    ⇒ 写完之后**再调一次 `loadConfigWithProvenance`**，付一次读。
  *    ⚠️ 这条与 `configHolder.invalidate()` 是**两件事**，别混为一谈：
  *    回读证明的是「落盘了」，`invalidate()` 保证的是「**同一个进程的下一个请求**
- *    看到的也是新值」（F7）。少了后者，`GET /admin/api/overview` 会在最多一个
+ *    看到的也是新值」。少了后者，`GET /admin/api/overview` 会在最多一个
  *    `CONFIG_TTL_MS` 内继续报旧值，而运维刚刚才看到保存回执上是新值。
  *    那一条由 `tests/contract/admin-config.test.ts` 的
  *    「保存之后同一个进程立刻回读到新值 —— 观测点在 overview，走的是真 holder」钉着。
@@ -178,7 +178,7 @@ export interface ConfigSnapshot {
  *
  * ⚠️⚠️ **这段说明本身被订正过一次，形态值得记**：它原来停在 `frozenConfig` 头上
  * 当孤儿（`frozenConfig` 是后加的，插在它与 `readAll` 之间），而正文里还写着
- * 已被证伪的二分判据「没有 blocker ⇒ 原样抛出去」。**与 F3 删掉的那段孤儿 JSDoc、
+ * 已被证伪的二分判据「没有 blocker ⇒ 原样抛出去」。**与评审删掉的那段孤儿 JSDoc、
  * 与 `ui-assets.test.ts` 那两段连续 JSDoc 是同一形态，同一轮里第三次。**
  * 判据很简单：**在两个声明之间插入新声明时，先确认上面那段文档挂的是谁。**
  */
@@ -193,7 +193,7 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
      * · **第一版**：`configLoadBlockers` 为空 ⇒ 原样抛。**不完备**——存储里
      *   `registrar.targetKeys: "abc"` 时那个函数返回 `[]`，而 `posInt()` 对存储里的
      *   非数字**是抛错不是降级** ⇒ 那一整类连诊断视图都拿不到，`GET`/`PUT` 双双 500、
-     *   面板没有出路（评审 F2 实测）。
+     *   面板没有出路（评审实测）。
      * · **第二版**：「存储读得出来 ⇒ 就是配置问题」。**也不完备**——存储只是**瞬时**
      *   抖了一下（第二次读就好了）时，它会把一份**完全正常**的配置判成配置问题，
      *   给出一个假的诊断视图。
@@ -372,7 +372,7 @@ function invalid(c: Context, errors: readonly ConfigError[]) {
  * ——运维照着 400 以为「没保存上」，下一次冷启动网关起不来（§5.4 的 fail-closed 反噬）。
  * 「400 那一次一次写都不产生」由 `tests/contract/admin-config.test.ts` 的
  * 「校验失败的那次请求 puts 计数一动不动 —— 只断言 400 抓不住『先写了再返回 400』」
- * 数着 put 计数钉住（只断言状态码抓不住这个形态，与 F9 同一个形状）。
+ * 数着 put 计数钉住（只断言状态码抓不住这个形态，与另一条发现同一个形状）。
  */
 export function configPutHandler(deps: ConfigDeps) {
   return async (c: Context) => {
@@ -396,7 +396,7 @@ export function configPutHandler(deps: ConfigDeps) {
     if (!verdict.ok) return invalid(c, verdict.errors);
 
     await wiring.storage.put(CONFIG_KEY, verdict.next);
-    // **F7：让同一个进程的下一个请求一定重载。** 少了这一行，`GET /admin/api/overview`
+    // **让同一个进程的下一个请求一定重载。** 少了这一行，`GET /admin/api/overview`
     // 会在最多一个 `CONFIG_TTL_MS`（默认 30 秒）内继续报旧值。
     deps.configHolder.invalidate();
 
@@ -581,7 +581,7 @@ export function configClearSecretHandler(deps: ConfigDeps) {
        *（`configLoadBlockers(RESET_VALUE, env)`：`RESET_VALUE` 是常量、`env` 手上就有 ⇒
        * **零额外存储读**，而且它的取值只随 `env` 变，与刚清掉的那把凭据无关）。
        *
-       * ⚠️ **它是复评回填补上的（F4 的另一半）**：面板清空一把凭据之后拿这条响应换掉了
+       * ⚠️ **它是复评回填补上的（那条发现的另一半）**：面板清空一把凭据之后拿这条响应换掉了
        * 手上那份 `data`，而这条响应原来**没有**这一格 ⇒ 紧接着点「重置配置」时，
        * 前端的 `resetWarnings()` 读不到它。上一版前端把「读不到」与「空数组」折进同一档，
        * 于是弹窗照说一句没有依据的安心话；那一档现在单独报「判断不了」。
@@ -637,7 +637,7 @@ const RESET_VALUE: Record<string, never> = {};
  *    这条是本仓登记过的「写错了没有任何自动化会红」的那一行，绊线在
  *    `tests/contract/admin-danger.test.ts` 的
  *    「reset 的回执是回读出来的：写完之后存储被换掉，回执必须报出存储里那一份」。
- * ② **`invalidate()` 与回读是两件事**（F7）。少了它，`GET /admin/api/overview`
+ * ② **`invalidate()` 与回读是两件事**。少了它，`GET /admin/api/overview`
  *    会在最多一个 `CONFIG_TTL_MS` 内继续报旧值，而运维刚看到回执上是新值。
  * ③ **`changed` 走 `changedEffective()` 那一份判据**，不另写。
  * ④ **响应体里一个凭据明文都没有**：`credentials` 那一块由 `split()` 产出，

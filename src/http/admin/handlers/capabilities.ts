@@ -64,7 +64,7 @@ export function capabilitiesHandler(deps: {
          */
         flushIntervalMs: deps.usageFlushIntervalMs,
         /**
-         * 哪几条协议的 token 是网关看得到的（订正 F1）。
+         * 哪几条协议的 token 是网关看得到的（订正）。
          * **不许在前端硬编码这个列表**——它由协议目录的 `usagePath` 是否为 null 决定，
          * 而那一格记的是「网关这条路径解不解析响应体」（`expectJson`），
          * 不是「这条协议有没有 usage」。

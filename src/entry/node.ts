@@ -103,7 +103,7 @@ export async function main(env: Record<string, string | undefined> = process.env
       // `src/entry/worker.ts` 里同位置那段完全相同（双运行时对等是硬约束）：
       // Worker 上每次 Cron 本来就很可能是新 isolate，Node 是长寿进程，不新建的话
       // 写预算（`EVENT_WRITES_PER_DAY` = 12，实例字段）会让第 13 轮之后**静默不写**
-      // ——而那条预算对这根轴本来就不适用（订正 F4：上界是补池频率本身）。
+      // ——而那条预算对这根轴本来就不适用（订正：上界是补池频率本身）。
       const tendStore = new StoreLogger({
         storage,
         now: () => Date.now(),

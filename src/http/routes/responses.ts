@@ -23,7 +23,7 @@ export function responsesRoutes(deps: DispatchDeps & UsageRecording): Hono {
     const latencyMs = deps.now() - startedAt;
     const record = (tokensIn: number, tokensOut: number) => recordUsage(deps, {
       // 同 `routes/anthropic.ts`：**刻意不强转**，归一化只在 `boundUsageKey()` 里
-      // 做一次（收口复评 H1）。
+      // 做一次（收口复评）。
       protocol: "responses", model: (req.model ?? "") as string,
       ok: res.ok, stream: internal.stream, latencyMs, tokensIn, tokensOut,
     });

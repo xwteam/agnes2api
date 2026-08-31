@@ -36,7 +36,7 @@ export interface ReadEventsResult {
  * 现在改用 `Storage.put()` 的 `expiresAt` 参数（`eventExpiresAt()` 算出来的绝对
  * 过期时刻）：有界性变成存储自己的性质，与这里的落盘节奏、槽位选择、isolate 是否
  * 被回收全部无关——KV 侧零操作开销（原生 `expiration`，不占任何配额桶），
- * FileStorage 侧**读时跳过、写时顺手清掉**（评审 F2 订正：这里原来写的"读/写时
+ * FileStorage 侧**读时跳过、写时顺手清掉**（评审订正：这里原来写的"读/写时
  * 惰性清理"不准确——`get`/`list` 只是逻辑上把过期键当不存在，从不物理删除；
  * 真正的物理清理只发生在 `put`/`delete` 里，措辞已与 `src/ports/storage.ts` 的
  * 端口文档对齐，见该适配器）。
@@ -137,7 +137,7 @@ export class StoreLogger implements Logger {
    * **它的上界不在这里，在调用方**：补池频率（Worker 的 Cron / Node 的
    * `TEND_INTERVAL_MS`）。**不许说「与事件 sink 同一套预算所以同样安全」**——
    * `EVENT_WRITES_PER_DAY` 是每实例的，而这条路径上每一轮都可能是一个新实例，
-   * 那套预算在这根轴上既拦不住什么也不构成上界（订正 F4）。
+   * 那套预算在这根轴上既拦不住什么也不构成上界（订正）。
    */
   async flush(): Promise<void> {
     await this.writeBatch(this.o.now());

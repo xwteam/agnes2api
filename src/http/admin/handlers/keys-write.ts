@@ -155,7 +155,7 @@ function paramId(c: Context): string {
 }
 
 /**
- * `POST /admin/api/keys` —— 批量导入（L4）。
+ * `POST /admin/api/keys` —— 批量导入（「重复导入即解封」那个后门的落点）。
  *
  * 请求 `{ keys: string[], resetExisting?: boolean }` → `{ added, duplicated, invalid, reset }`。
  * 三个数组装的分别是 id / id / **输入里的位置**（1 基、`number[]`），
@@ -258,7 +258,7 @@ export function keyDeleteHandler(deps: KeysWriteDeps) {
  * 数量这件事今天由下面**第二条**（覆盖）守着——具体是
  * `tests/unit/docs-parity.test.ts` 的
  * 「该红时红：`PATCH_FIELDS` 长出第七个字段 ⇒ 五份一起红，并逐份点名那个字段」，
- * 注释里不再复述这个数（复评 H2）。
+ * 注释里不再复述这个数（复评发现）。
  * ⚠️ 这里原先写的是「第三条」，而第三条管的是**顺序**、结构上管不了数量：
  * `enumerationFailures()` 里表长一格 ⇒ `missing.length > 0` ⇒ push 之后 `continue`，
  * 顺序那一段根本执行不到（复评实测：把顺序段整个中和，只红两格顺序反向控制，
@@ -352,7 +352,7 @@ export const PATCH_FIELDS = [
  * （`timeout: "sync"`）的等待预算是 `UPSTREAM_SYNC_TIMEOUT_MS`，流式端点是每把 key
  * 一个 `UPSTREAM_TIMEOUT_MS` 的首字节预算、逐把重试。
  * **它今天没有被修，只是被说清楚了**：要修得在 repo 里给「刚重置过」立一个不吸收
- * `seen` 的标记，而 `trackBaseline` 的 N1 恰恰是靠吸收 `seen` 才不会把别的 isolate
+ * `seen` 的标记，而 `trackBaseline` 恰恰是靠吸收 `seen` 才不会把别的 isolate
  * 写得更高的计数压回去——两者是同一个旋钮的两个方向，不是顺手一行。
  * 两个方向各有一格用例钉着：
  * `tests/contract/admin-keys-write.test.ts`
@@ -397,7 +397,7 @@ export function keyPatchHandler(deps: KeysWriteDeps) {
     if (unevict) { next.evicted = false; next.evictedReason = null; }
     // **摊平一份新的，不是复用 `EMPTY_STATS` 那个 frozen 单例。**
     // ⚠️ 这里原来写的理由是「整池共享同一个对象时，任何一处顺手改一个计数都会同时改掉
-    // 别的 key 那一份（冻结只在严格模式下抛）」——**那个理由在本仓不成立**（复评 L6）：
+    // 别的 key 那一份（冻结只在严格模式下抛）」——**那个理由在本仓不成立**（复评发现）：
     // 本仓是 ESM/TS，**全程严格模式**，真有人原地改共享单例会当场抛 `TypeError`，
     // 不会静静串改；而且今天 `src/` 里没有任何一处原地改 `record.stats`
     // （`src/core/admin/stats.ts` 里凡是把它当成**一份新的 stats** 用的地方同样都摊平，

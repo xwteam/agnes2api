@@ -76,7 +76,7 @@ function afterParam(raw: string | undefined): number | null {
  * 时间窗边界（`EVENT_WINDOW_MS`，1 小时）才会触发**，单纯"快了几分钟但还在
  * 同一个窗口内"不会。
  *
- * ⚠️ **评审 F5：上面这句"1 小时"极易被读错，专门澄清一次——这条判据看的是
+ * ⚠️ **评审发现：上面这句"1 小时"极易被读错，专门澄清一次——这条判据看的是
  * 「有没有跨过窗口边界」，与偏移量的绝对大小无关，"1 小时"只是窗口宽度这个
  * 参照系，不是"至少要偏移这么多"的门槛。** 反例两组，都已实测：偏移仅
  * **2 毫秒**、但恰好跨在窗口边界上（例如 `now` 在窗口末尾前 1ms、`after` 在
@@ -138,7 +138,7 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
       // 前端据此判断「保留上一次的 after」还是「推进到新值」（见 pure/events.mjs 的
       // cursorOutcome —— 它把"没有新事件"与"后端契约被破坏了"分成两支）。
       cursor,
-      // **本 isolate** 的自述状态与标识（评审 M2：多 isolate 下相邻两次轮询可能落到
+      // **本 isolate** 的自述状态与标识（评审发现：多 isolate 下相邻两次轮询可能落到
       // 不同 isolate，`buffered`/`dropped`/`budgetExhausted` 因此可能来回跳——
       // 带上 `shardId` 面板才能把"这句话说的是哪一个 isolate"钉清楚）。
       shardId: status.shardId,
@@ -164,9 +164,9 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
 }
 
 /**
- * `GET /admin/api/events/download`（订正 F8）。
+ * `GET /admin/api/events/download`（订正）。
  *
- * **刻意返回裸 `Response` 而不是 `c.text()`**：progress.md 登记的 N2 说「第一个返回
+ * **刻意返回裸 `Response` 而不是 `c.text()`**：progress.md 登记的那条发现说「第一个返回
  * 裸 Response 的管理端点一出现，写反的 nosniff 顺序就让它静默少一条头」，而当时的
  * 路由清单下那条变异是**不可观测**的。这里主动把它变成可观测的，并配一条契约断言
  * （见 `tests/contract/admin-events.test.ts` 的
@@ -174,7 +174,7 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
  * 护栏又变回摆设（变异表已实测：`c.text()` 抓不住这条，两种写法都带 nosniff，
  * 这条差异只能靠注释 + 评审守住）。
  *
- * **同样clamp 到 `MAX_LIMIT`（评审发现 M3）**：候选键空间在「索引无上限增长」修完之后已经结构性有界
+ * **同样clamp 到 `MAX_LIMIT`（评审发现）**：候选键空间在「索引无上限增长」修完之后已经结构性有界
  * （`EVENT_WINDOW_RETAIN × EVENT_SLOTS`，不再随部署年龄增长），但单次归并结果的
  * 理论上限仍是"候选键数 × 每键 100 条"，直接全量序列化没有必要——与列表端点用
  * 同一个上限，行为可预期。

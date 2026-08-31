@@ -24,7 +24,7 @@ import type { Storage } from "../ports/storage.js";
  * `pool:index`/`configHolder`/`admin:session:`/`tend:lock`……），这个保留键用一个
  * **前导空格**开头——业务代码不可能写出这样的键，不存在碰撞可能。
  *
- * ⚠️ **评审 F3**：这个常量第一版写的是字面 NUL 字节（`\x00`），不是这行注释描述的
+ * ⚠️ **评审发现**：这个常量第一版写的是字面 NUL 字节（`\x00`），不是这行注释描述的
  * 前导空格——git 因此把整个文件判成二进制，后果不是"风格问题"：评审包生成时对
  * 这个文件只吐一行 `Binary files a/... and b/... differ`（评审没看过这一轮最核心
  * 文件的代码）；`grep -rn "implements Storage"` 之类的审计静默跳过它、连

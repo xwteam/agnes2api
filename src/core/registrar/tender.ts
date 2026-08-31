@@ -228,7 +228,7 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
 
   // 单次铸 key 的最坏墙钟：等满验证码超时，且 `code_timeout` 属于通道级失败会降级，
   // 所以同一个补池名额最坏要在 chain 上的每条通道各等满一次。这是墙钟里**占绝对
-  // 大头**的一项（默认 120 秒/通道），也正是 M1 之后新出现的那个撞墙钟场景：两条
+  // 大头**的一项（默认 120 秒/通道），也正是后来新出现的那个撞墙钟场景：两条
   // 通道同时收不到信时，5 个名额 ×2 通道 ×120 秒 = 1200 秒 > Cron 的 900 秒。
   const worstAttemptMs = deps.config.codeTimeoutMs * chain.length;
 

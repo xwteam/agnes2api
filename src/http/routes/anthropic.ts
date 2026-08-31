@@ -40,7 +40,7 @@ export function anthropicRoutes(deps: DispatchDeps & UsageRecording): Hono {
      */
     const latencyMs = deps.now() - startedAt;
     const record = (tokensIn: number, tokensOut: number) => recordUsage(deps, {
-      // ⚠️ **这里刻意不做 `String(...)` 强转**（收口复评 H1）：这一段在
+      // ⚠️ **这里刻意不做 `String(...)` 强转**（收口复评）：这一段在
       // `record` 闭包体里，**而它在「Tier-2 关着就 return」之前求值** ⇒ 一个
       // `{"model":{"toString":1,"valueOf":1}}` 的请求体会让 `String()` 自己抛，
       // 把**关着统计的部署**也打成 500（全局约束 16：关必须是零成本）。
