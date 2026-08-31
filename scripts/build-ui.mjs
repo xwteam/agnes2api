@@ -4,7 +4,7 @@
  * 不转译、不打包、不压缩——产物字节与源文件完全相同，
  * 因此把 admin-ui/ 原样当静态文件挂在 /admin/ 下就是一个完整可调试的面板。
  * ⚠️ 这句原来写的是「admin-ui/index.html 用浏览器直接打开仍然是完整可调试的面板」，
- * 那句**是假的**（P3b Task 7 阶段验收实测推翻）：index.html 的资源引用是绝对路径，
+ * 那句**是假的**（阶段验收实测推翻）：index.html 的资源引用是绝对路径，
  * file:// 下会解析成 file:///admin/... 而全部 404；而且现代浏览器把 file:// 的源当成
  * null，type="module" 的脚本会被 CORS 挡下。可执行的验收步骤见 admin-ui/README.md。
  * 这是守住硬约束 4（不引入需要构建步骤的前端框架）的全部依据，
@@ -152,7 +152,7 @@ for (const p of files) {
   };
 }
 
-// 规则 2：体积预算。gzip 后的上限在 CI 里查（Task 8）。
+// 规则 2：体积预算。gzip 后的上限在 CI 里查。
 if (totalBytes >= MAX_RAW_BYTES) fail(`原始总字节 ${totalBytes} 超过 1 MiB`);
 
 const buildHash = createHash("sha256")

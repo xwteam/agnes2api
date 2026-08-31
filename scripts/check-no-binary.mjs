@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 评审 F3 新增的这道门禁（CI 里跑 `scripts/check-no-binary.mjs` 那一步）：`src/`/`tests/`/`admin-ui/`/`scripts/`/`docs/` 下
 // 不许存在被 git 判定为二进制的文件。
-// ⚠️ 范围含**未跟踪**的新文件（P3d Task 9 复评补，理由见下面 `--others` 那一段）。
+// ⚠️ 范围含**未跟踪**的新文件（复评补的，理由见下面 `--others` 那一段）。
 //
 // 起因：`storage-file.ts` 的一个保留键常量第一版写成了字面 NUL 字节而不是转义
 // 写法，git 因此把整份文件判成二进制——后果不是风格问题：
@@ -96,10 +96,10 @@ function parseEolRecord(record) {
 }
 
 /**
- * ⚠️⚠️ **`--others --exclude-standard` 是 P3d Task 9 复评补的，别把它删回去。**
+ * ⚠️⚠️ **`--others --exclude-standard` 是复评补的，别把它删回去。**
  *
  * 原来只列 `--cached`（跟踪文件）⇒ **一个新增文件在 `git add` 之前完全不在扫描
- * 范围内**。这不是理论风险，是本仓实测踩过的一次：P3d Task 9 新增的
+ * 范围内**。这不是理论风险，是本仓实测踩过的一次：当时新增的
  * `tests/ui/dom/keys-verify.test.ts` 里一个字符串分隔符落盘成了字面 NUL 字节，
  * 作者在 `git add` **之前**跑这道门禁，它报的是「288 个文件全部是文本 ✅」——
  * **不是「没问题」，是「没看」**，直到 `git add` 之后才红。

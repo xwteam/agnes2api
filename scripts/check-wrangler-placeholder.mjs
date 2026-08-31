@@ -6,7 +6,7 @@
  * 而这个门禁保证那次改写不会跟着提交上来——公开仓里出现真实 id 属于泄漏部署细节，
  * 与 scan-secrets.sh 是同一条纪律。
  *
- * 第二条断言（binding 名）是 Task 8 复验时登记的一个缺口：`src/entry/worker.ts`
+ * 第二条断言（binding 名）是复验时登记的一个缺口：`src/entry/worker.ts`
  * 硬编码读 `env.POOL`（`Env.POOL: KVNamespace` 字段 + 两处 `new KvStorage(env.POOL)`），
  * 这个名字来自 `wrangler.toml` 的 `[[kv_namespaces]] binding = "POOL"`——**两边只是
  * 靠约定对上，没有任何类型系统或测试把它们钉在一起**。契约测试用 miniflare 的
