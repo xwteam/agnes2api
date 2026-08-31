@@ -178,7 +178,7 @@ function addField(container, path, kind) {
   container.appendChild(built.wrap);
   nodes.fields[path] = built;
   // **两种事件都收**：文本框走 `input`，下拉与开关走 `change`。
-  // 漏掉任一种，那一类控件在诊断态下就再也提交不上去（F1 的反面）。
+  // 漏掉任一种，那一类控件在诊断态下就再也提交不上去（那条发现的反面）。
   for (const type of ["input", "change"]) {
     built.input.addEventListener(type, () => { touched.add(path); });
   }
@@ -202,7 +202,7 @@ function renderOne(built) {
     setLock(built, v.locked, v.lockedBy);
     // **凭据框永远是空的**：它没有明文可回填（设计 §8.6），占位符说「留空则不修改」。
     built.input.value = "";
-    // 锁定的凭据框不许可编辑（M11）。**由这里显式决定**，见 `setLock` 上面那段。
+    // 锁定的凭据框不许可编辑（评审发现）。**由这里显式决定**，见 `setLock` 上面那段。
     built.input.disabled = v.locked === true;
     // ⚠️ **清空按钮不跟着 `locked` 一起禁用，这一行是订正。**
     // 它清的是**存储里那一份**，而 env 锁定恰恰是「清掉存储那份最安全」的状态
@@ -223,7 +223,7 @@ function renderOne(built) {
     // 那会把「关掉注册机 / 把那把 key 填回去」这两条自救路径在 UI 上堵死，
     // 而后端明明放行。只有「这一格单独没读到」才置灰——那时改它也没有意义。
     //
-    // ⚠️ **史实订正（复评 F5）**：改动前这一行写的是 `disabled = true`，
+    // ⚠️ **史实订正（复评发现）**：改动前这一行写的是 `disabled = true`，
     // 但下面那句 `setLock(built, false, null)` 会把它抹回 `false`（那行已删，
     // 见 `setLock` 上面那段）⇒ **诊断态从来没被置灰过**，真正没生效的是
     // 「单独一格没读到」那一半。这一行是让两种状态**第一次分得开**，
@@ -237,7 +237,7 @@ function renderOne(built) {
     env: displayValue(v.env),
     effective: displayValue(v.effective),
   });
-  // 被 env 锁定的字段置灰（M11）。**由这里显式决定**，见 `setLock` 上面那段。
+  // 被 env 锁定的字段置灰（评审发现）。**由这里显式决定**，见 `setLock` 上面那段。
   built.input.disabled = v.locked === true;
   // 输入框里回填**存储层**那个值（面板真正在改的就是那一层）；存储里没有就留空，
   // 生效值另在上面那一行里写着。
@@ -318,7 +318,7 @@ function render() {
   // 遗留待办里，别把它读成「读取态会把屏幕清干净」。
   if (saved === null) clearReadback();
 
-  // ⚠️⚠️ **危险区那一行回执同样必须在这里作废**（复评回填 F1）。
+  // ⚠️⚠️ **危险区那一行回执同样必须在这里作废**（复评回填）。
   //
   // 它与上面那段是**同一个形状的第二例**，而它逃过了上面那段：上面清的是
   // `nodes.readback`，判据是「这份数据是不是保存回执」；危险区那一行由 `doReset()` /
@@ -682,7 +682,7 @@ function confirmReset() {
     body.appendChild(el("p", { class: "muted note" },
       t("set.danger.reset.propagation", { bound: fmtDuration(p.visibilityUpperBoundMs) })));
   } else {
-    // ⚠️ **上界读不出来时这句话不许整条消失**（复评回填 F4）：上一版这里没有 else，
+    // ⚠️ **上界读不出来时这句话不许整条消失**（复评回填）：上一版这里没有 else，
     // 于是 `GET /admin/api/config` 失败之后弹窗里**一个字都不提传播**——
     // 而设计 §5.2 要求的是「必须显示，不许写立即生效」，「不显示」不是它的一档。
     // 读不到的只是那个数，「别的副本不会在这一刻看到」这件事照旧成立。
@@ -700,7 +700,7 @@ async function doReset() {
     // **回读之后**才刷界面（与 `save()` / `doClear()` 同一条纪律）：`res` 就是
     // 后端回读出来的新状态本身。
     data = res;
-    // ⚠️⚠️ **上一次保存留下的回读行与高亮必须在这里显式作废**（复评回填 F2）。
+    // ⚠️⚠️ **上一次保存留下的回读行与高亮必须在这里显式作废**（复评回填）。
     //
     // `render()` 里那段清理的判据是 `isSaveReceipt()`，而它认的是「`changed` 这一格在不在」
     // ——**重置回执里也有 `changed`**（`src/http/admin/handlers/config.ts` 的
@@ -717,7 +717,7 @@ async function doReset() {
     for (const path of changed) {
       if (nodes.fields[path] !== undefined) nodes.fields[path].wrap.classList.add("changed");
     }
-    // ⚠️ **按 `changed` 分岔**（复评回填 F3）：重置对一部分字段**什么都没做**
+    // ⚠️ **按 `changed` 分岔**（复评回填）：重置对一部分字段**什么都没做**
     //（存储里本来就没有值、或者被环境变量锁着，而那正是五份 ADMIN.md 反复强调的那一句），
     // 那一档一格都没高亮，说「已经高亮出来」就是当面说反话。
     // 两档的形状照 `save()` 里 `set.readback` / `set.readback.none` 那一对。
@@ -740,7 +740,7 @@ async function doReset() {
  *
  * ⚠️ **池大小是点开这一刻现取的**（`GET /admin/api/keys`，走 isolate 快照：
  * **命中快照那一次零存储读**），不是常驻轮询——本板块那条「没有自动刷新」的纪律照旧。
- * ⚠️ **上一版这里写的是无条件的「零存储读」，那是假的**（复评回填 F7）：
+ * ⚠️ **上一版这里写的是无条件的「零存储读」，那是假的**（复评回填）：
  * `src/core/keypool-repo.ts` 的 `all()` 第一行是
  * `if (this.cacheTtlMs <= 0) return await this.loadAll();`——而 `POOL_CACHE_TTL_MS=0`
  * 是五份 DEPLOY.md 明写的逃生口；快照过期时 `ensureFresh()` 同样真读。

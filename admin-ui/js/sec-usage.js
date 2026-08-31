@@ -62,7 +62,7 @@ let seq = 0;
 /** 下钻的世代号。**与 `seq` 分开**，理由见 `openDay()` 上方那段。 */
 let detailSeq = 0;
 /**
- * 板块现在是不是显示着。**`loadStatic()` 那条链唯一的作废判据**（评审 M5）：
+ * 板块现在是不是显示着。**`loadStatic()` 那条链唯一的作废判据**（评审发现）：
  * 它不经 `load()`，所以拿不到世代号；切走之后它回来重绘一个不可见的板块，
  * 今天没有用户可见的后果，但那是「一条没有作废条件的异步链」——
  * 本板块另外两条都有，这一条没有理由是例外。
@@ -96,7 +96,7 @@ function tile(labelKey, tipKey, tipParams) {
 function block(titleKey) {
   const wrap = el("div", { class: "card block" });
   // **标题节点要交出去**：`≈` 得真的挂在标题上，而不是挂在整张表下面
-  //（收口复评 G2：上一版 append 到 `wrap` ⇒ 子节点序是
+  //（收口复评：上一版 append 到 `wrap` ⇒ 子节点序是
   // `h3, div, span.approx`，`≈` 落在表格**下面**，与注释和用例名都对不上，
   // 而用例只数个数 ⇒ 改 append 目标那一行**不会红**）。
   const head = elI18n("h3", titleKey);
@@ -260,7 +260,7 @@ function buildNoteBanner(note, onRetry) {
 /**
  * 重试按钮。**`onRetry` 是必填的**：上一版无参数、一律调 `load()`，
  * 于是单日下钻那条错误横幅上的「刷新」重拉的是**汇总**而不是那一天
- * ——一颗按了不解决问题的按钮（评审 M1）。
+ * ——一颗按了不解决问题的按钮（评审发现）。
  */
 function retryButton(onRetry) {
   const btn = elI18n("button", "common.refresh", { type: "button", class: "usage-retry" });
@@ -273,7 +273,7 @@ function retryButton(onRetry) {
  * `≈` 看 `approximate`，「不完整」看 `malformedKind`。**一个都不许在前端硬编码。**
  *
  * ⚠️⚠️ **`incompleteOf` 判据直接走 `malformedKind()`，刻意不经 `summaryCards().complete`**
- *（定向复评 N2）：`complete` 是拿 `total` 算的
+ *（定向复评）：`complete` 是拿 `total` 算的
  *（`total === null ? true : …`），而 **`GET /admin/api/usage/:date` 的响应里
  * 根本没有 `total` 字段**（`src/http/admin/handlers/usage.ts` 的 `usageDateHandler`
  * 返回的是 `hours` / `byModel` / `byProtocol` / `shards` / `malformed`）
@@ -287,7 +287,7 @@ function retryButton(onRetry) {
  * 而那条端点没有 total，拿它当「缺没缺块」的判据是结构性错误」正面钉着。
  *
  * ⚠️ **这两个标记只给「整块」用**：六张卡是整段区间的合计，说它不完整是准确的；
- * **表格的每一行不许各自挂标记**，理由见 `buildDayTable` 上方（定向复评 N4）。
+ * **表格的每一行不许各自挂标记**，理由见 `buildDayTable` 上方（定向复评）。
  */
 function honestyMarks(resp) {
   return {
@@ -295,9 +295,9 @@ function honestyMarks(resp) {
     // `partial` 那一档的数字是真的、只是不全 —— 渲染成完整的就是伪造
     // 「这份数据是全的」这个印象，而全局约束 9 禁的伪造不只是伪造 `0`。
     // `all` 那一档**不走这里**：那时一个数字都没有（整块是 `unavailable`），
-    // 说「下面这些数字缺了几块」是在描述一堆不存在的数字（定向复评 N7）。
+    // 说「下面这些数字缺了几块」是在描述一堆不存在的数字（定向复评）。
     // `malformedKind` 判成 `"partial"` 时 `malformed` 已经被 `finite()` 验过是数字，
-    // 所以这里不再叠一层 `typeof` 兜底（收口复评 G6：那是一条走不到的支）。
+    // 所以这里不再叠一层 `typeof` 兜底（收口复评：那是一条走不到的支）。
     incompleteOf: malformedKind(resp) === "partial" ? resp.malformed : null,
   };
 }
@@ -306,19 +306,19 @@ function honestyMarks(resp) {
  * 表格标题旁边那一个 `≈`。
  *
  * ⚠️ **表格里的数字与卡片上的一样是近似值，但 `≈` 只在这里出一次，不逐格出**
- *（定向复评 N5：上一版 `numberCells` 的 `marks` 形参恒为 `null` ⇒
+ *（定向复评：上一版 `numberCells` 的 `marks` 形参恒为 `null` ⇒
  * 六张卡写 `≈ 100`、紧挨着的日表写 `100`，**同一个数字两种说法**，
  * 而那个不一致是沉默的——没有任何注释说过表里为什么不出）。
  * 逐格出的话 30 天档是 7 列 × 30 行 = 210 个 `≈`，那时它是装饰不是信号。
  * ⇒ **一张表出一个，挂在标题节点上**，tooltip 与卡片上那个逐字相同（同一个 `approxTitle()`）。
  *
- * ⚠️⚠️ **调用点必须先确认这一块真的出了数字**（收口复评 F1）：上一版在
+ * ⚠️⚠️ **调用点必须先确认这一块真的出了数字**（收口复评）：上一版在
  * 「这张表是空的」那条早退**之前**就无条件挂了它，实测（`days: null` /
  * `note: "read_failed"` / `approximate: true`）得到一张写着「这段区间的按天数据
  * 读不出来」的表、**下面挂着一个 `≈`**；而那一档下六张卡的 `≈` 反而都不出
  *（`fillCell` 的 `"unknown"` 支提前 return）⇒ **全页唯一一个 `≈` 就挂在
  * 那张说「读不出来」的表上**。
- * ⭐⭐ 记一条形状，它是本任务最贵的一条：**我在同一个提交里立了 N7 的裁定
+ * ⭐⭐ 记一条形状，它是本任务最贵的一条：**我在同一个提交里立了那条裁定
  *（「下面一个数字都没有，就不许说『下面这些数字…』」），然后在另一处违反了它。**
  * ⇒ **立完一条裁定，回头 grep 一遍自己这一轮碰过的所有同型位置。**
  */
@@ -390,7 +390,7 @@ function headRow(keys) {
  * 写成「请求 0 次」**、延迟格还写着 EN DASH（= 「读成功了只是没样本」）。
  * 判据现在收在 `pure/usage.mjs` 的 `rowState()` 里，两张表都必须过它。
  *
- * ⚠️ **它不收 `marks`，这是刻意的**（定向复评 N5）：上一版留了一个第四形参
+ * ⚠️ **它不收 `marks`，这是刻意的**（定向复评）：上一版留了一个第四形参
  * 而两个调用点都传 `null` ⇒ **一个恒为死的形参**，看起来像「表里也会出标记」
  * 而实际上永远不出。`≈` 改成一张表出一个、挂在标题上（见 `approxTitleMark`），
  * 「不完整」改成整块出一处（见 `buildDayTable` 上方）。**死形参一律删掉，
@@ -422,13 +422,13 @@ function keyCell(text) {
 /**
  * 日汇总表。点「下钻」展开那一天的分解。
  *
- * ⚠️⚠️ **表格的每一行不挂「不完整」标记，这一条是订正过的**（定向复评 N4）：
+ * ⚠️⚠️ **表格的每一行不挂「不完整」标记，这一条是订正过的**（定向复评）：
  * 上一版给**每一行**的日期格挂了一个，而 `malformed` 数的是**整段区间**的畸形分片
  * ⇒ 30 天档下 30 行全写「不完整」，其中绝大多数天其实是完整的
  * ——**对那些天它是一句假话**。上一版自己的注释还承认「我们并不知道具体哪一格短了」，
  * 却对每一格都下了断言。⭐ 记一条形状：**「我们不知道是哪一个」推不出
  * 「所以每一个都标上」，它只推得出「只能对整体说」。**
- * ⇒ 「缺了几块」**不在表格里逐行说**。它在哪里说，逐处列全（收口复评 G3：
+ * ⇒ 「缺了几块」**不在表格里逐行说**。它在哪里说，逐处列全（收口复评：
  * 上一版这里写「只由整块那一处说」而**漏掉了六张卡**，同一提交的用例
  * 第 ② 句正面断言「六张卡带标记」、`fillCell()` 也确实挂）：
  * · 汇总侧 = **1 条红条**（`usage.note.partialMalformed`，`render()` 里由 `note` 驱动）
@@ -436,7 +436,7 @@ function keyCell(text) {
  * · 下钻侧 = `buildDetail()` 里那一句单日口径的话。
  * **两张表格的行：一个都不挂。**
  *
- * ⚠️ `≈` 也只出一个，挂在表标题上（`approxTitleMark`，定向复评 N5）。
+ * ⚠️ `≈` 也只出一个，挂在表标题上（`approxTitleMark`，定向复评）。
  */
 function buildDayTable(state, marks) {
   const { wrap, body, head } = block("usage.table.title");
@@ -446,7 +446,7 @@ function buildDayTable(state, marks) {
     //    `read_failed` 那一档 `days` 是 null ⇒ 行数也是 0，照后一句渲染
     //    等于把一次读取失败说成「这段时间本来就没有日子」。
     // ⚠️⚠️ **判据是白名单，收在 `pure/usage.mjs` 的 `readSucceeded()` 里**
-    //    （定向复评 N6）：上一版这里写的是黑名单
+    //    （定向复评）：上一版这里写的是黑名单
     //    `state === "unavailable" ? 不可用 : 空`，方向反的；而分解表那一边是白名单。
     //    同一件事两张表两个方向，本身就是下一次分叉的入口。
     body.appendChild(elI18n(
@@ -455,8 +455,8 @@ function buildDayTable(state, marks) {
     ));
     return wrap;
   }
-  // ⚠️ **`≈` 挂在早退之后**（收口复评 F1）：上面那条早退意味着这张表一个数字都没有，
-  //    而 `≈` 是一句关于「下面那些数字」的话。挂在**标题节点**上（G2）。
+  // ⚠️ **`≈` 挂在早退之后**（收口复评）：上面那条早退意味着这张表一个数字都没有，
+  //    而 `≈` 是一句关于「下面那些数字」的话。挂在**标题节点**上（理由见 `approxTitleMark` 上方那段）。
   const mark = approxTitleMark(marks);
   if (mark !== null) head.appendChild(mark);
   const table = el("table");
@@ -482,7 +482,7 @@ function buildDayTable(state, marks) {
 /**
  * 分解表的一张（小时 / 模型 / 协议共用）。
  *
- * ⚠️ **同样不收 `marks`**：与日表同一条理由（定向复评 N2 + N4）——
+ * ⚠️ **同样不收 `marks`**：与日表同一条理由（定向复评）——
  * 我们不知道是哪一个小时 / 哪一个模型短了，就只能对整块说。
  * 上一版这里有一个 `marks` 形参，而它在这条端点上**结构性地永远是 `null`**
  *（`honestyMarks` 当时经 `summaryCards().complete`，而那条端点没有 `total`），
@@ -494,7 +494,7 @@ function breakdownTable(titleKey, keyLabelKey, map, numeric, state) {
   const rows = breakdownRows(map, numeric);
   if (rows.length === 0) {
     // 同上：**这一天读不出来**与**这一天没有记录**是两句话。那条评审点名的「第三屏」。
-    // 判据与日表共用同一个 `readSucceeded()`（定向复评 N6）。
+    // 判据与日表共用同一个 `readSucceeded()`（定向复评）。
     wrap.appendChild(elI18n(
       "p", readSucceeded(state) ? "usage.detail.empty" : "usage.detail.unavailable",
       { class: "muted note" },
@@ -542,7 +542,7 @@ function buildDetail() {
   head.appendChild(close);
   wrap.appendChild(head);
 
-  // ⚠️ 这颗重试按钮重拉的是**这一天**，不是汇总（评审 M1）。
+  // ⚠️ 这颗重试按钮重拉的是**这一天**，不是汇总（评审发现）。
   const retryDay = () => { openDay(detailDate); };
 
   if (detailFailed) {
@@ -570,11 +570,11 @@ function buildDetail() {
 
   // 缺了几块这件事在这条端点上只有字段说得出来（它不发畸形 code）。
   const marks = honestyMarks(detailData);
-  // ⚠️ **同 F1：这一天读不出来时三张表一个数字都没有，那时不许挂 `≈`。**
+  // ⚠️ **同 `approxTitleMark` 上方那条：这一天读不出来时三张表一个数字都没有，那时不许挂 `≈`。**
   //    `readSucceeded(state)` 与两张表决定「空表说哪一句」用的是同一个判据。
   const mark = readSucceeded(state) ? approxTitleMark(marks) : null;
   if (mark !== null) head.appendChild(mark);
-  // ⚠️⚠️ **只在 `partial` 那一档说，`all` 不说**（定向复评 N7）：
+  // ⚠️⚠️ **只在 `partial` 那一档说，`all` 不说**（定向复评）：
   //    `all` 时整块是 `unavailable`、下面三张表**一个数字都没有**，
   //    而这句话的主语是「下面这些数字」——那是在描述一堆不存在的数字。
   //    `all` 那一档由 `note` 那条红条（「每一个都是畸形的……去查存储」）
@@ -616,7 +616,7 @@ function render() {
   const banner = buildNoteBanner(note, load);
   if (banner !== null) host.appendChild(banner);
   // ⚠️⚠️ **判据是「有没有人用 error 档说过『读不出来』」，不是「有没有横幅」**
-  //（评审 M2）。上一版写的是 `banner === null`，于是 `range_clamped`（warn 档）
+  //（评审发现）。上一版写的是 `banner === null`，于是 `range_clamped`（warn 档）
   // 配上 `days: null` 时：六张卡全是 EM DASH，而页面上只有一条温和的黄条
   // ——**没有任何一句说「读不出来」**。
   // ⚠️ 今天后端发不出这个组合，但本文件 `buildNoteBanner` 上方刚论证过
@@ -743,7 +743,7 @@ export const usageSection = {
 
   onHide() {
     // **三件事都要做**：abort 省掉真实网络往返，两个世代号保证汇总与下钻
-    // 回来的那份都被丢掉，`shown` 作废 `loadStatic()` 那条链（评审 M5）。
+    // 回来的那份都被丢掉，`shown` 作废 `loadStatic()` 那条链（评审发现）。
     if (abort) { abort.abort(); abort = null; }
     seq++;
     detailSeq++;

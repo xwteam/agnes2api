@@ -92,7 +92,7 @@ describe("媒体裁定：不内嵌远端、不放宽 CSP", () => {
    * 变红条件：把 `mediaEmbeddable()` 放宽成 `/^https?:\/\//i`（「远端图片也画出来吧」）
    * ⇒ 这一格红。
    */
-  it("远端 http(s) 地址一律不可内嵌 —— 面板 CSP 的 img-src 里没有任何远端主机（订正 F6）", () => {
+  it("远端 http(s) 地址一律不可内嵌 —— 面板 CSP 的 img-src 里没有任何远端主机（订正）", () => {
     expect(mediaEmbeddable("https://cdn.example.invalid/a.png")).toBe(false);
     expect(mediaEmbeddable("http://cdn.example.invalid/a.png")).toBe(false);
     // **同源那条也不行**：它同样是一条上游给的地址，而「同源」这件事在这里只是碰巧

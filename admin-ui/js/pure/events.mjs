@@ -82,7 +82,7 @@ export function itemsOf(body) {
  * 事件列表区该显示哪条消息（`null` = 显示表格）。与 `pure/keys.mjs` 的
  * `listMessageKey` 同一个模式（判据一律不写在 `sec-events.js` 里，见硬规则 1）。
  *
- * **评审 M5**：原来 `sec-events.js` 用一个模块级的 `everLoaded` 标记（"这次进入
+ * **评审发现**：原来 `sec-events.js` 用一个模块级的 `everLoaded` 标记（"这次进入
  * 本板块之后有没有成功过一次"），`onShow()` 每次都把它重置成 `false`——于是重新
  * 进入本板块时，只要第一轮轮询恰好失败，就会把 `view` 里明明还留着的历史事件
  * 整段换成"读取失败"，即使数据一直都在，只是这一轮没刷新成功。
@@ -113,7 +113,7 @@ export function eventsListMessageKey(loadError, viewLength, filteredLength, clea
 }
 
 /**
- * 本 isolate 的分片 id（评审 M2）。**没有数据时是 null**，不是空串——
+ * 本 isolate 的分片 id（评审发现）。**没有数据时是 null**，不是空串——
  * 空串会被当成"有值但恰好是空"，与"读不出来"混在一起。
  */
 export function shardIdOf(body) {
@@ -122,7 +122,7 @@ export function shardIdOf(body) {
 }
 
 /**
- * 响应生成时刻（后端 `now()`，评审 N1 点名的第二个零消费者字段，[LOW]）。
+ * 响应生成时刻（后端 `now()`，评审点名的第二个零消费者字段，[LOW]）。
  *
  * 与 `pure/keys.mjs` 的 `generatedAt` 同一条理由（那边用它当 `cooldownRemaining`
  * 的参照时刻，不用浏览器时钟）：这里没有需要拿它算差值的场景，**最小、低风险的
@@ -140,7 +140,7 @@ export function generatedAtOf(body) {
  * 也是"一切正常"的值，混进"读不出来"里会把面板变成在撒谎。
  *
  * - `truncated`（评审补的）：`after`+`limit` 组合截掉了一部分本该出现的旧事件。
- * - `buffered`（评审 N1）：本 isolate 缓冲里还有多少条事件没有落盘。isolate 在
+ * - `buffered`（评审发现）：本 isolate 缓冲里还有多少条事件没有落盘。isolate 在
  *   下一次成功 flush 之前被回收（Worker 上是常态）时，这些事件会**永久丢失**，
  *   而 `dropped` 不计它（`dropped` 只统计已经落盘/已经在内存环里明确丢弃的那些，
  *   还"活在"缓冲区里、尚未有机会落盘或丢弃的不算）。字段消费者审计发现这是

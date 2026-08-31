@@ -406,7 +406,7 @@ export const I18N = {
   // 只差「向邮箱服务发一次请求」与「向上游发一次请求」这一处。
   "keys.action.verify": { "zh-CN": "验活", "zh-TW": "驗活", en: "Verify", ja: "疎通確認", ko: "활성 확인" },
   "keys.verify.running": { "zh-CN": "正在探测…", "zh-TW": "正在探測…", en: "Probing…", ja: "確認中…", ko: "확인 중…" },
-  // 只读探针那句话（订正 F8）。**它必须是可见文本，不是 tooltip**：运维会以为
+  // 只读探针那句话（订正）。**它必须是可见文本，不是 tooltip**：运维会以为
   // 「验活成功」就等于把 strikes 清了，而这条端点写零个存储字段。
   "keys.verify.readOnlyNote": { "zh-CN": "这是一次人造探测，不改变这把 key 的状态：strikes、冷却、用量统计都不会动。", "zh-TW": "這是一次人造探測，不改變這把 key 的狀態：strikes、冷卻、用量統計都不會動。", en: "This is a synthetic probe. It does not change this key's state — strikes, cooldown and usage stats all stay untouched.", ja: "これは人工的なプローブです。この key の状態は変わりません（strikes・クールダウン・利用統計はいずれも動きません）。", ko: "이것은 인위적인 탐지입니다. 이 key의 상태는 바뀌지 않습니다(strikes·쿨다운·사용량 통계 모두 그대로입니다)." },
   "keys.verify.hintEnabled": { "zh-CN": "按一下会真的向上游发一次请求。", "zh-TW": "按一下會真的向上游發一次請求。", en: "Each click really does send one request upstream.", ja: "クリックするたびに上流へ実際にリクエストを 1 回送ります。", ko: "누를 때마다 업스트림으로 실제 요청을 한 번 보냅니다." },
@@ -463,7 +463,7 @@ export const I18N = {
   "ov.freshness.pool":  { "zh-CN": "别的实例判定的冷却 / 剔除：最多晚 {upper}（{ttl} 快照 + 约 {edge} KV 边缘缓存）。这个窗口里本实例的写会覆盖对方刚写下的调度状态。", "zh-TW": "別的實例判定的冷卻 / 剔除：最多晚 {upper}（{ttl} 快照 + 約 {edge} KV 邊緣快取）。這個視窗裡本實例的寫入會覆蓋對方剛寫下的排程狀態。", en: "Cooldowns/evictions decided by another instance: up to {upper} late ({ttl} snapshot + about {edge} KV edge cache). Within that window, writes from this instance also overwrite the scheduling state the other one just wrote.", ja: "他のインスタンスが判定したクールダウン／除外：最大 {upper} 遅れます（{ttl} のスナップショット + 約 {edge} の KV エッジキャッシュ）。この間、このインスタンスの書き込みは相手が書いたばかりのスケジューリング状態を上書きします。", ko: "다른 인스턴스가 판정한 쿨다운/제외: 최대 {upper} 늦게 반영됩니다({ttl} 스냅숏 + 약 {edge} KV 엣지 캐시). 이 구간에서는 이 인스턴스의 쓰기가 상대가 방금 기록한 스케줄링 상태를 덮어씁니다." },
   "ov.freshness.config":{ "zh-CN": "配置保存之后生效：最多 {upper}（{ttl} 配置缓存 + 约 {edge} KV 边缘缓存）。不是「立即生效」。", "zh-TW": "設定儲存之後生效：最多 {upper}（{ttl} 設定快取 + 約 {edge} KV 邊緣快取）。不是「立即生效」。", en: "Config changes take effect after saving: up to {upper} ({ttl} config cache + about {edge} KV edge cache). Not \"immediately\".", ja: "設定は保存後に反映されます：最大 {upper}（{ttl} の設定キャッシュ + 約 {edge} の KV エッジキャッシュ）。「即時反映」ではありません。", ko: "설정은 저장 후 반영됩니다: 최대 {upper}({ttl} 설정 캐시 + 약 {edge} KV 엣지 캐시). \"즉시 반영\"이 아닙니다." },
 
-  // F9：设计文档 §10.1「今日用量」的订正。Tier-1 的 stats 是自这把 key 加入以来的
+  // 设计文档 §10.1「今日用量」的订正。Tier-1 的 stats 是自这把 key 加入以来的
   // 累计值，没有任何时间维度；把它标成「今日」是撒谎，标题直接写「累计（≈）」。
   // **不再硬编码 (≈)**：`≈` 现在由 usageStats() 的 approx 字段驱动，逐格渲染
   // （见 sec-overview.js 的 renderUsage/approxMark），标题只说「累计」这件事本身。
@@ -544,14 +544,14 @@ export const I18N = {
   "ev.pollStatus.active": { "zh-CN": "轮询中", "zh-TW": "輪詢中", en: "Polling", ja: "ポーリング中", ko: "폴링 중" },
   "ev.pollStatus.paused": { "zh-CN": "已暂停", "zh-TW": "已暫停", en: "Paused", ja: "一時停止中", ko: "일시 정지됨" },
   "ev.pollStatus.error":  { "zh-CN": "轮询出错，稍后重试", "zh-TW": "輪詢出錯，稍後重試", en: "Polling error, will retry", ja: "ポーリングエラー、後で再試行します", ko: "폴링 오류, 나중에 재시도합니다" },
-  // 评审 M2：轮询指示灯的提示语接上"本 isolate"到底是哪一个（shardId），
+  // 评审发现：轮询指示灯的提示语接上"本 isolate"到底是哪一个（shardId），
   // 拼在状态文案后面，不是独立一句——避免多语言各自维护一套"状态+分片"的组合句。
   "ev.pollStatus.shardSuffix": { "zh-CN": "（本 isolate：{shardId}）", "zh-TW": "（本 isolate：{shardId}）", en: " (this isolate: {shardId})", ja: "（この isolate：{shardId}）", ko: "(이 isolate: {shardId})" },
-  // 评审 N1：`buffered` 单独不占用黄条（见 pure/events.mjs 的 shouldWarn 说明），
+  // 评审发现：`buffered` 单独不占用黄条（见 pure/events.mjs 的 shouldWarn 说明），
   // 但 isolate 随时可能被回收、缓冲里的事件会随之永久丢失——这里补一句 tooltip
   // 常驻提示，愿意看的人看得到，不打扰不关心的人。
   "ev.pollStatus.bufferedSuffix": { "zh-CN": "（本 isolate 还有 {count} 条事件未落盘，isolate 被回收会丢失）", "zh-TW": "（本 isolate 還有 {count} 條事件未寫入，isolate 被回收會遺失）", en: " ({count} events in this isolate not yet persisted — lost if the isolate is recycled)", ja: "（この isolate にはまだ {count} 件のイベントが未保存です。isolate が回収されると失われます）", ko: "(이 isolate에 아직 저장되지 않은 이벤트 {count}건이 있습니다. isolate가 회수되면 손실됩니다)" },
-  // 评审 N1 [LOW]：`generatedAt` 是响应生成时刻，tooltip 报一句"数据截至几点"，
+  // 评审发现 [LOW]：`generatedAt` 是响应生成时刻，tooltip 报一句"数据截至几点"，
   // 运维不用另外去猜面板有没有卡住（同 pure/keys.mjs 用它当参照时刻的理由）。
   "ev.pollStatus.generatedAtSuffix": { "zh-CN": "（数据截至 {time}）", "zh-TW": "（資料截至 {time}）", en: " (data as of {time})", ja: "（データ基準時刻：{time}）", ko: "(데이터 기준 시각: {time})" },
   // 本任务：`malformed` 恒为 0（`src/` 里没有产出畸形条目的路径），非 0 就说明
@@ -700,9 +700,9 @@ export const I18N = {
   "set.danger.reset.effect.unknown": { "zh-CN": "读不到当前配置，因此判断不了重置之后这份配置还会缺什么。这一步照样可以执行，但后果只能按最坏情况准备。", "zh-TW": "讀不到目前設定，因此判斷不了重置之後這份設定還會缺什麼。這一步照樣可以執行，但後果只能按最壞情況準備。", en: "The current configuration could not be read, so there is no way to tell what will be missing after the reset. You can still go ahead, but assume the worst case.", ja: "現在の設定を読み取れないため、リセット後に何が欠けるかを判断できません。実行は可能ですが、結果は最悪の場合を想定してください。", ko: "현재 설정을 읽지 못해 초기화 뒤에 무엇이 빠지는지 판단할 수 없습니다. 그래도 실행할 수는 있지만 결과는 최악의 경우를 가정하세요." },
   // ⚠️ **这一条与上面 `set.danger.reset.propagation` 是同一件事的两档**：上界读得到就说数，
   // 读不到时**照样要说「别的副本不会在这一刻看到」**（设计 §5.2 那条「不许写立即生效」在这一档
-  // 同样成立）——上一版在这一档整句消失，屏幕上于是一个字都不提传播（复评回填 F4）。
+  // 同样成立）——上一版在这一档整句消失，屏幕上于是一个字都不提传播（复评回填）。
   "set.danger.reset.propagation.unknown": { "zh-CN": "读不到这个部署的传播上界；别的副本 / isolate 不会在这一刻就看到这次重置，具体要等多久这里说不出来。", "zh-TW": "讀不到這個部署的傳播上界；別的副本 / isolate 不會在這一刻就看到這次重置，具體要等多久這裡說不出來。", en: "The propagation upper bound for this deployment could not be read; other replicas or isolates will not see this reset at this moment, and there is no number to give for how long it takes.", ja: "このデプロイの伝播の上限を読み取れません。他のレプリカや isolate がこのリセットを見るのはこの瞬間ではありませんが、どれだけかかるかはここでは示せません。", ko: "이 배포의 전파 상한을 읽지 못했습니다. 다른 복제본이나 isolate가 이 초기화를 보는 것은 지금 이 순간이 아니지만, 얼마나 걸리는지는 여기서 말할 수 없습니다." },
-  // ⚠️ **回执分两档，判据是回执里 `changed` 的长度**（复评回填 F3）：上一版只有一句
+  // ⚠️ **回执分两档，判据是回执里 `changed` 的长度**（复评回填）：上一版只有一句
   // 「真的变了的那几格已经高亮出来」，而重置对一部分字段**什么都没做**（存储里本来就没有值、
   // 或者被环境变量锁着）——`changed: []` 那一档一格都没高亮，那句话是当面说反话。
   // `save()` 为同一件事早就有 `set.readback` / `set.readback.none` 两档，这里照它的形状补齐。
@@ -882,7 +882,7 @@ export const I18N = {
   // ⚠️ 与 `usage.table.unavailable` 同一条理由，同一条评审点名的「第三屏」：分片全坏 /
   //    读取失败 / 落在保留期外时三个 map 合出来都是空的，照上面那句渲染就是
   //    把「我们什么都不知道」说成「这一天没有记录」。
-  // ⚠️ **单日口径，不能拿 `usage.incompleteTip` 顶替**（定向复评 N7）：
+  // ⚠️ **单日口径，不能拿 `usage.incompleteTip` 顶替**（定向复评）：
   //    后者逐字写着「这段区间里」，而下钻说的是**一天**。
   "usage.detail.incomplete": { "zh-CN": "这一天有 {malformed} 个分片是畸形的，读不回来。下面这些数字缺了那几块，不是这一天完整的用量。", "zh-TW": "這一天有 {malformed} 個分片是畸形的，讀不回來。下面這些數字缺了那幾塊，不是這一天完整的用量。", en: "{malformed} shard(s) for this day are malformed and could not be read. The numbers below are missing those parts — this is not the complete usage for the day.", ja: "この日は不正なシャードが {malformed} 件あり、読み取れませんでした。以下の数値はその分が欠けており、この日の完全な使用量ではありません。", ko: "이 날짜에 손상된 샤드가 {malformed}개 있어 읽지 못했습니다. 아래 수치는 그만큼 빠져 있어 이 날짜의 완전한 사용량이 아닙니다." },
   "usage.detail.unavailable": { "zh-CN": "这一天的分解读不出来，所以这里是空的——不是这一天没有记录。", "zh-TW": "這一天的分解讀不出來，所以這裡是空的——不是這一天沒有記錄。", en: "The breakdown for this day could not be read, so this is empty — it is not that the day has no records.", ja: "この日の内訳を取得できなかったため空になっています。この日に記録がないという意味ではありません。", ko: "이 날짜의 분해를 읽지 못해 비어 있습니다. 이 날짜에 기록이 없다는 뜻이 아닙니다." },

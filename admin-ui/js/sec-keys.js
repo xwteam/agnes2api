@@ -255,7 +255,7 @@ function verifyControl(v) {
   } else if (s !== undefined && typeof s.code === "string") {
     wrap.appendChild(elI18n("span", verifyResultLabelKey(s.code), { class: "verify-result" }));
     // 只读探针那句话与结果**一起**出现：运维恰恰是在看到「验活通过」的那一刻
-    // 以为 strikes 已经被清掉了（订正 F8）。
+    // 以为 strikes 已经被清掉了（订正）。
     wrap.appendChild(elI18n("span", "keys.verify.readOnlyNote", { class: "muted note verify-note" }));
   }
   return wrap;
@@ -280,7 +280,7 @@ function verifyControl(v) {
  * 这与 `js/sec-usage.js` / `js/sec-models.js` 用世代号守同一件事是同一条判据，
  * 只是这里的「世代」就是这一次自己的那把 controller。
  *
- * ⚠️ **不调 `load()`**（订正 F8）。它是**只读探针**：后端写零个存储字段，
+ * ⚠️ **不调 `load()`**（订正）。它是**只读探针**：后端写零个存储字段，
  * 前端这一侧也不许借着「顺手刷新一下」把这一行的 `strikes` / 分档徽章换掉——
  * 那会让运维以为是验活改的。由 `tests/ui/dom/keys-verify.test.ts` 的
  * 「验活成功后这一行的 strikes 与分档徽章一个字都没变」那一格钉着
@@ -314,7 +314,7 @@ function verifyOne(view) {
       // ⚠️ **收尾整段都在这个 `if` 里面**：`s.ctl !== ctl` 只有一种成因——
       // `onHide()` 已经把这一次作废掉了。此时装定时器与重渲**都是错的**：
       // 那会给一个已经切走的板块留一个 3 秒的孤儿定时器 + 一次不可见的 `render()`，
-      // 而 `stopTimers()` 的注释逐字写着这正是它要消灭的东西（复评 L3）。
+      // 而 `stopTimers()` 的注释逐字写着这正是它要消灭的东西（复评发现）。
       if (s.ctl !== ctl) return;
       s.ctl = null;
       s.inFlight = false;
@@ -439,7 +439,7 @@ function syncHeaderCheckbox() {
 
 function render() {
   // **读失败一律当「没有数据」，且只判这一次**：三处各写一份 `loadError ? ... : data`
-  // 的话，下一次改动很容易只改其中两处（评审 N4）。
+  // 的话，下一次改动很容易只改其中两处（评审发现）。
   const shown = loadError ? null : data;
   syncCounts(shown);
   syncBulkBar();
@@ -548,10 +548,10 @@ function stopTimers() {
  * 而那一次已经被作废、永远不会回来把它放开（`.finally()` 里的
  * `if (s.ctl !== ctl) return;` 此时已经生效）。
  *
- * ⚠️⚠️ **`code` 也必须清（复评 L4）。** 那句「验活通过」**没有任何时间上下文**——
+ * ⚠️⚠️ **`code` 也必须清（复评发现）。** 那句「验活通过」**没有任何时间上下文**——
  * 面板上它长得和「这把 key 现在是好的」一模一样。不清的话，切走十分钟再切回来
  * 仍然显示着上一次的结论，而这十分钟里这把 key 完全可能已经被上游吊销。
- * **结果只在这一行、这一次会话里就地显示**（订正 F8：它不落盘、不进 `stats`），
+ * **结果只在这一行、这一次会话里就地显示**（订正：它不落盘、不进 `stats`），
  * 那条纪律的另一半就是**它也不许跨越一次「离开这个板块」活下来**。
  * ⚠️ **`lastAt` 刻意不清**：后端那道最小间隔闸不会因为你切了个板块就重置，
  * 清掉它只会让运维按下去换回一句 429。

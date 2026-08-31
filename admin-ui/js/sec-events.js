@@ -56,9 +56,9 @@ let lastStatus = {
   dropped: null, budgetExhausted: null, truncated: null, buffered: null,
   cursorAhead: null, malformed: null, cursorBroken: false,
 };
-/** 最近一次成功响应里的本 isolate 分片 id（评审 M2），驱动轮询指示灯的提示文案。 */
+/** 最近一次成功响应里的本 isolate 分片 id（评审发现），驱动轮询指示灯的提示文案。 */
 let lastShardId = null;
-/** 最近一次成功响应的生成时刻（评审 N1 [LOW]），同样只驱动轮询指示灯的提示文案。 */
+/** 最近一次成功响应的生成时刻（评审发现 [LOW]），同样只驱动轮询指示灯的提示文案。 */
 let lastGeneratedAt = null;
 /**
  * 轮询的全部跨轮状态（游标 / 自愈中 / 退避间隔）。**整体来自 `pollOutcome()` 的
@@ -125,7 +125,7 @@ function renderPollIndicator() {
   nodes.pollDot.className = `poll-dot poll-dot-${kind}`;
   let label = t(pollIndicatorLabelKey(kind));
   if (lastShardId !== null) label += t("ev.pollStatus.shardSuffix", { shardId: lastShardId });
-  // 评审 N1：`buffered` 是"本 isolate 还没落盘的事件数"——单纯有数字不算异常
+  // 评审发现：`buffered` 是"本 isolate 还没落盘的事件数"——单纯有数字不算异常
   // （见 pure/events.mjs 的 shouldWarn 注释），但 isolate 随时可能被回收，
   // 这里没有黄条那么显眼，但至少让愿意看 tooltip 的人看得到这个风险。
   if (lastStatus.buffered !== null && lastStatus.buffered > 0) {
@@ -139,7 +139,7 @@ function renderPollIndicator() {
   if (lastStatus.malformed !== null && lastStatus.malformed > 0) {
     label += t("ev.pollStatus.malformedSuffix", { count: lastStatus.malformed });
   }
-  // 评审 N1 [LOW]：`generatedAt` 是响应生成时刻，最小、低风险的消费方式——
+  // 评审发现 [LOW]：`generatedAt` 是响应生成时刻，最小、低风险的消费方式——
   // 让 tooltip 报一句"数据截至几点"，运维不用另外去猜面板有没有卡住。
   if (lastGeneratedAt !== null) {
     label += t("ev.pollStatus.generatedAtSuffix", { time: fmtInstant(lastGeneratedAt, offsetMs()) });

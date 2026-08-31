@@ -2790,7 +2790,7 @@ describe("媒体模式：地址、链接与不内嵌", () => {
    * **变红条件（实测，见 progress note 的 M34）**：把 `syncSendButton()` 里那个
    * `mode === "video"` 分支删掉、三档共用 `pg.send.ready` ⇒ 这一格红。
    */
-  it("视频档按下之前那句话说的是 1 + 60 次，不是「一次」 —— 它是运维唯一看得到代价的地方（评审 M2）", async () => {
+  it("视频档按下之前那句话说的是 1 + 60 次，不是「一次」 —— 它是运维唯一看得到代价的地方（评审发现）", async () => {
     const h = await openPg(respondWith());
     const sec = h.section("playground");
     pasteToken(sec, GW_TOKEN);

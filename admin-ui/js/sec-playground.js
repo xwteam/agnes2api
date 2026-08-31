@@ -66,7 +66,7 @@
  * ⚠️ **「能不能内嵌」「能不能做链接」两条判据都是纯函数，不在本文件里目测**
  * （`js/pure/playground.mjs` 的 `mediaEmbeddable()` / `mediaLinkable()`）。
  * 由 `tests/ui/playground-media.test.ts` 的
- * 「远端 http(s) 地址一律不可内嵌 —— 面板 CSP 的 img-src 里没有任何远端主机（订正 F6）」
+ * 「远端 http(s) 地址一律不可内嵌 —— 面板 CSP 的 img-src 里没有任何远端主机（订正）」
  * 与 `tests/ui/dom/playground-section.test.ts` 的
  * 「媒体结果只出现地址与链接，一个内嵌远端资源的元素都没有」两格钉着。
  * ⚠️ **链接元素必须显式带 `rel="noopener noreferrer"`**：`target="_blank"` 的 a 元素
@@ -160,7 +160,7 @@
  *   （`message_start`）与 `src/core/protocol/anthropic.ts`「usage: { output_tokens: 0 }」
  *   （`message_delta`）。⇒ 谁顺手把「响应里的 usage」画出来，Anthropic 那条流就会在面板上
  *   显示 **0 个 token**，那是全局约束 9 明令禁止的那件事（**伪造 0 比显示「没有」更糟**）。
- *   ⚠️⚠️ **上一句里 responses / gemini 那半原来是一句零判据的全称句（复评 F1，本轮补上）**：
+ *   ⚠️⚠️ **上一句里 responses / gemini 那半原来是一句零判据的全称句（复评发现，本轮补上）**：
  *   anthropic 那半靠上面两个名字锚拦得住（改一个字段名 ⇒ 注释指向那道门禁当场 EXIT=1），
  *   而 responses / gemini 那半**当时仓里没有任何东西会为它变红** —— 复评把 `usage: {…}`
  *   加进 `src/core/protocol/responses.ts` 的 `response.completed` ⇒ **全仓 3176/3176 全绿**。
@@ -183,7 +183,7 @@
  *   `admin-ui/js/i18n-dict.js`「本面板在流式这一档不读 token 用量」（key 名 pg.turn.noTokens）
  *   ——**与上游有没有 usage 无关，恒为真**。
  *   它替换掉的旧文案「流式响应不带 token 用量」是一句关于上游的全称句，对 openai 可能为假。
- *   ⚠️ **引文与路径必须紧挨着写**（复评 F2）：上一版写成「`pg.turn.noTokens` 逐字是「…」」，
+ *   ⚠️ **引文与路径必须紧挨着写**（复评发现）：上一版写成「`pg.turn.noTokens` 逐字是「…」」，
  *   引文和字典那份真源之间隔着别的字 ⇒ 注释指向那道门禁**认不出这是个名字锚**，
  *   复评实测把字典里的「本面板」改成「此面板」⇒ 那道门禁 **EXIT=0**；
  *   改成现在这个形态之后**本轮亲手重跑同一次变异**：**EXIT=1，两处引文各被点名一次**。
@@ -191,7 +191,7 @@
  * 由 `tests/ui/dom/playground-section.test.ts` 的
  * 「流式那一轮不显示任何 token 数字 —— Anthropic 的流里带着一个恒为 0 的 usage」钉着。
  *
- * ⚠️⚠️ **别把上面那句读成「结构上不可能」——它只是「今天没写」。**（评审 F2 实测）
+ * ⚠️⚠️ **别把上面那句读成「结构上不可能」——它只是「今天没写」。**（评审实测）
  * 我原来在报告里写过「结构性地不读，不是靠自觉」，**那是言过其实**：
  * 评审在 `onPayload` 里加三行解析 `usage.output_tokens`、在下面多画一行
  * `` `Tokens: ${…}` `` ⇒ **当时 103/103 全绿**，屏幕上同时出现
@@ -205,7 +205,7 @@
  * `tests/ui/dom/playground-section.test.ts` 的
  * 「反向控制（同格）：手工往流式那一轮多挂一个 p.pg-tokens —— 闭集判据看不见它就说明它是死断言」
  * 与「反向控制（同格·盒子外）：把那一行挂到 .pg-turn 外面的右栏上 —— 盒子外照样在屏幕上」。
- * ⚠️⚠️ **射程原来停在 `.pg-turn` 那个盒子上，本轮放宽到右栏（复评 F3）**：
+ * ⚠️⚠️ **射程原来停在 `.pg-turn` 那个盒子上，本轮放宽到右栏（复评发现）**：
  * 复评把 `Tokens: 0` 画在 `buildRight()` 的 `body` 上（`.pg-turn` **外面**、右栏里）
  * ⇒ **那个测试文件 81/81 全绿**，而屏幕上「本面板……不读 token 用量」与「Tokens: 0」同时在。
  * ⇒ 判据改成遍历右栏那整张卡片，上面第二条反向控制就是那次逃逸的 DOM 形态。
@@ -685,7 +685,7 @@ function sendBlockedKey() {
 /**
  * 发送按钮的可用性与 tooltip 就地刷一遍（同 `syncHintNote`，不整块重画）。
  *
- * ⚠️⚠️ **视频档的那句话不能与另两档共用，这是评审 M2 抓到的一句假话。**
+ * ⚠️⚠️ **视频档的那句话不能与另两档共用，这是评审抓到的一句假话。**
  * `pg.send.ready` 五语言逐字都写着「按一下会真的向上游发**一次**请求」
  * （en `one request` / ja `1 回` / ko `한 번`）——**而视频档一次点击是
  * 1 次建任务 + 最多 `VIDEO_POLL_MAX_ATTEMPTS` 次轮询。**
@@ -694,7 +694,7 @@ function sendBlockedKey() {
  * ⚠️ **次数从常量插值进去，不写死在字典里**：写死的话改常量就会让那句话变成假话，
  * 而字典没有任何机器在守（评审发现）。
  * 由 `tests/ui/dom/playground-section.test.ts` 的
- * 「视频档按下之前那句话说的是 1 + 60 次，不是「一次」 —— 它是运维唯一看得到代价的地方（评审 M2）」钉着。
+ * 「视频档按下之前那句话说的是 1 + 60 次，不是「一次」 —— 它是运维唯一看得到代价的地方（评审发现）」钉着。
  */
 function syncSendButton() {
   if (nodes === null || nodes.send === null) return;
@@ -956,7 +956,7 @@ function fillTurn(wrap, turn) {
       nodes.streamTurn = wrap;
     }
     wrap.appendChild(body);
-    // **「这条流一个字都没有」是一句关于「它读完了」的话，四个前提缺一不可**（评审 F1/F3）：
+    // **「这条流一个字都没有」是一句关于「它读完了」的话，四个前提缺一不可**（评审发现）：
     // · `pending` 期间不许说 —— 那时候它只是**还没到**（说话的是 pg.sending）；
     // · 出错那一档不许说 —— 那条流**根本没开起来 / 没读完**，说「读完了」是假话。
     //   ⚠️ 这一条是评审实测抓到的：漏掉它，断网那一轮会**同时**画出
@@ -981,7 +981,7 @@ function fillTurn(wrap, turn) {
       //    `turn.malformed` ⇒ 只就地改 `<pre>` 的 `textContent` **够不着这一格**。
       //    上一版正是如此：流式在途期间屏幕上一个字都不提「掉了几块」，
       //    **把一段缺字的回答当成完整的回答画着**，直到流结束那一次整版 `render()` 才补上
-      //    （复评 G2 实测：在途 `.pg-malformed` 0 / 强制重建 1）——
+      //    （复评实测：在途 `.pg-malformed` 0 / 强制重建 1）——
       //    而上面那句「静默丢弃就是撒谎」正是本文件自己写的。
       //    机理与 `.pg-status` 那一次逐字同型：**就地更新的那个节点之外，
       //    还有一份会变的状态被渲染在别处。**
@@ -1121,7 +1121,7 @@ function buildUnavailable() {
   banner.appendChild(elI18n("span", "common.loadFailed"));
   const retry = elI18n("button", "common.refresh", { type: "button", class: "pg-retry" });
   retry.addEventListener("click", () => {
-    // ⚠️ **hint 那一次也要重问**（评审 L3）：`hintAsked` 是个一次性闸，
+    // ⚠️ **hint 那一次也要重问**（评审发现）：`hintAsked` 是个一次性闸，
     //    `/config` 失败一次之后它永远为真 ⇒ **整个会话的 hint 校验停在「比不了」，
     //    按了这颗按钮也不恢复**。这颗按钮的语义是「把这个板块读不到的东西再读一次」，
     //    而 hint 正是其中之一。
@@ -1232,7 +1232,7 @@ async function loadCatalog(preempt) {
     // 媒体端点表。**它读不出来同样是整份读不出来**，不是「媒体档不可用」：
     // 一个只有对话档能用、另两档静静变空的面板，运维分不出是这个网关不支持媒体、
     // 还是这份响应我们没读懂（全局约束 9 的同型）。
-    // ⚠️ **代价明写（评审 L3）：媒体那几格漂了，会把整个 Playground（含对话四档）
+    // ⚠️ **代价明写（评审发现）：媒体那几格漂了，会把整个 Playground（含对话四档）
     //    一起打死**，右栏变成那条红色横幅。这与 `playgroundProtocols()` / `catalogModels()`
     //    任何一个读不出来时的处置**逐字一致**（三者同档），**是刻意的一致而不是漏想**：
     //    「这份响应我们没读懂」时，让一半功能看起来正常才是更坏的那一档。
@@ -1297,7 +1297,7 @@ function cancelInFlight() {
   current = null;
   inFlight = false;
   /**
-   * ⚠️⚠️ **在飞那一轮的收尾必须在这里做，不能指望 `.finally()`**（评审 F3）。
+   * ⚠️⚠️ **在飞那一轮的收尾必须在这里做，不能指望 `.finally()`**（评审发现）。
    *
    * `sendOnce()` 的 `.finally()` 第一句是 `if (current !== ctl) return;`，
    * 而这个函数刚把 `current` 置空 ⇒ **那条收尾路径走不到**。
@@ -1583,7 +1583,7 @@ function sendOnce() {
           // 一块坏数据不该让运维正在读的那段回答整个消失。
           turn.malformed++;
           /**
-           * ⚠️⚠️ **「显示出来」必须现在就发生，不能等到流结束**（复评 G2 实测）：
+           * ⚠️⚠️ **「显示出来」必须现在就发生，不能等到流结束**（复评实测）：
            * 这个数画在那个 `<pre>` **外面**，而下面那句就地更新只碰 `<pre>` 的
            * `textContent` ⇒ 上一版在途期间屏幕上**一个字都不提**，
            * 把一段缺字的回答当成完整的回答画着，直到 `.finally()` 那一次整版
@@ -1687,7 +1687,7 @@ export const playgroundSection = {
 
   onShow() {
     // ⚠️⚠️ **每次显示都重新从存储读一遍口令，不能只在 `init()` 里读一次**
-    //（评审 M2）：登出**不会** reload 页面、板块也不会重新 `init()`，
+    //（评审发现）：登出**不会** reload 页面、板块也不会重新 `init()`，
     //    于是模块变量里那把口令会活过一次登出 ⇒ 下一个人登录进来时口令框是预填好的。
     //    `js/app.js` 的 `leave()` 清存储、这里重新读存储，**两处缺一不可**。
     // ⚠️ **代价明写**：隐私模式下 `writeGatewayToken()` 写不进去，于是切走再切回来
