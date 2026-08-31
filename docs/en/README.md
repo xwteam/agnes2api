@@ -59,7 +59,7 @@
 
 | Date | What changed |
 |------|--------------|
-| 2026-08-28 | v0.1.0 - 🎉 **First release**: the four-protocol gateway, the registrar, and the admin panel all land at once, and one codebase runs on both the Cloudflare Worker and the Node / Docker runtime. The four inbound protocols share one upstream scheduler, one key pool, and one failure-attribution path; the registrar's two temporary-mailbox channels are strictly equal peers; the panel has eight sections and needs no build step; documentation ships as one copy per language, five in total |
+| 2026-08-31 | v0.1.0 - 🎉 **First release**: the four-protocol gateway, the registrar, and the admin panel all land at once, and one codebase runs on both the Cloudflare Worker and the Node / Docker runtime. The four inbound protocols share one upstream scheduler, one key pool, and one failure-attribution path; the registrar's two temporary-mailbox channels are strictly equal peers; the panel has eight sections and needs no build step; documentation ships as one copy per language, five in total |
 
 > The full changelog lives in [CHANGELOG.md](../../CHANGELOG.md).
 
