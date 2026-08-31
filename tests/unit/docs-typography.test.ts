@@ -949,6 +949,23 @@ const R23B_THIN = 40;
 const R23B_RATIO = 15;
 
 /**
+ * **B 那条线今天还剩多少余量 —— 从磁盘现算，不手写。**
+ * 返回「最小顶穿量」x：往某一份出货文档尾巴上追加 x 个空壳 `### 占位` 恰好能把薄标题
+ * 占比顶过 `R23B_RATIO`，追加 x-1 个还顶不过去。
+ *
+ * 闭式解：追加在**文末**的空壳标题彼此相邻、且不切开任何已有区间，于是每加一个
+ * 分子分母各 +1 ⇒ `(thin + x) / (total + x) > R/100` ⇔ `x > (R·total − 100·thin) / (100 − R)`。
+ * 取严格大于的最小整数即 `floor(…) + 1`（右边恰好是整数时也对：floor 之后 +1 就跨过去了）。
+ *
+ * ⚠️ 那个「各 +1」的假设**不许只活在这段注释里**：R23'B 的 ② 那一格拿 x 与 x−1
+ * 各真跑一遍 `intervalsOf`，公式算大算小都当场红。
+ */
+const minBreakingFiller = (ints: readonly Interval[]): number => {
+  const thin = ints.filter((x) => x.chars < R23B_THIN).length;
+  return Math.floor((R23B_RATIO * ints.length - 100 * thin) / (100 - R23B_RATIO)) + 1;
+};
+
+/**
  * R23'C 的判定本体：同一类文档的五种语言，标题**层级序列**必须逐位相等。
  * **真扫描与反向控制共用它**，反向控制喂的是变异过的 `Doc[]`。
  */
@@ -995,7 +1012,7 @@ describe("R23' 结构分层：相邻标题间的长度、薄标题占比、五�
       .toBeLessThanOrEqual(R23A_OVERLONG_RATCHET);
   });
 
-  it("B（棘轮）：薄标题（相邻标题间 <40 字符）占比 ≤15% —— 今天 13.5%，余量 29 个空壳标题", () => {
+  it("B（棘轮）：薄标题（相邻标题间 <40 字符）占比 ≤15% —— 余量有多大由下面 ② 那一格从磁盘现算", () => {
     const ints = all();
     const thin = ints.filter((x) => x.chars < R23B_THIN).length;
     const ratio = (100 * thin) / ints.length;
@@ -1023,21 +1040,44 @@ describe("R23' 结构分层：相邻标题间的长度、薄标题占比、五�
     expect(faults, "删掉 5 个 `###` 之后 C 居然还绿").toContain("API: ja 有");
   });
 
-  it("② 该红时红：加 30 个空壳 `### 占位` —— B 被顶穿（专门证明「填充不管用」）", () => {
-    // 今天 226/1674 = 13.50%。要顶穿 15% 需要 x 满足 (226+x)/(1674+x) > 0.15 ⇒ x ≥ 30。
-    // **余量只有 29 个空壳标题**，这个数写在这里是为了让后来的人知道这条线有多紧。
-    // ⚠️ 23 → 30 是**分子降了**：P3g 给六份 README 的 `#### Cloudflare Worker` 节各补了
-    // 一颗一键部署按钮 + 一句「它替不了你两件事」的白话，那 6 个此前近乎空的区间
-    // 一次性脱离了薄标题档 ⇒ 分子 232 → 226、占比 13.86% → 13.50%。
-    // **这不是把线放松**：`R23B_RATIO` 还是 15，分母 1674 一个没动（没加任何新标题），
-    // 余量变大恰恰是因为文档变实了。ADJ ㊷ 那次是分母变（1669 → 1674），这次是分子变。
+  it("② 该红时红：往一份出货文档尾巴上加**最小顶穿量**的空壳 `### 占位` —— B 被顶穿；少一个则还没穿", () => {
+    // ── 这个数为什么不许再手写 ────────────────────────────────────────────────
+    // 它此前是个手写常量（23 → 30），注释里同时钉着「今天 x/y = z%、余量 n 个空壳标题」。
+    // P3g 复评实测：`b71eef1` 给 `CHANGELOG.md` 的 `### Added` 下面插了三个 `####`
+    //（网关与转发 / 注册机与管理面板 / 部署、文档与门禁）—— CHANGELOG 在 `shipDocs()`
+    // 的射程里（仓根全部 `.md`）⇒ **分母 1674 → 1677**（多三个标题），同时 `### Added`
+    // 自己被挤成 0 字符区间 ⇒ **分子 226 → 227**。真正的最小顶穿量当场从 30 掉到 29，
+    // 而那三个手写的数一个都没跟着改，注释把这条线说松了整整 1 格。
+    // 沿革（三跳，三种成因，正好说明手写为什么盯不住）：
+    //   · 23 → 30（P3g 一键部署按钮）：**只有分子变**，232 → 226，分母 1674 没动。
+    //   · 30 → 29（本次 `b71eef1`）：**分子分母同时变**，227/1677，与前两次都不同。
+    //   · ADJ ㊷ 那次：**只有分母变**，1669 → 1674。
+    // ⇒ 改成从磁盘现算。手写常量只要还在，下一次动出货文档就会再发霉一遍。
+    //
+    // 写作本条时的现算快照（**不承重**，判据自己算，这里只是给读的人一个量级）：
+    //   薄标题 227 / 区间 1677 = 13.54%，最小顶穿量 29 ⇒ **余量 28 个空壳标题**。
+    // ⚠️ `R23B_RATIO` 还是 15，一格判据都没放松：变的只是「余量从哪儿来」。
     const target = join("docs", "zh-CN", "USAGE.md");
-    const filler = Array.from({ length: 30 }, (_, i) => `### 占位 ${i + 1}\n`).join("\n");
-    const docs = withMutation(pairsOf(SHIP_DOCS), target, (s) => `${s}\n${filler}`);
-    const ints = intervalsOf(docs);
-    const ratio = (100 * ints.filter((x) => x.chars < R23B_THIN).length) / ints.length;
-    expect(ratio, `塞了 30 个空壳标题之后占比才 ${ratio.toFixed(2)}% —— B 没被顶穿，那它拦不住刷密度`)
-      .toBeGreaterThan(R23B_RATIO);
+    const base = all();
+    const x = minBreakingFiller(base);
+    expect(x, `现算出来的最小顶穿量是 ${x}（≤0）—— 那说明 B 的主格自己就该红了，这一格的前提没了`)
+      .toBeGreaterThan(0);
+    const ratioWith = (n: number): { ratio: number; thin: number; total: number } => {
+      const filler = Array.from({ length: n }, (_, i) => `### 占位 ${i + 1}\n`).join("\n");
+      const ints = intervalsOf(withMutation(pairsOf(SHIP_DOCS), target, (s) => `${s}\n${filler}`));
+      const thin = ints.filter((y) => y.chars < R23B_THIN).length;
+      return { ratio: (100 * thin) / ints.length, thin, total: ints.length };
+    };
+    const hit = ratioWith(x);
+    expect(hit.ratio, `塞了 ${x} 个空壳标题（现算的最小顶穿量）之后占比才 ${hit.ratio.toFixed(2)}%`
+      + `（${hit.thin}/${hit.total}）—— B 没被顶穿，那它拦不住刷密度`).toBeGreaterThan(R23B_RATIO);
+    // ⚠️ 这一条才是把「余量」真的钉住的那半：它证明 x 是**最小值**，不是随手取的一个大数。
+    // 顺带把 `minBreakingFiller` 那个「每加一个空壳、分子分母各 +1」的闭式解真跑一遍 ——
+    // 假设错了（比如末尾那一段被切开之后自己也掉进薄标题档）这里当场红，不留在注释里。
+    const miss = ratioWith(x - 1);
+    expect(miss.ratio, `塞 ${x - 1} 个空壳标题就已经把占比顶到 ${miss.ratio.toFixed(2)}%`
+      + `（${miss.thin}/${miss.total}）—— 那 ${x} 不是最小顶穿量，`
+      + "`minBreakingFiller` 那个闭式解算大了，余量比它说的更紧").toBeLessThanOrEqual(R23B_RATIO);
   });
 
   it("③ 该红时红：给一段 bullet 洪流逐条插空行而不加标题 —— A 的计数**一个都不许少**", () => {
