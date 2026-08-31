@@ -273,6 +273,51 @@ describe("该红时红：往任一份公开 markdown 塞一个内部标识符 �
     expect(/\bP[1-9][a-z]?\b/.test("P3c부터 지원합니다."), "`\\b` 版认不出 `P3c부터` —— "
       + "文件头那段「JS 的 `\\b` 只认 ASCII 词字符，谚文这一处它认得出」的说明就该被推翻").toBe(true);
   });
+
+  /**
+   * 🔴 **同一串里挨着的两个标识符，必须**各报一条**。**
+   *
+   * 这不是想出来的边界，是本仓真的数错过一次的**那个机制**：清理那一批时的处数是用
+   * `grep -oE '[^0-9A-Za-z]…[^0-9A-Za-z]'` 这种**把边界字符一起吃掉**的写法数出来的
+   *（前后各配一个「非字母数字」的字符类，而不是零宽的前后瞻）。
+   * 落到 `post-C4/C4b-fix` 这种真串上：第一次匹配吃掉了 `C4` 后面那个 `/`，
+   * 而 `C4b` 前面本来就靠那个 `/` 当边界 —— 于是**下一次匹配再也起不来**，`C4b` 整个被漏掉。
+   * 实测：改前那 40 份里 `C4b` 真有 10 处，吃边界的写法只数到 5 处。
+   * 提交标题里那个「91 处」就是这么来的（本判据口径实测是 116 处，
+   * 差额与分解登记在 `scripts/prepush.sh` 那段来源注释里）。
+   *
+   * 本文件的四族用的是**零宽前后瞻**，天然没有这个毛病；这一格把「没有这个毛病」钉死，
+   * 免得哪天有人图省事把前后瞻换回字符类，判据又开始少报而没人知道。
+   */
+  it("🔴 同一串里挨着的两个标识符各报一条（`C4/C4b` / `P3c Task 1`）—— 数错那 25 处的机制就在这里", () => {
+    probeBase();
+    const target = "docs/zh-TW/DEPLOY.md";
+
+    const twoFindings = leaks(readerWith(target,
+      (src) => `${src}\n\n這一行是探針：post-C4/C4b-fix 的實測數字。\n`));
+    expect(twoFindings.length,
+      `\`C4/C4b\` 应当报两条（\`C4\` 与 \`C4b\` 各一条），实际：\n${twoFindings.join("\n")}`).toBe(2);
+    expect(twoFindings.filter((f) => f.includes("「C4」")), "没有单独点名 `C4` 的那一条").toHaveLength(1);
+    expect(twoFindings.filter((f) => f.includes("「C4b」")), "没有单独点名 `C4b` 的那一条 —— "
+      + "多半是有人把零宽前后瞻换成了会吃掉边界字符的字符类，`C4b` 前面那个 `/` 被上一次匹配吃掉了")
+      .toHaveLength(1);
+
+    // 跨族的同一种形态：一族的匹配吃掉分隔的空格，另一族就跟着瞎。
+    const crossFamily = leaks(readerWith(target,
+      (src) => `${src}\n\n這一行是探針：P3c Task 1 起才有。\n`));
+    expect(crossFamily.length,
+      `\`P3c Task 1\` 应当报两条（阶段编号 + 任务号），实际：\n${crossFamily.join("\n")}`).toBe(2);
+    expect(crossFamily.filter((f) => f.includes("「P3c」")), "没有点名阶段编号 `P3c`").toHaveLength(1);
+    expect(crossFamily.filter((f) => f.includes("「Task 1」")), "没有点名任务号 `Task 1`").toHaveLength(1);
+
+    // ⚠️ 反向控制：把「吃边界」那种写法拿过来跑同一串，它**必须只数到一个**。
+    // 这一条不是在测正则库，是在保证上面那段注释讲的机制今天仍然成立——
+    // 哪天它也数到两个，说明这段来源说明该重新实测，而不是继续照抄。
+    const eatsBoundary = /[^0-9A-Za-z][CIQW][0-9]{1,2}[a-z]?[^0-9A-Za-z]/g;
+    expect([..."post-C4/C4b-fix".matchAll(eatsBoundary)].length,
+      "吃边界的写法居然也数到了两个 —— 文件里那段「91 是这么数错的」说明就该被推翻，回去重新实测")
+      .toBe(1);
+  });
 });
 
 describe("不乱红：形状像、意思不是的那几种，一处都不许命中", () => {
