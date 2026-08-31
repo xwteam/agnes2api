@@ -782,8 +782,19 @@ BANNER='[collection-guard] ✅'
 #   40 份逐份各有一格「塞一个 `P3c` 进去必须只红一条并点名那一份那一行」。
 #   净格数 4303 + 62 = 4365；`docs-typography.test.ts` 那份只改了三处标题字面（标题里的
 #   `（P3，默认关闭）` 去掉了期号），格数不变。
+# 4365 → 4371 格，文件数仍是 142：**泄漏轴的射程从 40 份扩到 44 份**（复评 Critical 的回填）。
+#   上一版把泄漏轴（ADJ ㉚）挂在了排版轴的射程 `shipDocs()` 上，于是 `admin-ui/README.md`
+#   借着偏离名册第 17 条一并逃出泄漏轴——而第 17 条的原文是「移出 **D4 的排版射程**」、
+#   理由是「套 16 节骨架毫无意义」，**那是排版轴的豁免，㉚ 一个字都没豁免过**。
+#   一条排版豁免被静静升级成了泄漏豁免，代价是那份自述里 11 处阶段编号 / 任务号
+#   （它确实是出货文档：`CHANGELOG.md` 正文直接把读者指过去）判据一处都看不见。
+#   ⇒ `tests/helpers/ship-docs.ts` 新开 `publicDocs()` = `shipDocs()` 那 40 份
+#   ＋ `admin-ui/README.md` ＋ `.github` 下（含子目录）全部 `.md`（今天 3 份）= 44 份；
+#   `shipDocs()` **不动**，它要继续服务排版轴与名册第 17 条。
+#   格数：逐份探针 40 → 44（+4）、「宽出来的正是那 4 份」1 格，
+#   `docs-deviations.test.ts` 里「第 17 条只豁免排版、不豁免 ㉚」1 格 ⇒ 4365 + 6 = 4371。
 EXPECT_NODE_FILES=142
-EXPECT_NODE_TESTS=4365
+EXPECT_NODE_TESTS=4371
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

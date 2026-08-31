@@ -26,7 +26,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { blankHtmlComments } from "../helpers/strip-comments.js";
-import { shipDocs } from "../helpers/ship-docs.js";
+import { publicDocs, shipDocs } from "../helpers/ship-docs.js";
 import { join } from "node:path";
 
 const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
@@ -282,6 +282,10 @@ const REGISTRY: readonly Deviation[] = [
     // 现在读的是排版判官真正在用的那一份
     // （`tests/helpers/ship-docs.ts`），它红不红与那 40 份射程真的绑在一起；
     // 本文件末尾另有一格反向控制，喂一份含它的射程必须点名。
+    // 🔴 **这条只豁免排版轴，不豁免 ADJ ㉚**：`what` 里那句「D4 的排版射程」与 `why` 里那句
+    // 「套 16 节骨架毫无意义」讲的都是排版。泄漏轴（不暴露内部路线图与阶段编号）另有射程
+    // （`publicDocs()`），`admin-ui/README.md` **在**那份射程里。本文件末尾专门为这件事
+    // 单开了一格——本仓已经因为把这两根轴混成一份射程，让 11 处内部编号躺进过公开仓。
     assert: () => adminUiScopeFault(shipDocs()),
   },
   {
@@ -427,6 +431,29 @@ describe("W94 名册自守：编号不重、三样东西齐全、机器验不了
     expect(ship.filter((p) => p.includes("/") || p.includes("\\")).length,
       "射程里一条带目录分隔符的路径都没有 —— 那多半又是拿 `readdirSync(\".\")` 凑的裸文件名，"
       + "第 17 条的第二个方向会重新变成恒绿").toBe(35);
+  });
+
+  /**
+   * 🔴 **第 17 条只豁免排版轴（D4 的 16 节骨架），不豁免 ADJ ㉚（不暴露内部路线图与阶段编号）。**
+   *
+   * 这条登记的原文写的是「移出 **D4 的排版射程**」，理由写的是「套 16 节骨架毫无意义」
+   * —— 两句话说的都是**排版**。而泄漏轴（㉚）是另一根轴，它一个字都没豁免过任何文档。
+   * 本仓真的在这里栽过一次：泄漏轴那份判据（`docs-internal-refs.test.ts`）第一版把射程
+   * 接在了 `shipDocs()` 上，于是 `admin-ui/README.md` 借着这条**排版**豁免一并逃出了泄漏轴，
+   * 而它当时确确实实带着 11 处阶段编号 / 任务号躺在公开仓里——
+   * **一条排版豁免被静静升级成了泄漏豁免**，且没有任何一格看得见。
+   *
+   * ⇒ 这一格把两根轴的分工钉死：`admin-ui/README.md` 必须**在排版射程外**（第 17 条成立）
+   * **且在泄漏射程内**（㉚ 没有豁免它）。哪根轴被人挪到另一根上，这一格当场红。
+   * **失效条件**：哪天第 17 条按它自己的 `until` 被删掉（面板自述也当出货文档去套骨架），
+   * 这一格连同那条登记一起删。
+   */
+  it("🔴 第 17 条只豁免排版轴：`admin-ui/README.md` 在排版射程外，但必须在泄漏射程内", () => {
+    const p = join("admin-ui", "README.md");
+    expect(REGISTRY.some((d) => d.id === 17), "第 17 条不在名册里了 —— 这一格该跟着删").toBe(true);
+    expect(shipDocs(), `${p} 进了排版射程 —— 第 17 条不成立了`).not.toContain(p);
+    expect(publicDocs(), `${p} 不在泄漏射程里 —— 第 17 条那条**排版**豁免又被当成 ㉚ 的豁免用了。`
+      + "ADJ ㉚ 没有豁免过任何一份公开 markdown，泄漏轴的射程必须是 `publicDocs()`").toContain(p);
   });
 
   it("规格名册里那两条**已经结清**的条目今天确实不在名册里（结清了就该删，不是留着当摆设）", () => {

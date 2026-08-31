@@ -8,9 +8,22 @@
  * 一起带着 56 处 `P1`/`P2`/`P3`/`P3c`/`P3d`，随首个版本一路发到了公开仓。
  * 「有一条判据在守」和「那条判据看得见这份文档」是两件事，本文件补的是后者。
  *
- * ── 射程：40 份出货文档，从磁盘现算 ─────────────────────────────────────────
- * 仓根全部 `.md` + `docs/{5 语言}/*.md`，与排版判官共用 `tests/helpers/ship-docs.ts`
- * 那一份真源 —— 新增一份文档会**自动**进射程，不用回来改这里。
+ * ── 射程：44 份公开 markdown，从磁盘现算 ────────────────────────────────────
+ * `publicDocs()` = 排版判官那 40 份（仓根全部 `.md` + `docs/{5 语言}` 下的 `.md`）
+ * ＋ `admin-ui/README.md` ＋ `.github` 下（含子目录）全部 `.md`（今天 3 份）。
+ * 都从磁盘现算 —— 新增一份文档会**自动**进射程，不用回来改这里。
+ *
+ * 🔴 **这里刻意不用 `shipDocs()`，理由必须写死在这里，不然下一个人还会接错。**
+ * 第一版接的就是 `shipDocs()`，于是 `admin-ui/README.md` 一并落在射程外，
+ * 而那份文档落在射程外的**唯一**依据是偏离名册第 17 条——那条登记的原文是
+ *「移出 D4 的**排版**射程」，理由写的是「套 16 节骨架毫无意义」。
+ * **那是排版轴的豁免**。ADJ ㉚（公开仓不暴露内部路线图与阶段编号）是**另一根轴**，
+ * 它一个字都没豁免过任何一份文档。接错射程 = 把一条排版豁免静静升级成泄漏豁免，
+ * 而 `admin-ui/README.md` 确确实实是出货文档（`CHANGELOG.md` 正文直接把读者指过去，
+ * `docs-parity.test.ts` 里那一组自己写着「第一个访客会看到的三份自述」）——
+ * 实测：接 `shipDocs()` 的那一版，它里面 11 处阶段编号 / 任务号本判据一处都看不见。
+ * ⇒ 泄漏轴走 `publicDocs()`，排版轴继续走 `shipDocs()`，
+ * 两根轴各自一份射程；`docs-deviations.test.ts` 里另有一格钉住「第 17 条只豁免排版」。
  *
  * ⚠️ **不剥围栏、不剥 HTML 注释，全文扫**。排版轴的判据要剥（围栏里教人写 markdown
  * 的示例不该被当成正文），这一条恰恰相反：**围栏里的阶段编号照样是泄漏**，
@@ -25,10 +38,15 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 
-import { shipDocs } from "../helpers/ship-docs.js";
+import { sep } from "node:path";
 
-/** 出货文档全集。**从磁盘现算**，与 `tests/unit/docs-typography.test.ts` 同源。 */
-const SHIP_DOCS: readonly string[] = shipDocs();
+import { publicDocs, shipDocs } from "../helpers/ship-docs.js";
+
+/**
+ * 公开 markdown 全集（今天 44 份）。**从磁盘现算**。
+ * 变量名刻意不叫 `SHIP_DOCS`：本文件的射程比排版轴那 40 份宽，名字一样会诱人接错真源。
+ */
+const PUBLIC_DOCS: readonly string[] = publicDocs();
 
 /**
  * **登记在案的四族。每一族都必须是「今天真的泄漏过 / 真的有形状」的那一类**，
@@ -102,7 +120,7 @@ type DocReader = (path: string) => string;
 const realDoc: DocReader = (path) => readFileSync(path, "utf8");
 
 /** 逐份逐行扫，命中就出一条带 `文件:行号` 的报文。 */
-function leaks(read: DocReader, docs: readonly string[] = SHIP_DOCS): string[] {
+function leaks(read: DocReader, docs: readonly string[] = PUBLIC_DOCS): string[] {
   const out: string[] = [];
   for (const path of docs) {
     const lines = read(path).split("\n");
@@ -124,41 +142,57 @@ const readerWith = (target: string, mutate: (src: string) => string): DocReader 
   (path) => (path === target ? mutate(realDoc(path)) : realDoc(path));
 
 /**
- * 探针的基：真的 40 份今天必须过判据。
+ * 探针的基：真的 44 份今天必须过判据。
  * 否则探针红了会被读成「探针有问题」，而真因在文档。
  */
 function probeBase(): void {
   const base = leaks(realDoc);
   if (base.length > 0) {
     throw new Error(
-      "本格是探针，它的基取自真的 40 份出货文档，而真文档今天本身就不过判据 —— "
-      + "别从这一格的报文里找原因，真因在「40 份出货文档里一个内部标识符都没有」那一格：\n"
+      "本格是探针，它的基取自真的 44 份公开 markdown，而真文档今天本身就不过判据 —— "
+      + "别从这一格的报文里找原因，真因在「44 份公开 markdown 里一个内部标识符都没有」那一格：\n"
       + base.join("\n"),
     );
   }
 }
 
-describe("射程自守：40 份出货文档，逐份读得到", () => {
-  it("射程是从磁盘现算的 40 份，且每一份都真的读得到", () => {
-    expect(SHIP_DOCS.length,
-      `出货文档从 40 份变成了 ${SHIP_DOCS.length} 份 —— 数变了就该有人来确认`
-      + "新增/删除的那一份该不该进射程").toBe(40);
-    expect(SHIP_DOCS.filter((p) => !existsSync(p)), "射程里有读不到的文件").toEqual([]);
+describe("射程自守：44 份公开 markdown，逐份读得到", () => {
+  it("射程是从磁盘现算的 44 份，且每一份都真的读得到", () => {
+    expect(PUBLIC_DOCS.length,
+      `公开 markdown 从 44 份变成了 ${PUBLIC_DOCS.length} 份 —— 数变了就该有人来确认`
+      + "新增/删除的那一份该不该进射程").toBe(44);
+    expect(PUBLIC_DOCS.filter((p) => !existsSync(p)), "射程里有读不到的文件").toEqual([]);
   });
 
   it("射程盖住仓根与五个语言目录，不是只盯着 `CHANGELOG.md` 那一份", () => {
     // 这一格钉的正是本文件的立法理由：老判据只看 `CHANGELOG.md`，
     // 于是 `docs/**` 那 35 份带着 56 处阶段编号一路发到了公开仓。
-    expect(SHIP_DOCS).toContain("CHANGELOG.md");
+    expect(PUBLIC_DOCS).toContain("CHANGELOG.md");
     for (const lang of ["zh-CN", "zh-TW", "en", "ja", "ko"]) {
       for (const base of ["DEPLOY.md", "SPONSORS.md"]) {
-        expect(SHIP_DOCS, `${lang}/${base} 不在射程里`).toContain(`docs/${lang}/${base}`);
+        expect(PUBLIC_DOCS, `${lang}/${base} 不在射程里`).toContain(`docs/${lang}/${base}`);
       }
     }
   });
+
+  it("🔴 泄漏轴的射程比排版轴宽出的正是那 4 份：面板自述 + `.github` 三份社区模板", () => {
+    // 这一格钉的是本轮那条 Critical：第一版把泄漏轴挂在了 `shipDocs()` 上，
+    // 于是 `admin-ui/README.md` 借着**排版轴**的豁免（名册第 17 条）一并逃出泄漏轴，
+    // 而它当时真的带着 11 处阶段编号 / 任务号躺在公开仓里。
+    // 两个方向都查：宽出来的必须恰好是这 4 份（多了要有人来确认），
+    // 且这 4 份确实不在排版轴那份射程里（不然第 17 条就自己不成立了）。
+    const extra = PUBLIC_DOCS.filter((p) => !shipDocs().includes(p));
+    expect([...extra].sort(), "泄漏轴比排版轴宽出来的不是那 4 份 —— 谁动了射程").toEqual([
+      ".github/ISSUE_TEMPLATE/bug_report.md",
+      ".github/ISSUE_TEMPLATE/feature_request.md",
+      ".github/pull_request_template.md",
+      "admin-ui/README.md",
+    ].map((p) => p.split("/").join(sep)));
+    expect(shipDocs().length, "排版轴那份射程不再是 40 份 —— 名册第 17 条那两格会先红").toBe(40);
+  });
 });
 
-describe("40 份出货文档里一个内部标识符都没有（阶段编号 / 任务号 / 评审发现号）", () => {
+describe("44 份公开 markdown 里一个内部标识符都没有（阶段编号 / 任务号 / 评审发现号）", () => {
   it("真扫描：零命中", () => {
     const found = leaks(realDoc);
     expect(found, `出货文档里还留着内部研发轨迹的标识符：\n${found.join("\n")}\n`
@@ -168,8 +202,8 @@ describe("40 份出货文档里一个内部标识符都没有（阶段编号 / �
   });
 });
 
-describe("该红时红：往任一份出货文档塞一个内部标识符 ⇒ 只红一条并点名那一份那一行", () => {
-  it.each([...SHIP_DOCS])("%s 末尾塞一句带 `P3c` 的话", (target) => {
+describe("该红时红：往任一份公开 markdown 塞一个内部标识符 ⇒ 只红一条并点名那一份那一行", () => {
+  it.each([...PUBLIC_DOCS])("%s 末尾塞一句带 `P3c` 的话", (target) => {
     probeBase();
     const found = leaks(readerWith(target, (src) => `${src}\n\nP3c 起这条路径才有。\n`));
     expect(found.length, `应当只红一条，实际：\n${found.join("\n")}`).toBe(1);

@@ -4972,10 +4972,18 @@ describe("五语言 DEPLOY.md 的两笔「没在真机上了结过」配额账�
  *   与运行时无关，所以这里刻意不进 `tests/contract/`。
  */
 /** 本组的名字。`admin-ui/README.md` 点名它，下面那一格拿这个常量回头去 README 里找——
- *  改了组名而 README 没跟着改，当场红。这样 README 里那句「有机器守了」自己也有测法。 */
-const TASK29_GROUP = "推公开仓之前第一个访客会看到的三份自述（P3e Task 29）";
+ *  改了组名而 README 没跟着改，当场红。这样 README 里那句「有机器守了」自己也有测法。
+ *
+ *  🔴 **这个字面量必须原样出现在 `admin-ui/README.md` 里**（下面那一格强制的），
+ *  所以它等于被写进了公开仓的 README。原来的写法带着内部阶段与任务编号，
+ *  于是一条测试内部的命名把 ADJ ㉚ 要挡的东西**钉死**在了一份公开自述上——
+ *  凡是这种「测试常量会被文档判据反向要求出现在出货文档里」的字面量，
+ *  一律不许带内部研发轨迹的标识符。把编号写回这个常量，
+ *  `tests/unit/docs-internal-refs.test.ts「真扫描：零命中」`会当场点名 `admin-ui/README.md`
+ *  ——那份自述从这一轮起真的进了泄漏轴的射程（`publicDocs()`）。 */
+const FIRST_VISIT_GROUP = "推公开仓之前第一个访客会看到的三份自述";
 
-describe(TASK29_GROUP, () => {
+describe(FIRST_VISIT_GROUP, () => {
   const readReal = (p: string) => readFileSync(p, "utf8");
   const realIndexHtml = () => readReal("admin-ui/index.html");
   const realPanelReadme = () => readReal("admin-ui/README.md");
@@ -5130,8 +5138,8 @@ describe(TASK29_GROUP, () => {
       .toBeGreaterThanOrEqual(3);
     expect(repoPaths.filter((p) => !existsSync(p)), "admin-ui/README.md 里这几条仓根路径指向的文件不在").toEqual([]);
     // README 里那句「上面那张表有机器守了」点的就是本组的名字。组名改了而 README 没跟着改 ⇒ 这里红。
-    expect(readme, `admin-ui/README.md 里那句「有机器守了」点名的组名已经不是「${TASK29_GROUP}」了`)
-      .toContain(TASK29_GROUP);
+    expect(readme, `admin-ui/README.md 里那句「有机器守了」点名的组名已经不是「${FIRST_VISIT_GROUP}」了`)
+      .toContain(FIRST_VISIT_GROUP);
   });
 
   /**
