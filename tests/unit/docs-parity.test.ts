@@ -5715,16 +5715,36 @@ describe(FIRST_VISIT_GROUP, () => {
     }
 
     // ── ⑥ 按完按钮还得自己补的那两格：wrangler.toml 的 KV 命名空间 id 与 GATEWAY_TOKEN ──
+    //   ⚠️ **取值范围是那条 bullet，不是整条版本条目**（复评预言过、随后当场发生的那个空档）：
+    //   这三个字面此前用 `text.includes(...)` 在**整段**里找，那时全段只有那条 bullet 写过它们，
+    //   所以「今天等价于 bullet 级锚定」。复评把这一条列为 Minor 并写明「空档只在将来
+    //   同段别处再写出这三个字面时才出现」——而下一笔提交往同一条版本条目里写了
+    //   `wrangler.toml`（讲那批清理触及了哪四份配置），空档当场成真：
+    //   把 bullet 换成语义相反的「开箱即用」之后，反向控制只红 2 格而不是 3 格，
+    //   因为 `wrangler.toml` 在同段别处仍找得到。**收窄到 bullet 之后它才真的只认那一句。**
     //   同一条 bullet 的第二行。复评实测：⑤ 补上「六份 README」「两处 healthcheck」
     //   之后，这一行仍然一个断言都打不中——把它整句换成语义相反的「按完开箱即用，什么都
     //   不用补」，全仓会读 CHANGELOG 的测试文件一起跑仍是零红。这一行恰恰是读者按完按钮
     //   之后能不能把网关跑起来的唯一说明，写反了比不写更坏。
+    /**
+     * 那条 bullet 的正文：从 `- **两种部署形态各自的入口**` 起，到下一条同级 bullet 之前。
+     * 认不出就是空串 —— 空串会让下面三条断言一起红并点名，而不是静默放行
+     * （「认不出要吵」，与本组 `wb === null` 那一支同一条纪律）。
+     */
+    const DEPLOY_BULLET_HEAD = "- **两种部署形态各自的入口**";
+    const bulletText = ((): string => {
+      const i = text.indexOf(DEPLOY_BULLET_HEAD);
+      if (i < 0) return "";
+      const rest = text.slice(i + DEPLOY_BULLET_HEAD.length);
+      const j = rest.search(/\n- \*\*/);
+      return j < 0 ? rest : rest.slice(0, j);
+    })();
     const wb = wranglerBlanks(readSrc);
     if (wb === null) {
       out.push(`${WRANGLER} 里 KV 命名空间的 \`id = "…"\` 与 \`GATEWAY_TOKEN\` 两样一样都认不出`
         + " —— 认不出要吵，不是 CHANGELOG 写对了");
     } else {
-      if (!text.includes(`\`${WRANGLER}\``)) {
+      if (!bulletText.includes(`\`${WRANGLER}\``)) {
         out.push(`CHANGELOG 那条版本条目里没点名 \`${WRANGLER}\` —— 按完一键部署按钮还得回去补的就是这份文件`);
       }
       // KV 命名空间 id
@@ -5736,7 +5756,7 @@ describe(FIRST_VISIT_GROUP, () => {
         out.push(`${WRANGLER} 里的 KV 命名空间 id 已经不是占位符（现在是 "${wb.kvId}"，`
           + `占位符应为 "${wb.placeholder}"）—— CHANGELOG 那句「按完仍要自己补 ${KV_BLANK_PHRASE}」就此成了假话，`
           + "而且这个 id 会随仓库一起出门");
-      } else if (!text.includes(KV_BLANK_PHRASE)) {
+      } else if (!bulletText.includes(KV_BLANK_PHRASE)) {
         out.push(`CHANGELOG 那条版本条目里没说还得补「${KV_BLANK_PHRASE}」`
           + `（${WRANGLER} 里那一格现算仍是占位符 "${wb.placeholder}"）`
           + " —— 不补它 `env.POOL` 就是 undefined，网关起不来");
@@ -5747,7 +5767,7 @@ describe(FIRST_VISIT_GROUP, () => {
       } else if (wb.token === "plain") {
         out.push(`${WRANGLER} 里有 \`GATEWAY_TOKEN = …\` 这样的明文赋值 —— CHANGELOG 那句「仍要自己补`
           + " `GATEWAY_TOKEN`」成了假话，而且这是一条会被提交进公开仓的内置凭据");
-      } else if (!text.includes("`GATEWAY_TOKEN`")) {
+      } else if (!bulletText.includes("`GATEWAY_TOKEN`")) {
         out.push("CHANGELOG 那条版本条目里没点名 `GATEWAY_TOKEN`"
           + `（${WRANGLER} 现算：它只以 \`.dev.vars\` / \`wrangler secret put\` 的说法出现，文件里没有值）`
           + " —— 不补它网关同样起不来");
