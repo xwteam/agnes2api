@@ -202,7 +202,32 @@ export async function bootPanel(opts: {
   };
 }
 
-/** 让所有已经排队的 microtask 跑完（`fetch` 的两层 await）。 */
+/**
+ * 让面板发出去的那几层异步**跑到落定**（`fetch` 的两层 await + `Response.json()`）。
+ *
+ * ── 为什么这里不是 `await Promise.resolve()` 数 tick ─────────────────────────
+ * 原实现是 `for (i<times) await Promise.resolve()`，即「排 `times` 个微任务」。
+ * 那等于**手写一个「这条链有多少层」的常量**，而层数不由本仓决定 ——
+ * `Response.json()` 落在 undici 里，它读流要走几层随 Node 版本变：
+ *   · Node 24（本机开发用的版本）：6 层就够，全绿；
+ *   · Node 22（`Dockerfile` 里 `node:22-alpine`、CI 里 `node-version: 22`，
+ *     **也就是真正出货的那个版本**）：**至少要 10 层**，实测 6 层时
+ *     `tests/ui/dom/**` 有 7 份文件、119 格红。
+ * ⇒ 公开仓的 CI 一路红着，而本机 `scripts/prepush.sh` 一路绿 —— 两边跑的
+ *   Node 大版本不是同一个，这一格就卡在中间。
+ *
+ * 现在一轮 = **一个宏任务回合**（`setImmediate`）。回合与回合之间整条微任务队列
+ * 会被**抽干**（含微任务自己再排出来的那些），所以这不再是「猜要几个 tick」，
+ * 而是结构上跑完。`times` 的含义从「几个微任务」变成「几个回合」，
+ * 181 处显式传 `6` / `12` 的调用点一个都不用改（回合比 tick 强得多）。
+ *
+ * ⚠️ **不许改回数 tick**：`tests/ui/dom/fake-dom-parity.test.ts` 里
+ * 「settle 抽干的是整条微任务队列，不是数着固定几个 tick」那一组用一条 200 层深的链钉着这件事。
+ * ⚠️ **中间态判据不受影响**：那几格（比如「回读还没落定之前不许出现成功迹象」）
+ * 靠的是一个**始终没解决**的 promise，抽多久都抽不出结果 —— 同一组里有一格钉着。
+ * ⚠️ `setImmediate` 今天没有被任何一份用例假造：两处 `vi.useFakeTimers()` 都显式
+ * 只 fake `setTimeout` / `clearTimeout`，`events-poll.test.ts` 只 stub 了 `setTimeout`。
+ */
 export async function settle(times = 6): Promise<void> {
-  for (let i = 0; i < times; i++) await Promise.resolve();
+  for (let i = 0; i < times; i++) await new Promise<void>((r) => { setImmediate(r); });
 }

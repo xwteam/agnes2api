@@ -715,8 +715,21 @@ BANNER='[collection-guard] ✅'
 #   同批把那份文件里「剥注释不许下手过重」拿来举例的那一行从 `with: { version: 9 }`
 #   换成 `with: { node-version: 22, cache: pnpm }` —— 它要的只是「一行不带 `#` 的真源行」，
 #   而被举例的那一行已经删了。**换的是样本，不是判据。**
+# 4280 → 4282：**pnpm 那一行修好之后，CI 第一次真的跑到了第 11 步，当场露出第二层**：
+#   `tests/ui/dom/**` 有 7 份文件、119 格在 runner 上红，而本机全绿。根因是
+#   `tests/ui/dom/harness.ts` 的 `settle()` 原实现是「排 `times` 个微任务」——
+#   等于把「面板那条异步链有多少层」写成常量，而层数不由本仓决定：`Response.json()`
+#   落在 undici 里，读流走几层随 Node 大版本变。实测 Node 24（本机）6 层够用，
+#   Node 22（`Dockerfile` 的 `node:22-alpine` + CI 的 `node-version: 22`，
+#   **也就是真正出货的那个版本**）至少要 10 层。
+#   ⚠️ **本脚本结构上看不见这一层**：它用的是本机那个 Node，和出货那个不是同一个大版本。
+#   ⇒ 一轮改成**一个宏任务回合**（`setImmediate`），回合之间整条微任务队列被抽干,
+#   不再猜 tick；181 处显式传 `6` / `12` 的调用点一个都没动。
+#   `fake-dom-parity.test.ts` 补一组盯这条性质：一条 200 层深的链一次 `settle()`
+#   跑到底（数 tick 的实现在这里必红，实测只推进 7 层）+ 不乱红（始终没解决的 promise
+#   抽多久也抽不出结果，中间态那几格靠的正是这条）⇒ +2。
 EXPECT_NODE_FILES=140
-EXPECT_NODE_TESTS=4280
+EXPECT_NODE_TESTS=4282
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { stripComments } from "../../helpers/strip-comments.js";
+import { settle } from "./harness.js";
 
 /**
  * **复评必改④：替身能力扫描门禁。**
@@ -275,5 +276,44 @@ describe("复评必改④：替身能力扫描——发货代码不许用到 fak
 
   it("盲区清单不是空的——如实登记按名字扫描拦不住的那几类，别让人以为门禁绿了就等于处处一致", () => {
     expect(KNOWN_BLIND_SPOTS.length).toBeGreaterThan(0);
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * **settle() 抽干的是整条队列，不是数着 tick**（P3g 复评顺手抓到的）。
+ *
+ * `tests/ui/dom/harness.ts` 的 `settle()` 原实现是「排 `times` 个微任务」，
+ * 等于把「面板那条异步链有多少层」写成一个常量 —— 而层数不由本仓决定：
+ * `Response.json()` 落在 undici 里，它读流走几层随 Node 大版本变。实测
+ * Node 24（本机开发）6 层够用全绿，Node 22（`Dockerfile` 的 `node:22-alpine`、
+ * CI 的 `node-version: 22`，**也就是真正出货的那个版本**）至少要 10 层，
+ * 6 层时 `tests/ui/dom/**` 有 7 份文件、119 格红。
+ *
+ * 下面两格是那次改动的判据：一格钉「抽得够深」，一格钉「没抽过头」。
+ * 两格都不碰面板代码，只测 harness 自己 —— 它是 340 格 DOM 用例共用的地基。
+ * ───────────────────────────────────────────────────────────────────────────── */
+describe("settle 抽干的是整条微任务队列，不是数着固定几个 tick", () => {
+  const DEPTH = 200;
+
+  it("一条 200 层深的 promise 链，一次 `settle()` 就跑到底 —— 数 tick 的实现在这里必红", async () => {
+    let done = 0;
+    // 每一层解决之后才排下一层：数 `times` 个微任务的实现最多推进 `times` 层。
+    let chain: Promise<void> = Promise.resolve();
+    for (let i = 0; i < DEPTH; i++) chain = chain.then(() => { done += 1; });
+    await settle();
+    expect(done, `一次 settle() 只推进了 ${done} 层（共 ${DEPTH} 层）——`
+      + "它数的还是固定几个 tick，那 harness 的深度就随 Node 大版本漂移，"
+      + "出货用的 Node 22 上会整片红而本机 Node 24 全绿").toBe(DEPTH);
+    void chain;
+  });
+
+  it("不乱红：一个**始终没解决**的 promise，settle 抽多久也抽不出结果", async () => {
+    // 「回读还没落定之前不许出现成功迹象」那一类中间态判据全靠这条性质：
+    // 它们用一个握在手里的 `resolve` 把应答扣住，settle 越深也不该把它放出来。
+    let settled = false;
+    void new Promise<void>(() => {}).then(() => { settled = true; });
+    await settle(12);
+    expect(settled, "settle 把一个从没 resolve 过的 promise 也「抽」出结果了 ——"
+      + "那所有中间态判据都成了空气").toBe(false);
   });
 });
