@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.1.0-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.1.1-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -59,6 +59,7 @@
 
 | 날짜 | 변경 내용 |
 |------|----------|
+| 2026-08-31 | v0.1.1 - 🧹 **정비 릴리스**: 내부 개발 식별자를 공개 저장소에서 걷어냈습니다. 실제로 새고 있던 곳은 패널 배포물의 202곳뿐으로, /admin/js/*.js 본문에 실려 패널을 연 방문자 전원에게 전달되고 있었습니다. 나머지는 소스, 테스트, 게이트 스크립트, 출고 문서, 커밋 메시지에 흩어져 있었습니다. 아울러 조판 축의 예외가 조용히 유출 축의 예외로 승격돼 있던 문제와, 기본 타임아웃 경계에 걸터앉아 있던 테스트 세 칸도 고쳤습니다. 동작 변경은 없습니다 |
 | 2026-08-31 | v0.1.0 - 🎉 **첫 릴리스**: 4개 프로토콜 게이트웨이, 레지스트라, 관리 패널이 한 번에 갖춰졌고 같은 코드가 Cloudflare Worker와 Node / Docker 두 런타임에서 함께 돕니다. 네 갈래 인바운드 프로토콜은 같은 업스트림 스케줄러, 같은 key 풀, 같은 실패 원인 판별을 공유합니다. 레지스트라의 임시 메일함 경로 두 개는 엄격하게 대등합니다. 패널은 여덟 개 섹션이며 빌드 단계가 필요 없습니다. 문서는 5개 언어로 각각 한 벌씩 있습니다 |
 
 > 전체 변경 이력은 [CHANGELOG.md](../../CHANGELOG.md)에 있습니다.

@@ -73,6 +73,25 @@ describe("node 入口: fail-closed", () => {
 });
 
 describe("node 入口: 真实启动路径", () => {
+  /**
+   * `/health` 报的那个版本号，**从仓根 `VERSION` 现读，不手抄**。
+   *
+   * ⚠️ 这里原来写死着一个版本号字面量。它是**发版时才会引爆的一颗雷**：
+   * `scripts/set-version.sh` 同步的是 `VERSION` / `package.json` / `src/version.ts`
+   * 与六份 README 的徽章 —— **它够不着这一行**。于是把版本号从一个值改到下一个值时，
+   * 这一格是全仓唯一会红的地方，而报文（`expected "0.1.1" to deeply equal "0.1.0"`）
+   * 看起来像是入口坏了。本格要证的是「真入口真的把版本号报了出来」，
+   * **不是「版本号今天恰好是某个值」**——后者由
+   * `tests/unit/version.test.ts「VERSION 文件、package.json 与 src/version.ts 三处一致」` 那一格管。
+   *
+   * **认不出要吵**：`VERSION` 读不出来或是空的当场红，不静静拿一个空串去比。
+   */
+  const releaseVersion = (): string => {
+    const v = readFileSync("VERSION", "utf8").trim();
+    expect(v, "仓根 VERSION 读出来是空的 —— 这一格会拿空串去比，测的是空气").not.toEqual("");
+    return v;
+  };
+
   it("提供 GATEWAY_TOKEN 时真的监听端口并能响应 /health", async () => {
     const server = await main({ GATEWAY_TOKEN: "t", PORT: "0", DATA_DIR: tmpDataDir() });
     try {
@@ -80,7 +99,7 @@ describe("node 入口: 真实启动路径", () => {
       const res = await fetch(`http://127.0.0.1:${port}/health`);
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
-        status: "ok", version: "0.1.0", storage: { writable: true },
+        status: "ok", version: releaseVersion(), storage: { writable: true },
       });
     } finally {
       await close(server);

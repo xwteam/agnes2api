@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.1.0-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.1.1-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -59,6 +59,7 @@
 
 | 日期 | 更新內容 |
 |------|----------|
+| 2026-08-31 | v0.1.1 - 🧹 **整備版**：把內部研發編號從公開倉清乾淨。面板資源那 202 處會隨 /admin/js/*.js 發給每個打開面板的訪客，是唯一真正外洩的一塊；其餘散在原始碼、測試、門禁指令稿、出貨文件與提交訊息裡。順帶修好「一條排版豁免被靜靜升級成洩漏豁免」和三格卡在預設逾時邊界上的測試。行為面沒有改動 |
 | 2026-08-31 | v0.1.0 - 🎉 **首個版本**：四協議閘道、註冊機與管理面板一次成型，同一份程式碼同時跑 Cloudflare Worker 與 Node / Docker 兩種執行時。四條入站協議共用同一套上游排程、同一個 key 池、同一份失敗歸因；註冊機的兩條臨時信箱通道嚴格平級；面板八個板塊零建置；文件五語言各一份 |
 
 > 完整更新日誌請查看 [CHANGELOG.md](../../CHANGELOG.md)。

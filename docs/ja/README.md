@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.1.0-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.1.1-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -59,6 +59,7 @@
 
 | 日付 | 更新内容 |
 |------|----------|
+| 2026-08-31 | v0.1.1 - 🧹 **整備リリース**：社内向け識別子を公開リポジトリから一掃しました。実際に漏れていたのはパネル配信物の 202 か所だけで、/admin/js/*.js の本文としてパネルを開いた訪問者全員に届いていました。残りはソース、テスト、ゲートスクリプト、出荷ドキュメント、コミットメッセージに散在していたものです。あわせて、組版上の除外がいつの間にか漏洩チェックの除外へ格上げされていた問題と、既定のタイムアウト境界に居座っていたテスト 3 ケースも直しています。動作の変更はありません |
 | 2026-08-31 | v0.1.0 - 🎉 **最初のリリース**：4 プロトコルのゲートウェイ、レジストラー、管理パネルが一度に揃い、同じコードが Cloudflare Worker と Node / Docker の両ランタイムで動きます。4 本の受信プロトコルは同じ上流スケジューラ、同じ key プール、同じ失敗の切り分けを共有します。レジストラーの 2 本の一時メールボックス経路は厳密に対等です。パネルは 8 つのセクションでビルド手順は不要です。ドキュメントは 5 言語に各 1 部あります |
 
 > 変更履歴の全文は [CHANGELOG.md](../../CHANGELOG.md) にあります。

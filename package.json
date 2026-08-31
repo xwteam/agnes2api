@@ -1,6 +1,6 @@
 {
   "name": "agnes2api",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI gateway that speaks the OpenAI, Anthropic, OpenAI Responses and Google Gemini protocols over one shared upstream pool, with a built-in admin panel. One codebase, two runtimes: Cloudflare Workers and Node/Docker.",
   "type": "module",
   "license": "MIT",
