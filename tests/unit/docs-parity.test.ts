@@ -7270,11 +7270,11 @@ describe("五份 SPONSORS.md 的字面恒等式（W33 的验收 ①②③⑤）"
  * W136 —— 「某份文档里有 X」这种**跨文档指认**必须为真（P3f 阶段 5B 第 1 轮评审回填）。
  *
  * ── 它补的是哪个洞 ────────────────────────────────────────────────────────
- * 阶段 5A 的 `cde41db` 把一颗 `Deploy to Cloudflare` 按钮从根 README 删掉，阶段 5B 的
- * W40–W44 五笔（`e7ece1e` / `943a3d3` / `bfaf387` / `bf3193a` / `99ac29c`）在重写各自那份
+ * 阶段 5A 的 `016d89c` 把一颗 `Deploy to Cloudflare` 按钮从根 README 删掉，阶段 5B 的
+ * W40–W44 五笔（`20f8394` / `ba506f6` / `ec632fd` / `b4f5455` / `0078ea7`）在重写各自那份
  * README 时把它从**五份**语言版删掉，全仓从此零命中。
- * ⚠️ 这一段原先把功劳记在 `ba5a076` 头上，**是错的**——`git log -S deploy.workers.cloudflare.com`
- *   的命中集合里没有它，`git show ba5a076:docs/{lang}/README.md` 逐份仍各有 1 处。
+ * ⚠️ 这一段原先把功劳记在 `35209c9` 头上，**是错的**——`git log -S deploy.workers.cloudflare.com`
+ *   的命中集合里没有它，`git show 35209c9:docs/{lang}/README.md` 逐份仍各有 1 处。
  *   写错还能活下来的原因值得记：`check-comment-refs` 只校验注释里的**仓内路径**，
  *   **commit id 是零判据区**——这一段的归因错不了任何一格。**可是五份 DEPLOY.md
  * 仍逐字指着它**，而且写在「方式一 / Option A」这个首选路径上：读者照着打开根 README，
@@ -11998,7 +11998,7 @@ describe("W131 R27 的源码锚：口令那两条门槛的数字从 `src/` 现�
   /**
    * ⚠️ **射程曾经是写死的 11 份**（README × 6 + DEPLOY × 5），而那是**立组当天的仓库形状**：
    * 那时另外 25 份非 README 文档里一个 `GATEWAY_TOKEN` 都没有。
-   * 阶段 7C 的 `933f3f7` 把五份 `USAGE.md` 从接线纸扩成使用指南之后，
+   * 阶段 7C 的 `54d7035` 把五份 `USAGE.md` 从接线纸扩成使用指南之后，
    * 五份 `USAGE.md`、五份 `API.md`、`docs/en/ADMIN.md` 里都出现了 `GATEWAY_TOKEN`
    * （⚠️ 这一段原先写成 `docs/{星}/USAGE.md` 那种通配写法，**`*` 后面紧跟 `/` 会把块注释提前闭合**，
    *   整份文件当场 PARSE_ERROR、`Tests no tests`。本仓 `strip-comments` 那一族机制防的就是这类，

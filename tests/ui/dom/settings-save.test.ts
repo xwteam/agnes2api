@@ -805,7 +805,7 @@ describe("接线：不轮询、传播上界要显示出来", () => {
  *
  * ⚠️⚠️ **这段说明订正过一次，订正的是史实而不是判据（复评 F5）。**
  * 原文写的是「第一版的 `renderOne` 据此**把所有输入框一律置灰**……前端跟不上
- * 等于白修」——**那是假史实**。按 `c6919fe` 原样核实：`renderOne` 那一支确实写着
+ * 等于白修」——**那是假史实**。按 `80e2e53` 原样核实：`renderOne` 那一支确实写着
  * `built.input.disabled = true`，但**紧接着**的 `setLock(built, false, null)` 里
  * 第一行是 `built.input.disabled = locked === true` ⇒ 把它抹回 `false`。
  * **诊断态下的表单从来没有被置灰过**，这一格当时就是绿的。
