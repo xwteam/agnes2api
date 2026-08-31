@@ -812,8 +812,25 @@ BANNER='[collection-guard] ✅'
 # 4371 → 4372 格，文件数仍是 142：**边界吞并夹具**——`docs-internal-refs.test.ts` 里
 #   多一格「`C4/C4b` 与 `P3c Task 1` 必须各报两条，且吃边界的写法必须只数到一个」。
 #   它钉的就是上面那笔 116 vs 91 里第 ③ 笔的机制，免得那段来源说明日后静静变假。
+# 4372 → 4373 格，文件数仍是 142：**CHANGELOG 能力清单那根轴改接「全部发版条目」**。
+#   `docs-parity.test.ts` 里那十三格判的是「公开仓那份能力清单必须与真源逐条对齐」
+#   （几条协议、几个板块、几条鉴权通道、两种运行时各用哪个存储实现、兜底状态码、
+#   发镜像的标签……），而它们的射程一直接在 `logSection(CHANGELOG, VERSION)` 上——
+#   也就是接在了另一根轴（「当前这一版必须有自己的一条非空条目、七处发版日期同一天」）
+#   的射程上。**发下一版时这个接错会当场变成一次假红**：实测把 `VERSION` 改成 `0.1.1`
+#   并按 Keep a Changelog 写一条只讲这一版改了什么的条目 ⇒ 本组 13 格齐红，
+#   报文全是「版本条目里没点名协议 `openai`」这类方向反了的话（能力清单一个字没少，
+#   只是不在那条新条目里）；而唯一的「捷径」是把上一版的清单复制进新条目，
+#   那正是 ADJ ⑩ 明令禁止的「为了凑满而编造版本条目」。
+#   ⇒ 新开 `releaseEntriesText()`：射程 = 全部 `## [x.y.z]` 条目的正文拼接
+#   （`## [Unreleased]` 与文件抬头不在内），认不出返回 `null`。
+#   四个消费者（协议 / 板块 / 通道那格、三串手抄清单那格、`storageFailures`、
+#   `bulletFailures`）改接它；`CHANGELOG_CELL` 与 `RELEASE_DATE_CELL` 两格**不动**，
+#   它们服务的本来就是 `VERSION` 那根轴。
+#   净 +1 格：一条反向控制（只有 `## [Unreleased]` ⇒ 返回 `null`；未发布段的正文
+#   不许算进射程；再压一条只讲自己的补丁条目 ⇒ 存储与 bullet 两格都不许因此红）。
 EXPECT_NODE_FILES=142
-EXPECT_NODE_TESTS=4372
+EXPECT_NODE_TESTS=4373
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

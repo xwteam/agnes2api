@@ -5193,6 +5193,41 @@ describe(FIRST_VISIT_GROUP, () => {
     return lines.slice(i, j);
   };
 
+  /**
+   * **能力清单那根轴的射程：CHANGELOG 里全部发版条目的正文**（`## [Unreleased]`
+   * 与文件抬头那段说明都不在内），从磁盘现算。**一条发版条目都认不出返回 `null`**，
+   * 调用方据此吵——返回空串会让下面那几格在取节写法变了的时候静静地全绿。
+   *
+   * 🔴 **它为什么不能接 `logSection(body, VERSION)`——这是本仓栽过的同一种接错射程。**
+   * 下面这几格判的是「**公开仓里那份能力清单**（几条协议、几个板块、几条鉴权通道、
+   * 两种运行时各用哪个存储实现、兜底状态码、发镜像的标签……）**必须与真源逐条对齐**」。
+   * 那是**真实性轴**。而 `VERSION` 里那个版本号服务的是另一根轴：
+   * 「**当前这一版**必须有自己的一条非空条目、且七处发版日期是同一天」（`CHANGELOG_CELL`
+   * 与 `RELEASE_DATE_CELL` 两格，它们继续接 `logSection(body, VERSION)`，本函数不碰）。
+   * 两根轴共用一份射程的代价是**结构性的**：发下一个补丁版时，`VERSION` 一改，
+   * 真实性轴的射程就整个挪到了那条新条目上——而按 Keep a Changelog，补丁版的条目本来就
+   * 只写这一版改了什么，不会（也不该）把整份能力清单再抄一遍。于是这十三格会一起红，
+   * 而修它的唯一「捷径」是**把上一版的能力清单复制进新条目**——那是编造版本条目，
+   * 正是 ADJ ⑩ 明令禁止的那件事。实测：把 `VERSION` 改成 `0.1.1`、按 Keep a Changelog
+   * 写一条只讲这一版的条目 ⇒ 本组 13 格齐红，报文全是「版本条目里没点名协议 `openai`」
+   * 这类**方向完全反了**的话（能力清单一个字都没少，只是不在那条新条目里）。
+   * ⇒ 真实性轴改接「全部发版条目」：那份清单写在哪一条里都算数，删掉它照样红。
+   *
+   * ⚠️ **取节按文件里的先后顺序拼**（新版在前、老版在后）。下面有三处「第一处匹配即取」
+   * 的清单抽取（`` `<协议 id>`（括号标签） ``、`文档（… / …）`、`**CI …门禁**：…——`），
+   * 它们抽的是首个版本那条条目里立下的三串清单。**往后新写的版本条目里不许再出现这三种
+   * 字面**，否则先被扫到的会是新条目里那一处。这条约束写在这里，不是靠人记着。
+   */
+  const releaseEntriesText = (body: string): string | null => {
+    const out: string[] = [];
+    let inEntry = false;
+    for (const line of body.split("\n")) {
+      if (line.startsWith("## ")) inEntry = /^## \[[0-9]+\.[0-9]+\.[0-9]+/.test(line);
+      if (inEntry) out.push(line);
+    }
+    return out.length === 0 ? null : out.join("\n");
+  };
+
   /** 真扫描与该红时红**共用这一份**，`read` 是唯一的注入点。 */
   const changelogFailures = (v: string, read: () => string): string[] => {
     const body = read();
@@ -5282,10 +5317,9 @@ describe(FIRST_VISIT_GROUP, () => {
   };
 
   it("CHANGELOG 的版本条目逐条点名协议 / 板块 / 通道，且它写下的每一个中文计数都从真源现算", () => {
-    const v = realVersion();
-    const sec = logSection(realChangelog(), v);
-    expect(sec, `CHANGELOG.md 里没有 ${v} 的条目`).not.toBeNull();
-    const text = sec!.join("\n");
+    const entries = releaseEntriesText(realChangelog());
+    expect(entries, "CHANGELOG.md 里一条 `## [x.y.z]` 发版条目都认不出 —— 认不出要吵").not.toBeNull();
+    const text = entries!;
     const sections = sectionsOf(realIndexHtml());
     // ── 逐条点名：加一条协议 / 一个板块 / 一条通道而不改 CHANGELOG ⇒ 当场点名它 ──
     for (const p of PROTOCOLS) expect(text, `版本条目里没点名协议 \`${p.id}\``).toContain(`\`${p.id}\``);
@@ -5341,10 +5375,8 @@ describe(FIRST_VISIT_GROUP, () => {
   };
 
   const storageFailures = (readLog: () => string): string[] => {
-    const v = realVersion();
-    const sec = logSection(readLog(), v);
-    if (sec === null) return [`CHANGELOG.md 里没有 ${v} 的条目 —— 这一格无从判起`];
-    const text = sec.join("\n");
+    const text = releaseEntriesText(readLog());
+    if (text === null) return ["CHANGELOG.md 里一条 `## [x.y.z]` 发版条目都认不出 —— 这一格无从判起"];
     const st = entryStorages();
     if (st === null) {
       return ["src/entry/{worker,node}.ts 里认不出 `import { XxxStorage } from \"../adapters/storage-*.js\"` "
@@ -5429,9 +5461,9 @@ describe(FIRST_VISIT_GROUP, () => {
   };
 
   it("CHANGELOG 里那三串手抄清单（协议括号标签 / 六份文档 / 十三道门禁）逐项对齐真源", () => {
-    const sec = logSection(realChangelog(), realVersion());
-    expect(sec, `CHANGELOG.md 里没有 ${realVersion()} 的条目`).not.toBeNull();
-    const text = sec!.join("\n");
+    const entries = releaseEntriesText(realChangelog());
+    expect(entries, "CHANGELOG.md 里一条 `## [x.y.z]` 发版条目都认不出 —— 认不出要吵").not.toBeNull();
+    const text = entries!;
     // ① 协议后面那个括号标签必须是 `PROTOCOLS[].label` 的子串（真源写 "Google Gemini generateContent"，
     //    这里写 "generateContent" 是合法的省写；写成别的协议的名字 / 一个不存在的名字则红）。
     for (const p of PROTOCOLS) {
@@ -5569,10 +5601,8 @@ describe(FIRST_VISIT_GROUP, () => {
    * 那一组唯一能红的真源变异是「占位符被换成真 id」，不注进来就只能测探测器、测不到判据）。
    */
   const bulletFailures = (readLog: () => string, readSrc: (p: string) => string = readReal): string[] => {
-    const v = realVersion();
-    const sec = logSection(readLog(), v);
-    if (sec === null) return [`CHANGELOG.md 里没有 ${v} 的条目 —— 这一格无从判起`];
-    const text = sec.join("\n");
+    const text = releaseEntriesText(readLog());
+    if (text === null) return ["CHANGELOG.md 里一条 `## [x.y.z]` 发版条目都认不出 —— 这一格无从判起"];
     const lower = text.toLowerCase();
     const out: string[] = [];
     /** 一个中文计数必须以某个可辨认的后缀出现（体例与上面那格 `counts` 一致）。 */
@@ -5852,6 +5882,31 @@ describe(FIRST_VISIT_GROUP, () => {
     expect(deployButtonReadmes()).not.toBeNull();
     expect(healthcheckPlaces().length).toBe(2);
     expect(wranglerBlanks()).not.toBeNull();
+  });
+
+  it("能力清单那根轴的射程是「全部发版条目」：只有 `## [Unreleased]` ⇒ 认不出要吵；发下一版 ⇒ 不许因此红", () => {
+    // ① 认不出要吵：一条发版条目都没有时返回 `null`，而不是一个「什么都没写」的空串
+    //    ——空串会让上面那几格逐条 `includes` 全落空、报文全变成「CHANGELOG 没写协议 …」，
+    //    方向正好反了（真因是取节写法瞎了，不是文档写错了）。
+    expect(releaseEntriesText("# Changelog\n\n## [Unreleased]\n\n- 还没发的东西\n"),
+      "只有 `## [Unreleased]` 时还能拼出发版条目的正文 —— 那份正文是编的").toBeNull();
+    // ② `## [Unreleased]` 底下的字不许被算进射程：算进去等于「还没发的东西」也能顶数。
+    const withUnreleased = releaseEntriesText(
+      "# Changelog\n\n## [Unreleased]\n\n- 只在未发布里出现的那句话\n\n## [0.0.1] - 2026-01-01\n\n- 真条目\n");
+    expect(withUnreleased, "有一条发版条目却认不出来").not.toBeNull();
+    expect(withUnreleased!, "`## [Unreleased]` 底下的正文被算进了发版条目的射程")
+      .not.toContain("只在未发布里出现的那句话");
+    // ③ 真源侧：今天这份 CHANGELOG 认得出，且上面那份能力清单确实落在射程里。
+    const real = releaseEntriesText(realChangelog());
+    expect(real, "真 CHANGELOG.md 里一条发版条目都认不出 —— 上面那几格就全无从判起了").not.toBeNull();
+    for (const p of PROTOCOLS) expect(real!, `发版条目的射程里没有协议 \`${p.id}\``).toContain(`\`${p.id}\``);
+    // ④ **本格存在的理由**：发下一版（版本条目上面再压一条只讲这一版的补丁条目）之后，
+    //    能力清单一个字都没动 ⇒ 这根轴不许因此红。射程接在 `VERSION` 上时这里当场红。
+    const nextRelease = realChangelog()
+      .replace("## [Unreleased]", "## [Unreleased]\n\n## [9.9.9] - 2099-01-01\n\n- 只修了一处笔误。");
+    expect(nextRelease, "变异没落地——CHANGELOG 里没找到 `## [Unreleased]`").not.toEqual(realChangelog());
+    expect(storageFailures(() => nextRelease), "发了一版只讲自己的补丁条目，存储那一格就红了").toEqual([]);
+    expect(bulletFailures(() => nextRelease), "发了一版只讲自己的补丁条目，三条 bullet 那一格就红了").toEqual([]);
   });
 
   /* ───────────────────────────────────────────────────────────────────────────
