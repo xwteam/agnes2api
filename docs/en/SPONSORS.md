@@ -26,6 +26,6 @@ agnes2api is an open-source project maintained primarily by an individual. If th
 
 - 🔌 Compatibility testing for new protocols (OpenAI / Anthropic / Gemini / OpenAI-Responses)
 - 🖼️ Broader image and video forwarding coverage
-- 🔐 Public-facing shape and hardening of the registrar (P2)
+- 🔐 Public-facing shape and hardening of the registrar
 - 🌐 Multi-language translation improvements
 - 📖 Documentation improvements

@@ -390,7 +390,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 - **Writes**: in steady state about `pool size × 4` per day (`lastUsedAt` is touched every 6
   hours) — 80 with 20 keys, 8% of the write quota, leaving the rest for cooldown and eviction
   bookkeeping. Each key also costs one one-off write the first time it is used.
-- **Events board (Task 6) writes**: each isolate persists at most `EVENT_WRITES_PER_DAY`
+- **Events board writes**: each isolate persists at most `EVENT_WRITES_PER_DAY`
   (**12**) times per day; past that, `budgetExhausted` is reported honestly, with no silent
   drop and no retry. **This gate only holds within a single isolate** — whether it's globally
   safe depends on whether "concurrent isolate count × this value" still fits the budget, since
@@ -409,7 +409,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   where a cold-started isolate's first flush bypassed throttling entirely — every isolate
   cold start used to send one zero-gate write, and now the first flush after cold start goes
   through the same minimum-interval gate as every other flush.
-- **Registrar write side (new in P3c Task 1) — this entire section only exists when
+- **Registrar write side — this entire section only exists when
   `registrar.enabled` is true.** On a default deployment (the registrar is off), the writes
   added by this section are **0/day**, not "a few less". When it is on, every tend round pays
   three items, **all hanging off one axis: the tend frequency** (on Worker that is the Cron in
@@ -442,7 +442,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 
 #### What each panel write operation costs — "only when a human clicks"
 
-- **Write side of the panel's write operations (new in P3c) — these only happen when a human
+- **Write side of the panel's write operations — these only happen when a human
   clicks, so they are not part of the steady-state accounts above.** There is no frequency
   bound to speak of (the bound is the operator's hand), so what follows is the **unit price of
   each operation**; every number below is a measured reading, **counted cell by cell**:
@@ -450,7 +450,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   `tests/contract/manual-tend.test.ts`, and the two settings-page endpoints in
   `tests/contract/admin-config.test.ts`.
   (This sentence used to name only the first file, while the "tend now" row has nothing to do
-  with it and no cell counted it at all back then — full-branch review I4. The fix is to add
+  with it and no cell counted it at all back then. The fix is to add
   that missing cell, not to soften this sentence.)
   - **Importing M new keys**: `M + 1` puts (M records + 1 index), `M + 1` gets, **0 lists**.
     At most 200 per import (over that it is a 400, **never a silent truncation**) ⇒ the upper
@@ -555,7 +555,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
     (that is the sentence above). **On Worker the knob is the Cron in `wrangler.toml`**;
     on Node it is `TEND_INTERVAL_MS`. `TEND_INTERVAL_MS` is **consumed only by the Node
     scheduler** — changing it on Worker adds **not a single round**. Conversely the
-    `registrar_tend_lock` put/delete pair **exists in both runtimes** (as of P3c Task 5 the
+    `registrar_tend_lock` put/delete pair **exists in both runtimes** (the
     Node side takes the same lock — an in-process boolean is worthless when several
     containers share one volume).
   - **Threshold axis**: when `TEND_INTERVAL_MS` drops below
@@ -571,7 +571,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 
 #### Write side of Tier-2 usage statistics (off by default)
 
-- **Write side of Tier-2 usage statistics (new in P3d, `USAGE_STATS_ENABLED`, **off by default**)
+- **Write side of Tier-2 usage statistics (`USAGE_STATS_ENABLED`, **off by default**)
   — it is the only new writer this phase.**
 
   **While it is off, this line contributes exactly zero writes**: no in-memory accumulator is
@@ -709,16 +709,16 @@ Those 13 come from the following, and all six points matter:
   > run cannot fill a single flush interval; cooldown and eviction are still counted per failure.
   > **Do not read the two as one** — what gets exhausted first is the upstream side, not KV.
 
-- **Events board reads (post-C4/C4b-fix figures, more conservative than the earlier draft)**:
+- **Events board reads (figures from after the candidate-key bound was fixed, more conservative than the earlier draft)**:
   polling no longer depends on an index, so the number of candidate keys is **hard-bounded** —
   no matter how stale `after` is or how many days the deployment has been running, a single
-  request scans at most 24 time windows × 2 slots = **48** gets (before the C4 fix, a stale or
+  request scans at most 24 time windows × 2 slots = **48** gets (before that fix, a stale or
   hostile `after` could push a single request to nearly 1 million gets; see the regression
   cases in `tests/contract/quota-panel.test.ts`). When `after` falls within a recent time
   window it's a "warm read", usually needing only 2 gets (4 at the moment a poll crosses a
   time-window boundary).
-  **"Bounded" does not mean "independent of activity level"** — evaluation C4b surfaced a
-  counter-intuitive result:
+  **"Bounded" does not mean "independent of activity level"** — and there is a
+  counter-intuitive result here:
   - **An "active" deployment with a steady stream of new events**: new events keep pushing
     the poll interval back down to the 15-second minimum, and most polls hit a warm read.
     Assuming the worst case of 4 gets/poll throughout: `(86400 ÷ 15) × 4 = 23,040` gets/day
@@ -753,17 +753,17 @@ Those 13 come from the following, and all six points matter:
     click (`readEvents(null)` always does a cold read, no cursor) — this only happens on a
     manual click and is negligible at that scale; noted here purely for completeness.
   Both scenarios' ceilings stay **flat regardless of how many days the deployment has been
-  running** — that part of the original claim still holds after the C4 fix.
+  running** — that part of the original claim still holds after that fix.
 #### The `list` and `delete` buckets
 
 - **`list` and `delete` are two further buckets, 1,000/day each**, separate from the read and
   write buckets. Steady-state forwarding never issues a `list` — that is exactly why the
   `pool:index` key exists. **Four** things consume it: the 48–96 daily index reconciliations
-  (one at the start of every tending round); **the panel's "tend now" button** (since P3c: when
+  (one at the start of every tending round); **the panel's "tend now" button** (when
   a round actually mints a key, the wrap-up reconciles once more ⇒ at most 24 more per day, the
   bound being that guardrail itself — this consumer used to be missing from the list, and the
   sentence used to describe reconciliation as "a separate, independently scheduled job", which
-  since P3c also has an **operator-triggered** consumer; full-branch review I2); the
+  now also has an **operator-triggered** consumer); the
   **empty-pool rescan** (when the index parses
   fine yet not a single live record can be read, the gateway issues one `list` to check whether
   a hand-imported record is missing from the index); and the **missing-index fallback** (when
@@ -794,7 +794,7 @@ By the same logic, the `list` backoff for the empty-pool and missing-index state
 **per instance**: every cold isolate pays its own cost, and the total scales linearly with the
 number of isolates.
 
-### Admin panel variables (P3, disabled by default)
+### Admin panel variables (disabled by default)
 
 | Variable | Required | Default | Notes |
 |--------|--------|-------|-----|
@@ -968,7 +968,7 @@ an audit field that the admin panel's events view will filter and display.
 If nothing usable is available the field is recorded as `null` — never a fabricated `"unknown"`,
 which would read as a real source.
 
-### What the settings page can change (P3c)
+### What the settings page can change
 
 The panel's **Settings** page has three cards: **Credentials**, **Upstream & cooldowns**, and
 **Registrar** (which holds the two fully equal mailbox-channel sub-cards plus an *Advanced*
@@ -987,11 +987,11 @@ fields and **writes nothing**: writing would produce "saved successfully, effect
 and the operator would blame a stale cache and wait for two refresh cycles for nothing.
 
 > [!IMPORTANT]
-> **From P3c the registrar family is in that lock table too** (`REGISTRAR_ENABLED`,
+> **The registrar family is in that lock table too** (`REGISTRAR_ENABLED`,
 > `REGISTRAR_PRIMARY`, `REGISTRAR_FALLBACK`, `TARGET_KEYS`, `MINT_BATCH`, `TEND_INTERVAL_MS`,
 > `CODE_TIMEOUT_MS`, `MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `MAX_DOMAIN_ATTEMPTS`,
 > `REGISTRAR_TOKEN_NAME`, `AGNES_PLATFORM_URL`, `YYDS_BASE_URL`, `YYDS_API_KEY`,
-> `MOEMAIL_BASE_URL`, `MOEMAIL_API_KEY`). Before that they were not: with `TARGET_KEYS=30` in
+> `MOEMAIL_BASE_URL`, `MOEMAIL_API_KEY`). That was not always so: with `TARGET_KEYS=30` in
 > `docker-compose.yml`, changing it to 20 in the panel saved fine while the effective value stayed 30
 > **even across restarts**, and the panel said nothing about it.
 
@@ -1012,7 +1012,7 @@ those if the secret is shorter than 5 — showing them would be showing all of i
 
 > [!WARNING]
 > **Credentials written from the panel are stored in plaintext** in KV / `store.json`, at the same
-> level as P1's "keys are stored in plaintext". Do not assume what you type here is an encrypted
+> level as the "keys are stored in plaintext" caveat. Do not assume what you type here is an encrypted
 > secret. Treat the data directory / KV namespace as credential material.
 
 > [!WARNING]

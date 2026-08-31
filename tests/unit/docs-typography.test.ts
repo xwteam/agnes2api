@@ -1687,11 +1687,11 @@ const headImportantBlock = (text: string): ReadonlyArray<{ line: string; no: num
  * **手写的只有「去哪儿找」**，节的内容由文件说了算；下面有一格自守钉住五份都找得到。
  */
 const DEPLOY_AUTH_HEADING: Record<string, string> = {
-  "zh-CN": "### 管理面板相关变量（P3，默认关闭）",
-  "zh-TW": "### 管理面板相關變數（P3，預設關閉）",
-  en: "### Admin panel variables (P3, disabled by default)",
-  ja: "### 管理パネル関連の変数（P3、デフォルトで無効）",
-  ko: "### 관리 패널 관련 변수(P3, 기본값은 비활성화)",
+  "zh-CN": "### 管理面板相关变量（默认关闭）",
+  "zh-TW": "### 管理面板相關變數（預設關閉）",
+  en: "### Admin panel variables (disabled by default)",
+  ja: "### 管理パネル関連の変数（デフォルトで無効）",
+  ko: "### 관리 패널 관련 변수(기본값은 비활성화)",
 };
 
 /** 从那个 `###` 起、到下一个 `## ` 为止的正文行。找不到标题返回空数组。 */
@@ -1842,10 +1842,10 @@ describe("R27 fail-closed 语义的词表两侧：方向由本组管，数字由
     // 「开放访问」这类词在别的语境里可能完全正当（例如讲上游或讲公开文档）。
     // 本表只在两处切片里查 —— 切片之外一个字都不看。
     const fixture: Doc = ["docs/zh-CN/DEPLOY.md",
-      "# X\n\n### 管理面板相关变量（P3，默认关闭）\n\n口令必填。\n\n## 别的一节\n\n这里说开放访问也不算。\n"];
+      "# X\n\n### 管理面板相关变量（默认关闭）\n\n口令必填。\n\n## 别的一节\n\n这里说开放访问也不算。\n"];
     expect(r27FailOpen([], [fixture]), "射程漏到了鉴权节之外").toEqual([]);
     const inside: Doc = ["docs/zh-CN/DEPLOY.md",
-      "# X\n\n### 管理面板相关变量（P3，默认关闭）\n\n未配置即开放访问。\n\n## 别的一节\n"];
+      "# X\n\n### 管理面板相关变量（默认关闭）\n\n未配置即开放访问。\n\n## 别的一节\n"];
     expect(r27FailOpen([], [inside]), "鉴权节里的 fail-open 措辞没被抓到 —— 那这半个射程是死的")
       .toHaveLength(2);
   });
