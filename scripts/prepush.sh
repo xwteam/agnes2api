@@ -740,8 +740,25 @@ BANNER='[collection-guard] ✅'
 #   ⇒ 该红时红 2（把份数写小 / 把 healthcheck 说成没有）+ 认不出要吵 1 = +3。
 #   顺带把 `BUTTON_LABEL` / `BUTTON_MARKUP` 提到模块级：W136 (B) 与本组两个消费方
 #   合用同一份字面，各抄一份的话改一处漏一处又是同一种失明。
-EXPECT_NODE_FILES=140
-EXPECT_NODE_TESTS=4285
+# 4285 → 4301，文件数 140 → **141**：**P3g 复评第 2 轮发现 1 的回填**——
+#   新增 `scripts/pretag.sh`（打 tag 前的那道门禁）与 `tests/unit/pretag-guard.test.ts`。
+#   立项理由是一次已经发生的事故：`v0.1.0` 打在 `5f4bc0b` 上，而 GitHub 记着那个提交的
+#   `lint-and-test` 是 **failure**，同时 `origin/main` 已经比它多两个提交；而
+#   `.github/workflows/docker-publish.yml` 只有 checkout + buildx + push、**一道测试都不跑**，
+#   于是 `ghcr.io` 上 `0.1.0` / `0.1` / `latest` 三个公开标签全是从那棵红树上构建的。
+#   ⚠️ **本脚本看不见这一层**：它判的是「这棵树本身合不合格」，判不了「这棵树是不是远端
+#   main 那棵」「GitHub 那边记着它绿不绿」——那两件都要联网，而这份清单必须离线跑得完。
+#   ⇒ 新脚本单开一份（六格：工作树 / 分支 / VERSION 与 CHANGELOG / HEAD == 远端 main /
+#   远端还没这个 tag / 那个 sha 上 ci.yml 的每个 job 都是 completed+success）。
+#   测法与 `scan-secrets.test.ts` 同轨（复制到临时仓里跑，`gh` 用 PATH 上的夹具顶替，
+#   远端是本地裸仓 + `insteadOf` 改写 ⇒ 全程不联网）：
+#   非空锚 1 + 六格全过 1 + 该红时红 / 认不出要吵 12（CI 红 / 那个 job 一次没跑过 / 还在跑 /
+#   重跑取最新那条 / gh 请求失败 / 响应不是 JSON / 机器上没有 gh / job 名单从 ci.yml 现算 /
+#   HEAD 超前远端 / 工作树脏 / 不在 main 上 / CHANGELOG 没这个版本的条目）
+#   + tag 已存在时默认拒、`--allow-retag` 才放（且 CI 那格照旧一票否决）1 + 坏参数退 2 一格
+#   ⇒ 16 格。
+EXPECT_NODE_FILES=141
+EXPECT_NODE_TESTS=4301
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

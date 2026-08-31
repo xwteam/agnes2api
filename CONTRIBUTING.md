@@ -186,12 +186,31 @@ translated README.
 3. Run the pre-push checklist — `bash scripts/prepush.sh` — and make it green. It re-runs the
    CI gates in CI's own order, plus the few things CI structurally cannot see (a dirty working
    tree, the branch, the author identity, the test counts, and a real two-runtime smoke test).
-4. Commit, tag `vX.Y.Z`, and push **both the commit and the tag**. Pushing a `v*` tag is what
-   triggers [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) to
-   publish the image; that workflow can also be run by hand from the Actions tab. The version
-   badges are not computed at render time — they ship inside the commit the tag points at, so
-   the tag must come after the version bump, never before.
-5. Write the GitHub Release body from the skeleton below.
+4. Commit and push **the commit alone**, then wait for CI on it. The tag has to point at
+   whatever `origin/main` ends up being, so it cannot be created before the push.
+5. Run the tag gate — `bash scripts/pretag.sh` — and make its six cells green. The section
+   below says what it guards.
+6. Tag `vX.Y.Z` and push the tag. Pushing a `v*` tag is what triggers
+   [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) to publish the
+   image. The version badges are not computed at render time — they ship inside the commit the
+   tag points at, so the tag must come after the version bump, never before.
+7. Write the GitHub Release body from the skeleton below.
+
+### Why the tag gate is its own script
+
+`scripts/pretag.sh` refuses to let you tag unless the working tree is clean, you are on `main`,
+`HEAD` is the exact commit `origin/main` points at, the tag does not already exist on the
+remote, and GitHub itself records every job in `ci.yml` on that commit as `completed/success`.
+The last three need the network, which is why this is not an eighth cell in `prepush.sh` — that
+checklist has to stay runnable offline.
+
+It exists because the first release did not have it. `v0.1.0` was tagged on a commit whose
+`lint-and-test` GitHub records as `failure`, two commits behind `main`; and since
+`docker-publish.yml` is checkout + buildx + push with no test and no gate in it, that red tree
+is what the published `0.1.0`, `0.1`, and `latest` images were built from. Pushing a tag is the
+only thing standing between a tree and `ghcr.io`, so the check has to happen before the tag.
+That workflow can also be run by hand from the Actions tab, which is how you rebuild the images
+after a tag has been moved.
 
 ### The Release body is five languages, in this order
 
