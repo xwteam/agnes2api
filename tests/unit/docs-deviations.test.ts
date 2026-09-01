@@ -92,7 +92,7 @@ type Deviation = {
 const REGISTRY: readonly Deviation[] = [
   {
     id: 1,
-    what: "六份 SPONSORS.md 没有 `## 📢 交流群`，`^---$` 因此是 2 条而不是 3 条（V40）",
+    what: "六份 SPONSORS.md 没有 `## 📢 交流群`，`^---$` 因此是 2 条而不是 3 条",
     why: "本仓没有交流群，照抄一个空的群号节就是造假；`---` 的条数按 R20/P4② 跟着节数走",
     until: "哪天真建了群并在 SPONSORS 里放出入口 —— 那时这条登记要删，同时 R20/P4② 的期望值跟着 +1",
     assert: () => SIX_SPONSORS.flatMap((p) => {
@@ -110,7 +110,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 2,
-    what: "根 README 的动态徽章区是 3 枚（CI / Issues / Stars），模板是 2 枚（V30）",
+    what: "根 README 的动态徽章区是 3 枚（CI / Issues / Stars），模板是 2 枚",
     why: "多出来的那枚是 CI 状态徽章；删掉它 `repo-front-door` 的 (c) 会当场红",
     until: "哪天 CI 徽章被换掉或动态区改成别的枚数 —— 先去看 `repo-front-door` 的 (c) 再改这里",
     assert: () => {
@@ -124,7 +124,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 3,
-    what: "快速部署第 2 步叫 `### 2. 部署`，不是模板的 `### 2. Docker 部署`（V5）",
+    what: "快速部署第 2 步叫 `### 2. 部署`，不是模板的 `### 2. Docker 部署`",
     why: "本仓是双形态（Docker + Cloudflare Worker），把标题写死成 Docker 会漏掉一半读者",
     until: "哪天只剩一种部署形态 —— 那时标题该跟着收窄，这条登记要删",
     assert: () => SIX_READMES.flatMap((p) => {
@@ -137,7 +137,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 4,
-    what: "`docs/{lang}/` 是 7 份而不是模板的 5 份（V19）—— 多出 ADMIN 与 REGISTRAR",
+    what: "`docs/{lang}/` 是 7 份而不是模板的 5 份 —— 多出 ADMIN 与 REGISTRAR",
     why: "面板与注册机是本仓独有的两块，参照仓没有对照物，只能自己立一类文档",
     until: "哪天这两块下线 —— 文档跟着删，这条登记也删",
     assert: () => LANGS.flatMap((l) => {
@@ -147,7 +147,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 5,
-    what: "`.github/workflows/` 是 3 个而不是模板的 2 个（V11）—— 多出 `deploy-worker.yml`",
+    what: "`.github/workflows/` 是 3 个而不是模板的 2 个 —— 多出 `deploy-worker.yml`",
     why: "Worker 形态需要一条自己的部署流水线，模板只有 Docker 一条路",
     until: "哪天不再发 Worker 形态",
     assert: () => {
@@ -160,14 +160,14 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 6,
-    what: "根目录多出 CONTRIBUTING / SECURITY 与 `.github` 三份模板，参照仓没有（V47）",
+    what: "根目录多出 CONTRIBUTING / SECURITY 与 `.github` 三份模板，参照仓没有",
     why: "公开仓的门面：贡献指引、安全披露渠道、issue/PR 模板。参照仓缺这些不是优点",
     until: "不失效 —— 这是刻意超出模板的一档，除非仓不再公开",
     assert: () => COMMUNITY_MD.filter((p) => !existsSync(p)).map((p) => `${p} 不见了`),
   },
   {
     id: 7,
-    what: "GitHub 仓库 topics 保留 10 个（V48）",
+    what: "GitHub 仓库 topics 保留 10 个",
     why: "topics 是搜索入口，10 个是 GitHub 上限档，删到 5 个只会更难被搜到",
     until: "哪天决定收窄 topics",
     // 🔴 **这一条机器验不了**：topics 存在 GitHub 的仓库设置里，不在磁盘上。
@@ -177,7 +177,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 8,
-    what: "`.env.example` 用制表符包边分组（`# ──…`），参照仓是平铺的（V49）",
+    what: "`.env.example` 用制表符包边分组（`# ──…`），参照仓是平铺的",
     why: "本仓 29 个环境变量，分组之后才读得下去；两参照仓只有 17 / 54 行，不需要分组",
     until: "哪天变量数掉回十几个",
     assert: () => {
@@ -187,7 +187,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 9,
-    what: "`> [!CAUTION]` 只在五份 DEPLOY.md 里各用 2 处，全仓合计恰 10 处（V50）",
+    what: "`> [!CAUTION]` 只在五份 DEPLOY.md 里各用 2 处，全仓合计恰 10 处",
     why: "CAUTION 是最高一档，用滥了就不管用；这 10 处是「不可逆 / 会丢数据」那两件事",
     until: "哪天出现第三件够得上 CAUTION 的事 —— 先来改这个数，别静静地加",
     assert: () => {
@@ -202,7 +202,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 10,
-    what: "非 README 文档里唯一的 `<details>`：五份 DEPLOY.md 的 `### 配额账` 各 1 处（V27，射程铁律的具名例外）",
+    what: "非 README 文档里唯一的 `<details>`：五份 DEPLOY.md 的 `### 配额账` 各 1 处（射程铁律的具名例外）",
     why: "那一节 283 行全是账目推导，不折叠会把整份 DEPLOY 压垮；除它之外非 README 一概不折叠",
     until: "哪天配额账拆成独立文档，或者决定非 README 全面允许折叠 —— 后者要先推翻那条射程铁律",
     // 🔴 这就是 ADJ §77 记的那笔登记债：7B 用测试内的 `DETAILS_ALLOWLIST` 暂代名册，
@@ -222,7 +222,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 12,
-    what: "六份 README 的「📝 最近更新」表数据行 <10 行（V43）",
+    what: "六份 README 的「📝 最近更新」表数据行 <10 行",
     why: "ADJ ⑩ 明令「不许为了凑满 10 行而编造版本条目」；这个仓才发到 v0.1.0",
     until: "行数涨到 10 之后这条登记必须删（那时它就不是偏离了）",
     assert: () => SIX_READMES.flatMap((p) => {
@@ -232,7 +232,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 13,
-    what: "六份 SPONSORS.md 的导语不照抄模板的「请作者喝杯咖啡 / 二维码见管理面板」（V41）",
+    what: "六份 SPONSORS.md 的导语不照抄模板的「请作者喝杯咖啡 / 二维码见管理面板」",
     why: "本仓没有收款码也没有二维码，照抄就是**指向一个不存在的东西**——「照抄即造假」那一档",
     until: "哪天真放了收款码或二维码入口 —— 那时这条登记要删，导语也该改回模板的写法",
     assert: () => SIX_SPONSORS.flatMap((p) => {
@@ -244,7 +244,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 14,
-    what: "六份 README 的 `## 🙏 致谢` 写成前瞻式，不写模板那句「这些反馈直接推动了…的迭代」（V42）",
+    what: "六份 README 的 `## 🙏 致谢` 写成前瞻式，不写模板那句「这些反馈直接推动了…的迭代」",
     why: "本仓还没有收到过任何外部反馈，写「推动了迭代」是**凭空捏造一段社区史**",
     until: "哪天真有外部贡献可以点名致谢",
     // ⚠️ 这一条是审查器构造的那条反例的正面回答：致谢正文**不在任何判官的射程里**，
@@ -258,7 +258,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 15,
-    what: "根 README 删掉了模板的「文档 × 语言」索引矩阵表，改成五条 `> 📖` 指针行（V45）",
+    what: "根 README 删掉了模板的「文档 × 语言」索引矩阵表，改成五条 `> 📖` 指针行",
     why: "矩阵表 7 行 × 5 列，改一份文档要动 5 格；指针行贴在对应小节里，读者在哪一节就看哪一条",
     until: "哪天文档种类多到指针行铺不下",
     assert: () => {
@@ -272,7 +272,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 17,
-    what: "`admin-ui/README.md` 移出 D4 的排版射程（Q15）",
+    what: "`admin-ui/README.md` 移出排版轴的射程（贡献者文档，参照仓无对照物）",
     why: "它是写给改面板源码的人的开发笔记，参照仓没有对照物；套 16 节骨架毫无意义",
     until: "哪天决定把它也当出货文档",
     // ⚠️ **两个方向**：文件必须还在（不是被删了才「不在射程里」），且确实不在 40 份射程里。
@@ -282,7 +282,7 @@ const REGISTRY: readonly Deviation[] = [
     // 现在读的是排版判官真正在用的那一份
     // （`tests/helpers/ship-docs.ts`），它红不红与那 40 份射程真的绑在一起；
     // 本文件末尾另有一格反向控制，喂一份含它的射程必须点名。
-    // 🔴 **这条只豁免排版轴，不豁免 ADJ ㉚**：`what` 里那句「D4 的排版射程」与 `why` 里那句
+    // 🔴 **这条只豁免排版轴，不豁免 ADJ ㉚**：`what` 里那句「排版轴的射程」与 `why` 里那句
     // 「套 16 节骨架毫无意义」讲的都是排版。泄漏轴（不暴露内部路线图与阶段编号）另有射程
     // （`publicDocs()`），`admin-ui/README.md` **在**那份射程里。本文件末尾专门为这件事
     // 单开了一格——本仓已经因为把这两根轴混成一份射程，让 11 处内部编号躺进过公开仓。
@@ -321,7 +321,7 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 20,
-    what: "五份 DEPLOY.md 是 **15** 个 `##`，模板骨架是 12 个（V56 + ADJ ㊵）",
+    what: "五份 DEPLOY.md 是 **15** 个 `##`，模板骨架是 12 个（ADJ ㊵）",
     why: "`## Docker 部署` 拆成「选哪种形态 + 两条部署路」是 +3；ADJ ㊵ 又保留了 `## 环境变量` 是 +1，12−1+3+1 = 15",
     until: "哪天只剩一条部署形态 —— 那时要退回 12 节，这条登记跟着删",
     // ⚠️ 规格 §4 R19 名册表第 20 行写的是「恰 14」，**那个数已经过期**：
@@ -434,9 +434,9 @@ describe("名册自守：编号不重、三样东西齐全、机器验不了的�
   });
 
   /**
-   * 🔴 **第 17 条只豁免排版轴（D4 的 16 节骨架），不豁免 ADJ ㉚（不暴露内部路线图与阶段编号）。**
+   * 🔴 **第 17 条只豁免排版轴（那 16 节骨架），不豁免 ADJ ㉚（不暴露内部路线图与阶段编号）。**
    *
-   * 这条登记的原文写的是「移出 **D4 的排版射程**」，理由写的是「套 16 节骨架毫无意义」
+   * 这条登记的原文写的是「移出 **排版轴的射程**」，理由写的是「套 16 节骨架毫无意义」
    * —— 两句话说的都是**排版**。而泄漏轴（㉚）是另一根轴，它一个字都没豁免过任何文档。
    * 本仓真的在这里栽过一次：泄漏轴那份判据（`docs-internal-refs.test.ts`）第一版把射程
    * 接在了 `shipDocs()` 上，于是 `admin-ui/README.md` 借着这条**排版**豁免一并逃出了泄漏轴，
@@ -460,12 +460,12 @@ describe("名册自守：编号不重、三样东西齐全、机器验不了的�
     const ids = new Set(REGISTRY.map((d) => d.id));
     // 第 11 条：规格自己在 R2 修订时删掉了（「TIP 是两句而非一句」根本不构成偏离）。
     expect(ids.has(11), "第 11 条回来了 —— 规格已裁定它不构成偏离，登记它会稀释整张名册").toBe(false);
-    // 第 16 条：Q7 的「USAGE 本期不扩容 = 已知欠账」。阶段 7C 已经把五份 USAGE 从
+    // 第 16 条：规格里那条「USAGE 本期不扩容 = 已知欠账」。阶段 7C 已经把五份 USAGE 从
     // 95–103 行扩到了 308–400 行，**欠账结清** ⇒ 按它自己的失效条件，这条登记必须删。
     expect(ids.has(16), "第 16 条（USAGE 不扩容）回来了 —— 它已经结清了").toBe(false);
     const lines = LANGS.map((l) => read(join("docs", l, "USAGE.md")).split("\n").length - 1);
     expect(lines.filter((n) => n < 300), `USAGE 又缩回 300 行以下了（${lines.join(" / ")}）—— `
-      + "那 Q7 的欠账重新成立，第 16 条要加回名册").toEqual([]);
+      + "那条欠账重新成立，第 16 条要加回名册").toEqual([]);
   });
 });
 

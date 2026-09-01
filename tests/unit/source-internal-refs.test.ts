@@ -312,19 +312,21 @@ const readerWith = (target: string, mutate: (src: string) => string): FileReader
  *
  * 🔴 **这张表是一笔欠账的登记，不是许可。** 上一轮清理清的是第二批字母那一族
  * （下面「新族恒为零」那一格钉着它今天在标本集之外**一处不剩**）；
- * 其余四族在跟踪文件里**从来没有被清过**，下面这 11 份就是它们的残留。
+ * 其余四族在跟踪文件里**从来没有被清过**，下面这 10 份就是它们的残留。
  * 每一处都是真的内部标识符或真的同形真词，逐份读过：
  *
- * · 四份判据文件（排版轴 / 对照轴 / 偏离名册 / 门面轴）里，是那几轴**自己的规则编号**
+ * · 三份判据文件（排版轴 / 对照轴 / 偏离名册）里，是那几轴**自己的规则编号**
  *   与探针串——与标本集那两份同一类，但它们**没有拿到那一族的免**：这一族的清理该做，
  *   只是不在本轮的射程里。⇒ 登记在这里，数字不许涨。
+ *   ⚠️ 这一条原先是**四份**，第四份是门面轴。那一份上剩的最后一处随本轮的改写一起
+ *   清掉了，处数掉到零 ⇒ 按下面那段「清到零就把那一行删掉」的规矩整行删除，不是留个 0。
  * · **五份**源码 / 测试里，是 Unicode 控制字符区的两个标准名字（`C` + 一位数字那两个）。
  *   **这一类清不掉**：它是 Unicode 标准里那两个区的名字，改写就是把话讲错。
  *   ⇒ 这也是本轴**做不到「总数为零」**的硬原因，写在这里，不假装它不存在。
  *   ⚠️ **复评订正**：这一条原先写「四份」，而把 `tests/helpers/ship-docs.ts` 那一处
  *   也归了进来——那一处根本不是控制字符名，是一个货真价实的发现号，属于**该清**的那一档。
  *   归错档的后果不是数字差一，是**照这段读下去的人会认定它动不得，于是永远没人去清**。
- *   已当场清掉，那一份因此退出本表；三条 bullet 现在合计 4 + 5 + 2 = 11，与正文对得上。
+ *   已当场清掉，那一份因此退出本表；三条 bullet 现在合计 3 + 5 + 2 = 10，与正文对得上。
  * · 两份是**判官自己的标本集**（`SPECIMENS` 那两份，今天 100 与 50 处）：
  *   它们的数字天生就高，理由逐份写在那张表里。**它们在册的意义只有一个——
  *   数字与签名不许动。** 早先它们走的是「整份跳过」，那等于往这两份里新写任何编号都不红。
@@ -347,12 +349,11 @@ const BASELINE: ReadonlyArray<readonly [string, number, string]> = [
   ["src/adapters/logger-console.ts", 4, "de1aa8f2a4cd"],
   ["src/http/admin/auth.ts", 3, "6d7e39c41b4a"],
   ["tests/ui/sendable-parity.test.ts", 2, "bc4554e3aa76"],
-  ["tests/unit/docs-deviations.test.ts", 5, "6a1141c2740e"],
+  ["tests/unit/docs-deviations.test.ts", 2, "f49a7dcae86e"],
   ["tests/unit/docs-internal-refs.test.ts", 100, "8ee7583d5554"],
-  ["tests/unit/docs-parity.test.ts", 25, "e6f2f93b4745"],
-  ["tests/unit/docs-typography.test.ts", 29, "d54f59644f71"],
+  ["tests/unit/docs-parity.test.ts", 23, "bf6437e3b93f"],
+  ["tests/unit/docs-typography.test.ts", 25, "38a17c4d86d1"],
   ["tests/unit/logger.test.ts", 4, "de1aa8f2a4cd"],
-  ["tests/unit/repo-front-door.test.ts", 1, "b804d0b78b82"],
 ];
 
 /** 逐份点名的实际值，形态与 `BASELINE` 一致（路径 / 处数 / 签名），直接拿去比。 */

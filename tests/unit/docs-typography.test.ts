@@ -7,7 +7,7 @@
  * `scripts/check-i18n.mjs:9-12` 立法时说的一模一样 —— **一条红会被另一条红盖住**，
  * 读日志的人只看得见第一个失败，剩下的要修完再跑一轮才浮出来。
  *
- * ── 两批启用，不是一批（X3 / O7 / Q17）────────────────────────────────────
+ * ── 两批启用，不是一批 ────────────────────────────────────────────────
  * · **上半**（与那一期的改写无关）：R20/P1–P4、R22f/g、R24、R25a–e、R28。
  * · **下半**（依赖那一期的成果）：R20/P5、R21、R23'、R26。
  *   R25f 早就随「位置不对的 `---`」那一组落进了 `tests/unit/docs-parity.test.ts`（两格：真扫描 +
@@ -18,7 +18,7 @@
  *
  * ── 口径（一次写清，下面每一格都按这个来）────────────────────────────────
  * · **射程**：出货文档 40 份 = 仓根 5 份 + `docs/{5 语言}/{7 份}`。**从磁盘现算**。
- *   不含 `.github/**`（3 份）与 `admin-ui/README.md`（1 份）—— 后者是 Q15 的
+ *   不含 `.github/**`（3 份）与 `admin-ui/README.md`（1 份）—— 后者是一条
  *   具名裁定，登记在偏离名册第 17 条。
  * · **先剥围栏**：以 ``` 起头的行做开关，围栏定界行本身也剥掉。
  *   围栏里教人写 markdown 的示例不进任何一格的射程。
@@ -668,7 +668,7 @@ describe("R25a–e emoji 标题按文档类分档（两端都查）", () => {
     expect(wrong, `快速部署的三步不对：\n${wrong.join("\n")}`).toEqual([]);
   });
 
-  it("e 六份 SPONSORS.md：H1 带 `☕`，两个 H2 分别带 `💖` / `🤝`（按 V40 没有 `📢`）", () => {
+  it("e 六份 SPONSORS.md：H1 带 `☕`，两个 H2 分别带 `💖` / `🤝`（按那条刻意偏离没有 `📢`）", () => {
     const wrong = pairsOf(SIX_SPONSORS).flatMap(([p, t]) => {
       const rows = bodyLines(t);
       const h1 = rows.find((r) => /^# /.test(r.line))?.line ?? "";
@@ -800,8 +800,8 @@ describe("R28 排版基线不回退（那 16 个指标里，能进仓的那几�
  *
  * 为什么单独一批：R21 判的是「195 处裸警告转完之后」的状态、R23' 判的是
  * 「在语义边界上插完标题之后」的状态、R26 判的是「收完开篇之后」的状态。
- * 在阶段 7 中途启用，整个阶段 7 全程 CI 红，而且**红的原因是「活还没干完」**，报文误导
- *（X3 / O7 / Q17）。所以它们排在最后一批之后，**启用当天就必须全绿**。
+ * 在阶段 7 中途启用，整个阶段 7 全程 CI 红，而且**红的原因是「活还没干完」**，报文误导。
+ * 所以它们排在最后一批之后，**启用当天就必须全绿**。
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /* ── R21 —— 裸警告 emoji 归零（上限判据，不可灌水）────────────────────────── */
@@ -1217,7 +1217,7 @@ describe("R26a–c 25 份非 README 的开篇三行形态与 H1 译名", () => {
  * 先交代问题有多硬：可判定性审查构造了一条一次性机械变换，跑四个 sed 就能让纯上限体系
  * 全绿，而 25 份非 README 里的 alert 块**仍然是 0 个**、内容一个字没动。
  * 根因是「宁取上限与恒等式，不取下限」贯彻得太彻底：**上限只能防退化，不能驱动改进**，
- * 而 D4（「现在的太简单了」）是一个改进诉求。
+ * 而用户那句「现在的太简单了」是一个改进诉求。
  *
  * P5 的形态**不是回到计数下限**（那可灌水），而是**内容锚定**：
  * 出货文档正文里每出现一处「风险语义句」，它所在的块必须以 `> [!TYPE]` 起头。
@@ -1225,7 +1225,7 @@ describe("R26a–c 25 份非 README 的开篇三行形态与 H1 译名", () => {
  * 少写直接红、想减少分母就得删掉真实的风险陈述（被 R28 的体量下限挡住）。
  *
  * **它验不了什么**：alert 选的**类型**对不对；一句风险陈述**写得全不全**。
- * ⇒ 判型转换有人工评审（Q17 已定），P5 只保证「风险句必须住在框里」。
+ * ⇒ 判型转换有人工评审（已定），P5 只保证「风险句必须住在框里」。
  * ────────────────────────────────────────────────────────────────────────── */
 
 /**
@@ -1478,7 +1478,7 @@ describe("R19' 载体过滤：40 份出货文档的正文里一个 HTML 注释�
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
- * R14 —— **D3 商用措辞：五语言一律建议式，不得为禁止性**（评审发现 7 / 11 / 18 的回填）
+ * R14 —— **商用措辞：五语言一律建议式，不得为禁止性**（评审发现 7 / 11 / 18 的回填）
  *
  * 🔴 **这是用户唯一逐字点名「要有机器判据」的那一条**（USER-DECISIONS.md:41-42、
  * ADJUDICATIONS.md:158：「五份各自命中本语言的建议式措辞，且全仓零命中禁用词表」）。
@@ -1487,7 +1487,7 @@ describe("R19' 载体过滤：40 份出货文档的正文里一个 HTML 注释�
  *
  * ⚠️ **为什么这条洞一定会被踩**：`ADJ ⑧` 实测 kiro2api 模板的 ja/ko 原文就是
  * 禁止式（`商用は禁止です` / `사용하지 마십시오`）。「照模板走」这条路径的终点
- * 就是违反 D3 —— 本组是那条路上唯一的拦截点。
+ * 就是违反那条裁定 —— 本组是那条路上唯一的拦截点。
  *
  * **两张表，两个方向都要查**（少任何一个方向都是半拉子）：
  * · **正面表 + 否定守卫**：六份各自命中本语言的建议式措辞；命中点**之外**前后 8 个
@@ -1520,20 +1520,20 @@ const headNoteBlock = (text: string): ReadonlyArray<{ line: string; no: number }
 };
 
 /** 建议式措辞（正面表）。key 是语言，根 README 按 zh-CN 算。 */
-const D3_ADVISORY: Record<string, string> = {
+const COMMERCIAL_ADVISORY: Record<string, string> = {
   "zh-CN": "不建议", "zh-TW": "不建議", en: "not recommended",
   ja: "お勧めしません", ko: "권장하지 않습니다",
 };
 
 /** 否定守卫的特征词。**只在命中点之外的前后 8 个字符里查**。 */
-const D3_NEGATORS: readonly string[] = ["不", "并非", "並非", "無需", "无需", "不会", "不會", "not", "never", "ません", "않"];
+const COMMERCIAL_NEGATORS: readonly string[] = ["不", "并非", "並非", "無需", "无需", "不会", "不會", "not", "never", "ません", "않"];
 
 /**
  * 禁止性字面（负面表）。**射程是头部 NOTE 块，所以敢收裸词**。
  * 前 10 条是规格 §R14 写死的那张表，后面几条是评审四次变异实测用过的原句
  *（含 kiro2api 模板的 ja/ko 原文）—— 照抄回来即红。
  */
-const D3_FORBIDDEN: readonly string[] = [
+const COMMERCIAL_FORBIDDEN: readonly string[] = [
   "不要用于任何商业", "禁止商", "不得用于任何商业", "禁止です", "してはいけません",
   "사용하지 마십시오", "금지", "must not", "prohibited", "do not use",
   "禁止", "嚴禁", "严禁", "不得用於任何商業", "使用しないでください",
@@ -1549,13 +1549,13 @@ const advisoryContext = (text: string, word: string): string | null => {
 /** 正面表的判定：逐份返回「为什么算未命中」，命中则不返回。 */
 const d3Missing = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) => {
   const lang = p === "README.md" ? "zh-CN" : (p.split("/")[1] ?? "");
-  const want = D3_ADVISORY[lang];
+  const want = COMMERCIAL_ADVISORY[lang];
   if (want === undefined) return [`${p}：认不出语言 ${lang} —— 正面表没有这一格`];
   const block = headNoteBlock(t).map((r) => r.line).join("\n");
   if (block === "") return [`${p}：头部一块 \`> [!NOTE]\` 都没有 —— 射程是空的，判据在测空气`];
   const ctx = advisoryContext(block, want);
   if (ctx === null) return [`${p}：头部 NOTE 块里没有本语言的建议式措辞「${want}」`];
-  const neg = D3_NEGATORS.filter((n) => ctx.includes(n));
+  const neg = COMMERCIAL_NEGATORS.filter((n) => ctx.includes(n));
   return neg.length === 0 ? []
     : [`${p}：「${want}」命中了，但前后 8 字里有否定词 ${neg.join(" / ")} —— `
       + `这是「并非不建议」那一类反话：${ctx}`];
@@ -1563,11 +1563,11 @@ const d3Missing = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) => {
 
 /** 负面表的判定：射程内命中禁止性字面的行。 */
 const d3Forbidden = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) =>
-  headNoteBlock(t).flatMap((r) => D3_FORBIDDEN
+  headNoteBlock(t).flatMap((r) => COMMERCIAL_FORBIDDEN
     .filter((w) => r.line.includes(w))
     .map((w) => `${p}:${r.no} 命中禁止性措辞「${w}」：${r.line.trim().slice(0, 60)}`)));
 
-describe("R14 D3 商用措辞：六份 README 的头部 NOTE 块一律建议式（用户裁定，唯一点名要机器判据的那条）", () => {
+describe("R14 商用措辞：六份 README 的头部 NOTE 块一律建议式（用户裁定，唯一点名要机器判据的那条）", () => {
   it("射程自守：六份都取得到头部 `[!NOTE]` 块，且块里真有正文", () => {
     const empty = pairsOf(SIX_READMES).filter(([, t]) => headNoteBlock(t).length < 2)
       .map(([p]) => p);
@@ -1578,7 +1578,7 @@ describe("R14 D3 商用措辞：六份 README 的头部 NOTE 块一律建议式�
   it("正面表：六份各自命中本语言的建议式措辞，且不是「并非不建议」那种反话", () => {
     const bad = d3Missing(pairsOf(SIX_READMES));
     expect(bad, `商用措辞不是建议式：\n${bad.join("\n")}\n`
-      + "⇒ 用户裁定 D3：「不建议用于任何商业目的，这样就好了」—— **建议式，不是禁止式**").toEqual([]);
+      + "⇒ 用户裁定：「不建议用于任何商业目的，这样就好了」—— **建议式，不是禁止式**").toEqual([]);
   });
 
   it("负面表：头部 NOTE 块里一处禁止性字面都没有", () => {
@@ -1733,7 +1733,7 @@ const R27_FAIL_OPEN: readonly string[] = [
 /** 否定守卫：命中点**之外**前后 8 字里出现这些词 ⇒ 判为未命中（同 R14）。 */
 const r27Hit = (text: string, words: readonly string[]): boolean => words.some((w) => {
   const ctx = advisoryContext(text, w);
-  return ctx !== null && !D3_NEGATORS.some((n) => ctx.includes(n));
+  return ctx !== null && !COMMERCIAL_NEGATORS.some((n) => ctx.includes(n));
 });
 
 const r27Missing = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) => {

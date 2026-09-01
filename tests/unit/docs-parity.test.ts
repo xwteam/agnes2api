@@ -2739,7 +2739,7 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
 
   // ── ④' `SIBLING_DOCS` ↔ `DOCS` 的双向咬合 ────────────────────────────────
   //
-  // **立项理由（Q16 的风险兜底）**：API 那一批把五份 `API.md` 的骨架整个
+  // **立项理由（规格那条风险兜底）**：API 那一批把五份 `API.md` 的骨架整个
   // 重构了一遍（15 个平铺 `##` → 13 节 + 端点降 `###`），而 `ADMIN.md` 正是通过
   // 上面那套 `SIBLING_DOCS` 引用兄弟文档的**小节名**。「名字改了 ⇒ 引用失效」这一半
   // 上面那格已经在守（`titleLines` 收窄之后连「散文里碰巧提过」都蒙混不过去），
@@ -4853,7 +4853,7 @@ describe("五语言 DEPLOY.md 的两笔「没在真机上了结过」配额账�
 
   it("该红时红：把 zh-CN 那段的结论改写成「这 60 次是安全的、足够用」⇒ 当场点名 zh-CN 与两条概念", () => {
     // ⚠️ **反向控制用仓里真实存在的串**：被替换掉的那一句今天逐字写在
-    // docs/zh-CN/DEPLOY.md 里，替换文就是复评做过的那次真文件变异（V3）。
+    // docs/zh-CN/DEPLOY.md 里，替换文就是复评做过的那次真文件变异。
     const failures = redlineFailures(readerWith(
       "zh-CN",
       (s) => s.split("**两页对不上，我们也\n  没有在真机上了结过它**")
@@ -7426,7 +7426,7 @@ it("五份 DEPLOY.md 都写着 package.json 里那两条本地开发脚本，而
  *   本轮没判，也没有判据在看。
  * ────────────────────────────────────────────────────────────────────────── */
 describe("五份 SPONSORS.md 的字面恒等式（那一笔的验收 ①②③⑤）", () => {
-  /** ① 逐字抄 T3 §4.1 那张译名表。H2-2「交流群」整列按 V40 不取，所以每种语言三项不是四项。 */
+  /** ① 逐字抄 T3 §4.1 那张译名表。H2-2「交流群」整列按那条刻意偏离不取，所以每种语言三项不是四项。 */
   const SPONSORS_HEADINGS: Record<Lang, readonly [string, string, string]> = {
     "zh-CN": ["# ☕ 赞赏 & 共享", "## 💖 支持项目", "## 🤝 参与贡献"],
     "zh-TW": ["# ☕ 贊賞 & 共享", "## 💖 支持專案", "## 🤝 參與貢獻"],
@@ -7529,7 +7529,7 @@ describe("五份 SPONSORS.md 的字面恒等式（那一笔的验收 ①②③�
 
   /* ── ② 分隔线条数 = 节数（规格裁定）────────────────────────────────────── */
   const HR_COUNT = 2;
-  const REAL_2 = `② 五份 SPONSORS.md 各恰有 ${HR_COUNT} 条 \`---\`（= 节数；模板是 3 条，少的那条是 V40 删掉交流群节的刻意偏离）`;
+  const REAL_2 = `② 五份 SPONSORS.md 各恰有 ${HR_COUNT} 条 \`---\`（= 节数；模板是 3 条，少的那条是删掉交流群节的刻意偏离）`;
 
   const hrFailures = (read: LangRead): string[] =>
     LANGS
@@ -8369,11 +8369,11 @@ describe("Cloudflare 一键部署按钮：六份逐字节相同、位置在 clon
  *
  * ── 为什么是「五份都补」而不是「跟模板删掉」（ADJ §63）────────────────────
  * 模板侧实测：kiro2api 五份 README 的这一段都**只有短句**，没有那半句 ⇒ 偏离模板的
- * 是 en/ja/ko 而不是中文两份。但「按模板走」**不是这一节的裁决规则**：D3 明令
+ * 是 en/ja/ko 而不是中文两份。但「按模板走」**不是这一节的裁决规则**：规格明令
  * agnes2api 的 📄 节不照抄 kiro2api 那份「**允许**：个人学习、研究、自用部署、二次开发」
  * 枚举（它暗示商用不在允许之列，与 MIT 自相矛盾），改成按 MIT 的真实授权写
- *「**授予** / **要求**」。⇒ 这一节从 D3 落地那天起就已经不跟模板了。
- * 而按 D3 的口径，回填前的写法是**描述不全**：MIT 正文的第三块就是
+ *「**授予** / **要求**」。⇒ 这一节从那条裁定落地那天起就已经不跟模板了。
+ * 而按那条裁定的口径，回填前的写法是**描述不全**：MIT 正文的第三块就是
  * `THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND`，
  *「授予 / 要求」两条把它漏了。kiro2api 没有这个义务（它那份枚举根本不是在描述 MIT）。
  * ⇒ 补齐两份中文是**补全**，删 en/ja/ko 是**真损失**。措辞与根 README
@@ -8540,7 +8540,7 @@ const DOC_SECTIONS = {
    *
    * 槽位来源逐条：
    * 1 `环境要求` K∩G ｜ 2 `获取 {凭据}` K∩G 句式（K `获取 Kiro 凭据` / G `获取 Cookie` ⇒ agnes `获取 Agnes 凭据`）
-   * 3–5 §1.10 的双形态变体（V53：第 3 槽拆三节；`## 选哪种形态` 排在两条部署路之前且不预设主推）
+   * 3–5 §1.10 的双形态变体（第 3 槽拆三节；`## 选哪种形态` 排在两条部署路之前且不预设主推）
    * 6 `环境变量` ADJ ㊵ 的扩展位，**取 agnes 五份今天已有的那五个标题逐字**（实测五语言同构，漂移 0）
    * 7 `多账号配置` ｜ 8 `验证部署` ｜ 9 `常见问题` ｜ 10 `性能优化` ｜ 11 `监控和维护`
    * 12 `升级服务` ｜ 13 `备份和恢复` ｜ 14 `安全建议` ｜ 15 页脚节
@@ -8555,8 +8555,8 @@ const DOC_SECTIONS = {
     "zh-CN": [
       "## 环境要求",                    // K∩G
       "## 获取 Agnes 凭据",             // K∩G 句式
-      "## 选哪种形态",                  // V53 必须变体（模板无先例）
-      "## Cloudflare Worker 部署",      // V53
+      "## 选哪种形态",                  // §1.10 必须变体（模板无先例）
+      "## Cloudflare Worker 部署",      // §1.10 变体
       "## Docker 部署",                 // K∩G
       "## 环境变量",                    // ADJ ㊵（agnes 现名）
       "## 多账号配置",                  // K∩G
@@ -8653,7 +8653,7 @@ const DOC_SECTIONS = {
    *
    * ⚠️ **`## Anthropic 兼容 API` 这一格没有照抄 K∩G 的 `## Claude 兼容 API`，理由要说清楚**：
    * ADJ ㊴ 逐条列出的 K∩G 差异是三项（`管理接口`→`管理 API`、`系统`→`系统 API`、` API` 后缀），
-   * 不含厂商名。而 D2 的 K∩G 通则本身就把「两仓一致的 = 模板骨架」与
+   * 不含厂商名。而 K∩G 那条通则本身就把「两仓一致的 = 模板骨架」与
    * 「各写各的 = 项目特定内容」分开：**协议的厂商名属于后者**——agnes 全仓
    * （`package.json` 的 description、六份 README、五份 API.md）一律写 Anthropic，
    * 照抄 Claude 会让文档与它自己的其余部分打架。**这一条是判断不是实测，写在这里备查。**
@@ -9142,7 +9142,7 @@ describe("非 README 文档的五语言 `##` 译名常量表", () => {
  *
  * **口径**（三条都一样，写在这里一次，不在每一格里重复）：
  * - 射程 = **出货文档全集**：仓根五份 + `docs/{5 语言}/{7 份}`，共 40 份。
- *   不含 `.github/**`、不含 `admin-ui/README.md`（Q15：贡献者文档，参照仓无对照物）。
+ *   不含 `.github/**`、不含 `admin-ui/README.md`（贡献者文档，参照仓无对照物）。
  * - **先剥围栏再动手**：` ``` ` 开头的行做开关，围栏定界行本身也剥掉。
  *   围栏里教人写 markdown 表格的示例**不在射程内**，第 6 格是它的反向控制。
  * - 「表头」= 分隔行的**上一行**。上一行不以 `|` 起头、或列数对不上，这一行**不算表格**，
@@ -9826,7 +9826,7 @@ describe("表格行与单元格的长度上限（R22e ≤ 340 / R22e2 ≤ 300）
 /* ══════════════════════════════════════════════════════════════════════════
  * `### 配额账` 那一节：`<details>` 折叠 + `###`/`####` 分层
  *
- * **这一节是全仓最大的一块散文**（改写前 283 行 / en 373 行），而 V27 已裁定
+ * **这一节是全仓最大的一块散文**（改写前 283 行 / en 373 行），而当时的裁定是
  * **不拆出 QUOTA.md**（ADJ ㉑：参照仓只有五类文档，不新增文档类型）。
  * ⇒ 只能就地压缩观感：`####` 分层 + 一处 `<details>` 折叠最深的那段推导。
  *
@@ -10058,17 +10058,17 @@ describe("`### 配额账` 的折叠与分层（`<details>` 是射程铁律的具
  * `##` 骨架本身由上面译名表那一组的「已接线的那几格」用 `toEqual DOC_SECTIONS` 守着。
  * 本组守的是骨架**之下**那四件事，它们各自都能在骨架全对的前提下坏掉：
  *
- * · **对仗恒等式（§1.10 V54）**：`## Cloudflare Worker 部署` 与 `## Docker 部署`
+ * · **对仗恒等式（§1.10）**：`## Cloudflare Worker 部署` 与 `## Docker 部署`
  *   两节的 `###` 文本数组必须**互相 `toEqual`**（逐条同名同序）。规格把它写成
  *  「对仗是恒等式，不是风格」——两条部署路的步骤一旦错位，读者分不清哪一步属于哪条路。
- *   同批还查 `## 选哪种形态` 之下**恰 1 张 3 列表**（V53），且那一节**不预设主推**（V55）。
+ *   同批还查 `## 选哪种形态` 之下**恰 1 张 3 列表**，且那一节**不预设主推**。
  * · **带注释的 ```env 围栏** ≥5 个/份，每个变量上方 1–3 行 `#` 注释、以
  *   `必填：`/`可选：`（各语言的对应写法）起头，变量之间空一行。
  * · **`## 常见问题` 的三段式**——`### {症状短语}` + `**症状**：` + `**解决方案**：`
  *   + 有序列表，三者**成对**且五语言条数彼此相等。
  * · **`## 安全建议` 真的在**，页脚节恰 4 条 bullet（模板固定形态）。
  *
- * ⚠️ **常见问题那条为什么不写 `toBe(6)`**（这是规格 FL-6-X2 的主控裁定，不是本轮放宽）：
+ * ⚠️ **常见问题那条为什么不写 `toBe(6)`**（这是主控在规格上的裁定，不是本轮放宽）：
  * 「恰 6 条 × 5 语言」与 ADJ ⑩「不许为凑数编造条目」同型而方向相反——一条判据
  * 要求编造，另一条禁止编造，同一份规格不能两头都要。⇒ 判据形态是
  * **形态恒等 + 五语言彼此相等 + 不回退下限**。今天五份各 **6** 条（与两个参照仓实测
@@ -10088,7 +10088,7 @@ function h2Section(src: string, heading: string): string[] {
   return lines.slice(at + 1, to);
 }
 
-/** 一段正文里的 `###` 标题行（原样）。`####` 不算——V54 的对仗只到 `###` 这一层。 */
+/** 一段正文里的 `###` 标题行（原样）。`####` 不算——对仗只到 `###` 这一层。 */
 const h3sOf = (sectionLines: readonly string[]): string[] =>
   sectionLines.filter((l) => /^### /.test(l));
 
@@ -10177,21 +10177,21 @@ describe("五份 DEPLOY.md 的 15 节骨架之下的四条验收", () => {
         .toBeGreaterThan(0);
       expect(
         dk,
-        `docs/${lang}/DEPLOY.md 两条部署路的 \`###\` 对不上（§1.10 V54：对仗是恒等式，不是风格）：\n`
+        `docs/${lang}/DEPLOY.md 两条部署路的 \`###\` 对不上（§1.10：对仗是恒等式，不是风格）：\n`
         + `  Worker: ${JSON.stringify(wk)}\n  Docker: ${JSON.stringify(dk)}\n`
         + "⇒ 两条路的步骤一旦错位，读者分不清哪一步属于哪条路。要改就两边一起改。",
       ).toEqual(wk);
     }
   });
 
-  it("§1.10 V53：`## 选哪种形态` 之下恰 1 张表，且那张表恰 3 列", () => {
+  it("§1.10：`## 选哪种形态` 之下恰 1 张表，且那张表恰 3 列", () => {
     for (const lang of LANGS) {
       const sec = h2Section(deploy(lang), headingAt(lang, SLOT.choose));
       const seps = sec.filter((l) => SEPARATOR_ROW.test(l));
-      expect(seps.length, `docs/${lang}/DEPLOY.md 的「选哪种形态」有 ${seps.length} 张表，V53 要的是恰 1 张`)
+      expect(seps.length, `docs/${lang}/DEPLOY.md 的「选哪种形态」有 ${seps.length} 张表，规格要的是恰 1 张`)
         .toBe(1);
       expect(rowCells(seps[0]!.trim()).length,
-        `docs/${lang}/DEPLOY.md 的那张对比表不是 3 列 —— V53 要的是「维度 / Worker / Docker」三列`)
+        `docs/${lang}/DEPLOY.md 的那张对比表不是 3 列 —— 规格要的是「维度 / Worker / Docker」三列`)
         .toBe(3);
     }
   });
@@ -10266,7 +10266,7 @@ describe("五份 DEPLOY.md 的 15 节骨架之下的四条验收", () => {
   });
 
   it("不回退下限：常见问题今天五份各 6 条（与两个参照仓实测相同），不许掉下去", () => {
-    // ⚠️ **不是 `toBe(6)`**，理由见本组文件头（规格 FL-6-X2 的主控裁定）：
+    // ⚠️ **不是 `toBe(6)`**，理由见本组文件头（主控在规格上的裁定）：
     // 钉死具体值会与「不许为凑数编造条目」互斥。下限挡得住「删掉两条凑合」，
     // 挡不住「再加一条真问题」——后者本来也不该被挡。
     for (const lang of LANGS) {
@@ -10367,7 +10367,7 @@ const AUTH_METHOD_PREFIX: Record<Lang, string> = {
   "zh-CN": "方式 ", "zh-TW": "方式 ", en: "Method ", ja: "方式 ", ko: "방식 ",
 };
 
-/** `## 错误响应` 之下那张状态码总表的标题（V18）。 */
+/** `## 错误响应` 之下那张状态码总表的标题。 */
 const ERROR_CODE_H3: Record<Lang, string> = {
   "zh-CN": "常见错误码",
   "zh-TW": "常見錯誤碼",
@@ -10452,7 +10452,7 @@ describe("五份 API.md 的 13 节骨架之下的四条验收", () => {
     }
   });
 
-  it("`## 错误响应` 之下有状态码总表，且状态码列**严格升序**（V18）", () => {
+  it("`## 错误响应` 之下有状态码总表，且状态码列**严格升序**", () => {
     for (const lang of LANGS) {
       const src = apiSrc(lang);
       const sec = h2Section(src, DOC_SECTIONS.API[lang][2]);
@@ -12712,7 +12712,7 @@ describe("R13c' 的射程扩展：40 份出货文档的**全部正文行**逐行
  * ① `src/core/config.ts`：缺 `GATEWAY_TOKEN` ⇒ 抛错，**而且那条路径只判存在、不判长度**；
  * ② `src/http/admin/auth.ts`：`ADMIN_TOKEN_MIN_LENGTH` 的**数值**。
  *
- * 🔴 为什么必须有它：V33 那句「`GATEWAY_TOKEN` 长度不得少于 24 位」是一条
+ * 🔴 为什么必须有它：复评抓到的那句「`GATEWAY_TOKEN` 长度不得少于 24 位」是一条
  * **源码不支持的假话**，而只有词表的 R27 对它完全放行 —— 24 位这条门槛只在
  * `ADMIN_TOKEN` 上。同族先例是本文件里「`## 管理 API` 的硬编码数字从真源现算」那一组。
  *
@@ -12772,7 +12772,7 @@ const clauseGatewayClaims = (path: string, no: number, line: string): string[] =
  *（`README.md` + 五份 `docs/{lang}/README.md` + 五份 `docs/{lang}/DEPLOY.md` 的「必填 / 默认值 / 说明」表），
  * 而那张表正是「长度不得少于 24 位」这类话最会被写进去的地方。
  * 实测：往 `docs/zh-CN/DEPLOY.md` 的 `GATEWAY_TOKEN` 行塞一句长度门槛 ⇒
- * 本文件 543 格、全仓 4173 格**一格都不红**。V33 的原型就这么复活了一次。
+ * 本文件 543 格、全仓 4173 格**一格都不红**。那句假话的原型就这么复活了一次。
  *
  * ⚠️ **为什么表格行不能沿用小句规则**：五份 DEPLOY 的环境变量表把整段解释压进一格，
  *「`ADMIN_TOKEN` … 必须与 `GATEWAY_TOKEN` 不同，且至少 24 位」这种写法里
@@ -12814,7 +12814,7 @@ describe("R27 的源码锚：口令那两条门槛的数字从 `src/` 现算，�
    * （⚠️ 这一段原先写成 `docs/{星}/USAGE.md` 那种通配写法，**`*` 后面紧跟 `/` 会把块注释提前闭合**，
    *   整份文件当场 PARSE_ERROR、`Tests no tests`。本仓 `strip-comments` 那一族机制防的就是这类，
    *   而注释自己写坏是它够不着的——这里改成中文描述，不写通配路径。）
-   * ⇒ **同一句 V33 假话写进那 25 份里，这一组一格都不会红**（复评实测指出）。
+   * ⇒ **同一句假话写进那 25 份里，这一组一格都不会红**（复评实测指出）。
    *
    * 所以射程改成**从磁盘现算**：全部出货文档里**凡提到 `GATEWAY_TOKEN` 的**都进射程。
    * 这样它跟着仓库形状走，不会再因为「立组那天还没有」而留下静默盲区。
@@ -12824,7 +12824,7 @@ describe("R27 的源码锚：口令那两条门槛的数字从 `src/` 现算，�
   // ⚠️ **基集合也必须现算**（评审发现 13）：上一版这里手写着 31 份
   //（README × 6 + `docs/{5 语言}/{5 类}`），而注释却宣称「全部出货文档现算」。
   // 差集里恰好躺着一份**提 `GATEWAY_TOKEN` 的 `SECURITY.md`**（第 52 / 117 / 118 行），
-  // 评审在它上面复现出 V33 那句假话的原型（「a strong `GATEWAY_TOKEN` of at least 24
+  // 评审在它上面复现出那句假话的原型（「a strong `GATEWAY_TOKEN` of at least 24
   // characters」），4181 格一格不红。⇒ 基集合改成与
   // `docs-typography.test.ts` 的 `SHIP_DOCS` 同一份逻辑：仓根全部 `.md` + `docs/{语言}/*.md`。
   const SCOPE: readonly string[] = [
@@ -12933,7 +12933,7 @@ describe("R27 的源码锚：口令那两条门槛的数字从 `src/` 现算，�
     });
     expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
     const wrong = gatewayLengthClaims(docs);
-    expect(wrong.join("\n"), "把长度门槛安到网关口令上没被抓到 —— 而那正是 V33 犯过的那句假话")
+    expect(wrong.join("\n"), "把长度门槛安到网关口令上没被抓到 —— 而那正是当时犯过的那句假话")
       .toContain(`${target}:`);
   });
 
@@ -12955,7 +12955,7 @@ describe("R27 的源码锚：口令那两条门槛的数字从 `src/` 现算，�
       return p === target ? [p, t.replace(from, to)] as const : [p, t] as const;
     });
     const wrong = gatewayLengthClaims(docs);
-    expect(wrong.join("\n"), "`SECURITY.md` 里的 V33 原型没被抓到 —— "
+    expect(wrong.join("\n"), "`SECURITY.md` 里那句假话的原型没被抓到 —— "
       + "这正是上一版基集合写死 31 份时的死法（评审实测 4181 格全绿）").toContain(`${target}:`);
   });
 
@@ -13005,7 +13005,7 @@ describe("R27 的源码锚：口令那两条门槛的数字从 `src/` 现算，�
       .not.toEqual(readFileSync(target, "utf8"));
     const wrong = gatewayLengthClaims(docs);
     expect(wrong).toHaveLength(1);
-    expect(wrong[0] ?? "", "表格行里的 V33 原型没被抓到 —— 这正是上一版整行跳过表格时的死法")
+    expect(wrong[0] ?? "", "表格行里那句假话的原型没被抓到 —— 这正是上一版整行跳过表格时的死法")
       .toContain(`${target}:`);
     expect(wrong[0] ?? "").toContain("表格键列即该行主语");
   });
@@ -13734,7 +13734,7 @@ describe("五链的语言顺序恒定：指针行与语言切换行两个载体�
  * 三条的引用侧今天一条都没落，评审逐条实测：
  * · **R15**（spec:1474）：规格自己举的反例是「六份全抄
  *   `<sub>Built with Rust + axum + tokio | Powered by Kiro (CodeWhisperer)</sub>` 也满足
- *   『六份相同』—— 那正是 V28 要防的那件事」。实测只改 ja 那一份的 `<sub>` 行 ⇒ 全绿，
+ *   『六份相同』—— 那正是这条规格要防的那件事」。实测只改 ja 那一份的 `<sub>` 行 ⇒ 全绿，
  *   **连「六份逐字节相同」那一半都不存在**。
  * · **R18 引用侧**（spec:1525）：`existsSync` 那一半有（本文件另一组），
  *   **尺寸那一半没有** —— 去掉 `docs/ko/README.md` 第 3 行的 `width`/`height` ⇒ 全绿，
@@ -13886,7 +13886,7 @@ describe("头部徽章 / logo 引用 / 页脚 `<sub>`：六份自等式 + 从 `p
       .split("-")[0] ?? "";
     const powered = subText(r(at)).slice(subText(r(at)).indexOf("Powered by"));
     expect(powered.toLowerCase(), "抄成 kiro 的上游名之后真源锚居然还绿 —— "
-      + "那「六份相同」就是唯一的判据，而六份一起抄正是 V28 要防的那件事")
+      + "那「六份相同」就是唯一的判据，而六份一起抄正是这条规格要防的那件事")
       .not.toContain(brand.toLowerCase());
     expect(subText(r(at)), "").not.toContain("Hono");
   });
