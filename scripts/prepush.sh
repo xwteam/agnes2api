@@ -1356,6 +1356,14 @@ cell_commit_msgs() {
       gopts=(-oP -e "${res[k]}")
       if [[ ${flg[k]} == *i* ]]; then gopts=(-oPi -e "${res[k]}"); fi
       raw=$(git log -1 --format=%B "$sha" | grep "${gopts[@]}" || true)
+      # ⚠️ **`C0` / `C1` 是 Unicode 控制字符区的两个标准名字，不是发现号。**
+      #   族定义从文档轴那份判据当场抽，而那一族（大写字母 + 数字）在**出货 markdown**
+      #   里确实抓不到这两个词——文档不谈字符编码。但这一格扫的是**提交信息**，
+      #   而讲清理、讲日志转义时提到它们是家常便饭（本仓源码轴那份判据早就把它们
+      #   逐条登记为假阳性了，见 `tests/unit/source-internal-refs.test.ts` 的台账）。
+      #   ⇒ 两根轴对同一个词给相反判定，是这一格自己的缺口，不是提交信息写错了。
+      #   实测：本轮有两条提交因此被误报，而它们讲的正是「哪些串是控制字符名、不许改」。
+      raw=$(printf '%s\n' "$raw" | grep -vxE 'C0|C1' || true)
       if [[ -n $raw ]]; then
         cnt=$(printf '%s\n' "$raw" | grep -c . || true)
         hits=$(printf '%s\n' "$raw" | sort -u | tr '\n' ' ')
