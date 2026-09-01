@@ -871,7 +871,7 @@ BANNER='[collection-guard] ✅'
 #   ⇒ 新开 `cell_commit_msgs`：族定义从 `docs-internal-refs.test.ts` 当场抽
 #   （与 ③ 抽 `ci.yml` 同一个理由），射程 = `git rev-list HEAD --not <各远端>/main`。
 #   格数（都在 `tests/unit/prepush-guard.test.ts`）：接线 1 + 正向控制 1 +
-#   「五族逐族点名」1 + 「已推送的不进射程」1 + 抽取器反向控制 2 = 6。
+#   「逐族各塞一个证据串进提交信息」1 + 「已推送的不进射程」1 + 抽取器反向控制 2 = 6。
 # 4388 → 4416 格（+28），文件数 142 → 143：**源码轴的判据**
 #   （`tests/unit/source-internal-refs.test.ts`，新开一份，刻意不塞进文档轴那 6000 行里）。
 #   上一轮把跟踪文件里那一族内部标识符从 1069 处清到 120 处，是一次**纯人工动作**：
