@@ -692,7 +692,7 @@ describe("tendOnce", () => {
     expect(order).toEqual(["create:yyds-u0@a.test", "delete:yyds-u0@a.test"]);
   });
 
-  it("I-1 预算连一次尝试都装不下时，记 registrar.round_budget_impossible 且级别是 error（与「本轮提前收尾」区分开）", async () => {
+  it("本轮预算告警①：预算连一次尝试都装不下时，记 registrar.round_budget_impossible 且级别是 error（与「本轮提前收尾」区分开）", async () => {
     // 这是永久停摆而不是瞬时状况：每一轮都 attempted=0 / minted=0 / failures=[]，
     // 两个入口的归因日志走 `minted < attempted`（0<0 为假）一条都不打，这条 error
     // 是唯一能说破它的地方。断言的是**事件名与级别**——console.* 已经被换成注入的
@@ -730,7 +730,7 @@ describe("tendOnce", () => {
     expect(logger.has("registrar.round_budget_exhausted")).toBe(false);
   });
 
-  it("I-1 成对：预算装得下至少一次时记 registrar.round_budget_exhausted 且级别是 warn（别把正常收尾报成配置错误）", async () => {
+  it("本轮预算告警②（与①成对）：预算装得下至少一次时记 registrar.round_budget_exhausted 且级别是 warn（别把正常收尾报成配置错误）", async () => {
     const logger = recordingLogger();
     let t = 0;
     const order: string[] = [];

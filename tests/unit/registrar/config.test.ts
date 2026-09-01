@@ -218,7 +218,7 @@ describe("registrarFromEnv", () => {
     expect(logger.has("registrar.interval_shorter_than_worst_round")).toBe(false);
   });
 
-  it("I-1 CODE_TIMEOUT_MS×通道数 超过 Worker 轮级预算时启动期记 registrar.attempt_exceeds_worker_budget（否则是永久静默停摆）", () => {
+  it("轮级预算告警①：CODE_TIMEOUT_MS×通道数 超过 Worker 轮级预算时启动期记 registrar.attempt_exceeds_worker_budget（否则是永久静默停摆）", () => {
     // CODE_TIMEOUT_MS 无上界，而 Worker 的轮级预算是固定值。超过之后 tendOnce 连
     // 第一次尝试都不敢开始：attempted=0、minted=0、failures=[]，两个入口的归因日志
     // 走的是 `minted < attempted`（0<0 为假）一条都不打——用户只看到「本轮预算不足」，
@@ -241,7 +241,7 @@ describe("registrarFromEnv", () => {
     expect(e?.msg).toContain("Node/Docker");
   });
 
-  it("I-1 同样的 400s 在单通道下不告警（400s < 780s 预算，成对用例）", () => {
+  it("轮级预算告警②：同样的 400s 在单通道下不告警（400s < 780s 预算，与①成对）", () => {
     // 与上一条唯一的差别是没有备通道：`× 通道数` 这个因子被真正求值了才能同时通过
     // 这两条。若实现漏乘通道数，上一条就不会触发。
     const logger = recordingLogger();
@@ -279,7 +279,7 @@ describe("requirePrimary", () => {
   });
 });
 
-describe("I-2 五语言文档对轮级预算的表述必须有条件、且与代码同步", () => {
+describe("五语言文档对轮级预算的表述必须有条件、且与代码同步", () => {
   // 这个功能的立项理由就是「不接受用文档兜」，所以文档反过来把它写成无条件保证是
   // 特别有害的一种错：既掩盖了残余场景（预算判据不含单请求超时与 403 退避），
   // 也在公开仓里立了一个站不住的承诺（「邮箱一定被删掉」）。
@@ -328,7 +328,7 @@ describe("I-2 五语言文档对轮级预算的表述必须有条件、且与代
     //
     // console.* 已经被换成注入的 Logger：spy console 只会看到空 mock，必须改成
     // recordingLogger 断言事件名 + 级别。五语言的可 grep 锚点也从「按中文文案 grep」
-    // 改成「按事件名 grep」——英日韩用户此前永远搜不到中文片段（评审发现 M-5 遗留）。
+    // 改成「按事件名 grep」——英日韩用户此前永远搜不到中文片段（评审发现的遗留）。
     const logger = recordingLogger();
     registrarFromEnv(
       {
