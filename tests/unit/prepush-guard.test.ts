@@ -730,7 +730,7 @@ describe("⑧ 未推送提交信息格：族定义抽真源、脏提交点名、
     }
   });
 
-  it("反向控制：五族逐族各塞一个证据串进提交信息 ⇒ 红，且逐族点名、点到提交", () => {
+  it("反向控制：逐族各塞一个证据串进提交信息 ⇒ 红，且逐族点名、点到提交", () => {
     const { root, src } = makeRepos();
     try {
       const evidence = evidenceStrings();
