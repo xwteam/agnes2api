@@ -7,7 +7,7 @@
  * gzip 后的上限——Worker 脚本的部署体积上限是 gzip 后的值，而约 500 KB 的字符串
  * 常量会整个进脚本。
  *
- * MAX_GZIP 的取值（已核实，见设计文档 §17 U2）：
+ * MAX_GZIP 的取值（已核实，见设计文档 §17）：
  * Cloudflare Worker 免费档脚本上限是 gzip 后 **3 MiB**（付费档 10 MiB）。这个
  * 3 MiB 是**整个 Worker 脚本**（路由、dispatcher、注册机等业务代码 + 这里管的
  * UI 资源）共用的一个预算，不能把它整个划给 UI 资源，否则业务代码一涨就没有

@@ -274,7 +274,7 @@ function fail(src, pos, kind, why) {
  *
  * ⚠️⚠️⚠️ **它不是不变量，别把它当门。第四轮复评把这件事量死了，改它之前读完这一段。**
  * 它开不开口，取决于**本行双引号的奇偶**——而这个量**与「哪个斜杠被判反了」毫无关系**。
- * 复评的 X3 用一个撇号就证明了反面：在 `src/ports/logger.ts` 上追加那条判反的探针行
+ * 复评用一个撇号就证明了反面：在 `src/ports/logger.ts` 上追加那条判反的探针行
  *（`const of = 4; const half = of / 2; const P = "/"; const U = "https://x"; console.log(…);`）
  * 时它当场红、负责裸 `console` 的门禁从绿变红；**同一行只多一个** `` const T = `it's`; ``
  * ⇒ 它**一个字都不吵**，那个裸 `console.log` 静默被吞、门禁重新报绿，
