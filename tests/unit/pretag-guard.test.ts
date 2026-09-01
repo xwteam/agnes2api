@@ -13,7 +13,7 @@ const CI_FILE = resolve(".github/workflows/ci.yml");
  * **打 tag 前那道门禁（`scripts/pretag.sh`）自身的正确性。**
  *
  * 这个文件存在的直接理由（复评发现）：本仓的**首个版本就是从一棵红树上发出去的**。
- * `v0.1.0` 落在 `a636dc1`，而 GitHub 记着那个提交的 `lint-and-test` 是 **failure**
+ * `v0.1.0` 落在 `2a25550`，而 GitHub 记着那个提交的 `lint-and-test` 是 **failure**
  *（`.github/workflows/ci.yml` 里 pnpm 版本给了两处 ⇒ `Multiple versions of pnpm specified`，
  * 那十三步一步没跑；修完 pnpm 之后又露出 `tests/ui/dom` 在 `node-version: 22` 上 119 格红），
  * 与此同时 `origin/main` 已经比那个 tag 多了两个提交。

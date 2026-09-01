@@ -7852,11 +7852,11 @@ describe("五份 SPONSORS.md 的字面恒等式（那一笔的验收 ①②③�
  * 「某份文档里有 X」这种**跨文档指认**必须为真（第 1 轮评审回填）。
  *
  * ── 它补的是哪个洞 ────────────────────────────────────────────────────────
- * 阶段 5A 的 `a042e8f` 把一颗 `Deploy to Cloudflare` 按钮从根 README 删掉，阶段 5B 的
- * 重写那五笔（`09a47e4` / `76cd19d` / `2d363a7` / `04a5c40` / `a7d8774`）在重写各自那份
+ * 阶段 5A 的 `5d96e7d` 把一颗 `Deploy to Cloudflare` 按钮从根 README 删掉，阶段 5B 的
+ * 重写那五笔（`86f6234` / `5456dae` / `4217986` / `7c6bad3` / `cb8e175`）在重写各自那份
  * README 时把它从**五份**语言版删掉，全仓从此零命中。
- * ⚠️ 这一段原先把功劳记在 `40a1af8` 头上，**是错的**——`git log -S deploy.workers.cloudflare.com`
- *   的命中集合里没有它，`git show 40a1af8:docs/{lang}/README.md` 逐份仍各有 1 处。
+ * ⚠️ 这一段原先把功劳记在 `25589bd` 头上，**是错的**——`git log -S deploy.workers.cloudflare.com`
+ *   的命中集合里没有它，`git show 25589bd:docs/{lang}/README.md` 逐份仍各有 1 处。
  *   写错还能活下来的原因值得记：`check-comment-refs` 只校验注释里的**仓内路径**，
  *   **commit id 是零判据区**——这一段的归因错不了任何一格。**可是五份 DEPLOY.md
  * 仍逐字指着它**，而且写在「方式一 / Option A」这个首选路径上：读者照着打开根 README，
@@ -8185,13 +8185,13 @@ describe("跨文档指认的真实性：文档里说「那份 README 里有 X」
  *   只删语言版一份 ⇒ 只有本组红。这就是本组存在的理由。
  *
  * ── 为什么按钮**回来了**（用户裁定）────────────────────────────────────────
- * 它在 `6771af4` 引入、阶段 5 重写六份 README 时被删（根 `a042e8f` + 五份语言版
+ * 它在 `6771af4` 引入、阶段 5 重写六份 README 时被删（根 `5d96e7d` + 五份语言版
  * 重写那五笔），跨文档指认那一组就是因为「五份 DEPLOY.md 还指着一颗不存在的按钮」才建的。
  * ⚠️ 交接材料把根那一笔记成了**另一个 sha**，那个串在本仓解析不开（三次历史重写
  * 之后已经不存在），这里刻意不抄它——`tests/unit/sha-refs.test.ts「(a) 每一处 sha 引用要么
  * 解析得开是 commit，要么在已销毁名册上」`会把任何解析不开的 sha 引用当场判红，而它判得对：
  * 读者点过去只会看到 Not a valid object name（本轮初稿抄了那个 sha，就是被这一格逮住的）。
- * 真正删掉根 README 那颗按钮的是 `a042e8f`，`git log -S deploy.workers.cloudflare.com`
+ * 真正删掉根 README 那颗按钮的是 `5d96e7d`，`git log -S deploy.workers.cloudflare.com`
  * 的命中集合可复核 —— 与本组上方那段的归因一致。
  * 用户裁定要它回来。实测过入口是活的：按钮图 `https://deploy.workers.cloudflare.com/button`
  * 回 200 且 `image/svg+xml`，部署入口 `?url=https://github.com/xwteam/agnes2api` 回 307。
@@ -12809,7 +12809,7 @@ describe("R27 的源码锚：口令那两条门槛的数字从 `src/` 现算，�
   /**
    * ⚠️ **射程曾经是写死的 11 份**（README × 6 + DEPLOY × 5），而那是**立组当天的仓库形状**：
    * 那时另外 25 份非 README 文档里一个 `GATEWAY_TOKEN` 都没有。
-   * 阶段 7C 的 `ab80db2` 把五份 `USAGE.md` 从接线纸扩成使用指南之后，
+   * 阶段 7C 的 `1735ef3` 把五份 `USAGE.md` 从接线纸扩成使用指南之后，
    * 五份 `USAGE.md`、五份 `API.md`、`docs/en/ADMIN.md` 里都出现了 `GATEWAY_TOKEN`
    * （⚠️ 这一段原先写成 `docs/{星}/USAGE.md` 那种通配写法，**`*` 后面紧跟 `/` 会把块注释提前闭合**，
    *   整份文件当场 PARSE_ERROR、`Tests no tests`。本仓 `strip-comments` 那一族机制防的就是这类，

@@ -6,7 +6,7 @@
 #   bash scripts/pretag.sh --allow-retag    # 同上，但允许远端已经有这个 tag（重打那一次）
 #   bash scripts/pretag.sh --remote <名字>  # 换一个远端名（默认 origin），只给夹具用
 #
-# **为什么有这个脚本。** 本仓的首个版本 v0.1.0 是这样出门的：tag 落在 `a636dc1`，
+# **为什么有这个脚本。** 本仓的首个版本 v0.1.0 是这样出门的：tag 落在 `2a25550`，
 # 而那个提交的 `lint-and-test` 在 GitHub 上记着 **failure**（`.github/workflows/ci.yml`
 # 里 `pnpm/action-setup` 与 `packageManager` 两处都给了 pnpm 版本，
 # `Error: Multiple versions of pnpm specified` ⇒ 那十三步一步没跑；修完 pnpm 之后

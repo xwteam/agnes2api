@@ -418,7 +418,7 @@ const looksLikeRepoPath = (t: string, topDirs: readonly string[]): boolean =>
 /**
  * 🔴 **这一格是补漏，补的是一次真实事故。**
  *
- * `04085b8` 那一笔里，转换脚本跑 shell 时一次重定向事故把两个 **0 字节**的空文件
+ * `96fa2a6` 那一笔里，转换脚本跑 shell 时一次重定向事故把两个 **0 字节**的空文件
  * （`range` / `under`）提交进了公开仓根目录，**十三道门禁一格都没拦住**，两轮评审也都没提。
  * 漏的原因是三条各自都成立的射程边界正好在这里对齐成了一个洞：
  * · 「工作树干净」那道门禁查的是**未提交的改动** —— 文件已经提交，所以工作树确实是干净的；
@@ -1301,7 +1301,7 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
   it("(m) 该红时红：`range` / `under` 那次事故重演 —— 两份 0 字节垃圾各自被点名", () => {
     probeBase(topLevelFileFailures(topLevelFiles(), TOP_LEVEL_FILES),
       "(m) 仓库根目录的顶层文件恰好等于那张具名表 —— 多一份少一份都要有人来表态");
-    // `04085b8` 当时索引里真实多出来的就是这两条（0 字节，git 不看大小、只看路径）。
+    // `96fa2a6` 当时索引里真实多出来的就是这两条（0 字节，git 不看大小、只看路径）。
     const failures = topLevelFileFailures(topLevelFiles([...gitLsFiles(), "range", "under"]), TOP_LEVEL_FILES);
     expect(failures).toHaveLength(2);
     expect(failures.join("\n"), "重定向事故落下的空文件没被点名 —— 这一格就白补了").toContain("`range`");
