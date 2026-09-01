@@ -32,7 +32,7 @@ describe("KeyView 永不含明文", () => {
   /**
    * @refs-ignore（本段要点名那个已被删掉的前端副本）
    * ⚠️ **这里原来还有一格「maskKey 与前端那份 `pure/mask.mjs` 在同一组夹具上结果
-   * 一致」，随 `admin-ui/js/pure/mask.mjs` 一起删掉了**（评审发现 B3）。
+   * 一致」，随 `admin-ui/js/pure/mask.mjs` 一起删掉了**（评审查实）。
    *
    * 理由不是"那条断言不好"，而是**它守的东西没有消费者**：`mask.mjs` 在
    * `admin-ui/js/` 里零导入者——面板显示的 `masked` 是后端这一份算好之后放进
@@ -59,7 +59,7 @@ describe("KeyView 永不含明文", () => {
  *
  * @refs-ignore（本段要点名那两个已被删掉的前端文件）
  * ⚠️ **这组 CASES 原本是从 `tests/ui/bucket.test.ts` 逐格搬过来的，别再"精简"回去。**
- *（那份前端副本与 `admin-ui/js/pure/bucket.mjs` 已在评审发现 B3 一并删除——
+ *（那份前端副本与 `admin-ui/js/pure/bucket.mjs` 已在同一轮评审里一并删除——
  *  面板显示的 `bucket` 来自本文件测的这一份，前端那份零导入者。**这里就是这条
  *  等价关系今天唯一的护栏了**，删一格就没有第二处兜着。）
  * 那边用一整段注释记着一次实测：如果没有一格真的把 `disabled` 设成 `true`，

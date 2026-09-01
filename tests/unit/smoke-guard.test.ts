@@ -97,7 +97,7 @@ const intervalCriterionFailures = (read: Read): string[] => {
   return out;
 };
 
-/* ── ③ 的结论真的被那一格采纳（D4）───────────────────────────────────────── */
+/* ── ③ 的结论真的被那一格采纳 ──────────────────────────────────────────── */
 
 const REAL_VERDICT_ADOPTED = "cell_stream_interval 真的把 check_stream 的返回值当成这一格的成败，两个形态各一处";
 
@@ -121,7 +121,7 @@ const streamVerdictAdoptedFailures = (read: Read): string[] => {
   return out;
 };
 
-/* ── 块数与门槛只有一份真源（D5）─────────────────────────────────────────── */
+/* ── 块数与门槛只有一份真源 ────────────────────────────────────────────── */
 
 const REAL_CHUNK_SOURCE = "stub 发几块、判据期望几块、铺开门槛多少 —— 三者同出 STUB_CHUNKS / STUB_GAP_MS 这一份定义";
 
@@ -170,7 +170,7 @@ const chunkSourceFailures = (read: Read): string[] => {
   return out;
 };
 
-/* ── override 不碰开发者的 ./data 与 .env（D2）───────────────────────────── */
+/* ── override 不碰开发者的 ./data 与 .env ──────────────────────────────── */
 
 const COMPOSE_FILE = "docker-compose.yml";
 const REAL_DATA_ISOLATION = "override 把 /app/data 那条挂载改指临时目录、把 env_file 整条 !reset 掉，并在 up 之前回读核对";

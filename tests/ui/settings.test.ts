@@ -631,7 +631,7 @@ describe("前端只做四条最轻量的即时提示（设计 §10.4）", () => 
   /**
    * ⚠️⚠️ **变异的靶子：把第四条改成无条件拦截。**
    *
-   * 后端 `registrarFromEnv` 里那条抛错写在 `if (enabled && …)` 里（V21），
+   * 后端 `registrarFromEnv` 里那条抛错写在 `if (enabled && …)` 里，
    * 关着的注册机它一条都不抛 ⇒ 前端无条件拦的后果是**「关着注册机时连下拉框都
    * 改不了」**，而后端明明会收下。**两边判据必须同源。**
    * 后端那一半在 `tests/unit/admin/config-validate.test.ts` 的

@@ -40,7 +40,7 @@ describe("网关口令能被撤销（没设 GATEWAY_TOKEN 环境变量的部署�
 // `/v1/models` 那条契约用例走的是 auth 中间件里直接持有的 `configHolder.current()`
 // 闭包，完全不经过 `dispatchDeps()` 那个 getter；`dispatchDeps` 的 getter 若被改回
 // 「建 app 时求值一次」，`/v1/models` 那条契约用例照样全绿——必须换一条真的会走
-// `dispatch()` 的路由，才能钉住 D2（config 在建 app 那一刻被闭包捕获冻结）不复发。
+// `dispatch()` 的路由，才能钉住那个缺陷（config 在建 app 那一刻被闭包捕获冻结）不复发。
 describe("dispatch() 内部读到的配置同样能被撤销（不止 gatewayToken）", () => {
   it("改存储里的 agnesBaseUrl，跨一个 TTL 之后新请求打到新地址", async () => {
     let t = 0;

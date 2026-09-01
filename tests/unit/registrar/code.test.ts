@@ -113,9 +113,9 @@ describe("extractCode", () => {
     expect(extractCode("", body)).toBeNull();
   });
 
-  // === D3：上限从 64 KiB 提到 1 MiB，并处理「截断点落在数字串中间」 ===
+  // === 上限从 64 KiB 提到 1 MiB，并处理「截断点落在数字串中间」 ===
 
-  it("D3 验证码排在一段 >64 KiB 的内嵌大图之后时仍能取到（旧的 64 KiB 上限会漏码）", () => {
+  it("验证码排在一段 >64 KiB 的内嵌大图之后时仍能取到（旧的 64 KiB 上限会漏码）", () => {
     // Agnes 的验证码邮件是 HTML 模板，内嵌 base64 logo 动辄 100 KB+。图片排在验证码
     // 元素之前时，64 KiB 的上限会被图片整个吃光 → 恒返回 null → 注册机 100% 静默失效。
     const bigImage = `<img src="data:image/png;base64,${"A".repeat(100 * 1024)}">`;
@@ -123,7 +123,7 @@ describe("extractCode", () => {
     expect(extractCode("Your Agnes Platform Verification Code", body)).toBe("246810");
   });
 
-  it("D3 长数字串跨越上限边界时返回 null，而不是切出来的前六位", () => {
+  it("长数字串跨越上限边界时返回 null，而不是切出来的前六位", () => {
     // 截断点落在长数字串中间会凭空造出一个左右都带 \b 的六位数：
     // 「订单号 1234567890」切在第 6 位后成了「订单号 123456<EOF>」，末尾即词边界。
     // 注意：在截断处补一个空格**不能**消掉这个伪边界，必须把残缺的数字整段丢掉。
@@ -133,7 +133,7 @@ describe("extractCode", () => {
     expect(extractCode("", body)).toBeNull();
   });
 
-  // === D3 的另一半：上限提到 1 MiB 的前提是扫描真的是线性的 ===
+  // === 同一条裁定的另一半：上限提到 1 MiB 的前提是扫描真的是线性的 ===
   //
   // MAX_BODY_LEN 这个常量存在的**唯一目的**就是给 CPU 封顶（Worker CPU 上限 30 秒，
   // Node 侧则是同步阻塞整个事件循环、连四个协议的转发一起堵死）。把它从 64 KiB 提到
@@ -202,7 +202,7 @@ describe("extractCode", () => {
     ["②b 多个 class= 起始位置且全文无 >", 'class="verification"'.repeat(13_000)],
     // ③ 关键词密集且全文无数字，逼 `[^\d]*\b(\d{6})\b` 每个起始位置都扫到串尾。
     ["③ 密集关键词且全文无数字", "验证码".repeat(30_000)],
-  ])("D3 对抗性正文 %s 必须在 1000 ms 内返回（量词无上界会退化成 O(n²)）", (_name, body) => {
+  ])("对抗性正文 %s 必须在 1000 ms 内返回（量词无上界会退化成 O(n²)）", (_name, body) => {
     const started = Date.now();
     extractCode("Your Agnes Platform Verification Code", body);
     expect(Date.now() - started).toBeLessThan(1000);
@@ -242,7 +242,7 @@ describe("extractCode", () => {
     expect(extractCode("Your Agnes Platform Verification Code", body)).toBe("143770");
   });
 
-  it("D3 上限内的数字串不受影响（成对用例，防止把正常的码也一起丢掉）", () => {
+  it("上限内的数字串不受影响（成对用例，防止把正常的码也一起丢掉）", () => {
     // 与上一条对照：同样以数字收尾，但没发生截断，就必须照常取到。
     const body = `${"x".repeat(100)}验证码 654321`;
     expect(extractCode("", body)).toBe("654321");

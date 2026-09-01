@@ -4,7 +4,7 @@ import { KEY_STORE, SAVED_AT_STORE } from "../../../admin-ui/js/pure/storage-key
 import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
- * **B1 目标 ⑥：四张池子卡 / 四张汇总卡不许伪造 `0`。**
+ * **面板行为覆盖目标 ⑥：四张池子卡 / 四张汇总卡不许伪造 `0`。**
  *
  * 这是本项目**产品不变式**里最要紧的一条——「面板绝不撒谎」。读不出来时显示 `0`
  * 与显示 `—` 在屏幕上只差一个字符，对运维却是两件完全相反的事：

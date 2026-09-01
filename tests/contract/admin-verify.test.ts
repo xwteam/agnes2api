@@ -11,7 +11,7 @@ import type { KeyRecord } from "../../src/core/types.js";
 
 /**
  * `POST /admin/api/keys/:id/verify` —— 单把 key 的验活，以及与通道连通性测试
- * **共用的**出站探测护栏（设计 §10.2 / §11 + 订正 D1）。
+ * **共用的**出站探测护栏（设计 §10.2 / §11 与那条订正）。
  *
  * **contract ⇒ node 与 workerd 各跑一遍**（`tests/global-setup.ts` 的 `POLICY` 强制）。
  *

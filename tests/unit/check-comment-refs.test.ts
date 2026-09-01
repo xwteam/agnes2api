@@ -8,7 +8,7 @@ import { blankComments } from "../helpers/strip-comments.js";
 const SCRIPT = resolve("scripts/check-comment-refs.mjs");
 
 /**
- * **注释指向门禁（`scripts/check-comment-refs.mjs`）自己的元测试**（评审发现 B2）。
+ * **注释指向门禁（`scripts/check-comment-refs.mjs`）自己的元测试**（评审查实）。
  *
  * @refs-ignore-file —— **整份文件豁免，理由是构造性的**：这份元测试的**真注释**里
  * 到处点名故意不存在的路径（手写豁免清单要逐条解释每个虚构路径的来历、每组夹具的
@@ -600,7 +600,7 @@ const COVERED: ReadonlyArray<{ claim: string; why: string }> = [
   { claim: "这条由 `tests/x.test.ts` 守着。", why: "守着" },
   { claim: "改坏了 `tests/x.test.ts` 会变红。", why: "会变红" },
   { claim: "改坏了 `tests/x.test.ts` 就变红。", why: "变红" },
-  // ── 本任务新增的五个（V22：原来这五种说法门禁一个都看不见）──
+  // ── 本任务新增的五个（原来这五种说法门禁一个都看不见）──
   { claim: "这条由 `tests/x.test.ts` 保证。", why: "由 X 保证" },
   { claim: "这条已核实，见 `tests/x.test.ts`。", why: "已核实" },
   { claim: "已实测：`tests/x.test.ts` 会拦下这个变异。", why: "已实测" },
@@ -1460,9 +1460,9 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       // `scripts/check-no-binary.mjs` 的两段说明里同样举了 `src/x.ts` / `src/hidden.ts` 两个虚构路径。
       "scripts/check-no-binary.mjs",
       "scripts/check-no-binary.mjs",
-      // 事件环：评审发现 A9 的标本，那条**错误的**旧指向刻意原样留着当反面教材。
+      // 事件环：那条评审发现的标本，错误的旧指向刻意原样留着当反面教材。
       "src/core/admin/event-ring.ts",
-      // 掩码：要点名 B3 删掉的那个前端副本。
+      // 掩码：要点名评审删掉的那个前端副本。
       "src/core/admin/key-view.ts",
       // ⚠️ **后加的一处**：那一段逐字引用上一版原文来记录「要么列出来，
       // 要么把计数删掉」那次裁定，字面上必然带着计数，而计数在那里是**被引用的对象**。
@@ -1477,7 +1477,7 @@ describe("本仓 @refs-ignore 的使用处，逐条列名", () => {
       "tests/global-setup.ts",
       "tests/global-setup.ts",
       "tests/global-setup.ts",
-      // 同样要点名 B3 删掉的两个前端文件。
+      // 同样要点名评审删掉的两个前端文件。
       "tests/unit/admin/key-view.test.ts",
       "tests/unit/admin/key-view.test.ts",
       // ⚠️ **后加的另一处**，与 `src/http/admin/probe-guard.ts` 那一处成对：

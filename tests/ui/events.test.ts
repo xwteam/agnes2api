@@ -433,7 +433,7 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
   });
 
   /**
-   * **评审三审(a) + 四审 B2**：`healing` 是"上一次自愈之后、还没有重新建立起
+   * **评审三审(a) + 四审**：`healing` 是"上一次自愈之后、还没有重新建立起
    * 游标"的那一整段（不是"刚好上一轮"）。这段里即使真的拉到了 items，也不算
    * "来了新内容"——那批 items 正是自愈时 resetView 刚扔掉的同一批。
    *
@@ -465,7 +465,7 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
     });
 
     /**
-     * **评审四审 B2 的核心三条**：置位 / 保持 / 清位，各钉一条。"保持"那条是
+     * **评审四审的核心三条**：置位 / 保持 / 清位，各钉一条。"保持"那条是
      * 三审(a) 版本唯一缺的东西——它只有置位与"下一轮自动清位"。
      */
     it("置位：自愈那一轮把 healing 置成 true", () => {
@@ -501,7 +501,7 @@ describe("pollOutcome：轮询结果的完整决策（after 自愈 + view 清空
   });
 });
 
-describe("initialPollState / resumePollState：跨轮状态的两种重置（评审四审 B1）", () => {
+describe("initialPollState / resumePollState：跨轮状态的两种重置（评审四审）", () => {
   it("initialPollState：游标、自愈、退避全部归零——切换级别相当于换了一条流", () => {
     expect(initialPollState()).toEqual({ after: null, healing: false, delayMs: 15_000 });
   });

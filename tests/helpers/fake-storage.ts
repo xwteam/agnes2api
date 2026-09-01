@@ -11,7 +11,7 @@ import type { Storage } from "../../src/ports/storage.js";
  * 重新造一个自己的 `DelayedStorage`。
  *
  * **默认不传（`undefined`），不是 `0`**——两者行为不同，见下面构造函数的说明；
- * 这不是措辞问题，是本仓已经真实踩过的一次回归（评审 D1）。
+ * 这不是措辞问题，是本仓已经真实踩过的一次回归（评审查实）。
  */
 export class MemoryStorage implements Storage {
   private readonly map = new Map<string, string>();

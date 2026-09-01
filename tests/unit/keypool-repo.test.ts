@@ -686,7 +686,7 @@ describe("一次瞬时 list 失败不许粘住十分钟", () => {
     }
     const afterThree = st.lists;
     /**
-     * ⚠️ **「恰好三次」这一条以前没有被断言过**（评审发现 A9）：这一格原来只
+     * ⚠️ **「恰好三次」这一条以前没有被断言过**（评审查实）：这一格原来只
      * 检查第 4 次之后 `st.lists` 不再增长，而 `keypool-repo.ts` 的注释却写着
      * 「按这个时序实测钉住：三次真实尝试恰好落在 t0 / t0+60s / t0+120s」。
      * 把 `LIST_FAIL_ESCALATE_AFTER` 从 3 改成 2 或 5，那句话就不成立了，
@@ -728,7 +728,7 @@ describe("索引写失败的退避常数不许是死条件", () => {
     expect(INDEX_WRITE_RETRY_MS).toBeGreaterThanOrEqual(5 * DEFAULT_POOL_CACHE_TTL_MS);
     expect(READ_PATH_LIST_BACKOFF_MS).toBe(600_000);
     expect(LIST_FAIL_FAST_RETRY_MS).toBe(60_000);
-    // ⚠️ **LIST_FAIL_ESCALATE_AFTER 以前不在这张表里**（评审发现 A9）——它是
+    // ⚠️ **LIST_FAIL_ESCALATE_AFTER 以前不在这张表里**（评审查实）——它是
     // keypool-repo.ts 里**唯一一个缺席常数表的导出常数**，而 keypool-repo.ts 的
     // 注释恰恰拿"三次"当它整段时序论证的支点。
     expect(LIST_FAIL_ESCALATE_AFTER).toBe(3);

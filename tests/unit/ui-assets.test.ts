@@ -105,7 +105,7 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
    * `js/ui.js`、`js/pure/format.mjs`，以及三个空板块桩
    * `js/sec-overview.js` / `js/sec-keys.js` / `js/sec-events.js`。逐个确认过：
    *（那一轮还加了 `js/pure/bucket.mjs`，它与 `js/pure/mask.mjs` 已在
-   *  评审 B3 一并删除——两者在 `admin-ui/js/` 里零导入者，后端的
+   *  评审里一并删除——两者在 `admin-ui/js/` 里零导入者，后端的
    *  `src/core/admin/key-view.ts` 早就把 `masked`/`bucket` 算好放进响应了。）
    * 全部是面板自己的 HTML/CSS/JS，没有配置、没有笔记、没有任何含数据的文件，
    * 都该是公开可取的。清单**手写**，不是从测试跑出来的实际值粘回去的

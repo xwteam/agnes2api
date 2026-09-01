@@ -22,7 +22,7 @@ interface PollState { after: number | null; healing: boolean; delayMs: number }
 
 /**
  * 一轮"客户端轮询"。**跨轮状态整体来自 `pollOutcome()` 的 `next`，这里一个字段都
- * 不自己算**——评审四审 B1：上一版这个循环用自己的局部 `let justHealed` 把
+ * 不自己算**——评审四审查实：上一版这个循环用自己的局部 `let justHealed` 把
  * "上一轮的自愈不算这一轮的新内容"这条跨轮规则**又抄了一遍**，于是板块文件里
  * 真正发货的那一行（`justHealed = outcome.resetView`）被改成恒 `false`，全套
  * 1241 条用例一条都不红——测的是抄件不是原件（`tests/helpers/make-app.ts` 早就
@@ -185,7 +185,7 @@ describe("事件面板轮询：持续跨 isolate 时钟偏移下的自愈稳态�
   });
 
   /**
-   * **评审四审 B2**：稳态吞吐必须落在评审规划、五语言 DEPLOY.md 白纸黑字承诺的
+   * **评审四审**：稳态吞吐必须落在评审规划、五语言 DEPLOY.md 白纸黑字承诺的
    * **70,560 次/天**包线内——而三审(a) 的"只遮紧接着一轮"版本只对"严格交替"这
    * 一种负载均衡比例成立。
    *

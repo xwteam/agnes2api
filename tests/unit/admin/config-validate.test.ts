@@ -201,7 +201,7 @@ describe("跨字段规则：每一条都对应 registrarFromEnv 里一处 throw"
   });
 
   /**
-   * ⚠️⚠️ **V21：`fallback === primary` 后端只在 `enabled` 为真时抛。**
+   * ⚠️⚠️ **`fallback === primary` 后端只在 `enabled` 为真时抛。**
    *
    * 这一格钉住的是「关着的时候后端不拦」——**前端那一半必须同源**，
    * 否则「关着注册机时改不了下拉框」。前端那一格在 `tests/ui/settings.test.ts` 的

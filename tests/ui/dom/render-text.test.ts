@@ -8,7 +8,7 @@ import { emptyBucket } from "../../../src/core/admin/usage-stats.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
- * **B1 目标 ⑤：五种语言 × 七个板块，渲染出来的字里零裸 key、零未替换的 `{}`。**
+ * **面板行为覆盖目标 ⑤：五种语言 × 七个板块，渲染出来的字里零裸 key、零未替换的 `{}`。**
  *
  * ⚠️ **「七个板块 × 字典全部命名空间」是后来扩出来的，扩之前是「三个板块 ×
  * 手写 8 个命名空间」。** 扩容的直接理由是一次实测：`elI18n('h2','usage.titel')`
