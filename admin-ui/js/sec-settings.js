@@ -465,7 +465,7 @@ async function loadCatalog() {
     exInFlight = false;
   }
   // ⚠️ **这里不判 `nodes !== null`，上面那条早退也不判——两条路径对同一个不变量
-  //    必须给出同一个表态**（评审 F-10：上一版一条判一条不判，
+  //    必须给出同一个表态**（评审点出来的：上一版一条判一条不判，
   //    而「一处判空」会被下一个人读成「这里真的可能是 null」）。
   //    不变量与它的出处：`loadCatalog()` 只有 `onShow()` 一个调用方，而
   //    `admin-ui/js/app.js` 的 `showSection` 是**先 init 再 onShow**

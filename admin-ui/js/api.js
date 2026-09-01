@@ -16,7 +16,7 @@
  * 那格数着调用点钉住。
  * ⚠️⚠️ **它仍然会漏。别把它读成「所有出网方式」。**
  *
- * **轴一：枚举表**（评审 F-11 发现，**Playground 那个出口落地时补齐**）。
+ * **轴一：枚举表**（那一轮评审发现的，**Playground 那个出口落地时补齐**）。
  * 表里原来只有 `fetch` / `XMLHttpRequest` / `EventSource` / `sendBeacon` 四个名字，
  * **`new WebSocket(`、动态 `import(`、以及把 fetch 先存进变量再调
  *（`const f = globalThis.fetch; f(u)`）三种它一个都数不出来**（当时实测三种各得 0）。
