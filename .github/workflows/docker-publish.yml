@@ -9,33 +9,146 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+
+# ⚠️ **为什么不是「一个 job 用模拟器一次出两个架构」—— 这段是实测账，别把它合回单 job。**
+#
+# 上一版就是那么写的：单 job + `docker/setup-qemu-action` + `platforms: linux/amd64,linux/arm64`。
+# 实测：推 `v0.1.1` 那次，这份 workflow 在 `docker/build-push-action` 那一步跑到 **298 分钟
+# 仍是 in_progress**（它前面那几步全是秒过），而 GitHub 单个 job 的上限是 **360 分钟**
+# ⇒ 它必然超时失败，**镜像一次都没发出去**。
+#
+# 成因是三件事叠起来的，缺一件都不会这么慢：
+#   · arm64 那一半在模拟器里执行，Node 工具链在模拟下慢一个数量级以上；
+#   · 本仓 `Dockerfile` 为了瘦运行期镜像，刻意跑**两次** `pnpm install --frozen-lockfile`
+#     （构建期一次、运行期 `--prod` 一次）外加一次 `pnpm build`；
+#   · 那次发版 `package.json` 只改了版本号那一行，而它就在
+#     `COPY package.json pnpm-lock.yaml ./` 那一层里 ⇒ 它后面所有 install 层的缓存全部失效、
+#     两次 install 都从零重跑。
+# （`v0.1.0` 那次快，只是因为它是首次构建，缓存还没有失效过 —— 别把那次读成「模拟够用」。）
+#
+# 现在这份是 docker 官方对多架构的推荐做法：**每个架构各自在原生 runner 上构建、各自
+# push by digest，最后由一个 job 把两个 digest 合成 manifest 再打标签**。GitHub 给公开仓
+# 免费提供原生 arm64 runner（`ubuntu-24.04-arm`），arm64 因此不再过模拟，与 amd64 同一个量级：
+# 即便缓存全失效，也只是几分钟的事，不再是「必然撞上限」。
+#
+# ⚠️ 两条前提，写在这里省得下一个人重新踩：
+#   ① 原生 arm64 runner 免费**只对公开仓成立**。仓库哪天转私有，该做的是重新算这笔账
+#      （付费 runner / 只发 amd64 / 别的构建面），**不是退回模拟器**——退回去就是复现 298 分钟。
+#   ② 矩阵写法看着比单 job 啰嗦，而**啰嗦的那部分正是它快的原因**。合并 = 复现上面那次超时。
+
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  build:
+    # `fail-fast: false`：一个架构红了也把另一个跑完 —— 「两个都红」和「只有 arm64 红」
+    # 是完全不同的两件事，而提前取消会让人读不出是哪一种。
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # ⚠️ 两个 job 各自声明：job 级 `permissions` 会整个盖掉顶层那份，
+    # 漏写一个 job 就是那个 job 推不动 ghcr。
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
+      - name: 备好平台名与镜像名
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          REPO: ${{ github.repository }}
+        run: |
+          # `linux/amd64` → `linux-amd64`：缓存 scope 与产物名里不能带 `/`。
+          echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> "$GITHUB_ENV"
+          # ghcr 只收全小写的镜像名，而 `github.repository` 原样带着仓库主人的大小写。
+          # 本仓今天全小写、这一步是空操作；它是给**大写名字的 fork** 兜底的，
+          # 否则那边 push 会直接死在 `invalid reference format` 上。
+          echo "IMAGE=${REGISTRY}/${REPO,,}" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # 这一步在 build 里只取 `labels`：标签（tags）一律由下面 merge 那个 job 统一打，
+      # 单架构的镜像本身不带任何标签，只按 digest 推上去。
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.IMAGE }}
+      - uses: docker/build-push-action@v5
+        id: build
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # push-by-digest：不打标签，只把镜像按内容摘要推上去，等 merge 那个 job 来合。
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # 跨构建复用层缓存（依赖安装等），后续构建更快。
+          # ⚠️ scope 按架构分开：两个 job 现在是并行的两台机器，共用一个 scope 会互相覆盖，
+          # 拉到的还可能是另一个架构的层 —— 分开之后各存各的，谁都污染不到谁。
+          cache-from: type=gha,scope=${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_PAIR }}
+      - name: 把本架构的 digest 落成一个空文件
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          # 文件名就是全部内容：merge 那边只需要摘要本身，不需要文件里有东西。
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          # 一个 digest 都没落下来时当场红：静静上传一个空产物，会让 merge 在
+          # 「少了一个架构」的情况下照样合出一份看起来正常的 manifest。
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+      - name: 备好镜像名
+        env:
+          REPO: ${{ github.repository }}
+        run: echo "IMAGE=${REGISTRY}/${REPO,,}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # ⚠️ 这三条 tags 与上一版逐字相同（推 `v0.1.1` 时产出 `0.1.1` / `0.1` / `latest`）。
+      # 改动它 = 新老版本的镜像标签对不上，已经发出去的那些会突然找不到。
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
-      - uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          # 跨构建复用层缓存（依赖安装等），后续构建更快。
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: 把两个架构的 digest 合成一份 manifest 并打标签
+        working-directory: /tmp/digests
+        run: |
+          # `$(…)` 这两处要的就是词分割：把 jq 拼出的多个 `-t`、把目录里每个 digest
+          # 展开成独立参数。加引号反而会被当成单个参数传进去。
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+      - name: 核对合出来的 manifest 真的两个架构都在
+        run: |
+          docker buildx imagetools inspect \
+            "$(jq -cr '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
