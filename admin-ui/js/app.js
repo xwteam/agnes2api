@@ -117,7 +117,7 @@ function leave(reason) {
  * （`new WebSocket(` / 动态 `import(` / 把 fetch 先存进变量再调；评审 F-11 实测各得 0）。
  * 补齐之后它仍然沿另一条轴漏一族：抠模板串字面文本那一步会把**带花括号的插值**
  * 整条吃掉——`admin-ui/js/sec-overview.js` 那条渲染「上次检查时间」的模板串就是这个形状，
- * 往它里面塞一个真 `fetch` 实测全绿（定向复评 H-1）。
+ * 往它里面塞一个真 `fetch` 实测全绿（定向复评当场跑过）。
  * 边界全文见 `admin-ui/js/api.js` 文件头。
  */
 async function probe(key) {
