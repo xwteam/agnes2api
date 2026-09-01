@@ -355,7 +355,7 @@ const readerWith = (target: string, mutate: (src: string) => string): FileReader
  * 🔴 **这张表是一笔欠账的登记，不是许可。** 第二批字母那一族早先已经清干净
  * （下面「新族恒为零」那一格钉着它今天在标本集之外**一处不剩**）；
  * 「字母 + 连字号 + 字母」那一族的存量**本轮正在分批清**，清到零的份整行从表里消失；
- * 其余五族在跟踪文件里**从来没有被清过**。下面这 38 份是今天还剩的残留，
+ * 其余五族在跟踪文件里**从来没有被清过**。下面这 27 份是今天还剩的残留，
  * 每一处都是真的内部标识符或真的同形真词，逐族读过：
  *
  * 🔴 **这张表在收第三批字母与带连字号那两族的那一轮从 10 份长到 49 份，
@@ -400,21 +400,10 @@ const BASELINE: ReadonlyArray<readonly [string, number, string]> = [
   ["src/http/admin/handlers/overview.ts", 1, "86348ea0bf50"],
   ["src/http/admin/handlers/registrar.ts", 1, "78c7523daad8"],
   ["src/http/admin/handlers/usage.ts", 1, "86348ea0bf50"],
-  ["tests/contract/admin-events.test.ts", 5, "c624cbc805b7"],
-  ["tests/contract/admin-registrar.test.ts", 1, "ae4183abbde3"],
-  ["tests/contract/admin-usage.test.ts", 3, "966131ffe196"],
   ["tests/contract/media.test.ts", 1, "11508a93417c"],
-  ["tests/contract/stream-parity.test.ts", 6, "e8e4be318786"],
-  ["tests/contract/usage-tier2.test.ts", 1, "280a4a2311fb"],
   ["tests/helpers/doc-glossary.ts", 2, "2c16973275e7"],
   ["tests/helpers/readme-sections.ts", 2, "8db22afc6dc9"],
-  ["tests/ui/api-session.test.ts", 14, "168cc21fb285"],
-  ["tests/ui/dom/playground-section.test.ts", 18, "cc0f719a0fc9"],
-  ["tests/ui/dom/usage-section.test.ts", 1, "6df15e22da98"],
-  ["tests/ui/events.test.ts", 1, "82988760f79b"],
-  ["tests/ui/examples.test.ts", 2, "9d4ab8a7c080"],
   ["tests/ui/i18n.test.ts", 1, "ac71a10b2936"],
-  ["tests/ui/playground.test.ts", 6, "37593802c179"],
   ["tests/ui/sendable-parity.test.ts", 2, "bc4554e3aa76"],
   ["tests/ui/settings.test.ts", 2, "84ed9f000ec5"],
   ["tests/unit/admin/tend-guard.test.ts", 1, "78c7523daad8"],

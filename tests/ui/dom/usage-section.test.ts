@@ -949,7 +949,7 @@ describe("Token 卡的覆盖范围", () => {
   });
 
   /**
-   * ⚠️⚠️ **这一格是变异 M-O 逼出来的，登记成因**：上一格用的 `tokensCoverage`
+   * ⚠️⚠️ **这一格是一条变异逼出来的，登记成因**：上一格用的 `tokensCoverage`
    * 夹具是 `["anthropic", "responses"]`，而把 `sec-usage.js` 里那一行
    * `const coverage = caps && caps.stats ? caps.stats.tokensCoverage : null;`
    * 换成写死的 `["anthropic", "responses"]` 之后，**42 条全绿、完整逃逸**

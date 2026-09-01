@@ -7,7 +7,7 @@ import { shardKey, windowIndex } from "../../src/core/admin/event-ring.js";
 const AUTH = { headers: { "x-admin-key": TEST_ADMIN_TOKEN } };
 
 /**
- * **诚实记录**：本文件下方那条逐字照抄简报的 U-C 用例（"一次请求之后，存储里确实
+ * **诚实记录**：本文件下方那条逐字照抄简报的落盘用例（"一次请求之后，存储里确实
  * 有事件落盘"）用的是**零延迟**的 `MemoryStorage`——它的 `get`/`put` 是包了 `async`
  * 的同步 Map 操作，每次 `await` 只消耗**一个微任务 tick**，不产生任何真实的异步
  * 延迟。**实测**：把 `log-flush.ts` 的 `await flush()` 改成 fire-and-forget 的
@@ -22,7 +22,7 @@ const AUTH = { headers: { "x-admin-key": TEST_ADMIN_TOKEN } };
  * `delayMs` 同一个机制，见 `tests/helpers/fake-storage.ts` 的说明）包一层，
  * 才能把"响应有没有等写完"这件事变得可观测——这与生产里 Worker 真实 KV 写入 /
  * Node 真实磁盘写入都有不可忽略的 IO 延迟是同一个道理。下面这些用例就是诊断出
- * 这一点之后新补的，是本任务里唯一真正守住 U-C 的用例；上面那条逐字照抄简报的
+ * 这一点之后新补的，是本任务里唯一真正守住「响应返回前必须落盘」的用例；上面那条照抄简报的
  * 用例继续保留（它仍然验证"最终确实落盘"，只是不验证"响应返回前"这个时序）。
  */
 
@@ -88,7 +88,7 @@ describe("GET /admin/api/events", () => {
   });
 
   /**
-   * **U-C（订正 / 待验证）：这是本期唯一一处依赖运行时调度时序的地方。**
+   * **（订正 / 待验证）这是本期唯一一处依赖运行时调度时序的地方。**
    * 事件落库的 `put` 在中间件里被 `await`，必须在响应返回前完成。
    * 两种运行时**各断言一遍**——workerd 的 isolate 生命周期与 node 完全不同，
    * 只在 node 侧验过就假设 worker 侧一样，正是这个项目栽过的那类「未经核实的前提」。
@@ -142,7 +142,7 @@ describe("GET /admin/api/events", () => {
   });
 
   /**
-   * **U-C 真正的守卫：响应返回时，落盘必须已经完成**（不是"最终会完成"）。
+   * **真正的守卫：响应返回时，落盘必须已经完成**（不是"最终会完成"）。
    * 用 `DelayedStorage` 让每次存储访问都真的经过一次 `setTimeout`——这样
    * "`await flush()` 与否"这件事才会在**响应返回的那一刻**产生可观测的差异：
    * awaited 版本里 `app.request()` 的 Promise 要等 `maybeFlush()` 的存储调用全部
@@ -165,7 +165,7 @@ describe("GET /admin/api/events", () => {
   });
 
   /**
-   * **补的第三条 U-C 用例，专门对齐"挂在 next() 之前"这条变异。**
+   * **补的第三条落盘用例，专门对齐"挂在 next() 之前"这条变异。**
    *
    * 上面两条用例都打了**两次**请求，检验的是"最终有没有事件落盘"——这条性质
    * 对"logFlush 挂到 next() 之前"这个变异**不够精确**：挂在 next() 之前时，

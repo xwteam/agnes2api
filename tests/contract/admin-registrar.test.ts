@@ -55,7 +55,7 @@ const DAY_END = 20_001 * 86_400_000;
 /** 注册机开着、两条通道都配齐（`channel_not_configured` 那几格需要它们真的存在）。 */
 /**
  * ⚠️⚠️ **`TARGET_KEYS` 与 `MINT_BATCH` 刻意挑成让 `pool` 那五个数字两两不同**
- *（评审发现 / M-5）：夹具里 `target=9`、`counted=4`、`gap=5`、`fresh=2`、`mintBatch=3`。
+ *（评审发现的一条）：夹具里 `target=9`、`counted=4`、`gap=5`、`fresh=2`、`mintBatch=3`。
  *
  * 第一版是 `target=4 / counted=4 / gap=0 / fresh=2 / mintBatch=2` ⇒
  * **`counted === target` 且 `fresh === mintBatch`**，于是把 `counted` 写成 `reg.targetKeys`、

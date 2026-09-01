@@ -617,7 +617,7 @@ describe("buildDetailText：说明 / 字段列的文本拼装", () => {
   });
 });
 
-describe("groupEvents：按 corr 相邻折叠成时间线（P-1）", () => {
+describe("groupEvents：按 corr 相邻折叠成时间线", () => {
   /**
    * **人工冒烟项**：本期几乎没有事件带 corr（后来才串进注册机），
    * 所以分组必须在「一个都没有」时也表现正常——不崩、不把互不相关的事件粘在一起。
