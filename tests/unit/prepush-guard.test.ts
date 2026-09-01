@@ -435,8 +435,8 @@ describe("prepush.sh 的逐格表：红不许被吃掉，列位不许错开", ()
     const r = runBash(tailScript(rows));
     const lines = r.stdout.split("\n");
     // ⚠️ **两列都要量**：只量标题那一列判不出这件事——把标题挪回补齐位时它恒在第 4 列，
-    //   错开的是它**后面**那一列。（这条判据第一版正是只量了标题，把 M-TABLE 那次变异
-    //   放行了：判据用错工具时不会报错，会静静地放行。）
+    //   错开的是它**后面**那一列。（这条判据第一版正是只量了标题，把「标题挪回补齐位」
+    //   那次变异放行了：判据用错工具时不会报错，会静静地放行。）
     const columnStarts = (pick: (row: (typeof rows)[number]) => string): number[] =>
       rows.map((row) => {
         const [, title] = row;

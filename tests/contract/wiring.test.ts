@@ -139,7 +139,7 @@ class CountingStorage implements Storage {
   }
 }
 
-// ── C-RM1：健康检查要反映「存储可写」，但不许每次都写盘 ─────────────────────
+// ── 健康检查要反映「存储可写」，但不许每次都写盘 ────────────────────────────
 describe("buildApp 的存储可写性探测", () => {
   it("开启探测时只写一次探针键并删掉，之后 /health 不再产生任何写入", async () => {
     const s = new CountingStorage();

@@ -17,7 +17,7 @@ describe("GET /health", () => {
     expect((await app.request("/health")).status).toBe(200);
   });
 
-  // ── C-RM1：存储写不进去的容器不许再报 healthy ───────────────────────────────
+  // ── 存储写不进去的容器不许再报 healthy ──────────────────────────────────────
   //
   // 真机实测：绑定挂载的宿主 data 目录属主是 uid 1000，容器内运行用户是 uid 100，
   // 于是 store.json 写入 EACCES；但 /health 压根不碰存储，容器一路 healthy，

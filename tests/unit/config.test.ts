@@ -15,7 +15,7 @@ describe("loadConfig", () => {
     expect(c.cooldownPaymentMs).toBe(3_600_000);
   });
 
-  // C-RM2：同步端点（图片生成、视频建任务）的首字节要等上游把结果算完才到达，
+  // 同步端点（图片生成、视频建任务）的首字节要等上游把结果算完才到达，
   // 实测约 12 秒，8 秒预算会让它 100% 失败。默认值必须显著大于流式首字节的 8 秒。
   it("同步端点超时有独立默认值，且远大于流式首字节的 8 秒", async () => {
     const c = await loadConfig({ GATEWAY_TOKEN: "t" }, new MemoryStorage());

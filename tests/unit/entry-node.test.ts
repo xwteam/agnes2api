@@ -107,7 +107,7 @@ describe("node 入口: 真实启动路径", () => {
   });
 });
 
-// ── I-RM3：Critical A 的健康信号必须由**真实入口**保证 ───────────────────────
+// ── Critical A 的健康信号必须由**真实入口**保证 ──────────────────────────────
 //
 // storage-health 那套用例走的是 `buildApp(..., { probeStorage: true })`，绕过了
 // src/entry/node.ts。实测把入口那一行的 `{ probeStorage: true }` 删掉，全套用例照样全绿

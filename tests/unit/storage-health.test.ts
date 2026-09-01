@@ -102,7 +102,7 @@ describe("probeWritable", () => {
     expect(err?.message).toMatch(/EACCES/);
   });
 
-  // M-RM9：可写性的结论只看 put。原实现把 put+delete 一起 try，于是「写得进、删不掉」
+  // 可写性的结论只看 put。原实现把 put+delete 一起 try，于是「写得进、删不掉」
   // 既误报 degraded、又把探针键留在存储里，两个后果同时发生。
   it("put 成功而 delete 失败时仍判为可写，只记日志，不误报 degraded", async () => {
     // console.* 已经被换成注入的 Logger（probeWritable 第 4 个可选参数）：spy console
@@ -120,8 +120,9 @@ describe("probeWritable", () => {
   });
 });
 
-// ── C-RM1 的真实文件系统复现：宿主目录属主不匹配 ≈ 数据目录对当前用户不可写 ──
-// 容器内的表现是 uid 100 写 uid 1000 的目录；在单测里用「去掉写权限的目录」等价复现。
+// ── 「存储写不进去的容器不许再报 healthy」那条裁定的真实文件系统复现 ─────────
+// 宿主目录属主不匹配 ≈ 数据目录对当前用户不可写；容器内的表现是 uid 100 写
+// uid 1000 的目录，在单测里用「去掉写权限的目录」等价复现。
 // root 无视权限位，因此以 root 跑测试时跳过（真机验证由容器那一侧覆盖）。
 const notRoot = typeof process.getuid !== "function" || process.getuid() !== 0;
 
