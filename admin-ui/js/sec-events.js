@@ -62,7 +62,7 @@ let lastShardId = null;
 let lastGeneratedAt = null;
 /**
  * 轮询的全部跨轮状态（游标 / 自愈中 / 退避间隔）。**整体来自 `pollOutcome()` 的
- * `next`，这个文件不再自己算它的任何一个字段**——评审四审 B1：上一版把"上一轮的
+ * `next`，这个文件不再自己算它的任何一个字段**——评审四审查实：上一版把"上一轮的
  * 自愈不算这一轮的新内容"这条跨轮规则的一半写在这里（`justHealed = outcome.resetView`），
  * 而这个文件没有任何自动化覆盖，把那一行改成恒 false 全套用例一条都不红。
  * 判据全部搬回 pure/events.mjs（admin-ui/README.md 硬规则 1）。
@@ -211,7 +211,7 @@ async function poll() {
     lastGeneratedAt = generatedAtOf(body);
     loadError = false;
     lastError = false;
-    // 游标那一条的二审 / 四审 B1：游标自愈、视图要不要跟着清空、退避间隔看不看到
+    // 游标那一条的二审 / 四审：游标自愈、视图要不要跟着清空、退避间隔看不看到
     // "新内容"、自愈状态什么时候清位——同一个纯状态转换的四个面，**全部**在
     // pollOutcome() 里（admin-ui/README.md 硬规则 1）。这里只剩两件拼装：视图
     // 要不要清、把返回的下一轮状态整体收下。一个判据都不许再回到这个文件。

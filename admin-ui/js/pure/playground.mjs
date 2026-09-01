@@ -4,7 +4,7 @@
  *
  * ⚠️ **本模块不知道任何端点路径、任何协议 id、任何请求体形状。** 路径模板、请求方法、
  * 鉴权头的名字、流式怎么开、最小请求体，全部来自 `GET /admin/api/models` 的响应
- * （真源 `src/core/admin/protocol-catalog.ts`）。这是设计文档订正 D1 的落点：
+ * （真源 `src/core/admin/protocol-catalog.ts`）。这是设计文档那条订正的落点：
  * 集成示例卡与 Playground 是同一份知识，「做两遍必漂，而漂了没人会发现」。
  * **示例卡渲染的那份与这里发出去的这份必须同源。**
  *
