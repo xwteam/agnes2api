@@ -148,8 +148,9 @@ function defaultStoreLogger(now: () => number): StoreLogger {
  * 把 AppDeps 变成 dispatch 要的 DispatchDeps。
  *
  * `config` 用 **getter** 而不是拷值：路由工厂在建 app 那一刻就把 deps 闭包捕获了，
- * 拷值等于把配置永久冻结在启动时刻——这正是那个缺陷的成因。getter 让每次属性读取
- * 都取当前值；而 dispatch() 在请求开头解构一次（dispatcher.ts:209），
+ * 拷值等于把配置永久冻结在启动时刻 —— 那个缺陷就是这么来的：改完配置之后，
+ * 网关照旧按启动那一刻的旧值跑。getter 让每次属性读取都取当前值；
+ * 而 dispatch() 在请求开头解构一次（dispatcher.ts:209），
  * 因此**单个请求内部仍是一份一致的快照**，这正是想要的语义。
  *
  * ⚠️ **返回值不许被展开（`{ ...dispatchDeps(deps) }`）。** 展开会**当场求值**那个

@@ -11,7 +11,7 @@ import { declarations, isColorProp, visibleNonColorDecls } from "../helpers/css-
  * 源码层门禁：**两条硬约束的自动化部分**。
  *
  * 这个文件存在的理由是一次实测打脸：台账与多处派发里都写着「`src/core` 零 IO，
- * 豁免清单不许变长，**有源码断言钉着**」——**那条断言根本不存在**（计划文档的订正 R1）。
+ * 豁免清单不许变长，**有源码断言钉着**」——**那条断言根本不存在**。
  * 实测在 `src/core/` 下加一处 `setTimeout` 加一处 `Math.random`，typecheck、全套测试、
  * 九道 CI 门禁**全绿，零信号**。
  *
@@ -24,7 +24,7 @@ import { declarations, isColorProp, visibleNonColorDecls } from "../helpers/css-
  *     const b = performance.now();             // 压根没有这条规则
  *     const c = globalThis.Math.random();      // 同第一条
  *
- * 要害不是「漏了几个记号」，而是**又一次越界宣称**——规模比 R1 小，性质一模一样，
+ * 要害不是「漏了几个记号」，而是**又一次越界宣称**——规模比上面那次小，性质一模一样，
  * 而这条门禁存在的全部理由就是治「注释里的断言被后人信任」。
  *
  * **因此本文件的边界不再由散文宣称，而是由下面两张可执行的表钉死**：

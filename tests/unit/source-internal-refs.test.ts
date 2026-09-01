@@ -200,7 +200,7 @@ function reOf(family: { readonly source: string; readonly flags: string }): RegE
  * 清掉这些串等于把判据拆了，而拆了判据换来的「零命中」是假的。
  * ⇒ 下面「第二批字母那一族一处不剩」那一格把这两份跳过，**只有那一格**。
  *
- * 🔴 **它们照样进扫描、照样在 `BASELINE` 里逐份点名**（今天各 100 与 50 处，五族合计）。
+ * 🔴 **它们照样进扫描、照样在 `BASELINE` 里逐份点名**（今天各 95 与 48 处，五族合计）。
  * 这一条是**修回来的**：早先这两份走的是「整份跳过全部五族」，
  * 后果实测过——往 `scripts/prepush.sh` 末尾新写一个第二批字母的编号加一个任务号，
  * **一格都不红**。判官的标本集要的是「这一份的数字与签名不许动」，
@@ -226,7 +226,7 @@ const SPECIMENS: ReadonlyArray<{
       + "（族定义里的 `evidence`、`该红时红` 那一组塞进文档的探针句、"
       + "`KNOWN_FALSE_POSITIVES` 里那几条「登记它真的会咬」的句子）。"
       + "清掉这些串 = 那份判据当场失去认形状的能力，换来的零命中是假的。"
-      + "⇒ 第二批字母那个零对它不成立（今天 28 处）",
+      + "⇒ 第二批字母那个零对它不成立（今天 28 处，五族合计 95 处）",
     until: "哪天那份判据改成从外部夹具读探针串（真串不再写在判据自己身上）—— "
       + "那时这份该从这里删掉，它在第二批字母那一族上的命中该降到零",
   },
@@ -327,7 +327,7 @@ const readerWith = (target: string, mutate: (src: string) => string): FileReader
  *   也归了进来——那一处根本不是控制字符名，是一个货真价实的发现号，属于**该清**的那一档。
  *   归错档的后果不是数字差一，是**照这段读下去的人会认定它动不得，于是永远没人去清**。
  *   已当场清掉，那一份因此退出本表；三条 bullet 现在合计 3 + 5 + 2 = 10，与正文对得上。
- * · 两份是**判官自己的标本集**（`SPECIMENS` 那两份，今天 100 与 50 处）：
+ * · 两份是**判官自己的标本集**（`SPECIMENS` 那两份，今天 95 与 48 处）：
  *   它们的数字天生就高，理由逐份写在那张表里。**它们在册的意义只有一个——
  *   数字与签名不许动。** 早先它们走的是「整份跳过」，那等于往这两份里新写任何编号都不红。
  *
@@ -345,13 +345,13 @@ const readerWith = (target: string, mutate: (src: string) => string): FileReader
  */
 const BASELINE: ReadonlyArray<readonly [string, number, string]> = [
   ["admin-ui/js/pure/sendable.mjs", 3, "6d7e39c41b4a"],
-  ["scripts/prepush.sh", 54, "4a7c3ee2356c"],
+  ["scripts/prepush.sh", 48, "651b40b44cf5"],
   ["src/adapters/logger-console.ts", 4, "de1aa8f2a4cd"],
   ["src/http/admin/auth.ts", 3, "6d7e39c41b4a"],
   ["tests/ui/sendable-parity.test.ts", 2, "bc4554e3aa76"],
   ["tests/unit/docs-deviations.test.ts", 2, "f49a7dcae86e"],
-  ["tests/unit/docs-internal-refs.test.ts", 100, "8ee7583d5554"],
-  ["tests/unit/docs-parity.test.ts", 23, "bf6437e3b93f"],
+  ["tests/unit/docs-internal-refs.test.ts", 95, "d26b04d4d97d"],
+  ["tests/unit/docs-parity.test.ts", 22, "dc0bca0c5877"],
   ["tests/unit/docs-typography.test.ts", 25, "38a17c4d86d1"],
   ["tests/unit/logger.test.ts", 4, "de1aa8f2a4cd"],
 ];
@@ -461,6 +461,16 @@ describe("射程自守：`git` 的全部跟踪文件，减掉二进制与两条�
   });
 });
 
+/**
+ * 🔴 **下面每一格凡是走全射程扫描的，都显式带 60 秒预算（`}, 60_000)`），不是「放宽断言」。**
+ *
+ * 这一轴的每一次 `leaks()` / `census()` 都要把射程里那几百份文件逐族逐行重扫一遍，
+ * 而变异探针每格还要再扫一到几遍。vitest 的默认单格超时是 5 秒：单核、有负载的机器上
+ * 整套测试从 195 秒拖到 251 秒时，这些格子会被那 5 秒当场切断，
+ * **红出来的报文是「超时」，不是它真正要守的那件事**——看报文的人会去找一个不存在的回归。
+ * 本仓在 `tests/unit/check-comment-refs.test.ts:1421` 那一格上栽过同一跤，修法逐字相同。
+ * ⚠️ **断言一个字都没动，改的只有时间预算。**
+ */
 describe("跟踪文件里的内部标识符：逐份点名，与登记在案的欠账相等", () => {
   it("🔴 逐份点名与基线相等（涨了是新回归，掉了是该把数字改小，签名变了是等量替换）", () => {
     const now = census(realFile);
@@ -480,7 +490,7 @@ describe("跟踪文件里的内部标识符：逐份点名，与登记在案的�
       + "只改签名不读报文，等于把一处新泄漏登记成现状。\n"
       + `逐条：\n${leaks(realFile).join("\n")}`).toEqual([]);
     expect(now, "三个方向单独看都对、合起来却不相等 —— 比对写坏了").toEqual(expected);
-  });
+  }, 60_000);
 
   it("🔴 第二批字母那一族，在标本集那两份之外**一处不剩**", () => {
     // 这一格是本文件的立法理由本身：上一轮清理清的就是这一族（1069 → 120 口径），
@@ -494,7 +504,7 @@ describe("跟踪文件里的内部标识符：逐份点名，与登记在案的�
       .sort();
     expect(out, "第二批字母那一族又回潮了（逐条见上）。上一轮把它从 1069 处清到 120 处，"
       + "而那 120 处全在标本集那两份与排除的两份里 —— 这里出现任何一处都是新写进去的").toEqual([]);
-  });
+  }, 60_000);
 
   it("🔴 该红时红（其五）：在册文件里做一次**等量替换** ⇒ 签名那个方向必须红", () => {
     // 这一格钉的是基线第三列存在的理由：只记处数时，这个变异**全格皆绿**（实测过）。
@@ -514,7 +524,7 @@ describe("跟踪文件里的内部标识符：逐份点名，与登记在案的�
     expect(swapped.map((r) => r[0]),
       "等量替换没被认出来 —— 基线只记处数就是这个盲区，第三列的签名是为它加的")
       .toEqual([target]);
-  });
+  }, 60_000);
 });
 
 describe("判官的标本集恰两份：在册、真的带那一族、且没拿到「整份不查」", () => {
@@ -559,7 +569,7 @@ describe("判官的标本集恰两份：在册、真的带那一族、且没拿�
         `标本集 ${e.path} 不在基线里 —— 它的处数与签名没有任何棘轮盯着，`
         + "往里面新写一个编号将一格都不红").toContain(e.path);
     }
-  });
+  }, 60_000);
 
   it("🔴 该红时红（其三）：往标本集那两份里各新写一个编号 ⇒ 逐份点名那一格必须红", () => {
     // 五个变异方向里的第三个：其一 / 其二在下面那一组，其五在上面基线那一组，其四紧跟本格。
@@ -578,7 +588,7 @@ describe("判官的标本集恰两份：在册、真的带那一族、且没拿�
         .filter((f) => f.startsWith(`${e.path}:`) && f.includes(`「${PROBE_SECOND_BATCH}」`)).length,
       `${e.path} 里新写的那一处没有出现在报文里`).toBe(1);
     }
-  });
+  }, 60_000);
 
   it("🔴 该红时红（其四）：把标本集某一份清空 ⇒ 名册过期那一格与棘轮的「掉了」方向都红", () => {
     const family = secondBatch();
@@ -594,7 +604,7 @@ describe("判官的标本集恰两份：在册、真的带那一族、且没拿�
       expect(ratchet(emptied).shrank.map((r) => r[0]),
         `${e.path} 清空之后棘轮没红在「掉了」那个方向 —— 它多半没在基线里`).toEqual([e.path]);
     }
-  });
+  }, 60_000);
 });
 
 describe("该红时红：往跟踪文件里塞一个内部标识符 ⇒ 点名文件与行号", () => {
@@ -616,7 +626,7 @@ describe("该红时红：往跟踪文件里塞一个内部标识符 ⇒ 点名�
     expect(mine[0], "没有点名行号").toContain(`${target}:3 `);
     expect(mine[0], "没有点名命中的那个串").toContain(`「${SECOND_BATCH}」`);
     expect(mine[0], "没有点名族").toContain("第二批字母");
-  });
+  }, 60_000);
 
   it("🔴 该红时红（其二）：往 `tests` 下的某份文件里写一个第二批字母的编号 ⇒ 必须红", () => {
     // 口径：`tests` 算在射程内。公开仓的读者读得到每一份测试文件。
@@ -627,7 +637,7 @@ describe("该红时红：往跟踪文件里塞一个内部标识符 ⇒ 点名�
     const mine = found.filter((f) => f.startsWith(`${target}:`));
     expect(mine.length, `应当只红一条，实际：\n${found.join("\n")}`).toBe(1);
     expect(mine[0]).toContain(`「${SECOND_BATCH_SHORT}」`);
-  });
+  }, 60_000);
 
   it("五族逐族认得出：各塞一个真串进同一份脚本 ⇒ 逐族点名", () => {
     probeBase();
@@ -649,7 +659,7 @@ describe("该红时红：往跟踪文件里塞一个内部标识符 ⇒ 点名�
       expect(mine[0], `没有点名族「${id}」`).toContain(id);
       expect(mine[0], `没有点名串「${evidence}」`).toContain(`「${evidence}」`);
     }
-  });
+  }, 60_000);
 
   it("同一串里挨着的两个标识符各报一条 —— 零宽前后瞻，不许换成会吃边界的字符类", () => {
     // 与文档轴那一格同一个机制：把边界字符一起吃掉的写法会漏掉第二个。
@@ -660,7 +670,7 @@ describe("该红时红：往跟踪文件里塞一个内部标识符 ⇒ 点名�
     expect(mine.length, `应当报两条，实际：\n${mine.join("\n")}`).toBe(2);
     expect(mine.filter((f) => f.includes(`「${"M" + "5b"}」`)),
       "没有单独点名后一个 —— 多半是有人把零宽前后瞻换成了会吃掉边界字符的字符类").toHaveLength(1);
-  });
+  }, 60_000);
 });
 
 describe("不乱红：形状像、意思不是的那几种，一处都不许命中", () => {
@@ -683,7 +693,7 @@ describe("不乱红：形状像、意思不是的那几种，一处都不许命�
     expect(withoutUnderscore.test(`const ${ident} = 3;`),
       "去掉下划线边界的那一版居然也不命中 —— 文件头那段「43 处靠正则设计消掉」该重新实测")
       .toBe(true);
-  });
+  }, 60_000);
 
   /**
    * 🔴 **第二批字母不含 `H`，两个方向都钉死。**
@@ -700,7 +710,7 @@ describe("不乱红：形状像、意思不是的那几种，一处都不许命�
     expect(withH.test(`这一节的标题层级用 ${heading}。`),
       "把 `H` 加回去的那版居然也不命中 —— 文件头那段「收 `H` 会把标题层级全变成假红」该重新实测")
       .toBe(true);
-  });
+  }, 60_000);
 
   // 每一条都写清「为什么它长得像」，否则下一个人会以为这张表是凑数的。
   const INNOCENT: ReadonlyArray<readonly [string, string]> = [
@@ -719,14 +729,14 @@ describe("不乱红：形状像、意思不是的那几种，一处都不许命�
     const found = leaks(readerWith(target, (src) => `${src}\n// ${sentence}\n`));
     expect(found.filter((f) => f.startsWith(`${target}:`)),
       `这一句被误伤了：${sentence}\n${found.join("\n")}`).toEqual([]);
-  });
+  }, 60_000);
 
   it("注释里出现「评审」两个字但不带发现号 —— 不许因此红", () => {
     probeBase();
     const found = leaks(readerWith(target, (src) => `${src}\n// 这笔账是评审要求主动给出的。\n`));
     expect(found.filter((f) => f.startsWith(`${target}:`)),
       `「评审」这个词本身被判成了泄漏：\n${found.join("\n")}`).toEqual([]);
-  });
+  }, 60_000);
 });
 
 /**
@@ -779,5 +789,5 @@ describe("与文档轴那份真源不漂：族数对得上，它登记的每个�
       .not.toContain(self);
     expect(leaks(realFile).filter((f) => f.startsWith(`${self}:`)),
       "本文件自己命中了 —— 探针串必须拼出来写，不许写字面量").toEqual([]);
-  });
+  }, 60_000);
 });

@@ -11,7 +11,8 @@ import { httpError } from "../../errors.js";
 import { protocolById, MODEL_CATALOG } from "../../../core/admin/protocol-catalog.js";
 
 /**
- * `POST /admin/api/keys/:id/verify` —— 单把 key 的验活（设计 §10.2 / §11 与那条订正）。
+ * `POST /admin/api/keys/:id/verify` —— 单把 key 的验活（设计 §10.2 / §11，
+ * 与那条订正：**这条端点一个存储字段都不写**）。
  *
  * **这是本仓第一次让后端拿着某一把具体的明文 key 去打上游。**
  *

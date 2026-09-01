@@ -188,7 +188,7 @@ export async function buildApp(
   //
   // ⚠️ **「不再靠人守」这句话在复评时对五语言那一半还是过头话，如实登记**：
   // 当时那一半只有 `tests/unit/docs-parity.test.ts` 的
-  // 「五语言 DEPLOY.md 里……的出现次数彼此一致」那条路径 token 计数守着，而复评 R8 实测
+  // 「五语言 DEPLOY.md 里……的出现次数彼此一致」那条路径 token 计数守着，而复评时实测
   // 「五份**同步**删掉那句正文、只留 `src/http/wire.ts` 这个路径」——docs-parity 那份
   // 66 格全绿、`check-comment-refs` EXIT=0，而本句当场变假。上面那条逐语言查正文的守卫是补它的。
   // docs-parity 那条锚今天仍在，但它管的是**跨五种语言对等**（某一份漏改就红），是另一件事。

@@ -7,7 +7,7 @@
  * `scripts/check-i18n.mjs:9-12` 立法时说的一模一样 —— **一条红会被另一条红盖住**，
  * 读日志的人只看得见第一个失败，剩下的要修完再跑一轮才浮出来。
  *
- * ── 两批启用，不是一批 ────────────────────────────────────────────────
+ * ── 两批启用，不是一批 ────────────────────────────────────────────────────
  * · **上半**（与那一期的改写无关）：R20/P1–P4、R22f/g、R24、R25a–e、R28。
  * · **下半**（依赖那一期的成果）：R20/P5、R21、R23'、R26。
  *   R25f 早就随「位置不对的 `---`」那一组落进了 `tests/unit/docs-parity.test.ts`（两格：真扫描 +
@@ -195,7 +195,7 @@ describe("R20/P1 alert 的语义位置：头部恰 4 块、系统要求节末恰
       return seq.join(",") === "NOTE,WARNING,TIP,IMPORTANT" ? [] : [`${p}: ${seq.join(",") || "（一块都没有）"}`];
     });
     expect(wrong, `头部警示带的类型序列不对：\n${wrong.join("\n")}\n`
-      + "四块的顺序是模板形态（R12 守的是同一件事，这里守的是它在 `##` 之前）").toEqual([]);
+      + "四块的顺序是模板形态，这里连它在 `##` 之前这一条一起守").toEqual([]);
   });
 
   it("② 六份 README 的 `## 📋 系统要求` 节里恰 1 条 `> [!TIP]`，且它是该节最后一个内容块", () => {
@@ -1225,7 +1225,7 @@ describe("R26a–c 25 份非 README 的开篇三行形态与 H1 译名", () => {
  * 少写直接红、想减少分母就得删掉真实的风险陈述（被 R28 的体量下限挡住）。
  *
  * **它验不了什么**：alert 选的**类型**对不对；一句风险陈述**写得全不全**。
- * ⇒ 判型转换有人工评审（已定），P5 只保证「风险句必须住在框里」。
+ * ⇒ 判型转换有人工评审，P5 只保证「风险句必须住在框里」。
  * ────────────────────────────────────────────────────────────────────────── */
 
 /**
@@ -1389,10 +1389,10 @@ describe("R20/P5 风险语义句必须住在 alert 块里（内容锚定的下�
 /* ══════════════════════════════════════════════════════════════════════════
  * R19' —— **载体过滤：出货文档正文里不许出现 HTML 注释**（评审发现 19 的回填）
  *
- * 规格（P3F-SPEC-FINAL.md §R14 补 / §R16）明写：「所有 `includes` 型判定之前必须先做
- * 载体过滤 —— 剥掉 ``` 围栏与 `<!-- -->` HTML 注释」，并点名 R14 / R16 / R19 / R26f' /
- * R27 全部适用。围栏一直在剥；**HTML 注释一处都没剥**，于是评审用两行注释就把整套
- * 文档判官弄瞎了：
+ * 规格（§R14 补 / §R16）明写：「所有 `includes` 型判定之前必须先做
+ * 载体过滤 —— 剥掉 ``` 围栏与 `<!-- -->` HTML 注释」，并点名 R14 / R16 / R19 /
+ * R27 与另一条始终没落地的判据全部适用。围栏一直在剥；**HTML 注释一处都没剥**，
+ * 于是评审用两行注释就把整套文档判官弄瞎了：
  * · 其一：把 `README.md` 里 `> 📖 详细面板文档：…` 整行包进 `<!-- -->`
  *   ⇒ ADMIN.md 在首屏的唯一入口在 GitHub 上消失，`Tests 764 passed`。
  * · 其二：把头部那条 `> [!IMPORTANT]`（整段 fail-closed 说明）包进 `<!-- -->`
@@ -1482,7 +1482,7 @@ describe("R19' 载体过滤：40 份出货文档的正文里一个 HTML 注释�
  *
  * 🔴 **这是用户唯一逐字点名「要有机器判据」的那一条**（USER-DECISIONS.md:41-42、
  * ADJUDICATIONS.md:158：「五份各自命中本语言的建议式措辞，且全仓零命中禁用词表」）。
- * 规格 P3F-SPEC-FINAL.md 有整节 `## R14`，而**阶段 6 只建了 R27、漏了 R14**：
+ * 规格有整节 `## R14`，而**阶段 6 只建了 R27、漏了 R14**：
  * 评审把六份 README 的那句话全部改成禁止式，`Tests 4181 passed (4181)`。
  *
  * ⚠️ **为什么这条洞一定会被踩**：`ADJ ⑧` 实测 kiro2api 模板的 ja/ko 原文就是
@@ -1547,7 +1547,7 @@ const advisoryContext = (text: string, word: string): string | null => {
 };
 
 /** 正面表的判定：逐份返回「为什么算未命中」，命中则不返回。 */
-const d3Missing = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) => {
+const commercialAdvisoryFaults = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) => {
   const lang = p === "README.md" ? "zh-CN" : (p.split("/")[1] ?? "");
   const want = COMMERCIAL_ADVISORY[lang];
   if (want === undefined) return [`${p}：认不出语言 ${lang} —— 正面表没有这一格`];
@@ -1562,7 +1562,7 @@ const d3Missing = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) => {
 });
 
 /** 负面表的判定：射程内命中禁止性字面的行。 */
-const d3Forbidden = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) =>
+const commercialForbiddenFaults = (docs: readonly Doc[]): string[] => docs.flatMap(([p, t]) =>
   headNoteBlock(t).flatMap((r) => COMMERCIAL_FORBIDDEN
     .filter((w) => r.line.includes(w))
     .map((w) => `${p}:${r.no} 命中禁止性措辞「${w}」：${r.line.trim().slice(0, 60)}`)));
@@ -1576,13 +1576,13 @@ describe("R14 商用措辞：六份 README 的头部 NOTE 块一律建议式（�
   });
 
   it("正面表：六份各自命中本语言的建议式措辞，且不是「并非不建议」那种反话", () => {
-    const bad = d3Missing(pairsOf(SIX_READMES));
+    const bad = commercialAdvisoryFaults(pairsOf(SIX_READMES));
     expect(bad, `商用措辞不是建议式：\n${bad.join("\n")}\n`
       + "⇒ 用户裁定：「不建议用于任何商业目的，这样就好了」—— **建议式，不是禁止式**").toEqual([]);
   });
 
   it("负面表：头部 NOTE 块里一处禁止性字面都没有", () => {
-    const bad = d3Forbidden(pairsOf(SIX_READMES));
+    const bad = commercialForbiddenFaults(pairsOf(SIX_READMES));
     expect(bad, `头部 NOTE 块里出现了禁止性措辞：\n${bad.join("\n")}\n`
       + "⚠️ 射程只在这一块 —— `403 Forbidden` 的 ja/ko 译法、免责声明第 4 条的「严禁」、"
       + "`docs/en/ADMIN.md` 里正当的 `must not` 都在射程之外，别把本表搬去全仓 grep").toEqual([]);
@@ -1593,9 +1593,9 @@ describe("R14 商用措辞：六份 README 的头部 NOTE 块一律建议式（�
     const docs = withMutation(pairsOf(SIX_READMES), target,
       (s) => s.replace("상업적 용도로는 권장하지 않습니다.", "상업적 용도로는 절대 사용하지 마십시오."));
     expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
-    expect(d3Forbidden(docs).join("\n"), "ko 改成禁止式没被抓到 —— 而那正是模板原文")
+    expect(commercialForbiddenFaults(docs).join("\n"), "ko 改成禁止式没被抓到 —— 而那正是模板原文")
       .toContain(`${target}:`);
-    expect(d3Missing(docs).join("\n"), "正面表也该同时红（建议式措辞被换掉了）").toContain(`${target}：`);
+    expect(commercialAdvisoryFaults(docs).join("\n"), "正面表也该同时红（建议式措辞被换掉了）").toContain(`${target}：`);
   });
 
   it("该红时红（规格的反向控制②）：en 改成 `must not be used commercially` —— 正负两表同时点名", () => {
@@ -1604,8 +1604,8 @@ describe("R14 商用措辞：六份 README 的头部 NOTE 块一律建议式（�
       (s) => s.replace("it is not recommended for any commercial use.",
         "it must not be used commercially; commercial use is prohibited."));
     expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
-    expect(d3Forbidden(docs).join("\n"), "`must not` / `prohibited` 都没被抓到").toContain(`${target}:`);
-    expect(d3Missing(docs).join("\n"), "`not recommended` 被换掉了，正面表也该红").toContain(`${target}：`);
+    expect(commercialForbiddenFaults(docs).join("\n"), "`must not` / `prohibited` 都没被抓到").toContain(`${target}:`);
+    expect(commercialAdvisoryFaults(docs).join("\n"), "`not recommended` 被换掉了，正面表也该红").toContain(`${target}：`);
   });
 
   it("该红时红（评审实测那四条）：zh-CN / en / ja 三种照抄模板的禁止式，逐条点名", () => {
@@ -1620,7 +1620,7 @@ describe("R14 商用措辞：六份 README 的头部 NOTE 块一律建议式（�
       const docs = withMutation(pairsOf(SIX_READMES), target, (s) => s.replace(from, to));
       expect(docs.find(([p]) => p === target)?.[1], `变异没落地：${target}`)
         .not.toEqual(readFileSync(target, "utf8"));
-      expect(d3Forbidden(docs).join("\n"), `${target} 改成禁止式没被抓到`).toContain(`${target}:`);
+      expect(commercialForbiddenFaults(docs).join("\n"), `${target} 改成禁止式没被抓到`).toContain(`${target}:`);
     }
   });
 
@@ -1629,7 +1629,7 @@ describe("R14 商用措辞：六份 README 的头部 NOTE 块一律建议式（�
     const docs = withMutation(pairsOf(SIX_READMES), target,
       (s) => s.replace("不建议用于任何商业目的", "并非不建议用于任何商业目的"));
     expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
-    expect(d3Missing(docs).join("\n"), "「并非不建议」这种反话让 `includes` 打了绿灯 —— "
+    expect(commercialAdvisoryFaults(docs).join("\n"), "「并非不建议」这种反话让 `includes` 打了绿灯 —— "
       + "否定守卫没生效").toContain(`${target}：`);
   });
 
@@ -1639,7 +1639,7 @@ describe("R14 商用措辞：六份 README 的头部 NOTE 块一律建议式（�
     const fixture: Doc = ["x.md", "# X\n\n> [!NOTE]\n> 商用はお勧めしません。\n\n"
       + "| 403 | 禁止 |\n| 403 | 금지 (권한 부족) |\n\n严禁将本项目用于任何违法违规活动。\n"
       + "those two things must not look alike on screen\n"];
-    expect(d3Forbidden([fixture]), "射程漏到了 NOTE 块之外 —— 规格 §R14 点名的那三处误红会全部回来")
+    expect(commercialForbiddenFaults([fixture]), "射程漏到了 NOTE 块之外 —— 规格 §R14 点名的那三处误红会全部回来")
       .toEqual([]);
   });
 });
@@ -1648,7 +1648,7 @@ describe("R14 商用措辞：六份 README 的头部 NOTE 块一律建议式（�
  * R27 —— **fail-closed 鉴权语义的词表两侧**（评审发现 8 / 12 的回填）
  *
  * 🔴 **本仓的鉴权语义与 kiro2api 相反，这一组是专门为「抄错」设计的**（硬约束 4、ADJ ⑦）。
- * 规格 P3F-SPEC-FINAL.md §R27 把它定成四件套：正面词表 + 否定守卫 + 负面 fail-open 词表
+ * 规格 §R27 把它定成四件套：正面词表 + 否定守卫 + 负面 fail-open 词表
  * + 源码锚。**当时只落了源码锚那一半**：评审把 README 头部那句
  *「缺失时网关**直接拒绝启动**」改成「以开放模式启动」（与同一块开头「本网关是
  * fail-closed 的」当场自相矛盾），`Tests 4181 passed (4181)`。
@@ -1657,7 +1657,7 @@ describe("R14 商用措辞：六份 README 的头部 NOTE 块一律建议式（�
  * **分工写在这里，别再合并成一句**：
  * · **本组（词表两侧）管语义方向** —— 这句话说的是「拒绝」还是「放行」。
  * · **源码锚管数字** —— 24 位这条门槛在谁头上、`GATEWAY_TOKEN` 判不判长度。
- * 两者缺一，R12/R27 就都是空壳（规格 :1341、:1857 逐字这么写）。
+ * 两者缺一，R27 就是空壳（规格逐字这么写）。
  * ⚠️ 本文件上一版有一条注释写着「R27 的 fail-open 黑名单是按字面扫的」——**那张黑名单
  * 当时并不存在**（ADJ §71 记的「注释在替判据做承诺」同族）。现在它存在了，注释才成立。
  *

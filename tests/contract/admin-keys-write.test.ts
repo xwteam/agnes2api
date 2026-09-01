@@ -775,7 +775,7 @@ describe("PATCH /admin/api/keys/:id", () => {
     expect((await send(app, "PATCH", `/admin/api/keys/${r.id}`, body)).status).toBe(400);
   });
 
-  // ── clearStats：R10 承诺过的那条「经过 repo 的正式重置路径」──
+  // ── clearStats：那条承诺过的「经过 repo 的正式重置路径」──
   //
   // 五份 DEPLOY.md 在 `POOL_TOUCH_INTERVAL_MS` 那一行同步承诺过它，面板完成时
   // `PATCH_FIELDS` 里却没有 stats ⇒ 五份齐说一句假话。裁定「做」与它的形态
@@ -847,7 +847,7 @@ describe("PATCH /admin/api/keys/:id", () => {
    * `src/core/keypool-repo.ts` 有一份 `pendingStats` 基线：被写消除吃掉的计数增量
    * 攒在里面，而**运行中的实例记着自己那份 `entry.base`**。绕过 repo 直接改存储
    * ⇒ 先看到清零、随后被下一次真落盘按基线顶回旧值——那正是五份 DEPLOY.md
-   * 那一行描述的现象，也正是 R10 要求「经过 repo」的原因。
+   * 那一行描述的现象，也正是那句承诺要求「经过 repo」的原因。
    *
    * 走 PATCH 这条路时 `save()` **不传 `prev`**，而它的「新建」分支头一行就是
    * `pendingStats.delete(next.id)` ⇒ 基线与增量一并作废。
