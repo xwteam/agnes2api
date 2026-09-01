@@ -6812,7 +6812,7 @@ describe("五份 DEPLOY.md 不许再写「某一期会提供某条重置路径�
    * 五份 DEPLOY.md 现在写的是「走 `PATCH /admin/api/keys/:id` 带 `clearStats`」。
    * 端点路径那一半已经由上面「危险区那两条端点的路径……从真源常量现算」同型地守着，
    * 这一格守的是**字段名**：`PATCH_FIELDS` 里没有它、或者它被改了名而文档没跟上，
-   * 这一格当场红，且报文明说**真因在源码，不在文档**（本文件 MUT-G 那一族的报文纪律）。
+   * 这一格当场红，且报文明说**真因在源码，不在文档**（本文件那一族格子共用的报文纪律）。
    *
    * 比「五份彼此相等」多守一件事：**各恰好 1 次**。五份一起写成 2 次
    * （复制粘贴把那一行重复了）在纯对等判据下是合法的。
@@ -7089,7 +7089,7 @@ describe("「改一把 key」那份动作枚举从 `PATCH_FIELDS` 现算（复�
 
   it("该红时红：`PATCH_FIELDS` 长出第七个字段 ⇒ 五份一起红，并逐份点名那个字段", () => {
     probeBaseEnumeration();
-    // ⚠️ **这一串是仓里真实存在过的形态**：复评的 MUT-2 就是往 `PATCH_FIELDS` 里
+    // ⚠️ **这一串是仓里真实存在过的形态**：复评实测过的那次变异就是往 `PATCH_FIELDS` 里
     // 加 `clearNote`，而那一次 docs-parity 277 格全绿——这一格就是那次全绿的解药。
     const failures = enumerationFailures([...PATCH_FIELDS, "clearNote"], realDoc("DEPLOY"));
     expect(failures.length, `五种语言各该红一条，实际：\n${failures.join("\n")}`).toBe(LANGS.length);

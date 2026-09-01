@@ -411,7 +411,7 @@ export const USAGE_OTHER_BUCKET = "__other__";
  * `JSON.parse('{"toString":1,"valueOf":1}')` 造得出一个两个转换方法都不是函数的对象，
  * 对它取原始值会 `TypeError: Cannot convert object to primitive value`。
  *
- * ⚠️ **`Symbol` 那一档够不到，理由要写下来而不是省略**（收口复评 LOW-2）：
+ * ⚠️ **`Symbol` 那一档够不到，理由要写下来而不是省略**（收口复评）：
  * `String(Symbol())` 同样抛（`TypeError: Cannot convert a Symbol value to a string`），
  * 但本函数的入参一路来自 `JSON.parse`，**而 JSON 里造不出 Symbol** ⇒ 不可达。
  * 结论是「不可达」，不是「不会抛」——所以兜底照样包着它，不为这一档单开分支。

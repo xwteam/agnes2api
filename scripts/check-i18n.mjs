@@ -470,8 +470,8 @@ for (const [k, row] of Object.entries(I18N)) {
 // 文案一起打红，逼着开豁免名册，而本仓的裁定是「开豁免名册比没有规则更糟」。
 // ⇒ 只登记 `ov.config.primary` / `ov.config.fallback` 这两条整 key。
 //
-// ⚠️⚠️ **最后两条（`set.danger.reset.` / `set.advanced.`）是评审发现 MEDIUM-2
-// 补的，起因是「射程停在阶段 I 之前」**：上面那一批是阶段 B 按**当时存在的
+// ⚠️⚠️ **最后两条（`set.danger.reset.` / `set.advanced.`）是评审发现补的，
+// 起因是「射程停在阶段 I 之前」**：上面那一批是阶段 B 按**当时存在的
 // key** 逐条枚举的，而阶段 I 新写的 `set.danger.reset.warn` /
 // `set.danger.reset.desc` / `set.advanced.warn` 三条**逐字提到「两条邮箱通道」**
 // 却全在门外。评审实测：往 `set.danger.reset.warn/zh-CN` 插「推荐先用 MoeMail 通道。」

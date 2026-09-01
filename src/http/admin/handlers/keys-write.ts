@@ -282,7 +282,7 @@ export function keyDeleteHandler(deps: KeysWriteDeps) {
  * ⇒ `pnpm test` 3763 格全绿。③ 就是把顺序搬回「真源 ↔ DEPLOY.md」之间的补偿判据，
  * 不是随文档一起丢。
  * ⚠️ ② 是复评回填补上的：在那之前**本表长一格，文档侧一个字都不会红**
- *（复评 MUT-2 实测：加第七个字段 ⇒ docs-parity 与契约双双全绿）。
+ *（复评实测：加第七个字段 ⇒ docs-parity 与契约双双全绿）。
  */
 export const PATCH_FIELDS = [
   "disabled", "note", "clearCooldown", "clearStrikes", "unevict", "clearStats",

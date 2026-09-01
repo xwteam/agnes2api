@@ -815,7 +815,7 @@ describe("单日下钻", () => {
    *
    * 上一轮它经 `summaryCards().complete` 判——而 `:date` 响应没有 `total`
    * ⇒ `complete` 恒 true ⇒ **标记结构性地永不渲染**，`marks` 是死参
-   *（MUT-B 把它改成 `null`，**624 全绿完整逃逸**）。
+   *（那次变异把它改成 `null`，**624 全绿完整逃逸**）。
    * 判据现在直接走 `malformedKind()`。
    *
    * ⚠️ **顺带钉住那条裁定的两条**：

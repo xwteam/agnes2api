@@ -474,7 +474,7 @@ describe("scripts/check-i18n.mjs 元测试：十条判据逐条", () => {
   /**
    * **上面那条反向控制的第二条腿（评审发现）。**
    *
-   * MEDIUM-2 的修法是把作用域扩到 `set.danger.reset.` 与 `set.advanced.` 两个**区**
+   * 那条发现的修法是把作用域扩到 `set.danger.reset.` 与 `set.advanced.` 两个**区**
    * （而不是那三条整 key，理由见门禁那张表上方那段）。扩到「区」就带来一条新的
    * 扩宽风险：顺手写成 `set.danger.` 的话，**清空 Key 池那一区会一起被收进来**——
    * 而它讲的是 key 池，与两条通道毫无关系。

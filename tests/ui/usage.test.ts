@@ -243,7 +243,7 @@ describe("整块的结论必须往下传到每一张表（评审那条的根因�
    * `hours` / `byModel` / `byProtocol` / `shards` / `malformed`）
    * ⇒ 在那条端点上 `complete` **恒为 true**，拿它当「缺没缺块」的判据
    * 会让下钻的「不完整」标记**结构性地永不渲染**。
-   * 上一轮就是这么写的，而 MUT-B（把 `keyCell(row.key, marks)` 改成 `null`）
+   * 上一轮就是这么写的，而那次变异（把 `keyCell(row.key, marks)` 改成 `null`）
    * **624 全绿完整逃逸**——因为那个 `marks` 本来就是死的。
    *
    * ⇒ 这一格**正面把那个陷阱钉下来**：不是「别这么写」的一句注释，

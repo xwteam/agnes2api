@@ -545,7 +545,7 @@ describe("i18n 字典", () => {
   });
 
   /**
-   * **同一个概念在 ja 里只许有一个术语**（编号 NEW-7）。
+   * **同一个概念在 ja 里只许有一个术语**（定向复评发现）。
    *
    * 勘察实测的那一处：`reg.primary` 写的是 `プライマリチャネル`，
    * 而 `set.field.registrar.primary` 写的是 `主チャネル`（`docs/ja/REGISTRAR.md` 用的也是后者）——

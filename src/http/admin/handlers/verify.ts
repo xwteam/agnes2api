@@ -189,7 +189,7 @@ export function verifyHandler(deps: VerifyDeps) {
         // **`reason` 是机器可读的 code，不是异常消息**：异常消息里可能带上游 URL
         // 与栈帧，与 `createApp` 的 `app.onError` 刻意不回显 `err.message` 是同一条策略。
         //
-        // ⚠️ **代价，明写（定向复评 NEW-5）**：把取协议 / 取配置 / 装超时闸挪进 `try`
+        // ⚠️ **代价，明写（定向复评）**：把取协议 / 取配置 / 装超时闸挪进 `try`
         // 是为了堵住护栏那段窗口（见上面那段），但它**同时把这个裸 `catch` 的覆盖面
         // 扩大了**——`protocolById("openai")!` 或 `MODEL_CATALOG[0]!` 断言失败、
         // `deps.config()` 抛错这类**网关自己的内部错误**，现在会被吞成
