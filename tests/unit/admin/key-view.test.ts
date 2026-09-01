@@ -20,7 +20,7 @@ describe("KeyView 永不含明文", () => {
     expect(Object.keys(v!)).not.toContain("key");
     // 逐个值扫一遍：只断言「没有 key 这个字段名」拦不住「顺手塞进 note 字段」。
     //
-    // ⚠️ **`?? null` 不是防御性写法，它是这条断言能不能成立的前提**（评审 M-d）：
+    // ⚠️ **`?? null` 不是防御性写法，它是这条断言能不能成立的前提**（评审指出）：
     // `JSON.stringify(undefined)` 返回的是 `undefined` 而不是字符串，`.not.toContain`
     // 会当场抛 TypeError——**那是一次崩溃，不是一次检查**。今天 `KeyView` 的字段
     // 恰好都不是 undefined 所以无害，但后来要往这里加 `note`，只要它是
@@ -131,7 +131,7 @@ describe("keyBucket 与 isAvailable 等价（后端这一份同样要钉）", ()
   });
 
   /**
-   * **「顺序即优先级」原来只是一句注释**（评审 M-c）：`BUCKETS` 的字面量那格与
+   * **「顺序即优先级」原来只是一句注释**（评审指出）：`BUCKETS` 的字面量那格与
    * `keyBucket` 的行为那几格**互不相干**——改字面量顺序只红前者，改 `if` 顺序只红后者，
    * 两边可以各自漂到对方的反面而没有任何东西发现。这一格把两者绑起来。
    *
@@ -244,7 +244,7 @@ describe("KeyView.disabled 恒是布尔、恒存在", () => {
   });
   /**
    * `v.disabled` 与 `v.bucket === "disabled"` 今天**恒等价**，而后来会
-   * **一边读 `v.disabled` 渲染开关、一边读 `v.bucket` 渲染徽章**（评审 M-b）——
+   * **一边读 `v.disabled` 渲染开关、一边读 `v.bucket` 渲染徽章**（评审指出）——
    * 两个字段一旦漂开，面板就会出现「徽章说已剔除、开关说没停用」这种自相矛盾的行。
    * 所以夹具里必须有 `disabled + evicted` 那一格：**那正是两者最可能漂开的地方**
    * （`bucket` 走优先级只报一个，而 `disabled` 是独立的布尔）。
