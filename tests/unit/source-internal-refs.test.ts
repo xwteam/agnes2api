@@ -343,7 +343,7 @@ const readerWith = (target: string, mutate: (src: string) => string): FileReader
  */
 const BASELINE: ReadonlyArray<readonly [string, number, string]> = [
   ["admin-ui/js/pure/sendable.mjs", 3, "6d7e39c41b4a"],
-  ["scripts/prepush.sh", 53, "d73604e9c02f"],
+  ["scripts/prepush.sh", 54, "4a7c3ee2356c"],
   ["src/adapters/logger-console.ts", 4, "de1aa8f2a4cd"],
   ["src/http/admin/auth.ts", 3, "6d7e39c41b4a"],
   ["tests/ui/sendable-parity.test.ts", 2, "bc4554e3aa76"],
