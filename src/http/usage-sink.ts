@@ -183,7 +183,7 @@ export const USAGE_ERROR_REPORT: Readonly<Record<UsagePhase, { event: string; ms
  * ── 为什么它不走 config-provenance（定向复评要求把这个决定和代价写下来）──────────
  * `USAGE_FLUSH_INTERVAL_MS` **只从环境变量读，一个字都不从存储读**，因此它
  * 不进 `GatewayConfig`、不进 `FIELD_EXPOSURE`、不进 `ENV_LOCK_MAP`、不进 `EDITABLE`，
- * 也就不出现在 `GET /admin/api/config` 的四元组里。**判据沿用上一轮 U-C 那一整节，
+ * 也就不出现在 `GET /admin/api/config` 的四元组里。**判据沿用上一轮那一整节的裁定，
  * 结论相反，因为前提不同**：
  * · `usageStatsEnabled` 进 `ENV_LOCK_MAP` 的理由是**它存储里就能改** ⇒ 不进表的话
  *   四元组会自相矛盾（`stored: true` / `env: null` / `effective: false`），那是撒谎；

@@ -614,7 +614,7 @@ cell_stream_interval() {
 cell_usage_30d() {
   local to from resp
   if (( WORKER_OK != 1 )); then
-    echo "❌ Worker 形态没起来，这一格没有观测面（U-H 问的就是 Worker 那一侧）" >&2
+    echo "❌ Worker 形态没起来，这一格没有观测面（这一档要验的就是 Worker 那一侧）" >&2
     return 1
   fi
   to=$(date +%s%3N)
@@ -639,7 +639,7 @@ cell_usage_30d() {
     if (bad.length) { console.error("❌ " + bad.join("；")); process.exit(1); }
     console.log(`   tier=${r.tier} note=${r.note} days=${r.days.length} clamped=${r.range.clamped}`);
   ' || return 1
-  echo "✅ 本次实测在 wrangler dev 起的 workerd 上跑得完（官方两页文档口径仍对不上，见 U-H）"
+  echo "✅ 本次实测在 wrangler dev 起的 workerd 上跑得完（官方两页文档口径仍对不上，见 src/core/admin/usage-stats.ts 的 USAGE_DAY_RETAIN 上方那段）"
   return 0
 }
 

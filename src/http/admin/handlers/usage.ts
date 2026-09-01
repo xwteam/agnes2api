@@ -367,7 +367,7 @@ type ReadBlock =
  * 结论同源、措辞不同。**上一版把计划的话记在了设计头上。**
  * 两份文档都未随公开仓发布；被订正的那句结论逐字留在这里，不依赖它们。
  * 而 30 天那一档正是本仓第一个会一次发出 60 次子请求的读扇出
- * ——`src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方记着 U-H 的裁定：
+ * ——`src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方记着那条裁定：
  * **Cloudflare 的两页官方文档在「一次调用能发多少次子请求」上互相对不上**
  * （Workers limits 页免费档 50，KV limits 页 1,000，而前者没有定义 KV 算哪一行），
  * 所以**这里不许写成「60 次是安全的」**——那句裁定至今有效，理由见那一段。

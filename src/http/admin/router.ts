@@ -449,7 +449,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   //
   // 两条都是只读的。**唯一会烧配额的是读扇出**：`30d` 那一档一次请求发
   // `30 × USAGE_SLOTS = 60` 次 get（计划 §配额账「读侧」那张表），
-  // 而 `src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方记着 U-H 的裁定
+  // 而 `src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方记着那条裁定
   // ——**Cloudflare 的两页官方文档在这个数上互相对不上，不许把 60 写成「安全的」**。
   // 所以那一档必须失败得诚实，见 `usageHandler`。
   // ⚠️ 真机冒烟已经量过「跑不跑得完」那一半（`scripts/smoke-dual-runtime.sh` 的 ④），

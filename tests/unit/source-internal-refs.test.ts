@@ -355,7 +355,7 @@ const readerWith = (target: string, mutate: (src: string) => string): FileReader
  * 🔴 **这张表是一笔欠账的登记，不是许可。** 第二批字母那一族早先已经清干净
  * （下面「新族恒为零」那一格钉着它今天在标本集之外**一处不剩**）；
  * 「字母 + 连字号 + 字母」那一族的存量**本轮正在分批清**，清到零的份整行从表里消失；
- * 其余五族在跟踪文件里**从来没有被清过**。下面这 42 份是今天还剩的残留，
+ * 其余五族在跟踪文件里**从来没有被清过**。下面这 38 份是今天还剩的残留，
  * 每一处都是真的内部标识符或真的同形真词，逐族读过：
  *
  * 🔴 **这张表在收第三批字母与带连字号那两族的那一轮从 10 份长到 49 份，
@@ -394,16 +394,12 @@ const readerWith = (target: string, mutate: (src: string) => string): FileReader
 const BASELINE: ReadonlyArray<readonly [string, number, string]> = [
   ["admin-ui/js/pure/sendable.mjs", 3, "6d7e39c41b4a"],
   ["scripts/prepush.sh", 86, "df9576f20dce"],
-  ["scripts/smoke-dual-runtime.sh", 2, "a9ec222003e9"],
   ["src/adapters/logger-console.ts", 4, "de1aa8f2a4cd"],
-  ["src/core/admin/usage-stats.ts", 8, "19a2468562ab"],
   ["src/core/tend-scheduler.ts", 1, "86348ea0bf50"],
   ["src/http/admin/auth.ts", 3, "6d7e39c41b4a"],
   ["src/http/admin/handlers/overview.ts", 1, "86348ea0bf50"],
   ["src/http/admin/handlers/registrar.ts", 1, "78c7523daad8"],
-  ["src/http/admin/handlers/usage.ts", 2, "d98018103bdc"],
-  ["src/http/admin/router.ts", 1, "d305e955a224"],
-  ["src/http/usage-sink.ts", 1, "0f9be40aaef6"],
+  ["src/http/admin/handlers/usage.ts", 1, "86348ea0bf50"],
   ["tests/contract/admin-events.test.ts", 5, "c624cbc805b7"],
   ["tests/contract/admin-registrar.test.ts", 1, "ae4183abbde3"],
   ["tests/contract/admin-usage.test.ts", 3, "966131ffe196"],
