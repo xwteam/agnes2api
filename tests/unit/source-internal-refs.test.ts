@@ -239,7 +239,7 @@ function reOf(family: { readonly source: string; readonly flags: string }): RegE
  * 清掉这些串等于把判据拆了，而拆了判据换来的「零命中」是假的。
  * ⇒ 下面「第二批字母那一族一处不剩」那一格把这两份跳过，**只有那一格**。
  *
- * 🔴 **它们照样进扫描、照样在 `BASELINE` 里逐份点名**（今天各 127 与 86 处，七族合计）。
+ * 🔴 **它们照样进扫描、照样在 `BASELINE` 里逐份点名**（今天各 130 与 86 处，七族合计）。
  * 这一条是**修回来的**：早先这两份走的是「整份跳过、族族都不查」，
  * 后果实测过——往 `scripts/prepush.sh` 末尾新写一个第二批字母的编号加一个任务号，
  * **一格都不红**。判官的标本集要的是「这一份的数字与签名不许动」，
@@ -265,7 +265,7 @@ const SPECIMENS: ReadonlyArray<{
       + "（族定义里的 `evidence`、`该红时红` 那一组塞进文档的探针句、"
       + "`KNOWN_FALSE_POSITIVES` 里那几条「登记它真的会咬」的句子）。"
       + "清掉这些串 = 那份判据当场失去认形状的能力，换来的零命中是假的。"
-      + "⇒ 第二批字母那个零对它不成立（今天 28 处，七族合计 127 处）",
+      + "⇒ 第二批字母那个零对它不成立（今天 28 处，七族合计 130 处）",
     until: "哪天那份判据改成从外部夹具读探针串（真串不再写在判据自己身上）—— "
       + "那时这份该从这里删掉，它在第二批字母那一族上的命中该降到零",
   },
@@ -371,7 +371,7 @@ const readerWith = (target: string, mutate: (src: string) => string): FileReader
  *   同一档还有本轮新登记那两族带进来的同形真词：JS 引擎那个名字、对象存储与边缘
  *   数据库那两个产品名、以及正则里大写字母区间那个写法本身。它们与编号**逐字节相同**，
  *   形状上分不开，只能像这样具名躺在这张表里，靠份数与签名钉着。
- * · 两份是**判官自己的标本集**（`SPECIMENS` 那两份，今天 127 与 86 处）：
+ * · 两份是**判官自己的标本集**（`SPECIMENS` 那两份，今天 130 与 86 处）：
  *   它们的数字天生就高，理由逐份写在那张表里。**它们在册的意义只有一个——
  *   数字与签名不许动。** 早先它们走的是「整份跳过」，那等于往这两份里新写任何编号都不红。
  *
@@ -427,7 +427,7 @@ const BASELINE: ReadonlyArray<readonly [string, number, string]> = [
   ["tests/unit/admin/tend-guard.test.ts", 1, "78c7523daad8"],
   ["tests/unit/admin/usage-stats.test.ts", 2, "9381084923e7"],
   ["tests/unit/docs-deviations.test.ts", 8, "250bff753e7a"],
-  ["tests/unit/docs-internal-refs.test.ts", 127, "cea6145dd50d"],
+  ["tests/unit/docs-internal-refs.test.ts", 130, "0daf1299a96b"],
   ["tests/unit/docs-parity.test.ts", 321, "198f775bea74"],
   ["tests/unit/docs-typography.test.ts", 119, "67ce9c846574"],
   ["tests/unit/env-example-parity.test.ts", 10, "8c1af04ab776"],
