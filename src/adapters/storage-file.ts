@@ -122,7 +122,7 @@ export class FileStorage implements Storage {
    * （那条规矩管 `src/core/`；这里是 `src/adapters/`）。
    *
    * ⚠️ **这里原来写着「本文件里唯一读 `Date.now()` 的地方」，那是假的**
-   *（通读评审 A9）：本文件有**两处**调用点——这个 `isExpired()`，以及
+   *（通读评审查实）：本文件有**两处**调用点——这个 `isExpired()`，以及
    * `pruneExpired()`（写路径上顺手清过期键的那个）。两处用的是同一个墙钟、
    * 同一条理由，说成"唯一"只会让下一个读到这句话的人以为写路径不碰时钟。
    */

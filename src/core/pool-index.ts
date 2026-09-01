@@ -31,7 +31,7 @@ export function makePoolIndex(ids: readonly string[]): PoolIndex {
 }
 
 /**
- * 从存储读回来的东西一律当 `unknown` 窄化（D3 约束：新代码禁止 `Record<string, any>`）。
+ * 从存储读回来的东西一律当 `unknown` 窄化（硬约束：新代码禁止 `Record<string, any>`）。
  *
  * **结构级错误（不是对象 / 版本不对 / ids 不是数组）返回 null**，让调用方走「索引缺失」
  * 那条重建路径；**元素级脏数据（非字符串、空串、重复）就地剔掉**，不让一条脏数据

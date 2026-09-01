@@ -148,12 +148,12 @@ function defaultStoreLogger(now: () => number): StoreLogger {
  * 把 AppDeps 变成 dispatch 要的 DispatchDeps。
  *
  * `config` 用 **getter** 而不是拷值：路由工厂在建 app 那一刻就把 deps 闭包捕获了，
- * 拷值等于把配置永久冻结在启动时刻——这正是缺陷 D2 的成因。getter 让每次属性读取
+ * 拷值等于把配置永久冻结在启动时刻——这正是那个缺陷的成因。getter 让每次属性读取
  * 都取当前值；而 dispatch() 在请求开头解构一次（dispatcher.ts:209），
  * 因此**单个请求内部仍是一份一致的快照**，这正是想要的语义。
  *
  * ⚠️ **返回值不许被展开（`{ ...dispatchDeps(deps) }`）。** 展开会**当场求值**那个
- * getter 并把结果拷成一个普通属性 ⇒ 配置重新冻结在建 app 那一刻，缺陷 D2 原样复活，
+ * getter 并把结果拷成一个普通属性 ⇒ 配置重新冻结在建 app 那一刻，那个缺陷原样复活，
  * 而 `tsc` 一个字都不会说。加 `usageSink` 那一格时差点这么写
  * ——**要加字段就加在下面这个对象字面量里**，别在调用点拼。
  */
@@ -165,7 +165,7 @@ function dispatchDeps(deps: AppDeps): DispatchDeps & UsageRecording {
     logger: deps.logger,
     /**
      * Tier-2 归因。**协议名由路由层传，不改 `dispatch()` 的签名**：
-     * 那个函数的参数里没有「这是哪条协议」这一维（V5），加一维要牵动 30 多处测试
+     * 那个函数的参数里没有「这是哪条协议」这一维，加一维要牵动 30 多处测试
      * 构造点，而路由层本来就是唯一知道答案的那一层。
      * 缺席（Tier-2 关着）时四条路由的 `recordUsage()` 第一行就 return。
      */
@@ -244,7 +244,7 @@ export function createApp(deps: AppDeps): Hono {
    *
    * ⚠️ **这里原来写着「今天这条变异在本仓是不可观测的（唯一返回裸 Response 的
    * /admin 那棵树自己也设了 nosniff）」——那句现在是假的，两处都假**
-   *（通读评审 A9）：
+   *（通读评审查实）：
    * ① 把这一行**移动**到 `next()` 之前（不是新增一行）之后实测 **2 failed**：
    *    `tests/contract/admin-events.test.ts` 的「下载端点是裸 Response，且**仍然**带全局 nosniff」
    *    （`/admin/api/events/download` 是裸 `Response`，且它自己**不**设 nosniff——

@@ -34,7 +34,7 @@ function levelParam(raw: string | undefined): LogLevel | null {
  * 于是候选窗口数恒 `<= EVENT_WINDOW_RETAIN`，与 `after` 是什么值无关。
  *
  * ⚠️ **这里原来写的是「`Math.max(floor, windowIndex(负数))` 恒等于 `floor`」，
- * 那句只在真实纪元时钟下成立**（通读评审 A9）：生产上 `now` 是真实时间戳，
+ * 那句只在真实纪元时钟下成立**（通读评审查实）：生产上 `now` 是真实时间戳，
  * `floor = nowWindow - 23` 是个很大的正数，任何负数都被它盖过去 ⇒ 确实恒等于
  * `floor`。但在贴近纪元零点的假时钟下（本仓不少用例用 `() => 1000`），
  * `floor` 自己就是 `-23`，`after = -1` 时 `Math.max(-23, -1) === -1 ≠ floor`。

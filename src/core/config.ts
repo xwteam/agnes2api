@@ -45,7 +45,7 @@ export interface GatewayConfig {
    * 本次装载有没有降级（存储的 config 键读不出来 / 某些字段回落了默认值）。
    *
    * ⚠️ **这段注释原来写着「全仓还没有任何代码读它」，那句已经过期了**
-   *（通读评审 A9）：消费链在**同一个提交里**就接上了，三级——
+   *（通读评审查实）：消费链在**同一个提交里**就接上了，三级——
    * `src/http/admin/handlers/overview.ts:112`（放进响应的 `config.degraded`）
    * → `admin-ui/js/pure/overview.mjs:107`（取值并窄化成 `boolean | null`）
    * → `admin-ui/js/sec-overview.js:154`（`=== true` 时把红色横幅显示出来）。

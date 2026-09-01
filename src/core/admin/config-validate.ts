@@ -85,7 +85,7 @@ export const CONFIG_ERROR_CODES = [
   "not_a_channel",
   /** 注册机开着却没选主通道（后端 `registrarFromEnv` 在这一条上是抛错）。 */
   "primary_required",
-  /** 备通道等于主通道。**只在 `enabled` 为真时成立**（V21），前端拦截必须同源。 */
+  /** 备通道等于主通道。**只在 `enabled` 为真时成立**，前端拦截必须同源。 */
   "fallback_equals_primary",
   "delay_min_gt_max",
   /** 注册机开着、这条通道在链上，却没有凭据（`creds()` 在这一条上是抛错）。 */
@@ -518,7 +518,7 @@ export function configLoadBlockers(stored: unknown, env: Env): ConfigError[] {
  * 跨字段规则。**每一条都对应 `registrarFromEnv` 里一处会 `throw` 的地方**——
  * 这份清单存在的全部理由就是「别让面板写出一份让网关起不来的配置」。
  *
- * ⚠️ **三条都受 `enabled` 门控**（V21）：注册机关着时 `registrarFromEnv` 一条都不抛
+ * ⚠️ **三条都受 `enabled` 门控**：注册机关着时 `registrarFromEnv` 一条都不抛
  * （`if (enabled && …)`），面板也就一条都不许拦。**两边判据必须同源**——
  * 前端无条件拦截的后果是「关着注册机时连下拉框都改不了」，而后端明明会收下。
  */

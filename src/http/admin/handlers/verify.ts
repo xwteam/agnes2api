@@ -11,7 +11,7 @@ import { httpError } from "../../errors.js";
 import { protocolById, MODEL_CATALOG } from "../../../core/admin/protocol-catalog.js";
 
 /**
- * `POST /admin/api/keys/:id/verify` —— 单把 key 的验活（设计 §10.2 / §11，订正 D1）。
+ * `POST /admin/api/keys/:id/verify` —— 单把 key 的验活（设计 §10.2 / §11 与那条订正）。
  *
  * **这是本仓第一次让后端拿着某一把具体的明文 key 去打上游。**
  *
@@ -22,7 +22,7 @@ import { protocolById, MODEL_CATALOG } from "../../../core/admin/protocol-catalo
  *    · **失败记 strike** ⇒ 面板上连点几次就能把一把好 key 打进长冷却甚至剔除；
  *    · **成功清 strike / 解除 evicted** ⇒ **「重新导入即解封」后门的同型复发**，
  *      入口从「重新导入」换成「点一下验活」，而面板已经为那个后门专门设计过知情勾选框。
- *    连 Tier-1 的 `stats` 也不写——`stats` 是「真实流量的证据」（设计订正 D1 原话），
+ *    连 Tier-1 的 `stats` 也不写——`stats` 是「真实流量的证据」（设计里那条订正的原话），
  *    掺进人造探测就不再是证据了。
  *    **代价，明写**：刷新面板后看不到「上次验活结果」。这是对的：面板已有的
  *    `bucket` / `strikes` / `lastErrorKind` 才是那个问题更可信的答案。
@@ -67,7 +67,7 @@ import { protocolById, MODEL_CATALOG } from "../../../core/admin/protocol-catalo
  *    `upstreamPath` 才是**网关对上游**的那一条（`/chat/completions`，与
  *    `src/core/dispatcher.ts` 里 `${config.agnesBaseUrl}${args.path}` 那一句同源）。
  *    **两者混用的后果**：上游路径一变，验活对所有 key 一律报失败，
- *    而面板会显示「整池 key 都死了」——这正是设计 D1 说的「漂了没人会发现」。
+ *    而面板会显示「整池 key 都死了」——这正是设计里那条订正说的「漂了没人会发现」。
  *
  * ── ⚠️ 出站的鉴权头**刻意不取** `proto.authHeader` ──────────────────────────
  *

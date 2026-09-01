@@ -29,7 +29,7 @@ export interface ConfigHolder {
  * 「holder 比边缘缓存还快，于是快出来的那部分毫无意义」。
  *
  * **用户可见的总生效上界 = 本 TTL(30s) + KV 边缘缓存默认 60s ≈ 90 秒。**
- * 待复核项 U3 已核实：Cloudflare KV 的 `cacheTtl` 最小值 30、默认值 60（官方文档
+ * 那条待复核项已核实：Cloudflare KV 的 `cacheTtl` 最小值 30、默认值 60（官方文档
  * https://developers.cloudflare.com/kv/api/read-key-value-pairs/ ，"cacheTtl... minimum:
  * 30"、"60 is the default"，2026-08-19 复核），与本文件上面那句「miniflare 写死 30」
  * 一致，因此这个数字**可以**写进 UI 文案与用户文档，并且**必须**写——设计文档 §5.2
@@ -45,7 +45,7 @@ export const CONFIG_TTL_MS = 30_000;
 /**
  * KV 边缘缓存的默认 `cacheTtl`（秒 → 毫秒）。
  *
- * **已核实**：Cloudflare KV 的 `cacheTtl` 最小 30、默认 60（设计文档 §17 U3，2026-08-19）。
+ * **已核实**：Cloudflare KV 的 `cacheTtl` 最小 30、默认 60（设计文档 §17，2026-08-19）。
  *
  * ⚠️ **它原来是 `src/http/admin/handlers/overview.ts` 里的一个模块私有常量**，
  * 设置页那一轮把它**移**到这里（不是新增第二份）：`PUT /admin/api/config` 的
