@@ -68,7 +68,7 @@ export interface GlossaryTerm {
 export const GLOSSARY: readonly GlossaryTerm[] = [
   {
     term: "排障",
-    note: "ADJ-STAGE0 #8 实证的第一组：zh-TW 漏翻成简体用词、ja 两种说法并存",
+    note: "实证的第一组：zh-TW 漏翻成简体用词、ja 两种说法并存",
     scope: "all",
     renderings: {
       "zh-TW": ["排障", "疑難排解"],
@@ -79,7 +79,7 @@ export const GLOSSARY: readonly GlossaryTerm[] = [
   },
   {
     term: "凭据",
-    note: "ADJ-STAGE0 #8 实证的第二组：ja / ko 各有两种说法，zh-TW 有一处写成大陆用词",
+    note: "实证的第二组：ja / ko 各有两种说法，zh-TW 有一处写成大陆用词",
     scope: "all",
     renderings: {
       "zh-TW": ["憑證", "憑據"],
@@ -90,7 +90,7 @@ export const GLOSSARY: readonly GlossaryTerm[] = [
   },
   {
     term: "调试台",
-    note: "ADJ-STAGE0 #8 实证的第三组：zh-TW 的 DEPLOY 用了另一个词",
+    note: "实证的第三组：zh-TW 的 DEPLOY 用了另一个词",
     scope: "all",
     renderings: {
       "zh-TW": ["除錯台", "偵錯台"],
