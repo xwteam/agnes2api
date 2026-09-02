@@ -54,6 +54,17 @@ redirects to `/admin`, so either of the two ways people type it by hand works.
 The top bar spans the panel: brand, status badge, repo link, language, theme, sign
 out. The sidebar keeps only the eight nav items.
 
+- **There is no "restart" button up there**: the Worker form has no process to restart, and
+  the Node / Docker form exposes no self-restart endpoint.
+- **The theme toggle also exists on the login gate**: the dark theme already applies while
+  you type the token, so that is where it has to be switchable.
+- **The mark in the top left corner is the image from the top of the README**, and so is the
+  favicon in your browser tab; the login gate shows the same one. Both are that image
+  downscaled and inlined into the panel, with a gate comparing them pixel by pixel — the
+  panel and the project's front door cannot drift into two different faces.
+
+#### The status badge
+
 - **The status badge has three states**: running / degraded / status unknown. Its source is
   the gateway's `/health` — the endpoint that needs no authentication and touches no storage.
   It answers `ok` while the data directory is writable, and `degraded` with a `503` when it is
@@ -63,10 +74,6 @@ out. The sidebar keeps only the eight nav items.
   light that is always on carries as much information as no light.
 - **It reports the latest probe, not this instant**: the panel probes once when you get in;
   clicking the badge probes again.
-- **There is no "restart" button up there**: the Worker form has no process to restart, and
-  the Node / Docker form exposes no self-restart endpoint.
-- **The theme toggle also exists on the login gate**: the dark theme already applies while
-  you type the token, so that is where it has to be switchable.
 
 ## The eight boards at a glance
 

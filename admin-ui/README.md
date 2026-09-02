@@ -49,10 +49,15 @@ CI 的漂移门禁同样会红。
    里面的 `<script>` / `on*` / `javascript:` 都会执行，而脚本校验只对 `.html` 生效。
    「零内联脚本」的判据是**属性边界**匹配：`<script data-src="x">payload</script>`
    这类假 `src` 伪装拦得住（浏览器只在真有 `src` 时才忽略内联体）。
-   **站点图标（`<link rel="icon">`）走的是同一条规则**：它是一段 `data:image/svg+xml,…`
-   的 URI 写在 `index.html` 里，不是仓里的第二个文件——`data:` 在 `src/ui/serve.ts`
-   那条 CSP 的 `img-src 'self' data:` 里是被明确允许的。**别把它换成 `.ico` / `.png`**：
-   那两种连 `scripts/build-ui.mjs` 的扩展名白名单都过不去。
+   **站点图标与品牌标记走的是同一条规则**：两处都是写在源文件里的 `data:` URI
+   （`index.html` 的 `<link rel="icon">`、`css/shell.css` 的 `.brand-mark` 背景），
+   不是仓里的第二、第三个文件——`data:` 在 `src/ui/serve.ts` 那条 CSP 的
+   `img-src 'self' data:` 里是被明确允许的。**别把它们换成独立的 `.ico` / `.png` / `.svg`**：
+   前两种连 `scripts/build-ui.mjs` 的扩展名白名单都过不去，后一种就是上面那条同源文档。
+   ⚠️ 这两处的字节**不是自绘图形，也不许手改**：它们是 `docs/logo.png`（六份 README
+   头部块摆的那张）缩到 32×32 / 64×64 的结果，由 `node scripts/check-png.mjs --emit <边长>`
+   生成，并由同一个脚本每次跑都逐像素对账。换图不重生成这里 ⇒ 门禁当场红，
+   理由是项目不该在 README 与面板上长着两副面孔。
 3. 文案与占位符里不许出现「数字IP:端口」形态，会被 `scripts/scan-secrets.sh` 打红。
    一律写 `localhost:8080` 或 `https://your-gateway.example.com`。
 

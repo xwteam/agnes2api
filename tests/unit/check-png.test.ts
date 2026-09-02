@@ -418,3 +418,113 @@ describe("scripts/check-png.mjs 与 scripts/check-no-binary.mjs 的咬合", () =
     expect(() => readFileSync(resolve(paths[0]!)), `名册里登记的 ${paths[0]} 不在仓里`).not.toThrow();
   });
 });
+
+/**
+ * **面板里内联的那几串 base64**（`auditUiLogos()`）。
+ *
+ * 起因：面板一度用的是一枚**自绘**的机器人线稿，而 `docs/logo.png` 是另一只吉祥物
+ * ——同一个项目在 README 与管理面板上长着两副面孔，而且没有任何东西会为此变红。
+ * 现在面板用的是同一张图（缩到 32×32 / 64×64 内联进 HTML 与 CSS），
+ * 这一组钉的就是"内联的那几串确实是它缩出来的"。
+ *
+ * ⚠️ **判法是像素不是字节**：逐字节比对要求 `deflate` 的输出跨 zlib 版本可复现，
+ * 那是一件没人保证的事（本机与 CI 的 Node 大版本今天就不同）。所以下面的负例全部
+ * 落在"解压之后的 RGBA 对不上"或"这份内联字节自己结构不合规"两类上。
+ */
+describe("scripts/check-png.mjs：面板里内联的 PNG 与 docs/logo.png 是同一张", () => {
+  /** 真面板里那两串（`admin-ui/index.html` 的站点图标、`admin-ui/css/shell.css` 的品牌标记）。 */
+  const panelInline = (file: string): Buffer => {
+    const m = /data:image\/png;base64,([A-Za-z0-9+/]+={0,2})/.exec(readFileSync(resolve(file), "utf8"));
+    if (m === null) throw new Error(`${file} 里没有内联 PNG —— 夹具与真文件漂了`);
+    return Buffer.from(m[1]!, "base64");
+  };
+
+  /**
+   * `Buffer#toString("base64")`。**走一次显式断言**：理由与 `firstIdatStart()` 里那段
+   * 一模一样——本仓 tsconfig 的 `types` 让全局 `Buffer` 解析到 workers 那份**子集**声明，
+   * 那份声明里的 `toString` 不收参数（`pnpm typecheck` 报 TS2554，实测过）。
+   */
+  const b64 = (b: Buffer): string => (b as unknown as { toString(enc: "base64"): string }).toString("base64");
+
+  /** 一个只有 `docs/logo.png`（真图）与 `admin-ui/` 的临时仓，面板里内联给定的那几张图。 */
+  function tempUiRepo(inline: readonly Buffer[]): string {
+    const dir = mkdtempSync(join(tmpdir(), "a2a-png-ui-"));
+    mkdirSync(join(dir, "docs"), { recursive: true });
+    mkdirSync(join(dir, "admin-ui", "css"), { recursive: true });
+    writeFileSync(join(dir, "docs", "logo.png"), realLogo());
+    writeFileSync(
+      join(dir, "admin-ui", "css", "brand.css"),
+      inline.map((b) => `.brand-mark { background: url("data:image/png;base64,${b64(b)}"); }`).join("\n"),
+    );
+    return dir;
+  }
+
+  function inTempUiRepo(inline: readonly Buffer[], fn: (r: ReturnType<typeof run>) => void): void {
+    const dir = tempUiRepo(inline);
+    try {
+      fn(run([], dir));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("真仓今天：两处内联各自逐像素等于那张图（同时说明 --emit 出来的东西自己过得了这道门禁）", () => {
+    const r = run([]);
+    expect(r.status, `真仓被判红了：\n${r.stderr}`).toBe(0);
+    expect(r.stdout, "站点图标那一处没被审到").toContain("admin-ui/index.html  内联 32×32");
+    expect(r.stdout, "品牌标记那一处没被审到").toContain("admin-ui/css/shell.css  内联 64×64");
+  });
+
+  it("拿 --emit 现生成一张放进临时仓 ⇒ 绿（生成与校验走的是同一份 boxDownsample）", () => {
+    const uri = execFileSync("node", [SCRIPT, "--emit", "64"], { encoding: "utf8" }).trim();
+    const bytes = Buffer.from(uri.slice("data:image/png;base64,".length), "base64");
+    inTempUiRepo([bytes], (r) => {
+      expect(r.status, `--emit 出来的图被自己的门禁判红了：\n${r.stderr}`).toBe(0);
+      expect(r.stdout).toContain("内联 64×64");
+    });
+  });
+
+  /** 五条负例：名字 → [面板里内联什么, 报文里必须出现的那句话]。 */
+  const UI_NEGATIVES: ReadonlyArray<readonly [string, () => Buffer[], string]> = [
+    ["一处内联都没有 ⇒ fail closed（「一处都没有」不等于「每一处都合格」）",
+      () => [], "一处内联 PNG 都没有"],
+    ["内联的是另一张结构完全合规的 32×32 ⇒ 红在逐像素对账上",
+      () => [synthPng(32, 32, 32 * 32)], "个分量不同"],
+    ["边长不整除 128（30×30）⇒ 红（非整数倍降采样没有唯一答案）",
+      () => [synthPng(30, 30, 30 * 30)], "不整除"],
+    ["不是正方形（64×32）⇒ 红",
+      () => [synthPng(64, 32, 64 * 32)], "不是正方形"],
+    ["像素全对、但夹带一个 tEXt 块 ⇒ 红（结构判据同样管内联的那张）",
+      () => {
+        const good = panelInline("admin-ui/index.html");
+        return [insertAt(good, firstIdatStart(good), chunk("tEXt", Buffer.from("a\0payload")))];
+      },
+      "含被禁块 tEXt"],
+  ];
+
+  it.each(UI_NEGATIVES.map((n, i) => [i, n[0], n[1], n[2]] as const))(
+    "负例 %i：%s",
+    (_i, _name, make, needle) => {
+      inTempUiRepo(make(), (r) => {
+        expect(r.status, `这份面板应该被判红，实际 exit ${r.status}\nstdout: ${r.stdout}`).toBe(1);
+        expect(r.stderr, `报文没说到点子上：\n${r.stderr}`).toContain(needle);
+      });
+    },
+  );
+
+  it("五条负例的报文两两不同 —— 不是一把梭", () => {
+    const messages = UI_NEGATIVES.map(([, make]) => {
+      let out = "";
+      inTempUiRepo(make(), (r) => { out = r.stderr; });
+      return out.replace(/\/tmp\/[^\s:]+/g, "<路径>");
+    });
+    expect(new Set(messages).size, `五条负例只吐出了 ${new Set(messages).size} 种报文：\n${messages.join("\n---\n")}`)
+      .toBe(UI_NEGATIVES.length);
+  });
+
+  it("报文告诉人怎么修：点名重生成那条命令，而不是只说「对不上」", () => {
+    inTempUiRepo([synthPng(32, 32, 32 * 32)], (r) => {
+      expect(r.stderr).toContain("node scripts/check-png.mjs --emit 32");
+    });
+  });
+});

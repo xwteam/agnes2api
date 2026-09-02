@@ -4,6 +4,12 @@
 // 那道门禁原来的语义是"这几个目录下一个二进制文件都不许有"，一旦让进来一个，
 // 就得有人替它回答"这个文件里藏没藏东西"。这个脚本就是那个人。
 //
+// **它还兼了第二件事**（见下面 `auditUiLogos()` 那一节）：管理面板的站点图标与品牌标记
+// 是同一张图缩小之后 base64 内联进 `admin-ui/index.html` 与 `admin-ui/css/shell.css` 的，
+// 那两串字节同样没人拿肉眼看过，而且**换了图不重生成它们，项目会静静地长出两副面孔**
+// （README 一副、面板另一副 —— 那正是这一节存在的起因）。它们走的是同一套结构判据，
+// 外加一条"解出来的像素必须等于登记那张图的降采样结果"。
+//
 // ── 放行让出的洞到底有多大：量出来的，不是推的 ─────────────────────────────
 // `scripts/scan-secrets.sh` 今天**不是**对二进制文件全瞎（那句话曾经是对的，
 // 在它去掉 `git grep -I` 之前）。本机在一份仓库副本上逐档实测过四种载荷：
@@ -78,13 +84,17 @@
 //   ② 把下面 `REGISTERED_BINARIES` 里那条 sha256 换成新图的
 //      （`sha256sum docs/logo.png`）——不换的话这道门禁当场红，这是有意的：
 //      **登记值就是"这张图是被人看过的那张"的唯一凭证**；
-//   ③ 重跑 `bash scripts/scan-secrets.sh` 与 `bash scripts/scan-secrets.sh --history`
+//   ③ 重生成面板里那两串 base64 并贴回去：`node scripts/check-png.mjs --emit 32`
+//      给 `admin-ui/index.html` 的 `<link rel="icon">`、`--emit 64` 给
+//      `admin-ui/css/shell.css` 的 `.brand-mark` 背景；改完 `pnpm ui:build`。
+//      漏了这一步这道门禁同样当场红（逐像素对账），**红在这里比红在用户眼里好**；
+//   ④ 重跑 `bash scripts/scan-secrets.sh` 与 `bash scripts/scan-secrets.sh --history`
 //      六条规则两档都要跑，理由见上面那段 fail-closed；
-//   ④ 重跑 `node scripts/check-png.mjs`。
+//   ⑤ 重跑 `node scripts/check-png.mjs`。
 // 同一份流程在 `CONTRIBUTING.md` 的「Replacing docs/logo.png」一节里还有一份英文的：
 // 那一份是给外部贡献者看的，这一份是给改这个脚本的人看的。**两份都要改**——
 // 它们不是同一句话的两处复制（一份讲判据为什么长这样，一份讲流程怎么走），
-// 但第 ③ 步那条 fail-closed 的理由两边都必须在，少一边就会有人以为凭据扫描坏了。
+// 但第 ④ 步那条 fail-closed 的理由两边都必须在，少一边就会有人以为凭据扫描坏了。
 //
 // ── 判据自己的边界（明写，别读成它什么都能验）──────────────────────────────
 // · 它**证不了**这张图"好看"或"是我们想要的那张图"：sha256 只证明字节没变过，
@@ -96,9 +106,9 @@
 //   它拦得住"一整块不透明的贴片"，拦不住"一张全透明的空图"（那种会先被
 //   `IHDR` 的尺寸/体积判据之外的人眼发现，机器这里不装能耐）。
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { inflateSync } from "node:zlib";
+import { inflateSync, deflateSync } from "node:zlib";
 import { pathToFileURL } from "node:url";
 
 /**
@@ -195,10 +205,15 @@ function paeth(a, b, c) {
 }
 
 /**
- * 完全透明像素的占比。**只支持 8 位 RGBA 非隔行**——别的形态在上面就被判掉了，
+ * `IDAT` 解压 + 逐行反过滤，得到 `width × height × 4` 字节的 RGBA。
+ * **只支持 8 位 RGBA 非隔行**——别的形态在上面就被判掉了，
  * 这里不做第二次分支：一个"顺手支持一下"的分支等于一条没人测过的解码路径。
+ *
+ * ⚠️ **这一步原来是 `transparentRatio()` 的前半段**，拆出来是因为解出来的像素现在有
+ * 第二个用途：面板里内联的那两串 base64 要与 `docs/logo.png` 缩出来的像素逐字节对账
+ *（`auditUiLogos()`）。拆的是位置不是判据——两笔解压对账仍在下面这几行里。
  */
-function transparentRatio(idat, width, height, fail) {
+function decodeRgba(idat, width, height, fail) {
   // ⚠️ **两笔账，缺一笔就等于没对账**（回填第 2 轮补的第二笔，理由见文件头 ⑴）：
   // `inflateSync` 在 zlib 流正常结束后会**静默忽略后面所有输入字节**，所以
   // "解压出来多少"对上了，完全不能推出"输入有没有被吃完"。`{ info: true }` 让它
@@ -217,9 +232,9 @@ function transparentRatio(idat, width, height, fail) {
   if (raw.length !== height * (stride + 1)) {
     fail(`解压后的像素数据是 ${raw.length} 字节，按 ${width}×${height} RGBA 算应该是 ${height * (stride + 1)} 字节`);
   }
+  const pixels = Buffer.alloc(height * stride);
   const prev = Buffer.alloc(stride);
   const cur = Buffer.alloc(stride);
-  let transparent = 0;
   let pos = 0;
   for (let y = 0; y < height; y++) {
     const ft = raw[pos++];
@@ -238,18 +253,32 @@ function transparentRatio(idat, width, height, fail) {
         default: fail(`第 ${y} 行的行过滤器是 ${ft}，PNG 只定义了 0..4`);
       }
     }
-    for (let x = 3; x < stride; x += bpp) if (cur[x] === 0) transparent++;
+    cur.copy(pixels, y * stride);
     cur.copy(prev);
   }
-  return transparent / (width * height);
+  return pixels;
+}
+
+/** 完全透明（alpha == 0）像素的占比。输入是 `decodeRgba()` 解出来的那块 RGBA。 */
+function transparentRatio(pixels) {
+  let transparent = 0;
+  for (let i = 3; i < pixels.length; i += 4) if (pixels[i] === 0) transparent++;
+  return transparent / (pixels.length / 4);
 }
 
 /**
  * 逐字节审一个 PNG。**不满足任何一条就 throw**，报文里带上是哪一条不满足
  * ——十一条负例各自命中不同分支这件事由 `tests/unit/check-png.test.ts` 的
  * 「十一条负例的报文两两不同 —— 不是一把梭」钉着。
+ *
+ * `limits` 默认是 `LIMITS`（进仓那张图的那套）。**面板里内联的那两张缩略图走同一份
+ * 结构判据、只换尺寸那三个数**：块白名单 / 长度界 / 至多一次 / 块序 / 零尾随 /
+ * `IDAT` 两侧对账，一条都不减——它们同样是"没人拿肉眼看过的字节"。
+ * ⚠️ `minTransparentRatio: null` 表示**这一条不适用**（不是"放宽到 0"）：
+ * 缩略图的每一个像素都被 `auditUiLogos()` 拿 `docs/logo.png` 缩出来的值逐字节钉死，
+ * 再叠一条比例判据是**恒真**的——恒真的判据不会红，写它只会让人以为多了一层守卫。
  */
-export function auditPng(path, buf = readFileSync(path)) {
+export function auditPng(path, buf = readFileSync(path), limits = LIMITS) {
   const fail = (msg) => { throw new Error(`${path}: ${msg}`); };
 
   if (!buf.subarray(0, 8).equals(SIGNATURE)) fail("不是 PNG（头 8 字节的签名不符）");
@@ -333,23 +362,186 @@ export function auditPng(path, buf = readFileSync(path)) {
   if (depth !== 8 || colorType !== 6 || compression !== 0 || filter !== 0 || interlace !== 0) {
     fail(`只收 8 位 RGBA 非隔行 PNG，这份是 depth=${depth} colorType=${colorType} compression=${compression} filter=${filter} interlace=${interlace}`);
   }
-  if (width !== LIMITS.width || height !== LIMITS.height) {
-    fail(`尺寸是 ${width}×${height}，模板要求 ${LIMITS.width}×${LIMITS.height}`);
+  if (width !== limits.width || height !== limits.height) {
+    fail(`尺寸是 ${width}×${height}，模板要求 ${limits.width}×${limits.height}`);
   }
-  if (buf.length > LIMITS.maxBytes) {
-    fail(`体积 ${buf.length} 字节，超过上限 ${LIMITS.maxBytes} 字节`);
+  if (buf.length > limits.maxBytes) {
+    fail(`体积 ${buf.length} 字节，超过上限 ${limits.maxBytes} 字节`);
   }
 
-  const ratio = transparentRatio(Buffer.concat(idat), width, height, fail);
-  if (ratio < LIMITS.minTransparentRatio) {
-    fail(`完全透明像素只占 ${(ratio * 100).toFixed(1)}%，低于下限 ${(LIMITS.minTransparentRatio * 100).toFixed(0)}%`
+  const pixels = decodeRgba(Buffer.concat(idat), width, height, fail);
+  const ratio = transparentRatio(pixels);
+  if (limits.minTransparentRatio !== null && ratio < limits.minTransparentRatio) {
+    fail(`完全透明像素只占 ${(ratio * 100).toFixed(1)}%，低于下限 ${(limits.minTransparentRatio * 100).toFixed(0)}%`
       + " —— 模板要的是抠过图的标记，不是一整块不透明的贴片");
   }
 
   return {
-    chunks, width, height, bytes: buf.length, transparentRatio: ratio,
+    chunks, width, height, bytes: buf.length, transparentRatio: ratio, pixels,
     sha256: createHash("sha256").update(buf).digest("hex"),
   };
+}
+
+/* ── 面板里那几串 base64：必须就是 docs/logo.png 缩出来的那张图 ─────────────────
+ *
+ * **为什么这一格必须存在。** `docs/logo.png` 是这个项目的门面（六份 README 的头部块
+ * 摆的都是它），而管理面板要用同一副长相。面板这边有两条硬约束堵着别的做法：
+ * 独立的二进制文件过不了 `scripts/build-ui.mjs` 的扩展名白名单（零二进制资源），
+ * 独立的 `.svg` 会以 image/svg+xml 挂在 /admin/ 下变成同源文档 ⇒ 只剩「把缩略图
+ * base64 内联进 HTML / CSS」这一条路。而内联的代价是**同一张图在仓里存了三份字节**
+ *（`docs/logo.png` + `admin-ui/index.html` 的站点图标 + `admin-ui/css/shell.css` 的品牌标记），
+ * 三份没有任何东西看着它们一致 ⇒ 换了图不换面板，**项目会静静地长出两副面孔**。
+ * 这一节就是那个"看着它们一致"的人。
+ *
+ * **判法是像素，不是字节。** 逐字节比对要求 `deflate` 的输出跨 zlib 版本可复现，
+ * 那是一件没人保证的事（本机 Node 24、CI Node 22）。所以对账落在**解压之后的 RGBA**
+ * 上：面板里那串 base64 解出来的每一个像素，必须等于 `docs/logo.png` 按整数倍
+ * 盒式降采样出来的那个像素。缩放函数只有 `boxDownsample()` 这一份实现，
+ * 生成（`--emit`）与校验走的是同一份 —— 两份实现迟早会各漂各的。
+ *
+ * **它证不了什么（明写，别读成它什么都能验）**：它证不了那张图好看，也证不了
+ * 登记 sha256 的那个人真的看过它 —— 那两件事的边界在文件头已经写过一次，
+ * 内联这几串只是把同一条边界跟着继承下来，没有多也没有少。
+ */
+
+/** 面板真源目录。这里的每一个文件都要被扫一遍有没有内联 PNG。 */
+export const UI_SOURCE_DIR = "admin-ui";
+
+/** 缩略图的来源。**必须是名册里那一条**，否则"与项目门面同一副长相"就是空话。 */
+export const UI_LOGO_SOURCE = "docs/logo.png";
+
+/**
+ * 盒式降采样，**整数倍**。alpha 取块内平均，RGB 取**按 alpha 加权**的平均
+ *（不加权的话透明像素那些无意义的颜色会把边缘拖脏，缩完一圈灰边）。
+ * 全透明的块直接写四个 0：除以 0 的分支必须自己定，不能靠 NaN 落进 Buffer 变成 0。
+ */
+export function boxDownsample({ width, height, pixels }, factor) {
+  const w = width / factor, h = height / factor;
+  const out = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sr = 0, sg = 0, sb = 0, sa = 0;
+      for (let dy = 0; dy < factor; dy++) {
+        for (let dx = 0; dx < factor; dx++) {
+          const i = ((y * factor + dy) * width + (x * factor + dx)) * 4;
+          const a = pixels[i + 3];
+          sr += pixels[i] * a; sg += pixels[i + 1] * a; sb += pixels[i + 2] * a; sa += a;
+        }
+      }
+      const o = (y * w + x) * 4;
+      if (sa !== 0) {
+        out[o] = Math.round(sr / sa);
+        out[o + 1] = Math.round(sg / sa);
+        out[o + 2] = Math.round(sb / sa);
+        out[o + 3] = Math.round(sa / (factor * factor));
+      }
+    }
+  }
+  return { width: w, height: h, pixels: out };
+}
+
+/** 一个 PNG 块：长度 + 类型 + 数据 + CRC。`--emit` 用，校验那条路不碰它。 */
+function pngChunk(type, data) {
+  const b = Buffer.alloc(8 + data.length + 4);
+  b.writeUInt32BE(data.length, 0);
+  b.write(type, 4, "ascii");
+  data.copy(b, 8);
+  b.writeUInt32BE(crc32(b.subarray(4, 8 + data.length)), 8 + data.length);
+  return b;
+}
+
+/**
+ * 把一块 RGBA 编成 8 位 RGBA 非隔行 PNG：`IHDR IDAT IEND` 三块，行过滤器一律 0。
+ * 块序与块集合刻意长成 `auditPng()` 收得下的最窄那一种 —— 生成出来的东西自己过不了
+ * 本仓的门禁是个笑话。
+ */
+function encodePng({ width, height, pixels }) {
+  const stride = width * 4;
+  const raw = Buffer.alloc(height * (stride + 1));
+  for (let y = 0; y < height; y++) {
+    raw[y * (stride + 1)] = 0;
+    pixels.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  return Buffer.concat([
+    SIGNATURE,
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(raw, { level: 9 })),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+/** 一段文本里所有 `data:image/png;base64,…` 的 base64 净荷（按出现顺序，含重复）。 */
+export function collectPngDataUris(text) {
+  return [...text.matchAll(/data:image\/png;base64,([A-Za-z0-9+/]+={0,2})/g)].map((m) => m[1]);
+}
+
+function walkFiles(dir) {
+  const out = [];
+  for (const name of readdirSync(dir).sort()) {
+    const p = `${dir}/${name}`;
+    if (statSync(p).isDirectory()) out.push(...walkFiles(p));
+    else out.push(p);
+  }
+  return out;
+}
+
+/**
+ * 审面板里内联的每一张 PNG。返回 `{ path, edge, bytes }[]`，有一处对不上就 throw。
+ *
+ * ⚠️ **它自己不再验一遍那张图的 sha256**：`main()` 里名册那一档排在它前面，对不上就
+ * 直接 return 1，走到这儿时"源图就是登记过的那张"已经成立 —— 在这里重验一遍是一条
+ * 永远不会红的判据。**代价是顺序成了前提**：谁把这一节挪到名册那一档之前，
+ * 就得连这句话和那一档一起改，否则"源自同一张登记过的图"这句话会静静地缩水成
+ * "源自仓里那个位置上的文件"。
+ *
+ * ⚠️ **一处都找不到也是红**（fail closed）：把品牌标记删干净会让"每一处都合格"
+ * 恒真，那是这道门禁最坏的形态 —— 与文件头那条"名册空了不等于审过了"同一条理由。
+ * 具体是哪个文件用它、用在哪个选择器上，由 `tests/ui/shell-chrome.test.ts`
+ * 「HTML 里恰一处内联 PNG（站点图标），shell.css 里恰一处（品牌标记）」那一格钉；
+ * 这里只回答"面板里那些字节是不是那张图"。
+ */
+export function auditUiLogos(root = ".") {
+  const src = auditPng(`${root}/${UI_LOGO_SOURCE}`);
+  const found = [];
+  for (const p of walkFiles(`${root}/${UI_SOURCE_DIR}`)) {
+    const rel = p.slice(root.length + 1);
+    const uris = collectPngDataUris(readFileSync(p, "utf8"));
+    for (let i = 0; i < uris.length; i++) {
+      const where = `${rel} 里第 ${i + 1} 处内联 PNG`;
+      const buf = Buffer.from(uris[i], "base64");
+      // 尺寸先从 IHDR 读出来当**期望值**喂回 auditPng：读错了也无所谓——
+      // 下面逐像素那一格拿的是真图缩出来的值，尺寸对不上时它一定对不上。
+      if (buf.length < 24) throw new Error(`${where}: 只有 ${buf.length} 字节，连 IHDR 都不完整`);
+      const edge = buf.readUInt32BE(16);
+      const high = buf.readUInt32BE(20);
+      if (edge !== high) throw new Error(`${where}: ${edge}×${high} 不是正方形，而 ${UI_LOGO_SOURCE} 是`);
+      if (edge < 1 || src.width % edge !== 0) {
+        throw new Error(`${where}: 边长 ${edge} 不整除 ${UI_LOGO_SOURCE} 的 ${src.width}`
+          + " —— 只收整数倍降采样，非整数倍没有唯一答案，也就没法逐像素对账");
+      }
+      const info = auditPng(where, buf, {
+        width: edge, height: edge, maxBytes: LIMITS.maxBytes, minTransparentRatio: null,
+      });
+      const want = boxDownsample(src, src.width / edge);
+      if (!info.pixels.equals(want.pixels)) {
+        let bad = 0;
+        for (let k = 0; k < want.pixels.length; k++) if (info.pixels[k] !== want.pixels[k]) bad++;
+        throw new Error(`${where}: 解出来的像素与 ${UI_LOGO_SOURCE} 缩到 ${edge}×${edge} 的结果对不上`
+          + `（${bad} 个分量不同）—— 换图之后面板这几串没跟着重生成，项目会有两副面孔；`
+          + `重生成：node scripts/check-png.mjs --emit ${edge}`);
+      }
+      found.push({ path: rel, edge, bytes: buf.length });
+    }
+  }
+  if (found.length === 0) {
+    throw new Error(`${UI_SOURCE_DIR} 里一处内联 PNG 都没有 —— 面板不再用 ${UI_LOGO_SOURCE} 当品牌标记了？`
+      + "「一处都没有」不等于「每一处都合格」，这道门禁按失败处理");
+  }
+  return found;
 }
 
 /**
@@ -380,6 +572,21 @@ function auditRegistered(path, want) {
 }
 
 function main(argv) {
+  // `--emit <边长>`：把 docs/logo.png 缩到指定边长，打一行 data URI 到 stdout。
+  // 换图流程的第 ③ 步用它重生成面板里那几串 base64（贴进 admin-ui/index.html 与
+  // admin-ui/css/shell.css）。**它不是门禁**，但它与门禁共用 `boxDownsample()`：
+  // 生成与校验分成两份实现的话，两份迟早各漂各的。
+  if (argv[0] === "--emit") {
+    const edge = Number(argv[1]);
+    const src = auditPng(UI_LOGO_SOURCE);
+    if (!Number.isInteger(edge) || edge < 1 || src.width % edge !== 0) {
+      console.error(`[check-png] ❌ --emit 要一个整除 ${src.width} 的边长，收到的是「${argv[1]}」`);
+      return 1;
+    }
+    const png = encodePng(boxDownsample(src, src.width / edge));
+    console.log(`data:image/png;base64,${png.toString("base64")}`);
+    return 0;
+  }
   const targets = argv.length > 0
     ? argv.map((p) => [p, REGISTERED_BINARIES[p] ?? null])
     : Object.entries(REGISTERED_BINARIES);
@@ -400,6 +607,22 @@ function main(argv) {
     const i = r.info;
     console.log(`[check-png] ✅ ${r.path}  ${i.width}×${i.height} / ${i.bytes} 字节 / 块序 ${i.chunks.join(" ")}`
       + ` / 完全透明 ${(i.transparentRatio * 100).toFixed(1)}% / sha256 ${i.sha256.slice(0, 12)}…`);
+  }
+  // 面板里内联的那几串 base64 与上面这张图对账。**只在审全量时跑**：带路径参数是
+  // 单审某个文件的用法，那一档不该顺带把面板也审一遍（报文会指错地方）。
+  if (argv.length === 0) {
+    let logos;
+    try {
+      logos = auditUiLogos();
+    } catch (e) {
+      console.error(`[check-png] ❌ 面板里内联的 PNG 与 ${UI_LOGO_SOURCE} 对不上：`);
+      console.error(`  ${e.message}`);
+      return 1;
+    }
+    for (const l of logos) {
+      console.log(`[check-png] ✅ ${l.path}  内联 ${l.edge}×${l.edge} / ${l.bytes} 字节`
+        + ` / 逐像素等于 ${UI_LOGO_SOURCE} 降采样 ${LIMITS.width / l.edge} 倍`);
+    }
   }
   return 0;
 }

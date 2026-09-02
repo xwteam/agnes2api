@@ -5,19 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#f7f8fa">
 <title>agnes2api 管理后台</title>
-<!-- 站点图标。**内联 data URI 的 SVG，不是一个独立文件**：admin-ui/README.md 的硬规则 2
-     两头都堵着——独立的 `.svg` 会以 image/svg+xml 挂在 /admin/ 下变成同源文档，
-     而二进制（`.png` / `.ico`）连生成器都过不去（scripts/build-ui.mjs 的扩展名白名单）。
+<!-- 站点图标 = **项目门面那张图**（docs/logo.png）缩到 32×32 之后内联的 data URI。
+     六份 README 的头部块摆的就是那张图；面板用同一张，项目才只有一副面孔。
+     **必须内联、必须是 data URI**：独立的二进制（`.png` / `.ico`）连生成器都过不去
+     （scripts/build-ui.mjs 的扩展名白名单），独立的 `.svg` 会以 image/svg+xml 挂在
+     /admin/ 下变成同源文档——两条都写在 admin-ui/README.md 的硬规则 2 里。
      `<link rel="icon">` 走的是 CSP 的 img-src，而 src/ui/serve.ts 里那条策略写的是
      `img-src 'self' data:` ⇒ 这条 data URI 是被现有策略明确允许的那一种。
-     ⚠️ **这里的颜色是硬编码的十六进制，而面板其余地方一律引用 CSS 变量**：data URI
-     里引用不到 `var(--primary)`。代价由 tests/ui/shell-chrome.test.ts 的
-     「favicon 里那个色值就是 base.css 的 --primary —— 硬编码的那一处不许自己漂」接住，
-     改了 base.css 的主色而没改这里，那一格当场红。
-     ⚠️ **刻意不用 docs/logo.png**：那张图 20159 字节，base64 之后约 26.9 KB 落进面板资源，
-     而体积预算今天的余量只有约 48 KiB（gzip）——一张图吃掉四成余量，且同一份字节会
-     在仓里存两处（`docs/logo.png` 与这份 HTML）而没有任何东西看着它们一致。 -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3.5' y='7' width='17' height='13' rx='4.5' fill='none' stroke='%234f46e5' stroke-width='1.8'/%3E%3Cpath d='M 12 3.4 v 3.6' stroke='%234f46e5' stroke-width='1.8'/%3E%3Ccircle cx='12' cy='2.6' r='1.5' fill='%234f46e5'/%3E%3Ccircle cx='9' cy='13.2' r='1.6' fill='%234f46e5'/%3E%3Ccircle cx='15' cy='13.2' r='1.6' fill='%234f46e5'/%3E%3C/svg%3E">
+     ⚠️ **这串字节不许手改，也不许换成别的图**：它由 `node scripts/check-png.mjs --emit 32`
+     生成，同一个脚本每次跑都会把它解回像素、与 docs/logo.png 降采样 4 倍的结果逐字节
+     对账（`auditUiLogos()`）——换了图不重生成这里，门禁当场红。
+     32×32 是按显示尺寸挑的：标签页图标是 16 CSS 像素，2 倍屏正好 32 物理像素。
+     品牌标记那张 64×64 在 admin-ui/css/shell.css 里，同一张图、同一道判据。 -->
+<link rel="icon" href="data:image/png;base64,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">
 <!-- 唯一的经典脚本，必须同步、必须在 CSS 之前：防闪白 / 闪错语言。 -->
 <script src="/admin/js/boot.js"></script>
 <link rel="stylesheet" href="/admin/css/base.css">
@@ -36,13 +36,7 @@
          入口，而闸上五种语言的文案本来就齐全，看不懂的人换不换得了语言不取决于这里。 -->
     <div class="gate-head">
       <span class="brand">
-        <svg class="brand-mark" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
-          <rect x="3.5" y="7" width="17" height="13" rx="4.5" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-          <path d="M 12 3.4 v 3.6" stroke="currentColor" stroke-width="1.8"></path>
-          <circle cx="12" cy="2.6" r="1.5" fill="currentColor"></circle>
-          <circle cx="9" cy="13.2" r="1.6" fill="currentColor"></circle>
-          <circle cx="15" cy="13.2" r="1.6" fill="currentColor"></circle>
-        </svg>
+        <span class="brand-mark" aria-hidden="true"></span>
         <span class="brand-name">agnes2api</span>
       </span>
       <button id="gate-theme-btn" class="icon-btn" type="button" data-i18n-title="shell.theme"></button>
@@ -68,14 +62,13 @@
        ⚠️ **空标签本身曾经就是缺陷**：这两颗按钮以前只有 `data-i18n-title`（悬停才有
        提示），`innerHTML` 是空串 ⇒ 屏幕上是两个 32×32 的空方块。 -->
   <header class="topbar">
+    <!-- 品牌标记是一个空的 <span>，图画在 admin-ui/css/shell.css 的 `.brand-mark`
+         背景上（那张图就是 docs/logo.png 缩到 64×64）。**刻意不是 <img>**：顶栏与
+         登录闸两处标记共用 CSS 里那一份 base64，写成 <img> 就要在 HTML 里各存一遍
+         同样的字节——体积预算多吃一份，还多一处会漂的真源。
+         `aria-hidden` 是因为它右边那个 .brand-name 已经把品牌名读出来了。 -->
     <span class="brand">
-      <svg class="brand-mark" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-        <rect x="3.5" y="7" width="17" height="13" rx="4.5" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-        <path d="M 12 3.4 v 3.6" stroke="currentColor" stroke-width="1.8"></path>
-        <circle cx="12" cy="2.6" r="1.5" fill="currentColor"></circle>
-        <circle cx="9" cy="13.2" r="1.6" fill="currentColor"></circle>
-        <circle cx="15" cy="13.2" r="1.6" fill="currentColor"></circle>
-      </svg>
+      <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-name">agnes2api</span>
     </span>
     <!-- 服务状态徽章。数据源是 `/health`（不鉴权、零存储 IO），三档：运行中 / 降级 /

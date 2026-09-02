@@ -137,21 +137,40 @@ Before that assertion existed the registry had no lock at all: a second PNG drop
 `src/`, plus one line in `REGISTERED_BINARIES`, made the binary gate print a green tick and
 left every other check quiet.
 
-### Swapping the image is four steps, not one
+### The admin panel carries two shrunken copies of the same image
 
-Swapping the image is therefore four steps, not one:
+The panel's favicon and brand mark are that same logo, downscaled to 32×32 and 64×64 and
+inlined as `data:image/png;base64,…` — in `admin-ui/index.html` and `admin-ui/css/shell.css`
+respectively. They have to be inlined: a standalone binary never gets past the extension
+allowlist in `scripts/build-ui.mjs`, and a standalone `.svg` would be served as
+`image/svg+xml` under `/admin/`, i.e. a same-origin document. Inlining means the same
+picture now exists as three separate runs of bytes in this repository, so `check-png.mjs`
+decodes every inline PNG it finds under `admin-ui/` and requires it to be **pixel-identical
+to `docs/logo.png` box-downscaled by an integer factor**. Without that check, replacing the
+logo and forgetting the panel would leave the project wearing two different faces — one in
+the READMEs, one in the admin UI — and nothing anywhere would go red. The comparison is on
+pixels rather than bytes on purpose: byte equality would assume `deflate` output is
+reproducible across zlib versions, which nobody guarantees.
+
+### Swapping the image is five steps, not one
+
+Swapping the image is therefore five steps, not one:
 
 1. Overwrite `docs/logo.png` (128×128, 8-bit RGBA, non-interlaced).
 2. Update the registered sha256 in `scripts/check-png.mjs` (`sha256sum docs/logo.png`).
    The gate goes red until you do, and that is the point: the registered digest is the only
    evidence that a human ever looked at these bytes.
-3. Re-run the credential scan — **both archives**: `bash scripts/scan-secrets.sh` and
+3. Regenerate the panel's two inline copies and paste them back:
+   `node scripts/check-png.mjs --emit 32` for the `<link rel="icon">` in
+   `admin-ui/index.html`, `--emit 64` for the `.brand-mark` background in
+   `admin-ui/css/shell.css`; then `pnpm ui:build`. The same gate goes red until you do.
+4. Re-run the credential scan — **both archives**: `bash scripts/scan-secrets.sh` and
    `bash scripts/scan-secrets.sh --history`.
-4. Re-run `node scripts/check-png.mjs`.
+5. Re-run `node scripts/check-png.mjs`.
 
-### Why step 3 is not a formality
+### Why step 4 is not a formality
 
-Step 3 is not a formality. Five of the six rules in that scanner decide on `git grep`'s exit
+Step 4 is not a formality. Five of the six rules in that scanner decide on `git grep`'s exit
 code, so a credential-shaped string inside a binary is caught. **The sixth rule — the bare-IP
 one — needs the matched line's content, which `git grep` refuses to print for a binary file,
 so it fails closed.** Concretely: if the compressed bytes of your new logo happen to contain
