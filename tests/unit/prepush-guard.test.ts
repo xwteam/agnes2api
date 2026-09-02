@@ -675,9 +675,12 @@ describe("prepush.sh 的报文：方向要说对，别把人指到与这次失�
  */
 describe("⑧ 未推送提交信息格：族定义抽真源、脏提交点名、已推送的不进射程", () => {
   const FAMILY_SRC = "tests/unit/docs-internal-refs.test.ts";
+  const SRC_FAMILY_SRC = "tests/unit/source-internal-refs.test.ts";
   const script = [
     "set -uo pipefail",
     constOf("FAMILY_SRC"),
+    constOf("SRC_FAMILY_SRC"),
+    fnOf("expand_placeholders"),
     fnOf("cell_commit_msgs"),
     "cell_commit_msgs",
   ].join("\n");
@@ -704,9 +707,73 @@ describe("⑧ 未推送提交信息格：族定义抽真源、脏提交点名、
       .map((m) => m[1]!);
   }
 
-  const withRealSource = (cwd: string, srcOverride?: string) =>
-    runBash(`FAMILY_SRC=${JSON.stringify(srcOverride ?? join(process.cwd(), FAMILY_SRC))}\n${script}`,
-      { cwd });
+  /**
+   * 源码轴那份真源里，那三族登记的证据串。它们在文件里写成 `evidence: expand("…")`，
+   * **带占位符**（真源自己在源码轴的射程里，原样写成字面量就是自己命中自己）。
+   * ⇒ 这里把展开也交给 `prepush.sh` 自己那个 `expand_placeholders`：
+   * 展开表要是两边漂了，⑧ 的正向自检会先一步红在「判据坏了」上。
+   * 🔴 **一个真串都不在这份文件里手写** —— 手写一份进来，这份测试自己就成了下一处泄漏点。
+   */
+  function srcAxisEvidence(): string[] {
+    const raw = readFileSync(SRC_FAMILY_SRC, "utf8")
+      .split("\n")
+      .map((l) => /^ +evidence: expand\("(.*)"\),$/.exec(l))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => m[1]!);
+    if (raw.length === 0) {
+      throw new Error(`${SRC_FAMILY_SRC} 里一个 evidence: expand(…) 都读不出来 —— `
+        + "⑧ 会少抽那几族，而它的失败模式正是「少抽还照样绿」");
+    }
+    const expanded = raw.map((s) => runBash(
+      ["set -uo pipefail", fnOf("expand_placeholders"), `expand_placeholders ${JSON.stringify(s)}`]
+        .join("\n"),
+    ).stdout);
+    for (const [i, s] of expanded.entries()) {
+      if (s === "" || s === raw[i]) {
+        throw new Error(`占位符没被展开（第 ${i + 1} 条：「${raw[i]}」⇒「${s}」）—— `
+          + "拿没展开的串当探针，这一格验的就是空气");
+      }
+    }
+    return expanded;
+  }
+
+  /** 源码轴那三族的族名，报文点名点的就是它（后面还缀着一截轴名）。 */
+  function srcAxisFamilyIds(): string[] {
+    const lines = readFileSync(SRC_FAMILY_SRC, "utf8").split("\n");
+    const out: string[] = [];
+    let id = "";
+    let seen = false;
+    for (const line of lines) {
+      const mi = /^ +id: "(.*)",$/.exec(line);
+      if (mi) { id = mi[1]!; seen = false; continue; }
+      if (/^ +evidence: expand\("/.test(line) && !seen) { out.push(id); seen = true; }
+    }
+    return out;
+  }
+
+  /** 那张具名夹具白名单里的名字。同样运行时读，不在这份文件里手写。 */
+  function allowlistNames(): string[] {
+    const out = [...readFileSync(SRC_FAMILY_SRC, "utf8")
+      .matchAll(/^\s+(?:\{ )?name: "([^"]+)"/gm)].map((m) => m[1]!);
+    if (out.length === 0) {
+      throw new Error(`${SRC_FAMILY_SRC} 里那张具名夹具白名单一条都读不出来 —— 判据坏了`);
+    }
+    return out;
+  }
+
+  /**
+   * 一个**按定义解析不开**的文档名，拼出来。
+   * 🔴 原样写成字面量的话，这份文件自己就多了一处解不开的引用 ——
+   * 而源码轴那条结构化判法的射程正是跟踪文件，它会当场红在这一行上。
+   */
+  const ghostDoc = ["GHOST", "md"].join(".");
+
+  const withRealSource = (cwd: string, srcOverride?: string, srcAxisOverride?: string) =>
+    runBash([
+      `FAMILY_SRC=${JSON.stringify(srcOverride ?? join(process.cwd(), FAMILY_SRC))}`,
+      `SRC_FAMILY_SRC=${JSON.stringify(srcAxisOverride ?? join(process.cwd(), SRC_FAMILY_SRC))}`,
+      script,
+    ].join("\n"), { cwd });
 
   it("⑧ 接上了：逐格表里有它，跑的是 cell_commit_msgs，族定义的真源在仓里", () => {
     const s = readFileSync(PREPUSH, "utf8");
@@ -746,6 +813,108 @@ describe("⑧ 未推送提交信息格：族定义抽真源、脏提交点名、
         expect(r.stderr, `报文里没把原串「${s}」摆出来`).toContain(s);
       }
       expect(r.stderr, "报文没给出处置办法").toContain("只动信息不动树");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * 🔴 **这一格是回填一条评审发现**：上一轮把三族新形状收进了源码轴那份判据，可 ⑧
+   * 当时只从文档轴那七族抽 ⇒ 一条同时写着这三种形状的提交信息**七族全部零命中、
+   * 当场放行**，而提交信息一旦推出去就改不动。下面两格分别盯着「抽得到」与「真的红」。
+   */
+  it("反向控制：源码轴那三族的证据串进提交信息 ⇒ 红，且逐族点名", () => {
+    const { root, src } = makeRepos();
+    try {
+      const evidence = srcAxisEvidence();
+      expect(evidence.length, "源码轴那几族一条证据串都没抽到").toBeGreaterThan(0);
+      git(src, "commit", "-q", "--allow-empty", "-m", `chore: 变异探针\n\n${evidence.join(" / ")}\n`);
+      const sha = git(src, "rev-parse", "--short", "HEAD").trim();
+      const r = withRealSource(src);
+      expect(r.code, `提交信息里塞了 ${evidence.length} 族源码轴证据串却没红 —— `
+        + "⑧ 多半又只抽了文档轴那一份").toBe(1);
+      expect(r.stderr, "没点名是哪一条提交").toContain(sha);
+      for (const id of srcAxisFamilyIds()) {
+        expect(r.stderr, `报文里没点名族「${id}」`).toContain(id);
+      }
+      for (const s of evidence) {
+        expect(r.stderr, `报文里没把原串「${s}」摆出来`).toContain(s);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("两轴各抽一份：屏幕上分别写着从哪一份抽到几族，合计不少于两轴之和", () => {
+    const { root, src } = makeRepos();
+    try {
+      const r = withRealSource(src);
+      expect(r.code, `干净的仓被判红了：\n${r.stdout}${r.stderr}`).toBe(0);
+      expect(r.stdout, "报文里没提源码轴那份真源 ⇒ 分不出它到底抽没抽")
+        .toContain(SRC_FAMILY_SRC);
+      const m = /共 (\d+) 族/.exec(r.stdout);
+      expect(m, "没打出合计族数 ⇒ 「少抽一族」这种失败在屏幕上看不出来").not.toBeNull();
+      expect(Number(m![1]), "合计族数比两轴各自登记的还少 —— 有一份没抽到")
+        .toBe(familyIds().length + srcAxisFamilyIds().length);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("抽取器反向控制之三：源码轴那份的 `expand(` 形态坏了 ⇒ 红，不许当成零命中", () => {
+    const { root, src } = makeRepos();
+    const dir = mkdtempSync(join(tmpdir(), "prepush-families-"));
+    try {
+      // 只动一处：把 `source: expand("…")` 这个形态改成模板串，其余照抄真源。
+      const broken = readFileSync(SRC_FAMILY_SRC, "utf8")
+        .split("\n")
+        .map((l) => l.replace(/^( +source: )expand\("(.*)"\),$/, "$1`$2`,"))
+        .join("\n");
+      const p = join(dir, "broken-source-axis.ts");
+      writeFileSync(p, broken, "utf8");
+      const r = withRealSource(src, undefined, p);
+      expect(r.code, "源码轴那份一族都没抽到却照样 exit 0 ⇒ 那几族恒绿").toBe(1);
+      expect(r.stderr).toContain("一族都没抽出来");
+      expect(r.stderr, "报文得说清失败模式是「少抽还照样绿」").toContain("少抽还照样绿");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * ── 第二条判法：提交信息里引用的文档名必须解析得开 ──────────────────────────
+   * 认形状那一套按定义守不住它（文件名身上一个编号形状都没有），而这一支恰恰是
+   * 上一轮清掉的那一类：指着一份公开仓里根本不存在的内部账本 / 内部报告。
+   */
+  it("反向控制：提交信息里引用一份仓里没有的文档 ⇒ 红，点名提交与那个名字", () => {
+    const { root, src } = makeRepos();
+    try {
+      git(src, "commit", "-q", "--allow-empty", "-m", `chore: 变异探针\n\n见 ${ghostDoc} 那一节\n`);
+      const sha = git(src, "rev-parse", "--short", "HEAD").trim();
+      const r = withRealSource(src);
+      expect(r.code, "引用了一份不存在的文档却没红").toBe(1);
+      expect(r.stderr, "没点名是哪一条提交").toContain(sha);
+      expect(r.stderr, "没把那个解析不开的名字摆出来").toContain(ghostDoc);
+      expect(r.stderr, "报文没给出处置办法").toContain("讲进句子里");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("不乱红：仓里真有的文档名、白名单里那些按定义就该不存在的夹具名，都不许红", () => {
+    const { root, src } = makeRepos();
+    try {
+      writeFileSync(join(src, "README.md"), "# hi\n", "utf8");
+      git(src, "add", "README.md");
+      git(src, "commit", "-qm", "docs: 加一份 README.md");
+      const fixtures = allowlistNames();
+      git(src, "commit", "-q", "--allow-empty",
+        "-m", `chore: 白名单里那几个夹具名\n\n${fixtures.join(" / ")}\n`);
+      const r = withRealSource(src);
+      expect(r.code, `真实文档名或白名单夹具名被误伤了：\n${r.stdout}${r.stderr}`).toBe(0);
+      expect(r.stdout, "没打出白名单抽到几条 ⇒ 抽空了会让每个夹具名都变假红，而屏幕上看不出来")
+        .toMatch(/夹具白名单 \d+ 条/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -1034,8 +1034,17 @@ BANNER='[collection-guard] ✅'
 #   「不乱红」那张真词表新增 2 行各一格，结构化判法那一组 10 格
 #   （扫描器不许扫空、正向、双向查两格、该红时红三格、大小写敏感、carve-out、不乱红）
 #   ⇒ 4439 + 2 + 2 + 10 = 4453。
+#
+# 🔴 **这一轮（回填一条评审发现）：把 ⑧ 接到两轴上，再把文档名那条判法接一份到提交信息上。**
+#   起因是实测出来的一格：上一轮收的三族新形状 ⑧ 一族都抽不走 ⇒ 一条同时写着这三种形状、
+#   外加两个解析不开的文档名的提交信息，七族逐条 grep 全部零命中、当场放行。
+#   而提交信息推出去就改不动（上面那笔 254 处的欠账就是这么来的）。
+#   格数：源码轴那份判据新增「⑧ 抽得走」一组 4 格（名册双向查 / 证据串认得出自己 /
+#   抽取形态逐字相等 / 该红时红），本文件的元测试新增 5 格（源码轴三族的证据串真的会红 /
+#   两轴各抽一份且屏幕上分得出来 / 源码轴那份抽取器坏了要红 / 引用不存在的文档要红 /
+#   真实文档名与白名单夹具名不许误伤）⇒ 4453 + 4 + 5 = 4462。
 EXPECT_NODE_FILES=143
-EXPECT_NODE_TESTS=4453
+EXPECT_NODE_TESTS=4462
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 
@@ -1399,6 +1408,9 @@ cell_smoke() {
 # ⚠️ **族定义一个字都不在这里手抄**：每一族的正则与 flag 都是从
 #   `tests/unit/docs-internal-refs.test.ts` 里那几行 `re:` **当场抽**出来的
 #   ——与 ③ 抽 `ci.yml` 同一个理由：手抄的那份会漂，而且漂了没人会发现。
+#   ⚠️ **抽的是两份真源，不是一份**：源码轴那份判据自己收着三族文档轴没有（或更窄）的形状，
+#   下面 `SRC_FAMILY_SRC` 那段写着为什么是这三族。再加一条**不认形状**的判法：
+#   提交信息里引用的文档名必须在 `git ls-files` 里解析得开。
 # ⚠️ **抽取器最坏的死法是「一族都没抽到还照样绿」**，所以抽完先跑一遍**正向自检**：
 #   同一份文件里每一族各自登记着一个证据串，逐条喂给刚抽出来的那条正则，
 #   **有一条抓不住就当场把这一格弄红**，报文说的是「判据坏了」，不是「提交信息干净」。
@@ -1414,10 +1426,54 @@ cell_smoke() {
 #   而真源在本仓）。整跑档没人设它，走的永远是仓里那一份。
 FAMILY_SRC="${FAMILY_SRC:-tests/unit/docs-internal-refs.test.ts}"
 
+# ── 第二份真源：**源码轴**那份判据 ───────────────────────────────────────────
+#
+# 🔴 **补这一份是回填一条评审发现：光抽文档轴那七族，硬约束里「提交信息也要干净」
+#   的那一半按定义就有一截没人守。** 源码轴自己收了两族（多字母前缀、内部裁定册指针），
+#   还有一族两轴同名而源码轴的尾巴更宽（多认一个小写字母）——这三族文档轴一条都没有，
+#   而它们恰恰是最近几轮清理的主力形状。实测过：一条同时写着这三种形状的提交信息，
+#   只抽文档轴时**七族全部零命中、当场放行**。
+#   ⇒ 两轴各抽一份，取并集；重复的那几族多扫一遍，不去挑。
+#
+# ⚠️ **为什么只抽三族、不把源码轴九族全抽**：其余六族在提交信息上由文档轴同名的那一份
+#   盖住，而且文档轴那几条更宽（前后瞻少一个下划线；第二批字母那一族还多含 `H`）。
+#   剩下那一族（内部评审名）的正则源在源码轴里是**刻意拆开拼的**——那份判据自己在
+#   源码轴的射程里，原样写成字面量就是自己命中自己 ⇒ 一行 `grep` 抽不走它，
+#   而它在文档轴那边有一份等价的，走那边。
+#
+# ⚠️ **同样一个字都不手抄**：源码轴那三族在真源里写成「单行 + 占位符」
+#   （`source: expand("…")` / `evidence: expand("…")`），下面这段展开表与真源里
+#   `PLACEHOLDERS` 那张表同口径。两边漂了的话，正向自检当场红在「判据坏了」上：
+#   展开后的证据串抓不住就说明展开表对不上。那份判据自己有一格盯着这个形态
+#   （「⑧ 抽得走」那一组：拿同一套形态抽它自己，抽出来的必须与运行时逐字相等）。
+#
+# ⚠️ 覆盖入口与上面那条同理，只为把这一格抠出来单跑时能指向真源。
+SRC_FAMILY_SRC="${SRC_FAMILY_SRC:-tests/unit/source-internal-refs.test.ts}"
+
+# ── 占位符的值：**拼出来，不写字面量** ───────────────────────────────────────
+# 理由与真源里那三个常量逐字相同：本脚本自己在源码轴的射程里（而且是它两份标本集之一），
+# 把大写区间、那个轮次缩写原样写成字面量，就是往这个脚本里写一处真串。
+expand_placeholders() {
+  local s=$1 a="A" z="Z" upper round circled
+  upper="${a}-${z}"
+  round="A""DJ"
+  circled="⓪①-⑳㉑-㉟㊱-㊿"
+  s=${s//'{}'/}
+  s=${s//'{UPPER}'/$upper}
+  s=${s//'{ROUND}'/$round}
+  s=${s//'{CIRCLED}'/$circled}
+  printf '%s' "$s"
+}
+
 cell_commit_msgs() {
   local src="$FAMILY_SRC"
   if [[ ! -f $src ]]; then
     echo "❌ 族定义的真源 $src 不在 —— 这一格没有判据可用，不许静默放行" >&2
+    return 1
+  fi
+  local src2="$SRC_FAMILY_SRC"
+  if [[ ! -f $src2 ]]; then
+    echo "❌ 源码轴那份真源 $src2 不在 —— 这一格少抽三族，不许静默放行" >&2
     return 1
   fi
 
@@ -1438,7 +1494,34 @@ cell_commit_msgs() {
     echo "   $src 里那张族表的写法变了（id: / re: / evidence: 各占一行、按族相邻）。" >&2
     return 1
   fi
-  echo "   从 $src 抽到 $n 族"
+
+  # ── 再从源码轴那份真源抽它自己那三族（形态：id / source: expand / flags / evidence: expand）──
+  # ⚠️ 逐行走、见到 `evidence: expand(…)` 才收一族：族名取最近一条 `id:`，
+  #   这样六个不带证据串的族一条都不会被误收。
+  local line raw_id raw_src raw_flg raw_evi extra=0
+  raw_id=""; raw_src=""; raw_flg=""
+  while IFS= read -r line; do
+    if [[ $line =~ ^[[:space:]]+id:\ \"(.*)\",$ ]]; then raw_id="${BASH_REMATCH[1]}"; continue; fi
+    if [[ $line =~ ^[[:space:]]+source:\ expand\(\"(.*)\"\),$ ]]; then raw_src="${BASH_REMATCH[1]}"; continue; fi
+    if [[ $line =~ ^[[:space:]]+flags:\ \"(.*)\",$ ]]; then raw_flg="${BASH_REMATCH[1]}"; continue; fi
+    if [[ $line =~ ^[[:space:]]+evidence:\ expand\(\"(.*)\"\),$ ]] && [[ -n $raw_src ]]; then
+      raw_evi="${BASH_REMATCH[1]}"
+      res+=("$(expand_placeholders "$raw_src")")
+      flg+=("$raw_flg")
+      ids+=("${raw_id}（源码轴）")
+      evi+=("$(expand_placeholders "$raw_evi")")
+      raw_src=""
+      extra=$((extra + 1))
+    fi
+  done < "$src2"
+  if (( extra == 0 )); then
+    echo "❌ 从 $src2 一族都没抽出来 —— 抽取器坏了。" >&2
+    echo "   源码轴自己收的那几族因此一格不响，而那一格的失败模式正是「少抽还照样绿」。" >&2
+    echo "   那份判据里的写法变了（source: expand(\"…\") / evidence: expand(\"…\") 各占一行）。" >&2
+    return 1
+  fi
+  n=${#res[@]}
+  echo "   从 $src 抽到 $((n - extra)) 族，从 $src2 再抽到 $extra 族，共 $n 族"
 
   # ── 正向自检：每一族登记的证据串必须被它自己那条正则抓住 ──
   local k broke=0
@@ -1457,6 +1540,52 @@ cell_commit_msgs() {
     return 1
   fi
   echo "   正向自检：$n 族的证据串逐条被自己那条正则抓住"
+
+  # ── 第二条判法：提交信息里引用的文档名，必须在仓里解析得开 ──────────────────
+  #
+  # 🔴 **认形状那一套按定义守不住它**：文件名身上一个编号形状都没有。上一轮把
+  #   「引用了一份公开仓里根本不存在的内部文档」这一支换成了结构化判法收在源码轴上，
+  #   可那条判法的射程是**跟踪文件**——提交信息一格不响，而提交信息推出去就改不动。
+  #   ⇒ 这里接一份同口径的到提交信息上。它比词元正则强的那一格也一并接过来：
+  #   **没人事先想到的名字**（某份内部报告、某本内部账本）照样当场被逮到。
+  #
+  # ⚠️ **三条口径与源码轴那份逐字相同，而且都不手抄**：引用形态那条正则、
+  #   那张具名夹具白名单，全部从 $src2 当场抽。只判 `.md`、按 basename 判、
+  #   区分大小写 —— 三条各自的实测理由写在那份判据里，这里不另抄一份。
+  #
+  # ⚠️ **存在性拿的是「今天这棵树」**：一份历史上有、后来删掉的文档，旧提交信息里
+  #   指着它会被判成解不开（红在保守的那一侧）；反过来将来新增一份同名文档，
+  #   旧提交信息里那个名字就重新解得开了。这条边界登记在源码轴那份判据的文件头上。
+  local md_re allow_n=0
+  md_re=$(grep -oP '^const MD_REF_SOURCE = "\K.*(?=";$)' "$src2" || true)
+  if [[ -z $md_re ]]; then
+    echo "❌ 从 $src2 抽不到那条引用形态的正则 —— 抽取器坏了，不许静默放行" >&2
+    return 1
+  fi
+  # 真源是 TypeScript 字面量，里面的反斜杠是**双写**的；这里还原成一条 PCRE。
+  md_re=${md_re//\\\\/\\}
+  local -a allow=()
+  mapfile -t allow < <(grep -oP '^\s+(?:\{ )?name: "\K[^"]+' "$src2" || true)
+  allow_n=${#allow[@]}
+  if (( allow_n == 0 )); then
+    echo "❌ 从 $src2 抽不到那张具名夹具白名单 —— 抽取器坏了。" >&2
+    echo "   一张抽空了的白名单会让每一条夹具名都变成假红，报文长得和真泄漏一模一样。" >&2
+    return 1
+  fi
+  local a
+  for a in "${allow[@]}"; do
+    if [[ $a != *.md ]]; then
+      echo "❌ 白名单里抽出来一条不是文档名的东西：$a —— 抽的多半不是那张表" >&2
+      return 1
+    fi
+  done
+  local -a basenames=()
+  mapfile -t basenames < <(git ls-files | sed 's#.*/##' | sort -u)
+  if (( ${#basenames[@]} == 0 )); then
+    echo "❌ git ls-files 一份跟踪文件都没列出来 —— 存在性集合是空的，这一格会把每个名字都判红" >&2
+    return 1
+  fi
+  echo "   文档名判法：引用形态 1 条、夹具白名单 $allow_n 条、存在性集合 ${#basenames[@]} 个名字"
 
   # ── 射程：以每个远端的 <远端>/main 为基线，算还没推出去的那几条 ──
   local -a bases=() shas=()
@@ -1479,7 +1608,7 @@ cell_commit_msgs() {
   # ── 逐条扫 ──
   # ⚠️ **`grep -c` 数的是「有命中的行数」，不是命中处数**（同一行里两处只算一处）。
   #   要的是处数，所以拿 `-o` 那一份输出自己数行；`sort -u` 那一份只用来打印，不用来计数。
-  local sha short raw hits cnt bad=0 total=0
+  local sha short raw hits cnt bad=0 total=0 dangling=0
   for sha in "${shas[@]}"; do
     if [[ -z $sha ]]; then continue; fi
     short=$(git rev-parse --short "$sha")
@@ -1504,20 +1633,40 @@ cell_commit_msgs() {
         echo "   $(git log -1 --format=%s "$sha")" >&2
       fi
     done
+
+    # 同一条提交，再走一遍文档名那条判法。
+    local name
+    while IFS= read -r name; do
+      if [[ -z $name ]]; then continue; fi
+      if printf '%s\n' "${basenames[@]}" | grep -qxF -- "$name"; then continue; fi
+      if printf '%s\n' "${allow[@]}" | grep -qxF -- "$name"; then continue; fi
+      dangling=$((dangling + 1))
+      bad=1
+      echo "❌ $short 的提交信息里引用了一份仓里没有的文档：$name" >&2
+      echo "   $(git log -1 --format=%s "$sha")" >&2
+    done < <(git log -1 --format=%B "$sha" | grep -oP "$md_re" | sort -u || true)
   done
 
-  if (( bad != 0 )); then
+  if (( dangling != 0 )); then
+    echo "❌ 未推送的提交信息里共 $dangling 处解析不开的文档名（逐条见上）。" >&2
+    echo "   读者克隆下来点不开、也 grep 不到 —— 那多半是一份没随仓库推送的内部文档。" >&2
+    echo "   处置：把编号 / 文件名背后**那件事**讲进句子里，而不是把指针删掉留一句断气话；" >&2
+    echo "   真是夹具名（按定义就该不存在的那种）就去 $src2 的那张具名白名单里登记。" >&2
+  fi
+  if (( total != 0 )); then
     echo "❌ 未推送的提交信息里共 $total 处内部研发标识符（逐条见上）。" >&2
+    echo "   命中的是同形真词（HTML 标题层级 / Apple 芯片 / 网络分层 / 功能键）时，" >&2
+    echo "   出路与 markdown 那边同一条：在提交信息里改用它本来的写法，不是放宽这道门禁。" >&2
+  fi
+  if (( bad != 0 )); then
     echo "   提交信息随 push 一起发出去，公开仓的 git log 谁都读得到 ——" >&2
     echo "   而它不在任何一份 markdown 的射程里，历史扫描那一格又只管凭据。" >&2
     echo "   处置：趁它们还没推出去就地改写（git commit-tree 逐条重放，或 filter-repo" >&2
     echo "   --message-callback），把编号换成「讲那一轮 + 讲那件事」的写法；" >&2
     echo "   **只动信息不动树**，改完 git diff <旧HEAD> HEAD 必须为空。" >&2
-    echo "   命中的是同形真词（HTML 标题层级 / Apple 芯片 / 网络分层 / 功能键）时，" >&2
-    echo "   出路与 markdown 那边同一条：在提交信息里改用它本来的写法，不是放宽这道门禁。" >&2
     return 1
   fi
-  echo "✅ ${#shas[@]} 条未推送提交的提交信息里，$n 族零命中"
+  echo "✅ ${#shas[@]} 条未推送提交的提交信息里，$n 族零命中，引用的文档名逐个解析得开"
   return 0
 }
 
