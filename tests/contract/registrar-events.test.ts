@@ -9,8 +9,7 @@ import { NULL_LOGGER } from "../../src/ports/logger.js";
 
 /**
  * 防住的真实故障：`registrar.*` 事件产出了、却没落库，于是事件板块里一条补池事件
- * 都没有 —— 这正是阶段验收「看到最近的补池发生了什么」实测为零的成因
- * （账本 progress.md:1041-1046）。
+ * 都没有 —— 这正是当时阶段验收「看到最近的补池发生了什么」实测为零的成因。
  *
  * 观测形态照抄 `tests/unit/registrar/scheduling-wiring.test.ts` 的「function fakeCtx()」：
  * ⚠️ 这里**刻意用名字锚而不是行号**——第一版写的是 `:171`（计划里给的那个数），

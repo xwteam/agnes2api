@@ -368,7 +368,7 @@ export const PATCH_FIELDS = [
  * 这一条，而事件板块的口径是「池子为什么变了」——`stats` 在 `FIELD_ROLE` 里是
  * telemetry，清零不改变任何调度行为，这与「只改备注不打事件」是同一把尺子。
  * **代价是：面板上那把 key 的计数会突然掉到 0，而事件板块里没有任何痕迹**，
- * 今天唯一看得出发生过这件事的是访问日志。这条登记在 task-31A-report.md 的遗留里。
+ * 今天唯一看得出发生过这件事的是访问日志。这条当时登记成了遗留。
  * 「不打事件」由下面那格用例正面钉着，将来要改成打事件，先回设计 §7.2 加白名单。
  */
 export function keyPatchHandler(deps: KeysWriteDeps) {

@@ -166,7 +166,7 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
 /**
  * `GET /admin/api/events/download`（订正）。
  *
- * **刻意返回裸 `Response` 而不是 `c.text()`**：progress.md 登记的那条发现说「第一个返回
+ * **刻意返回裸 `Response` 而不是 `c.text()`**：当时登记的那条发现说「第一个返回
  * 裸 Response 的管理端点一出现，写反的 nosniff 顺序就让它静默少一条头」，而当时的
  * 路由清单下那条变异是**不可观测**的。这里主动把它变成可观测的，并配一条契约断言
  * （见 `tests/contract/admin-events.test.ts` 的
