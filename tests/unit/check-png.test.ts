@@ -233,19 +233,20 @@ const NEGATIVES: ReadonlyArray<readonly [string, () => Buffer, string]> = [
   ],
   // ── 以下两条是回填第 2 轮补的：IDAT 里 zlib 流之后的尾随字节没人查、块的出现次数没人管 ──
   [
-    "把 20 KB 明文接在 IDAT 的 zlib 流后面（块长与 CRC 都重算过，块序仍是 IHDR IDAT IEND）",
+    "把 10 KB 明文接在 IDAT 的 zlib 流后面（块长与 CRC 都重算过，块序仍是 IHDR IDAT IEND）",
     // **这一条一度是全绿的，而且是七条判据一条都没被走到的那种全绿**：
     // 块序合法、CRC 对、31947 字节在 32 KB 上限之内、透明度 70.1%。
     // 原因是解压那一步只对了**解压出来多少**这一笔账（`raw.length`），
     // 没对**解压用掉多少**——`inflateSync` 在 zlib 流结束后会静默吃掉后面所有字节。
-    // 容量与上面那条 iCCP 负例（20 KB）一模一样，也就是说洞只是从块里挪进了块内的流尾。
+    // 载荷比当初那一版小，**只因为今天这张真图更大、32 KB 上限底下的余量更少**：
+    // 负例必须留在上限之内，否则它会被体积那条顺手挡下，而这一条要钉的是流尾那个洞。
     // 载荷刻意用"邮箱形态的明文"：`scripts/scan-secrets.sh` 对二进制里的这一类一个字读不到。
     () => {
       const b = realLogo();
       const at = firstIdatStart(b);
       const len = (b[at]! * 0x1000000) + (b[at + 1]! << 16) + (b[at + 2]! << 8) + b[at + 3]!;
       const zlib = b.subarray(at + 8, at + 8 + len);
-      const payload = Buffer.from("ops@internal-example.invalid ".repeat(714)); // ≈20 KB 明文
+      const payload = Buffer.from("ops@internal-example.invalid ".repeat(353)); // ≈10 KB 明文
       return Buffer.concat([
         b.subarray(0, at),
         chunk("IDAT", Buffer.concat([zlib, payload])),
@@ -255,19 +256,20 @@ const NEGATIVES: ReadonlyArray<readonly [string, () => Buffer, string]> = [
     "没被解码",
   ],
   [
-    "在 IDAT 之前插 1000 个各装 4 字节载荷的合法 gAMA —— 每一个的类型、长度、位置都挑不出毛病",
+    "在 IDAT 之前插 700 个各装 4 字节载荷的合法 gAMA —— 每一个的类型、长度、位置都挑不出毛病",
     // 这一条钉的是**出现次数**，所以刻意让每个块都完全合规（`gAMA` 规范固定 4 字节，
     // 这里就装 4 字节）：长度界是逐块独立判的，它回答不了"这个类型能来几次"。
-    // 1000 × 16 字节开销 + 11959 = 27959 字节，**在 32 KB 上限之内**——
+    // 700 × 16 字节开销 + 20159 = 31359 字节，**在 32 KB 上限之内**——
+    // 块数随真图大小走：换一张更大的图就要把它调小，**让它继续留在上限之内**。
     // 这一点是这条负例的分量所在：它必须被重复判据接住，不是被体积上限顺手挡下。
     () => {
       const b = realLogo();
       const at = firstIdatStart(b);
       const blocks: Buffer[] = [];
-      for (let i = 0; i < 1000; i++) blocks.push(chunk("gAMA", Buffer.from("a@b.invalid".slice(i % 8, (i % 8) + 4))));
+      for (let i = 0; i < 700; i++) blocks.push(chunk("gAMA", Buffer.from("a@b.invalid".slice(i % 8, (i % 8) + 4))));
       return Buffer.concat([b.subarray(0, at), ...blocks, b.subarray(at)]);
     },
-    "gAMA 出现了 1000 次",
+    "gAMA 出现了 700 次",
   ],
 ];
 
