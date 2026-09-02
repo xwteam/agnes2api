@@ -1051,8 +1051,18 @@ BANNER='[collection-guard] ✅'
 #   格数：本文件的元测试新增 3 格（逐 token 字节比对 / token 集合双向查 / 该红时红的变异探针）
 #   ⇒ 4462 + 3 = 4465。文件数不动：占位符那几个值搬进了
 #   `tests/helpers/internal-ref-placeholders.ts`，它是 helper 不是测试文件。
-EXPECT_NODE_FILES=143
-EXPECT_NODE_TESTS=4465
+# 🔴 **这一轮：面板顶栏落地，外壳那一层第一次有了自己的判据。**
+#   `admin-ui/index.html` 从「侧栏底部三件套」改成「顶栏 + 只剩导航的侧栏」，
+#   两颗此前字面上是空标签的图标按钮补上了图标（屏幕上原来是两个空方块），
+#   登录闸补上品牌区与主题切换，面板补上站点图标（内联 data URI 的 SVG）。
+#   格数：新增两份文件 —— `tests/ui/shell-chrome.test.ts` 8 格（favicon 是内联 SVG /
+#   色值与 base.css 的主色相等 / 该红时红 / 三颗按钮带 i18n 标题 / 仓库链接两格 /
+#   导航项结构两格）与 `tests/ui/dom/shell-chrome.test.ts` 5 格（三颗按钮真有图标 /
+#   标题与 aria-label 被填过 / 登录闸那颗真切得动主题 / 两颗切的是同一个开关 /
+#   切语言不许抹掉导航图标）⇒ 4465 + 13 = 4478，文件数 143 + 2 = 145。
+#   workerd 那两个数不动：这两份都是 Node 单运行时的用例。
+EXPECT_NODE_FILES=145
+EXPECT_NODE_TESTS=4478
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

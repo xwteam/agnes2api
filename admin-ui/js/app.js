@@ -11,6 +11,7 @@
  */
 import { t, apply, setLang, currentLang, LANGS } from "./i18n.js";
 import { getTheme, toggleTheme, setTheme } from "./theme.js";
+import { svgIcon } from "./ui.js";
 import { onUnauthorized } from "./api.js";
 import { overviewSection } from "./sec-overview.js";
 import { keysSection } from "./sec-keys.js";
@@ -160,8 +161,46 @@ form.addEventListener("submit", async (e) => {
 // 会话失效由 api.js 统一上报：任何一个 401 都把人送回登录闸，并说清原因。
 onUnauthorized(() => leave("common.sessionExpired"));
 
+/**
+ * 顶栏与登录闸上那几颗图标按钮的图标。
+ *
+ * **`index.html` 里那几颗按钮是空的，图标在这里插进去**，理由是
+ * `js/ui.js` 的 `svgIcon()` 是全站唯一那份构造 SVG 的实现（`createElementNS`，
+ * 不走 innerHTML），在 HTML 里再手抄一份 `<path d="…">` 就是第二份真源。
+ *
+ * ⚠️ **这两颗按钮此前是真的空的**：只有 `data-i18n-title`（悬停才有提示），
+ * 里面一个字符都没有 ⇒ 屏幕上是两个 32×32 的空方块，而 i18n 字典里
+ * `shell.theme` / `shell.logout` 五种语言的文案一直都在、从没被渲染过。
+ * 这一条由 `tests/ui/dom/shell-chrome.test.ts` 的
+ * 「三颗图标按钮各自真的有一个 <svg> 图标 —— 空方块那个缺陷不许回来」钉着。
+ *
+ * 主题那颗刻意**不随当前主题换图标**：半明半暗的对比图标表达的是「切换」这个动作
+ * 本身，与当前处在哪一档无关；随主题换图标还要回答「画的是现在这一档还是切过去
+ * 那一档」，那是个每次都会有人读反的问题。
+ *
+ * ⚠️ **path 的每个命令字母后面都留一个空格，别把它们压回紧挨着数字的紧凑写法**
+ *（SVG 两种写法逐字等价）：紧凑写法里「移动命令紧跟着两位坐标」那个片段会被
+ * `tests/unit/source-internal-refs.test.ts` 的
+ * 「🔴 逐份点名与基线相等（涨了是新回归，掉了是该把数字改小，签名变了是等量替换）」
+ * 判成「大写字母 + 一到两位数字」那一族内部标识符 —— 实测压回紧凑写法当场红 5 处
+ *（这份文件 2 处、`index.html` 3 处）。
+ */
+const ICON_THEME = "M 12 3 a 9 9 0 1 0 0 18 a 9 9 0 1 0 0 -18 z M 12 3 v 18";
+const ICON_LOGOUT = "M 12 4 v 8 M 7.5 6.5 a 7 7 0 1 0 9 0";
+
+/** 给一颗图标按钮插图标。id 不存在时静默跳过——登录闸与顶栏各有各的按钮。 */
+function paintIcon(id, d) {
+  const btn = document.getElementById(id);
+  if (btn) btn.appendChild(svgIcon(d, 16));
+}
+paintIcon("theme-btn", ICON_THEME);
+paintIcon("logout-btn", ICON_LOGOUT);
+paintIcon("gate-theme-btn", ICON_THEME);
+
 document.getElementById("logout-btn").addEventListener("click", () => leave(null));
 document.getElementById("theme-btn").addEventListener("click", () => toggleTheme());
+// 登录闸上那颗：**登录之前也得切得动主题**，顶栏那颗要登录之后才够得着。
+document.getElementById("gate-theme-btn").addEventListener("click", () => toggleTheme());
 
 const langSel = document.getElementById("lang-select");
 for (const l of LANGS) {

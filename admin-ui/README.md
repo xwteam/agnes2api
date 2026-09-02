@@ -49,6 +49,10 @@ CI 的漂移门禁同样会红。
    里面的 `<script>` / `on*` / `javascript:` 都会执行，而脚本校验只对 `.html` 生效。
    「零内联脚本」的判据是**属性边界**匹配：`<script data-src="x">payload</script>`
    这类假 `src` 伪装拦得住（浏览器只在真有 `src` 时才忽略内联体）。
+   **站点图标（`<link rel="icon">`）走的是同一条规则**：它是一段 `data:image/svg+xml,…`
+   的 URI 写在 `index.html` 里，不是仓里的第二个文件——`data:` 在 `src/ui/serve.ts`
+   那条 CSP 的 `img-src 'self' data:` 里是被明确允许的。**别把它换成 `.ico` / `.png`**：
+   那两种连 `scripts/build-ui.mjs` 的扩展名白名单都过不去。
 3. 文案与占位符里不许出现「数字IP:端口」形态，会被 `scripts/scan-secrets.sh` 打红。
    一律写 `localhost:8080` 或 `https://your-gateway.example.com`。
 
@@ -64,7 +68,9 @@ CI 的漂移门禁同样会红。
 
 ## 目录结构与板块
 
-`index.html` 是全站唯一的 HTML：左边一列导航按钮、右边一个内容区。导航按钮上的
+`index.html` 是全站唯一的 HTML：顶上一条横贯的顶栏（品牌 / 仓库链接 / 语言 / 主题 /
+退出登录）、左边一列导航按钮、右边一个内容区。**语言、主题、退出登录三样在顶栏，不在侧栏底部**
+——侧栏现在只剩导航。导航按钮上的
 `data-section` 是**板块清单的唯一真源**——`app.js` 按它切板块，下面这张表按它排，
 `i18n` 字典按它取 `nav.*` 文案。每一个 `data-section` 各配一份同名的挂载文件
 （拼 DOM 与发请求）和一份同名的纯逻辑文件（可测、无 DOM）。

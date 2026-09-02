@@ -63,6 +63,9 @@ export const I18N = {
   "shell.logout":     { "zh-CN": "退出登录", "zh-TW": "登出", en: "Sign out", ja: "ログアウト", ko: "로그아웃" },
   "shell.theme":      { "zh-CN": "切换主题", "zh-TW": "切換主題", en: "Toggle theme", ja: "テーマ切り替え", ko: "테마 전환" },
   "shell.lang":       { "zh-CN": "语言", "zh-TW": "語言", en: "Language", ja: "言語", ko: "언어" },
+  // 顶栏那条仓库链接的悬停提示。链接自己的文字是 `GitHub` 这个专名，五种语言里都不译，
+  // 所以它写死在 `index.html` 里；**要译的是「这链接会把你带去哪」**，那一句在这里。
+  "shell.repo":       { "zh-CN": "项目仓库（GitHub）", "zh-TW": "專案倉庫（GitHub）", en: "Project repository on GitHub", ja: "GitHub のリポジトリ", ko: "GitHub 저장소" },
   "common.refresh":   { "zh-CN": "刷新", "zh-TW": "重新整理", en: "Refresh", ja: "更新", ko: "새로고침" },
   "common.loadFailed":{ "zh-CN": "读取失败，显示为 —", "zh-TW": "讀取失敗，顯示為 —", en: "Failed to load; shown as —", ja: "取得に失敗しました（— と表示）", ko: "불러오기 실패(—로 표시)" },
   "common.copy":      { "zh-CN": "复制", "zh-TW": "複製", en: "Copy", ja: "コピー", ko: "복사" },

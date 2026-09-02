@@ -12,7 +12,7 @@ import { createFakeDom, installFakeDom, type FakeDom, type FakeElement } from ".
  * 那一格兜住——它直接扫真 `index.html`，漂了就红。
  */
 export const SKELETON_IDS = [
-  "gate", "gate-form", "gate-key", "gate-err",
+  "gate", "gate-form", "gate-key", "gate-err", "gate-theme-btn",
   "shell", "lang-select", "theme-btn", "logout-btn",
   "sec-overview", "sec-keys", "sec-registrar", "sec-events", "sec-usage", "sec-models",
   "sec-playground", "sec-settings",
@@ -109,12 +109,30 @@ export function buildDom(): { dom: FakeDom; nav: FakeElement[] } {
   dom.byId("gate-form").appendChild(submit);
   dom.byId("gate-form").appendChild(dom.byId("gate-err"));
 
+  // 三颗图标按钮的 `data-i18n-title`：真 `index.html` 上写着，`apply()` 靠它写
+  // title / aria-label。夹具漏了它的话，「图标按钮读屏器读得出来」那一格测的是空气。
+  // ⚠️ 这三条与真 HTML 的对齐由 `tests/ui/shell-chrome.test.ts` 的
+  // 「三颗图标按钮在 index.html 里都带着 data-i18n-title」那一格扫真文件兜着。
+  for (const [id, key] of [
+    ["theme-btn", "shell.theme"], ["gate-theme-btn", "shell.theme"], ["logout-btn", "shell.logout"],
+  ] as const) {
+    dom.byId(id).setAttribute("data-i18n-title", key);
+  }
+
   const nav: FakeElement[] = [];
   for (const name of NAV_SECTIONS) {
     const btn = dom.document.createElement("button");
     btn.classList.add("nav-item");
     btn.setAttribute("data-section", name);
-    btn.setAttribute("data-i18n", `nav.${name}`);
+    // **`data-i18n` 挂在里面那个 span 上，不是挂在按钮上**——真 `index.html` 就是这么写的，
+    // 而它不是随便挑的：`apply()` 对 [data-i18n] 写的是 `textContent`，标在按钮上会
+    // 把同在按钮里的那颗图标一起抹掉。夹具照抄这个结构，不然这里测不到那件事。
+    const ico = dom.document.createElement("span");
+    ico.classList.add("nav-ico");
+    btn.appendChild(ico);
+    const label = dom.document.createElement("span");
+    label.setAttribute("data-i18n", `nav.${name}`);
+    btn.appendChild(label);
     dom.document.body.appendChild(btn);
     nav.push(btn);
     dom.byId(`sec-${name}`).classList.add("section");

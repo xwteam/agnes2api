@@ -8,6 +8,11 @@
   width: 100%; max-width: 380px; padding: 28px; background: var(--panel);
   border: 1px solid var(--border); border-radius: var(--radius);
 }
+.gate-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+/* ⚠️ 这一条不是装饰：下面 `.gate-card button` 那条 `width: 100%` 是给「进入」那颗
+   提交按钮写的，它会连坐品牌区里这颗图标按钮 —— 实测（真浏览器截图）它被拉成整行宽、
+   直接压在品牌名上。`.icon-btn` 的 32×32 由 base.css 定义，这里只负责不让它被撑开。 */
+.gate-head .icon-btn { flex: none; width: 32px; }
 .gate-card h1 { margin: 0 0 4px; font-size: 20px; }
 .gate-card p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
 .gate-card input { margin-bottom: 14px; }
@@ -20,23 +25,49 @@
    将来改布局不必回头去找 JS 里那句写死的 display 值。 */
 .gate.off { display: none; }
 
-/* ── 外壳（侧栏 + 主内容） ───────────────────────────────── */
+/* ── 外壳（顶栏 + 侧栏 + 主内容） ─────────────────────────
+   顶栏横跨两列，所以栅格是「一行自适应高度的顶栏 + 一行内容」：
+   `grid-template-rows: auto 1fr` 那个 `1fr` 是内容行，没有它侧栏在内容很短时不到底。 */
 .shell { display: none; }
-.shell.on { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+.shell.on {
+  display: grid; grid-template-columns: 220px 1fr; grid-template-rows: auto 1fr;
+  min-height: 100vh;
+}
+.topbar {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: var(--gap);
+  padding: 10px var(--gap);
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
+/* 品牌区：顶栏与登录闸共用同一副长相，两处各写一份的话它们会各漂各的。 */
+.brand { display: inline-flex; align-items: center; gap: var(--gap-sm); }
+.brand-mark { flex: none; color: var(--primary); }
+.brand-name { font-weight: 600; font-size: 16px; }
+/* `margin-left: auto` 把动作区推到最右，中间那段空白留给徽章这类以后要挂上来的东西。 */
+.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--gap-sm); }
+.topbar-actions select { width: auto; padding: 6px 8px; }
+/* 仓库链接：外观对齐 `.icon-btn`（同样的高度与圆角），但它是 <a> 不是 <button>
+   ——中键 / Ctrl 点开新标签这类浏览器原生行为只有真链接才有。 */
+.topbar-link {
+  display: inline-flex; align-items: center; height: 32px; padding: 0 10px;
+  font-size: 13px; text-decoration: none;
+  color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.topbar-link:hover { background: var(--panel-2); }
 .side {
   display: flex; flex-direction: column; gap: var(--gap);
   padding: var(--gap); background: var(--panel); border-right: 1px solid var(--border);
 }
-.side .brand { font-weight: 600; font-size: 16px; }
 .side nav { display: flex; flex-direction: column; gap: 4px; }
 .nav-item {
+  display: flex; align-items: center; gap: var(--gap-sm);
   text-align: left; padding: 8px 10px; color: var(--text);
   background: transparent; border: 0; border-radius: var(--radius-sm);
 }
+/* 图标那一格宽度固定：不固定的话八个 emoji 的字形宽度不一，文字左边会参差不齐。 */
+.nav-ico { flex: none; width: 18px; font-size: 15px; line-height: 1; text-align: center; }
 .nav-item:hover { background: var(--panel-2); }
 .nav-item.active { background: var(--primary); color: var(--primary-fg); }
-.side-foot { margin-top: auto; display: flex; align-items: center; gap: var(--gap-sm); }
-.side-foot select { width: auto; flex: 1; padding: 6px 8px; }
 
 .main { padding: var(--gap); overflow: auto; }
 .section { display: none; }

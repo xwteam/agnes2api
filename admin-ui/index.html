@@ -5,6 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#f7f8fa">
 <title>agnes2api 管理后台</title>
+<!-- 站点图标。**内联 data URI 的 SVG，不是一个独立文件**：admin-ui/README.md 的硬规则 2
+     两头都堵着——独立的 `.svg` 会以 image/svg+xml 挂在 /admin/ 下变成同源文档，
+     而二进制（`.png` / `.ico`）连生成器都过不去（scripts/build-ui.mjs 的扩展名白名单）。
+     `<link rel="icon">` 走的是 CSP 的 img-src，而 src/ui/serve.ts 里那条策略写的是
+     `img-src 'self' data:` ⇒ 这条 data URI 是被现有策略明确允许的那一种。
+     ⚠️ **这里的颜色是硬编码的十六进制，而面板其余地方一律引用 CSS 变量**：data URI
+     里引用不到 `var(--primary)`。代价由 tests/ui/shell-chrome.test.ts 的
+     「favicon 里那个色值就是 base.css 的 --primary —— 硬编码的那一处不许自己漂」接住，
+     改了 base.css 的主色而没改这里，那一格当场红。
+     ⚠️ **刻意不用 docs/logo.png**：那张图 20159 字节，base64 之后约 26.9 KB 落进面板资源，
+     而体积预算今天的余量只有约 48 KiB（gzip）——一张图吃掉四成余量，且同一份字节会
+     在仓里存两处（`docs/logo.png` 与这份 HTML）而没有任何东西看着它们一致。 -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3.5' y='7' width='17' height='13' rx='4.5' fill='none' stroke='%234f46e5' stroke-width='1.8'/%3E%3Cpath d='M 12 3.4 v 3.6' stroke='%234f46e5' stroke-width='1.8'/%3E%3Ccircle cx='12' cy='2.6' r='1.5' fill='%234f46e5'/%3E%3Ccircle cx='9' cy='13.2' r='1.6' fill='%234f46e5'/%3E%3Ccircle cx='15' cy='13.2' r='1.6' fill='%234f46e5'/%3E%3C/svg%3E">
 <!-- 唯一的经典脚本，必须同步、必须在 CSS 之前：防闪白 / 闪错语言。 -->
 <script src="/admin/js/boot.js"></script>
 <link rel="stylesheet" href="/admin/css/base.css">
@@ -14,6 +27,26 @@
 <body>
 <div class="gate" id="gate">
   <form class="gate-card" id="gate-form">
+    <!-- 登录闸的品牌区与主题切换。**主题切换在登录之前就得有**：`js/boot.js` 已经
+         按 localStorage 把 data-theme 落到 <html> 上了，深色用户看到的登录闸本来就是
+         深色的，而在这里改不了它——顶栏那颗按钮要登录之后才够得着。
+         ⚠️ **这里刻意没有语言下拉**：`js/i18n.js` 在模块加载时就读 localStorage 定好了
+         语言，登录闸的每一句文案（含下面那些 data-i18n）都已经按那个语言渲染，
+         所以语言在闸上是**可用**的；不放下拉是因为它与顶栏那个是同一份状态的第二个
+         入口，而闸上五种语言的文案本来就齐全，看不懂的人换不换得了语言不取决于这里。 -->
+    <div class="gate-head">
+      <span class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+          <rect x="3.5" y="7" width="17" height="13" rx="4.5" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+          <path d="M 12 3.4 v 3.6" stroke="currentColor" stroke-width="1.8"></path>
+          <circle cx="12" cy="2.6" r="1.5" fill="currentColor"></circle>
+          <circle cx="9" cy="13.2" r="1.6" fill="currentColor"></circle>
+          <circle cx="15" cy="13.2" r="1.6" fill="currentColor"></circle>
+        </svg>
+        <span class="brand-name">agnes2api</span>
+      </span>
+      <button id="gate-theme-btn" class="icon-btn" type="button" data-i18n-title="shell.theme"></button>
+    </div>
     <h1 data-i18n="gate.title">agnes2api 管理后台</h1>
     <p class="sub" data-i18n="gate.sub">请输入管理口令（ADMIN_TOKEN）</p>
     <label for="gate-key" data-i18n="gate.label">管理口令</label>
@@ -25,23 +58,48 @@
 </div>
 
 <div class="shell" id="shell">
-  <aside class="side">
-    <div class="brand">agnes2api</div>
-    <nav>
-      <button class="nav-item" data-section="overview" data-i18n="nav.overview">概览</button>
-      <button class="nav-item" data-section="keys" data-i18n="nav.keys">Key 池</button>
-      <button class="nav-item" data-section="registrar" data-i18n="nav.registrar">注册机</button>
-      <button class="nav-item" data-section="events" data-i18n="nav.events">事件</button>
-      <button class="nav-item" data-section="usage" data-i18n="nav.usage">用量</button>
-      <button class="nav-item" data-section="models" data-i18n="nav.models">模型</button>
-      <button class="nav-item" data-section="playground" data-i18n="nav.playground">调试台</button>
-      <button class="nav-item" data-section="settings" data-i18n="nav.settings">设置</button>
-    </nav>
-    <div class="side-foot">
+  <!-- 顶栏。品牌 / 语言 / 主题 / 退出登录 / 仓库链接都挂在这里，侧栏只剩导航。
+       ⚠️ **刻意没有「重启」按钮**（kiro2api 的顶栏上有一个）：本网关的 Worker 形态
+       压根没有可重启的进程（概览页那几格自己写着「无常驻进程」），Node / Docker 形态
+       也没有任何自重启接口。点了没反应的按钮比没有按钮更糟。
+       ⚠️ 两颗图标按钮的图标由 `js/app.js` 用 `svgIcon()` 插进来，**这里刻意是空的**：
+       图标一律内联 SVG（admin-ui/README.md 硬规则 2），而 `js/ui.js` 的 `svgIcon()` 是
+       全站唯一那份构造 SVG 的实现，在 HTML 里再手抄一份 path 就是第二份真源。
+       ⚠️ **空标签本身曾经就是缺陷**：这两颗按钮以前只有 `data-i18n-title`（悬停才有
+       提示），`innerHTML` 是空串 ⇒ 屏幕上是两个 32×32 的空方块。 -->
+  <header class="topbar">
+    <span class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+        <rect x="3.5" y="7" width="17" height="13" rx="4.5" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+        <path d="M 12 3.4 v 3.6" stroke="currentColor" stroke-width="1.8"></path>
+        <circle cx="12" cy="2.6" r="1.5" fill="currentColor"></circle>
+        <circle cx="9" cy="13.2" r="1.6" fill="currentColor"></circle>
+        <circle cx="15" cy="13.2" r="1.6" fill="currentColor"></circle>
+      </svg>
+      <span class="brand-name">agnes2api</span>
+    </span>
+    <div class="topbar-actions">
+      <a class="topbar-link" href="https://github.com/xwteam/agnes2api"
+         target="_blank" rel="noopener noreferrer" data-i18n-title="shell.repo">GitHub</a>
       <select id="lang-select" data-i18n-title="shell.lang"></select>
-      <button id="theme-btn" class="icon-btn" data-i18n-title="shell.theme"></button>
-      <button id="logout-btn" class="icon-btn" data-i18n-title="shell.logout"></button>
+      <button id="theme-btn" class="icon-btn" type="button" data-i18n-title="shell.theme"></button>
+      <button id="logout-btn" class="icon-btn" type="button" data-i18n-title="shell.logout"></button>
     </div>
+  </header>
+  <aside class="side">
+    <nav>
+      <!-- 每个导航项 = 一颗 emoji + 一个带 data-i18n 的文字 span。
+           **文字必须自己占一个 span**：`js/i18n.js` 的 `apply()` 对 [data-i18n] 写的是
+           `el.textContent = t(key)`，标在按钮上会把图标一起抹掉。 -->
+      <button class="nav-item" data-section="overview"><span class="nav-ico" aria-hidden="true">📊</span><span data-i18n="nav.overview">概览</span></button>
+      <button class="nav-item" data-section="keys"><span class="nav-ico" aria-hidden="true">🔑</span><span data-i18n="nav.keys">Key 池</span></button>
+      <button class="nav-item" data-section="registrar"><span class="nav-ico" aria-hidden="true">🤖</span><span data-i18n="nav.registrar">注册机</span></button>
+      <button class="nav-item" data-section="events"><span class="nav-ico" aria-hidden="true">📜</span><span data-i18n="nav.events">事件</span></button>
+      <button class="nav-item" data-section="usage"><span class="nav-ico" aria-hidden="true">📈</span><span data-i18n="nav.usage">用量</span></button>
+      <button class="nav-item" data-section="models"><span class="nav-ico" aria-hidden="true">🧩</span><span data-i18n="nav.models">模型</span></button>
+      <button class="nav-item" data-section="playground"><span class="nav-ico" aria-hidden="true">🧪</span><span data-i18n="nav.playground">调试台</span></button>
+      <button class="nav-item" data-section="settings"><span class="nav-ico" aria-hidden="true">⚙️</span><span data-i18n="nav.settings">设置</span></button>
+    </nav>
   </aside>
   <main class="main">
     <section class="section" id="sec-overview"></section>
