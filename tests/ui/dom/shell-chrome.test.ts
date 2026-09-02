@@ -80,6 +80,91 @@ describe("顶栏 / 登录闸的图标按钮", () => {
   });
 });
 
+describe("顶栏的服务状态徽章", () => {
+  const TOKEN = "admin-token-0123456789-ok!";
+
+  /** 登录一次，随后 `enter()` 会去探一次 `/health`。 */
+  async function login(respond?: (url: string, method: string) => { status: number; body: unknown }) {
+    const h = await bootPanel({ respond });
+    h.input.value = TOKEN;
+    h.form.submit();
+    await settle();
+    return h;
+  }
+
+  it("进壳层之后真的去探了一次 /health，而且那一次一条凭据头都不带", async () => {
+    const h = await login((url) => (url === "/health"
+      ? { status: 200, body: { status: "ok", version: "0.0.0" } }
+      : { status: 200, body: {} }));
+    const probes = h.calls.filter((c) => c.url === "/health");
+    expect(probes.length, "进壳层之后没探过 /health —— 那颗徽章说的是它自己编的").toBe(1);
+    // `/health` 是不鉴权端点：把管理口令送过去等于凭空多一条口令离开页面的路径。
+    expect(Object.keys(probes[0]!.headers), "健康探针带上了请求头 —— 它打的是不鉴权端点").toEqual([]);
+  });
+
+  it("登录闸上不探：没有已存口令时一个请求都不发这条性质不许被徽章破坏", async () => {
+    const h = await bootPanel();
+    await settle();
+    expect(h.calls, "还在登录闸上就发请求了").toEqual([]);
+  });
+
+  it("拿到 status:ok ⇒ 徽章是「运行中」并挂上 badge-ok", async () => {
+    const h = await login((url) => (url === "/health"
+      ? { status: 200, body: { status: "ok" } }
+      : { status: 200, body: {} }));
+    const badge = h.dom.byId("health-badge");
+    expect(badge.textContent).toBe("运行中");
+    expect(badge.classList.contains("badge-ok")).toBe(true);
+  });
+
+  /** 降级那一档回的是 **503**；按 `res.ok` 判的话它会掉进「状态未知」。 */
+  it("拿到 503 + status:degraded ⇒ 徽章是「已降级」并挂上 badge-warn", async () => {
+    const h = await login((url) => (url === "/health"
+      ? { status: 503, body: { status: "degraded", storage: { writable: false } } }
+      : { status: 200, body: {} }));
+    const badge = h.dom.byId("health-badge");
+    expect(badge.textContent).toBe("已降级");
+    expect(badge.classList.contains("badge-warn")).toBe(true);
+    expect(badge.classList.contains("badge-ok"), "降级却挂着「运行中」的颜色").toBe(false);
+  });
+
+  it("应答认不出来 ⇒ 徽章说「状态未知」，绝不滑进「运行中」", async () => {
+    const h = await login(() => ({ status: 200, body: {} }));
+    const badge = h.dom.byId("health-badge");
+    expect(badge.textContent).toBe("状态未知");
+    expect(badge.classList.contains("badge-ok"), "判不出来却点亮了绿灯").toBe(false);
+    expect(badge.classList.contains("badge-warn")).toBe(false);
+  });
+
+  it("点一下徽章会再探一次 —— 它写的是「最近一次探测」，得有办法刷新", async () => {
+    const h = await login((url) => (url === "/health"
+      ? { status: 200, body: { status: "ok" } }
+      : { status: 200, body: {} }));
+    const before = h.calls.filter((c) => c.url === "/health").length;
+    h.dom.byId("health-badge").click();
+    await settle();
+    expect(h.calls.filter((c) => c.url === "/health").length, "点了徽章没有重新探").toBe(before + 1);
+  });
+
+  /**
+   * 徽章文案是 JS 写进去的，靠**动态挂上去的 `data-i18n`** 让框架层在切语言时重刷。
+   * 变异：把 `paint()` 里那句 `setAttribute("data-i18n", …)` 删掉 ⇒ 这一格变红。
+   */
+  it("切语言之后徽章跟着换语言（它的 data-i18n 是运行期挂上去的）", async () => {
+    const h = await login((url) => (url === "/health"
+      ? { status: 200, body: { status: "ok" } }
+      : { status: 200, body: {} }));
+    expect(h.dom.byId("health-badge").textContent).toBe("运行中");
+
+    const sel = h.dom.byId("lang-select");
+    sel.value = "en";
+    sel.change();
+    await settle();
+
+    expect(h.dom.byId("health-badge").textContent, "切了语言，徽章还留在上一门语言上").toBe("Running");
+  });
+});
+
 describe("侧栏导航：图标与文字是两个 span", () => {
   /**
    * **`apply()` 对 [data-i18n] 写的是 `textContent`。** 把 `data-i18n` 标在导航按钮

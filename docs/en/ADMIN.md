@@ -49,6 +49,25 @@ redirects to `/admin`, so either of the two ways people type it by hand works.
   container. Put the panel behind TLS and open it only on machines you trust — the full
   argument is in the "Leaking the admin token" part of [DEPLOY.md](DEPLOY.md).
 
+### The top bar
+
+The top bar spans the panel: brand, status badge, repo link, language, theme, sign
+out. The sidebar keeps only the eight nav items.
+
+- **The status badge has three states**: running / degraded / status unknown. Its source is
+  the gateway's `/health` — the endpoint that needs no authentication and touches no storage.
+  It answers `ok` while the data directory is writable, and `degraded` with a `503` when it is
+  not; the image's built-in health check reads that same line.
+- **When it cannot tell, it says "status unknown", not "running"**: a network failure, a body
+  that is not JSON, or a `status` value it has never seen all land in the third state. A green
+  light that is always on carries as much information as no light.
+- **It reports the latest probe, not this instant**: the panel probes once when you get in;
+  clicking the badge probes again.
+- **There is no "restart" button up there**: the Worker form has no process to restart, and
+  the Node / Docker form exposes no self-restart endpoint.
+- **The theme toggle also exists on the login gate**: the dark theme already applies while
+  you type the token, so that is where it has to be switchable.
+
 ## The eight boards at a glance
 
 | Board | The question it answers | Read-only or writes | Which switch it needs |

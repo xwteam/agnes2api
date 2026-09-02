@@ -11270,7 +11270,10 @@ describe("五份 ADMIN.md 的分层、围栏与排障三段式", () => {
 
   /** 今天的实测值，同时是**不回退下限**（只许升不许降，与常见问题那一条同一种形态）。 */
   const H2_COUNT = 14;
-  const H3_FLOOR = 48;
+  // ⚠️ 顶栏那一节（「面板外壳」那一段）落地时 48 → 49：五份各多一个 `###`。
+  // 下限跟着今天的实测值走，**不是**把它留在旧值上——留旧值等于给「五份一起缩水一层」
+  // 开一格豁免，而下面那格探针正是拿 `H3_FLOOR - 1` 当期望值的。
+  const H3_FLOOR = 49;
   const H4_FLOOR = 2;
   const FENCE_FLOOR = 3;
 
@@ -11308,7 +11311,7 @@ describe("五份 ADMIN.md 的分层、围栏与排障三段式", () => {
     }
   });
 
-  it("`###`/`####` 两级：五份数量彼此相等，且不回退（今天 48 / 2）", () => {
+  it("`###`/`####` 两级：五份数量彼此相等，且不回退（今天 49 / 2）", () => {
     const h3 = LANGS.map((l) => headingsAtLevel(realAdminSrc(l), 3).length);
     const h4 = LANGS.map((l) => headingsAtLevel(realAdminSrc(l), 4).length);
     expect(new Set(h3).size, `五份的 \`###\` 数不一致：${JSON.stringify(Object.fromEntries(LANGS.map((l, i) => [l, h3[i]])))}`)

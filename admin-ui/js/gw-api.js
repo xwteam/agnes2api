@@ -22,9 +22,10 @@
  * 由 `tests/ui/gw-api.test.ts` 的
  * 「口令只在请求头里，URL 上一个字节都没有 —— 进 URL 就会落进历史与各级访问日志」钉着。
  *
- * ⚠️⚠️ **这是全站第三个网络出口。** 另两个是 `js/api.js` 的 `raw()` 与 `js/app.js` 的
- * 登录探针。三个出口这件事由 `tests/ui/api-session.test.ts` 的
- * 「恰好三处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口」那格数着钉住。
+ * ⚠️⚠️ **这是全站第三个网络出口。** 另三个是 `js/api.js` 的 `raw()`、`js/app.js` 的
+ * 登录探针与 `js/health.js` 的健康探针（**最后这个是后来加的**，所以「第三个」说的是
+ * 落地顺序，不是总数）。四个出口这件事由 `tests/ui/api-session.test.ts` 的
+ * 「恰好四处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口、health.js 的健康探针」那格数着钉住。
  * ⚠️ 那张枚举表**曾经漏掉三种写法**（`new WebSocket(` / 动态 `import(` /
  * 把 fetch 先存进变量再调），本模块落地时把三种一并补进去并各种了一次探针。
  * 它仍然沿另一条轴漏一族：**带花括号的插值会被整条抠掉**——本模块因此**不许**把
@@ -172,7 +173,7 @@ export async function sendToGateway(req, token, opts) {
  * 「流式与非流式走同一道同源自查 —— 两条路各写一份的话，漏掉的那份会把口令送去别处」
  * 逐条对着钉（同一组判据在两条路上各断言一遍）。
  * ⚠️ 顺带：本文件因此仍然**只有一处** `fetch(`，`tests/ui/api-session.test.ts` 的
- * 「恰好三处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口」那张表
+ * 「恰好四处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口、health.js 的健康探针」那张表
  * 不必跟着放宽——**那张表一旦开始跟着代码放宽就不再守任何东西**。
  *
  * ⚠️ **不用 `EventSource`**：它设不了请求头（设计 §7.2 因此否掉了它），

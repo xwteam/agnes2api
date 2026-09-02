@@ -12,6 +12,7 @@
 import { t, apply, setLang, currentLang, LANGS } from "./i18n.js";
 import { getTheme, toggleTheme, setTheme } from "./theme.js";
 import { svgIcon } from "./ui.js";
+import { refreshHealth, wireHealth } from "./health.js";
 import { onUnauthorized } from "./api.js";
 import { overviewSection } from "./sec-overview.js";
 import { keysSection } from "./sec-keys.js";
@@ -84,6 +85,10 @@ function enter() {
   let saved = "overview";
   try { saved = localStorage.getItem(SECTION_STORE) || "overview"; } catch (e) { /* ignore */ }
   showSection(saved);
+  // 顶栏那颗状态徽章探一次。**在这里而不是在模块顶层**：徽章只在壳层里看得见，
+  // 而登录闸上发一个请求会让「没有已存口令时一个请求都不发」那条性质不再成立。
+  // 不 await：徽章慢一拍无所谓，板块渲染不该等它。
+  refreshHealth();
 }
 
 function leave(reason) {
@@ -97,8 +102,9 @@ function leave(reason) {
 }
 
 /**
- * 登录探针。**这是全站第二个网络出口**（另两个是 `js/api.js` 的 `raw()` 与
- * Playground 的 `js/gw-api.js`）——`api.js` 的文件头一度把「全站唯一网络出口」
+ * 登录探针。**这是全站第二个落地的网络出口**（另三个是 `js/api.js` 的 `raw()`、
+ * Playground 的 `js/gw-api.js` 与顶栏状态徽章的 `js/health.js`）——`api.js` 的文件头
+ * 一度把「全站唯一网络出口」
  * 当成它那段安全论证的前提，那句是假的（评审当场推翻），两边现在都说准了。
  * ⚠️ **「也是最后一个」这半句同样活不过一期**：它被后来落地的 Playground
  * 对外出口推翻了。⭐ 记一条形状：**一句「到此为止」的话，写下时是真的，
@@ -111,9 +117,9 @@ function leave(reason) {
  *    在登录闸上再弹一次登录闸；
  * ③ 口令还没进 `localStorage`，`api.js` 的 `readKey()` 读不到它。
  * 出口数量由 `tests/ui/api-session.test.ts` 的
- * 「恰好三处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口」
+ * 「恰好四处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口、health.js 的健康探针」
  * 数着钉住：**照它那张手写枚举表里的七种写法写、并且不在带花括号的插值里**，
- * 加第四个会变红。
+ * 加第五个会变红。
  * ⚠️ **那张表原来只有四种写法，后来把漏掉的三种补齐了**
  * （`new WebSocket(` / 动态 `import(` / 把 fetch 先存进变量再调；那一轮评审实测各得 0）。
  * 补齐之后它仍然沿另一条轴漏一族：抠模板串字面文本那一步会把**带花括号的插值**
@@ -199,6 +205,7 @@ paintIcon("gate-theme-btn", ICON_THEME);
 
 document.getElementById("logout-btn").addEventListener("click", () => leave(null));
 document.getElementById("theme-btn").addEventListener("click", () => toggleTheme());
+wireHealth();
 // 登录闸上那颗：**登录之前也得切得动主题**，顶栏那颗要登录之后才够得着。
 document.getElementById("gate-theme-btn").addEventListener("click", () => toggleTheme());
 

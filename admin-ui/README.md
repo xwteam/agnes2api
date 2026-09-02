@@ -88,12 +88,13 @@ CI 的漂移门禁同样会红。
 
 `js/pure/` 下另有几份**不与板块一一对应**的共用纯逻辑：`js/pure/format.mjs`、
 `js/pure/session.mjs`、`js/pure/storage-keys.mjs`、`js/pure/sendable.mjs`、
-`js/pure/examples.mjs`、`js/pure/keys-write.mjs`。上表不管它们，只钉
+`js/pure/examples.mjs`、`js/pure/keys-write.mjs`、`js/pure/health.mjs`。上表不管它们，只钉
 「一个板块 ⇒ 两份同名文件」这一条。
 
 板块之外的共用件：`js/boot.js`（见上，全站唯一的经典脚本）、`js/app.js`（外壳：登录闸、
 导航、板块注册表与 `showSection`）、`js/api.js`（打管理接口 `/admin/api/*` 的出口）、
-`js/gw-api.js`（调试台打对外网关那棵树用的另一份，**拿的是另一把钥匙**）、`js/i18n.js` +
+`js/gw-api.js`（调试台打对外网关那棵树用的另一份，**拿的是另一把钥匙**）、
+`js/health.js`（顶栏那颗服务状态徽章，打的是不鉴权的 `/health`，**一条凭据头都不带**）、`js/i18n.js` +
 `js/i18n-dict.js`（五语言字典）、`js/theme.js`（亮/暗主题）、`js/ui.js`（DOM 小工具）。
 每一份的边界与理由都写在各自文件头，这里不复述。
 

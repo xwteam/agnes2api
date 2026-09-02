@@ -78,6 +78,12 @@
       </svg>
       <span class="brand-name">agnes2api</span>
     </span>
+    <!-- 服务状态徽章。数据源是 `/health`（不鉴权、零存储 IO），三档：运行中 / 降级 /
+         状态未知。**初始文案就是「状态未知」**：这一刻还没探过，写成「运行中」等于
+         凭空断言一件没验过的事。它是一颗按钮，点一下重新探——徽章说的是「最近一次
+         探测」，不是「此刻」。 -->
+    <button id="health-badge" class="badge health-badge" type="button"
+            data-i18n="shell.status.unknown" data-i18n-title="shell.status.hint">状态未知</button>
     <div class="topbar-actions">
       <a class="topbar-link" href="https://github.com/xwteam/agnes2api"
          target="_blank" rel="noopener noreferrer" data-i18n-title="shell.repo">GitHub</a>

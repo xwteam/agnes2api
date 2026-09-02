@@ -1061,8 +1061,17 @@ BANNER='[collection-guard] ✅'
 #   标题与 aria-label 被填过 / 登录闸那颗真切得动主题 / 两颗切的是同一个开关 /
 #   切语言不许抹掉导航图标）⇒ 4465 + 13 = 4478，文件数 143 + 2 = 145。
 #   workerd 那两个数不动：这两份都是 Node 单运行时的用例。
-EXPECT_NODE_FILES=145
-EXPECT_NODE_TESTS=4478
+#
+# 🔴 **紧接着的一轮：顶栏那颗服务状态徽章，数据源是不鉴权的 `/health`。**
+#   面板因此多了**第四个网络出口**（`admin-ui/js/health.js`），出口清单那一格从
+#   「恰好三处」改成「恰好四处」，四个文件里指着它的注释一并跟上。
+#   格数：新增 `tests/ui/health.test.ts` 12 格（三档判定 2 格 + 认不出来的五种输入 5 格
+#   + 反向自检 1 格 + 文案与配色 4 格），`tests/ui/dom/shell-chrome.test.ts` 新增 7 格
+#   （真的探了一次且不带凭据头 / 登录闸上不探 / 三档各一格 / 点一下重新探 / 切语言跟着换），
+#   `tests/ui/api-session.test.ts` 新增 1 格（健康探针一条凭据头都不带）
+#   ⇒ 4478 + 20 = 4498，文件数 145 + 1 = 146。workerd 那两个数仍然不动。
+EXPECT_NODE_FILES=146
+EXPECT_NODE_TESTS=4498
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=709
 

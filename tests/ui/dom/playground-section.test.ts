@@ -1508,6 +1508,10 @@ describe("网络面：这个板块到底打了哪几条端点", () => {
     const urls = new Set<string>();
     for (const c of h.calls) urls.add(c.url);
     urls.delete("/admin/api/session");
+    // `/health` 是**外壳**那一层的（顶栏状态徽章在进壳层时探一次），不是这个板块发的。
+    // ⚠️ **逐条点名地删，不许改成「只看 /admin/api/ 开头的」**：后者会让这一格
+    // 从此看不见任何一条打到别处去的请求，而那正是它要抓的东西。
+    urls.delete("/health");
     expect([...urls].sort()).toEqual(["/admin/api/config", "/admin/api/models"]);
   });
 

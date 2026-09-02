@@ -66,6 +66,12 @@ export const I18N = {
   // 顶栏那条仓库链接的悬停提示。链接自己的文字是 `GitHub` 这个专名，五种语言里都不译，
   // 所以它写死在 `index.html` 里；**要译的是「这链接会把你带去哪」**，那一句在这里。
   "shell.repo":       { "zh-CN": "项目仓库（GitHub）", "zh-TW": "專案倉庫（GitHub）", en: "Project repository on GitHub", ja: "GitHub のリポジトリ", ko: "GitHub 저장소" },
+  // 顶栏那颗状态徽章的三档。取值决策在 `js/pure/health.mjs`，那边的文件头写着为什么
+  // 第三档叫「状态未知」而不是「离线」：判据能证明的只有「最近这一次没拿到可识别的应答」。
+  "shell.status.ok":       { "zh-CN": "运行中", "zh-TW": "運行中", en: "Running", ja: "稼働中", ko: "실행 중" },
+  "shell.status.degraded": { "zh-CN": "已降级", "zh-TW": "已降級", en: "Degraded", ja: "機能低下", ko: "성능 저하" },
+  "shell.status.unknown":  { "zh-CN": "状态未知", "zh-TW": "狀態未知", en: "Status unknown", ja: "状態不明", ko: "상태 알 수 없음" },
+  "shell.status.hint":     { "zh-CN": "最近一次 /health 探测的结果，点一下重新探测", "zh-TW": "最近一次 /health 探測的結果，點一下重新探測", en: "Result of the latest /health probe — click to probe again", ja: "直近の /health プローブの結果です。クリックすると再度確認します", ko: "가장 최근 /health 프로브 결과입니다. 누르면 다시 확인합니다" },
   "common.refresh":   { "zh-CN": "刷新", "zh-TW": "重新整理", en: "Refresh", ja: "更新", ko: "새로고침" },
   "common.loadFailed":{ "zh-CN": "读取失败，显示为 —", "zh-TW": "讀取失敗，顯示為 —", en: "Failed to load; shown as —", ja: "取得に失敗しました（— と表示）", ko: "불러오기 실패(—로 표시)" },
   "common.copy":      { "zh-CN": "复制", "zh-TW": "複製", en: "Copy", ja: "コピー", ko: "복사" },

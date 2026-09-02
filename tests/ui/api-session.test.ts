@@ -613,7 +613,7 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
 ];
 
 describe("面板的网络出口清单", () => {
-  it("恰好三处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口", () => {
+  it("恰好四处：api.js 的 raw()、app.js 的登录探针、gw-api.js 的网关出口、health.js 的健康探针", () => {
     // **按文件计数，不按行号**：行号断言会被任何一次无关的注释改动打红，那种
     // 断言过不了三轮就会被人"顺手放宽"，而放宽之后它就什么都不守了。
     // 第三处是 Playground 出口：它**拿的是另一把钥匙**（网关口令），
@@ -621,6 +621,12 @@ describe("面板的网络出口清单", () => {
     // 「凭据头只有 x-admin-key —— 没有任何网关口令头」与
     // `tests/ui/gw-api.test.ts` 的
     // 「凭据头里没有 x-admin-key —— 管理口令绝不许走上对外那条路」。
+    //
+    // ⚠️ **第四处是顶栏状态徽章的健康探针，它是后来加的**（`js/health.js`）。
+    // 它同样刻意绕开 `api.js`，理由与前两处都不同：`/health` 是**不鉴权**端点，
+    // 走 `api.js` 会给它带上 `x-admin-key`——把管理口令送去一个不需要它的端点，
+    // 等于凭空多一条口令离开页面的路径。**这个出口一条凭据头都不带**，由本文件
+    // 「健康探针一条凭据头都不带 —— 它打的是不鉴权端点」那一格钉着。
     const counts: Record<string, number> = {};
     for (const f of walkJs("admin-ui/js")) {
       const n = egressSites(readFileSync(f, "utf8"));
@@ -630,7 +636,28 @@ describe("面板的网络出口清单", () => {
       "admin-ui/js/api.js": 1,
       "admin-ui/js/app.js": 1,
       "admin-ui/js/gw-api.js": 1,
+      "admin-ui/js/health.js": 1,
     });
+  });
+
+  /**
+   * **健康探针不带任何凭据头。**
+   *
+   * 上面那一格数的是"有几个出口"，这一格问的是"新加的那个出口带了什么出去"。
+   * 判据落在**源码文本**上（与上面同源：注释与模板串字面文本都抠掉），因为这是
+   * 一条"永远不许出现"的性质——行为断言只能证明**某一次调用**没带，证不了
+   * 另一条分支上没有第二个带头的 `fetch`。行为侧另有一格在
+   * `tests/ui/dom/shell-chrome.test.ts` 的
+   * 「进壳层之后真的去探了一次 /health，而且那一次一条凭据头都不带」。
+   */
+  it("健康探针一条凭据头都不带 —— 它打的是不鉴权端点", () => {
+    const code = codeOnly(readFileSync("admin-ui/js/health.js", "utf8"));
+    for (const forbidden of ["x-admin-key", "authorization", "Authorization", "headers"]) {
+      expect(code, `health.js 里出现了 ${forbidden} —— /health 不鉴权，不该带任何头出去`)
+        .not.toContain(forbidden);
+    }
+    // 反向控制：这个文件里确实有那次 `fetch`，上面几条不是对着一个空文件在断言。
+    expect(code, "health.js 里没有 fetch —— 这一格测的是空气").toContain("fetch(");
   });
 
   /**
@@ -891,7 +918,7 @@ const ASSIGN_NOTE = "含 += ||= ??= &&=";
  * ⚠️⚠️ **为什么它必须是独立的一张表、而不是往 `EGRESS_FORMS` 里再塞几条**：
  * 上面那张表数的是「**取数**」（`fetch` / `XHR` / `EventSource` / `sendBeacon` /
  * `WebSocket` / 动态 `import`），它的处数直接支撑 `admin-ui/js/api.js` 文件头那段
- * 「口令只走请求头」的安全论证，**恰好三处**是那段论证的前提。
+ * 「口令只走请求头」的安全论证，**恰好四处**（且其中只有三处带凭据头）是那段论证的前提。
  * 导航一族是**另一件事**：它不取数，它把**当前这一页**（或一个新标签页）送去某个地址，
  * 而地址是可以拼字符串的。两族混进同一个计数里，那段安全论证的前提就说不清了。
  *

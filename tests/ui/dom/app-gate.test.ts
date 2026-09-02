@@ -199,8 +199,18 @@ describe("已存会话：绝对上限与 401 登出", () => {
 
     const after = h.calls.slice(1);
     expect(after.length, "进壳层之后一个请求都没发，这一格什么都没验到").toBeGreaterThan(0);
-    for (const c of after) {
+    // ⚠️ **两族分开断言，不是把不带头的那族豁免掉。**
+    // 进壳层之后不止管理接口那一族：顶栏状态徽章会探一次**不鉴权**的 `/health`。
+    // 那一条**必须**不带口令（往一个不需要口令的端点送口令，等于多一条外发路径），
+    // 所以这里对它的要求正好是反过来的——它同样是一条会红的断言，不是一个洞。
+    const admin = after.filter((c) => c.url.startsWith("/admin/api/"));
+    const others = after.filter((c) => !c.url.startsWith("/admin/api/"));
+    expect(admin.length, "进壳层之后一条管理接口都没打，这一格什么都没验到").toBeGreaterThan(0);
+    for (const c of admin) {
       expect(c.headers["x-admin-key"], `${c.url} 送出去的口令头不对`).toBe(TOKEN);
+    }
+    for (const c of others) {
+      expect(Object.keys(c.headers), `${c.url} 是不鉴权端点，却带着请求头出去了`).toEqual([]);
     }
   });
 

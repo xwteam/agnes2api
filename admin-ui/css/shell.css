@@ -43,6 +43,12 @@
 .brand { display: inline-flex; align-items: center; gap: var(--gap-sm); }
 .brand-mark { flex: none; color: var(--primary); }
 .brand-name { font-weight: 600; font-size: 16px; }
+/* 状态徽章。`.badge` 的底样式在 sections.css 里（业务板块也在用），这里只补两件事：
+   它是一颗**按钮**（点一下重新探测），以及那颗表示「这是一盏状态灯」的圆点。
+   圆点走 `::before` 而不是一个真的子元素：`apply()` 对 [data-i18n] 写的是
+   `textContent`，任何子节点都会在切语言时被抹掉，而伪元素不在那条路上。 */
+.health-badge { cursor: pointer; font: inherit; font-size: 12px; }
+.health-badge::before { content: "●"; margin-right: 6px; }
 /* `margin-left: auto` 把动作区推到最右，中间那段空白留给徽章这类以后要挂上来的东西。 */
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--gap-sm); }
 .topbar-actions select { width: auto; padding: 6px 8px; }

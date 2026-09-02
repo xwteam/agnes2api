@@ -770,22 +770,25 @@ describe("i18n 字典", () => {
      * **反向自检 ③：表里不许有死条目。** 与 ② 是同一件事的另一半
      *（② 挡"漏了"，③ 挡"多了 / 前缀写错"）。
      *
-     * 今天为空的两个各有其**如实的**理由，都不是缺陷：
-     * · `shell` / `nav` —— 壳层标题与六个导航按钮的文案全写在 `index.html` 的
-     *   `data-i18n` 属性里，而本条扫的是 `admin-ui/js` 下的 `.js`/`.mjs`。那一半由
+     * 今天为空的那一个有其**如实的**理由，不是缺陷：
+     * · `nav` —— 八个导航按钮的文案全写在 `index.html` 的 `data-i18n` 属性里，
+     *   而本条扫的是 `admin-ui/js` 下的 `.js`/`.mjs`。那一半由
      *   `scripts/check-i18n.mjs` 的第 ① 条覆盖（它连 `.html` 一起走）。
      *
      * ⚠️ **`reg` 后来离开了这张空表**：注册机板块落地之后，
      * `sec-registrar.js` 与 `pure/registrar.mjs` 真的开始引用 `reg.*` 了。
      * 这一格因此从三条变成两条——**它变红正是它在起作用**（上一版那段说明写着
      * 「注册机板块整个排在后面，字典先铺好、还没有任何消费者」，那句话现在是假的）。
+     * ⚠️ **`shell` 后来也离开了这张空表**，同一个形态：顶栏那颗服务状态徽章落地之后，
+     * `pure/health.mjs` 的 `HEALTH_TEXT_KEY` 真的开始把 `shell.status.*` 写成字面量了
+     *（`js/health.js` 把它挂成徽章的 `data-i18n`）。这一格因此从两条变成一条。
      */
     const emptyNamespaces = NAMESPACES.filter((ns) => !usedNamespaces.has(ns));
     expect(
       [...emptyNamespaces].sort(),
       "一个引用都没扫到的命名空间集合变了——要么前缀写错/该删，要么某个空的前缀"
       + "终于有了 JS 消费者，回来把上面那段说明改准",
-    ).toEqual(["nav", "shell"]);
+    ).toEqual(["nav"]);
   });
 
   /**

@@ -13,7 +13,7 @@ import { createFakeDom, installFakeDom, type FakeDom, type FakeElement } from ".
  */
 export const SKELETON_IDS = [
   "gate", "gate-form", "gate-key", "gate-err", "gate-theme-btn",
-  "shell", "lang-select", "theme-btn", "logout-btn",
+  "shell", "lang-select", "theme-btn", "logout-btn", "health-badge",
   "sec-overview", "sec-keys", "sec-registrar", "sec-events", "sec-usage", "sec-models",
   "sec-playground", "sec-settings",
   "toast-host",
@@ -115,9 +115,13 @@ export function buildDom(): { dom: FakeDom; nav: FakeElement[] } {
   // 「三颗图标按钮在 index.html 里都带着 data-i18n-title」那一格扫真文件兜着。
   for (const [id, key] of [
     ["theme-btn", "shell.theme"], ["gate-theme-btn", "shell.theme"], ["logout-btn", "shell.logout"],
+    ["health-badge", "shell.status.hint"],
   ] as const) {
     dom.byId(id).setAttribute("data-i18n-title", key);
   }
+  // 状态徽章的**初始档就是「状态未知」**（还没探过），与真 `index.html` 一致。
+  dom.byId("health-badge").setAttribute("data-i18n", "shell.status.unknown");
+  dom.byId("health-badge").classList.add("badge", "health-badge");
 
   const nav: FakeElement[] = [];
   for (const name of NAV_SECTIONS) {

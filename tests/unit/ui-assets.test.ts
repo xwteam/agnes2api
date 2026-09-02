@@ -127,6 +127,7 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // `GET /admin/api/models` 的响应现拼）。公开可取没有问题。
       // `-` 的字符码比 `.` 小，字典序排在 i18n-dict.js 之前。
       "/admin/js/gw-api.js",
+      "/admin/js/health.js",
       "/admin/js/i18n-dict.js",
       "/admin/js/i18n.js",
       // 事件板块的取值决策（查询串拼装、分组、轮询退避等），
@@ -140,6 +141,7 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // base URL 由调用方在运行期取，文件里连一个地址字面量都没有，公开可取没有问题。
       "/admin/js/pure/examples.mjs",
       "/admin/js/pure/format.mjs",
+      "/admin/js/pure/health.mjs",
       // Key 池板块**写操作**的取值决策（按钮可用性、确认文案、
       // 批量选择边界、导入行拆分、bulk 结果汇总）。同一条硬规则、同一份理由，
       // 由 tests/ui/keys-write.test.ts 跑着。纯函数、无配置、无数据。
