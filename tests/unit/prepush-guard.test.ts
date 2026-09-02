@@ -3,6 +3,7 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PLACEHOLDERS } from "../helpers/internal-ref-placeholders.js";
 
 /**
  * ── `scripts/prepush.sh` 的元测试 ────────────────────────────────────────────
@@ -880,6 +881,79 @@ describe("⑧ 未推送提交信息格：族定义抽真源、脏提交点名、
       rmSync(dir, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  /**
+   * ── 两张展开表不漂 ────────────────────────────────────────────────────────
+   *
+   * 🔴 **这三格是回填一条评审发现。** 族定义确实一个字都不手抄（上面那几格盯着），
+   * 可 `expand_placeholders` 里那几个占位符的**值**是第二份手抄件：真值在
+   * TypeScript 里，脚本那边是 shell，import 不过来，只能各写一份。
+   * 而当时写在两处注释与一条提交信息里的说法是「两边漂了的话，正向自检当场红在
+   * 『判据坏了』上」——**实测为假**：把 shell 那侧的圈号表削成一个字符，
+   * ⑧ 的正向自检照样全绿、exit 0，而那一册指针的圈号写法在提交信息上恰恰是
+   * 只由这段展开表把守的一支。正向自检按定义也兜不住那个轮次缩写
+   *（正则源与证据串两边写的是同一个占位符，一起漂了照样匹配）。
+   * ⇒ 这里补一格**逐 token 的字节比对**，再配一格变异探针，否则验的又是空气。
+   *
+   * ⚠️ **一个真值都不在本文件里手写**：TypeScript 那侧从
+   * `tests/helpers/internal-ref-placeholders.ts` import，shell 那侧用 `fnOf` 从
+   * `scripts/prepush.sh` 当场抠。
+   */
+  const expandFn = () => fnOf("expand_placeholders");
+
+  /** 拿 shell 那段展开跑一条串。`mutate` 只给变异探针用：改完的那份照样从真源来。 */
+  function expandInShell(s: string, mutate?: (fn: string) => string): string {
+    const fn = expandFn();
+    const body = mutate === undefined ? fn : mutate(fn);
+    const r = runBash([
+      "set -uo pipefail",
+      body,
+      `expand_placeholders ${JSON.stringify(s)}`,
+    ].join("\n"));
+    if (r.code !== 0) {
+      throw new Error(`expand_placeholders 跑不起来（exit ${r.code}）：${r.stderr}`);
+    }
+    return r.stdout;
+  }
+
+  it("🔴 两张展开表逐 token 比对：shell 那段展开与真源那张表逐字节相等", () => {
+    expect(PLACEHOLDERS.length, "真源那张表是空的 —— 这一格会变成零次循环，恒绿")
+      .toBeGreaterThan(0);
+    for (const [token, value] of PLACEHOLDERS) {
+      expect(expandInShell(token),
+        `占位符 ${token} 两边对不上 —— ⑧ 扫提交信息时认的形状与真源已经不是同一批，`
+        + "而提交信息推出去就改不动").toBe(value);
+    }
+  });
+
+  it("🔴 token 集合双向查：shell 那段展开认的占位符 = 真源那张表登记的，一条不多一条不少", () => {
+    // ⚠️ 字符类刻意写成 `[^']*` 而不是大写区间：那个区间原样写进来，本文件自己就多了
+    //    一处「字母 + 连字号 + 字母」的命中，源码轴那份判据会当场红在这一行上。
+    const got = [...expandFn().matchAll(/\$\{s\/\/'(\{[^']*\})'\//g)].map((m) => m[1] as string);
+    expect(got.length, "从那段展开里一个占位符都没抠出来 —— 抠取器坏了，这一格会恒绿")
+      .toBeGreaterThan(0);
+    expect([...got].sort(), "两张表的 token 集合对不上：shell 那边多一条 ⇒ 有人加了占位符"
+      + "却没往真源里登记；少一条 ⇒ 真源里那一条在提交信息那一格上从来没被展开过")
+      .toEqual(PLACEHOLDERS.map(([t]) => t).sort());
+  });
+
+  it("🔴 该红时红：shell 那段展开里某个值改一个字符 ⇒ 逐 token 比对当场对不上", () => {
+    let probed = 0;
+    for (const [token, value] of PLACEHOLDERS) {
+      if (value === "") continue; // 空串那一条改不动：删一个字符还是空串
+      // 拿真值的**最后一个字符**当变异点（从真源导出，不在本文件里挑一个字面量）：
+      // 大写区间与那个缩写在 shell 里是拼出来的，被拼的那一小块同样只出现一次。
+      const ch = [...value].at(-1) as string;
+      const mutate = (fn: string) => fn.replace(ch, "");
+      expect(mutate(expandFn()), `变异没落地（${token}）—— 这一格验的是空气`)
+        .not.toBe(expandFn());
+      expect(expandInShell(token, mutate),
+        `把 shell 那侧 ${token} 的值改一个字符之后，逐 token 比对居然还相等 —— `
+        + "那一格验的是空气").not.toBe(value);
+      probed += 1;
+    }
+    expect(probed, "一个占位符都没探到 —— 真源那张表里全是空串？").toBeGreaterThan(0);
   });
 
   /**
