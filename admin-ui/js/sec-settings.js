@@ -1039,6 +1039,26 @@ export const settingsSection = {
     const saveBtn = buildToolbar(section);
     const host = addHost(section, saveBtn);
 
+    // ── 四张卡分两列 ────────────────────────────────────────────────────────
+    //
+    // 竖着摞成一列时整页是一条很长的窄条（真机量到的高与分列之后的高写在报文里，
+    // **这里刻意不抄一份**：本仓没有布局引擎，抄下来的数没有测法、只会过期）。
+    // **这一层与下面那几处 `.cfg-grid` 是两件事，缺一处右边那片空白就还在**：
+    // 网格管的是一张卡里一行站几格，这两列管的是四张卡怎么排。
+    //
+    // ⚠️ **行容器复用 `.card-row`**（注册机那两张通道卡走的就是它），列本身是
+    // `.cfg-col`——`.card-row` 的子项是一张卡，而这里一列里要摞好几张，
+    // 理由与它踩过的那个窄屏坑写在 `admin-ui/css/sections.css` 的 `.cfg-col` 上方。
+    // ⚠️ **分列不改阅读顺序**：DOM 里仍是卡 1→4，左列拿前两张、右列拿后两张，
+    // 窄屏落回单列时读到的顺序与宽屏逐张相同。这一条由
+    // `tests/ui/dom/settings-layout.test.ts「四张卡分在两列里，读序仍是卡 1→4」` 钉着。
+    const cols = el("div", { class: "card-row" });
+    const colLeft = el("div", { class: "cfg-col" });
+    const colRight = el("div", { class: "cfg-col" });
+    cols.appendChild(colLeft);
+    cols.appendChild(colRight);
+    section.appendChild(cols);
+
     // ── 卡 1：认证密钥 ──────────────────────────────────────────────────────
     //
     // ⚠️ **每张卡的字段装在一个 `.cfg-grid` 里，不直接摊在卡身上**：`.cfg-field`
@@ -1054,7 +1074,7 @@ export const settingsSection = {
     // 管理员口令**只读展示**（设计 §8.1 规则 2 / §10.4 卡 1）：它只从环境变量来，
     // 面板不该能改自己的钥匙，所以这里连输入框都不给。
     auth.body.appendChild(elI18n("p", "set.adminTokenNote", { class: "muted note" }));
-    section.appendChild(auth.wrap);
+    colLeft.appendChild(auth.wrap);
 
     // ── 卡 2：上游与冷却 ────────────────────────────────────────────────────
     const upstream = card("set.card.upstream");
@@ -1067,7 +1087,7 @@ export const settingsSection = {
     // 运维改完刷新一看没变化，得出的结论是「这个面板的保存是假的」。**写法与卡 1 对齐。**
     // 由 tests/ui/dom/settings-save.test.ts 的「卡 2 底下真的印着那句「改了要重启」」钉着。
     upstream.body.appendChild(elI18n("p", "set.card.upstreamNote", { class: "muted note" }));
-    section.appendChild(upstream.wrap);
+    colLeft.appendChild(upstream.wrap);
 
     // ── 卡 3：集成示例（设计 §10.4 第 4 张卡）──────────────────────────────────
     // 板块文件允许碰浏览器全局，**base URL 在这里读一次再传给纯函数**——
@@ -1076,7 +1096,7 @@ export const settingsSection = {
     const examples = card("set.card.examples");
     exOrigin = location.origin;
     nodes.examples = examples.body;
-    section.appendChild(examples.wrap);
+    colRight.appendChild(examples.wrap);
 
     // ── 卡 4：危险区（设计小节「重置到底重置了什么」）────────────────────────────
     //
@@ -1104,7 +1124,7 @@ export const settingsSection = {
     dangerResult.style.display = "none";
     danger.body.appendChild(dangerResult);
     nodes.dangerResult = dangerResult;
-    section.appendChild(danger.wrap);
+    colRight.appendChild(danger.wrap);
 
     addHostFooter(section, host);
   },

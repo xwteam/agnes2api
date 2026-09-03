@@ -52,6 +52,72 @@ function ancestorWith(node: FakeElement, cls: string): FakeElement | null {
   return null;
 }
 
+describe("设置页：四张卡分在两列里", () => {
+  /**
+   * ⚠️ **期望值是手写的，而且刻意手写。** 这张表说的是「哪张卡在左、哪张在右、
+   * 读到的先后是什么」——那是一个**决定**，不是可以从别处派生出来的事实。
+   * 添一张新卡时这一格会红，而它**该**红：新卡放哪一列必须有人决定一次。
+   * 「设置页上一共有几张卡」那个数另有真源（`tests/unit/docs-parity.test.ts` 的
+   * 「五份 ADMIN.md 里五张表的行数，逐张等于屏幕那边对应的那个计数」），
+   * 那一格从 `settingsSection` 里 `card("…")` 的调用序列现算，不看这张表。
+   */
+  const READING_ORDER = [
+    "set.card.auth", "set.card.upstream", "set.card.examples", "set.card.danger",
+  ] as const;
+
+  /** 这一列里那几张卡的标题 key，按 DOM 顺序。 */
+  function cardKeysIn(col: FakeElement): string[] {
+    return col.querySelectorAll(".card")
+      .flatMap((c) => c.children.filter((n) => n.tagName === "h3"))
+      .map((h) => h.getAttribute("data-i18n") ?? "")
+      .filter((k) => k.startsWith("set.card."));
+  }
+
+  function columns(h: Harness): FakeElement[] {
+    return h.section("settings").querySelectorAll(".cfg-col");
+  }
+
+  /**
+   * ⚠️ **靶子写清楚：把 `colLeft/colRight.appendChild(卡)` 改回 `section.appendChild(卡)`。**
+   * 那是这一版之前的写法，屏幕上的后果是四张卡竖着摞成一列、整页拉成一条长窄条。
+   * 那次改动**没有打红过任何既有用例**，所以这一族是它唯一的绊线。
+   */
+  it("四张卡分在两列里，读序仍是卡 1→4", async () => {
+    const h = await openSettings();
+    const cols = columns(h);
+    expect(cols.length, "设置页上的列数不是 2 —— 「左右两列」这件事不成立了").toBe(2);
+    const left = cardKeysIn(cols[0]!);
+    const right = cardKeysIn(cols[1]!);
+    // 两列都得有卡：四张全塞进一列同样能让上面那格绿，而那就是分列之前的样子。
+    expect(left.length, "左列一张卡都没有 —— 那不是两列，那是一列外面套了个空盒子").toBeGreaterThan(0);
+    expect(right.length, "右列一张卡都没有 —— 同上").toBeGreaterThan(0);
+    expect(
+      [...left, ...right],
+      "四张卡的分列或先后变了 —— 这是个决定，改之前先想清楚新的读序是什么",
+    ).toEqual([...READING_ORDER]);
+  });
+
+  /**
+   * **反向控制：没有一张设置卡漏在两列之外。**
+   * 上面那格只看「列里有什么」，一张被 append 回 `section` 的卡它一眼都看不见
+   * ——而那正好是要防的那次回退的形态（回退一半时更像）。
+   */
+  it("设置页上的每一张卡都在某一列里，一张都没漏在列外", async () => {
+    const h = await openSettings();
+    const section = h.section("settings");
+    const stray = section.querySelectorAll(".card")
+      .filter((c) => ancestorWith(c, "cfg-col") === null)
+      .flatMap((c) => c.children.filter((n) => n.tagName === "h3"))
+      .map((h3) => h3.getAttribute("data-i18n"));
+    expect(stray, "这几张卡跑到两列外面去了 —— 它们会各自独占一整行").toEqual([]);
+    // 上面那条在「一张卡都找不到」时同样成立 ⇒ 先证屏幕上真的有卡。
+    expect(
+      section.querySelectorAll(".card").length,
+      "设置页上一张卡都没有 —— 上面那格比的是空集",
+    ).toBeGreaterThan(0);
+  });
+});
+
 describe("设置页：卡内字段排在网格里，不是一格占一整行", () => {
   /**
    * ⚠️ **靶子写清楚：把 `addField(grid, …)` 改回 `addField(card.body, …)`。**

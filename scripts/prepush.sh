@@ -1165,8 +1165,14 @@ BANNER='[collection-guard] ✅'
 #   同一把尺子对着裸 220px 那版报「会顶穿」的反向控制）
 #   ⇒ 4555 + 5 = 4560，文件数 146 + 1 = 147。**workerd 那两个数不动**：
 #   新增的两组一组是 DOM 层、一组是源码级判据，都只在 Node 侧跑。
+# 🔴 **这一轮（同一件事的另一半）：设置页那四张卡改成左右两列。**
+#   与上一轮是两件事：网格管的是一张卡里一行站几格，两列管的是四张卡怎么排。
+#   格数：`tests/ui/dom/settings-layout.test.ts` 新增 2 格（四张卡分在两列里且读序仍是
+#   卡 1→4 / 没有一张卡漏在列外的反向控制），`tests/unit/source-guards.test.ts` 新增 2 格
+#  （`.cfg-col` 的换行阈值走 flex-basis 而不是 min-width / 零值不算硬下限的反向控制）
+#   ⇒ 4560 + 4 = 4564。文件数不动。**workerd 那两个数不动**，理由同上一轮。
 EXPECT_NODE_FILES=147
-EXPECT_NODE_TESTS=4560
+EXPECT_NODE_TESTS=4564
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 

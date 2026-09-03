@@ -2215,6 +2215,32 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
     return bounds.filter((b) => !(b.startsWith("min(") && b.includes("100%")));
   }
 
+  /** 一个长度值是不是「非零的硬下限」。`0` / `0px` 那一档是安全的，别把它一起杀了。 */
+  function isHardLength(value: string): boolean {
+    return !/^0[a-z%]*$/.test(value.trim());
+  }
+
+  it(".cfg-col 的换行阈值走 flex-basis，不走 min-width —— min-width 在更窄的容器里不会退让", () => {
+    const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+    const body = cssRuleBody(css, ".cfg-col");
+    expect(body, `${SECTIONS_CSS} 里找不到 .cfg-col 这条规则 —— 先来修抠法`).not.toBeNull();
+    const decls = declarations(body!);
+    expect(decls.length, "抠出来的是空块 —— 抠错了，下面几条会变成恒真").toBeGreaterThan(0);
+    expect(
+      decls.filter((d) => d.prop === "min-width" && isHardLength(d.value)).map((d) => d.value),
+      "`.cfg-col` 上出现了非零的 min-width：主区可用宽比它还窄时列不会退让，整块内容会顶出去"
+      + "（真机实测过一次：380px 视口下 .main 的 scrollWidth 316 / clientWidth 160，"
+      + "而分列之前是 177/160）。阈值改用 `flex: 1 1 <basis>`，basis 是可以被压缩的",
+    ).toEqual([]);
+    // 换行阈值必须真的存在：`flex: 1` 那种没有 basis 的写法两列永远不换行。
+    const flex = decls.find((d) => d.prop === "flex");
+    expect(flex, "`.cfg-col` 上没有 flex 简写 —— 换行阈值没了，两列在窄屏上不会落回一列").toBeDefined();
+    expect(
+      flex!.value.split(/\s+/).length,
+      `\`flex: ${flex!.value}\` 里没有第三段（basis）—— 换行看的就是 basis，缺了它这套布局没有阈值`,
+    ).toBe(3);
+  });
+
   it(".cfg-grid 的 minmax() 下界裹着 min(…, 100%) —— 裸的 px 下界会把网格顶出卡外", () => {
     const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
     const body = cssRuleBody(css, ".cfg-grid");
@@ -2239,6 +2265,16 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
    * 夹具里的两段逐字取自本轮真机量过的那两版（裸 220px 那版与现在这版），
    * 尺子若退化成恒返回空数组，上面那格会永远绿，而这一格当场红。
    */
+  /**
+   * **反向控制：`isHardLength()` 两个方向都对。**
+   * 退化成恒 `false` 时上面 `.cfg-col` 那格永远绿；退化成恒 `true` 时
+   * `min-width: 0`（它是那条规则里必需的一半）会被误报成硬下限。
+   */
+  it("反向控制：min-width: 0 不算硬下限，300px 算", () => {
+    expect(["0", "0px", "0%"].filter(isHardLength), "零值被当成硬下限了").toEqual([]);
+    expect(["300px", "20rem", "50%"].filter(isHardLength), "真的硬下限没被判出来").toEqual(["300px", "20rem", "50%"]);
+  });
+
   it("反向控制：裸的 minmax(220px, 1fr) 被判成会顶穿，裹了 min() 的那版不被误判", () => {
     expect(
       hardBounds(minmaxLowerBounds("repeat(auto-fit, minmax(220px, 1fr))")),

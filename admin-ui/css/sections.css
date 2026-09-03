@@ -220,6 +220,24 @@ tr:last-child td { border-bottom: 0; }
 /* 分组内的行左边一条细线，视觉上把同一条时间线的几行连起来。 */
 .ev-row-grouped td:first-child { border-left: 2px solid var(--border); }
 
+/* 设置页的**两列**。容器一个字都不新造，直接用上面那条 `.card-row`
+   （flex + wrap + gap，注册机那两张通道卡走的就是它）；本类补的是它给不了的那一半
+   ——`.card-row` 的 flex 子项是**一张卡**，而设置页要的是一列里**摞好几张卡**。
+   列内的竖向间距仍旧由 `.card + .card` 那条规则给，不在这里另发明一套间距。
+
+   ⚠️⚠️ **换行阈值走 `flex-basis`，不走 `min-width`——这一步是真机量出来的，别改回去。**
+   `.pg-cols` / `.card-row` 那一招是 `flex: 1` + `min-width: 300px`，它在**比阈值还窄的
+   容器里会顶穿**：`min-width` 是硬下限，容器只剩 160px 时列仍然是 300px 宽。
+   实测 380px 视口（侧栏之后主区只剩 160px 可用）：`min-width: 300px` 那版
+   `.main` 量到 **scrollWidth 316 / clientWidth 160**，而分列之前那版是 177/160
+   ——**是这条规则自己把横向滚动从 17px 拉到 156px 的**。
+   `flex: 1 1 300px` 换来同一个换行行为（换行看的是 basis），但 basis 是可以被压缩的，
+   容器窄到装不下时列跟着缩到容器宽 ⇒ 那 156px 回落到 0。
+   `min-width: 0` 是配套的那一半：flex 子项默认的 `min-width: auto` = 内容最小宽，
+   会绕过 `flex-shrink` 再把列顶宽一次。**本仓不写媒体查询**，换行仍旧只靠 wrap。
+   下面 `.cfg-grid` 那条 `min(…, 100%)` 是**同一个坑的第二例**，两条一起读。 */
+.cfg-col { flex: 1 1 300px; min-width: 0; }
+
 /* 卡内字段的**多列**。这一条管的是另一半：`.cfg-field` 是块级盒，一格占一整行，
    而下面那条 `max-width: 420px` 让输入框只占其中一段 ⇒ 每一行右边都空着一大片。
    改成 auto-fit 的网格之后，一行站几格由列宽决定，输入框把整格填满
@@ -228,7 +246,7 @@ tr:last-child td { border-bottom: 0; }
    ⚠️ **`auto-fit` 不是 `auto-fill`**：只有一格字段的卡（认证密钥那张）在 `auto-fill`
    下会把那一格挤在最左、右边留一条空轨道，而 `auto-fit` 把空轨道塌掉、让那一格铺满
    ——那条空轨道正好是本轮要消掉的那种空白。
-   ⚠️⚠️ **`minmax()` 的下界必须裹一层 `min(…, 100%)`，这一步是真机量出来的，别改回去。**
+   ⚠️⚠️ **`minmax()` 的下界必须裹一层 `min(…, 100%)`，与上面 `.cfg-col` 是同一个坑的第二例。**
    裸的 `minmax(220px, 1fr)` 里那个 220px 是**轨道的硬下限**：卡内可用宽只剩 94px 时
    轨道照样 220px，于是网格把卡顶穿。实测 380px 视口（主区可用 160px）：裸 220px 那版
    `.main` 量到 **scrollWidth 253 / clientWidth 160**，改前那版是 177/160。
