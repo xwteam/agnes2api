@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { UI_ASSETS } from "../../src/ui/assets.generated.js";
+import { faviconPngFrom } from "../../src/ui/serve.js";
 import { VERSION } from "../../src/version.js";
 
 /**
@@ -166,6 +167,99 @@ describe("静态资源伺服", () => {
     const { app } = await makeApp([], ["k1"], {}, undefined, { adminToken: undefined });
     expect((await app.request("/admin")).status).toBe(404);
     expect((await app.request("/admin/css/base.css")).status).toBe(404);
+  });
+});
+
+/**
+ * ── `GET /favicon.ico` ─────────────────────────────────────────────────────
+ *
+ * 浏览器**不看页面里写了什么**也会去取这一条，而在这之前网关根路径上没有它。
+ *
+ * 期望值**不从 `faviconPngFrom()` 取**（那是同义反复：抠法写坏两边一起变、测试照绿），
+ * 而是在这里用另一条抠法（按 `base64,` 与引号切）从 `/admin` 那份 HTML 里独立解一遍。
+ * 那一串本身由 `scripts/check-png.mjs` 的 `auditUiLogos()` 与 `docs/logo.png` 逐像素
+ * 对账，所以这一组等于把 `/favicon.ico` 也接到了那张图这个唯一真源上。
+ */
+describe("站点图标：GET /favicon.ico", () => {
+  /** 从一份 HTML 里独立解出内联 PNG 的字节。**与被测实现不共用一行代码。** */
+  function inlinedPng(html: string): Uint8Array {
+    const b64 = html.split("base64,")[1]!.split('"')[0]!;
+    const bin = atob(b64);
+    return Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+  }
+
+  it("200 + image/png，字节与 /admin 那份 HTML 里内联的那一串逐字节相同", async () => {
+    const { app } = await makeApp();
+    const res = await app.request("/favicon.ico");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    const got = new Uint8Array(await res.arrayBuffer());
+    const want = inlinedPng(UI_ASSETS["/admin"]!.body);
+    expect(got.length, "长度先对上，逐字节那格红了才读得出是哪一位").toBe(want.length);
+    expect([...got]).toEqual([...want]);
+  });
+
+  it("发出去的真是一张 PNG：头 8 字节是 PNG 魔数，尾 4 字节是 IEND", async () => {
+    const { app } = await makeApp();
+    const bytes = new Uint8Array(await (await app.request("/favicon.ico")).arrayBuffer());
+    // 手写字面量，不从被测字节里现读。全局那条 nosniff 禁止浏览器猜类型 ⇒
+    // 声明成 image/png 的东西必须真的是 PNG，否则标签页上就是一个空白。
+    expect([...bytes.slice(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect([...bytes.slice(-4)]).toEqual([0xae, 0x42, 0x60, 0x82]);
+  });
+
+  it("带匹配的 If-None-Match 返回 304 且无响应体", async () => {
+    const { app } = await makeApp();
+    const etag = (await app.request("/favicon.ico")).headers.get("etag")!;
+    expect(etag.length).toBeGreaterThan(0);
+    const res = await app.request("/favicon.ico", { headers: { "if-none-match": etag } });
+    expect(res.status).toBe(304);
+    expect(await res.text()).toBe("");
+  });
+
+  /**
+   * 图标的字节住在 `/admin` 那份 HTML 里，所以它的 etag 是从那份 HTML 的内容哈希
+   * 拼出来的 —— **但两份内容不同，校验子必须不同**。直接复用的话，浏览器拿着
+   * `/admin` 的 etag 来取图标会得到 304，然后把那份 HTML 当成图去渲染。
+   */
+  it("拿 /admin 的 etag 去请求图标不会得到 304，反过来也不会", async () => {
+    const { app } = await makeApp();
+    const htmlEtag = (await app.request("/admin")).headers.get("etag")!;
+    const icoEtag = (await app.request("/favicon.ico")).headers.get("etag")!;
+    expect(icoEtag).not.toBe(htmlEtag);
+    expect((await app.request("/favicon.ico", { headers: { "if-none-match": htmlEtag } })).status).toBe(200);
+    expect((await app.request("/admin", { headers: { "if-none-match": icoEtag } })).status).toBe(200);
+  });
+
+  it("200 与 304 两个分支都带全套安全头与 cache-control: no-cache", async () => {
+    const { app } = await makeApp();
+    const etag = (await app.request("/favicon.ico")).headers.get("etag")!;
+    for (const [init, status] of [[{}, 200], [{ headers: { "if-none-match": etag } }, 304]] as const) {
+      const res = await app.request("/favicon.ico", init);
+      expect(res.status).toBe(status);
+      expect(res.headers.get("content-security-policy"), `${status}`).toBe(CSP);
+      expect(res.headers.get("x-frame-options"), `${status}`).toBe("DENY");
+      expect(res.headers.get("x-content-type-options"), `${status}`).toBe("nosniff");
+      expect(res.headers.get("referrer-policy"), `${status}`).toBe("no-referrer");
+      expect(res.headers.get("cache-control"), `${status}`).toBe("no-cache");
+    }
+  });
+
+  it("未设 ADMIN_TOKEN 时它跟着面板一起消失 —— 有没有图标不该额外泄漏一份运行时事实", async () => {
+    const { app } = await makeApp([], ["k1"], {}, undefined, { adminToken: undefined });
+    expect((await app.request("/favicon.ico")).status).toBe(404);
+  });
+
+  /**
+   * **反向控制**：抠法退化成「什么都抠不到」时必须当场抛，不许静默返回一张空图
+   * ——0 字节的图标在浏览器里跟「没这条路由」长得一模一样，那正是本轮要修的形态。
+   */
+  it("抠不到内联 PNG 时当场抛，不静默给一张 0 字节的图", () => {
+    expect(() => faviconPngFrom("<html><head><title>没有图标</title></head></html>"))
+      .toThrow(/找不到/);
+    // 正向：真 HTML 抠得到，且解出来的就是那串 base64 的字节（否则上面那格是空转）。
+    expect([...faviconPngFrom(UI_ASSETS["/admin"]!.body)])
+      .toEqual([...inlinedPng(UI_ASSETS["/admin"]!.body)]);
   });
 });
 

@@ -768,8 +768,17 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
    * ③ 结构上的理由与协议目录那条完全相同：`adminAuth` 挂在 `/admin/api/*` 上，
    *    要让它们免鉴权就得挪到那行 `use` 之前，而**那个位置上的任何后续新增端点
    *    都会跟着免鉴权**。
+   *
+   * **站点图标那一轮的表态：这张表长一条 `/favicon.ico`。**
+   * 它与 `/admin` / `/admin/*` 同源同理由 —— 同样注册在 `src/ui/serve.ts` 的
+   * `uiRoutes()` 里、同样只投递编译期常量（那串字节就住在 `UI_ASSETS["/admin"]` 的
+   * HTML 里）、同样跟着 `ADMIN_TOKEN` 一起存在或消失。**它必须免鉴权**：浏览器取
+   * 图标时不带任何自定义头，鉴权一挂上就是一个永远 401 的图标。
+   * 逐字节等于那份 HTML 里内联的那一串这件事由
+   * `tests/contract/ui-serve.test.ts` 的
+   * 「200 + image/png，字节与 /admin 那份 HTML 里内联的那一串逐字节相同」守着。
    */
-  const PUBLIC_PATHS: readonly string[] = ["/health", "/admin", "/admin/*"];
+  const PUBLIC_PATHS: readonly string[] = ["/health", "/admin", "/admin/*", "/favicon.ico"];
 
   /**
    * 路径 → 安全域。**总函数**：分不出来就抛，逼新端点在这里表态，
@@ -814,6 +823,11 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 静态资源。**刻意用 get() 而不是 use()**，见 EXPECTED_MIDDLEWARE 的说明。
     "GET /admin",
     "GET /admin/*",
+    // 站点图标。**这是 `uiRoutes()` 里唯一一条不在 /admin 前缀下的路由**，
+    // 也是这张表上第一条不带 /health、/v1、/admin 三种前缀的条目 ——
+    // 它同样用 `admin.get()` 那一族（`app.get()`）注册，不产生 ALL 条目
+    // ⇒ `EXPECTED_MIDDLEWARE` 保持不变。免鉴权的表态写在 `PUBLIC_PATHS` 上方。
+    "GET /favicon.ico",
     // ── Key 写端点：这张表**第一次**出现非 GET 条目 ──────────────────────────
     //
     // 在它们出现之前，`/admin/api/*` 六条全是 `admin.get()`，于是「鉴权挂没挂上」

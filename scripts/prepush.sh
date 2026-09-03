@@ -1081,10 +1081,24 @@ BANNER='[collection-guard] ✅'
 #   （三格摆放判据 + 一格该红时红，换掉原来那三格 favicon 色值判据 —— 那三格守的
 #   硬编码色值随自绘图标一起消失了）⇒ 4498 + 11 = 4509。文件数不动：两份都已存在。
 #   workerd 那两个数不动：两份都是 Node 单运行时的用例。
+# 🔴 **这一轮：`GET /favicon.ico` 补上一条真路由。**
+#   在这之前网关根路径上没有它（面板标签页那颗图标走的是 HTML 里的内联 data URI，
+#   而浏览器**不看页面写了什么**也会去取 `/favicon.ico`）⇒ 线上那条一直是 404。
+#   字节**不新存一份**：从 `UI_ASSETS["/admin"]` 那份 HTML 里已有的 base64 抠出来解码，
+#   于是它经 `scripts/check-png.mjs` 的 `auditUiLogos()` 接在 `docs/logo.png` 这个唯一
+#   真源上。路由挂在 `uiRoutes()` 里 ⇒ 跟着 ADMIN_TOKEN 一起存在或消失。
+#   格数：`tests/contract/ui-serve.test.ts` 新增 7 格（字节逐字节相同 / 真是一张 PNG（魔数与
+#   IEND）/ 304 空体 / 与 /admin 的 etag 两个方向都不串 / 200 与 304 都带全套安全头 /
+#   未设 ADMIN_TOKEN 时一起 404 / 抠不到时当场抛的反向控制）⇒ 4509 + 7 = 4516。
+#   文件数不动（那份文件已存在）。**workerd 那两个数这次要动**：contract 双运行时各跑
+#   一遍 ⇒ 709 + 7 = 716，文件数仍是 38。
+#   ⚠️ 同批改 `tests/contract/admin-auth.test.ts` 的两张快照（`EXPECTED` 多一条
+#   `GET /favicon.ico`、`PUBLIC_PATHS` 多一条同名路径并在上方表态）——**格数不变**，
+#   那两格本来就在跑，是它们把这条新端点逼到评审面前的。
 EXPECT_NODE_FILES=146
-EXPECT_NODE_TESTS=4509
+EXPECT_NODE_TESTS=4516
 EXPECT_WORKERS_FILES=38
-EXPECT_WORKERS_TESTS=709
+EXPECT_WORKERS_TESTS=716
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

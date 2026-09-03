@@ -522,6 +522,11 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   //
   // 静态资源**免鉴权**（登录闸得先能打开），但它整棵树跟着 /admin 一起存在或消失：
   // 没配 ADMIN_TOKEN 时上面已经 return null，连这几行都不会执行。
+  //
+  // ⚠️ `uiRoutes()` 里**还有一条不在 /admin 前缀下的路由**：`GET /favicon.ico`
+  //（浏览器不看 HTML 也会去取的那一条）。它同样免鉴权、同样跟着这里一起存在或消失，
+  // 理由写在 `src/ui/serve.ts` 那条路由上方。放在这一行之后新增 `/admin/api/*`
+  // 端点会被上面那条静态兜底吃掉，这一点不因它而变。
   admin.route("/", uiRoutes());
   return admin;
 }
