@@ -1,5 +1,19 @@
-/* 所有颜色一律引用变量，零硬编码色值。主色用 indigo（不是 kiro2api 的 emerald）：
-   同一个运维会同时开着两个结构一模一样的面板，颜色是最快最可靠的区分信号。
+/* 所有颜色一律引用变量，零硬编码色值。
+
+   ⚠️ **主色是 emerald，这是从 kiro2api 搬过来的**（`kiro2api/admin-ui-v2/css/base.css`
+   的开头逐字写着「emerald (kiro2api + gemini2api share this exact palette)」）。
+   ⚠️ **这里原来写的是「主色用 indigo（不是 kiro2api 的 emerald）：同一个运维会同时开着
+   两个结构一模一样的面板，颜色是最快最可靠的区分信号」——那条理由已被推翻**：
+   两个面板要靠什么区分由用它的人说了算，而他要的是一套外观。区分信号今天落在
+   顶栏的品牌名与那张 logo 上（两个项目的图与名字本来就不一样），不落在主色上。
+
+   ⚠️⚠️ **主色取的是 emerald-700 `#047857`，不是 kiro2api 那份 emerald-600 `#059669`，
+   这一步不是口味，是一条量出来的下限**：`--primary` 在本面板同时充当
+   ① 链接文字色（`a`）、② 实心按钮的底（`button`，白字画在上面）、③ 侧栏选中项的字色。
+   ①③ 是正文文字、② 是按钮标签，三样都受 WCAG 1.4.3 AA 的 4.5:1 约束，而
+   **`#059669` 配白字只有 3.77:1**（用下面那条判据同一份公式现算的，不是抄来的），
+   `#047857` 是 5.48:1。⇒ 同一条 emerald 上暗一档，屏幕上与 kiro2api 并排看几乎分不出，
+   而按钮上的字不再是「勉强能看」。`--primary-hover` 跟着落到 emerald-800 `#065f46`。
 
    本文件只放**组件原语 token** + 跨页面共用的基础重置/控件样式。外壳布局
    （侧栏、登录闸、toast、modal）在 shell.css；业务内容（表格、卡片、徽章）
@@ -8,39 +22,102 @@
 /* ⚠️ **`--muted` 的取值受一条会变红的下限约束，改它之前先读这一段**（真机实测）。
    `--muted` 不只画"次要说明文字"：`.badge` 的底样式、表头 `th`、未选中的 `.btn-toggle`
    全都是 `--muted` 画在 `--panel-2` 上，而那是本面板对比度最紧的一对。
-   亮色那份原来是 `#6b7280`，在 `--panel-2`（`#f0f1f5`）上量出来 **4.28:1**，
-   低于 WCAG 1.4.3 AA 对正文的 4.5:1 —— 真浏览器五语言 × 两主题冒烟里
+   亮色那份最早是 `#6b7280`，真浏览器五语言 × 两主题冒烟里
    **亮色那五格逐格都量出不达标元素、深色那五格 0 处，五种语言逐格同数**
    （语言无关，是 token 的事不是文案的事）。
    ⚠️ **不达标的具体条数刻意不写**（对比度复评时点名）：它随当时渲染了几行模型目录漂
    （`.badge-off` 是大头），写进注释就是一个复现不出来、又没有测法的数；
-   而下面这两个比值不一样，它们是**现算的**。
-   现在改成同一条灰阶上暗一档的 `#4b5563`（在 `--panel-2` 上 6.70:1）。
-   ⚠️ 上面这两个读数**不是抄来的**：下面那条断言用同一条 WCAG 公式现算，
-   把 token 改回去它会把算出来的比值逐字打进报文（本轮变异实测印出来的正是 4.28:1）。
+   而下面这几个比值不一样，它们是**现算的**。
+   现在亮色走 slate-600 `#475569`（在换成 emerald 那套之后的 `--panel-2` = `#f1f5f9`
+   上 6.92:1）。⚠️ 上面那两句里的读数**不是抄来的**：下面那条断言用同一条 WCAG 公式现算，
+   把 token 改回 `#6b7280` 它会把算出来的比值逐字打进报文（在今天这套底色上是 4.41:1，
+   仍然低于 4.5:1 ⇒ 那条反向控制换底色之后照旧成立）。
+
+   ⚠️⚠️ **深色那一半在换配色时第一次真的顶到线上了，这一条要说清楚**：
+   kiro2api 深色主题里的次要文字是 slate-400 `#94a3b8`，而它画在同一份配色的
+   `--bg-tertiary`（本仓的 `--panel-2` = `#334155`）上**只有 4.04:1** —— 也就是说
+   **kiro2api 那份自己过不了本仓这条线**，照抄会当场把这道门禁打红。
+   所以深色的 `--muted` 取同一条 slate 灰阶上、slate-400 与 slate-300 (`#cbd5e1`)
+   之间的一档 `#aab8c9`（在 `--panel-2` 上 5.13:1），既过线又不至于亮到与 `--text` 混同。
+
    **下限由 `tests/unit/source-guards.test.ts「--muted 在三种底色上都过 4.5:1」` 那一格钉着**，
    它直接从本文件抠 token 现算，改回任何一个过不了线的值都会当场红。
    ⚠️ **锚要写成 `路径「用例名」` 紧挨着的那一种**：实测第 8 道门禁只校验这一种形态的锚内容，
    写成「`路径` 的「用例名」」时那个名字改了它一声不吭（本轮实测 EXIT=0）。 */
 :root {
-  --bg: #f7f8fa; --panel: #ffffff; --panel-2: #f0f1f5; --text: #1c1f26; --muted: #4b5563;
-  --border: #e3e6ec; --primary: #4f46e5; --primary-fg: #ffffff;
+  --bg: #f8fafc; --panel: #ffffff; --panel-2: #f1f5f9; --text: #0f172a; --muted: #475569;
+  --border: #e2e8f0; --border-hover: #cbd5e1;
+  --primary: #047857; --primary-hover: #065f46; --primary-fg: #ffffff;
   --danger: #dc2626; --danger-fg: #ffffff; --warn: #b45309; --warn-fg: #ffffff;
   --ok: #15803d; --ok-fg: #ffffff;
-  --radius: 10px; --radius-sm: 6px; --gap: 16px; --gap-sm: 8px;
-  --shadow: rgba(15, 18, 24, 0.12);
+  /* 主色的透明度档（kiro2api 的 `--primary-10/20`）。侧栏选中项的淡底、
+     输入框聚焦时那圈光晕、实心按钮 hover 时那道投影各用一档。
+     ⚠️ 三处的前景色都量过：`--primary` 画在「10% 主色叠在 `--panel` 上」得到的
+     `#e6f2ee` 上是 4.78:1、叠在 `--bg` 上是 4.57:1，深色那两格是 6.24 / 7.75:1。 */
+  --primary-10: rgba(4, 120, 87, 0.1);
+  --primary-20: rgba(4, 120, 87, 0.2);
+  /* 中性提示条那一档（kiro2api 的 `--info-*` 语义档）。用量板块的 `.banner-info`
+     从「灰底 + 正文色」换成这一档：灰底那版与卡片底几乎同色，一条提示看着像排版留白。
+     `--info-text` 画在「8% 蓝叠在 `--panel` 上」的 `#eff5fe` 上量到 6.12:1（深色 7.14:1）。 */
+  --info-bg: rgba(59, 130, 246, 0.08);
+  --info-border: rgba(59, 130, 246, 0.2);
+  --info-text: #1d4ed8;
+  /* 圆角改成 kiro2api 那套 rem 分级（原来是 `--radius: 10px` 一个固定值）。
+     五档各有各的落点：sm = 徽章那种小方块、md = 图标按钮 / 导航项 / 分段按钮、
+     lg = 按钮 / 输入框 / 表格 / 代码块、xl = 卡片 / modal / 登录卡、full = 药丸与状态点。
+     ⚠️ **旧的 `--radius` / `--radius-sm` 两个名字已经删掉、没有留别名**：留着别名的话
+     漏改的引用点会静静沿用旧尺度，而那正是「移植了一半」最难被看见的形态。 */
+  --radius-sm: 0.375rem; --radius-md: 0.5rem; --radius-lg: 0.75rem; --radius-xl: 1rem;
+  --radius-full: 9999px;
+  --gap: 16px; --gap-sm: 8px;
+  /* 阴影改成 kiro2api 那套**双层**四档（原来是一个 `--shadow` 颜色 + 每处各写一条
+     `0 4px 12px`）。双层的意思是一条紧贴元素的硬边 + 一条铺开的软边，
+     单层那版在浅色底上要么看不见、要么糊成一团灰。四档各有落点：
+     sm = 卡片常驻、md = 图标按钮 hover 抬起、lg = 浮层（下拉菜单 / toast / 登录卡）、
+     xl = modal、glass = 顶栏那条毛玻璃条。 */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.02);
+  --shadow-glass: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+  /* 玻璃拟态。**只给真的压在内容上面的那两处用**：顶栏（页面滚动时内容从它下面过）
+     与「添加 Key」那个绝对定位的下拉菜单。
+     ⚠️ **不往别处撒**：半透明底压在不透明底上与直接写死一个色号没有任何区别，
+     那种「加了但看不出」的装饰与一颗点了没反应的按钮是同一类东西。 */
+  --glass: rgba(255, 255, 255, 0.8);
+  --glass-strong: rgba(255, 255, 255, 0.95);
+  /* modal 背后那层遮罩。原来复用的是 `--shadow` 那个颜色 token —— 一个名字同时当
+     「投影的颜色」和「遮罩的底」，改其中一个用途就会连坐另一个。现在各归各的。 */
+  --overlay-bg: rgba(0, 0, 0, 0.6);
   /* 有色背景（toast/badge 这类不跟 --panel 走的元素）上的 hover 遮罩。
      只有一份定义、不按主题分叉：它是"在当前背景上压暗一层"的相对效果，
      深色主题下 toast 背景同样是饱和/浅色（见 --danger 等在 dark 里的取值），
      压暗一样成立，不需要为亮暗各写一份。 */
   --overlay-hover: rgba(0, 0, 0, 0.15);
+  /* 统一的过渡曲线（kiro2api 的 `--transition`）。一处定义、各处引用：
+     每个组件各写各的时长与曲线时，鼠标扫过一排控件会看到几种不同的快慢。 */
+  --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 :root[data-theme="dark"] {
-  --bg: #14161a; --panel: #1c1f26; --panel-2: #23262f; --text: #e7e9ee; --muted: #9aa1ad;
-  --border: #2b303a; --primary: #818cf8; --primary-fg: #14161a;
-  --danger: #f87171; --danger-fg: #14161a; --warn: #fbbf24; --warn-fg: #14161a;
-  --ok: #4ade80; --ok-fg: #14161a;
-  --shadow: rgba(0, 0, 0, 0.4);
+  --bg: #0f172a; --panel: #1e293b; --panel-2: #334155; --text: #f1f5f9; --muted: #aab8c9;
+  --border: #475569; --border-hover: #64748b;
+  --primary: #34d399; --primary-hover: #10b981; --primary-fg: #0f172a;
+  --danger: #f87171; --danger-fg: #0f172a; --warn: #fbbf24; --warn-fg: #0f172a;
+  --ok: #4ade80; --ok-fg: #0f172a;
+  --primary-10: rgba(52, 211, 153, 0.1);
+  --primary-20: rgba(52, 211, 153, 0.2);
+  --info-bg: rgba(59, 130, 246, 0.1);
+  --info-border: rgba(59, 130, 246, 0.2);
+  --info-text: #93c5fd;
+  /* 深色下阴影要更黑才看得见：浅色那套的 5% 黑压在 #0f172a 上等于没有。 */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  --glass: rgba(30, 41, 59, 0.85);
+  --glass-strong: rgba(15, 23, 42, 0.95);
+  --overlay-bg: rgba(0, 0, 0, 0.8);
 }
 * { box-sizing: border-box; }
 body {
@@ -52,23 +129,76 @@ a { color: var(--primary); }
 
 /* 输入 / 按钮的原语样式：登录闸的表单与 modal 的操作栏共用同一套。 */
 label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
+/* ⚠️ **选择器一个类型都没多收，这是有意的**：`input[type="search"]` 刻意不在这一串里
+   ——搜索框只出现在 `.toolbar` 里，那边自己写着 `flex: 1` 的整套样式，
+   把 `width: 100%` 撒到它头上会把那一行的 flex 分配弄乱。 */
 input[type="password"], input[type="text"], select, textarea {
   width: 100%; padding: 10px 12px; color: var(--text); font: inherit;
-  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  transition: var(--transition);
+}
+/* 悬停时边框加深一档（kiro2api 的 `--border-hover`）：一排静止的输入框上，
+   「鼠标现在指着哪一个」此前一点提示都没有。 */
+input[type="password"]:hover, input[type="text"]:hover,
+select:hover, textarea:hover { border-color: var(--border-hover); }
+/* 聚焦时主色边框 + 一圈淡主色光晕（kiro2api 的 `.form-control:focus`）。
+   ⚠️ 它**不替代** `:focus-visible` 那条 outline：光晕是鼠标点进来时也有的视觉反馈，
+   outline 是键盘可见焦点环（WCAG 2.4.7），两者管的是不同的人。 */
+input[type="password"]:focus, input[type="text"]:focus,
+select:focus, textarea:focus {
+  border-color: var(--primary); background: var(--panel); box-shadow: 0 0 0 4px var(--primary-10);
 }
 textarea { resize: vertical; }
 button {
   padding: 10px 12px; font: inherit; cursor: pointer;
-  color: var(--primary-fg); background: var(--primary); border: 0; border-radius: var(--radius);
+  color: var(--primary-fg); background: var(--primary); border: 0; border-radius: var(--radius-lg);
+  transition: var(--transition);
 }
+/* hover 时压到 emerald 的下一档 + 一道主色投影（kiro2api 的 `.btn-primary:hover`）。
+   ⚠️ `--primary-hover` 配 `--primary-fg` 量过：亮色 7.68:1、深色 7.04:1
+   ——比常态那 5.48 / 9.29 只多不少，hover 不许把字变得更难读。
+
+   ⚠️⚠️ **`:where()` 那一层不是花架子，它是这两条规则能存在的前提，删了会当场坏几处。**
+   本仓没有 `.btn-primary` 那种类：**裸 `button` 就是主按钮的样式**，而
+   `.icon-btn` / `.nav-item` / `.btn-toggle` / `.toast-close` / `.badge` 这几族都是
+   「先长成 button、再把底色改回中性」。写成 `button:not([disabled]):hover` 的话它的
+   特指度是 **(0,2,1)**，压过 `.icon-btn:hover` / `.nav-item:hover` / `.toast-close:hover`
+   的 **(0,2,0)** ⇒ 鼠标扫过侧栏导航、顶栏图标按钮、toast 的关闭叉，它们会**整块变成
+   主色绿**，而字色还留在各自的中性色上（`--muted` 画在 `--primary-hover` 上几乎看不见）。
+   `:where()` 对特指度的贡献是 **0**，所以这两条落到 **(0,1,1)**，任何一条带类的
+   hover 规则都压得过它。
+
+   ⚠️ **`:not(.badge)` 是这条名单上唯一的例外，理由与上面那几族不同**：那几族靠
+   自己的 `:hover` 规则赢，而徽章**不能有 hover 底色** —— 它的底色就是它要说的那句话
+   （`.badge-ok` / `.badge-warn` / …），任何一条 `.health-badge:hover { background: … }`
+   都会在鼠标扫过时把状态色盖掉。顶栏那颗服务状态徽章是本仓唯一一个 `<button class="badge">`。
+
+   ⇒ 规矩落成一句话：**任何会自己重画底色的按钮类，要么自己写一条设 `background` 的
+   `:hover`，要么进上面那份 `:not()` 名单。** 这条由
+   `tests/unit/source-guards.test.ts「会自己重画底色的按钮类，要么自己有 hover 底色，要么进那份 :not() 名单」`
+   钉着（它从面板源码里扫出「哪些类真的挂在 <button> 上」，不是一份手抄名单）。
+   ⚠️ **它接不住的那一半**：特指度本身没有自动判据（本仓没有 CSS 引擎，比不了），
+   改这两行的选择器形态之前请手算一遍 —— `(0,1,1)` 必须低于那几族各自的 hover 规则。 */
+button:where(:not([disabled]):not(.badge)):hover { background: var(--primary-hover); box-shadow: 0 4px 6px -1px var(--primary-20); }
+button:where(:not([disabled])):active { transform: scale(0.98); }
 button[disabled] { opacity: .6; cursor: progress; }
 button.danger { background: var(--danger); color: var(--danger-fg); }
+/* ⚠️ **这一条必须自己把底色写一遍**：上面那条 hover 规则会把底换成主色，
+   而 `button.danger` 的 (0,1,1) 与它**同分**、只靠「写在后面」赢下常态那一格；
+   hover 那一格必须由本条 (0,2,1) 亲自压过去，漏写 `background` 就是
+   **一颗销毁凭据的按钮在鼠标扫过时变成绿色**。危险按钮 hover 只加投影不换色：
+   它的颜色本身就是那句警告，换掉等于把警告收回。 */
+button.danger:where(:not([disabled])):hover { background: var(--danger); box-shadow: var(--shadow-md); }
 
-/* 图标按钮：侧栏与业务板块共用（svgIcon() 生成的 <svg> 直接放在里面）。 */
+/* 图标按钮：侧栏与业务板块共用（svgIcon() 生成的 <svg> 直接放在里面）。
+   hover 时抬 2px + 一层中档投影，是 kiro2api 顶栏那几颗按钮的手感。 */
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 32px; height: 32px; padding: 0;
   color: var(--text); background: transparent; border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md); transition: var(--transition);
 }
-.icon-btn:hover { background: var(--panel-2); }
+.icon-btn:hover {
+  background: var(--panel-2); border-color: var(--primary); color: var(--primary);
+  transform: translateY(-2px); box-shadow: var(--shadow-md);
+}

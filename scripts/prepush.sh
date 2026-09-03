@@ -1095,8 +1095,30 @@ BANNER='[collection-guard] ✅'
 #   ⚠️ 同批改 `tests/contract/admin-auth.test.ts` 的两张快照（`EXPECTED` 多一条
 #   `GET /favicon.ico`、`PUBLIC_PATHS` 多一条同名路径并在上方表态）——**格数不变**，
 #   那两格本来就在跑，是它们把这条新端点逼到评审面前的。
+# 🔴 **这一轮：面板整体换成 kiro2api 那套 emerald 观感（配色 / 圆角分级 / 双层阴影 /
+#   玻璃 / 语义色档）。** 换的是 token 与组件外观，DOM 结构与类名一个都没动。
+#   ⚠️ **主色取 emerald-700 `#047857` 而不是 kiro2api 那份 emerald-600 `#059669`**：
+#   后者配白字只有 3.77:1（用本仓那份现算量具量的），而 `--primary` 在本面板同时是
+#   链接色、实心按钮的底、侧栏选中项的字色，三样都受 4.5:1 约束。
+#   ⚠️ 深色的 `--muted` 同理不能照抄 kiro2api 的 `#94a3b8`：它画在同一份配色的
+#   `#334155` 上只有 4.04:1，**照抄会当场把 `--muted` 那道门禁打红**。
+#   顺带修掉一处与 `.poll-dot` 同形的老缺陷：`.pg-hint-ok` / `.pg-hint-bad` 用的是
+#   `--ok-fg` / `--danger-fg`（亮色下都是 `#ffffff`）⇒ 白字画在白卡上、两档还同色。
+#   ⚠️ **换配色时自己踩了一次特指度的坑，第四组判据就是买它的**：第一版给裸 `button`
+#   加的 hover 写成 `button:not([disabled]):hover`（0,2,1），一次压过
+#   `.icon-btn:hover` / `.nav-item:hover` / `.toast-close:hover`（0,2,0）—— 鼠标扫过
+#   侧栏导航、顶栏图标按钮、toast 的关闭叉，它们会整块变成主色绿而字色留在中性档。
+#   本仓没有 CSS 引擎，**这件事一格测试都不会红，是手算特指度算出来的**。
+#   处置：那条规则改用 `:where()` 降到 (0,1,1)，`.btn-toggle` 补一条自己的 hover 底色，
+#   徽章进 `:not()` 名单（它的底色就是它要说的那句状态）。
+#   格数：`tests/unit/source-guards.test.ts` 新增 18 格 —— CSS 变量两个方向对账 7 格
+#   （非空锚 / 引用都定义过 / 该红时红 / 定义都被引用 / 该红时红 / 深色是亮色子集 /
+#   该红时红），`--*-fg` 只许画在自己铺的底上 3 格（非空锚 / 真扫描 / 该红时红），
+#   theme-color 三份拷贝同值 3 格（真扫描 / 两条该红时红），按钮 hover 底色表态 5 格
+#   （非空锚 / 真扫描 / 两条该红时红 / 认不出要吵）⇒ 4516 + 18 = 4534。
+#   文件数不动。**workerd 那两个数不动**：这四组都是 Node 单运行时的源码级判据。
 EXPECT_NODE_FILES=146
-EXPECT_NODE_TESTS=4516
+EXPECT_NODE_TESTS=4534
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 

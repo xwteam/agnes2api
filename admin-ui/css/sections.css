@@ -4,7 +4,8 @@
 
 .card {
   padding: var(--gap); background: var(--panel);
-  border: 1px solid var(--border); border-radius: var(--radius);
+  border: 1px solid var(--border); border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
 }
 .card + .card { margin-top: var(--gap-sm); }
 /* ⚠️⚠️ **上面那条是给「竖着摞起来的卡」用的，横排的一行里必须取消掉。**
@@ -24,7 +25,7 @@
 
 table {
   width: 100%; border-collapse: collapse; background: var(--panel);
-  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;
 }
 th, td {
   padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border);
@@ -34,7 +35,7 @@ th { color: var(--muted); font-weight: 500; background: var(--panel-2); }
 tr:last-child td { border-bottom: 0; }
 
 .badge {
-  display: inline-block; padding: 2px 8px; font-size: 12px; border-radius: 999px;
+  display: inline-block; padding: 2px 8px; font-size: 12px; border-radius: var(--radius-full);
   color: var(--muted); background: var(--panel-2); border: 1px solid var(--border);
 }
 .badge-ok { color: var(--ok-fg); background: var(--ok); border-color: var(--ok); }
@@ -72,7 +73,7 @@ tr:last-child td { border-bottom: 0; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-sm); margin: var(--gap-sm) 0; }
 .toolbar input[type="search"] {
   flex: 1; min-width: 160px; padding: 10px 12px; color: var(--text); font: inherit;
-  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
 }
 .toolbar select { width: auto; }
 .toolbar .auto { display: inline-flex; align-items: center; gap: var(--gap-sm); margin-bottom: 0; }
@@ -86,7 +87,7 @@ tr:last-child td { border-bottom: 0; }
 /* 概览板块：常驻红色横幅（config.degraded 时）+ 内容块卡片。 */
 .banner-danger {
   padding: var(--gap-sm) var(--gap); margin-bottom: var(--gap-sm);
-  color: var(--danger-fg); background: var(--danger); border-radius: var(--radius);
+  color: var(--danger-fg); background: var(--danger); border-radius: var(--radius-lg);
 }
 .banner-danger p { margin: 2px 0; }
 .block { margin-top: var(--gap); }
@@ -97,7 +98,8 @@ tr:last-child td { border-bottom: 0; }
 .btn-group { display: inline-flex; gap: 2px; flex-wrap: wrap; }
 .btn-toggle {
   padding: 6px 10px; font: inherit; color: var(--muted);
-  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-md);
+  transition: var(--transition);
 }
 /* 选中态。**颜色之外必须再有一条非颜色声明**（WCAG 1.4.1）：
    原来这条只改 `color` 与 `border-color`，真机实测（触屏模拟）里选中与未选中两颗按钮的
@@ -114,6 +116,11 @@ tr:last-child td { border-bottom: 0; }
    真机量过（宽屏与 380px 窄屏各一轮，逐档切换）：**按钮组的换行行数不变、页面不横向滚动**。
    位移的具体像素数**刻意不写在这里**——本仓没有布局引擎，写下来就是一个没有测法的数字；
    要复量的话按上面那句记着的量法（宽屏与 380px 窄屏各一轮、逐档切换）自己重量一遍。 */
+/* ⚠️ **这条 hover 不是装饰，它是一条会顶住上游规则的护栏**：`base.css` 里那条
+   `button:where(…):hover` 会把任何按钮的底换成主色，而分段按钮的字色是 `--muted`
+   ——`--muted` 画在 `--primary-hover` 上几乎看不见。本条 (0,2,0) 压过它的 (0,1,1)，
+   把底留在中性档，只把边框与字色提亮一档。整条规矩写在那两行上方。 */
+.btn-toggle:hover { background: var(--panel-2); border-color: var(--border-hover); color: var(--text); }
 .btn-toggle.active { color: var(--text); border-color: var(--primary); font-weight: 600; }
 /* 轮询状态指示灯：三态各一个颜色 token，点本身不带文字（文字说明挂在 title/aria-label 上）。
    ⚠️⚠️ **`--ok-fg` / `--danger-fg` 那一对是坏的，别改回去**（复评时真机量出来的）：
@@ -132,7 +139,7 @@ tr:last-child td { border-bottom: 0; }
    `tests/unit/source-guards.test.ts「已登记的欠账：亮色下 --ok 与 --danger 几乎等亮度」`
    ——哪天有人把它修好，那一格会红并提醒回来删掉这段话。 */
 .poll-dot {
-  display: inline-block; width: 8px; height: 8px; border-radius: 999px;
+  display: inline-block; width: 8px; height: 8px; border-radius: var(--radius-full);
   background: var(--muted); margin-left: var(--gap-sm);
 }
 .poll-dot-active { background: var(--ok); }
@@ -140,7 +147,7 @@ tr:last-child td { border-bottom: 0; }
 .poll-dot-error { background: var(--danger); }
 
 /* Key 池板块：批量条复用 .toolbar 布局，行内动作列的按钮组换行。 */
-.bulk-bar { background: var(--panel-2); padding: var(--gap-sm); border-radius: var(--radius); }
+.bulk-bar { background: var(--panel-2); padding: var(--gap-sm); border-radius: var(--radius-lg); }
 .row-actions { display: flex; flex-wrap: wrap; gap: 4px; }
 
 /* 单把 key 的验活：一颗按钮 + 它的行内结果。
@@ -158,8 +165,9 @@ tr:last-child td { border-bottom: 0; }
 .dropdown-menu {
   position: absolute; top: 100%; left: 0; z-index: 50; margin-top: 4px;
   min-width: 220px; padding: var(--gap-sm) 0;
-  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: 0 4px 12px var(--shadow);
+  background: var(--glass-strong); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-lg);
 }
 .dropdown-group + .dropdown-group { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
 .dropdown-group-label { padding: 4px var(--gap-sm); font-size: 12px; color: var(--muted); }
@@ -205,7 +213,7 @@ tr:last-child td { border-bottom: 0; }
    一条**横贯整张卡的红色大条**，于是整页视觉上最抢眼的东西是三颗**销毁凭据**的按钮。
    与 `.channel-card .channel-test` 用的是同一条处置（`align-self: flex-start`）。 */
 .cfg-field .cfg-clear { align-self: flex-start; }
-.cfg-advanced { margin-top: var(--gap-sm); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--gap-sm); }
+.cfg-advanced { margin-top: var(--gap-sm); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--gap-sm); }
 .cfg-advanced summary { cursor: pointer; color: var(--text); }
 .cfg-errors p { margin: 2px 0; }
 .danger-text { color: var(--danger); }
@@ -232,7 +240,7 @@ tr:last-child td { border-bottom: 0; }
    窄屏上那段代码会把整张卡撑破。 */
 .examples-code {
   margin: var(--gap-sm) 0; padding: var(--gap-sm);
-  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-lg);
   white-space: pre; overflow-x: auto; font-size: 12px; line-height: 1.5;
 }
 /* 两排分段选择器各占一行：挤在同一行时协议与语言两组按钮会被读成一组。
@@ -258,11 +266,16 @@ tr:last-child td { border-bottom: 0; }
 /* 黄条与中性条。`.banner-danger` 已经在概览板块那一段里定义过，这里只补另两档。 */
 .banner-warn {
   padding: var(--gap-sm) var(--gap); margin-bottom: var(--gap-sm);
-  color: var(--warn-fg); background: var(--warn); border-radius: var(--radius);
+  color: var(--warn-fg); background: var(--warn); border-radius: var(--radius-lg);
 }
+/* 中性提示条走 kiro2api 的 `--info-*` 语义档。
+   ⚠️ **它原来是「`--panel-2` 底 + 正文色」，那个底与卡片底几乎同色** ——
+   一条本该被读成「这里有话要说」的横幅，看上去只是一块排版留白。
+   现在是淡蓝底 + 一圈同色边 + 深蓝字（量到 6.12:1 / 深色 7.14:1）。 */
 .banner-info {
   padding: var(--gap-sm) var(--gap); margin-bottom: var(--gap-sm);
-  color: var(--text); background: var(--panel-2); border-radius: var(--radius);
+  color: var(--info-text); background: var(--info-bg);
+  border: 1px solid var(--info-border); border-radius: var(--radius-lg);
 }
 .banner-warn p, .banner-info p { margin: 2px 0; }
 /* 错误横幅里那颗重试按钮：跟在文字后面，别把整条横幅撑成两行。
@@ -296,10 +309,19 @@ tr:last-child td { border-bottom: 0; }
 .pg-field > select, .pg-field > input[type="password"], .pg-field > textarea { flex: 1; min-width: 0; }
 .pg-field > textarea { font-family: inherit; resize: vertical; }
 /* 口令与设置页 hint 对不对得上那一句。**三档同时靠文字表达**，颜色只是加强
-   （WCAG 1.4.1：不许只靠颜色传达状态）。 */
+   （WCAG 1.4.1：不许只靠颜色传达状态）。
+   ⚠️⚠️ **这两条原来写的是 `--ok-fg` / `--danger-fg`，那是坏的**（本轮换配色时逐对复量
+   `--*-fg` 的用法时逮到的，与 `.poll-dot` 那次是**同一个形状的第三例**）：
+   那一族是「画在有色底上的前景色」，亮色主题里两个逐字都是 `#ffffff`
+   ⇒ 这两句话是白字画在白卡（`--panel`）上、深色主题里同样是深色画在深色上，
+   **两个主题下都看不见**；而且两个取值逐字相同 ⇒ 「对得上」与「对不上」同色。
+   现在走画在底色上的那一套：亮色 5.02:1 / 4.83:1，深色 8.40:1 / 5.29:1。
+   ⚠️ 这一族**没有**像 `.poll-dot` 那样的现算断言看着（那一格只认
+   `sections.css` 里 `.poll-dot-*` 三条规则的 `background`），所以这段话就是它的护栏：
+   改回 `--*-fg` 一族之前，先去 `tests/unit/source-guards.test.ts` 那两组量具上补一格。 */
 .pg-hint { display: block; margin-top: 4px; font-size: 12px; }
-.pg-hint-ok { color: var(--ok-fg); }
-.pg-hint-bad { color: var(--danger-fg); }
+.pg-hint-ok { color: var(--ok); }
+.pg-hint-bad { color: var(--danger); }
 /* 一轮对话。上下两条头部信息 + 中间的内容。 */
 .pg-turn { padding: var(--gap-sm) 0; }
 .pg-turn + .pg-turn { border-top: 1px solid var(--border); }
@@ -309,7 +331,7 @@ tr:last-child td { border-bottom: 0; }
 /* 响应体原文。**必须能横向滚**：一行很长的 JSON 会把整块布局撑破。 */
 .pg-body {
   margin: 4px 0 0; padding: var(--gap-sm); max-height: 320px;
-  overflow: auto; background: var(--panel-2); border-radius: var(--radius);
+  overflow: auto; background: var(--panel-2); border-radius: var(--radius-lg);
   font-size: 12px; white-space: pre;
 }
 /* 「协议目录读不出来」那一档：与模型板块的 `.models-unknown` 表达同一件事
@@ -326,5 +348,5 @@ tr:last-child td { border-bottom: 0; }
 .pg-media-url { flex: 1; min-width: 0; word-break: break-all; font-size: 12px; }
 /* **只有 data 形式的图片会走到这里**（判定在 js/pure/playground.mjs 的 mediaEmbeddable）。
    限高限宽：上游给多大就画多大的话，一张图能把整页顶到看不见别的东西。 */
-.pg-media-img { display: block; width: 100%; max-width: 320px; max-height: 320px; object-fit: contain; border-radius: var(--radius); }
+.pg-media-img { display: block; width: 100%; max-width: 320px; max-height: 320px; object-fit: contain; border-radius: var(--radius-lg); }
 .pg-media-note > .pg-media-endpoint { flex: 1; min-width: 0; word-break: break-all; font-size: 12px; }

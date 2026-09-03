@@ -16,8 +16,15 @@ export function setTheme(next) {
   if (dark) document.documentElement.setAttribute("data-theme", "dark");
   else document.documentElement.removeAttribute("data-theme");
   try { localStorage.setItem(STORE, dark ? "dark" : "light"); } catch (e) { /* 隐私模式 */ }
+  // ⚠️ **这两个色值是 `admin-ui/css/base.css` 里 `--bg` 的第二份拷贝，而且没人对账。**
+  // 不能写成 `var(--bg)`：`<meta name="theme-color">` 的 content 是给浏览器 chrome
+  // （移动端地址栏 / 标题栏）读的字符串，不走 CSS 变量解析。
+  // 也不能在这里 `getComputedStyle` 去读：那一步要等样式表加载完，而这段代码在切主题
+  // 的同一帧里跑，读到的可能是上一套值。
+  // ⇒ **换 `--bg` 的那天必须同时改这一行**（`admin-ui/index.html` 里那条初始
+  // `<meta name="theme-color">` 是第三份，同理）。本轮换 emerald 配色时三处一起改过。
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", dark ? "#14161a" : "#f7f8fa");
+  if (meta) meta.setAttribute("content", dark ? "#0f172a" : "#f8fafc");
   document.dispatchEvent(new CustomEvent("themechange", { detail: { theme: dark ? "dark" : "light" } }));
 }
 

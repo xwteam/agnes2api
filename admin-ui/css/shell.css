@@ -6,7 +6,8 @@
 .gate { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: var(--gap); }
 .gate-card {
   width: 100%; max-width: 380px; padding: 28px; background: var(--panel);
-  border: 1px solid var(--border); border-radius: var(--radius);
+  border: 1px solid var(--border); border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
 }
 .gate-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 /* ⚠️ 这一条不是装饰：下面 `.gate-card button` 那条 `width: 100%` 是给「进入」那颗
@@ -33,11 +34,22 @@
   display: grid; grid-template-columns: 220px 1fr; grid-template-rows: auto 1fr;
   min-height: 100vh;
 }
+/* 顶栏是 kiro2api 那条**毛玻璃**条：内容从它下面滚过去时透出一层模糊。
+   三条声明缺一不可，缺哪条它就退化成什么，逐条写在这里：
+   · `position: sticky` —— 没有它内容根本不会从它下面过（本页是**文档在滚**：
+     `.shell.on` 是 `min-height: 100vh` 的栅格，行高由内容撑开，超出视口的是整页）；
+   · `background: var(--glass)` —— 半透明底；写成不透明色的话下面那条 blur 一点效果都没有；
+   · `backdrop-filter: blur()` —— 真正的模糊；只有半透明底而没有它就只是一层薄纱。
+   ⚠️ **`-webkit-` 那一行不是可有可无的**：Safari 到今天仍只认带前缀的写法，
+   少了它 macOS / iOS 上这条顶栏是半透明但**不模糊**的，滚动时底下的文字会直接透上来。 */
 .topbar {
   grid-column: 1 / -1;
+  position: sticky; top: 0; z-index: 30;
   display: flex; align-items: center; gap: var(--gap);
   padding: 10px var(--gap);
-  background: var(--panel); border-bottom: 1px solid var(--border);
+  background: var(--glass); border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-glass);
 }
 /* 品牌区：顶栏与登录闸共用同一副长相，两处各写一份的话它们会各漂各的。
    ⚠️ **标记就是项目门面那张图**（docs/logo.png，六份 README 头部块摆的那张），
@@ -68,9 +80,14 @@
 .topbar-link {
   display: inline-flex; align-items: center; height: 32px; padding: 0 10px;
   font-size: 13px; text-decoration: none;
-  color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-md);
+  transition: var(--transition);
 }
-.topbar-link:hover { background: var(--panel-2); }
+/* 与 `.icon-btn:hover` 同一套手感（抬 2px + 中档投影），它俩在顶栏里并排站着。 */
+.topbar-link:hover {
+  background: var(--panel-2); border-color: var(--primary); color: var(--primary);
+  transform: translateY(-2px); box-shadow: var(--shadow-md);
+}
 .side {
   display: flex; flex-direction: column; gap: var(--gap);
   padding: var(--gap); background: var(--panel); border-right: 1px solid var(--border);
@@ -79,12 +96,20 @@
 .nav-item {
   display: flex; align-items: center; gap: var(--gap-sm);
   text-align: left; padding: 8px 10px; color: var(--text);
-  background: transparent; border: 0; border-radius: var(--radius-sm);
+  background: transparent; border: 0; border-radius: var(--radius-md);
+  transition: var(--transition);
 }
 /* 图标那一格宽度固定：不固定的话八个 emoji 的字形宽度不一，文字左边会参差不齐。 */
 .nav-ico { flex: none; width: 18px; font-size: 15px; line-height: 1; text-align: center; }
 .nav-item:hover { background: var(--panel-2); }
-.nav-item.active { background: var(--primary); color: var(--primary-fg); }
+/* 选中项：kiro2api 那种**淡主色底 + 主色字**，不是整块实心主色。
+   ⚠️ **`font-weight` 那一条不是装饰**：换成淡底之后，选中与未选中的差别只剩颜色，
+   而「状态不许只由颜色表达」（WCAG 1.4.1）是本仓已经为 `.btn-toggle.active` 与
+   `.badge-off` 各表过一次态的同一条线。加粗是这一族里唯一一条既不改布局宽度、
+   又能被色觉障碍用户读到的信号。
+   ⚠️ 颜色量过：`--primary` 画在「10% 主色叠在 `--panel` 上」得到的底上，
+   亮色 4.78:1 / 深色 6.24:1，两档都过 4.5:1。 */
+.nav-item.active { background: var(--primary-10); color: var(--primary); font-weight: 600; }
 
 .main { padding: var(--gap); overflow: auto; }
 .section { display: none; }
@@ -97,8 +122,8 @@
 }
 .toast {
   display: flex; align-items: center; gap: var(--gap-sm);
-  padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px;
-  color: var(--primary-fg); background: var(--primary); box-shadow: 0 4px 12px var(--shadow);
+  padding: 10px 14px; border-radius: var(--radius-lg); font-size: 13px;
+  color: var(--primary-fg); background: var(--primary); box-shadow: var(--shadow-lg);
 }
 .toast-warn { background: var(--warn); color: var(--warn-fg); }
 .toast-err { background: var(--danger); color: var(--danger-fg); }
@@ -115,11 +140,12 @@
 .modal-back {
   position: fixed; inset: 0; z-index: 200;
   display: flex; align-items: center; justify-content: center;
-  background: var(--shadow);
+  background: var(--overlay-bg);
 }
 .modal {
   width: 100%; max-width: 420px; padding: 20px; background: var(--panel);
-  border: 1px solid var(--border); border-radius: var(--radius);
+  border: 1px solid var(--border); border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
 }
 .modal h2 { margin: 0 0 12px; font-size: 16px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--gap-sm); margin-top: 16px; }

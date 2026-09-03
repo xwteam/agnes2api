@@ -2324,8 +2324,12 @@ describe("轮询状态灯：非文字状态指示（WCAG 1.4.11）", () => {
  *
  * `--muted` 不只画"次要说明文字"：`.badge` 的底样式、表头 `th`、未选中的 `.btn-toggle`
  * 全是 `--muted` 画在 `--panel-2` 上，而那是本面板对比度最紧的一对。
- * 亮色那份原来是 `#6b7280`，在 `#f0f1f5` 上量出来 4.28:1 —— 低于 4.5:1。
- * 这个读数**不是抄来的**：把 token 改回 `#6b7280`，下面那格会把它算出来的比值逐字打进报文。
+ * 亮色那份最早是 `#6b7280`，在当时的 `--panel-2`（`#f0f1f5`）上量出来 4.28:1 —— 低于 4.5:1。
+ * 这个读数**不是抄来的**：把 token 改回 `#6b7280`，下面那格会把它算出来的比值逐字打进报文
+ *（换成 emerald 那套底色之后同一条变异印出来的是 4.41:1，仍然低于 4.5 ⇒ 反向控制照旧成立）。
+ * ⚠️ **深色那一半在换配色那一轮第一次真的顶到线上**：kiro2api 的次要文字色
+ * slate-400 `#94a3b8` 画在同一份配色的 `#334155` 上只有 4.04:1，**照抄会当场把这一格打红**，
+ * 所以本仓深色的 `--muted` 取的是同一条灰阶上更亮的一档（理由写在 `admin-ui/css/base.css` 的文件头）。
  * 真浏览器五语言 × 两主题冒烟（每格逐板块遍历所有带文字的元素）：
  * **亮色那五格逐格都量出不达标元素、深色那五格 0 处，五种语言逐格同数**
  * ⇒ 是 token 的事，不是文案的事。
@@ -2356,8 +2360,12 @@ describe("--muted 在三种底色上都过 4.5:1", () => {
     expect(light, `${BASE_CSS} 里抠不到亮色 :root 块`).not.toBeNull();
     expect(dark, `${BASE_CSS} 里抠不到深色 :root 块`).not.toBeNull();
     // 仓里真实存在的两个取值，各自只属于一块。串味 / 抠成同一块时这两条会红。
+    // ⚠️ 深色那个字面量在换 emerald 配色那一轮从 `#14161a` 改成了 slate-900 `#0f172a`
+    //（`admin-ui/css/base.css` 的深色 `--bg`）。**改它不是削弱**：这一格要的是
+    // 「两块各自抠得对」，支点必须是**今天仓里真有**的取值，写一个过期的值会让这一格
+    // 恒红，而恒红的判据下一次会被人改成恒绿。
     expect(light!["--panel"], "亮色的 --panel 不是纯白了？那三种底色的枚举要回来重新表态").toBe("#ffffff");
-    expect(dark!["--bg"], "抠到的深色块不对").toBe("#14161a");
+    expect(dark!["--bg"], "抠到的深色块不对").toBe("#0f172a");
   });
 
   it("亮暗两套主题下，--muted 画在三种底色上都不低于 4.5:1", () => {
@@ -2377,5 +2385,395 @@ describe("--muted 在三种底色上都过 4.5:1", () => {
         ).toBe(true);
       }
     }
+  });
+});
+
+/**
+ * ── CSS 变量的两个方向都对得上账（换配色那一轮补的）─────────────────────────────
+ *
+ * 起因是实测出来的一个形状：把圆角从「一个 `--radius: 10px`」换成 kiro2api 那套
+ * `--radius-sm/md/lg/xl/full` 分级时，**漏改一个引用点是完全静默的**——
+ * `border-radius: var(--radius)` 在 `--radius` 已经不存在之后不会报错、不会回落到
+ * 旧值，浏览器把整条声明当成无效丢掉 ⇒ 那个元素变成**直角**，而三份 CSS、
+ * 生成器、全套测试没有任何一条会响。反方向同样静默：定义了一个谁都没引用的
+ * token（「移了一半」最常见的残留），它只是白占体积预算。
+ *
+ * 所以这一组把两个方向都变成断言，外加一条「深色块不许自己发明名字」：
+ * `[data-theme="dark"]` 是**覆盖**块，只有亮色 `:root` 里已经存在的名字才有意义；
+ * 深色里多写一个亮色没有的名字 ⇒ 那个 token 在亮色主题下是未定义的，
+ * 引用它的规则在亮色下整条失效。
+ *
+ * **它接不住什么，明写**：
+ * · 只认 `var(--x)` 这一种引用形态，**不解析带回落值的 `var(--x, y)`**（本仓今天一处都没有；
+ *   真写了的话它会被当成普通引用，回落值那一半没人看）。
+ * · 只扫 `admin-ui/css/*.css` 三份。JS 里用 `el.style.setProperty("--x", …)` 写变量
+ *   这一族完全不在射程里（本仓同样一处都没有）。
+ * · 它只管「名字对不对得上」，**一个字都不管取值合不合理**——那是上面两组 WCAG 量具的活。
+ */
+describe("CSS 变量：定义与引用两个方向都对得上账", () => {
+  const CSS_DIR = "admin-ui/css";
+  const CSS_FILES = ["base.css", "sections.css", "shell.css"] as const;
+
+  /** 一份 CSS 里所有 `var(--x)` 引用到的名字。**抠注释之后再扫**（注释里写满了真代码片段）。 */
+  function referenced(files: readonly string[] = CSS_FILES): Set<string> {
+    const out = new Set<string>();
+    for (const f of files) {
+      const css = stripCssComments(readFileSync(join(CSS_DIR, f), "utf8"));
+      for (const m of css.matchAll(/var\(\s*(--[a-z0-9-]+)/g)) out.add(m[1]!);
+    }
+    return out;
+  }
+
+  /** `base.css` 某一个 `:root` 块里定义的全部 token 名（不看取值，取值那一半归 WCAG 那两组）。 */
+  function definedIn(theme: "light" | "dark", css?: string): Set<string> {
+    const body = stripCssComments(css ?? readFileSync(join(CSS_DIR, "base.css"), "utf8"));
+    const head = theme === "light" ? ":root {" : ':root[data-theme="dark"] {';
+    const at = body.indexOf(head);
+    if (at === -1) throw new Error(`base.css 里抠不到 ${head} 那一块 —— 写法变了就回来改抠法`);
+    const end = body.indexOf("}", at);
+    if (end === -1) throw new Error(`base.css 的 ${head} 那一块没有收尾的 }`);
+    const out = new Set<string>();
+    for (const m of body.slice(at, end).matchAll(/(--[a-z0-9-]+)\s*:/g)) out.add(m[1]!);
+    return out;
+  }
+
+  it("非空锚：真的扫到了引用与定义 —— 抠法坏成空集时下面几格会恒绿", () => {
+    // 手写下界，不从被测对象现算。今天实测远高于这两个数；它们只用来挡「扫成空」。
+    expect(referenced().size, "三份 CSS 里一个 var(--x) 都没扫到 —— 抠法坏了").toBeGreaterThan(20);
+    expect(definedIn("light").size, "亮色 :root 里一个 token 都没扫到 —— 抠法坏了").toBeGreaterThan(20);
+    expect(definedIn("dark").size, "深色块里一个 token 都没扫到 —— 抠法坏了").toBeGreaterThan(15);
+  });
+
+  it("每个被引用的 token 都在亮色 :root 里定义过 —— 引一个不存在的名字是静默直角", () => {
+    const defined = definedIn("light");
+    const dangling = [...referenced()].filter((n) => !defined.has(n)).sort();
+    expect(
+      dangling,
+      `这些 token 被 var() 引用了，却不在 admin-ui/css/base.css 的亮色 :root 里：${dangling.join("、")}`
+      + " —— 浏览器会把整条声明丢掉（圆角变直角、颜色变继承色），而这件事没有任何报错",
+    ).toEqual([]);
+  });
+
+  it("该红时红：引一个没定义过的 token ⇒ 逐条点名它", () => {
+    const defined = definedIn("light");
+    const dangling = [...new Set([...referenced(), "--radius"])].filter((n) => !defined.has(n));
+    // `--radius` 正是换圆角分级那一轮删掉的旧名字：拿它当探针，比拿一个凭空编的名字更贴。
+    expect(dangling, "探针没造出悬空引用 —— 是不是有人又把 --radius 加回定义里了？").toContain("--radius");
+  });
+
+  it("亮色 :root 里定义的每个 token 都被引用过 —— 没人用的 token 是「移了一半」的残留", () => {
+    const used = referenced();
+    const idle = [...definedIn("light")].filter((n) => !used.has(n)).sort();
+    expect(
+      idle,
+      `这些 token 定义了却没有任何 var() 引用：${idle.join("、")}`
+      + " —— 要么某处规则漏改了、要么它本来就该删掉；白占体积预算的 token 还会让人以为它在生效",
+    ).toEqual([]);
+  });
+
+  it("该红时红：定义一个谁都不用的 token ⇒ 点名它", () => {
+    const css = readFileSync(join(CSS_DIR, "base.css"), "utf8")
+      .replace("  --gap: 16px; --gap-sm: 8px;", "  --gap: 16px; --gap-sm: 8px; --nobody-uses-me: 1px;");
+    expect(css, "探针没落到 base.css 上 —— 那一行的写法漂了，回来改探针").toContain("--nobody-uses-me");
+    const idle = [...definedIn("light", css)].filter((n) => !referenced().has(n));
+    expect(idle).toContain("--nobody-uses-me");
+  });
+
+  it("深色块的 token 名是亮色块的子集 —— 深色里发明的名字在亮色主题下是未定义的", () => {
+    const light = definedIn("light");
+    const darkOnly = [...definedIn("dark")].filter((n) => !light.has(n)).sort();
+    expect(
+      darkOnly,
+      `这些 token 只在 [data-theme="dark"] 里定义：${darkOnly.join("、")}`
+      + " —— 亮色主题下引用它们的规则会整条失效，而深色主题下一切正常，这种缺陷只有切回亮色才看得见",
+    ).toEqual([]);
+  });
+
+  it("该红时红：深色块里多一个亮色没有的名字 ⇒ 点名它", () => {
+    const css = readFileSync(join(CSS_DIR, "base.css"), "utf8")
+      .replace('  --overlay-bg: rgba(0, 0, 0, 0.8);\n}', '  --overlay-bg: rgba(0, 0, 0, 0.8); --dark-only-probe: #000000;\n}');
+    expect(css, "探针没落到深色块上 —— 那一行的写法漂了，回来改探针").toContain("--dark-only-probe");
+    const darkOnly = [...definedIn("dark", css)].filter((n) => !definedIn("light", css).has(n));
+    expect(darkOnly).toContain("--dark-only-probe");
+  });
+});
+
+/**
+ * ── `--*-fg` 一族只许画在自己铺的底上（复评那两次的同一个形状，第三次）──────────
+ *
+ * `--primary-fg` / `--ok-fg` / `--warn-fg` / `--danger-fg` 是**画在有色底上的前景色**：
+ * 亮色主题里四个逐字都是 `#ffffff`。把它们当成普通文字色写在卡片上 ⇒
+ * **白字画在白卡上，两个主题下都看不见**，而且同族之间还互相同色（两档状态长得一模一样）。
+ *
+ * 这个缺陷在本仓已经出现过三次，前两次都是靠人眼在真机上量出来的：
+ * ① `.poll-dot` 三态（复评实测，现在走 `--ok`/`--muted`/`--danger`，并配了一组现算的 3:1 判据）；
+ * ② `.pg-hint-ok` / `.pg-hint-bad`（换配色那一轮逐对复量 `--*-fg` 用法时逮到的）。
+ * ⇒ 第三次不再靠人眼：**只要一条 `color: var(--*-fg)` 所在的规则自己没设 `background`，就红。**
+ *
+ * **它接不住什么，明写**：
+ * · 只按「同一条规则块内有没有 `background` / `background-color` 声明」判，
+ *   **不解析继承**：一条规则把底铺在父选择器上、字色写在子选择器上的写法会被误判成违规
+ *   （今天一处都没有；真要这么写就回来把那一处登记成具名豁免，别把判据放宽成恒绿）。
+ * · 只扫三份 CSS 的**规则块**，`style="…"` 属性与 JS 里的 CSSOM 写入不在射程里
+ *   （前者被 CSP 的 `style-src 'self'` 挡着，后者本仓一处都没有）。
+ */
+describe("--*-fg 一族只许出现在自己铺了底的规则里", () => {
+  const CSS_DIR = "admin-ui/css";
+  const CSS_FILES = ["base.css", "sections.css", "shell.css"] as const;
+
+  /** 一份 CSS 里所有 `选择器 { 声明 }` 块。抠掉注释再切，注释里满是真代码片段。 */
+  function rules(css: string): Array<{ selector: string; body: string }> {
+    const out: Array<{ selector: string; body: string }> = [];
+    for (const m of stripCssComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      out.push({ selector: m[1]!.trim().replace(/\s+/g, " "), body: m[2]! });
+    }
+    return out;
+  }
+
+  /** 违规块的选择器清单：用了 `--*-fg` 当 `color`，而同一块里没有任何 background 声明。 */
+  function offenders(files: readonly { name: string; css: string }[]): string[] {
+    const out: string[] = [];
+    for (const f of files) {
+      for (const r of rules(f.css)) {
+        if (!/color\s*:\s*var\(\s*--[a-z0-9-]+-fg\s*\)/.test(r.body)) continue;
+        if (/(^|[;{\s])background(-color)?\s*:/.test(r.body)) continue;
+        out.push(`${f.name} 的 ${r.selector}`);
+      }
+    }
+    return out;
+  }
+
+  const real = () => CSS_FILES.map((name) => ({ name, css: readFileSync(join(CSS_DIR, name), "utf8") }));
+
+  it("非空锚：真的扫到了若干条**合法**的 --*-fg 用法 —— 否则下面两格是空转", () => {
+    // 手写下界。今天 `.badge-ok` / `.toast-*` / `button` 那一族都在这里面。
+    const legit = real().flatMap((f) => rules(f.css)
+      .filter((r) => /color\s*:\s*var\(\s*--[a-z0-9-]+-fg\s*\)/.test(r.body)
+        && /(^|[;{\s])background(-color)?\s*:/.test(r.body))
+      .map((r) => `${f.name} 的 ${r.selector}`));
+    expect(legit.length, "三份 CSS 里一条 --*-fg 用法都没扫到 —— 抠法坏了").toBeGreaterThan(5);
+  });
+
+  it("今天三份 CSS 里一处都没有", () => {
+    const bad = offenders(real());
+    expect(
+      bad,
+      `这些规则把「画在有色底上的前景色」当成了普通文字色：${bad.join("；")}`
+      + " —— 亮色主题里 --*-fg 四个逐字都是 #ffffff，这就是白字画在白卡上，"
+      + "而且同族之间互相同色（两档状态长得一模一样）。改成画在底色上的那一套（--ok / --danger / …）",
+    ).toEqual([]);
+  });
+
+  it("该红时红：把 .pg-hint-ok 改回 var(--ok-fg) ⇒ 点名它", () => {
+    const files = real().map((f) => (f.name !== "sections.css" ? f : {
+      name: f.name,
+      css: f.css.replace(".pg-hint-ok { color: var(--ok); }", ".pg-hint-ok { color: var(--ok-fg); }"),
+    }));
+    const mutated = files.find((f) => f.name === "sections.css")!.css;
+    expect(mutated, "探针没落到 .pg-hint-ok 上 —— 那条规则的写法漂了，回来改探针")
+      .toContain(".pg-hint-ok { color: var(--ok-fg); }");
+    expect(offenders(files).join("；")).toContain(".pg-hint-ok");
+  });
+});
+
+/**
+ * ── `<meta name="theme-color">` 的三份拷贝必须同值（换配色那一轮补的）──────────
+ *
+ * 那个 meta 的 content 是给浏览器 chrome（移动端地址栏 / 标题栏）读的**字符串**，
+ * 不走 CSS 变量解析 ⇒ `admin-ui/css/base.css` 的 `--bg` 在仓里一共有三份拷贝：
+ * 亮暗两套写在 `admin-ui/js/theme.js` 的 `setTheme()` 里，初始那一份写在
+ * `admin-ui/index.html` 的 `<meta>` 上。**换配色时漏改任何一份都是静默的**：
+ * 桌面浏览器根本不显示它，只有手机上那条地址栏会突然与页面差一截颜色。
+ *
+ * **它接不住什么，明写**：判据只比对**取值**，不管这三处该不该存在；
+ * 也不管 `boot.js` 那条防闪白路径（它只写 `data-theme`，不碰 meta）。
+ */
+describe("theme-color 的三份拷贝与 base.css 的 --bg 同值", () => {
+  const readBase = () => readFileSync("admin-ui/css/base.css", "utf8");
+  const readTheme = () => readFileSync("admin-ui/js/theme.js", "utf8");
+  const readHtml = () => readFileSync("admin-ui/index.html", "utf8");
+
+  /** `setTheme()` 里那一行写的 `[深色, 亮色]` 两个色值。抠不到就抛。 */
+  function themeJsColors(js: string): [string, string] {
+    const m = /dark \? "(#[0-9a-f]{6})" : "(#[0-9a-f]{6})"/.exec(stripComments(js));
+    if (m === null) throw new Error("theme.js 里抠不到那一行 theme-color —— 写法变了就回来改抠法");
+    return [m[1]!, m[2]!];
+  }
+  /** `index.html` 里那条初始 meta 的 content。抠不到就抛。 */
+  function htmlColor(html: string): string {
+    const m = /<meta name="theme-color" content="(#[0-9a-f]{6})">/.exec(html);
+    if (m === null) throw new Error("index.html 里抠不到 <meta name=\"theme-color\"> —— 写法变了就回来改抠法");
+    return m[1]!;
+  }
+  /** `base.css` 某一套主题的 `--bg`。 */
+  function bgOf(theme: "light" | "dark", css: string): string {
+    const body = stripCssComments(css);
+    const head = theme === "light" ? ":root {" : ':root[data-theme="dark"] {';
+    const at = body.indexOf(head);
+    const m = /--bg:\s*(#[0-9a-f]{6})\s*;/.exec(body.slice(at, body.indexOf("}", at)));
+    if (at === -1 || m === null) throw new Error(`base.css 的 ${head} 那一块里抠不到 --bg`);
+    return m[1]!;
+  }
+
+  it("三份拷贝逐份等于 base.css 里对应主题的 --bg", () => {
+    const [dark, light] = themeJsColors(readTheme());
+    const css = readBase();
+    expect(dark, "theme.js 里深色那个 theme-color 与 base.css 的深色 --bg 不同").toBe(bgOf("dark", css));
+    expect(light, "theme.js 里亮色那个 theme-color 与 base.css 的亮色 --bg 不同").toBe(bgOf("light", css));
+    // 初始那一份必须是**亮色**：`boot.js` 只在深色用户那里改 `data-theme`，改不到这条 meta，
+    // 而未登录的深色用户第一眼看到的地址栏颜色由 `setTheme()` 之后那次写入接管。
+    expect(htmlColor(readHtml()), "index.html 里那条初始 theme-color 与亮色 --bg 不同")
+      .toBe(bgOf("light", css));
+  });
+
+  it("该红时红：theme.js 里那一行改一位 ⇒ 与 base.css 对不上", () => {
+    const mutated = readTheme().replace('"#0f172a" : "#f8fafc"', '"#0f172b" : "#f8fafc"');
+    expect(mutated, "探针没落到 theme.js 上 —— 那一行的写法漂了，回来改探针").not.toBe(readTheme());
+    expect(themeJsColors(mutated)[0]).not.toBe(bgOf("dark", readBase()));
+  });
+
+  it("该红时红：index.html 那条 meta 改一位 ⇒ 与 base.css 对不上", () => {
+    const mutated = readHtml().replace('content="#f8fafc"', 'content="#f8fafd"');
+    expect(mutated, "探针没落到 index.html 上 —— 那条 meta 的写法漂了，回来改探针").not.toBe(readHtml());
+    expect(htmlColor(mutated)).not.toBe(bgOf("light", readBase()));
+  });
+});
+
+/**
+ * ── 裸 `button` 的 hover 底色不许盖住会自己重画底色的组件（换配色那一轮补的）──────
+ *
+ * 本仓**没有** `.btn-primary` 那种类：`admin-ui/css/base.css` 里裸 `button` 那条规则
+ * 就是主按钮的样式，而 `.icon-btn` / `.nav-item` / `.btn-toggle` / `.toast-close` /
+ * `.badge` 这几族都是「先长成 button、再把底色改回中性」。给裸 `button` 加一条
+ * `:hover { background: … }` 之后，**只要那条规则的特指度压过某一族，那一族就会在
+ * 鼠标扫过时整块变成主色绿，而字色还留在各自的中性档上**（`--muted` 画在
+ * `--primary-hover` 上几乎看不见）。这不是假设：换配色那一轮第一版写的正是
+ * `button:not([disabled]):hover`，(0,2,1) 一次压过四族，靠人手算特指度才发现。
+ *
+ * ⇒ 规矩：**任何会自己重画底色的按钮类，要么自己写一条设 `background` 的 `:hover`，
+ * 要么进那条规则的 `:not()` 名单。**
+ *
+ * **反同义反复**：「哪些类真的挂在 `<button>` 上」从**面板源码**扫（`index.html` 的
+ * `<button class="…">` 与 JS 里 `el("button", { … class: "…" })` 这两种建法），
+ * 不是一份手抄名单；「哪些类会重画底色」从 CSS 扫。两侧都不是从被测规则读出来的。
+ *
+ * **它接不住什么，明写**：
+ * · **特指度本身没有判据**（本仓没有 CSS 引擎，比不了）。这一格只管「有没有表态」，
+ *   不管那一条 hover 规则写出来到底赢不赢。选择器形态改了要自己手算。
+ * · 只认上面那两种建按钮的写法。`document.createElement("button")` + `className = …`
+ *   这一族扫不到（本仓一处都没有）。
+ * · 只看「同一条规则块里有没有 `background`」，不解析继承（同 `--*-fg` 那一组）。
+ */
+describe("会自己重画底色的按钮类，要么自己有 hover 底色，要么进那份 :not() 名单", () => {
+  const CSS_DIR = "admin-ui/css";
+  const CSS_FILES = ["base.css", "sections.css", "shell.css"] as const;
+  const JS_DIR = "admin-ui/js";
+
+  const allCss = () => CSS_FILES.map((f) => stripCssComments(readFileSync(join(CSS_DIR, f), "utf8"))).join("\n");
+
+  /**
+   * 面板源码里出现过的**每一份 `<button>` 的类名清单**（不是打平的类名集合）。
+   *
+   * ⚠️ **必须按「一颗按钮一份清单」来判，不能打平成一个集合**：`class="btn-toggle active"`
+   * 这种写法里 `active` 只是修饰类，它自己从不单独出现在按钮上，而
+   * `.nav-item.active` 那条规则里确实带着 `background` ⇒ 打平之后 `active`
+   * 会被当成一族「会自己重画底色却没表态」的类，而屏幕上根本没有这颗按钮。
+   *（第一版就是打平写的，实测当场把 `active` 报了出来。）
+   */
+  function buttonClassLists(): string[][] {
+    const out: string[][] = [];
+    const push = (raw: string) => {
+      const list = raw.split(/\s+/).filter((c) => c !== "");
+      if (list.length > 0) out.push(list);
+    };
+    const html = stripHtmlComments(readFileSync("admin-ui/index.html", "utf8"));
+    for (const m of html.matchAll(/<button\b[^>]*\bclass="([^"]*)"/g)) push(m[1]!);
+    for (const name of readdirSync(JS_DIR).filter((f) => f.endsWith(".js"))) {
+      const js = blankComments(readFileSync(join(JS_DIR, name), "utf8"));
+      // `el("button", { … class: "x y" … })` 与 `elI18n("button", "key", { … class: "x y" … })`。
+      // 只在同一次调用的头 240 个字符内找 `class:`，避免跨到下一处调用去。
+      for (const m of js.matchAll(/\b(?:el|elI18n)\("button"[\s\S]{0,240}?class:\s*"([^"]*)"/g)) push(m[1]!);
+    }
+    return out;
+  }
+
+  /** 某个类在三份 CSS 里有没有一条**设了 background** 的规则（不限 hover）。 */
+  function repaintsBackground(cls: string, css: string): boolean {
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!new RegExp(`\\.${cls}(?![\\w-])`).test(m[1]!)) continue;
+      if (/(^|[;{\s])background(-color)?\s*:/.test(m[2]!)) return true;
+    }
+    return false;
+  }
+  /** 某个类有没有一条**自己带 `:hover` 且设了 background** 的规则。 */
+  function hasHoverBackground(cls: string, css: string): boolean {
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sel = m[1]!;
+      if (!new RegExp(`\\.${cls}(?![\\w-])`).test(sel) || !sel.includes(":hover")) continue;
+      if (/(^|[;{\s])background(-color)?\s*:/.test(m[2]!)) return true;
+    }
+    return false;
+  }
+  /** 裸 `button` 那条 hover 规则的 `:not()` 名单里点了哪几个类。抠不到就抛。 */
+  function exempted(css: string): Set<string> {
+    const m = /button:where\(([^)]*(?:\([^)]*\)[^)]*)*)\):hover\s*\{/.exec(css);
+    if (m === null) {
+      throw new Error(
+        "base.css 里抠不到 `button:where(…):hover { … }` 那条规则 —— 它改形态了。"
+        + "先回来改抠法（顺便手算一遍新形态的特指度），别让这一格静静放行",
+      );
+    }
+    return new Set([...m[1]!.matchAll(/:not\(\.([\w-]+)\)/g)].map((x) => x[1]!));
+  }
+
+  /** 没表态的按钮：清单里有类会重画底色，而**整份清单**里没有一个类给出 hover 底色或进了名单。 */
+  function silentButtons(css: string): string[] {
+    const list = exempted(css);
+    return [...new Set(buttonClassLists()
+      .filter((cs) => cs.some((c) => repaintsBackground(c, css)))
+      .filter((cs) => !cs.some((c) => hasHoverBackground(c, css) || list.has(c)))
+      .map((cs) => cs.join(" ")))].sort();
+  }
+
+  it("非空锚：三样都真的扫到了 —— 任何一样扫成空，下面那格会恒绿", () => {
+    const lists = buttonClassLists();
+    const flat = new Set(lists.flat());
+    // 手写下界与几个今天确实存在的样本，不从被测对象现算。
+    expect(lists.length, "面板源码里一颗带 class 的 <button> 都没扫到 —— 抠法坏了").toBeGreaterThan(10);
+    for (const c of ["icon-btn", "nav-item", "btn-toggle", "badge", "toast-close"]) {
+      expect([...flat], `扫不到 .${c} 挂在 <button> 上了 —— 面板改写法了就回来改抠法`).toContain(c);
+    }
+    expect(repaintsBackground("icon-btn", allCss()), ".icon-btn 不再自己设 background 了？").toBe(true);
+    expect(exempted(allCss()).size, ":not() 名单扫成空了 —— 抠法坏了").toBeGreaterThan(0);
+  });
+
+  it("今天挂在 <button> 上、又会自己重画底色的类，逐个都表过态", () => {
+    const silent = silentButtons(allCss());
+    expect(
+      silent,
+      `这些按钮的类清单里有会自己重画底色的类，却既没有自己的 :hover 底色、`
+      + `也没有一个类在 base.css 那条 button:where(…):hover 的 :not() 名单里：${silent.join("；")}`
+      + " —— 鼠标扫过它们时会整块变成主色绿，而字色留在各自的中性档上",
+    ).toEqual([]);
+  });
+
+  it("该红时红：把 .btn-toggle 那条 hover 底色删掉 ⇒ 点名它", () => {
+    const css = allCss().replace(
+      ".btn-toggle:hover { background: var(--panel-2); border-color: var(--border-hover); color: var(--text); }",
+      "",
+    );
+    expect(css, "探针没落到 .btn-toggle:hover 上 —— 那条规则的写法漂了，回来改探针")
+      .not.toContain(".btn-toggle:hover");
+    expect(silentButtons(css).join("；")).toContain("btn-toggle");
+  });
+
+  it("该红时红：把 .badge 从 :not() 名单里删掉 ⇒ 点名它（徽章的底色就是它要说的那句话）", () => {
+    const css = allCss().replace("button:where(:not([disabled]):not(.badge)):hover", "button:where(:not([disabled])):hover");
+    expect(exempted(css).has("badge"), "探针没把 .badge 从名单里删掉 —— 那条规则的写法漂了").toBe(false);
+    expect(silentButtons(css).join("；")).toContain("badge");
+  });
+
+  it("认不出要吵：那条 hover 规则改成别的形态时当场抛，不静默当成「名单是空的」", () => {
+    expect(() => exempted("button:hover { background: red; }")).toThrow(/抠不到/);
   });
 });
