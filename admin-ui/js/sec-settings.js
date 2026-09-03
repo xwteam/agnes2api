@@ -1,9 +1,14 @@
 /**
- * 设置页：认证密钥 / 上游与冷却 / 注册机（设计 §10.4 的前三张卡）
- * + 集成示例 + 危险区（设计里不带编号的那一节
- * 「重置到底重置了什么」）。**卡数是五份 ADMIN.md 设置卡那张表的行数真源**，
- * 由 `tests/unit/docs-parity.test.ts` 的
- * 「五份 ADMIN.md 里五张表的行数，逐张等于屏幕那边对应的那个计数」钉着。
+ * 配置表单。屏幕上它分成**两个挂载点**：
+ * · **设置页**（`settingsSection`）：认证密钥 / 上游与冷却 + 集成示例 + 危险区
+ *   （最后一张是设计里不带编号的那一节「重置到底重置了什么」）；
+ * · **注册机板块的「设置」分页**（`registrarConfigPanel`）：注册机那张卡。
+ *
+ * ⚠️ **「设置页上有几张卡」这个数是五份 ADMIN.md 设置卡那张表的行数真源，
+ * 而它数的是 `settingsSection` 那一段、不是整份文件**：注册机那张卡的代码住在这里，
+ * 挂却挂在别的板块上。由 `tests/unit/docs-parity.test.ts` 的
+ * 「五份 ADMIN.md 里五张表的行数，逐张等于屏幕那边对应的那个计数」钉着，
+ * 搬出去的卡在那边有一张双向查的登记表。
  *
  * 板块契约（设计文档 §9.3）：`{ init?, onShow?, onHide? }`，见 admin-ui/js/app.js
  * 的 showSection。**板块内不许监听 langchange**——框架层会 apply(document) 之后
@@ -29,7 +34,7 @@ import { api } from "./api.js";
 import { t } from "./i18n.js";
 import { el, elI18n, toast, openModal, copy } from "./ui.js";
 import { fmtDuration } from "./pure/format.mjs";
-// 第 4 张卡（集成示例）。**模型清单直接复用模型板块那份窄化**，不在 examples.mjs 里
+// 第 3 张卡（集成示例）。**模型清单直接复用模型板块那份窄化**，不在 examples.mjs 里
 // 再写一遍——同一份响应的同一个字段，两份窄化就是两份会分叉的判据。
 import { catalogModels } from "./pure/models.mjs";
 import {
@@ -44,10 +49,30 @@ import {
   buildPatch, localErrors, changedFields, changedSecrets, propagationView,
   errorRows, clearResultView, displayValue, clearWarning, isDiagnostic, loadBlockedRows,
   isSaveReceipt, touchesLiveField, touchesBuildTimeField,
-  // 第 5 张卡（危险区）。**取值决策一律在纯函数里**，见本文件纪律 ②。
+  // 第 4 张卡（危险区）。**取值决策一律在纯函数里**，见本文件纪律 ②。
   DANGER_ACTIONS, resetWarnings, poolSizeOf, purgeConfirmed, purgeResultView, isPoolSizeChanged,
 } from "./pure/settings.mjs";
 
+/**
+ * 表单的全部节点。**一份 `fields` + 一张 `hosts` 名单。**
+ *
+ * ⚠️⚠️ **为什么是「一份表单、两个宿主」而不是「两份表单」，这一段是本文件最要紧的取舍。**
+ * 注册机那张配置卡从设置页搬到了注册机板块的「设置」分页（`registrarConfigPanel`），
+ * 而 `GET/PUT /admin/api/config` 管的是**同一把配置**：
+ * · 各写一份表单机制 ⇒ 建控件、四元组渲染、锁定、诊断态、错误行、回读高亮、
+ *   保存顺序（设计 §5.3 那条不可妥协的产品不变式）全都要抄第二份，
+ *   而两份实现里绿的那一份会赢——这正是本仓 `js/ui.js` 文件头点名反对的形态；
+ * · 一份表单、两个宿主 ⇒ **同一个字段在整个面板里只有一个控件**，
+ *   `buildPatch` 看到的仍然是一张完整的表单，「两处各写各的」在结构上不成立。
+ *
+ * `fields` 是路径 → 控件，两个宿主共用；`hosts` 是「每个挂载点自己的那几行状态」
+ *（保存按钮、降级横幅、装载失败清单、错误行、回读行、传播说明）——**这几样必须
+ * 按宿主各有一份**：运维站在注册机的「设置」分页上按保存，错误行画到设置页那份
+ * 节点上等于**屏幕上什么都没发生**。`render()` / `showErrors()` 一族因此逐个宿主写一遍。
+ *
+ * `examples` / `dangerResult` 只属于设置页那个宿主，注册机那边**没有**这两张卡
+ * ⇒ 它们可以是 `null`，碰它们的地方一律先判空。
+ */
 let nodes = null;
 let abort = null;
 /**
@@ -63,7 +88,7 @@ let touched = new Set();
 let data = null;
 
 // ───────────────────────────────────────────────────────────────────────────
-// 第 4 张卡：集成示例（设计 §10.4）的那几格状态
+// 第 3 张卡：集成示例（设计 §10.4）的那几格状态
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -168,6 +193,66 @@ function card(titleKey) {
   const body = el("div");
   wrap.appendChild(body);
   return { wrap, body };
+}
+
+/**
+ * 建 `nodes`。**两个宿主谁先被打开都要能建起来**，所以它是幂等的：
+ * 面板可能先进注册机板块的「设置」分页，那时设置板块还没 `init()` 过。
+ */
+function ensureNodes() {
+  if (nodes === null) nodes = { fields: {}, hosts: [], examples: null, dangerResult: null };
+}
+
+/**
+ * 一个挂载点的「状态行」成套建出来并登记。**成套**是关键：
+ * 少建一样（比如漏了错误行）在那个宿主上就是**保存失败时屏幕上什么都不显示**，
+ * 而另一个宿主照旧正常 ⇒ 这种缺陷只有站在那一页上才看得见。
+ * 返回值里那颗保存按钮由调用方自己挂进工具条（两个宿主的工具条形状不同）。
+ */
+function addHost(container, saveBtn) {
+  const degraded = elI18n("p", "set.degraded", { class: "danger-text" });
+  degraded.style.display = "none";
+  container.appendChild(degraded);
+
+  const host = { save: saveBtn, degraded, blocked: null, errors: null, readback: null, propagation: null, propagationBuildTime: null };
+  nodes.hosts.push(host);
+  return host;
+}
+
+/**
+ * 一个挂载点**底部**那几行（装载失败清单 / 错误行 / 回读行 / 两句传播说明）。
+ * 与 `addHost()` 分成两步，纯粹是因为它们在页面上一个在顶、一堆在底。
+ */
+function addHostFooter(container, host) {
+  const blocked = el("div", { class: "cfg-blocked danger-text" });
+  blocked.style.display = "none";
+  container.appendChild(blocked);
+  host.blocked = blocked;
+
+  const errors = el("div", { class: "cfg-errors danger-text" });
+  errors.style.display = "none";
+  container.appendChild(errors);
+  host.errors = errors;
+
+  const readback = el("p", { class: "muted note cfg-readback" });
+  readback.style.display = "none";
+  container.appendChild(readback);
+  host.readback = readback;
+
+  const propagation = el("p", { class: "muted note" });
+  container.appendChild(propagation);
+  host.propagation = propagation;
+
+  // 上面那句的**例外分支**：这次保存碰到了建实例时读一次的字段。
+  // ⚠️ **它是保存回执，不是又一条常驻说明**——常驻的那句在卡 2 底下
+  //（`set.card.upstreamNote`，改之前就该看见）。默认藏着，由 `render()` 按
+  // `touchesBuildTimeField()` 打开，见那里那一段。
+  // 走 `elI18n` 而不是 `t()`：它不带占位符 ⇒ 切语言时框架层的 `apply(document)`
+  // 刷得动它（`set.propagation` 带 `{bound}`，刷不动，只能等 `onShow()` 重画）。
+  const propagationBuildTime = elI18n("p", "set.propagation.buildTime", { class: "muted note" });
+  propagationBuildTime.style.display = "none";
+  container.appendChild(propagationBuildTime);
+  host.propagationBuildTime = propagationBuildTime;
 }
 
 /** 建一格并登记进 `nodes.fields`，两处都不许漏——漏了那一格永远不会被渲染。 */
@@ -333,33 +418,37 @@ function render() {
   clearDangerResult();
 
   const showLive = p.visibilityUpperBoundMs !== null && (saved === null || touchesLiveField(saved));
-  nodes.propagation.textContent = showLive
-    ? t("set.propagation", { bound: fmtDuration(p.visibilityUpperBoundMs) })
-    : "";
-  nodes.propagation.style.display = showLive ? "" : "none";
-  nodes.propagationBuildTime.style.display = saved !== null && touchesBuildTimeField(saved) ? "" : "none";
-
   const degraded = data !== null && data.configDegraded === true;
-  nodes.degraded.style.display = degraded ? "" : "none";
-
   // 装载不起来时：一条横幅 + 逐条列出缺什么。**表单仍然可编辑**（见 renderOne）。
   const blocked = loadBlockedRows(data);
-  nodes.blocked.textContent = "";
-  nodes.blocked.style.display = blocked.length === 0 ? "none" : "";
-  if (blocked.length > 0) {
-    nodes.blocked.appendChild(elI18n("p", "set.loadBlocked"));
-    for (const r of blocked) {
-      const label = nodes.fields[r.field] === undefined ? r.field : t(fieldLabelKey(r.field));
-      // 表外的码**原样显示出来**，不冒充任何一档已知原因。
-      const text = r.key === null ? t("set.err.unknown", { code: r.code }) : t(r.key, r.params);
-      nodes.blocked.appendChild(el("p", null, `${label}: ${text}`));
-      if (nodes.fields[r.field] !== undefined) nodes.fields[r.field].wrap.classList.add("invalid");
+
+  // **逐个宿主画一遍**，理由与 `showErrors()` 上方那段相同。
+  for (const h of nodes.hosts) {
+    h.propagation.textContent = showLive
+      ? t("set.propagation", { bound: fmtDuration(p.visibilityUpperBoundMs) })
+      : "";
+    h.propagation.style.display = showLive ? "" : "none";
+    h.propagationBuildTime.style.display = saved !== null && touchesBuildTimeField(saved) ? "" : "none";
+    h.degraded.style.display = degraded ? "" : "none";
+    h.blocked.textContent = "";
+    h.blocked.style.display = blocked.length === 0 ? "none" : "";
+    if (blocked.length > 0) {
+      h.blocked.appendChild(elI18n("p", "set.loadBlocked"));
+      for (const r of blocked) {
+        const label = nodes.fields[r.field] === undefined ? r.field : t(fieldLabelKey(r.field));
+        // 表外的码**原样显示出来**，不冒充任何一档已知原因。
+        const text = r.key === null ? t("set.err.unknown", { code: r.code }) : t(r.key, r.params);
+        h.blocked.appendChild(el("p", null, `${label}: ${text}`));
+      }
     }
+  }
+  for (const r of blocked) {
+    if (nodes.fields[r.field] !== undefined) nodes.fields[r.field].wrap.classList.add("invalid");
   }
 }
 
 /**
- * 第 4 张卡的卡内内容，整块重画。
+ * 第 3 张卡的卡内内容，整块重画。
  *
  * ── **本函数里没有任何一条端点路径、请求体形状或协议名** ──────────────────────
  * 核心设计决定（全局约束 15）：四个消费者只许有一份「怎么调这个网关」的知识。
@@ -485,8 +574,10 @@ async function loadCatalog() {
  * 「三个信号一起指向一次没有发生的变化」就是漏清其中一样的后果。
  */
 function clearReadback() {
-  nodes.readback.textContent = "";
-  nodes.readback.style.display = "none";
+  for (const h of nodes.hosts) {
+    h.readback.textContent = "";
+    h.readback.style.display = "none";
+  }
   for (const path of Object.keys(nodes.fields)) nodes.fields[path].wrap.classList.remove("changed");
 }
 
@@ -494,6 +585,9 @@ function clearReadback() {
  * 危险区那一行回执作废。**一次早已过去的操作不许挂在屏幕上**，理由见 `render()` 里那段。
  */
 function clearDangerResult() {
+  // ⚠️ **必须判空**：危险区只在设置页那个宿主上，而注册机板块的「设置」分页可以在
+  // 设置板块从没被打开过的情况下先跑起来（`showSection` 只 init 当前那个板块）。
+  if (nodes.dangerResult === null) return;
   nodes.dangerResult.textContent = "";
   nodes.dangerResult.style.display = "none";
 }
@@ -503,8 +597,10 @@ function clearMarks() {
   for (const path of Object.keys(nodes.fields)) {
     nodes.fields[path].wrap.classList.remove("invalid");
   }
-  nodes.errors.textContent = "";
-  nodes.errors.style.display = "none";
+  for (const h of nodes.hosts) {
+    h.errors.textContent = "";
+    h.errors.style.display = "none";
+  }
   // ⚠️ **不清 `nodes.blocked`**：它讲的是「存储里那份配置现在装不装得起来」这个
   // **当前状态**，不是上一次保存留下的痕迹；由 `render()` 按最新响应重算。
   clearReadback();
@@ -514,17 +610,25 @@ function clearMarks() {
 }
 
 function showErrors(rows) {
-  nodes.errors.textContent = "";
+  // ⚠️ **每个宿主都画一遍，不是「画在当前可见的那个上」**：判断「现在站在哪一页」
+  // 要么读 DOM 的可见性、要么让本模块记住板块切换——两条都是在这里重造一份路由状态。
+  // 一次保存最多产生几行错误，多写一份的代价可以忽略，而漏写那一份的代价是
+  // **站在那一页上的人什么都看不见**。
+  for (const h of nodes.hosts) {
+    h.errors.textContent = "";
+    for (const r of rows) {
+      const line = el("p");
+      const label = nodes.fields[r.field] === undefined ? r.field : t(fieldLabelKey(r.field));
+      // 表外的码**原样显示出来**，不冒充任何一档已知原因。
+      const text = r.key === null ? t("set.err.unknown", { code: r.code }) : t(r.key, r.params);
+      line.textContent = `${label}: ${text}`;
+      h.errors.appendChild(line);
+    }
+    h.errors.style.display = rows.length === 0 ? "none" : "";
+  }
   for (const r of rows) {
-    const line = el("p");
-    const label = nodes.fields[r.field] === undefined ? r.field : t(fieldLabelKey(r.field));
-    // 表外的码**原样显示出来**，不冒充任何一档已知原因。
-    const text = r.key === null ? t("set.err.unknown", { code: r.code }) : t(r.key, r.params);
-    line.textContent = `${label}: ${text}`;
-    nodes.errors.appendChild(line);
     if (nodes.fields[r.field] !== undefined) nodes.fields[r.field].wrap.classList.add("invalid");
   }
-  nodes.errors.style.display = rows.length === 0 ? "none" : "";
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -570,7 +674,7 @@ async function save() {
     return;
   }
 
-  nodes.save.disabled = true;
+  for (const h of nodes.hosts) h.save.disabled = true;
   try {
     // ★★ 这一行之前，界面上不许有任何「保存成功」的迹象。
     const res = await api.put("/config", { patch });
@@ -586,16 +690,18 @@ async function save() {
     for (const path of secrets) {
       if (nodes.fields[path] !== undefined) nodes.fields[path].wrap.classList.add("changed");
     }
-    nodes.readback.textContent = changed.length === 0 && secrets.length === 0
-      ? t("set.readback.none")
-      : t("set.readback", { count: String(changed.length + secrets.length) });
-    nodes.readback.style.display = "";
+    for (const h of nodes.hosts) {
+      h.readback.textContent = changed.length === 0 && secrets.length === 0
+        ? t("set.readback.none")
+        : t("set.readback", { count: String(changed.length + secrets.length) });
+      h.readback.style.display = "";
+    }
   } catch (e) {
     const rows = errorRows(e && e.body);
     if (rows.length > 0) showErrors(rows);
     else toast(t("set.saveFailed"), "warn", { sticky: true });
   } finally {
-    nodes.save.disabled = false;
+    for (const h of nodes.hosts) h.save.disabled = false;
   }
 }
 
@@ -655,7 +761,7 @@ async function doClear(path) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// 卡 5：危险区
+// 卡 4：危险区
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -721,6 +827,7 @@ async function doReset() {
     //（存储里本来就没有值、或者被环境变量锁着，而那正是五份 ADMIN.md 反复强调的那一句），
     // 那一档一格都没高亮，说「已经高亮出来」就是当面说反话。
     // 两档的形状照 `save()` 里 `set.readback` / `set.readback.none` 那一对。
+    // 危险区只在设置页那个宿主上，而这两颗按钮也只在那里 ⇒ 走到这里它一定已经建好了。
     nodes.dangerResult.textContent = changed.length === 0
       ? t("set.danger.reset.doneNone")
       : t("set.danger.reset.done", { count: String(changed.length) });
@@ -830,26 +937,107 @@ async function load() {
   render();
 }
 
+/**
+ * 注册机那张配置卡的卡内内容（补池旋钮 + 两张平级通道子卡 + 高级折叠区）。
+ * **屏幕上它在注册机板块的「设置」分页里**，见下面 `registrarConfigPanel`。
+ */
+function buildRegistrarCard(body) {
+  for (const path of CARD_REGISTRAR) {
+    const kind = path === "registrar.enabled"
+      ? "toggle"
+      : ((path === "registrar.primary" || path === "registrar.fallback") ? "select" : "text");
+    addField(body, path, kind);
+  }
+
+  body.appendChild(elI18n("p", "reg.emptyPrimary", { class: "muted note" }));
+  const channelRow = el("div", { class: "card-row" });
+  // **顺序取自 `CHANNELS`**（字母序），两张子卡由同一段代码建出来 ⇒
+  // 「完全对称」在结构上就是不可表达的例外（设计 §10.3 第 2 条）。
+  for (const channel of CHANNELS) {
+    const sub = el("div", { class: "card channel-card", "data-channel": channel });
+    sub.appendChild(elI18n("div", channelLabelKey(channel), { class: "label channel-name" }));
+    for (const path of channelFields(channel)) {
+      addField(sub, path, isSecretPath(path) ? "secret" : "text");
+    }
+    // 两条通道之间**唯一**的不对称，且它是同一个字段位置上的两句事实。
+    sub.appendChild(elI18n("p", channelAddressFactKey(channel), { class: "muted note" }));
+    channelRow.appendChild(sub);
+  }
+  body.appendChild(channelRow);
+
+  // 高级折叠区：`agnesPlatformUrl` 单独放这里 + 红色警告 + 自己的二次确认按钮。
+  const advanced = el("details", { class: "cfg-advanced" });
+  advanced.appendChild(elI18n("summary", "set.advanced.title"));
+  advanced.appendChild(elI18n("p", "set.advanced.warn", { class: "danger-text" }));
+  for (const path of ADVANCED_FIELDS) addField(advanced, path, "text");
+  const advSave = elI18n("button", "set.advanced.save", { type: "button", class: "cfg-advanced-save danger" });
+  advSave.addEventListener("click", () => { confirmAdvanced(); });
+  advanced.appendChild(advSave);
+  body.appendChild(advanced);
+}
+
+/**
+ * 一个挂载点的工具条：「刷新」+「保存」。两个宿主形状相同，所以只有一份实现。
+ * `save` 那颗按钮由 `addHost()` 登记进 `nodes.hosts`，保存期间两个宿主一起变灰。
+ */
+function buildToolbar(container) {
+  const bar = el("div", { class: "toolbar" });
+  const refresh = elI18n("button", "common.refresh", { type: "button" });
+  refresh.addEventListener("click", () => { load(); });
+  bar.appendChild(refresh);
+  const saveBtn = elI18n("button", "set.save", { type: "button", class: "cfg-save" });
+  saveBtn.addEventListener("click", () => { save(); });
+  bar.appendChild(saveBtn);
+  container.appendChild(bar);
+  return saveBtn;
+}
+
+/**
+ * 注册机那张配置卡。**它不在设置页上，挂在注册机板块的「设置」分页里**
+ *（`admin-ui/js/sec-registrar.js` 的 TAB）。
+ *
+ * ⚠️ **为什么代码仍然住在这个文件里**：它是 `GET/PUT /admin/api/config` 那张表单的
+ * 一部分——建控件、四元组渲染、锁定、诊断态、保存顺序全走上面那一套。搬到注册机板块
+ * 文件里就要把整套表单机制抄第二份，而那正是本文件顶上那段 ⚠️⚠️ 反对的形态。
+ * 搬走的是**屏幕上的位置**，不是实现。
+ *
+ * ⚠️ **设置页那边不再有第二份**：`settingsSection.init()` 里已经没有注册机那张卡了
+ *（曾经的「卡 3」）。两处都能改同一个字段 = 两处各写各的，正是本轮要消掉的形态。
+ * 「设置页今天有几张卡」这个数是五份 ADMIN.md 那张表的行数真源，随之从 5 变成 4。
+ */
+export const registrarConfigPanel = {
+  init(host) {
+    ensureNodes();
+    host.textContent = "";
+    const saveBtn = buildToolbar(host);
+    const h = addHost(host, saveBtn);
+
+    const reg = card("set.card.registrar");
+    buildRegistrarCard(reg.body);
+    host.appendChild(reg.wrap);
+
+    addHostFooter(host, h);
+  },
+
+  onShow() {
+    load();
+  },
+
+  onHide() {
+    // **作废在飞请求**：与 `settingsSection.onHide()` 同一条（板块契约 §9.3）。
+    // 两个宿主共用同一个 `abort`：面板一次只显示一个板块，不会互相打断。
+    if (abort) { abort.abort(); abort = null; }
+  },
+};
+
 export const settingsSection = {
   init(section) {
+    ensureNodes();
     section.textContent = "";
     section.appendChild(elI18n("h2", "set.title"));
-    nodes = { fields: {} };
 
-    const bar = el("div", { class: "toolbar" });
-    const refresh = elI18n("button", "common.refresh", { type: "button" });
-    refresh.addEventListener("click", () => { load(); });
-    bar.appendChild(refresh);
-    const save0 = elI18n("button", "set.save", { type: "button", class: "cfg-save" });
-    save0.addEventListener("click", () => { save(); });
-    bar.appendChild(save0);
-    nodes.save = save0;
-    section.appendChild(bar);
-
-    const degraded = elI18n("p", "set.degraded", { class: "danger-text" });
-    degraded.style.display = "none";
-    section.appendChild(degraded);
-    nodes.degraded = degraded;
+    const saveBtn = buildToolbar(section);
+    const host = addHost(section, saveBtn);
 
     // ── 卡 1：认证密钥 ──────────────────────────────────────────────────────
     const auth = card("set.card.auth");
@@ -870,43 +1058,7 @@ export const settingsSection = {
     upstream.body.appendChild(elI18n("p", "set.card.upstreamNote", { class: "muted note" }));
     section.appendChild(upstream.wrap);
 
-    // ── 卡 3：注册机（两张平级子卡 + 高级折叠区）──────────────────────────────
-    const reg = card("set.card.registrar");
-    for (const path of CARD_REGISTRAR) {
-      const kind = path === "registrar.enabled"
-        ? "toggle"
-        : ((path === "registrar.primary" || path === "registrar.fallback") ? "select" : "text");
-      addField(reg.body, path, kind);
-    }
-
-    reg.body.appendChild(elI18n("p", "reg.emptyPrimary", { class: "muted note" }));
-    const channelRow = el("div", { class: "card-row" });
-    // **顺序取自 `CHANNELS`**（字母序），两张子卡由同一段代码建出来 ⇒
-    // 「完全对称」在结构上就是不可表达的例外（设计 §10.3 第 2 条）。
-    for (const channel of CHANNELS) {
-      const sub = el("div", { class: "card channel-card", "data-channel": channel });
-      sub.appendChild(elI18n("div", channelLabelKey(channel), { class: "label channel-name" }));
-      for (const path of channelFields(channel)) {
-        addField(sub, path, isSecretPath(path) ? "secret" : "text");
-      }
-      // 两条通道之间**唯一**的不对称，且它是同一个字段位置上的两句事实。
-      sub.appendChild(elI18n("p", channelAddressFactKey(channel), { class: "muted note" }));
-      channelRow.appendChild(sub);
-    }
-    reg.body.appendChild(channelRow);
-
-    // 高级折叠区：`agnesPlatformUrl` 单独放这里 + 红色警告 + 自己的二次确认按钮。
-    const advanced = el("details", { class: "cfg-advanced" });
-    advanced.appendChild(elI18n("summary", "set.advanced.title"));
-    advanced.appendChild(elI18n("p", "set.advanced.warn", { class: "danger-text" }));
-    for (const path of ADVANCED_FIELDS) addField(advanced, path, "text");
-    const advSave = elI18n("button", "set.advanced.save", { type: "button", class: "cfg-advanced-save danger" });
-    advSave.addEventListener("click", () => { confirmAdvanced(); });
-    advanced.appendChild(advSave);
-    reg.body.appendChild(advanced);
-    section.appendChild(reg.wrap);
-
-    // ── 卡 4：集成示例（设计 §10.4 第 4 张卡）──────────────────────────────────
+    // ── 卡 3：集成示例（设计 §10.4 第 4 张卡）──────────────────────────────────
     // 板块文件允许碰浏览器全局，**base URL 在这里读一次再传给纯函数**——
     // `js/pure/` 下禁止出现浏览器那两个顶层全局（`scripts/build-ui.mjs` 的静态校验，
     // 含注释里的字样），所以纯函数只收一个 `origin` 参数。
@@ -915,7 +1067,7 @@ export const settingsSection = {
     nodes.examples = examples.body;
     section.appendChild(examples.wrap);
 
-    // ── 卡 5：危险区（设计小节「重置到底重置了什么」）────────────────────────────
+    // ── 卡 4：危险区（设计小节「重置到底重置了什么」）────────────────────────────
     //
     // ⚠️ **这张卡一度刻意不存在**：设计里那条订正把它往后推过一期，逐字理由是
     // 「『重置』到底重置了什么本身就需要一节设计，而本文档没有这一节」——
@@ -943,35 +1095,7 @@ export const settingsSection = {
     nodes.dangerResult = dangerResult;
     section.appendChild(danger.wrap);
 
-    const blocked = el("div", { class: "cfg-blocked danger-text" });
-    blocked.style.display = "none";
-    section.appendChild(blocked);
-    nodes.blocked = blocked;
-
-    const errors = el("div", { class: "cfg-errors danger-text" });
-    errors.style.display = "none";
-    section.appendChild(errors);
-    nodes.errors = errors;
-
-    const readback = el("p", { class: "muted note cfg-readback" });
-    readback.style.display = "none";
-    section.appendChild(readback);
-    nodes.readback = readback;
-
-    const propagation = el("p", { class: "muted note" });
-    section.appendChild(propagation);
-    nodes.propagation = propagation;
-
-    // 上面那句的**例外分支**：这次保存碰到了建实例时读一次的字段。
-    // ⚠️ **它是保存回执，不是又一条常驻说明**——常驻的那句在卡 2 底下
-    //（`set.card.upstreamNote`，改之前就该看见）。默认藏着，由 `render()` 按
-    // `touchesBuildTimeField()` 打开，见那里那一段。
-    // 走 `elI18n` 而不是 `t()`：它不带占位符 ⇒ 切语言时框架层的 `apply(document)`
-    // 刷得动它（`set.propagation` 带 `{bound}`，刷不动，只能等 `onShow()` 重画）。
-    const propagationBuildTime = elI18n("p", "set.propagation.buildTime", { class: "muted note" });
-    propagationBuildTime.style.display = "none";
-    section.appendChild(propagationBuildTime);
-    nodes.propagationBuildTime = propagationBuildTime;
+    addHostFooter(section, host);
   },
 
   onShow() {

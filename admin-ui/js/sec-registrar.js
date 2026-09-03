@@ -1,5 +1,12 @@
 /**
- * 注册机板块（设计 §10.3）：状态 → 池子四格 → **两张完全平级的通道卡** → 补池历史。
+ * 注册机板块（设计 §10.3）。**顶部一条 TAB，两页：**
+ * · **运行状态**：状态 → 池子四格 → **两张完全平级的通道卡** → 补池历史；
+ * · **设置**：原来设置页上那张「注册机」配置卡（补池旋钮 + 两条通道各自的凭据 +
+ *   高级折叠区）。它由 `admin-ui/js/sec-settings.js` 的 `registrarConfigPanel` 供给
+ *   ——**实现只有一份**，搬走的是屏幕上的位置，理由写在那个文件 `nodes` 上方。
+ *   **设置页不再有第二份**：同一个字段在整个面板里只有一个控件。
+ *
+ * 下面这段讲的是「运行状态」那一页。
  * 「立即补池」那颗按钮的四条护栏在后端（`src/http/admin/handlers/registrar.ts`），
  * 第 3 条（确认弹窗明示消耗）在这里。
  *
@@ -31,6 +38,9 @@ import { t } from "./i18n.js";
 import { el, elI18n, toast, openModal } from "./ui.js";
 import { fmtCount, fmtDash, fmtDuration, fmtInstant } from "./pure/format.mjs";
 import { offsetMs } from "./pure/overview.mjs";
+// 注册机那张**配置卡**由设置板块那份表单实现供给（`registrarConfigPanel`）：
+// 屏幕上它在本板块的「设置」分页里，而实现只有一份 —— 理由写在那个文件的 `nodes` 上方。
+import { registrarConfigPanel } from "./sec-settings.js";
 import {
   CHANNELS, channelLabelKey, channelAddressFactKey, channelRoleKey,
   statusView, channelCards, poolView, tendCost, manualQuotaView,
@@ -370,10 +380,109 @@ async function load() {
   if (nodes !== null) render();
 }
 
+/**
+ * 收起 / 展开一个分页。
+ *
+ * ⚠️ **用 `hidden` 属性而不是 `style.display`**：`hidden` 同时把那一页从**可及性树**
+ * 里摘掉（读屏器不会念到一页看不见的表单），而 `display: none` 那条要么写在样式表里
+ * 才有同样效果、要么就得在这里写死表现。UA 样式表本来就给 `[hidden]` 配了
+ * `display: none`，所以 `admin-ui/css/sections.css` 里**刻意没有** `.tabpanel { display: … }`
+ * ——加一条就会盖掉那条 UA 规则，藏起来的那一页会重新显示出来。
+ */
+function setPanelHidden(panel, hidden) {
+  if (hidden) panel.setAttribute("hidden", "");
+  else panel.removeAttribute("hidden");
+}
+
+/**
+ * 板块顶部那条 TAB。**两页：运行状态 / 设置。**
+ *
+ * ⚠️ **可及性按 WAI-ARIA 的 tabs 模式做全，不只是「两颗长得像标签的按钮」**：
+ * `role="tablist"/"tab"/"tabpanel"` + `aria-selected` + `aria-controls` / `aria-labelledby`
+ * 把「这是一组分页、现在选中的是哪一页、这一页对应哪块内容」告诉读屏器；
+ * **roving tabindex**（选中的那颗 `tabindex="0"`、其余 `-1`）让 Tab 键一次跳过整组，
+ * 组内换页走左右方向键（外加 Home / End 跳到首尾）——这正是这个模式的意义：
+ * 不这么做的话，一个纯键盘用户要按 N 次 Tab 才能走出这条标签栏。
+ *
+ * ⚠️ **本仓此前没有 tab 组件**（kiro2api 的面板里也没有，`grep .tab / role="tab"` 零命中），
+ * 所以样式是照它的视觉语言新造的一条（`admin-ui/css/sections.css` 的 `.tabs` 一族），
+ * 不是从别处抄一套风格不搭的。
+ *
+ * `onSelect(name)` 在**真的换页之后**回调（同一页重复点不回调）：两页各自要在
+ * 第一次被看到时拉自己那份数据。
+ */
+function buildTabs(section, tabs, onSelect) {
+  const list = el("div", { class: "tabs", role: "tablist" });
+  const btns = [];
+  const select = (idx, focus) => {
+    const changed = btns.findIndex((b) => b.getAttribute("aria-selected") === "true") !== idx;
+    btns.forEach((b, i) => {
+      b.setAttribute("aria-selected", i === idx ? "true" : "false");
+      // roving tabindex：整组在 Tab 序列里只占一格。
+      b.setAttribute("tabindex", i === idx ? "0" : "-1");
+      setPanelHidden(tabs[i].panel, i !== idx);
+    });
+    if (focus) btns[idx].focus();
+    if (changed) onSelect(tabs[idx].name);
+  };
+  tabs.forEach((tab, i) => {
+    const btn = elI18n("button", tab.labelKey, {
+      type: "button", class: "tab", role: "tab",
+      id: `reg-tab-${tab.name}`, "aria-controls": `reg-panel-${tab.name}`,
+      "aria-selected": i === 0 ? "true" : "false", tabindex: i === 0 ? "0" : "-1",
+    });
+    btn.addEventListener("click", () => { select(i, false); });
+    btn.addEventListener("keydown", (ev) => {
+      // ⚠️ **只认这四个键，别的一概放行**：吞掉 Tab / Enter / Space 会把这条标签栏
+      // 变成一个键盘出不去的陷阱。
+      const step = { ArrowRight: 1, ArrowLeft: -1 }[ev.key];
+      if (step !== undefined) {
+        ev.preventDefault();
+        select((i + step + tabs.length) % tabs.length, true);
+        return;
+      }
+      if (ev.key === "Home") { ev.preventDefault(); select(0, true); }
+      else if (ev.key === "End") { ev.preventDefault(); select(tabs.length - 1, true); }
+    });
+    btns.push(btn);
+    list.appendChild(btn);
+    tab.panel.setAttribute("role", "tabpanel");
+    tab.panel.setAttribute("id", `reg-panel-${tab.name}`);
+    tab.panel.setAttribute("aria-labelledby", `reg-tab-${tab.name}`);
+    setPanelHidden(tab.panel, i !== 0);
+  });
+  section.appendChild(list);
+  for (const tab of tabs) section.appendChild(tab.panel);
+}
+
+/**
+ * 现在停在哪一页。**模块级状态，不从 DOM 现读**：`onShow()` 会在切板块、切语言时
+ * 被重跑，那时要知道该拉哪一页的数据，而从 DOM 反推「哪颗 tab 的 aria-selected 是 true」
+ * 就是把同一份状态存了第二处。
+ */
+let activeTab = "status";
+
 export const registrarSection = {
   init(section) {
     section.textContent = "";
     section.appendChild(elI18n("h2", "reg.title"));
+
+    const statusPanel = el("div", { class: "tabpanel" });
+    const settingsPanel = el("div", { class: "tabpanel" });
+    buildTabs(section, [
+      { name: "status", labelKey: "reg.tab.status", panel: statusPanel },
+      { name: "settings", labelKey: "reg.tab.settings", panel: settingsPanel },
+    ], (name) => {
+      activeTab = name;
+      // **换页之后立刻拉那一页自己的数据**：两页各有各的端点，
+      // 不拉的话第二页第一次打开是空的，而运维只会以为「读不出来」。
+      if (name === "settings") registrarConfigPanel.onShow();
+      else load();
+    });
+    registrarConfigPanel.init(settingsPanel);
+
+    // 下面这一整段是「运行状态」那一页的内容，全部挂在 statusPanel 上。
+    section = statusPanel;
 
     const bar = el("div", { class: "toolbar" });
     const refresh = elI18n("button", "common.refresh", { type: "button" });
@@ -441,11 +550,17 @@ export const registrarSection = {
   },
 
   onShow() {
-    load();
+    // **只拉当前这一页的数据**：站在「设置」分页上时拉一次 `/registrar/status`
+    // 是一次白花的存储读，而本板块那条纪律（没有自动刷新）算的就是「人点一下才发生」。
+    if (activeTab === "settings") registrarConfigPanel.onShow();
+    else load();
   },
 
   onHide() {
     // **作废在飞请求**：不作废的话切回来时旧响应可能盖掉新数据（板块契约 §9.3）。
+    // 两页各有各的在飞请求，**两条都要作废**——只掐当前这一页的话，另一页那条
+    // 晚到的响应会画到一棵已经切走的子树上。
     if (abort) { abort.abort(); abort = null; }
+    registrarConfigPanel.onHide();
   },
 };

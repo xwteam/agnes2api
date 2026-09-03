@@ -106,6 +106,37 @@ async function openSettings(respond: (url: string, method: string) => Resp | Pro
   return h;
 }
 
+/**
+ * 进壳层、切到**注册机板块的「设置」分页**。
+ *
+ * ⚠️ **注册机那张配置卡搬家之后，凡是碰 `registrar.*` 字段的用例都走这个入口。**
+ * 它与 `openSettings()` 拿到的是**同一份表单**（`admin-ui/js/sec-settings.js` 的
+ * 「**一份 `fields` + 一张 `hosts` 名单。**」），只是宿主换了一个 —— 所以保存、错误行、回读那一套
+ * 断言在这边逐条照旧成立，这也正是这些用例该验的东西。
+ * 返回值里 `panel` 就是那一页的根节点，**别再拿 `h.section("registrar")` 去找字段**：
+ * 「运行状态」那一页里也有 `[data-channel]`。
+ */
+async function openRegistrarSettings(respond: (url: string, method: string) => Resp | Promise<Resp>) {
+  const h = await bootPanel({
+    now: NOW,
+    store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000) },
+    respond,
+  });
+  await settle();
+  h.dom.document.querySelectorAll(".nav-item")
+    .find((b) => b.getAttribute("data-section") === "registrar")!
+    .click();
+  await settle();
+  const section = h.section("registrar");
+  section.querySelectorAll('[role="tab"]')
+    .find((b) => b.getAttribute("data-i18n") === "reg.tab.settings")!
+    .click();
+  await settle();
+  const panel = section.querySelectorAll('[id="reg-panel-settings"]')[0];
+  if (!panel) throw new Error("找不到注册机板块的「设置」分页");
+  return { h, panel };
+}
+
 function fieldNode(section: FakeElement, path: string): FakeElement {
   const node = section.walk().find((n) => n.getAttribute("data-field") === path);
   if (!node) throw new Error(`找不到字段 ${path}`);
@@ -611,8 +642,8 @@ describe("凭据只写不读（设计 §8.6）", () => {
 
   /** 没配过的凭据没有东西可清 ⇒ 按钮禁用（点它是纯粹的空操作）。 */
   it("没配过的凭据：清空按钮禁用", async () => {
-    const h = await openSettings(() => ok(configBody()));
-    const clear = fieldNode(h.section("settings"), "registrar.yyds.apiKey")
+    const { panel } = await openRegistrarSettings(() => ok(configBody()));
+    const clear = fieldNode(panel, "registrar.yyds.apiKey")
       .children.find((c) => c.classList.contains("cfg-clear"))!;
     expect(clear.disabled).toBe(true);
   });
@@ -620,10 +651,9 @@ describe("凭据只写不读（设计 §8.6）", () => {
 
 describe("agnesPlatformUrl 折在高级区，且有自己的二次确认（设计 §8.6 第二行）", () => {
   /** **变异的靶子**（DOM 侧那一半）：把它挪回主表单。 */
-  it("它在 details 折叠区里，不在三张卡的主表单里", async () => {
-    const h = await openSettings(() => ok(configBody()));
-    const section = h.section("settings");
-    const node = fieldNode(section, "registrar.agnesPlatformUrl");
+  it("它在 details 折叠区里，不在注册机那张卡的主表单里", async () => {
+    const { h, panel } = await openRegistrarSettings(() => ok(configBody()));
+    const node = fieldNode(panel, "registrar.agnesPlatformUrl");
     // 顺着 parent 往上走，必须撞到一个 `details`。
     let cur: FakeElement | null = node;
     let inDetails = false;
@@ -638,11 +668,10 @@ describe("agnesPlatformUrl 折在高级区，且有自己的二次确认（设�
   });
 
   it("高级区那颗保存按钮先弹二次确认，确认之前不发请求", async () => {
-    const h = await openSettings(() => ok(configBody()));
-    const section = h.section("settings");
-    const advSave = section.querySelectorAll("button")
+    const { h, panel } = await openRegistrarSettings(() => ok(configBody()));
+    const advSave = panel.querySelectorAll("button")
       .find((b) => b.getAttribute("data-i18n") === "set.advanced.save")!;
-    inputOf(section, "registrar.agnesPlatformUrl").value = "https://evil.example.com";
+    inputOf(panel, "registrar.agnesPlatformUrl").value = "https://evil.example.com";
     advSave.click();
     await settle();
     expect(h.dom.document.querySelectorAll(".modal").length, "改注册去向没有二次确认").toBe(1);
@@ -665,7 +694,7 @@ describe("两条通道在设置页上完全对称（设计 §10.3 第 1/2/3 条�
    * 连渲染出来的那一行也一起断言。
    */
   it("两张子卡的 DOM 顺序恒为 moemail、yyds（字母序），且每张卡装的是自己那条通道的字段", async () => {
-    const h = await openSettings(() => ok(configBody({
+    const { panel } = await openRegistrarSettings(() => ok(configBody({
       fields: {
         ...configBody().fields,
         "registrar.moemail.baseUrl": { stored: "https://moemail-only.example.com", env: null, effective: "https://moemail-only.example.com", lockedBy: null },
@@ -677,7 +706,7 @@ describe("两条通道在设置页上完全对称（设计 §10.3 第 1/2/3 条�
         "registrar.yyds.apiKey": { configured: true, hint: "YYYY", lockedBy: null },
       },
     })));
-    const cards = h.section("settings").querySelectorAll(".channel-card");
+    const cards = panel.querySelectorAll(".channel-card");
     expect(cards.map((c) => c.getAttribute("data-channel"))).toEqual(["moemail", "yyds"]);
 
     // ① **完整路径**：每张卡装的必须是自己那条通道的字段。
@@ -709,8 +738,8 @@ describe("两条通道在设置页上完全对称（设计 §10.3 第 1/2/3 条�
 
   /** **设计 §10.3 第 1 条：主通道下拉无预选值，初始是占位符。** */
   it("主通道下拉初始不预选任何一条通道", async () => {
-    const h = await openSettings(() => ok(configBody()));
-    const select = inputOf(h.section("settings"), "registrar.primary");
+    const { panel } = await openRegistrarSettings(() => ok(configBody()));
+    const select = inputOf(panel, "registrar.primary");
     expect(select.value, "预选了一条通道 —— 任何预选都会被读成排名").toBe("");
     expect(select.children.map((o) => o.getAttribute("value"))).toEqual(["", "moemail", "yyds"]);
   });
@@ -856,11 +885,10 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
    * **变红条件**：把 `buildPatch` 里那句「没有基线的格只送动过的」去掉。
    */
   it("诊断态下只填一格：发出的 patch 里不许有 registrar.enabled", async () => {
-    const h = await openSettings(() => ok(BLOCKED));
-    const section = h.section("settings");
+    const { h, panel } = await openRegistrarSettings(() => ok(BLOCKED));
     // 只动那把 key（真的派发 input 事件，与运维敲键盘同一条路径）。
-    inputOf(section, "registrar.yyds.apiKey").input("refilled-key-8888");
-    saveButton(section).click();
+    inputOf(panel, "registrar.yyds.apiKey").input("refilled-key-8888");
+    saveButton(panel).click();
     await settle(10);
 
     const put = h.calls.find((c) => c.method === "PUT");
@@ -878,16 +906,15 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
    * 没法从诊断态里把注册机**打开**（那同样是一条正当的自救路径）。
    */
   it("诊断态下真的动过的格照旧送得出去（含 checkbox 与下拉）", async () => {
-    const h = await openSettings(() => ok(BLOCKED));
-    const section = h.section("settings");
-    const toggle = inputOf(section, "registrar.enabled");
+    const { h, panel } = await openRegistrarSettings(() => ok(BLOCKED));
+    const toggle = inputOf(panel, "registrar.enabled");
     toggle.checked = true;
     toggle.change();
-    const primary = inputOf(section, "registrar.primary");
+    const primary = inputOf(panel, "registrar.primary");
     primary.value = "moemail";
     primary.change();
-    inputOf(section, "registrar.moemail.apiKey").input("mk-1234");
-    saveButton(section).click();
+    inputOf(panel, "registrar.moemail.apiKey").input("mk-1234");
+    saveButton(panel).click();
     await settle(10);
 
     const put = h.calls.find((c) => c.method === "PUT");
@@ -898,31 +925,48 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
     expect(patch["registrar.enabled"], "诊断态下把注册机打开这条路被堵死了").toBe(true);
   });
 
-  it("横幅 + 逐条列出缺什么，并把那一格标红", async () => {
-    const h = await openSettings(() => ok(BLOCKED));
-    const section = h.section("settings");
-    const banner = section.querySelectorAll(".cfg-blocked")[0]!;
+  /**
+   * ⚠️ **这一格顺带钉住「一份表单、两个宿主」那条设计的要害**：装载失败清单画的是
+   * **同一份**内容，而它必须在**运维正站着的那一页**上出现。这里站的是注册机的
+   * 「设置」分页 —— 画到设置页那份节点上的话，这一格拿到的是 `display: none`。
+   */
+  it("横幅 + 逐条列出缺什么，并把那一格标红（站在注册机的「设置」分页上）", async () => {
+    const { panel } = await openRegistrarSettings(() => ok(BLOCKED));
+    const banner = panel.querySelectorAll(".cfg-blocked")[0]!;
     expect(banner.style.display, "装载不起来，面板却什么都没说").not.toBe("none");
     expect(banner.textContent).toContain("下一次重启");
     // 逐条那一行要说清是哪一格、缺什么。
     expect(banner.textContent).toContain("API Key");
     expect(banner.textContent).toContain("凭据");
-    expect(fieldNode(section, "registrar.yyds.apiKey").classList.contains("invalid")).toBe(true);
+    expect(fieldNode(panel, "registrar.yyds.apiKey").classList.contains("invalid")).toBe(true);
   });
 
   /**
    * **变红条件**：把 `renderOne` 里那句 `built.input.disabled = !isDiagnostic(data);`
    * 改回无条件 `true`。
    */
-  it("诊断态下表单仍然可编辑 —— 那是运维唯一的出路", async () => {
-    const h = await openSettings(() => ok(BLOCKED));
-    const section = h.section("settings");
-    for (const path of ["registrar.enabled", "registrar.primary", "registrar.yyds.apiKey", "maxStrikes"]) {
+  /**
+   * ⚠️ **这一格横跨两个宿主，是有意的**：注册机那三格在注册机板块的「设置」分页上，
+   * `maxStrikes` 在设置页上，而它们是**同一份表单**的字段。分成两格写的话，
+   * 「两个宿主各自把 `disabled` 算错一半」这种坏法就分不出来了。
+   */
+  it("诊断态下表单仍然可编辑 —— 那是运维唯一的出路（两个宿主各查一遍）", async () => {
+    const { h, panel } = await openRegistrarSettings(() => ok(BLOCKED));
+    for (const path of ["registrar.enabled", "registrar.primary", "registrar.yyds.apiKey"]) {
       expect(
-        inputOf(section, path).disabled,
+        inputOf(panel, path).disabled,
         `${path} 在诊断态下被置灰了 —— 自救路径在 UI 上被堵死，而后端明明放行`,
       ).toBe(false);
     }
+    // 切到设置页那个宿主，同一份表单的另一格照旧可编辑。
+    h.dom.document.querySelectorAll(".nav-item")
+      .find((b) => b.getAttribute("data-section") === "settings")!
+      .click();
+    await settle();
+    expect(
+      inputOf(h.section("settings"), "maxStrikes").disabled,
+      "maxStrikes 在诊断态下被置灰了 —— 自救路径在 UI 上被堵死，而后端明明放行",
+    ).toBe(false);
   });
 
   /**

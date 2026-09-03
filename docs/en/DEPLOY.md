@@ -970,9 +970,10 @@ which would read as a real source.
 
 ### What the settings page can change
 
-The panel's **Settings** page has three cards: **Credentials**, **Upstream & cooldowns**, and
-**Registrar** (which holds the two fully equal mailbox-channel sub-cards plus an *Advanced*
-disclosure). It writes to the `config` key **in storage**, never to environment variables.
+These fields live on three cards: **Credentials** and **Upstream & cooldowns** sit on the
+**Settings** page, while **Registrar** (which holds the two fully equal mailbox-channel
+sub-cards plus an *Advanced* disclosure) sits on the **Settings** tab of the **Registrar**
+board. All three write to the `config` key **in storage**, never to environment variables.
 
 **Every field shows three values, not one.** The line "stored X · env Y · effective Z" separates
 "what you saved", "what the deployment supplies", and "what the gateway is actually using".

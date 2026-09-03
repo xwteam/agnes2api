@@ -147,6 +147,10 @@ export const I18N = {
   // 换成「没有可以预填的地址」。判据与理由见
   // `admin-ui/js/pure/registrar.mjs` 的 `channelAddressFactKey()`。
   "reg.title":        { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
+  // 板块顶部那条 TAB 的两页。**「设置」这一页装的是原来设置页上那张注册机卡**
+  // （见 `admin-ui/js/sec-settings.js` 的 `registrarConfigPanel`），设置页那边不再有第二份。
+  "reg.tab.status":   { "zh-CN": "运行状态", "zh-TW": "執行狀態", en: "Status", ja: "稼働状況", ko: "실행 상태" },
+  "reg.tab.settings": { "zh-CN": "设置", "zh-TW": "設定", en: "Settings", ja: "設定", ko: "설정" },
   "reg.state":        { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },
   "reg.state.on":     { "zh-CN": "已启用", "zh-TW": "已啟用", en: "Enabled", ja: "有効", ko: "사용 중" },
   "reg.state.off":    { "zh-CN": "已关闭", "zh-TW": "已關閉", en: "Disabled", ja: "無効", ko: "꺼짐" },

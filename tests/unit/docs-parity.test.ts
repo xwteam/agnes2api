@@ -2850,6 +2850,31 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
   const codeOnly = (src: string): string => blankComments(src);
 
   /**
+   * `sec-settings.js` 里建了、但**不挂在设置页上**的卡。**手写登记表，双向查。**
+   *
+   * 今天只有一张：注册机那张卡挂在注册机板块的「设置」分页里
+   *（`admin-ui/js/sec-settings.js` 的 `registrarConfigPanel`）。它的代码留在这个文件里，
+   * 是因为它与设置页那几张卡是**同一份表单**（理由写在那个文件 `nodes` 上方）。
+   */
+  const CARDS_MOUNTED_ELSEWHERE: readonly string[] = ["set.card.registrar"];
+
+  /**
+   * **设置页那个板块自己**建的卡（`export const settingsSection` 之后那一段）。
+   * 认不出那个导出就抛：退化成「整份文件」会让计数悄悄多算一张。
+   */
+  function settingsPageCards(settings: string): string[] {
+    const at = settings.indexOf("export const settingsSection");
+    if (at < 0) {
+      throw new Error(
+        "sec-settings.js 里找不到 `export const settingsSection` —— 设置板块改形态了，"
+        + "「设置页上有几张卡」这个数就没有右界了，先回来改抠法",
+      );
+    }
+    return [...settings.slice(at).matchAll(/card\("(set\.card\.[A-Za-z]+)"\)/g)]
+      .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
+  }
+
+  /**
    * 认源的**完备性锚**（复评发现）。返回失败报文数组，空 = 认全了。
    *
    * ⚠️⚠️ **这一层是复评实测逼出来的，不是设计时想到的，读完再改。** 下面 `panelCounts()`
@@ -2881,17 +2906,33 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     const decl = (settings.match(/function\s+card\s*\(/g) ?? []).length;
     // `(?<![.\w$])`：排除成员访问（`x.card(`）与以 card 结尾的别的标识符。
     const allCalls = (settings.match(/(?<![.\w$])card\s*\(/g) ?? []).length;
-    const cardNames = [...settings.matchAll(/card\("(set\.card\.[A-Za-z]+)"\)/g)]
+    const namesInFile = [...settings.matchAll(/card\("(set\.card\.[A-Za-z]+)"\)/g)]
       .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
+    const cardNames = settingsPageCards(settings);
+    // ⚠️⚠️ **「这个文件里建了几张卡」不再等于「设置页上有几张卡」，这一段是那次搬家的落点。**
+    // 注册机那张卡的代码仍然住在 `sec-settings.js`（它是同一份表单的一部分，
+    // 理由在那个文件 `nodes` 上方），但它**挂在注册机板块的「设置」分页上**。
+    // 拿整份文件的计数当「设置页有几张卡」，五份 ADMIN.md 那句话会静静地多算一张
+    // ——而那正是本判据要防的形态。⇒ 计数只数 `export const settingsSection` 之后那一段，
+    // 而**跑到那一段之外的卡逐张登记**（下面这条是双向的：登记表过期同样红）。
+    const outside = namesInFile.filter((n) => !cardNames.includes(n)).sort();
+    if (outside.join("|") !== [...CARDS_MOUNTED_ELSEWHERE].sort().join("|")) {
+      out.push(
+        `sec-settings.js 里建了却不在设置页上的卡是 ${JSON.stringify(outside)}，`
+        + `而登记表写的是 ${JSON.stringify([...CARDS_MOUNTED_ELSEWHERE])}`
+        + "——要么又有一张卡搬去了别的板块（那五份 ADMIN.md 的设置卡表要跟着少一行），"
+        + "要么搬走的那张搬回来了（登记表过期）",
+      );
+    }
     if (decl !== 1) {
       out.push(
         `sec-settings.js 里 \`function card(\` 数到 ${decl} 处（该是 1 处）`
         + "——建卡的那个函数改名或改形态了，下面那条「调用点数 === 认出来的名字数」的锚会跟着失灵",
       );
-    } else if (allCalls - decl !== cardNames.length) {
+    } else if (allCalls - decl !== namesInFile.length) {
       out.push(
         `sec-settings.js 里 \`card(\` 的调用点有 ${allCalls - decl} 处，`
-        + `而取名正则只认出 ${cardNames.length} 个（${cardNames.join("、")}）`
+        + `而取名正则只认出 ${namesInFile.length} 个（${namesInFile.join("、")}）`
         + "——多半是某一张卡写成了多行 / 换了写法，取名正则认不出它，"
         + "于是设置卡那条计数会静静地少一张，而五份 ADMIN.md 的设置卡表全靠它",
       );
@@ -2968,8 +3009,7 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     if (blind.length > 0) {
       throw new Error(`认不出屏幕上的卡 / 模式，这一组的计数已经不可信：\n${blind.join("\n")}`);
     }
-    const cardNames = [...codeOnly(src.settings).matchAll(/card\("(set\.card\.[A-Za-z]+)"\)/g)]
-      .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
+    const cardNames = settingsPageCards(codeOnly(src.settings));
     const modeKeys = [...codeOnly(src.playground).matchAll(/\{\s*mode:\s*"[a-z]+",\s*key:\s*"(pg\.mode\.[a-z]+)"\s*\}/g)]
       .flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
     const dangerIds = dangerIdsOf(src);
@@ -3087,7 +3127,10 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(1);
     // ⚠️ 期望的两个数**从真源现算**，不手写：危险区真的落地那天卡数会变，写死会在
     // 「判据其实什么都没坏」的那天红，而代价是逼后来的人去削弱这一格。
-    const cards = realPanel().cards;
+    // ⚠️ **完备性锚数的是「这个文件里建了几张卡」，不是「设置页上有几张卡」**：
+    // 注册机那张卡的代码住在这个文件里、却挂在别的板块上（见 `CARDS_MOUNTED_ELSEWHERE`）。
+    // 两个数在那次搬家之后不再相等，期望值要从这两个数一起算。
+    const cards = realPanel().cards + CARDS_MOUNTED_ELSEWHERE.length;
     for (const h of [`调用点有 ${cards + 1} 处`, `只认出 ${cards} 个`, "设置卡表"]) {
       expect(failures[0] ?? "", "吵了但报文没点名这些东西——报文是唯一会被看见的护栏").toContain(h);
     }
@@ -3399,25 +3442,25 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
   // 下面那条变异因此上移一档：现在模拟的是**第 6 张卡**。
 
   /**
-   * ⚠️⚠️ **落地之后真仓自己就处在旧判据会瞎掉的那个形态里，这件事必须留成一条断言。**
+   * ⚠️⚠️ **这里曾经有一格「落地之后的既成事实：设置卡表与警告条表今天行数相同」，
+   * 它按设计响过之后被删掉了，这段留的是它的来历与去向。**
    *
-   * 旧判据是「行数恰好等于 n 的表有且只有一张」，它当时全绿逃逸的原因是
-   * 设置卡数撞上了黄条数。危险区落地之后**那个撞号是真的**：设置卡 5 张、黄条 5 条。
-   * 也就是说旧判据对「设置卡表少一行」这件事**今天恒瞎**——而位置判据不受影响。
-   * 这一格把撞号本身钉住（撞号消失时它会红，提醒回来重新评估下面那条变异还覆不覆盖
-   * 那个形态），紧跟着的那一格用一次**文档侧**变异正面证明位置判据没被撞号骗到。
+   * 那一格钉的是一个**撞号**：危险区落地之后设置卡 5 张、黄条 5 条，于是旧的
+   *「行数恰好等于 n 的表有且只有一张」那种认表法对「设置卡表少一行」**恒瞎**，
+   * 而位置判据不受影响 —— 紧跟着那一格用一次文档侧变异正面证明了这一点。
+   * 那一格的报文逐字写着「撞号消失时它会红，提醒回来重新评估」。
+   *
+   * 注册机那张配置卡搬到注册机板块的「设置」分页之后，设置卡从 5 张变成 4 张，
+   * **撞号真的消失了**（今天 8 / 5 / 3 / 4，四个数互不相同），那一格按设计红了。
+   * ⇒ 按它自己的报文处置：删掉它。
+   * ⚠️ **不改写成「四个数两两不同」**：本组开头那段已经明写过为什么不要那种洁痕断言
+   *（它会在两条锚碰巧同数的那天红，而那天判据其实什么都没坏），顺序假设该由
+   *「把期望表里相邻两项对调，五份必须一起红」那一格接着守 —— 它本来就是为这件事写的。
+   * 下面这一格保留：它证明的是**位置判据会点名「设置卡」**，与撞号在不在无关。
    */
-  it("落地之后的既成事实：设置卡表与警告条表今天行数相同 —— 旧的「按行数认表」判据对它已经恒瞎", () => {
-    const c = realPanel();
-    expect(c.cards,
-      "设置卡数与黄条数不再相同了 —— 下面那格「按行数认表会认错」的正面证据没了，回来重新评估")
-      .toBe(c.warn);
-  });
-
-  it("该红时红：设置卡表少一行（五份一起）—— 位置判据点名「设置卡」，不许认成行数相同的警告条表", () => {
+  it("该红时红：设置卡表少一行（五份一起）—— 位置判据点名「设置卡」", () => {
     probeTableBase();
     // **文档侧变异**：把每一份 ADMIN.md 的第 4 张表（设置卡）删掉最后一行数据。
-    // 旧判据在这里会去数「5 行的表有几张」、数到警告条那张、判为「有且只有一张」而放行。
     const dropLastRowOfTable = (s: string, nth: number): string => {
       const lines = s.split("\n");
       let table = 0;
@@ -3433,6 +3476,8 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
       return [...lines.slice(0, lastRow), ...lines.slice(lastRow + 1)].join("\n");
     };
     const shorter: ApiDocReader = (lang) => dropLastRowOfTable(realAdminDoc(lang), 4);
+    // ⚠️ 上一版这里写着「旧判据在这里会去数『5 行的表有几张』、数到警告条那张、
+    // 判为『有且只有一张』而放行」—— 那句话随撞号一起过期了（见上方那段）。
     const failures = tableSeqFailures(expectedTables(realPanel()), shorter);
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(LANGS.length);
     for (const h of ["设置卡", "第 4 张"]) {
@@ -3440,7 +3485,7 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     }
   });
 
-  it("该红时红：设置页多出第 6 张卡而五份文档没跟着加行 —— 五份一起红", () => {
+  it("该红时红：设置页多出一张卡而五份文档没跟着加行 —— 五份一起红", () => {
     probeTableBase();
     const src = readPanelSource();
     // 变异取真源：照本仓真的会写的那一行再加一张卡出来。
@@ -3535,13 +3580,19 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
   /**
    * 「认证密钥含通道凭据」那一句：设置卡表第 1 行原来写的是「认证密钥 = 网关口令 **+ 各条邮箱通道自己的凭据**」。
    * 实测：`CARD_AUTH` 只有 `gatewayToken` 一格，通道凭据由 `channelFields()` 渲染进
-   * **卡 3（注册机）** 的两张对称子卡 ⇒ 运维照原文在两处都找不到它们。
+   * **注册机那张卡**的两张对称子卡 ⇒ 运维照原文在两处都找不到它们。
    *
-   * 这一格钉的是改真之后那两行话：**取值侧**（三张表里没有通道凭据）与**位置侧**
-   *（`channelFields()` 的调用点夹在卡 3 与卡 4 的建卡语句之间）。哪天真把通道凭据搬进
-   * 卡 1，这一格当场红，逼人回来同时改五份文档的第 1 行与第 3 行。
+   * ⚠️ **注册机那张卡已经不在设置页上了**（本轮搬家）：它挂在注册机板块的
+   * 「设置」分页里（`admin-ui/js/sec-settings.js` 的 `registrarConfigPanel`），
+   * 卡内内容由同一个文件里的 `buildRegistrarCard()` 建。所以**位置侧那一半的三个落点
+   * 跟着换了**：从「卡 3 与卡 4 的建卡语句之间」换成「`buildRegistrarCard()` 这个函数体内」，
+   * 外加一条「它只被注册机那个面板调用、设置板块不再调它」——后者才是
+   * 「设置页不再重复一份」这件事在源码这一侧的判据。
+   *
+   * 这一格钉的仍然是那两行话：**取值侧**（别的卡的字段表里没有通道凭据）与**位置侧**。
+   * 哪天真把通道凭据搬进卡 1，这一格当场红，逼人回来改五份文档。
    */
-  it("设置卡表第 1 / 3 行那两句话的测法：卡 1 只有网关口令，邮箱通道凭据渲染在卡 3 里", () => {
+  it("设置卡表第 1 行那句话的测法：卡 1 只有网关口令，邮箱通道凭据渲染在注册机那张卡里", () => {
     expect([...CARD_AUTH], "认证密钥卡的字段清单变了——五份 ADMIN.md 设置卡表第 1 行那句话得跟着改")
       .toEqual(["gatewayToken"]);
 
@@ -3552,16 +3603,34 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     expect(strayed, `这些通道凭据字段跑进了别的卡的字段表：${strayed.join("、")}`
       + "——五份 ADMIN.md 说它们在卡 3 的两张子卡里，那句话已经不成立了").toEqual([]);
 
-    // 位置侧：抠注释之后，`channelFields(` 的调用点必须夹在卡 3 与卡 4 的建卡语句之间。
+    // 位置侧①：抠注释之后，`channelFields(` 的调用点必须落在 `buildRegistrarCard()` 的函数体里
+    //（用「下一个顶层 function 声明」当右界，同上一版拿卡 4 当右界是同一种三落点写法）。
     const src = codeOnly(readPanelSource().settings);
-    const reg = src.indexOf('card("set.card.registrar")');
+    const cardFn = src.indexOf("function buildRegistrarCard(");
     const call = src.indexOf("channelFields(");
-    const examples = src.indexOf('card("set.card.examples")');
-    expect([reg, call, examples].filter((i) => i < 0), "这三个落点有认不出来的——判据本身已经和源码对不上了")
+    const nextFn = src.indexOf("function buildToolbar(");
+    expect([cardFn, call, nextFn].filter((i) => i < 0), "这三个落点有认不出来的——判据本身已经和源码对不上了")
       .toEqual([]);
-    expect(reg < call && call < examples,
-      `通道凭据的渲染点已经不在卡 3 那一段里了（卡 3 在 ${reg}，channelFields( 在 ${call}，卡 4 在 ${examples}）`
-      + "——五份 ADMIN.md 设置卡表第 3 行那句话得跟着改").toBe(true);
+    expect(cardFn < call && call < nextFn,
+      `通道凭据的渲染点已经不在 buildRegistrarCard() 里了（函数在 ${cardFn}，channelFields( 在 ${call}，`
+      + `下一个函数在 ${nextFn}）——五份 ADMIN.md 里那句话得跟着改`).toBe(true);
+
+    // 位置侧②：**注册机那张卡只被建一次，而且不是在设置板块里建的。**
+    // 这一条是「设置页不再重复一份」在源码这一侧的判据：设置页要是又长回一张注册机卡，
+    // 同一个字段就会有两个控件，两处各写各的。
+    const calls = [...src.matchAll(/buildRegistrarCard\(/g)].length;
+    expect(calls, "buildRegistrarCard( 的出现次数不是「一处声明 + 一处调用」——有人加了第二处挂载点？")
+      .toBe(2);
+    const panel = src.indexOf("export const registrarConfigPanel");
+    const settingsInit = src.indexOf("export const settingsSection");
+    expect([panel, settingsInit].filter((i) => i < 0), "两个导出有认不出来的——判据本身已经和源码对不上了")
+      .toEqual([]);
+    // ⚠️ 起点要跳过声明那一处自己（`cardFn` 指的是 `function ` 那个 f，
+    // 从 `cardFn + 1` 找会把声明里的函数名又找一遍）。
+    const callSite = src.indexOf("buildRegistrarCard(", cardFn + "function buildRegistrarCard(".length);
+    expect(panel < callSite && callSite < settingsInit,
+      `注册机那张卡的调用点不在 registrarConfigPanel 里了（面板在 ${panel}，调用在 ${callSite}，`
+      + "设置板块在 " + String(settingsInit) + "）——它要么搬回了设置页，要么又多了一处挂载点").toBe(true);
   });
 
   /**
@@ -9660,9 +9729,10 @@ describe("非 README 文档里位置不对的 `---` 删掉（页脚块之前允�
  * 逼人回来重新量。**没有这一格，340 就是一张全仓通行证。**
  *
  * ⚠️ **为什么不落「除那 4 行外一律 ≤200」的分档判据**（当时把这件事留给本轮定）：
- * 今天射程内 >200 的有 **26** 行，其中 22 行住在 `ADMIN.md` / `API.md` / `REGISTRAR.md`
+ * 今天射程内 >200 的有 **25** 行（注册机那张配置卡搬家、设置卡表各少一行之前是 26），
+ * 其中大部分住在 `ADMIN.md` / `API.md` / `REGISTRAR.md`
  * 与四种语言的 `DEPLOY.md` 里，属于 **API / ADMIN / REGISTRAR 还没做**的那几批。
- * 现在落分档判据只有两条路：要么写一张 26 行的白名单（一张伪装成守卫的待办清单），
+ * 现在落分档判据只有两条路：要么写一张几十行的白名单（一张伪装成守卫的待办清单），
  * 要么把射程外的三类文档现在就改掉。两条都不是本轮该做的事 ⇒ 改成上面那条棘轮，
  * **它会自己到期**，而白名单不会。
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -9767,7 +9837,10 @@ describe("表格行与单元格的长度上限（R22e ≤ 340 / R22e2 ≤ 300）
    * 那等于把「只会变松、不会变紧」的老样子放回来。
    */
   it("棘轮：射程内超过 200 字符的表格行恰好还是今天这些（变大 = 有人在塞长句，变小 = 该回来重新量）", () => {
-    const OVER_200_TODAY = 26;
+    // ⚠️ 26 → 25：注册机那张配置卡搬到注册机板块的「设置」分页之后，五份 ADMIN.md 的
+    // 设置卡表各少了一行，而那一行（射程内的那一份）正是这 26 行里的一行。
+    // **不是「有人把长句改短了」，是那一行整条不在了。**
+    const OVER_200_TODAY = 25;
     const { over200 } = scanWideRows(non25Pairs());
     expect(
       over200.length,
@@ -11271,9 +11344,10 @@ describe("五份 ADMIN.md 的分层、围栏与排障三段式", () => {
   /** 今天的实测值，同时是**不回退下限**（只许升不许降，与常见问题那一条同一种形态）。 */
   const H2_COUNT = 14;
   // ⚠️ 顶栏那一节（「面板外壳」那一段）落地时 48 → 49：五份各多一个 `###`。
+  // 注册机板块分成两页（运行状态 / 设置）落地时 49 → 50：五份各多一个 `###`。
   // 下限跟着今天的实测值走，**不是**把它留在旧值上——留旧值等于给「五份一起缩水一层」
   // 开一格豁免，而下面那格探针正是拿 `H3_FLOOR - 1` 当期望值的。
-  const H3_FLOOR = 49;
+  const H3_FLOOR = 50;
   const H4_FLOOR = 2;
   const FENCE_FLOOR = 3;
 

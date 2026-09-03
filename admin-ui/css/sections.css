@@ -177,6 +177,32 @@ tr:last-child td { border-bottom: 0; }
 }
 .dropdown-menu button:not([disabled]):hover { background: var(--panel-2); }
 
+/* 分页（TAB）。**本仓此前没有这个组件**，两个参照仓的面板里也没有
+   （`grep .tab / role="tab"` 零命中）⇒ 这一套是照 kiro2api 的视觉语言新造的：
+   底下一条分隔线、选中那颗用主色的下边框把线「顶开」、未选中的走 `--muted`。
+
+   ⚠️ **`.tab[aria-selected="true"]` 那条里的 `font-weight` 不是装饰**：选中态
+   不许只由颜色表达（WCAG 1.4.1），与 `.btn-toggle.active` 是同一条线、同一种处置。
+   ⚠️ **选择器钉的是 `aria-selected` 而不是一个 `.active` 类**：那个属性是读屏器读的
+   那一份真相，样式跟着它走就不可能出现「看着选中、读屏器说没选中」的分叉。
+   ⚠️ **这里刻意没有 `.tabpanel { display: … }`**：藏起来的那一页靠 `hidden` 属性
+   （UA 样式表给它配了 `display: none`），写一条 display 进来会把那条 UA 规则盖掉
+   ——两页会同时显示出来。理由全文在 `admin-ui/js/sec-registrar.js` 的 `setPanelHidden()`。 */
+.tabs {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-bottom: var(--gap); border-bottom: 1px solid var(--border);
+}
+.tab {
+  padding: 8px 14px; font: inherit; color: var(--muted);
+  background: transparent; border: 0; border-bottom: 2px solid transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  transition: var(--transition);
+}
+/* ⚠️ 与 `.btn-toggle:hover` 同一条理由：`base.css` 那条 `button:where(…):hover`
+   会把任何按钮的底换成主色，本条 (0,2,0) 压过它的 (0,1,1) 把底留在中性档。 */
+.tab:hover { background: var(--panel-2); color: var(--text); }
+.tab[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+
 /* 注册机板块：两张**完全对称**的通道卡。
    ⚠️ **这里刻意没有任何 `[data-channel="…"]` 选择器。** 给某一条通道单独一条
    样式规则，就是在样式层引入设计 §10.3 第 2 条禁止的那种不对称——而它比代码里的

@@ -202,6 +202,15 @@ The registrar board is an **index, not a manual**: all the refill rules, how to 
 channel, which credentials you have to bring, and how to troubleshoot live in
 [REGISTRAR.md](REGISTRAR.md), and this page keeps no second copy. What the board shows is:
 
+### The two tabs
+
+- **This board is split into two tabs**: "Status" shows how it is running right now, and
+  "Settings" is where you change the refill knobs and each channel's own credentials.
+  **The settings page keeps no second copy** — every field has exactly one control in the
+  whole panel.
+- Switch tabs with the left/right arrow keys (Home / End jump to the ends); the whole tab
+  strip takes a single stop in the Tab order.
+
 ### The two mailbox channels
 
 - **The two mailbox channels are peers** and have no default: the primary must be named
@@ -406,15 +415,14 @@ stream too.
 
 ## Settings
 
-### The five cards
+### The four cards
 
-The settings page has five cards today:
+The settings page has four cards today:
 
 | Card | What it covers | Worth knowing |
 |----|--------------|-------------|
 | Credentials | The gateway token and nothing else; the admin token is shown read-only on this card, because the panel cannot change its own key | Credentials are write-only: a blank input means this field is left alone |
 | Upstream & cooldowns | Upstream address, timeouts, and the cooldown / eviction knobs | Two of them are read once when the instance is built, see the end of this section |
-| Registrar | Every refill knob, **each mailbox channel's own credentials** (two symmetric sub-cards), plus an "advanced" collapsed area | The field in that area changes where every automatic registration goes |
 | Integration examples | Ready-to-run call examples | The address comes from the origin you opened the panel on, and the token is a placeholder |
 | Danger zone | Two buttons whose effects cannot be undone: reset configuration, purge the key pool | Both ask for a second confirmation; purging also makes you type the current pool size by hand |
 

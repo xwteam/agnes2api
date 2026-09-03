@@ -91,8 +91,33 @@ function emptyPrimaryNode(section: FakeElement): FakeElement {
   return node;
 }
 
+/**
+ * 板块顶部那条 TAB 的某一页。
+ *
+ * ⚠️⚠️ **本文件里凡是按 `[data-channel]` 找卡的地方都必须先收到这一页里。**
+ * 「运行状态」那一页有两张**通道状态卡**，「设置」那一页里那张注册机配置卡下面
+ * 还有两张**通道凭据子卡**，两边用的是同一个 `data-channel` 钩子
+ *（都是「一条通道一张卡」，这个钩子本来就该长一样）⇒ 在整个板块上找会拿到四张，
+ * 而顺序判据看上去仍然「以 moemail 开头」——**那正是会静静放行的形状**。
+ */
+function tabPanel(section: FakeElement, name: "status" | "settings"): FakeElement {
+  const panel = section.querySelectorAll(`[id="reg-panel-${name}"]`)[0];
+  if (!panel) throw new Error(`找不到 ${name} 那一页`);
+  return panel;
+}
+
+/** 那两颗 TAB 按钮，按 DOM 顺序。 */
+function tabButtons(section: FakeElement): FakeElement[] {
+  return section.querySelectorAll('[role="tab"]');
+}
+
+/**
+ * 「运行状态」那一页上某条通道的**状态卡**。
+ * ⚠️ **先收到那一页里再找**，理由见 `tabPanel()` 上方：整个板块上找会连「设置」那一页
+ * 里那两张凭据子卡一起拿到，而 `[0]` 恰好仍是对的那张 —— 一个靠 DOM 顺序碰巧成立的判据。
+ */
 function channelCard(section: FakeElement, channel: string): FakeElement {
-  const card = section.querySelectorAll(`[data-channel="${channel}"]`)[0];
+  const card = tabPanel(section, "status").querySelectorAll(`[data-channel="${channel}"]`)[0];
   if (!card) throw new Error(`找不到 ${channel} 那张通道卡`);
   return card;
 }
@@ -158,8 +183,8 @@ describe("设计 §10.3 第 2、3 条：两张通道卡", () => {
    */
   it("两张卡在 DOM 里的先后恒为 moemail、yyds（字母序）", async () => {
     const h = await openRegistrar(defaultRespond());
-    const section = h.section("registrar");
-    const order = section.querySelectorAll("[data-channel]").map((c) => c.getAttribute("data-channel"));
+    const panel = tabPanel(h.section("registrar"), "status");
+    const order = panel.querySelectorAll("[data-channel]").map((c) => c.getAttribute("data-channel"));
     expect(order).toEqual(["moemail", "yyds"]);
   });
 
@@ -170,8 +195,8 @@ describe("设计 §10.3 第 2、3 条：两张通道卡", () => {
         moemail: { configured: true, role: "fallback" },
       },
     })));
-    const section = h.section("registrar");
-    expect(section.querySelectorAll("[data-channel]").map((c) => c.getAttribute("data-channel")))
+    const panel = tabPanel(h.section("registrar"), "status");
+    expect(panel.querySelectorAll("[data-channel]").map((c) => c.getAttribute("data-channel")))
       .toEqual(["moemail", "yyds"]);
   });
 
@@ -757,5 +782,170 @@ describe("Key 池「添加 Key」菜单：【自动注册】两项接上了注�
     // 点中的那一项必须真的把弹窗打开了——判据建在「这一下有没有生效」上，
     // 而不是「菜单关没关」（菜单关掉是这一项自己做的，是对的）。
     expect(h.dom.document.body.textContent).toContain(I18N["reg.tend.confirmTitle"]!["zh-CN"]!);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 板块顶部那条 TAB（本轮新造：本仓与两个参照仓此前都没有 tab 组件）
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * **可及性按 WAI-ARIA 的 tabs 模式验，不只验「点得动」。**
+ *
+ * 一组光有样式的标签栏对读屏器与纯键盘用户等于不存在：读屏器不知道这是一组分页、
+ * 不知道现在选中哪一页；键盘用户要按 N 次 Tab 才走得出这条标签栏。
+ * 这一组把那套契约逐条钉住 —— `role` 三件套、`aria-selected`、两向 `aria-controls` /
+ * `aria-labelledby`、roving tabindex、左右方向键与 Home / End。
+ *
+ * **它接不住什么，明写**：这里验的是**标记与键盘行为**，不验「读屏器真的念对了」
+ *（那要真读屏器，本仓没有），也不验样式（`.tab[aria-selected="true"]` 那条规则由
+ * `admin-ui/css/sections.css` 里那段注释与人眼负责）。
+ */
+describe("注册机板块的两个分页（TAB）", () => {
+  it("结构：一条 tablist、两颗 tab，各自与自己那块 tabpanel 双向指着", async () => {
+    const h = await openRegistrar(defaultRespond());
+    const section = h.section("registrar");
+    const lists = section.querySelectorAll('[role="tablist"]');
+    expect(lists.length, "找不到 tablist —— 一组没有 role 的按钮对读屏器就是几颗普通按钮").toBe(1);
+
+    const btns = tabButtons(section);
+    expect(btns.map((b) => b.getAttribute("data-i18n")), "两页的顺序或数量变了")
+      .toEqual(["reg.tab.status", "reg.tab.settings"]);
+
+    for (const name of ["status", "settings"] as const) {
+      const btn = btns.find((b) => b.getAttribute("data-i18n") === `reg.tab.${name}`)!;
+      const panel = tabPanel(section, name);
+      expect(panel.getAttribute("role"), `${name} 那块内容不是 tabpanel`).toBe("tabpanel");
+      // 双向：按钮指着内容、内容指回按钮。少一个方向读屏器就串不起来。
+      expect(btn.getAttribute("aria-controls"), `${name} 的 tab 没指向自己那块内容`)
+        .toBe(`reg-panel-${name}`);
+      expect(panel.getAttribute("aria-labelledby"), `${name} 那块内容没指回自己的 tab`)
+        .toBe(btn.getAttribute("id"));
+    }
+  });
+
+  it("初始停在「运行状态」：选中那颗 aria-selected=true、tabindex=0，另一页收起来", async () => {
+    const h = await openRegistrar(defaultRespond());
+    const section = h.section("registrar");
+    const [status, settings] = tabButtons(section);
+    expect(status!.getAttribute("aria-selected")).toBe("true");
+    expect(settings!.getAttribute("aria-selected")).toBe("false");
+    // roving tabindex：整组在 Tab 序列里只占一格。
+    expect([status!.getAttribute("tabindex"), settings!.getAttribute("tabindex")]).toEqual(["0", "-1"]);
+    expect(tabPanel(section, "status").getAttribute("hidden"), "选中那一页被收起来了").toBeNull();
+    expect(tabPanel(section, "settings").getAttribute("hidden"), "没选中那一页没有被收起来 —— 两页会同时显示")
+      .toBe("");
+  });
+
+  it("点第二颗：选中态、tabindex 与收起状态四样一起换过去", async () => {
+    const h = await openRegistrar(defaultRespond());
+    const section = h.section("registrar");
+    tabButtons(section)[1]!.click();
+    await settle();
+    const [status, settings] = tabButtons(section);
+    expect([status!.getAttribute("aria-selected"), settings!.getAttribute("aria-selected")])
+      .toEqual(["false", "true"]);
+    expect([status!.getAttribute("tabindex"), settings!.getAttribute("tabindex")]).toEqual(["-1", "0"]);
+    expect(tabPanel(section, "status").getAttribute("hidden")).toBe("");
+    expect(tabPanel(section, "settings").getAttribute("hidden")).toBeNull();
+  });
+
+  it("左右方向键换页并把焦点带过去，两端回绕；Home / End 跳首尾", async () => {
+    const h = await openRegistrar(defaultRespond());
+    const section = h.section("registrar");
+    const btns = tabButtons(section);
+    const selected = () => tabButtons(section).findIndex((b) => b.getAttribute("aria-selected") === "true");
+
+    btns[0]!.keydown("ArrowRight");
+    await settle();
+    expect(selected(), "右方向键没换页").toBe(1);
+    // **焦点必须跟着走**：不跟着走的话，用户按一下方向键之后再按一下还是从原来那颗出发。
+    expect(h.dom.document.activeElement, "换页了但焦点没跟过去").toBe(tabButtons(section)[1]);
+
+    tabButtons(section)[1]!.keydown("ArrowRight");
+    await settle();
+    expect(selected(), "右端没有回绕到第一颗").toBe(0);
+
+    tabButtons(section)[0]!.keydown("ArrowLeft");
+    await settle();
+    expect(selected(), "左端没有回绕到最后一颗").toBe(1);
+
+    tabButtons(section)[1]!.keydown("Home");
+    await settle();
+    expect(selected(), "Home 没跳到第一颗").toBe(0);
+
+    tabButtons(section)[0]!.keydown("End");
+    await settle();
+    expect(selected(), "End 没跳到最后一颗").toBe(1);
+  });
+
+  /**
+   * **别的键一概放行。** 吞掉 Tab 会把这条标签栏变成一个键盘出不去的陷阱，
+   * 吞掉 Enter / Space 会让「用键盘按下这颗 tab」这条最自然的路失灵。
+   */
+  it("不吞别的键：Tab / Enter / Space 都不被 preventDefault", async () => {
+    const h = await openRegistrar(defaultRespond());
+    for (const key of ["Tab", "Enter", " "]) {
+      const ev = tabButtons(h.section("registrar"))[0]!.keydown(key);
+      expect(ev.defaultPrevented, `${key} 被吞掉了`).toBe(false);
+    }
+    // 反向自检：方向键那一族确实是被吞掉的（否则上面那格是空转）。
+    expect(tabButtons(h.section("registrar"))[0]!.keydown("ArrowRight").defaultPrevented).toBe(true);
+  });
+});
+
+/**
+ * ── 注册机的配置卡搬到「设置」那一页（本轮）─────────────────────────────────────
+ *
+ * 搬家的要害不是「换了个位置」，是**设置页不再有第二份**：同一个字段两处都能改的话，
+ * 两处会各写各的。这一组从三个方向钉住它。
+ */
+describe("注册机的配置卡在「设置」分页里，设置页不再有第二份", () => {
+  /** 一棵子树里所有配置字段的路径。 */
+  const fieldsOf = (root: FakeElement): string[] => root.querySelectorAll("[data-field]")
+    .map((n) => String(n.getAttribute("data-field")));
+
+  it("「运行状态」那一页一个配置字段都没有，注册机的旋钮全在「设置」那一页", async () => {
+    const h = await openRegistrar(defaultRespond());
+    const section = h.section("registrar");
+    expect(fieldsOf(tabPanel(section, "status")), "运行状态那一页混进了可编辑的配置字段").toEqual([]);
+
+    const settings = fieldsOf(tabPanel(section, "settings"));
+    // 手写几条一定要在的路径，不从 `CARD_REGISTRAR` 推导（从被测对象推导出来的期望值恒成立）。
+    for (const path of ["registrar.enabled", "registrar.primary", "registrar.targetKeys",
+      "registrar.moemail.apiKey", "registrar.yyds.apiKey", "registrar.agnesPlatformUrl"]) {
+      expect(settings, `${path} 不在注册机的「设置」分页上`).toContain(path);
+    }
+  });
+
+  it("设置板块上一个 registrar.* 字段都没有 —— 两处都能改同一个字段就是两处各写各的", async () => {
+    const h = await openRegistrar(defaultRespond());
+    h.dom.document.querySelectorAll(".nav-item")
+      .find((b) => b.getAttribute("data-section") === "settings")!
+      .click();
+    await settle();
+    const strayed = fieldsOf(h.section("settings")).filter((p) => p.startsWith("registrar."));
+    expect(strayed, `设置页上又长出了这些注册机字段：${strayed.join("、")}`).toEqual([]);
+    // 非空锚：设置页本身不是空的（否则上面那条恒绿）。
+    expect(fieldsOf(h.section("settings")).length, "设置页一个字段都没有 —— 这一格什么都没验到")
+      .toBeGreaterThan(3);
+  });
+
+  /**
+   * **停在「运行状态」那一页时不许去拉配置。**
+   * 本板块那条纪律（没有自动刷新）算的是「人点一下才发生」，站在状态页上拉一次
+   * `/admin/api/config` 是一次白花的存储读。
+   */
+  it("停在「运行状态」页时不拉 /config；切到「设置」页才拉，且不再重复拉 status", async () => {
+    const h = await openRegistrar(defaultRespond());
+    const cfgCalls = () => h.calls.filter((c) => c.url.startsWith("/admin/api/config")).length;
+    const statusCalls = () => h.calls.filter((c) => c.url.startsWith("/admin/api/registrar/status")).length;
+    expect(cfgCalls(), "停在运行状态页却去拉了配置").toBe(0);
+    const statusBefore = statusCalls();
+
+    tabButtons(h.section("registrar"))[1]!.click();
+    await settle();
+    expect(cfgCalls(), "切到设置页却没有拉配置 —— 那一页会是空的").toBe(1);
+    expect(statusCalls(), "切到设置页还顺手又拉了一次 status").toBe(statusBefore);
   });
 });

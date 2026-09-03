@@ -8,9 +8,9 @@ import { emptyBucket } from "../../../src/core/admin/usage-stats.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
- * **面板行为覆盖目标 ⑤：五种语言 × 七个板块，渲染出来的字里零裸 key、零未替换的 `{}`。**
+ * **面板行为覆盖目标 ⑤：五种语言 × 八个板块，渲染出来的字里零裸 key、零未替换的 `{}`。**
  *
- * ⚠️ **「七个板块 × 字典全部命名空间」是后来扩出来的，扩之前是「三个板块 ×
+ * ⚠️ **「八个板块 × 字典全部命名空间」是后来一步步扩出来的，最早是「三个板块 ×
  * 手写 8 个命名空间」。** 扩容的直接理由是一次实测：`elI18n('h2','usage.titel')`
  * 这种拼写错误在当时**全仓用例 + 六道脚本门禁下一格都不红**，而同一个错误换成
  * `ov.titel` 当场红 5 格——差别只在于命名空间在不在那张手写表里、板块在不在那三个里。
@@ -163,6 +163,37 @@ function respond(url: string): { status: number; body: unknown } {
       },
     };
   }
+  // 注册机板块。**两页都要有东西可渲染**：「运行状态」这一页靠它，
+  // 「设置」那一页靠上面 `/admin/api/config` 那一支（两页是同一个板块的两棵子树）。
+  if (url.startsWith("/admin/api/registrar/status")) {
+    return {
+      status: 200,
+      body: {
+        serverTime: NOW,
+        enabled: true,
+        primary: "yyds",
+        fallback: "moemail",
+        channels: {
+          moemail: { configured: true, role: "fallback" },
+          yyds: { configured: true, role: "primary" },
+        },
+        pool: { target: 20, counted: 18, gap: 2, fresh: 15, mintBatch: 5 },
+        lockedUntil: NOW + 30_000,
+        manual: {
+          used: 5, remaining: 19, perDay: 24,
+          resetAt: NOW + 3_600_000, cooldownUntil: NOW + 60_000, retryAfterMs: 60_000,
+        },
+        history: {
+          entries: [{
+            skipped: false, available: 3, attempted: 2, minted: 2, mintedByChannel: { yyds: 2 },
+            failures: [{ reason: "mailbox_unavailable", count: 1 }],
+            at: NOW - 60_000, primaryChannel: "yyds", durationMs: 1200, trigger: "cron",
+          }],
+          malformed: 1,
+        },
+      },
+    };
+  }
   return { status: 200, body: {} };
 }
 
@@ -171,7 +202,7 @@ function respond(url: string): { status: number; body: unknown } {
  *
  * ⚠️ **射程登记（实测，别读成「`data-i18n-ph` / `data-i18n-title` 有人守了」）**：
  * 下面确实收 `title` / `aria-label` / `placeholder` 三个属性，所以那两个标记**渲染出来的值**
- * 在这七个板块里是被看着的——把 `pg.prompt.placeholder` 两处一起打错成
+ * 在这八个板块里是被看着的——把 `pg.prompt.placeholder` 两处一起打错成
  * `pg.prompt.placeholdr`，这里当场红 5 格（落点 `playground <textarea placeholder>`）。
  * **但只打错 `data-i18n-ph=` 那一处、留着紧跟其后的 `setAttribute("placeholder", t(…))`
  * 不动，这里一格都不红**（`admin-ui/js/sec-playground.js` 504/505 就是这个形状，
@@ -224,8 +255,12 @@ const LEFTOVER_PLACEHOLDER = /\{[A-Za-z_][A-Za-z0-9_]*\}/;
  * ⚠️ **每个数都是当场量出来再手写下来的字面量，不许写成 `texts.length - 1`**
  *（第 6 种假阳性：期望值从被测对象推导出来，于是永远成立）。
  * 实测值（zh-CN / zh-TW / en / ja / ko **五种语言逐一量过，同值**）：
- * overview 72 · keys 76 · events 30 · settings 117 · usage 52 · models 61 · playground 27。
- * 下面写的是略低于实测的整数——留一点余量给正常的文案增删，但离「渲染不出来」很远。
+ * overview 72 · keys 76 · events 30 · settings 62 · usage 52 · models 61 · playground 27 ·
+ * registrar 95。下面写的是略低于实测的整数——留一点余量给正常的文案增删，
+ * 但离「渲染不出来」很远。
+ * ⚠️ **settings 那个数从 117 掉到 62 不是缺陷，是搬家**：注册机那张配置卡搬到了
+ * 注册机板块的「设置」分页上（`admin-ui/js/sec-settings.js` 的 `registrarConfigPanel`），
+ * 掉下去的那 55 段文字原样出现在 registrar 那 95 段里。两个数一起改才对得上账。
  *
  * ⚠️ **射程明写：它抓的是「整块没渲染出来」，不是「少了一张卡」。**
  * 实测：把 `/admin/api/models` 那一支改成返 500，底层数据是 `models` 从 61 掉到 7、
@@ -239,22 +274,29 @@ const LEFTOVER_PLACEHOLDER = /\{[A-Za-z_][A-Za-z0-9_]*\}/;
  * 「测试报几格」是两件事，别混着读）。那次故障是被 `models` 这一格单独抓住的——
  * 顺着 `SECTIONS` 排在它后面的板块，只要它先红，一律没机会真正被断言到。
  *
- * ⚠️ **`registrar` 不在这里**：它是第八个板块，这一轮只扩到七个。
- * 少的那一个不是被判定为不需要，而是还没有做——别把这份清单读成「全部板块都覆盖了」。
+ * ⚠️ **`registrar` 这一轮补上了，八个板块全在这张表里。**（上一版这里写着「它是第八个
+ * 板块，这一轮只扩到七个……别把这份清单读成『全部板块都覆盖了』」——那条欠账随注册机
+ * 那张配置卡搬家一起结清了：那张卡的全部文案现在只在这个板块上渲染，不覆盖它等于
+ * 把设置页原来那 55 段文字整块移出射程。）
+ * ⚠️ **注册机那两页的文字都算进这一个数**：「设置」那一页靠 `hidden` 属性收起来，
+ * 而 `visibleTexts()` 只走 DOM、不解释 CSS ⇒ 两页的文案在这里都被看着。
+ * 这对本判据是**好事**（要抓的是「裸 key 上屏」，收起来的那一页照样会被人打开），
+ * 但**别把这个数读成「屏幕上同时显示这么多字」**。
  */
 const SECTIONS = [
   { name: "overview", minTexts: 60 },
   { name: "keys", minTexts: 64 },
   { name: "events", minTexts: 24 },
-  { name: "settings", minTexts: 100 },
+  { name: "settings", minTexts: 54 },
+  { name: "registrar", minTexts: 84 },
   { name: "usage", minTexts: 44 },
   { name: "models", minTexts: 52 },
   { name: "playground", minTexts: 22 },
 ] as const;
 
-describe("五语言 × 七板块：渲染出来的字里没有给机器看的记号", () => {
+describe("五语言 × 八板块：渲染出来的字里没有给机器看的记号", () => {
   for (const lang of LANGS) {
-    it(`${lang}：七个板块渲染出的每一段文字都不是裸 key、也没有未替换的 {占位符}`, async () => {
+    it(`${lang}：八个板块渲染出的每一段文字都不是裸 key、也没有未替换的 {占位符}`, async () => {
       const h = await bootPanel({
         now: NOW,
         store: {
@@ -264,7 +306,7 @@ describe("五语言 × 七板块：渲染出来的字里没有给机器看的记
       });
       await settle();
 
-      // 逐个板块点进去，让七棵子树都真的被渲染过一遍。
+      // 逐个板块点进去，让八棵子树都真的被渲染过一遍。
       // ⚠️ **深度用缺省的 6，没有调大。** 扩到七个板块时先写成了 `settle(30)`，
       //    理由写的是「Playground 要串起 /models + /config 两条请求」——**实测是假的**：
       //    退回缺省 `settle()` 之后七个板块的可见文字数一段不少（72/76/30/117/52/61/27，
