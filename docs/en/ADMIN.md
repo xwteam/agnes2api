@@ -475,7 +475,7 @@ The settings page has four cards today:
 
 ## Danger zone
 
-The last card on the settings page. Neither button here can be undone, and there is no undo path.
+The fourth card on the settings page. Neither button here can be undone, and there is no undo path.
 
 | Button | What it touches | What it leaves alone | Second confirmation |
 |------|---------------|--------------------|-------------------|

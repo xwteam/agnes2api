@@ -920,6 +920,8 @@ function firstStringLiteral(code: string, openParen: number): string | null {
  */
 
 describe("抠注释真源的扫描器边界", () => {
+  // ⚠️ 显式 60s：这一格要逐字符扫 200+ 个文件，在 `nproc=1` 的机器上实测 5.4–5.6s，
+  //    贴着 vitest 默认的 5s 线跑 —— 不给兜底它会在负载稍高时假红（本轮实测红过一次）。
   it("射程内每个文件都扫得完 —— 一个失步都不许有", () => {
     // 判据与复评那次普查逐字相同：单双引号字符串不许跨行，跨行即失步。
     // 新真源把这条判据做进了扫描器本身（失步当场抛，不静默按某一种解释走下去），
@@ -954,7 +956,7 @@ describe("抠注释真源的扫描器边界", () => {
       + "真代码整段脱离扫描而所有下游门禁照常报绿。请去真源的正则/字符串判据里补这一档，"
       + "**别在调用方加 try/catch 把它吞掉**",
     ).toEqual([]);
-  });
+  }, 60_000);
 
   /**
    * **`blankComments()` 抠掉的每一段，在原文里必须以斜杠开头 —— 这一格接的是裁判看不见的那一族。**
@@ -2048,10 +2050,43 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
  * 一条 CSS 规则的声明块。抠不到一律 `null`——"抠不到就当通过"是这一族最常见的死法。
  * **这是本文件里唯一一份实现**：下面「状态不许只由颜色表达」与「设置页排布」两组各用它。
  */
+/** 把一份**平铺的** CSS 切成「选择器列表 → 规则体」。 */
+function cssRules(css: string): ReadonlyArray<{ readonly sel: string; readonly body: string }> {
+  const out: Array<{ sel: string; body: string }> = [];
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) out.push({ sel: m[1]!.trim(), body: m[2]! });
+  return out;
+}
+
+/**
+ * 选择器**逐字等于** `selector` 的那些规则体，拼成一份。
+ *
+ * ⚠️ **同一个选择器写了多条时全收**（上一版用 `re.exec()` 只取第一条）。
+ * ⚠️ **它只回答「那一条规则里写了什么」，回答不了「这个类最终被谁影响」**——
+ * 后者要用下面的 `cssRulesMentioning()`。两者别混用：`.btn-toggle` 一族问的
+ * 恰恰是「底样式**自己**有没有非颜色声明」，把 `.btn-toggle.active` 的
+ * `font-weight` 并进来会让那格反向控制永远绿。
+ */
 function cssRuleBody(css: string, selector: string): string | null {
-  const re = new RegExp(`${selector.replace(/[.\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`);
-  const m = re.exec(css);
-  return m === null ? null : m[1]!;
+  const bodies = cssRules(css).filter((r) => r.sel === selector).map((r) => r.body);
+  return bodies.length === 0 ? null : bodies.join(";");
+}
+
+/**
+ * 选择器列表里**提到** `cls` 这个类的**全部**规则体，拼成一份。
+ *
+ * 🔴 **这一族防的是「再写一条压过去」，不是「改那一条」。** 实测过一次：
+ * 在 `.cfg-col` 那条底下加一行 `.card-row > .cfg-col { min-width: 300px; }`
+ *（特指度 (0,2,0) 压过 (0,1,0)，屏幕上就是 380px 视口下 `.main` 316/160 那个坏版本），
+ * 而当时的量具只取第一个匹配 ⇒ 全族 182 格一格不红。硬下限这类**只要有一条规则
+ * 写上就成立**的性质，量具就必须把所有写得到它的规则一起收。
+ *
+ * ⚠️ 它假设这份 CSS 是**平铺的**（没有 `@media` 之类的嵌套块）。下面「射程自守」
+ * 那一格盯着这个前提：哪天真加了嵌套块，切分会把外层前缀粘进选择器，那一格会红。
+ */
+function cssRulesMentioning(css: string, cls: string): string | null {
+  const token = new RegExp(`${cls.replace(/[.\\]/g, "\\$&")}(?![\\w-])`);
+  const bodies = cssRules(css).filter((r) => token.test(r.sel)).map((r) => r.body);
+  return bodies.length === 0 ? null : bodies.join(";");
 }
 
 /**
@@ -2226,8 +2261,12 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
     expect(body, `${SECTIONS_CSS} 里找不到 .cfg-col 这条规则 —— 先来修抠法`).not.toBeNull();
     const decls = declarations(body!);
     expect(decls.length, "抠出来的是空块 —— 抠错了，下面几条会变成恒真").toBeGreaterThan(0);
+    // 🔴 硬下限只要**任何一条**写得到 `.cfg-col` 的规则设上就成立 ⇒ 这一句扫全部，
+    //    不只是上面那条本身（否则「在底下再写一条压过去」整条路没设防，实测过）。
+    const affecting = cssRulesMentioning(css, ".cfg-col");
+    expect(affecting, "一条写得到 .cfg-col 的规则都没有 —— 抠法坏了").not.toBeNull();
     expect(
-      decls.filter((d) => d.prop === "min-width" && isHardLength(d.value)).map((d) => d.value),
+      declarations(affecting!).filter((d) => d.prop === "min-width" && isHardLength(d.value)).map((d) => d.value),
       "`.cfg-col` 上出现了非零的 min-width：主区可用宽比它还窄时列不会退让，整块内容会顶出去"
       + "（真机实测过一次：380px 视口下 .main 的 scrollWidth 316 / clientWidth 160，"
       + "而分列之前是 177/160）。阈值改用 `flex: 1 1 <basis>`，basis 是可以被压缩的",
@@ -2241,6 +2280,31 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
     ).toBe(3);
   });
 
+  /**
+   * **反向控制：「在底下再写一条压过去」这条路也要被堵住。**
+   * 上一版量具只取第一个匹配 ⇒ 改那一条防住了、再写一条整个没设防：
+   * 实测加一行 `.card-row > .cfg-col { min-width: 300px; }`（(0,2,0) 压过 (0,1,0)）
+   * 全族 182 格一格不红。这两格喂的是**变异过的 CSS 文本**，不改磁盘。
+   */
+  it("反向控制：另写一条规则给 .cfg-col 加硬下限 ⇒ 量具当场看得见", () => {
+    const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+    const mutated = `${css}\n.card-row > .cfg-col { min-width: 300px; }\n`;
+    const affecting = cssRulesMentioning(mutated, ".cfg-col");
+    expect(
+      declarations(affecting!).filter((d) => d.prop === "min-width" && isHardLength(d.value)).map((d) => d.value),
+      "另写一条规则加的硬下限没被看见 —— 量具又退回只看第一条了",
+    ).toEqual(["300px"]);
+  });
+
+  it("反向控制：另写一条规则给 .cfg-grid 加裸 px 下界 ⇒ 量具当场看得见", () => {
+    const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+    const mutated = `${css}\n.card-row > .cfg-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }\n`;
+    const bounds = declarations(cssRulesMentioning(mutated, ".cfg-grid")!)
+      .filter((d) => d.prop === "grid-template-columns")
+      .flatMap((d) => minmaxLowerBounds(d.value));
+    expect(hardBounds(bounds), "另写一条规则加的裸下界没被看见 —— 量具又退回只看第一条了").not.toEqual([]);
+  });
+
   it(".cfg-grid 的 minmax() 下界裹着 min(…, 100%) —— 裸的 px 下界会把网格顶出卡外", () => {
     const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
     const body = cssRuleBody(css, ".cfg-grid");
@@ -2250,7 +2314,12 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
       decl,
       `.cfg-grid 里没有 grid-template-columns（抠到的是 \`${body!.trim()}\`）—— 多列已经不成立了`,
     ).toBeDefined();
-    const bounds = minmaxLowerBounds(decl!.value);
+    // 🔴 同上：轨道下界只要**任何一条**写得到 `.cfg-grid` 的规则设成裸长度就成立。
+    const affectingGrid = cssRulesMentioning(css, ".cfg-grid");
+    expect(affectingGrid, "一条写得到 .cfg-grid 的规则都没有 —— 抠法坏了").not.toBeNull();
+    const bounds = declarations(affectingGrid!)
+      .filter((d) => d.prop === "grid-template-columns")
+      .flatMap((d) => minmaxLowerBounds(d.value));
     expect(bounds.length, "这条规则里一个 minmax() 都没有 —— 下面那条比的是空集").toBeGreaterThan(0);
     expect(
       hardBounds(bounds),

@@ -1171,8 +1171,15 @@ BANNER='[collection-guard] ✅'
 #   卡 1→4 / 没有一张卡漏在列外的反向控制），`tests/unit/source-guards.test.ts` 新增 2 格
 #  （`.cfg-col` 的换行阈值走 flex-basis 而不是 min-width / 零值不算硬下限的反向控制）
 #   ⇒ 4560 + 4 = 4564。文件数不动。**workerd 那两个数不动**，理由同上一轮。
+# 🔴 **补上那两格判据自己的洞。** 上一轮那两格用的量具只取**第一个**匹配的规则，
+#   于是「改那一条」防住了、「在底下再写一条压过去」整条路没设防：实测另写一行
+#   `.card-row > .cfg-col { min-width: 300px; }`（特指度压过原规则，屏幕上就是
+#   380px 视口下 `.main` 316/160 那个坏版本），全族一格不红。
+#   格数：`tests/unit/source-guards.test.ts` 新增 2 格（另写一条加硬下限 / 另写一条加
+#   裸 px 下界，两格都是**喂变异过的 CSS 文本**、不改磁盘）⇒ 4564 + 2 = 4566。
+#   文件数不动。**workerd 那两个数不动**，理由同上两轮。
 EXPECT_NODE_FILES=147
-EXPECT_NODE_TESTS=4564
+EXPECT_NODE_TESTS=4566
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 

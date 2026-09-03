@@ -226,7 +226,8 @@ tr:last-child td { border-bottom: 0; }
    列内的竖向间距仍旧由 `.card + .card` 那条规则给，不在这里另发明一套间距。
 
    ⚠️⚠️ **换行阈值走 `flex-basis`，不走 `min-width`——这一步是真机量出来的，别改回去。**
-   `.pg-cols` / `.card-row` 那一招是 `flex: 1` + `min-width: 300px`，它在**比阈值还窄的
+   `.pg-cols` / `.card-row` 那一招是 `flex: 1` + 一个**写死的 `min-width`**（两者形态相同、
+   取值不同，各自的数在各自那行上，这里不复述），它在**比阈值还窄的
    容器里会顶穿**：`min-width` 是硬下限，容器只剩 160px 时列仍然是 300px 宽。
    实测 380px 视口（侧栏之后主区只剩 160px 可用）：`min-width: 300px` 那版
    `.main` 量到 **scrollWidth 316 / clientWidth 160**，而分列之前那版是 177/160
