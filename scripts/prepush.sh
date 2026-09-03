@@ -1156,8 +1156,17 @@ BANNER='[collection-guard] ✅'
 #   拿掉一张卡就红 / 改错一条分节头就红 / 把上一轮漏掉的那两行抄回 `tests/` 就红 /
 #   `settingsSection` 换写法时当场抛
 #   ⇒ 4548 + 7 = 4555。文件数不动。**workerd 那两个数不动**：这一组是 Node 单运行时的源码级判据。
-EXPECT_NODE_FILES=146
-EXPECT_NODE_TESTS=4555
+# 🔴 **这一轮：设置页的排布（卡内字段改成多列网格）第一次有了判据。**
+#   在这之前排布这一层**一格判据都没有**：实测把字段从「一格占一整行」改成网格，
+#   全仓 4555 格零红 —— 也就是说把它改回去同样不会有东西吵。
+#   格数：新增文件 `tests/ui/dom/settings-layout.test.ts` 3 格（字段都在网格里 /
+#   卡级说明刻意在网格外的反向控制 / 网格不许越过卡的边界），
+#   `tests/unit/source-guards.test.ts` 新增 2 格（`minmax()` 下界裹着 `min(…, 100%)` /
+#   同一把尺子对着裸 220px 那版报「会顶穿」的反向控制）
+#   ⇒ 4555 + 5 = 4560，文件数 146 + 1 = 147。**workerd 那两个数不动**：
+#   新增的两组一组是 DOM 层、一组是源码级判据，都只在 Node 侧跑。
+EXPECT_NODE_FILES=147
+EXPECT_NODE_TESTS=4560
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 

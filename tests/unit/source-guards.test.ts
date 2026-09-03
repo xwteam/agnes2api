@@ -2045,6 +2045,16 @@ describe("分段选择器的每个创建点都带 aria-pressed", () => {
 });
 
 /**
+ * 一条 CSS 规则的声明块。抠不到一律 `null`——"抠不到就当通过"是这一族最常见的死法。
+ * **这是本文件里唯一一份实现**：下面「状态不许只由颜色表达」与「设置页排布」两组各用它。
+ */
+function cssRuleBody(css: string, selector: string): string | null {
+  const re = new RegExp(`${selector.replace(/[.\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`);
+  const m = re.exec(css);
+  return m === null ? null : m[1]!;
+}
+
+/**
  * ── `.btn-toggle.active` 与 `.badge` 一族：状态不许只由颜色表达（WCAG 1.4.1）──────
  *
  * `.btn-toggle.active` 原来只改 `color` 与 `border-color`。后来在真浏览器上
@@ -2077,16 +2087,9 @@ describe("状态不许只由颜色表达", () => {
    */
   const NON_COLOR = ["font-weight", "text-decoration", "box-shadow", "outline"];
 
-  /** 一条规则的声明块。抠不到一律 `null`——"抠不到就当通过"是这一族最常见的死法。 */
-  function ruleBody(css: string, selector: string): string | null {
-    const re = new RegExp(`${selector.replace(/[.\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`);
-    const m = re.exec(css);
-    return m === null ? null : m[1]!;
-  }
-
   it(".btn-toggle.active 至少有一条非颜色声明 —— 只改颜色的话触屏与色觉障碍用户拿不到选中态", () => {
     const css = stripCss(readFileSync(SECTIONS_CSS, "utf8"));
-    const body = ruleBody(css, ".btn-toggle.active");
+    const body = cssRuleBody(css, ".btn-toggle.active");
     expect(body, `${SECTIONS_CSS} 里找不到 .btn-toggle.active 这条规则 —— 先来修抠法`).not.toBeNull();
     expect(body!.trim(), "抠出来的是空块 —— 抠错了，下面那条会变成恒真").not.toBe("");
     expect(
@@ -2105,7 +2108,7 @@ describe("状态不许只由颜色表达", () => {
    */
   it("反向控制：同一个量具对着 .btn-toggle 底样式报「没有非颜色声明」", () => {
     const css = stripCss(readFileSync(SECTIONS_CSS, "utf8"));
-    const body = ruleBody(css, ".btn-toggle");
+    const body = cssRuleBody(css, ".btn-toggle");
     expect(body, "连底样式都抠不到了 —— 抠法坏了").not.toBeNull();
     expect(body!, "抠到的不是 .btn-toggle 底样式（它该有 padding）").toContain("padding");
     expect(
@@ -2122,7 +2125,7 @@ describe("状态不许只由颜色表达", () => {
    */
   it("反向控制：.btn-toggle.active 那三条声明的颜色/非颜色分类逐条对得上", () => {
     const css = stripCss(readFileSync(SECTIONS_CSS, "utf8"));
-    const body = ruleBody(css, ".btn-toggle.active");
+    const body = cssRuleBody(css, ".btn-toggle.active");
     expect(body, "抠不到 .btn-toggle.active").not.toBeNull();
     // 期望值手写字面量，不是从被测对象读出来再回填。
     expect(
@@ -2162,6 +2165,92 @@ describe("状态不许只由颜色表达", () => {
       visibleNonColorDecls("text-decoration: none; outline: 0; font-weight: normal;", NON_COLOR)
         .map((d) => d.prop),
       "`text-decoration: none` 这种「声明还在、逐字把自己关掉」的写法被放行了",
+    ).toEqual([]);
+  });
+});
+
+/**
+ * ── 设置页那些多列布局里的**硬下限**（真机量出来的一个坑）─────────────────────
+ *
+ * 面板的外壳是「固定宽侧栏 + 剩下的给主区」，所以**主区可用宽可以比视口窄得多**：
+ * 380px 视口下主区只剩 160px。多列布局里那些写死的 px 下限（`min-width` 也好、
+ * `minmax()` 的下界也好）在这种容器里**不会退让**，于是整块内容顶出容器、
+ * 面板横向滚动。本轮真机量到过一次：`.cfg-grid` 的下界写成裸的 `220px` 时
+ * `.main` 是 scrollWidth 253 / clientWidth 160，而不加这条网格时是 177/160。
+ *
+ * **这一格接不住什么，明写**：它是纯文本扫描，不渲染、量不到像素。真正的
+ * 「窄屏会不会横向滚动」只有真浏览器量得到（量法与量到的数写在被测规则上方）。
+ * 它能钉住的是**那个会顶穿的写法本身**——下界一旦退回裸 px，这里当场红。
+ */
+describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", () => {
+  const SECTIONS_CSS = "admin-ui/css/sections.css";
+
+  /**
+   * `minmax(下界, 上界)` 里那些**下界的原文**，一个 `minmax(` 一条。
+   * **括号深度感知**：`minmax(min(220px, 100%), 1fr)` 的下界是 `min(220px, 100%)`
+   * 整段，用 `[^,]*` 那种写法会在 `min(` 里面的逗号上断开、把下界读成 `min(220px`
+   * ⇒ 判据会指着一个残句说话。认不出结构一律抛，不返回一份残缺的清单。
+   */
+  function minmaxLowerBounds(value: string): string[] {
+    const out: string[] = [];
+    const head = "minmax(";
+    for (let i = value.indexOf(head); i !== -1; i = value.indexOf(head, i + 1)) {
+      const from = i + head.length;
+      let depth = 0;
+      let lower: string | null = null;
+      for (let j = from; j < value.length; j++) {
+        const c = value[j];
+        if (c === "(") depth++;
+        else if (c === ")") { if (depth === 0) break; depth--; }
+        else if (c === "," && depth === 0) { lower = value.slice(from, j).trim(); break; }
+      }
+      if (lower === null) throw new Error(`认不出 minmax() 的下界（原文 \`${value}\`）—— 先回来改抠法`);
+      out.push(lower);
+    }
+    return out;
+  }
+
+  /** 一条下界「会顶穿」= 它不是 `min(…)` 形态，或者那个 `min()` 里没有 `100%` 这一支。 */
+  function hardBounds(bounds: readonly string[]): string[] {
+    return bounds.filter((b) => !(b.startsWith("min(") && b.includes("100%")));
+  }
+
+  it(".cfg-grid 的 minmax() 下界裹着 min(…, 100%) —— 裸的 px 下界会把网格顶出卡外", () => {
+    const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+    const body = cssRuleBody(css, ".cfg-grid");
+    expect(body, `${SECTIONS_CSS} 里找不到 .cfg-grid 这条规则 —— 先来修抠法`).not.toBeNull();
+    const decl = declarations(body!).find((d) => d.prop === "grid-template-columns");
+    expect(
+      decl,
+      `.cfg-grid 里没有 grid-template-columns（抠到的是 \`${body!.trim()}\`）—— 多列已经不成立了`,
+    ).toBeDefined();
+    const bounds = minmaxLowerBounds(decl!.value);
+    expect(bounds.length, "这条规则里一个 minmax() 都没有 —— 下面那条比的是空集").toBeGreaterThan(0);
+    expect(
+      hardBounds(bounds),
+      "这几个 minmax() 下界是写死的长度：卡内可用宽比它还窄时轨道不会退让，网格会把卡顶穿"
+      + "（真机实测过一次：380px 视口下 .main 的 scrollWidth 253 / clientWidth 160）。"
+      + "裹一层 `min(…, 100%)`，宽容器那一半分毫不变",
+    ).toEqual([]);
+  });
+
+  /**
+   * **反向控制：同一把尺子对着那条真的会顶穿的写法必须报「顶穿」。**
+   * 夹具里的两段逐字取自本轮真机量过的那两版（裸 220px 那版与现在这版），
+   * 尺子若退化成恒返回空数组，上面那格会永远绿，而这一格当场红。
+   */
+  it("反向控制：裸的 minmax(220px, 1fr) 被判成会顶穿，裹了 min() 的那版不被误判", () => {
+    expect(
+      hardBounds(minmaxLowerBounds("repeat(auto-fit, minmax(220px, 1fr))")),
+      "裸的 px 下界没被判出来 —— 上面那格的绿不算数",
+    ).toEqual(["220px"]);
+    expect(
+      minmaxLowerBounds("repeat(auto-fit, minmax(min(220px, 100%), 1fr))"),
+      "括号深度感知坏了：`min(` 里面的逗号把下界截断了",
+    ).toEqual(["min(220px, 100%)"]);
+    expect(
+      hardBounds(minmaxLowerBounds("repeat(auto-fit, minmax(min(220px, 100%), 1fr))")),
+      "裹了 `min(…, 100%)` 的下界被误判成会顶穿 —— 判据把两种写法一起杀了",
     ).toEqual([]);
   });
 });

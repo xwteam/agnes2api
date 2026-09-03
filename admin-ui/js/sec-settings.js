@@ -1040,8 +1040,17 @@ export const settingsSection = {
     const host = addHost(section, saveBtn);
 
     // ── 卡 1：认证密钥 ──────────────────────────────────────────────────────
+    //
+    // ⚠️ **每张卡的字段装在一个 `.cfg-grid` 里，不直接摊在卡身上**：`.cfg-field`
+    // 是块级盒、一格占一整行，而输入框上有 `max-width: 420px` ⇒ 每一行右边空着一大片。
+    // 网格让一行站几格由卡宽决定，规则与它踩过的那个窄屏坑写在
+    // `admin-ui/css/sections.css` 的 `.cfg-grid` 上方。
+    // ⚠️ **卡级的整句说明留在网格外面**（下面两处 `muted note`）：那两句说的是整张卡，
+    // 塞进网格会被当成一格字段去排。
     const auth = card("set.card.auth");
-    for (const path of CARD_AUTH) addField(auth.body, path, "secret");
+    const authGrid = el("div", { class: "cfg-grid" });
+    for (const path of CARD_AUTH) addField(authGrid, path, "secret");
+    auth.body.appendChild(authGrid);
     // 管理员口令**只读展示**（设计 §8.1 规则 2 / §10.4 卡 1）：它只从环境变量来，
     // 面板不该能改自己的钥匙，所以这里连输入框都不给。
     auth.body.appendChild(elI18n("p", "set.adminTokenNote", { class: "muted note" }));
@@ -1049,7 +1058,9 @@ export const settingsSection = {
 
     // ── 卡 2：上游与冷却 ────────────────────────────────────────────────────
     const upstream = card("set.card.upstream");
-    for (const path of CARD_UPSTREAM) addField(upstream.body, path, "text");
+    const upstreamGrid = el("div", { class: "cfg-grid" });
+    for (const path of CARD_UPSTREAM) addField(upstreamGrid, path, "text");
+    upstream.body.appendChild(upstreamGrid);
     // 这一句在字典里躺了整整一期没上屏，而 `pure/settings.mjs` 的注释一直声称它「就在卡 2 底下」。
     // 说的是 `poolCacheTtlMs` / `poolTouchIntervalMs` 与卡 2 里别的字段的那条真实差异：
     // 建实例时读一次，改了要重启容器 / 等 isolate 回收才生效。面板不说这句话，

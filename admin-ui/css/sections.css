@@ -220,6 +220,28 @@ tr:last-child td { border-bottom: 0; }
 /* 分组内的行左边一条细线，视觉上把同一条时间线的几行连起来。 */
 .ev-row-grouped td:first-child { border-left: 2px solid var(--border); }
 
+/* 卡内字段的**多列**。这一条管的是另一半：`.cfg-field` 是块级盒，一格占一整行，
+   而下面那条 `max-width: 420px` 让输入框只占其中一段 ⇒ 每一行右边都空着一大片。
+   改成 auto-fit 的网格之后，一行站几格由列宽决定，输入框把整格填满
+   （420px 那条上限在这个宽度上不再咬合）。
+
+   ⚠️ **`auto-fit` 不是 `auto-fill`**：只有一格字段的卡（认证密钥那张）在 `auto-fill`
+   下会把那一格挤在最左、右边留一条空轨道，而 `auto-fit` 把空轨道塌掉、让那一格铺满
+   ——那条空轨道正好是本轮要消掉的那种空白。
+   ⚠️⚠️ **`minmax()` 的下界必须裹一层 `min(…, 100%)`，这一步是真机量出来的，别改回去。**
+   裸的 `minmax(220px, 1fr)` 里那个 220px 是**轨道的硬下限**：卡内可用宽只剩 94px 时
+   轨道照样 220px，于是网格把卡顶穿。实测 380px 视口（主区可用 160px）：裸 220px 那版
+   `.main` 量到 **scrollWidth 253 / clientWidth 160**，改前那版是 177/160。
+   `min(220px, 100%)` 让下限在窄容器里退成容器宽，多列那一半（宽容器）分毫不变。
+   ⚠️ `.cfg-field` 自带的 `margin-bottom` 在网格里必须清掉，行距改由 `gap` 给：
+   留着的话每一行会比 `gap` 多出一档，而网格的行高本来就按最高的那一格对齐。
+   特指度：`.cfg-grid > .cfg-field` (0,2,0) 压过 `.cfg-field` (0,1,0)。 */
+.cfg-grid {
+  display: grid; gap: var(--gap-sm);
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+.cfg-grid > .cfg-field { margin-bottom: 0; }
+
 /* 设置页。
    ⚠️ **锁定与「本次变化」两种状态必须有各自的视觉信号，而且不能只靠颜色**：
    一个只用颜色区分的状态对色觉障碍用户等于不存在，而这两个状态一个说
