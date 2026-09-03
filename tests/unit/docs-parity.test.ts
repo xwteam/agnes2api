@@ -2884,8 +2884,8 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
    * `const danger = card(\n  "set.card.danger",\n);`（外加五语言字典补键），
    * `check-i18n` exit 0、**本文件一格都没红**、`build-ui` 之后 `pnpm test` 全过，
    * 而此刻五份 ADMIN.md 仍写着当时那句「设置页今天有四张卡」、危险区那一节仍写着当时那句
- * 「这张卡今天还不存在」。**两句话今天都已经不在文档里了**（危险区落地时一起改掉），
- * 这段留的是那次逃逸的形状，不是现状。
+   * 「这张卡今天还不存在」。**两句话今天都已经不在文档里了**（危险区落地时一起改掉），
+   * 这段留的是那次逃逸的形状，不是现状。
    * （**这里刻意不抄当时的格数与文件数**：注释里抄一份计数天生会过期，本仓已因此漂过多次。）
    * 给 `MODES` 加一档 `{ mode: "audio", key: "pg.mode.audio", beta: true }` 是同一个形状
    *（多一个属性，`}` 不再紧跟 key，正则整条认不出）。
@@ -3620,8 +3620,12 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     expect(channelPaths.length, "一条通道凭据字段都没数到——这一格测的是空气").toBeGreaterThan(0);
     const elsewhere = [...CARD_AUTH, ...CARD_UPSTREAM, ...CARD_REGISTRAR, ...ADVANCED_FIELDS];
     const strayed = channelPaths.filter((p) => elsewhere.includes(p));
+    // ⚠️ **这条报文刻意不复述五份 ADMIN.md 的原话。** 上一版写的是「五份 ADMIN.md 说
+    // 它们在卡 3 的两张子卡里」——注册机搬进自己那张卡的分页之后，「子卡」与「卡 3」
+    // 在五份里逐份零命中，于是这一格真红那天，读者会照着报文去找一句不存在的话。
+    // ⇒ 报文只说**哪儿坏了、去核对哪张表**，措辞留给文档自己；转述一次就多一处会漂的拷贝。
     expect(strayed, `这些通道凭据字段跑进了别的卡的字段表：${strayed.join("、")}`
-      + "——五份 ADMIN.md 说它们在卡 3 的两张子卡里，那句话已经不成立了").toEqual([]);
+      + "——通道凭据换了归属，五份 ADMIN.md 的设置卡表跟着失真了，去核对那张表").toEqual([]);
 
     // 位置侧①：抠注释之后，`channelFields(` 的调用点必须落在 `buildRegistrarCard()` 的函数体里
     //（用「下一个顶层 function 声明」当右界，同上一版拿卡 4 当右界是同一种三落点写法）。
