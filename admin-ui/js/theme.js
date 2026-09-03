@@ -16,7 +16,10 @@ export function setTheme(next) {
   if (dark) document.documentElement.setAttribute("data-theme", "dark");
   else document.documentElement.removeAttribute("data-theme");
   try { localStorage.setItem(STORE, dark ? "dark" : "light"); } catch (e) { /* 隐私模式 */ }
-  // ⚠️ **这两个色值是 `admin-ui/css/base.css` 里 `--bg` 的第二份拷贝，而且没人对账。**
+  // ⚠️ **这两个色值是 `admin-ui/css/base.css` 里 `--bg` 的第二份拷贝。**
+  // 对账由 `tests/unit/source-guards.test.ts「theme-color 的三份拷贝与 base.css 的 --bg 同值」`
+  // 那一组钉着（它从本文件与 index.html 里抠出色值，跟 base.css 的亮暗 `--bg` 逐字比）
+  // ⇒ **改这一行而忘了改 base.css（或反过来）会当场红**，但拷贝本身消不掉，理由是下面两条：
   // 不能写成 `var(--bg)`：`<meta name="theme-color">` 的 content 是给浏览器 chrome
   // （移动端地址栏 / 标题栏）读的字符串，不走 CSS 变量解析。
   // 也不能在这里 `getComputedStyle` 去读：那一步要等样式表加载完，而这段代码在切主题

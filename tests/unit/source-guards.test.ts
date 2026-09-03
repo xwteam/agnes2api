@@ -2389,6 +2389,86 @@ describe("--muted 在三种底色上都过 4.5:1", () => {
 });
 
 /**
+ * ── `--primary` 的对比度下限（WCAG 1.4.3 AA，评审回填）──────────────────────────
+ *
+ * 起因是一条实测出来的**空洞**：换 emerald 那一轮唯一一处刻意偏离参照仓的取值就是
+ * `--primary`（取 emerald-700 `#047857` 而不是 kiro2api 的 emerald-600 `#059669`，
+ * 理由写在 `admin-ui/css/base.css` 的文件头），而**那个取值当时没有任何判据钉着**：
+ * 把它改回 `#059669`，全仓一格都不红——屏幕上「跟 kiro2api 一模一样」看起来还更像是修好了，
+ * 实际是实心按钮上的白字掉到 3.77:1。上面那组量具只钉 `--muted` 一个前景色，接不住它。
+ *
+ * `--primary` 在本面板身兼两职，**两职各有各的下限**：
+ * ① **填充**：`button` 的底（`base.css` 的 `button` / `button:hover`），上面画 `--primary-fg`；
+ * ② **文字**：链接 `a`、侧栏选中项 `.nav-item.active`、TAB 选中项 `.tab[aria-selected="true"]`、
+ *    `.icon-btn:hover` 一族，画在面板的三种底色上。
+ * 两职都是「文字与其背景」，都受 1.4.3 AA 的 4.5:1 约束。
+ *
+ * **它接不住什么，明写**：
+ * · 底色只枚举 `--bg` / `--panel` / `--panel-2` 三种**不透明**底。`.nav-item.active` 真正的底是
+ *   `--primary-10` 半透明叠在 `--panel` 上，**混色算不出来**（要先解 alpha 合成，而 token 表里
+ *   只有色值）—— 那一对的读数写在 `base.css` 的 `--primary-10` 那段注释里，是人算的，没有判据。
+ * · 只认 `#rrggbb`。token 改成 `rgb(…)` / `color-mix(…)` 时**抠不到 ⇒ 断言当场红**，不是静默跳过。
+ * · 量具（`contrast()`）与 `--muted` 那组、`.poll-dot` 那组共用一份，自证在 `--muted` 那组里。
+ */
+describe("--primary 的填充与文字两种用法都过 4.5:1", () => {
+  /** `--primary` 当文字时今天真正落在哪几种不透明底色上。手写枚举，同 `--muted` 那一格的理由。 */
+  const SURFACES = ["--bg", "--panel", "--panel-2"] as const;
+  /** 上面画着 `--primary-fg` 的那几档填充色。`--primary-hover` 是 `button:hover` 的底。 */
+  const FILLS = ["--primary", "--primary-hover"] as const;
+
+  /** 一份 token 表里所有低于 4.5:1 的对子，逐条带着算出来的比值。全过则空数组。 */
+  function failures(tk: Record<string, string>): string[] {
+    const out: string[] = [];
+    for (const fill of FILLS) {
+      const cr = contrast(tk[fill]!, tk["--primary-fg"]!);
+      if (cr < 4.5) out.push(`${fill}(${tk[fill]}) 的底上画 --primary-fg(${tk["--primary-fg"]}) 只有 ${cr.toFixed(2)}:1`);
+    }
+    for (const surface of SURFACES) {
+      const cr = contrast(tk["--primary"]!, tk[surface]!);
+      if (cr < 4.5) out.push(`--primary(${tk["--primary"]}) 当文字画在 ${surface}(${tk[surface]}) 上只有 ${cr.toFixed(2)}:1`);
+    }
+    return out;
+  }
+
+  it("非空锚：亮暗两块都抠得到这一格要用的五个 token", () => {
+    for (const theme of ["light", "dark"] as const) {
+      const tk = themeTokens(theme);
+      expect(tk, `${BASE_CSS} 里抠不到 ${theme} 的 token 块`).not.toBeNull();
+      for (const name of [...FILLS, "--primary-fg", ...SURFACES]) {
+        expect(tk![name], `${theme}: 抠不到 ${name}（改成 rgb()/color-mix() 了？先回来改抠法）`).not.toBe(undefined);
+      }
+    }
+  });
+
+  it("亮暗两套主题下，填充配 --primary-fg、以及 --primary 当文字画在三种底色上都不低于 4.5:1", () => {
+    for (const theme of ["light", "dark"] as const) {
+      const tk = themeTokens(theme);
+      expect(tk, `${BASE_CSS} 里抠不到 ${theme} 的 token 块`).not.toBeNull();
+      expect(
+        failures(tk!),
+        `${theme} 主题下这些对子低于 WCAG 1.4.3 AA 的 4.5:1 —— 实心按钮的标签、链接、`
+        + `侧栏与 TAB 的选中项全走 --primary`,
+      ).toEqual([]);
+    }
+  });
+
+  it("该红时红：把 --primary 换回 kiro2api 的 emerald-600 #059669 ⇒ 四个对子逐个掉线", () => {
+    const tk = themeTokens("light");
+    expect(tk, `${BASE_CSS} 里抠不到亮色 token 块`).not.toBeNull();
+    // ⚠️ **变异只改 `--primary` 这一个格子**，别的 token 照抄今天仓里的真值：
+    // 要证的正是「只把主色改回参照仓那一档」这一步会被接住。
+    const mutated = { ...tk!, "--primary": "#059669" };
+    const got = failures(mutated);
+    expect(got.length, `#059669 没被判掉线 —— 量具坏了：${got.join("；")}`).toBe(4);
+    // 白字画在 emerald-600 上的读数：`base.css` 文件头逐字写着 3.77:1，这里现算一遍对上。
+    expect(got.join("；")).toContain("3.77:1");
+    // 反向控制的反向控制：今天仓里的真值在同一条路径上是空数组（上一格已断言，这里只挡
+    // 「failures() 退化成恒返回四条」）。
+    expect(failures(tk!)).toEqual([]);
+  });
+});
+
+/**
  * ── CSS 变量的两个方向都对得上账（换配色那一轮补的）─────────────────────────────
  *
  * 起因是实测出来的一个形状：把圆角从「一个 `--radius: 10px`」换成 kiro2api 那套
@@ -2495,6 +2575,69 @@ describe("CSS 变量：定义与引用两个方向都对得上账", () => {
     expect(css, "探针没落到深色块上 —— 那一行的写法漂了，回来改探针").toContain("--dark-only-probe");
     const darkOnly = [...definedIn("dark", css)].filter((n) => !definedIn("light", css).has(n));
     expect(darkOnly).toContain("--dark-only-probe");
+  });
+});
+
+/**
+ * ── 圆角分级的落点表不许再说谎（评审回填）──────────────────────────────────────
+ *
+ * `admin-ui/css/base.css` 那张「五档各有各的落点」的表**曾经逐字写错两条**：说
+ * 「sm = 徽章那种小方块」，而实测 `.badge` 走的是 `--radius-full`、`--radius-sm` 全仓
+ * 唯一的消费者是 `.toast-close`。一张写错的落点表比没有表更糟：下一个人按它挑档，
+ * 挑出来的尺度与屏幕上已有的同类元素对不齐，而这件事没有任何东西会响。
+ *
+ * 所以把那张表里**最容易漂的两条**变成断言。**不是整张表**：md / lg 那两档各有十来个
+ * 消费者，逐条钉死等于把「加一条规则」变成「必须回来改判据」，那种判据下一次会被人删掉。
+ *
+ * **它接不住什么，明写**：
+ * · 只钉 `--radius-sm` 的消费者集合与 `.badge` 这一条，md / lg / xl / full 的其余落点没人钉。
+ * · 只按「同一条规则块内出现了 `var(--radius-x)`」判，不区分 `border-radius` 与别的属性
+ *   （今天三份 CSS 里 `--radius-*` 只出现在 `border-radius` 上）。
+ */
+describe("圆角分级：base.css 那张落点表里会漂的两条", () => {
+  const CSS_DIR = "admin-ui/css";
+  const CSS_FILES = ["base.css", "sections.css", "shell.css"] as const;
+
+  /** 引用了某一档圆角的全部选择器（跨三份 CSS，抠掉注释再切）。 */
+  function consumers(tier: string): string[] {
+    const out: string[] = [];
+    for (const name of CSS_FILES) {
+      const css = stripCssComments(readFileSync(join(CSS_DIR, name), "utf8"));
+      for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (!m[2]!.includes(`var(--radius-${tier})`)) continue;
+        out.push(m[1]!.trim().replace(/\s+/g, " "));
+      }
+    }
+    return out.sort();
+  }
+
+  it("非空锚：md 与 lg 那两档真的扫得到一堆消费者 —— 否则下面两格是空转", () => {
+    // 手写下界，不从被测对象现算。今天实测远高于这两个数。
+    expect(consumers("md").length, "一条 --radius-md 消费者都没扫到 —— 抠法坏了").toBeGreaterThan(3);
+    expect(consumers("lg").length, "一条 --radius-lg 消费者都没扫到 —— 抠法坏了").toBeGreaterThan(5);
+  });
+
+  it("--radius-sm 的唯一消费者是 .toast-close（base.css 的落点表逐字这么写着）", () => {
+    expect(
+      consumers("sm"),
+      "base.css 的圆角落点表写着「sm = `.toast-close` 那一颗……全仓只此一处」"
+      + " —— 消费者变了就回去把那张表改对，别让下一个人按一张错表挑档",
+    ).toEqual([".toast-close"]);
+  });
+
+  it("`.badge` 走的是 full 不是 sm —— 表里那条曾经就是这么写错的", () => {
+    expect(consumers("full"), "`.badge` 不再走 --radius-full 了？回去改 base.css 那张落点表").toContain(".badge");
+    expect(consumers("sm"), "`.badge` 又跑回 --radius-sm 了 —— 那正是评审逮到的那条错表").not.toContain(".badge");
+  });
+
+  it("该红时红：把 .badge 改回 var(--radius-sm) ⇒ sm 的消费者集合不再是那一条", () => {
+    const css = stripCssComments(readFileSync(join(CSS_DIR, "sections.css"), "utf8"))
+      .replace("border-radius: var(--radius-full)", "border-radius: var(--radius-sm)");
+    const got: string[] = [];
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (m[2]!.includes("var(--radius-sm)")) got.push(m[1]!.trim().replace(/\s+/g, " "));
+    }
+    expect(got, "探针没落到 sections.css 上 —— 那一行的写法漂了，回来改探针").toContain(".badge");
   });
 });
 

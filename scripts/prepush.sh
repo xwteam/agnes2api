@@ -1135,8 +1135,18 @@ BANNER='[collection-guard] ✅'
 #  （少的那一行就是设置卡表里被删掉的注册机那一行）；`settings-save.test.ts` 里碰
 #   `registrar.*` 的九格改走注册机板块的「设置」分页；`render-text.test.ts` 补上第八个板块
 #  （settings 117 → 62、registrar 95，两个数一起改才对得上账）。
+# 🔴 **这一轮（评审回填）：把两处「注释这么说、判据没这么钉」补成真的会红。**
+#   ① `--primary` 是上一轮唯一一处刻意偏离参照仓的取值（emerald-700 而不是 emerald-600），
+#   而那个取值当时**一格判据都没有**：实测把它改回 `#059669`，全仓 4541 格照绿，
+#   屏幕上「跟 kiro2api 一模一样」看着还更像修好了，实际是按钮上的白字掉到 3.77:1。
+#   ② `base.css` 那张圆角落点表逐字写错过两条（说「sm = 徽章那种小方块」，而 `.badge`
+#   走的是 `--radius-full`、`--radius-sm` 全仓唯一消费者是 `.toast-close`）。
+#   格数：`tests/unit/source-guards.test.ts` 新增 7 格 —— `--primary` 填充与文字两种用法
+#   3 格（非空锚 / 亮暗两套都过 4.5:1 / 改回 `#059669` 就红并打出 3.77:1），
+#   圆角落点表 4 格（非空锚 / sm 的唯一消费者 / `.badge` 走 full 不走 sm / 该红时红）
+#   ⇒ 4541 + 7 = 4548。文件数不动。**workerd 那两个数不动**：两组都是 Node 单运行时的源码级判据。
 EXPECT_NODE_FILES=146
-EXPECT_NODE_TESTS=4541
+EXPECT_NODE_TESTS=4548
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 
