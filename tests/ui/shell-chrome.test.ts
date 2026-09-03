@@ -36,9 +36,14 @@ function inlinePngs(text: string): string[] {
  * 硬编码的东西换成了那两串 base64，看着它们不漂的人换成了上面那道门禁。
  */
 describe("面板的站点图标与品牌标记", () => {
-  it("有 favicon，而且它是内联 data URI 的 PNG —— 不是独立文件、不是 /favicon.ico 那个 404", () => {
+  it("有 favicon，而且它是内联 data URI 的 PNG —— 不是独立文件、不是回落到 /favicon.ico", () => {
     const href = faviconHref(HTML);
-    expect(href, "index.html 里没有 <link rel=\"icon\">：浏览器会去要 /favicon.ico 然后拿到 404").not.toBeNull();
+    // ⚠️ **这条报文订正过**：它原来写的是「浏览器会去要 /favicon.ico 然后拿到 404」，
+    // 而 `GET /favicon.ico` 现在是一条真路由（`src/ui/serve.ts`，200 + image/png），
+    // 那句话已经不成立了。今天少了这个 `<link>` 的后果是**回落**到那条路由
+    // ——而那条路由的字节恰恰是从这一串抠出来的，少了它连回落都没有东西可发。
+    expect(href, "index.html 里没有 <link rel=\"icon\">：站点图标只剩 /favicon.ico 那条回落，"
+      + "而那条路由的字节正是从这一串抠出来的 —— 两处会一起没有").not.toBeNull();
     // 独立的 `.svg` 会以 image/svg+xml 挂在 /admin/ 下成为同源文档；
     // `.png` / `.ico` 连 `scripts/build-ui.mjs` 的扩展名白名单都过不去。
     // 两条都写在 admin-ui/README.md 的硬规则 2 里，这一格是它在 HTML 这一侧的落点。
