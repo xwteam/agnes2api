@@ -1145,8 +1145,19 @@ BANNER='[collection-guard] ✅'
 #   3 格（非空锚 / 亮暗两套都过 4.5:1 / 改回 `#059669` 就红并打出 3.77:1），
 #   圆角落点表 4 格（非空锚 / sm 的唯一消费者 / `.badge` 走 full 不走 sm / 该红时红）
 #   ⇒ 4541 + 7 = 4548。文件数不动。**workerd 那两个数不动**：两组都是 Node 单运行时的源码级判据。
+# 🔴 **这一轮（评审回填第二轮）：「危险区是屏幕上第几张卡」改成现算的判据。**
+#   上一轮把那个编号按人手改了三处、还在提交信息里当成穷举写死成「三处」，复评实测是 5 处
+#  （剩下两处躺在 `tests/ui/` 下，写的都是搬卡之后已经作废的编号）。⇒ 不再靠人手数：
+#   「屏幕上第几张」从 `settingsSection.init()` 里 `card("…")` 的调用序列现算，
+#   两侧对不上就红。射程覆盖 `admin-ui/` 与 `tests/` 两棵树 —— 只扫 `admin-ui/` 的判据
+#   在上一轮那天会全绿，那正是它必须跨出去的理由。
+#   格数：`tests/unit/source-guards.test.ts` 新增 7 格 —— 非空锚（含「射程真的走到了
+#   tests/ 与 admin-ui/js/pure/」）/ `── 卡 N：` 分节头逐条对号 / 三种拼法的说法全部对号 /
+#   拿掉一张卡就红 / 改错一条分节头就红 / 把上一轮漏掉的那两行抄回 `tests/` 就红 /
+#   `settingsSection` 换写法时当场抛
+#   ⇒ 4548 + 7 = 4555。文件数不动。**workerd 那两个数不动**：这一组是 Node 单运行时的源码级判据。
 EXPECT_NODE_FILES=146
-EXPECT_NODE_TESTS=4548
+EXPECT_NODE_TESTS=4555
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 

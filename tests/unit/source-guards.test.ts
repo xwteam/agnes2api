@@ -2920,3 +2920,204 @@ describe("会自己重画底色的按钮类，要么自己有 hover 底色，要
     expect(() => exempted("button:hover { background: red; }")).toThrow(/抠不到/);
   });
 });
+
+/**
+ * ── 「危险区是屏幕上第几张卡」不许再靠人手同步（复评回填第二轮）──────────────────
+ *
+ * 注册机那张配置卡从设置页搬到注册机板块之后，设置页从 5 张卡变成 4 张，
+ * **散落在注释里的屏幕编号一个都不会自己跟着改**。上一轮的修订按人手数了一遍、
+ * 改了 3 处、并在提交信息里把它当成穷举写死成「三处」——复评实测其实是 5 处，
+ * 剩下两处躺在测试文件里，写的都是同一个已经作废的编号。
+ * 这正是本仓登记在案的「注释这么说、判据没这么钉」的形状：**只要那个数还是人手抄的，
+ * 下一次搬卡它就会再漂一次**。⇒ 把它变成一条会自己红的判据。
+ *
+ * **两侧都不是从对方读出来的**：
+ * · 「屏幕上第几张」从 `settingsSection.init()` 里 `card("…")` 的**调用序列**现算；
+ * · 「注释里说第几张」从注释文本里抠。
+ * 两侧对不上就红，并把两个数一起打进报文。
+ *
+ * **它接不住什么，明写**：
+ * · 只认下面 `DANGER_CLAIMS` 那三种拼法。换一种说法（例如「倒数第一张」）躲得掉——
+ *   这条边界与 `IO_PATTERNS` 同款：**宁可漏认几种拼法，也不把判据放宽成模糊匹配**。
+ * · 只管**危险区**这一张卡的编号，以及 `settingsSection` 里那几条 `── 卡 N：` 分节头。
+ *   别的卡在别处被人用散文提到编号时，这一格看不见。
+ * · **刻意不收「曾经的『卡 3』」那种史实句**（`sec-settings.js` 里就有一处）：那句话说的是
+ *   搬家之前的旧编号，它**本来就该与今天的顺序不同**，收进来等于要求史实跟着现状漂。
+ *   代价是「用『曾经』二字包装一个其实是现状的错编号」躲得掉。
+ * · 射程是 `admin-ui/` 与 `tests/` 两棵树下的 `.ts`/`.js`/`.mjs`。
+ *   ⚠️ **`tests/` 必须在射程里**：上一轮漏掉的那两处正是躺在 `tests/ui/` 下的，
+ *   只扫 `admin-ui/` 的判据当天会全绿。今天那两处已经不带编号了 ⇒ 这一侧**现在扫出零处**，
+ *   而它仍然不是空转：非空锚断言的是**两棵树合起来**的处数，而这一侧一旦有人把编号抄回去，
+ *   下一次搬卡它就会被点名。
+ *   ⚠️ **`src/` 刻意不在射程里**：那边的 `src/ui/assets.generated.ts` 是把 admin-ui 整段
+ *   嵌进去的生成物，扫它等于把同一批注释重数一遍（同 `REGEX_STRIP_SKIP` 的理由）。
+ *   ⚠️ **本文件自己也在射程里，而且不给自己开豁免**：代价是这一组的散文与探针里
+ *   **一个过期的屏幕编号字面量都不许出现**（编号一律拼出来或写成 `N`）。
+ *   这是刻意的——给自己开豁免，下一个人就能把一句过期断言写在这里而无人知晓。
+ * · 只扫源码，**文档（五份 ADMIN.md）那一侧不在射程里**：那边的卡片表另有一整组
+ *   逐份对账的判据，本组不去重复它。
+ *   ⚠️ 文档对账那份测试的散文里留着几句带旧编号的史实叙述（说的是搬家之前的样子），
+ *   三种拼法一条都不匹配（实测），刻意不去动它们 —— 史实不该跟着现状漂。
+ */
+describe("危险区在屏幕上第几张卡：注释里说的等于源码里建卡的顺序", () => {
+  const SEC = "admin-ui/js/sec-settings.js";
+  const readSec = (): string => readFileSync(SEC, "utf8");
+
+  /** `settingsSection` 那一段源码（到下一处顶层 `export ` 或文件尾为止）。抠不到就抛。 */
+  function settingsSectionOf(js: string): string {
+    const at = js.indexOf("export const settingsSection");
+    if (at === -1) {
+      throw new Error(
+        `${SEC} 里抠不到 \`export const settingsSection\` —— 它改写法了。`
+        + "先回来改抠法，别让这一格静静放行",
+      );
+    }
+    const next = js.indexOf("\nexport ", at + 1);
+    return js.slice(at, next === -1 ? js.length : next);
+  }
+
+  /**
+   * 设置页的建卡顺序：`settingsSection` 里 `card("…")` 的调用序列。
+   * **先抠注释**——注释里正当地会提到别的卡的 key，数进来顺序就假了。
+   */
+  function cardOrder(js: string): string[] {
+    const body = blankComments(settingsSectionOf(js));
+    return [...body.matchAll(/\bcard\("([^"]+)"\)/g)].map((m) => m[1]!);
+  }
+
+  /** 危险区那张卡在屏幕上是第几张（1 起）。不在设置页上就是 0。 */
+  const dangerNth = (js: string): number => cardOrder(js).indexOf("set.card.danger") + 1;
+
+  /**
+   * `── 卡 N：` 那几条分节头，逐条配上它底下第一处 `card("…")` 真正建的卡。
+   * 位置要对得上，所以注释侧读原文、调用侧读 `blankComments()`（两者等长）。
+   */
+  function headerClaims(js: string): Array<{ said: number; key: string; nth: number }> {
+    const raw = settingsSectionOf(js);
+    const calls = [...blankComments(raw).matchAll(/\bcard\("([^"]+)"\)/g)]
+      .map((m, i) => ({ at: m.index!, key: m[1]!, nth: i + 1 }));
+    const out: Array<{ said: number; key: string; nth: number }> = [];
+    for (const h of raw.matchAll(/── 卡 (\d+)：/g)) {
+      const call = calls.find((c) => c.at > h.index!);
+      if (call !== undefined) out.push({ said: Number(h[1]!), key: call.key, nth: call.nth });
+    }
+    return out;
+  }
+
+  /**
+   * 认得出的三种「危险区是第 N 张卡」拼法。射程边界见本组开头。
+   *
+   * ⚠️ 第三条里的「屏幕上的」**刻意是可选的**：上一轮真实漏掉的那两处，一处写的是
+   *「卡 N：危险区」（第一条收得住），另一处写的是「危险区（第 N 张卡）」——**不带那三个字**。
+   * 把它写成必需的话，这一格对当时那两处里的一处仍然是瞎的。
+   */
+  const DANGER_CLAIMS: readonly RegExp[] = [
+    /卡 (\d+)：危险区/g,
+    /第 (\d+) 张卡（危险区）/g,
+    /危险区（(?:屏幕上的)?第 (\d+) 张卡）/g,
+  ];
+
+  /** 射程内的全部源文件（`admin-ui/` 与 `tests/` 两棵树，理由见本组开头）。 */
+  const CLAIM_SCAN_DIRS = ["admin-ui", "tests"] as const;
+  const claimScanFiles = (): string[] =>
+    CLAIM_SCAN_DIRS.flatMap((d) => walkSrc(d)).map((p) => p.split("\\").join("/"));
+
+  /**
+   * 射程内所有「危险区是第 N 张卡」的说法。
+   *
+   * `override` 用来在探针里把某一份的内容换成变异版而不落盘——两条「该红时红」
+   * 靠它，别让判据只在真文件上跑得动。
+   */
+  function dangerClaims(override: Readonly<Record<string, string>> = {}): Array<{ file: string; said: number }> {
+    const out: Array<{ file: string; said: number }> = [];
+    for (const file of claimScanFiles()) {
+      const src = override[file] ?? readFileSync(file, "utf8");
+      for (const rx of DANGER_CLAIMS) {
+        for (const m of src.matchAll(rx)) out.push({ file, said: Number(m[1]!) });
+      }
+    }
+    return out;
+  }
+
+  it("非空锚：建卡序列、分节头、危险区的说法，三样都真的扫到了", () => {
+    // 手写下界，不从被测对象现算。
+    const order = cardOrder(readSec());
+    expect(order.length, "settingsSection 里一处 card(\"…\") 都没扫到 —— 抠法坏了").toBeGreaterThan(2);
+    expect(order, "设置页上扫不到危险区那张卡了 —— 它被搬走了就回来改这一组").toContain("set.card.danger");
+    expect(
+      order,
+      "注册机那张卡又回到设置页上了 —— 那正是本轮消掉的「两处都能改同一个字段」",
+    ).not.toContain("set.card.registrar");
+    expect(headerClaims(readSec()).length, "一条 `── 卡 N：` 分节头都没扫到 —— 抠法坏了").toBeGreaterThan(2);
+    expect(
+      dangerClaims().length,
+      "一处「危险区是第 N 张卡」的说法都没扫到 —— 那几处的拼法漂了，回来改 DANGER_CLAIMS",
+    ).toBeGreaterThan(2);
+    // 射程真的走出了 `admin-ui/`：`tests/` 这一侧今天扫出零处说法，唯一能证明
+    // 它没被漏在射程外的就是「这棵树里确实有文件被读到了」。
+    const scanned = claimScanFiles();
+    expect(scanned.some((p) => p.startsWith("tests/")), "射程没走到 tests/ —— 上一轮漏掉的正是那一侧").toBe(true);
+    expect(scanned, "射程没走到 admin-ui/js/pure/ —— 今天那两处说法就住在这里").toContain(
+      "admin-ui/js/pure/settings.mjs",
+    );
+  });
+
+  it("`── 卡 N：` 每一条分节头的编号，等于它底下那张卡的建卡序号", () => {
+    const bad = headerClaims(readSec())
+      .filter((c) => c.said !== c.nth)
+      .map((c) => `分节头写「卡 ${c.said}」，而 ${c.key} 实际是第 ${c.nth} 张`);
+    expect(bad, `${SEC} 的分节头编号与建卡顺序对不上：${bad.join("；")}`).toEqual([]);
+  });
+
+  it("每一处「危险区是第 N 张卡」的说法，等于现算出来的那个序号", () => {
+    const nth = dangerNth(readSec());
+    const bad = dangerClaims()
+      .filter((c) => c.said !== nth)
+      .map((c) => `${c.file} 写「第 ${c.said} 张卡」`);
+    expect(
+      bad,
+      `危险区今天是设置页上的第 ${nth} 张卡，这些地方还写着别的数：${bad.join("；")}`
+      + " —— 搬卡之后注释不会自己跟着改，回去逐处改对",
+    ).toEqual([]);
+  });
+
+  it("该红时红：把集成示例那张卡从设置页拿掉 ⇒ 危险区前移一位，现存那几处说法全部点名", () => {
+    const sec = readSec().replace('const examples = card("set.card.examples");', "const examples = null;");
+    expect(sec, "探针没落到那一行上 —— 建卡的写法漂了，回来改探针").not.toBe(readSec());
+    expect(dangerNth(sec), "拿掉一张卡之后危险区没有前移 —— 现算的那一侧坏了").toBe(3);
+    const claims = dangerClaims({ [SEC]: sec });
+    const bad = claims.filter((c) => c.said !== dangerNth(sec));
+    expect(bad.length, "拿掉一张卡之后一处都没红 —— 这一格是空转").toBe(claims.length);
+    expect(bad.length, "拿掉一张卡之后一处都没红 —— 这一格是空转").toBeGreaterThan(2);
+  });
+
+  it("该红时红：把上一轮真实漏掉的那两行原样抄回 `tests/` ⇒ 两份都被点名", () => {
+    // 复原的就是复评逮到的那两行（当时逐字是「危险区（第 N 张卡）」与「卡 N：危险区」两种形态）。
+    // ⚠️ **那个数字必须拼出来、不许写成字面量**：本文件也在射程里，写死一个过期编号
+    // 会让上面那一格把本文件自己一并点名（第一版就是这么当场红的）。
+    const nth = dangerNth(readSec());
+    const stale = nth + 1;
+    const a = "tests/ui/settings.test.ts";
+    const b = "tests/ui/dom/settings-save.test.ts";
+    const mutated = {
+      [a]: `${readFileSync(a, "utf8")}\n// 危险区（第 ${stale} 张卡）\n`,
+      [b]: `${readFileSync(b, "utf8")}\n// 卡 ${stale}：危险区\n`,
+    };
+    const bad = dangerClaims(mutated).filter((c) => c.said !== nth);
+    expect(
+      bad.map((c) => c.file).sort(),
+      "把上一轮那两行抄回去竟然没被全部点名 —— 要么射程缩回了 admin-ui/，要么少认了一种拼法",
+    ).toEqual([b, a].sort());
+  });
+
+  it("该红时红：把「卡 2：上游与冷却」那条分节头的编号改一位 ⇒ 与建卡顺序对不上", () => {
+    const sec = readSec().replace("── 卡 2：上游与冷却", "── 卡 5：上游与冷却");
+    expect(sec, "探针没落到那条分节头上 —— 它的写法漂了，回来改探针").not.toBe(readSec());
+    const bad = headerClaims(sec).filter((c) => c.said !== c.nth);
+    expect(bad.map((c) => c.key), "改错一条分节头却没被点名").toEqual(["set.card.upstream"]);
+  });
+
+  it("认不出要吵：`settingsSection` 换了写法时当场抛，不静默当成「一张卡都没有」", () => {
+    expect(() => cardOrder("const somethingElse = {};")).toThrow(/抠不到/);
+  });
+});

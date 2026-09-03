@@ -604,7 +604,13 @@ export const I18N = {
   // 分组时间线的组头文案（按 corr 相邻折叠）。
   "ev.timeline": { "zh-CN": "时间线 · {count} 条 · {corr}", "zh-TW": "時間線 · {count} 條 · {corr}", en: "Timeline · {count} events · {corr}", ja: "タイムライン · {count} 件 · {corr}", ko: "타임라인 · {count}건 · {corr}" },
 
-  // ── 设置页（设计 §10.4 的前三张卡）────────────────────────────────────────
+  // ── `set.*` 命名空间（设计 §10.4 的前三张卡，注册机那张已搬走）────────────
+  //
+  // ⚠️ **这一族不再全在设置页上**：`set.card.auth` / `set.card.upstream` 那两张卡在设置页，
+  // `set.card.registrar` 那张挂在注册机板块的「设置」分页里（`admin-ui/js/sec-registrar.js`
+  // 的 TAB，实现仍在 `sec-settings.js` 的 `registrarConfigPanel`）。**命名空间没跟着搬**，
+  // 理由就是下面那两条——`set.*` 的分界线是「谁在 `GET/PUT /admin/api/config` 那张表单上」，
+  // 不是「谁画在哪一页上」。
   //
   // ⚠️ **命名空间刻意用 `set.*` 而不是 `reg.*`**，两条理由：
   // ① `reg.*` 是禁用词门禁（`scripts/check-i18n.mjs` 第 ⑥ 条）的作用域，而那道门禁
