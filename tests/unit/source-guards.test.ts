@@ -2271,6 +2271,31 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
     return bounds.filter((b) => !(b.startsWith("min(") && b.includes("100%")));
   }
 
+  /**
+   * 全部写得到 `.cfg-grid` 的规则里，`grid-template-columns` 那几条声明。
+   *
+   * 🔴 **抠不出 `minmax()` 的写法一律抛，不许当空集。** 实测过一次：在文件末尾追写
+   * `.cfg-grid { grid-template-columns: repeat(3, 1fr); }`，真机上 1920 与 1280 两档
+   * 当场排成三列，而按 `flatMap(minmaxLowerBounds)` 收集的那几格**逐格是绿的**——
+   * 不含 `minmax()` 的声明贡献 0 个下界，于是整条规则对它们等于不存在。
+   * ⇒ 收集这一步就把这种写法拦下来，别让它悄悄退化成「没看见 = 没问题」。
+   */
+  function gridColumnDecls(css: string): ReadonlyArray<{ prop: string; value: string }> {
+    const affecting = cssRulesMentioning(css, ".cfg-grid");
+    expect(affecting, "一条写得到 .cfg-grid 的规则都没有 —— 抠法坏了").not.toBeNull();
+    const decls = declarations(affecting!).filter((d) => d.prop === "grid-template-columns");
+    expect(decls.length, "一条 grid-template-columns 都没有 —— 多列已经不成立了").toBeGreaterThan(0);
+    for (const d of decls) {
+      if (!/minmax\s*\(/.test(d.value)) {
+        throw new Error(
+          `\`grid-template-columns: ${d.value}\` 里没有 minmax() —— 这条声明的列数不由轨道下界决定，`
+          + "本族这几把算尺量不了它。要么改成 minmax() 的写法，要么先给它单独立一格判据",
+        );
+      }
+    }
+    return decls;
+  }
+
   /** 一个长度值是不是「非零的硬下限」。`0` / `0px` 那一档是安全的，别把它一起杀了。 */
   function isHardLength(value: string): boolean {
     return !/^0[a-z%]*$/.test(value.trim());
@@ -2336,11 +2361,7 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
       `.cfg-grid 里没有 grid-template-columns（抠到的是 \`${body!.trim()}\`）—— 多列已经不成立了`,
     ).toBeDefined();
     // 🔴 同上：轨道下界只要**任何一条**写得到 `.cfg-grid` 的规则设成裸长度就成立。
-    const affectingGrid = cssRulesMentioning(css, ".cfg-grid");
-    expect(affectingGrid, "一条写得到 .cfg-grid 的规则都没有 —— 抠法坏了").not.toBeNull();
-    const bounds = declarations(affectingGrid!)
-      .filter((d) => d.prop === "grid-template-columns")
-      .flatMap((d) => minmaxLowerBounds(d.value));
+    const bounds = gridColumnDecls(css).flatMap((d) => minmaxLowerBounds(d.value));
     expect(bounds.length, "这条规则里一个 minmax() 都没有 —— 下面那条比的是空集").toBeGreaterThan(0);
     expect(
       hardBounds(bounds),
@@ -2753,11 +2774,7 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
      */
     it("每条轨道的上界都是 1fr —— 两列等宽，长内容撑不破轨道", () => {
       const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
-      const affecting = cssRulesMentioning(css, ".cfg-grid");
-      expect(affecting, "一条写得到 .cfg-grid 的规则都没有 —— 抠法坏了").not.toBeNull();
-      const uppers = declarations(affecting!)
-        .filter((d) => d.prop === "grid-template-columns")
-        .flatMap((d) => minmaxUpperBounds(d.value));
+      const uppers = gridColumnDecls(css).flatMap((d) => minmaxUpperBounds(d.value));
       expect(uppers.length, "一个 minmax() 都没抠到 —— 下面那条比的是空集").toBeGreaterThan(0);
       expect(
         uppers.filter((u) => u !== "1fr"),
