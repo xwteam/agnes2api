@@ -1199,8 +1199,16 @@ BANNER='[collection-guard] ✅'
 #   格数：`tests/ui/dom/shell-chrome.test.ts` 新增 2 格（两颗按钮各带日月两枚且两枚
 #   画的不是同一条 path / 亮色只露太阳、深色只露月亮且两颗同步）⇒ 4572 + 2 = 4574。
 #   文件数不动（加在既有文件里）。**workerd 那两个数不动**：这一族是 DOM 层，只在 Node 侧跑。
+# 🔴 **这一轮：图标的描边端点补上圆头。**
+#   日月两枚的几何与 kiro2api 逐字相同，但 `js/ui.js` 的 `svgIcon()`（全站唯一那份造 SVG
+#   的实现）不设 `stroke-linecap` / `stroke-linejoin` ⇒ 缺省的 `butt` / `miter` 把太阳那八根
+#   约 2px 长的射线渲染成 2×2 的方块、斜的四根成菱形，月亮的两个尖角被切平。
+#   真机逐像素比过：补之前那两枚与 kiro2api 差 4.999% / 0.525% 的像素，补之后是 0.000% / 0.000%。
+#   格数：`tests/ui/dom/shell-chrome.test.ts` 新增 1 格（三颗按钮里全部四枚 `<svg>` 的
+#   两个 stroke 属性都是 round）⇒ 4574 + 1 = 4575。
+#   文件数不动（加在既有文件里）。**workerd 那两个数不动**：这一族是 DOM 层，只在 Node 侧跑。
 EXPECT_NODE_FILES=147
-EXPECT_NODE_TESTS=4574
+EXPECT_NODE_TESTS=4575
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 

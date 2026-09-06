@@ -29,7 +29,18 @@ export function elI18n(tag, key, attrs) {
   return node;
 }
 
-/** 内联 SVG 图标。`d` 是 path 的 d 属性。**零二进制资源**是硬规则（build-ui.mjs 会拦）。 */
+/**
+ * 内联 SVG 图标。`d` 是 path 的 d 属性。**零二进制资源**是硬规则（build-ui.mjs 会拦）。
+ *
+ * ⚠️ **`stroke-linecap` / `stroke-linejoin` 这两行别删。** 缺省值是 `butt` / `miter`，
+ * 而本仓的图标是「细线 + 很短的划」那一路：太阳那八根射线每根只有约 2px 长，
+ * 配 2px 的描边，齐头端点会把每一根渲染成一个 2×2 的**方块**（斜的那四根成菱形），
+ * 观感是一圈小方块围着一个圆环，不是圆头短划的太阳；月亮的两个尖角同理被切平。
+ * 真机量过一次：不设这两个属性时 computed `stroke-linecap` 是 `butt`。
+ * **设在这里而不是设在某几枚图标上**：本文件是全站唯一造 SVG 的地方，
+ * 逐枚去设等于把同一个决定抄成好几份，其中一份迟早漏掉。
+ * 由 `tests/ui/dom/shell-chrome.test.ts`「图标的描边端点是圆头 —— 短划不许渲染成方块」那一格钉着。
+ */
 export function svgIcon(d, size) {
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -38,6 +49,8 @@ export function svgIcon(d, size) {
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
   svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");
   const path = document.createElementNS(SVG_NS, "path");
   path.setAttribute("d", d);

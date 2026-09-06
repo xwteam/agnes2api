@@ -37,6 +37,35 @@ describe("顶栏 / 登录闸的图标按钮", () => {
     }
   });
 
+  /**
+   * **图标的描边端点是圆头。**
+   *
+   * 本仓的图标是「细线 + 很短的划」那一路：太阳那八根射线每根只有约 2px 长
+   *（`l 1.4 1.4` 一类），配 2px 的描边。`stroke-linecap` 的缺省值是 `butt`（齐头），
+   * 那会把每一根射线渲染成一个 2×2 的**方块**、斜的四根成菱形，
+   * 观感是一圈小方块围着一个圆环；月亮的两个尖角同理被切平。
+   * 真机量过一次：不设这个属性时 computed `stroke-linecap` 读到的就是 `butt`。
+   *
+   * ⚠️ **三颗按钮一起看**：这个属性设在 `js/ui.js` 的 `svgIcon()` 里（全站唯一那份
+   * 造 SVG 的实现），逐枚去设迟早漏掉一枚 —— 三颗一起断言，漏哪一枚都红。
+   * 日月两枚也一并看：它们走的是同一个 `svgIcon()`，但各自是独立的 `<svg>` 节点。
+   */
+  it("图标的描边端点是圆头 —— 短划不许渲染成方块", async () => {
+    const h = await bootPanel();
+    const svgs: Array<{ where: string; node: FakeElement }> = [];
+    for (const id of ICON_BUTTONS) {
+      for (const s of h.dom.byId(id).children.filter((c) => c.tagName.toLowerCase() === "svg")) {
+        svgs.push({ where: `#${id} 里的 ${s.getAttribute("class") ?? "那一枚"}`, node: s });
+      }
+    }
+    // 前置事实：真的收到了图标。收不到时下面的循环是空转，会假绿。
+    expect(svgs.length, "一枚 <svg> 都没收到 —— 抠法坏了，下面那圈是空转").toBeGreaterThanOrEqual(4);
+    for (const { where, node } of svgs) {
+      expect(node.getAttribute("stroke-linecap"), `${where} 的 stroke-linecap 不是 round —— 短划会渲染成方块`).toBe("round");
+      expect(node.getAttribute("stroke-linejoin"), `${where} 的 stroke-linejoin 不是 round —— 折角会被切成尖角`).toBe("round");
+    }
+  });
+
   it("三颗按钮的 title 与 aria-label 都被 apply() 填过 —— 读屏器读得出它们是什么", async () => {
     const h = await bootPanel();
     for (const id of ICON_BUTTONS) {
