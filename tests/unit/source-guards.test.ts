@@ -2490,14 +2490,33 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
       return { px: pxs[0]!, pct: pcts.length === 1 ? pcts[0]! / 100 : null };
     }
 
-    /** 写得到 `.cfg-grid` 的**全部**规则里，那些 `minmax()` 下界拆出来的项。 */
+    /**
+     * 写得到 `.cfg-grid` 的**每一条** `grid-template-columns` 拆出来的下界项。
+     *
+     * 🔴 **「一条声明贡献 0 个下界」必须是错，不是空集。** 上一版是
+     * `.flatMap(minmaxLowerBounds).map(boundTerms)`：`minmax()` 一个都没有的那条声明
+     * 静默贡献空集 ⇒ 那条规则对这一族**根本不存在**。实测：在 sections.css 末尾追写
+     * 一条 `.cfg-grid { grid-template-columns: repeat(3, 1fr); }`（同特指度、后写的赢，
+     * 真机 1920 档「上游与冷却」当场从 2 列变 3 列），全族一格都不红。
+     * 旁边 `.cfg-col` 那一格立的标准是**形态无关**的（任何规则上出现非零 min-width 就红），
+     * 这里跟上同一档：抠不出 `minmax()` 下界的写法一律抛（与 `boundTerms()`
+     * 「认不出一律抛」同一个体例），列数这件事就不是这把算尺算得清的了。
+     */
     function bounds(css: string): Array<{ px: number; pct: number | null }> {
       const affecting = cssRulesMentioning(css, ".cfg-grid");
       expect(affecting, "一条写得到 .cfg-grid 的规则都没有 —— 抠法坏了").not.toBeNull();
       return declarations(affecting!)
         .filter((d) => d.prop === "grid-template-columns")
-        .flatMap((d) => minmaxLowerBounds(d.value))
-        .map(boundTerms);
+        .flatMap((d) => {
+          const lowers = minmaxLowerBounds(d.value);
+          if (lowers.length === 0) {
+            throw new Error(
+              `\`grid-template-columns: ${d.value}\` 里没有 minmax() —— 这条声明的列数不由轨道下界决定，`
+              + "这把算尺算不了它（真机上 `repeat(3, 1fr)` 这类写法直接排三列）",
+            );
+          }
+          return lowers.map(boundTerms);
+        });
     }
 
     type Bound = { px: number; pct: number | null };
@@ -2708,6 +2727,23 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
       expect(boundTerms("min(100%, max(180px, 40%))")).toEqual({ px: 180, pct: 0.4 });
       expect(() => boundTerms("min(100%, max(180px, min(220px, 40%)))"), "两个 px 项被猜出了一个").toThrow(/认不出下界/);
       expect(() => boundTerms("min(100%, max(40%, 45%))"), "一个 px 项都没有时没抛").toThrow(/认不出下界/);
+    });
+
+    /**
+     * **反向控制（收集）：不含 `minmax()` 的那条声明不许被当成空集放过。**
+     * 喂的是真机验过会排三列的写法（CSSOM 插到页面上，1920 档「上游与冷却」
+     * 792px/9 格从 2 列变 3 列）；它同特指度、写在后面 ⇒ 真的是它说了算。
+     * `bounds()` 退回 `.flatMap(minmaxLowerBounds)` 那一版时，这一格当场红。
+     */
+    it("反向控制：底下再写一条不含 minmax 的 grid-template-columns ⇒ 算尺当场看得见", () => {
+      const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+      const mutated = `${css}\n.cfg-grid { grid-template-columns: repeat(3, 1fr); }\n`;
+      expect(
+        () => bounds(mutated),
+        "真机上这条排出三列，而算尺一声不吭 —— 收集又退回「没有 minmax 就当空集」了",
+      ).toThrow(/没有 minmax\(\)/);
+      // 同一格里的正向：磁盘上今天这版仍旧抠得出下界，别把两种写法一起杀了。
+      expect(bounds(css).length, "今天这版被误判成认不出 —— 上面那条的红不算数").toBeGreaterThan(0);
     });
 
     /**

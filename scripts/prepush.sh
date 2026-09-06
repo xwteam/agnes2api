@@ -1256,8 +1256,20 @@ BANNER='[collection-guard] ✅'
 #   ⑩ 下界抠法认不出的结构一律抛；⑪ 每条轨道的上界都是 `1fr`（两列等宽、不被内容撑破）。
 #   ⇒ 4578 − 4 + 11 = 4585。文件数不动（都在既有文件里）。
 #   **workerd 那两个数不动**：这一组仍是 Node 单运行时的源码级判据。
+# 🔴 **按评审回填：列数的收集不许「不含 minmax() 就当空集」。**
+#   `bounds()` 上一版是 `.flatMap(minmaxLowerBounds).map(boundTerms)` ⇒ 一条没有
+#   `minmax()` 的 `grid-template-columns` 贡献空集、那条规则对整族**根本不存在**。
+#   实测：在 `admin-ui/css/sections.css` 末尾追写一条
+#   `.cfg-grid { grid-template-columns: repeat(3, 1fr); }`（同特指度、后写的赢），
+#   这一族 197 格一格不红；同一条规则用 CSSOM 插到真页面上，1920 与 1280 两档
+#   「上游与冷却」当场从 2 列变 3 列。改成抠不出 `minmax()` 下界一律抛
+#   （与 `boundTerms()`「认不出一律抛」同一个体例），那条变异当场红 4 格。
+#   格数：`tests/unit/source-guards.test.ts` **增 1 格**——反向控制喂
+#   `repeat(3, 1fr)` 那条真会排三列的写法，断言收集当场抛；同一格里带一句正向
+#   （今天这版仍抠得出下界），免得它退化成恒抛也绿。
+#   ⇒ 4585 + 1 = 4586。文件数不动。**workerd 那两个数不动**，理由同上一组。
 EXPECT_NODE_FILES=147
-EXPECT_NODE_TESTS=4585
+EXPECT_NODE_TESTS=4586
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 
