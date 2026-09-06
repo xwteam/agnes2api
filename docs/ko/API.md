@@ -607,6 +607,41 @@ curl http://localhost:8080/admin/api/models \
 }
 ```
 
+### GET /admin/api/upstream/models
+
+풀에 있는 key 하나로 업스트림이 지금 어떤 모델 ID를 가지고 있는지 물어봅니다.
+**위 엔드포인트를 대체하지 않고 함께 존재합니다**: 위는 이 게이트웨이가 지원하는
+프로토콜과 엔드포인트를, 이 엔드포인트는 업스트림 계정이 방금 반환한 것을 말합니다.
+**스토리지 쓰기는 0**이며, 가드는 단일 key 확인과 공유합니다(최소 간격 안의 두 번째
+호출은 429). 풀에 쓸 수 있는 key가 없으면 5xx가 아니라 `ok: false`와
+`reason: "no_key"`를 반환합니다. `onlyUpstream`은 업스트림에는 있고 카탈로그에는
+없는 것, `onlyCatalog`는 카탈로그에는 있는데 이번에 반환되지 않은 것입니다 — 후자는
+**해당 모델이 업스트림에 없다는 뜻이 아닙니다**: 모델은 계정 단위로 부여됩니다.
+
+**요청**:
+
+```bash
+curl http://localhost:8080/admin/api/upstream/models \
+  -H "x-admin-key: your-admin-token"
+```
+
+**응답**:
+
+```json
+{
+  "ok": true,
+  "status": 200,
+  "latencyMs": 412,
+  "reason": null,
+  "models": {
+    "ids": ["agnes-2.0-flash"],
+    "truncated": false,
+    "onlyUpstream": [],
+    "onlyCatalog": ["agnes-video-v2.0"]
+  }
+}
+```
+
 ### GET /admin/api/keys
 
 Key 풀의 읽기 전용 목록이며 필터와 페이지네이션이 있습니다. **투영에는 평문 key가 절대 들어가지 않습니다.**

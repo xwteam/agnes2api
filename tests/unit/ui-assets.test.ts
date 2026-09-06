@@ -313,9 +313,22 @@ describe("生成器的硬规则", () => {
     }
   });
 
-  it("体积预算：原始总字节 < 1 MiB", () => {
+  /**
+   * 体积预算。**取值为什么是 2 MiB、抬它损失了什么，全文在
+   * `scripts/check-ui-budget.mjs` 的文件头**，这里不复述一份。
+   *
+   * ⚠️ 第一句断言先把这里与生成器的 `MAX_RAW_BYTES` 对上。原先这一格只写死了一个
+   * `1024 * 1024`，于是这条线在仓里有**两份互不知情的副本**：改了生成器那边、这里
+   * 留在旧值上的话，这一格就变成一条**比生成器更严的影子判据**——它红的时候，读它的人
+   * 会去查生成器，而生成器是绿的。**变红条件**：动了任一侧而没同步另一侧。
+   */
+  it("体积预算：原始总字节 < 2 MiB，且这个上限与生成器写死的是同一个", () => {
+    expect(
+      readFileSync(GENERATOR, "utf8"),
+      "生成器里的 MAX_RAW_BYTES 与这一格对不上了 —— 两处必须同时改",
+    ).toContain("const MAX_RAW_BYTES = 2 * 1024 * 1024;");
     const total = Object.values(UI_ASSETS).reduce((n, a) => n + Buffer.byteLength(a.body, "utf8"), 0);
-    expect(total).toBeLessThan(1024 * 1024);
+    expect(total).toBeLessThan(2 * 1024 * 1024);
   });
 });
 

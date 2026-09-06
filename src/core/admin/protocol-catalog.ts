@@ -409,6 +409,17 @@ export function protocolById(id: string): ProtocolEntry | null {
 }
 
 /**
+ * 上游那条「列模型」端点的路径，拼在 `config.agnesBaseUrl` 之后（与 `upstreamPath`
+ * 同一个坐标系，见那个字段上方那段）。
+ *
+ * ⚠️ **它只有「网关对上游」这一半，没有「客户端对网关」那一半**：本网关自己对外的
+ * 那条列模型端点交出去的是 `MODEL_CATALOG`（本仓写死的目录），而这一条拉回来的是
+ * **上游账号此刻的清单**。两者是两个问题，理由全文在
+ * `src/core/admin/upstream-models.ts` 的文件头。
+ */
+export const UPSTREAM_MODELS_PATH = "/models";
+
+/**
  * 媒体端点表里的一条。**找不到就抛**，不是返回 `null`：调用方（路由注册）拿到 `null`
  * 只能少注册一条路由，而那是一条**部署完才发现的** 404。
  */

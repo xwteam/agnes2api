@@ -607,6 +607,41 @@ curl http://localhost:8080/admin/api/models \
 }
 ```
 
+### GET /admin/api/upstream/models
+
+プール内の key を 1 本使って、上流が今どのモデル ID を持っているかを問い合わせます。
+**上のエンドポイントと併存し、置き換えるものではありません**：上はこのゲートウェイが
+対応するプロトコルとエンドポイント、こちらは上流アカウントが今返した内容です。
+**ストレージ書き込みはゼロ**。ガードは単一 key の疎通確認と共用します（最小間隔内の
+2 回目は 429）。プールに使える key が無い場合は 5xx ではなく `ok: false` と
+`reason: "no_key"` を返します。`onlyUpstream` は上流にあってカタログに無いもの、
+`onlyCatalog` はカタログにあって今回返らなかったもの——後者は**「上流にそのモデルが
+無い」という意味ではありません**：モデルはアカウント単位で付与されます。
+
+**リクエスト**：
+
+```bash
+curl http://localhost:8080/admin/api/upstream/models \
+  -H "x-admin-key: your-admin-token"
+```
+
+**レスポンス**：
+
+```json
+{
+  "ok": true,
+  "status": 200,
+  "latencyMs": 412,
+  "reason": null,
+  "models": {
+    "ids": ["agnes-2.0-flash"],
+    "truncated": false,
+    "onlyUpstream": [],
+    "onlyCatalog": ["agnes-video-v2.0"]
+  }
+}
+```
+
 ### GET /admin/api/keys
 
 Key プールの読み取り専用一覧で、絞り込みとページングが付きます。**投影に平文の key は決して含まれません。**

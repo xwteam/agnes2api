@@ -319,7 +319,8 @@ tr:last-child td { border-bottom: 0; }
    `.cfg-field` 是 column 方向的 flex 容器，按钮默认被拉成整行宽——真机截图上那是
    一条**横贯整张卡的红色大条**，于是整页视觉上最抢眼的东西是三颗**销毁凭据**的按钮。
    与 `.channel-card .channel-test` 用的是同一条处置（`align-self: flex-start`）。 */
-.cfg-field .cfg-clear { align-self: flex-start; }
+/* 主密钥那颗「复制占位符」同理（真机量过：不加它是 552px 宽，比同卡的「保存」还宽）。 */
+.cfg-field .cfg-clear, .cfg-field .cfg-master-copy { align-self: flex-start; }
 .cfg-advanced { margin-top: var(--gap-sm); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--gap-sm); }
 .cfg-advanced summary { cursor: pointer; color: var(--text); }
 .cfg-errors p { margin: 2px 0; }

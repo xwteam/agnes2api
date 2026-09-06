@@ -607,6 +607,39 @@ curl http://localhost:8080/admin/api/models \
 }
 ```
 
+### GET /admin/api/upstream/models
+
+拿池裡的一把 key 去問上游此刻有哪些模型 id。**與上面那條並存，不取代它**：
+上面那條說的是本閘道支援哪些協議與端點，這一條說的是上游帳號此刻回了什麼。
+**零儲存寫**；護欄與單把 key 驗活共用同一把（最小間隔之內連打第二次回 429）。
+池裡一把可用的 key 都沒有時回 `ok: false` 與 `reason: "no_key"`，不是 5xx。
+`onlyUpstream` 是上游有而目錄沒有的，`onlyCatalog` 是目錄有而這次上游沒回的
+——後者**不等於「上游沒有這個模型」**：上游按帳號發模型，權限較窄的 key 清單本來就短。
+
+**請求**：
+
+```bash
+curl http://localhost:8080/admin/api/upstream/models \
+  -H "x-admin-key: your-admin-token"
+```
+
+**回應**：
+
+```json
+{
+  "ok": true,
+  "status": 200,
+  "latencyMs": 412,
+  "reason": null,
+  "models": {
+    "ids": ["agnes-2.0-flash"],
+    "truncated": false,
+    "onlyUpstream": [],
+    "onlyCatalog": ["agnes-video-v2.0"]
+  }
+}
+```
+
 ### GET /admin/api/keys
 
 Key 池唯讀列表，帶篩選與分頁。**投影裡永遠沒有明文 key。**

@@ -12,6 +12,7 @@ import { sessionHandler } from "./handlers/session.js";
 import { keysHandler } from "./handlers/keys.js";
 import { capabilitiesHandler } from "./handlers/capabilities.js";
 import { modelsHandler } from "./handlers/models.js";
+import { upstreamModelsHandler } from "./handlers/upstream-models.js";
 import { overviewHandler } from "./handlers/overview.js";
 import { eventsHandler, eventsDownloadHandler } from "./handlers/events.js";
 import {
@@ -444,6 +445,32 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   //   **「唯一」这种词只要有人补一格网就过期一次**——写「哪几格会红、红了说什么」，
   //   别写「只有谁会红」。
   admin.get("/admin/api/models", modelsHandler());
+
+  // ── 上游此刻有哪些模型 ───────────────────────────────────────────────────
+  //
+  // **与上面那条并存，不替换它**：上面那条零存储读、零网络，交出去的是本仓写死的
+  // 协议目录（「怎么调这个网关」）；这一条拿池里的一把 key 去打一次真实的上游请求，
+  // 交出去的是「上游账号此刻的清单」。两者是两个问题，理由全文在
+  // `src/core/admin/upstream-models.ts` 的文件头。
+  //
+  // ⚠️ **它是四段（`upstream/models`），今天与任何一条都不重叠**；`/admin/api/models`
+  // 是三段，形状上吃不掉它。会出事的仍是那个老坑：将来加一条更宽的
+  // `/admin/api/upstream/:something` 时它必须排在本条之后（Hono 按注册顺序匹配）。
+  // 由 `tests/contract/admin-auth.test.ts` 的
+  // 「窗口内更宽的模式不许排在更窄的之前 —— 被吃掉的那一条恒不可达，而它只会回一个看起来合理的 400」
+  // 从 `app.routes` 现算钉着。
+  //
+  // **它一次存储写都不产生**（只读探针，与验活同一条），所以配额账的写侧不用改；
+  // 读侧它消费的是 `repo.all()` 那份 isolate 快照，与面板别的板块共用。
+  //
+  // ⚠️ **今天没有面板卡消费它**（面板那一半撞了原始档体积预算，已交上一层裁定，
+  // 见 `handlers/upstream-models.ts` 文件头）。它现在只对 curl / 脚本可见，
+  // 五份 API.md 的「GET /admin/api/upstream/models」那一节是它今天唯一的文档面。
+  admin.get("/admin/api/upstream/models", upstreamModelsHandler({
+    repo: deps.repo, fetcher: deps.fetcher, now: deps.now,
+    config: () => deps.configHolder.current(),
+    guard: probeGuard,
+  }));
 
   // ── Tier-2 用量 ─────────────────────────────────────────────────────────
   //

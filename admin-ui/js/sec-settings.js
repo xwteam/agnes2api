@@ -33,7 +33,7 @@
 import { api } from "./api.js";
 import { t } from "./i18n.js";
 import { el, elI18n, toast, openModal, copy } from "./ui.js";
-import { fmtDuration } from "./pure/format.mjs";
+import { fmtDash, fmtDuration } from "./pure/format.mjs";
 // 第 3 张卡（集成示例）。**模型清单直接复用模型板块那份窄化**，不在 examples.mjs 里
 // 再写一遍——同一份响应的同一个字段，两份窄化就是两份会分叉的判据。
 import { catalogModels } from "./pure/models.mjs";
@@ -44,7 +44,7 @@ import {
 // `settings.mjs` 里不重新声明一份（见那里的说明）。
 import { CHANNELS, channelLabelKey, channelAddressFactKey } from "./pure/registrar.mjs";
 import {
-  CARD_AUTH, CARD_UPSTREAM, CARD_REGISTRAR, ADVANCED_FIELDS,
+  CARD_AUTH, CARD_UPSTREAM, CARD_REGISTRAR, ADVANCED_FIELDS, MASTER_KEY_PATH, masterKeyView,
   channelFields, fieldLabelKey, fieldView, credentialView,
   buildPatch, localErrors, changedFields, changedSecrets, propagationView,
   errorRows, clearResultView, displayValue, clearWarning, isDiagnostic, loadBlockedRows,
@@ -187,6 +187,28 @@ function buildToggle(path) {
   return { wrap, input, meta, lock, clear: null, path, secret: false };
 }
 
+/**
+ * 卡 1 顶上那一行「主 API 密钥」：掩码 + 状态 + 一颗按钮。**只读，不是第二个输入框**
+ * ——能改它的那个框就在同一张卡里，同一把凭据给两个入口迟早会分叉。
+ *
+ * ⚠️⚠️ **那颗按钮复制的是占位符，不是口令**（面板拿不到明文，理由在
+ * `pure/settings.mjs` 的 `masterKeyView()` 上方）：照抄一颗「复制密钥」的结果是往剪贴板里
+ * 塞一个空串而 toast 照样说「已复制」——**静默给出错误答案的按钮比没有按钮坏**。
+ */
+function buildMasterRow() {
+  const wrap = el("div", { class: "cfg-field", "data-master-key": MASTER_KEY_PATH });
+  wrap.appendChild(elI18n("div", "set.master.label", { class: "cfg-label" }));
+  const value = el("div", { class: "mono cfg-master-value" }, fmtDash(null));
+  wrap.appendChild(value);
+  const state = el("span", { class: "muted note cfg-master-state" });
+  wrap.appendChild(state);
+  const btn = elI18n("button", "set.master.copy", { type: "button", class: "cfg-master-copy" });
+  btn.addEventListener("click", () => { copy(KEY_PLACEHOLDER); });
+  wrap.appendChild(btn);
+  wrap.appendChild(elI18n("p", "set.master.note", { class: "muted note" }));
+  return { wrap, value, state };
+}
+
 function card(titleKey) {
   const wrap = el("div", { class: "card block" });
   wrap.appendChild(elI18n("h3", titleKey));
@@ -200,7 +222,7 @@ function card(titleKey) {
  * 面板可能先进注册机板块的「设置」分页，那时设置板块还没 `init()` 过。
  */
 function ensureNodes() {
-  if (nodes === null) nodes = { fields: {}, hosts: [], examples: null, dangerResult: null };
+  if (nodes === null) nodes = { fields: {}, hosts: [], examples: null, dangerResult: null, master: null };
 }
 
 /**
@@ -361,9 +383,24 @@ function setLock(built, locked, lockedBy) {
   built.wrap.classList.toggle("locked", locked === true);
 }
 
+/**
+ * 主密钥那一行。**三档不许合并**：配了 / 没配 / 整份读不到。把第三档并进「未配置」
+ * 是当面说一句我们并不知道的话，而运维照着它填一把新口令，会把一台其实配好了的网关的
+ * 口令换掉。**只在设置页那个宿主上有**（注册机分页没有卡 1）⇒ 先判空。
+ */
+function renderMaster() {
+  if (nodes.master === null) return;
+  const v = masterKeyView(data);
+  nodes.master.value.textContent = v.masked === null ? fmtDash(null) : v.masked;
+  nodes.master.state.textContent = t(
+    v.configured === null ? "set.meta.unreadable" : (v.configured ? "set.secretSet" : "set.secretUnset"),
+  );
+}
+
 function render() {
   // 渲染之后表单里的值就是服务端的当前状态，之前那些「动过」的痕迹全部作废。
   touched = new Set();
+  renderMaster();
   for (const path of Object.keys(nodes.fields)) renderOne(nodes.fields[path]);
 
   const p = propagationView(data);
@@ -1087,6 +1124,11 @@ export const settingsSection = {
     // ⚠️ **卡级的整句说明留在网格外面**（下面两处 `muted note`）：那两句说的是整张卡，
     // 塞进网格会被当成一格字段去排。
     const auth = card("set.card.auth");
+    // **排在输入框上面、网格外面**：打开这张卡的第一个问题是「现在配的是哪一把」，
+    // 第二个才是「换一把」；在网格外的理由与上面那句卡级说明相同。
+    const master = buildMasterRow();
+    nodes.master = master;
+    auth.body.appendChild(master.wrap);
     const authGrid = el("div", { class: "cfg-grid" });
     for (const path of CARD_AUTH) addField(authGrid, path, "secret");
     auth.body.appendChild(authGrid);

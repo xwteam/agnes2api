@@ -6,6 +6,7 @@ import {
   buildPatch, localErrors, changedFields, propagationView, errorRows, displayValue, clearWarning,
   BUILD_TIME_FIELDS, touchesBuildTimeField, touchesLiveField, isSaveReceipt,
   DANGER_ACTIONS, resetWarnings, poolSizeOf, purgeConfirmed, purgeResultView, isPoolSizeChanged,
+  MASTER_KEY_PATH, masterKeyView,
 } from "../../admin-ui/js/pure/settings.mjs";
 import { CHANNELS } from "../../admin-ui/js/pure/registrar.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
@@ -918,5 +919,60 @@ describe("危险区的取值决策", () => {
     expect(isPoolSizeChanged({ error: { message: "池子在你确认之前变了" } }),
       "靠 message 的中文判会在别的语言 / 别的措辞下当场失效").toBe(false);
     expect(isPoolSizeChanged(null)).toBe(false);
+  });
+});
+
+/**
+ * 卡 1 顶上那一行「主 API 密钥」的取值。
+ *
+ * ⚠️⚠️ **这一族守的是一条安全性质：面板永远不交出明文**（设计 §8.6）。
+ * 屏幕那一侧由 `tests/ui/dom/settings-master-key.test.ts`
+ * 「响应里混进明文时，屏幕上一个字节都不许出现它」守着，这里守的是取值本身
+ * ——两层缺任何一层，「哪天有人给后端加了明文回显」都会被面板原样画出来。
+ */
+describe("masterKeyView：掩码加末 4 位，读不出来是破折号那一档", () => {
+  const body = (cred: unknown) => ({ credentials: cred, fields: {}, secrets: [MASTER_KEY_PATH] });
+
+  it("配了口令 ⇒ 掩码加末 4 位", () => {
+    expect(masterKeyView(body({ [MASTER_KEY_PATH]: { configured: true, hint: "wxyz" } })))
+      .toEqual({ configured: true, masked: "••••••••wxyz" });
+  });
+
+  /**
+   * ⚠️ **`configured` 的三档一档都不许塌**：`true` / `false` / `null`（读不到）。
+   * 把第三档塌成 `false`，面板会对一台其实配好了的网关说「未配置」。
+   */
+  it.each([
+    ["没配置", { [MASTER_KEY_PATH]: { configured: false, hint: null } }, false],
+    ["整份凭据读不到", null, null],
+    ["这一把没在响应里", {}, null],
+  ])("%s ⇒ masked 是 null，configured 如实是 %s", (_name, cred, configured) => {
+    expect(masterKeyView(body(cred))).toEqual({ configured, masked: null });
+  });
+
+  /**
+   * **末 4 位不是字符串 / 是空串时一律当读不出来。**
+   * 拼一个 `"••••••••undefined"` 出来比什么都不显示更坏：它看起来像一个真的值。
+   */
+  it.each([[7], [""], [null], [{}]])("hint 是 %s 时不拼出一个假的掩码", (hint) => {
+    expect(masterKeyView(body({ [MASTER_KEY_PATH]: { configured: true, hint } })).masked).toBe(null);
+  });
+
+  /**
+   * **明文一个字节都不许出来。** 真机上后端根本不交出明文，这一格喂的是一份
+   * 被外部写坏的响应——`credentialView()` 只认 `configured` / `hint` 那条窄化
+   * 是这条性质的全部依据，这一格是它的正面判据。
+   */
+  it("响应里混进明文时，交出来的东西里一个字节都不许有它", () => {
+    const plain = "gw-secret-plaintext";
+    const v = masterKeyView(body({
+      [MASTER_KEY_PATH]: { configured: true, hint: "wxyz", value: plain, key: plain },
+    }));
+    expect(JSON.stringify(v)).not.toContain(plain);
+    expect(v.masked, "反向自检：它确实交出了掩码，不是因为整个是空的才没命中").toBe("••••••••wxyz");
+  });
+
+  it("CARD_AUTH 与这一行说的是同一把凭据（两处各写一份字面量就会漂）", () => {
+    expect([...CARD_AUTH]).toContain(MASTER_KEY_PATH);
   });
 });

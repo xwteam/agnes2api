@@ -30,7 +30,16 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SRC = join(ROOT, "admin-ui");
 const OUT = process.argv[2] ? resolve(process.argv[2]) : join(ROOT, "src", "ui", "assets.generated.ts");
-const MAX_RAW_BYTES = 1024 * 1024;
+/**
+ * 源目录原始字节的上限。**这是一条早期预警线，不是平台约束**——平台只管 gzip 后的
+ * 脚本体积，而本脚本一个 gzip 字节都不算。取值为什么是 2 MiB、抬它损失了什么、
+ * 它与 gzip 那条的分工，**全文只写在 `scripts/check-ui-budget.mjs` 的文件头**，
+ * 这里不复述一份（复述的那份迟早与它分叉）。
+ *
+ * ⚠️ 两个脚本的默认值必须一致；那边多一个 `UI_MAX_RAW_BYTES` 环境变量覆盖，是为了
+ * `tests/unit/scripts-guard.test.ts` 把预算调到 0 验它真的在比。
+ */
+const MAX_RAW_BYTES = 2 * 1024 * 1024;
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -152,8 +161,11 @@ for (const p of files) {
   };
 }
 
-// 规则 2：体积预算。gzip 后的上限在 CI 里查。
-if (totalBytes >= MAX_RAW_BYTES) fail(`原始总字节 ${totalBytes} 超过 1 MiB`);
+// 规则 2：体积预算。gzip 后的上限在 CI 里查（`scripts/check-ui-budget.mjs`，
+// 那条才是对着平台的护栏；这里这条是生成这一步的早期预警，见 MAX_RAW_BYTES 上方）。
+// ⚠️ 消息里报**上限本身的字节数**而不是「1 MiB」这种手写的字面量：改了常量忘了改
+// 这句话的话，报出来的会是一个与实际不符的数，而它恰恰是出事时唯一被读到的一行。
+if (totalBytes >= MAX_RAW_BYTES) fail(`原始总字节 ${totalBytes} 超过上限 ${MAX_RAW_BYTES}`);
 
 const buildHash = createHash("sha256")
   .update(Object.keys(assets).sort().map((k) => k + assets[k].etag).join("\n"))

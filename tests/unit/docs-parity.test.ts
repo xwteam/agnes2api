@@ -11021,6 +11021,7 @@ const SHAPE_UNCOVERED = [
   "GET /admin/api/session",
   "GET /admin/api/capabilities",
   "GET /admin/api/models",
+  "GET /admin/api/upstream/models",
   "GET /admin/api/keys",
   "POST /admin/api/keys",
   "POST /admin/api/keys/bulk",

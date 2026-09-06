@@ -1268,10 +1268,41 @@ BANNER='[collection-guard] ✅'
 #   `repeat(3, 1fr)` 那条真会排三列的写法，断言收集当场抛；同一格里带一句正向
 #   （今天这版仍抠得出下界），免得它退化成恒抛也绿。
 #   ⇒ 4585 + 1 = 4586。文件数不动。**workerd 那两个数不动**，理由同上一组。
-EXPECT_NODE_FILES=147
-EXPECT_NODE_TESTS=4586
-EXPECT_WORKERS_FILES=38
-EXPECT_WORKERS_TESTS=716
+# 🔴 **这一轮：主 API 密钥那一行 + 上游模型那条端点。**
+#   ① **设置页卡 1 顶上多一行只读的「主 API 密钥」**（掩码 + 末 4 位 + 一颗复制占位符的按钮）。
+#      格数：`tests/ui/settings.test.ts` **+10**（`masterKeyView` 那一族：1 格正常档、
+#      3 格 `configured` 三态、4 格坏 `hint` 不许拼出假掩码、1 格明文不外泄、
+#      1 格「它与 `CARD_AUTH` 说的是同一把凭据」）；
+#      `tests/ui/dom/settings-master-key.test.ts` **新文件 +5**（掩码那一行在卡 1 里、
+#      两档破折号各说各的、复制按钮送出去的逐字是占位符常量且非空、混进明文时整屏不许出现它）。
+#   ② **后端多一条 `GET /admin/api/upstream/models`**（拿池里的一把 key 去问上游此刻有哪些模型）。
+#      格数：`tests/unit/admin/upstream-models.test.ts` **新文件 +12**（窄化的边界与两向差集）；
+#      `tests/contract/admin-upstream-models.test.ts` **新文件 +11**（出站 URL/key、空池不打上游、
+#      401 正文一个字节都不回、坏形状是 bad_payload、差集、截断、零存储写、护栏共用但 kind 不相交）。
+#      `tests/contract/admin-auth.test.ts` **格数不变**：那一格「/admin/api/* 条目数」的期望值
+#      24 → 25，新端点同时进鉴权矩阵的枚举表——**只换输入与期望值，不增删格**。
+#   ⚠️ **消费这条端点的面板卡当时没有落地**（原始档预算那一半已交上一层裁定，
+#      裁定结果是把 raw 上限抬到 2 MiB）；那一轮 `tests/ui/models.test.ts` 与
+#      `tests/ui/dom/models-*.test.ts` 一格都没动。**下一组就是补它的那一轮。**
+#   ⇒ Node：4586 + 10 + 5 + 12 + 11 = 4624；文件 147 + 3 = 150（三个新文件）。
+#   ⇒ **workerd 这次要动**：契约那一份在 workerd 侧同样跑一遍 ⇒ 716 + 11 = 727，文件 38 + 1 = 39。
+# 🔴 **这一轮：修上游模型那条端点的两处缺陷。**
+#   ① **后端两处缺陷**（`src/core/admin/upstream-models.ts`）：
+#      · 文件头把「只认 OpenAI 那个形状」写成了「实测上游走的就是它」——手上没有有效的
+#        Agnes key，那句话没有观测支撑，改成如实标注「按 new-api 系推断，未在真上游验过」
+#        （**只改注释，不增格**）；
+#      · `parseUpstreamModels()` 对「`data` 非空而一条 id 都抽不出来」返回空清单
+#        ⇒ handler 回 `ok:true`，面板画出「上游这次一个模型都没回」——**把一句关于
+#        「我们看不懂」的话说成了一句关于上游的事实**。改成返回 `null`（走 `bad_payload`）。
+#        格数：`tests/unit/admin/upstream-models.test.ts` **+3**（一族三个夹具：字段名不对 /
+#        `id` 类型不对 / 元素不是对象；反向那一半由既有的「坏记录逐条跳过」那格担着）。
+#        变异实测：删掉那一行 ⇒ 这三格当场红。
+#   ⇒ Node：4624 + 3 = 4627；文件数不动（那三格加在既有文件里）。
+#   ⇒ **workerd 这两个数不动**：这一轮一格契约用例都没动。
+EXPECT_NODE_FILES=150
+EXPECT_NODE_TESTS=4627
+EXPECT_WORKERS_FILES=39
+EXPECT_WORKERS_TESTS=727
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

@@ -607,6 +607,42 @@ curl http://localhost:8080/admin/api/models \
 }
 ```
 
+### GET /admin/api/upstream/models
+
+Uses one key from the pool to ask the upstream which model ids it has right now.
+**It coexists with the endpoint above rather than replacing it**: that one describes which
+protocols and endpoints this gateway supports, this one reports what the upstream account
+returned just now. **Zero storage writes**; it shares the probe guard with single-key
+verification (a second call inside the minimum interval gets a 429).
+With no usable key in the pool it answers `ok: false` and `reason: "no_key"`, not a 5xx.
+`onlyUpstream` lists ids the upstream has but the catalogue does not; `onlyCatalog` lists ids
+the catalogue has but the upstream did not return this time — the latter **does not mean the
+model is gone**: models are granted per account, so a narrower key returns a shorter list.
+
+**Request**:
+
+```bash
+curl http://localhost:8080/admin/api/upstream/models \
+  -H "x-admin-key: your-admin-token"
+```
+
+**Response**:
+
+```json
+{
+  "ok": true,
+  "status": 200,
+  "latencyMs": 412,
+  "reason": null,
+  "models": {
+    "ids": ["agnes-2.0-flash"],
+    "truncated": false,
+    "onlyUpstream": [],
+    "onlyCatalog": ["agnes-video-v2.0"]
+  }
+}
+```
+
 ### GET /admin/api/keys
 
 The read-only key-pool listing with filtering and pagination. **The projection never contains a plaintext key.**

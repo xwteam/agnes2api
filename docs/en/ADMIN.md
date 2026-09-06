@@ -421,10 +421,15 @@ The settings page has four cards today:
 
 | Card | What it covers | Worth knowing |
 |----|--------------|-------------|
-| Credentials | The gateway token and nothing else; the admin token is shown read-only on this card, because the panel cannot change its own key | Credentials are write-only: a blank input means this field is left alone |
+| Credentials | A read-only primary API key line on top, then the gateway token; the admin token is read-only too, because the panel cannot change its own key | Credentials are write-only: a blank input means this field is left alone |
 | Upstream & cooldowns | Upstream address, timeouts, and the cooldown / eviction knobs | Two of them are read once when the instance is built, see the end of this section |
 | Integration examples | Ready-to-run call examples | The address comes from the origin you opened the panel on, and the token is a placeholder |
 | Danger zone | Two buttons whose effects cannot be undone: reset configuration, purge the key pool | Both ask for a second confirmation; purging also makes you type the current pool size by hand |
+
+- **The primary API key line is read-only**: the panel only sees the last 4 characters, never
+  the clear text, so it renders a mask and the button copies the sample placeholder, not the
+  token. The clear text lives in `GATEWAY_TOKEN` on the deployment side, or set a new one in
+  the input below.
 
 ### The quadruple and the priority order
 

@@ -21,7 +21,14 @@
  * `tests/ui/settings.test.ts` 的
  * 「agnesPlatformUrl 只在高级区，主表单三张卡一格都不许有它」正面钉着这一条。
  */
-export const CARD_AUTH = ["gatewayToken"];
+/**
+ * 「主 API 密钥」那把凭据的路径。今天这台网关**只有一把对外口令**（四条协议共用，
+ * 见 `src/http/middleware/auth.ts`）⇒ 没有第二个候选。具名导出让卡 1 的字段表与卡顶
+ * 那一行共用同一个字面量——抄两份就会漂。
+ */
+export const MASTER_KEY_PATH = "gatewayToken";
+
+export const CARD_AUTH = [MASTER_KEY_PATH];
 
 export const CARD_UPSTREAM = [
   "agnesBaseUrl",
@@ -319,6 +326,18 @@ export function credentialView(body, path) {
     lockedBy,
     locked: lockedBy !== null,
   };
+}
+
+/**
+ * 卡 1 顶上那一行「主 API 密钥」的展示值。**`masked` 永远不是明文**（同 `credentialView`）：
+ * 这一行回答的是「配的是不是我以为的那一把」，不是「那一把是什么」。
+ * 末 4 位读不出来时是 `null`，调用方画破折号——**一串光秃秃的圆点会被读成
+ * 「配了一把很短的口令」**，而我们连末 4 位都没有。
+ */
+export function masterKeyView(body) {
+  const v = credentialView(body, MASTER_KEY_PATH);
+  const hint = typeof v.hint === "string" && v.hint !== "" ? v.hint : null;
+  return { configured: v.configured, masked: hint === null ? null : `••••••••${hint}` };
 }
 
 /** 这条路径是不是凭据。判据取**后端给的那份清单**，前端不另写一份（写两份必漂）。 */
