@@ -1229,8 +1229,14 @@ BANNER='[collection-guard] ✅'
 #   同一个变异在 1440 档仍是绿的」——**格数不变，只换了输入**。
 #   ⇒ 4575 + 2 = 4577。文件数不动（都加在既有文件里）。
 #   **workerd 那两个数不动**：这一组是 Node 单运行时的源码级判据。
+# 🔴 **补上那张真机基线表自己的哨兵。** `MEASURED` 是量出来的常量，而这一族只做文本
+#   扫描、不渲染 ⇒ 给某张卡加一格字段之后表里的 `cells` 还是旧值，尺子拿一个不存在的
+#   排布去算下界，全族照样绿。原有的反向控制钉的都是**尺子本身**，没有一格钉**输入**。
+#   格数：`tests/unit/source-guards.test.ts` 新增 1 格 —— 从 `settings.mjs` 的字段清单
+#   现算今天几格，与表里的 `cells` 对不上就红（变异实测：给上游卡插一格 9→10 当场红）。
+#   ⇒ 4577 + 1 = 4578。文件数不动。**workerd 那两个数不动**，理由同上一组。
 EXPECT_NODE_FILES=147
-EXPECT_NODE_TESTS=4577
+EXPECT_NODE_TESTS=4578
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 

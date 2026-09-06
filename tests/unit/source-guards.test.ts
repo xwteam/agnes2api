@@ -2413,6 +2413,46 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
      * 用户报的那一档那张网格：1100 视口下设置页「上游与冷却」卡里的网格宽 382px。
      * **它必须站得下两条轨道**——被报的缺陷就是这一格塌成了九行一列。
      */
+    /**
+     * **输入新鲜度：`MEASURED` 里的 `cells` 必须还等于今天真实的字段数。**
+     *
+     * 🔴 上面那张表是**真机量出来的常量**，判据本身只做文本扫描、不渲染。
+     * 于是它有一个自己看不见的死法：**给某张卡加一格字段之后，表里的 `cells` 还是旧值**，
+     * `narrowestTrack()` 拿一个不存在的排布去算下界，而这一族照样全绿。
+     * 已有的三格反向控制钉的都是**尺子本身**（220px / 150px / auto-fit 塌空轨道），
+     * 没有一格钉**输入的新鲜度**。
+     *
+     * ⇒ 这一格拿字段清单的真源现算今天几格，与表里的 `cells` 对。
+     * **格数一变就说明宽度基线也该重量**——用格数当哨兵够用，宽度那一半量不到（要真浏览器）。
+     */
+    it("MEASURED 里的格数还等于今天的字段数 —— 字段增删之后那张表必须重量", () => {
+      const src = readFileSync("admin-ui/js/pure/settings.mjs", "utf8");
+      const listLen = (name: string): number => {
+        const i = src.indexOf(`export const ${name}`);
+        expect(i, `settings.mjs 里找不到 ${name} —— 字段清单的真源改名了？`).toBeGreaterThan(-1);
+        const s = src.indexOf("[", i);
+        let depth = 0, j = s;
+        for (; j < src.length; j++) {
+          if (src[j] === "[") depth++;
+          else if (src[j] === "]" && --depth === 0) break;
+        }
+        return (src.slice(s, j + 1).match(/"[^"]+"/g) ?? []).length;
+      };
+      const today = { 上游与冷却: listLen("CARD_UPSTREAM"), 注册机: listLen("CARD_REGISTRAR") };
+      const inTable = [...new Set(MEASURED.map((m) => m.cells))].sort((a, b) => a - b);
+      expect(
+        today.上游与冷却,
+        `「上游与冷却」今天 ${today.上游与冷却} 格，而 MEASURED 里记的是 9 —— `
+        + "字段增删了，那张表的网格宽也该在真浏览器里重量一遍再改数，别只改这个数字",
+      ).toBe(9);
+      expect(
+        today.注册机,
+        `注册机那张卡今天 ${today.注册机} 格，而 MEASURED 里记的是 11 —— 同上`,
+      ).toBe(11);
+      // 表里除了这两个数还有通道卡那档的 2；三个数一个都不许凭空多出来。
+      expect(inTable, "MEASURED 里出现了没人解释的格数档位").toEqual([2, 9, 11]);
+    });
+
     const NARROW_TWO_COL = MEASURED.find((m) => m.dock === 1100 && m.grid === 382)!;
     /**
      * 轨道宽的下限：真机量到「五语言的标签都还折得进 2 行」的最窄轨道。
