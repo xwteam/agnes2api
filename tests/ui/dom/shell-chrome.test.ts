@@ -67,6 +67,72 @@ describe("顶栏 / 登录闸的图标按钮", () => {
     expect(html.getAttribute("data-theme"), "再点一下没切回亮色").toBeNull();
   });
 
+  /**
+   * ── 日月两枚图标 ─────────────────────────────────────────────────────────
+   *
+   * ⚠️ **上一版两颗按钮画的是同一枚「半明半暗」的图标，亮暗两态长得一模一样**，
+   * 而当时**没有任何一格看得见它换没换**——把它改成随主题切之前，
+   * 排布之外这一层同样是一格判据都没有。
+   */
+  describe("主题按钮的日月两枚图标", () => {
+    const THEME_BUTTONS = ["theme-btn", "gate-theme-btn"] as const;
+
+    /** 一颗按钮里的日月两枚 + 它身上全部的 `<svg>`。 */
+    function iconsOf(btn: FakeElement) {
+      const svgs = btn.children.filter((c) => c.tagName.toLowerCase() === "svg");
+      return {
+        sun: svgs.find((s) => s.classList.contains("icon-sun")),
+        moon: svgs.find((s) => s.classList.contains("icon-moon")),
+        all: svgs,
+      };
+    }
+    /** 这一枚今天露不露脸。**`display: none` 是唯一的藏法**，别再发明第二种。 */
+    const shown = (n: FakeElement) => n.style.display !== "none";
+    /** 一枚图标画的那条 path。 */
+    const pathOf = (n: FakeElement) =>
+      n.children.find((c) => c.tagName.toLowerCase() === "path")?.getAttribute("d") ?? "";
+
+    it("两颗主题按钮各带日月两枚图标，而且两枚画的不是同一个东西", async () => {
+      const h = await bootPanel();
+      for (const id of THEME_BUTTONS) {
+        const { sun, moon, all } = iconsOf(h.dom.byId(id));
+        expect(all.length, `#${id} 里的 <svg> 不是两枚`).toBe(2);
+        expect(sun, `#${id} 里没有太阳那一枚（.icon-sun）`).not.toBeUndefined();
+        expect(moon, `#${id} 里没有月亮那一枚（.icon-moon）`).not.toBeUndefined();
+        expect(pathOf(sun!).length, `#${id} 太阳那一枚的 path 是空的`).toBeGreaterThan(0);
+        expect(pathOf(moon!).length, `#${id} 月亮那一枚的 path 是空的`).toBeGreaterThan(0);
+        // 两枚插的是同一条 path 时下面那格照样全绿（藏一枚露一枚，只是屏幕上没变化）。
+        expect(
+          pathOf(sun!) === pathOf(moon!),
+          `#${id} 的日月两枚画的是同一条 path —— 那等于换了个写法把「不换图标」又做了一遍`,
+        ).toBe(false);
+      }
+    });
+
+    /**
+     * **变异：把 `document.addEventListener("themechange", …)` 那一行删掉 ⇒ 这一格红。**
+     * 首帧那一次刷新单独调用过，所以只看初始状态的判据抓不住这条回退。
+     */
+    it("亮色只露太阳、深色只露月亮，两颗按钮同步跟着切", async () => {
+      const h = await bootPanel();
+      expect(h.dom.document.documentElement.getAttribute("data-theme"), "前置条件：默认亮色").toBeNull();
+      const state = () => THEME_BUTTONS.map((id) => {
+        const { sun, moon } = iconsOf(h.dom.byId(id));
+        return [shown(sun!), shown(moon!)];
+      });
+      expect(state(), "亮色下露出来的不是太阳").toEqual([[true, false], [true, false]]);
+
+      h.dom.byId("gate-theme-btn").click();
+      await settle(1);
+      expect(state(), "切到深色之后露出来的不是月亮（两颗按钮里但凡有一颗没跟上就红）")
+        .toEqual([[false, true], [false, true]]);
+
+      h.dom.byId("theme-btn").click();
+      await settle(1);
+      expect(state(), "从另一颗按钮切回亮色之后露出来的不是太阳").toEqual([[true, false], [true, false]]);
+    });
+  });
+
   /** 顶栏那颗与登录闸那颗是**同一个开关的两个入口**，切出来的必须是同一档。 */
   it("顶栏那颗与登录闸那颗切的是同一个开关", async () => {
     const h = await bootPanel();

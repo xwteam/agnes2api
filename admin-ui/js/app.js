@@ -180,9 +180,14 @@ onUnauthorized(() => leave("common.sessionExpired"));
  * 这一条由 `tests/ui/dom/shell-chrome.test.ts` 的
  * 「三颗图标按钮各自真的有一个 <svg> 图标 —— 空方块那个缺陷不许回来」钉着。
  *
- * 主题那颗刻意**不随当前主题换图标**：半明半暗的对比图标表达的是「切换」这个动作
- * 本身，与当前处在哪一档无关；随主题换图标还要回答「画的是现在这一档还是切过去
- * 那一档」，那是个每次都会有人读反的问题。
+ * ⚠️⚠️ **主题那两颗跟着当前主题换图标：亮色露太阳、深色露月亮。**
+ * 画的是**现在处在哪一档**，不是「点下去会变成哪一档」——两颗按钮、两个入口，
+ * 读法只有这一种。上一版刻意不换（一枚半明半暗的对比图标表达「切换」这个动作
+ * 本身），换掉它是一次**决定**：这个面板与同一个人手上另一个面板摆在一起时，
+ * 同一颗按钮长得不一样比读反一次更贵。
+ * **两枚图标都在按钮里，切换只改 `style.display`，不重建节点**：
+ * 由 `tests/ui/dom/shell-chrome.test.ts`「两颗主题按钮各带日月两枚图标，而且两枚画的不是同一个东西」
+ * 与同一份文件的「亮色只露太阳、深色只露月亮，两颗按钮同步跟着切」两格钉着。
  *
  * ⚠️ **path 的每个命令字母后面都留一个空格，别把它们压回紧挨着数字的紧凑写法**
  *（SVG 两种写法逐字等价）：紧凑写法里「移动命令紧跟着两位坐标」那个片段会被
@@ -191,7 +196,8 @@ onUnauthorized(() => leave("common.sessionExpired"));
  * 判成「大写字母 + 一到两位数字」那一族内部标识符 —— 实测压回紧凑写法当场红 5 处
  *（这份文件 2 处、`index.html` 3 处）。
  */
-const ICON_THEME = "M 12 3 a 9 9 0 1 0 0 18 a 9 9 0 1 0 0 -18 z M 12 3 v 18";
+const ICON_SUN = "M 12 8 a 4 4 0 1 0 0 8 a 4 4 0 1 0 0 -8 z M 12 2 v 2 M 12 20 v 2 M 4.9 4.9 l 1.4 1.4 M 17.7 17.7 l 1.4 1.4 M 2 12 h 2 M 20 12 h 2 M 4.9 19.1 l 1.4 -1.4 M 17.7 6.3 l 1.4 -1.4";
+const ICON_MOON = "M 21 12.8 A 9 9 0 1 1 11.2 3 a 7 7 0 0 0 9.8 9.8 z";
 const ICON_LOGOUT = "M 12 4 v 8 M 7.5 6.5 a 7 7 0 1 0 9 0";
 
 /** 给一颗图标按钮插图标。id 不存在时静默跳过——登录闸与顶栏各有各的按钮。 */
@@ -199,9 +205,42 @@ function paintIcon(id, d) {
   const btn = document.getElementById(id);
   if (btn) btn.appendChild(svgIcon(d, 16));
 }
-paintIcon("theme-btn", ICON_THEME);
+
+/**
+ * 两颗主题按钮里的日月两枚。
+ *
+ * ⚠️ **节点引用留在这里，切主题时不去选择器捞**：这两枚是 SVG 命名空间的节点
+ *（`js/ui.js` 的 `svgIcon()` 用 `createElementNS` 造），按类名再捞一遍要多一份
+ * 与本仓其余取节点方式不同的写法，而这里本来就握着它们。
+ */
+const themeIcons = [];
+function paintThemeIcon(id) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  const sun = svgIcon(ICON_SUN, 16);
+  sun.setAttribute("class", "icon-sun");
+  const moon = svgIcon(ICON_MOON, 16);
+  moon.setAttribute("class", "icon-moon");
+  btn.appendChild(sun);
+  btn.appendChild(moon);
+  themeIcons.push({ sun, moon });
+}
+
+/** 亮色只露太阳、深色只露月亮。两颗按钮是同一个开关的两个入口，一起刷。 */
+function paintThemeState() {
+  const dark = getTheme() === "dark";
+  for (const pair of themeIcons) {
+    pair.sun.style.display = dark ? "none" : "";
+    pair.moon.style.display = dark ? "" : "none";
+  }
+}
+
+paintThemeIcon("theme-btn");
+paintThemeIcon("gate-theme-btn");
 paintIcon("logout-btn", ICON_LOGOUT);
-paintIcon("gate-theme-btn", ICON_THEME);
+// `theme.js` 每次切主题都广播这一条 ⇒ 两处入口点哪一颗，两颗都跟着换。
+document.addEventListener("themechange", paintThemeState);
+paintThemeState();
 
 document.getElementById("logout-btn").addEventListener("click", () => leave(null));
 document.getElementById("theme-btn").addEventListener("click", () => toggleTheme());

@@ -1193,8 +1193,14 @@ BANNER='[collection-guard] ✅'
 #   下界 220px 时 1100 那一档只剩一条轨道的反向控制 / 下界 176px 时 1440 那一档
 #   挤出比标签还窄的轨道的反向控制）⇒ 4569 + 3 = 4572。
 #   文件数不动。**workerd 那两个数不动**：这一组是 Node 单运行时的源码级判据。
+# 🔴 **这一轮：两颗主题按钮改成日月两枚、跟着当前主题切。**
+#   上一版两颗按钮画的是同一枚「半明半暗」的图标、亮暗两态长得一模一样，
+#   而**没有任何一格看得见它换没换** —— 与排布那一层同一种空白。
+#   格数：`tests/ui/dom/shell-chrome.test.ts` 新增 2 格（两颗按钮各带日月两枚且两枚
+#   画的不是同一条 path / 亮色只露太阳、深色只露月亮且两颗同步）⇒ 4572 + 2 = 4574。
+#   文件数不动（加在既有文件里）。**workerd 那两个数不动**：这一族是 DOM 层，只在 Node 侧跑。
 EXPECT_NODE_FILES=147
-EXPECT_NODE_TESTS=4572
+EXPECT_NODE_TESTS=4574
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 
