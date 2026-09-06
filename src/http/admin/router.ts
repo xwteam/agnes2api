@@ -463,9 +463,9 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // **它一次存储写都不产生**（只读探针，与验活同一条），所以配额账的写侧不用改；
   // 读侧它消费的是 `repo.all()` 那份 isolate 快照，与面板别的板块共用。
   //
-  // ⚠️ **今天没有面板卡消费它**（面板那一半撞了原始档体积预算，已交上一层裁定，
-  // 见 `handlers/upstream-models.ts` 文件头）。它现在只对 curl / 脚本可见，
-  // 五份 API.md 的「GET /admin/api/upstream/models」那一节是它今天唯一的文档面。
+  // 面板这一侧的消费者是模型板块那张「上游模型」卡（`admin-ui/js/sec-models.js`）；
+  // 文档面是五份 API.md 的「GET /admin/api/upstream/models」那一节与五份 ADMIN.md
+  // 的模型板块那一段。
   admin.get("/admin/api/upstream/models", upstreamModelsHandler({
     repo: deps.repo, fetcher: deps.fetcher, now: deps.now,
     config: () => deps.configHolder.current(),

@@ -1,8 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   protocolBadges, filterByProtocol, catalogProtocols, catalogModels, modalityLabelKey,
+  upstreamModelsView, upstreamResultCode, upstreamTransportCode, upstreamLabelKey,
 } from "../../admin-ui/js/pure/models.mjs";
 import { catalogPayload } from "../../src/core/admin/protocol-catalog.js";
+import { I18N } from "../../admin-ui/js/i18n-dict.js";
+import { stripComments } from "../helpers/strip-comments.js";
 
 /**
  * **模型板块的取值判定。**
@@ -274,5 +278,176 @@ describe("形态 → 文案 key", () => {
     const models = catalogModels(catalogPayload())! as ModelRow[];
     const missing = models.filter((m) => modalityLabelKey(m.modality) === null).map((m) => m.modality);
     expect(missing, "真源里有这些形态，而 modalityLabelKey 不认识它们").toEqual([]);
+  });
+});
+
+/**
+ * **上游那份清单的取值判定**（`admin-ui/js/pure/models.mjs` 的 `upstream*` 一族）。
+ *
+ * ⚠️ 这一族与上面那几格测的是两件事：上面是「本网关支持什么」，这里是
+ * 「上游账号此刻回了什么」。**两份并存**，理由全文在
+ * `src/core/admin/upstream-models.ts` 的文件头。
+ */
+type UpView = { ids: string[]; truncated: boolean; onlyUpstream: string[]; onlyCatalog: string[] };
+
+const FULL: UpView = { ids: ["a"], truncated: false, onlyUpstream: [], onlyCatalog: ["b"] };
+
+describe("upstreamModelsView：四个字段一个都不许缺", () => {
+  /**
+   * ⚠️ **缺字段一律 `null`，不是「补一个默认值」。**
+   * `truncated` 缺了补 `false` 会把「还有一截没给你看」说成「上游就这些」；
+   * 两个差集缺了补 `[]` 会把「我们没算」说成「两边一致」——**都是凭空造出来的事实**。
+   */
+  it.each([
+    ["不是对象", 42],
+    ["是数组", [FULL]],
+    ["truncated 不是布尔", { ...FULL, truncated: "no" }],
+    ["ids 不是字符串数组", { ...FULL, ids: [1] }],
+    ["缺 onlyUpstream", { ids: FULL.ids, truncated: false, onlyCatalog: [] }],
+    ["缺 onlyCatalog", { ids: FULL.ids, truncated: false, onlyUpstream: [] }],
+  ])("%s ⇒ null", (_name, models) => {
+    expect(upstreamModelsView(models)).toBeNull();
+  });
+
+  it("四个字段齐全时逐条窄化，且不与入参共享数组", () => {
+    const src = { ids: ["a"], truncated: true, onlyUpstream: ["a"], onlyCatalog: ["b"], extra: 1 };
+    const v = upstreamModelsView(src) as UpView;
+    expect(v).toEqual({ ids: ["a"], truncated: true, onlyUpstream: ["a"], onlyCatalog: ["b"] });
+    src.ids.push("mutated");
+    expect(v.ids, "窄化结果与入参共享了同一个数组").toEqual(["a"]);
+  });
+});
+
+describe("upstreamResultCode / upstreamTransportCode：两个函数各管一半", () => {
+  it.each([
+    ["no_key"], ["upstream_error"], ["bad_payload"], ["timeout"], ["network_error"],
+  ])("200 响应体里的 reason「%s」有自己的一档", (reason) => {
+    expect(upstreamResultCode({ ok: false, status: null, reason })).toBe(reason);
+  });
+
+  /**
+   * ⚠️ **表外的 reason 落 `mismatch`，不许落进任何一档「上游怎么了」。**
+   * 落进 `upstream_error` 的后果是面板对运维说「上游出错了」，
+   * 而真相可能是后端换了个我们还没跟上的结果码。
+   */
+  it("面板不认识的 reason ⇒ mismatch，而不是冒充一档已知原因", () => {
+    expect(upstreamResultCode({ ok: false, status: null, reason: "brand_new_reason" })).toBe("mismatch");
+  });
+
+  /**
+   * ⚠️⚠️ **`ok: true` 但那份清单读不出来时也是 `mismatch`，不是 `ok`。**
+   * 判成 `ok` 的话，板块会拿着一个 `null` 去画卡片——终局要么整屏崩，
+   * 要么画出一张空卡，而空卡说的是「上游一个模型都没回」。
+   */
+  it("ok 为真但 models 形状不认识 ⇒ mismatch，不是 ok", () => {
+    expect(upstreamResultCode({ ok: true, status: 200, reason: null, models: { ids: ["a"] } }))
+      .toBe("mismatch");
+  });
+
+  it("ok 为真且形状对得上 ⇒ ok", () => {
+    expect(upstreamResultCode({ ok: true, status: 200, reason: null, models: FULL })).toBe("ok");
+  });
+
+  /**
+   * ⚠️ **判据是顶层 `reason` 而不是状态码**：护栏在同一个 429 下产出两种拒绝，
+   * 处置完全不同（等它回来 / 稍后再试）。只看 429 会把两者合成一句话。
+   */
+  it.each([
+    ["护栏说上一次还在飞", { status: 429, body: { reason: "probe_in_flight" } }, "probe_in_flight"],
+    ["护栏说间隔没过", { status: 429, body: { reason: "probe_cooldown" } }, "probe_cooldown"],
+    ["管理会话没了", { status: 401, body: null }, "unauthorized_admin"],
+    ["别的 429（表外）", { status: 429, body: { reason: "something_else" } }, "transport_error"],
+  ])("%s ⇒ %s", (_name, err, expected) => {
+    expect(upstreamTransportCode(err)).toBe(expected);
+  });
+});
+
+/**
+ * **后端会产出的每一条 reason，面板都得认得。**
+ *
+ * ⚠️ 这一组扫的是后端源码，不是一份手抄的清单：后端加一种 reason 是一行 diff，
+ * 而「面板没跟上」在本仓的出站探测护栏那一轮真实发生过一次。
+ *
+ * ⚠️ **这个扫描器与 `tests/ui/keys-write.test.ts`
+ *「扫描器先在真文件上对得上；它读不懂的两种书写形态一律不许出现 —— 探针不许探在会过的那一侧」
+ * 里那个不是同一个，刻意的**：那一份还带着「读不懂的书写形态一律不许出现」的反向表
+ *（它守的是验活那两个文件），这里只需要「literals 与 dynamic 各是什么」，
+ * 并且把两者都**钉到手写的期望值上**
+ * ——后端换一种写法时这里会当场红，而不是静默漏扫。
+ */
+function upstreamReasonSites(src: string): { literals: string[]; dynamic: string[] } {
+  const literals = new Set<string>();
+  const dynamic: string[] = [];
+  for (const m of stripComments(src).matchAll(/\breason:\s*([^,\n}]*)/g)) {
+    const expr = m[1]!.trim();
+    if (expr === "" || expr === "null") continue;
+    const found = [...expr.matchAll(/"([A-Za-z0-9_]+)"/g)].map((x) => x[1]!);
+    if (found.length === 0) { dynamic.push(expr); continue; }
+    for (const f of found) literals.add(f);
+  }
+  return { literals: [...literals].sort(), dynamic };
+}
+
+describe("后端产出的 reason × 面板认得的 reason", () => {
+  it("列模型那条 handler 的每一条 reason 面板都有一档 —— 认不得的会被说成「面板还不认识」，而这一格要求根本别走到那里", () => {
+    const sites = upstreamReasonSites(readFileSync("src/http/admin/handlers/upstream-models.ts", "utf8"));
+    // 手写期望值：后端多一条 / 少一条都在这里当场红。
+    expect(sites.literals).toEqual(["bad_payload", "network_error", "no_key", "timeout", "upstream_error"]);
+    // 唯一动态的那一处是护栏那条 429，它走的是 `upstreamTransportCode()` 那一半（下一格）。
+    expect(sites.dynamic).toEqual(["g.reason"]);
+
+    const unmapped = sites.literals.filter((r) => upstreamResultCode({ ok: false, reason: r }) === "mismatch");
+    expect(unmapped, "后端会产出这些 reason，而面板还没给它们文案").toEqual([]);
+
+    const keys = sites.literals.map((r) => upstreamLabelKey(upstreamResultCode({ ok: false, reason: r })));
+    expect(new Set(keys).size, "两条 reason 共用了同一句文案").toBe(sites.literals.length);
+  });
+
+  it("护栏那两条 reason 面板也都有一档 —— 它们与验活共用同一把护栏", () => {
+    const sites = upstreamReasonSites(readFileSync("src/http/admin/probe-guard.ts", "utf8"));
+    expect(sites.literals).toEqual(["probe_cooldown", "probe_in_flight"]);
+    const unmapped = sites.literals
+      .filter((r) => upstreamTransportCode({ status: 429, body: { reason: r } }) === "transport_error");
+    expect(unmapped, "护栏会产出这些 reason，而面板把它们当成了一次说不出所以然的失败").toEqual([]);
+  });
+
+  /**
+   * ⚠️ **按名字锚扫源码，不是行为断言**：拼出来的 key 与写死的 key 在行为上可以
+   * 逐字节相同，而三道 i18n 门禁里有两道只认字面量（全局约束 12）。
+   */
+  it("每一个 code 的 i18n key 都以字面量出现在源码里，并且都在字典里", () => {
+    const src = readFileSync("admin-ui/js/pure/models.mjs", "utf8");
+    const codes = [
+      "ok", "no_key", "upstream_error", "bad_payload", "timeout", "network_error",
+      "mismatch", "probe_in_flight", "probe_cooldown", "unauthorized_admin", "transport_error",
+    ];
+    const keys = codes.map((c) => upstreamLabelKey(c));
+    expect(new Set(keys).size, "两个 code 共用了同一个 key").toBe(codes.length);
+    for (const k of keys) {
+      expect(src.includes(`"${k}"`), `${k} 不是以字面量出现的`).toBe(true);
+      expect(k in I18N, `${k} 不在字典里`).toBe(true);
+    }
+  });
+
+  /**
+   * ⚠️ **`upstreamLabelKey()` 交出来的 key 一个都不许带 `{占位符}`。**
+   * 它们在源码里的形态是 `return "…";`（后面跟的是 `;` 不是 `,`），而
+   * `scripts/check-i18n.mjs` 第 ⑧ 条正是拿「后面紧跟着什么」当判据 ⇒ 真带了占位符，
+   * 那道门禁当场 exit 1。这一格把那条约束钉在字典这一侧，别等门禁去发现。
+   */
+  it("这一族 key 五种语言里一个 {占位符} 都没有 —— 它们是不带参数的裸标签", () => {
+    const codes = ["ok", "no_key", "upstream_error", "bad_payload", "timeout", "network_error",
+      "mismatch", "probe_in_flight", "probe_cooldown", "unauthorized_admin", "transport_error"];
+    const dict = I18N as unknown as Record<string, Record<string, string>>;
+    const bad: string[] = [];
+    for (const c of codes) {
+      const k = upstreamLabelKey(c);
+      for (const [lang, s] of Object.entries(dict[k]!)) if (/\{\w+\}/.test(s)) bad.push(`${k}/${lang}`);
+    }
+    expect(bad).toEqual([]);
+    // 反向自检：判据不瞎 —— 带占位符的那三个 key 确实被它认出来。
+    for (const k of ["models.up.listLabel", "models.up.truncated", "models.up.status"]) {
+      expect(Object.values(dict[k]!).some((s) => /\{\w+\}/.test(s)), `${k} 应当带占位符`).toBe(true);
+    }
   });
 });

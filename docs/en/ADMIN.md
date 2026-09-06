@@ -316,7 +316,7 @@ go by it and never parse `msg`:
 
 ### What this page answers
 
-- **This page answers one question**: which models this gateway admits, what type each one is,
+- **The first thing this page answers**: which models this gateway admits, what type each one is,
   which protocols it is really available on, and which endpoint to call.
 
 ### Three types, and protocol availability
@@ -351,6 +351,26 @@ go by it and never parse `msg`:
 > endpoint declares `generateContent` for **every** model, **including the video one**, while
 > the real path for video is the two-step "create the job, then poll". This page is filled in
 > by real availability; when the two disagree, this page is the one to believe.
+
+### The upstream models card
+
+- **This page also answers a second thing**: which model ids the upstream account returns right
+  now. That card carries a button; each click really does send a request upstream using a key
+  from the pool, with a minimum interval between two of them.
+- **It does not replace the catalog table above; both cards stay**: the catalog says what this
+  gateway supports and which endpoint to call, while the upstream list is only model ids — no
+  protocol membership, no endpoints.
+- **Both directions of the difference are drawn**: what upstream has and the catalog does not,
+  and what the catalog has and upstream did not return this time.
+
+  > [!WARNING]
+  > **"in the catalog but not returned this time" does not mean "upstream lacks that model"**:
+  > upstream hands out models per account, so a narrowly scoped key sees a shorter list.
+
+- **Before that button is pressed the card shows a dash**, next to a visible sentence:
+  "not asked yet" and "upstream returned nothing" are two different things.
+- **When upstream does not answer normally its error body is not shown here**; only the status
+  code it returned is drawn — that body is where APIs tend to echo fragments of the key.
 
 ## Playground
 

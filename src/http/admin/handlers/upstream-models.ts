@@ -14,13 +14,10 @@ import { parseUpstreamModels, diffAgainstCatalog } from "../../../core/admin/ups
  * 写死的协议目录（「怎么调这个网关」）；这一条是一次真实的出站请求，交出去的是
  * 「上游账号此刻的清单」。理由全文在 `src/core/admin/upstream-models.ts` 的文件头。
  *
- * ⚠️⚠️ **今天这条端点在本仓里没有面板消费者，这是刻意的一半交付。**
- * 模型板块那张「上游模型」卡的前端增量装不进 `scripts/check-ui-budget.mjs` 的原始档预算
- *（要知道今天还剩多少，跑一次那个脚本看它自己报的那行；**别在这里抄一个会漂的数**），
- * 那一半已交上一层裁定。**那张卡落地时把这一段整段删掉。**
- * ⇒ **下面凡是描述「拿到这份响应之后该怎么显示」的段落，说的都是对调用方的契约，
- * 不是在描述某个已经存在的界面**——别把它们读成「面板已经这么干了」，
- * 也别照着它们去 `grep` 一个不存在的板块文件。
+ * 面板这一侧的消费者是模型板块那张「上游模型」卡（`admin-ui/js/sec-models.js`
+ * 的 `upstreamCard()`），取值判定在 `admin-ui/js/pure/models.mjs` 的 `upstream*` 一族。
+ * ⚠️ 下面凡是描述「拿到这份响应之后该怎么显示」的段落，说的都是**对调用方的契约**
+ * ——那张卡照它接，但契约不因为它而收窄：curl / 脚本同样是这条端点的调用方。
  *
  * ── 约束，逐条抄自 `handlers/verify.ts` 那六条里仍然适用的几条 ─────────────────
  *
@@ -94,8 +91,8 @@ export function upstreamModelsHandler(deps: UpstreamModelsDeps) {
         error: { type: "rate_limit_error", message: g.message },
         // 顶层 `reason` 是**机器可读的码**，与 200 那几档的 `reason` 同一族。
         // ⚠️ 调用方据它选文案，**不许解析 `message`**：那一句是给人看的中文，措辞会变。
-        // （**别在这里写「面板据它选五语言文案」**：本轮评审现算过一次，当时那份还没
-        // 落地的面板 catch 把 429 整个吞成「读取失败」，这句注释在描述一件没有发生的事。）
+        // 面板那一侧读它的是 `admin-ui/js/pure/models.mjs` 的 `upstreamTransportCode()`
+        //（判据是这个字段，不是 429 那个状态码——同一个状态码下这里有两种拒绝）。
         reason: g.reason,
       }, 429);
     }

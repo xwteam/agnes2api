@@ -400,6 +400,17 @@ tr:last-child td { border-bottom: 0; }
 /* 「模型目录读不出来」那一根 EM DASH。用报警色 + `cursor: help`（tooltip 里有全文），
    与 `.usage-unknown` 表达的是同一件事：**我们不知道**，不是「一个模型都没有」。 */
 .models-unknown { color: var(--danger); font-size: 22px; cursor: help; margin: 0; }
+/* 「上游模型」那张卡。
+   ⚠️ 「还没查过」那根破折号**刻意不用 `.models-unknown`**：那一条是报警色，而
+   「还没问过上游」不是故障。它旁边跟着一句**看得见的**说明（不是 `title`），
+   所以这里只需要把破折号本身撑大、并与那句话拉开一点距离。 */
+.models-up-idle { margin: 0; }
+.models-up-dash { color: var(--muted); font-size: 22px; margin-right: var(--gap-sm); }
+/* 失败横幅里那句「上游回了几」跟在结果文案后面，别贴成一个词。 */
+.models-up-status { margin-left: var(--gap-sm); }
+/* 一排模型 id：换行铺开，别把几十个 id 挤成一条横向滚动条。 */
+.models-up-list { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px; }
+.models-up-group { margin-top: var(--gap-sm); }
 .usage-detail-head { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-sm); }
 .usage-detail-head h3 { margin: 0; font-size: 14px; }
 .usage-breakdown { margin-top: var(--gap); }

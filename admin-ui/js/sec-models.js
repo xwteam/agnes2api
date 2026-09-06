@@ -1,6 +1,14 @@
 /**
- * 模型板块（设计文档 §10.7 / §11）：一张只读表 ——
- * 模型 ID / 类型（字段名 `modality`）/ 协议可用性矩阵（四个徽章）/ 端点。
+ * 模型板块（设计文档 §10.7 / §11）：两张卡 ——
+ * ① **模型目录**（一张只读表：模型 ID / 类型（字段名 `modality`）/
+ *    协议可用性矩阵（四个徽章）/ 端点），来自本仓写死的协议目录，零网络出站；
+ * ② **上游模型**（一颗按钮 + 这次拉回来的清单与两个方向的差集），
+ *    它拿池里的一把 key 去真打一次上游。
+ *
+ * ⚠️⚠️ **② 不替换 ①，两者回答的是两个问题**：① 是「**本网关**支持什么、怎么调」，
+ * ② 是「**上游账号**此刻有什么」。上游那份没有协议归属、没有端点，
+ * 拿它替掉目录会让集成示例 / 调试台 / 这张表一起失去所有可照抄的调用方式。
+ * 后端那一半的全文在 `src/core/admin/upstream-models.ts` 的文件头。
  *
  * 板块契约（设计文档 §9.3）：`{ init?, onShow?, onHide? }`，见 admin-ui/js/app.js
  * 的 showSection。**板块内不许监听 langchange**——框架层会 apply(document) 之后
@@ -9,8 +17,8 @@
  * ── **本板块是「消费协议目录」这条路径的第一个前端消费者** ────────────────────
  * 核心设计决定（全局约束 15）：四个消费者只许有一份「怎么调这个网关」的知识。
  * ⇒ **本文件的可执行代码里没有任何一条对外端点路径、没有任何一个协议 id、
- *    也没有任何一份请求体形状**（唯一的 admin 路径是 `api.get("/models")`，
- *    它为什么不算第二份知识，见本文件头「`api.get("/models")` 这条 admin 路径
+ *    也没有任何一份请求体形状**（admin 路径有两条，`api.get("/models")` 与
+ *    上游那条，它们为什么不算第二份知识，见本文件头「那两条 admin 路径
  *    为什么不算第二份端点知识」那一段）。
  * 协议 id 与展示名来自响应的 `protocols[]`，端点原样搬运响应的 `endpoints[]`，
  * 连「视频模型是两段式」这件事都是数出来的、不是写死的。
@@ -36,6 +44,9 @@
  * 工具栏上**没有刷新按钮**（设计 §10.7：agnes 的模型是硬编码的，
  * 没有「跨账号刷新」这个动作）——那颗按钮会承诺一个不存在的语义。
  * 错误横幅上那颗**不是刷新，是「再读一次」**：它治的是一次读取失败，不是「数据变了」。
+ * ⚠️ **上游那张卡上的按钮是第三种东西，别与这两句混起来**：它是「去问一次上游」，
+ * 而上游的清单**真的会变**（换一把权限不同的 key、上游上下线一个模型）。
+ * 目录那一半今天仍然没有刷新按钮，那句话没有作废。
  * 少了它，一次网络抖动会让这个板块在本次会话里一直停在错误页上
  *（`onShow()` 虽然会重试，但那要求用户先猜到「切走再切回来」这个动作）。
  *
@@ -112,10 +123,12 @@
  * 并随公开仓发出去，而公开仓的读者打不开一个不在仓里的路径
  *（通读评审 LOW）。
  *
- * ── `api.get("/models")` 这条 admin 路径为什么不算「第二份端点知识」 ──────────
+ * ── 那两条 admin 路径为什么不算「第二份端点知识」 ─────────────────────────────
  * 全局约束 15 管的是「怎么调**这个网关**」那张对外面（`/v1`、请求体形状、鉴权头），
  * 不是「怎么够得着那份真源」。`sec-usage.js` 已经写着同样的 `api.get("/models")` 与
- * `api.get("/capabilities")`，本文件与它同一条边界。
+ * `api.get("/capabilities")`，本文件与它同一条边界；上游那条同理，
+ * 它的路径是 admin 面的，**上游自己那条列模型路径一个字符都不在前端**
+ *（那一段拼接全在 `src/http/admin/handlers/upstream-models.ts` 里）。
  * ⚠️ **但要写清代价：这条 admin 路径今天没有任何机器在守**
  *（`tests/ui/no-hardcoded-endpoints.test.ts` 的正则只认 `/v1` 开头的对外路径）。
  * 本文件头开头那句「可执行代码里没有任何一条对外端点路径」说的是**那张对外面**，不是这一条。
@@ -126,6 +139,7 @@ import { el, elI18n } from "./ui.js";
 import { fmtDash } from "./pure/format.mjs";
 import {
   protocolBadges, filterByProtocol, catalogProtocols, catalogModels, modalityLabelKey,
+  upstreamModelsView, upstreamResultCode, upstreamTransportCode, upstreamLabelKey,
 } from "./pure/models.mjs";
 
 let nodes = null;
@@ -169,6 +183,18 @@ let seq = 0;
  * 世代号在 catch 里同样把它挡在外面，两种环境走的是同一条判据。
  */
 let abort = null;
+/**
+ * 「上游模型」那张卡的状态机。**四档，恒有一档**：
+ * `idle` 还没查过 / `loading` 在飞 / `ok` 查回来了 / `error` 这次没查成。
+ *
+ * ⚠️⚠️ **`idle` 与 `ok` 且清单为空**是两句完全不同的话，所以它们**不共用一档**：
+ * 前者是「我们还没问过上游」，后者是「问过了，上游这次一个都没回」。
+ * 合成一档的话，一张什么都没查过的卡会对运维说一句关于上游的事实（全局约束 9 的同型）。
+ *
+ * `code` 是 `js/pure/models.mjs` 那两个 code 函数的产物，`status` 只在
+ * `upstream_error` 那一档有意义（上游回了几）。`view` 是窄化之后的清单。
+ */
+let up = { state: "idle", code: null, status: null, view: null };
 
 /** 一个内容块：标题 + 空的 body 容器。 */
 function block(titleKey) {
@@ -307,6 +333,124 @@ function buildTable(rows) {
 }
 
 /**
+ * 一组模型 id：一行小标题 + 一排等宽的 id。**空数组不画**，由调用方决定那一档说什么
+ * ——「这一组是空的」在三处的含义各不相同（没有多出来的 / 没有漏掉的 / 上游没回）。
+ */
+function idList(labelKey, ids, group) {
+  const wrap = el("div", { class: "models-up-group", "data-group": group });
+  // ⚠️ **小标题走 `t(key, params)` 而不是 `elI18n`**：三个 key 各自带一个 `{n}`，
+  //    而 `elI18n` 内部调的是不带参数的 `t()` ⇒ 屏幕上会出现裸的占位符
+  //   （`scripts/check-i18n.mjs` 第 ⑧ 条对 `elI18n` 的中间参数结构性地看不见，
+  //    它拦不住这个错，所以这句写在这里）。
+  wrap.appendChild(el("div", { class: "muted note" }, t(labelKey, { n: ids.length })));
+  const list = el("div", { class: "models-up-list" });
+  // 每个 id 画成一颗中性灰的 chip（复用 `.badge` 的底样式，**不新起一套**）：
+  // 一排纯文本 id 之间只有空格，长 id 挨在一起会被读成一条串。
+  for (const id of ids) list.appendChild(el("span", { class: "mono badge", "data-up-id": id }, id));
+  wrap.appendChild(list);
+  return wrap;
+}
+
+/**
+ * 「上游模型」那张卡。**它与上面那张目录表并存，不替换它**：
+ * 目录讲「本网关支持什么、拿什么端点去调」，这里讲「上游账号此刻回了什么」。
+ * 上游那份**没有协议归属、也没有端点**，拿它替掉目录等于把矩阵和端点列一起抹掉。
+ * ⇒ 两份并存，并且把**两个方向的差集**都画出来。
+ *
+ * ⚠️ **没有自动加载，只有一颗按钮。** 这条读会拿池里的一把 key 去真打一次上游
+ *（全局约束 14：按一下就打上游的按钮必须自带告知与护栏）。挂在 `onShow()` 上的话，
+ * 每切一次板块就打一次上游，而运维根本没要求过这件事。
+ * 告知写在卡的说明里（`models.up.desc`），护栏由后端那把与验活共用的 ProbeGuard 兜底，
+ * 面板这一侧再加一条：在飞时按钮 `disabled`，且 `loadUpstream()` 开头有早退。
+ * ⚠️ **早退那条才是护栏**：`disabled` 在 `tests/ui/dom/fake-dom-parity.test.ts` 的
+ * `KNOWN_BLIND_SPOTS` 里挂着（「`.disabled` 挂错宿主」），DOM 用例观测不到它。
+ */
+function upstreamCard() {
+  const { wrap, body } = block("models.up.title");
+  body.appendChild(elI18n("p", "models.up.desc", { class: "muted note" }));
+
+  const btn = elI18n("button", "models.up.load", { type: "button", class: "models-up-btn" });
+  btn.disabled = up.state === "loading";
+  btn.addEventListener("click", () => { loadUpstream(); });
+  body.appendChild(btn);
+
+  if (up.state === "loading") {
+    body.appendChild(elI18n("p", "models.up.loading", { class: "muted note" }));
+    return wrap;
+  }
+
+  if (up.state === "idle") {
+    // 一根破折号 + **一句看得见的话**。那句话刻意不写进 `title`：hover-only 的提示
+    // 在触屏上根本出不来（`.badge` 那一族的同型问题在本文件头已登记），
+    // 而「还没查过」正是最容易被误读成「上游没有模型」的一档。
+    const p = el("p", { class: "models-up-idle" });
+    p.appendChild(el("span", { class: "models-up-dash" }, fmtDash(null)));
+    p.appendChild(elI18n("span", "models.up.idle", { class: "muted" }));
+    body.appendChild(p);
+    return wrap;
+  }
+
+  if (up.state === "error") {
+    const banner = el("div", { class: "banner-danger", role: "status" });
+    banner.appendChild(el("span", { "data-up": "msg" }, t(upstreamLabelKey(up.code))));
+    // 状态码**另起一句**，不拼进上面那句：`upstreamLabelKey()` 交出来的每一个 key
+    // 都不许带 `{占位符}`（那些字面量后面跟的是 `;`，`scripts/check-i18n.mjs`
+    // 第 ⑧ 条会当场红），而「上游回了几」只在 `upstream_error` 那一档有意义。
+    if (up.status !== null) {
+      banner.appendChild(el("span", { class: "models-up-status", "data-up": "status" }, t("models.up.status", { status: up.status })));
+    }
+    body.appendChild(banner);
+    return wrap;
+  }
+
+  const v = up.view;
+  body.appendChild(el("p", { class: "muted note", "data-up": "msg" }, t(upstreamLabelKey("ok"))));
+  if (v.truncated) {
+    // ⚠️ **条数取的是「这次拿到手的那份」的长度，不在前端写一个上限常量**：
+    // 上限是后端的（`src/core/admin/upstream-models.ts`），抄一份就会漂。
+    const warn = el("div", { class: "banner-warn", "data-up": "truncated" });
+    warn.appendChild(el("p", {}, t("models.up.truncated", { n: v.ids.length })));
+    body.appendChild(warn);
+  }
+  body.appendChild(idList("models.up.listLabel", v.ids, "ids"));
+
+  if (v.onlyUpstream.length === 0 && v.onlyCatalog.length === 0) {
+    body.appendChild(elI18n("p", "models.up.diffNone", { class: "muted note" }));
+  } else {
+    if (v.onlyUpstream.length > 0) body.appendChild(idList("models.up.onlyUpstream", v.onlyUpstream, "onlyUpstream"));
+    if (v.onlyCatalog.length > 0) body.appendChild(idList("models.up.onlyCatalog", v.onlyCatalog, "onlyCatalog"));
+  }
+  return wrap;
+}
+
+/**
+ * 向上游查一次模型清单。**只有那颗按钮会调它**，没有任何隐式入口。
+ *
+ * ⚠️ **两类失败落在两个函数上**：200 的响应体走 `upstreamResultCode()`，
+ * 非 2xx（`js/api.js` 抛的 `ApiError`）走 `upstreamTransportCode()`。
+ * 混成一个的后果在 `js/pure/models.mjs` 那两段上方写着：护栏的 429 会被说成「上游出错了」，
+ * 而那一次**一个出站请求都没发生过**。
+ */
+function loadUpstream() {
+  if (up.state === "loading") return;
+  up = { state: "loading", code: null, status: null, view: null };
+  render();
+  api.get("/upstream/models")
+    .then((body) => {
+      const code = upstreamResultCode(body);
+      const view = code === "ok" ? upstreamModelsView(body.models) : null;
+      up = {
+        state: code === "ok" ? "ok" : "error", code,
+        status: body && typeof body.status === "number" ? body.status : null, view,
+      };
+    })
+    .catch((e) => {
+      up = { state: "error", code: upstreamTransportCode(e), status: null, view: null };
+    })
+    .then(() => { render(); });
+}
+
+/**
  * 读不出来那一档。
  *
  * ⚠️⚠️ **这里绝不能退化成「渲染一张空表」**（全局约束 9 的同型）：一张空表会被读成
@@ -342,10 +486,14 @@ function render() {
   host.textContent = "";
   if (catalog === null) {
     host.appendChild(buildUnavailable());
-    return;
+  } else {
+    host.appendChild(buildFilterBar());
+    host.appendChild(buildTable(filterByProtocol(catalog.models, filter)));
   }
-  host.appendChild(buildFilterBar());
-  host.appendChild(buildTable(filterByProtocol(catalog.models, filter)));
+  // ⚠️ **目录读不出来时这张卡照画。** 两条读没有任何依赖关系：目录那条零网络出站、
+  // 这条要真打一次上游。把它塞进 `catalog !== null` 那一支的后果是，一次目录读失败
+  // 会连带把一个完全能用的功能藏起来，而屏幕上不会有任何东西说它去哪了。
+  host.appendChild(upstreamCard());
 }
 
 /**

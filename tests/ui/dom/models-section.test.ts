@@ -435,21 +435,35 @@ describe("按协议筛选（工具栏）", () => {
   });
 
   /**
-   * ⚠️ **工具栏上没有刷新按钮**（设计 §10.7：agnes 的模型是硬编码的，
+   * ⚠️ **目录那张表的工具栏上没有刷新按钮**（设计 §10.7：agnes 的模型是硬编码的，
    * 没有「跨账号刷新」这个动作）。**变红条件**：往 `init()` 里加一颗刷新按钮。
    * 那颗按钮会承诺一个不存在的语义——点它什么都不会变，而运维会以为自己拿到了新数据。
+   *
+   * ⚠️⚠️ **判据从「数按钮」换成了「按身份逐颗列出来」，这是改强不是改软。**
+   * 「上游模型」那张卡落地时板块里多了一颗真按钮（`models-up-btn`，
+   * 它去问的是**上游此刻有什么**，那件事真的会变，与「刷新一份硬编码目录」不是一回事）。
+   * 只把 5 改成 6 的话，这一格从此对「换掉其中一颗」全瞎；列出身份之后，
+   * 多一颗刷新、少一个档位、或者把上游那颗改成刷新，三种都当场红
+   *（**实测**：把 `upstreamCard()` 里那颗的 class 改成 `models-retry` ⇒ 本格红）。
    */
-  it("工具栏上只有筛选档位，没有刷新按钮 —— 那颗按钮会承诺一个不存在的语义", async () => {
+  it("目录工具栏上只有筛选档位；板块里那颗真按钮是「去问上游」不是刷新", async () => {
     const h = await openModels(respondWithCatalog());
     const sec = h.section("models");
     // 「全部」+ 四条协议 = 五个档位，**手写**。
     expect(filterButtons(sec).length).toBe(5);
     expect(filterButtons(sec).map((b) => b.getAttribute("data-protocol")))
       .toEqual(["", "openai", "anthropic", "responses", "gemini"]);
-    // 板块里全部按钮 = 五个档位，一个不多（错误横幅那颗只在读不出来时出现）。
-    let buttons = 0;
-    for (const b of sec.querySelectorAll("button")) buttons++;
-    expect(buttons, "板块里多了一颗按钮 —— 是不是加了刷新？").toBe(5);
+    // 板块里全部按钮，按 DOM 顺序逐颗报出身份（档位报 `data-protocol`，其余报 class）。
+    // 错误横幅那颗「再读一次」只在目录读不出来时出现，所以这一档里没有它。
+    const ids: string[] = [];
+    for (const b of sec.querySelectorAll("button")) {
+      const p = b.getAttribute("data-protocol");
+      ids.push(p === null ? String(b.getAttribute("class") ?? "") : `filter:${p}`);
+    }
+    expect(ids, "板块里的按钮阵容变了 —— 是不是加了刷新？").toEqual([
+      "filter:", "filter:openai", "filter:anthropic", "filter:responses", "filter:gemini",
+      "models-up-btn",
+    ]);
   });
 
   /**

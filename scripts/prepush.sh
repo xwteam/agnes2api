@@ -1299,8 +1299,27 @@ BANNER='[collection-guard] ✅'
 #        变异实测：删掉那一行 ⇒ 这三格当场红。
 #   ⇒ Node：4624 + 3 = 4627；文件数不动（那三格加在既有文件里）。
 #   ⇒ **workerd 这两个数不动**：这一轮一格契约用例都没动。
-EXPECT_NODE_FILES=150
-EXPECT_NODE_TESTS=4627
+# 🔴 **这一轮：把消费那条端点的「上游模型」面板卡补上。**
+#   后端与五份 API.md 上一轮就落地了，而面板那一半没有 ⇒ **文档与代码当时在承诺一个
+#   不存在的界面**。这一轮补的就是那一半（模型板块多一张卡：一颗按钮 + 上游这次回的
+#   清单 + 两个方向的差集），并把两处「今天没有面板消费者」的注释改成实情。
+#   ⚠️ **它不取代目录那张表**：目录讲「本网关支持什么、拿哪条端点去调」，
+#      上游那份只有一串模型 id，没有协议归属也没有端点，两张卡并存。
+#   格数：`tests/ui/models.test.ts` **+23**（`upstreamModelsView` 6 格缺字段 + 1 格窄化；
+#      `upstreamResultCode` 5 格 reason + 3 格边界；`upstreamTransportCode` 4 格；
+#      2 格读后端源码对表（handler 的 reason 全集 / 护栏那两条）；
+#      1 格 key 逐条以字面量出现且在字典里；1 格这族 key 一个占位符都不许带）；
+#      `tests/ui/dom/models-upstream.test.ts` **新文件 +11**（还没查过那一档、
+#      目录挂了这张卡照在、正常 / 空池 / bad_payload / 上游 401 / 超时 / 截断六种表现、
+#      不取代目录、护栏 429、在飞不重发）。
+#   `tests/ui/dom/models-section.test.ts` **格数不变**：那一格「板块里全部按钮」从
+#      「数个数」换成「按身份逐颗列出来」——**改强不是改软**（只把 5 改成 6 的话，
+#      它从此对「换掉其中一颗」全瞎）。变异实测：把上游那颗的 class 改成 `models-retry` ⇒ 红。
+#   `tests/unit/docs-parity.test.ts` **格数不变**：`H3_FLOOR` 50 → 51（五份 ADMIN.md 各多一个 `###`）。
+#   ⇒ Node：4627 + 23 + 11 = 4661；文件 150 + 1 = 151（一个新文件）。
+#   ⇒ **workerd 这两个数不动**：这一轮一格契约用例都没动。
+EXPECT_NODE_FILES=151
+EXPECT_NODE_TESTS=4661
 EXPECT_WORKERS_FILES=39
 EXPECT_WORKERS_TESTS=727
 
