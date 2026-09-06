@@ -2358,6 +2358,115 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
       "裹了 `min(…, 100%)` 的下界被误判成会顶穿 —— 判据把两种写法一起杀了",
     ).toEqual([]);
   });
+
+  /**
+   * ── 轨道下界那个**数**：一个人同时决定两件事 ───────────────────────────────
+   *
+   * 上面那几格管的是**写法**（裸 px 会顶穿），这一族管的是**取值**。
+   * `repeat(auto-fit, minmax(min(下界, 100%), 1fr))` 里那个下界既决定窄容器里
+   * 还剩几条轨道，也决定每条轨道最少多宽：往大调，窄档提前塌回单列（用户报的
+   * 正是这一条 —— 那一档九格字段一格一行）；往小调，宽档挤出比标签还窄的轨道。
+   * ⇒ 它有一个**窗口**，两头都得钉，只钉一头等于没钉。
+   *
+   * 🔴 **上一轮就是在这里栽的**：那一轮只在 1440 一档量过、看见两列就收工，
+   * 而用户在更窄的那一档看到的是单列。⇒ 这一族的两个输入刻意取**两档**。
+   *
+   * 下面三个数都是真机量出来的（无头 Chromium + 假接口，六档视口；量法与整张
+   * 六档表写在这一轮的提交信息里，**这里只留判据要用的三个数**）：
+   * 1100 那一档设置页那张卡里网格宽 382px、1440 那一档 552px、
+   * 那张卡里最宽的一条中文标签要 183px（末尾那个「）」前面断不开，
+   * 轨道比它窄时那一个字符会挂到轨道外面去）。
+   *
+   * **这一族接不住什么，明写**：它是纯文本扫描，不渲染、量不到像素。它假设上面
+   * 那三个数今天仍然成立——换字号、换侧栏宽、换卡的内边距都会让它们过期。
+   * 那一天该**重新量一次再改这里的数**，不是把断言删掉。
+   */
+  describe("卡内网格的轨道下界：落在真机量出来的那个窗口里", () => {
+    /** 真机量的三个数，出处见上面那段。 */
+    const GRID_AT_1100 = 382;
+    const GRID_AT_1440 = 552;
+    const WIDEST_LABEL = 183;
+
+    /** 网格的 gap 走 `--gap-sm`。**不在这里手抄一份数**，从 base.css 读。 */
+    function gapPx(): number {
+      const css = stripCssComments(readFileSync("admin-ui/css/base.css", "utf8"));
+      const m = /--gap-sm:\s*(\d+)px/.exec(css);
+      expect(m, "base.css 里读不出 --gap-sm 的值 —— 先回来修抠法").not.toBeNull();
+      return Number(m![1]);
+    }
+
+    /** 写得到 `.cfg-grid` 的**全部**规则里，那些下界的 px 数。 */
+    function boundsPx(css: string): number[] {
+      const affecting = cssRulesMentioning(css, ".cfg-grid");
+      expect(affecting, "一条写得到 .cfg-grid 的规则都没有 —— 抠法坏了").not.toBeNull();
+      return declarations(affecting!)
+        .filter((d) => d.prop === "grid-template-columns")
+        .flatMap((d) => minmaxLowerBounds(d.value))
+        .map((b) => {
+          const m = /(\d+(?:\.\d+)?)px/.exec(b);
+          if (m === null) throw new Error(`下界 \`${b}\` 里没有 px 长度 —— 先回来修抠法`);
+          return Number(m[1]);
+        });
+    }
+
+    /** 容器宽 `w` 里站得下几条下界为 `b` 的轨道（`auto-fit` 的算法，gap 算在里面）。 */
+    const tracksIn = (w: number, b: number, gap: number) => Math.floor((w + gap) / (b + gap));
+    /** 站了 `n` 条时每条多宽。 */
+    const trackWidth = (w: number, n: number, gap: number) => (w - (n - 1) * gap) / n;
+
+    it("下界既不许大到让 1100 那一档塌回单列，也不许小到让 1440 那一档挤出比标签还窄的轨道", () => {
+      const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+      const gap = gapPx();
+      const bounds = boundsPx(css);
+      expect(bounds.length, "一个 px 下界都没抠到 —— 下面几条比的是空集").toBeGreaterThan(0);
+
+      // 前置事实：1100 那一档两条轨道真的容得下最宽的那条标签。
+      // 不成立的话这个窗口本身就是错的，下面两条断言在比一件做不到的事。
+      expect(
+        trackWidth(GRID_AT_1100, 2, gap),
+        "1100 那一档两条轨道每条都装不下最宽的那条标签 —— 这个窗口的前提已经不成立，回去重新量",
+      ).toBeGreaterThanOrEqual(WIDEST_LABEL);
+
+      for (const b of bounds) {
+        expect(
+          tracksIn(GRID_AT_1100, b, gap),
+          `下界 ${b}px 太大：1100 那一档（网格宽 ${GRID_AT_1100}px、gap ${gap}px）只站得下`
+          + ` ${tracksIn(GRID_AT_1100, b, gap)} 条轨道 —— 那一档会塌回单列，正是被报的那个缺陷`,
+        ).toBeGreaterThanOrEqual(2);
+        const n1440 = tracksIn(GRID_AT_1440, b, gap);
+        expect(
+          trackWidth(GRID_AT_1440, n1440, gap),
+          `下界 ${b}px 太小：1440 那一档会站 ${n1440} 条轨道、每条`
+          + ` ${trackWidth(GRID_AT_1440, n1440, gap)}px，比最宽那条标签的 ${WIDEST_LABEL}px 还窄`,
+        ).toBeGreaterThanOrEqual(WIDEST_LABEL);
+      }
+    });
+
+    /**
+     * **反向控制（上沿）：把下界改回本轮之前那个数 ⇒ 尺子当场看得见。**
+     * 尺子若退化成恒返回一个 ≥ 2 的轨道数，上面那格永远绿，而这一格当场红。
+     */
+    it("反向控制：下界 220px 在 1100 那一档只站得下一条轨道", () => {
+      expect(
+        tracksIn(GRID_AT_1100, 220, gapPx()),
+        "220px 那版在 1100 那一档被算成不止一条轨道 —— 尺子坏了，上面那格的绿不算数",
+      ).toBe(1);
+    });
+
+    /**
+     * **反向控制（下沿）：压到窗口以下 ⇒ 尺子当场看得见。**
+     * 只钉上沿的话「下界写 60px」同样全绿，而那会在宽档挤出一排读不了的窄轨道。
+     */
+    it("反向控制：下界 176px 会让 1440 那一档挤出三条比标签还窄的轨道", () => {
+      const gap = gapPx();
+      const n = tracksIn(GRID_AT_1440, 176, gap);
+      expect(n, "176px 那版在 1440 那一档没被算成三条轨道 —— 尺子坏了").toBe(3);
+      expect(
+        trackWidth(GRID_AT_1440, n, gap),
+        "176px 那版算出来的轨道宽没有低于标签宽 —— 上面那格的下沿是摆设",
+      ).toBeLessThan(WIDEST_LABEL);
+    });
+  });
 });
 
 /**
