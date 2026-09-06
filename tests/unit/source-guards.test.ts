@@ -2371,21 +2371,55 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
    * 🔴 **上一轮就是在这里栽的**：那一轮只在 1440 一档量过、看见两列就收工，
    * 而用户在更窄的那一档看到的是单列。⇒ 这一族的两个输入刻意取**两档**。
    *
-   * 下面三个数都是真机量出来的（无头 Chromium + 假接口，六档视口；量法与整张
-   * 六档表写在这一轮的提交信息里，**这里只留判据要用的三个数**）：
-   * 1100 那一档设置页那张卡里网格宽 382px、1440 那一档 552px、
-   * 那张卡里最宽的一条中文标签要 183px（末尾那个「）」前面断不开，
-   * 轨道比它窄时那一个字符会挂到轨道外面去）。
+   * 🔴 **第二次栽的地方（这一轮修的）：上一版只喂 1440 一档、只拿简体中文一门语言。**
+   * 两处射程都标错了：
+   * ① **1440 不是约束档**。按今天的下界真机量到的轨道宽是
+   *    1920→192、1440→272、1280→232、1100→187、900→282、600→314
+   *    ——最窄的是 1100 与 1920，1440 反而是最宽的几档之一。上一版之所以还能咬住
+   *    几个变异，是因为下界继续往下掉时 1440 会先翻成三轨，**纯属巧合**。
+   *    ⇒ 这一版把**每一档都算一遍**，取最窄的那条轨道去比。
+   * ② **语言轴整个不在判据里**。上一版那个 183px 是简体中文的最宽标签，而同一批
+   *    字段 en 要 261px、ja 要 352px ⇒ 拿它当门槛等于只覆盖五分之一。
    *
-   * **这一族接不住什么，明写**：它是纯文本扫描，不渲染、量不到像素。它假设上面
-   * 那三个数今天仍然成立——换字号、换侧栏宽、换卡的内边距都会让它们过期。
-   * 那一天该**重新量一次再改这里的数**，不是把断言删掉。
+   * 下面的数都是真机量出来的（无头 Chromium + **本地起真服务**，八档视口 × 五语言 ×
+   * 设置页与注册机分页；整张表写在这一轮的提交信息里，这里只留判据要用的那几个）。
+   *
+   * ⚠️ **下沿的口径这一轮换了，别照旧读成「轨道不许比标签窄」。** 旧口径写的是
+   * 「轨道比最宽的标签窄时那个字会挂到轨道外面」——真机逐像素扫过，**那是假的**：
+   * 那批 `scrollWidth > clientWidth` 的标签末尾都是全角「）」，它的字身宽算进了
+   * scrollWidth 而墨迹只占左半个字身，实测墨迹**落在格子里 5–8.5px**，一个像素都没出去
+   *（同一把尺子对着真溢出的对照组读到 +55.75px，所以不是尺子瞎）。
+   * 新口径改成**折行数**：轨道再窄，标签也只是多折一行，而多折行是有代价的
+   *（每张卡变高、一行里各格高度被最高的那格拉齐）。真机量到的拐点很干脆——
+   * 轨道 ≥ 177px 时五种语言的标签**最多折 2 行**，176px 时 ja 有一条翻到 3 行。
+   * ⇒ 下沿钉 177。
    */
   describe("卡内网格的轨道下界：落在真机量出来的那个窗口里", () => {
-    /** 真机量的三个数，出处见上面那段。 */
-    const GRID_AT_1100 = 382;
-    const GRID_AT_1440 = 552;
-    const WIDEST_LABEL = 183;
+    /**
+     * 每一档视口下，卡内网格量到的宽与那张网格里的格数。
+     * **两页都收**：设置页那两张卡、注册机分页的旋钮网格与两张通道子卡。
+     * `auto-fit` 会把空轨道塌掉 ⇒ 实际轨道数是「装得下几条」与「有几格」的较小者，
+     * 所以格数必须跟着网格宽一起记，只记宽会把 2 格的通道子卡算成 4 轨。
+     */
+    const MEASURED: Array<{ dock: number; grid: number; cells: number }> = [
+      { dock: 1920, grid: 792, cells: 9 }, { dock: 1920, grid: 1634, cells: 11 }, { dock: 1920, grid: 775, cells: 2 },
+      { dock: 1440, grid: 552, cells: 9 }, { dock: 1440, grid: 1154, cells: 11 }, { dock: 1440, grid: 535, cells: 2 },
+      { dock: 1280, grid: 472, cells: 9 }, { dock: 1280, grid: 994, cells: 11 }, { dock: 1280, grid: 455, cells: 2 },
+      { dock: 1100, grid: 382, cells: 9 }, { dock: 1100, grid: 814, cells: 11 }, { dock: 1100, grid: 365, cells: 2 },
+      { dock: 900, grid: 282, cells: 9 }, { dock: 900, grid: 614, cells: 11 }, { dock: 900, grid: 265, cells: 2 },
+      { dock: 600, grid: 314, cells: 9 }, { dock: 600, grid: 314, cells: 11 }, { dock: 600, grid: 280, cells: 2 },
+    ];
+    /**
+     * 用户报的那一档那张网格：1100 视口下设置页「上游与冷却」卡里的网格宽 382px。
+     * **它必须站得下两条轨道**——被报的缺陷就是这一格塌成了九行一列。
+     */
+    const NARROW_TWO_COL = MEASURED.find((m) => m.dock === 1100 && m.grid === 382)!;
+    /**
+     * 轨道宽的下限：真机量到「五语言的标签都还折得进 2 行」的最窄轨道。
+     * 176px 时 ja 的「プールスナップショットのキャッシュ（ミリ秒、0 = 無効）」翻到 3 行。
+     * **这是折行数的拐点，不是某一条标签的像素宽**——它不随某一门语言的文案长短漂。
+     */
+    const MIN_TRACK = 177;
 
     /** 网格的 gap 走 `--gap-sm`。**不在这里手抄一份数**，从 base.css 读。 */
     function gapPx(): number {
@@ -2409,36 +2443,52 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
         });
     }
 
-    /** 容器宽 `w` 里站得下几条下界为 `b` 的轨道（`auto-fit` 的算法，gap 算在里面）。 */
-    const tracksIn = (w: number, b: number, gap: number) => Math.floor((w + gap) / (b + gap));
+    /**
+     * 网格宽 `w`、格数 `cells` 里最终站几条下界为 `b` 的轨道。
+     * `auto-fit` 先按下界算「装得下几条」，再把没有格子占的空轨道塌掉 ⇒ 取两者较小者。
+     */
+    const tracksIn = (w: number, cells: number, b: number, gap: number) =>
+      Math.max(1, Math.min(cells, Math.floor((w + gap) / (b + gap))));
     /** 站了 `n` 条时每条多宽。 */
     const trackWidth = (w: number, n: number, gap: number) => (w - (n - 1) * gap) / n;
+    /** 下界为 `b` 时，六档 × 两页里**最窄**的那条轨道（连同它出自哪一档）。 */
+    function narrowestTrack(b: number, gap: number) {
+      let worst = { px: Infinity, dock: 0, grid: 0, tracks: 0 };
+      for (const m of MEASURED) {
+        const n = tracksIn(m.grid, m.cells, b, gap);
+        const px = trackWidth(m.grid, n, gap);
+        if (px < worst.px) worst = { px, dock: m.dock, grid: m.grid, tracks: n };
+      }
+      return worst;
+    }
 
-    it("下界既不许大到让 1100 那一档塌回单列，也不许小到让 1440 那一档挤出比标签还窄的轨道", () => {
+    it("下界既不许大到让 1100 那一档塌回单列，也不许小到让任何一档的轨道窄过折行拐点", () => {
       const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
       const gap = gapPx();
       const bounds = boundsPx(css);
       expect(bounds.length, "一个 px 下界都没抠到 —— 下面几条比的是空集").toBeGreaterThan(0);
 
-      // 前置事实：1100 那一档两条轨道真的容得下最宽的那条标签。
-      // 不成立的话这个窗口本身就是错的，下面两条断言在比一件做不到的事。
+      // 前置事实：1100 那一档的两条轨道真的宽过折行拐点。
+      // 不成立的话这个窗口本身是空的，下面两条断言在比一件做不到的事。
       expect(
-        trackWidth(GRID_AT_1100, 2, gap),
-        "1100 那一档两条轨道每条都装不下最宽的那条标签 —— 这个窗口的前提已经不成立，回去重新量",
-      ).toBeGreaterThanOrEqual(WIDEST_LABEL);
+        trackWidth(NARROW_TWO_COL.grid, 2, gap),
+        `1100 那一档（网格 ${NARROW_TWO_COL.grid}px）两条轨道每条都窄过 ${MIN_TRACK}px`
+        + " —— 这个窗口的前提已经不成立，回去重新量",
+      ).toBeGreaterThanOrEqual(MIN_TRACK);
 
       for (const b of bounds) {
+        const n1100 = tracksIn(NARROW_TWO_COL.grid, NARROW_TWO_COL.cells, b, gap);
         expect(
-          tracksIn(GRID_AT_1100, b, gap),
-          `下界 ${b}px 太大：1100 那一档（网格宽 ${GRID_AT_1100}px、gap ${gap}px）只站得下`
-          + ` ${tracksIn(GRID_AT_1100, b, gap)} 条轨道 —— 那一档会塌回单列，正是被报的那个缺陷`,
+          n1100,
+          `下界 ${b}px 太大：1100 那一档（网格宽 ${NARROW_TWO_COL.grid}px、gap ${gap}px）只站得下`
+          + ` ${n1100} 条轨道 —— 那一档会塌回单列，正是被报的那个缺陷`,
         ).toBeGreaterThanOrEqual(2);
-        const n1440 = tracksIn(GRID_AT_1440, b, gap);
+        const w = narrowestTrack(b, gap);
         expect(
-          trackWidth(GRID_AT_1440, n1440, gap),
-          `下界 ${b}px 太小：1440 那一档会站 ${n1440} 条轨道、每条`
-          + ` ${trackWidth(GRID_AT_1440, n1440, gap)}px，比最宽那条标签的 ${WIDEST_LABEL}px 还窄`,
-        ).toBeGreaterThanOrEqual(WIDEST_LABEL);
+          w.px,
+          `下界 ${b}px 太小：${w.dock} 那一档（网格 ${w.grid}px）会站 ${w.tracks} 条轨道、`
+          + `每条 ${w.px}px，窄过折行拐点 ${MIN_TRACK}px —— 那一档起标签要折到 3 行`,
+        ).toBeGreaterThanOrEqual(MIN_TRACK);
       }
     });
 
@@ -2448,24 +2498,74 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
      */
     it("反向控制：下界 220px 在 1100 那一档只站得下一条轨道", () => {
       expect(
-        tracksIn(GRID_AT_1100, 220, gapPx()),
+        tracksIn(NARROW_TWO_COL.grid, NARROW_TWO_COL.cells, 220, gapPx()),
         "220px 那版在 1100 那一档被算成不止一条轨道 —— 尺子坏了，上面那格的绿不算数",
       ).toBe(1);
     });
 
     /**
      * **反向控制（下沿）：压到窗口以下 ⇒ 尺子当场看得见。**
-     * 只钉上沿的话「下界写 60px」同样全绿，而那会在宽档挤出一排读不了的窄轨道。
+     * 只钉上沿的话「下界写 60px」同样全绿，而那会挤出一排要折三行的窄轨道。
+     * 🔴 **这一格同时钉住上一版标错的那个射程**：150px 这个变异在**1440 那一档是绿的**
+     *（那一档仍是 3 轨 178.67px，宽过拐点），只有把每一档都算过才看得见它
+     * —— 最窄的那条出在 1920 档。上一版只喂 1440 ⇒ 它会放这个变异过去。
      */
-    it("反向控制：下界 176px 会让 1440 那一档挤出三条比标签还窄的轨道", () => {
+    it("反向控制：下界 150px 挤出的最窄轨道窄过折行拐点，而且出在 1920 那一档、不在 1440", () => {
       const gap = gapPx();
-      const n = tracksIn(GRID_AT_1440, 176, gap);
-      expect(n, "176px 那版在 1440 那一档没被算成三条轨道 —— 尺子坏了").toBe(3);
+      const w = narrowestTrack(150, gap);
+      expect(w.px, "150px 那版算出来的最窄轨道没有低于折行拐点 —— 上面那格的下沿是摆设").toBeLessThan(MIN_TRACK);
+      expect(w.dock, "最窄的那条不在 1920 档 —— 这一格自称的射程说错了，回去重新量").toBe(1920);
+      // 上一版只喂 1440：同一个变异在那一档是绿的 ⇒ 单档输入接不住它。
+      const at1440 = MEASURED.find((m) => m.dock === 1440 && m.grid === 552)!;
       expect(
-        trackWidth(GRID_AT_1440, n, gap),
-        "176px 那版算出来的轨道宽没有低于标签宽 —— 上面那格的下沿是摆设",
-      ).toBeLessThan(WIDEST_LABEL);
+        trackWidth(at1440.grid, tracksIn(at1440.grid, at1440.cells, 150, gap), gap),
+        "150px 那版在 1440 那一档也低于拐点了 —— 那这一格证不出「单档输入接不住」这件事",
+      ).toBeGreaterThanOrEqual(MIN_TRACK);
     });
+
+    /**
+     * **反向控制（格数）：`auto-fit` 把空轨道塌掉这件事必须在尺子里。**
+     * 不塌的话 1920 档那张两格的通道子卡（775px）会被算成 4 轨 187.75px，
+     * 而它真机上是 2 轨 384px —— 尺子会拿一个不存在的窄轨道去误判下界。
+     */
+    it("反向控制：两格的通道子卡在 1920 档是两条 384px 的轨道，不是四条", () => {
+      const gap = gapPx();
+      const sub = MEASURED.find((m) => m.dock === 1920 && m.cells === 2)!;
+      const n = tracksIn(sub.grid, sub.cells, 180, gap);
+      expect(n, "空轨道没被塌掉 —— 尺子把 2 格算成了多轨").toBe(2);
+      expect(Math.round(trackWidth(sub.grid, n, gap)), "算出来的轨道宽对不上真机量到的 384px").toBe(384);
+    });
+  });
+
+  /**
+   * ── 标签的折行兜底 ─────────────────────────────────────────────────────────
+   *
+   * 上面那一族管的是**轨道有多宽**，这一格管的是**标签装不下时怎么办**。
+   * 两件事必须都在：轨道宽只保证「常见档位够用」，而窄到 380px 的视口上
+   * 那张卡只剩 76px 可用，任何下界都救不了——那时唯一还起作用的是让词能断开。
+   * 真机量过（八档 × 五语言）：断不开的最长一段是 en 的 79px，380px 视口下轨道 76px
+   * ⇒ 真的画到格子外面；`overflow-wrap: anywhere` 把这个数压到 13–14px。
+   *
+   * 🔴 用 `cssRulesMentioning()` 而不是 `cssRuleBody()`：这一条是「**有没有哪条规则
+   * 把它关掉**」的性质，别人再写一条 `.cfg-grid .cfg-label { overflow-wrap: normal }`
+   * 同样能压过来，只看逐字相等的那一条会漏。
+   */
+  it("标签允许断在任意处 —— 断不开的长词不许画到格子外面", () => {
+    const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+    const affecting = cssRulesMentioning(css, ".cfg-label");
+    expect(affecting, "一条写得到 .cfg-label 的规则都没有 —— 抠法坏了").not.toBeNull();
+    const wraps = declarations(affecting!).filter((d) => d.prop === "overflow-wrap" || d.prop === "word-break");
+    expect(
+      wraps.length,
+      `写得到 .cfg-label 的规则里一条 overflow-wrap / word-break 都没有（抠到的是 \`${affecting!.trim()}\`）`
+      + " —— 380px 视口下 en 的长词会画到格子外面",
+    ).toBeGreaterThan(0);
+    // **最后一条说了算**（同特指度下后写的赢），而 `normal` 就是「关掉」。
+    const last = wraps[wraps.length - 1]!;
+    expect(
+      last.value,
+      `最后一条 ${last.prop} 是 \`${last.value}\` —— 那等于把兜底关掉了`,
+    ).toMatch(/anywhere|break-word|break-all/);
   });
 });
 
