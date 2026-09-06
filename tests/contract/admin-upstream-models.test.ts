@@ -339,4 +339,35 @@ describe("传输失败分三档：响应头没来 / 正文没来 / 根本连不�
     expect(await (await call(app)).json())
       .toMatchObject({ ok: false, status: 200, reason: "bad_payload" });
   });
+
+  /**
+   * 🔴 **回填一条评审发现：上一格的反向自检只覆盖了「JSON 解得开、形状不对」，
+   * 漏掉了「JSON 压根解不开」。**
+   *
+   * `res.json()` 是 `text()` 之后 `JSON.parse()`，**两个阶段的失败落在同一个
+   * `catch` 里**。于是「正文完整落地、但它不是 JSON」被说成了 `body_incomplete`，
+   * 而那句文案逐字是「正文却没有完整落地（**超时或中途断流**）」
+   *（`admin-ui/js/i18n-dict.js` 的 `models.up.bodyIncomplete`）——
+   * 这一档正文一个字节都没少，超时没发生、断流也没发生。
+   *
+   * ⇒ 上一轮修的是「拿一件**传输失败**去冒充一句关于**那份内容**的话」，
+   * 这一格钉住反方向：**不许拿一句传输失败去冒充一件关于那份内容的事**。
+   * 中间代理回 HTML 错误页 / 网关登录页这一类，在真实链路上比「正文读到一半 reset」
+   * 常见得多，而 `bad_payload` 那句「上游回了，但那份内容本网关看不懂」对它逐字成立
+   * ⇒ **不需要第四档，也不需要新增五语言 key**。
+   *
+   * 变异实测：把 handler 里 `text()` / `JSON.parse()` 那两个 try 并回一个
+   *（即改回 `await res.json()`）⇒ 这一格当场红（收到 `body_incomplete`）。
+   */
+  it("正文完整落地、但它压根不是 JSON ⇒ bad_payload —— 传输没失败，不许说成正文没落地", async () => {
+    const { app } = await makeApp(
+      // 中间代理 / 网关最常见的那一种：200 带着一整页 HTML 错误页。
+      [{ status: 200, body: "<html>upstream proxy error page</html>" }],
+      ["sk-up-not-json-0001"], {}, () => NOW,
+    );
+
+    // `status: 200` 一并钉住：这一档响应头带着 200 落过地，不是 `timeout` 那个 `null`。
+    expect(await (await call(app)).json())
+      .toMatchObject({ ok: false, status: 200, reason: "bad_payload" });
+  });
 });

@@ -1339,10 +1339,33 @@ BANNER='[collection-guard] ✅'
 #     共用同一句文案」那格当场红。
 #   ⇒ Node：4661 + 6 + 1 + 1 = 4669；文件数不动（三处都加在既有文件里）。
 #   ⇒ workerd：727 + 6 = 733（契约用例双运行时各跑一遍）；文件数不动。
+# 🔴 **这一轮（回填一条评审发现）：上一格拆分把边界反着跨了一次 —— 拿一句**传输失败**
+#   去冒充一件关于**那份内容**的事。**
+#   · `res.json()` = `text()` 之后 `JSON.parse()`，上一轮把**两个阶段的失败**收进了
+#     同一个 `catch` ⇒「正文完整落地、但它不是 JSON」（中间代理回的 HTML 错误页 /
+#     网关登录页，真实链路上比「读到一半 reset」常见得多）被说成 `body_incomplete`，
+#     而那句文案逐字是「正文却没有完整落地（超时或中途断流）」：正文一个字节都没少。
+#   · 修法是**两个 `await`**：`text()` 的失败才是传输失败，`JSON.parse()` 的失败
+#     与「形状不对」同属一句话 ⇒ 共用既有的 `bad_payload`。
+#     ⚠️ **不新增第四档、不新增五语言 key**：`models.up.badPayload`（「上游回了，但那份
+#     内容本网关看不懂」）对这一档逐字成立。这一点是硬约束——gzip 现算 391598/393216
+#     ＝ 99.59%，只剩 1618 字节，本轮不许动 MAX_GZIP。
+#     ⇒ 后端 reason 字面量全集**不变**，`tests/ui/models.test.ts` 那格手写全集
+#     `[bad_payload, body_incomplete, network_error, no_key, timeout, upstream_error]`
+#     一个字不动；面板、字典、生成物一律零改动（`pnpm ui:build` 后 `git diff` 干净）。
+#   格数：`tests/contract/admin-upstream-models.test.ts` **+1**（上游 200 + 正文
+#     `<html>upstream proxy error page</html>` ⇒ `bad_payload` 且 `status: 200`；
+#     放在那组反向自检旁边，补上它漏掉的「JSON 压根解不开」那一半——
+#     原有三格 `bad_payload` 喂的全是**合法 JSON**）。
+#   变异实测（两个方向都钉住）：把两个 try 并回一个（改回 `await res.json()`）
+#     ⇒ 新增那格当场红（收到 `body_incomplete`）；把 `text()` 那档的 `body_incomplete`
+#     改成 `bad_payload` ⇒ 「正文永不落地」「正文中途断流」两格当场红（实跑 2 failed）。
+#   ⇒ Node：4669 + 1 = 4670；文件数不动（加在既有文件里）。
+#   ⇒ workerd：733 + 1 = 734（契约用例双运行时各跑一遍）；文件数不动。
 EXPECT_NODE_FILES=151
-EXPECT_NODE_TESTS=4669
+EXPECT_NODE_TESTS=4670
 EXPECT_WORKERS_FILES=39
-EXPECT_WORKERS_TESTS=733
+EXPECT_WORKERS_TESTS=734
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

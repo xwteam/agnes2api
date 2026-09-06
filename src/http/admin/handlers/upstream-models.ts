@@ -145,13 +145,34 @@ export function upstreamModelsHandler(deps: UpstreamModelsDeps) {
       // 响应头」、`models.up.networkError` 说「这次请求没有拿到任何响应」），
       // 而这里响应头已经带着状态码落地了。⇒ 正文阶段是**第三档**，有自己的 code。
       // ⚠️ 异常本身一个字都不进响应：断流异常里常带着上游 URL 与整条请求信息。
-      let payload: unknown;
+      //
+      // 🔴 **两个阶段必须是两个 `await`**（回填一条评审发现）。原来这里是单个
+      // `await res.json()` 配单个 `catch`：`res.json()` 是 `text()` 之后 `JSON.parse()`,
+      // **两个阶段的失败落进同一个出口** ⇒ 上一处修正的边界被反着跨了一次——
+      // 「正文完整落地、但它不是 JSON」（中间代理回的 HTML 错误页 / 网关登录页，
+      // 真实链路上比「读到一半 reset」常见得多）被说成了 `body_incomplete`，
+      // 而那句文案逐字是「正文却没有完整落地（超时或中途断流）」：正文一个字节都没少。
+      // ⇒ 边界画在两句话之间：**没拿到**是传输的事，**看不懂**是那份内容的事。
+      let text: string;
       try {
-        payload = await res.json();
+        // 只有这一段的失败是传输失败：正文没有完整落地（超时 / 中途断流）。
+        text = await res.text();
       } catch {
         return c.json({
           ok: false, status: res.status, latencyMs: deps.now() - startedAt,
           reason: "body_incomplete", models: null,
+        });
+      }
+      let payload: unknown;
+      try {
+        // 这一段的失败是「那份内容本网关看不懂」——正文完整到手了，只是解不开。
+        // 与下面 `parseUpstreamModels()` 那一档同属一句话，**共用 `bad_payload`**，
+        // 不新增第四档：`models.up.badPayload` 逐字对这一档成立。
+        payload = JSON.parse(text);
+      } catch {
+        return c.json({
+          ok: false, status: res.status, latencyMs: deps.now() - startedAt,
+          reason: "bad_payload", models: null,
         });
       }
       const parsed = parseUpstreamModels(payload);
