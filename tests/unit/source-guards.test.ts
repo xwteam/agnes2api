@@ -2245,6 +2245,27 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
     return out;
   }
 
+  /**
+   * `minmax(下界, 上界)` 里那些**上界的原文**，一个 `minmax(` 一条。
+   * 括号深度感知与上面同源：从下界那个逗号之后收到与 `minmax(` 配对的那个右括号。
+   */
+  function minmaxUpperBounds(value: string): string[] {
+    const out: string[] = [];
+    const head = "minmax(";
+    for (let i = value.indexOf(head); i !== -1; i = value.indexOf(head, i + 1)) {
+      let depth = 0, comma = -1, j = i + head.length;
+      for (; j < value.length; j++) {
+        const c = value[j];
+        if (c === "(") depth++;
+        else if (c === ")") { if (depth === 0) break; depth--; }
+        else if (c === "," && depth === 0 && comma === -1) comma = j;
+      }
+      if (comma === -1 || j >= value.length) throw new Error(`认不出 minmax() 的上界（原文 \`${value}\`）—— 先回来改抠法`);
+      out.push(value.slice(comma + 1, j).trim());
+    }
+    return out;
+  }
+
   /** 一条下界「会顶穿」= 它不是 `min(…)` 形态，或者那个 `min()` 里没有 `100%` 这一支。 */
   function hardBounds(bounds: readonly string[]): string[] {
     return bounds.filter((b) => !(b.startsWith("min(") && b.includes("100%")));
@@ -2360,67 +2381,49 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
   });
 
   /**
-   * ── 轨道下界那个**数**：一个人同时决定两件事 ───────────────────────────────
+   * ── 列数：**恰好两列**，以及窄到多少落回一列 ────────────────────────────────
    *
-   * 上面那几格管的是**写法**（裸 px 会顶穿），这一族管的是**取值**。
-   * `repeat(auto-fit, minmax(min(下界, 100%), 1fr))` 里那个下界既决定窄容器里
-   * 还剩几条轨道，也决定每条轨道最少多宽：往大调，窄档提前塌回单列（用户报的
-   * 正是这一条 —— 那一档九格字段一格一行）；往小调，宽档挤出比标签还窄的轨道。
-   * ⇒ 它有一个**窗口**，两头都得钉，只钉一头等于没钉。
+   * 上面那几格管的是**写法**（裸 px 会顶穿），这一族管的是**排布**。
    *
-   * 🔴 **上一轮就是在这里栽的**：那一轮只在 1440 一档量过、看见两列就收工，
-   * 而用户在更窄的那一档看到的是单列。⇒ 这一族的两个输入刻意取**两档**。
+   * 🔴 **这一轮之前这一族的前提是错的。** 它按 `auto-fit` 的原语义写：下界是纯 px、
+   * 「一行站几条」由卡宽与下界的比值决定，于是判据只钉了「别太大（窄档别塌回一列）」
+   * 与「别太小（轨道别窄过折行拐点）」两头，**中间站三列还是八列它一个字都没说**。
+   * 真机量到的就是这个：1920 档「上游与冷却」3 列、注册机旋钮 8 列，只有 1440/1100
+   * 两档凑巧是两列 —— 而要的一直是**左右两列，恰好两个**。
+   * ⇒ 下界里加了一条相对卡宽的 `40%` 项（为什么是这个数、窗口两头各在哪，写在
+   *   `admin-ui/css/sections.css` 的 `.cfg-grid` 上方，那里是这些数的家，这里不复述）。
+   *   这一族因此改成钉三件事：**恒不超过两列**、**够宽就是两列**、**不够时落回一列**。
    *
-   * 🔴 **第二次栽的地方（这一轮修的）：上一版只喂 1440 一档、只拿简体中文一门语言。**
-   * 两处射程都标错了：
-   * ① **1440 不是约束档**。按今天的下界真机量到的轨道宽是
-   *    1920→192、1440→272、1280→232、1100→187、900→282、600→314
-   *    ——最窄的是 1100 与 1920，1440 反而是最宽的几档之一。上一版之所以还能咬住
-   *    几个变异，是因为下界继续往下掉时 1440 会先翻成三轨，**纯属巧合**。
-   *    ⇒ 这一版把**每一档都算一遍**，取最窄的那条轨道去比。
-   * ② **语言轴整个不在判据里**。上一版那个 183px 是简体中文的最宽标签，而同一批
-   *    字段 en 要 261px、ja 要 352px ⇒ 拿它当门槛等于只覆盖五分之一。
-   *
-   * 下面的数都是真机量出来的（无头 Chromium + **本地起真服务**，八档视口 × 五语言 ×
-   * 设置页与注册机分页；整张表写在这一轮的提交信息里，这里只留判据要用的那几个）。
-   *
-   * ⚠️ **下沿的口径这一轮换了，别照旧读成「轨道不许比标签窄」。** 旧口径写的是
-   * 「轨道比最宽的标签窄时那个字会挂到轨道外面」——真机逐像素扫过，**那是假的**：
-   * 那批 `scrollWidth > clientWidth` 的标签末尾都是全角「）」，它的字身宽算进了
-   * scrollWidth 而墨迹只占左半个字身，实测墨迹**落在格子里 5–8.5px**，一个像素都没出去
-   *（同一把尺子对着真溢出的对照组读到 +55.75px，所以不是尺子瞎）。
-   * 新口径改成**折行数**：轨道再窄，标签也只是多折一行，而多折行是有代价的
-   *（每张卡变高、一行里各格高度被最高的那格拉齐）。真机量到的拐点很干脆——
-   * 轨道 ≥ 177px 时五种语言的标签**最多折 2 行**，176px 时 ja 有一条翻到 3 行。
-   * ⇒ 下沿钉 177。
+   * **这一族接不住什么，明写**：它是纯文本扫描 + 一把按 `auto-fit` 规则算的算尺，
+   * 不渲染、量不到像素。`MEASURED` 里的宽与列数是真机量出来的常量（无头 Chromium +
+   * 本地起真服务，六档视口 × 五语言 × 设置页与注册机分页），算尺与真机对不上时它会红，
+   * 但「今天真机长什么样」它自己看不见。
    */
-  describe("卡内网格的轨道下界：落在真机量出来的那个窗口里", () => {
+  describe("卡内网格：够宽恰好两列，不够落回一列", () => {
     /**
-     * 每一档视口下，卡内网格量到的宽与那张网格里的格数。
+     * 每一档视口下，卡内网格量到的宽、那张网格里的格数、以及**真机上真的排了几列**。
      * **两页都收**：设置页那两张卡、注册机分页的旋钮网格与两张通道子卡。
-     * `auto-fit` 会把空轨道塌掉 ⇒ 实际轨道数是「装得下几条」与「有几格」的较小者，
-     * 所以格数必须跟着网格宽一起记，只记宽会把 2 格的通道子卡算成 4 轨。
+     * `auto-fit` 会把空轨道塌掉 ⇒ 实际列数是「装得下几条」与「有几格」的较小者，
+     * 所以格数必须跟着网格宽一起记，只记宽会把 2 格的通道子卡算成 2 列以上。
+     * `cols` 是**交叉核对用的第二个量**：算尺算出来的列数与它对不上，
+     * 说明要么 CSS 改了、要么这张表过期了，两种都该当场红。
      */
-    const MEASURED: Array<{ dock: number; grid: number; cells: number }> = [
-      { dock: 1920, grid: 792, cells: 9 }, { dock: 1920, grid: 1634, cells: 11 }, { dock: 1920, grid: 775, cells: 2 },
-      { dock: 1440, grid: 552, cells: 9 }, { dock: 1440, grid: 1154, cells: 11 }, { dock: 1440, grid: 535, cells: 2 },
-      { dock: 1280, grid: 472, cells: 9 }, { dock: 1280, grid: 994, cells: 11 }, { dock: 1280, grid: 455, cells: 2 },
-      { dock: 1100, grid: 382, cells: 9 }, { dock: 1100, grid: 814, cells: 11 }, { dock: 1100, grid: 365, cells: 2 },
-      { dock: 900, grid: 282, cells: 9 }, { dock: 900, grid: 614, cells: 11 }, { dock: 900, grid: 265, cells: 2 },
-      { dock: 600, grid: 314, cells: 9 }, { dock: 600, grid: 314, cells: 11 }, { dock: 600, grid: 280, cells: 2 },
+    const MEASURED: Array<{ dock: number; grid: number; cells: number; cols: number }> = [
+      { dock: 1920, grid: 792, cells: 9, cols: 2 }, { dock: 1920, grid: 1634, cells: 11, cols: 2 }, { dock: 1920, grid: 775, cells: 2, cols: 2 },
+      { dock: 1440, grid: 552, cells: 9, cols: 2 }, { dock: 1440, grid: 1154, cells: 11, cols: 2 }, { dock: 1440, grid: 535, cells: 2, cols: 2 },
+      { dock: 1280, grid: 472, cells: 9, cols: 2 }, { dock: 1280, grid: 994, cells: 11, cols: 2 }, { dock: 1280, grid: 455, cells: 2, cols: 2 },
+      { dock: 1100, grid: 382, cells: 9, cols: 2 }, { dock: 1100, grid: 814, cells: 11, cols: 2 }, { dock: 1100, grid: 365, cells: 2, cols: 1 },
+      { dock: 900, grid: 282, cells: 9, cols: 1 }, { dock: 900, grid: 614, cells: 11, cols: 2 }, { dock: 900, grid: 265, cells: 2, cols: 1 },
+      { dock: 600, grid: 314, cells: 9, cols: 1 }, { dock: 600, grid: 314, cells: 11, cols: 1 }, { dock: 600, grid: 280, cells: 2, cols: 1 },
     ];
-    /**
-     * 用户报的那一档那张网格：1100 视口下设置页「上游与冷却」卡里的网格宽 382px。
-     * **它必须站得下两条轨道**——被报的缺陷就是这一格塌成了九行一列。
-     */
+
     /**
      * **输入新鲜度：`MEASURED` 里的 `cells` 必须还等于今天真实的字段数。**
      *
      * 🔴 上面那张表是**真机量出来的常量**，判据本身只做文本扫描、不渲染。
      * 于是它有一个自己看不见的死法：**给某张卡加一格字段之后，表里的 `cells` 还是旧值**，
-     * `narrowestTrack()` 拿一个不存在的排布去算下界，而这一族照样全绿。
-     * 已有的三格反向控制钉的都是**尺子本身**（220px / 150px / auto-fit 塌空轨道），
-     * 没有一格钉**输入的新鲜度**。
+     * 算尺拿一个不存在的排布去算列数，而这一族照样全绿。
+     * 其余几格反向控制钉的都是**尺子本身**，没有一格钉**输入的新鲜度**。
      *
      * ⇒ 这一格拿字段清单的真源现算今天几格，与表里的 `cells` 对。
      * **格数一变就说明宽度基线也该重量**——用格数当哨兵够用，宽度那一半量不到（要真浏览器）。
@@ -2443,7 +2446,7 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
       expect(
         today.上游与冷却,
         `「上游与冷却」今天 ${today.上游与冷却} 格，而 MEASURED 里记的是 9 —— `
-        + "字段增删了，那张表的网格宽也该在真浏览器里重量一遍再改数，别只改这个数字",
+        + "字段增删了，那张表的网格宽与列数也该在真浏览器里重量一遍再改数，别只改这个数字",
       ).toBe(9);
       expect(
         today.注册机,
@@ -2453,6 +2456,7 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
       expect(inTable, "MEASURED 里出现了没人解释的格数档位").toEqual([2, 9, 11]);
     });
 
+    /** 用户报的那一档那张网格：1100 视口下设置页「上游与冷却」卡里的网格宽 382px。 */
     const NARROW_TWO_COL = MEASURED.find((m) => m.dock === 1100 && m.grid === 382)!;
     /**
      * 轨道宽的下限：真机量到「五语言的标签都还折得进 2 行」的最窄轨道。
@@ -2469,111 +2473,265 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
       return Number(m![1]);
     }
 
-    /** 写得到 `.cfg-grid` 的**全部**规则里，那些下界的 px 数。 */
-    function boundsPx(css: string): number[] {
+    /**
+     * 一条轨道下界拆成两项：`px` 是硬项，`pct` 是相对卡宽的那一项（没有就是 `null`）。
+     * `min(…, 100%)` 那层包裹里的 `100%` 是**窄容器兜底**、不是列数项，按定义剔掉
+     * （它由上面「.cfg-grid 的 minmax() 下界裹着 min(…, 100%)」那一格单独钉着）。
+     * **认不出结构一律抛**：多一个 px 项或多一个百分比项时，「列数」这件事就不是
+     * 这把算尺算得清的了，返回一个猜出来的值等于让整族在一个错前提上继续绿。
+     */
+    function boundTerms(bound: string): { px: number; pct: number | null } {
+      const pxs = [...bound.matchAll(/(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+      const pcts = [...bound.matchAll(/(\d+(?:\.\d+)?)%/g)].map((m) => Number(m[1])).filter((v) => v !== 100);
+      if (pxs.length !== 1 || pcts.length > 1) {
+        throw new Error(`认不出下界 \`${bound}\` 的结构（${pxs.length} 个 px 项、${pcts.length} 个百分比项）—— 先回来改抠法`);
+      }
+      return { px: pxs[0]!, pct: pcts.length === 1 ? pcts[0]! / 100 : null };
+    }
+
+    /** 写得到 `.cfg-grid` 的**全部**规则里，那些 `minmax()` 下界拆出来的项。 */
+    function bounds(css: string): Array<{ px: number; pct: number | null }> {
       const affecting = cssRulesMentioning(css, ".cfg-grid");
       expect(affecting, "一条写得到 .cfg-grid 的规则都没有 —— 抠法坏了").not.toBeNull();
       return declarations(affecting!)
         .filter((d) => d.prop === "grid-template-columns")
         .flatMap((d) => minmaxLowerBounds(d.value))
-        .map((b) => {
-          const m = /(\d+(?:\.\d+)?)px/.exec(b);
-          if (m === null) throw new Error(`下界 \`${b}\` 里没有 px 长度 —— 先回来修抠法`);
-          return Number(m[1]);
-        });
+        .map(boundTerms);
     }
 
+    type Bound = { px: number; pct: number | null };
+    /** 卡宽 `w` 下这条下界解析出来的**实际轨道下限**。 */
+    const lowerAt = (w: number, b: Bound) => Math.min(w, Math.max(b.px, (b.pct ?? 0) * w));
     /**
-     * 网格宽 `w`、格数 `cells` 里最终站几条下界为 `b` 的轨道。
+     * 网格宽 `w`、格数 `cells` 时最终排几列。
      * `auto-fit` 先按下界算「装得下几条」，再把没有格子占的空轨道塌掉 ⇒ 取两者较小者。
      */
-    const tracksIn = (w: number, cells: number, b: number, gap: number) =>
-      Math.max(1, Math.min(cells, Math.floor((w + gap) / (b + gap))));
-    /** 站了 `n` 条时每条多宽。 */
+    const colsIn = (w: number, cells: number, b: Bound, gap: number) =>
+      Math.min(cells, Math.max(1, Math.floor((w + gap) / (lowerAt(w, b) + gap))));
+    /** 排 `n` 列时每列多宽。 */
     const trackWidth = (w: number, n: number, gap: number) => (w - (n - 1) * gap) / n;
-    /** 下界为 `b` 时，六档 × 两页里**最窄**的那条轨道（连同它出自哪一档）。 */
-    function narrowestTrack(b: number, gap: number) {
-      let worst = { px: Infinity, dock: 0, grid: 0, tracks: 0 };
-      for (const m of MEASURED) {
-        const n = tracksIn(m.grid, m.cells, b, gap);
-        const px = trackWidth(m.grid, n, gap);
-        if (px < worst.px) worst = { px, dock: m.dock, grid: m.grid, tracks: n };
+    /** 落回一列的临界卡宽：`2 × px + gap` 之下连两条最窄轨道都站不下。 */
+    const fallbackWidth = (b: Bound, gap: number) => 2 * b.px + gap;
+    /** 卡宽从 120 扫到 4000，`cells` 管够时排过的最多列数（连同它出在哪个宽度）。 */
+    function widestSweep(b: Bound, gap: number) {
+      let worst = { cols: 0, w: 0 };
+      for (let w = 120; w <= 4000; w++) {
+        const n = colsIn(w, 99, b, gap);
+        if (n > worst.cols) worst = { cols: n, w };
       }
       return worst;
     }
 
-    it("下界既不许大到让 1100 那一档塌回单列，也不许小到让任何一档的轨道窄过折行拐点", () => {
+    /**
+     * 🔴 **这一格是本轮的正题。** 「恰好两列」不是「在今天这几档卡宽上凑巧是两列」——
+     * 用户看见的三列五列正是后一种的产物。真正要成立的是**对任何卡宽都排不出第三列**。
+     * 它由下界里那条相对项保证：一行站 n 条要 `n × 下界 + (n−1) × gap ≤ W`，
+     * 下界含 `pct × W` 时 n=3 那个不等式要求 `pct ≤ (W − 2gap) / (3W) < 1/3`
+     * ⇒ **pct 超过 1/3 时三列对任何 W 都不成立**，这个结论不带卡宽。
+     * 代数与逐宽扫描两条都留着：代数说的是「为什么恒成立」，扫描说的是「今天真的成立」。
+     */
+    it("任何卡宽下都排不出第三列 —— 这是列数不随卡宽漂的那一半", () => {
       const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
       const gap = gapPx();
-      const bounds = boundsPx(css);
-      expect(bounds.length, "一个 px 下界都没抠到 —— 下面几条比的是空集").toBeGreaterThan(0);
-
-      // 前置事实：1100 那一档的两条轨道真的宽过折行拐点。
-      // 不成立的话这个窗口本身是空的，下面两条断言在比一件做不到的事。
-      expect(
-        trackWidth(NARROW_TWO_COL.grid, 2, gap),
-        `1100 那一档（网格 ${NARROW_TWO_COL.grid}px）两条轨道每条都窄过 ${MIN_TRACK}px`
-        + " —— 这个窗口的前提已经不成立，回去重新量",
-      ).toBeGreaterThanOrEqual(MIN_TRACK);
-
-      for (const b of bounds) {
-        const n1100 = tracksIn(NARROW_TWO_COL.grid, NARROW_TWO_COL.cells, b, gap);
+      const bs = bounds(css);
+      expect(bs.length, "一条 minmax() 下界都没抠到 —— 下面几条比的是空集").toBeGreaterThan(0);
+      for (const b of bs) {
         expect(
-          n1100,
-          `下界 ${b}px 太大：1100 那一档（网格宽 ${NARROW_TWO_COL.grid}px、gap ${gap}px）只站得下`
-          + ` ${n1100} 条轨道 —— 那一档会塌回单列，正是被报的那个缺陷`,
-        ).toBeGreaterThanOrEqual(2);
-        const w = narrowestTrack(b, gap);
+          b.pct,
+          `下界 ${b.px}px 里没有相对卡宽的那一项 —— 列数就又回到「卡宽 ÷ 下界」，`
+          + "卡一变宽当场冒出第三列（上一版真机量到 1920 档注册机排了 8 列）",
+        ).not.toBeNull();
         expect(
-          w.px,
-          `下界 ${b}px 太小：${w.dock} 那一档（网格 ${w.grid}px）会站 ${w.tracks} 条轨道、`
-          + `每条 ${w.px}px，窄过折行拐点 ${MIN_TRACK}px —— 那一档起标签要折到 3 行`,
+          b.pct!,
+          `相对项 ${(b.pct! * 100).toFixed(1)}% 没超过 1/3：三列要 3 × pct × W + 2 × gap ≤ W，`
+          + "pct ≤ 1/3 时它在够宽的卡上就成立了 —— 第三列会回来",
+        ).toBeGreaterThan(1 / 3);
+        const worst = widestSweep(b, gap);
+        expect(
+          worst.cols,
+          `卡宽 ${worst.w}px 时这条下界排了 ${worst.cols} 列 —— 「恰好两列」不成立`,
+        ).toBeLessThanOrEqual(2);
+      }
+    });
+
+    /**
+     * 每一档真机基线上，算尺算出来的列数必须与**真机真的排了几列**逐行相等。
+     * 上一格钉的是「不超过两列」——全档一列同样满足它，而那是分列之前的样子。
+     */
+    it("够宽的那几档恰好两列，不够的那几档一列", () => {
+      const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+      const gap = gapPx();
+      const bs = bounds(css);
+      for (const b of bs) {
+        const wide = fallbackWidth(b, gap);
+        const mismatch = MEASURED
+          .map((m) => ({ m, n: colsIn(m.grid, m.cells, b, gap) }))
+          .filter(({ m, n }) => n !== m.cols);
+        expect(
+          mismatch.map(({ m, n }) => `${m.dock} 档 ${m.grid}px/${m.cells} 格：算尺说 ${n} 列、真机是 ${m.cols} 列`),
+          "算尺与真机基线对不上 —— 要么 CSS 的下界改了、要么这张表过期了，两种都得回真浏览器重量",
+        ).toEqual([]);
+        // 「够宽」与「不够」各自真的都有样本，否则上面那条比的是一件没发生的事。
+        const twoCol = MEASURED.filter((m) => m.grid >= wide && m.cells >= 2);
+        const oneCol = MEASURED.filter((m) => m.grid < wide);
+        expect(twoCol.length, `没有一档卡宽够得上 ${wide}px —— 「两列」在今天的面板上一档都没发生`).toBeGreaterThan(0);
+        expect(oneCol.length, `没有一档卡宽低于 ${wide}px —— 「落回一列」这一半没有样本`).toBeGreaterThan(0);
+        expect(
+          twoCol.filter((m) => m.cols !== 2).map((m) => `${m.dock} 档 ${m.grid}px`),
+          `这几档卡宽够 ${wide}px 却没排成两列`,
+        ).toEqual([]);
+        expect(
+          oneCol.filter((m) => m.cols !== 1).map((m) => `${m.dock} 档 ${m.grid}px`),
+          `这几档卡宽不够 ${wide}px 却排了不止一列`,
+        ).toEqual([]);
+      }
+    });
+
+    /**
+     * 落回一列那个阈值的**窗口**，两头都得钉，只钉一头等于没钉：
+     * · 下沿：阈值 = `2 × px + gap` ⇒ 排成两列时每列至少 `px` 宽，
+     *   `px` 低过折行拐点时「落回一列」之前会先排出一对要折三行的窄列；
+     * · 上沿：`px` 大到让 1100 那一档（网格 382px）站不下两列 —— 那正是被报过的缺陷。
+     */
+    it("落回一列的阈值落在折行拐点与 1100 那一档之间", () => {
+      const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+      const gap = gapPx();
+      for (const b of bounds(css)) {
+        expect(
+          b.px,
+          `下界 ${b.px}px 低过折行拐点 ${MIN_TRACK}px：卡宽刚够 ${fallbackWidth(b, gap)}px 时会排出`
+          + ` 两条 ${b.px}px 的轨道，那一档起五语言里有标签要折到 3 行`,
+        ).toBeGreaterThanOrEqual(MIN_TRACK);
+        expect(
+          colsIn(NARROW_TWO_COL.grid, NARROW_TWO_COL.cells, b, gap),
+          `下界 ${b.px}px 太大：1100 那一档（网格宽 ${NARROW_TWO_COL.grid}px、gap ${gap}px）`
+          + " 站不下两列 —— 那一档会落回一列，正是被报的那个缺陷",
+        ).toBe(2);
+        // 前置事实：1100 那一档的两条轨道真的宽过折行拐点。不成立的话窗口本身是空的。
+        expect(
+          trackWidth(NARROW_TWO_COL.grid, 2, gap),
+          `1100 那一档（网格 ${NARROW_TWO_COL.grid}px）两列每列都窄过 ${MIN_TRACK}px`
+          + " —— 这个窗口的前提已经不成立，回去重新量",
         ).toBeGreaterThanOrEqual(MIN_TRACK);
       }
     });
 
     /**
-     * **反向控制（上沿）：把下界改回本轮之前那个数 ⇒ 尺子当场看得见。**
-     * 尺子若退化成恒返回一个 ≥ 2 的轨道数，上面那格永远绿，而这一格当场红。
+     * **反向控制：上一版那条纯 px 下界 ⇒ 算尺当场看得见第三列。**
+     * 喂的是本轮之前逐字在用的那个值。算尺若退化成恒返回 ≤ 2，上面那格永远绿、这一格红。
      */
-    it("反向控制：下界 220px 在 1100 那一档只站得下一条轨道", () => {
+    it("反向控制：纯 px 下界 min(180px, 100%) 在宽卡上排到三列以上", () => {
+      const gap = gapPx();
+      const b = boundTerms("min(180px, 100%)");
+      expect(b.pct, "纯 px 下界被抠出了相对项 —— 抠法把 100% 那层兜底当成列数项了").toBeNull();
+      // 真机上那一版在 1920 档注册机（网格 1634px、11 格）排了 8 列。
+      expect(colsIn(1634, 11, b, gap), "算尺没算出真机量到的那 8 列 —— 它对不上被修的那个形态").toBe(8);
+      expect(widestSweep(b, gap).cols, "纯 px 下界没被算出第三列 —— 上面那格的绿不算数").toBeGreaterThan(2);
+    });
+
+    /**
+     * **反向控制：相对项压到 1/3 及以下 ⇒ 第三列回来。**
+     * 只钉「有没有相对项」的话 `33%` 同样能过，而它在够宽的卡上就是三列。
+     */
+    it("反向控制：相对项 33% 在够宽的卡上排出第三列", () => {
+      const gap = gapPx();
+      const b = boundTerms("min(100%, max(180px, 33%))");
+      expect(b.pct, "相对项没被抠出来").toBeCloseTo(0.33, 10);
+      const worst = widestSweep(b, gap);
+      expect(worst.cols, "33% 那版没被算出第三列 —— 「pct 必须超过 1/3」那条断言是摆设").toBeGreaterThanOrEqual(3);
+    });
+
+    /**
+     * **反向控制：相对项抬到 50% ⇒ 连两列都站不下。**
+     * 两条轨道要 `2 × 0.5W + gap ≤ W`，而 `gap > 0` ⇒ 对任何卡宽都不成立。
+     * 这条钉的是上沿：`(W − gap) / 2W` 那个上界不是随口写的。
+     */
+    it("反向控制：相对项 50% 每一档都落回一列", () => {
+      const gap = gapPx();
+      const b = boundTerms("min(100%, max(180px, 50%))");
       expect(
-        tracksIn(NARROW_TWO_COL.grid, NARROW_TWO_COL.cells, 220, gapPx()),
-        "220px 那版在 1100 那一档被算成不止一条轨道 —— 尺子坏了，上面那格的绿不算数",
+        MEASURED.filter((m) => colsIn(m.grid, m.cells, b, gap) !== 1),
+        "50% 那版还有档位排得出两列 —— 算尺没把 gap 算进去",
+      ).toEqual([]);
+    });
+
+    /**
+     * **反向控制（阈值上沿）：把 px 项改回本轮之前那个数 ⇒ 尺子当场看得见。**
+     * 220px 时落回阈值是 448px，1100 那一档的 382px 够不上。
+     */
+    it("反向控制：px 项 220 时 1100 那一档只排得下一列", () => {
+      const gap = gapPx();
+      const b = { px: 220, pct: 0.4 };
+      expect(fallbackWidth(b, gap), "落回阈值算错了").toBe(448);
+      expect(
+        colsIn(NARROW_TWO_COL.grid, NARROW_TWO_COL.cells, b, gap),
+        "220px 那版在 1100 那一档被算成两列 —— 尺子坏了，上面那格的绿不算数",
       ).toBe(1);
     });
 
     /**
-     * **反向控制（下沿）：压到窗口以下 ⇒ 尺子当场看得见。**
-     * 只钉上沿的话「下界写 60px」同样全绿，而那会挤出一排要折三行的窄轨道。
-     * 🔴 **这一格同时钉住上一版标错的那个射程**：150px 这个变异在**1440 那一档是绿的**
-     *（那一档仍是 3 轨 178.67px，宽过拐点），只有把每一档都算过才看得见它
-     * —— 最窄的那条出在 1920 档。上一版只喂 1440 ⇒ 它会放这个变异过去。
+     * **反向控制（阈值下沿）：px 项压到拐点以下 ⇒ 落回之前先排出折三行的窄列。**
+     * 只钉上沿的话「px 项写 60」同样全绿，而那会在窄卡上排出一对读不了的轨道。
      */
-    it("反向控制：下界 150px 挤出的最窄轨道窄过折行拐点，而且出在 1920 那一档、不在 1440", () => {
+    it("反向控制：px 项 150 时窄卡上排出比折行拐点还窄的两列", () => {
       const gap = gapPx();
-      const w = narrowestTrack(150, gap);
-      expect(w.px, "150px 那版算出来的最窄轨道没有低于折行拐点 —— 上面那格的下沿是摆设").toBeLessThan(MIN_TRACK);
-      expect(w.dock, "最窄的那条不在 1920 档 —— 这一格自称的射程说错了，回去重新量").toBe(1920);
-      // 上一版只喂 1440：同一个变异在那一档是绿的 ⇒ 单档输入接不住它。
-      const at1440 = MEASURED.find((m) => m.dock === 1440 && m.grid === 552)!;
+      const b = { px: 150, pct: 0.4 };
+      const w = fallbackWidth(b, gap);
+      expect(w, "落回阈值算错了").toBe(308);
+      expect(colsIn(w, 9, b, gap), "150px 那版在临界宽上没排成两列 —— 这一格证不出它的代价").toBe(2);
       expect(
-        trackWidth(at1440.grid, tracksIn(at1440.grid, at1440.cells, 150, gap), gap),
-        "150px 那版在 1440 那一档也低于拐点了 —— 那这一格证不出「单档输入接不住」这件事",
-      ).toBeGreaterThanOrEqual(MIN_TRACK);
+        trackWidth(w, 2, gap),
+        "150px 那版在临界宽上排出的两列没有窄过折行拐点 —— 上面那格的下沿是摆设",
+      ).toBeLessThan(MIN_TRACK);
     });
 
     /**
      * **反向控制（格数）：`auto-fit` 把空轨道塌掉这件事必须在尺子里。**
-     * 不塌的话 1920 档那张两格的通道子卡（775px）会被算成 4 轨 187.75px，
-     * 而它真机上是 2 轨 384px —— 尺子会拿一个不存在的窄轨道去误判下界。
+     * 不塌的话 1920 档那张两格的通道子卡（775px）照样是 2 列，看不出区别 ⇒
+     * 拿一格字段的卡来钉：真机上它铺满整张卡（1 列），不塌的话算尺会说 2 列。
      */
-    it("反向控制：两格的通道子卡在 1920 档是两条 384px 的轨道，不是四条", () => {
+    it("反向控制：一格字段的卡把空轨道塌掉 —— 算尺不许说它是两列", () => {
       const gap = gapPx();
+      const b = { px: 180, pct: 0.4 };
+      expect(colsIn(792, 1, b, gap), "空轨道没被塌掉 —— 尺子把 1 格算成了两列").toBe(1);
       const sub = MEASURED.find((m) => m.dock === 1920 && m.cells === 2)!;
-      const n = tracksIn(sub.grid, sub.cells, 180, gap);
-      expect(n, "空轨道没被塌掉 —— 尺子把 2 格算成了多轨").toBe(2);
-      expect(Math.round(trackWidth(sub.grid, n, gap)), "算出来的轨道宽对不上真机量到的 384px").toBe(384);
+      expect(colsIn(sub.grid, sub.cells, b, gap), "两格的通道子卡在 1920 档不是两列").toBe(2);
+      expect(Math.round(trackWidth(sub.grid, 2, gap)), "算出来的轨道宽对不上真机量到的 384px").toBe(384);
+    });
+
+    /**
+     * **反向控制（抠法）：`boundTerms()` 认不出的结构要抛，不许猜。**
+     * 它退化成「猜一个」时，上面每一格都在一个编出来的下界上继续绿。
+     */
+    it("反向控制：下界的抠法认得出两项，认不出的结构一律抛", () => {
+      expect(boundTerms("min(100%, max(180px, 40%))")).toEqual({ px: 180, pct: 0.4 });
+      expect(() => boundTerms("min(100%, max(180px, min(220px, 40%)))"), "两个 px 项被猜出了一个").toThrow(/认不出下界/);
+      expect(() => boundTerms("min(100%, max(40%, 45%))"), "一个 px 项都没有时没抛").toThrow(/认不出下界/);
+    });
+
+    /**
+     * **两列真的等宽，而且长内容撑不破自己那一条。**
+     * `minmax()` 的上界写 `auto` / `max-content` 时轨道会跟着内容长，两条轨道当场不等宽
+     * ——这是 grid 的老坑，而它在本仓一个像素都量不到（判据不渲染）⇒ 钉写法。
+     */
+    it("每条轨道的上界都是 1fr —— 两列等宽，长内容撑不破轨道", () => {
+      const css = stripCssComments(readFileSync(SECTIONS_CSS, "utf8"));
+      const affecting = cssRulesMentioning(css, ".cfg-grid");
+      expect(affecting, "一条写得到 .cfg-grid 的规则都没有 —— 抠法坏了").not.toBeNull();
+      const uppers = declarations(affecting!)
+        .filter((d) => d.prop === "grid-template-columns")
+        .flatMap((d) => minmaxUpperBounds(d.value));
+      expect(uppers.length, "一个 minmax() 都没抠到 —— 下面那条比的是空集").toBeGreaterThan(0);
+      expect(
+        uppers.filter((u) => u !== "1fr"),
+        "这几个 minmax() 上界不是 `1fr`：轨道会跟着内容长，两列当场不等宽",
+      ).toEqual([]);
+      // 反向控制（同一格里）：抠法对着真的会撑破的写法必须报出来，
+      // 否则它退化成恒返回 `1fr` 时上面那条永远绿。
+      expect(
+        minmaxUpperBounds("repeat(auto-fit, minmax(min(100%, max(180px, 40%)), auto))"),
+        "上界 `auto` 没被抠出来 —— 上面那条的绿不算数",
+      ).toEqual(["auto"]);
     });
   });
 
