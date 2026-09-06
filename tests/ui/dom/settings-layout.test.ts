@@ -3,7 +3,10 @@ import { bootPanel, settle, type Harness } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
 // 期望值一律从**真源**现算：哪几格字段属于哪张卡由 pure 层那两张表说了算，
 // 这里手抄一份的话，表改了这一族会指着自己的抄件说「对得上」。
-import { CARD_AUTH, CARD_UPSTREAM } from "../../../admin-ui/js/pure/settings.mjs";
+import {
+  CARD_AUTH, CARD_UPSTREAM, CARD_REGISTRAR, ADVANCED_FIELDS, channelFields,
+} from "../../../admin-ui/js/pure/settings.mjs";
+import { CHANNELS } from "../../../admin-ui/js/pure/registrar.mjs";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 
 /**
@@ -179,5 +182,100 @@ describe("设置页：卡内字段排在网格里，不是一格占一整行", (
       grids.filter((g) => ancestorWith(g, "card") === null).length,
       "有网格跑到卡外面去了 —— 那样「哪一格属于哪张卡」在屏幕上就没了",
     ).toBe(0);
+  });
+});
+
+/**
+ * ── 注册机板块「设置」分页上的那张配置卡 ─────────────────────────────────────
+ *
+ * ⚠️⚠️ **这一族补的是上一轮漏掉的那一半。** 设置页那四张卡改成网格的那一轮，
+ * `buildRegistrarCard()`（这张卡的卡内内容）**一格都没改到**，而上面那一族只看
+ * 设置板块 ⇒ 全绿。真机量到的后果：这一页里 `.cfg-grid` 的个数是 0、16 格字段
+ * 全在网格外，屏幕上就是「怎么改都还是一列」。
+ *
+ * **这一族与上面那一族不是同一件事**：屏幕上它们是两个板块、代码里是两个函数
+ *（`settingsSection.init()` 与 `buildRegistrarCard()`），只钉住其中一个的判据
+ * 对另一个的回退是瞎的 —— 那正是它必须自己占一族的理由。
+ */
+describe("注册机「设置」分页：卡内字段同样排在网格里", () => {
+  /** 进壳层 → 切到注册机板块 → 点开「设置」那一页。 */
+  async function openRegistrarSettings(): Promise<Harness> {
+    const h = await bootPanel({
+      now: NOW,
+      store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000), [SECTION_STORE]: "registrar" },
+      respond: () => ({ status: 200, body: {} }),
+    });
+    await settle(12);
+    const tab = h.section("registrar").walk().find((n) => n.getAttribute("id") === "reg-tab-settings");
+    if (!tab) throw new Error("注册机板块上找不到「设置」那颗 TAB —— 分页结构变了，先回来看抠法");
+    tab.click();
+    await settle(12);
+    return h;
+  }
+
+  /** 这一页上**应当**存在的每一格字段，全部从 pure 层那几张表现算。 */
+  const REGISTRAR_FIELDS = [
+    ...CARD_REGISTRAR,
+    ...CHANNELS.flatMap((c: string) => channelFields(c)),
+    ...ADVANCED_FIELDS,
+  ] as string[];
+
+  /**
+   * ⚠️ **靶子写清楚：把 `addField(knobs/subGrid/advGrid, …)` 改回
+   * `addField(body/sub/advanced, …)`。** 那是这一版之前的写法，屏幕上的后果是
+   * 这一页每一格字段各占一整行 —— 用户报的第一条就是它。
+   */
+  it("注册机分页上每一格字段都装在某个 .cfg-grid 里，一格都没漏在网格外", async () => {
+    const h = await openRegistrarSettings();
+    const panel = h.section("registrar").walk()
+      .find((n) => n.getAttribute("id") === "reg-panel-settings");
+    expect(panel, "找不到「设置」那一页").not.toBeUndefined();
+    const outside: string[] = [];
+    for (const path of REGISTRAR_FIELDS) {
+      if (ancestorWith(fieldNode(panel!, path), "cfg-grid") === null) outside.push(path);
+    }
+    expect(
+      outside,
+      "这几格字段没在 .cfg-grid 里 —— 它们会各占一整行，屏幕上就是「怎么改都还是一列」",
+    ).toEqual([]);
+    // 上面那条 `toEqual([])` 在「这一页上一格字段都没有」时同样成立 ⇒ 先证清单非空。
+    expect(REGISTRAR_FIELDS.length, "从 pure 层现算出来的字段清单是空的 —— 上面那格比的是空集")
+      .toBeGreaterThan(0);
+  });
+
+  /**
+   * **反向控制：同一把尺子对着真的不在网格里的节点必须报「不在」。**
+   * `reg.emptyPrimary` 是卡级的整句说明，与设置页那两句同一条规矩：刻意留在网格外。
+   */
+  it("反向控制：那句卡级说明确实不在网格里", async () => {
+    const h = await openRegistrarSettings();
+    const panel = h.section("registrar").walk()
+      .find((n) => n.getAttribute("id") === "reg-panel-settings")!;
+    const note = panel.walk().find((n) => n.getAttribute("data-i18n") === "reg.emptyPrimary");
+    expect(note, "这一页上找不到那句卡级说明 —— 先回来看是不是整段搬走了").not.toBeUndefined();
+    expect(
+      ancestorWith(note!, "cfg-grid"),
+      "卡级说明被塞进了网格 —— 它会被当成一格字段去排，而它说的是整张卡",
+    ).toBeNull();
+  });
+
+  /**
+   * **两张通道子卡各有各的网格。** 共用一个网格时两条通道的字段会在同一行里交错排，
+   * 「两张子卡完全对称」（设计 §10.3 第 2 条）在屏幕上当场就没了，而上面第一格
+   * 对这种写法是全绿的。
+   */
+  it("两张通道子卡各有一个自己的 .cfg-grid，不共用同一个", async () => {
+    const h = await openRegistrarSettings();
+    const panel = h.section("registrar").walk()
+      .find((n) => n.getAttribute("id") === "reg-panel-settings")!;
+    const perChannel = CHANNELS.map((c: string) => {
+      const sub = panel.walk().find((n) => n.getAttribute("data-channel") === c);
+      if (!sub) throw new Error(`这一页上找不到 ${c} 那张凭据子卡`);
+      return sub.querySelectorAll(".cfg-grid").length;
+    });
+    expect(
+      perChannel,
+      "两张通道子卡里的网格个数不是各一个 —— 共用一个网格会让两条通道的字段交错排",
+    ).toEqual(CHANNELS.map(() => 1));
   });
 });

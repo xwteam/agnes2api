@@ -1178,8 +1178,15 @@ BANNER='[collection-guard] ✅'
 #   格数：`tests/unit/source-guards.test.ts` 新增 2 格（另写一条加硬下限 / 另写一条加
 #   裸 px 下界，两格都是**喂变异过的 CSS 文本**、不改磁盘）⇒ 4564 + 2 = 4566。
 #   文件数不动。**workerd 那两个数不动**，理由同上两轮。
+# 🔴 **这一轮：注册机「设置」分页上那张配置卡的字段也进网格（上一轮漏掉的那一半）。**
+#   上一轮只改到 `settingsSection.init()`，`buildRegistrarCard()` 一格没动 ⇒ 真机量到
+#   那一页里 `.cfg-grid` 的个数是 0、16 格字段全在网格外，屏幕上永远是一列。
+#   而设置板块那一族只看设置板块，对这一页的回退是瞎的。
+#   格数：`tests/ui/dom/settings-layout.test.ts` 新增 3 格（这一页每格字段都在网格里 /
+#   卡级说明刻意在网格外的反向控制 / 两张通道子卡各有各的网格）⇒ 4566 + 3 = 4569。
+#   文件数不动（加在既有文件里）。**workerd 那两个数不动**：这一族只在 Node 侧跑。
 EXPECT_NODE_FILES=147
-EXPECT_NODE_TESTS=4566
+EXPECT_NODE_TESTS=4569
 EXPECT_WORKERS_FILES=38
 EXPECT_WORKERS_TESTS=716
 

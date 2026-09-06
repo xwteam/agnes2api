@@ -942,13 +942,24 @@ async function load() {
  * **屏幕上它在注册机板块的「设置」分页里**，见下面 `registrarConfigPanel`。
  */
 function buildRegistrarCard(body) {
+  // ⚠️ **这张卡里的每一格字段也装在 `.cfg-grid` 里**，理由与设置页那两张卡逐字相同
+  //（`.cfg-field` 是块级盒、一格占一整行，而输入框只占其中一段），规则与它踩过的
+  // 那个窄屏坑写在 `admin-ui/css/sections.css` 的 `.cfg-grid` 上方。
+  // ⚠️⚠️ **这一处曾经是漏掉的那一半**：设置页那四张卡改成网格的那一轮**没有改到这里**，
+  // 于是注册机板块「设置」分页里的字段一格不落地全在网格外 —— 真机量到过一次
+  //（那一天这一页里 `.cfg-grid` 的个数是 0），屏幕上就是「怎么改都还是一列」。
+  // 由 `tests/ui/dom/settings-layout.test.ts` 的
+  // 「注册机分页上每一格字段都装在某个 .cfg-grid 里」那一格钉着。
+  const knobs = el("div", { class: "cfg-grid" });
   for (const path of CARD_REGISTRAR) {
     const kind = path === "registrar.enabled"
       ? "toggle"
       : ((path === "registrar.primary" || path === "registrar.fallback") ? "select" : "text");
-    addField(body, path, kind);
+    addField(knobs, path, kind);
   }
+  body.appendChild(knobs);
 
+  // 卡级的整句说明留在网格外面（与设置页那两句同一条规矩）：它说的是整张卡。
   body.appendChild(elI18n("p", "reg.emptyPrimary", { class: "muted note" }));
   const channelRow = el("div", { class: "card-row" });
   // **顺序取自 `CHANNELS`**（字母序），两张子卡由同一段代码建出来 ⇒
@@ -956,9 +967,13 @@ function buildRegistrarCard(body) {
   for (const channel of CHANNELS) {
     const sub = el("div", { class: "card channel-card", "data-channel": channel });
     sub.appendChild(elI18n("div", channelLabelKey(channel), { class: "label channel-name" }));
+    // **两张子卡各自一个网格**，而不是共用一个：共用会让两条通道的字段在同一行里
+    // 交错排（第 2 条「完全对称」在屏幕上就没了）。这一步对两条通道逐字相同。
+    const subGrid = el("div", { class: "cfg-grid" });
     for (const path of channelFields(channel)) {
-      addField(sub, path, isSecretPath(path) ? "secret" : "text");
+      addField(subGrid, path, isSecretPath(path) ? "secret" : "text");
     }
+    sub.appendChild(subGrid);
     // 两条通道之间**唯一**的不对称，且它是同一个字段位置上的两句事实。
     sub.appendChild(elI18n("p", channelAddressFactKey(channel), { class: "muted note" }));
     channelRow.appendChild(sub);
@@ -969,7 +984,11 @@ function buildRegistrarCard(body) {
   const advanced = el("details", { class: "cfg-advanced" });
   advanced.appendChild(elI18n("summary", "set.advanced.title"));
   advanced.appendChild(elI18n("p", "set.advanced.warn", { class: "danger-text" }));
-  for (const path of ADVANCED_FIELDS) addField(advanced, path, "text");
+  // 折叠区里那一格同样进网格：它今天只有一格，`auto-fit` 会把空轨道塌掉、让它铺满
+  //（与设置页「认证密钥」那张单格卡是同一档行为），而清单一旦多一格就自动排成多列。
+  const advGrid = el("div", { class: "cfg-grid" });
+  for (const path of ADVANCED_FIELDS) addField(advGrid, path, "text");
+  advanced.appendChild(advGrid);
   const advSave = elI18n("button", "set.advanced.save", { type: "button", class: "cfg-advanced-save danger" });
   advSave.addEventListener("click", () => { confirmAdvanced(); });
   advanced.appendChild(advSave);
