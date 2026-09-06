@@ -321,6 +321,8 @@ describe("upstreamModelsView：四个字段一个都不许缺", () => {
 describe("upstreamResultCode / upstreamTransportCode：两个函数各管一半", () => {
   it.each([
     ["no_key"], ["upstream_error"], ["bad_payload"], ["timeout"], ["network_error"],
+    // 正文阶段那一档：响应头已经落地、正文没有。它与上面四条各是各的一句话。
+    ["body_incomplete"],
   ])("200 响应体里的 reason「%s」有自己的一档", (reason) => {
     expect(upstreamResultCode({ ok: false, status: null, reason })).toBe(reason);
   });
@@ -392,7 +394,9 @@ describe("后端产出的 reason × 面板认得的 reason", () => {
   it("列模型那条 handler 的每一条 reason 面板都有一档 —— 认不得的会被说成「面板还不认识」，而这一格要求根本别走到那里", () => {
     const sites = upstreamReasonSites(readFileSync("src/http/admin/handlers/upstream-models.ts", "utf8"));
     // 手写期望值：后端多一条 / 少一条都在这里当场红。
-    expect(sites.literals).toEqual(["bad_payload", "network_error", "no_key", "timeout", "upstream_error"]);
+    expect(sites.literals).toEqual(
+      ["bad_payload", "body_incomplete", "network_error", "no_key", "timeout", "upstream_error"],
+    );
     // 唯一动态的那一处是护栏那条 429，它走的是 `upstreamTransportCode()` 那一半（下一格）。
     expect(sites.dynamic).toEqual(["g.reason"]);
 

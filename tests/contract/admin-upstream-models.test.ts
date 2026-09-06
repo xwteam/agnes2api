@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { CountingStorage } from "../helpers/counting-storage.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
@@ -22,6 +22,9 @@ import { UPSTREAM_MODELS_MAX } from "../../src/core/admin/upstream-models.js";
 
 const NOW = 20_000 * 86_400_000;
 const withKey = { "x-admin-key": TEST_ADMIN_TOKEN };
+
+// 假定时器只在传输失败那几格里开，收尾必须还原：漏了它会污染同文件后面的用例。
+afterEach(() => { vi.useRealTimers(); });
 
 /** 出站的上游 URL。**手写字面量**，不是 `agnesBaseUrl + UPSTREAM_MODELS_PATH` 拼出来的。 */
 const UPSTREAM_URL = "https://upstream.test/v1/models";
@@ -204,5 +207,136 @@ describe("GET /admin/api/upstream/models —— 打的是哪一条、拿的是�
     expect((await call(app)).status).toBe(429);
     t = NOW + PROBE_MIN_INTERVAL_MS + 1;
     expect((await call(app)).status).toBe(200);
+  });
+});
+
+/**
+ * 🔴 **回填两条评审发现（本轮）。**
+ *
+ * 发现 A：`timeout` / `network_error` 两条分支在这条端点上**一格判据都没有**
+ *（同族的 `admin-verify.test.ts:322` / `:347` 早有现成先例）。面板那一侧为它们各发了
+ * 一档卡面文案，却没有任何东西证明后端真的产得出它们 —— DOM 那一格喂的是手写夹具。
+ *
+ * 发现 B：**读正文期间断流 / 超时被说成了 `bad_payload`**。原来那一句是
+ * `parseUpstreamModels(await res.json().catch(() => null))`：`res.json()` reject 被
+ * `.catch` 吞成 `null` ⇒ 与「上游回的形状不对」走同一个出口。可这两件事一件关于
+ * **那份内容**、一件关于**我们压根没拿到那份内容**，运维的处置也因此完全不同
+ *（核对两边版本 / 抬超时档 · 查链路）。
+ *
+ * ⚠️⚠️ **但它也不能改回 `timeout` / `network_error`**（评审建议的修法，实测为假）：
+ * 那两句文案逐字是**响应头阶段**的话 —— `models.up.timeout` 说「在超时档内没有拿到
+ * 响应头」、`models.up.networkError` 说「这次请求没有拿到任何响应」。响应头明明
+ * 已经带着 200 落地了，把它说成这两句，是拿一句假话换掉另一句假话。
+ * ⇒ 正文阶段是**第三档**，它有自己的 `body_incomplete` 与自己那一句。
+ */
+describe("传输失败分三档：响应头没来 / 正文没来 / 根本连不上 —— 三句话不许混成一句", () => {
+  it("上游挂起时在 upstreamTimeoutMs（响应头档）处中止并回 timeout，不是同步档的两分钟", async () => {
+    // ⚠️ **必须用真定时器语义**：handler 用的是**真** `setTimeout`，推进注入的
+    // `deps.now()` 不会触发它 —— 拿递进假时钟去推，这一格会挂死到测试超时而不是变红。
+    // 理由逐字见 `tests/contract/admin-verify.test.ts`「上游挂起时在 upstreamTimeoutMs（首字节档）处中止并回 timeout，不是同步档的两分钟」。
+    const { app, fetcher } = await makeApp(
+      // 60 秒远大于响应头档的 8 秒、又远小于同步档的 120 秒：
+      // 取错档位（`upstreamSyncTimeoutMs`）时下面推到 8 秒**不会**中止 ⇒ 这一格红。
+      [{ status: 200, body: listBody(["m-1"]), delayMs: 60_000 }],
+      ["sk-up-timeout-0001"], { upstreamTimeoutMs: 8_000, upstreamSyncTimeoutMs: 120_000 },
+      () => NOW,
+    );
+
+    vi.useFakeTimers();
+    const pending = call(app);
+    await vi.advanceTimersByTimeAsync(8_000);
+    const res = await pending;
+
+    expect(res.status).toBe(200);
+    // `status: null` 是这一档的一半：一个响应头都没到手，没有状态码可说。
+    expect(await res.json()).toMatchObject({ ok: false, status: null, reason: "timeout" });
+    expect(fetcher.sentUrls, "反向自检：出站确实发生过一次").toEqual([UPSTREAM_URL]);
+  });
+
+  it("8 秒之前不中止 —— 否则上一格的 timeout 可能只是「它对任何延迟都超时」", async () => {
+    const { app } = await makeApp(
+      // 7999 < 8000：这一次必须**成功**。
+      [{ status: 200, body: listBody(["m-1"]), delayMs: 7_999 }],
+      ["sk-up-timeout-0002"], { upstreamTimeoutMs: 8_000, upstreamSyncTimeoutMs: 120_000 },
+      () => NOW,
+    );
+
+    vi.useFakeTimers();
+    const pending = call(app);
+    await vi.advanceTimersByTimeAsync(7_999);
+    const res = await pending;
+
+    expect(await res.json()).toMatchObject({ ok: true, status: 200, reason: null });
+  });
+
+  it("出站抛错时 reason 是机器可读的 code，不是异常消息 —— 异常消息里同样可能带着这把 key", async () => {
+    const KEY = "sk-up-throw-canary-4f10c2";
+    const { app } = await makeApp(
+      // **让桩真的 `throw`**：错误 stub 从不真 throw 是本仓登记过的一种假阳性。
+      // 消息里刻意塞进那把 key：真实的连接错误常把整条请求信息带出来。
+      [{ throws: new Error(`connect ECONNREFUSED while sending Bearer ${KEY} to upstream`) }],
+      [KEY], {}, () => NOW,
+    );
+
+    const text = await (await call(app)).text();
+
+    expect(JSON.parse(text)).toMatchObject({ ok: false, status: null, reason: "network_error" });
+    expect(text, "异常消息被原样塞进了响应").not.toContain(KEY);
+    expect(text, "异常消息被原样塞进了响应").not.toContain("ECONNREFUSED");
+  });
+
+  /**
+   * 被守护的性质：**响应头到手之后正文才断的那一档，说的是「我们没拿到那份内容」，
+   * 不是「那份内容我们看不懂」。**
+   *
+   * ⚠️ 这一格与上面那格 `timeout` 的差别全在 `status`：这里响应头带着 **200** 落过地，
+   * 所以 `status` 是 200 而不是 `null`。改成 `reason: "timeout"` 的话面板会说
+   *「在超时档内没有拿到响应头」—— 而它明明拿到了，那是评审建议的修法里的一处硬伤。
+   */
+  it("响应头 200 已经落地、正文却永不落地 ⇒ body_incomplete，不是 bad_payload", async () => {
+    const { app } = await makeApp(
+      [{ status: 200, bodyNeverLands: true, delayMs: 0 }],
+      ["sk-up-body-hang-0001"], { upstreamTimeoutMs: 8_000, upstreamSyncTimeoutMs: 120_000 },
+      () => NOW,
+    );
+
+    vi.useFakeTimers();
+    const pending = call(app);
+    await vi.advanceTimersByTimeAsync(8_000);
+    const body = await (await pending).json();
+
+    expect(body).toMatchObject({ ok: false, status: 200, reason: "body_incomplete" });
+  });
+
+  it("正文中途断流 ⇒ 同样是 body_incomplete —— 没超时也不该被说成「内容看不懂」", async () => {
+    const { app } = await makeApp(
+      [{
+        status: 200,
+        // 一块都没吐就 error：真实的「连接在正文中途断了」。
+        body: new ReadableStream<Uint8Array>({
+          start(c) { c.error(new Error("connection reset while reading body")); },
+        }),
+      }],
+      ["sk-up-body-reset-0001"], {}, () => NOW,
+    );
+
+    const text = await (await call(app)).text();
+
+    expect(JSON.parse(text)).toMatchObject({ ok: false, status: 200, reason: "body_incomplete" });
+    expect(text, "断流的异常消息被原样塞进了响应").not.toContain("connection reset");
+  });
+
+  /**
+   * 反向自检：上面两格把 `bad_payload` 整个吞掉的话它们全都还是绿的。
+   * 这一格钉住「正文**完整到手**、只是形状不对」那一档仍旧是 `bad_payload`。
+   */
+  it("正文完整到手、只是形状不对时仍然是 bad_payload —— 上面两格没有把这一档一起吞掉", async () => {
+    const { app } = await makeApp(
+      [{ status: 200, body: JSON.stringify({ data: [{ name: "没有 id 这个字段" }] }) }],
+      ["sk-up-still-bad-0001"], {}, () => NOW,
+    );
+
+    expect(await (await call(app)).json())
+      .toMatchObject({ ok: false, status: 200, reason: "bad_payload" });
   });
 });

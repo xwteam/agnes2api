@@ -202,6 +202,11 @@ function upstreamBodyReasonCode(reason) {
   if (reason === "bad_payload") return "bad_payload";
   if (reason === "timeout") return "timeout";
   if (reason === "network_error") return "network_error";
+  // ⚠️ **正文阶段那一档不许并进上面任何一条**：`timeout` / `network_error` 两句文案
+  // 逐字是**响应头阶段**的话（「没有拿到响应头」/「没有拿到任何响应」），而这一档
+  // 响应头已经带着状态码落地了；`bad_payload` 那句又说的是「那份内容看不懂」，
+  // 而这一档我们压根没拿到那份内容。三句都不成立 ⇒ 它有自己的一档。
+  if (reason === "body_incomplete") return "body_incomplete";
   return null;
 }
 
@@ -217,7 +222,7 @@ function upstreamBodyReasonCode(reason) {
  * 说成「上游一个模型都没回」。`mismatch` 那句文案两种来源都涵盖（未知 reason /
  * 形状不认识），因为对运维来说处置是同一件事：核对两边版本。
  *
- * @returns {"ok"|"no_key"|"upstream_error"|"bad_payload"|"timeout"|"network_error"|"mismatch"}
+ * @returns {"ok"|"no_key"|"upstream_error"|"bad_payload"|"timeout"|"network_error"|"body_incomplete"|"mismatch"}
  */
 export function upstreamResultCode(resp) {
   const r = obj(resp);
@@ -262,6 +267,7 @@ export function upstreamLabelKey(code) {
   if (code === "bad_payload") return "models.up.badPayload";
   if (code === "timeout") return "models.up.timeout";
   if (code === "network_error") return "models.up.networkError";
+  if (code === "body_incomplete") return "models.up.bodyIncomplete";
   if (code === "probe_in_flight") return "models.up.probeInFlight";
   if (code === "probe_cooldown") return "models.up.probeCooldown";
   if (code === "unauthorized_admin") return "models.up.unauthorizedAdmin";

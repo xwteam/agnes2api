@@ -258,6 +258,33 @@ describe("上游模型：六种表现", () => {
   });
 
   /**
+   * 🔴 **正文阶段那一档（回填一条评审发现）。**
+   *
+   * 后端原来把「响应头到手之后正文才断」也回成 `bad_payload`，于是这张卡说的是
+   *「那份内容本网关看不懂」——而我们压根没拿到那份内容。评审建议改回 `timeout`，
+   * 实测那同样是假话：`models.up.timeout` 逐字说「在超时档内**没有拿到响应头**」，
+   * 而这一档响应头带着 200 落过地。⇒ 它是第三档，有自己的一句。
+   *
+   * ⚠️ 这一格的三条断言各钉一个方向：说对自己那句 / 不冒充上一档 / 不冒充下一档。
+   * 少任何一条，把后端那个 `body_incomplete` 改回 `bad_payload` 或 `timeout` 都还能绿。
+   */
+  it("正文没落地：与「看不懂那份内容」和「没拿到响应头」两句都分得开，且状态码照画", async () => {
+    const h = await openModels(() => ({
+      status: 200,
+      body: { ok: false, status: 200, latencyMs: 8000, reason: "body_incomplete", models: null },
+    }));
+
+    await clickLoad(h);
+
+    expect(msg(h)).toBe("上游的响应头回了，正文却没有完整落地（超时或中途断流）。这不是「那份内容看不懂」。");
+    expect(msg(h), "把「没拿到正文」说成了「没拿到响应头」").not.toContain("没有拿到响应头");
+    expect(msg(h), "把「没拿到那份内容」说成了「那份内容看不懂」").not.toContain("本网关看不懂");
+    // `status` 是 200 ⇒ 状态码那一行**该在**：响应头确实落地过，这正是它与 timeout 的分界。
+    expect(h.section("models").textContent, "响应头明明落地过，状态码那一行却没画").toContain("200");
+    expect(groupIds(h, "ids")).toEqual([]);
+  });
+
+  /**
    * **截断那一档：如实交代，不静默丢。**
    * 静默丢的后果是运维以为上游就这些模型——那是一句面板凭空说出来的话。
    *

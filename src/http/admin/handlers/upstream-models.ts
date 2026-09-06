@@ -39,8 +39,14 @@ import { parseUpstreamModels, diffAgainstCatalog } from "../../../core/admin/ups
  *    `src/core`，接不住 `src/http` 里的裸 `fetch`；真正接住它的是本端点的契约用例里
  *    那些观测桩 fetcher 的格子。
  *
- * 4. **自带 AbortController + 超时**，档位取 `config.upstreamTimeoutMs`（首字节档）：
+ * 4. **自带 AbortController + 超时**，档位取 `config.upstreamTimeoutMs`：
  *    它不经 `dispatch()`，那套超时/中止一样都没有。
+ *    ⚠️ **这一条抄过来时漏改了一个词**（回填一条评审发现）：`handlers/verify.ts`
+ *    把这个档位称作「首字节档」，那边成立是因为验活**只要一个响应头**，拿到就
+ *    `body.cancel()`；而这条端点必须把正文读完，同一个定时器要到 `finally` 才解除，
+ *    于是它覆盖的是**整次交换**（响应头 + 正文），不只是首字节。
+ *    ⇒ 中止可能落在两个阶段，两个阶段回的是两种 reason：响应头之前是 `timeout`，
+ *    响应头之后是 `body_incomplete`（见下方读正文那一段）。
  *
  * 5. **护栏与验活共用同一把 `ProbeGuard`**（全局约束 14：按一下就打上游的按钮必须连同
  *    护栏一起交付）。kind 是**常量** `"upstream-models"` 而不是带标识的——这条端点
@@ -128,7 +134,27 @@ export function upstreamModelsHandler(deps: UpstreamModelsDeps) {
       // id 字符串。⚠️ **别把这句写成「本仓唯一一处读上游正文的路径」**（本轮评审逐条现算
       // 反驳过一次）：三条协议路由与两条邮箱适配器都在读上游正文。这里成立的只有
       // 「**这条端点上**，只有 2xx 才读」这一条边界，见上方约束 2。
-      const parsed = parseUpstreamModels(await res.json().catch(() => null));
+      // 🔴 **读正文失败与形状不对是两句话，不许共用一个出口**（回填一条评审发现）。
+      // 原来这里是 `parseUpstreamModels(await res.json().catch(() => null))`：
+      // `res.json()` reject 被那个 `.catch` 吞成 `null` ⇒ 与「上游回的形状不对」
+      // 落进同一档 `bad_payload`，而那句话说的是「**那份内容**我们看不懂」——
+      // 可这一档我们压根没拿到那份内容。两者的处置也不同（核对两边版本 / 抬超时档 · 查链路）。
+      //
+      // ⚠️⚠️ **也不许改回 `timeout` / `network_error`**（评审建议的修法，实测为假）：
+      // 那两句文案逐字是**响应头阶段**的话（`models.up.timeout` 说「在超时档内没有拿到
+      // 响应头」、`models.up.networkError` 说「这次请求没有拿到任何响应」），
+      // 而这里响应头已经带着状态码落地了。⇒ 正文阶段是**第三档**，有自己的 code。
+      // ⚠️ 异常本身一个字都不进响应：断流异常里常带着上游 URL 与整条请求信息。
+      let payload: unknown;
+      try {
+        payload = await res.json();
+      } catch {
+        return c.json({
+          ok: false, status: res.status, latencyMs: deps.now() - startedAt,
+          reason: "body_incomplete", models: null,
+        });
+      }
+      const parsed = parseUpstreamModels(payload);
       if (parsed === null) {
         return c.json({
           ok: false, status: res.status, latencyMs: deps.now() - startedAt,

@@ -1318,10 +1318,31 @@ BANNER='[collection-guard] ✅'
 #   `tests/unit/docs-parity.test.ts` **格数不变**：`H3_FLOOR` 50 → 51（五份 ADMIN.md 各多一个 `###`）。
 #   ⇒ Node：4627 + 23 + 11 = 4661；文件 150 + 1 = 151（一个新文件）。
 #   ⇒ **workerd 这两个数不动**：这一轮一格契约用例都没动。
+# 🔴 **这一轮（回填两条评审发现）：把「正文没落地」从 `bad_payload` 里拆出来，
+#   并给这条端点的三档传输失败各补一格。**
+#   · 拆分：原来 `parseUpstreamModels(await res.json().catch(() => null))` 把
+#     **读正文失败**（超时中止 / 中途断流）与**形状不对**吞进同一个出口 ⇒ 面板说
+#     「那份内容本网关看不懂」，而我们压根没拿到那份内容。
+#     ⚠️ 评审建议改回 `timeout` / `network_error`，**实测为假**：那两句文案逐字是
+#     **响应头阶段**的话（「没有拿到响应头」/「没有拿到任何响应」），而这一档响应头
+#     带着状态码落过地 ⇒ 那是拿一句假话换另一句假话。⇒ 新增第三档 `body_incomplete`。
+#   · 覆盖：`timeout` / `network_error` 两条分支在这条端点上原本**一格判据都没有**
+#     （同族的 `admin-verify.test.ts` 早有先例），面板却已为它们各发了一档文案。
+#   格数：`tests/contract/admin-upstream-models.test.ts` **+6**（超时正向 + 差一毫秒
+#     的反向自检、出站抛错回 `network_error` 且异常消息不进响应、正文永不落地、
+#     正文中途断流、以及「正文完整到手只是形状不对仍是 `bad_payload`」那格反向自检）；
+#     `tests/ui/dom/models-upstream.test.ts` **+1**（正文没落地那一档：与上下两档的
+#     两句话各钉一条，且状态码照画）；`tests/ui/models.test.ts` **+1**
+#     （`it.each` 的 reason 全集多一条 `body_incomplete`）。
+#   变异实测：把 handler 那个 `body_incomplete` 改回 `bad_payload` ⇒ 契约那 2 格当场红；
+#     把 `upstreamLabelKey` 的这一档指去 `models.up.timeout` ⇒ DOM 那格 + 「两条 reason
+#     共用同一句文案」那格当场红。
+#   ⇒ Node：4661 + 6 + 1 + 1 = 4669；文件数不动（三处都加在既有文件里）。
+#   ⇒ workerd：727 + 6 = 733（契约用例双运行时各跑一遍）；文件数不动。
 EXPECT_NODE_FILES=151
-EXPECT_NODE_TESTS=4661
+EXPECT_NODE_TESTS=4669
 EXPECT_WORKERS_FILES=39
-EXPECT_WORKERS_TESTS=727
+EXPECT_WORKERS_TESTS=733
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

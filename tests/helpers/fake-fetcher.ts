@@ -14,12 +14,26 @@ import type { Fetcher } from "../../src/ports/fetcher.js";
  * 给一个 `ReadableStream`，第二块卡在测试自己的 deferred 上。
  * `tests/contract/stream-parity.test.ts` 用的正是这条。
  */
+/**
+ * ⚠️ **`bodyNeverLands`：响应头已经落地、正文永远不落地**（再后来补的）。
+ *
+ * `delayMs` 建模的是「首字节要花这么久」——它挂在**响应头之前**，于是拿它做出来的
+ * 超时用例覆盖的永远只有「一个响应头都没等到」那一半。而 `res.json()` 是在响应头
+ * 到手**之后**才开始读的：正文读到一半断流 / 读正文期间超时中止，是一族它压根构造不出来
+ * 的失败，调用方对它的处置也与前一半不同。
+ *
+ * ⚠️ **它必须跟着 `init.signal` 走，这正是它与「给一个永不 close 的 `ReadableStream`」
+ * 的差别**：真 `fetch` 的响应体流是与那个 signal 绑着的，abort 一次正文流就 error。
+ * 手搓一个不认 signal 的挂起流，调用方那边的超时定时器**永远不会把这次读唤醒**
+ *——用例不是变红，是挂死到超时（第 8 种假阳性的近亲：替身的时序语义与真身不同）。
+ */
 type Outcome =
   | {
     status: number;
     body?: string | ReadableStream<Uint8Array>;
     headers?: Record<string, string>;
     delayMs?: number;
+    bodyNeverLands?: boolean;
   }
   | { throws: Error };
 
@@ -42,8 +56,32 @@ export class FakeFetcher implements Fetcher {
     const o = this.outcomes[this.i++] ?? { status: 200, body: "{}" };
     if ("throws" in o) throw o.throws;
     if (o.delayMs !== undefined) await waitOrAbort(o.delayMs, init.signal);
+    if (o.bodyNeverLands === true) {
+      return new Response(hangingBody(init.signal), { status: o.status, headers: o.headers });
+    }
     return new Response(o.body ?? "{}", { status: o.status, headers: o.headers });
   }
+}
+
+/**
+ * 一条**一块都不吐、也永远不 close** 的正文流：读它的人一直等。
+ * 调用方 abort 时它 error 成 `AbortError`，与真 `fetch` 的响应体流同一条语义。
+ */
+function hangingBody(signal: AbortSignal | undefined): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (signal?.aborted) return controller.error(abortError());
+      signal?.addEventListener(
+        "abort",
+        () => {
+          // 已经被取消 / 已经 error 过时再 error 一次会抛，忽略即可。
+          try { controller.error(abortError()); } catch { /* 已关闭 */ }
+        },
+        { once: true },
+      );
+    },
+    // 刻意没有 `pull`：一块都不 enqueue，也不 close。
+  });
 }
 
 /** 等待期间若调用方的超时触发了 abort，就像真实 fetch 那样抛 AbortError。 */
