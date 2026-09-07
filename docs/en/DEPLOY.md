@@ -299,7 +299,7 @@ there is no second one.
 | `COOLDOWN_STRIKE_MS` | no | `1800000` | Cooldown duration applied once a key reaches `MAX_STRIKES`. The key recovers automatically when it expires. |
 | `POOL_CACHE_TTL_MS` | no | `60000` | How long each isolate/process keeps its in-memory key-pool snapshot; `0` disables it. Formula and cost below. **Read once at instance build** (`src/http/wire.ts`): a container restart or an isolate recycle is required — **editing it in the admin panel does not take effect immediately**. |
 | `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted; `0` = every successful request. Cost below. **Read once at instance build** (`src/http/wire.ts`): a container restart or an isolate recycle is required — **editing it in the admin panel does not take effect immediately**. |
-| `USAGE_STATS_ENABLED` | no | `false` | Tier-2 time series behind the panel's "Usage" section (by day / hour / model / protocol). **The check is a literal `true`**; `1` or `yes` count as off. **Off by default, and "off" is zero-cost**. What it costs, and how low traffic **loses** counts, is below. Read once when the app is built. |
+| `USAGE_STATS_ENABLED` | no | `false` | Tier-2 time series in the panel's "Usage" section (by day / hour / model / protocol). **The check is a literal `true`**; `1` / `yes` count as off. **Off by default, and "off" is zero-cost**. What it costs, and how short-lived instances **lose** counts, is below. Read once when the app is built. |
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
 | `APIKEY_CACHE_TTL_MS` | no | `300000` | How long each instance caches the outbound API key table; `0` disables it. It also sets how long a disabled key lives on elsewhere. See the quota budget. |
@@ -378,20 +378,23 @@ below. Changing it takes effect after a container restart / isolate recycle.
 
 ### `USAGE_FLUSH_INTERVAL_MS`: on KV you cannot shrink it, and getting it wrong says nothing
 
-Seeing "the tail is at most 2 hours", the first instinct is usually to shrink the flush
-interval. **On KV that road is closed**: each instance only has 13 writes of budget per day, the
-interval × 12 must be at least a day, so the smallest usable value is 7200000 (2 hours), and
-anything below it throws while the app is wired up (`src/http/usage-sink.ts`).
+Seeing "the tail is at most 2 hours", the first instinct is to shrink the flush interval.
+**On KV that road is closed**: each instance has only 13 writes of budget per day and
+interval × 12 must be at least a day, so the smallest usable value is 7200000 (2 hours);
+below that it throws while the app is wired up (`src/http/usage-sink.ts`).
 
 > [!WARNING]
 > **On Workers that throw never shows up in the deploy output.**
-> **It turns into a 500 that gives no reason at all**: `wrangler deploy` still succeeds, but
-> from then on **every single request** returns `{"error":{"type":"internal_error",…}}`, and
-> the real reason lands only in `console.error`, which you need `wrangler tail` to see. One
-> mistyped number buys you a silent incident that looks exactly like "the whole gateway is
-> down".
-> File storage (Docker) has no such floor — 300000 (5 minutes) is perfectly reasonable there;
-> on Node the same throw simply keeps the process from starting, which is impossible to miss.
+> **It turns into a 500 that gives no reason at all**: `wrangler deploy` succeeds, but from
+> then on **every single request** returns `{"error":{"type":"internal_error",…}}` and the real
+> reason lands only in `console.error` (`wrangler tail` to see it). One mistyped number reads
+> exactly like "the gateway is down".
+> **The check runs whether or not `USAGE_STATS_ENABLED` is on** (`src/http/wire.ts` resolves it
+> unconditionally), so turning statistics off **does not clear the 500**: put the value back to
+> >= 7200000, or delete the line.
+> File storage (Docker / Node — one runtime) has **no such floor at all**: 300000 (5 minutes)
+> is fine there and this throw never happens. What throws there is another value (not an
+> integer, or below 1); Node prints it and exits.
 
 ### Quota budget: how many requests a Worker on the free KV tier can serve
 
@@ -688,10 +691,13 @@ Those 13 come from the following, and all six points matter:
      there is no longer a per-day write budget**; the interval itself is the bound. Turning it
      back down to 300000 (5 minutes) is entirely reasonable.
    · **KV (Workers) has a write quota** ⇒ the budget stays at 13 per instance per day, and the
-     interval must satisfy `interval × (13 − 1) >= one day`. Violating it **fails at startup**
-     and tells you the smallest usable value (7200000). Refusing silently is deliberate: with
-     such a value the write volume still looks fine **while the data goes wrong from midday
-     onward**, which is harder to notice than a failure to start.
+     interval must satisfy `interval × (13 − 1) >= one day`. Violating it throws while the app
+     is wired up and tells you the smallest usable value (7200000) — but **on Workers you never
+     see that message**: `wrangler deploy` still succeeds and from then on
+     **every request gets a 500 with no reason**, see the `USAGE_FLUSH_INTERVAL_MS` section
+     above. Refusing silently is deliberate: with such a value the write volume still looks
+     fine **while the data goes wrong from midday onward**, which is harder to notice than a
+     visible failure.
 
 ⑤ **At most 2 instances' data survives for a given day; anything beyond that overwrites.**
    Usage shards are stored as `usage:<UTC day>:<slot>` and **there are only 2 slots**;
@@ -1515,7 +1521,7 @@ zero-cost — no accumulator is built and not one storage write happens. To turn
 ```env
 # Optional: the Tier-2 time series behind the panel's "Usage" section. The check is a literal
 # true; 1 or yes count as off. Once on, each instance writes at most 13 puts per day (~10.4% of
-# the write quota); the tail is at most 2 hours, and under low traffic that tail becomes loss.
+# the write quota); the tail is at most 2 hours, and an instance that dies inside that window takes those counts with it — loss, not late posting.
 USAGE_STATS_ENABLED=true
 ```
 

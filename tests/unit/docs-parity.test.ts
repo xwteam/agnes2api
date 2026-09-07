@@ -4606,12 +4606,28 @@ describe("根 README 首屏的一行五链与 16 节骨架", () => {
  * 而其中一份坏了另一份不会响——本文件对「第二份实现」的既有裁决。
  */
 /**
+ * 一段「只在这里找」的射程。`what` 只进报文，`read` 是切出来的那一段。
+ * **切不出来要炸，不许返回空串**——空串会让 token 计数变成 0，把「小节标题改了」
+ * 报成「这句话没写」，与 `sectionBody` 顶上那条「认不出要吵」是同一条。
+ */
+type TokenScope = { readonly what: string; readonly read: ApiDocReader };
+
+/**
  * 一张「每语言一个 token」的锚表 × 五份 DEPLOY.md，返回失败报文数组。
  * **真扫描与下面的探针共用这一份**——各写一份的话，两边的判据会各有各的口径，
  * 而其中一份坏了另一份不会响（本文件既有纪律）。
+ *
+ * ⚠️ **`scope` 只收窄「自己那份里出现几次」这一半，跨语言那一半照旧扫整份**：
+ * 前者要的是「这句话住在该住的地方」（不给「搬到正文任意位置照绿」留门），
+ * 后者要的是「别的语言那份里一个字都没有」——把它也收窄，等于允许把 en 的句子
+ * 塞进 zh-TW 的正文里而不响。两者射程本来就该不同。
  */
-function perLangTokenFailures(label: string, table: Record<Lang, string>, read: ApiDocReader): string[] {
+function perLangTokenFailures(
+  label: string, table: Record<Lang, string>, read: ApiDocReader, scope?: TokenScope,
+): string[] {
   const out: string[] = [];
+  const own_ = scope?.read ?? read;
+  const where = scope === undefined ? "里" : `的${scope.what}里`;
   for (const lang of LANGS) {
     const token = table[lang];
     // 空串永远查得到 —— 认不出要吵，不许装没看见。
@@ -4619,10 +4635,10 @@ function perLangTokenFailures(label: string, table: Record<Lang, string>, read: 
       out.push(`${label}：${lang} 的锚 token 是空串——空串永远查得到，这一格从此空转`);
       continue;
     }
-    const own = read(lang).split(token).length - 1;
+    const own = own_(lang).split(token).length - 1;
     if (own !== 1) {
       out.push(
-        `${label}：docs/${lang}/DEPLOY.md 里「${token}」出现 ${own} 次，应当恰好 1 次`
+        `${label}：docs/${lang}/DEPLOY.md ${where}「${token}」出现 ${own} 次，应当恰好 1 次`
         + "——0 次多半是这一份漏改（或翻译时抄错了一位），"
         + "2 次以上说明这个 token 不再唯一，换一个只在那句话里出现的写法",
       );
@@ -4874,7 +4890,28 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚", () => {
  * · (B) 「打开之后要付什么」那一节里「消失而不是延迟」那一句；
  * · (C) 文末 ```env 片段的注释里的同一件事（照抄那段的人只看得到这几行注释）；
  * · (D) `USAGE_FLUSH_INTERVAL_MS` 那一节里「Worker 上抛错变成不带原因的 500」；
- * · (E) 「低流量部署正是这件事最常发生的场景」——把「低流量」这个词和 Tier-2 绑在一起。
+ * · (E) 「低流量部署正是这件事最常发生的场景」——把「低流量」这个词和 Tier-2 绑在一起；
+ * · (F) 同一节里「这道校验与 `USAGE_STATS_ENABLED` 开没开无关」；
+ * · (G) 同一节里「把开关关回去也解不了这场 500」那句处置。
+ *
+ * ── 每一格都写明「在哪一段里找」（复评发现：标签写着位置、断言却扫整份）────────
+ * 上一版五格全部 `read(lang)` 扫**整份** DEPLOY.md，而 (A)/(C) 的标签写着
+ * 「表格那一格」「env 片段注释里」——把那句话从表格行搬到正文任意位置，两格照绿，
+ * 而表格那一格回到改动前只说开销的样子。现在五格各自带一个 `TokenScope`：
+ * · (A) → 环境变量表里 `| \`USAGE_STATS_ENABLED\`` 起头的**那一行**；
+ * · (B)(E) → `### USAGE_STATS_ENABLED …` **那一节**（`sectionBody`）；
+ * · (C) → 含 `USAGE_STATS_ENABLED=true` 的**那一段 ```env 围栏**（`envFences`）；
+ * · (D)(F)(G) → `### USAGE_FLUSH_INTERVAL_MS …` **那一节**。
+ * 收窄的只是「自己那份里出现几次」，跨语言互校仍然扫整份（理由见
+ * `perLangTokenFailures` 顶上）。**三个切法都配了「切得出、切得准」的自守格**——
+ * 一个切出空串的射程会把所有 token 判成 0 次，那是一格会瞎报的判据。
+ *
+ * ── (F)(G) 补的是这个地雷最要命的一半 ──────────────────────────────────────
+ * `src/http/wire.ts` 的 `resolveUsageFlushInterval()` 调用点在
+ * `cfg.usageStatsEnabled ? new UsageSink(…) : undefined` 那个三元**之外**，
+ * 无条件执行 ⇒ 填错了这个值之后，**把刚打开的 `USAGE_STATS_ENABLED` 关回 `false`
+ * 并不能解除每请求 500**。而读者照 (D) 定位到「填错了一个数字」时，最自然的第一步
+ * 恰恰就是关开关。改动前五份文档一句没写这半句，`.env.example` 也没写。
  *
  * ── (D) 那条链是查证过的，三个文件各读了一遍 ────────────────────────────────
  * · `src/http/wire.ts` 里 `resolveUsageFlushInterval()` 的调用点**无条件执行**
@@ -4888,23 +4925,104 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚", () => {
  *   真原因只落在 `console.error`。那条 500 的形状由
  *   `tests/unit/entry-worker.test.ts` 的「装配失败时返回固定文案的 JSON 500，不回显异常细节——这是未鉴权路径」钉着。
  * ⇒ 「`wrangler deploy` 成功，然后每个请求 500」是这三条的直接后果，不是推测。
- * Node 那一侧同一个抛错会让进程起不来（`src/entry/node.ts` 不 catch），所以只有
- * Worker 形态是静默的——这也是文档里那两句分开写的原因。
+ *
+ * ⚠️⚠️ **Node 那一侧根本走不到这个抛错**（复评推翻了上一版写在这里的那句
+ * 「同一个抛错会让进程起不来（`src/entry/node.ts` 不 catch）」——两半都是假的）：
+ * · `src/http/usage-sink.ts` 里那道下限的判据第一项是 `hasWriteQuota`，而
+ *   `src/http/wire.ts` 把它接成 `runtime.quotaModel === "kv"`；
+ * · `src/adapters/runtime-node.ts` 的 `quotaModel` 恒为 `"file"`，而 `src/entry/node.ts`
+ *   是仓里唯一的 Node 入口、存储恒为 `FileStorage` ⇒ `hasWriteQuota` 在 Node 上恒为假
+ *   ⇒ **这道下限在 Node/Docker 上不存在，那个抛错不可达**。
+ *   现成的用例就是证据：`tests/contract/usage-tier2.test.ts` 的
+ *   「走 buildApp 的接线证据：USAGE_FLUSH_INTERVAL_MS 同时改变了落盘节奏与 capabilities 报出去的那个数」
+ *   正是 `USAGE_FLUSH_INTERVAL_MS: "300000"` + `nodeRuntime()` 建起了 app。
+ * · 而 `src/entry/node.ts` **恰恰 catch**：`main().catch(…)` 打印 `err.message` 之后
+ *   `process.exit(1)`。所以「Node 上失败是响的」这句话为真的对象是**另一类值**——
+ *   `usage-sink.ts` 那条「必须是不小于 1 的整数」，它与存储形态无关。
+ * ⇒ 文档里那两句现在这么分：Worker = 静默 500；文件存储（Docker / Node）= 压根没有这道下限。
  *
  * ── 它验不了什么（照本文件一贯的口径明写）──────────────────────────────────
- * 它认的是**五个 token 在不在、在不在自己那种语言里**，不认「这一节写得对不对」，
- * 也不认那三处**位置**：token 被整段搬到文档别处，这一组照绿（位置只能靠评审）。
- * 五份被同一句错话同步污染时它同样不响——那是跨语言互校的固有边界，与本文件
- * 开头 `NUMBERS` 那一段写的是同一条。
+ * 它认的是**七个 token 在不在、在不在自己那种语言里、在不在该在的那一段里**，
+ * 不认「这一节写得对不对」。五份被同一句错话同步污染时它不响——那是跨语言互校的
+ * 固有边界，与本文件开头 `NUMBERS` 那一段写的是同一条。
+ * 「④ 段里那句互斥的旧说法」不归本组，归紧跟在后面的那一组。
  */
 describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着「丢失」，不只是「延迟」", () => {
-  /** (A) 环境变量表那一格：读者照着表逐行读参数时唯一看得到的那句。 */
+  /** `### USAGE_STATS_ENABLED …` 那一节的标题，逐语言（`sectionBody` 要逐字对上）。 */
+  const STATS_HEADING: Record<Lang, string> = {
+    "zh-CN": "`USAGE_STATS_ENABLED`：打开之后要付什么",
+    "zh-TW": "`USAGE_STATS_ENABLED`：打開之後要付什麼",
+    en: "What `USAGE_STATS_ENABLED` costs once you turn it on",
+    ja: "`USAGE_STATS_ENABLED`: オンにすると何を払うか",
+    ko: "`USAGE_STATS_ENABLED`: 켜면 무엇을 치르나",
+  };
+
+  /** `### USAGE_FLUSH_INTERVAL_MS …` 那一节的标题，逐语言。 */
+  const FLUSH_HEADING: Record<Lang, string> = {
+    "zh-CN": "`USAGE_FLUSH_INTERVAL_MS`：KV 形态下调不小，而且调坏了不会明说",
+    "zh-TW": "`USAGE_FLUSH_INTERVAL_MS`：KV 形態下調不小，而且調壞了不會明說",
+    en: "`USAGE_FLUSH_INTERVAL_MS`: on KV you cannot shrink it, and getting it wrong says nothing",
+    ja: "`USAGE_FLUSH_INTERVAL_MS`: KV 形態では小さくできず、間違えても何も言いません",
+    ko: "`USAGE_FLUSH_INTERVAL_MS`: KV 형태에서는 줄일 수 없고, 잘못 넣어도 알려주지 않습니다",
+  };
+
+  /**
+   * 环境变量表里以 `` | `NAME` `` 起头的**那一行**（整行原样）。
+   * **恰好一行，多了少了都当场炸**：切出空串会把所有 token 判成 0 次，
+   * 把「表里那一行不见了」报成「这句话没写」，与 `sectionBody` 顶上那条同源。
+   */
+  const tableRow = (src: string, name: string): string => {
+    const rows = src.split("\n").filter((l) => l.trimStart().startsWith(`| \`${name}\``));
+    if (rows.length !== 1) throw new Error(`环境变量表里 \`| \`${name}\`\` 起头的行有 ${rows.length} 行，应当恰好 1 行`);
+    return rows[0] as string;
+  };
+
+  /** 含指定声明的那**一段** ```env 围栏（不含定界行）。同样「恰好一个，多了少了当场炸」。 */
+  const envFenceWith = (src: string, decl: string): string => {
+    const hit = envFences(src).map((b) => b.join("\n")).filter((b) => b.includes(decl));
+    if (hit.length !== 1) throw new Error(`含 \`${decl}\` 的 \`\`\`env 围栏有 ${hit.length} 个，应当恰好 1 个`);
+    return hit[0] as string;
+  };
+
+  /** 一个 `### 小节` 的正文。`sectionBody` 返回 `null` = 标题对不上 ⇒ 炸。 */
+  const section = (src: string, heading: string, lang: Lang): string => {
+    const body = sectionBody(src, heading);
+    if (body === null) throw new Error(`docs/${lang}/DEPLOY.md 里找不到 \`### ${heading}\` 这一节`);
+    return body;
+  };
+
+  const ROW_SCOPE = (read: ApiDocReader): TokenScope => ({
+    what: "环境变量表里 `USAGE_STATS_ENABLED` 那一行",
+    read: (lang) => tableRow(read(lang), "USAGE_STATS_ENABLED"),
+  });
+  const STATS_SCOPE = (read: ApiDocReader): TokenScope => ({
+    what: "`### USAGE_STATS_ENABLED …` 那一节",
+    read: (lang) => section(read(lang), STATS_HEADING[lang], lang),
+  });
+  const FENCE_SCOPE = (read: ApiDocReader): TokenScope => ({
+    what: "文末那段 ```env 围栏",
+    read: (lang) => envFenceWith(read(lang), "USAGE_STATS_ENABLED=true"),
+  });
+  const FLUSH_SCOPE = (read: ApiDocReader): TokenScope => ({
+    what: "`### USAGE_FLUSH_INTERVAL_MS …` 那一节",
+    read: (lang) => section(read(lang), FLUSH_HEADING[lang], lang),
+  });
+
+  /**
+   * (A) 环境变量表那一格：读者照着表逐行读参数时唯一看得到的那句。
+   * ⚠️ **限定词是「短命实例」不是「低流量」**（复评发现）：丢数的条件挂在
+   * **实例活不到一个落盘间隔**上，不是流量上——长寿的 Docker / Node 进程在低流量下
+   * 只是迟到、不丢（累加器在进程内存里，进程不死就还在），本节 ② 段逐字写着
+   * 「存活不足 2 小时的实例（Worker 的短命 isolate、Docker 的快速重启）」。
+   * 写成「低流量」对 Docker 读者是假话，而这张表的开场白自称「完整的取值范围与
+   * 代价以本表为准」，「代价写在别处」不构成豁免。
+   */
   const TABLE_CELL_LOSS: Record<Lang, string> = {
-    "zh-CN": "低流量下计数会丢而不是迟到",
-    "zh-TW": "低流量下計數會丟而不是遲到",
-    en: "how low traffic **loses** counts",
-    ja: "低トラフィックではカウントが遅れるのではなく消える",
-    ko: "저트래픽에서는 카운트가 늦는 게 아니라 사라진다",
+    "zh-CN": "短命实例上计数会丢而不是迟到",
+    "zh-TW": "短命實例上計數會丟而不是遲到",
+    en: "how short-lived instances **lose** counts",
+    ja: "短命なインスタンスではカウントが遅れるのではなく消える",
+    ko: "수명이 짧은 인스턴스에서는 카운트가 늦는 게 아니라 사라진다",
   };
 
   /** (B) 「打开之后要付什么」那一节：`> [!WARNING]` 里「消失，不是延迟到账」那一句。 */
@@ -4922,13 +5040,16 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
    * `.env` / `wrangler.toml`，抄的人往往不会往回翻。
    * ⚠️ 那个围栏里的注释**最多 3 行**（本文件「每个 ```env 围栏都是「带注释的」」那一格
    * 判着 1–3 行），所以这一句必须压进一行——token 也就只能落在那一行上。
+   * ⚠️ **五份都得带上机制从句**（复评发现）：上一版 en/ja/ko 只剩「低流量 ⇒ 丢」这个
+   * 结论，连「不是迟到」都没有，比 zh-CN/zh-TW 说得还满。现在五份一律把条件写成
+   * 「实例活不到一个落盘间隔」，与 (A) 同一个限定。
    */
   const ENV_SNIPPET_LOSS: Record<Lang, string> = {
-    "zh-CN": "那条尾巴在低流量部署上会直接变成丢数",
-    "zh-TW": "那條尾巴在低流量部署上會直接變成丟數",
-    en: "under low traffic that tail becomes loss",
-    ja: "低トラフィックではその尻尾がそのまま欠損になる",
-    ko: "그 꼬리가 곧바로 유실이 된다",
+    "zh-CN": "那条尾巴在短命实例上会直接变成丢数",
+    "zh-TW": "那條尾巴在短命實例上會直接變成丟數",
+    en: "an instance that dies inside that window takes those counts with it",
+    ja: "落とし切る前に死んだインスタンスはそのカウントごと消える",
+    ko: "기록 간격을 넘기지 못한 인스턴스는 그 카운트를 그대로 가지고 사라진다",
   };
 
   /** (D) `USAGE_FLUSH_INTERVAL_MS` 那一节：Worker 上的静默 500（链条见本组顶上）。 */
@@ -4953,23 +5074,69 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
     ko: "저트래픽 배포야말로 이 일이 가장 자주 벌어지는 상황입니다",
   };
 
+  /**
+   * (F) 这道校验**与开关开没开无关**。
+   * 出处是 `src/http/wire.ts`：`resolveUsageFlushInterval()` 的调用点在
+   * `cfg.usageStatsEnabled ? new UsageSink(…) : undefined` 那个三元**之外**。
+   */
+  const OFF_DOES_NOT_HELP: Record<Lang, string> = {
+    "zh-CN": "这道校验与 `USAGE_STATS_ENABLED` 开没开无关",
+    "zh-TW": "這道校驗與 `USAGE_STATS_ENABLED` 開沒開無關",
+    en: "The check runs whether or not `USAGE_STATS_ENABLED` is on",
+    ja: "このチェックは `USAGE_STATS_ENABLED` がオンかどうかとは無関係です",
+    ko: "이 검사는 `USAGE_STATS_ENABLED`가 켜져 있는지와 무관합니다",
+  };
+
+  /**
+   * (G) 处置。**必须与 (F) 分开钉**：只说「无关」而不说「那该怎么办」，
+   * 读者仍然会在面板与环境变量之间来回试。
+   */
+  const FIX_IS_THE_NUMBER: Record<Lang, string> = {
+    "zh-CN": "把统计开关关回 `false` **并不能解除这场 500**",
+    "zh-TW": "把統計開關關回 `false` **並不能解除這場 500**",
+    en: "turning statistics off **does not clear the 500**",
+    ja: "統計をオフに戻しても**この 500 は解けません**",
+    ko: "통계를 다시 꺼도 **이 500은 풀리지 않습니다**",
+  };
+
   const LOSS_TABLES = [
-    { label: "(A) 环境变量表那一格的丢失语义", table: TABLE_CELL_LOSS },
-    { label: "(B) 「打开之后要付什么」那一节的丢失语义", table: SECTION_LOSS },
-    { label: "(C) 文末 ```env 片段注释里的丢失语义", table: ENV_SNIPPET_LOSS },
-    { label: "(D) `USAGE_FLUSH_INTERVAL_MS` 调小之后 Worker 上的静默 500", table: SILENT_500 },
-    { label: "(E) 「低流量」与 Tier-2 绑在一起", table: LOW_TRAFFIC },
+    { label: "(A) 环境变量表那一格的丢失语义", table: TABLE_CELL_LOSS, scope: ROW_SCOPE },
+    { label: "(B) 「打开之后要付什么」那一节的丢失语义", table: SECTION_LOSS, scope: STATS_SCOPE },
+    { label: "(C) 文末 ```env 片段注释里的丢失语义", table: ENV_SNIPPET_LOSS, scope: FENCE_SCOPE },
+    { label: "(D) `USAGE_FLUSH_INTERVAL_MS` 调小之后 Worker 上的静默 500", table: SILENT_500, scope: FLUSH_SCOPE },
+    { label: "(E) 「低流量」与 Tier-2 绑在一起", table: LOW_TRAFFIC, scope: STATS_SCOPE },
+    { label: "(F) 这道校验与 `USAGE_STATS_ENABLED` 开没开无关", table: OFF_DOES_NOT_HELP, scope: FLUSH_SCOPE },
+    { label: "(G) 关掉统计解不了这场 500，得改那个数", table: FIX_IS_THE_NUMBER, scope: FLUSH_SCOPE },
   ] as const;
 
-  it.each([...LOSS_TABLES])("$label：五份 DEPLOY.md 各自写着自己那种语言的写法，且不串门", ({ label, table }) => {
-    const failures = perLangTokenFailures(label, table, realDoc("DEPLOY"));
+  it.each([...LOSS_TABLES])("$label：五份 DEPLOY.md 各自写着自己那种语言的写法、写在该写的那一段里，且不串门", ({ label, table, scope }) => {
+    const read = realDoc("DEPLOY");
+    const failures = perLangTokenFailures(label, table, read, scope(read));
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("反向自检：五张锚表的语言集恰好等于 LANGS，且没有两种语言共用（或互为子串）同一个 token", () => {
+  it("反向自检：七张锚表的语言集恰好等于 LANGS，且没有两种语言共用（或互为子串）同一个 token", () => {
     for (const { label, table } of LOSS_TABLES) {
       const failures = tokenTableFailures(label, table);
       expect(failures, failures.join("\n")).toEqual([]);
+    }
+  });
+
+  /**
+   * **射程自守：四种收窄各自切得出东西，而且真的比整份短。**
+   * 少了这一格，一个「切出空串」的射程会把七格一起判成「出现 0 次」——
+   * 那是一格会瞎报的判据，报文还会把人指向文档而不是这里。
+   */
+  it("射程自守：四种收窄在五份真文档上都切得出非空的一段，而且严格短于整份", () => {
+    const read = realDoc("DEPLOY");
+    for (const make of [ROW_SCOPE, STATS_SCOPE, FENCE_SCOPE, FLUSH_SCOPE]) {
+      const scope = make(read);
+      for (const lang of LANGS) {
+        const cut = scope.read(lang);
+        expect(cut.trim().length, `${scope.what}：docs/${lang}/DEPLOY.md 上切出来是空的`).toBeGreaterThan(0);
+        expect(cut.length, `${scope.what}：docs/${lang}/DEPLOY.md 上切出来的和整份一样长 —— 那就没收窄`)
+          .toBeLessThan(read(lang).length);
+      }
     }
   });
 
@@ -4978,81 +5145,273 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
   // ⚠️ **变异的目标串都是今天真的写在文档里的**，`readerWith` 在变异没落地时当场炸，
   // 所以「探针绿」不可能是「变异压根没打中」造成的。
 
+  /** 探针的公共夹具：变异只改一份，射程跟着变异后的那份走。 */
+  const probe = (
+    entry: (typeof LOSS_TABLES)[number], target: Lang, edit: (s: string) => string,
+  ): string[] => {
+    const read = readerWith(target, edit, "DEPLOY");
+    return perLangTokenFailures(entry.label, entry.table, read, entry.scope(read));
+  };
+
   it("探针①：把 zh-CN 表格那一格改回只说开销、不说丢 ⇒ (A) 红并点名 zh-CN", () => {
     // 这一格钉的正是改动前的原文：那一格只写「打开之后的开销见下文」，
     // 一个字都没说计数会丢。改回去必须当场红。
-    const failures = perLangTokenFailures(
-      "(A) 环境变量表那一格的丢失语义",
-      TABLE_CELL_LOSS,
-      readerWith(
-        "zh-CN",
-        (s) => s.split(`打开之后的开销、**${TABLE_CELL_LOSS["zh-CN"]}**见下文。`).join("打开之后的开销见下文。"),
-        "DEPLOY",
-      ),
+    const failures = probe(
+      LOSS_TABLES[0], "zh-CN",
+      (s) => s.split(`打开之后的开销、**${TABLE_CELL_LOSS["zh-CN"]}**见下文。`).join("打开之后的开销见下文。"),
     );
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
     expect(failures[0]).toContain("docs/zh-CN/DEPLOY.md");
     expect(failures[0]).toContain("出现 0 次");
   });
 
-  it("探针②：把 en 那一节的「丢」改写回「延迟」的说法 ⇒ (B) 红并点名 en", () => {
-    const failures = perLangTokenFailures(
-      "(B) 「打开之后要付什么」那一节的丢失语义",
-      SECTION_LOSS,
-      readerWith("en", (s) => s.split(SECTION_LOSS.en).join("posting them a little late"), "DEPLOY"),
+  /**
+   * 探针①b：**收窄那一半自己的探针**（复评发现：上一版 (A) 的标签写着「表格那一格」，
+   * 断言却扫整份 ⇒ 把这句话从表格行搬到正文任意位置照绿，而表格那一格回到只说开销）。
+   * 这一格证明收窄真的咬得住：句子还在文档里、只是不在那一行上，(A) 必须红。
+   */
+  it("探针①b：把 zh-CN 那句话从表格行搬到正文别处（文档里还在）⇒ (A) 照样红", () => {
+    const failures = probe(
+      LOSS_TABLES[0], "zh-CN",
+      (s) => `${s.split(`、**${TABLE_CELL_LOSS["zh-CN"]}**见下文。`).join("见下文。")}\n\n${TABLE_CELL_LOSS["zh-CN"]}\n`,
     );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/zh-CN/DEPLOY.md");
+    expect(failures[0]).toContain("那一行");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("探针②：把 en 那一节的「丢」改写回「延迟」的说法 ⇒ (B) 红并点名 en", () => {
+    const failures = probe(LOSS_TABLES[1], "en", (s) => s.split(SECTION_LOSS.en).join("posting them a little late"));
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
     expect(failures[0]).toContain("docs/en/DEPLOY.md");
     expect(failures[0]).toContain("出现 0 次");
   });
 
   it("探针③：把 ja 那段 ```env 注释里的那一句删掉 ⇒ (C) 红并点名 ja", () => {
-    const failures = perLangTokenFailures(
-      "(C) 文末 ```env 片段注释里的丢失语义",
-      ENV_SNIPPET_LOSS,
-      readerWith("ja", (s) => s.split(ENV_SNIPPET_LOSS.ja).join("パネルの数字は少し古くなる"), "DEPLOY"),
-    );
+    const failures = probe(LOSS_TABLES[2], "ja", (s) => s.split(ENV_SNIPPET_LOSS.ja).join("パネルの数字は少し古くなる"));
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
     expect(failures[0]).toContain("docs/ja/DEPLOY.md");
     expect(failures[0]).toContain("出现 0 次");
   });
 
-  it("探针④：把 ko 那句静默 500 改写成「启动就报错」那种误导说法 ⇒ (D) 红并点名 ko", () => {
-    // 「启动就报错」是 `.env.example` 里对这条限制的既有说法，它在 Node 上为真、
-    // **在 Worker 上不成立**——本组 (D) 守的就是这半句差别。
-    const failures = perLangTokenFailures(
-      "(D) `USAGE_FLUSH_INTERVAL_MS` 调小之后 Worker 上的静默 500",
-      SILENT_500,
-      readerWith("ko", (s) => s.split(SILENT_500.ko).join("기동 시점에 바로 오류로 알려줍니다"), "DEPLOY"),
+  /** 探针③b：(C) 的收窄同样要咬得住——句子搬出围栏（抄那段的人就看不到了）必须红。 */
+  it("探针③b：把 ja 那句话从 ```env 围栏里搬到正文别处 ⇒ (C) 照样红", () => {
+    const failures = probe(
+      LOSS_TABLES[2], "ja",
+      (s) => `${s.split(ENV_SNIPPET_LOSS.ja).join("パネルの数字は少し古くなる")}\n\n${ENV_SNIPPET_LOSS.ja}\n`,
     );
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/ja/DEPLOY.md");
+    expect(failures[0]).toContain("```env 围栏");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("探针④：把 ko 那句静默 500 改写成「启动就报错」那种误导说法 ⇒ (D) 红并点名 ko", () => {
+    // ⚠️ 「기동 시점에 바로 오류로 알려줍니다」（＝「启动就报错」）**两个运行时上都不成立**：
+    // Worker 上 `wrangler deploy` 照样成功、失败是每请求一个静默 500；
+    // 文件存储（Docker / Node）上压根没有这道下限，这个抛错不可达
+    //（论证见本组顶上那段 ⚠️⚠️）。本组 (D) 守的就是「Worker 那一半怎么表现」。
+    // 同一句误导说法在 ④ 段与 `.env.example` 里的版本，由紧跟着的那一组盯着。
+    const failures = probe(LOSS_TABLES[3], "ko", (s) => s.split(SILENT_500.ko).join("기동 시점에 바로 오류로 알려줍니다"));
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
     expect(failures[0]).toContain("docs/ko/DEPLOY.md");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("探针④b：把 en 那句「与开关无关」删掉 ⇒ (F) 红并点名 en", () => {
+    // 删掉它，读者照 (D) 定位到「填错了一个数字」之后最自然的第一步——
+    // 把刚打开的 `USAGE_STATS_ENABLED` 关回去——就又变成一条没人拦的死路。
+    const failures = probe(LOSS_TABLES[5], "en", (s) => s.split(OFF_DOES_NOT_HELP.en).join("This check"));
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/en/DEPLOY.md");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("探针④c：把 zh-TW 那句处置删掉 ⇒ (G) 红并点名 zh-TW", () => {
+    const failures = probe(
+      LOSS_TABLES[6], "zh-TW", (s) => s.split(FIX_IS_THE_NUMBER["zh-TW"]).join("把統計開關關回 `false` 就好"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/zh-TW/DEPLOY.md");
     expect(failures[0]).toContain("出现 0 次");
   });
 
   it("探针⑤：把 en 那句英文原样塞进 zh-TW 那一份（「五份都塞同一句英文」那种糊弄法）⇒ (E) 红并点名 zh-TW", () => {
     // 与上面那一组的「串门」探针同源：zh-TW 那份仍然写着自己的 token，
     // 正向那一半照绿，只有跨语言那一半抓得住。
-    const failures = perLangTokenFailures(
-      "(E) 「低流量」与 Tier-2 绑在一起",
-      LOW_TRAFFIC,
-      readerWith(
-        "zh-TW",
-        (s) => s.split(LOW_TRAFFIC["zh-TW"]).join(`${LOW_TRAFFIC["zh-TW"]}（${LOW_TRAFFIC.en}）`),
-        "DEPLOY",
-      ),
+    // ⚠️ 它同时是「收窄没有把跨语言互校一起收窄」的证据：塞进去的那句英文
+    // **不在 en 自己那一节里**，只有扫整份的那一半看得见。
+    const failures = probe(
+      LOSS_TABLES[4], "zh-TW",
+      (s) => s.split(LOW_TRAFFIC["zh-TW"]).join(`${LOW_TRAFFIC["zh-TW"]}（${LOW_TRAFFIC.en}）`),
     );
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
     expect(failures[0]).toContain("docs/zh-TW/DEPLOY.md");
     expect(failures[0]).toContain(LOW_TRAFFIC.en);
   });
 
-  it("不乱红：五份一起合法地多写一句无关的话 —— 上面五格不许因此假红", () => {
+  it("不乱红：五份一起合法地多写一句无关的话 —— 上面七格不许因此假红", () => {
     const noisy: ApiDocReader = (lang) => `${realDoc("DEPLOY")(lang)}\n\n<!-- 无关的一行 -->\n`;
-    for (const { label, table } of LOSS_TABLES) {
-      const failures = perLangTokenFailures(label, table, noisy);
+    for (const { label, table, scope } of LOSS_TABLES) {
+      const failures = perLangTokenFailures(label, table, noisy, scope(noisy));
       expect(failures, `${label}：五份一起多写了一句无关的话，判据却红了\n${failures.join("\n")}`).toEqual([]);
     }
+  });
+});
+
+/**
+ * ── 破了那道 KV 下限之后到底发生什么：④ 段与 `.env.example` 也得说分运行时的真话 ──
+ *
+ * **它补的是一条真实发生过的自相矛盾**（复评发现）：上一轮新开的
+ * `### USAGE_FLUSH_INTERVAL_MS` 一节写着「Worker 上这个抛错不会出现在部署输出里，
+ * 而是变成一个不说原因的 500」，而**同一份 DEPLOY.md** 往下两百多行的配额账 ④ 段
+ * 原封不动写着「破了**启动就报错**并告诉你最小可用值」，`.env.example` 里也是同一句。
+ * 上一版的判据一个字都不认这件事：(D) 只钉新那一节里有没有那句话，④ 段照着旧说法读
+ * 的人拿到的仍然是「部署时会响」。**两种互斥说法住在同一份文件里，等于没修。**
+ *
+ * ── 为什么「启动就报错」是错的（两个运行时都错）─────────────────────────────
+ * · Worker：`buildApp` 是在 `fetch()` 里懒装配的（`src/entry/worker.ts`），
+ *   抛错被 catch 成一条不带原因的 500 ⇒ `wrangler deploy` 成功，失败在**每个请求**上，
+ *   真原因只在 `console.error`。压根没有一个「启动」时刻给运维看。
+ * · 文件存储（Docker / Node）：`src/adapters/runtime-node.ts` 的 `quotaModel` 恒为
+ *   `"file"` ⇒ `src/http/wire.ts` 传给 `resolveUsageFlushInterval()` 的 `hasWriteQuota`
+ *   恒为假 ⇒ **这道下限在那一侧根本不存在**，谈不上「启动就报错」。
+ *
+ * ── 这一组钉的是什么 ────────────────────────────────────────────────────────
+ * 六份文件（五语言 DEPLOY.md + `.env.example`）**含那道下限的那一段**里：
+ * · **不许**出现「启动就报错 / fails at startup / 起動時にエラー / 시작할 때 오류」；
+ * · **必须**写着「Worker 上是每个请求一个不说原因的 500」。
+ * 射程收在那一段而不是整份，是有意的：`docs/ja/REGISTRAR.md` 里「起動時にエラー」
+ * 说的是注册机凭据（那一条**在 Node 上确实为真**），整份扫会把它一起判红。
+ *
+ * ── 它验不了什么 ────────────────────────────────────────────────────────────
+ * 反面那一半只认**这一种措辞**：有人改写成「启动时报错」它就看不见了。
+ * 真正扛事的是正面那一半（那句 500 必须在），反面只是把今天这句原话钉死不许回潮。
+ */
+describe("破了那道 KV 下限之后的后果：④ 段与 `.env.example` 里也是分运行时的真话", () => {
+  /** 一份文件在这件事上的两条措辞：不许出现的、必须出现的。 */
+  type BoundClaim = { readonly startupOnly: string; readonly perRequest500: string };
+
+  /** 键 = 语言码或 `.env.example`（后者用简体措辞，它本来就是简体文件）。 */
+  const BOUND_CLAIMS: Record<string, BoundClaim> = {
+    "zh-CN": { startupOnly: "启动就报错", perRequest500: "每个请求一个不说原因的 500" },
+    "zh-TW": { startupOnly: "啟動就報錯", perRequest500: "每個請求一個不說原因的 500" },
+    en: { startupOnly: "fails at startup", perRequest500: "every request gets a 500 with no reason" },
+    ja: { startupOnly: "起動時にエラー", perRequest500: "すべてのリクエストが理由のない 500" },
+    ko: { startupOnly: "시작할 때 오류", perRequest500: "모든 요청이 이유 없는 500" },
+    ".env.example": { startupOnly: "启动就报错", perRequest500: "每个请求一个不说原因的 500" },
+  };
+
+  /**
+   * 含 `(13 − 1)` 那一行所在的**整段**：向上向下各扩到第一条空行为止
+   *（`.env.example` 里只有一个 `#` 的行同样算空行——那是它的段落分隔）。
+   * **那道下限在一份文件里出现的次数不是 1 就当场炸**：0 次说明这一段被改写了、
+   * 判据在守空气，2 次以上说明射程认不准是哪一段。
+   */
+  const boundParagraph = (label: string, src: string): string => {
+    const lines = src.split("\n");
+    const hits = lines.flatMap((l, i) => (l.includes("(13 − 1)") ? [i] : []));
+    if (hits.length !== 1) throw new Error(`${label} 里「(13 − 1)」那道下限出现 ${hits.length} 次，应当恰好 1 次`);
+    const blank = (l: string | undefined): boolean => l === undefined || l.trim() === "" || l.trim() === "#";
+    let from = hits[0] as number;
+    let to = hits[0] as number;
+    while (!blank(lines[from - 1])) from -= 1;
+    while (!blank(lines[to + 1])) to += 1;
+    return lines.slice(from, to + 1).join("\n");
+  };
+
+  /** 判定本体。**只读文本、不碰磁盘**，反向控制因此可以直接喂变异过的字符串。 */
+  const boundFailures = (files: ReadonlyArray<readonly [label: string, text: string]>): string[] => {
+    const out: string[] = [];
+    for (const [label, text] of files) {
+      const claim = BOUND_CLAIMS[label];
+      if (claim === undefined) {
+        out.push(`${label}：没有登记它的措辞表 —— 射程与登记表对不上，先补登记`);
+        continue;
+      }
+      const para = boundParagraph(label, text);
+      if (para.includes(claim.startupOnly)) {
+        out.push(
+          `${label}：那道下限所在的那一段里还写着「${claim.startupOnly}」——`
+          + "Worker 上 `wrangler deploy` 照样成功（失败在每个请求上），"
+          + "文件存储那一侧压根没有这道下限，两个运行时上这句话都不成立",
+        );
+      }
+      if (!para.includes(claim.perRequest500)) {
+        out.push(
+          `${label}：那道下限所在的那一段里没写「${claim.perRequest500}」——`
+          + "读者照这一段读到的仍然是「部署时会响」，与 `USAGE_FLUSH_INTERVAL_MS` 那一节打架",
+        );
+      }
+    }
+    return out;
+  };
+
+  /** 六份真文件。 */
+  const realFiles = (): ReadonlyArray<readonly [string, string]> => [
+    ...LANGS.map((l) => [l, readFileSync(docPath(".", l, "DEPLOY"), "utf8")] as const),
+    [".env.example", readFileSync(".env.example", "utf8")] as const,
+  ];
+
+  /** 变异只改一份，其余五份照旧。**改不动就当场炸。** */
+  const filesWith = (target: string, edit: (s: string) => string): ReadonlyArray<readonly [string, string]> =>
+    realFiles().map(([label, text]) => {
+      if (label !== target) return [label, text] as const;
+      const out = edit(text);
+      if (out === text) throw new Error(`变异没落到 ${target} 上——这一格控制是空的`);
+      return [label, out] as const;
+    });
+
+  it("射程自守：六份文件都切得出那一段，每一段都含着那道下限、而且严格短于整份", () => {
+    const files = realFiles();
+    expect(files.length, "射程不是六份 —— 五语言 DEPLOY.md + .env.example").toBe(6);
+    for (const [label, text] of files) {
+      const para = boundParagraph(label, text);
+      expect(para, `${label}：切出来的那一段里没有那道下限`).toContain("(13 − 1)");
+      expect(para.length, `${label}：切出来的那一段与整份一样长 —— 那就没收窄`).toBeLessThan(text.length);
+    }
+  });
+
+  it("六份文件的那一段里：没有「启动就报错」那种说法，而且写着 Worker 上是每请求一个不说原因的 500", () => {
+    const failures = boundFailures(realFiles());
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("该红时红：把 zh-CN ④ 段那句改回「启动就报错」⇒ 红并点名 zh-CN", () => {
+    const failures = boundFailures(filesWith(
+      "zh-CN", (s) => s.split("破了在装配时就抛错并告诉你最小可用值").join("破了**启动就报错**并告诉你最小可用值"),
+    ));
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("zh-CN");
+    expect(failures[0]).toContain("启动就报错");
+  });
+
+  it("该红时红：把 .env.example 那一段里的「每请求 500」删掉 ⇒ 红并点名 .env.example", () => {
+    const failures = boundFailures(filesWith(
+      ".env.example", (s) => s.split("之后是每个请求一个不说原因的 500，").join("之后就那样了，"),
+    ));
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain(".env.example");
+    expect(failures[0]).toContain("没写");
+  });
+
+  it("不乱红：六份一起合法地多写一句无关的话 —— 上面两格不许因此假红", () => {
+    const noisy = realFiles().map(([label, text]) => [label, `${text}\n\n<!-- 无关的一行 -->\n`] as const);
+    const failures = boundFailures(noisy);
+    expect(failures, `六份一起多写了一句无关的话，判据却红了\n${failures.join("\n")}`).toEqual([]);
+  });
+
+  /**
+   * `.env.example` 那一段还要自己写一遍「与开关无关」。
+   * **不能靠 DEPLOY.md 那边的 (F)**：照抄 `.env.example` 的人往往一眼都不看文档，
+   * 而「把刚打开的 `USAGE_STATS_ENABLED` 关回去」恰恰是他最自然的第一步。
+   */
+  it("`.env.example` 的那一段里也写着「这道校验与 USAGE_STATS_ENABLED 开没开无关」", () => {
+    const src = readFileSync(".env.example", "utf8");
+    const para = boundParagraph(".env.example", src);
+    expect(para, "关掉统计并不能解除那场 500 —— 这半句在 .env.example 里没写")
+      .toContain("这道校验与上面的 USAGE_STATS_ENABLED 开没开无关");
   });
 });
 
