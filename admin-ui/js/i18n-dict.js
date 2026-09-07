@@ -145,6 +145,11 @@ export const I18N = {
   "ak.usage.unknown":  { "zh-CN": "用量：—", "zh-TW": "用量：—", en: "Usage: —", ja: "使用量: —", ko: "사용량: —" },
   "ak.usage.value":    { "zh-CN": "近 24 小时 ≈ {count} 次请求", "zh-TW": "近 24 小時 ≈ {count} 次請求", en: "Last 24h ≈ {count} requests", ja: "直近 24 時間 ≈ {count} 件", ko: "최근 24시간 ≈ {count}건" },
   "ak.usage.tip":      { "zh-CN": "这个数来自时间序列统计（Tier-2），是近似值：未落盘的尾巴最长一个落盘间隔。按天 / 按小时的完整分解在「用量」板块。", "zh-TW": "這個數來自時間序列統計（Tier-2），是近似值：未落盤的尾巴最長一個落盤間隔。按天 / 按小時的完整分解在「用量」板塊。", en: "This number comes from time-series stats (Tier-2) and is approximate: the unflushed tail can be up to one flush interval old. The full per-day / per-hour breakdown is in the Usage section.", ja: "この数値は時系列統計（Tier-2）によるもので概算です。未書き込み分は最大で 1 回のフラッシュ間隔ぶん古くなります。日別・時間別の完全な内訳は「使用量」セクションにあります。", ko: "이 수치는 시계열 통계(Tier-2)에서 온 근사값입니다. 아직 기록되지 않은 부분은 최대 한 번의 플러시 간격만큼 오래되었을 수 있습니다. 일별·시간별 전체 분해는 「사용량」 섹션에 있습니다." },
+  // 用量这一次没读到时那条黄条的正文。**它必须把「坏的只是这一行」说出来**：
+  // 这条横幅出现时列表、签发、停用、删除全都照常可用，一句笼统的「读取失败」
+  // 会让运维以为整个板块出事了。旁边那颗按钮走 `common.refresh`（同一件东西，
+  // 不为它另开一条文案）。
+  "ak.usageFailed":    { "zh-CN": "用量这一次没读出来（列表本身没问题）", "zh-TW": "用量這一次沒讀出來（列表本身沒問題）", en: "Usage could not be read this time (the list itself is fine)", ja: "今回は使用量を読み取れませんでした（一覧そのものは正常です）", ko: "이번에는 사용량을 읽지 못했습니다 (목록 자체는 정상입니다)" },
   "ak.action.rename":  { "zh-CN": "改名", "zh-TW": "改名", en: "Rename", ja: "名前変更", ko: "이름 변경" },
   "ak.action.disable": { "zh-CN": "停用", "zh-TW": "停用", en: "Disable", ja: "停止", ko: "중지" },
   "ak.action.enable":  { "zh-CN": "启用", "zh-TW": "啟用", en: "Enable", ja: "有効化", ko: "사용" },

@@ -335,4 +335,80 @@ describe("API 密钥板块：每张卡上的用量那一行", () => {
     expect(usageCells(h)[0]).toBe(`用量：${EM}`);
     expect(sectionOf(h).textContent, "用量拉不出来不该让整张列表消失").toContain("mobile-app");
   });
+
+  /** 这一次会话里 `GET /admin/api/…` 各打了几次。**按前缀数，不看方法之外的东西。** */
+  function getCount(h: Harness, prefix: string): number {
+    return h.calls.filter((c) => c.url.startsWith(prefix) && c.method === "GET").length;
+  }
+
+  /**
+   * **用量读失败之后出得来出不来。**
+   *
+   * 评审发现（第 1 轮）：`loadUsage()` 原来**只有 `onShow` 一个调用点**，
+   * 而它失败之后每张卡恒画「用量：—」——板块里没有任何一颗按钮会再拉一次用量
+   *（上面那颗「刷新」只画在「列表也读不出来」那一支里，且只重拉列表）。
+   * 也就是说 `usageFailed` 是个**进得去出不来**的状态，唯一的出路是切走板块再切回来。
+   * 当时那段注释还反过来宣称「写操作收尾会跟着重来」——**一个调用点都没有**。
+   *
+   * 下面四格钉的就是修完之后的形状；`loadUsage` 的调用点数目本身由那段注释里
+   * 写明的现算命令（`grep -n "loadUsage" admin-ui/js/sec-apikeys.js` 恰好三处）兜着。
+   */
+  describe("用量读失败之后，板块内自己给得出重试的路", () => {
+    /** 第一次用量读 500、之后改成 200。**用它验「点一下真的能回到数字」。** */
+    function flakyUsage() {
+      let failed = false;
+      return (url: string) => {
+        if (url.startsWith("/admin/api/usage")) {
+          if (failed) return { status: 200, body: usageBody() };
+          failed = true;
+          return { status: 500, body: {} };
+        }
+        return respondOk()(url);
+      };
+    }
+
+    it("失败时画出一条黄条 + 一颗「刷新」，点它之后那一格从 — 变回真数字", async () => {
+      const { h } = await openSection(flakyUsage());
+      expect(usageCells(h)[0], "前置条件没成立").toBe(`用量：${EM}`);
+      const again = buttonByText(sectionOf(h), "刷新");
+      expect(again, "用量读失败后板块里一个重试入口都没有 —— 只能切走再切回来").not.toBeNull();
+      again!.click();
+      await settle(12);
+      expect(usageCells(h)[0], "点了「刷新」用量还是 —").toContain("7");
+      expect(sectionOf(h).textContent, "读回来了就该把那条黄条收掉").not.toContain("列表本身没问题");
+    });
+
+    it("那颗「刷新」**只重拉用量**，不顺手把列表也拉一遍（一次点击不许付没要的存储读）", async () => {
+      const { h } = await openSection(flakyUsage());
+      const before = getCount(h, "/admin/api/apikeys");
+      const usageBefore = getCount(h, "/admin/api/usage");
+      buttonByText(sectionOf(h), "刷新")!.click();
+      await settle(12);
+      expect(getCount(h, "/admin/api/usage"), "点了却没重拉用量").toBe(usageBefore + 1);
+      expect(getCount(h, "/admin/api/apikeys"), "顺手把列表也拉了一遍").toBe(before);
+    });
+
+    it("用量好好的时候不画这条黄条 —— 常驻的话它就成了噪音", async () => {
+      const { h } = await openSection(respondWithUsage({ status: 200, body: usageBody() }));
+      expect(sectionOf(h).textContent).not.toContain("列表本身没问题");
+      expect(buttonByText(sectionOf(h), "刷新"), "一切正常时这个板块里不该有「刷新」").toBeNull();
+    });
+
+    /**
+     * **写操作收尾刻意不重拉用量**，这一格钉的是那条裁定（不是漏了）。
+     * 理由写在 `loadUsage()` 上方：签发 / 改名 / 停用 / 删除都不改变「已经发生过的
+     * 请求数」，跟着重拉只会给每次写平白加 4 次 get。哪天真要改成「写完也重拉」，
+     * 得先来改这一格 —— 顺带把 DEPLOY.md 那笔账一起改了。
+     */
+    it("一次写操作收尾**不**重拉用量（列表倒是要重拉：版本号必须刷新）", async () => {
+      const { h } = await openSection(respondWithUsage({ status: 200, body: usageBody() }));
+      const usageBefore = getCount(h, "/admin/api/usage");
+      const listBefore = getCount(h, "/admin/api/apikeys");
+      buttonByText(sectionOf(h), "停用")!.click();
+      await settle(12);
+      expect(getCount(h, "/admin/api/apikeys"), "写完没重新读一遍列表，版本号就陈旧了").toBe(listBefore + 1);
+      expect(getCount(h, "/admin/api/usage"), "写操作收尾顺手重拉了用量 —— 那是每次写多付 4 次 get")
+        .toBe(usageBefore);
+    });
+  });
 });

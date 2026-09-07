@@ -265,6 +265,26 @@ function render() {
     host.appendChild(elI18n("p", emptyKey, { class: "muted note" }));
     return;
   }
+  // ── 用量这一次没读到：**这个板块自己给出重试的入口**─────────────────────────
+  // 没有这一条时，`usageFailed` 是个**进得去出不来**的状态：每张卡画成「用量：—」，
+  // 而板块里没有任何一颗按钮会再拉一次用量（上面那颗「刷新」只重拉列表，写操作
+  // 收尾也只重拉列表）⇒ 运维唯一的出路是切走板块再切回来。
+  //
+  // ⚠️ **它与上面 `st === "error"` 那条红条刻意是两条，不合并**：那一条说的是
+  //    「列表读不出来」，那时卡片压根没画、谈用量没有意义（所以那一支先 return 了）；
+  //    这一条说的是「列表好好的，只有用量这一行没读到」。**两颗按钮各只重拉自己
+  //    那一条**——让「刷新」顺手把另一条也拉一遍，就是让一次点击付一笔运维没要的
+  //    存储读（Tier-2 开着时是 4 次 get）。
+  // ⚠️ 它是**黄条**不是红条：列表、签发、停用、删除全都照常可用，坏掉的只是卡片上
+  //    那一行附加信息。用红条会把「少一行数字」说成「这个板块出事了」。
+  if (usageFailed) {
+    const warn = el("div", { class: "banner-warn" });
+    warn.appendChild(elI18n("span", "ak.usageFailed"));
+    const again = elI18n("button", "common.refresh", { type: "button", class: "ak-usage-retry" });
+    again.addEventListener("click", () => { void loadUsage(); });
+    warn.appendChild(again);
+    host.appendChild(warn);
+  }
   for (const v of visible) host.appendChild(itemCard(v));
 }
 
@@ -304,7 +324,14 @@ async function loadCapabilities() {
  *
  * ⚠️ **它不轮询、不跟着搜索框重拉**：与「用量」板块同一条纪律
  *（那个板块的文件头写着「每刷新一次要付『天数 × 分片槽位』次存储读」）。
- * 进板块拉一次，之后只有点「刷新」类的写操作收尾才会跟着重来。
+ * **进板块拉一次；此外只有一个调用点**——这一次读失败时 `render()` 会画出一条黄条，
+ * 那颗按钮再拉一次。现算：`grep -n loadUsage admin-ui/js/sec-apikeys.js` 是**四行**
+ *（本行这句说明 + 定义 + 黄条那颗按钮 + `onShow`），也就是**调用点只有两个**。
+ *
+ * ⚠️ **写操作收尾（`afterWrite`）刻意不重拉它**，而这不是省事：签发 / 改名 / 停用 /
+ * 删除**都不会改变「已经发生过的请求数」**——新签发的那把在这份数据里本来就取不到桶
+ *（`apiKeyUsage()` 据此判成**真的 0**，那是对的），删掉的那张卡整张消失。
+ * 跟着重拉一遍只会给每一次写操作平白加 4 次 get，换不回任何一个会变的数字。
  *
  * ⚠️⚠️ **Tier-2 关着时这条请求的存储读是 0 次**，那是后端的结构性性质
  *（`src/http/admin/handlers/usage.ts` 的 `UsageWiring` 上方：关闭时读路径

@@ -387,9 +387,9 @@ tr:last-child td { border-bottom: 0; }
 }
 .banner-warn p, .banner-info p { margin: 2px 0; }
 /* 错误横幅里那颗重试按钮：跟在文字后面，别把整条横幅撑成两行。
-   用量板块与模型板块上那颗是**同一件东西**，所以共用这一条规则、
+   用量板块、模型板块与「API 密钥」板块上那颗是**同一件东西**，所以共用这一条规则、
    不各写一份取值逐字相同的声明（同 `.badge-danger` 下面那段裁定）。 */
-.usage-retry, .models-retry { margin-left: var(--gap-sm); }
+.usage-retry, .models-retry, .ak-usage-retry { margin-left: var(--gap-sm); }
 
 /* 模型板块。 */
 /* 一条端点一行；同一格里的第二条往下挪，别让两段式被读成一条带斜杠的长路径。 */

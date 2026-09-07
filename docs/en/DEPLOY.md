@@ -713,7 +713,10 @@ Those 13 come from the following, and all six points matter:
   with statistics off, that endpoint's read path **does not exist structurally** (it is not an
   `if` guarding it), so **a default deployment pays nothing for this line**. With Tier-2 on,
   the `24h` range spans at most 2 UTC days × 2 slots = **at most 4 gets**, and it happens
-  **once, when a human opens that board** (this board does not poll).
+  **once, when a human opens that board** (this board does not poll). When that read fails,
+  the “Refresh” on the amber banner above the cards asks for it once more — **that is another
+  human click, not an automatic retry**; **writes (issue / rename / disable / delete) end
+  without re-reading it on purpose**, since none of them change requests that already happened.
 
   > [!NOTE]
   > **It does not change the “critical configuration crosses to 100.3%” ledger above**:
