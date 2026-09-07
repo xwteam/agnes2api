@@ -56,8 +56,12 @@ export default {
          * 才看得见）。同一份代码在 Node 上是 `process.exit(1)`——运维立刻看得见的
          * 正确 fail-fast。同一份代码、两种相反的运维体验。
          *
-         * `ConfigRefusal` = **运维配错了**（今天只剩「两边都没有 GATEWAY_TOKEN」与
-         * `num()` 的 env 侧非法值两条）⇒ `503` + 一条**固定枚举**的 `reason`，
+         * `ConfigRefusal` = **运维配错了**。今天可达的是四类，散在 6 个抛点上
+         *（`grep -rn "throw new ConfigRefusal(" src/` 实测 6 处）：「两边都没有
+         * GATEWAY_TOKEN」、`num()` 的 env 侧非法值、`APIKEY_CACHE_TTL_MS` 非法、
+         * `USAGE_FLUSH_INTERVAL_MS` 非法——后两类由 `src/http/wire.ts` 在 `buildApp`
+         * 里**无条件**调用的两个 resolver 抛出，所以它们和前两类一样走得到这里。
+         * ⇒ `503` + 一条**固定枚举**的 `reason`，
          * 让「这个部署还没配完」这件事在 `wrangler tail` 之外也说得出来。
          * 非 `ConfigRefusal` 按定义就是代码 bug ⇒ 维持今天的不透明 `500`。
          *

@@ -1692,10 +1692,28 @@ BANNER='[collection-guard] ✅'
 #     · 把 ja 那份的 Worker 症状段改回「一启动就退出」⇒ 红 2（症状段 + 负面表）；
 #     · 把设置页横幅改回无条件用 `set.loadBlocked.fatal` ⇒ **只红 1**。
 #   ⇒ Node：4856 + 47 = 4903；文件数 156 + 3 = 159。
+#
+#   ── 第 4 轮（评审回填，commit 439bd5d）：**+15**，四个数里只有 EXPECT_NODE_TESTS 动
+#   ⚠️ 这一笔是**补记**：439bd5d 当时加了判据却没改 EXPECT_*、也没进这张账，于是账面
+#      停在 4903 而树上已经是 4918 —— 第 ⑥ 格本来会红。补的时候每个数都是重新量的，
+#      不是照着差值倒推：
+#     · `tests/unit/source-guards.test.ts` 206 → **217**（**+11**）＝ 3 格普通 `it`
+#       （throw 清单恰好等于手写清单且全是 `ConfigRefusal` / 反向自检「清单不许空」/
+#       「注释里的 throw 不算数」）＋ `it.each(OPS_THROW_COVERED)` **4 条**
+#       ＋ `it.each(OPS_THROW_BLIND_SPOTS)` **4 条**。两个数组的条目数是数出来的，
+#       不是估的（顶层 `{` 计数）。
+#     · `tests/unit/docs-parity.test.ts` 654 → **657**（**+3**：那条空断言按
+#       `> [!WARNING]` 切成「步骤区 / 警示区」之后 1 格拆 3 格）。
+#     · `tests/ui/dom/settings-save.test.ts` **+1**（横幅三档：注册机关着但仍有
+#       blocker 时不许说「注册机开着」）。
+#     · `tests/unit/entry-worker.test.ts` **+0**（那一轮只改了措辞，没加格）。
+#   ⇒ Node：4903 + 15 = **4918**；文件数不动（四处都加在既有文件里）。
+#   ⇒ workerd 不动：这四份都只在 node 侧跑（`tests/ui/**` 与 `tests/unit/**` 不进
+#     workers 池），`src/**` 那一轮的改动没有新增契约用例。
 #   ⇒ workerd：768 + 6 = 774（`config-degrade` 4 格 + `admin-config` / `admin-registrar` 各 1 格，
 #     三份都在 `tests/contract/` 下 ⇒ 两个池子都跑）；文件数 41 + 1 = 42。
 EXPECT_NODE_FILES=159
-EXPECT_NODE_TESTS=4903
+EXPECT_NODE_TESTS=4918
 EXPECT_WORKERS_FILES=42
 EXPECT_WORKERS_TESTS=774
 
