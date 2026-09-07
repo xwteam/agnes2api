@@ -415,8 +415,10 @@ export type ApiKeyTableRead =
  * 把读回来的裸值窄化成一张表。
  *
  * **不做逐条抢救**（kiro2api 那边有 `salvage_api_keys`）：本仓这张 blob 只有面板
- * 一个写者、没有「运维手工编辑」这条正当来源，而 `.invalid` 旁路已经把原始字节
- * 保住了。抢救逻辑的代价是一整条"部分正确"的语义，收益在本仓为零。
+ * 一个写者、没有「运维手工编辑」这条正当来源，而坏字节本身留在存储里没有被任何
+ * 一条路径覆盖过（读路径零 put、写路径读到 `invalid` 一律 409 拒绝落盘，
+ * 理由见 `src/http/apikey-store.ts` 的 `loadApiKeyTable`）⇒ 人工捞回随时可做。
+ * 抢救逻辑的代价是一整条"部分正确"的语义，收益在本仓为零。
  */
 export function parseApiKeyTable(raw: unknown): ApiKeyTableRead {
   if (raw === null || raw === undefined) return { kind: "absent" };

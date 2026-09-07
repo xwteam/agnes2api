@@ -1378,8 +1378,31 @@ BANNER='[collection-guard] ✅'
 #   ⇒ Node：151 + 5 = 156 个文件；4670 + 30 + 17 + 8 + 30 + 10 + 10 = 4775 格。
 #   ⇒ workerd：39 + 2 = 41 个文件（两份契约都落在 `tests/contract/`，双运行时各跑一遍）；
 #     734 + 17 + 8 = 759 格。
+# 🔴 **这一轮（回填一条评审发现：吊销延迟提示里的时长恒画成破折号）。**
+#   · `sec-apikeys.js` 按 `overview.config.kvEdgeCacheMs` 取边缘缓存那个数，
+#     真后端把它放在 `freshness` 里（`handlers/overview.ts`，`config` 那一格只装
+#     registrar/envLocked/degraded）⇒ 恒 `undefined` ⇒ `akRevokeDelayMs` 如约回
+#     `null` ⇒ 停用/删除后那条 sticky 提示逐字是「最多还要 — 才看得见这次改动」，
+#     也就是设计 §6 与五份 ADMIN.md 都写死的「必须给具体数字」整条落空。
+#   · **判据为什么没红**：`tests/ui/apikeys.test.ts` 只测纯函数
+#     `akRevokeDelayMs(300_000, 60_000) === 360_000`，没有一格验证它**从哪个字段取数**；
+#     而 `tests/ui/dom/apikeys-section.test.ts` 那份 `/overview` 替身**自己也把这个数
+#     放在 `config` 里**——替身跟着实现一起错，于是那句话整格测的是空气。
+#     修替身是这一轮的实质改动之一，不是顺手。
+#   · 修法：改走 `freshnessValues()`（`sec-overview.js` 用的同一个投影函数），
+#     不在板块里手写第二遍取字段 ⇒ 同一处漂移没有第二个入口。
+#   格数：`tests/ui/dom/apikeys-section.test.ts` **+3**（停用后提示里出现「6分0秒」/
+#     删除后同样给具体时长 / 后端真的没给这个数时画 `—`）。第三格是**反面**那一格：
+#     少了它，把 `edgeMs` 硬编码成 60_000 也能让前两格绿。
+#   变异实测：把取数改回 `config.` ⇒ 前两格当场红（实跑 2 failed，收到的逐字是
+#     「本实例已经生效；别的实例最多还要 — 才看得见这次改动。」）。
+#   · 另一条（`src/core/admin/api-keys.ts` 的注释拿一个不存在的 `.invalid` 旁路当论据）
+#     只改注释，**零格数**：那条旁路从没落地，全仓只有一个同名日志事件；
+#     真正成立的论据是「读路径零 put + 写路径 409 拒绝覆盖」，两处实现都在。
+#   ⇒ Node：4775 + 3 = 4778；文件数不动（加在既有文件里）。
+#   ⇒ workerd：759 + 0 = 759（`tests/ui/**` 只在 node 侧跑，见 vitest.config.ts）；文件数不动。
 EXPECT_NODE_FILES=156
-EXPECT_NODE_TESTS=4775
+EXPECT_NODE_TESTS=4778
 EXPECT_WORKERS_FILES=41
 EXPECT_WORKERS_TESTS=759
 

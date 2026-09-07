@@ -61,14 +61,40 @@ async function openSection(respond: (url: string, method: string) => { status: n
   return { h, calls: h.calls };
 }
 
+/**
+ * `/admin/api/overview` 的应答，**形状与真后端逐格对齐**。
+ *
+ * ⚠️⚠️ **`kvEdgeCacheMs` 住在 `freshness` 里，不在 `config` 里。** 这一条不是随手写的：
+ * 本文件第一版的这份替身把它放进了 `config`，**而板块当时也正好从 `config` 取**
+ * ——替身跟着实现一起错，于是「停用后那句提示里的具体时长」整格测的是空气。
+ * 真形状的权威是 `tests/contract/admin-overview.test.ts` 的 `OverviewBody`
+ *（`config` 那一格只有 registrar/envLocked/degraded 六项，没有任何 TTL）。
+ * **改这份替身之前先去那边核对，别照着 `sec-apikeys.js` 反推。**
+ */
+const OVERVIEW_BODY = {
+  freshness: {
+    poolCacheTtlMs: 60_000, poolVisibilityUpperBoundMs: 120_000, poolTouchIntervalMs: 21_600_000,
+    configTtlMs: 30_000, configVisibilityUpperBoundMs: 90_000, kvEdgeCacheMs: 60_000,
+  },
+  config: {
+    registrarEnabled: false, primary: null, fallback: null,
+    targetKeys: 0, envLocked: [], degraded: false,
+  },
+};
+
 /** 缺省应答：capabilities / overview / apikeys 三条，其余一律空对象。 */
-function respondOk(list: unknown = listBody(), cap: unknown = capBody()) {
+function respondOk(list: unknown = listBody(), cap: unknown = capBody(), ov: unknown = OVERVIEW_BODY) {
   return (url: string) => {
     if (url.startsWith("/admin/api/capabilities")) return { status: 200, body: cap };
-    if (url.startsWith("/admin/api/overview")) return { status: 200, body: { config: { kvEdgeCacheMs: 60_000 } } };
+    if (url.startsWith("/admin/api/overview")) return { status: 200, body: ov };
     if (url.startsWith("/admin/api/apikeys")) return { status: 200, body: list };
     return { status: 200, body: {} };
   };
+}
+
+/** toast-host 里当前的全部提示文本，按出现顺序。 */
+function toasts(h: Harness): string[] {
+  return h.dom.byId("toast-host").querySelectorAll("div").map((d) => d.textContent);
 }
 
 const sectionOf = (h: Harness): FakeElement => h.section("apikeys");
@@ -166,6 +192,59 @@ describe("API 密钥板块：写操作把版本号带回去", () => {
     toggle!.click();
     await settle(12);
     expect(calls.filter((c) => c.method !== "GET"), "版本号还不知道，却把写请求发出去了").toEqual([]);
+  });
+});
+
+/**
+ * **「停用之后最多还要多久才在别处失效」那句话里的数，得真的是个数。**
+ *
+ * `tests/ui/apikeys.test.ts` 已经把 `akRevokeDelayMs()` 本身测到了
+ *（`(300_000, 60_000) → 360_000`、任一为空回 `null`），**但没有一格验证板块把
+ * 那两个入参从哪里取**——而实际漏的正是取数那一步：边缘缓存那个数被按
+ * `overview.config.kvEdgeCacheMs` 取，真后端把它放在 `freshness` 里，于是恒为
+ * `undefined` ⇒ 纯函数如约回 `null` ⇒ 提示画成「最多还要 — 才看得见」。
+ * 纯函数对、接线错，是本仓已经登记过的同一族假阴性。
+ *
+ * ⇒ 这一组的观测点**必须是渲染出来的那句话**，不是 `akRevokeDelayMs` 的返回值。
+ */
+describe("API 密钥板块：吊销延迟提示里的时长是具体的数字，不是破折号", () => {
+  it("停用成功后那条 sticky 提示写的是「6分0秒」（= 缓存 TTL 300s + 边缘缓存 60s）", async () => {
+    const { h } = await openSection(respondOk());
+    buttonByText(sectionOf(h), "停用")!.click();
+    await settle(12);
+    const line = toasts(h).find((s) => s.includes("别的实例最多还要"));
+    expect(line, "停用成功却没弹出「多久才在别处失效」那条提示").toBeDefined();
+    // 字段名一改回 `config.` 这一格立刻红：edgeMs 变 null ⇒ 这里就是 EM。
+    expect(line, "时长画成了破折号 —— 边缘缓存那个数没取到（它在 freshness 里）").not.toContain(EM);
+    expect(line).toContain("6分0秒");
+  });
+
+  it("删除成功后同样给具体时长", async () => {
+    const { h } = await openSection(respondOk());
+    buttonByText(sectionOf(h), "删除")!.click();
+    await settle(4);
+    // 确认弹窗挂在 body 上（`ui.js` 的 `openModal`），两颗按钮固定是 [取消, 确定]。
+    const dialog = h.dom.document.body.querySelectorAll('[role="dialog"]')[0];
+    expect(dialog, "点了删除却没弹出确认框").toBeDefined();
+    const buttons = dialog!.querySelectorAll("button");
+    buttons[buttons.length - 1]!.click();
+    await settle(12);
+    const line = toasts(h).find((s) => s.includes("别的实例最多还要"));
+    expect(line, "删除成功却没弹出「多久才在别处失效」那条提示").toBeDefined();
+    expect(line).toContain("6分0秒");
+  });
+
+  /**
+   * **反面那一格照样要有**：后端真的没给这个数时，画 `—` 是对的行为
+   *（`akRevokeDelayMs` 那条「不编一个数出来」的安全约定）。
+   * 少了这一格，「把 edgeMs 硬编码成 60_000」也能让上面两格绿。
+   */
+  it("后端没给边缘缓存那个数时画 —，**不编一个数出来**", async () => {
+    const { h } = await openSection(respondOk(listBody(), capBody(), { freshness: {} }));
+    buttonByText(sectionOf(h), "停用")!.click();
+    await settle(12);
+    const line = toasts(h).find((s) => s.includes("别的实例最多还要"));
+    expect(line, "读不到就该画破折号，而不是凑一个数出来").toContain(EM);
   });
 });
 
