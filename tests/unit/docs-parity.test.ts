@@ -4849,6 +4849,214 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚", () => {
 });
 
 /**
+ * ── `USAGE_STATS_ENABLED` **自己那三处**说明里的「丢失」语义 ────────────────────
+ *
+ * **先说清楚这一组不是在补一句「文档从来没说过丢失」**——那是假话。丢失语义在
+ * 五份 DEPLOY.md 的配额账折叠块里（② 段与紧跟着 ③ 段的那条 `> [!IMPORTANT]`）、
+ * 在 `.env.example` 的 `USAGE_STATS_ENABLED` 段里、在五份 ADMIN.md 的「为什么这些数
+ * 标着约等于」里都写着，`docs/zh-CN/DEPLOY.md` 那条 `> [!IMPORTANT]` 甚至逐字写着
+ * 「随实例一起消失，不是延迟到账」，并且已经由上面 `ALIVE_QUALIFIER` 那一组钉着。
+ *
+ * **真正的缺口在另一处**：读者是照着**开关自己**那三处做决定的——环境变量表那一行、
+ * 「打开之后要付什么」那一节、以及文末那段照抄就能用的 ```env 片段——而那三处
+ * 改动前**只给了「延迟」语义**（「未落盘的尾巴最长 2 小时」/「tail」/「尻尾」/「꼬리」）。
+ * 「尾巴」这个词框定的就是「最晚 2 小时会补上」，而 Tier-2 的累加器只在
+ * `src/http/usage-sink.ts` 的实例内存里，Worker 的 isolate 闲置就被回收
+ * ⇒ **低流量部署上那些计数是丢掉，不是迟到**。
+ * 那张表自己的开场白写着「完整的取值范围与代价以本表为准」，所以「代价写在别处」
+ * 不构成豁免。
+ *
+ * ── 这一组钉的是什么 ────────────────────────────────────────────────────────
+ * 五张「每语言一个 token」的锚表 × 五份 DEPLOY.md，复用上面那一组的
+ * `perLangTokenFailures` / `tokenTableFailures`（**不另抄一份实现**，理由与那一组
+ * 顶上写的逐字相同：两份实现的口径会各自漂，而其中一份坏了另一份不会响）：
+ * · (A) 环境变量表那一格里的丢失语义；
+ * · (B) 「打开之后要付什么」那一节里「消失而不是延迟」那一句；
+ * · (C) 文末 ```env 片段的注释里的同一件事（照抄那段的人只看得到这几行注释）；
+ * · (D) `USAGE_FLUSH_INTERVAL_MS` 那一节里「Worker 上抛错变成不带原因的 500」；
+ * · (E) 「低流量部署正是这件事最常发生的场景」——把「低流量」这个词和 Tier-2 绑在一起。
+ *
+ * ── (D) 那条链是查证过的，三个文件各读了一遍 ────────────────────────────────
+ * · `src/http/wire.ts` 里 `resolveUsageFlushInterval()` 的调用点**无条件执行**
+ *   （开关关着也算一次，那里的注释自己写着理由）；
+ * · `src/http/usage-sink.ts` 的 `resolveUsageFlushInterval()` 在「有写配额」那一侧
+ *   `间隔 × (预算 − 1) < 一天` 时**直接抛**，最小可用值 7200000 —— 由
+ *   `tests/contract/usage-tier2.test.ts` 的「有写配额的存储上把间隔调到 300 秒：启动就抛，
+ *   且消息里给出最小可用值 7200000 —— 写量合格而数据从中午起就是假的，比起不来更难发现」钉着；
+ * · `src/entry/worker.ts` 的 `fetch()` 把 `buildApp` 的异常 catch 成一条**不带原因**的
+ *   500，并且 `cachedApp` 停在 `null` ⇒ **每一个请求都会重走一遍并再抛一遍**，
+ *   真原因只落在 `console.error`。那条 500 的形状由
+ *   `tests/unit/entry-worker.test.ts` 的「装配失败时返回固定文案的 JSON 500，不回显异常细节——这是未鉴权路径」钉着。
+ * ⇒ 「`wrangler deploy` 成功，然后每个请求 500」是这三条的直接后果，不是推测。
+ * Node 那一侧同一个抛错会让进程起不来（`src/entry/node.ts` 不 catch），所以只有
+ * Worker 形态是静默的——这也是文档里那两句分开写的原因。
+ *
+ * ── 它验不了什么（照本文件一贯的口径明写）──────────────────────────────────
+ * 它认的是**五个 token 在不在、在不在自己那种语言里**，不认「这一节写得对不对」，
+ * 也不认那三处**位置**：token 被整段搬到文档别处，这一组照绿（位置只能靠评审）。
+ * 五份被同一句错话同步污染时它同样不响——那是跨语言互校的固有边界，与本文件
+ * 开头 `NUMBERS` 那一段写的是同一条。
+ */
+describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着「丢失」，不只是「延迟」", () => {
+  /** (A) 环境变量表那一格：读者照着表逐行读参数时唯一看得到的那句。 */
+  const TABLE_CELL_LOSS: Record<Lang, string> = {
+    "zh-CN": "低流量下计数会丢而不是迟到",
+    "zh-TW": "低流量下計數會丟而不是遲到",
+    en: "how low traffic **loses** counts",
+    ja: "低トラフィックではカウントが遅れるのではなく消える",
+    ko: "저트래픽에서는 카운트가 늦는 게 아니라 사라진다",
+  };
+
+  /** (B) 「打开之后要付什么」那一节：`> [!WARNING]` 里「消失，不是延迟到账」那一句。 */
+  const SECTION_LOSS: Record<Lang, string> = {
+    "zh-CN": "那些计数随实例一起消失，不是延迟到账",
+    "zh-TW": "那些計數隨實例一起消失，不是延遲入帳",
+    en: "losing them outright rather than posting them late",
+    ja: "インスタンスは、貯めたカウントごと消えます",
+    ko: "쌓아둔 카운트를 그대로 가지고 사라집니다",
+  };
+
+  /**
+   * (C) 文末那段 ```env 片段的注释。
+   * **它必须自己写一遍，不能靠上面两处**：这一段的全部用途就是被整段抄进
+   * `.env` / `wrangler.toml`，抄的人往往不会往回翻。
+   * ⚠️ 那个围栏里的注释**最多 3 行**（本文件「每个 ```env 围栏都是「带注释的」」那一格
+   * 判着 1–3 行），所以这一句必须压进一行——token 也就只能落在那一行上。
+   */
+  const ENV_SNIPPET_LOSS: Record<Lang, string> = {
+    "zh-CN": "那条尾巴在低流量部署上会直接变成丢数",
+    "zh-TW": "那條尾巴在低流量部署上會直接變成丟數",
+    en: "under low traffic that tail becomes loss",
+    ja: "低トラフィックではその尻尾がそのまま欠損になる",
+    ko: "그 꼬리가 곧바로 유실이 된다",
+  };
+
+  /** (D) `USAGE_FLUSH_INTERVAL_MS` 那一节：Worker 上的静默 500（链条见本组顶上）。 */
+  const SILENT_500: Record<Lang, string> = {
+    "zh-CN": "而是变成一个不说原因的 500",
+    "zh-TW": "而是變成一個不說原因的 500",
+    en: "It turns into a 500 that gives no reason at all",
+    ja: "理由を言わない 500 に化けます",
+    ko: "이유를 말하지 않는 500으로 바뀝니다",
+  };
+
+  /**
+   * (E) 「低流量」这个词与 Tier-2 绑在一起。
+   * **单独上一个锚的理由**：(A)~(C) 就算全在，只要没有这一句，读者仍然会把丢失
+   * 读成「偶尔重启才会遇到的边角情况」，而它恰恰是**低流量部署的常态**。
+   */
+  const LOW_TRAFFIC: Record<Lang, string> = {
+    "zh-CN": "低流量部署正是这件事最常发生的场景",
+    "zh-TW": "低流量部署正是這件事最常發生的場景",
+    en: "Low-traffic deployments are where this happens",
+    ja: "低トラフィックのデプロイこそこれが最も起きやすい",
+    ko: "저트래픽 배포야말로 이 일이 가장 자주 벌어지는 상황입니다",
+  };
+
+  const LOSS_TABLES = [
+    { label: "(A) 环境变量表那一格的丢失语义", table: TABLE_CELL_LOSS },
+    { label: "(B) 「打开之后要付什么」那一节的丢失语义", table: SECTION_LOSS },
+    { label: "(C) 文末 ```env 片段注释里的丢失语义", table: ENV_SNIPPET_LOSS },
+    { label: "(D) `USAGE_FLUSH_INTERVAL_MS` 调小之后 Worker 上的静默 500", table: SILENT_500 },
+    { label: "(E) 「低流量」与 Tier-2 绑在一起", table: LOW_TRAFFIC },
+  ] as const;
+
+  it.each([...LOSS_TABLES])("$label：五份 DEPLOY.md 各自写着自己那种语言的写法，且不串门", ({ label, table }) => {
+    const failures = perLangTokenFailures(label, table, realDoc("DEPLOY"));
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+
+  it("反向自检：五张锚表的语言集恰好等于 LANGS，且没有两种语言共用（或互为子串）同一个 token", () => {
+    for (const { label, table } of LOSS_TABLES) {
+      const failures = tokenTableFailures(label, table);
+      expect(failures, failures.join("\n")).toEqual([]);
+    }
+  });
+
+  // ── 探针：变异只改一份，其余四份照旧走真文档 ──────────────────────────────
+  //
+  // ⚠️ **变异的目标串都是今天真的写在文档里的**，`readerWith` 在变异没落地时当场炸，
+  // 所以「探针绿」不可能是「变异压根没打中」造成的。
+
+  it("探针①：把 zh-CN 表格那一格改回只说开销、不说丢 ⇒ (A) 红并点名 zh-CN", () => {
+    // 这一格钉的正是改动前的原文：那一格只写「打开之后的开销见下文」，
+    // 一个字都没说计数会丢。改回去必须当场红。
+    const failures = perLangTokenFailures(
+      "(A) 环境变量表那一格的丢失语义",
+      TABLE_CELL_LOSS,
+      readerWith(
+        "zh-CN",
+        (s) => s.split(`打开之后的开销、**${TABLE_CELL_LOSS["zh-CN"]}**见下文。`).join("打开之后的开销见下文。"),
+        "DEPLOY",
+      ),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/zh-CN/DEPLOY.md");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("探针②：把 en 那一节的「丢」改写回「延迟」的说法 ⇒ (B) 红并点名 en", () => {
+    const failures = perLangTokenFailures(
+      "(B) 「打开之后要付什么」那一节的丢失语义",
+      SECTION_LOSS,
+      readerWith("en", (s) => s.split(SECTION_LOSS.en).join("posting them a little late"), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/en/DEPLOY.md");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("探针③：把 ja 那段 ```env 注释里的那一句删掉 ⇒ (C) 红并点名 ja", () => {
+    const failures = perLangTokenFailures(
+      "(C) 文末 ```env 片段注释里的丢失语义",
+      ENV_SNIPPET_LOSS,
+      readerWith("ja", (s) => s.split(ENV_SNIPPET_LOSS.ja).join("パネルの数字は少し古くなる"), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/ja/DEPLOY.md");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("探针④：把 ko 那句静默 500 改写成「启动就报错」那种误导说法 ⇒ (D) 红并点名 ko", () => {
+    // 「启动就报错」是 `.env.example` 里对这条限制的既有说法，它在 Node 上为真、
+    // **在 Worker 上不成立**——本组 (D) 守的就是这半句差别。
+    const failures = perLangTokenFailures(
+      "(D) `USAGE_FLUSH_INTERVAL_MS` 调小之后 Worker 上的静默 500",
+      SILENT_500,
+      readerWith("ko", (s) => s.split(SILENT_500.ko).join("기동 시점에 바로 오류로 알려줍니다"), "DEPLOY"),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/ko/DEPLOY.md");
+    expect(failures[0]).toContain("出现 0 次");
+  });
+
+  it("探针⑤：把 en 那句英文原样塞进 zh-TW 那一份（「五份都塞同一句英文」那种糊弄法）⇒ (E) 红并点名 zh-TW", () => {
+    // 与上面那一组的「串门」探针同源：zh-TW 那份仍然写着自己的 token，
+    // 正向那一半照绿，只有跨语言那一半抓得住。
+    const failures = perLangTokenFailures(
+      "(E) 「低流量」与 Tier-2 绑在一起",
+      LOW_TRAFFIC,
+      readerWith(
+        "zh-TW",
+        (s) => s.split(LOW_TRAFFIC["zh-TW"]).join(`${LOW_TRAFFIC["zh-TW"]}（${LOW_TRAFFIC.en}）`),
+        "DEPLOY",
+      ),
+    );
+    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
+    expect(failures[0]).toContain("docs/zh-TW/DEPLOY.md");
+    expect(failures[0]).toContain(LOW_TRAFFIC.en);
+  });
+
+  it("不乱红：五份一起合法地多写一句无关的话 —— 上面五格不许因此假红", () => {
+    const noisy: ApiDocReader = (lang) => `${realDoc("DEPLOY")(lang)}\n\n<!-- 无关的一行 -->\n`;
+    for (const { label, table } of LOSS_TABLES) {
+      const failures = perLangTokenFailures(label, table, noisy);
+      expect(failures, `${label}：五份一起多写了一句无关的话，判据却红了\n${failures.join("\n")}`).toEqual([]);
+    }
+  });
+});
+
+/**
  * ── 那条红线在 DEPLOY.md 一侧的机器化（复评发现）──────────────────────────────
  *
  * 红线原话（一直立着，登记在 `admin-ui/js/pure/playground.mjs` 自己的注释里）：

@@ -1267,11 +1267,14 @@ const RISK_WORDS: ReadonlyArray<readonly [concept: string, cells: Readonly<Recor
 const P5_OUTSIDE_ALERT: ReadonlyArray<readonly [path: string, no: number, why: string]> = [
   // ⚠️ **这两个是绝对行号，会随上游插入的内容漂**（每-key 用量那一轮实测：在这两处
   //    之前的配额账里各插了一段之后，889 → 909、872 → 892，这一格当场红；紧接着那一轮
-  //    的评审回填又往同一笔账里补了「用量读失败那颗刷新」的读次数，909 → 912、892 → 896）。
+  //    的评审回填又往同一笔账里补了「用量读失败那颗刷新」的读次数，909 → 912、892 → 896；
+  //    这一轮往 `USAGE_STATS_ENABLED` 那一节补了「丢失不是延迟」的警示、并在它后面新开了
+  //    `### USAGE_FLUSH_INTERVAL_MS` 一节，912 → 938、896 → 921）。
   //    **红是对的**：它逼人回来确认「那句括注还在原处、还是同一句」，而不是让登记
   //    悄悄指到别的行上去。改的时候要照着报文里的新行号去核对那一行的内容。
-  [join("docs", "en", "DEPLOY.md"), 912, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
-  [join("docs", "ja", "DEPLOY.md"), 896, "同上，ja 那一份的对应括注"],
+  //    ⚠️ 这一轮就是照这条做的：两处的**原文一个字都没动**，只是被上面新增的段落往下推。
+  [join("docs", "en", "DEPLOY.md"), 938, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
+  [join("docs", "ja", "DEPLOY.md"), 921, "同上，ja 那一份的对应括注"],
 ];
 
 describe("R20/P5 风险语义句必须住在 alert 块里（内容锚定的下限，不可灌水）", () => {

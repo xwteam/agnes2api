@@ -299,7 +299,7 @@ there is no second one.
 | `COOLDOWN_STRIKE_MS` | no | `1800000` | Cooldown duration applied once a key reaches `MAX_STRIKES`. The key recovers automatically when it expires. |
 | `POOL_CACHE_TTL_MS` | no | `60000` | How long each isolate/process keeps its in-memory key-pool snapshot; `0` disables it. Formula and cost below. **Read once at instance build** (`src/http/wire.ts`): a container restart or an isolate recycle is required — **editing it in the admin panel does not take effect immediately**. |
 | `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted; `0` = every successful request. Cost below. **Read once at instance build** (`src/http/wire.ts`): a container restart or an isolate recycle is required — **editing it in the admin panel does not take effect immediately**. |
-| `USAGE_STATS_ENABLED` | no | `false` | Tier-2 time series behind the panel's "Usage" section (by day / hour / model / protocol). **The check is a literal `true`**; `1` or `yes` count as off. **Off by default, and "off" is zero-cost**. What it costs once on is below. Read once when the app is built. |
+| `USAGE_STATS_ENABLED` | no | `false` | Tier-2 time series behind the panel's "Usage" section (by day / hour / model / protocol). **The check is a literal `true`**; `1` or `yes` count as off. **Off by default, and "off" is zero-cost**. What it costs, and how low traffic **loses** counts, is below. Read once when the app is built. |
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
 | `APIKEY_CACHE_TTL_MS` | no | `300000` | How long each instance caches the outbound API key table; `0` disables it. It also sets how long a disabled key lives on elsewhere. See the quota budget. |
@@ -366,6 +366,32 @@ Once on, each instance writes at most 13 puts per day (about 10.4% of the write 
 day across 8 isolates); once exhausted nothing more is written that day and it recovers on the
 next UTC day. The unflushed tail is at most 2 hours. See the Tier-2 part of "Quota accounting"
 below. Changing it takes effect after a container restart / isolate recycle.
+
+> [!WARNING]
+> **A "tail" is not the same as "late"**: counts accumulate in the instance's memory, and an
+> instance that does not live through one flush interval takes them along —
+> **losing them outright rather than posting them late**.
+> **Low-traffic deployments are where this happens**: an idle Worker isolate is recycled, so a
+> gateway serving a few dozen requests a day may never flush at all, and that stretch looks on
+> the panel exactly like "nobody used it". For dependable usage data a long-lived process
+> (Docker / Node) fits far better than a Worker.
+
+### `USAGE_FLUSH_INTERVAL_MS`: on KV you cannot shrink it, and getting it wrong says nothing
+
+Seeing "the tail is at most 2 hours", the first instinct is usually to shrink the flush
+interval. **On KV that road is closed**: each instance only has 13 writes of budget per day, the
+interval × 12 must be at least a day, so the smallest usable value is 7200000 (2 hours), and
+anything below it throws while the app is wired up (`src/http/usage-sink.ts`).
+
+> [!WARNING]
+> **On Workers that throw never shows up in the deploy output.**
+> **It turns into a 500 that gives no reason at all**: `wrangler deploy` still succeeds, but
+> from then on **every single request** returns `{"error":{"type":"internal_error",…}}`, and
+> the real reason lands only in `console.error`, which you need `wrangler tail` to see. One
+> mistyped number buys you a silent incident that looks exactly like "the whole gateway is
+> down".
+> File storage (Docker) has no such floor — 300000 (5 minutes) is perfectly reasonable there;
+> on Node the same throw simply keeps the process from starting, which is impossible to miss.
 
 ### Quota budget: how many requests a Worker on the free KV tier can serve
 
@@ -1489,12 +1515,15 @@ zero-cost — no accumulator is built and not one storage write happens. To turn
 ```env
 # Optional: the Tier-2 time series behind the panel's "Usage" section. The check is a literal
 # true; 1 or yes count as off. Once on, each instance writes at most 13 puts per day (~10.4% of
-# the write quota) and the unflushed tail is at most 2 hours.
+# the write quota); the tail is at most 2 hours, and under low traffic that tail becomes loss.
 USAGE_STATS_ENABLED=true
 ```
 
 Read the Tier-2 part of the quota section above before switching it on: it competes for the same
 write bucket as the key pool's cooldown and eviction bookkeeping.
+**Read the two alerts above as well**: on a low-traffic Worker these counts may never reach
+storage at all, so for dependable usage data use a long-lived process (Docker / Node); and on KV
+`USAGE_FLUSH_INTERVAL_MS` cannot be shrunk — forcing it down makes every request return 500.
 
 ## Upgrading the Service
 
