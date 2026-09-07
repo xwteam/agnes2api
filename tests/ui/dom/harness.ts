@@ -15,7 +15,7 @@ export const SKELETON_IDS = [
   "gate", "gate-form", "gate-key", "gate-err", "gate-theme-btn",
   "shell", "lang-select", "theme-btn", "logout-btn", "health-badge",
   "sec-overview", "sec-keys", "sec-registrar", "sec-events", "sec-usage", "sec-models",
-  "sec-playground", "sec-settings",
+  "sec-playground", "sec-apikeys", "sec-settings",
   "toast-host",
 ] as const;
 
@@ -26,11 +26,11 @@ export const SKELETON_IDS = [
  * `toast-host` 这些不是板块的 id，而这一份决定 `buildDom()` 造几颗导航按钮、
  * 以及 `Harness.section()` 认哪几个名字。两者的漂移由
  * `tests/ui/dom/app-gate.test.ts` 的
- * 「八个板块按钮的 data-section 与真 index.html 一致（顺序也是导航顺序）」
+ * 「九个板块按钮的 data-section 与真 index.html 一致（顺序也是导航顺序）」
  * 那一格扫真 `index.html` 兜着。
  */
 export const NAV_SECTIONS = [
-  "overview", "keys", "registrar", "events", "usage", "models", "playground", "settings",
+  "overview", "keys", "registrar", "events", "usage", "models", "playground", "apikeys", "settings",
 ] as const;
 
 type SectionName = (typeof NAV_SECTIONS)[number];

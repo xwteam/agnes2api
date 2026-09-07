@@ -124,8 +124,8 @@ describe("图标按钮的可及性属性", () => {
 describe("侧栏导航项的结构", () => {
   const items = [...HTML.matchAll(/<button class="nav-item" data-section="([^"]+)">([\s\S]*?)<\/button>/g)];
 
-  it("八项导航一项不少，每一项都是「一颗图标 + 一个带 data-i18n 的文字 span」", () => {
-    expect(items.length, "认不出导航项——写法变了就回来改这条判据，别把它放宽成恒真").toBe(8);
+  it("九项导航一项不少，每一项都是「一颗图标 + 一个带 data-i18n 的文字 span」", () => {
+    expect(items.length, "认不出导航项——写法变了就回来改这条判据，别把它放宽成恒真").toBe(9);
     for (const m of items) {
       const [, section, inner] = m;
       expect(inner, `${section} 这一项没有图标 span`).toMatch(/<span class="nav-ico" aria-hidden="true">.+<\/span>/);
@@ -136,7 +136,7 @@ describe("侧栏导航项的结构", () => {
 
   it("图标是装饰性的：每一颗都带 aria-hidden，读屏器读到的只有文字", () => {
     const icons = [...HTML.matchAll(/<span class="nav-ico"([^>]*)>/g)].map((m) => m[1]!);
-    expect(icons.length).toBe(8);
+    expect(icons.length).toBe(9);
     for (const attrs of icons) expect(attrs).toContain('aria-hidden="true"');
   });
 });

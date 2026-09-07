@@ -130,6 +130,12 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       "/admin/js/health.js",
       "/admin/js/i18n-dict.js",
       "/admin/js/i18n.js",
+      // 「API 密钥」板块的取值决策（三态判定、搜索排序、到期换算、表单校验）。
+      // 同一条硬规则、同一份理由，由 tests/ui/apikeys.test.ts 跑着。
+      // **逐条确认过：纯函数、无配置、无数据**——它一个字节的密钥都不碰
+      //（明文只在签发那一次的响应里出现过，而它连那条响应都不解析），
+      // 上限 / TTL / 「明文能不能取回」三格全部以参数形式从 `capabilities` 进来。
+      "/admin/js/pure/apikeys.mjs",
       // 事件板块的取值决策（查询串拼装、分组、轮询退避等），
       // 同一条硬规则、同一份理由，由 tests/ui/events.test.ts 跑着。纯函数、无配置、无数据。
       "/admin/js/pure/events.mjs",
@@ -198,6 +204,11 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       //（`RANGES` 那四个档位名与九条 note code 都是本仓写死的枚举值，
       // 不是这套部署配了什么），公开可取没有问题。
       "/admin/js/pure/usage.mjs",
+      // 「API 密钥」板块本体（DOM 拼装 + 那五条端点的网络调用）。
+      // 与其余八个板块文件同一性质：**没有任何机密**，它拿到的每一个字段都来自
+      // 一次鉴权后的接口调用。⚠️ **签发那一次的明文确实经过它**，但只经过一次、
+      // 只落在一个对话框里，**一个字节都不写进任何存储**（面板侧没有它的落点）。
+      "/admin/js/sec-apikeys.js",
       "/admin/js/sec-events.js",
       "/admin/js/sec-keys.js",
       // 模型板块本体（DOM 拼装 + 一条端点的网络调用）。

@@ -59,6 +59,9 @@ export const I18N = {
   "nav.playground":   { "zh-CN": "调试台", "zh-TW": "偵錯台", en: "Playground", ja: "プレイグラウンド", ko: "플레이그라운드" },
   // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `set.*`：命名空间在这里
   // 表示的是「壳层导航」，与板块内部的文案分开。
+  // ⚠️ 与 `nav.registrar` 同一条理由，放 `nav.*` 而不是 `ak.*`：命名空间在这里
+  // 表示的是「壳层导航」，与板块内部的文案分开。
+  "nav.apikeys":      { "zh-CN": "API 密钥", "zh-TW": "API 密鑰", en: "API keys", ja: "API キー", ko: "API 키" },
   "nav.settings":     { "zh-CN": "设置", "zh-TW": "設定", en: "Settings", ja: "設定", ko: "설정" },
   "shell.logout":     { "zh-CN": "退出登录", "zh-TW": "登出", en: "Sign out", ja: "ログアウト", ko: "로그아웃" },
   "shell.theme":      { "zh-CN": "切换主题", "zh-TW": "切換主題", en: "Toggle theme", ja: "テーマ切り替え", ko: "테마 전환" },
@@ -94,6 +97,72 @@ export const I18N = {
   //
   // ⚠️ **`keys.mustDisableFirst` 刻意不在这个命名空间里另开一条**：那句话早就有了
   // （下面 Key 池写操作那一段），再写一份就是同一批文案两份真源。对照表直接指过去。
+  // ── API 密钥板块（我们**签发给下游**的那一族，不是 Key 池那一族）──────────
+  // ⚠️ 措辞上一律写「API 密钥」，Key 池那边一律写「key」——两族在同一块屏幕上
+  // 出现，文案是把它们分开的主要手段（路径不能改，那是已经发布的契约）。
+  "ak.title":          { "zh-CN": "API 密钥", "zh-TW": "API 密鑰", en: "API keys", ja: "API キー", ko: "API 키" },
+  "ak.sub":            { "zh-CN": "签发给下游客户端的 API 密钥。它们与上游 Key 池方向相反：这里的每一把都是别人拿来向本网关证明身份的。", "zh-TW": "簽發給下游用戶端的 API 密鑰。它們與上游 Key 池方向相反：這裡的每一把都是別人拿來向本閘道證明身分的。", en: "API keys you issue to downstream clients. They point the opposite way from the upstream key pool: each one here is what somebody else presents to this gateway.", ja: "下流のクライアントに発行する API キーです。上流の key プールとは向きが逆で、ここにあるのは相手がこのゲートウェイに提示するものです。", ko: "다운스트림 클라이언트에 발급하는 API 키입니다. 업스트림 key 풀과 방향이 반대로, 여기 있는 것은 상대가 이 게이트웨이에 제시하는 자격 증명입니다." },
+  "ak.svc.title":      { "zh-CN": "服务连接", "zh-TW": "服務連線", en: "Service endpoint", ja: "サービス接続先", ko: "서비스 접속 정보" },
+  "ak.svc.baseUrl":    { "zh-CN": "Base URL", "zh-TW": "Base URL", en: "Base URL", ja: "Base URL", ko: "Base URL" },
+  "ak.svc.master":     { "zh-CN": "主口令（GATEWAY_TOKEN）永远有效，而且验证它一次存储读都不产生——密钥表读不出来时它照样能用。要轮换它请到「设置」页，这里刻意不再显示它一次。", "zh-TW": "主口令（GATEWAY_TOKEN）永遠有效，而且驗證它一次儲存讀取都不產生——密鑰表讀不出來時它照樣能用。要輪換它請到「設定」頁，這裡刻意不再顯示它一次。", en: "The master token (GATEWAY_TOKEN) is always valid, and checking it performs no storage read at all — it keeps working even when the key table cannot be read. Rotate it on the Settings page; it is deliberately not echoed a second time here.", ja: "マスタートークン（GATEWAY_TOKEN）は常に有効で、その判定はストレージ読み取りを一切発生させません——キー表が読めなくても使えます。ローテーションは「設定」ページで行ってください。ここでは意図的に再表示しません。", ko: "마스터 토큰(GATEWAY_TOKEN)은 언제나 유효하며 그 판정은 저장소 읽기를 전혀 일으키지 않습니다 — 키 표를 읽지 못해도 그대로 동작합니다. 교체는 「설정」 페이지에서 하세요. 여기서는 일부러 다시 표시하지 않습니다." },
+  "ak.card.all":       { "zh-CN": "全部", "zh-TW": "全部", en: "Total", ja: "合計", ko: "전체" },
+  "ak.card.active":    { "zh-CN": "启用中", "zh-TW": "啟用中", en: "Active", ja: "有効", ko: "사용 중" },
+  "ak.card.disabled":  { "zh-CN": "已停用", "zh-TW": "已停用", en: "Disabled", ja: "停止中", ko: "중지됨" },
+  "ak.card.expired":   { "zh-CN": "已过期", "zh-TW": "已過期", en: "Expired", ja: "期限切れ", ko: "만료됨" },
+  "ak.bucket.active":  { "zh-CN": "启用中", "zh-TW": "啟用中", en: "Active", ja: "有効", ko: "사용 중" },
+  "ak.bucket.disabled":{ "zh-CN": "已停用", "zh-TW": "已停用", en: "Disabled", ja: "停止中", ko: "중지됨" },
+  "ak.bucket.expired": { "zh-CN": "已过期", "zh-TW": "已過期", en: "Expired", ja: "期限切れ", ko: "만료됨" },
+  "ak.sort.new":       { "zh-CN": "新 → 旧", "zh-TW": "新 → 舊", en: "Newest first", ja: "新しい順", ko: "최신순" },
+  "ak.sort.old":       { "zh-CN": "旧 → 新", "zh-TW": "舊 → 新", en: "Oldest first", ja: "古い順", ko: "오래된 순" },
+  "ak.sort.name":      { "zh-CN": "按名称", "zh-TW": "按名稱", en: "By name", ja: "名前順", ko: "이름순" },
+  "ak.searchPh":       { "zh-CN": "搜索名称 / 掩码 / 短 id", "zh-TW": "搜尋名稱 / 遮罩 / 短 id", en: "Search name, mask or short id", ja: "名前・マスク・短い id で検索", ko: "이름 / 마스크 / 짧은 id 검색" },
+  "ak.purge":          { "zh-CN": "清理失效（{count}）", "zh-TW": "清理失效（{count}）", en: "Purge unusable ({count})", ja: "無効なものを整理（{count}）", ko: "실효 정리({count})" },
+  "ak.issue":          { "zh-CN": "签发密钥", "zh-TW": "簽發密鑰", en: "Issue a key", ja: "キーを発行", ko: "키 발급" },
+  "ak.issueTitle":     { "zh-CN": "签发一把 API 密钥", "zh-TW": "簽發一把 API 密鑰", en: "Issue an API key", ja: "API キーを発行", ko: "API 키 발급" },
+  "ak.issueSubmit":    { "zh-CN": "签发", "zh-TW": "簽發", en: "Issue", ja: "発行", ko: "발급" },
+  "ak.form.name":      { "zh-CN": "名称", "zh-TW": "名稱", en: "Name", ja: "名前", ko: "이름" },
+  "ak.form.namePh":    { "zh-CN": "这把发给谁用，例如 mobile-app", "zh-TW": "這把發給誰用，例如 mobile-app", en: "Who gets this one, e.g. mobile-app", ja: "誰に渡すか（例: mobile-app）", ko: "누구에게 줄 키인지(예: mobile-app)" },
+  "ak.form.expiry":    { "zh-CN": "到期", "zh-TW": "到期", en: "Expiry", ja: "有効期限", ko: "만료" },
+  // ⚠️ 快捷档的文案逐字写「自签发时刻起」：写成「有效期 N 天」会被读成
+  // 「发出去之后第一次用才开始计时」，而本网关在签发那一刻就把绝对到期时刻定死了。
+  "ak.expiry.never":   { "zh-CN": "不过期", "zh-TW": "不過期", en: "Never expires", ja: "無期限", ko: "만료 없음" },
+  "ak.expiry.d7":      { "zh-CN": "自签发时刻起 7 天", "zh-TW": "自簽發時刻起 7 天", en: "7 days from the moment it is issued", ja: "発行した時点から 7 日", ko: "발급한 시점부터 7일" },
+  "ak.expiry.d30":     { "zh-CN": "自签发时刻起 30 天", "zh-TW": "自簽發時刻起 30 天", en: "30 days from the moment it is issued", ja: "発行した時点から 30 日", ko: "발급한 시점부터 30일" },
+  "ak.expiry.d90":     { "zh-CN": "自签发时刻起 90 天", "zh-TW": "自簽發時刻起 90 天", en: "90 days from the moment it is issued", ja: "発行した時点から 90 日", ko: "발급한 시점부터 90일" },
+  "ak.expiry.custom":  { "zh-CN": "自定日期", "zh-TW": "自訂日期", en: "Pick a date", ja: "日付を指定", ko: "날짜 지정" },
+  "ak.err.pickDate":   { "zh-CN": "请选一个将来的日期", "zh-TW": "請選一個將來的日期", en: "Pick a date in the future", ja: "将来の日付を選んでください", ko: "미래 날짜를 선택하세요" },
+  "ak.form.onceOnly":  { "zh-CN": "签发之后明文只显示这一次。网关只存它的摘要，丢了找不回来，只能删掉重发。", "zh-TW": "簽發之後明文只顯示這一次。閘道只存它的摘要，丟了找不回來，只能刪掉重發。", en: "The plaintext is shown once, right after issuing. The gateway stores only its digest; if you lose it, delete the key and issue a new one.", ja: "平文は発行直後の一度だけ表示されます。ゲートウェイはダイジェストしか保存しないため、紛失したら削除して発行し直してください。", ko: "평문은 발급 직후 한 번만 보여집니다. 게이트웨이는 다이제스트만 저장하므로, 잃어버리면 삭제하고 다시 발급하세요." },
+  "ak.createdAt":      { "zh-CN": "签发于", "zh-TW": "簽發於", en: "Issued", ja: "発行", ko: "발급" },
+  "ak.expiresAt":      { "zh-CN": "到期", "zh-TW": "到期", en: "Expires", ja: "期限", ko: "만료" },
+  "ak.expiresNever":   { "zh-CN": "不过期", "zh-TW": "不過期", en: "Never expires", ja: "無期限", ko: "만료 없음" },
+  "ak.action.rename":  { "zh-CN": "改名", "zh-TW": "改名", en: "Rename", ja: "名前変更", ko: "이름 변경" },
+  "ak.action.disable": { "zh-CN": "停用", "zh-TW": "停用", en: "Disable", ja: "停止", ko: "중지" },
+  "ak.action.enable":  { "zh-CN": "启用", "zh-TW": "啟用", en: "Enable", ja: "有効化", ko: "사용" },
+  "ak.action.delete":  { "zh-CN": "删除", "zh-TW": "刪除", en: "Delete", ja: "削除", ko: "삭제" },
+  "ak.renameTitle":    { "zh-CN": "改名", "zh-TW": "改名", en: "Rename this key", ja: "キーの名前を変更", ko: "키 이름 변경" },
+  "ak.deleteTitle":    { "zh-CN": "删除这把密钥", "zh-TW": "刪除這把密鑰", en: "Delete this key", ja: "このキーを削除", ko: "이 키 삭제" },
+  "ak.deleteConfirm":  { "zh-CN": "删掉之后拿着它的客户端会开始收到 401。这一步不可撤销，但随时可以再签发一把新的。", "zh-TW": "刪掉之後拿著它的用戶端會開始收到 401。這一步不可撤銷，但隨時可以再簽發一把新的。", en: "Clients holding this key will start getting 401. This cannot be undone, but you can issue a new key at any time.", ja: "このキーを持つクライアントは 401 を受け取るようになります。取り消せませんが、新しいキーはいつでも発行できます。", ko: "이 키를 가진 클라이언트는 401을 받기 시작합니다. 되돌릴 수 없지만 새 키는 언제든 발급할 수 있습니다." },
+  "ak.purgeTitle":     { "zh-CN": "清理失效的密钥", "zh-TW": "清理失效的密鑰", en: "Purge unusable keys", ja: "使えないキーを整理", ko: "쓸 수 없는 키 정리" },
+  "ak.purgeConfirm":   { "zh-CN": "会删掉此刻已停用或已过期的每一把，仍然可用的一把都不动。这一步不可撤销。", "zh-TW": "會刪掉此刻已停用或已過期的每一把，仍然可用的一把都不動。這一步不可撤銷。", en: "This deletes every key that is currently disabled or expired, and leaves every usable key untouched. It cannot be undone.", ja: "現在停止中または期限切れのキーをすべて削除し、まだ使えるキーには一切触れません。取り消せません。", ko: "지금 중지되었거나 만료된 키를 모두 지우고, 아직 쓸 수 있는 키는 전혀 건드리지 않습니다. 되돌릴 수 없습니다." },
+  "ak.empty":          { "zh-CN": "还没有签发过 API 密钥。下游客户端此刻用的是主口令。", "zh-TW": "還沒有簽發過 API 密鑰。下游用戶端此刻用的是主口令。", en: "No API keys issued yet. Downstream clients are currently using the master token.", ja: "API キーはまだ発行されていません。下流のクライアントは今のところマスタートークンを使っています。", ko: "아직 발급한 API 키가 없습니다. 다운스트림 클라이언트는 지금 마스터 토큰을 쓰고 있습니다." },
+  "ak.emptyFiltered":  { "zh-CN": "没有匹配的密钥", "zh-TW": "沒有符合的密鑰", en: "No keys match", ja: "一致するキーがありません", ko: "일치하는 키가 없습니다" },
+  "ak.notWired":       { "zh-CN": "这个部署没有接上 API 密钥的存储，本板块的写操作会被后端拒绝。它多半是直接装配的，没有走标准入口。", "zh-TW": "這個部署沒有接上 API 密鑰的儲存，本板塊的寫入操作會被後端拒絕。它多半是直接裝配的，沒有走標準入口。", en: "This deployment has no storage wired for API keys, so writes here are rejected by the backend. It was most likely assembled directly rather than through the standard entry point.", ja: "このデプロイには API キー用のストレージが接続されていないため、ここでの書き込みはバックエンドに拒否されます。標準の入口を通さずに直接組み立てられている可能性が高いです。", ko: "이 배포에는 API 키용 저장소가 연결되어 있지 않아 여기서의 쓰기는 백엔드가 거부합니다. 표준 진입점을 거치지 않고 직접 조립된 경우가 대부분입니다." },
+  "ak.loadFailed":     { "zh-CN": "这次没读到密钥列表", "zh-TW": "這次沒讀到密鑰清單", en: "Could not load the key list this time", ja: "今回はキー一覧を取得できませんでした", ko: "이번에는 키 목록을 불러오지 못했습니다" },
+  "ak.unreadable":     { "zh-CN": "存储里的密钥表读不懂：全部子密钥此刻都验不过，而主口令不受影响。", "zh-TW": "儲存裡的密鑰表讀不懂：全部子密鑰此刻都驗不過，而主口令不受影響。", en: "The key table in storage cannot be parsed: every sub-key currently fails verification, while the master token is unaffected.", ja: "ストレージ内のキー表を解釈できません: 現在すべてのサブキーが検証に失敗しますが、マスタートークンには影響しません。", ko: "저장소의 키 표를 해석할 수 없습니다: 지금 모든 서브키가 검증에 실패하지만 마스터 토큰은 영향을 받지 않습니다." },
+  "ak.unreadableHelp": { "zh-CN": "里面的原始内容没有被改动，面板的写操作会被拒绝以免覆盖它。处置步骤见 ADMIN.md 的排障一节。", "zh-TW": "裡面的原始內容沒有被改動，面板的寫入操作會被拒絕以免覆蓋它。處置步驟見 ADMIN.md 的排障一節。", en: "The original content is untouched and writes from the panel are refused so that nothing overwrites it. The recovery steps are in the troubleshooting section of ADMIN.md.", ja: "元の内容は変更されておらず、上書きを避けるためパネルからの書き込みは拒否されます。復旧手順は ADMIN.md のトラブルシューティングにあります。", ko: "원본 내용은 그대로이며, 덮어쓰지 않도록 패널의 쓰기는 거부됩니다. 복구 절차는 ADMIN.md의 문제 해결 절에 있습니다." },
+  "ak.secret.title":   { "zh-CN": "这把密钥的明文", "zh-TW": "這把密鑰的明文", en: "The plaintext of this key", ja: "このキーの平文", ko: "이 키의 평문" },
+  "ak.secret.intro":   { "zh-CN": "把它交给要用的那一方。它可以放进 Authorization、x-api-key、x-goog-api-key 或 key 查询参数，四种写法都认。", "zh-TW": "把它交給要用的那一方。它可以放進 Authorization、x-api-key、x-goog-api-key 或 key 查詢參數，四種寫法都認。", en: "Hand it to whoever will use it. It works in Authorization, x-api-key, x-goog-api-key or the key query parameter — all four are accepted.", ja: "使う相手に渡してください。Authorization、x-api-key、x-goog-api-key、key クエリパラメータのいずれでも受け付けます。", ko: "사용할 상대에게 전달하세요. Authorization, x-api-key, x-goog-api-key, key 쿼리 파라미터 네 가지 모두 받습니다." },
+  "ak.secret.onceOnly":{ "zh-CN": "关掉这个窗口就再也看不到它了。网关只存它的摘要，没有任何接口能把它取回来。", "zh-TW": "關掉這個視窗就再也看不到它了。閘道只存它的摘要，沒有任何介面能把它取回來。", en: "Close this dialog and it is gone for good. The gateway stores only its digest, and no endpoint can hand it back.", ja: "このダイアログを閉じると二度と表示できません。ゲートウェイはダイジェストしか保存せず、取り戻せるエンドポイントはありません。", ko: "이 창을 닫으면 다시는 볼 수 없습니다. 게이트웨이는 다이제스트만 저장하며 되돌려 주는 엔드포인트가 없습니다." },
+  "ak.secret.close":   { "zh-CN": "我已经复制好了", "zh-TW": "我已經複製好了", en: "I have copied it", ja: "コピーしました", ko: "복사했습니다" },
+  "ak.revokeDelay":    { "zh-CN": "本实例已经生效；别的实例最多还要 {delay} 才看得见这次改动。", "zh-TW": "本實例已經生效；別的實例最多還要 {delay} 才看得見這次改動。", en: "It has taken effect on this instance; other instances may take up to {delay} to see this change.", ja: "このインスタンスでは反映済みです。ほかのインスタンスがこの変更を認識するまで最大 {delay} かかります。", ko: "이 인스턴스에서는 적용되었습니다. 다른 인스턴스가 이 변경을 인식하기까지 최대 {delay} 걸립니다." },
+  "ak.staleView":      { "zh-CN": "还没读到这份列表的版本号，写操作暂时做不了，请先刷新一次", "zh-TW": "還沒讀到這份清單的版本號，寫入操作暫時做不了，請先重新整理一次", en: "The version of this list has not been read yet, so writes are unavailable — refresh first", ja: "この一覧のバージョン番号をまだ取得できていないため、書き込みはできません。まず再読み込みしてください", ko: "이 목록의 버전 번호를 아직 읽지 못해 쓰기를 할 수 없습니다. 먼저 새로 고치세요" },
+  "ak.writeFailed":    { "zh-CN": "这次操作没成功", "zh-TW": "這次操作沒成功", en: "That operation did not go through", ja: "今回の操作は成功しませんでした", ko: "이번 작업은 성공하지 못했습니다" },
+  "ak.issued":         { "zh-CN": "已签发", "zh-TW": "已簽發", en: "Issued", ja: "発行しました", ko: "발급했습니다" },
+  "ak.renamed":        { "zh-CN": "已改名", "zh-TW": "已改名", en: "Renamed", ja: "名前を変更しました", ko: "이름을 변경했습니다" },
+  "ak.disabled":       { "zh-CN": "已停用", "zh-TW": "已停用", en: "Disabled", ja: "停止しました", ko: "중지했습니다" },
+  "ak.enabled":        { "zh-CN": "已启用", "zh-TW": "已啟用", en: "Enabled", ja: "有効にしました", ko: "사용으로 바꿨습니다" },
+  "ak.deleted":        { "zh-CN": "已删除", "zh-TW": "已刪除", en: "Deleted", ja: "削除しました", ko: "삭제했습니다" },
+  "ak.purged":         { "zh-CN": "已清理", "zh-TW": "已清理", en: "Purged", ja: "整理しました", ko: "정리했습니다" },
   "err.untranslated": { "zh-CN": "{message}（这句是后端原话，本面板还没有这条错误码的译文）", "zh-TW": "{message}（這句是後端原話，本面板還沒有這條錯誤碼的譯文）", en: "{message} (raw text from the backend; this panel has no translation for that error code yet)", ja: "{message}（これはバックエンドの原文です。このパネルにはそのエラーコードの訳文がまだありません）", ko: "{message} (백엔드가 보낸 원문입니다. 이 패널에는 해당 오류 코드의 번역문이 아직 없습니다)" },
   "err.admin_unavailable": { "zh-CN": "管理接口已停用。原因只写进了服务端日志，请查一下管理口令的配置。", "zh-TW": "管理介面已停用。原因只寫進了伺服器日誌，請查一下管理口令的設定。", en: "The admin API is disabled. The reason is written only to the server log; check the admin token configuration.", ja: "管理 API は停止しています。理由はサーバーログにのみ記録されます。管理トークンの設定を確認してください。", ko: "관리 API가 중지되었습니다. 이유는 서버 로그에만 기록되므로 관리 토큰 설정을 확인하세요." },
   "err.admin_unauthorized": { "zh-CN": "口令缺失或不正确", "zh-TW": "口令缺失或不正確", en: "Missing or invalid token", ja: "トークンがないか、正しくありません", ko: "토큰이 없거나 올바르지 않습니다" },
@@ -110,6 +179,19 @@ export const I18N = {
   "err.not_a_bulk_op": { "zh-CN": "这个批量操作后端不认识，它只接受：{ops}", "zh-TW": "這個批次操作後端不認識，它只接受：{ops}", en: "The backend does not recognize this bulk operation; it only accepts: {ops}", ja: "このバッチ操作はバックエンドが認識しません。受け付けるのは次のみです: {ops}", ko: "백엔드가 이 일괄 작업을 인식하지 못합니다. 허용되는 값은 다음뿐입니다: {ops}" },
   "err.ids_not_a_string_array": { "zh-CN": "批量操作的 id 列表必须是一组文本，面板与网关的版本可能对不上", "zh-TW": "批次操作的 id 清單必須是一組文字，面板與網關的版本可能對不上", en: "The id list for a bulk operation must be an array of strings; the panel and the gateway may be on different versions", ja: "バッチ操作の id 一覧は文字列の配列である必要があります。パネルとゲートウェイのバージョンが異なる可能性があります", ko: "일괄 작업의 id 목록은 문자열 배열이어야 합니다. 패널과 게이트웨이의 버전이 다를 수 있습니다" },
   "err.too_many_bulk_ids": { "zh-CN": "一次最多操作 {max} 把 key，请分几次来", "zh-TW": "一次最多操作 {max} 把 key，請分幾次來", en: "At most {max} keys per bulk operation; split it into several rounds", ja: "1 回のバッチ操作は最大 {max} 件です。数回に分けてください", ko: "일괄 작업은 한 번에 최대 {max}개까지입니다. 여러 번에 나눠 주세요" },
+  // ── 对外 API 密钥那五条端点的错误码 ───────────────────────────────
+  // ⚠️ 这一族说的是「我们签发的」那种密钥，不是上游池那种 key。措辞里一律
+  // 写「API 密钥」而不写裸的「key」，好让两族在同一块屏幕上分得开。
+  "err.apikey_not_found": { "zh-CN": "没有这把 API 密钥，它可能刚被别人删掉了", "zh-TW": "沒有這把 API 密鑰，它可能剛被別人刪掉了", en: "No such API key; someone may have just deleted it", ja: "この API キーはありません。ほかの人が削除した直後かもしれません", ko: "해당 API 키가 없습니다. 방금 다른 사람이 삭제했을 수 있습니다" },
+  "err.name_not_a_string": { "zh-CN": "名称必须是文本，面板与网关的版本可能对不上", "zh-TW": "名稱必須是文字，面板與網關的版本可能對不上", en: "The name must be text; the panel and the gateway may be on different versions", ja: "名前は文字列である必要があります。パネルとゲートウェイのバージョンが異なる可能性があります", ko: "이름은 문자열이어야 합니다. 패널과 게이트웨이의 버전이 다를 수 있습니다" },
+  "err.name_empty": { "zh-CN": "请给这把密钥起个名字：列表里只靠名字认得出它是谁在用", "zh-TW": "請給這把密鑰取個名字：清單裡只靠名字認得出它是誰在用", en: "Give this key a name — the list identifies it by name only", ja: "このキーに名前を付けてください。一覧では名前だけが手掛かりです", ko: "이 키에 이름을 지어 주세요. 목록에서는 이름으로만 구분할 수 있습니다" },
+  "err.name_too_long": { "zh-CN": "名称最长 {max} 个字符", "zh-TW": "名稱最長 {max} 個字元", en: "The name may be at most {max} characters", ja: "名前は最大 {max} 文字です", ko: "이름은 최대 {max}자입니다" },
+  "err.expires_not_a_number": { "zh-CN": "到期时间填得不对，请重新选一次日期，或者选「不过期」", "zh-TW": "到期時間填得不對，請重新選一次日期，或者選「不過期」", en: "The expiry is not a valid timestamp — pick a date again, or choose “never expires”", ja: "有効期限が正しくありません。日付を選び直すか、「無期限」を選んでください", ko: "만료 시각이 올바르지 않습니다. 날짜를 다시 고르거나 “만료 없음”을 선택하세요" },
+  "err.expires_in_the_past": { "zh-CN": "这个到期时间已经过去了：签发一把生下来就过期的密钥没有意义，请选一个将来的日期", "zh-TW": "這個到期時間已經過去了：簽發一把生下來就過期的密鑰沒有意義，請選一個將來的日期", en: "That expiry is already in the past — issuing a key that is born expired does nothing; pick a future date", ja: "その有効期限はすでに過去です。最初から期限切れのキーを発行しても意味がないため、将来の日付を選んでください", ko: "만료 시각이 이미 지났습니다. 처음부터 만료된 키를 발급해도 의미가 없으니 미래 날짜를 선택하세요" },
+  "err.too_many_apikeys": { "zh-CN": "最多只能有 {max} 把 API 密钥。请先删掉一些不用的，再签发新的。", "zh-TW": "最多只能有 {max} 把 API 密鑰。請先刪掉一些不用的，再簽發新的。", en: "At most {max} API keys. Delete a few unused ones before issuing more.", ja: "API キーは最大 {max} 件までです。使っていないものを削除してから発行してください。", ko: "API 키는 최대 {max}개까지입니다. 사용하지 않는 키를 삭제한 뒤 발급하세요." },
+  "err.version_not_a_number": { "zh-CN": "这次操作没带上列表的版本号，面板与网关的版本可能对不上", "zh-TW": "這次操作沒帶上清單的版本號，面板與網關的版本可能對不上", en: "This request carried no list version; the panel and the gateway may be on different versions", ja: "この操作に一覧のバージョン番号が付いていません。パネルとゲートウェイのバージョンが異なる可能性があります", ko: "이 요청에 목록 버전 번호가 없습니다. 패널과 게이트웨이의 버전이 다를 수 있습니다" },
+  "err.stale_write": { "zh-CN": "这份列表在你看到它之后被改过了（你看到的是第 {expected} 版，现在是第 {actual} 版）。什么都没有改，请刷新后重来。", "zh-TW": "這份清單在你看到它之後被改過了（你看到的是第 {expected} 版，現在是第 {actual} 版）。什麼都沒有改，請重新整理後再試。", en: "This list changed after you loaded it (you saw version {expected}, it is now version {actual}). Nothing was changed — refresh and try again.", ja: "この一覧は表示後に変更されました（表示していたのは第 {expected} 版、現在は第 {actual} 版です）。何も変更していません。再読み込みしてやり直してください。", ko: "이 목록은 화면에 띄운 뒤 변경되었습니다(보고 있던 것은 {expected}판, 현재는 {actual}판). 아무것도 바뀌지 않았으니 새로 고친 뒤 다시 시도하세요." },
+  "err.apikeys_unreadable": { "zh-CN": "存储里的 API 密钥表读不懂，本次写入已经拒绝，以免覆盖掉里面还留着的内容。里面的原始内容没有被改动，请照 ADMIN.md 的排障一节处理。", "zh-TW": "儲存裡的 API 密鑰表讀不懂，本次寫入已經拒絕，以免覆蓋掉裡面還留著的內容。裡面的原始內容沒有被改動，請照 ADMIN.md 的排障一節處理。", en: "The API key table in storage cannot be parsed, so this write was refused to avoid overwriting what is still in there. The original content is untouched — see the troubleshooting section of ADMIN.md.", ja: "ストレージ内の API キー表を解釈できないため、残っている内容を上書きしないよう今回の書き込みを拒否しました。元の内容は変更していません。ADMIN.md のトラブルシューティングを参照してください。", ko: "저장소의 API 키 표를 해석할 수 없어 남아 있는 내용을 덮어쓰지 않도록 이번 쓰기를 거부했습니다. 원본 내용은 그대로입니다. ADMIN.md의 문제 해결 절을 참고하세요." },
 
   // ── 补池失败归因（注册机板块才渲染；本期先把键写齐，好让门禁从第一天就是活的）────────
   "reg.fail.domain_blocked_all": { "zh-CN": "所有域名都被上游拦下", "zh-TW": "所有網域都被上游擋下", en: "Every domain was blocked upstream", ja: "すべてのドメインが上流でブロックされました", ko: "모든 도메인이 업스트림에서 차단되었습니다" },

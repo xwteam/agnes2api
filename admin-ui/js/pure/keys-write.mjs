@@ -403,6 +403,20 @@ export const ADMIN_ERROR_TEXT_KEY = {
   "not_a_bulk_op": "err.not_a_bulk_op",
   "ids_not_a_string_array": "err.ids_not_a_string_array",
   "too_many_bulk_ids": "err.too_many_bulk_ids",
+  // ── 对外 API 密钥那五条端点 ──────────────────────────────────────────
+  // ⚠️ **它们住在这张表里而不是另起一张**，理由是这张表的消费者
+  // （`adminErrorText`）是全仓唯一那份「码 → 文案」的翻译，两张表就是两份真源，
+  // 而其中一张迟早漏掉新码。**表的名字里没有 keys 字样，射程本来就是整棵管理树。**
+  "apikey_not_found": "err.apikey_not_found",
+  "name_not_a_string": "err.name_not_a_string",
+  "name_empty": "err.name_empty",
+  "name_too_long": "err.name_too_long",
+  "expires_not_a_number": "err.expires_not_a_number",
+  "expires_in_the_past": "err.expires_in_the_past",
+  "too_many_apikeys": "err.too_many_apikeys",
+  "version_not_a_number": "err.version_not_a_number",
+  "stale_write": "err.stale_write",
+  "apikeys_unreadable": "err.apikeys_unreadable",
 };
 
 /**

@@ -21,6 +21,7 @@ import { eventsSection } from "./sec-events.js";
 import { usageSection } from "./sec-usage.js";
 import { modelsSection } from "./sec-models.js";
 import { playgroundSection } from "./sec-playground.js";
+import { apikeysSection } from "./sec-apikeys.js";
 import { settingsSection } from "./sec-settings.js";
 import { sessionExpired } from "./pure/session.mjs";
 import { sendable } from "./pure/sendable.mjs";
@@ -31,7 +32,8 @@ import { KEY_STORE, SAVED_AT_STORE, SECTION_STORE, GW_KEY_STORE } from "./pure/s
 
 const SECTIONS = {
   overview: overviewSection, keys: keysSection, registrar: registrarSection, events: eventsSection,
-  usage: usageSection, models: modelsSection, playground: playgroundSection, settings: settingsSection,
+  usage: usageSection, models: modelsSection, playground: playgroundSection,
+  apikeys: apikeysSection, settings: settingsSection,
 };
 
 const gate = document.getElementById("gate");

@@ -469,3 +469,26 @@ tr:last-child td { border-bottom: 0; }
    限高限宽：上游给多大就画多大的话，一张图能把整页顶到看不见别的东西。 */
 .pg-media-img { display: block; width: 100%; max-width: 320px; max-height: 320px; object-fit: contain; border-radius: var(--radius-lg); }
 .pg-media-note > .pg-media-endpoint { flex: 1; min-width: 0; word-break: break-all; font-size: 12px; }
+
+/* ── API 密钥板块 ────────────────────────────────────────────────────────────
+   **只补这一族真正需要的几条**：统计卡走 `.card-row > .card`、错误横幅走
+   `.banner-danger` / `.banner-warn`、工具栏走 `.toolbar`，一条都不重新发明。 */
+.ak-bar-right { margin-left: auto; }
+.ak-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--gap-sm);
+}
+.ak-item + .ak-item { margin-top: var(--gap-sm); }
+.ak-item-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-sm); }
+.ak-name { font-weight: 600; word-break: break-all; }
+.ak-item-meta {
+  display: flex; flex-wrap: wrap; gap: var(--gap-sm);
+  margin-top: 4px; font-size: 12px;
+}
+.ak-item-actions { display: flex; flex-wrap: wrap; gap: var(--gap-sm); margin-top: var(--gap-sm); }
+/* 明文那一行：等宽、可选中、长了就换行 —— 它是运维要整串复制走的东西。 */
+.ak-secret { word-break: break-all; user-select: all; margin: var(--gap-sm) 0; }
+/* 到期快捷档那几颗 chip。选中态只加边框色，不改字号 —— 换字号会让整行跳动。 */
+.chips { display: flex; flex-wrap: wrap; gap: var(--gap-sm); margin: 4px 0 var(--gap-sm); }
+.chip.active { border-color: var(--primary); color: var(--primary); }

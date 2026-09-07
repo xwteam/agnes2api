@@ -89,6 +89,7 @@ CI 的漂移门禁同样会红。
 | `usage` | 用量 | `js/sec-usage.js` | `js/pure/usage.mjs` |
 | `models` | 模型 | `js/sec-models.js` | `js/pure/models.mjs` |
 | `playground` | 调试台 | `js/sec-playground.js` | `js/pure/playground.mjs` |
+| `apikeys` | API 密钥 | `js/sec-apikeys.js` | `js/pure/apikeys.mjs` |
 | `settings` | 设置 | `js/sec-settings.js` | `js/pure/settings.mjs` |
 
 `js/pure/` 下另有几份**不与板块一一对应**的共用纯逻辑：`js/pure/format.mjs`、

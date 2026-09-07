@@ -96,7 +96,7 @@ const KNOWN_BLIND_SPOTS = [
 ];
 
 describe("硬规则 1 的另一半：sec-*.js 不许重新声明 pure/*.mjs 已导出的函数名", () => {
-  it("扫描范围本身不是空的——十五个 pure 模块、八个板块文件都得真的被扫到", () => {
+  it("扫描范围本身不是空的——十六个 pure 模块、九个板块文件都得真的被扫到", () => {
     // 反向自检：下面那条相等断言在「一个文件都没扫到」时同样是绿的。
     // 数字手写，改动 admin-ui 的文件结构时必须回来表态。
     // 设置页那一轮各加一个（`pure/settings.mjs` 与 `sec-settings.js`）⇒ 10 / 5。
@@ -112,8 +112,9 @@ describe("硬规则 1 的另一半：sec-*.js 不许重新声明 pure/*.mjs 已�
     // 顶栏状态徽章那一轮**同样只加了 pure 那一侧**（`pure/health.mjs`）：徽章住在外壳
     // 的顶栏里，不是板块 ⇒ **14 → 15，板块数不变**。与 `gw-api.js` 同一条理由，
     // 同一轮新建的 `admin-ui/js/health.js` 两边都不算。
-    expect(pureModules().length, "pure 模块数变了").toBe(15);
-    expect(sectionFiles().length, "板块文件数变了").toBe(8);
+    // API 密钥那一轮各再加一个（`pure/apikeys.mjs` 与 `sec-apikeys.js`）⇒ **15 → 16、8 → 9**。
+    expect(pureModules().length, "pure 模块数变了").toBe(16);
+    expect(sectionFiles().length, "板块文件数变了").toBe(9);
   });
 
   it("全部 pure 模块的导出函数名，一个都不许在 sec-*.js 里被重新声明", () => {
