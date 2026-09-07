@@ -269,9 +269,13 @@ export function malformedKind(resp) {
  * ⚠️ **这一档下六张卡仍然写 `0`，不是 EM DASH，这也是一条裁定**：
  * `0` 在这里是真的——**已经落盘的就是 0 条**，而横幅负责说清「可能只是还没落下来」。
  * 换成 EM DASH 就是把「真的没人用」那一半说成「数据丢了」，方向相反的同一种谎
- *（`cellKind` / `rowState` 的判据是黑名单，这一档因此照 `empty` 那样渲染）。
+ *（`rowState` 把这一档原样往下传，而 `cellKind` 只在**没有数字可写**的那一支上
+ * 认它，有数字的那一支照 `empty` 那样渲染）。
  * 由 `tests/ui/dom/usage-section.test.ts` 的
  * 「shards=0 时六张卡仍然写 0 —— 画成 EM DASH 就是反方向的同一种谎」那一格钉着。
+ * ⚠️ **没有数字可写的那三格（成功率 / 错误率 / 平均延迟）走 `"none-no-shards"`**：
+ * 字形仍是 EN DASH，换掉的只是 tooltip —— 那一句上一版在说「没有可用的样本」，
+ * 而这一档下有没有样本正是分不出来的（见 `cellKind` 上方第四档那一段）。
  */
 export function usageState(resp) {
   const r = obj(resp);
@@ -329,10 +333,21 @@ export function detailState(resp) {
  *
  * 第二个参数是这一行自己的桶：整块读成功了、而这一行的桶读不回来（形状不对），
  * 那也是「这一行我们不知道」，**不是这一行是 0**。
+ *
+ * ⚠️⚠️ **`no-shards` 原样往下传，这一条是终检回填的**：上一版把它压成 `"data"`，
+ * 于是日表里**没有数字可写**的那一列（平均延迟）拿到的是 `cellKind("data", null)`
+ * ⇒ `"none"` ⇒ tooltip 又变回「这段时间没有可用的样本」——**与六张卡上刚修掉的
+ * 是同一句假话，只是挪到了下一屏**（`sec-usage.js` 的 `numberCells` 是这两处唯一的
+ * 共同下游）。压成 `"data"` 不改变**有数字那几格**的结局（`cellKind` 在
+ * `no-shards` 下对有限数字照样返回 `"value"`，日表那一行仍然写 0），
+ * 唯一的差别就在那一列破折号的 tooltip 上。
+ * ⭐ 记一条形状：**「两种状态在今天的渲染上等价」不等于「可以把其中一种擦掉」**
+ * ——擦掉之后，下一个只对其中一种成立的判据就再也接不到它了。
  */
 export function rowState(state, bucket) {
   if (state === "off" || state === "unavailable") return "unavailable";
-  return obj(bucket) === null ? "unavailable" : "data";
+  if (obj(bucket) === null) return "unavailable";
+  return state === "no-shards" ? "no-shards" : "data";
 }
 
 /**
@@ -375,12 +390,13 @@ export function avgLatency(bucket) {
 }
 
 /**
- * 一个数字格的三种结局。**这是「三态不许长得一样」在单元格这一层的落点。**
+ * 一个数字格的四种结局。**这是「三态不许长得一样」在单元格这一层的落点。**
  *
  * | 返回值 | 什么时候 | 板块渲染成 |
  * |---|---|---|
  * | `"value"` | 整块读成功了，而且这一格是个有限数字（**含 0**） | 那个数字 |
  * | `"none"` | 整块读成功了，但这一格没有可用的样本 / 分母 | **`–` EN DASH（U+2013）** |
+ * | `"none-no-shards"` | 同上，但整块是 `no-shards` —— 有没有样本这件事我们不知道 | **同一根 `–`，换一句 tooltip** |
  * | `"unknown"` | 整块就没读出来（`off` / `unavailable`） | **`—` EM DASH（U+2014）** |
  *
  * ⚠️⚠️ **计数类在 `empty` 态显示 `0` 是对的，别「修」成破折号**：这一次读成功了，
@@ -389,12 +405,26 @@ export function avgLatency(bucket) {
  * `"value"` ⇒ 卡上是 `0`。**而同一个 `empty` 态下比率与平均延迟走的是 `"none"`**
  *（分母是 0、样本是 0），两类卡因此在同一个状态下长得不一样 —— 那正是要的。
  *
+ * ⚠️⚠️ **第四档是终检点名的第三处同一个谎，它藏在 `title` 属性里。**
+ * `no-shards` 上一版掉进 `"none"` ⇒ 成功率 / 错误率 / 平均延迟三张卡（与日表
+ * 对应列）挂的是 `usage.cell.noneTip`：「这一次读成功了，只是这段时间没有可用的
+ * 样本。」——**而同一屏的横幅刚说完「还有 N 条计数没有落盘」**。样本是有的，
+ * 只是没落盘；这一档下「有没有样本」正是我们分不出来的那件事。
+ * ⇒ 分出第四档，让板块换一句 tooltip（`usage.cell.noneNoShardsTip`）。
+ *
+ * ⚠️ **它照旧渲染成 EN DASH，字形一个像素都不动**：`no-shards` 下这一格
+ *「读成功了、只是没有数字可写」与 `empty` 下是同一件事，改字形就成了
+ * 「已经落盘的就是 0 条」那条裁定的反面（见 `usageState` 上方第五档那一段）。
+ * `tests/ui/dom/usage-section.test.ts` 的「shards=0 时六张卡仍然写 0 ——
+ * 画成 EM DASH 就是反方向的同一种谎」那一格钉的是**字形**，它在这一改动下不动。
+ *
  * ⚠️ **两个破折号必须视觉可区分，而判据在这里、不在板块文件里**：让板块自己
  * 目测「这一格该画哪一根」就等于把三态判定复制回了 DOM 拼装代码。
  */
 export function cellKind(state, value) {
   if (state === "off" || state === "unavailable") return "unknown";
-  return finite(value) === null ? "none" : "value";
+  if (finite(value) !== null) return "value";
+  return state === "no-shards" ? "none-no-shards" : "none";
 }
 
 /**
@@ -405,6 +435,10 @@ export function cellKind(state, value) {
  * ⚠️ **少了这一层，`empty` 与 `unavailable` 在比率卡上会长得一模一样**：
  * `fmtPercent(0, 0)` 与 `fmtPercent(null, null)` **都返回 EM DASH**，
  * 而前者的意思是「这段时间没有请求」、后者是「读取失败」。
+ *
+ * ⚠️ **它转调 `cellKind`，所以第四档（`"none-no-shards"`）在这里是白拿的** ——
+ * 核实过：`no-shards` 下分母是 0 ⇒ 传进去的是 `null` ⇒ 落第四档。
+ * 成功率与错误率两张卡因此跟着换 tooltip，**不必在这里再写一次判据**。
  */
 export function ratioKind(state, den) {
   const d = finite(den);

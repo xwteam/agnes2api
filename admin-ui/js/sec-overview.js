@@ -19,7 +19,7 @@ import { el, elI18n } from "./ui.js";
 import { fmtCount, fmtDash, fmtDuration, fmtInstant, fmtPercent, fmtBytesMb } from "./pure/format.mjs";
 import {
   POOL_CARDS, poolCardLabelKey, runtimeNameLabelKey, storageBackendLabelKey,
-  poolCounts, processCells, usageStats, configSummary, storageInfo,
+  poolCounts, processCells, usageStats, usageTipKey, configSummary, storageInfo,
   freshnessValues, kvReadEstimatePerIsolatePerDay, offsetMs,
 } from "./pure/overview.mjs";
 
@@ -142,6 +142,13 @@ function renderUsage() {
   fillTile(nodes.usage.failed, fmtCount(u.failed));
   fillTile(nodes.usage.clientErrors, fmtCount(u.clientErrors));
   fillTile(nodes.usage.successRate, fmtPercent(u.success, u.requests));
+  // ⚠️ **那句尾巴按 `capabilities.stats.tier2Enabled` 分两版**（终检回填）：
+  //    统计开着的时候还说「要等启用之后才有」，等于把人从「用量」板块支开，
+  //    而那正是他该去看横幅的地方。判据在 `usageTipKey()` 里，不在这。
+  //    `render()` 从两条路进来，`loadCapabilities()` 那条回来时这里会再跑一次。
+  const tipKey = usageTipKey(caps);
+  nodes.usage.tip.setAttribute("data-i18n", tipKey);
+  nodes.usage.tip.textContent = t(tipKey);
 }
 
 function renderConfig() {
@@ -290,8 +297,14 @@ function buildUsageCard(section) {
     cardRow.appendChild(card);
   }
   body.appendChild(cardRow);
-  body.appendChild(elI18n("p", "ov.usage.tip", { class: "muted note" }));
+  // ⚠️ **这一句的 key 是会变的**（终检回填）：`data-i18n` 由 `renderUsage()` 按
+  //    `usageTipKey(caps)` 重写，`elI18n` 这里给的只是**还不知道开没开**时的那一版。
+  //    仍然走 `data-i18n` 而不是纯 textContent：切语言时框架层的 `apply(document)`
+  //    要照着现在这个 key 重译，写死文字的话切语言之后它会停在旧语言上。
+  const tip = elI18n("p", "ov.usage.tip", { class: "muted note" });
+  body.appendChild(tip);
   section.appendChild(wrap);
+  values.tip = tip;
   return values;
 }
 

@@ -1564,8 +1564,66 @@ BANNER='[collection-guard] ✅'
 #     是把英文那几句压短压回来的，**不是抬阈值**。往那一节再加话之前先量。
 #   ⇒ Node：4832 + 13 = 4845；文件数不动（都加在既有文件里）。
 #   ⇒ workerd：768 + 0 = 768（这一轮只动文档与 `tests/unit/docs-*`，不在 workerd 侧跑）。
+# 🔴 **这一轮（评审回填第 4 轮：「还没落盘」被说成「没人用」的两处遗留）+11。**
+#   逐格写清多的是**哪几格**。前后两组数字**各自在隔离副本上单跑那四份量过**
+#   （`git archive HEAD` 解到独立目录：120 格；改动后同样那四份：131 格）。
+#
+#   ── 甲：`usage.cell.noneTip` 那句 tooltip 对「开着但一条分片都还没落盘」是假话。
+#     **它是同一句谎的第三处，藏在 `title` 属性里。** `cellKind` 上一版只把
+#     `off` / `unavailable` 判成 `"unknown"`，那一档掉进 `"none"` ⇒ 成功率 / 错误率 /
+#     平均延迟三张卡与日表那一列挂的是「这一次读成功了，只是这段时间没有可用的样本。」
+#     ——而同一屏的横幅刚说完「还有 4 条计数没有落盘」。**样本是有的，只是没落盘。**
+#     全仓 grep `noneTip`，在 `tests/` 里**零命中**：这句话此前一格判据都没有。
+#     改法：`cellKind` 分出第四档 `"none-no-shards"`（**字形一个像素不动**，仍是
+#     EN DASH，换掉的只有 tooltip），`rowState` 把这一档原样往下传（日表那一列走它），
+#     新增 `usage.cell.noneNoShardsTip` 五语言。
+#     格数：`tests/ui/usage.test.ts` 42 → 44（**+2**：第四档的分档 + 三条反向锚 /
+#       那句 tooltip 的五语言禁词矩阵）；
+#       `tests/ui/dom/usage-section.test.ts` 38 → 40（**+2**：这一档下 EN DASH 那几格的
+#       `title` 不许说「没有可用的样本」/ 真「有分片、盘里就是 0」那一档的 `title` 必须原样留着）。
+#     ⚠️ 既有那格「这一档的数字格仍然是 0…」**没加格，也没放松**：只把 `rowState`
+#       那一句从 `"data"` 改成 `"no-shards"`，并串上 `cellKind(rowState(…), 0) === "value"`
+#       ——断言的仍然是「日表那一行照旧写 0」这件事本身。
+#
+#   ── 乙：`ov.usage.tip` 对一个**已经开着**统计的部署是一句会把人支开的话。
+#     它在 `admin-ui/js/sec-overview.js` 里是**无条件** `appendChild` 的：
+#     「按天/按小时的分解要等启用时间序列统计之后才有」——而那个人此刻该去的
+#     正是「用量」板块（横幅在那儿）。
+#     **没有为它动后端**：`stats.tier2Enabled` 是 `src/http/admin/handlers/capabilities.ts`
+#     早就在发的，概览板块也早就把 `/capabilities` 拉进 `caps` 了。
+#     改法：新增纯函数 `usageTipKey(caps)`（**白名单**：只有 `=== false` 才算「确知关着」，
+#     拉不到 / 字段缺席都算「不知道」），默认那一版改成**无论开没开都成立**的话，
+#     另加 `ov.usage.tipTier2Off` 五语言只在确知关着时用。
+#     格数：`tests/ui/overview.test.ts` 34 → 38（**+4**：开着 / 确知关着 /
+#       不知道时不许当成关着（白名单方向）/ 默认那句的五语言禁词矩阵）；
+#       `tests/ui/dom/overview-cards.test.ts` 6 → 9（**+3**：开着那一版真的挂上了 /
+#       关着那一版仍然说清怎么开 / `capabilities` 500 时不许默认当成关着）。
+#
+#   ── 丙：`admin-ui/js/pure/usage.mjs` 里「认不出来的 tier 退回 `empty`」那条 fallback
+#     **一个字都没动**（后端今天只发得出 `off` / `tier2`，走不到；上一轮把它定成
+#     `empty` 的理由成立）。零格数，记在这里免得下一个人去找。
+#
+#   变异实测（**十条逐条真跑过**，跑的是那四份共 131 格，每条只红该红的，跑完 md5 还原）：
+#     · `cellKind` 末行改回 `finite(value) === null ? "none" : "value"` ⇒ 红 2；
+#     · `ratioKind` 传给 `cellKind` 的 state 换成 `state === "no-shards" ? "empty" : state`
+#       ⇒ 红 2（比率那两张卡与延迟那张卡是两条路，缺一条就漏掉两张卡）；
+#     · `rowState` 改回 `obj(bucket) === null ? "unavailable" : "data"` ⇒ 红 2
+#       （其中一格是**日表那一列** —— 六张卡对了不代表日表也对）；
+#     · `usage.cell.noneNoShardsTip` 中文改回 `usage.cell.noneTip` 原文 ⇒ 红 2，
+#       报文逐字 `expected [ 'zh-CN：「没有可用的样本」' ] to deeply equal []`；
+#     · `fillCell` 里那个三元的两支对调 ⇒ 红 2（两个方向同时说反）；
+#     · `usageTipKey` 恒返回 `"ov.usage.tipTier2Off"` ⇒ 红 4；
+#     · `usageTipKey` 恒返回 `"ov.usage.tip"` ⇒ 红 2；
+#     · `usageTipKey` 的白名单改成黑名单（`=== false` → `!(… === true)`）⇒ 红 2；
+#     · 删掉 `renderUsage()` 末尾那三行（退回无条件渲染）⇒ **只红 1**：
+#       「统计开着时…」那一格**照绿**（默认 key 本来就是 `ov.usage.tip`），
+#       拦住这种回退的只有「确知统计关着时…」那一格 —— 两格缺一不可，
+#       这条实测已经写进那两格自己的注释里，别把它当成多余的一格删掉；
+#     · `ov.usage.tip` 中文改回原文 ⇒ 红 2。
+#   ⇒ Node：4845 + 11 = 4856；文件数不动（四处都加在既有文件里）。
+#   ⇒ workerd：768 + 0 = 768（`tests/ui/**` 只在 node 侧跑，`src/**` 一行没动）。
 EXPECT_NODE_FILES=156
-EXPECT_NODE_TESTS=4845
+EXPECT_NODE_TESTS=4856
 EXPECT_WORKERS_FILES=41
 EXPECT_WORKERS_TESTS=768
 

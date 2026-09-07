@@ -85,6 +85,22 @@ function approxCount(section: FakeElement): number {
   return n;
 }
 
+/**
+ * 板块里全部 EN DASH 格（`.usage-none`）的 `title`。
+ *
+ * ⚠️ **观测点是 `title` 属性，不是屏幕上那个字符**：EN DASH 底下今天挂着**两句**
+ * 不同的话（`usage.cell.noneTip` / `usage.cell.noneNoShardsTip`），字形刻意相同
+ * ——只数字符或只比 textContent 的判据对这两句的区别**完全不可观测**
+ *（第 5 种假阳性）。这个 helper 是「那句话说了什么」唯一的观测口。
+ */
+function noneTips(section: FakeElement): string[] {
+  const out: string[] = [];
+  for (const sp of section.querySelectorAll("span")) {
+    if (sp.classList.contains("usage-none")) out.push(sp.getAttribute("title") ?? "");
+  }
+  return out;
+}
+
 /** 板块里全部横幅的 class（顺序即 DOM 顺序）。 */
 function banners(section: FakeElement): string[] {
   const out: string[] = [];
@@ -512,6 +528,73 @@ describe("开着但一条分片都还没落盘：同一屏上不许出现两句�
     expect(c["usage.card.latency"]).toBe(EN);
     // 日表那一行同样写 0：整块的结论往下传，传的是「读成功了」，不是「我们不知道」。
     expect(dayRowCells(sec)[0]).toBe(`2026-08-21|0|0|0|0 / 0|0|${EN}|下钻`);
+  });
+
+  /**
+   * ⚠️⚠️⚠️ **同一个谎的第三处，它藏在 `title` 属性里。**
+   *
+   * 上一格钉的是**字形**（EN DASH 不许变成 EM DASH）。字形对了，那几格 EN DASH
+   * 底下挂的却还是 `usage.cell.noneTip`：
+   * ```
+   * 这一次读成功了，只是这段时间没有可用的样本。
+   * ```
+   * ——**而同一屏的横幅正说着「还有 4 条计数没有落盘」**。样本是有的，只是没落盘。
+   * 这一档下「有没有样本」正是我们分不出来的那件事。
+   * 全仓 grep `noneTip`，在 `tests/` 里**零命中** —— 这句话此前一格判据都没有。
+   *
+   * ⚠️ **两句话字形相同是刻意的**（上一格那条裁定），所以这一格的观测点只能是
+   * `title`：`cards()` / `dayRowCells()` 读的都是 textContent，对这个区别是瞎的。
+   *
+   * **变红条件**（四条都真跑过，跑的是那四份共 131 格，每条只红 2 格）：
+   * · `cellKind` 末行改回 `return finite(value) === null ? "none" : "value";`
+   *   ⇒ `not.toContain("没有可用的样本")` 那句红，报文逐字
+   *   `expected '这一次读成功了，只是这段时间没有可用的样本。' not to contain '没有可用的样本'`；
+   * · `ratioKind` 传给 `cellKind` 的 state 换成 `state === "no-shards" ? "empty" : state`
+   *   ⇒ 同一句红（成功率 / 错误率那两张卡）；
+   * · `rowState` 改回 `return obj(bucket) === null ? "unavailable" : "data";`
+   *   ⇒ 同一句红（**日表那一列** —— 六张卡对了不代表日表也对）；
+   * · `usage.cell.noneNoShardsTip` 的中文改回 `usage.cell.noneTip` 的原文 ⇒ 同一句红。
+   */
+  it("这一档下 EN DASH 那几格的 tooltip 不许说「没有可用的样本」—— 横幅刚说完还有 4 条没落盘", async () => {
+    const h = await openUsage(respondWith(notLandedBody()));
+    const sec = h.section("usage");
+    const tips = noneTips(sec);
+    // ① 装置自检：这一档下真的渲染出了 EN DASH 那几格（成功率 / 错误率 / 平均延迟
+    //    三张卡 + 日表那一列），否则下面的 for 是空转。
+    expect(tips.length, "一格 EN DASH 都没有 ⇒ 这一格测的是空气").toBeGreaterThanOrEqual(4);
+    for (const tip of tips) {
+      expect(tip, "tooltip 还在说「没有可用的样本」，而横幅正说着还有 4 条没落盘")
+        .not.toContain("没有可用的样本");
+      expect(tip, "没说清这段区间是「还没落盘」而不是「没人用」").toContain("还没落盘");
+    }
+    // ② 装置自检：那条尾巴真的在同一屏上，否则「自相矛盾」在这一格里根本不存在。
+    expect(sec.textContent, "未落盘的尾巴没渲染 ⇒ 这一格测的是空气").toContain("还有 4 条计数没有落盘");
+    // ③ 字形一格都不许动：换的是话，不是那根破折号。
+    const c = cards(sec);
+    expect(c["usage.card.successRate"], "顺手把字形也改了").toBe(EN);
+    expect(c["usage.card.latency"], "顺手把字形也改了").toBe(EN);
+  });
+
+  /**
+   * **对照锚：真「有分片、盘里就是 0」那一档，那句话必须原样留着。**
+   *
+   * 少了这一格，把 `usage.cell.noneTip` 整个删掉 / 两档合并成一句「还没落盘」
+   * 也能让上一格全绿 —— 而那是方向相反的同一种谎（`empty` 档下我们**确实**
+   * 知道这段时间没有样本，说成「还没落盘」就是把真话说成不确定）。
+   *
+   * **变红条件**（真跑过）：把 `fillCell` 里那个三元的两支对调
+   * ⇒ 这一格 + 上一格共 2 格红（那两句话对调之后**两个方向同时**说反）。
+   */
+  it("有分片、盘里就是 0 的那一档，tooltip 仍然是「确实没有可用的样本」", async () => {
+    const h = await openUsage(respondWith(usageBody({
+      days: [{ date: "2026-08-21", total: ZERO_BUCKET }], total: ZERO_BUCKET,
+    })));
+    const sec = h.section("usage");
+    const tips = noneTips(sec);
+    expect(tips.length, "一格 EN DASH 都没有 ⇒ 这一格测的是空气").toBeGreaterThanOrEqual(4);
+    for (const tip of tips) {
+      expect(tip, "「确知没有样本」那一档被顺手改成了「还没落盘」").toContain("没有可用的样本");
+    }
   });
 });
 

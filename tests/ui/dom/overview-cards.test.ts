@@ -33,16 +33,40 @@ function cards(section: FakeElement): Record<string, string> {
   return out;
 }
 
-async function openOverview(overview: { status: number; body: unknown }) {
+/**
+ * 打开概览板块。
+ *
+ * `caps` 是 `GET /admin/api/capabilities` 的响应体，**默认那一份刻意不带 `stats`**
+ *（= 「我们不知道统计开没开」），保持这个文件里既有那些格的行为不变。
+ */
+async function openOverview(
+  overview: { status: number; body: unknown },
+  caps: unknown = { runtime: { name: "node", colo: null } },
+) {
   const h = await bootPanel({
     now: NOW,
     store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000) },
     respond: (url) => (url.startsWith("/admin/api/overview")
       ? overview
-      : { status: 200, body: { runtime: { name: "node", colo: null } } }),
+      : { status: 200, body: caps }),
   });
   await settle();
   return h;
+}
+
+/**
+ * 累计用量卡底下那句尾巴：现在挂的是哪个 key、屏幕上是哪句话。
+ *
+ * ⚠️ **`data-i18n` 也要读**：那一句的 key 是会变的，而切语言时框架层的
+ * `apply(document)` 照着 `data-i18n` 重译 —— 只把文字写对、key 留在旧的那一个，
+ * 切一次语言就会翻回上一版那句话，而**只看 textContent 的判据对这件事是瞎的**。
+ */
+function usageTip(section: FakeElement): { key: string | null; text: string } {
+  for (const p of section.querySelectorAll("p")) {
+    const key = p.getAttribute("data-i18n");
+    if (key === "ov.usage.tip" || key === "ov.usage.tipTier2Off") return { key, text: p.textContent };
+  }
+  return { key: null, text: "" };
 }
 
 const FULL = {
@@ -166,5 +190,96 @@ describe("概览板块：读不出来时显示破折号，绝不伪造 0", () =>
       vi.unstubAllGlobals();
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe("累计用量卡底下那句尾巴：不许把一个已经开着统计的部署从「用量」板块支开", () => {
+  /**
+   * ⚠️⚠️ **这一句上一版是无条件渲染的，而它对一半的部署是误导。**
+   *
+   * `sec-overview.js` 的 `buildUsageCard()` 里原本是
+   * `body.appendChild(elI18n("p", "ov.usage.tip", …))` —— 一个不看任何字段的
+   * `appendChild`，说的是「按天/按小时的分解要等启用时间序列统计之后才有」。
+   * 对一个**已经打开** `USAGE_STATS_ENABLED` 的运维，这句话把他从「用量」板块支开，
+   * 而那个板块此刻正挂着「还有 N 条计数没有落盘」的横幅 —— 正是他该去看的东西。
+   *
+   * ⚠️ **没有为它新增任何后端字段**：`stats.tier2Enabled` 是
+   * `src/http/admin/handlers/capabilities.ts` 早就在发的，概览板块也早就把
+   * `/capabilities` 拉进来了（`loadCapabilities()`）。这一格顺带钉住
+   * **capabilities 回来之后真的重渲了一次**（`onShow()` 里那条 `.then(() => render())`）。
+   *
+   * **变红条件**（真跑过）：把 `usageTipKey` 改成恒返回 `"ov.usage.tipTier2Off"`
+   * ⇒ 这一格红（`expected 'ov.usage.tipTier2Off' to be 'ov.usage.tip'`），连同下面
+   * 「capabilities 读不出来时不许默认当成「关着」」那一格，以及 `tests/ui/overview.test.ts`
+   * 的「统计开着的时候不用那句「要等启用之后才有」」与
+   * 「拉不到 capabilities / 字段缺席 / 字段不是布尔 ⇒ 用那句无论开没开都成立的话」两格，共 4 格。
+   *
+   * ⚠️ **它单独一格拦不住「退回无条件渲染」**：实测把 `renderUsage()` 末尾那三行
+   * 删掉之后这一格**照绿**（默认 key 本来就是 `ov.usage.tip`）—— 拦住那一种回退的是
+   * 下面「确知统计关着时……」那一格，两格缺一不可。
+   */
+  it("统计开着时那句尾巴指向「用量」板块，不再说「要等启用之后才有」", async () => {
+    const h = await openOverview(FULL, {
+      runtime: { name: "node", colo: null },
+      stats: { tier2Enabled: true, flushIntervalMs: 60_000, tokensCoverage: [] },
+    });
+    const tip = usageTip(h.section("overview"));
+    expect(tip.key, "那句尾巴整个不见了 ⇒ 这一格测的是空气").toBe("ov.usage.tip");
+    expect(tip.text, "开着统计的部署还在被那句话支开").not.toContain("要等启用");
+    expect(tip.text, "没告诉他分解在哪个板块").toContain("「用量」板块");
+    // 装置自检：这一句仍然守着它原本那半件事（「累计」不是「今日」）。
+    expect(tip.text, "「不是今日」那半句被顺手删了").toContain("不是「今日」");
+  });
+
+  /**
+   * **反向锚：确知关着时那句「怎么开」必须还在。**
+   *
+   * 少了这一格，把 `usageTipKey` 改成恒返回 `"ov.usage.tip"` 也能让上一格全绿
+   * —— 而那样一个**没开**统计的部署就再也没人告诉他「分解要先开统计」了。
+   *
+   * **变红条件**（两条都真跑过）：把 `usageTipKey` 改成恒返回 `"ov.usage.tip"`
+   * ⇒ 这一格 + `tests/ui/overview.test.ts` 的「确知关着的时候才多说一句「怎么开」」共 2 格；
+   * 把 `renderUsage()` 末尾那三行删掉（退回无条件渲染）⇒ **只红这一格**
+   * ——那一种回退在全仓只有它拦得住。
+   */
+  it("确知统计关着时，那句尾巴仍然说清「要先开」以及开法在哪", async () => {
+    const h = await openOverview(FULL, {
+      runtime: { name: "node", colo: null },
+      stats: { tier2Enabled: false, flushIntervalMs: 60_000, tokensCoverage: [] },
+    });
+    const tip = usageTip(h.section("overview"));
+    expect(tip.key, "关着的那一版没挂上").toBe("ov.usage.tipTier2Off");
+    expect(tip.text, "没开统计的部署被告知分解「在用量板块」，去了却只有一张说明卡")
+      .toContain("要等开启之后才有");
+  });
+
+  /**
+   * **拉不到 `/capabilities` 时用那句「无论开没开都成立」的话，不是默认当成关着。**
+   *
+   * 这一格钉的是 `usageTipKey` 的白名单方向在**真实那条链**上也成立：
+   * `loadCapabilities()` 吞掉异常之后 `caps` 停在 `null`。
+   *
+   * **变红条件**（真跑过）：把 `usageTipKey` 里那句白名单改成黑名单
+   *（`c.tier2Enabled === false` → `!(… === true)`）⇒ 这一格红
+   *（`expected 'ov.usage.tipTier2Off' to be 'ov.usage.tip'`），连同 `tests/ui/overview.test.ts`
+   * 的「拉不到 capabilities / 字段缺席 / 字段不是布尔 ⇒ 用那句无论开没开都成立的话」共 2 格。
+   */
+  it("capabilities 读不出来时不许默认当成「关着」", async () => {
+    // ⚠️ **只让 `/capabilities` 这一条 500**：整份 responder 一起 500 的话，
+    //    面板开机那次「已存过口令就直接验一次」也会失败 ⇒ 停在口令门上、
+    //    板块压根没建出来 —— 这一格会变成一句恒真的空转（实测过，`tip.key` 是 null）。
+    const h = await bootPanel({
+      now: NOW,
+      store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000) },
+      respond: (url) => {
+        if (url.startsWith("/admin/api/overview")) return FULL;
+        if (url.includes("/capabilities")) return { status: 500, body: { error: { message: "boom" } } };
+        return { status: 200, body: {} };
+      },
+    });
+    await settle();
+    const tip = usageTip(h.section("overview"));
+    expect(tip.key, "读不出来被当成了「确知关着」").toBe("ov.usage.tip");
+    expect(tip.text.length, "那句尾巴是空的").toBeGreaterThan(0);
   });
 });

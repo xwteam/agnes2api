@@ -259,20 +259,126 @@ describe("「开着，但一条分片都还没落盘」是自己一档", () => {
    *
    * `0` 在这里是真的 —— **已经落盘的就是 0 条**，而横幅负责说清「可能只是还没落下来」。
    * 换成 EM DASH 就是把「真的没人用」说成「数据丢了」，方向相反的同一种谎。
-   * ⇒ `cellKind` / `rowState` 的黑名单**刻意**不收这一档；
+   * ⇒ `cellKind` 的黑名单**刻意**不收这一档；
    * `readSucceeded` 那个白名单则**必须**收（表里那句话该是「没有可以列出的日子」）。
+   *
+   * ⚠️ **`rowState` 原样往下传这一档（终检回填），而日表那一行照旧写 `0`**：
+   * 有数字那几格走的是 `cellKind(…, 0)` ⇒ `"value"`，与压成 `"data"` 时逐格相同；
+   * 差别只在**没有数字可写**的那一列（平均延迟）的 tooltip 上，理由见
+   * `rowState` 上方那段。这里连着 `cellKind` 一起断言，钉的是「仍然写 0」这件事本身。
    *
    * **变红条件**：把 `cellKind` 的第一行改成
    * `if (state === "off" || state === "unavailable" || state === "no-shards") return "unknown";`
-   * ⇒ 第一句断言红；把 `readSucceeded` 里 `|| state === "no-shards"` 删掉 ⇒ 第三句红。
+   * ⇒ 第一句与那条串起来的断言红；把 `readSucceeded` 里 `|| state === "no-shards"`
+   * 删掉 ⇒ 「读成功了」那句红；把 `rowState` 改回
+   * `return obj(bucket) === null ? "unavailable" : "data";`（真跑过）
+   * ⇒ 这一格 + `tests/ui/dom/usage-section.test.ts` 的
+   * 「这一档下 EN DASH 那几格的 tooltip 不许说「没有可用的样本」—— 横幅刚说完还有 4 条没落盘」共 2 格红。
    */
   it("这一档的数字格仍然是 0、表里那句话仍然是「没有可以列出的日子」—— 画成 EM DASH 是反方向的同一种谎", () => {
     expect(cellKind("no-shards", 0), "「已经落盘的就是 0 条」是真的，别画成「我们不知道」").toBe("value");
-    expect(rowState("no-shards", { ...ZERO })).toBe("data");
+    expect(rowState("no-shards", { ...ZERO }), "这一档没往行状态里传，日表那一列的 tooltip 会退回上一句").toBe("no-shards");
+    expect(
+      cellKind(rowState("no-shards", { ...ZERO }), 0),
+      "日表那一行不再写 0 了 —— 传下去的档位把「已经落盘的就是 0 条」擦掉了",
+    ).toBe("value");
     expect(readSucceeded("no-shards"), "读成功了 —— 表里那句话不该是「读不出来」").toBe(true);
     // 反向锚：真「读不出来」的那两档不许跟着一起被放行。
     expect(cellKind("unavailable", 0)).toBe("unknown");
     expect(readSucceeded("unavailable")).toBe(false);
+  });
+
+  /**
+   * ⚠️⚠️ **同一个谎的第三处：没有数字可写的那几格，tooltip 里说的是「没有样本」。**
+   *
+   * 上一版 `cellKind` 只把 `off` / `unavailable` 判成 `"unknown"`，
+   * `no-shards` 于是掉进 `"none"` ⇒ 成功率 / 错误率 / 平均延迟三张卡（与日表
+   * 对应列）挂的是 `usage.cell.noneTip`：「这一次读成功了，只是这段时间没有
+   * 可用的样本。」**而同一屏的横幅刚说完「还有 N 条计数没有落盘」** ——
+   * 样本是有的，只是没落盘；这一档下「有没有样本」正是分不出来的那件事。
+   *
+   * ⚠️ **它换的是 tooltip，不是字形**：第四档照旧渲染 EN DASH，
+   * 上面那一格（「六张卡仍然写 0」）与 `tests/ui/dom/usage-section.test.ts`
+   * 同名那一格钉的都是字形，两边在这一改动下都不动。
+   *
+   * **变红条件**（两条都真跑过，跑的是那四份共 131 格，每条只红 2 格）：
+   * · 把 `cellKind` 末行改回 `return finite(value) === null ? "none" : "value";`
+   *   ⇒ 这一格 + `tests/ui/dom/usage-section.test.ts` 的
+   *   「这一档下 EN DASH 那几格的 tooltip 不许说「没有可用的样本」—— 横幅刚说完还有 4 条没落盘」；
+   * · 把 `ratioKind` 里传给 `cellKind` 的 state 换成
+   *   `state === "no-shards" ? "empty" : state` ⇒ **同样这两格**
+   *   ——比率那两张卡与延迟那张卡走的是两条路，缺一条这一格就漏掉两张卡。
+   */
+  it("no-shards 下没有数字可写的那几格换一档 —— 上一版的 tooltip 在说「没有可用的样本」", () => {
+    // 平均延迟：这一档下 `avgLatency` 交出来的是 null（没有落盘的样本可算）。
+    expect(
+      cellKind("no-shards", avgLatency({ ...ZERO })),
+      "延迟那一格还在说「这段时间没有可用的样本」",
+    ).toBe("none-no-shards");
+    // 比率格转调 `cellKind`，第四档必须跟着走（成功率 / 错误率两张卡）。
+    expect(ratioKind("no-shards", 0), "比率那两格没跟着换档").toBe("none-no-shards");
+    // ⚠️ **两档必须真的不一样**：同一个 null 在 `empty` 与 `no-shards` 下
+    //    分别是「确知没有样本」与「不知道有没有」，挂同一句话就是把两件事说成一件。
+    expect(cellKind("no-shards", null)).not.toBe(cellKind("empty", null));
+    // 反向锚三条：别为了分出第四档把另外三档一起改坏。
+    expect(cellKind("empty", null), "「确知没有样本」那一档被顺手改掉了").toBe("none");
+    expect(cellKind("data", avgLatency({ ...ZERO })), "有数据时零样本那一格被改掉了").toBe("none");
+    expect(cellKind("no-shards", 0), "有数字可写时不许换档").toBe("value");
+    expect(ratioKind("unavailable", null), "读不出来那一档被顺手改掉了").toBe("unknown");
+  });
+
+  /**
+   * ⚠️⚠️ **文案判据：第四档那句 tooltip 里，五种语言都不许说「这段时间没有样本」。**
+   *
+   * 它要表达的是**分不出来**：读成功了，但这段区间一条分片都还没落盘，
+   * 「真的没人用」与「刚发生的还没写进去」在今天的数据上无法区分。
+   * ⇒ 两个方向都不许说死 —— 不许说「没有样本」，也不许反过来断言「数据丢了」。
+   * 这一格只守前一个方向（后一个方向没有可枚举的禁词，留给评审，
+   * 与 `usage.note.noShards` 那张矩阵同一条边界）。
+   *
+   * ⚠️ **禁词表按语言排成矩阵**，与本仓别处那几张同形：拉平之后
+   *「某个概念在某种语言下一个说法都没有」在表面上看不出来。
+   *
+   * ⚠️⚠️ **反向控制拿的是活的 `usage.cell.noneTip`，不是抄一份死字符串**：
+   * 那一句正是这个新 key 存在的理由（它就该说「没有样本」），
+   * 用它当反例同时钉住了「两个 key 不许说同一句话」。它哪天被改到不含任何禁词，
+   * 这张表也就该重新审一遍 —— 那时候这一格红是对的。
+   *
+   * **变红条件**（真跑过）：把 `usage.cell.noneNoShardsTip` 的中文那一版改回
+   * `usage.cell.noneTip` 的原文 ⇒ 红 2（这一格 + `tests/ui/dom/usage-section.test.ts`
+   * 的「这一档下 EN DASH 那几格的 tooltip 不许说「没有可用的样本」—— 横幅刚说完还有 4 条没落盘」
+   * 那一格），这一格的报文逐字
+   * `expected [ 'zh-CN：「没有可用的样本」' ] to deeply equal []` —— **点名到语言**。
+   */
+  it("no-shards 那一格的 tooltip 里，五种语言都不许说这段时间没有样本", () => {
+    const BANNED: Record<string, string[]> = {
+      "zh-CN": ["没有可用的样本", "没有样本"],
+      "zh-TW": ["沒有可用的樣本", "沒有樣本"],
+      en: ["no samples", "without samples"],
+      ja: ["サンプルがありません", "サンプルがない"],
+      ko: ["샘플이 없습니다", "사용할 샘플"],
+    };
+    const dict = I18N as Record<string, Record<string, string>>;
+    const value = dict["usage.cell.noneNoShardsTip"];
+    expect(value, "`usage.cell.noneNoShardsTip` 没了 —— 下面整格会空转").toBeTruthy();
+    const hits: string[] = [];
+    for (const [lang, words] of Object.entries(BANNED)) {
+      const text = value![lang] ?? "";
+      // 非空锚：每一种语言都得真有一句话，否则「不含禁词」是恒真的。
+      expect(text.length, `${lang} 那一格是空的`).toBeGreaterThan(0);
+      for (const w of words) if (text.includes(w)) hits.push(`${lang}：「${w}」`);
+    }
+    expect(hits, `这一句又在说「没有样本」了：\n${hits.join("\n")}`).toEqual([]);
+    // ⚠️ **反向控制**：禁词表本身不许是死的。`usage.cell.noneTip` 说的正是这件事，
+    //    它喂进同一条判据必须**每一种语言都被点名**。
+    const none = dict["usage.cell.noneTip"];
+    expect(none, "`usage.cell.noneTip` 没了 —— 反向控制会空转").toBeTruthy();
+    for (const [lang, words] of Object.entries(BANNED)) {
+      expect(
+        words.some((w) => (none![lang] ?? "").includes(w)),
+        `${lang} 的禁词一条都对不上 usage.cell.noneTip —— 这一格在空转`,
+      ).toBe(true);
+    }
   });
 
   /**

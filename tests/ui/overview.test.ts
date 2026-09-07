@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
-  poolCounts, processCells, usageStats, configSummary, storageInfo,
+  poolCounts, processCells, usageStats, usageTipKey, configSummary, storageInfo,
   freshnessValues, poolKnobs, kvReadEstimatePerIsolatePerDay, offsetMs,
   POOL_CARDS, poolCardLabelKey, runtimeNameLabelKey, storageBackendLabelKey,
 } from "../../admin-ui/js/pure/overview.mjs";
@@ -113,6 +113,96 @@ describe("usageStats：poolStats 为 null 时全部 null，不是 0；approx 由
   it("poolStats 存在但没带 approximate 字段时按近似处理——宁可多打一个 ≈", () => {
     const { approximate, ...rest } = body.poolStats;
     expect(usageStats({ ...body, poolStats: rest }).approx).toBe(true);
+  });
+});
+
+describe("usageTipKey：那句尾巴不许对着一个已经开着统计的部署说「要等启用之后才有」", () => {
+  /**
+   * ⚠️⚠️ **它挡的是一句会把人支开的话。**
+   *
+   * 累计用量卡底下那一句上一版是**无条件**渲染的
+   *（`sec-overview.js` 的 `body.appendChild(elI18n("p", "ov.usage.tip", …))`）：
+   *「……按天/按小时的分解要等启用时间序列统计之后才有。」
+   * 对一个**已经打开** `USAGE_STATS_ENABLED` 的部署，这句话把他从「用量」板块支开
+   * ——而那个板块此刻正挂着「还有 N 条计数没有落盘」的横幅，是他该去的地方。
+   *
+   * **变红条件**（两条都真跑过，跑的是那四份共 131 格）：
+   * 把 `usageTipKey` 改成恒返回 `"ov.usage.tipTier2Off"` ⇒ 红 4（这一格 +
+   * 下面「拉不到 capabilities / 字段缺席 / 字段不是布尔 ⇒ 用那句无论开没开都成立的话」+
+   * `tests/ui/dom/overview-cards.test.ts` 的
+   * 「统计开着时那句尾巴指向「用量」板块，不再说「要等启用之后才有」」与
+   * 「capabilities 读不出来时不许默认当成「关着」」两格）；
+   * 改成恒返回 `"ov.usage.tip"` ⇒ 红 2（下面「确知关着的时候才多说一句「怎么开」」+
+   * `tests/ui/dom/overview-cards.test.ts` 的
+   * 「确知统计关着时，那句尾巴仍然说清「要先开」以及开法在哪」）。
+   */
+  it("统计开着的时候不用那句「要等启用之后才有」", () => {
+    expect(
+      usageTipKey({ stats: { tier2Enabled: true, flushIntervalMs: 60_000 } }),
+      "开着的部署被那句话支开了",
+    ).toBe("ov.usage.tip");
+  });
+
+  it("确知关着的时候才多说一句「怎么开」", () => {
+    expect(usageTipKey({ stats: { tier2Enabled: false } })).toBe("ov.usage.tipTier2Off");
+  });
+
+  /**
+   * ⚠️⚠️ **判据是白名单（`=== false` 才算关着），不是 `!== true`。**
+   *
+   * `/capabilities` 拉失败时 `caps` 是 `null`、字段缺席时是 `undefined`
+   * ——那两种都是**我们不知道开没开**。黑名单会把它们一起说成「关着」，
+   * 也就是在最查不出来的那一档上把上一版那句误导原样留下。
+   * ⭐ 与 `pure/usage.mjs` 的 `readSucceeded` 是同一条形状。
+   *
+   * **变红条件**（真跑过）：把 `c.tier2Enabled === false` 改成 `!(c.tier2Enabled === true)`
+   * ⇒ 这一格在**第一条**（`caps=null`）就红，连同
+   * `tests/ui/dom/overview-cards.test.ts` 的「capabilities 读不出来时不许默认当成「关着」」共 2 格。
+   */
+  it("拉不到 capabilities / 字段缺席 / 字段不是布尔 ⇒ 用那句无论开没开都成立的话", () => {
+    for (const caps of [null, undefined, {}, { stats: null }, { stats: {} },
+      { stats: { tier2Enabled: "false" } }, { stats: { tier2Enabled: 0 } }]) {
+      expect(usageTipKey(caps), `caps=${JSON.stringify(caps)} 被当成了「确知关着」`)
+        .toBe("ov.usage.tip");
+    }
+  });
+
+  /**
+   * **两个 key 都得在字典里、五种语言齐全，而且那句默认的话里不许再出现「要等启用」。**
+   *
+   * ⚠️ 默认那一版是 `caps` 读不到时也要用的那一句 ⇒ 它必须**无论开没开都成立**。
+   *
+   * **变红条件**（真跑过）：把 `ov.usage.tip` 的中文改回原文 ⇒ 红 2（这一格并点名
+   * `zh-CN` + `tests/ui/dom/overview-cards.test.ts` 的
+   * 「统计开着时那句尾巴指向「用量」板块，不再说「要等启用之后才有」」那一格）；
+   * 反向控制那一段保证禁词表不是死的（`ov.usage.tipTier2Off` 逐语言必须命中）。
+   */
+  it("默认那句话里，五种语言都不许说「要等启用时间序列统计之后才有」", () => {
+    const BANNED: Record<string, string[]> = {
+      "zh-CN": ["要等启用", "之后才有"],
+      "zh-TW": ["要等啟用", "之後才有"],
+      en: ["once time-series stats are enabled", "only appears once"],
+      ja: ["有効になってから", "有効化してから"],
+      ko: ["활성화된 후에만", "켠 뒤에야"],
+    };
+    const dict = I18N as Record<string, Record<string, string>>;
+    const tip = dict["ov.usage.tip"];
+    const off = dict["ov.usage.tipTier2Off"];
+    expect(tip, "`ov.usage.tip` 没了 —— 这一格会空转").toBeTruthy();
+    expect(off, "`ov.usage.tipTier2Off` 没了 —— 反向控制会空转").toBeTruthy();
+    const hits: string[] = [];
+    for (const [lang, words] of Object.entries(BANNED)) {
+      const text = tip![lang] ?? "";
+      expect(text.length, `${lang} 那一格是空的`).toBeGreaterThan(0);
+      for (const w of words) if (text.includes(w)) hits.push(`${lang}：「${w}」`);
+      // 反向控制：同一张表喂给「确知关着」那一版，每种语言都必须命中，
+      // 否则「默认那句不含禁词」证明不了任何事。
+      expect(
+        words.some((w) => (off![lang] ?? "").includes(w)),
+        `${lang} 的禁词一条都对不上 ov.usage.tipTier2Off —— 这一格在空转`,
+      ).toBe(true);
+    }
+    expect(hits, `默认那句话又在说「要等启用之后才有」了：\n${hits.join("\n")}`).toEqual([]);
   });
 });
 

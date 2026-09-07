@@ -119,12 +119,20 @@ function approxTitle() {
 }
 
 /**
- * 把一个数字格填成三态里的一种。
+ * 把一个数字格填成四态里的一种。
  *
  * `kind` 来自 `cellKind` / `ratioKind`，**不是这里判的**：
  * · `"value"` —— 那个数字（可能带 `≈` 与「不完整」两个前缀标记）；
  * · `"none"`  —— EN DASH，「读成功了，这段时间没有样本」；
+ * · `"none-no-shards"` —— **同一根 EN DASH**，换一句 tooltip：这段区间一条分片
+ *   都还没落盘，「有没有样本」正是分不出来的那件事；
  * · `"unknown"` —— `fmtDash(null)` 的 EM DASH，「我们不知道」。
+ *
+ * ⚠️⚠️ **后两档的字形刻意相同，不同的只有 `title`**：`no-shards` 下这一格
+ * 与 `empty` 下一样「读成功了、只是没有数字可写」，动字形就撞上
+ *「这一档六张卡仍然写 0」那条裁定的反面。**这一屏上第三处那句假话就藏在
+ * 这个 `title` 里** —— 横幅刚说完「还有 N 条计数没有落盘」，tooltip 却在说
+ *「这段时间没有可用的样本」。分档判据整段写在 `pure/usage.mjs` 的 `cellKind` 上方。
  *
  * ⚠️ **计数类在 `empty` 态拿到的 `kind` 是 `"value"`、值是 `0`** ——那一格就该写 `0`。
  * 把真零画成破折号是**反向的撒谎**，与「接口失败伪造 0」同样严重、方向相反。
@@ -135,8 +143,9 @@ function fillCell(node, kind, text, marks) {
     node.appendChild(el("span", { class: "usage-unknown", title: t("usage.cell.unknownTip") }, fmtDash(null)));
     return;
   }
-  if (kind === "none") {
-    node.appendChild(el("span", { class: "usage-none", title: t("usage.cell.noneTip") }, EN_DASH));
+  if (kind === "none" || kind === "none-no-shards") {
+    const tip = kind === "none" ? "usage.cell.noneTip" : "usage.cell.noneNoShardsTip";
+    node.appendChild(el("span", { class: "usage-none", title: t(tip) }, EN_DASH));
     return;
   }
   if (marks && marks.approx) {

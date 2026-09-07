@@ -598,7 +598,16 @@ export const I18N = {
   "ov.usage.failed":      { "zh-CN": "失败", "zh-TW": "失敗", en: "Failed", ja: "失敗", ko: "실패" },
   "ov.usage.clientErrors":{ "zh-CN": "客户端 4xx", "zh-TW": "用戶端 4xx", en: "Client 4xx", ja: "クライアント 4xx", ko: "클라이언트 4xx" },
   "ov.usage.successRate": { "zh-CN": "成功率", "zh-TW": "成功率", en: "Success rate", ja: "成功率", ko: "성공률" },
-  "ov.usage.tip":         { "zh-CN": "这是自这批 key 加入以来的累计值，不是「今日」——按天/按小时的分解要等启用时间序列统计之后才有。", "zh-TW": "這是自這批 key 加入以來的累計值，不是「今日」——按天/按小時的分解要等啟用時間序列統計之後才有。", en: "This is the cumulative value since these keys were added, not \"today\" — a per-day/per-hour breakdown will only be available once time-series stats are enabled.", ja: "これはこの key が追加されて以降の累計値であり、「本日」ではありません——日次／時間次への分解は時系列統計が有効になってからのみ可能です。", ko: "이는 이 key가 추가된 이후의 누적값이며 \"오늘\"이 아닙니다 — 일별/시간별 분해는 시계열 통계가 활성화된 후에만 가능합니다." },
+  // ⚠️⚠️ **这一句分两版，选哪一版由 `pure/overview.mjs` 的 `usageTipKey(caps)` 判**
+  //    （终检点名的第二处）。上一版只有一句、**无条件**渲染，说的是「按天/按小时的
+  //    分解要等启用时间序列统计之后才有」——对一个**已经打开**统计的部署，
+  //    那句话把人从「用量」板块支开，而那里正挂着「还有 N 条没落盘」的横幅。
+  //    ⇒ 默认这一版**无论开没开都成立**（只说分解在哪个板块），
+  //    只有 `capabilities.stats.tier2Enabled === false`（确知关着）才换下面那一版。
+  "ov.usage.tip":         { "zh-CN": "这是自这批 key 加入以来的累计值，不是「今日」——按天/按小时的分解在「用量」板块。", "zh-TW": "這是自這批 key 加入以來的累計值，不是「今日」——按天/按小時的分解在「用量」板塊。", en: "This is the cumulative value since these keys were added, not \"today\" — the per-day/per-hour breakdown lives in the Usage section.", ja: "これはこの key が追加されて以降の累計値であり、「本日」ではありません——日次／時間次の分解は「使用量」セクションにあります。", ko: "이는 이 key가 추가된 이후의 누적값이며 \"오늘\"이 아닙니다 — 일별/시간별 분해는 \"사용량\" 섹션에 있습니다." },
+  // 确知关着时才多说一句「怎么开」。**「用量」板块的说明卡里写着开法**
+  //（`usage.off.howto`：环境变量 + 重启），所以这半句指过去是真的。
+  "ov.usage.tipTier2Off": { "zh-CN": "这是自这批 key 加入以来的累计值，不是「今日」——时间序列统计现在是关着的，按天/按小时的分解要等开启之后才有，开法写在「用量」板块里。", "zh-TW": "這是自這批 key 加入以來的累計值，不是「今日」——時間序列統計現在是關著的，按天/按小時的分解要等開啟之後才有，開法寫在「用量」板塊裡。", en: "This is the cumulative value since these keys were added, not \"today\" — time-series stats are currently off, so the per-day/per-hour breakdown only appears once they are enabled; the Usage section explains how.", ja: "これはこの key が追加されて以降の累計値であり、「本日」ではありません——時系列統計は現在無効のため、日次／時間次の分解は有効化してからになります。有効化の方法は「使用量」セクションに書かれています。", ko: "이는 이 key가 추가된 이후의 누적값이며 \"오늘\"이 아닙니다 — 시계열 통계가 현재 꺼져 있어 일별/시간별 분해는 켠 뒤에야 나옵니다. 켜는 방법은 \"사용량\" 섹션에 적혀 있습니다." },
   // `≈` 标记的 tooltip：与 keys.approxTip 同一条道理（并发下少计 + 写消除延迟落盘），
   // 这里是整池聚合（sumStats），不是单把 key，措辞相应调整。
   // ⚠️ **「isolate 被回收时这一段会丢」这半句是补上去的，别再删**（评审第 2 轮）：
@@ -949,11 +958,20 @@ export const I18N = {
   "usage.card.tokensTipUnknown": { "zh-CN": "覆盖了哪几条协议这一次没读出来。这个数只统计非流式响应，流式的 token 网关看不到。", "zh-TW": "涵蓋了哪幾條協定這一次沒讀出來。這個數只統計非串流回應，串流的 token 網關看不到。", en: "Could not read which protocols are covered this time. This number counts non-streaming responses only; streaming tokens are invisible to the gateway.", ja: "どのプロトコルが対象かを今回は取得できませんでした。この数値は非ストリーミング応答のみを集計しており、ストリーミングのトークンはゲートウェイからは見えません。", ko: "이번에는 어떤 프로토콜이 포함되는지 읽지 못했습니다. 이 값은 비스트리밍 응답만 집계하며 스트리밍 토큰은 게이트웨이에서 볼 수 없습니다." },
   "usage.card.streamingTip": { "zh-CN": "单列一栏，好让 Token 那一格缺掉的正是这些请求这件事看得见。", "zh-TW": "單列一欄，好讓 Token 那一格缺掉的正是這些請求這件事看得見。", en: "Listed separately so that the gap in the token count is visible: these are exactly the requests it cannot see.", ja: "トークン数に欠けているのがまさにこれらのリクエストであることが分かるよう、独立した項目にしています。", ko: "토큰 수에서 빠진 것이 바로 이 요청들이라는 사실이 보이도록 별도 항목으로 둡니다." },
 
-  // ── 单元格的两根破折号（一条评审裁定）──────────────────────────────────────
+  // ── 单元格的两根破折号 + 三句 tooltip（一条评审裁定 + 一处终检回填）────────
   // ⚠️ **`–`（EN DASH）与 `—`（EM DASH）说的是两件事，视觉上必须分得开。**
   // 前者：这一次读成功了，只是这一格没有样本 / 没有分母；
   // 后者：整块就没读出来，我们不知道。
+  // ⚠️⚠️ **EN DASH 那一根底下有两句话，不是一句**（终检点名的第三处）：
+  //   `no-shards`（开着、这段区间一条分片都还没落盘）上一版也挂 `usage.cell.noneTip`，
+  //   而那句「没有可用的样本」与同一屏横幅的「还有 N 条计数没有落盘」互相打脸
+  //   ——样本是有的，只是没落盘。分档在 `admin-ui/js/pure/usage.mjs` 的 `cellKind`。
   "usage.cell.noneTip":    { "zh-CN": "这一次读成功了，只是这段时间没有可用的样本。", "zh-TW": "這一次讀成功了，只是這段時間沒有可用的樣本。", en: "The read succeeded; there simply were no samples in this period.", ja: "取得には成功しましたが、この期間にサンプルがありませんでした。", ko: "읽기는 성공했지만 이 기간에 사용할 샘플이 없습니다." },
+  // ⚠️ **这一句两个方向都不许说死**：不许说「没有样本」（可能只是还没写进去），
+  //    也不许说「数据丢了」（可能真的没人用）。它要表达的正是**分不出来**。
+  //    五种语言由 `tests/ui/usage.test.ts` 的
+  //    「no-shards 那一格的 tooltip 里，五种语言都不许说这段时间没有样本」那一格钉着。
+  "usage.cell.noneNoShardsTip": { "zh-CN": "这一次读成功了，但这段区间一条分片都还没落盘：是真的没人用，还是刚发生的还没写进去，现在分不出来。", "zh-TW": "這一次讀成功了，但這段區間一條分片都還沒落盤：是真的沒人用，還是剛發生的還沒寫進去，現在分不出來。", en: "The read succeeded, but not one shard has landed in storage for this period: we cannot yet tell whether nothing was used or the traffic simply has not been written down.", ja: "取得には成功しましたが、この期間はシャードがまだ 1 件も書き込まれていません。実際に使われていないのか、まだ書き込まれていないだけなのかは、現時点では区別できません。", ko: "읽기는 성공했지만 이 구간에는 아직 샤드가 하나도 기록되지 않았습니다. 실제로 사용되지 않은 것인지, 아직 기록되지 않은 것인지 지금은 구분할 수 없습니다." },
   "usage.cell.unknownTip": { "zh-CN": "这一格读不出来。显示的不是 0——我们不知道它是多少。", "zh-TW": "這一格讀不出來。顯示的不是 0——我們不知道它是多少。", en: "This value could not be read. It is not zero — we do not know what it is.", ja: "この値は取得できませんでした。0 ではなく、値が分からないという意味です。", ko: "이 값을 읽지 못했습니다. 0이 아니라 값을 알 수 없다는 뜻입니다." },
   // `≈` 的 tooltip。落盘间隔那个数**从 capabilities 取，不在前端算死**。
   // ⚠️ **「那一段会丢」这半句是补上去的，别再删**：Tier-1 那一侧（`keys.approxTip`）

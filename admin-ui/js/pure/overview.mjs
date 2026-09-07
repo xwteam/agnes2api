@@ -100,6 +100,32 @@ export function usageStats(body) {
 }
 
 /**
+ * 累计用量卡底下那句话该用哪个 key。**入参是 `/capabilities` 的响应，不是 `/overview`。**
+ *
+ * ⚠️⚠️ **它存在的理由是一句会被合理误读的话**（终检点名的第二处）：那一句上一版
+ * 是**无条件**渲染的「按天/按小时的分解要等启用时间序列统计之后才有」——
+ * 对一个**已经打开** `USAGE_STATS_ENABLED` 的部署，它把人从「用量」板块支开，
+ * 而那个板块此刻正是他该去看横幅的地方。
+ *
+ * ⚠️⚠️ **默认是那句「无论开没开都成立」的话，只有确知关着时才多说一句怎么开**：
+ * 判据是**白名单**（`tier2Enabled === false` 才算「确知关着」），不是
+ * `!== true`。`/capabilities` 拉失败时 `caps` 是 `null`、字段缺席时是 `undefined`
+ * ——那两种都是**我们不知道开没开**，而黑名单会把它们一起说成「关着」，
+ * 也就是在最查不出来的那一档上把上一版那句误导原样留下。
+ * ⭐ 与 `pure/usage.mjs` 的 `readSucceeded` 是同一条形状：
+ * 「排除已知的坏情况」与「只放行已知的好情况」在今天的取值上等价，明天不等价。
+ *
+ * ⚠️ **这里没有为它新增任何后端字段**：`stats.tier2Enabled` 是
+ * `src/http/admin/handlers/capabilities.ts` 早就在发的，概览板块也早就把
+ * `/capabilities` 拉进 `caps` 了（`sec-overview.js` 的 `loadCapabilities()`）。
+ */
+export function usageTipKey(caps) {
+  const c = caps && typeof caps === "object" ? caps.stats : null;
+  const off = c && typeof c === "object" && c.tier2Enabled === false;
+  return off ? "ov.usage.tipTier2Off" : "ov.usage.tip";
+}
+
+/**
  * 配置摘要卡。**`config` 整块缺失（存储读失败）时返回 `null` 这一个哨兵**，
  * 不是逐字段各自 null——`primary`/`fallback` 在 `config` 块**存在**时本来就可能是
  * 合法的 `null`（注册机未启用，两条通道平级、没有默认值），把「整块读不出来」
