@@ -131,12 +131,19 @@ describe("GET /admin/api/overview", () => {
   it("config 块的字段真的从 configHolder 读出来，不是碰巧对上夹具默认值", async () => {
     const { app } = await makeApp([], ["k1"], {
       degraded: true,
-      registrar: { ...TEST_CONFIG.registrar, enabled: true, primary: "yyds", fallback: null, targetKeys: 7 },
+      registrar: {
+        ...TEST_CONFIG.registrar, enabled: true, primary: "yyds", fallback: null, targetKeys: 7,
+        // **与夹具默认值不同**，理由同上：`blocked` 默认 false，不改的话
+        // 「概览有没有真的读 cfg.registrar.blocked」这个选择在这一格上不可观测。
+        blocked: true,
+      },
     }, () => 1000);
     const body = await getOverview(app);
     expect(body.config).toEqual({
       registrarEnabled: true, primary: "yyds", fallback: null, targetKeys: 7,
       envLocked: [], degraded: true,
+      // 不给这一格的话，概览卡片会照旧声称有一个在工作的注册机 —— 而补池一轮都没跑。
+      registrarBlocked: true,
     });
   });
 

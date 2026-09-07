@@ -20,6 +20,8 @@ const CFG: RegistrarConfig = {
   mintDelayMinMs: 1, mintDelayMaxMs: 1, maxDomainAttempts: 8,
   tokenName: "auto", agnesPlatformUrl: "https://platform.test",
   yyds: { baseUrl: "https://y.test", apiKey: "k" }, moemail: null,
+  // `blocked` 是装载的产物；这份手写夹具走的是「装载成功」那一档。
+  blocked: false,
 };
 
 function agnesOk() {

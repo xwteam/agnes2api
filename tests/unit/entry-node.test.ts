@@ -67,8 +67,38 @@ describe("node 入口: 留空的 DATA_DIR / PORT 视同「没设」", () => {
 });
 
 describe("node 入口: fail-closed", () => {
-  it("缺少 GATEWAY_TOKEN 时启动失败（拒绝服务），不会去监听端口", async () => {
-    await expect(main({ DATA_DIR: tmpDataDir() })).rejects.toThrow(/GATEWAY_TOKEN/);
+  /**
+   * ⚠️⚠️ **两半写在同一格里，刻意的。**
+   *
+   * 「注册机装不起来不再让整个网关死掉」这条改动，与「缺 `GATEWAY_TOKEN` 必须
+   * 继续拒绝服务」这条不变量（`src/http/config-holder.ts` 里那句「首次装载失败
+   * 必须抛：缺 GATEWAY_TOKEN 拒绝服务是网关的三条不变量之一」）方向相反。
+   * 把它们分成两格，任何一方被「顺手统一」时都只红一格，读起来像是那一格写错了；
+   * 写在同一格里，**谁把其中一半塌进另一半都会红**，而且红的时候两句断言并排摆着。
+   *
+   * ⚠️ Node 这一侧**代码一行都没改**：`main().catch` 打 `err.message` + `process.exit(1)`
+   * 仍然是这个形态下正确的 fail-fast。换掉的只有异常的**类**（`ConfigRefusal`），
+   * 而那只有 Worker 入口看得见。
+   */
+  it("缺 GATEWAY_TOKEN 仍然拒绝服务；而注册机配坏了进程照常起得来", async () => {
+    // ① 缺口令：抛，不监听端口。**message 逐字**——`main().catch` 打的就是它。
+    await expect(main({ DATA_DIR: tmpDataDir() })).rejects.toThrow("缺少 GATEWAY_TOKEN，网关无法启动");
+
+    // ② 注册机开着却缺凭据 + 一个写坏的数值：**照常起得来**。
+    //    从前这一档在 Node 上是 `process.exit(1)` 进重启循环，而且没有面板可以进去改回来。
+    const server = await main({
+      GATEWAY_TOKEN: "t", PORT: "0", DATA_DIR: tmpDataDir(),
+      REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "moemail",
+      MOEMAIL_BASE_URL: "https://m.invalid",   // 缺 MOEMAIL_API_KEY ⇒ blocker
+      TARGET_KEYS: "abc",                       // 非法数值 ⇒ 字段级降级
+    });
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(res.status, "注册机是可选子系统，它缺一把 key 不该让 /health 也死掉").toBe(200);
+    } finally {
+      await close(server);
+    }
   });
 });
 

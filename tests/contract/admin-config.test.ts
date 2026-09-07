@@ -280,7 +280,7 @@ describe("FIELD_EXPOSURE 双向哨兵：标 secret 的不许出现，标 public 
     return { stored, expect: wanted };
   }
 
-  it("28 个叶子逐个种哨兵：3 个 secret 一个都不许出现，25 个 public 一个都不许少", async () => {
+  it("29 个叶子逐个种哨兵：3 个 secret 一个都不许出现，26 个 public 一个都不许少", async () => {
     const { stored, expect: wanted } = sentinels();
     // 口令走存储（env 里没有 GATEWAY_TOKEN），于是 `gatewayToken` 那个哨兵是真的在用的那把。
     const { app } = await realApp({ env: {}, stored });
@@ -306,8 +306,9 @@ describe("FIELD_EXPOSURE 双向哨兵：标 secret 的不许出现，标 public 
     expect(missing, "标了 public 的字段被静默漏掉了 —— 面板上那一格永远是空的").toEqual([]);
     // **反向自检，手写字面量**：两个计数都不许是 0，否则上面两条恒绿。
     expect(secrets, "凭据格数变了").toBe(3);
-    // 后来把 24 抬到 25（新增 `usageStatsEnabled`，公开、不可编辑）。
-    expect(publics, "公开字段格数变了").toBe(25);
+    // 后来把 24 抬到 25（新增 `usageStatsEnabled`，公开、不可编辑），
+    // 再抬到 26（新增 `registrar.blocked`，公开、不可编辑、是**装载的产物**）。
+    expect(publics, "公开字段格数变了").toBe(26);
   });
 });
 
@@ -835,20 +836,37 @@ describe("清掉一条在链上的通道凭据", () => {
    * `fields`/`credentials` 给 `null`（不编一份空配置），`loadBlocked` 逐条说清缺什么，
    * 而 `editable` 照给 —— **表单必须还能用，那是唯一的出路。**
    */
-  it("装载不起来时 GET 给诊断视图：200 + fields=null + loadBlocked 逐条 + editable 照给", async () => {
+  /**
+   * ⚠️⚠️ **这一格的断言在「注册机装不起来不再抛错」那一轮被整个换掉了，别照旧读。**
+   *
+   * 它原来断言的是「清掉在链上的通道凭据 ⇒ `GET` 降级成**诊断视图**
+   *（`fields === null`）」。那正是本轮要修的缺陷的一半：一个**可选子系统**缺凭据，
+   * 不该让整份配置装不起来、更不该让面板退化成一张读不到当前值的诊断表。
+   *
+   * **新的真话**：整份配置照常装得起来（`fields` 有值、`configDegraded` 为假），
+   * 只是注册机本次没启动，逐条理由如实进 `loadBlocked`。
+   * 面板靠 `fields === null` 分辨这两档（`isDiagnostic()`），横幅文案因此分了两条。
+   */
+  it("清掉在链上的通道凭据之后 GET 照常给完整视图：fields 不为 null，而 loadBlocked 逐条说清", async () => {
     const { app } = await realApp({ env: {}, stored: ON_CHAIN });
     await clear(app, "registrar.yyds.apiKey");
 
     const res = await getConfig(app);
     expect(res.status).toBe(200);
     const body = await res.json() as {
-      fields: unknown; credentials: unknown; configDegraded: boolean;
-      loadBlocked: Array<{ code: string }>; editable: string[];
+      fields: Record<string, unknown> | null; credentials: unknown; configDegraded: boolean;
+      loadBlocked: Array<{ field: string; code: string }>; editable: string[];
     };
-    expect(body.fields, "编了一份空配置出来 —— 那与「读不出来」长得一模一样").toBeNull();
-    expect(body.credentials).toBeNull();
-    expect(body.configDegraded).toBe(true);
-    expect(body.loadBlocked.map((b) => b.code)).toEqual(["channel_credentials_missing"]);
+    expect(body.fields, "注册机是可选子系统，它缺一把 key 不该让面板读不到任何当前值").not.toBeNull();
+    expect(body.credentials).not.toBeNull();
+    // **不是降级**：字段一个都没回落，配置本身好好的。
+    expect(body.configDegraded).toBe(false);
+    expect(body.loadBlocked).toEqual([
+      { field: "registrar.yyds.apiKey", code: "channel_credentials_missing", params: { channel: "yyds" } },
+    ]);
+    // **开关一个字都不改**：真话是「已启用 · 本次没跑起来」。
+    expect((body.fields as Record<string, { effective: unknown }>)["registrar.enabled"]!.effective).toBe(true);
+    expect((body.fields as Record<string, { effective: unknown }>)["registrar.blocked"]!.effective).toBe(true);
     expect(body.editable.length, "连可编辑清单都不给的话，表单没法用").toBe(26);
   });
 
@@ -964,21 +982,64 @@ describe("清掉一条在链上的通道凭据", () => {
    * 判据换成「**存储读得出来吗**」（完备）：读得出来而构造失败 ⇒ 配置问题。
    * **变红条件**：把 `readAll` 的判据换回 `blockers.length === 0 ⇒ throw`。
    */
-  it("逐字段判据说不出是哪一格时，照样给诊断视图（不是 500）", async () => {
+  /**
+   * ⚠️⚠️ **这一格原来断言的是 `registrar.targetKeys: "abc"` ⇒ 诊断视图 + `config_unloadable`。**
+   * 那条输入今天退成了**字段级降级**（回落默认值 20 + `config.invalid` + `degraded`），
+   * 它既不让网关起不来、也不让注册机停跑 ⇒ **它压根不该再进诊断视图**。
+   *
+   * 判据跟着换成新的真话，两半都断：① 不是诊断视图；② 降级这件事没有被吞掉。
+   */
+  it("存储里的注册机数值被写坏 ⇒ 字段级降级（回落默认值 + degraded），不再是诊断视图", async () => {
     const { app, storage } = await realApp({ env: {}, stored: { gatewayToken: GW } });
-    // 绕过面板，手工把存储写成 `posInt()` 会抛的形状。
+    // 绕过面板，手工把存储写成从前 `posInt()` 会抛的那个形状。
     await storage.put("config", { gatewayToken: GW, registrar: { targetKeys: "abc" } });
 
     const res = await getConfig(app);
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      fields: Record<string, { stored: unknown; effective: unknown }> | null;
+      configDegraded: boolean; loadBlocked: unknown[];
+    };
+    expect(body.fields, "字段级降级不该让面板读不到当前值").not.toBeNull();
+    expect(body.fields!["registrar.targetKeys"]!.effective, "回落到内置默认值").toBe(20);
+    expect(body.fields!["registrar.targetKeys"]!.stored, "存储原件照实报，不许美化").toBe("abc");
+    // **降级必须说出来**：否则运维会以为面板上那个 20 就是他存的值。
+    expect(body.configDegraded, "回落了却不报降级 —— 那是面板撒谎").toBe(true);
+    expect(body.loadBlocked, "字段回落之后注册机照样跑得起来，一条 blocker 都不该有").toEqual([]);
+
+    // 而且修得回来。
+    expect((await put(app, { "registrar.targetKeys": 20 })).status).toBe(200);
+    await expect(loadConfig({}, storage, NULL_LOGGER)).resolves.toBeDefined();
+  });
+
+  /**
+   * **`config_unloadable` 那条兜底仍然在，但它的射程被本轮改动收窄到了近乎为零。**
+   *
+   * ⚠️ **诚实登记（逐条对树核实过）**：`readAll` 走进这一档要同时满足
+   * ① 装载抛了、② 存储读得出来、③ 拿同一份原件就地重构造仍然抛、
+   * ④ `configLoadBlockers` 一条都说不出。而装载今天只有两个抛点——
+   * 「两边都没有 `gatewayToken`」（`configLoadBlockers` 说得出，走 `gateway_token_required`）
+   * 与 `num()` 的 **env** 侧非法值。后者在真部署里意味着 `buildApp` 那一刻就抛、
+   * 进程/isolate 根本起不来 ⇒ **走不到这个 handler**。
+   * ⇒ **这一档在生产里今天到不了。** 留着它是因为「说不出是哪一格」必须有一个如实的
+   * 表达（不编一个具体字段出来），而这一格钉的就是那个兜底本身还在、没有被顺手删掉。
+   *
+   * 这里靠 `ConfigWiring.env` 与 app 装配时那份 env **可以不同**这一点把它构造出来。
+   */
+  it("兜底档：装载抛了而逐字段判据说不出是哪一格时，仍然给诊断视图而不是 500", async () => {
+    const storage = new MemoryStorage();
+    await storage.put("config", { gatewayToken: GW });
+    const { makeApp } = await import("../helpers/make-app.js");
+    // app 本身用干净的 env 装配得起来；**只有 `readAll` 这条路看到的 env 是坏的**。
+    const { app } = await makeApp([], [], {}, () => 1000, {
+      storage, config: { storage, env: { GATEWAY_TOKEN: GW, MAX_STRIKES: "abc" } },
+    });
+    const res = await app.request("/admin/api/config", { headers: withKey });
     expect(res.status, "这一类缺陷连诊断视图都拿不到 —— 那个形状原样幸存").toBe(200);
     const body = await res.json() as { fields: unknown; loadBlocked: Array<{ field: string; code: string }> };
     expect(body.fields).toBeNull();
     // **不编一个具体字段出来**：说不出是哪一格就如实说不出。
     expect(body.loadBlocked).toEqual([{ field: "", code: "config_unloadable" }]);
-
-    // 而且修得回来。
-    expect((await put(app, { "registrar.targetKeys": 20 })).status).toBe(200);
-    await expect(loadConfig({}, storage, NULL_LOGGER)).resolves.toBeDefined();
   });
 
   /**

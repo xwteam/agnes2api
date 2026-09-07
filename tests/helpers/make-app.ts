@@ -129,7 +129,7 @@ export const TEST_CONFIG: GatewayConfig = {
   // tests/unit/pool-cache.test.ts 与 tests/contract/freshness.test.ts 专门覆盖。
   poolCacheTtlMs: 0, poolTouchIntervalMs: 0,
   // 注册机默认关闭，测试夹具无需凭据。
-  registrar: registrarFromEnv({}, {}),
+  registrar: registrarFromEnv({}, {}).config,
   degraded: false,
   // **Tier-2 默认关，与生产默认值逐字相同**（全局约束）。
   // ⚠️ 把它改成 true 在这里是**无效**的：`createApp` 认的是 `AppDeps.usageSink`

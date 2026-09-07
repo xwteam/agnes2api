@@ -103,8 +103,8 @@ export function failureReasonKey(reason) {
 /**
  * 后端拒绝时那个**顶层 `reason`** → i18n key。
  *
- * ⚠️⚠️ **状态码不是判据。** `409` 有三种（`tend_in_flight` / `locked` /
- * `registrar_disabled`）、**`429` 有四种**（`manual_cooldown` / `write_budget_exhausted` /
+ * ⚠️⚠️ **状态码不是判据。** `409` 有四种（`tend_in_flight` / `locked` /
+ * `registrar_disabled` / `registrar_blocked`）、**`429` 有四种**（`manual_cooldown` / `write_budget_exhausted` /
  * `probe_in_flight` / `probe_cooldown`——后两种是出站探测护栏加的）。
  * 拿状态码选文案的前端会把「另一个副本在跑」（等对面跑完）与「注册机压根没开」
  *（去设置里打开它）说成同一句话——两者的处置毫无共同之处。
@@ -117,6 +117,10 @@ export function refuseReasonKey(reason) {
     case "tend_in_flight": return "reg.refuse.tend_in_flight";
     case "locked": return "reg.refuse.locked";
     case "registrar_disabled": return "reg.refuse.registrar_disabled";
+    // ⚠️ **不许并进上面那一档。** `reg.refuse.registrar_disabled` 逐字写着
+    // 「注册机没有打开……请先在设置里打开它」，而这一档的开关明明是开的
+    // ——照那句话去做只会让运维把一个已经打开的开关再点一遍。
+    case "registrar_blocked": return "reg.refuse.registrar_blocked";
     case "write_budget_exhausted": return "reg.refuse.write_budget_exhausted";
     case "manual_cooldown": return "reg.refuse.manual_cooldown";
     case "not_wired": return "reg.refuse.not_wired";
@@ -151,6 +155,13 @@ export function statusView(body) {
   const b = obj(body);
   return {
     enabled: b !== null && typeof b.enabled === "boolean" ? b.enabled : null,
+    /**
+     * **开着、但这份配置本次没装起来。**
+     *
+     * 与 `enabled` 是两格不是一格：把它压进 `enabled` 就是对着一个亮着的开关说
+     * 「没打开」。读不到时记 `null`（不是 `false`）——与 `configured` 同一条纪律。
+     */
+    blocked: b !== null && typeof b.blocked === "boolean" ? b.blocked : null,
     primary: b !== null && typeof b.primary === "string" ? b.primary : null,
     fallback: b !== null && typeof b.fallback === "string" ? b.fallback : null,
     serverTime: b === null ? null : finite(b.serverTime),

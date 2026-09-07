@@ -7,6 +7,25 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **行为变更（未鉴权路径上的契约变更）：Cloudflare Worker 上装配失败的那一档从
+  `500` 改成 `503` + `reason: "not_configured"`。按 `500` 报警的监控要跟着改。**
+  只有「运维配错」这一档换码（两边都没有 `GATEWAY_TOKEN`、`num()` 的环境变量侧非法值、
+  `APIKEY_CACHE_TTL_MS` / `USAGE_FLUSH_INTERVAL_MS` 非法）；其余异常按定义是代码 bug，
+  仍然是不透明的 `500`。Node/Docker 侧一行都没改（`process.exit(1)`）。
+
+- **注册机装不起来不再让整个网关死掉。** 从前「开着却缺凭据 / 没选主通道 / 备通道等于
+  主通道」会让 `buildApp` 抛错——Docker 上容器反复重启，Worker 上是「部署显示成功、
+  每个请求 500、原因只在 `wrangler tail`」（真机实测 81 次探测 60 次 500）。
+  现在这一族只让**注册机本次不启动**，转发、`/health`、面板照常。
+  - 面板新增第三态「已启用 · 本次没跑起来」，每轮记一条 `error` 级 `registrar.blocked`；
+    `GET /admin/api/registrar` 多一格 `blocked`；两条注册机端点回 `409 registrar_blocked`。
+  - 注册机那 16 个环境变量写错值不再让容器起不来（数值类回落默认值 + `config.invalid`）。
+    **这是一次能力下降**：运维不能再靠「容器崩了」发现部署笔误。
+  - 五份 `DEPLOY.md` 的故障排查条目按运行时拆两段症状，并把 `RESET_CONFIG=1` 从那条的
+    解决步骤里删掉（它会连唯一那把口令一起忽略）。
+
 ### Added
 
 - **对外 API 密钥**：面板多出第九个板块「API 密钥」（`apikeys`），把「一把网关口令」

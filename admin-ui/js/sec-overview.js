@@ -157,8 +157,14 @@ function renderConfig() {
   // 仍可能合法为 null（注册机未启用），那种情形显示「无」而不是 ———两种 null
   // 的来源不同，见 configSummary 的说明，调用方必须先判这一层再往下取字段。
   nodes.config.banner.style.display = c !== null && c.degraded === true ? "" : "none";
+  // **三态**：关 / 开着在跑 / 开着但这次没跑起来。第三态压成「已启用」就是
+  // 声称有一个在工作的注册机，而补池一轮都没跑——这次改动把一次响亮的故障换成了
+  // 一次安静的故障，这张卡片是仅有的几处「你得去看」之一。
   nodes.config.registrar.textContent = c === null || c.registrarEnabled === null
-    ? fmtDash(null) : t(c.registrarEnabled ? "ov.config.on" : "ov.config.off");
+    ? fmtDash(null)
+    : t(c.registrarEnabled
+      ? (c.registrarBlocked === true ? "ov.config.blocked" : "ov.config.on")
+      : "ov.config.off");
   nodes.config.primary.textContent = c === null ? fmtDash(null) : (c.primary === null ? t("ov.config.none") : c.primary);
   nodes.config.fallback.textContent = c === null ? fmtDash(null) : (c.fallback === null ? t("ov.config.none") : c.fallback);
   nodes.config.targetKeys.textContent = c === null ? fmtDash(null) : fmtCount(c.targetKeys);

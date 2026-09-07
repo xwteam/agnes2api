@@ -8,13 +8,20 @@ import { checkAdminTokenShape, ADMIN_TOKEN_MIN_LENGTH } from "../../../src/http/
 import { envLockedFields, loadConfigWithProvenance } from "../../../src/core/config-provenance.js";
 import { MemoryStorage } from "../../helpers/fake-storage.js";
 import { NULL_LOGGER } from "../../../src/ports/logger.js";
+import { registrarFromEnv } from "../../../src/core/registrar/config.js";
+import { registrarGrid } from "../../helpers/registrar-grid.js";
 
 /**
  * `validateConfigPatch` —— 设计 §5.4 第 1 条的那道「写入前校验」。
  *
- * 它挡的是**一次面板保存把网关砖掉**：`registrarFromEnv` 对存储里的非法值是**抛错**
- * 不是降级，而 `ConfigHolder` 的「保留上一份合法快照」只在热实例上成立——
- * 冷启动没有上一份可退（Node `process.exit(1)`、Worker 冷 isolate 全部 500）。
+ * ⚠️ **它挡的是什么，在「装载器全函数化」那一轮换了一档，这一段是订正。**
+ * 原文写的是「它挡的是一次面板保存把网关砖掉：`registrarFromEnv` 对存储里的非法值
+ * 是**抛错**不是降级」。今天装载器一处都不抛，注册机那一族坏配置只让**注册机本次
+ * 不启动**（转发、`/health`、面板照常）。
+ * ⇒ 本模块的身份退成 ① **写入侧预判**（别让人保存一份注册机跑不起来的配置）
+ * ＋ ② **面板文案的码源**。
+ * 仍然是砖机档的只剩「两边都没有 `gatewayToken`」——而 `ConfigHolder` 的
+ * 「保留上一份合法快照」只在热实例上成立，冷启动没有上一份可退。
  */
 
 const GW = { GATEWAY_TOKEN: "gateway-token-for-validate-tests" };
@@ -318,7 +325,9 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
     // ⇒ **哪天设置页给了它入口，就把它从这里挪进 `EDITABLE`（`kind: "bool"`），
     // 而不是两边都留一份。** 它在 `ENV_LOCK_MAP` 里是另一件事，判据见
     // `GatewayConfig.usageStatsEnabled` 的说明（不进那张表会让四元组自相矛盾）。
-    const READ_ONLY = ["degraded", "usageStatsEnabled"];
+    // ⚠️ `registrar.blocked` 与 `degraded` **同一档理由**：装载的产物，不是旋钮。
+    // 把它做成可写会让面板能「把红色横幅关掉」，而横幅要报告的那件事一点没变。
+    const READ_ONLY = ["degraded", "registrar.blocked", "usageStatsEnabled"];
     const unaccounted = exposureFields()
       .map((f) => f.field)
       .filter((f) => !EDITABLE_FIELDS.includes(f) && !READ_ONLY.includes(f))
@@ -421,7 +430,9 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
         // 它由 `src/http/admin/handlers/config.ts` 的 `readAll` 在「原件读得出来、
         // 却构造不出一份合法配置、而逐字段判据说不出是哪一格」那一支产出，
         // 由 `tests/contract/admin-config.test.ts` 的
-        // 「逐字段判据说不出是哪一格时，照样给诊断视图（不是 500）」钉着。
+        // 「兜底档：装载抛了而逐字段判据说不出是哪一格时，仍然给诊断视图而不是 500」钉着。
+        // ⚠️ **它的射程在装载器全函数化那一轮收窄到了近乎为零**（那一格的 JSDoc 里
+        // 逐条写了理由）：留着它是因为「说不出是哪一格」必须有一个如实的表达。
         by: "handlers/config.ts 的 readAll 诊断视图",
       },
       {
@@ -514,7 +525,19 @@ describe("防漂：validateConfigPatch 放行的，loadConfigWithProvenance 必�
    * 同源」这两种世界里都是绿的。这里手工绕过校验，直接把一份**校验会拒**的配置
    * 写进存储，确认装载确实会抛——那正是这道校验存在的全部理由。
    */
-  it("反向自检：绕过校验直接写一份非法配置，装载真的会抛（这就是要挡的那件事）", async () => {
+  /**
+   * ⚠️⚠️ **这一格的后半截在「装载器全函数化」那一轮换了，别照旧读。**
+   * 它原来断言的是「绕过校验写一份非法配置 ⇒ 装载**真的会抛**」。今天不抛了：
+   * 同一份配置照常装得起来，只是**注册机本次不启动**（`blocked` + 逐条 `blockers`）。
+   *
+   * ⇒ 前半截（校验本来就该拒它）一个字不动，后半截换成新的真话。
+   * **「写时严 / 读时松」这条不对称是刻意的**：面板仍然拒绝保存一份注册机跑不起来的
+   * 配置（别让人一步一步把自己坑进去），而装载侧会收下同样的配置（一份坏的可选子系统
+   * 配置不该让网关起不来）。下一个来读这段代码的人极可能把它当漂移去「修」，
+   * 一修就把这次改动拆了——`configLoadBlockers` 头上那段 JSDoc 与下面那格双向等价
+   * 用例是这条不对称仅有的两道守卫。
+   */
+  it("写时严 / 读时松：校验拒掉的那份配置，装载侧收下它但把注册机挡在门外", async () => {
     const bad = { registrar: { enabled: true, primary: "yyds", fallback: "yyds", yyds: { apiKey: "k" } } };
     expect(
       codes(validateConfigPatch(
@@ -526,7 +549,14 @@ describe("防漂：validateConfigPatch 放行的，loadConfigWithProvenance 必�
 
     const storage = new MemoryStorage();
     await storage.put("config", bad);
-    await expect(loadConfigWithProvenance(GW, storage, NULL_LOGGER)).rejects.toThrow();
+    const prov = await loadConfigWithProvenance(GW, storage, NULL_LOGGER);
+    expect(prov.config.registrar.blocked, "注册机必须被挡住 —— 不然下游会拿一份半真的配置去跑").toBe(true);
+    expect(prov.config.registrar.enabled, "开关一个字都不许改").toBe(true);
+    expect(prov.registrarBlocked.map((b) => `${b.field}:${b.code}`))
+      .toEqual(["registrar.fallback:fallback_equals_primary"]);
+    // **网关本体照常**：口令还在，转发那一族旋钮一个都没受影响。
+    expect(prov.config.gatewayToken).toBe(GW.GATEWAY_TOKEN);
+    expect(prov.config.degraded).toBe(false);
   });
 });
 
@@ -667,23 +697,65 @@ describe("configLoadBlockers：逐条对应 loadConfigWithProvenance 会抛的�
   });
 
   /**
-   * ⚠️ **这一格是「它真的是那份判据」的反向自检**：拿每一个 `configLoadBlockers`
-   * 说「装得起来」的样本去真的装载一遍，必须不抛；说「装不起来」的必须真的抛。
-   * 光比清单长度证明不了它与 `loadConfigWithProvenance` 是同一件事。
+   * ⚠️⚠️ **判据换了一档，这一段是订正。**
+   * 它原来断言的是「blockers 为空 ⟺ 真的装载得起来」。装载器全函数化之后
+   * **只剩 `gateway_token_required` 那一条还等于「装不起来」**，其余各条都退成
+   * 「注册机本次不启动」。拿旧判据继续跑会把「注册机没跑」误判成「网关起不来」。
+   *
+   * ⇒ 拆成两条各自精确的：这一格钉 **fatal 那一档**（唯一剩下的），
+   * 下一格钉**两份实现的等价**。
    */
   it.each([
     ["干净配置", { gatewayToken: "x" }, {}, true],
     ["缺口令", {}, {}, false],
-    ["通道缺凭据", { gatewayToken: "x", registrar: { enabled: true, primary: "yyds" } }, {}, false],
-    ["备通道等于主通道", { gatewayToken: "x", registrar: { enabled: true, primary: "yyds", fallback: "yyds", yyds: { apiKey: "k" } } }, {}, false],
+    ["通道缺凭据", { gatewayToken: "x", registrar: { enabled: true, primary: "yyds" } }, {}, true],
+    ["备通道等于主通道", { gatewayToken: "x", registrar: { enabled: true, primary: "yyds", fallback: "yyds", yyds: { apiKey: "k" } } }, {}, true],
     ["关着的注册机随便填", { gatewayToken: "x", registrar: { enabled: false, primary: "yyds", fallback: "yyds" } }, {}, true],
-  ])("%s：blockers 为空 ⟺ 真的装载得起来", async (_n, stored, env, loadable) => {
+  ])("%s：有没有 gateway_token_required ⟺ 装载抛不抛（今天唯一的 fatal 档）", async (_n, stored, env, loadable) => {
     const blockers = configLoadBlockers(stored, env as Record<string, string | undefined>);
-    expect(blockers.length === 0, `blockers=${JSON.stringify(blockers)}`).toBe(loadable);
+    expect(
+      !blockers.some((b) => b.code === "gateway_token_required"),
+      `blockers=${JSON.stringify(blockers)}`,
+    ).toBe(loadable);
     const storage = new MemoryStorage();
     await storage.put("config", stored);
     const run = loadConfigWithProvenance(env as Record<string, string | undefined>, storage, NULL_LOGGER);
     if (loadable) await expect(run).resolves.toBeDefined();
     else await expect(run).rejects.toThrow();
+  });
+
+  /**
+   * ⚠️⚠️ **双向等价：`configLoadBlockers` ⟺ 装载器 blockers。**
+   *
+   * 这两份是**刻意保留的两份实现**（评审定稿：不许把写入侧那份升格成运行时承重判据
+   * ——那等于把一份登记在案的不完备实现放到热路径上）。代价就压在这一格：
+   * 同一张对抗性输入网格上，两边的 `field:code` 集合必须逐组相等。
+   *
+   * · **正向**（校验说有 blocker ⇒ 装载器也说有）：写入侧不许把人挡在一个装载侧
+   *   其实收得下的配置外面；
+   * · **反向**（装载器说有 ⇒ 校验也说有）：面板不许让人保存一份注册机跑不起来的配置，
+   *   然后到运行时才安静地不补池。仓里此前只有正向那半边。
+   *
+   * ⚠️ **射程明写**：这是**网格**不是穷举（见 `tests/helpers/registrar-grid.ts` 顶上
+   * 那段），未预见的输入形状仍可能漏过。但漏一格的后果已经从「注册机该跑不跑」
+   * 退回「面板漏报一格」。**这不是结构性保护。**
+   */
+  it("双向等价：configLoadBlockers ⟺ 装载器 blockers", () => {
+    const diffs: string[] = [];
+    for (const c of registrarGrid()) {
+      // `configLoadBlockers` 吃的是**整份存储原件**，注册机那份挂在 `registrar` 下；
+      // 口令给齐，好让那条 fatal 不掺进来（它由上一格单独钉）。
+      const stored = { gatewayToken: "x", registrar: c.stored as Record<string, unknown> };
+      const env = { GATEWAY_TOKEN: "x", ...c.env };
+      const fromValidate = configLoadBlockers(stored, env)
+        .map((b) => `${b.field}:${b.code}`).sort();
+      const fromLoader = registrarFromEnv(c.env, c.stored, NULL_LOGGER, { degraded: false })
+        .blockers.map((b) => `${b.field}:${b.code}`).sort();
+      const a = [...new Set(fromValidate)].join(" | ");
+      const b = [...new Set(fromLoader)].join(" | ");
+      if (a !== b) diffs.push(`${c.name}\n    校验侧: [${a}]\n    装载侧: [${b}]`);
+    }
+    expect(diffs, "两份实现漂了。它们是刻意的两份，而这一格是唯一把它们钉在一起的东西：\n"
+      + diffs.slice(0, 10).join("\n")).toEqual([]);
   });
 });

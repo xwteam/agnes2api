@@ -1299,7 +1299,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```
 
 > [!NOTE]
-> `remaining` は成功の分岐でも返します：使い切ったときだけ返すのは、運用者に何も知らせないまま壁にぶつけるのと同じだからです。拒否は全部で六種類あり、**どれも「このルートが存在しない」ではありません**：`409 registrar_disabled`（レジストラーが無効）、`409 channel_not_configured`（チャネルに認証情報が無い）、`409 tend_in_flight`（同じレプリカで既に 1 ラウンド進行中）、`409 locked`（レプリカ間の短いロックを他が保持）、`429 manual_cooldown`（手動 2 回の間の最小間隔）、`429 write_budget_exhausted`（1 日の上限回数）——後ろの二つは [REGISTRAR.md](REGISTRAR.md) の「四つのガードレール」表と同じ真の出所を指します。
+> `remaining` は成功の分岐でも返します：使い切ったときだけ返すのは、運用者に何も知らせないまま壁にぶつけるのと同じだからです。拒否は全部で七種類あり、**どれも「このルートが存在しない」ではありません**：`409 registrar_disabled`（レジストラーが無効）、`409 registrar_blocked`（レジストラーは有効だが、この設定を読み込めず今回は起動しなかった）、`409 channel_not_configured`（チャネルに認証情報が無い）、`409 tend_in_flight`（同じレプリカで既に 1 ラウンド進行中）、`409 locked`（レプリカ間の短いロックを他が保持）、`429 manual_cooldown`（手動 2 回の間の最小間隔）、`429 write_budget_exhausted`（1 日の上限回数）——後ろの二つは [REGISTRAR.md](REGISTRAR.md) の「四つのガードレール」表と同じ真の出所を指します。
 
 ### GET /admin/api/registrar/status
 

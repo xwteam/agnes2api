@@ -231,7 +231,9 @@ describe("两条通道完全平级（设计 §10.3）", () => {
 
 describe("statusView / poolView：逐字段降级，绝不伪造", () => {
   it("整段读不到时逐字段 null", () => {
-    expect(statusView(null)).toEqual({ enabled: null, primary: null, fallback: null, serverTime: null, lockedUntil: null });
+    expect(statusView(null)).toEqual({
+      enabled: null, blocked: null, primary: null, fallback: null, serverTime: null, lockedUntil: null,
+    });
     expect(poolView(null)).toEqual({ target: null, counted: null, gap: null, fresh: null, mintBatch: null });
   });
 
@@ -239,6 +241,20 @@ describe("statusView / poolView：逐字段降级，绝不伪造", () => {
     expect(statusView({ enabled: false }).enabled).toBe(false);
     expect(statusView({}).enabled).toBeNull();
     expect(statusView({ enabled: "false" }).enabled, "字符串不当成布尔").toBeNull();
+  });
+
+  /**
+   * **三态各占一格，`blocked` 与 `enabled` 不许互相压。**
+   *
+   * 「开着但这次没跑起来」压成 `enabled: false` 是对着一个亮着的开关说没打开；
+   * 压成普通的 `enabled: true` 是声称有一个在工作的注册机，而补池一轮都没跑。
+   * 「没读到」照旧是 `null`，不是 `false`——与本文件其余各格同一条纪律。
+   */
+  it("blocked 是第三态：与 enabled 各占一格，读不到时是 null 不是 false", () => {
+    expect(statusView({ enabled: true, blocked: true })).toMatchObject({ enabled: true, blocked: true });
+    expect(statusView({ enabled: true, blocked: false })).toMatchObject({ enabled: true, blocked: false });
+    expect(statusView({ enabled: true }).blocked, "没读到就是没读到，不许当成「没被挡」").toBeNull();
+    expect(statusView({ enabled: true, blocked: "true" }).blocked, "字符串不当成布尔").toBeNull();
   });
 
   it("pool 那块整个是 null 时逐格 null，不退化成 0", () => {

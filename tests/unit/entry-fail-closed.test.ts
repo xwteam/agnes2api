@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { configFromEnv } from "../../src/core/config.js";
 import { registrarFromEnv } from "../../src/core/registrar/config.js";
 
-const DEFAULT_REGISTRAR = registrarFromEnv({}, {});
+const DEFAULT_REGISTRAR = registrarFromEnv({}, {}).config;
 
 describe("Entry fail-closed 行为", () => {
   describe("configFromEnv 缺少 GATEWAY_TOKEN", () => {

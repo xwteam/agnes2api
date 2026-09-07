@@ -3,6 +3,7 @@ import { createApp } from "./app.js";
 import { createApiKeyHolder, resolveApiKeyCacheTtl } from "./apikey-holder.js";
 import { createConfigHolder, type ConfigHolder } from "./config-holder.js";
 import { loadConfig, envLockedFields } from "../core/config.js";
+import { loadConfigWithProvenance } from "../core/config-provenance.js";
 import { KeyPoolRepo } from "../core/keypool-repo.js";
 import type { RuntimeInfo } from "../ports/runtime.js";
 import { NativeFetcher } from "../adapters/fetcher-native.js";
@@ -378,17 +379,25 @@ async function runManualTendRound(
     }),
   });
 
+  const gate: { reason: "disabled" | "blocked" | null } = { reason: null };
   const deps = await buildTendDeps(env, storage, {
     logger: multiLogger(tendConsole, tendStore),
     flush: () => tendStore.flush(),
+    gate,
   });
-  // 端点在起跑前已经查过一次 `registrar.enabled`（走 ConfigHolder）。走到这里还是
-  // `null`，说明存储里的配置在这两步之间被改掉了——**如实说一声，别静默返回**：
+  // 端点在起跑前已经查过一次 `registrar.enabled` / `blocked`（走 ConfigHolder）。走到
+  // 这里还是 `null`，说明存储里的配置在这两步之间被改掉了——**如实说一声，别静默返回**：
   // 面板已经收到 202，这条事件是运维唯一能看出「按了但没跑」的地方。
+  //
+  // ⚠️ **文案按档分岔**：原来这里写死「注册机已被关掉」，而 blocked 那一档开关还开着
+  // ——那句话在这一档上是假的。
   if (!deps) {
     tendStore.log({
       level: "warn", event: "registrar.manual_tend_skipped",
-      msg: "手动补池启动后发现注册机已被关掉，本轮什么都没做（面板已经回过 202）",
+      msg: gate.reason === "blocked"
+        ? "手动补池启动后发现这份注册机配置装不起来，本轮什么都没做（面板已经回过 202）"
+        : "手动补池启动后发现注册机已被关掉，本轮什么都没做（面板已经回过 202）",
+      fields: { reason: gate.reason ?? "disabled" },
     });
     await tendStore.flush();
     return;
@@ -470,8 +479,13 @@ async function probeChannel(
   // 这条路只读不写，**不接 `StoreLogger`**：一次连通性测试不该在事件板块里刷屏，
   // 而真正值得留痕的那一条（测试失败）由 handler 用 app 的 sink 打（那条带 `channel`
   // 与耗时，比这里的适配器内部日志更贴近运维要看的东西）。
-  const deps = await buildTendDeps(env, storage);
-  if (deps === null) return { ok: false, reason: "registrar_disabled" };
+  const gate: { reason: "disabled" | "blocked" | null } = { reason: null };
+  const deps = await buildTendDeps(env, storage, { gate });
+  // **两档分开报**：面板对 `registrar_disabled` 的五语言文案逐字是「注册机没有打开
+  // ……请先在设置里打开它」，而 blocked 那一档开关明明是开的——照旧混报就是撒谎。
+  if (deps === null) {
+    return { ok: false, reason: gate.reason === "blocked" ? "registrar_blocked" : "registrar_disabled" };
+  }
   const provider = deps.providers[channel];
   if (provider === undefined) return { ok: false, reason: "provider_missing" };
   return { ok: true, domains: (await provider.listDomains()).length };
@@ -523,6 +537,16 @@ export async function buildTendDeps(
      * `StoreLogger` 实例。缺省是空操作（没传 logger 的调用方也没有东西要落）。
      */
     flush?: () => Promise<void>;
+    /**
+     * 返回 `null` 时**是哪一档**。与 `num()` 的 `flags` 同一套「可变标记」形态，
+     * 理由也一样：把它做成返回值的一部分会牵连全部 `=== null` 的调用点，
+     * 而让调用方自己再读一次配置就是多付一次 KV 读。
+     *
+     * **两档的处置完全不同**：`disabled` = 「去设置里打开它」，
+     * `blocked` = 「它开着，但这份配置装不起来，去补齐缺的那几格」。
+     * 拿一句话糊两档正是本仓反复裁过的形态（面板会对着一个开着的开关说「没打开」）。
+     */
+    gate?: { reason: "disabled" | "blocked" | null };
   } = {},
 ): Promise<TendRoundDeps | null> {
   // **接上这条线之前，这里是裸 `ConsoleLogger`**，`registrar.*` 事件因此进不了
@@ -542,9 +566,44 @@ export async function buildTendDeps(
   // 五语言 DEPLOY.md 里就是这么写的。
   const logger: Logger = opts.logger ?? new ConsoleLogger();
   const flush = opts.flush ?? (async () => {});
-  const config = await loadConfig(env, storage, logger);
-  const reg = config.registrar;
-  if (!reg.enabled) return null;
+  // **`loadConfigWithProvenance` 而不是 `loadConfig`：零额外 IO，同一次读。**
+  // 多要的那一格是 `registrarBlocked`——日志里要说清「缺的是哪几格」，
+  // 只报一个 count 的话运维还得自己去面板对一遍。
+  const prov = await loadConfigWithProvenance(env, storage, logger);
+  const reg = prov.config.registrar;
+  if (!reg.enabled) { if (opts.gate) opts.gate.reason = "disabled"; return null; }
+  /**
+   * ⚠️⚠️ **这道 gate 是整个「装不起来不再抛错」那套改动的承重点。**
+   *
+   * `blocked` 为真时 `RegistrarConfig` 会出现一个从前不存在的状态：
+   * `enabled=true` 且 `primary="moemail"` 而 `moemail=null`。下游拿着这份配置去跑，
+   * 最坏是 `mintOne` 的 `finally` 不跑 ⇒ **临时邮箱漏删**。本方案靠 **gate 而不是
+   * 改状态** 挡住它，因此这一句必须排在**建任何 provider 之前**——
+   * `tests/unit/registrar/scheduling-wiring.test.ts` 的
+   * 「blocked ⇒ 返回 null，且一个 provider 都没建」钉的正是这个行为
+   *（只断返回值抓不住「先建了 provider 再返回 null」）。
+   *
+   * ⚠️ **不按 blocker 的码分支**：`gatewayToken` 那条在 `loadConfigWithProvenance`
+   * 里已经抛掉了，走到这里的 blocker 全是注册机自己的。
+   *
+   * ⚠️ **必须是 error 级、必须每轮都打。** 这次改动把一次**响亮**的故障（进程退出 /
+   * 全线 500）换成了一次**安静**的故障（补池停摆、池子慢慢耗干、几小时到几天后以
+   * `pool_empty` 503 的形式炸出来）。缓解手段全是「你得去看」型的：这条事件 +
+   * 面板三处横幅。少一条，这个方案就把一个吵闹的故障换成了一个安静的故障。
+   */
+  if (reg.blocked) {
+    if (opts.gate) opts.gate.reason = "blocked";
+    logger.log({
+      level: "error", event: "registrar.blocked",
+      msg: "注册机已启用，但这份配置装不起来，本次没有启动它（转发不受影响）。"
+        + "去面板设置页按下面这几格补齐，改完保存即可恢复，不需要重启容器 / 重新部署。",
+      fields: {
+        count: prov.registrarBlocked.length,
+        fields: prov.registrarBlocked.map((b) => `${b.field}:${b.code}`).join(","),
+      },
+    });
+    return null;
+  }
 
   const fetcher = new NativeFetcher();
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

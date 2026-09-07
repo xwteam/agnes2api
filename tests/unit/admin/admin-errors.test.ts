@@ -169,8 +169,18 @@ describe("管理接口错误码：码是码，文案在五语言字典里", () =
  * **第十六条是 `notWired()` 那句**，它**刻意不进闭集**：那一档说的是「装配没走
  * `wire.ts`」，与 `config.ts` 的同名分支逐字同源，面板对它只按顶层 `reason` 选一句
  * 固定文案，够不着 `errorMessage()` 那条渲染路径。**53 + 16 = 69。**
+ *
+ * ⚠️ **这一次从 69 改成 71，逐条表态**（注册机新增的 `registrar_blocked` 那一档）：
+ * 两条落点都在 `src/http/admin/handlers/registrar.ts`——手动补池那条与通道连通性
+ * 测试那条，各一句「注册机开着，但这份配置装不起来……」。
+ * **两条都不进 `ADMIN_ERROR_CODES`**，理由与同一个文件里既有的
+ * `registrar_disabled` / `channel_not_configured` 逐字同源：注册机板块对这一族
+ * **只按顶层 `reason` 选五语言文案**（`admin-ui/js/pure/registrar.mjs` 的
+ * `refuseReasonKey()` 是一张逐条列出的表），后端的中文 `message` 够不着
+ * `sec-keys.js` 的 `errorMessage()` 那条渲染路径。
+ * 给它们发码 = 在一个够不着屏幕的位置上多两条要五语言维护的契约。**69 + 2 = 71。**
  */
-const ADMIN_MESSAGE_SITES = 69;
+const ADMIN_MESSAGE_SITES = 71;
 
 describe("面不许增长", () => {
   it("面不许增长：src/http/admin/ 下带中文 message 的落点恰好这么多", () => {

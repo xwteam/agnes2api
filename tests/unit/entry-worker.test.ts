@@ -48,14 +48,75 @@ describe("worker 入口: fail-closed", () => {
     expect(res.status).not.toBe(200);
   });
 
-  it("装配失败时返回固定文案的 JSON 500，不回显异常细节——这是未鉴权路径", async () => {
-    // 缺 GATEWAY_TOKEN 且存储里也没有 ⇒ buildApp 抛「缺少 GATEWAY_TOKEN，网关无法启动」
+  /**
+   * ⚠️⚠️ **这一格在「Worker 侧把运维配错与代码 bug 分开」那一轮换了状态码，别照旧读。**
+   *
+   * 从前两档共用一个不说原因的 `500`。真机上的后果是：一次常规重新部署之后
+   * **81 次探测 60 次 500**（`/health` 也在内），而唯一的线索只在 `wrangler tail`
+   * ——同一份代码在 Node 上是 `process.exit(1)`、运维立刻看得见。
+   *
+   * ⇒ `ConfigRefusal`（运维配错）改回 **`503` + 固定枚举 `reason`**，
+   * 非 `ConfigRefusal`（代码 bug）维持不透明的 `500`（下一格钉那一半）。
+   *
+   * ⚠️ **`not.toContain("GATEWAY_TOKEN")` 那半句一个字都不许删**：`reason` 是**固定
+   * 枚举串、永不由 `err.message` 派生**。这是未鉴权路径，配置细节一个字节都不许出去。
+   */
+  it("缺 GATEWAY_TOKEN 时每个请求回 503 + reason:\"not_configured\"，不回显异常细节——这是未鉴权路径", async () => {
+    // 缺 GATEWAY_TOKEN 且存储里也没有 ⇒ buildApp 抛 ConfigRefusal「缺少 GATEWAY_TOKEN，网关无法启动」
     const { kv } = fakeKv();
     const res = await worker.fetch(new Request("https://x.test/v1/models"), { POOL: kv } as Env);
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
     const text = await res.text();
-    expect(JSON.parse(text)).toEqual({ error: { type: "internal_error", message: "网关内部错误" } });
+    expect(JSON.parse(text)).toEqual({
+      error: { type: "service_unavailable", message: "网关尚未完成配置" },
+      reason: "not_configured",
+    });
     expect(text).not.toContain("GATEWAY_TOKEN");
+  });
+
+  /**
+   * **另一半：非 `ConfigRefusal` 的异常仍然是不透明的 `500`。**
+   *
+   * 少了这一格，把 catch 里那个 `instanceof` 判断整个删掉、一律回 `503`，
+   * 上一格照样绿——而那样做等于对着一个**代码 bug** 说「网关尚未完成配置」，
+   * 把运维支去改一份根本没问题的配置。
+   */
+  it("非 ConfigRefusal 的装配异常仍然回不透明的 500（那是代码 bug，不是运维配错）", async () => {
+    // ⚠️ **夹具必须是一个真正的「代码 bug」，不能拿某个配置错误来充数。**
+    // 逐条对树核实过：`buildApp` 里今天所有会抛的地方**都是运维配错**
+    //（缺 `gatewayToken`、`num()` 的 env 侧、两个 TTL 环境变量），
+    // 而它们已经全部改成 `ConfigRefusal` 了——存储读失败那一支在冷启动上
+    // 走 `degradeOnUnreadable` 降级、压根不抛。⇒ 生产里今天没有一条已知输入
+    // 能走到这一支，所以这里直接把 `buildApp` 换成一个会抛裸 `Error` 的替身，
+    // 钉的是**分流本身**（`instanceof` 那一句被删掉时这一格红）。
+    vi.resetModules();
+    vi.doMock("../../src/http/wire.js", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../../src/http/wire.js")>();
+      return {
+        ...actual,
+        buildApp: async () => { throw new Error("模拟一个代码 bug：不是 ConfigRefusal"); },
+      };
+    });
+    try {
+      const { default: freshWorker } = await import("../../src/entry/worker.js");
+      const { kv } = fakeKv();
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const res = await freshWorker.fetch(
+          new Request("https://x.test/v1/models"),
+          { GATEWAY_TOKEN: "token-long-enough-for-this-test", POOL: kv } as Env,
+        );
+        expect(res.status).toBe(500);
+        const text = await res.text();
+        expect(JSON.parse(text)).toEqual({ error: { type: "internal_error", message: "网关内部错误" } });
+        expect(text, "内部异常的原文一个字都不许出去").not.toContain("模拟一个代码 bug");
+      } finally {
+        spy.mockRestore();
+      }
+    } finally {
+      vi.doUnmock("../../src/http/wire.js");
+      vi.resetModules();
+    }
   });
 });
 

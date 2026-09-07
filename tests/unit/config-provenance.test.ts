@@ -7,6 +7,7 @@ import { registrarFromEnv } from "../../src/core/registrar/config.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 import { recordingLogger } from "../helpers/recording-logger.js";
+import { EDITABLE_FIELDS } from "../../src/core/admin/config-validate.js";
 
 /**
  * `loadConfigWithProvenance` —— 设计 §5.3 的「面板不承诺生效，而是回读生效值」
@@ -204,14 +205,19 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
     ]);
   });
 
-  it("四元组的键集合就是 FIELD_EXPOSURE 走出来的全部叶子（手写的 28 条）", async () => {
+  it("四元组的键集合就是 FIELD_EXPOSURE 走出来的全部叶子（手写的 29 条）", async () => {
     const { storage, env } = await withStored(undefined, { GATEWAY_TOKEN: "gw-token-for-provenance" });
     const { source } = await loadConfigWithProvenance(env, storage);
     const paths = Object.keys(source).sort();
     expect(paths).toEqual([
       "agnesBaseUrl", "cooldownPaymentMs", "cooldownRateLimitMs", "cooldownStrikeMs",
       "degraded", "gatewayToken", "maxStrikes", "poolCacheTtlMs", "poolTouchIntervalMs",
-      "registrar.agnesPlatformUrl", "registrar.codeTimeoutMs", "registrar.enabled",
+      "registrar.agnesPlatformUrl",
+      // **装载的产物，不是旋钮**（与 `degraded` 同一档）：面板要能答出
+      // 「注册机开着却没动静」是因为哪几格，标量进这里、逐条理由在
+      // `ConfigProvenance.registrarBlocked`（数组进不来，见下面那格已知盲点）。
+      "registrar.blocked",
+      "registrar.codeTimeoutMs", "registrar.enabled",
       "registrar.fallback", "registrar.maxDomainAttempts", "registrar.mintBatch",
       "registrar.mintDelayMaxMs", "registrar.mintDelayMinMs", "registrar.moemail.apiKey",
       "registrar.moemail.baseUrl", "registrar.primary", "registrar.targetKeys",
@@ -223,7 +229,46 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
       // 三格摆在一起，答案是「环境变量没设」还是「存储里写了 false」一眼可分。
       "usageStatsEnabled",
     ]);
-    expect(paths.length, "28 这个数是手写的：加字段必须在评审里被看见").toBe(28);
+    expect(paths.length, "29 这个数是手写的：加字段必须在评审里被看见").toBe(29);
+  });
+
+  /**
+   * **`registrar.blocked` 在四处的处置与 `degraded` 完全同档。**
+   *
+   * 它是本仓第一个进 `RegistrarConfig` 的「装载产物」标量（`degraded` 是
+   * `GatewayConfig` 层的同类）。要求「与 `degraded` 同档」是一句可执行的指令，
+   * 而这一格把那四处逐处钉住，省得下一个人凭措辞去猜：
+   * ① 进 `FIELD_EXPOSURE` 且是 `public`（面板要看得见）；
+   * ② `env` / `lockedBy` 两格恒为 `null`（它没有环境变量，进 `ENV_LOCK_MAP` 才是撒谎）；
+   * ③ 不在 `EDITABLE`（做成可写 = 面板能把红横幅关掉，而横幅要报告的那件事一点没变）；
+   * ④ `effective` 报的是**本次装载算出来的那个值**，不是存储原件里那一格。
+   *
+   * ⚠️ 「在 READ_ONLY 台账里」那一条不在这里：它由
+   * `tests/unit/admin/config-validate.test.ts` 的
+   * 「FIELD_EXPOSURE 里每一格要么可编辑，要么在手写的「刻意只读」清单里」自动盯着
+   * （不补那份清单，那一格当场红）——同一件事钉两遍只会让人以为它们各管一半。
+   */
+  it("registrar.blocked 与 degraded 同档：public / env=null / 不可编辑 / effective 是算出来的", async () => {
+    const { storage, env } = await withStored(
+      // **存储里刻意塞一个假的 `blocked`**：它是派生字段，写什么都不该影响生效值。
+      { registrar: { enabled: true, primary: "moemail", blocked: false } },
+      { GATEWAY_TOKEN: "gw-token-for-provenance" },
+    );
+    const { source, config } = await loadConfigWithProvenance(env, storage);
+
+    for (const path of ["degraded", "registrar.blocked"]) {
+      const f = source[path];
+      expect(f, `${path} 没进四元组`).toBeDefined();
+      expect(f!.exposure, `${path} 不是 public 的话面板就看不见它`).toBe("public");
+      expect(f!.lockedBy, `${path} 没有环境变量，lockedBy 必须是 null`).toBeNull();
+      expect((f as { env: string | null }).env, `${path} 没有环境变量，env 必须是 null`).toBeNull();
+      expect(EDITABLE_FIELDS, `${path} 是装载的产物，不是旋钮`).not.toContain(path);
+    }
+
+    // ④ 生效值是算出来的：缺 moemail 凭据 ⇒ blocked 为真，哪怕存储里写着 false。
+    expect(config.registrar.blocked).toBe(true);
+    expect((source["registrar.blocked"] as { effective: unknown }).effective).toBe(true);
+    expect((source["registrar.blocked"] as { stored: unknown }).stored, "存储原件照实报").toBe(false);
   });
 
   /**

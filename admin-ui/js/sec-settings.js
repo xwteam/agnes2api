@@ -470,7 +470,11 @@ function render() {
     h.blocked.textContent = "";
     h.blocked.style.display = blocked.length === 0 ? "none" : "";
     if (blocked.length > 0) {
-      h.blocked.appendChild(elI18n("p", "set.loadBlocked"));
+      // ⚠️⚠️ **两档文案，按 `isDiagnostic()` 选，不许合成一条。**
+      // `set.loadBlocked.fatal` 那句写着「下一次重启 / isolate 回收会失败」——
+      // 那**只对整份配置装不起来的那一档成立**。注册机装不起来时网关照常跑、
+      // 照常重启得起来，拿那句话去吓人是把「面板不撒谎」换个地方违反一次。
+      h.blocked.appendChild(elI18n("p", isDiagnostic(data) ? "set.loadBlocked.fatal" : "set.loadBlocked.registrar"));
       for (const r of blocked) {
         const label = nodes.fields[r.field] === undefined ? r.field : t(fieldLabelKey(r.field));
         // 表外的码**原样显示出来**，不冒充任何一档已知原因。

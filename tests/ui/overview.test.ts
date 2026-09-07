@@ -21,7 +21,7 @@ const body = {
     configVisibilityUpperBoundMs: 90_000, kvEdgeCacheMs: 60_000,
   },
   config: {
-    registrarEnabled: true, primary: "yyds", fallback: "moemail",
+    registrarEnabled: true, registrarBlocked: false, primary: "yyds", fallback: "moemail",
     targetKeys: 20, envLocked: ["maxStrikes"], degraded: false,
   },
 };
@@ -236,13 +236,13 @@ describe("configSummary：block 整体缺失是单个 null 哨兵，不是逐字
   });
   it("config 是个空对象（技术上是对象，只是字段都没有）时走逐字段降级，不是整块 null——与 poolCounts 同一条哲学", () => {
     expect(configSummary({ ...body, config: {} })).toEqual({
-      registrarEnabled: null, primary: null, fallback: null,
+      registrarEnabled: null, registrarBlocked: null, primary: null, fallback: null,
       targetKeys: null, envLocked: [], degraded: null,
     });
   });
   it("有数据时逐项透传", () => {
     expect(configSummary(body)).toEqual({
-      registrarEnabled: true, primary: "yyds", fallback: "moemail",
+      registrarEnabled: true, registrarBlocked: false, primary: "yyds", fallback: "moemail",
       targetKeys: 20, envLocked: ["maxStrikes"], degraded: false,
     });
   });

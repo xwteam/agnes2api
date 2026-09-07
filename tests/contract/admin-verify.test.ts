@@ -39,7 +39,7 @@ const UPSTREAM_URL = "https://upstream.test/v1/chat/completions";
 const BOTH_CHANNELS = registrarFromEnv({
   REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "moemail",
   YYDS_API_KEY: "yk", MOEMAIL_BASE_URL: "https://moe.invalid", MOEMAIL_API_KEY: "mk",
-}, {});
+}, {}).config;
 
 const verify = (
   app: Awaited<ReturnType<typeof makeApp>>["app"],

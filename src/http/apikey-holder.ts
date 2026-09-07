@@ -1,5 +1,6 @@
 import { Refreshable } from "../core/refreshable.js";
 import type { Storage } from "../ports/storage.js";
+import { ConfigRefusal } from "../core/config-errors.js";
 import type { Logger } from "../ports/logger.js";
 import type { ApiKeyTable } from "../core/admin/api-keys.js";
 import { loadApiKeyTable } from "./apikey-store.js";
@@ -64,7 +65,9 @@ export function resolveApiKeyCacheTtl(raw: string | undefined): number {
   if (raw === undefined || raw === "") return APIKEY_CACHE_TTL_MS;
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 0) {
-    throw new Error(`环境变量 APIKEY_CACHE_TTL_MS 必须是不小于 0 的整数: ${raw}`);
+    // **`ConfigRefusal` 而不是裸 `Error`**，理由与 `resolveUsageFlushInterval`
+    // 那一处逐字相同：运维配错要落进 Worker 入口的 503 那一支，不是 500。
+    throw new ConfigRefusal(`环境变量 APIKEY_CACHE_TTL_MS 必须是不小于 0 的整数: ${raw}`);
   }
   return n;
 }

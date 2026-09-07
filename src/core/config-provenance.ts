@@ -2,6 +2,7 @@ import type { Storage } from "../ports/storage.js";
 import { NULL_LOGGER, type Logger } from "../ports/logger.js";
 import type { GatewayConfig } from "./config.js";
 import { registrarFromEnv, type RegistrarConfig } from "./registrar/config.js";
+import { ConfigRefusal, type ConfigError } from "./config-errors.js";
 // 从 KeyPoolRepo 借默认值而不是在这里再抄一遍两个魔数：抄一遍就有两个真源，
 // 而「面板上写的生效时间」与「实际行为」对不上正是本期最不能出的那类问题。
 import {
@@ -126,6 +127,11 @@ export const FIELD_EXPOSURE: ExposureMap<GatewayConfig> = {
     agnesPlatformUrl: "public",
     yyds: { baseUrl: "public", apiKey: "secret" },
     moemail: { baseUrl: "public", apiKey: "secret" },
+    // **装载的产物，不是旋钮**——与 `GatewayConfig.degraded` 同一档处置：
+    // 进四元组（面板要看得见）、不进 `EDITABLE`、进那份手写的「刻意只读」清单。
+    // `ENV_OF_FIELD` 里刻意没有它（它没有环境变量）⇒ 四元组的 `env` / `lockedBy`
+    // 恒为 `null`，那是对的。
+    blocked: "public",
   },
 };
 
@@ -257,8 +263,15 @@ export function num(
     const n = Number(raw);
     // **环境变量的非法值继续 fail-fast**：那是部署时错误，运维必须立刻看得见，
     // 而且它不可能是面板写坏的——面板永远碰不到环境变量。
+    //
+    // ⚠️⚠️ **注册机子树是刻意的例外，别来抹平。**
+    // `src/core/registrar/config.ts` 的 `posInt()` 对 env 侧的非法值**降级不抛**，
+    // 与这里正相反。判据不是「哪种更严格」，而是**这个子系统有没有安全的降能模式**：
+    // 注册机停跑 = 池子不再自动补，转发照常；而这里这些旋钮（超时、strike 阈值、
+    // 冷却时长）一个都关不掉——回落默认值就是**静默改掉转发行为**，那比拒绝启动更坏。
+    // ⇒ 两边的不一致是有理由的取舍，不是疏漏。要改先推翻这条理由。
     if (!isIntAtLeast(n, min)) {
-      throw new Error(`环境变量 ${envName} 必须是不小于 ${min} 的整数: ${raw}`);
+      throw new ConfigRefusal(`环境变量 ${envName} 必须是不小于 ${min} 的整数: ${raw}`);
     }
     return n;
   }
@@ -330,6 +343,18 @@ export interface ConfigProvenance {
    * （加不了字段就编译不过），这里就自动多一条，不存在「加了字段忘了加进四元组」。
    */
   source: Record<string, FieldSource>;
+  /**
+   * 注册机本次为什么没跑起来。**空数组 = 跑起来了**（或者压根没开）。
+   *
+   * ⚠️ **它不进 `GatewayConfig`**：数组字段会撞上 `FIELD_EXPOSURE` 那个已登记的
+   * 盲点（见 `ExposureMap` 上面那段「数组也满足 extends object，会被当成对象递归」）。
+   * 进 `GatewayConfig` 的是 `registrar.blocked` 这一格**标量**，逐条理由住这里。
+   *
+   * ⚠️ **`loadConfig` 会把它连同 `source` 一起丢掉**，这是有意的：转发路径、两个
+   * 入口、补池都只要生效值，而「为什么没跑起来」只有面板的 `GET /admin/api/config`
+   * 要（`readAll` 把它填进 `loadBlocked`）。
+   */
+  registrarBlocked: readonly ConfigError[];
 }
 
 /** 存储里 `config` 键的原始形状。**一律 `unknown` + 逐字段窄化**（硬约束 8）。 */
@@ -437,10 +462,18 @@ export async function loadConfigWithProvenance(
 
   const gatewayToken = env.GATEWAY_TOKEN ?? asString(stored.gatewayToken);
   // 唯一保留 fatal 的一条：没有口令就无法鉴权，继续跑比停下来更危险。
-  if (!gatewayToken) throw new Error("缺少 GATEWAY_TOKEN，网关无法启动");
+  // **message 逐字不动**：`src/entry/node.ts` 的 `main().catch` 打的就是它，
+  // 五语言 DEPLOY.md 的故障排查条目引的也是这句原文。换的只有类——
+  // `ConfigRefusal` 让 `src/entry/worker.ts` 分得开「运维配错」与「代码 bug」。
+  if (!gatewayToken) throw new ConfigRefusal("缺少 GATEWAY_TOKEN，网关无法启动");
 
-  // 字段级降级也要计入 degraded：`num()` 走 config.invalid 分支时会往这里打标记。
+  // 字段级降级也要计入 degraded：`num()` 与注册机的 `posInt()` 走 config.invalid
+  // 分支时都会往这里打标记。
   const flags = { degraded: storageUnreadable };
+
+  // 注册机装载**提出来单独一行**：它现在返回 `{ config, blockers }` 两格，
+  // 而下面那个对象字面量里放不下第二个产物。
+  const reg = registrarFromEnv(env, storedRegistrar as Partial<RegistrarConfig>, logger, flags);
 
   const config: GatewayConfig = {
     gatewayToken,
@@ -453,7 +486,7 @@ export async function loadConfigWithProvenance(
     cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", stored.cooldownStrikeMs, DEFAULTS.cooldownStrikeMs, logger, 1, flags),
     poolCacheTtlMs: num(env, "POOL_CACHE_TTL_MS", "poolCacheTtlMs", stored.poolCacheTtlMs, DEFAULTS.poolCacheTtlMs, logger, 0, flags),
     poolTouchIntervalMs: num(env, "POOL_TOUCH_INTERVAL_MS", "poolTouchIntervalMs", stored.poolTouchIntervalMs, DEFAULTS.poolTouchIntervalMs, logger, 0, flags),
-    registrar: registrarFromEnv(env, storedRegistrar as Partial<RegistrarConfig>, logger),
+    registrar: reg.config,
     degraded: flags.degraded,
     // **优先级与判据都照抄 `registrarFromEnv` 里 `enabled` 那一行**
     //（`src/core/registrar/config.ts` 的 `const enabled = …=== "true"`）：
@@ -493,7 +526,7 @@ export async function loadConfigWithProvenance(
     };
   });
 
-  return { config, source };
+  return { config, source, registrarBlocked: reg.blockers };
 }
 
 /** 只收字符串，别的（含数字 / 对象）一律 `undefined`——存储里什么形状都可能来。 */

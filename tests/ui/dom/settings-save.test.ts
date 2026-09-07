@@ -942,6 +942,45 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
   });
 
   /**
+   * ⚠️⚠️ **同一块横幅，两档文案，判据是 `isDiagnostic()`（也就是 `fields === null`）。**
+   *
+   * 「注册机装不起来不再让整个网关死掉」之后，`loadBlocked` 非空**不再等于**
+   * 「整份配置装不起来」：绝大多数时候整份配置好好的、`fields` 有值，只是注册机
+   * 这个可选子系统本次没启动。而 `set.loadBlocked.fatal` 那句写着
+   * 「当前进程靠上一份合法快照还在跑，但**下一次重启 / isolate 回收会失败**」
+   * ——那句话在这一档上是**假的**，网关照常重启得起来。
+   *
+   * 拿一句话糊两档，就是把「面板不撒谎」换个地方违反一次。
+   *
+   * **变红条件**：把 `sec-settings.js` 里那句 `isDiagnostic(data) ? … : …` 改回
+   * 无条件用同一条键。
+   */
+  it("注册机装不起来（fields 不为 null）时横幅换成另一句 —— 不许说「下一次重启会失败」", async () => {
+    // **与 BLOCKED 的唯一差别就是 `fields` / `credentials` 有值**：那正是两档的判据。
+    const REGISTRAR_ONLY = {
+      ...BLOCKED,
+      fields: Object.fromEntries(
+        EDITABLE_FIELDS.filter((f) => !SECRET_FIELDS.includes(f))
+          .map((f) => [f, { stored: null, env: null, effective: null, lockedBy: null }]),
+      ),
+      credentials: Object.fromEntries(
+        SECRET_FIELDS.map((f) => [f, { configured: false, hint: null, lockedBy: null }]),
+      ),
+      configDegraded: false,
+    };
+    const { panel } = await openRegistrarSettings(() => ok(REGISTRAR_ONLY));
+    const banner = panel.querySelectorAll(".cfg-blocked")[0]!;
+    expect(banner.style.display, "注册机没跑起来，面板却什么都没说").not.toBe("none");
+    expect(
+      banner.textContent,
+      "这一档网关照常重启得起来 —— 那句话是吓人，不是真话",
+    ).not.toContain("下一次重启");
+    expect(banner.textContent, "真话是「转发不受影响」").toContain("转发不受影响");
+    // 逐条那一行照旧要说清是哪一格、缺什么（两档共用同一份行渲染）。
+    expect(banner.textContent).toContain("API Key");
+  });
+
+  /**
    * **变红条件**：把 `renderOne` 里那句 `built.input.disabled = !isDiagnostic(data);`
    * 改回无条件 `true`。
    */

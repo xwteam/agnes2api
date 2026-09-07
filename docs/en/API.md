@@ -1300,7 +1300,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```
 
 > [!NOTE]
-> `remaining` is returned on the success branch too: giving it only when the budget is exhausted means an operator walks into a wall with no warning. There are six rejections in all, and **none of them means "this route does not exist"**: `409 registrar_disabled` (the registrar is off), `409 channel_not_configured` (the channel has no credentials), `409 tend_in_flight` (a round is already running on this replica), `409 locked` (another replica holds the short lock), `429 manual_cooldown` (the minimum interval between two manual tends), `429 write_budget_exhausted` (the daily ceiling) — the last two point at the same source of truth as the "Four Guardrails" table in [REGISTRAR.md](REGISTRAR.md).
+> `remaining` is returned on the success branch too: giving it only when the budget is exhausted means an operator walks into a wall with no warning. There are seven rejections in all, and **none of them means "this route does not exist"**: `409 registrar_disabled` (the registrar is off), `409 registrar_blocked` (the registrar is on, but this config could not be loaded, so it was not started this time), `409 channel_not_configured` (the channel has no credentials), `409 tend_in_flight` (a round is already running on this replica), `409 locked` (another replica holds the short lock), `429 manual_cooldown` (the minimum interval between two manual tends), `429 write_budget_exhausted` (the daily ceiling) — the last two point at the same source of truth as the "Four Guardrails" table in [REGISTRAR.md](REGISTRAR.md).
 
 ### GET /admin/api/registrar/status
 

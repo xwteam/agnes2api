@@ -138,6 +138,12 @@ export function configSummary(body) {
   const envLocked = Array.isArray(c.envLocked) ? c.envLocked.filter((x) => typeof x === "string") : [];
   return {
     registrarEnabled: typeof c.registrarEnabled === "boolean" ? c.registrarEnabled : null,
+    /**
+     * **开着、但这份配置本次没装起来。** 不取这一格的话，概览卡片会照旧写
+     * 「注册机：已启用」——而补池一轮都没跑，池子在慢慢耗干。
+     * 读不到记 `null`（不是 `false`），与本文件其余各格同一条纪律。
+     */
+    registrarBlocked: typeof c.registrarBlocked === "boolean" ? c.registrarBlocked : null,
     primary: typeof c.primary === "string" ? c.primary : null,
     fallback: typeof c.fallback === "string" ? c.fallback : null,
     targetKeys: typeof c.targetKeys === "number" ? c.targetKeys : null,

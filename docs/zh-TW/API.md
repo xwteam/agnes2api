@@ -1297,7 +1297,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```
 
 > [!NOTE]
-> `remaining` 在成功那一支也照樣給：只在耗盡那一支給它，等於讓維運毫不知情地撞上一堵牆。拒絕一共六種，**沒有一種是「這條路由不存在」**：`409 registrar_disabled`（註冊機沒啟用）、`409 channel_not_configured`（通道沒配憑證）、`409 tend_in_flight`（同一副本上已有一輪在途）、`409 locked`（跨副本短鎖被別人佔著）、`429 manual_cooldown`（兩次手動之間的最小間隔）、`429 write_budget_exhausted`（每天的次數上限）——後兩條與 [REGISTRAR.md](REGISTRAR.md) 的「四條護欄」表指同一份真源。
+> `remaining` 在成功那一支也照樣給：只在耗盡那一支給它，等於讓維運毫不知情地撞上一堵牆。拒絕一共七種，**沒有一種是「這條路由不存在」**：`409 registrar_disabled`（註冊機沒啟用）、`409 registrar_blocked`（註冊機開著，但這份設定裝不起來、本次沒有啟動它）、`409 channel_not_configured`（通道沒配憑證）、`409 tend_in_flight`（同一副本上已有一輪在途）、`409 locked`（跨副本短鎖被別人佔著）、`429 manual_cooldown`（兩次手動之間的最小間隔）、`429 write_budget_exhausted`（每天的次數上限）——後兩條與 [REGISTRAR.md](REGISTRAR.md) 的「四條護欄」表指同一份真源。
 
 ### GET /admin/api/registrar/status
 

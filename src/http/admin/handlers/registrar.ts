@@ -128,6 +128,11 @@ export type ChannelProbe =
   | { ok: true; domains: number }
   /** 注册机在「端点查过 enabled」与「真去探」之间被关掉了。 */
   | { ok: false; reason: "registrar_disabled" }
+  /**
+   * 注册机开着，但这份配置装不起来（`buildTendDeps` 在建 provider 之前就早退了）。
+   * **与上一档分开**：那一档的处置是「去设置里打开它」，这一档开关明明是开的。
+   */
+  | { ok: false; reason: "registrar_blocked" }
   /** 这条通道没有凭据 ⇒ `buildTendDeps` 压根没给它造 provider。 */
   | { ok: false; reason: "provider_missing" };
 
@@ -192,6 +197,12 @@ function backgroundCtx(c: Context): BackgroundCtx | null {
 const REASON_IN_FLIGHT = "tend_in_flight";
 const REASON_LOCKED = "locked";
 const REASON_DISABLED = "registrar_disabled";
+/**
+ * 注册机开着、这份配置却装不起来。**不许让按钮回 202 进一个空操作**，
+ * 也不许退回 `REASON_DISABLED`——后者的五语言文案逐字是「注册机没有打开……
+ * 请先在设置里打开它」，而开关就在旁边亮着。
+ */
+const REASON_BLOCKED = "registrar_blocked";
 const REASON_NOT_WIRED = "not_wired";
 const REASON_UNKNOWN_CHANNEL = "unknown_channel";
 const REASON_CHANNEL_NOT_CONFIGURED = "channel_not_configured";
@@ -263,6 +274,17 @@ export function manualTendHandler(deps: RegistrarDeps) {
           message: "注册机未启用，没有可补的池；请先在设置里打开注册机并配好至少一条邮箱通道",
         },
         reason: REASON_DISABLED,
+      }, 409);
+    }
+    // 开着、但这份配置装不起来 ⇒ 补池一把都铸不出来。**在动任何护栏之前拒绝**：
+    // 放它进去只会白白消费一格日预算 + 起算一次 10 分钟冷却，换来一轮空转。
+    if (reg.blocked) {
+      return c.json({
+        error: {
+          type: "conflict",
+          message: "注册机开着，但这份配置装不起来，本次没有启动它；请先去设置页把缺的那几格补上",
+        },
+        reason: REASON_BLOCKED,
       }, 409);
     }
 
@@ -493,6 +515,12 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
     return c.json({
       serverTime: now,
       enabled: reg.enabled,
+      /**
+       * **本次装载有没有判定这份注册机配置跑不起来。**
+       * 与 `enabled` 是两格，不是一格：`enabled: true, blocked: true` 的真话是
+       * 「已启用 · 本次没跑起来」，把它压成 `enabled: false` 是另一种撒谎。
+       */
+      blocked: reg.blocked,
       primary: reg.primary ?? null,
       fallback: reg.fallback ?? null,
       /**
@@ -604,6 +632,13 @@ export function channelTestHandler(deps: RegistrarDeps) {
         channel: raw,
       }, 409);
     }
+    if (reg.blocked) {
+      return c.json({
+        error: { type: "conflict", message: "注册机开着，但这份配置装不起来，两条通道都没有装配，无法测试连通性" },
+        reason: REASON_BLOCKED,
+        channel: raw,
+      }, 409);
+    }
     if (!channelConfigured(reg, raw)) {
       return c.json({
         error: { type: "conflict", message: "这条通道在本次部署里没有配好凭据，无法测试连通性" },
@@ -654,7 +689,9 @@ export function channelTestHandler(deps: RegistrarDeps) {
         // 配置在这两步之间被改掉了（注册机被关、或这条通道的凭据被清空）。
         return c.json({
           error: { type: "conflict", message: "注册机的配置在这次测试期间被改掉了，本次没有测成" },
-          reason: probe.reason === "registrar_disabled" ? REASON_DISABLED : REASON_CHANNEL_NOT_CONFIGURED,
+          reason: probe.reason === "registrar_disabled"
+            ? REASON_DISABLED
+            : probe.reason === "registrar_blocked" ? REASON_BLOCKED : REASON_CHANNEL_NOT_CONFIGURED,
           channel: raw,
         }, 409);
       }

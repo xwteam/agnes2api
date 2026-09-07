@@ -229,6 +229,119 @@ describe("硬约束：src/core 零 IO", () => {
   });
 });
 
+// ── ①之二 src/core/registrar 全函数化（模块级零 throw） ──────────────────────
+
+/**
+ * **注册机装载器不许再抛。**
+ *
+ * 这条约束的来历是一次真机事故：注册机开着却缺 `MOEMAIL_API_KEY`，`registrarFromEnv`
+ * 抛错 ⇒ `buildApp` 抛 ⇒ 在 Cloudflare Worker 上**部署"成功"、81 次探测 60 次 500**
+ *（`/health` 也在内），而真原因只落在 `console.error` 里，要 `wrangler tail` 才看得见。
+ * 注册机是**可选子系统**：它缺凭据不该让转发、`/health`、面板一起死。
+ *
+ * ⇒ 装载器改成产出 `blockers`，本目录下**模块级零 `throw`**。
+ *
+ * ⚠️ **这一格与 `tests/unit/registrar/config-total.test.ts` 的
+ * 「整张网格跑下来一次都不抛」互为反向控制**：那一格从**行为**跑一张对抗性输入网格
+ *（抓得住「throw 换了个马甲」），这一格从**源码**扫（抓得住「新加了一处，而那张
+ * 网格恰好没走到它」）。少任何一格，另一格都有一整类逃逸。
+ *
+ * ⚠️ 期望值一律手写字面量，绝不从被测对象 grep 出来再回填——回填出来的期望值恒等于
+ * 实际值，那条断言永远绿（本项目登记在案的第 6 种假阳性形态）。
+ */
+
+/**
+ * 一处 `throw` 归属哪个函数：**往上找最近的一行函数声明**。
+ *
+ * ⚠️ **这是启发式，边界写在下面 `THROW_BLIND_SPOTS` 里，不许读成「精确的作用域分析」。**
+ * 它够用的理由很具体：本目录下的代码风格是顶层 `function` 声明 + 具名导出，
+ * 而这条门禁真正要拦的是「有人在装载路径上重新加了一处 `throw`」——那一处几乎
+ * 必然落在某个顶层函数里。真要做精确归属就得把 TS 解析成 AST，而那会换来一份
+ * 比被测代码还复杂的判据。
+ */
+function throwOwners(src: string): string[] {
+  const lines = blankComments(src).split("\n");
+  const out: string[] = [];
+  lines.forEach((line, i) => {
+    if (!/(?<![.\w])throw\s/.test(line)) return;
+    let owner = "<顶层>";
+    for (let k = i; k >= 0; k--) {
+      const m = /^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)/.exec(lines[k] ?? "");
+      if (m) { owner = m[1]!; break; }
+    }
+    out.push(owner);
+  });
+  return out;
+}
+
+/**
+ * **手写的豁免清单。** 一个名字，不是一个计数——计数说不出「谁」，而这条约束的
+ * 全部意义就是「装载路径上一个都不许有」。
+ *
+ * - `requirePrimary`（`config.ts`）：**消费方护栏**，不在装载路径上。它挡的是
+ *   「某个消费者跳过了 `enabled` / `blocked` 两道 gate 就去裸读 `cfg.primary`」，
+ *   那是代码 bug，必须响。它自己那段 JSDoc 里逐字写着它是**装载器那个模块**唯一的
+ *   throw 豁免项。
+ * - `tendOnce`（`tender.ts`）：`switch` 的 `default` 分支上那句穷尽性断言
+ *   （`const exhaustive: never = out.reason`）。**它不是运行期校验**——正常代码路径上
+ *   永远到不了，够得着它的唯一方式是给 `MintOutcome.reason` 加一个新取值而不补分支，
+ *   而那在 `tsc` 那里先红。它也不在配置装载路径上（补池那一轮才跑得到）。
+ *
+ * 清单变长 = 有人在注册机装载路径上重新加了一处抛点，**必须在评审里显式表态**。
+ */
+const REGISTRAR_THROW_EXEMPTIONS: readonly string[] = ["requirePrimary", "tendOnce"];
+
+/** 这道扫描声称覆盖的写法，每一条都有探针钉着。 */
+const THROW_COVERED: ReadonlyArray<{ probe: string; expect: string }> = [
+  { probe: "function f() {\n  throw new Error(\"x\");\n}", expect: "f" },
+  { probe: "export function g() {\n  if (a) throw new Error(\"x\");\n}", expect: "g" },
+  { probe: "export async function h() {\n  throw new TypeError(\"x\");\n}", expect: "h" },
+  { probe: "throw new Error(\"top\");", expect: "<顶层>" },
+];
+
+/** 这道扫描抓不住的写法，同样每一条都有探针钉着。写成断言，不写成散文。 */
+const THROW_BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
+  {
+    probe: "const boom = () => { throw new Error(\"x\"); };\nfunction f() { boom(); }",
+    why: "箭头函数：归属会算到外层最近的 `function` 上（这里是 `<顶层>`），说不出真正的宿主——但它**仍然会被扫到**，只是名字不对，所以拦得住「新加一处」这件事本身",
+  },
+  {
+    probe: "function f() {\n  return Promise.reject(new Error(\"x\"));\n}",
+    why: "`Promise.reject`：不是字面的 `throw`，扫不到。它在本目录下等价于抛（装载器是同步函数，返回 Promise 会让类型当场对不上），由 `tsc` 与那张行为网格兜",
+  },
+];
+
+describe("硬约束：src/core/registrar 模块级零 throw", () => {
+  it("src/core/registrar/ 下的 throw 恰好等于手写豁免清单", () => {
+    const hits: string[] = [];
+    for (const p of walkTs("src/core/registrar")) {
+      const rel = p.split("\\").join("/");
+      for (const owner of throwOwners(readFileSync(p, "utf8"))) hits.push(`${rel} :: ${owner}`);
+    }
+    expect(
+      hits.map((h) => h.split(" :: ")[1]!).sort(),
+      "注册机装载路径上又出现了 throw。注册机是可选子系统：它抛错会让 Node 容器起不来、"
+      + "让 Worker 每个请求 500（真机实测 74%），而缺一把邮箱 key 不该有这个后果。"
+      + "先确认它真的是消费方护栏而不是装载路径上的校验，再连同理由加进 REGISTRAR_THROW_EXEMPTIONS",
+    ).toEqual([...REGISTRAR_THROW_EXEMPTIONS]);
+  });
+
+  it.each(THROW_COVERED)("声称覆盖的写法真的抓得住：$expect", ({ probe, expect: owner }) => {
+    // 反向自检：上面那条全绿也可能是因为**正则一个都没匹配上**。
+    expect(throwOwners(probe)).toContain(owner);
+  });
+
+  it.each(THROW_BLIND_SPOTS)("已知的归属边界确实如此（边界是断言，不是散文）：$why", ({ probe }) => {
+    // 这两条**都不是「扫不到」**的同一种：第一条扫得到但名字不对，第二条压根扫不到。
+    // 判据因此只断言「归属结果不等于那个真正的宿主函数名」，不断言空数组。
+    expect(throwOwners(probe)).not.toContain("boom");
+  });
+
+  it("注释里的 throw 不算数——这个仓库的注释极其爱复述代码", () => {
+    expect(throwOwners("// 这里以前 throw new Error()\n/* 也不再 throw */\nexport const x = 1;")).toEqual([]);
+  });
+});
+
 // ── ② src/adapters、src/http、src/ports、src/ui 的裸 console ─────────────
 
 /**

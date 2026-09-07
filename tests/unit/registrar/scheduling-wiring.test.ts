@@ -43,6 +43,38 @@ vi.mock("../../../src/core/registrar/tender.js", async (importOriginal) => {
  * 是空的，不必靠某个 `waitFor` 熬满 2 秒超时才发现回退——那种失败形态慢且不说明
  * 原因，见那条用例上方的说明。
  */
+/**
+ * 两条邮箱通道适配器的**构造计数**。
+ *
+ * 存在的理由只有一条：`buildTendDeps` 里那道「注册机装不起来就早退」的 gate
+ * **必须排在建 provider 之前**，而「只断返回值是 null」**抓不住**「先建了 provider
+ * 再返回 null」——那种实现下 `mintOne` 那一族的资源（临时邮箱）已经有人拿着了。
+ * 两个 mock 都用 `importOriginal` 包真身，行为一个字节都不变。
+ */
+const providerBuilds: string[] = [];
+
+vi.mock("../../../src/adapters/mailbox-yyds.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/adapters/mailbox-yyds.js")>();
+  class Counted extends actual.YydsProvider {
+    constructor(...args: ConstructorParameters<typeof actual.YydsProvider>) {
+      providerBuilds.push("yyds");
+      super(...args);
+    }
+  }
+  return { ...actual, YydsProvider: Counted };
+});
+
+vi.mock("../../../src/adapters/mailbox-moemail.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/adapters/mailbox-moemail.js")>();
+  class Counted extends actual.MoeMailProvider {
+    constructor(...args: ConstructorParameters<typeof actual.MoeMailProvider>) {
+      providerBuilds.push("moemail");
+      super(...args);
+    }
+  }
+  return { ...actual, MoeMailProvider: Counted };
+});
+
 const timers: Array<{ fn: () => void; ms: number }> = [];
 const intervalCalls: Array<{ fn: () => void; ms: number }> = [];
 
@@ -871,5 +903,61 @@ describe("补池轮次不可并发重入", () => {
     } finally {
       errSpy.mockRestore();
     }
+  });
+});
+
+/**
+ * **注册机 blocked 时，补池装配在建任何 provider 之前就早退。**
+ *
+ * 这是「装不起来不再抛错」那套改动的承重点：`blocked` 为真时 `RegistrarConfig` 会
+ * 出现一个从前不存在的状态——`enabled=true`、`primary` 有值、而通道对象可能是 `null`
+ * 或者「两条通道其实都配齐了，只是主备撞了」。下游拿着这份配置去跑，最坏是
+ * `mintOne` 的 `finally` 不跑 ⇒ **临时邮箱漏删**。本方案靠 **gate 而不是改状态**
+ * 挡住它，于是「gate 排在哪一行」就成了一条真实的不变量。
+ *
+ * ⚠️ **夹具刻意选「凭据齐全但主备撞了」**：缺凭据那一档下 `cfg.yyds` 本来就是 `null`，
+ * provider 天然建不出来 ⇒ 把 gate 挪到后面也照样绿（那种夹具让被测的选择不可观测，
+ * 是本仓登记的第 5 种假阳性）。凭据齐全那一档才真的能把 provider 建出来。
+ */
+describe("blocked 的注册机：建 provider 之前就早退（零邮箱/Agnes 触达）", () => {
+  /** 主备撞在同一条通道上 ⇒ blocked，而两条通道的凭据都是齐的。 */
+  const BLOCKED = {
+    enabled: true, primary: "yyds", fallback: "yyds",
+    yyds: { baseUrl: "https://y.invalid", apiKey: "yk" },
+  };
+  /** 对照组：同一份凭据，只把备通道去掉 ⇒ 装得起来。 */
+  const FINE = { enabled: true, primary: "yyds", yyds: { baseUrl: "https://y.invalid", apiKey: "yk" } };
+
+  async function run(registrar: Record<string, unknown>) {
+    const { buildTendDeps } = await import("../../../src/http/wire.js");
+    const { MemoryStorage } = await import("../../helpers/fake-storage.js");
+    const { recordingLogger } = await import("../../helpers/recording-logger.js");
+    const storage = new MemoryStorage();
+    await storage.put("config", { registrar });
+    const logger = recordingLogger();
+    providerBuilds.length = 0;
+    const deps = await buildTendDeps({ GATEWAY_TOKEN: "t" }, storage, { logger });
+    return { deps, logger, builds: [...providerBuilds] };
+  }
+
+  it("blocked ⇒ 返回 null，且一个 provider 都没建", async () => {
+    const { deps, builds } = await run(BLOCKED);
+    expect(deps).toBeNull();
+    expect(builds, "gate 排在建 provider 之后 —— 那一步已经把邮箱通道的句柄造出来了").toEqual([]);
+  });
+
+  it("blocked ⇒ 每一轮都打一条 error 级 registrar.blocked，且说得出缺的是哪几格", async () => {
+    const { logger } = await run(BLOCKED);
+    const e = logger.entries.find((x) => x.event === "registrar.blocked");
+    expect(e, "这次改动把一次响亮的故障换成了一次安静的故障 —— 这条事件是仅有的补偿之一").toBeDefined();
+    expect(e?.level, "补池停摆会让池子慢慢耗干，几小时到几天后才以 pool_empty 炸出来").toBe("error");
+    expect(String(e?.fields?.fields)).toContain("registrar.fallback:fallback_equals_primary");
+    expect(e?.fields?.count).toBe(1);
+  });
+
+  it("对照组：同一份凭据、装得起来时 provider 真的建得出来 —— 否则上面那条恒绿", async () => {
+    const { deps, builds } = await run(FINE);
+    expect(deps).not.toBeNull();
+    expect(builds).toEqual(["yyds"]);
   });
 });

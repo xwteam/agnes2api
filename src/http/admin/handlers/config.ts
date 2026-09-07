@@ -157,7 +157,18 @@ export interface ConfigSnapshot {
   fields: Record<string, unknown> | null;
   credentials: Record<string, unknown> | null;
   configDegraded: boolean;
-  /** 装载不起来的每一条原因。**空数组 = 装得起来**，面板据此决定要不要显示诊断横幅。 */
+  /**
+   * **这份配置有哪几格挡着事。空数组 = 一格都没有。**
+   *
+   * ⚠️⚠️ **这段说明被本轮改动整个重写过，别照旧读成「非空 = 装不起来」。**
+   * 它现在有**两种**来源，面板必须靠 `fields === null` 分辨（`isDiagnostic()`）：
+   * · `fields !== null` + 本格非空 ⇒ **整份配置装得起来**，只是注册机这个可选子系统
+   *   本次没启动（转发、`/health`、面板全都正常）。横幅走 `set.loadBlocked.registrar`。
+   * · `fields === null` + 本格非空 ⇒ 整份配置真的装不起来，面板已降级成诊断视图。
+   *   改完之后落进这一档的只剩「两边都没有 gatewayToken」与 `num()` 的 env 侧
+   *   ——横幅走 `set.loadBlocked.fatal`（那句「下一次重启 / isolate 回收会失败」
+   *   只对这一档成立）。
+   */
   loadBlocked: readonly ConfigError[];
 }
 
@@ -185,7 +196,15 @@ export interface ConfigSnapshot {
 async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnapshot> {
   try {
     const prov = await loadConfigWithProvenance(wiring.env, wiring.storage, logger);
-    return { prov, ...split(prov.source), configDegraded: prov.config.degraded, loadBlocked: [] };
+    // ⚠️ **这里原来写死 `[]`。** 装载成功不再等于「一格问题都没有」：注册机装不起来
+    // 时装载照常成功（它只是没启动），逐条理由在 `prov.registrarBlocked` 里。
+    // 写死 `[]` 的后果是那一整族缺陷在面板上**完全不可见**——而这次改动正是把它从
+    // 一次响亮的故障换成了一次安静的故障，可见性是唯一的补偿。
+    return {
+      prov, ...split(prov.source),
+      configDegraded: prov.config.degraded,
+      loadBlocked: prov.registrarBlocked,
+    };
   } catch (err) {
     /**
      * ⚠️⚠️ **切分是三分，不是二分。这一段被订正过两次，两次都是我判据不完备。**
@@ -198,15 +217,19 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
      *   抖了一下（第二次读就好了）时，它会把一份**完全正常**的配置判成配置问题，
      *   给出一个假的诊断视图。
      *
-     * ⚠️ **承重前提：`env` 那一侧在 boot 时已经被证明可用。**
-     * `loadConfigWithProvenance` 的抛错来源有两个——`env` 与存储——而下面这三分
-     * **只覆盖存储那一侧**，靠的是「`env` 里的非法值在 `buildApp` 那一刻就 fail-fast、
-     * 进程根本起不来」。**「进程已启动」这个前提一旦不成立，三分就不完备**：
-     * 例如 `env` 里 `TARGET_KEYS=abc`，今天它在 boot 就抛、走不到这里。
-     * ⚠️ **而这条前提不是永恒的**：`src/core/registrar/config.ts` 里那套校验
-     * 自己登记着它沿用的是网关那一层留下的口径、与 `num()` 的字段级降级策略并不一致；
-     * **哪天有人去抹平那个不一致、让 boot 侧变宽松，这一类就会变活**，
-     * 到那时这段切分要跟着补一条。
+     * ⚠️⚠️ **这一段预言的事已经发生，下面是订正后的实情。**
+     * 原文写的是：三分「只覆盖存储那一侧」，靠的是「`env` 里的非法值在 `buildApp`
+     * 那一刻就 fail-fast、进程根本起不来」；并且点名了那条前提不永恒——
+     * 「`src/core/registrar/config.ts` 里那套校验……与 `num()` 的字段级降级策略
+     * 并不一致；**哪天有人去抹平那个不一致、让 boot 侧变宽松，这一类就会变活**」。
+     *
+     * **那次抹平就是本轮改动**，抹平方向是「注册机子树整体降级」：
+     * 注册机那 16 个 env 变量的非法值现在回落默认值，不再抛。
+     * ⇒ boot 侧仍然会抛的只剩两条：**两边都没有 `gatewayToken`**，
+     * 与 `num()` 的 env 侧（转发旋钮，它们没有安全的降能模式）。
+     * 两条都是 `ConfigRefusal`，两条都会让**进程/isolate 根本装不起来**
+     * ⇒ **「进程已启动」这个承重前提第一次是逐字精确的**，三分因此第一次完备。
+     * 剩下能走到这段 catch 的，只有存储那一侧。
      *
      * 正确的切分要问两个问题，答案三分：
      * ① **原件读得出来吗**？读不出来 ⇒ 存储真的坏了 ⇒ **原样抛第一个异常**；
@@ -545,16 +568,28 @@ export function configClearSecretHandler(deps: ConfigDeps) {
      * 于是回读抛错的那一支（正是最该留痕的那一支）**一条审计都没有**——
      * 存储被改了、面板收到 500、事件板块里什么都没有。
      */
+    /**
+     * ⚠️⚠️ **两档必须分开说，这一段是本轮改动的订正。**
+     * 原来这里对**任何**一条 blocker 都说「下一次冷启动会失败」——那句话今天只对
+     * `gateway_token_required` 成立。清掉一把**通道凭据**之后网关照常起得来，
+     * 只是注册机本次（以及下一次装载）不启动。拿砖机的措辞去说一件不砖机的事，
+     * 会让运维在一次「补池停了」的小事故上按大事故处置。
+     */
+    const fatalAfter = blockedAfter.some((b) => b.code === "gateway_token_required");
     deps.logger.log({
-      // 两支都是 `warn`：清空成功本身不是错误，装载不起来才是 error。
+      // 装载不起来（砖机档）与注册机跑不起来都记 error：前者是网关停摆，
+      // 后者是一次**安静的功能缺失**——池子会慢慢耗干，不吵一声就没人会去看。
       level: blockedAfter.length > 0 ? "error" : "warn",
       event: "config.secret_cleared",
-      msg: blockedAfter.length > 0
+      msg: fatalAfter
         ? "面板清空了一把凭据，清完之后这份配置已经装载不起来了——当前进程靠上一份快照还能跑，"
-          + "但下一次冷启动会失败。请立刻在设置页里补回来，或把依赖它的那条通道从主/备里去掉。"
-        : (stillConfigured
-          ? "面板清空了存储里的一把凭据；环境变量里仍然有一份，生效值不变"
-          : "面板清空了一把凭据；这份配置仍然装载得起来"),
+          + "但下一次冷启动会失败。请立刻在设置页里补回来。"
+        : (blockedAfter.length > 0
+          ? "面板清空了一把凭据，注册机因此装不起来了——网关转发不受影响，但补池会停摆、"
+            + "池子会慢慢耗干。请在设置页里补回来，或把依赖它的那条通道从主/备里去掉。"
+          : stillConfigured
+            ? "面板清空了存储里的一把凭据；环境变量里仍然有一份，生效值不变"
+            : "面板清空了一把凭据；这份配置仍然装载得起来"),
       // **只记路径与机器可读的原因码**，值一个字都不记。
       fields: {
         path,
@@ -571,7 +606,7 @@ export function configClearSecretHandler(deps: ConfigDeps) {
        * ⚠️ **保留这个字段名是为了不改前端契约**，但它现在是从 `loadBlocked` 派生的，
        * 而不是一条只认 `gatewayToken` 的独立判断。
        */
-      gatewayTokenMissing: blockedAfter.some((b) => b.code === "gateway_token_required"),
+      gatewayTokenMissing: fatalAfter,
       loadBlocked: [...blockedAfter],
       fields: after.fields,
       credentials: after.credentials,

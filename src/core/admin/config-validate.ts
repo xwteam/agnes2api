@@ -1,31 +1,46 @@
 import { FIELD_EXPOSURE, type Env, type Exposure } from "../config-provenance.js";
+/**
+ * **原样再导出，不是第二份定义**：词表与类型今天住在 `src/core/config-errors.ts`
+ *（那次搬家的理由——避开 `provenance → validate → provenance` 的运行期值循环——
+ * 全文在那个文件顶上）。这里再导出一次是为了让既有调用方
+ *（`src/http/admin/handlers/config.ts` 与两处测试）一个 import 都不用改，
+ * 先例是 `src/core/config.ts:13` 再导出 `envLockedFields`。
+ */
+export { CONFIG_ERROR_CODES, type ConfigError, type ConfigErrorCode } from "../config-errors.js";
+import type { ConfigError } from "../config-errors.js";
+// 只借常量，不借规则：两份实现是刻意的，见 `crossFieldErrors` 上面那段。
+import { DEFAULTS as REGISTRAR_DEFAULTS } from "../registrar/config.js";
 
 /**
  * 写入前校验（设计 §5.4 第 1 条）。**纯函数，在写存储之前跑，失败一个字节都不写。**
  *
- * ── 它挡的是什么 ────────────────────────────────────────────────────────────
+ * ── 它挡的是什么（**这一整段被本轮改动订正过，别照旧读**）────────────────────
  *
- * 设计 §5.4 逐字：存储里的非法值会让 `loadConfig` **抛错**，后果是
- * · **Node**：`buildApp` 抛 → `process.exit(1)` → **容器重启循环，而且没有面板
- *   可以进去改回来**；
- * · **Worker**：冷 isolate 全部 500，转发流量整个挂掉。
+ * ⚠️⚠️ **原文写的是**：`registrarFromEnv` 的 `posInt()` 对存储里的非数字「是抛错，
+ * 不是降级」，注册机那三条跨字段规则「同样是抛」，⇒「面板必须在写下去之前拦住它，
+ * 这就是本模块」。**那段话今天逐句作废**：注册机装载器已经全函数化
+ *（`src/core/registrar/config.ts` 模块级零 `throw`，由
+ * `tests/unit/source-guards.test.ts` 的「`src/core/registrar/` 下的 throw 恰好等于
+ * 手写豁免清单」钉着），非法数值退成字段级降级、其余四类退成 `blockers`
+ *（注册机本次不启动，转发、`/health`、面板一律不受影响）。
  *
- * §5.4 的四重防护里，字段级降级（第 2 条）与热路径保留上一份快照（第 3 条）都已在
- * 更早几轮就落地了，但它们**都救不了这一类**：
- * · `registrarFromEnv` 的 `posInt()` 对存储里的非数字**是抛错，不是降级**；
- * · `enabled=true` + 没选主通道、`fallback === primary`、缺凭据，三条同样是抛；
- * · 而 `ConfigHolder` 的兜底只在**热实例**上成立——冷启动没有「上一份快照」可退。
- * ⇒ **面板必须在写下去之前拦住它。** 这就是本模块。
+ * ⇒ **本模块的身份跟着退了一档**：它不再是「防止面板把网关砖掉」的唯一防线，
+ * 而是 ① **写入侧预判**（别让人保存一份注册机跑不起来的配置）＋
+ * ② **面板文案的码源**（`CONFIG_ERROR_CODES` 那张表）。
+ *
+ * ⚠️ 整条装载路径今天只剩**一个**抛点：两边都没有 `gatewayToken`
+ *（`config-provenance.ts` 那句 `throw new ConfigRefusal`）。它仍然是砖机档——
+ * 没有口令就无法鉴权，继续跑比停下来更危险——而 `ConfigHolder` 的兜底只在
+ * **热实例**上成立，冷启动没有「上一份快照」可退。**那一条本模块照旧拦。**
  *
  * ── 为什么规则不与 `loadConfig` 共用一份代码 ────────────────────────────────
  *
  * 试过的形态是「干跑一次 `loadConfigWithProvenance`，抛了就是非法」。它更省代码，
- * 但**给不出逐字段错误码**：`registrarFromEnv` 抛的是一条中文 `Error`，面板要么
- * 原样显示（那就把后端的中文 message 变成了对外契约，本仓已裁定不走这条路），
- * 要么去解析它（比中文 message 更脆）。设计 §10.4 要的是
- * `400 { errors: [{ field, code, params }] }`——**逐字段、机器可读、能映射五语言**。
+ * 但**给不出逐字段错误码**（今天更甚：装载器压根不抛了，干跑什么都测不出来）。
+ * 设计 §10.4 要的是 `400 { errors: [{ field, code, params }] }`
+ * ——**逐字段、机器可读、能映射五语言**。
  *
- * ⇒ 取舍明写：规则在这里**是第二份实现**，代价是它可能与 `loadConfig` 漂移。
+ * ⇒ 取舍明写：规则在这里**是第二份实现**，代价是它可能与装载器漂移。
  * 用两件事把代价压住：
  * ① **可编辑字段清单与 `FIELD_EXPOSURE` 逐条对账**（见 `EDITABLE` 上面那段）。
  *    ⚠️ **这里原来写的是「从 `FIELD_EXPOSURE` 派生 ⇒ `tsc` 报错」，那是错的**
@@ -39,77 +54,14 @@ import { FIELD_EXPOSURE, type Env, type Exposure } from "../config-provenance.js
  *    「防漂：validateConfigPatch 放行的，loadConfigWithProvenance 必须装载得起来」
  *    **拿真的装载函数**去跑每一个「校验说合法」的样本——漂移会在那里变红，
  *    而不是等到某个运维保存一次设置页把网关砖掉。
+ *    ⚠️ 那一格今天是**单向**的（放行 ⇒ 装得起来）。反向那半边由同一份文件里的
+ *    「双向等价：configLoadBlockers 的 field:code 集合恒等于装载器的 blockers」
+ *    补上——两份实现从此在同一张对抗性输入网格上逐组对账。
  *
  * ── 零 IO ──────────────────────────────────────────────────────────────────
  * 本文件在 `src/core/` 下：没有时间、没有随机、没有网络。`env` 是一份**数据**，
  * 由调用方从各自运行时取好再传进来。
  */
-
-/** 一条逐字段错误。`code` 是机器可读判别串，**面板靠它选五语言文案，不解析 message**。 */
-export interface ConfigError {
-  /** 面板路径，例如 `maxStrikes` / `registrar.yyds.baseUrl`。 */
-  field: string;
-  code: ConfigErrorCode;
-  /** 渲染文案要的参数（下界、两个冲突值……）。**只放标量**，与 `LogEntry.fields` 同一条纪律。 */
-  params?: Record<string, string | number>;
-}
-
-/**
- * 全部错误码。**单一真源是下面这个数组，类型从它派生。**
- *
- * ⚠️⚠️ **第一版是手写联合 + 测试里一份 `as const satisfies readonly ConfigErrorCode[]`
- * 的镜像，那条护栏实测是假的**（评审发现，我自己复现过）：`satisfies` 只做**单向
- * 可赋值检查**——它保证镜像里每一项都是合法的码，**不保证每一个码都在镜像里**。
- * 给联合加一个新码而不补 `ERROR_KEYS`、不补五语言 ⇒
- * `tsc exit=0`、`settings.test.ts` 34 passed、`check-i18n exit=0`，**零信号**；
- * 而反向（从联合里删一个）确实 `TS2322 ×2`。**删得住、加不住。**
- * 后果是：后端加错误码 ⇒ 面板 `errorMessageKey()` 返回 `null` ⇒ 走 `set.err.unknown`
- * **把裸码显示给运维**，没有任何东西会红。
- *
- * ⇒ 改成**数组是真源、类型是派生**：测试直接遍历 `CONFIG_ERROR_CODES`，
- * 加一个码而不补文案，`tests/ui/settings.test.ts` 的
- * 「后端产出的每一个错误码都有对应的 i18n 键 —— 加一个码不补文案就变红」当场红。
- */
-export const CONFIG_ERROR_CODES = [
-  /** 请求体里有本表不认识的字段（拼错的字段名在宽松实现下是一次「保存成功、什么都没发生」）。 */
-  "unknown_field",
-  /** 这个字段被环境变量锁定，写它不会生效——**拒绝而不是静默接受**，见下面 `lockedBy` 那段。 */
-  "locked_by_env",
-  "not_an_integer",
-  "below_min",
-  "not_a_string",
-  "not_a_boolean",
-  "empty",
-  "too_long",
-  "not_a_url",
-  "not_a_channel",
-  /** 注册机开着却没选主通道（后端 `registrarFromEnv` 在这一条上是抛错）。 */
-  "primary_required",
-  /** 备通道等于主通道。**只在 `enabled` 为真时成立**，前端拦截必须同源。 */
-  "fallback_equals_primary",
-  "delay_min_gt_max",
-  /** 注册机开着、这条通道在链上，却没有凭据（`creds()` 在这一条上是抛错）。 */
-  "channel_credentials_missing",
-  /** 两边都没有网关口令 ⇒ 冷启动会 fail-closed（`loadConfigWithProvenance` 抛）。 */
-  "gateway_token_required",
-  /** 凭据首尾带空白：HTTP 头值在传输层被 trim，客户端**永远送不出**这个值。 */
-  "whitespace_padded",
-  /** 凭据含送不出去的字符（非可打印 ASCII）。判据与 `ADMIN_TOKEN` 那条同源。 */
-  "not_sendable",
-  "too_short",
-  /** 网关口令不得等于 `ADMIN_TOKEN`：中转口令是发给每一个下游用户的。 */
-  "same_as_admin_token",
-  /**
-   * **这份配置构造不出来，但说不出是哪一格。**
-   *
-   * ⚠️ 它存在的理由是 `configLoadBlockers` **不完备**（见那个函数上面的说明）：
-   * `posInt()` 对存储里的非数字是**抛错**而不是降级，而那条路径不在逐字段表里。
-   * 这个码是那一类的如实兜底——**不编一个具体字段出来**，具体原因走事件板块。
-   */
-  "config_unloadable",
-] as const;
-
-export type ConfigErrorCode = (typeof CONFIG_ERROR_CODES)[number];
 
 /** 备注类文本的长度上限。与 `MAX_NOTE_LENGTH` 同一条理由：没有上限的自由文本会挂在热路径上。 */
 export const MAX_TEXT_LENGTH = 200;
@@ -485,18 +437,24 @@ function checkLeaf(field: string, spec: Exclude<Spec, { kind: "secret" }>, value
  * 换主通道**全是 500**，`GET /admin/api/config` 也是 500，而**干跑 `validate` 回 200**
  * ——干跑说「你这个补丁合法」，真跑 500。冷启动则连 `/admin` 一起消失。
  *
- * **判据对应 `loadConfigWithProvenance` 会抛的那些地方**：
- * · 两边都没有 `gatewayToken` ⇒ 那里 `if (!gatewayToken) throw`；
- * · 其余五条 ⇒ `registrarFromEnv` / `creds()` 里的 `throw`（`crossFieldErrors`）。
+ * **判据对应的东西在本轮改动里换了一次，这一段是订正**：
+ * · 两边都没有 `gatewayToken` ⇒ `loadConfigWithProvenance` 里那句
+ *   `throw new ConfigRefusal`。**这一条仍然是「网关起不来」。**
+ * · 其余各条 ⇒ **不再对应任何 `throw`**（`registrarFromEnv` 已全函数化），
+ *   而是对应**装载器产出的 `blockers`**：注册机本次不启动，转发照常。
+ *   两边由 `tests/unit/admin/config-validate.test.ts` 的
+ *   「双向等价：configLoadBlockers ⟺ 装载器 blockers」在一张对抗性输入网格上
+ *   逐组对账（比 `field:code` 集合）。
  *
- * ⚠️⚠️ **它不完备，这一段是订正——原来这里写着「没有第二份推理」，那是假的。**
- * 评审当场跑出反例：存储里 `registrar.targetKeys: "abc"` ⇒ 本函数返回 `[]`，
- * 而 `posInt()` 对存储里的非数字**是抛错不是降级**（本文件开篇正把这件事列为
- * 本模块存在的理由之一），于是那份配置真的装不起来。
- * **它就是一份第二实现，只是覆盖面比 `loadConfigWithProvenance` 窄。**
+ * ⚠️⚠️ **「它不完备」那一段的射程跟着收窄了。** 原来举的反例是存储里
+ * `registrar.targetKeys: "abc"`：那时 `posInt()` 对非数字**抛错**、而本函数返回 `[]`。
+ * 今天那条输入退成了**字段级降级**（回落默认值 + `config.invalid` 事件），
+ * 它既不让网关起不来、也不让注册机停跑 ⇒ **本函数对它返回 `[]` 是对的，不是漏报。**
+ * 剩下的不完备是网格式等价固有的：那格用例是**网格**不是穷举，未预见的输入形状
+ * 仍可能漏过——但漏一格的后果已经从「注册机该跑不跑」退回「面板漏报一格」。
  *
- * ⇒ **不许再拿「blockers 为空」当「装得起来」的判据**（`readAll` 曾经这么用，
- * 后果是这一整类缺陷连诊断视图都拿不到、`GET`/`PUT` 双双 500、面板没有出路）。
+ * ⇒ **仍然不许拿「blockers 为空」当「装得起来」的判据**（`readAll` 曾经这么用，
+ * 后果是那一整类缺陷连诊断视图都拿不到、`GET`/`PUT` 双双 500、面板没有出路）。
  * 正确的判据是「**存储读得出来吗**」——读得出来而构造失败，那就是配置问题；
  * 本函数只负责把**说得出是哪一格**的那些列出来，说不出的走 `config_unloadable`。
  *
@@ -515,22 +473,32 @@ export function configLoadBlockers(stored: unknown, env: Env): ConfigError[] {
 }
 
 /**
- * 跨字段规则。**每一条都对应 `registrarFromEnv` 里一处会 `throw` 的地方**——
- * 这份清单存在的全部理由就是「别让面板写出一份让网关起不来的配置」。
+ * 跨字段规则。**每一条都对应装载器（`registrarFromEnv`）产出的一条 blocker**——
+ * 这份清单存在的全部理由是「别让面板写出一份注册机跑不起来的配置」。
  *
- * ⚠️ **三条都受 `enabled` 门控**：注册机关着时 `registrarFromEnv` 一条都不抛
- * （`if (enabled && …)`），面板也就一条都不许拦。**两边判据必须同源**——
- * 前端无条件拦截的后果是「关着注册机时连下拉框都改不了」，而后端明明会收下。
+ * ⚠️⚠️ **它与装载器是两份实现，这是刻意的**（评审定稿：不许把本函数升格成运行时
+ * 承重判据——那等于把一份登记在案的不完备实现放到热路径上）。代价由
+ * `tests/unit/admin/config-validate.test.ts` 的「双向等价」那一格压住：同一张
+ * 对抗性输入网格上，本函数的 `field:code` 集合恒等于装载器 `blockers` 的。
+ * ⇒ **改这里必须同时对着 `src/core/registrar/config.ts` 读一遍**，反之亦然。
+ *
+ * ⚠️ **通道那几条受 `enabled` 门控，`delay_min_gt_max` 不受**——两条都与装载器逐字
+ * 同源。前端无条件拦截的后果是「关着注册机时连下拉框都改不了」，而后端明明会收下。
  */
 function crossFieldErrors(next: Obj, env: Env): ConfigError[] {
   const out: ConfigError[] = [];
   const reg = asObject(next.registrar) ?? {};
 
-  const min = reg.mintDelayMinMs;
-  const max = reg.mintDelayMaxMs;
-  if (typeof min === "number" && typeof max === "number" && min > max) {
-    // 这一条**不受 `enabled` 门控**：`registrarFromEnv` 里那次比较也在
-    // `if (!enabled) return cfg;` 之前，关着的注册机同样会因为它抛错。
+  // **比的是生效值，不是存储原件。**
+  // ⚠️ 原来这里写的是「两边都是 `number` 且 min > max」——那份判据漏掉了两整类：
+  // ① env 里的 `MINT_DELAY_MIN_MS=9000` 配上存储缺席（生效 max = 默认 5000）；
+  // ② 存储里写了非法值（生效值是**默认值**，不是那个非法值）。
+  // 装载器比的一直是生效值，于是两边在这两类上给出不同答案。现在同源。
+  const min = effectiveNum(env, "MINT_DELAY_MIN_MS", reg.mintDelayMinMs, REGISTRAR_DEFAULTS.mintDelayMinMs);
+  const max = effectiveNum(env, "MINT_DELAY_MAX_MS", reg.mintDelayMaxMs, REGISTRAR_DEFAULTS.mintDelayMaxMs);
+  if (min > max) {
+    // 这一条**不受 `enabled` 门控**：装载器里那次比较也在 `if (enabled)` 那一段之外，
+    // 关着的注册机同样会因为它产出 blocker。
     out.push({ field: "registrar.mintDelayMinMs", code: "delay_min_gt_max", params: { min, max } });
   }
 
@@ -539,30 +507,34 @@ function crossFieldErrors(next: Obj, env: Env): ConfigError[] {
     : env.REGISTRAR_ENABLED === "true";
   if (!enabled) return out;
 
-  const primary = env.REGISTRAR_PRIMARY ?? reg.primary ?? null;
-  const fallback = env.REGISTRAR_FALLBACK ?? reg.fallback ?? null;
+  const primary = pickChannel(env.REGISTRAR_PRIMARY, reg.primary);
+  const fallback = pickChannel(env.REGISTRAR_FALLBACK, reg.fallback);
 
-  if (primary === null || primary === "") {
+  if (primary.invalid) {
+    // **值写错了与压根没选是两句不同的话**，`else if` 与装载器同形。
+    out.push({ field: "registrar.primary", code: "not_a_channel", params: { raw: String(primary.raw) } });
+  } else if (primary.value === null) {
     out.push({ field: "registrar.primary", code: "primary_required" });
   }
-  if (fallback !== null && fallback !== "" && fallback === primary) {
+  if (fallback.invalid) {
+    out.push({ field: "registrar.fallback", code: "not_a_channel", params: { raw: String(fallback.raw) } });
+  } else if (fallback.value !== null && fallback.value === primary.value) {
     out.push({
       field: "registrar.fallback", code: "fallback_equals_primary",
-      params: { channel: String(primary) },
+      params: { channel: String(primary.value) },
     });
   }
 
-  for (const ch of [primary, fallback]) {
-    if (ch !== "yyds" && ch !== "moemail") continue;
+  for (const ch of [...new Set([primary.value, fallback.value])]) {
+    if (ch === null) continue;
     const creds = asObject(reg[ch]) ?? {};
     // YYDS 的 `baseUrl` 有内置取值、MoeMail 没有——这是两条通道之间**唯一**的不对称，
     // 而它是一句事实（一条是地址固定的公共服务，一条是自建服务），不是排名。
-    // 判据逐条对应 `creds()` 里那三个 `if (!x) throw`。
-    if (ch === "moemail" && !nonEmpty(env.MOEMAIL_BASE_URL ?? creds.baseUrl)) {
+    if (ch === "moemail" && pick(env.MOEMAIL_BASE_URL, creds.baseUrl) === undefined) {
       out.push({ field: "registrar.moemail.baseUrl", code: "channel_credentials_missing", params: { channel: ch } });
     }
     const keyEnv = ch === "yyds" ? env.YYDS_API_KEY : env.MOEMAIL_API_KEY;
-    if (!nonEmpty(keyEnv ?? creds.apiKey)) {
+    if (pick(keyEnv, creds.apiKey) === undefined) {
       out.push({ field: `registrar.${ch}.apiKey`, code: "channel_credentials_missing", params: { channel: ch } });
     }
   }
@@ -571,6 +543,52 @@ function crossFieldErrors(next: Obj, env: Env): ConfigError[] {
 
 function nonEmpty(v: unknown): boolean {
   return typeof v === "string" && v !== "";
+}
+
+/**
+ * 「env 优先、空串算没写」这条取值规则，**与装载器的 `asNonEmpty(env) ?? asNonEmpty(stored)`
+ * 逐字同形**。空串必须算「没写」：`MOEMAIL_API_KEY=` 这种写法在 compose 里极常见，
+ * 把它当成「配了一把空 key」会让两边给出不同答案。
+ */
+function pick(envRaw: string | undefined, storedRaw: unknown): string | undefined {
+  return nonEmpty(envRaw) ? envRaw : (nonEmpty(storedRaw) ? storedRaw as string : undefined);
+}
+
+/**
+ * 一个通道字段的取值 + 「写了个不认识的值」这件事。判据与装载器的 `resolveChannel`
+ * 同形：`undefined` / `null` / 空串都算没写，**env 侧写了非法值就不再看存储**
+ *（否则一个拼错的 `REGISTRAR_PRIMARY=yydss` 会静默穿透成存储里那条通道）。
+ */
+function pickChannel(
+  envRaw: string | undefined,
+  storedRaw: unknown,
+): { value: "yyds" | "moemail" | null; invalid: boolean; raw: unknown } {
+  if (envRaw !== undefined && envRaw !== "") {
+    if (envRaw === "yyds" || envRaw === "moemail") return { value: envRaw, invalid: false, raw: envRaw };
+    return { value: null, invalid: true, raw: envRaw };
+  }
+  // ⚠️ **不能借道 `pick()`**：那个函数把「非字符串」也归成「没写」，而存储里的
+  // `primary: 123` 是**写了个不认识的值**（装载器对它报 `not_a_channel`），
+  // 两者的文案与处置都不同。
+  if (storedRaw === undefined || storedRaw === null || storedRaw === "") {
+    return { value: null, invalid: false, raw: null };
+  }
+  if (storedRaw === "yyds" || storedRaw === "moemail") return { value: storedRaw, invalid: false, raw: storedRaw };
+  return { value: null, invalid: true, raw: storedRaw };
+}
+
+/**
+ * 一个注册机数值项的**生效值**，与装载器的 `posInt()` 逐字同形：
+ * env > 存储 > 内置默认值，**非法一律回落默认值**（不再是抛错）。
+ */
+function effectiveNum(env: Env, envName: string, stored: unknown, fallback: number): number {
+  const raw = env[envName];
+  if (raw !== undefined) {
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 1 ? n : fallback;
+  }
+  if (stored === undefined || stored === null) return fallback;
+  return typeof stored === "number" && Number.isInteger(stored) && stored >= 1 ? stored : fallback;
 }
 
 /**

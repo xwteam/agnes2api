@@ -1,5 +1,6 @@
 import { WORKER_ROUND_BUDGET_MS } from "./types.js";
 import { NULL_LOGGER, type Logger } from "../../ports/logger.js";
+import type { ConfigError } from "../config-errors.js";
 
 export type Channel = "yyds" | "moemail";
 
@@ -12,7 +13,7 @@ export interface RegistrarConfig {
   enabled: boolean;
   /**
    * 两条邮箱通道完全平级，没有内置默认值：`enabled=false` 时它可能没有真实取值
-   * （下面的 `channel()` 解析结果为 `null`），但接口按启用状态下的合法形状声明为
+   * （下面的 `resolveChannel()` 解析结果为 `null`），但接口按启用状态下的合法形状声明为
    * 非空——消费方在读它之前必须先看 `enabled`，这与网关 `GatewayConfig` 的
    * `gatewayToken` 必填不是同一种情况：那里没有"关闭"这个中间态。
    */
@@ -29,9 +30,52 @@ export interface RegistrarConfig {
   agnesPlatformUrl: string;
   yyds: ChannelCreds | null;
   moemail: ChannelCreds | null;
+  /**
+   * **本次装载判定这份注册机配置跑不起来** ⇒ 补池与两条注册机端点一律早退。
+   *
+   * 它是**装载的产物**，不是旋钮（与 `GatewayConfig.degraded` 同一性质，因此同样
+   * 不进 `EDITABLE`、进 `tests/unit/admin/config-validate.test.ts` 里那份手写的
+   * 「刻意只读」清单）。逐条理由**不在这里**——数组字段会撞上 `FIELD_EXPOSURE`
+   * 那个已登记的盲点（`config-provenance.ts` 的 `ExposureMap` 说明里那条
+   * 「数组也满足 extends object，会被当成对象递归」），理由住在
+   * `ConfigProvenance.registrarBlocked`。
+   *
+   * ⚠️ **`blocked` 为真时 `enabled` 一个字都不改。** 「运维明明打开了，面板却说
+   * 未启用」是另一种撒谎，本仓刚为同形态连修过两轮。真话是「已启用 · 本次没跑起来」。
+   *
+   * ⚠️ **它可以在 `enabled=false` 时为真**：`delay_min_gt_max` 那一条不受 `enabled`
+   * 门控（与 `crossFieldErrors` 逐字一致）。消费方一律**先判 `enabled` 再判 `blocked`**，
+   * 面板文案同理——关着的注册机该说「未启用」，不是「没跑起来」。
+   */
+  blocked: boolean;
 }
 
-const DEFAULTS = {
+/**
+ * 一次装载的产物：**生效配置 + 这份注册机为什么没跑起来**。
+ *
+ * ⚠️ **本模块从此模块级零 `throw`**（唯一豁免是消费方护栏 `requirePrimary`，
+ * 见它自己的说明），由 `tests/unit/source-guards.test.ts` 的
+ * 「`src/core/registrar/` 下的 throw 恰好等于手写豁免清单」钉着。
+ * 理由：注册机是**可选子系统**，它缺凭据不该让转发、`/health`、面板一起死。
+ * 这条在 Worker 形态上尤其要命——那里没有「启动」这回事，`buildApp` 每个 isolate
+ * 懒执行，抛错的结果是「部署成功、每个请求 500、真原因只在 `wrangler tail`」。
+ */
+export interface RegistrarLoad {
+  config: RegistrarConfig;
+  /** 空数组 = 这份注册机配置跑得起来。非空 = 注册机本次不启动，逐条说明为什么。 */
+  blockers: readonly ConfigError[];
+}
+
+/**
+ * 注册机的内置默认值。
+ *
+ * **导出是因为 `src/core/admin/config-validate.ts` 的 `crossFieldErrors` 也要用**
+ *（它比的是 `mintDelayMin/Max` 的**生效值**，而生效值的第三级就是这里）。
+ * 抄第二份的后果是「面板拦不拦得住」与「装载器产不产 blocker」在默认值那一档
+ * 可以给出不同答案——而那两边本来就是刻意保留的两份实现，共用常量是把可漂的面
+ * 缩到最小，不是把两份实现合成一份。
+ */
+export const DEFAULTS = {
   // primary 刻意没有默认值：两条通道平级，由使用者显式选择。给默认值等于替所有
   // 部署者做一个只在特定环境下成立的判断。
   targetKeys: 20,
@@ -50,97 +94,212 @@ type Env = Record<string, string | undefined>;
 
 /**
  * 读取一个正整数配置项，优先级：环境变量 > 存储 > 内置默认值。
- * 与 `src/core/config.ts` 里的 `num()` 同一套语义：只校验 `Number.isFinite` 不够，
- * 0 或负数会让下游的间隔/次数类字段失去意义（例如 `mintBatch=0` 会让补池永远
- * 补不出 key）。
+ *
+ * 取值必须是不小于 1 的整数：0 或负数会让下游的间隔/次数类字段失去意义
+ *（例如 `mintBatch=0` 会让补池永远补不出 key），所以只校验 `Number.isFinite` 不够。
+ *
+ * ⚠️⚠️ **非法值两侧都降级，不抛错——这是本轮改动里唯一一处主动放弃的 fail-fast。**
+ * 从前 env 侧与存储侧都是抛：`TARGET_KEYS=abc` 在 Node 上让容器起不来（运维立刻
+ * 看得见），在 Worker 上则是**部署成功、每个请求 500、原因只在 `wrangler tail`**。
+ * 现在两侧一律回落默认值 + 一条 `config.invalid` + `flags.degraded = true`。
+ * **它与 `config-provenance.ts` 的 `num()` 对 env 的策略故意不一致**，理由与「别来
+ * 抹平」的告诫写在 `num()` 那段注释旁边（有没有安全的降能模式）。
+ *
+ * ⚠️ **不产出 blocker**：字段回落之后注册机照样跑得起来，这与 `num()` 的既有策略一致。
+ * 代价明写：Node 运维**不能再靠「容器崩了」发现部署笔误**，只能靠面板红横幅与事件。
+ *
+ * ⚠️ 事件名取 `config.invalid` 而不是 `registrar.*`，与 `num()` 同一个名字——面板与
+ * 五语言文档里「字段级降级」这件事只有一条事件名。代价是它拿不到 `ConsoleLogger`
+ * 的 `[registrar]` 前缀（前缀按事件名命名空间派生），`fields.field` 里的
+ * `registrar.` 路径前缀是这条日志里唯一的归属线索。
  */
-function posInt(env: Env, envName: string, field: string, stored: unknown, fallback: number): number {
+function posInt(
+  env: Env,
+  envName: string,
+  field: string,
+  stored: unknown,
+  fallback: number,
+  logger: Logger,
+  flags?: { degraded: boolean },
+): number {
   const raw = env[envName];
   if (raw !== undefined) {
     const n = Number(raw);
-    if (!Number.isInteger(n) || n < 1) throw new Error(`环境变量 ${envName} 必须是正整数: ${raw}`);
-    return n;
+    if (Number.isInteger(n) && n >= 1) return n;
+    degrade(logger, flags, field, "env", raw, fallback);
+    return fallback;
   }
-  if (stored === undefined) return fallback;
+  if (stored === undefined || stored === null) return fallback;
   if (typeof stored !== "number" || !Number.isInteger(stored) || stored < 1) {
-    throw new Error(`存储中的 ${field} 必须是正整数: ${String(stored)}`);
+    degrade(logger, flags, field, "stored", String(stored), fallback);
+    return fallback;
   }
   return stored;
 }
 
-/**
- * `strict=false`（注册机未启用）时格式非法只记一条 `registrar.config_ignored` 事件并
- * 当作未设置（`null`），不抛错：一个被显式关闭的子系统的脏配置不该让整个网关起不来。
- * `strict=true`（已启用）时维持原有的抛错行为，因为这时通道值真的要被使用。
- */
-function channel(raw: string | undefined, envName: string, strict: boolean, logger: Logger): Channel | null {
-  if (raw === undefined || raw === "") return null;
-  if (raw !== "yyds" && raw !== "moemail") {
-    const msg = `${envName} 只能是 yyds 或 moemail: ${raw}`;
-    if (strict) throw new Error(msg);
-    logger.log({
-      level: "warn", event: "registrar.config_ignored",
-      msg: "注册机未启用，忽略格式非法的通道值", fields: { source: "env", name: envName, raw },
-    });
-    return null;
-  }
-  return raw;
+function degrade(
+  logger: Logger,
+  flags: { degraded: boolean } | undefined,
+  field: string,
+  source: "env" | "stored",
+  raw: string,
+  fallback: number,
+): void {
+  logger.log({
+    level: "warn", event: "config.invalid",
+    msg: "注册机的配置值非法，本字段回落到默认值（注册机照常运行）",
+    fields: { field, source, raw, fallback },
+  });
+  if (flags) flags.degraded = true;
 }
 
 /**
- * 校验存储里的通道值。这是网关那一层留下的口径：数值型校验（`posInt`）本就同时覆盖 env 与存储两条
- * 路径，但通道这种枚举值如果只在 env 侧校验、存储侧直接透传，垃圾数据会绕过校验
- * 静默流入一个类型上声明为 `"yyds" | "moemail"` 的字段，后续按通道分支的代码
- * （例如"选哪个 MailProvider 适配器"）就会拿到既不匹配 yyds 也不匹配 moemail 的值。
+ * 一个通道值的解析结果。
  *
- * 同 `channel()`：`strict=false`（未启用）时只记事件不抛错，见上面注释。
+ * `invalid` 说的是「有人写了一个值，而它既不是 `yyds` 也不是 `moemail`」——
+ * 它与 `value === null` **不是同一件事**：后者还包括「压根没选」。
+ * 两者的处置不同（`not_a_channel` vs `primary_required`），文案也不同。
  */
-function storedChannel(raw: unknown, field: string, strict: boolean, logger: Logger): Channel | null {
-  if (raw === undefined || raw === null) return null;
-  if (raw !== "yyds" && raw !== "moemail") {
-    const msg = `存储中的 ${field} 只能是 yyds 或 moemail: ${String(raw)}`;
-    if (strict) throw new Error(msg);
-    logger.log({
-      level: "warn", event: "registrar.config_ignored",
-      msg: "注册机未启用，忽略存储中格式非法的通道值", fields: { source: "stored", name: field, raw: String(raw) },
-    });
-    return null;
-  }
-  return raw;
+interface ChannelPick {
+  value: Channel | null;
+  invalid: "env" | "stored" | null;
 }
 
-/** 启用时才校验凭据：关着的注册机不该因为没配 key 而让整个网关起不来。 */
-function creds(env: Env, stored: Partial<RegistrarConfig>, ch: Channel): ChannelCreds {
-  if (ch === "yyds") {
-    const apiKey = env.YYDS_API_KEY ?? stored.yyds?.apiKey ?? "";
-    if (!apiKey) throw new Error("注册机已启用但缺少 YYDS_API_KEY");
-    return { baseUrl: env.YYDS_BASE_URL ?? stored.yyds?.baseUrl ?? DEFAULTS.yydsBaseUrl, apiKey };
+/**
+ * 解析一个通道字段，优先级：环境变量 > 存储 > 不选。
+ *
+ * ⚠️⚠️ **env 键存在但值非法时，不再回落到存储值。**
+ * 从前这里是两个函数（`channel()` / `storedChannel()`）各带一个 `strict` 参数，
+ * 由调用点写成 `channel(...) ?? storedChannel(...)`；`strict` 随着装载器全函数化
+ * 一起消失之后，那个 `??` 会让 `REGISTRAR_PRIMARY=yydss` **静默穿透**成存储里
+ * 那条通道——运维写错一个字母，网关拿另一条通道去跑，一句话都不说。
+ * **这是本轮改动会引入的新缺陷，在这里堵死**：env 侧非法 ⇒ 直接判 `invalid: "env"`，
+ * 不看存储。
+ *
+ * **「缺席」的判据两侧同源**：`undefined` / `null` / 空串都算没写。env 侧的空串
+ *（`REGISTRAR_PRIMARY=`）因此会继续往存储看，与 `config-validate.ts` 的
+ * `crossFieldErrors` 逐字同一条规则——两边由那格双向等价用例钉着。
+ */
+function resolveChannel(
+  envRaw: string | undefined,
+  storedRaw: unknown,
+  envName: string,
+  field: string,
+  logger: Logger,
+): ChannelPick {
+  if (envRaw !== undefined && envRaw !== "") {
+    if (envRaw === "yyds" || envRaw === "moemail") return { value: envRaw, invalid: null };
+    logger.log({
+      level: "warn", event: "registrar.config_ignored",
+      msg: "忽略格式非法的通道值（只能是 yyds 或 moemail）",
+      fields: { source: "env", name: envName, raw: envRaw },
+    });
+    return { value: null, invalid: "env" };
   }
-  const baseUrl = env.MOEMAIL_BASE_URL ?? stored.moemail?.baseUrl ?? "";
-  const apiKey = env.MOEMAIL_API_KEY ?? stored.moemail?.apiKey ?? "";
+  if (storedRaw === undefined || storedRaw === null || storedRaw === "") {
+    return { value: null, invalid: null };
+  }
+  if (storedRaw === "yyds" || storedRaw === "moemail") return { value: storedRaw, invalid: null };
+  logger.log({
+    level: "warn", event: "registrar.config_ignored",
+    msg: "忽略存储中格式非法的通道值（只能是 yyds 或 moemail）",
+    fields: { source: "stored", name: field, raw: String(storedRaw) },
+  });
+  return { value: null, invalid: "stored" };
+}
+
+/** 只收非空字符串，别的（含数字 / 对象 / 空串）一律 `undefined`——存储里什么形状都可能来。 */
+function asNonEmpty(v: unknown): string | undefined {
+  return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+/**
+ * 一条通道的凭据。**缺什么就产出哪一条 blocker，不抛、也不发明取值。**
+ *
+ * ⚠️⚠️ **这里原来写着「启用时才校验凭据：关着的注册机不该因为没配 key 而让整个网关
+ * 起不来」。那句话只落实了一半**——「关着」那一半是真的，而「开着但缺凭据」照样
+ * 让整个网关起不来（三处 `throw`）。本轮把另一半补齐：**装载器不再有校验决定权，
+ * 它只产出 blocker，启不启动由消费方 gate**（`buildTendDeps` 与两条注册机端点）。
+ *
+ * `field` 与 `code` 与 `config-validate.ts` 的 `crossFieldErrors` 逐字对齐
+ *（`registrar.moemail.baseUrl` / `registrar.<ch>.apiKey` + `channel_credentials_missing`），
+ * 两边由那格双向等价用例钉着。
+ */
+function creds(
+  env: Env,
+  stored: Partial<RegistrarConfig>,
+  ch: Channel,
+  out: ConfigError[],
+): ChannelCreds | null {
+  if (ch === "yyds") {
+    const apiKey = asNonEmpty(env.YYDS_API_KEY) ?? asNonEmpty(stored.yyds?.apiKey);
+    if (apiKey === undefined) {
+      out.push({ field: "registrar.yyds.apiKey", code: "channel_credentials_missing", params: { channel: ch } });
+      return null;
+    }
+    // YYDS 的 baseUrl 有内置取值、MoeMail 没有——这是两条通道之间**唯一**的不对称，
+    // 而它是一句事实（一条是地址固定的公共服务，一条是自建服务），不是排名。
+    return {
+      baseUrl: asNonEmpty(env.YYDS_BASE_URL) ?? asNonEmpty(stored.yyds?.baseUrl) ?? DEFAULTS.yydsBaseUrl,
+      apiKey,
+    };
+  }
+  const baseUrl = asNonEmpty(env.MOEMAIL_BASE_URL) ?? asNonEmpty(stored.moemail?.baseUrl);
+  const apiKey = asNonEmpty(env.MOEMAIL_API_KEY) ?? asNonEmpty(stored.moemail?.apiKey);
   // MoeMail 是自建服务，没有公共默认地址，两项都必须显式提供。
-  if (!baseUrl) throw new Error("注册机已启用但缺少 MOEMAIL_BASE_URL");
-  if (!apiKey) throw new Error("注册机已启用但缺少 MOEMAIL_API_KEY");
-  return { baseUrl, apiKey };
+  if (baseUrl === undefined) {
+    out.push({ field: "registrar.moemail.baseUrl", code: "channel_credentials_missing", params: { channel: ch } });
+  }
+  if (apiKey === undefined) {
+    out.push({ field: "registrar.moemail.apiKey", code: "channel_credentials_missing", params: { channel: ch } });
+  }
+  return baseUrl === undefined || apiKey === undefined ? null : { baseUrl, apiKey };
 }
 
 export function registrarFromEnv(
   env: Env,
   stored: Partial<RegistrarConfig>,
   logger: Logger = NULL_LOGGER,
-): RegistrarConfig {
+  /**
+   * 字段级降级要能被上层观测到（`GatewayConfig.degraded`）。与 `num()` 的 `flags`
+   * 同一套语义：**用传入的标记打点，不要改成让调用方去解析日志**。
+   * 可选：`configFromEnv` 从不传（它没有「存储」这个降级来源）。
+   */
+  flags?: { degraded: boolean },
+): RegistrarLoad {
+  const blockers: ConfigError[] = [];
   const enabled = (env.REGISTRAR_ENABLED ?? String(stored.enabled ?? false)) === "true";
-  // 通道格式校验受 enabled 门控：未启用时脏数据只记事件，见 channel()/storedChannel() 注释。
-  const primary = channel(env.REGISTRAR_PRIMARY, "REGISTRAR_PRIMARY", enabled, logger)
-    ?? storedChannel(stored.primary, "primary", enabled, logger);
-  const fallback = channel(env.REGISTRAR_FALLBACK, "REGISTRAR_FALLBACK", enabled, logger)
-    ?? storedChannel(stored.fallback, "fallback", enabled, logger);
 
-  if (enabled && !primary) {
-    throw new Error("注册机已启用但未指定 REGISTRAR_PRIMARY（yyds 或 moemail，两者平级需显式选择）");
-  }
-  if (enabled && fallback && fallback === primary) {
-    throw new Error("REGISTRAR_FALLBACK 与 REGISTRAR_PRIMARY 相同，降级到自己没有意义");
+  const primaryPick = resolveChannel(env.REGISTRAR_PRIMARY, stored.primary, "REGISTRAR_PRIMARY", "primary", logger);
+  const fallbackPick = resolveChannel(env.REGISTRAR_FALLBACK, stored.fallback, "REGISTRAR_FALLBACK", "fallback", logger);
+  const primary = primaryPick.value;
+  const fallback = fallbackPick.value;
+
+  // 通道相关的四条 blocker 全部受 `enabled` 门控：关着的注册机的脏配置一条都不该
+  // 拦着谁——判据与 `crossFieldErrors` 同源（那边 `if (!enabled) return out;`）。
+  if (enabled) {
+    if (primaryPick.invalid !== null) {
+      blockers.push({
+        field: "registrar.primary", code: "not_a_channel",
+        params: { raw: String(primaryPick.invalid === "env" ? env.REGISTRAR_PRIMARY : stored.primary) },
+      });
+    } else if (primary === null) {
+      // **写成 `else if` 是有意的**：值写错了（`not_a_channel`）与压根没选
+      // （`primary_required`）是两句不同的话，同时说出来只会让运维以为有两处要改。
+      // `crossFieldErrors` 那边同一形状（`primary` 非空串就不报 `primary_required`）。
+      blockers.push({ field: "registrar.primary", code: "primary_required" });
+    }
+    if (fallbackPick.invalid !== null) {
+      blockers.push({
+        field: "registrar.fallback", code: "not_a_channel",
+        params: { raw: String(fallbackPick.invalid === "env" ? env.REGISTRAR_FALLBACK : stored.fallback) },
+      });
+    } else if (fallback !== null && fallback === primary) {
+      blockers.push({
+        field: "registrar.fallback", code: "fallback_equals_primary",
+        params: { channel: fallback },
+      });
+    }
   }
 
   const cfg: RegistrarConfig = {
@@ -149,25 +308,30 @@ export function registrarFromEnv(
     // 非空，消费方读取前必须先判断 enabled，见上面接口定义处的注释。
     primary: primary as Channel,
     fallback,
-    targetKeys: posInt(env, "TARGET_KEYS", "targetKeys", stored.targetKeys, DEFAULTS.targetKeys),
-    mintBatch: posInt(env, "MINT_BATCH", "mintBatch", stored.mintBatch, DEFAULTS.mintBatch),
-    tendIntervalMs: posInt(env, "TEND_INTERVAL_MS", "tendIntervalMs", stored.tendIntervalMs, DEFAULTS.tendIntervalMs),
-    codeTimeoutMs: posInt(env, "CODE_TIMEOUT_MS", "codeTimeoutMs", stored.codeTimeoutMs, DEFAULTS.codeTimeoutMs),
-    mintDelayMinMs: posInt(env, "MINT_DELAY_MIN_MS", "mintDelayMinMs", stored.mintDelayMinMs, DEFAULTS.mintDelayMinMs),
-    mintDelayMaxMs: posInt(env, "MINT_DELAY_MAX_MS", "mintDelayMaxMs", stored.mintDelayMaxMs, DEFAULTS.mintDelayMaxMs),
-    maxDomainAttempts: posInt(env, "MAX_DOMAIN_ATTEMPTS", "maxDomainAttempts", stored.maxDomainAttempts, DEFAULTS.maxDomainAttempts),
+    targetKeys: posInt(env, "TARGET_KEYS", "registrar.targetKeys", stored.targetKeys, DEFAULTS.targetKeys, logger, flags),
+    mintBatch: posInt(env, "MINT_BATCH", "registrar.mintBatch", stored.mintBatch, DEFAULTS.mintBatch, logger, flags),
+    tendIntervalMs: posInt(env, "TEND_INTERVAL_MS", "registrar.tendIntervalMs", stored.tendIntervalMs, DEFAULTS.tendIntervalMs, logger, flags),
+    codeTimeoutMs: posInt(env, "CODE_TIMEOUT_MS", "registrar.codeTimeoutMs", stored.codeTimeoutMs, DEFAULTS.codeTimeoutMs, logger, flags),
+    mintDelayMinMs: posInt(env, "MINT_DELAY_MIN_MS", "registrar.mintDelayMinMs", stored.mintDelayMinMs, DEFAULTS.mintDelayMinMs, logger, flags),
+    mintDelayMaxMs: posInt(env, "MINT_DELAY_MAX_MS", "registrar.mintDelayMaxMs", stored.mintDelayMaxMs, DEFAULTS.mintDelayMaxMs, logger, flags),
+    maxDomainAttempts: posInt(env, "MAX_DOMAIN_ATTEMPTS", "registrar.maxDomainAttempts", stored.maxDomainAttempts, DEFAULTS.maxDomainAttempts, logger, flags),
     // 前缀不能省：容器编排层（compose/K8s）里 TOKEN_NAME 这种通用名字太容易与
     // 别的组件撞车，而撞上的后果是静默改掉铸出的 key 在 Agnes 后台的显示名。
     tokenName: env.REGISTRAR_TOKEN_NAME ?? stored.tokenName ?? DEFAULTS.tokenName,
     agnesPlatformUrl: env.AGNES_PLATFORM_URL ?? stored.agnesPlatformUrl ?? DEFAULTS.agnesPlatformUrl,
     yyds: null,
     moemail: null,
+    blocked: false,
   };
 
+  // **这一条刻意不受 `enabled` 门控**，与 `crossFieldErrors` 里那条逐字一致
+  //（那边的注释已经登记了「不门控是有意的」）。它比较的是**生效值**，
+  // 所以两个数各自都合法、只是搭配不成立时照样报得出来。
   if (cfg.mintDelayMinMs > cfg.mintDelayMaxMs) {
-    throw new Error(
-      `MINT_DELAY_MIN_MS 不能大于 MINT_DELAY_MAX_MS: ${cfg.mintDelayMinMs} > ${cfg.mintDelayMaxMs}`,
-    );
+    blockers.push({
+      field: "registrar.mintDelayMinMs", code: "delay_min_gt_max",
+      params: { min: cfg.mintDelayMinMs, max: cfg.mintDelayMaxMs },
+    });
   }
 
   // 单轮最坏耗时 ≈ mintBatch × codeTimeoutMs × 通道数（每次铸 key 最长要等满验证码
@@ -176,8 +340,8 @@ export function registrarFromEnv(
   //
   // 它超过补池间隔时，轮次会重叠着跑——两个入口各有兜底（Node 的在途守卫、Worker
   // 的 KV 短锁）会把重叠的那次跳过，但被跳过的名额就白白浪费了，该调的是配置本身。
-  // 与上面 MINT_DELAY_MIN/MAX 的交叉校验同一性质，区别是这里只 warn 不抛错：数值
-  // 各自都合法，只是搭配不划算，没到该拒绝启动的程度。这条 warn 受 enabled 门控，
+  // 与上面 MINT_DELAY_MIN/MAX 的交叉校验同一性质，区别是这里只 warn、连 blocker 都不产：
+  // 数值各自都合法，只是搭配不划算，没到该让注册机停跑的程度。这条 warn 受 enabled 门控，
   // 关着的注册机不会打。
   const chainLength = cfg.fallback ? 2 : 1;
   const worstRoundMs = cfg.mintBatch * cfg.codeTimeoutMs * chainLength;
@@ -195,8 +359,8 @@ export function registrarFromEnv(
   // `minted < attempted`（0 < 0 为假）所以一条都不打，用户只看到「本轮墙钟预算
   // 不足」，读起来像瞬时状况，实际是永久停摆。启动期把它说破。
   //
-  // 只 warn 不抛错：Node/Docker 上**定时轮**没有平台墙钟上限，同一份配置在那边的
-  // 定时轮上完全合法，抛错会让一个正当的 Node 部署起不来。文案里点明形态差异。
+  // 只 warn 不产 blocker：Node/Docker 上**定时轮**没有平台墙钟上限，同一份配置在那边的
+  // 定时轮上完全合法，让注册机停跑会打掉一个正当的 Node 部署。文案里点明形态差异。
   //
   // ⚠️ **末句的措辞是订正过的，别改回去。** 上一版写的是
   // 「Node/Docker 没有平台墙钟上限，不受此限制」——**面板那颗「立即补池」上线之后那句就不再准确**：
@@ -220,13 +384,21 @@ export function registrarFromEnv(
     });
   }
 
-  if (!enabled) return cfg;
-
-  for (const ch of [primary, fallback].filter((c): c is Channel => c !== null)) {
-    if (ch === "yyds") cfg.yyds = creds(env, stored, "yyds");
-    else cfg.moemail = creds(env, stored, "moemail");
+  if (enabled) {
+    // **去重**：`primary === fallback` 时（那本身已经产出 `fallback_equals_primary`）
+    // 不该把同一条通道的缺凭据再报一遍。
+    const chain = [...new Set([primary, fallback].filter((c): c is Channel => c !== null))];
+    for (const ch of chain) {
+      const got = creds(env, stored, ch, blockers);
+      if (ch === "yyds") cfg.yyds = got;
+      else cfg.moemail = got;
+    }
   }
-  return cfg;
+
+  // 一次收齐全部 blocker（不首条即停）：运维要的是「还差哪几格」，不是「先改这一格
+  // 再来问下一格」——那正是本仓在 `validateConfigPatch` 的跨字段阶段裁过的形态。
+  cfg.blocked = blockers.length > 0;
+  return { config: cfg, blockers };
 }
 
 /**
@@ -235,6 +407,11 @@ export function registrarFromEnv(
  * `enabled`）。下游一旦裸读 `cfg.primary` 却忘了先判空，拿到的要么是 `undefined`
  * 引发的无上下文异常，要么是运行时 `null`。这个访问器把判断收敛到一处：调用方
  * 不必再自己记得先查 `enabled`。
+ *
+ * ⚠️⚠️ **它是本模块唯一的 `throw` 豁免项**（`tests/unit/source-guards.test.ts` 里那份
+ * 手写豁免清单逐字写着 `requirePrimary`）。它不在装载路径上——装载器全函数化说的是
+ * 「一份坏配置不该让网关起不来」，而这里是**消费方护栏**：走到这里还没有主通道，
+ * 说明某个消费者跳过了 `enabled` / `blocked` 两道 gate，那是代码 bug，必须响。
  */
 export function requirePrimary(cfg: RegistrarConfig): Channel {
   if (!cfg.enabled || !cfg.primary) {

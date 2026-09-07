@@ -403,11 +403,33 @@ attempt, whether it succeeded or failed.
 
 ## Troubleshooting
 
+### The registrar has three states
+
+The registrar is not simply on or off — there are **three** states.
+
+- **Disabled**: `REGISTRAR_ENABLED` is unset, or the panel toggle is off. Nothing runs, nothing is sent.
+- **Enabled**: on, and this configuration loads. Tending runs on `TEND_INTERVAL_MS` (or the Worker Cron).
+- **Enabled · not started this time**: the toggle is on, but this configuration could not be loaded
+  (no primary channel, missing credentials on the chain, fallback equal to primary, …), so it was not
+  started. **Gateway forwarding is entirely unaffected** — only the refilling stops.
+
+The third one is the easy state to misread, so it shows up in four places: the Settings banner (listing
+the missing fields), the Registrar status row, the Overview config summary, and an `error`-level
+`registrar.blocked` every round. **To recover**: fill in those fields and save — no restart, no redeploy.
+
+> [!WARNING]
+> **What this costs**: it turns a loud failure into a quiet one. Once refilling stops, the pool drains
+> slowly and surfaces as `pool_empty` hours or days later, far from the real cause. The four signals
+> above exist precisely for that — **you have to go look**.
+
 ### Startup and logging conventions
 
-- **If credentials are missing while enabled, the process fails to start and tells you which
-  variable is missing.** The registrar follows a fail-closed policy — missing credentials never
-  degrade silently, they fail the gateway loudly so the problem is easy to spot.
+- **If credentials are missing while enabled, the registrar does not start this round, but the
+  gateway keeps forwarding.**
+  This **changed**: it used to fail the whole gateway closed. The registrar is an optional
+  subsystem, and one missing mailbox key should not take down forwarding, `/health` and the admin
+  panel with it. The missing fields are now listed one by one in the panel, and an `error`-level
+  `registrar.blocked` is logged every round. See "The registrar has three states" below.
 - Refill logs are consistently prefixed with `[registrar]`, so you can filter for them. The
   second field on every log line is a stable, machine-readable **event name** (e.g.
   `registrar.round_budget_impossible`). Grepping by event name is more reliable than grepping

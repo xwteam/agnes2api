@@ -8,6 +8,7 @@ import { workerRuntime } from "../adapters/runtime-worker.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import { WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
 import { acquireTendLock, releaseTendLock } from "../http/admin/tend-lock.js";
+import { ConfigRefusal } from "../core/config-errors.js";
 import type { Hono } from "hono";
 
 export interface Env {
@@ -47,6 +48,37 @@ export default {
         // 内部路径与栈帧。与 app.onError 刻意不回显、/health 刻意不回显底层错误
         // 是同一条策略——原实现在这里自相矛盾。
         console.error("[agnes2api] 装配失败", err);
+        /**
+         * ⚠️⚠️ **两档分开，这是本轮改动的另一半。**
+         *
+         * Worker 上没有「启动」这回事：`buildApp` 每个 isolate 懒执行，抛错的结果是
+         * **部署"成功"、每个请求 500、真原因只落在 `console.error`**（要 `wrangler tail`
+         * 才看得见）。同一份代码在 Node 上是 `process.exit(1)`——运维立刻看得见的
+         * 正确 fail-fast。同一份代码、两种相反的运维体验。
+         *
+         * `ConfigRefusal` = **运维配错了**（今天只剩「两边都没有 GATEWAY_TOKEN」与
+         * `num()` 的 env 侧非法值两条）⇒ `503` + 一条**固定枚举**的 `reason`，
+         * 让「这个部署还没配完」这件事在 `wrangler tail` 之外也说得出来。
+         * 非 `ConfigRefusal` 按定义就是代码 bug ⇒ 维持今天的不透明 `500`。
+         *
+         * ⚠️ **`reason` 永不由 `err.message` 派生。** 这是未鉴权路径，配置细节
+         * 一个字节都不许到未鉴权调用方——`tests/unit/entry-worker.test.ts` 的
+         * 「缺 GATEWAY_TOKEN 时每个请求回 503 + reason:"not_configured"，不回显异常细节——这是未鉴权路径」
+         * 里那句 `expect(text).not.toContain("GATEWAY_TOKEN")` 钉着这条。
+         *
+         * ⚠️ **这是未鉴权路径上的契约变更**：按 500 报警的监控要跟着改（CHANGELOG
+         * 里记了）。`reason: "not_configured"` 是一条新的未鉴权披露（告诉陌生人这个
+         * 部署没配完）；先例是 `/health` 未鉴权就回 `status:"degraded"` 加一整句说明。
+         */
+        if (err instanceof ConfigRefusal) {
+          return new Response(
+            JSON.stringify({
+              error: { type: "service_unavailable", message: "网关尚未完成配置" },
+              reason: "not_configured",
+            }),
+            { status: 503, headers: { "content-type": "application/json" } },
+          );
+        }
         return new Response(
           JSON.stringify({ error: { type: "internal_error", message: "网关内部错误" } }),
           { status: 500, headers: { "content-type": "application/json" } },

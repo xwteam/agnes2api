@@ -4920,10 +4920,14 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚", () => {
  *   `间隔 × (预算 − 1) < 一天` 时**直接抛**，最小可用值 7200000 —— 由
  *   `tests/contract/usage-tier2.test.ts` 的「有写配额的存储上把间隔调到 300 秒：启动就抛，
  *   且消息里给出最小可用值 7200000 —— 写量合格而数据从中午起就是假的，比起不来更难发现」钉着；
- * · `src/entry/worker.ts` 的 `fetch()` 把 `buildApp` 的异常 catch 成一条**不带原因**的
- *   500，并且 `cachedApp` 停在 `null` ⇒ **每一个请求都会重走一遍并再抛一遍**，
- *   真原因只落在 `console.error`。那条 500 的形状由
- *   `tests/unit/entry-worker.test.ts` 的「装配失败时返回固定文案的 JSON 500，不回显异常细节——这是未鉴权路径」钉着。
+ * · `src/entry/worker.ts` 的 `fetch()` 把 `buildApp` 的异常 catch 成一条**不带配置细节**的
+ *   响应，并且 `cachedApp` 停在 `null` ⇒ **每一个请求都会重走一遍并再抛一遍**，
+ *   完整原因只落在 `console.error`。
+ *   ⚠️ **这一条被订正过**：那条响应现在**分两档**——「运维配错」（`ConfigRefusal`）回
+ *   `503` + `reason: "not_configured"`，其余（按定义是代码 bug）维持不透明的 `500`。
+ *   两档的形状分别由 `tests/unit/entry-worker.test.ts` 的
+ *   「缺 GATEWAY_TOKEN 时每个请求回 503 + reason:"not_configured"，不回显异常细节——这是未鉴权路径」
+ *   与「非 ConfigRefusal 的装配异常仍然回不透明的 500（那是代码 bug，不是运维配错）」钉着。
  * ⇒ 「`wrangler deploy` 成功，然后每个请求 500」是这三条的直接后果，不是推测。
  *
  * ⚠️⚠️ **Node 那一侧根本走不到这个抛错**（复评推翻了上一版写在这里的那句
@@ -12377,7 +12381,11 @@ describe("五份 REGISTRAR.md 的两级分层与 Cron 那一节的拆分", () =>
    * 多出来的那一个 `##` 就是页脚节；逐条内容由「页脚形态 A」那一组按公式查。
    */
   const H2_COUNT = 12;
-  const H3_FLOOR = 15;
+  // ⚠️ **15 → 16 是「注册机的三态」那一节落地，不是骨架漂移。**
+  // 这条下限的语义是「只许升不许降」（同 ADMIN 那一条）：五份**同时**新增一个 `###`
+  // 时，「五份彼此相等」那半边一格都不会红，只有这条下限拦得住「五份一起缩水」。
+  // 新增的那一节住在 `## 排障` 之下，逐语言各一个 `###`，五份同步。
+  const H3_FLOOR = 16;
   const H4_FLOOR = 4;
   /** Cron 那一节里的 `####` 恰好几个、至少几张表（靶子是「4 个 `####` + 3 张表」）。 */
   const CRON_H4 = 4;
@@ -13596,7 +13604,12 @@ describe("R27 的源码锚：口令那两条门槛的数字从 `src/` 现算，�
     const fn = src.slice(src.indexOf("export function configFromEnv"));
     const body = fn.slice(0, fn.indexOf("\n}\n") + 1);
     return {
-      throwsWhenMissing: /if \(!gatewayToken\) throw new Error\(/.test(body),
+      // ⚠️ **判据从 `throw new Error(` 放宽到「抛一个以 `Config` 打头的类」，
+      // 而不是放宽成裸 `throw`**：装载路径那一轮给「网关拒绝服务」这一档配了专用
+      // 异常类 `ConfigRefusal`（两个入口据它把「运维配错」与「代码 bug」分开），
+      // 于是这里的 `new Error(` 不再匹配。**射程一个字都没放宽**——它仍然要求
+      // 那一句是「缺口令就抛」，只是允许抛的是那个专用类。
+      throwsWhenMissing: /if \(!gatewayToken\) throw new Config\w+\(/.test(body),
       checksLength: /gatewayToken\.length\s*[<>=]/.test(body),
     };
   };
@@ -14766,5 +14779,107 @@ describe("六份 README 的配置表：名单 ⊆ `.env.example`，默认值从 
         return m === null ? [] : [m[1] ?? ""];
       });
     expect(commented.filter((k) => !decl.has(k)), "被注释掉的声明没进声明集").toEqual([]);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * **五份 `DEPLOY.md` 的那条故障排查条目：症状按运行时分两段。**
+ *
+ * 这一组是缺陷③的判据。原来那条的症状行逐字写着「容器或 Worker **一启动就退出**」
+ * ——**对 Worker 是假的**：Worker 没有「启动」这回事，`buildApp` 在每个 isolate 里
+ * 懒执行，抛错的真实症状是「部署显示成功、每个请求回一个不说原因的 500、线索只在
+ * `wrangler tail`」。症状对不上的人根本不会点进这一条，于是唯一的救命步骤白写。
+ *
+ * 改完之后 Worker 那一半回的是 `503` + `reason: not_configured`（未鉴权路径上的
+ * 契约变更，CHANGELOG 记着）。三条判据：
+ * ① 五份都写了 Worker 专属症状段（「部署成功」+「503」两条都要在）；
+ * ② 五份都**不再**含「Worker 一启动就退出」那种合并说法；
+ * ③ 五份都把 `RESET_CONFIG=1` 从这条的解决步骤里删掉了——改完之后存储里能写坏到
+ *    让网关起不来的只剩「gatewayToken 两边都没有」，而 `RESET_CONFIG` 的语义是
+ *    **完全忽略存储里的 `config` 键** ⇒ 连唯一那把口令也一起忽略，照做更糟。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("五份 DEPLOY.md：缺口令那条故障排查按运行时分两段症状", () => {
+  const readDeploy: ApiDocReader = realDoc("DEPLOY");
+
+  /** 那一条 `###` 小节的正文，逐语言。**找不到当场抛**，不静静返回空串。 */
+  const HEADING: Record<Lang, string> = {
+    "zh-CN": "### 网关起不来，日志里只有一行缺少令牌",
+    "zh-TW": "### 閘道起不來，日誌裡只有一行缺少權杖",
+    en: "### The gateway will not start and the log has one line about a missing token",
+    ja: "### ゲートウェイが起動せず、ログにトークン不足の 1 行だけが出る",
+    ko: "### 게이트웨이가 뜨지 않고 로그에 토큰이 없다는 한 줄만 나온다",
+  };
+
+  function entry(lang: Lang): string {
+    const src = readDeploy(lang);
+    const from = src.indexOf(`\n${HEADING[lang]}\n`);
+    if (from < 0) {
+      throw new Error(`docs/${lang}/DEPLOY.md 里找不到「${HEADING[lang]}」`
+        + " —— 小节标题改了就回来改这张表，别让下面几格变成假红");
+    }
+    const rest = src.slice(from + 1);
+    const end = rest.slice(1).search(/\n#{2,3} /);
+    return end < 0 ? rest : rest.slice(0, end + 1);
+  }
+
+  /** Worker 专属症状必须说到的两件事，逐语言。**都是文档正文里的字面串。** */
+  const WORKER_SYMPTOM: Record<Lang, readonly string[]> = {
+    "zh-CN": ["部署会显示成功", "503", "wrangler tail"],
+    "zh-TW": ["部署會顯示成功", "503", "wrangler tail"],
+    en: ["the deploy reports success", "503", "wrangler tail"],
+    ja: ["デプロイは成功と表示される", "503", "wrangler tail"],
+    ko: ["배포는 성공으로 표시", "503", "wrangler tail"],
+  };
+
+  /** 「一启动就退出」那种把两种运行时合并说的旧措辞，逐语言。 */
+  const MERGED_CLAIM: Record<Lang, readonly string[]> = {
+    "zh-CN": ["容器或 Worker 一启动就退出"],
+    "zh-TW": ["容器或 Worker 一啟動就退出"],
+    en: ["The container or the Worker exits right after startup"],
+    ja: ["コンテナまたは Worker が起動直後に終了"],
+    ko: ["컨테이너나 Worker가 기동 직후 종료"],
+  };
+
+  it("五份都写了 Worker 专属症状段：部署成功 + 503 + 线索在 wrangler tail", () => {
+    const missing = LANGS.flatMap((l) => {
+      const body = entry(l);
+      return WORKER_SYMPTOM[l].filter((w) => !body.includes(w)).map((w) => `docs/${l}/DEPLOY.md 缺「${w}」`);
+    });
+    expect(missing, `Worker 那一半的症状没写全：\n${missing.join("\n")}\n`
+      + "⇒ 症状对不上的人不会点进这一条，唯一的救命步骤就白写了").toEqual([]);
+  });
+
+  it("五份都不再把两种运行时合并成「一启动就退出」——那句话对 Worker 是假的", () => {
+    const bad = LANGS.flatMap((l) => {
+      const src = readDeploy(l);
+      return MERGED_CLAIM[l].filter((w) => src.includes(w)).map((w) => `docs/${l}/DEPLOY.md 仍有「${w}」`);
+    });
+    expect(bad, `旧措辞回来了：\n${bad.join("\n")}\n`
+      + "⇒ Worker 上装配失败不会「退出」，它会部署成功然后每个请求回 503").toEqual([]);
+  });
+
+  it("五份都把 `RESET_CONFIG=1` 从这条的解决步骤里删掉了", () => {
+    const bad = LANGS.filter((l) => entry(l).includes("RESET_CONFIG=1") && !entry(l).includes("[!WARNING]"))
+      .map((l) => `docs/${l}/DEPLOY.md`);
+    expect(bad, "`RESET_CONFIG=1` 又回到这条的解决步骤里了 —— 它会把存储里那把口令也一起忽略，"
+      + "照做会把「补池停了」的小事故操作成「口令没了」的大事故").toEqual([]);
+    // **反向自检**：五份里都还留着那条**警示**（告诉人别用它），否则上面那格只是「删干净了」。
+    const noWarning = LANGS.filter((l) => !entry(l).includes("RESET_CONFIG=1")).map((l) => `docs/${l}/DEPLOY.md`);
+    expect(noWarning, "连「别用 RESET_CONFIG 救这一条」的警示也一起删掉了 —— "
+      + "那等于把一条会让人操作更糟的路留在别处而这里一个字都不说").toEqual([]);
+  });
+
+  it("五份都新开了「注册机开着却不铸 key」那条 —— 这是修复之后新出现的用户可见形态", () => {
+    const HEAD: Record<Lang, string> = {
+      "zh-CN": "### 注册机开着却不铸 key",
+      "zh-TW": "### 註冊機開著卻不鑄 key",
+      en: "### The registrar is on but mints nothing",
+      ja: "### レジストラーは有効なのに key を発行しない",
+      ko: "### 등록기는 켜져 있는데 key를 발급하지 않는다",
+    };
+    const missing = LANGS.filter((l) => !readDeploy(l).includes(HEAD[l])).map((l) => `docs/${l}/DEPLOY.md`);
+    expect(missing, "把一次响亮的故障换成一次安静的故障之后，这条排查是运维仅有的入口之一")
+      .toEqual([]);
   });
 });

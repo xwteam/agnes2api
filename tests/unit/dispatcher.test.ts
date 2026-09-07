@@ -37,7 +37,7 @@ const CONFIG = {
   // 「改完再 all() 读回来」断言。快照缓存与写消除都会挡在这条读回路上，开着它们
   // 等于让这些断言测的是缓存而不是记账。两者由 pool-cache / quota-account 覆盖。
   poolCacheTtlMs: 0, poolTouchIntervalMs: 0,
-  registrar: registrarFromEnv({}, {}),
+  registrar: registrarFromEnv({}, {}).config,
   degraded: false,
   // Tier-2 与 `dispatch()` 完全无关：**归因由路由层记，`dispatch` 的签名一个字没改**
   //（这是后来加的）。这一格在这里只是让 `GatewayConfig` 完整。

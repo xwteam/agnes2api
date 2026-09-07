@@ -319,9 +319,17 @@ every other setting, they do not take effect per request.
 
 ### `RESET_CONFIG`: when to reach for this escape hatch
 
-> Use it to recover when the stored config has been corrupted badly enough to keep the gateway
-> from starting; remove the line afterwards, or nothing you save in the panel will ever take
-> effect.
+> What it is actually for is **bypassing the panel-stored configuration wholesale**: boot once with
+> environment variables and built-in defaults only, so you are back in a known-clean state. Remove the
+> line afterwards, or nothing you save in the panel will ever take effect.
+
+> [!WARNING]
+> **Do not treat it as "the config got corrupted, use this to recover".** Stored values can hardly be
+> corrupted badly enough to stop the gateway any more: an invalid number **falls back to the default**
+> (the panel reports the degradation), and registrar problems only stop **the registrar** from starting
+> this time while the gateway keeps forwarding. The one remaining way to keep the gateway from starting
+> is **having no gateway token on either side** — and `RESET_CONFIG=1` would ignore the stored token too,
+> so **following that advice makes things worse**.
 
 ### What `POOL_CACHE_TTL_MS` costs
 
@@ -1167,6 +1175,18 @@ see [REGISTRAR.md](REGISTRAR.md).
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | no / required if a channel is yyds | `https://maliapi.215.im` / empty | YYDS Mail channel credentials. |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | required if a channel is moemail | empty / empty | MoeMail channel credentials (self-hosted, no default address). |
 
+> [!WARNING]
+> **A wrong value in these 16 variables no longer keeps the container from starting.**
+> Numeric ones (`TARGET_KEYS=abc`, `MINT_BATCH=0`, and the like) **fall back to the default in the
+> table above**, report a degradation in the panel and log one `config.invalid` event; channel and
+> credential mistakes (a misspelled channel name, the registrar on with no primary channel, a missing
+> API key, a fallback equal to the primary) only stop **the registrar** from starting this time, while
+> the gateway keeps forwarding.
+>
+> **This is a capability loss, stated plainly**: a deployment typo used to crash the container, so you
+> knew immediately; now it runs quietly and you have to go look at the panel banner or the events section.
+> The walkthrough is the "the registrar is on but mints nothing" entry under Troubleshooting below.
+
 ### What each of the two timeout budgets covers
 
 The criterion is *when the upstream's first byte can possibly arrive*, not the name of the
@@ -1396,18 +1416,30 @@ the pool has no key yet — go back to the section above and import one.
 
 ## Troubleshooting
 
-Six of them, ordered by when you are likely to hit them. Each is "symptom → fix", and the
+Seven of them, ordered by when you are likely to hit them. Each is "symptom → fix", and the
 numbered steps are meant to be worked through in order.
 
 ### The gateway will not start and the log has one line about a missing token
 
-**Symptom**: The container or the Worker exits right after startup and the log contains nothing but `缺少 GATEWAY_TOKEN，网关无法启动`.
+**Symptom**: it differs by runtime, and the two look nothing alike.
+
+- **Docker / Node**: the container **exits right after startup** and the log contains nothing but
+  `缺少 GATEWAY_TOKEN，网关无法启动`.
+- **Cloudflare Worker**: **the deploy reports success**, but **every request returns `503`** with the body
+  `{"error":{"type":"service_unavailable","message":"网关尚未完成配置"},"reason":"not_configured"}`,
+  and `/health` behaves the same. A Worker has no "startup": assembly happens lazily in each isolate,
+  so there is no "exited" signal here. **The only clue is in `npx wrangler tail`**, on a line starting with
+  `[agnes2api] 装配失败`.
 
 **Fix**:
 
 1. Docker: check that `.env` has a `GATEWAY_TOKEN=` line and that **there is something after the equals sign**.
 2. Worker: run `npx wrangler secret put GATEWAY_TOKEN` once, then `npx wrangler deploy`.
-3. A corrupted stored config also fails to load. Boot once with `RESET_CONFIG=1` to recover, and **remove that line once you have**.
+
+> [!WARNING]
+> **Do not reach for `RESET_CONFIG=1` here.** It means "**ignore the stored `config` key entirely**" — and if
+> your gateway token lives exactly there (the one you saved in the panel), ignoring it removes the only token
+> you have. Only the two steps above fix this failure.
 
 ### Every request answers 503 because the pool is empty
 
@@ -1418,6 +1450,25 @@ numbered steps are meant to be worked through in order.
 1. Import at least one key from the key-pool page of the admin panel, or call `POST /admin/api/keys` (see [API.md](API.md)); with no `ADMIN_TOKEN` set, follow the "Multi-Account Configuration" section and write into the storage backend directly.
 2. Already imported and still empty: a hand-written record **does not touch `pool:index`**, so either wait for one reconciliation (30 minutes by default) or add the id to the index by hand.
 3. The registrar is on but the pool never grows: check the panel's events board, or follow [REGISTRAR.md](REGISTRAR.md) to debug the two mailbox channels.
+
+### The registrar is on but mints nothing (the panel says enabled, the pool never grows)
+
+**Symptom**: the registrar toggle is on, yet no tending round runs. Keys only leave the pool, and it
+eventually surfaces as the previous entry — several layers away from the real cause by then.
+
+This is a **quiet feature outage**: the registrar is optional, so when its configuration cannot be loaded,
+**the gateway keeps forwarding** and only the refilling stops. Nothing crashes, so you have to go and look.
+
+**Where to look** (four places, all saying the same thing):
+
+1. A banner at the top of the **Settings** page, listing the missing fields.
+2. The **Registrar** section reads "Enabled · not started this time" instead of "Enabled".
+3. The **Overview** config summary says the same on the registrar row.
+4. An `error`-level `registrar.blocked` in the events section, every round.
+
+**Fix**: fill in the fields listed in the banner on the Settings page — most often a mailbox channel on the
+primary/fallback chain is missing its API key, or the fallback was set to the same channel as the primary.
+**Saving is enough to recover; no container restart and no redeploy.**
 
 ### The panel will not open and `/admin` answers 404
 

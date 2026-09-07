@@ -238,7 +238,12 @@ async function startTend(channel) {
 
 function renderStatus() {
   const s = statusView(data);
-  nodes.state.textContent = s.enabled === null ? fmtDash(null) : t(s.enabled ? "reg.state.on" : "reg.state.off");
+  // **三态，不是两态**：关 / 开着在跑 / 开着但这次没跑起来。
+  // 第三态压进前两态里的任何一个都是撒谎——压成「已关闭」是对着一个亮着的开关
+  // 说没打开，压成「已启用」是声称有一个在工作的注册机而补池一轮都没跑。
+  nodes.state.textContent = s.enabled === null
+    ? fmtDash(null)
+    : t(s.enabled ? (s.blocked === true ? "reg.state.blocked" : "reg.state.on") : "reg.state.off");
   nodes.primary.textContent = s.primary === null ? t("reg.none") : s.primary;
   nodes.fallback.textContent = s.fallback === null ? t("reg.none") : s.fallback;
 

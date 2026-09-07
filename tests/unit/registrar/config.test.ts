@@ -4,13 +4,24 @@ import { WORKER_CRON_WALL_CLOCK_MS, WORKER_ROUND_BUDGET_MS } from "../../../src/
 import { registrarFromEnv, requirePrimary } from "../../../src/core/registrar/config.js";
 import { recordingLogger } from "../../helpers/recording-logger.js";
 
+/** 只要生效配置那一半。装载器现在返回 `{ config, blockers }` 两格。 */
+const cfg = (
+  env: Parameters<typeof registrarFromEnv>[0],
+  stored: Parameters<typeof registrarFromEnv>[1] = {},
+  logger?: Parameters<typeof registrarFromEnv>[2],
+): ReturnType<typeof registrarFromEnv>["config"] => registrarFromEnv(env, stored, logger).config;
+
+/** `blockers` 压成 `field:code` 排序清单——逐条比对时读起来是人话。 */
+const codes = (r: ReturnType<typeof registrarFromEnv>): string[] =>
+  r.blockers.map((b) => `${b.field}:${b.code}`).sort();
+
 describe("registrarFromEnv", () => {
   it("默认不启用", () => {
-    expect(registrarFromEnv({}, {}).enabled).toBe(false);
+    expect(cfg({}, {}).enabled).toBe(false);
   });
 
   it("默认值与设计文档一致", () => {
-    const c = registrarFromEnv({}, {});
+    const c = cfg({}, {});
     expect(c.fallback).toBeNull();
     expect(c.targetKeys).toBe(20);
     expect(c.mintBatch).toBe(5);
@@ -19,26 +30,46 @@ describe("registrarFromEnv", () => {
     expect(c.maxDomainAttempts).toBe(8);
   });
 
-  it("启用但没指定主通道时抛错（两条通道平级，不预设默认）", () => {
-    expect(() => registrarFromEnv({ REGISTRAR_ENABLED: "true" }, {}))
-      .toThrow(/REGISTRAR_PRIMARY/);
+  // ⚠️⚠️ **这一族用例在「装载器全函数化」那一轮从「抛错」改判成「产出 blocker」。**
+  // 判据的**行为**没有放松，换的是失败形态：从前一份坏配置让**整个网关**起不来
+  //（Node 进程退出 / Worker 每个请求 500），现在只让**注册机本次不启动**，
+  // 转发、`/health`、面板照常。`blocked` 与逐条 `blockers` 是那件事的对外表达。
+  it("启用但没指定主通道时产出 primary_required（两条通道平级，不预设默认）", () => {
+    const r = registrarFromEnv({ REGISTRAR_ENABLED: "true" }, {});
+    expect(codes(r)).toEqual(["registrar.primary:primary_required"]);
+    expect(r.config.blocked).toBe(true);
+    // **`enabled` 一个字都不改**：「运维明明打开了，面板却说未启用」是另一种撒谎。
+    expect(r.config.enabled).toBe(true);
   });
 
-  it("启用但主通道凭据缺失时抛错并指明缺项", () => {
-    expect(() => registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds" }, {}))
-      .toThrow(/YYDS_API_KEY/);
+  it("启用但主通道凭据缺失时产出 channel_credentials_missing 并指明是哪一格", () => {
+    const r = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds" }, {});
+    expect(r.blockers).toEqual([
+      { field: "registrar.yyds.apiKey", code: "channel_credentials_missing", params: { channel: "yyds" } },
+    ]);
+    // **不发明取值**：缺凭据的通道保持 null，下游拿不到一份半真的 ChannelCreds。
+    expect(r.config.yyds).toBeNull();
+    expect(r.config.blocked).toBe(true);
   });
 
-  it("启用且凭据齐备时通过", () => {
-    const c = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" }, {});
-    expect(c.enabled).toBe(true);
-    expect(c.yyds).toEqual({ baseUrl: "https://maliapi.215.im", apiKey: "k" });
+  it("启用且凭据齐备时通过（blockers 空、blocked 假）", () => {
+    const r = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" }, {});
+    expect(r.config.enabled).toBe(true);
+    expect(r.config.yyds).toEqual({ baseUrl: "https://maliapi.215.im", apiKey: "k" });
+    expect(r.blockers).toEqual([]);
+    expect(r.config.blocked).toBe(false);
   });
 
   it("配了备通道则备通道凭据也必须齐备", () => {
-    expect(() => registrarFromEnv(
+    const r = registrarFromEnv(
       { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k", REGISTRAR_FALLBACK: "moemail" }, {},
-    )).toThrow(/MOEMAIL/);
+    );
+    expect(codes(r)).toEqual([
+      "registrar.moemail.apiKey:channel_credentials_missing",
+      "registrar.moemail.baseUrl:channel_credentials_missing",
+    ]);
+    // 主通道那一半照样装得出来——**一次收齐全部 blocker，且不牵连别的字段**。
+    expect(r.config.yyds).toEqual({ baseUrl: "https://maliapi.215.im", apiKey: "k" });
   });
 
   it("yyds 作**备**通道时 YYDS_API_KEY 同样必填（不是「主通道才要」）", () => {
@@ -46,14 +77,14 @@ describe("registrarFromEnv", () => {
     // .env.example 的错误注释（「主通道启用时必填」）正是把用户往这个配置上引——
     // 结果 Node 进程 process.exit(1)、Worker 全部请求 500，整个网关的转发能力被
     // 一个备通道凭据打掉。两条方向都钉住，才算守住「两条通道一视同仁」。
-    expect(() => registrarFromEnv(
+    expect(codes(registrarFromEnv(
       {
         REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "moemail",
         MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
         REGISTRAR_FALLBACK: "yyds",
       },
       {},
-    )).toThrow(/YYDS_API_KEY/);
+    ))).toEqual(["registrar.yyds.apiKey:channel_credentials_missing"]);
   });
 
   it(".env.example 的凭据注释按「主通道或备通道任一」措辞，两条通道对称", () => {
@@ -67,24 +98,51 @@ describe("registrarFromEnv", () => {
   });
 
   it("MoeMail 作主通道时同时要 base url 与 key（自建服务无默认地址）", () => {
-    expect(() => registrarFromEnv(
+    expect(codes(registrarFromEnv(
       { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "moemail", MOEMAIL_API_KEY: "k" }, {},
-    )).toThrow(/MOEMAIL_BASE_URL/);
+    ))).toEqual(["registrar.moemail.baseUrl:channel_credentials_missing"]);
   });
 
   it("环境变量优先于存储", () => {
-    const c = registrarFromEnv({ TARGET_KEYS: "7" }, { targetKeys: 30 });
-    expect(c.targetKeys).toBe(7);
+    expect(cfg({ TARGET_KEYS: "7" }, { targetKeys: 30 }).targetKeys).toBe(7);
   });
 
   it("存储值在环境变量缺失时生效", () => {
-    expect(registrarFromEnv({}, { targetKeys: 30 }).targetKeys).toBe(30);
+    expect(cfg({}, { targetKeys: 30 }).targetKeys).toBe(30);
   });
 
-  it("数值非法时抛错而不是静默取 NaN", () => {
-    expect(() => registrarFromEnv({ TARGET_KEYS: "abc" }, {})).toThrow(/TARGET_KEYS/);
-    expect(() => registrarFromEnv({ MINT_BATCH: "0" }, {})).toThrow(/MINT_BATCH/);
-    expect(() => registrarFromEnv({}, { targetKeys: -1 })).toThrow(/targetKeys/);
+  /**
+   * ⚠️⚠️ **这一格是本轮唯一一处主动放弃的 fail-fast，判据跟着整个换了。**
+   *
+   * 从前 `TARGET_KEYS=abc` 在两侧都抛：Node 上容器起不来（运维立刻看得见），
+   * Worker 上则是**部署成功、每个请求 500、原因只在 `wrangler tail`**。
+   * 现在两侧一律回落默认值 + 一条 `config.invalid` + `degraded` 标记，
+   * **不产 blocker**（字段回落之后注册机照样跑得起来，与 `num()` 的既有策略一致）。
+   *
+   * 代价明写在被测代码的 `posInt()` 注释里：Node 运维不能再靠「容器崩了」发现部署笔误。
+   */
+  it("数值非法时回落默认值 + 记 config.invalid + 打 degraded，而不是抛错也不是 NaN", () => {
+    const logger = recordingLogger();
+    const flags = { degraded: false };
+    const r = registrarFromEnv({ TARGET_KEYS: "abc", MINT_BATCH: "0" }, { tendIntervalMs: -1 }, logger, flags);
+    expect(r.config.targetKeys).toBe(20);
+    expect(r.config.mintBatch).toBe(5);
+    expect(r.config.tendIntervalMs).toBe(1_800_000);
+    expect(r.blockers).toEqual([]);
+    expect(r.config.blocked).toBe(false);
+    expect(flags.degraded).toBe(true);
+    expect(
+      logger.entries.filter((x) => x.event === "config.invalid").map((x) => x.fields?.field).sort(),
+    ).toEqual(["registrar.mintBatch", "registrar.targetKeys", "registrar.tendIntervalMs"]);
+    // **env 与 stored 两侧都要能分辨**：面板文案里「是你写的环境变量还是面板存的值」
+    // 是运维接下来改哪里的唯一依据。
+    expect(
+      logger.entries.filter((x) => x.event === "config.invalid").map((x) => x.fields?.source).sort(),
+    ).toEqual(["env", "env", "stored"]);
+  });
+
+  it("不传 flags 时同样不抛（configFromEnv 这条路径没有存储来源，也就没有 degraded 可打）", () => {
+    expect(() => registrarFromEnv({ TARGET_KEYS: "abc" }, {})).not.toThrow();
   });
 
   // 早期遗留：配置校验此前只覆盖环境变量层，没覆盖存储层。primary/fallback 是决定
@@ -92,14 +150,44 @@ describe("registrarFromEnv", () => {
   // 代码（例如选哪个 MailProvider 适配器）会拿到既不是 yyds 也不是 moemail 的值。
   // 通道格式校验现在受 enabled 门控（见下面"未启用时…只 warn"的用例），故这里要
   // 显式启用注册机，才能真正打在"启用时格式非法必须抛错"这条分支上。
-  it("启用时存储中的 primary 非法值抛错，不能绕过校验静默流入", () => {
-    expect(() => registrarFromEnv({ REGISTRAR_ENABLED: "true" }, { primary: "garbage" as never }))
-      .toThrow(/primary/);
+  it("启用时存储中的 primary 非法值产出 not_a_channel，不能绕过校验静默流入", () => {
+    const r = registrarFromEnv({ REGISTRAR_ENABLED: "true" }, { primary: "garbage" as never });
+    expect(codes(r)).toEqual(["registrar.primary:not_a_channel"]);
+    // **不同时报 primary_required**：值写错了与压根没选是两句不同的话。
+    expect(r.config.primary).toBeNull();
   });
 
-  it("启用时存储中的 fallback 非法值抛错，不能绕过校验静默流入", () => {
-    expect(() => registrarFromEnv({ REGISTRAR_ENABLED: "true" }, { fallback: "garbage" as never }))
-      .toThrow(/fallback/);
+  it("启用时存储中的 fallback 非法值产出 not_a_channel，不能绕过校验静默流入", () => {
+    expect(codes(registrarFromEnv({ REGISTRAR_ENABLED: "true" }, { fallback: "garbage" as never })))
+      .toEqual(["registrar.fallback:not_a_channel", "registrar.primary:primary_required"]);
+  });
+
+  /**
+   * ⚠️⚠️ **这一格是本轮改动**自己引入**的缺陷的堵口，别删。**
+   *
+   * `channel()` / `storedChannel()` 合并成一个 `resolveChannel()` 之后，调用点原来
+   * 那句 `channel(...) ?? storedChannel(...)` 如果照搬，`REGISTRAR_PRIMARY=yydss`
+   * 会**静默穿透**成存储里那条通道——运维写错一个字母，网关拿另一条通道去跑，
+   * 一句话都不说。判据钉的是「env 侧写错就不再看存储」这个行为。
+   */
+  it("env 侧通道值非法时不回落到存储值（拼错一个字母不许静默换一条通道去跑）", () => {
+    const r = registrarFromEnv(
+      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yydss" },
+      { primary: "moemail" as never, moemail: { baseUrl: "https://m.test", apiKey: "k" } },
+    );
+    expect(r.config.primary).toBeNull();
+    expect(codes(r)).toEqual(["registrar.primary:not_a_channel"]);
+    // 穿透的话这里会是那份 moemail 凭据。
+    expect(r.config.moemail).toBeNull();
+  });
+
+  it("env 侧通道值是空串时算「没写」，继续看存储（compose 里 `REGISTRAR_PRIMARY=` 是常见写法）", () => {
+    const r = registrarFromEnv(
+      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "", YYDS_API_KEY: "k" },
+      { primary: "yyds" as never },
+    );
+    expect(r.config.primary).toBe("yyds");
+    expect(r.blockers).toEqual([]);
   });
 
   // 注册机关闭时，一个用不到的字段不该让整个网关起不来（例如面板写入 bug、
@@ -108,18 +196,24 @@ describe("registrarFromEnv", () => {
     // console.* 已经被换成注入的 Logger（第 3 个可选参数）：spy console 只会看到空
     // mock，必须改成 recordingLogger 断言事件名。
     const logger = recordingLogger();
-    let cfg: ReturnType<typeof registrarFromEnv> | undefined;
+    let got: ReturnType<typeof registrarFromEnv> | undefined;
     expect(() => {
-      cfg = registrarFromEnv({}, { primary: "garbage" as never, fallback: "trash" as never }, logger);
+      got = registrarFromEnv({}, { primary: "garbage" as never, fallback: "trash" as never }, logger);
     }).not.toThrow();
-    expect(cfg!.enabled).toBe(false);
+    expect(got!.config.enabled).toBe(false);
+    // **关着的注册机一条 blocker 都不产**：那几条全部受 enabled 门控。
+    expect(got!.blockers).toEqual([]);
+    expect(got!.config.blocked).toBe(false);
     expect(logger.has("registrar.config_ignored")).toBe(true);
   });
 
-  it("主备通道相同时抛错（降级到自己没有意义）", () => {
-    expect(() => registrarFromEnv(
+  it("主备通道相同时产出 fallback_equals_primary（降级到自己没有意义）", () => {
+    const r = registrarFromEnv(
       { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k", REGISTRAR_FALLBACK: "yyds" }, {},
-    )).toThrow(/相同/);
+    );
+    expect(codes(r)).toEqual(["registrar.fallback:fallback_equals_primary"]);
+    // **同一条通道的缺凭据不许报两遍**（这里凭据是齐的，钉的是去重本身）。
+    expect(r.config.yyds).toEqual({ baseUrl: "https://maliapi.215.im", apiKey: "k" });
   });
 
   // 回归用例：主备相同的校验此前没有像"启用但未指定主通道"那条一样受 enabled
@@ -127,42 +221,50 @@ describe("registrarFromEnv", () => {
   // 文档示例、提前布置环境变量）就会让 registrarFromEnv 抛错——而这个函数是
   // loadConfig()/buildApp() 内部调用链的一环，两个入口都会经过它，于是关闭状态
   // 下的一条注册机专属校验会把整个网关的启动都拖垮。
-  it("未启用时主备通道相同不抛错，网关能正常构建（关闭状态不该受注册机专属校验拖累）", () => {
-    expect(() => registrarFromEnv(
-      { REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "yyds" }, {},
-    )).not.toThrow();
-    const c = registrarFromEnv({ REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "yyds" }, {});
-    expect(c.enabled).toBe(false);
+  it("未启用时主备通道相同一条 blocker 都不产（关闭状态不该受注册机专属校验拖累）", () => {
+    const r = registrarFromEnv({ REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "yyds" }, {});
+    expect(r.config.enabled).toBe(false);
+    expect(r.blockers).toEqual([]);
+    expect(r.config.blocked).toBe(false);
   });
 
-  it("未启用时不校验凭据（关着就不该因为没配 key 而启动失败）", () => {
+  it("未启用时不校验凭据（关着就不该因为没配 key 而让注册机记一笔）", () => {
     // 关键：REGISTRAR_PRIMARY 已指定但对应凭据缺失——原始测试只传了
     // { REGISTRAR_ENABLED: "false" }，此时 primary 本来就是 null，凭据校验循环
     // 天然不会跑到，删掉"未启用时跳过校验"的分支这条测试也照样通过（验证过：
     // 真的删掉代码里的 `if (!enabled) return cfg;` 后 12 个测试仍全绿）。
     // 必须让 primary 有值、凭据没给，才能真正打在"关闭时跳过凭据校验"这条分支上。
-    expect(() => registrarFromEnv(
-      { REGISTRAR_ENABLED: "false", REGISTRAR_PRIMARY: "yyds" }, {},
-    )).not.toThrow();
+    const r = registrarFromEnv({ REGISTRAR_ENABLED: "false", REGISTRAR_PRIMARY: "yyds" }, {});
+    expect(r.blockers).toEqual([]);
+    expect(r.config.yyds).toBeNull();
   });
 
-  it("mintDelayMinMs 大于 mintDelayMaxMs 时抛错并点名两个环境变量", () => {
-    expect(() => registrarFromEnv({ MINT_DELAY_MIN_MS: "9000", MINT_DELAY_MAX_MS: "3000" }, {}))
-      .toThrow(/MINT_DELAY_MIN_MS/);
-    expect(() => registrarFromEnv({ MINT_DELAY_MIN_MS: "9000", MINT_DELAY_MAX_MS: "3000" }, {}))
-      .toThrow(/MINT_DELAY_MAX_MS/);
+  it("mintDelayMinMs 大于 mintDelayMaxMs 时产出 delay_min_gt_max，且带上两个生效值", () => {
+    const r = registrarFromEnv({ MINT_DELAY_MIN_MS: "9000", MINT_DELAY_MAX_MS: "3000" }, {});
+    expect(r.blockers).toEqual([
+      { field: "registrar.mintDelayMinMs", code: "delay_min_gt_max", params: { min: 9000, max: 3000 } },
+    ]);
+    // **这一条不受 enabled 门控**——与 `crossFieldErrors` 里那条逐字一致。
+    expect(r.config.enabled).toBe(false);
+    expect(r.config.blocked).toBe(true);
   });
 
-  it("mintDelayMinMs 等于 mintDelayMaxMs 时不抛错（固定延迟是合法配置）", () => {
-    const c = registrarFromEnv({ MINT_DELAY_MIN_MS: "3000", MINT_DELAY_MAX_MS: "3000" }, {});
+  it("delay 那条比的是**生效值**：env 只给了 min，max 走内置默认值照样比得出来", () => {
+    // 从前 `crossFieldErrors` 比的是存储原件里那两个数，这一类整个漏在外面。
+    expect(codes(registrarFromEnv({ MINT_DELAY_MIN_MS: "9000" }, {})))
+      .toEqual(["registrar.mintDelayMinMs:delay_min_gt_max"]);
+  });
+
+  it("mintDelayMinMs 等于 mintDelayMaxMs 时不产 blocker（固定延迟是合法配置）", () => {
+    const c = cfg({ MINT_DELAY_MIN_MS: "3000", MINT_DELAY_MAX_MS: "3000" }, {});
     expect(c.mintDelayMinMs).toBe(3000);
     expect(c.mintDelayMaxMs).toBe(3000);
   });
 
   it("tokenName 读的是 REGISTRAR_TOKEN_NAME（无前缀的 TOKEN_NAME 在容器里太容易撞车）", () => {
-    expect(registrarFromEnv({ REGISTRAR_TOKEN_NAME: "mine" }, {}).tokenName).toBe("mine");
+    expect(cfg({ REGISTRAR_TOKEN_NAME: "mine" }, {}).tokenName).toBe("mine");
     // 无前缀的旧名字不再被读取——否则编排层里别的组件设的 TOKEN_NAME 会静默生效。
-    expect(registrarFromEnv({ TOKEN_NAME: "someone-elses" }, {}).tokenName).toBe("auto");
+    expect(cfg({ TOKEN_NAME: "someone-elses" }, {}).tokenName).toBe("auto");
   });
 
   // === 补池间隔与单轮最坏耗时的交叉校验（只 warn，不抛错） ===
@@ -174,7 +276,7 @@ describe("registrarFromEnv", () => {
 
   it("TEND_INTERVAL_MS 小于 MINT_BATCH×CODE_TIMEOUT_MS 时启动期记 registrar.interval_shorter_than_worst_round（轮次会重叠）", () => {
     const logger = recordingLogger();
-    const c = registrarFromEnv(
+    const c = cfg(
       { ...ENABLED, TEND_INTERVAL_MS: "60000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {}, logger,
     );
     expect(c.enabled).toBe(true); // 只是警告，配置照常生效
@@ -261,21 +363,23 @@ describe("registrarFromEnv", () => {
 
 describe("requirePrimary", () => {
   it("enabled 且 primary 合法时返回该通道", () => {
-    const cfg = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" }, {});
-    expect(requirePrimary(cfg)).toBe("yyds");
+    const c = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" }, {}).config;
+    expect(requirePrimary(c)).toBe("yyds");
   });
 
   it("enabled=false 时抛错（即便 primary 字段因类型断言而非空）", () => {
-    const cfg = registrarFromEnv({}, {});
-    expect(() => requirePrimary(cfg)).toThrow();
+    const c = registrarFromEnv({}, {}).config;
+    expect(() => requirePrimary(c)).toThrow();
   });
 
   it("enabled=true 但 primary 为 null 时抛错", () => {
-    // registrarFromEnv 本身在 enabled 且 primary 为空时已经抛错，这里直接构造
-    // 一个"绕过 registrarFromEnv"的畸形 cfg 来验证 requirePrimary 自身的判空逻辑，
-    // 不依赖上游是否也会拦截。
-    const cfg = { enabled: true, primary: null } as unknown as Parameters<typeof requirePrimary>[0];
-    expect(() => requirePrimary(cfg)).toThrow();
+    // ⚠️ **上一句原来写的是「registrarFromEnv 本身在 enabled 且 primary 为空时已经抛错」
+    // ——那句今天是假的**：装载器全函数化之后它只产 `primary_required` blocker，
+    // `config.primary` 照旧是 `null`。于是这颗**消费方护栏**第一次是真正必要的：
+    // 它挡的是「某个消费者跳过了 enabled / blocked 两道 gate」这种代码 bug。
+    // 这里仍然直接构造一个畸形 cfg，钉的是 requirePrimary 自身的判空逻辑。
+    const c = { enabled: true, primary: null } as unknown as Parameters<typeof requirePrimary>[0];
+    expect(() => requirePrimary(c)).toThrow();
   });
 });
 

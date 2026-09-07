@@ -5,6 +5,7 @@ import { NULL_LOGGER, type Logger } from "../ports/logger.js";
 // 设计 §5.3 逐字：`loadConfig` 退化成 `loadConfigWithProvenance` 的薄封装，
 // 且「不允许在面板层另写一套来源推导——那必然与 `loadConfig` 漂移」。
 import { DEFAULTS, num, loadConfigWithProvenance } from "./config-provenance.js";
+import { ConfigRefusal } from "./config-errors.js";
 
 // `envLockedFields` 与 `ENV_LOCK_MAP` 同住 `config-provenance.ts`（那张表既是「面板
 // 改了也不生效」的依据，又是四元组里 `env`/`lockedBy` 两格的数据源，拆两处必漂）。
@@ -91,7 +92,8 @@ type Env = Record<string, string | undefined>;
 
 export function configFromEnv(env: Env, logger: Logger = NULL_LOGGER): GatewayConfig {
   const gatewayToken = env.GATEWAY_TOKEN;
-  if (!gatewayToken) throw new Error("缺少 GATEWAY_TOKEN，网关无法启动");
+  // 类与 message 都与 `loadConfigWithProvenance` 那一处逐字同源，见那里的说明。
+  if (!gatewayToken) throw new ConfigRefusal("缺少 GATEWAY_TOKEN，网关无法启动");
 
   return {
     gatewayToken,
@@ -104,7 +106,10 @@ export function configFromEnv(env: Env, logger: Logger = NULL_LOGGER): GatewayCo
     cooldownStrikeMs: num(env, "COOLDOWN_STRIKE_MS", "cooldownStrikeMs", undefined, DEFAULTS.cooldownStrikeMs, logger),
     poolCacheTtlMs: num(env, "POOL_CACHE_TTL_MS", "poolCacheTtlMs", undefined, DEFAULTS.poolCacheTtlMs, logger, 0),
     poolTouchIntervalMs: num(env, "POOL_TOUCH_INTERVAL_MS", "poolTouchIntervalMs", undefined, DEFAULTS.poolTouchIntervalMs, logger, 0),
-    registrar: registrarFromEnv(env, {}, logger),
+    // **不传 flags**：这条路径没有「存储」这个降级来源，`degraded` 恒为 false
+    //（与 `num()` 在本函数里的既有做法一致）。注册机的 blocker 在这条路径上
+    // 同样被丢掉——`configFromEnv` 没有面板，没有地方展示它们。
+    registrar: registrarFromEnv(env, {}, logger).config,
     // 恒为 false：这条路径没有「存储」这个降级来源，纯 env + 内置默认值不存在
     // 「保存了却没生效」这种可能，没有什么好提示的。
     degraded: false,

@@ -1299,7 +1299,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```
 
 > [!NOTE]
-> `remaining`은 성공 분기에서도 돌려줍니다: 다 썼을 때만 주는 것은 운영자를 아무것도 모르는 채로 벽에 부딪히게 하는 것과 같습니다. 거절은 모두 여섯 가지이며 **그중 어느 것도 "이 라우트가 없다"가 아닙니다**: `409 registrar_disabled`(레지스트라가 꺼짐), `409 channel_not_configured`(채널에 자격 증명이 없음), `409 tend_in_flight`(같은 복제본에서 이미 한 라운드 진행 중), `409 locked`(다른 복제본이 짧은 잠금을 쥐고 있음), `429 manual_cooldown`(수동 두 번 사이의 최소 간격), `429 write_budget_exhausted`(하루 상한 횟수) — 뒤의 둘은 [REGISTRAR.md](REGISTRAR.md)의 "네 가지 가드레일" 표와 같은 진짜 출처를 가리킵니다.
+> `remaining`은 성공 분기에서도 돌려줍니다: 다 썼을 때만 주는 것은 운영자를 아무것도 모르는 채로 벽에 부딪히게 하는 것과 같습니다. 거절은 모두 일곱 가지이며 **그중 어느 것도 "이 라우트가 없다"가 아닙니다**: `409 registrar_disabled`(레지스트라가 꺼짐), `409 registrar_blocked`(레지스트라는 켜져 있지만 이 설정을 읽어 들일 수 없어 이번에는 시작하지 않음), `409 channel_not_configured`(채널에 자격 증명이 없음), `409 tend_in_flight`(같은 복제본에서 이미 한 라운드 진행 중), `409 locked`(다른 복제본이 짧은 잠금을 쥐고 있음), `429 manual_cooldown`(수동 두 번 사이의 최소 간격), `429 write_budget_exhausted`(하루 상한 횟수) — 뒤의 둘은 [REGISTRAR.md](REGISTRAR.md)의 "네 가지 가드레일" 표와 같은 진짜 출처를 가리킵니다.
 
 ### GET /admin/api/registrar/status
 

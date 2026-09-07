@@ -1639,10 +1639,65 @@ BANNER='[collection-guard] ✅'
 #     · `ov.usage.tip` 中文改回原文 ⇒ 红 2。
 #   ⇒ Node：4845 + 11 = 4856；文件数不动（四处都加在既有文件里）。
 #   ⇒ workerd：768 + 0 = 768（`tests/ui/**` 只在 node 侧跑，`src/**` 一行没动）。
-EXPECT_NODE_FILES=156
-EXPECT_NODE_TESTS=4856
-EXPECT_WORKERS_FILES=41
-EXPECT_WORKERS_TESTS=768
+# 🔴 **这一轮（注册机装不起来不再让整个网关死掉）。**
+#   ⚠️ 这里不是「把脚本里那个数改成新的就完事」：下面逐格写清多的是**哪几格**、为什么。
+#   数字是拿 `git archive HEAD` 展开一份干净副本、两边各跑一次 `--reporter=json`
+#   逐文件对账量出来的（`tests/unit/source-internal-refs.test.ts` 在那份副本上恒为 0
+#   —— 它扫的是 `dist/`，而 `git archive` 里没有 `dist/`。那 64 格是量法的伪影，不进这本账）。
+#
+#   ── 新文件三份，**+20**
+#     · `tests/contract/config-degrade.test.ts` **+4**（真机那次 74% 500 的回归：
+#       冷装配不抛且一行「装配失败」都不打 / `/health` 不是 500 / 带口令的 `/v1/models` 不是 500 /
+#       `GET /admin/api/config` 给完整视图 + 逐条 `loadBlocked`）。**contract ⇒ 两个池子都计数。**
+#     · `tests/unit/registrar/config-total.test.ts` **+13**（装载器全函数化：网格自守 1 +
+#       「整张网格一次都不抛」1 + 手写期望 9 + `blocked ⟺ blockers 非空` 1 + `blocked` 不改 `enabled` 1）。
+#       ⚠️ 那张 308 组的网格**刻意压成一格**，不用 `it.each` 摊成 308 格 —— 摊开会让这本账没法读。
+#     · `tests/unit/config-fatal-matrix.test.ts` **+3**（有口令恒不抛 / 没口令恒抛 `ConfigRefusal`
+#       且 message 逐字 / 网格里真有 blocked 组的反向自检）。
+#
+#   ── 既有文件加格，**+27**
+#     · `tests/unit/source-guards.test.ts` 198 → 206（**+8**：「`src/core/registrar/` 下的 throw
+#       恰好等于手写豁免清单」1 + `THROW_COVERED` 4 + `THROW_BLIND_SPOTS` 2 + 「注释里的 throw 不算数」1）。
+#     · `tests/unit/docs-parity.test.ts` 650 → 654（**+4**：Worker 专属症状段 / 不许再合并成
+#       「一启动就退出」/ `RESET_CONFIG=1` 从那条解决步骤里删干净且警示还在 / 五份都新开了
+#       「注册机开着却不铸 key」那条）。
+#     · `tests/unit/registrar/config.test.ts` 38 → 42（**+4**：env 侧通道值非法不许穿透到存储 /
+#       env 侧空串算「没写」/ 不传 flags 时同样不抛 / delay 那条比的是生效值）。
+#       ⚠️ 同一份文件里另有 **12 格是改写不是新增**（原来断言「抛错」的那些改成断言 blockers）。
+#     · `tests/unit/registrar/scheduling-wiring.test.ts` 21 → 24（**+3**：blocked ⇒ 返回 null 且
+#       一个 provider 都没建 / 每轮一条 error 级 `registrar.blocked` / 对照组「装得起来时真的建得出来」）。
+#     · 单格各 **+1** 共 8 格：`tests/contract/admin-config.test.ts`（`config_unloadable` 那条兜底档，
+#       用 `ConfigWiring.env` 与装配 env 可以不同构造出来）、`tests/contract/admin-registrar.test.ts`
+#       （blocked 时 GET 回 `enabled:true + blocked:true`、两条按钮回 409 `registrar_blocked`）、
+#       `tests/unit/config-provenance.test.ts`（`registrar.blocked` 与 `degraded` 四处同档）、
+#       `tests/unit/admin/config-validate.test.ts`（双向等价：`configLoadBlockers` ⟺ 装载器 blockers）、
+#       `tests/unit/entry-worker.test.ts`（非 `ConfigRefusal` 仍回不透明 500）、
+#       `tests/ui/registrar.test.ts`（`blocked` 是第三态，读不到时是 `null`）、
+#       `tests/ui/dom/registrar-section.test.ts`（三态各渲染成不同的一句话）、
+#       `tests/ui/dom/settings-save.test.ts`（横幅按 `isDiagnostic` 分两档文案）。
+#
+#   变异实测（逐格都真跑过，记录的是**实际**红了哪几格，不是预期）：
+#     · 在 `creds()` 里放回真机那条 `throw` ⇒ 红 10：config-degrade 全 4 格、config-total 的
+#       「整张网格不抛」+「去重那格手写期望」+「blocked ⟺ blockers」+「blocked 不改 enabled」、
+#       source-guards 的 throw 清单、entry-node 那一格；
+#     · 在 `src/core/registrar/tender.ts` 另加一处**永不被调用**的 throw ⇒ **只红 1**
+#       （source-guards）——这条实测正是 ②③ 互为反向控制的证据：行为网格对它一格都不红；
+#     · 删掉 `crossFieldErrors` 新加的 `not_a_channel` ⇒ **只红 1**（双向等价那格）；
+#     · 把 `if (!gatewayToken) throw` 包进 try/catch 一刀切吞掉 ⇒ 红 4（fatal 矩阵后一半、
+#       entry-node、entry-worker 的两格 fail-closed）；
+#     · 把 blocked 那道 gate 挪到建完 provider 之后 ⇒ **只红 1**（「一个 provider 都没建」）；
+#     · 把 `err.message` 塞进 503 响应体 ⇒ **只红 1**；把非 `ConfigRefusal` 也归到 503 ⇒ **只红 1**（另一格）；
+#     · 把 `REASON_BLOCKED` 退回 `REASON_DISABLED` ⇒ **只红 1**；
+#     · 把 `registrar.blocked` 放进 `EDITABLE` ⇒ 红 2（新那格 + 既有的 `locked_by_env` 对账）；
+#     · 把 ja 那份的 Worker 症状段改回「一启动就退出」⇒ 红 2（症状段 + 负面表）；
+#     · 把设置页横幅改回无条件用 `set.loadBlocked.fatal` ⇒ **只红 1**。
+#   ⇒ Node：4856 + 47 = 4903；文件数 156 + 3 = 159。
+#   ⇒ workerd：768 + 6 = 774（`config-degrade` 4 格 + `admin-config` / `admin-registrar` 各 1 格，
+#     三份都在 `tests/contract/` 下 ⇒ 两个池子都跑）；文件数 41 + 1 = 42。
+EXPECT_NODE_FILES=159
+EXPECT_NODE_TESTS=4903
+EXPECT_WORKERS_FILES=42
+EXPECT_WORKERS_TESTS=774
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

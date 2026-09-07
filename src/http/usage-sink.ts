@@ -1,4 +1,5 @@
 import type { Storage } from "../ports/storage.js";
+import { ConfigRefusal } from "../core/config-errors.js";
 import {
   type UsageBucket, type UsageDayShard, type WriteBudget,
   FRESH_BUDGET, canWrite, consume,
@@ -232,7 +233,11 @@ export function resolveUsageFlushInterval(
   }
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) {
-    throw new Error(`环境变量 USAGE_FLUSH_INTERVAL_MS 必须是不小于 1 的整数: ${raw}`);
+    // **`ConfigRefusal` 而不是裸 `Error`**：这是**运维配错**，不是代码 bug。
+    // `src/entry/worker.ts` 的 catch 靠类分流两档——留成裸 `Error` 的话，一次
+    // `wrangler.toml [vars]` 里的笔误会得到一个「网关内部错误」的 500，
+    // 把运维支去查代码，而该改的是那一行配置。
+    throw new ConfigRefusal(`环境变量 USAGE_FLUSH_INTERVAL_MS 必须是不小于 1 的整数: ${raw}`);
   }
   if (hasWriteQuota && n * (USAGE_WRITES_PER_DAY - 1) < USAGE_DAY_MS) {
     const min = Math.ceil(USAGE_DAY_MS / (USAGE_WRITES_PER_DAY - 1));

@@ -67,12 +67,12 @@ const BOTH_CHANNELS = registrarFromEnv({
   REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "moemail",
   YYDS_API_KEY: "yk", MOEMAIL_BASE_URL: "https://moe.invalid", MOEMAIL_API_KEY: "mk",
   TARGET_KEYS: "9", MINT_BATCH: "3",
-}, {});
+}, {}).config;
 
 /** 只配了 YYDS：`moemail` 那条就是「这条通道在本次部署里没有凭据」的真实形态。 */
 const ONLY_YYDS = registrarFromEnv({
   REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "yk", TARGET_KEYS: "4",
-}, {});
+}, {}).config;
 
 const withKey = { "x-admin-key": TEST_ADMIN_TOKEN };
 const jsonHeaders = { ...withKey, "content-type": "application/json" };
@@ -88,7 +88,7 @@ interface FixtureOptions {
    */
   tickingClock?: boolean;
   /** 注册机配置。缺省是两条通道都配齐。`null` = 关着（走 `makeApp` 的默认夹具）。 */
-  registrar?: ReturnType<typeof registrarFromEnv> | null;
+  registrar?: ReturnType<typeof registrarFromEnv>["config"] | null;
   /** `null` = 这个 app 压根没接注册机执行体（`503 not_wired` 那一档）。 */
   wire?: boolean;
   probe?: (channel: Channel) => Promise<ChannelProbe>;
@@ -162,6 +162,43 @@ describe("GET /admin/api/registrar/status", () => {
     expect(body.primary, "关着的注册机没有主通道，如实给 null").toBeNull();
   });
 
+  /**
+   * ⚠️⚠️ **「已启用 · 本次没跑起来」是第三态，不许被压成前两态里的任何一个。**
+   *
+   * 注册机装不起来时 `enabled` 一个字都不改（把它压成 `false` 是撒谎：运维明明打开了），
+   * 而两条按钮**也不许回 202 进一个空操作**（那是「面板说开始了、其实什么都不会发生」，
+   * 本仓反复裁过的同一形状）。⇒ 一格标量 `blocked` + 一条**新的** `reason`。
+   *
+   * 退回 `registrar_disabled` 会怎样：那条 reason 的五语言文案逐字是
+   * 「注册机没有打开……请先在设置里打开它」，而开关就在旁边亮着。
+   */
+  it("blocked 时面板不说未启用：GET 回 enabled:true + blocked:true，两条按钮都回 409 registrar_blocked", async () => {
+    // 主备撞在同一条通道上 ⇒ blocked，而凭据是齐的（缺凭据那一档 `channelConfigured`
+    // 会先拦下，测不到这一条）。
+    const BLOCKED = registrarFromEnv({
+      REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "yyds", YYDS_API_KEY: "yk",
+    }, {}).config;
+    let probed = false;
+    const { app, tendCalls } = await fixture({
+      registrar: BLOCKED,
+      probe: async () => { probed = true; return { ok: true, domains: 1 }; },
+    });
+
+    const got = await (await status(app)).json() as { enabled: boolean; blocked: boolean };
+    expect(got.enabled, "运维明明打开了 —— 压成 false 是另一种撒谎").toBe(true);
+    expect(got.blocked).toBe(true);
+
+    const tend = await app.request("/admin/api/registrar/tend", { method: "POST", headers: withKey });
+    expect(tend.status, "202 = 面板说「已开始」，而实际上一把 key 都不会铸").toBe(409);
+    expect((await tend.json() as { reason: string }).reason).toBe("registrar_blocked");
+    expect(tendCalls, "拒绝的那一次不许真去跑一轮").toEqual([]);
+
+    const probe = await testChannel(app, "yyds");
+    expect(probe.status).toBe(409);
+    expect((await probe.json() as { reason: string }).reason).toBe("registrar_blocked");
+    expect(probed, "被拒的那一次不许发一次上游探测").toBe(false);
+  });
+
   it("两条通道各自的接入状态与角色如实给出——只配了 YYDS 时 moemail 是 configured:false", async () => {
     const { app } = await fixture({ registrar: ONLY_YYDS });
     const body = await (await status(app)).json() as {
@@ -221,7 +258,7 @@ describe("GET /admin/api/registrar/status", () => {
     const over = await fixture({
       registrar: registrarFromEnv({
         REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "yk", TARGET_KEYS: "1",
-      }, {}),
+      }, {}).config,
       keys: ["sk-a", "sk-b", "sk-c"],
     });
     const overBody = await (await status(over.app)).json() as { pool: { gap: number } };

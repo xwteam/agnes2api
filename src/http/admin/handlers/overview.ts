@@ -102,6 +102,13 @@ export function overviewHandler(deps: {
       },
       config: {
         registrarEnabled: cfg.registrar.enabled,
+        /**
+         * **开着、但这份配置本次没装起来。** 不给这一格的话，概览卡片会照旧
+         * 声称有一个在工作的注册机——而补池其实一轮都没跑。
+         * 面板必须 `registrarEnabled && registrarBlocked` 一起判：关着的注册机
+         * 该说「未启用」，不是「没跑起来」。
+         */
+        registrarBlocked: cfg.registrar.blocked,
         primary: cfg.registrar.primary ?? null,
         fallback: cfg.registrar.fallback ?? null,
         targetKeys: cfg.registrar.targetKeys,

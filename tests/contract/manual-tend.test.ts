@@ -41,7 +41,7 @@ const DAY_END = 20_001 * 86_400_000;
 
 const REGISTRAR_ON = registrarFromEnv({
   REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k", TARGET_KEYS: "1",
-}, {});
+}, {}).config;
 
 const withKey = { "x-admin-key": TEST_ADMIN_TOKEN };
 

@@ -34,6 +34,8 @@ function statusBody(over: Record<string, unknown> = {}) {
   return {
     serverTime: NOW,
     enabled: true,
+    // 装载的产物：默认「装得起来」，要测第三态的用例显式覆盖它。
+    blocked: false,
     primary: "yyds",
     fallback: "moemail",
     channels: {
@@ -543,6 +545,26 @@ describe("设计 §10.3 第 8 条：空状态文案", () => {
       emptyPrimaryNode(section).style.display,
       "关着的注册机不该催人去选主通道",
     ).toBe("none");
+  });
+
+  /**
+   * ⚠️⚠️ **三态各说各的，第三态不许被前两态吸收。**
+   *
+   * `blocked` 为真时开关**是开着的**：压成「已关闭」是对着一个亮着的开关说没打开
+   *（运维会去点它，而那一点毫无作用）；照旧写「已启用」则是声称有一个在工作的注册机，
+   * 而补池一轮都没跑、池子在慢慢耗干。这一格把三种输入并排跑一遍，
+   * **谁把其中两态渲染成同一句话都会红**。
+   */
+  it("三态各渲染成不同的一句话：已关闭 / 已启用 / 已启用 · 本次没跑起来", async () => {
+    const texts: string[] = [];
+    for (const [enabled, blocked] of [[false, false], [true, false], [true, true]] as const) {
+      const h = await openRegistrar(() => ok(statusBody({ enabled, blocked })));
+      texts.push(h.section("registrar").textContent);
+    }
+    expect(texts[0]).toContain(I18N["reg.state.off"]!["zh-CN"]!);
+    expect(texts[1]).toContain(I18N["reg.state.on"]!["zh-CN"]!);
+    expect(texts[2], "开关明明是开的，却写「已关闭」").not.toContain(I18N["reg.state.off"]!["zh-CN"]!);
+    expect(texts[2], "补池一轮都没跑，却写「已启用」").toContain(I18N["reg.state.blocked"]!["zh-CN"]!);
   });
 });
 
