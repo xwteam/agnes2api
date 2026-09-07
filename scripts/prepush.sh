@@ -1348,8 +1348,10 @@ BANNER='[collection-guard] ✅'
 #   · 修法是**两个 `await`**：`text()` 的失败才是传输失败，`JSON.parse()` 的失败
 #     与「形状不对」同属一句话 ⇒ 共用既有的 `bad_payload`。
 #     ⚠️ **不新增第四档、不新增五语言 key**：`models.up.badPayload`（「上游回了，但那份
-#     内容本网关看不懂」）对这一档逐字成立。这一点是硬约束——gzip 现算 391598/393216
-#     ＝ 99.59%，只剩 1618 字节，本轮不许动 MAX_GZIP。
+#     内容本网关看不懂」）对这一档逐字成立。当时还有一条硬约束：那一轮 gzip 已经
+#     贴着本仓自设上限（1/8 那版）满格，明令不许动 MAX_GZIP，所以刻意不新增 key。
+#     ⚠️ **那条约束今天已经解除**（分母改成 1/4，理由写在 check-ui-budget.mjs 文件头），
+#     但「不新增第四档」这个结论**与体积无关、照样成立**：它是语义上的判断。
 #     ⇒ 后端 reason 字面量全集**不变**，`tests/ui/models.test.ts` 那格手写全集
 #     `[bad_payload, body_incomplete, network_error, no_key, timeout, upstream_error]`
 #     一个字不动；面板、字典、生成物一律零改动（`pnpm ui:build` 后 `git diff` 干净）。
