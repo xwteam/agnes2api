@@ -35,9 +35,11 @@ import { offsetMs, freshnessValues } from "./pure/overview.mjs";
 // （那张表的名字里没有 keys 字样，射程本来就是整棵管理树）。
 import { adminErrorFields, adminErrorText } from "./pure/keys-write.mjs";
 // ⚠️ **用量那一行走「用量」板块那份纯模块，不在这里再写一套判据**：
-// 「Tier-2 关着 / 读不出来 / 真的是 0」这三态本仓只许有一份判据
-//（`usageState()`），各写一份的话，分叉的那一边正好是「关着」时，
-// 面板就会开始伪造 0。区间也用同一个 `rangeToQuery`，两处不许各算各的。
+// 「这段用量该读成什么」本仓只许有一份判据（`usageState()`），各写一份的话，
+// 分叉的那一边正好是「关着」时，面板就会开始伪造 0。
+// ⚠️ **这里刻意不复述那边分了几档、各叫什么**：那是另一份文件的内容，抄过来会腐烂
+//（上一版这行写的是「这三态」，而那边早已不止三态）。要看清单去 `usageState()`。
+// 区间也用同一个 `rangeToQuery`，两处不许各算各的。
 import { apiKeyUsage, rangeToQuery } from "./pure/usage.mjs";
 import {
   AK_CARDS, AK_SORTS, AK_EXPIRY_DAYS,
@@ -183,17 +185,22 @@ function itemCard(v) {
     ? t("ak.expiresNever")
     : `${t("ak.expiresAt")} ${fmtInstant(v.expiresAt, off)}`));
   // ── 这把密钥的用量（Tier-2）─────────────────────────────────────────────
-  // ⚠️⚠️ **三态各有各的一句话，`off` 那一句里一个数字都没有**：Tier-2 关着时
-  //    这个部署根本没在记账，画 `0` 就是把「没开」说成「没人用」（全局约束 9）。
+  // ⚠️⚠️ **`apiKeyUsage()` 的每一档各有各的一句话，其中两档里一个数字都没有**：
+  //    `off` —— Tier-2 关着，这个部署根本没在记账；
+  //    `no-shards` —— 开着，但这段区间一条分片都还没落盘（评审第 2 轮补的那一档）。
+  //    两档下画 `0` 都是把别的事说成「没人用」（全局约束 9）。
   //    判据在 `apiKeyUsage()` 里，**这里只负责把它画出来**（admin-ui/README.md 硬规则 1）。
   const u = apiKeyUsage(usageData, usageFailed, v.id);
   const usage = el("span", { class: "muted ak-usage" },
     u.kind === "off" ? t("ak.usage.off")
       : u.kind === "unknown" ? t("ak.usage.unknown")
-        : t("ak.usage.value", { count: fmtCount(u.requests) }));
-  // tooltip 只在真有数字那一档挂：另外两档下「这个数是近似值」是一句关于
-  // **不存在的数字**的话（本仓为这个形状付过一次代价，见 sec-usage.js 的 `approxTitleMark`）。
+        : u.kind === "no-shards" ? t("ak.usage.notLanded")
+          : t("ak.usage.value", { count: fmtCount(u.requests) }));
+  // tooltip：`value` 那一档说「这个数是近似值」，`no-shards` 那一档说「为什么这里没有数」。
+  // 另外两档不挂 —— 「这个数是近似值」在它们身上是一句关于**不存在的数字**的话
+  //（本仓为这个形状付过一次代价，见 sec-usage.js 的 `approxTitleMark`）。
   if (u.kind === "value") usage.setAttribute("title", t("ak.usage.tip"));
+  else if (u.kind === "no-shards") usage.setAttribute("title", t("ak.usage.notLandedTip"));
   meta.appendChild(usage);
   card.appendChild(meta);
 

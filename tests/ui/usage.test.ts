@@ -225,6 +225,36 @@ describe("「开着，但一条分片都还没落盘」是自己一档", () => {
   });
 
   /**
+   * ⚠️⚠️ **`tier === "tier2"` 这一半也是判据的一部分，不是随手写的防御**（评审第 2 轮）。
+   *
+   * 评审实测：把这一半删掉，用量那两份用例（本文件与它的 DOM 侧）当时共 76 格**全绿**
+   * —— 也就是没有任何东西在盯它。补上这一格。
+   *
+   * **它为什么必须留着**：这一档换上去的那句话（`usage.note.noShards`）
+   * **逐字点名了 Tier-2 的落盘机制**（「Tier-2 是攒够一个落盘间隔才写一次的」）。
+   * `tier` 是别的值时我们并不知道那个部署按什么节奏落盘，照样说这句话就是拿一条
+   * **我们没有的知识**去解释屏幕上的 0 —— 与这一档立案要挡的是同一种毛病，
+   * 只是这一次编的是「为什么还没落盘」而不是「有没有人用」。
+   * ⇒ 认不出来的 `tier` 退回 `empty`（`tier: "off"` 那一支在更上面早退，不走这里）。
+   *
+   * ⚠️ 今天后端只发得出 `"off"` / `"tier2"` 两个值
+   *（`src/http/admin/handlers/usage.ts` 的 `usageHandler`：`const tier = wiring === null ? "off" : "tier2";`），
+   * 所以这一格钉的是**面板对没见过的 tier 的态度**，不是今天走得到的一条路。
+   *
+   * **变红条件**（真跑过）：把 `usageState` 那一支的 `r.tier === "tier2" &&` 删掉
+   * ⇒ 这一格当场红，报文逐字是 `expected 'no-shards' to be 'empty'`；
+   * 同一次变异下另外 101 格全绿 —— 在这一格之前，那一半确实一个人都没盯。
+   */
+  it("认不出来的 tier 不归这一档 —— 那句话点名了 Tier-2 的落盘机制，别的 tier 上我们没有这条知识", () => {
+    expect(
+      usageState(noShardsBody({ tier: "tier3" })),
+      "面板拿一条没有的知识去解释屏幕上的 0",
+    ).toBe("empty");
+    // `tier` 整个不是字符串时同样退回 —— 「读不懂」不等于「就是 tier2」。
+    expect(usageState(noShardsBody({ tier: null })), "tier 读不懂时被当成了 tier2").toBe("empty");
+  });
+
+  /**
    * **这一档下六张卡仍然写 `0`，不是 EM DASH。**
    *
    * `0` 在这里是真的 —— **已经落盘的就是 0 条**，而横幅负责说清「可能只是还没落下来」。
@@ -307,8 +337,17 @@ describe("「开着，但一条分片都还没落盘」是自己一档", () => {
    * ⚠️ **判据是「两条都说了『会丢』这件事」，不是「两条文案相同」**：它们的主语
    *（池计数 / 用量分片）与那个时间常量都不是一回事，写成逐字比对会红在一件正确的改动上。
    *
-   * **变红条件**：把 `usage.approxTip` 中文那一版的后半句删掉 ⇒ 当场红（实测，
-   * 报文点名的是 `usage.approxTip` 的 `zh-CN`）。
+   * ⚠️⚠️ **名单不许写死**（评审第 2 轮）：上一版这里写死了三条
+   *（`usage.approxTip` / `usage.approxTipUnknown` / `keys.approxTip`），而
+   * `ov.usage.approxTip` 与 `ak.usage.tip` 说的是**同一个**未落盘窗口、当时都还没说
+   * 「会丢」—— 名单是这条红线**唯一**的守卫，写死就等于把名单外的入口放生。
+   * ⇒ 带 `approxTip` 的 key **从字典里现扫**（将来任何一条 `*.approxTip` 出生即入网），
+   * 名字对不上这条规律的入口（`ak.usage.tip`）另列，并由下面那条自检钉住扫出来的
+   * 那一组真的含着今天已知的四条 —— 否则正则哪天扫不着东西，这一格会静悄悄空转。
+   *
+   * **变红条件**（都真跑过）：删 `usage.approxTip` 中文那一版的后半句 ⇒ 红，报文点名
+   * `usage.approxTip` 的 `zh-CN`；删 `ak.usage.tip` 中文那半句 ⇒ 红且点名 `ak.usage.tip`；
+   * 删 `ov.usage.approxTip` 中文那半句 ⇒ 红且点名 `ov.usage.approxTip`。
    */
   it("Tier-2 的 ≈ tooltip 与 Tier-1 一样明写「这一段会丢」—— 只说「还没落盘」会被读成「等一会儿就补上」", () => {
     const LOSS: Record<string, string[]> = {
@@ -319,7 +358,14 @@ describe("「开着，但一条分片都还没落盘」是自己一档", () => {
       ko: ["사라집니다", "손실"],
     };
     const dict = I18N as Record<string, Record<string, string>>;
-    for (const key of ["usage.approxTip", "usage.approxTipUnknown", "keys.approxTip"]) {
+    // 现扫：名字里带 `approxTip` 的都算这一族。
+    const scanned = Object.keys(dict).filter((k) => k.includes("approxTip")).sort();
+    // 自检：正则哪天扫不着东西（改名 / 重构）时这一格必须红，而不是空转过去。
+    for (const known of ["usage.approxTip", "usage.approxTipUnknown", "keys.approxTip", "ov.usage.approxTip"]) {
+      expect(scanned, `${known} 没被扫进来 —— 这一格在空转`).toContain(known);
+    }
+    // 名字对不上那条规律、但说的是同一个未落盘窗口的入口，另列。
+    for (const key of [...scanned, "ak.usage.tip"]) {
       expect(dict[key], `${key} 没了 —— 这一格会空转`).toBeTruthy();
       for (const [lang, words] of Object.entries(LOSS)) {
         const text = dict[key]![lang] ?? "";
@@ -851,8 +897,14 @@ describe("按密钥那一维：保留伪 id 与每张卡上的那个数", () => 
    * ⚠️⚠️ **`off` 与「真的是 0」必须是两档，这一格是本轮那条硬裁定的纯函数一侧。**
    * 合成一档的实现（`requests: byApiKey?.[id]?.requests ?? 0`）在**四条断言里的
    * 三条上都是绿的**，只有第一条会红 —— 所以这一格的第一条不能省。
+   *
+   * ⚠️⚠️ **`no-shards` 那一条是评审第 2 轮补的**：这个函数当时是黑名单
+   *（只挡 `off` / `unavailable`），`usageState` 新分出来的那一档**默认落进
+   * 「就是 0」**，而这一格上一版的标题只写了四档、五条断言里没有一条喂它
+   * —— 于是它被第 ④ 条（「读成功了、这把一次都没被用过 ⇒ 就是 0」）整个吞了进去。
+   * ⇒ 这一格的射程从此是**穷举**：`usageState` 的每一档在这里都得有一条。
    */
-  it("四档互不重叠：没开 / 读不出来 / 读到了但这把是 0 / 有数字", () => {
+  it("五档互不重叠：没开 / 读不出来 / 开着但一条分片都还没落盘 / 读到了但这把是 0 / 有数字", () => {
     const withKey = (over: Record<string, unknown> = {}) => okBody({
       byApiKey: { aabbccddeeff: { ...BUCKET, requests: 7 } }, ...over,
     });
@@ -866,9 +918,18 @@ describe("按密钥那一维：保留伪 id 与每张卡上的那个数", () => 
     // ③ 整块读不出来（`days` 是 null）⇒ 同样是「我们不知道」，不是 0。
     expect(apiKeyUsage(okBody({ days: null, total: null, byApiKey: null, note: "read_failed" }), false, "aabbccddeeff").kind)
       .toBe("unknown");
-    // ④ 读成功了、这把密钥这段时间一次都没被用过 ⇒ **就是 0**，把它画成破折号是反向的撒谎。
+    // ④ 开着，但这段区间一条分片都还没落盘 ⇒ **不是 0**：落盘之前它与「真的没人用」
+    //    在这份响应上完全同形，而这一屏没有横幅替它说话（线上实测那份形状：
+    //    `tier2` / `shards:0` / `no_shards` / `byApiKey:{}`，`pending.count` 是 4）。
+    expect(apiKeyUsage(okBody({
+      days: [{ date: "2026-08-21", total: ZERO }], total: ZERO,
+      shards: 0, malformed: 0, note: "no_shards", byApiKey: {},
+      pending: { count: 4, ms: 184_532, budgetExhausted: false },
+    }), false, "aabbccddeeff")).toEqual({ kind: "no-shards", requests: 0 });
+    // ⑤ 读成功了、**区间里有分片**、这把密钥一次都没被用过 ⇒ **就是 0**，
+    //    把它画成破折号是反向的撒谎。「有分片」这半句是这一条与 ④ 的分界。
     expect(apiKeyUsage(withKey(), false, "112233445566")).toEqual({ kind: "value", requests: 0 });
-    // ⑤ 有数字。
+    // ⑥ 有数字。
     expect(apiKeyUsage(withKey(), false, "aabbccddeeff")).toEqual({ kind: "value", requests: 7 });
   });
 

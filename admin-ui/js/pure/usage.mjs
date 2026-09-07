@@ -247,6 +247,17 @@ export function malformedKind(resp) {
  * 同一个部署拿到的 `note` 是 `range_clamped`，**只认 `note` 会让这一档在那条路上
  * 整个消失**，而那正是老 bug 的另一半（那一路今天连横幅都会换成「真的是 0」那句）。
  *
+ * ⚠️ **`tier === "tier2"` 那一半同样是判据，不是随手写的防御**（评审第 2 轮点名：
+ * 删掉它当时 76 格全绿 —— 没有任何东西在盯它）：这一档换上去的那句话
+ * （`usage.note.noShards`）**逐字点名了 Tier-2 的落盘机制**（「攒够一个落盘间隔才写
+ * 一次」）。`tier` 是认不出来的值时我们并不知道那个部署按什么节奏落盘，照样说这句话
+ * 就是拿一条**我们没有的知识**去解释屏幕上的 0 —— 与这一档立案要挡的是同一种毛病，
+ * 只是编的内容从「有没有人用」换成了「为什么还没落盘」。⇒ 认不出来的 `tier` 退回
+ * `empty`。今天后端只发得出 `"off"` / `"tier2"`（`usageHandler` 里那句
+ * `const tier = wiring === null ? "off" : "tier2";`），所以这一条钉的是**面板对没见过的
+ * `tier` 的态度**。由 `tests/ui/usage.test.ts` 的
+ * 「认不出来的 tier 不归这一档」那一格钉着。
+ *
  * ⚠️⚠️ **`pending.count === 0` 不归 `empty`，它照样是这一档，理由写死在这里**：
  * `pending` 是 `src/http/usage-sink.ts` 那个 sink 的**内存**状态，只反映
  * **服务这一次请求的那个 isolate**。别的 isolate 里可能正攒着，而一个在落盘之前
@@ -616,15 +627,27 @@ export function apiKeyRowLabelKey(id) {
 /**
  * 汇总那份响应里，某一把密钥的请求数。**给「API 密钥」板块的每张卡用。**
  *
- * @returns {{kind: "off"|"unknown"|"value", requests: number}}
+ * @returns {{kind: "off"|"unknown"|"no-shards"|"value", requests: number}}
  *
  * ⚠️⚠️ **`off` 是一档独立的结局，不许并进 `value` 的 0**（本轮那条硬裁定）：
  * Tier-2 关着时这个部署**根本没在记账**，画一个 `0` 就是把「没开」说成「没人用」。
  * 判据走的是**同一个** `usageState()`，不另写一套 —— 两套判据迟早会对同一份响应
  * 给出不同的结论，而分叉的那一边正好是「关着」时，后果就是面板开始伪造 0。
  *
+ * ⚠️⚠️ **`no-shards` 同样是一档独立的结局，理由与 `off` 逐字同源**（评审第 2 轮）：
+ * 这个函数上一版是**黑名单**（只挡 `off` / `unavailable`，其余一律往 `value` 倒），
+ * 于是 `usageState` 多分出来的那一档**默认落进「就是 0」** —— 而「API 密钥」那一屏上
+ * 没有任何横幅替它说话（用量板块那条 `usage.note.noShards` 横幅不在这一屏），
+ * 每张卡照旧写「近 24 小时 ≈ 0 次请求」。那正是 `readSucceeded` 上方那段警告
+ *（「`usageState` 哪天多一档……那一档会**默认落到**……也就是**默认说假话**」）
+ * 真的发生了一次：白名单那一支跟着更新了，紧挨着的这条黑名单一个字没动。
+ * ⇒ 这一档单独返回，让 `sec-apikeys.js` 换一句话（`ak.usage.notLanded`）。
+ * ⚠️ 它**排在 `byApiKey` 之前**：这一档下那份 map 本来就是空的（一条分片都没落盘），
+ * 走下去只会拿到 `value` + `0`，也就是那句假话本身。
+ *
  * ⚠️ **「这把密钥这段时间一次都没被用过」确实是 `value` + `0`**，那不是伪造：
- * 读成功了、区间里有分片、这一格就是没有 —— 与 `EMPTY_DAY` 上方那条论证同源。
+ * 读成功了、区间里**有分片**、这一格就是没有 —— 与 `EMPTY_DAY` 上方那条论证同源。
+ * **「有分片」这半句是这条论证的支点**，`no-shards` 那一档正好没有它。
  */
 export function apiKeyUsage(resp, failed, id) {
   if (failed === true) return { kind: "unknown", requests: 0 };
@@ -633,6 +656,7 @@ export function apiKeyUsage(resp, failed, id) {
   const st = usageState(r);
   if (st === "off") return { kind: "off", requests: 0 };
   if (st === "unavailable") return { kind: "unknown", requests: 0 };
+  if (st === "no-shards") return { kind: "no-shards", requests: 0 };
   const m = obj(r.byApiKey);
   // `byApiKey` 整块拿不到 ⇒ 「我们不知道」，**不是 0**（那一档后端已经发成 `null`）。
   if (m === null) return { kind: "unknown", requests: 0 };

@@ -330,6 +330,53 @@ describe("API 密钥板块：每张卡上的用量那一行", () => {
     expect(usageCells(h)[0], "把真零画成破折号是反向的撒谎").not.toContain(EM);
   });
 
+  /**
+   * ⚠️⚠️ **评审第 2 轮：这一屏是那条「多一档就默认说假话」真的发生过的地方。**
+   *
+   * `apiKeyUsage()` 上一版是**黑名单**（只挡 `off` / `unavailable`），
+   * `usageState()` 新分出来的「开着但一条分片都还没落盘」于是**默认落进 `value` + 0**，
+   * 每张卡照旧写「近 24 小时 ≈ 0 次请求」——而这一屏上**没有任何横幅**替它说
+   *「可能只是还没落盘」（`usage.note.noShards` 那条横幅在「用量」板块，不在这里）。
+   * 与 `ak.usage.off` 是同一条纪律的另一半：那边禁「没开」被说成「没人用」。
+   *
+   * ⚠️ **观测点是这一格渲染出来的字**（`.ak-usage` 的文本与 `title`），
+   * 不是 `apiKeyUsage()` 的返回值：纯函数那一侧由 `tests/ui/usage.test.ts` 的
+   *「五档互不重叠」那一格钉着，**它证明不了这一屏真的换了一句话**。
+   *
+   * **变红条件**（真跑过）：把 `apiKeyUsage()` 里
+   * `if (st === "no-shards") return { kind: "no-shards", requests: 0 };` 删掉
+   * ⇒ 这一格当场红，报文逐字是
+   * `expected '近 24 小时 ≈ 0 次请求' to contain '还没有落盘的记录'`
+   *（同一次变异下 `tests/ui/usage.test.ts` 的「五档互不重叠」也红，那是纯函数那一侧）。
+   */
+  it("开着但一条分片都还没落盘：那一格不许写「≈ 0 次请求」—— 这一屏上没有横幅替它说「还没落盘」", async () => {
+    const zero = {
+      requests: 0, success: 0, errors: 0, tokensIn: 0, tokensOut: 0,
+      streamingRequests: 0, latencySum: 0, latencyCount: 0,
+    };
+    const { h } = await openSection(respondWithUsage({
+      status: 200,
+      body: usageBody({
+        total: zero, byApiKey: {}, shards: 0, malformed: 0, note: "no_shards",
+        pending: { count: 4, ms: 184_532, budgetExhausted: false },
+      }),
+    }));
+    const cells = usageCells(h);
+    expect(cells.length, "卡片上压根没有这一格的话，下面的断言是空的").toBe(1);
+    // ① 「还没落盘」这件事要说出来。
+    expect(cells[0], "没说清这是「还没落盘」").toContain("还没有落盘的记录");
+    // ② 那句「≈ N 次请求」不许出现 —— 它是这一格上唯一会被读成「没人用」的形状。
+    expect(cells[0], "又把「还没落盘」画成了一个请求数").not.toContain("≈");
+    expect(cells[0], "又把「还没落盘」说成了 0 次请求").not.toContain("次请求");
+    // ③ 这一档挂的是「为什么这里没有数」，不是「这个数是近似值」——
+    //    后者是一句关于**不存在的数字**的话。
+    const cell = sectionOf(h).querySelectorAll(".ak-usage")[0]!;
+    expect(cell.getAttribute("title") ?? "", "tooltip 没说清「分不出没人用和还没写进去」")
+      .toContain("还没落盘");
+    expect(cell.getAttribute("title") ?? "", "把「这个数是近似值」挂在了一个不存在的数字上")
+      .not.toContain("近似值");
+  });
+
   it("用量这一次读失败时画 —，而且不牵连列表本身（卡片照常在）", async () => {
     const { h } = await openSection(respondWithUsage({ status: 500, body: {} }));
     expect(usageCells(h)[0]).toBe(`用量：${EM}`);

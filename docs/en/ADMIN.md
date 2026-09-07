@@ -293,6 +293,12 @@ go by it and never parse `msg`:
 - **While it is off, this page draws no empty chart**: a chart of `0`s reads as "nobody used
   it during this period", whereas the truth is "this deployment is not keeping the books at
   all". Those two must not look alike.
+- **While it is on but not a single shard has been flushed yet, "nobody used it" is equally
+  off limits.** The second tier writes once per flush interval, so requests may already have
+  happened while their counters are still in instance memory — this page then says outright
+  that it cannot tell "nobody used it" from "not written yet" instead of asserting either.
+  This bullet and the previous one are two halves of one rule: **never dress something else
+  up as "nobody used it"**.
 
 ### Time ranges and retention
 
@@ -310,8 +316,8 @@ go by it and never parse `msg`:
   an instance is recycled before the flush, that stretch is gone; (3) a day's shards have only
   2 slots, so when more replicas than that write at once, the same slot is last-write-wins.
 - **When a value cannot be read the cell shows `—`, not `0`**: "there really were 0 requests
-  today", "the second tier is off" and "this read failed" are three different things, and the
-  panel is not allowed to draw them the same way.
+  today", "the second tier is off", "it is on but nothing has been flushed yet" and "this read
+  failed" are four different things, and the panel is not allowed to draw them the same way.
 
 ### Usage per API key
 

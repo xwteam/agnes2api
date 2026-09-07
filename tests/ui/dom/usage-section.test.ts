@@ -515,6 +515,107 @@ describe("开着但一条分片都还没落盘：同一屏上不许出现两句�
   });
 });
 
+describe("有分片是畸形的时候不许说「答案就是零」：同一屏上的另一对打脸句子", () => {
+  const ZERO = {
+    requests: 0, success: 0, errors: 0, tokensIn: 0, tokensOut: 0,
+    streamingRequests: 0, latencySum: 0, latencyCount: 0,
+  };
+
+  /**
+   * ⚠️⚠️ **评审第 2 轮：`usage.empty` 那条横幅不止对「有分片、盘里就是 0」成立。**
+   *
+   * ⑧（一部分分片畸形）下 `usageState` 判的仍是 `empty`（`all_malformed` 才早退），
+   * 于是同一屏上评审实测到的是这两句：
+   * ```
+   * banner-danger : 一部分分片是畸形的，下面这些数字缺了那几块。请去查存储里是谁写的。
+   * banner-info   : 这段区间里一次请求都没有。这不是读取失败——我们确实读到了，答案就是零。
+   * ```
+   * **后一句是假的**：缺掉的那几块里有多少请求，我们并不知道。这与「还没落盘被说成
+   * 没人用」是**同一个形状**，只是换了一对句子。
+   *
+   * ⚠️ **观测点是渲染出来的字**，不是状态枚举：这一档的状态今天仍然是 `empty`
+   *（那是对的 —— 已经读到的那部分确实是 0），变的是**面板闭不闭嘴**。
+   *
+   * **变红条件**（真跑过）：把 `renderBody` 里那句 `malformedKind(data) === "none"`
+   * 删掉 ⇒ 第一句断言当场红（`usage.empty` 又出现在这一屏上）。
+   */
+  it("一部分分片畸形 + 读到的是 0 ⇒ 不许说「答案就是零」，红条刚说了这些数字缺了几块", async () => {
+    const h = await openUsage(respondWith(usageBody({
+      days: [{ date: "2026-08-21", total: ZERO }], total: ZERO,
+      shards: 2, malformed: 1, note: "partial_malformed",
+    })));
+    const sec = h.section("usage");
+    // ① 那句「答案就是零」不许出现。
+    expect(sec.textContent, "缺了几块的数字被说成了「我们确实读到了，答案就是零」")
+      .not.toContain("答案就是零");
+    // ② 装置自检：那条红条真的渲染出来了，否则「自相矛盾」在这一格里根本不存在。
+    expect(banners(sec).join("|"), "畸形那条红条没渲染 ⇒ 这一格测的是空气")
+      .toContain("banner-danger:");
+    expect(sec.textContent, "没说清缺的是哪几块").toContain("下面这些数字缺了那几块");
+  });
+
+  /**
+   * ⚠️⚠️ **挡它的判据必须是字段（`malformedKind`），不是 `note`。**
+   *
+   * 后端的 `note` 只有一格，`range_clamped` 压得过 `partial_malformed`
+   *（优先级在 `src/http/admin/handlers/usage.ts` 的 `usageHandler` 上方）
+   * ⇒ 照 `note` 挡的实现在这条路上整个失效，而失效的方向是**说得更死**：
+   * `range_clamped` 是 warn 档，压不掉 `usage.empty`。
+   * 这是 `no_shards` 那一档踩过的同一颗雷，换一个 note 再踩一次。
+   *
+   * **变红条件**（真跑过）：把 `renderBody` 那句判据换成
+   * `usageNoteKey(note) !== "usage.note.partialMalformed"`（照 note 挡）
+   * ⇒ 这一格第一句断言红，而上面那一格仍然绿 —— 两格缺一不可。
+   */
+  it("区间被夹过时同样不许说「答案就是零」—— note 那一格被 range_clamped 占掉了", async () => {
+    const h = await openUsage(respondWith(usageBody({
+      days: [{ date: "2026-08-21", total: ZERO }], total: ZERO,
+      shards: 2, malformed: 1,
+      range: { from: NOW - 86_399_999, to: NOW, clamped: true }, note: "range_clamped",
+    })));
+    const sec = h.section("usage");
+    expect(sec.textContent, "note 被夹的那条占掉之后，「答案就是零」原地复活")
+      .not.toContain("答案就是零");
+    // 装置自检：被夹这件事还得有人说（这一格不该把它挤掉），
+    // 而「不完整」那个标记也还在 —— 它才是这一屏上关于畸形的唯一一句话。
+    expect(sec.textContent, "被夹这件事没人说了").toContain("只显示了能拿到的那一段");
+    expect(sec.textContent, "「不完整」那个诚实标记没了").toContain("不完整");
+  });
+
+  /**
+   * ⚠️⚠️ **「坏没坏读不出来」时也闭嘴 —— 判据是白名单（`=== "none"`），不是黑名单。**
+   *
+   * `malformedKind()` 的第三个返回值是 `"unknown"`（`shards` / `malformed` 不是有限数字）。
+   * 写成 `!== "partial"` 在**今天的取值集合上等价**，而在这一档上相反：那时我们连
+   * 「有没有分片坏掉」都不知道，`usage.empty` 那句「我们确实读到了，答案就是零」
+   * 是拿一条没有的知识下结论 —— 与本组上面两格是同一条道理的第三种形状。
+   * 这条「排除已知的坏」与「只放行已知的好」明天会分叉的纪律，
+   * `admin-ui/js/pure/usage.mjs` 的 `readSucceeded` 上方有它的全文。
+   *
+   * ⚠️ 今天后端发不出这个组合（`days` 成数组时 `shards` 总是数字），
+   * 这一格钉的是**面板对没见过的字段组合的态度** —— 与本文件
+   *「面板不认识的 note code 原样显示出来」那一格同源。
+   *
+   * **变红条件**（真跑过）：把 `renderBody` 那句判据改成 `malformedKind(data) !== "partial"`
+   * ⇒ 第一句断言红（`expected … not to contain '答案就是零'`），
+   * 而本组上面两格与「接口返回真实的零请求时……」那一格全绿 —— 只有这一格看得见它。
+   */
+  it("读不出有几个分片坏了的时候同样闭嘴 —— 「不知道」不许被写成「答案就是零」", async () => {
+    const body = (over: Record<string, unknown>) => usageBody({
+      days: [{ date: "2026-08-21", total: ZERO }], total: ZERO, note: null, ...over,
+    });
+    // ① `shards` / `malformed` 读不成数字 ⇒ 这一页不许下那个结论。
+    const unknown = await openUsage(respondWith(body({ shards: null, malformed: null })));
+    expect(unknown.section("usage").textContent, "连「坏没坏」都不知道，却说「答案就是零」")
+      .not.toContain("答案就是零");
+    // ② 装置自检兼反向控制：**同一份响应只把这两格换成数字**，那句话就该说出来
+    //    —— 否则第一句断言可能只是因为这一页整个没渲染出来。
+    const clean = await openUsage(respondWith(body({ shards: 3, malformed: 0 })));
+    expect(clean.section("usage").textContent, "真的是 0 的时候这一页反倒不吭声了")
+      .toContain("答案就是零");
+  });
+});
+
 describe("横幅：判据全部来自响应字段", () => {
   /**
    * **变红条件**：把 `buildRangeBar` 里那条 `usage.covered` 改成用

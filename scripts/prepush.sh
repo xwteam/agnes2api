@@ -1458,8 +1458,70 @@ BANNER='[collection-guard] ✅'
 #     这条行为在 DEPLOY.md 的配额账里已经写全（它本来就是一笔读次数）。
 #   ⇒ Node：4802 + 4 = 4806；文件数不动（加在既有文件里）。
 #   ⇒ workerd：768 + 0 = 768（`tests/ui/**` 只在 node 侧跑）；文件数不动。
+# 🔴 **这一轮（评审回填第 2 轮：面板补那一档）。这一笔一次结清三个 commit 的账。**
+#   ⚠️⚠️ **前两个 commit 加了格却没记账，EXPECT_* 停在 4806 —— 第 ⑥ 格今天必红。**
+#   这里不是「把脚本里那个数改成新的就完事」：下面逐格写清多的是**哪几格**、为什么，
+#   三组数字**各自在隔离副本上单跑那几份量过**（`git archive <sha>` + 独立目录）。
+#
+#   ── 甲：commit 0f0845a（「开着但一条分片都还没落盘」分出一档）**+9**，它没改 EXPECT_*。
+#     `tests/ui/usage.test.ts` 35 → 41（**+6**：这一档不是 empty / pending 是 0 照样是它 /
+#       被夹过时仍是它 / 数字格仍写 0 且表里那句话是「没有可以列出的日子」 /
+#       ⑦ 的早退必须排在它前面 / 那句假话的五语言禁词矩阵）；
+#     `tests/ui/dom/usage-section.test.ts` 32 → 35（**+3**：横幅不许说「没有记下任何用量」/
+#       被夹过时那句话不许消失 / 六张卡仍写 0 不画 EM DASH）。
+#
+#   ── 乙：commit 9d6f299（五份 DEPLOY.md「丢失不是延迟」）**+12**，它也没改 EXPECT_*。
+#     `tests/unit/docs-parity.test.ts` 625 → 637（五张「每语言一个 token」的锚表 ×
+#       各自的探针与「不乱红」；`tests/unit/docs-typography.test.ts` 94 → 94 **格数不变**，
+#       它改的是 `P5_OUTSIDE_ALERT` 那两条绝对行号）。
+#     ⚠️ 那个 commit 的正文自报「五格探针与一格不乱红」＝ 6，**实测是 12**
+#       ——以实测为准（自报数字不进这本账）。
+#
+#   ── 丙：本轮（评审第 2 轮的六条）**+5**。落到格数上是三处新判据 + 两处零格数：
+#     ① `apiKeyUsage()` 对 `no-shards` 表态。它上一版是**黑名单**（只挡 `off` /
+#        `unavailable`）⇒ `usageState` 新分出来的那一档默认落进 `value` + 0，
+#        「API 密钥」那一屏照旧写「近 24 小时 ≈ 0 次请求」，而**那一屏没有横幅**
+#        替它说「可能只是还没落盘」（`usage.note.noShards` 在「用量」板块）。
+#        `tests/ui/usage.test.ts` **±0**（既有那格从「四档」扩成「五档」，加断言不加格）；
+#        `tests/ui/dom/apikeys-section.test.ts` 21 → 22（**+1**：那一格的字与 tooltip）。
+#     ② `usage.empty` 那句「答案就是零」对「一部分分片畸形」同样是假话
+#        （0f0845a 新写的注释宣称它只对第 ④ 档成立 —— 实测不成立）。
+#        判据走 `malformedKind()` **不走 `note`**：note 只有一格，`range_clamped`
+#        压得过 `partial_malformed`，照 note 挡在那条路上会原地失效。
+#        `tests/ui/dom/usage-section.test.ts` 35 → 38（**+3**：畸形在场时闭嘴 /
+#        被夹过时同样闭嘴 / 「坏没坏读不出来」时也闭嘴（兼反向控制））。
+#     ③ `usageState` 里 `tier === "tier2"` 那一半此前**一个判据都没盯**
+#        （评审实测：删掉它，那两份共 76 格全绿）。补一格钉它的**理由**——
+#        `usage.note.noShards` 逐字点名了 Tier-2 的落盘机制，别的 tier 上没这条知识。
+#        `tests/ui/usage.test.ts` 41 → 42（**+1**）。
+#     ④ 零格数：`ak.usage.tip` / `ov.usage.approxTip` 五语言补「isolate 被回收时这一段
+#        会丢」。那一格判据的 key 名单从**写死三条**改成**从字典现扫** `*approxTip`
+#        + 另列 `ak.usage.tip`，并加了一条「扫不着就红」的自检 —— **仍是同一格**。
+#     ⑤ 零格数：五份 ADMIN.md 那两条规矩从「两件事 / 三件事」补成四件事。
+#        排版对等那五格一条都不动（没加标题 / 围栏 / 链接 / 表格行 / 标识符型 code span），
+#        「相邻标题间不超过 1200 字符」那条棘轮实测仍是 67，一格没涨
+#        ⇒ `docs-parity` 与 `docs-typography` 格数不变。
+#        ⚠️ 上一行原本写的是那五格的编号简称，它给 `scripts/prepush.sh` 凭空添了两处
+#        内部研发标识符 ⇒ `tests/unit/source-internal-refs.test.ts` 的逐份基线
+#        86 → 88 当场红（那一格的处置写得很清楚：**不许把表里的数字改大**，
+#        要么把编号换成读者用得上的说法、要么删掉整句）。这里照第一条改，
+#        基线那张表**一个字都不用动**。
+#   丙的变异实测（**八条逐条真跑过**，跑的是那三份共 102 格，每条只红该红的）：
+#     · 删 `apiKeyUsage()` 的 `no-shards` 一支 ⇒ 红 2（纯函数「五档」+ DOM 那格，
+#       报文逐字 `expected '近 24 小时 ≈ 0 次请求' to contain '还没有落盘的记录'`）；
+#     · 删 `usageState` 的 `r.tier === "tier2" &&` ⇒ **只红 1**（`expected 'no-shards' to be 'empty'`）；
+#     · 删 `malformedKind(data) === "none"` ⇒ 红 2（畸形那格 + 被夹那格）；
+#     · 换成照 note 挡（`usageNoteKey(note) !== "usage.note.partialMalformed"`）⇒ **只红 1**
+#       （被夹那格）——这一条证明前一格与它缺一不可；
+#     · 白名单写成 `=== null` ⇒ 红 2（新那格 + 既有「接口返回真实的零请求时」那格）；
+#     · 白名单写成黑名单 `!== "partial"` ⇒ **只红 1**（「坏没坏读不出来」那格）；
+#     · 删 `ak.usage.tip` / `ov.usage.approxTip` 中文那半句 ⇒ 各红 1，且**点名到 key 与语言**；
+#     · 把那条现扫的正则改成扫不着 ⇒ 自检红（`expected [] to include 'usage.approxTip'`）。
+#   ⇒ Node：4806 + 9（甲）+ 12（乙）+ 5（丙）= 4832；文件数不动（三处都加在既有文件里）。
+#   ⇒ workerd：768 + 0 = 768（甲乙丙都没碰 `tests/contract/**` 与 `src/**` 的行为，
+#     `tests/ui/**` 与 `tests/unit/docs-*` 只在 node 侧跑）；文件数不动。
 EXPECT_NODE_FILES=156
-EXPECT_NODE_TESTS=4806
+EXPECT_NODE_TESTS=4832
 EXPECT_WORKERS_FILES=41
 EXPECT_WORKERS_TESTS=768
 

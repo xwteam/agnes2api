@@ -145,7 +145,21 @@ export const I18N = {
   "ak.usage.off":      { "zh-CN": "用量：未开启", "zh-TW": "用量：未開啟", en: "Usage: not enabled", ja: "使用量: 無効", ko: "사용량: 비활성" },
   "ak.usage.unknown":  { "zh-CN": "用量：—", "zh-TW": "用量：—", en: "Usage: —", ja: "使用量: —", ko: "사용량: —" },
   "ak.usage.value":    { "zh-CN": "近 24 小时 ≈ {count} 次请求", "zh-TW": "近 24 小時 ≈ {count} 次請求", en: "Last 24h ≈ {count} requests", ja: "直近 24 時間 ≈ {count} 件", ko: "최근 24시간 ≈ {count}건" },
-  "ak.usage.tip":      { "zh-CN": "这个数来自时间序列统计（Tier-2），是近似值：未落盘的尾巴最长一个落盘间隔。按天 / 按小时的完整分解在「用量」板块。", "zh-TW": "這個數來自時間序列統計（Tier-2），是近似值：未落盤的尾巴最長一個落盤間隔。按天 / 按小時的完整分解在「用量」板塊。", en: "This number comes from time-series stats (Tier-2) and is approximate: the unflushed tail can be up to one flush interval old. The full per-day / per-hour breakdown is in the Usage section.", ja: "この数値は時系列統計（Tier-2）によるもので概算です。未書き込み分は最大で 1 回のフラッシュ間隔ぶん古くなります。日別・時間別の完全な内訳は「使用量」セクションにあります。", ko: "이 수치는 시계열 통계(Tier-2)에서 온 근사값입니다. 아직 기록되지 않은 부분은 최대 한 번의 플러시 간격만큼 오래되었을 수 있습니다. 일별·시간별 전체 분해는 「사용량」 섹션에 있습니다." },
+  // ⚠️⚠️ **「一条分片都还没落盘」也不许写成 `≈ 0 次请求`**（评审第 2 轮）：
+  //    这一句与 `ak.usage.off` 是同一条纪律的另一半 —— 那边禁的是把「没开」说成
+  //    「没人用」，这边禁的是把「还没落盘」说成「没人用」。判据同样走
+  //    `apiKeyUsage()`（那个函数上方有它的全文），这里只负责有一句话可说。
+  //    ⚠️ 这一句里**刻意没有数字**，理由与 `off` 那一句相同。
+  "ak.usage.notLanded": { "zh-CN": "近 24 小时：还没有落盘的记录", "zh-TW": "近 24 小時：還沒有落盤的記錄", en: "Last 24h: nothing flushed yet", ja: "直近 24 時間: まだ書き込まれた記録がありません", ko: "최근 24시간: 아직 기록된 내역 없음" },
+  "ak.usage.notLandedTip": { "zh-CN": "这段区间里一个分片都还没落盘。Tier-2 是攒够一个落盘间隔才写一次的，这一行分不出「这把密钥没人用」和「还没写进去」。", "zh-TW": "這段區間裡一個分片都還沒落盤。Tier-2 是攢夠一個落盤間隔才寫一次的，這一行分不出「這把密鑰沒人用」和「還沒寫進去」。", en: "Not a single shard has been flushed for this range yet. Tier-2 writes only once per flush interval, so this line cannot tell “nobody used this key” from “not written yet”.", ja: "この期間のシャードはまだ 1 件も書き込まれていません。Tier-2 はフラッシュ間隔ごとにまとめて書き込むため、この行では「この鍵は誰も使っていない」と「まだ書き込まれていない」を区別できません。", ko: "이 구간에는 아직 샤드가 하나도 기록되지 않았습니다. Tier-2는 플러시 간격마다 한 번씩 기록하므로, 이 줄에서는 “이 키를 아무도 쓰지 않음”과 “아직 기록되지 않음”을 구분할 수 없습니다." },
+  // ⚠️ **「isolate 被回收时这一段会丢」这半句是补上去的，别再删**（评审第 2 轮）：
+  //    它与 `usage.approxTip` 说的是**同一个** Tier-2 未落盘窗口，而上一版这里只写
+  //    「最长一个落盘间隔」——读起来像「等一会儿就补上」，而它可能永远补不上。
+  //    同一件事在同一个面板上两种诚实度，低的那一种就是这个面板的实际诚实度。
+  //    由 `tests/ui/usage.test.ts` 的
+  //    「Tier-2 的 ≈ tooltip 与 Tier-1 一样明写「这一段会丢」」那一格的 key 名单钉着
+  //    （**名单是这条红线唯一的守卫**：漏掉一个入口就等于把那个入口放生）。
+  "ak.usage.tip":      { "zh-CN": "这个数来自时间序列统计（Tier-2），是近似值：未落盘的尾巴最长一个落盘间隔，isolate 在此之前被回收时这一段会丢。按天 / 按小时的完整分解在「用量」板块。", "zh-TW": "這個數來自時間序列統計（Tier-2），是近似值：未落盤的尾巴最長一個落盤間隔，isolate 在此之前被回收時這一段會遺失。按天 / 按小時的完整分解在「用量」板塊。", en: "This number comes from time-series stats (Tier-2) and is approximate: the unflushed tail can be up to one flush interval old, and whatever is in it is lost if the isolate is recycled first. The full per-day / per-hour breakdown is in the Usage section.", ja: "この数値は時系列統計（Tier-2）によるもので概算です。未書き込み分は最大で 1 回のフラッシュ間隔ぶん古くなり、その前に isolate が回収されるとその分は失われます。日別・時間別の完全な内訳は「使用量」セクションにあります。", ko: "이 수치는 시계열 통계(Tier-2)에서 온 근사값입니다. 아직 기록되지 않은 부분은 최대 한 번의 플러시 간격만큼 오래되었을 수 있으며, 그 전에 isolate가 회수되면 그 구간은 사라집니다. 일별·시간별 전체 분해는 「사용량」 섹션에 있습니다." },
   // 用量这一次没读到时那条黄条的正文。**它必须把「坏的只是这一行」说出来**：
   // 这条横幅出现时列表、签发、停用、删除全都照常可用，一句笼统的「读取失败」
   // 会让运维以为整个板块出事了。旁边那颗按钮走 `common.refresh`（同一件东西，
@@ -587,7 +601,12 @@ export const I18N = {
   "ov.usage.tip":         { "zh-CN": "这是自这批 key 加入以来的累计值，不是「今日」——按天/按小时的分解要等启用时间序列统计之后才有。", "zh-TW": "這是自這批 key 加入以來的累計值，不是「今日」——按天/按小時的分解要等啟用時間序列統計之後才有。", en: "This is the cumulative value since these keys were added, not \"today\" — a per-day/per-hour breakdown will only be available once time-series stats are enabled.", ja: "これはこの key が追加されて以降の累計値であり、「本日」ではありません——日次／時間次への分解は時系列統計が有効になってからのみ可能です。", ko: "이는 이 key가 추가된 이후의 누적값이며 \"오늘\"이 아닙니다 — 일별/시간별 분해는 시계열 통계가 활성화된 후에만 가능합니다." },
   // `≈` 标记的 tooltip：与 keys.approxTip 同一条道理（并发下少计 + 写消除延迟落盘），
   // 这里是整池聚合（sumStats），不是单把 key，措辞相应调整。
-  "ov.usage.approxTip":   { "zh-CN": "近似值：这是整池所有 key 的累计聚合，单把 key 的计数在并发下会少计（KV 没有 CAS），且最多延迟一个触达间隔才落盘。", "zh-TW": "近似值：這是整池所有 key 的累計聚合，單把 key 的計數在並發下會少計（KV 沒有 CAS），且最多延遲一個觸達間隔才寫入。", en: "Approximate: this is the pool-wide aggregate over every key. Per-key counters undercount under concurrent requests (KV has no CAS) and can lag by up to one touch interval before being persisted.", ja: "概算値: これはプール内の全 key を集計した値です。key ごとのカウンターは同時リクエスト下で少なく数えられ（KV に CAS がないため）、永続化は最大でタッチ間隔ぶん遅れることがあります。", ko: "근사값: 이는 풀 전체 key의 누적 합계입니다. key별 카운터는 동시 요청에서 적게 집계되며(KV에 CAS 없음), 저장은 최대 하나의 접촉 간격만큼 늦어질 수 있습니다." },
+  // ⚠️ **「isolate 被回收时这一段会丢」这半句是补上去的，别再删**（评审第 2 轮）：
+  //    上一版只说「最多延迟一个触达间隔才落盘」，而紧挨着的 `keys.approxTip`
+  //    一直明写着「会丢」——它们说的是**同一个**未落盘窗口，两种诚实度只能取低的那一种。
+  //    由 `tests/ui/usage.test.ts` 的
+  //    「Tier-2 的 ≈ tooltip 与 Tier-1 一样明写「这一段会丢」」那一格的 key 名单钉着。
+  "ov.usage.approxTip":   { "zh-CN": "近似值：这是整池所有 key 的累计聚合，单把 key 的计数在并发下会少计（KV 没有 CAS），且最多延迟一个触达间隔才落盘，isolate 在此之前被回收时这一段会丢。", "zh-TW": "近似值：這是整池所有 key 的累計聚合，單把 key 的計數在並發下會少計（KV 沒有 CAS），且最多延遲一個觸達間隔才寫入，isolate 在此之前被回收時這一段會遺失。", en: "Approximate: this is the pool-wide aggregate over every key. Per-key counters undercount under concurrent requests (KV has no CAS) and can lag by up to one touch interval before being persisted — whatever has not been persisted is lost if the isolate is recycled first.", ja: "概算値: これはプール内の全 key を集計した値です。key ごとのカウンターは同時リクエスト下で少なく数えられ（KV に CAS がないため）、永続化は最大でタッチ間隔ぶん遅れることがあり、その前に isolate が回収されるとその分は失われます。", ko: "근사값: 이는 풀 전체 key의 누적 합계입니다. key별 카운터는 동시 요청에서 적게 집계되며(KV에 CAS 없음), 저장은 최대 하나의 접촉 간격만큼 늦어질 수 있고, 그 전에 isolate가 회수되면 그 구간은 사라집니다." },
 
   "ov.config.title":      { "zh-CN": "配置摘要", "zh-TW": "設定摘要", en: "Config summary", ja: "設定サマリー", ko: "설정 요약" },
   "ov.config.registrar":  { "zh-CN": "注册机", "zh-TW": "註冊機", en: "Registrar", ja: "レジストラー", ko: "등록기" },

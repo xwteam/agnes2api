@@ -645,11 +645,24 @@ function render() {
     host.appendChild(fail);
   }
   // 「这段时间真的是 0」要有自己的一句话。`note` 已经用 info 档说过同一件事时
-  // 不再重复，而第 ④ 种状态的 `note` 是 `null`、没人替它说。
-  // ⚠️⚠️ **这一句只对第 ④ 种状态成立（有分片落过盘、盘里就是 0），
-  //    而「开着但一条分片都没落盘」已经在 `usageState` 里分出去了**：
-  //    对那一档说「答案就是零」是假话，它可能只是还没写进去（见那个函数上方第五档那段）。
-  if (state === "empty" && (usageNoteKey(note) === null || noteSeverity(note) !== "info")) {
+  // 不再重复，而「有分片落过盘、盘里就是 0」那一档的 `note` 是 `null`、没人替它说。
+  // ⚠️⚠️ **`usage.empty` 是这一页上语气最重的一句（「我们确实读到了，答案就是零」），
+  //    所以它的前提要一条不缺地摆在这里**：读成功了、这段区间**有分片落过盘**、
+  //    而且**读回来的分片一个都不坏**。少任何一条，这句话就是在替我们不知道的事下结论。
+  //    · 「还没落盘」那一档由 `usageState` 分出去了（`no-shards`，见那个函数上方第五档）；
+  //    · 「有分片，但其中几个是畸形的」这一档 **`usageState` 分不出来**（它归 `empty`），
+  //      得在这里挡：畸形族在场时那些 0 缺了几块，说「答案就是零」与紧挨着的红条
+  //      「一部分分片是畸形的，下面这些数字缺了那几块」当场互相打脸 —— 与那一档
+  //      被立案的形状**是同一个**，只是换了一对句子。
+  // ⚠️⚠️ **挡它的判据是 `malformedKind()`（字段），不是 `note`**：后端的 note 只有一格，
+  //    `range_clamped` 压得过 `partial_malformed`（优先级在
+  //    `src/http/admin/handlers/usage.ts` 的 `usageHandler` 上方）⇒ 照 note 挡的话，
+  //    区间被夹过时这一句会原地复活，而那正是 `no_shards` 那一档踩过的同一颗雷。
+  // ⚠️ `malformedKind` 的 `"unknown"`（`shards` / `malformed` 读不成数字）**同样挡掉**：
+  //    那时我们连「坏没坏」都不知道，不许下「答案就是零」这个结论。
+  //    ⇒ 判据写成 `=== "none"`（白名单），不是 `!== "partial"`（黑名单）。
+  if (state === "empty" && malformedKind(data) === "none"
+    && (usageNoteKey(note) === null || noteSeverity(note) !== "info")) {
     const empty = el("div", { class: "banner-info", role: "status" });
     empty.appendChild(elI18n("span", "usage.empty"));
     host.appendChild(empty);
