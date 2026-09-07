@@ -1603,7 +1603,10 @@ BANNER='[collection-guard] ✅'
 #     **一个字都没动**（后端今天只发得出 `off` / `tier2`，走不到；上一轮把它定成
 #     `empty` 的理由成立）。零格数，记在这里免得下一个人去找。
 #
-#   变异实测（**十条逐条真跑过**，跑的是那四份共 131 格，每条只红该红的，跑完 md5 还原）：
+#   变异实测（**十条逐条真跑过**，跑的是那四份共 131 格，跑完 md5 还原）：
+#   ⚠️ **上一版这里还写了「每条只红该红的」，那句对第 8 条不成立**：它记的格数是错的
+#     （写「红 2」、实测只红 1，而且红的不是注释点名的那条输入）。复评把第 8 条逐字重跑、
+#     按实测订正在它自己那一行；其余九条复评时也重跑过，格数与下面记的一致。
 #     · `cellKind` 末行改回 `finite(value) === null ? "none" : "value"` ⇒ 红 2；
 #     · `ratioKind` 传给 `cellKind` 的 state 换成 `state === "no-shards" ? "empty" : state`
 #       ⇒ 红 2（比率那两张卡与延迟那张卡是两条路，缺一条就漏掉两张卡）；
@@ -1614,7 +1617,21 @@ BANNER='[collection-guard] ✅'
 #     · `fillCell` 里那个三元的两支对调 ⇒ 红 2（两个方向同时说反）；
 #     · `usageTipKey` 恒返回 `"ov.usage.tipTier2Off"` ⇒ 红 4；
 #     · `usageTipKey` 恒返回 `"ov.usage.tip"` ⇒ 红 2；
-#     · `usageTipKey` 的白名单改成黑名单（`=== false` → `!(… === true)`）⇒ 红 2；
+#     · `usageTipKey` 的白名单改成黑名单（`=== false` → `!(… === true)`）⇒ **只红 1**
+#       （**复评实测订正，上一版这里写「红 2」是假的**）：红的是 `tests/ui/overview.test.ts`
+#       的「拉不到 capabilities / 字段缺席 / 字段不是布尔 ⇒ 用那句无论开没开都成立的话」
+#       那一格，而且是在它循环的**第 5 条** `caps={stats:{}}` 上红，不是第一条 `caps=null`
+#       ——`usageTipKey` 先取 `caps.stats` 再 `c && …`，`caps` 为 `null` / `undefined` / `{}` /
+#       `{stats:null}` 时整条 `&&` 在走到 `=== false` 之前就短路了，白名单与黑名单
+#       在那四档上不可观测。⇒ `tests/ui/dom/overview-cards.test.ts` 的
+#       「capabilities 读不出来时不许默认当成「关着」」那一格在这条变异下**照绿**
+#       （它喂的正是 `caps=null`）。那一格真正的变红条件是把
+#       `admin-ui/js/sec-overview.js` 里 `loadCapabilities()` 的 `catch` 改成
+#       `caps = { stats: { tier2Enabled: false } };` ⇒ **只红它自己**（同样实测）。
+#       ⚠️ 顺带订正一条**危害不是纸面的**：`overview.test.ts` 那个循环里
+#       `{stats:{}}` 起的后三条是全仓唯一能观测这个方向的输入，实测删掉它们之后
+#       同一条变异跑全量 `pnpm test` **一格行为判据都不红**（只剩生成物漂移守卫在响）。
+#       两格各自的注释已按实测重写，别再照旧读成「这两格互为连坐」。
 #     · 删掉 `renderUsage()` 末尾那三行（退回无条件渲染）⇒ **只红 1**：
 #       「统计开着时…」那一格**照绿**（默认 key 本来就是 `ov.usage.tip`），
 #       拦住这种回退的只有「确知统计关着时…」那一格 —— 两格缺一不可，

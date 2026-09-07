@@ -155,9 +155,24 @@ describe("usageTipKey：那句尾巴不许对着一个已经开着统计的部�
    * 也就是在最查不出来的那一档上把上一版那句误导原样留下。
    * ⭐ 与 `pure/usage.mjs` 的 `readSucceeded` 是同一条形状。
    *
-   * **变红条件**（真跑过）：把 `c.tier2Enabled === false` 改成 `!(c.tier2Enabled === true)`
-   * ⇒ 这一格在**第一条**（`caps=null`）就红，连同
-   * `tests/ui/dom/overview-cards.test.ts` 的「capabilities 读不出来时不许默认当成「关着」」共 2 格。
+   * **变红条件**（**复评实测订正**，上一版这三句连着写错了）：把
+   * `c.tier2Enabled === false` 改成 `!(c.tier2Enabled === true)` ⇒ 跑那四份共 131 格，
+   * **只红这一格**（`Tests 1 failed | 130 passed`），而且是在下面循环的**第 5 条**
+   * `caps={stats:{}}` 上红，**不是第一条 `caps=null`**：`usageTipKey` 先把
+   * `caps.stats` 取进 `c`、再接 `c && typeof c === "object" && …`，于是前四条
+   *（`null` / `undefined` / `{}` / `{stats:null}`）的 `c` 都是假值，整条 `&&`
+   * 在走到 `=== false` 之前就短路了 —— **白名单与黑名单在那四档上根本不可观测**。
+   *
+   * ⚠️⚠️ **所以循环里后三条不是重复的**（`{stats:{}}` / `{stats:{tier2Enabled:"false"}}` /
+   * `{stats:{tier2Enabled:0}}`）：它们是全仓唯一能观测到这个方向的输入。实测把这三条
+   * 删掉、同一条变异跑全量 `pnpm test` ⇒ **一格行为判据都不红**，只剩
+   * `tests/unit/ui-assets.test.ts`「源目录里每个文件都在生成物里，且内容一字不差」与
+   *「重新生成一遍，与仓库里那份逐字节相同」两格在响 —— 那两格钉的是
+   * 「改了 `admin-ui/` 却没跑 `pnpm ui:build`」，与这条行为无关。
+   *
+   * ⚠️ `tests/ui/dom/overview-cards.test.ts` 的「capabilities 读不出来时不许默认当成「关着」」
+   * 那一格在这条变异下**照绿**（它喂进去的正是 `caps=null` 那一档，短路了），
+   * 上一版把它算作连坐的第 2 格是假的。那一格真正钉的东西写在它自己的注释里。
    */
   it("拉不到 capabilities / 字段缺席 / 字段不是布尔 ⇒ 用那句无论开没开都成立的话", () => {
     for (const caps of [null, undefined, {}, { stats: null }, { stats: {} },

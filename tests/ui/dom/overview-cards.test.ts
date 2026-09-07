@@ -256,13 +256,21 @@ describe("累计用量卡底下那句尾巴：不许把一个已经开着统计�
   /**
    * **拉不到 `/capabilities` 时用那句「无论开没开都成立」的话，不是默认当成关着。**
    *
-   * 这一格钉的是 `usageTipKey` 的白名单方向在**真实那条链**上也成立：
-   * `loadCapabilities()` 吞掉异常之后 `caps` 停在 `null`。
+   * 这一格钉的是 `loadCapabilities()` **吞掉异常之后不许把 `caps` 兜底成「关着」**：
+   * 异常被吞掉之后 `caps` 必须原样停在 `null`，那一档走的是 `usageTipKey` 里
+   * `c && typeof c === "object" && …` 的短路支 ⇒ 默认那句无论开没开都成立的话。
    *
-   * **变红条件**（真跑过）：把 `usageTipKey` 里那句白名单改成黑名单
-   *（`c.tier2Enabled === false` → `!(… === true)`）⇒ 这一格红
-   *（`expected 'ov.usage.tipTier2Off' to be 'ov.usage.tip'`），连同 `tests/ui/overview.test.ts`
-   * 的「拉不到 capabilities / 字段缺席 / 字段不是布尔 ⇒ 用那句无论开没开都成立的话」共 2 格。
+   * ⚠️⚠️ **它钉不到白名单方向**（**复评实测订正**：上一版这里写「钉的是 `usageTipKey`
+   * 的白名单方向在真实那条链上也成立」，那句是假的）：`caps === null` 时 `c` 就是 `null`，
+   * `=== false` 与 `!(… === true)` 在这一档上**根本走不到**，两种写法这一格都绿。
+   * 白名单方向由 `tests/ui/overview.test.ts` 的「拉不到 capabilities / 字段缺席 /
+   * 字段不是布尔 ⇒ 用那句无论开没开都成立的话」那个循环里 `{stats:{}}` 起的后三条
+   * 独家钉着 —— 别把它们当成重复项删掉，理由与实测写在那一格自己的注释里。
+   *
+   * **变红条件**（复评实测，跑那四份共 131 格）：把 `admin-ui/js/sec-overview.js` 的
+   * `loadCapabilities()` 那个 `catch` 改成 `caps = { stats: { tier2Enabled: false } };`
+   *（读不到就默认当成关着）⇒ **只红这一格**（`Tests 1 failed | 130 passed`，
+   * 报文 `expected 'ov.usage.tipTier2Off' to be 'ov.usage.tip'`）。
    */
   it("capabilities 读不出来时不许默认当成「关着」", async () => {
     // ⚠️ **只让 `/capabilities` 这一条 500**：整份 responder 一起 500 的话，
