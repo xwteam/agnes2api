@@ -32,6 +32,10 @@ export function openaiRoutes(deps: DispatchDeps & UsageRecording): Hono {
       // 把**关着统计的部署**也打成 500（全局约束 16：关必须是零成本）。
       // 归一化只在 `boundUsageKey()` 里做一次，那一侧只有开着才跑。
       protocol: "openai", model: (body.model ?? "") as string,
+      // ⚠️ **归属原样取，不在这里兜底**：这一段在 handler 顶层、无条件求值
+      //（比另外三条更早），兜底放在 `UsageSink.record()`——只有 Tier-2 开着才跑的
+      // 那一侧，理由与上面那条 `String(...)` 完全相同。
+      apiKeyId: c.get("apiKeyId"),
       ok: res.ok, stream, latencyMs: deps.now() - startedAt,
       // ⚠️ **OpenAI 这一条的 token 恒 0，而且这不是「忘了取」**（订正）：
       // 本文件是四条协议路由里唯一**不传 `expectJson`** 的一条，`dispatch()` 因此走

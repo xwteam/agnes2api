@@ -531,6 +531,76 @@ export function breakdownRows(map, numeric) {
 }
 
 /**
+ * 后端那三个**保留伪 id**。它们不是密钥 id，是桶名。
+ *
+ * ⚠️ **这里是第二份字面量，第一份在 `src/core/admin/usage-stats.ts`
+ *（`USAGE_MASTER_BUCKET` / `USAGE_UNATTRIBUTED_BUCKET` / `USAGE_OTHER_BUCKET`）。**
+ * 面板 import 不到 `src/`，所以这一份抄不掉；**抄件靠一格用例与原件对表**——
+ * `tests/ui/usage.test.ts` 的
+ * 「面板那三个保留 id 与后端常量逐字相同 —— 这是一份抄件，它只能靠对表活着」
+ * 直接 import 后端常量逐字比对。改了后端而没改这里，那一格当场红。
+ */
+export const RESERVED_API_KEY_IDS = {
+  master: "master",
+  unattributed: "unattributed",
+  other: "__other__",
+};
+
+/**
+ * 按密钥那一列：一个桶键该显示成哪一条 i18n key。**认不出来返回 `null`
+ * ⇒ 调用方照实画那个原始 id。**
+ *
+ * ⚠️⚠️ **只有这一维做 id → 名的映射，`byModel` 那一维刻意不做**（本轮裁定）：
+ * 这一维的键是**我们自己发的**（12 位十六进制的 id，或上面那三个保留串），
+ * 客户端选不了自己落进哪一格；而 `byModel` 的 `__other__` **客户端可以直接在
+ * 请求体里填**（那条已知边界逐字记在 `src/core/admin/usage-stats.ts` 的
+ * `boundUsageKey` 上方）—— 在那一维做映射等于让任何一个客户端把自己的流量
+ * 显示成「其它」。**两维差的是「谁能控制这个键」，不是「哪个更好看」。**
+ *
+ * ⚠️ **认不出来的 id 一律原样画，不猜、也不标「已删除」**：一个已经被删掉的密钥
+ * 与一个「这一刻那张表读不出来」的密钥在面板手上**完全同形**，
+ * 把它渲染成「已删除」就是把未知说成结论（那句静态说明由
+ * `usage.detail.apiKeyNote` 常驻，不由这个函数说）。
+ */
+export function apiKeyRowLabelKey(id) {
+  if (id === RESERVED_API_KEY_IDS.master) return "usage.key.master";
+  if (id === RESERVED_API_KEY_IDS.unattributed) return "usage.key.unattributed";
+  if (id === RESERVED_API_KEY_IDS.other) return "usage.key.other";
+  return null;
+}
+
+/**
+ * 汇总那份响应里，某一把密钥的请求数。**给「API 密钥」板块的每张卡用。**
+ *
+ * @returns {{kind: "off"|"unknown"|"value", requests: number}}
+ *
+ * ⚠️⚠️ **`off` 是一档独立的结局，不许并进 `value` 的 0**（本轮那条硬裁定）：
+ * Tier-2 关着时这个部署**根本没在记账**，画一个 `0` 就是把「没开」说成「没人用」。
+ * 判据走的是**同一个** `usageState()`，不另写一套 —— 两套判据迟早会对同一份响应
+ * 给出不同的结论，而分叉的那一边正好是「关着」时，后果就是面板开始伪造 0。
+ *
+ * ⚠️ **「这把密钥这段时间一次都没被用过」确实是 `value` + `0`**，那不是伪造：
+ * 读成功了、区间里有分片、这一格就是没有 —— 与 `EMPTY_DAY` 上方那条论证同源。
+ */
+export function apiKeyUsage(resp, failed, id) {
+  if (failed === true) return { kind: "unknown", requests: 0 };
+  const r = obj(resp);
+  if (r === null) return { kind: "unknown", requests: 0 };
+  const st = usageState(r);
+  if (st === "off") return { kind: "off", requests: 0 };
+  if (st === "unavailable") return { kind: "unknown", requests: 0 };
+  const m = obj(r.byApiKey);
+  // `byApiKey` 整块拿不到 ⇒ 「我们不知道」，**不是 0**（那一档后端已经发成 `null`）。
+  if (m === null) return { kind: "unknown", requests: 0 };
+  // ⚠️ **只用下标取值**：这份 map 是后端那个无原型对象序列化过来的，
+  //    而 `id` 一路来自那张表，同一条纪律见 `breakdownRows` 上方。
+  const b = obj(m[id]);
+  if (b === null) return { kind: "value", requests: 0 };
+  const n = finite(b.requests);
+  return n === null ? { kind: "unknown", requests: 0 } : { kind: "value", requests: n };
+}
+
+/**
  * `capabilities.stats.tokensCoverage`（裸 `string[]` 的协议 **id**）
  * → `GET /admin/api/models` 的 `protocols[].label`（展示名）。
  *

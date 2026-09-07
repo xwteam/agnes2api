@@ -8,6 +8,7 @@ import { resolveUsageFlushInterval } from "../../src/http/usage-sink.js";
 import { workerRuntime } from "../../src/adapters/runtime-worker.js";
 import {
   USAGE_FLUSH_MIN_INTERVAL_MS, USAGE_WRITES_PER_DAY, mergeDayShards, type UsageDayShard,
+  USAGE_MASTER_BUCKET, USAGE_APIKEY_MAX_KEYS, USAGE_OTHER_BUCKET, USAGE_UNATTRIBUTED_BUCKET,
 } from "../../src/core/admin/usage-stats.js";
 import type { Storage } from "../../src/ports/storage.js";
 
@@ -461,8 +462,9 @@ describe("UsageSink 的落盘契约", () => {
     let t = startAt;
     const storage = new UsagePutCounter(new MemoryStorage(undefined, () => t));
     const sink = new UsageSink({ storage, now: () => t, shardId: SHARD, onError: () => {} });
-    const one = (o: Partial<{ protocol: string; model: string; ok: boolean }> = {}) => sink.record({
+    const one = (o: Partial<{ protocol: string; model: string; ok: boolean; apiKeyId: string }> = {}) => sink.record({
       protocol: o.protocol ?? "openai", model: o.model ?? "agnes-2.0-flash",
+      apiKeyId: o.apiKeyId ?? USAGE_MASTER_BUCKET,
       ok: o.ok ?? true, stream: false, latencyMs: 10, tokensIn: 0, tokensOut: 0,
     });
     return {
@@ -594,7 +596,7 @@ describe("UsageSink 的落盘契约", () => {
     const storage = new UsagePutCounter(new MemoryStorage(undefined, () => t));
     const sink = new UsageSink({ storage, now: () => t, shardId: SHARD, onError: (e) => errs.push(e) });
     const one = () => sink.record({
-      protocol: "openai", model: "m", ok: true, stream: false,
+      protocol: "openai", model: "m", apiKeyId: USAGE_MASTER_BUCKET, ok: true, stream: false,
       latencyMs: 10, tokensIn: 0, tokensOut: 0,
     });
 
@@ -847,7 +849,7 @@ describe("UsageSink 的落盘契约", () => {
     // 同协议之后：`byProtocol.openai.requests` 在「没有快照」与「原地改桶值」两种
     // 实现下都会变成 2；不同模型则让 `byModel` 那一维照旧钉住「多出一个键」那一支。
     const one = (model: string) => sink.record({
-      protocol: "openai", model, ok: true, stream: false, latencyMs: 1, tokensIn: 0, tokensOut: 0,
+      protocol: "openai", model, apiKeyId: USAGE_MASTER_BUCKET, ok: true, stream: false, latencyMs: 1, tokensIn: 0, tokensOut: 0,
     });
 
     one("m-alpha");                      // alpha
@@ -932,7 +934,7 @@ describe("UsageSink 的落盘契约", () => {
     for (const bad of [123, { a: 1 }, true, [1, 2], unstringifiable] as unknown[]) {
       expect(
         () => r.sink.record({
-          protocol: "openai", model: bad as string, ok: true, stream: false,
+          protocol: "openai", model: bad as string, apiKeyId: USAGE_MASTER_BUCKET, ok: true, stream: false,
           latencyMs: 1, tokensIn: 0, tokensOut: 0,
         }),
         // ⚠️ 这一条今天恒真（`record()` 有兜底），保留是为了让「它不该抛」这件事
@@ -1171,7 +1173,7 @@ describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 run
         storage, now: () => t, shardId: SHARD, onError: () => {}, budgetPerDay,
       });
       for (let i = 0; i < 20; i++) {
-        sink.record({ protocol: "openai", model: "m", ok: true, stream: false, latencyMs: 1, tokensIn: 0, tokensOut: 0 });
+        sink.record({ protocol: "openai", model: "m", apiKeyId: USAGE_MASTER_BUCKET, ok: true, stream: false, latencyMs: 1, tokensIn: 0, tokensOut: 0 });
         t += DAY_MS;
       }
       t += USAGE_FLUSH_MIN_INTERVAL_MS + 1;
@@ -1241,5 +1243,148 @@ describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 run
       { GATEWAY_TOKEN: "t", USAGE_STATS_ENABLED: "true", USAGE_FLUSH_INTERVAL_MS: "300000" },
       new UsagePutCounter(new MemoryStorage()), workerRuntime(), { newShardId: () => SHARD },
     )).rejects.toThrow(/7200000/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// ④ 按密钥归属组：`byApiKey` 这一维
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("Tier-2 的按密钥归属（byApiKey）", () => {
+  /** 与上面 `rig()` 同一套三件套。**单独一份**：这一组要按 `apiKeyId` 分样本。 */
+  function keyRig(startAt = DAY0_MS) {
+    let t = startAt;
+    const storage = new UsagePutCounter(new MemoryStorage(undefined, () => t));
+    const sink = new UsageSink({ storage, now: () => t, shardId: SHARD, onError: () => {} });
+    return {
+      storage, sink,
+      one: (apiKeyId: string | undefined) => sink.record({
+        protocol: "openai", model: "m", apiKeyId,
+        ok: true, stream: false, latencyMs: 10, tokensIn: 0, tokensOut: 0,
+      }),
+      advance: (ms: number) => { t += ms; },
+      pastInterval: () => { t += USAGE_FLUSH_MIN_INTERVAL_MS + 1; },
+    };
+  }
+
+  const shardOf = async (r: ReturnType<typeof keyRig>): Promise<UsageDayShard> =>
+    (await r.storage.get<UsageDayShard>(KEY_DAY0))!;
+
+  /**
+   * ⚠️⚠️ **这一格是本轮那条「新增 put = 0 次/天」的可执行版本，而且它数的是 put。**
+   *
+   * 判据不是「put 少于某个数」（那种断言在任何实现下都容易绿），是
+   * **同一条时间轴跑两遍、一遍全部归给主口令、一遍每条各归一把不同的密钥，
+   * 两遍的 put 次数必须逐字相同**。
+   * ⇒ 谁把这一维改成「按密钥另开一个键」（`usage:<日>:<槽位>:<keyId>` 这种形态，
+   * 一个看起来很自然的改动），第二遍的 put 会随密钥数线性涨，这一格当场红。
+   *
+   * ⚠️ **反向自检不可少**：两遍的 put 数相同，也可能是因为**这一维压根没被记下来**。
+   * 所以同时断言两遍落下去的分片里 `byApiKey` 的键数是 1 与 25 —— 那才说明
+   * 「多的是值里的一维，不是键」。
+   */
+  it("加了 byApiKey 这一维之后每天的 put 次数一个都没多 —— 数的是 put，不是 flush", async () => {
+    const run = async (distinct: boolean) => {
+      const r = keyRig();
+      // 一整天里每小时一条请求，每条请求收尾都调一次 maybeFlush（生产里就是这样）。
+      for (let h = 0; h < 24; h++) {
+        r.one(distinct ? `key${String(h).padStart(8, "0")}` : USAGE_MASTER_BUCKET);
+        await r.sink.maybeFlush();
+        r.advance(3_600_000);
+      }
+      // 收尾再落一次，让最后那几条也进分片（否则两遍的键数差别只是「还没落盘」）。
+      r.pastInterval();
+      await r.sink.maybeFlush();
+      return { puts: r.storage.usagePuts.length, shard: await shardOf(r) };
+    };
+
+    const same = await run(false);
+    const many = await run(true);
+
+    // 手写字面量：2 小时间隔 × 一天 = 11 次周期性落盘 + 收尾那 1 次。
+    expect(same.puts, "夹具本身没落过盘的话，下面那句『相等』是空的").toBe(12);
+    expect(many.puts, "**这一句就是那条「新增 put = 0 次/天」**").toBe(same.puts);
+    // 反向自检：这一维真的被记下来了，两遍的差别在**值**里。
+    expect(Object.keys(same.shard.byApiKey)).toEqual([USAGE_MASTER_BUCKET]);
+    expect(Object.keys(many.shard.byApiKey).length).toBe(24);
+    // 而两遍的总数逐字相同 —— 分维不改变任何一个计数。
+    expect(many.shard.total.requests).toBe(same.shard.total.requests);
+  });
+
+  it("Σ byApiKey 恒等于 total —— 每一条请求都恰好落进一格，不多不少", async () => {
+    const r = keyRig();
+    r.one(USAGE_MASTER_BUCKET);
+    r.one("aabbccddeeff");
+    r.one("aabbccddeeff");
+    r.one("112233445566");
+    r.pastInterval();
+    await r.sink.maybeFlush();
+
+    const shard = await shardOf(r);
+    const sum = Object.values(shard.byApiKey).reduce((a, b) => a + b.requests, 0);
+    expect(shard.total.requests).toBe(4);
+    expect(sum, "对不上就说明有请求没被归属，或者被归了两次").toBe(shard.total.requests);
+    expect(shard.byApiKey.aabbccddeeff?.requests).toBe(2);
+    expect(shard.byApiKey[USAGE_MASTER_BUCKET]?.requests).toBe(1);
+  });
+
+  /**
+   * ⚠️ **归属拿不到时的兜底不许归给主口令**：那会把别人的流量算到主口令头上，
+   * 而**归属正是这一维存在的全部理由**。
+   * 也不许干脆不记（那会让 Σ`byApiKey` 与 `total` 静默对不上，见上一格）。
+   */
+  it("apiKeyId 缺席时归到 unattributed，既不归主口令也不静默丢掉", async () => {
+    const r = keyRig();
+    r.one(undefined);
+    r.one("");           // 空串与「没拿到」是同一件事：空字符串键是一格没有名字的行
+    r.one(USAGE_MASTER_BUCKET);
+    r.pastInterval();
+    await r.sink.maybeFlush();
+
+    const shard = await shardOf(r);
+    expect(shard.byApiKey[USAGE_UNATTRIBUTED_BUCKET]?.requests).toBe(2);
+    expect(shard.byApiKey[USAGE_MASTER_BUCKET]?.requests, "主口令那一格不许被兜底污染").toBe(1);
+    expect(shard.total.requests).toBe(3);
+  });
+
+  /**
+   * ⚠️ **日桶是历史累计，而那 200 把只管当下** —— 同一天里反复「签发→用→删」，
+   * 一天之内出现过的不同 id 数可以远超 200。这一格证明那一维**有界**，
+   * 而且**总数一条不丢**（溢出只是丢分辨率）。
+   */
+  it("一天之内出现的不同 id 数超过上界时并进 __other__，键数封顶而总数一条不丢", async () => {
+    const r = keyRig();
+    const n = USAGE_APIKEY_MAX_KEYS + 40;
+    for (let i = 0; i < n; i++) r.one(`k${String(i).padStart(11, "0")}`);
+    r.pastInterval();
+    await r.sink.maybeFlush();
+
+    const shard = await shardOf(r);
+    // 201 个具名键 + 溢出那一格 = 202。
+    expect(Object.keys(shard.byApiKey).length).toBe(USAGE_APIKEY_MAX_KEYS + 1);
+    expect(shard.byApiKey[USAGE_OTHER_BUCKET]?.requests).toBe(40);
+    expect(shard.total.requests).toBe(n);
+    const sum = Object.values(shard.byApiKey).reduce((a, b) => a + b.requests, 0);
+    expect(sum, "溢出丢的是分辨率，不是计数").toBe(n);
+  });
+
+  /**
+   * ⚠️⚠️ **这一格钉的是鉴权那一段的接线，走真装配。**
+   * 上面几格全在直接驱动 `UsageSink`，它们对「归属是谁写进去的」一个字都没说
+   * ——把 `src/http/middleware/auth.ts` 里那两行 `c.set` 删掉，它们照样全绿。
+   * 变红条件：删掉主口令那一段的 `c.set` ⇒ 这一格收到的是 `unattributed`。
+   */
+  it("主口令打进来的请求归到 master，走的是真装配的鉴权中间件", async () => {
+    let t = DAY0_MS;
+    const g = await gateway({ enabled: true, now: () => t });
+    await g.hit();
+    t += USAGE_FLUSH_MIN_INTERVAL_MS + 1;
+    await g.hit();
+
+    const shard = (await g.storage.get<UsageDayShard>(KEY_DAY0))!;
+    expect(Object.keys(shard.byApiKey)).toEqual([USAGE_MASTER_BUCKET]);
+    expect(shard.byApiKey[USAGE_MASTER_BUCKET]!.requests).toBeGreaterThan(0);
+    // 反向自检：兜底那一格一次都没出现过 —— 出现了就说明归属没走通、只是被兜住了。
+    expect(shard.byApiKey[USAGE_UNATTRIBUTED_BUCKET]).toBeUndefined();
   });
 });

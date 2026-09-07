@@ -529,7 +529,7 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
       //    形状一样，所以照样是「拿不到就如实说拿不到」。由那一格用例正面钉着。
       return c.json({
         ...base,
-        range: null, days: null, total: null, shards: null, malformed: null,
+        range: null, days: null, total: null, byApiKey: null, shards: null, malformed: null,
         pending: wiring === null ? null : pendingBlock(wiring.sink),
         note: (wiring === null ? "tier2_off" : "clock_unavailable") satisfies UsageNote,
       });
@@ -547,7 +547,7 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
       //    （没有 sink 就没有「未落盘的尾巴」这件事，报 0 是伪造）。
       return c.json({
         ...base, range,
-        days: null, total: null, shards: null, malformed: null, pending: null,
+        days: null, total: null, byApiKey: null, shards: null, malformed: null, pending: null,
         note: "tier2_off" satisfies UsageNote,
       });
     }
@@ -561,12 +561,12 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
       //    `tier` / `range` / `pending` 这三块都还是真的，整条 500 会把它们一起丢掉。
       return c.json({
         ...base, range,
-        days: null, total: null, shards: null, malformed: null, pending,
+        days: null, total: null, byApiKey: null, shards: null, malformed: null, pending,
         note: "read_failed" satisfies UsageNote,
       });
     }
 
-    const { byDay, total, shards, malformed } = block.merged;
+    const { byDay, byApiKey, total, shards, malformed } = block.merged;
     const days: Array<{ date: string; total: UsageBucket }> = [];
     // ── 这个循环的上界，以及那个 `n < USAGE_DAY_RETAIN` 到底在守什么 ──────────
     //
@@ -603,6 +603,24 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
 
     return c.json({
       ...base, range, days, shards, malformed, pending,
+      /**
+       * 整段区间按「哪一把对外 API 密钥」分。
+       *
+       * ⚠️⚠️ **它为什么在汇总这条端点上，而不只在单日下钻那条**：
+       * 「API 密钥」板块的每一张卡上要显示这把密钥的用量，而那个板块**没有
+       * 「某一天」这个概念**——它列的是当前这张表。让它去点一天再下钻是错的界面，
+       * 让它自己把 30 天逐天拉一遍则是 30 次请求。
+       * ⇒ 汇总这条端点原样把这一维交出去，**零新增存储读**：`mergeDayShards`
+       * 本来就把它合出来了，这里只是没有把它丢掉。
+       *
+       * ⚠️ **与 `days` / `total` / `shards` / `malformed` 同生同死**：上面那三条
+       * 早退里它一起是 `null`。一个「读失败但按密钥分解写着 `{}`」的响应体，
+       * 面板照着渲染就是「这段时间每一把密钥都是 0 次」——那正是伪造 0。
+       *
+       * ⚠️ **它是无原型对象**（`mergeDayShards` 的硬契约）：`c.json` 走
+       * `JSON.stringify`，对无原型对象照常工作（已实测，见那份契约的说明）。
+       */
+      byApiKey,
       /**
        * ⚠️ **`malformed` 那一维先判，而且它把「全坏」与「部分坏」分成两条 code**
        *（评审发现 + 定向复评）：
@@ -700,7 +718,7 @@ export function usageDateHandler(deps: { usage: UsageWiring | null; now: () => n
       approximate: true as const,
       generatedAt: at,
     };
-    const empty = { hours: null, byModel: null, byProtocol: null, shards: null, malformed: null };
+    const empty = { hours: null, byModel: null, byProtocol: null, byApiKey: null, shards: null, malformed: null };
 
     if (wiring === null) return c.json({ ...base, ...empty, note: "tier2_off" satisfies UsageNote });
     if (!Number.isFinite(at)) {
@@ -719,9 +737,9 @@ export function usageDateHandler(deps: { usage: UsageWiring | null; now: () => n
     const block = await readShards(wiring.storage, keys);
     if (!block.ok) return c.json({ ...base, ...empty, note: "read_failed" satisfies UsageNote });
 
-    const { hours, byModel, byProtocol, shards, malformed } = block.merged;
+    const { hours, byModel, byProtocol, byApiKey, shards, malformed } = block.merged;
     return c.json({
-      ...base, hours, byModel, byProtocol, shards, malformed,
+      ...base, hours, byModel, byProtocol, byApiKey, shards, malformed,
       note: "no_request_detail" satisfies UsageNote,
     });
   };

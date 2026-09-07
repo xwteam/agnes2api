@@ -25,6 +25,10 @@ export function responsesRoutes(deps: DispatchDeps & UsageRecording): Hono {
       // 同 `routes/anthropic.ts`：**刻意不强转**，归一化只在 `boundUsageKey()` 里
       // 做一次（收口复评）。
       protocol: "responses", model: (req.model ?? "") as string,
+      // ⚠️ **归属原样取，不在这里兜底**：这一行在「Tier-2 关着就 return」之前求值，
+      // 兜底放在 `UsageSink.record()`（只有开着才跑的那一侧），
+      // 理由见 `UsageOutcome.apiKeyId` 上方那段。
+      apiKeyId: c.get("apiKeyId"),
       ok: res.ok, stream: internal.stream, latencyMs, tokensIn, tokensOut,
     });
 

@@ -1401,10 +1401,44 @@ BANNER='[collection-guard] ✅'
 #     真正成立的论据是「读路径零 put + 写路径 409 拒绝覆盖」，两处实现都在。
 #   ⇒ Node：4775 + 3 = 4778；文件数不动（加在既有文件里）。
 #   ⇒ workerd：759 + 0 = 759（`tests/ui/**` 只在 node 侧跑，见 vitest.config.ts）；文件数不动。
+# 🔴 **这一轮（每-key 用量：Tier-2 的 `byApiKey` 一维 + 面板两处消费点）。**
+#   · 后端：`UsageDayShard` / `mergeDayShards` / `UsageSink` 各加一维；鉴权那两段
+#     `c.set("apiKeyId", …)`（主口令 ⇒ 保留伪 id `master`，**那一段仍然零存储 IO**）；
+#     两条读端点把 `byApiKey` 交出去，并与 `days` / `total` 同生同死。
+#     `boundUsageKey()` 的第三个形参 `maxKeys` **改成必填**（`byModel` 32 / `byApiKey` 201
+#     是两个数，带默认值时漏传会静默按 32 计而无任何编译期信号）。
+#   · 面板：单日下钻多第四张表「按密钥」+ 一句常驻说明；「API 密钥」板块每张卡多一行用量。
+#   格数（**逐文件列全，六处都在既有文件里**）：
+#     `tests/unit/admin/usage-stats.test.ts` **+5**（上界是 APIKEY_MAX+1 且与 32 不是同一个数 /
+#       满桶后并进 __other__ 且旧键仍认得出来 / 保留伪 id 与真 id 取值集合不相交 /
+#       合并这一维且存量分片缺这一格不算畸形 / 键叫 `__proto__` 时不消失）；
+#     `tests/contract/usage-tier2.test.ts` **+5**（**put 次数不变** / Σ byApiKey = total /
+#       缺席归 unattributed 且不污染 master / 超上界并进 __other__ 而总数不丢 /
+#       主口令走真装配归到 master）；
+#     `tests/contract/admin-usage.test.ts` **+4**（汇总端点发这一维 / 单日下钻四维同层 /
+#       三条早退里它与 days 一起是 null / 子密钥走真签发+真鉴权归到它自己的 id）；
+#     `tests/ui/usage.test.ts` **+4**（抄件与后端常量对表 / 三条展示名与真 id 返回 null /
+#       四档互不重叠（`off` ≠ 0）/ 形状不对时是「我们不知道」）；
+#     `tests/ui/dom/usage-section.test.ts` **+2**（第四张表的保留 id 换展示名、真 id 原样画、
+#       一个字不说「已删除」/ 这一天读不出来时那张表说的是「读不出来」）；
+#     `tests/ui/dom/apikeys-section.test.ts` **+4**（**关着时那一格一个数字都不许出现** /
+#       画这一把自己的数而不是区间合计 / 真零画 0 / 用量读失败画 — 且不牵连列表）。
+#   变异实测（逐条都真跑过）：
+#     · 只在 `byApiKey` 有多于一个键时按密钥另开键落盘 ⇒ **只有**「put 次数一个都没多」那格红
+#       （既有 31 格全绿 —— 那条轴此前没有任何东西守着）；
+#     · 删掉主口令那一段的 `c.set` ⇒ 「主口令……归到 master」那格红；
+#     · 删掉子密钥那一段的 `c.set` ⇒ 「子密钥……归到它自己的 id」那格红；
+#     · 删掉 `apiKeyUsage()` 里 `off` 那一支（并进 `value` 的 0）⇒ 纯函数与 DOM 各红一格。
+#   `tests/unit/docs-parity.test.ts` **格数不变**：`H3_FLOOR` 56 → 58（五份 ADMIN.md 各多两个
+#     `###`；拆成两个是因为并成一个会越过 R23A 那道棘轮，实测 67 → 69）。
+#   `tests/unit/docs-typography.test.ts` **格数不变**：`P5_OUTSIDE_ALERT` 那两条绝对行号
+#     889/872 → 909/892（配额账里插了一段，登记跟着漂——**它红是对的**）。
+#   ⇒ Node：4778 + 5 + 5 + 4 + 4 + 2 + 4 = 4802；文件数不动（六处都加在既有文件里）。
+#   ⇒ workerd：759 + 5 + 4 = 768（两份契约双运行时各跑一遍）；文件数不动。
 EXPECT_NODE_FILES=156
-EXPECT_NODE_TESTS=4778
+EXPECT_NODE_TESTS=4802
 EXPECT_WORKERS_FILES=41
-EXPECT_WORKERS_TESTS=759
+EXPECT_WORKERS_TESTS=768
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

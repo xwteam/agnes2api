@@ -583,6 +583,14 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   Once on: **at most 13 puts per day per instance**, which at 8 concurrent isolates is
   `13 × 8` = **104** per day, roughly 10.4% of the write quota. Totals for four scenarios:
 
+  > [!NOTE]
+  > **The by-API-key dimension (`byApiKey`) never moved this number.** It lives **inside the
+  > value of the same per-day key** (alongside by-hour / by-model / by-protocol), so one flush
+  > is still exactly 1 put, and the flush that crosses UTC midnight is still 2 — **an extra
+  > dimension only makes that JSON value bigger, it does not add keys**. The value stays
+  > bounded too: at most 201 named slots plus one overflow slot, eight integers each — tens of
+  > kilobytes, far below the 25 MiB KV value limit.
+
   | Scenario | puts/day | share of the write quota |
   |--------|--------|------------------------|
   | **Tier-2 off (default)**, registrar off | **176** | 17.6% |
@@ -699,6 +707,18 @@ Those 13 come from the following, and all six points matter:
   > **Do not cite the events board's 48 cold gets below as evidence** — 48 is within limits
   > under both readings, so it says nothing at all about whether 60 is fine. To rely on this
   > range on the free plan, measure it on real hardware first.
+
+- **The usage line on every card in the API keys board goes through the same
+  `/admin/api/usage` (the `24h` range).** **While Tier-2 is off it costs `0` storage reads** —
+  with statistics off, that endpoint's read path **does not exist structurally** (it is not an
+  `if` guarding it), so **a default deployment pays nothing for this line**. With Tier-2 on,
+  the `24h` range spans at most 2 UTC days × 2 slots = **at most 4 gets**, and it happens
+  **once, when a human opens that board** (this board does not poll).
+
+  > [!NOTE]
+  > **It does not change the “critical configuration crosses to 100.3%” ledger above**:
+  > that one counts the steady-state refreshes each active isolate performs on
+  > `APIKEY_CACHE_TTL_MS`, which is not the same quantity as a one-off read on a human click.
 
 - **Playground video runs: at most `1 + 60` upstream requests per task** (1 create + at most
   60 polls, `VIDEO_POLL_MAX_ATTEMPTS`).

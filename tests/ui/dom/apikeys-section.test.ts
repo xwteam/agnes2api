@@ -255,3 +255,84 @@ describe("API 密钥板块：明文只在签发那一次露面", () => {
     expect(sectionOf(h).textContent).not.toContain("sk-4f1c");
   });
 });
+
+/**
+ * **每张卡上的用量那一行（Tier-2）。**
+ *
+ * ⚠️⚠️ 这一组的头等目标只有一条：**Tier-2 关着时那一格不许出现任何一个数字**。
+ * 那是本轮那条硬裁定（「关着时显示『未开启』，不是恒为 0 的数字」）的判据本身，
+ * 而它只有在**真的渲染出来的那段文本**上才验得到 —— 纯函数那一侧回
+ * `{ kind: "off" }`，画的时候照样可以被写成 `fmtCount(0)`。
+ */
+describe("API 密钥板块：每张卡上的用量那一行", () => {
+  /** 这一张卡上那一格的文本。**按 class 找**：它是这一格唯一的身份。 */
+  function usageCells(h: Harness): string[] {
+    return sectionOf(h).querySelectorAll(".ak-usage").map((n) => n.textContent);
+  }
+
+  /** 缺省三条 + 一条 `/admin/api/usage`。 */
+  function respondWithUsage(usage: { status: number; body: unknown }) {
+    return (url: string) => {
+      if (url.startsWith("/admin/api/usage")) return usage;
+      return respondOk()(url);
+    };
+  }
+
+  const usageBody = (over: Record<string, unknown> = {}) => ({
+    tier: "tier2", timezone: "UTC", approximate: true, generatedAt: NOW,
+    range: { from: NOW - 86_400_000, to: NOW, clamped: false },
+    days: [], shards: 2, malformed: 0,
+    total: {
+      requests: 9, success: 9, errors: 0, tokensIn: 0, tokensOut: 0,
+      streamingRequests: 0, latencySum: 0, latencyCount: 0,
+    },
+    byApiKey: {
+      aaaabbbbcccc: {
+        requests: 7, success: 7, errors: 0, tokensIn: 0, tokensOut: 0,
+        streamingRequests: 0, latencySum: 0, latencyCount: 0,
+      },
+    },
+    pending: { count: 0, ms: 0, budgetExhausted: false },
+    note: null, ...over,
+  });
+
+  it("Tier-2 关着时那一格写「未开启」，而且一个数字都不许出现 —— 画 0 就是把「没开」说成「没人用」", async () => {
+    const { h } = await openSection(respondWithUsage({
+      status: 200,
+      body: {
+        tier: "off", timezone: "UTC", approximate: true, generatedAt: NOW,
+        range: { from: NOW - 86_400_000, to: NOW, clamped: false },
+        days: null, total: null, byApiKey: null, shards: null, malformed: null,
+        pending: null, note: "tier2_off",
+      },
+    }));
+    const cells = usageCells(h);
+    expect(cells.length, "卡片上压根没有这一格的话，下面那条正则是空的").toBe(1);
+    expect(cells[0]).toBe("用量：未开启");
+    // ★ **这一句就是那条裁定的判据**：任何一个数字都算违反。
+    expect(cells[0], "Tier-2 关着时画出了数字").not.toMatch(/\d/);
+  });
+
+  it("开着且读到了：画这把密钥自己的请求数（带 ≈），不是整段区间的合计", async () => {
+    const { h } = await openSection(respondWithUsage({ status: 200, body: usageBody() }));
+    const cells = usageCells(h);
+    expect(cells[0]).toContain("7");
+    // 反向自检：`total.requests` 是 9 —— 拿合计去填每一张卡是另一种撒谎。
+    expect(cells[0], "画的是整段区间的合计，不是这一把的").not.toContain("9");
+    expect(cells[0]).toContain("≈");
+  });
+
+  it("开着、读到了、而这把密钥这段时间一次都没被用过：画 0 —— 那不是伪造，是真的 0", async () => {
+    const { h } = await openSection(respondWithUsage({
+      status: 200, body: usageBody({ byApiKey: {} }),
+    }));
+    expect(usageCells(h)[0]).toContain("0");
+    expect(usageCells(h)[0], "把真零画成破折号是反向的撒谎").not.toContain(EM);
+  });
+
+  it("用量这一次读失败时画 —，而且不牵连列表本身（卡片照常在）", async () => {
+    const { h } = await openSection(respondWithUsage({ status: 500, body: {} }));
+    expect(usageCells(h)[0]).toBe(`用量：${EM}`);
+    expect(sectionOf(h).textContent, "用量拉不出来不该让整张列表消失").toContain("mobile-app");
+  });
+});

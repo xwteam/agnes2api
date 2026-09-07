@@ -6,6 +6,7 @@ import { UsageSink, USAGE_ERROR_REPORT } from "../../src/http/usage-sink.js";
 import { buildApp } from "../../src/http/wire.js";
 import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 import { USAGE_NOTES } from "../../src/http/admin/handlers/usage.js";
+import { USAGE_MASTER_BUCKET } from "../../src/core/admin/usage-stats.js";
 import type { Storage } from "../../src/ports/storage.js";
 
 /**
@@ -147,7 +148,7 @@ async function seed(storage: Storage, day: number, slot: number, json: string) {
 
 /** 最小可用的一份分片 JSON。`day` 与桶里的数都由调用方给。 */
 function shardJson(day: number, o: {
-  requests: number; hours?: string; byModel?: string; byProtocol?: string;
+  requests: number; hours?: string; byModel?: string; byProtocol?: string; byApiKey?: string;
 }) {
   return JSON.stringify({
     shardId: "u2", day, updatedAt: 1,
@@ -155,7 +156,10 @@ function shardJson(day: number, o: {
   }).replace(/}$/, "")
     + `,"hours":${o.hours ?? "{}"}`
     + `,"byModel":${o.byModel ?? "{}"}`
-    + `,"byProtocol":${o.byProtocol ?? "{}"}}`;
+    + `,"byProtocol":${o.byProtocol ?? "{}"}`
+    // ⚠️ **缺省是「这一格压根不在」而不是 `{}`**：本轮之前落盘的分片就是那个形状，
+    //    夹具默认摆的必须是存量形态，否则「零迁移」那条性质在这里不可观测。
+    + `${o.byApiKey === undefined ? "" : `,"byApiKey":${o.byApiKey}`}}`;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1006,7 +1010,7 @@ describe("pending 块（UsageSink.status() 的三个字段）", () => {
     const { get, sink, errors } = await tier2On({ now: () => t, storage: st });
 
     const hit = () => sink.record({
-      protocol: "openai", model: "agnes-2.0-flash", ok: true, stream: false,
+      protocol: "openai", model: "agnes-2.0-flash", apiKeyId: USAGE_MASTER_BUCKET, ok: true, stream: false,
       latencyMs: 12, tokensIn: 3, tokensOut: 4,
     });
 
@@ -1437,7 +1441,7 @@ describe("record 期出错与 flush 期出错说的不是同一句话", () => {
     const { sink, errors } = await tier2On({ now, storage: st });
 
     const one = {
-      protocol: "openai", model: "ok-model", ok: true, stream: false,
+      protocol: "openai", model: "ok-model", apiKeyId: USAGE_MASTER_BUCKET, ok: true, stream: false,
       latencyMs: 1, tokensIn: 0, tokensOut: 0,
     };
     // 先记一条正常的，好让 pending 有一个非零基线（否则「没涨」与「本来就是 0」同值）。
@@ -1522,5 +1526,123 @@ describe("record 期出错与 flush 期出错说的不是同一句话", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// ⑥ 按密钥归属：两条读端点各把 `byApiKey` 交出去
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("GET /admin/api/usage(/:date) 的 byApiKey 这一维", () => {
+  const KEY_ONE = '{"master":{"requests":3,"success":3,"errors":0,"tokensIn":0,"tokensOut":0,"streamingRequests":0,"latencySum":30,"latencyCount":3},'
+    + '"aabbccddeeff":{"requests":2,"success":2,"errors":0,"tokensIn":0,"tokensOut":0,"streamingRequests":0,"latencySum":20,"latencyCount":2}}';
+
+  it("汇总端点把整段区间的 byApiKey 交出去 —— 「API 密钥」板块没有「某一天」这个概念，它拿的就是这一格", async () => {
+    const { get, storage } = await tier2On({ now: () => NOW });
+    await seed(storage, DAY0, 0, shardJson(DAY0, { requests: 5, byApiKey: KEY_ONE }));
+    const res = await get(`/admin/api/usage?from=${NOW}&to=${NOW}`);
+    const body = await res.json() as { byApiKey: Record<string, { requests: number }> };
+    expect(body.byApiKey.master?.requests).toBe(3);
+    expect(body.byApiKey.aabbccddeeff?.requests).toBe(2);
+  });
+
+  it("单日下钻端点把 byApiKey 与小时 / 模型 / 协议摆在同一层", async () => {
+    const { get, storage } = await tier2On({ now: () => NOW });
+    await seed(storage, DAY0, 0, shardJson(DAY0, { requests: 5, byApiKey: KEY_ONE }));
+    const res = await get(`/admin/api/usage/${DAY0_DATE}`);
+    const body = await res.json() as Record<string, unknown>;
+    // 四维同层：少哪一个，面板那张表就得自己去别处凑。
+    for (const dim of ["hours", "byModel", "byProtocol", "byApiKey"]) {
+      expect(body[dim], `${dim} 这一维不该是 null`).not.toBeNull();
+    }
+    expect((body.byApiKey as Record<string, { requests: number }>).master?.requests).toBe(3);
+  });
+
+  /**
+   * ⚠️⚠️ **同生同死。** 一个「读失败但按密钥分解写着 `{}`」的响应体，面板照着渲染
+   * 就是「这段时间每一把密钥都是 0 次」——那正是全局约束 9 禁的伪造 0，
+   * 只是换了一维。三条早退各摆一次。
+   */
+  it("三条早退（统计没开 / 读不出来 / 时钟坏了）里 byApiKey 与 days 一起是 null，绝不是空对象", async () => {
+    // ① 统计没开
+    {
+      const { get } = await tier2Off({ now: () => NOW });
+      const b = await (await get("/admin/api/usage")).json() as Record<string, unknown>;
+      expect(b.days).toBeNull();
+      expect(b.byApiKey, "关着时给个 {} 就是「每一把都是 0 次」").toBeNull();
+    }
+    // ② 读不出来
+    {
+      const st = new UsageReadCounter(new MemoryStorage(undefined, () => NOW));
+      const { get, storage } = await tier2On({ now: () => NOW, storage: st });
+      await seed(storage, DAY0, 0, shardJson(DAY0, { requests: 5, byApiKey: KEY_ONE }));
+      st.failUsageGetAt = 1;
+      const b = await (await get("/admin/api/usage")).json() as Record<string, unknown>;
+      expect(b.note).toBe("read_failed");
+      expect(b.byApiKey).toBeNull();
+    }
+    // ③ 时钟给不出有限数字
+    {
+      const { get } = await tier2On({ now: () => NaN });
+      const b = await (await get("/admin/api/usage")).json() as Record<string, unknown>;
+      expect(b.note).toBe("clock_unavailable");
+      expect(b.byApiKey).toBeNull();
+    }
+    // ④ 单日下钻那一条端点同理（它的四维是一套 `empty`）。
+    {
+      const { get } = await tier2Off({ now: () => NOW });
+      const b = await (await get(`/admin/api/usage/${DAY0_DATE}`)).json() as Record<string, unknown>;
+      expect(b.note).toBe("tier2_off");
+      expect(b.byApiKey).toBeNull();
+    }
+  });
+
+  /**
+   * ⚠️⚠️ **这一格走真装配的鉴权 + 真签发的一把子密钥，端到端。**
+   * 它是「面板上那一行到底是谁的用量」这条链唯一完整跑通的一格：
+   * 签发 → 拿明文打 `/v1` → 落盘 → 读端点 → `byApiKey` 里出现**那把的 id**。
+   * 变红条件：把 `src/http/middleware/auth.ts` 里子密钥那一段的 `c.set` 删掉
+   * ⇒ 那一条落进 `unattributed`（而不是「静默不见」——那是刻意的，见那个桶名上方）。
+   */
+  it("子密钥打进来的请求归到它自己的 id，不归主口令 —— 走真签发 + 真鉴权", async () => {
+    let t = NOW;
+    const storage = new UsageReadCounter(new MemoryStorage(undefined, () => t));
+    const sink = new UsageSink({ storage, now: () => t, shardId: "u2", onError: () => {} });
+    const { app } = await makeApp(
+      [], [], { poolCacheTtlMs: 60_000 }, () => t,
+      { storage, usageSink: sink, apiKeys: {} },
+    );
+
+    const issued = await (await app.request("/admin/api/apikeys", {
+      method: "POST",
+      headers: { "x-admin-key": TEST_ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ name: "attribution" }),
+    })).json() as { secret: string; record: { id: string } };
+
+    // ⚠️ **必须打 `/v1/chat/completions`，不能打 `/v1/models`**：后者不经
+    //    `recordUsage()`（它不转发，也就没有终态可记）⇒ 拿它当样本，这一格
+    //    无论归属对不对都是空的。**池子刻意留空**：503 `pool_empty` 同样是一个终态，
+    //    一个出站请求都不发。
+    const call = (credential: string) => app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "m", messages: [] }),
+    });
+    await call(issued.secret);
+    await call(issued.secret);
+    await call("t");                       // TEST_CONFIG.gatewayToken = 主口令
+    // 推过一个落盘间隔，再打一次让收尾的 flush 真的写下去。
+    t += 7_200_001;
+    await call("t");
+
+    const body = await (await app.request("/admin/api/usage", {
+      headers: { "x-admin-key": TEST_ADMIN_TOKEN },
+    })).json() as { byApiKey: Record<string, { requests: number }> };
+
+    expect(body.byApiKey[issued.record.id]?.requests, "那把子密钥自己那一格").toBe(2);
+    expect(body.byApiKey[USAGE_MASTER_BUCKET]?.requests, "主口令那一格").toBe(2);
+    // 反向自检：兜底那一格一次都不许出现。
+    expect(Object.keys(body.byApiKey).sort())
+      .toEqual([issued.record.id, USAGE_MASTER_BUCKET].sort());
   });
 });

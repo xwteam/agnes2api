@@ -36,6 +36,10 @@ export function geminiRoutes(deps: DispatchDeps & UsageRecording): Hono {
     const latencyMs = deps.now() - startedAt;
     const record = (tokensIn: number, tokensOut: number) => recordUsage(deps, {
       protocol: "gemini", model,
+      // ⚠️ **归属原样取，不在这里兜底**：这一行在「Tier-2 关着就 return」之前求值，
+      // 兜底放在 `UsageSink.record()`（只有开着才跑的那一侧），
+      // 理由见 `UsageOutcome.apiKeyId` 上方那段。
+      apiKeyId: c.get("apiKeyId"),
       ok: res.ok, stream, latencyMs, tokensIn, tokensOut,
     });
 

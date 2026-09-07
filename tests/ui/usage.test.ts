@@ -5,9 +5,13 @@ import {
   summaryCards, bucketCells,
   malformedKind, usageNoteKey, noteSeverity, dayRows, breakdownRows,
   tokensCoverageLabels, pendingTail,
+  RESERVED_API_KEY_IDS, apiKeyRowLabelKey, apiKeyUsage,
 } from "../../admin-ui/js/pure/usage.mjs";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 import { USAGE_NOTES } from "../../src/http/admin/handlers/usage.js";
+import {
+  USAGE_MASTER_BUCKET, USAGE_UNATTRIBUTED_BUCKET, USAGE_OTHER_BUCKET,
+} from "../../src/core/admin/usage-stats.js";
 
 /**
  * 用量板块的取值判定。
@@ -617,5 +621,66 @@ describe("六张汇总卡", () => {
   it("畸形分片条数原样带出来 —— 面板要说清『缺了几块』，不是只说『缺了』", () => {
     expect(summaryCards(okBody({ shards: 3, malformed: 2 })).malformed).toBe(2);
     expect(summaryCards(okBody()).malformed).toBe(0);
+  });
+});
+
+describe("按密钥那一维：保留伪 id 与每张卡上的那个数", () => {
+  /**
+   * ⚠️⚠️ **这一格是那份抄件唯一的活路。** 面板 import 不到 `src/`，
+   * 那三个字面量因此在仓里存在两份；两份字面量的默认结局是**悄悄分叉**
+   * ——后端把桶名改一个字母，面板那一列会安静地退回画裸串，
+   * 而**没有任何一格会红**（`apiKeyRowLabelKey` 照样「认不出来就原样画」）。
+   * 这一格直接把两边摆在一起比。
+   */
+  it("面板那三个保留 id 与后端常量逐字相同 —— 这是一份抄件，它只能靠对表活着", () => {
+    expect(RESERVED_API_KEY_IDS.master).toBe(USAGE_MASTER_BUCKET);
+    expect(RESERVED_API_KEY_IDS.unattributed).toBe(USAGE_UNATTRIBUTED_BUCKET);
+    expect(RESERVED_API_KEY_IDS.other).toBe(USAGE_OTHER_BUCKET);
+  });
+
+  it("三个保留 id 各有一条展示名，而真实密钥 id 一律返回 null（原样画）", () => {
+    expect(apiKeyRowLabelKey(USAGE_MASTER_BUCKET)).toBe("usage.key.master");
+    expect(apiKeyRowLabelKey(USAGE_UNATTRIBUTED_BUCKET)).toBe("usage.key.unattributed");
+    expect(apiKeyRowLabelKey(USAGE_OTHER_BUCKET)).toBe("usage.key.other");
+    // ★ 12 位十六进制的真 id：**不猜、不标「已删除」**，交回 null 让调用方画原值。
+    expect(apiKeyRowLabelKey("aabbccddeeff")).toBe(null);
+    expect(apiKeyRowLabelKey("")).toBe(null);
+    // 三条展示名都真的在字典里（少一条，面板上会显示裸 key 串）。
+    for (const k of ["usage.key.master", "usage.key.unattributed", "usage.key.other"]) {
+      expect(Object.prototype.hasOwnProperty.call(I18N, k), `${k} 不在字典里`).toBe(true);
+    }
+  });
+
+  /**
+   * ⚠️⚠️ **`off` 与「真的是 0」必须是两档，这一格是本轮那条硬裁定的纯函数一侧。**
+   * 合成一档的实现（`requests: byApiKey?.[id]?.requests ?? 0`）在**四条断言里的
+   * 三条上都是绿的**，只有第一条会红 —— 所以这一格的第一条不能省。
+   */
+  it("四档互不重叠：没开 / 读不出来 / 读到了但这把是 0 / 有数字", () => {
+    const withKey = (over: Record<string, unknown> = {}) => okBody({
+      byApiKey: { aabbccddeeff: { ...BUCKET, requests: 7 } }, ...over,
+    });
+
+    // ① Tier-2 没开 ⇒ **不是 0**。
+    expect(apiKeyUsage({ tier: "off", days: null, total: null, byApiKey: null }, false, "aabbccddeeff"))
+      .toEqual({ kind: "off", requests: 0 });
+    // ② 这一次读失败 / 还没读到 ⇒ 「我们不知道」。
+    expect(apiKeyUsage(withKey(), true, "aabbccddeeff").kind).toBe("unknown");
+    expect(apiKeyUsage(null, false, "aabbccddeeff").kind).toBe("unknown");
+    // ③ 整块读不出来（`days` 是 null）⇒ 同样是「我们不知道」，不是 0。
+    expect(apiKeyUsage(okBody({ days: null, total: null, byApiKey: null, note: "read_failed" }), false, "aabbccddeeff").kind)
+      .toBe("unknown");
+    // ④ 读成功了、这把密钥这段时间一次都没被用过 ⇒ **就是 0**，把它画成破折号是反向的撒谎。
+    expect(apiKeyUsage(withKey(), false, "112233445566")).toEqual({ kind: "value", requests: 0 });
+    // ⑤ 有数字。
+    expect(apiKeyUsage(withKey(), false, "aabbccddeeff")).toEqual({ kind: "value", requests: 7 });
+  });
+
+  it("byApiKey 那一格形状不对时是「我们不知道」，不是 0", () => {
+    // 整块不是对象（后端不会发，但面板不该假设后端只会发它今天见过的形状）。
+    expect(apiKeyUsage(okBody({ byApiKey: "nope" }), false, "aabbccddeeff").kind).toBe("unknown");
+    // 这一格在，但 `requests` 不是有限数字。
+    expect(apiKeyUsage(okBody({ byApiKey: { aabbccddeeff: { requests: "7" } } }), false, "aabbccddeeff").kind)
+      .toBe("unknown");
   });
 });

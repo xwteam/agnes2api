@@ -491,6 +491,10 @@ tr:last-child td { border-bottom: 0; }
   margin-top: 4px; font-size: 12px;
 }
 .ak-item-actions { display: flex; flex-wrap: wrap; gap: var(--gap-sm); margin-top: var(--gap-sm); }
+/* 每张卡上那一行用量。**它与同一行里另外三格一样走 `.muted`**，这里只补一条
+   「别被挤断」——三态里最长的那一句（「未归属……」不会出现在这里，但
+   「用量：未开启」在 ja/ko 下也比日期长）在窄屏上会把整行撑开。 */
+.ak-usage { white-space: nowrap; }
 /* 明文那一行：等宽、可选中、长了就换行 —— 它是运维要整串复制走的东西。 */
 .ak-secret { word-break: break-all; user-select: all; margin: var(--gap-sm) 0; }
 /* 到期快捷档那几颗 chip。

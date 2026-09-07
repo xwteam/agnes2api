@@ -616,9 +616,13 @@ describe("单日下钻", () => {
     byModel["gpt-4o"] = { ...(DETAIL_HOURS["2"] as object) };
     const byProtocol: Record<string, unknown> = Object.create(null);
     byProtocol["openai"] = { ...(DETAIL_HOURS["2"] as object) };
+    // ⚠️ **无原型对象**，与另外三维同一条理由（键从存储里回来，`__proto__` 造得出来）。
+    const byApiKey: Record<string, unknown> = Object.create(null);
+    byApiKey["master"] = { ...(DETAIL_HOURS["2"] as object) };
+    byApiKey["aabbccddeeff"] = { ...(DETAIL_HOURS["10"] as object) };
     return {
       tier: "tier2", timezone: "UTC", date: "2026-08-21", approximate: true, generatedAt: NOW,
-      hours: DETAIL_HOURS, byModel, byProtocol, shards: 2, malformed: 0,
+      hours: DETAIL_HOURS, byModel, byProtocol, byApiKey, shards: 2, malformed: 0,
       note: "no_request_detail",
       ...over,
     };
@@ -1034,5 +1038,84 @@ describe("时间范围分段的 aria-pressed 跟着点击走", () => {
       pick().map((b) => b.getAttribute("aria-pressed")),
       "屏幕上换了档，aria-pressed 没跟着走 —— 读屏用户读到的是假的",
     ).toEqual(["false", "false", "true", "false"]);
+  });
+});
+
+/**
+ * **单日下钻的第四张表：按密钥。**
+ *
+ * 它与「小时 / 模型 / 协议」同级，共用同一条 `readSucceeded` / `rowState` 判据。
+ * 这一组补的是**只有渲染出来才验得到**的那两件事：那三个保留伪 id 换成了展示名，
+ * 而别的 id 一律原样画（不猜、不标「已删除」）。
+ */
+describe("单日下钻的第四张表：按密钥", () => {
+  const HOUR2 = {
+    requests: 2, success: 2, errors: 0, tokensIn: 10, tokensOut: 5,
+    streamingRequests: 0, latencySum: 200, latencyCount: 2,
+  };
+
+  async function drillWith(byApiKey: Record<string, unknown>) {
+    const detail = {
+      tier: "tier2", timezone: "UTC", date: "2026-08-21", approximate: true, generatedAt: NOW,
+      hours: Object.create(null), byModel: Object.create(null), byProtocol: Object.create(null),
+      byApiKey, shards: 2, malformed: 0, note: "no_request_detail",
+    };
+    const h = await openUsage((url) => {
+      if (url.startsWith("/admin/api/capabilities")) return { status: 200, body: CAPS };
+      if (url.startsWith("/admin/api/models")) return { status: 200, body: MODELS };
+      if (url.startsWith("/admin/api/usage/")) return { status: 200, body: detail };
+      if (url.startsWith("/admin/api/usage")) return { status: 200, body: usageBody() };
+      return { status: 200, body: {} };
+    });
+    h.section("usage").querySelector(".usage-drill")!.click();
+    await settle(12);
+    return h;
+  }
+
+  it("那三个保留伪 id 画的是展示名，而一把真密钥的 id 原样画 —— 不猜、也不标「已删除」", async () => {
+    const m: Record<string, unknown> = Object.create(null);
+    m["master"] = { ...HOUR2 };
+    m["unattributed"] = { ...HOUR2 };
+    m["__other__"] = { ...HOUR2 };
+    m["aabbccddeeff"] = { ...HOUR2 };
+    const sec = (await drillWith(m)).section("usage");
+    // ⚠️ **断言收在那张表自己身上，不看整个板块的文本**：那句常驻说明里逐字带着
+    //    「已删除」三个字（「面板不会把它标成『已删除』」），拿整块去做反向断言
+    //    会被自己那句话打红 —— 而那不是缺陷，是断言的作用域画错了。
+    const blocks = sec.querySelectorAll(".usage-breakdown");
+    const keyBlock = blocks.find((b) => b.textContent.startsWith("按密钥"));
+    expect(keyBlock, "第四张表压根没画出来").not.toBe(undefined);
+    const rows = keyBlock!.querySelectorAll("tr").slice(1)   // 去掉表头
+      .map((tr) => tr.querySelectorAll("td")[0]!.textContent);
+    expect(rows, "主口令那一格还在画裸的 master").toContain("主口令");
+    expect(rows.some((r) => r.startsWith("未归属"))).toBe(true);
+    expect(rows.some((r) => r.startsWith("其它"))).toBe(true);
+    // ★ 一把已经不在当前表里的密钥：**原始 id 照实画**。
+    expect(rows).toContain("aabbccddeeff");
+    // ★ 反向自检：那一行一个字都没说「已删除」——那是面板分不出来的事。
+    expect(rows.join("|"), "把「当前表里查不到」说成了「已删除」").not.toContain("已删除");
+    // ★ 而那句常驻说明正面回答「删了之后怎么显示」，它不由 `note` 说、任何时候都在。
+    expect(sec.textContent).toContain("已经删掉的密钥仍然以原始 id 留在历史里");
+  });
+
+  it("这一天读不出来时第四张表说的是「读不出来」，不是「这一天没有记录」", async () => {
+    // `hours` 整块是 null ⇒ `detailState` 判 `unavailable`，四张表一起走那一句。
+    const detail = {
+      tier: "tier2", timezone: "UTC", date: "2026-08-21", approximate: true, generatedAt: NOW,
+      hours: null, byModel: null, byProtocol: null, byApiKey: null,
+      shards: null, malformed: null, note: "read_failed",
+    };
+    const h = await openUsage((url) => {
+      if (url.startsWith("/admin/api/capabilities")) return { status: 200, body: CAPS };
+      if (url.startsWith("/admin/api/models")) return { status: 200, body: MODELS };
+      if (url.startsWith("/admin/api/usage/")) return { status: 200, body: detail };
+      if (url.startsWith("/admin/api/usage")) return { status: 200, body: usageBody() };
+      return { status: 200, body: {} };
+    });
+    h.section("usage").querySelector(".usage-drill")!.click();
+    await settle(12);
+    const sec = h.section("usage");
+    expect(sec.textContent).toContain("按密钥");
+    expect(sec.textContent, "把「读不出来」说成了「这一天没有记录」").not.toContain("这一天没有可以分解的记录");
   });
 });

@@ -1,6 +1,6 @@
 /**
  * 用量板块（设计文档 §10.6）：
- * 6 张汇总卡 + 时间范围按钮组 + 日汇总表 + 点某天下钻到「小时 / 模型 / 协议」三张表。
+ * 6 张汇总卡 + 时间范围按钮组 + 日汇总表 + 点某天下钻到「小时 / 模型 / 协议 / 密钥」四张表。
  *
  * 板块契约（设计文档 §9.3）：`{ init?, onShow?, onHide? }`，见 admin-ui/js/app.js
  * 的 showSection。**板块内不许监听 langchange**——框架层会 apply(document) 之后
@@ -35,6 +35,7 @@ import {
   usageState, detailState, rowState, readSucceeded, summaryCards, bucketCells,
   malformedKind, usageNoteKey, noteSeverity,
   dayRows, breakdownRows, tokensCoverageLabels, pendingTail, cellKind, ratioKind,
+  apiKeyRowLabelKey,
 } from "./pure/usage.mjs";
 
 /**
@@ -488,7 +489,7 @@ function buildDayTable(state, marks) {
  *（`honestyMarks` 当时经 `summaryCards().complete`，而那条端点没有 `total`），
  * 于是它既是死参、又给人一种「已经接好了」的错觉。
  */
-function breakdownTable(titleKey, keyLabelKey, map, numeric, state) {
+function breakdownTable(titleKey, keyLabelKey, map, numeric, state, labelOf) {
   const wrap = el("div", { class: "usage-breakdown" });
   wrap.appendChild(elI18n("h4", titleKey));
   const rows = breakdownRows(map, numeric);
@@ -509,7 +510,11 @@ function breakdownTable(titleKey, keyLabelKey, map, numeric, state) {
   for (const row of rows) {
     const tr = el("tr");
     // ⚠️ **键来自客户端填的模型名，一律 textContent**（`el()` 走的就是它）。
-    tr.appendChild(keyCell(row.key));
+    // ⚠️ **`labelOf` 认得出来的才换成展示名，认不出来一律画原始键**：
+    //    那三个保留伪 id 是我们自己发的，换名是安全的；别的一律原样
+    //    （理由与「不许标『已删除』」是同一条，见 `apiKeyRowLabelKey` 上方）。
+    const labelKey = labelOf === null ? null : labelOf(row.key);
+    tr.appendChild(labelKey === null ? keyCell(row.key) : elI18n("td", labelKey, { class: "mono" }));
     numberCells(tr, state, row.total);
     table.appendChild(tr);
   }
@@ -587,9 +592,20 @@ function buildDetail() {
     wrap.appendChild(warn);
   }
 
-  wrap.appendChild(breakdownTable("usage.detail.hours", "usage.detail.hour", detailData.hours, true, state));
-  wrap.appendChild(breakdownTable("usage.detail.models", "usage.detail.model", detailData.byModel, false, state));
-  wrap.appendChild(breakdownTable("usage.detail.protocols", "usage.detail.protocol", detailData.byProtocol, false, state));
+  // ⚠️ **第六个形参在这三张表上恒是 `null`，而它不是死形参**（本轮加这一维时的裁定）：
+  //    第四张表真的传了一个函数进去，`breakdownTable` 里那一支也真的会走到。
+  //    本文件登记过「死形参一律删掉，不留着当占位」那条纪律（见 `numberCells` 上方）
+  //    —— 这一个不适用，因为它有一个活着的调用点。
+  wrap.appendChild(breakdownTable("usage.detail.hours", "usage.detail.hour", detailData.hours, true, state, null));
+  wrap.appendChild(breakdownTable("usage.detail.models", "usage.detail.model", detailData.byModel, false, state, null));
+  wrap.appendChild(breakdownTable("usage.detail.protocols", "usage.detail.protocol", detailData.byProtocol, false, state, null));
+  // ⚠️ **第四张表：按密钥。** 它与上面三张同级（设计 §10.6 的「这一天按小时 / 按模型 /
+  //    按协议的分解」在本轮多了一维），走同一条 `readSucceeded` / `rowState` 判据。
+  wrap.appendChild(breakdownTable("usage.detail.apiKeys", "usage.detail.apiKey", detailData.byApiKey, false, state, apiKeyRowLabelKey));
+  // ⚠️⚠️ **那句关于「已删除的密钥」的说明是常驻的，不由 `note` 说**：它任何时候都成立
+  //    （id 是签发那一刻的事实），而 `note` 只有一格、出问题时会被别的 code 占掉
+  //    —— 与本文件对 `no_request_detail` 那句指路话的处置逐字同源。
+  wrap.appendChild(elI18n("p", "usage.detail.apiKeyNote", { class: "muted note" }));
   return wrap;
 }
 

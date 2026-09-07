@@ -1398,6 +1398,7 @@ curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999"
   "range": { "from": 1735689600000, "to": 1735775999999, "clamped": false },
   "days": null,
   "total": null,
+  "byApiKey": null,
   "shards": null,
   "malformed": null,
   "pending": null,
@@ -1410,7 +1411,7 @@ curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999"
 
 ### GET /admin/api/usage/{date}
 
-하루치 사용량 상세: 시간별, 모델별, 프로토콜별 세 조각.
+하루치 사용량 상세: 시간별, 모델별, 프로토콜별, API 키별 네 조각. **`byApiKey`의 키는 발급 당시의 키 id**이며, 삭제된 키도 원래 id 그대로 이력에 남고 마스터 토큰의 사용량은 예약된 의사 id `master`에 집계됩니다.
 
 **요청 본문**: 이 엔드포인트는 본문을 받지 않으며 날짜는 경로에 쓰고 UTC의 `YYYY-MM-DD`가 아니면 `400`입니다. **위의 구간 엔드포인트와는 기준이 의도적으로 다릅니다**: 그쪽은 epoch 밀리초 정수만, 이쪽은 날짜 문자열만 받으며 서로 호환되지 않습니다.
 
@@ -1433,6 +1434,7 @@ curl http://localhost:8080/admin/api/usage/2026-08-30 \
   "hours": null,
   "byModel": null,
   "byProtocol": null,
+  "byApiKey": null,
   "shards": null,
   "malformed": null,
   "note": "tier2_off"

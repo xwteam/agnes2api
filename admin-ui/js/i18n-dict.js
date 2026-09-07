@@ -135,6 +135,16 @@ export const I18N = {
   "ak.createdAt":      { "zh-CN": "签发于", "zh-TW": "簽發於", en: "Issued", ja: "発行", ko: "발급" },
   "ak.expiresAt":      { "zh-CN": "到期", "zh-TW": "到期", en: "Expires", ja: "期限", ko: "만료" },
   "ak.expiresNever":   { "zh-CN": "不过期", "zh-TW": "不過期", en: "Never expires", ja: "無期限", ko: "만료 없음" },
+  // ── 每张卡上的用量那一行（Tier-2）─────────────────────────────────────────
+  // ⚠️⚠️ **`off` 那一句里不许出现任何一个数字**：Tier-2 关着时这个部署根本没在记账，
+  //    画一个 `0` 就是把「没开」说成「没人用」（全局约束 9 的原话是「绝不伪造 `0`」）。
+  //    由 `tests/ui/dom/apikeys-section.test.ts` 的
+  //    「Tier-2 关着时那一格写」那一格
+  //    **按正则扫这一格的文本**钉着。
+  "ak.usage.off":      { "zh-CN": "用量：未开启", "zh-TW": "用量：未開啟", en: "Usage: not enabled", ja: "使用量: 無効", ko: "사용량: 비활성" },
+  "ak.usage.unknown":  { "zh-CN": "用量：—", "zh-TW": "用量：—", en: "Usage: —", ja: "使用量: —", ko: "사용량: —" },
+  "ak.usage.value":    { "zh-CN": "近 24 小时 ≈ {count} 次请求", "zh-TW": "近 24 小時 ≈ {count} 次請求", en: "Last 24h ≈ {count} requests", ja: "直近 24 時間 ≈ {count} 件", ko: "최근 24시간 ≈ {count}건" },
+  "ak.usage.tip":      { "zh-CN": "这个数来自时间序列统计（Tier-2），是近似值：未落盘的尾巴最长一个落盘间隔。按天 / 按小时的完整分解在「用量」板块。", "zh-TW": "這個數來自時間序列統計（Tier-2），是近似值：未落盤的尾巴最長一個落盤間隔。按天 / 按小時的完整分解在「用量」板塊。", en: "This number comes from time-series stats (Tier-2) and is approximate: the unflushed tail can be up to one flush interval old. The full per-day / per-hour breakdown is in the Usage section.", ja: "この数値は時系列統計（Tier-2）によるもので概算です。未書き込み分は最大で 1 回のフラッシュ間隔ぶん古くなります。日別・時間別の完全な内訳は「使用量」セクションにあります。", ko: "이 수치는 시계열 통계(Tier-2)에서 온 근사값입니다. 아직 기록되지 않은 부분은 최대 한 번의 플러시 간격만큼 오래되었을 수 있습니다. 일별·시간별 전체 분해는 「사용량」 섹션에 있습니다." },
   "ak.action.rename":  { "zh-CN": "改名", "zh-TW": "改名", en: "Rename", ja: "名前変更", ko: "이름 변경" },
   "ak.action.disable": { "zh-CN": "停用", "zh-TW": "停用", en: "Disable", ja: "停止", ko: "중지" },
   "ak.action.enable":  { "zh-CN": "启用", "zh-TW": "啟用", en: "Enable", ja: "有効化", ko: "사용" },
@@ -940,7 +950,7 @@ export const I18N = {
   "usage.note.noShards":          { "zh-CN": "读成功了，这段区间里一个分片都没有——这个部署确实没有记下任何用量。", "zh-TW": "讀成功了，這段區間裡一個分片都沒有——這個部署確實沒有記下任何用量。", en: "The read succeeded and there were no shards at all in this range — this deployment genuinely recorded no usage.", ja: "読み取りには成功しましたが、この期間にシャードが 1 件もありません。このデプロイは実際に使用量を記録していません。", ko: "읽기는 성공했지만 이 구간에 샤드가 하나도 없습니다. 이 배포는 실제로 사용량을 기록하지 않았습니다." },
   "usage.note.allMalformed":      { "zh-CN": "读到了分片，但每一个都是畸形的——这段时间的用量我们一无所知。请去查存储里是谁写的。", "zh-TW": "讀到了分片，但每一個都是畸形的——這段時間的用量我們一無所知。請去查儲存裡是誰寫的。", en: "Shards were found but every one of them is malformed — we know nothing about usage in this period. Check what wrote them in storage.", ja: "シャードは見つかりましたが、すべて不正な形式です。この期間の使用量は一切分かりません。ストレージに何が書き込まれたか確認してください。", ko: "샤드를 찾았지만 모두 손상되어 있습니다. 이 기간의 사용량을 전혀 알 수 없습니다. 스토리지에 무엇이 기록되었는지 확인하세요." },
   "usage.note.partialMalformed":  { "zh-CN": "一部分分片是畸形的，下面这些数字缺了那几块。请去查存储里是谁写的。", "zh-TW": "一部分分片是畸形的，下面這些數字缺了那幾塊。請去查儲存裡是誰寫的。", en: "Some shards are malformed, so the numbers below are missing those parts. Check what wrote them in storage.", ja: "一部のシャードが不正な形式のため、以下の数値はその分が欠けています。ストレージに何が書き込まれたか確認してください。", ko: "일부 샤드가 손상되어 아래 수치에서 그만큼 빠져 있습니다. 스토리지에 무엇이 기록되었는지 확인하세요." },
-  "usage.note.noRequestDetail":   { "zh-CN": "这里没有逐请求流水，只有按小时 / 模型 / 协议的分解。需要逐请求粒度请看容器 stdout 或 Cloudflare Workers Logs。", "zh-TW": "這裡沒有逐請求流水，只有按小時 / 模型 / 協定的分解。需要逐請求粒度請看容器 stdout 或 Cloudflare Workers Logs。", en: "There is no per-request log here, only breakdowns by hour, model and protocol. For per-request detail see the container stdout or Cloudflare Workers Logs.", ja: "ここにはリクエスト単位のログはなく、時間 / モデル / プロトコル別の内訳のみです。リクエスト単位が必要な場合はコンテナの stdout または Cloudflare Workers Logs を参照してください。", ko: "여기에는 요청별 로그가 없고 시간 / 모델 / 프로토콜별 분해만 있습니다. 요청 단위가 필요하면 컨테이너 stdout 또는 Cloudflare Workers Logs를 확인하세요." },
+  "usage.note.noRequestDetail":   { "zh-CN": "这里没有逐请求流水，只有按小时 / 模型 / 协议 / 密钥的分解。需要逐请求粒度请看容器 stdout 或 Cloudflare Workers Logs。", "zh-TW": "這裡沒有逐請求流水，只有按小時 / 模型 / 協定 / 密鑰的分解。需要逐請求粒度請看容器 stdout 或 Cloudflare Workers Logs。", en: "There is no per-request log here, only breakdowns by hour, model, protocol and API key. For per-request detail see the container stdout or Cloudflare Workers Logs.", ja: "ここにはリクエスト単位のログはなく、時間 / モデル / プロトコル / APIキー別の内訳のみです。リクエスト単位が必要な場合はコンテナの stdout または Cloudflare Workers Logs を参照してください。", ko: "여기에는 요청별 로그가 없고 시간 / 모델 / 프로토콜 / API 키별 분해만 있습니다. 요청 단위가 필요하면 컨테이너 stdout 또는 Cloudflare Workers Logs를 확인하세요." },
   // ⚠️ **「这段时间真的是 0」必须有自己的一句话**：后端第 ④ 种状态
   //（有分片、只是请求数是 0）的 `note` 是 `null`，那一档没有任何 code 可读，
   //    而它与「读不出来」在数字上都是「什么都没有」——不说出来就是三态混一。
@@ -982,6 +992,23 @@ export const I18N = {
   "usage.detail.hour":     { "zh-CN": "小时", "zh-TW": "小時", en: "Hour", ja: "時", ko: "시" },
   "usage.detail.model":    { "zh-CN": "模型", "zh-TW": "模型", en: "Model", ja: "モデル", ko: "모델" },
   "usage.detail.protocol": { "zh-CN": "协议", "zh-TW": "協定", en: "Protocol", ja: "プロトコル", ko: "프로토콜" },
+  "usage.detail.apiKeys": { "zh-CN": "按密钥", "zh-TW": "按密鑰", en: "By API key", ja: "APIキー別", ko: "API 키별" },
+  "usage.detail.apiKey":  { "zh-CN": "密钥", "zh-TW": "密鑰", en: "API key", ja: "APIキー", ko: "API 키" },
+  // ⚠️⚠️ **这一句正面回答「密钥删了之后，历史里那个 id 怎么显示」。**
+  //    答案是「原样显示，不标成『已删除』」：日桶按天存，那个 id 就是签发时的事实；
+  //    而要判「已删除」必须与当前那张表联表，联表拿到的只是「当前表里查不到」，
+  //    **那有两种成因（真的删了 / 这一刻表读不出来）**，把它渲染成「已删除」
+  //    就是把一个未知说成结论。id 不是凭据（它本来就会进事件日志与 URL）。
+  "usage.detail.apiKeyNote": { "zh-CN": "这一列是签发时的密钥 id。已经删掉的密钥仍然以原始 id 留在历史里 —— 面板不会把它标成「已删除」：当前表里查不到有两种成因（真的删了，或者这一刻那张表读不出来），分不开就不下结论。", "zh-TW": "這一列是簽發時的密鑰 id。已經刪掉的密鑰仍然以原始 id 留在歷史裡 —— 面板不會把它標成「已刪除」：目前表裡查不到有兩種成因（真的刪了，或者這一刻那張表讀不出來），分不開就不下結論。", en: "This column holds the key id as issued. Deleted keys stay in history under their original id — the panel does not label them “deleted”: “not in the current table” has two possible causes (really deleted, or the table cannot be read right now), and we do not state a conclusion we cannot tell apart.", ja: "この列は発行時のキー id です。削除済みのキーも元の id のまま履歴に残ります。パネルはそれを「削除済み」とは表示しません: 「現在の一覧に無い」には二つの原因（本当に削除された／今この瞬間その一覧が読めない）があり、区別できないものを結論として書かないためです。", ko: "이 열은 발급 당시의 키 id입니다. 삭제된 키도 원래 id 그대로 이력에 남습니다. 패널은 이를 「삭제됨」으로 표시하지 않습니다: 「현재 목록에 없음」에는 두 가지 원인(정말 삭제됨 / 지금 이 순간 목록을 읽지 못함)이 있고, 구분할 수 없는 것을 결론으로 적지 않기 때문입니다." },
+  // ── 三个保留伪 id 的展示名 ────────────────────────────────────────────────
+  // ⚠️ **只有这一维做 id → 名的映射，模型那一维刻意不做**：这三个字面量是**我们自己发的**，
+  //    客户端选不了自己落进哪一格（真 id 是 12 位十六进制，与这三个串不相交）。
+  //    而 `byModel` 那一维的 `__other__` **客户端可以直接填**（那条边界逐字记在
+  //    `src/core/admin/usage-stats.ts` 的 `boundUsageKey` 上方）—— 在那里做映射
+  //    等于让任何一个客户端把自己的流量显示成「其它」。
+  "usage.key.master":  { "zh-CN": "主口令", "zh-TW": "主口令", en: "Master token", ja: "マスタートークン", ko: "마스터 토큰" },
+  "usage.key.other":   { "zh-CN": "其它（超出上限的密钥合计）", "zh-TW": "其它（超出上限的密鑰合計）", en: "Other (keys beyond the cap, combined)", ja: "その他（上限を超えたキーの合計）", ko: "기타(상한을 넘은 키 합계)" },
+  "usage.key.unattributed": { "zh-CN": "未归属（有请求绕过了鉴权中间件，要去查）", "zh-TW": "未歸屬（有請求繞過了鑑權中介層，要去查）", en: "Unattributed (a request bypassed the auth middleware — worth investigating)", ja: "未帰属（認証ミドルウェアを迂回したリクエストがあります。要調査）", ko: "미귀속(인증 미들웨어를 우회한 요청이 있습니다 — 확인 필요)" },
   "usage.detail.close":    { "zh-CN": "收起", "zh-TW": "收起", en: "Collapse", ja: "閉じる", ko: "접기" },
   "usage.detail.empty":    { "zh-CN": "这一天没有可以分解的记录。", "zh-TW": "這一天沒有可以分解的記錄。", en: "There is nothing to break down for this day.", ja: "この日は内訳を表示できる記録がありません。", ko: "이 날짜에는 분해할 기록이 없습니다." },
   // ⚠️ 与 `usage.table.unavailable` 同一条理由，同一条评审点名的「第三屏」：分片全坏 /

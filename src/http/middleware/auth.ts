@@ -2,7 +2,28 @@ import type { MiddlewareHandler } from "hono";
 import type { Logger } from "../../ports/logger.js";
 import { constantTimeEqual } from "../../core/admin/constant-time.js";
 import { digest, findByDigest, isApiKeyUsable, apiKeyBucket } from "../../core/admin/api-keys.js";
+import { USAGE_MASTER_BUCKET } from "../../core/admin/usage-stats.js";
 import type { ApiKeyHolder } from "../apikey-holder.js";
+
+/**
+ * 「这次请求用的是哪一把 key」这条归属**经请求上下文往下传**，不改 `dispatch()` 的
+ * 签名、也不塞进 `AppDeps`：那两处都是**建 app 时**定死的东西，而这一条是**每请求**的。
+ *
+ * ⚠️ **用 `declare module` 而不是 `c.set("随手写的字符串", …)`**：Hono 的
+ * `ContextVariableMap` 一被扩，`c.set` / `c.get` 两侧的键与值类型就都由 `tsc` 管着，
+ * 拼错一个字母是编译错误。裸字符串那一种在两边各拼一次，**拼错的那一次没有任何信号**
+ * ——归属会静默变成 `undefined`，而面板上它长得就是一格「未归属」。
+ *
+ * ⚠️ **可空**（`?`）：`c.get()` 在没人写过的时候返回 `undefined`，
+ * 声明成不可空就是在类型上撒谎。今天走到四条协议路由的请求一定被写过
+ *（本中间件挂在 `/v1/*` 与 `/v1beta/*` 上，不放行就不会有 handler），
+ * 但**类型不该替一条接线上的性质担保**。
+ */
+declare module "hono" {
+  interface ContextVariableMap {
+    apiKeyId?: string;
+  }
+}
 
 function extract(c: Parameters<MiddlewareHandler>[0]): string | null {
   const authz = c.req.header("authorization");
@@ -81,6 +102,10 @@ export function auth(getToken: () => string, apiKeys?: ApiKeyAuthWiring | null):
     // 扫描器打 `/v1/chat/completions` 不带任何头是最常见的形态，让它撬不动存储。
     if (presented !== null) {
       if (constantTimeEqual(presented, getToken())) {
+        // ★ **归属：主口令归到保留伪 id。`c.set` 是一次 Map 写，不是一次存储访问**
+        //   ——这一段「零存储 IO」的性质一个字节都没变（那是本板块的逃生口本身，
+        //   见上面那段 ⚠️⚠️）。为了记用量给它加一次读或一次写是明令禁止的。
+        c.set("apiKeyId", USAGE_MASTER_BUCKET);
         await next();
         return;
       }
@@ -93,6 +118,11 @@ export function auth(getToken: () => string, apiKeys?: ApiKeyAuthWiring | null):
           if (rec !== null) {
             const now = apiKeys.now();
             if (isApiKeyUsable(rec, now)) {
+              // ★ 归属：**记的是 `rec.id`，不是名称、不是摘要、更不是明文**。
+              //   id 本来就会进事件日志与 URL（`ApiKeyRecord.id` 上方：
+              //   「不由密钥派生」正是为这件事写的），把它当统计的桶键零新增泄漏面。
+              //   ⚠️ **改名不改 id** ⇒ 历史用量跟着这条记录走，不会因为改了个名字断成两截。
+              c.set("apiKeyId", rec.id);
               await next();
               return;
             }

@@ -1396,6 +1396,7 @@ curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999"
   "range": { "from": 1735689600000, "to": 1735775999999, "clamped": false },
   "days": null,
   "total": null,
+  "byApiKey": null,
   "shards": null,
   "malformed": null,
   "pending": null,
@@ -1408,7 +1409,7 @@ curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999"
 
 ### GET /admin/api/usage/{date}
 
-某一天的用量明細：按小時、按模型、按協議三張切片。
+某一天的用量明細：按小時、按模型、按協議、按密鑰四張切片。**按密鑰那一維的鍵是簽發時的密鑰 id**，刪掉的密鑰仍以原始 id 留在歷史裡；主口令的用量歸到保留偽 id `master`。
 
 **請求體**：本端點不收請求內容，日期寫在路徑裡，必須是 UTC 的 `YYYY-MM-DD`，否則 `400`。**與上面那條區間端點的口徑刻意不同**：那條只認 epoch 毫秒整數，這條只認日期字串，兩者不通用。
 
@@ -1431,6 +1432,7 @@ curl http://localhost:8080/admin/api/usage/2026-08-30 \
   "hours": null,
   "byModel": null,
   "byProtocol": null,
+  "byApiKey": null,
   "shards": null,
   "malformed": null,
   "note": "tier2_off"

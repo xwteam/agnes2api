@@ -1265,8 +1265,12 @@ const RISK_WORDS: ReadonlyArray<readonly [concept: string, cells: Readonly<Recor
  *   **这就是双向登记该起的作用**，记一笔。）
  */
 const P5_OUTSIDE_ALERT: ReadonlyArray<readonly [path: string, no: number, why: string]> = [
-  [join("docs", "en", "DEPLOY.md"), 889, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
-  [join("docs", "ja", "DEPLOY.md"), 872, "同上，ja 那一份的对应括注"],
+  // ⚠️ **这两个是绝对行号，会随上游插入的内容漂**（每-key 用量那一轮实测：在这两处
+  //    之前的配额账里各插了一段之后，889 → 909、872 → 892，这一格当场红）。
+  //    **红是对的**：它逼人回来确认「那句括注还在原处、还是同一句」，而不是让登记
+  //    悄悄指到别的行上去。改的时候要照着报文里的新行号去核对那一行的内容。
+  [join("docs", "en", "DEPLOY.md"), 909, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
+  [join("docs", "ja", "DEPLOY.md"), 892, "同上，ja 那一份的对应括注"],
 ];
 
 describe("R20/P5 风险语义句必须住在 alert 块里（内容锚定的下限，不可灌水）", () => {

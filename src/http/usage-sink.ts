@@ -5,12 +5,24 @@ import {
   USAGE_FLUSH_MIN_INTERVAL_MS, USAGE_WRITES_PER_DAY,
   emptyBucket, addToBucket, usageDayIndex, usageHourOf, usageSlotOf, usageDayKey, usageExpiresAt,
   boundUsageKey, USAGE_DAY_MS,
+  USAGE_MODEL_MAX_KEYS, USAGE_APIKEY_MAX_KEYS, USAGE_UNATTRIBUTED_BUCKET,
 } from "../core/admin/usage-stats.js";
 
 /** 一次转发的终态。四条协议路由各自填一份，**协议名由路由传，不靠 dispatch 猜**。 */
 export interface UsageOutcome {
   protocol: string;
   model: string;
+  /**
+   * 这次请求用的是哪一把对外 API 密钥。**由 `src/http/middleware/auth.ts` 写进请求
+   * 上下文，四条路由原样取出来传下来**（主口令 ⇒ `USAGE_MASTER_BUCKET`）。
+   *
+   * ⚠️ **类型是可空的，而且四条路由刻意不在自己那一侧兜底**：那几行在
+   * `recordUsage()` 的「sink 缺席就 return」**之前**求值，任何一行都会在
+   * **Tier-2 关着**时照样跑（`src/core/admin/usage-stats.ts` 的
+   * `USAGE_MODEL_KEY_MAX_LEN` 上方那条「本任务最贵的一次教训」）。
+   * 兜底在 `UsageSink.record()` 里，那一侧只有开着才跑。
+   */
+  apiKeyId: string | undefined;
   ok: boolean;
   stream: boolean;
   latencyMs: number;
@@ -24,6 +36,7 @@ interface DayAcc {
   hours: Record<string, UsageBucket>;
   byModel: Record<string, UsageBucket>;
   byProtocol: Record<string, UsageBucket>;
+  byApiKey: Record<string, UsageBucket>;
 }
 
 /**
@@ -45,7 +58,10 @@ interface DayAcc {
  * `JSON.stringify` 与 `{ ...map }`（并发那半的快照）对无原型对象都照常工作，已实测。
  *
  * `hours` / `byProtocol` 的键今天是闭集（`"00"`…`"23"` 与四条协议的字面量），
- * **一起改是因为「三个 map 造法一致」比「记住只有一个需要」可靠**。
+ * **一起改是因为「四个 map 造法一致」比「记住只有一个需要」可靠**
+ *（上一版这里写的是「三个」，本轮加了 `byApiKey` 之后是四个）。
+ * `byApiKey` 的键同样不是客户端填的（见 `src/core/admin/usage-stats.ts` 的
+ * `USAGE_MASTER_BUCKET`），**它跟着一起无原型走的正是这条「造法一致」的理由**。
  */
 function emptyDay(): DayAcc {
   return {
@@ -53,6 +69,7 @@ function emptyDay(): DayAcc {
     hours: Object.create(null),
     byModel: Object.create(null),
     byProtocol: Object.create(null),
+    byApiKey: Object.create(null),
   };
 }
 
@@ -431,7 +448,17 @@ export class UsageSink {
       // ★ **模型名是客户端随便填的**，收进上界再当键用（评审发现）。
       // **这一步排在所有写入之前**，理由见上面那段。
       // `byProtocol` 刻意不收：它的值是四条路由里的字面量，外部碰不到。
-      const modelKey = boundUsageKey(acc.byModel, u.model);
+      const modelKey = boundUsageKey(acc.byModel, u.model, USAGE_MODEL_MAX_KEYS);
+      // ★ **归属的兜底就在这一行，不在四条路由上**（见 `UsageOutcome.apiKeyId`）。
+      //   `undefined` 只在「有路绕过了鉴权中间件」时出现，今天结构上不可达
+      //   ——理由与「那为什么还要有它」写在 `USAGE_UNATTRIBUTED_BUCKET` 上方。
+      //   ⚠️ 空串一并归到这里：`c.get()` 拿到空串与拿不到是同一件事，
+      //   而一个空字符串键在面板上是一格**没有名字的行**。
+      const rawKeyId = typeof u.apiKeyId === "string" && u.apiKeyId !== ""
+        ? u.apiKeyId : USAGE_UNATTRIBUTED_BUCKET;
+      // ★ **上界是 `USAGE_APIKEY_MAX_KEYS` 不是 `USAGE_MODEL_MAX_KEYS`**：
+      //   两个数不同（201 vs 32），而那个形参刻意没有默认值，理由见 `boundUsageKey` 上方。
+      const apiKeyKey = boundUsageKey(acc.byApiKey, rawKeyId, USAGE_APIKEY_MAX_KEYS);
       const arg = {
         ok: u.ok, stream: u.stream, latencyMs: u.latencyMs,
         tokensIn: u.tokensIn, tokensOut: u.tokensOut,
@@ -440,6 +467,7 @@ export class UsageSink {
       acc.hours[hour] = addToBucket(acc.hours[hour] ?? emptyBucket(), arg);
       acc.byModel[modelKey] = addToBucket(acc.byModel[modelKey] ?? emptyBucket(), arg);
       acc.byProtocol[u.protocol] = addToBucket(acc.byProtocol[u.protocol] ?? emptyBucket(), arg);
+      acc.byApiKey[apiKeyKey] = addToBucket(acc.byApiKey[apiKeyKey] ?? emptyBucket(), arg);
       this.days.set(day, acc);
       this.dirty.add(day);
       this.version.set(day, (this.version.get(day) ?? 0) + 1);
@@ -531,7 +559,10 @@ export class UsageSink {
       const acc = this.days.get(day);
       if (!acc) { this.dirty.delete(day); continue; }
       // ★ **发起写之前先取一份快照**（定向复评）。
-      // 三个 record 都要浅拷：`record()` 往它们里面**赋新键**（`acc.hours[h] = …`），
+      // ⚠️ **本轮多了一个 `byApiKey`，它与另外三个一视同仁**：漏掉它一个，
+      // `await` 期间到达的那一条会只蹭进它而不进 `total`，也就是下面那句
+      // 「分片自己和自己对不上」换一个维度原样发生。
+      // 四个 record 都要浅拷：`record()` 往它们里面**赋新键**（`acc.hours[h] = …`），
       // 而 `acc.total` 是整体重新赋值的。不拷的话，`await` 期间到达的那一条会
       // **只蹭进 `hours`/`byModel`/`byProtocol` 而不进 `total`**
       //（KV 那边 `JSON.stringify` 在 await 前同步求值，则是干脆整条丢掉）
@@ -544,7 +575,12 @@ export class UsageSink {
         shardId: this.o.shardId, day, updatedAt: at,
         total: acc.total,
         hours: { ...acc.hours }, byModel: { ...acc.byModel }, byProtocol: { ...acc.byProtocol },
+        byApiKey: { ...acc.byApiKey },
       };
+      // ⚠️ **到这里为止 put 的次数一个都没变**：`shard` 多一维只是让这一个键的**值**
+      // 变大，而循环体每轮仍然恰好一次 `storage.put`。那条性质由
+      // `tests/contract/usage-tier2.test.ts` 的「加了 byApiKey 这一维之后每天的
+      // put 次数一个都没多 —— 数的是 put，不是 flush」**数着 put 计数**钉着。
       // ★ 预算同样**在发起写之前**扣，理由同上（失败不回滚）。
       this.budget = consume(this.budget, at);
       try {

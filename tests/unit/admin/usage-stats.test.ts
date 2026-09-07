@@ -4,7 +4,11 @@ import {
   USAGE_DAY_MS, usageCandidateKeys, usageExpiresAt, usageDayIndex, usageHourOf,
   usageSlotOf, usageDayKey,
   emptyBucket, addToBucket, mergeDayShards, canWrite, type WriteBudget,
+  boundUsageKey, USAGE_MODEL_MAX_KEYS, USAGE_APIKEY_MAX_KEYS,
+  USAGE_MASTER_BUCKET, USAGE_UNATTRIBUTED_BUCKET, USAGE_OTHER_BUCKET,
 } from "../../../src/core/admin/usage-stats.js";
+import { APIKEY_MAX } from "../../../src/core/admin/api-keys.js";
+import { newApiKeyId } from "../../../src/http/apikey-store.js";
 
 describe("Tier-2 的配额算术", () => {
   /**
@@ -214,5 +218,94 @@ describe("Tier-2 的合并", () => {
     expect(b.errors).toBe(1);
     expect(b.latencyCount).toBe(1);      // 手写字面量
     expect(b.latencySum).toBe(30);       // 手写字面量：8000 那一笔一个毫秒都不许进来
+  });
+});
+
+describe("Tier-2 的按密钥归属（byApiKey）", () => {
+  /**
+   * ⚠️ **这一格钉的是「两维的上界是两个不同的数」，不是「有上界」。**
+   * 只断言「有上界」的话，把 `USAGE_APIKEY_MAX_KEYS` 写成 `USAGE_MODEL_MAX_KEYS`
+   * 照样绿——而那正是 `boundUsageKey` 的第三个形参刻意没有默认值要挡的那件事
+   *（一个有 33 把密钥的部署里，第 33 把之后的用量全部并进「其它」，
+   * 而面板上那看起来完全正常）。
+   */
+  it("byApiKey 的上界是 APIKEY_MAX + 1，与 byModel 那个 32 不是同一个数", () => {
+    expect(USAGE_APIKEY_MAX_KEYS).toBe(APIKEY_MAX + 1);
+    expect(USAGE_APIKEY_MAX_KEYS).not.toBe(USAGE_MODEL_MAX_KEYS);
+    // 手写字面量：这两个数一旦被谁改成同一个，上面那句 `not.toBe` 才是唯一的信号。
+    expect(USAGE_MODEL_MAX_KEYS).toBe(32);
+    expect(USAGE_APIKEY_MAX_KEYS).toBe(201);
+  });
+
+  it("填满 201 格之后再来一个新 id 就并进 __other__；而已经在里面的那些照旧认得出来", () => {
+    const acc: Record<string, number> = Object.create(null);
+    // 200 把子密钥 + 主口令 = 恰好填满。
+    for (let i = 0; i < APIKEY_MAX; i++) {
+      acc[boundUsageKey(acc, `id${String(i).padStart(9, "0")}`, USAGE_APIKEY_MAX_KEYS)] = 1;
+    }
+    acc[boundUsageKey(acc, USAGE_MASTER_BUCKET, USAGE_APIKEY_MAX_KEYS)] = 1;
+    expect(Object.keys(acc).length).toBe(USAGE_APIKEY_MAX_KEYS);
+
+    // 第 202 个不同的 id ⇒ 溢出格。
+    expect(boundUsageKey(acc, "id999999999", USAGE_APIKEY_MAX_KEYS)).toBe(USAGE_OTHER_BUCKET);
+    // **满桶之后旧键仍然认得出来**：否则同一把密钥会在两次请求之间换格子。
+    expect(boundUsageKey(acc, USAGE_MASTER_BUCKET, USAGE_APIKEY_MAX_KEYS)).toBe(USAGE_MASTER_BUCKET);
+    expect(boundUsageKey(acc, "id000000007", USAGE_APIKEY_MAX_KEYS)).toBe("id000000007");
+  });
+
+  /**
+   * ⚠️ **这一格是 `USAGE_MASTER_BUCKET` 上方那段安全论证的可执行版本。**
+   * 「主口令那一格不可能被一把真密钥占掉」今天靠的是**取值集合不相交**：
+   * 真 id 是 12 位十六进制，而 `"master"` 有 6 个字符、还带着 hex 里没有的字母。
+   * 哪天有人把 `newApiKeyId()` 改成「随机 6 个字符」或者「允许字母全表」，
+   * 这一格当场红——而那时面板会把某一把真密钥的用量渲染成「主口令」。
+   */
+  it("主口令那个伪 id 与真实密钥 id 的取值集合不相交 —— 一把真密钥占不掉那一格", () => {
+    expect(/^[0-9a-f]{12}$/.test(USAGE_MASTER_BUCKET)).toBe(false);
+    expect(/^[0-9a-f]{12}$/.test(USAGE_UNATTRIBUTED_BUCKET)).toBe(false);
+    for (let i = 0; i < 200; i++) {
+      const id = newApiKeyId();
+      expect(id, "真 id 必须是 12 位十六进制，那正是不相交这条论证的前提").toMatch(/^[0-9a-f]{12}$/);
+      expect(id).not.toBe(USAGE_MASTER_BUCKET);
+      expect(id).not.toBe(USAGE_UNATTRIBUTED_BUCKET);
+    }
+  });
+
+  it("合并把每个分片的 byApiKey 加在一起；存量分片没有这一格时是空的，而且不算畸形", () => {
+    const shard = (byApiKey: string | null) => JSON.parse(JSON.stringify({
+      shardId: "s", day: 7, updatedAt: 1,
+      total: { requests: 1, success: 1, errors: 0, tokensIn: 0, tokensOut: 0, streamingRequests: 0, latencySum: 0, latencyCount: 0 },
+      hours: {}, byModel: {}, byProtocol: {},
+      ...(byApiKey === null ? {} : { byApiKey: JSON.parse(byApiKey) }),
+    }));
+    const one = { requests: 1, success: 1, errors: 0, tokensIn: 0, tokensOut: 0, streamingRequests: 0, latencySum: 0, latencyCount: 0 };
+    const r = mergeDayShards([
+      shard(JSON.stringify({ master: one })),
+      shard(JSON.stringify({ master: one, aabbccddeeff: one })),
+      // ★ **本轮之前落盘的那些分片压根没有这一格**：它们必须仍然是**合法**分片。
+      shard(null),
+    ]);
+    expect(r.malformed, "少一格 byApiKey 不是畸形，那是存量形态").toBe(0);
+    expect(r.shards).toBe(3);
+    expect(r.byApiKey[USAGE_MASTER_BUCKET]?.requests).toBe(2);
+    expect(r.byApiKey.aabbccddeeff?.requests).toBe(1);
+    expect(r.total.requests).toBe(3);
+  });
+
+  /**
+   * ⚠️ **这一维的键不是客户端填的，但它是从存储里回来的** —— 手工编辑过的
+   * KV / `store.json` 里放得进一个叫 `__proto__` 的键，而普通 `{}` 上那一条会
+   * **静默消失**（`total` 与 Σ`byApiKey` 从此对不上）。
+   * 变红条件：把 `mergeDayShards` 里那个 `byApiKey` 改回 `{}`。
+   */
+  it("byApiKey 的键叫 __proto__ 时不许消失 —— 那份值是从存储里回来的", () => {
+    const raw = JSON.parse(`{
+      "shardId": "s", "day": 7, "updatedAt": 1,
+      "total": {"requests": 1, "success": 1, "errors": 0, "tokensIn": 0, "tokensOut": 0, "streamingRequests": 0, "latencySum": 0, "latencyCount": 0},
+      "hours": {}, "byModel": {}, "byProtocol": {},
+      "byApiKey": {"__proto__": {"requests": 1, "success": 1, "errors": 0, "tokensIn": 0, "tokensOut": 0, "streamingRequests": 0, "latencySum": 0, "latencyCount": 0}}
+    }`);
+    const r = mergeDayShards([raw]);
+    expect(Object.keys(r.byApiKey)).toEqual(["__proto__"]);
   });
 });

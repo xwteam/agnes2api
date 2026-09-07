@@ -1398,6 +1398,7 @@ curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999"
   "range": { "from": 1735689600000, "to": 1735775999999, "clamped": false },
   "days": null,
   "total": null,
+  "byApiKey": null,
   "shards": null,
   "malformed": null,
   "pending": null,
@@ -1410,7 +1411,7 @@ curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999"
 
 ### GET /admin/api/usage/{date}
 
-ある一日の使用量の内訳：時間別、モデル別、プロトコル別の三つの切り口。
+ある一日の使用量の内訳：時間別、モデル別、プロトコル別、APIキー別の四つの切り口。**`byApiKey` のキーは発行時のキー id** です。削除済みのキーも元の id のまま履歴に残り、マスタートークンの使用量は予約された疑似 id `master` に集計されます。
 
 **リクエストボディ**：このエンドポイントはボディを取りません。日付はパスに書き、UTC の `YYYY-MM-DD` でなければ `400` です。**上の区間エンドポイントとは口径が意図的に異なります**：あちらは epoch ミリ秒の整数しか取らず、こちらは日付文字列しか取りません。互換性はありません。
 
@@ -1433,6 +1434,7 @@ curl http://localhost:8080/admin/api/usage/2026-08-30 \
   "hours": null,
   "byModel": null,
   "byProtocol": null,
+  "byApiKey": null,
   "shards": null,
   "malformed": null,
   "note": "tier2_off"

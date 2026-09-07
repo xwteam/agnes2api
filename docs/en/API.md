@@ -1399,6 +1399,7 @@ curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999"
   "range": { "from": 1735689600000, "to": 1735775999999, "clamped": false },
   "days": null,
   "total": null,
+  "byApiKey": null,
   "shards": null,
   "malformed": null,
   "pending": null,
@@ -1411,7 +1412,7 @@ curl "http://localhost:8080/admin/api/usage?from=1735689600000&to=1735775999999"
 
 ### GET /admin/api/usage/{date}
 
-The detail for one day: three slices, by hour, by model and by protocol.
+The detail for one day: four slices — by hour, by model, by protocol and by API key. **The keys of the `byApiKey` slice are key ids as issued**; deleted keys stay in history under their original id, and the master token's usage is attributed to the reserved pseudo id `master`.
 
 **Request body**: this endpoint takes no body; the date lives in the path and must be a UTC `YYYY-MM-DD`, otherwise `400`. **The convention here deliberately differs from the range endpoint above**: that one takes epoch milliseconds as an integer, this one takes a date string, and the two are not interchangeable.
 
@@ -1434,6 +1435,7 @@ curl http://localhost:8080/admin/api/usage/2026-08-30 \
   "hours": null,
   "byModel": null,
   "byProtocol": null,
+  "byApiKey": null,
   "shards": null,
   "malformed": null,
   "note": "tier2_off"

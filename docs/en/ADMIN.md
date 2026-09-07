@@ -313,6 +313,43 @@ go by it and never parse `msg`:
   today", "the second tier is off" and "this read failed" are three different things, and the
   panel is not allowed to draw them the same way.
 
+### Usage per API key
+
+- **Tier-2 has one more dimension: by API key.** Drill into a day and you get a fourth
+  table next to by-hour / by-model / by-protocol; every card in the API keys board also
+  carries a usage line for the last day.
+- **The master token's usage is attributed to the reserved pseudo id `master`.** That is
+  **a label, not a row in the key table**: the master token does not live in that table and
+  no write path can create or delete it. What gets recorded for a sub-key is its **id** —
+  never the name, the digest or the plaintext. A key id is not a credential; it already
+  appears in the event log.
+- **Recording this dimension adds no storage read or write to the master token's auth
+  path** — the zero-storage-access property of that path is the escape hatch for a broken
+  key table, and it is not up for trade.
+- **Turning this dimension on costs zero extra writes.** These numbers live *inside* the
+  existing per-day key; the per-instance daily write count is unchanged (that number and
+  its derivation are in the quota ledger in the deployment guide).
+- **While Tier-2 is off, that line reads “Usage: not enabled” and draws no number at
+  all** — drawing a `0` would turn “not enabled” into “nobody used it”.
+
+### After a key is deleted, and why there is no “reset usage”
+
+- **Deleted keys stay in history under their original id, and the panel does not label
+  them “deleted.”** Buckets are stored per UTC day, so the id is the fact of the day it was
+  issued. Deciding “deleted” would mean joining against the current table, and that join
+  yields only “not in the current table” — two possible causes (really deleted, or the table
+  is unreadable right now). We do not state a conclusion we cannot tell apart.
+- **Distinct key ids in one day are bounded (201 = the 200-key table cap plus the master
+  slot)**; the rest merge into one “Other” row. The day bucket is a **historical
+  accumulation** while that 200 governs only **the present**: issuing, using and deleting
+  keys repeatedly within a day produces arbitrarily many ids. **The overflow loses
+  resolution, not counts.**
+- **There is no “reset usage” button, deliberately.** Tier-2 numbers are bucketed per UTC
+  day and expire on their own, so “reset” has no counterpart here. Pressing it would only
+  *look* like it worked: the accumulators in memory are untouched, so the shard is written
+  back within one flush interval and other instances keep writing. To drop history, let it
+  age out of retention.
+
 ## Models
 
 ### What this page answers
@@ -490,11 +527,15 @@ ourselves, and revoking a leaked key should be as fast as possible.
 "Purge unusable" deletes every key that is currently disabled or expired and leaves every
 usable key untouched; the number it deletes equals the sum of those two stat cards.
 
-### Four things this board deliberately does not do
+### Three things this board deliberately does not do
+
+> [!NOTE]
+> There used to be a fourth entry here, “per-key usage,” justified by “the data source is off by default, so it would be a slab of UI reading ‘not enabled’ on most deployments.”
+> **It is built now**: every card carries a usage line for the last day. The “off by default” half was not worked around — while it is off, that line reads exactly “Usage: not enabled” and **draws no number at all**.
+> The full write-up is above, under **Usage → Usage per API key**.
 
 - **A spending cap per key** —— A cap needs a cross-instance, near-real-time view of what has already been spent, and this shape cannot provide one: live usage lives in each instance's memory and flushing lags behind. What you could build is an approximate cap with an unbounded error.
 - **Lazy activation (the clock starts on first use)** —— It requires writing to storage on the authentication hot path, and that path must stay write-free. "N days from the moment it is issued" covers the same need.
-- **Per-key usage** —— The data source is the second statistics tier, which is off by default; building it would mean a whole slab of UI that reads "not enabled" on most deployments. **This is where this board differs most from comparable panels, stated plainly here.**
 - **Binding a key to specific upstream keys** —— This gateway's pool rotates by health and is homogeneous — there is **no such concept as "this outbound key may only use these upstream accounts"**.
 
 ## Settings

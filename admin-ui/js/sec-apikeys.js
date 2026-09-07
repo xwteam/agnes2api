@@ -34,6 +34,11 @@ import { offsetMs, freshnessValues } from "./pure/overview.mjs";
 // 错误码 → 文案。**全仓唯一那份「码 → i18n key」的翻译**，两族管理端点共用它
 // （那张表的名字里没有 keys 字样，射程本来就是整棵管理树）。
 import { adminErrorFields, adminErrorText } from "./pure/keys-write.mjs";
+// ⚠️ **用量那一行走「用量」板块那份纯模块，不在这里再写一套判据**：
+// 「Tier-2 关着 / 读不出来 / 真的是 0」这三态本仓只许有一份判据
+//（`usageState()`），各写一份的话，分叉的那一边正好是「关着」时，
+// 面板就会开始伪造 0。区间也用同一个 `rangeToQuery`，两处不许各算各的。
+import { apiKeyUsage, rangeToQuery } from "./pure/usage.mjs";
 import {
   AK_CARDS, AK_SORTS, AK_EXPIRY_DAYS,
   akCounts, akListState, akItems, akVersion, akBadgeClass, akBucketLabelKey,
@@ -55,6 +60,17 @@ let abort = null;
 let cap = { wired: null, max: null, nameMax: null, plaintextRetrievable: false, cacheTtlMs: null };
 /** KV 边缘缓存那个数，同样来自后端（概览页那条链）。 */
 let edgeMs = null;
+/**
+ * 最近一次 `GET /admin/api/usage`（近 24 小时那一档）的响应，每张卡的用量那一行读它。
+ *
+ * ⚠️ **`null` 与 `usageFailed` 是两件事**，与本文件 `data` / `loadError` 那一对
+ * 逐字同源：`null` 还包含「还没拉过」，而那一档与「拉了但失败了」在面板上
+ * 都画破折号、**但它们不是同一句话**——判据收在 `apiKeyUsage()` 里，这里只存状态。
+ */
+let usageData = null;
+let usageFailed = false;
+/** 用量那一次请求的世代号。与列表那一条分开：两者的作废条件本来就不同。 */
+let usageSeq = 0;
 
 /** 把一次管理接口错误翻成一句话。**两族端点共用同一份翻译**，见上面的 import。 */
 function errorMessage(e, genericKey) {
@@ -166,6 +182,19 @@ function itemCard(v) {
   meta.appendChild(el("span", { class: "muted" }, v.expiresAt === null
     ? t("ak.expiresNever")
     : `${t("ak.expiresAt")} ${fmtInstant(v.expiresAt, off)}`));
+  // ── 这把密钥的用量（Tier-2）─────────────────────────────────────────────
+  // ⚠️⚠️ **三态各有各的一句话，`off` 那一句里一个数字都没有**：Tier-2 关着时
+  //    这个部署根本没在记账，画 `0` 就是把「没开」说成「没人用」（全局约束 9）。
+  //    判据在 `apiKeyUsage()` 里，**这里只负责把它画出来**（admin-ui/README.md 硬规则 1）。
+  const u = apiKeyUsage(usageData, usageFailed, v.id);
+  const usage = el("span", { class: "muted ak-usage" },
+    u.kind === "off" ? t("ak.usage.off")
+      : u.kind === "unknown" ? t("ak.usage.unknown")
+        : t("ak.usage.value", { count: fmtCount(u.requests) }));
+  // tooltip 只在真有数字那一档挂：另外两档下「这个数是近似值」是一句关于
+  // **不存在的数字**的话（本仓为这个形状付过一次代价，见 sec-usage.js 的 `approxTitleMark`）。
+  if (u.kind === "value") usage.setAttribute("title", t("ak.usage.tip"));
+  meta.appendChild(usage);
   card.appendChild(meta);
 
   const actions = el("div", { class: "ak-item-actions" });
@@ -268,6 +297,39 @@ async function loadCapabilities() {
   } catch (e) {
     edgeMs = null;
   }
+}
+
+/**
+ * 拉一次近 24 小时的用量汇总。**每张卡上那一行的唯一数据源。**
+ *
+ * ⚠️ **它不轮询、不跟着搜索框重拉**：与「用量」板块同一条纪律
+ *（那个板块的文件头写着「每刷新一次要付『天数 × 分片槽位』次存储读」）。
+ * 进板块拉一次，之后只有点「刷新」类的写操作收尾才会跟着重来。
+ *
+ * ⚠️⚠️ **Tier-2 关着时这条请求的存储读是 0 次**，那是后端的结构性性质
+ *（`src/http/admin/handlers/usage.ts` 的 `UsageWiring` 上方：关闭时读路径
+ * 在结构上不存在）⇒ **默认部署为这一行付的存储读恰好是 0**。
+ * 开着时它按 24 小时那一档取键，最多跨 2 个 UTC 日 × 2 个槽位 = 4 次 get。
+ * 这笔账写在五份 DEPLOY.md 的配额账里。
+ *
+ * **失败不抹掉已经画好的数字**：与 `load()` 同一条理由，一次读失败对
+ * 「这些密钥被用了多少次」什么新东西都没说。
+ */
+async function loadUsage() {
+  const mine = ++usageSeq;
+  const q = rangeToQuery("24h", Date.now());
+  // `q` 为 null 只在本机时钟坏掉时发生；那时不发请求，让上一次的数据留着。
+  if (q === null) return;
+  try {
+    const body = await api.get(`/usage?from=${q.from}&to=${q.to}`);
+    if (mine !== usageSeq) return;
+    usageData = body;
+    usageFailed = false;
+  } catch (e) {
+    if (mine !== usageSeq) return;
+    usageFailed = true;
+  }
+  render();
 }
 
 async function load() {
@@ -485,9 +547,14 @@ export const apikeysSection = {
     void (async () => {
       if (cap.wired === null) await loadCapabilities();
       await load();
+      // ⚠️ **排在列表之后、且不并发发**：这一行是卡片上的附加信息，
+      //    列表拉不出来时卡片压根不画，先把它抢在前面只会白付一次请求。
+      await loadUsage();
     })();
   },
   onHide() {
     if (abort !== null) { abort.abort(); abort = null; }
+    // 用量那一条在飞的同样作废：回来时它会 `render()`，而那时板块已经切走了。
+    usageSeq++;
   },
 };

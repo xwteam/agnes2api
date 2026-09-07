@@ -46,6 +46,11 @@
  * **一个模块级可变状态都没有**。
  */
 import { type WriteBudget, FRESH_BUDGET, canWrite, consume } from "./event-ring.js";
+/**
+ * `byApiKey` 那一维的上界从这里取，**不在本文件里手抄一个 200**：
+ * 抄一份的话，哪天那张表的容量改了，这边那个数不会跟着变，而没有任何东西会红。
+ */
+import { APIKEY_MAX } from "./api-keys.js";
 
 /**
  * 预算实现从事件板块**复用**，不再写一份（两份预算实现迟早会分叉）。
@@ -108,6 +113,17 @@ export interface UsageDayShard {
   hours: Record<string, UsageBucket>;
   byModel: Record<string, UsageBucket>;
   byProtocol: Record<string, UsageBucket>;
+  /**
+   * 这一天按「哪一把对外 API 密钥」分。键是 `ApiKeyRecord.id`，或下面那两个保留伪 id。
+   *
+   * ⚠️ **加这一维的 `put` 次数增量恒为 0**，这不是一句估计：落盘的次数由
+   * `UsageSink.maybeFlush()` 的「每个有未落盘增量的日各写一个键」决定，
+   * 而这一维住在**那个键的值里面**（与 `hours` / `byModel` / `byProtocol` 同一处），
+   * 一次 flush 写几个键与值里有几维完全无关。变大的只有那个 JSON 值。
+   * 由 `tests/contract/usage-tier2.test.ts` 的
+   * 「加了 byApiKey 这一维之后每天的 put 次数一个都没多 —— 数的是 put，不是 flush」钉着。
+   */
+  byApiKey: Record<string, UsageBucket>;
 }
 
 export const USAGE_DAY_MS = 86_400_000;
@@ -334,9 +350,101 @@ export const USAGE_MODEL_KEY_MAX_LEN = 64;
  *
  * **`byProtocol` 刻意不设上界**：那一维的值来自四条路由里的字面量
  *（`"openai"` / `"anthropic"` / `"responses"` / `"gemini"`），客户端碰不到它。
- * `hours` 同理（恒 24 格）。**只有 `byModel` 这一维是外部可控的。**
+ * `hours` 同理（恒 24 格）。
+ *
+ * ⚠️⚠️ **上一版这里的收尾句是「只有 `byModel` 这一维是外部可控的」，本轮加了
+ * `byApiKey` 之后那句话要改，但不是照 `byProtocol` 那条改**（本轮裁定，判据写全）：
+ * · **「外部可控」这个词今天仍然只有 `byModel` 一个**——`byApiKey` 的键是
+ *   `src/http/apikey-store.ts` 的 `newApiKeyId()` 发的 12 位 hex，或本文件下面那两个
+ *   保留伪 id，客户端**选不了自己落进哪一格**；
+ * · **但「有没有上界」与「外部可不可控」不是同一个问题，上一版把它们绑成了一句话。**
+ *   `byApiKey` 照样要上界，理由在 `USAGE_APIKEY_MAX_KEYS` 上方（一句话：日桶是
+ *   **历史累计**，而 200 那个上限只管**当下**）。
+ * ⇒ 收尾句因此拆成两句：**外部可控的只有 `byModel`；而需要上界的是 `byModel` 与
+ * `byApiKey` 两维**。差别落在**闸的形状**上：`byModel` 要键长闸 + 格数闸两道，
+ * `byApiKey` 的键长闸是另一件事（见 `USAGE_APIKEY_MAX_KEYS` 末尾那条）。
  */
 export const USAGE_MODEL_MAX_KEYS = 32;
+
+/**
+ * `byApiKey` 最多留几个具名键。**取 `APIKEY_MAX + 1`**：当下能同时存在的全部子密钥
+ * （`src/core/admin/api-keys.ts` 的 `APIKEY_MAX` = 200）各一格，加上主口令那一格。
+ *
+ * ⚠️⚠️ **为什么这一维也要上界——「键不是外部可控的」推不出「它有界」。**
+ * 那 200 是**当下**的上限，而日桶是**历史累计**：同一个 UTC 日里「签发 → 用一次 →
+ * 删掉」反复操作，一天之内出现过的不同 id 数**可以远超 200**，而这份 map
+ * **永不清理、每次落盘整份覆写进一个键**。没有上界的三个后果与
+ * `USAGE_MODEL_MAX_KEYS` 上方那三条**逐条同型**（内存无上界 / KV 单值 25MB 撞上之后
+ * 那天永远 dirty、每个落盘间隔白烧一格预算而数据再也写不出去 / 读侧最多 60 个分片要合并），
+ * 这里不复述。
+ *
+ * ⚠️ **两维的差别只在「谁能驱动它」，而那一条决定的是紧迫性、不是要不要设闸**：
+ * `byModel` 任何一个客户端在请求体里填一个新串就能加一格；`byApiKey` 要管理员口令，
+ * 而且每签发一把就是一次 `put`（KV 免费档每天 1,000 次写 ⇒ 那一侧当天至多千余把）。
+ * ⇒ **不拿「写配额自然会拦住它」当有界性的依据**：那是把本模块的有界性建在
+ * **另一个子系统的配额**上，而文件存储那一侧根本没有写配额（`budgetPerDay = null`，
+ * 见 `src/http/usage-sink.ts` 的 `resolveUsageFlushInterval()`）——那一侧一句话就穿了。
+ *
+ * **溢出的处置与 `byModel` 完全相同**：并进 `USAGE_OTHER_BUCKET`。
+ * 代价只是「多出来的那些密钥在面板上合成一格」，**总数一条不丢**
+ * （`total` 与 Σ`byApiKey` 的关系不受影响）。
+ *
+ * ⚠️ **已知边界，如实登记**：主口令那一格 `"master"` **不享受任何优待**——
+ * 一天之内先有 201 个不同的子密钥 id 落过桶、主口令的第一条请求才到，
+ * 那一条会并进 `USAGE_OTHER_BUCKET`。不为它开一条「保留席位」的分支：
+ * 那要在热路径上多一个判断，而它换回来的只是一个**在 201 把密钥当天全部轮换过**
+ * 的部署里才看得见的格子。**主口令「不可删不可停用」说的是它不在那张表里、
+ * 没有任何写路径能建它或删它，不是「它在统计里有一个永久保留的桶」。**
+ *
+ * ⚠️ **这一维走的是同一个 `boundUsageKey()`，因此也吃那道 64 字符的键长闸——
+ * 而它在这里不是惰性的**（别照「id 反正只有 12 位」把它读成一条走不到的路）：
+ * `isApiKeyRecord()` 对 `id` 的要求只有「非空字符串」，**手工编辑过的 KV /
+ * `store.json` 里放得进一个任意长的 id**，而那个串会一路走到这里当键用。
+ * 键长闸挡的正是那一档，与 `byModel` 那一维的理由不同、效果相同。
+ */
+export const USAGE_APIKEY_MAX_KEYS = APIKEY_MAX + 1;
+
+/**
+ * 主口令（`GATEWAY_TOKEN` / 存储里的 `gatewayToken`）那一段用量的桶名。
+ *
+ * ⚠️ **它是一个伪 id，不是那张表里的一行**：主口令不在 `apikeys` 里
+ *（`src/core/admin/api-keys.ts` 文件头那四条理由），**没有任何写路径能建它或删它**。
+ *
+ * ⚠️⚠️ **取 `"master"` 这个字面量是安全的，理由要写下来而不是靠直觉**：
+ * 真实的子密钥 id 由 `src/http/apikey-store.ts` 的 `newApiKeyId()` 发，
+ * 是 **12 位十六进制**；`"master"` 有 6 个字符、而且带着 `m` / `s` / `t` 三个
+ * 十六进制里没有的字母 ⇒ **两者的取值集合不相交**，一把真密钥不可能占掉这一格，
+ * 面板也不可能把某一把真密钥的用量渲染成「主口令」。
+ * ⚠️ **这条论证只覆盖「本网关自己发的 id」**：手工编辑过的存储里放得进一个
+ * 名字就叫 `master` 的记录（见 `USAGE_APIKEY_MAX_KEYS` 末尾那条同源的边界）。
+ * 后果是**那一把的用量与主口令合成一格**——总数不丢、上界照旧。
+ * 不为它换一个「猜不到的」桶名：那是把正确性建在一个秘密上，而这里没有正确性依赖它
+ *（与 `USAGE_OTHER_BUCKET` 上方那条边界同一套处置）。
+ */
+export const USAGE_MASTER_BUCKET = "master";
+
+/**
+ * 「这次请求没带得到归属」的桶名。
+ *
+ * ⚠️ **今天它结构上不可达，如实登记，别把它读成「有一条正在咬人的缺陷」**：
+ * 归属由 `src/http/middleware/auth.ts` 在放行前写进请求上下文，而四条协议路由
+ * **只能经那个中间件进来**（`src/http/app.ts` 把它挂在 `/v1/*` 与 `/v1beta/*` 上）
+ * ⇒ 走到 handler 的请求一定已经被归属过。
+ *
+ * **那为什么还要有它**：另外两种兜底都在撒谎——
+ * · 归到 `USAGE_MASTER_BUCKET` ⇒ 把别人的流量算到主口令头上，而**归属正是这一维
+ *   存在的全部理由**；
+ * · 干脆不记这一条 ⇒ `total` 与 Σ`byApiKey` 从此对不上，**而那是静默的**
+ *   （面板上只会少一点，没有任何信号）。
+ * ⇒ 留一个**看得出是兜底**的桶名，与 `[unstringifiable]` 同一条理由。
+ * 它一旦在面板上出现，说的就是「有一条路绕过了鉴权中间件」——那是要人去查的。
+ *
+ * **兜底落在哪一侧是有讲究的**：它在 `UsageSink.record()` 里，
+ * 也就是**只有 Tier-2 开着才跑**的那一侧，不在四条路由上
+ *（`USAGE_MODEL_KEY_MAX_LEN` 上方那条「本任务最贵的一次教训」的原话：
+ * **防御要加在「只有开着才跑」的那一侧**）。
+ */
+export const USAGE_UNATTRIBUTED_BUCKET = "unattributed";
 
 /**
  * 超出 `USAGE_MODEL_MAX_KEYS` 之后的模型都并进这一格。
@@ -428,10 +536,23 @@ function safeString(raw: unknown): string {
   }
 }
 
-export function boundUsageKey(existing: Readonly<Record<string, unknown>>, raw: string): string {
+/**
+ * ⚠️⚠️ **第三个参数 `maxKeys` 刻意没有默认值，这一条是本轮新加的**：
+ * 本文件的 `canWrite` 那一段已经为「一个带默认值的参数静默按另一维的常量计」
+ * 付过一次代价（漏传**不会有类型错误、不会有任何编译期信号**）。
+ * `byModel` 与 `byApiKey` 的上界是两个不同的数（32 与 201），
+ * 写成 `maxKeys = USAGE_MODEL_MAX_KEYS` 的话，`byApiKey` 那一侧漏传就会**静默按 32 计**
+ * ⇒ 一个有 33 把密钥的部署里，第 33 把之后的用量全部并进「其它」，
+ * **而面板上那看起来完全正常**。⇒ 必填，让 `tsc` 当场说话。
+ */
+export function boundUsageKey(
+  existing: Readonly<Record<string, unknown>>,
+  raw: string,
+  maxKeys: number,
+): string {
   const k = safeString(raw).slice(0, USAGE_MODEL_KEY_MAX_LEN);
   if (Object.prototype.hasOwnProperty.call(existing, k)) return k;
-  if (Object.keys(existing).length >= USAGE_MODEL_MAX_KEYS) return USAGE_OTHER_BUCKET;
+  if (Object.keys(existing).length >= maxKeys) return USAGE_OTHER_BUCKET;
   return k;
 }
 
@@ -587,6 +708,8 @@ export function mergeDayShards(raw: readonly unknown[]): {
   hours: Record<string, UsageBucket>;
   byModel: Record<string, UsageBucket>;
   byProtocol: Record<string, UsageBucket>;
+  /** 见 `UsageDayShard.byApiKey`。**与上面三个一样是无原型对象**，那条硬契约同样适用。 */
+  byApiKey: Record<string, UsageBucket>;
   total: UsageBucket;
   shards: number; malformed: number;
 } {
@@ -600,6 +723,11 @@ export function mergeDayShards(raw: readonly unknown[]): {
   const hours: Record<string, UsageBucket> = Object.create(null);
   const byModel: Record<string, UsageBucket> = Object.create(null);
   const byProtocol: Record<string, UsageBucket> = Object.create(null);
+  // ⚠️ **这一个同样必须无原型，理由与上面四个不完全相同、结论相同**：它的键**不是**
+  // 客户端填的，但**是从存储里回来的**——手工编辑过的分片里放得进一个叫 `__proto__`
+  // 的键，那一条会在普通 `{}` 上静默消失。**入口一变宽，同一个洞就回来了**，
+  // 所以判据取「这份值来自存储」而不是「这一维外部可不可控」。
+  const byApiKey: Record<string, UsageBucket> = Object.create(null);
   let shards = 0; let malformed = 0;
   const merge = (into: Record<string, UsageBucket>, from: Record<string, UsageBucket>) => {
     for (const [k, v] of Object.entries(from)) into[k] = addBuckets(into[k] ?? emptyBucket(), v);
@@ -611,8 +739,9 @@ export function mergeDayShards(raw: readonly unknown[]): {
     total = addBuckets(total, sh.total);
     byDay[String(sh.day)] = addBuckets(byDay[String(sh.day)] ?? emptyBucket(), sh.total);
     merge(hours, sh.hours); merge(byModel, sh.byModel); merge(byProtocol, sh.byProtocol);
+    merge(byApiKey, sh.byApiKey);
   }
-  return { byDay, hours, byModel, byProtocol, total, shards, malformed };
+  return { byDay, hours, byModel, byProtocol, byApiKey, total, shards, malformed };
 }
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.trunc(v) : 0);
@@ -667,5 +796,9 @@ function narrowShard(v: unknown): UsageDayShard | null {
     hours: narrowRecord(r.hours),
     byModel: narrowRecord(r.byModel),
     byProtocol: narrowRecord(r.byProtocol),
+    // ⚠️ **存量分片里没有这一格**（本轮之前落盘的那些）：`narrowRecord(undefined)`
+    // 回一个空的无原型对象，那些天的按密钥分解因此是空的——**这是实情，不是缺陷**。
+    // 零迁移，与 `KeyRecord.disabled`「缺席 = 启用」同一体例。
+    byApiKey: narrowRecord(r.byApiKey),
   };
 }
