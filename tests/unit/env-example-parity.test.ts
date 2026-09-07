@@ -131,8 +131,15 @@ const EXTRA_ENV = ["DATA_DIR"];
  * · `RESET_CONFIG` —— `src/core/config-provenance.ts` 的逃生口，置 1 时忽略存储里的 config 键。
  * · `TRUST_PROXY` —— `src/http/wire.ts` 交给 `src/http/client-ip.ts` 决定信不信转发头。
  * · `USAGE_FLUSH_INTERVAL_MS` —— `src/http/wire.ts` 交给 `src/http/usage-sink.ts` 的落盘间隔。
+ * · `APIKEY_CACHE_TTL_MS` —— `src/http/wire.ts` 交给 `src/http/apikey-holder.ts` 的
+ *   对外 API 密钥表缓存有效期。**刻意不进 `GatewayConfig`**：进了就要跟着进
+ *   `ENV_LOCK_MAP` 与设置页那份四元组，而它与 `POOL_CACHE_TTL_MS` 一样是
+ *   「建 app 时读一次」的部署形态旋钮，面板改不了它。
  */
-const RUNTIME_ONLY_ENV = ["ADMIN_TOKEN", "PORT", "RESET_CONFIG", "TRUST_PROXY", "USAGE_FLUSH_INTERVAL_MS"];
+const RUNTIME_ONLY_ENV = [
+  "ADMIN_TOKEN", "PORT", "RESET_CONFIG", "TRUST_PROXY", "USAGE_FLUSH_INTERVAL_MS",
+  "APIKEY_CACHE_TTL_MS",
+];
 
 /**
  * `env` 上的名字里**根本不是环境变量**的那些：Cloudflare 的绑定。

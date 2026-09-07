@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import type { RuntimeInfo } from "../../../ports/runtime.js";
 import type { StorageHealth } from "../../../core/storage-health.js";
 import { PROTOCOLS } from "../../../core/admin/protocol-catalog.js";
+import { apiKeysCapability } from "./api-keys.js";
 
 /**
  * **双运行时差异的唯一出口**（设计文档 §11）。面板启动时调一次，
@@ -32,6 +33,13 @@ export function capabilitiesHandler(deps: {
    * 报常量等于面板对「尾巴最长多久」说了一句与实际不符的话。
    */
   usageFlushIntervalMs: number;
+  /**
+   * 对外 API 密钥那一格。**由 `adminRouter` 从 `apiKeysCapability()` 算好交进来**
+   * ——那个函数与端点 handler 住在同一个文件里，`max` / `nameMax` /
+   * `plaintextRetrievable` 三格因此与真正强制它们的那段代码同源。
+   * 在这里重新拼一份就是第二份真源。
+   */
+  apiKeys: ReturnType<typeof apiKeysCapability>;
 }) {
   return (c: Context) => {
     // `cf` 只在 Cloudflare 边缘存在。**取不到就如实 null**，不伪造一个 "unknown"。
@@ -78,6 +86,12 @@ export function capabilitiesHandler(deps: {
          */
         tokensCoverage: PROTOCOLS.filter((p) => p.usagePath !== null).map((p) => p.id),
       },
+      /**
+       * 对外 API 密钥。**面板据它显隐整个板块里那几处形态分支**
+       *（有没有「复制完整密钥」这颗按钮、「停用之后最多还能用多久」写几分钟、
+       * 这个部署接没接这张表），**一格都不许在前端写死**（全局约束 10）。
+       */
+      apiKeys: deps.apiKeys,
     });
   };
 }

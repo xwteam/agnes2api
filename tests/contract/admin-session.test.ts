@@ -12,6 +12,7 @@ import { TEST_CONFIG } from "../helpers/make-app.js";
 import { StoreLogger } from "../../src/adapters/logger-store.js";
 import { createTendGate } from "../../src/http/admin/tend-lock.js";
 import { USAGE_FLUSH_MIN_INTERVAL_MS } from "../../src/core/admin/usage-stats.js";
+import { APIKEY_CACHE_TTL_MS } from "../../src/http/apikey-holder.js";
 
 const TOKEN = "session-probe-admin-token-01234";
 
@@ -62,6 +63,11 @@ function adminApp(version: string) {
     usage: null,
     // 同上：本文件只测 session，给后端常量那个默认值即可。
     usageFlushIntervalMs: USAGE_FLUSH_MIN_INTERVAL_MS,
+    // 对外 API 密钥那五条端点要的接线。**刻意传 `null`**，与 `registrar` / `config`
+    // 同一条理由：那是「这个 app 没接子密钥存储」的形态，五条端点如实回 503。
+    apiKeys: null,
+    // 同上：本文件只测 session，给后端常量那个默认值即可。
+    apiKeyCacheTtlMs: APIKEY_CACHE_TTL_MS,
   });
   if (!admin) throw new Error("前置条件不成立：合规的 ADMIN_TOKEN 应当装出 /admin 子 app");
   const app = new Hono();

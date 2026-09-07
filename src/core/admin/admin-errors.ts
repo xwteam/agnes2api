@@ -19,8 +19,11 @@
  * 3. 码是闭集、可被机器守（下面这张表 + 与字典的双向相等）；散文不是。
  *
  * ⚠️⚠️ **边界（如实写明，别当成全称承诺）。** 本表只覆盖**面板真的会把后端
- * `message` 画到屏幕上**的那一族，也就是 `admin-ui/js/sec-keys.js` 的
- * `errorMessage()` 够得着的那些端点（Key 池的四条写端点 + 管理鉴权那两条）。
+ * `message` 画到屏幕上**的那一族，也就是 `admin-ui/js/sec-keys.js` 与
+ * `admin-ui/js/sec-apikeys.js` 的 `errorMessage()` 够得着的那些端点
+ *（Key 池的四条写端点 + 对外 API 密钥的五条 + 管理鉴权那两条）。
+ * ⚠️ **「Key 池那四条 + 鉴权那两条」这个射程是对外密钥那一族落地之前的原话**，
+ * 那时它是真的；现在两族并存，两族的码在下面并排列着。
  * 实测口径写在 `tests/unit/admin/admin-errors.test.ts` 的
  * 「面不许增长：src/http/admin/ 下带中文 message 的落点恰好这么多」那一格上方。
  *
@@ -96,6 +99,32 @@ export const ADMIN_ERROR_CODES = [
   "ids_not_a_string_array",
   /** 一次批量操作的把数超过了 `MAX_IMPORT_KEYS`。 */
   "too_many_bulk_ids",
+
+  // ── 对外 API 密钥那五条端点 ──────────────────────────────────────────
+  // ⚠️ **这一族说的是「我们签发的」那种 key，不是上游池那种**，两者的完整对照表
+  // 在 `src/core/admin/api-keys.ts` 的文件头。码名里一律带 `apikey` /
+  // `name` / `expires` / `version` 这些本族专有的词，与上面 `key_not_found`
+  // 那一族分得开——两族的码在面板上会并排出现在同一个字典里。
+  /** 这个 id 在密钥表里不存在。 */
+  "apikey_not_found",
+  /** `name` 不是字符串。 */
+  "name_not_a_string",
+  /** `name` 去掉首尾空白之后是空的。**空名字在列表里认不出是哪一把。** */
+  "name_empty",
+  /** `name` 超过了 `API_KEY_NAME_MAX`。 */
+  "name_too_long",
+  /** `expiresAt` 既不是整数毫秒时间戳也不是 `null`。 */
+  "expires_not_a_number",
+  /** `expiresAt` 已经过去了：签发一把生下来就过期的密钥不是一个有意义的动作。 */
+  "expires_in_the_past",
+  /** 密钥表里的把数已经到 `APIKEY_MAX`。**超了就 400，不静默截断。** */
+  "too_many_apikeys",
+  /** `version` 不是非负整数。它是调用方屏幕上那份列表的版本号，必填。 */
+  "version_not_a_number",
+  /** 拿着旧版本号来写：这份列表在你看到它之后被改过了。**一个字节都没写。** */
+  "stale_write",
+  /** 存储里的密钥表结构不认。**写入被拒绝，以免覆盖掉里面还留着的内容。** */
+  "apikeys_unreadable",
 ] as const;
 
 export type AdminErrorCode = (typeof ADMIN_ERROR_CODES)[number];
@@ -155,6 +184,20 @@ export const ADMIN_ERROR_PARAMS = {
   "not_a_bulk_op": ["ops"],
   "ids_not_a_string_array": [],
   "too_many_bulk_ids": ["max"],
+  "apikey_not_found": [],
+  "name_not_a_string": [],
+  "name_empty": [],
+  "name_too_long": ["max"],
+  "expires_not_a_number": [],
+  "expires_in_the_past": [],
+  "too_many_apikeys": ["max"],
+  "version_not_a_number": [],
+  // 两个数都是**我们自己算出来的版本号**，不是调用方送来的任何字段的值
+  // ——`AdminErrorParams` 上方那条「永不回显请求体里字段的值」在这里成立：
+  // `expected` 确实来自请求，但它是一个**已经被窄化成非负整数**的数字，
+  // 不是一段原样搬运的调用方文本。
+  "stale_write": ["expected", "actual"],
+  "apikeys_unreadable": [],
 } as const satisfies Record<AdminErrorCode, readonly string[]>;
 
 /**

@@ -17,6 +17,7 @@ import type { RegistrarWiring } from "../../src/http/admin/handlers/registrar.js
 import type { TendGate } from "../../src/http/admin/tend-lock.js";
 import type { ConfigWiring } from "../../src/http/admin/handlers/config.js";
 import type { UsageSink } from "../../src/http/usage-sink.js";
+import { createApiKeyHolder } from "../../src/http/apikey-holder.js";
 
 /**
  * 夹具的管理口令。27 位（≥ ADMIN_TOKEN_MIN_LENGTH），且与 `TEST_CONFIG.gatewayToken`
@@ -106,6 +107,16 @@ export interface MakeAppOptions {
    * **`storage` 必须与用例自己观测的那一个是同一个实例**，否则数的是另一份装配。
    */
   usageSink?: UsageSink;
+  /**
+   * 对外 API 密钥的接线。**默认不传 ⇒ `createApp` 收到 `undefined`**：
+   * 鉴权只认主口令、五条管理端点如实回 `503 not_wired`，与本期之前的行为逐字节
+   * 相同——既有的几百条用例因此一格都没变。
+   *
+   * ⚠️ **传 `true` 会用夹具自己那份 `storage` 建一个真持有者**（TTL 默认 0 = 不缓存，
+   * 好让「改完立刻看得见」这件事在用例里可断言）；配额类用例要自己传 `ttlMs`。
+   * **存储必须与用例自己观测的那一个是同一个实例**，否则数的是另一份装配。
+   */
+  apiKeys?: { ttlMs?: number } | undefined;
 }
 
 export const TEST_CONFIG: GatewayConfig = {
@@ -183,6 +194,12 @@ export async function makeApp(
   const storeLogger = new StoreLogger({
     storage, now, shardId: options.shardId ?? "test-shard", onError: () => {},
   });
+  // **默认 TTL 取 0（不缓存）**：既有用例要的是「改完立刻看得见」，
+  // 而配额那一族要的是「TTL 真的挡住第二次读」——后者自己传 `ttlMs`。
+  const apiKeyHolder = options.apiKeys === undefined
+    ? null
+    : createApiKeyHolder({ storage, logger: NULL_LOGGER, now, ttlMs: options.apiKeys.ttlMs ?? 0 });
+  const apiKeyWiring = apiKeyHolder === null ? null : { storage, holder: apiKeyHolder };
   const app = createApp({
     version: "0.1.0",
     configHolder,
@@ -201,6 +218,10 @@ export async function makeApp(
     // 原样透传（含 `undefined`）：**缺席就是 Tier-2 关着**，那是生产默认值，
     // 在这里替它兜底会让「关」这个真实形态在夹具里不可达。
     usageSink: options.usageSink,
+    // **缺席就是「这个 app 没接子密钥」**，同上一条：那也是一个真实的生产形态
+    //（一把都没签发过的部署），在这里替它兜底会让它在夹具里不可达。
+    apiKeys: apiKeyWiring === null ? undefined : apiKeyWiring,
+    apiKeyCacheTtlMs: options.apiKeys?.ttlMs ?? 0,
   });
-  return { app, fetcher, repo, storageHealth, logger: recording, storage, storeLogger };
+  return { app, fetcher, repo, storageHealth, logger: recording, storage, storeLogger, apiKeyHolder };
 }

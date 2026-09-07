@@ -157,8 +157,20 @@ describe("管理接口错误码：码是码，文案在五语言字典里", () =
  * 四条落点逐条数过：`config.ts` 两条（重置端点自己的「不认识的字段」/「必须显式带
  * confirm: true」）+ `keys-write.ts` 两条（「expect 必须是一个非负整数」/「池子在你确认
  * 之前变了」）。**49 + 4 = 53**。
+ *
+ * ⚠️ **这一次从 53 改成 69，逐条表态**（对外 API 密钥那五条端点，
+ * 全部落在 `src/http/admin/handlers/api-keys.ts` 一个文件里）：
+ * 十六条里**十五条进面板、各有一条 `ADMIN_ERROR_CODES` 里的码并补齐了五语言**
+ *（信封级两条 `body_not_an_object` / `unknown_field` 复用既有的码；本族新增十条码，
+ * 其中 `apikey_not_found` 在 PATCH 与 DELETE 上各有一处落点、
+ * `name_*` 三条与 `expires_*` 两条各一处、`too_many_apikeys` / `version_not_a_number` /
+ * `stale_write` / `apikeys_unreadable` 各一处；另外复用了 `not_a_boolean` 与
+ * `empty_patch` 各一处）。
+ * **第十六条是 `notWired()` 那句**，它**刻意不进闭集**：那一档说的是「装配没走
+ * `wire.ts`」，与 `config.ts` 的同名分支逐字同源，面板对它只按顶层 `reason` 选一句
+ * 固定文案，够不着 `errorMessage()` 那条渲染路径。**53 + 16 = 69。**
  */
-const ADMIN_MESSAGE_SITES = 53;
+const ADMIN_MESSAGE_SITES = 69;
 
 describe("面不许增长", () => {
   it("面不许增长：src/http/admin/ 下带中文 message 的落点恰好这么多", () => {

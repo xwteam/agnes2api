@@ -25,6 +25,8 @@ import type { Storage } from "../ports/storage.js";
 import { createTendGate, type TendGate } from "./admin/tend-lock.js";
 import type { RegistrarWiring } from "./admin/handlers/registrar.js";
 import type { ConfigWiring } from "./admin/handlers/config.js";
+import type { ApiKeyWiring } from "./admin/handlers/api-keys.js";
+import { APIKEY_CACHE_TTL_MS } from "./apikey-holder.js";
 
 export interface AppDeps extends Omit<DispatchDeps, "config"> {
   version: string;
@@ -118,6 +120,25 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
    *（说明卡要说清「打开之后尾巴最长多久」）。
    */
   usageFlushIntervalMs?: number;
+  /**
+   * 对外 API 密钥的接线（子密钥表的存储 + 它的缓存持有者）。
+   * **可选，缺省 `undefined`**，理由与 `config` / `usageSink` 完全相同：
+   * 只有 `wire.ts` 的 `buildApp` 手上才有 `Storage`。
+   *
+   * ⚠️ **缺席时鉴权退化成「只认主口令」，也就是本期之前的行为，一个字节都没变**
+   * ——那不是「装配不全」，而是一个正常形态（一把子密钥都没签发过的部署）。
+   * 五条管理端点照常注册、照常鉴权，但如实回 `503 not_wired`。
+   *
+   * ⚠️⚠️ **鉴权中间件与管理端点必须拿到同一个 wiring**，否则会出现
+   * 「面板签发成功、而网关那一侧永远认不出那把密钥」。今天这件事是结构性的：
+   * 下面两处都直接读这一格，中间不经过任何第二个变量。
+   */
+  apiKeys?: ApiKeyWiring;
+  /**
+   * 生效的密钥表缓存 TTL。**可选，缺省 = 后端常量**（`APIKEY_CACHE_TTL_MS`），
+   * 理由与 `usageFlushIntervalMs` 同一条：这里是被海量既有测试直接调用的底层装配函数。
+   */
+  apiKeyCacheTtlMs?: number;
 }
 
 /**
@@ -264,8 +285,18 @@ export function createApp(deps: AppDeps): Hono {
 
   const dd = dispatchDeps(deps);
   app.route("/", healthRoutes(deps.version, deps.storageHealth));
-  app.use("/v1/*", auth(() => deps.configHolder.current().gatewayToken));
-  app.use("/v1beta/*", auth(() => deps.configHolder.current().gatewayToken));
+  // 子密钥那一段的接线。**两条 `use` 共用同一份**——各建一份的话，两条协议面
+  // 会各自持有一个缓存持有者，读配额当场翻倍，而且「刚停用的密钥还能用多久」
+  // 在 `/v1` 与 `/v1beta` 上会是两个不同的答案。
+  //
+  // ⚠️ **`undefined` 原样往下传**（不在这里兜底建一个）：缺席就是「这个 app 没接」，
+  // 而那条路径上鉴权一次存储调用都没有——那是本期最要紧的那条结构性性质，
+  // 在这里替它兜底会让它变成一个 `if`。
+  const apiKeyAuth = deps.apiKeys === undefined
+    ? null
+    : { holder: deps.apiKeys.holder, now: deps.now, logger: deps.logger };
+  app.use("/v1/*", auth(() => deps.configHolder.current().gatewayToken, apiKeyAuth));
+  app.use("/v1beta/*", auth(() => deps.configHolder.current().gatewayToken, apiKeyAuth));
   app.route("/", openaiRoutes(dd));
   app.route("/", anthropicRoutes(dd));
   app.route("/", geminiRoutes(dd));
@@ -318,6 +349,10 @@ export function createApp(deps: AppDeps): Hono {
     // ② 从 sink 上取，「读的和写的是同一个实例」就是结构性的，而不是靠这里记得传对。
     usage: usageSink !== undefined ? { storage: usageSink.storage, sink: usageSink } : null,
     usageFlushIntervalMs: deps.usageFlushIntervalMs ?? USAGE_FLUSH_MIN_INTERVAL_MS,
+    // **与上面那两条 `use` 读的是同一格**：中间不经过第二个变量，
+    // 「面板写的和网关认的是同一张表」因此是结构性的，不靠这里记得传对。
+    apiKeys: deps.apiKeys ?? null,
+    apiKeyCacheTtlMs: deps.apiKeyCacheTtlMs ?? APIKEY_CACHE_TTL_MS,
   });
   if (admin) app.route("/", admin);
   return app;

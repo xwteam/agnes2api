@@ -31,6 +31,10 @@ import {
   keyUsageHandler, usageHandler, usageDateHandler, type UsageWiring,
 } from "./handlers/usage.js";
 import { verifyHandler } from "./handlers/verify.js";
+import {
+  apiKeysListHandler, apiKeyIssueHandler, apiKeyPatchHandler, apiKeyDeleteHandler,
+  apiKeysPurgeHandler, apiKeysCapability, APIKEYS_PURGE_PATH, type ApiKeyWiring,
+} from "./handlers/api-keys.js";
 import type { TendGate } from "./tend-lock.js";
 import { createProbeGuard } from "./probe-guard.js";
 import { uiRoutes } from "../../ui/serve.js";
@@ -123,6 +127,21 @@ export interface AdminRouterDeps {
    * 「未落盘的尾巴最长多久」，**不许在前端写死**（全局约束 10）。
    */
   usageFlushIntervalMs: number;
+  /**
+   * 对外 API 密钥的接线。**`null` = 这个 app 没接**，五条端点仍然注册、
+   * 仍然鉴权，但会如实回 `503 not_wired`。见 `ApiKeyWiring`。
+   *
+   * ⚠️ **它与 `src/http/middleware/auth.ts` 第②段拿到的必须是同一个持有者**，
+   * 而这件事今天靠的是「`createApp` 里两处都从同一个 `deps.apiKeys` 取」，
+   * 不是一条约束。分叉的后果是：面板签发成功、而网关那一侧永远认不出那把密钥。
+   */
+  apiKeys: ApiKeyWiring | null;
+  /**
+   * 生效的密钥表缓存 TTL。**由 `wire.ts` 从 `APIKEY_CACHE_TTL_MS` 算出来**，
+   * `capabilities` 与列表端点原样发给面板——面板据它算「停用之后最多还能用多久」，
+   * **不许在前端写死**（全局约束 10）。
+   */
+  apiKeyCacheTtlMs: number;
 }
 
 /**
@@ -265,6 +284,9 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
     runtime: deps.runtime, storageHealth: deps.storageHealth, version: deps.version,
     usageStatsEnabled: deps.usageStatsEnabled,
     usageFlushIntervalMs: deps.usageFlushIntervalMs,
+    // **同一个事实的同一个来源**：面板问的是「这个部署接没接对外密钥的存储」，
+    // 而那件事的全部真相就是「装配有没有把 wiring 交进来」。
+    apiKeys: apiKeysCapability({ wired: deps.apiKeys !== null, cacheTtlMs: deps.apiKeyCacheTtlMs }),
   }));
   admin.get("/admin/api/overview", overviewHandler({
     repo: deps.repo, configHolder: deps.configHolder, storageHealth: deps.storageHealth,
@@ -534,6 +556,43 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   const usage = { usage: deps.usage, now: deps.now };
   admin.get("/admin/api/usage", usageHandler(usage));
   admin.get("/admin/api/usage/:date", usageDateHandler(usage));
+
+  // ── 对外 API 密钥（第九个板块）──────────────────────────────────────────────
+  //
+  // ⚠️⚠️ **路径是 `apikeys`，与上面那一族 `keys` 是两回事，别读混**：那一族是
+  // **我们持有的**上游凭据，这一族是**我们签发的**、别人拿来向我们证明身份的凭据。
+  // 完整对照表在 `src/core/admin/api-keys.ts` 的文件头。刻意不共用 `/admin/api/keys`
+  // 前缀，因为那条已经是发布过的公开契约。
+  //
+  // 五条都用具名方法注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
+  // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态**，
+  // 而不是默认它不变。
+  //
+  // ⚠️ **`purge` 必须写在 `:id` 之前**，与上面 `KEYS_PURGE_PATH` 那段逐字同源：
+  // Hono 按注册顺序匹配，`/admin/api/apikeys/purge` 同样能匹配
+  // `/admin/api/apikeys/:id`。今天两者方法不同（POST / DELETE、PATCH）所以碰不上，
+  // 但顺序反了之后加一条 `POST /admin/api/apikeys/:id` 就会静默地把它吃掉
+  // ——而被吃掉的后果是一颗「清理全部失效密钥」的按钮落在别的 handler 上。
+  // 这条规矩由 `tests/contract/admin-auth.test.ts` 的
+  // 「窗口内更宽的模式不许排在更窄的之前 —— 被吃掉的那一条恒不可达，而它只会回一个看起来合理的 400」
+  // 从 `app.routes` 现算钉着。
+  //
+  // ⚠️ **五条都无条件注册，不看接没接线**——理由与注册机那三条、用量那两条逐字相同：
+  // 路由表随运行时装配变化的话，枚举式鉴权矩阵会因为默认夹具恰好没接而让这五条
+  // 从矩阵里消失。「没接」是 handler 里的一条 503，不是「这条路由不存在」。
+  //
+  // ⚠️ **矩阵会拿正确的管理口令把每条路由真的打一遍**，而 `purge` 打通了就是清掉
+  // 一批密钥——它安全的唯一理由与 `POST /admin/api/keys/purge` 逐字相同：
+  // `version` 必填，矩阵发的是不带请求体的 POST，在 `readAdminJson` 那一步就 400。
+  // **别把 `version` 改成可选。**
+  const apiKeys = {
+    wiring: deps.apiKeys, now: deps.now, logger: deps.logger, cacheTtlMs: deps.apiKeyCacheTtlMs,
+  };
+  admin.get("/admin/api/apikeys", apiKeysListHandler(apiKeys));
+  admin.post("/admin/api/apikeys", apiKeyIssueHandler(apiKeys));
+  admin.post(APIKEYS_PURGE_PATH, apiKeysPurgeHandler(apiKeys));
+  admin.delete("/admin/api/apikeys/:id", apiKeyDeleteHandler(apiKeys));
+  admin.patch("/admin/api/apikeys/:id", apiKeyPatchHandler(apiKeys));
 
   // ★ 必须在**全部** /admin/api/* 路由之后注册：Hono 把匹配上的 handler 按注册顺序
   // 串起来跑，`/admin/*` 这条兜底若排在前面会先返回 404，**整套管理 API 直接消失**

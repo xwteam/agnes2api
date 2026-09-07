@@ -25,6 +25,8 @@ import { TEND_HISTORY_KEY } from "../../src/core/admin/tend-history.js";
 import { MANUAL_GUARD_KEY, MANUAL_TENDS_PER_DAY } from "../../src/core/admin/tend-guard.js";
 import { TEND_LOCK_KEY } from "../../src/http/admin/tend-lock.js";
 import { HEALTH_PROBE_KEY } from "../../src/core/storage-health.js";
+import { APIKEY_KEY } from "../../src/http/apikey-store.js";
+import { APIKEYS_PURGE_PATH } from "../../src/http/admin/handlers/api-keys.js";
 import { CONFIG_TTL_MS, KV_EDGE_CACHE_MS } from "../../src/http/config-holder.js";
 import { DEFAULT_POOL_CACHE_TTL_MS } from "../../src/core/keypool-repo.js";
 import { SESSION_MAX_AGE_MS } from "../../admin-ui/js/pure/session.mjs";
@@ -5321,6 +5323,36 @@ describe(FIRST_VISIT_GROUP, () => {
     return out.length === 0 ? null : out.join("\n");
   };
 
+  /**
+   * **「与当前这棵树对齐」那根轴的射程：发版条目 ∪ `## [Unreleased]`。**
+   *
+   * ⚠️⚠️ **它与 `releaseEntriesText` 是两份，不是一份，别合并**——上面那一份的射程
+   * 刻意**不含** `[Unreleased]`，理由与那一格反向控制（②「还没发的东西不许顶数」）
+   * 逐字写在它自己的说明里，本函数一个字都没改它。
+   *
+   * 两者的差别在于**被比的另一侧是什么**：
+   * · 存储实现、兜底状态码、镜像标签那几格比的是「**已经发出去的那一版**承诺了什么」
+   *   ⇒ 射程只能是发版条目；
+   * · 而下面「协议 / 板块 / 通道 / 语言逐条点名」比的是 `admin-ui/index.html`、
+   *   `PROTOCOLS`、`CHANNELS`、`LANGS` —— **全是当前这棵树上的真源**。
+   *   一个板块今天落地、下一版才发，按 Keep a Changelog 它就该写在 `[Unreleased]` 里；
+   *   射程排除它的话，这一族判据在「落地到发版之间」这段时间里只有两条出路：
+   *   改一条已经发出去的版本条目（对那个版本说假话），或者为了让判据变绿去发一次版。
+   * ⇒ **它没有把判据放松**：要点名的集合与那几个中文计数一个都没少，
+   *   只是「写在哪一条条目里」多了合法的一处。
+   */
+  const documentedEntriesText = (body: string): string | null => {
+    const out: string[] = [];
+    let inEntry = false;
+    for (const line of body.split("\n")) {
+      if (line.startsWith("## ")) {
+        inEntry = /^## \[[0-9]+\.[0-9]+\.[0-9]+/.test(line) || line.startsWith("## [Unreleased]");
+      }
+      if (inEntry) out.push(line);
+    }
+    return out.length === 0 ? null : out.join("\n");
+  };
+
   /** 真扫描与该红时红**共用这一份**，`read` 是唯一的注入点。 */
   const changelogFailures = (v: string, read: () => string): string[] => {
     const body = read();
@@ -5410,8 +5442,10 @@ describe(FIRST_VISIT_GROUP, () => {
   };
 
   it("CHANGELOG 的版本条目逐条点名协议 / 板块 / 通道，且它写下的每一个中文计数都从真源现算", () => {
-    const entries = releaseEntriesText(realChangelog());
-    expect(entries, "CHANGELOG.md 里一条 `## [x.y.z]` 发版条目都认不出 —— 认不出要吵").not.toBeNull();
+    // **这一格接的是 `documentedEntriesText`（发版条目 ∪ `[Unreleased]`）**，
+    // 不是 `releaseEntriesText`：它比的是当前这棵树上的真源，理由全文在那个函数上方。
+    const entries = documentedEntriesText(realChangelog());
+    expect(entries, "CHANGELOG.md 里一条条目都认不出 —— 认不出要吵").not.toBeNull();
     const text = entries!;
     const sections = sectionsOf(realIndexHtml());
     // ── 逐条点名：加一条协议 / 一个板块 / 一条通道而不改 CHANGELOG ⇒ 当场点名它 ──
@@ -5554,8 +5588,10 @@ describe(FIRST_VISIT_GROUP, () => {
   };
 
   it("CHANGELOG 里那三串手抄清单（协议括号标签 / 六份文档 / 十三道门禁）逐项对齐真源", () => {
-    const entries = releaseEntriesText(realChangelog());
-    expect(entries, "CHANGELOG.md 里一条 `## [x.y.z]` 发版条目都认不出 —— 认不出要吵").not.toBeNull();
+    // **这一格接的是 `documentedEntriesText`（发版条目 ∪ `[Unreleased]`）**，
+    // 不是 `releaseEntriesText`：它比的是当前这棵树上的真源，理由全文在那个函数上方。
+    const entries = documentedEntriesText(realChangelog());
+    expect(entries, "CHANGELOG.md 里一条条目都认不出 —— 认不出要吵").not.toBeNull();
     const text = entries!;
     // ① 协议后面那个括号标签必须是 `PROTOCOLS[].label` 的子串（真源写 "Google Gemini generateContent"，
     //    这里写 "generateContent" 是合法的省写；写成别的协议的名字 / 一个不存在的名字则红）。
@@ -6282,7 +6318,7 @@ describe(FIRST_VISIT_GROUP, () => {
 });
 
 /**
- * ── 「重置到底重置了什么」：九把存储键的封闭登记（后来改写成不读设计文档）─
+ * ── 「重置到底重置了什么」：十把存储键的封闭登记（后来改写成不读设计文档）─
  *
  * ⚠️⚠️ **这一组的期望源换过一次，换的理由必须留在这里，否则下一个人会把它改回去。**
  * 上一版的期望源是仓里一份内部设计文档「重置到底重置了什么」小节里那张逐键表；
@@ -6290,7 +6326,9 @@ describe(FIRST_VISIT_GROUP, () => {
  * 这一组守的**不是**「代码与那份文档不许漂」（文档没了，那个风险跟着没了），
  * 而是**「新增一把存储键时不许被漏掉」**——那个风险一点没变。
  * 所以期望源搬到了两个仍然活着的东西上：
- * · **封闭登记 `RESET_LEDGER`**（就写在本文件里，九把键逐把表态，读者看得见）；
+ * · **封闭登记 `RESET_LEDGER`**（就写在本文件里，逐把表态，读者看得见）；
+ *   ⚠️ 这里原来写的是「九把键」——对外 API 密钥表落地时它变成十把，
+ *   而**数只写在下面那一格的断言里**，散文里不再复述它（复述一次就会再漂一次）。
  * · **`src/http/admin/handlers/config.ts` 里那份重置实现本身**——`configResetHandler`
  *   真的写/删了哪几把键，从源码切片现扫，不手抄。
  *
@@ -6328,6 +6366,7 @@ const KEYS: readonly string[] = [
   TEND_LOCK_KEY,       // src/http/admin/tend-lock.ts
   MANUAL_GUARD_KEY,    // src/core/admin/tend-guard.ts
   HEALTH_PROBE_KEY,    // src/core/storage-health.ts
+  APIKEY_KEY,          // src/http/apikey-store.ts
 ];
 
 /** 裁决的**封闭词表**：留白、写成「部分」「视情况」一律红。 */
@@ -6335,7 +6374,7 @@ const VERDICTS = ["动", "不动"] as const;
 type ResetVerdict = (typeof VERDICTS)[number];
 
 /**
- * **九把存储键 × 「重置配置」这条路径的封闭登记。**
+ * **全部存储键 × 「重置配置」这条路径的封闭登记。**
  *
  * ⚠️ **`name` 是常量名，`key` 是从真源 import 的值。手写的只有 `name` / `verdict` / `why`。**
  * `key` 一律写成 import 进来的那个标识符，不许抄字面量——抄了之后改常量值这一组不会红。
@@ -6392,6 +6431,14 @@ const RESET_LEDGER: ReadonlyArray<{
     name: "HEALTH_PROBE_KEY", key: HEALTH_PROBE_KEY, verdict: "不动",
     why: "存储健康探针写的那把键。它不属于任何一份业务状态，读写都由探针自己管。",
   },
+  {
+    name: "APIKEY_KEY", key: APIKEY_KEY, verdict: "不动",
+    why: "对外 API 密钥表（我们**签发**给别人的那一族，不是上游池那一族）。"
+      + "重置配置一把都不动它，理由与 key 池那两把逐字相同：那是另一颗按钮的事，"
+      + "两颗按钮的爆炸半径刻意不重叠。**而且这一把更不能顺手清**——清掉它等于"
+      + "让全部下游客户端当场 401，而重置配置本身已经会换掉网关口令，"
+      + "两件事叠在一起会让运维分不清是哪一件把客户端打掉的。",
+  },
 ];
 
 /** 封闭登记的失败报文。**逐条点名**，不许只说「登记不对」。 */
@@ -6409,7 +6456,7 @@ function resetLedgerFailures(): string[] {
   const rows = new Map(RESET_LEDGER.map((r) => [r.key, r]));
   for (const k of KEYS) {
     if (!rows.has(k)) {
-      fails.push(`存储键 \`${k}\` 在 RESET_LEDGER 里没有一行 —— 九把键必须逐把表态：`
+      fails.push(`存储键 \`${k}\` 在 RESET_LEDGER 里没有一行 —— 每一把键都必须逐把表态：`
         + "给它补一行（`name` / `key` 写 import 进来的常量 / `verdict` / `why`）。");
     }
   }
@@ -6533,12 +6580,12 @@ function resetImplTouchedKeyNames(body: string): { names: string[]; literals: st
   return { names: [...new Set(names)].sort(), literals };
 }
 
-describe("「重置到底重置了什么」：九把存储键的封闭登记", () => {
-  it("封闭登记对这 9 个存储键逐把表态 —— 删掉登记里一行就红", () => {
+describe("「重置到底重置了什么」：十把存储键的封闭登记", () => {
+  it("封闭登记对这 10 个存储键逐把表态 —— 删掉登记里一行就红", () => {
     // ⚠️ 手写字面量等号，不许 `toBeGreaterThanOrEqual`（本仓 §通用纪律逐字禁的形态）。
-    expect(KEYS.length, "键表被改动了 —— 回来把这个数改对，别删断言").toBe(9);
-    expect(new Set(KEYS).size, "KEYS 里有重复的键名 —— 两个常量取了同一个值？").toBe(9);
-    expect(RESET_LEDGER.length, "登记的行数与键表对不上 —— 逐把表态就是逐把，不许合并行").toBe(9);
+    expect(KEYS.length, "键表被改动了 —— 回来把这个数改对，别删断言").toBe(10);
+    expect(new Set(KEYS).size, "KEYS 里有重复的键名 —— 两个常量取了同一个值？").toBe(10);
+    expect(RESET_LEDGER.length, "登记的行数与键表对不上 —— 逐把表态就是逐把，不许合并行").toBe(10);
     const failures = resetLedgerFailures();
     expect(failures, failures.join("\n")).toEqual([]);
   });
@@ -6585,11 +6632,11 @@ describe("「重置到底重置了什么」：九把存储键的封闭登记", (
     // 计数是「扫描不是空跑」的绊线，也拦「加了键、也 import 了、但没回来改这个数」。
     // ⚠️ 报文要两个方向都说得通：扫少了是扫描坏了，扫多了是清单该长大。
     expect(exported.length,
-      "扫到的**导出**存储键常量条数与手写的不一致 —— 比 9 少通常是扫描写坏了（判据认不出真声明），"
-      + "比 9 多说明真加了一把键：把它 import 进 KEYS、给 `RESET_LEDGER` 补一行，再回来把这个数改对").toBe(9);
+      "扫到的**导出**存储键常量条数与手写的不一致 —— 比 10 少通常是扫描写坏了（判据认不出真声明），"
+      + "比 10 多说明真加了一把键：把它 import 进 KEYS、给 `RESET_LEDGER` 补一行，再回来把这个数改对").toBe(10);
     expect(declared.length,
-      "扫到的存储键常量总数不是 10（9 把导出的业务键 + 1 把封闭登记里的适配器内部键）—— "
-      + "扫少了是判据认不出真声明，扫多了见上面两条报文").toBe(10);
+      "扫到的存储键常量总数不是 11（10 把导出的业务键 + 1 把封闭登记里的适配器内部键）—— "
+      + "扫少了是判据认不出真声明，扫多了见上面两条报文").toBe(11);
   });
 
   it("「重置配置」那一列裁决从重置实现现扫 —— 实现动了哪几把键，登记就得写哪几把", () => {
@@ -10770,6 +10817,7 @@ const ROUTE_CALL = /\badmin\.(get|post|put|patch|delete)\(\s*(?:"([^"]+)"|([A-Z]
 const ROUTE_PATH_CONSTS: Readonly<Record<string, string>> = {
   KEYS_PURGE_PATH,
   CONFIG_RESET_PATH,
+  APIKEYS_PURGE_PATH,
 };
 
 /** `:id` → `{id}`：源码用 Hono 的冒号写法，文档用模板通行的花括号写法。 */
@@ -11014,8 +11062,10 @@ const SHAPE_COVERED = [
 
 /**
  * 本组**没有**打的端点。第 2 轮评审把 24 条逐条对着 handler 人工核过一遍，
- * 这 19 条当时是准的；**「当时是准的」不是判据**，所以它们在这里以「已登记未覆盖」
+ * 当时那一批是准的；**「当时是准的」不是判据**，所以它们在这里以「已登记未覆盖」
  * 的身份存在，而不是悄悄不在名单上。
+ * ⚠️ 这里原来写着「这 19 条」——那个数在对外 API 密钥五条进来之后就不对了，
+ * **数不再写进散文**（射程由上面那格双向相等现算，写第二遍只会再漂一次）。
  */
 const SHAPE_UNCOVERED = [
   "GET /admin/api/session",
@@ -11038,6 +11088,17 @@ const SHAPE_UNCOVERED = [
   "POST /admin/api/registrar/channels/{channel}/test",
   "GET /admin/api/usage",
   "GET /admin/api/usage/{date}",
+  // ── 对外 API 密钥五条 ────────────────────────────────────────────────
+  // 五条一起进「已登记未覆盖」，理由与上面那 20 条同一条：本组的活响应比对是
+  // 评审点名的 config 四条 + overview 那五条，别的端点在这里只表态、不覆盖。
+  // ⚠️ **签发那一条尤其不能顺手进 `SHAPE_COVERED`**：它的 201 响应体里带一次明文，
+  // 而本组会把活响应的顶层键集合**打印进失败报文**——一次不相等就会把那把密钥
+  // 的字段名连同上下文一起印到 CI 日志里。真要覆盖它，得先想清楚这件事。
+  "GET /admin/api/apikeys",
+  "POST /admin/api/apikeys",
+  "PATCH /admin/api/apikeys/{id}",
+  "DELETE /admin/api/apikeys/{id}",
+  "POST /admin/api/apikeys/purge",
 ] as const;
 
 /**
@@ -11366,14 +11427,22 @@ describe("五份 ADMIN.md 的分层、围栏与排障三段式", () => {
     (JSON.parse(readFileSync("package.json", "utf8")) as { bugs?: { url?: string } }).bugs?.url ?? "",
   ];
 
-  /** 今天的实测值，同时是**不回退下限**（只许升不许降，与常见问题那一条同一种形态）。 */
-  const H2_COUNT = 14;
+  /**
+   * 今天的实测值，同时是**不回退下限**（只许升不许降，与常见问题那一条同一种形态）。
+   *
+   * ⚠️ **14 → 15 是「API 密钥」那个板块落地的结果，不是骨架漂移**：面板多了第九个板块，
+   * 而 ADMIN.md 的骨架是「一个板块一节」（速查表那一格从屏幕现算，它同时也变成了 9 行）。
+   * 少了这一节，五份文档就会对一块运维每天要点的界面只字不提。
+   */
+  const H2_COUNT = 15;
   // ⚠️ 顶栏那一节（「面板外壳」那一段）落地时 48 → 49：五份各多一个 `###`。
   // 注册机板块分成两页（运行状态 / 设置）落地时 49 → 50：五份各多一个 `###`。
   // 模型板块那张「上游模型」卡落地时 50 → 51：五份各多一个 `###`。
+  // 「API 密钥」板块落地时 51 → 56：五份各多五个 `###`（板块里四个 +
+  // 排障里「密钥表读不懂」那一条）。
   // 下限跟着今天的实测值走，**不是**把它留在旧值上——留旧值等于给「五份一起缩水一层」
   // 开一格豁免，而下面那格探针正是拿 `H3_FLOOR - 1` 当期望值的。
-  const H3_FLOOR = 51;
+  const H3_FLOOR = 56;
   const H4_FLOOR = 2;
   const FENCE_FLOOR = 3;
 
@@ -11403,7 +11472,7 @@ describe("五份 ADMIN.md 的分层、围栏与排障三段式", () => {
 
   /* ── 骨架不动 ───────────────────────────────────────────────────────────── */
 
-  it("`##` 骨架维持现状：五份各恰 14 个 `##`（骨架不动是这一条的全部内容）", () => {
+  it("`##` 骨架维持现状：五份各恰 15 个 `##`（骨架不动是这一条的全部内容）", () => {
     for (const lang of LANGS) {
       const n = headingsAtLevel(realAdminSrc(lang), 2).length;
       expect(n, `docs/${lang}/ADMIN.md 的 \`##\` 数从 ${H2_COUNT} 变成了 ${n}`

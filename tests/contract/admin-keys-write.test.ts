@@ -3,6 +3,9 @@ import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { CountingStorage } from "../helpers/counting-storage.js";
 import { MAX_IMPORT_KEYS, MAX_NOTE_LENGTH, PATCH_FIELDS } from "../../src/http/admin/handlers/keys-write.js";
 import { MAX_KEY_LENGTH } from "../../src/core/keypool-repo.js";
+import { MemoryStorage } from "../helpers/fake-storage.js";
+import { APIKEY_KEY } from "../../src/http/apikey-store.js";
+import { APIKEY_MAX, API_KEY_NAME_MAX } from "../../src/core/admin/api-keys.js";
 import type { KeyView } from "../../src/core/admin/key-view.js";
 import type { KeyRecord, KeyStats } from "../../src/core/types.js";
 import {
@@ -1260,8 +1263,26 @@ describe("写端点的错误体：码在闭集里，message 仍在", () => {
     return { status: res.status, error: parsed.error ?? {} };
   }
 
-  /** 打一条码要用到的现场：常规 app、一个管理端整个停用的 app、一把活着的 key 的 id。 */
-  interface FailCtx { app: App; conflictApp: App; id: string }
+  /**
+   * 打一条码要用到的现场。
+   *
+   * ⚠️ **后四格是对外 API 密钥那一族加进来的**：那五条端点与 Key 池那四条**不共用
+   * 任何存储**，而它们的码住在同一张闭集里（`ADMIN_ERROR_CODES` 的射程是整棵管理树，
+   * 不是某一个板块）⇒ 「一条码一次真请求」这条纪律要求这里必须有一个**真的接了
+   * 子密钥存储**的 app，否则那十条码只能靠 503 打出来，而 503 那条走的是不带 `code`
+   * 的网关信封 —— 那样它们一侧都没有，正是这张表当初被改成 `satisfies` 要挡的形态。
+   *
+   * · `akApp` / `akId` / `akVersion`：一台接了子密钥存储的 app，以及它里面一把
+   *   真签发出来的密钥的 id 与当前表版本号；
+   * · `akFullApp`：一台密钥表**已经装满 `APIKEY_MAX` 把**的 app（表是直接写进存储的，
+   *   不是签发 200 次——那要 200 次 SHA-256，而这一格要验的只是那道上限）；
+   * · `akBrokenApp`：一台 `apikeys` 键是坏值的 app。
+   */
+  interface FailCtx {
+    app: App; conflictApp: App; id: string;
+    akApp: App; akId: string; akVersion: number;
+    akFullApp: App; akBrokenApp: App;
+  }
 
   /**
    * 探针字段的**名**与**值**，刻意长得不一样。
@@ -1331,6 +1352,31 @@ describe("写端点的错误体：码在闭集里，message 仍在", () => {
     ids_not_a_string_array: (c) => send(c.app, "POST", "/admin/api/keys/bulk", {
       op: "disable", ids: PROBE_FIELD_VALUE,
     }),
+    // ── 对外 API 密钥那五条端点 ──────────────────────────────────────────
+    apikey_not_found: (c) => send(c.akApp, "PATCH", "/admin/api/apikeys/nope", {
+      version: c.akVersion, name: "whatever",
+    }),
+    name_not_a_string: (c) => send(c.akApp, "POST", "/admin/api/apikeys", { name: 12345 }),
+    // 全空白也算空：列表里只靠名字认得出是谁在用。
+    name_empty: (c) => send(c.akApp, "POST", "/admin/api/apikeys", { name: "   " }),
+    name_too_long: (c) => send(c.akApp, "POST", "/admin/api/apikeys", {
+      name: "x".repeat(API_KEY_NAME_MAX + 1),
+    }),
+    expires_not_a_number: (c) => send(c.akApp, "POST", "/admin/api/apikeys", {
+      name: "expiry-probe", expiresAt: PROBE_FIELD_VALUE,
+    }),
+    // **差一毫秒**：`isApiKeyExpired` 的边界是 `now >= expiresAt`，
+    // 所以「等于 now」已经在期外，创建那一侧必须用同一条边界。
+    expires_in_the_past: (c) => send(c.akApp, "POST", "/admin/api/apikeys", {
+      name: "expiry-probe", expiresAt: NOW,
+    }),
+    too_many_apikeys: (c) => send(c.akFullApp, "POST", "/admin/api/apikeys", { name: "one-too-many" }),
+    // 不带 `version` 的写：它是必填的并发凭证，缺席不是「不做并发检查」。
+    version_not_a_number: (c) => send(c.akApp, "PATCH", `/admin/api/apikeys/${c.akId}`, { name: "no-version" }),
+    stale_write: (c) => send(c.akApp, "PATCH", `/admin/api/apikeys/${c.akId}`, {
+      version: c.akVersion + 999, name: "from-a-stale-screen",
+    }),
+    apikeys_unreadable: (c) => send(c.akBrokenApp, "POST", "/admin/api/apikeys", { name: "must-not-overwrite" }),
     too_many_bulk_ids: (c) => send(c.app, "POST", "/admin/api/keys/bulk", {
       op: "disable", ids: Array.from({ length: MAX_IMPORT_KEYS + 1 }, (_, i) => `id-bulk-scan-${i}`),
     }),
@@ -1352,7 +1398,44 @@ describe("写端点的错误体：码在闭集里，message 仍在", () => {
       [], ["sk-err-conflict-target-a"], { gatewayToken: TEST_ADMIN_TOKEN }, () => NOW,
       { adminToken: TEST_ADMIN_TOKEN },
     );
-    const ctx: FailCtx = { app, conflictApp, id: k.id };
+    // ── 对外 API 密钥那一族的现场 ──────────────────────────────────────
+    const { app: akApp } = await makeApp([], [], {}, () => NOW, { apiKeys: {} });
+    const issued = await akApp.request("/admin/api/apikeys", {
+      method: "POST", headers: JSON_AUTH, body: JSON.stringify({ name: "err-code-target" }),
+    });
+    expect(issued.status, "前置条件不成立：签发一把子密钥本该 201").toBe(201);
+    const issuedBody = await issued.json() as { record: { id: string }; version: number };
+
+    // 装满那一台：**直接把整张表写进存储**，一次 put，不跑 200 次签发。
+    const fullStorage = new MemoryStorage(undefined, () => NOW);
+    await fullStorage.put(APIKEY_KEY, {
+      version: 1,
+      keys: Array.from({ length: APIKEY_MAX }, (_, i) => ({
+        id: `full${String(i).padStart(8, "0")}`,
+        name: `full-${i}`,
+        // 摘要位数与真实签发出来的一致；这一格验的是上限，不是验证路径。
+        hash: String(i).padStart(64, "0"),
+        hint: "0000",
+        createdAt: NOW,
+        expiresAt: null,
+      })),
+    });
+    const { app: akFullApp } = await makeApp(
+      [], [], {}, () => NOW, { apiKeys: {}, storage: fullStorage },
+    );
+
+    // 坏值那一台：读得出来、但结构不认。**写路径必须拒绝，绝不覆盖。**
+    const brokenStorage = new MemoryStorage(undefined, () => NOW);
+    await brokenStorage.put(APIKEY_KEY, "这不是一张表");
+    const { app: akBrokenApp } = await makeApp(
+      [], [], {}, () => NOW, { apiKeys: {}, storage: brokenStorage },
+    );
+
+    const ctx: FailCtx = {
+      app, conflictApp, id: k.id,
+      akApp, akId: issuedBody.record.id, akVersion: issuedBody.version,
+      akFullApp, akBrokenApp,
+    };
     const out = {} as Record<AdminErrorCode, Failure>;
     for (const code of Object.keys(FAILURE_RECIPES) as AdminErrorCode[]) {
       out[code] = await readFailure(await FAILURE_RECIPES[code](ctx), code);

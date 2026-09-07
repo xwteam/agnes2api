@@ -622,7 +622,7 @@ const RESET_VALUE: Record<string, never> = {};
  * **重置的对象只有 `config` 这一把键**，其余八把业务键一个字节都不动。
  * 那张逐键表是一份**封闭登记**，写在 `tests/unit/docs-parity.test.ts` 的 `RESET_LEDGER` 上：
  * · 形状由 `tests/unit/docs-parity.test.ts` 的
- *   「封闭登记对这 9 个存储键逐把表态 —— 删掉登记里一行就红」钉着；
+ *   「封闭登记对这 10 个存储键逐把表态 —— 删掉登记里一行就红」钉着；
  * · **这一段函数体真的动了哪几把键**由同文件的
  *   「「重置配置」那一列裁决从重置实现现扫 —— 实现动了哪几把键，登记就得写哪几把」钉着
  *   ——它会把下面那句 `storage.put(CONFIG_KEY, …)` 从源码里扫出来，与登记逐条比对，

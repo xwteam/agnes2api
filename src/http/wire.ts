@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import { createApp } from "./app.js";
+import { createApiKeyHolder, resolveApiKeyCacheTtl } from "./apikey-holder.js";
 import { createConfigHolder, type ConfigHolder } from "./config-holder.js";
 import { loadConfig, envLockedFields } from "../core/config.js";
 import { KeyPoolRepo } from "../core/keypool-repo.js";
@@ -254,6 +255,22 @@ export async function buildApp(
     })
     : undefined;
 
+  /**
+   * 对外 API 密钥表的缓存持有者。**这里建一把，交给两处**（网关鉴权的第②段与
+   * 面板那五条端点），「面板写的和网关认的是同一张表」因此是结构性的。
+   *
+   * ⚠️ **它无条件建，与 `usageSink` 那条「关必须是零成本」刻意不同。** 两者的差别
+   * 是真的：`usageSink` 建出来就会**攒内存、迟早写盘**，而这一份在「一把子密钥都没
+   * 签发过」的部署上**一次存储调用都不产生**——鉴权第②段只在「凭据不等于主口令」
+   * 之后才走到，而那条路径上的读还被 TTL 摊平。它没有可省的成本，
+   * 也就没有一个「关掉它」的开关该存在。
+   *
+   * **存储传 `watched`**（与 `configHolder` 同）：这张表读不出来说明存储真的出了
+   * 问题，那条该进 `/health` 的可写性信号。
+   */
+  const apiKeyCacheTtlMs = resolveApiKeyCacheTtl(env.APIKEY_CACHE_TTL_MS);
+  const apiKeyHolder = createApiKeyHolder({ storage: watched, logger, now, ttlMs: apiKeyCacheTtlMs });
+
   const app = createApp({
     version: VERSION,
     configHolder,
@@ -293,6 +310,12 @@ export async function buildApp(
     usageSink,
     // 生效的落盘间隔。**面板不许写死这个数**（全局约束 10：诚实标记由后端字段驱动）。
     usageFlushIntervalMs: usageFlush.flushIntervalMs,
+    // 对外 API 密钥。**只有这里装配得出来**（它要 `Storage`，而 `createApp` 没有），
+    // 与 `config` / `usageSink` 同一条理由。
+    apiKeys: { storage: watched, holder: apiKeyHolder },
+    // 生效的 TTL。**面板不许写死这个数**（全局约束 10）：它决定「停用之后最多还能
+    // 用多久」那句话里的分钟数，而那句话是安全相关的。
+    apiKeyCacheTtlMs,
   });
   return { app, configHolder, repo, tendGate };
 }
