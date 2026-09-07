@@ -61,6 +61,17 @@ A missing or wrong credential returns `401`:
 > [!IMPORTANT]
 > The admin interface `/admin/api/*` accepts **none** of the four ways above. It only reads the `x-admin-key` header and only accepts `ADMIN_TOKEN`. The two keys are strictly separated: the gateway token is handed to every downstream user, so reusing it as the panel password means handing over the whole key pool.
 
+### Besides GATEWAY_TOKEN, outbound API keys issued in the panel are accepted too
+
+In all four transports above, the value may be either `GATEWAY_TOKEN` or an **outbound API key** (it starts with `sk-`) issued from the “API keys” section of the admin panel. The two **stack**; the second does not replace the first:
+
+- `GATEWAY_TOKEN` is always valid, and **checking it performs no storage read at all** — that property is the escape hatch itself: if the key table is corrupted or storage cannot be read, clients using the master token are not affected by a single byte;
+- an outbound API key can be named, given an expiry, and revoked at any time, so each downstream consumer gets its own instead of the master token;
+- the gateway stores only the SHA-256 digest of each key; **the plaintext appears only in the response to the request that issued it**;
+- disabling or deleting one is **not instantaneous**: other instances may take about 6 minutes to notice — see `PATCH /admin/api/apikeys/{id}` below.
+
+The `401` body says **exactly the same thing** for “no such key”, “disabled” and “expired” — telling them apart would hand a scanner an enumeration oracle. The real reason goes only to the event log (`apikey.rejected`, with the `id` and the bucket).
+
 ## Standard Bare Paths
 
 Each of the four protocols is mounted on its own standard bare path, so mainstream SDKs need no vendor prefix in `base_url`.
@@ -857,6 +868,186 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 
 > [!NOTE]
 > This endpoint sits behind the outbound-probe guard at `verify:<id>` granularity: clicking the same key repeatedly gets a `429` with a top-level `reason`, while verifying a different key is unaffected. It produces zero storage writes.
+
+### GET /admin/api/apikeys
+
+List every outbound API key. **The response never contains plaintext** — only the mask and the last 4 characters.
+
+**Request**:
+
+```bash
+curl http://localhost:8080/admin/api/apikeys \
+  -H "x-admin-key: your-admin-token"
+```
+
+**Response**:
+
+```json
+{
+  "unreadable": false,
+  "version": 7,
+  "keys": [
+    {
+      "id": "9f2c1a4b7e08",
+      "name": "mobile-app",
+      "seq": 1,
+      "masked": "sk-••••••••3d41",
+      "hint": "3d41",
+      "bucket": "active",
+      "disabled": false,
+      "createdAt": 1763164800000,
+      "expiresAt": 1794700800000
+    }
+  ],
+  "counts": { "all": 1, "active": 1, "disabled": 0, "expired": 0 },
+  "max": 200,
+  "cacheTtlMs": 300000
+}
+```
+
+> [!NOTE]
+> `unreadable: true` means the table in storage could not be parsed; `keys` is then an empty array and `version` is `null` — **that is not the same as “there are none”**, and the panel must branch on this field. `version` is the optimistic-concurrency version number; the three write endpoints below all echo it back.
+
+### POST /admin/api/apikeys
+
+Issue a new outbound API key. Success is `201`.
+
+> [!WARNING]
+> **The plaintext appears in this one response and nowhere else, ever.** The gateway stores only its SHA-256 digest; if you lose it, it cannot be recovered — delete the key and issue a new one.
+
+**Request body**:
+
+| Parameter | Type | Required | Description |
+|-----------|----|--------|-----------|
+| `name` | string | Yes | 1–64 characters, used to tell keys apart in the list; duplicates are allowed. |
+| `expiresAt` | number or null | No | Expiry as an epoch-millisecond timestamp; it must be in the future. `null` or absent means it never expires. |
+
+**Request**:
+
+```bash
+curl -X POST http://localhost:8080/admin/api/apikeys \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "mobile-app", "expiresAt": 1794700800000 }'
+```
+
+**Response**:
+
+```json
+{
+  "secret": "sk-the-32-hex-digits-appear-here-once",
+  "record": {
+    "id": "9f2c1a4b7e08",
+    "name": "mobile-app",
+    "seq": 1,
+    "masked": "sk-••••••••3d41",
+    "hint": "3d41",
+    "bucket": "active",
+    "disabled": false,
+    "createdAt": 1763164800000,
+    "expiresAt": 1794700800000
+  },
+  "version": 8
+}
+```
+
+> [!NOTE]
+> **This endpoint takes no `version`**: issuing appends, and it is applied on top of the copy the server just read back, so it cannot overwrite records somebody else wrote.
+
+### PATCH /admin/api/apikeys/{id}
+
+Rename a key, disable/enable it, or change its expiry.
+
+**Request body**:
+
+| Parameter | Type | Required | Description |
+|-----------|----|--------|-----------|
+| `version` | number | Yes | The version of the list you are holding (the one `GET` returned). A mismatch returns `409` with `code: "stale_write"` and writes nothing at all. |
+| `name` | string | No | Same as issuing. |
+| `disabled` | boolean | No | `true` disables the key. |
+| `expiresAt` | number or null | No | Same as issuing. **An explicit `null` means “make it never expire”; leaving the field out means “do not touch it”.** |
+
+**Request**:
+
+```bash
+curl -X PATCH http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08 \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "version": 7, "disabled": true }'
+```
+
+**Response**:
+
+```json
+{
+  "ok": true,
+  "record": {
+    "id": "9f2c1a4b7e08",
+    "name": "mobile-app",
+    "seq": 1,
+    "masked": "sk-••••••••3d41",
+    "hint": "3d41",
+    "bucket": "disabled",
+    "disabled": true,
+    "createdAt": 1763164800000,
+    "expiresAt": 1794700800000
+  },
+  "version": 8
+}
+```
+
+> [!WARNING]
+> **Disabling is not instantaneous.** It takes effect immediately on the instance that handled the request, but other instances may take up to one `APIKEY_CACHE_TTL_MS` (5 minutes by default) plus roughly 60 seconds of KV edge cache — **about 6 minutes** in total. Lower `APIKEY_CACHE_TTL_MS` to shorten that, at the cost of proportionally more read quota (see the quota ledger in DEPLOY.md).
+
+Writing with a stale version:
+
+```json
+{ "error": { "type": "conflict", "code": "stale_write", "message": "这份列表已经被改过了：你看到的是第 7 版，现在是第 9 版。什么都没有改，请刷新后重来", "params": { "expected": 7, "actual": 9 } } }
+```
+
+### DELETE /admin/api/apikeys/{id}
+
+Revoke a key. Success is `204` with no response body.
+
+> [!NOTE]
+> **The version travels in the `?version=` query parameter, not in the request body**: a body on `DELETE` is legal per spec, but intermediaries and some clients drop it, and a concurrency token that is silently dropped is worse than none — you think you carried the safety net and you did not.
+
+There is **no** “disable it before you can delete it” precondition here (the upstream key pool has one): what is deleted is only a verification record we issued ourselves, re-issuing is a perfectly normal operation, and revoking a leaked key should be as fast as possible.
+
+**Request**:
+
+```bash
+curl -X DELETE "http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08?version=7" \
+  -H "x-admin-key: your-admin-token"
+```
+
+### POST /admin/api/apikeys/purge
+
+Delete every key that is **no longer usable** (disabled or expired) in one go. Keys that still work are left untouched.
+
+**Request body**:
+
+| Parameter | Type | Required | Description |
+|-----------|----|--------|-----------|
+| `version` | number | Yes | Same as `PATCH`; a mismatch returns `409` and deletes nothing. |
+
+**Request**:
+
+```bash
+curl -X POST http://localhost:8080/admin/api/apikeys/purge \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "version": 7 }'
+```
+
+**Response**:
+
+```json
+{ "deleted": 3, "remaining": 1, "version": 8 }
+```
+
+> [!NOTE]
+> The set it deletes is exactly the sum of the “disabled” and “expired” stat cards in the panel.
 
 ### GET /admin/api/events
 

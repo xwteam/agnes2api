@@ -149,6 +149,12 @@ function termConflicts(read: DocReader): string[] {
  *   四条本来就写的是多数用词，重写时照原样搬了过去。
  *   ⚠️ `zh-TW｜排障` 那一行 README 两侧都不沾（`排障` / `疑難排解` 一次都没写），
  *   它是下面反向控制 ①② 的支点，本步一个字都不许碰。
+ * ── 对外 API 密钥那一族落地时动了哪一行 ────────────────────────────────────
+ * · `zh-TW｜密钥`：API 这一侧**新进表**（`密鑰`，与 ADMIN / DEPLOY 同）。
+ *   **销账数仍然是 0**：分歧本来就落在 README / REGISTRAR 的 `金鑰` 与另外三份的
+ *   `密鑰` 之间，API.md 挑了其中多数的那一个把自己这一份写统一，**一条都没消掉**。
+ *   ⚠️ 别把它读成「又多了一处分歧」：这一行原本就在表上，只是多了一个被看着的文件。
+ *
  * ── 五份 `API.md` 重写成 13 节那一批动了哪十行 ──────────────────────────────
  * 🔴 **销账数是 0，十行里没有一行消失** —— 别把「动了十行」读成「统一了十个词」。
  * 两类各占一半，逐条写清是哪一类：
@@ -239,7 +245,7 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   "zh-TW｜判据｜API=判據｜DEPLOY=判據+判準｜REGISTRAR=判據+判準",
   "zh-TW｜协议｜ADMIN=協定｜API=協議｜DEPLOY=協定｜README=協議｜SPONSORS=協議｜USAGE=協議",
   "zh-TW｜客户端｜ADMIN=客戶端｜API=用戶端｜DEPLOY=客戶端+用戶端｜README=用戶端｜USAGE=用戶端",
-  "zh-TW｜密钥｜ADMIN=密鑰｜DEPLOY=密鑰｜README=金鑰｜REGISTRAR=金鑰",
+  "zh-TW｜密钥｜ADMIN=密鑰｜API=密鑰｜DEPLOY=密鑰｜README=金鑰｜REGISTRAR=金鑰",
   "zh-TW｜并发｜ADMIN=並行｜API=並行｜DEPLOY=並發+並行｜REGISTRAR=並行",
   "zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解｜USAGE=疑難排解",
   "zh-TW｜网关｜ADMIN=閘道｜API=閘道｜DEPLOY=網關+閘道｜README=閘道｜REGISTRAR=閘道｜USAGE=閘道",

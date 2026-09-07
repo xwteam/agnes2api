@@ -1364,10 +1364,24 @@ BANNER='[collection-guard] ✅'
 #     改成 `bad_payload` ⇒ 「正文永不落地」「正文中途断流」两格当场红（实跑 2 failed）。
 #   ⇒ Node：4669 + 1 = 4670；文件数不动（加在既有文件里）。
 #   ⇒ workerd：733 + 1 = 734（契约用例双运行时各跑一遍）；文件数不动。
-EXPECT_NODE_FILES=151
-EXPECT_NODE_TESTS=4670
-EXPECT_WORKERS_FILES=39
-EXPECT_WORKERS_TESTS=734
+# 🔴 **这一轮（对外 API 密钥：面板第九个板块 + 五条端点 + 双运行时契约）。**
+#   · 新增 5 个测试文件：`tests/unit/admin/api-keys.test.ts`（纯函数边界，**30** 格）、
+#     `tests/contract/admin-apikeys.test.ts`（端到端契约，**17** 格）、
+#     `tests/contract/admin-apikeys-quota.test.ts`（配额账，**8** 格）、
+#     `tests/ui/apikeys.test.ts`（板块取值决策，**30** 格）、
+#     `tests/ui/dom/apikeys-section.test.ts`（渲染行为，**10** 格）。
+#   · 既有文件里**只多出一族**：`tests/ui/dom/keys-actions.test.ts` 那条
+#     `it.each([...ADMIN_ERROR_CODES])` 跟着闭集从 16 条长到 26 条 ⇒ **+10**。
+#     其余被改到的既有文件（`admin-auth` 的路由快照、`admin-keys-write` 的逐码配方表、
+#     `docs-parity` 的几处棘轮、`ui-assets` 的资产名册……）改的都是**已有格子里的期望值**，
+#     格数一格没动。
+#   ⇒ Node：151 + 5 = 156 个文件；4670 + 30 + 17 + 8 + 30 + 10 + 10 = 4775 格。
+#   ⇒ workerd：39 + 2 = 41 个文件（两份契约都落在 `tests/contract/`，双运行时各跑一遍）；
+#     734 + 17 + 8 = 759 格。
+EXPECT_NODE_FILES=156
+EXPECT_NODE_TESTS=4775
+EXPECT_WORKERS_FILES=41
+EXPECT_WORKERS_TESTS=759
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

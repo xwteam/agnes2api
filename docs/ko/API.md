@@ -61,6 +61,17 @@ GATEWAY_TOKEN=긴-무작위-문자열로-바꾸세요
 > [!IMPORTANT]
 > 관리 인터페이스 `/admin/api/*`는 위 네 가지 방식을 **하나도 받지 않습니다**. `x-admin-key` 헤더만 읽고 `ADMIN_TOKEN`만 받습니다. 두 열쇠는 엄격히 분리됩니다: 중계 토큰은 모든 다운스트림 사용자에게 나눠 주는 것이므로, 그것을 패널 토큰으로 돌려쓰면 풀 전체를 넘겨주는 것과 같습니다.
 
+### GATEWAY_TOKEN 외에, 패널에서 발급한 외부용 API 키도 받습니다
+
+위 네 가지 전달 방식의 값에는 `GATEWAY_TOKEN` 말고도 관리 패널의 「API 키」 섹션에서 발급한 **외부용 API 키**(`sk-`로 시작)를 쓸 수 있습니다. 둘은 **겹쳐 쓰는** 관계이지 대체 관계가 아닙니다:
+
+- `GATEWAY_TOKEN`은 언제나 유효하며, **그 판정은 저장소 읽기를 전혀 일으키지 않습니다** — 이 성질이 곧 탈출구입니다. 키 표가 망가져도, 저장소를 읽지 못해도 마스터 토큰을 쓰는 클라이언트는 1바이트도 영향을 받지 않습니다;
+- 외부용 API 키는 하나씩 이름과 만료를 두고 언제든 중지·폐기할 수 있어, 마스터 토큰을 넘기지 않고 다운스트림마다 따로 한 개씩 나눠 줄 수 있습니다;
+- 게이트웨이는 각 키의 SHA-256 다이제스트만 저장하며, **평문은 발급한 그 응답에만 나타납니다**;
+- 중지나 삭제는 **즉시가 아닙니다**: 다른 인스턴스가 알아차리기까지 약 6분이 걸릴 수 있습니다. 아래 `PATCH /admin/api/apikeys/{id}`를 보세요.
+
+`401` 본문은 「그런 키가 없음」 「중지됨」 「만료됨」 세 경우에 **똑같은 문장**을 돌려줍니다 — 구분해 주는 것은 스캐너에게 열거 창구를 내주는 일이기 때문입니다. 진짜 이유는 이벤트 로그(`apikey.rejected`, `id`와 구분값 포함)에만 기록되며, 그곳은 운영자만 볼 수 있습니다.
+
 ## 표준 베어 경로
 
 네 프로토콜은 각자 자기 표준 베어 경로에 올라가 있어서, 주요 SDK는 `base_url`에 벤더 접두사를 붙일 필요가 없습니다.
@@ -856,6 +867,186 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 
 > [!NOTE]
 > 이 엔드포인트는 `verify:<id>` 단위로 아웃바운드 프로브 가드 뒤에 있습니다: 같은 key를 연달아 누르면 최상위 `reason`이 붙은 `429`가 되지만 다른 key 확인은 영향을 받지 않습니다. 스토리지 쓰기는 한 번도 일어나지 않습니다.
+
+### GET /admin/api/apikeys
+
+외부용 API 키를 모두 나열합니다. **응답에는 평문이 절대 들어가지 않고**, 마스크와 마지막 4자리만 들어갑니다.
+
+**요청**:
+
+```bash
+curl http://localhost:8080/admin/api/apikeys \
+  -H "x-admin-key: your-admin-token"
+```
+
+**응답**:
+
+```json
+{
+  "unreadable": false,
+  "version": 7,
+  "keys": [
+    {
+      "id": "9f2c1a4b7e08",
+      "name": "mobile-app",
+      "seq": 1,
+      "masked": "sk-••••••••3d41",
+      "hint": "3d41",
+      "bucket": "active",
+      "disabled": false,
+      "createdAt": 1763164800000,
+      "expiresAt": 1794700800000
+    }
+  ],
+  "counts": { "all": 1, "active": 1, "disabled": 0, "expired": 0 },
+  "max": 200,
+  "cacheTtlMs": 300000
+}
+```
+
+> [!NOTE]
+> `unreadable: true`는 「저장소의 그 표를 해석할 수 없었다」는 뜻이며, 이때 `keys`는 빈 배열, `version`은 `null`입니다 — **「한 개도 없다」와는 다른 상태**이므로 패널은 이 항목으로 분기해서 그려야 합니다. `version`은 낙관적 동시성 제어용 버전 번호이며, 아래 쓰기 엔드포인트 세 개가 모두 그대로 되돌려 줍니다.
+
+### POST /admin/api/apikeys
+
+외부용 API 키를 새로 발급합니다. 성공은 `201`입니다.
+
+> [!WARNING]
+> **평문은 이 한 번의 응답에만 나타나며, 이후 어떤 엔드포인트로도 가져올 수 없습니다.** 게이트웨이는 SHA-256 다이제스트만 저장합니다. 잃어버리면 복구할 수 없으니 삭제하고 다시 발급하세요.
+
+**요청 본문**:
+
+| 파라미터 | 타입 | 필수 | 설명 |
+|--------|----|----|----|
+| `name` | string | 예 | 1~64자. 목록에서 어떤 키가 어디에 쓰이는지 알아보기 위한 이름이며 중복을 허용합니다. |
+| `expiresAt` | number 또는 null | 아니오 | 만료 시각(epoch 밀리초). 미래여야 합니다. `null`이거나 없으면 만료 없음. |
+
+**요청**:
+
+```bash
+curl -X POST http://localhost:8080/admin/api/apikeys \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "mobile-app", "expiresAt": 1794700800000 }'
+```
+
+**응답**:
+
+```json
+{
+  "secret": "sk-the-32-hex-digits-appear-here-once",
+  "record": {
+    "id": "9f2c1a4b7e08",
+    "name": "mobile-app",
+    "seq": 1,
+    "masked": "sk-••••••••3d41",
+    "hint": "3d41",
+    "bucket": "active",
+    "disabled": false,
+    "createdAt": 1763164800000,
+    "expiresAt": 1794700800000
+  },
+  "version": 8
+}
+```
+
+> [!NOTE]
+> **이 엔드포인트는 `version`을 받지 않습니다**: 발급은 추가이며 서버가 방금 다시 읽은 내용 위에 얹히므로 다른 사람이 쓴 레코드를 덮어쓸 수 없습니다.
+
+### PATCH /admin/api/apikeys/{id}
+
+키의 이름 / 사용 중지 상태 / 만료 시각을 바꿉니다.
+
+**요청 본문**:
+
+| 파라미터 | 타입 | 필수 | 설명 |
+|--------|----|----|----|
+| `version` | number | 예 | 손에 든 목록의 버전 번호(`GET`이 준 그 값). 맞지 않으면 `409`와 `code: "stale_write"`를 돌려주고 한 바이트도 쓰지 않습니다. |
+| `name` | string | 아니오 | 발급과 동일. |
+| `disabled` | boolean | 아니오 | `true`면 중지. |
+| `expiresAt` | number 또는 null | 아니오 | 발급과 동일. **명시적인 `null`은 「만료 없음으로 변경」, 항목 자체를 빼면 「이번에는 건드리지 않음」입니다.** |
+
+**요청**:
+
+```bash
+curl -X PATCH http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08 \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "version": 7, "disabled": true }'
+```
+
+**응답**:
+
+```json
+{
+  "ok": true,
+  "record": {
+    "id": "9f2c1a4b7e08",
+    "name": "mobile-app",
+    "seq": 1,
+    "masked": "sk-••••••••3d41",
+    "hint": "3d41",
+    "bucket": "disabled",
+    "disabled": true,
+    "createdAt": 1763164800000,
+    "expiresAt": 1794700800000
+  },
+  "version": 8
+}
+```
+
+> [!WARNING]
+> **중지는 즉시가 아닙니다.** 이 요청을 처리한 인스턴스에서는 바로 적용되지만, 다른 인스턴스는 최대 `APIKEY_CACHE_TTL_MS`(기본 5분)에 KV 엣지 캐시 약 60초를 더한 **약 6분**이 걸립니다. 더 빠르게 하려면 `APIKEY_CACHE_TTL_MS`를 줄이면 되고, 그만큼 읽기 쿼터가 늘어납니다(DEPLOY.md의 쿼터 장부 참고).
+
+오래된 버전 번호로 쓰면:
+
+```json
+{ "error": { "type": "conflict", "code": "stale_write", "message": "这份列表已经被改过了：你看到的是第 7 版，现在是第 9 版。什么都没有改，请刷新后重来", "params": { "expected": 7, "actual": 9 } } }
+```
+
+### DELETE /admin/api/apikeys/{id}
+
+키를 폐기합니다. 성공은 `204`이고 응답 본문이 없습니다.
+
+> [!NOTE]
+> **버전 번호는 쿼리 파라미터 `?version=`로 보내고 요청 본문으로 보내지 않습니다**: `DELETE`에 본문을 붙이는 것 자체는 규격상 정당하지만 중간 프록시나 일부 클라이언트가 그것을 버립니다. 조용히 버려진 동시성 토큰은 「보험을 들었다고 믿었는데 안 들려 있는」 상태 그 자체입니다.
+
+여기에는 「먼저 중지해야 삭제할 수 있다」는 전제 조건이 **없습니다**(업스트림 key 풀에는 있습니다): 여기서 지워지는 것은 우리가 발급한 검증용 레코드뿐이고 재발급은 지극히 일반적인 작업이며, 유출된 키의 폐기는 빠를수록 좋기 때문입니다.
+
+**요청**:
+
+```bash
+curl -X DELETE "http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08?version=7" \
+  -H "x-admin-key: your-admin-token"
+```
+
+### POST /admin/api/apikeys/purge
+
+**이미 쓸 수 없는** 키(중지됨 또는 만료됨)를 한 번에 지웁니다. 아직 쓸 수 있는 키는 하나도 건드리지 않습니다.
+
+**요청 본문**:
+
+| 파라미터 | 타입 | 필수 | 설명 |
+|--------|----|----|----|
+| `version` | number | 예 | `PATCH`와 동일. 맞지 않으면 `409`이고 하나도 지우지 않습니다. |
+
+**요청**:
+
+```bash
+curl -X POST http://localhost:8080/admin/api/apikeys/purge \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "version": 7 }'
+```
+
+**응답**:
+
+```json
+{ "deleted": 3, "remaining": 1, "version": 8 }
+```
+
+> [!NOTE]
+> 지워지는 집합은 패널의 「중지됨」과 「만료됨」 통계 카드 두 장의 합과 정확히 같습니다.
 
 ### GET /admin/api/events
 

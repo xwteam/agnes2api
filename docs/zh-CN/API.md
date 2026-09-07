@@ -61,6 +61,17 @@ GATEWAY_TOKEN=换成一把长随机串
 > [!IMPORTANT]
 > 管理接口 `/admin/api/*` **不接受**上面这四种传递方式，它只认 `x-admin-key` 请求头、只认 `ADMIN_TOKEN`。两把钥匙严格隔离：中转口令是发给每一个下游用户的，复用它当面板口令等于把整池 key 交出去。
 
+### 除了 GATEWAY_TOKEN，还认面板签发的对外 API 密钥
+
+上面四种传递方式，值除了填 `GATEWAY_TOKEN`，还可以填管理面板「API 密钥」板块签发出来的**对外 API 密钥**（`sk-` 开头）。两者是**叠加**关系，不是替换：
+
+- `GATEWAY_TOKEN` 永远有效，**判定它一次存储读都不产生**——这条性质是逃生口本身：密钥表被写坏、存储读不出来时，拿主口令调用的客户端一个字节都不受影响；
+- 对外 API 密钥可以逐把命名、设到期、随时停用或吊销，用来给不同的下游各发一把，而不必把主口令交出去；
+- 网关只存密钥的 SHA-256 摘要，**明文只在签发那一次的响应里出现过**；
+- 停用或删除**不是即时的**：别的实例最多还要约 6 分钟才看得见，见下面 `PATCH /admin/api/apikeys/{id}` 那条的说明。
+
+`401` 的响应体对「没有这把密钥」「已停用」「已过期」三种情况**说的是同一句话**——区分它们等于给扫描者一个枚举接口。真正的原因只写进事件日志（`apikey.rejected`，带 `id` 与档位），那是运维才看得到的地方。
+
 ## 路径说明
 
 四种协议各自挂在自己的标准裸路径上，主流 SDK 填 `base_url` 时无需添加任何厂商前缀。
@@ -854,6 +865,186 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 
 > [!NOTE]
 > 这条端点带出站探测护栏，粒度是 `verify:<id>`：同一把 key 连着点会拿到 `429` 加顶层 `reason`，而验别的 key 不受影响。它一次存储写都不产生。
+
+### GET /admin/api/apikeys
+
+列出全部对外 API 密钥。**响应里永远没有明文**，只有掩码与末 4 位。
+
+**请求**：
+
+```bash
+curl http://localhost:8080/admin/api/apikeys \
+  -H "x-admin-key: your-admin-token"
+```
+
+**响应**：
+
+```json
+{
+  "unreadable": false,
+  "version": 7,
+  "keys": [
+    {
+      "id": "9f2c1a4b7e08",
+      "name": "mobile-app",
+      "seq": 1,
+      "masked": "sk-••••••••3d41",
+      "hint": "3d41",
+      "bucket": "active",
+      "disabled": false,
+      "createdAt": 1763164800000,
+      "expiresAt": 1794700800000
+    }
+  ],
+  "counts": { "all": 1, "active": 1, "disabled": 0, "expired": 0 },
+  "max": 200,
+  "cacheTtlMs": 300000
+}
+```
+
+> [!NOTE]
+> `unreadable: true` 说的是「存储里那张表读不出来」，此时 `keys` 是空数组、`version` 是 `null`——**它不等于「一把都没有」**，面板必须按这一格分支渲染。`version` 是乐观并发用的版本号，下面三条写端点都要把它原样带回来。
+
+### POST /admin/api/apikeys
+
+签发一把新的对外 API 密钥。成功是 `201`。
+
+> [!WARNING]
+> **明文只在这一次响应里出现，此后任何端点都拿不到它。** 网关只存它的 SHA-256 摘要，丢了找不回来，只能删掉重发。
+
+**请求体**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|----|----|----|----|
+| `name` | string | 是 | 1–64 个字符，用来在列表里认出这把密钥是谁在用；允许重名。 |
+| `expiresAt` | number 或 null | 否 | 到期时刻（epoch 毫秒），必须是将来的时刻；`null` 或缺席 = 不过期。 |
+
+**请求**：
+
+```bash
+curl -X POST http://localhost:8080/admin/api/apikeys \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "mobile-app", "expiresAt": 1794700800000 }'
+```
+
+**响应**：
+
+```json
+{
+  "secret": "sk-the-32-hex-digits-appear-here-once",
+  "record": {
+    "id": "9f2c1a4b7e08",
+    "name": "mobile-app",
+    "seq": 1,
+    "masked": "sk-••••••••3d41",
+    "hint": "3d41",
+    "bucket": "active",
+    "disabled": false,
+    "createdAt": 1763164800000,
+    "expiresAt": 1794700800000
+  },
+  "version": 8
+}
+```
+
+> [!NOTE]
+> **本端点不收 `version`**：签发是追加，它落在服务端刚回读出来的那一份之上，不会覆盖别人写下的记录。
+
+### PATCH /admin/api/apikeys/{id}
+
+改一把密钥的名称 / 停用状态 / 到期时刻。
+
+**请求体**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|----|----|----|----|
+| `version` | number | 是 | 你手上那份列表的版本号（`GET` 给的那个）。对不上就 `409` 加 `code: "stale_write"`，一个字节都不写。 |
+| `name` | string | 否 | 同签发。 |
+| `disabled` | boolean | 否 | `true` = 停用。 |
+| `expiresAt` | number 或 null | 否 | 同签发；**显式传 `null` 是「改成不过期」，缺席才是「这次不动它」**。 |
+
+**请求**：
+
+```bash
+curl -X PATCH http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08 \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "version": 7, "disabled": true }'
+```
+
+**响应**：
+
+```json
+{
+  "ok": true,
+  "record": {
+    "id": "9f2c1a4b7e08",
+    "name": "mobile-app",
+    "seq": 1,
+    "masked": "sk-••••••••3d41",
+    "hint": "3d41",
+    "bucket": "disabled",
+    "disabled": true,
+    "createdAt": 1763164800000,
+    "expiresAt": 1794700800000
+  },
+  "version": 8
+}
+```
+
+> [!WARNING]
+> **停用不是即时的。** 处理这次请求的实例立刻生效，而别的实例最多还要一个 `APIKEY_CACHE_TTL_MS`（默认 5 分钟）加 KV 边缘缓存的约 60 秒，合计**约 6 分钟**才看得见。要更快就把 `APIKEY_CACHE_TTL_MS` 调小，代价是读配额等量放大（见 DEPLOY.md 的配额账）。
+
+拿旧版本号来写时：
+
+```json
+{ "error": { "type": "conflict", "code": "stale_write", "message": "这份列表已经被改过了：你看到的是第 7 版，现在是第 9 版。什么都没有改，请刷新后重来", "params": { "expected": 7, "actual": 9 } } }
+```
+
+### DELETE /admin/api/apikeys/{id}
+
+吊销一把密钥。成功是 `204`，没有响应体。
+
+> [!NOTE]
+> **版本号走查询参数 `?version=`，不走请求体**：`DELETE` 带请求体在规范上合法，但中间代理与部分客户端会把它丢掉，而一条被静默丢掉的并发凭证等于「以为带了保险、其实没带」。
+
+它**没有**「必须先停用才能删」那道前置（上游 key 池那条有）：这里删掉的只是我们自己签发的一条验证记录，重发一把是完全正常的操作，而吊销一把已泄漏的密钥要越快越好。
+
+**请求**：
+
+```bash
+curl -X DELETE "http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08?version=7" \
+  -H "x-admin-key: your-admin-token"
+```
+
+### POST /admin/api/apikeys/purge
+
+一次清掉全部**已失效**的密钥（已停用或已过期），仍然可用的一把都不动。
+
+**请求体**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|----|----|----|----|
+| `version` | number | 是 | 同 `PATCH`；对不上就 `409`，一把都不删。 |
+
+**请求**：
+
+```bash
+curl -X POST http://localhost:8080/admin/api/apikeys/purge \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "version": 7 }'
+```
+
+**响应**：
+
+```json
+{ "deleted": 3, "remaining": 1, "version": 8 }
+```
+
+> [!NOTE]
+> 删掉的这一批与面板上「已停用」「已过期」两张统计卡之和逐条相同。
 
 ### GET /admin/api/events
 

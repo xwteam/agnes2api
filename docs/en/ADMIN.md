@@ -75,7 +75,7 @@ out. The sidebar keeps only the eight nav items.
 - **It reports the latest probe, not this instant**: the panel probes once when you get in;
   clicking the badge probes again.
 
-## The eight boards at a glance
+## The nine boards at a glance
 
 | Board | The question it answers | Read-only or writes | Which switch it needs |
 |-----|-----------------------|-------------------|---------------------|
@@ -86,6 +86,7 @@ out. The sidebar keeps only the eight nav items.
 | Usage | How request volume, success rate and latency move over time | Read-only | `USAGE_STATS_ENABLED` (second tier only) |
 | Models | Which models the gateway admits, with their modalities and protocols | Read-only | – |
 | Playground | Check one protocol end to end with a real request | Calls upstream | – |
+| API keys | What state each key you issued downstream is in, and which ones to revoke | Writes | – |
 | Settings | What the runtime configuration is now, and which items the environment locked | Writes | – |
 
 "Writes" means **the actions you press on that page write to storage**; "calls upstream" means
@@ -433,6 +434,69 @@ stream too.
   tells you how many were removed. You can also clear them yourself with "clear conversation".
   That only clears this copy on your screen; nothing server-side is touched.
 
+## API keys
+
+This board manages **the credentials you issue to downstream consumers**. It points the
+opposite way from "Key pool": that board holds the upstream keys **this gateway owns** (used
+to prove its identity to Agnes), while every key here is what **somebody else presents to
+this gateway**. The two words look alike; this paragraph and the card headers are what keep
+them apart on screen.
+
+It **stacks on top of** `GATEWAY_TOKEN` rather than replacing it:
+
+- `GATEWAY_TOKEN` is always valid, and checking it **performs no storage read at all** — if
+  the key table is corrupted or storage cannot be read, clients using the master token are
+  not affected by a single byte. That property is this gateway's escape hatch, which is why
+  this board deliberately neither shows it nor offers a button to disable it; rotate it on
+  the Settings page.
+- Every key issued here can be named, given an expiry, and disabled or revoked on its own, so
+  each downstream consumer gets one of its own instead of a share of the master token.
+
+### What a key consists of
+
+- **Name** —— 1–64 characters, so you can tell keys apart; duplicates are allowed.
+- **Mask** —— `sk-••••••••` plus the last 4 characters. **The gateway stores only the SHA-256 digest of a key, never a byte of the plaintext**, which is why the mask has no leading characters — we simply do not have them.
+- **State** —— Active, disabled or expired. A key that is both disabled and expired reads as "disabled": that is the decision you made.
+- **Issued / expires** —— The expiry is computed and frozen **at the moment of issuing**. There is no "the clock starts on first use" behaviour here.
+
+**At most 200 keys**; issuing beyond that is rejected rather than silently truncated.
+
+### Issuing one
+
+"Issue a key" → give it a name → pick an expiry (never, 7/30/90 days from the moment it is
+issued, or a specific date).
+
+> [!WARNING]
+> **The plaintext appears once, in the dialog right after issuing.** Close it and it is gone
+> — the gateway stores only the digest and no endpoint can hand the plaintext back. If you
+> lose it, delete that key and issue a new one. This is **the exact opposite** of the upstream
+> key pool (those must be stored in the clear, because they get used).
+
+### Disabling, revoking, and how long it takes to apply
+
+"Disable" is reversible (enable it again whenever you like); "delete" is not. Neither requires
+you to do anything else first — what is deleted here is only a verification record we issued
+ourselves, and revoking a leaked key should be as fast as possible.
+
+> [!IMPORTANT]
+> **Disabling and deleting are not instantaneous.** The instance that handled your click
+> applies it at once; other instances may take up to one `APIKEY_CACHE_TTL_MS` (5 minutes by
+> default) plus the KV edge cache window; the sum of the two is the upper bound (the exact
+> arithmetic is in the quota budget in DEPLOY.md). The panel
+> shows that concrete duration in the toast after you press. To shorten it, lower
+> `APIKEY_CACHE_TTL_MS`; the cost is proportionally more read quota (see the quota budget in
+> DEPLOY.md).
+
+"Purge unusable" deletes every key that is currently disabled or expired and leaves every
+usable key untouched; the number it deletes equals the sum of those two stat cards.
+
+### Four things this board deliberately does not do
+
+- **A spending cap per key** —— A cap needs a cross-instance, near-real-time view of what has already been spent, and this shape cannot provide one: live usage lives in each instance's memory and flushing lags behind. What you could build is an approximate cap with an unbounded error.
+- **Lazy activation (the clock starts on first use)** —— It requires writing to storage on the authentication hot path, and that path must stay write-free. "N days from the moment it is issued" covers the same need.
+- **Per-key usage** —— The data source is the second statistics tier, which is off by default; building it would mean a whole slab of UI that reads "not enabled" on most deployments. **This is where this board differs most from comparable panels, stated plainly here.**
+- **Binding a key to specific upstream keys** —— This gateway's pool rotates by health and is homogeneous — there is **no such concept as "this outbound key may only use these upstream accounts"**.
+
 ## Settings
 
 ### The four cards
@@ -583,6 +647,19 @@ not registered, so nothing outside can tell whether there is a back office here 
 
 **Fix**: go back to the deployment side and set an acceptable `ADMIN_TOKEN` (the three rules
 are listed at the top of this page), then redeploy or rebuild the container.
+
+### The "API keys" board says the key table cannot be parsed
+
+**Cause**: the `apikeys` entry in storage no longer has a shape the gateway recognises (edited
+by hand, or a write that got truncated). Right now **every sub-key fails verification while
+the master token is unaffected** — clients using `GATEWAY_TOKEN` carry on as before.
+
+**Fix**: the original content **has not been modified**, and writes from the panel are refused
+precisely so that nothing overwrites it. First take a copy of the current value (Worker:
+`wrangler kv key get apikeys`; Docker: the `apikeys` entry in `data/store.json`) and see what
+is left in it; then put it back into the shape `{"version": <a number>, "keys": []}`, or
+delete the entry entirely — deleting revokes every key you have issued, so you will have to
+issue new ones.
 
 ### It will not open, and the answer is `401`
 

@@ -302,6 +302,7 @@ there is no second one.
 | `USAGE_STATS_ENABLED` | no | `false` | Tier-2 time series behind the panel's "Usage" section (by day / hour / model / protocol). **The check is a literal `true`**; `1` or `yes` count as off. **Off by default, and "off" is zero-cost**. What it costs once on is below. Read once when the app is built. |
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
 | `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
+| `APIKEY_CACHE_TTL_MS` | no | `300000` | How long each instance caches the outbound API key table; `0` disables it. It also sets how long a disabled key lives on elsewhere. See the quota budget. |
 
 ### Accepted ranges, and the two "read once at construction" exceptions
 
@@ -754,6 +755,54 @@ Those 13 come from the following, and all six points matter:
     manual click and is negligible at that scale; noted here purely for completeness.
   Both scenarios' ceilings stay **flat regardless of how many days the deployment has been
   running** — that part of the original claim still holds after that fix.
+#### Read side of outbound API keys (**0 per day on a default deployment**)
+
+Verifying a key issued from the panel's "API keys" section requires reading one table.
+The account has three tiers:
+
+- **Deployments where every client uses `GATEWAY_TOKEN` (that is, every deployment from
+  before this version): `0` per day.** That zero is **structural**, not a switch: the master
+  token is compared in the first stage of authentication, and that path simply has no call
+  site that reads the table. **Requests carrying no credential at all are also 0** — a
+  scanner cannot lever it.
+#### How many reads a deployment that actually uses sub-keys pays
+
+- **Once clients start using sub-keys**, each active isolate per day:
+
+      86400 ÷ (`APIKEY_CACHE_TTL_MS` in seconds) × 1
+
+  With the default `300000` (5 minutes) that is **288 per isolate per day**. In the two
+  scenarios this document uses throughout: 3 active isolates = **864 per day (0.86% of the
+  read quota)**; 8 = **2,304 per day (2.30%)**. It is **independent of request volume** —
+  one refresh is always one `get`, because the whole table is a single KV value rather than
+  one record per key plus an index.
+- **`APIKEY_CACHE_TTL_MS=0` (cache off)**: reads grow linearly with the number of requests
+  carrying a sub-key — the same family of warning as `POOL_CACHE_TTL_MS=0`. Use it only
+  while diagnosing something.
+
+#### The borderline configuration this version pushes over the line
+
+> [!WARNING]
+> **This version pushes the borderline configuration above over the line.** In the scenario
+> described earlier ("20 keys + 3 active isolates already spend about 99.4%"), if clients
+> are **also** using sub-keys, add another 864 reads ⇒ roughly **100.3%**, which is **over**.
+> The prescription is the same as before: raise `POOL_CACHE_TTL_MS` (it is what produces
+> most of that 99.4%) rather than lowering `APIKEY_CACHE_TTL_MS` — lowering the latter only
+> makes revocation faster and reads more frequent.
+
+#### Write side of outbound API keys, and how long revocation takes
+
+**Nothing changes on the write side**: issuing, renaming, disabling, deleting and purging
+each cost exactly **1 put, 0 deletes and 0 lists** (the whole table is rewritten, regardless
+of how many keys it holds), and only when a human clicks.
+
+> [!IMPORTANT]
+> **Disabling and deleting are not instantaneous. This one is security-relevant; do not read
+> it as "takes effect shortly".** The instance that handled the request applies it at once;
+> other instances may take up to `APIKEY_CACHE_TTL_MS` plus roughly 60 seconds of KV edge
+> cache ⇒ about **6 minutes** by default. The only way to make it faster is to lower
+> `APIKEY_CACHE_TTL_MS`, and the cost is exactly the read account above, scaled up.
+
 #### The `list` and `delete` buckets
 
 - **`list` and `delete` are two further buckets, 1,000/day each**, separate from the read and
@@ -1496,6 +1545,15 @@ like importing a key below.
 - **Treat the data directory, the KV namespace and every backup as credentials.** Keys and the
   credentials written through the panel are all stored in plain text, at the same level as the
   keys themselves.
+### Outbound API keys are the opposite of the upstream key pool
+
+- **The plaintext of an outbound API key appears exactly once.** It is in the response to the
+  request that issued it and nowhere else — the gateway stores only its SHA-256 digest. If you
+  lose it, it cannot be recovered; delete the key and issue a new one. **This is the opposite
+  of the upstream key pool** (those must be stored in the clear, because they get used).
+- **Hand each downstream consumer its own sub-key instead of sharing `GATEWAY_TOKEN`.** A
+  sub-key can be disabled, given an expiry and revoked individually; once the master token has
+  been shared, the only way to revoke it is to rotate it and break every consumer at once.
 
 A minimal security baseline:
 

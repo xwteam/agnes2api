@@ -61,6 +61,17 @@ GATEWAY_TOKEN=長いランダム文字列に置き換える
 > [!IMPORTANT]
 > 管理インターフェース `/admin/api/*` は上の四つの渡し方を**一つも受け付けません**。`x-admin-key` ヘッダーだけを読み、`ADMIN_TOKEN` だけを受け付けます。二本の鍵は厳密に分離されています：中継トークンは下流の利用者全員に配るものなので、それをパネルのトークンに使い回すことはプール全体を渡すことと同じです。
 
+### GATEWAY_TOKEN のほか、パネルで発行した対外 API キーも受け付けます
+
+上記 4 つの渡し方の値には、`GATEWAY_TOKEN` のほかに、管理パネルの「API キー」セクションで発行した**対外 API キー**（`sk-` で始まります）も使えます。両者は**併存**であり、置き換えではありません：
+
+- `GATEWAY_TOKEN` は常に有効で、**その判定はストレージ読み取りを一切発生させません**——この性質こそが脱出口そのものです。キー表が壊れていても、ストレージが読めなくても、マスタートークンを使うクライアントは 1 バイトの影響も受けません；
+- 対外 API キーは 1 本ずつ名前と有効期限を持ち、いつでも停止・失効させられます。マスタートークンを渡さずに、下流ごとに別々の 1 本を配れます；
+- ゲートウェイが保存するのは SHA-256 ダイジェストだけで、**平文は発行時のレスポンスにしか現れません**；
+- 停止や削除は**即時ではありません**：ほかのインスタンスが気づくまで最大で約 6 分かかります。下の `PATCH /admin/api/apikeys/{id}` を参照してください。
+
+`401` のボディは「そのキーが存在しない」「停止済み」「期限切れ」の 3 つに対して**まったく同じ文言**を返します——区別することはスキャナーに列挙用の窓口を渡すのと同じだからです。本当の理由はイベントログ（`apikey.rejected`、`id` と区分付き）にだけ記録され、そこは運用者しか見られません。
+
 ## 標準ベアパス
 
 四つのプロトコルはそれぞれ自分の標準ベアパスに載っているので、主要な SDK は `base_url` にベンダー接頭辞を足す必要がありません。
@@ -856,6 +867,186 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 
 > [!NOTE]
 > このエンドポイントは `verify:<id>` の粒度で外向きプローブのガードの後ろにあります：同じ key を続けて押すとトップレベルの `reason` 付きで `429` になりますが、別の key の確認は影響を受けません。ストレージ書き込みは一度も発生しません。
+
+### GET /admin/api/apikeys
+
+対外 API キーを一覧します。**レスポンスに平文は決して含まれません**——マスクと末尾 4 文字だけです。
+
+**リクエスト**：
+
+```bash
+curl http://localhost:8080/admin/api/apikeys \
+  -H "x-admin-key: your-admin-token"
+```
+
+**レスポンス**：
+
+```json
+{
+  "unreadable": false,
+  "version": 7,
+  "keys": [
+    {
+      "id": "9f2c1a4b7e08",
+      "name": "mobile-app",
+      "seq": 1,
+      "masked": "sk-••••••••3d41",
+      "hint": "3d41",
+      "bucket": "active",
+      "disabled": false,
+      "createdAt": 1763164800000,
+      "expiresAt": 1794700800000
+    }
+  ],
+  "counts": { "all": 1, "active": 1, "disabled": 0, "expired": 0 },
+  "max": 200,
+  "cacheTtlMs": 300000
+}
+```
+
+> [!NOTE]
+> `unreadable: true` は「ストレージ上のその表を読み取れなかった」という意味で、このとき `keys` は空配列、`version` は `null` になります——**「一本もない」とは別物**であり、パネルはこの項目で分岐して描画しなければなりません。`version` は楽観的並行制御のバージョン番号で、以下の書き込み系 3 本はいずれもこれをそのまま返します。
+
+### POST /admin/api/apikeys
+
+対外 API キーを新規に発行します。成功時は `201` です。
+
+> [!WARNING]
+> **平文はこの一回のレスポンスにしか現れず、以後どのエンドポイントからも取得できません。** ゲートウェイが保存するのは SHA-256 ダイジェストだけです。紛失した場合は復元できないので、削除して発行し直してください。
+
+**リクエストボディ**：
+
+| パラメータ | 型 | 必須 | 説明 |
+|----------|----|------|------|
+| `name` | string | はい | 1〜64 文字。一覧でどのキーがどこで使われているか見分けるためのもので、重複は許容します。 |
+| `expiresAt` | number または null | いいえ | 有効期限（epoch ミリ秒）。未来の時刻である必要があります。`null` または省略で無期限。 |
+
+**リクエスト**：
+
+```bash
+curl -X POST http://localhost:8080/admin/api/apikeys \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "mobile-app", "expiresAt": 1794700800000 }'
+```
+
+**レスポンス**：
+
+```json
+{
+  "secret": "sk-the-32-hex-digits-appear-here-once",
+  "record": {
+    "id": "9f2c1a4b7e08",
+    "name": "mobile-app",
+    "seq": 1,
+    "masked": "sk-••••••••3d41",
+    "hint": "3d41",
+    "bucket": "active",
+    "disabled": false,
+    "createdAt": 1763164800000,
+    "expiresAt": 1794700800000
+  },
+  "version": 8
+}
+```
+
+> [!NOTE]
+> **このエンドポイントは `version` を受け取りません**：発行は追記であり、サーバーが読み直した直後の内容の上に載るため、他者が書いたレコードを上書きすることはありません。
+
+### PATCH /admin/api/apikeys/{id}
+
+キーの名前 / 停止状態 / 有効期限を変更します。
+
+**リクエストボディ**：
+
+| パラメータ | 型 | 必須 | 説明 |
+|----------|----|------|------|
+| `version` | number | はい | 手元の一覧のバージョン番号（`GET` が返したもの）。一致しない場合は `409` と `code: "stale_write"` を返し、1 バイトも書きません。 |
+| `name` | string | いいえ | 発行時と同じ。 |
+| `disabled` | boolean | いいえ | `true` で停止。 |
+| `expiresAt` | number または null | いいえ | 発行時と同じ。**明示的な `null` は「無期限に変更」、項目自体の省略が「今回は触らない」です。** |
+
+**リクエスト**：
+
+```bash
+curl -X PATCH http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08 \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "version": 7, "disabled": true }'
+```
+
+**レスポンス**：
+
+```json
+{
+  "ok": true,
+  "record": {
+    "id": "9f2c1a4b7e08",
+    "name": "mobile-app",
+    "seq": 1,
+    "masked": "sk-••••••••3d41",
+    "hint": "3d41",
+    "bucket": "disabled",
+    "disabled": true,
+    "createdAt": 1763164800000,
+    "expiresAt": 1794700800000
+  },
+  "version": 8
+}
+```
+
+> [!WARNING]
+> **停止は即時ではありません。** このリクエストを処理したインスタンスでは直ちに反映されますが、ほかのインスタンスでは最大で `APIKEY_CACHE_TTL_MS`（既定 5 分）＋ KV エッジキャッシュの約 60 秒、合計**約 6 分**かかります。速くしたい場合は `APIKEY_CACHE_TTL_MS` を小さくしますが、その分だけ読み取りクォータが増えます（DEPLOY.md のクォータ計算を参照）。
+
+古いバージョン番号で書き込んだ場合：
+
+```json
+{ "error": { "type": "conflict", "code": "stale_write", "message": "这份列表已经被改过了：你看到的是第 7 版，现在是第 9 版。什么都没有改，请刷新后重来", "params": { "expected": 7, "actual": 9 } } }
+```
+
+### DELETE /admin/api/apikeys/{id}
+
+キーを失効させます。成功時は `204` で、レスポンスボディはありません。
+
+> [!NOTE]
+> **バージョン番号はクエリパラメータ `?version=` で渡し、リクエストボディでは渡しません**：`DELETE` にボディを付けること自体は規格上正当ですが、中間プロキシや一部のクライアントがそれを落とします。黙って落とされた並行トークンは「保険を掛けたつもりで掛かっていない」状態そのものです。
+
+ここには「先に停止しないと削除できない」という前提条件は**ありません**（上流 key プール側にはあります）：削除されるのは自分たちが発行した検証用レコードだけで、再発行はまったく通常の操作ですし、漏れたキーの失効は速いほどよいからです。
+
+**リクエスト**：
+
+```bash
+curl -X DELETE "http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08?version=7" \
+  -H "x-admin-key: your-admin-token"
+```
+
+### POST /admin/api/apikeys/purge
+
+**すでに使えない**キー（停止済みまたは期限切れ）をまとめて削除します。まだ使えるものには一切触れません。
+
+**リクエストボディ**：
+
+| パラメータ | 型 | 必須 | 説明 |
+|----------|----|------|------|
+| `version` | number | はい | `PATCH` と同じ。一致しない場合は `409` で、1 本も削除しません。 |
+
+**リクエスト**：
+
+```bash
+curl -X POST http://localhost:8080/admin/api/apikeys/purge \
+  -H "x-admin-key: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{ "version": 7 }'
+```
+
+**レスポンス**：
+
+```json
+{ "deleted": 3, "remaining": 1, "version": 8 }
+```
+
+> [!NOTE]
+> 削除される集合は、パネルの「停止中」「期限切れ」2 枚の統計カードの合計とちょうど一致します。
 
 ### GET /admin/api/events
 
