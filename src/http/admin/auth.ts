@@ -4,32 +4,16 @@ import { clientIp } from "../client-ip.js";
 // 管理树自己的错误信封：**比网关那份多一格 `code`**，面板靠它选五语言文案。
 // 两个函数为什么不合并，见 `./errors.ts` 的文件头。
 import { adminErrorBody } from "./errors.js";
+import { constantTimeEqual } from "../../core/admin/constant-time.js";
 
 /**
- * 常数时间比较：先比长度，再逐字节异或累加，**中途不提前 return**。
- *
- * 长度本身会泄漏（长度不同时立刻 false），这是标准取舍：口令是 ≥24 位的随机串，
- * 泄漏长度不构成可利用的信息，而为了藏长度去做定长填充只会让实现更容易写错。
- *
- * ⚠️ **常数时间这个性质无法用单元测试证明，原因是它根本不在返回值里**：
- * 被测的性质是「**耗时**不随输入而变」，而测试只能断言返回值。把整个函数换成
- * `a === b`、或把循环体改成 `if (a[i] !== b[i]) return false`，**返回值逐点相同**，
- * 变的只是耗时——所以任何基于返回值的断言都区分不了它们（已实测：两条变异全套测试
- * 照样绿，两条变异都当场量过）。
- *
- * 那为什么不写计时断言？因为在 CI 上测不准：几十个字节的逐字节差异是纳秒量级，
- * 而 JIT 预热、GC、共享 runner 的调度噪声是毫秒量级，信噪比根本不够，写出来的
- * 只会是一条随机红绿的用例——那比没有更糟。
- *
- * 所以这一条**明确不由测试保证，而由评审保证**：评审时逐字核对下面的循环体里
- * 没有任何提前 return / break / 短路运算（`&&` `||` `?:`），出现就是回归。
+ * 常数时间比较。**真源已经搬到 `src/core/admin/constant-time.ts`**（对外 API 密钥
+ * 那条查表路径要用同一份实现，而 `src/core` 不许 import `src/http`），
+ * 这里**原样再导出一次**：它的既有调用方一直都是从本模块拿它。
+ * 完整的理由、边界与「这条性质由评审保证而不是由测试保证」那段说明都在那个文件里，
+ * **这里刻意不复述**。
  */
-export function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
+export { constantTimeEqual };
 
 export const ADMIN_TOKEN_MIN_LENGTH = 24;
 

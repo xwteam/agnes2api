@@ -155,13 +155,21 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
 ];
 
 /**
- * **手写的豁免清单。早期留下的 6 处，之后一处没新增。**
+ * **手写的豁免清单。**
+ *
+ * ⚠️ 这里原来写着「早期留下的 6 处，之后一处没新增」——对外 API 密钥那一族落地时
+ * 新增了第 7 处（`admin/api-keys.ts` 的 `crypto.subtle`），那句话从那天起是假的。
  *
  * 每一条都要能一句话说清为什么它不是「环境能力注入」的漏网之鱼：
  * - `dispatcher.ts` 的 `setTimeout`：`AbortController` 的超时闸。注入它就要注入一整套
  *   假定时器，而被测的是「超时会不会真的中止」，假定时器证明不了。已登记的既定豁免。
  * - `keypool-repo.ts` 的 `crypto.subtle`：算 key 的 id。WebCrypto 在 Workers 与 Node
  *   都是标准全局，注入只会多一个端口、多一份假实现，换不到可测性。已登记。
+ * - `admin/api-keys.ts` 的 `crypto.subtle`：算**对外** API 密钥的摘要。与上一条同一条
+ *   依据（同一个 API、同一个理由），是它落地时新增的第一行豁免。
+ *   ⚠️ **随机数刻意没跟着进来**：签发一把新密钥要 `crypto.getRandomValues`，而
+ *   「不可重放」正是这条硬约束存在的理由 ⇒ 铸币住在 `src/http/apikey-store.ts`
+ *   （那一层本来就允许 IO），core 这一侧只有摘要这一处。
  * - 两处 `crypto.randomUUID`：协议层给响应造 id（`msg_…` / `resp_…`）。同上。
  * - `storage-health.ts` 与 `registrar/mint.ts` 的 `Date.now` / `Math.random`：都是
  *   **可注入参数的默认值**（`now: () => number = () => Date.now()`、
@@ -171,6 +179,7 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
  * 而不是让它悄悄绿过去。
  */
 const CORE_IO_EXEMPTIONS: readonly string[] = [
+  "src/core/admin/api-keys.ts :: crypto.subtle ×1",
   "src/core/dispatcher.ts :: setTimeout ×1",
   "src/core/keypool-repo.ts :: crypto.subtle ×1",
   "src/core/protocol/anthropic.ts :: crypto.randomUUID ×1",
