@@ -199,9 +199,9 @@ export function malformedKind(resp) {
 }
 
 /**
- * 整块用量的状态。**四态互不重叠。**
+ * 整块用量的状态。**五态互不重叠。**
  *
- * @returns {"off"|"unavailable"|"empty"|"data"}
+ * @returns {"off"|"unavailable"|"no-shards"|"empty"|"data"}
  *
  * ⚠️ **判据取的是顶层 `total.requests`，不是 `days` 里有没有非零的一天**，
  * 而这一条不是随手选的：`src/http/admin/handlers/usage.ts` 的 `total` 字段上方
@@ -228,17 +228,55 @@ export function malformedKind(resp) {
  * ⭐ **根因是「上一处修复」本身**：为了让卡片别写 `0` 而加的早退，
  * 把那份 `0` 留给了下一个消费者。⇒ 每一个渲染数字的地方都要走 `rowState()`，
  * **不许自己按行判**（本文件 `rowState` 上方有它的全文）。
+ *
+ * ── 第五档 `no-shards`：「开着，但一条分片都还没落盘」（线上实测逼出来的）──────
+ * ⚠️⚠️ **这一档以前掉进 `empty`，而 `empty` 那句话对它是假的。**
+ * 线上把 `USAGE_STATS_ENABLED` 打开、打了几次请求（池空、全 503）之后打开这一页，
+ * 后端回的是 `tier:"tier2"` / `shards:0` / `note:"no_shards"` / `pending.count > 0`，
+ * 而同一屏上同时出现了两句话：横幅说「这个部署确实没有记下任何用量」，
+ * 紧挨着的尾巴说「还有 N 条计数没有落盘」。**前一句是假的**——它确实记下了，
+ * 只是还在内存里。`docs/zh-CN/ADMIN.md` 的「关着的时候这一页不画空图表」那一条
+ * 立的规矩是「『没人用』与『没在记账』不许长得一样」，而这一档正是它禁的形状：
+ * **「还没落盘」被说成了「没人用」。**
+ *
+ * ⚠️ **判据只从已有字段推，不新增后端字段**：`tier === "tier2"` 且
+ * `total.requests` 不是正数（`> 0` 那一支上面已经早退成 `data`）
+ * 且（`shards === 0` 或 `note === "no_shards"`）。
+ * 两个判据都要，是因为 `range_clamped` **压过** `no_shards`（优先级写在
+ * `src/http/admin/handlers/usage.ts` 的 `usageHandler` 上方）⇒ 区间被夹过时
+ * 同一个部署拿到的 `note` 是 `range_clamped`，**只认 `note` 会让这一档在那条路上
+ * 整个消失**，而那正是老 bug 的另一半（那一路今天连横幅都会换成「真的是 0」那句）。
+ *
+ * ⚠️⚠️ **`pending.count === 0` 不归 `empty`，它照样是这一档，理由写死在这里**：
+ * `pending` 是 `src/http/usage-sink.ts` 那个 sink 的**内存**状态，只反映
+ * **服务这一次请求的那个 isolate**。别的 isolate 里可能正攒着，而一个在落盘之前
+ * 就被回收的 isolate 把它那份直接带走了 —— 两种情形下 `pending.count` 都是 0，
+ * 而请求**真的发生过**。⇒ 「pending 是 0」证明不了「真的没人用」，
+ * 拿它当判据等于在最查不出来的那一档上把假话说得更像真的。
+ * **`pending` 只做加法**（那条尾巴自己会说「还有 N 条没落盘」），不参与分档。
+ *
+ * ⚠️ **这一档下六张卡仍然写 `0`，不是 EM DASH，这也是一条裁定**：
+ * `0` 在这里是真的——**已经落盘的就是 0 条**，而横幅负责说清「可能只是还没落下来」。
+ * 换成 EM DASH 就是把「真的没人用」那一半说成「数据丢了」，方向相反的同一种谎
+ *（`cellKind` / `rowState` 的判据是黑名单，这一档因此照 `empty` 那样渲染）。
+ * 由 `tests/ui/dom/usage-section.test.ts` 的
+ * 「shards=0 时六张卡仍然写 0 —— 画成 EM DASH 就是反方向的同一种谎」那一格钉着。
  */
 export function usageState(resp) {
   const r = obj(resp);
   if (r === null) return "unavailable";
   if (r.tier === "off") return "off";
   if (!Array.isArray(r.days)) return "unavailable";
+  // ⚠️ **这一句必须排在 `no-shards` 前面**：⑦（分片都在、每一个都坏）的 `shards`
+  //    同样是 0，掉进 `no-shards` 就会把「读到的全是垃圾」说成「还没写进去」。
   if (malformedKind(r) === "all") return "unavailable";
   const total = obj(r.total);
   const requests = total === null ? null : finite(total.requests);
   if (requests === null) return "unavailable";
-  return requests > 0 ? "data" : "empty";
+  if (requests > 0) return "data";
+  return r.tier === "tier2" && (finite(r.shards) === 0 || r.note === "no_shards")
+    ? "no-shards"
+    : "empty";
 }
 
 /**
@@ -300,9 +338,15 @@ export function rowState(state, bucket) {
  *
  * ⭐ 记一条形状：**「排除掉已知的坏情况」与「只放行已知的好情况」
  * 在今天的取值集合上等价，在明天多一档时相反**——而护栏要挡的正是明天那一档。
+ *
+ * ⚠️ **`no-shards` 进白名单，这是那条「明天多一档」真的发生时的表态**：
+ * 那一档**读成功了**（后端 200 + `days` 成数组），只是这段区间一条分片都没落盘
+ * ⇒ 表里那句话该是「没有可以列出的日子」，不是「读不出来」。
+ * 把它漏在白名单外的后果是一句方向相反的假话（见 `usageState` 上方第五档那一段：
+ * 那会把「还没落盘」说成「数据丢了」）。
  */
 export function readSucceeded(state) {
-  return state === "data" || state === "empty";
+  return state === "data" || state === "empty" || state === "no-shards";
 }
 
 /**

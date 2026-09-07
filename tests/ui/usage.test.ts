@@ -18,7 +18,7 @@ import {
  *
  * **每一格的标题写清它防住了什么真实故障**，因为这个板块的全部难点是
  * 「今天真的是 0 次请求」「Tier-2 没开」「读不出来」「读到的全是坏分片」
- * 在面板上长得一模一样，而它们是四件事。
+ * 「开着、但这段区间一条分片都还没落盘」在面板上长得一模一样，而它们是五件事。
  */
 
 /** 一个非零的桶。各条用例在它上面改一处。 */
@@ -47,7 +47,7 @@ function okBody(over: Record<string, unknown> = {}) {
   };
 }
 
-describe("四态判定：三件事不许揉成一件", () => {
+describe("五态判定：四件事不许揉成一件", () => {
   /**
    * **变红条件（实测记在当时的变异表里）**：把 `usageState` 里
    * `if (r.tier === "off") return "off";` 那一支删掉 ⇒ Tier-2 关着的那一档
@@ -55,7 +55,7 @@ describe("四态判定：三件事不许揉成一件", () => {
    * ⇒ 面板对「统计没开」显示一条「读取失败」的红色横幅 + 重试按钮，
    * 而重试一万次也不会有数据。下面第一句断言当场红。
    */
-  it("四种状态互不重叠 —— 『没开』『读不出来』『真的是 0』『有数据』揉在一起就是撒谎", () => {
+  it("五种状态互不重叠 —— 『没开』『读不出来』『还没落盘』『真的是 0』『有数据』揉在一起就是撒谎", () => {
     // ① Tier-2 没开：后端把 days / total / shards / malformed 一起给 null。
     expect(usageState({
       tier: "off", range: { from: 0, to: 1, clamped: false },
@@ -69,15 +69,21 @@ describe("四态判定：三件事不许揉成一件", () => {
       pending: { count: 0, ms: 0, budgetExhausted: false }, note: "read_failed",
     })).toBe("unavailable");
 
-    // ③ 读成功了，这段时间真的一次请求都没有。
+    // ③ 读成功了，但这段区间一条分片都还没落盘（后端状态表第 ③ 行）。
+    //    **这不是「真的没人用」**：Tier-2 攒够间隔才写一次，请求可能还在内存里。
     expect(usageState(okBody({
       days: [{ date: "2026-08-21", total: ZERO }], total: ZERO, shards: 0, malformed: 0, note: "no_shards",
+    }))).toBe("no-shards");
+
+    // ④ 有分片落过盘，盘里的请求数就是 0 —— 这一档才是「真的没人用」（后端状态表第 ④ 行）。
+    expect(usageState(okBody({
+      days: [{ date: "2026-08-21", total: ZERO }], total: ZERO, shards: 3, malformed: 0, note: null,
     }))).toBe("empty");
 
-    // ④ 有数据。
+    // ⑤ 有数据。
     expect(usageState(okBody())).toBe("data");
 
-    // ⑤ 整条响应都没拿到（网络断了 / JSON 解析失败）——同样是「我们不知道」。
+    // ⑥ 整条响应都没拿到（网络断了 / JSON 解析失败）——同样是「我们不知道」。
     expect(usageState(null)).toBe("unavailable");
     expect(usageState(undefined)).toBe("unavailable");
     expect(usageState("nope")).toBe("unavailable");
@@ -92,7 +98,9 @@ describe("四态判定：三件事不许揉成一件", () => {
    * ——而我们对这段时间的用量一无所知。那是伪造 0，方向与「接口失败报 0」相同。
    *
    * **变红条件**：把 `usageState` 里 `if (malformedKind(r) === "all") return "unavailable";`
-   * 删掉 ⇒ 这一格返回 `"empty"` ⇒ 断言红。
+   * 删掉 ⇒ 这一格返回 `"no-shards"`（⑦ 的 `shards` 同样是 0）⇒ 断言红。
+   * ⚠️ **那句早退排在 `no-shards` 那一支之前，也是这一格在钉**：顺序反过来的话，
+   * 「读到的全是垃圾」会被说成「还没写进去」——同一份 0 换了一句假话而已。
    */
   it("分片全坏时是 unavailable 而不是 empty —— 那些 0 不是知识，写成 0 就是伪造", () => {
     const body = okBody({
@@ -101,9 +109,9 @@ describe("四态判定：三件事不许揉成一件", () => {
     });
     expect(malformedKind(body)).toBe("all");
     expect(usageState(body)).toBe("unavailable");
-    // 反向锚：**同一份响应只把 malformed 改成 0** ⇒ 它就真的是 empty。
+    // 反向锚：**同一份响应只把 malformed 改成 0** ⇒ 它就落回「还没落盘」那一档。
     // 少了这一句，一个「恒返回 unavailable」的实现也会绿（第 5 种假阳性）。
-    expect(usageState({ ...body, malformed: 0, note: "no_shards" })).toBe("empty");
+    expect(usageState({ ...body, malformed: 0, note: "no_shards" })).toBe("no-shards");
   });
 
   /**
@@ -136,6 +144,192 @@ describe("四态判定：三件事不许揉成一件", () => {
     const body = okBody({ days: [{ date: "2026-08-21", total: ZERO }], total: BUCKET });
     expect(summaryCards(body).requests, "卡片读的是顶层 total").toBe(100);
     expect(usageState(body), "状态也必须读同一个 total").toBe("data");
+  });
+});
+
+describe("「开着，但一条分片都还没落盘」是自己一档", () => {
+  /** ③ 那一档的响应体：读成功了、每天一格全 0 桶、`shards` 是 0。 */
+  function noShardsBody(over: Record<string, unknown> = {}) {
+    return okBody({
+      days: [{ date: "2026-08-21", total: ZERO }], total: ZERO,
+      shards: 0, malformed: 0, note: "no_shards",
+      pending: { count: 4, ms: 184_532, budgetExhausted: false },
+      ...over,
+    });
+  }
+
+  /**
+   * **线上实测出来的自相矛盾：同一屏上两句话互相打脸。**
+   *
+   * 统计开着、打了几次请求（池空、全 503）之后打开这一页，后端回的是
+   * `tier:"tier2"` / `shards:0` / `note:"no_shards"` / `pending.count > 0`，
+   * 而这一档当时掉进 `empty` ⇒ 横幅说「这个部署确实没有记下任何用量」，
+   * 紧挨着的尾巴说「还有 4 条计数没有落盘」。**前一句是假的。**
+   *
+   * **变红条件**：把 `usageState` 最后那一支换回 `return "empty";`
+   *（也就是不分这一档）⇒ 第一句断言当场红。
+   */
+  it("开着但一条分片都没落盘不是 empty —— 尾巴刚说还有几条没落盘，横幅却说一条都没记下", () => {
+    const body = noShardsBody();
+    expect(usageState(body)).toBe("no-shards");
+    // 装置自检：这一格的前提（那条尾巴真的会渲染）必须成立，否则「自相矛盾」是空的。
+    expect(pendingTail(body), "pending 尾巴取不出来 ⇒ 这一格描述的那个矛盾根本不会出现")
+      .toEqual({ count: 4, ms: 184_532, budgetExhausted: false });
+    // 反向锚：**有分片落过盘、盘里就是 0** 才是「真的没人用」那一档。
+    // 少了这一句，一个「requests 是 0 就恒返回 no-shards」的实现也会绿。
+    expect(usageState(okBody({
+      days: [{ date: "2026-08-21", total: ZERO }], total: ZERO, shards: 3, malformed: 0, note: null,
+    })), "有分片落过盘的那一档被并进来了 —— 那一档确实是「答案就是零」").toBe("empty");
+  });
+
+  /**
+   * ⚠️⚠️ **`pending.count === 0` 照样归这一档，这是本轮的一条硬裁定。**
+   *
+   * `pending` 是那个 sink 的**内存**状态，只反映**服务这一次请求的那个 isolate**：
+   * · 别的 isolate 里可能正攒着；
+   * · 一个在落盘之前就被回收的 isolate 把它那份直接带走了。
+   * 两种情形下 `pending.count` 都是 0，而请求**真的发生过**。
+   * ⇒ 拿 `pending` 当分档判据 = 在最查不出来的那一档上把假话说得更像真的。
+   *
+   * **变红条件**：在 `usageState` 那一支的判据上再 `&&` 一个「`pending.count` 是正数」
+   *（= 「有尾巴才算还没落盘」）⇒ 第二句断言拿到 `"empty"` ⇒ 当场红。
+   */
+  it("pending.count 是 0 照样是这一档 —— pending 只是这一个 isolate 的内存，证明不了没人用过", () => {
+    expect(usageState(noShardsBody()), "有尾巴时是这一档").toBe("no-shards");
+    expect(
+      usageState(noShardsBody({ pending: { count: 0, ms: 0, budgetExhausted: false } })),
+      "尾巴是 0 就被判成「真的没人用」—— 被回收的 isolate 正是这个形状",
+    ).toBe("no-shards");
+    // 连 `pending` 整块都没有（后端那一档发 null）时同样不许改判。
+    expect(usageState(noShardsBody({ pending: null }))).toBe("no-shards");
+  });
+
+  /**
+   * ⚠️⚠️ **判据不许只认 `note`：`range_clamped` 压过 `no_shards`。**
+   *
+   * 优先级写在 `src/http/admin/handlers/usage.ts` 的 `usageHandler` 上方
+   *（「`range_clamped` 仍然压过 `no_shards`」）⇒ 区间被夹过时，同一个部署拿到的
+   * `note` 是 `range_clamped`，而 `shards` 仍然是 0。
+   * **这条路正是老 bug 更难看的那一半**：它连横幅都会换成 `usage.empty`
+   * 那句「答案就是零」（`no_shards` 至少还是 info 档、会把 `usage.empty` 压掉）。
+   *
+   * **变红条件**：把判据里的 `finite(r.shards) === 0 ||` 删掉（只认 `note`）
+   * ⇒ 第一句断言返回 `"empty"` ⇒ 当场红。
+   */
+  it("区间被夹过时仍然是这一档 —— note 那一格被 range_clamped 占掉，只认 note 会让这一档整个消失", () => {
+    expect(usageState(noShardsBody({
+      range: { from: 0, to: 86_399_999, clamped: true }, note: "range_clamped",
+    })), "只认 note ⇒ 被夹过的那条路上它又变回「真的没人用」").toBe("no-shards");
+    // 反向锚：`shards` 那一半也不许被删。只认 `shards` 会漏掉后端哪天换 code 的那一天。
+    expect(usageState(noShardsBody({ shards: null })), "note 那一半被删了").toBe("no-shards");
+  });
+
+  /**
+   * **这一档下六张卡仍然写 `0`，不是 EM DASH。**
+   *
+   * `0` 在这里是真的 —— **已经落盘的就是 0 条**，而横幅负责说清「可能只是还没落下来」。
+   * 换成 EM DASH 就是把「真的没人用」说成「数据丢了」，方向相反的同一种谎。
+   * ⇒ `cellKind` / `rowState` 的黑名单**刻意**不收这一档；
+   * `readSucceeded` 那个白名单则**必须**收（表里那句话该是「没有可以列出的日子」）。
+   *
+   * **变红条件**：把 `cellKind` 的第一行改成
+   * `if (state === "off" || state === "unavailable" || state === "no-shards") return "unknown";`
+   * ⇒ 第一句断言红；把 `readSucceeded` 里 `|| state === "no-shards"` 删掉 ⇒ 第三句红。
+   */
+  it("这一档的数字格仍然是 0、表里那句话仍然是「没有可以列出的日子」—— 画成 EM DASH 是反方向的同一种谎", () => {
+    expect(cellKind("no-shards", 0), "「已经落盘的就是 0 条」是真的，别画成「我们不知道」").toBe("value");
+    expect(rowState("no-shards", { ...ZERO })).toBe("data");
+    expect(readSucceeded("no-shards"), "读成功了 —— 表里那句话不该是「读不出来」").toBe(true);
+    // 反向锚：真「读不出来」的那两档不许跟着一起被放行。
+    expect(cellKind("unavailable", 0)).toBe("unknown");
+    expect(readSucceeded("unavailable")).toBe(false);
+  });
+
+  /**
+   * ⚠️⚠️ **文案判据：这一句里不许再出现「没有记下任何用量」那一族断言。**
+   *
+   * 它上一版五种语言逐句都在宣称这件事（中文「确实没有记下任何用量」、
+   * 英文 `genuinely recorded no usage`），而那是假的。
+   * **禁词表按语言排成矩阵**，与本仓别处那几张同形：拉平之后
+   *「某个概念在某种语言下一个说法都没有」在表面上看不出来，
+   * 而那正是这条红线最容易失守的方式（简体那一格红、繁体那一格绿）。
+   *
+   * ⚠️ **它守的是「不许说这一句」，不守「译文准不准」**：换个同义说法它抓不住，
+   * 那一档留给评审 —— 与 `scripts/lib/unverified-claims.mjs` 文件头那条边界同源。
+   *
+   * **变红条件**：把 `usage.note.noShards` 改回那句宣称 ⇒ 当场红。实测跑了三轮
+   *（中文那一版单独一次、英文那一版单独一次、繁中 + 日 + 韩三种一起一次），
+   * 五种语言在报文里逐条都被点名。
+   */
+  it("no-shards 那句文案里，五种语言都不许宣称这个部署没有记下任何用量", () => {
+    const BANNED: Record<string, string[]> = {
+      "zh-CN": ["没有记下任何用量", "确实没有记下"],
+      "zh-TW": ["沒有記下任何用量", "確實沒有記下"],
+      en: ["recorded no usage", "genuinely recorded"],
+      ja: ["使用量を記録していません", "実際に使用量を"],
+      ko: ["사용량을 기록하지 않았습니다", "실제로 사용량을"],
+    };
+    const value = (I18N as Record<string, Record<string, string>>)["usage.note.noShards"];
+    expect(value, "`usage.note.noShards` 没了 —— 下面整格会空转").toBeTruthy();
+    // 非空锚：每一种语言都得真有一句话，否则「不含禁词」是恒真的。
+    for (const lang of Object.keys(BANNED)) {
+      expect((value![lang] ?? "").length, `${lang} 那一格是空的`).toBeGreaterThan(0);
+    }
+    const hits: string[] = [];
+    for (const [lang, words] of Object.entries(BANNED)) {
+      for (const w of words) if ((value![lang] ?? "").includes(w)) hits.push(`${lang}：「${w}」`);
+    }
+    expect(hits, `这一句又在宣称「没有记下任何用量」了：\n${hits.join("\n")}`).toEqual([]);
+    // ⚠️ **反向控制**：禁词表本身不许是死的。上一版那句原文喂进同一条判据必须被点名，
+    //    否则「一个都没命中」证明不了任何事（第 5 种假阳性）。
+    const OLD = {
+      "zh-CN": "读成功了，这段区间里一个分片都没有——这个部署确实没有记下任何用量。",
+      "zh-TW": "讀成功了，這段區間裡一個分片都沒有——這個部署確實沒有記下任何用量。",
+      en: "The read succeeded and there were no shards at all in this range — this deployment genuinely recorded no usage.",
+      ja: "読み取りには成功しましたが、この期間にシャードが 1 件もありません。このデプロイは実際に使用量を記録していません。",
+      ko: "읽기는 성공했지만 이 구간에 샤드가 하나도 없습니다. 이 배포는 실제로 사용량을 기록하지 않았습니다.",
+    } as const;
+    for (const [lang, words] of Object.entries(BANNED)) {
+      expect(
+        words.some((w) => OLD[lang as keyof typeof OLD].includes(w)),
+        `${lang} 的禁词一条都对不上上一版那句原文 —— 这一格在空转`,
+      ).toBe(true);
+    }
+  });
+
+  /**
+   * **Tier-2 那条 `≈` tooltip 要有 Tier-1 的诚实度。**
+   *
+   * Tier-1 那一侧（`keys.approxTip`）一直明写着「isolate 在此之前被回收时这一段会丢」，
+   * 而 Tier-2 这一侧上一版只说「还有一段未落盘窗口」——读起来像「等一会儿就补上」，
+   * 而它可能永远补不上。同一页上两种诚实度，低的那一种就是这一页的实际诚实度。
+   *
+   * ⚠️ **判据是「两条都说了『会丢』这件事」，不是「两条文案相同」**：它们的主语
+   *（池计数 / 用量分片）与那个时间常量都不是一回事，写成逐字比对会红在一件正确的改动上。
+   *
+   * **变红条件**：把 `usage.approxTip` 中文那一版的后半句删掉 ⇒ 当场红（实测，
+   * 报文点名的是 `usage.approxTip` 的 `zh-CN`）。
+   */
+  it("Tier-2 的 ≈ tooltip 与 Tier-1 一样明写「这一段会丢」—— 只说「还没落盘」会被读成「等一会儿就补上」", () => {
+    const LOSS: Record<string, string[]> = {
+      "zh-CN": ["会丢"],
+      "zh-TW": ["會遺失", "會丟"],
+      en: ["is lost", "are lost"],
+      ja: ["失われます"],
+      ko: ["사라집니다", "손실"],
+    };
+    const dict = I18N as Record<string, Record<string, string>>;
+    for (const key of ["usage.approxTip", "usage.approxTipUnknown", "keys.approxTip"]) {
+      expect(dict[key], `${key} 没了 —— 这一格会空转`).toBeTruthy();
+      for (const [lang, words] of Object.entries(LOSS)) {
+        const text = dict[key]![lang] ?? "";
+        expect(text.length, `${key} 的 ${lang} 那一格是空的`).toBeGreaterThan(0);
+        expect(
+          words.some((w) => text.includes(w)),
+          `${key} 的 ${lang} 没说「isolate 被回收时这一段会丢」`,
+        ).toBe(true);
+      }
+    }
   });
 });
 
@@ -215,13 +409,15 @@ describe("整块的结论必须往下传到每一张表（评审那条的根因�
    * **两张表面对一个不认识的状态时都必须往「我们不知道」那边倒**。
    */
   it("readSucceeded 是白名单：不认识的状态一律判成「没读成功」—— 黑名单会让明天新加的那一档默认说假话", () => {
-    // 今天的四档，逐个手写锚死。
+    // 今天在用的每一档，逐个手写锚死。
     expect(readSucceeded("data")).toBe(true);
     expect(readSucceeded("empty")).toBe(true);
+    // ⚠️ 「那条『明天多一档』真的发生了」的那一档：它读成功了，只是一条分片都没落盘。
+    expect(readSucceeded("no-shards")).toBe(true);
     expect(readSucceeded("unavailable")).toBe(false);
     expect(readSucceeded("off")).toBe(false);
     // ⚠️⚠️ **这一句才是它存在的理由**：拿一个今天不存在的状态当探针。
-    //    黑名单实现（`state !== "unavailable"`）在上面四句上**逐句等价**，
+    //    黑名单实现（`state !== "unavailable"`）在上面几句上**逐句等价**，
     //    只在这一句上分叉 —— 它会返回 true ⇒ 表会说「没有可以列出的日子」，
     //    也就是对一个自己都不认识的状态断言「我们知道答案是没有」。
     expect(readSucceeded("some_state_added_later"), "不认识的状态被当成了「读成功了」").toBe(false);

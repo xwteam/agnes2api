@@ -8,8 +8,8 @@
  *
  * 三条纪律：①一切来自接口的内容一律 textContent（`byModel` 的键来自客户端填的
  * 模型名，完全不可信）；②**取值决策一律不写在这里**，全在 `js/pure/usage.mjs` 里
- * （admin-ui/README.md 硬规则 1），四态判定由 `tests/ui/usage.test.ts` 的
- * 「四种状态互不重叠 —— 『没开』『读不出来』『真的是 0』『有数据』揉在一起就是撒谎」
+ * （admin-ui/README.md 硬规则 1），整块状态判定由 `tests/ui/usage.test.ts` 的
+ * 「五种状态互不重叠 —— 『没开』『读不出来』『还没落盘』『真的是 0』『有数据』揉在一起就是撒谎」
  * 那一格钉着；③**一切形态分支只读接口返回的字段**，不许自己嗅探运行时（全局约束 1）。
  *
  * ── **本板块不轮询** ────────────────────────────────────────────────────────
@@ -645,11 +645,25 @@ function render() {
     host.appendChild(fail);
   }
   // 「这段时间真的是 0」要有自己的一句话。`note` 已经用 info 档说过同一件事时
-  // 不再重复（③ `no_shards`），而第 ④ 种状态的 `note` 是 `null`、没人替它说。
+  // 不再重复，而第 ④ 种状态的 `note` 是 `null`、没人替它说。
+  // ⚠️⚠️ **这一句只对第 ④ 种状态成立（有分片落过盘、盘里就是 0），
+  //    而「开着但一条分片都没落盘」已经在 `usageState` 里分出去了**：
+  //    对那一档说「答案就是零」是假话，它可能只是还没写进去（见那个函数上方第五档那段）。
   if (state === "empty" && (usageNoteKey(note) === null || noteSeverity(note) !== "info")) {
     const empty = el("div", { class: "banner-info", role: "status" });
     empty.appendChild(elI18n("span", "usage.empty"));
     host.appendChild(empty);
+  }
+  // 「读成功了，但这段区间一条分片都还没落盘」也要有自己的一句话，而且**必须由
+  // 状态驱动、不能由 `note` 驱动**：`range_clamped` 压过 `no_shards`（优先级在
+  // `src/http/admin/handlers/usage.ts` 的 `usageHandler` 上方），区间被夹过时
+  // 这一档的 `note` 是别的 code，照 `note` 走它就整个消失。
+  // 判据写成「那条横幅有没有已经说过这一句」而不是「note 是不是 no_shards」：
+  // 后端哪天换一条 code 指向同一句话时，这里不会开始说两遍。
+  if (state === "no-shards" && usageNoteKey(note) !== "usage.note.noShards") {
+    const notLanded = el("div", { class: "banner-info", role: "status" });
+    notLanded.appendChild(elI18n("span", "usage.note.noShards"));
+    host.appendChild(notLanded);
   }
 
   // ⚠️ **两个诚实标记算一次，卡片与日表共用同一份**（评审前后点了两次）：

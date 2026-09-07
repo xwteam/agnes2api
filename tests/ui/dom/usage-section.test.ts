@@ -292,7 +292,8 @@ describe("三态在六张卡上必须长得不一样", () => {
     };
     const days = [{ date: "2026-08-21", total: zero }];
 
-    // ③ 区间里一个分片都没有：读成功了，答案真的是零。
+    // ③ 区间里一个分片都没有：读成功了，**已经落盘的**就是零
+    //    （「这是不是等于没人用」由顶部横幅说，见「开着但一条分片都还没落盘」那一组）。
     const noShards = await openUsage(respondWith(usageBody({
       days, total: zero, shards: 0, malformed: 0, note: "no_shards",
     })));
@@ -411,6 +412,106 @@ describe("三态在六张卡上必须长得不一样", () => {
     expect(cards(on.section("usage"))["usage.card.requests"]).toContain("≈");
     const off = await openUsage(respondWith(usageBody({ approximate: false })));
     expect(cards(off.section("usage"))["usage.card.requests"], "前端把 ≈ 写死了").not.toContain("≈");
+  });
+});
+
+describe("开着但一条分片都还没落盘：同一屏上不许出现两句互相打脸的话", () => {
+  const ZERO_BUCKET = {
+    requests: 0, success: 0, errors: 0, tokensIn: 0, tokensOut: 0,
+    streamingRequests: 0, latencySum: 0, latencyCount: 0,
+  };
+  /** ③ 那一档 + 一条**真实存在的**未落盘尾巴（线上实测到的那个组合）。 */
+  function notLandedBody(over: Record<string, unknown> = {}) {
+    return usageBody({
+      days: [{ date: "2026-08-21", total: ZERO_BUCKET }], total: ZERO_BUCKET,
+      shards: 0, malformed: 0, note: "no_shards",
+      pending: { count: 4, ms: 184_532, budgetExhausted: false },
+      ...over,
+    });
+  }
+
+  /**
+   * ⚠️⚠️⚠️ **线上实测：同一屏上同时出现了这两句话。**
+   * ```
+   * 读成功了，这段区间里一个分片都没有——这个部署确实没有记下任何用量。
+   * 还有 4 条计数没有落盘，上面的数字少了这一截。
+   * ```
+   * **前一句是假的**，而且用了「确实」这个加重语气的词：它确实记下了 4 条，
+   * 只是还在内存里。`docs/zh-CN/ADMIN.md` 那条「关着的时候这一页不画空图表」
+   * 立的规矩是「『没人用』与『没在记账』不许长得一样」，这一档正是它禁的形状。
+   *
+   * **观测点必须是渲染出来的字**，不是状态枚举：`tests/ui/usage.test.ts` 的
+   * 「开着但一条分片都没落盘不是 empty —— 尾巴刚说还有几条没落盘，横幅却说一条都没记下」
+   * 那一格证明的是判定分了档，**不证明面板真的换了一句话**。
+   *
+   * **变红条件**：把 `usage.note.noShards` 的**中文**那一版改回那句原文
+   * ⇒ 第一句断言当场红。⚠️ **这一格只看得见中文**（面板在用例里跑的是默认语言）
+   * ——另外四种语言由 `tests/ui/usage.test.ts` 那张五语言禁词矩阵接住，
+   * 实测只改英文那一版时这一格是**绿的**。
+   */
+  it("横幅不许说这个部署没有记下任何用量 —— 紧挨着的尾巴刚说了还有 4 条没落盘", async () => {
+    const h = await openUsage(respondWith(notLandedBody()));
+    const sec = h.section("usage");
+    // ① 那句假话一个字都不许留。
+    expect(sec.textContent, "又在说「确实没有记下任何用量」，而下一行正说着还有 4 条没落盘")
+      .not.toContain("没有记下任何用量");
+    // ② 装置自检：那条尾巴真的渲染出来了，否则「自相矛盾」这件事在这一格里根本不存在。
+    expect(sec.textContent, "未落盘的尾巴没渲染 ⇒ 这一格测的是空气").toContain("还有 4 条计数没有落盘");
+    // ③ 换上去的那一句要把「可能只是还没落下来」说出来。
+    expect(sec.textContent, "没说清这段区间是「还没落盘」而不是「没人用」").toContain("还没落盘");
+    // ④ 「真的是 0」那句是第 ④ 种状态的，不许出现在这一档。
+    expect(sec.textContent, "把「还没落盘」说成了「答案就是零」").not.toContain("一次请求都没有");
+    // ⑤ 只说一遍：note 那条横幅与状态那条横幅撞车的话，同一句话会出现两次。
+    const said = banners(sec).filter((b) => b.includes("还没落盘"));
+    expect(said.length, "同一句话渲染了两遍（note 一条 + 状态一条）").toBe(1);
+  });
+
+  /**
+   * ⚠️⚠️ **`range_clamped` 压过 `no_shards`，那条路上老 bug 更难看。**
+   *
+   * 后端的 note 只有一格，优先级里 `range_clamped` 在 `no_shards` 之前
+   *（`src/http/admin/handlers/usage.ts` 的 `usageHandler` 上方逐条写着）。
+   * ⇒ 区间被夹过时 `note` 是 `range_clamped`（warn 档），**`usage.empty` 那句
+   * 「答案就是零」不再被 info 档压掉，会直接渲染出来**。
+   * 照 `note` 判这一档的实现在这条路上会整个失效，而失效的方向是说得更死。
+   *
+   * **变红条件**：把 `usageState` 那一支里的 `finite(r.shards) === 0 ||` 删掉
+   *（只认 `note`）⇒ 状态落回 `empty` ⇒ 第一句断言当场红。
+   */
+  it("区间被夹过时这一档仍然说还没落盘 —— note 那一格被占掉，只认 note 会让它退回「答案就是零」", async () => {
+    const h = await openUsage(respondWith(notLandedBody({
+      range: { from: NOW - 86_399_999, to: NOW, clamped: true }, note: "range_clamped",
+    })));
+    const sec = h.section("usage");
+    expect(sec.textContent, "被夹过的那条路上又变回了「这段区间里一次请求都没有」")
+      .not.toContain("一次请求都没有");
+    expect(sec.textContent, "这一档的那句话在被夹过的那条路上整个消失了").toContain("还没落盘");
+    // 装置自检：`range_clamped` 自己那句提示还得在（这一格不该把它挤掉）。
+    expect(sec.textContent, "被夹这件事没人说了").toContain("只显示了能拿到的那一段");
+  });
+
+  /**
+   * **这一档的六张卡仍然写 `0`，不是 EM DASH。**
+   *
+   * `0` 在这里是真的 —— **已经落盘的就是 0 条**，横幅负责说清「可能只是还没落下来」。
+   * 画成 EM DASH 就是把「真的没人用」说成「数据丢了」：与那句假话方向相反、
+   * 同样是一句假话。**两个方向的谎都不许**，这一格钉的是被忽略的那个方向。
+   *
+   * **变红条件**：把 `cellKind` 的第一行加上 `|| state === "no-shards"`
+   * ⇒ 六张卡全变 EM DASH ⇒ 第一句断言红。
+   */
+  it("shards=0 时六张卡仍然写 0 —— 画成 EM DASH 就是反方向的同一种谎", async () => {
+    const h = await openUsage(respondWith(notLandedBody()));
+    const sec = h.section("usage");
+    const c = cards(sec);
+    expect(c["usage.card.requests"], "「已经落盘的就是 0 条」被画成了「我们不知道」").toBe("≈ 0");
+    expect(c["usage.card.streaming"]).toBe("≈ 0");
+    expect(c["usage.card.tokens"]).toBe("≈ 0 / 0");
+    // 比率与延迟没有分母 / 没有样本 ⇒ EN DASH，与 `empty` 那一档同形（它们本来就同形）。
+    expect(c["usage.card.successRate"]).toBe(EN);
+    expect(c["usage.card.latency"]).toBe(EN);
+    // 日表那一行同样写 0：整块的结论往下传，传的是「读成功了」，不是「我们不知道」。
+    expect(dayRowCells(sec)[0]).toBe(`2026-08-21|0|0|0|0 / 0|0|${EN}|下钻`);
   });
 });
 
