@@ -474,6 +474,10 @@ tr:last-child td { border-bottom: 0; }
    **只补这一族真正需要的几条**：统计卡走 `.card-row > .card`、错误横幅走
    `.banner-danger` / `.banner-warn`、工具栏走 `.toolbar`，一条都不重新发明。 */
 .ak-bar-right { margin-left: auto; }
+/* 服务连接卡那一行：标签 + 值 + 一颗按钮挤在一行。**不套 `.cfg-field`** —— 那是
+   设置页的 auto-fit 网格，套上去按钮会被拉成整行宽的一条色带（真浏览器上量过）。 */
+.ak-svc-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-sm); }
+.ak-svc-row .mono { word-break: break-all; }
 .ak-item {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -489,6 +493,18 @@ tr:last-child td { border-bottom: 0; }
 .ak-item-actions { display: flex; flex-wrap: wrap; gap: var(--gap-sm); margin-top: var(--gap-sm); }
 /* 明文那一行：等宽、可选中、长了就换行 —— 它是运维要整串复制走的东西。 */
 .ak-secret { word-break: break-all; user-select: all; margin: var(--gap-sm) 0; }
-/* 到期快捷档那几颗 chip。选中态只加边框色，不改字号 —— 换字号会让整行跳动。 */
+/* 到期快捷档那几颗 chip。
+   ⚠️⚠️ **未选中那几颗必须先被压成中性色，选中那颗才用主色。**
+   这里第一版只写了 `.chip.active { color: var(--primary) }` —— 而本仓的裸 `button`
+   本来就是「主色底 + 白字」（见 base.css 那段「没有 .btn-primary，裸 button 就是主按钮」），
+   于是选中那颗成了**绿底绿字**：真浏览器上量到的是一颗完全空白的绿方块。
+   两种状态的差别必须落在**底色**上，不是只落在字色上。
+   选中态不改字号 —— 换字号会让整行跳动。 */
 .chips { display: flex; flex-wrap: wrap; gap: var(--gap-sm); margin: 4px 0 var(--gap-sm); }
-.chip.active { border-color: var(--primary); color: var(--primary); }
+.chip {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border);
+}
+.chip:where(:not([disabled])):hover { background: var(--panel-2); border-color: var(--border-hover); }
+.chip.active { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.chip.active:where(:not([disabled])):hover { background: var(--primary-hover); }

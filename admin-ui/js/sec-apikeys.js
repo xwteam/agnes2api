@@ -86,7 +86,10 @@ function block(titleKey) {
 /** 服务连接卡：Base URL + 一句「主口令在设置页」。见文件头那段偏离说明。 */
 function buildServiceCard() {
   const { wrap, body } = block("ak.svc.title");
-  const row = el("div", { class: "cfg-field" });
+  // ⚠️ **不复用设置页的 `.cfg-field`**：那是一张 auto-fit 网格（一格一行地铺），
+  // 而这里要的是「标签 + 值 + 一颗按钮」挤在同一行 —— 套上去之后那颗「复制」
+  // 会被拉成整行宽的一条绿带（真浏览器上量到的）。
+  const row = el("div", { class: "ak-svc-row" });
   row.appendChild(elI18n("div", "ak.svc.baseUrl", { class: "cfg-label" }));
   const url = el("div", { class: "mono", id: "ak-base-url" }, fmtDash(null));
   row.appendChild(url);
