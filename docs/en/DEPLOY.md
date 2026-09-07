@@ -1175,6 +1175,8 @@ see [REGISTRAR.md](REGISTRAR.md).
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | no / required if a channel is yyds | `https://maliapi.215.im` / empty | YYDS Mail channel credentials. |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | required if a channel is moemail | empty / empty | MoeMail channel credentials (self-hosted, no default address). |
 
+#### What happens when one of these 16 variables has a wrong value
+
 > [!WARNING]
 > **A wrong value in these 16 variables no longer keeps the container from starting.**
 > Numeric ones (`TARGET_KEYS=abc`, `MINT_BATCH=0`, and the like) **fall back to the default in the
@@ -1185,7 +1187,7 @@ see [REGISTRAR.md](REGISTRAR.md).
 >
 > **This is a capability loss, stated plainly**: a deployment typo used to crash the container, so you
 > knew immediately; now it runs quietly and you have to go look at the panel banner or the events section.
-> The walkthrough is the "the registrar is on but mints nothing" entry under Troubleshooting below.
+> The walkthrough is the Troubleshooting entry "The registrar is on but mints nothing" below.
 
 ### What each of the two timeout budgets covers
 

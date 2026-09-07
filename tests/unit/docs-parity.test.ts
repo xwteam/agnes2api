@@ -13604,12 +13604,15 @@ describe("R27 的源码锚：口令那两条门槛的数字从 `src/` 现算，�
     const fn = src.slice(src.indexOf("export function configFromEnv"));
     const body = fn.slice(0, fn.indexOf("\n}\n") + 1);
     return {
-      // ⚠️ **判据从 `throw new Error(` 放宽到「抛一个以 `Config` 打头的类」，
+      // ⚠️ **判据从 `throw new Error(` 改成 `throw new ConfigRefusal(`，
       // 而不是放宽成裸 `throw`**：装载路径那一轮给「网关拒绝服务」这一档配了专用
       // 异常类 `ConfigRefusal`（两个入口据它把「运维配错」与「代码 bug」分开），
       // 于是这里的 `new Error(` 不再匹配。**射程一个字都没放宽**——它仍然要求
-      // 那一句是「缺口令就抛」，只是允许抛的是那个专用类。
-      throwsWhenMissing: /if \(!gatewayToken\) throw new Config\w+\(/.test(body),
+      // 那一句是「缺口令就抛」，只是把类名换成了那个专用类。
+      // ⚠️ **收窄过一次**（评审回填）：上一版写的是 `throw new Config\w+\(`，
+      // 那会连 `ConfigAnything` 一起收下，而这里要钉的就是**那一个类**——
+      // 换成别的 `Config*` 类就等于换掉了两个入口分流的依据，它必须红。
+      throwsWhenMissing: /if \(!gatewayToken\) throw new ConfigRefusal\(/.test(body),
       checksLength: /gatewayToken\.length\s*[<>=]/.test(body),
     };
   };
@@ -14794,9 +14797,11 @@ describe("六份 README 的配置表：名单 ⊆ `.env.example`，默认值从 
  * 契约变更，CHANGELOG 记着）。三条判据：
  * ① 五份都写了 Worker 专属症状段（「部署成功」+「503」两条都要在）；
  * ② 五份都**不再**含「Worker 一启动就退出」那种合并说法；
- * ③ 五份都把 `RESET_CONFIG=1` 从这条的解决步骤里删掉了——改完之后存储里能写坏到
- *    让网关起不来的只剩「gatewayToken 两边都没有」，而 `RESET_CONFIG` 的语义是
- *    **完全忽略存储里的 `config` 键** ⇒ 连唯一那把口令也一起忽略，照做更糟。
+ * ③ 五份都把 `RESET_CONFIG` 从这条的**解决步骤区**里删掉了、同时在**警示区**里
+ *    留着那句反向措辞——改完之后存储里能写坏到让网关起不来的只剩
+ *    「gatewayToken 两边都没有」，而 `RESET_CONFIG` 的语义是**完全忽略存储里的
+ *    `config` 键** ⇒ 连唯一那把口令也一起忽略，照做更糟。
+ *    ⚠️ ③ 的判据被**重写过**（上一版是一条恒真的空断言），逐条理由写在那一格上方。
  * ══════════════════════════════════════════════════════════════════════════ */
 
 describe("五份 DEPLOY.md：缺口令那条故障排查按运行时分两段症状", () => {
@@ -14859,27 +14864,122 @@ describe("五份 DEPLOY.md：缺口令那条故障排查按运行时分两段症
       + "⇒ Worker 上装配失败不会「退出」，它会部署成功然后每个请求回 503").toEqual([]);
   });
 
-  it("五份都把 `RESET_CONFIG=1` 从这条的解决步骤里删掉了", () => {
-    const bad = LANGS.filter((l) => entry(l).includes("RESET_CONFIG=1") && !entry(l).includes("[!WARNING]"))
-      .map((l) => `docs/${l}/DEPLOY.md`);
-    expect(bad, "`RESET_CONFIG=1` 又回到这条的解决步骤里了 —— 它会把存储里那把口令也一起忽略，"
-      + "照做会把「补池停了」的小事故操作成「口令没了」的大事故").toEqual([]);
-    // **反向自检**：五份里都还留着那条**警示**（告诉人别用它），否则上面那格只是「删干净了」。
-    const noWarning = LANGS.filter((l) => !entry(l).includes("RESET_CONFIG=1")).map((l) => `docs/${l}/DEPLOY.md`);
-    expect(noWarning, "连「别用 RESET_CONFIG 救这一条」的警示也一起删掉了 —— "
-      + "那等于把一条会让人操作更糟的路留在别处而这里一个字都不说").toEqual([]);
+  /**
+   * ⚠️⚠️ **这一格是重写过的，上一版是一条空断言，别把它改回去。**
+   *
+   * 上一版逐字写着：
+   * ```js
+   * const bad = LANGS.filter((l) => entry(l).includes("RESET_CONFIG=1") && !entry(l).includes("[!WARNING]"));
+   * ```
+   * 而 `entry(l)` 取的是**整条 `###` 小节正文**——解决步骤与 `> [!WARNING]` 都在里面。
+   * 改完之后每一节里都有那个 WARNING 块 ⇒ 第一条断言 **恒真**；第二条又只要求
+   * 「这一节里出现过 `RESET_CONFIG=1`」。两条合起来只钉住「这一节提到了它、且有个警示块」，
+   * **完全钉不住「它还在不在解决步骤里」**——而后者才是这条缺陷要修的东西。
+   * 复评把删掉的那一步原样加回 `docs/zh-CN/DEPLOY.md` 的步骤区，跑**全量 4903 格一格不红**。
+   *
+   * ⇒ 判据改成钉**位置**：按 `> [!WARNING]` 把小节切成「步骤区 / 警示区」两段，
+   * ① 步骤区里一个 `RESET_CONFIG` 都不许有（**连不带 `=1` 的提法也不许**，射程比上一版宽）；
+   * ② 警示区里必须有那句反向措辞（各语言一个字面串，与 `WORKER_SYMPTOM` 同一体例）。
+   */
+
+  /** 切段用的分界符。五份逐字相同（GitHub 的告警块语法），所以不必按语言列表。 */
+  const WARN_MARK = "> [!WARNING]";
+
+  /**
+   * 把小节切成「步骤区」与「警示区」。**切不出来当场抛**——切出个空串会让下面
+   * 两条断言一起变成假绿（步骤区空 ⇒ ① 恒真），那正是上一版栽的跟头。
+   */
+  function split(lang: Lang): { steps: string; warning: string } {
+    const body = entry(lang);
+    const at = body.indexOf(WARN_MARK);
+    if (at < 0) {
+      throw new Error(`docs/${lang}/DEPLOY.md 的这一节里找不到 \`${WARN_MARK}\``
+        + " —— 切不出「步骤区 / 警示区」，别让下面两格变成假绿");
+    }
+    return { steps: body.slice(0, at), warning: body.slice(at) };
+  }
+
+  /** 警示区里那句**反向措辞**，逐语言。都是文档正文里的字面串。 */
+  const WARN_REVERSE: Record<Lang, string> = {
+    "zh-CN": "不要用 `RESET_CONFIG=1` 来救这一条",
+    "zh-TW": "不要用 `RESET_CONFIG=1` 來救這一條",
+    en: "Do not reach for `RESET_CONFIG=1` here",
+    ja: "この症状に `RESET_CONFIG=1` を使ってはいけません",
+    ko: "이 증상에 `RESET_CONFIG=1`을 쓰지 마세요",
+  };
+
+  it("切得出也切得准：五份的步骤区里都还留着那两步，警示区里都还留着那个告警块", () => {
+    // 上一版之所以是空断言，根子在「射程切错了」而没有任何东西验证切法。
+    const bad = LANGS.flatMap((l) => {
+      const { steps, warning } = split(l);
+      return [
+        steps.includes("wrangler secret put GATEWAY_TOKEN") ? [] : [`docs/${l}/DEPLOY.md 步骤区里没有那两步`],
+        warning.startsWith(WARN_MARK) ? [] : [`docs/${l}/DEPLOY.md 警示区没从告警块起头`],
+      ].flat();
+    });
+    expect(bad, `切法失效了：\n${bad.join("\n")}`).toEqual([]);
   });
 
+  it("五份的**解决步骤区**里一个 `RESET_CONFIG` 都没有（不只是「这一节里有个警示块」）", () => {
+    const bad = LANGS.filter((l) => split(l).steps.includes("RESET_CONFIG")).map((l) => `docs/${l}/DEPLOY.md`);
+    expect(bad, "`RESET_CONFIG` 又回到这条的解决步骤里了 —— 它会把存储里那把口令也一起忽略，"
+      + "照做会把「补池停了」的小事故操作成「口令没了」的大事故").toEqual([]);
+  });
+
+  it("五份的警示区里都留着那句反向措辞（告诉人**别**用它，不只是提到它）", () => {
+    const bad = LANGS.filter((l) => !split(l).warning.includes(WARN_REVERSE[l]))
+      .map((l) => `docs/${l}/DEPLOY.md 警示区缺「${WARN_REVERSE[l]}」`);
+    expect(bad, `反向措辞没了：\n${bad.join("\n")}\n`
+      + "⇒ 那等于把一条会让人操作更糟的路留在别处，而这里一个字都不说").toEqual([]);
+  });
+
+  /** 那条排查条目的标题，逐语言。**下面两格共用**（开了没有 / 指没指过去）。 */
+  const MINTS_NOTHING: Record<Lang, string> = {
+    "zh-CN": "注册机开着却不铸 key",
+    "zh-TW": "註冊機開著卻不鑄 key",
+    en: "The registrar is on but mints nothing",
+    ja: "レジストラーは有効なのに key を発行しない",
+    ko: "등록기는 켜져 있는데 key를 발급하지 않는다",
+  };
+
   it("五份都新开了「注册机开着却不铸 key」那条 —— 这是修复之后新出现的用户可见形态", () => {
-    const HEAD: Record<Lang, string> = {
-      "zh-CN": "### 注册机开着却不铸 key",
-      "zh-TW": "### 註冊機開著卻不鑄 key",
-      en: "### The registrar is on but mints nothing",
-      ja: "### レジストラーは有効なのに key を発行しない",
-      ko: "### 등록기는 켜져 있는데 key를 발급하지 않는다",
-    };
-    const missing = LANGS.filter((l) => !readDeploy(l).includes(HEAD[l])).map((l) => `docs/${l}/DEPLOY.md`);
+    const missing = LANGS.filter((l) => !readDeploy(l).includes(`### ${MINTS_NOTHING[l]}`))
+      .map((l) => `docs/${l}/DEPLOY.md`);
     expect(missing, "把一次响亮的故障换成一次安静的故障之后，这条排查是运维仅有的入口之一")
+      .toEqual([]);
+  });
+
+  /**
+   * ⚠️ **这一格是评审回填加的，它钉的是「从别处指得过去」，不是「开了没有」。**
+   *
+   * 上面那格只钉住「五份都新开了那条」，钉不住「有没有人被指过去」——于是
+   * zh-CN / zh-TW 的注册机环境变量表下方那个 `> [!WARNING]` 各自只有 **2 行**，
+   * 而 en / ja / ko 各 **10 行**，多出来的正好包括那句指路
+   *（「走一遍的入口是……那一条」）。**一格判据都没红**，因为不对等这件事没人钉。
+   *
+   * 那句指路是**可执行信息不是修辞**：这一轮把一次响亮的故障（容器崩）换成了一次
+   * 安静的故障（注册机静静不跑），而读者手上只剩「去看面板横幅」这半句时，
+   * 他根本不知道有那条把四个观测点写全了的排查条目。
+   *
+   * 射程只取那个 WARNING 块本身（不是整份文档）：指路句必须与「这是能力下降」
+   * **同处一屏**，写在文档别的地方等于没写。
+   */
+  it("五份的注册机环境变量表下方那个警示里，都有一句指向那条排查条目", () => {
+    const bad = LANGS.flatMap((l) => {
+      const src = readDeploy(l);
+      // 那张表的最后一行是两条 MoeMail 变量；紧随其后的 `> [!WARNING]` 就是这一块。
+      const row = src.lastIndexOf("| `MOEMAIL_BASE_URL`");
+      if (row < 0) return [`docs/${l}/DEPLOY.md 找不到注册机变量表的末行 —— 表变了就回来改这个锚`];
+      const at = src.indexOf("> [!WARNING]", row);
+      if (at < 0) return [`docs/${l}/DEPLOY.md 那张表下方没有 [!WARNING] 块`];
+      const end = src.indexOf("\n#", at);
+      const block = end < 0 ? src.slice(at) : src.slice(at, end);
+      return block.includes(MINTS_NOTHING[l])
+        ? []
+        : [`docs/${l}/DEPLOY.md 的那个警示里没有指向「${MINTS_NOTHING[l]}」的指路句`];
+    });
+    expect(bad, `五语言不对等：\n${bad.join("\n")}\n`
+      + "⇒ 这几种语言的读者只被告知「去看面板横幅」，而没被指向那条把四个观测点写全了的排查条目")
       .toEqual([]);
   });
 });

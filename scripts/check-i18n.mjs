@@ -521,6 +521,25 @@ for (const [k, row] of Object.entries(I18N)) {
   for (const lang of LANGS) if (IP_PORT.test(String(row[lang] ?? ""))) errors.push(`${k}/${lang} 出现 IP:PORT 形态`);
 }
 
+// ⑦之二 字典值里不许有 markdown 粗体标记 `**…**`
+//
+// **面板一律 `textContent` 渲染**（`js/ui.js` 的 `el()` / `elI18n()` 逐字写着
+// 「一切来自接口的内容一律 textContent，永不 innerHTML」），所以 `**` 会**原样出现在
+// 屏幕上**——运维看到的是裸星号，不是粗体。
+//
+// 这条门禁是评审回填加的：当时字典里有两条带 `**`（`ev.notice` 与
+// `set.loadBlocked.registrar`），**其中后者是唯一一条会在故障时弹出来的横幅**。
+// 两条一起去掉了标记，加这一格是为了不再出现「两种约定各留一半」——
+// 想强调就换措辞，别把 markdown 混进一个不渲染 markdown 的通道。
+// ⚠️ **射程只到 `**`**：单个 `*`（乘号、脚注、`*.example.com` 这种通配写法）不管。
+for (const [k, row] of Object.entries(I18N)) {
+  for (const lang of LANGS) {
+    if (String(row[lang] ?? "").includes("**")) {
+      errors.push(`${k}/${lang} 出现 markdown 粗体标记 \`**\` —— 面板走 textContent，屏幕上会是裸星号`);
+    }
+  }
+}
+
 // ⑧ 带 `{占位符}` 的 key 不许被当成「不带参数的裸标签」用
 //
 // **这一条是阶段验收的人工冒烟抓出来的，不是凭空加的门禁。**

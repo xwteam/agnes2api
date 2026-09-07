@@ -942,6 +942,29 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
   });
 
   /**
+   * **三档里的第二档：整份配置装得起来、注册机开着、只是它本次没跑起来。**
+   *
+   * ⚠️ **`registrar.enabled.effective` 写成显式 `true`，不是可有可无的装饰**（评审回填）：
+   * 这份夹具原来把每一格都摊成 `effective: null`，于是它在「注册机开没开」这根轴上
+   * 什么都没说——而横幅现在正是按这一格分岔的。写死 `true` 之后，它与下一格
+   *（`false`）的差别**恰好是驱动分岔的那一个 bit**，两格互为对照。
+   */
+  const registrarOnly = (enabled: boolean) => ({
+    ...BLOCKED,
+    fields: {
+      ...Object.fromEntries(
+        EDITABLE_FIELDS.filter((f) => !SECRET_FIELDS.includes(f))
+          .map((f) => [f, { stored: null, env: null, effective: null, lockedBy: null }]),
+      ),
+      "registrar.enabled": { stored: enabled, env: null, effective: enabled, lockedBy: null },
+    },
+    credentials: Object.fromEntries(
+      SECRET_FIELDS.map((f) => [f, { configured: false, hint: null, lockedBy: null }]),
+    ),
+    configDegraded: false,
+  });
+
+  /**
    * ⚠️⚠️ **同一块横幅，两档文案，判据是 `isDiagnostic()`（也就是 `fields === null`）。**
    *
    * 「注册机装不起来不再让整个网关死掉」之后，`loadBlocked` 非空**不再等于**
@@ -957,18 +980,7 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
    */
   it("注册机装不起来（fields 不为 null）时横幅换成另一句 —— 不许说「下一次重启会失败」", async () => {
     // **与 BLOCKED 的唯一差别就是 `fields` / `credentials` 有值**：那正是两档的判据。
-    const REGISTRAR_ONLY = {
-      ...BLOCKED,
-      fields: Object.fromEntries(
-        EDITABLE_FIELDS.filter((f) => !SECRET_FIELDS.includes(f))
-          .map((f) => [f, { stored: null, env: null, effective: null, lockedBy: null }]),
-      ),
-      credentials: Object.fromEntries(
-        SECRET_FIELDS.map((f) => [f, { configured: false, hint: null, lockedBy: null }]),
-      ),
-      configDegraded: false,
-    };
-    const { panel } = await openRegistrarSettings(() => ok(REGISTRAR_ONLY));
+    const { panel } = await openRegistrarSettings(() => ok(registrarOnly(true)));
     const banner = panel.querySelectorAll(".cfg-blocked")[0]!;
     expect(banner.style.display, "注册机没跑起来，面板却什么都没说").not.toBe("none");
     expect(
@@ -976,8 +988,51 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
       "这一档网关照常重启得起来 —— 那句话是吓人，不是真话",
     ).not.toContain("下一次重启");
     expect(banner.textContent, "真话是「转发不受影响」").toContain("转发不受影响");
+    expect(banner.textContent, "开着的时候就该说它开着").toContain("注册机开着");
     // 逐条那一行照旧要说清是哪一格、缺什么（两档共用同一份行渲染）。
     expect(banner.textContent).toContain("API Key");
+  });
+
+  /**
+   * ⚠️⚠️ **第三档：注册机**关着**、但这份配置里仍然有 blocker。**
+   *
+   * 改动前这一档走的是「注册机**开着**，但这份配置装不起来……」那句
+   * ——**面板对着一个关着的开关说它开着**，而同一块面板里注册机板块与概览卡片
+   * 这时都写「已关闭」（两处都先判 `enabled`）⇒ 面板自相矛盾。
+   *
+   * **这一档不是假想，它是刻意保留的**：`src/core/registrar/config.ts` 里
+   * `delay_min_gt_max` 那条 blocker **不受 `enabled` 门控**（它比的是生效值），
+   * 所以 `enabled=false` + `mintDelayMinMs > mintDelayMaxMs` 就能造出来。
+   * `RegistrarConfig.blocked` 的 JSDoc 逐字写着规则：「消费方一律先判 `enabled`
+   * 再判 `blocked`……**关着的注册机该说「未启用」，不是「没跑起来」**」。
+   *
+   * **变红条件**：把 `sec-settings.js` 里那句 `loadBlockedKey(data)` 改回
+   * `isDiagnostic(data) ? "set.loadBlocked.fatal" : "set.loadBlocked.registrar"`。
+   */
+  it("注册机**关着**但仍有 blocker 时：横幅不许说「注册机开着」", async () => {
+    const OFF = {
+      ...registrarOnly(false),
+      // 这条 blocker **不受 `enabled` 门控**，正是这一档在生产里的来路。
+      loadBlocked: [{
+        field: "registrar.mintDelayMinMs",
+        code: "delay_min_gt_max",
+        params: { min: 9000, max: 5000 },
+      }],
+    };
+    const { panel } = await openRegistrarSettings(() => ok(OFF));
+    const banner = panel.querySelectorAll(".cfg-blocked")[0]!;
+    expect(banner.style.display, "有 blocker，面板却什么都没说").not.toBe("none");
+    expect(
+      banner.textContent,
+      "开关是关着的，横幅却说「注册机开着」—— 面板对着一个关着的开关撒谎",
+    ).not.toContain("注册机开着");
+    expect(
+      banner.textContent,
+      "这一档网关照常重启得起来，`fatal` 那句「下一次重启会失败」在这里也是假的",
+    ).not.toContain("下一次重启");
+    // 逐条那一行照旧要说清是哪一格、缺什么（三档共用同一份行渲染）。
+    expect(banner.textContent, "没说清是哪一格").toContain("两次铸 key 的最小间隔");
+    expect(banner.textContent, "没说清缺什么").toContain("最小间隔 9000 不能大于最大间隔 5000");
   });
 
   /**

@@ -1123,6 +1123,8 @@ Caddy는 `header_up CF-Connecting-IP ""`, Traefik은 미들웨어의 `customRequ
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | 아니오 / 채널이 yyds일 때 필수 | `https://maliapi.215.im` / 공백 | YYDS Mail 채널 자격 증명. |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | 채널이 moemail일 때 필수 | 공백 / 공백 | MoeMail 채널 자격 증명(자체 호스팅, 기본 주소 없음). |
 
+#### 이 16개 변수에 잘못된 값을 썼을 때
+
 > [!WARNING]
 > **이 16개 변수에 잘못된 값을 써도 더 이상 컨테이너가 뜨지 못하는 일은 없습니다.**
 > 숫자형(`TARGET_KEYS=abc`, `MINT_BATCH=0` 등)은 **위 표의 기본값으로 폴백**하고,

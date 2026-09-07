@@ -600,6 +600,41 @@ export function isDiagnostic(body) {
 }
 
 /**
+ * 那块「装不起来」横幅该用哪一条文案。**三档，不是两档。**
+ *
+ * ⚠️⚠️ **这个函数是补出来的，别把调用点改回原来那句 `isDiagnostic(data) ? A : B`。**
+ * 原来只有两档，于是「注册机**关着**、但仍然产出了 blocker」这一档会走进
+ * `set.loadBlocked.registrar`，而那句话第一句逐字是「**注册机开着**，但这份配置
+ * 装不起来……」——**面板对着一个关着的开关说它开着**。
+ *
+ * 这一档不是假想，它是**刻意**保留的：`src/core/registrar/config.ts` 里
+ * `delay_min_gt_max` 那条 blocker **不受 `enabled` 门控**（它比的是生效值，
+ * 两个数各自合法、只是搭配不成立）。实跑复现过：存储里
+ * `{"registrar":{"enabled":false,"mintDelayMinMs":9000}}`（默认 max=5000）⇒
+ * `GET /admin/api/config` 回 `fields !== null` + `loadBlocked` 非空 + `enabled.effective=false`。
+ * 同一块面板里注册机板块与概览卡片这时都渲染「已关闭」（两处都先判 `enabled`）
+ * ⇒ **面板自相矛盾**。`RegistrarConfig.blocked` 的 JSDoc 逐字写着这条规则
+ *（「消费方一律先判 `enabled` 再判 `blocked`……关着的注册机该说「未启用」」），
+ * 三个消费方里就这一处没照做。
+ *
+ * ⚠️ **「读不出 `registrar.enabled`」退回哪一档，是想过的**：退回「开着」那句。
+ * 理由不是随便挑的——这块横幅只在 `loadBlocked` 非空时才画，而非诊断态下
+ * `fields` 必然非 null，`registrar.enabled` 又必然在里面
+ *（它是 `FIELD_EXPOSURE` 里的非 secret 格，`split()` 无条件把每一格都放进 `fields`）
+ * ⇒ **这一支在生产里够不着，它只是防御**。真到了那一天，两句里哪一句都可能是假的，
+ * 而「维持改动前的行为」比「换一种新的假话」更容易被查出来。
+ */
+export function loadBlockedKey(body) {
+  if (isDiagnostic(body)) return "set.loadBlocked.fatal";
+  const b = obj(body);
+  const fields = b === null ? null : obj(b.fields);
+  const row = fields === null ? null : obj(fields["registrar.enabled"]);
+  return row !== null && row.effective === false
+    ? "set.loadBlocked.registrarOff"
+    : "set.loadBlocked.registrar";
+}
+
+/**
  * 装载不起来的每一条原因 → 渲染用的行。**判据与 `errorRows()` 是同一份**
  *（同样的 `code` → 同样的文案），两者的区别只在数据从响应体的哪一格来。
  */

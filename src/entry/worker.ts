@@ -145,6 +145,10 @@ export default {
         flush: () => tendStore.flush(),
       });
     } catch (err) {
+      // ⚠️ **够得着这条 catch 的是哪几类，与 Node 那一侧不完全相同**：`src/entry/node.ts`
+      // 同位置那段列了两条（口令被清掉、存储读失败），**Worker 这边还多一档**——
+      // `num()` 的 env 侧非法值。理由是 `scheduled()` 与 `fetch()` 是两个独立的 isolate
+      // 生命周期，这里根本没跑过 `buildApp`，也就没有「启动时就退出」那道前置筛子。
       console.error("[registrar] 装配补池依赖失败", err);
       return;
     }

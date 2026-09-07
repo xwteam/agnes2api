@@ -126,8 +126,20 @@ export async function main(env: Record<string, string | undefined> = process.env
           flush: () => tendStore.flush(),
         });
       } catch (err) {
-        // 装配失败（例如注册机配置被改成非法值）只记日志：转发能力与补池能力
-        // 相互独立，不该因为补池装配失败而让整个网关进程停摆。
+        // 装配失败只记日志：转发能力与补池能力相互独立，不该因为补池装配失败
+        // 而让整个网关进程停摆。
+        //
+        // ⚠️ **括号里原来举的例子（「注册机配置被改成非法值」）在本轮之后成了假话，
+        // 已删。** `buildTendDeps` 现在走 `loadConfigWithProvenance`，注册机配置非法
+        // 这一族**再也不会抛**：要么字段级降级，要么产 blocker 走 gate 早退（返回
+        // `null`，走的是下面那句 `if (!deps) return`，根本不是这条 catch）。
+        // 今天在 Node 上还够得着这条 catch 的只剩两条，**都不是「配置被改成非法值」**：
+        // ① 面板把存储里的 `gatewayToken` 清掉、而环境变量里也没有 ⇒ `ConfigRefusal`；
+        // ② 这一次存储读失败 ⇒ 原样抛（`buildTendDeps` 不传 `degradeOnUnreadable`，
+        //    那个降级只给冷启动那条路）。
+        // `num()` 的 env 侧非法值这一档在**这里**够不着：env 在运行中不变，
+        // 而同一份 env 已经在上面 `buildApp` 那一步过了一遍，不合格的话进程早就
+        // `process.exit(1)` 了（本文件末尾那个 `main().catch`）。
         console.error("[registrar] 装配补池依赖失败", err);
         return;
       }

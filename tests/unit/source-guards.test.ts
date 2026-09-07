@@ -6,6 +6,8 @@ import {
   stripComments, blankComments, stripCssComments, stripHtmlComments, FAIL_KINDS,
 } from "../helpers/strip-comments.js";
 import { declarations, isColorProp, visibleNonColorDecls } from "../helpers/css-decls.js";
+// 大写区间的**唯一真源**（拼出来的，理由见 `declaredEnvNames()` 上方那段）。
+import { UPPER } from "../helpers/internal-ref-placeholders.js";
 
 /**
  * 源码层门禁：**两条硬约束的自动化部分**。
@@ -339,6 +341,219 @@ describe("硬约束：src/core/registrar 模块级零 throw", () => {
 
   it("注释里的 throw 不算数——这个仓库的注释极其爱复述代码", () => {
     expect(throwOwners("// 这里以前 throw new Error()\n/* 也不再 throw */\nexport const x = 1;")).toEqual([]);
+  });
+});
+
+// ── ①之三 运维配错形状的 throw 一律是 ConfigRefusal ──────────────────────────
+
+/**
+ * **凡是「消息里点名了某个环境变量」的 `throw`，一律得是 `ConfigRefusal`。**
+ *
+ * 这条门禁的来历是一次评审打脸，形态与本文件开头那次一模一样：
+ * `src/entry/worker.ts` 的 catch 靠 `err instanceof ConfigRefusal` 把「运维配错」
+ *（`503` + `reason:"not_configured"`）与「代码 bug」（不透明 `500`）分成两档。
+ * 那一轮把 `resolveUsageFlushInterval()` 的**第一处** throw 换成了 `ConfigRefusal`，
+ * **同一个函数里的第二处原样留着裸 `Error`**——而 `src/http/wire.ts` 无条件调它、
+ * Worker 的 `quotaModel === "kv"` ⇒ `wrangler.toml [vars]` 里一句
+ * `USAGE_FLUSH_INTERVAL_MS=300000` 就走得到，且它是纯运维笔误。
+ * 于是运维得到的是「网关内部错误」的 500，被支去查一份根本没问题的代码。
+ *
+ * **漏的那一处当时写在两份自述里都说已经改完了**——
+ * `tests/unit/entry-worker.test.ts`「非 ConfigRefusal 的装配异常仍然回不透明的 500（那是代码 bug，不是运维配错）」
+ * 那格的注释、以及 `CHANGELOG.md` 的 Changed 段——一格判据都没红，因为当时
+ * 「都改完了」这件事**只写在注释里，没有任何机器守着**。这一格就是那个机器。
+ *
+ * ── 为什么判据是「消息里点名了环境变量」，而不是「扫 `buildApp` 的调用树」 ────
+ * 后者是评审给的建议，落地时**换了个更钉得住的射程**，理由具体：
+ * ① `buildApp` 的传递闭包几乎等于整个 `src/`（协议适配、上游派发、邮箱适配都在里面），
+ *    而那些模块的 `throw` **本来就该是裸 `Error`**（它们跑在请求期 / 补池期，
+ *    根本不经过入口那两档 catch）⇒ 豁免清单会被它们淹掉，一份被淹掉的清单没人看；
+ * ② 「调用树」要靠静态跟 import 现算，一次 `await import()` 或一处间接调用就漏，
+ *    而漏了不会有任何信号——那正是本文件反复裁过的「越界宣称」形态；
+ * ③ 真正要拦的那一类有一个**比调用树更硬的外形**：一条运维配错的消息，
+ *    为了有用，几乎必然把变量名写进去（今天 5 处全都写了，一处例外都没有）。
+ *
+ * 代价是**明写的**：消息里不点名环境变量的运维配错抛点，这一格抓不住
+ *（见 `OPS_THROW_BLIND_SPOTS` 的第一条，那是断言不是散文）。
+ */
+
+/**
+ * `.env.example` 里声明过的环境变量名（`# NAME=` 的注释形态同样算声明）。
+ *
+ * ⚠️ **大写区间必须从 `UPPER` 拼出来，不许原样写成字面量**：本文件在
+ * `tests/unit/source-internal-refs.test.ts` 那条源码轴的射程里，而那一族认的正是
+ * 「字母 + 连字号 + 字母」这个形状。实跑验过：写成字面量时那边的逐份点名当场红，
+ * 在本文件上涨一处、点着这一行 —— **连这段注释里都不许把它拼全**（第一版这段
+ * 注释把那两个字母原样写进去举例，于是同一格再红一次，位置换成了注释这一行）。
+ */
+function declaredEnvNames(): readonly string[] {
+  const decl = new RegExp(`^#?[ \\t]*([${UPPER}][${UPPER}0-9_]*)=`);
+  return readFileSync(".env.example", "utf8").split("\n")
+    .flatMap((l) => {
+      const m = decl.exec(l);
+      return m === null ? [] : [m[1]!];
+    });
+}
+
+/**
+ * 抠出每一处 `throw new Ident(…)` 的**类名 + 实参原文**。
+ *
+ * ⚠️ **它是个只认引号的迷你词法器，不是 TS 解析器。** 从 `(` 起做括号配平，
+ * 配平时跳过 `"` / `'` / 反引号 三种串（含 `\` 转义）。模板串连同里面的 `${…}`
+ * 一起被当作串内文本跳过——对**配平**而言这是对的，实跑验过
+ *（`` `…${f("(")}` `` 这种写法抠得完整无误，见 `OPS_THROW_COVERED`）。
+ * **它不认正则字面量**，那是这道扫描今天唯一的失步来源，登记在
+ * `OPS_THROW_BLIND_SPOTS` 里（两个方向各一条探针，两条的症状还不一样）。
+ *
+ * ⚠️ **配不平就当场抛**，不静静返回半截实参——半截实参会让下面那条判据
+ * 悄悄漏掉一处抛点，而这一格存在的全部理由就是治「悄悄漏掉一处」。
+ */
+function throwSites(src: string): ReadonlyArray<{ cls: string; args: string }> {
+  const code = blankComments(src);
+  const out: Array<{ cls: string; args: string }> = [];
+  for (const m of code.matchAll(/(?<![.\w])throw\s+new\s+(\w+)\s*\(/g)) {
+    const open = m.index + m[0].length - 1;
+    let depth = 0;
+    let quote: string | null = null;
+    let i = open;
+    for (; i < code.length; i++) {
+      const c = code[i]!;
+      if (quote !== null) {
+        if (c === "\\") { i++; continue; }
+        if (c === quote) quote = null;
+        continue;
+      }
+      if (c === "\"" || c === "'" || c === "`") { quote = c; continue; }
+      if (c === "(") depth++;
+      else if (c === ")") { depth--; if (depth === 0) break; }
+    }
+    if (depth !== 0) {
+      throw new Error(`抠不出 \`throw new ${m[1]}(\` 的实参（括号没配平）—— 扫描器已经失步，别信它的结果`);
+    }
+    out.push({ cls: m[1]!, args: code.slice(open + 1, i) });
+  }
+  return out;
+}
+
+/** 这段实参**点名了环境变量**吗（⇒ 它描述的是一次运维配错，不是代码 bug）。 */
+function namesEnvVar(args: string, names: readonly string[]): boolean {
+  if (args.includes("环境变量")) return true;
+  return names.some((n) => new RegExp(`(?<![\\w])${n}(?![\\w])`).test(args));
+}
+
+/**
+ * **`src/ui/assets.generated.ts` 必须排除**：它把整个 `admin-ui/` 逐字节编码成字符串
+ * 字面量，里面的 `throw new …` 是**面板源码的文本**，不是这份 TS 会执行的语句。
+ * 不排除的话这一格会去审面板的 JS，而面板根本不经过入口那两档 catch。
+ */
+const OPS_THROW_SKIP: readonly string[] = ["src/ui/assets.generated.ts"];
+
+/**
+ * **手写的期望值：今天全部「运维配错形状」的抛点，逐处一行。**
+ *
+ * 绝不从被测对象 grep 出来再回填（本项目登记在案的第 6 种假阳性形态）。
+ * 清单变长 = 有人新加了一处运维配错抛点，**评审必须显式看见它，并确认它是
+ * `ConfigRefusal`**；清单变短 = 有人删了一处 fail-closed，同样要被看见。
+ *
+ * 六处的来历（同一个文件出现两次就写两行，行内不写行号——行号会漂）：
+ * · `src/core/config.ts` × 1：`configFromEnv` 那句「缺 `GATEWAY_TOKEN` 就抛」；
+ * · `src/core/config-provenance.ts` × 2：`num()` 的 env 侧非法值、以及带溯源那份
+ *   装载器里同一句「缺 `GATEWAY_TOKEN` 就抛」；
+ * · `src/http/apikey-holder.ts` × 1：`APIKEY_CACHE_TTL_MS` 非法；
+ * · `src/http/usage-sink.ts` × 2：`USAGE_FLUSH_INTERVAL_MS` 非整数、以及**有写配额
+ *   时间隔太小**那一处——**第二处正是这一格的来历**，它曾经是裸 `Error`。
+ */
+const OPS_THROW_SITES: readonly string[] = [
+  "src/core/config-provenance.ts :: ConfigRefusal",
+  "src/core/config-provenance.ts :: ConfigRefusal",
+  "src/core/config.ts :: ConfigRefusal",
+  "src/http/apikey-holder.ts :: ConfigRefusal",
+  "src/http/usage-sink.ts :: ConfigRefusal",
+  "src/http/usage-sink.ts :: ConfigRefusal",
+];
+
+/** 这道扫描声称覆盖的写法，每一条都有探针钉着。 */
+const OPS_THROW_COVERED: ReadonlyArray<{ probe: string; cls: string; ops: boolean }> = [
+  { probe: "throw new Error(\"环境变量 FOO_BAR 必须是整数\");", cls: "Error", ops: true },
+  { probe: "if (!t) throw new ConfigRefusal(\"缺少 GATEWAY_TOKEN，网关无法启动\");", cls: "ConfigRefusal", ops: true },
+  {
+    // 跨行 + 模板串 + 插值 + 串里带半角括号：漏掉这一族就等于漏掉本仓那处真实的抛点。
+    probe: "throw new Error(\n  `环境变量 USAGE_FLUSH_INTERVAL_MS=${raw} 不行：`\n"
+      + "  + `间隔 × (${N} − 1) 必须 >= 一天。`,\n);",
+    cls: "Error", ops: true,
+  },
+  { probe: "throw new Error(`媒体端点目录里没有 ${id}`);", cls: "Error", ops: false },
+];
+
+/** 这道扫描抓不住的写法，同样每一条都有探针钉着。写成断言，不写成散文。 */
+const OPS_THROW_BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
+  {
+    probe: "throw new Error(\"这个部署还没配完，先照 DEPLOY.md 改一遍再来\");",
+    why: "运维配错、但消息里一个环境变量名都没点：这一格判不出它是配错还是代码 bug。**这是接受的代价**——一条不点名变量的配错消息对运维本来就没用，评审该先驳回那条文案",
+  },
+  {
+    probe: "const e = new Error(\"环境变量 GATEWAY_TOKEN 有问题\");\nthrow e;",
+    why: "先建对象再 `throw` 变量：`throw new X(` 的形状对不上，扫不到。刻意绕开这一档留给代码评审，与本文件其余几道 grep 门禁同一条线",
+  },
+  {
+    // 实跑抠出来的实参是 `f(/\)/`——`环境变量` 那半句被截掉了 ⇒ 这处被判成「没点名环境变量」。
+    probe: "throw new Error(f(/\\)/) + \"环境变量 GATEWAY_TOKEN 没了\");",
+    why: "实参里出现**正则字面量**、且里面有个反斜杠转义的 `)`：迷你词法器不认正则，那个 `)` 被当成收口 ⇒ 实参被截断、这一处**静静漏掉**。这是本扫描今天最危险的一条边界，接受它的理由是本仓的抛错实参里从来没出现过正则（六处全是字符串拼接）",
+  },
+  {
+    // 同一族的另一半：截断方向反过来时不是漏掉，而是当场失步抛。
+    probe: "throw new Error(re(/\\(/) + \"环境变量 GATEWAY_TOKEN 没了\");",
+    why: "同上，但正则里是个 `(`：配平永远收不了口 ⇒ 扫描器**当场抛「已经失步」**而不是静静漏掉。两条症状不同，所以各钉一条",
+  },
+];
+
+describe("硬约束：运维配错形状的 throw 一律是 ConfigRefusal", () => {
+  it("src/ 下凡是点名了环境变量的 throw，恰好等于手写清单且全是 ConfigRefusal", () => {
+    const names = declaredEnvNames();
+    const hits: string[] = [];
+    for (const p of walkTs("src")) {
+      const rel = p.split("\\").join("/");
+      if (OPS_THROW_SKIP.includes(rel)) continue;
+      for (const s of throwSites(readFileSync(p, "utf8"))) {
+        if (namesEnvVar(s.args, names)) hits.push(`${rel} :: ${s.cls}`);
+      }
+    }
+    expect(
+      hits.sort(),
+      "运维配错形状的抛点变了。**它必须是 `ConfigRefusal`**：`src/entry/worker.ts` 的 catch "
+      + "靠这个类把「运维配错」（503 + reason:\"not_configured\"）与「代码 bug」（不透明 500）分开，"
+      + "留成裸 `Error` 的话，一句 `wrangler.toml [vars]` 里的笔误会得到一个「网关内部错误」，"
+      + "原因只在 `wrangler tail`。新增/删除抛点时连同理由一起改 OPS_THROW_SITES",
+    ).toEqual([...OPS_THROW_SITES]);
+  });
+
+  it("反向自检：清单不许是空的，也不许只剩一处——空清单会让上面那格恒绿", () => {
+    // 上面那格全绿也可能是因为**正则一个都没匹配上**（本仓登记在案的假阳性形态）。
+    expect(OPS_THROW_SITES.length).toBeGreaterThan(1);
+    expect(OPS_THROW_SITES.every((s) => s.endsWith(" :: ConfigRefusal"))).toBe(true);
+  });
+
+  it.each(OPS_THROW_COVERED)("声称覆盖的写法真的抓得住：$cls / ops=$ops", ({ probe, cls, ops }) => {
+    const sites = throwSites(probe);
+    expect(sites.map((s) => s.cls)).toEqual([cls]);
+    expect(namesEnvVar(sites[0]!.args, declaredEnvNames().concat(["FOO_BAR"]))).toBe(ops);
+  });
+
+  it.each(OPS_THROW_BLIND_SPOTS)("已知边界确实如此（边界是断言，不是散文）：$why", ({ probe }) => {
+    // 三条**不是同一种**：前两条扫得到/扫不到但判不成 ops，第三条会让扫描器当场抛。
+    let ops: boolean;
+    try {
+      const sites = throwSites(probe);
+      ops = sites.length > 0 && namesEnvVar(sites[0]!.args, declaredEnvNames());
+    } catch {
+      ops = false; // 「失步就抛」本身就是登记过的处置，见第三条的 why
+    }
+    expect(ops).toBe(false);
+  });
+
+  it("注释里的 throw 不算数——本仓的注释里 `throw new Error(` 出现过不止一次", () => {
+    const probe = "// 这里以前 throw new Error(\"环境变量 GATEWAY_TOKEN 没了\")\nexport const x = 1;";
+    expect(throwSites(probe)).toEqual([]);
   });
 });
 

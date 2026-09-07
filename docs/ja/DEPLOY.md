@@ -1149,6 +1149,8 @@ Caddy は `header_up CF-Connecting-IP ""`、Traefik はミドルウェアの `cu
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | いいえ / チャネルが yyds の場合は必須 | `https://maliapi.215.im` / 空 | YYDS Mail チャネルの認証情報。 |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | チャネルが moemail の場合は必須 | 空 / 空 | MoeMail チャネルの認証情報（自己ホスト、デフォルトアドレスなし）。 |
 
+#### これら 16 個の変数に誤った値を書いたとき
+
 > [!WARNING]
 > **これら 16 個の変数に誤った値を書いても、もうコンテナは起動しなくなりません。**
 > 数値系（`TARGET_KEYS=abc`、`MINT_BATCH=0` など）は**上の表のデフォルト値へフォールバック**し、

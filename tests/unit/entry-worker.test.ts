@@ -83,11 +83,20 @@ describe("worker 入口: fail-closed", () => {
    */
   it("非 ConfigRefusal 的装配异常仍然回不透明的 500（那是代码 bug，不是运维配错）", async () => {
     // ⚠️ **夹具必须是一个真正的「代码 bug」，不能拿某个配置错误来充数。**
-    // 逐条对树核实过：`buildApp` 里今天所有会抛的地方**都是运维配错**
-    //（缺 `gatewayToken`、`num()` 的 env 侧、两个 TTL 环境变量），
-    // 而它们已经全部改成 `ConfigRefusal` 了——存储读失败那一支在冷启动上
-    // 走 `degradeOnUnreadable` 降级、压根不抛。⇒ 生产里今天没有一条已知输入
-    // 能走到这一支，所以这里直接把 `buildApp` 换成一个会抛裸 `Error` 的替身，
+    //
+    // ⚠️⚠️ **这段注释被订正过，别把它读回上一版。** 上一版逐字写着「逐条对树核实过：
+    // `buildApp` 里今天所有会抛的地方都是运维配错，而它们已经全部改成 `ConfigRefusal`
+    // 了……生产里今天没有一条已知输入能走到这一支」——**那是假话**：
+    // `resolveUsageFlushInterval()` 在「有写配额」那一侧还留着**第二处**裸 `throw new Error(`，
+    // 而 `src/http/wire.ts` 无条件调它、Worker 的 `quotaModel === "kv"` ⇒ 一句
+    // `USAGE_FLUSH_INTERVAL_MS=300000` 就走得到这一支，且它是纯运维配错。
+    // 那一处已在评审回填里换成 `ConfigRefusal`。
+    //
+    // ⇒ **今天这句话只敢说到这里**：`buildApp` 路径上**已知**的抛点都是运维配错、
+    // 都已是 `ConfigRefusal`，而「有没有第 N 处漏网」不由这段注释担保——
+    // 由 `tests/unit/source-guards.test.ts`「src/ 下凡是点名了环境变量的 throw，恰好等于手写清单且全是 ConfigRefusal」
+    // 那一格担保（上一版正是因为把这件事写在注释里而没有机器守着，才让第二处漏了整整一轮）。
+    // 所以这里直接把 `buildApp` 换成一个会抛裸 `Error` 的替身，
     // 钉的是**分流本身**（`instanceof` 那一句被删掉时这一格红）。
     vi.resetModules();
     vi.doMock("../../src/http/wire.js", async (importOriginal) => {

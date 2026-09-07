@@ -241,7 +241,15 @@ export function resolveUsageFlushInterval(
   }
   if (hasWriteQuota && n * (USAGE_WRITES_PER_DAY - 1) < USAGE_DAY_MS) {
     const min = Math.ceil(USAGE_DAY_MS / (USAGE_WRITES_PER_DAY - 1));
-    throw new Error(
+    // **同上一支：`ConfigRefusal` 而不是裸 `Error`**（评审回填）。这一支比上一支更
+    // 该分对档：它**只在 Worker 上够得着**（`hasWriteQuota` 由 `runtime.quotaModel === "kv"`
+    // 接线，Node 恒为 `"file"`），而 Worker 正是「装配抛错 ⇒ 每个请求不透明 500、
+    // 原因只在 `wrangler tail`」那个失败形态的发生地。留成裸 `Error` 的话，
+    // `wrangler.toml [vars]` 里一句 `USAGE_FLUSH_INTERVAL_MS=300000`——一个纯粹的
+    // 运维笔误、不是代码 bug——照样落进 500 那一档，把运维支去查代码。
+    // **message 一个字都没改**：`tests/contract/usage-tier2.test.ts` 断的是消息里的
+    // 最小可用值，换类不换话。
+    throw new ConfigRefusal(
       `环境变量 USAGE_FLUSH_INTERVAL_MS=${raw} 在这种存储形态下会让一天中的大部分时间没有用量数据：`
       + `每个实例每天只有 ${USAGE_WRITES_PER_DAY} 次写配额，间隔 × (${USAGE_WRITES_PER_DAY} − 1) 必须 >= 一天。`
       + `最小可用值是 ${min}。`

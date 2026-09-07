@@ -47,7 +47,7 @@ import {
   CARD_AUTH, CARD_UPSTREAM, CARD_REGISTRAR, ADVANCED_FIELDS, MASTER_KEY_PATH, masterKeyView,
   channelFields, fieldLabelKey, fieldView, credentialView,
   buildPatch, localErrors, changedFields, changedSecrets, propagationView,
-  errorRows, clearResultView, displayValue, clearWarning, isDiagnostic, loadBlockedRows,
+  errorRows, clearResultView, displayValue, clearWarning, isDiagnostic, loadBlockedRows, loadBlockedKey,
   isSaveReceipt, touchesLiveField, touchesBuildTimeField,
   // 第 4 张卡（危险区）。**取值决策一律在纯函数里**，见本文件纪律 ②。
   DANGER_ACTIONS, resetWarnings, poolSizeOf, purgeConfirmed, purgeResultView, isPoolSizeChanged,
@@ -470,11 +470,13 @@ function render() {
     h.blocked.textContent = "";
     h.blocked.style.display = blocked.length === 0 ? "none" : "";
     if (blocked.length > 0) {
-      // ⚠️⚠️ **两档文案，按 `isDiagnostic()` 选，不许合成一条。**
+      // ⚠️⚠️ **三档文案，选键的逻辑住在 `loadBlockedKey()` 里，不许在这里写三元。**
       // `set.loadBlocked.fatal` 那句写着「下一次重启 / isolate 回收会失败」——
       // 那**只对整份配置装不起来的那一档成立**。注册机装不起来时网关照常跑、
       // 照常重启得起来，拿那句话去吓人是把「面板不撒谎」换个地方违反一次。
-      h.blocked.appendChild(elI18n("p", isDiagnostic(data) ? "set.loadBlocked.fatal" : "set.loadBlocked.registrar"));
+      // 第三档（**注册机关着但仍然有 blocker**）是评审回填补的：原来那句
+      // `isDiagnostic(data) ? … : …` 会让它走进「注册机开着」那条文案。
+      h.blocked.appendChild(elI18n("p", loadBlockedKey(data)));
       for (const r of blocked) {
         const label = nodes.fields[r.field] === undefined ? r.field : t(fieldLabelKey(r.field));
         // 表外的码**原样显示出来**，不冒充任何一档已知原因。
