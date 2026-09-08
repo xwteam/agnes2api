@@ -224,7 +224,7 @@ export default {
             fields: { error: err instanceof Error ? err.message : String(err) },
           });
           await deps.recordCrashedRound({
-            at: roundStartedAt, channel: deps.config.primary ?? "",
+            at: roundStartedAt, channel: deps.config.channel ?? "",
             durationMs: Date.now() - roundStartedAt, trigger: "cron",
           });
         } finally {

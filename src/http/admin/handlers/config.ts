@@ -170,6 +170,16 @@ export interface ConfigSnapshot {
    *   只对这一档成立）。
    */
   loadBlocked: readonly ConfigError[];
+  /**
+   * **不拦人、但必须说出来的那几句话**（`ConfigProvenance.registrarNotices`）。
+   *
+   * 与 `loadBlocked` 平行的一格，处置完全不同：那一格的意思是「有东西挡着」，
+   * 这一格恰恰配着「一切照常跑，只是有句话得告诉你」。今天只有一族：存量存储 /
+   * 环境变量里那两个旧的主备键还在，本次是怎么读它们的、丢掉了什么。
+   *
+   * 装载失败那一支恒为空数组：那时连生效配置都没有，谈不上「照常跑」。
+   */
+  loadNotices: readonly ConfigError[];
 }
 
 /**
@@ -204,6 +214,7 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
       prov, ...split(prov.source),
       configDegraded: prov.config.degraded,
       loadBlocked: prov.registrarBlocked,
+      loadNotices: prov.registrarNotices,
     };
   } catch (err) {
     /**
@@ -252,7 +263,10 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
         wiring.env, frozenConfig(stored, wiring.storage), logger,
       );
       // 瞬时抖动：这一份构造得出来，照常返回，不给假的诊断视图。
-      return { prov, ...split(prov.source), configDegraded: prov.config.degraded, loadBlocked: [] };
+      return {
+        prov, ...split(prov.source), configDegraded: prov.config.degraded,
+        loadBlocked: [], loadNotices: prov.registrarNotices,
+      };
     } catch {
       const blockers = configLoadBlockers(stored ?? {}, wiring.env);
       // 具体原因（`posInt` 那类）只进事件板块，**不进响应体**。
@@ -273,6 +287,7 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
       return {
         prov: null, fields: null, credentials: null, configDegraded: true,
         loadBlocked: blockers.length > 0 ? blockers : [{ field: "", code: "config_unloadable" as const }],
+        loadNotices: [],
       };
     }
   }
@@ -335,6 +350,14 @@ export function configGetHandler(deps: ConfigDeps) {
        * **而不是一份编出来的空配置**，并且**表单仍然可编辑**（那是唯一的出路）。
        */
       loadBlocked: [...snap.loadBlocked],
+      /**
+       * **不拦人的常驻提示**（空数组 = 没什么要说的）。面板渲染成设置页顶部的横幅。
+       *
+       * ⚠️ **它刻意走这条零写的 GET，不走事件板块**：装载器每 30 秒刷一次，做成事件
+       * 会在运维来查问题的那一刻把诊断从 100 格的事件环里挤出去；而且补池每轮都装载
+       * 一次，那会让「健康的一轮零事件零写」变成每轮一次 put，写配额账要跟着改。
+       */
+      loadNotices: [...snap.loadNotices],
       /** 面板能改的字段清单。**从后端给**，前端不另写一份（写两份必漂）。 */
       editable: [...EDITABLE_FIELDS],
       /** 哪几条路径是凭据。前端据此渲染「留空则不修改」的占位符与清空按钮。 */
@@ -450,6 +473,11 @@ export function configPutHandler(deps: ConfigDeps) {
       credentials: after.credentials,
       configDegraded: after.configDegraded,
       loadBlocked: [...after.loadBlocked],
+      /**
+       * **回读出来的常驻提示。** 保存会顺手把存量的旧主备键规整掉，所以这一格通常会
+       * 在保存之后变空——面板据此把横幅撤掉，不必等下一次刷新。
+       */
+      loadNotices: [...after.loadNotices],
       changed,
       credentialsChanged,
       /**

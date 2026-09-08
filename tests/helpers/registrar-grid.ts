@@ -13,13 +13,20 @@ import type { RegistrarConfig } from "../../src/core/registrar/config.js";
  * 三处各写一张的话，「等价」就只在各自那张网格上成立，而漂移恰恰发生在没人共用的
  * 那几格上。
  *
- * ── 为什么是三张子网格拼起来，而不是一个全叉乘 ──────────────────────────────
+ * ── 为什么是四张子网格拼起来，而不是一个全叉乘 ──────────────────────────────
  * 全叉乘（通道 × 凭据 × 七个数值字段 × 两侧 × 六个取值）是十万级，跑不动也读不懂。
- * 三张子网格各自把**一件事**叉满，其余维度钉死在一个已知合法的底座上：
+ * 四张子网格各自把**一件事**叉满，其余维度钉死在一个已知合法的底座上：
  * ① 通道那张：`enabled` × 两侧 × 五种通道取值 × 凭据有无；
- * ② 数值那张：三个代表性数值字段 × 两侧 × 六种取值；
- * ③ 延迟对那张：`min` × `max` 六 × 六，两种「一边 env 一边存储」的摆法。
+ * ② 存量旧键那张：`enabled` × 两侧 × 旧主通道五种 × 旧备通道五种 × 凭据有无；
+ * ③ 数值那张：三个代表性数值字段 × 两侧 × 六种取值；
+ * ④ 延迟对那张：`min` × `max` 六 × 六，两种「一边 env 一边存储」的摆法。
  * **这是网格不是穷举**，射程写在这里，别读成「等价性被证明了」。
+ *
+ * ⚠️ **② 是两条通道改成二选一那一轮加的，它不是凑数。** 通道那张从「主 × 备」两维
+ * 叉乘收成一维之后，规模从 200 组掉到 40 组 —— 而少掉的那 160 组恰恰是**存量部署
+ * 手上那份配置的形状**（`{"registrar":{"primary":…,"fallback":…}}`）。把那一维
+ * 直接删掉 = 兼容读那条路径上一组对抗性输入都没有，而它正是这次改动里最容易
+ * 静默出错的一段。⇒ 那一维搬进 ②，喂的是旧键。
  */
 
 export type EnvMap = Record<string, string | undefined>;
@@ -54,6 +61,36 @@ function channelGrid(): GridCase[] {
   const out: GridCase[] = [];
   for (const enabled of [true, false]) {
     for (const side of ["env", "stored"] as const) {
+      for (const c of CHANNEL_VALUES) {
+        for (const creds of [true, false]) {
+          const env: EnvMap = {};
+          const stored: Partial<RegistrarConfig> = creds ? { ...FULL_CREDS } : {};
+          if (enabled) env.REGISTRAR_ENABLED = "true";
+          else stored.enabled = false;
+          if (side === "env") put(env, "REGISTRAR_CHANNEL", c);
+          else if (c !== undefined) stored.channel = c as RegistrarConfig["channel"];
+          out.push({
+            name: `通道/${enabled ? "开" : "关"}/${side}/channel=${String(c)}/creds=${creds}`,
+            env, stored,
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * ② 存量旧键那张：`enabled` × 两侧 × 旧主通道五种 × 旧备通道五种 × 凭据有无。
+ *
+ * 喂的是**升级前那份配置的形状**：env 侧是 `REGISTRAR_PRIMARY` / `REGISTRAR_FALLBACK`
+ * 两个旧变量名，存储侧是 `registrar.primary` / `registrar.fallback` 两个旧键。
+ * 新名字一个都不给 —— 这一张就是要把「兼容读」那条路径叉满。
+ */
+function legacyGrid(): GridCase[] {
+  const out: GridCase[] = [];
+  for (const enabled of [true, false]) {
+    for (const side of ["env", "stored"] as const) {
       for (const p of CHANNEL_VALUES) {
         for (const f of CHANNEL_VALUES) {
           for (const creds of [true, false]) {
@@ -65,11 +102,13 @@ function channelGrid(): GridCase[] {
               put(env, "REGISTRAR_PRIMARY", p);
               put(env, "REGISTRAR_FALLBACK", f);
             } else {
-              if (p !== undefined) stored.primary = p as RegistrarConfig["primary"];
-              if (f !== undefined) stored.fallback = f as RegistrarConfig["fallback"];
+              // 旧键已经不在 `RegistrarConfig` 上了，所以这里要绕过类型 —— 而这正是
+              // 存量存储里真实存在的形状。
+              if (p !== undefined) (stored as Record<string, unknown>).primary = p;
+              if (f !== undefined) (stored as Record<string, unknown>).fallback = f;
             }
             out.push({
-              name: `通道/${enabled ? "开" : "关"}/${side}/primary=${String(p)}/fallback=${String(f)}/creds=${creds}`,
+              name: `存量旧键/${enabled ? "开" : "关"}/${side}/primary=${String(p)}/fallback=${String(f)}/creds=${creds}`,
               env, stored,
             });
           }
@@ -80,7 +119,7 @@ function channelGrid(): GridCase[] {
   return out;
 }
 
-/** ② 数值那张：三个代表性字段 × 两侧 × 六种取值，底座是一份跑得起来的配置。 */
+/** ③ 数值那张：三个代表性字段 × 两侧 × 六种取值，底座是一份跑得起来的配置。 */
 function numberGrid(): GridCase[] {
   const fields = [
     { envName: "TARGET_KEYS", stored: "targetKeys" },
@@ -91,7 +130,7 @@ function numberGrid(): GridCase[] {
   for (const f of fields) {
     for (const side of ["env", "stored"] as const) {
       for (const v of NUM_VALUES) {
-        const env: EnvMap = { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds" };
+        const env: EnvMap = { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds" };
         const stored: Partial<RegistrarConfig> = { ...FULL_CREDS };
         if (side === "env") env[f.envName] = String(v);
         else (stored as Record<string, unknown>)[f.stored] = v;
@@ -102,7 +141,7 @@ function numberGrid(): GridCase[] {
   return out;
 }
 
-/** ③ 延迟对那张：`min` × `max`，两种「一边 env 一边存储」的摆法。 */
+/** ④ 延迟对那张：`min` × `max`，两种「一边 env 一边存储」的摆法。 */
 function delayGrid(): GridCase[] {
   const out: GridCase[] = [];
   for (const minOnEnv of [true, false]) {
@@ -125,5 +164,5 @@ function delayGrid(): GridCase[] {
 }
 
 export function registrarGrid(): GridCase[] {
-  return [...channelGrid(), ...numberGrid(), ...delayGrid()];
+  return [...channelGrid(), ...legacyGrid(), ...numberGrid(), ...delayGrid()];
 }

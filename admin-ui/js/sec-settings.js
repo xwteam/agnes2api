@@ -48,6 +48,7 @@ import {
   channelFields, fieldLabelKey, fieldView, credentialView,
   buildPatch, localErrors, changedFields, changedSecrets, propagationView,
   errorRows, clearResultView, displayValue, clearWarning, isDiagnostic, loadBlockedRows, loadBlockedKey,
+  loadNoticeRows,
   isSaveReceipt, touchesLiveField, touchesBuildTimeField,
   // 第 4 张卡（危险区）。**取值决策一律在纯函数里**，见本文件纪律 ②。
   DANGER_ACTIONS, resetWarnings, poolSizeOf, purgeConfirmed, purgeResultView, isPoolSizeChanged,
@@ -152,7 +153,15 @@ function buildField(path, secret) {
   return { wrap, input, meta, lock, clear, path, secret };
 }
 
-/** 主/备通道的下拉。**初始是占位符，两条通道都不预选**（设计 §10.3 第 1 条）。 */
+/**
+ * 通道下拉。**初始是占位符，两条通道都不预选**（设计 §10.3 第 1 条）。
+ *
+ * **控件仍是 `<select>`，刻意不改成 radio**：换成 radio 要在 `addField`/`fieldView`
+ * 开一条新分支 + 新 DOM + 逐项 disabled 回填 + 重写全部摸 select 的用例，
+ * 还要吃体积预算，而收益只是「更像单选」。占位符「未选择」在二选一里更是必须的
+ *（未选 = 注册机不跑）。选项顺序仍取 `CHANNELS`（字母序）—— 字母序在这里额外还
+ * 一笔账：它让「第一个 = 主」这个读法从一开始就不成立。
+ */
 function buildChannelSelect(path) {
   const wrap = el("div", { class: "cfg-field", "data-field": path });
   wrap.appendChild(elI18n("label", fieldLabelKey(path), { class: "cfg-label" }));
@@ -222,7 +231,14 @@ function card(titleKey) {
  * 面板可能先进注册机板块的「设置」分页，那时设置板块还没 `init()` 过。
  */
 function ensureNodes() {
-  if (nodes === null) nodes = { fields: {}, hosts: [], examples: null, dangerResult: null, master: null };
+  if (nodes === null) {
+    nodes = {
+      fields: {}, hosts: [], examples: null, dangerResult: null, master: null,
+      // 两张通道凭据子卡上那一行「本次使用 / 未使用」。**按通道名存**，
+      // 因为它是逐通道渲染的，而不是逐字段。
+      channelUse: {},
+    };
+  }
 }
 
 /**
@@ -236,7 +252,18 @@ function addHost(container, saveBtn) {
   degraded.style.display = "none";
   container.appendChild(degraded);
 
-  const host = { save: saveBtn, degraded, blocked: null, errors: null, readback: null, propagation: null, propagationBuildTime: null };
+  /**
+   * **不拦人的常驻提示**（存量的主备旧键怎么读的、丢了什么）。
+   *
+   * ⚠️ **它在顶上、和「装不起来」那块分开**：那块是红的、说的是「有东西挡着」，
+   * 这块说的是「一切照常跑，只是有句话得告诉你」。两句混在同一块里，运维会把
+   * 一条不拦人的提示读成一次故障。
+   */
+  const notices = el("div", { class: "cfg-notices muted note" });
+  notices.style.display = "none";
+  container.appendChild(notices);
+
+  const host = { save: saveBtn, degraded, notices, blocked: null, errors: null, readback: null, propagation: null, propagationBuildTime: null };
   nodes.hosts.push(host);
   return host;
 }
@@ -397,6 +424,23 @@ function renderMaster() {
   );
 }
 
+/**
+ * 两张通道凭据子卡顶上那一行：**这一条本次用不用得到。**
+ *
+ * 判据是**生效值**（`fieldView(...).effective`），不是表单里正在编辑的值：
+ * 这一行说的是「网关现在按哪条通道在跑」，而不是「你正打算改成哪条」。
+ * 两条通道都读不出来时两张卡都显示「未使用」——那时注册机多半整个关着，
+ * 而「关着时两张卡都说未配置」是本轮如实登记、刻意不修的一处既有缺口。
+ */
+function renderChannelUse() {
+  const current = fieldView(data, "registrar.channel").effective;
+  for (const channel of Object.keys(nodes.channelUse)) {
+    nodes.channelUse[channel].textContent = t(
+      current === channel ? "reg.channel.inUse" : "reg.channel.idle",
+    );
+  }
+}
+
 function render() {
   // 渲染之后表单里的值就是服务端的当前状态，之前那些「动过」的痕迹全部作废。
   touched = new Set();
@@ -458,9 +502,19 @@ function render() {
   const degraded = data !== null && data.configDegraded === true;
   // 装载不起来时：一条横幅 + 逐条列出缺什么。**表单仍然可编辑**（见 renderOne）。
   const blocked = loadBlockedRows(data);
+  const notices = loadNoticeRows(data);
+
+  renderChannelUse();
 
   // **逐个宿主画一遍**，理由与 `showErrors()` 上方那段相同。
   for (const h of nodes.hosts) {
+    h.notices.textContent = "";
+    h.notices.style.display = notices.length === 0 ? "none" : "";
+    for (const r of notices) {
+      // 表外的码**原样显示出来**，不冒充任何一档已知原因（与下面那块同一条纪律）。
+      const text = r.key === null ? t("set.err.unknown", { code: r.code }) : t(r.key, r.params);
+      h.notices.appendChild(el("p", null, text));
+    }
     h.propagation.textContent = showLive
       ? t("set.propagation", { bound: fmtDuration(p.visibilityUpperBoundMs) })
       : "";
@@ -997,19 +1051,32 @@ function buildRegistrarCard(body) {
   for (const path of CARD_REGISTRAR) {
     const kind = path === "registrar.enabled"
       ? "toggle"
-      : ((path === "registrar.primary" || path === "registrar.fallback") ? "select" : "text");
+      : (path === "registrar.channel" ? "select" : "text");
     addField(knobs, path, kind);
   }
   body.appendChild(knobs);
 
   // 卡级的整句说明留在网格外面（与设置页那两句同一条规矩）：它说的是整张卡。
-  body.appendChild(elI18n("p", "reg.emptyPrimary", { class: "muted note" }));
+  body.appendChild(elI18n("p", "reg.emptyChannel", { class: "muted note" }));
   const channelRow = el("div", { class: "card-row" });
   // **顺序取自 `CHANNELS`**（字母序），两张子卡由同一段代码建出来 ⇒
   // 「完全对称」在结构上就是不可表达的例外（设计 §10.3 第 2 条）。
   for (const channel of CHANNELS) {
     const sub = el("div", { class: "card channel-card", "data-channel": channel });
     sub.appendChild(elI18n("div", channelLabelKey(channel), { class: "label channel-name" }));
+    /**
+     * **「本次使用 / 未使用」这一行是「必须两个都配」那个体感的真正解药。**
+     *
+     * 那个体感的成因**不是** `primary` / `fallback` 这对字段名（面板上早就有「未选择」
+     * 这一项），而是这里对两条通道**无条件**渲染两张凭据子卡、四个输入框永远在等着
+     * 被填，旁边却没有一句话说「这条本次没用到」。
+     *
+     * ⚠️ **两张子卡都保留，不许砍成一张**：砍掉一张就等于把「平级」变成「有个正牌、
+     * 有个备胎」，反而更糟；两卡同构是结构性保证。
+     */
+    const inUse = el("p", { class: "muted note channel-inuse" });
+    sub.appendChild(inUse);
+    nodes.channelUse[channel] = inUse;
     // **两张子卡各自一个网格**，而不是共用一个：共用会让两条通道的字段在同一行里
     // 交错排（第 2 条「完全对称」在屏幕上就没了）。这一步对两条通道逐字相同。
     const subGrid = el("div", { class: "cfg-grid" });

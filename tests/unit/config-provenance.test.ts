@@ -205,7 +205,7 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
     ]);
   });
 
-  it("四元组的键集合就是 FIELD_EXPOSURE 走出来的全部叶子（手写的 29 条）", async () => {
+  it("四元组的键集合就是 FIELD_EXPOSURE 走出来的全部叶子（手写的 28 条）", async () => {
     const { storage, env } = await withStored(undefined, { GATEWAY_TOKEN: "gw-token-for-provenance" });
     const { source } = await loadConfigWithProvenance(env, storage);
     const paths = Object.keys(source).sort();
@@ -217,10 +217,11 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
       // 「注册机开着却没动静」是因为哪几格，标量进这里、逐条理由在
       // `ConfigProvenance.registrarBlocked`（数组进不来，见下面那格已知盲点）。
       "registrar.blocked",
+      "registrar.channel",
       "registrar.codeTimeoutMs", "registrar.enabled",
-      "registrar.fallback", "registrar.maxDomainAttempts", "registrar.mintBatch",
+      "registrar.maxDomainAttempts", "registrar.mintBatch",
       "registrar.mintDelayMaxMs", "registrar.mintDelayMinMs", "registrar.moemail.apiKey",
-      "registrar.moemail.baseUrl", "registrar.primary", "registrar.targetKeys",
+      "registrar.moemail.baseUrl", "registrar.targetKeys",
       "registrar.tendIntervalMs", "registrar.tokenName", "registrar.yyds.apiKey",
       "registrar.yyds.baseUrl", "upstreamSyncTimeoutMs", "upstreamTimeoutMs",
       // **它是四元组里第一条「面板读得到、却改不了」的公开字段**
@@ -229,7 +230,7 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
       // 三格摆在一起，答案是「环境变量没设」还是「存储里写了 false」一眼可分。
       "usageStatsEnabled",
     ]);
-    expect(paths.length, "29 这个数是手写的：加字段必须在评审里被看见").toBe(29);
+    expect(paths.length, "28 这个数是手写的：加字段必须在评审里被看见").toBe(28);
   });
 
   /**
@@ -299,17 +300,20 @@ describe("FIELD_EXPOSURE 是「哪些字段是凭据」的唯一真源", () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * ⚠️⚠️ **判据必须是「四种配置的并集」，不能是一次调用。**
+ * ⚠️⚠️ **判据必须是「关 / 开两种配置的并集」，不能是一次调用。**
  *
- * `creds()`（`src/core/registrar/config.ts` 的「启用时才校验凭据」那一段）读
- * 4 个 env 名字，而它**只在 `enabled === true` 且该通道在链上时才被调**，并且
- * **缺凭据时会抛**。一次调用最多摸到 12 个名字 ⇒ 断言写成「实际读到 ⊆ 锁定表」时，
- * **未走到的分支上新增的读取点静默逃逸**。
+ * `creds()`（`src/core/registrar/config.ts` 里那一段）读 4 个 env 名字，而它
+ * **只在 `enabled === true` 时才被调**。一次「关」的调用最多摸到 13 个名字 ⇒
+ * 断言写成「实际读到 ⊆ 锁定表」时，**未走到的分支上新增的读取点静默逃逸**。
  *
- * ⇒ 四种配置（关 / 开×yyds 主 / 开×moemail 主 / 开×双通道）各跑一次 Proxy 追踪，
- * **抛错的那次也要把已访问的名字收下**，断言并集恰好等于下面那张手写清单。
- * **变红条件**：① 给 `registrarFromEnv` 或 `creds()` 任一分支加一个新读取点而不进
- * 锁定表；② 把矩阵砍成一种配置（则 `creds()` 那 4 个名字漏出）。
+ * ⚠️⚠️ **矩阵从四种塌成两种，口径跟着变了，别照旧读。** 上一版是
+ *「关 / 开×yyds 主 / 开×moemail 主 / 开×双通道」四种，理由是 `creds()`
+ * 只对**链上通道**解析 ⇒ 要凑齐那 4 个凭据变量必须走「双通道」那一格。
+ * 两条通道改成二选一之后 `creds()` **对两条通道都解析**（未选中那条只是不产
+ * blocker）⇒ **「开×任意一条通道」自己就是全集**，第三、四格再也问不出新东西。
+ * ⇒ 收成两种。**变红条件**：① 给 `registrarFromEnv` 或 `creds()` 任一分支加一个
+ * 新读取点而不进锁定表；② 把矩阵砍成只剩「关」（则 `creds()` 那 4 个名字漏出，
+ * 由下面那条反向自检当场点名）。
  */
 describe("registrarFromEnv 读到的 env 名字，全部进了锁定表", () => {
   /** 用 Proxy 记下一次 `registrarFromEnv` 摸过哪些 env 键。**抛错也要把已访问的收下。** */
@@ -336,22 +340,8 @@ describe("registrarFromEnv 读到的 env 名字，全部进了锁定表", () => 
   const MATRIX: ReadonlyArray<{ name: string; env: Record<string, string | undefined> }> = [
     { name: "关", env: {} },
     {
-      name: "开 × yyds 主",
-      env: { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" },
-    },
-    {
-      name: "开 × moemail 主",
-      env: {
-        REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "moemail",
-        MOEMAIL_BASE_URL: "https://m.example.com", MOEMAIL_API_KEY: "k",
-      },
-    },
-    {
-      name: "开 × 双通道",
-      env: {
-        REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "moemail",
-        YYDS_API_KEY: "k", MOEMAIL_BASE_URL: "https://m.example.com", MOEMAIL_API_KEY: "k",
-      },
+      name: "开 × yyds",
+      env: { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k" },
     },
   ];
 
@@ -362,11 +352,11 @@ describe("registrarFromEnv 读到的 env 名字，全部进了锁定表", () => 
   const EXPECTED_ENV_NAMES = [
     "AGNES_PLATFORM_URL", "CODE_TIMEOUT_MS", "MAX_DOMAIN_ATTEMPTS", "MINT_BATCH",
     "MINT_DELAY_MAX_MS", "MINT_DELAY_MIN_MS", "MOEMAIL_API_KEY", "MOEMAIL_BASE_URL",
-    "REGISTRAR_ENABLED", "REGISTRAR_FALLBACK", "REGISTRAR_PRIMARY", "REGISTRAR_TOKEN_NAME",
-    "TARGET_KEYS", "TEND_INTERVAL_MS", "YYDS_API_KEY", "YYDS_BASE_URL",
+    "REGISTRAR_CHANNEL", "REGISTRAR_ENABLED", "REGISTRAR_FALLBACK", "REGISTRAR_PRIMARY",
+    "REGISTRAR_TOKEN_NAME", "TARGET_KEYS", "TEND_INTERVAL_MS", "YYDS_API_KEY", "YYDS_BASE_URL",
   ] as const;
 
-  it("四种配置的并集恰好是手写的这 16 个名字", () => {
+  it("两种配置的并集恰好是手写的这 17 个名字", () => {
     const union = new Set<string>();
     for (const cell of MATRIX) for (const n of tracked(cell.env)) union.add(n);
     expect([...union].sort()).toEqual([...EXPECTED_ENV_NAMES].sort());
@@ -378,9 +368,9 @@ describe("registrarFromEnv 读到的 env 名字，全部进了锁定表", () => 
    * 不写这一格的话，「把矩阵砍成一种配置」这条变异**不会红**——上面那条会跟着
    * 少 4 个名字一起被改绿。这一格把「为什么必须是并集」钉成一条会变红的断言。
    */
-  it("单跑「关」这一种配置只摸得到 12 个 —— creds() 那 4 个会静默逃逸", () => {
+  it("单跑「关」这一种配置只摸得到 13 个 —— creds() 那 4 个会静默逃逸", () => {
     const only = tracked({}).sort();
-    expect(only.length).toBe(12);
+    expect(only.length).toBe(13);
     for (const leaked of ["YYDS_API_KEY", "YYDS_BASE_URL", "MOEMAIL_API_KEY", "MOEMAIL_BASE_URL"]) {
       expect(only, `${leaked} 在「关」这一支上本来就摸不到`).not.toContain(leaked);
     }
@@ -391,17 +381,64 @@ describe("registrarFromEnv 读到的 env 名字，全部进了锁定表", () => 
    * **判据走 `envLockedFields`**（那是面板真正消费的那个函数），不是去读私有的
    * `ENV_LOCK_MAP`——后者是实现细节，前者是契约。
    */
-  it("这 16 个名字每一个都能让 envLockedFields 报出一条锁定字段", () => {
-    const missing = EXPECTED_ENV_NAMES.filter((n) => envLockedFields({ [n]: "x" }).length === 0);
+  /**
+   * ⚠️ **`REGISTRAR_FALLBACK` 是这条断言唯一的例外，理由必须写清楚。**
+   * 它仍然被 `registrarFromEnv` 读一次（为了产出一条「这条通道被丢掉了」的提示），
+   * 但它**不再锁任何字段** —— 留在锁定表里就是让面板对一个已经不存在的字段声称
+   * 「被环境变量锁定」。**「被读到」与「锁定了某个字段」是两件事**，这一格从这一轮
+   * 起要把它们分开。它的去处登记在 `tests/unit/env-example-parity.test.ts`
+   * 的已弃用变量表里。
+   */
+  const NOT_LOCKING = ["REGISTRAR_FALLBACK"] as const;
+
+  it("这 17 个名字里，除了那个已弃用的，每一个都能让 envLockedFields 报出一条锁定字段", () => {
+    const missing = EXPECTED_ENV_NAMES
+      .filter((n) => !(NOT_LOCKING as readonly string[]).includes(n))
+      .filter((n) => envLockedFields({ [n]: "x" }).length === 0);
     expect(
       missing,
       "这些环境变量会被 registrarFromEnv 读到、却不在锁定表里 ⇒ 面板会把一个"
       + "「改了也不生效」的字段显示成可以改，而那正是设计 §5.3 开头点名的最高频形态",
     ).toEqual([]);
+    // 反向：已弃用那个**真的**不锁任何字段（写错方向的话上面那条会被它悄悄喂饱）。
+    for (const n of NOT_LOCKING) {
+      expect(envLockedFields({ [n]: "x" }), `${n} 还在锁定表里`).toEqual([]);
+    }
   });
 
   /**
-   * 锁定表的完整清单（11 个网关 + 16 个注册机）。**手写，加字段必须在评审里被看见。**
+   * **同一个字段路径挂着两个 env 名字时，面板必须报出「运维那边实际存在的那个」。**
+   *
+   * 逆表从前是 `Object.fromEntries(...)`：两个名字映到同一路径时后写的赢，于是一台
+   * 设了旧名字的部署会被告知「是新名字锁的」，运维去 compose 里 grep 什么都搜不到。
+   * 既有门禁只对账「哪些字段被锁」、**不对账「被哪个名字锁」**，抓不住它。
+   */
+  it("兼容别名锁定时，四元组里的 lockedBy 报的是运维那边实际存在的那个名字", async () => {
+    const { storage } = await withStored(undefined, { GATEWAY_TOKEN: "gw-token-for-provenance" });
+    const withAlias = await loadConfigWithProvenance(
+      { GATEWAY_TOKEN: "gw-token-for-provenance", REGISTRAR_PRIMARY: "yyds" }, storage,
+    );
+    expect(withAlias.source["registrar.channel"]?.lockedBy).toBe("env:REGISTRAR_PRIMARY");
+    const withNew = await loadConfigWithProvenance(
+      { GATEWAY_TOKEN: "gw-token-for-provenance", REGISTRAR_CHANNEL: "yyds" }, storage,
+    );
+    expect(withNew.source["registrar.channel"]?.lockedBy).toBe("env:REGISTRAR_CHANNEL");
+    // 两个都设时报正式名（它才是真正生效的那一级）。
+    const both = await loadConfigWithProvenance(
+      {
+        GATEWAY_TOKEN: "gw-token-for-provenance",
+        REGISTRAR_CHANNEL: "yyds", REGISTRAR_PRIMARY: "moemail",
+      }, storage,
+    );
+    expect(both.source["registrar.channel"]?.lockedBy).toBe("env:REGISTRAR_CHANNEL");
+  });
+
+  /**
+   * 锁定表的完整清单（11 个网关 + 15 个注册机字段路径）。**手写，加字段必须在评审里被看见。**
+   *
+   * ⚠️ **路径数比 env 名字数少一个**：`REGISTRAR_CHANNEL` 与它的兼容别名
+   * `REGISTRAR_PRIMARY` 映到同一条路径（`envLockedFields` 去重），而
+   * `REGISTRAR_FALLBACK` 一条路径都不锁。
    *
    * ⚠️ **`USAGE_STATS_ENABLED` 是后来加的第 27 条，它与前 26 条有一处不同：
    * 那个字段今天不在 `EDITABLE` 里（设置页没有它的入口）。** 进这张表的理由因此
@@ -410,7 +447,7 @@ describe("registrarFromEnv 读到的 env 名字，全部进了锁定表", () => 
    *（`stored: true` / `env: null` / `effective: false`）。全文见
    * `GatewayConfig.usageStatsEnabled` 与 `ENV_LOCK_MAP` 里那一行的说明。
    */
-  it("锁定表恰好是这 27 条字段路径", () => {
+  it("锁定表恰好是这 26 条字段路径", () => {
     const all = envLockedFields(Object.fromEntries([
       "GATEWAY_TOKEN", "AGNES_BASE_URL", "UPSTREAM_TIMEOUT_MS", "UPSTREAM_SYNC_TIMEOUT_MS",
       "MAX_STRIKES", "COOLDOWN_RATE_LIMIT_MS", "COOLDOWN_PAYMENT_MS", "COOLDOWN_STRIKE_MS",
@@ -420,10 +457,11 @@ describe("registrarFromEnv 读到的 env 名字，全部进了锁定表", () => 
     expect(all).toEqual([
       "agnesBaseUrl", "cooldownPaymentMs", "cooldownRateLimitMs", "cooldownStrikeMs",
       "gatewayToken", "maxStrikes", "poolCacheTtlMs", "poolTouchIntervalMs",
-      "registrar.agnesPlatformUrl", "registrar.codeTimeoutMs", "registrar.enabled",
-      "registrar.fallback", "registrar.maxDomainAttempts", "registrar.mintBatch",
+      "registrar.agnesPlatformUrl", "registrar.channel", "registrar.codeTimeoutMs",
+      "registrar.enabled",
+      "registrar.maxDomainAttempts", "registrar.mintBatch",
       "registrar.mintDelayMaxMs", "registrar.mintDelayMinMs", "registrar.moemail.apiKey",
-      "registrar.moemail.baseUrl", "registrar.primary", "registrar.targetKeys",
+      "registrar.moemail.baseUrl", "registrar.targetKeys",
       "registrar.tendIntervalMs", "registrar.tokenName", "registrar.yyds.apiKey",
       "registrar.yyds.baseUrl", "upstreamSyncTimeoutMs", "upstreamTimeoutMs",
       "usageStatsEnabled",

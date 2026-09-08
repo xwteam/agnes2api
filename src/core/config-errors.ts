@@ -61,13 +61,30 @@ export const CONFIG_ERROR_CODES = [
   "too_long",
   "not_a_url",
   "not_a_channel",
-  /** 注册机开着却没选主通道（装载器产出同名 blocker，注册机本次不启动）。 */
-  "primary_required",
-  /** 备通道等于主通道。**只在 `enabled` 为真时成立**，前端拦截必须同源。 */
-  "fallback_equals_primary",
+  /** 注册机开着却没选通道（装载器产出同名 blocker，注册机本次不启动）。 */
+  "channel_required",
   "delay_min_gt_max",
-  /** 注册机开着、这条通道在链上，却没有凭据（装载器产出同名 blocker）。 */
+  /** 注册机开着、这条通道被选中，却没有凭据（装载器产出同名 blocker）。 */
   "channel_credentials_missing",
+  /**
+   * ── 下面三条不是错误，是**不拦人的通知**（`RegistrarLoad.notices`）──────────
+   *
+   * ⚠️ **它们进这张表，是因为面板选文案走的是同一条路**（`errorMessageKey()`），
+   * 而这张表是「每个码都有五语言文案」那格判据的遍历源。**不许因此把它们当 blocker
+   * 用**：blocker 的意思是「注册机本次不启动」，这三条恰恰配着「注册机照常跑」。
+   */
+  /** 本次生效的通道值来自旧的存储键 `registrar.primary`（保存一次就会被规整掉）。 */
+  "legacy_channel_key",
+  /** 本次生效的通道值来自旧的环境变量名 `REGISTRAR_PRIMARY`（长期兼容，不设期限）。 */
+  "legacy_channel_env",
+  /**
+   * 旧的备通道键还在，但它**不再参与选路**，被丢掉了。`params.dropped` 是那条通道名。
+   *
+   * ⚠️ **文案必须点名到具体通道，并且必须说清最咬人的那个场景**：一台部署的主通道
+   * 凭据早已失效、一直靠备通道在铸 key，升级后产出会归零，而面板每一格都显示
+   * 「已配置」。文案一旦写软成「备通道已弃用」，这就变成一次静默的生产事故。
+   */
+  "legacy_fallback_ignored",
   /** 两边都没有网关口令 ⇒ 冷启动会 fail-closed（`loadConfigWithProvenance` 抛 `ConfigRefusal`）。 */
   "gateway_token_required",
   /** 凭据首尾带空白：HTTP 头值在传输层被 trim，客户端**永远送不出**这个值。 */

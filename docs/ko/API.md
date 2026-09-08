@@ -587,8 +587,7 @@ curl http://localhost:8080/admin/api/overview \
   },
   "config": {
     "registrarEnabled": true,
-    "primary": "moemail",
-    "fallback": "yyds",
+    "channel": "moemail",
     "targetKeys": 20,
     "envLocked": ["gatewayToken"],
     "degraded": false
@@ -1127,6 +1126,7 @@ curl http://localhost:8080/admin/api/config \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
+  "loadNotices": [],
   "editable": ["upstreamTimeoutMs"],
   "secrets": ["gatewayToken"],
   "resetBlocked": [],
@@ -1161,6 +1161,7 @@ curl -X PUT http://localhost:8080/admin/api/config \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
+  "loadNotices": [],
   "changed": ["upstreamTimeoutMs"],
   "credentialsChanged": [],
   "appliedAt": 1735689600000,
@@ -1273,7 +1274,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 | 파라미터 | 타입 | 필수 | 설명 |
 |--------|----|----|----|
-| `channel` | string | 아니오 | `moemail` 또는 `yyds`만; 빼면 설정의 주/대체 채널 사슬을 따릅니다. |
+| `channel` | string | 아니오 | `moemail` 또는 `yyds`만; 빼면 설정에서 선택한 채널을 사용합니다. |
 
 **요청**:
 
@@ -1321,11 +1322,10 @@ curl http://localhost:8080/admin/api/registrar/status \
 {
   "serverTime": 1735689600000,
   "enabled": true,
-  "primary": "moemail",
-  "fallback": "yyds",
+  "channel": "moemail",
   "channels": {
-    "moemail": { "configured": true, "role": "primary" },
-    "yyds": { "configured": true, "role": "fallback" }
+    "moemail": { "configured": true, "selected": true },
+    "yyds": { "configured": true, "selected": false }
   },
   "pool": { "target": 20, "counted": 3, "gap": 17, "fresh": 2, "mintBatch": 5 },
   "lockedUntil": null,

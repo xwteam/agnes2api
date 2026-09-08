@@ -117,11 +117,11 @@ describe("注册机日志事件（文档对外承诺 [registrar] 前缀 + 稳定
 
   it("config 忽略脏通道值时记 registrar.config_ignored，且 source 区分 env 与 stored", () => {
     const a = recordingLogger();
-    registrarFromEnv({ REGISTRAR_PRIMARY: "typo-here" }, {}, a);
+    registrarFromEnv({ REGISTRAR_CHANNEL: "typo-here" }, {}, a);
     expect(a.entries.find((x) => x.event === "registrar.config_ignored")?.fields?.source).toBe("env");
 
     const b = recordingLogger();
-    registrarFromEnv({}, { primary: "garbage" as never }, b);
+    registrarFromEnv({}, { channel: "garbage" as never }, b);
     expect(b.entries.find((x) => x.event === "registrar.config_ignored")?.fields?.source).toBe("stored");
   });
 });

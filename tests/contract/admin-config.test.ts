@@ -213,7 +213,7 @@ describe("凭据只写不读（设计 §8.6）", () => {
 
   it("secrets/clear 只认三条凭据路径，别的一律 400", async () => {
     const { app } = await realApp();
-    for (const path of ["maxStrikes", "registrar.primary", "nope", ""]) {
+    for (const path of ["maxStrikes", "registrar.channel", "nope", ""]) {
       const res = await app.request("/admin/api/config/secrets/clear", {
         method: "POST",
         headers: { ...withKey, "content-type": "application/json" },
@@ -246,7 +246,7 @@ describe("FIELD_EXPOSURE 双向哨兵：标 secret 的不许出现，标 public 
   function sentinels(): { stored: Record<string, unknown>; expect: Map<string, unknown> } {
     const ref = configFromEnv({
       GATEWAY_TOKEN: "x", REGISTRAR_ENABLED: "true",
-      REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "moemail",
+      REGISTRAR_CHANNEL: "yyds",
       YYDS_API_KEY: "k", MOEMAIL_BASE_URL: "https://m.example.com", MOEMAIL_API_KEY: "k",
     }) as unknown as Record<string, unknown>;
     const typeAt = (path: string[]): string => {
@@ -280,7 +280,7 @@ describe("FIELD_EXPOSURE 双向哨兵：标 secret 的不许出现，标 public 
     return { stored, expect: wanted };
   }
 
-  it("29 个叶子逐个种哨兵：3 个 secret 一个都不许出现，26 个 public 一个都不许少", async () => {
+  it("28 个叶子逐个种哨兵：3 个 secret 一个都不许出现，25 个 public 一个都不许少", async () => {
     const { stored, expect: wanted } = sentinels();
     // 口令走存储（env 里没有 GATEWAY_TOKEN），于是 `gatewayToken` 那个哨兵是真的在用的那把。
     const { app } = await realApp({ env: {}, stored });
@@ -308,7 +308,9 @@ describe("FIELD_EXPOSURE 双向哨兵：标 secret 的不许出现，标 public 
     expect(secrets, "凭据格数变了").toBe(3);
     // 后来把 24 抬到 25（新增 `usageStatsEnabled`，公开、不可编辑），
     // 再抬到 26（新增 `registrar.blocked`，公开、不可编辑、是**装载的产物**）。
-    expect(publics, "公开字段格数变了").toBe(26);
+    // 两条通道改成二选一之后又回到 25：`registrar.primary` / `registrar.fallback`
+    // 两格合成 `registrar.channel` 一格。
+    expect(publics, "公开字段格数变了").toBe(25);
   });
 });
 
@@ -699,11 +701,11 @@ describe("事件：配置被改过要留痕，但一个值都不许进日志", (
  * ```
  */
 describe("清掉一条在链上的通道凭据", () => {
-  /** 注册机开着、yyds 是主通道、凭据只在存储里 —— 那把 key 一清就装载不起来。 */
+  /** 注册机开着、选中的是 yyds、凭据只在存储里 —— 那把 key 一清就装载不起来。 */
   const ON_CHAIN = {
     gatewayToken: GW,
     registrar: {
-      enabled: true, primary: "yyds",
+      enabled: true, channel: "yyds",
       yyds: { baseUrl: "https://yyds.invalid", apiKey: "on-chain-key-7777" },
     },
   };
@@ -820,7 +822,7 @@ describe("清掉一条在链上的通道凭据", () => {
   it.each([
     ["关掉注册机", { "registrar.enabled": false }],
     ["把那把 key 重新填回去", { "registrar.yyds.apiKey": "refilled-key-8888" }],
-    ["换一条主通道", { "registrar.primary": "moemail", "registrar.moemail.baseUrl": "https://m.invalid", "registrar.moemail.apiKey": "mk-9999" }],
+    ["换一条通道", { "registrar.channel": "moemail", "registrar.moemail.baseUrl": "https://m.invalid", "registrar.moemail.apiKey": "mk-9999" }],
   ])("装载不起来之后，「%s」这条自救路径必须走得通", async (_name, patch) => {
     const { app, storage, env } = await realApp({ env: {}, stored: ON_CHAIN });
     await clear(app, "registrar.yyds.apiKey");
@@ -867,7 +869,8 @@ describe("清掉一条在链上的通道凭据", () => {
     // **开关一个字都不改**：真话是「已启用 · 本次没跑起来」。
     expect((body.fields as Record<string, { effective: unknown }>)["registrar.enabled"]!.effective).toBe(true);
     expect((body.fields as Record<string, { effective: unknown }>)["registrar.blocked"]!.effective).toBe(true);
-    expect(body.editable.length, "连可编辑清单都不给的话，表单没法用").toBe(26);
+    // 26 ⇒ 25：主备两格合成一格。
+    expect(body.editable.length, "连可编辑清单都不给的话，表单没法用").toBe(25);
   });
 
   /**
@@ -1052,7 +1055,7 @@ describe("清掉一条在链上的通道凭据", () => {
   it("配置本来就坏时，改一个无关字段要放行；而新引入 blocker 照旧拒", async () => {
     const BROKEN = {
       gatewayToken: GW,
-      registrar: { enabled: true, primary: "yyds", yyds: { baseUrl: "https://y.invalid" } },
+      registrar: { enabled: true, channel: "yyds", yyds: { baseUrl: "https://y.invalid" } },
     };
     // **先用好配置把 app 建起来，再手工写坏**：坏配置下 `buildApp` 在 `prime()` 就抛，
     // 整个 app 装不出来（那是冷启动那一半，见报告 §6.9，不是这一格要测的东西）。
@@ -1060,11 +1063,11 @@ describe("清掉一条在链上的通道凭据", () => {
     await storage.put("config", BROKEN);
     // ① 无关字段：放行（只修一半）。
     expect((await put(app, { maxStrikes: 7 })).status, "本来就坏的配置连无关字段都改不了").toBe(200);
-    // ② 新引入一条：照旧拒。
-    const bad = await put(app, { "registrar.fallback": "yyds" });
+    // ② 新引入一条：照旧拒。把通道切到一条**一格凭据都没有**的通道上。
+    const bad = await put(app, { "registrar.channel": "moemail" });
     expect(bad.status).toBe(400);
-    expect((await bad.json() as { errors: Array<{ code: string }> }).errors.map((e) => e.code))
-      .toEqual(["fallback_equals_primary"]);
+    expect((await bad.json() as { errors: Array<{ code: string }> }).errors.map((e) => e.code).sort())
+      .toEqual(["channel_credentials_missing", "channel_credentials_missing"]);
   });
 
   /**
@@ -1269,5 +1272,122 @@ describe("两条 config 写端点的单价（五语言 DEPLOY.md 配额账那两
     });
     expect(res.status).toBe(200);
     expect(m(), "干跑校验的代价漂了").toEqual({ puts: 0, gets: 1, deletes: 0 });
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 存量的两个主备旧键：读得出来、说得出来、保存一次就消失
+ * ══════════════════════════════════════════════════════════════════════════ */
+describe("存量主备旧键的迁移（GET 说话、PUT 清理）", () => {
+  /** 升级前那份存储真实长什么样。 */
+  const LEGACY = {
+    gatewayToken: GW,
+    registrar: {
+      enabled: true, primary: "yyds", fallback: "moemail",
+      yyds: { baseUrl: "https://y.invalid", apiKey: "yk" },
+      maxStrikes: undefined,
+    },
+  };
+
+  it("GET：旧键读得出来，而丢掉的那条通道被点名说进 loadNotices（不进 loadBlocked）", async () => {
+    const { app } = await realApp({ env: {}, stored: LEGACY });
+    const body = await (await getConfig(app)).json() as {
+      fields: Record<string, { effective: unknown }>;
+      loadBlocked: unknown[];
+      loadNotices: Array<{ field: string; code: string; params?: Record<string, unknown> }>;
+    };
+    expect(body.fields["registrar.channel"]!.effective, "旧键的值没被兼容读出来").toBe("yyds");
+    expect(body.loadBlocked, "这是通知不是阻断 —— 注册机照常跑").toEqual([]);
+    expect(body.loadNotices.map((n) => n.code).sort())
+      .toEqual(["legacy_channel_key", "legacy_fallback_ignored"]);
+    expect(
+      body.loadNotices.find((n) => n.code === "legacy_fallback_ignored")?.params,
+      "被丢掉的那条通道必须被点名 —— 一台一直靠它铸 key 的部署，升级后产出会归零",
+    ).toEqual({ dropped: "moemail", source: "stored" });
+  });
+
+  /**
+   * **保存任意一次，两个旧键就消失，横幅随之消失。**
+   *
+   * ⚠️ 这是 `validateConfigPatch` 里第一处「不由 patch 驱动的写」，所以两件事都要钉：
+   * 旧键真的没了，**而生效值一个字都没变**（规整不许顺手改掉运维选的通道）。
+   */
+  it("PUT：保存一个无关字段之后，两个旧键真的从存储里没了，而通道值保持原样", async () => {
+    const { app, storage } = await realApp({ env: {}, stored: LEGACY });
+    expect((await put(app, { maxStrikes: 7 })).status).toBe(200);
+    const after = await storage.get<{ registrar: Record<string, unknown> }>("config");
+    expect(Object.keys(after!.registrar), "旧键还赖在存储里 —— 那条横幅永远关不掉")
+      .not.toContain("primary");
+    expect(Object.keys(after!.registrar)).not.toContain("fallback");
+    expect(after!.registrar.channel, "规整顺手改掉了运维选的通道").toBe("yyds");
+    // 回读一次：横幅该没了。
+    const body = await (await getConfig(app)).json() as { loadNotices: unknown[] };
+    expect(body.loadNotices, "旧键清掉了，提示却还在 —— 那条提示就成了永远关不掉的噪声").toEqual([]);
+  });
+
+  /**
+   * **剪枝不许进任何一份「这次改了什么」的清单。**
+   *
+   * ⚠️⚠️ **这一格的落点被实测订正过一次，别照着旧说法读。**
+   * 设计里写的是「剪枝路径进 `changed` ⇒ 设置页那条回执会高亮一个不存在的 DOM 节点、
+   * 把计数撑大」。**那条路走不通**：`PUT` 回执里的 `changed` 是
+   * `changedEffective()`（按四元组的 `effective` 前后比），它的路径全集来自
+   * `FIELD_EXPOSURE`，而那张表里已经没有 `registrar.primary` / `registrar.fallback`
+   * —— 实测把剪枝路径 `push` 进 `validateConfigPatch` 的 `changed` 之后，`PUT` 那一格
+   * **纹丝不动**。
+   *
+   * 真正会漏出去的是另外两处，都用的是 `validateConfigPatch` 那份 `changed`：
+   * · `POST /admin/api/config/validate`（干跑）**原样把它返回给面板**；
+   * · `config.updated` 那条审计事件的 `fields` 逐字是它 `join(",")` 的结果。
+   * 两处都会对运维说他改了一个他没碰、也看不见的字段。
+   * ⚠️ **这里只钉干跑那一处**：审计事件里那一行**就是同一个值**（`verdict.changed`
+   * 的 `join(",")`），干跑这条端点已经把它端到端钉住了；再去事件板块捞一遍只是换个
+   * 姿势读同一个变量，而那条读路径自己还带着事件缓冲的时序，会让这一格变脆。
+   */
+  it("剪枝那两个路径不进「改了什么」的清单（干跑那条端点 + PUT 回执）", async () => {
+    const { app } = await realApp({ env: {}, stored: LEGACY });
+
+    // ① 干跑那条端点返回的就是 `validateConfigPatch` 的 `changed`。
+    const dry = await app.request("/admin/api/config/validate", {
+      method: "POST",
+      headers: { ...withKey, "content-type": "application/json" },
+      body: JSON.stringify({ patch: { maxStrikes: 7 } }),
+    });
+    expect(dry.status).toBe(200);
+    expect(
+      (await dry.json() as { changed: string[] }).changed,
+      "干跑说他改了一个他没碰、也看不见的字段",
+    ).toEqual(["maxStrikes"]);
+
+    // ② PUT 回执（这一格今天走的是另一份判据，一并钉住，别让它哪天被换回来）。
+    const body = await (await put(app, { maxStrikes: 7 })).json() as { changed: string[] };
+    expect(body.changed).toEqual(["maxStrikes"]);
+  });
+
+  /**
+   * **用旧的环境变量名锁住时，面板报的必须是那个名字。**
+   *
+   * 逆表从前是「一个字段只留得下一个 env 名」，两个名字映到同一路径时后写的赢 ⇒
+   * 运维会被告知「是 REGISTRAR_CHANNEL 锁的」，他去 compose 里 grep 什么都搜不到。
+   * 既有门禁只对账「哪些字段被锁」、**不对账「被哪个名字锁」**。
+   */
+  it("兼容别名锁定：lockedBy 与 locked_by_env 报的都是运维那边实际存在的那个名字", async () => {
+    const { app } = await realApp({
+      env: { GATEWAY_TOKEN: GW, REGISTRAR_PRIMARY: "yyds" },
+      stored: { gatewayToken: GW },
+    });
+    const body = await (await getConfig(app)).json() as {
+      fields: Record<string, { lockedBy: string | null }>;
+    };
+    expect(body.fields["registrar.channel"]!.lockedBy).toBe("env:REGISTRAR_PRIMARY");
+
+    const res = await put(app, { "registrar.channel": "moemail" });
+    expect(res.status, "被环境变量锁住的字段必须拒，不许「写下去但不生效」").toBe(400);
+    const err = await res.json() as { errors: Array<{ code: string; params?: { env?: string } }> };
+    expect(err.errors.map((e) => e.code)).toEqual(["locked_by_env"]);
+    expect(
+      err.errors[0]!.params?.env,
+      "报了一个运维那边根本不存在的变量名 —— 他去 compose 里 grep 会一无所获",
+    ).toBe("REGISTRAR_PRIMARY");
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  CHANNELS, channelLabelKey, channelAddressFactKey, channelRoleKey,
+  CHANNELS, channelLabelKey, channelAddressFactKey, channelSelectedKey,
   failureReasonKey, refuseReasonKey, refuseKeyOf,
   statusView, channelCards, poolView, tendCost, manualQuotaView,
   historyRows, historyMalformed, roundOutcome, roundFailures, mintedByChannelText,
@@ -168,7 +168,7 @@ describe("两条通道完全平级（设计 §10.3）", () => {
   });
 
   it("第 3 条的反面：顺序不是从响应体里读的 —— 后端换个键序也不影响面板", () => {
-    const cards = channelCards({ channels: { yyds: { configured: true, role: "primary" }, moemail: { configured: false, role: null } } });
+    const cards = channelCards({ channels: { yyds: { configured: true, selected: true }, moemail: { configured: false, selected: false } } });
     expect(cards.map((c) => c.channel), "顺序跟着响应体的键序跑了").toEqual(["moemail", "yyds"]);
   });
 
@@ -208,17 +208,17 @@ describe("两条通道完全平级（设计 §10.3）", () => {
     }
   });
 
-  it("角色：主 / 备 / 没用到，三档各有一句如实的文案（没用到那档不许留空）", () => {
-    expect(channelRoleKey("primary")).toBe("reg.role.primary");
-    expect(channelRoleKey("fallback")).toBe("reg.role.fallback");
-    expect(channelRoleKey(null)).toBe("reg.role.unused");
-    expect(channelRoleKey("something-else")).toBe("reg.role.unused");
+  it("本次使用 / 未使用：两档各有一句如实的文案（未使用那档不许留空）", () => {
+    expect(channelSelectedKey(true)).toBe("reg.role.inUse");
+    expect(channelSelectedKey(false)).toBe("reg.role.unused");
+    // 读不出来（`null`）时也给一句如实的文案，不留空——空着会让运维以为是没读到。
+    expect(channelSelectedKey(null)).toBe("reg.role.unused");
   });
 
   it("channelCards：读不出来时 configured 是 null 而不是 false —— 「没配」与「没读到」是两句话", () => {
     const cards = channelCards(null);
     expect(cards.map((c) => c.channel)).toEqual(["moemail", "yyds"]);
-    expect(cards.every((c) => c.configured === null && c.role === null)).toBe(true);
+    expect(cards.every((c) => c.configured === null && c.selected === null)).toBe(true);
 
     const broken = channelCards({ channels: { moemail: { configured: "yes" }, yyds: 42 } });
     expect(broken.every((c) => c.configured === null)).toBe(true);
@@ -232,7 +232,7 @@ describe("两条通道完全平级（设计 §10.3）", () => {
 describe("statusView / poolView：逐字段降级，绝不伪造", () => {
   it("整段读不到时逐字段 null", () => {
     expect(statusView(null)).toEqual({
-      enabled: null, blocked: null, primary: null, fallback: null, serverTime: null, lockedUntil: null,
+      enabled: null, blocked: null, channel: null, serverTime: null, lockedUntil: null,
     });
     expect(poolView(null)).toEqual({ target: null, counted: null, gap: null, fresh: null, mintBatch: null });
   });

@@ -31,7 +31,7 @@ interface OverviewBody {
   };
   /** `ConfigHolder.current()` 永不抛，`config` 恒有值，不再是 `... | null`。 */
   config: {
-    registrarEnabled: boolean; primary: string | null; fallback: string | null;
+    registrarEnabled: boolean; channel: string | null;
     targetKeys: number; envLocked: string[]; degraded: boolean;
   };
 }
@@ -123,7 +123,7 @@ describe("GET /admin/api/overview", () => {
    * `ConfigHolder.current()` 读出来，不是恰好蒙对了夹具默认值。
    *
    * 这条防住的真实回归：评审实测原实现在 `BrokenStorage` 下把这几个字段全部硬编码
-   * 断言成夹具常量（`registrarEnabled: false, primary: null, ..., degraded: false`），
+   * 断言成夹具常量（`registrarEnabled: false, channel: null, ..., degraded: false`），
    * 1022 条全绿——第 5 种假阳性，`TEST_CONFIG` 的默认值恰好与「实现有没有真的读
    * `cfg`」这个选择无法区分。这里显式把 `degraded`/`registrar` 都改成与默认值
    * **不同**的值，任何一处偷懒改成硬编码字面量都会在这条上现形。
@@ -132,7 +132,7 @@ describe("GET /admin/api/overview", () => {
     const { app } = await makeApp([], ["k1"], {
       degraded: true,
       registrar: {
-        ...TEST_CONFIG.registrar, enabled: true, primary: "yyds", fallback: null, targetKeys: 7,
+        ...TEST_CONFIG.registrar, enabled: true, channel: "yyds", targetKeys: 7,
         // **与夹具默认值不同**，理由同上：`blocked` 默认 false，不改的话
         // 「概览有没有真的读 cfg.registrar.blocked」这个选择在这一格上不可观测。
         blocked: true,
@@ -140,7 +140,7 @@ describe("GET /admin/api/overview", () => {
     }, () => 1000);
     const body = await getOverview(app);
     expect(body.config).toEqual({
-      registrarEnabled: true, primary: "yyds", fallback: null, targetKeys: 7,
+      registrarEnabled: true, channel: "yyds", targetKeys: 7,
       envLocked: [], degraded: true,
       // 不给这一格的话，概览卡片会照旧声称有一个在工作的注册机 —— 而补池一轮都没跑。
       registrarBlocked: true,

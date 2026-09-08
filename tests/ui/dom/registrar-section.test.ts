@@ -2,6 +2,8 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { bootPanel, settle } from "./harness.js";
 import { KEY_STORE, SAVED_AT_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
+import { LANG_STORE } from "../../../admin-ui/js/pure/storage-keys.mjs";
+import { LANGS } from "../../../admin-ui/js/i18n.js";
 import { I18N } from "../../../admin-ui/js/i18n-dict.js";
 import type { FakeElement } from "../../helpers/fake-dom.js";
 import { stripComments, stripCssComments } from "../../helpers/strip-comments.js";
@@ -36,11 +38,11 @@ function statusBody(over: Record<string, unknown> = {}) {
     enabled: true,
     // 装载的产物：默认「装得起来」，要测第三态的用例显式覆盖它。
     blocked: false,
-    primary: "yyds",
+    channel: "yyds",
     fallback: "moemail",
     channels: {
-      moemail: { configured: true, role: "fallback" },
-      yyds: { configured: true, role: "primary" },
+      moemail: { configured: true, selected: false },
+      yyds: { configured: true, selected: true },
     },
     pool: { target: 20, counted: 18, gap: 2, fresh: 15, mintBatch: 5 },
     lockedUntil: null,
@@ -88,7 +90,7 @@ function byI18n(root: FakeElement, key: string): FakeElement | undefined {
 
 /** 空状态那一行。**它的可见性靠 `style.display`，`textContent` 问不出来。** */
 function emptyPrimaryNode(section: FakeElement): FakeElement {
-  const node = section.querySelectorAll("p").find((p) => p.getAttribute("data-i18n") === "reg.emptyPrimary");
+  const node = section.querySelectorAll("p").find((p) => p.getAttribute("data-i18n") === "reg.emptyChannel");
   if (!node) throw new Error("找不到空状态那一行");
   return node;
 }
@@ -193,8 +195,8 @@ describe("设计 §10.3 第 2、3 条：两张通道卡", () => {
   it("后端把 channels 的键序换过来也不影响面板上的先后", async () => {
     const h = await openRegistrar(() => ok(statusBody({
       channels: {
-        yyds: { configured: true, role: "primary" },
-        moemail: { configured: true, role: "fallback" },
+        yyds: { configured: true, selected: true },
+        moemail: { configured: true, selected: false },
       },
     })));
     const panel = tabPanel(h.section("registrar"), "status");
@@ -204,11 +206,11 @@ describe("设计 §10.3 第 2、3 条：两张通道卡", () => {
 
   it("两条通道的角色与凭据状态各归各的 —— 备通道不许被显示成主通道", async () => {
     const h = await openRegistrar(() => ok(statusBody({
-      primary: "yyds", fallback: null,
-      channels: { moemail: { configured: false, role: null }, yyds: { configured: true, role: "primary" } },
+      channel: "yyds",
+      channels: { moemail: { configured: false, selected: false }, yyds: { configured: true, selected: true } },
     })));
     const section = h.section("registrar");
-    expect(channelCard(section, "yyds").textContent).toContain(I18N["reg.role.primary"]!["zh-CN"]!);
+    expect(channelCard(section, "yyds").textContent).toContain(I18N["reg.role.inUse"]!["zh-CN"]!);
     expect(channelCard(section, "moemail").textContent).toContain(I18N["reg.role.unused"]!["zh-CN"]!);
     expect(channelCard(section, "moemail").textContent).toContain(I18N["reg.channel.credsNo"]!["zh-CN"]!);
     expect(channelCard(section, "yyds").textContent).toContain(I18N["reg.channel.credsYes"]!["zh-CN"]!);
@@ -523,11 +525,11 @@ describe("名额与冷却", () => {
 describe("设计 §10.3 第 8 条：空状态文案", () => {
   it("注册机开着却没有主通道：说「两条通道平级，请选择一条」，不是「未选择时使用 X」", async () => {
     const h = await openRegistrar(() => ok(statusBody({
-      primary: null, fallback: null,
-      channels: { moemail: { configured: false, role: null }, yyds: { configured: false, role: null } },
+      channel: null,
+      channels: { moemail: { configured: false, selected: false }, yyds: { configured: false, selected: false } },
     })));
     const section = h.section("registrar");
-    expect(section.textContent).toContain(I18N["reg.emptyPrimary"]!["zh-CN"]!);
+    expect(section.textContent).toContain(I18N["reg.emptyChannel"]!["zh-CN"]!);
     expect(emptyPrimaryNode(section).style.display, "那句话在 DOM 里但被藏起来了").not.toBe("none");
   });
 
@@ -538,7 +540,7 @@ describe("设计 §10.3 第 8 条：空状态文案", () => {
    * 是量具用错了地方——第一版就是这么写的，那一格在两种取值下都红。
    */
   it("注册机整个关着时**不**显示那句空状态 —— 那时该说的是「已关闭」", async () => {
-    const h = await openRegistrar(() => ok(statusBody({ enabled: false, primary: null, fallback: null })));
+    const h = await openRegistrar(() => ok(statusBody({ enabled: false, channel: null })));
     const section = h.section("registrar");
     expect(section.textContent).toContain(I18N["reg.state.off"]!["zh-CN"]!);
     expect(
@@ -741,7 +743,7 @@ describe("Key 池「添加 Key」菜单：【自动注册】两项接上了注�
       now: NOW,
       store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000) },
       respond: (url) => (url.startsWith("/admin/api/registrar/status")
-        ? ok(statusBody({ channels: { moemail: { configured: false, role: null }, yyds: { configured: true, role: "primary" } } }))
+        ? ok(statusBody({ channels: { moemail: { configured: false, selected: false }, yyds: { configured: true, selected: true } } }))
         : ok({ items: [], total: 0, page: 1, pages: 1, size: 20, counts: {}, approximate: true, generatedAt: NOW })),
     });
     await settle();
@@ -934,7 +936,7 @@ describe("注册机的配置卡在「设置」分页里，设置页不再有第�
 
     const settings = fieldsOf(tabPanel(section, "settings"));
     // 手写几条一定要在的路径，不从 `CARD_REGISTRAR` 推导（从被测对象推导出来的期望值恒成立）。
-    for (const path of ["registrar.enabled", "registrar.primary", "registrar.targetKeys",
+    for (const path of ["registrar.enabled", "registrar.channel", "registrar.targetKeys",
       "registrar.moemail.apiKey", "registrar.yyds.apiKey", "registrar.agnesPlatformUrl"]) {
       expect(settings, `${path} 不在注册机的「设置」分页上`).toContain(path);
     }
@@ -969,5 +971,128 @@ describe("注册机的配置卡在「设置」分页里，设置页不再有第�
     await settle();
     expect(cfgCalls(), "切到设置页却没有拉配置 —— 那一页会是空的").toBe(1);
     expect(statusCalls(), "切到设置页还顺手又拉了一次 status").toBe(statusBefore);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 两条通道是二选一：**屏幕上说不出「主 / 备」这套词**
+ *
+ * ⚠️ **判据钉的是「面板上出现了哪些字」，不是「某个 key 还在不在」。**
+ * 只查 key 的话，把旧文案原样搬到新 key 上照样全绿；只查一种语言的话，
+ * 另外四种语言里留下的「主チャネル」「대체 채널」没有任何东西看得见。
+ * ⚠️ **也不与 `scripts/check-i18n.mjs` 的偏好词门禁重叠**：那张表管的是
+ * 「不许推荐某一条通道」，这一格管的是「不许出现排名词」。
+ * ══════════════════════════════════════════════════════════════════════════ */
+describe("面板上说不出主 / 备（两条通道二选一）", () => {
+  /** 排名词，逐语言。**不含单独的「フォールバック」**——那个词在别处正当地描述别的回落。 */
+  const RANK_WORDS = [
+    "主通道", "备用通道", "備用通道", "备通道", "備通道",
+    "Primary channel", "Fallback channel", "primary channel", "fallback channel",
+    "主チャネル", "フォールバックチャネル", "予備チャネル",
+    "주 채널", "대체 채널", "보조 채널",
+  ];
+
+  /** 注册机板块的两页（运行状态 + 设置）整棵 DOM 的文本。 */
+  async function registrarText(lang: string): Promise<string> {
+    const h = await bootPanel({
+      now: NOW,
+      store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000), [LANG_STORE]: lang },
+      respond: defaultRespond(),
+    });
+    await settle();
+    h.dom.document.querySelectorAll(".nav-item")
+      .find((b) => b.getAttribute("data-section") === "registrar")!
+      .click();
+    await settle();
+    const section = h.section("registrar");
+    const runningTab = section.textContent;
+    const tab = section.walk().find((n) => n.getAttribute("id") === "reg-tab-settings");
+    if (!tab) throw new Error("找不到「设置」那颗 TAB —— 分页结构变了，先回来看抠法");
+    tab.click();
+    await settle(12);
+    return `${runningTab}\n${section.textContent}`;
+  }
+
+  it.each(LANGS)("%s：注册机板块两页的整棵 DOM 里一个排名词都没有", async (lang: string) => {
+    const text = await registrarText(lang);
+    // 非空锚：渲染失败时下面那条 `toEqual([])` 只会更绿。
+    expect(text.length, `${lang} 这一页渲染出来是空的 —— 这一格测的是空气`).toBeGreaterThan(200);
+    expect(
+      RANK_WORDS.filter((w) => text.includes(w)),
+      `${lang} 的注册机板块上出现了排名词 —— 两条通道是二选一，屏幕上不该有「主 / 备」这套说法。`
+      + "把下拉藏起来（display:none）也不算数：文字仍然在 textContent 里",
+    ).toEqual([]);
+  });
+
+  /**
+   * **通道字段恰好一格，而两张凭据子卡都在、状态互斥。**
+   *
+   * 前半截钉「界面上不许有第二个通道下拉」（屏幕上只要有两个，无论叫什么，读者都会把
+   * 上面那个读成主）；后半截钉「不许砍成一张卡」——砍掉一张就等于把「平级」变成
+   * 「有个正牌、有个备胎」，反而更糟。
+   */
+  it("设置页：通道字段恰好一格，两张凭据子卡都在且「本次使用 / 未使用」互斥", async () => {
+    const h = await bootPanel({
+      now: NOW,
+      store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000) },
+      respond: (url: string) => (url.startsWith("/admin/api/config")
+        ? ok({
+          fields: {
+            "registrar.enabled": { stored: true, env: null, effective: true, lockedBy: null },
+            "registrar.channel": { stored: "yyds", env: null, effective: "yyds", lockedBy: null },
+          },
+          credentials: {}, configDegraded: false, loadBlocked: [], loadNotices: [],
+          editable: ["registrar.channel"], secrets: [], resetBlocked: [],
+          propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
+        })
+        : ok(statusBody())),
+    });
+    await settle();
+    h.dom.document.querySelectorAll(".nav-item")
+      .find((b) => b.getAttribute("data-section") === "registrar")!
+      .click();
+    await settle();
+    const section = h.section("registrar");
+    section.walk().find((n) => n.getAttribute("id") === "reg-tab-settings")!.click();
+    await settle(12);
+
+    // **只看「设置」那一页**：运行状态页上另有两张通道卡（那两张不带输入框），
+    // 拿整个板块去数会把它们一起算进来。
+    const panel = section.walk().find((n) => n.getAttribute("id") === "reg-panel-settings")!;
+    const fields = panel.walk().filter((n) => n.getAttribute("data-field") !== null);
+    const paths = fields.map((n) => n.getAttribute("data-field")!);
+    expect(paths.filter((p) => p === "registrar.channel"), "通道下拉不是恰好一格").toHaveLength(1);
+    expect(
+      paths.filter((p) => p.endsWith("registrar.primary") || p.endsWith("registrar.fallback")),
+      "屏幕上还留着第二个通道字段 —— 那就是把主备藏起来，不是做成二选一",
+    ).toEqual([]);
+
+    const cards = panel.walk().filter((n) => n.getAttribute("data-channel") !== null
+      && (n.getAttribute("class") ?? "").includes("channel-card"));
+    // 设置页那两张凭据子卡（运行状态页那两张卡在另一页上，这里点的是设置页）。
+    expect(cards.length, "两张凭据子卡不是都在 —— 砍掉一张等于把平级变成正牌 + 备胎").toBe(2);
+    const inUse = cards.filter((c) => c.textContent.includes(I18N["reg.channel.inUse"]!["zh-CN"]!));
+    const idle = cards.filter((c) => c.textContent.includes(I18N["reg.channel.idle"]!["zh-CN"]!));
+    expect(inUse.map((c) => c.getAttribute("data-channel")), "「本次使用」不是恰好挂在选中那条上").toEqual(["yyds"]);
+    expect(idle.map((c) => c.getAttribute("data-channel")), "「未使用」不是恰好挂在另一条上").toEqual(["moemail"]);
+  });
+
+  /**
+   * **字典里那一族旧 key 真的没了。**
+   * 与上面那一族互相独立：那一族查屏幕上的字，这一格查字典里的键。
+   * 只删引用不删键时 `scripts/check-i18n.mjs` 第 ④ 条也会独立红一次，两条路互不依赖。
+   */
+  it("字典里主 / 备那一族旧 key 一个都不剩", () => {
+    const GONE = [
+      "reg.primary", "reg.fallback", "reg.role.primary", "reg.role.fallback",
+      "ov.config.primary", "ov.config.fallback",
+      "set.field.registrar.primary", "set.field.registrar.fallback",
+      "set.err.fallback_equals_primary", "set.err.primary_required",
+      "reg.emptyPrimary", "reg.channel.role",
+    ];
+    expect(
+      GONE.filter((k) => k in I18N),
+      "这些 key 还在字典里 —— 引用删了、键留着，偏好词门禁与译文维护都会继续养着它们",
+    ).toEqual([]);
   });
 });

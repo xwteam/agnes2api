@@ -354,16 +354,15 @@ async function runManualTendRound(
   env: Record<string, string | undefined>,
   storage: Storage,
   /**
-   * 只用这一条通道（面板「添加 Key」菜单里【自动注册】那两项，设计 §10.2）。
-   * `null` = 按配置里的主/备通道链跑，与加通道参数之前的行为逐字相同。
+   * 这一轮临时改用这条通道（面板「添加 Key」菜单里【自动注册】那两项，设计 §10.2）。
+   * `null` = 用设置里选中的那条，与加通道参数之前的行为逐字相同。
    *
    * ⚠️ **实现方式是给这一轮换一份 `config`，`src/core/registrar/tender.ts` 一个字都没改。**
-   * `tendOnce` 的通道链就是 `config.fallback ? [primary, fallback] : [primary]`，
-   * 把 `primary` 换成选中的通道、`fallback` 置空，得到的正是「只用这一条」——
-   * 而给核心加一个 `onlyChannel` 参数要在那个函数里多一条分支，那是全仓最热的
-   * 补池路径，不该为一个面板入口去动它。
+   * 两条通道改成二选一之后这个手法反而更干净：`tendOnce` 本来就只读 `config.channel`
+   * 这一个字段，把它换掉就是「这一轮用那条」。**上一版这里讲的是「把 primary 换成
+   * 选中的通道、fallback 置空」那个技巧——那个机制已经不存在了。**
    * **代价明写**：`TendResult.primaryChannel` 记的是**这一轮实际用的那条**，
-   * 不是配置里的主通道——补池历史里由 `trigger: "manual"` 那一列把它们分开。
+   * 不是设置里选中的那条——补池历史里由 `trigger: "manual"` 那一列把它们分开。
    */
   channel: Channel | null,
 ): Promise<void> {
@@ -407,7 +406,7 @@ async function runManualTendRound(
   // **端点已经验过这条通道有凭据**（`channelConfigured`），走到这里 `providers[channel]`
   // 必然存在；万一配置在这两步之间被改掉，`tendOnce` 会照常记一条 `provider_missing`
   // 失败——那正是它该做的，不需要在这里再判一次。
-  const config = channel === null ? deps.config : { ...deps.config, primary: channel, fallback: null };
+  const config = channel === null ? deps.config : { ...deps.config, channel };
 
   const roundStartedAt = Date.now();
   try {
@@ -447,7 +446,7 @@ async function runManualTendRound(
       // **崩掉的那一轮记的也是「这一轮实际用的通道」**，与上面 `config` 同一份，
       // 不是配置里的主通道——否则一次「只用 MoeMail」崩掉之后，补池历史上那一行
       // 会指着 YYDS 说它崩了。
-      at: roundStartedAt, channel: config.primary ?? "",
+      at: roundStartedAt, channel: config.channel ?? "",
       durationMs: Date.now() - roundStartedAt, trigger: "manual",
     });
   } finally {
@@ -576,7 +575,7 @@ export async function buildTendDeps(
    * ⚠️⚠️ **这道 gate 是整个「装不起来不再抛错」那套改动的承重点。**
    *
    * `blocked` 为真时 `RegistrarConfig` 会出现一个从前不存在的状态：
-   * `enabled=true` 且 `primary="moemail"` 而 `moemail=null`。下游拿着这份配置去跑，
+   * `enabled=true` 且 `channel="moemail"` 而 `moemail=null`。下游拿着这份配置去跑，
    * 最坏是 `mintOne` 的 `finally` 不跑 ⇒ **临时邮箱漏删**。本方案靠 **gate 而不是
    * 改状态** 挡住它，因此这一句必须排在**建任何 provider 之前**——
    * `tests/unit/registrar/scheduling-wiring.test.ts` 的

@@ -1737,10 +1737,83 @@ BANNER='[collection-guard] ✅'
 #   ⇒ Node：4918 + 6 = **4924**；文件数 159 + 1 = **160**。
 #   ⇒ workerd 两个数一格不动：新增的三份判据全在 `tests/unit/` 下，不进 workers 池；
 #     `tests/contract/` 一格都没加。
+#
+#   ── 这一轮（注册机通道从主备降级改成二选一）：**净 +16 / +4，但那是删格与加格两笔**
+#   ⚠️ **两笔分开记，不许合并成一个净值糊过去。** 三个计数都是当场量出来的：
+#      在 `git archive HEAD` 展开的干净副本上逐份跑一遍（改动前），
+#      再在工作树上逐份跑一遍（改动后），两边都读 `Tests N passed`。
+#
+#   ── 删格：**−11**（都是被删掉的那套语义带走的，不是判据被放宽）
+#     · `tests/unit/registrar/config.test.ts` **−8**：备通道凭据那两格（moemail 作备 /
+#       yyds 作备）、存储里 fallback 非法值那格、主备相同产 blocker 那格、关着时主备
+#       相同不产 blocker 那格、「配了备通道时最坏耗时 ×2」与它的成对格、
+#       「MoeMail 作主通道」那格（并进了新的「反向控制：选中 moemail」）。
+#     · `tests/unit/registrar/tender.test.ts` **−4**：三格降级到备通道（列域名失败 /
+#       所有域名建不出邮箱 / 收不到验证码）＋「配了备通道时预算按两条通道算」。
+#     · `tests/ui/settings.test.ts` **−1**：`fallback === primary` 前端拦截那一对里的
+#       第二格（第一格改写成了「通道下拉怎么改前端都不拦」）。
+#     · `tests/unit/check-i18n.test.ts` **−1**：`BANNED_PREFIXES` 的正向格从 8 条收成 6 条
+#       （`set.field.registrar.primary` / `…fallback` / `ov.config.primary` / `…fallback`
+#       四条合成两条），而那张表是 `it.each` 的数据源。
+#     · `tests/contract/admin-registrar.test.ts` **−1**：「两条通道都配齐时主/备角色各归各的」
+#       那格（换成了下面那格「未选中但凭据齐」）。
+#
+#   ── 加格：**+27**
+#     · `tests/unit/registrar/config.test.ts` **+13**：配置模型上不存在第二条通道的槽位
+#       （比键集合，不是 `toBeUndefined`）／两条通道都解析凭据的正反两格／反向控制选中
+#       moemail ／存量迁移那一族 9 格（旧键读得出来且丢掉的那条被点名、没有 fallback 时
+#       零 notice、空串等于没写、fallback 等于生效通道时零 notice、旧 env 名仍可用但要
+#       说一声、新名在场时不报旧名、通知走状态不走事件、规整抬值、规整不覆盖已有值）。
+#     · `tests/unit/registrar/tender.test.ts` **+3**：一次通道级失败绝不碰另一条通道
+#       （判据是**调用计数**不是返回值）／`code_timeout` 单独一格（switch 里是另一支）／
+#       反向控制：选中 moemail 时同样不碰 yyds。
+#     · `tests/ui/dom/registrar-section.test.ts` **+7**：五种语言各一格「整棵 DOM 里一个
+#       排名词都没有」＋「设置页通道字段恰好一格、两张凭据子卡都在且状态互斥」＋
+#       「字典里主备那一族旧 key 一个都不剩」。
+#     · `tests/contract/admin-config.test.ts` **+4**：GET 说出被丢掉的那条通道／PUT 之后
+#       旧键真的没了而通道值不变／剪枝不进「改了什么」的清单／兼容别名锁定时报的是
+#       运维那边实际存在的那个 env 名。**contract ⇒ 两个池子都计数。**
+#     · `tests/contract/admin-registrar.test.ts` **+1**：未选中但凭据齐的通道，
+#       `configured` 是真话、`selected` 为假，且「测试连接」不回 409。**contract。**
+#     · `tests/unit/registrar/config-total.test.ts` **+1**、`tests/unit/config-provenance.test.ts` **+1**
+#       （兼容别名锁定时 `lockedBy` 报哪个名字）、`tests/unit/env-example-parity.test.ts` **+1**
+#       （已弃用那两个名字：src/ 真的还读、而 .env.example 里一行都没有）。
+#     · `tests/ui/settings.test.ts` **+1**（通道下拉怎么改前端都不拦）、
+#       `tests/unit/check-i18n.test.ts` **+1**（`BANNED_PREFIXES` 里每条前缀至少命中一个真键）。
+#
+#   变异实测（逐条真跑，记录的是**实际**红了哪几格）：
+#     · 把 `fallback: null` 加回配置对象 ⇒ **只红 1**（键集合那格）——
+#       它正是为「界面藏起来、内部还是主备」那个谎准备的；
+#     · `creds()` 退回只解析选中那条 ⇒ 红 10（正向那格 + 未选中通道的 configured/测试连接
+#       那格 + 契约层 7 格 + 锁定表并集那格）；
+#     · 两条通道的缺凭据都收进 blockers ⇒ 红 22（反向那格 + 双向等价 + 手写期望整族）；
+#     · 不读 `stored.fallback`（静默丢弃）⇒ 红 2（装载层与契约层各一格）；
+#     · 无条件产 `legacy_fallback_ignored` ⇒ 红 6（三条反向控制 + 新名在场那格 + env 别名
+#       那格 + PUT 清理那格）；只去掉 `fallback === channel` 那道门控 ⇒ **只红 1**；
+#     · notice 改成 `logger.log` ⇒ 红 3（含「连装三次零事件」那格）；
+#     · 删掉 `validateConfigPatch` 里的剪枝 ⇒ **只红 1**；
+#     · 把剪枝路径 push 进 `validateConfigPatch` 的 `changed` ⇒ **只红 1**（干跑那条端点）。
+#       ⚠️ **这一格的落点被实测订正过**：`PUT` 回执里的 `changed` 走的是 `changedEffective()`
+#       （按四元组比），路径全集来自 `FIELD_EXPOSURE`，剪枝路径压根进不去 —— 实测那一格
+#       纹丝不动。真正会漏出去的是干跑端点与审计事件，判据因此钉在干跑那条上。
+#     · 逆表退回「一个字段只留一个 env 名」⇒ 红 2（四元组的 `lockedBy` + `locked_by_env` 的 params）；
+#     · 恢复自动降级（完整版：链 + 降级重试）⇒ 红 3（三格「绝不碰另一条通道」）；
+#       只把「另一条通道被摸一下」加回去、不恢复降级 ⇒ **同样红 3** —— 判据钉的是调用计数，
+#       所以「调了但吞掉异常」也逃不掉；
+#     · 删掉 `abortRound` ⇒ 红 2（upstream_error 中止整轮那一对）；
+#     · 把「주 채널」写回 `reg.channel` 的 ko 文案 ⇒ **只红 1**（ko 那一格）；
+#     · 把通道下拉留着但 `display:none` ⇒ 红 6（五种语言全红 + 字段计数那格）——
+#       这正是「藏起来 = 又一个谎」的判据；
+#     · 只删引用不删字典键 ⇒ 红 1，且 `check-i18n` 独立 EXIT=1（两条互相独立的路）；
+#     · 砍掉一张凭据子卡 ⇒ 红 2；
+#     · 往 `BANNED_PREFIXES` 里塞一条死前缀 ⇒ 红 2（新加那格 + 既有的双向咬合格）。
+#   ⇒ Node：4924 − 11 + 27 = **4940**；文件数不动（一份新文件都没加）。
+#   ⇒ workerd：774 + 4 = **778**（`admin-config` +4；`admin-registrar` 是 +1 −1 净 0），
+#     文件数不动。
 EXPECT_NODE_FILES=160
-EXPECT_NODE_TESTS=4924
+EXPECT_NODE_TESTS=4940
 EXPECT_WORKERS_FILES=42
-EXPECT_WORKERS_TESTS=774
+EXPECT_WORKERS_TESTS=778
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

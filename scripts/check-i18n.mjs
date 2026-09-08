@@ -438,9 +438,9 @@ for (const [k, row] of Object.entries(I18N)) {
 // 必须在真正给这两条通道接线、写更多面向运维的文案之前先扩到这里。
 //
 // ⚠️⚠️ **后三条前缀是后来追加的**，起因同型、危害更大：用户那条硬约束是
-// 「YYDS 与 MoeMail 严格同级，不替人选主备」，而两条通道**共用的那对凭据 key**
-// （`set.field.channel.*`）与主 / 备两个选择器标签（`set.field.registrar.primary`
-// / `fallback`）、注册机那张卡的标题（`set.card.registrar`）在这之前**全在门外**——
+// 「YYDS 与 MoeMail 严格同级，不替人选」，而两条通道**共用的那对凭据 key**
+// （`set.field.channel.*`）与那个通道选择器的标签（`set.field.registrar.channel`，
+// 从前是主 / 备两条）、注册机那张卡的标题（`set.card.registrar`）在这之前**全在门外**——
 // 夹具实跑 EXIT=0。设置页正是运维**真的在做那个选择**的地方。
 //
 // ⚠️ **为什么不是整个 `set.*`（这条推理必须留着，删了下一个人会顺手扩宽）**：
@@ -458,17 +458,18 @@ for (const [k, row] of Object.entries(I18N)) {
 // ⚠️ **边界：这只管词面。** 「两条里挑一条的话就用 X」这种不含禁用词的表述它抓不住，
 // 那一档留给评审。**别在任何地方把它升格成「杜绝一切偏好表述」。**
 //
-// ⚠️⚠️ **最后两条（`ov.config.primary` / `ov.config.fallback`）是本轮追加的，
-// 起因是韩文实测里 `ov.config.primary` 的 ko 值写成了「기본 채널」（＝默认通道），
-// 而同一概念在 `reg.primary` / `set.field.registrar.primary` 都是「주 채널」（＝主通道）——
+// ⚠️⚠️ **`ov.config.channel` 这一条是追加的**（当时是 `ov.config.primary` /
+// `ov.config.fallback` 两条，两条通道改成二选一之后合成了一条），
+// 起因是韩文实测里那一格的 ko 值写成了「기본 채널」（＝默认通道），
+// 而同一概念在别处都是「주 채널」（＝主通道）——
 // 概览页把「槽位」说成了「默认值」，正是用户那条硬约束明令禁止的暗示。
 //
-// ⚠️ **这里登记的是两条整 key，不是 `ov.config.` 前缀**：`ov.config.` 底下还有
+// ⚠️ **这里登记的是一条整 key，不是 `ov.config.` 前缀**：`ov.config.` 底下还有
 // `envLockedTip`（zh-CN/zh-TW/ja 正当地用「优先/優先」描述环境变量优先级）与
 // `degradedBanner`（zh-CN/zh-TW/en/ko 正当地用「默认/預設/default/기본」描述配置
 // 降级回落到默认值）——两者都与「两条通道平级」无关，扩宽前缀会当场把这两条正当
 // 文案一起打红，逼着开豁免名册，而本仓的裁定是「开豁免名册比没有规则更糟」。
-// ⇒ 只登记 `ov.config.primary` / `ov.config.fallback` 这两条整 key。
+// ⇒ 只登记 `ov.config.channel` 这一条整 key。
 //
 // ⚠️⚠️ **最后两条（`set.danger.reset.` / `set.advanced.`）是评审发现补的，
 // 起因是「射程停在阶段 I 之前」**：上面那一批是阶段 B 按**当时存在的
@@ -496,15 +497,21 @@ for (const [k, row] of Object.entries(I18N)) {
 // 「⑥ 反向控制：与通道无关的 set.field.upstreamTimeoutMs 里出现同样的词 ⇒ 不红」
 // 与「⑥ 反向控制：与通道无关的 set.danger.purge.* 里出现同样的词 ⇒ 不红」两格钉着
 // （**只做一半等于没做**：单看前一族，作用域写成整个 `set.*` 也全绿）。
+// ⚠️⚠️ **这张表有半张网从前是空的，反向控制在测试那边补上了。**
+// 第 ④ 条（字典里没被引用的 key ⇒ 硬错）兜得住「删了引用忘了删键」，**反方向没有**：
+// 表里留一条指向已删键的死前缀，本脚本一格都不会红 —— 它不吵，它只是**不再看了**，
+// 于是偏好词门禁对改名后的新 key **静默失效**。改 key 名的那一轮正是最需要它的时候。
+// ⇒ 那一格在 `tests/unit/check-i18n.test.ts` 的
+// 「⑥ 反向控制：BANNED_PREFIXES 里每条前缀都至少命中一个真实存在的 key」。
+// **刻意不写在本脚本里**：本脚本要能跑在测试造出来的小夹具仓上（那里的字典只有
+// 寥寥几个 key），把这条判据塞进来会让每一个夹具当场红。
 const BANNED_PREFIXES = [
   "reg.",
   "keys.addMenu.auto",
-  "set.field.registrar.primary",
-  "set.field.registrar.fallback",
+  "set.field.registrar.channel",
   "set.field.channel.",
   "set.card.registrar",
-  "ov.config.primary",
-  "ov.config.fallback",
+  "ov.config.channel",
   "set.danger.reset.",
   "set.advanced.",
 ];

@@ -51,14 +51,14 @@ export function channelAddressFactKey(channel) {
 }
 
 /**
- * 这条通道在**本次配置**里的角色 → i18n key。
- * `null`（既不是主也不是备）同样有一句如实的文案，**不是留空**——空着会让运维
- * 以为是没读出来。
+ * 这条通道是不是**本次选中**的那条 → i18n key。
+ *
+ * ⚠️ 它从前叫 `channelRoleKey`、按 `"primary" | "fallback" | null` 三态分岔。
+ * 两条通道是二选一，「角色」这个词本身就在暗示排名 ⇒ 两态。
+ * 没被选中的那条同样有一句如实的文案，**不是留空**——空着会让运维以为是没读出来。
  */
-export function channelRoleKey(role) {
-  if (role === "primary") return "reg.role.primary";
-  if (role === "fallback") return "reg.role.fallback";
-  return "reg.role.unused";
+export function channelSelectedKey(selected) {
+  return selected === true ? "reg.role.inUse" : "reg.role.unused";
 }
 
 /**
@@ -162,8 +162,7 @@ export function statusView(body) {
      * 「没打开」。读不到时记 `null`（不是 `false`）——与 `configured` 同一条纪律。
      */
     blocked: b !== null && typeof b.blocked === "boolean" ? b.blocked : null,
-    primary: b !== null && typeof b.primary === "string" ? b.primary : null,
-    fallback: b !== null && typeof b.fallback === "string" ? b.fallback : null,
+    channel: b !== null && typeof b.channel === "string" ? b.channel : null,
     serverTime: b === null ? null : finite(b.serverTime),
     lockedUntil: b === null ? null : finite(b.lockedUntil),
   };
@@ -184,7 +183,7 @@ export function channelCards(body) {
     return {
       channel,
       configured: one !== null && typeof one.configured === "boolean" ? one.configured : null,
-      role: one !== null && typeof one.role === "string" ? one.role : null,
+      selected: one !== null && typeof one.selected === "boolean" ? one.selected : null,
     };
   });
 }

@@ -398,7 +398,7 @@ put（约占写配额 10.4%，8 个 isolate 时合计 104 次/天），耗尽当
     > [!IMPORTANT]
     > **「健康时是 0」有一个前提，必须说清楚**：`loadConfig` 有一条
     > **逐轮都会打**的配置警告——`TEND_INTERVAL_MS` 小于
-    > `MINT_BATCH × CODE_TIMEOUT_MS × 通道数`（默认 `5 × 120000 × 1 = 600000`，
+    > `MINT_BATCH × CODE_TIMEOUT_MS`（默认 `5 × 120000 = 600000`，
     > 即 10 分钟）时，**每一轮都会写一次**，哪怕那一轮什么都没铸。
 
   - **补池历史（`tend:history`）**：每轮一次 get + 一次 put，**无条件**。
@@ -506,7 +506,7 @@ put（约占写配额 10.4%，8 个 isolate 时合计 104 次/天），耗尽当
     在 Worker 上调它**一轮都不会多**；而 `registrar_tend_lock` 那对
     put/delete **两种运行时都有**（Node 侧也接上了同一把锁——
     多副本共卷部署下进程内的那个布尔形同虚设）。
-  - **阈值轴**：`TEND_INTERVAL_MS` 跌破 `MINT_BATCH × CODE_TIMEOUT_MS × 通道数`
+  - **阈值轴**：`TEND_INTERVAL_MS` 跌破 `MINT_BATCH × CODE_TIMEOUT_MS`
     时，**事件那一笔从「健康轮 0 次」跳成「每轮 1 次」**——这一跳与频率无关，
     是上面那条逐轮配置警告造成的。
   **两轴叠加才是最坏**。本节讲的是 Worker + 免费档 KV，所以举一个**这个形态下
@@ -901,7 +901,7 @@ Caddy 用 `header_up CF-Connecting-IP ""`，Traefik 用中间件的 `customReque
 写下去的后果是「保存成功、生效值纹丝不动」，运维会以为是缓存没刷，白等两轮。
 
 > [!IMPORTANT]
-> **注册机那一族（`REGISTRAR_ENABLED` / `REGISTRAR_PRIMARY` / `REGISTRAR_FALLBACK` /
+> **注册机那一族（`REGISTRAR_ENABLED` / `REGISTRAR_CHANNEL`（连同它的兼容别名）/
 > `TARGET_KEYS` / `MINT_BATCH` / `TEND_INTERVAL_MS` / `CODE_TIMEOUT_MS` / `MINT_DELAY_MIN_MS` /
 > `MINT_DELAY_MAX_MS` / `MAX_DOMAIN_ATTEMPTS` / `REGISTRAR_TOKEN_NAME` / `AGNES_PLATFORM_URL` /
 > `YYDS_BASE_URL` / `YYDS_API_KEY` / `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY`）也进了这张锁定表。**
@@ -953,8 +953,7 @@ KV 边缘缓存默认 60 秒 ⇒ 上界约 **90 秒**。本实例是立刻生效
 | 变量 | 是否必填 | 默认值 | 说明 |
 |----|--------|------|----|
 | `REGISTRAR_ENABLED` | 否 | `false` | 总开关，为 `true` 才会启用注册机。 |
-| `REGISTRAR_PRIMARY` | 启用时必填 | 无 | 主通道，`yyds` 或 `moemail`；两者平级，无默认值。 |
-| `REGISTRAR_FALLBACK` | 否 | 空（不降级） | 备通道，`yyds` 或 `moemail`。 |
+| `REGISTRAR_CHANNEL` | 启用时必填 | 无 | 注册机用哪一条通道，`yyds` 或 `moemail`；两条通道二选一，无默认值。 |
 | `TARGET_KEYS` | 否 | `20` | 目标可用 key 数。 |
 | `MINT_BATCH` | 否 | `5` | 单轮最多铸几把 key。 |
 | `TEND_INTERVAL_MS` | 否（仅 Node/Docker） | `1800000` | Node 侧补池间隔；Worker 侧由 `wrangler.toml` 的 Cron 决定。 |
@@ -966,13 +965,20 @@ KV 边缘缓存默认 60 秒 ⇒ 上界约 **90 秒**。本实例是立刻生效
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | 否 / 通道为 yyds 时必填 | `https://maliapi.215.im` / 空 | YYDS Mail 通道凭据。 |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | 通道为 moemail 时必填 | 空 / 空 | MoeMail 通道凭据（自建服务，无默认地址）。 |
 
-#### 这 16 个变量写错值之后会怎样
+#### 这 15 个变量写错值之后会怎样
+
+> [!NOTE]
+> **两个已弃用的旧名字，刻意不进上表。** `REGISTRAR_PRIMARY` 是 `REGISTRAR_CHANNEL` 的
+> **兼容别名**（优先级更低，用到它时面板顶部有一条提示，那一格照样置灰）；
+> `REGISTRAR_FALLBACK` **不再参与选路**，只被读一次，用来在面板上点名告诉你
+> 「这条通道被丢掉了」。两个旧名字都不会让升级中的部署停跑，但 `.env.example`
+> 里已经不再声明它们——新部署直接用新名字。
 
 > [!WARNING]
-> **这 16 个变量写错值不会再让容器起不来。**
+> **这 15 个变量写错值不会再让容器起不来。**
 > 数值类（`TARGET_KEYS=abc`、`MINT_BATCH=0` 这一族）**回落到上表的默认值**，
 > 在面板上报一次降级、并记一条 `config.invalid` 事件；通道与凭据类
->（通道名拼错、注册机开着却没选主通道、缺 API Key、备通道等于主通道）
+>（通道名拼错、注册机开着却没选通道、选中那条通道缺 API Key）
 > 只让**注册机**本次不启动，网关照常转发。
 >
 > **这是一次能力下降，明说**：从前一个部署笔误会让容器崩掉，所以你立刻就知道；
@@ -1225,8 +1231,8 @@ curl -s "$BASE/v1/chat/completions" \
 3. **概览**页的配置摘要里，「注册机」那一行同样写「已启用 · 本次没跑起来」。
 4. 事件板块里每一轮都有一条 `error` 级的 `registrar.blocked`，字段里列出缺的那几格。
 
-**解决方案**：按横幅列出的那几格去设置页补齐（最常见的是某条在主/备链上的邮箱通道缺 API Key，
-或者备通道被设成了和主通道同一条），**保存即可恢复，不需要重启容器、也不需要重新部署**。
+**解决方案**：按横幅列出的那几格去设置页补齐（最常见的是选中那条邮箱通道缺 API Key，
+或者压根没选通道），**保存即可恢复，不需要重启容器、也不需要重新部署**。
 
 ### 面板打不开，`/admin` 回 404
 

@@ -64,14 +64,14 @@ const DAY_END = 20_001 * 86_400_000;
  * 而它这次咬的正好是我为了诚实**专门补出来**的那个 `fresh` 字段。
  */
 const BOTH_CHANNELS = registrarFromEnv({
-  REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "moemail",
+  REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds",
   YYDS_API_KEY: "yk", MOEMAIL_BASE_URL: "https://moe.invalid", MOEMAIL_API_KEY: "mk",
   TARGET_KEYS: "9", MINT_BATCH: "3",
 }, {}).config;
 
 /** 只配了 YYDS：`moemail` 那条就是「这条通道在本次部署里没有凭据」的真实形态。 */
 const ONLY_YYDS = registrarFromEnv({
-  REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "yk", TARGET_KEYS: "4",
+  REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "yk", TARGET_KEYS: "4",
 }, {}).config;
 
 const withKey = { "x-admin-key": TEST_ADMIN_TOKEN };
@@ -157,9 +157,9 @@ describe("GET /admin/api/registrar/status", () => {
     const { app } = await fixture({ registrar: null });
     const res = await status(app);
     expect(res.status).toBe(200);
-    const body = await res.json() as { enabled: boolean; primary: string | null };
+    const body = await res.json() as { enabled: boolean; channel: string | null };
     expect(body.enabled).toBe(false);
-    expect(body.primary, "关着的注册机没有主通道，如实给 null").toBeNull();
+    expect(body.channel, "关着的注册机没有选中的通道，如实给 null").toBeNull();
   });
 
   /**
@@ -173,10 +173,11 @@ describe("GET /admin/api/registrar/status", () => {
    * 「注册机没有打开……请先在设置里打开它」，而开关就在旁边亮着。
    */
   it("blocked 时面板不说未启用：GET 回 enabled:true + blocked:true，两条按钮都回 409 registrar_blocked", async () => {
-    // 主备撞在同一条通道上 ⇒ blocked，而凭据是齐的（缺凭据那一档 `channelConfigured`
-    // 会先拦下，测不到这一条）。
+    // 选中 moemail 却一格凭据都没填 ⇒ blocked；而 yyds 的凭据是齐的，
+    // 所以 `channelConfigured("yyds")` 为真、按钮走得到 blocked 这一档
+    //（缺凭据那一档 `channelConfigured` 会先拦下，测不到这一条）。
     const BLOCKED = registrarFromEnv({
-      REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "yyds", YYDS_API_KEY: "yk",
+      REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "moemail", YYDS_API_KEY: "yk",
     }, {}).config;
     let probed = false;
     const { app, tendCalls } = await fixture({
@@ -199,22 +200,30 @@ describe("GET /admin/api/registrar/status", () => {
     expect(probed, "被拒的那一次不许发一次上游探测").toBe(false);
   });
 
-  it("两条通道各自的接入状态与角色如实给出——只配了 YYDS 时 moemail 是 configured:false", async () => {
+  it("两条通道各自的接入状态如实给出——只配了 YYDS 时 moemail 是 configured:false", async () => {
     const { app } = await fixture({ registrar: ONLY_YYDS });
     const body = await (await status(app)).json() as {
-      channels: Record<string, { configured: boolean; role: string | null }>;
+      channels: Record<string, { configured: boolean; selected: boolean }>;
     };
-    expect(body.channels.yyds).toEqual({ configured: true, role: "primary" });
-    expect(body.channels.moemail).toEqual({ configured: false, role: null });
+    expect(body.channels.yyds).toEqual({ configured: true, selected: true });
+    expect(body.channels.moemail).toEqual({ configured: false, selected: false });
   });
 
-  it("两条通道都配齐时，主/备角色各归各的——备通道不许被记成主通道", async () => {
+  /**
+   * **未选中但凭据齐的那条通道，面板说的必须是真话。**
+   *
+   * 二选一模型下「切换前先比一比」是核心工作流：`configured` 报 false 会让面板
+   * 说一句假话，而「测试连接」跟着回 409 ⇒ 想测另一条必须先切过去保存（鸡生蛋）。
+   */
+  it("未选中但凭据齐的通道：configured 是真话、selected 为假，且「测试连接」不回 409", async () => {
     const { app } = await fixture();
     const body = await (await status(app)).json() as {
-      channels: Record<string, { configured: boolean; role: string | null }>;
+      channels: Record<string, { configured: boolean; selected: boolean }>;
     };
-    expect(body.channels.yyds).toEqual({ configured: true, role: "primary" });
-    expect(body.channels.moemail).toEqual({ configured: true, role: "fallback" });
+    expect(body.channels.yyds).toEqual({ configured: true, selected: true });
+    expect(body.channels.moemail).toEqual({ configured: true, selected: false });
+    const probe = await testChannel(app, "moemail");
+    expect(probe.status, "未选中那条通道被 409 挡住了 —— 切换前先测这条路就断了").not.toBe(409);
   });
 
   /**
@@ -257,7 +266,7 @@ describe("GET /admin/api/registrar/status", () => {
 
     const over = await fixture({
       registrar: registrarFromEnv({
-        REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "yk", TARGET_KEYS: "1",
+        REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "yk", TARGET_KEYS: "1",
       }, {}).config,
       keys: ["sk-a", "sk-b", "sk-c"],
     });
@@ -760,11 +769,10 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
     GATEWAY_TOKEN: "gateway-token-for-registrar-fixture",
     ADMIN_TOKEN: TEST_ADMIN_TOKEN,
     REGISTRAR_ENABLED: "true",
-    // **主 yyds、备 moemail**：这样「只用 moemail」与「按配置的链跑」会得到**两个不同的**
-    // `primaryChannel`。两条通道配成同一条的话，下面那对镜像断言两边都是同一个值，
-    // 整组恒绿——那正是本仓登记的「夹具 A/B 同值」那种假阳性。
-    REGISTRAR_PRIMARY: "yyds",
-    REGISTRAR_FALLBACK: "moemail",
+    // **选中 yyds，另一条通道的凭据也配齐**：这样「这一轮改用 moemail」与「用设置里
+    // 选中的那条」会得到**两个不同的** `primaryChannel`。两边配成同一条的话，下面那对
+    // 镜像断言两边都是同一个值，整组恒绿——那正是本仓登记的「夹具 A/B 同值」那种假阳性。
+    REGISTRAR_CHANNEL: "yyds",
     YYDS_API_KEY: "yk",
     YYDS_BASE_URL: "https://yyds.invalid",
     MOEMAIL_API_KEY: "mk",
@@ -812,7 +820,7 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
    * 实测：把 `wire.ts` 的 `tend: (channel) => runManualTendRound(env, storage, channel)`
    * 改成传 `null` ⇒ 这一格红（`primaryChannel` 变回 `"yyds"`），其余 1930 格全绿。
    */
-  it("带 channel 时，落盘的那一行记的是「这一轮实际用的通道」，不是配置里的主通道", async () => {
+  it("带 channel 时，落盘的那一行记的是「这一轮实际用的通道」，不是设置里选中的那条", async () => {
     const h = await realApp();
     const res = await h.call("/admin/api/registrar/tend", { channel: "moemail" });
     expect(res.status).toBe(202);
@@ -821,7 +829,7 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
     expect(rows, "真装配这一轮没有往 tend:history 写下任何东西").toHaveLength(1);
     expect(
       rows![0]!.primaryChannel,
-      "面板上选的是 MoeMail，落盘的那一行却记着主通道 —— 202 与响应体都是 handler 的自报，抓不住这一条",
+      "面板上选的是 MoeMail，落盘的那一行却记着设置里那条 —— 202 与响应体都是 handler 的自报，抓不住这一条",
     ).toBe("moemail");
     expect(rows![0]!.trigger).toBe("manual");
   });
@@ -830,11 +838,11 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
    * **上面那一格的镜像方向。** 少了它，把 `runManualTendRound` 写成「无条件只用
    * 请求里那条、没给就崩」或者「无条件用 moemail」都能让上面那格绿。
    */
-  it("不带 channel 时，落盘的那一行记的是配置里的主通道（镜像方向）", async () => {
+  it("不带 channel 时，落盘的那一行记的是设置里选中的那条（镜像方向）", async () => {
     const h = await realApp();
     expect((await h.call("/admin/api/registrar/tend")).status).toBe(202);
     const rows = await h.history();
-    expect(rows![0]!.primaryChannel, "没指定通道时应当按配置的主/备链跑").toBe("yyds");
+    expect(rows![0]!.primaryChannel, "没指定通道时应当用设置里选中的那条").toBe("yyds");
   });
 
   /**

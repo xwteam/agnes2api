@@ -155,12 +155,10 @@ function fixtureWith(key: string, lang: string, text: string, extra: Partial<Fix
 const BANNED_PREFIX_CASES: ReadonlyArray<readonly [string, string, string]> = [
   ["reg.x", "zh-TW", "主通道（推薦）"],
   ["keys.addMenu.autoMoemail", "en", "Auto-register (recommended)"],
-  ["set.field.registrar.primary", "zh-TW", "主通道（推薦）"],
-  ["set.field.registrar.fallback", "en", "Fallback channel (recommended)"],
+  ["set.field.registrar.channel", "zh-TW", "使用的通道（推薦）"],
   ["set.field.channel.baseUrl", "ko", "서비스 URL (권장)"],
   ["set.card.registrar", "zh-CN", "注册机（推荐先配这条）"],
-  ["ov.config.primary", "ko", "주 채널(권장)"],
-  ["ov.config.fallback", "ja", "フォールバックチャネル（推奨）"],
+  ["ov.config.channel", "ko", "사용 중인 채널(권장)"],
   // 评审发现：后来新写的那两个区（重置配置 / 高级）逐字提到
   // 「两条邮箱通道」却在射程外，起因与测法见门禁那张表上方那段。
   ["set.danger.reset.warn", "zh-CN", "这一步会抹掉两条邮箱通道的凭据，推荐先备份 MoeMail 那一条。"],
@@ -451,6 +449,29 @@ describe("scripts/check-i18n.mjs 元测试：十条判据逐条", () => {
       orphan,
       "上面那张正向格表里这几条 key 已经不在门禁的作用域里了"
       + " ⇒ 要么门禁那张前缀表被人删了一条，要么这里的 key 写错了",
+    ).toEqual([]);
+  });
+
+  /**
+   * ⚠️⚠️ **另一半反向控制：门禁那张表里不许留死前缀。**
+   *
+   * 上面那一格咬合的是「门禁那张表 ⟺ 这份夹具正向格表」，两边**都是手写的**，
+   * 一起改名就一起绿 —— 它证明不了那些前缀在**真字典**里还指得着东西。
+   * 而一条指向已删 key 的死前缀不会让任何一格红：**它不吵，它只是不再看了**，
+   * 于是偏好词门禁对改名后的新 key 静默失效。改 key 名的那一轮正是最需要它的时候。
+   *
+   * **判据落在真字典上**（不是夹具）：门禁那张表里每一条前缀，真字典里都得至少有
+   * 一个 key 以它开头。
+   */
+  it("⑥ 反向控制：BANNED_PREFIXES 里每条前缀都至少命中一个真实存在的 key", () => {
+    const prefixes = gateBannedPrefixes();
+    expect(prefixes, "抠到的不是那张前缀表").toContain("reg.");
+    const keys = Object.keys(I18N);
+    const dead = prefixes.filter((p) => !keys.some((k) => k.startsWith(p)));
+    expect(
+      dead,
+      "门禁那张前缀表里这几条一个真实的 key 都没命中 ⇒ 那些 key 多半被改名或删掉了。"
+      + "留着死前缀 = 偏好词门禁在这一族上**静默失效**（它不会红，它只是不再看了）",
     ).toEqual([]);
   });
 

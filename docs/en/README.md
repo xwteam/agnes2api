@@ -90,7 +90,7 @@
 - An upstream `429`/`402` puts that key into tiered cooldown, `401`/`403` evicts it permanently, and consecutive transient failures put it into a long cooldown (30 minutes by default, recovered automatically) once they reach `MAX_STRIKES`
 - When not a single key is usable it honestly answers `503` with a distinguishable `reason` (nothing imported yet / all cooling / all disabled / all evicted / upstream keeps failing), and the cooling case carries `Retry-After`
 - **Automatic refill is off by default**: turn on `REGISTRAR_ENABLED` and the gateway registers Agnes accounts to top the pool back up whenever usable keys fall below `TARGET_KEYS`
-- The registrar's two temporary-mailbox channels (`yyds` / `moemail`) are **strictly equal peers**; which one is primary is your call, and no default preference is baked in
+- The registrar's two temporary-mailbox channels (`yyds` / `moemail`) are **strictly equal peers**; you pick one of the two, the choice is yours, and no default preference is baked in
 
 ### 🔀 Two runtimes, one forwarding core
 

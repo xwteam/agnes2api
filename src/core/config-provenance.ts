@@ -110,8 +110,7 @@ export const FIELD_EXPOSURE: ExposureMap<GatewayConfig> = {
   usageStatsEnabled: "public",
   registrar: {
     enabled: "public",
-    primary: "public",
-    fallback: "public",
+    channel: "public",
     targetKeys: "public",
     mintBatch: "public",
     tendIntervalMs: "public",
@@ -141,17 +140,25 @@ export const FIELD_EXPOSURE: ExposureMap<GatewayConfig> = {
  * `loadConfigWithProvenance` 的优先级是 env > 存储 > 默认值，而 env 在运行中不会变，
  * 所以「被锁定」这件事在装配时算一次就够，不必每请求重算。
  *
- * ⚠️ **注册机那 16 个名字是后来补进来的。** 它们此前不在表里，注释写的理由是
+ * ⚠️ **注册机那一批名字是后来补进来的。** 它们此前不在表里，注释写的理由是
  * 「面板还没有设置页，加进来会得到一份现在没人消费的清单」——
  * 那个前提早已失效：设置页做出来了，清单现在有消费者。
  * 少了它们的后果很具体：`docker-compose` 里写了 `TARGET_KEYS=30`，面板上那一格
  * 既不置灰也不说明，运维改成 20、保存成功、**生效值永远是 30，重启也不会好**
  * ——那正是设计 §5.3 开头点名的最高频形态。
  *
- * **这 16 个名字不是手抄的**：`tests/unit/config-provenance.test.ts` 的
- * 「四种配置的并集恰好是手写的这 16 个名字」用 Proxy 在
- * **四种配置**（关 / 开×yyds 主 / 开×moemail 主 / 开×双通道）下各追踪一次
- * 并取并集——单跑一种配置只摸得到 12 个，`creds()` 那 4 个会静默逃逸。
+ * **这批名字不是手抄的**：`tests/unit/config-provenance.test.ts` 的那一格用 Proxy
+ * 追踪 `registrarFromEnv` 真正摸过哪些 env 键，再与本表对账。
+ *
+ * ⚠️ **两条通道改成二选一之后，那一格的口径变了，别照旧读**：`creds()` 现在对
+ * **两条通道都解析**（未选中那条只是不产 blocker），所以「开着」的任何一种配置都会
+ * 摸到全部 4 个凭据变量 —— 从前要靠「开×双通道」那一种配置才凑得齐的并集，今天
+ * 「开×任意一条通道」自己就是全集。矩阵因此从四种塌成两种（关 / 开）。
+ *
+ * ⚠️ **`REGISTRAR_CHANNEL` 与 `REGISTRAR_PRIMARY` 两个名字都在表里，映到同一个字段
+ * 路径。** 这不是重复登记：`envLockedFields` 的判据是「这个键在 env 里存在」，
+ * 只登记新名字的话，一台设了旧名字的部署那一格不会置灰、改了保存成功、生效值纹丝
+ * 不动 —— 那正是这张表存在的全部理由。
  */
 const ENV_LOCK_MAP: Readonly<Record<string, string>> = {
   GATEWAY_TOKEN: "gatewayToken",
@@ -173,8 +180,14 @@ const ENV_LOCK_MAP: Readonly<Record<string, string>> = {
   USAGE_STATS_ENABLED: "usageStatsEnabled",
   // ── 注册机（`registrarFromEnv` 直接读的 12 个）────────────────────────────
   REGISTRAR_ENABLED: "registrar.enabled",
-  REGISTRAR_PRIMARY: "registrar.primary",
-  REGISTRAR_FALLBACK: "registrar.fallback",
+  REGISTRAR_CHANNEL: "registrar.channel",
+  // **兼容别名**：公开仓已发过 tag，别人的 compose / wrangler 里躺着这个名字。
+  // 它与上面那个映到**同一个字段路径**，理由见本表上方那段 ⚠️。
+  REGISTRAR_PRIMARY: "registrar.channel",
+  // ⚠️ **`REGISTRAR_FALLBACK` 刻意不在这张表里。** 它已经不锁任何字段，留着就是让
+  // 面板对一个不存在的字段声称「被环境变量锁定」。装载器仍然读它（为了产出一条
+  // 迁移提示），**「被读到」与「锁定了某个字段」是两件事**。它登记在
+  // `tests/unit/env-example-parity.test.ts` 的已弃用变量表里。
   TARGET_KEYS: "registrar.targetKeys",
   MINT_BATCH: "registrar.mintBatch",
   TEND_INTERVAL_MS: "registrar.tendIntervalMs",
@@ -191,10 +204,40 @@ const ENV_LOCK_MAP: Readonly<Record<string, string>> = {
   MOEMAIL_API_KEY: "registrar.moemail.apiKey",
 };
 
-/** 字段路径 → 环境变量名。`ENV_LOCK_MAP` 的逆表，**由它派生，不另写一份**。 */
-const ENV_OF_FIELD: Readonly<Record<string, string>> = Object.fromEntries(
-  Object.entries(ENV_LOCK_MAP).map(([envName, field]) => [field, envName]),
-);
+/**
+ * 字段路径 → **候选**环境变量名（顺序即优先级）。`ENV_LOCK_MAP` 的逆表，
+ * **由它派生，不另写一份**。
+ *
+ * ⚠️⚠️ **它从前是 `Object.fromEntries(...)`，一个字段只留得下一个名字。**
+ * 两个 env 名映到同一字段路径时，逆表会塌成「后写的赢」——于是一台设了
+ * `REGISTRAR_PRIMARY` 的部署会被面板告知「是 REGISTRAR_CHANNEL 锁的」，
+ * 运维去 compose 里 grep 什么都搜不到。既有门禁只对账「哪些字段被锁」、
+ * **不对账「被哪个名字锁」**，抓不住它。⇒ 逆表存**数组**，报名字时按
+ * 「env 里实际存在的那一个」挑，都不存在时报第一个（正式名）。
+ */
+const ENV_OF_FIELD: Readonly<Record<string, readonly string[]>> = (() => {
+  const out: Record<string, string[]> = {};
+  for (const [envName, field] of Object.entries(ENV_LOCK_MAP)) {
+    (out[field] ??= []).push(envName);
+  }
+  return out;
+})();
+
+/**
+ * 这个字段今天**该报哪个环境变量名**。
+ *
+ * 判据是「env 里实际存在的那一个」，不是「正式名字是哪个」：运维要拿这个名字去
+ * 自己的 compose / wrangler 里找那一行。都不存在时报第一个候选（正式名），
+ * 那一档只出现在「没被锁」的场合，报什么都不会误导人。
+ */
+export function envNameForField(
+  field: string,
+  env: Record<string, string | undefined>,
+): string | null {
+  const names = ENV_OF_FIELD[field];
+  if (names === undefined || names.length === 0) return null;
+  return names.find((n) => env[n] !== undefined) ?? names[0]!;
+}
 
 /**
  * 哪些字段被环境变量锁住了。
@@ -202,9 +245,13 @@ const ENV_OF_FIELD: Readonly<Record<string, string>> = Object.fromEntries(
  * `num()` 的 env 分支（然后抛错），面板必须显示它是锁定的，否则用户会一直改存储、一直没效果。
  */
 export function envLockedFields(env: Record<string, string | undefined>): string[] {
-  return Object.entries(ENV_LOCK_MAP)
-    .filter(([k]) => env[k] !== undefined)
-    .map(([, field]) => field);
+  // **去重**：两个 env 名可以映到同一个字段路径（`REGISTRAR_CHANNEL` 与它的兼容
+  // 别名），两个都设了的话这里会出现两条一模一样的路径。
+  return [...new Set(
+    Object.entries(ENV_LOCK_MAP)
+      .filter(([k]) => env[k] !== undefined)
+      .map(([, field]) => field),
+  )];
 }
 
 /**
@@ -355,6 +402,17 @@ export interface ConfigProvenance {
    * 要（`readAll` 把它填进 `loadBlocked`）。
    */
   registrarBlocked: readonly ConfigError[];
+  /**
+   * 注册机装载时**不拦人、但必须说出来**的那几句话（`RegistrarLoad.notices`）。
+   *
+   * 与 `registrarBlocked` 平行的一格，处置完全不同：那一格的意思是「注册机本次
+   * 没启动」，这一格恰恰配着「注册机照常跑」。今天只有一族：存量存储 / 环境变量
+   * 里那两个旧的主备键还在，本次是怎么读它们的、丢掉了什么。
+   *
+   * ⚠️ **同样不进 `GatewayConfig`**（数组字段会撞 `ExposureMap` 那个已登记的盲点），
+   * 理由与上一格逐字同源。由 `GET /admin/api/config` 的 `loadNotices` 带出去。
+   */
+  registrarNotices: readonly ConfigError[];
 }
 
 /** 存储里 `config` 键的原始形状。**一律 `unknown` + 逐字段窄化**（硬约束 8）。 */
@@ -500,8 +558,9 @@ export async function loadConfigWithProvenance(
   const source: Record<string, FieldSource> = {};
   walkExposure(FIELD_EXPOSURE, [], (path, exposure) => {
     const key = path.join(".");
-    const envName = ENV_OF_FIELD[key];
-    const envValue = envName === undefined ? undefined : env[envName];
+    // **按 env 里实际存在的那个名字报**，理由见 `envNameForField` 上面那段。
+    const envName = envNameForField(key, env);
+    const envValue = envName === null ? undefined : env[envName];
     const lockedBy = envValue === undefined ? null : `env:${envName}`;
     if (exposure === "secret") {
       // ⚠️ **`configured` 读的是「存储原件 + env」，不是生效模型**（设计 §5.5）：
@@ -526,7 +585,7 @@ export async function loadConfigWithProvenance(
     };
   });
 
-  return { config, source, registrarBlocked: reg.blockers };
+  return { config, source, registrarBlocked: reg.blockers, registrarNotices: reg.notices };
 }
 
 /** 只收字符串，别的（含数字 / 对象）一律 `undefined`——存储里什么形状都可能来。 */

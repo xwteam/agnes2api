@@ -54,40 +54,41 @@ describe("装载器全函数化：对抗性输入网格上一次都不抛", () =
    * **逐条手写的期望值**，一格都不从被测对象回填。
    *
    * 挑的是网格里最容易写错的那几组：两侧的通道非法、env 非法不许穿透到存储、
-   * 凭据缺一半、主备同通道要去重、以及**不受 `enabled` 门控**的延迟对。
+   * 凭据缺一半、只对选中那条产 blocker、以及**不受 `enabled` 门控**的延迟对。
    */
   const codes = (env: Record<string, string | undefined>, stored: object): string[] =>
     registrarFromEnv(env, stored, recordingLogger(), { degraded: false })
       .blockers.map((b) => `${b.field}:${b.code}`).sort();
 
   it.each([
-    ["关着 + 满地脏数据 ⇒ 一条都不产",
+    ["关着 + 满地脏数据（含两个旧的主备键）⇒ 一条都不产",
       { REGISTRAR_PRIMARY: "abc" }, { fallback: "abc", enabled: false }, []],
     ["开着 + 什么都没选",
-      { REGISTRAR_ENABLED: "true" }, {}, ["registrar.primary:primary_required"]],
-    ["开着 + env 主通道拼错（不许穿透到存储里那条合法通道）",
-      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "abc" },
-      { primary: "moemail", moemail: { baseUrl: "https://m.invalid", apiKey: "mk" } },
-      ["registrar.primary:not_a_channel"]],
-    ["开着 + 存储主通道拼错",
-      { REGISTRAR_ENABLED: "true" }, { primary: "abc" }, ["registrar.primary:not_a_channel"]],
-    ["开着 + moemail 主通道 + 只有 key 没有 baseUrl",
-      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "moemail", MOEMAIL_API_KEY: "mk" }, {},
-      ["registrar.moemail.baseUrl:channel_credentials_missing"]],
-    ["开着 + 主备同通道且都缺凭据 ⇒ 缺凭据只报一遍（去重）",
-      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "moemail", REGISTRAR_FALLBACK: "moemail" }, {},
+      { REGISTRAR_ENABLED: "true" }, {}, ["registrar.channel:channel_required"]],
+    ["开着 + env 通道拼错（不许穿透到兼容别名，也不许穿透到存储里那条合法通道）",
+      { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "abc", REGISTRAR_PRIMARY: "yyds" },
+      { channel: "moemail", moemail: { baseUrl: "https://m.invalid", apiKey: "mk" } },
+      ["registrar.channel:not_a_channel"]],
+    ["开着 + 存储通道拼错",
+      { REGISTRAR_ENABLED: "true" }, { channel: "abc" }, ["registrar.channel:not_a_channel"]],
+    ["开着 + 存量旧键读得出来（兼容读）⇒ 缺的是那条通道的凭据，不是「没选通道」",
+      { REGISTRAR_ENABLED: "true" }, { primary: "moemail" },
       [
-        "registrar.fallback:fallback_equals_primary",
         "registrar.moemail.apiKey:channel_credentials_missing",
         "registrar.moemail.baseUrl:channel_credentials_missing",
       ]],
+    ["开着 + moemail 通道 + 只有 key 没有 baseUrl",
+      { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "moemail", MOEMAIL_API_KEY: "mk" }, {},
+      ["registrar.moemail.baseUrl:channel_credentials_missing"]],
+    ["开着 + 选中 yyds、moemail 一格凭据都没有 ⇒ 未选中那条一条 blocker 都不产",
+      { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k" }, {}, []],
     ["关着 + 延迟对反了 ⇒ 照样产（这一条不受 enabled 门控）",
       { MINT_DELAY_MIN_MS: "9000", MINT_DELAY_MAX_MS: "3000" }, {},
       ["registrar.mintDelayMinMs:delay_min_gt_max"]],
     ["关着 + 延迟对里那个非法值回落默认值之后不再反 ⇒ 一条都不产",
       { MINT_DELAY_MIN_MS: "abc", MINT_DELAY_MAX_MS: "3000" }, {}, []],
     ["开着 + 数值全写坏 ⇒ 全部回落默认值，一条 blocker 都不产",
-      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k", TARGET_KEYS: "abc", MINT_BATCH: "-1" },
+      { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k", TARGET_KEYS: "abc", MINT_BATCH: "-1" },
       {}, []],
   ] as const)("blockers 逐条等于手写期望：%s", (_n, env, stored, want) => {
     expect(codes(env as Record<string, string | undefined>, stored)).toEqual([...want]);

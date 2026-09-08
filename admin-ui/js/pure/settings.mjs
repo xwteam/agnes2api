@@ -62,8 +62,9 @@ export const CARD_UPSTREAM = [
  */
 export const CARD_REGISTRAR = [
   "registrar.enabled",
-  "registrar.primary",
-  "registrar.fallback",
+  // **恰好一格通道下拉。** 屏幕上只要有两个通道下拉，无论叫什么，读者都会把上面
+  // 那个读成「主」——那就是把「二选一」藏起来，而不是做成二选一。
+  "registrar.channel",
   "registrar.targetKeys",
   "registrar.mintBatch",
   "registrar.tendIntervalMs",
@@ -236,8 +237,7 @@ const ERROR_KEYS = {
   too_long: "set.err.too_long",
   not_a_url: "set.err.not_a_url",
   not_a_channel: "set.err.not_a_channel",
-  primary_required: "set.err.primary_required",
-  fallback_equals_primary: "set.err.fallback_equals_primary",
+  channel_required: "set.err.channel_required",
   delay_min_gt_max: "set.err.delay_min_gt_max",
   channel_credentials_missing: "set.err.channel_credentials_missing",
   // 评审接连三次点名补的五条。**加码就必须补这里 + 补五语言**，由
@@ -249,6 +249,11 @@ const ERROR_KEYS = {
   too_short: "set.err.too_short",
   same_as_admin_token: "set.err.same_as_admin_token",
   config_unloadable: "set.err.config_unloadable",
+  // 下面三条不是错误，是**不拦人的常驻提示**（存量的主备旧键怎么读的、丢了什么）。
+  // 它们与错误码走同一张表，是因为面板选文案走的是同一条路。
+  legacy_channel_key: "set.err.legacy_channel_key",
+  legacy_channel_env: "set.err.legacy_channel_env",
+  legacy_fallback_ignored: "set.err.legacy_fallback_ignored",
 };
 
 /**
@@ -449,15 +454,13 @@ function sameScalar(a, b) {
 }
 
 /**
- * 前端**只做四条最轻量的即时提示**（设计 §10.4）：
- * 必填 / 是数字 / 非负 / `fallback ≠ primary`。**其余全靠渲染后端错误码。**
+ * 前端**只做三条最轻量的即时提示**（设计 §10.4）：
+ * 必填 / 是数字 / 非负。**其余全靠渲染后端错误码。**
  *
- * ⚠️⚠️ **第四条只在注册机启用时拦。**
- * 后端 `registrarFromEnv` 里那条 `fallback === primary` 的抛错写在
- * `if (enabled && …)` 里，关着的注册机它一条都不抛 ⇒ 前端无条件拦截的后果是
- * **「关着注册机时连下拉框都改不了」**，而后端明明会收下。
- * **两边判据必须同源**，这一条由 `tests/ui/settings.test.ts` 的
- * 「注册机关着时前端不拦 fallback === primary —— 与后端同源」钉着。
+ * ⚠️ **这里从前还有第四条「`fallback ≠ primary`，只在注册机启用时拦」。**
+ * 两条通道改成二选一之后，那条规则连同它的错误码一起不存在了 ⇒ 整段删除。
+ * 它当初那条「只在启用时拦、与后端同源」的纪律仍然有效，只是今天没有任何一条
+ * 前端预校验落在通道上：`channel_required` 由后端在跨字段阶段报。
  *
  * @param raw   `{ 路径: 值 }`，与 `buildPatch` 同一份输入。
  * @param body  最近一次 `GET /admin/api/config` 的响应（判「哪些是凭据」与当前类型）。
@@ -491,32 +494,7 @@ export function localErrors(raw, body) {
     if (n < 0) out.push({ field: path, code: "below_min" });
   }
 
-  // ④ `fallback ≠ primary`，**只在启用时**。
-  const enabled = pickBool(raw, body, "registrar.enabled");
-  const primary = pickText(raw, body, "registrar.primary");
-  const fallback = pickText(raw, body, "registrar.fallback");
-  if (enabled === true && fallback !== "" && fallback !== null && fallback === primary) {
-    out.push({ field: "registrar.fallback", code: "fallback_equals_primary" });
-  }
   return out;
-}
-
-/** 表单里有就用表单的，没有就用当前四元组里那一格。 */
-function pickBool(raw, body, path) {
-  const v = raw[path];
-  if (typeof v === "boolean") return v;
-  if (v === "true" || v === "false") return v === "true";
-  const view = fieldView(body, path);
-  const cur = view.stored === null ? view.effective : view.stored;
-  return typeof cur === "boolean" ? cur : null;
-}
-
-function pickText(raw, body, path) {
-  const v = raw[path];
-  if (typeof v === "string") return v;
-  const view = fieldView(body, path);
-  const cur = view.stored === null ? view.effective : view.stored;
-  return typeof cur === "string" ? cur : null;
 }
 
 /**
@@ -650,11 +628,29 @@ export function loadBlockedRows(body) {
 }
 
 /**
+ * **不拦人、但必须说出来的那几句话** → 渲染用的行（数据来自响应体的 `loadNotices`）。
+ *
+ * ⚠️ **与 `loadBlockedRows` 是两个来源、两块屏幕区域，判据却共用同一份**
+ *（同样的 `code` → 同样的文案）。分成两个函数而不是加一个参数：调用点因此读得出
+ * 自己在画哪一块，而「装不起来」与「照常跑、只是有句话得说」在屏幕上必须长得不一样。
+ */
+export function loadNoticeRows(body) {
+  const b = obj(body);
+  const list = b !== null && Array.isArray(b.loadNotices) ? b.loadNotices : [];
+  return list.filter((e) => obj(e) !== null).map((e) => ({
+    field: typeof e.field === "string" ? e.field : "",
+    code: typeof e.code === "string" ? e.code : "",
+    key: errorMessageKey(e.code),
+    params: obj(e.params) === null ? {} : e.params,
+  }));
+}
+
+/**
  * 清空这一把凭据之前，**必须对运维说的那一句话**。
  *
  * ⚠️⚠️ **一句通用红字在这几种状态下，有的是救命、有的是吓人。**
  * 面板手上有分辨它们的全部数据（`lockedBy` 说 env 里有没有；注册机开没开、这条通道
- * 在不在主/备链上都在四元组里），**所以不许让运维自己猜**。
+ * 是不是本次选中的那条都在四元组里），**所以不许让运维自己猜**。
  * 第一版给的是一句带「如果……」的条件句——那等于把判断推回给读的人，而他手上
  * 恰恰没有比面板更多的信息。
  *
@@ -680,10 +676,9 @@ export function clearWarning(body, path) {
 
   const enabled = fieldView(body, "registrar.enabled").effective === true;
   const channel = /^registrar\.(moemail|yyds)\.apiKey$/.exec(path);
-  const onChain = channel !== null && (
-    fieldView(body, "registrar.primary").effective === channel[1]
-    || fieldView(body, "registrar.fallback").effective === channel[1]
-  );
+  // **判据是「它是不是本次选中的那条」**，不再是「它在不在主备链上」——链没有了。
+  const onChain = channel !== null
+    && fieldView(body, "registrar.channel").effective === channel[1];
   return enabled && onChain
     ? { key: "set.clear.effect.channelBreaks", kind: "danger" }
     : { key: "set.clear.effect.channelIdle", kind: "info" };

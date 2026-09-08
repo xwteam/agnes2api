@@ -17,15 +17,15 @@
  *
  * ⚠️ **偏好词门禁的作用域早就不只是 `reg.*` 了**（两条邮箱通道必须完全平级）：
  * 今天它是一张前缀表，`reg.` 与 `keys.addMenu.auto` 之外还包含设置页那几条
- *（`set.field.registrar.primary` / `…fallback` / `set.field.channel.` / `set.card.registrar`）
- * 与概览页那**两条整 key**（`ov.config.primary` / `ov.config.fallback`）。
+ *（`set.field.registrar.channel` / `set.field.channel.` / `set.card.registrar`）
+ * 与概览页那**一条整 key**（`ov.config.channel`）。
  * **表在 `scripts/check-i18n.mjs` 的 `BANNED_PREFIXES`，别在这里手抄一份**——
  * 抄一份就会漂，而漂了没人会发现。
  * ⚠️ **处置也跟着变了，别再照抄上一版那句「换个命名空间」**：那条出路对前缀成立
- *（`reg.` 底下的一句话可以搬去 `nav.` 或 `common.`），但对上面那两条**整 key** 不成立
- * ——`ov.config.primary` 就是概览页那一行的标签，它没有「别的命名空间」可去。
+ *（`reg.` 底下的一句话可以搬去 `nav.` 或 `common.`），但对上面那条**整 key** 不成立
+ * ——`ov.config.channel` 就是概览页那一行的标签，它没有「别的命名空间」可去。
  * ⇒ 在作用域内要说「默认值」时，正确做法是**把那句话改写成不含偏好词的说法**
- *（「主通道」是槽位，不是「默认值」）；确实是作用域收错了，去改那张前缀表并在评审里说明，
+ *（「使用的通道」是槽位，不是「默认值」）；确实是作用域收错了，去改那张前缀表并在评审里说明，
  * **别给禁用词表开豁免**。
  */
 export const I18N = {
@@ -267,12 +267,11 @@ export const I18N = {
   "reg.state.on":     { "zh-CN": "已启用", "zh-TW": "已啟用", en: "Enabled", ja: "有効", ko: "사용 중" },
   "reg.state.off":    { "zh-CN": "已关闭", "zh-TW": "已關閉", en: "Disabled", ja: "無効", ko: "꺼짐" },
   "reg.state.blocked": { "zh-CN": "已启用 · 本次没跑起来", "zh-TW": "已啟用 · 本次沒跑起來", en: "Enabled \u00b7 not started this time", ja: "有効 \u00b7 今回は起動せず", ko: "사용 중 \u00b7 이번에는 시작 못 함" },
-  "reg.primary":      { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary channel", ja: "主チャネル", ko: "주 채널" },
-  "reg.fallback":     { "zh-CN": "备用通道", "zh-TW": "備用通道", en: "Fallback channel", ja: "フォールバックチャネル", ko: "대체 채널" },
+  "reg.channel":      { "zh-CN": "使用的通道", "zh-TW": "使用的通道", en: "Channel in use", ja: "使用するチャネル", ko: "사용 중인 채널" },
   "reg.none":         { "zh-CN": "未选择", "zh-TW": "未選擇", en: "Not selected", ja: "未選択", ko: "선택 안 됨" },
   // 设计 §10.3 第 8 条逐字：空状态说「两条通道平级，请选择一条作为主通道」，
   // **不是**「未选择时使用 X」。
-  "reg.emptyPrimary": { "zh-CN": "两条通道平级，请选择一条作为主通道。", "zh-TW": "兩條通道平級，請選擇一條作為主通道。", en: "The two channels rank equally — pick one as the primary channel.", ja: "2 つのチャネルは対等です。どちらか一方を主チャネルとして選んでください。", ko: "두 채널은 동등합니다. 둘 중 하나를 주 채널로 선택하세요." },
+  "reg.emptyChannel": { "zh-CN": "两条通道二选一：选中的那条负责收验证码，另一条填了也不会被用到，也不会自动切换。", "zh-TW": "兩條通道二選一：選中的那條負責收驗證碼，另一條填了也不會被用到，也不會自動切換。", en: "Pick one of the two channels: the selected one receives the verification codes, and the other is never used even if you fill it in — there is no automatic switching.", ja: "2 つのチャネルから 1 つを選びます。選んだほうが確認コードを受け取り、もう一方は入力しても使われません。自動で切り替わることもありません。", ko: "두 채널 중 하나를 고릅니다. 선택한 쪽이 인증 코드를 받고, 다른 쪽은 입력해도 사용되지 않으며 자동으로 전환되지도 않습니다." },
 
   "reg.pool.target":  { "zh-CN": "目标 key 数", "zh-TW": "目標 key 數", en: "Target key count", ja: "目標 key 数", ko: "목표 key 수" },
   // ⚠️ **这一格不叫「可用」，理由在 `src/core/registrar/tender.ts` 的 `available` 字段上**：
@@ -290,10 +289,11 @@ export const I18N = {
   // 「YYDS 开箱即用」是偏好，不许写。
   "reg.channel.addressFact.moemail": { "zh-CN": "自建服务：每个实例的地址都不一样，本就没有可以预填的地址，必须自己填。", "zh-TW": "自建服務：每個實例的位址都不一樣，本就沒有可以預先填入的位址，必須自己填。", en: "Self-hosted service: every instance lives at a different address, so there is no address to prefill — you provide it.", ja: "セルフホストのサービスです。インスタンスごとにアドレスが異なるため、あらかじめ入れておけるアドレスは存在しません。自分で指定してください。", ko: "직접 호스팅하는 서비스입니다. 인스턴스마다 주소가 달라 미리 채워 둘 주소가 존재하지 않으므로 직접 입력해야 합니다." },
   "reg.channel.addressFact.yyds":    { "zh-CN": "地址固定的公共服务：内置了一个地址，也可以自己改。", "zh-TW": "位址固定的公共服務：內建了一個位址，也可以自己改。", en: "Public service at a fixed address: one address ships with the gateway, and you can still override it.", ja: "アドレスが固定された公開サービスです。アドレスが 1 つ同梱されており、上書きもできます。", ko: "주소가 고정된 공개 서비스입니다. 주소 하나가 내장되어 있으며 직접 바꿀 수도 있습니다." },
-  "reg.channel.role":     { "zh-CN": "角色", "zh-TW": "角色", en: "Role", ja: "役割", ko: "역할" },
-  "reg.role.primary":     { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary", ja: "主", ko: "주 채널" },
-  "reg.role.fallback":    { "zh-CN": "备用通道", "zh-TW": "備用通道", en: "Fallback", ja: "フォールバック", ko: "대체 채널" },
-  "reg.role.unused":      { "zh-CN": "本次配置没有用到它", "zh-TW": "本次設定沒有用到它", en: "Not used by the current configuration", ja: "現在の設定では使われていません", ko: "현재 설정에서는 사용되지 않습니다" },
+  "reg.channel.inUseLabel": { "zh-CN": "本次使用", "zh-TW": "本次使用", en: "In use", ja: "使用状況", ko: "사용 여부" },
+  "reg.role.inUse":       { "zh-CN": "本次配置用的就是它", "zh-TW": "本次設定用的就是它", en: "This is the channel the current configuration uses", ja: "現在の設定で使われているのはこのチャネルです", ko: "현재 설정에서 사용하는 채널입니다" },
+  "reg.role.unused":      { "zh-CN": "本次配置没有使用它", "zh-TW": "本次設定沒有使用它", en: "The current configuration does not use it", ja: "現在の設定では使われていません", ko: "현재 설정에서는 사용되지 않습니다" },
+  "reg.channel.inUse":    { "zh-CN": "本次使用：注册机就用这一条收验证码。", "zh-TW": "本次使用：註冊機就用這一條收驗證碼。", en: "In use: this is the channel the registrar receives verification codes on.", ja: "使用中: レジストラーはこのチャネルで確認コードを受け取ります。", ko: "사용 중: 등록기가 이 채널로 인증 코드를 받습니다." },
+  "reg.channel.idle":     { "zh-CN": "未使用：填了也不会被用到，但可以先配好，随时切过来。", "zh-TW": "未使用：填了也不會被用到，但可以先配好，隨時切過來。", en: "Not in use: filling it in changes nothing right now, but you can set it up ahead of time and switch over whenever you want.", ja: "未使用: 入力しても今は使われませんが、先に設定しておけばいつでも切り替えられます。", ko: "사용 안 함: 입력해도 지금은 쓰이지 않지만, 미리 설정해 두면 언제든 전환할 수 있습니다." },
   "reg.channel.creds":    { "zh-CN": "凭据", "zh-TW": "憑證", en: "Credentials", ja: "資格情報", ko: "자격 증명" },
   "reg.channel.credsYes": { "zh-CN": "已配好", "zh-TW": "已配好", en: "Configured", ja: "設定済み", ko: "설정됨" },
   "reg.channel.credsNo":  { "zh-CN": "未配置", "zh-TW": "未設定", en: "Not configured", ja: "未設定", ko: "설정 안 됨" },
@@ -316,7 +316,7 @@ export const I18N = {
   "reg.tend.confirmUnknown": { "zh-CN": "读不到当前的缺口与单轮上限，这次会铸几把 key 说不准。请先刷新，确认状态之后再点。", "zh-TW": "讀不到目前的缺口與單輪上限，這次會鑄幾把 key 說不準。請先重新整理，確認狀態之後再點。", en: "The current gap and per-round ceiling could not be read, so how many keys this run mints is unknown. Refresh first and confirm the state before proceeding.", ja: "現在の不足数と 1 ラウンドの上限が読み取れないため、今回いくつ key を発行するかは不明です。まず更新して状態を確認してから実行してください。", ko: "현재 부족분과 라운드당 상한을 읽지 못해 이번에 key를 몇 개 발급할지 알 수 없습니다. 먼저 새로고침해 상태를 확인한 뒤 진행하세요." },
   // 通道下拉：**初始为占位符，两条通道都不预选**（设计 §10.3 第 1 条同一条纪律）。
   "reg.tend.channelLabel": { "zh-CN": "用哪条通道", "zh-TW": "用哪條通道", en: "Which channel", ja: "使用するチャネル", ko: "사용할 채널" },
-  "reg.tend.channelAny":   { "zh-CN": "按当前配置的主 / 备通道", "zh-TW": "按目前設定的主 / 備通道", en: "Follow the configured primary / fallback chain", ja: "設定されている主／フォールバックの順に従う", ko: "설정된 주/대체 채널 순서를 따름" },
+  "reg.tend.channelAny":   { "zh-CN": "按设置里选中的那条", "zh-TW": "按設定裡選中的那條", en: "Use the channel from settings", ja: "設定で選んでいるチャネルを使う", ko: "설정에서 선택한 채널을 사용" },
   "reg.tend.started":      { "zh-CN": "已开始补池。结果会出现在下面的补池历史里——这颗按钮只负责发起，不等它跑完。", "zh-TW": "已開始補池。結果會出現在下面的補池歷史裡——這顆按鈕只負責發起，不等它跑完。", en: "Refill started. The result will show up in the refill history below — this button only kicks it off and does not wait for it to finish.", ja: "補充を開始しました。結果は下の補充履歴に表示されます——このボタンは開始するだけで、完了を待ちません。", ko: "보충을 시작했습니다. 결과는 아래 보충 기록에 표시됩니다 — 이 버튼은 시작만 할 뿐 완료를 기다리지 않습니다." },
   "reg.tend.failed":       { "zh-CN": "这次补池没有发起成功", "zh-TW": "這次補池沒有發起成功", en: "This refill was not started", ja: "今回の補充は開始できませんでした", ko: "이번 보충을 시작하지 못했습니다" },
   // 「今天还剩几次」**在点之前就要显示**，不是等到点不动了才说。
@@ -624,8 +624,7 @@ export const I18N = {
   "ov.config.on":         { "zh-CN": "已启用", "zh-TW": "已啟用", en: "Enabled", ja: "有効", ko: "활성화됨" },
   "ov.config.off":        { "zh-CN": "已关闭", "zh-TW": "已關閉", en: "Disabled", ja: "無効", ko: "비활성화됨" },
   "ov.config.blocked":    { "zh-CN": "已启用 · 本次没跑起来", "zh-TW": "已啟用 · 本次沒跑起來", en: "Enabled \u00b7 not started this time", ja: "有効 \u00b7 今回は起動せず", ko: "사용 중 \u00b7 이번에는 시작 못 함" },
-  "ov.config.primary":    { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary channel", ja: "主チャネル", ko: "주 채널" },
-  "ov.config.fallback":   { "zh-CN": "备用通道", "zh-TW": "備用通道", en: "Fallback channel", ja: "フォールバックチャネル", ko: "대체 채널" },
+  "ov.config.channel":    { "zh-CN": "使用的通道", "zh-TW": "使用的通道", en: "Channel in use", ja: "使用するチャネル", ko: "사용 중인 채널" },
   "ov.config.none":       { "zh-CN": "无", "zh-TW": "無", en: "None", ja: "なし", ko: "없음" },
   "ov.config.targetKeys": { "zh-CN": "目标 key 数", "zh-TW": "目標 key 數", en: "Target key count", ja: "目標 key 数", ko: "목표 key 수" },
   "ov.config.envLocked":  { "zh-CN": "被环境变量锁定的字段数：{count}", "zh-TW": "被環境變數鎖定的欄位數：{count}", en: "Fields locked by environment variables: {count}", ja: "環境変数でロックされているフィールド数: {count}", ko: "환경 변수로 잠긴 필드 수: {count}" },
@@ -891,8 +890,10 @@ export const I18N = {
   "set.err.too_long": { "zh-CN": "最长 {max} 个字符", "zh-TW": "最長 {max} 個字元", en: "At most {max} characters", ja: "最大 {max} 文字です", ko: "최대 {max}자입니다" },
   "set.err.not_a_url": { "zh-CN": "必须是 http:// 或 https:// 开头的地址", "zh-TW": "必須是 http:// 或 https:// 開頭的位址", en: "Must be an http:// or https:// URL", ja: "http:// または https:// で始まる URL が必要です", ko: "http:// 또는 https:// 로 시작하는 주소여야 합니다" },
   "set.err.not_a_channel": { "zh-CN": "只能选列表里的通道", "zh-TW": "只能選清單裡的通道", en: "Pick one of the listed channels", ja: "一覧にあるチャネルから選んでください", ko: "목록에 있는 채널 중에서 선택하세요" },
-  "set.err.primary_required": { "zh-CN": "注册机开着时必须选一条主通道", "zh-TW": "註冊機開著時必須選一條主通道", en: "A primary channel is required while the registrar is on", ja: "レジストラーが有効なときは主チャネルの選択が必要です", ko: "등록기가 켜져 있을 때는 주 채널을 선택해야 합니다" },
-  "set.err.fallback_equals_primary": { "zh-CN": "备用通道不能与主通道是同一条", "zh-TW": "備用通道不能與主通道是同一條", en: "The fallback channel cannot be the same as the primary one", ja: "フォールバックチャネルは主チャネルと同じにできません", ko: "대체 채널은 주 채널과 같을 수 없습니다" },
+  "set.err.channel_required": { "zh-CN": "注册机开着时必须选一条通道", "zh-TW": "註冊機開著時必須選一條通道", en: "A channel must be selected while the registrar is on", ja: "レジストラーが有効なときはチャネルを 1 つ選ぶ必要があります", ko: "등록기가 켜져 있을 때는 채널을 하나 선택해야 합니다" },
+  "set.err.legacy_channel_key": { "zh-CN": "这一格的值来自旧的存储键 registrar.primary。在这一页保存任意一次，旧键会被清掉，这条提示随之消失。", "zh-TW": "這一格的值來自舊的儲存鍵 registrar.primary。在這一頁儲存任意一次，舊鍵會被清掉，這條提示隨之消失。", en: "This value comes from the legacy stored key registrar.primary. Save anything on this page once and the legacy key is cleaned up, after which this notice goes away.", ja: "この値は旧ストレージキー registrar.primary から読まれています。このページで一度保存すれば旧キーは削除され、この通知も消えます。", ko: "이 값은 예전 저장 키 registrar.primary에서 읽어 온 것입니다. 이 페이지에서 한 번 저장하면 예전 키가 정리되고 이 알림도 사라집니다." },
+  "set.err.legacy_channel_env": { "zh-CN": "这一格的值来自旧的环境变量名 REGISTRAR_PRIMARY。它作为兼容别名长期保留，改成 REGISTRAR_CHANNEL 之后这条提示会消失。", "zh-TW": "這一格的值來自舊的環境變數名 REGISTRAR_PRIMARY。它作為相容別名長期保留，改成 REGISTRAR_CHANNEL 之後這條提示會消失。", en: "This value comes from the legacy environment variable REGISTRAR_PRIMARY. It is kept as a compatibility alias indefinitely; rename it to REGISTRAR_CHANNEL and this notice goes away.", ja: "この値は旧環境変数名 REGISTRAR_PRIMARY から読まれています。互換エイリアスとして今後も残りますが、REGISTRAR_CHANNEL に変えればこの通知は消えます。", ko: "이 값은 예전 환경 변수 이름 REGISTRAR_PRIMARY에서 읽어 온 것입니다. 호환 별칭으로 계속 남지만, REGISTRAR_CHANNEL로 바꾸면 이 알림이 사라집니다." },
+  "set.err.legacy_fallback_ignored": { "zh-CN": "备通道 {dropped} 已经被丢掉：两条通道现在是二选一，它不再参与选路，也不会在失败时被自动启用。如果你的部署一直靠它在铸 key，现在一把都不会铸出来了——要用它，请把上面那一格改成它。", "zh-TW": "備通道 {dropped} 已經被丟掉：兩條通道現在是二選一，它不再參與選路，也不會在失敗時被自動啟用。如果你的部署一直靠它在鑄 key，現在一把都不會鑄出來了——要用它，請把上面那一格改成它。", en: "The fallback channel {dropped} has been dropped: the two channels are now an either-or choice, so it no longer takes part in routing and is never switched to on failure. If your deployment has actually been minting keys through it, you will now mint none at all — to keep using it, change the channel above to it.", ja: "フォールバックチャネル {dropped} は破棄されました。2 つのチャネルはいずれか一方を選ぶ方式になったため、経路選択には関与せず、失敗しても自動的に切り替わりません。もし実際にこのチャネルでキーを発行していた場合、これからは 1 つも発行されません。使い続けるには上のチャネルをこれに変更してください。", ko: "대체 채널 {dropped}은(는) 폐기되었습니다. 이제 두 채널은 둘 중 하나만 고르는 방식이라 경로 선택에 관여하지 않으며 실패해도 자동으로 전환되지 않습니다. 실제로 이 채널로 key를 발급해 왔다면 이제 하나도 발급되지 않습니다. 계속 쓰려면 위의 채널을 이것으로 바꾸세요." },
   "set.err.delay_min_gt_max": { "zh-CN": "最小间隔 {min} 不能大于最大间隔 {max}", "zh-TW": "最小間隔 {min} 不能大於最大間隔 {max}", en: "The minimum delay {min} cannot exceed the maximum {max}", ja: "最小間隔 {min} は最大間隔 {max} を超えられません", ko: "최소 간격 {min}은 최대 간격 {max}보다 클 수 없습니다" },
   "set.err.channel_credentials_missing": { "zh-CN": "{channel} 这条通道还差凭据，注册机开着时它必须配全", "zh-TW": "{channel} 這條通道還差憑據，註冊機開著時它必須配全", en: "The {channel} channel is missing credentials, which are required while the registrar is on", ja: "{channel} チャネルの資格情報が不足しています。レジストラーが有効な間は必須です", ko: "{channel} 채널의 자격 증명이 없습니다. 등록기가 켜져 있는 동안에는 필수입니다" },
   "set.err.gateway_token_required": { "zh-CN": "网关口令不能两边都没有：环境变量里没有，存储里也清空了，下一次冷启动会起不来", "zh-TW": "網關口令不能兩邊都沒有：環境變數裡沒有，儲存裡也清空了，下一次冷啟動會起不來", en: "The gateway token cannot be missing from both sides: it is absent from the environment and cleared in storage, so the next cold start will fail", ja: "ゲートウェイトークンが両方にない状態にはできません。環境変数になく、ストレージでもクリアされているため、次のコールドスタートで起動できなくなります", ko: "게이트웨이 토큰이 양쪽 모두에 없을 수는 없습니다. 환경 변수에도 없고 저장소에서도 지워져 다음 콜드 스타트에 기동이 실패합니다" },
@@ -913,8 +914,7 @@ export const I18N = {
   "set.field.poolCacheTtlMs": { "zh-CN": "池快照缓存（毫秒，0 = 关闭）", "zh-TW": "池快照快取（毫秒，0 = 關閉）", en: "Pool snapshot cache (ms, 0 = off)", ja: "プールスナップショットのキャッシュ（ミリ秒、0 = 無効）", ko: "풀 스냅숏 캐시(ms, 0 = 끔)" },
   "set.field.poolTouchIntervalMs": { "zh-CN": "写消除间隔（毫秒，0 = 关闭）", "zh-TW": "寫入消除間隔（毫秒，0 = 關閉）", en: "Write-elision interval (ms, 0 = off)", ja: "書き込み省略の間隔（ミリ秒、0 = 無効）", ko: "쓰기 생략 간격(ms, 0 = 끔)" },
   "set.field.registrar.enabled": { "zh-CN": "启用注册机", "zh-TW": "啟用註冊機", en: "Enable the registrar", ja: "レジストラーを有効にする", ko: "등록기 사용" },
-  "set.field.registrar.primary": { "zh-CN": "主通道", "zh-TW": "主通道", en: "Primary channel", ja: "主チャネル", ko: "주 채널" },
-  "set.field.registrar.fallback": { "zh-CN": "备用通道", "zh-TW": "備用通道", en: "Fallback channel", ja: "フォールバックチャネル", ko: "대체 채널" },
+  "set.field.registrar.channel": { "zh-CN": "使用的通道", "zh-TW": "使用的通道", en: "Channel in use", ja: "使用するチャネル", ko: "사용 중인 채널" },
   "set.field.registrar.targetKeys": { "zh-CN": "目标 key 数", "zh-TW": "目標 key 數", en: "Target key count", ja: "目標キー数", ko: "목표 key 수" },
   "set.field.registrar.mintBatch": { "zh-CN": "单轮最多铸几把", "zh-TW": "單輪最多鑄幾把", en: "Max keys minted per round", ja: "1 ラウンドあたりの最大発行数", ko: "라운드당 최대 발급 수" },
   "set.field.registrar.tendIntervalMs": { "zh-CN": "补池间隔（毫秒）", "zh-TW": "補池間隔（毫秒）", en: "Refill interval (ms)", ja: "補充間隔（ミリ秒）", ko: "보충 간격(ms)" },

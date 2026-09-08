@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { WORKER_CRON_WALL_CLOCK_MS, WORKER_ROUND_BUDGET_MS } from "../../../src/core/registrar/types.js";
-import { registrarFromEnv, requirePrimary } from "../../../src/core/registrar/config.js";
+import {
+  registrarFromEnv, requireChannel, migrateStoredRegistrar,
+} from "../../../src/core/registrar/config.js";
 import { recordingLogger } from "../../helpers/recording-logger.js";
 
-/** 只要生效配置那一半。装载器现在返回 `{ config, blockers }` 两格。 */
+/** 只要生效配置那一半。装载器现在返回 `{ config, blockers, notices }` 三格。 */
 const cfg = (
   env: Parameters<typeof registrarFromEnv>[0],
   stored: Parameters<typeof registrarFromEnv>[1] = {},
@@ -22,7 +24,6 @@ describe("registrarFromEnv", () => {
 
   it("默认值与设计文档一致", () => {
     const c = cfg({}, {});
-    expect(c.fallback).toBeNull();
     expect(c.targetKeys).toBe(20);
     expect(c.mintBatch).toBe(5);
     expect(c.tendIntervalMs).toBe(1_800_000);
@@ -34,16 +35,16 @@ describe("registrarFromEnv", () => {
   // 判据的**行为**没有放松，换的是失败形态：从前一份坏配置让**整个网关**起不来
   //（Node 进程退出 / Worker 每个请求 500），现在只让**注册机本次不启动**，
   // 转发、`/health`、面板照常。`blocked` 与逐条 `blockers` 是那件事的对外表达。
-  it("启用但没指定主通道时产出 primary_required（两条通道平级，不预设默认）", () => {
+  it("启用但没选通道时产出 channel_required（两条通道平级，不预设默认）", () => {
     const r = registrarFromEnv({ REGISTRAR_ENABLED: "true" }, {});
-    expect(codes(r)).toEqual(["registrar.primary:primary_required"]);
+    expect(codes(r)).toEqual(["registrar.channel:channel_required"]);
     expect(r.config.blocked).toBe(true);
     // **`enabled` 一个字都不改**：「运维明明打开了，面板却说未启用」是另一种撒谎。
     expect(r.config.enabled).toBe(true);
   });
 
-  it("启用但主通道凭据缺失时产出 channel_credentials_missing 并指明是哪一格", () => {
-    const r = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds" }, {});
+  it("启用但选中通道的凭据缺失时产出 channel_credentials_missing 并指明是哪一格", () => {
+    const r = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds" }, {});
     expect(r.blockers).toEqual([
       { field: "registrar.yyds.apiKey", code: "channel_credentials_missing", params: { channel: "yyds" } },
     ]);
@@ -53,54 +54,67 @@ describe("registrarFromEnv", () => {
   });
 
   it("启用且凭据齐备时通过（blockers 空、blocked 假）", () => {
-    const r = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" }, {});
+    const r = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k" }, {});
     expect(r.config.enabled).toBe(true);
     expect(r.config.yyds).toEqual({ baseUrl: "https://maliapi.215.im", apiKey: "k" });
     expect(r.blockers).toEqual([]);
     expect(r.config.blocked).toBe(false);
   });
 
-  it("配了备通道则备通道凭据也必须齐备", () => {
+  it("配置模型上根本不存在第二条通道的槽位（界面藏起来、内部还是主备就会红）", () => {
+    // ⚠️ **必须比键集合，不能只写 `expect(cfg.fallback).toBeUndefined()`**：
+    // 一个「保留 fallback 字段但恒为 null」的实现能从后者那边蒙混过去，
+    // 而那正是「面板上把第二个下拉藏起来、内部还是主备」这个谎的形状。
     const r = registrarFromEnv(
-      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k", REGISTRAR_FALLBACK: "moemail" }, {},
+      { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k" },
+      { primary: "moemail", fallback: "moemail" } as never,
     );
-    expect(codes(r)).toEqual([
-      "registrar.moemail.apiKey:channel_credentials_missing",
-      "registrar.moemail.baseUrl:channel_credentials_missing",
+    expect(Object.keys(r.config).sort()).toEqual([
+      "agnesPlatformUrl", "blocked", "channel", "codeTimeoutMs", "enabled",
+      "maxDomainAttempts", "mintBatch", "mintDelayMaxMs", "mintDelayMinMs",
+      "moemail", "targetKeys", "tendIntervalMs", "tokenName", "yyds",
     ]);
-    // 主通道那一半照样装得出来——**一次收齐全部 blocker，且不牵连别的字段**。
-    expect(r.config.yyds).toEqual({ baseUrl: "https://maliapi.215.im", apiKey: "k" });
+    expect(Object.keys(r.config)).not.toContain("fallback");
+    expect(Object.keys(r.config)).not.toContain("primary");
   });
 
-  it("yyds 作**备**通道时 YYDS_API_KEY 同样必填（不是「主通道才要」）", () => {
-    // 与上一条镜像：上一条只覆盖了 moemail 作备通道，yyds 那一半零覆盖，而
-    // .env.example 的错误注释（「主通道启用时必填」）正是把用户往这个配置上引——
-    // 结果 Node 进程 process.exit(1)、Worker 全部请求 500，整个网关的转发能力被
-    // 一个备通道凭据打掉。两条方向都钉住，才算守住「两条通道一视同仁」。
+  it("两条通道都解析凭据，但只有选中那条的缺凭据产 blocker（正向）", () => {
+    // 未选中那条的 `configured` 必须是真话 —— 面板的「测试连接」与「添加 Key ▸
+    // 自动注册」都拿它当判据，而「切换前先比一比」是二选一模型下最核心的工作流。
+    const r = registrarFromEnv({
+      REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k",
+      MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
+    }, {});
+    expect(r.config.moemail).toEqual({ baseUrl: "https://m.test", apiKey: "mk" });
+    expect(r.blockers).toEqual([]);
+    expect(r.config.blocked).toBe(false);
+  });
+
+  it("未选中那条通道缺凭据时不产 blocker（反向，与上一条缺一不可）", () => {
+    // 没选它就不该拦人。少了这一条，一个「两条都收 blocker」的实现照样能过上一条。
+    const r = registrarFromEnv({
+      REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k",
+      MOEMAIL_BASE_URL: "https://m.test",
+    }, {});
+    expect(r.config.moemail).toBeNull();
+    expect(r.blockers).toEqual([]);
+    expect(r.config.blocked).toBe(false);
+  });
+
+  it("反向控制：选中 moemail 时，缺的是 moemail 的凭据（两条通道一视同仁）", () => {
     expect(codes(registrarFromEnv(
-      {
-        REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "moemail",
-        MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
-        REGISTRAR_FALLBACK: "yyds",
-      },
-      {},
-    ))).toEqual(["registrar.yyds.apiKey:channel_credentials_missing"]);
-  });
-
-  it(".env.example 的凭据注释按「主通道或备通道任一」措辞，两条通道对称", () => {
-    // .env.example 是用户复制来改的那份文件，它的措辞就是这条约束对外的唯一说明；
-    // 上面那条断言的是代码行为，这条断言的是文档不与代码矛盾。
-    const env = readFileSync(".env.example", "utf8");
-    expect(env).toContain("# YYDS Mail 凭据（主通道或备通道任一为 yyds 时必填）");
-    expect(env).toContain("主通道或备通道任一为 moemail 时两项都必填");
-    // 旧措辞会让用户以为备通道凭据可以不填。
-    expect(env).not.toContain("（主通道启用时必填）");
-  });
-
-  it("MoeMail 作主通道时同时要 base url 与 key（自建服务无默认地址）", () => {
-    expect(codes(registrarFromEnv(
-      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "moemail", MOEMAIL_API_KEY: "k" }, {},
+      { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "moemail", MOEMAIL_API_KEY: "k" }, {},
     ))).toEqual(["registrar.moemail.baseUrl:channel_credentials_missing"]);
+  });
+
+  it(".env.example 的凭据注释两条通道对称，且不再提主备", () => {
+    // .env.example 是用户复制来改的那份文件，它的措辞就是这条约束对外的唯一说明；
+    // 上面那几条断言的是代码行为，这条断言的是文档不与代码矛盾。
+    const env = readFileSync(".env.example", "utf8");
+    expect(env).toContain("# YYDS Mail 凭据（选中的通道为 yyds 时必填）");
+    expect(env).toContain("选中的通道为 moemail 时两项都必填");
+    // 旧措辞里那对「主通道 / 备通道」已经不存在了，留着就是在教一个不存在的模型。
+    expect(env).not.toContain("主通道或备通道任一");
   });
 
   it("环境变量优先于存储", () => {
@@ -150,16 +164,11 @@ describe("registrarFromEnv", () => {
   // 代码（例如选哪个 MailProvider 适配器）会拿到既不是 yyds 也不是 moemail 的值。
   // 通道格式校验现在受 enabled 门控（见下面"未启用时…只 warn"的用例），故这里要
   // 显式启用注册机，才能真正打在"启用时格式非法必须抛错"这条分支上。
-  it("启用时存储中的 primary 非法值产出 not_a_channel，不能绕过校验静默流入", () => {
-    const r = registrarFromEnv({ REGISTRAR_ENABLED: "true" }, { primary: "garbage" as never });
-    expect(codes(r)).toEqual(["registrar.primary:not_a_channel"]);
-    // **不同时报 primary_required**：值写错了与压根没选是两句不同的话。
-    expect(r.config.primary).toBeNull();
-  });
-
-  it("启用时存储中的 fallback 非法值产出 not_a_channel，不能绕过校验静默流入", () => {
-    expect(codes(registrarFromEnv({ REGISTRAR_ENABLED: "true" }, { fallback: "garbage" as never })))
-      .toEqual(["registrar.fallback:not_a_channel", "registrar.primary:primary_required"]);
+  it("启用时存储中的 channel 非法值产出 not_a_channel，不能绕过校验静默流入", () => {
+    const r = registrarFromEnv({ REGISTRAR_ENABLED: "true" }, { channel: "garbage" as never });
+    expect(codes(r)).toEqual(["registrar.channel:not_a_channel"]);
+    // **不同时报 channel_required**：值写错了与压根没选是两句不同的话。
+    expect(r.config.channel).toBeNull();
   });
 
   /**
@@ -170,23 +179,23 @@ describe("registrarFromEnv", () => {
    * 会**静默穿透**成存储里那条通道——运维写错一个字母，网关拿另一条通道去跑，
    * 一句话都不说。判据钉的是「env 侧写错就不再看存储」这个行为。
    */
-  it("env 侧通道值非法时不回落到存储值（拼错一个字母不许静默换一条通道去跑）", () => {
+  it("新名字非法时既不落到兼容别名、也不落到存储（四级之间同样不许穿透）", () => {
+    // 候选从 2 级变 4 级之后，「本级判死就到此为止」这条纪律一个字都不能松：
+    // 松了的话新名字写错一个字母，网关会静默拿旧名字或存储里那条通道去跑。
     const r = registrarFromEnv(
-      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yydss" },
-      { primary: "moemail" as never, moemail: { baseUrl: "https://m.test", apiKey: "k" } },
+      { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yydss", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" },
+      { channel: "moemail" as never, moemail: { baseUrl: "https://m.test", apiKey: "k" } },
     );
-    expect(r.config.primary).toBeNull();
-    expect(codes(r)).toEqual(["registrar.primary:not_a_channel"]);
-    // 穿透的话这里会是那份 moemail 凭据。
-    expect(r.config.moemail).toBeNull();
+    expect(r.config.channel).toBeNull();
+    expect(codes(r)).toEqual(["registrar.channel:not_a_channel"]);
   });
 
-  it("env 侧通道值是空串时算「没写」，继续看存储（compose 里 `REGISTRAR_PRIMARY=` 是常见写法）", () => {
+  it("env 侧通道值是空串时算「没写」，继续往下看（compose 里 `REGISTRAR_CHANNEL=` 是常见写法）", () => {
     const r = registrarFromEnv(
-      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "", YYDS_API_KEY: "k" },
-      { primary: "yyds" as never },
+      { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "", YYDS_API_KEY: "k" },
+      { channel: "yyds" as never },
     );
-    expect(r.config.primary).toBe("yyds");
+    expect(r.config.channel).toBe("yyds");
     expect(r.blockers).toEqual([]);
   });
 
@@ -198,7 +207,7 @@ describe("registrarFromEnv", () => {
     const logger = recordingLogger();
     let got: ReturnType<typeof registrarFromEnv> | undefined;
     expect(() => {
-      got = registrarFromEnv({}, { primary: "garbage" as never, fallback: "trash" as never }, logger);
+      got = registrarFromEnv({}, { channel: "garbage" as never }, logger);
     }).not.toThrow();
     expect(got!.config.enabled).toBe(false);
     // **关着的注册机一条 blocker 都不产**：那几条全部受 enabled 门控。
@@ -207,34 +216,13 @@ describe("registrarFromEnv", () => {
     expect(logger.has("registrar.config_ignored")).toBe(true);
   });
 
-  it("主备通道相同时产出 fallback_equals_primary（降级到自己没有意义）", () => {
-    const r = registrarFromEnv(
-      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k", REGISTRAR_FALLBACK: "yyds" }, {},
-    );
-    expect(codes(r)).toEqual(["registrar.fallback:fallback_equals_primary"]);
-    // **同一条通道的缺凭据不许报两遍**（这里凭据是齐的，钉的是去重本身）。
-    expect(r.config.yyds).toEqual({ baseUrl: "https://maliapi.215.im", apiKey: "k" });
-  });
-
-  // 回归用例：主备相同的校验此前没有像"启用但未指定主通道"那条一样受 enabled
-  // 门控，导致运维在真正打开注册机之前先把两个通道变量摆成同一个值（例如照抄
-  // 文档示例、提前布置环境变量）就会让 registrarFromEnv 抛错——而这个函数是
-  // loadConfig()/buildApp() 内部调用链的一环，两个入口都会经过它，于是关闭状态
-  // 下的一条注册机专属校验会把整个网关的启动都拖垮。
-  it("未启用时主备通道相同一条 blocker 都不产（关闭状态不该受注册机专属校验拖累）", () => {
-    const r = registrarFromEnv({ REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "yyds" }, {});
-    expect(r.config.enabled).toBe(false);
-    expect(r.blockers).toEqual([]);
-    expect(r.config.blocked).toBe(false);
-  });
-
   it("未启用时不校验凭据（关着就不该因为没配 key 而让注册机记一笔）", () => {
     // 关键：REGISTRAR_PRIMARY 已指定但对应凭据缺失——原始测试只传了
     // { REGISTRAR_ENABLED: "false" }，此时 primary 本来就是 null，凭据校验循环
     // 天然不会跑到，删掉"未启用时跳过校验"的分支这条测试也照样通过（验证过：
     // 真的删掉代码里的 `if (!enabled) return cfg;` 后 12 个测试仍全绿）。
     // 必须让 primary 有值、凭据没给，才能真正打在"关闭时跳过凭据校验"这条分支上。
-    const r = registrarFromEnv({ REGISTRAR_ENABLED: "false", REGISTRAR_PRIMARY: "yyds" }, {});
+    const r = registrarFromEnv({ REGISTRAR_ENABLED: "false", REGISTRAR_CHANNEL: "yyds" }, {});
     expect(r.blockers).toEqual([]);
     expect(r.config.yyds).toBeNull();
   });
@@ -269,7 +257,7 @@ describe("registrarFromEnv", () => {
 
   // === 补池间隔与单轮最坏耗时的交叉校验（只 warn，不抛错） ===
 
-  const ENABLED = { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" };
+  const ENABLED = { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k" };
 
   // console.* 已经被换成注入的 Logger（第 3 个可选参数）：下面全部改成 recordingLogger
   // 断言事件名 + fields，而不是 spy console 断言文案子串。
@@ -292,48 +280,15 @@ describe("registrarFromEnv", () => {
     expect(logger.has("registrar.interval_shorter_than_worst_round")).toBe(false);
   });
 
-  it("配了备通道时单轮最坏耗时按两条通道算（code_timeout 会降级重试一次）", () => {
-    // 后来 code_timeout 属于通道级失败，配了备通道时同一个补池名额最坏要等
-    // 两次 CODE_TIMEOUT_MS。墙钟模型跟着变，这条告警的阈值必须同步，否则用户按
-    // 「没告警＝安全」调参会直接撞上轮次重叠。
-    const logger = recordingLogger();
-    // 700000 > 5×120000 = 600000（单通道不告警），< 5×120000×2 = 1200000（双通道要告警）。
-    // 阈值取在两个模型之间，旧模型下这条必红。
-    registrarFromEnv(
-      {
-        ...ENABLED, REGISTRAR_FALLBACK: "moemail",
-        MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
-        TEND_INTERVAL_MS: "700000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000",
-      },
-      {}, logger,
-    );
-    const e = logger.entries.find((x) => x.event === "registrar.interval_shorter_than_worst_round");
-    expect(e).toBeDefined();
-    expect(e?.fields?.worstRoundMs).toBe(1200000);
-  });
-
-  it("同样的 700000 在单通道下不告警（成对用例，锁住通道数这个因子）", () => {
-    const logger = recordingLogger();
-    registrarFromEnv(
-      { ...ENABLED, TEND_INTERVAL_MS: "700000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {}, logger,
-    );
-    expect(logger.has("registrar.interval_shorter_than_worst_round")).toBe(false);
-  });
-
-  it("轮级预算告警①：CODE_TIMEOUT_MS×通道数 超过 Worker 轮级预算时启动期记 registrar.attempt_exceeds_worker_budget（否则是永久静默停摆）", () => {
+  it("轮级预算告警①：CODE_TIMEOUT_MS 超过 Worker 轮级预算时启动期记 registrar.attempt_exceeds_worker_budget（否则是永久静默停摆）", () => {
     // CODE_TIMEOUT_MS 无上界，而 Worker 的轮级预算是固定值。超过之后 tendOnce 连
     // 第一次尝试都不敢开始：attempted=0、minted=0、failures=[]，两个入口的归因日志
     // 走的是 `minted < attempted`（0<0 为假）一条都不打——用户只看到「本轮预算不足」，
     // 读起来像瞬时状况，实际每一轮都零产出。
     const logger = recordingLogger();
-    // 400s × 2 通道 = 800s > 780s 预算。TEND_INTERVAL_MS 给得足够大，避免上面那条
-    // 重叠告警混进来——这条断言要能确定命中的是新加的这一条。
+    // 800s > 780s 预算。TEND_INTERVAL_MS 给得足够大，避免上面那条重叠告警混进来。
     registrarFromEnv(
-      {
-        ...ENABLED, REGISTRAR_FALLBACK: "moemail",
-        MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
-        CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000",
-      },
+      { ...ENABLED, CODE_TIMEOUT_MS: "800000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000" },
       {}, logger,
     );
     const e = logger.entries.find((x) => x.event === "registrar.attempt_exceeds_worker_budget");
@@ -343,9 +298,10 @@ describe("registrarFromEnv", () => {
     expect(e?.msg).toContain("Node/Docker");
   });
 
-  it("轮级预算告警②：同样的 400s 在单通道下不告警（400s < 780s 预算，与①成对）", () => {
-    // 与上一条唯一的差别是没有备通道：`× 通道数` 这个因子被真正求值了才能同时通过
-    // 这两条。若实现漏乘通道数，上一条就不会触发。
+  it("轮级预算告警②：400s 不告警（400s < 780s 预算，与①成对）", () => {
+    // 与①成对：没有它的话，一个「无条件告警」的实现照样能过①。
+    // ⚠️ 这一对从前钉的是 `× 通道数` 那个因子（400s × 2 通道 = 800s）。
+    // 两条通道改成二选一之后那个因子不存在了，判据改成钉阈值本身。
     const logger = recordingLogger();
     registrarFromEnv(
       { ...ENABLED, CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000" },
@@ -361,25 +317,136 @@ describe("registrarFromEnv", () => {
   });
 });
 
-describe("requirePrimary", () => {
-  it("enabled 且 primary 合法时返回该通道", () => {
-    const c = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k" }, {}).config;
-    expect(requirePrimary(c)).toBe("yyds");
+/**
+ * **存量存储 / 环境变量里那两个旧的主备键：读得出来，而且丢掉的那条被点名说出来。**
+ *
+ * 这一族是整个改动里最容易撒谎的一栏：仓库已经发过 tag，线上存储里确实躺着
+ * `{"registrar":{"primary":"yyds","fallback":"moemail"}}` 这种数据。静默丢弃
+ * `fallback` 就是撒谎，而无条件提示又会常年顶着一条假通知 —— 两个方向都要钉住。
+ */
+describe("存量主备旧键的迁移", () => {
+  const notices = (r: ReturnType<typeof registrarFromEnv>): string[] =>
+    r.notices.map((n) => `${n.field}:${n.code}`).sort();
+
+  it("旧键读得出来，注册机照常跑，而丢掉的那条被点名说出来", () => {
+    const r = registrarFromEnv(
+      { REGISTRAR_ENABLED: "true" },
+      { primary: "yyds", fallback: "moemail", yyds: { baseUrl: "https://y.test", apiKey: "k" } } as never,
+    );
+    expect(r.config.channel).toBe("yyds");
+    // **照常跑**：为一个已失去意义的旧键把一台正常运行的注册机拦停，是拿正确性换洁癖。
+    expect(r.blockers).toEqual([]);
+    expect(r.config.blocked).toBe(false);
+    expect(notices(r)).toEqual([
+      "registrar.channel:legacy_channel_key",
+      "registrar.channel:legacy_fallback_ignored",
+    ]);
+    const dropped = r.notices.find((n) => n.code === "legacy_fallback_ignored");
+    // **必须点名到具体通道**：一台主通道凭据早已失效、一直靠备通道铸 key 的部署，
+    // 升级后产出会归零而面板每一格都显示「已配置」——这条点名是唯一的防线。
+    expect(dropped?.params).toEqual({ dropped: "moemail", source: "stored" });
   });
 
-  it("enabled=false 时抛错（即便 primary 字段因类型断言而非空）", () => {
+  it("反向控制：没有 fallback 就一条 notice 都不许有", () => {
+    // 没有它，上一条可以靠「无条件每次打一条」蒙混过关。
+    const r = registrarFromEnv(
+      { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k" }, {},
+    );
+    expect(r.notices).toEqual([]);
+  });
+
+  it("反向控制：fallback 是空串等于没写（compose 里 `REGISTRAR_FALLBACK=` 极常见）", () => {
+    expect(registrarFromEnv(
+      { REGISTRAR_ENABLED: "true", REGISTRAR_FALLBACK: "" },
+      { primary: "yyds", yyds: { baseUrl: "https://y.test", apiKey: "k" } } as never,
+    ).notices.filter((n) => n.code === "legacy_fallback_ignored")).toEqual([]);
+    expect(registrarFromEnv(
+      { REGISTRAR_ENABLED: "true" },
+      { primary: "yyds", fallback: "", yyds: { baseUrl: "https://y.test", apiKey: "k" } } as never,
+    ).notices.filter((n) => n.code === "legacy_fallback_ignored")).toEqual([]);
+  });
+
+  it("fallback 与生效的通道相同时一条 notice 都不许产（那份配置从前就没生效过）", () => {
+    // 它从前被「备通道等于主通道」那条 blocker 拦着、**一把 key 都没铸过**，
+    // 说「丢弃了一条降级路径」是假话。
+    const r = registrarFromEnv(
+      { REGISTRAR_ENABLED: "true" },
+      { primary: "yyds", fallback: "yyds", yyds: { baseUrl: "https://y.test", apiKey: "k" } } as never,
+    );
+    expect(notices(r)).toEqual(["registrar.channel:legacy_channel_key"]);
+    expect(r.notices.filter((n) => n.code === "legacy_fallback_ignored")).toEqual([]);
+  });
+
+  it("旧的环境变量名仍然能用，但每次都要说一声（长期兼容，不设废弃期限）", () => {
+    const r = registrarFromEnv(
+      { REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", REGISTRAR_FALLBACK: "moemail", YYDS_API_KEY: "k" }, {},
+    );
+    expect(r.config.channel).toBe("yyds");
+    expect(r.blockers).toEqual([]);
+    expect(notices(r)).toEqual([
+      "registrar.channel:legacy_channel_env",
+      "registrar.channel:legacy_fallback_ignored",
+    ]);
+    expect(r.notices.find((n) => n.code === "legacy_fallback_ignored")?.params)
+      .toEqual({ dropped: "moemail", source: "env" });
+  });
+
+  it("新名字在场时不报「用的是旧名字」（那句话会变成假话）", () => {
+    const r = registrarFromEnv(
+      { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", REGISTRAR_PRIMARY: "moemail", YYDS_API_KEY: "k" }, {},
+    );
+    expect(r.config.channel).toBe("yyds");
+    expect(r.notices).toEqual([]);
+  });
+
+  it("迁移通知走状态不走事件：同一份配置连装三次，注入的 logger 一条事件都收不到", () => {
+    // 装载器每 30 秒刷一次 ⇒ 每 isolate 每天约 2880 次装载，而事件环只有 100 格。
+    // 做成事件会在运维升级完来查问题的那一刻把诊断挤出去。钉的是这条行为，
+    // 不是计数洁癖。
+    const logger = recordingLogger();
+    const env = { REGISTRAR_ENABLED: "true" };
+    const stored = {
+      primary: "yyds", fallback: "moemail", yyds: { baseUrl: "https://y.test", apiKey: "k" },
+    } as never;
+    for (let i = 0; i < 3; i++) {
+      expect(registrarFromEnv(env, stored, logger).notices.length).toBeGreaterThan(0);
+    }
+    expect(logger.entries, `实际事件：${JSON.stringify(logger.events())}`).toEqual([]);
+  });
+
+  it("规整：`channel` 缺席时把 `primary` 抬上来，然后两个旧键都消失", () => {
+    // 读路径与写路径共用这一份实现 —— 两处各写一份就是本仓反复裁过的「两份实现必漂」。
+    const { next } = migrateStoredRegistrar({ primary: "yyds", fallback: "moemail", targetKeys: 7 });
+    expect(next.channel).toBe("yyds");
+    expect(Object.keys(next).sort()).toEqual(["channel", "targetKeys"]);
+  });
+
+  it("规整：`channel` 已经在了就不覆盖它，旧键照样清掉", () => {
+    const { next } = migrateStoredRegistrar({ channel: "moemail", primary: "yyds", fallback: "yyds" });
+    expect(next.channel).toBe("moemail");
+    expect(Object.keys(next).sort()).toEqual(["channel"]);
+  });
+});
+
+describe("requireChannel", () => {
+  it("enabled 且 channel 合法时返回该通道", () => {
+    const c = registrarFromEnv({ REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k" }, {}).config;
+    expect(requireChannel(c)).toBe("yyds");
+  });
+
+  it("enabled=false 时抛错（即便 channel 字段因类型断言而非空）", () => {
     const c = registrarFromEnv({}, {}).config;
-    expect(() => requirePrimary(c)).toThrow();
+    expect(() => requireChannel(c)).toThrow();
   });
 
-  it("enabled=true 但 primary 为 null 时抛错", () => {
-    // ⚠️ **上一句原来写的是「registrarFromEnv 本身在 enabled 且 primary 为空时已经抛错」
-    // ——那句今天是假的**：装载器全函数化之后它只产 `primary_required` blocker，
-    // `config.primary` 照旧是 `null`。于是这颗**消费方护栏**第一次是真正必要的：
+  it("enabled=true 但 channel 为 null 时抛错", () => {
+    // ⚠️ **上一句原来写的是「registrarFromEnv 本身在 enabled 且通道为空时已经抛错」
+    // ——那句今天是假的**：装载器全函数化之后它只产 `channel_required` blocker，
+    // `config.channel` 照旧是 `null`。于是这颗**消费方护栏**第一次是真正必要的：
     // 它挡的是「某个消费者跳过了 enabled / blocked 两道 gate」这种代码 bug。
-    // 这里仍然直接构造一个畸形 cfg，钉的是 requirePrimary 自身的判空逻辑。
-    const c = { enabled: true, primary: null } as unknown as Parameters<typeof requirePrimary>[0];
-    expect(() => requirePrimary(c)).toThrow();
+    // 这里仍然直接构造一个畸形 cfg，钉的是 requireChannel 自身的判空逻辑。
+    const c = { enabled: true, channel: null } as unknown as Parameters<typeof requireChannel>[0];
+    expect(() => requireChannel(c)).toThrow();
   });
 });
 
@@ -436,10 +503,8 @@ describe("五语言文档对轮级预算的表述必须有条件、且与代码�
     const logger = recordingLogger();
     registrarFromEnv(
       {
-        REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k",
-        REGISTRAR_FALLBACK: "moemail",
-        MOEMAIL_BASE_URL: "https://m.test", MOEMAIL_API_KEY: "mk",
-        CODE_TIMEOUT_MS: "400000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000",
+        REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k",
+        CODE_TIMEOUT_MS: "800000", MINT_BATCH: "1", TEND_INTERVAL_MS: "9000000",
       },
       {}, logger,
     );

@@ -87,10 +87,10 @@ describe("逐字段校验", () => {
   });
 
   it("通道字段只收 yyds / moemail / null", () => {
-    expect(codes(validateConfigPatch({ "registrar.primary": "gmail" }, { stored: {}, env: GW })))
-      .toEqual(["registrar.primary:not_a_channel"]);
+    expect(codes(validateConfigPatch({ "registrar.channel": "gmail" }, { stored: {}, env: GW })))
+      .toEqual(["registrar.channel:not_a_channel"]);
     // `null` = 「不选」。注册机关着时不选主通道完全合法（`registrarFromEnv` 的既有语义）。
-    expect(ok(validateConfigPatch({ "registrar.fallback": null }, { stored: {}, env: GW })).ok).toBe(true);
+    expect(ok(validateConfigPatch({ "registrar.channel": null }, { stored: {}, env: GW })).ok).toBe(true);
   });
 
   /**
@@ -195,29 +195,30 @@ describe("凭据：缺席或空串 = 不改（设计 §8.6）", () => {
 });
 
 describe("跨字段规则：每一条都对应 registrarFromEnv 里一处 throw", () => {
-  const ON = { "registrar.enabled": true, "registrar.primary": "yyds", "registrar.yyds.apiKey": "k" };
+  const ON = { "registrar.enabled": true, "registrar.channel": "yyds", "registrar.yyds.apiKey": "k" };
 
-  it("开着却没选主通道 ⇒ primary_required", () => {
+  it("开着却没选通道 ⇒ channel_required", () => {
     expect(codes(validateConfigPatch({ "registrar.enabled": true }, { stored: {}, env: GW })))
-      .toContain("registrar.primary:primary_required");
+      .toContain("registrar.channel:channel_required");
   });
 
-  it("备通道等于主通道 ⇒ fallback_equals_primary", () => {
-    expect(codes(validateConfigPatch({ ...ON, "registrar.fallback": "yyds" }, { stored: {}, env: GW })))
-      .toContain("registrar.fallback:fallback_equals_primary");
+  it("未选中那条通道缺凭据时不拦人（只对选中那条产 blocker）", () => {
+    // 二选一模型下「另一条先配好、随时切过来」是核心工作流：为未选中那条缺凭据
+    // 拦下保存，等于逼人先切过去才能配。
+    const r = validateConfigPatch(ON, { stored: {}, env: GW });
+    expect(r.ok, `未选中那条通道把保存拦下了：${JSON.stringify(codes(r))}`).toBe(true);
   });
 
   /**
-   * ⚠️⚠️ **`fallback === primary` 后端只在 `enabled` 为真时抛。**
+   * ⚠️⚠️ **通道那几条后端只在 `enabled` 为真时产 blocker。**
    *
    * 这一格钉住的是「关着的时候后端不拦」——**前端那一半必须同源**，
-   * 否则「关着注册机时改不了下拉框」。前端那一格在 `tests/ui/settings.test.ts` 的
-   * 「注册机关着时前端不拦 fallback === primary —— 与后端同源」。
+   * 否则「关着注册机时改不了下拉框」。
    * **变红条件**：把 `crossFieldErrors` 里那句 `if (!enabled) return out;` 删掉。
    */
-  it("注册机关着时，fallback === primary 完全合法 —— 后端不抛，前端也不许拦", () => {
+  it("注册机关着时，没选通道完全合法 —— 后端不拦，前端也不许拦", () => {
     const r = validateConfigPatch(
-      { "registrar.enabled": false, "registrar.primary": "yyds", "registrar.fallback": "yyds" },
+      { "registrar.enabled": false, "registrar.channel": null },
       { stored: {}, env: GW },
     );
     expect(r.ok, `关着的注册机被拦下了：${JSON.stringify(codes(r))}`).toBe(true);
@@ -225,7 +226,7 @@ describe("跨字段规则：每一条都对应 registrarFromEnv 里一处 throw"
 
   it("开着却缺凭据 ⇒ channel_credentials_missing（这正是 creds() 会抛的那一支）", () => {
     expect(codes(validateConfigPatch(
-      { "registrar.enabled": true, "registrar.primary": "moemail" },
+      { "registrar.enabled": true, "registrar.channel": "moemail" },
       { stored: {}, env: GW },
     ))).toEqual([
       "registrar.moemail.apiKey:channel_credentials_missing",
@@ -239,7 +240,7 @@ describe("跨字段规则：每一条都对应 registrarFromEnv 里一处 throw"
    */
   it("凭据由环境变量提供时不算缺 —— 判据是 env ?? 存储，不是只看存储", () => {
     const r = validateConfigPatch(
-      { "registrar.enabled": true, "registrar.primary": "moemail" },
+      { "registrar.enabled": true, "registrar.channel": "moemail" },
       { stored: {}, env: { ...GW, MOEMAIL_BASE_URL: "https://m.example.com", MOEMAIL_API_KEY: "k" } },
     );
     expect(r.ok, JSON.stringify(codes(r))).toBe(true);
@@ -383,14 +384,10 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
       { patch: { agnesBaseUrl: "nope" }, stored: {}, env: GW },
       { patch: { "registrar.enabled": 1 }, stored: {}, env: GW },
       { patch: { "registrar.tokenName": "x".repeat(MAX_TEXT_LENGTH + 1) }, stored: {}, env: GW },
-      { patch: { "registrar.primary": "gmail" }, stored: {}, env: GW },
+      { patch: { "registrar.channel": "gmail" }, stored: {}, env: GW },
       { patch: { "registrar.enabled": true }, stored: {}, env: GW },
-      {
-        patch: { "registrar.enabled": true, "registrar.primary": "yyds", "registrar.fallback": "yyds", "registrar.yyds.apiKey": "k" },
-        stored: {}, env: GW,
-      },
       { patch: { "registrar.mintDelayMinMs": 9_000, "registrar.mintDelayMaxMs": 5_000 }, stored: {}, env: GW },
-      { patch: { "registrar.enabled": true, "registrar.primary": "yyds" }, stored: {}, env: GW },
+      { patch: { "registrar.enabled": true, "registrar.channel": "yyds" }, stored: {}, env: GW },
       // ── 评审新增的五个码，各配一个能真的触发它的样本 ─────────────────────
       // ⚠️ 这五格的 `env` 里刻意**没有** `GATEWAY_TOKEN`：设了的话 `gatewayToken`
       // 会先吃 `locked_by_env`，测的就不是这五条了（第 1 种假阳性）。
@@ -406,10 +403,10 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
     }
     // **期望值手写字面量**，不从 `produced` 反推（第 6 种假阳性）。
     expect([...produced].sort()).toEqual([
-      "below_min", "channel_credentials_missing", "delay_min_gt_max", "empty",
-      "fallback_equals_primary", "locked_by_env",
+      "below_min", "channel_credentials_missing", "channel_required", "delay_min_gt_max",
+      "empty", "locked_by_env",
       "not_a_boolean", "not_a_channel", "not_a_string", "not_a_url", "not_an_integer",
-      "not_sendable", "primary_required", "same_as_admin_token", "too_long",
+      "not_sendable", "same_as_admin_token", "too_long",
       "too_short", "unknown_field", "whitespace_padded",
     ]);
 
@@ -425,6 +422,23 @@ describe("EDITABLE 与 FIELD_EXPOSURE / envLockedFields 逐条对账", () => {
      * 要么就得把它从清单里拿掉（那样它的五语言文案就没人守了）。
      */
     const NOT_FROM_VALIDATE: ReadonlyArray<{ code: ConfigErrorCode; by: string }> = [
+      // ── 三条**不是错误**的通知码，校验路径按定义产不出它们 ────────────────
+      // 它们是装载器对「存量主备旧键」的说明（`RegistrarLoad.notices`），配着
+      // 「注册机照常跑」，而本函数只回答「这份补丁能不能保存」。
+      // 进 `CONFIG_ERROR_CODES` 的唯一理由是面板选文案走同一条路，
+      // 它们的五语言文案由 `tests/ui/settings.test.ts` 那格逼出来。
+      {
+        code: "legacy_channel_key",
+        by: "registrarFromEnv 的 notices（存量存储里那个旧的主通道键）",
+      },
+      {
+        code: "legacy_channel_env",
+        by: "registrarFromEnv 的 notices（旧的主通道环境变量名，兼容别名）",
+      },
+      {
+        code: "legacy_fallback_ignored",
+        by: "registrarFromEnv 的 notices（旧的备通道键/变量已不参与选路）",
+      },
       {
         code: "config_unloadable",
         // 它由 `src/http/admin/handlers/config.ts` 的 `readAll` 在「原件读得出来、
@@ -482,24 +496,24 @@ describe("防漂：validateConfigPatch 放行的，loadConfigWithProvenance 必�
     { name: "两个池子旋钮关掉", patch: { poolCacheTtlMs: 0, poolTouchIntervalMs: 0 } },
     { name: "改上游地址", patch: { agnesBaseUrl: "https://mirror.example.com/v1" } },
     {
-      name: "打开注册机 + yyds 单通道",
-      patch: { "registrar.enabled": true, "registrar.primary": "yyds", "registrar.yyds.apiKey": "yk" },
+      name: "打开注册机 + yyds",
+      patch: { "registrar.enabled": true, "registrar.channel": "yyds", "registrar.yyds.apiKey": "yk" },
     },
     {
-      name: "打开注册机 + 双通道",
+      name: "打开注册机 + moemail，另一条通道的凭据也先配好",
       patch: {
-        "registrar.enabled": true, "registrar.primary": "moemail", "registrar.fallback": "yyds",
+        "registrar.enabled": true, "registrar.channel": "moemail",
         "registrar.moemail.baseUrl": "https://m.example.com", "registrar.moemail.apiKey": "mk",
         "registrar.yyds.apiKey": "yk",
       },
     },
     {
-      name: "关着的注册机 + 一堆没选完的通道值",
-      patch: { "registrar.enabled": false, "registrar.primary": "yyds", "registrar.fallback": "yyds" },
+      name: "关着的注册机 + 没选通道",
+      patch: { "registrar.enabled": false, "registrar.channel": null },
     },
     {
       name: "凭据由环境变量提供",
-      patch: { "registrar.enabled": true, "registrar.primary": "moemail" },
+      patch: { "registrar.enabled": true, "registrar.channel": "moemail" },
       env: { MOEMAIL_BASE_URL: "https://m.example.com", MOEMAIL_API_KEY: "mk" },
     },
   ];
@@ -538,22 +552,25 @@ describe("防漂：validateConfigPatch 放行的，loadConfigWithProvenance 必�
    * 用例是这条不对称仅有的两道守卫。
    */
   it("写时严 / 读时松：校验拒掉的那份配置，装载侧收下它但把注册机挡在门外", async () => {
-    const bad = { registrar: { enabled: true, primary: "yyds", fallback: "yyds", yyds: { apiKey: "k" } } };
+    const bad = { registrar: { enabled: true, channel: "moemail", yyds: { apiKey: "k" } } };
     expect(
       codes(validateConfigPatch(
-        { "registrar.enabled": true, "registrar.primary": "yyds", "registrar.fallback": "yyds", "registrar.yyds.apiKey": "k" },
+        { "registrar.enabled": true, "registrar.channel": "moemail", "registrar.yyds.apiKey": "k" },
         { stored: {}, env: GW },
       )),
       "前置条件：校验本来就该拒它",
-    ).toContain("registrar.fallback:fallback_equals_primary");
+    ).toContain("registrar.moemail.apiKey:channel_credentials_missing");
 
     const storage = new MemoryStorage();
     await storage.put("config", bad);
     const prov = await loadConfigWithProvenance(GW, storage, NULL_LOGGER);
     expect(prov.config.registrar.blocked, "注册机必须被挡住 —— 不然下游会拿一份半真的配置去跑").toBe(true);
     expect(prov.config.registrar.enabled, "开关一个字都不许改").toBe(true);
-    expect(prov.registrarBlocked.map((b) => `${b.field}:${b.code}`))
-      .toEqual(["registrar.fallback:fallback_equals_primary"]);
+    expect(prov.registrarBlocked.map((b) => `${b.field}:${b.code}`).sort())
+      .toEqual([
+        "registrar.moemail.apiKey:channel_credentials_missing",
+        "registrar.moemail.baseUrl:channel_credentials_missing",
+      ]);
     // **网关本体照常**：口令还在，转发那一族旋钮一个都没受影响。
     expect(prov.config.gatewayToken).toBe(GW.GATEWAY_TOKEN);
     expect(prov.config.degraded).toBe(false);

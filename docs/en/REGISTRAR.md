@@ -39,28 +39,38 @@ upstream answers with a 404. Failures like that now record **the address actuall
 in the event (any username/password, query string and fragment inside it are replaced with
 placeholder markers), so one look at the events is enough to recognise this trap.
 
-### Configuring the primary and the fallback
+### Choosing the channel
 
 > [!IMPORTANT]
-> **The two channels are fully equal — this project sets neither as primary and
-> recommends neither.**
+> **Pick one of the two channels. There is no primary/fallback pair and no automatic failover.**
+> The two channels are fully equal — this project picks neither for you and recommends neither.
 
-`REGISTRAR_PRIMARY` has no default; you must explicitly set it to `yyds` or `moemail` when
-enabling the registrar. `REGISTRAR_FALLBACK` is optional: when the primary channel hits a
-**channel-level failure** (listing domains fails, mailbox creation fails repeatedly, invalid
-credentials, the verification code never arrives), the registrar falls back to it automatically
-for that attempt. Leave it empty to disable fallback.
+`REGISTRAR_CHANNEL` has no default; you must explicitly set it to `yyds` or `moemail` when
+enabling the registrar. The selected channel receives the verification codes; the other one is
+**never used even if you fill it in**, though you can set it up ahead of time and switch over
+whenever you want.
 
-> "The verification code never arrives" counts as a channel-level failure: the code is delivered
-> *through* that mailbox channel, so a broken MX record or a deleted mail-forwarding rule — every
-> API call returns 2xx, the mail simply never shows up — likewise means "this channel cannot
-> produce a key right now".
+> [!WARNING]
+> **When the selected channel fails, the registrar does not switch to the other one.**
+> If the code never arrives (a broken MX record, a deleted mail-forwarding rule — every API call
+> returns 2xx, the mail simply never shows up), that means "this channel cannot produce a key
+> right now", and this round — possibly this whole day — mints nothing until you switch channels
+> yourself. See "What happens after a channel fails" below for the exact behaviour.
 
-### How to pick your primary
+#### What about the legacy names
+
+> This setting used to be called `REGISTRAR_PRIMARY`, with a `REGISTRAR_FALLBACK`
+> beside it. The old primary name is **kept indefinitely as a compatibility alias** (lower
+> precedence than the new name; a notice appears at the top of the panel when it is in use).
+> The old fallback variable **no longer takes part in routing**, but it is still read once, only
+> so the panel can name the channel that was dropped. Neither legacy name stops an upgrading
+> deployment from running.
+
+### How to pick that one channel
 
 What to base the choice on: the registrar works around Agnes blocking disposable-mailbox domains
 by rotating domains, so the more usable domains you have, the longer it keeps working. Check how
-many usable domains you actually have on each side and pick the one with more as your primary —
+many usable domains you actually have on each side; the one with more lasts longer —
 that depends only on your own account or self-hosted setup, not on which service it is.
 
 ## Zero built-in credentials — bring your own
@@ -78,8 +88,10 @@ registrar you need to prepare, on your own:
 
 ### The minimum you have to prepare
 
-At minimum, prepare credentials for whichever channel `REGISTRAR_PRIMARY` points to. If you also
-set `REGISTRAR_FALLBACK`, prepare credentials for that channel as well.
+At minimum, prepare credentials for whichever channel `REGISTRAR_CHANNEL` points to. The other
+channel's credentials may be filled in or left empty: they do not affect whether the registrar
+starts. Filling them in makes that channel's "configured" flag and its "Test connection" button
+work in the panel, which is handy for comparing the two before switching.
 
 ## Configuration
 
@@ -87,12 +99,11 @@ set `REGISTRAR_FALLBACK`, prepare credentials for that channel as well.
 # ── Switch and channels ───────────────────────────────────────────
 # Master switch. Must be true to enable the registrar. (optional, default false)
 REGISTRAR_ENABLED=false
-# Primary channel, yyds or moemail; the two are equal, no default.
+# Which channel the registrar uses, yyds or moemail; pick one of the two, no default.
 # (required once the registrar is enabled)
-REGISTRAR_PRIMARY=
-# Fallback channel, yyds or moemail; used when the primary hits a channel-level
-# failure. (optional, empty = no fallback)
-REGISTRAR_FALLBACK=
+# The legacy name REGISTRAR_PRIMARY is kept indefinitely as a compatibility alias;
+# the legacy fallback variable no longer takes part in routing.
+REGISTRAR_CHANNEL=
 
 # ── Refill pacing ─────────────────────────────────────────────────
 # Target number of usable keys; a refill round only triggers below this.
@@ -193,7 +204,6 @@ single hung connection can stretch a round indefinitely.
 |--------|-------|------------------------|
 | **Typical duration** | `MINT_BATCH × CODE_TIMEOUT_MS` + the random delays within a round | 600 + 20 ≈ **600–620s**, leaving roughly **30% headroom** under the 900s wall-clock limit |
 | **Theoretical worst case** (one mint) | `CODE_TIMEOUT_MS + (1 + 3 × MAX_DOMAIN_ATTEMPTS + 3) × 15s` | 120 + 420 = **540s**; multiplied by `MINT_BATCH` that is far beyond 900s |
-| With `REGISTRAR_FALLBACK` set | the *worst case* × the number of channels (i.e. ×2) | the typical duration is unchanged |
 
 - **Typical** means every request returns quickly and the first domain isn't blocked, so the time
   is dominated by waiting for the verification code: roughly `MINT_BATCH × CODE_TIMEOUT_MS` =
@@ -205,17 +215,18 @@ single hung connection can stretch a round indefinitely.
   persisted the moment it is minted, so being aborted only leaves the round incomplete. If you
   want even the pathological case to stay within the wall clock, set `MINT_BATCH` to 1–2, or
   lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
-- **The fallback raises the worst case only, never the typical one.** In the typical case the
-  code arrives and the fallback is never engaged; only a channel-level failure such as "the
-  verification code never arrives" makes the same refill slot wait out another `CODE_TIMEOUT_MS`
-  on the fallback. The startup warning `TEND_INTERVAL_MS is below the worst-case round duration`
-  uses exactly this model: `MINT_BATCH × CODE_TIMEOUT_MS × number of channels`.
+- **There used to be a "number of channels" factor here.** The two channels were once a
+  primary/fallback pair, so "the verification code never arrives" fell back and made the same
+  refill slot wait out `CODE_TIMEOUT_MS` on each channel. Now that you pick one of the two,
+  there is no second wait and the factor is gone entirely. The startup warning
+  `TEND_INTERVAL_MS is below the worst-case round duration` uses exactly this model:
+  `MINT_BATCH × CODE_TIMEOUT_MS`.
 
 #### On Worker the registrar stops on its own before the wall clock runs out
 
 **This covers the "worst case" row above, but *not* the "theoretical worst case" one.** Before
 starting each mint it checks whether the remaining wall clock can hold one complete mint
-(`CODE_TIMEOUT_MS × number of channels`, plus the inter-attempt delay). If it cannot, that
+(`CODE_TIMEOUT_MS`, plus the inter-attempt delay). If it cannot, that
 attempt is **never started**: the round ends early, a `registrar.round_budget_exhausted` warning
 is logged (something like "not enough wall-clock budget left to complete another mint, ending the
 round early"), keys already minted are kept, and the remaining slots roll over to the next
@@ -235,7 +246,7 @@ clock, so the **scheduled** round does not engage this mechanism and uses `MINT_
 
 > [!WARNING]
 > **The budget is not a blanket guarantee — a residual case remains.** The check only counts the
-> dominant term, `CODE_TIMEOUT_MS × number of channels`. It deliberately does **not** include the
+> dominant term, `CODE_TIMEOUT_MS`. It deliberately does **not** include the
 > 15-second per-request timeouts or the 403 back-offs: including them would mean no attempt ever
 > dares to start, since the "theoretical worst case" above already exceeds 900s on its own. The
 > budget is 87% of the wall clock, and the ~120s left over is what covers those tails:
@@ -250,7 +261,7 @@ If the second row worries you, work the "theoretical worst case" formula above a
 
 #### Two log lines: grep them by event name when the limit is exceeded
 
-**Do not set `CODE_TIMEOUT_MS` too high.** Once `CODE_TIMEOUT_MS × number of channels` exceeds the
+**Do not set `CODE_TIMEOUT_MS` too high.** Once `CODE_TIMEOUT_MS` exceeds the
 per-round budget (87% of the wall clock), **no attempt can start at all** on Worker and the refill
 produces nothing, round after round. Two log lines cover this — grep by **event name** (see
 "Troubleshooting" below; more reliable than grepping prose, which can drift across wording
@@ -267,7 +278,7 @@ by event name, never by the prose on this page.
 something like:
 
 ```text
-[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS×通道数超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来（每轮 attempted=0），请调小 CODE_TIMEOUT_MS 或去掉备通道。Node/Docker 的定时轮没有平台墙钟上限、不受此限制，但面板的「立即补池」在两种运行时上都带同一份轮级预算，Node/Docker 上同样铸不出来。 codeTimeoutMs=... chainLength=... worstAttemptMs=... workerRoundBudgetMs=...
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS 超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来（每轮 attempted=0），请调小 CODE_TIMEOUT_MS。Node/Docker 的定时轮没有平台墙钟上限、不受此限制，但面板的「立即补池」在两种运行时上都带同一份轮级预算，Node/Docker 上同样铸不出来。 codeTimeoutMs=... worstAttemptMs=... workerRoundBudgetMs=...
 ```
 
 It does **not** stop the gateway from starting — unlike "missing credentials fail at startup".
@@ -279,7 +290,7 @@ both runtimes print this warning but only Worker is actually affected.
 (`grep 'registrar.round_budget_impossible'`), something like:
 
 ```text
-[registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始，补池将持续零产出——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS 或去掉备通道 worstAttemptMs=... roundBudgetMs=...
+[registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始，补池将持续零产出——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS worstAttemptMs=... roundBudgetMs=...
 ```
 
 It repeats every round, which is how you tell this is a standing condition rather than a one-off.
@@ -460,6 +471,40 @@ the missing fields), the Registrar status row, the Overview config summary, and 
   most likely make forwarding fail every time it is selected, so disable or delete it from the
   admin panel. An error event `registrar.minted_key_suspicious` is emitted alongside it (it records
   only the channel and the length, **never the plaintext**).
+### What happens after a channel fails
+
+**You pick one of the two channels, so "switch to the other one" is something only you can do.**
+When the selected channel fails:
+
+- **The current slot is written off and the next slot in this round starts as usual** (after the
+  random `MINT_DELAY_MIN_MS`–`MINT_DELAY_MAX_MS` pause). Listing domains fails, invalid
+  credentials, no mailbox can be created on any candidate domain, the code never arrives, rate
+  limiting, a network blip, every domain blocked, registration / login / key creation failing —
+  all of these land in this bucket.
+- **There is exactly one exception**: an overall Agnes backend failure (`upstream_error`) **ends
+  the round immediately** and leaves the remaining slots to the next schedule — carrying on would
+  only produce more doomed requests during the outage.
+- **There is no cross-round backoff and no exponential retry.** A failure does not change when the
+  next round runs: Node/Docker uses the fixed `TEND_INTERVAL_MS` timer, Worker uses the Cron in
+  `wrangler.toml`. Throttling within a round already has two layers (the random pause between
+  attempts and, on Worker, the per-round wall-clock budget).
+
+#### The price, and how to notice it
+
+> [!WARNING]
+> **This is a capability regression, stated plainly.** A channel that could not receive codes used
+> to get one automatic switch to the other channel: refills slowed down but keys still came out.
+> Now the same failure means this round — possibly this whole day — mints nothing until you go and
+> switch channels yourself. The failure mode changes from "refills get slower" to "refills produce
+> nothing, the pool drains, and hours or days later it surfaces as a `pool_empty` 503" — **a
+> self-healing failure has been traded for one that needs a human**. That is the inherent price of
+> picking one of the two, not a defect.
+
+**How to notice it**: every round's failure reasons in the refill history carry the channel name
+(the `reasons=` line), the four pool numbers in the registrar board, and — when a channel request
+fails — the event that now carries **the address actually requested**. If you see zero output,
+click "Test connection" on the other channel in the panel; if it works, switch the channel over.
+
 ### When a channel keeps failing
 
 - If a channel keeps failing to register (for example, Agnes has tightened its verification-code

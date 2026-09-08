@@ -127,7 +127,7 @@ export function usageTipKey(caps) {
 
 /**
  * 配置摘要卡。**`config` 整块缺失（存储读失败）时返回 `null` 这一个哨兵**，
- * 不是逐字段各自 null——`primary`/`fallback` 在 `config` 块**存在**时本来就可能是
+ * 不是逐字段各自 null——`channel` 在 `config` 块**存在**时本来就可能是
  * 合法的 `null`（注册机未启用，两条通道平级、没有默认值），把「整块读不出来」
  * 与「读出来了、确实没配」用同一个 `null` 表示，调用方就分不清该显示 `—`
  * 还是显示「无」——这正是本任务实现时抓到的一个真实 bug（评审前自查）。
@@ -144,8 +144,7 @@ export function configSummary(body) {
      * 读不到记 `null`（不是 `false`），与本文件其余各格同一条纪律。
      */
     registrarBlocked: typeof c.registrarBlocked === "boolean" ? c.registrarBlocked : null,
-    primary: typeof c.primary === "string" ? c.primary : null,
-    fallback: typeof c.fallback === "string" ? c.fallback : null,
+    channel: typeof c.channel === "string" ? c.channel : null,
     targetKeys: typeof c.targetKeys === "number" ? c.targetKeys : null,
     envLocked,
     degraded: typeof c.degraded === "boolean" ? c.degraded : null,

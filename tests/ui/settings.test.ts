@@ -422,7 +422,7 @@ describe("i18n：门禁看不见的那两族，在这里补上", () => {
     }
     expect(missing).toEqual([]);
     // 反向自检：表本身不是空的。**这个数字是手写的**，加码时必须回来表态。
-    expect(CONFIG_ERROR_CODES.length, "错误码表规模变了，请确认文案与映射都跟上了").toBe(20);
+    expect(CONFIG_ERROR_CODES.length, "错误码表规模变了，请确认文案与映射都跟上了").toBe(22);
   });
 
   /**
@@ -587,8 +587,7 @@ describe("前端只做四条最轻量的即时提示（设计 §10.4）", () => 
     fields: {
       maxStrikes: { stored: 3, env: null, effective: 3, lockedBy: null },
       "registrar.enabled": { stored: true, env: null, effective: true, lockedBy: null },
-      "registrar.primary": { stored: "yyds", env: null, effective: "yyds", lockedBy: null },
-      "registrar.fallback": { stored: null, env: null, effective: null, lockedBy: null },
+      "registrar.channel": { stored: "yyds", env: null, effective: "yyds", lockedBy: null },
     },
     credentials: {}, secrets: [],
   };
@@ -624,31 +623,20 @@ describe("前端只做四条最轻量的即时提示（设计 §10.4）", () => 
     expect(localErrors({ maxStrikes: "" }, fresh)).toEqual([]);
   });
 
-  it("注册机开着时，fallback === primary 前端就拦（设计 §10.3 第 7 条）", () => {
-    expect(localErrors({ "registrar.fallback": "yyds" }, body))
-      .toEqual([{ field: "registrar.fallback", code: "fallback_equals_primary" }]);
-  });
-
   /**
-   * ⚠️⚠️ **变异的靶子：把第四条改成无条件拦截。**
-   *
-   * 后端 `registrarFromEnv` 里那条抛错写在 `if (enabled && …)` 里，
-   * 关着的注册机它一条都不抛 ⇒ 前端无条件拦的后果是**「关着注册机时连下拉框都
-   * 改不了」**，而后端明明会收下。**两边判据必须同源。**
-   * 后端那一半在 `tests/unit/admin/config-validate.test.ts` 的
-   * 「注册机关着时，fallback === primary 完全合法 —— 后端不抛，前端也不许拦」。
+   * ⚠️⚠️ **这里从前是一对「`fallback === primary` 前端就拦 / 关着时不拦」的用例。**
+   * 两条通道改成二选一之后那条规则连同它的错误码一起不存在了 ⇒ 那一对整个删掉。
+   * 今天前端预校验**一条都不落在通道上**：`channel_required` 由后端在跨字段阶段报。
+   * 这一格钉住那件事本身——通道下拉怎么改，前端都不许自己拦。
    */
-  it("注册机关着时前端不拦 fallback === primary —— 与后端同源", () => {
+  it("通道下拉改成什么，前端预校验都不拦（判据留给后端）", () => {
+    expect(localErrors({ "registrar.channel": "yyds" }, body)).toEqual([]);
+    expect(localErrors({ "registrar.channel": null }, body)).toEqual([]);
     const off = {
       ...body,
       fields: { ...body.fields, "registrar.enabled": { stored: false, env: null, effective: false, lockedBy: null } },
     };
-    expect(
-      localErrors({ "registrar.fallback": "yyds" }, off),
-      "前端无条件拦截了 —— 关着注册机时运维连下拉框都改不了，而后端会收下",
-    ).toEqual([]);
-    // 表单里现改的 `enabled` 同样算数（还没保存就该按新状态判）。
-    expect(localErrors({ "registrar.enabled": false, "registrar.fallback": "yyds" }, body)).toEqual([]);
+    expect(localErrors({ "registrar.channel": "moemail" }, off)).toEqual([]);
   });
 
   it("凭据不进即时提示 —— 它们留空是正当的（「留空则不修改」）", () => {
@@ -707,8 +695,7 @@ describe("清空凭据前那句警告：按状态分岔，每一条都是确定�
   const ON_CHAIN = base({
     fields: {
       "registrar.enabled": { stored: true, env: null, effective: true, lockedBy: null },
-      "registrar.primary": { stored: "yyds", env: null, effective: "yyds", lockedBy: null },
-      "registrar.fallback": { stored: null, env: null, effective: null, lockedBy: null },
+      "registrar.channel": { stored: "yyds", env: null, effective: "yyds", lockedBy: null },
     },
   });
 
@@ -754,24 +741,22 @@ describe("清空凭据前那句警告：按状态分岔，每一条都是确定�
    * 在不在链上）会把「开着注册机、但用的是另一条通道」误报成冷启动会失败——
    * 那正是「吓人」的那一半。
    */
-  it("注册机开着、但这条通道不在链上 ⇒ 仍然是「现在不影响」", () => {
+  it("注册机开着、但这条通道不是本次选中的那条 ⇒ 仍然是「现在不影响」", () => {
     const other = base({
       fields: {
         "registrar.enabled": { stored: true, env: null, effective: true, lockedBy: null },
-        "registrar.primary": { stored: "moemail", env: null, effective: "moemail", lockedBy: null },
-        "registrar.fallback": { stored: null, env: null, effective: null, lockedBy: null },
+        "registrar.channel": { stored: "moemail", env: null, effective: "moemail", lockedBy: null },
       },
     });
     expect(clearWarning(other, "registrar.yyds.apiKey").key).toBe("set.clear.effect.channelIdle");
-    // 反向：把它设成备通道 ⇒ 立刻升级成 danger。
-    const asFallback = base({
+    // 反向：把通道切成它 ⇒ 立刻升级成 danger。
+    const asSelected = base({
       fields: {
         "registrar.enabled": { stored: true, env: null, effective: true, lockedBy: null },
-        "registrar.primary": { stored: "moemail", env: null, effective: "moemail", lockedBy: null },
-        "registrar.fallback": { stored: "yyds", env: null, effective: "yyds", lockedBy: null },
+        "registrar.channel": { stored: "yyds", env: null, effective: "yyds", lockedBy: null },
       },
     });
-    expect(clearWarning(asFallback, "registrar.yyds.apiKey").key).toBe("set.clear.effect.channelBreaks");
+    expect(clearWarning(asSelected, "registrar.yyds.apiKey").key).toBe("set.clear.effect.channelBreaks");
   });
 
   it("四条文案五语言齐备（这一族同样是三道 i18n 门禁看不见的）", () => {

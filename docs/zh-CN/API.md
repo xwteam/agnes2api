@@ -587,8 +587,7 @@ curl http://localhost:8080/admin/api/overview \
   },
   "config": {
     "registrarEnabled": true,
-    "primary": "moemail",
-    "fallback": "yyds",
+    "channel": "moemail",
     "targetKeys": 20,
     "envLocked": ["gatewayToken"],
     "degraded": false
@@ -1125,6 +1124,7 @@ curl http://localhost:8080/admin/api/config \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
+  "loadNotices": [],
   "editable": ["upstreamTimeoutMs"],
   "secrets": ["gatewayToken"],
   "resetBlocked": [],
@@ -1159,6 +1159,7 @@ curl -X PUT http://localhost:8080/admin/api/config \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
+  "loadNotices": [],
   "changed": ["upstreamTimeoutMs"],
   "credentialsChanged": [],
   "appliedAt": 1735689600000,
@@ -1271,7 +1272,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 | 参数 | 类型 | 必填 | 说明 |
 |----|----|----|----|
-| `channel` | string | 否 | 只能是 `moemail` 或 `yyds`；不给就按配置里的主/备通道链跑。 |
+| `channel` | string | 否 | 只能是 `moemail` 或 `yyds`；不给就用设置里选中的那条。 |
 
 **请求**：
 
@@ -1319,11 +1320,10 @@ curl http://localhost:8080/admin/api/registrar/status \
 {
   "serverTime": 1735689600000,
   "enabled": true,
-  "primary": "moemail",
-  "fallback": "yyds",
+  "channel": "moemail",
   "channels": {
-    "moemail": { "configured": true, "role": "primary" },
-    "yyds": { "configured": true, "role": "fallback" }
+    "moemail": { "configured": true, "selected": true },
+    "yyds": { "configured": true, "selected": false }
   },
   "pool": { "target": 20, "counted": 3, "gap": 17, "fresh": 2, "mintBatch": 5 },
   "lockedUntil": null,

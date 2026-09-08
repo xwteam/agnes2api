@@ -2,7 +2,7 @@ import type { KeyPoolRepo } from "../keypool-repo.js";
 import type { MailProvider } from "../../ports/mailbox.js";
 import type { AgnesDeps } from "./agnes.js";
 import type { RegistrarConfig, Channel } from "./config.js";
-import { requirePrimary } from "./config.js";
+import { requireChannel } from "./config.js";
 import { countsTowardTarget } from "../keypool.js";
 import { isImportableKey } from "../keypool-repo.js";
 import { mintOne, type MintOutcome } from "./mint.js";
@@ -10,7 +10,7 @@ import type { Logger } from "../../ports/logger.js";
 
 /**
  * 一次铸 key 失败的归因：`mintOne` 给出的所有 reason，外加 `provider_missing`
- *（它不是 mintOne 的产物——表示 chain 里的通道压根没构造出 provider，是接线错误）。
+ *（它不是 mintOne 的产物——表示选中的通道压根没构造出 provider，是接线错误）。
  *
  * 用联合类型而不是裸 `string`：下面的 switch 特意用 `never` 做了穷尽检查，好让
  * `MintOutcome` 新增 reason 时编译期就提醒这里表态；如果对外的 `TendResult` 把
@@ -91,11 +91,14 @@ export interface TendResult {
   attempted: number;
   minted: number;
   /**
-   * **逐通道的铸出数**（评审发现）。`minted` 只有总数，而 `minted++` 发生在
-   * `for (const ch of chain)` 里——**一轮全靠备通道铸出来时，总数记在哪条通道
-   * 名下是看不出来的**。没有这个字段，面板就只能拿 `primaryChannel` 去顶，
-   * 于是备通道的战绩会被持续记到主通道头上，**与「两条邮箱通道完全平级」
-   * 那条硬约束正面冲突**。`failures` 早就是逐条带 `channel` 的，这里补齐产出侧。
+   * **逐通道的铸出数。**
+   *
+   * ⚠️ **它今天与 `minted` + `primaryChannel` 等价——旧理由已经不成立，别照旧读。**
+   * 旧理由是「一轮可能一半靠主通道一半靠备通道铸出来，总数记在哪条通道名下看不出来」；
+   * 两条通道改成二选一、自动降级整个拆掉之后，一轮里**只可能有一条通道**产出。
+   * **保留它的唯一理由是存量历史条目的形状**：它已经逐字落进 `tend:history`
+   *（`TendRecord extends TendResult`），删掉会让升级前的历史条目被整条判成 malformed
+   * 丢掉，换不到任何东西。同源先例见下面 `available` 与 `primaryChannel` 两段。
    *
    * 没铸出来的通道**不出现在表里**（不是记 0）。
    *
@@ -124,11 +127,16 @@ export interface TendResult {
    */
   at: number;
   /**
-   * 这一轮走的**主**通道。`skipped`（注册机关着）时 `primary` 运行期是 `null`，记空串。
+   * 这一轮用的那条通道。`skipped`（注册机关着）时运行期没有取值，记空串。
    *
-   * ⚠️ **名字里的 `primary` 不能省**（评审发现）：它原来叫 `channel`，而那个名字
-   * 会被下游读成「这一轮是谁干的」——**实际铸出来的可能是备通道**。
-   * 要回答「谁真的铸出来了」请读 `mintedByChannel`。
+   * ⚠️ **名字里的 `primary` 是历史格式留下的，今天系统里已经没有主备了。**
+   * 它当初叫这个名字，是因为一轮里实际铸出来的可能是备通道、而这一栏记的是主通道；
+   * 两条通道改成二选一之后没有这个区别了——**这一栏的语义就是「这一轮用的那条通道」**。
+   *
+   * **名字不改**，与本接口 `available` 那一段同源：它已经逐字持久化进 `tend:history`
+   *（`src/core/admin/tend-history.ts` 的 `FIELD_CHECKS` 是
+   * `Record<keyof TendRecord, …>`，改名会让升级前的历史条目被整条判成 malformed 丢掉），
+   * 而且它写在五语言 API.md 的响应示例里——那是已发过 tag 的公开仓的响应体契约。
    */
   primaryChannel: string;
   /** 这一轮的墙钟耗时。**面板拿它区分「补池很快就返回了」与「跑满了预算」**。 */
@@ -207,17 +215,16 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   if (need <= 0) {
     return {
       skipped: false, available, attempted: 0, minted: 0, mintedByChannel: {}, failures: [],
-      at: startedAt, primaryChannel: requirePrimary(deps.config), durationMs: deps.now() - startedAt,
+      at: startedAt, primaryChannel: requireChannel(deps.config), durationMs: deps.now() - startedAt,
     };
   }
 
-  // 用 requirePrimary() 而不是裸读 deps.config.primary：后者的类型虽然声明为非空
+  // 用 requireChannel() 而不是裸读 deps.config.channel：后者的类型虽然声明为非空
   // Channel，但 enabled=false 时运行时其实是 null，裸读拿到的要么是运行时 null、
-  // 要么是往下传导致的无上下文异常。此处 enabled 已在上面判过为 true，primary
+  // 要么是往下传导致的无上下文异常。此处 enabled 已在上面判过为 true，channel
   // 理应有值，但仍统一走这条安全访问器，不给「以后这段代码被挪到别处、判断被
   // 不小心删掉」留退路。
-  const primary = requirePrimary(deps.config);
-  const chain: Channel[] = deps.config.fallback ? [primary, deps.config.fallback] : [primary];
+  const channel = requireChannel(deps.config);
 
   const rounds = Math.min(need, deps.config.mintBatch);
   const roundStartedAt = startedAt;
@@ -226,11 +233,14 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   let attempted = 0;
   let minted = 0;
 
-  // 单次铸 key 的最坏墙钟：等满验证码超时，且 `code_timeout` 属于通道级失败会降级，
-  // 所以同一个补池名额最坏要在 chain 上的每条通道各等满一次。这是墙钟里**占绝对
-  // 大头**的一项（默认 120 秒/通道），也正是后来新出现的那个撞墙钟场景：两条
-  // 通道同时收不到信时，5 个名额 ×2 通道 ×120 秒 = 1200 秒 > Cron 的 900 秒。
-  const worstAttemptMs = deps.config.codeTimeoutMs * chain.length;
+  // 单次铸 key 的最坏墙钟：等满一次验证码超时。这是墙钟里**占绝对大头**的一项
+  //（默认 120 秒）。
+  //
+  // ⚠️ **这里从前还乘着 `chain.length`**：`code_timeout` 属于通道级失败会降级，
+  // 同一个补池名额最坏要在两条通道上各等满一次（5 个名额 ×2 通道 ×120 秒 = 1200 秒
+  // > Cron 的 900 秒，那正是当时那个撞墙钟场景）。两条通道改成二选一之后没有第二次
+  // 等待了，这个因子整个消失 —— 顺带把「配了备通道才会撞上的那个墙钟死局」也消掉了。
+  const worstAttemptMs = deps.config.codeTimeoutMs;
 
   for (let i = 0; i < rounds; i++) {
     // 间隔先算出来：它也要计入预算，且必须在「要不要开始这次尝试」之前就知道。
@@ -255,7 +265,7 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
         deps.logger.log({
           level: "error", event: "registrar.round_budget_impossible",
           msg: "单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始，补池将持续零产出"
-            + "——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS 或去掉备通道",
+            + "——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS",
           fields: { worstAttemptMs, roundBudgetMs: deps.roundBudgetMs },
         });
       } else {
@@ -277,17 +287,13 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
     // 上游整体故障（upstream_error）时，这一轮到此为止：见下方 switch 分支注释。
     let abortRound = false;
 
-    for (const ch of chain) {
-      const provider = deps.providers[ch];
-      if (!provider) {
-        // 通道在 chain 里却没构造出对应 provider——这是接线错误（例如漏配置
-        // 某个通道），不是"这条通道本来就没配"的正常状态。静默 continue 会让
-        // attempted 正常自增、minted=0、failures=[]，观测层面查不出原因；这里
-        // 留一条记录，让接线错误在 TendResult 里可见。
-        failures.push({ reason: "provider_missing", channel: ch });
-        continue;
-      }
-
+    const provider = deps.providers[channel];
+    if (!provider) {
+      // 选中的通道没构造出对应 provider——这是接线错误，不是"这条通道本来就没配"的
+      // 正常状态。静默跳过会让 attempted 正常自增、minted=0、failures=[]，观测层面
+      // 查不出原因；这里留一条记录，让接线错误在 TendResult 里可见。
+      failures.push({ reason: "provider_missing", channel });
+    } else {
       const out = await mintOne({
         provider,
         agnes: deps.agnes,
@@ -305,87 +311,68 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
         // 在这里拒收 = 销毁凭据 = `keypool-repo.ts` 开头定性的那一类**数据丢失**。
         await deps.repo.add(out.key);
         minted++;
-        // **记在真正铸出来的那条通道名下**（评审发现），不是主通道。
-        mintedByChannel[ch] = (mintedByChannel[ch] ?? 0) + 1;
+        mintedByChannel[channel] = (mintedByChannel[channel] ?? 0) + 1;
         // **如实报可疑**（裁定 m5）。`isImportableKey` 此前
         // 只挂在面板导入这条「人点一下」的路径上，而**稳态下 key 进池子的主路径是
         // 这一行**——不对称是登记过的，处置不同是刻意的，但"不报"从来不是选项。
         if (!isImportableKey(out.key)) {
-          failures.push({ reason: "key_suspicious", channel: ch });
+          failures.push({ reason: "key_suspicious", channel });
           deps.logger.log({
             level: "error", event: "registrar.minted_key_suspicious",
             msg: "上游发回来的 key 含有不可打印字符或空白，已照常存进池子，但它多半每次被选中都会让转发失败"
               + "（拼进 authorization 头时会抛 TypeError）；请在面板上停用或删除它",
             // **不带明文**（约束 11(a)）：只报长度与通道，够运维定位、不够泄漏。
-            fields: { channel: ch, keyLength: out.key.length },
+            fields: { channel, keyLength: out.key.length },
           });
         }
-        break;
-      }
+      } else {
+        failures.push({ reason: out.reason, channel });
 
-      failures.push({ reason: out.reason, channel: ch });
-
-      // 只有通道本身坏了（建不出邮箱、列不出域名、收不到验证码）才值得降级到备
-      // 通道；其余原因换通道也没用——域名被拒/账号链路失败打的都是同一个 Agnes
-      // 后端，留给下一轮重试更省配额。upstream_error 需要单独处理：见下面那支。
-      // 用 switch 而不是 `!== "provider_error"` 的一刀切，是为了让联合类型的
-      // 穷尽检查（default 分支的 never）在 MintOutcome 新增 reason 时提醒这里
-      // 也要决定怎么退避，而不是被默认行为悄悄吞掉。
-      let tryFallback = false;
-      switch (out.reason) {
-        case "provider_error":
-          // 通道级失败：列域名失败、凭据无效，以及「所有候选域名上都建不出邮箱」
-          //（mintOne 把这三种都归到 provider_error）。设计 §4.5 承诺的正是这三种
-          // 情况降级到备通道。
-          tryFallback = true;
-          break;
-        case "rate_limited":
-          // 撞上 Agnes 的注册限流（403）。mintOne 内部已经按 5 秒退避过并换了域名，
-          // 这里不再加码：换通道打的还是同一个后端（没意义），整轮中止又会把恢复
-          // 拖到下一个调度周期（默认 30 分钟）——而限流恰恰是"等一下就好"的那类
-          // 故障。下一次尝试前本就有 mintDelay 的随机间隔。
-          break;
-        case "network_error":
-          // 瞬时网络错误（DNS / TCP reset / TLS）：既不能断定这条通道坏了——它可能
-          // 出在 Agnes 那五个请求里的任何一个，换通道打的还是同一个后端——也不足以
-          // 判定上游整体故障而中止整轮。按设计 §7「一轮内单次失败不中断整轮」处理：
-          // 本次作废，下一次尝试前本就有 mintDelay 的随机间隔。真正的通道级归因
-          // 已经由 listDomains / createMailbox 那两条路径（provider_error）覆盖。
-          break;
-        case "code_timeout":
-          // 验证码正是**经由这条邮箱通道**投递的，所以「收不到信」就是「这条通道
-          // 现在产不出 key」——MX 记录失效、Cloudflare Email Routing 的 catch-all
-          // 规则被删、上游把 Agnes 的发件方判成垃圾邮件，都是这个形态：API 全 2xx，
-          // 建邮箱/删邮箱/列域名一切正常，只是信永远不到。此前它被归进「换通道也
-          // 没用」那一组，于是备通道配好了却一次都不会被启用，key 池耗尽后网关整体
-          // 不可用——与备通道那条缺陷修复前的终态完全一致，只是起点从「建不出邮箱」换成了
-          // 「收不到验证码」。
-          //
-          // 只做通道级降级，**不**在 mintOne 内部逐个域名重试（既有生产实现是后者）：
-          // 换域名重试每次要额外花满 codeTimeoutMs（默认 120 秒），单次铸 key 最坏
-          // 到 8×120 秒，远超 Worker Cron 的 900 秒墙钟；而 mintOne 每次进来都会重新
-          // 洗牌域名，「个别域名 MX 坏了」这种情况靠下一次尝试重抽即可恢复，代价只
-          // 有一个补池名额。真正换不回来的是**通道级**收信故障，那正是降级要解决的。
-          tryFallback = true;
-          break;
-        case "domain_blocked_all":
-        case "register_failed":
-        case "login_failed":
-        case "key_failed":
-          break;
-        case "upstream_error":
-          // Agnes 后端整体故障（发验证码遇到非 400 的非 2xx），换通道打的还是
-          // 同一个后端，没有意义；继续本轮只会在故障期间制造更多注定失败的
-          // 请求。这里的退避是整轮级别的：立即结束这一轮 tend，把剩余名额
-          // 留给下次调度（那颗定时器），而不是硬着头皮把 mintBatch 耗完。
-          abortRound = true;
-          break;
-        default: {
-          const exhaustive: never = out.reason;
-          throw new Error(`未处理的 MintOutcome.reason: ${String(exhaustive)}`);
+        /**
+         * **这个 switch 只决定「要不要中止整轮」，不再决定「换不换通道」。**
+         *
+         * ⚠️⚠️ **两条通道是二选一，一条通道失败绝不会去碰另一条**（本轮的行为变更）。
+         * 从前 `provider_error` 与 `code_timeout` 会把 `tryFallback` 置真、降级到备
+         * 通道；现在这两支与其余几支的处置完全一样：**本次名额作废，本轮的下一个名额
+         * 照常开始**（先睡 mintDelayMin~Max）。没有跨轮退避、也不新增：失败不改变下一轮
+         * 的时间（Node 是固定 TEND_INTERVAL_MS 定时器、Worker 是 Cron），轮内节流已有
+         * 两层（尝试间的随机间隔 + 轮级墙钟预算）。加自动退避等于偷偷把「二选一」变成
+         * 「二选一 + 自适应调度」，运维在面板上看到的补池节奏会与配置对不上。
+         *
+         * ⚠️ **变坏的地方点名写出来**：从前「这条通道收不到验证码」还有一次换通道的
+         * 机会；现在同一条通道收不到验证码 = 这一轮乃至这一天一把都铸不出来，直到运维
+         * 自己去面板换通道。故障形态从「补池变慢但还在出 key」变成「补池零产出、池子
+         * 慢慢耗干、几小时到几天后以 pool_empty 503 炸出来」——**把一个自愈的故障换成
+         * 了一个要人管的故障**。这是「二选一」的固有代价，不是实现缺陷。
+         *
+         * ⚠️ **switch 本身必须留着**：它还担着 `upstream_error ⇒ abortRound` 与
+         * `default` 分支那句穷尽性断言（`MintOutcome` 新增 reason 时逼人表态的编译期
+         * 护栏）。它只是从「决定换不换通道」退化成「决定中不中止整轮」。
+         */
+        switch (out.reason) {
+          case "provider_error":
+          case "rate_limited":
+          case "network_error":
+          case "code_timeout":
+          case "domain_blocked_all":
+          case "register_failed":
+          case "login_failed":
+          case "key_failed":
+            // 本次名额作废，本轮的下一个名额照常开始。`rate_limited` 那一支
+            // mintOne 内部已经退避过并换了域名，这里不再加码。
+            break;
+          case "upstream_error":
+            // Agnes 后端整体故障（发验证码遇到非 400 的非 2xx）。继续本轮只会在故障
+            // 期间制造更多注定失败的请求。这里的退避是整轮级别的：立即结束这一轮
+            // tend，把剩余名额留给下次调度，而不是硬着头皮把 mintBatch 耗完。
+            abortRound = true;
+            break;
+          default: {
+            const exhaustive: never = out.reason;
+            throw new Error(`未处理的 MintOutcome.reason: ${String(exhaustive)}`);
+          }
         }
       }
-      if (!tryFallback) break;
     }
 
     if (abortRound) break;
@@ -395,7 +382,7 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
 
   return {
     skipped: false, available, attempted, minted, mintedByChannel, failures,
-    at: startedAt, primaryChannel: primary, durationMs: deps.now() - startedAt,
+    at: startedAt, primaryChannel: channel, durationMs: deps.now() - startedAt,
   };
 }
 

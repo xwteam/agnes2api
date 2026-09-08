@@ -153,7 +153,7 @@ function renderUsage() {
 
 function renderConfig() {
   const c = configSummary(data);
-  // **`c === null` = 整块读失败，逐格显示 —**；`c` 存在时 `primary`/`fallback`
+  // **`c === null` = 整块读失败，逐格显示 —**；`c` 存在时 `channel`
   // 仍可能合法为 null（注册机未启用），那种情形显示「无」而不是 ———两种 null
   // 的来源不同，见 configSummary 的说明，调用方必须先判这一层再往下取字段。
   nodes.config.banner.style.display = c !== null && c.degraded === true ? "" : "none";
@@ -165,13 +165,12 @@ function renderConfig() {
     : t(c.registrarEnabled
       ? (c.registrarBlocked === true ? "ov.config.blocked" : "ov.config.on")
       : "ov.config.off");
-  nodes.config.primary.textContent = c === null ? fmtDash(null) : (c.primary === null ? t("ov.config.none") : c.primary);
-  nodes.config.fallback.textContent = c === null ? fmtDash(null) : (c.fallback === null ? t("ov.config.none") : c.fallback);
+  nodes.config.channel.textContent = c === null ? fmtDash(null) : (c.channel === null ? t("ov.config.none") : c.channel);
   nodes.config.targetKeys.textContent = c === null ? fmtDash(null) : fmtCount(c.targetKeys);
   if (c === null) {
     // ⚠️ **降级态也要带标签。** 这一行不再走 `row()` 之后（见 buildConfigCard），
-    // 直接写 `fmtDash(null)` 会让整段读失败时前四行是「注册机：—」「主通道：—」…、
-    // 第五行变成孤零零一个 `—`：修掉一个 `{count}` 泄漏，换来一处标签丢失。
+    // 直接写 `fmtDash(null)` 会让整段读失败时前几行是「注册机：—」「使用的通道：—」…、
+    // 最后一行变成孤零零一个 `—`：修掉一个 `{count}` 泄漏，换来一处标签丢失。
     // 整句仍由这一个节点承载，只是把 `{count}` 换成破折号。
     nodes.config.envLocked.textContent = t("ov.config.envLocked", { count: fmtDash(null) });
     nodes.config.envLocked.removeAttribute("title");
@@ -321,8 +320,8 @@ function buildConfigCard(section) {
 
   const { wrap, body } = block("ov.config.title");
   const registrar = row("ov.config.registrar");
-  const primary = row("ov.config.primary");
-  const fallback = row("ov.config.fallback");
+  // **一行，不是两行**：两条通道是二选一，概览上不该再出现第二格通道。
+  const channel = row("ov.config.channel");
   const targetKeys = row("ov.config.targetKeys");
   // ⚠️ **`ov.config.envLocked` 不是标签，是一句自带 `{count}` 的完整句子**
   //（「被环境变量锁定的字段数：{count}」）。用 `row()` 渲染它，标签那半会调
@@ -333,12 +332,12 @@ function buildConfigCard(section) {
   // 这一类回归现在由 `scripts/check-i18n.mjs` 的第 ⑧ 条挡着（带占位符的 key
   // 不许被当成不带参数的裸标签用）。
   const envLocked = el("p");
-  for (const r of [registrar, primary, fallback, targetKeys]) body.appendChild(r.p);
+  for (const r of [registrar, channel, targetKeys]) body.appendChild(r.p);
   body.appendChild(envLocked);
   section.appendChild(wrap);
   return {
     banner,
-    registrar: registrar.value, primary: primary.value, fallback: fallback.value,
+    registrar: registrar.value, channel: channel.value,
     targetKeys: targetKeys.value, envLocked,
   };
 }

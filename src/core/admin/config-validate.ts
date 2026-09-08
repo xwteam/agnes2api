@@ -9,7 +9,7 @@ import { FIELD_EXPOSURE, type Env, type Exposure } from "../config-provenance.js
 export { CONFIG_ERROR_CODES, type ConfigError, type ConfigErrorCode } from "../config-errors.js";
 import type { ConfigError } from "../config-errors.js";
 // 只借常量，不借规则：两份实现是刻意的，见 `crossFieldErrors` 上面那段。
-import { DEFAULTS as REGISTRAR_DEFAULTS } from "../registrar/config.js";
+import { DEFAULTS as REGISTRAR_DEFAULTS, migrateStoredRegistrar } from "../registrar/config.js";
 
 /**
  * 写入前校验（设计 §5.4 第 1 条）。**纯函数，在写存储之前跑，失败一个字节都不写。**
@@ -128,8 +128,7 @@ const EDITABLE: Readonly<Record<string, Spec>> = {
   poolCacheTtlMs: { kind: "int", min: 0 },
   poolTouchIntervalMs: { kind: "int", min: 0 },
   "registrar.enabled": { kind: "bool" },
-  "registrar.primary": { kind: "channelOrNull" },
-  "registrar.fallback": { kind: "channelOrNull" },
+  "registrar.channel": { kind: "channelOrNull" },
   "registrar.targetKeys": { kind: "int", min: 1 },
   "registrar.mintBatch": { kind: "int", min: 1 },
   "registrar.tendIntervalMs": { kind: "int", min: 1 },
@@ -290,7 +289,9 @@ export function validateConfigPatch(
     // 写下去的后果是：面板显示保存成功、四元组里 `stored` 真的变了、而 `effective`
     // 纹丝不动——运维会以为是缓存没刷，去等那 90 秒，然后再等一次。
     // 拒绝 + 一条能照着改的错误码，是唯一不会骗人的处置。
-    const envName = envNameOf(field);
+    // **报名字时把 env 一起喂进去**：`registrar.channel` 有两个候选名（正式名 +
+    // 兼容别名），只报正式名会把设了旧名字的运维支去 grep 一个他那边不存在的变量。
+    const envName = envNameOf(field, ctx.env);
     if (envName !== null && ctx.env[envName] !== undefined) {
       errors.push({ field, code: "locked_by_env", params: { env: envName } });
       continue;
@@ -381,6 +382,27 @@ export function validateConfigPatch(
   );
   if (errors.length > 0) return { ok: false, errors };
 
+  /**
+   * **顺手把存量的两个旧主备键规整掉。这是本函数里第一处「不由 patch 驱动的写」，
+   * 所以必须写在契约里。**
+   *
+   * 规整规则本身**不在这里**：读路径与写路径共用
+   * `src/core/registrar/config.ts` 的 `migrateStoredRegistrar()`——那条规则两处
+   * 各写一份就是本仓反复裁过的「两份实现必漂」，而它一旦分叉，面板上那条常驻横幅
+   * 会与存储里的实际键说两句不同的话。
+   *
+   * ⚠️⚠️ **这两个路径不许进 `changed`。** `changed` 的两个消费者都在设置页：
+   * 一个拿每条 path 去 `nodes.fields[path]` 加高亮，一个拿它的长度渲染
+   * 「本次保存了 N 项」。`registrar.fallback` 在新面板里**没有 DOM 节点** ⇒
+   * 高亮落空、计数虚高，回执会对运维说他改了一个他没碰、也看不见的字段。
+   * 剪枝这件事由那条横幅说，不由回执说。
+   */
+  const regBefore = (next as Obj).registrar;
+  if (asObject(regBefore) !== null) {
+    const migrated = migrateStoredRegistrar(regBefore);
+    next = setAt(next, ["registrar"], migrated.next);
+  }
+
   return { ok: true, next, changed: changed.sort() };
 }
 
@@ -412,8 +434,8 @@ function checkLeaf(field: string, spec: Exclude<Spec, { kind: "secret" }>, value
     case "bool":
       return typeof value === "boolean" ? null : { field, code: "not_a_boolean" };
     case "channelOrNull":
-      // `null` = 「不选」，对 `fallback` 是正当取值；对 `primary` 由跨字段规则接手
-      // （注册机关着时不选主通道完全合法，那是 `registrarFromEnv` 的既有语义）。
+      // `null` = 「不选」，这是正当取值：注册机关着时不选通道完全合法，
+      // 开着时由跨字段规则接手（`channel_required`），那是 `registrarFromEnv` 的既有语义。
       if (value === null) return null;
       return isChannel(value) ? null : { field, code: "not_a_channel" };
     default:
@@ -507,25 +529,18 @@ function crossFieldErrors(next: Obj, env: Env): ConfigError[] {
     : env.REGISTRAR_ENABLED === "true";
   if (!enabled) return out;
 
-  const primary = pickChannel(env.REGISTRAR_PRIMARY, reg.primary);
-  const fallback = pickChannel(env.REGISTRAR_FALLBACK, reg.fallback);
+  const picked = pickChannel(env, reg);
 
-  if (primary.invalid) {
+  if (picked.invalid) {
     // **值写错了与压根没选是两句不同的话**，`else if` 与装载器同形。
-    out.push({ field: "registrar.primary", code: "not_a_channel", params: { raw: String(primary.raw) } });
-  } else if (primary.value === null) {
-    out.push({ field: "registrar.primary", code: "primary_required" });
-  }
-  if (fallback.invalid) {
-    out.push({ field: "registrar.fallback", code: "not_a_channel", params: { raw: String(fallback.raw) } });
-  } else if (fallback.value !== null && fallback.value === primary.value) {
-    out.push({
-      field: "registrar.fallback", code: "fallback_equals_primary",
-      params: { channel: String(primary.value) },
-    });
+    out.push({ field: "registrar.channel", code: "not_a_channel", params: { raw: String(picked.raw) } });
+  } else if (picked.value === null) {
+    out.push({ field: "registrar.channel", code: "channel_required" });
   }
 
-  for (const ch of [...new Set([primary.value, fallback.value])]) {
+  // **只对选中的那一条产 blocker。** 装载器那边两条通道都会解析凭据（未选中那条
+  // 的缺凭据进一个用完即弃的数组），两边在 blockers 这个集合上因此仍然逐字相等。
+  for (const ch of [picked.value]) {
     if (ch === null) continue;
     const creds = asObject(reg[ch]) ?? {};
     // YYDS 的 `baseUrl` 有内置取值、MoeMail 没有——这是两条通道之间**唯一**的不对称，
@@ -560,21 +575,24 @@ function pick(envRaw: string | undefined, storedRaw: unknown): string | undefine
  *（否则一个拼错的 `REGISTRAR_PRIMARY=yydss` 会静默穿透成存储里那条通道）。
  */
 function pickChannel(
-  envRaw: string | undefined,
-  storedRaw: unknown,
+  env: Env,
+  reg: Obj,
 ): { value: "yyds" | "moemail" | null; invalid: boolean; raw: unknown } {
-  if (envRaw !== undefined && envRaw !== "") {
-    if (envRaw === "yyds" || envRaw === "moemail") return { value: envRaw, invalid: false, raw: envRaw };
-    return { value: null, invalid: true, raw: envRaw };
+  // **候选四级，顺序即优先级，与装载器的 `resolveChannel` 逐字同源**：
+  // 正式名 > 兼容别名 > 新存储键 > 旧存储键。某一级存在但值非法就到此为止，
+  // 不往下穿透（否则新名字写错会静默落到旧名字上）。
+  const candidates: unknown[] = [
+    env.REGISTRAR_CHANNEL, env.REGISTRAR_PRIMARY, reg.channel, reg.primary,
+  ];
+  for (const raw of candidates) {
+    // ⚠️ **不能借道 `pick()`**：那个函数把「非字符串」也归成「没写」，而存储里的
+    // `channel: 123` 是**写了个不认识的值**（装载器对它报 `not_a_channel`），
+    // 两者的文案与处置都不同。
+    if (raw === undefined || raw === null || raw === "") continue;
+    if (raw === "yyds" || raw === "moemail") return { value: raw, invalid: false, raw };
+    return { value: null, invalid: true, raw };
   }
-  // ⚠️ **不能借道 `pick()`**：那个函数把「非字符串」也归成「没写」，而存储里的
-  // `primary: 123` 是**写了个不认识的值**（装载器对它报 `not_a_channel`），
-  // 两者的文案与处置都不同。
-  if (storedRaw === undefined || storedRaw === null || storedRaw === "") {
-    return { value: null, invalid: false, raw: null };
-  }
-  if (storedRaw === "yyds" || storedRaw === "moemail") return { value: storedRaw, invalid: false, raw: storedRaw };
-  return { value: null, invalid: true, raw: storedRaw };
+  return { value: null, invalid: false, raw: null };
 }
 
 /**
@@ -600,37 +618,49 @@ function effectiveNum(env: Env, envName: string, stored: unknown, fallback: numb
  * 「locked_by_env 的判据与 envLockedFields 是同一张表 —— 逐字段对账」钉住：
  * 它拿 `envLockedFields` 的输出与本函数逐字段比对，任何一边漏一格都会红。
  */
-export function envNameOf(field: string): string | null {
-  return FIELD_ENV[field] ?? null;
+export function envNameOf(field: string, env: Env = {}): string | null {
+  const names = FIELD_ENV[field];
+  if (names === undefined || names.length === 0) return null;
+  // **按 env 里实际存在的那个名字报**，与 `config-provenance.ts` 的
+  // `envNameForField` 同一条规则：运维要拿这个名字去自己的 compose 里找那一行，
+  // 报一个他那边根本不存在的变量名等于把他支去 grep 一个搜不到的字符串。
+  return names.find((n) => env[n] !== undefined) ?? names[0]!;
 }
 
-const FIELD_ENV: Readonly<Record<string, string>> = {
-  gatewayToken: "GATEWAY_TOKEN",
-  agnesBaseUrl: "AGNES_BASE_URL",
-  upstreamTimeoutMs: "UPSTREAM_TIMEOUT_MS",
-  upstreamSyncTimeoutMs: "UPSTREAM_SYNC_TIMEOUT_MS",
-  maxStrikes: "MAX_STRIKES",
-  cooldownRateLimitMs: "COOLDOWN_RATE_LIMIT_MS",
-  cooldownPaymentMs: "COOLDOWN_PAYMENT_MS",
-  cooldownStrikeMs: "COOLDOWN_STRIKE_MS",
-  poolCacheTtlMs: "POOL_CACHE_TTL_MS",
-  poolTouchIntervalMs: "POOL_TOUCH_INTERVAL_MS",
-  "registrar.enabled": "REGISTRAR_ENABLED",
-  "registrar.primary": "REGISTRAR_PRIMARY",
-  "registrar.fallback": "REGISTRAR_FALLBACK",
-  "registrar.targetKeys": "TARGET_KEYS",
-  "registrar.mintBatch": "MINT_BATCH",
-  "registrar.tendIntervalMs": "TEND_INTERVAL_MS",
-  "registrar.codeTimeoutMs": "CODE_TIMEOUT_MS",
-  "registrar.mintDelayMinMs": "MINT_DELAY_MIN_MS",
-  "registrar.mintDelayMaxMs": "MINT_DELAY_MAX_MS",
-  "registrar.maxDomainAttempts": "MAX_DOMAIN_ATTEMPTS",
-  "registrar.tokenName": "REGISTRAR_TOKEN_NAME",
-  "registrar.agnesPlatformUrl": "AGNES_PLATFORM_URL",
-  "registrar.yyds.baseUrl": "YYDS_BASE_URL",
-  "registrar.yyds.apiKey": "YYDS_API_KEY",
-  "registrar.moemail.baseUrl": "MOEMAIL_BASE_URL",
-  "registrar.moemail.apiKey": "MOEMAIL_API_KEY",
+/**
+ * 一个字段的**候选**环境变量名，顺序即优先级。
+ *
+ * ⚠️ **值是数组不是单串**：`registrar.channel` 有两个名字（正式名 + 兼容别名），
+ * 存单串的那一版会让面板把「是哪个名字锁的」答错。
+ */
+const FIELD_ENV: Readonly<Record<string, readonly string[]>> = {
+  gatewayToken: ["GATEWAY_TOKEN"],
+  agnesBaseUrl: ["AGNES_BASE_URL"],
+  upstreamTimeoutMs: ["UPSTREAM_TIMEOUT_MS"],
+  upstreamSyncTimeoutMs: ["UPSTREAM_SYNC_TIMEOUT_MS"],
+  maxStrikes: ["MAX_STRIKES"],
+  cooldownRateLimitMs: ["COOLDOWN_RATE_LIMIT_MS"],
+  cooldownPaymentMs: ["COOLDOWN_PAYMENT_MS"],
+  cooldownStrikeMs: ["COOLDOWN_STRIKE_MS"],
+  poolCacheTtlMs: ["POOL_CACHE_TTL_MS"],
+  poolTouchIntervalMs: ["POOL_TOUCH_INTERVAL_MS"],
+  "registrar.enabled": ["REGISTRAR_ENABLED"],
+  // 两个名字，顺序即优先级：正式名在前、兼容别名在后。`REGISTRAR_FALLBACK`
+  // **不在这里**——它已经不锁任何字段（理由见 `config-provenance.ts` 的 `ENV_LOCK_MAP`）。
+  "registrar.channel": ["REGISTRAR_CHANNEL", "REGISTRAR_PRIMARY"],
+  "registrar.targetKeys": ["TARGET_KEYS"],
+  "registrar.mintBatch": ["MINT_BATCH"],
+  "registrar.tendIntervalMs": ["TEND_INTERVAL_MS"],
+  "registrar.codeTimeoutMs": ["CODE_TIMEOUT_MS"],
+  "registrar.mintDelayMinMs": ["MINT_DELAY_MIN_MS"],
+  "registrar.mintDelayMaxMs": ["MINT_DELAY_MAX_MS"],
+  "registrar.maxDomainAttempts": ["MAX_DOMAIN_ATTEMPTS"],
+  "registrar.tokenName": ["REGISTRAR_TOKEN_NAME"],
+  "registrar.agnesPlatformUrl": ["AGNES_PLATFORM_URL"],
+  "registrar.yyds.baseUrl": ["YYDS_BASE_URL"],
+  "registrar.yyds.apiKey": ["YYDS_API_KEY"],
+  "registrar.moemail.baseUrl": ["MOEMAIL_BASE_URL"],
+  "registrar.moemail.apiKey": ["MOEMAIL_API_KEY"],
 };
 
 /**

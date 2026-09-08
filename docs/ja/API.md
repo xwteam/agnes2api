@@ -587,8 +587,7 @@ curl http://localhost:8080/admin/api/overview \
   },
   "config": {
     "registrarEnabled": true,
-    "primary": "moemail",
-    "fallback": "yyds",
+    "channel": "moemail",
     "targetKeys": 20,
     "envLocked": ["gatewayToken"],
     "degraded": false
@@ -1127,6 +1126,7 @@ curl http://localhost:8080/admin/api/config \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
+  "loadNotices": [],
   "editable": ["upstreamTimeoutMs"],
   "secrets": ["gatewayToken"],
   "resetBlocked": [],
@@ -1161,6 +1161,7 @@ curl -X PUT http://localhost:8080/admin/api/config \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "loadBlocked": [],
+  "loadNotices": [],
   "changed": ["upstreamTimeoutMs"],
   "credentialsChanged": [],
   "appliedAt": 1735689600000,
@@ -1273,7 +1274,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 | パラメータ | 型 | 必須 | 説明 |
 |----------|----|----|----|
-| `channel` | string | いいえ | `moemail` か `yyds` のみ；省くと設定のプライマリ／フォールバックチャネルの連鎖に従います。 |
+| `channel` | string | いいえ | `moemail` か `yyds` のみ；省くと設定で選んでいるチャネルを使います。 |
 
 **リクエスト**：
 
@@ -1321,11 +1322,10 @@ curl http://localhost:8080/admin/api/registrar/status \
 {
   "serverTime": 1735689600000,
   "enabled": true,
-  "primary": "moemail",
-  "fallback": "yyds",
+  "channel": "moemail",
   "channels": {
-    "moemail": { "configured": true, "role": "primary" },
-    "yyds": { "configured": true, "role": "fallback" }
+    "moemail": { "configured": true, "selected": true },
+    "yyds": { "configured": true, "selected": false }
   },
   "pool": { "target": 20, "counted": 3, "gap": 17, "fresh": 2, "mintBatch": 5 },
   "lockedUntil": null,

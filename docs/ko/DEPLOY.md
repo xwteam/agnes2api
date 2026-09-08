@@ -449,7 +449,7 @@ docker compose up -d
 
     > [!IMPORTANT]
     > **"건강하면 0"에는 전제가 있으며, 반드시 밝혀 둡니다**: `loadConfig`는
-    > `TEND_INTERVAL_MS`가 `MINT_BATCH × CODE_TIMEOUT_MS × 채널 수`
+    > `TEND_INTERVAL_MS`가 `MINT_BATCH × CODE_TIMEOUT_MS`
     > (기본값 `5 × 120000 × 1 = 600000`, 즉 10분)보다 작으면 **매 바퀴마다** 설정 경고를
     > 한 건 냅니다. 그 설정에서는 **아무것도 주조하지 않은 바퀴도 매번 한 번 씁니다**.
 
@@ -578,7 +578,7 @@ docker compose up -d
     `registrar_tend_lock`의 put/delete 쌍은 **두 런타임 모두에 존재합니다**
     (Node 쪽도 같은 잠금을 잡습니다 — 여러 컨테이너가 하나의 볼륨을
     공유하는 구성에서는 프로세스 내부의 불리언이 무용지물이기 때문입니다).
-  - **임계 축**: `TEND_INTERVAL_MS`가 `MINT_BATCH × CODE_TIMEOUT_MS × 채널 수` 아래로
+  - **임계 축**: `TEND_INTERVAL_MS`가 `MINT_BATCH × CODE_TIMEOUT_MS` 아래로
     떨어지면 이벤트 항목이 **"건강한 바퀴 0회"에서 "매 바퀴 1회"로 뜁니다**. 이 도약은
     주기와 무관하며, 위에서 말한 매 바퀴 나오는 설정 경고가 원인입니다.
   **가장 나쁜 것은 두 축이 겹칠 때입니다.** 이 절은 Worker + 무료 등급 KV 이야기이므로,
@@ -1052,7 +1052,7 @@ Caddy는 `header_up CF-Connecting-IP ""`, Traefik은 미들웨어의 `customRequ
 두 주기를 헛되이 기다리게 됩니다.
 
 > [!IMPORTANT]
-> **등록기 계열(`REGISTRAR_ENABLED` / `REGISTRAR_PRIMARY` / `REGISTRAR_FALLBACK` /
+> **등록기 계열(`REGISTRAR_ENABLED` / `REGISTRAR_CHANNEL`(호환 별칭 포함) /
 > `TARGET_KEYS` / `MINT_BATCH` / `TEND_INTERVAL_MS` / `CODE_TIMEOUT_MS` / `MINT_DELAY_MIN_MS` /
 > `MINT_DELAY_MAX_MS` / `MAX_DOMAIN_ATTEMPTS` / `REGISTRAR_TOKEN_NAME` / `AGNES_PLATFORM_URL` /
 > `YYDS_BASE_URL` / `YYDS_API_KEY` / `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY`)도 이 잠금 표에
@@ -1110,8 +1110,7 @@ Caddy는 `header_up CF-Connecting-IP ""`, Traefik은 미들웨어의 `customRequ
 | 변수 | 필수 여부 | 기본값 | 설명 |
 |----|---------|------|----|
 | `REGISTRAR_ENABLED` | 아니오 | `false` | 마스터 스위치. `true`여야 레지스트라가 활성화됨. |
-| `REGISTRAR_PRIMARY` | 활성화 시 필수 | 없음 | 주 채널, `yyds` 또는 `moemail`. 둘은 대등하며 기본값 없음. |
-| `REGISTRAR_FALLBACK` | 아니오 | 공백(폴백 없음) | 보조 채널, `yyds` 또는 `moemail`. |
+| `REGISTRAR_CHANNEL` | 활성화 시 필수 | 없음 | 레지스트라가 사용할 채널, `yyds` 또는 `moemail`. 둘 중 하나만 고르며 기본값 없음. |
 | `TARGET_KEYS` | 아니오 | `20` | 목표로 하는 사용 가능 key 수. |
 | `MINT_BATCH` | 아니오 | `5` | 한 라운드에서 발급할 key의 최대 개수. |
 | `TEND_INTERVAL_MS` | 아니오(Node/Docker 전용) | `1800000` | Node 측 보충 간격. Worker 측은 `wrangler.toml`의 Cron이 대신 결정. |
@@ -1123,14 +1122,23 @@ Caddy는 `header_up CF-Connecting-IP ""`, Traefik은 미들웨어의 `customRequ
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | 아니오 / 채널이 yyds일 때 필수 | `https://maliapi.215.im` / 공백 | YYDS Mail 채널 자격 증명. |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | 채널이 moemail일 때 필수 | 공백 / 공백 | MoeMail 채널 자격 증명(자체 호스팅, 기본 주소 없음). |
 
-#### 이 16개 변수에 잘못된 값을 썼을 때
+> [!NOTE]
+> **폐기된 옛 이름 두 개는 의도적으로 위 표에 넣지 않았습니다.**
+> `REGISTRAR_PRIMARY`는 `REGISTRAR_CHANNEL`의 **호환 별칭**입니다(우선순위가 낮고, 사용
+> 중이면 패널 상단에 알림이 뜨며 해당 항목이 비활성화되는 것은 동일합니다).
+> `REGISTRAR_FALLBACK`은 **더 이상 경로 선택에 관여하지 않으며**, 패널에서 "이 채널은
+> 폐기되었다"고 이름을 짚어 주기 위해 한 번만 읽힙니다. 두 옛 이름 모두 업그레이드 중인
+> 배포를 멈추게 하지 않지만, `.env.example`에는 더 이상 선언하지 않습니다 —— 새 배포는
+> 새 이름을 쓰세요.
+
+#### 이 15개 변수에 잘못된 값을 썼을 때
 
 > [!WARNING]
-> **이 16개 변수에 잘못된 값을 써도 더 이상 컨테이너가 뜨지 못하는 일은 없습니다.**
+> **이 15개 변수에 잘못된 값을 써도 더 이상 컨테이너가 뜨지 못하는 일은 없습니다.**
 > 숫자형(`TARGET_KEYS=abc`, `MINT_BATCH=0` 등)은 **위 표의 기본값으로 폴백**하고,
 > 패널에 저하를 한 번 보고하며 이벤트 섹션에 `config.invalid`를 한 건 남깁니다.
-> 채널·자격 증명 쪽 실수(채널 이름 오타, 등록기를 켜고도 주 채널 미설정, API 키 누락,
-> 대체 채널이 주 채널과 동일)는 **이번에 등록기만 시작하지 않을** 뿐, 게이트웨이 전달은 평소대로입니다.
+> 채널·자격 증명 쪽 실수(채널 이름 오타, 등록기를 켜고도 채널 미선택, 선택한 채널의
+> API 키 누락)는 **이번에 등록기만 시작하지 않을** 뿐, 게이트웨이 전달은 평소대로입니다.
 >
 > **이것은 능력 저하입니다. 분명히 적습니다**: 예전에는 배포 오타로 컨테이너가 죽어 바로 알았지만,
 > 이제는 조용히 계속 돌기 때문에 패널 배너나 이벤트 섹션을 직접 보러 가야 합니다.
@@ -1414,7 +1422,7 @@ curl -s "$BASE/v1/chat/completions" \
 4. 이벤트 섹션에 매 라운드 `error` 등급 `registrar.blocked`가 남고 빠진 항목이 나열됩니다.
 
 **해결**: 배너에 나열된 항목을 설정 페이지에서 채우세요(주/대체 체인 위의 메일박스 채널에 API 키가 없거나,
-대체 채널이 주 채널과 같게 설정된 경우가 가장 흔합니다).
+아예 채널을 고르지 않은 경우가 가장 흔합니다).
 **저장하면 복구되며, 컨테이너 재시작도 재배포도 필요 없습니다.**
 
 ### 패널이 열리지 않고 `/admin`이 404를 준다

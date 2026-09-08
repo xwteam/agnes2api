@@ -21,7 +21,7 @@ const body = {
     configVisibilityUpperBoundMs: 90_000, kvEdgeCacheMs: 60_000,
   },
   config: {
-    registrarEnabled: true, registrarBlocked: false, primary: "yyds", fallback: "moemail",
+    registrarEnabled: true, registrarBlocked: false, channel: "yyds",
     targetKeys: 20, envLocked: ["maxStrikes"], degraded: false,
   },
 };
@@ -224,8 +224,8 @@ describe("usageTipKey：那句尾巴不许对着一个已经开着统计的部�
 describe("configSummary：block 整体缺失是单个 null 哨兵，不是逐字段 null", () => {
   /**
    * **这条钉住实施时抓到的一个真实 bug（评审前自查）**：如果 `config` 缺失时
-   * 也逐字段返回 `{primary: null, fallback: null, ...}`，就会跟「config 块本来就
-   * 存在、但注册机没启用所以 primary/fallback 合法地是 null」撞出同一个值——
+   * 也逐字段返回 `{channel: null, ...}`，就会跟「config 块本来就
+   * 存在、但注册机没启用所以 channel 合法地是 null」撞出同一个值——
    * 调用方没法区分「该显示 —」还是「该显示『无』」。整块用一个 `null` 哨兵表示，
    * 这种撞车就不可能发生：调用方必须先判 `configSummary(x) === null`。
    */
@@ -236,23 +236,22 @@ describe("configSummary：block 整体缺失是单个 null 哨兵，不是逐字
   });
   it("config 是个空对象（技术上是对象，只是字段都没有）时走逐字段降级，不是整块 null——与 poolCounts 同一条哲学", () => {
     expect(configSummary({ ...body, config: {} })).toEqual({
-      registrarEnabled: null, registrarBlocked: null, primary: null, fallback: null,
+      registrarEnabled: null, registrarBlocked: null, channel: null,
       targetKeys: null, envLocked: [], degraded: null,
     });
   });
   it("有数据时逐项透传", () => {
     expect(configSummary(body)).toEqual({
-      registrarEnabled: true, registrarBlocked: false, primary: "yyds", fallback: "moemail",
+      registrarEnabled: true, registrarBlocked: false, channel: "yyds",
       targetKeys: 20, envLocked: ["maxStrikes"], degraded: false,
     });
   });
-  it("config 块存在、但 primary/fallback 合法为 null（注册机未启用）时，与「整块缺失」是两种不同的返回形状", () => {
-    const r = configSummary({ ...body, config: { ...body.config, registrarEnabled: false, primary: null, fallback: null } });
+  it("config 块存在、但 channel 合法为 null（注册机未启用）时，与「整块缺失」是两种不同的返回形状", () => {
+    const r = configSummary({ ...body, config: { ...body.config, registrarEnabled: false, channel: null } });
     expect(r).not.toBeNull();
-    expect(r!.primary).toBeNull();
-    expect(r!.fallback).toBeNull();
-    // 而 targetKeys / envLocked / degraded 这些跟 primary 无关的字段照样是原始值，
-    // 不会被「primary 是 null」连累成整块 null——这正是哨兵设计要保住的那条区分。
+    expect(r!.channel).toBeNull();
+    // 而 targetKeys / envLocked / degraded 这些跟通道无关的字段照样是原始值，
+    // 不会被「channel 是 null」连累成整块 null——这正是哨兵设计要保住的那条区分。
     expect(r!.targetKeys).toBe(20);
   });
   it("envLocked 不是数组时按空数组处理，不是 null（悬停列表要能安全 .map）", () => {

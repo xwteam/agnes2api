@@ -459,7 +459,7 @@ isolate 8 個で合計 104 回/日）。使い切るとその日はもう書か�
 
     > [!IMPORTANT]
     > **「健全なら 0」には前提があり、それを明記します**: `loadConfig` は
-    > `TEND_INTERVAL_MS` が `MINT_BATCH × CODE_TIMEOUT_MS × チャネル数`
+    > `TEND_INTERVAL_MS` が `MINT_BATCH × CODE_TIMEOUT_MS`
     > （既定で `5 × 120000 × 1 = 600000`、つまり 10 分）を下回るとき、
     > **毎巡かならず**設定警告を 1 件出します。その設定では**何も鋳造しない巡でも
     > 毎回 1 回書き込みます**。
@@ -589,7 +589,7 @@ isolate 8 個で合計 104 回/日）。使い切るとその日はもう書か�
     `registrar_tend_lock` の put/delete は**両方のランタイムに存在します**
     （Node 側も同じロックを取ります——複数のコンテナが 1 つの
     ボリュームを共有する構成では、プロセス内の真偽値は役に立ちません）。
-  - **閾値軸**: `TEND_INTERVAL_MS` が `MINT_BATCH × CODE_TIMEOUT_MS × チャネル数`
+  - **閾値軸**: `TEND_INTERVAL_MS` が `MINT_BATCH × CODE_TIMEOUT_MS`
     を下回ると、イベントの項目が**「健全な巡は 0 回」から「毎巡 1 回」へ跳ねます**。
     この跳ねは頻度とは無関係で、上記の毎巡出る設定警告が原因です。
   **最悪なのは 2 本の軸が重なったときです。** 本節は Worker + 無料枠 KV の話なので、
@@ -1078,7 +1078,7 @@ Caddy は `header_up CF-Connecting-IP ""`、Traefik はミドルウェアの `cu
 書いてしまうと「保存成功・実効値は不変」となり、運用者はキャッシュのせいだと思って何周期も無駄に待つことになります。
 
 > [!IMPORTANT]
-> **レジストラー系（`REGISTRAR_ENABLED`／`REGISTRAR_PRIMARY`／`REGISTRAR_FALLBACK`／
+> **レジストラー系（`REGISTRAR_ENABLED`／`REGISTRAR_CHANNEL`（互換エイリアスを含む）／
 > `TARGET_KEYS`／`MINT_BATCH`／`TEND_INTERVAL_MS`／`CODE_TIMEOUT_MS`／`MINT_DELAY_MIN_MS`／
 > `MINT_DELAY_MAX_MS`／`MAX_DOMAIN_ATTEMPTS`／`REGISTRAR_TOKEN_NAME`／`AGNES_PLATFORM_URL`／
 > `YYDS_BASE_URL`／`YYDS_API_KEY`／`MOEMAIL_BASE_URL`／`MOEMAIL_API_KEY`）もこのロック表に入りました。**
@@ -1136,8 +1136,7 @@ Caddy は `header_up CF-Connecting-IP ""`、Traefik はミドルウェアの `cu
 | 変数 | 必須 | デフォルト | 説明 |
 |----|----|----------|----|
 | `REGISTRAR_ENABLED` | いいえ | `false` | マスタースイッチ。`true` にしないとレジストラーは有効になりません。 |
-| `REGISTRAR_PRIMARY` | 有効化時は必須 | なし | 主チャネル、`yyds` または `moemail`。両者は対等でデフォルト値なし。 |
-| `REGISTRAR_FALLBACK` | いいえ | 空（フォールバックなし） | フォールバックチャネル、`yyds` または `moemail`。 |
+| `REGISTRAR_CHANNEL` | 有効化時は必須 | なし | レジストラーが使うチャネル、`yyds` または `moemail`。2 つのうち 1 つを選びます。デフォルト値なし。 |
 | `TARGET_KEYS` | いいえ | `20` | 目標とする利用可能 key 数。 |
 | `MINT_BATCH` | いいえ | `5` | 1 ラウンドで発行する key の最大数。 |
 | `TEND_INTERVAL_MS` | いいえ（Node/Docker のみ） | `1800000` | Node 側の補充間隔。Worker 側は `wrangler.toml` の Cron が代わりに決める。 |
@@ -1149,14 +1148,22 @@ Caddy は `header_up CF-Connecting-IP ""`、Traefik はミドルウェアの `cu
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | いいえ / チャネルが yyds の場合は必須 | `https://maliapi.215.im` / 空 | YYDS Mail チャネルの認証情報。 |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | チャネルが moemail の場合は必須 | 空 / 空 | MoeMail チャネルの認証情報（自己ホスト、デフォルトアドレスなし）。 |
 
-#### これら 16 個の変数に誤った値を書いたとき
+> [!NOTE]
+> **非推奨になった 2 つの旧名称は、意図的に上の表に入れていません。**
+> `REGISTRAR_PRIMARY` は `REGISTRAR_CHANNEL` の**互換エイリアス**です（優先度は低く、
+> 使われている場合はパネル上部に通知が出ます。項目のグレーアウトは同じです）。
+> `REGISTRAR_FALLBACK` は**経路選択に関与しなくなり**、パネルで「このチャネルは破棄された」
+> と名指しで伝えるためだけに一度読まれます。どちらの旧名称もアップグレード中のデプロイを
+> 止めませんが、`.env.example` にはもう記載していません——新規デプロイは新しい名前を使います。
+
+#### これら 15 個の変数に誤った値を書いたとき
 
 > [!WARNING]
-> **これら 16 個の変数に誤った値を書いても、もうコンテナは起動しなくなりません。**
+> **これら 15 個の変数に誤った値を書いても、もうコンテナは起動しなくなりません。**
 > 数値系（`TARGET_KEYS=abc`、`MINT_BATCH=0` など）は**上の表のデフォルト値へフォールバック**し、
 > パネルに劣化を 1 回報告し、イベントセクションに `config.invalid` を 1 件残します。
-> チャネル系・認証情報系の誤り（チャネル名の綴り間違い、レジストラーが有効なのに主チャネル未設定、
-> API キー欠落、フォールバックが主チャネルと同一）は**レジストラーが今回起動しない**だけで、
+> チャネル系・認証情報系の誤り（チャネル名の綴り間違い、レジストラーが有効なのにチャネル未選択、
+> 選んだチャネルの API キー欠落）は**レジストラーが今回起動しない**だけで、
 > ゲートウェイの転送は通常どおりです。
 >
 > **これは能力の低下です。明記します**：以前はデプロイのタイプミスでコンテナが落ちたので即座に分かりましたが、
@@ -1443,8 +1450,8 @@ curl -s "$BASE/v1/chat/completions" \
 3. **概要**ページの設定サマリーでも、レジストラーの行が同じ表示になります。
 4. イベントセクションに毎ラウンド `error` レベルの `registrar.blocked` が出て、不足項目が並びます。
 
-**対処**：バナーに並んだ項目を設定ページで埋めてください（主/フォールバックのチェーン上にあるメールボックスチャネルの
-API キーが無い、あるいはフォールバックが主チャネルと同じに設定されている、が最も多いケースです）。
+**対処**：バナーに並んだ項目を設定ページで埋めてください（選んだメールボックスチャネルの
+API キーが無い、あるいはチャネルをまだ選んでいない、が最も多いケースです）。
 **保存すれば復旧します。コンテナの再起動も再デプロイも不要です。**
 
 ### パネルが開かず、`/admin` が 404 を返す

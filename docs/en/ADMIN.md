@@ -128,7 +128,7 @@ are left in the pool.**
 
 ### Configuration summary
 
-- **Configuration summary**: the registrar switch, the primary/fallback channels and
+- **Configuration summary**: the registrar switch, the channel in use and
   `TARGET_KEYS`, as they are in effect right now. Fields locked by the environment carry a
   lock marker — editing those on the settings page changes nothing, because the environment
   variable takes priority.
@@ -214,9 +214,10 @@ channel, which credentials you have to bring, and how to troubleshoot live in
 
 ### The two mailbox channels
 
-- **The two mailbox channels are peers** and have no default: the primary must be named
-  explicitly, the fallback may be left unset. The board shows each one's role
-  (primary / fallback) and whether its credentials are configured.
+- **The two mailbox channels are peers**, have no default, and are an **either-or choice**:
+  you must name the one to use explicitly; the other is never used even if you fill it in, and
+  it is never switched to on failure. The board shows, for each one, whether it is the channel
+  currently in use and whether its credentials are configured.
 
 ### Refill history and channel tests
 

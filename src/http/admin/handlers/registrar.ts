@@ -106,7 +106,7 @@ export interface RegistrarWiring {
    * 真的跑一轮**手动**补池（装配依赖 → `tendOnce` → 写 `tend:history` → 落盘事件）。
    * 由 `wire.ts` 提供，因为只有它手上有 `env`。
    *
-   * `channel` 为 `null` 时按配置里的主/备通道链跑；给了通道名则**只用那一条**
+   * `channel` 为 `null` 时用设置里选中的那条；给了通道名则**这一轮改用那一条**
    *（面板「添加 Key」菜单里【自动注册】那两项，设计 §10.2）。
    *
    * **允许抛错**：抛出来由本文件接住并记一条事件，**而锁一定在 `finally` 里释放**。
@@ -248,9 +248,15 @@ async function optionalObjectBody(c: Context): Promise<Record<string, unknown>> 
 /**
  * 这条通道现在有没有凭据。
  *
- * 判据取 `RegistrarConfig` 里那两个 `ChannelCreds | null` 字段——它们**只对
- * 主/备通道解析**（见 `registrarFromEnv` 末尾那个循环），所以「非 null」正好等于
- * 「这条通道真的接进了本次部署」，不需要再去比一遍 primary/fallback。
+ * 判据取 `RegistrarConfig` 里那两个 `ChannelCreds | null` 字段。**注册机开着时
+ * 两条通道都会解析凭据**（见 `registrarFromEnv` 末尾那个循环），所以「非 null」
+ * 正好等于「这条通道的凭据齐了」——**它不等于「这条通道被选中了」**，后者读
+ * `registrar.channel`。
+ *
+ * ⚠️ 上一版这里写的是「它们只对主/备通道解析，所以非 null 正好等于这条通道真的
+ * 接进了本次部署」。两条通道改成二选一之后，只给选中那条解析会让未选中那条的
+ * 「已配置」永远是假话、「测试连接」永远 409 —— 而「切换前先比一比」正是二选一
+ * 模型下最核心的工作流。
  */
 function channelConfigured(
   cfg: { yyds: unknown; moemail: unknown },
@@ -290,8 +296,8 @@ export function manualTendHandler(deps: RegistrarDeps) {
 
     // ── 通道参数：**在动任何护栏之前校验完**（校验失败一次写都不产生）──────────
     //
-    // 给了通道名 = 「只用这一条」（面板「添加 Key」菜单里【自动注册】那两项）。
-    // 不给 = 按配置里的主/备通道链跑，与加通道参数之前的行为逐字相同。
+    // 给了通道名 = 「这一轮改用这一条」（面板「添加 Key」菜单里【自动注册】那两项）。
+    // 不给 = 用设置里选中的那条，与加通道参数之前的行为逐字相同。
     const body = await optionalObjectBody(c);
     let channel: Channel | null = null;
     if (body.channel !== undefined && body.channel !== null) {
@@ -521,8 +527,11 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
        * 「已启用 · 本次没跑起来」，把它压成 `enabled: false` 是另一种撒谎。
        */
       blocked: reg.blocked,
-      primary: reg.primary ?? null,
-      fallback: reg.fallback ?? null,
+      /**
+       * **注册机用的那一条通道。两条通道是二选一，没有主备。**
+       * 这里从前是 `primary` / `fallback` 两格。
+       */
+      channel: reg.channel ?? null,
       /**
        * 两条通道**各自**的接入状态。顺序在这里没有意义（JSON 对象），
        * **渲染顺序由面板的 `CHANNELS` 常量定死成字母序**，见那里的理由。
@@ -533,10 +542,13 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
       channels: Object.fromEntries(CHANNELS.map((ch) => [ch, {
         configured: channelConfigured(reg, ch),
         /**
-         * 这条通道在**本次配置**里的角色。`null` = 既不是主也不是备。
-         * 面板照实渲染，不做任何加权。
+         * 这条通道是不是**本次选中**的那条。
+         *
+         * ⚠️ 它从前是 `role`（`"primary" | "fallback" | null`）。留着「角色」这个词
+         * 本身就在暗示排名，而两条通道是二选一 —— 旁边已经有一格 `configured`，
+         * `{configured, selected}` 读起来正好。
          */
-        role: reg.primary === ch ? "primary" : (reg.fallback === ch ? "fallback" : null),
+        selected: reg.channel === ch,
       }])),
       pool: records === null ? null : {
         target: reg.targetKeys,

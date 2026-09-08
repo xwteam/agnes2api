@@ -245,13 +245,13 @@ describe("注册机「设置」分页：卡内字段同样排在网格里", () =
 
   /**
    * **反向控制：同一把尺子对着真的不在网格里的节点必须报「不在」。**
-   * `reg.emptyPrimary` 是卡级的整句说明，与设置页那两句同一条规矩：刻意留在网格外。
+   * `reg.emptyChannel` 是卡级的整句说明，与设置页那两句同一条规矩：刻意留在网格外。
    */
   it("反向控制：那句卡级说明确实不在网格里", async () => {
     const h = await openRegistrarSettings();
     const panel = h.section("registrar").walk()
       .find((n) => n.getAttribute("id") === "reg-panel-settings")!;
-    const note = panel.walk().find((n) => n.getAttribute("data-i18n") === "reg.emptyPrimary");
+    const note = panel.walk().find((n) => n.getAttribute("data-i18n") === "reg.emptyChannel");
     expect(note, "这一页上找不到那句卡级说明 —— 先回来看是不是整段搬走了").not.toBeUndefined();
     expect(
       ancestorWith(note!, "cfg-grid"),

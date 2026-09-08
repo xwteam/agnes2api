@@ -280,8 +280,8 @@ function throwOwners(src: string): string[] {
  * **手写的豁免清单。** 一个名字，不是一个计数——计数说不出「谁」，而这条约束的
  * 全部意义就是「装载路径上一个都不许有」。
  *
- * - `requirePrimary`（`config.ts`）：**消费方护栏**，不在装载路径上。它挡的是
- *   「某个消费者跳过了 `enabled` / `blocked` 两道 gate 就去裸读 `cfg.primary`」，
+ * - `requireChannel`（`config.ts`）：**消费方护栏**，不在装载路径上。它挡的是
+ *   「某个消费者跳过了 `enabled` / `blocked` 两道 gate 就去裸读 `cfg.channel`」，
  *   那是代码 bug，必须响。它自己那段 JSDoc 里逐字写着它是**装载器那个模块**唯一的
  *   throw 豁免项。
  * - `tendOnce`（`tender.ts`）：`switch` 的 `default` 分支上那句穷尽性断言
@@ -291,7 +291,7 @@ function throwOwners(src: string): string[] {
  *
  * 清单变长 = 有人在注册机装载路径上重新加了一处抛点，**必须在评审里显式表态**。
  */
-const REGISTRAR_THROW_EXEMPTIONS: readonly string[] = ["requirePrimary", "tendOnce"];
+const REGISTRAR_THROW_EXEMPTIONS: readonly string[] = ["requireChannel", "tendOnce"];
 
 /** 这道扫描声称覆盖的写法，每一条都有探针钉着。 */
 const THROW_COVERED: ReadonlyArray<{ probe: string; expect: string }> = [
@@ -2769,13 +2769,29 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
      * 说明要么 CSS 改了、要么这张表过期了，两种都该当场红。
      */
     const MEASURED: Array<{ dock: number; grid: number; cells: number; cols: number }> = [
-      { dock: 1920, grid: 792, cells: 9, cols: 2 }, { dock: 1920, grid: 1634, cells: 11, cols: 2 }, { dock: 1920, grid: 775, cells: 2, cols: 2 },
-      { dock: 1440, grid: 552, cells: 9, cols: 2 }, { dock: 1440, grid: 1154, cells: 11, cols: 2 }, { dock: 1440, grid: 535, cells: 2, cols: 2 },
-      { dock: 1280, grid: 472, cells: 9, cols: 2 }, { dock: 1280, grid: 994, cells: 11, cols: 2 }, { dock: 1280, grid: 455, cells: 2, cols: 2 },
-      { dock: 1100, grid: 382, cells: 9, cols: 2 }, { dock: 1100, grid: 814, cells: 11, cols: 2 }, { dock: 1100, grid: 365, cells: 2, cols: 1 },
-      { dock: 900, grid: 282, cells: 9, cols: 1 }, { dock: 900, grid: 614, cells: 11, cols: 2 }, { dock: 900, grid: 265, cells: 2, cols: 1 },
-      { dock: 600, grid: 314, cells: 9, cols: 1 }, { dock: 600, grid: 314, cells: 11, cols: 1 }, { dock: 600, grid: 280, cells: 2, cols: 1 },
+      { dock: 1920, grid: 792, cells: 9, cols: 2 }, { dock: 1920, grid: 1634, cells: 10, cols: 2 }, { dock: 1920, grid: 775, cells: 2, cols: 2 },
+      { dock: 1440, grid: 552, cells: 9, cols: 2 }, { dock: 1440, grid: 1154, cells: 10, cols: 2 }, { dock: 1440, grid: 535, cells: 2, cols: 2 },
+      { dock: 1280, grid: 472, cells: 9, cols: 2 }, { dock: 1280, grid: 994, cells: 10, cols: 2 }, { dock: 1280, grid: 455, cells: 2, cols: 2 },
+      { dock: 1100, grid: 382, cells: 9, cols: 2 }, { dock: 1100, grid: 814, cells: 10, cols: 2 }, { dock: 1100, grid: 365, cells: 2, cols: 1 },
+      { dock: 900, grid: 282, cells: 9, cols: 1 }, { dock: 900, grid: 614, cells: 10, cols: 2 }, { dock: 900, grid: 265, cells: 2, cols: 1 },
+      { dock: 600, grid: 314, cells: 9, cols: 1 }, { dock: 600, grid: 314, cells: 10, cols: 1 }, { dock: 600, grid: 280, cells: 2, cols: 1 },
     ];
+
+    /**
+     * ⚠️⚠️ **注册机那张卡的 `cells` 从 11 改成 10（两条通道二选一，主备两格合成一格），
+     * 而 `grid` 与 `cols` 一个数都没重量 —— 理由必须写清楚，别当成「顺手改了个数」。**
+     *
+     * · `grid` 是**容器宽**，由停靠宽与页面布局决定，与这张卡里有几格字段无关
+     *（少一格只会少一行，不改变块级容器的宽度）；
+     * · `cols` 走的是下面 `colsIn()`：`min(cells, max(1, floor((w + gap) / (下界 + gap))))`。
+     *   这张卡记录的 `cols` 全是 1 或 2，而 `cells` 从 11 掉到 10 之后仍然远大于 2
+     *   ⇒ `min` 取的一直是右边那一项，结果一个都不变。
+     *
+     * **我没有在真浏览器里重量过这两列**（本环境没有无头浏览器）。上面两条是从这把
+     * 算尺自己的公式与「容器宽不随内容格数变」这条布局事实推出来的，写在这里是为了
+     * 下一个人能复核这条推理，而不是为了让它看起来像量过。**格数再变一格、或者哪天
+     * 某一档的 `cols` 逼近 `cells` 时，这条推理就不成立了，那时必须真的重量。**
+     */
 
     /**
      * **输入新鲜度：`MEASURED` 里的 `cells` 必须还等于今天真实的字段数。**
@@ -2810,10 +2826,10 @@ describe("设置页的多列：写死的 px 下限不许在窄容器里顶穿", 
       ).toBe(9);
       expect(
         today.注册机,
-        `注册机那张卡今天 ${today.注册机} 格，而 MEASURED 里记的是 11 —— 同上`,
-      ).toBe(11);
+        `注册机那张卡今天 ${today.注册机} 格，而 MEASURED 里记的是 10 —— 同上`,
+      ).toBe(10);
       // 表里除了这两个数还有通道卡那档的 2；三个数一个都不许凭空多出来。
-      expect(inTable, "MEASURED 里出现了没人解释的格数档位").toEqual([2, 9, 11]);
+      expect(inTable, "MEASURED 里出现了没人解释的格数档位").toEqual([2, 9, 10]);
     });
 
     /** 用户报的那一档那张网格：1100 视口下设置页「上游与冷却」卡里的网格宽 382px。 */

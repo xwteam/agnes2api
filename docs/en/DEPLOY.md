@@ -1101,7 +1101,7 @@ and the operator would blame a stale cache and wait for two refresh cycles for n
 
 > [!IMPORTANT]
 > **The registrar family is in that lock table too** (`REGISTRAR_ENABLED`,
-> `REGISTRAR_PRIMARY`, `REGISTRAR_FALLBACK`, `TARGET_KEYS`, `MINT_BATCH`, `TEND_INTERVAL_MS`,
+> `REGISTRAR_CHANNEL` (and its compatibility alias), `TARGET_KEYS`, `MINT_BATCH`, `TEND_INTERVAL_MS`,
 > `CODE_TIMEOUT_MS`, `MINT_DELAY_MIN_MS`, `MINT_DELAY_MAX_MS`, `MAX_DOMAIN_ATTEMPTS`,
 > `REGISTRAR_TOKEN_NAME`, `AGNES_PLATFORM_URL`, `YYDS_BASE_URL`, `YYDS_API_KEY`,
 > `MOEMAIL_BASE_URL`, `MOEMAIL_API_KEY`). That was not always so: with `TARGET_KEYS=30` in
@@ -1162,8 +1162,7 @@ see [REGISTRAR.md](REGISTRAR.md).
 | Variable | Required | Default | Notes |
 |--------|--------|-------|-----|
 | `REGISTRAR_ENABLED` | no | `false` | Master switch; must be `true` to enable the registrar. |
-| `REGISTRAR_PRIMARY` | required once enabled | none | Primary channel, `yyds` or `moemail`; the two are equal, no default. |
-| `REGISTRAR_FALLBACK` | no | empty (no fallback) | Fallback channel, `yyds` or `moemail`. |
+| `REGISTRAR_CHANNEL` | required once enabled | none | Which channel the registrar uses, `yyds` or `moemail`; pick one of the two, no default. |
 | `TARGET_KEYS` | no | `20` | Target number of usable keys. |
 | `MINT_BATCH` | no | `5` | Maximum keys minted per round. |
 | `TEND_INTERVAL_MS` | no (Node/Docker only) | `1800000` | Node-side refill interval; on the Worker this is governed by the Cron in `wrangler.toml` instead. |
@@ -1175,14 +1174,22 @@ see [REGISTRAR.md](REGISTRAR.md).
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | no / required if a channel is yyds | `https://maliapi.215.im` / empty | YYDS Mail channel credentials. |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | required if a channel is moemail | empty / empty | MoeMail channel credentials (self-hosted, no default address). |
 
-#### What happens when one of these 16 variables has a wrong value
+> [!NOTE]
+> **Two deprecated legacy names are deliberately not in the table above.**
+> `REGISTRAR_PRIMARY` is a **compatibility alias** for `REGISTRAR_CHANNEL` (lower precedence; a
+> notice appears at the top of the panel when it is in use, and the field is greyed out just the
+> same). `REGISTRAR_FALLBACK` **no longer takes part in routing**; it is read once, only so the
+> panel can name the channel that was dropped. Neither legacy name stops an upgrading deployment
+> from running, but `.env.example` no longer declares them — new deployments use the new name.
+
+#### What happens when one of these 15 variables has a wrong value
 
 > [!WARNING]
-> **A wrong value in these 16 variables no longer keeps the container from starting.**
+> **A wrong value in these 15 variables no longer keeps the container from starting.**
 > Numeric ones (`TARGET_KEYS=abc`, `MINT_BATCH=0`, and the like) **fall back to the default in the
 > table above**, report a degradation in the panel and log one `config.invalid` event; channel and
-> credential mistakes (a misspelled channel name, the registrar on with no primary channel, a missing
-> API key, a fallback equal to the primary) only stop **the registrar** from starting this time, while
+> credential mistakes (a misspelled channel name, the registrar on with no channel selected, the
+> selected channel missing its API key) only stop **the registrar** from starting this time, while
 > the gateway keeps forwarding.
 >
 > **This is a capability loss, stated plainly**: a deployment typo used to crash the container, so you
@@ -1469,7 +1476,7 @@ This is a **quiet feature outage**: the registrar is optional, so when its confi
 4. An `error`-level `registrar.blocked` in the events section, every round.
 
 **Fix**: fill in the fields listed in the banner on the Settings page — most often a mailbox channel on the
-primary/fallback chain is missing its API key, or the fallback was set to the same channel as the primary.
+selected mailbox channel is missing its API key, or no channel has been selected at all.
 **Saving is enough to recover; no container restart and no redeploy.**
 
 ### The panel will not open and `/admin` answers 404

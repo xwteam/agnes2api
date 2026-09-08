@@ -43,8 +43,7 @@ function configBody(over: Record<string, unknown> = {}) {
       poolCacheTtlMs: { stored: 0, env: null, effective: 0, lockedBy: null },
       poolTouchIntervalMs: { stored: 0, env: null, effective: 0, lockedBy: null },
       "registrar.enabled": { stored: false, env: null, effective: false, lockedBy: null },
-      "registrar.primary": { stored: null, env: null, effective: null, lockedBy: null },
-      "registrar.fallback": { stored: null, env: null, effective: null, lockedBy: null },
+      "registrar.channel": { stored: null, env: null, effective: null, lockedBy: null },
       "registrar.targetKeys": { stored: 20, env: null, effective: 20, lockedBy: null },
       "registrar.mintBatch": { stored: 5, env: null, effective: 5, lockedBy: null },
       "registrar.tendIntervalMs": { stored: 1800000, env: null, effective: 1800000, lockedBy: null },
@@ -739,7 +738,7 @@ describe("两条通道在设置页上完全对称（设计 §10.3 第 1/2/3 条�
   /** **设计 §10.3 第 1 条：主通道下拉无预选值，初始是占位符。** */
   it("主通道下拉初始不预选任何一条通道", async () => {
     const { panel } = await openRegistrarSettings(() => ok(configBody()));
-    const select = inputOf(panel, "registrar.primary");
+    const select = inputOf(panel, "registrar.channel");
     expect(select.value, "预选了一条通道 —— 任何预选都会被读成排名").toBe("");
     expect(select.children.map((o) => o.getAttribute("value"))).toEqual(["", "moemail", "yyds"]);
   });
@@ -910,9 +909,9 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
     const toggle = inputOf(panel, "registrar.enabled");
     toggle.checked = true;
     toggle.change();
-    const primary = inputOf(panel, "registrar.primary");
-    primary.value = "moemail";
-    primary.change();
+    const channel = inputOf(panel, "registrar.channel");
+    channel.value = "moemail";
+    channel.change();
     inputOf(panel, "registrar.moemail.apiKey").input("mk-1234");
     saveButton(panel).click();
     await settle(10);
@@ -920,7 +919,7 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
     const put = h.calls.find((c) => c.method === "PUT");
     const patch = (put!.body as { patch: Record<string, unknown> }).patch;
     expect(Object.keys(patch).sort()).toEqual([
-      "registrar.enabled", "registrar.moemail.apiKey", "registrar.primary",
+      "registrar.channel", "registrar.enabled", "registrar.moemail.apiKey",
     ]);
     expect(patch["registrar.enabled"], "诊断态下把注册机打开这条路被堵死了").toBe(true);
   });
@@ -1046,7 +1045,7 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
    */
   it("诊断态下表单仍然可编辑 —— 那是运维唯一的出路（两个宿主各查一遍）", async () => {
     const { h, panel } = await openRegistrarSettings(() => ok(BLOCKED));
-    for (const path of ["registrar.enabled", "registrar.primary", "registrar.yyds.apiKey"]) {
+    for (const path of ["registrar.enabled", "registrar.channel", "registrar.yyds.apiKey"]) {
       expect(
         inputOf(panel, path).disabled,
         `${path} 在诊断态下被置灰了 —— 自救路径在 UI 上被堵死，而后端明明放行`,

@@ -109,8 +109,7 @@ export function overviewHandler(deps: {
          * 该说「未启用」，不是「没跑起来」。
          */
         registrarBlocked: cfg.registrar.blocked,
-        primary: cfg.registrar.primary ?? null,
-        fallback: cfg.registrar.fallback ?? null,
+        channel: cfg.registrar.channel ?? null,
         targetKeys: cfg.registrar.targetKeys,
         envLocked: [...deps.envLocked],
         /** 本次装载有没有降级（存储读不出来 / 字段回落默认值）。红色横幅的依据。 */

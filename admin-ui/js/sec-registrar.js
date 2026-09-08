@@ -42,7 +42,7 @@ import { offsetMs } from "./pure/overview.mjs";
 // 屏幕上它在本板块的「设置」分页里，而实现只有一份 —— 理由写在那个文件的 `nodes` 上方。
 import { registrarConfigPanel } from "./sec-settings.js";
 import {
-  CHANNELS, channelLabelKey, channelAddressFactKey, channelRoleKey,
+  CHANNELS, channelLabelKey, channelAddressFactKey, channelSelectedKey,
   statusView, channelCards, poolView, tendCost, manualQuotaView,
   historyRows, historyMalformed, roundOutcome, roundFailures, mintedByChannelText,
   channelTestResult, refuseKeyOf,
@@ -85,7 +85,7 @@ function tile(labelKey, tipKey) {
 /**
  * 一张通道卡。**两条通道走同一条代码路径**，见文件头那段。
  *
- * 卡里恰好五行 + 一颗按钮：名称、角色、凭据、地址事实、测试结果行 + 「测试连接」。
+ * 卡里恰好五行 + 一颗按钮：名称、是否本次使用、凭据、地址事实、测试结果行 + 「测试连接」。
  * **地址事实那一行是两条通道之间唯一的不对称**（设计 §10.3 第 5 条），
  * 而它是**同一个字段位置上的两句不同事实**，不是「一边有一边没有」——
  * 后者才会被读成排名。
@@ -94,9 +94,11 @@ function buildChannelCard(channel) {
   const card = el("div", { class: "card channel-card", "data-channel": channel });
   card.appendChild(elI18n("div", channelLabelKey(channel), { class: "label channel-name" }));
 
-  const role = row("reg.channel.role");
+  // 「本次使用 / 未使用」这一行**从前叫「角色」**（主通道 / 备用通道 / 没用到）。
+  // 两条通道是二选一，「角色」这个词本身就在暗示排名。
+  const selected = row("reg.channel.inUseLabel");
   const creds = row("reg.channel.creds");
-  card.appendChild(role.p);
+  card.appendChild(selected.p);
   card.appendChild(creds.p);
 
   // 地址事实：常驻文案，不随响应变化（它讲的是这两家服务本身的性质）。
@@ -109,7 +111,7 @@ function buildChannelCard(channel) {
   card.appendChild(result);
 
   test.addEventListener("click", () => { runChannelTest(channel, test, result); });
-  return { card, role: role.value, creds: creds.value, test, result };
+  return { card, selected: selected.value, creds: creds.value, test, result };
 }
 
 /**
@@ -176,13 +178,13 @@ async function statusForCost() {
  * 抄成两份的话，「明示消耗」这条护栏迟早只剩一半——而少的那一半正好是
  * 点击频率更高的那个入口。
  *
- * ⚠️ **通道下拉初始是占位符，两条通道都不预选**——与设计 §10.3 第 1 条
- *（主通道下拉无默认选中值）是同一条纪律：预选任何一条都会被读成排名。
- * 占位符本身是一个**有意义的选项**（「按当前配置的主/备通道」），不是空白项。
+ * ⚠️ **通道下拉初始是占位符，两条通道都不预选**——与设置页那个通道下拉
+ * 无预选值是同一条纪律：预选任何一条都会被读成排名。
+ * 占位符本身是一个**有意义的选项**（「按设置里选中的那条」），不是空白项。
  *
- * ⚠️⚠️ **这不是设计 §10.4 设置页里那个「主通道」下拉。** 那一条（连同第 7 条
- * `fallback !== primary` 的即时拦截）属于 config 写路径，而本任务没有那条端点
- * ——**别把这里这一格当成第 1 条与第 7 条已经落地了**。
+ * ⚠️ **它与设置页那个通道下拉是两件事**：这里选的是「这一次点击临时改用哪条」，
+ * 那里选的是「注册机平时用哪条」。这个选项**刻意不删**——删它会动
+ * `POST /admin/api/registrar/tend` 的 `channel` 可选契约（五语言 API.md 逐字写着）。
  */
 export async function confirmAndTend(channel) {
   const body = el("div");
@@ -244,12 +246,11 @@ function renderStatus() {
   nodes.state.textContent = s.enabled === null
     ? fmtDash(null)
     : t(s.enabled ? (s.blocked === true ? "reg.state.blocked" : "reg.state.on") : "reg.state.off");
-  nodes.primary.textContent = s.primary === null ? t("reg.none") : s.primary;
-  nodes.fallback.textContent = s.fallback === null ? t("reg.none") : s.fallback;
+  nodes.channel.textContent = s.channel === null ? t("reg.none") : s.channel;
 
-  // 设计 §10.3 第 8 条的空状态：**只在注册机开着却没有主通道时出现**。
+  // 空状态：**只在注册机开着却一条通道都没选时出现**。
   // 注册机整个关着时不显示它——那时该说的是「已关闭」，而不是催人去选通道。
-  nodes.emptyPrimary.style.display = s.enabled === true && s.primary === null ? "" : "none";
+  nodes.emptyChannel.style.display = s.enabled === true && s.channel === null ? "" : "none";
 
   nodes.locked.textContent = s.lockedUntil === null
     ? "" : t("reg.locked", { at: fmtInstant(s.lockedUntil, offsetMs()) });
@@ -293,8 +294,8 @@ function renderQuota() {
 function renderChannels() {
   for (const card of channelCards(data)) {
     const n = nodes.channels[card.channel];
-    n.role.textContent = card.role === null && card.configured === null
-      ? fmtDash(null) : t(channelRoleKey(card.role));
+    n.selected.textContent = card.selected === null && card.configured === null
+      ? fmtDash(null) : t(channelSelectedKey(card.selected));
     n.creds.textContent = card.configured === null
       ? fmtDash(null) : t(card.configured ? "reg.channel.credsYes" : "reg.channel.credsNo");
   }
@@ -334,7 +335,9 @@ function renderHistory() {
       r.trigger === "manual" ? t("reg.trigger.manual") : (r.trigger === "cron" ? t("reg.trigger.cron") : fmtDash(null)),
     ));
     // `primaryChannel` 是**这一轮实际用的那条**（手动补池可以指定单条通道），
-    // 不是配置里的主通道。空串 = 注册机当时关着。
+    // 不是设置里选中的那条。名字里的 `primary` 是历史格式留下的，系统里已经没有
+    // 主备了（理由见 `src/core/registrar/tender.ts` 那个字段的说明）。
+    // 空串 = 注册机当时关着。
     tr.appendChild(el("td", null, typeof r.primaryChannel === "string" && r.primaryChannel !== ""
       ? r.primaryChannel : fmtDash(null)));
 
@@ -500,12 +503,12 @@ export const registrarSection = {
 
     const status = block("reg.state");
     const state = row("reg.state");
-    const primary = row("reg.primary");
-    const fallback = row("reg.fallback");
-    for (const r of [state, primary, fallback]) status.body.appendChild(r.p);
-    const emptyPrimary = elI18n("p", "reg.emptyPrimary", { class: "muted note" });
-    emptyPrimary.style.display = "none";
-    status.body.appendChild(emptyPrimary);
+    // **一行，不是两行。** 两条通道是二选一，屏幕上不该再出现第二格通道。
+    const channel = row("reg.channel");
+    for (const r of [state, channel]) status.body.appendChild(r.p);
+    const emptyChannel = elI18n("p", "reg.emptyChannel", { class: "muted note" });
+    emptyChannel.style.display = "none";
+    status.body.appendChild(emptyChannel);
     const quota = el("p", { class: "muted note" });
     const cooldown = el("p", { class: "muted note" });
     cooldown.style.display = "none";
@@ -547,8 +550,8 @@ export const registrarSection = {
     section.appendChild(historyBlock.wrap);
 
     nodes = {
-      state: state.value, primary: primary.value, fallback: fallback.value,
-      emptyPrimary, quota, cooldown, locked,
+      state: state.value, channel: channel.value,
+      emptyChannel, quota, cooldown, locked,
       pool: { target: target.value, counted: counted.value, gap: gap.value, fresh: fresh.value },
       channels, malformed, historyBody,
     };

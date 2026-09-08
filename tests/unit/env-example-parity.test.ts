@@ -19,7 +19,7 @@ import { MemoryStorage } from "../helpers/fake-storage.js";
  *
  * ⚠️ **本文件不是 `.env.example` 上唯一的活断言**（第一版这里写成「全仓提到它的地方
  * 全是注释」，实测为假）：`tests/unit/registrar/config.test.ts`
- * 的「.env.example 的凭据注释按……两条通道对称」早就在读它并钉住**凭据注释的措辞**。
+ * 的「.env.example 的凭据注释两条通道对称，且不再提主备」早就在读它并钉住**凭据注释的措辞**。
  * 两格射程不同——那一格管**某几句话怎么写**，本文件管**清单齐不齐、值能不能用、
  * 文档对不对得上**。改 `.env.example` 的人两格都要看。
  *
@@ -29,7 +29,7 @@ import { MemoryStorage } from "../helpers/fake-storage.js";
  *    抄一份就是第三份变量名清单（那张表自己的注释已经写过「由它派生，不另写一份」）。
  *    它是**私有**的，而本仓已经裁定过「判据走 `envLockedFields`，不是去读私有的
  *    `ENV_LOCK_MAP`——后者是实现细节，前者是契约」（`tests/unit/config-provenance.test.ts`
- *    的「这 16 个名字每一个都能让 envLockedFields 报出一条锁定字段」）。
+ *    的「这 17 个名字里，除了那个已弃用的，每一个都能让 envLockedFields 报出一条锁定字段」）。
  *    ⇒ 这里用一个 **Proxy 探针**从那个契约函数身上把名字取回来，见 `envLockNames()`。
  * ② `EXTRA_ENV` / ③ `RUNTIME_ONLY_ENV`——**手写**，各自配了会红的断言，见各自的说明。
  *
@@ -142,6 +142,23 @@ const RUNTIME_ONLY_ENV = [
 ];
 
 /**
+ * **已弃用的环境变量名：`src/` 仍然读它们，而 `.env.example` 里刻意不再声明。**
+ *
+ * 两条纪律各自成立，别把它们合成一条：
+ * · **仍然读** —— 公开仓已经发过 tag，别人的 compose / wrangler 里躺着这两个名字。
+ *   直接不读 = 一台跑得好好的部署升级后静默变成「没选通道」，而面板会说一个假原因。
+ * · **不再声明** —— `.env.example` 是教陌生人的那份文件，它不该教一个已弃用的名字。
+ *
+ * · `REGISTRAR_PRIMARY` —— `registrar.channel` 的**兼容别名**。它仍在 `ENV_LOCK_MAP`
+ *   里（否则设了它的部署那一格不置灰、改了保存成功、生效值纹丝不动），
+ *   所以要从「锁定表里的每个变量都在 .env.example 里」那条断言里显式扣掉。
+ * · `REGISTRAR_FALLBACK` —— **不再参与选路，也不锁任何字段**，装载器只读它一次，
+ *   为的是在面板上点名说「这条通道被丢掉了」。它因此**不在** `ENV_LOCK_MAP` 里，
+ *   要靠这张表才有去处。
+ */
+const DEPRECATED_ENV = ["REGISTRAR_PRIMARY", "REGISTRAR_FALLBACK"];
+
+/**
  * `env` 上的名字里**根本不是环境变量**的那些：Cloudflare 的绑定。
  *
  * · `POOL` —— KV namespace 绑定，由 `wrangler.toml` 的 `[[kv_namespaces]]` 注入到
@@ -151,8 +168,14 @@ const RUNTIME_ONLY_ENV = [
  */
 const WORKER_BINDINGS = ["POOL"];
 
-/** `.env.example` 该有的全部名字。绑定不在其中，理由见 `WORKER_BINDINGS`。 */
-const expectedInEnvExample = (): string[] => [...envLockNames(), ...EXTRA_ENV, ...RUNTIME_ONLY_ENV];
+/**
+ * `.env.example` 该有的全部名字。绑定不在其中，理由见 `WORKER_BINDINGS`；
+ * 已弃用的那几个也不在，理由见 `DEPRECATED_ENV`。
+ */
+const expectedInEnvExample = (): string[] => [
+  ...envLockNames().filter((n) => !DEPRECATED_ENV.includes(n)),
+  ...EXTRA_ENV, ...RUNTIME_ONLY_ENV,
+];
 
 // ── src/ 侧的独立扫描 ───────────────────────────────────────────────────────
 
@@ -176,7 +199,7 @@ function walkTs(dir: string): string[] {
  *
  * 它只覆盖「点号/方括号直接取」这一种写法：`num(env, "MAX_STRIKES", …)` 这类把名字
  * 当字符串参数传的读取点不在射程内，它们由 `ENV_LOCK_MAP` 那一侧管着
- *（`tests/unit/config-provenance.test.ts` 的「四种配置的并集恰好是手写的这 16 个名字」
+ *（`tests/unit/config-provenance.test.ts` 的「两种配置的并集恰好是手写的这 17 个名字」
  * 用 Proxy 追踪 `registrarFromEnv` 真实读过的键）。
  */
 function envNamesReadInSrc(): string[] {
@@ -191,10 +214,10 @@ function envNamesReadInSrc(): string[] {
 }
 
 describe(".env.example 与真源对齐", () => {
-  it("ENV_LOCK_MAP 里的每个变量都在 .env.example 里出现过", () => {
+  it("ENV_LOCK_MAP 里的每个变量都在 .env.example 里出现过（已弃用的那几个除外）", () => {
     const declared = new Set(declaredInEnvExample());
     expect(
-      envLockNames().filter((k) => !declared.has(k)),
+      envLockNames().filter((k) => !DEPRECATED_ENV.includes(k)).filter((k) => !declared.has(k)),
       "这些变量真源里有、教陌生人 cp 的那份文件里没有 ⇒ 照着 .env.example 部署的人拿不到它们；"
       + "每个补一行，默认值与一行注释抄 docs/<语言>/DEPLOY.md 里那一格",
     ).toEqual([]);
@@ -272,13 +295,28 @@ describe(".env.example 与真源对齐", () => {
    * 这一格逼作者表态——进 `ENV_LOCK_MAP`（配置字段），还是进上面那两张手写表之一。
    */
   it("src/ 里读到的每个环境变量都得有个去处 —— 要么在锁定表里，要么在手写的那几张表里点名", () => {
-    const known = new Set([...expectedInEnvExample(), ...WORKER_BINDINGS]);
+    const known = new Set([...expectedInEnvExample(), ...WORKER_BINDINGS, ...DEPRECATED_ENV]);
     expect(
       envNamesReadInSrc().filter((k) => !known.has(k)),
       "src/ 里读了这些环境变量，而它们既不在 ENV_LOCK_MAP 里、也没在本文件的手写表里点名。"
       + "两种可能：① 真的新增了一个变量 ⇒ 按它的性质进 ENV_LOCK_MAP / EXTRA_ENV / RUNTIME_ONLY_ENV，"
       + "并在 .env.example 里补一行；② 只是某段注释里写了 env.XXX（本扫描刻意不抠注释）"
       + " ⇒ 把那句注释改成不带 env. 前缀，别把名字塞进任何一张表",
+    ).toEqual([]);
+  });
+
+  it("已弃用的那几个：src/ 真的还在读它们，而 .env.example 里一行都没有", () => {
+    // 两个方向都要钉：只钉前者的话，把它们悄悄写回 .env.example（等于继续教旧名字）
+    // 不会红；只钉后者的话，装载器哪天真的不读它们了这张表就变成一份死名册。
+    const read = new Set(envNamesReadInSrc());
+    expect(
+      DEPRECATED_ENV.filter((k) => !read.has(k)),
+      "这些名字登记成「已弃用但仍兼容读」，而 src/ 里没有任何一处读它们 ⇒ 兼容那一半是假的",
+    ).toEqual([]);
+    const declared = new Set(declaredInEnvExample());
+    expect(
+      DEPRECATED_ENV.filter((k) => declared.has(k)),
+      ".env.example 是教陌生人的那份文件，它不该教一个已弃用的名字",
     ).toEqual([]);
   });
 
@@ -410,7 +448,7 @@ const LANGS = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
  */
 const ENV_TABLE_DOCS = [
   { doc: "DEPLOY", anchor: "GATEWAY_TOKEN", why: "网关唯一的必填项" },
-  { doc: "REGISTRAR", anchor: "REGISTRAR_PRIMARY", why: "注册机启用后唯一没有默认值的必填项" },
+  { doc: "REGISTRAR", anchor: "REGISTRAR_CHANNEL", why: "注册机启用后唯一没有默认值的必填项" },
 ] as const;
 
 /**
@@ -525,19 +563,19 @@ describe(".env.example 与五语言文档对等", () => {
    * 「分支真的在承重」——REGISTRAR 那五份今天全绿，既可能是因为围栏抽得对，
    * 也可能是因为表格分支恰好还抓到了别的什么。这里用一份**被改过的文本**逼它表态。
    */
-  it("该红时红：把 REGISTRAR_PRIMARY 从 ```env 围栏里删掉 ⇒ 锚点那格仍然红，并点名是哪一种语言", () => {
+  it("该红时红：把 REGISTRAR_CHANNEL 从 ```env 围栏里删掉 ⇒ 锚点那格仍然红，并点名是哪一种语言", () => {
     /** `mutate` 为真时，把那一行从 ```env 围栏里抹掉再抽——变异只落在指定的那一份上。 */
     const anchorMissing = (lang: string, mutate: boolean): boolean => {
       const raw = readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8");
-      const md = mutate ? raw.replace(/^REGISTRAR_PRIMARY=.*$/m, "") : raw;
-      return !docEnvVarsFrom(md).includes("REGISTRAR_PRIMARY");
+      const md = mutate ? raw.replace(/^REGISTRAR_CHANNEL=.*$/m, "") : raw;
+      return !docEnvVarsFrom(md).includes("REGISTRAR_CHANNEL");
     };
     // 变异只落在 ja 这一份上：其余四份照旧认得出，报文才点得出名。
-    expect(anchorMissing("ja", true), "变异落地了却还认得出 REGISTRAR_PRIMARY —— 这一格控制是空的").toBe(true);
+    expect(anchorMissing("ja", true), "变异落地了却还认得出 REGISTRAR_CHANNEL —— 这一格控制是空的").toBe(true);
     expect(LANGS.filter((l) => anchorMissing(l, false)), "没变异的四份不该跟着红").toEqual([]);
     // 而**整份文档里仍然写着这个名字**（正文里到处在讲它）⇒ 证明红的是抽取分支，
     // 不是一条「全文 grep 一下」就能糊弄过去的弱判据。
-    expect(readFileSync("docs/ja/REGISTRAR.md", "utf8"), "前提坏了：正文里本来就该提到它").toContain("REGISTRAR_PRIMARY");
+    expect(readFileSync("docs/ja/REGISTRAR.md", "utf8"), "前提坏了：正文里本来就该提到它").toContain("REGISTRAR_CHANNEL");
   });
 
   /**

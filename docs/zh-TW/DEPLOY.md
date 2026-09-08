@@ -399,7 +399,7 @@ put（約占寫配額 10.4%，8 個 isolate 時合計 104 次／天），耗盡�
     > [!IMPORTANT]
     > **「健康時是 0」有一個前提，必須說清楚**：`loadConfig` 有一條
     > **逐輪都會打**的設定警告——`TEND_INTERVAL_MS` 小於
-    > `MINT_BATCH × CODE_TIMEOUT_MS × 通道數`（預設 `5 × 120000 × 1 = 600000`，
+    > `MINT_BATCH × CODE_TIMEOUT_MS`（預設 `5 × 120000 = 600000`，
     > 即 10 分鐘）時，**每一輪都會寫一次**，哪怕那一輪什麼都沒鑄。
 
   - **補池歷史（`tend:history`）**：每輪一次 get + 一次 put，**無條件**。
@@ -507,7 +507,7 @@ put（約占寫配額 10.4%，8 個 isolate 時合計 104 次／天），耗盡�
     在 Worker 上調它**一輪都不會多**；而 `registrar_tend_lock` 那對
     put/delete **兩種執行時都有**（Node 側也接上了同一把鎖——
     多副本共用磁碟區的部署下行程內的那個布林形同虛設）。
-  - **閾值軸**：`TEND_INTERVAL_MS` 跌破 `MINT_BATCH × CODE_TIMEOUT_MS × 通道數`
+  - **閾值軸**：`TEND_INTERVAL_MS` 跌破 `MINT_BATCH × CODE_TIMEOUT_MS`
     時，**事件那一筆從「健康輪 0 次」跳成「每輪 1 次」**——這一跳與頻率無關，
     是上面那條逐輪設定警告造成的。
   **兩軸疊加才是最壞**。本節講的是 Worker + 免費檔 KV，所以舉一個**這個形態下
@@ -903,7 +903,7 @@ Caddy 用 `header_up CF-Connecting-IP ""`，Traefik 用中介軟體的 `customRe
 寫下去的後果是「儲存成功、生效值紋絲不動」，維運會以為是快取沒刷，白等兩輪。
 
 > [!IMPORTANT]
-> **註冊機那一族（`REGISTRAR_ENABLED` / `REGISTRAR_PRIMARY` / `REGISTRAR_FALLBACK` /
+> **註冊機那一族（`REGISTRAR_ENABLED` / `REGISTRAR_CHANNEL`（連同它的相容別名）/
 > `TARGET_KEYS` / `MINT_BATCH` / `TEND_INTERVAL_MS` / `CODE_TIMEOUT_MS` / `MINT_DELAY_MIN_MS` /
 > `MINT_DELAY_MAX_MS` / `MAX_DOMAIN_ATTEMPTS` / `REGISTRAR_TOKEN_NAME` / `AGNES_PLATFORM_URL` /
 > `YYDS_BASE_URL` / `YYDS_API_KEY` / `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY`）也進了這張鎖定表。**
@@ -955,8 +955,7 @@ KV 邊緣快取預設 60 秒 ⇒ 上界約 **90 秒**。本實例是立刻生效
 | 變數 | 是否必填 | 預設值 | 說明 |
 |----|--------|------|----|
 | `REGISTRAR_ENABLED` | 否 | `false` | 總開關，須為 `true` 才會啟用註冊機。 |
-| `REGISTRAR_PRIMARY` | 啟用時必填 | 無 | 主通道，`yyds` 或 `moemail`；兩者平等，無預設值。 |
-| `REGISTRAR_FALLBACK` | 否 | 空（不降級） | 備用通道，`yyds` 或 `moemail`。 |
+| `REGISTRAR_CHANNEL` | 啟用時必填 | 無 | 註冊機用哪一條通道，`yyds` 或 `moemail`；兩條通道二選一，無預設值。 |
 | `TARGET_KEYS` | 否 | `20` | 目標可用 key 數。 |
 | `MINT_BATCH` | 否 | `5` | 單輪最多鑄幾把 key。 |
 | `TEND_INTERVAL_MS` | 否（僅 Node/Docker） | `1800000` | Node 側補池間隔；Worker 側則由 `wrangler.toml` 的 Cron 決定。 |
@@ -968,13 +967,20 @@ KV 邊緣快取預設 60 秒 ⇒ 上界約 **90 秒**。本實例是立刻生效
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | 否 / 通道為 yyds 時必填 | `https://maliapi.215.im` / 空 | YYDS Mail 通道憑證。 |
 | `MOEMAIL_BASE_URL` / `MOEMAIL_API_KEY` | 通道為 moemail 時必填 | 空 / 空 | MoeMail 通道憑證（自建服務，無預設位址）。 |
 
-#### 這 16 個變數寫錯值之後會怎樣
+#### 這 15 個變數寫錯值之後會怎樣
+
+> [!NOTE]
+> **兩個已棄用的舊名字，刻意不進上表。** `REGISTRAR_PRIMARY` 是 `REGISTRAR_CHANNEL` 的
+> **相容別名**（優先級更低，用到它時面板頂部有一條提示，那一格照樣置灰）；
+> `REGISTRAR_FALLBACK` **不再參與選路**，只被讀一次，用來在面板上點名告訴你
+> 「這條通道被丟掉了」。兩個舊名字都不會讓升級中的部署停跑，但 `.env.example`
+> 裡已經不再宣告它們——新部署直接用新名字。
 
 > [!WARNING]
-> **這 16 個變數寫錯值不會再讓容器起不來。**
+> **這 15 個變數寫錯值不會再讓容器起不來。**
 > 數值類（`TARGET_KEYS=abc`、`MINT_BATCH=0` 這一族）**回落到上表的預設值**，
 > 在面板上報一次降級、並記一條 `config.invalid` 事件；通道與憑證類
->（通道名拼錯、註冊機開著卻沒選主通道、缺 API Key、備通道等於主通道）
+>（通道名拼錯、註冊機開著卻沒選通道、選中那條通道缺 API Key）
 > 只讓**註冊機**本次不啟動，閘道照常轉發。
 >
 > **這是一次能力下降，明說**：從前一個部署筆誤會讓容器崩掉，所以你立刻就知道；
@@ -1228,8 +1234,8 @@ curl -s "$BASE/v1/chat/completions" \
 3. **總覽**頁的設定摘要裡，「註冊機」那一行同樣寫「已啟用 · 本次沒跑起來」。
 4. 事件板塊裡每一輪都有一條 `error` 級的 `registrar.blocked`，欄位裡列出缺的那幾格。
 
-**解決方案**：按橫幅列出的那幾格去設定頁補齊（最常見的是某條在主/備鏈上的郵箱通道缺 API Key，
-或者備通道被設成了和主通道同一條），**儲存即可恢復，不需要重啟容器、也不需要重新部署**。
+**解決方案**：按橫幅列出的那幾格去設定頁補齊（最常見的是選中那條郵箱通道缺 API Key，
+或者壓根沒選通道），**儲存即可恢復，不需要重啟容器、也不需要重新部署**。
 
 ### 面板打不開，`/admin` 回 404
 

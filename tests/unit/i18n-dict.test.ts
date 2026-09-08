@@ -214,12 +214,12 @@ describe("i18n 字典", () => {
    * 想在作用域内合法地说「默认值」时，正确做法是**把那条文案放进别的命名空间**，
    * 而不是给这张表开豁免——前缀表就是这条规则的作用域。
    *
-   * ⚠️⚠️ **最后两条（`ov.config.primary` / `ov.config.fallback`）是本轮追加的**，
-   * 与 `scripts/check-i18n.mjs` 同一次改动、同一条起因：韩文实测里 `ov.config.primary`
-   * 的 ko 值写成了「기본 채널」（＝默认通道），而同一概念在 `reg.primary` /
-   * `set.field.registrar.primary` 都是「주 채널」（＝主通道）——概览页把「槽位」
-   * 说成了「默认值」，正是用户那条硬约束明令禁止的暗示。
-   * **登记的是两条整 key，不是 `ov.config.` 前缀**：`ov.config.` 底下的
+   * ⚠️⚠️ **`ov.config.channel` 那一条是追加的**（当时是 `ov.config.primary` /
+   * `ov.config.fallback` 两条，两条通道改成二选一之后合成了一条），
+   * 与 `scripts/check-i18n.mjs` 同一次改动、同一条起因：韩文实测里那一格的 ko 值
+   * 写成了「기본 채널」（＝默认通道），而同一概念在别处都是「주 채널」（＝主通道）
+   * ——概览页把「槽位」说成了「默认值」，正是用户那条硬约束明令禁止的暗示。
+   * **登记的是一条整 key，不是 `ov.config.` 前缀**：`ov.config.` 底下的
    * `envLockedTip`（zh-CN/zh-TW/ja 正当地用「优先/優先」描述环境变量优先级）与
    * `degradedBanner`（zh-CN/zh-TW/en/ko 正当地用「默认/預設/default/기본」描述配置
    * 降级回落到默认值）都与「两条通道平级」无关，扩宽前缀会把这两条正当文案一起
@@ -385,12 +385,10 @@ describe("i18n 字典", () => {
   const PREFIXES = [
     "reg.",
     "keys.addMenu.auto",
-    "set.field.registrar.primary",
-    "set.field.registrar.fallback",
+    "set.field.registrar.channel",
     "set.field.channel.",
     "set.card.registrar",
-    "ov.config.primary",
-    "ov.config.fallback",
+    "ov.config.channel",
     // 评审发现：后来新写的那两个区（重置配置 / 高级）逐字提到
     // 「两条邮箱通道」却在射程外。理由与「为什么不含 set.danger.purge.」见门禁
     // `scripts/check-i18n.mjs` 里 `BANNED_PREFIXES` 上方那段。
@@ -555,67 +553,60 @@ describe("i18n 字典", () => {
   /**
    * **同一个概念在 ja 里只许有一个术语**（定向复评发现）。
    *
-   * 勘察实测的那一处：`reg.primary` 写的是 `プライマリチャネル`，
-   * 而 `set.field.registrar.primary` 写的是 `主チャネル`（`docs/ja/REGISTRAR.md` 用的也是后者）——
-   * 同一个东西，面板上两个日文词。真正要命的是**它会被下一次改词坐实**：
-   * 那一轮若只改 `set.field.*` 一侧而不动 `reg.*`，两个词就从「一次疏漏」变成「两套术语」。
+   * 勘察实测的那一处：那一族里两个 key 一个写 `プライマリチャネル`、一个写 `主チャネル`
+   *（当时 `docs/ja/REGISTRAR.md` 用的是后者）——同一个东西，面板上两个日文词。
+   * 真正要命的是**它会被下一次改词坐实**：那一轮若只改一侧，两个词就从「一次疏漏」
+   * 变成「两套术语」。
    *
-   * ⚠️⚠️ **这一格刻意不写死是哪个词**（`toBe("主チャネル")` 那种写法）。
-   * 主 / 备措辞本身还悬着三个候选，将来真换词时**三个 key 会一起换**——
-   * 写死词的断言那时会红在一件完全正确的改动上，而写死"只许有一个"的断言不会：
-   * 它红的时候，红的正是「只改了一半」那一种。
+   * ⚠️⚠️ **这一格刻意不写死是哪个词**（`toBe("使用するチャネル")` 那种写法）。
+   * 措辞将来真换词时**三个 key 会一起换**——写死词的断言那时会红在一件完全正确的
+   * 改动上，而写死「只许有一个」的断言不会：它红的时候，红的正是「只改了一半」那一种。
+   *
+   * ⚠️ **上一版这里还有一串 `toContain(短标签)` 的链条，本轮拆掉了，理由如实登记**：
+   * 那条链靠的是「长标签里包含短标签」这个巧合（当时短标签逐字是「主」）。
+   * 两条通道改成二选一之后，那一族的短文案是一整句话（「現在の設定で使われているのは
+   * このチャネルです」），包含关系不再成立 —— 硬凑一个包含关系就是为了让判据绿而改判据。
+   * **换成钉「共用同一个名词」这一条**，射程比原来窄，明写在这里。
    */
-  it("同一个概念在 ja 里只有一个术语 —— 主通道那一族", () => {
-    const LABEL_KEYS = ["reg.primary", "set.field.registrar.primary", "ov.config.primary"] as const;
+  it("同一个概念在 ja 里只有一个术语 —— 使用的通道那一族", () => {
+    const LABEL_KEYS = ["reg.channel", "set.field.registrar.channel", "ov.config.channel"] as const;
     /**
      * ⚠️⚠️ **下面读到的每一条 key 都要登记在这里，不许只登记 `LABEL_KEYS`**
-     *（补漏评审）。上一版的反向自检只问了 `LABEL_KEYS` 三条，
-     * 而用例体里还读着另外三条**没登记**的 key；`ja()` 对不存在的 key 返回 `""`，
-     * 于是那两条 `toContain(ja("reg.role.primary"))` 变成 `toContain("")` **恒真**。
-     * 实测：把 `reg.role.primary` 改个名、并给新 key 写回本任务要消灭的那个词 ⇒ 这一格仍然 PASS。
-     * 上一版那句「这张表不许空转」承诺的射程比它的代码大 —— 这里把射程补齐。
+     *（补漏评审）。`ja()` 对不存在的 key 返回 `""`，于是 `toContain("")` **恒真**——
+     * 实测过：把被读的那个 key 改个名、并给新 key 写回本任务要消灭的那个词 ⇒ 仍然 PASS。
      */
-    const READ_KEYS = [...LABEL_KEYS, "reg.emptyPrimary", "reg.role.primary", "reg.tend.channelAny"];
+    const READ_KEYS = [...LABEL_KEYS, "reg.emptyChannel", "reg.role.inUse", "reg.tend.channelAny"];
     const ja = (k: string): string => ((I18N as Record<string, Record<string, string>>)[k] ?? {}).ja ?? "";
     expect(READ_KEYS.filter((k) => !(k in I18N)), "这一格读到的 key 里有字典中不存在的").toEqual([]);
     expect([...new Set(LABEL_KEYS.map(ja))], "同一个概念在 ja 里出现了不止一个术语").toHaveLength(1);
     const term = ja(LABEL_KEYS[0]);
     expect(term.length, "ja 值是空的 ⇒ 上面那条 `toHaveLength(1)` 是恒真的").toBeGreaterThan(0);
-    /**
-     * ⚠️ **短标签也要有下限，否则「长词 contains 短标签」这条方向天生松**：
-     * `ja("reg.role.primary")` 退化成一个碎片（甚至空串）时，`toContain` 照样过。
-     * 这里只钉「不许是空串 / 单字符碎片」这一档，**刻意不写死是哪个词**——
-     * 理由与上面那段同一条：主 / 备措辞真换词时几个 key 会一起换。
-     */
-    const short = ja("reg.role.primary");
-    expect(short.length, "短标签退化成碎片 ⇒ 下面那条 `toContain` 松到什么都能过").toBeGreaterThan(0);
-    // 整句文案与短标签也必须用同一个词，不许各说各的。
-    expect(ja("reg.emptyPrimary"), "那句「两条通道平级，请选择一条作为主通道」用的是另一个日文词").toContain(term);
-    expect(term, "短标签 reg.role.primary 用的是另一个日文词").toContain(short);
-    expect(ja("reg.tend.channelAny"), "补池范围那句用的是另一个日文词").toContain(short);
+    // 那几句整句文案与标签必须共用同一个名词，不许各说各的。
+    const NOUN = "チャネル";
+    expect(term, "标签本身不含那个名词 ⇒ 下面几条的射程是假的").toContain(NOUN);
+    for (const k of ["reg.emptyChannel", "reg.role.inUse", "reg.tend.channelAny"]) {
+      expect(ja(k), `${k} 的 ja 文案没用同一个名词`).toContain(NOUN);
+    }
   });
 
   /**
-   * ⚠️⚠️ **同一个概念在 ja 文档里也只许有一个术语 —— 备用通道那一族**
-   *（补漏评审）。
+   * ⚠️⚠️ **ja 文档里不许再出现「主 / 备」那套说法**（原来这一格叫「备用通道那一族」）。
    *
-   * Step 5 当时只统一了 primary 一侧，fallback 一侧的结论是「字典内已一致，不动」——
-   * **那句话只在字典内为真**。实测：同一个概念当时在 `docs/ja/` 里是「副チャネル」，
-   * 而下一期新写的 `docs/ja/ADMIN.md` 又冒出第三个词「予備」，**全程零告警**，
-   * 因为上面那一格的射程只有字典、不含 `docs/`。
-   * 一个概念三个日文词，读文档的人无从判断它们是不是同一个东西。
+   * 它的前身守的是「同一个概念在 `docs/ja/` 里只许有一个词」：实测过同一个概念
+   * 在字典里是一个词、在 `docs/ja/ADMIN.md` 里又冒出第三个词，全程零告警。
+   * 两条通道改成二选一之后，那个概念**整个不存在了** —— 于是这一格转成守
+   * 「旧说法不许残留」：`docs/ja/` 里再出现「主チャネル」「フォールバックチャネル」
+   * 「副チャネル」「予備チャネル」中的任何一个，都说明某一份日文文档还在教一个
+   * 已经不存在的模型。
    *
-   * ⇒ 这一格把射程接到 `docs/ja/` 上：**面板怎么说，文档就怎么说**（正典取自字典，
-   * 不在这里手写第二份），另外两个词一个都不许再出现。
-   * ⚠️ **禁的是「副チャネル」与「予備」这两种指称**（后者连「予備チャネル」一起收），
-   * **不是「フォールバック」这个词本身**：
-   * `docs/ja/DEPLOY.md` 里好几处正当地用它描述别的回落（池空回落、`X-Forwarded-For` 回落），
-   * 那些与两条邮箱通道无关，禁词写宽一格就会当场逼出一册豁免名单。
+   * ⚠️ **禁的是这四种「指称」，不是「フォールバック」这个词本身**：
+   * `docs/ja/DEPLOY.md` 里好几处正当地用它描述别的回落（池空回落、`X-Forwarded-For`
+   * 回落），那些与两条邮箱通道无关，禁词写宽一格就会当场逼出一册豁免名单。
    */
-  it("同一个概念在 ja 文档里也只有一个术语 —— 备用通道那一族", () => {
-    const canonical = ((I18N as Record<string, Record<string, string>>)["reg.fallback"] ?? {}).ja ?? "";
-    expect(canonical, "`reg.fallback` 的 ja 值没了 ⇒ 正典取不到，下面整格会空转").toBeTruthy();
-    const BANNED_JA_ALIASES = ["副チャネル", "予備"];
+  it("ja 文档里不许再出现主 / 备那套说法（两条通道是二选一）", () => {
+    const canonical = ((I18N as Record<string, Record<string, string>>)["reg.channel"] ?? {}).ja ?? "";
+    expect(canonical, "`reg.channel` 的 ja 值没了 ⇒ 正典取不到，下面整格会空转").toBeTruthy();
+    const BANNED_JA_ALIASES = ["主チャネル", "フォールバックチャネル", "副チャネル", "予備チャネル"];
     const dir = resolve("docs/ja");
     const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
     // 非空锚：目录读空 / 后缀写错时，下面那条 `toEqual([])` 只会更绿。
@@ -625,7 +616,7 @@ describe("i18n 字典", () => {
     for (const f of files) {
       const lines = readFileSync(join(dir, f), "utf8").split("\n");
       lines.forEach((line, i) => {
-        if (line.includes(canonical)) canonicalSeen++;
+        if (line.includes("チャネル")) canonicalSeen++;
         for (const w of BANNED_JA_ALIASES) {
           if (line.includes(w)) hits.push(`docs/ja/${f}:${i + 1} 用了「${w}」`);
         }
@@ -633,11 +624,11 @@ describe("i18n 字典", () => {
     }
     expect(
       canonicalSeen,
-      `docs/ja 里一处「${canonical}」都没有 —— 正典对不上文档，这一格的射程是假的`,
+      "docs/ja 里一处「チャネル」都没有 —— 正典对不上文档，这一格的射程是假的",
     ).toBeGreaterThan(0);
     expect(
       hits,
-      `备用通道在 ja 里只许有一个说法（面板用的是「${canonical}」）：\n${hits.join("\n")}`,
+      `两条通道是二选一，日文文档里不许再出现主 / 备那套说法（面板用的是「${canonical}」）：\n${hits.join("\n")}`,
     ).toEqual([]);
   });
 

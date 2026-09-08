@@ -604,7 +604,7 @@ describe("Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）", 
       // 面板（这里直接写存储）把注册机打开。
       await storage.put("config", {
         registrar: {
-          enabled: true, primary: "yyds",
+          enabled: true, channel: "yyds",
           yyds: { baseUrl: "https://y.test", apiKey: "k" },
         },
       });
@@ -653,7 +653,7 @@ describe("Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）", 
       // 把实现改回读启动快照也会通过，是无冲突 fixture（测试质量清单第 1 类）。
       await storage.put("config", {
         registrar: {
-          enabled: true, primary: "yyds",
+          enabled: true, channel: "yyds",
           yyds: { baseUrl: "https://y.test", apiKey: "k" },
           tendIntervalMs: 60_000,
         },
@@ -910,23 +910,23 @@ describe("补池轮次不可并发重入", () => {
  * **注册机 blocked 时，补池装配在建任何 provider 之前就早退。**
  *
  * 这是「装不起来不再抛错」那套改动的承重点：`blocked` 为真时 `RegistrarConfig` 会
- * 出现一个从前不存在的状态——`enabled=true`、`primary` 有值、而通道对象可能是 `null`
- * 或者「两条通道其实都配齐了，只是主备撞了」。下游拿着这份配置去跑，最坏是
- * `mintOne` 的 `finally` 不跑 ⇒ **临时邮箱漏删**。本方案靠 **gate 而不是改状态**
- * 挡住它，于是「gate 排在哪一行」就成了一条真实的不变量。
+ * 出现一个从前不存在的状态——`enabled=true`、`channel` 有值、而选中那条通道的对象是
+ * `null`。下游拿着这份配置去跑，最坏是 `mintOne` 的 `finally` 不跑 ⇒
+ * **临时邮箱漏删**。本方案靠 **gate 而不是改状态** 挡住它，于是「gate 排在哪一行」
+ * 就成了一条真实的不变量。
  *
- * ⚠️ **夹具刻意选「凭据齐全但主备撞了」**：缺凭据那一档下 `cfg.yyds` 本来就是 `null`，
- * provider 天然建不出来 ⇒ 把 gate 挪到后面也照样绿（那种夹具让被测的选择不可观测，
- * 是本仓登记的第 5 种假阳性）。凭据齐全那一档才真的能把 provider 建出来。
+ * ⚠️ **夹具刻意选「选中的那条缺凭据、另一条齐全」**：选中那条本来就建不出 provider，
+ * 而**另一条今天照样会被解析出凭据** ⇒ 把 gate 挪到建 provider 之后，那一条就会被
+ * 真的造出来，这一格才看得见差别。让被测的选择不可观测是本仓登记的第 5 种假阳性。
  */
 describe("blocked 的注册机：建 provider 之前就早退（零邮箱/Agnes 触达）", () => {
-  /** 主备撞在同一条通道上 ⇒ blocked，而两条通道的凭据都是齐的。 */
+  /** 选中 moemail 却一格凭据都没填 ⇒ blocked；而 yyds 的凭据是齐的、建得出 provider。 */
   const BLOCKED = {
-    enabled: true, primary: "yyds", fallback: "yyds",
+    enabled: true, channel: "moemail",
     yyds: { baseUrl: "https://y.invalid", apiKey: "yk" },
   };
-  /** 对照组：同一份凭据，只把备通道去掉 ⇒ 装得起来。 */
-  const FINE = { enabled: true, primary: "yyds", yyds: { baseUrl: "https://y.invalid", apiKey: "yk" } };
+  /** 对照组：同一份凭据，把通道改成 yyds ⇒ 装得起来。 */
+  const FINE = { enabled: true, channel: "yyds", yyds: { baseUrl: "https://y.invalid", apiKey: "yk" } };
 
   async function run(registrar: Record<string, unknown>) {
     const { buildTendDeps } = await import("../../../src/http/wire.js");
@@ -951,8 +951,8 @@ describe("blocked 的注册机：建 provider 之前就早退（零邮箱/Agnes 
     const e = logger.entries.find((x) => x.event === "registrar.blocked");
     expect(e, "这次改动把一次响亮的故障换成了一次安静的故障 —— 这条事件是仅有的补偿之一").toBeDefined();
     expect(e?.level, "补池停摆会让池子慢慢耗干，几小时到几天后才以 pool_empty 炸出来").toBe("error");
-    expect(String(e?.fields?.fields)).toContain("registrar.fallback:fallback_equals_primary");
-    expect(e?.fields?.count).toBe(1);
+    expect(String(e?.fields?.fields)).toContain("registrar.moemail.baseUrl:channel_credentials_missing");
+    expect(e?.fields?.count).toBe(2);
   });
 
   it("对照组：同一份凭据、装得起来时 provider 真的建得出来 —— 否则上面那条恒绿", async () => {
