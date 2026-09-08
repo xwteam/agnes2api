@@ -570,8 +570,25 @@ records nothing at all.
 > reworded its rate-limit message and our word list missed it, or the upstream really did
 > swap those domains into its blocklist. **Do not read it as "the upstream said nothing
 > about rate limiting"** — the headline case this tier exists for is precisely the one where the
-> upstream did say something and we failed to recognise it. The only way to tell them apart is to
-> read the upstream's own wording carried by the `registrar.domain_blocked` events.
+> upstream did say something and we failed to recognise it.
+
+#### Where to find the upstream's own wording: the two branches differ
+
+**Do not follow "go read `registrar.domain_blocked`" all the way down — on one of the two
+branches that event is never emitted at all. The price is recorded here honestly:**
+
+- **Several domains ruled «blocked» within the same round**: once the clamp fires, **every**
+  «blocked» verdict of that round is discarded wholesale ⇒ the ledger learns no `blocked` ⇒
+  **not a single `registrar.domain_blocked` event is emitted that round**. All this branch
+  leaves you is the `registrar.known_good_domain_rejected` entries, and those **only cover
+  domains the ledger already knew were good** — a cold start, or a domain the upstream listed
+  for the first time this round, leaves no wording at all. The
+  `registrar.domain_verdicts_discarded` event emitted in the same round carries only the count
+  of discarded verdicts, the round's output and the backoff deadline — **no upstream wording**.
+- **Every domain the upstream lists ruled «blocked»** (this is the branch a single-mail-domain
+  deployment takes): the clamp never reaches its threshold ⇒ the ledger learns the verdict as
+  usual, and on the second strike `registrar.domain_blocked` goes out carrying the upstream's
+  own wording.
 
 #### How much request volume the third tier leaves behind
 

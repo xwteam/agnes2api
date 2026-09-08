@@ -698,6 +698,27 @@ async function finishRound(p: {
     if (toSave === undefined && p.minted === 0 && clusterShape) {
       toSave = nextBackoff(p.backoff, "cluster", deps.now());
     }
+    /**
+     * 🔴 **代价登记（评审回填，可证不是推断）：钳位生效的那一支拿不到全部上游原话。**
+     *
+     * `commitJournal` 里 `applied` 在钳位生效时把**全部** `blocked` 判定滤光，
+     * 剩下的只可能是 `ok`，而 `newlyBlocked` 只从 `s === "blocked"` 那一支产生
+     * ⇒ **`committed.newlyBlocked` 在这一支上可证恒为空 ⇒ 下面那条
+     * `registrar.domain_blocked` 一条都发不出来**。而这条 `domain_verdicts_discarded`
+     * 的 `fields` 只有条数、本轮产出与退避截止时刻，**一个字的上游原话都不带**。
+     *
+     * ⚠️ **这一支上唯一带得出上游原话的是 `./mint.ts` 的
+     * `registrar.known_good_domain_rejected`，而它只覆盖台账里已知能用的那些域名** ——
+     * 冷启动、或者上游这一轮新列出来的域名，一句原话都没有。⇒ 面板横幅与五语言文档
+     * 都按支分开写，不许说成「去翻 domain_blocked 就能分辨」。
+     *
+     * ⚠️ **刻意不往这条事件里塞 message**：那要改 `CommitResult` 的形状（把被作废的
+     * 那几条判定各自的上游原话带出来），属于改行为；这一轮的处置是**说真话 + 把代价
+     * 登记下来**，行为一个字都没动。判据是
+     * `tests/unit/registrar/domain-ledger-io.test.ts` 的
+     * 「钳位生效那一轮：registrar.domain_blocked 一条都发不出来，上游原话只在
+     *   known_good_domain_rejected 里」。
+     */
     if (committed.discarded > 0) {
       deps.logger.log({
         level: "warn", event: "registrar.domain_verdicts_discarded",

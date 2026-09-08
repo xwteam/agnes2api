@@ -530,6 +530,80 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
   });
 
   /**
+   * 🔴🔴 **承重格：钳位生效的那一支，横幅让运维去翻的那条事件根本发不出来。**
+   *
+   * 这一格是评审拿探针实测出来的，不是推断，而且**它钉的是上面那格没人管的一维**：
+   * 上面那格与下面那格钉的都是「请求量与退避键」，钳位这一支的**事件形态**一格都没有。
+   *
+   * 可证的部分（`./domain-ledger.ts` 的 `commitJournal`）：钳位一生效，`applied` 就把
+   * **全部** `blocked` 判定滤光 ⇒ 剩下的只可能是 `ok` ⇒ `newlyBlocked`（只从
+   * `s === "blocked"` 那一支产生）**恒为空** ⇒ `registrar.domain_blocked` 一条都发不出来。
+   * 而同一轮发出的 `registrar.domain_verdicts_discarded` 的 `fields` 只有条数、本轮产出
+   * 与退避截止时刻，**一个字的上游原话都不带**。
+   *
+   * ⇒ 面板横幅与五语言文档从前逐字写着「去翻 registrar.domain_blocked 带的上游原话」，
+   * 在这一支上指向一条永远不会发出的事件。现在按支分开写，而这一支**唯一**带得出上游
+   * 原话的是 `./mint.ts` 的 `registrar.known_good_domain_rejected`，且它只覆盖台账里
+   * 已知能用的那些域名 —— 这一格把这三件事一起钉住。
+   *
+   * ⚠️ **`domain_blocked` 那条断言是「全程一条都没有」，不是「第 0 轮没有」**：
+   * 只看第 0 轮的话，「判死要两跳」本来就让它在第一轮沉默，那条断言会退化成空转。
+   *
+   * 变异：把 `commitJournal` 里 `applied` 那一行的钳位过滤去掉
+   *（`const applied = roundVerdicts`）⇒ 台账学得到 blocked、第二轮就发出
+   * `registrar.domain_blocked` ⇒ 红。
+   */
+  it("钳位生效那一轮：registrar.domain_blocked 一条都发不出来，上游原话只在 known_good_domain_rejected 里", async () => {
+    const REWORDED = { status: 400, body: '{"code":400,"message":"Slow down, mate."}' };
+    const domains = ["b.test", "c.test", "d.test", "e.test"];
+    let ledger: DomainLedger = { v: 1, updatedAt: NOW - 1, total: 4, entries: {
+      "b.test": { s: "ok", at: NOW - 3000, n: 2 },
+      "c.test": { s: "ok", at: NOW - 2000, n: 2 },
+    } };
+    let backoff: BackoffState | null = null;
+    const blockedSeen: string[] = [];
+    const discardedFieldKeys: string[][] = [];
+    const wordingCarriers: string[] = [];
+
+    // 4 轮里真正打出去的是第 0/1/3 轮（退避把其余轮次挡在门外）——够走过「两跳判死」。
+    for (let r = 0; r < 4; r++) {
+      const at = NOW + r * ROUND_GAP_MS;
+      const round = makeDeps({
+        domains, ledger, backoff, now: () => at,
+        over: { targetKeys: 5, mintBatch: 5 },
+        sendCode: () => REWORDED,
+      });
+      await tendOnce(round.deps);
+      ledger = round.io.ledger;
+      backoff = round.io.backoff;
+      for (const e of round.logger.entries) {
+        if (e.event === "registrar.domain_blocked") blockedSeen.push(`r${r}`);
+        if (e.event === "registrar.domain_verdicts_discarded") {
+          discardedFieldKeys.push(Object.keys(e.fields ?? {}).sort());
+        }
+        // 上游那句原话逐字出现在哪条事件里。**这就是运维手里真正能拿到的证据**。
+        if (JSON.stringify(e.fields ?? {}).includes("Slow down, mate.")) wordingCarriers.push(e.event);
+      }
+    }
+
+    // ① 横幅从前指向的那条事件，这一支上**全程一条都没有**。
+    expect(blockedSeen).toEqual([]);
+    // ② 这一支真正发出来的是它，而它的字段里**没有 message 这一栏**（手写字面量）。
+    expect(discardedFieldKeys).toEqual([
+      ["backoffUntil", "count", "minted"],
+      ["backoffUntil", "count", "minted"],
+      ["backoffUntil", "count", "minted"],
+    ]);
+    // ③ 上游原话唯一的落点：台账里已知能用的那两个域名的那条诊断。
+    expect(new Set(wordingCarriers)).toEqual(new Set(["registrar.known_good_domain_rejected"]));
+    // ④ 前置条件：钳位真的生效了（台账一个字都没学到），否则上面三条量的是别的东西。
+    expect(ledger.entries).toEqual({
+      "b.test": { s: "ok", at: NOW - 3000, n: 2 },
+      "c.test": { s: "ok", at: NOW - 2000, n: 2 },
+    });
+  });
+
+  /**
    * 🔴🔴 **承重格：只配了一个邮箱域名的部署，上一格那一档必须同样接得住。**
    *
    * 上一格那一档从前的触发条件是「同一轮里 **≥2 个**域名被判屏蔽」（`commitJournal`
@@ -556,6 +630,13 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
    * 20 轮 = 10 小时，够走到指数封顶那一档 —— 稳态是「每 8 轮打一次、每次 5 个请求」，
    * 48 轮/天 ÷ 8 × 5 = **30 次/天**（这就是写进 CHANGELOG 与五语言文档的那个数）。
    *
+   * ⚠️ **外加这一档自己那条事件（评审回填）**：`registrar.round_all_domains_rejected`
+   * 在全仓只有这里守着 —— 它被加出来的理由正是「单域名下钳位没生效，照
+   * `registrar.domain_verdicts_discarded` 的名字发出去就是假话」，所以两条一起断言：
+   * 第 0 轮该发的发了、不许发的那条一条都没有。没有它的话整段 `else if` 被删掉都没人发现
+   *（实测：补这两行之前把那一整段 `else if` 删干净，注册机那一批判据 402/402 全绿、
+   * `tsc --noEmit` 也是 0）。
+   *
    * 变异：把 `finishRound` 里 `roundAllRejected` 那一项从触发条件里删掉
    * ⇒ 逐轮请求数变回 5 × 20、退避恒为 null ⇒ 红。
    */
@@ -567,6 +648,8 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
     let backoff: BackoffState | null = null;
     const perRound: number[] = [];
     const mintedPerRound: number[] = [];
+    /** 第 0 轮那把事件名。**这一档新加的那条事件在全仓只有这里守着。** */
+    let round0 = [] as string[];
 
     for (let r = 0; r < 20; r++) {
       const at = NOW + r * ROUND_GAP_MS;
@@ -578,6 +661,7 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
       const out = await tendOnce(round.deps);
       perRound.push(round.verification.length);
       mintedPerRound.push(out.minted);
+      if (r === 0) round0 = round.logger.events();
       ledger = round.io.ledger;
       backoff = round.io.backoff;
     }
@@ -594,6 +678,11 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
     // ⚠️ 单域名下钳位（≥2 个才生效）一次都没触发 ⇒ 台账照常学得到那条结论，
     // `registrar.domain_blocked` 也照常带得出上游原话。**这一维一格都没动。**
     expect(ledger.entries["b.test"]?.s).toBe("blocked");
+    // 🔴 **这一档自己那条事件**：退避是按「这一轮的候选全军覆没」这个形状记的，
+    // 而钳位那条事件的名字说的是「钳位作废了几条结论」—— 单域名下钳位压根没生效，
+    // 冒用它的名字就是假话。两条一起断言：该发的发了、不许发的一条都没有。
+    expect(round0).toContain("registrar.round_all_domains_rejected");
+    expect(round0).not.toContain("registrar.domain_verdicts_discarded");
   });
 
   /**

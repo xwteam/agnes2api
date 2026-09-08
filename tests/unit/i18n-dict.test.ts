@@ -912,16 +912,41 @@ describe("i18n 字典", () => {
    * 🔴🔴 **上一版这里钉的是「上游一句限流的话都没说」，那一句本身就是假话** ——
    * 全文见下面那一格（`CLUSTER_FALSE_UPSTREAM_FACTS`）。两格是一对：这一格要求文案
    * 把判据归给我们自己，下一格禁止它顺手把「我们没认出来」升级成「上游没说」。
+   *
+   * 🔴🔴 **五个锚点都必须自带否定语素（评审回填，实测出来的）**：上一版 en 那条是
+   * `"matched our rate-limit word list"`，**不含否定** ⇒ 把英文文案翻成极性完全相反的
+   * 那句假话（「我们的词表命中了限流」——词表真命中的话写下的就是 app/edge 那两档，
+   * 根本走不到这一档）之后，**全仓 47 格一格都不红**（实测读数 `47 passed (47)`）。
+   * 同形状的简中变异（「没有一句…」→「有一句…」）当场红 2 格并逐字点名简中。
+   * ⇒ 锚点换成含否定的整句，并在下面的反向自检里给五种语言各喂一条**极性翻转**毒刺。
    */
   const CLUSTER_SPEC: BackoffCopySpec = {
     ownership: {
       "zh-CN": "没有一句我们认得出的限流的话",
       "zh-TW": "沒有一句我們認得出的限流的話",
-      en: "matched our rate-limit word list",
+      en: "Nothing in the upstream's replies matched our rate-limit word list",
       ja: "当方の語句リストに載っているレート制限の文言がありませんでした",
       ko: "우리 단어 목록에 있는 속도 제한 문구를 찾지 못했습니다",
     },
     absolutes: BACKOFF_ABSOLUTES,
+  };
+
+  /**
+   * 🔴 **极性翻转毒刺（评审回填）：把 cluster 那条归属句改成语义完全相反的那句假话。**
+   *
+   * 现有的两类毒刺（把上一版假话拼回去、把「另一种可能」抠掉）都是**加/减**，一条都
+   * 覆盖不到「原地把极性翻过来」这一类 —— 而这一类恰恰是最像真话的那种改法：
+   * 翻过去之后每一句都还通顺，只是与本档的前提正好相反。
+   *
+   * ⚠️ **每一条都必须是「把锚点整句换成它的反面」**，不是随手删几个字：换完之后
+   * 锚点不再出现 ⇒ `backoffCopyProblems` 必须**只**点名这一种语言。
+   */
+  const CLUSTER_POLARITY_FLIPS: Record<(typeof LANGS)[number], string> = {
+    "zh-CN": "有一句我们认得出的限流的话",
+    "zh-TW": "有一句我們認得出的限流的話",
+    en: "The upstream's reply matched our rate-limit word list",
+    ja: "当方の語句リストに載っているレート制限の文言がありました",
+    ko: "우리 단어 목록에 있는 속도 제한 문구를 찾았습니다",
   };
 
   /**
@@ -1069,6 +1094,19 @@ describe("i18n 字典", () => {
         const poisoned = { ...row, [lang]: `${row[lang]!}${w}` };
         expect(backoffCopyProblems(poisoned, spec), `${key} / ${lang}: 塞了绝对化说法却没被点名`)
           .toEqual([`${lang}: 把归因说绝对了（「${w}」）`]);
+      }
+    }
+    // 毒刺三（评审回填）：**极性翻转** —— 把 cluster 那条归属句原地换成语义相反的
+    // 那句假话。上一版 en 的锚点不含否定 ⇒ 这条毒刺喂下去全绿；现在必须逐语言被点名。
+    {
+      const row = dictRow("reg.backoff.cluster")!;
+      for (const lang of LANGS) {
+        const flipped = CLUSTER_POLARITY_FLIPS[lang];
+        // 前置条件：反面那句本身不许把锚点包在里面，否则这条毒刺是空转。
+        expect(flipped.includes(CLUSTER_SPEC.ownership[lang]), `${lang}: 极性翻转那句还含着锚点`).toBe(false);
+        const poisoned = { ...row, [lang]: row[lang]!.split(CLUSTER_SPEC.ownership[lang]).join(flipped) };
+        expect(backoffCopyProblems(poisoned, CLUSTER_SPEC), `${lang}: 归属句被翻成相反的假话却没被点名`)
+          .toEqual([`${lang}: 没说清这是我们自己的判定（缺「${CLUSTER_SPEC.ownership[lang]}」）`]);
       }
     }
     // 整行不在字典里时也要说话 —— 否则改了 key 名之后上面两格会退化成空转。

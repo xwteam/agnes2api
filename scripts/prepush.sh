@@ -2088,6 +2088,11 @@ BANNER='[collection-guard] ✅'
 #       「写出来的只许是 `cluster`、`app`/`edge` 一条都不许有」，**它钉的那件事没变**：
 #       变异「把那道保险改回 `isKnownGood ⇒ rate_limited/app`」照样让它红。
 #     · `tests/ui/registrar.test.ts` **51 → 51**（只改注释措辞，计数不动）。
+#     · `tests/unit/registrar/backoff.test.ts` **13 → 13**（⚠️ **补记，评审发现这一份
+#       上一轮漏进了账**）：`nextBackoff` 那格上方描述 cluster 触发条件的一段注释
+#       原地改写（`+6/−6`，纯注释），**一条断言都没动、一格都没增删**，实测仍是 13。
+#       与上面 `tests/ui/registrar.test.ts` 那一条同格式 —— 这本账要的是「改了哪几份、
+#       各自动没动格数」全都在册，不是只登记动了格数的那几份。
 #     · 五语言 REGISTRAR.md、CHANGELOG、`admin-ui/` 两个文件与三个 core 文件的注释
 #       **一格判据都没新增**（docs-parity / docs-typography / check-i18n / check-refs 直接覆盖；
 #       实测 docs-parity 仍是 657）。⚠️ 五份 REGISTRAR.md 的第三档横幅表格那一行**刻意
@@ -2098,8 +2103,48 @@ BANNER='[collection-guard] ✅'
 #   ⇒ Node：5084 + 2 = **5086**；文件数 **164 不动**。
 #   ⇒ workerd 两个数仍然一格不动（实测 43 / 793）：新增的两格全在 `tests/unit/` 下，
 #     不进 workers 池；`tests/contract/` 一格都没加。
+#
+#   ── 评审回填（第三档横幅指向一条那一支发不出来的事件）：**+1**，
+#      只有 node 侧的用例数动，文件数一格不动（没有新文件）。
+#   ⚠️ 起因是评审拿探针实测出来的一条假话，可证不是推断：横幅与五语言文档逐字写着
+#      「分辨两种可能的唯一办法是去看 `registrar.domain_blocked` 带的上游原话」，而
+#      `commitJournal` 里钳位一生效，`applied` 就把**全部** `blocked` 判定滤光 ⇒ 剩下
+#      的只可能是 `ok` ⇒ `newlyBlocked` 恒为空 ⇒ 那条事件在钳位这一支上**一条都发不
+#      出来**。自己复跑的读数（4 域名 + `Slow down, mate.` 那份既有夹具、4 轮，逐事件
+#      名）：`registrar.domain_blocked` **零次**；发出来的是
+#      `registrar.domain_verdicts_discarded`，而它的 fields 只有 count / minted /
+#      backoffUntil，**一个字的上游原话都不带**；带得出原话的只有
+#      `registrar.known_good_domain_rejected`（只覆盖台账里已知能用的那些域名）。
+#      ⇒ 处置**只改说法、不改行为**：横幅与五份文档按支分开写，并把「钳位那一支拿不到
+#      全部上游原话」登记进 CHANGELOG + 五语言文档 + `tender.ts` 注释。事件的字段、
+#      退避算法、钳位本身**一个字都没动**（`git diff` 里 `tender.ts` 是纯 `+21` 注释、
+#      `domain-ledger.ts` 一行没改）。
+#   ⚠️ 计数是**当场量出来的**（改动前后各 `npx vitest run` 单文件读一次）。
+#     · `tests/unit/registrar/domain-ledger-io.test.ts` 27 → **28**（**+1**）：
+#       「钳位生效那一轮：registrar.domain_blocked 一条都发不出来，上游原话只在
+#        known_good_domain_rejected 里」—— 三条断言分别钉「那条事件全程零次」、
+#       「discarded 那条的字段名清单是手写字面量、没有 message 这一栏」、
+#       「上游原话唯一的落点是 known_good_domain_rejected」。
+#     · `tests/unit/i18n-dict.test.ts` **47 → 47**（**改写不是新增**，评审回填第 2 条）：
+#       `CLUSTER_SPEC.ownership.en` 从不含否定的 `"matched our rate-limit word list"`
+#       换成含否定的整句，并给反向自检那一格补上第三类毒刺（**极性翻转**，五语言各一条）。
+#       实测读数：把 en 文案翻成极性相反的假话，改动前 **47 passed (47)** 一格不红，
+#       改动后 **2 failed | 45 passed (47)** 并逐字点名 `en`。
+#     · `tests/unit/registrar/domain-ledger-io.test.ts` 另有 **1 格是原地加断言不是新增**
+#       （评审回填第 3 条）：「只配了一个邮箱域名 + 上游换了限流措辞」那格补两行 ——
+#       第 0 轮 `registrar.round_all_domains_rejected` 必须在场、
+#       `registrar.domain_verdicts_discarded` 必须不在场。那条事件此前**全仓零覆盖**
+#       （实测：整段 `else if` 删干净，`tests/unit/registrar/` + `tests/ui/registrar.test.ts`
+#       全绿 402/402）。
+#     · 五语言 REGISTRAR.md、CHANGELOG、`admin-ui/js/i18n-dict.js` 与 `tender.ts` 的注释
+#       **一格判据都没新增**（docs-parity / docs-typography / check-i18n / check-refs 直接覆盖）。
+#   变异实测（逐格真跑，记的是**实际**红了哪几格，跑完都还原并确认 `git status` 干净）：
+#     见本次报告的变异一节。
+#   ⇒ Node：5086 + 1 = **5087**；文件数 **164 不动**。
+#   ⇒ workerd 两个数仍然一格不动（实测 43 / 793）：新增的那一格在 `tests/unit/` 下，
+#     不进 workers 池；`tests/contract/` 一格都没加。
 EXPECT_NODE_FILES=164
-EXPECT_NODE_TESTS=5086
+EXPECT_NODE_TESTS=5087
 EXPECT_WORKERS_FILES=43
 EXPECT_WORKERS_TESTS=793
 
