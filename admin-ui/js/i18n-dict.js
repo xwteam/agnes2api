@@ -304,7 +304,7 @@ export const I18N = {
   "reg.channel.testOk":     { "zh-CN": "连通：可用域名 {domains} 个 · 耗时 {latencyMs} ms", "zh-TW": "連通：可用網域 {domains} 個 · 耗時 {latencyMs} ms", en: "Reachable: {domains} usable domain(s) · {latencyMs} ms", ja: "接続できました: 利用可能なドメイン {domains} 件 · {latencyMs} ms", ko: "연결됨: 사용 가능한 도메인 {domains}개 · {latencyMs} ms" },
   "reg.channel.testFailed": { "zh-CN": "没有连上（耗时 {latencyMs} ms）。详细原因在事件板块里，事件名 registrar.channel_test_failed。", "zh-TW": "沒有連上（耗時 {latencyMs} ms）。詳細原因在事件板塊裡，事件名 registrar.channel_test_failed。", en: "Could not connect ({latencyMs} ms). The details are in the Events section under registrar.channel_test_failed.", ja: "接続できませんでした（{latencyMs} ms）。詳細はイベントセクションの registrar.channel_test_failed を参照してください。", ko: "연결하지 못했습니다({latencyMs} ms). 자세한 내용은 이벤트 섹션의 registrar.channel_test_failed에 있습니다." },
   "reg.channel.testError":  { "zh-CN": "测试请求本身失败了，没有测到这条通道", "zh-TW": "測試請求本身失敗了，沒有測到這條通道", en: "The test request itself failed, so this channel was never reached", ja: "テストのリクエスト自体が失敗したため、このチャネルには到達していません", ko: "테스트 요청 자체가 실패해 이 채널에는 도달하지 못했습니다" },
-  "reg.channel.testHint":   { "zh-CN": "测试只读取这条通道的可用域名列表，不建邮箱、不注册账号，不消耗任何名额。", "zh-TW": "測試只讀取這條通道的可用網域清單，不建郵箱、不註冊帳號，不消耗任何名額。", en: "The test only reads this channel's list of usable domains: no mailbox is created, no account is registered, no quota is consumed.", ja: "テストはこのチャネルの利用可能ドメイン一覧を読むだけです。メールボックスの作成もアカウント登録も行わず、枠も消費しません。", ko: "테스트는 이 채널의 사용 가능한 도메인 목록만 읽습니다. 메일박스를 만들지도, 계정을 등록하지도, 정원을 소비하지도 않습니다." },
+  "reg.channel.testHint":   { "zh-CN": "测试只读取这条通道的可用域名列表，不建邮箱、不注册账号，不消耗任何名额。测不通时，事件里那条失败信息会带上它实际请求的那个地址。", "zh-TW": "測試只讀取這條通道的可用網域清單，不建郵箱、不註冊帳號，不消耗任何名額。測不通時，事件裡那條失敗訊息會帶上它實際請求的那個位址。", en: "The test only reads this channel's list of usable domains: no mailbox is created, no account is registered, no quota is consumed. When it fails, the failure entry in Events carries the address it actually requested.", ja: "テストはこのチャネルの利用可能ドメイン一覧を読むだけです。メールボックスの作成もアカウント登録も行わず、枠も消費しません。失敗した場合、イベントに残る失敗メッセージには実際にリクエストしたアドレスが含まれます。", ko: "테스트는 이 채널의 사용 가능한 도메인 목록만 읽습니다. 메일박스를 만들지도, 계정을 등록하지도, 정원을 소비하지도 않습니다. 실패하면 이벤트에 남는 실패 메시지에 실제로 요청한 주소가 함께 들어갑니다." },
 
   "reg.tend.button":       { "zh-CN": "立即补池", "zh-TW": "立即補池", en: "Refill now", ja: "今すぐ補充", ko: "지금 보충" },
   "reg.tend.confirmTitle": { "zh-CN": "确认立即补池", "zh-TW": "確認立即補池", en: "Confirm refill", ja: "補充の確認", ko: "보충 확인" },
@@ -926,6 +926,10 @@ export const I18N = {
   "set.field.registrar.agnesPlatformUrl": { "zh-CN": "注册后端地址", "zh-TW": "註冊後端位址", en: "Registration backend URL", ja: "登録バックエンドの URL", ko: "가입 백엔드 URL" },
   "set.field.channel.baseUrl": { "zh-CN": "服务地址", "zh-TW": "服務位址", en: "Service URL", ja: "サービス URL", ko: "서비스 URL" },
   "set.field.channel.apiKey": { "zh-CN": "API Key", "zh-TW": "API Key", en: "API key", ja: "API キー", ko: "API 키" },
+  // 一句事实，不是一次猜测：这里刻意不去判断「你填的地址像不像接口地址」——
+  // 一个自建实例完全可能就住在 /v1 底下，猜别人家的 URL 布局正是本仓禁止的启发式。
+  // 它把结构性的混淆点直接说破：网关自己那个地址是带前缀的，这一格不是。
+  "set.field.channel.baseUrl.fact": { "zh-CN": "这一格填服务的根地址，不要带 /v1 这类接口路径前缀。网关自己对外的 AGNES_BASE_URL 是带 /v1 的，两者不是一回事。", "zh-TW": "這一格填服務的根位址，不要帶 /v1 這類介面路徑前綴。網關自己對外的 AGNES_BASE_URL 是帶 /v1 的，兩者不是一回事。", en: "Give the service root address here, without an API path prefix such as /v1. The gateway's own AGNES_BASE_URL does carry /v1 — the two are not the same thing.", ja: "ここにはサービスのルートアドレスを入力します。/v1 のような API パスのプレフィックスは付けません。ゲートウェイ自身が公開する AGNES_BASE_URL には /v1 が付きますが、両者は別物です。", ko: "여기에는 서비스의 루트 주소를 입력합니다. /v1 같은 API 경로 접두사는 붙이지 마세요. 게이트웨이가 외부에 제공하는 AGNES_BASE_URL에는 /v1이 붙지만, 이 둘은 서로 다른 것입니다." },
 
   // ── 用量板块（设计 §10.6）──────────────────────────────────────────────────
   //

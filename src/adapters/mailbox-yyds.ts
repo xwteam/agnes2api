@@ -2,6 +2,7 @@ import type { MailProvider } from "../ports/mailbox.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
+import { httpFailMessage, redactUrl } from "../core/registrar/url.js";
 import type { Logger } from "../ports/logger.js";
 
 /**
@@ -63,10 +64,18 @@ export class YydsProvider implements MailProvider {
   }
 
   async listDomains(): Promise<string[]> {
-    const r = await this.deps.fetcher.fetch(`${this.deps.baseUrl}/v1/domains`, {
+    // **这就是「HTTP 404 却查不出为什么」那个故障的现场**：baseUrl 被填成带 `/v1`
+    // 的接口地址时，这里拼出来的是 `…/v1/v1/domains`。错误消息里不带地址的话，
+    // 运维手上只有一行「HTTP 404」，而唯一的线索恰恰是这个拼接结果。
+    const url = `${this.deps.baseUrl}/v1/domains`;
+    const r = await this.deps.fetcher.fetch(url, {
       method: "GET", headers: this.headers(), signal: this.signal(),
     });
-    if (!r.ok) throw new Error(`YYDS 列域名失败: HTTP ${r.status}`);
+    if (!r.ok) {
+      throw new Error(httpFailMessage({
+        provider: "YYDS", action: "列域名", method: "GET", url, status: r.status,
+      }));
+    }
     const data = (await r.json()) as Record<string, any>;
     return ((data?.data ?? []) as Array<{ domain?: string }>)
       .map((d) => d?.domain)
@@ -79,11 +88,16 @@ export class YydsProvider implements MailProvider {
     for (let i = 0; i < 10; i++) {
       lp += LOCAL_PART_ALPHABET[Math.floor(rand() * LOCAL_PART_ALPHABET.length)]!;
     }
-    const r = await this.deps.fetcher.fetch(`${this.deps.baseUrl}/v1/accounts`, {
+    const url = `${this.deps.baseUrl}/v1/accounts`;
+    const r = await this.deps.fetcher.fetch(url, {
       method: "POST", headers: this.headers(), body: JSON.stringify({ localPart: lp, domain }),
       signal: this.signal(),
     });
-    if (!r.ok) throw new Error(`YYDS 建邮箱失败: HTTP ${r.status}`);
+    if (!r.ok) {
+      throw new Error(httpFailMessage({
+        provider: "YYDS", action: "建邮箱", method: "POST", url, status: r.status,
+      }));
+    }
     // 2xx 之后的任何解析失败都意味着同一件事：邮箱**可能已经在上游建出来了**，
     // 而我们手上没有它的 id，于是它删不掉——处置见下面那段注释。
     let data: Record<string, any> | null = null;
@@ -110,9 +124,11 @@ export class YydsProvider implements MailProvider {
         level: "warn", event: "registrar.mailbox_create_unparseable",
         msg: "YYDS 建邮箱响应无法解析或缺少 data.address / data.id：邮箱可能已在上游创建但拿不到 id，"
           + "无法主动删除，约 24 小时后随 expiresAt 自动过期；活跃邮箱配额会被它占住，可按 guessed 人工核对",
-        fields: { provider: "yyds", domain, guessed, expiresAfterHours: 24 },
+        fields: { provider: "yyds", domain, guessed, expiresAfterHours: 24, url: redactUrl(url) },
       });
-      throw new Error("YYDS 建邮箱响应无法解析或缺少 data.address / data.id");
+      throw new Error(
+        `YYDS 建邮箱响应无法解析或缺少 data.address / data.id (POST ${redactUrl(url)})`,
+      );
     }
     // **收信按 address 定位、删除按 id 定位**——真机实测的契约：
     //   GET    /v1/messages?address={address} → 200，换成 id → 404 inbox_not_found
@@ -122,6 +138,19 @@ export class YydsProvider implements MailProvider {
     return { address, handle: id };
   }
 
+  /**
+   * ⚠️ **本方法里被 catch 吞掉的请求失败刻意不留任何日志**（两个适配器同一处置，
+   * 这句在 `mailbox-moemail.ts` 的 `pollCode` 上也写了一份，免得下一个人当成漏了）。
+   *
+   * 理由：单次铸 key 光轮询就要打约 40 次请求、瞬时错误是常态（下面那几个 try/catch
+   * 就是为此加的）。在这里留痕会让 `EVENT_RING_SIZE` 那 100 格的事件环几秒清空一次，
+   * 把运维真正需要的诊断挤出去。
+   *
+   * **代价明写、登记为已知缺口**：「baseUrl 对，但收信接口的路径不对」这一类故障
+   * 仍然只表现为 `code_timeout`，而 `code_timeout` 的文案会把人指向 MX 记录 /
+   * 邮件转发规则，方向是反的。可接受的依据是：把 baseUrl 填成带接口前缀的地址时，
+   * `listDomains` 第一步就先失败了，压根走不到这里。
+   */
   async pollCode(mailbox: Mailbox, timeoutMs: number): Promise<string | null> {
     const start = this.deps.now();
     const seen = new Set<string>();
@@ -195,9 +224,10 @@ export class YydsProvider implements MailProvider {
   }
 
   async deleteMailbox(mailbox: Mailbox): Promise<void> {
+    const url = `${this.deps.baseUrl}/v1/accounts/${encodeURIComponent(mailbox.handle)}`;
     try {
       const r = await this.deps.fetcher.fetch(
-        `${this.deps.baseUrl}/v1/accounts/${encodeURIComponent(mailbox.handle)}`,
+        url,
         { method: "DELETE", headers: this.headers(), signal: this.signal() },
       );
       // 非 2xx 才是最常见的删除失败路径：404/403/500 都会让 fetch 正常 resolve，
@@ -210,7 +240,8 @@ export class YydsProvider implements MailProvider {
         this.deps.logger.log({
           level: "warn", event: "registrar.delete_mailbox_failed",
           msg: "YYDS 删邮箱失败（残留不影响已拿到的结果）",
-          fields: { provider: "yyds", address: mailbox.address, status: r.status },
+          // 这里本来就是结构化 fields，地址单开一格，不拼进 msg。
+          fields: { provider: "yyds", address: mailbox.address, status: r.status, url: redactUrl(url) },
         });
       }
     } catch (err) {
@@ -219,7 +250,7 @@ export class YydsProvider implements MailProvider {
       this.deps.logger.log({
         level: "warn", event: "registrar.delete_mailbox_failed",
         msg: "YYDS 删邮箱失败（残留不影响已拿到的结果）",
-        fields: { provider: "yyds", address: mailbox.address, err: errMsg(err) },
+        fields: { provider: "yyds", address: mailbox.address, err: errMsg(err), url: redactUrl(url) },
       });
     }
   }

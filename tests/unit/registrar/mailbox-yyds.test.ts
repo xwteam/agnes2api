@@ -28,6 +28,23 @@ describe("YydsProvider", () => {
     expect(await p.listDomains()).toEqual(["a.test", "b.test"]);
   });
 
+  it("listDomains 失败时把实际请求的地址说出来（凭据抹掉、重复的路径段留着）", async () => {
+    // 这一格复现的是真机上那个「只有一行 HTTP 404、查不下去」的故障：baseUrl 被填成
+    // 带 `/v1` 的接口地址 ⇒ 适配器拼出 `…/v1/v1/domains` ⇒ 404。断言那个**重复段**
+    // 必须真的出现在消息里，它就是根因本身；同时钉住 userinfo 一个字都不许漏出去。
+    const { fetcher } = stubFetcher(() => ({ status: 404, body: { success: false } }));
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://sentineluser:sentinelsecret@y.invalid/v1",
+      apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+    });
+    const err = await p.listDomains().then(() => null, (e: unknown) => e as Error);
+    expect(err).not.toBeNull();
+    expect(err!.message).toContain("y.invalid/v1/v1/domains");
+    expect(err!.message).toContain("404");
+    expect(err!.message).not.toContain("sentinelsecret");
+    expect(err!.message).not.toContain("sentineluser");
+  });
+
   it("RM1 createMailbox 的 handle 取 data.id 而不是 data.address", async () => {
     // 真机契约：收信要 address（`/v1/messages?address=`），删除要 id
     // （`/v1/accounts/{id}`），两个接口用的键不一样。fixture 里 address 与 id

@@ -30,6 +30,14 @@ The registrar supports two mailbox channels for receiving verification codes:
 | Nature | A third-party temporary-mailbox service | A temporary-mailbox service you self-host |
 | API base URL | Has a default (`YYDS_BASE_URL`, its public API endpoint) | No default (`MOEMAIL_BASE_URL`) — fill in the address of your own instance |
 | Getting credentials | Apply for an API key from the service (`YYDS_API_KEY`) | Generate an API key inside your own instance (`MOEMAIL_API_KEY`) |
+| Shape of the address | The service root address, without an API path prefix such as `/v1` | The instance root address, likewise without an API path prefix |
+
+That last row deserves a note of its own: the gateway's own `AGNES_BASE_URL` **does** carry
+`/v1`, the two are not the same thing, and copying one into the other is the most common way
+to get this wrong. Set it to `…/v1` and the registrar builds `…/v1/v1/domains`, which the
+upstream answers with a 404. Failures like that now record **the address actually requested**
+in the event (any username/password, query string and fragment inside it are replaced with
+placeholder markers), so one look at the events is enough to recognise this trap.
 
 ### Configuring the primary and the fallback
 

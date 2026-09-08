@@ -704,9 +704,12 @@ export function channelTestHandler(deps: RegistrarDeps) {
        * 的通用错误处理把它当成「面板自己坏了」；② 两条通道必须**同一套返回形状**，
        * 一条通的、一条不通的时候，两张卡片不该一张走成功分支一张走异常分支。
        *
-       * ⚠️ **不回显上游的错误文本**：`err.message` 里可能带着请求 URL（含 baseUrl）
-       * 甚至上游原样返回的响应体。面板拿 `reason` 选一句自己的文案，
+       * ⚠️ **不回显上游的错误文本**：`err.message` 里**确实**带着请求 URL（含 baseUrl），
+       * 还可能带上游原样返回的响应体。「可能」是上一版写下时的预言，两个邮箱适配器
+       * 用 `src/core/registrar/url.ts` 的 `httpFailMessage` 把地址拼进消息之后，
+       * 它已经是事实。面板拿 `reason` 选一句自己的文案，
        * 详情留在事件里（运维在事件板块看得到，而事件板块是鉴权后的）。
+       * **这一条不许放松**：URL 只进已鉴权的事件板块，不进这条响应体。
        */
       const latencyMs = deps.now() - startedAt;
       deps.logger.log({

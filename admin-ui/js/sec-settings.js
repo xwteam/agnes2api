@@ -1017,6 +1017,9 @@ function buildRegistrarCard(body) {
       addField(subGrid, path, isSecretPath(path) ? "secret" : "text");
     }
     sub.appendChild(subGrid);
+    // 「填根地址、别带 /v1」这一句**两张子卡逐字相同**，所以它不破坏对称：
+    // 它说的是这一格该填什么形状的地址，与是哪条通道无关。
+    sub.appendChild(elI18n("p", "set.field.channel.baseUrl.fact", { class: "muted note" }));
     // 两条通道之间**唯一**的不对称，且它是同一个字段位置上的两句事实。
     sub.appendChild(elI18n("p", channelAddressFactKey(channel), { class: "muted note" }));
     channelRow.appendChild(sub);

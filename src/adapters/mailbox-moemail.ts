@@ -2,6 +2,7 @@ import type { MailProvider } from "../ports/mailbox.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
+import { httpFailMessage, redactUrl } from "../core/registrar/url.js";
 import type { Logger } from "../ports/logger.js";
 
 /**
@@ -61,10 +62,17 @@ export class MoeMailProvider implements MailProvider {
   }
 
   async listDomains(): Promise<string[]> {
-    const r = await this.deps.fetcher.fetch(`${this.deps.baseUrl}/api/config`, {
+    // 地址带进错误消息，理由与 YYDS 适配器同位置那段逐字同源（两条通道完全平级：
+    // 只给一条带上地址，另一条的同类故障就没人守）。
+    const url = `${this.deps.baseUrl}/api/config`;
+    const r = await this.deps.fetcher.fetch(url, {
       method: "GET", headers: this.headers(), signal: this.signal(),
     });
-    if (!r.ok) throw new Error(`MoeMail 列域名失败: HTTP ${r.status}`);
+    if (!r.ok) {
+      throw new Error(httpFailMessage({
+        provider: "MoeMail", action: "列域名", method: "GET", url, status: r.status,
+      }));
+    }
     const data = (await r.json()) as Record<string, any>;
     // MoeMail 用逗号分隔的字符串返回域名，与 YYDS 的数组形态不同。
     return String(data?.emailDomains ?? "")
@@ -79,12 +87,17 @@ export class MoeMailProvider implements MailProvider {
     for (let i = 0; i < 10; i++) {
       name += LOCAL_PART_ALPHABET[Math.floor(rand() * LOCAL_PART_ALPHABET.length)]!;
     }
-    const r = await this.deps.fetcher.fetch(`${this.deps.baseUrl}/api/emails/generate`, {
+    const url = `${this.deps.baseUrl}/api/emails/generate`;
+    const r = await this.deps.fetcher.fetch(url, {
       method: "POST", headers: this.headers(),
       body: JSON.stringify({ name, expiryTime: MAILBOX_TTL_MS, domain }),
       signal: this.signal(),
     });
-    if (!r.ok) throw new Error(`MoeMail 建邮箱失败: HTTP ${r.status}`);
+    if (!r.ok) {
+      throw new Error(httpFailMessage({
+        provider: "MoeMail", action: "建邮箱", method: "POST", url, status: r.status,
+      }));
+    }
     let data: Record<string, any> | null = null;
     try {
       data = (await r.json()) as Record<string, any>;
@@ -101,14 +114,22 @@ export class MoeMailProvider implements MailProvider {
         level: "warn", event: "registrar.mailbox_create_unparseable",
         msg: "MoeMail 建邮箱响应无法解析或缺少 id/email：邮箱可能已在上游创建但 handle 丢失，"
           + "无法主动删除，只能等 TTL 到期自愈",
-        fields: { provider: "moemail", domain, ttlMinutes: MAILBOX_TTL_MS / 60_000 },
+        fields: { provider: "moemail", domain, ttlMinutes: MAILBOX_TTL_MS / 60_000, url: redactUrl(url) },
       });
-      throw new Error("MoeMail 建邮箱响应无法解析或缺少 id 或 email");
+      throw new Error(
+        `MoeMail 建邮箱响应无法解析或缺少 id 或 email (POST ${redactUrl(url)})`,
+      );
     }
     // MoeMail 用 id 定位邮箱，与 YYDS 用地址不同。
     return { address: data.email, handle: data.id };
   }
 
+  /**
+   * ⚠️ **本方法里被 catch 吞掉的请求失败刻意不留任何日志**，与 `mailbox-yyds.ts` 的
+   * `pollCode` 同一处置、同一理由（轮询请求量大、瞬时错误是常态，留痕会把 100 格的
+   * 事件环几秒清空一次）。**这句在两个文件里各写一份是有意的**：只写一处的话，
+   * 读另一个文件的人会把它当成漏了。代价那一段见 YYDS 侧同位置的注释。
+   */
   async pollCode(mailbox: Mailbox, timeoutMs: number): Promise<string | null> {
     const start = this.deps.now();
     // 注：这里不需要 YYDS 那种 seen 去重。YYDS 要二次拉详情，"标记已处理"与"真正
@@ -153,9 +174,10 @@ export class MoeMailProvider implements MailProvider {
   }
 
   async deleteMailbox(mailbox: Mailbox): Promise<void> {
+    const url = `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`;
     try {
       const r = await this.deps.fetcher.fetch(
-        `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`,
+        url,
         { method: "DELETE", headers: this.headers(), signal: this.signal() },
       );
       // 理由同 YYDS 适配器：非 2xx 会正常 resolve、进不了 catch，是最常见的失败
@@ -165,7 +187,8 @@ export class MoeMailProvider implements MailProvider {
         this.deps.logger.log({
           level: "warn", event: "registrar.delete_mailbox_failed",
           msg: "MoeMail 删邮箱失败（残留不影响已拿到的结果）",
-          fields: { provider: "moemail", address: mailbox.address, status: r.status },
+          // 这里本来就是结构化 fields，地址单开一格，不拼进 msg。
+          fields: { provider: "moemail", address: mailbox.address, status: r.status, url: redactUrl(url) },
         });
       }
     } catch (err) {
@@ -174,7 +197,7 @@ export class MoeMailProvider implements MailProvider {
       this.deps.logger.log({
         level: "warn", event: "registrar.delete_mailbox_failed",
         msg: "MoeMail 删邮箱失败（残留不影响已拿到的结果）",
-        fields: { provider: "moemail", address: mailbox.address, err: errMsg(err) },
+        fields: { provider: "moemail", address: mailbox.address, err: errMsg(err), url: redactUrl(url) },
       });
     }
   }

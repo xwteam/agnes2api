@@ -30,6 +30,22 @@ describe("MoeMailProvider", () => {
     expect(new Headers(calls[0]!.init.headers).get("x-api-key")).toBe("k");
   });
 
+  it("listDomains 失败时把实际请求的地址说出来（凭据抹掉）", async () => {
+    // **与 YYDS 侧逐条同构**，理由与本仓「两条通道必须完全平级」同源：只给一条通道
+    // 写判据，另一条的同类缺陷没人守。
+    const { fetcher } = stubFetcher(() => ({ status: 404, body: {} }));
+    const p = new MoeMailProvider({
+      fetcher, baseUrl: "https://sentineluser:sentinelsecret@m.invalid",
+      apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+    });
+    const err = await p.listDomains().then(() => null, (e: unknown) => e as Error);
+    expect(err).not.toBeNull();
+    expect(err!.message).toContain("m.invalid/api/config");
+    expect(err!.message).toContain("404");
+    expect(err!.message).not.toContain("sentinelsecret");
+    expect(err!.message).not.toContain("sentineluser");
+  });
+
   it("createMailbox 带 X-API-Key，请求体含 name/expiryTime/domain，handle 用 id 而非 email", async () => {
     // id 与 email 特意给不同的值：如果实现误把 handle 设成 email（照抄 YYDS 的
     // "handle=address"），这条断言才会真正失败，而不是两条路径殊途同归。

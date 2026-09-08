@@ -1712,8 +1712,33 @@ BANNER='[collection-guard] ✅'
 #     workers 池），`src/**` 那一轮的改动没有新增契约用例。
 #   ⇒ workerd：768 + 6 = 774（`config-degrade` 4 格 + `admin-config` / `admin-registrar` 各 1 格，
 #     三份都在 `tests/contract/` 下 ⇒ 两个池子都跑）；文件数 41 + 1 = 42。
-EXPECT_NODE_FILES=159
-EXPECT_NODE_TESTS=4918
+#
+#   ── 这一轮（通道请求失败时带上它实际请求的地址）：**+6**，只有 node 侧那两个数动
+#   ⚠️ 逐格写清多的是哪几格，不写净值。三个计数都是**当场量出来的**
+#      （`npx vitest run <单个文件>` 逐份跑一遍读 `Tests N passed`），不是照差值倒推。
+#     · 新文件一份：`tests/unit/registrar/url.test.ts` **+4**
+#       （脱敏真的脱了且没把诊断信息一起删掉 / 解析不开时不许回落原串 / 幂等 /
+#       统一模板同时带状态码、方法名与脱敏后的地址）。**它在 `tests/unit/` 下 ⇒ 只进 node 池。**
+#     · `tests/unit/registrar/mailbox-yyds.test.ts` 28 → **29**（**+1**：列域名失败时
+#       消息里带 `…/v1/v1/domains` 这个重复段、带状态码，且 userinfo 一个字都不漏）。
+#     · `tests/unit/registrar/mailbox-moemail.test.ts` 20 → **21**（**+1**：同构一份。
+#       只给一条通道写判据，另一条的同类缺陷没人守）。
+#     · 文档、面板文案、`assets.generated.ts` 那几处改动**一格判据都没新增**
+#       （既有的 docs-parity / docs-typography / check-i18n 直接覆盖）。
+#   变异实测（逐条真跑，记录的是**实际**红了哪几格）：
+#     · `redactUrl` 函数体换成 `return raw` ⇒ **红 5**（url 那 4 格里的 3 格 + 两个适配器各 1 格；
+#       「幂等」那格反而还绿 —— 恒等函数当然幂等，这条实测正说明幂等格与脱敏格钉的不是同一件事）；
+#     · 只把 `catch` 分支改成 `return raw` ⇒ **只红 1**（解析不开那格）；
+#     · 统一模板里 `redactUrl(p.url)` 换成裸 `p.url` ⇒ **红 3**（模板格 + 两个适配器各 1）；
+#     · 把地址整个从消息里拿掉、只留状态码 ⇒ **红 3**（同上三格，但红的是另一半断言）；
+#     · 只给 YYDS 加地址、MoeMail 退回旧文案 ⇒ **只红 1**（MoeMail 那格）—— 平级这条真的守住了；
+#     · 模板里把方法名写死成 `GET` ⇒ **只红 1**（模板格）；
+#     · 把脱敏标记从 userinfo 挪到返回串最前面 ⇒ **只红 1**（幂等格），其余四格照绿。
+#   ⇒ Node：4918 + 6 = **4924**；文件数 159 + 1 = **160**。
+#   ⇒ workerd 两个数一格不动：新增的三份判据全在 `tests/unit/` 下，不进 workers 池；
+#     `tests/contract/` 一格都没加。
+EXPECT_NODE_FILES=160
+EXPECT_NODE_TESTS=4924
 EXPECT_WORKERS_FILES=42
 EXPECT_WORKERS_TESTS=774
 
