@@ -465,8 +465,10 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
    * ⇒ 240 次/天，而本仓在 `src/core/registrar/backoff.ts` 与本文件被测的
    * `tender.ts` 里逐字登记着上游的行为是「窗口里每打一次请求就把窗口续一次」。
    *
-   * 治它的是 `finishRound` 里那一档：`commitJournal` 的 `discarded > 0`
-   *（同一轮里 ≥2 个域名被判屏蔽）**且这一轮零产出**时，按 `cluster` 记一个跨轮退避。
+   * 治它的是 `finishRound` 里那一档：这一轮**成片**判出「域名被屏蔽」
+   *（`commitJournal` 的 `discarded > 0`，即同一轮里 ≥2 个域名被判屏蔽；或者上游列出来的
+   * 域名一个不落全被判屏蔽 —— 后一条是给单域名部署的，判据在下一格）
+   * **且这一轮零产出**时，按 `cluster` 记一个跨轮退避。
    * 它**不中止本轮**、**不吞任何域名结论**，所以那把 `at` 冻住的死锁不会回来。
    *
    * ⚠️ **这一格钉的是两个数：一轮打几次、退避写了什么**（都是手写字面量）。
@@ -525,6 +527,73 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
       "b.test": { s: "ok", at: NOW - 3000, n: 2 },
       "c.test": { s: "ok", at: NOW - 2000, n: 2 },
     });
+  });
+
+  /**
+   * 🔴🔴 **承重格：只配了一个邮箱域名的部署，上一格那一档必须同样接得住。**
+   *
+   * 上一格那一档从前的触发条件是「同一轮里 **≥2 个**域名被判屏蔽」（`commitJournal`
+   * 那道钳位的 `discarded > 0`）。**只配了一个邮箱域名的部署永远凑不满 2 个**
+   * ⇒ 这一档一次都不会命中，而上游改文案那件事对它照样发生。
+   *
+   * 改动前的实测（同一份夹具、20 轮）：逐轮请求数恒为 5、`minted` 恒为 0、
+   * 退避键 20 轮**一次都没写**。Cron 每 30 分钟一轮 ⇒ 稳态 **240 次/天**。
+   * 而拆掉那道保险之前（`mintOne` 里「已知好域名回 400 就改判限流」还在的时候），
+   * 同一份夹具是 `[1,1,0,1,0,…]` + app 退避 ⇒ 稳态约 **6 次/天** ——
+   * 也就是说这种部署形态上，那一档接不住时的请求量是上一版的 **40 倍**。
+   *
+   * ⚠️ **上一版并不是白得的 6 次/天**：它那 20 轮里台账一个字都没学到
+   *（`{s:"ok"}` 原封不动），`registrar.domain_blocked` 一条都没有 —— 也就没有
+   * 「上游那句原话」这个唯一的现场证据，而那正是那把死锁的来源。
+   *
+   * 治它的是触发条件的语义本身：这一档要的是**「这一轮的候选全军覆没」**，
+   * 逐字实现成「上游列出来的域名一个不落全试过了、而且全被判成屏蔽」——
+   * 单域名下「就那一个，试了、被拒了」同样满足。判据在 `./tender.ts` 的 `finishRound`。
+   * ⚠️ **「一个不落全试过」那半句不是修饰**：省掉它，「池子快满、这一轮只开了 1 个名额」
+   * 也会记退避 —— 反向控制是本 describe 第一格（连着 6 轮那格逐字断言全程不写退避键）。
+   *
+   * ⚠️ **这一格钉的是三个数：逐轮请求数、minted、退避那把键的内容**（都是手写字面量）。
+   * 20 轮 = 10 小时，够走到指数封顶那一档 —— 稳态是「每 8 轮打一次、每次 5 个请求」，
+   * 48 轮/天 ÷ 8 × 5 = **30 次/天**（这就是写进 CHANGELOG 与五语言文档的那个数）。
+   *
+   * 变异：把 `finishRound` 里 `roundAllRejected` 那一项从触发条件里删掉
+   * ⇒ 逐轮请求数变回 5 × 20、退避恒为 null ⇒ 红。
+   */
+  it("只配了一个邮箱域名 + 上游换了限流措辞：退避照样记得下来，请求量被按住", async () => {
+    const REWORDED = { status: 400, body: '{"code":400,"message":"Slow down, mate."}' };
+    let ledger: DomainLedger = { v: 1, updatedAt: NOW - 1, total: 1, entries: {
+      "b.test": { s: "ok", at: NOW - 3000, n: 2 },
+    } };
+    let backoff: BackoffState | null = null;
+    const perRound: number[] = [];
+    const mintedPerRound: number[] = [];
+
+    for (let r = 0; r < 20; r++) {
+      const at = NOW + r * ROUND_GAP_MS;
+      const round = makeDeps({
+        domains: ["b.test"], ledger, backoff, now: () => at,
+        over: { targetKeys: 5, mintBatch: 5 },
+        sendCode: () => REWORDED,
+      });
+      const out = await tendOnce(round.deps);
+      perRound.push(round.verification.length);
+      mintedPerRound.push(out.minted);
+      ledger = round.io.ledger;
+      backoff = round.io.backoff;
+    }
+
+    // 🔴 **手写字面量。** 改动前这里是 5 × 20 = 100 次；现在是 25 次。
+    // 打出去的是第 0/1/3/7/15 轮 —— 间隔 1、2、4、8、8 轮，正是指数走到封顶。
+    expect(perRound).toEqual([5, 5, 0, 5, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0]);
+    // 前置条件：这一档里一把 key 都铸不出来（否则上面那串 0 是「池子满了」造成的）。
+    expect(mintedPerRound).toEqual(Array(20).fill(0));
+    // 归因是**这一轮的形状**，不是冒充上游说过的话；第 5 次撞算出来的窗口撞上封顶。
+    expect(backoff).toEqual({
+      until: NOW + 15 * ROUND_GAP_MS + 14_400_000, kind: "cluster", since: NOW, hits: 5,
+    });
+    // ⚠️ 单域名下钳位（≥2 个才生效）一次都没触发 ⇒ 台账照常学得到那条结论，
+    // `registrar.domain_blocked` 也照常带得出上游原话。**这一维一格都没动。**
+    expect(ledger.entries["b.test"]?.s).toBe("blocked");
   });
 
   /**
@@ -617,10 +686,19 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
    * 这一格钉的就是**那条假信号在源头上不再产生**；横幅的措辞另有一格，是
    * `tests/unit/i18n-dict.test.ts`「退避横幅那条 app 文案先说清判据归属，再不许把换出口说成唯一出路（五语言各一格）」。
    *
+   * ⚠️⚠️ **这一格的断言改过一次，改的理由与它钉的那件事无关，写在这里免得被读成放水**：
+   * 夹具是**只配了一个邮箱域名**的部署，而「这一轮把上游列出来的域名一个不落全试过、
+   * 还全被判成屏蔽、且零产出」现在会记一个 `cluster` 退避（`./tender.ts` 的 `finishRound`，
+   * 全文见那里）。所以这里不再断言「一把退避键都不写」，改成断言**归因**：
+   * 写出来的只许是 `cluster`（这一轮的形状），**`app` / `edge` 一条都不许有** ——
+   * 那两档才是「上游在限你」，而这一轮上游一个限流字眼都没回。
+   * 这一档的横幅逐字说明两种可能都还开着（上游换了限流措辞 / 上游真把域名拉黑了），
+   * 与 `app` 那条「上游在限你」不是同一句话。
+   *
    * 变异：把那道保险改回「`isKnownGood` ⇒ 当场 return `rate_limited` / `limitKind: "app"`」
-   * ⇒ 退避键被写上一条 app 窗口、归因变成 `rate_limited` ⇒ 红。
+   * ⇒ 退避 `kind` 变成 `app`、归因变成 `rate_limited` ⇒ 下面两行各红一次。
    */
-  it("好域名被真的拉黑时不写任何退避键：归因是域名，不是「上游在限你」", async () => {
+  it("好域名被真的拉黑时只按「这一轮的形状」退避：归因是域名，不是「上游在限你」", async () => {
     const { deps, io } = makeDeps({
       domains: ["b.test"],
       ledger: { v: 1, updatedAt: NOW - 1, total: 1, entries: {
@@ -631,8 +709,9 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
 
     const out = await tendOnce(deps);
 
-    expect(io.savedBackoff).toEqual([]);
-    expect(io.backoff).toBeNull();
+    // 🔴 归因只许是「这一轮的形状」。`app` / `edge` 那两档是「上游回话里的字眼」，
+    // 而这一轮上游一个限流字眼都没回 —— 写出那两档就是把一句上游没说的话安上去。
+    expect(io.savedBackoff.map((s) => s?.kind ?? null)).toEqual(["cluster"]);
     expect(out.failures).toEqual([{ reason: "domain_blocked_all", channel: "yyds" }]);
   });
 });

@@ -837,7 +837,7 @@ describe("i18n 字典", () => {
    *
    * ⚠️ **这一格钉的是措辞，不是行为。** 「这个场景下压根不该记 app 退避」那一半是行为，
    * 在 `tests/unit/registrar/domain-ledger-io.test.ts` 的
-   * 「好域名被真的拉黑时不写任何退避键：归因是域名，不是「上游在限你」」那一格。
+   * 「好域名被真的拉黑时只按「这一轮的形状」退避：归因是域名，不是「上游在限你」」那一格。
    * 两格分工：这里管面板说什么，那里管后端产不产生这条信号。
    *
    * ⚠️ **五种语言各写各的形态**，与本文件里那几张「概念 × 语言」矩阵同一条纪律：
@@ -904,22 +904,78 @@ describe("i18n 字典", () => {
 
   /**
    * `reg.backoff.cluster`：**证据类型与 app 那条不同，归属句也必须不同**。
-   * 这一档触发时上游一个限流字眼都没说（说了就落进 edge / app 了），
-   * 判据是「同一轮里 ≥2 个域名被判屏蔽 + 这一轮零产出」这个形状
-   *（`src/core/registrar/tender.ts` 的 `finishRound`）。
-   * ⇒ 照抄 app 那句「按词表认出来的」就又是一次说假话，所以这里查的是
-   *「上游一句限流的话都没说」那一句。
+   * 判据是「这一轮的形状」（同一轮里好几个域名被判屏蔽、或者上游列出来的域名一个不落
+   * 全被判屏蔽，且这一轮零产出 —— `src/core/registrar/tender.ts` 的 `finishRound`），
+   * 而不是上游回话里的字眼。⇒ 照抄 app 那句「按词表认出来的」是说假话（这一档一个词表
+   * 都没命中），所以这里查的是**归属给「我们自己的词表没命中」**的那一句。
+   *
+   * 🔴🔴 **上一版这里钉的是「上游一句限流的话都没说」，那一句本身就是假话** ——
+   * 全文见下面那一格（`CLUSTER_FALSE_UPSTREAM_FACTS`）。两格是一对：这一格要求文案
+   * 把判据归给我们自己，下一格禁止它顺手把「我们没认出来」升级成「上游没说」。
    */
   const CLUSTER_SPEC: BackoffCopySpec = {
     ownership: {
-      "zh-CN": "上游一句限流的话都没说",
-      "zh-TW": "上游一句限流的話都沒說",
-      en: "The upstream said nothing about rate limiting",
-      ja: "上流はレート制限について一言も述べていません",
-      ko: "업스트림은 속도 제한에 대해 한마디도 하지 않았습니다",
+      "zh-CN": "没有一句我们认得出的限流的话",
+      "zh-TW": "沒有一句我們認得出的限流的話",
+      en: "matched our rate-limit word list",
+      ja: "当方の語句リストに載っているレート制限の文言がありませんでした",
+      ko: "우리 단어 목록에 있는 속도 제한 문구를 찾지 못했습니다",
     },
     absolutes: BACKOFF_ABSOLUTES,
   };
+
+  /**
+   * 🔴🔴 **`reg.backoff.cluster` 不许把「我们的词表没命中」说成「上游的事实」。**
+   *
+   * 这一格治的是一句实测出来的假话。上一版这条文案五语言逐字写着「上游一句限流的话都
+   * 没说」/「The upstream said nothing about rate limiting」，而**这一档存在的唯一理由**
+   *（`src/core/registrar/backoff.ts` 与 `src/core/registrar/mint.ts` 都逐字写着）是
+   *「上游改了限流文案 ⇒ 真限流被逐条读成域名屏蔽」—— 在那个场景里上游**明明说了一句
+   * 限流的话**（判据夹具里逐字是 `Slow down, mate.`），只是我们的词表没认出来。
+   * ⇒ 横幅在最该提示「可能是上游改了限流文案」的那一刻，反而明确否掉了这个方向。
+   *
+   * **它与 `reg.backoff.app` 上一轮刚裁掉的那句是同一个形状的镜像**：那次是把「我们的
+   * 判定」说成「上游的事实」，这次是把「我们的词表没命中」说成「上游的事实」。
+   *
+   * ⚠️ **反方向同样不许**：也不能写成「上游一定改了限流文案」。横幅要让运维看得出
+   * 两种可能都还开着，所以下面还查一条**双向都在场**的正向要求。
+   */
+  const CLUSTER_FALSE_UPSTREAM_FACTS: Record<(typeof LANGS)[number], readonly string[]> = {
+    "zh-CN": ["上游一句限流的话都没说", "上游一个限流字眼都没说", "上游什么都没说", "上游没提限流"],
+    "zh-TW": ["上游一句限流的話都沒說", "上游一個限流字眼都沒說", "上游什麼都沒說", "上游沒提限流"],
+    en: ["said nothing about rate limiting", "never mentioned rate limiting", "did not mention rate limiting"],
+    ja: ["レート制限について一言も述べていません", "レート制限について何も言っていません"],
+    ko: ["속도 제한에 대해 한마디도 하지 않았습니다", "속도 제한을 전혀 언급하지 않았습니다"],
+  };
+
+  /** 「两种可能都还开着」这半句在五种语言里的说法。**缺它就等于把另一个方向说死了。** */
+  const CLUSTER_BOTH_READINGS: Record<(typeof LANGS)[number], readonly string[]> = {
+    "zh-CN": ["上游换了限流的措辞", "上游真的成批换了黑名单"],
+    "zh-TW": ["上游換了限流的措辭", "上游真的成批換了黑名單"],
+    en: ["reworded its rate-limit message", "really has swapped its blocklist"],
+    ja: ["レート制限の文言を変えて", "本当にブロックリストを入れ替えた"],
+    ko: ["속도 제한 문구를 바꿔", "실제로 차단 목록을 갈아치웠"],
+  };
+
+  /**
+   * 一行文案按上面两张表查出来的问题清单，空数组 = 干净。
+   * **与 `backoffCopyProblems` 同一条纪律**：返回被点名的那几条而不是布尔，
+   * 否则「五种语言里只有简中被抓住」与「全被抓住」不可分辨。
+   */
+  function clusterFactProblems(row: Record<string, string> | undefined): string[] {
+    if (row === undefined) return ["整行不在字典里"];
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      const text = row[lang] ?? "";
+      for (const w of CLUSTER_FALSE_UPSTREAM_FACTS[lang]) {
+        if (text.includes(w)) bad.push(`${lang}: 把「我们的词表没命中」说成了上游的事实（「${w}」）`);
+      }
+      for (const w of CLUSTER_BOTH_READINGS[lang]) {
+        if (!text.includes(w)) bad.push(`${lang}: 没把两种可能都摆出来（缺「${w}」）`);
+      }
+    }
+    return bad;
+  }
 
   const dictRow = (k: string): Record<string, string> | undefined =>
     (I18N as Record<string, Record<string, string>>)[k];
@@ -932,19 +988,55 @@ describe("i18n 字典", () => {
   });
 
   /**
-   * 🔴 **cluster 那一档（评审回填新增的第三档退避）同样不许说假话，而且不许照抄 app。**
+   * 🔴 **cluster 那一档（第三档退避）同样不许说假话，而且不许照抄 app。**
    * 它是「上游改了限流文案 ⇒ 真限流被逐条读成域名屏蔽」那一档唯一会亮起来的横幅，
-   * 而那一档里上游**什么都没说** —— 面板要是照 app 那条讲「上游回话里带着『请求过于
-   * 频繁』」，就是把一句上游从没说过的话安到它头上。
+   * 而那一档里**我们的词表一个字都没命中** —— 面板要是照 app 那条讲「上游回话里带着
+   *『请求过于频繁』」，就是把一句我们根本没认出来的话说成认出来了。
    *
    * 变异：把 `reg.backoff.cluster` 的五种语言整条换成 `reg.backoff.app` 的原文
    * ⇒ 五种语言的归属句全部缺席 ⇒ 红。
    */
-  it("cluster 那条退避文案先说清上游什么都没说，再不许把换出口说成唯一出路（五语言各一格）", () => {
+  it("cluster 那条退避文案把判据归给我们自己的词表，再不许把换出口说成唯一出路（五语言各一格）", () => {
     expect(
       backoffCopyProblems(dictRow("reg.backoff.cluster"), CLUSTER_SPEC),
-      "上游一个限流字眼都没说的那一档，面板不许说成「上游在限你」",
+      "词表一个字都没命中的那一档，面板不许说成「上游在限你」",
     ).toEqual([]);
+  });
+
+  /**
+   * 🔴🔴 **承重格：cluster 那条文案不许把「我们的词表没命中」说成「上游没说」，
+   * 也不许反过来把「上游一定改了文案」说死 —— 两个方向都不许。**
+   *
+   * 全文与出处见 `CLUSTER_FALSE_UPSTREAM_FACTS` 那一段。这一格与上一格是一对：
+   * 上一格要求归属句在场，这一格禁止那句归属被顺手升级成一句上游的事实，
+   * 并要求**两种可能都写出来**。
+   *
+   * ⚠️ **反同义反复**：正向断言之后逐语言喂毒刺，两张表各喂一次 ——
+   * 判定函数写反或者哪张表在某种语言上是空的，这一格当场红。
+   */
+  it("cluster 那条退避文案不许把「我们的词表没命中」说成「上游没说」（五语言各一条毒刺）", () => {
+    const row = dictRow("reg.backoff.cluster")!;
+    expect(
+      clusterFactProblems(row),
+      "这一档要治的正是「上游改了限流文案」，说「上游没说」就是在最需要它的场景里说假话",
+    ).toEqual([]);
+
+    for (const lang of LANGS) {
+      expect(CLUSTER_FALSE_UPSTREAM_FACTS[lang].length, `${lang} 一条假上游事实都没登记`).toBeGreaterThan(0);
+      expect(CLUSTER_BOTH_READINGS[lang].length, `${lang} 一条「另一种可能」都没登记`).toBeGreaterThan(0);
+
+      // 毒刺一：把上一版那句假话拼回这一种语言 ⇒ 必须**只**点名这一种语言。
+      const w = CLUSTER_FALSE_UPSTREAM_FACTS[lang][0]!;
+      expect(clusterFactProblems({ ...row, [lang]: `${row[lang]!}${w}` }), `${lang}: 假上游事实没被点名`)
+        .toEqual([`${lang}: 把「我们的词表没命中」说成了上游的事实（「${w}」）`]);
+
+      // 毒刺二：把「另一种可能」那半句抠掉 ⇒ 同样必须**只**点名这一种语言。
+      const b = CLUSTER_BOTH_READINGS[lang][0]!;
+      expect(clusterFactProblems({ ...row, [lang]: row[lang]!.split(b).join("") }), `${lang}: 抠掉一半可能却没被点名`)
+        .toEqual([`${lang}: 没把两种可能都摆出来（缺「${b}」）`]);
+    }
+
+    expect(clusterFactProblems(undefined)).toEqual(["整行不在字典里"]);
   });
 
   /**

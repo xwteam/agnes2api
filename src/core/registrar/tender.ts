@@ -617,8 +617,8 @@ function rejectedThisRound(journal: ReturnType<typeof newJournal>): ReadonlySet<
  * `tests/unit/registrar/domain-ledger-io.test.ts`「一轮铸 5 把，registrar:domains 只被 put 一次；退避键一次都不写」按键数着 put 计数钉这条。
  *
  * ⚠️ **退避键在这里有两个来源，`p.backoffToSave` 只是其中一个**：限流那一支（`tendOnce`
- * 的 switch）与下面那一档（钳位生效 + 这一轮零产出）。两者**不叠加**——前者已经定好时
- * 后者一个字都不改，理由写在那一段里。
+ * 的 switch）与下面那一档（这一轮成片判出「域名被屏蔽」+ 这一轮零产出）。两者**不叠加**
+ * ——前者已经定好时后者一个字都不改，理由写在那一段里。
  */
 async function finishRound(p: {
   deps: TendDeps;
@@ -640,35 +640,65 @@ async function finishRound(p: {
       // 域名一个都没列出来时不动 `total`：那是「这一轮没问到」，不是「上游只有 0 个」。
       p.allDomains.length > 0 ? p.allDomains.length : null,
     );
+    /**
+     * 🔴 **这一档的形状证据，两条，取并集**。它是分类器读错文案那一档（真限流被逐条读成
+     * 域名屏蔽）能产生的**唯一**信号 —— `mintOne` 那两条限流支一次都进不去，
+     * `edge` / `app` 两档退避一个都不会写。
+     *
+     * ① `committed.discarded > 0` = 钳位生效 = **同一轮里 ≥2 个域名被判成「域名被屏蔽」**；
+     * ② `roundAllRejected` = **上游列出来的域名这一轮一个不落全试过了，而且全被判成
+     *    「域名被屏蔽」**。
+     *
+     * 🔴🔴 **② 是补上来的，它治的是一条实测出来的、对整类部署完全失效的漏洞**：
+     * 只配了一个邮箱域名的部署**永远凑不满 ① 要的那 2 个**，于是上游一改限流文案，
+     * 那种部署每一轮都打满 `mintBatch` 次注定失败的发码请求、**一个退避键都不写**。
+     * 实测（测试替身、内置值、20 轮）：逐轮请求数恒为 5、`minted` 恒为 0、退避 20 轮全是
+     * `null` ⇒ 稳态 **240 次/天**；接上 ② 之后同一份夹具是
+     * `[5,5,0,5,0,0,0,5,0,0,0,0,0,0,0,5,0,0,0,0]` ⇒ 稳态 **30 次/天**
+     *（封顶那一档每 8 轮打一次 × 5 次/轮，48 轮/天）。
+     * 判据是 `tests/unit/registrar/domain-ledger-io.test.ts` 的
+     * 「只配了一个邮箱域名 + 上游换了限流措辞：退避照样记得下来，请求量被按住」。
+     *
+     * ⚠️ **② 真正多接住的只有「上游只给出一个域名」那一种，这一点如实写出来**：上游给出
+     * ≥2 个域名时，「全试过且全被拒」意味着被拒的域名 ≥2 个 ⇒ 钳位必然生效 ⇒ ① 早就成立。
+     * 写成上面那个更一般的形状，只是因为**这一档的语义本来就该是「这一轮的候选全军覆没」**，
+     * 而不是「凑够两个」——「凑够两个」是钳位的口径，被顺手借用成了退避的口径，那次借用
+     * 就是这条漏洞的来源。
+     *
+     * ⚠️ **「一个不落全试过」这半句是承重的，不许省**：`journal` 里只有拿到过可分类回话的
+     * 域名（建不出邮箱、正文空到读不出、非域名屏蔽的非 2xx 都不进本子）。省掉它的话，
+     * 「池子快满、这一轮只开了 1 个名额、而它恰好撞上一个真被拉黑的域名」也会记退避 ——
+     * 实测：`tests/unit/registrar/domain-ledger-io.test.ts` 的
+     * 「连着 6 轮：坏域名被降下去，另外三个候选派得出去，key 照样铸得出来」那一格里，
+     * 第 0 轮就会白记一个 `cluster` 窗口（那一格逐字断言全程一个退避键都不写）。
+     *
+     * ⚠️ **不并进钳位本身**：钳位管的是「学不学这条域名结论」，改它会让单域名部署再也学不到
+     * `blocked`、`registrar.domain_blocked` 那条带着上游原话的事件再也发不出来 —— 而横幅
+     * 恰恰要运维去翻那条原话。⇒ 钳位一格都没动，只有退避的触发条件取了并集。
+     *
+     * ⚠️ **`p.minted === 0` 这个前提是承重的，不是保险起见**：这两条证据在
+     *「上游真的成批拉黑了好几个域名」时同样会成立，而那一档**这一轮照样铸得出 key**
+     *（`rejectedThisRound` 把被拒过的跨档排到最后）。那时上游明明还在给我们发号，
+     * 记退避等于自己把补池按停 —— 与限流那一支「铸出过 key 就重新起一串」同一条纪律。
+     * 反向控制在 `tests/unit/registrar/domain-ledger-io.test.ts` 的
+     * 「同一轮里两个已知能用的域名同时被拉黑：结论照旧被钳位作废，但这一轮仍然铸得出 key」
+     *（那一格逐字断言一个退避键都不写）。
+     *
+     * ⚠️ **它按的是「这一轮的形状」，不是「这一个域名以前是 ok」** —— 后者正是被拆掉的那道
+     * 保险的判据，也是那把 `at` 冻住的死锁的来源（全文见 `./mint.ts` 的 `domain_blocked`
+     * 那一支）。两者不是同一件事：这里**不中止本轮**（`mintBatch` 个名额照常轮着试不同
+     * 域名，本轮该出的 key 照出）、**不吞任何域名结论**，且一轮真铸出 key 就把整把键清掉。
+     */
+    const rejected = rejectedThisRound(p.journal);
+    const probed = new Set(p.journal.observations.map((o) => o.domain));
+    const listed = new Set(p.allDomains);
+    const roundAllRejected =
+      rejected.size > 0 && rejected.size === probed.size && probed.size === listed.size;
+    const clusterShape = committed.discarded > 0 || roundAllRejected;
+    if (toSave === undefined && p.minted === 0 && clusterShape) {
+      toSave = nextBackoff(p.backoff, "cluster", deps.now());
+    }
     if (committed.discarded > 0) {
-      /**
-       * 🔴 钳位生效了 = **同一轮里 ≥2 个域名被判成「域名被屏蔽」**。
-       * 这是本设计里**唯一与上游文案无关**的「疑似限流」证据，而分类器读错文案的那一档
-       *（真限流被逐条读成域名屏蔽）能产生的信号**只有这一个** —— `mintOne` 那两条
-       * 限流支一次都进不去，`edge` / `app` 两档退避一个都不会写。
-       *
-       * 🔴🔴 **所以它必须接上处置，不能只记一条事件。** 只记事件的代价是实测出来的，
-       * 不是推断：稳态台账 + 内置值下让上游对每个域名都回一句词表外的限流话，
-       * 五轮里每一轮都打满 `mintBatch` 次注定失败的发码请求、**一个退避键都不写**、
-       * 台账因为钳位一个字不变 ⇒ 下一轮逐字节重演。而本仓自己在
-       * `./backoff.ts` 与 `./tender.ts:510` 逐字登记着上游的行为是「窗口里每打一次就把
-       * 窗口续一次」—— 那就是把惩罚窗口一直续下去。
-       *
-       * ⚠️ **`p.minted === 0` 这个前提是承重的，不是保险起见**：钳位在
-       *「上游真的成批拉黑了好几个域名」时同样会触发，而那一档**这一轮照样铸得出 key**
-       *（`rejectedThisRound` 把被拒过的跨档排到最后）。那时上游明明还在给我们发号，
-       * 记退避等于自己把补池按停 —— 与限流那一支「铸出过 key 就重新起一串」同一条纪律。
-       * 反向控制在 `tests/unit/registrar/domain-ledger-io.test.ts` 的
-       * 「同一轮里两个已知能用的域名同时被拉黑：结论照旧被钳位作废，但这一轮仍然铸得出 key」
-       *（那一格逐字断言一个退避键都不写）。
-       *
-       * ⚠️ **它按的是「一轮里好几个域名全挂 + 零产出」这个形状，不是「这一个域名以前是 ok」**
-       * —— 后者正是被拆掉的那道保险的判据，也是那把 `at` 冻住的死锁的来源
-       *（全文见 `./mint.ts` 的 `domain_blocked` 那一支）。两者不是同一件事：
-       * 这里**不中止本轮**（`mintBatch` 个名额照常轮着试不同域名，本轮该出的 key 照出）、
-       * **不吞任何域名结论**，且一轮真铸出 key 就把整把键清掉。
-       */
-      if (toSave === undefined && p.minted === 0) toSave = nextBackoff(p.backoff, "cluster", deps.now());
       deps.logger.log({
         level: "warn", event: "registrar.domain_verdicts_discarded",
         msg: "同一轮里冒出好几个疑似「域名被屏蔽」，这更像是出口被限流而不是域名真的成批失效，"
@@ -678,6 +708,21 @@ async function finishRound(p: {
           count: committed.discarded, minted: p.minted,
           // 这一轮到底记没记退避窗口。**记的是结果不是意图**：限流那一支已经写过时
           // 这里不覆盖，字段里出现的就是那一支的截止时刻。
+          backoffUntil: toSave?.until ?? null,
+        },
+      });
+    } else if (roundAllRejected && p.minted === 0) {
+      // 上面那条事件说的是「钳位作废了几条结论」，而单域名部署下钳位压根没生效
+      //（它要 ≥2 个域名）—— 照那条事件的名字发出去就是假话。这一条说的是另一件事：
+      // **这一轮试过的候选全被拒、一把 key 都没出**，退避是按这个形状记的。
+      deps.logger.log({
+        level: "warn", event: "registrar.round_all_domains_rejected",
+        msg: "上游列出来的邮箱域名这一轮一个不落全试过了，而且全被判成「域名被屏蔽」，"
+          + "这一轮一把 key 都没铸出来；按这个形状记了一个退避窗口。两种可能都还开着："
+          + "上游换了限流的措辞、我们的词表没认出来，或者上游真的把这些域名拉黑了 "
+          + "—— 去看 registrar.domain_blocked 带的上游原话",
+        fields: {
+          listed: listed.size, probed: probed.size, rejected: rejected.size, minted: p.minted,
           backoffUntil: toSave?.until ?? null,
         },
       });

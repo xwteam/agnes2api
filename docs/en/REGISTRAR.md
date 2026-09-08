@@ -545,17 +545,44 @@ So after hitting either layer:
 - More than 4 hours after a window ended with no new hit, the exponent starts over too (the pool
   stayed full and the registrar never really ran for several rounds, say).
 
-#### The third tier: the upstream said nothing, but several domains failed together in one round
+#### The third tier: our word list matched nothing, but the round's domains failed in a cluster
 
 One rewording upstream and
 a real rate limit gets read as "domain blocked" one reply at a time — neither tier above ever
 fires, the round no longer stops early, and up to `MINT_BATCH` doomed verification requests go
 out per round. The only evidence still standing is **the shape of
-the round**: more than one domain ruled blocked within the same round while that round minted no
-keys. The registrar records a backoff window on that basis too (starting at 30 minutes, same
-exponent, same 4-hour cap), **but it does not abort the round and it swallows no domain
-verdict** — the domains due to be tried that round still get tried, and the keys due to come out
-still come out. If the round minted even one key, this tier records nothing at all.
+the round**, and it has two forms; either one counts:
+
+- more than one domain ruled blocked within the same round;
+- **or every domain the upstream lists ruled blocked in that round** (this is the one that carries
+  deployments with a single mailbox domain — they can never reach the "more than one" above).
+
+Both require that **the round minted no keys at all**. The registrar records a backoff window on
+that basis (starting at 30 minutes, same exponent, same 4-hour cap), **but it does not abort the
+round and it swallows no domain verdict** — the domains due to be tried that round still get
+tried, and the keys due to come out still come out. If the round minted even one key, this tier
+records nothing at all.
+
+#### When this tier lights up, both readings stay open
+
+> [!WARNING]
+> **Both readings are still open and the banner will not pick one for you**: the upstream
+> reworded its rate-limit message and our word list missed it, or the upstream really did
+> swap those domains into its blocklist. **Do not read it as "the upstream said nothing
+> about rate limiting"** — the headline case this tier exists for is precisely the one where the
+> upstream did say something and we failed to recognise it. The only way to tell them apart is to
+> read the upstream's own wording carried by the `registrar.domain_blocked` events.
+
+#### How much request volume the third tier leaves behind
+
+In numbers (built-in values, measured against test doubles): past the exponential cap it fires
+**once every 8 rounds, at `MINT_BATCH` = 5 verification requests each**. At one Cron round every 30 minutes that is
+48 rounds/day ÷ 8 × 5 = **about 30 per day**.
+Two figures to compare against: **before this tier caught it, every round went out in full ⇒ about
+240 per day**; and the second tier (where the upstream's wording does land in our word list) aborts
+the whole round on impact (1 per round) ⇒ **about 6 per day**.
+⇒ **30 is not 6**: this tier costs more than the second one because it does not abort the round —
+the keys due out that round still come out, and the price is the rest of that round's attempts.
 
 #### The backoff banner: the three tiers call for different actions
 
@@ -565,7 +592,7 @@ The registrar section shows a backoff banner:
 |-----------|-------------------|---------------|
 | Edge rate limit | "refills are spaced too tightly" | Raise `MINT_DELAY_MIN_MS`, or lower `MINT_BATCH` |
 | The upstream's own registration limit | "matched by our word list, not stated by the upstream" | Raise `MINT_DELAY_MIN_MS`, lower `MINT_BATCH`; change egress only once confirmed |
-| Several domains blocked in one round, nothing minted | "the upstream said nothing about rate limiting" | Read the `registrar.domain_blocked` events for the upstream's own wording first |
+| Domains blocked in a cluster, nothing minted | "nothing matched our word list; both readings stay open" | Read the `registrar.domain_blocked` events for the upstream's wording first |
 
 > [!IMPORTANT]
 > **Switching mailbox channel does not get you out of this.** The limit lives on the edge between
