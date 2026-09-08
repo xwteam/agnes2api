@@ -332,6 +332,23 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   // 收尾一次性 `commitJournal` 并只在内容真变了时才落盘。
   const provider = deps.providers[channel];
   const journal = newJournal();
+  /**
+   * **这一轮已经派出去过的域名。** 传给 `selectDomains` 做**档内**轮换。
+   *
+   * 🔴 为什么非有它不可：台账**轮内不更新**（落盘统一在收尾），而 `selectDomains` 对
+   * 「已知 ok」那一档是按 `at` 的全序排序 —— `at` 轮内不变 ⇒ 默认
+   * `MAX_DOMAIN_ATTEMPTS = 1` 时**一轮 5 个名额确定性地全落在同一个域名上**
+   *（6 分钟内 5 个账号挂在同一个域名下），而那一档的 JSDoc 逐字写着「LRU 轮换，别把一个
+   * 好域名打成上游风控的焦点」。轮换从前只发生在**轮与轮之间**，而「打成焦点」这件事
+   * 发生的正是轮内那几次连续注册。
+   *
+   * ⚠️ **它装的是「派出去的候选」而不是「真的打过的域名」，是刻意的取舍**：`mintOne`
+   * 拿到候选之后可能只用了第一个（后面的用不用取决于它自己怎么失败），而要精确知道
+   * 「真的打过哪几个」就得改 `MintOutcome` 的形状 —— 那是两个 case 都要动的公开结构。
+   * 多标几个的代价只有一条：**档内**多转几格（`maxDomainAttempts > 1` 时才可能发生），
+   * 而档与档的优先级一格都不动。
+   */
+  const usedThisRound = new Map<string, number>();
   let ledger: DomainLedger = emptyDomainLedger();
   let allDomains: string[] = [];
   if (provider !== undefined) {
@@ -405,17 +422,21 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
       // 查不出原因；这里留一条记录，让接线错误在 TendResult 里可见。
       failures.push({ reason: "provider_missing", channel });
     } else {
+      // **候选域名按台账排序，不再是「全量洗牌取前 N」。** 每个名额都重排一次：
+      // 上一个名额刚学到的结论还在 `journal` 里没落盘，但同一轮里再撞同一个坏域名
+      // 是划不来的——所以这里用 `ledger` 的排序 + `mintOne` 自己按顺序试。
+      // 第六个实参是本轮已派出去过的那些（见 `usedThisRound` 那一段）：它只在**档内**
+      // 把它们挪到后面，档与档的优先级一格都不动。
+      const candidates = selectDomains(
+        ledger, allDomains, deps.now(), deps.config.maxDomainAttempts, deps.rand, usedThisRound,
+      );
+      for (const d of candidates) usedThisRound.set(d, (usedThisRound.get(d) ?? 0) + 1);
       const out = await mintOne({
         provider,
         agnes: deps.agnes,
         tokenName: deps.config.tokenName,
         codeTimeoutMs: deps.config.codeTimeoutMs,
-        // **候选域名按台账排序，不再是「全量洗牌取前 N」。** 每个名额都重排一次：
-        // 上一个名额刚学到的结论还在 `journal` 里没落盘，但同一轮里再撞同一个坏域名
-        // 是划不来的——所以这里用 `ledger` 的排序 + `mintOne` 自己按顺序试。
-        candidates: selectDomains(
-          ledger, allDomains, deps.now(), deps.config.maxDomainAttempts, deps.rand,
-        ),
+        candidates,
         journal,
         ledger,
         now: deps.now(),
@@ -486,7 +507,19 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
             // 惩罚窗口都远比一轮长，**窗口里每打一次就把窗口续一次** ⇒ 打得越多恢复
             // 得越晚，而且那些请求一次都不可能成功。
             abortRound = true;
-            const next = nextBackoff(backoff, out.limitKind, deps.now());
+            // 🔴 **这一轮铸出过 key 就重新起一串**（`hits` 回到 1，不接着翻倍）。
+            //
+            // 从前这里无条件传 `backoff`，于是「前 4 把成功、第 5 把撞限流」这种**默认参数
+            // 下最常见的一轮**照样把 `hits` 一路推上去：连着几轮都长这样 ⇒ 15min → 30min →
+            // 1h → 2h → 4h(封顶)，而每一轮其实都在正常出 key。指数退避要治的是「越打越死」，
+            // 不是「出着 key 顺带撞了一次上限」。收尾那一支（`finishRound`）要的是
+            // **铸出过 key 且整轮一次限流都没撞到**，走到这里就说明撞过了、那一支进不来
+            // —— 两支合起来才是五语言 REGISTRAR.md 与 CHANGELOG 写的那件事：
+            // 一轮里只要铸出过 key，指数就从头数起。
+            //
+            // ⚠️ **`minted` 在这一行已经是这一轮的终值**：本支紧跟着 `abortRound = true`，
+            // 后面一个名额都不会再开始。
+            const next = nextBackoff(minted > 0 ? null : backoff, out.limitKind, deps.now());
             backoffToSave = next;
             deps.logger.log({
               level: "warn", event: "registrar.rate_limited",

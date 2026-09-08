@@ -19,8 +19,9 @@
  * 或者把语言切成别的，`classifySendCode` 的正向识别就会漏。
  * ⇒ 判死走的是**负向匹配**（「不是限流就算屏蔽」），因此必然会误判。
  * 三层东西压着这个误判，缺一层就变成静默的系统性记错：
- * ① 判死要两跳（`n >= 2`），一次误分类只让好域名短暂降权；
- * ② `commitJournal` 的**一轮最多学 1 条**钳位（与文案无关，见那里）；
+ * ① 判死要两跳（`n >= 2`）**而且两跳必须来自两轮**（同一轮里的多条观测先折叠成一条，
+ *    见 `commitJournal`），一次误分类只让好域名短暂降权；
+ * ② `commitJournal` 的**一轮最多学 1 个域名**的钳位（与文案无关，见那里）；
  * ③ `selectDomains` 全序排序**永不 filter** ⇒ 判死的域名照样在候选里，只是排最后。
  *
  * ⚠️ **我们没有见过「域名真被屏蔽」那条 400 的正文长什么样。** 这是知识空白，
@@ -91,7 +92,13 @@ export interface DomainEntry {
   s: "ok" | "blocked";
   /** 这条结论最后一次被观测到的时刻（epoch ms）。TTL 判定与 LRU 轮换都只看它。 */
   at: number;
-  /** **连续同向**观测数。方向一变就归 1，这是「判死要两跳」的载体。 */
+  /**
+   * **连续同向的轮数。** 方向一变就归 1，这是「判死要两跳」的载体。
+   *
+   * ⚠️ **数的是轮不是观测条数**：`commitJournal` 先把同一个域名在这一轮里的多条观测
+   * 折叠成一条，所以一轮之内最多 +1。**这条不是文风，是「两跳 = 两轮」的全部依据**
+   *（不折叠的话，一轮里同一个域名被拒两次就直接判死，而「两跳」压着的正是一次误分类）。
+   */
   n: number;
 }
 
@@ -243,16 +250,24 @@ export const ADDRESS_PLACEHOLDER = "<邮箱地址>";
  * 还命中就整段丢掉。** 「我们没想到的编码形态」的后果因此是**少说一句话**，
  * 不是**多漏一个地址**。
  *
+ * 🔴 **顺序是「先脱敏、后截断」，反过来会在边界上漏出地址前缀。**
+ * 从前是先 `bodySnippet` 再替换：地址正好跨在 512 那一刀上时，**前半截留在正文里**，
+ * 而回查查的是**完整**地址、查不出来 ⇒ 一个 `u0@x` 这样的前缀原样进事件。
+ * 泄漏量小，但这一段逐字写着「替换完再回头查一遍，还命中就整段丢掉」——
+ * 那句纪律在那一档从前是没做到的。现在替换打在**完整正文**上，边界上剩下的一定是
+ * 占位符的一部分，不可能是地址的任何一段。
+ *
  * ⚠️ **代价明写**：回查只查**完整地址**（含 URL 编码形态），**不查本地部分**。
  * 本地部分是邮箱通道自己生成的短串（形如 `u0`），回查它会把一大堆本来无害的正文
  * 整段丢掉，而那正是这条诊断存在的理由。这是有意取舍，不是遗漏。
  */
 export function upstreamMessage(body: string, address: string): string {
-  const snippet = bodySnippet(body);
-  if (snippet === "" || address === "") return snippet;
-  const out = snippet
+  if (address === "") return bodySnippet(body);
+  const redacted = body
     .split(address).join(ADDRESS_PLACEHOLDER)
     .split(encodeURIComponent(address)).join(ADDRESS_PLACEHOLDER);
+  const out = bodySnippet(redacted);
+  // 回查打在**真正会被写出去的那一段**上：替换本身也可能拼出新的一处命中。
   return out.includes(address) || out.includes(encodeURIComponent(address))
     ? UNSAFE_UPSTREAM_MESSAGE
     : out;
@@ -292,6 +307,15 @@ export function isKnownGood(ledger: DomainLedger, domain: string, now: number): 
  * ③ `blocked` 但已过 `BLOCK_TTL_MS`、或 `n === 1` 的「可疑」 —— 按 `at` 旧→新；
  * ④ `blocked` 且 `n >= 2` 且未过期 —— 列表末尾，同样按 `at` 旧→新。
  *
+ * ⚠️ **`at` 一轮之内不变**（台账落盘统一在收尾），所以光靠上面那四档，同一轮里的每个
+ * 名额都会拿到**同一个**域名 —— 「LRU 轮换」从前只发生在轮与轮之间，而「打成风控焦点」
+ * 这件事发生的正是轮内那几次连续注册。`used` 治的就是这一条：本轮已经派出去过的域名
+ * **在自己那一档里**排到后面。
+ *
+ * 🔴 **它只在档内生效，绝不跨档**：跨档的话「只有一个已知 ok 域名 + 一堆判死域名」这种
+ * 台账会在第二个名额上把判死的那些顶到前面 —— 那正是台账存在的理由要挡掉的事。
+ * 档内没得换时（比如全表只有一个 ok 域名）它自然退回「还是那一个」，这是对的。
+ *
  * 同档内 `at` 相同时以域名字典序兜底，好让排序在任何实现上都是确定的
  *（`Array.prototype.sort` 的稳定性只保证「相等元素保持输入顺序」，而输入顺序本身
  * 是上游返回的顺序 —— 那不是我们能断言的东西）。
@@ -302,6 +326,14 @@ export function selectDomains(
   now: number,
   limit: number,
   rand: () => number,
+  /**
+   * 本轮每个域名已经被派出去过几次。**只影响档内次序**，不改档。省略 = 谁都没派过。
+   *
+   * 用次数而不是「派过没派过」的布尔：布尔在名额数多于域名数时会退化成
+   *「p q r p p」（第四个名额之后大家都是「派过」，次序又塌回 `at`），
+   * 而次数给出的是真正的轮转「p q r p q」。
+   */
+  used?: ReadonlyMap<string, number>,
 ): string[] {
   if (allDomains.length === 0) return [];
   // 洗一次牌把「真正未知」那一档的顺序定下来，再用它当 ② 档的档内次序。
@@ -323,11 +355,15 @@ export function selectDomains(
     return {
       d,
       tier,
+      // 档内第一顺位：本轮派出去得少的排在前面。
+      spent: used?.get(d) ?? 0,
       // ② 档没有可信的 `at`（可能压根不在表里），用洗牌名次当档内次序。
       order: tier === 2 ? (shuffleRank.get(d) ?? 0) : (e?.at ?? 0),
     };
   });
-  ranked.sort((a, b) => (a.tier - b.tier) || (a.order - b.order) || (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+  ranked.sort((a, b) =>
+    (a.tier - b.tier) || (a.spent - b.spent) || (a.order - b.order)
+    || (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
   // `limit` 夹到至少 1：返回空数组会让这一次尝试连一个域名都没有，
   // 而本函数的全部价值就在于「永不返回空」。
   return ranked.slice(0, Math.max(1, Math.floor(limit))).map((r) => r.d);
@@ -369,7 +405,7 @@ export interface CommitResult {
   next: DomainLedger;
   /** 内容真的变了吗。**为假时调用方一次 put 都不许发**（写配额账那根轴）。 */
   dirty: boolean;
-  /** 被钳位整体作废的疑似 blocked 判定条数。非 0 时调用方要记一条事件。 */
+  /** 被钳位整体作废的疑似 blocked **域名数**（折叠之后，不是观测条数）。非 0 时调用方要记一条事件。 */
   discarded: number;
   /**
    * 这一轮**第二跳判死**的域名。**只有它们该记 `registrar.domain_blocked` 事件。**
@@ -399,6 +435,16 @@ export interface CommitResult {
  *（排在 unknown 之后、真判死之前，**仍会被选中**，只是优先级低）；第二次才真判死。
  * 一次 2xx 无条件覆盖回 `{s:"ok", n:1}`。
  *
+ * 🔴 **两跳 = 两轮，所以同一个域名在这一轮里的多条观测先折叠成一条**（取最后一条 =
+ * 这一轮最新的证据）。不折叠的话「两跳」在**一轮之内**就走得完：钳位数的是**域名数**
+ *（`Set`），而 `n` 从前是按**观测条数**累加的 —— 同一个域名在一轮里被拒两次 ⇒ 钳位不
+ * 触发（size 还是 1）、`n` 直接到 2 ⇒ 一轮之内从 unknown 判死并发出
+ * `registrar.domain_blocked`。而本文件头把「判死要两跳」登记为压着误判的第一层，
+ * 逐字写着「一次误分类只让好域名短暂降权」。
+ *
+ * ⚠️ **折叠之后再算钳位**：一个域名这一轮先被拒、后来又成功过，它的结论就是 `ok`，
+ * 不该再去凑「疑似 blocked 的域名数」。
+ *
  * **学得慢完全可以接受**：我们要的是记住好域名，不是记全所有坏的。
  */
 export function commitJournal(
@@ -407,11 +453,16 @@ export function commitJournal(
   now: number,
   total: number | null,
 ): CommitResult {
+  // 一轮之内同一个域名只留最后一条：`Map` 的 `set` 覆盖旧值但保留首次插入的次序。
+  const folded = new Map<string, DomainJournal["observations"][number]>();
+  for (const o of journal.observations) folded.set(o.domain, o);
+  const roundVerdicts = [...folded.values()];
+
   const blockedDomains = new Set(
-    journal.observations.filter((o) => o.verdict === "blocked").map((o) => o.domain),
+    roundVerdicts.filter((o) => o.verdict === "blocked").map((o) => o.domain),
   );
   const clamp = blockedDomains.size >= 2;
-  const applied = journal.observations.filter((o) => !(clamp && o.verdict === "blocked"));
+  const applied = roundVerdicts.filter((o) => !(clamp && o.verdict === "blocked"));
 
   const entries: Record<string, DomainEntry> = { ...ledger.entries };
   const newlyBlocked: CommitResult["newlyBlocked"] = [];

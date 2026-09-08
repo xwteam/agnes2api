@@ -32,9 +32,22 @@ export interface BackoffState {
   /** 退避到期时刻（epoch ms）。判据是 `until > now` 这一处值比较。 */
   until: number;
   kind: BackoffKind;
-  /** 这一串连续退避是从什么时候开始的。面板拿它说「已经限了多久」。 */
+  /**
+   * 这一串连续退避是从什么时候开始的。面板拿它说「已经限了多久」。
+   *
+   * ⚠️ **它同时是「这是哪一串」的身份**：`nextBackoff` 只在**重新起一串**时把它推到
+   * 当前时刻，`mergeBackoff` 靠比它大小分辨两份状态说的是不是同一串（见那里）。
+   */
   since: number;
-  /** 连续撞了几次（没有一次成功铸号打断）。指数退避的指数就是它。 */
+  /**
+   * **这一串里撞了几次。** 指数退避的指数就是它。
+   *
+   * ⚠️ **「连续」指的是「连续几轮零产出」，不是「连续几次请求」**：一轮里既铸出了 key
+   * 又撞了限流时，`./tender.ts` 会**重新起一串**（`hits` 回到 1），因为那一轮上游明明
+   * 还在给我们发号 —— 它不是「越限越死」的那种形态。判据在
+   * `tests/unit/registrar/domain-ledger-io.test.ts` 的
+   * 「同一轮里既铸出了 key 又撞上限流：退避重新起一串（hits 回到 1），不接着翻倍」。
+   */
   hits: number;
 }
 
@@ -95,41 +108,77 @@ export function retryAfterMs(state: BackoffState | null, now: number): number | 
 }
 
 /**
+ * 上一串还算不算数。**为真时 `nextBackoff` 重新起一串**（`hits` 回到 1）。
+ *
+ * 判据只有一条：**上一段退避窗口过完之后，隔了比封顶那一档还久都没再撞过。**
+ * 那时旧的 `hits` 已经不是「连续」的证据了 —— 它是几小时前那一串的残留。
+ *
+ * ⚠️ **刻意复用 `BACKOFF_MAX_MS` 当阈值，不新增第四个常量**：合法的一串里，两次撞之间
+ * 最多隔一个「上一段窗口 + 一个补池间隔」，而窗口本身封顶就是它 ⇒ 真正连续的那些串
+ * 一个都不会被这条误伤；能被它判断的只有「中间隔了半天以上」那种。加一个旋钮要付的
+ * 一整圈门禁写在文件末尾那段。
+ *
+ * **它治的是一条真实的驻留路径**：池子填满之后 `tendOnce` 在 `need <= 0` 那里就 return 了，
+ * **根本走不到收尾**（`./tender.ts` 的 `finishRound`），于是一把 `hits` 很高的退避键会
+ * 一直留在存储里；等池子再耗干时第一次撞限流就直接跳到封顶那一档。
+ */
+function streakBroken(prev: BackoffState | null, now: number): boolean {
+  return prev === null || now - prev.until > BACKOFF_MAX_MS;
+}
+
+/**
  * 撞上限流之后的下一个退避窗口。
  *
- * `hits` 数的是**连续**撞的次数：一次成功铸号会把整把键清掉（`clearBackoff`），
- * 所以它不会因为「偶尔撞一次」越滚越大。
+ * `hits` 数的是**这一串**里撞了几次。**两种情况会重新起一串**（`hits` 回到 1）：
+ * ① 调用方传 `null` —— `./tender.ts` 的 `finishRound` 上方那一段逐字写着它什么时候传：
+ *    **这一轮铸出了 key**（那一轮上游明明还在给我们发号，不是「越限越死」那种形态）；
+ * ② 上一串早就过完了（`streakBroken`）。
+ *
+ * ⚠️ **「清掉整把键」是另一回事，不在本函数里**：那是 `./tender.ts` 的
+ * `finishRound` 调 `deps.saveBackoff(null)`（一轮之内一次限流都没撞到时走这一支）。
  *
  * ⚠️ **`since` 取旧的那个**：它说的是「这一串连续限流是从什么时候开始的」，
  * 每次都刷新就等于把它变成 `until - 一个窗口`，那样面板上「已经限了多久」永远只会
- * 显示一个窗口长。
+ * 显示一个窗口长。重新起一串时它才推到当前时刻 —— `mergeBackoff` 靠这一点分辨串。
  */
 export function nextBackoff(prev: BackoffState | null, kind: BackoffKind, now: number): BackoffState {
-  const hits = (prev?.hits ?? 0) + 1;
+  const streak = streakBroken(prev, now) ? null : prev;
+  const hits = (streak?.hits ?? 0) + 1;
   const base = kind === "edge" ? EDGE_BACKOFF_MS : APP_BACKOFF_MS;
   // `2 ** (hits - 1)` 在 hits 很大时会溢出成 Infinity，先夹后乘。
   const factor = Math.min(2 ** Math.min(hits - 1, 30), Number.MAX_SAFE_INTEGER);
   const span = Math.min(base * factor, BACKOFF_MAX_MS);
-  return { until: now + span, kind, since: prev?.since ?? now, hits };
+  return { until: now + span, kind, since: streak?.since ?? now, hits };
 }
 
 /**
  * 两份退避状态合一份。**KV 没有 CAS，这把键也是读-改-写。**
  *
  * 🔴 **丢更新在这把键上最疼**：丢掉 `until` 等于退避窗口凭空消失 ⇒ 继续打 ⇒
- * 每打一次续一次窗口 ⇒ 正好回到本次要修的那个缺陷。所以合并一律取**更保守**的那个：
- * `until` / `hits` 取大的，`since` 取小的，`kind` 跟着胜出的 `until` 走。
+ * 每打一次续一次窗口 ⇒ 正好回到本次要修的那个缺陷。所以**窗口本身一律取更保守的那个**：
+ * `until` 取大的，`kind` 跟着胜出的 `until` 走。
  * 这把丢更新的后果从「覆盖」降到「取更保守的那个」，但**消灭不了它**（没有 CAS 就
  * 消灭不了），与 `pool:index` 是同一句诚实限定。
+ *
+ * ⚠️⚠️ **`hits` 不能照着 `until` 那条「取大的」办，这是一条实测出来的坑**：
+ * `nextBackoff` 重新起一串时写回来的 `hits` 是 1，而存储里那份旧的可能是 5 ——
+ * 无脑取大就把「重新起一串」在**落盘这一层**原地撤销掉，而 `tendOnce` 那一侧的判据
+ * （注入的假 `saveBackoff`）照样全绿：一份行为在两个地方各说各话。
+ * ⇒ 判据是 `since`：**它只在重新起一串时才前进**，所以 `since` 更大的那一份说的就是
+ * 更新的那一串，`hits` / `since` 整对跟着它走；两份 `since` 相同才是同一串，
+ * 那时才取 `hits` 更大的（同一串里的丢更新，仍按更保守处理）。
  */
 export function mergeBackoff(cur: BackoffState | null, next: BackoffState): BackoffState {
   if (cur === null) return next;
+  const streak = cur.since === next.since
+    ? { since: cur.since, hits: Math.max(cur.hits, next.hits) }
+    : (next.since > cur.since ? { since: next.since, hits: next.hits } : { since: cur.since, hits: cur.hits });
   const winner = cur.until >= next.until ? cur : next;
   return {
     until: Math.max(cur.until, next.until),
     kind: winner.kind,
-    since: Math.min(cur.since, next.since),
-    hits: Math.max(cur.hits, next.hits),
+    since: streak.since,
+    hits: streak.hits,
   };
 }
 

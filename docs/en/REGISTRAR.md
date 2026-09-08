@@ -497,8 +497,11 @@ reused**:
   a domain already known to work. That is why the built-in `MAX_DOMAIN_ATTEMPTS` could drop to 1.
 - The registrar section of the panel shows a line like "Domain ledger: N usable · N ruled out ·
   N to re-check · N never probed (updated …)".
-- A domain has to be rejected **twice in a row** before it sinks to the bottom of the candidate
-  list; after one rejection it is still picked, just later. One success flips it back to "usable".
+- A domain has to be rejected in **two separate rounds** before it sinks to the bottom of the
+  candidate list (**however many rejections happen inside one round, they count as one**); after
+  one such round it is still picked, just later. One success flips it back to "usable".
+
+#### Why that verdict can be wrong
 
 > [!WARNING]
 > **"Ruled out" is our verdict, not the upstream's statement.** The upstream uses the same `400`
@@ -528,8 +531,12 @@ So after hitting either layer:
 - A **backoff window** is recorded and consulted before the next round starts. **Inside the window
   not a single upstream request is sent and not a single temp mailbox is created.** The refill
   history row for it reads "Still inside the backoff window; this round never started".
-- Repeated hits stretch the backoff **exponentially** (capped at 4 hours). One successful mint
-  clears it.
+- Repeated hits stretch the backoff **exponentially** (capped at 4 hours). "Repeated" counts
+  **consecutive rounds that minted nothing**: once a round mints a key the exponent starts over —
+  if that round also hit a limit, the backoff returns to its starting step instead of doubling;
+  if it hit no limit at all, the key is cleared outright.
+- More than 4 hours after a window ended with no new hit, the exponent starts over too (the pool
+  stayed full and the registrar never really ran for several rounds, say).
 
 #### The backoff banner: the two layers call for different actions
 

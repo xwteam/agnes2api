@@ -450,7 +450,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 - **Registrar write side — this entire section only exists when
   `registrar.enabled` is true.** On a default deployment (the registrar is off), the writes
   added by this section are **0/day**, not "a few less". When it is on, every tend round pays
-  four items, **all hanging off one axis: the tend frequency** (on Worker that is the Cron in
+  five items, **all hanging off one axis: the tend frequency** (on Worker that is the Cron in
   `wrangler.toml`, `*/30 * * * *` by default = 48 rounds/day; on Node it is `TEND_INTERVAL_MS`):
   - **Tend lock**: one put + one delete per round. This item already existed before this
     change; it had simply never been written into this account.
@@ -473,15 +473,22 @@ its writes grow with request count, so the budget is "so many per day", not "so 
     **It is only written when the round actually learned something new** — in steady state
     (no verdict changes) it costs **0**. The rows below use the upper bound of 48/day; do not
     read it as "paid every round". Single key, no fan-out.
+  - **Backoff key (`registrar:backoff`)**: one get + **at most** one put per round. The round
+    that hits an upstream rate limit writes it once (recording the backoff window); a round that
+    hit no limit at all writes it once more only to clear a stale key left in storage.
+    **With no limit hit and no stale key it costs 0.** Of the three rows below, **only "every
+    round produces failure events" uses the upper bound of 48/day**: a round that hits a limit
+    necessarily produces failure events, whereas in the "every round healthy" row it is 0 —
+    once cleared, the key is empty and is never written a second time. Single key, no fan-out.
 
   > [!IMPORTANT]
-  > **Do not read these three through `EVENT_WRITES_PER_DAY` (12 per isolate per day).**
+  > **Do not read these five through `EVENT_WRITES_PER_DAY` (12 per isolate per day).**
   > That gate is built for the `fetch` path, where the premise is "one isolate serves many
   > requests, so the budget is consumed repeatedly on a long-lived instance". On the tend path
   > each round is very likely a **brand-new isolate** (Worker's `scheduled()`) that flushes once
   > in its life and carries a fresh budget every time ⇒ **on this axis that gate neither stops
   > anything nor constitutes any upper bound**. The real bound is the tend frequency itself:
-  > **tightening the Cron or lowering `TEND_INTERVAL_MS` scales all three items proportionally.**
+  > **tightening the Cron or lowering `TEND_INTERVAL_MS` scales all five items proportionally.**
 
 #### What each panel write operation costs — "only when a human clicks"
 
@@ -518,18 +525,24 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   - **Deleting one key**: 2 gets + 1 put (index) + 1 delete.
   - **Bulk disable / bulk clear-cooldown of N keys**: N gets + N puts.
   - **Bulk delete of N keys**: `N + 1` gets + **1** put (the index is written once) + N deletes.
-  - **One click on "tend now"**: a fixed **4 puts** (guard key + lock acquisition + tend
-    history + domain ledger) plus 1 delete (releasing the lock, which lives in a different
-    bucket), plus **2 more puts per key actually minted** (record + index). It is the **only
-    panel action with a daily cap**: at most **24** per day (the fourth guardrail, see
-    [REGISTRAR.md](REGISTRAR.md)) ⇒ a sustainable `24 × 4 = 96` puts/day, which on top of
-    the 368 in the third row below gives **464/day (46.4%)**; minting the default
-    `MINT_BATCH = 5` every single time gives an upper bound of `24 × 14 = 336` ⇒
-    **704/day (70.4%)**, and that row is not sustainable — your temporary-mailbox quota and
-    `TARGET_KEYS` hit their limits first. **The reason for this gate is not "it would blow the
-    budget", it is "there is no headroom"**: with only the 10-minute cooldown the bound is
-    `24 × 6 = 144` rounds/day = 576 puts, which on top of 368 is already 94.4% — and 96 of that
-    368 equals `12 × concurrent isolate count`, a number **you cannot tune yourself**.
+  - **One click on "tend now"**: the non-minting write side is a fixed **3 puts** (guard key +
+    lock acquisition + tend history) **plus at most one conditional write each for the domain
+    ledger and the backoff key ⇒ an upper bound of 5 puts**, plus 1 delete (releasing the lock,
+    which lives in a different bucket), plus **2 more puts per key actually minted**
+    (record + index). Those last two are conditional: the ledger is written only when the round
+    really learned something, the backoff key only when a rate limit was hit (or a stale one has
+    to be cleared), so a click costs **as little as 3**; the numbers below use the upper bound.
+    It is the **only panel action with a daily cap**: at most **24** per day (the fourth
+    guardrail, see
+    [REGISTRAR.md](REGISTRAR.md)) ⇒ a sustainable `24 × 5 = 120` puts/day, which on top of
+    the 416 in the third row below gives **536/day (53.6%)**; minting the default
+    `MINT_BATCH = 5` every single time gives an upper bound of `24 × 15 = 360` ⇒
+    **776/day (77.6%)**, and that row is not sustainable — your temporary-mailbox quota and
+    `TARGET_KEYS` hit their limits first. **The reason for this gate is not only "there is no
+    headroom", it is that the budget really would blow**: with only the 10-minute cooldown the
+    bound is `24 × 6 = 144` rounds/day = 720 puts, which on top of 416 is 1,136/day (113.6%) —
+    and 96 of that 416 equals `12 × concurrent isolate count`, a number **you cannot tune
+    yourself**.
   - **Saving the settings once** (`PUT /admin/api/config`): **1 put** + 3–4 gets (one
     `readAll` plus one raw read before the write, then one `readAll` to read back; when you
     save again right afterwards the previous `invalidate()` makes the config-refresh
@@ -580,13 +593,13 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   |--------|--------|------------------------|
   | **Registrar off (default)**, nobody operating | **176** | **17.6%** |
   | Registrar on, **every round healthy**, nobody operating | **320** | **32.0%** |
-  | Registrar on, **every round producing failure events**, nobody operating | **368** | **36.8%** |
+  | Registrar on, **every round producing failure events**, nobody operating | **416** | **41.6%** |
 
   > [!WARNING]
   > **None of these three is an upper bound; each is a current value.** The 96/day item equals
   > `12 × concurrent isolate count`, and that count varies with the geographic distribution of
   > your traffic — **you cannot set it yourself**. Plan headroom accordingly; do not treat 320 or
-  > 368 as a ceiling. Both rows use the upper bound where the domain ledger is written **every
+  > 416 as a ceiling. Both rows use the upper bound where the domain ledger is written **every
   > round**; in steady state it is never written, so the real figure is 48 lower.
   > The **`delete` bucket** is counted separately: the tend lock releases 48 times a day, and
   > that bucket is nearly idle today.
@@ -609,7 +622,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   **The worst case is both axes at once.** This section is about Worker + the free KV tier,
   so here is an example that is **perfectly legal in that shape**: change the Cron to
   `*/5 * * * *` ⇒ 288 rounds/day, each producing events ⇒
-  `80 + 96 + 288 + 288 + 288 + 288 = 1,328` writes/day — **already past the write quota**.
+  `80 + 96 + 288 + 288 + 288 + 288 + 288 = 1,616` writes/day — **already past the write quota**.
   The three rows above all assume the default Cron (one round every 30 minutes); **do not
   read them as constants independent of the frequency**.
 
@@ -638,17 +651,19 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   |--------|--------|------------------------|
   | **Tier-2 off (default)**, registrar off | **176** | 17.6% |
   | Tier-2 on, registrar off | **280** | 28.0% |
-  | Tier-2 on, registrar on and every round producing failure events | **472** | 47.2% |
-  | Previous row + "Tend now" clicked until the 24-per-day gate is spent | **568** | 56.8% |
+  | Tier-2 on, registrar on and every round producing failure events | **520** | 52.0% |
+  | Previous row + "Tend now" clicked until the 24-per-day gate is spent | **640** | 64.0% |
 
   > [!WARNING]
   > **Like the three columns above, this table is not an upper bound.** Read it this way:
   > **two items in this table carry a hard gate** — the 104 from Tier-2 (13 puts per instance
-  > per day, point ③ below) and the 72 from "Tend now" (24 per day, see the "clicking Tend now
-  > once" bullet above). None of the others has a gate, and what they cost depends on whoever
-  > is operating the panel. The last row assumes **no new keys are minted** (a flat 3 puts per
-  > click); minting on every click costs more, but that column hits the temporary-mailbox quota
-  > first and is not sustainable — the arithmetic is in that same bullet.
+  > per day, point ③ below) and the 120 from "Tend now" (24 per day × an upper bound of 5 per
+  > click, see the "clicking Tend now once" bullet above). None of the others has a gate, and
+  > what they cost depends on whoever is operating the panel. The last row assumes **no new keys
+  > are minted** (3 fixed puts per click plus at most one conditional write each for the domain
+  > ledger and the backoff key); minting on every click costs more, but that column hits the
+  > temporary-mailbox quota first and is not sustainable — the arithmetic is in that same
+  > bullet.
 
 <details>
 <summary><b>Click to expand: where those 13 come from (all six points matter)</b></summary>

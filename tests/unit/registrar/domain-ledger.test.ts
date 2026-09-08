@@ -91,18 +91,33 @@ describe("upstreamMessage：上游正文进事件之前先抹掉邮箱地址", (
   });
 
   /**
-   * **后置回查**：替换完再回头查一遍，还命中就整段丢掉。纪律与
-   * `src/core/registrar/url.ts` 的 `redactInMessage` 逐字同一条 ——
-   * 「我们没想到的形态」的后果是少说一句话，不是多漏一个地址。
+   * 🔴 **承重格：先脱敏、后截断。**
+   *
+   * **这一格的上一版用例名说的是反话，评审抓到，如实登记**：它当时叫「截断把地址切成
+   * 两半时整段丢掉，而不是漏半个出去」，而两条断言是 `not.toBe(UNSAFE)` +
+   * `not.toContain(完整地址)` —— 也就是**明确断言不整段丢**、只查完整地址。
+   * 那时的实现是先 `bodySnippet` 再替换，地址跨在 512 那一刀上时**前半截原样留在正文里**
+   *（实测尾巴是 `…yyyyu0@x…`，含地址前 4 个字符），而这一格照绿。
+   * 名字听着对、断言其实在守一个已知代价 —— 本仓反复登记的那一类。
+   *
+   * 变异：把实现换回 `bodySnippet(body)` 之后再 `split(address)`
+   * ⇒ 下面那条「地址的前缀一个字符都不许出现」当场红。
    */
-  it("截断把地址切成两半时整段丢掉，而不是漏半个出去", () => {
+  it("截断把地址切成两半时不漏地址前缀（脱敏先做，截断后做）", () => {
     const addr = "u0@x.test";
-    // 让地址正好跨在 512 的边界上：前半截留在 snippet 里，后半截被切掉。
+    // 让地址正好跨在 512 的边界上：先截断的话前半截会留在 snippet 里，后半截被切掉。
     const body = "y".repeat(508) + addr + "z".repeat(100);
     const out = upstreamMessage(body, addr);
-    // 截断之后完整地址已经不在里面了 —— 这一档本来就安全，回查不该误伤。
-    expect(out).not.toBe(UNSAFE_UPSTREAM_MESSAGE);
+    // ① 完整地址不在里面（这一档从前就守着）。
     expect(out).not.toContain(addr);
+    // ② **地址的任何一段都不在里面**：手写前缀字面量，不从被测输入反查。
+    expect(out).not.toContain("u0@");
+    expect(out).not.toContain("u0");
+    // ③ 不是「整段丢掉」那一档 —— 边界上剩下的是占位符的一部分，不是地址，
+    //    正文的诊断价值（那 508 个 y）照常留着。
+    expect(out).not.toBe(UNSAFE_UPSTREAM_MESSAGE);
+    expect(out.startsWith("y".repeat(508))).toBe(true);
+    expect(out).toHaveLength(513);
   });
 });
 
@@ -221,6 +236,52 @@ describe("selectDomains：好域名不可能被永久排除", () => {
     expect(selectDomains(emptyDomainLedger(), ["a", "b"], NOW, -3, () => 0)).toHaveLength(1);
   });
 
+  /**
+   * 🔴 **承重格：轮内轮换。**
+   *
+   * 台账**轮内不更新**（落盘统一在收尾），而这一档是按 `at` 的全序排序 ⇒ 不给
+   * `used` 的话，同一份台账连调几次拿到的**永远是同一个域名**。默认
+   * `MAX_DOMAIN_ATTEMPTS = 1` 时那就是「一轮 5 个名额全打同一个域名」，
+   * 而本函数的 JSDoc 逐字写着「LRU 轮换，别把一个好域名打成上游风控的焦点」。
+   *
+   * 变异：删掉排序里的 `spent` 那一项 ⇒ 三次全是 `p.test` ⇒ 红。
+   */
+  it("本轮已经派出去过的域名在自己那一档里排到后面（`at` 轮内不变，光靠它每个名额都会拿到同一个）", () => {
+    const ledger = ledgerOf({
+      "p.test": { s: "ok", at: NOW - 300, n: 1 },
+      "q.test": { s: "ok", at: NOW - 200, n: 1 },
+      "r.test": { s: "ok", at: NOW - 100, n: 1 },
+    });
+    const all = ["p.test", "q.test", "r.test"];
+    const used = new Map<string, number>();
+    const picked: string[] = [];
+    // 名额数刻意多于域名数：数的是**次数**不是「派过没派过」，所以第 4、5 个名额
+    // 要接着轮转回去，而不是塌回「谁的 at 最旧就一直是谁」。
+    for (let i = 0; i < 5; i++) {
+      const got = selectDomains(ledger, all, NOW, 1, () => 0.5, used);
+      picked.push(got[0]!);
+      for (const d of got) used.set(d, (used.get(d) ?? 0) + 1);
+    }
+    // 手写字面量：`at` 旧→新，而每挑走一个就把它挪到本档后面。
+    expect(picked).toEqual(["p.test", "q.test", "r.test", "p.test", "q.test"]);
+    // 反向控制：**不传 `used` 就是旧行为**（同一份台账连调五次全是同一个）——
+    // 这一行说明上面那几个不同的名字确实来自 `used`，不是来自别的什么。
+    expect([0, 1, 2, 3, 4].map(() => selectDomains(ledger, all, NOW, 1, () => 0.5)[0]))
+      .toEqual(["p.test", "p.test", "p.test", "p.test", "p.test"]);
+  });
+
+  it("轮换只在档内发生：一个已知 ok 的域名派出去过之后，仍排在判死的那些前面", () => {
+    const ledger = ledgerOf({
+      "good.test": { s: "ok", at: NOW - 100, n: 1 },
+      "dead.test": { s: "blocked", at: NOW - 999, n: 3 },
+    });
+    const got = selectDomains(
+      ledger, ["good.test", "dead.test"], NOW, 2, () => 0, new Map([["good.test", 3]]),
+    );
+    // 全表只剩这一个 ok 域名时，「还是它」才是对的：跨档轮换等于主动去打已知不行的域名。
+    expect(got).toEqual(["good.test", "dead.test"]);
+  });
+
   it("未知那一档真的用注入的 rand 洗牌（不是原样照抄上游返回的顺序）", () => {
     const all = ["a", "b", "c", "d"];
     const asc = selectDomains(emptyDomainLedger(), all, NOW, 4, () => 0);
@@ -278,13 +339,46 @@ describe("commitJournal", () => {
     expect(got.discarded).toBe(2);
   });
 
-  it("同一个域名在一轮里被判两次 blocked 只算一条（钳位数的是域名数，不是观测条数）", () => {
+  /**
+   * 🔴 **承重格：两跳必须来自两轮。**
+   *
+   * **这一格的上一版把一个洞固化成了「性质」，评审抓到，如实登记**：它当时断言的是
+   * `n: 2` —— 也就是「同一个域名在一轮里被拒两次就直接判死」。钳位数的是**域名数**
+   *（`Set`，size 还是 1 ⇒ 不触发），而 `n` 当时按**观测条数**累加 ⇒ **一轮之内从
+   * unknown 判死**并发出 `registrar.domain_blocked`，而
+   * `src/core/registrar/domain-ledger.ts` 的文件头逐字把「判死要两跳」登记为压着误判的
+   * 第一层、「一次误分类只让好域名短暂降权」。那一版还**不断言 `newlyBlocked`**，
+   * 于是「一轮之内就发判死事件」这件事没有任何机器守着。
+   *
+   * 可达性不是理论的：台账暖起来之后 `selectDomains` 在一轮之内会**确定性地**把同一个
+   * 域名派给每个名额（本文件里「本轮已经派出去过的域名在自己那一档里排到后面（`at` 轮内
+   * 不变，光靠它每个名额都会拿到同一个）」那一格钉着修法）。
+   *
+   * 变异：把折叠去掉（`n` 改回按观测条数累加）⇒ `n` 变 2、`newlyBlocked` 冒出一条 ⇒ 红。
+   */
+  it("同一个域名在一轮里被判两次 blocked 只算一跳：n 到 1 为止，且不发判死", () => {
     const j = newJournal();
     recordVerdict(j, "a.test", "blocked");
     recordVerdict(j, "a.test", "blocked");
     const got = commitJournal(emptyDomainLedger(), j, NOW, 374);
+    // 钳位数的是域名数，这一轮只有一个域名 ⇒ 不触发。
     expect(got.discarded).toBe(0);
-    expect(got.next.entries["a.test"]).toEqual({ s: "blocked", at: NOW, n: 2 });
+    expect(got.next.entries["a.test"]).toEqual({ s: "blocked", at: NOW, n: 1 });
+    // 第二跳只能来自下一轮 ⇒ 这一轮一条判死事件都不许有。
+    expect(got.newlyBlocked).toEqual([]);
+  });
+
+  it("一轮里同一个域名先被拒后成功 ⇒ 这一轮的结论是 ok，也不去凑钳位那个域名数", () => {
+    const j = newJournal();
+    recordVerdict(j, "a.test", "blocked", "上游那句话");
+    recordVerdict(j, "a.test", "ok");
+    recordVerdict(j, "b.test", "blocked");
+    const got = commitJournal(emptyDomainLedger(), j, NOW, 374);
+    // a 折叠成 ok（一次 2xx 是干净可靠的证据），于是「疑似 blocked 的域名」只剩 b 一个
+    // ⇒ 钳位不触发，b 照常记第一跳。
+    expect(got.discarded).toBe(0);
+    expect(got.next.entries["a.test"]).toEqual({ s: "ok", at: NOW, n: 1 });
+    expect(got.next.entries["b.test"]).toEqual({ s: "blocked", at: NOW, n: 1 });
   });
 
   it("判死要两跳：第一次只写 n=1（可疑），第二次才 n>=2 并进 newlyBlocked", () => {

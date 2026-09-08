@@ -1935,8 +1935,40 @@ BANNER='[collection-guard] ✅'
 #     （`vitest.workers.config.ts` 的 include 只收 `tests/contract/**`：
 #      新增的那一份契约测试是唯一进 workers 池的**新文件**，
 #      而 `admin-registrar.test.ts` 那 4 格本来就在那个目录里，两个池各跑一遍）。
-EXPECT_NODE_FILES=163
-EXPECT_NODE_TESTS=5052
+#
+#   ── 这一轮（评审回填：退避的「一串」怎么数 / 一轮之内学多少 / 域名轮内轮换）：**+21**，
+#      只有 node 侧那两个数动。
+#   ⚠️ 逐格写清多的是哪几格，不写净值。三个计数都是**当场量出来的**
+#      （`npx vitest run --config vitest.config.ts <单个文件>` 逐份跑一遍读 `Tests N passed`），
+#      不是照差值倒推。
+#     · `tests/unit/registrar/backoff.test.ts` **新增 13**（新文件）：
+#       在它之前 `nextBackoff` / `mergeBackoff` / `narrowBackoff` **一格直接判据都没有**，
+#       全靠 io 那份从 `tendOnce` 外面间接量。13 格 = 窗口判定与倒计时 2 格、窄化 2 格、
+#       指数/封顶/`since` 取旧的 3 格、**传 null 重新起一串** 1 格、**陈旧的一串不许接着滚**
+#       1 格、merge 4 格（其中承重的是「`since` 更大的那一份是更新的一串，`hits` 跟着它走」
+#       —— 无脑取大会把「重新起一串」在落盘那一层原地撤销掉）。
+#       **它在 `tests/unit/` 下 ⇒ 只进 node 池。**
+#     · `tests/unit/registrar/domain-ledger.test.ts` 37 → **40**（**+3**）：
+#       一轮之内档内轮换（+1）、轮换只在档内不越档（+1）、
+#       一轮里同一个域名先被拒后成功折叠成 ok（+1）。
+#       另有两格**原地重写、计数不动**：「同一个域名在一轮里被判两次 blocked」从固化
+#       `n: 2`（把一轮之内判死当成期望行为）改成钉 `n: 1` + `newlyBlocked` 为空；
+#       `upstreamMessage` 边界那格的用例名从反话（「整段丢掉」）改成它真正断言的那句，
+#       并补了「地址前缀一个字符都不许出现」。
+#     · `tests/unit/registrar/domain-ledger-io.test.ts` 15 → **20**（**+5**）：
+#       同一轮里既铸出 key 又撞限流 ⇒ 重新起一串（+1）、一轮之内同域名两次 400 只学一跳
+#       且不发判死事件（+1）、它的反向控制「第二轮才判死」（+1）、一轮 5 个名额轮着用
+#       不同域名（+1）、走 `buildTendDeps` 真接线量落盘的 `hits`（+1）。
+#     · 五语言 REGISTRAR.md / DEPLOY.md、CHANGELOG、`tend-guard.ts` 与 `backoff.ts` 的注释
+#       **一格判据都没新增**（既有的 docs-parity / docs-typography / check-i18n / check-refs
+#       直接覆盖；docs-parity 那几个数字锚点是**改值**不是加格）。
+#   变异实测（逐条真跑，记的是**实际**红了哪几格，跑完都还原并确认 `git status` 干净）：
+#     见本次报告的变异一节。
+#   ⇒ Node：5052 + 21 = **5073**；文件数 163 + 1 = **164**。
+#   ⇒ workerd 两个数一格不动：新增的三份判据全在 `tests/unit/` 下，不进 workers 池；
+#     `tests/contract/` 一格都没加。
+EXPECT_NODE_FILES=164
+EXPECT_NODE_TESTS=5073
 EXPECT_WORKERS_FILES=43
 EXPECT_WORKERS_TESTS=793
 

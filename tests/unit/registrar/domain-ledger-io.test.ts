@@ -276,6 +276,39 @@ describe("撞上限流：整轮当场停手，并记一个跨轮退避", () => {
     expect(io.savedBackoff).toEqual([{ until: NOW + 1_800_000, kind: "edge", since: NOW - 10_000, hits: 2 }]);
   });
 
+  /**
+   * 🔴 **承重格（评审回填）：一轮里既出了 key 又撞了限流，指数从头数。**
+   *
+   * 这是默认参数下**最常见的一轮形态**：`MINT_BATCH = 5`，而实测预算是「每窗口 4~6 次、
+   * 余量为零」⇒「前几把成功、最后一把撞限流」。从前收尾那两支是
+   * 「撞过限流 ⇒ 写 `nextBackoff(旧的)`」优先、「铸出来了 ⇒ 清键」殿后，于是这种一轮
+   * 照样把 `hits` 一路推上去：连着几轮都长这样 ⇒ 15min → 30min → 1h → 2h → 4h(封顶)，
+   * **而每一轮其实都在正常出 key**。五语言 REGISTRAR.md 与 CHANGELOG 逐字承诺的是相反
+   * 的那句话。
+   *
+   * 变异：把 `tender.ts` 那一行改回 `nextBackoff(backoff, …)`
+   * ⇒ 落盘的是 `hits: 4` / 2 小时 ⇒ 红。
+   */
+  it("同一轮里既铸出了 key 又撞上限流：退避重新起一串（hits 回到 1），不接着翻倍", async () => {
+    let n = 0;
+    const { deps, io } = makeDeps({
+      domains: ["b.test"],
+      over: { targetKeys: 5, mintBatch: 5 },
+      // 前两把成功，第三把撞上边缘限流。
+      sendCode: () => (++n <= 2 ? OK() : EDGE_LIMIT),
+      backoff: { until: NOW - 1, kind: "edge", since: NOW - 100_000, hits: 3 },
+    });
+
+    const out = await tendOnce(deps);
+
+    // 前置条件：这一轮**真的**铸出了 key，而且真的撞上了限流。
+    expect(out.minted).toBe(2);
+    expect(out.failures).toEqual([{ reason: "rate_limited", channel: "yyds" }]);
+    // 手写字面量：重新起一串 ⇒ 15 分钟那一档、`hits: 1`、`since` 推到此刻。
+    // 改动之前这里是 `{ until: NOW + 7_200_000, since: NOW - 100_000, hits: 4 }`。
+    expect(io.savedBackoff).toEqual([{ until: NOW + 900_000, kind: "edge", since: NOW, hits: 1 }]);
+  });
+
   it("成功铸出 key 之后把陈旧的退避键清掉（指数从头数）", async () => {
     const { deps, io } = makeDeps({
       sendCode: OK,
@@ -289,6 +322,99 @@ describe("撞上限流：整轮当场停手，并记一个跨轮退避", () => {
     const { deps, io } = makeDeps({ sendCode: OK });
     await tendOnce(deps);
     expect(io.savedBackoff).toEqual([]);
+  });
+});
+
+describe("一轮之内：域名轮着用，同一个域名最多学一跳", () => {
+  /** 从被打过的那些邮箱地址里把域名取出来 —— 「这一轮到底用到了几个不同域名」。 */
+  const domainsOf = (addresses: readonly string[]): string[] =>
+    addresses.map((a) => a.slice(a.indexOf("@") + 1));
+
+  /**
+   * 🔴 **承重格（评审回填）：一轮 5 把 key 不许全挂在同一个域名上。**
+   *
+   * 台账**轮内不更新**（落盘统一在收尾），而 `selectDomains` 对「已知 ok」那一档是按
+   * `at` 的全序排序 ⇒ 每个名额都会拿到**同一个**域名：默认间隔下 6 分钟里 5 个账号
+   * 全挂在一个域名下，而那一档的 JSDoc 逐字写着「LRU 轮换，别把一个好域名打成上游
+   * 风控的焦点」。轮换从前只发生在轮与轮之间。
+   *
+   * ⚠️ **这一格钉的是「用到了几个不同域名」，不是排序函数的返回值**：
+   * `selectDomains` 那几格量的是纯函数的列表，量不到「一轮之内实际打到哪去了」。
+   *
+   * 变异：删掉 `tender.ts` 里的 `usedThisRound`（或排序里的 `spent` 那一项）
+   * ⇒ 5 个名额全是 `p.test` ⇒ 红。
+   */
+  it("台账里有 3 个已知能用的域名时，一轮 5 个名额轮着用，不是全打同一个", async () => {
+    const { deps, verification } = makeDeps({
+      domains: ["p.test", "q.test", "r.test"],
+      over: { targetKeys: 5, mintBatch: 5 },
+      ledger: { v: 1, updatedAt: NOW - 1, total: 3, entries: {
+        "p.test": { s: "ok", at: NOW - 300, n: 1 },
+        "q.test": { s: "ok", at: NOW - 200, n: 1 },
+        "r.test": { s: "ok", at: NOW - 100, n: 1 },
+      } },
+      sendCode: OK,
+    });
+
+    const out = await tendOnce(deps);
+
+    expect(out.minted).toBe(5);
+    // 手写字面量：`at` 旧→新轮着来，第 4、5 个名额转回头。
+    expect(domainsOf(verification))
+      .toEqual(["p.test", "q.test", "r.test", "p.test", "q.test"]);
+  });
+
+  /**
+   * 🔴 **承重格（评审回填）：一轮之内不许把一个域名从「没见过」判死。**
+   *
+   * 钳位数的是**域名数**（`Set`，同一个域名撞几次都还是 1 ⇒ 不触发），而 `n` 从前是按
+   * **观测条数**累加的 ⇒ 同一个域名在一轮里被拒两次就直接 `n = 2` ⇒ **一轮之内判死**
+   * 并发出 `registrar.domain_blocked`。而
+   * `src/core/registrar/domain-ledger.ts` 的文件头把「判死要两跳」登记为压着误判的第一层、
+   * 逐字写着「一次误分类只让好域名短暂降权」。
+   *
+   * 变异：把 `commitJournal` 的折叠删掉 ⇒ `n` 变 2、事件冒出来 ⇒ 红。
+   */
+  it("一轮之内同一个域名连着两次 400：只学一跳，一条 registrar.domain_blocked 都不发", async () => {
+    const { deps, io, logger, verification } = makeDeps({
+      domains: ["x.test"],
+      over: { targetKeys: 2, mintBatch: 2, maxDomainAttempts: 1 },
+      ledger: warmLedger(1),
+      sendCode: () => DOMAIN_400,
+    });
+
+    await tendOnce(deps);
+
+    // 前置条件：这一轮真的把同一个域名打了两次（否则下面两条是白给的）。
+    expect(domainsOf(verification)).toEqual(["x.test", "x.test"]);
+    expect(io.ledger.entries["x.test"]).toEqual({ s: "blocked", at: NOW, n: 1 });
+    expect(logger.has("registrar.domain_blocked")).toBe(false);
+  });
+
+  /**
+   * **反向控制**：第二跳来自**下一轮**时照常判死并发事件 —— 上面那一格不是把整条
+   * 判死路径关掉了。
+   */
+  it("第二轮再挨一次才判死，事件这时才发", async () => {
+    const first = makeDeps({
+      domains: ["x.test"],
+      over: { targetKeys: 1, mintBatch: 1 },
+      ledger: warmLedger(1),
+      sendCode: () => DOMAIN_400,
+    });
+    await tendOnce(first.deps);
+    expect(first.io.ledger.entries["x.test"]!.n).toBe(1);
+
+    const second = makeDeps({
+      domains: ["x.test"],
+      over: { targetKeys: 1, mintBatch: 1 },
+      ledger: first.io.ledger,
+      sendCode: () => DOMAIN_400,
+    });
+    await tendOnce(second.deps);
+
+    expect(second.io.ledger.entries["x.test"]!.n).toBe(2);
+    expect(second.logger.has("registrar.domain_blocked")).toBe(true);
   });
 });
 
@@ -469,5 +595,88 @@ describe("台账落盘走的是真接线（buildTendDeps），按键数写次数
     // 手写字面量：**恰好 1 次**。把落盘挪进 for 循环之后这里会是 5。
     expect(storage.puts.get(DOMAIN_LEDGER_KEY) ?? 0).toBe(1);
     expect(storage.puts.get(REGISTRAR_BACKOFF_KEY) ?? 0).toBe(0);
+  });
+
+  /**
+   * 🔴 **承重格（评审回填）：「重新起一串」必须活着穿过落盘那一层。**
+   *
+   * `tendOnce` 那一侧的判据用的是注入的假 `saveBackoff`，**量不到 `mergeBackoff`**：
+   * 真接线上写回去要先 `get` 再 merge，而 merge 从前对 `hits` 是无脑取大 ⇒ 写回来的
+   * `hits: 1` 被存储里那份旧的 `hits: 5` 顶掉 ⇒ 承诺在真接线上原地失效，而上面那些格
+   * 照样全绿。**一份行为在两个地方各说各话，只有走真存储的这一格看得见。**
+   *
+   * 变异：把 `mergeBackoff` 的 `hits` 改回 `Math.max(cur.hits, next.hits)`
+   * ⇒ 落盘的是 `hits: 6` ⇒ 红。
+   */
+  it("真接线：同一轮里既铸出了 key 又撞上限流，落盘的 hits 是 1 不是接着翻倍", async () => {
+    let mailboxes = 0;
+    let sent = 0;
+    vi.stubGlobal("fetch", async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/api/verification")) {
+        // 前两把成功，第三把撞上边缘限流（429 + 纯文本正文）。
+        return ++sent <= 2
+          ? new Response("{}", { status: 200 })
+          : new Response("error code: 1015", { status: 429 });
+      }
+      if (url.includes("/api/user/login")) {
+        return new Response(JSON.stringify({ data: { access_token: "tok" } }), { status: 200 });
+      }
+      if (url.includes("/api/token")) {
+        return new Response(JSON.stringify({ data: { key: `sk-${mailboxes}` } }), { status: 200 });
+      }
+      if (url.includes("/v1/domains")) {
+        return new Response(JSON.stringify({ data: [{ domain: "b.test" }] }), { status: 200 });
+      }
+      if (url.includes("/v1/accounts")) {
+        mailboxes++;
+        return new Response(
+          JSON.stringify({ data: { address: `u${mailboxes}@b.test`, id: `id-${mailboxes}` } }),
+          { status: 200 },
+        );
+      }
+      if (/\/v1\/messages\/[^?]+/.test(url)) {
+        return new Response(JSON.stringify({ data: { verificationCode: "123456" } }), { status: 200 });
+      }
+      if (url.includes("/v1/messages")) {
+        return new Response(JSON.stringify({ data: [{ id: "m1" }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+
+    const storage = new KeyedCountingStorage();
+    // 存储里先摆一把「上一串已经滚到 5」的退避键（窗口早就过完了，拦不住这一轮）。
+    const before = Date.now();
+    await storage.put(REGISTRAR_BACKOFF_KEY, {
+      until: before - 1000, kind: "edge", since: before - 200_000, hits: 5,
+    });
+    // 摆夹具那一次 put 不算这一轮的账 —— 下面要数的是「这一轮写了几次」。
+    storage.puts.clear();
+
+    const deps = await buildTendDeps({
+      GATEWAY_TOKEN: "t",
+      REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k",
+      TARGET_KEYS: "5", MINT_BATCH: "5", MINT_DELAY_MIN_MS: "1", MINT_DELAY_MAX_MS: "1",
+      CODE_TIMEOUT_MS: "60000",
+    }, storage);
+    expect(deps, "接线没装起来，这一格量的就不是真接线了").not.toBeNull();
+
+    const out = await tendOnce(deps!);
+
+    // 前置条件：这一轮**真的**铸出了 key，而且真的撞上了限流。
+    expect(out.minted).toBe(2);
+    expect(out.failures).toEqual([{ reason: "rate_limited", channel: "yyds" }]);
+
+    // 写配额账里那一笔的判据：**撞上限流的那一轮，退避键恰好被 put 一次**
+    //（五语言 DEPLOY.md 按「每轮最多 1 次 ⇒ 上界 48 次/天」记账）。
+    expect(storage.puts.get(REGISTRAR_BACKOFF_KEY) ?? 0).toBe(1);
+
+    const saved = await storage.get<BackoffState>(REGISTRAR_BACKOFF_KEY);
+    expect(saved?.hits, "重新起一串被 mergeBackoff 顶掉了").toBe(1);
+    expect(saved?.kind).toBe("edge");
+    // 窗口长度回到基数那一档（15 分钟），不是 `hits: 6` 那一档的 4 小时封顶。
+    // 这里用真时钟，所以给一分钟的容差而不是等值断言。
+    expect(saved!.until).toBeGreaterThan(before + EDGE_BACKOFF_MS - 60_000);
+    expect(saved!.until).toBeLessThanOrEqual(Date.now() + EDGE_BACKOFF_MS);
   });
 });
