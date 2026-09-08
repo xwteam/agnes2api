@@ -86,10 +86,10 @@ describe("mintOne", () => {
     expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "upstream_error" });
   });
 
-  it("所有候选域名上都建不出邮箱时返回 provider_error（通道级失败，可降级到备通道）", async () => {
-    // 设计 §4.5 把「连续建邮箱失败」与「列域名失败、凭据无效」并列为通道级失败。
-    // 此前这条路径轮完后返回 domain_blocked_all，而 tender 把 domain_blocked_all
-    // 归入「换通道也没用」，备通道配了也永远不会启用。
+  it("所有候选域名上都建不出邮箱时返回 provider_error（通道级失败，不是域名问题）", async () => {
+    // 「连续建邮箱失败」与「列域名失败、凭据无效」是同一类：**这条通道现在产不出邮箱**。
+    // 此前这条路径轮完后返回 domain_blocked_all，于是日志把排障引向域名方向，
+    // 而域名一个都没问题。
     const provider = new FakeMailProvider({
       domains: ["x.test", "y.test", "z.test"],
       failCreateOn: ["x.test", "y.test", "z.test"],
@@ -99,6 +99,37 @@ describe("mintOne", () => {
     // 一个邮箱都没建出来 → 一次验证码都没发出去 → 根本没资格声称"域名全被屏蔽"。
     expect(provider.created).toEqual([]);
     expect(seen).toEqual([]);
+  });
+
+  /**
+   * ⚠️⚠️ **这一格钉的是那条 warn 说出去的**话**，不是它的 event 名。**
+   *
+   * `registrar.no_mailbox_on_any_domain` 的 msg 会渲染进面板事件板块、进容器 stdout、
+   * 进 `GET /admin/api/events/download`。它上一版写着「（可降级到备通道）」——
+   * 而两条通道改成二选一之后，`../../../src/core/registrar/tender.ts` 那个 switch
+   * 上方逐字写明「一条通道失败绝不会去碰另一条」。运维照着旧文案会等一次
+   * **永远不会发生**的自动切换，把一个要人管的故障当成自愈的故障。
+   *
+   * 与 `tests/unit/source-guards.test.ts` 的「src 下每一个 .ts 的字符串字面量里，
+   * 排名词一个都没有」互相独立：那一格扫源码文本，这一格**真跑一次 mintOne**、
+   * 从注入的 logger 里把它实际说出来的那句话读回来。源码那一格挡不住
+   * 「换个说法但意思照旧」，行为这一格挡不住「msg 是拼出来的」——两条路各补一半。
+   */
+  it("建不出邮箱那条 warn 的措辞：不许再许诺「会自动换到另一条通道」", async () => {
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({
+      domains: ["x.test"], failCreateOn: ["x.test"],
+    });
+    const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
+    await mintOne({ provider, agnes, ...BASE, logger });
+    const e = logger.entries.find((x) => x.event === "registrar.no_mailbox_on_any_domain");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    for (const w of ["备通道", "降级", "主/备"]) {
+      expect(e!.msg, `这条 warn 又开始许诺自动换通道了：${e!.msg}`).not.toContain(w);
+    }
+    // 反向控制：整句换成一句空话也能通过上面那条。它必须**说清接下来会怎样**，
+    // 否则运维只知道「失败了」，仍然不知道该不该等。
+    expect(e!.msg).toContain("不会自动改用另一条通道");
   });
 
   it("只有部分域名建不出邮箱、其余域名被上游拒(400)时仍是 domain_blocked_all（不误报通道级失败）", async () => {

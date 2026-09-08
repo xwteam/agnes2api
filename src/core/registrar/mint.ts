@@ -76,15 +76,19 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
   // 分开，只要出现过一次非 400 的非 2xx，就不能再声称"域名全被屏蔽"。
   let sawUpstreamError = false;
   // 「所有候选域名上都建不出邮箱」是**通道级**失败（凭据失效、活跃邮箱配额耗尽、
-  // 邮箱服务本身挂了），不是域名问题：设计 §4.5 与五语言用户文档都把「连续建邮箱
-  // 失败」与「列域名失败、凭据无效」并列为该降级到备通道的三种通道级失败。此前这条
-  // 路径一律 continue、轮完后返回 domain_blocked_all，而 tender 把 domain_blocked_all
-  // 归入「换通道也没用」，于是备通道明明配好了却永远不会被启用，日志还把排障引向
-  // 域名方向。用这个标记把两者分开。
+  // 邮箱服务本身挂了），不是域名问题：它与「列域名失败」「凭据无效」是同一类
+  // ——**这条通道现在产不出邮箱**。此前这条路径一律 continue、轮完后返回
+  // domain_blocked_all，于是日志把排障引向域名方向，而域名一个都没问题。
+  // 用这个标记把两者分开。
   //
-  // 复用 provider_error 而不是新增 reason：tender 对它的处置（降级到备通道）与这里
-  // 需要的完全一致，且 listDomains 失败、凭据无效走的也是同一个语义——「这条通道
-  // 现在产不出邮箱」。多一个 reason 只会让 tender 的 switch 多一支相同的分支。
+  // ⚠️⚠️ **别再照着上一版读成「该降级到备通道」。** 两条邮箱通道今天是**二选一**，
+  // 一条通道失败**绝不会**去碰另一条（`./tender.ts` 那个 switch 上方逐字写着这条，
+  // 连它的固有代价也一起登记在那里）。这里区分通道级失败与域名级失败，剩下的价值
+  // 只有一条：**把排障方向说对**（去看通道的凭据/配额/服务，而不是去看域名）。
+  //
+  // 复用 provider_error 而不是新增 reason：tender 对这几种 reason 的处置完全一致
+  //（本次名额作废、本轮下一个名额照常开始），且它们的语义本来就是同一句话。
+  // 多一个 reason 只会让 tender 的 switch 多一支相同的分支。
   let createdAny = false;
   let sawRateLimited = false;
 
@@ -200,9 +204,16 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
     // 一个邮箱都没建出来，说明连「让 Agnes 看一眼这个域名」的机会都没有过，
     // 谈不上域名被屏蔽。这条日志要能把运维引向邮箱通道（凭据/配额/服务），
     // 而不是域名。
+    //
+    // ⚠️ **msg 里不许出现「可降级到备通道」那半句。** 它是 `EVENT_RING_SIZE` 那个
+    // 事件环里的一条 warn ⇒ 会渲染进面板的事件板块、进容器 stdout、进
+    // `GET /admin/api/events/download`。两条通道改成二选一之后，这一轮乃至这一天
+    // 都不会自动换通道（`./tender.ts`），面板照着旧文案说一遍，运维就会「等它自己
+    // 切过去」而实际上永远不会切 —— 那是把一个要人管的故障说成了自愈的故障。
     deps.logger.log({
       level: "warn", event: "registrar.no_mailbox_on_any_domain",
-      msg: "候选域名上都建不出临时邮箱，按通道级失败处理（可降级到备通道）",
+      msg: "候选域名上都建不出临时邮箱，按通道级失败处理：本次名额作废，"
+        + "不会自动改用另一条通道；请去查这条通道的凭据、活跃邮箱配额与服务状态",
       fields: { candidates: candidates.length },
     });
     return { ok: false, reason: "provider_error" };

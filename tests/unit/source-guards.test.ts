@@ -288,10 +288,17 @@ function throwOwners(src: string): string[] {
  *   （`const exhaustive: never = out.reason`）。**它不是运行期校验**——正常代码路径上
  *   永远到不了，够得着它的唯一方式是给 `MintOutcome.reason` 加一个新取值而不补分支，
  *   而那在 `tsc` 那里先红。它也不在配置装载路径上（补池那一轮才跑得到）。
+ * - `fetchChannel`（`fetch.ts`）：**每一次出站请求的失败通道**，与装载路径毫无交集
+ *   （补池那一轮、或运维点「测试通道」时才跑得到）。它抛的是**替换掉的那条**
+ *   —— `fetcher.fetch` 本来就会 reject，这里只是把运行时那条**可能带着口令的**
+ *   message 换成脱敏过的（理由见 `src/core/registrar/url.ts` 的 `redactInMessage`）。
+ *   ⚠️ 它**不能**改成返回 `null` 之类的哨兵值：两个适配器与 `agnes.ts` 上下文里
+ *   「请求失败」一直是以异常表达的（`listDomains` 非 2xx 也抛），改成哨兵等于让
+ *   每一个调用点各自重新发明一次错误传播，而其中任何一处漏判都是静默的。
  *
  * 清单变长 = 有人在注册机装载路径上重新加了一处抛点，**必须在评审里显式表态**。
  */
-const REGISTRAR_THROW_EXEMPTIONS: readonly string[] = ["requireChannel", "tendOnce"];
+const REGISTRAR_THROW_EXEMPTIONS: readonly string[] = ["fetchChannel", "requireChannel", "tendOnce"];
 
 /** 这道扫描声称覆盖的写法，每一条都有探针钉着。 */
 const THROW_COVERED: ReadonlyArray<{ probe: string; expect: string }> = [
@@ -4136,5 +4143,113 @@ describe("危险区在屏幕上第几张卡：注释里说的等于源码里建�
 
   it("认不出要吵：`settingsSection` 换了写法时当场抛，不静默当成「一张卡都没有」", () => {
     expect(() => cardOrder("const somethingElse = {};")).toThrow(/抠不到/);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * ⑤ 服务端会说出口的**字符串**里，不许再出现「主 / 备」那套词
+ *
+ * ⚠️⚠️ **这一格是评审回填加的，因为它守的那件事此前一格都没有。**
+ * 两条邮箱通道改成二选一之后，仓里仍有两条**会被运维读到**的字符串在讲主备：
+ * · `src/core/registrar/mint.ts` 的 `registrar.no_mailbox_on_any_domain`：
+ *   msg 里写着「可降级到备通道」——它进事件环、进面板事件板块、进容器 stdout、
+ *   进 `GET /admin/api/events/download`。运维看到会以为「等一下会自动换过去」，
+ *   而 `src/core/registrar/tender.ts` 那个 switch 上方逐字写着**绝不会**。
+ * · `src/http/admin/handlers/config.ts` 的 `config.secret_cleared`：
+ *   msg 里让人「把依赖它的那条通道从主/备里去掉」——那个开关今天不存在。
+ * 两条都活过了两次提交、五语言文档全量复核和一整轮评审：**没有任何东西在看字符串**。
+ * DOM 那一族（`tests/ui/dom/registrar-section.test.ts` 的
+ * 「%s：注册机板块两页的整棵 DOM 里一个排名词都没有」）射程只到面板那两页，
+ * 事件文案与后端 msg 不在里面。
+ *
+ * ── 射程与它的两条边（明写，别读成「文案从此都是真的」）─────────────────────
+ * 扫的是 `src/**\/*.ts` 里**剥掉注释之后**的字符串字面量（`"…"` 与 `` `…` ``）。
+ * · **注释不在射程里**，这是刻意的：注释里正当地大量讲「从前是主备、现在不是了」，
+ *   收进来会打红一整批**正确的**历史说明，而那正是本仓反复裁定过的「扩太宽」。
+ *   注释的正确性归代码评审管。
+ * · **三种引号都在射程里**（双引号 / 单引号 / 模板串）。单引号那一支是实测补的，
+ *   经过见 `STRING_LITERAL` 上方那段 —— 第一版声称「本仓没有单引号串」，假的。
+ * · **跨行拼接的每一段各自成串**，所以 `"前半句" + "后半句"` 两段都查得到；
+ *   但一个被 `${}` 从中间劈开的排名词（`` `主${x}备` ``）抓不住 —— 由下面那格
+ *   盲点探针钉着，本仓今天没有这种写法。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 排名词表。**逐语言**：只查中文的话，将来某条英文 msg 里的
+ * `primary/fallback chain` 没有任何东西看得见。
+ * ⚠️ **不含单独的 `fallback` / 「回落」**：那两个词在别处正当地描述别的回落
+ *（`set.clear.effect.env` 讲的「回落到环境变量」就是一例），收进来是假阳性。
+ */
+const CHAIN_WORDS = [
+  "主通道", "备通道", "备用通道", "備通道", "備用通道",
+  "主/备", "主备", "主/備", "主備",
+  "primary/fallback", "primary channel", "fallback channel",
+  "主／フォールバック", "主/フォールバック", "주/대체", "주 채널", "대체 채널",
+] as const;
+
+/**
+ * 剥注释之后的三种字符串字面量。
+ *
+ * ⚠️ **单引号那一支是本轮实测补上的，不是顺手写全。** 第一版把它写成「本仓 TS 侧
+ * 没有单引号串，所以不认它零代价」，并给这句话配了一格自守探针 —— **那格当场红**：
+ * `src/http/admin/handlers/events.ts` 的 `content-disposition` 就是一处单引号串
+ *（值里带双引号，用单引号包才不用转义）。**那句「本仓没有」是假的**，散文如果没被
+ * 做成会红的断言，就会以这种形态混过去。
+ */
+const STRING_LITERAL = /"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`/g;
+
+function chainWordHits(src: string): string[] {
+  const out: string[] = [];
+  for (const m of stripComments(src).matchAll(STRING_LITERAL)) {
+    const lit = m[1] ?? m[2] ?? m[3] ?? "";
+    for (const w of CHAIN_WORDS) if (lit.includes(w)) out.push(w);
+  }
+  return out;
+}
+
+describe("服务端字符串里不许再出现主 / 备（两条通道二选一）", () => {
+  it("src 下每一个 .ts 的字符串字面量里，排名词一个都没有", () => {
+    const hits: string[] = [];
+    for (const p of walkTs("src")) {
+      // 与「裸 console」那一格同一条理由：这份生成物是逐字节内嵌的**前端文本**，
+      // 拿同一份正则去扫它抓到的是文本巧合。前端文案由 `check-i18n` 与
+      // `tests/unit/i18n-dict.test.ts` 那一族守。
+      if (p.endsWith("assets.generated.ts")) continue;
+      for (const w of chainWordHits(readFileSync(p, "utf8"))) {
+        hits.push(`${p.split("\\").join("/")} :: ${w}`);
+      }
+    }
+    expect(
+      tally(hits),
+      "服务端某条字符串又开始讲「主 / 备」了 —— 两条邮箱通道是二选一，一条失败**绝不会**"
+      + "自动换到另一条（src/core/registrar/tender.ts）。它多半会进事件板块与容器 stdout，"
+      + "运维照着它等一次永远不会发生的自动切换",
+    ).toEqual([]);
+  });
+
+  it("边界探针：这几种写法抓得住", () => {
+    // 单条 msg
+    expect(chainWordHits('msg: "按通道级失败处理（可降级到备通道）",')).toEqual(["备通道"]);
+    // 跨行拼接的第二段（真实形态：本仓的长 msg 都是 `"…" + "…"`）
+    expect(chainWordHits('msg: "前半句，"\n  + "把它从主/备里去掉。",')).toEqual(["主/备"]);
+    // 模板串
+    expect(chainWordHits("const s = `这条通道在主备链上`;")).toEqual(["主备"]);
+    // 英文侧
+    expect(chainWordHits('const s = "on the primary/fallback chain";')).toEqual(["primary/fallback"]);
+  });
+
+  it("边界探针：单引号也在射程里，注释里的提及不算", () => {
+    // 单引号：`src/http/admin/handlers/events.ts` 的 content-disposition 就是这种写法，
+    // 所以必须认它。第一版把它写成「本仓没有、故不认」——那句话经探针实测是假的。
+    expect(chainWordHits("const s = '主备';")).toEqual(["主备"]);
+    // 注释里正当地讲历史（「从前是主备」），收进射程会打红一整批正确的说明。
+    expect(chainWordHits("// 两条通道从前是主备，现在不是了\nconst x = 1;")).toEqual([]);
+    expect(chainWordHits("/* 备通道那一族旧键 */\nconst x = 1;")).toEqual([]);
+  });
+
+  it("盲点探针：被 `${}` 从中间劈开的排名词抓不住（登记在案，今天本仓没有这种写法）", () => {
+    // 写成会红的断言而不是散文：哪天有人换了更聪明的抠法，这一格会红，
+    // 提醒他回来把上面那段射程说明一起改。
+    expect(chainWordHits("const s = `主${x}备`;"), "劈开的排名词：已知盲点").toEqual([]);
   });
 });

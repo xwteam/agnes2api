@@ -3,6 +3,7 @@ import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/ty
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
 import { httpFailMessage, redactUrl } from "../core/registrar/url.js";
+import { fetchChannel } from "../core/registrar/fetch.js";
 import type { Logger } from "../ports/logger.js";
 
 /**
@@ -68,8 +69,9 @@ export class YydsProvider implements MailProvider {
     // 的接口地址时，这里拼出来的是 `…/v1/v1/domains`。错误消息里不带地址的话，
     // 运维手上只有一行「HTTP 404」，而唯一的线索恰恰是这个拼接结果。
     const url = `${this.deps.baseUrl}/v1/domains`;
-    const r = await this.deps.fetcher.fetch(url, {
-      method: "GET", headers: this.headers(), signal: this.signal(),
+    const r = await fetchChannel({
+      fetcher: this.deps.fetcher, provider: "YYDS", action: "列域名", url,
+      init: { method: "GET", headers: this.headers(), signal: this.signal() },
     });
     if (!r.ok) {
       throw new Error(httpFailMessage({
@@ -89,9 +91,12 @@ export class YydsProvider implements MailProvider {
       lp += LOCAL_PART_ALPHABET[Math.floor(rand() * LOCAL_PART_ALPHABET.length)]!;
     }
     const url = `${this.deps.baseUrl}/v1/accounts`;
-    const r = await this.deps.fetcher.fetch(url, {
-      method: "POST", headers: this.headers(), body: JSON.stringify({ localPart: lp, domain }),
-      signal: this.signal(),
+    const r = await fetchChannel({
+      fetcher: this.deps.fetcher, provider: "YYDS", action: "建邮箱", url,
+      init: {
+        method: "POST", headers: this.headers(),
+        body: JSON.stringify({ localPart: lp, domain }), signal: this.signal(),
+      },
     });
     if (!r.ok) {
       throw new Error(httpFailMessage({
@@ -165,8 +170,9 @@ export class YydsProvider implements MailProvider {
       // 是说不通的。
       let lr: Response | null;
       try {
-        lr = await this.deps.fetcher.fetch(listUrl, {
-          method: "GET", headers: this.headers(), signal: this.signal(),
+        lr = await fetchChannel({
+          fetcher: this.deps.fetcher, provider: "YYDS", action: "列消息", url: listUrl,
+          init: { method: "GET", headers: this.headers(), signal: this.signal() },
         });
       } catch {
         lr = null;
@@ -188,8 +194,9 @@ export class YydsProvider implements MailProvider {
           const dUrl = `${this.deps.baseUrl}/v1/messages/${encodeURIComponent(id)}?address=${encodeURIComponent(mailbox.address)}`;
           let dr: Response | null;
           try {
-            dr = await this.deps.fetcher.fetch(dUrl, {
-              method: "GET", headers: this.headers(), signal: this.signal(),
+            dr = await fetchChannel({
+              fetcher: this.deps.fetcher, provider: "YYDS", action: "拉消息详情", url: dUrl,
+              init: { method: "GET", headers: this.headers(), signal: this.signal() },
             });
           } catch {
             // 与非 2xx 同处置，理由见上面列表请求处的注释。
@@ -226,10 +233,10 @@ export class YydsProvider implements MailProvider {
   async deleteMailbox(mailbox: Mailbox): Promise<void> {
     const url = `${this.deps.baseUrl}/v1/accounts/${encodeURIComponent(mailbox.handle)}`;
     try {
-      const r = await this.deps.fetcher.fetch(
-        url,
-        { method: "DELETE", headers: this.headers(), signal: this.signal() },
-      );
+      const r = await fetchChannel({
+        fetcher: this.deps.fetcher, provider: "YYDS", action: "删邮箱", url,
+        init: { method: "DELETE", headers: this.headers(), signal: this.signal() },
+      });
       // 非 2xx 才是最常见的删除失败路径：404/403/500 都会让 fetch 正常 resolve，
       // 根本走不到下面的 catch。不在这里留痕的话，「邮箱正在堆积、活跃邮箱配额
       // 即将耗尽」这件事一条信号都没有——而用完即删是功能能否持续工作的前提

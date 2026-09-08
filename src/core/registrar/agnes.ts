@@ -1,5 +1,6 @@
 import type { Fetcher } from "../../ports/fetcher.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS } from "./types.js";
+import { fetchChannel } from "./fetch.js";
 
 export interface AgnesDeps {
   fetcher: Fetcher;
@@ -22,10 +23,13 @@ const timeoutSignal = () => AbortSignal.timeout(REGISTRAR_REQUEST_TIMEOUT_MS);
 /** 发验证码。**原样返回状态码不抛错**：400 表示该域名被 Agnes 屏蔽，调用方要据此换域名。 */
 export async function sendCode(deps: AgnesDeps, email: string): Promise<number> {
   const url = `${deps.platformUrl}/api/verification?email=${encodeURIComponent(email)}&purpose=register`;
-  const r = await deps.fetcher.fetch(url, {
-    method: "GET",
-    headers: { ...BASE_HEADERS, "x-user-language": "zh-CN" },
-    signal: timeoutSignal(),
+  const r = await fetchChannel({
+    fetcher: deps.fetcher, provider: "Agnes", action: "发验证码", url,
+    init: {
+      method: "GET",
+      headers: { ...BASE_HEADERS, "x-user-language": "zh-CN" },
+      signal: timeoutSignal(),
+    },
   });
   return r.status;
 }
@@ -33,11 +37,15 @@ export async function sendCode(deps: AgnesDeps, email: string): Promise<number> 
 export async function register(
   deps: AgnesDeps, email: string, password: string, code: string,
 ): Promise<boolean> {
-  const r = await deps.fetcher.fetch(`${deps.platformUrl}/api/user/register`, {
-    method: "POST",
-    headers: { ...BASE_HEADERS, "x-user-language": "zh" },
-    body: JSON.stringify({ email, password, password_confirm: password, code }),
-    signal: timeoutSignal(),
+  const r = await fetchChannel({
+    fetcher: deps.fetcher, provider: "Agnes", action: "注册",
+    url: `${deps.platformUrl}/api/user/register`,
+    init: {
+      method: "POST",
+      headers: { ...BASE_HEADERS, "x-user-language": "zh" },
+      body: JSON.stringify({ email, password, password_confirm: password, code }),
+      signal: timeoutSignal(),
+    },
   });
   return r.ok;
 }
@@ -46,11 +54,15 @@ export async function register(
 export async function login(
   deps: AgnesDeps, email: string, password: string,
 ): Promise<string | null> {
-  const r = await deps.fetcher.fetch(`${deps.platformUrl}/api/user/login`, {
-    method: "POST",
-    headers: { ...BASE_HEADERS, "x-user-language": "zh" },
-    body: JSON.stringify({ username: email, password }),
-    signal: timeoutSignal(),
+  const r = await fetchChannel({
+    fetcher: deps.fetcher, provider: "Agnes", action: "登录",
+    url: `${deps.platformUrl}/api/user/login`,
+    init: {
+      method: "POST",
+      headers: { ...BASE_HEADERS, "x-user-language": "zh" },
+      body: JSON.stringify({ username: email, password }),
+      signal: timeoutSignal(),
+    },
   });
   if (!r.ok) return null;
   // 网关超时/维护页等场景会以 200 状态返回非 JSON 正文（与 mailbox-yyds.ts 的
@@ -79,11 +91,15 @@ export async function login(
 export async function createKey(
   deps: AgnesDeps, token: string, name: string,
 ): Promise<string | null> {
-  const r = await deps.fetcher.fetch(`${deps.platformUrl}/api/token`, {
-    method: "POST",
-    headers: { ...BASE_HEADERS, "x-user-language": "zh-CN", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ name }),
-    signal: timeoutSignal(),
+  const r = await fetchChannel({
+    fetcher: deps.fetcher, provider: "Agnes", action: "建 key",
+    url: `${deps.platformUrl}/api/token`,
+    init: {
+      method: "POST",
+      headers: { ...BASE_HEADERS, "x-user-language": "zh-CN", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name }),
+      signal: timeoutSignal(),
+    },
   });
   if (!r.ok) return null;
   // 同上：非 JSON 正文按取不到 key 处理，不抛错。

@@ -394,6 +394,11 @@ describe("i18n 字典", () => {
     // `scripts/check-i18n.mjs` 里 `BANNED_PREFIXES` 上方那段。
     "set.danger.reset.",
     "set.advanced.",
+    // 评审回填：清空凭据那一区的两条文案整段在讲两条通道，却在射程外。
+    // ⚠️ 它**挡不住**当时那次真正的缺陷（那两条写的是「主/备链」= 排名词，
+    // 不是偏好词）——守排名词的是本文件里「字典全域：…一条文案里都没有「主 / 备」
+    // 排名词」那一格。两件事别混为一谈，理由见门禁那张表上方那段。
+    "set.clear.effect.",
   ] as const;
 
   it("通道相关命名空间不出现任何偏好词（含繁体变体）", () => {
@@ -630,6 +635,188 @@ describe("i18n 字典", () => {
       hits,
       `两条通道是二选一，日文文档里不许再出现主 / 备那套说法（面板用的是「${canonical}」）：\n${hits.join("\n")}`,
     ).toEqual([]);
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════
+   * ⚠️⚠️ **字典全域**：任何一条文案里都不许再出现「主 / 备」那套排名词
+   *
+   * 评审实测抓出来的形态：`set.clear.effect.channelBreaks` 与
+   * `set.clear.effect.channelIdle` 五种语言逐字还写着「这条通道就在主/备链上」
+   * 「先把这条通道从主/备里去掉」，而它们**会渲染给运维看** ——
+   * `admin-ui/js/pure/settings.mjs` 的 `clearWarning()` 返回这两个 key，
+   * `admin-ui/js/sec-settings.js` 把它塞进「清空凭据」的二次确认弹窗。
+   * 判据那一行改对了（比的是 `registrar.channel`），**只有文案没跟上**。
+   *
+   * **为什么此前没有任何东西拦得住**（两条都逐条查过）：
+   * · `scripts/check-i18n.mjs` 的 `BANNED_PREFIXES` 是**偏好词**表
+   *  （推荐/默认/おすすめ/권장…），根本不含「主 / 备」这一族 —— 就算把
+   *   `set.clear.` 收进那张表，它照样一格都不会红。
+   * · `tests/ui/dom/registrar-section.test.ts`「%s：注册机板块两页的整棵 DOM 里一个
+   *   排名词都没有」那一族是**排名词**表，但射程只到注册机板块那两页的 DOM，
+   *   **弹窗文案不在里面**，而且那张表里也没有「主/备链」这个形。
+   * ⇒ 这一格建在**整本字典**上：不挑命名空间、不挑板块。弹窗、横幅、tooltip、
+   *   将来任何一条新 key 都在射程里。
+   *
+   * ⚠️ **豁免恰好一条，写成会红的名单而不是散文**（见 `RANK_WORD_EXEMPT`）。
+   * ══════════════════════════════════════════════════════════════════════ */
+  const RANK_WORDS = [
+    "主通道", "备通道", "备用通道", "備通道", "備用通道",
+    "主/备", "主备", "主/備", "主備",
+    "primary/fallback", "primary channel", "Primary channel",
+    "fallback channel", "Fallback channel",
+    "主チャネル", "フォールバックチャネル", "予備チャネル", "副チャネル",
+    "主／フォールバック", "主/フォールバック",
+    "주/대체", "주 채널", "대체 채널", "보조 채널",
+  ] as const;
+
+  /**
+   * **唯一一条豁免，理由是它必须点名。**
+   *
+   * `set.err.legacy_fallback_ignored` 是存量迁移提示：旧的备通道键还在，本次被丢掉了。
+   * `src/core/config-errors.ts` 那个成员上方逐字写着为什么它**必须**点名到具体通道 ——
+   * 一台主通道凭据早已失效、一直靠备通道在铸 key 的部署，升级后产出会归零，
+   * 而面板每一格都显示「已配置」。**文案一旦写软成「备通道已弃用」，这就变成一次
+   * 静默的生产事故。** 它讲的是一个**已经消失的**模型，不是在教一个活着的开关。
+   */
+  const RANK_WORD_EXEMPT = ["set.err.legacy_fallback_ignored"] as const;
+
+  it("字典全域：除迁移提示那一条外，一条文案里都没有「主 / 备」排名词", () => {
+    const hits: string[] = [];
+    for (const [k, row] of Object.entries(I18N as Record<string, Record<string, string>>)) {
+      if ((RANK_WORD_EXEMPT as readonly string[]).includes(k)) continue;
+      for (const lang of LANGS) {
+        const s = row[lang] ?? "";
+        for (const w of RANK_WORDS) if (s.includes(w)) hits.push(`${k}/${lang}: ${w}`);
+      }
+    }
+    expect(
+      hits,
+      "字典里又有文案在讲「主 / 备」了 —— 两条通道是二选一，一条失败**绝不会**自动换到"
+      + "另一条。它可能出现在弹窗、横幅或 tooltip 上，那些地方 DOM 那一族看不见",
+    ).toEqual([]);
+  });
+
+  it("反向自检：那条豁免不是空气（它今天真的还在命中，且真的还在字典里）", () => {
+    // 少了这一格，豁免名单可以指着一个早就改名 / 删掉的 key 而永远不吵，
+    // 于是这条禁令对那一族**静默失效**——与 `PREFIXES` 的 `dead` 自检同一条理由。
+    for (const k of RANK_WORD_EXEMPT) {
+      const row = (I18N as Record<string, Record<string, string>>)[k];
+      expect(row, `豁免名单指着一个不存在的 key：${k}`).toBeDefined();
+      const hit = LANGS.some((lang) => RANK_WORDS.some((w) => (row![lang] ?? "").includes(w)));
+      expect(hit, `${k} 已经不含任何排名词了 —— 这条豁免该删了`).toBe(true);
+    }
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════
+   * ⚠️⚠️ **上面那一格只守 ja，另外四侧从来是空的 —— 而漏改恰恰发生在 en 与 ko。**
+   *
+   * 评审实测：「三态」那一节 zh-CN / zh-TW / ja / ko 四份都改成了「没选通道、
+   * 选中那条通道缺凭据」，**只有 `docs/en/REGISTRAR.md` 一字未动**，还在教
+   * `fallback equal to primary` —— 那个失败模式对应的错误码
+   * `fallback_equals_primary` 已经从 `src/core/config-errors.ts` 删掉了。
+   * 同一形态在 `docs/ko/DEPLOY.md` 又来一次（「주/대체 체인 위의 …」）。
+   * 而当时的提交信息写着「五语言 REGISTRAR / DEPLOY / ADMIN / API / README
+   * 逐份过了一遍」—— 那句话在这两处上不成立。
+   *
+   * ⇒ 这一格把 ja 那半张网补成五侧。**禁的是「活的指令」，不是这几个字**：
+   * 五份文档里都有大量**正当**的历史说明（「两条通道曾经是主备」「旧的备通道变量
+   * 不再参与选路」），收进射程会当场逼出一册豁免名册 —— 而本仓的裁定是
+   *「开豁免名册比没有规则更糟」。所以词表挑的是**只有在讲一个活着的主备链时才写得出来
+   * 的短语**（「链上」「chain」「체인」「連鎖」），不是「主 / 备」这两个字本身。
+   *
+   * ⚠️ **扫描前要把整份文档折平，而且要折两种。** 逐行扫会漏掉**跨行**的短语，
+   * 而 markdown 正文恰恰是按 100 列硬折行的 —— 本轮实测：HEAD 上
+   * `docs/en/DEPLOY.md` 那句 `on the / primary/fallback chain` 就骑在换行上，
+   * 逐行扫一格都不红。
+   * ⚠️⚠️ **只折成空格是不够的，这是实测打脸出来的**：本格的第一版只做
+   * `\s+ → " "`，配套的自检探针**当场红** —— 中日韩正文换行处**没有空格**，
+   * 「主/备\n链」折成空格之后变成「主/备 链」，短语反而对不上了。
+   * ⇒ 两种折法都要走：`\s+ → " "`（拉丁文，词间靠空格）与 `\s+ → ""`（中日韩，
+   * 换行处不该多出空格）。任一种命中就算命中。
+   * 代价：报不出行号，只报到文件 + 命中的短语。
+   * ══════════════════════════════════════════════════════════════════════ */
+  const BANNED_DOC_PHRASES: Record<string, readonly string[]> = {
+    "zh-CN": ["主/备链", "主备链", "主/备里", "主备里"],
+    "zh-TW": ["主/備鏈", "主備鏈", "主/備裡", "主備裡"],
+    en: ["primary/fallback chain", "fallback equal to primary", "on the chain", "on the primary/fallback"],
+    ja: ["主／フォールバックの連鎖", "主/フォールバックの連鎖", "主チャネル", "フォールバックチャネル"],
+    ko: ["주/대체 체인", "주/대체에서", "주 채널이나 대체"],
+  };
+
+  /** 折平成拉丁式（词间留空格）与中日韩式（换行处不留空格）两份，理由见上面那段。 */
+  const flatten = (text: string): [string, string] =>
+    [text.replace(/\s+/g, " "), text.replace(/\s+/g, "")];
+
+  it.each(Object.keys(BANNED_DOC_PHRASES))(
+    "docs/%s：一句「主 / 备链」式的活指令都没有（两条通道是二选一）",
+    (lang: string) => {
+      const dir = resolve("docs", lang);
+      const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
+      // 非空锚：目录读空 / 后缀写错时，下面那条 `toEqual([])` 只会更绿。
+      expect(files.length, `docs/${lang} 下一份 .md 都没读到 —— 这一格测的是空气`).toBeGreaterThan(0);
+      const hits: string[] = [];
+      for (const f of files) {
+        const flats = flatten(readFileSync(join(dir, f), "utf8"));
+        for (const w of BANNED_DOC_PHRASES[lang]!) {
+          if (flats.some((s) => s.includes(w))) hits.push(`docs/${lang}/${f} 用了「${w}」`);
+        }
+      }
+      expect(
+        hits,
+        `${lang} 的文档还在教一条活着的主 / 备链，而两条通道今天是二选一：\n${hits.join("\n")}`,
+      ).toEqual([]);
+    },
+  );
+
+  /**
+   * **反向自检：这张短语表不许有死条目、也不许把正当的历史说明扫进来。**
+   *
+   * 前半截与 `PREFIXES` 那张表的 `dead` 自检同一条理由：把 `on the chain` 打错成
+   * `on the chian`，上面那五格只会更绿。**「警报变少」与「判据认对了」长得一模一样。**
+   * 后半截钉的是射程上界：五份文档里今天确实**有**「主备 / primary/fallback」这些字
+   *（讲历史、讲旧变量名），它们必须**不被**上面那格打红 —— 少了这一句，把词表扩宽成
+   * 「主备」两个字之后这一族照样全绿，而它守的正是那件事。
+   */
+  it("反向自检：短语表每条都真的抓得住，而正当的历史说明一条都不误伤", () => {
+    /**
+     * markdown **真实**会在哪儿折行：有空格的短语只在空格处折（拉丁文），
+     * 没有空格的短语（中日韩）哪个字之间都可能折。
+     *
+     * ⚠️ **这条「真实」是本格的射程边界，不是修辞。** 第一版的探针一律从短语正中间
+     * 劈开，`primary/fallback chain` 于是被劈成 `primary/fal` + `lback chain`，
+     * 两条折法都对不上 —— **拉丁短语被从单词中间劈开时确实抓不住**，登记为已知盲区。
+     * 接受它的依据很具体：markdown 折行器不会把一个单词劈成两半。
+     */
+    const realisticBreaks = (w: string): string[] =>
+      (w.includes(" ")
+        ? [...w.matchAll(/ /g)].map((m) => m.index!)
+        : [...Array(w.length - 1).keys()].map((i) => i + 1))
+        .map((i) => `${w.slice(0, i)}\n${w.slice(w[i] === " " ? i + 1 : i)}`);
+
+    // ① 每条短语都用**跨行合成样本**证明它真的会被抓住，走的是与被测代码逐字相同的
+    //    那两条折法。少了这一步，一条永远匹配不上的死短语看起来和一条「今天零命中」
+    //    的活短语完全一样。
+    for (const [lang, words] of Object.entries(BANNED_DOC_PHRASES)) {
+      for (const w of words) {
+        // 不折行的那一份也要算进去：短句可能整条待在一行上。
+        for (const sample of [w, ...realisticBreaks(w)]) {
+          expect(
+            flatten(sample).some((s) => s.includes(w)),
+            `${lang} 的「${w}」在折行样本「${sample.replace("\n", "⏎")}」上抓不住`,
+          ).toBe(true);
+        }
+      }
+    }
+    // ② 正当的历史说明今天真的在文档里，且**不**落进射程。
+    const zhFlats = flatten(readFileSync(resolve("docs/zh-CN/REGISTRAR.md"), "utf8"));
+    expect(zhFlats[0], "zh-CN REGISTRAR 里那句「曾经是主备」没了 —— 射程上界的支点变了，回来重新评估")
+      .toContain("两条通道曾经是主备");
+    for (const w of BANNED_DOC_PHRASES["zh-CN"]!) {
+      expect(
+        zhFlats.some((s) => s.includes(w)),
+        `射程被扩宽了：正当的历史说明被「${w}」打中`,
+      ).toBe(false);
+    }
   });
 
   /**

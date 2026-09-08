@@ -163,6 +163,8 @@ const BANNED_PREFIX_CASES: ReadonlyArray<readonly [string, string, string]> = [
   // 「两条邮箱通道」却在射程外，起因与测法见门禁那张表上方那段。
   ["set.danger.reset.warn", "zh-CN", "这一步会抹掉两条邮箱通道的凭据，推荐先备份 MoeMail 那一条。"],
   ["set.advanced.warn", "en", "Change it only if you run an equivalent backend (the recommended one)."],
+  // 评审回填：清空凭据那一区（`channelBreaks` / `channelIdle` 整段在讲两条通道）。
+  ["set.clear.effect.channelBreaks", "ja", "このチャネル（推奨）をクリアします。"],
 ];
 
 /** 门禁源码里那张 `BANNED_PREFIXES`，逐字抠出来。认不出会抛，不会静默当成空表。 */

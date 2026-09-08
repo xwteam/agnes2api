@@ -1057,6 +1057,15 @@ function buildRegistrarCard(body) {
   body.appendChild(knobs);
 
   // 卡级的整句说明留在网格外面（与设置页那两句同一条规矩）：它说的是整张卡。
+  //
+  // ⚠️⚠️ **这一处是无条件的，而且必须保持无条件。** 它是「设置」分页上**唯一**
+  // 一句说「选中那条失败了也不会自动改用另一条」的话（两张子卡上的
+  // `reg.channel.idle` 说的是「另一条闲着」，不是同一件事）。把它改成条件显示，
+  // 最常见的那一档（通道已经选好）屏幕上就再也没人说这件事了。
+  // ⚠️ 同一个 key 在 `./sec-registrar.js` 还有**第二个**渲染点（「运行状态」那一页），
+  // 那边**是**有条件的（只在开着却没选通道时出现）。只读到那一处会得出相反的结论——
+  // 一次评审就是这么误判的。这一处由 `tests/ui/dom/registrar-section.test.ts` 的
+  // 「设置分页：选好通道之后，「不会自动切换」那句话仍然在屏幕上（不是空状态才出现）」钉着。
   body.appendChild(elI18n("p", "reg.emptyChannel", { class: "muted note" }));
   const channelRow = el("div", { class: "card-row" });
   // **顺序取自 `CHANNELS`**（字母序），两张子卡由同一段代码建出来 ⇒

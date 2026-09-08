@@ -429,7 +429,7 @@ The registrar is not simply on or off — there are **three** states.
 - **Disabled**: `REGISTRAR_ENABLED` is unset, or the panel toggle is off. Nothing runs, nothing is sent.
 - **Enabled**: on, and this configuration loads. Tending runs on `TEND_INTERVAL_MS` (or the Worker Cron).
 - **Enabled · not started this time**: the toggle is on, but this configuration could not be loaded
-  (no primary channel, missing credentials on the chain, fallback equal to primary, …), so it was not
+  (no channel selected, the selected channel is missing its credentials, …), so it was not
   started. **Gateway forwarding is entirely unaffected** — only the refilling stops.
 
 The third one is the easy state to misread, so it shows up in four places: the Settings banner (listing

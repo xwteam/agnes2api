@@ -1475,8 +1475,8 @@ This is a **quiet feature outage**: the registrar is optional, so when its confi
 3. The **Overview** config summary says the same on the registrar row.
 4. An `error`-level `registrar.blocked` in the events section, every round.
 
-**Fix**: fill in the fields listed in the banner on the Settings page — most often a mailbox channel on the
-selected mailbox channel is missing its API key, or no channel has been selected at all.
+**Fix**: fill in the fields listed in the banner on the Settings page — most often the selected mailbox
+channel is missing its API key, or no channel has been selected at all.
 **Saving is enough to recover; no container restart and no redeploy.**
 
 ### The panel will not open and `/admin` answers 404

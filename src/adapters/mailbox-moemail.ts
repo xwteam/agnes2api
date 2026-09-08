@@ -3,6 +3,7 @@ import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/ty
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
 import { httpFailMessage, redactUrl } from "../core/registrar/url.js";
+import { fetchChannel } from "../core/registrar/fetch.js";
 import type { Logger } from "../ports/logger.js";
 
 /**
@@ -65,8 +66,9 @@ export class MoeMailProvider implements MailProvider {
     // 地址带进错误消息，理由与 YYDS 适配器同位置那段逐字同源（两条通道完全平级：
     // 只给一条带上地址，另一条的同类故障就没人守）。
     const url = `${this.deps.baseUrl}/api/config`;
-    const r = await this.deps.fetcher.fetch(url, {
-      method: "GET", headers: this.headers(), signal: this.signal(),
+    const r = await fetchChannel({
+      fetcher: this.deps.fetcher, provider: "MoeMail", action: "列域名", url,
+      init: { method: "GET", headers: this.headers(), signal: this.signal() },
     });
     if (!r.ok) {
       throw new Error(httpFailMessage({
@@ -88,10 +90,13 @@ export class MoeMailProvider implements MailProvider {
       name += LOCAL_PART_ALPHABET[Math.floor(rand() * LOCAL_PART_ALPHABET.length)]!;
     }
     const url = `${this.deps.baseUrl}/api/emails/generate`;
-    const r = await this.deps.fetcher.fetch(url, {
-      method: "POST", headers: this.headers(),
-      body: JSON.stringify({ name, expiryTime: MAILBOX_TTL_MS, domain }),
-      signal: this.signal(),
+    const r = await fetchChannel({
+      fetcher: this.deps.fetcher, provider: "MoeMail", action: "建邮箱", url,
+      init: {
+        method: "POST", headers: this.headers(),
+        body: JSON.stringify({ name, expiryTime: MAILBOX_TTL_MS, domain }),
+        signal: this.signal(),
+      },
     });
     if (!r.ok) {
       throw new Error(httpFailMessage({
@@ -143,10 +148,11 @@ export class MoeMailProvider implements MailProvider {
       // 里同位置的注释——此前一次网络抖动就会作废整次铸 key，而验证码往往已经到了。
       let r: Response | null;
       try {
-        r = await this.deps.fetcher.fetch(
-          `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`,
-          { method: "GET", headers: this.headers(), signal: this.signal() },
-        );
+        r = await fetchChannel({
+          fetcher: this.deps.fetcher, provider: "MoeMail", action: "列消息",
+          url: `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`,
+          init: { method: "GET", headers: this.headers(), signal: this.signal() },
+        });
       } catch {
         r = null;
       }
@@ -176,10 +182,10 @@ export class MoeMailProvider implements MailProvider {
   async deleteMailbox(mailbox: Mailbox): Promise<void> {
     const url = `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`;
     try {
-      const r = await this.deps.fetcher.fetch(
-        url,
-        { method: "DELETE", headers: this.headers(), signal: this.signal() },
-      );
+      const r = await fetchChannel({
+        fetcher: this.deps.fetcher, provider: "MoeMail", action: "删邮箱", url,
+        init: { method: "DELETE", headers: this.headers(), signal: this.signal() },
+      });
       // 理由同 YYDS 适配器：非 2xx 会正常 resolve、进不了 catch，是最常见的失败
       // 路径。MoeMail 侧同样有活跃邮箱上限（数字与出处见本文件头那段），
       // 删不掉一样会把配额吃光，必须留痕。

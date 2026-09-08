@@ -1810,10 +1810,53 @@ BANNER='[collection-guard] ✅'
 #   ⇒ Node：4924 − 11 + 27 = **4940**；文件数不动（一份新文件都没加）。
 #   ⇒ workerd：774 + 4 = **778**（`admin-config` +4；`admin-registrar` 是 +1 −1 净 0），
 #     文件数不动。
+#
+#   ── 这一轮（评审回填：脱敏漏掉「请求没发出去」那一半 + 四处旧文案）：**+30 / +8**
+#   ⚠️ 三个计数都是**当场量出来的**：把每份被改过的测试文件的 HEAD 版本单独放回去跑一遍
+#      （改动前），再在工作树上跑一遍（改动后），两边都读那行 `Tests N`。
+#      ⚠️ 其中三份文件的 HEAD 版本在今天的工作树上**会红 1 格**（源码已经变了），
+#      所以读的是 `Tests 1 failed | N passed (N+1)` 里的**括号内总数**，不是 `passed` 数。
+#
+#   ── 加格：**+30**，删格 0
+#     · `tests/unit/registrar/url.test.ts` **+7**（4 → 11）：`redactInMessage` 5 格
+#       （运行时把完整 URL 写进 message／口令以另一种形态残留⇒整段丢弃／URL 解析不开
+#       ⇒整段丢弃／反向控制「没有凭据成分时原样放行」／查询串与片段）
+#       ＋ `transportFailMessage` 2 格（与 `httpFailMessage` 同构／非 Error 抛出物）。
+#     · `tests/contract/mailbox.test.ts` **+8**（12 → 20）：两条通道**各 4 格**——
+#       listDomains／createMailbox 抛出的 message 里没有口令且还说得出地址、
+#       deleteMailbox 记进事件的 `err` 字段里没有口令、
+#       ＋反向控制「pollCode 一条日志都不留，所以它那一路也漏不出口令」。
+#       **contract ⇒ 两个池子都计数**，workerd 那 +8 就是这一笔。
+#     · `tests/unit/i18n-dict.test.ts` **+8**（35 → 43）：字典全域排名词扫描 1 格
+#       ＋ 豁免自守 1 格（`set.err.legacy_fallback_ignored` 今天真的还在命中）
+#       ＋ 五语言文档短语表 5 格（`it.each`，把只守 ja 的那半张网补成五侧）
+#       ＋ 短语表反向自检 1 格（每条短语的跨行样本都抓得住 / 正当的历史说明不误伤）。
+#     · `tests/unit/source-guards.test.ts` **+4**（217 → 221）：`src/**` 字符串字面量里
+#       的排名词扫描 1 格正扫 ＋ 3 格边界与盲点探针（抓得住的写法／单引号也在射程里、
+#       注释不算／被 `${}` 劈开的抓不住）。
+#     · `tests/unit/registrar/mint.test.ts` **+1**（28 → 29）：那条 warn 的**措辞**
+#       （真跑一次 mintOne，从注入的 logger 里读它实际说出来的话）。
+#     · `tests/ui/dom/registrar-section.test.ts` **+1**（54 → 55）：设置分页上
+#       「不会自动切换」那句话在**选好通道**的那一档仍然可见且没被 `display:none` 藏起来。
+#     · `tests/unit/check-i18n.test.ts` **+1**（103 → 104）：`BANNED_PREFIXES` 新增
+#       `set.clear.effect.` 的正向格（那张表是 `it.each` 的数据源）。
+#
+#   变异实测（逐条真跑，记录的是**实际**红了哪几格，跑完都还原并确认 `git status` 干净）：
+#     · 去掉 `redactInMessage` 的后置回查（只做替换）⇒ **只红 1**（「另一种形态残留」那格）；
+#     · 两个适配器的 listDomains / createMailbox / deleteMailbox 三处绕开 `fetchChannel`
+#       退回裸 `fetcher.fetch` ⇒ 红 6（两条通道 × 三格），`pollCode` 那两格照绿；
+#     · 把 `mint.ts` 那条 msg 与 `config.ts` 那条 msg 的旧文案写回去 ⇒ 红 2
+#       （源码字符串扫描 1 格，一次报出两个落点；行为那格 1）；
+#     · 把两条 `set.clear.effect.*` 的旧文案 + `docs/en/REGISTRAR.md` + `docs/ko/DEPLOY.md`
+#       的旧文案一起写回去 ⇒ 红 3（字典全域 1 + docs/en 1 + docs/ko 1）；
+#     · 把设置分页那句「不会自动切换」改成 `display:none` ⇒ **只红 1**。
+#   ⇒ Node：4940 + 30 = **4970**；文件数不动（一份新测试文件都没加）。
+#   ⇒ workerd：778 + 8 = **786**（只有 `tests/contract/mailbox.test.ts` 那一笔进 workers 池，
+#     `vitest.workers.config.ts` 的 include 只收 `tests/contract/**`），文件数不动。
 EXPECT_NODE_FILES=160
-EXPECT_NODE_TESTS=4940
+EXPECT_NODE_TESTS=4970
 EXPECT_WORKERS_FILES=42
-EXPECT_WORKERS_TESTS=778
+EXPECT_WORKERS_TESTS=786
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

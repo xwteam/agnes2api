@@ -208,3 +208,86 @@ runDeleteFailureContract(
   (fetch, logger) => new MoeMailProvider({ fetcher: { fetch }, baseUrl: "https://m.test", apiKey: "k", ...makeClock(), logger }),
   { address: "u1@a.test", handle: "eid-1" },
 );
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * baseUrl 带 userinfo：**请求根本没发出去**的那一半，口令不许跟着错误往外走
+ *
+ * ⚠️⚠️ **这一族守的是上一版零覆盖的那一半。** 此前 `src/core/registrar/url.ts` 的脱敏
+ * 只落在适配器 `if (!r.ok)` 那一支上 —— 而 baseUrl 带 userinfo 时那一支**一行都不执行**：
+ * undici 在**构造 Request 的那一步**就抛 `TypeError`，message 里带着完整的原始 URL。
+ * 那条 Error 一路穿到 `src/core/registrar/mint.ts` 的 `registrar.list_domains_failed`
+ * 与 `src/http/admin/handlers/registrar.ts` 的 `registrar.channel_test_failed`，
+ * 于是口令原样进事件板块、进 `GET /admin/api/events/download`、进容器 stdout。
+ *
+ * ⚠️ **替身的 message 是从真机抄回来的**（本机 Node v24.15.0 实跑 `fetch()` 拿到的
+ * 逐字模板），不是想象出来的形状 —— 这一格的全部效力都建立在这句话上。
+ * 用假 fetcher 而不是真 fetch，是因为判据要能在 workerd 上跑同一份。
+ * ══════════════════════════════════════════════════════════════════════════ */
+const CRED_SENTINEL = "sentinelsecretpassword";
+const CRED_BASE = `https://sentineluser:${CRED_SENTINEL}@h.invalid/v1`;
+
+/** 真机形态：**构造期**就抛，且把原样 URL 写进自己的 message。 */
+function credentialRejectingFetch() {
+  return async (url: string) => {
+    throw new TypeError(
+      `Request cannot be constructed from a URL that includes credentials: ${url}`,
+    );
+  };
+}
+
+function runCredentialLeakContract(
+  name: string,
+  make: (fetch: (url: string, init: RequestInit) => Promise<Response>, logger: ReturnType<typeof recordingLogger>) => MailProvider,
+  mailbox: Mailbox,
+) {
+  describe(`${name}: baseUrl 里的口令不许跟着「请求没发出去」的错误跑出来`, () => {
+    it("listDomains 抛出的 message 里没有口令，但还说得出打的是哪个地址", async () => {
+      const p = make(credentialRejectingFetch(), recordingLogger());
+      await expect(p.listDomains()).rejects.toThrow();
+      const msg = await p.listDomains().catch((e: unknown) => (e as Error).message);
+      expect(msg).not.toContain(CRED_SENTINEL);
+      // 后半截同样是判据：把 message 整段换成一句「失败了」也能通过上面那条，
+      // 而那会让「HTTP 404 却查不出为什么」那个故障重新变得查不出来。
+      expect(msg).toContain("***@h.invalid");
+    });
+
+    it("createMailbox 同样（POST 那一支不是靠 GET 那一支顺带守住的）", async () => {
+      const p = make(credentialRejectingFetch(), recordingLogger());
+      const msg = await p.createMailbox("a.test").catch((e: unknown) => (e as Error).message);
+      expect(msg).not.toContain(CRED_SENTINEL);
+      expect(msg).toContain("***@h.invalid");
+    });
+
+    it("deleteMailbox 不抛错，但它记进事件的 err 字段里也没有口令", async () => {
+      // 这一条是**日志落点**上的判据：deleteMailbox 自己吞掉异常并把 `err.message`
+      // 塞进 `fields.err`，那正是口令进事件板块的一条现成通道。
+      const logger = recordingLogger();
+      const p = make(credentialRejectingFetch(), logger);
+      await expect(p.deleteMailbox(mailbox)).resolves.toBeUndefined();
+      const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
+      expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+      expect(JSON.stringify(e)).not.toContain(CRED_SENTINEL);
+    });
+
+    it("pollCode 一条日志都不留，所以它那一路也漏不出口令", async () => {
+      // 反向控制：它不是靠脱敏守住的，是靠「整个吞掉、什么都不记」守住的
+      //（理由见两个适配器 pollCode 上方那段）。写清楚免得下一个人以为这里也包了一层。
+      const logger = recordingLogger();
+      const p = make(credentialRejectingFetch(), logger);
+      expect(await p.pollCode(mailbox, 5000)).toBeNull();
+      expect(logger.entries, "pollCode 开始留痕了 —— 那就得回去看它记的是不是脱敏过的").toEqual([]);
+    });
+  });
+}
+
+runCredentialLeakContract(
+  "YydsProvider",
+  (fetch, logger) => new YydsProvider({ fetcher: { fetch }, baseUrl: CRED_BASE, apiKey: "k", ...makeClock(), logger }),
+  { address: "u1@a.test", handle: "acct-u1" },
+);
+
+runCredentialLeakContract(
+  "MoeMailProvider",
+  (fetch, logger) => new MoeMailProvider({ fetcher: { fetch }, baseUrl: CRED_BASE, apiKey: "k", ...makeClock(), logger }),
+  { address: "u1@a.test", handle: "eid-1" },
+);

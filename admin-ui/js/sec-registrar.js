@@ -250,6 +250,14 @@ function renderStatus() {
 
   // 空状态：**只在注册机开着却一条通道都没选时出现**。
   // 注册机整个关着时不显示它——那时该说的是「已关闭」，而不是催人去选通道。
+  //
+  // ⚠️⚠️ **`reg.emptyChannel` 有两个渲染点，只读到这一个会得出相反的结论。**
+  // 这里是「运行状态」那一页的 status 卡，**有条件**；另一处在
+  // `./sec-settings.js` 的 `buildRegistrarCard()`（「设置」分页走的那条路），
+  // 那边是 `body.appendChild(...)`、**一行 display 都不碰，无条件显示**。
+  // 一次评审就是只看了这一处，据此断言「这句话不在设置页、也不是无条件显示」——
+  // 两条都不成立。设置分页那一档由 `tests/ui/dom/registrar-section.test.ts` 的
+  // 「设置分页：选好通道之后，「不会自动切换」那句话仍然在屏幕上（不是空状态才出现）」钉着。
   nodes.emptyChannel.style.display = s.enabled === true && s.channel === null ? "" : "none";
 
   nodes.locked.textContent = s.lockedUntil === null

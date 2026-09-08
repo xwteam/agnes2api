@@ -1078,6 +1078,72 @@ describe("面板上说不出主 / 备（两条通道二选一）", () => {
   });
 
   /**
+   * ⚠️⚠️ **「失败也不会自动切过去」这句话，在最常见的那一档也必须在屏幕上。**
+   *
+   * 最常见的一档是「通道已经选好了」（`enabled=true` + `channel` 非空）。那一档下，
+   * 两张凭据子卡上只有 `reg.channel.idle`「未使用：填了也不会被用到，但可以先配好，
+   * 随时切过来」—— 那句话说的是「另一条闲着」，**不是**「这条失败了也不会自动切」。
+   * 承载后一句的是卡级的 `reg.emptyChannel`（「…另一条填了也不会被用到，
+   * **也不会自动切换**」）。
+   *
+   * ⚠️ **这一格是评审回填加的，而它加进来的直接原因是一次误判 —— 值得写清楚，
+   * 免得下一个人沿着同一条路再走一遍：** 评审断言「`reg.emptyChannel` 不在设置页、
+   * 也不是无条件显示」，依据是 `admin-ui/js/sec-registrar.js` 里那处
+   * `style.display = s.enabled === true && s.channel === null ? "" : "none"`。
+   * **那是它的第二个渲染点**（注册机板块「运行状态」那一页的 status 卡），
+   * 确实是有条件的。而「设置」分页走的是另一条路：`registrarConfigPanel.init()`
+   *（`admin-ui/js/sec-settings.js`）→ `buildRegistrarCard()` → 无条件
+   * `body.appendChild(elI18n("p", "reg.emptyChannel", …))`，**一行 display 都不碰**。
+   * 同一个 key 两个渲染点、两套显示条件 —— 只读到一个就会得出相反的结论。
+   * ⇒ 把「它在设置分页上、且无条件」做成会红的断言，不再靠人去读第二遍。
+   */
+  it("设置分页：选好通道之后，「不会自动切换」那句话仍然在屏幕上（不是空状态才出现）", async () => {
+    const h = await bootPanel({
+      now: NOW,
+      store: { [KEY_STORE]: TOKEN, [SAVED_AT_STORE]: String(NOW - 1000) },
+      respond: (url: string) => (url.startsWith("/admin/api/config")
+        ? ok({
+          fields: {
+            "registrar.enabled": { stored: true, env: null, effective: true, lockedBy: null },
+            // **选好了通道**——正是评审认为「这一句不会出现」的那一档。
+            "registrar.channel": { stored: "yyds", env: null, effective: "yyds", lockedBy: null },
+          },
+          credentials: {}, configDegraded: false, loadBlocked: [], loadNotices: [],
+          editable: ["registrar.channel"], secrets: [], resetBlocked: [],
+          propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
+        })
+        : ok(statusBody())),
+    });
+    await settle();
+    h.dom.document.querySelectorAll(".nav-item")
+      .find((b) => b.getAttribute("data-section") === "registrar")!
+      .click();
+    await settle();
+    const section = h.section("registrar");
+    section.walk().find((n) => n.getAttribute("id") === "reg-tab-settings")!.click();
+    await settle(12);
+    const panel = section.walk().find((n) => n.getAttribute("id") === "reg-panel-settings")!;
+
+    const sentence = I18N["reg.emptyChannel"]!["zh-CN"]!;
+    // ① 这句话的**内容**必须真的在讲「不会自动切换」——不然下面两条钉的是一句空话。
+    expect(sentence, "reg.emptyChannel 不再讲「不会自动切换」了 —— 这一格的载重理由变了")
+      .toContain("也不会自动切换");
+    // ② 它在设置分页的 DOM 里。
+    expect(
+      panel.textContent.includes(sentence),
+      "选好通道之后，设置分页上没有任何一句话说「失败也不会自动改用另一条」",
+    ).toBe(true);
+    // ③ 而且**没有被藏起来**：`textContent` 连 display:none 的节点也照收，
+    //    少了这一条，把它改成条件显示之后上面那条照样绿。
+    const node = panel.walk().find((n) => n.textContent === sentence);
+    expect(node, "找不到承载这句话的那个节点 —— 抠法变了，先回来看这一格").toBeDefined();
+    expect(
+      node!.style?.display ?? "",
+      "这句话被藏起来了 —— 那就等于「选好通道的那一档」上它根本不存在",
+    ).not.toBe("none");
+  });
+
+  /**
    * **字典里那一族旧 key 真的没了。**
    * 与上面那一族互相独立：那一族查屏幕上的字，这一格查字典里的键。
    * 只删引用不删键时 `scripts/check-i18n.mjs` 第 ④ 条也会独立红一次，两条路互不依赖。

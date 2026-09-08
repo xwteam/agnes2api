@@ -337,8 +337,12 @@ export async function buildApp(
  * Cron 那条路在 Node 上确实不传（`src/entry/node.ts`）；但手动这条路在 Node 上同样
  * 传，因为「一次点击最多跑多久」是**这颗按钮自己的**性质，不是运行时的性质——
  * 两侧不同就等于同一颗按钮在两种部署下能铸出不同把数，而那个差异没有任何人会去断言。
- * 代价：Node 上手动补池可能比定时轮少铸几把（判据是 `codeTimeoutMs × 通道数`），
+ * 代价：Node 上手动补池可能比定时轮少铸几把（判据是 `codeTimeoutMs`），
  * 下一次定时轮会接着补。
+ * ⚠️ **这里从前还乘着一个「通道数」，本轮是第四处订正。** 两条通道改成二选一之后
+ * 没有第二次等待了，那个因子整个消失 —— 另外三处是 `src/core/registrar/tender.ts`
+ * 的 `worstAttemptMs`、`src/core/registrar/config.ts` 的最坏耗时告警、
+ * 与 `wrangler.toml` 的 Cron 间隔估算段。**四处同源，改一处就得四处一起改。**
  *
  * ⚠️ **残余风险如实登记**：预算把「跑不完的尝试」挡在门外，**它不消灭泄漏，只把概率
  * 压下来**。平台仍可能在预算窗口之内中止调用，`mintOne` 的 `finally` 仍可能不跑。

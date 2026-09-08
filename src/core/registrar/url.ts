@@ -21,6 +21,12 @@
  * `config-provenance.ts` 里那条禁令（「不要用关键词启发式去兜底，那是一张手写词表」）
  * 逐字管着这种场合。
  *
+ * ⚠️ **本文件覆盖的是「我们自己写的那句话」和「运行时写的那句话」两半。**
+ * `redactUrl` / `httpFailMessage` 管前一半（地址由我们拼进去）；
+ * `redactInMessage` / `transportFailMessage` 管后一半（`fetch` 没发出去时，
+ * **运行时**把完整 URL 写进了它自己的 message）。**只做前一半等于没做**：
+ * baseUrl 带 userinfo 时前一半的代码路径压根不执行，理由见 `redactInMessage`。
+ *
  * ── 零 IO ─────────────────────────────────────────────────────────────────
  * 本文件在 `src/core/` 下：纯字符串函数，没有时间、没有随机、没有网络、没有环境。
  */
@@ -72,6 +78,84 @@ export function redactUrl(raw: string): string {
 }
 
 /**
+ * `redactInMessage` 认不出、因而**整段丢弃**时的固定占位串。
+ *
+ * ⚠️ **丢的是别人写的那段文字，不是整条诊断。** 调用方（`channelFailMessage`）
+ * 无论如何都会把 `(${method} ${redactUrl(url)})` 拼在后面，所以「打的是哪个地址」
+ * 这条线索一直都在；被丢掉的只是运行时自己那句话。
+ */
+export const UNSAFE_MESSAGE = "<原始错误消息里仍有凭据成分，已整段丢弃>";
+
+/** 把一个 URL 里**会带凭据的那几段**抠出来；解析不开时返回 `null`（= 认不出来）。 */
+function urlSecrets(raw: string): string[] | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  // `search` / `hash` 去掉前导的 `?` / `#` 再比：运行时的消息里可能只嵌了值那一段。
+  return [u.username, u.password, u.search.slice(1), u.hash.slice(1)].filter((s) => s !== "");
+}
+
+/**
+ * 把**运行时自己写的**一句错误消息变成可以安全写进日志的形态。
+ *
+ * ── 它守的是哪个洞（实测出来的，不是推断）────────────────────────────────
+ *
+ * `redactUrl` / `httpFailMessage` 只覆盖「请求发出去了、上游回了个非 2xx」那一半。
+ * **另一半是 `fetch` 压根没发出去**：baseUrl 带 userinfo 时，undici 在**构造
+ * Request 的那一步**就抛 `TypeError`，而它的 message 里带着**完整的原始 URL**——
+ * 本机 Node v24.15.0 实测逐字：
+ *   `Request cannot be constructed from a URL that includes credentials: https://user:pass@…`
+ * 这条 Error 一路穿到 `./mint.ts` 的 `fields: { err: errMsg(err) }` 与
+ * `src/http/admin/handlers/registrar.ts` 的 `registrar.channel_test_failed`，
+ * 于是口令原样进事件板块、进容器 stdout ——正是本文件头点名要防的那两个出口。
+ * 适配器里 `if (!r.ok)` 那一支根本没跑到，脱敏被整个绕过。
+ *
+ * ── 它凭什么敢说自己挡住了 ────────────────────────────────────────────────
+ *
+ * **不是靠「把认识的形态替换掉」，是靠一条后置条件**：替换完之后再回头查一遍，
+ * 只要还有任何一段凭据留在输出里，**整段丢掉**（`UNSAFE_MESSAGE`）。
+ * ⇒ 「我们没想到的形态」的后果是**少说一句话**，不是**多漏一把口令**。
+ * 反过来写（只做替换、不做回查）时，一个被运行时重新编码过的 URL 就能整串漏出去，
+ * 而门禁全绿——那正是本文件上一版的形状。
+ *
+ * ⚠️ **代价明写**：URL 解析不开时 `urlSecrets` 返回 `null` ⇒ **无条件整段丢弃**。
+ * 此时我们连「哪几段是凭据」都说不出来，任何放行都是在赌。诊断不会因此断掉：
+ * `UNPARSEABLE_URL` 本身就是一条完整结论（见本文件头那段），调用方照样拼得出来。
+ *
+ * ⚠️ **另一半代价**：口令恰好是一个在别处也会自然出现的短串（`1`、`a=1`）时，
+ * 回查会命中一句**本来无害**的消息并把它整段丢掉。这是刻意选的方向——
+ * 假阳性只让人少看到一句话，假阴性会把口令贴进 issue。
+ */
+export function redactInMessage(msg: string, url: string): string {
+  const secrets = urlSecrets(url);
+  if (secrets === null) return UNSAFE_MESSAGE;
+  // `split`/`join` 而不是 `replace`：后者只换第一处，而 undici 那句话里 URL 出现一次、
+  // 别的运行时可能出现两次（「构造 X 失败」+「原始输入 X」）。
+  const out = msg.split(url).join(redactUrl(url));
+  return secrets.some((s) => out.includes(s)) ? UNSAFE_MESSAGE : out;
+}
+
+/**
+ * 通道请求失败时**唯一**的消息模板：`<通道> <动作>失败: <原因> (<方法> <脱敏地址>)`。
+ *
+ * **两半失败共用它**是有意的：「发得出去但回了 404」与「压根没发出去」在日志里
+ * 长同一个样，运维不必先分辨自己撞上的是哪一半才知道去哪儿看地址。
+ * 上一版只有前一半有模板，后一半直接裸搬运行时的 message ——**脱敏因此只做了一半**。
+ */
+function channelFailMessage(p: {
+  provider: string;
+  action: string;
+  method: string;
+  url: string;
+  reason: string;
+}): string {
+  return `${p.provider} ${p.action}失败: ${p.reason} (${p.method} ${redactUrl(p.url)})`;
+}
+
+/**
  * 通道请求非 2xx 时的统一错误消息模板，形如
  * `YYDS 列域名失败: HTTP 404 (GET https://maliapi.215.im/v1/v1/domains)`。
  *
@@ -96,5 +180,24 @@ export function httpFailMessage(p: {
   url: string;
   status: number;
 }): string {
-  return `${p.provider} ${p.action}失败: HTTP ${p.status} (${p.method} ${redactUrl(p.url)})`;
+  return channelFailMessage({ ...p, reason: `HTTP ${p.status}` });
+}
+
+/**
+ * 通道请求**根本没发出去**时的统一错误消息模板，形如
+ * `YYDS 列域名失败: Request cannot be constructed … https://***@h/v1 (GET https://***@h/v1)`。
+ *
+ * `cause` 是运行时抛出来的那个 Error，**它的 message 不可信**（见 `redactInMessage`），
+ * 所以先过一遍脱敏再拼。原始 Error **不挂成 `cause`**：`errMsg()` 只读 `message`，
+ * 挂上去谁都不会读，却让口令继续在进程里跟着这条 Error 走。
+ */
+export function transportFailMessage(p: {
+  provider: string;
+  action: string;
+  method: string;
+  url: string;
+  cause: unknown;
+}): string {
+  const raw = p.cause instanceof Error ? p.cause.message : String(p.cause);
+  return channelFailMessage({ ...p, reason: redactInMessage(raw, p.url) });
 }
