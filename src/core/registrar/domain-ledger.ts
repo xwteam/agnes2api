@@ -323,6 +323,25 @@ export function isKnownGood(ledger: DomainLedger, domain: string, now: number): 
  * 台账会在第二个名额上把判死的那些顶到前面 —— 那正是台账存在的理由要挡掉的事。
  * 档内没得换时（比如全表只有一个 ok 域名）它自然退回「还是那一个」，这是对的。
  *
+ * ── `failed`：**本轮已经被上游明确拒过的域名，排到全表最后，这一条跨档** ──────
+ *
+ * 🔴 **它与 `used` 刻意不同档：`used` 只管档内，`failed` 压过 `tier`。**
+ * 理由是实测出来的一个归零场景：`commitJournal` 的**一轮最多学 1 条**钳位在
+ *「同一轮里两个已知 ok 的域名同时被上游拉黑」时会把两条结论**整体作废** ⇒ 台账一个字
+ * 都不变 ⇒ 下一轮的排序与这一轮逐字节相同 ⇒ 每一轮都把全部名额喂给那两个坏域名，
+ * 补池归零直到那两条 `ok` 过 `OK_TTL_MS`（7 天）。
+ * 光靠档内轮换救不了它：那两个域名**自己就是第一档**，档内怎么转都轮不到第二档的域名。
+ * ⇒ 这一条必须跨档。
+ *
+ * ⚠️ **它只活在这一轮的内存里，一个字都不落盘**：`failed` 由 `./tender.ts` 从本轮的
+ * `DomainJournal` 现算（同一个域名以**最后一条**观测为准，先被拒后来又成功的不算）。
+ * 所以它**不可能**把一个好域名永久降权 —— 下一轮它从空集重新开始。
+ * 这也是它敢跨档、而 `used` 不敢的全部原因：`used` 表达的是「派出去过」（噪声），
+ * `failed` 表达的是「上游这一轮当着面拒了它」（证据）。
+ *
+ * ⚠️ **全表都失败时它自然退化**：所有域名的 `failed` 都为真 ⇒ 这一项对次序毫无影响，
+ * 排序原样落回四档。**永不返回空**那条性质一格都不动。
+ *
  * 同档内 `at` 相同时以域名字典序兜底，好让排序在任何实现上都是确定的
  *（`Array.prototype.sort` 的稳定性只保证「相等元素保持输入顺序」，而输入顺序本身
  * 是上游返回的顺序 —— 那不是我们能断言的东西）。
@@ -341,6 +360,11 @@ export function selectDomains(
    * 而次数给出的是真正的轮转「p q r p q」。
    */
   used?: ReadonlyMap<string, number>,
+  /**
+   * 本轮已经被上游明确拒过（`blocked`）的域名。**这一项跨档，压过 `tier`。**
+   * 省略 = 这一轮还没人被拒过。理由与边界见本函数说明里 `failed` 那一段。
+   */
+  failed?: ReadonlySet<string>,
 ): string[] {
   if (allDomains.length === 0) return [];
   // 洗一次牌把「真正未知」那一档的顺序定下来，再用它当 ② 档的档内次序。
@@ -361,6 +385,8 @@ export function selectDomains(
     const e = ledger.entries[d];
     return {
       d,
+      // **跨档的那一项排在最前**：本轮已经被上游当面拒过的，一律让到全表最后。
+      rejected: failed?.has(d) === true ? 1 : 0,
       tier,
       // 档内第一顺位：本轮派出去得少的排在前面。
       spent: used?.get(d) ?? 0,
@@ -369,7 +395,7 @@ export function selectDomains(
     };
   });
   ranked.sort((a, b) =>
-    (a.tier - b.tier) || (a.spent - b.spent) || (a.order - b.order)
+    (a.rejected - b.rejected) || (a.tier - b.tier) || (a.spent - b.spent) || (a.order - b.order)
     || (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
   // `limit` 夹到至少 1：返回空数组会让这一次尝试连一个域名都没有，
   // 而本函数的全部价值就在于「永不返回空」。

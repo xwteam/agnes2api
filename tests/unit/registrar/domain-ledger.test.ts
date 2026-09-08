@@ -282,6 +282,50 @@ describe("selectDomains：好域名不可能被永久排除", () => {
     expect(got).toEqual(["good.test", "dead.test"]);
   });
 
+  /**
+   * 🔴 **承重格：`failed` 跨档，`used` 不跨档 —— 这条不对称是这一族的全部要点。**
+   *
+   * 上一格刚钉完「派出去过**不**跨档」；这一格用**同一个台账形态**换成 `failed`，
+   * 结论必须相反。两格并排才说得清那条不对称：`used` 表达的是「派出去过」（噪声），
+   * `failed` 表达的是「上游这一轮当着面拒了它」（证据）。
+   *
+   * 它救的是一个实测出来的归零场景：`commitJournal` 的一轮最多学 1 条钳位会在
+   *「同一轮里两个已知 ok 的域名同时被拉黑」时把两条结论整体作废 ⇒ 台账不变 ⇒
+   * 下一轮排序逐字节相同。档内轮换救不了它（那两个域名自己就是第一档），必须跨档。
+   * 端到端那一格是 `tests/unit/registrar/domain-ledger-io.test.ts`
+   * 「同一轮里两个已知能用的域名同时被拉黑：结论照旧被钳位作废，但这一轮仍然铸得出 key」。
+   *
+   * 变异：把 `selectDomains` 排序里的 `rejected` 那一项删掉 ⇒ `good.test` 又排回第一 ⇒ 红。
+   */
+  it("本轮被上游拒过的域名跨档排到最后：连「没试过」的都排在它前面", () => {
+    const ledger = ledgerOf({ "good.test": { s: "ok", at: NOW - 100, n: 1 } });
+    const all = ["good.test", "fresh.test"];
+    // 反向控制先摆出来：不传 `failed` 时它是第一档、稳稳排第一。
+    expect(selectDomains(ledger, all, NOW, 2, () => 0))
+      .toEqual(["good.test", "fresh.test"]);
+    // 传了 `failed` ⇒ 它让到全表最后，第二档那个从没试过的顶上来。
+    expect(selectDomains(ledger, all, NOW, 2, () => 0, undefined, new Set(["good.test"])))
+      .toEqual(["fresh.test", "good.test"]);
+  });
+
+  /**
+   * ⚠️ **反向控制：全表都被拒过时，`failed` 对次序毫无影响 —— 排序原样落回四档。**
+   * 「永不返回空」那条结构性性质一格都不动，`failed` 不许在那种局面下自造一套新次序。
+   */
+  it("全表都被拒过时次序与不传 failed 逐字相同（不制造第二套排序）", () => {
+    const ledger = ledgerOf({
+      "good.test": { s: "ok", at: NOW - 100, n: 1 },
+      "dead.test": { s: "blocked", at: NOW - 999, n: 3 },
+    });
+    const all = ["good.test", "dead.test"];
+    const none = selectDomains(ledger, all, NOW, 2, () => 0);
+    const allFailed = selectDomains(
+      ledger, all, NOW, 2, () => 0, undefined, new Set(all),
+    );
+    expect(allFailed).toEqual(none);
+    expect(allFailed).toEqual(["good.test", "dead.test"]);
+  });
+
   it("未知那一档真的用注入的 rand 洗牌（不是原样照抄上游返回的顺序）", () => {
     const all = ["a", "b", "c", "d"];
     const asc = selectDomains(emptyDomainLedger(), all, NOW, 4, () => 0);

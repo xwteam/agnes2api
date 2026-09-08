@@ -427,8 +427,11 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
       // 是划不来的——所以这里用 `ledger` 的排序 + `mintOne` 自己按顺序试。
       // 第六个实参是本轮已派出去过的那些（见 `usedThisRound` 那一段）：它只在**档内**
       // 把它们挪到后面，档与档的优先级一格都不动。
+      // 第七个是本轮**已经被上游当面拒过**的那些（见 `rejectedThisRound`）：它**跨档**，
+      // 因为救的正是「第一档里的域名全坏了，档内怎么转都轮不到第二档」那个归零场景。
       const candidates = selectDomains(
         ledger, allDomains, deps.now(), deps.config.maxDomainAttempts, deps.rand, usedThisRound,
+        rejectedThisRound(journal),
       );
       for (const d of candidates) usedThisRound.set(d, (usedThisRound.get(d) ?? 0) + 1);
       const out = await mintOne({
@@ -578,6 +581,32 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
     skipped: false, available, attempted, minted, mintedByChannel, failures,
     at: startedAt, primaryChannel: channel, durationMs: deps.now() - startedAt,
   };
+}
+
+/**
+ * 本轮**已经被上游当面拒过**的域名，现从这一轮的观测本子算出来。
+ *
+ * 🔴 **它治的是一个实测出来的归零场景，不是锦上添花**：`commitJournal` 的
+ *「一轮最多学 1 条」钳位在**同一轮里两个已知 ok 的域名同时被上游拉黑**时会把两条结论
+ * 整体作废 ⇒ 台账一个字都不变 ⇒ 下一轮的排序与这一轮逐字节相同 ⇒ 每一轮都把全部名额
+ * 喂给那两个坏域名，补池归零直到那两条 `ok` 过 `OK_TTL_MS`（7 天）。
+ * `selectDomains` 拿它把这些域名排到**全表最后**（跨档），于是同一轮的下一个名额就能
+ * 落到第二档的域名上，**本轮就能出 key**。钳位本身一格都没动 —— 它挡的是「学不学」，
+ * 这里管的是「这一轮接下来打谁」，两件事。
+ *
+ * ⚠️ **同一个域名以最后一条观测为准**：先被拒、后来又成功过的，这一轮不该再被让到后面
+ *（口径与 `commitJournal` 的折叠逐字相同 —— 两处对「这一轮这个域名到底怎么样」
+ * 必须给同一个答案）。
+ *
+ * ⚠️ **不落盘、不跨轮**：`journal` 每轮新建一本，所以它下一轮从空集重新开始 ——
+ * 一个好域名不可能被它永久降权。
+ */
+function rejectedThisRound(journal: ReturnType<typeof newJournal>): ReadonlySet<string> {
+  const last = new Map<string, string>();
+  for (const o of journal.observations) last.set(o.domain, o.verdict);
+  const out = new Set<string>();
+  for (const [d, v] of last) if (v === "blocked") out.add(d);
+  return out;
 }
 
 /**

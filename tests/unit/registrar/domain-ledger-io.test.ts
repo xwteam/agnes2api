@@ -449,6 +449,85 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
   });
 
   /**
+   * 🔴 **承重格：两个已知能用的域名同时被拉黑时，钳位不许把补池按到零。**
+   *
+   * 这一格是上一格（连着 6 轮）留下的洞，**是实测出来的、不是推断**：把保险拆掉之后，
+   * `commitJournal` 的「一轮最多学 1 条」钳位会在**同一轮里两个域名都被拒**时
+   * 把两条结论整体作废 ⇒ 台账一个字都不变 ⇒ 下一轮排序与这一轮逐字节相同 ⇒
+   * 每一轮都把全部名额喂给那两个坏域名。实测那一次：三个名额全打在 `b`/`c` 上、
+   * `minted = 0`、台账里两条 `ok` 原封不动，而 `d.test` 一次都没被派出去。
+   *
+   * 治它的是 `selectDomains` 的第七个实参（`./tender.ts` 的 `rejectedThisRound`）：
+   * 本轮被上游当面拒过的域名**跨档**排到全表最后，于是同一轮的下一个名额就落到
+   * 第二档的 `d.test` 上。**钳位一格都没动。**
+   *
+   * 变异：把 `selectDomains` 排序里的 `rejected` 那一项删掉（或不传第七个实参）
+   * ⇒ 三个名额全落在 `b`/`c` 上、`minted` 变 0 ⇒ 红。
+   */
+  it("同一轮里两个已知能用的域名同时被拉黑：结论照旧被钳位作废，但这一轮仍然铸得出 key", async () => {
+    const { deps, io, logger, verification } = makeDeps({
+      domains: ["b.test", "c.test", "d.test"],
+      over: { targetKeys: 3, mintBatch: 3 },
+      ledger: { v: 1, updatedAt: NOW - 1, total: 3, entries: {
+        "b.test": { s: "ok", at: NOW - 1000, n: 3 },
+        "c.test": { s: "ok", at: NOW - 900, n: 3 },
+      } },
+      sendCode: (email) =>
+        (email.endsWith("@b.test") || email.endsWith("@c.test")) ? DOMAIN_400 : OK(),
+    });
+
+    const out = await tendOnce(deps);
+
+    // 手写字面量：两个坏域名各吃掉一个名额，第三个名额落到从没试过的 `d.test` 上。
+    // 改动之前这里是 ["b.test", "c.test", "b.test"]、`minted` 是 0。
+    expect(domainsOf(verification)).toEqual(["b.test", "c.test", "d.test"]);
+    expect(out.minted).toBe(1);
+    // 钳位照旧生效：两条 blocked 整体作废，台账里那两条 `ok` 一个字都没变。
+    expect(logger.has("registrar.domain_verdicts_discarded")).toBe(true);
+    expect(io.ledger.entries["b.test"]).toEqual({ s: "ok", at: NOW - 1000, n: 3 });
+    expect(io.ledger.entries["c.test"]).toEqual({ s: "ok", at: NOW - 900, n: 3 });
+    // 成功那一条照常学下来（钳位只作废 blocked）。
+    expect(io.ledger.entries["d.test"]).toEqual({ s: "ok", at: NOW, n: 1 });
+    // 全程没有任何限流 ⇒ 一个退避键都不写。
+    expect(io.savedBackoff).toEqual([]);
+  });
+
+  /**
+   * ⚠️ **「同一个域名以最后一条观测为准」这句话必须有一格钉着。**
+   *
+   * `rejectedThisRound` 的折叠口径与 `commitJournal` 的折叠是同一句话（「这一轮这个域名
+   * 到底怎么样」两处必须给同一个答案）。**改成「取第一条」时全仓其余判据一格都不红**
+   *（实测），所以这一格是它唯一的检测点：一个域名这一轮先被拒、后来又成功过，
+   * 之后的名额**不该**再把它让到后面。
+   *
+   * 夹具：`b` 第一次被拒、之后放行，`c`/`d` 一直被拒。`rand = 0.9` 让洗牌在三个元素上
+   * 是恒等置换 ⇒ 未知那一档的档内次序就是 b、c、d。
+   * 变异：把折叠改成「取第一条」⇒ 第 5 个名额上 `b` 仍算被拒过、次序落回
+   * 「派得少的先上」⇒ 打到 `c`（又是 400）⇒ 铸出数从 2 变 1 ⇒ 红。
+   */
+  it("同一个域名先被拒、后来又成功：这一轮之后的名额不再把它让到后面", async () => {
+    let bHits = 0;
+    const { deps, verification } = makeDeps({
+      domains: ["b.test", "c.test", "d.test"],
+      over: { targetKeys: 5, mintBatch: 5, maxDomainAttempts: 1 },
+      ledger: warmLedger(3),
+      rand: () => 0.9,
+      sendCode: (email) => {
+        if (email.endsWith("@b.test")) return ++bHits === 1 ? DOMAIN_400 : OK();
+        return DOMAIN_400;
+      },
+    });
+
+    const out = await tendOnce(deps);
+
+    // 手写字面量：前三个名额各试一个新域名（都被拒），第四个名额上全表都被拒过
+    // ⇒ 次序落回四档、`b` 回到队首并这次成功了；第五个名额上 `b` 的最后一条观测是
+    // 成功，所以它不再被让到后面 —— 直接又是 `b`。
+    expect(domainsOf(verification)).toEqual(["b.test", "c.test", "d.test", "b.test", "b.test"]);
+    expect(out.minted).toBe(2);
+  });
+
+  /**
    * 🔴 **承重格：不许把「我们自己的判断」伪造成「上游在限你」。**
    *
    * 面板的 `reg.backoff.app` 那条横幅只由**退避键**驱动。从前这个场景里根本没有限流，
