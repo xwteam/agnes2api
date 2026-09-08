@@ -119,12 +119,20 @@ TEND_INTERVAL_MS=1800000
 # (optional, default 120000 = 120s)
 CODE_TIMEOUT_MS=120000
 # Lower / upper bound of the random delay between mint attempts within a round,
-# in ms. (optional, default 2000 / 5000)
-MINT_DELAY_MIN_MS=2000
-MINT_DELAY_MAX_MS=5000
+# in ms. (optional, default 60000 / 90000)
+# The lower bound was measured: from one egress address, spacing requests 60s apart
+# kept succeeding, while firing them back to back got blocked on the third one by the
+# rate limit in front of the upstream, with a penalty window of ten-odd minutes.
+# The upper bound is only jitter headroom, not a measured value.
+MINT_DELAY_MIN_MS=60000
+MINT_DELAY_MAX_MS=90000
 # Maximum number of temp-mailbox domains tried per mint attempt.
-# (optional, default 8)
-MAX_DOMAIN_ATTEMPTS=8
+# (optional, default 1)
+# The registrar now remembers which mail domains the upstream accepts and reuses them,
+# so in steady state one successful mint costs exactly one send-code request.
+# Raising this scales up how much of the rate-limit allowance each round burns
+# (measured allowance: roughly 4-6 per window).
+MAX_DOMAIN_ATTEMPTS=1
 # Display name given to the minted key in the Agnes dashboard.
 # (optional, default auto)
 REGISTRAR_TOKEN_NAME=auto
@@ -202,25 +210,27 @@ single hung connection can stretch a round indefinitely.
 
 | Estimate | Formula | Result with the defaults |
 |--------|-------|------------------------|
-| **Typical duration** | `MINT_BATCH × CODE_TIMEOUT_MS` + the random delays within a round | 600 + 20 ≈ **600–620s**, leaving roughly **30% headroom** under the 900s wall-clock limit |
-| **Theoretical worst case** (one mint) | `CODE_TIMEOUT_MS + (1 + 3 × MAX_DOMAIN_ATTEMPTS + 3) × 15s` | 120 + 420 = **540s**; multiplied by `MINT_BATCH` that is far beyond 900s |
+| **Typical duration** | `MINT_BATCH × CODE_TIMEOUT_MS` + `(MINT_BATCH − 1) × MINT_DELAY_MAX_MS` | 600 + 360 = **960s**, **already past the 900s wall clock** — see the round budget below |
+| **Theoretical worst case** (one mint) | `CODE_TIMEOUT_MS + (3 × MAX_DOMAIN_ATTEMPTS + 3) × 15s + (MAX_DOMAIN_ATTEMPTS − 1) × MINT_DELAY_MAX_MS` | 120 + 90 = **210s** at cap 1 |
 
 - **Typical** means every request returns quickly and the first domain isn't blocked, so the time
-  is dominated by waiting for the verification code: roughly `MINT_BATCH × CODE_TIMEOUT_MS` =
-  5 × 120s = 600s, plus at most 4 random delays of up to 5s each, about 20s.
+  is dominated by waiting for the verification code plus the gaps between slots:
+  `MINT_BATCH × CODE_TIMEOUT_MS` = 5 × 120s = 600s, plus 4 gaps of up to 90s each = 360s.
+- **That gap term used to be negligible; it no longer is.** After `MINT_DELAY_MAX_MS` went
+  from 5s to 90s it grew from 20s to 360s, putting the worst round at 960s > 900s.
+  **This is not a new defect** — the round budget below exists precisely for it: on Worker the
+  worst case still completes 4 slots and leaves the 5th to the next round.
 - **The request count in the worst case** comes from this: besides polling for the code, one mint
-  issues "1 request to list domains + 3 per domain attempted (create mailbox, send code, delete
-  mailbox) + 3 more (register, log in, create key)". In other words, **the default configuration
-  can hit the wall-clock limit in pathological cases** — a deliberate trade-off: each key is
-  persisted the moment it is minted, so being aborted only leaves the round incomplete. If you
-  want even the pathological case to stay within the wall clock, set `MINT_BATCH` to 1–2, or
-  lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
+  issues "3 per domain attempted (create mailbox, send code, delete mailbox) + 3 more (register,
+  log in, create key)"; listing domains moved up to **round level** (once per round, no longer
+  once per slot). If you want even the pathological case to stay within the wall clock, set
+  `MINT_BATCH` to 1–2, or lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
 - **There used to be a "number of channels" factor here.** The two channels were once a
   primary/fallback pair, so "the verification code never arrives" fell back and made the same
   refill slot wait out `CODE_TIMEOUT_MS` on each channel. Now that you pick one of the two,
   there is no second wait and the factor is gone entirely. The startup warning
   `TEND_INTERVAL_MS is below the worst-case round duration` uses exactly this model:
-  `MINT_BATCH × CODE_TIMEOUT_MS`.
+  `MINT_BATCH × CODE_TIMEOUT_MS + (MINT_BATCH − 1) × MINT_DELAY_MAX_MS`.
 
 #### On Worker the registrar stops on its own before the wall clock runs out
 
@@ -245,11 +255,15 @@ clock, so the **scheduled** round does not engage this mechanism and uses `MINT_
 > refill on Node/Docker can also mint fewer keys; the next scheduled round picks up the rest.
 
 > [!WARNING]
-> **The budget is not a blanket guarantee — a residual case remains.** The check only counts the
-> dominant term, `CODE_TIMEOUT_MS`. It deliberately does **not** include the
-> 15-second per-request timeouts or the 403 back-offs: including them would mean no attempt ever
-> dares to start, since the "theoretical worst case" above already exceeds 900s on its own. The
-> budget is 87% of the wall clock, and the ~120s left over is what covers those tails:
+> **The budget is not a blanket guarantee — a residual case remains.** The check counts
+> `CODE_TIMEOUT_MS + (MAX_DOMAIN_ATTEMPTS − 1) × MINT_DELAY_MAX_MS`. It deliberately does
+> **not** include the 15-second per-request timeouts: including them would mean no attempt ever
+> dares to start. The budget is 87% of the wall clock, and the ~120s left over covers those tails:
+>
+> **This paragraph used to say "or the 403 back-offs", which pointed at a dead branch.**
+> Hitting a rate limit now **ends the whole round on the spot and records a cross-round backoff
+> window**; there is no "wait a moment and keep hammering" any more (see "What happens when the
+> upstream rate-limits you" below).
 
 | Where the slowness is | Does the budget cover it | Consequence |
 |---------------------|------------------------|-----------|
@@ -371,18 +385,21 @@ the endpoint answers `409 registrar_disabled`.
 > budget, while the manual round does**, so under the same configuration a manual round may mint
 > fewer keys than a scheduled one; the remaining slots go to the next scheduled round.
 
-### These three keys never expire on their own
+### These keys do not disappear on their own
 
-`registrar_tend_lock`, `registrar_manual_guard` and `tend:history` **all carry no TTL**. Their
-names are fixed literals and there is always exactly one of each; stale values are always decided
-by **comparing values** (an expired lock blocks nobody, yesterday's counter does not count), so
-leaving them behind is harmless.
+`registrar_tend_lock`, `registrar_manual_guard`, `tend:history`, `registrar:domains` and
+`registrar:backoff` — all five **carry no TTL**. Their names are fixed literals and there is always
+exactly one of each; stale values are always decided by **comparing values**, so leaving them
+behind is harmless.
 
 **The cost, stated plainly**: if you turn the registrar off for good, or delete the deployment but
 keep the KV namespace, they will not disappear. To clean up, delete the keys by hand:
 
 - Worker: `wrangler kv key delete --binding=POOL registrar_manual_guard` (once per key)
-- Node / Docker: edit `DATA_DIR/store.json` and remove those three top-level fields
+- Node / Docker: edit `DATA_DIR/store.json` and remove those five top-level fields
+
+**`registrar:domains` is also the only manual escape hatch when the domain ledger got something
+wrong**: deleting it sends the registrar back to a cold start.
 
 **You usually want to keep `tend:history`**: it is exactly what you want during a post-mortem, and
 "the tend history vanishes N days after the registrar was turned off" is the worst possible timing —
@@ -471,6 +488,68 @@ the missing fields), the Registrar status row, the Overview config summary, and 
   most likely make forwarding fail every time it is selected, so disable or delete it from the
   admin panel. An error event `registrar.minted_key_suspicious` is emitted alongside it (it records
   only the channel and the length, **never the plaintext**).
+### The registrar remembers which mail domains work
+
+The upstream only accepts some disposable-mailbox domains. **That verdict is now persisted and
+reused**:
+
+- In steady state **one successful mint costs exactly one `/api/verification` request** — it picks
+  a domain already known to work. That is why the built-in `MAX_DOMAIN_ATTEMPTS` could drop to 1.
+- The registrar section of the panel shows a line like "Domain ledger: N usable · N ruled out ·
+  N to re-check · N never probed (updated …)".
+- A domain has to be rejected **twice in a row** before it sinks to the bottom of the candidate
+  list; after one rejection it is still picked, just later. One success flips it back to "usable".
+
+> [!WARNING]
+> **"Ruled out" is our verdict, not the upstream's statement.** The upstream uses the same `400`
+> both for "this domain is blocked" and for "your egress address is sending too fast", and the
+> only clue that separates them is the response body — which we match against a **word list**.
+> One wording change upstream and we get it wrong. Three layers hold that down: a verdict takes
+> two hits, at most one domain is ruled out per round, and **the ordering never excludes any
+> domain outright**. At worst refills get slower; they do **not** drop to zero.
+
+#### If you believe the domain ledger got something wrong
+
+There is no per-domain listing in the panel (hundreds of
+upstream domains would inflate an endpoint that is polled every few seconds by an order of
+magnitude). Three options: wait for the verdict to expire (24h for ruled out, 7 days for usable),
+wait for the two-hit rule to correct itself, or delete the storage key by hand (see "These keys do
+not disappear on their own" below).
+
+### What happens when the upstream rate-limits you
+
+There is an edge rate limit in front of the upstream (`429`), and the upstream's own registration
+rate limit on top of that (`400` plus a "too many requests" style message). **Both penalty windows
+outlast a single refill round, and every request made inside the window extends it.**
+
+So after hitting either layer:
+
+- **The round ends on the spot** — no switching domains, no moving on to the next slot.
+- A **backoff window** is recorded and consulted before the next round starts. **Inside the window
+  not a single upstream request is sent and not a single temp mailbox is created.** The refill
+  history row for it reads "Still inside the backoff window; this round never started".
+- Repeated hits stretch the backoff **exponentially** (capped at 4 hours). One successful mint
+  clears it.
+
+#### The backoff banner: the two layers call for different actions
+
+The registrar section shows a backoff banner:
+
+| Which layer | What the panel says | What you can do |
+|-----------|-------------------|---------------|
+| Edge rate limit | "refills are spaced too tightly" | Raise `MINT_DELAY_MIN_MS`, or lower `MINT_BATCH` |
+| The upstream's own registration limit | "this egress address may have exhausted its allowance" | Usually only waiting, or changing egress |
+
+> [!IMPORTANT]
+> **Switching mailbox channel does not get you out of this.** The limit lives on the edge between
+> your egress address and the upstream; which mailbox channel you use is irrelevant. Switching
+> channels when you see the backoff banner is wasted effort.
+
+**Filling an empty pool is now noticeably slower**: a target of 20 keys goes from "a few minutes"
+to roughly 4–5 rounds. At one Cron round every 30 minutes that is **about 2–2.5 hours**. This is
+the direct price of trading "burn the allowance and keep hammering for nothing" for "slow but
+actually produces keys".
+
 ### What happens after a channel fails
 
 **You pick one of the two channels, so "switch to the other one" is something only you can do.**
@@ -478,16 +557,19 @@ When the selected channel fails:
 
 - **The current slot is written off and the next slot in this round starts as usual** (after the
   random `MINT_DELAY_MIN_MS`–`MINT_DELAY_MAX_MS` pause). Listing domains fails, invalid
-  credentials, no mailbox can be created on any candidate domain, the code never arrives, rate
-  limiting, a network blip, every domain blocked, registration / login / key creation failing —
+  credentials, no mailbox can be created on any candidate domain, the code never arrives,
+  a network blip, every domain blocked, registration / login / key creation failing —
   all of these land in this bucket.
-- **There is exactly one exception**: an overall Agnes backend failure (`upstream_error`) **ends
-  the round immediately** and leaves the remaining slots to the next schedule — carrying on would
-  only produce more doomed requests during the outage.
-- **There is no cross-round backoff and no exponential retry.** A failure does not change when the
-  next round runs: Node/Docker uses the fixed `TEND_INTERVAL_MS` timer, Worker uses the Cron in
-  `wrangler.toml`. Throttling within a round already has two layers (the random pause between
-  attempts and, on Worker, the per-round wall-clock budget).
+- **There are exactly two exceptions, and both end the round immediately**:
+  - an overall Agnes backend failure (`upstream_error`) — carrying on would only produce more
+    doomed requests during the outage;
+  - **hitting an upstream rate limit (`rate_limited`)** — see "What happens when the upstream
+    rate-limits you" below.
+- **Apart from rate limiting there is no cross-round backoff and no exponential retry.** An
+  ordinary failure does not change when the next round runs: Node/Docker uses the fixed
+  `TEND_INTERVAL_MS` timer, Worker uses the Cron in `wrangler.toml`. Throttling within a round
+  already has two layers (the random pause between attempts and, on Worker, the per-round
+  wall-clock budget).
 
 #### The price, and how to notice it
 

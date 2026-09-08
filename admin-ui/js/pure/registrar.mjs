@@ -62,7 +62,7 @@ export function channelSelectedKey(selected) {
 }
 
 /**
- * 补池失败归因 → i18n key。**十二个成员逐条列出，表外的一律返回 `null`。**
+ * 补池失败归因 → i18n key。**十三个成员逐条列出，表外的一律返回 `null`。**
  *
  * ⚠️⚠️ **设计 §7.3 要的「`switch` + `never` 穷尽检查」在这个文件里做不到，这是
  * 一条如实登记的偏离，不是疏忽。** `admin-ui/js/pure/*.mjs` 是 JavaScript，而
@@ -72,7 +72,7 @@ export function channelSelectedKey(selected) {
  *
  * **穷尽性因此落在两处会真的变红的地方，两处方向相反：**
  * ① `tests/ui/registrar.test.ts` 的
- *    「失败归因表就是 TEND_FAILURE_REASONS 那一份——加了第 13 个成员，这一格会 tsc 报错」
+ *    「失败归因表就是 TEND_FAILURE_REASONS 那一份——加了下一个成员，这一格会 tsc 报错」
  *    里那张 `Record<TendFailureReason, string>` 手写表：**联合类型多一个成员，
  *    `tsc` 当场报错**（那个文件在 `tsconfig.json` 的 include 里）；
  * ② `tests/unit/i18n-dict.test.ts` 的「TendFailureReason 的每个成员都有 reg.fail.<reason> 键」：
@@ -96,6 +96,10 @@ export function failureReasonKey(reason) {
     case "provider_missing": return "reg.fail.provider_missing";
     case "round_crashed": return "reg.fail.round_crashed";
     case "key_suspicious": return "reg.fail.key_suspicious";
+    // 「这一轮还在退避窗口里，一次都没开始」。**不能并进 `rate_limited`**：
+    // 那一档说的是「这一轮真的去打了、被上游挡了」，而这一档一次上游请求都没发出去，
+    // 两句话对运维的意思完全不同（去看上游 / 等窗口过去）。
+    case "upstream_backoff": return "reg.fail.upstream_backoff";
     default: return null;
   }
 }
@@ -361,6 +365,63 @@ export function channelTestResult(res) {
     params: { latencyMs: latencyMs === null ? "—" : latencyMs },
     kind: "warn",
   };
+}
+
+/**
+ * **域名台账那一格。**
+ *
+ * ⚠️ **`blocked` 是「我们判它不行」，不是「上游声明它不行」。** 判定走的是一张
+ * 启发式词表（`src/core/registrar/domain-ledger.ts` 的 `classifySendCode`），
+ * 上游改一次措辞就会误判 —— 所以文案里用的是中性措辞，**不许写成「被上游屏蔽」**。
+ *
+ * 整块读不到 ⇒ 返回 `null`（渲染成 `—`）；读到了但 `total` 是 `null` ⇒
+ * 「未探过」那一格没法算，如实给 `null`，**不伪造成 0**。
+ */
+export function domainLedgerView(body) {
+  const b = obj(body);
+  const d = b === null ? null : obj(b.domains);
+  if (d === null) return null;
+  return {
+    total: finite(d.total),
+    ok: finite(d.ok),
+    blocked: finite(d.blocked),
+    suspect: finite(d.suspect),
+    unknown: finite(d.unknown),
+    updatedAt: finite(d.updatedAt),
+  };
+}
+
+/**
+ * **退避横幅那一格。** 只在**真的还在退避中**时非空（后端已经按 `until > now`
+ * 判过一次，这里不再拿本地时钟去减）。
+ *
+ * ⚠️ **两档限流的文案必须分开**：`edge` 的处置是「补池打得太密，把间隔调大」，
+ * `app` 的处置是「这个出口的注册额度到顶了，只能等或者换出口」。
+ * 揉成一句会让运维去调一个不解决问题的旋钮。
+ *
+ * ⚠️ **两档都要明说「换邮箱通道逃不掉」**：限流发生在「出口 IP → 上游」这条边上，
+ * 与用哪条邮箱通道无关。不说这一句，运维的第一反应就是去切通道。
+ */
+export function backoffView(body) {
+  const b = obj(body);
+  const k = b === null ? null : obj(b.backoff);
+  if (k === null) return null;
+  const kind = k.kind === "edge" || k.kind === "app" ? k.kind : null;
+  if (kind === null) return null;
+  const nums = {
+    until: finite(k.until),
+    retryAfterMs: finite(k.retryAfterMs),
+    since: finite(k.since),
+    hits: finite(k.hits),
+  };
+  // ⚠️ **两条 key 各写成一个对象字面量里的一格，不写成三元表达式**：
+  // `scripts/check-i18n.mjs` 第 ⑧ 条查的是「key 字面量后面紧跟着什么」，而它
+  // **刻意读原文、不抠注释**（那条规则旁边逐字写着理由）。写成三元的话 key 后面
+  // 跟的是冒号，会被判成「把带占位符的 key 当纯标签用了」而当场红——这两条文案
+  // **确实**带 `{left}` / `{at}` 两个占位符，那条判据是对的。
+  return kind === "edge"
+    ? { kind, key: "reg.backoff.edge", ...nums }
+    : { kind, key: "reg.backoff.app", ...nums };
 }
 
 /**

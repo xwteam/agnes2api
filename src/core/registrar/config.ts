@@ -104,9 +104,28 @@ export const DEFAULTS = {
   mintBatch: 5,
   tendIntervalMs: 1_800_000,
   codeTimeoutMs: 120_000,
-  mintDelayMinMs: 2_000,
-  mintDelayMaxMs: 5_000,
-  maxDomainAttempts: 8,
+  /**
+   * 🟢 **实测下界**：≥60 秒间隔时同一出口连续四次发码全部成功，第七次才撞上应用层
+   * 限流；无间隔连发时第三次就被上游前置的边缘限流挡下。60 秒是量出来的那个下界。
+   *
+   * ⚠️ **这个数是观测不是承诺**：它来自单一出口、单日样本，换出口或换时段可能完全
+   * 不同。所以它留在可配那一侧（`MINT_DELAY_MIN_MS`）。
+   */
+  mintDelayMinMs: 60_000,
+  /**
+   * 🟡 **不是实测，是抖动上界。** 依据是本仓自己的部署形态：Worker 多 isolate、
+   * 多副本 Docker 共卷都可能同时起轮，固定 60 秒会把它们锁成同一个节拍。
+   */
+  mintDelayMaxMs: 90_000,
+  /**
+   * 🟢 **实测 + 推导**：有了域名台账之后，一个名额里的**第二个**域名期望收益为负
+   *（多烧一格限流预算，而暖机后成功率提升趋近 0）；而「一个名额里连打好几次」正是
+   * 实测中触发边缘限流的那个形态。
+   *
+   * ⚠️ **域名轮换没有消失，只是搬了地方**：从「一个名额之内连打」搬到「两个名额之间」，
+   * 而那里本来就有 `mintDelayMinMs`~`mintDelayMaxMs` 的间隔。
+   */
+  maxDomainAttempts: 1,
   tokenName: "auto",
   agnesPlatformUrl: "https://platform-backend.agnes-ai.com",
   yydsBaseUrl: "https://maliapi.215.im",
@@ -444,24 +463,47 @@ export function registrarFromEnv(
     });
   }
 
-  // 单轮最坏耗时 ≈ mintBatch × codeTimeoutMs（每次铸 key 最长要等满一次验证码超时）。
+  // 单轮最坏耗时 = `mintBatch × codeTimeoutMs`（每次铸 key 最长要等满一次验证码
+  // 超时）**加上名额之间的那 `mintBatch − 1` 段随机间隔**。
+  //
+  // ⚠️ **间隔那一项是本轮补上的**：默认间隔从几秒改成几十秒之后，它不再是可以忽略
+  // 的尾巴——默认配置下它占 360 秒，而整轮最坏是 960 秒。漏掉它，这条 warn 就会在
+  // 一份**真的会重叠**的配置上保持沉默。
   //
   // ⚠️ **这里从前还乘着一个「通道数」**：配了备通道时「验证码超时」属于通道级失败、
   // 会降级重试一次，同一个名额最坏要等两次超时。两条通道改成二选一之后没有第二次
-  // 了，这个因子整个消失。同一份口径在 `./types.ts` 的 `WORKER_ROUND_BUDGET_MS`、
-  // `wrangler.toml` 的 Cron 间隔估算段、五语言 REGISTRAR.md 各有一份，四处一起改。
+  // 了，这个因子整个消失。同一份口径在 `./tender.ts` 的 `worstAttemptMs`、
+  // `./types.ts` 的 `WORKER_ROUND_BUDGET_MS`、`wrangler.toml` 的 Cron 间隔估算段
+  // 各有一份，四处一起改。
   //
   // 它超过补池间隔时，轮次会重叠着跑——两个入口各有兜底（Node 的在途守卫、Worker
   // 的 KV 短锁）会把重叠的那次跳过，但被跳过的名额就白白浪费了，该调的是配置本身。
   // 与上面 MINT_DELAY_MIN/MAX 的交叉校验同一性质，区别是这里只 warn、连 blocker 都不产：
   // 数值各自都合法，只是搭配不划算，没到该让注册机停跑的程度。这条 warn 受 enabled 门控，
   // 关着的注册机不会打。
-  const worstRoundMs = cfg.mintBatch * cfg.codeTimeoutMs;
+  const worstRoundMs = cfg.mintBatch * cfg.codeTimeoutMs
+    + Math.max(0, cfg.mintBatch - 1) * cfg.mintDelayMaxMs;
   if (enabled && cfg.tendIntervalMs < worstRoundMs) {
     logger.log({
       level: "warn", event: "registrar.interval_shorter_than_worst_round",
-      msg: "TEND_INTERVAL_MS 小于单轮最坏耗时 MINT_BATCH×CODE_TIMEOUT_MS，补池轮次可能重叠并被跳过",
-      fields: { tendIntervalMs: cfg.tendIntervalMs, mintBatch: cfg.mintBatch, codeTimeoutMs: cfg.codeTimeoutMs, worstRoundMs },
+      msg: "TEND_INTERVAL_MS 小于单轮最坏耗时（MINT_BATCH×CODE_TIMEOUT_MS 加上名额之间的 MINT_DELAY_MAX_MS 间隔），"
+        + "补池轮次可能重叠并被跳过",
+      fields: {
+        tendIntervalMs: cfg.tendIntervalMs, mintBatch: cfg.mintBatch,
+        codeTimeoutMs: cfg.codeTimeoutMs, mintDelayMaxMs: cfg.mintDelayMaxMs, worstRoundMs,
+      },
+    });
+  }
+
+  // 每多试一个域名，就是**多一次真实的发码请求**，而实测的限流预算约 4~6 次/窗口。
+  // 这条 warn 是「调大它的代价」唯一说得出口的地方——面板上它只是一个数字输入框。
+  if (enabled && cfg.maxDomainAttempts > 2) {
+    logger.log({
+      level: "warn", event: "registrar.domain_attempts_costly",
+      msg: "MAX_DOMAIN_ATTEMPTS 调得偏大：每多试一个域名就多打一次发验证码请求，"
+        + "而实测上游的限流预算大约是每个窗口 4~6 次（这个数是观测不是承诺，换出口可能不同）。"
+        + "有了域名台账之后，稳态下一次成功铸号只需要 1 次，把它留在 1~2 更划算。",
+      fields: { maxDomainAttempts: cfg.maxDomainAttempts },
     });
   }
 
@@ -481,7 +523,11 @@ export function registrarFromEnv(
   // 是这颗按钮自己的性质，不是运行时的性质）。于是同一份把 `CODE_TIMEOUT_MS` 调过头的
   // 配置，在 Node 上**定时轮照常铸、手动补池一把都铸不出来**，而运维照着旧措辞会以为
   // 自己这边完全不受影响。五语言 REGISTRAR.md 同一段也已一并订正。
-  const worstAttemptMs = cfg.codeTimeoutMs;
+  // **与 `./tender.ts` 的 `worstAttemptMs` 同一个公式**（那里是判据、这里是启动期
+  // 交叉校验，各写一个字面量迟早漂移）：一次尝试 = 等满一次验证码超时，外加这次
+  // 尝试里换域名要付的 `maxDomainAttempts − 1` 段间隔。
+  const worstAttemptMs = cfg.codeTimeoutMs
+    + Math.max(0, cfg.maxDomainAttempts - 1) * cfg.mintDelayMaxMs;
   if (enabled && worstAttemptMs > WORKER_ROUND_BUDGET_MS) {
     logger.log({
       level: "warn", event: "registrar.attempt_exceeds_worker_budget",

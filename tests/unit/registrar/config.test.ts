@@ -22,13 +22,21 @@ describe("registrarFromEnv", () => {
     expect(cfg({}, {}).enabled).toBe(false);
   });
 
+  /**
+   * ⚠️ **`maxDomainAttempts` 的内置取值从 8 改成了 1，间隔那两个从 2000/5000 改成
+   * 60000/90000 —— 这是一次行为变更，不是调参。** 有了域名台账之后，稳态下一次成功
+   * 铸号只需要一次发码请求；而实测上游的限流预算大约是每个窗口 4~6 次，
+   * 「一个名额里连打 8 次」正是把那点额度一次打光的形态。
+   */
   it("默认值与设计文档一致", () => {
     const c = cfg({}, {});
     expect(c.targetKeys).toBe(20);
     expect(c.mintBatch).toBe(5);
     expect(c.tendIntervalMs).toBe(1_800_000);
     expect(c.codeTimeoutMs).toBe(120_000);
-    expect(c.maxDomainAttempts).toBe(8);
+    expect(c.maxDomainAttempts).toBe(1);
+    expect(c.mintDelayMinMs).toBe(60_000);
+    expect(c.mintDelayMaxMs).toBe(90_000);
   });
 
   // ⚠️⚠️ **这一族用例在「装载器全函数化」那一轮从「抛错」改判成「产出 blocker」。**
@@ -239,7 +247,11 @@ describe("registrarFromEnv", () => {
 
   it("delay 那条比的是**生效值**：env 只给了 min，max 走内置默认值照样比得出来", () => {
     // 从前 `crossFieldErrors` 比的是存储原件里那两个数，这一类整个漏在外面。
-    expect(codes(registrarFromEnv({ MINT_DELAY_MIN_MS: "9000" }, {})))
+    //
+    // ⚠️ **这里的 95000 是重算过的，不是照抄。** 上一版写的是 9000，当时内置的 max 是
+    // 5000；`MINT_DELAY_MAX_MS` 的内置取值改成 90000 之后 `9000 < 90000` ⇒ 这一格
+    // **不再产 blocker**，也就是它测的那件事整个失效了。手写新字面量：95000 > 90000。
+    expect(codes(registrarFromEnv({ MINT_DELAY_MIN_MS: "95000" }, {})))
       .toEqual(["registrar.mintDelayMinMs:delay_min_gt_max"]);
   });
 
@@ -262,16 +274,63 @@ describe("registrarFromEnv", () => {
   // console.* 已经被换成注入的 Logger（第 3 个可选参数）：下面全部改成 recordingLogger
   // 断言事件名 + fields，而不是 spy console 断言文案子串。
 
-  it("TEND_INTERVAL_MS 小于 MINT_BATCH×CODE_TIMEOUT_MS 时启动期记 registrar.interval_shorter_than_worst_round（轮次会重叠）", () => {
+  /**
+   * ⚠️ **单轮最坏耗时的公式变了：名额之间那几段间隔现在算进去了。**
+   * 从前 `MINT_DELAY_MAX_MS` 的内置取值是 5000，那 4 段间隔一共 20 秒、可以忽略；
+   * 改成 90000 之后它占 360 秒，而整轮最坏是 960 秒 —— 漏掉它，这条 warn 会在一份
+   * **真的会重叠**的配置上保持沉默。
+   */
+  it("TEND_INTERVAL_MS 小于单轮最坏耗时时启动期记 registrar.interval_shorter_than_worst_round（轮次会重叠）", () => {
     const logger = recordingLogger();
     const c = cfg(
-      { ...ENABLED, TEND_INTERVAL_MS: "60000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000" }, {}, logger,
+      {
+        ...ENABLED, TEND_INTERVAL_MS: "60000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000",
+        MINT_DELAY_MIN_MS: "60000", MINT_DELAY_MAX_MS: "90000",
+      }, {}, logger,
     );
     expect(c.enabled).toBe(true); // 只是警告，配置照常生效
     const e = logger.entries.find((x) => x.event === "registrar.interval_shorter_than_worst_round");
     expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
     expect(e?.fields?.tendIntervalMs).toBe(60000);
-    expect(e?.fields?.worstRoundMs).toBe(600000); // 算出来的单轮最坏耗时
+    // **手写字面量**：5 × 120000 + (5 − 1) × 90000 = 960000。不从被测对象反查回填。
+    expect(e?.fields?.worstRoundMs).toBe(960000);
+  });
+
+  /**
+   * **与上一格成对**：只有间隔那一项能把它推过界的配置。
+   * 少了这一格，`worstRoundMs` 改回只算 `mintBatch × codeTimeoutMs` 时上一格照样绿
+   *（600000 也 > 60000）—— 那正是本轮补上的那一项。
+   */
+  it("间隔那一项单独就能把单轮最坏耗时推过补池间隔（只算 MINT_BATCH×CODE_TIMEOUT_MS 时这一格不会响）", () => {
+    const logger = recordingLogger();
+    cfg(
+      {
+        ...ENABLED, TEND_INTERVAL_MS: "700000", MINT_BATCH: "5", CODE_TIMEOUT_MS: "120000",
+        MINT_DELAY_MIN_MS: "60000", MINT_DELAY_MAX_MS: "90000",
+      }, {}, logger,
+    );
+    // 旧公式：600000 < 700000 ⇒ 不响。新公式：960000 > 700000 ⇒ 响。
+    const e = logger.entries.find((x) => x.event === "registrar.interval_shorter_than_worst_round");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.fields?.worstRoundMs).toBe(960000);
+  });
+
+  /**
+   * 每多试一个域名就是**多一次真实的发码请求**，而实测的限流预算约 4~6 次/窗口。
+   * 面板上它只是一个数字输入框，这条 warn 是「调大它的代价」唯一说得出口的地方。
+   */
+  it("MAX_DOMAIN_ATTEMPTS 调得偏大时启动期记 registrar.domain_attempts_costly", () => {
+    const logger = recordingLogger();
+    cfg({ ...ENABLED, MAX_DOMAIN_ATTEMPTS: "8" }, {}, logger);
+    const e = logger.entries.find((x) => x.event === "registrar.domain_attempts_costly");
+    expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
+    expect(e?.fields?.maxDomainAttempts).toBe(8);
+  });
+
+  it("MAX_DOMAIN_ATTEMPTS 留在内置取值上时不记该事件（成对用例，防止无条件告警）", () => {
+    const logger = recordingLogger();
+    cfg({ ...ENABLED }, {}, logger);
+    expect(logger.has("registrar.domain_attempts_costly")).toBe(false);
   });
 
   it("TEND_INTERVAL_MS 足够大时不记该事件（成对用例，防止无条件告警）", () => {

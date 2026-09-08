@@ -44,6 +44,7 @@ import { registrarConfigPanel } from "./sec-settings.js";
 import {
   CHANNELS, channelLabelKey, channelAddressFactKey, channelSelectedKey,
   statusView, channelCards, poolView, tendCost, manualQuotaView,
+  domainLedgerView, backoffView,
   historyRows, historyMalformed, roundOutcome, roundFailures, mintedByChannelText,
   channelTestResult, refuseKeyOf,
 } from "./pure/registrar.mjs";
@@ -299,6 +300,35 @@ function renderQuota() {
   nodes.cooldown.style.display = cooling ? "" : "none";
 }
 
+/**
+ * 域名台账那一行 + 退避横幅。
+ *
+ * ⚠️ **「判死」用的是中性措辞**：那是**我们**按一张启发式词表做的判定，不是上游的
+ * 声明（`src/core/registrar/domain-ledger.ts` 的文件头逐字登记着它会误判）。
+ *
+ * ⚠️ **退避横幅两档文案分开**，而且两档都要明说「换邮箱通道逃不掉」：限流发生在
+ * 「出口 IP → 上游」这条边上，与用哪条邮箱通道无关。不说这一句，运维的第一反应
+ * 就是去切通道 —— 切完照样被限。
+ */
+function renderDomains() {
+  const d = domainLedgerView(data);
+  if (d === null) {
+    nodes.domains.textContent = fmtDash(null);
+  } else {
+    nodes.domains.textContent = t("reg.domains.summary", {
+      ok: fmtCount(d.ok), blocked: fmtCount(d.blocked),
+      suspect: fmtCount(d.suspect), unknown: fmtCount(d.unknown),
+    }) + (d.updatedAt === null ? "" : t("reg.domains.updatedAt", { at: fmtInstant(d.updatedAt, offsetMs()) }));
+  }
+
+  const b = backoffView(data);
+  // **倒计时用相对量、几点恢复用绝对量**，两个都由服务端给（与手动补池冷却同一条口径）。
+  nodes.backoff.textContent = b === null || b.retryAfterMs === null || b.until === null
+    ? ""
+    : t(b.key, { left: fmtDuration(b.retryAfterMs), at: fmtInstant(b.until, offsetMs()) });
+  nodes.backoff.style.display = nodes.backoff.textContent === "" ? "none" : "";
+}
+
 function renderChannels() {
   for (const card of channelCards(data)) {
     const n = nodes.channels[card.channel];
@@ -374,6 +404,7 @@ function renderHistory() {
 function render() {
   renderStatus();
   renderPool();
+  renderDomains();
   renderQuota();
   renderChannels();
   renderHistory();
@@ -522,9 +553,19 @@ export const registrarSection = {
     cooldown.style.display = "none";
     const locked = el("p", { class: "muted note" });
     locked.style.display = "none";
+    // 域名台账那一行是**常驻**的（读不到时显示 `—`）：它回答的是「注册机现在认得
+    // 几个能用的域名」，而那正是「补池为什么慢」最常见的答案。
+    const domains = el("p", { class: "muted note" });
+    // 退避横幅**只在真的还在退避里时出现**：给一个已经过去的时刻会渲染出一个恒为 0
+    // 的假倒计时（与手动补池冷却那一行同一条纪律）。
+    const backoff = el("p", { class: "muted note reg-backoff" });
+    backoff.style.display = "none";
     status.body.appendChild(quota);
     status.body.appendChild(cooldown);
     status.body.appendChild(locked);
+    status.body.appendChild(el("p", { class: "muted note" }, t("reg.domains.label")));
+    status.body.appendChild(domains);
+    status.body.appendChild(backoff);
     section.appendChild(status.wrap);
 
     const poolRow = el("div", { class: "card-row" });
@@ -559,7 +600,7 @@ export const registrarSection = {
 
     nodes = {
       state: state.value, channel: channel.value,
-      emptyChannel, quota, cooldown, locked,
+      emptyChannel, quota, cooldown, locked, domains, backoff,
       pool: { target: target.value, counted: counted.value, gap: gap.value, fresh: fresh.value },
       channels, malformed, historyBody,
     };

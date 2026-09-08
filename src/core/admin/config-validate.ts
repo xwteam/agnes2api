@@ -513,7 +513,7 @@ function crossFieldErrors(next: Obj, env: Env): ConfigError[] {
 
   // **比的是生效值，不是存储原件。**
   // ⚠️ 原来这里写的是「两边都是 `number` 且 min > max」——那份判据漏掉了两整类：
-  // ① env 里的 `MINT_DELAY_MIN_MS=9000` 配上存储缺席（生效 max = 默认 5000）；
+  // ① env 里只给了 `MINT_DELAY_MIN_MS`、存储缺席（生效 max 走内置取值）；
   // ② 存储里写了非法值（生效值是**默认值**，不是那个非法值）。
   // 装载器比的一直是生效值，于是两边在这两类上给出不同答案。现在同源。
   const min = effectiveNum(env, "MINT_DELAY_MIN_MS", reg.mintDelayMinMs, REGISTRAR_DEFAULTS.mintDelayMinMs);

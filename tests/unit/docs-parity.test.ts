@@ -24,6 +24,8 @@ import { KEY_PREFIX, POOL_INDEX_KEY } from "../../src/core/pool-index.js";
 import { TEND_HISTORY_KEY } from "../../src/core/admin/tend-history.js";
 import { MANUAL_GUARD_KEY, MANUAL_TENDS_PER_DAY } from "../../src/core/admin/tend-guard.js";
 import { TEND_LOCK_KEY } from "../../src/http/admin/tend-lock.js";
+import { DOMAIN_LEDGER_KEY } from "../../src/core/registrar/domain-ledger.js";
+import { REGISTRAR_BACKOFF_KEY } from "../../src/core/registrar/backoff.js";
 import { HEALTH_PROBE_KEY } from "../../src/core/storage-health.js";
 import { APIKEY_KEY } from "../../src/http/apikey-store.js";
 import { APIKEYS_PURGE_PATH } from "../../src/http/admin/handlers/api-keys.js";
@@ -154,8 +156,12 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     // **它挡不住的那一种，两个锚点并无差别**：五份被同一个错误值同步污染
     //（`48` 五份一起改成 `49`、`272` 五份一起删）⇒ 计数依然对等 ⇒ 依然绿。
     // 这是跨语言互校这条判据的固有边界，不是选哪个数字能解决的。
-    { token: "272", why: "注册机开着且每轮都健康时的写侧合计（80 + 96 + 48 + 0 + 48）" },
-    { token: "320", why: "注册机开着且每轮都有失败事件时的写侧合计（80 + 96 + 48 + 48 + 48）" },
+    // ⚠️ **这两个数改过一次，理由不是「判据碍事」，是账本身多了一笔**：注册机新增了
+    // 一把每轮最多写一次的域名台账键（`registrar:domains`），两栏各按上界 +48。
+    // 旧值 `272` / `320` 从此在五份文档里各 0 次 —— 不改这里的话，下面那条
+    // `total === 0` 会当场红并点名 DEPLOY.md（那正是它该做的）。
+    { token: "320", why: "注册机开着且每轮都健康时的写侧合计（80 + 96 + 48 + 0 + 48 + 48）" },
+    { token: "368", why: "注册机开着且每轮都有失败事件时的写侧合计（80 + 96 + 48 + 48 + 48 + 48）" },
     // ⚠️ **这三个是第三轮补的，理由与上面两个一样：数过再加。**
     // 改动前 `1,040` 在五份里各 0 次、`288` 各 0 次、`600000` 各 0 次；
     // 现在分别是 1 / 6 / 5，五份完全一致。它们承载的是配额账里**最容易写歪**的
@@ -165,9 +171,10 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     // `TEND_INTERVAL_MS=300000` 换成了 Cron `*/5`（订正 ⑤：本节讲的是 Worker
     // 形态，而 `TEND_INTERVAL_MS` 只被 Node 调度器消费，在 Worker 上调它一轮都不会多）。
     // 加一个五份都不存在的 token 会被上面那条 `toBeGreaterThan(0)` 当场判死。
-    { token: "1,040", why: "两轴叠加的最坏合计（Cron */5 且每轮都有事件），已打穿 1,000" },
-    { token: "288", why: "Cron `*/5 * * * *` 每天的轮数，三笔按轮计费的乘数" },
-    { token: "600000", why: "逐轮配置警告的阈值 MINT_BATCH×CODE_TIMEOUT_MS×通道数 的默认值" },
+    { token: "1,328", why: "两轴叠加的最坏合计（Cron */5 且每轮都有事件），已打穿 1,000" },
+    { token: "288", why: "Cron `*/5 * * * *` 每天的轮数，四笔按轮计费的乘数" },
+    // ⚠️ 阈值的公式变了（名额之间那几段间隔算进来了），默认值随之从 600000 变成 960000。
+    { token: "960000", why: "逐轮配置警告的阈值 MINT_BATCH×CODE_TIMEOUT_MS + (MINT_BATCH−1)×MINT_DELAY_MAX_MS 的默认值" },
     // ⚠️ **后来补的，同样是先数过再加**：改动前 `201` 在五份文档里各 **0** 次
     //（`git show HEAD:docs/<lang>/DEPLOY.md | grep -o 201 | wc -l`），加进来之后各 **1** 次。
     // 选它而不选同一段里的 `200`（一次导入的上限）：`200` 在五份里各已出现 7 次，
@@ -188,12 +195,14 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     // 写死 `"24 × 3"` 的话，`MANUAL_TENDS_PER_DAY` 一改，五份文档里那句算式原地变成
     // 假话而本表照绿。现算之后常量一改，token 就成了文档里查不到的串 ⇒ 下面那条
     // `total === 0` 当场红并点名 DEPLOY.md。理由与 `1 + ${…}` 那两条逐字相同。
+    // ⚠️ **每次点击的非铸造写侧从 3 次 put 变成 4 次**（多了域名台账那一把），
+    // 于是这三个数一起重算：`24 × 4 = 96`、`96 + 368 = 464`、`24 × 14 = 336`、`336 + 368 = 704`。
     {
-      token: `${MANUAL_TENDS_PER_DAY} × 3`,
-      why: "「立即补池」可持续写侧的算式（每天 MANUAL_TENDS_PER_DAY 次 × 每次 3 次 put）",
+      token: `${MANUAL_TENDS_PER_DAY} × 4`,
+      why: "「立即补池」可持续写侧的算式（每天 MANUAL_TENDS_PER_DAY 次 × 每次 4 次 put）",
     },
-    { token: "392", why: "「立即补池」可持续写侧叠上稳态第三栏之后的合计（72 + 320）" },
-    { token: "632", why: "「立即补池」每次都铸满 MINT_BATCH 时的突发上界合计（312 + 320）" },
+    { token: "464", why: "「立即补池」可持续写侧叠上稳态第三栏之后的合计（96 + 368）" },
+    { token: "704", why: "「立即补池」每次都铸满 MINT_BATCH 时的突发上界合计（336 + 368）" },
     // ⚠️ **再后来补的五个，同样是先数过再加**：改动前 `104` / `13 × 8` / `280` /
     // `424` / 最坏那一行的合计在五份文档里**各 0 次**（`grep -o -F` 逐份数过），
     // 加进来之后 `13 × 8` / `104` / `280` / `424` / 最坏那一行分别是 **1 / 4 / 1 / 1 / 1** 次，
@@ -215,8 +224,8 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     // 抄得一模一样**——这正是本表开头那段边界说明（「只能证明五份写得一样，不能证明
     // 五份说得对」）的一个活实例。现算之后常量一改，token 就成了文档里查不到的串
     // ⇒ 下面那条 `total === 0` 当场红并点名 DEPLOY.md。
-    // ⚠️ `424` 仍是字面量：它是上一行的合计（320 + 104），与这道闸无关。
-    //    每次点击**不铸新 key** 时的写侧固定是 3 次 put（`tend-guard.ts` 文件头那段算式），
+    // ⚠️ `472` 仍是字面量：它是上一行的合计（368 + 104），与这道闸无关。
+    //    每次点击**不铸新 key** 时的写侧固定是 4 次 put（`tend-guard.ts` 文件头那段算式），
     //    五份文档里那一行也是按这个口径写的。
     //
     // ⚠️ **不加 `13`**：它在五份里散落在「13 次 put」「12 + 1」等十几处，
@@ -225,10 +234,10 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
     { token: "13 × 8", why: "Tier-2 每天写量的算式（每实例 13 次 put × 8 个并发 isolate）" },
     { token: "104", why: "Tier-2 打开之后每天新增的 put 数，配额账里本期唯一的新写者" },
     { token: "280", why: "Tier-2 开、注册机关着时的写侧合计（176 + 104）" },
-    { token: "424", why: "Tier-2 开、注册机开着且每轮有失败事件时的写侧合计（320 + 104）" },
+    { token: "472", why: "Tier-2 开、注册机开着且每轮有失败事件时的写侧合计（368 + 104）" },
     {
-      token: String(424 + MANUAL_TENDS_PER_DAY * 3),
-      why: "四行场景表里最坏那一行的合计（424 + MANUAL_TENDS_PER_DAY × 3）—— 「开了也不打穿」这条结论就靠它",
+      token: String(472 + MANUAL_TENDS_PER_DAY * 4),
+      why: "四行场景表里最坏那一行的合计（472 + MANUAL_TENDS_PER_DAY × 4）—— 「开了也不打穿」这条结论就靠它",
     },
     // ⚠️ **后来补的，同样是先数过再加**：改动前 `.dev.vars.off` 在五份文档里
     // **各 0 次**（`grep -o -F | wc -l` 逐份数过），加进来之后**各 1 次**，五份完全一致。
@@ -6938,6 +6947,8 @@ const KEYS: readonly string[] = [
   MANUAL_GUARD_KEY,    // src/core/admin/tend-guard.ts
   HEALTH_PROBE_KEY,    // src/core/storage-health.ts
   APIKEY_KEY,          // src/http/apikey-store.ts
+  DOMAIN_LEDGER_KEY,   // src/core/registrar/domain-ledger.ts
+  REGISTRAR_BACKOFF_KEY, // src/core/registrar/backoff.ts
 ];
 
 /** 裁决的**封闭词表**：留白、写成「部分」「视情况」一律红。 */
@@ -7009,6 +7020,18 @@ const RESET_LEDGER: ReadonlyArray<{
       + "两颗按钮的爆炸半径刻意不重叠。**而且这一把更不能顺手清**——清掉它等于"
       + "让全部下游客户端当场 401，而重置配置本身已经会换掉网关口令，"
       + "两件事叠在一起会让运维分不清是哪一件把客户端打掉的。",
+  },
+  {
+    name: "DOMAIN_LEDGER_KEY", key: DOMAIN_LEDGER_KEY, verdict: "不动",
+    why: "注册机的域名台账（「上游认不认这个邮箱域名」的结论）。它是**观测积累**，"
+      + "不是那份配置的一部分：清掉它只会让下一轮回到冷启动，把已经花过的发码请求"
+      + "重新花一遍，而上游对发码这条路是有限流的。与补池历史那一把同一条理由。",
+  },
+  {
+    name: "REGISTRAR_BACKOFF_KEY", key: REGISTRAR_BACKOFF_KEY, verdict: "不动",
+    why: "注册机撞上上游限流之后记的退避窗口。**尤其不许顺手删**，理由与补池锁那一把"
+      + "同形：删掉它 = 下一轮立刻去打一个正在惩罚我们的上游，而那个窗口里每打一次"
+      + "就把它续一次。它也不是配置，是一条刚观测到的外部状态。",
   },
 ];
 
@@ -7151,12 +7174,12 @@ function resetImplTouchedKeyNames(body: string): { names: string[]; literals: st
   return { names: [...new Set(names)].sort(), literals };
 }
 
-describe("「重置到底重置了什么」：十把存储键的封闭登记", () => {
-  it("封闭登记对这 10 个存储键逐把表态 —— 删掉登记里一行就红", () => {
+describe("「重置到底重置了什么」：全部存储键的封闭登记", () => {
+  it("封闭登记对这 12 个存储键逐把表态 —— 删掉登记里一行就红", () => {
     // ⚠️ 手写字面量等号，不许 `toBeGreaterThanOrEqual`（本仓 §通用纪律逐字禁的形态）。
-    expect(KEYS.length, "键表被改动了 —— 回来把这个数改对，别删断言").toBe(10);
-    expect(new Set(KEYS).size, "KEYS 里有重复的键名 —— 两个常量取了同一个值？").toBe(10);
-    expect(RESET_LEDGER.length, "登记的行数与键表对不上 —— 逐把表态就是逐把，不许合并行").toBe(10);
+    expect(KEYS.length, "键表被改动了 —— 回来把这个数改对，别删断言").toBe(12);
+    expect(new Set(KEYS).size, "KEYS 里有重复的键名 —— 两个常量取了同一个值？").toBe(12);
+    expect(RESET_LEDGER.length, "登记的行数与键表对不上 —— 逐把表态就是逐把，不许合并行").toBe(12);
     const failures = resetLedgerFailures();
     expect(failures, failures.join("\n")).toEqual([]);
   });
@@ -7203,11 +7226,11 @@ describe("「重置到底重置了什么」：十把存储键的封闭登记", (
     // 计数是「扫描不是空跑」的绊线，也拦「加了键、也 import 了、但没回来改这个数」。
     // ⚠️ 报文要两个方向都说得通：扫少了是扫描坏了，扫多了是清单该长大。
     expect(exported.length,
-      "扫到的**导出**存储键常量条数与手写的不一致 —— 比 10 少通常是扫描写坏了（判据认不出真声明），"
-      + "比 10 多说明真加了一把键：把它 import 进 KEYS、给 `RESET_LEDGER` 补一行，再回来把这个数改对").toBe(10);
+      "扫到的**导出**存储键常量条数与手写的不一致 —— 比 12 少通常是扫描写坏了（判据认不出真声明），"
+      + "比 12 多说明真加了一把键：把它 import 进 KEYS、给 `RESET_LEDGER` 补一行，再回来把这个数改对").toBe(12);
     expect(declared.length,
-      "扫到的存储键常量总数不是 11（10 把导出的业务键 + 1 把封闭登记里的适配器内部键）—— "
-      + "扫少了是判据认不出真声明，扫多了见上面两条报文").toBe(11);
+      "扫到的存储键常量总数不是 13（12 把导出的业务键 + 1 把封闭登记里的适配器内部键）—— "
+      + "扫少了是判据认不出真声明，扫多了见上面两条报文").toBe(13);
   });
 
   it("「重置配置」那一列裁决从重置实现现扫 —— 实现动了哪几把键，登记就得写哪几把", () => {
@@ -12387,7 +12410,10 @@ describe("五份 REGISTRAR.md 的两级分层与 Cron 那一节的拆分", () =>
   // 新增的那一节住在 `## 排障` 之下，逐语言各一个 `###`，五份同步。
   // 本轮每份多了一个 `###`（「一条通道失败之后会发生什么」：两条通道改成二选一之后，
   // 单通道失败的行为与它的代价必须有自己的一节），下限 16 ⇒ 17。
-  const H3_FLOOR = 17;
+  // 再一轮每份又多了两个 `###`（域名台账那一节 + 撞上上游限流那一节：注册机现在会
+  // 记住域名结论、撞上限流会整轮停手并跨轮退避，两件事各自都改变了运维要做的动作），
+  // 下限 17 ⇒ 19。
+  const H3_FLOOR = 19;
   const H4_FLOOR = 4;
   /** Cron 那一节里的 `####` 恰好几个、至少几张表（靶子是「4 个 `####` + 3 张表」）。 */
   const CRON_H4 = 4;
@@ -12524,13 +12550,20 @@ describe("五份 REGISTRAR.md 的两级分层与 Cron 那一节的拆分", () =>
  * 也就是说这一版比 7C 那一版**多守住一条内容**，而不是少守。
  * 数字从 1 改成 2 的**唯一**合法理由是「文档里真的多了一条判过型的 IMPORTANT」，
  * 不是「判据碍事」——下一个人要再改这个数，同样得先说清多出来的那条是什么。
+ * 🔴 **【再一次重新基线：2 → 3】**
+ * 「撞上上游限流之后会发生什么」那一节新增了第三条 IMPORTANT：
+ * **「换一条邮箱通道逃不掉这一档」**——限流发生在「出口地址 → 上游」这条边上，
+ * 与用哪条邮箱通道无关。它落在同一条判型规则的「**别读成 X**」那一类上：
+ * 运维看到退避横幅时的第一反应就是去切通道，而那是白费力气。
+ * **同批给它配了内容锚**（下面 `CHANNEL_NO_ESCAPE`），与前两条一样是逐字抄自五份真文档
+ * ——条数仍然是**恒等**（恰 3），而且守住的内容比上一版多一条。
  * ══════════════════════════════════════════════════════════════════════════ */
 
-describe("五份 REGISTRAR.md 的那两条 `> [!IMPORTANT]`", () => {
+describe("五份 REGISTRAR.md 的那三条 `> [!IMPORTANT]`", () => {
   const realRegSrc: ApiDocReader = realDoc("REGISTRAR");
 
   /** 这五份里 `> [!IMPORTANT]` 的条数。**恒等**，不是下限。 */
-  const REG_IMPORTANT_COUNT = 2;
+  const REG_IMPORTANT_COUNT = 3;
 
   /** 那条 `> [!IMPORTANT]` 里必须写着的话，逐语言。**不是现找的**——对不上就红。 */
   const EQUAL_CHANNELS: Record<Lang, string> = {
@@ -12539,6 +12572,16 @@ describe("五份 REGISTRAR.md 的那两条 `> [!IMPORTANT]`", () => {
     en: "The two channels are fully equal",
     ja: "2 つのチャネルは完全に対等であり",
     ko: "두 채널은 완전히 대등하며",
+  };
+
+  /** 第 3 条里必须写着的话，逐语言。逐字抄自五份真文档。
+   * 它对着的是运维看到退避横幅时最自然、也最白费力气的那个反应：去切邮箱通道。 */
+  const CHANNEL_NO_ESCAPE: Record<Lang, string> = {
+    "zh-CN": "换一条邮箱通道逃不掉这一档",
+    "zh-TW": "換一條信箱通道逃不掉這一檔",
+    en: "Switching mailbox channel does not get you out of this",
+    ja: "メールボックスチャネルを切り替えてもこれは回避できません",
+    ko: "메일박스 채널을 바꿔도 이 구간은 피할 수 없습니다",
   };
 
   /** 第 2 条（判型落点）里必须写着的话，逐语言。同样是逐字抄自五份真文档。 */
@@ -12563,7 +12606,7 @@ describe("五份 REGISTRAR.md 的那两条 `> [!IMPORTANT]`", () => {
     return out;
   };
 
-  it(`五份各恰 ${REG_IMPORTANT_COUNT} 条 \`> [!IMPORTANT]\`，且两条各自写着自己那句话`, () => {
+  it(`五份各恰 ${REG_IMPORTANT_COUNT} 条 \`> [!IMPORTANT]\`，且三条各自写着自己那句话`, () => {
     const failures: string[] = [];
     for (const lang of LANGS) {
       const bodies = alertBodies(realRegSrc(lang));
@@ -12573,11 +12616,15 @@ describe("五份 REGISTRAR.md 的那两条 `> [!IMPORTANT]`", () => {
         );
         continue;
       }
-      for (const [what, want] of [["平级承诺", EQUAL_CHANNELS[lang]], ["立即补池是例外", TEND_EXCEPTION[lang]]] as const) {
+      for (const [what, want] of [
+        ["平级承诺", EQUAL_CHANNELS[lang]],
+        ["立即补池是例外", TEND_EXCEPTION[lang]],
+        ["换通道逃不掉退避", CHANNEL_NO_ESCAPE[lang]],
+      ] as const) {
         const hits = bodies.filter((b) => b.includes(want)).length;
         if (hits !== 1) {
           failures.push(
-            `docs/${lang}/REGISTRAR.md 的两条 alert 里写着「${want}」（${what}）的有 ${hits} 条，应当恰 1 条：\n${bodies.join("\n---\n")}`,
+            `docs/${lang}/REGISTRAR.md 的三条 alert 里写着「${want}」（${what}）的有 ${hits} 条，应当恰 1 条：\n${bodies.join("\n---\n")}`,
           );
         }
       }
@@ -12586,7 +12633,9 @@ describe("五份 REGISTRAR.md 的那两条 `> [!IMPORTANT]`", () => {
       failures,
       `${failures.join("\n")}\n`
       + "⇒ 第 1 条对着的是用户的硬约束：YYDS 与 MoeMail 同级，不替用户选主备；"
-      + "第 2 条是判型的落点（「有例外」⇒ IMPORTANT）。两条都不许悄悄消失。",
+      + "第 2 条是判型的落点（「有例外」⇒ IMPORTANT）；"
+      + "第 3 条挡的是运维看到退避横幅时最自然、也最白费力气的那个反应（去切通道）。"
+      + "三条都不许悄悄消失。",
     ).toEqual([]);
   });
 

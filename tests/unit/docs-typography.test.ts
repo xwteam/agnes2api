@@ -1272,12 +1272,14 @@ const P5_OUTSIDE_ALERT: ReadonlyArray<readonly [path: string, no: number, why: s
   //    `### USAGE_FLUSH_INTERVAL_MS` 一节，912 → 938、896 → 921；紧接着的评审回填
   //    往那一节补了「与 `USAGE_STATS_ENABLED` 开没开无关」并改写了配额账 ④ 段的后果说明，
   //    938 → 944、921 → 928；本轮往注册机那 16 个环境变量的表下补了「写错值不再让容器
-  //    起不来」的警示块、并改写了 `RESET_CONFIG` 那一节，944 → 952、928 → 936）。
+  //    起不来」的警示块、并改写了 `RESET_CONFIG` 那一节，944 → 952、928 → 936；
+  //    再一轮往配额账里补了域名台账那一笔按轮计费的写（注册机新增的第四把每轮写的键），
+  //    952 → 958、936 → 942）。
   //    **红是对的**：它逼人回来确认「那句括注还在原处、还是同一句」，而不是让登记
   //    悄悄指到别的行上去。改的时候要照着报文里的新行号去核对那一行的内容。
   //    ⚠️ 这两轮都是照这条做的：两处的**原文一个字都没动**，只是被上面新增的段落往下推。
-  [join("docs", "en", "DEPLOY.md"), 952, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
-  [join("docs", "ja", "DEPLOY.md"), 936, "同上，ja 那一份的对应括注"],
+  [join("docs", "en", "DEPLOY.md"), 958, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
+  [join("docs", "ja", "DEPLOY.md"), 942, "同上，ja 那一份的对应括注"],
 ];
 
 describe("R20/P5 风险语义句必须住在 alert 块里（内容锚定的下限，不可灌水）", () => {

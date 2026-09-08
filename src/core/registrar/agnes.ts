@@ -20,8 +20,25 @@ const BASE_HEADERS = {
  */
 const timeoutSignal = () => AbortSignal.timeout(REGISTRAR_REQUEST_TIMEOUT_MS);
 
-/** 发验证码。**原样返回状态码不抛错**：400 表示该域名被 Agnes 屏蔽，调用方要据此换域名。 */
-export async function sendCode(deps: AgnesDeps, email: string): Promise<number> {
+/**
+ * 发验证码。**原样返回状态码与正文，不抛错。**
+ *
+ * ⚠️⚠️ **这里原来只返回状态码，注释逐字写着「400 表示该域名被 Agnes 屏蔽」——
+ * 那句话只对了一半。** 上游用 `400` 同时表达「这个域名被屏蔽了」与「你这个出口
+ * 发得太频繁了」，而**正文是唯一的区分线索**。把正文整个丢掉，就等于在代码层面
+ * 让这两件事永远分不开：一次出口级限流会被读成「这些域名被屏蔽了」，然后照着
+ * 「换个域名就好」继续打，把上游的惩罚窗口一次次续上。
+ *
+ * 分辨交给 `./domain-ledger.ts` 的 `classifySendCode`，**而且那是启发式**
+ *（词表匹配），这句话在那边的文件头逐字登记着。
+ *
+ * ⚠️ **正文在这里不截断、不脱敏**：那是调用点的职责（正文里可能带我们自己拼进
+ * URL 的邮箱地址，进事件之前必须过 `./url.ts` 的脱敏并截断）。
+ * 本函数只负责把证据完整交出去。
+ */
+export async function sendCode(
+  deps: AgnesDeps, email: string,
+): Promise<{ status: number; body: string }> {
   const url = `${deps.platformUrl}/api/verification?email=${encodeURIComponent(email)}&purpose=register`;
   const r = await fetchChannel({
     fetcher: deps.fetcher, provider: "Agnes", action: "发验证码", url,
@@ -31,7 +48,15 @@ export async function sendCode(deps: AgnesDeps, email: string): Promise<number> 
       signal: timeoutSignal(),
     },
   });
-  return r.status;
+  // 读正文失败（连接中途断了）按「没有正文」处理，不让它把一次已经拿到状态码的
+  // 请求变成异常——与本文件 `login` / `createKey` 对非 JSON 正文的处置同一条。
+  let body: string;
+  try {
+    body = await r.text();
+  } catch {
+    body = "";
+  }
+  return { status: r.status, body };
 }
 
 export async function register(

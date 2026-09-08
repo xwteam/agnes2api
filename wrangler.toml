@@ -29,23 +29,32 @@ id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 # 注册机链路上每个 HTTP 请求都有 15 秒的单请求超时（src/core/registrar/types.ts 的
 # REGISTRAR_REQUEST_TIMEOUT_MS），下面两个估算都以它为前提——没有它，一个挂起的
 # 连接就能让单轮无限拖长：
-#   常态：MINT_BATCH（默认 5）× CODE_TIMEOUT_MS（默认 120s）+ 铸 key 间隔延时
-#         ≈ 600~620 秒，余量约 30%。
-#   最坏：验证码一直收不到时，每个名额都要等满一次 CODE_TIMEOUT_MS，
-#         即 MINT_BATCH × CODE_TIMEOUT_MS（默认 600 秒）。
-#         注：这里从前还乘着一个「通道数」——两条邮箱通道是主备、code_timeout 会降级到
+#   常态：MINT_BATCH（默认 5）× CODE_TIMEOUT_MS（默认 120s）
+#         + (MINT_BATCH - 1) × MINT_DELAY_MAX_MS（默认 90s）≈ 960 秒。
+#   最坏：验证码一直收不到时，每个名额都要等满一次 CODE_TIMEOUT_MS，同一个式子：
+#         MINT_BATCH × CODE_TIMEOUT_MS + (MINT_BATCH - 1) × MINT_DELAY_MAX_MS = 960 秒。
+#         注①：名额之间那几段间隔从前只有几秒，可以忽略；MINT_DELAY_MIN/MAX_MS 的
+#         内置取值改成 60s / 90s 之后它占 360 秒，必须算进来。
+#         注②：这里从前还乘着一个「通道数」——两条邮箱通道是主备、code_timeout 会降级到
 #         备通道，同一个名额要在两条通道上各等满一次（1200 秒 > 900 秒）。两条通道
 #         改成二选一之后没有第二次等待了，那个因子整个消失。
+#         注③：960 秒**已经超过 900 秒的墙钟上限**——这不是新缺陷，下面那个轮级预算
+#         正是为它准备的：Worker 上最坏跑得完 4 个名额，第 5 个留给下一轮
+#         （走 registrar.round_budget_exhausted，不是崩、也不是静默）。
 #
 # 因此 scheduled() 给 tendOnce 传了一个**轮级墙钟预算**
 #（src/entry/worker.ts 的 TEND_ROUND_BUDGET_MS = 780s）：每次开始一次铸 key 之前先
-# 判断剩余预算能否装下完整的一次（CODE_TIMEOUT_MS + 尝试间隔），装不下就
+# 判断剩余预算能否装下完整的一次
+#（CODE_TIMEOUT_MS + (MAX_DOMAIN_ATTEMPTS - 1) × MINT_DELAY_MAX_MS，再加上名额之间
+# 那一段间隔），装不下就
 # 根本不开始、提前收尾。这样单轮不会被平台从中间砍断——被砍断时 mintOne 的 finally
 # 不执行，那个临时邮箱就漏了。MINT_BATCH 在 Worker 上因此是「单轮上限」而非保证值。
 # Node/Docker 没有平台墙钟上限，不传预算，MINT_BATCH 照常跑满。
 #
-# 预算判据只算了占大头的 CODE_TIMEOUT_MS 项；单次尝试还会花掉若干个 15 秒的单请求
-# 超时与 403 退避，那正是 780s 与 900s 之间那 120 秒余量的用途。「每个请求都挂满
+# 预算判据算的是 CODE_TIMEOUT_MS 加上一次尝试之内换域名要付的间隔；单次尝试还会
+# 花掉若干个 15 秒的单请求超时，那正是 780s 与 900s 之间那 120 秒余量的用途。
+#（这一段从前写的是「与 403 退避」——那条 403 分支已经删掉了：撞上限流现在是
+# 当场结束整轮 + 记一个跨轮退避，不再有「等一下接着打」这回事。）「每个请求都挂满
 # 15 秒」这种病态情形仍可能顶到上限，这一条是早先就存在并已接受的取舍：每铸出
 # 一把 key 就立即落库，中止只让当轮不完整。
 [triggers]

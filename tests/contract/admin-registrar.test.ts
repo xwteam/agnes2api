@@ -10,6 +10,8 @@ import {
 import { EVENT_WRITES_PER_DAY } from "../../src/core/admin/event-ring.js";
 import { TEND_LOCK_KEY } from "../../src/http/admin/tend-lock.js";
 import { TEND_HISTORY_KEY, type TendRecord } from "../../src/core/admin/tend-history.js";
+import { DOMAIN_LEDGER_KEY } from "../../src/core/registrar/domain-ledger.js";
+import { REGISTRAR_BACKOFF_KEY } from "../../src/core/registrar/backoff.js";
 import { buildApp } from "../../src/http/wire.js";
 import { workerRuntime } from "../../src/adapters/runtime-worker.js";
 import { WORKER_ROUND_BUDGET_MS } from "../../src/core/registrar/types.js";
@@ -153,6 +155,69 @@ describe("GET /admin/api/registrar/status", () => {
    * **报告**的状态，不是拒绝它的理由。做成 409 的话，运维在面板上会看到一片
    * `—`，既看不到「已关闭」这句话，也看不到关掉之前那几轮的补池历史。
    */
+  /**
+   * **域名台账与退避两块。**
+   *
+   * 🔴 **`domains.total` 不许现打一次 `listDomains()` 去凑。** 这个端点今天一次上游
+   * 请求都不发，破了那条性质就等于给面板加了一颗每几秒被轮询一次就打一次上游的按钮。
+   * 取值只能来自台账里记的上一轮观测数 —— 所以这一格夹具里的存储只有那把台账键，
+   * **一个 provider 都没有**，而 `total` 仍然出得来。
+   */
+  it("status 带出域名台账：四格计数与总数都来自台账那把键，不现问上游", async () => {
+    const st = new MemoryStorage(undefined, () => NOW);
+    await st.put(DOMAIN_LEDGER_KEY, {
+      v: 1, updatedAt: NOW - 1000, total: 10,
+      entries: {
+        "a.test": { s: "ok", at: NOW, n: 2 },
+        "b.test": { s: "ok", at: NOW, n: 1 },
+        "c.test": { s: "blocked", at: NOW, n: 3 },
+        "d.test": { s: "blocked", at: NOW, n: 1 },
+      },
+    });
+    const { app } = await fixture({ storage: st });
+    const body = await (await status(app)).json() as {
+      domains: { total: number; ok: number; blocked: number; suspect: number; unknown: number; updatedAt: number };
+    };
+    // 手写字面量：可用 2、判死 1（n>=2）、待复查 1（n===1）、未探过 10 − 2 − 1 − 1 = 6。
+    expect(body.domains).toMatchObject({ total: 10, ok: 2, blocked: 1, suspect: 1, unknown: 6 });
+    expect(body.domains.updatedAt).toBe(NOW - 1000);
+  });
+
+  it("台账那把键还不存在时，domains 整块照常给出来，但 total / unknown 如实是 null（不伪造 0）", async () => {
+    const { app } = await fixture();
+    const body = await (await status(app)).json() as {
+      domains: { total: number | null; ok: number; unknown: number | null };
+    };
+    expect(body.domains.total).toBeNull();
+    expect(body.domains.unknown, "总数不知道时「未探过」算不出来 —— 给 0 是伪造").toBeNull();
+    expect(body.domains.ok).toBe(0);
+  });
+
+  /**
+   * **退避那一块只在真的还在退避中时非空。**
+   * 给一个已经过去的时刻会让面板渲染出一个恒为 0 的假倒计时 —— 口径与手动补池
+   * 冷却那一格逐字相同（相对量做倒计时、绝对时刻显示「几点恢复」，成对给）。
+   */
+  it("退避中：status 带出 until / retryAfterMs / kind，两个时间量成对给", async () => {
+    const st = new MemoryStorage(undefined, () => NOW);
+    await st.put(REGISTRAR_BACKOFF_KEY, { until: NOW + 600_000, kind: "edge", since: NOW - 60_000, hits: 2 });
+    const { app } = await fixture({ storage: st });
+    const body = await (await status(app)).json() as {
+      backoff: { until: number; kind: string; retryAfterMs: number; hits: number };
+    };
+    expect(body.backoff).toEqual({
+      until: NOW + 600_000, kind: "edge", retryAfterMs: 600_000, since: NOW - 60_000, hits: 2,
+    });
+  });
+
+  it("退避已经过期：整块如实回 null —— 判据是 until > now 这一处值比较", async () => {
+    const st = new MemoryStorage(undefined, () => NOW);
+    await st.put(REGISTRAR_BACKOFF_KEY, { until: NOW - 1, kind: "app", since: NOW - 60_000, hits: 1 });
+    const { app } = await fixture({ storage: st });
+    const body = await (await status(app)).json() as { backoff: unknown };
+    expect(body.backoff).toBeNull();
+  });
+
   it("注册机关着照常 200 并如实说 enabled:false，不是 409", async () => {
     const { app } = await fixture({ registrar: null });
     const res = await status(app);

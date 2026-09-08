@@ -588,8 +588,14 @@ export function isDiagnostic(body) {
  * 这一档不是假想，它是**刻意**保留的：`src/core/registrar/config.ts` 里
  * `delay_min_gt_max` 那条 blocker **不受 `enabled` 门控**（它比的是生效值，
  * 两个数各自合法、只是搭配不成立）。实跑复现过：存储里
- * `{"registrar":{"enabled":false,"mintDelayMinMs":9000}}`（默认 max=5000）⇒
- * `GET /admin/api/config` 回 `fields !== null` + `loadBlocked` 非空 + `enabled.effective=false`。
+ * `{"registrar":{"enabled":false,"mintDelayMinMs":95000}}`（内置的 max 是 90000）⇒
+ * `GET /admin/api/config` 回 `fields !== null` + `loadBlocked` 非空
+ *（逐字是 `[{"field":"registrar.mintDelayMinMs","code":"delay_min_gt_max","params":{"min":95000,"max":90000}}]`）
+ * + `enabled.effective=false`。
+ * ⚠️ **这个数字换过一次，换的时候重跑了一遍。** 上一版写的是 `mintDelayMinMs: 9000`
+ *（当时内置的 max 是 5000）；`MINT_DELAY_MAX_MS` 的内置取值改成 90000 之后，
+ * 9000 < 90000 ⇒ **那个例子当场不再产 blocker**，而它旁边还挂着「实跑复现过」这句话。
+ * **「实跑复现过」不许留在一个不再成立的例子上** —— 换数字的时候必须真的再跑一次。
  * 同一块面板里注册机板块与概览卡片这时都渲染「已关闭」（两处都先判 `enabled`）
  * ⇒ **面板自相矛盾**。`RegistrarConfig.blocked` 的 JSDoc 逐字写着这条规则
  *（「消费方一律先判 `enabled` 再判 `blocked`……关着的注册机该说「未启用」」），

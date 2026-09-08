@@ -4,7 +4,7 @@ import {
   failureReasonKey, refuseReasonKey, refuseKeyOf,
   statusView, channelCards, poolView, tendCost, manualQuotaView,
   historyRows, historyMalformed, roundOutcome, roundFailures, mintedByChannelText,
-  channelTestResult,
+  channelTestResult, domainLedgerView, backoffView,
 } from "../../admin-ui/js/pure/registrar.mjs";
 import { TEND_FAILURE_REASONS, type TendFailureReason } from "../../src/core/registrar/tender.js";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
@@ -33,7 +33,7 @@ import { I18N } from "../../admin-ui/js/i18n-dict.js";
  * **`tsc` 当场在这张表上报错**（与 `router.ts` 的 `REJECT_MESSAGE`、
  * `tend-history.ts` 的 `FIELD_CHECKS` 是同一招）。
  *
- * **十二行全是手写字面量，不从 `TEND_FAILURE_REASONS` 拼出来**：从被测对象自己
+ * **十三行全是手写字面量，不从 `TEND_FAILURE_REASONS` 拼出来**：从被测对象自己
  * 推导出来的期望值恒等于实际值（本仓登记的第 6 种假阳性）。
  */
 const EXPECTED_FAILURE_KEY: Record<TendFailureReason, string> = {
@@ -49,16 +49,17 @@ const EXPECTED_FAILURE_KEY: Record<TendFailureReason, string> = {
   provider_missing: "reg.fail.provider_missing",
   round_crashed: "reg.fail.round_crashed",
   key_suspicious: "reg.fail.key_suspicious",
+  upstream_backoff: "reg.fail.upstream_backoff",
 };
 
 describe("failureReasonKey：补池失败归因的穷尽渲染", () => {
-  it("失败归因表就是 TEND_FAILURE_REASONS 那一份——加了第 13 个成员，这一格会 tsc 报错", () => {
+  it("失败归因表就是 TEND_FAILURE_REASONS 那一份——加了下一个成员，这一格会 tsc 报错", () => {
     // 运行期这一半：手写表的成员集合必须与联合类型的运行期表**双向一致**。
     // 编译期那一半由上面 `Record<TendFailureReason, string>` 承担（少一行就 tsc 红）。
     expect(Object.keys(EXPECTED_FAILURE_KEY).sort()).toEqual([...TEND_FAILURE_REASONS].sort());
   });
 
-  it("十二个成员各自渲染成自己那条 reg.fail.* 键", () => {
+  it("十三个成员各自渲染成自己那条 reg.fail.* 键", () => {
     for (const [reason, key] of Object.entries(EXPECTED_FAILURE_KEY)) {
       expect(failureReasonKey(reason), reason).toBe(key);
     }
@@ -450,5 +451,63 @@ describe("channelTestResult：两条通道同一套文案模板", () => {
     const a = channelTestResult({ ok: true, channel: "moemail", domains: 3, latencyMs: 10 });
     const b = channelTestResult({ ok: true, channel: "yyds", domains: 3, latencyMs: 10 });
     expect(a).toEqual(b);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 域名台账与退避横幅
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("domainLedgerView：域名台账那一行", () => {
+  it("整块读不到时返回 null（渲染成 —），与「台账是空的」分得开", () => {
+    expect(domainLedgerView(null)).toBeNull();
+    expect(domainLedgerView({})).toBeNull();
+    expect(domainLedgerView({ domains: null })).toBeNull();
+    // 读到了、只是还什么都没记住 ⇒ **不是 null**，是一行四个 0。
+    expect(domainLedgerView({ domains: { total: null, ok: 0, blocked: 0, suspect: 0, unknown: null } }))
+      .toEqual({ total: null, ok: 0, blocked: 0, suspect: 0, unknown: null, updatedAt: null });
+  });
+
+  it("总数不知道时「未探过」如实是 null，不伪造 0", () => {
+    const v = domainLedgerView({ domains: { total: null, ok: 3, blocked: 1, suspect: 0, unknown: null } });
+    expect(v?.unknown, "「一个都没探过」与「不知道有多少个」是两回事").toBeNull();
+    expect(v?.ok).toBe(3);
+  });
+});
+
+describe("backoffView：退避横幅", () => {
+  /**
+   * **只在真的还在退避中时非空。** 后端已经按 `until > now` 判过一次，前端不再拿
+   * 本地时钟去减 —— 给一个已经过去的时刻会渲染出一个恒为 0 的假倒计时。
+   */
+  it("整块是 null（不在退避中）⇒ 不渲染横幅", () => {
+    expect(backoffView(null)).toBeNull();
+    expect(backoffView({})).toBeNull();
+    expect(backoffView({ backoff: null })).toBeNull();
+  });
+
+  /**
+   * 🔴 **两档必须映射到两条不同的文案键。** 揉成一句会让运维在应用层限流那一档
+   * 去调一个不解决问题的旋钮（把间隔调大对「这个出口的注册额度到顶了」没有用）。
+   */
+  it("两层限流各自映射到自己那条文案键，且两条不是同一条", () => {
+    const edge = backoffView({ backoff: { kind: "edge", until: 9, retryAfterMs: 8, since: 1, hits: 2 } });
+    const app = backoffView({ backoff: { kind: "app", until: 9, retryAfterMs: 8, since: 1, hits: 2 } });
+    expect(edge?.key).toBe("reg.backoff.edge");
+    expect(app?.key).toBe("reg.backoff.app");
+    expect(edge?.key).not.toBe(app?.key);
+    expect(edge?.until).toBe(9);
+    expect(edge?.retryAfterMs).toBe(8);
+  });
+
+  it("两条 reg.backoff.* 键都真的在字典里 —— 渲染一个字典里没有的 key 等于把 key 本身显示给运维", () => {
+    for (const k of ["reg.backoff.edge", "reg.backoff.app"]) {
+      expect(k in I18N, `${k} 不在字典里`).toBe(true);
+    }
+  });
+
+  it("kind 是表外的值时整块返回 null，不冒充任何一档", () => {
+    expect(backoffView({ backoff: { kind: "something_new", until: 9, retryAfterMs: 8 } })).toBeNull();
+    expect(backoffView({ backoff: { until: 9, retryAfterMs: 8 } })).toBeNull();
   });
 });

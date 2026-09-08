@@ -3,9 +3,16 @@ import { mintOne } from "../../../src/core/registrar/mint.js";
 import { FakeMailProvider } from "../../helpers/fake-mailbox.js";
 import { recordingLogger } from "../../helpers/recording-logger.js";
 import { NULL_LOGGER } from "../../../src/ports/logger.js";
+import { emptyDomainLedger, newJournal } from "../../../src/core/registrar/domain-ledger.js";
 
+/**
+ * ⚠️ **`sendCode` 现在返回 `{status, body}`，`agnesStub` 的 plan 跟着变。**
+ * `sendCode` 那一格从「回一个状态码」变成「回一个状态码 + 一段正文」，因为**正文
+ * 是区分「域名被屏蔽的 400」与「出口被限流的 400」的唯一线索**。
+ * 只给状态码的旧写法保留成 `number` 简写（正文按 `{}` 补），免得每一格都要写两遍。
+ */
 function agnesStub(plan: {
-  sendCode?: (email: string) => number;
+  sendCode?: (email: string) => number | { status: number; body: string };
   register?: boolean;
   login?: string | null;
   key?: string | null;
@@ -20,7 +27,9 @@ function agnesStub(plan: {
           if (url.includes("/api/verification")) {
             const email = decodeURIComponent(new URL(url).searchParams.get("email") ?? "");
             seen.push(email);
-            return new Response("{}", { status: plan.sendCode ? plan.sendCode(email) : 200 });
+            const r = plan.sendCode ? plan.sendCode(email) : 200;
+            const { status, body } = typeof r === "number" ? { status: r, body: "{}" } : r;
+            return new Response(body, { status });
           }
           if (url.includes("/api/user/register")) {
             return new Response("{}", { status: plan.register === false ? 422 : 200 });
@@ -42,15 +51,25 @@ function agnesStub(plan: {
 // 共享同一个 entries 数组，不检查日志内容的用例也会悄悄往里面塞条目，污染真正关心日志的
 // 那几条用例（下面几条会各自局部覆盖成一个新的 recordingLogger()）。
 const BASE = {
-  tokenName: "auto", codeTimeoutMs: 5000, maxDomainAttempts: 8,
+  tokenName: "auto", codeTimeoutMs: 5000,
+  // 域名不再由 mintOne 自己去列、也不再由它洗牌：候选由 `tendOnce` 用
+  // `selectDomains` 排好序传进来（见 `src/core/registrar/mint.ts` 的 `candidates`）。
+  // 这里给一份和 `FakeMailProvider` 的默认域名逐字相同的候选。
+  candidates: ["a.test", "b.test", "c.test"],
+  ledger: emptyDomainLedger(),
+  now: 1_000_000,
+  mintDelayMinMs: 0, mintDelayMaxMs: 0,
   sleep: async () => {}, rand: () => 0.5, logger: NULL_LOGGER,
 };
+
+/** 每一格都要一本**自己的**观测本子——共用一本会让上一格的观测漏进下一格。 */
+const base = () => ({ ...BASE, journal: newJournal() });
 
 describe("mintOne", () => {
   it("顺利时返回 key", async () => {
     const provider = new FakeMailProvider();
     const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: true, key: "sk-ok" });
+    expect(await mintOne({ provider, agnes, ...base() })).toEqual({ ok: true, key: "sk-ok" });
   });
 
   it("域名被上游拒(400)时换下一个域名重试", async () => {
@@ -61,7 +80,9 @@ describe("mintOne", () => {
       login: "tok",
       key: "sk-ok",
     });
-    const out = await mintOne({ provider, agnes, ...BASE });
+    const out = await mintOne({
+      provider, agnes, ...base(), candidates: ["blocked.test", "good.test"],
+    });
     expect(out).toEqual({ ok: true, key: "sk-ok" });
     expect(seen.length).toBeGreaterThanOrEqual(2);
   });
@@ -69,13 +90,15 @@ describe("mintOne", () => {
   it("所有域名都被拒时返回 domain_blocked_all", async () => {
     const provider = new FakeMailProvider({ domains: ["x.test", "y.test"] });
     const { agnes } = agnesStub({ sendCode: () => 400 });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "domain_blocked_all" });
+    expect(await mintOne({ provider, agnes, ...base(), candidates: ["x.test", "y.test"] }))
+      .toEqual({ ok: false, reason: "domain_blocked_all" });
   });
 
   it("发验证码遇到非 400 的非 2xx（上游整体故障）时返回 upstream_error 而不是 domain_blocked_all", async () => {
     const provider = new FakeMailProvider({ domains: ["x.test", "y.test"] });
     const { agnes } = agnesStub({ sendCode: () => 500 });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "upstream_error" });
+    expect(await mintOne({ provider, agnes, ...base(), candidates: ["x.test", "y.test"] }))
+      .toEqual({ ok: false, reason: "upstream_error" });
   });
 
   it("400 与其他非 2xx 混杂时也归为 upstream_error（不能谎称域名全被屏蔽）", async () => {
@@ -83,7 +106,8 @@ describe("mintOne", () => {
     const { agnes } = agnesStub({
       sendCode: (email) => (email.endsWith("@blocked.test") ? 400 : 503),
     });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "upstream_error" });
+    expect(await mintOne({ provider, agnes, ...base(), candidates: ["blocked.test", "down.test"] }))
+      .toEqual({ ok: false, reason: "upstream_error" });
   });
 
   it("所有候选域名上都建不出邮箱时返回 provider_error（通道级失败，不是域名问题）", async () => {
@@ -95,7 +119,8 @@ describe("mintOne", () => {
       failCreateOn: ["x.test", "y.test", "z.test"],
     });
     const { seen, agnes } = agnesStub({ login: "tok", key: "sk-ok" });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "provider_error" });
+    expect(await mintOne({ provider, agnes, ...base(), candidates: ["x.test", "y.test", "z.test"] }))
+      .toEqual({ ok: false, reason: "provider_error" });
     // 一个邮箱都没建出来 → 一次验证码都没发出去 → 根本没资格声称"域名全被屏蔽"。
     expect(provider.created).toEqual([]);
     expect(seen).toEqual([]);
@@ -121,7 +146,7 @@ describe("mintOne", () => {
       domains: ["x.test"], failCreateOn: ["x.test"],
     });
     const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
-    await mintOne({ provider, agnes, ...BASE, logger });
+    await mintOne({ provider, agnes, ...base(), candidates: ["x.test"], logger });
     const e = logger.entries.find((x) => x.event === "registrar.no_mailbox_on_any_domain");
     expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
     for (const w of ["备通道", "降级", "主/备"]) {
@@ -140,83 +165,156 @@ describe("mintOne", () => {
       failCreateOn: ["bad.test"],
     });
     const { agnes } = agnesStub({ sendCode: () => 400 });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "domain_blocked_all" });
+    expect(await mintOne({ provider, agnes, ...base(), candidates: ["bad.test", "blocked.test"] }))
+      .toEqual({ ok: false, reason: "domain_blocked_all" });
     expect(provider.created).toHaveLength(1);
   });
 
-  // === 限流（403）与上游宕机（其他非 2xx）的退避不同 ===
+  // === 限流：当场停手，不再「等一下换个域名接着打」 ===
+  //
+  // ⚠️⚠️ **这一段整个重写过，而且是收紧不是放松。** 从前 403 会 `sleep(5000)` 再换
+  // 下一个域名接着打，注释里写着「取自既有生产实现（跑了一个多月）」——而真机实测
+  // 上游回的是 429 与 400，那条 403 分支**一次都没走到过**。更要命的是那个形态本身：
+  // 两层限流的惩罚窗口都远比 5 秒长，**窗口里每打一次就把窗口续一次**。
+  // 现在三种限流形态一律**当场结束这次尝试**并把层级交回给 `tendOnce` 去记退避。
 
-  it("发验证码遇 403（限流）时先退避再换域名，后续域名仍能成功铸出 key", async () => {
+  it("撞上边缘限流（429 + 非 JSON 正文）时当场停手：只打一次、不换域名、一条域名结论都不记", async () => {
     const provider = new FakeMailProvider({ domains: ["first.test", "second.test"] });
     const slept: number[] = [];
-    const { agnes } = agnesStub({
-      sendCode: (email) => (email.endsWith("@first.test") ? 403 : 200),
-      login: "tok", key: "sk-ok",
+    const journal = newJournal();
+    const { seen, agnes } = agnesStub({
+      sendCode: () => ({ status: 429, body: "error code: 1015" }),
     });
     const out = await mintOne({
-      provider, agnes, ...BASE, sleep: async (ms: number) => { slept.push(ms); },
+      provider, agnes, ...base(), journal,
+      candidates: ["first.test", "second.test"],
+      sleep: async (ms: number) => { slept.push(ms); },
     });
-    expect(out).toEqual({ ok: true, key: "sk-ok" });
-    // 限流之后必须真的等一下——既有生产实现同款的 5 秒退避。
-    expect(slept).toEqual([5000]);
+    expect(out).toEqual({ ok: false, reason: "rate_limited", limitKind: "edge", marker: "1015" });
+    // ① 只打了一次 —— 从前是把候选全打一遍。
+    expect(seen).toHaveLength(1);
+    // ② 一秒都不睡：睡完接着打正是把惩罚窗口续上的那个形态。
+    expect(slept).toEqual([]);
+    // ③ **一条域名结论都不记**：限流不是「这个域名不行」。
+    expect(journal.observations).toEqual([]);
+    // ④ 邮箱照样删干净。
+    expect(provider.deleted).toEqual(provider.created);
   });
 
-  it("所有域名都遇 403 时返回 rate_limited，而不是 domain_blocked_all/upstream_error", async () => {
+  it("撞上应用层限流（400 + 限流文案）时同样当场停手，且 limitKind 是 app", async () => {
     const provider = new FakeMailProvider({ domains: ["x.test", "y.test"] });
-    const slept: number[] = [];
-    const { agnes } = agnesStub({ sendCode: () => 403 });
+    const journal = newJournal();
+    const { seen, agnes } = agnesStub({
+      sendCode: () => ({
+        status: 400,
+        body: JSON.stringify({ code: 400, message: "Too many registration attempts from this IP" }),
+      }),
+    });
     const out = await mintOne({
-      provider, agnes, ...BASE, sleep: async (ms: number) => { slept.push(ms); },
+      provider, agnes, ...base(), journal, candidates: ["x.test", "y.test"],
     });
-    expect(out).toEqual({ ok: false, reason: "rate_limited" });
-    expect(slept).toEqual([5000, 5000]);
+    expect(out).toEqual({ ok: false, reason: "rate_limited", limitKind: "app", marker: null });
+    expect(seen).toHaveLength(1);
+    // 🔴 **这一条是「不把好域名判死」的第一守卫**：同一个 400，正文说的是限流。
+    expect(journal.observations).toEqual([]);
   });
 
-  it("403 与 500 混杂时归为 upstream_error（宕机的归因优先于限流）", async () => {
-    // 限流可以"等一下再来"，宕机必须整轮中止；两者同时出现时按更严重的那个归因。
+  it("403 也并进边缘限流那一档（它今天是死分支，但并进来比留一条「睡一会儿接着打」的路安全）", async () => {
     const provider = new FakeMailProvider({ domains: ["limited.test", "down.test"] });
-    const { agnes } = agnesStub({
-      sendCode: (email) => (email.endsWith("@limited.test") ? 403 : 500),
-    });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "upstream_error" });
+    const { agnes } = agnesStub({ sendCode: () => 403 });
+    expect(await mintOne({
+      provider, agnes, ...base(), candidates: ["limited.test", "down.test"],
+    })).toEqual({ ok: false, reason: "rate_limited", limitKind: "edge", marker: null });
   });
 
-  it("最多只试 maxDomainAttempts 个域名", async () => {
+  it("已知能用的域名回 400 时按限流处理，不把它打成 blocked", async () => {
+    // 两边代价严重不对称：判错限流只慢一轮，判错域名会把一个真好用的域名踢下去。
+    const logger = recordingLogger();
+    const journal = newJournal();
+    const ledger = emptyDomainLedger();
+    ledger.entries["good.test"] = { s: "ok", at: 1_000_000, n: 1 };
+    const provider = new FakeMailProvider({ domains: ["good.test"] });
+    // 正文里**不含**任何限流词 —— 换成分类器就是 `domain_blocked`。
+    const { agnes } = agnesStub({ sendCode: () => ({ status: 400, body: '{"code":400,"message":"nope"}' }) });
+    const out = await mintOne({
+      provider, agnes, ...base(), journal, ledger, now: 1_000_000,
+      candidates: ["good.test"], logger,
+    });
+    expect(out).toEqual({ ok: false, reason: "rate_limited", limitKind: "app", marker: null });
+    expect(journal.observations).toEqual([]);
+    expect(logger.has("registrar.known_good_domain_rejected")).toBe(true);
+  });
+
+  it("400 但正文是空的：分不出是哪一种，一条域名结论都不记，只换下一个域名", async () => {
+    const journal = newJournal();
+    const provider = new FakeMailProvider({ domains: ["a.test", "b.test"] });
+    const { seen, agnes } = agnesStub({ sendCode: () => ({ status: 400, body: "   " }) });
+    const out = await mintOne({
+      provider, agnes, ...base(), journal, candidates: ["a.test", "b.test"],
+    });
+    expect(out).toEqual({ ok: false, reason: "domain_blocked_all" });
+    expect(seen).toHaveLength(2);
+    expect(journal.observations).toEqual([]);
+  });
+
+  it("成功那一次把 ok 记进观测本子（这是稳态下「一次成功铸号只打一次发码」的来源）", async () => {
+    const journal = newJournal();
+    const provider = new FakeMailProvider({ domains: ["good.test"] });
+    const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
+    await mintOne({ provider, agnes, ...base(), journal, candidates: ["good.test"] });
+    expect(journal.observations).toEqual([{ domain: "good.test", verdict: "ok" }]);
+  });
+
+  it("换域名之前真的等一段 mintDelayMin~Max（零间隔连打正是触发边缘限流的那个形态）", async () => {
+    const slept: number[] = [];
+    const provider = new FakeMailProvider({ domains: ["a.test", "b.test", "c.test"] });
+    const { agnes } = agnesStub({ sendCode: () => 400 });
+    await mintOne({
+      provider, agnes, ...base(),
+      candidates: ["a.test", "b.test", "c.test"],
+      mintDelayMinMs: 1000, mintDelayMaxMs: 3000, rand: () => 0.5,
+      sleep: async (ms: number) => { slept.push(ms); },
+    });
+    // 三个域名 ⇒ 两段间隔（第一个域名之前不等）。手写字面量：1000 + floor(0.5 × 2000)。
+    expect(slept).toEqual([2000, 2000]);
+  });
+
+  it("只试调用方给的那几个候选域名（数量上限现在由 selectDomains 在轮级定死）", async () => {
     const provider = new FakeMailProvider({ domains: ["a.test", "b.test", "c.test", "d.test", "e.test"] });
     const { seen, agnes } = agnesStub({ sendCode: () => 400 });
-    await mintOne({ provider, agnes, ...BASE, maxDomainAttempts: 2 });
+    await mintOne({ provider, agnes, ...base(), candidates: ["a.test", "b.test"] });
     expect(seen).toHaveLength(2);
   });
 
   it("验证码超时返回 code_timeout", async () => {
     const provider = new FakeMailProvider({ code: null });
     const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "code_timeout" });
+    expect(await mintOne({ provider, agnes, ...base() })).toEqual({ ok: false, reason: "code_timeout" });
   });
 
   it("注册失败返回 register_failed", async () => {
     const provider = new FakeMailProvider();
     const { agnes } = agnesStub({ register: false });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "register_failed" });
+    expect(await mintOne({ provider, agnes, ...base() })).toEqual({ ok: false, reason: "register_failed" });
   });
 
   it("登录拿不到令牌返回 login_failed", async () => {
     const provider = new FakeMailProvider();
     const { agnes } = agnesStub({ login: null });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "login_failed" });
+    expect(await mintOne({ provider, agnes, ...base() })).toEqual({ ok: false, reason: "login_failed" });
   });
 
   it("建 key 失败返回 key_failed", async () => {
     const provider = new FakeMailProvider();
     const { agnes } = agnesStub({ login: "tok", key: null });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "key_failed" });
+    expect(await mintOne({ provider, agnes, ...base() })).toEqual({ ok: false, reason: "key_failed" });
   });
 
   it("无论成功失败都删掉临时邮箱", async () => {
     for (const plan of [{ login: "tok", key: "sk-ok" }, { register: false }]) {
       const provider = new FakeMailProvider();
       const { agnes } = agnesStub(plan);
-      await mintOne({ provider, agnes, ...BASE });
+      await mintOne({ provider, agnes, ...base() });
       expect(provider.deleted).toEqual(provider.created);
       expect(provider.deleted.length).toBeGreaterThan(0);
     }
@@ -229,27 +327,23 @@ describe("mintOne", () => {
     // 与 `src/adapters/mailbox-moemail.ts` 的文件头），漏删会直接把配额吃光。
     const provider = new FakeMailProvider({ domains: ["a.test", "b.test", "c.test"] });
     const { agnes } = agnesStub({ sendCode: () => 400 });
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "domain_blocked_all" });
+    expect(await mintOne({ provider, agnes, ...base() })).toEqual({ ok: false, reason: "domain_blocked_all" });
     expect(provider.created).toHaveLength(3);
     expect(provider.deleted).toEqual(provider.created);
   });
 
-  it("列域名失败返回 provider_error", async () => {
-    const provider = {
-      name: "yyds" as const,
-      async listDomains(): Promise<string[]> {
-        throw new Error("down");
-      },
-      async createMailbox() {
-        throw new Error("unreachable");
-      },
-      async pollCode() {
-        return null;
-      },
-      async deleteMailbox() {},
-    };
-    const { agnes } = agnesStub({});
-    expect(await mintOne({ provider, agnes, ...BASE })).toEqual({ ok: false, reason: "provider_error" });
+  it("候选域名为空时返回 provider_error（列域名这件事已经提到轮级，mintOne 不再自己列）", async () => {
+    // ⚠️ 这一格从前叫「列域名失败返回 provider_error」，钉的是 `mintOne` 内部
+    // `provider.listDomains()` 抛错那一支。域名现在由 `tendOnce` 在**轮开头**列一次
+    // 再排好序传进来（一轮 1 次而不是每个名额 1 次），那条支路整个搬走了，
+    // 留在 mintOne 这边的只剩「一个候选都没有」这一档。
+    const provider = new FakeMailProvider();
+    const { seen, agnes } = agnesStub({});
+    expect(await mintOne({ provider, agnes, ...base(), candidates: [] }))
+      .toEqual({ ok: false, reason: "provider_error" });
+    // 零副作用：一个邮箱都不建、一次上游请求都不发。
+    expect(provider.created).toEqual([]);
+    expect(seen).toEqual([]);
   });
 
   it("删临时邮箱失败不会掩盖已经拿到的结果", async () => {
@@ -260,13 +354,14 @@ describe("mintOne", () => {
     const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
     // deleteMailbox 真的会抛，若 finally 里没包 try/catch，这次调用会以异常收场
     // 而不是拿到 mintOne 的返回值——这条断言必须能捕捉到那种回归。
-    await expect(mintOne({ provider, agnes, ...BASE })).resolves.toEqual({ ok: true, key: "sk-ok" });
+    await expect(mintOne({ provider, agnes, ...base() })).resolves.toEqual({ ok: true, key: "sk-ok" });
   });
 
   // === 网络层错误不再穿透整轮 ===
 
   it("注册链路中途 fetch 抛错（网络层）时返回 network_error，而不是让异常穿透出去", async () => {
     const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
     const agnes = {
       platformUrl: "https://platform.test",
       fetcher: {
@@ -278,7 +373,7 @@ describe("mintOne", () => {
         },
       },
     };
-    await expect(mintOne({ provider, agnes, ...BASE })).resolves.toEqual({
+    await expect(mintOne({ provider, agnes, ...base(), ...only })).resolves.toEqual({
       ok: false, reason: "network_error",
     });
     // 网络错误也要走 finally 的清理，否则邮箱就漏了。
@@ -288,11 +383,12 @@ describe("mintOne", () => {
 
   it("发验证码这一步 fetch 抛错时同样收敛成 network_error", async () => {
     const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
     const agnes = {
       platformUrl: "https://platform.test",
       fetcher: { async fetch(): Promise<Response> { throw new Error("EAI_AGAIN"); } },
     };
-    await expect(mintOne({ provider, agnes, ...BASE })).resolves.toEqual({
+    await expect(mintOne({ provider, agnes, ...base(), ...only })).resolves.toEqual({
       ok: false, reason: "network_error",
     });
     expect(provider.deleted).toHaveLength(1);
@@ -300,9 +396,10 @@ describe("mintOne", () => {
 
   it("轮询验证码抛错（邮箱侧网络错误）时也是 network_error，不穿透", async () => {
     const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
     provider.pollCode = async () => { throw new Error("socket hang up"); };
     const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
-    await expect(mintOne({ provider, agnes, ...BASE })).resolves.toEqual({
+    await expect(mintOne({ provider, agnes, ...base(), ...only })).resolves.toEqual({
       ok: false, reason: "network_error",
     });
     expect(provider.deleted).toHaveLength(1);
@@ -320,8 +417,9 @@ describe("mintOne", () => {
   it("验证码超时时记一条 registrar.code_timeout 事件，带上邮箱地址与 codeTimeoutMs", async () => {
     const logger = recordingLogger();
     const provider = new FakeMailProvider({ domains: ["only.test"], code: null });
+    const only = { candidates: ["only.test"] };
     const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
-    await mintOne({ provider, agnes, ...BASE, logger, codeTimeoutMs: 7777 });
+    await mintOne({ provider, agnes, ...base(), ...only, logger, codeTimeoutMs: 7777 });
     const e = logger.entries.find((x) => x.event === "registrar.code_timeout");
     expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
     expect(e?.fields?.address).toBe(provider.created[0]!);
@@ -331,8 +429,9 @@ describe("mintOne", () => {
   it("注册被拒时记一条 registrar.register_rejected 事件，带上邮箱地址", async () => {
     const logger = recordingLogger();
     const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
     const { agnes } = agnesStub({ register: false });
-    await mintOne({ provider, agnes, ...BASE, logger });
+    await mintOne({ provider, agnes, ...base(), ...only, logger });
     const e = logger.entries.find((x) => x.event === "registrar.register_rejected");
     expect(e).toBeDefined();
     expect(e?.fields?.address).toBe(provider.created[0]!);
@@ -341,8 +440,9 @@ describe("mintOne", () => {
   it("登录拿不到令牌时记一条 registrar.login_no_token 事件，带上邮箱地址", async () => {
     const logger = recordingLogger();
     const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
     const { agnes } = agnesStub({ login: null });
-    await mintOne({ provider, agnes, ...BASE, logger });
+    await mintOne({ provider, agnes, ...base(), ...only, logger });
     const e = logger.entries.find((x) => x.event === "registrar.login_no_token");
     expect(e).toBeDefined();
     expect(e?.fields?.address).toBe(provider.created[0]!);
@@ -351,8 +451,9 @@ describe("mintOne", () => {
   it("建 key 失败时记一条 registrar.key_not_returned 事件，带上邮箱地址与 tokenName", async () => {
     const logger = recordingLogger();
     const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
     const { agnes } = agnesStub({ login: "tok", key: null });
-    await mintOne({ provider, agnes, ...BASE, logger, tokenName: "my-token-name" });
+    await mintOne({ provider, agnes, ...base(), ...only, logger, tokenName: "my-token-name" });
     const e = logger.entries.find((x) => x.event === "registrar.key_not_returned");
     expect(e).toBeDefined();
     expect(e?.fields?.address).toBe(provider.created[0]!);
@@ -364,15 +465,17 @@ describe("mintOne", () => {
     // 记日志，这条会红。
     const logger = recordingLogger();
     const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
     const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
-    expect(await mintOne({ provider, agnes, ...BASE, logger })).toEqual({ ok: true, key: "sk-ok" });
+    expect(await mintOne({ provider, agnes, ...base(), ...only, logger })).toEqual({ ok: true, key: "sk-ok" });
     expect(logger.entries).toEqual([]);
   });
 
   it("不传 rand 时按 Math.random 兜底也能正常出 key", async () => {
     const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
     const { agnes } = agnesStub({ login: "tok", key: "sk-ok" });
-    const { rand: _rand, ...rest } = BASE;
+    const { rand: _rand, ...rest } = { ...base(), ...only };
     expect(await mintOne({ provider, agnes, ...rest })).toEqual({ ok: true, key: "sk-ok" });
   });
 });

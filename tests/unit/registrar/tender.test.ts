@@ -10,6 +10,8 @@ import type { MailProvider } from "../../../src/ports/mailbox.js";
 import type { Channel, RegistrarConfig } from "../../../src/core/registrar/config.js";
 import { recordingLogger } from "../../helpers/recording-logger.js";
 import { NULL_LOGGER } from "../../../src/ports/logger.js";
+import { emptyDomainLedger, type DomainLedger } from "../../../src/core/registrar/domain-ledger.js";
+import type { BackoffState } from "../../../src/core/registrar/backoff.js";
 
 // 显式标注 RegistrarConfig：brief 给的字面量没有类型注解，`channel` 会被收窄成
 // 字面量类型而不是 `Channel`，下面按测试用例覆盖成 "moemail" 时类型检查会报错
@@ -17,7 +19,10 @@ import { NULL_LOGGER } from "../../../src/ports/logger.js";
 const CFG: RegistrarConfig = {
   enabled: true, channel: "yyds",
   targetKeys: 3, mintBatch: 5, tendIntervalMs: 1000, codeTimeoutMs: 5000,
-  mintDelayMinMs: 1, mintDelayMaxMs: 1, maxDomainAttempts: 8,
+  // `maxDomainAttempts: 1` 跟着新的内置默认值走：`worstAttemptMs` 现在是
+  // `codeTimeoutMs + (maxDomainAttempts − 1) × mintDelayMaxMs`，cap=1 时它恰好
+  // 等于 `codeTimeoutMs`，下面几格预算用例里那些手算出来的数因此保持成立。
+  mintDelayMinMs: 1, mintDelayMaxMs: 1, maxDomainAttempts: 1,
   tokenName: "auto", agnesPlatformUrl: "https://platform.test",
   yyds: { baseUrl: "https://y.test", apiKey: "k" }, moemail: null,
   // `blocked` 是装载的产物；这份手写夹具走的是「装载成功」那一档。
@@ -59,9 +64,28 @@ function agnesWithKey(key: string) {
   };
 }
 
+/**
+ * 台账 / 退避这两把键的假存储端。**不是 `MemoryStorage`**：这几格要数的是
+ * 「`tendOnce` 调了几次写」，用一个真存储会把计数埋进它的内部状态里。
+ */
+function makeLedgerIo() {
+  const io = {
+    ledger: emptyDomainLedger(),
+    backoff: null as BackoffState | null,
+    saved: [] as DomainLedger[],
+    savedBackoff: [] as Array<BackoffState | null>,
+    loadDomainLedger: async () => io.ledger,
+    saveDomainLedger: async (l: DomainLedger) => { io.saved.push(l); io.ledger = l; },
+    loadBackoff: async () => io.backoff,
+    saveBackoff: async (s: BackoffState | null) => { io.savedBackoff.push(s); io.backoff = s; },
+  };
+  return io;
+}
+
 async function makeDeps(over: Partial<RegistrarConfig> = {}, provider: MailProvider = new FakeMailProvider()) {
   const repo = new KeyPoolRepo(new MemoryStorage(), { now: () => 1000, logger: NULL_LOGGER });
   const providers: Partial<Record<Channel, MailProvider>> = { yyds: provider };
+  const io = makeLedgerIo();
   // 显式标注 TendDeps：不标的话推断出的是这个字面量的形状，用例里给可选字段
   // （roundBudgetMs）赋值会被 tsc 拒绝，而 vitest 的 esbuild 转换不做类型检查，
   // 只有 `pnpm typecheck` 会揪出来——这也是发版清单必须把 typecheck 与 test
@@ -74,8 +98,12 @@ async function makeDeps(over: Partial<RegistrarConfig> = {}, provider: MailProvi
     providers,
     agnes: agnesOk(), now: () => 1000, sleep: async () => {}, rand: () => 0.5,
     logger: NULL_LOGGER,
+    loadDomainLedger: io.loadDomainLedger,
+    saveDomainLedger: io.saveDomainLedger,
+    loadBackoff: io.loadBackoff,
+    saveBackoff: io.saveBackoff,
   };
-  return { repo, deps };
+  return { repo, deps, io };
 }
 
 describe("tendOnce", () => {
@@ -205,6 +233,7 @@ describe("tendOnce", () => {
       repo, config: { ...CFG },
       providers: { yyds: new FakeMailProvider() },
       agnes: agnesOk(), now: () => t, sleep: async () => {}, rand: () => 0.5, logger: NULL_LOGGER,
+      ...makeLedgerIo(),
     };
     for (const k of ["a", "b", "c"]) await repo.add(k);
     expect((await tendOnce(deps)).minted, "前置条件：稳态一把都不铸").toBe(0);
@@ -249,6 +278,7 @@ describe("tendOnce", () => {
       repo, config: { ...CFG },
       providers: { yyds: new FakeMailProvider() },
       agnes: agnesOk(), now: () => t, sleep: async () => {}, rand: () => 0.5, logger: NULL_LOGGER,
+      ...makeLedgerIo(),
     };
     for (const k of ["a", "b", "c"]) await repo.add(k);
     expect((await repo.all()).length, "前置条件：稳态三把").toBe(3);
@@ -515,13 +545,23 @@ describe("tendOnce", () => {
     expect(out.failures[0]!.reason).toBe("provider_error");
   });
 
-  it("撞上限流（rate_limited）时不中止整轮、也不碰另一条通道：与 upstream_error 的退避刻意不同", async () => {
-    // 与上面 upstream_error 那条对照：同样是"每次都失败"，但 403 是限流——等一下
-    // 再试是有用的，整轮中止只会把恢复拖到下一个调度周期。两条断言的 attempted
-    // 不同（3 vs 1），避免"谁赢都通过"。
+  /**
+   * ⚠️⚠️ **这一格断言的是相反的行为，而且是收紧不是放松 —— 旧的那句话是错的。**
+   *
+   * 上一版叫「撞上限流（rate_limited）时**不中止**整轮」，理由写着「限流等一下再试
+   * 是有用的，整轮中止只会把恢复拖到下一个调度周期」。**真机实测把那句话推翻了**：
+   * 上游那两层限流的惩罚窗口都远比一轮长，而**窗口里每打一次请求就把窗口续一次**
+   * ⇒ 「接着把 mintBatch 打完」不是「等一下再试」，是把恢复时刻一次次往后推，
+   * 而那些请求一次都不可能成功。
+   *
+   * 所以处置改成与 `upstream_error` 同一支：**当场结束整轮**，并记一个跨轮退避键。
+   * `attempted` 从 3 变成 1 —— 这一格与上面 upstream_error 那格的 `attempted` 仍然
+   * 各自手写，只是这次两个数相同了，所以额外断言退避键把两者分开。
+   */
+  it("撞上限流（rate_limited）时当场中止整轮并记退避，也不碰另一条通道", async () => {
     const provider = new FakeMailProvider({ domains: ["x.test"] });
     const backup = new FakeMailProvider();
-    const { deps } = await makeDeps({ targetKeys: 3 }, provider);
+    const { deps, io } = await makeDeps({ targetKeys: 3 }, provider);
     deps.providers = { yyds: provider, moemail: backup };
     deps.agnes = {
       platformUrl: "https://platform.test",
@@ -530,9 +570,13 @@ describe("tendOnce", () => {
       } },
     };
     const out = await tendOnce(deps);
-    expect(out.attempted).toBe(3);
+    // 手写字面量：**1**，不是 3。旧行为下这里是 mintBatch 打满。
+    expect(out.attempted).toBe(1);
     expect(out.minted).toBe(0);
-    expect(out.failures.every((f) => f.reason === "rate_limited")).toBe(true);
+    expect(out.failures).toEqual([{ reason: "rate_limited", channel: "yyds" }]);
+    // 退避键被写上 —— 这是「下一轮别再打了」唯一的载体。
+    expect(io.savedBackoff).toHaveLength(1);
+    expect(io.savedBackoff[0]!.kind).toBe("edge");
     expect(backup.created).toEqual([]);
   });
 
@@ -789,6 +833,7 @@ describe("tendOnce 收尾对账", () => {
     const deps: TendDeps = {
       repo, config: { ...CFG, ...over }, providers: { yyds: new FakeMailProvider() },
       agnes: agnesOk(), now: () => 1000, sleep: async () => {}, rand: () => 0.5, logger,
+      ...makeLedgerIo(),
     };
     return { repo, deps, logger, s };
   }

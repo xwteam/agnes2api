@@ -28,6 +28,12 @@ import { createTendGate, type TendGate } from "./admin/tend-lock.js";
 import type { ChannelProbe } from "./admin/handlers/registrar.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import { WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
+import {
+  DOMAIN_LEDGER_KEY, narrowDomainLedger, mergeDomainLedger, type DomainLedger,
+} from "../core/registrar/domain-ledger.js";
+import {
+  REGISTRAR_BACKOFF_KEY, narrowBackoff, mergeBackoff, type BackoffState,
+} from "../core/registrar/backoff.js";
 
 export interface BuildOptions {
   /**
@@ -643,6 +649,39 @@ export async function buildTendDeps(
     }
   };
 
+  /**
+   * 域名台账与退避状态的读写。**四个都是必填字段，不给默认值**（`TendDeps` 那里
+   * 逐字写着理由：给默认值就等于某个入口忘接线时静默退化成本次要修的那个缺陷）。
+   *
+   * ⚠️ **写回一律「先 get 再 merge」，不是裸覆盖。** KV 没有 CAS，这是本仓第四处
+   * 读-改-写（前三处是 `pool:index`、`registrar_manual_guard` / `registrar_tend_lock`、
+   * `tend:history`，`src/http/admin/handlers/registrar.ts` 顶部那张诚实表列着）。
+   * 丢一条域名结论只是下一轮重学（便宜）；**丢掉退避的截止时刻等于退避窗口凭空消失
+   * ⇒ 继续打 ⇒ 每打一次把上游的惩罚窗口续一次 ⇒ 正好回到本次要修的那个缺陷**。
+   * merge 把丢更新的后果从「覆盖」降到「取更保守的那个」，**但消灭不了它**——
+   * 没有 CAS 就消灭不了，这句限定不许被改写成「并发已解决」。
+   */
+  const loadDomainLedger = async (): Promise<DomainLedger> =>
+    narrowDomainLedger(await storage.get(DOMAIN_LEDGER_KEY));
+  const saveDomainLedger = async (next: DomainLedger): Promise<void> => {
+    const cur = narrowDomainLedger(await storage.get(DOMAIN_LEDGER_KEY));
+    // **不传 `expiresAt`**：陈旧判定全靠台账里那两处 TTL 值比较，给整把键配 TTL
+    // 就是让 TTL 兼任 staleness 的职责（理由与 `registrar_manual_guard` 同源）。
+    await storage.put(DOMAIN_LEDGER_KEY, mergeDomainLedger(cur, next));
+  };
+  const loadBackoff = async (): Promise<BackoffState | null> =>
+    narrowBackoff(await storage.get(REGISTRAR_BACKOFF_KEY));
+  const saveBackoff = async (next: BackoffState | null): Promise<void> => {
+    if (next === null) {
+      // 清退避是**显式动作**（一次成功铸号），不 merge —— merge 会把刚清掉的
+      // `until` 又取回来，那就永远清不掉了。
+      await storage.put(REGISTRAR_BACKOFF_KEY, null);
+      return;
+    }
+    const cur = narrowBackoff(await storage.get(REGISTRAR_BACKOFF_KEY));
+    await storage.put(REGISTRAR_BACKOFF_KEY, mergeBackoff(cur, next));
+  };
+
   return {
     repo: new KeyPoolRepo(storage, {
       now, logger,
@@ -678,6 +717,10 @@ export async function buildTendDeps(
     sleep,
     rand: Math.random,
     logger,
+    loadDomainLedger,
+    saveDomainLedger,
+    loadBackoff,
+    saveBackoff,
     flush,
     /**
      * 把这一轮的汇总追加进 `tend:history`。

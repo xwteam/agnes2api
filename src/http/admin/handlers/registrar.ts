@@ -11,6 +11,12 @@ import {
 } from "../../../core/admin/tend-guard.js";
 import { TEND_HISTORY_KEY, narrowTendHistory } from "../../../core/admin/tend-history.js";
 import {
+  DOMAIN_LEDGER_KEY, narrowDomainLedger, summarizeLedger,
+} from "../../../core/registrar/domain-ledger.js";
+import {
+  REGISTRAR_BACKOFF_KEY, narrowBackoff, retryAfterMs,
+} from "../../../core/registrar/backoff.js";
+import {
   acquireTendLock, releaseTendLock, narrowTendLock, TEND_LOCK_KEY, type TendGate,
 } from "../tend-lock.js";
 import type { ProbeGuard } from "../probe-guard.js";
@@ -78,8 +84,13 @@ import { httpError } from "../../errors.js";
  * | `registrar_manual_guard` | 两副本同时点，各读到 `used=K-1`、各写回 `used=K` ⇒ 闸门多放行一次 | 每次并发窗口最多多放行 (并发数−1) 次 |
  * | `registrar_tend_lock` | 两个都抢到 ⇒ 两轮补池并发跑 | 同上 |
  * | `tend:history`（`wire.ts` 的 `appendHistory`） | 丢一轮记录 ⇒「每轮汇总」缺一行 | 每次并发窗口最多丢 (并发数−1) 轮 |
+ * | `registrar:domains`（`wire.ts` 的 `saveDomainLedger`） | 丢几条域名结论 ⇒ 下一轮重学（便宜） | 同上 |
+ * | `registrar:backoff`（`wire.ts` 的 `saveBackoff`） | 🔴 丢掉截止时刻 ⇒ 退避窗口凭空消失 ⇒ 继续打 ⇒ **每打一次把上游的惩罚窗口续一次** | 同上 |
  *
- * **这三处是尽力而为，不是原子操作**；存储锁把并发窗口压到很小，但压不到零。
+ * ⚠️ **最后两处写回都先 `get` 再 merge**（`until`/`hits` 取更保守的那个、域名结论按
+ * `at` 取新的），把丢更新的后果从「覆盖」降到「取更保守的那个」。
+ *
+ * **这五处是尽力而为，不是原子操作**；存储锁把并发窗口压到很小，但压不到零。
  * 为什么不做成无读改写：`tend:history` 改成一轮一键就要付 `list`（红线 1 直接禁止），
  * 护栏键改成一天一键则跨天时仍要读旧键。**两条路都更差，代价明写比消除更诚实。**
  */
@@ -449,8 +460,22 @@ export function manualTendHandler(deps: RegistrarDeps) {
 /**
  * `GET /admin/api/registrar/status` —— 注册机板块的唯一取数端点（设计 §11）。
  *
- * **稳态下一次存储写都不产生**，读侧是 3 次 `get`（补池历史 + 锁 + 护栏键）加一次
- * 共用 isolate 快照的 `repo.all()`，**没有 `list()`**（红线 1）。
+ * **稳态下一次存储写都不产生**，读侧是 5 次 `get`（补池历史 + 锁 + 护栏键 +
+ * 域名台账 + 退避状态）加一次共用 isolate 快照的 `repo.all()`，
+ * **没有 `list()`**（红线 1）。
+ *
+ * ⚠️ **上面那个数从 3 变成 5 是本轮改动**（新增域名台账与退避两块）。
+ * **「零写」这条性质一个字没变**：新增的两块只读不改。
+ *
+ * 🔴 **域名台账那一块里的 `total` 不许现打一次 `listDomains()` 去凑。**
+ * 这个端点今天一次上游请求都不发，为了凑一个总数破掉这条性质，等于在面板上新增
+ * 一颗每几秒被轮询一次就打一次上游的按钮。取值只能来自台账里记的上一轮观测数，
+ * 取不到就如实回 `null`。
+ *
+ * ⚠️ **刻意没有做「列出全部域名」的端点。** 上游今天 374 个域名，把它们塞进一个
+ * 每几秒被轮询一次的响应里会把响应体撑大一个量级。**代价明写**：运维认定台账记错了
+ * 的时候，只能等 TTL 过期、等两跳规则自纠、或者手工删掉那把 KV 键 —— 与
+ * `registrar_manual_guard` 已经登记的那条代价同形，五语言 REGISTRAR.md 里写在同一段。
  *
  * ⚠️ **「稳态」这个限定词是订正，不是修饰（通读评审）**：上面那句话原来是无条件的，
  * 而 `repo.all()` 有两条会 `list()` **并写索引**的支路——`bootstrapFromListThrottled()`
@@ -502,6 +527,11 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
     const history = await block(async () => narrowTendHistory(await wiring.storage.get(TEND_HISTORY_KEY)));
     const lock = await block(async () => ({ v: narrowTendLock(await wiring.storage.get(TEND_LOCK_KEY)) }));
     const guard = await block(async () => ({ v: narrowManualGuard(await wiring.storage.get(MANUAL_GUARD_KEY)) }));
+    // 台账窄化的产物本身**永远不是 `null`**（读不出来 = 空台账 = 「什么都没记住」），
+    // 所以它不需要那层壳；而退避窄化会返回 `null`（「现在没有退避」），需要。
+    const domains = await block(async () =>
+      summarizeLedger(narrowDomainLedger(await wiring.storage.get(DOMAIN_LEDGER_KEY)), now));
+    const backoff = await block(async () => ({ v: narrowBackoff(await wiring.storage.get(REGISTRAR_BACKOFF_KEY)) }));
     const records = await block(() => deps.repo.all());
 
     /**
@@ -573,6 +603,33 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
        * `cooldownUntil`（绝对）+ `retryAfterMs`（相对）渲染倒计时。
        */
       manual: guard === null ? null : manualTendQuota(guard.v, now),
+      /**
+       * **域名台账的汇总。** 壳是 `null` ⇒ 读失败（渲染成 `—`）；
+       * 壳里的 `total` 是 `null` ⇒ 还没有哪一轮记下过上游的域名总数。
+       *
+       * ⚠️ **`blocked` 那一格是「我们判它不行」，不是「上游声明它不行」**——判定走的是
+       * 启发式词表，面板文案必须用中性措辞（见 `admin-ui/js/pure/registrar.mjs`）。
+       */
+      domains,
+      /**
+       * **退避状态。** 只在**真的还在退避中**时非空；不在退避中时整个是 `null`。
+       *
+       * `until`（绝对）与 `retryAfterMs`（相对）**成对给**，口径逐字照
+       * `manualTendQuota()` 在 `src/core/admin/tend-guard.ts` 定的那一条：相对量做倒计时
+       *（免疫客户端时钟偏差）、绝对时刻显示「几点恢复」。给一个已经过去的时刻会让面板
+       * 渲染出一个恒为 0 的假倒计时。
+       */
+      backoff: backoff === null ? null : (
+        backoff.v !== null && backoff.v.until > now
+          ? {
+            until: backoff.v.until,
+            kind: backoff.v.kind,
+            retryAfterMs: retryAfterMs(backoff.v, now),
+            since: backoff.v.since,
+            hits: backoff.v.hits,
+          }
+          : null
+      ),
       history: history === null ? null : { entries: history.entries, malformed: history.malformed },
     });
   };

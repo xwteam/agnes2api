@@ -1873,10 +1873,72 @@ BANNER='[collection-guard] ✅'
 #     `tests/contract/**`），`src/**` 这一轮只动了 admin-ui 的四处注释。
 #   ⇒ workerd：778 + 8 = **786**（只有 `tests/contract/mailbox.test.ts` 那一笔进 workers 池，
 #     `vitest.workers.config.ts` 的 include 只收 `tests/contract/**`），文件数不动。
-EXPECT_NODE_FILES=160
-EXPECT_NODE_TESTS=4974
-EXPECT_WORKERS_FILES=42
-EXPECT_WORKERS_TESTS=786
+#
+#   ── 注册机不再把自己锁死（域名台账 + 撞上限流整轮退避）：Node **+68 / +3 文件**，
+#      workerd **+3 / +1 文件**
+#   起因是三条真机实测：① 上游那两层限流（前置边缘的 429 + 应用自己的 400）的惩罚窗口
+#   都比一轮补池长，而**窗口里每打一次就把窗口续一次**；② 从前撞上限流会零间隔换下一个
+#   域名接着打，一轮最多打出 40 次注定失败的发码请求；③ 域名结论（400 = 这个域名被拒）
+#   一次都没被记住，每铸一把 key 都从上游全部域名里重新随机取。
+#   逐格记账（**每个数都是单文件现跑出来的，不是估的**）：
+#     · `tests/unit/registrar/domain-ledger.test.ts` **新增 37**（新文件）：
+#       两种 400 的分类（承重：400+限流文案绝不判域名死）、窄化的失败方向（读不出来 =
+#       什么都没记住，绝不是全被屏蔽）、`selectDomains` 全序排序（承重：全表判死时仍非空）、
+#       两跳判死、**一轮最多学一条 blocked 的钳位**（承重）、合并与汇总。
+#     · `tests/unit/registrar/domain-ledger-io.test.ts` **新增 15**（新文件）：
+#       一次成功铸号只打一次 `/api/verification`、撞 429 整轮立刻停并写退避键、
+#       已知 ok 的域名回 400 按限流处理、写次数（铸 5 把只写一次台账 / 没学到东西零写）、
+#       噪声不进台账（5xx 与 fetch reject）、轮级预算把域内间隔算进去（手写字面量 300000）。
+#       最后一格经 `buildTendDeps` 真接线 + 按键计数的存储，量的是真的 put 次数。
+#     · `tests/contract/registrar-backoff.test.ts` **新增 3**（新文件，**同时进 workers 池**）：
+#       退避窗口内零上游请求、零建临时邮箱、不伪造成 `skipped`，外加两条反向控制
+#       （退避到期照常开跑 / 压根没有退避键照常开跑）。放 `tests/contract/` 是为了让这条
+#       唯一能整轮改变行为的早退分支在两种运行时下各跑一遍。
+#     · `tests/unit/registrar/mint.test.ts` 29 → **33**（+4）：403 那三格旧用例整段重写
+#       （403 从「睡 5 秒换域名接着打」并进「当场停手」——**是收紧不是放松**），
+#       新增边缘限流 / 应用层限流 / 已知 ok 域名回 400 / 空正文 / 成功记 ok / 域内间隔六格。
+#     · `tests/unit/source-guards.test.ts` 225 → **228**（+3）：新增「`src/core/registrar/`
+#       下 import `ports/storage` 的文件数恰好是 0」那一格 + 它的两条反向自检
+#       （检测器认得出一处 import、目录真的扫得到文件）。**上面那道零 IO 扫描抓不住它**
+#       ——`Storage` 是注入的端口，core 里今天就有三个文件正当地 import 它。
+#     · `tests/unit/registrar/config.test.ts` 47 → **50**（+3）：`delay_min_gt_max` 那格的
+#       数字重算（内置 max 5000 → 90000 ⇒ 9000 不再产 blocker，换成 95000）、
+#       新增「间隔那一项单独就能把单轮最坏耗时推过补池间隔」与 `domain_attempts_costly`
+#       的正反两格。
+#     · `tests/unit/registrar/config-total.test.ts` 14 → **15**（+1）：那张网格里
+#       「非法值回落之后不再反」那一行的两个数重算（内置 min 2000 → 60000 之后它反而
+#       开始产 blocker，整行测的东西反了），并补一行成对的「回落之后搭配是反的 ⇒ 照样产」。
+#     · `tests/unit/admin/config-validate.test.ts` 53 → **54**（+1）：「patch 只带一半时
+#       另一半从存储取」那格的夹具重挑 —— 旧夹具在新的内置取值下让**存储那一半自己就已经
+#       是坏的**，而跨字段阶段只拒补丁新引入的 blocker ⇒ 那一格拿到空数组、
+#       测的东西整个失效。同批补了一格「前置条件：那份存储自己是健康的」。
+#     · `tests/unit/registrar/agnes.test.ts` 14 → **15**（+1）：`sendCode` 从返回状态码改成
+#       返回 `{status, body}`（正文是分辨两种 400 的唯一线索），旧那格重写 + 新增
+#       「正文读不出来时按空正文处理，不抛」。
+#     · `tests/contract/admin-registrar.test.ts` 38 → **42**（+4，**同时进 workers 池**）：
+#       status 端点新增的两块（域名台账四格计数 + 退避的绝对/相对时刻成对给）各两格，
+#       其中两格钉的是「不伪造」：台账键还不存在时 `total`/`unknown` 如实回 `null`、
+#       退避已经过期时整块回 `null`（判据是 `until > now` 这一处值比较）。
+#       🔴 `domains.total` 那一格的夹具**一个 provider 都没有**——它证的是那个总数
+#       来自台账里记的上一轮观测，而不是现打一次 `listDomains()` 去凑。
+#     · `tests/ui/registrar.test.ts` 45 → **51**（+6）：面板那两个取数纯函数
+#       （`domainLedgerView` / `backoffView`）的读不到 / 不伪造 0 / 两档限流各自映射到
+#       **两条不同**的文案键 / 表外 `kind` 不冒充任何一档 / 两条键都真的在字典里。
+#     · 计数没动、但断言的行为变了的：`tests/unit/registrar/tender.test.ts` 32 → 32
+#       （`rate_limited` 从「不中止整轮」改成「当场中止并记退避」，`attempted` 3 → 1）、
+#       `tests/unit/registrar/log-prefix.test.ts` 5 → 5（`registrar.list_domains_failed`
+#       随「列域名提到轮级」从 `mintOne` 搬到 `tendOnce`，事件名与前缀两条对外承诺没变）。
+#   变异实测（逐格真跑，记的是**实际**红了哪几格，跑完都还原并确认 `git status` 干净）：
+#     见本次报告的变异一节。
+#   ⇒ Node：4974 + 68 + 4 + 6 = **5052**；文件数 160 + 3 = **163**。
+#   ⇒ workerd：786 + 3 + 4 = **793**；文件数 42 + 1 = **43**
+#     （`vitest.workers.config.ts` 的 include 只收 `tests/contract/**`：
+#      新增的那一份契约测试是唯一进 workers 池的**新文件**，
+#      而 `admin-registrar.test.ts` 那 4 格本来就在那个目录里，两个池各跑一遍）。
+EXPECT_NODE_FILES=163
+EXPECT_NODE_TESTS=5052
+EXPECT_WORKERS_FILES=43
+EXPECT_WORKERS_TESTS=793
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

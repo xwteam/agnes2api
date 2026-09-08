@@ -1,8 +1,22 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { registrarFromEnv } from "../../../src/core/registrar/config.js";
-import { mintOne } from "../../../src/core/registrar/mint.js";
+import { registrarFromEnv, type RegistrarConfig } from "../../../src/core/registrar/config.js";
+import { tendOnce } from "../../../src/core/registrar/tender.js";
+import { KeyPoolRepo } from "../../../src/core/keypool-repo.js";
+import { MemoryStorage } from "../../helpers/fake-storage.js";
+import { NULL_LOGGER } from "../../../src/ports/logger.js";
+import { emptyDomainLedger } from "../../../src/core/registrar/domain-ledger.js";
+
+/** 「装载成功、选中 yyds」的一份最小配置。只有下面那一格用得到。 */
+const CFG: RegistrarConfig = {
+  enabled: true, channel: "yyds",
+  targetKeys: 1, mintBatch: 1, tendIntervalMs: 1_800_000, codeTimeoutMs: 5000,
+  mintDelayMinMs: 1, mintDelayMaxMs: 1, maxDomainAttempts: 1,
+  tokenName: "auto", agnesPlatformUrl: "https://platform.test",
+  yyds: { baseUrl: "https://y.test", apiKey: "k" }, moemail: null,
+  blocked: false,
+};
 import { YydsProvider } from "../../../src/adapters/mailbox-yyds.js";
 import { MoeMailProvider } from "../../../src/adapters/mailbox-moemail.js";
 import { recordingLogger } from "../../helpers/recording-logger.js";
@@ -81,7 +95,10 @@ it("src/core 全目录零 console——只列白名单会漏掉将来新增的�
 });
 
 describe("注册机日志事件（文档对外承诺 [registrar] 前缀 + 稳定事件名）", () => {
-  it("mintOne 列域名失败时记 registrar.list_domains_failed 事件", async () => {
+  it("tendOnce 列域名失败时记 registrar.list_domains_failed 事件", async () => {
+    // ⚠️ 这一格从前钉的是 `mintOne` 内部那次 `listDomains()`。列域名已经提到**轮级**
+    // （一轮 1 次，而不是每个名额 1 次），这条事件跟着搬到了 `tendOnce`；
+    // **事件名与 `[registrar]` 前缀这两条对外承诺一个字没变**，所以这一格照钉不误。
     const logger = recordingLogger();
     const provider = {
       name: "yyds" as const,
@@ -90,11 +107,16 @@ describe("注册机日志事件（文档对外承诺 [registrar] 前缀 + 稳定
       async pollCode() { return null; },
       async deleteMailbox() {},
     };
-    await mintOne({
-      provider,
+    await tendOnce({
+      repo: new KeyPoolRepo(new MemoryStorage(), { now: () => 1000, logger: NULL_LOGGER }),
+      config: { ...CFG },
+      providers: { yyds: provider },
       agnes: { platformUrl: "https://platform.test", fetcher: { async fetch() { return new Response("{}"); } } },
-      tokenName: "auto", codeTimeoutMs: 5000, maxDomainAttempts: 8,
-      sleep: async () => {}, rand: () => 0.5, logger,
+      now: () => 1000, sleep: async () => {}, rand: () => 0.5, logger,
+      loadDomainLedger: async () => emptyDomainLedger(),
+      saveDomainLedger: async () => {},
+      loadBackoff: async () => null,
+      saveBackoff: async () => {},
     });
     expect(logger.events()).toContain("registrar.list_domains_failed");
   });

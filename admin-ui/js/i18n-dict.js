@@ -242,6 +242,10 @@ export const I18N = {
   // 上游账号与临时邮箱都真的花掉了），只是发回来的 key 材料含不可打印字符或空白。
   // 它照常存进池子（拒收 = 销毁凭据），但多半每次被选中都会让转发失败。
   // 五种语言的措辞都必须说清「已存下来 + 请去处理它」，不许写成「铸失败了」。
+  // 「这一轮还在退避窗口里，一次都没开始」。**不是 `rate_limited` 的同义词**：
+  // 那一档说的是「真的去打了、被上游挡了」，这一档一次上游请求都没发出去，
+  // 两句话对运维的意思完全不同（去看上游 / 等窗口过去）。
+  "reg.fail.upstream_backoff": { "zh-CN": "还在退避窗口里，这一轮一次都没开始", "zh-TW": "還在退避視窗裡，這一輪一次都沒開始", en: "Still inside the backoff window; this round never started", ja: "バックオフ期間中のため、このラウンドは 1 回も開始していません", ko: "백오프 구간 안이라 이 라운드는 한 번도 시작하지 않았습니다" },
   "reg.fail.key_suspicious": { "zh-CN": "铸出来的 key 材料可疑（已存入池子，请手动停用或删除）", "zh-TW": "鑄出來的 key 材料可疑（已存入池子，請手動停用或刪除）", en: "The minted key material looks malformed (stored in the pool anyway — disable or delete it)", ja: "発行されたキーの内容が不正に見えます（プールには保存済み — 無効化または削除してください）", ko: "발급된 키 내용이 손상된 것으로 보입니다(풀에는 저장되었으니 비활성화하거나 삭제하세요)" },
 
   // ── 注册机板块 ────────────────────────────────────────────────────────────
@@ -327,6 +331,24 @@ export const I18N = {
   // 绝对时刻显示「几点恢复」。绝不让面板拿本地时钟去减一个服务端时刻。
   "reg.tend.cooldown":     { "zh-CN": "冷却中：{at} 之后可以再点（还有 {left}）", "zh-TW": "冷卻中：{at} 之後可以再點（還有 {left}）", en: "Cooling down: available again at {at} (in {left})", ja: "クールダウン中: {at} 以降に再度実行できます（あと {left}）", ko: "쿨다운 중: {at} 이후 다시 누를 수 있습니다(남은 시간 {left})" },
   "reg.locked":            { "zh-CN": "有一轮补池正在跑，持锁方声明最晚 {at} 结束", "zh-TW": "有一輪補池正在跑，持鎖方聲明最晚 {at} 結束", en: "A refill round is running; the lock holder declares it ends by {at} at the latest", ja: "補充ラウンドが実行中です。ロック保持側は遅くとも {at} には終わると宣言しています", ko: "보충 라운드가 실행 중입니다. 잠금 보유자는 늦어도 {at}에는 끝난다고 선언했습니다" },
+
+  // ── 域名台账与退避 ────────────────────────────────────────────────────────
+  //
+  // ⚠️⚠️ **「判死」这一格用的是中性措辞，绝不能写成「被上游屏蔽」。**
+  // 那是**我们**按一张启发式词表做的判定（`src/core/registrar/domain-ledger.ts`），
+  // 上游改一次错误文案它就会误判 —— 把一个可能是我们判错的结论说成上游的声明，
+  // 运维会照着它去找上游的麻烦。
+  //
+  // ⚠️ **`cap`（台账条目上限）刻意不进文案**：它是照着上游当前域名数留的余量，
+  // 而上游有多少域名不是常数——把一个当前取值印在面板上，运维会把它当成事实。
+  "reg.domains.label": { "zh-CN": "域名台账（注册机记住的「哪些域名能过」）", "zh-TW": "網域台帳（註冊機記住的「哪些網域能過」）", en: "Domain ledger (which mail domains the registrar has learned work)", ja: "ドメイン台帳（レジストラーが学習した「通るドメイン」）", ko: "도메인 원장(등록기가 학습한 «통과되는 도메인»)" },
+  "reg.domains.summary": { "zh-CN": "可用 {ok} · 判死 {blocked} · 待复查 {suspect} · 未探过 {unknown}", "zh-TW": "可用 {ok} · 判死 {blocked} · 待複查 {suspect} · 未探過 {unknown}", en: "{ok} usable · {blocked} ruled out · {suspect} to re-check · {unknown} never probed", ja: "利用可 {ok} · 除外 {blocked} · 再確認待ち {suspect} · 未確認 {unknown}", ko: "사용 가능 {ok} · 제외 {blocked} · 재확인 대기 {suspect} · 미확인 {unknown}" },
+  "reg.domains.updatedAt": { "zh-CN": "（更新于 {at}）", "zh-TW": "（更新於 {at}）", en: " (updated {at})", ja: "（更新 {at}）", ko: "(갱신 {at})" },
+  // 两档限流的**处置完全不同**，所以是两条文案不是一条带参数的：
+  // edge 那一档运维能自己动手（把间隔调大），app 那一档他动不了（只能等或换出口）。
+  // 两条都要说「换邮箱通道逃不掉」——限流在「出口 IP → 上游」这条边上，与通道无关。
+  "reg.backoff.edge": { "zh-CN": "撞上了上游前面那层边缘限流，还要等 {left}（约 {at} 恢复）。多半是补池打得太密，可以把 MINT_DELAY_MIN_MS 调大。换一条邮箱通道逃不掉这一档——限流是按出口地址算的，与用哪条通道无关。", "zh-TW": "撞上了上游前面那層邊緣限流，還要等 {left}（約 {at} 恢復）。多半是補池打得太密，可以把 MINT_DELAY_MIN_MS 調大。換一條郵箱通道逃不掉這一檔——限流是按出口位址算的，與用哪條通道無關。", en: "Hit the edge rate limit in front of the upstream; {left} left (recovers around {at}). Refills are most likely too closely spaced — raise MINT_DELAY_MIN_MS. Switching mailbox channel does not help: the limit is counted per egress address, not per channel.", ja: "上流の手前にあるエッジのレート制限に当たりました。残り {left}（{at} 頃に回復）。補充の間隔が詰まりすぎている可能性が高いので MINT_DELAY_MIN_MS を大きくしてください。メールボックスチャネルを切り替えても回避できません——制限は送信元アドレス単位で、チャネルとは無関係です。", ko: "업스트림 앞단의 엣지 속도 제한에 걸렸습니다. {left} 남음({at}쯤 회복). 보충 간격이 너무 촘촘할 가능성이 높으니 MINT_DELAY_MIN_MS를 늘리세요. 메일박스 채널을 바꿔도 피할 수 없습니다 — 제한은 발신 주소 기준이며 채널과 무관합니다." },
+  "reg.backoff.app": { "zh-CN": "撞上了上游自己的注册限流，还要等 {left}（约 {at} 恢复）。把间隔调大未必够，这个出口地址的注册额度可能已经到顶，多半只能等，或者换一个出口。换一条邮箱通道逃不掉这一档——限流是按出口地址算的，与用哪条通道无关。", "zh-TW": "撞上了上游自己的註冊限流，還要等 {left}（約 {at} 恢復）。把間隔調大未必夠，這個出口位址的註冊額度可能已經到頂，多半只能等，或者換一個出口。換一條郵箱通道逃不掉這一檔——限流是按出口位址算的，與用哪條通道無關。", en: "Hit the upstream's own registration rate limit; {left} left (recovers around {at}). Raising the delay may not be enough — this egress address may have exhausted its registration allowance, so waiting or changing egress is usually the only way out. Switching mailbox channel does not help: the limit is counted per egress address, not per channel.", ja: "上流自身の登録レート制限に当たりました。残り {left}（{at} 頃に回復）。間隔を広げるだけでは足りない場合があります——この送信元アドレスの登録枠を使い切った可能性が高く、待つか送信元を変えるしかありません。メールボックスチャネルを切り替えても回避できません——制限は送信元アドレス単位で、チャネルとは無関係です。", ko: "업스트림 자체의 가입 속도 제한에 걸렸습니다. {left} 남음({at}쯤 회복). 간격을 늘리는 것만으로는 부족할 수 있습니다 — 이 발신 주소의 가입 한도를 모두 쓴 것으로 보이며, 기다리거나 발신 주소를 바꾸는 수밖에 없습니다. 메일박스 채널을 바꿔도 피할 수 없습니다 — 제한은 발신 주소 기준이며 채널과 무관합니다." },
 
   "reg.history.title":  { "zh-CN": "补池历史", "zh-TW": "補池歷史", en: "Refill history", ja: "補充履歴", ko: "보충 기록" },
   "reg.history.empty":  { "zh-CN": "还没有补池记录。", "zh-TW": "還沒有補池記錄。", en: "No refill rounds recorded yet.", ja: "補充ラウンドの記録はまだありません。", ko: "아직 보충 라운드 기록이 없습니다." },

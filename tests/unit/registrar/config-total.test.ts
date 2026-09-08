@@ -85,8 +85,18 @@ describe("装载器全函数化：对抗性输入网格上一次都不抛", () =
     ["关着 + 延迟对反了 ⇒ 照样产（这一条不受 enabled 门控）",
       { MINT_DELAY_MIN_MS: "9000", MINT_DELAY_MAX_MS: "3000" }, {},
       ["registrar.mintDelayMinMs:delay_min_gt_max"]],
-    ["关着 + 延迟对里那个非法值回落默认值之后不再反 ⇒ 一条都不产",
-      { MINT_DELAY_MIN_MS: "abc", MINT_DELAY_MAX_MS: "3000" }, {}, []],
+    // ⚠️ **这一行的两个数是重算过的，不是照抄。** 它要造的形态是「非法值回落到内置
+    // 取值之后，min 与 max 的搭配**不再**反」。上一版写的是 `min=abc` + `max=3000`，
+    // 当时 min 回落到 2000 < 3000 ⇒ 不产；`MINT_DELAY_MIN_MS` 的内置取值改成 60000
+    // 之后 60000 > 3000 ⇒ **它反而开始产 blocker，整行测的东西反了**。
+    // 手写新字面量：min 回落到 60000，给一个比它大的 max。
+    ["关着 + 延迟对里那个非法值回落内置取值之后不再反 ⇒ 一条都不产",
+      { MINT_DELAY_MIN_MS: "abc", MINT_DELAY_MAX_MS: "120000" }, {}, []],
+    // **与上一行成对**：同样是回落，但回落之后的搭配**是反的** ⇒ 照样产。
+    // 少了这一行，「回落之后一律不产」这种实现在上一行也是绿的。
+    ["关着 + 非法值回落内置取值之后搭配是反的 ⇒ 照样产",
+      { MINT_DELAY_MIN_MS: "abc", MINT_DELAY_MAX_MS: "3000" }, {},
+      ["registrar.mintDelayMinMs:delay_min_gt_max"]],
     ["开着 + 数值全写坏 ⇒ 全部回落默认值，一条 blocker 都不产",
       { REGISTRAR_ENABLED: "true", REGISTRAR_CHANNEL: "yyds", YYDS_API_KEY: "k", TARGET_KEYS: "abc", MINT_BATCH: "-1" },
       {}, []],

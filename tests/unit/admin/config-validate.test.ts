@@ -263,12 +263,34 @@ describe("跨字段规则：每一条都对应 registrarFromEnv 里一处 throw"
   /**
    * **合并语义**：patch 只带 min 时，比较的另一半必须从**存储**里来。
    * 只比 patch 里那两格的话，「把 min 调大到超过已存的 max」会静默通过。
+   *
+   * ⚠️⚠️ **两个数字都重算过，而且这一格上一版是「碰巧绿的」，成因如实登记。**
+   * 上一版是 patch `min = 9000` + 存储 `max = 5000`。当时 `MINT_DELAY_MIN_MS` 的内置
+   * 取值是 2000，于是**存储那一半单独看是健康的**（2000 ≤ 5000），补丁引入的
+   * `9000 > 5000` 才是新 blocker ⇒ 这一格绿。
+   * 内置取值改成 60000 / 90000 之后，同一份存储**自己就已经是坏的**（60000 > 5000），
+   * 而跨字段阶段只拒**这次补丁新引入**的 blocker（同 `field:code` 视为「本来就有」）
+   * ⇒ 这一格拿到空数组。**它测的东西整个失效了，而不是实现回归了。**
+   * 新夹具重新挑过：存储 `max = 70_000` 让存储那一半单独是健康的（60000 ≤ 70000），
+   * 补丁 `min = 95_000` 才是新引入的那一条。
    */
   it("patch 只带一半时，另一半从存储取 —— 只比 patch 内部会漏掉这一类", () => {
     expect(codes(validateConfigPatch(
-      { "registrar.mintDelayMinMs": 9_000 },
-      { stored: { registrar: { mintDelayMaxMs: 5_000 } }, env: GW },
+      { "registrar.mintDelayMinMs": 95_000 },
+      { stored: { registrar: { mintDelayMaxMs: 70_000 } }, env: GW },
     ))).toContain("registrar.mintDelayMinMs:delay_min_gt_max");
+  });
+
+  /**
+   * **上一格的前置条件，单独钉一格。** 少了它，一份「存储那一半本来就坏」的夹具
+   * 会让上一格因为「这条 blocker 本来就有」而拿到空数组，而那与「实现没读存储」
+   * 长得一模一样 —— 上一格就是这么碰巧绿过一轮的。
+   */
+  it("前置条件：那份存储自己是健康的 —— 否则上一格量的是「本来就有」而不是「补丁引入」", () => {
+    expect(codes(validateConfigPatch(
+      { "registrar.targetKeys": 7 },
+      { stored: { registrar: { mintDelayMaxMs: 70_000 } }, env: GW },
+    ))).toEqual([]);
   });
 
   /**

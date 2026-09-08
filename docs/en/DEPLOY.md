@@ -450,7 +450,7 @@ its writes grow with request count, so the budget is "so many per day", not "so 
 - **Registrar write side — this entire section only exists when
   `registrar.enabled` is true.** On a default deployment (the registrar is off), the writes
   added by this section are **0/day**, not "a few less". When it is on, every tend round pays
-  three items, **all hanging off one axis: the tend frequency** (on Worker that is the Cron in
+  four items, **all hanging off one axis: the tend frequency** (on Worker that is the Cron in
   `wrangler.toml`, `*/30 * * * *` by default = 48 rounds/day; on Node it is `TEND_INTERVAL_MS`):
   - **Tend lock**: one put + one delete per round. This item already existed before this
     change; it had simply never been written into this account.
@@ -462,12 +462,17 @@ its writes grow with request count, so the budget is "so many per day", not "so 
     > [!IMPORTANT]
     > **"0 when healthy" has a precondition that must be stated**:
     > `loadConfig` emits one configuration warning **on every single round** when
-    > `TEND_INTERVAL_MS` is below `MINT_BATCH × CODE_TIMEOUT_MS × channel count`
-    > (by default `5 × 120000 × 1 = 600000`, i.e. 10 minutes). Under that setting **every
+    > `TEND_INTERVAL_MS` is below
+    > `MINT_BATCH × CODE_TIMEOUT_MS + (MINT_BATCH − 1) × MINT_DELAY_MAX_MS`
+    > (by default `5 × 120000 + 4 × 90000 = 960000`, i.e. 16 minutes). Under that setting **every
     > round writes once**, even a round that mints nothing.
 
   - **Tend history (`tend:history`)**: one get + one put per round, **unconditionally**.
     Single key, no fan-out.
+  - **Domain ledger (`registrar:domains`)**: **at most** one get + one put per round.
+    **It is only written when the round actually learned something new** — in steady state
+    (no verdict changes) it costs **0**. The rows below use the upper bound of 48/day; do not
+    read it as "paid every round". Single key, no fan-out.
 
   > [!IMPORTANT]
   > **Do not read these three through `EVENT_WRITES_PER_DAY` (12 per isolate per day).**
@@ -513,18 +518,18 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   - **Deleting one key**: 2 gets + 1 put (index) + 1 delete.
   - **Bulk disable / bulk clear-cooldown of N keys**: N gets + N puts.
   - **Bulk delete of N keys**: `N + 1` gets + **1** put (the index is written once) + N deletes.
-  - **One click on "tend now"**: a fixed **3 puts** (guard key + lock acquisition + tend
-    history) plus 1 delete (releasing the lock, which lives in a different bucket), plus
-    **2 more puts per key actually minted** (record + index). It is the **only panel action
-    with a daily cap**: at most **24** per day (the fourth guardrail, see
-    [REGISTRAR.md](REGISTRAR.md)) ⇒ a sustainable `24 × 3 = 72` puts/day, which on top of
-    the 320 in the third row below gives **392/day (39.2%)**; minting the default
-    `MINT_BATCH = 5` every single time gives an upper bound of `24 × 13 = 312` ⇒
-    **632/day (63.2%)**, and that row is not sustainable — your temporary-mailbox quota and
+  - **One click on "tend now"**: a fixed **4 puts** (guard key + lock acquisition + tend
+    history + domain ledger) plus 1 delete (releasing the lock, which lives in a different
+    bucket), plus **2 more puts per key actually minted** (record + index). It is the **only
+    panel action with a daily cap**: at most **24** per day (the fourth guardrail, see
+    [REGISTRAR.md](REGISTRAR.md)) ⇒ a sustainable `24 × 4 = 96` puts/day, which on top of
+    the 368 in the third row below gives **464/day (46.4%)**; minting the default
+    `MINT_BATCH = 5` every single time gives an upper bound of `24 × 14 = 336` ⇒
+    **704/day (70.4%)**, and that row is not sustainable — your temporary-mailbox quota and
     `TARGET_KEYS` hit their limits first. **The reason for this gate is not "it would blow the
     budget", it is "there is no headroom"**: with only the 10-minute cooldown the bound is
-    `24 × 6 = 144` rounds/day = 432 puts, which on top of 320 is already 75% — and 96 of that
-    320 equals `12 × concurrent isolate count`, a number **you cannot tune yourself**.
+    `24 × 6 = 144` rounds/day = 576 puts, which on top of 368 is already 94.4% — and 96 of that
+    368 equals `12 × concurrent isolate count`, a number **you cannot tune yourself**.
   - **Saving the settings once** (`PUT /admin/api/config`): **1 put** + 3–4 gets (one
     `readAll` plus one raw read before the write, then one `readAll` to read back; when you
     save again right afterwards the previous `invalidate()` makes the config-refresh
@@ -574,14 +579,15 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   | Scenario | puts/day | share of the write quota |
   |--------|--------|------------------------|
   | **Registrar off (default)**, nobody operating | **176** | **17.6%** |
-  | Registrar on, **every round healthy**, nobody operating | **272** | **27.2%** |
-  | Registrar on, **every round producing failure events**, nobody operating | **320** | **32.0%** |
+  | Registrar on, **every round healthy**, nobody operating | **320** | **32.0%** |
+  | Registrar on, **every round producing failure events**, nobody operating | **368** | **36.8%** |
 
   > [!WARNING]
   > **None of these three is an upper bound; each is a current value.** The 96/day item equals
   > `12 × concurrent isolate count`, and that count varies with the geographic distribution of
-  > your traffic — **you cannot set it yourself**. Plan headroom accordingly; do not treat 272 or
-  > 320 as a ceiling.
+  > your traffic — **you cannot set it yourself**. Plan headroom accordingly; do not treat 320 or
+  > 368 as a ceiling. Both rows use the upper bound where the domain ledger is written **every
+  > round**; in steady state it is never written, so the real figure is 48 lower.
   > The **`delete` bucket** is counted separately: the tend lock releases 48 times a day, and
   > that bucket is nearly idle today.
 
@@ -597,13 +603,13 @@ its writes grow with request count, so the budget is "so many per day", not "so 
     Node side takes the same lock — an in-process boolean is worthless when several
     containers share one volume).
   - **Threshold axis**: when `TEND_INTERVAL_MS` drops below
-    `MINT_BATCH × CODE_TIMEOUT_MS × channel count`, the event item **jumps from "0 on a
+    `MINT_BATCH × CODE_TIMEOUT_MS + (MINT_BATCH − 1) × MINT_DELAY_MAX_MS`, the event item **jumps from "0 on a
     healthy round" to "1 every round"** — that jump is independent of frequency and is
     caused by the per-round configuration warning described above.
   **The worst case is both axes at once.** This section is about Worker + the free KV tier,
   so here is an example that is **perfectly legal in that shape**: change the Cron to
   `*/5 * * * *` ⇒ 288 rounds/day, each producing events ⇒
-  `80 + 96 + 288 + 288 + 288 = 1,040` writes/day — **already past the write quota**.
+  `80 + 96 + 288 + 288 + 288 + 288 = 1,328` writes/day — **already past the write quota**.
   The three rows above all assume the default Cron (one round every 30 minutes); **do not
   read them as constants independent of the frequency**.
 
@@ -632,8 +638,8 @@ its writes grow with request count, so the budget is "so many per day", not "so 
   |--------|--------|------------------------|
   | **Tier-2 off (default)**, registrar off | **176** | 17.6% |
   | Tier-2 on, registrar off | **280** | 28.0% |
-  | Tier-2 on, registrar on and every round producing failure events | **424** | 42.4% |
-  | Previous row + "Tend now" clicked until the 24-per-day gate is spent | **496** | 49.6% |
+  | Tier-2 on, registrar on and every round producing failure events | **472** | 47.2% |
+  | Previous row + "Tend now" clicked until the 24-per-day gate is spent | **568** | 56.8% |
 
   > [!WARNING]
   > **Like the three columns above, this table is not an upper bound.** Read it this way:
@@ -1167,8 +1173,8 @@ see [REGISTRAR.md](REGISTRAR.md).
 | `MINT_BATCH` | no | `5` | Maximum keys minted per round. |
 | `TEND_INTERVAL_MS` | no (Node/Docker only) | `1800000` | Node-side refill interval; on the Worker this is governed by the Cron in `wrangler.toml` instead. |
 | `CODE_TIMEOUT_MS` | no | `120000` | Timeout waiting for the verification code. |
-| `MINT_DELAY_MIN_MS` / `MINT_DELAY_MAX_MS` | no | `2000` / `5000` | Random delay between mint attempts. |
-| `MAX_DOMAIN_ATTEMPTS` | no | `8` | Maximum domains tried per mint attempt. |
+| `MINT_DELAY_MIN_MS` / `MINT_DELAY_MAX_MS` | no | `60000` / `90000` | Random delay between mint attempts. The lower bound is measured; the upper is jitter headroom. |
+| `MAX_DOMAIN_ATTEMPTS` | no | `1` | Maximum domains tried per mint attempt. Domain verdicts are remembered and reused, so one suffices; **raising it burns more rate-limit allowance**. |
 | `REGISTRAR_TOKEN_NAME` | no | `auto` | Display name given to the minted key in the Agnes dashboard. |
 | `AGNES_PLATFORM_URL` | no | `https://platform-backend.agnes-ai.com` | Agnes platform backend used for registration. |
 | `YYDS_BASE_URL` / `YYDS_API_KEY` | no / required if a channel is yyds | `https://maliapi.215.im` / empty | YYDS Mail channel credentials. |

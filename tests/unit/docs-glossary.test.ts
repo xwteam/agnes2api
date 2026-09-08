@@ -238,8 +238,12 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   "ko｜上游｜ADMIN=업스트림｜API=업스트림｜DEPLOY=상류+업스트림｜README=업스트림｜REGISTRAR=업스트림｜USAGE=업스트림",
   "ko｜免费档｜DEPLOY=무료 등급+무료 요금제｜README=무료 등급",
   "ko｜邮箱｜ADMIN=메일박스｜API=메일함｜DEPLOY=메일박스+메일함｜README=메일함｜REGISTRAR=메일박스+메일함",
+  // 🟢 **`zh-TW｜余量` 这一行销账了**（`DEPLOY=餘量｜REGISTRAR=餘裕+餘量`）：
+  // `docs/zh-TW/REGISTRAR.md` 里唯一那处 `餘裕` 住在「距 900 秒的牆鐘上限還有約
+  // **30% 的餘裕**」这句话里，而注册机的默认间隔改成 60~90 秒之后那句话本身
+  // 就不成立了（整轮最差 960 秒 > 900 秒），整句被改写掉，那一处 `餘裕` 随之消失。
+  // ⇒ 这一份内部只剩 `餘量`，与 DEPLOY 一致。**是真的统一了，不是把登记删掉了事。**
   "zh-TW｜仓库｜DEPLOY=倉庫｜README=儲存庫｜REGISTRAR=儲存庫｜SPONSORS=倉庫",
-  "zh-TW｜余量｜DEPLOY=餘量｜REGISTRAR=餘裕+餘量",
   "zh-TW｜免费档｜DEPLOY=免費方案+免費檔｜README=免費方案",
   "zh-TW｜凭据｜ADMIN=憑證｜API=憑證｜DEPLOY=憑據+憑證｜README=憑證｜REGISTRAR=憑證｜USAGE=憑證",
   "zh-TW｜判据｜API=判據｜DEPLOY=判據+判準｜REGISTRAR=判據+判準",

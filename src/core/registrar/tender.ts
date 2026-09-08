@@ -7,6 +7,11 @@ import { countsTowardTarget } from "../keypool.js";
 import { isImportableKey } from "../keypool-repo.js";
 import { mintOne, type MintOutcome } from "./mint.js";
 import type { Logger } from "../../ports/logger.js";
+import {
+  commitJournal, ledgerReadFailed, newJournal, selectDomains, emptyDomainLedger,
+  type DomainLedger,
+} from "./domain-ledger.js";
+import { inBackoff, nextBackoff, retryAfterMs, type BackoffState } from "./backoff.js";
 
 /**
  * 一次铸 key 失败的归因：`mintOne` 给出的所有 reason，外加 `provider_missing`
@@ -48,7 +53,23 @@ export type TendFailureReason =
    * 而铸号这条路上拒绝是**销毁凭据**——Agnes 侧账号已经真实建出来了，key 材料只有
    * 手上这一份，扔掉就再也找不回来，连对账都修不了。
    */
-  | "key_suspicious";
+  | "key_suspicious"
+  /**
+   * **这一轮还在退避窗口里，一次都没开始。**
+   *
+   * 与 `round_crashed` 同一形态、同一条理由（那一段逐字写着）：**「这一轮根本没跑」
+   * 不该靠合读 `attempted === 0 && failures[0]` 去推**——面板的补池历史上这一行
+   * 必须能自己说清发生了什么。
+   *
+   * 🔴 **绝不许改用 `skipped: true` 表示它**：`skipped` 有且只有一个含义
+   *（`config.enabled === false`），拿它表示别的就是伪造。
+   *
+   * ⚠️ **它不区分撞的是哪一层限流**（边缘 / 应用）：两档都归到既有的 `rate_limited`，
+   * 层级由 `registrar:backoff` 的 `kind` 与 `registrar.rate_limited` 事件带出去。
+   * **代价如实登记**：只看补池历史那一行，分不出上一次撞的是哪一层，得去看事件板块
+   * 或面板的退避横幅。省掉的是一整圈 i18n 穷尽连锁。
+   */
+  | "upstream_backoff";
 
 /**
  * `TendFailureReason` 的运行期表。类型是编译期的，枚举不出来，而面板要按它
@@ -62,6 +83,7 @@ export const TEND_FAILURE_REASONS = [
   "domain_blocked_all", "upstream_error", "code_timeout", "register_failed",
   "login_failed", "key_failed", "provider_error", "network_error",
   "rate_limited", "provider_missing", "round_crashed", "key_suspicious",
+  "upstream_backoff",
 ] as const satisfies readonly TendFailureReason[];
 
 type _NoMissingReason =
@@ -102,7 +124,7 @@ export interface TendResult {
    *
    * 没铸出来的通道**不出现在表里**（不是记 0）。
    *
-   * ⚠️ **`{}` 有四个产出者，消费方必须靠别的字段把它们分开——单看这个字段分不出来。**
+   * ⚠️ **`{}` 有五个产出者，消费方必须靠别的字段把它们分开——单看这个字段分不出来。**
    * 面板要渲染「哪条通道真的铸出来了」，这张表就是判据，所以语义写全：
    *
    * | `{}` 的来源 | 怎么认出来 |
@@ -110,6 +132,7 @@ export interface TendResult {
    * | 注册机关着 | `skipped === true`（**它有且只有这一个含义**） |
    * | 健康轮，缺口 `need <= 0` | `skipped === false && attempted === 0 && failures 为空` |
    * | 整轮抛错 | `attempted === 0 && failures` 里是 `round_crashed` |
+   * | 退避窗口内整轮跳过 | `attempted === 0 && failures` 里是 `upstream_backoff` |
    * | 尝试了但全失败 | `attempted > 0 && failures` 非空 |
    *
    * 也就是：**`skipped` + `attempted` + `failures` 三个字段合读**才分得清。
@@ -184,6 +207,20 @@ export interface TendDeps {
   roundBudgetMs?: number;
   /** 事件日志 sink，由调用方注入——core 不直接碰 console。 */
   logger: Logger;
+  /**
+   * 域名台账与退避状态的读写。**四个都必填、都不给默认值**，与 `buildApp` 的
+   * `runtime` 同一条纪律：给默认值就等于某个入口忘接线时静默退化成
+   * 「每轮重新洗牌 + 撞了限流照打」——也就是本次要修的那个缺陷原封不动地回来。
+   *
+   * 落点在 `src/http/wire.ts` 的 `buildTendDeps`（**只有它手上有存储**）。
+   * `src/core/registrar/` 一个文件都不许 import `ports/storage`，
+   * `tests/unit/source-guards.test.ts` 有一格数着。
+   */
+  loadDomainLedger: () => Promise<DomainLedger>;
+  saveDomainLedger: (ledger: DomainLedger) => Promise<void>;
+  loadBackoff: () => Promise<BackoffState | null>;
+  /** `null` = 清掉退避（一次成功铸号）。 */
+  saveBackoff: (state: BackoffState | null) => Promise<void>;
 }
 
 /**
@@ -226,6 +263,43 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   // 不小心删掉」留退路。
   const channel = requireChannel(deps.config);
 
+  // ── 退避闸：**在开跑第一个名额之前**，一次上游请求都不发 ────────────────────
+  //
+  // 🔴 这道闸是整套改动的承重点。上游那两层限流的惩罚窗口都比一轮补池长得多，
+  // 而**窗口里每打一次请求就把窗口续一次**——没有它，Cron 每轮都会去续一次窗口，
+  // 正是本次要修的那个缺陷换个尺度重演。
+  //
+  // 🔴 **返回的是 `skipped: false`。** `skipped` 有且只有一个含义
+  //（`config.enabled === false`），拿它表示「这一轮在退避里」就是伪造
+  //（`./types.ts` 与 `src/core/admin/tend-history.ts` 两处逐字钉着这句话）。
+  // 这一行在补池历史上靠 `attempted === 0 && failures` 里的 `upstream_backoff`
+  // 自己说清发生了什么。
+  let backoff: BackoffState | null = null;
+  try {
+    backoff = await deps.loadBackoff();
+  } catch (err) {
+    // **读不出来按放行处理**（fail-open），方向与台账刻意相反：读坏的退避键当成
+    // 「还在退避」会让注册机静默停摆，而放行的代价只是多打一轮——那一轮撞上限流
+    // 会立刻把退避重新写上。代价明写，不是「已经防住了」。
+    deps.logger.log({
+      level: "warn", event: "registrar.backoff_read_failed",
+      msg: "退避状态读不出来，本轮照常跑（撞上限流会立刻重新记一次退避）",
+      fields: { err: err instanceof Error ? err.message : String(err) },
+    });
+  }
+  if (inBackoff(backoff, startedAt)) {
+    deps.logger.log({
+      level: "warn", event: "registrar.backoff_skipped",
+      msg: "上一轮撞上了上游限流，本轮还在退避窗口里，一次上游请求都不发、一个临时邮箱都不建",
+      fields: { kind: backoff!.kind, retryAfterMs: retryAfterMs(backoff, startedAt), hits: backoff!.hits },
+    });
+    return {
+      skipped: false, available, attempted: 0, minted: 0, mintedByChannel: {},
+      failures: [{ reason: "upstream_backoff", channel }],
+      at: startedAt, primaryChannel: channel, durationMs: deps.now() - startedAt,
+    };
+  }
+
   const rounds = Math.min(need, deps.config.mintBatch);
   const roundStartedAt = startedAt;
   const failures: TendResult["failures"] = [];
@@ -233,15 +307,53 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   let attempted = 0;
   let minted = 0;
 
-  // 单次铸 key 的最坏墙钟：等满一次验证码超时。这是墙钟里**占绝对大头**的一项
-  //（默认 120 秒）。
+  // 单次尝试的最坏墙钟：等满一次验证码超时，**外加这次尝试里换域名要付的间隔**。
+  //
+  // 🔴 **域内间隔那一项不是锦上添花，漏掉它的后果不是变慢是漏邮箱**：低估 ⇒ 开始
+  // 一次跑不完的尝试 ⇒ 平台从中间把调用砍断 ⇒ `mintOne` 的 `finally` 不执行 ⇒
+  // 临时邮箱漏删且没有任何日志，正是 `./types.ts` 与下面预算那段花大力气杀掉的
+  // 那条死亡链。默认 `maxDomainAttempts = 1` 时这一项是 0，与从前逐字相同；
+  // 只有运维把它调大时才涨。
   //
   // ⚠️ **这里从前还乘着 `chain.length`**：`code_timeout` 属于通道级失败会降级，
   // 同一个补池名额最坏要在两条通道上各等满一次（5 个名额 ×2 通道 ×120 秒 = 1200 秒
   // > Cron 的 900 秒，那正是当时那个撞墙钟场景）。两条通道改成二选一之后没有第二次
   // 等待了，这个因子整个消失 —— 顺带把「配了备通道才会撞上的那个墙钟死局」也消掉了。
-  const worstAttemptMs = deps.config.codeTimeoutMs;
+  //
+  // 同一份口径在 `./config.ts` 的 `worstAttemptMs`、`./types.ts` 的
+  // `WORKER_ROUND_BUDGET_MS`、`wrangler.toml` 的 Cron 估算段各有一份，四处一起改。
+  const worstAttemptMs = deps.config.codeTimeoutMs
+    + Math.max(0, deps.config.maxDomainAttempts - 1) * deps.config.mintDelayMaxMs;
 
+  // ── 域名台账：**轮开头读一次、列一次域名，收尾最多写一次** ──────────────────
+  //
+  // 从前 `listDomains()` 是**每个名额一次**（一轮 5 次白花），而域名结论一次都没被
+  // 记住。现在两件事都提到轮级：台账供 `selectDomains` 排序，观测攒进 `journal`，
+  // 收尾一次性 `commitJournal` 并只在内容真变了时才落盘。
+  const provider = deps.providers[channel];
+  const journal = newJournal();
+  let ledger: DomainLedger = emptyDomainLedger();
+  let allDomains: string[] = [];
+  if (provider !== undefined) {
+    try {
+      ledger = await deps.loadDomainLedger();
+    } catch (err) {
+      ledger = ledgerReadFailed(deps.logger, err);
+    }
+    try {
+      allDomains = await provider.listDomains();
+    } catch (err) {
+      deps.logger.log({
+        level: "warn", event: "registrar.list_domains_failed",
+        msg: "列域名失败", fields: { err: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+
+  /** 撞上限流时要写回去的退避状态；`null` = 清掉；`undefined` = 这一轮不动它。 */
+  let backoffToSave: BackoffState | null | undefined = undefined;
+
+  try {
   for (let i = 0; i < rounds; i++) {
     // 间隔先算出来：它也要计入预算，且必须在「要不要开始这次尝试」之前就知道。
     const delayMs = i === 0
@@ -287,7 +399,6 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
     // 上游整体故障（upstream_error）时，这一轮到此为止：见下方 switch 分支注释。
     let abortRound = false;
 
-    const provider = deps.providers[channel];
     if (!provider) {
       // 选中的通道没构造出对应 provider——这是接线错误，不是"这条通道本来就没配"的
       // 正常状态。静默跳过会让 attempted 正常自增、minted=0、failures=[]，观测层面
@@ -299,7 +410,17 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
         agnes: deps.agnes,
         tokenName: deps.config.tokenName,
         codeTimeoutMs: deps.config.codeTimeoutMs,
-        maxDomainAttempts: deps.config.maxDomainAttempts,
+        // **候选域名按台账排序，不再是「全量洗牌取前 N」。** 每个名额都重排一次：
+        // 上一个名额刚学到的结论还在 `journal` 里没落盘，但同一轮里再撞同一个坏域名
+        // 是划不来的——所以这里用 `ledger` 的排序 + `mintOne` 自己按顺序试。
+        candidates: selectDomains(
+          ledger, allDomains, deps.now(), deps.config.maxDomainAttempts, deps.rand,
+        ),
+        journal,
+        ledger,
+        now: deps.now(),
+        mintDelayMinMs: deps.config.mintDelayMinMs,
+        mintDelayMaxMs: deps.config.mintDelayMaxMs,
         sleep: deps.sleep,
         rand: deps.rand,
         logger: deps.logger,
@@ -351,16 +472,33 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
          */
         switch (out.reason) {
           case "provider_error":
-          case "rate_limited":
           case "network_error":
           case "code_timeout":
           case "domain_blocked_all":
           case "register_failed":
           case "login_failed":
           case "key_failed":
-            // 本次名额作废，本轮的下一个名额照常开始。`rate_limited` 那一支
-            // mintOne 内部已经退避过并换了域名，这里不再加码。
+            // 本次名额作废，本轮的下一个名额照常开始。
             break;
+          case "rate_limited": {
+            // 🔴 **这一支从「继续下一个名额」挪到「立刻中止整轮」，是本次的承重改动。**
+            // 从前它落在上面那一支：撞上限流之后接着把 `mintBatch` 打完，而两层限流的
+            // 惩罚窗口都远比一轮长，**窗口里每打一次就把窗口续一次** ⇒ 打得越多恢复
+            // 得越晚，而且那些请求一次都不可能成功。
+            abortRound = true;
+            const next = nextBackoff(backoff, out.limitKind, deps.now());
+            backoffToSave = next;
+            deps.logger.log({
+              level: "warn", event: "registrar.rate_limited",
+              msg: "撞上上游限流，本轮到此为止，并记一个退避窗口（窗口内下一轮一次上游请求都不发）",
+              fields: {
+                kind: out.limitKind, until: next.until, hits: next.hits,
+                // `marker` 只是边缘限流正文里那个可 grep 的记号，**不参与任何判定**。
+                marker: out.marker,
+              },
+            });
+            break;
+          }
           case "upstream_error":
             // Agnes 后端整体故障（发验证码遇到非 400 的非 2xx）。继续本轮只会在故障
             // 期间制造更多注定失败的请求。这里的退避是整轮级别的：立即结束这一轮
@@ -368,14 +506,37 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
             abortRound = true;
             break;
           default: {
-            const exhaustive: never = out.reason;
-            throw new Error(`未处理的 MintOutcome.reason: ${String(exhaustive)}`);
+            // ⚠️ 断言的是 **`out` 整个**而不是 `out.reason`：`rate_limited` 那一支
+            // 多带了 `limitKind` / `marker` 之后 `MintOutcome` 成了两个对象类型的联合，
+            // 全部 case 走完时 `out` 本身才是 `never`（`out.reason` 在那时已经取不到了）。
+            const exhaustive: never = out;
+            throw new Error(`未处理的 MintOutcome: ${JSON.stringify(exhaustive)}`);
           }
         }
       }
     }
 
     if (abortRound) break;
+  }
+  } finally {
+    // ── 收尾：把这一轮学到的东西落盘 ────────────────────────────────────────
+    //
+    // **放在 `finally` 里是刻意的**：整轮抛错时（`round_crashed` 那一档）退避截止
+    // 时刻同样必须落盘，否则一次崩轮就把「别再打了」这条结论丢掉，下一轮接着打、
+    // 接着续窗口。整段自己包一层 try/catch —— 收尾出错不该掩盖 try 块里正在飞的
+    // 那个异常（与 `mintOne` 的 `finally` 同一条纪律）。
+    try {
+      await finishRound({
+        deps, provider, ledger, journal, allDomains, minted, backoff, backoffToSave,
+      });
+    } catch (err) {
+      deps.logger.log({
+        level: "warn", event: "registrar.ledger_write_failed",
+        msg: "本轮的域名台账 / 退避状态没写进去；台账丢了只是下一轮重学，"
+          + "退避丢了会让下一轮照打（可能把上游的惩罚窗口续上）",
+        fields: { err: err instanceof Error ? err.message : String(err) },
+      });
+    }
   }
 
   if (minted > 0) await reconcileAfterMint(deps);
@@ -384,6 +545,61 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
     skipped: false, available, attempted, minted, mintedByChannel, failures,
     at: startedAt, primaryChannel: channel, durationMs: deps.now() - startedAt,
   };
+}
+
+/**
+ * 一轮收尾：域名台账最多写 1 次、退避键按需写 1 次。
+ *
+ * ⚠️ **「结论没变就一次 put 都不发」是写配额账的一根轴**，不是省事：Cron 每 30 分钟
+ * 一轮，稳态下台账的结论不再变动 ⇒ 这把键的写次数是 0 而不是 48 次/天。
+ * `tests/unit/registrar/domain-ledger-io.test.ts`「一轮铸 5 把，registrar:domains 只被 put 一次；退避键一次都不写」按键数着 put 计数钉这条。
+ */
+async function finishRound(p: {
+  deps: TendDeps;
+  provider: MailProvider | undefined;
+  ledger: DomainLedger;
+  journal: ReturnType<typeof newJournal>;
+  allDomains: string[];
+  minted: number;
+  backoff: BackoffState | null;
+  backoffToSave: BackoffState | null | undefined;
+}): Promise<void> {
+  const { deps } = p;
+
+  if (p.provider !== undefined) {
+    const committed = commitJournal(
+      p.ledger, p.journal, deps.now(),
+      // 域名一个都没列出来时不动 `total`：那是「这一轮没问到」，不是「上游只有 0 个」。
+      p.allDomains.length > 0 ? p.allDomains.length : null,
+    );
+    if (committed.discarded > 0) {
+      // 🔴 钳位生效了。这是「上游可能改了限流文案」最直接的信号。
+      deps.logger.log({
+        level: "warn", event: "registrar.domain_verdicts_discarded",
+        msg: "同一轮里冒出好几个疑似「域名被屏蔽」，这更像是出口被限流而不是域名真的成批失效，"
+          + "本轮的域名判定整体作废（好域名不会因为一次限流被判死）",
+        fields: { count: committed.discarded },
+      });
+    }
+    for (const b of committed.newlyBlocked) {
+      // 只有**第二跳判死**才记事件（第一跳只进台账），理由见 `CommitResult.newlyBlocked`。
+      deps.logger.log({
+        level: "warn", event: "registrar.domain_blocked",
+        msg: "这个邮箱域名连着两次被上游拒了，之后排到候选末尾（判定走的是启发式词表，"
+          + "上游换文案会误判；下面这句 message 就是用来看它换没换的）",
+        fields: { domain: b.domain, n: b.n, message: b.message },
+      });
+    }
+    if (committed.dirty) await deps.saveDomainLedger(committed.next);
+  }
+
+  if (p.backoffToSave !== undefined) {
+    await deps.saveBackoff(p.backoffToSave);
+  } else if (p.minted > 0 && p.backoff !== null) {
+    // 铸出来了 ⇒ 上游现在认我们 ⇒ 把那把陈旧的退避键清掉，指数从头数。
+    // **只有键真的存在时才写**：否则每一轮成功补池都要白付一次 put。
+    await deps.saveBackoff(null);
+  }
 }
 
 /**

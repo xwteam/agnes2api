@@ -664,6 +664,15 @@ describe(".env.example 与五语言文档对等", () => {
  * 分运行时的真话：Worker 上是每请求一个不说原因的 500，而且与 `USAGE_STATS_ENABLED`
  * 开没开无关），其余 18 行是此前几轮攒下的，都没回来重新量过。
  * 今天现量：`wc -l` = 219、`grep -c '^#'` = 160。
+ *
+ * ── 记账：219/160 → 240/182（2026-09-08 北京时间）────────────────────────
+ * 同一条理由第二次生效：「删掉 20 行 ⇒ 总行数那条红」那格探针删的是**固定 20 行**，
+ * 而文件长到 240 行之后删 20 行还剩 219 ≥ 219 ⇒ 探针又不咬了
+ *（实测：`expected 219 to be less than 219`）。
+ * 这一轮长的 21 行全在注册机那三个旋钮上：`MINT_DELAY_MIN_MS` / `MINT_DELAY_MAX_MS`
+ * 的内置取值改成 60000 / 90000、`MAX_DOMAIN_ATTEMPTS` 改成 1，三处都补了成段的说明
+ *（下限是实测出来的、上限只是抖动余量、以及「调大它会等量放大每轮的限流预算消耗」）。
+ * 现量：`wc -l` = 240、`grep -c '^#'` = 182。
  */
 describe("`.env.example` 不回退", () => {
   /** `wc -l .env.example` 的口径：数换行符，不是数 `split("\n")` 的段数。 */
@@ -671,23 +680,23 @@ describe("`.env.example` 不回退", () => {
   /** `grep -c '^#' .env.example` 的口径：以 `#` 起头的行数（含分隔用的 `# ---`）。 */
   const commentLines = (src: string): number => src.split("\n").filter((l) => l.startsWith("#")).length;
 
-  /** 2026-09-07 实测：`wc -l` = 219（2026-08-30 是 197，记账见本组顶上）。 */
-  const MIN_TOTAL_LINES = 219;
-  /** 2026-09-07 实测：`grep -c '^#'` = 160（2026-08-30 是 139）。 */
-  const MIN_COMMENT_LINES = 160;
+  /** 2026-09-08 实测：`wc -l` = 240（2026-09-07 是 219，记账见本组顶上）。 */
+  const MIN_TOTAL_LINES = 240;
+  /** 2026-09-08 实测：`grep -c '^#'` = 182（2026-09-07 是 160）。 */
+  const MIN_COMMENT_LINES = 182;
 
-  it("整份文件不短于实测下限（`wc -l` ≥ 219）", () => {
+  it("整份文件不短于实测下限（`wc -l` ≥ 240）", () => {
     expect(
       totalLines(envExample()),
-      `.env.example 比 2026-09-07 的实测值（${MIN_TOTAL_LINES} 行）短了 —— 阶段 7 的裁定是**这份文件一个字都不改**，`
+      `.env.example 比 2026-09-08 的实测值（${MIN_TOTAL_LINES} 行）短了 —— 阶段 7 的裁定是**这份文件一个字都不改**，`
       + "缩水只有两种来源：整段变量被删，或者注释被「去重」掉。要么把删掉的加回来，要么先来推翻「`.env.example` 一个字都不改」那条裁定",
     ).toBeGreaterThanOrEqual(MIN_TOTAL_LINES);
   });
 
-  it("注释密度不低于实测下限（`grep -c '^#'` ≥ 160）—— 它是陌生人手里唯一一份带说明的模板", () => {
+  it("注释密度不低于实测下限（`grep -c '^#'` ≥ 182）—— 它是陌生人手里唯一一份带说明的模板", () => {
     expect(
       commentLines(envExample()),
-      `.env.example 的注释行比 2026-09-07 的实测值（${MIN_COMMENT_LINES} 行）少了 —— `
+      `.env.example 的注释行比 2026-09-08 的实测值（${MIN_COMMENT_LINES} 行）少了 —— `
       + "每个变量上方那几行 `#` 是 `cp` 出来之后唯一的说明，删掉它等于把这份模板降级成一串裸变量名",
     ).toBeGreaterThanOrEqual(MIN_COMMENT_LINES);
   });

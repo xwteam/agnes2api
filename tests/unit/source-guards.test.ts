@@ -285,7 +285,7 @@ function throwOwners(src: string): string[] {
  *   那是代码 bug，必须响。它自己那段 JSDoc 里逐字写着它是**装载器那个模块**唯一的
  *   throw 豁免项。
  * - `tendOnce`（`tender.ts`）：`switch` 的 `default` 分支上那句穷尽性断言
- *   （`const exhaustive: never = out.reason`）。**它不是运行期校验**——正常代码路径上
+ *   （`const exhaustive: never = out`）。**它不是运行期校验**——正常代码路径上
  *   永远到不了，够得着它的唯一方式是给 `MintOutcome.reason` 加一个新取值而不补分支，
  *   而那在 `tsc` 那里先红。它也不在配置装载路径上（补池那一轮才跑得到）。
  * - `fetchChannel`（`fetch.ts`）：**每一次出站请求的失败通道**，与装载路径毫无交集
@@ -348,6 +348,57 @@ describe("硬约束：src/core/registrar 模块级零 throw", () => {
 
   it("注释里的 throw 不算数——这个仓库的注释极其爱复述代码", () => {
     expect(throwOwners("// 这里以前 throw new Error()\n/* 也不再 throw */\nexport const x = 1;")).toEqual([]);
+  });
+});
+
+// ── ①之二·补 src/core/registrar 一格存储都不碰 ──────────────────────────────
+
+/**
+ * **注册机那一族 core 模块，一个都不许 import 存储端口。**
+ *
+ * ⚠️ **上面那道零 IO 扫描抓不住它**：`IO_PATTERNS` 认的是时间 / 随机 / 定时 / 网络 /
+ * 环境这几族全局，而 `Storage` 是一个**注入的端口** —— `src/core/keypool-repo.ts`
+ * 等三个 core 文件今天就在 import 它，那是正当的。也就是说「注册机不碰存储」这条
+ * 性质此前**一格判据都没有**，它今天成立纯属碰巧。
+ *
+ * 本轮给注册机加了两把存储键（域名台账、退避状态），而两者的读写**必须**留在
+ * `src/http/wire.ts`：把 `Storage` 拉进 `src/core/registrar/` 之后，
+ * 「一轮最多写一次」这条写配额性质就会散落到各个调用点，而它今天是**一处**
+ *（`tendOnce` 的收尾）决定的。
+ *
+ * ⚠️ 期望值是手写的 `0`，不从被测对象数出来再回填。
+ */
+const REGISTRAR_DIR = "src/core/registrar";
+
+/** 一个文件 import 了存储端口没有。判据取 import 语句里的模块路径，不扫全文。 */
+function importsStorage(src: string): boolean {
+  return [...blankComments(src).matchAll(/from\s+["']([^"']+)["']/g)]
+    .some((m) => /(^|\/)ports\/storage(\.js)?$/.test(m[1] ?? ""));
+}
+
+describe("硬约束：src/core/registrar 一格存储都不碰", () => {
+  it("src/core/registrar/ 下 import ports/storage 的文件数恰好是 0", () => {
+    const offenders = walkTs(REGISTRAR_DIR)
+      .map((p) => p.split("\\").join("/"))
+      .filter((p) => importsStorage(readFileSync(p, "utf8")));
+    expect(
+      offenders,
+      "注册机的 core 模块开始直接碰存储了。域名台账与退避状态的读写必须留在 "
+      + "src/http/wire.ts：「一轮最多写一次台账」今天由 tendOnce 的收尾一处决定，"
+      + "把 Storage 拉进来之后它就会散落到各个调用点，而写配额账是按键算的",
+    ).toEqual([]);
+  });
+
+  it("反向自检：检测器真的认得出一处 import（否则上面那格空转也是绿的）", () => {
+    // 上面那格全绿也可能是因为**判据一个都匹配不上**（正则写错、walkTs 扫了空目录）。
+    expect(importsStorage('import type { Storage } from "../../ports/storage.js";')).toBe(true);
+    expect(importsStorage('import { KvStorage } from "../../adapters/storage-kv.js";')).toBe(false);
+    // 注释里提到不算数——这个仓库的注释极其爱复述代码。
+    expect(importsStorage('// 读写在 wire.ts，本文件不 import "../../ports/storage.js"')).toBe(false);
+  });
+
+  it("反向自检：目录真的扫得到文件（walkTs 扫空时上面那格同样是绿的）", () => {
+    expect(walkTs(REGISTRAR_DIR).length).toBeGreaterThan(5);
   });
 });
 

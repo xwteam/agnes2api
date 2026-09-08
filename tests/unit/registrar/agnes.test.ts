@@ -21,14 +21,39 @@ function recordingFetcher(responses: Array<{ status: number; body?: unknown }>) 
 describe("sendCode", () => {
   it("对邮箱做 URL 编码并带上 purpose=register", async () => {
     const { calls, fetcher } = recordingFetcher([{ status: 200 }]);
-    const status = await sendCode({ fetcher, platformUrl: PLATFORM }, "a+b@x.test");
-    expect(status).toBe(200);
+    const r = await sendCode({ fetcher, platformUrl: PLATFORM }, "a+b@x.test");
+    expect(r.status).toBe(200);
     expect(calls[0]!.url).toBe(`${PLATFORM}/api/verification?email=a%2Bb%40x.test&purpose=register`);
   });
 
-  it("原样返回状态码，不抛错（400 表示域名被屏蔽，调用方要据此换域名）", async () => {
-    const { fetcher } = recordingFetcher([{ status: 400 }]);
-    expect(await sendCode({ fetcher, platformUrl: PLATFORM }, "a@x.test")).toBe(400);
+  /**
+   * ⚠️ **这一格原来叫「原样返回状态码，不抛错（400 表示域名被屏蔽，调用方要据此换域名）」，
+   * 括号里那句话只对了一半。** 上游用 `400` 同时表达「这个域名被屏蔽了」与「你这个出口
+   * 发得太频繁了」，而**正文是唯一的区分线索**。把正文丢掉，代码层面就永远分不开这两件事
+   * —— 一次出口级限流会被读成「这些域名被屏蔽了」，然后照着「换个域名就好」继续打。
+   * 分辨在 `src/core/registrar/domain-ledger.ts` 的 `classifySendCode`，**而且是启发式**。
+   */
+  it("原样返回状态码**与正文**，不抛错 —— 正文是分辨两种 400 的唯一线索", async () => {
+    const { fetcher } = recordingFetcher([{ status: 400, body: { code: 400, message: "nope" } }]);
+    const r = await sendCode({ fetcher, platformUrl: PLATFORM }, "a@x.test");
+    expect(r.status).toBe(400);
+    expect(JSON.parse(r.body)).toEqual({ code: 400, message: "nope" });
+  });
+
+  it("正文读不出来时按空正文处理，不让它把一次已经拿到状态码的请求变成异常", async () => {
+    const fetcher = {
+      async fetch(): Promise<Response> {
+        // 状态码拿到了，读正文时连接断了 —— 与本文件 login/createKey 对非 JSON 正文的
+        // 处置同一条：不抛，交给调用方去分类。
+        return {
+          status: 429,
+          ok: false,
+          async text(): Promise<string> { throw new Error("aborted"); },
+        } as unknown as Response;
+      },
+    };
+    const r = await sendCode({ fetcher, platformUrl: PLATFORM }, "a@x.test");
+    expect(r).toEqual({ status: 429, body: "" });
   });
 });
 
