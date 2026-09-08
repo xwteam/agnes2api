@@ -2144,7 +2144,23 @@ BANNER='[collection-guard] ✅'
 #   ⇒ workerd 两个数仍然一格不动（实测 43 / 793）：新增的那一格在 `tests/unit/` 下，
 #     不进 workers 池；`tests/contract/` 一格都没加。
 EXPECT_NODE_FILES=164
-EXPECT_NODE_TESTS=5087
+#
+#   ── 指路不许指向一条当时还不存在的事件（终检遗留）：**+2**，全在 tests/unit/i18n-dict.test.ts
+#   起因：`reg.backoff.cluster` 里「上游列出来的域名全被判『被屏蔽』那一支，原话在
+#   registrar.domain_blocked 里」这半句，**在这一支第一次亮起来的那一轮为假** —— 判死要两跳，
+#   第 0 轮只写得下第一跳，而退避横幅第 0 轮就开始显示。终检实测那一轮的事件里只有
+#   registrar.round_all_domains_rejected，上游原话载体是空的。五语言横幅、事件正文、
+#   五份 REGISTRAR.md 表格那一格都带上了「第二跳之后才有」的限定。
+#     · `tests/unit/i18n-dict.test.ts` 47 → **49**（**+2**）：
+#       ①「指向 registrar.domain_blocked 时五语言都带着限定」
+#       ②「反向自检：把限定抠掉必须逐语言点名」—— 只有 ① 的话，空检测器与真干净长得一样。
+#   变异实测（逐格真跑）：把 zh-CN 的限定抠回上一版那句假话 ⇒ **红 2 格**（①②）；
+#   把 ① 的检测条件改成恒 continue ⇒ **红 1 格**（②接住了）。
+#   ⚠️ 表格那一格 en/ko 第一版改长了，顶破了 docs-parity 的 >200 字符棘轮与
+#   docs-typography 的 >1200 区间棘轮 —— **压短文案压回去的，两个棘轮一格没抬**。
+#   ⇒ Node：5087 + 2 = **5089**；文件数不动。
+#   ⇒ workerd 不动：`tests/unit/**` 不进 workers 池。
+EXPECT_NODE_TESTS=5089
 EXPECT_WORKERS_FILES=43
 EXPECT_WORKERS_TESTS=793
 

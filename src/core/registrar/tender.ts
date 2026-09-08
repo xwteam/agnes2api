@@ -740,8 +740,9 @@ async function finishRound(p: {
         level: "warn", event: "registrar.round_all_domains_rejected",
         msg: "上游列出来的邮箱域名这一轮一个不落全试过了，而且全被判成「域名被屏蔽」，"
           + "这一轮一把 key 都没铸出来；按这个形状记了一个退避窗口。两种可能都还开着："
-          + "上游换了限流的措辞、我们的词表没认出来，或者上游真的把这些域名拉黑了 "
-          + "—— 去看 registrar.domain_blocked 带的上游原话",
+          + "上游换了限流的措辞、我们的词表没认出来，或者上游真的把这些域名拉黑了。"
+          + "⚠️ 上游原话要等第二跳判死之后才进 registrar.domain_blocked —— "
+          + "这一支第一次亮起来的那一轮只写得下第一跳，那时候一条都翻不到",
         fields: {
           listed: listed.size, probed: probed.size, rejected: rejected.size, minted: p.minted,
           backoffUntil: toSave?.until ?? null,

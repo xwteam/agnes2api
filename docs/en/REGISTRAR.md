@@ -609,7 +609,7 @@ The registrar section shows a backoff banner:
 |-----------|-------------------|---------------|
 | Edge rate limit | "refills are spaced too tightly" | Raise `MINT_DELAY_MIN_MS`, or lower `MINT_BATCH` |
 | The upstream's own registration limit | "matched by our word list, not stated by the upstream" | Raise `MINT_DELAY_MIN_MS`, lower `MINT_BATCH`; change egress only once confirmed |
-| Domains blocked in a cluster, nothing minted | "nothing matched our word list; both readings stay open" | Read the `registrar.domain_blocked` events for the upstream's wording first |
+| Domains blocked in a cluster, nothing minted | "nothing matched our word list; both readings stay open" | See above — evidence differs; `registrar.domain_blocked` may be empty |
 
 > [!IMPORTANT]
 > **Switching mailbox channel does not get you out of this.** The limit lives on the edge between

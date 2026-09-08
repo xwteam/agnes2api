@@ -1114,6 +1114,60 @@ describe("i18n 字典", () => {
   });
 
   /**
+   * 🔴 **指路不许指向一条当时还不存在的事件。**
+   *
+   * `reg.backoff.cluster` 会告诉运维「上游原话去哪儿翻」。其中「上游列出来的域名
+   * 全被判『被屏蔽』那一支」曾经逐字写着「原话在 `registrar.domain_blocked` 里」——
+   * **而这一支第一次亮起来的那一轮，那条事件一条都还没发出来**：判死要两跳
+   *（`src/core/registrar/domain-ledger.ts` 的两跳规则），第 0 轮只写得下第一跳，
+   * 而退避横幅**第 0 轮就开始显示**。终检实测：那一轮的事件里只有
+   * `registrar.round_all_domains_rejected`，上游原话的载体是空的。
+   *
+   * ⇒ 凡是提到 `registrar.domain_blocked` 的那一支，必须带上「第二跳之后才有」这个
+   * 限定。五语言各有各的说法，锚点逐语言列在下面。
+   *
+   * ⚠️ 这一格与下面那格自检是**一对**：只断言「问题列表是空的」时，空检测器与真干净
+   * 长得一模一样（本仓栽过一次）。所以下面那格拿探针钉住检测器本身。
+   */
+  const SECOND_STRIKE_ANCHORS: Record<(typeof LANGS)[number], string> = {
+    "zh-CN": "第二跳",
+    "zh-TW": "第二跳",
+    en: "second strike",
+    ja: "2 回目",
+    ko: "두 번째",
+  };
+
+  /** 提到那条事件却没带「第二跳之后才有」的限定 ⇒ 逐语言点名。 */
+  function secondStrikeProblems(row: Record<string, string> | undefined): string[] {
+    if (row === undefined) return ["整行不在字典里"];
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      const text = row[lang] ?? "";
+      if (!text.includes("registrar.domain_blocked")) continue;
+      if (!text.includes(SECOND_STRIKE_ANCHORS[lang])) {
+        bad.push(`${lang}: 指向 registrar.domain_blocked 却没说「${SECOND_STRIKE_ANCHORS[lang]}」之后才有`);
+      }
+    }
+    return bad;
+  }
+
+  it("cluster 那条横幅指向 registrar.domain_blocked 时，五语言都带着「第二跳之后才有」的限定", () => {
+    expect(secondStrikeProblems(dictRow("reg.backoff.cluster"))).toEqual([]);
+  });
+
+  it("反向自检：把限定抠掉，上面那格必须逐语言点名 —— 否则它与空检测器长得一样", () => {
+    const row = dictRow("reg.backoff.cluster")!;
+    for (const lang of LANGS) {
+      const anchor = SECOND_STRIKE_ANCHORS[lang];
+      expect(row[lang]!.includes(anchor), `${lang}: 夹具前提不成立，正文里没有这个锚点`).toBe(true);
+      const poisoned = { ...row, [lang]: row[lang]!.split(anchor).join("") };
+      expect(secondStrikeProblems(poisoned), `${lang}: 限定被抠掉却没被点名`)
+        .toEqual([`${lang}: 指向 registrar.domain_blocked 却没说「${anchor}」之后才有`]);
+    }
+    expect(secondStrikeProblems(undefined)).toEqual(["整行不在字典里"]);
+  });
+
+  /**
    * 设计文档 §7.3 / §9.1 第 6 条：`TendFailureReason` 的每个联合成员都要有
    * `reg.fail.<reason>` 键。当初特意把它收成联合类型正是为了消费时保有穷尽性，
    * 「这笔前期投资这次要用上」。
