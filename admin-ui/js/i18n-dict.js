@@ -269,8 +269,8 @@ export const I18N = {
   "reg.state.blocked": { "zh-CN": "已启用 · 本次没跑起来", "zh-TW": "已啟用 · 本次沒跑起來", en: "Enabled \u00b7 not started this time", ja: "有効 \u00b7 今回は起動せず", ko: "사용 중 \u00b7 이번에는 시작 못 함" },
   "reg.channel":      { "zh-CN": "使用的通道", "zh-TW": "使用的通道", en: "Channel in use", ja: "使用するチャネル", ko: "사용 중인 채널" },
   "reg.none":         { "zh-CN": "未选择", "zh-TW": "未選擇", en: "Not selected", ja: "未選択", ko: "선택 안 됨" },
-  // 设计 §10.3 第 8 条逐字：空状态说「两条通道平级，请选择一条作为主通道」，
-  // **不是**「未选择时使用 X」。
+  // 空状态说的是「二选一」，**不是**「未选择时使用 X」，也**不是**「请选择一条作为
+  // 主通道」——后者是主备降级时代的措辞，那套机制已经拆掉，别照旧改回去。
   "reg.emptyChannel": { "zh-CN": "两条通道二选一：选中的那条负责收验证码，另一条填了也不会被用到，也不会自动切换。", "zh-TW": "兩條通道二選一：選中的那條負責收驗證碼，另一條填了也不會被用到，也不會自動切換。", en: "Pick one of the two channels: the selected one receives the verification codes, and the other is never used even if you fill it in — there is no automatic switching.", ja: "2 つのチャネルから 1 つを選びます。選んだほうが確認コードを受け取り、もう一方は入力しても使われません。自動で切り替わることもありません。", ko: "두 채널 중 하나를 고릅니다. 선택한 쪽이 인증 코드를 받고, 다른 쪽은 입력해도 사용되지 않으며 자동으로 전환되지도 않습니다." },
 
   "reg.pool.target":  { "zh-CN": "目标 key 数", "zh-TW": "目標 key 數", en: "Target key count", ja: "目標 key 数", ko: "목표 key 수" },
@@ -298,7 +298,8 @@ export const I18N = {
   "reg.channel.credsYes": { "zh-CN": "已配好", "zh-TW": "已配好", en: "Configured", ja: "設定済み", ko: "설정됨" },
   "reg.channel.credsNo":  { "zh-CN": "未配置", "zh-TW": "未設定", en: "Not configured", ja: "未設定", ko: "설정 안 됨" },
   // 设计 §10.3 第 6 条：用数据代替推荐——两个**等权**的按钮，返回可用域名数。
-  // 注册机设计定的口径：可用域名多寡是选主通道时唯一值得看的指标，与是哪家服务无关。
+  // 注册机设计定的口径：可用域名多寡是**选通道**时唯一值得看的指标，与是哪家服务无关。
+  // （从前这句写的是「选主通道」，主备已拆，用词跟着收。）
   "reg.channel.test":     { "zh-CN": "测试连接", "zh-TW": "測試連線", en: "Test connection", ja: "接続テスト", ko: "연결 테스트" },
   "reg.channel.testing":  { "zh-CN": "测试中…", "zh-TW": "測試中…", en: "Testing…", ja: "テスト中…", ko: "테스트 중…" },
   "reg.channel.testOk":     { "zh-CN": "连通：可用域名 {domains} 个 · 耗时 {latencyMs} ms", "zh-TW": "連通：可用網域 {domains} 個 · 耗時 {latencyMs} ms", en: "Reachable: {domains} usable domain(s) · {latencyMs} ms", ja: "接続できました: 利用可能なドメイン {domains} 件 · {latencyMs} ms", ko: "연결됨: 사용 가능한 도메인 {domains}개 · {latencyMs} ms" },
@@ -345,9 +346,9 @@ export const I18N = {
   "reg.row.noAttempt": { "zh-CN": "这一轮一次尝试都没开始（不是「跑完了没产出」）", "zh-TW": "這一輪一次嘗試都沒開始（不是「跑完了沒產出」）", en: "This round never started a single attempt (not \"ran and produced nothing\")", ja: "このラウンドは 1 回も試行を開始していません（「実行したが成果ゼロ」ではありません）", ko: "이 라운드는 시도를 한 번도 시작하지 않았습니다(「실행했지만 성과 없음」이 아닙니다)" },
   "reg.row.minted":   { "zh-CN": "铸出 {minted} / 尝试 {attempted}", "zh-TW": "鑄出 {minted} / 嘗試 {attempted}", en: "{minted} minted / {attempted} attempted", ja: "発行 {minted} / 試行 {attempted}", ko: "발급 {minted} / 시도 {attempted}" },
   "reg.row.unreadable": { "zh-CN": "这一行读不得", "zh-TW": "這一行讀不得", en: "This row is unreadable", ja: "この行は読み取れません", ko: "이 행은 읽을 수 없습니다" },
-  // ⚠️ 逐通道铸出数**必须显示**：`minted` 只有总数，一轮全靠备通道铸出来时，
-  // 总数记在哪条通道名下是看不出来的——没有这一格，备通道的战绩会被持续记到
-  // 主通道头上，与「两条通道完全平级」正面冲突。
+  // ⚠️ 逐通道铸出数**必须显示**。注意**旧理由已经不成立**：从前写的是「一轮全靠
+  // 备通道铸出来时看不出记在谁名下」，而主备降级已经拆掉，今天一轮只用选中的那条。
+  // 今天的理由是**历史行跨时间**：中间运维可能换过通道，而 `minted` 只有总数。
   "reg.row.byChannel": { "zh-CN": "逐通道：{detail}", "zh-TW": "逐通道：{detail}", en: "By channel: {detail}", ja: "チャネル別: {detail}", ko: "채널별: {detail}" },
   "reg.fail.unknownReason": { "zh-CN": "这个版本的面板不认识的失败归因：{reason}", "zh-TW": "這個版本的面板不認識的失敗歸因：{reason}", en: "A failure reason this panel build does not know: {reason}", ja: "このパネルのビルドが認識できない失敗理由: {reason}", ko: "이 패널 빌드가 알지 못하는 실패 원인: {reason}" },
 

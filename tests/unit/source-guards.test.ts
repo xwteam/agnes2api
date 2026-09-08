@@ -4253,3 +4253,73 @@ describe("服务端字符串里不许再出现主 / 备（两条通道二选一�
     expect(chainWordHits("const s = `主${x}备`;"), "劈开的排名词：已知盲点").toEqual([]);
   });
 });
+
+/**
+ * 注册机出站请求的**唯一出口**清单。
+ *
+ * `src/core/registrar/fetch.ts` 的文件头逐字写着它为什么要收成一个出口：
+ * 「……后者的失败形态是**下一个人新加的那一处忘了包**，而那种遗漏不会有任何东西变红。」
+ * ⚠️ **那句话此前没有任何判据兜着。** 实测过：把 `src/core/registrar/agnes.ts` 的
+ * `sendCode()` 改回裸 `deps.fetcher.fetch(...)`，全量 Node 用例**一格都不红**——
+ * 两个 mailbox 适配器之所以改坏会红，靠的是别处的**行为**判据（断言消息脱敏过），
+ * 而 `agnes.ts` 没有对应的行为判据，于是那半边是裸奔的。下面三格补的就是这个洞。
+ *
+ * 漏出去的东西不是抽象风险：`src/core/registrar/mint.ts` 把 `errMsg(err)` 原样记进
+ * `registrar.network_error` 的 `fields`，而 `AGNES_PLATFORM_URL` 和两条通道的 baseUrl
+ * 一样是运维手打的，形如 `https://user:pass@host` 完全可能。
+ */
+const CHANNEL_EGRESS_FILES: readonly string[] = [
+  "src/adapters/mailbox-yyds.ts",
+  "src/adapters/mailbox-moemail.ts",
+  "src/core/registrar/agnes.ts",
+];
+
+/** 一处裸出站 = 不是 `fetchChannel(` 的 `.fetch(`。注释里的不算。 */
+function bareFetchSites(src: string): string[] {
+  return stripComments(src)
+    .split("\n")
+    .map((line, i) => ({ line: line.trim(), no: i + 1 }))
+    .filter(({ line }) => /\.fetch\s*\(/.test(line))
+    .map(({ line, no }) => `${no}: ${line.slice(0, 60)}`);
+}
+
+describe("硬约束：注册机的出站请求只有 fetchChannel 一个出口", () => {
+  it("清单里的文件一处裸 `.fetch(` 都没有 —— 绕过出口就绕过了脱敏", () => {
+    const hits: string[] = [];
+    for (const rel of CHANNEL_EGRESS_FILES) {
+      for (const site of bareFetchSites(readFileSync(rel, "utf8"))) hits.push(`${rel} :: ${site}`);
+    }
+    expect(hits, "这几处绕过了 fetchChannel，失败消息不会被脱敏").toEqual([]);
+  });
+
+  it("反向自检：检测器真的认得出裸出站 —— 把它改成恒空，上面那格会一路绿着走", () => {
+    // 上面那格断言的是「一处都没有」，**空检测器与真干净长得一模一样**。
+    // 实测过：把 `bareFetchSites` 的过滤条件改成恒 false，全文件 224 格一格都不红。
+    // 所以这一格拿探针钉住检测器本身，写成断言不写成散文。
+    expect(bareFetchSites("const r = await deps.fetcher.fetch(url);"), "裸出站没被认出来").toHaveLength(1);
+    expect(bareFetchSites("  lr = await this.deps.fetcher.fetch(u, { method: \"GET\" });"), "带前缀的裸出站没被认出来").toHaveLength(1);
+    expect(bareFetchSites("const r = await fetchChannel({ url });"), "走了出口的却被当成裸出站").toEqual([]);
+    expect(bareFetchSites("// const r = await deps.fetcher.fetch(url);"), "注释里的不该算").toEqual([]);
+  });
+
+  it("反向自检：清单不许空，而且每个文件真的在调 `fetchChannel` —— 指向不发请求的文件会让上面那格恒绿", () => {
+    expect(CHANNEL_EGRESS_FILES.length).toBeGreaterThan(0);
+    for (const rel of CHANNEL_EGRESS_FILES) {
+      const src = stripComments(readFileSync(rel, "utf8"));
+      expect(
+        (src.match(/fetchChannel\s*\(/g) ?? []).length,
+        `${rel} 在清单里却一次 fetchChannel 都没调 —— 清单该改，不是判据该松`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("清单恰好等于 src/ 下 import 了 fetchChannel 的文件集 —— 新加一个出站文件不登记就红", () => {
+    const importers = walkTs("src")
+      .filter((p) => !p.endsWith("assets.generated.ts"))
+      .filter((p) => /\bfetchChannel\b/.test(stripComments(readFileSync(p, "utf8"))))
+      .filter((p) => !p.endsWith("registrar/fetch.ts"))
+      .map((p) => p.replace(/\\/g, "/"))
+      .sort();
+    expect(importers).toEqual([...CHANNEL_EGRESS_FILES].sort());
+  });
+});

@@ -1851,10 +1851,30 @@ BANNER='[collection-guard] ✅'
 #       的旧文案一起写回去 ⇒ 红 3（字典全域 1 + docs/en 1 + docs/ko 1）；
 #     · 把设置分页那句「不会自动切换」改成 `display:none` ⇒ **只红 1**。
 #   ⇒ Node：4940 + 30 = **4970**；文件数不动（一份新测试文件都没加）。
+#
+#   ── 出站唯一出口那道守卫（终检遗留 1）：**+4**，全在 tests/unit/source-guards.test.ts
+#   起因：`src/core/registrar/fetch.ts` 文件头自己写着收成单一出口是为了防「下一个人
+#   新加的那一处忘了包，而那种遗漏不会有任何东西变红」——**守这句话的判据当时并不存在**。
+#   实测：把 `src/core/registrar/agnes.ts` 的 sendCode() 改回裸 `deps.fetcher.fetch(...)`，
+#   全量 Node 用例**一格都不红**（两个 mailbox 适配器改坏会红，靠的是别处的**行为**判据
+#   断言消息脱敏过；agnes.ts 没有对应行为判据，那半边是裸奔的）。
+#     · `tests/unit/source-guards.test.ts` 221 → **225**（**+4**）：
+#       ①「清单里的文件一处裸 `.fetch(` 都没有」
+#       ②「反向自检：检测器真的认得出裸出站」——这一格是**我自己变异出来的**：
+#         把 ① 的过滤条件改成恒 false 时 224 格全绿，空检测器与真干净长得一模一样；
+#       ③「反向自检：清单不许空，且每个文件真的在调 fetchChannel」
+#       ④「清单恰好等于 src/ 下 import 了 fetchChannel 的文件集」
+#   变异实测（逐格真跑，记的是**实际**红了哪几格）：
+#     · agnes.ts 的 sendCode() 改回裸 fetch ⇒ **只红 ①**（改动前红 0，这就是那个洞）；
+#     · 清单里删掉 agnes.ts ⇒ **只红 ④**；
+#     · ① 的过滤条件改成恒 false ⇒ 补 ② 之前 **0 红**，补 ② 之后 **只红 ②**。
+#   ⇒ Node：4970 + 4 = **4974**；文件数不动。
+#   ⇒ workerd 不动：`tests/unit/**` 不进 workers 池（`vitest.workers.config.ts` 只收
+#     `tests/contract/**`），`src/**` 这一轮只动了 admin-ui 的四处注释。
 #   ⇒ workerd：778 + 8 = **786**（只有 `tests/contract/mailbox.test.ts` 那一笔进 workers 池，
 #     `vitest.workers.config.ts` 的 include 只收 `tests/contract/**`），文件数不动。
 EXPECT_NODE_FILES=160
-EXPECT_NODE_TESTS=4970
+EXPECT_NODE_TESTS=4974
 EXPECT_WORKERS_FILES=42
 EXPECT_WORKERS_TESTS=786
 
