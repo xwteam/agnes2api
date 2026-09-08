@@ -285,7 +285,14 @@ function shuffle<T>(items: readonly T[], rand: () => number): T[] {
   return a;
 }
 
-/** 这个域名现在是不是「已知能用」（`ok` 且没过期）。`mintOne` 的第二道保险要它。 */
+/**
+ * 这个域名现在是不是「已知能用」（`ok` 且没过期）。
+ *
+ * ⚠️ **今天它只决定 `mintOne` 发不发那条 `registrar.known_good_domain_rejected` 诊断，
+ * 一个判定都不参与。** 从前它是「已知 ok 的域名回 400 就改判成限流」那道保险的判据，
+ * 而那道保险在好域名**真被拉黑**时会把整轮停掉且一条结论都不记 —— 死锁全文记在
+ * `./mint.ts` 的 `domain_blocked` 那一支。
+ */
 export function isKnownGood(ledger: DomainLedger, domain: string, now: number): boolean {
   const e = ledger.entries[domain];
   return e !== undefined && e.s === "ok" && now - e.at < OK_TTL_MS;

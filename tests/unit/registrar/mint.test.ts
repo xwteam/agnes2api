@@ -227,21 +227,39 @@ describe("mintOne", () => {
     })).toEqual({ ok: false, reason: "rate_limited", limitKind: "edge", marker: null });
   });
 
-  it("已知能用的域名回 400 时按限流处理，不把它打成 blocked", async () => {
-    // 两边代价严重不对称：判错限流只慢一轮，判错域名会把一个真好用的域名踢下去。
+  /**
+   * ⚠️⚠️ **这一格的期望翻过一次面。** 它从前钉的是「已知 ok 的域名回 400 ⇒ 当场
+   * return `rate_limited`、一条观测都不记」那道保险 —— 而那道保险在好域名**真被上游
+   * 拉黑**时会把整轮停掉、台账里那条 `ok` 的 `at` 永远不刷新，于是它每一轮都排第一、
+   * 每一轮都把整轮停掉，最长 7 天一把 key 都出不来（死锁全文见
+   * `src/core/registrar/mint.ts` 的 `domain_blocked` 那一支）。
+   * 今天的行为：**结论照记、下一个候选照试、诊断日志留着**。
+   */
+  it("已知能用的域名回 400：结论照记、下一个候选照试，另发一条点名它的诊断事件", async () => {
     const logger = recordingLogger();
     const journal = newJournal();
     const ledger = emptyDomainLedger();
     ledger.entries["good.test"] = { s: "ok", at: 1_000_000, n: 1 };
-    const provider = new FakeMailProvider({ domains: ["good.test"] });
-    // 正文里**不含**任何限流词 —— 换成分类器就是 `domain_blocked`。
-    const { agnes } = agnesStub({ sendCode: () => ({ status: 400, body: '{"code":400,"message":"nope"}' }) });
+    const provider = new FakeMailProvider({ domains: ["good.test", "next.test"] });
+    // 正文里**不含**任何限流词 —— 分类器读出来就是 `domain_blocked`。
+    const { seen, agnes } = agnesStub({
+      sendCode: (email) => (email.endsWith("@good.test")
+        ? { status: 400, body: '{"code":400,"message":"nope"}' }
+        : 200),
+      login: "tok", key: "sk-next",
+    });
     const out = await mintOne({
       provider, agnes, ...base(), journal, ledger, now: 1_000_000,
-      candidates: ["good.test"], logger,
+      candidates: ["good.test", "next.test"], logger,
     });
-    expect(out).toEqual({ ok: false, reason: "rate_limited", limitKind: "app", marker: null });
-    expect(journal.observations).toEqual([]);
+    // **下一个候选真的被试了**，而且这一次尝试照样铸出了 key。
+    expect(out).toEqual({ ok: true, key: "sk-next" });
+    expect(seen).toHaveLength(2);
+    // 结论照记：一条 blocked（带着上游那句话）+ 一条 ok。
+    expect(journal.observations).toEqual([
+      { domain: "good.test", verdict: "blocked", message: '{"code":400,"message":"nope"}' },
+      { domain: "next.test", verdict: "ok" },
+    ]);
     expect(logger.has("registrar.known_good_domain_rejected")).toBe(true);
   });
 

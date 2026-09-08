@@ -820,6 +820,90 @@ describe("i18n 字典", () => {
   });
 
   /**
+   * 🔴🔴 **退避横幅那条 app 文案：先说清「这是谁下的结论」，再不许把换出口说成唯一出路。**
+   *
+   * 它治的是一次实测出来的说假话：那条文案从前逐字写着「这个出口地址的注册额度可能已经
+   * 到顶，多半只能等，或者换一个出口」，而当时最容易触发这条横幅的路径里**根本没有限流**
+   *（`mintOne` 有一道保险，把「已知能用的域名回 400」改判成 `limitKind: "app"`；那道保险
+   * 已经拆掉，理由写在 `src/core/registrar/mint.ts` 的 `domain_blocked` 那一支）。
+   * ⇒ 面板把**我们自己按一张词表做的判定**说成了「上游在限你」，而运维照着它换出口，
+   * 换多少个都没用。
+   *
+   * ── 判据是两条，方向相反，缺一条都不够 ──────────────────────────────────────
+   * ① **必须有归属**：文案里得出现「这是我们按词表认出来的、不是上游给的结论」那句话。
+   *    只做 ② 的话，把旧文案改写成另一句同样绝对的话就能蒙混过去。
+   * ② **不许有绝对化的归因**：「只能等 / 唯一出路」那一族。只做 ① 的话，把归属句
+   *    加在旧文案前面、后半截照旧绝对，也能蒙混过去。
+   *
+   * ⚠️ **这一格钉的是措辞，不是行为。** 「这个场景下压根不该记 app 退避」那一半是行为，
+   * 在 `tests/unit/registrar/domain-ledger-io.test.ts` 的
+   * 「好域名被真的拉黑时不写任何退避键：归因是域名，不是「上游在限你」」那一格。
+   * 两格分工：这里管面板说什么，那里管后端产不产生这条信号。
+   *
+   * ⚠️ **五种语言各写各的形态**，与本文件里那几张「概念 × 语言」矩阵同一条纪律：
+   * 只写简中等于在另外四种语言上完全没有检查（本仓为「简体『保证』漏掉繁体『保證』」
+   * 栽过一次）。下面那条反向自检钉着「五种语言一个都不许缺」。
+   *
+   * 变异：把 `reg.backoff.app` 整条改回旧文案 ⇒ 五种语言的 ① 全部缺席、
+   * zh-CN/zh-TW/en/ja/ko 的 ② 各命中一条 ⇒ 红。
+   */
+  const BACKOFF_APP_OWNERSHIP: Record<(typeof LANGS)[number], string> = {
+    "zh-CN": "不是上游给的结论",
+    "zh-TW": "不是上游給的結論",
+    en: "not a verdict the upstream handed us",
+    ja: "上流が下した結論ではありません",
+    ko: "업스트림이 내려준 결론이 아닙니다",
+  };
+  /** 绝对化归因：「除了等 / 换出口没别的办法」那一族在五种语言里的说法。 */
+  const BACKOFF_APP_ABSOLUTES: Record<(typeof LANGS)[number], readonly string[]> = {
+    "zh-CN": ["只能等", "唯一的办法"],
+    "zh-TW": ["只能等", "唯一的辦法"],
+    en: ["the only way out", "nothing you can do"],
+    ja: ["しかありません", "ほかにありません"],
+    ko: ["수밖에", "방법이 없습니다"],
+  };
+
+  it("退避横幅那条 app 文案先说清判据归属，再不许把换出口说成唯一出路（五语言各一格）", () => {
+    const row = (I18N as Record<string, Record<string, string>>)["reg.backoff.app"];
+    expect(row, "reg.backoff.app 不在字典里了 —— 这一格会退化成空转").toBeDefined();
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      const text = row![lang] ?? "";
+      if (!text.includes(BACKOFF_APP_OWNERSHIP[lang])) {
+        bad.push(`${lang}: 没说清这是我们自己的判定（缺「${BACKOFF_APP_OWNERSHIP[lang]}」）`);
+      }
+      for (const w of BACKOFF_APP_ABSOLUTES[lang]) {
+        if (text.includes(w)) bad.push(`${lang}: 把归因说绝对了（「${w}」）`);
+      }
+    }
+    expect(bad, "面板不许把「我们自己按词表下的判定」说成「上游在限你」").toEqual([]);
+  });
+
+  /**
+   * ⚠️ **反向自检：上面那两张表不许空转。** 五种语言各要有自己的说法，
+   * 而且「绝对化」那一族在每种语言下至少有一条 —— 少一种语言，那种语言就是盲区。
+   * 同时用一条**塞了毒刺的副本**证明判据真的抓得住（`toEqual([])` 是空断言家族，
+   * 表被清空 / 判据写坏时它只会更绿）。
+   */
+  it("反向自检：归属句与绝对化词表五种语言都不空，且塞进毒刺时逐语言都被点名", () => {
+    for (const lang of LANGS) {
+      expect(BACKOFF_APP_OWNERSHIP[lang], `${lang} 没有归属句 —— 那种语言在这条上是瞎的`).toBeTruthy();
+      expect(BACKOFF_APP_ABSOLUTES[lang].length, `${lang} 一个绝对化说法都没登记`).toBeGreaterThan(0);
+    }
+    const row = (I18N as Record<string, Record<string, string>>)["reg.backoff.app"]!;
+    for (const lang of LANGS) {
+      // 毒刺一：把归属句抠掉。
+      const stripped = { ...row, [lang]: row[lang]!.split(BACKOFF_APP_OWNERSHIP[lang]).join("") };
+      expect(stripped[lang]!.includes(BACKOFF_APP_OWNERSHIP[lang]),
+        `${lang}: 抠掉归属句之后它居然还在`).toBe(false);
+      // 毒刺二：塞一句绝对化归因。
+      const poisoned = `${row[lang]!}${BACKOFF_APP_ABSOLUTES[lang][0]!}`;
+      expect(poisoned.includes(BACKOFF_APP_ABSOLUTES[lang][0]!),
+        `${lang}: 塞了绝对化说法却抓不住`).toBe(true);
+    }
+  });
+
+  /**
    * 设计文档 §7.3 / §9.1 第 6 条：`TendFailureReason` 的每个联合成员都要有
    * `reg.fail.<reason>` 键。当初特意把它收成联合类型正是为了消费时保有穷尽性，
    * 「这笔前期投资这次要用上」。

@@ -84,17 +84,26 @@ function makeDeps(p: {
   ledger?: DomainLedger;
   backoff?: BackoffState | null;
   rand?: () => number;
+  /**
+   * 这一轮的时钟。**省略 = 定在 `NOW`**（绝大多数格只跑一轮，时间不动更好读）。
+   *
+   * 给它的唯一理由是**跨轮**判据：退避窗口是拿 `until > now` 判的，把好几轮全钉在同一
+   * 时刻的话，第一轮记下的窗口会把后面每一轮都拦掉 —— 量到的就不是「补池会不会卡死」
+   * 而是「同一毫秒里连打六次会怎样」。
+   */
+  now?: () => number;
 }) {
   const provider = new FakeMailProvider({ domains: p.domains ?? ["a.test", "b.test"] });
   const { verification, agnes } = agnesStub(p.sendCode);
   const io = makeIo(p.ledger ?? emptyDomainLedger(), p.backoff ?? null);
   const logger = recordingLogger();
+  const now = p.now ?? (() => NOW);
   const deps: TendDeps = {
-    repo: new KeyPoolRepo(new MemoryStorage(), { now: () => NOW, logger }),
+    repo: new KeyPoolRepo(new MemoryStorage(), { now, logger }),
     config: { ...CFG, ...p.over },
     providers: { yyds: provider },
     agnes,
-    now: () => NOW,
+    now,
     sleep: async () => {},
     rand: p.rand ?? (() => 0.5),
     logger,
@@ -221,11 +230,19 @@ describe("撞上限流：整轮当场停手，并记一个跨轮退避", () => {
   });
 
   /**
-   * 判据④。上周还能过的域名今天回一个**不含限流词**的 400 —— 两边代价严重不对称，
-   * 所以按限流处理。变异：删掉 `mintOne` 里那句「已知 ok 就不判死」的保险
-   * ⇒ B 变成 `blocked(n=1)` ⇒ 红。
+   * 判据④。上周还能过的域名今天回一个**不含限流词**的 400。
+   *
+   * ⚠️⚠️ **这一格的期望翻过一次面，翻的理由写在这里。** 它从前钉的是那道「已知 ok 就
+   * 改判成限流、台账里它还是 ok」的保险 —— 而那正是把整轮停死、一条结论都不记的那条
+   * 路径（死锁全文见 `src/core/registrar/mint.ts` 的 `domain_blocked` 那一支，
+   * 复现探针是上面「连着 6 轮：坏域名被降下去……」那一格）。今天的行为是
+   * **照分类器的结论记一跳**，而**诊断留着** —— 这一格钉的就是「拆掉保险没顺手把
+   * 那条早期信号也一起拆掉」。
+   *
+   * 变异：删掉 `mintOne` 里那条 `registrar.known_good_domain_rejected` 日志
+   * ⇒ 最后一行红（而台账那两行照绿 —— 两件事分得开）。
    */
-  it("已知能用的域名回 400 时按限流处理，台账里它还是 ok", async () => {
+  it("已知能用的域名回 400：照记一跳，并单独留一条点名它的诊断事件", async () => {
     const { deps, io, logger } = makeDeps({
       domains: ["b.test"],
       ledger: { v: 1, updatedAt: NOW - 1, total: 1, entries: {
@@ -236,8 +253,9 @@ describe("撞上限流：整轮当场停手，并记一个跨轮退避", () => {
 
     const out = await tendOnce(deps);
 
-    expect(io.ledger.entries["b.test"]).toEqual({ s: "ok", at: NOW - 1, n: 4 });
-    expect(out.failures).toEqual([{ reason: "rate_limited", channel: "yyds" }]);
+    // 只降一跳：`ok(n=4)` ⇒ `blocked(n=1)`，方向一变 `n` 就归 1，判死还差一跳。
+    expect(io.ledger.entries["b.test"]).toEqual({ s: "blocked", at: NOW, n: 1 });
+    expect(out.failures).toEqual([{ reason: "domain_blocked_all", channel: "yyds" }]);
     expect(logger.has("registrar.known_good_domain_rejected")).toBe(true);
   });
 
@@ -322,6 +340,140 @@ describe("撞上限流：整轮当场停手，并记一个跨轮退避", () => {
     const { deps, io } = makeDeps({ sendCode: OK });
     await tendOnce(deps);
     expect(io.savedBackoff).toEqual([]);
+  });
+});
+
+/**
+ * 🔴 **一个已知能用的域名被上游真的拉黑之后，补池不许卡死。**
+ *
+ * 这一族钉的是从前那道「已知 ok 的域名回 400 就按限流处理」的保险留下的死锁：
+ * 它**一条域名结论都不记**（台账里那条 `ok` 的 `at` 永远不刷新）、**当场 return**
+ *（同一次尝试里后面的候选一个都不试），而 `./tender.ts` 据此中止整轮并记指数退避。
+ * `selectDomains` 的档内次序是 `at` 升序 ⇒ 那条 `at` 冻住的坏域名每一轮都排第一
+ * ⇒ 每轮都是「打它一次 → 判成限流 → 停整轮 → 退避翻倍」，一把 key 都出不来，
+ * 直到 `OK_TTL_MS`（7 天）把那条 `ok` 过期掉才自愈。
+ */
+describe("已知能用的域名被上游真的拉黑之后，补池不许卡死", () => {
+  const domainsOf = (addresses: readonly string[]): string[] =>
+    addresses.map((a) => a.slice(a.indexOf("@") + 1));
+
+  /** 两轮补池之间隔多久。取内置的 `TEND_INTERVAL_MS` 那一档（30 分钟）。 */
+  const ROUND_GAP_MS = 1_800_000;
+
+  /**
+   * 🔴 **承重格：连着 6 轮之后仍然铸得出 key。**
+   *
+   * 夹具就是实测复现出来的那个形态：台账里 `b.test` 是上周真用过的「已知能用」，
+   * 上游今天真的把它拉黑了（回一个**不含任何限流词**的 400），而另外三个域名
+   * 从没试过、且完全正常。
+   *
+   * 变异：把 `mintOne` 里那道保险改回「`isKnownGood` ⇒ 当场 return `rate_limited`
+   * 且不记任何域名结论」⇒ 六轮 `minted` 全是 0、退避键被写三次、`b.test` 在台账里
+   * 还是 `ok` 且 `at` 一次都没刷新 ⇒ 红。
+   */
+  it("连着 6 轮：坏域名被降下去，另外三个候选派得出去，key 照样铸得出来", async () => {
+    const domains = ["b.test", "c.test", "d.test", "e.test"];
+    const sendCode: SendCode = (email) => (email.endsWith("@b.test") ? DOMAIN_400 : OK());
+
+    let ledger: DomainLedger = { v: 1, updatedAt: NOW - 1, total: 4, entries: {
+      "b.test": { s: "ok", at: NOW - 1000, n: 3 },
+    } };
+    let backoff: BackoffState | null = null;
+    const mintedPerRound: number[] = [];
+    const backoffWrites: Array<BackoffState | null> = [];
+    const hit: string[] = [];
+
+    for (let r = 0; r < 6; r++) {
+      const at = NOW + r * ROUND_GAP_MS;
+      const round = makeDeps({ domains, ledger, backoff, sendCode, now: () => at });
+      const out = await tendOnce(round.deps);
+      mintedPerRound.push(out.minted);
+      backoffWrites.push(...round.io.savedBackoff);
+      hit.push(...domainsOf(round.verification));
+      ledger = round.io.ledger;
+      backoff = round.io.backoff;
+    }
+
+    // **手写字面量。** 第一轮把它那一个名额花在「发现 b.test 真的不行」上
+    //（`MAX_DOMAIN_ATTEMPTS` 的内置取值是 1，一次尝试只试一个候选），
+    // 从第二轮起每一轮都铸得出来。改动之前这里是 [0, 0, 0, 0, 0, 0]。
+    expect(mintedPerRound).toEqual([0, 1, 1, 1, 1, 1]);
+    // 全程一次限流都没撞到 ⇒ 一个退避窗口都不许记。
+    // 改动之前这里是三次 app 退避，窗口 30min → 60min → 120min 地翻倍。
+    expect(backoffWrites).toEqual([]);
+    // 坏域名被降到「待复查」那一档（`n = 1`，两跳规则还没判死它），`at` 刷新到第一轮。
+    expect(ledger.entries["b.test"]).toEqual({ s: "blocked", at: NOW, n: 1 });
+    // 前置条件：另外三个从没试过的域名真的被派出去了（否则上面那行 minted 是白给的）。
+    expect(hit.filter((d) => d !== "b.test").length).toBeGreaterThan(0);
+  });
+
+  /**
+   * 🔴 **承重格：防误判没被这次改动丢掉 —— 一次误判不许立刻把好域名判死。**
+   *
+   * 场景是那道保险当初唯一想防的风险：**上游改了限流文案**，于是一句真限流的回话
+   * 落进负向匹配、被判成「域名被屏蔽」。今天接住它的是**两跳规则**：
+   * 第一跳只把域名降到「待复查」（`n = 1`，仍然会被选中），一次 2xx 无条件覆盖回「可用」。
+   *
+   * 变异：把 `commitJournal` 里 `n` 的方向判定改成无脑 `prev.n + 1`
+   *（`ok(n=5)` ⇒ `blocked(n=6)`）⇒ 第一跳就 `n >= 2`、`registrar.domain_blocked` 当场发出
+   * ⇒ 红。
+   */
+  it("上游改了限流文案时，一次误判只把好域名降到「待复查」，一次成功就回到「可用」", async () => {
+    // 一句真限流的回话，但措辞是词表里一个都没有的那种 —— 分类器会把它读成「域名被屏蔽」。
+    const REWORDED = { status: 400, body: '{"code":400,"message":"Slow down, mate."}' };
+
+    const first = makeDeps({
+      domains: ["b.test"],
+      ledger: { v: 1, updatedAt: NOW - 1, total: 1, entries: {
+        "b.test": { s: "ok", at: NOW - 1000, n: 5 },
+      } },
+      sendCode: () => REWORDED,
+    });
+    await tendOnce(first.deps);
+
+    // 只降一跳：`n = 1` 落在「待复查」那一档，**不是**判死的 `n >= 2`。
+    expect(first.io.ledger.entries["b.test"]).toEqual({ s: "blocked", at: NOW, n: 1 });
+    expect(first.logger.has("registrar.domain_blocked")).toBe(false);
+
+    // 下一轮上游恢复正常：一次 2xx 无条件覆盖回「可用」，而且它照样被选中了
+    //（`selectDomains` 永不 filter）。
+    const second = makeDeps({
+      domains: ["b.test"],
+      ledger: first.io.ledger,
+      sendCode: OK,
+      now: () => NOW + ROUND_GAP_MS,
+    });
+    const out = await tendOnce(second.deps);
+    expect(out.minted).toBe(1);
+    expect(second.io.ledger.entries["b.test"]).toEqual({ s: "ok", at: NOW + ROUND_GAP_MS, n: 1 });
+  });
+
+  /**
+   * 🔴 **承重格：不许把「我们自己的判断」伪造成「上游在限你」。**
+   *
+   * 面板的 `reg.backoff.app` 那条横幅只由**退避键**驱动。从前这个场景里根本没有限流，
+   * 却照样记下一个 `kind: "app"` 的退避窗口 ⇒ 面板逐字告诉运维「这个出口地址的注册
+   * 额度可能已经到顶，多半只能等，或者换一个出口」，而换出口一点用都没有。
+   * 这一格钉的就是**那条假信号在源头上不再产生**；横幅的措辞另有一格，是
+   * `tests/unit/i18n-dict.test.ts`「退避横幅那条 app 文案先说清判据归属，再不许把换出口说成唯一出路（五语言各一格）」。
+   *
+   * 变异：把那道保险改回「`isKnownGood` ⇒ 当场 return `rate_limited` / `limitKind: "app"`」
+   * ⇒ 退避键被写上一条 app 窗口、归因变成 `rate_limited` ⇒ 红。
+   */
+  it("好域名被真的拉黑时不写任何退避键：归因是域名，不是「上游在限你」", async () => {
+    const { deps, io } = makeDeps({
+      domains: ["b.test"],
+      ledger: { v: 1, updatedAt: NOW - 1, total: 1, entries: {
+        "b.test": { s: "ok", at: NOW - 1000, n: 4 },
+      } },
+      sendCode: () => DOMAIN_400,
+    });
+
+    const out = await tendOnce(deps);
+
+    expect(io.savedBackoff).toEqual([]);
+    expect(io.backoff).toBeNull();
+    expect(out.failures).toEqual([{ reason: "domain_blocked_all", channel: "yyds" }]);
   });
 });
 

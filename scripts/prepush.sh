@@ -1967,8 +1967,38 @@ BANNER='[collection-guard] ✅'
 #   ⇒ Node：5052 + 21 = **5073**；文件数 163 + 1 = **164**。
 #   ⇒ workerd 两个数一格不动：新增的三份判据全在 `tests/unit/` 下，不进 workers 池；
 #     `tests/contract/` 一格都没加。
+#
+#   ── 这一轮（拆掉「已知能用的域名回 400 就改判成限流」那道保险）：**+5**，
+#      只有 node 侧的用例数动，文件数一格不动（没有新文件）。
+#   ⚠️ 逐格写清多的是哪几格，不写净值。两个计数都是**当场量出来的**：
+#      改动前先 `git stash`、逐份 `npx vitest run --config vitest.config.ts <单个文件>`
+#      读 `Tests N passed`，还原后再读一遍，两次相减。不是照总数差值倒推。
+#     · `tests/unit/registrar/domain-ledger-io.test.ts` 20 → **23**（**+3**，实测两次读数）：
+#       ① 连着 6 轮：坏域名被降下去、另外三个候选派得出去、key 照样铸得出来
+#          （这一格就是复现那条死锁的探针，改动前它真的红：六轮 minted 全 0）；
+#       ② 上游改了限流文案时一次误判只降到「待复查」、一次成功回到「可用」（两跳规则还在）；
+#       ③ 好域名被真的拉黑时一个退避键都不写（面板那条 app 横幅在源头上不再产生）。
+#       另有一格**原地翻面、计数不动**：「已知能用的域名回 400」从钉「按限流处理、台账里
+#       还是 ok」改成钉「照记一跳 + 那条点名它的诊断事件还在」。
+#     · `tests/unit/i18n-dict.test.ts` 43 → **45**（**+2**，实测两次读数）：
+#       退避横幅那条 app 文案的措辞纪律（五语言各查「有没有说清判据归属」与
+#       「有没有把换出口说成唯一出路」两条，+1）、它自己的反向自检（表不许空转、
+#       塞进毒刺时逐语言都要被点名，+1）。
+#     · `tests/unit/registrar/mint.test.ts` **33 → 33**（原地翻面，计数不动）：
+#       「已知能用的域名回 400」那一格从钉「当场 return rate_limited、一条观测都不记」
+#       改成钉「结论照记、下一个候选照试、诊断日志还在」。
+#     · `tests/unit/registrar/domain-ledger.test.ts` **40 → 40**：只改了一个 describe 的名字
+#       （`isKnownGood` 今天服务的是那条诊断，不再是任何判定）。
+#     · 五语言 REGISTRAR.md、CHANGELOG、`admin-ui/js/i18n-dict.js` 与两个 core 文件的注释
+#       **一格判据都没新增**（既有的 docs-parity / docs-typography / check-i18n / check-refs
+#       直接覆盖）。
+#   变异实测（逐格真跑，记的是**实际**红了哪几格，跑完都还原并确认 `git status` 干净）：
+#     见本次报告的变异一节。
+#   ⇒ Node：5073 + 5 = **5078**；文件数 **164 不动**。
+#   ⇒ workerd 两个数一格不动（实测仍是 43 / 793）：新增的五格全在 `tests/unit/` 下，
+#     不进 workers 池；`tests/contract/` 一格都没加。
 EXPECT_NODE_FILES=164
-EXPECT_NODE_TESTS=5073
+EXPECT_NODE_TESTS=5078
 EXPECT_WORKERS_FILES=43
 EXPECT_WORKERS_TESTS=793
 

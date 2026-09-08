@@ -50,9 +50,16 @@ export interface MintDeps {
    * `tendOnce` 的收尾做（一轮最多 1 次 put）。
    */
   journal: DomainJournal;
-  /** 当前台账。**只读**，本函数拿它做「已知 ok 的域名回 400」那道保险。 */
+  /**
+   * 当前台账。**只读**，而且**只用来打一条诊断日志**：一个已知 ok 的域名这次被拒了，
+   * 值得在事件里点名（它是「上游改了限流文案」最早的信号）。
+   *
+   * ⚠️ **它不再参与任何判定。** 从前这里写着「拿它做『已知 ok 的域名回 400 就不判死』
+   * 那道保险」，而那道保险会在好域名**真被拉黑**时把整轮停掉且不记结论 —— 死锁的全文
+   * 记在下面 `domain_blocked` 那一支里。
+   */
   ledger: DomainLedger;
-  /** 这一轮开始的时刻。判 `ok` 结论过没过期要它。 */
+  /** 这一轮开始的时刻。判 `ok` 结论过没过期要它（只影响上面那条诊断日志发不发）。 */
   now: number;
   /** 换域名之间的随机间隔下界 / 上界。**与两次铸 key 之间复用同一对旋钮，不新增第三个。** */
   mintDelayMinMs: number;
@@ -77,8 +84,10 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
 
   // ⚠️⚠️ **`400` 有两种含义**（域名被屏蔽 / 出口被限流），由
   // `./domain-ledger.ts` 的 `classifySendCode` 分辨，**而那是启发式的负向匹配**
-  //（「正文不像限流就算屏蔽」）——上游改一次文案它就会漏。这句话不是修辞，
-  // 它决定了下面「已知 ok 的域名回 400 就不判死」那道保险为什么必须在。
+  //（「正文不像限流就算屏蔽」）——上游改一次文案它就会漏。
+  // **接住这条漏的是 `commitJournal` 的两跳规则 + 一轮最多学 1 条的钳位**，
+  // 不是本函数里的任何东西：这里从前那道「已知 ok 就改判限流」的保险已经拆掉，
+  // 它自己制造的死锁写在下面 `domain_blocked` 那一支里。
   //
   // 其他非 2xx（例如上游整体宕机返回 500）混进来的话，轮完所有域名后如果一律
   // 归因于 domain_blocked_all，会让调用方把"上游故障"误判成"换个域名就好"，
@@ -141,21 +150,41 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
       }
 
       if (verdict === "domain_blocked") {
-        // 🔴 **第二道保险：上周还能过的域名今天回 400，更可能是撞了出口限流。**
-        // 两边的代价严重不对称——误判成限流只是这一轮少铸几把（下一轮就回来），
-        // 误判成域名屏蔽会把一个真好用的域名从候选前排踢下去。
+        const message = upstreamMessage(r.body, mailbox.address);
+        // 🔴🔴 **这里曾经有第二道保险：已知 ok 的域名回 400 就当成出口限流、当场
+        // return、一条域名结论都不记。它被拆掉了，理由是实测出来的一条死锁**——
+        // 那道保险在**已知好域名真的被上游拉黑**时（这是它无法与「误判」分辨的另一半）：
+        // ① 一条结论都不记 ⇒ 台账里那条 `ok` 的 `at` 永远不刷新；
+        // ② 当场 return ⇒ 同一次尝试里后面的候选一个都不试；
+        // ③ `./tender.ts` 据此中止整轮并记指数退避。
+        // 而 `./domain-ledger.ts` 的 `selectDomains` 档内按 `at` 升序 ⇒ 那个 `at` 冻住的
+        // 坏域名**每一轮都排第一** ⇒ 每轮「打它一次 → 判成限流 → 停整轮 → 退避翻倍」，
+        // 一把 key 都出不来，直到 `OK_TTL_MS`（7 天）把那条 `ok` 过期掉才自愈。
+        // 实测探针：连着 6 轮 minted 全 0，而台账里另外三个好域名一次都没被派出去。
+        //
+        // 🔴 **拆掉它没有丢掉「防误判」**：那道保险想防的是「上游改了限流文案 ⇒ 真限流
+        // 被判成域名屏蔽」，而 `commitJournal` 的**两跳规则**本来就在防同一件事
+        //（一次误判只把域名降到「待复查」，仍会被选中；一次 2xx 无条件覆盖回 `ok`），
+        // 外加一轮最多学 1 条的钳位、以及排序永不 filter。保险与两跳规则**重复**，
+        // 却额外制造了上面那把死锁。
+        //
+        // ⚠️ **代价如实登记**：一个好域名挨一次误判会从候选第一档掉到「待复查」那一档
+        //（排在「没试过」的后面），要等下一次 2xx 才回来。这比 7 天零产出便宜得多，
+        // 但它不是零成本。
         if (isKnownGood(deps.ledger, domain, deps.now)) {
+          // **诊断保留，处置不变。** 一个我们有正面证据的域名被拒了，是「上游改文案」
+          // 与「上游改黑名单」两种情况唯一的早期信号，值一条 warn；但它**不再改变
+          // 控制流** —— 结论照记、下一个候选照试。
           deps.logger.log({
             level: "warn", event: "registrar.known_good_domain_rejected",
-            msg: "一个已知能用的域名这次被拒了，按出口限流处理而不是把它判成被屏蔽"
-              + "（两边代价不对称：判错限流只慢一轮，判错域名会把好域名踢下去）",
-            fields: { domain, message: upstreamMessage(r.body, mailbox.address) },
+            msg: "一个已知能用的域名这次被上游拒了，按分类器的结论照常记一跳（两跳才判死），"
+              + "并接着试下一个候选；上游那句话附在下面，用来看它是不是改了限流文案",
+            fields: { domain, message },
           });
-          return { ok: false, reason: "rate_limited", limitKind: "app", marker: null };
         }
         // 上游那句话跟着这条判定进本子：**只有第二跳判死那条事件会把它说出来**，
         // 而它是「上游改了限流文案」这个核心风险唯一的现场证据。
-        recordVerdict(deps.journal, domain, "blocked", upstreamMessage(r.body, mailbox.address));
+        recordVerdict(deps.journal, domain, "blocked", message);
         continue;
       }
 

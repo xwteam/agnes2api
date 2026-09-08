@@ -291,7 +291,7 @@ describe("selectDomains：好域名不可能被永久排除", () => {
   });
 });
 
-describe("isKnownGood：mintOne 那道「已知 ok 的域名回 400 不判死」的保险取的就是它", () => {
+describe("isKnownGood：mintOne 那条「点名一个已知能用的域名被拒了」的诊断取的就是它", () => {
   it("ok 且没过期 ⇒ 真；过期 / blocked / 不在表里 ⇒ 假", () => {
     const l = ledgerOf({
       fresh: { s: "ok", at: NOW, n: 1 },

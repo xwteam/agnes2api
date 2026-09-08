@@ -509,7 +509,13 @@ reused**:
 > only clue that separates them is the response body — which we match against a **word list**.
 > One wording change upstream and we get it wrong. Three layers hold that down: a verdict takes
 > two hits, at most one domain is ruled out per round, and **the ordering never excludes any
-> domain outright**. At worst refills get slower; they do **not** drop to zero.
+> domain outright**. But all three guard one direction only: a good domain being ruled out.
+> The opposite direction — the ledger still says "usable" while the upstream has blacklisted the
+> domain — rests on another rule: **whatever the classifier decides gets recorded; no verdict may
+> be swallowed**. That rule was once broken by a safety net ("a known-good domain that gets
+> rejected is re-read as a rate limit"), and the cost was not slowness but refills **dropping to
+> zero** for up to seven days; that safety net has been removed.
+> At worst refills get slower; they do **not** drop to zero.
 
 #### If you believe the domain ledger got something wrong
 
@@ -545,7 +551,7 @@ The registrar section shows a backoff banner:
 | Which layer | What the panel says | What you can do |
 |-----------|-------------------|---------------|
 | Edge rate limit | "refills are spaced too tightly" | Raise `MINT_DELAY_MIN_MS`, or lower `MINT_BATCH` |
-| The upstream's own registration limit | "this egress address may have exhausted its allowance" | Usually only waiting, or changing egress |
+| The upstream's own registration limit | "matched by our word list, not stated by the upstream" | Raise `MINT_DELAY_MIN_MS`, lower `MINT_BATCH`; change egress only once confirmed |
 
 > [!IMPORTANT]
 > **Switching mailbox channel does not get you out of this.** The limit lives on the edge between
