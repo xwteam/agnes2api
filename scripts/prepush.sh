@@ -2020,8 +2020,43 @@ BANNER='[collection-guard] ✅'
 #       以及它的反向控制（全表都被拒过时次序与不传它逐字相同，不制造第二套排序，+1）。
 #   ⇒ Node：5078 + 4 = **5082**；文件数 **164 不动**。
 #   ⇒ workerd 两个数仍然一格不动（实测 43 / 793）。
+#
+#   ── 评审回填（反方向那一档：上游改了限流文案时的请求量与退避）：**+2**，
+#      只有 node 侧的用例数动，文件数一格不动（没有新文件）。
+#   ⚠️ 起因是评审拿反方向探针实测出来的一维代价，不是推断：拆掉那道保险之后，
+#      「上游改了限流文案 ⇒ 真限流被逐条读成域名屏蔽」那一档从「1 次请求 + 记退避」
+#      变成「每轮打满 mintBatch 次 + 一个退避键都不写」，而钳位又让台账一个字不变
+#      ⇒ 下一轮逐字节重演。自己复跑的两个数（同一份探针、内置值、稳态台账、5 轮）：
+#      改动前 324f40e 逐轮请求 [1,1,0,1,0]、退避 hits 1→2→3；HEAD 逐轮 [5,5,5,5,5]、
+#      退避恒 null；冷启动对照组两边逐行相同（都是 [5,5,5,5,5] + null）。
+#      处置接在 `finishRound`：钳位生效**且这一轮零产出**时按新的 `cluster` 档记跨轮退避。
+#   ⚠️ 两个计数都是**当场量出来的**（改动前后各 `npx vitest run` 单文件读一次）。
+#     · `tests/unit/registrar/domain-ledger-io.test.ts` 25 → **26**（**+1**）：
+#       「上游改了限流文案时：一轮打满 mintBatch 次，但记下 cluster 退避把后面几轮按住」
+#       —— 十轮逐轮请求数是手写字面量 [5,5,0,5,0,0,0,5,0,0]（接上处置之前是 5×10）。
+#     · `tests/unit/i18n-dict.test.ts` 45 → **46**（**+1**）：
+#       cluster 那条新退避文案的措辞纪律（它的归属句是「上游一句限流的话都没说」，
+#       不许照抄 app 那条「按词表认出来的」）。
+#     · `tests/unit/registrar/backoff.test.ts` **13 → 13**（原地翻面，计数不动）：
+#       narrowBackoff 那格从只试 app 改成三档 kind 逐档试；nextBackoff 第一次撞那格
+#       补上 cluster 的基数。
+#     · `tests/ui/registrar.test.ts` **51 → 51**（原地翻面，计数不动）：
+#       两档映射改成三档、字典存在性那一格多查一条 key。
+#     · `tests/unit/i18n-dict.test.ts` 的另两格是**改写不是新增**（评审发现：反向自检
+#       那两条毒刺断言原来是 String 方法的同义反复）：判定收成一个纯函数，正向格与
+#       反向自检共用它。实测两份读数：把 `bad.push` 删掉，改动前那一版全绿（45/45），
+#       改动后反向自检当场红。
+#     · 五语言 REGISTRAR.md、CHANGELOG、`admin-ui/` 两个文件与三个 core 文件的注释
+#       **一格判据都没新增**（既有的 docs-parity / docs-typography / check-i18n / check-refs
+#       直接覆盖；五份 REGISTRAR.md 各多一个 `####`，docs-parity 与 docs-typography
+#       两份的格数都没动，实测仍是 657 / 94）。
+#   变异实测（逐格真跑，记的是**实际**红了哪几格，跑完都还原并确认 `git status` 干净）：
+#     见本次报告的变异一节。
+#   ⇒ Node：5082 + 2 = **5084**；文件数 **164 不动**。
+#   ⇒ workerd 两个数仍然一格不动（实测 43 / 793）：新增的两格全在 `tests/unit/` 下，
+#     不进 workers 池；`tests/contract/` 一格都没加。
 EXPECT_NODE_FILES=164
-EXPECT_NODE_TESTS=5082
+EXPECT_NODE_TESTS=5084
 EXPECT_WORKERS_FILES=43
 EXPECT_WORKERS_TESTS=793
 

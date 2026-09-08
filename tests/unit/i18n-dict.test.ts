@@ -820,17 +820,17 @@ describe("i18n 字典", () => {
   });
 
   /**
-   * 🔴🔴 **退避横幅那条 app 文案：先说清「这是谁下的结论」，再不许把换出口说成唯一出路。**
+   * 🔴🔴 **退避横幅的措辞纪律：先说清「这是谁下的结论」，再不许把换出口说成唯一出路。**
    *
-   * 它治的是一次实测出来的说假话：那条文案从前逐字写着「这个出口地址的注册额度可能已经
-   * 到顶，多半只能等，或者换一个出口」，而当时最容易触发这条横幅的路径里**根本没有限流**
-   *（`mintOne` 有一道保险，把「已知能用的域名回 400」改判成 `limitKind: "app"`；那道保险
-   * 已经拆掉，理由写在 `src/core/registrar/mint.ts` 的 `domain_blocked` 那一支）。
-   * ⇒ 面板把**我们自己按一张词表做的判定**说成了「上游在限你」，而运维照着它换出口，
-   * 换多少个都没用。
+   * 它治的是一次实测出来的说假话：`reg.backoff.app` 从前逐字写着「这个出口地址的注册
+   * 额度可能已经到顶，多半只能等，或者换一个出口」，而当时最容易触发这条横幅的路径里
+   * **根本没有限流**（`mintOne` 有一道保险，把「已知能用的域名回 400」改判成
+   * `limitKind: "app"`；那道保险已经拆掉，理由写在 `src/core/registrar/mint.ts` 的
+   * `domain_blocked` 那一支）。⇒ 面板把**我们自己下的判定**说成了「上游在限你」，
+   * 而运维照着它换出口，换多少个都没用。
    *
    * ── 判据是两条，方向相反，缺一条都不够 ──────────────────────────────────────
-   * ① **必须有归属**：文案里得出现「这是我们按词表认出来的、不是上游给的结论」那句话。
+   * ① **必须有归属**：文案里得出现「这是我们自己下的、不是上游给的结论」那句话。
    *    只做 ② 的话，把旧文案改写成另一句同样绝对的话就能蒙混过去。
    * ② **不许有绝对化的归因**：「只能等 / 唯一出路」那一族。只做 ① 的话，把归属句
    *    加在旧文案前面、后半截照旧绝对，也能蒙混过去。
@@ -844,18 +844,45 @@ describe("i18n 字典", () => {
    * 只写简中等于在另外四种语言上完全没有检查（本仓为「简体『保证』漏掉繁体『保證』」
    * 栽过一次）。下面那条反向自检钉着「五种语言一个都不许缺」。
    *
-   * 变异：把 `reg.backoff.app` 整条改回旧文案 ⇒ 五种语言的 ① 全部缺席、
-   * zh-CN/zh-TW/en/ja/ko 的 ② 各命中一条 ⇒ 红。
+   * ⚠️⚠️ **判定收成了下面这个纯函数，正向格与反向自检共用它 —— 这是评审回填的一条**：
+   * 反向自检从前把毒刺喂给 `String.prototype.includes` 自己
+   *（`split(x).join("")` 之后断言 `includes(x)` 为假、拼上 `x` 之后断言为真），
+   * 那两条断言只在验证 String 的语义，**一次都没碰到正向格的判定逻辑** ——
+   * 把正向格的 `if` 条件写反、或者把 `bad.push` 删掉，它照样全绿，
+   * 而它的用例名逐字宣称「塞进毒刺时逐语言都被点名」。现在两格喂的是同一个函数。
    */
-  const BACKOFF_APP_OWNERSHIP: Record<(typeof LANGS)[number], string> = {
-    "zh-CN": "不是上游给的结论",
-    "zh-TW": "不是上游給的結論",
-    en: "not a verdict the upstream handed us",
-    ja: "上流が下した結論ではありません",
-    ko: "업스트림이 내려준 결론이 아닙니다",
-  };
-  /** 绝对化归因：「除了等 / 换出口没别的办法」那一族在五种语言里的说法。 */
-  const BACKOFF_APP_ABSOLUTES: Record<(typeof LANGS)[number], readonly string[]> = {
+  interface BackoffCopySpec {
+    /** 这条 key 的「归属句」在五种语言里的说法。缺一种，那种语言在这条上就是瞎的。 */
+    ownership: Record<(typeof LANGS)[number], string>;
+    /** 绝对化归因：「除了等 / 换出口没别的办法」那一族在五种语言里的说法。 */
+    absolutes: Record<(typeof LANGS)[number], readonly string[]>;
+  }
+
+  /**
+   * 一行文案（`{lang: text}`）按一份 spec 查出来的**问题清单**，空数组 = 干净。
+   *
+   * ⚠️ **返回被点名的那几条、而不是一个布尔**：反向自检要断言的是「哪种语言因为什么
+   * 被点名」，布尔化之后「五种语言里只有简中被抓住」与「五种语言全被抓住」不可分辨。
+   */
+  function backoffCopyProblems(
+    row: Record<string, string> | undefined, spec: BackoffCopySpec,
+  ): string[] {
+    if (row === undefined) return ["整行不在字典里"];
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      const text = row[lang] ?? "";
+      if (!text.includes(spec.ownership[lang])) {
+        bad.push(`${lang}: 没说清这是我们自己的判定（缺「${spec.ownership[lang]}」）`);
+      }
+      for (const w of spec.absolutes[lang]) {
+        if (text.includes(w)) bad.push(`${lang}: 把归因说绝对了（「${w}」）`);
+      }
+    }
+    return bad;
+  }
+
+  /** 绝对化归因那一族的五语言说法。**三条退避文案共用同一张表**（说绝对了就是说绝对了）。 */
+  const BACKOFF_ABSOLUTES: Record<(typeof LANGS)[number], readonly string[]> = {
     "zh-CN": ["只能等", "唯一的办法"],
     "zh-TW": ["只能等", "唯一的辦法"],
     en: ["the only way out", "nothing you can do"],
@@ -863,44 +890,97 @@ describe("i18n 字典", () => {
     ko: ["수밖에", "방법이 없습니다"],
   };
 
+  /** `reg.backoff.app`：归属句说的是「按一张词表认出来的」。 */
+  const APP_SPEC: BackoffCopySpec = {
+    ownership: {
+      "zh-CN": "不是上游给的结论",
+      "zh-TW": "不是上游給的結論",
+      en: "not a verdict the upstream handed us",
+      ja: "上流が下した結論ではありません",
+      ko: "업스트림이 내려준 결론이 아닙니다",
+    },
+    absolutes: BACKOFF_ABSOLUTES,
+  };
+
+  /**
+   * `reg.backoff.cluster`：**证据类型与 app 那条不同，归属句也必须不同**。
+   * 这一档触发时上游一个限流字眼都没说（说了就落进 edge / app 了），
+   * 判据是「同一轮里 ≥2 个域名被判屏蔽 + 这一轮零产出」这个形状
+   *（`src/core/registrar/tender.ts` 的 `finishRound`）。
+   * ⇒ 照抄 app 那句「按词表认出来的」就又是一次说假话，所以这里查的是
+   *「上游一句限流的话都没说」那一句。
+   */
+  const CLUSTER_SPEC: BackoffCopySpec = {
+    ownership: {
+      "zh-CN": "上游一句限流的话都没说",
+      "zh-TW": "上游一句限流的話都沒說",
+      en: "The upstream said nothing about rate limiting",
+      ja: "上流はレート制限について一言も述べていません",
+      ko: "업스트림은 속도 제한에 대해 한마디도 하지 않았습니다",
+    },
+    absolutes: BACKOFF_ABSOLUTES,
+  };
+
+  const dictRow = (k: string): Record<string, string> | undefined =>
+    (I18N as Record<string, Record<string, string>>)[k];
+
   it("退避横幅那条 app 文案先说清判据归属，再不许把换出口说成唯一出路（五语言各一格）", () => {
-    const row = (I18N as Record<string, Record<string, string>>)["reg.backoff.app"];
-    expect(row, "reg.backoff.app 不在字典里了 —— 这一格会退化成空转").toBeDefined();
-    const bad: string[] = [];
-    for (const lang of LANGS) {
-      const text = row![lang] ?? "";
-      if (!text.includes(BACKOFF_APP_OWNERSHIP[lang])) {
-        bad.push(`${lang}: 没说清这是我们自己的判定（缺「${BACKOFF_APP_OWNERSHIP[lang]}」）`);
-      }
-      for (const w of BACKOFF_APP_ABSOLUTES[lang]) {
-        if (text.includes(w)) bad.push(`${lang}: 把归因说绝对了（「${w}」）`);
-      }
-    }
-    expect(bad, "面板不许把「我们自己按词表下的判定」说成「上游在限你」").toEqual([]);
+    expect(
+      backoffCopyProblems(dictRow("reg.backoff.app"), APP_SPEC),
+      "面板不许把「我们自己按词表下的判定」说成「上游在限你」",
+    ).toEqual([]);
   });
 
   /**
-   * ⚠️ **反向自检：上面那两张表不许空转。** 五种语言各要有自己的说法，
-   * 而且「绝对化」那一族在每种语言下至少有一条 —— 少一种语言，那种语言就是盲区。
-   * 同时用一条**塞了毒刺的副本**证明判据真的抓得住（`toEqual([])` 是空断言家族，
-   * 表被清空 / 判据写坏时它只会更绿）。
+   * 🔴 **cluster 那一档（评审回填新增的第三档退避）同样不许说假话，而且不许照抄 app。**
+   * 它是「上游改了限流文案 ⇒ 真限流被逐条读成域名屏蔽」那一档唯一会亮起来的横幅，
+   * 而那一档里上游**什么都没说** —— 面板要是照 app 那条讲「上游回话里带着『请求过于
+   * 频繁』」，就是把一句上游从没说过的话安到它头上。
+   *
+   * 变异：把 `reg.backoff.cluster` 的五种语言整条换成 `reg.backoff.app` 的原文
+   * ⇒ 五种语言的归属句全部缺席 ⇒ 红。
    */
-  it("反向自检：归属句与绝对化词表五种语言都不空，且塞进毒刺时逐语言都被点名", () => {
-    for (const lang of LANGS) {
-      expect(BACKOFF_APP_OWNERSHIP[lang], `${lang} 没有归属句 —— 那种语言在这条上是瞎的`).toBeTruthy();
-      expect(BACKOFF_APP_ABSOLUTES[lang].length, `${lang} 一个绝对化说法都没登记`).toBeGreaterThan(0);
+  it("cluster 那条退避文案先说清上游什么都没说，再不许把换出口说成唯一出路（五语言各一格）", () => {
+    expect(
+      backoffCopyProblems(dictRow("reg.backoff.cluster"), CLUSTER_SPEC),
+      "上游一个限流字眼都没说的那一档，面板不许说成「上游在限你」",
+    ).toEqual([]);
+  });
+
+  /**
+   * ⚠️ **反向自检：上面那两张表不许空转，而且判定函数真的抓得住毒刺。**
+   *
+   * 🔴 **毒刺喂给的是 `backoffCopyProblems` 本身，不是 `String.prototype`**（评审回填）：
+   * 上一版把归属句 `split().join("")` 掉之后断言 `includes` 为假、把绝对化说法拼到
+   * 尾巴上之后断言 `includes` 为真 —— 两条都是 String 语义的同义反复，正向格的判定
+   * 逻辑被写反时它一格都不会红。现在两格共用同一个函数：**判定写坏 ⇒ 这一格当场红。**
+   *
+   * 逐条钉的是「被点名的是哪种语言、因为什么」，不是「问题清单非空」：
+   * 只断言非空的话，「五种语言里只有简中被抓住」也能蒙混过去。
+   */
+  it("反向自检：归属句与绝对化词表五种语言都不空，且毒刺喂给判定函数时逐语言都被点名", () => {
+    for (const spec of [APP_SPEC, CLUSTER_SPEC]) {
+      for (const lang of LANGS) {
+        expect(spec.ownership[lang], `${lang} 没有归属句 —— 那种语言在这条上是瞎的`).toBeTruthy();
+        expect(spec.absolutes[lang].length, `${lang} 一个绝对化说法都没登记`).toBeGreaterThan(0);
+      }
     }
-    const row = (I18N as Record<string, Record<string, string>>)["reg.backoff.app"]!;
-    for (const lang of LANGS) {
-      // 毒刺一：把归属句抠掉。
-      const stripped = { ...row, [lang]: row[lang]!.split(BACKOFF_APP_OWNERSHIP[lang]).join("") };
-      expect(stripped[lang]!.includes(BACKOFF_APP_OWNERSHIP[lang]),
-        `${lang}: 抠掉归属句之后它居然还在`).toBe(false);
-      // 毒刺二：塞一句绝对化归因。
-      const poisoned = `${row[lang]!}${BACKOFF_APP_ABSOLUTES[lang][0]!}`;
-      expect(poisoned.includes(BACKOFF_APP_ABSOLUTES[lang][0]!),
-        `${lang}: 塞了绝对化说法却抓不住`).toBe(true);
+    for (const [key, spec] of [["reg.backoff.app", APP_SPEC], ["reg.backoff.cluster", CLUSTER_SPEC]] as const) {
+      const row = dictRow(key)!;
+      for (const lang of LANGS) {
+        // 毒刺一：把这一种语言的归属句抠掉 ⇒ 判定函数必须**只**点名这一种语言。
+        const stripped = { ...row, [lang]: row[lang]!.split(spec.ownership[lang]).join("") };
+        expect(backoffCopyProblems(stripped, spec), `${key} / ${lang}: 抠掉归属句却没被点名`)
+          .toEqual([`${lang}: 没说清这是我们自己的判定（缺「${spec.ownership[lang]}」）`]);
+        // 毒刺二：给这一种语言拼一句绝对化归因 ⇒ 同样必须**只**点名这一种语言。
+        const w = spec.absolutes[lang][0]!;
+        const poisoned = { ...row, [lang]: `${row[lang]!}${w}` };
+        expect(backoffCopyProblems(poisoned, spec), `${key} / ${lang}: 塞了绝对化说法却没被点名`)
+          .toEqual([`${lang}: 把归因说绝对了（「${w}」）`]);
+      }
     }
+    // 整行不在字典里时也要说话 —— 否则改了 key 名之后上面两格会退化成空转。
+    expect(backoffCopyProblems(undefined, APP_SPEC)).toEqual(["整行不在字典里"]);
   });
 
   /**

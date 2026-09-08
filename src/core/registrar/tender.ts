@@ -615,6 +615,10 @@ function rejectedThisRound(journal: ReturnType<typeof newJournal>): ReadonlySet<
  * ⚠️ **「结论没变就一次 put 都不发」是写配额账的一根轴**，不是省事：Cron 每 30 分钟
  * 一轮，稳态下台账的结论不再变动 ⇒ 这把键的写次数是 0 而不是 48 次/天。
  * `tests/unit/registrar/domain-ledger-io.test.ts`「一轮铸 5 把，registrar:domains 只被 put 一次；退避键一次都不写」按键数着 put 计数钉这条。
+ *
+ * ⚠️ **退避键在这里有两个来源，`p.backoffToSave` 只是其中一个**：限流那一支（`tendOnce`
+ * 的 switch）与下面那一档（钳位生效 + 这一轮零产出）。两者**不叠加**——前者已经定好时
+ * 后者一个字都不改，理由写在那一段里。
  */
 async function finishRound(p: {
   deps: TendDeps;
@@ -627,6 +631,8 @@ async function finishRound(p: {
   backoffToSave: BackoffState | null | undefined;
 }): Promise<void> {
   const { deps } = p;
+  // 限流那一支已经定好的退避（`undefined` = 那一支没走到）。下面那一档可能往里填。
+  let toSave = p.backoffToSave;
 
   if (p.provider !== undefined) {
     const committed = commitJournal(
@@ -635,12 +641,45 @@ async function finishRound(p: {
       p.allDomains.length > 0 ? p.allDomains.length : null,
     );
     if (committed.discarded > 0) {
-      // 🔴 钳位生效了。这是「上游可能改了限流文案」最直接的信号。
+      /**
+       * 🔴 钳位生效了 = **同一轮里 ≥2 个域名被判成「域名被屏蔽」**。
+       * 这是本设计里**唯一与上游文案无关**的「疑似限流」证据，而分类器读错文案的那一档
+       *（真限流被逐条读成域名屏蔽）能产生的信号**只有这一个** —— `mintOne` 那两条
+       * 限流支一次都进不去，`edge` / `app` 两档退避一个都不会写。
+       *
+       * 🔴🔴 **所以它必须接上处置，不能只记一条事件。** 只记事件的代价是实测出来的，
+       * 不是推断：稳态台账 + 内置值下让上游对每个域名都回一句词表外的限流话，
+       * 五轮里每一轮都打满 `mintBatch` 次注定失败的发码请求、**一个退避键都不写**、
+       * 台账因为钳位一个字不变 ⇒ 下一轮逐字节重演。而本仓自己在
+       * `./backoff.ts` 与 `./tender.ts:510` 逐字登记着上游的行为是「窗口里每打一次就把
+       * 窗口续一次」—— 那就是把惩罚窗口一直续下去。
+       *
+       * ⚠️ **`p.minted === 0` 这个前提是承重的，不是保险起见**：钳位在
+       *「上游真的成批拉黑了好几个域名」时同样会触发，而那一档**这一轮照样铸得出 key**
+       *（`rejectedThisRound` 把被拒过的跨档排到最后）。那时上游明明还在给我们发号，
+       * 记退避等于自己把补池按停 —— 与限流那一支「铸出过 key 就重新起一串」同一条纪律。
+       * 反向控制在 `tests/unit/registrar/domain-ledger-io.test.ts` 的
+       * 「同一轮里两个已知能用的域名同时被拉黑：结论照旧被钳位作废，但这一轮仍然铸得出 key」
+       *（那一格逐字断言一个退避键都不写）。
+       *
+       * ⚠️ **它按的是「一轮里好几个域名全挂 + 零产出」这个形状，不是「这一个域名以前是 ok」**
+       * —— 后者正是被拆掉的那道保险的判据，也是那把 `at` 冻住的死锁的来源
+       *（全文见 `./mint.ts` 的 `domain_blocked` 那一支）。两者不是同一件事：
+       * 这里**不中止本轮**（`mintBatch` 个名额照常轮着试不同域名，本轮该出的 key 照出）、
+       * **不吞任何域名结论**，且一轮真铸出 key 就把整把键清掉。
+       */
+      if (toSave === undefined && p.minted === 0) toSave = nextBackoff(p.backoff, "cluster", deps.now());
       deps.logger.log({
         level: "warn", event: "registrar.domain_verdicts_discarded",
         msg: "同一轮里冒出好几个疑似「域名被屏蔽」，这更像是出口被限流而不是域名真的成批失效，"
-          + "本轮的域名判定整体作废（好域名不会因为一次限流被判死）",
-        fields: { count: committed.discarded },
+          + "本轮的域名判定整体作废（好域名不会因为一次限流被判死）；"
+          + "这一轮如果一把 key 都没铸出来，还会按这个形状记一个退避窗口",
+        fields: {
+          count: committed.discarded, minted: p.minted,
+          // 这一轮到底记没记退避窗口。**记的是结果不是意图**：限流那一支已经写过时
+          // 这里不覆盖，字段里出现的就是那一支的截止时刻。
+          backoffUntil: toSave?.until ?? null,
+        },
       });
     }
     for (const b of committed.newlyBlocked) {
@@ -655,8 +694,8 @@ async function finishRound(p: {
     if (committed.dirty) await deps.saveDomainLedger(committed.next);
   }
 
-  if (p.backoffToSave !== undefined) {
-    await deps.saveBackoff(p.backoffToSave);
+  if (toSave !== undefined) {
+    await deps.saveBackoff(toSave);
   } else if (p.minted > 0 && p.backoff !== null) {
     // 铸出来了 ⇒ 上游现在认我们 ⇒ 把那把陈旧的退避键清掉，指数从头数。
     // **只有键真的存在时才写**：否则每一轮成功补池都要白付一次 put。

@@ -515,7 +515,8 @@ reused**:
 > be swallowed**. That rule was once broken by a safety net ("a known-good domain that gets
 > rejected is re-read as a rate limit"), and the cost was not slowness but refills **dropping to
 > zero** for up to seven days; that safety net has been removed.
-> At worst refills get slower; they do **not** drop to zero.
+> At worst refills get slower; they do **not** drop to zero — **in that direction**.
+> A real rate limit read as "domain blocked" costs something else: see "The third tier" below.
 
 #### If you believe the domain ledger got something wrong
 
@@ -544,14 +545,27 @@ So after hitting either layer:
 - More than 4 hours after a window ended with no new hit, the exponent starts over too (the pool
   stayed full and the registrar never really ran for several rounds, say).
 
-#### The backoff banner: the two layers call for different actions
+#### The third tier: the upstream said nothing, but several domains failed together in one round
+
+One rewording upstream and
+a real rate limit gets read as "domain blocked" one reply at a time — neither tier above ever
+fires, the round no longer stops early, and up to `MINT_BATCH` doomed verification requests go
+out per round. The only evidence still standing is **the shape of
+the round**: more than one domain ruled blocked within the same round while that round minted no
+keys. The registrar records a backoff window on that basis too (starting at 30 minutes, same
+exponent, same 4-hour cap), **but it does not abort the round and it swallows no domain
+verdict** — the domains due to be tried that round still get tried, and the keys due to come out
+still come out. If the round minted even one key, this tier records nothing at all.
+
+#### The backoff banner: the three tiers call for different actions
 
 The registrar section shows a backoff banner:
 
-| Which layer | What the panel says | What you can do |
+| Which tier | What the panel says | What you can do |
 |-----------|-------------------|---------------|
 | Edge rate limit | "refills are spaced too tightly" | Raise `MINT_DELAY_MIN_MS`, or lower `MINT_BATCH` |
 | The upstream's own registration limit | "matched by our word list, not stated by the upstream" | Raise `MINT_DELAY_MIN_MS`, lower `MINT_BATCH`; change egress only once confirmed |
+| Several domains blocked in one round, nothing minted | "the upstream said nothing about rate limiting" | Read the `registrar.domain_blocked` events for the upstream's own wording first |
 
 > [!IMPORTANT]
 > **Switching mailbox channel does not get you out of this.** The limit lives on the edge between

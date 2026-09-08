@@ -448,6 +448,85 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
     expect(second.io.ledger.entries["b.test"]).toEqual({ s: "ok", at: NOW + ROUND_GAP_MS, n: 1 });
   });
 
+
+  /**
+   * 🔴🔴 **承重格（评审回填）：反方向那一档 —— 上游改了限流文案时，一轮打几次、
+   * 写不写退避。**
+   *
+   * 这一格补的是那道保险拆掉之后**没人守的那一维**。拆保险治的是「上游真把好域名
+   * 拉黑」那半边（那半边从前一整轮只打 1 次就停死七天）；而它的另一半是：
+   * **上游改了限流文案**，于是一句真限流的回话落进负向匹配、被逐条读成「域名被屏蔽」
+   * —— 这一档里 `mintOne` 的两条限流支一次都进不去，`edge` / `app` 两档退避
+   * **一个都不会产生**，而本轮也不再提前停手。
+   *
+   * 拆保险之后、接上处置之前的实测（同一份夹具、内置值、5 轮）：
+   * 每一轮都打满 `mintBatch` = 5 次注定失败的发码请求、退避恒为 `null`、
+   * 台账因为钳位一个字不变 ⇒ 下一轮逐字节重演。Cron 每 30 分钟一轮
+   * ⇒ 240 次/天，而本仓在 `src/core/registrar/backoff.ts` 与本文件被测的
+   * `tender.ts` 里逐字登记着上游的行为是「窗口里每打一次请求就把窗口续一次」。
+   *
+   * 治它的是 `finishRound` 里那一档：`commitJournal` 的 `discarded > 0`
+   *（同一轮里 ≥2 个域名被判屏蔽）**且这一轮零产出**时，按 `cluster` 记一个跨轮退避。
+   * 它**不中止本轮**、**不吞任何域名结论**，所以那把 `at` 冻住的死锁不会回来。
+   *
+   * ⚠️ **这一格钉的是两个数：一轮打几次、退避写了什么**（都是手写字面量）。
+   * 反向控制在下面那一格「同一轮里两个已知能用的域名同时被拉黑……」：
+   * 那一格 `discarded` 同样 > 0，但**这一轮铸得出 key**，于是一个退避键都不许写。
+   *
+   * 变异：把 `finishRound` 里 `toSave = nextBackoff(..., "cluster", ...)` 那一行删掉
+   * ⇒ 十轮请求数变成 5 × 10、退避恒为 null ⇒ 红。
+   */
+  it("上游改了限流文案时：一轮打满 mintBatch 次，但记下 cluster 退避把后面几轮按住", async () => {
+    // 一句真限流的回话，措辞是词表里一个都没有的那种 ⇒ 分类器逐条读成「域名被屏蔽」。
+    const REWORDED = { status: 400, body: '{"code":400,"message":"Slow down, mate."}' };
+    const domains = ["b.test", "c.test", "d.test", "e.test"];
+    // 稳态台账：b / c 是上周真用过的「已知能用」。冷启动那一档不会走到这里
+    //（空台账下 `discarded` 同样 > 0，但那一档本来就该退避 —— 见下面那条断言）。
+    let ledger: DomainLedger = { v: 1, updatedAt: NOW - 1, total: 4, entries: {
+      "b.test": { s: "ok", at: NOW - 3000, n: 2 },
+      "c.test": { s: "ok", at: NOW - 2000, n: 2 },
+    } };
+    let backoff: BackoffState | null = null;
+    const perRound: number[] = [];
+    const mintedPerRound: number[] = [];
+    const kinds = new Set<string>();
+
+    for (let r = 0; r < 10; r++) {
+      const at = NOW + r * ROUND_GAP_MS;
+      const round = makeDeps({
+        domains, ledger, backoff, now: () => at,
+        over: { targetKeys: 5, mintBatch: 5 },
+        sendCode: () => REWORDED,
+      });
+      const out = await tendOnce(round.deps);
+      perRound.push(round.verification.length);
+      mintedPerRound.push(out.minted);
+      ledger = round.io.ledger;
+      backoff = round.io.backoff;
+      if (backoff !== null) kinds.add(backoff.kind);
+    }
+
+    // 🔴 **手写字面量。** 打满的那几轮仍然是 5 次（本轮不提前停手这一条没变），
+    // 但 0 的那几轮是退避窗口把整轮挡在门外 ——「不发一次上游请求」。
+    // 接上处置之前这里是 5 × 10 = 50 次；现在是 20 次。
+    expect(perRound).toEqual([5, 5, 0, 5, 0, 0, 0, 5, 0, 0]);
+    // 前置条件：这一档里一把 key 都铸不出来（否则上面那串 0 是「池子满了」造成的）。
+    expect(mintedPerRound).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    // 退避确实记下来了，而且归因是**这一轮的形状**，不是冒充上游说过的话。
+    expect(kinds).toEqual(new Set(["cluster"]));
+    // 指数真的在涨：这十轮里真正打出去的是第 0/1/3/7 轮，第 4 次撞（第 7 轮，
+    // 也就是 `NOW + 7 × 30min`）算出来的窗口是 30 分钟 × 2³ = 4 小时，正好撞上封顶。
+    // `since` 停在第一次撞的时刻 —— 它说的是「这一串是从什么时候开始的」。
+    expect(backoff).toEqual({
+      until: NOW + 7 * ROUND_GAP_MS + 14_400_000, kind: "cluster", since: NOW, hits: 4,
+    });
+    // 钳位照旧生效 ⇒ 台账一个字都没变（这一维一格都没动）。
+    expect(ledger.entries).toEqual({
+      "b.test": { s: "ok", at: NOW - 3000, n: 2 },
+      "c.test": { s: "ok", at: NOW - 2000, n: 2 },
+    });
+  });
+
   /**
    * 🔴 **承重格：两个已知能用的域名同时被拉黑时，钳位不许把补池按到零。**
    *
@@ -488,7 +567,9 @@ describe("已知能用的域名被上游真的拉黑之后，补池不许卡死"
     expect(io.ledger.entries["c.test"]).toEqual({ s: "ok", at: NOW - 900, n: 3 });
     // 成功那一条照常学下来（钳位只作废 blocked）。
     expect(io.ledger.entries["d.test"]).toEqual({ s: "ok", at: NOW, n: 1 });
-    // 全程没有任何限流 ⇒ 一个退避键都不写。
+    // 🔴 **这一行同时是上一格那个 `cluster` 退避的反向控制**：这一轮 `discarded` 同样
+    // > 0，但**铸得出 key** ⇒ 上游明明还在给我们发号，一个退避键都不许写。
+    // 变异：把 `finishRound` 里那一档的 `p.minted === 0` 前提删掉 ⇒ 这一行当场红。
     expect(io.savedBackoff).toEqual([]);
   });
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  EDGE_BACKOFF_MS, APP_BACKOFF_MS, BACKOFF_MAX_MS,
+  EDGE_BACKOFF_MS, APP_BACKOFF_MS, CLUSTER_BACKOFF_MS, BACKOFF_MAX_MS,
   inBackoff, retryAfterMs, narrowBackoff, nextBackoff, mergeBackoff,
   type BackoffState,
 } from "../../../src/core/registrar/backoff.js";
@@ -47,22 +47,45 @@ describe("narrowBackoff：读坏了当成「没有退避」放行，方向与台
     }
   });
 
-  it("四个字段齐全就照收", () => {
-    expect(narrowBackoff({ until: 7, kind: "app", since: 3, hits: 2 }))
-      .toEqual({ until: 7, kind: "app", since: 3, hits: 2 });
+  /**
+   * ⚠️ **三档 kind 都要单独试一次读回来。** 只试 `app` 的话，`narrowBackoff` 里那串
+   * `kind !== ...` 少写一档就是**写得进去、读不回来**：注册机把窗口写进存储，下一轮
+   * 读到 `null` 照打不误 —— 而按本仓登记的上游行为（窗口里每打一次就把窗口续一次），
+   * 那比不写还糟。`cluster` 这一档是评审回填新增的，它正是最容易被漏掉的那一个。
+   *
+   * 变异：把 `narrowBackoff` 里 `o.kind !== "cluster"` 那一段删掉 ⇒ 红。
+   */
+  it("三档 kind 都读得回来，四个字段齐全就照收", () => {
+    for (const kind of ["edge", "app", "cluster"] as const) {
+      expect(narrowBackoff({ until: 7, kind, since: 3, hits: 2 }), kind)
+        .toEqual({ until: 7, kind, since: 3, hits: 2 });
+    }
   });
 });
 
 describe("nextBackoff：指数、封顶、以及「一串」是怎么算的", () => {
-  it("第一次撞：边缘 15 分钟、应用 30 分钟，since 就是此刻", () => {
+  /**
+   * ⚠️ **三档各有自己的基数，逐档手写字面量。** `cluster` 那一档是评审回填新增的
+   *（同一轮里 ≥2 个域名被判屏蔽 + 这一轮零产出，见 `src/core/registrar/tender.ts`
+   * 的 `finishRound`），取值刻意与 `app` 相同 —— 但**取值相同不等于可以共用一个常量**：
+   * 两者的依据不同（app 那条是「一个补池周期」，cluster 那条是「我们对它零观测」），
+   * 将来只会改一个。这一格钉的是「哪一档用哪个常量」。
+   *
+   * 变异：把 `nextBackoff` 里 `BASE.cluster` 改成 `EDGE_BACKOFF_MS` ⇒ 红。
+   */
+  it("第一次撞：边缘 15 分钟、应用 30 分钟、成批判死那一档 30 分钟，since 就是此刻", () => {
     expect(nextBackoff(null, "edge", NOW)).toEqual({
       until: NOW + 900_000, kind: "edge", since: NOW, hits: 1,
     });
     expect(nextBackoff(null, "app", NOW)).toEqual({
       until: NOW + 1_800_000, kind: "app", since: NOW, hits: 1,
     });
+    expect(nextBackoff(null, "cluster", NOW)).toEqual({
+      until: NOW + 1_800_000, kind: "cluster", since: NOW, hits: 1,
+    });
     expect(EDGE_BACKOFF_MS).toBe(900_000);
     expect(APP_BACKOFF_MS).toBe(1_800_000);
+    expect(CLUSTER_BACKOFF_MS).toBe(1_800_000);
   });
 
   it("同一串里连着撞按 2 的幂拉长，since 取旧的那个（面板要说「已经限了多久」）", () => {

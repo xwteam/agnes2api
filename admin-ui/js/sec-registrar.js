@@ -306,9 +306,12 @@ function renderQuota() {
  * ⚠️ **「判死」用的是中性措辞**：那是**我们**按一张启发式词表做的判定，不是上游的
  * 声明（`src/core/registrar/domain-ledger.ts` 的文件头逐字登记着它会误判）。
  *
- * ⚠️ **退避横幅两档文案分开**，而且两档都要明说「换邮箱通道逃不掉」：限流发生在
+ * ⚠️ **退避横幅三档文案分开**，而且三档都要明说「换邮箱通道逃不掉」：限流发生在
  * 「出口 IP → 上游」这条边上，与用哪条邮箱通道无关。不说这一句，运维的第一反应
  * 就是去切通道 —— 切完照样被限。
+ * 第三档（`cluster`）的证据类型与前两档不同：上游一个限流字眼都没说，判据是
+ *「同一轮里好几个域名一起被判屏蔽 + 这一轮零产出」这个形状，所以它的文案不能照抄
+ * `reg.backoff.app` 那条（`admin-ui/js/pure/registrar.mjs` 的 `backoffView` 逐档分派）。
  */
 function renderDomains() {
   const d = domainLedgerView(data);

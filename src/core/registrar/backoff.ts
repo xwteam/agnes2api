@@ -25,8 +25,19 @@
  */
 export const REGISTRAR_BACKOFF_KEY = "registrar:backoff";
 
-/** 撞的是哪一层限流。**只影响面板文案与事件字段，不影响处置**（两层都是整轮停手）。 */
-export type BackoffKind = "edge" | "app";
+/**
+ * 这个退避窗口是**凭什么记下来的**。**只影响面板文案、事件字段与基数，不影响处置**
+ *（三档一律是「下一轮开跑前一次上游请求都不发」）。
+ *
+ * ⚠️ **前两档与第三档的证据类型不同，别把它们读成「三层限流」**：
+ * · `edge` / `app` —— 上游**回话里的字眼**落进了词表（`./mint.ts` 的分类器）。
+ *   这两档说的是「撞的是哪一层限流」。
+ * · `cluster` —— 上游一个限流字眼都没说，证据是**这一轮的形状**：同一轮里 ≥2 个域名
+ *   被判成「域名被屏蔽」且这一轮一把 key 都没铸出来（`./tender.ts` 的 `finishRound`
+ *   把 `commitJournal` 的 `discarded` 接过来）。它存在的唯一理由是**分类器读错了的
+ *   那一档**：上游改了限流文案 ⇒ 真限流被逐条读成域名屏蔽 ⇒ 前两档一个都不会产生。
+ */
+export type BackoffKind = "edge" | "app" | "cluster";
 
 export interface BackoffState {
   /** 退避到期时刻（epoch ms）。判据是 `until > now` 这一处值比较。 */
@@ -73,6 +84,20 @@ export const EDGE_BACKOFF_MS = 900_000;
 export const APP_BACKOFF_MS = 1_800_000;
 
 /**
+ * 「一轮里好几个域名同时被判屏蔽、且这一轮零产出」那一档的基数：30 分钟。
+ *
+ * 🔴 **同样没有任何实测支撑，是猜的**：这一档触发的时候上游连一句限流的话都没说
+ *（说了就落进上面两档了），所以我们对「它的惩罚窗口有多长」零观测——理由与
+ * `APP_BACKOFF_MS` 逐字同源，取值也刻意与它相同：**我们不知道它多长，所以至少跳过下一轮。**
+ *
+ * ⚠️ **第一次撞时它很可能一轮都跳不过去，如实写在这里**：它恰好等于
+ * `TEND_INTERVAL_MS` 的内置取值，而窗口判据是 `until > now` 这一处**严格**比较
+ * ⇒ 下一轮准点到达时窗口刚好算过去了。压住请求量靠的是**指数**那一段
+ *（30min → 1h → 2h → 4h 封顶），不是第一格。
+ */
+export const CLUSTER_BACKOFF_MS = 1_800_000;
+
+/**
  * 指数退避的封顶：4 小时（默认基数下约 8 轮）。
  *
  * 🟡 取舍：超过这个长度基本可以确定是**出口 IP 被长期限了**，那该让运维在面板上
@@ -91,7 +116,7 @@ export const BACKOFF_MAX_MS = 14_400_000;
 export function narrowBackoff(raw: unknown): BackoffState | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
-  if (o.kind !== "edge" && o.kind !== "app") return null;
+  if (o.kind !== "edge" && o.kind !== "app" && o.kind !== "cluster") return null;
   if (!Number.isFinite(o.until) || !Number.isFinite(o.since) || !Number.isFinite(o.hits)) return null;
   return { until: o.until as number, kind: o.kind, since: o.since as number, hits: o.hits as number };
 }
@@ -144,7 +169,12 @@ function streakBroken(prev: BackoffState | null, now: number): boolean {
 export function nextBackoff(prev: BackoffState | null, kind: BackoffKind, now: number): BackoffState {
   const streak = streakBroken(prev, now) ? null : prev;
   const hits = (streak?.hits ?? 0) + 1;
-  const base = kind === "edge" ? EDGE_BACKOFF_MS : APP_BACKOFF_MS;
+  // ⚠️ **写成穷尽的查表而不是三元链**：`BackoffKind` 再加一档时这里会在编译期报错
+  // （`Record` 缺键），而三元链只会安静地把新档落进 `else` 那一支。
+  const BASE: Record<BackoffKind, number> = {
+    edge: EDGE_BACKOFF_MS, app: APP_BACKOFF_MS, cluster: CLUSTER_BACKOFF_MS,
+  };
+  const base = BASE[kind];
   // `2 ** (hits - 1)` 在 hits 很大时会溢出成 Infinity，先夹后乘。
   const factor = Math.min(2 ** Math.min(hits - 1, 30), Number.MAX_SAFE_INTEGER);
   const span = Math.min(base * factor, BACKOFF_MAX_MS);

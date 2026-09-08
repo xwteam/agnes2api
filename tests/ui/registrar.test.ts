@@ -487,21 +487,31 @@ describe("backoffView：退避横幅", () => {
   });
 
   /**
-   * 🔴 **两档必须映射到两条不同的文案键。** 揉成一句会让运维在应用层限流那一档
+   * 🔴 **三档必须映射到三条互不相同的文案键。** 揉成一句会让运维在应用层限流那一档
    * 去调一个不解决问题的旋钮（把间隔调大对「这个出口的注册额度到顶了」没有用）。
+   *
+   * ⚠️ **`cluster` 那一档尤其不许落回前两条**（评审回填新增的第三档）：它触发时上游
+   * 一个限流字眼都没说，判据是「同一轮里 ≥2 个域名被判屏蔽 + 这一轮零产出」这个形状
+   *（`src/core/registrar/tender.ts` 的 `finishRound`）。渲染成 `reg.backoff.app` 那条
+   * 就是把一句上游从没说过的话安到它头上 —— 而这正是本仓刚为这条横幅裁过的那件事。
+   *
+   * 变异：把 `backoffView` 里 cluster 那一支删掉（落回 app 那条）⇒ 红。
    */
-  it("两层限流各自映射到自己那条文案键，且两条不是同一条", () => {
+  it("三档退避各自映射到自己那条文案键，三条互不相同", () => {
     const edge = backoffView({ backoff: { kind: "edge", until: 9, retryAfterMs: 8, since: 1, hits: 2 } });
     const app = backoffView({ backoff: { kind: "app", until: 9, retryAfterMs: 8, since: 1, hits: 2 } });
+    const cluster = backoffView({ backoff: { kind: "cluster", until: 9, retryAfterMs: 8, since: 1, hits: 2 } });
     expect(edge?.key).toBe("reg.backoff.edge");
     expect(app?.key).toBe("reg.backoff.app");
-    expect(edge?.key).not.toBe(app?.key);
+    expect(cluster?.key).toBe("reg.backoff.cluster");
+    expect(new Set([edge?.key, app?.key, cluster?.key]).size).toBe(3);
+    expect(cluster?.kind).toBe("cluster");
     expect(edge?.until).toBe(9);
     expect(edge?.retryAfterMs).toBe(8);
   });
 
-  it("两条 reg.backoff.* 键都真的在字典里 —— 渲染一个字典里没有的 key 等于把 key 本身显示给运维", () => {
-    for (const k of ["reg.backoff.edge", "reg.backoff.app"]) {
+  it("三条 reg.backoff.* 键都真的在字典里 —— 渲染一个字典里没有的 key 等于把 key 本身显示给运维", () => {
+    for (const k of ["reg.backoff.edge", "reg.backoff.app", "reg.backoff.cluster"]) {
       expect(k in I18N, `${k} 不在字典里`).toBe(true);
     }
   });
