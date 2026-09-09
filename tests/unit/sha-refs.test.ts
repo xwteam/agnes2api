@@ -292,7 +292,13 @@ describe("tracked 文件里的提交 sha 引用", () => {
    */
   it("(a-自检) 孤儿 commit 必须判成不可达，HEAD 必须判成可达", () => {
     const tree = git(["rev-parse", "HEAD^{tree}"]).trim();
-    const orphan = git(["commit-tree", tree, "-m", "sha-refs 自检用的孤儿提交"]).trim();
+    // ⚠️ **身份必须显式给。** CI runner 上没有 user.name / user.email，
+    //    裸 `commit-tree` 会 `fatal: empty ident name` —— 这一格上一版正是这样把 CI 弄红的
+    //    （本地有全局 git 身份，所以本地绿、CI 红，与本文件治的那一类同一个形状）。
+    const orphan = git([
+      "-c", "user.name=sha-refs-probe", "-c", "user.email=probe@invalid",
+      "commit-tree", tree, "-m", "sha-refs 自检用的孤儿提交",
+    ]).trim();
     expect(orphan, "commit-tree 没给出 sha，自检夹具本身坏了").toMatch(/^[0-9a-f]{40}$/);
     // 前提：这个对象**确实存在**（否则下面那句「不可达」证明不了可达性检查在起作用）。
     expect(resolveTypes([orphan]).get(orphan), "孤儿对象没写进本仓，夹具不成立").toBe("commit");
