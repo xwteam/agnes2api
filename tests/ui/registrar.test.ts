@@ -933,12 +933,26 @@ describe("缺陷复现：读自己的配置就失败了，一次上游请求都�
     expect(fetches, "上游真的被打了 —— 那这一格测的就不是这个缺陷").toBe(0);
 
     // ② **承重断言之一**：后端不许把这一次记成上游的锅。
+    //
+    // ⚠️ **判据是「键集合 + 那三格的值」，不是逐字相等**，与本文件上面那一格
+    //（「响应体多了或少了字段」）同一套，理由也逐字相同：这一格走的是**真装配、
+    // 真时钟**（handler 里 `latencyMs = deps.now() - startedAt`，`deps.now` 默认
+    // `Date.now`），`latencyMs` 不是常数。上一版把它逐字断言成 `0`，
+    // **负载一高就红**（实测：单跑 62 passed 连绿三次，而一次全量 `pnpm test`
+    // 里量到 `latencyMs: 1` 当场红）——那是一格时间敏感的 flaky 判据，
+    // 不是一个缺陷。**别改回逐字相等，也别为了「稳」把 reason 那一格放宽。**
     expect(res.status, "测不通不是接口异常").toBe(200);
     expect(
       body,
       "一次上游请求都没发出去，却被记成 upstream_error —— 运维会去查地址、DNS 与上游，"
       + "而要查的是存储，方向正好反了",
-    ).toEqual({ ok: false, channel: "yyds", reason: "not_attempted", latencyMs: 0 });
+    ).toMatchObject({ ok: false, channel: "yyds", reason: "not_attempted" });
+    // 键集合钉住那件承重的事：**这一档不带 status**（带上就走成另一句话了），
+    // 也不许少带 `latencyMs`。
+    expect(
+      Object.keys(body).sort(),
+      "响应体多了或少了字段 —— 带上 status 的话走的就是另一句话，这一格测的不是这个缺陷",
+    ).toEqual(["channel", "latencyMs", "ok", "reason"]);
 
     // ③ **承重断言之二**：运维眼里那句话跟着变，而且与那两条上游档不是同一句话。
     const view = channelTestResult(body);

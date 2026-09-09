@@ -1205,3 +1205,157 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
     expect({ puts: st.puts, deletes: st.deletes }, "失败请求自己这一次就落了盘").toEqual(before);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 🔴🔴 **缺陷复现：面板让运维去事件板块找的那条证据，在这条路上进不了事件板块。**
+ *
+ * 面板那句 `reg.channel.testOkDirty`（五语言逐字）说的是「详情在事件板块里，事件名
+ * `registrar.delete_mailbox_failed`」。而「事件板块」有且只有一个来源：
+ * `GET /admin/api/events`，它读的是 `StoreLogger`（`src/http/admin/router.ts`）。
+ *
+ * **上一版这条路上的适配器拿的是裸 `ConsoleLogger`**（`wire.ts` 的 `probeChannel`
+ * 调 `buildTendDeps` 时不传 `logger`），于是那条事件只落容器 stdout ——
+ * 面板把运维支去翻一份在那里根本不存在的证据，与本仓刚裁过的
+ * 「横幅别指向一条当时还不存在的事件」逐字同源。
+ *
+ * ⚠️⚠️ **观测点必须是 `/admin/api/events` 的返回体，不是「适配器有没有调 logger」。**
+ * 全仓已有十处 `delete_mailbox_failed` 判据，全都是给适配器塞一个假 logger 直接量
+ * `entries` —— 那种判据在这个缺陷面前**全部保持绿色**，因为它们量的是「适配器发了
+ * 没有」，而缺陷在于「发出去的那条到不到得了面板那条 sink」。
+ *
+ * **落盘节奏是这一组要绕开的唯一麻烦，做法写死在这里**：`StoreLogger.log()` 只进
+ * 内存缓冲，落盘由 `logFlush` 中间件在请求收尾时调，且被 `EVENT_FLUSH_MIN_INTERVAL_MS`
+ *（60 秒，`lastFlushAt` 在 sink 构造时就置成 `now()`）挡着 ⇒ 必须
+ * ① 假时钟推过 60 秒、② 再打一个**非 `/health`** 的请求把缓冲落下去、
+ * ③ 然后才读得到。三步都做全，读的才是真的存储侧。
+ * ══════════════════════════════════════════════════════════════════════════ */
+describe("真装配：验凭据留下的痕迹，运维在事件板块里真的看得见", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const ENV: Record<string, string | undefined> = {
+    GATEWAY_TOKEN: "gateway-token-for-registrar-fixture",
+    ADMIN_TOKEN: TEST_ADMIN_TOKEN,
+    REGISTRAR_ENABLED: "true",
+    REGISTRAR_CHANNEL: "yyds",
+    YYDS_API_KEY: "yk",
+    YYDS_BASE_URL: "https://yyds.invalid",
+    TARGET_KEYS: "1",
+  };
+
+  /**
+   * 打一次通道测试，然后把**事件板块那条端点**返回的事件名列出来。
+   *
+   * 返回 `body`（这一次的响应体）与 `panel`（`/admin/api/events` 的 `items` 里
+   * 那些事件名）两样：前者用来证明这一格真的走到了那一档，后者是承重观测点。
+   */
+  async function probeThenReadPanel(
+    upstream: (url: string | URL, init?: RequestInit) => Promise<Response>,
+  ): Promise<{ body: Record<string, unknown>; panel: string[] }> {
+    let t = NOW;
+    const now = () => t;
+    vi.stubGlobal("fetch", upstream);
+    const storage = new MemoryStorage(undefined, now);
+    const { app } = await buildApp(ENV, storage, workerRuntime(), { now });
+
+    const res = await app.request(
+      "/admin/api/registrar/channels/yyds/test", { method: "POST", headers: withKey },
+    );
+    const body = await res.json() as Record<string, unknown>;
+
+    // 推过最小落盘间隔，再打一个非 `/health` 请求 —— 缓冲是在**那一个**请求收尾时
+    // 才落的盘（`logFlush` 写在 `await next()` 之后），所以这一次读到的还是空的。
+    t += 60_001;
+    await app.request("/admin/api/events", { headers: withKey });
+    // 这一次读的才是落完盘之后的存储侧。
+    const evRes = await app.request("/admin/api/events", { headers: withKey });
+    expect(evRes.status, "事件板块这条端点自己就没通 —— 那下面量的是空气").toBe(200);
+    const ev = await evRes.json() as { items: Array<{ event: string }> };
+    return { body, panel: ev.items.map((e) => e.event) };
+  }
+
+  /** 列域名恒 200 回一个可用域名；建邮箱 / 删邮箱由参数决定怎么回。 */
+  function upstream(
+    onCreate: () => Response,
+    onDelete: () => Response = () => new Response(null, { status: 204 }),
+  ) {
+    return async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith("/v1/domains")) {
+        return new Response(JSON.stringify({ data: [{ domain: "a.test" }] }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      }
+      return (init?.method ?? "GET") === "DELETE" ? onDelete() : onCreate();
+    };
+  }
+
+  const CREATED = () => new Response(
+    JSON.stringify({ data: { address: "u@a.test", id: "acct-1" } }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+
+  /**
+   * 🔴 **阳性对照 + 探针，两件事一格做完。**
+   *
+   * ① **阳性对照**：handler 自己打的 `registrar.channel_test_failed` 走的是 app 的
+   *    sink，它**本来就**到得了面板 —— 拿它证明上面那套「推时钟 + 补一个请求 + 再读」
+   *    的观测装置是通的。没有这一条，下面两格红了也分不清是缺陷还是装置坏了。
+   * ② **探针**：同时断言一个**从没发生过**的事件名不在列表里。少了它，一个
+   *    「把所有事件名都返回一遍」的假面板照样能让下面两格全绿。
+   */
+  it("阳性对照：测试失败那条事件本来就到得了面板，而没发生过的事件名不在里面", async () => {
+    const { body, panel } = await probeThenReadPanel(async () => new Response("{}", { status: 401 }));
+    expect(body, "没走到失败那一支 —— 这一格对照的是别的东西").toMatchObject({
+      ok: false, reason: "credentials_rejected",
+    });
+    expect(panel, "观测装置本身不通：连 handler 自己打的那条都读不到").toContain(
+      "registrar.channel_test_failed",
+    );
+    // 探针：这一次一个邮箱都没建出来，那两条事件一条都不该在。
+    expect(panel, "面板把没发生过的事件也报了出来 —— 那下面两格量的是空气").not.toContain(
+      "registrar.delete_mailbox_failed",
+    );
+  });
+
+  /**
+   * 🔴🔴 **承重格之一：建出来了却删不掉 ⇒ 面板那句话指的那条事件必须真的在事件板块里。**
+   */
+  it("残留删不掉时，registrar.delete_mailbox_failed 到得了事件板块", async () => {
+    const { body, panel } = await probeThenReadPanel(
+      upstream(CREATED, () => new Response("nope", { status: 500 })),
+    );
+    // 前提可证：真的落在「验过了但有残留」那一档（面板据此选 `reg.channel.testOkDirty`）。
+    expect(body, "没走到残留那一档 —— 这一格测的就不是这个缺陷").toMatchObject({
+      ok: true, channel: "yyds", credentials: "accepted", cleaned: false,
+    });
+    expect(
+      panel,
+      "面板逐字让运维去事件板块按 registrar.delete_mailbox_failed 找详情，而那条事件"
+      + "根本进不了事件板块（只落容器 stdout）—— 那是把人支去翻一份不存在的证据",
+    ).toContain("registrar.delete_mailbox_failed");
+  });
+
+  /**
+   * 🔴🔴 **承重格之二：2xx 但拿不到 id ⇒ 邮箱可能已经建出来、连删都没法删。**
+   *
+   * 这一支响应体里**一个清理结论都没有**（失败支只带 `ok/channel/reason/latencyMs`），
+   * 面板那句 `reg.channel.testFailedNoStatus` 也只谈上游 ⇒ **面板上唯一能让运维知道
+   * 「这次点击可能漏了一个删不掉的邮箱」的东西，就是事件板块里的这条事件**。
+   * 它进不了事件板块，这次泄漏就是完全静默的。
+   */
+  it("2xx 但拿不到 id 时，registrar.mailbox_create_unparseable 到得了事件板块", async () => {
+    const { body, panel } = await probeThenReadPanel(upstream(
+      () => new Response("<html>error page</html>", {
+        status: 200, headers: { "content-type": "text/html" },
+      }),
+    ));
+    // 前提可证：走的确实是「2xx 之后解析不出 data.address / data.id」那一支。
+    expect(body, "没走到那一支 —— 这一格测的就不是这个缺陷").toMatchObject({
+      ok: false, channel: "yyds", reason: "upstream_error",
+    });
+    expect(
+      panel,
+      "验凭据途中可能建出来一个删不掉的邮箱，而面板上一条痕迹都没有 —— "
+      + "响应体不带清理结论，那句话只谈上游，这次泄漏就此静默",
+    ).toContain("registrar.mailbox_create_unparseable");
+  });
+});

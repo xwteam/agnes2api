@@ -289,7 +289,10 @@ export async function buildApp(
     registrar: {
       storage,
       tend: (channel) => runManualTendRound(env, storage, channel),
-      probeChannel: (channel) => probeChannel(env, storage, channel),
+      // **传的是 app 那个 `logger`**（`multiLogger(ConsoleLogger, StoreLogger)`）：
+      // 这次探测里只有适配器发得出来的那两条事件（建出来了却删不掉 / 拿不到 id）
+      // 必须到得了事件板块，理由与实测在 `probeChannel` 的 `logger` 参数上方。
+      probeChannel: (channel) => probeChannel(env, storage, channel, logger),
     },
     // 配置读写。**与上面的 `registrar` 同一条理由：只有这里有 `env`。**
     // 传的是 `storage` 而不是 `watched`：写配置失败不该被记进 `/health` 的可写性信号
@@ -519,10 +522,40 @@ async function probeChannel(
   env: Record<string, string | undefined>,
   storage: Storage,
   channel: Channel,
+  /**
+   * 事件 sink。**必须是 app 那一个**（`multiLogger(ConsoleLogger, StoreLogger)`），
+   * 见下面那段。
+   */
+  logger: Logger,
 ): Promise<ChannelProbe> {
-  // 这条路只读不写，**不接 `StoreLogger`**：一次连通性测试不该在事件板块里刷屏，
-  // 而真正值得留痕的那一条（测试失败）由 handler 用 app 的 sink 打（那条带 `channel`
-  // 与耗时，比这里的适配器内部日志更贴近运维要看的东西）。
+  // ⚠️⚠️ **这条路接 `StoreLogger`，上一版不接——那是一个已复现的缺陷，别改回去。**
+  //
+  // 上一版这里传的是缺省的裸 `ConsoleLogger`，理由写着「一次连通性测试不该在事件
+  // 板块里刷屏」。**代价是本轮才造出来的那一档变成了假话**：这颗按钮改成真验凭据
+  // 之后，YYDS 那条实现会**建一个临时邮箱再删掉**，于是多出两条只有适配器发得出来
+  // 的事件——`registrar.delete_mailbox_failed`（建出来了却删不掉）与
+  // `registrar.mailbox_create_unparseable`（2xx 但拿不到 id ⇒ 删都没法删）。
+  // 两条都只落容器 stdout，而面板那句 `reg.channel.testOkDirty` 逐字让运维去
+  // **事件板块**里按事件名找它。实测（真装配，spy 在 `StoreLogger.prototype.log`）：
+  //   body: {"ok":true,...,"cleaned":false}
+  //   进得了 StoreLogger 的事件：[]            ← 残留这一档，一条都没有
+  //   反向对照（同一套探针，上游 401）：["registrar.channel_test_failed"]  ← 进得去
+  // ⇒ 只有适配器那两条进不去，而它们正是「这次点击留下了什么」的唯一证据。
+  //
+  // **代价明写，别当它没有**：`buildTendDeps` 里那次配置解析的几条 warn
+  //（`registrar.attempt_exceeds_worker_budget` 之类）跟着进面板，于是**配置本身
+  // 有问题的部署**上，每点一次都会往那 100 格的事件环里再放一条。可接受的依据是
+  // ① 默认配置下它们一条都不发（`DEFAULTS` 全都不触发那几条 warn）；
+  // ② 会发的那几条本来就是定时补池每轮都在发的同一批，运维要看的也正是它们；
+  // ③ 失败那一支本来就每点一次记一条 `registrar.channel_test_failed`
+  //（handler 里那条），这条路径的可观测性早就不是「零留痕」了。
+  //
+  // **写配额一个字都不用改**：`StoreLogger.log()` 只进内存缓冲，落盘由 `logFlush`
+  // 中间件在请求收尾时按 `EVENT_FLUSH_MIN_INTERVAL_MS` / `EVENT_WRITES_PER_DAY`
+  // 决定 —— 吃的是事件 sink 那笔已经记过的旧账，本次请求自己仍然 0 次 put
+  //（`tests/contract/admin-registrar.test.ts` 那两格逐格量着）。
+  // 也正因为落盘归中间件管，这里**不需要** `buildTendDeps` 的 `flush`：
+  // 它和 app 的 `logger` 是**同一个** `StoreLogger` 实例。
   const gate: { reason: "disabled" | "blocked" | null } = { reason: null };
   /**
    * ⚠️⚠️ **装配这一截单独接住，它抛错时「一次上游请求都没发出去」。**
@@ -539,7 +572,7 @@ async function probeChannel(
    */
   let deps: TendRoundDeps | null;
   try {
-    deps = await buildTendDeps(env, storage, { gate });
+    deps = await buildTendDeps(env, storage, { gate, logger });
   } catch (err) {
     return { ok: false, reason: "probe_setup_failed", error: err };
   }

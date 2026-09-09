@@ -2271,9 +2271,44 @@ EXPECT_NODE_FILES=164
 #     并进响应字段那一段，而不是新加一段）。docs-parity 的 >200 字符棘轮全程没动。
 #   ⇒ Node：5104 + 24 = **5128**；文件数 **164 不动**（一份新测试文件都没加）。
 #   ⇒ workerd：797 + 2 = **799**（那 2 格在 `tests/contract/**`）；文件数 **43 不动**。
-EXPECT_NODE_TESTS=5128
+#
+#   ── 面板指向的那条事件，在这条路上进不了事件板块：**+3**，全在 tests/contract/ ─────
+#   起因（评审两条同源发现的回填）：上一轮那颗按钮改成真验凭据之后，YYDS 那条实现会
+#   **建一个临时邮箱再删掉**，于是多出两条只有适配器发得出来的事件 ——
+#   `registrar.delete_mailbox_failed`（建出来了却删不掉）与
+#   `registrar.mailbox_create_unparseable`（2xx 但拿不到 id ⇒ 连删都没法删）。
+#   而 `wire.ts` 的 `probeChannel` 调 `buildTendDeps` 时**不传 logger**，缺省是裸
+#   `ConsoleLogger` ⇒ 两条都只落容器 stdout，进不了 `/admin/api/events`。
+#   于是 `reg.channel.testOkDirty` 那句「详情在事件板块里，事件名
+#   registrar.delete_mailbox_failed」（五语言全中）是一句假话，而那条泄漏在另一支上
+#   连一句话都没有。**处置是把 app 的 sink 接上去，不是改文案** —— 那条证据本来就该在。
+#   判据缺口：全仓十处 `delete_mailbox_failed` 判据全是给适配器塞假 logger 直接量
+#   `entries`，量的是「适配器发了没有」，对「发出去的那条到不到得了面板」全部保持绿色。
+#     · `tests/contract/admin-registrar.test.ts` 51 → **54**（**+3**，双运行时 ⇒ workerd 也 +3）：
+#       ① 阳性对照 + 探针（`channel_test_failed` 本来就到得了面板；没发生过的事件名不在里面）；
+#       ② 残留删不掉时 `delete_mailbox_failed` 到得了事件板块；
+#       ③ 2xx 但拿不到 id 时 `mailbox_create_unparseable` 到得了事件板块。
+#       三格的观测点都是 **`GET /admin/api/events` 的返回体**，不是「适配器有没有调 logger」。
+#     · `tests/ui/registrar.test.ts` 62 → **62**（**一格没多**）：上一轮那格
+#       「后端自成一档、面板另说一句话」原来逐字断言 `latencyMs: 0`，而它走真装配、真时钟
+#       ⇒ **负载一高就红**（评审实测：一次全量里量到 `latencyMs: 1` 当场红，单跑连绿三次）。
+#       **原地改判据不是新增**：换成 `toMatchObject` 那三格 + `Object.keys().sort()` 键集合，
+#       与同文件上面那格同一套（那格逐字写着为什么不能逐字相等）。
+#       变异实测：给这一档补一个假 `status: 502` ⇒ 红（键集合）；并回 `upstream_error` ⇒ 红
+#       （toMatchObject）；把 `latencyMs` 删掉 ⇒ 红（键集合）。
+#     · `src/http/wire.ts` 只改了两处接线（`probeChannel` 多一个 `logger` 参数、
+#       `buildTendDeps` 那次调用把它传下去）与随之订正的那段注释，**一格判据都没新增**。
+#   变异实测（逐格真跑，跑完都还原并确认 `git status` 干净）：
+#     把 `buildTendDeps(env, storage, { gate, logger })` 改回 `{ gate }` ⇒
+#     **红 2 格**（②③），阳性对照 ① 保持绿 —— 观测装置本身是通的。
+#   ⚠️ **代价明写、没有藏**：配置解析那几条 warn 跟着进面板（默认配置下一条都不发），
+#     写配额一个字没改（`StoreLogger.log()` 只进缓冲，本次请求自己仍然 0 次 put，
+#     由本文件那两格 `CountingStorage` 逐格量着）。三个棘轮一个没抬。
+#   ⇒ Node：5128 + 3 = **5131**；文件数 **164 不动**。
+#   ⇒ workerd：799 + 3 = **802**；文件数 **43 不动**。
+EXPECT_NODE_TESTS=5131
 EXPECT_WORKERS_FILES=43
-EXPECT_WORKERS_TESTS=799
+EXPECT_WORKERS_TESTS=802
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。
