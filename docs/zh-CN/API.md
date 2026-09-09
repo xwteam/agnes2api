@@ -520,7 +520,7 @@ curl http://localhost:8080/admin/api/session \
 **响应**：
 
 ```json
-{ "ok": true, "version": "0.1.0" }
+{ "ok": true, "version": "0.2.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +538,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +570,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1458,7 +1458,7 @@ curl http://localhost:8080/health
 **响应**：
 
 ```json
-{ "status": "ok", "version": "0.1.0", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.2.0", "storage": { "writable": true } }
 ```
 
 `storage.writable` 报告的是「key 池所在的存储是否真的写得进去」。它由启动时的一次探测与运行期每一次真实写操作共同维护，健康检查自身不写盘。存储不可写时返回 **HTTP `503`**，`status` 变成 `degraded` 并附一句 `detail`（Docker 部署常见于绑定挂载的宿主目录属主与容器内运行用户不一致，详见容器日志）。

@@ -472,9 +472,12 @@ export function registrarFromEnv(
   //
   // ⚠️ **这里从前还乘着一个「通道数」**：配了备通道时「验证码超时」属于通道级失败、
   // 会降级重试一次，同一个名额最坏要等两次超时。两条通道改成二选一之后没有第二次
-  // 了，这个因子整个消失。同一份口径在 `./tender.ts` 的 `worstAttemptMs`、
-  // `./types.ts` 的 `WORKER_ROUND_BUDGET_MS`、`wrangler.toml` 的 Cron 间隔估算段
-  // 各有一份，四处一起改。
+  // 了，这个因子整个消失。同一份口径散在**五处**，改一处就得五处一起改：`src/core/registrar/types.ts` 的
+  // `WORKER_ROUND_BUDGET_MS`、`src/core/registrar/config.ts` 的最坏耗时告警、
+  // `src/core/registrar/tender.ts` 的 `worstAttemptMs`、`src/http/wire.ts` 传给
+  // 「立即补池」的那个预算、`wrangler.toml` 的 Cron 估算段（外加五语言 REGISTRAR.md
+  // 的散文）。⚠️ 上一版这张表被写了四份、四份点名的集合互相不一致 —— 照任一份走
+  // 都会漏掉一个文件。
   //
   // 它超过补池间隔时，轮次会重叠着跑——两个入口各有兜底（Node 的在途守卫、Worker
   // 的 KV 短锁）会把重叠的那次跳过，但被跳过的名额就白白浪费了，该调的是配置本身。

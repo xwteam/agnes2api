@@ -206,7 +206,7 @@ docker compose logs -f
 ```bash
 # ヘルスチェック（認証不要）。Worker では自分の https://<name>.<sub>.workers.dev に置き換える
 curl http://localhost:8080/health
-# {"status":"ok","version":"0.1.0"}
+# {"status":"ok","version": "0.2.0"}
 
 # 使えるモデルを確かめる
 curl http://localhost:8080/v1/models \

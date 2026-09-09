@@ -2341,7 +2341,20 @@ EXPECT_NODE_FILES=164
 #   变异实测：把改正过的引用换回孤儿 sha ⇒ 主判据红并点名「是孤儿…新 clone 里点不开」；
 #   把 `reachableFromHead` 改成 `return true` ⇒ **补这一格之前 7 格全绿，补完只红这一格**。
 #   ⇒ Node：5133 + 1 = **5134**；文件数不动。workerd 不动（`tests/unit/**` 不进 workers 池）。
-EXPECT_NODE_TESTS=5134
+#
+#   ── 文档里的 /health 版本示例跟着 VERSION 走（发版后审计）：**+2**
+#   起因：v0.2.0 发出去之后，六份 README 与五份 API.md 共 **26 处** `/health` 示例
+#   仍写着 `"version": "0.1.0"` —— 差了整整两个版本，而**没有任何东西盯着它**：
+#   docs-parity 其余格只比结构、docs-typography 只数字符、check-i18n 只管字典。
+#   这是一笔会随每次发版自动变旧的欠账，所以判法是**从 `VERSION` 现算**、不手写字面量
+#  （手写的话它自己就是下一笔同样的欠账）。
+#     · `tests/unit/docs-parity.test.ts` 661 → **663**（**+2**）：
+#       ①「11 份出货文档里的 `"version"` 示例都等于 VERSION（现算，不手写）」
+#       ②「反向自检：喂一份写着旧版本的假文档必须被点名」—— 只有 ① 的话空检测器与真干净同形。
+#   变异实测：把 README 里一处示例改回 0.1.0 ⇒ **只红 ①** 并逐字点名；
+#   把检测器的比较条件改成恒 false ⇒ **只红 ②**。
+#   ⇒ Node：5134 + 2 = **5136**；文件数不动。workerd 不动（`tests/unit/**` 不进 workers 池）。
+EXPECT_NODE_TESTS=5136
 EXPECT_WORKERS_FILES=43
 EXPECT_WORKERS_TESTS=802
 

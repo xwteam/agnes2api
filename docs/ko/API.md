@@ -520,7 +520,7 @@ curl http://localhost:8080/admin/api/session \
 **응답**:
 
 ```json
-{ "ok": true, "version": "0.1.0" }
+{ "ok": true, "version": "0.2.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +538,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +570,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1460,7 +1460,7 @@ curl http://localhost:8080/health
 **응답**:
 
 ```json
-{ "status": "ok", "version": "0.1.0", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.2.0", "storage": { "writable": true } }
 ```
 
 `storage.writable`은 "key 풀이 올라가 있는 스토리지에 정말 쓸 수 있는가"를 알려 줍니다. 시작할 때의 한 번의 프로브와 실행 중의 모든 실제 쓰기가 함께 유지하며, 헬스 체크 자신은 쓰지 않습니다. 쓸 수 없을 때는 **HTTP `503`**을 돌려주고 `status`가 `degraded`가 되며 `detail` 한 문장이 붙습니다(Docker에서는 바인드 마운트한 호스트 디렉터리 소유자와 컨테이너 안의 실행 사용자가 다른 경우가 많으며 자세한 내용은 컨테이너 로그에 있습니다).

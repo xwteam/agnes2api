@@ -520,7 +520,7 @@ curl http://localhost:8080/admin/api/session \
 **Response**:
 
 ```json
-{ "ok": true, "version": "0.1.0" }
+{ "ok": true, "version": "0.2.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +538,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +570,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1461,7 +1461,7 @@ curl http://localhost:8080/health
 **Response**:
 
 ```json
-{ "status": "ok", "version": "0.1.0", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.2.0", "storage": { "writable": true } }
 ```
 
 `storage.writable` reports whether the storage holding the key pool really is writable. It is maintained by one probe at startup plus every real write at runtime; the health check itself never writes. When storage is not writable the endpoint returns **HTTP `503`**, `status` becomes `degraded` and a `detail` sentence is attached (on Docker this usually means the bind-mounted host directory is owned by a different user than the one inside the container — see the container log).

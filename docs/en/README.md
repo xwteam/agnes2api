@@ -206,7 +206,7 @@ docker compose logs -f
 ```bash
 # Health check (unauthenticated). On the Worker use your https://<name>.<sub>.workers.dev
 curl http://localhost:8080/health
-# {"status":"ok","version":"0.1.0"}
+# {"status":"ok","version": "0.2.0"}
 
 # List the available models
 curl http://localhost:8080/v1/models \

@@ -320,8 +320,12 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   // > Cron 的 900 秒，那正是当时那个撞墙钟场景）。两条通道改成二选一之后没有第二次
   // 等待了，这个因子整个消失 —— 顺带把「配了备通道才会撞上的那个墙钟死局」也消掉了。
   //
-  // 同一份口径在 `./config.ts` 的 `worstAttemptMs`、`./types.ts` 的
-  // `WORKER_ROUND_BUDGET_MS`、`wrangler.toml` 的 Cron 估算段各有一份，四处一起改。
+  // 同一份口径散在**五处**，改一处就得五处一起改：`src/core/registrar/types.ts` 的
+  // `WORKER_ROUND_BUDGET_MS`、`src/core/registrar/config.ts` 的最坏耗时告警、
+  // `src/core/registrar/tender.ts` 的 `worstAttemptMs`、`src/http/wire.ts` 传给
+  // 「立即补池」的那个预算、`wrangler.toml` 的 Cron 估算段（外加五语言 REGISTRAR.md
+  // 的散文）。⚠️ 上一版这张表被写了四份、四份点名的集合互相不一致 —— 照任一份走
+  // 都会漏掉一个文件。
   const worstAttemptMs = deps.config.codeTimeoutMs
     + Math.max(0, deps.config.maxDomainAttempts - 1) * deps.config.mintDelayMaxMs;
 

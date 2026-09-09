@@ -520,7 +520,7 @@ curl http://localhost:8080/admin/api/session \
 **レスポンス**：
 
 ```json
-{ "ok": true, "version": "0.1.0" }
+{ "ok": true, "version": "0.2.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +538,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +570,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1460,7 +1460,7 @@ curl http://localhost:8080/health
 **レスポンス**：
 
 ```json
-{ "status": "ok", "version": "0.1.0", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.2.0", "storage": { "writable": true } }
 ```
 
 `storage.writable` は「key プールが載っているストレージに本当に書き込めるか」を報告します。起動時の一度のプローブと実行中のすべての実書き込みで維持され、ヘルスチェック自身は書き込みません。書き込めないときは **HTTP `503`** を返し、`status` が `degraded` になって `detail` の一文が付きます（Docker ではバインドマウントしたホストディレクトリの所有者とコンテナ内の実行ユーザーが食い違っている場合が多く、詳細はコンテナログにあります）。

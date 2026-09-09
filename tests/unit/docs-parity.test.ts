@@ -15108,3 +15108,55 @@ describe("五份 ADMIN.md：通道测试的代价说法不许与实现相反", (
     expect(noCostClaimProblems(() => ""), "什么都没有时不许无中生有").toEqual([]);
   });
 });
+
+/**
+ * 🔴 **文档里的 `/health` 示例回显的版本号，必须跟着 `VERSION` 走。**
+ *
+ * 这一格治的是一笔**会随每次发版自动变旧**的欠账。v0.2.0 发出去之后，六份 README
+ * 与五份 API.md 里 11 份文档、共 26 处 `/health` 示例仍写着 `"version": "0.1.0"` ——
+ * 差了整整两个版本，而**没有任何东西盯着它**：`docs-parity` 其余格只比结构、
+ * `docs-typography` 只数字符、`check-i18n` 只管字典。读者照文档 `curl` 一下就会
+ * 看到两个对不上的版本号，而这个差距只会越来越大。
+ *
+ * 判法是**从磁盘现算**（`VERSION` 是唯一真源），不手写字面量 —— 手写的话它自己
+ * 也会变成下一笔同样的欠账。
+ *
+ * ⚠️ 与下面那格自检是**一对**：只断言「一处都没有」时，空检测器与真干净长得一模一样
+ *（本仓栽过一次）。
+ */
+function staleHealthVersions(v: string, read: (p: string) => string, paths: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const p of paths) {
+    for (const m of read(p).matchAll(/"version":\s*"(\d+\.\d+\.\d+)"/g)) {
+      if (m[1] !== v) out.push(`${p} 的 /health 示例写着 ${m[1]}，而 VERSION 是 ${v}`);
+    }
+  }
+  return out;
+}
+
+/** 带 `/health` 示例的那 11 份：六份 README + 五份 API.md。 */
+const HEALTH_SAMPLE_DOCS: readonly string[] = [
+  "README.md",
+  ...LANGS.map((l) => `docs/${l}/README.md`),
+  ...LANGS.map((l) => `docs/${l}/API.md`),
+];
+
+describe("文档里的 /health 示例版本号跟着 VERSION 走", () => {
+  it("11 份出货文档里的 `\"version\"` 示例都等于 VERSION（现算，不手写）", () => {
+    // `realVersion()` 定义在另一个 describe 的作用域里，这里够不着 —— 直接读真源。
+    const v = readFileSync("VERSION", "utf8").trim();
+    expect(v, "VERSION 是空的，这一格会拿空串去比，测的是空气").not.toEqual("");
+    // 非空锚：一处示例都扫不到 ⇒ 判据瞎了，绿了什么都不证明。
+    const total = HEALTH_SAMPLE_DOCS.reduce(
+      (n, p) => n + [...readFileSync(p, "utf8").matchAll(/"version":\s*"\d+\.\d+\.\d+"/g)].length, 0);
+    expect(total, "一处 /health 版本示例都没扫到 —— 判据大概率瞎了").toBeGreaterThan(0);
+    expect(staleHealthVersions(v, (p) => readFileSync(p, "utf8"), HEALTH_SAMPLE_DOCS)).toEqual([]);
+  });
+
+  it("反向自检：喂一份写着旧版本的假文档，必须被点名 —— 否则它与空检测器同形", () => {
+    const fake = (p: string): string => (p === "README.md" ? '```\n{"status":"ok","version":"0.0.1"}\n```' : "");
+    expect(staleHealthVersions("9.9.9", fake, HEALTH_SAMPLE_DOCS))
+      .toEqual(["README.md 的 /health 示例写着 0.0.1，而 VERSION 是 9.9.9"]);
+    expect(staleHealthVersions("0.0.1", fake, HEALTH_SAMPLE_DOCS), "版本相等时不许无中生有").toEqual([]);
+  });
+});

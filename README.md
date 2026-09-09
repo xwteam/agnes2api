@@ -246,7 +246,7 @@ docker compose logs -f
 ```bash
 # 健康检查（不鉴权）。Worker 形态换成你的 https://<name>.<sub>.workers.dev
 curl http://localhost:8080/health
-# {"status":"ok","version":"0.1.0"}
+# {"status":"ok","version": "0.2.0"}
 
 # 查看可用模型
 curl http://localhost:8080/v1/models \

@@ -348,10 +348,14 @@ export async function buildApp(
  * 两侧不同就等于同一颗按钮在两种部署下能铸出不同把数，而那个差异没有任何人会去断言。
  * 代价：Node 上手动补池可能比定时轮少铸几把（判据是 `codeTimeoutMs`），
  * 下一次定时轮会接着补。
- * ⚠️ **这里从前还乘着一个「通道数」，本轮是第四处订正。** 两条通道改成二选一之后
- * 没有第二次等待了，那个因子整个消失 —— 另外三处是 `src/core/registrar/tender.ts`
- * 的 `worstAttemptMs`、`src/core/registrar/config.ts` 的最坏耗时告警、
- * 与 `wrangler.toml` 的 Cron 间隔估算段。**四处同源，改一处就得四处一起改。**
+ * ⚠️ **这里从前还乘着一个「通道数」。** 两条通道改成二选一之后
+ * 没有第二次等待了，那个因子整个消失。
+ * 同一份口径散在**五处**，改一处就得五处一起改：`src/core/registrar/types.ts` 的
+ * `WORKER_ROUND_BUDGET_MS`、`src/core/registrar/config.ts` 的最坏耗时告警、
+ * `src/core/registrar/tender.ts` 的 `worstAttemptMs`、`src/http/wire.ts` 传给
+ * 「立即补池」的那个预算、`wrangler.toml` 的 Cron 估算段（外加五语言 REGISTRAR.md
+ * 的散文）。⚠️ 上一版这张表被写了四份、四份点名的集合互相不一致 —— 照任一份走
+ * 都会漏掉一个文件。
  *
  * ⚠️ **残余风险如实登记**：预算把「跑不完的尝试」挡在门外，**它不消灭泄漏，只把概率
  * 压下来**。平台仍可能在预算窗口之内中止调用，`mintOne` 的 `finally` 仍可能不跑。
