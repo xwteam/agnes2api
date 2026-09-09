@@ -162,7 +162,7 @@ function usedToday(cur: ManualGuard | null, now: number): number {
  * 那边给的是「点完这一次之后还剩几次」（`used + 1` 已经落盘），这边给的是
  * 「现在还剩几次」（什么都没发生）。两个数字都对，但读错就会在面板上少显示一次。
  * 两者的关系由 `tests/contract/admin-registrar.test.ts` 的
- * 「点一次之前 status 说 19、点完之后 202 说 18 —— 两个方向的口径各钉一格」
+ * 「点一次之前 status 说 19、点完之后响应体说 18 —— 两个方向的口径各钉一格」
  * 用手写字面量正面钉住。
  *
  * `cooldownUntil` / `retryAfterMs` **成对给，且只在真的冷却中才非空**（评审 m3 的

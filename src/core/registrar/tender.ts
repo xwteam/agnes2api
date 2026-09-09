@@ -92,6 +92,43 @@ type _NoMissingReason =
 const _reasonsExhaustive: _NoMissingReason = true;
 void _reasonsExhaustive;
 
+/**
+ * **一次「立即补池」点击的最终结果**，交回给端点当作 HTTP 响应体。
+ *
+ * 🔴 它存在的理由是一条实测缺陷：从前端点回 `202 {started:true}` 就走人，整轮丢给
+ * `ctx.waitUntil`，而 Cloudflare 在响应结束后约 30 秒把它取消（日志原话见
+ * `src/core/registrar/types.ts` 的 `MANUAL_MINT_BATCH` 那段）。取消不抛异常
+ * ⇒ 两层 `try/finally` 都不跑 ⇒ 面板上那一轮**与「压根没点过」逐字节不可区分**。
+ *
+ * 把结果**同步交出来**是那条后果的唯一根治手段：端点 `await` 到底再返回，
+ * 于是「这一轮到底怎么了」永远有人接得住。三个成员各自对应一种真实结局，
+ * **`skipped` 与 `crashed` 不许合并成「失败」**——前者一次上游请求都没发，
+ * 后者可能已经建出临时邮箱，运维的处置完全不同。
+ */
+export interface ManualTendCap {
+  budgetMs: number;
+  mintBatch: number;
+  configuredMintBatch: number;
+  codeTimeoutMs: number;
+  configuredCodeTimeoutMs: number;
+  maxDomainAttempts: number;
+  configuredMaxDomainAttempts: number;
+}
+
+/**
+ * 这一轮被**按钮自己的上限**压小的那几格；一格都没压到就是 `null`。
+ *
+ * ⚠️ **它走响应体，不走事件——这是刻意的，不是省事。** 默认 `mintBatch` 是 5，
+ * 而手动上限是 1 ⇒ 压顶**每一次点击都会发生**。做成事件的话就是每点一次多一次 put，
+ * 直接打破「健康的一轮一次写都不产生」那条性质，而那条性质是五语言 DEPLOY.md
+ * 配额账（一次成功点击恰好 3 次 put）的立身之本。
+ * 响应体是运维**当场**就会看到的地方，代价为零。
+ */
+export type ManualTendOutcome =
+  | { kind: "done"; result: TendResult; capped: ManualTendCap | null }
+  | { kind: "skipped"; reason: "disabled" | "blocked"; capped: null }
+  | { kind: "crashed"; error: string; capped: ManualTendCap | null };
+
 export interface TendResult {
   skipped: boolean;
   /**

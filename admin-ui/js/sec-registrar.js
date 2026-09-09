@@ -197,6 +197,9 @@ export async function confirmAndTend(channel) {
       : t("reg.tend.confirmMsg", { keys: fmtCount(cost.keys), mailboxes: fmtCount(cost.mailboxes) }),
   ));
 
+  // 这颗按钮从「点完就回」变成了「等整轮跑完」，用户点确认之前必须知道这件事。
+  body.appendChild(el("p", null, t("reg.tend.confirmWait")));
+
   const label = el("label");
   label.appendChild(elI18n("span", "reg.tend.channelLabel"));
   let read = () => channel;
@@ -222,15 +225,51 @@ export async function confirmAndTend(channel) {
   ]);
 }
 
+/**
+ * ⚠️ **这颗按钮现在会挂到整轮跑完**（最长约两分钟），不再是「点完就回」。
+ *
+ * 从前端点回 202「已开始」就走人，整轮交给 `ctx.waitUntil`，而 Cloudflare 在响应后
+ * 约 30 秒把它取消掉（实测 3/3）——于是面板报了「已开始」，而那一轮**什么都没发生**，
+ * 补池历史里连一行都不会有。「已开始」这个提示本身就是那条缺陷的门面。
+ *
+ * 三条路必须分开说，**不许合并成「失败」**：
+ * · `done` —— 跑完了，报真实的 铸出/尝试 数；
+ * · `skipped` —— 一次上游请求都没发（配置在两步之间被改掉）；
+ * · `crashed` —— 整轮抛错，**可能已经建出临时邮箱**，处置与上面两条都不同。
+ * 网络错误那一支的文案是「结果未知，去补池历史里看」——**既不许渲染成成功、
+ * 也不许渲染成失败**：请求断了不等于那一轮没跑（兜底网还攥着它）。
+ */
 async function startTend(channel) {
   try {
-    await api.post("/registrar/tend", channel === null ? {} : { channel });
-    toast(t("reg.tend.started"), "ok");
+    const r = await api.post("/registrar/tend", channel === null ? {} : { channel });
+    const o = r && r.outcome;
+    if (o && o.kind === "done") {
+      const minted = Number(o.result && o.result.minted) || 0;
+      const attempted = Number(o.result && o.result.attempted) || 0;
+      toast(
+        t("reg.tend.done", { minted: fmtCount(minted), attempted: fmtCount(attempted) }),
+        minted > 0 ? "ok" : "warn",
+        minted > 0 ? undefined : { sticky: true },
+      );
+    } else if (o && o.kind === "skipped") {
+      toast(t("reg.tend.skipped"), "warn", { sticky: true });
+    } else if (o && o.kind === "crashed") {
+      toast(t("reg.tend.crashed"), "warn", { sticky: true });
+    } else {
+      // 后端比面板新、给了一种这一版不认识的结局。**照实说不认识**，
+      // 别冒充成功——与 `failureReasonKey()` 表外返回 null 是同一条纪律。
+      toast(t("reg.tend.unknownOutcome"), "warn", { sticky: true });
+    }
   } catch (e) {
     const key = refuseKeyOf(e && e.body);
-    // 拒绝的原因**必须留在屏幕上**（sticky）：它们里面有「今天的额度用完了」
-    // 这种四秒钟根本读不完、而且读漏了会让人反复点的信息。
-    toast(key === null ? t("reg.tend.failed") : t(key), "warn", { sticky: true });
+    if (key === null && !(e && e.body)) {
+      // 请求本身断了（超时/断网）：那一轮**可能仍在跑**，兜底网还攥着它。
+      toast(t("reg.tend.unknownResult"), "warn", { sticky: true });
+    } else {
+      // 拒绝的原因**必须留在屏幕上**（sticky）：它们里面有「今天的额度用完了」
+      // 这种四秒钟根本读不完、而且读漏了会让人反复点的信息。
+      toast(key === null ? t("reg.tend.failed") : t(key), "warn", { sticky: true });
+    }
   }
   // 无论成败都重新拉一次：成功那一支的 `remaining` 与冷却时刻都变了，
   // 失败那一支也可能是因为别的副本刚抢走了锁。

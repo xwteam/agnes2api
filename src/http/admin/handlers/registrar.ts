@@ -4,6 +4,8 @@ import type { Storage } from "../../../ports/storage.js";
 import type { RuntimeInfo, BackgroundCtx } from "../../../ports/runtime.js";
 import type { KeyPoolRepo } from "../../../core/keypool-repo.js";
 import type { ConfigHolder } from "../../config-holder.js";
+import type { ManualTendOutcome } from "../../../core/registrar/tender.js";
+import { MANUAL_MINT_BATCH } from "../../../core/registrar/types.js";
 import type { Channel } from "../../../core/registrar/config.js";
 import { countsTowardTarget, poolHealth } from "../../../core/keypool.js";
 import {
@@ -17,7 +19,8 @@ import {
   REGISTRAR_BACKOFF_KEY, narrowBackoff, retryAfterMs,
 } from "../../../core/registrar/backoff.js";
 import {
-  acquireTendLock, releaseTendLock, narrowTendLock, TEND_LOCK_KEY, type TendGate,
+  acquireTendLock, releaseTendLock, narrowTendLock, TEND_LOCK_KEY, TEND_LOCK_TTL_MANUAL_MS,
+  type TendGate,
 } from "../tend-lock.js";
 import type { ProbeGuard } from "../probe-guard.js";
 import { httpFailStatus } from "../../../core/registrar/url.js";
@@ -123,7 +126,7 @@ export interface RegistrarWiring {
    *
    * **允许抛错**：抛出来由本文件接住并记一条事件，**而锁一定在 `finally` 里释放**。
    */
-  tend: (channel: Channel | null) => Promise<void>;
+  tend: (channel: Channel | null) => Promise<ManualTendOutcome>;
   /**
    * 探一条通道的连通性：列一次可用域名，**再真的证明一次这把凭据能用**
    *（怎么证明由适配器自己决定，见 `src/ports/mailbox.ts`；YYDS 那条实现
@@ -424,7 +427,7 @@ export function manualTendHandler(deps: RegistrarDeps) {
         }, 429);
       }
 
-      const lock = await acquireTendLock(wiring.storage, now);
+      const lock = await acquireTendLock(wiring.storage, now, TEND_LOCK_TTL_MANUAL_MS);
       if (!lock.ok) {
         // **抢锁失败这一支一次写都不产生**：护栏还没消费，冷却也没起算。
         return c.json({
@@ -441,9 +444,10 @@ export function manualTendHandler(deps: RegistrarDeps) {
       //（键跟着冷却蒸发 ⇒ `used` 每 10 分钟归零 ⇒ 日预算闸永远走不到耗尽）。
       await wiring.storage.put(MANUAL_GUARD_KEY, verdict.next);
 
+      let outcome: ManualTendOutcome | null = null;
       const task = (async () => {
         try {
-          await wiring.tend(channel);
+          outcome = await wiring.tend(channel);
         } catch (err) {
           deps.logger.log({
             level: "error", event: "registrar.manual_tend_failed",
@@ -467,8 +471,25 @@ export function manualTendHandler(deps: RegistrarDeps) {
       })();
       started = true;
 
-      // 载体由注入的运行时决定：Worker 交给 `ctx.waitUntil`（不交就会被从中间砍断、
-      // 临时邮箱漏删），Node 直接 fire-and-forget。差异是**被断言的**，不是被容忍的。
+      // 🔴🔴 **同一个 promise 既交给兜底网、又在下面 `await`——这是刻意的，不是冗余。**
+      //
+      // 从前这里只有 `background(task, …)` 然后立刻回 202，于是整轮的载体是
+      // `ctx.waitUntil`。而 Cloudflare 在响应结束后**约 30 秒**就取消它
+      //（实测 3/3，日志原话见 `src/core/registrar/types.ts` 的 `MANUAL_MINT_BATCH`），
+      // 取消**不抛异常** ⇒ 下面那个 `finally` 里的 `releaseTendLock()` 与 `leave()`
+      // 一个都不跑 ⇒ 锁泄漏到自然过期，**期间连 Cron 轮也一起被挡掉**。
+      //
+      // 现在的分工：
+      // ① **正常路径的载体是下面那行 `await`**（`fetch` handler 自己撑着），
+      //    它保证 `try/finally` 真的跑完——写补池历史、放锁、`leave()`。
+      // ② `background()` 降级成**客户端中途断开时的兜底网**：那时请求上下文被销毁，
+      //    但 `waitUntil` 还攥着同一个 promise，再给约 30 秒，让 `mintOne` 的
+      //    `finally`（删临时邮箱）有机会跑完。**两条路都不需要平台给我们 13 分钟。**
+      // ⇒ `runtime.background` 因此保住了存在理由（双运行时断言照旧成立），
+      //    只是从「承载整轮」变成「承载断开后的余生」。
+      //
+      // ⚠️ 交给兜底网的必须是**上面这个已经在跑的 `task` 本身**。另起一个
+      // `wiring.tend()` 就是同一轮跑两遍，会同时撞邮箱建号限流与上游注册风控。
       deps.runtime.background(task, backgroundCtx(c));
 
       deps.logger.log({
@@ -477,19 +498,36 @@ export function manualTendHandler(deps: RegistrarDeps) {
         fields: { remaining: verdict.remaining, cooldownUntil: verdict.next.cooldownUntil, channel },
       });
 
+      await task;
+
       // ⚠️ **`remaining` 必须在这一支也给。** 只在耗尽那一支给它，等于让运维毫不知情地
       // 撞上一堵墙——面板要**如实显示还剩几次**，而不是等到点不动了才说。
+      // 🔴 **`202 {started:true}` → `200 {…真实结果}` 是公开响应契约的 breaking change。**
+      // 它正是「面板上这一轮与压根没点过逐字节不可区分」那条后果的**唯一**根治手段：
+      // 结果同步交出来之后，「这一轮到底怎么了」永远有人接得住。CHANGELOG 显式记了这一条。
+      //
+      // `started: true` **保留**：面板旧版本读的是它，去掉就是让旧面板把一次成功读成失败。
+      // `outcome` 是新增字段，旧面板看不见它、行为与从前一致（多一个字段不破坏解析）。
       return c.json({
         started: true,
+        /** ⚠️ **这一轮已经跑完了**，不是「已受理」。字段名沿用是为了兼容旧面板。 */
+        done: true,
         trigger: "manual",
         /** 这一轮**实际用哪条通道**：`null` = 按配置的主/备链。面板照实回显。 */
         channel,
+        /**
+         * 这一轮的真实结局。三个成员见 `ManualTendOutcome`：
+         * `done`（跑完了，带 minted/attempted/failures）/ `skipped`（配置在两步之间被改掉，
+         * 一次上游请求都没发）/ `crashed`（整轮抛错，可能已经建出临时邮箱）。
+         * **三者不许被面板合并成「失败」**，处置完全不同。
+         */
+        outcome,
         remaining: verdict.remaining,
         resetAt: verdict.resetAt,
         // 成对给，理由见 `ManualTendVerdict` 上面那段（评审 m3）。
         cooldownUntil: verdict.cooldownUntil,
         retryAfterMs: verdict.retryAfterMs,
-      }, 202);
+      }, 200);
     } finally {
       // 任何一条提前返回（429 / 409 / 抛错）都要把守卫还回去，否则这个副本上的
       // 补池会被一次被拒的点击永久堵死。真的起跑之后由上面那个 `finally` 负责。
@@ -627,8 +665,16 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
         /** 缺口 = `tendOnce` 用的那个 `need`，负数夹到 0（池子满了就是 0，不是负几把）。 */
         gap: Math.max(0, reg.targetKeys - (counted ?? 0)),
         fresh,
-        /** 面板算「本次最多铸几把」要它：`rounds = min(need, mintBatch)`（`tendOnce`）。 */
-        mintBatch: reg.mintBatch,
+        /**
+         * 面板算「本次最多铸几把」要它：`rounds = min(need, mintBatch)`（`tendOnce`）。
+         *
+         * 🔴 **必须跟着手动那份上限一起压。** 这一格是确认弹窗算「本次最多铸 N 把 /
+         * 最多消耗 N 个临时邮箱」的**唯一**输入，而手动一轮实际只跑
+         * `MANUAL_MINT_BATCH` 把（见 `src/core/registrar/types.ts`）。
+         * 不压就是弹窗说 5、实际做 1 —— 本仓反复裁过的那条「面板说 A、实际做 B」，
+         * 而且它撒的谎恰好在**用户点确认之前**那一屏上。
+         */
+        mintBatch: Math.min(reg.mintBatch, MANUAL_MINT_BATCH),
       },
       /**
        * 当前持锁方声明的到期时刻。**`null` 有两个含义，面板分不出来也不需要分**：

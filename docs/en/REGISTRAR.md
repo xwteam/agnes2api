@@ -250,9 +250,9 @@ ceiling, not a guarantee**: the round may simply not fill it. Node/Docker has no
 clock, so the **scheduled** round does not engage this mechanism and uses `MINT_BATCH` in full.
 
 > [!IMPORTANT]
-> **The panel's "Refill now" is the exception: both runtimes carry the same per-round budget.**
-> How long a single click may run is a property of that button, not of the runtime, so a manual
-> refill on Node/Docker can also mint fewer keys; the next scheduled round picks up the rest.
+> **The panel's "Refill now" is the exception: both runtimes carry the same per-round budget, and
+> a far tighter one — 70 s against the scheduled round's 780 s.** That ceiling belongs to the
+> button, not the runtime: one click mints **at most one key**; the rest waits for the next round.
 
 > [!WARNING]
 > **The budget is not a blanket guarantee — a residual case remains.** The check counts
@@ -346,9 +346,22 @@ those keys in the admin panel rather than expecting the registrar to do it.
 
 ## "Tend now" in the admin panel
 
-That's the button in the admin panel (`POST /admin/api/registrar/tend`). A `202` means the round
-**has started**; it keeps running after the response returns. Look at the "tend history" section
-for the outcome — its `trigger` will read `manual`.
+That's the button in the admin panel (`POST /admin/api/registrar/tend`). **The request waits for
+the whole round, and a `200` reports what that round actually did** — how many keys came out of
+how many attempts. The button therefore stays busy for up to two minutes. If the connection drops
+first, the panel says the outcome is unknown and the round may still be running: neither a success
+nor a failure. The same summary also lands in the "tend history" section, `trigger` reading
+`manual`.
+
+One click runs under **ceilings of its own**, tighter than the scheduled round's: at most one key,
+one domain attempt, 60 s of waiting for the code, a 70 s wall-clock budget. Each one caps rather
+than overrides, so a smaller configured value stays smaller; when one bites, the response gives
+the value before and after.
+
+It used to answer `202` and hand the round to the background, where the platform cancelled it
+about 30 seconds later **without raising anything**: nothing recorded, no event, the lock never
+released — that round was indistinguishable from a click that never happened, and the leaked lock
+blocked the scheduled rounds too.
 
 ### The four guardrails
 
@@ -357,12 +370,12 @@ It has **four guardrails**; failing any one of them means the round never starts
 | Guardrail | Response when it fails | What it blocks |
 |---------|----------------------|--------------|
 | In-flight guard within the process / isolate | `409 tend_in_flight` | The scheduled round colliding with the button, and two concurrent clicks on one replica |
-| Storage-level short lock (`registrar_tend_lock`) | `409 locked` | Overlap **across replicas** (several containers on a shared volume; the Worker's two isolates) |
+| Storage-level short lock (`registrar_tend_lock`, 3 min manual / 15 min scheduled) | `409 locked` | Overlap **across replicas** (several containers on a shared volume; the Worker's two isolates) |
 | At least 10 minutes between two manual rounds | `429 manual_cooldown` | Click-spamming through your temporary-mailbox quota |
 | At most **24** times per day | `429 write_budget_exhausted` | Click-spamming through your **storage write quota** (arithmetic in the "quota ledger" of [DEPLOY.md](DEPLOY.md)) |
 
 The `429` body carries `remaining` (how many are left today), `resetAt` (recovers at UTC
-midnight) and `retryAfterMs`. **The `202` body carries `remaining` too**, so the panel can state
+midnight) and `retryAfterMs`. **The `200` body carries `remaining` too**, so the panel can state
 the truth up front instead of waiting until the button stops working. When the registrar is off,
 the endpoint answers `409 registrar_disabled`.
 
@@ -377,13 +390,11 @@ the endpoint answers `409 registrar_disabled`.
 > most (concurrency − 1) extra rounds, and the tend history misses at most (concurrency − 1) rows".
 
 > [!WARNING]
-> **Residual risk**: a manual round carries **the same per-round wall-clock budget as the
-> Worker's Cron (780 s)**. Its job is "never start an attempt that is known not to fit"; it
-> **does not eliminate leaks, it only lowers the probability** — the platform can still abort the
-> call inside the budget window, and the temporary mailbox being minted at that moment is not
-> deleted. Note this differs from the scheduled round: **the Node/Docker timer carries no such
-> budget, while the manual round does**, so under the same configuration a manual round may mint
-> fewer keys than a scheduled one; the remaining slots go to the next scheduled round.
+> **Residual risk**: the 70 s budget only refuses to start an attempt that is known not to fit. It
+> **does not eliminate leaks, it only lowers the probability** — the call can still be cut off
+> inside the window, and the temporary mailbox in use at that moment is not deleted. The lock a
+> manual round takes expires in 3 minutes, not the scheduled round's 15, and that is under the
+> 10-minute cooldown: a lock leaked that way cannot survive until the next click is allowed.
 
 ### These keys do not disappear on their own
 

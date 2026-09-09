@@ -520,7 +520,7 @@ curl http://localhost:8080/admin/api/session \
 **Response**:
 
 ```json
-{ "ok": true, "version": "0.2.1" }
+{ "ok": true, "version": "0.2.2" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +538,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +570,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1269,7 +1269,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ### POST /admin/api/registrar/tend
 
-Triggers one refill round by hand. Success is `202` (started), not `200`.
+Runs one refill round by hand and **waits for it to finish**: success is `200`, not the old `202`. Allow up to two minutes.
 
 **Request body**:
 
@@ -1291,8 +1291,23 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```json
 {
   "started": true,
+  "done": true,
   "trigger": "manual",
   "channel": "moemail",
+  "outcome": {
+    "kind": "done",
+    "result": {
+      "primaryChannel": "moemail", "skipped": false, "available": 2,
+      "attempted": 1, "minted": 1, "mintedByChannel": { "moemail": 1 },
+      "failures": [], "durationMs": 41230
+    },
+    "capped": {
+      "budgetMs": 70000,
+      "mintBatch": 1, "configuredMintBatch": 5,
+      "codeTimeoutMs": 60000, "configuredCodeTimeoutMs": 120000,
+      "maxDomainAttempts": 1, "configuredMaxDomainAttempts": 1
+    }
+  },
   "remaining": 23,
   "resetAt": 1735776000000,
   "cooldownUntil": 1735690200000,
@@ -1300,8 +1315,10 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 }
 ```
 
+`outcome` says how the round ended; the three kinds must never be folded into one "it failed": `done` (it ran; `result` has `minted` / `attempted` / `failures`), `skipped` (`reason` `disabled` or `blocked`; **no upstream request went out**), `crashed` (it threw; a temporary mailbox may survive). `capped` is non-`null` when this round's own ceilings shortened it, and gives the applied and configured values.
+
 > [!NOTE]
-> `remaining` is returned on the success branch too: giving it only when the budget is exhausted means an operator walks into a wall with no warning. There are seven rejections in all, and **none of them means "this route does not exist"**: `409 registrar_disabled` (the registrar is off), `409 registrar_blocked` (the registrar is on, but this config could not be loaded, so it was not started this time), `409 channel_not_configured` (the channel has no credentials), `409 tend_in_flight` (a round is already running on this replica), `409 locked` (another replica holds the short lock), `429 manual_cooldown` (the minimum interval between two manual tends), `429 write_budget_exhausted` (the daily ceiling) — the last two point at the same source of truth as the "Four Guardrails" table in [REGISTRAR.md](REGISTRAR.md).
+> **Nothing about the rejections changed, and none of them is a `404`**: `409` for `registrar_disabled`, `registrar_blocked`, `channel_not_configured`, `tend_in_flight`, `locked`; `429` for `manual_cooldown`, `write_budget_exhausted` — same source of truth as the "Four Guardrails" table in [REGISTRAR.md](REGISTRAR.md). `remaining` still comes back on the success branch, and `started: true` is kept for older panels.
 
 ### GET /admin/api/registrar/status
 
@@ -1461,7 +1478,7 @@ curl http://localhost:8080/health
 **Response**:
 
 ```json
-{ "status": "ok", "version": "0.2.1", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.2.2", "storage": { "writable": true } }
 ```
 
 `storage.writable` reports whether the storage holding the key pool really is writable. It is maintained by one probe at startup plus every real write at runtime; the health check itself never writes. When storage is not writable the endpoint returns **HTTP `503`**, `status` becomes `degraded` and a `detail` sentence is attached (on Docker this usually means the bind-mounted host directory is owned by a different user than the one inside the container — see the container log).

@@ -8,13 +8,15 @@ import {
   MANUAL_GUARD_KEY, MANUAL_TENDS_PER_DAY, MANUAL_TEND_COOLDOWN_MS, type ManualGuard,
 } from "../../src/core/admin/tend-guard.js";
 import {
-  TEND_LOCK_KEY, TEND_LOCK_TTL_MS, acquireTendLock, createTendGate,
+  TEND_LOCK_KEY, TEND_LOCK_TTL_MANUAL_MS, acquireTendLock, createTendGate,
 } from "../../src/http/admin/tend-lock.js";
 import type { RegistrarWiring } from "../../src/http/admin/handlers/registrar.js";
 import { buildApp } from "../../src/http/wire.js";
 import { workerRuntime } from "../../src/adapters/runtime-worker.js";
 import { nodeRuntime } from "../../src/adapters/runtime-node.js";
-import { WORKER_ROUND_BUDGET_MS } from "../../src/core/registrar/types.js";
+import {
+  MANUAL_CODE_TIMEOUT_MS, MANUAL_MINT_BATCH, MANUAL_ROUND_BUDGET_MS, WORKER_ROUND_BUDGET_MS,
+} from "../../src/core/registrar/types.js";
 import { TEND_HISTORY_KEY, type TendRecord } from "../../src/core/admin/tend-history.js";
 import type { BackgroundCtx, RuntimeInfo } from "../../src/ports/runtime.js";
 import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
@@ -70,6 +72,21 @@ function gatedRun() {
   };
 }
 
+/**
+ * 等到注入的执行体**真的起跑**。
+ *
+ * ⚠️ 端点现在是**跑完整轮再返回**的（那正是这次修复的全部内容），所以本文件里凡是
+ * 用 `gatedRun()` 把一轮按住不放的用例，都**不能**先 `await post(...)`——那会死锁。
+ * 正确形态是：先拿住 promise、等它起跑、做完并发/锁的断言、再放闸、最后 `await`。
+ */
+async function started(g: { starts: () => number }, n = 1): Promise<void> {
+  for (let i = 0; i < 400; i++) {
+    if (g.starts() >= n) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error("执行体一直没起跑");
+}
+
 /** 夹具 A。`registrar` 打开，存储与注入的执行体共用同一个实例。 */
 async function fixtureA(o: {
   storage?: MemoryStorage | CountingStorage;
@@ -86,7 +103,7 @@ async function fixtureA(o: {
     ? undefined
     : {
       storage,
-      tend: o.run ?? (async () => {}),
+      tend: async (..._a) => { await (o.run ?? (async () => {}))(); return ({ kind: "done" as const, result: { skipped: false, available: 0, attempted: 0, minted: 0, mintedByChannel: {}, failures: [], primaryChannel: "moemail", at: 0, durationMs: 0 }, capped: null }); },
       // 本文件一条都不测通道连通性（那是 tests/contract/admin-registrar.test.ts 的活）。
       // **刻意抛错而不是返回一个假的成功**：真有哪条用例误打到这条端点上，红的会是
       // 那条用例，而不是一个悄悄通过的假结果。
@@ -131,37 +148,41 @@ describe("护栏 1：两个副本 / 两个并发请求，只有一个真的跑�
    * 不来自存储时序**——把 `delayMs` 改回 0 这一格**不会红**，那是刻意的对照实验，
    * 实测结果写进了任务报告。
    */
-  it("两个副本同时点『立即补池』，只有一个真的跑起来，另一个拿到 409", async () => {
-    let t = NOW;
-    const storage = new MemoryStorage(1, () => t);
-    const g1 = gatedRun();
-    const g2 = gatedRun();
-    const a = await fixtureA({ storage, run: g1.run, now: () => t });
-    const b = await fixtureA({ storage, run: g2.run, now: () => t });
+  it("上一轮（Cron）还持着锁时，手动点击拿到 409 locked 且执行体一次都不跑", async () => {
+    const storage = new MemoryStorage(1, () => NOW);
+    const g = gatedRun();
+    const a = await fixtureA({ storage, run: g.run, now: () => NOW });
 
-    const r1 = await post(a.app);
-    expect(r1.status, "第一个副本该拿到 202").toBe(202);
+    // 🔴 **场景换了，不是把旧用例调绿。** 旧用例让「第一个副本的手动轮」持锁到冷却
+    // 之后再点第二次，靠的是「单轮预算 13 分钟 > 冷却 10 分钟」。手动那份 TTL 改成
+    // 180 秒之后**那个场景在结构上不存在了**（180 秒 < 600 秒冷却）——而那正是这次
+    // 修复要的效果：一次被砍断的点击不再能挡住后面的补池。
+    // 于是这一格改成钉**今天真实存在**的那个重叠：Cron 轮持着 15 分钟的锁。
+    await storage.put(TEND_LOCK_KEY, { until: NOW + 900_000 });
 
-    // 冷却过去，但第一轮还挂着（真实窗口：单轮预算 13 分钟 > 冷却 10 分钟）。
-    t += MANUAL_TEND_COOLDOWN_MS + 60_000;
-    const r2 = await post(b.app);
-    expect(r2.status, "第二个副本必须被存储锁拦下").toBe(409);
-    // ⚠️ **`until` 写手写字面量，不写 `NOW + TEND_LOCK_TTL_MS`**（评审发现）：
-    // 那是从被测常量自己推导出来的期望值，把 TTL 改成 24 小时也照样绿（第 6 种假阳性，
-    // 实测 1816/1816 全绿）。而这个数是用户可见的——它就是面板显示的「最晚几点结束」，
-    // 也是「释放锁失败后最长停摆多久」的上界。常量本身另由
-    // `tests/unit/admin/tend-guard.test.ts` 的
-    // 「补池锁的有效期是 15 分钟这个数字本身就是策略，独立钉死」钉着，两边都是字面量
-    // ⇒ 「两边一起改」也拦得住（形态抄 roundBudgetMs 那条双锚）。
-    expect(await r2.json()).toMatchObject({ reason: "locked", until: NOW + 900_000 });
-
+    const res = await post(a.app);
+    expect(res.status, "上一轮还持着锁，这一次必须被拦下").toBe(409);
+    expect(await res.json()).toMatchObject({ reason: "locked", until: NOW + 900_000 });
     // **两半都要断言**：只看状态码抓不住「409 之后又偷偷跑了一轮」。
-    expect(g1.starts(), "第一个副本真的跑起来了").toBe(1);
-    expect(g2.starts(), "第二个副本一次都不许跑").toBe(0);
+    expect(g.starts(), "被 409 拦下之后一次都不许跑").toBe(0);
+  });
 
-    g1.release();
-    await g1.settled();
-    expect(await storage.get(TEND_LOCK_KEY), "跑完之后锁必须被释放").toBeNull();
+  /**
+   * **手动那份锁 TTL 必须短于手动冷却。**
+   *
+   * 这条不是风格问题，是那次事故的第二半：手动轮被平台砍断时 `releaseTendLock` 不跑，
+   * 锁只能等自然过期。TTL 取 Cron 那份 15 分钟时，**一次点击必然挡掉至少一轮 Cron**
+   *（线上实测发生过两次，日志里留着两条「上一轮补池仍在进行，跳过本次 Cron 触发」）。
+   * 短于冷却之后，最坏情况下那把泄漏的锁在下一次可点之前就已经自己过期了。
+   *
+   * **变红条件**：把 `TEND_LOCK_TTL_MANUAL_MS` 改回 `WORKER_CRON_WALL_CLOCK_MS`。
+   */
+  it("手动锁的 TTL 必须短于手动冷却 —— 泄漏的锁不许活到下一次可点", () => {
+    expect(TEND_LOCK_TTL_MANUAL_MS).toBe(180_000);
+    expect(
+      TEND_LOCK_TTL_MANUAL_MS < MANUAL_TEND_COOLDOWN_MS,
+      "一把泄漏的手动锁活得比冷却还久 ⇒ 它必然挡掉中间的 Cron 轮",
+    ).toBe(true);
   });
 
   /**
@@ -178,14 +199,18 @@ describe("护栏 1：两个副本 / 两个并发请求，只有一个真的跑�
     const g = gatedRun();
     const a = await fixtureA({ storage: new MemoryStorage(1, () => NOW), run: g.run });
 
-    const [r1, r2] = await Promise.all([post(a.app), post(a.app)]);
+    const q1 = post(a.app);
+    const q2 = post(a.app);
+    // 被守卫拦下的那一个**立刻**返回；跑起来的那一个要等放闸。
+    await started(g);
+    g.release();
+    const [r1, r2] = await Promise.all([q1, q2]);
     const codes = [r1.status, r2.status].sort();
-    expect(codes, "两个并发请求必须一个 202 一个 409").toEqual([202, 409]);
+    expect(codes, "两个并发请求必须一个 200 一个 409").toEqual([200, 409]);
     const rejected = r1.status === 409 ? r1 : r2;
     expect(await rejected.json()).toMatchObject({ reason: "tend_in_flight" });
     expect(g.starts(), "补池只许起一轮").toBe(1);
 
-    g.release();
     await g.settled();
   });
 
@@ -201,8 +226,8 @@ describe("护栏 1：两个副本 / 两个并发请求，只有一个真的跑�
   it("【诚实限定】同一 tick 的两次抢锁都会成功 —— 存储锁是尽力而为，不是互斥原语", async () => {
     const storage = new MemoryStorage(1, () => NOW);
     const [x, y] = await Promise.all([
-      acquireTendLock(storage, NOW),
-      acquireTendLock(storage, NOW),
+      acquireTendLock(storage, NOW, TEND_LOCK_TTL_MANUAL_MS),
+      acquireTendLock(storage, NOW, TEND_LOCK_TTL_MANUAL_MS),
     ]);
     expect([x.ok, y.ok], "两个都抢到了 —— 这正是那个 get→put 窗口").toEqual([true, true]);
   });
@@ -213,14 +238,16 @@ describe("护栏 1：两个副本 / 两个并发请求，只有一个真的跑�
    * ——一次抛错的补池会让锁留到自然过期（最长 15 分钟）才肯放下一轮进来，
    * 也就是**一次失败换一段停摆**。
    */
-  it("补池抛错时锁仍然被释放，且失败留下一条事件（面板已经回过 202，这是唯一的痕迹）", async () => {
+  it("补池抛错时锁仍然被释放，且失败留下一条事件（这一轮的结局现在同步交回给面板了）", async () => {
     let t = NOW;
     const storage = new MemoryStorage(undefined, () => t);
     const g = gatedRun();
     const a = await fixtureA({ storage, run: g.run, now: () => t });
 
-    expect((await post(a.app)).status).toBe(202);
+    const p1 = post(a.app);
+    await started(g);
     g.fail(new Error("补池在中途炸了"));
+    expect((await p1).status).toBe(200);
     await g.settled();
 
     expect(await storage.get(TEND_LOCK_KEY), "抛错那一轮把锁留在了存储里").toBeNull();
@@ -230,7 +257,7 @@ describe("护栏 1：两个副本 / 两个并发请求，只有一个真的跑�
 
     // 反向自检：锁真的没了 ⇒ 冷却过去之后能再点（不是靠等 15 分钟自然过期）。
     t += MANUAL_TEND_COOLDOWN_MS;
-    expect((await post(a.app)).status, "锁没释放的话这里会是 409").toBe(202);
+    expect((await post(a.app)).status, "锁没释放的话这里会是 409").toBe(200);
   });
 });
 
@@ -257,11 +284,11 @@ describe("护栏 2 与 4：手动冷却 + 每日写预算闸（评审那条护�
     const storage = new MemoryStorage(undefined, () => t);
     const a = await fixtureA({ storage, now: () => t });
 
-    expect((await post(a.app)).status).toBe(202);
+    expect((await post(a.app)).status).toBe(200);
     expect((await guardOf(storage))?.used, "前置条件：第一次点之后是 1").toBe(1);
 
     t += 11 * 60_000;
-    expect((await post(a.app)).status, "11 分钟 > 10 分钟冷却，该放行").toBe(202);
+    expect((await post(a.app)).status, "11 分钟 > 10 分钟冷却，该放行").toBe(200);
     expect(
       (await guardOf(storage))?.used,
       "护栏键在两次点击之间蒸发了 ⇒ 日预算闸永远走不到耗尽",
@@ -280,13 +307,13 @@ describe("护栏 2 与 4：手动冷却 + 每日写预算闸（评审那条护�
     const storage = new MemoryStorage(undefined, () => t);
     const a = await fixtureA({ storage, now: () => t });
 
-    expect((await post(a.app)).status).toBe(202);
+    expect((await post(a.app)).status).toBe(200);
     t += 11 * 60_000;
-    expect((await post(a.app)).status).toBe(202);
+    expect((await post(a.app)).status).toBe(200);
     expect((await guardOf(storage))?.used, "11 分钟不归零").toBe(2);
 
     t = DAY_END + 60_000;                       // 跨过当日 24:00
-    expect((await post(a.app)).status).toBe(202);
+    expect((await post(a.app)).status).toBe(200);
     const g = await guardOf(storage);
     expect(g?.used, "新的一天从 1 重新数").toBe(1);
     expect(g?.day, "写回去的是新那一天的序号").toBe(20_001);
@@ -331,10 +358,10 @@ describe("护栏 2 与 4：手动冷却 + 每日写预算闸（评审那条护�
    * **面板要如实显示还剩几次，不是等到耗尽才说。**
    * **变红条件（第一版三条判据里仍然有效的第 ④ 条）**：只在 429 那一支给 `remaining`。
    */
-  it("202 的响应体里就带着「今天还剩几次」与冷却到期时刻", async () => {
+  it("响应体里就带着「今天还剩几次」与冷却到期时刻", async () => {
     const a = await fixtureA();
     const res = await post(a.app);
-    expect(res.status).toBe(202);
+    expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       started: true,
       trigger: "manual",
@@ -388,7 +415,7 @@ describe("护栏 2 与 4：手动冷却 + 每日写预算闸（评审那条护�
 // 载体：Worker 的 waitUntil vs Node 的 fire-and-forget（硬约束 1）
 // ───────────────────────────────────────────────────────────────────────────
 
-describe("202 之后由谁驱动补池 —— 两种运行时的差异必须是被断言的", () => {
+describe("整轮跑完之后由谁兜底 —— 两种运行时的差异必须是被断言的", () => {
   function fakeCtx(): { ctx: BackgroundCtx; waited: Array<Promise<unknown>> } {
     const waited: Array<Promise<unknown>> = [];
     return { ctx: { waitUntil: (p) => { waited.push(p); } }, waited };
@@ -404,26 +431,32 @@ describe("202 之后由谁驱动补池 —— 两种运行时的差异必须是�
    * 所以判据是**那个 promise 真的交到了 `waitUntil` 手里**，而且**它落定的那一刻
    * 补池才算跑完**（执行体是 gated 的，202 返回时它还挂着）。
    */
-  it("Worker 形态：补池挂在 ctx.waitUntil 上，且那个 promise 落定时它才算跑完", async () => {
+  it("Worker 形态：整轮交给 ctx.waitUntil 当兜底网，且响应必须等它跑完才返回", async () => {
     const g = gatedRun();
     const a = await fixtureA({ run: g.run, runtime: workerRuntime() });
     const { ctx, waited } = fakeCtx();
 
-    const res = await a.app.request(
+    const p = a.app.request(
       "/admin/api/registrar/tend",
       { method: "POST", headers: withKey },
       undefined,
       ctx as unknown as ExecutionContext,
     );
-    expect(res.status).toBe(202);
-    expect(waited.length, "补池没有交给 ctx.waitUntil —— 响应返回后它会被截断").toBe(1);
+    await started(g);
+    expect(waited.length, "补池没有交给 ctx.waitUntil —— 客户端断开时它会被截断").toBe(1);
 
-    let done = false;
-    void waited[0]!.then(() => { done = true; });
-    expect(done, "202 返回时补池还挂着（执行体是可控的）").toBe(false);
+    // 🔴 **这一条断言就是整条修复。** 从前端点起跑之后立刻回 202，整轮的载体只有
+    // `ctx.waitUntil`，而平台在响应后约 30 秒把它取消掉（实测 3/3）；取消不抛异常，
+    // 于是锁不放、历史不写、面板上与「压根没点过」逐字节不可区分。
+    // **变红条件**：把 handler 里那行 `await task;` 删掉。
+    let responded = false;
+    void Promise.resolve(p).then(() => { responded = true; });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(responded, "整轮还没跑完端点就返回了 —— 那正是被平台砍断的那个缺陷").toBe(false);
+
     g.release();
-    await waited[0];
-    await Promise.resolve();
+    const res = await p;
+    expect(res.status).toBe(200);
     expect(g.starts()).toBe(1);
   });
 
@@ -440,16 +473,18 @@ describe("202 之后由谁驱动补池 —— 两种运行时的差异必须是�
     const a = await fixtureA({ run: g.run, runtime: nodeRuntime() });
     const { ctx, waited } = fakeCtx();
 
-    const res = await a.app.request(
+    const p = a.app.request(
       "/admin/api/registrar/tend",
       { method: "POST", headers: withKey },
       undefined,
       ctx as unknown as ExecutionContext,
     );
-    expect(res.status).toBe(202);
+    await started(g);
     expect(waited.length, "Node 侧不该碰 ctx.waitUntil").toBe(0);
-    expect(g.starts(), "但补池确实跑起来了").toBe(1);
     g.release();
+    const res = await p;
+    expect(res.status).toBe(200);
+    expect(g.starts(), "但补池确实跑起来了").toBe(1);
     await g.settled();
   });
 });
@@ -481,10 +516,12 @@ describe("鉴权与不可用状态", () => {
     expect(g.starts(), "鉴权失败了，但补池已经跑起来了").toBe(0);
 
     // 反向自检：带上口令**真的会跑**——否则上面那两个 0 什么都没证明。
-    expect((await post(a.app)).status).toBe(202);
+    const p1 = post(a.app);
+    await started(g);
+    g.release();
+    expect((await p1).status).toBe(200);
     expect(g.starts()).toBe(1);
     expect(st.puts, "带对口令的那次一次盘都没落").toBeGreaterThan(before.puts);
-    g.release();
     await g.settled();
   });
 
@@ -526,7 +563,7 @@ describe("鉴权与不可用状态", () => {
 
   it("成功那一次在事件板块里留一条痕迹 —— 运维要看得出「池子为什么变了」", async () => {
     const a = await fixtureA();
-    expect((await post(a.app)).status).toBe(202);
+    expect((await post(a.app)).status).toBe(200);
     const e = a.logger.entries.find((x) => x.event === "registrar.manual_tend_started");
     expect(e?.level).toBe("info");
     expect(e?.fields?.remaining).toBe(MANUAL_TENDS_PER_DAY - 1);
@@ -558,8 +595,10 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
       REGISTRAR_PRIMARY: "yyds",
       YYDS_API_KEY: "k",
       TARGET_KEYS: "1",
-      // 比 WORKER_ROUND_BUDGET_MS 大 ⇒ 一次尝试都开不了，零网络。
+      // 刻意配一个**远大于手动上限**的值：这一轮会被 `Math.min` 压回
+      // `MANUAL_CODE_TIMEOUT_MS`，而「压了没说」正是下面那一格要钉的东西。
       CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1),
+      MINT_BATCH: "5",
       // ⚠️ **第二道保险，不是装饰**：本夹具"零网络"的第一道保险是生产代码真的传了
       // `roundBudgetMs`（`tendOnce` 一次尝试都不开始）。**变异把那一行删掉之后，
       // 这条用例当场打了 YYDS 的线上接口**（拿到真实域名与 HTTP 403/429）——
@@ -609,17 +648,53 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
    * 推导出来的期望值恒等于实际值，那样「两边一起改」就绕过去了。
    * 下面第二条断言把那个常量本身也钉成同一个字面量 —— Cron 路径用的正是它。
    */
-  it("手动补池传的 roundBudgetMs 与 Cron 那一份逐字相同（780_000 手写字面量锚）", async () => {
+  /**
+   * ⚠️⚠️ **手动补池用的是 `MANUAL_*` 那一族，与 Cron 那份 780_000 必须不是同一个数。**
+   *
+   * 上一版这一格的标题逐字是「与 Cron 那一份**逐字相同**（780_000 手写字面量锚）」，
+   * 也就是说**这条判据当时把那个缺陷本身钉成了契约**——它每一次都绿，而线上
+   * 每一次点击都被平台在约 30 秒处砍断（实测 3/3，日志原话见
+   * `src/core/registrar/types.ts` 的 `MANUAL_MINT_BATCH`）。判据钉错了对象时，
+   * 绿色恰恰是它最危险的样子。
+   *
+   * **观测点换成 `registrar.manual_round_capped` 事件**（旧那条
+   * `round_budget_impossible` 已经不可能触发了：三格压顶之后
+   * `worstAttemptMs` 恒 = 60 秒 < 70 秒预算，这正是压顶的目的之一）。
+   *
+   * 三条变异各自拦得住：
+   * · **不压顶**（`Math.min` 那三行删掉）⇒ 这条事件不出现 ⇒ 红；
+   * · **压顶了但不说**（只删打事件那一段）⇒ 同上 ⇒ 红；
+   * · **手动预算改回 780_000** ⇒ 最后那条「两族不许相等」的断言 ⇒ 红。
+   *
+   * ⚠️ 期望值一律写手写字面量，不写常量本身：从被测对象推导出来的期望值恒等于
+   * 实际值，那样「两边一起改」就绕过去了。
+   */
+  it("手动补池用自己那一族预算，且把设置里更大的值压顶后如实说出来", async () => {
     const { res, storage } = await realApp();
-    expect(res.status).toBe(202);
+    // 202「已受理」→ 200「跑完了」：这一轮的结果现在是同步交出来的。
+    expect(res.status, "手动补池现在必须跑完再返回").toBe(200);
+    const body = await res.json() as { outcome?: { kind?: string } };
+    expect(body.outcome?.kind, "响应体里必须带上这一轮的真实结局").toBeDefined();
 
-    const e = (await storedEvents(storage)).find((x) => x.event === "registrar.round_budget_impossible");
-    expect(e, "手动补池没有传轮级预算 —— 平台中止时临时邮箱会漏删").toBeDefined();
-    expect(e?.fields?.roundBudgetMs, "手动那一份的取值漂了").toBe(780_000);
+    // ⚠️ **观测点是响应体，不是事件。** 压顶每一次点击都会发生（默认 mintBatch 5 > 1），
+    // 做成事件就是每点一次多一次 put ⇒ 打破「健康的一轮零写」，而那条性质正是
+    // 五语言 DEPLOY.md 配额账（一次成功点击恰好 3 次 put）的立身之本。
+    const capped = (body as { outcome?: { capped?: Record<string, unknown> | null } }).outcome?.capped;
+    expect(capped, "设置里的值被压小了却没说 —— 面板说 A 实际做 B").toBeTruthy();
+    expect(capped?.budgetMs, "手动那一份预算漂了").toBe(70_000);
+    expect(capped?.codeTimeoutMs, "等码超时没被压到手动上限").toBe(60_000);
+    expect(capped?.mintBatch, "手动一轮最多铸 1 把").toBe(1);
+    expect(capped?.configuredMintBatch, "被压之前的值要如实报出来").toBe(5);
+
+    // 🔴 整条修复的立身之本：两族**不许**再相等。
     expect(
-      WORKER_ROUND_BUDGET_MS,
-      "Cron 那一份（src/entry/worker.ts 用的就是这个常量）也必须是同一个数",
-    ).toBe(780_000);
+      Number(MANUAL_ROUND_BUDGET_MS),
+      "手动与 Cron 共用一份预算 —— 那正是被平台砍断的那个缺陷",
+    ).not.toBe(Number(WORKER_ROUND_BUDGET_MS));
+    expect(MANUAL_ROUND_BUDGET_MS).toBe(70_000);
+    expect(MANUAL_CODE_TIMEOUT_MS).toBe(60_000);
+    expect(MANUAL_MINT_BATCH).toBe(1);
+    expect(WORKER_ROUND_BUDGET_MS, "Cron 那一份不该被这次改动碰到").toBe(780_000);
   });
 
   /**
@@ -731,7 +806,7 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
 
     // ── ① 正常配置下的一次成功点击 ─────────────────────────────────────────
     const one = await clickOnce();
-    expect(one.res.status, "没走到成功那一支 —— 那下面数的是一条被拒绝的路径").toBe(202);
+    expect(one.res.status, "没走到成功那一支 —— 那下面数的是一条被拒绝的路径").toBe(200);
 
     // **先证明这一轮真的跑完了**，否则「3」可能是某条提前返回的路径的读数。
     const history = await one.st.get<TendRecord[]>(TEND_HISTORY_KEY);
@@ -753,7 +828,7 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
     // 这一段是这个 3 的**判别力来源**：没有它，`toBe(3)` 证明不了计数器对
     // 「多落一次盘」是敏感的（本仓登记过的「覆盖态让被测的选择不可观测」）。
     const warned = await clickOnce({ CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1) });
-    expect(warned.res.status).toBe(202);
+    expect(warned.res.status).toBe(200);
     expect(
       warned.puts,
       "多一条事件却没多一次 put —— 那上面那个 3 对「多写一次」是无感的",

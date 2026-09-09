@@ -17,7 +17,7 @@ import { WORKER_CRON_WALL_CLOCK_MS } from "../../core/registrar/types.js";
  * 这正是设计 §10.2 第 1 条点名要补的洞）。两条用例各钉一把，见
  * `tests/contract/manual-tend.test.ts` 的
  * 「同一个副本上两个并发请求：只有一个真跑（进程内守卫，存储锁在这里拦不住）」与
- * 「两个副本同时点『立即补池』，只有一个真的跑起来，另一个拿到 409」。
+ * 「上一轮（Cron）还持着锁时，手动点击拿到 409 locked 且执行体一次都不跑」。
  *
  * ⚠️ **诚实限定，不许被改写成「并发已解决」。** KV 是最终一致的，存储锁是**尽力而为、
  * 不是互斥原语**；它挡的是「上一轮明明还在跑」这种最常见的重叠，不是纳秒级竞态。
@@ -43,7 +43,7 @@ import { WORKER_CRON_WALL_CLOCK_MS } from "../../core/registrar/types.js";
  * 同一批里的 `src/core/admin/tend-guard.ts` 就是范例——`MANUAL_GUARD_KEY` 与
  * `checkManualTend()` 在 core，读写它的那两行在 `handlers/registrar.ts`。
  *
- * ⇒ **本文件今天违反了那条约定**：`TEND_LOCK_KEY` / `TEND_LOCK_TTL_MS` /
+ * ⇒ **本文件今天违反了那条约定**：`TEND_LOCK_KEY` / 两份 `TEND_LOCK_TTL_*` /
  * `narrowTendLock()` 三样按约定该住 `src/core/admin/`，只有 `acquire`/`release`
  * 该留在这里。**没拆是范围取舍，不是有什么东西拦着**——拆开要动两个入口 + wire + handler
  * 的 import，而本任务是本期风险最高的一个。**拆分成本很低，随时可以做，
@@ -54,14 +54,42 @@ import { WORKER_CRON_WALL_CLOCK_MS } from "../../core/registrar/types.js";
 export const TEND_LOCK_KEY = "registrar_tend_lock";
 
 /**
- * 锁的有效期。取 Cloudflare Cron Trigger 单次调用的墙钟上限（15 分钟）：超过它，
- * 上一轮要么已经结束、要么已经被平台中止，锁不该再拦住新的一轮——否则一次
- * 被中止的调用会让补池永久停摆。
+ * **定时（Cron）轮**的锁有效期。取 Cloudflare Cron Trigger 单次调用的墙钟上限
+ *（15 分钟）：超过它，上一轮要么已经结束、要么已经被平台中止，锁不该再拦住新的一轮
+ * ——否则一次被中止的调用会让补池永久停摆。
+ *
+ * ⚠️ **只给 `scheduled()` 那条路用。** 手动那条路走 `TEND_LOCK_TTL_MANUAL_MS`，
+ * 两者混用过一次，代价见那一段。
  *
  * ⚠️ **这把键写的时候不传 `expiresAt`**：有界性靠「单一固定键、数量恒为 1」，
  * 陈旧值无害——读侧是 `until > now` 的**值比较**，过期的锁不拦任何人。
  */
-export const TEND_LOCK_TTL_MS = WORKER_CRON_WALL_CLOCK_MS;
+export const TEND_LOCK_TTL_CRON_MS = WORKER_CRON_WALL_CLOCK_MS;
+
+/**
+ * Cloudflare KV 边缘读的陈旧窗口。**平台默认值，不是我们的取舍。**
+ *
+ * `src/adapters/storage-kv.ts` 走的是裸 `kv.get(key, "json")`、没有传 `cacheTtl`，
+ * 于是另一个 colo 读到的锁最多可能陈旧这么久。**任何一份锁 TTL 都必须大于它**，
+ * 否则一把还活着的锁会被别的副本读成空的，两轮同时开跑——那正是这把锁存在的全部理由。
+ */
+export const KV_READ_STALENESS_MS = 60_000;
+
+/**
+ * **手动补池专用的锁有效期。**
+ *
+ * 🔴 与 Cron 那份分开、且**照轮次的真实墙钟定，不照载体定**。取 180 秒的两头夹：
+ *
+ * - **下界①**：手动一轮的真实最坏 ≈ 60 秒（`MANUAL_CODE_TIMEOUT_MS` 等码）
+ *   ＋ 注册链上约 5 个 `REGISTRAR_REQUEST_TIMEOUT_MS` = 15 秒的请求尾巴
+ *  （发码 / 轮询 / 注册 / 登录 / 建 key）≈ **135 秒**。锁必须盖得住它，否则
+ *   `releaseTendLock` 那个**无条件** `storage.delete` 会去删掉别人刚抢到的锁。
+ * - **下界②**：必须大于 `KV_READ_STALENESS_MS`（60 秒），理由见那一段。
+ * - **上界**：手动冷却是 600 秒、Cron 间隔 1800 秒。取 180 秒 ⇒ 一次被中断的点击
+ *   最多挡住补池 3 分钟，撞上 Cron 的概率 180/1800 = 10%，撞上也只跳一轮
+ *  （对比出事时那份 15 分钟：**必然**挡掉至少一轮 Cron）。
+ */
+export const TEND_LOCK_TTL_MANUAL_MS = 180_000;
 
 /** 存储里读回来的锁值。窄化：`Storage.get` 是裸 `JSON.parse` + `as`，什么形状都可能是。 */
 export function narrowTendLock(raw: unknown): { until: number } | null {
@@ -78,17 +106,28 @@ export type TendLockResult = { ok: true } | { ok: false; until: number };
  *
  * 返回 `{ ok: false, until }` 时 `until` 是当前持锁方声明的到期时刻，
  * 面板拿它显示「上一轮还在跑，最晚 X 之前会结束」。
+ *
+ * 🔴 **`ttlMs` 必填、刻意不给默认值。** 从前它是文件级常量 `TEND_LOCK_TTL_MS`
+ *（= Cron 的 15 分钟），于是手动那条路**无声地**沿用了 Cron 的 TTL，一次被平台中断的
+ * 点击就把注册机连同 Cron 一起锁死一刻钟。给这个参数补一个默认值 = 那条缺陷原地复活，
+ * 而且下一次同样不会有任何东西提醒你。三个调用点必须各自显式表态用哪一份。
  */
-export async function acquireTendLock(storage: Storage, now: number): Promise<TendLockResult> {
+export async function acquireTendLock(
+  storage: Storage, now: number, ttlMs: number,
+): Promise<TendLockResult> {
   const lock = narrowTendLock(await storage.get(TEND_LOCK_KEY));
   if (lock !== null && lock.until > now) return { ok: false, until: lock.until };
-  await storage.put(TEND_LOCK_KEY, { until: now + TEND_LOCK_TTL_MS });
+  await storage.put(TEND_LOCK_KEY, { until: now + ttlMs });
   return { ok: true };
 }
 
 /**
  * 释放锁。**调用方必须放在 `finally` 里**——放在 `try` 的末尾时，一次抛错的补池会
- * 让锁留到自然过期（最长 15 分钟）才肯放下一轮进来，也就是一次失败换来一段停摆。
+ * 让锁留到自然过期（Cron 轮最长 15 分钟、手动轮最长 3 分钟）才肯放下一轮进来，
+ * 也就是一次失败换来一段停摆。
+ *
+ * ⚠️ **`finally` 挡不住平台级的中止**：执行上下文被销毁时它一行都不跑。那正是手动
+ * 那份 TTL 必须短于冷却的理由——`finally` 失效时，短 TTL 是最后一道兜底。
  */
 export async function releaseTendLock(storage: Storage): Promise<void> {
   await storage.delete(TEND_LOCK_KEY);
@@ -99,8 +138,8 @@ export async function releaseTendLock(storage: Storage): Promise<void> {
  *
  * **同步获取**是它的关键性质：`tryEnter()` 里没有任何 `await`，所以两个并发调用之间
  * 不存在检查与占用之间的窗口。写成「先问 `busy()` 再 `run()`」就把那个窗口造回来了
- *（两次调用之间隔着若干次存储 IO），而那种形态下第二个请求会拿到 202 却什么都没跑
- * ——**面板说「已开始」而实际没有**，正是本仓反复裁过的那一类。
+ *（两次调用之间隔着若干次存储 IO），而那种形态下第二个请求会拿到一个成功码却什么
+ * 都没跑——**面板说跑了而实际没有**，正是本仓反复裁过的那一类。
  */
 export interface TendGate {
   /**

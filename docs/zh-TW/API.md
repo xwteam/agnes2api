@@ -520,7 +520,7 @@ curl http://localhost:8080/admin/api/session \
 **回應**：
 
 ```json
-{ "ok": true, "version": "0.2.1" }
+{ "ok": true, "version": "0.2.2" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +538,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +570,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1266,7 +1266,8 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ### POST /admin/api/registrar/tend
 
-手動觸發一輪補池。成功是 `202`（已開始），不是 `200`。
+手動觸發一輪補池。**端點會把整輪跑完再回應，成功是 `200`**（從前是 `202`，只表示已開始；
+這是一次破壞性變更）。一次呼叫最長約兩分鐘，別把用戶端逾時設得比它短。
 
 **請求體**：
 
@@ -1288,14 +1289,23 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```json
 {
   "started": true,
+  "done": true,
   "trigger": "manual",
   "channel": "moemail",
+  "outcome": {
+    "kind": "done",
+    "result": { "attempted": 1, "minted": 1 },
+    "capped": { "budgetMs": 70000, "mintBatch": 1, "configuredMintBatch": 5 }
+  },
   "remaining": 23,
   "resetAt": 1735776000000,
   "cooldownUntil": 1735690200000,
   "retryAfterMs": 600000
 }
 ```
+
+> [!IMPORTANT]
+> `outcome` 是這一輪的真實結局，**三種不許被讀成同一種「失敗」**，處置完全不同：`done`（跑完了，`result` 就是那一輪的 TendResult，含 `minted` / `attempted` / `failures`）、`skipped`（`reason` 為 `disabled` 或 `blocked`，一次上游請求都沒發）、`crashed`（整輪拋錯，可能已經建出臨時信箱）。`started: true` 保留是為了相容舊面板，真正表示「這一輪已經跑完」的是 `done: true`。手動輪帶自己那一族更緊的上限（一次點擊最多鑄 1 把、等驗證碼最多 60 秒、輪級預算 70 秒），真被壓小時 `outcome.capped` 會如實報出壓前壓後的值。
 
 > [!NOTE]
 > `remaining` 在成功那一支也照樣給：只在耗盡那一支給它，等於讓維運毫不知情地撞上一堵牆。拒絕一共七種，**沒有一種是「這條路由不存在」**：`409 registrar_disabled`（註冊機沒啟用）、`409 registrar_blocked`（註冊機開著，但這份設定裝不起來、本次沒有啟動它）、`409 channel_not_configured`（通道沒配憑證）、`409 tend_in_flight`（同一副本上已有一輪在途）、`409 locked`（跨副本短鎖被別人佔著）、`429 manual_cooldown`（兩次手動之間的最小間隔）、`429 write_budget_exhausted`（每天的次數上限）——後兩條與 [REGISTRAR.md](REGISTRAR.md) 的「四條護欄」表指同一份真源。
@@ -1458,7 +1468,7 @@ curl http://localhost:8080/health
 **回應**：
 
 ```json
-{ "status": "ok", "version": "0.2.1", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.2.2", "storage": { "writable": true } }
 ```
 
 `storage.writable` 報告的是「key 池所在的儲存是否真的寫得進去」。它由啟動時的一次探測與執行期每一次真實寫操作共同維護，健康檢查自身不寫盤。儲存不可寫時回傳 **HTTP `503`**，`status` 變成 `degraded` 並附一句 `detail`（Docker 部署常見於繫結掛載的主機目錄擁有者與容器內執行使用者不一致，詳見容器日誌）。

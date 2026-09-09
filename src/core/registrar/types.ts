@@ -54,3 +54,56 @@ export const WORKER_CRON_WALL_CLOCK_MS = 900_000;
  * 两处必须用同一个数，各写一个字面量迟早漂移。
  */
 export const WORKER_ROUND_BUDGET_MS = 780_000;
+
+/**
+ * ⚠️⚠️ **以下这一族是「手动补池」专用的，与上面那份 Cron 预算不是一回事，
+ * 而把两者混用正是一条实测出来的严重缺陷。**
+ *
+ * 事故经过（Cloudflare 平台日志原话，不是推断）：面板「立即补池」回 202 之后把整轮
+ * 交给 `ctx.waitUntil`，而平台在**响应结束后约 30 秒**就把它取消掉：
+ *   `waitUntil() tasks did not complete within the allowed time after invocation end
+ *    and have been cancelled.`
+ * 实测 3/3 复现，间隔恒定 31~33 秒。
+ *
+ * 🔴 **取消不抛异常**——整个执行上下文被销毁，于是
+ * `src/http/admin/handlers/registrar.ts` 与 `src/http/wire.ts` **两层 `try/catch/finally`
+ * 一个都不执行**。后果不止「这一轮没记上」：`finally` 里的 `releaseTendLock` 同样不跑，
+ * 锁泄漏到自然过期，而那份 TTL 当时取的是 Cron 的 15 分钟
+ * ⇒ **点一次按钮 = 注册机（含 Cron 轮）停摆一刻钟**（日志实证：期间两次
+ * 「上一轮补池仍在进行，跳过本次 Cron 触发」）。
+ *
+ * ⇒ 处置是**换载体**（`fetch` 请求自己 `await` 到底，见 `wire.ts` 的 `manualTend`），
+ * 而不是「把预算调小一点继续赌 `waitUntil`」——赌只是把静默截断的概率变小，
+ * 没有消除它，而静默截断是这族缺陷里最恶劣的形态。
+ */
+export const MANUAL_MINT_BATCH = 1;
+
+/**
+ * 手动一轮**只试一个域名**。
+ *
+ * 这不是「保守一点」，是让 `tender.ts` 的 `worstAttemptMs =
+ * codeTimeoutMs + (maxDomainAttempts − 1) × mintDelayMaxMs` **退化成常量**。
+ * 不压它的话，运维把 `MAX_DOMAIN_ATTEMPTS` 调成 2，`worstAttemptMs` 就跳到
+ * 150 秒 > 预算 ⇒ 预算判据当场判「这一次尝试开不起来」⇒ **按钮变成永远铸不出
+ * key 的诚实空转**，而且空转得毫无征兆。
+ */
+export const MANUAL_MAX_DOMAIN_ATTEMPTS = 1;
+
+/**
+ * 手动轮的等码超时，取 Cron 那份（默认 120 秒）的一半。
+ *
+ * **不取更小的值**：`pollCode` 一超时就是 `code_timeout`，而那封信对应的临时邮箱
+ * 已经真的建出来、真的花掉了。载体换成请求自身之后没有 30 秒的天花板压着，
+ * 没有任何理由把成功率砍到那个量级去换一个已经不存在的约束。
+ */
+export const MANUAL_CODE_TIMEOUT_MS = 60_000;
+
+/**
+ * 手动轮的墙钟预算。
+ *
+ * 🔴 **它不是耗时上界，别读成上界。** 在 `MANUAL_MINT_BATCH = 1` 之下它**只被判一次**
+ *（`tender.ts` 里 `i === 0` 那次），语义是「这一次尝试开不开得起来」。
+ * 唯一的硬约束是**必须严格大于 `worstAttemptMs`**（= `MANUAL_CODE_TIMEOUT_MS` = 60 秒），
+ * 否则见 `MANUAL_MAX_DOMAIN_ATTEMPTS` 那段说的诚实空转。多出来的 10 秒留给 `elapsedMs`。
+ */
+export const MANUAL_ROUND_BUDGET_MS = 70_000;

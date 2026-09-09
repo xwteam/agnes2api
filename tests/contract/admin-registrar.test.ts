@@ -32,7 +32,7 @@ import { httpFail } from "../../src/core/registrar/url.js";
  * 实测过的两条逃逸：
  * · `wire.ts` 的 `tend: (channel) => runManualTendRound(env, storage, channel)`
  *   改成传 `null` ⇒ **1931/1931 全绿**。而那正是「面板写着 MoeMail、实际按主通道跑」
- *   ——handler 的 202 与响应体里那个 `"channel":"moemail"` 都是它**自己的自报**，
+ *   ——handler 的状态码与响应体里那个 `"channel":"moemail"` 都是它**自己的自报**，
  *   取自它自己的局部变量，**与执行体做了什么无关**。
  * · `wire.ts` 的 `probeChannel` 函数体整个换成 `return { ok: true, domains: 0, credentials: "accepted", cleaned: true }`
  *   ⇒ **1931/1931 全绿**。而设计 §10.3 第 6 条「用数据代替推荐」的全部立论，
@@ -107,7 +107,7 @@ function fixture(o: FixtureOptions = {}) {
   const tendCalls: Array<Channel | null> = [];
   const wiring: RegistrarWiring | undefined = o.wire === false ? undefined : {
     storage,
-    tend: async (channel) => { tendCalls.push(channel); },
+    tend: async (channel) => { tendCalls.push(channel); return { kind: "done", result: { skipped: false, available: 0, attempted: 0, minted: 0, mintedByChannel: {}, failures: [], primaryChannel: "moemail", at: 0, durationMs: 0 }, capped: null }; },
     // **缺省抛错，不是缺省返回一个成功**：一个"看起来测通了、其实什么都没探"的
     // 默认桩正是本仓登记的第 2 种假阳性（桩不抛错）。要测成功那一支的用例
     // 自己传 `probe`。抛出来的这一支同时也是「上游报错」那几格用的形态。
@@ -232,7 +232,7 @@ describe("GET /admin/api/registrar/status", () => {
    * ⚠️⚠️ **「已启用 · 本次没跑起来」是第三态，不许被压成前两态里的任何一个。**
    *
    * 注册机装不起来时 `enabled` 一个字都不改（把它压成 `false` 是撒谎：运维明明打开了），
-   * 而两条按钮**也不许回 202 进一个空操作**（那是「面板说开始了、其实什么都不会发生」，
+   * 而两条按钮**也不许回一个成功码进一个空操作**（那是「面板说开始了、其实什么都不会发生」，
    * 本仓反复裁过的同一形状）。⇒ 一格标量 `blocked` + 一条**新的** `reason`。
    *
    * 退回 `registrar_disabled` 会怎样：那条 reason 的五语言文案逐字是
@@ -256,7 +256,7 @@ describe("GET /admin/api/registrar/status", () => {
     expect(got.blocked).toBe(true);
 
     const tend = await app.request("/admin/api/registrar/tend", { method: "POST", headers: withKey });
-    expect(tend.status, "202 = 面板说「已开始」，而实际上一把 key 都不会铸").toBe(409);
+    expect(tend.status, "200 = 面板说「跑完了」，而实际上一把 key 都不会铸").toBe(409);
     expect((await tend.json() as { reason: string }).reason).toBe("registrar_blocked");
     expect(tendCalls, "拒绝的那一次不许真去跑一轮").toEqual([]);
 
@@ -313,7 +313,10 @@ describe("GET /admin/api/registrar/status", () => {
     expect(body.pool.fresh, "真正能打上游的只剩两把").toBe(2);
     expect(body.pool.target).toBe(9);
     expect(body.pool.gap, "缺口 = target - counted，夹到非负").toBe(5);
-    expect(body.pool.mintBatch, "面板算「本次最多铸几把」要它").toBe(3);
+    // 🔴 **配置里是 3，这里回 1**：这一格是确认弹窗算「本次最多铸 N 把 / 最多消耗
+    // N 个临时邮箱」的**唯一**输入，而手动一轮实际只跑 `MANUAL_MINT_BATCH` = 1 把。
+    // 不压就是弹窗说 3、实际做 1 —— 而且那句谎正好出现在用户点确认之前那一屏上。
+    expect(body.pool.mintBatch, "面板算「本次最多铸几把」要它，必须是压顶之后的值").toBe(1);
 
     /**
      * **反向自检：这五个数字两两不同。**
@@ -383,14 +386,14 @@ describe("GET /admin/api/registrar/status", () => {
    *
    * 两个数字**刻意不同**，而且差 1：
    * · `status` 给的是「**现在**还剩几次」——什么都没发生，`used=5` ⇒ **19**；
-   * · `202` 给的是「**点完这一次之后**还剩几次」——`used` 已经写成 6 ⇒ **18**。
+   * · 成功那一支给的是「**点完这一次之后**还剩几次」——`used` 已经写成 6 ⇒ **18**。
    *
    * 只钉其中一个的话，把 `manualTendQuota` 写成直接复用 `checkManualTend` 的
    * `ok` 支（少 1）或者反过来（多 1），都会有一半永远绿。两个都是手写字面量，
    * **不从 `MANUAL_TENDS_PER_DAY` 推导**——从被测对象自己推导出来的期望值恒等于
    * 实际值，那是本仓登记的第 6 种假阳性。
    */
-  it("点一次之前 status 说 19、点完之后 202 说 18 —— 两个方向的口径各钉一格", async () => {
+  it("点一次之前 status 说 19、点完之后响应体说 18 —— 两个方向的口径各钉一格", async () => {
     const storage = new MemoryStorage(undefined, () => NOW);
     const guard: ManualGuard = { day: 20_000, used: 5, cooldownUntil: 0 };
     await storage.put(MANUAL_GUARD_KEY, guard);
@@ -406,7 +409,7 @@ describe("GET /admin/api/registrar/status", () => {
     expect(before.manual.cooldownUntil, "不在冷却中就是 null，不是一个已经过去的时刻").toBeNull();
 
     const res = await tend(app);
-    expect(res.status).toBe(202);
+    expect(res.status).toBe(200);
     expect(
       (await res.json() as { remaining: number }).remaining,
       "点完之后 used=6，剩 24-6=18",
@@ -498,7 +501,7 @@ describe("GET /admin/api/registrar/status", () => {
     const st = new CountingStorage(new MemoryStorage(undefined, now));
     const wiring: RegistrarWiring = {
       storage: st,
-      tend: async () => {},
+      tend: async () => ({ kind: "done", result: { skipped: false, available: 0, attempted: 0, minted: 0, mintedByChannel: {}, failures: [], primaryChannel: "moemail", at: 0, durationMs: 0 }, capped: null }),
       // 失败夹具：这正是上一格没有的那一半。
       probeChannel: async () => { throw new Error("上游不可达"); },
     };
@@ -549,7 +552,7 @@ describe("GET /admin/api/registrar/status", () => {
     const st2 = new CountingStorage(new MemoryStorage(undefined, () => t2));
     const okApp = await makeApp([], [], { registrar: BOTH_CHANNELS }, () => t2, {
       storage: st2,
-      registrar: { storage: st2, tend: async () => {}, probeChannel: async () => ({ ok: true, domains: 1, credentials: "accepted", cleaned: true }) },
+      registrar: { storage: st2, tend: async () => ({ kind: "done", result: { skipped: false, available: 0, attempted: 0, minted: 0, mintedByChannel: {}, failures: [], primaryChannel: "moemail", at: 0, durationMs: 0 }, capped: null }), probeChannel: async () => ({ ok: true, domains: 1, credentials: "accepted", cleaned: true }) },
     });
     const b5 = st2.puts;
     for (let i = 0; i < 51; i++) {
@@ -775,24 +778,24 @@ describe("POST /admin/api/registrar/channels/:channel/test", () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 describe("立即补池的 channel 参数：「只用这一条通道」", () => {
-  it("不带请求体时照常 202，且传给执行体的是 null（按配置的主/备链跑）", async () => {
+  it("不带请求体时照常 200，且传给执行体的是 null（按配置的主/备链跑）", async () => {
     const { app, tendCalls } = await fixture();
-    expect((await tend(app)).status).toBe(202);
+    expect((await tend(app)).status).toBe(200);
     expect(tendCalls, "不带体的旧调用方式必须一字不变地照常工作").toEqual([null]);
   });
 
   /**
    * ⚠️ **不只断言 202：断言执行体收到的正是那条通道。**
    * 只看状态码的话，把 `wiring.tend(channel)` 写成 `wiring.tend(null)`
-   * ——也就是「菜单上选了 MoeMail，实际按主通道 YYDS 跑」——照样 202、照样绿。
+   * ——也就是「菜单上选了 MoeMail，实际按主通道 YYDS 跑」——照样 200、照样绿。
    */
   it("带 channel 时，执行体收到的就是那一条（不是被悄悄换成主通道）", async () => {
     const { app, tendCalls } = await fixture();
-    expect((await tend(app, { channel: "moemail" })).status).toBe(202);
+    expect((await tend(app, { channel: "moemail" })).status).toBe(200);
     expect(tendCalls).toEqual(["moemail"]);
   });
 
-  it("202 的响应体把这一轮实际用的通道回显出来", async () => {
+  it("响应体把这一轮实际用的通道回显出来", async () => {
     const { app } = await fixture();
     const body = await (await tend(app, { channel: "moemail" })).json() as { channel: string | null };
     expect(body.channel).toBe("moemail");
@@ -852,7 +855,7 @@ describe("立即补池的 channel 参数：「只用这一条通道」", () => {
 
   it("channel: null 与不给这个字段等价 —— 面板可以直接把「按配置的链」编码成 null", async () => {
     const { app, tendCalls } = await fixture();
-    expect((await tend(app, { channel: null })).status).toBe(202);
+    expect((await tend(app, { channel: null })).status).toBe(200);
     expect(tendCalls).toEqual([null]);
   });
 });
@@ -868,7 +871,7 @@ describe("立即补池的 channel 参数：「只用这一条通道」", () => {
  * **`wire.ts` 那一侧一格都没有被钉住**——两条实测过的逃逸写在本文件头。
  *
  * **零网络怎么做到的，两道保险**（照抄 `tests/contract/manual-tend.test.ts` 的
- * 「手动补池传的 roundBudgetMs 与 Cron 那一份逐字相同（780_000 手写字面量锚）」
+ * 「手动补池用自己那一族预算，且把设置里更大的值压顶后如实说出来」
  * 那一组的做法）：
  * ① `CODE_TIMEOUT_MS` 调到比 `WORKER_ROUND_BUDGET_MS` 还大 ⇒ `tendOnce` 判定
  *    「单次最坏耗时装不下本轮预算」，**一次尝试都不开始**就返回（补池那一组用它）；
@@ -928,7 +931,7 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
    *
    * 观测点是 **`tend:history` 那一行的 `primaryChannel`**，不是状态码、也不是响应体。
    * 三样东西在变异体里全都不会变：
-   * · `202` —— handler 起跑之后就返回了，与执行体做了什么无关；
+   * · 状态码 —— 它现在等整轮跑完才返回，但仍是 handler 的自报；
    * · 响应体里的 `"channel":"moemail"` —— 那是 handler **自己的局部变量**，是自报；
    * · 事件 `registrar.manual_tend_started` 的 `fields.channel` —— 同样是自报。
    * **只有落盘的那一行记的是真的跑了哪条通道。**
@@ -939,13 +942,13 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
   it("带 channel 时，落盘的那一行记的是「这一轮实际用的通道」，不是设置里选中的那条", async () => {
     const h = await realApp();
     const res = await h.call("/admin/api/registrar/tend", { channel: "moemail" });
-    expect(res.status).toBe(202);
+    expect(res.status).toBe(200);
 
     const rows = await h.history();
     expect(rows, "真装配这一轮没有往 tend:history 写下任何东西").toHaveLength(1);
     expect(
       rows![0]!.primaryChannel,
-      "面板上选的是 MoeMail，落盘的那一行却记着设置里那条 —— 202 与响应体都是 handler 的自报，抓不住这一条",
+      "面板上选的是 MoeMail，落盘的那一行却记着设置里那条 —— 状态码与响应体都是 handler 的自报，抓不住这一条",
     ).toBe("moemail");
     expect(rows![0]!.trigger).toBe("manual");
   });
@@ -956,7 +959,7 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
    */
   it("不带 channel 时，落盘的那一行记的是设置里选中的那条（镜像方向）", async () => {
     const h = await realApp();
-    expect((await h.call("/admin/api/registrar/tend")).status).toBe(202);
+    expect((await h.call("/admin/api/registrar/tend")).status).toBe(200);
     const rows = await h.history();
     expect(rows![0]!.primaryChannel, "没指定通道时应当用设置里选中的那条").toBe("yyds");
   });

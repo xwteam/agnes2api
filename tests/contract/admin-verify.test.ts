@@ -512,7 +512,7 @@ describe("出站探测护栏：与通道测试共用的那一套（全局约束 
     const storage = new MemoryStorage(undefined, now);
     const wiring: RegistrarWiring = {
       storage,
-      tend: async () => {},
+      tend: async () => ({ kind: "done", result: { skipped: false, available: 0, attempted: 0, minted: 0, mintedByChannel: {}, failures: [], primaryChannel: "moemail", at: 0, durationMs: 0 }, capped: null }),
       probeChannel: async () => ({ ok: true, domains: 3, credentials: "accepted", cleaned: true }),
     };
     const { app, repo } = await makeApp(
@@ -578,7 +578,7 @@ describe("出站探测护栏：与通道测试共用的那一套（全局约束 
     let fail = true;
     const wiring: RegistrarWiring = {
       storage,
-      tend: async () => {},
+      tend: async () => ({ kind: "done", result: { skipped: false, available: 0, attempted: 0, minted: 0, mintedByChannel: {}, failures: [], primaryChannel: "moemail", at: 0, durationMs: 0 }, capped: null }),
       probeChannel: async () => {
         if (fail) throw new Error("上游不可达");
         return { ok: true, domains: 2, credentials: "accepted", cleaned: true };
@@ -603,7 +603,7 @@ describe("出站探测护栏：与通道测试共用的那一套（全局约束 
     const probes: string[] = [];
     const wiring: RegistrarWiring = {
       storage,
-      tend: async () => {},
+      tend: async () => ({ kind: "done", result: { skipped: false, available: 0, attempted: 0, minted: 0, mintedByChannel: {}, failures: [], primaryChannel: "moemail", at: 0, durationMs: 0 }, capped: null }),
       probeChannel: async (channel) => { probes.push(channel); return { ok: true, domains: 1, credentials: "accepted", cleaned: true }; },
     };
     const { app } = await makeApp(

@@ -26,8 +26,10 @@ import { multiLogger } from "../adapters/logger-multi.js";
 import type { Logger } from "../ports/logger.js";
 import { createTendGate, type TendGate } from "./admin/tend-lock.js";
 import type { ChannelProbe } from "./admin/handlers/registrar.js";
-import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
-import { WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
+import { tendOnce, summarizeFailures, type ManualTendCap, type ManualTendOutcome } from "../core/registrar/tender.js";
+import {
+  MANUAL_CODE_TIMEOUT_MS, MANUAL_MAX_DOMAIN_ATTEMPTS, MANUAL_MINT_BATCH, MANUAL_ROUND_BUDGET_MS,
+} from "../core/registrar/types.js";
 import {
   DOMAIN_LEDGER_KEY, narrowDomainLedger, mergeDomainLedger, type DomainLedger,
 } from "../core/registrar/domain-ledger.js";
@@ -333,34 +335,44 @@ export async function buildApp(
 /**
  * 跑一轮**手动**补池（面板「立即补池」的执行体）。
  *
- * ⚠️ **`roundBudgetMs` 与 Cron 那一份逐字相同（`WORKER_ROUND_BUDGET_MS` = 780_000），
- * 这一行是本函数最容易被写漏的一行。** 不传的话：点一次「立即补池」，Worker 铸到
- * 第三把被平台回收，`mintOne` 的 `finally` 不跑，**两个临时邮箱留在上游**；
- * 点几次占满活跃邮箱名额 ⇒ 注册机彻底铸不出 key，**而面板上没有任何东西会说明原因**。
- * 由 `tests/contract/manual-tend.test.ts` 的
- * 「手动补池传的 roundBudgetMs 与 Cron 那一份逐字相同（780_000 手写字面量锚）」钉着
- * ——那一格的观测点是 `registrar.round_budget_impossible` 事件里的 `roundBudgetMs` 字段，
- * 所以「不传」与「传另一个值」是两种不同的红，两条变异各自都拦得住。
+ * 🔴🔴 **手动这一轮用的是 `MANUAL_*` 那一族，与 Cron 那份 780_000 不是一回事。**
+ * 上一版这里逐字写着「与 Cron 那一份逐字相同」，**那句话本身就是那条严重缺陷**：
  *
- * ⚠️ **两种运行时传同一个值，这是刻意的。** Node/Docker 没有平台墙钟上限，
- * Cron 那条路在 Node 上确实不传（`src/entry/node.ts`）；但手动这条路在 Node 上同样
- * 传，因为「一次点击最多跑多久」是**这颗按钮自己的**性质，不是运行时的性质——
- * 两侧不同就等于同一颗按钮在两种部署下能铸出不同把数，而那个差异没有任何人会去断言。
- * 代价：Node 上手动补池可能比定时轮少铸几把（判据是 `codeTimeoutMs`），
- * 下一次定时轮会接着补。
- * ⚠️ **这里从前还乘着一个「通道数」。** 两条通道改成二选一之后
- * 没有第二次等待了，那个因子整个消失。
+ * 2026-09-09（北京时间）实测，Cloudflare 平台日志原话——
+ *   `waitUntil() tasks did not complete within the allowed time after invocation end
+ *    and have been cancelled.`
+ * 手动轮 21:52:32 / 22:25:57 / 22:41:17 三次，对应取消 21:53:05 / 22:26:28 / 22:41:50，
+ * **3/3 复现，间隔恒定 31~33 秒**。也就是说 `fetch` 路径上 `ctx.waitUntil` 的实际额度
+ * ≈ 30 秒，而这里传的是 13 分钟——**差了约 26 倍**。
+ *
+ * 上一版那段「`ctx.waitUntil` 的实际上限本仓没有核实过，不许当既定事实用」的登记是对的，
+ * 但处置错了：它选择了「继续用那个没核实过的数」。现在核实了，值与载体一起换。
+ *
+ * ⚠️ **取消不抛异常**，整个执行上下文被销毁 ⇒ 本函数的 `try/catch/finally` 与
+ * 端点那一层的 `try/catch/finally` **两层全都不执行** ⇒ 不写补池历史、不发事件、
+ * 锁也不放。面板上那一轮与「压根没点过」逐字节不可区分。
+ *
+ * ⇒ **处置是换载体**：端点改成 `await` 这一轮再返回（见
+ * `src/http/admin/handlers/registrar.ts`），`runtime.background` 降级成
+ * 「客户端断开后的兜底网」。**光调小预算是不够的**——那只是把静默截断的概率压小，
+ * 没有消除它。
+ *
+ * ⚠️ **两种运行时仍然传同一族值，这一条没变、仍是刻意的。**
+ * 「一次点击最多跑多久」是**这颗按钮自己的**性质，不是运行时的性质；两侧不同就等于
+ * 同一颗按钮在两种部署下能铸出不同把数，而那个差异没有任何人会去断言。
+ * 代价：手动一轮**最多铸 1 把**（`MANUAL_MINT_BATCH`），剩下的交给定时轮接着补。
+ *
+ * ⚠️ **三格上限一律用 `Math.min` 压顶、不是赋值**：运维把 `CODE_TIMEOUT_MS` 调到 30 秒时
+ * 不该被「抬」回 60 秒。任一格真被压小时打一条 `registrar.manual_round_capped`——
+ * 设置页写着 5 把 / 120 秒而这一轮实际跑 1 把 / 60 秒，不说出来就是本仓反复裁过的
+ * 「面板说 A、实际做 B」。
+ *
  * 同一份口径散在**五处**，改一处就得五处一起改：`src/core/registrar/types.ts` 的
- * `WORKER_ROUND_BUDGET_MS`、`src/core/registrar/config.ts` 的最坏耗时告警、
- * `src/core/registrar/tender.ts` 的 `worstAttemptMs`、`src/http/wire.ts` 传给
- * 「立即补池」的那个预算、`wrangler.toml` 的 Cron 估算段（外加五语言 REGISTRAR.md
+ * `WORKER_ROUND_BUDGET_MS` 与 `MANUAL_*` 一族、`src/core/registrar/config.ts` 的最坏耗时
+ * 告警、`src/core/registrar/tender.ts` 的 `worstAttemptMs`、`src/http/wire.ts` 传给
+ * 「立即补池」的那份预算、`wrangler.toml` 的 Cron 估算段（外加五语言 REGISTRAR.md
  * 的散文）。⚠️ 上一版这张表被写了四份、四份点名的集合互相不一致 —— 照任一份走
  * 都会漏掉一个文件。
- *
- * ⚠️ **残余风险如实登记**：预算把「跑不完的尝试」挡在门外，**它不消灭泄漏，只把概率
- * 压下来**。平台仍可能在预算窗口之内中止调用，`mintOne` 的 `finally` 仍可能不跑。
- * 而且 780_000 这个数的出处是 **Cron Trigger 的 15 分钟墙钟**，
- * `fetch` 路径上 `ctx.waitUntil` 的实际上限本仓**没有核实过**，不许当既定事实用。
  *
  * **每一轮新建一个事件 sink 并在 `finally` 里 `flush()`**，理由与两个入口的 Cron 轮
  * 完全相同（见 `src/entry/worker.ts` 里同位置那段）：`maybeFlush()` 会把毫秒级返回的
@@ -382,7 +394,7 @@ async function runManualTendRound(
    * 不是设置里选中的那条——补池历史里由 `trigger: "manual"` 那一列把它们分开。
    */
   channel: Channel | null,
-): Promise<void> {
+): Promise<ManualTendOutcome> {
   const tendConsole = new ConsoleLogger();
   const tendStore = new StoreLogger({
     storage,
@@ -411,23 +423,46 @@ async function runManualTendRound(
     tendStore.log({
       level: "warn", event: "registrar.manual_tend_skipped",
       msg: gate.reason === "blocked"
-        ? "手动补池启动后发现这份注册机配置装不起来，本轮什么都没做（面板已经回过 202）"
-        : "手动补池启动后发现注册机已被关掉，本轮什么都没做（面板已经回过 202）",
+        ? "手动补池启动后发现这份注册机配置装不起来，本轮什么都没做"
+        : "手动补池启动后发现注册机已被关掉，本轮什么都没做",
       fields: { reason: gate.reason ?? "disabled" },
     });
     await tendStore.flush();
-    return;
+    return { kind: "skipped", reason: gate.reason ?? "disabled", capped: null };
   }
 
   // 「只用这一条通道」＝换一份 config，理由见上面 `channel` 参数的说明。
   // **端点已经验过这条通道有凭据**（`channelConfigured`），走到这里 `providers[channel]`
   // 必然存在；万一配置在这两步之间被改掉，`tendOnce` 会照常记一条 `provider_missing`
   // 失败——那正是它该做的，不需要在这里再判一次。
-  const config = channel === null ? deps.config : { ...deps.config, channel };
+  const picked = channel === null ? deps.config : { ...deps.config, channel };
+  // 三格一律 `Math.min` 压顶（不是赋值）：运维把 `CODE_TIMEOUT_MS` 调到 30 秒时
+  // 不该被「抬」回 60 秒。理由与取值见 `MANUAL_*` 那一族的 JSDoc。
+  const config = {
+    ...picked,
+    mintBatch: Math.min(picked.mintBatch, MANUAL_MINT_BATCH),
+    codeTimeoutMs: Math.min(picked.codeTimeoutMs, MANUAL_CODE_TIMEOUT_MS),
+    maxDomainAttempts: Math.min(picked.maxDomainAttempts, MANUAL_MAX_DOMAIN_ATTEMPTS),
+  };
+  // 真被压小时如实说一声。设置页写着 5 把 / 120 秒而这一轮跑的是 1 把 / 60 秒，
+  // 不说出来就是本仓反复裁过的「面板说 A、实际做 B」。
+  const capped: ManualTendCap | null = (
+    config.mintBatch < picked.mintBatch
+    || config.codeTimeoutMs < picked.codeTimeoutMs
+    || config.maxDomainAttempts < picked.maxDomainAttempts
+  )
+    ? {
+      budgetMs: MANUAL_ROUND_BUDGET_MS,
+      mintBatch: config.mintBatch, configuredMintBatch: picked.mintBatch,
+      codeTimeoutMs: config.codeTimeoutMs, configuredCodeTimeoutMs: picked.codeTimeoutMs,
+      maxDomainAttempts: config.maxDomainAttempts,
+      configuredMaxDomainAttempts: picked.maxDomainAttempts,
+    }
+    : null;
 
   const roundStartedAt = Date.now();
   try {
-    const r = await tendOnce({ ...deps, config, roundBudgetMs: WORKER_ROUND_BUDGET_MS });
+    const r = await tendOnce({ ...deps, config, roundBudgetMs: MANUAL_ROUND_BUDGET_MS });
     // `trigger: "manual"` —— 补池历史里这一行必须能与 Cron 那些区分开，
     // 否则运维看到池子突然多了两把 key 时分不清是自动补的还是有人点的。
     await deps.recordRound(r, "manual");
@@ -450,6 +485,7 @@ async function runManualTendRound(
         fields: { attempted: r.attempted, minted: r.minted, reasons: summarizeFailures(r.failures) },
       });
     }
+    return { kind: "done", result: r, capped };
   } catch (err) {
     // **抛错那一轮也必须在面板上占一格**（与两个入口的 Cron 轮同一条口径，评审发现）：
     // `recordRound` 排在 `tendOnce` 之后、一抛就整个跳过 ⇒ 不补这两件事的话，
@@ -466,6 +502,7 @@ async function runManualTendRound(
       at: roundStartedAt, channel: config.channel ?? "",
       durationMs: Date.now() - roundStartedAt, trigger: "manual",
     });
+    return { kind: "crashed", error: err instanceof Error ? err.message : String(err), capped };
   } finally {
     await deps.flush();
   }

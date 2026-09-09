@@ -265,7 +265,7 @@ describe("worker 入口: fetch 把 ExecutionContext 一路传给 app", () => {
         env,
         ctx,
       );
-      expect(res.status, "前置条件：这一发必须真的启动了一轮补池").toBe(202);
+      expect(res.status, "前置条件：这一发必须真的跑完了一轮补池").toBe(200);
       expect(
         waited.length,
         "入口把 ExecutionContext 丢在门口了 ⇒ 补池退化成 fire-and-forget，响应返回后会被截断",

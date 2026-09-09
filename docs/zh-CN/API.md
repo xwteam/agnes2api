@@ -520,7 +520,7 @@ curl http://localhost:8080/admin/api/session \
 **响应**：
 
 ```json
-{ "ok": true, "version": "0.2.1" }
+{ "ok": true, "version": "0.2.2" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +538,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +570,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1266,7 +1266,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ### POST /admin/api/registrar/tend
 
-手动触发一轮补池。成功是 `202`（已开始），不是 `200`。
+手动触发一轮补池。**这个端点会等整轮真的跑完再返回**（最长约两分钟），成功是 `200`。
 
 **请求体**：
 
@@ -1288,8 +1288,18 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```json
 {
   "started": true,
+  "done": true,
   "trigger": "manual",
   "channel": "moemail",
+  "outcome": {
+    "kind": "done",
+    "result": {
+      "skipped": false, "available": 2, "attempted": 1, "minted": 1,
+      "mintedByChannel": { "moemail": 1 }, "failures": [],
+      "at": 1735689600000, "primaryChannel": "moemail", "durationMs": 41200
+    },
+    "capped": null
+  },
   "remaining": 23,
   "resetAt": 1735776000000,
   "cooldownUntil": 1735690200000,
@@ -1298,7 +1308,10 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```
 
 > [!NOTE]
-> `remaining` 在成功那一支也照样给：只在耗尽那一支给它，等于让运维毫不知情地撞上一堵墙。拒绝一共七种，**没有一种是「这条路由不存在」**：`409 registrar_disabled`（注册机没启用）、`409 registrar_blocked`（注册机开着，但这份配置装不起来、本次没有启动它）、`409 channel_not_configured`（通道没配凭据）、`409 tend_in_flight`（同一副本上已有一轮在途）、`409 locked`（跨副本短锁被别人占着）、`429 manual_cooldown`（两次手动之间的最小间隔）、`429 write_budget_exhausted`（每天的次数上限）——后两条与 [REGISTRAR.md](REGISTRAR.md) 的「四条护栏」表指同一份真源。
+> `outcome.kind` 有三种，**不许被读成同一种「失败」**：`done` 是整轮跑完了（`result` 就是那一轮的补池结果）、`skipped` 是一次上游请求都没发出去（`reason` 为 `disabled` 或 `blocked`，此时 `capped` 恒为 `null`）、`crashed` 是整轮抛错中断（带 `error`，上游那边可能已经建出临时邮箱）。手动这一轮另有自己那一族上限（轮级预算 70 秒、最多铸 1 把、等码 60 秒、只试 1 个域名），一律取较小值压顶；真被压小时 `capped` 会报出压前压后的两组数，否则是 `null`。
+
+> [!NOTE]
+> **`202` 换成 `200` 是破坏性变更**：从前它一收到点击就返回，整轮交给响应之后的后台任务，而平台会在响应结束后约 30 秒把那个任务取消掉，于是补池历史、事件与锁的释放全部落空。`started: true` 保留给旧面板，新增的是 `done: true` 与 `outcome`。**前置拒绝的状态码一个都没变**，一共七种，**没有一种是「这条路由不存在」**：`409 registrar_disabled`（注册机没启用）、`409 registrar_blocked`（注册机开着，但这份配置装不起来、本次没有启动它）、`409 channel_not_configured`（通道没配凭据）、`409 tend_in_flight`（同一副本上已有一轮在途）、`409 locked`（跨副本短锁被别人占着）、`429 manual_cooldown`（两次手动之间的最小间隔）、`429 write_budget_exhausted`（每天的次数上限）——后两条与 [REGISTRAR.md](REGISTRAR.md) 的「四条护栏」表指同一份真源。`remaining` 在成功那一支也照样给：只在耗尽那一支给它，等于让运维毫不知情地撞上一堵墙。
 
 ### GET /admin/api/registrar/status
 
@@ -1458,7 +1471,7 @@ curl http://localhost:8080/health
 **响应**：
 
 ```json
-{ "status": "ok", "version": "0.2.1", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.2.2", "storage": { "writable": true } }
 ```
 
 `storage.writable` 报告的是「key 池所在的存储是否真的写得进去」。它由启动时的一次探测与运行期每一次真实写操作共同维护，健康检查自身不写盘。存储不可写时返回 **HTTP `503`**，`status` 变成 `degraded` 并附一句 `detail`（Docker 部署常见于绑定挂载的宿主目录属主与容器内运行用户不一致，详见容器日志）。

@@ -7,7 +7,7 @@ import { multiLogger } from "../adapters/logger-multi.js";
 import { workerRuntime } from "../adapters/runtime-worker.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import { WORKER_ROUND_BUDGET_MS } from "../core/registrar/types.js";
-import { acquireTendLock, releaseTendLock } from "../http/admin/tend-lock.js";
+import { acquireTendLock, releaseTendLock, TEND_LOCK_TTL_CRON_MS } from "../http/admin/tend-lock.js";
 import { ConfigRefusal } from "../core/config-errors.js";
 import type { Hono } from "hono";
 
@@ -167,7 +167,8 @@ export default {
     // **判据与键名已抽进 `src/http/admin/tend-lock.ts`**，与 Node 入口
     // 和面板的「立即补池」共用同一份实现——三处各写各的 `get`→检查→`put`，
     // 迟早有一处把中间那步省掉（那正是「两个都抢到」）。
-    const lock = await acquireTendLock(storage, Date.now());
+    // 这一路是 `scheduled()`，真有 15 分钟墙钟，所以用 Cron 那份 TTL。
+    const lock = await acquireTendLock(storage, Date.now(), TEND_LOCK_TTL_CRON_MS);
     if (!lock.ok) {
       console.warn("[registrar] 上一轮补池仍在进行，跳过本次 Cron 触发（可调疏 cron 或调小 MINT_BATCH）");
       return;

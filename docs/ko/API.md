@@ -520,7 +520,7 @@ curl http://localhost:8080/admin/api/session \
 **응답**:
 
 ```json
-{ "ok": true, "version": "0.2.1" }
+{ "ok": true, "version": "0.2.2" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +538,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +570,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1268,7 +1268,7 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ### POST /admin/api/registrar/tend
 
-보충을 손으로 한 바퀴 돌립니다. 성공은 `200`이 아니라 `202`(시작함)입니다.
+보충을 손으로 한 바퀴 돌립니다. **한 라운드를 끝까지 돌린 뒤** `200`을 반환하며, 예전의 `202`(시작함)는 더 이상 나오지 않습니다. 호출 하나가 2분 가까이 걸릴 수 있으니 클라이언트 타임아웃을 넉넉히 잡으세요. **거절하는 쪽의 상태 코드는 하나도 바뀌지 않았습니다.**
 
 **요청 본문**:
 
@@ -1290,14 +1290,32 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```json
 {
   "started": true,
+  "done": true,
   "trigger": "manual",
   "channel": "moemail",
+  "outcome": {
+    "kind": "done",
+    "result": {
+      "at": 1735689000000, "primaryChannel": "moemail", "skipped": false,
+      "available": 2, "attempted": 1, "minted": 1,
+      "mintedByChannel": { "moemail": 1 }, "failures": [], "durationMs": 8421
+    },
+    "capped": {
+      "budgetMs": 70000,
+      "mintBatch": 1, "configuredMintBatch": 5,
+      "codeTimeoutMs": 60000, "configuredCodeTimeoutMs": 120000,
+      "maxDomainAttempts": 1, "configuredMaxDomainAttempts": 1
+    }
+  },
   "remaining": 23,
   "resetAt": 1735776000000,
   "cooldownUntil": 1735690200000,
   "retryAfterMs": 600000
 }
 ```
+
+> [!IMPORTANT]
+> `outcome.kind`는 세 가지이며 **하나의 "실패"로 뭉뚱그리면 안 됩니다**: `done`은 라운드를 완주했다는 뜻이고 `result`가 그 라운드의 발급 수 / 시도 수 / 실패 원인입니다. `skipped`(`reason`은 `disabled` 또는 `blocked`)는 업스트림 요청을 한 번도 보내지 않은 것, `crashed`는 라운드 전체가 끊긴 것이라 임시 메일함이 이미 만들어졌을 수 있습니다. `capped`는 이 버튼 몫의 상한이 설정값을 실제로 눌렀을 때만 채워지며 누르기 전과 뒤의 값을 함께 담습니다. `started`는 옛 패널이 읽던 필드라 그대로 남았고, `done`이 새로 붙었습니다.
 
 > [!NOTE]
 > `remaining`은 성공 분기에서도 돌려줍니다: 다 썼을 때만 주는 것은 운영자를 아무것도 모르는 채로 벽에 부딪히게 하는 것과 같습니다. 거절은 모두 일곱 가지이며 **그중 어느 것도 "이 라우트가 없다"가 아닙니다**: `409 registrar_disabled`(레지스트라가 꺼짐), `409 registrar_blocked`(레지스트라는 켜져 있지만 이 설정을 읽어 들일 수 없어 이번에는 시작하지 않음), `409 channel_not_configured`(채널에 자격 증명이 없음), `409 tend_in_flight`(같은 복제본에서 이미 한 라운드 진행 중), `409 locked`(다른 복제본이 짧은 잠금을 쥐고 있음), `429 manual_cooldown`(수동 두 번 사이의 최소 간격), `429 write_budget_exhausted`(하루 상한 횟수) — 뒤의 둘은 [REGISTRAR.md](REGISTRAR.md)의 "네 가지 가드레일" 표와 같은 진짜 출처를 가리킵니다.
@@ -1460,7 +1478,7 @@ curl http://localhost:8080/health
 **응답**:
 
 ```json
-{ "status": "ok", "version": "0.2.1", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.2.2", "storage": { "writable": true } }
 ```
 
 `storage.writable`은 "key 풀이 올라가 있는 스토리지에 정말 쓸 수 있는가"를 알려 줍니다. 시작할 때의 한 번의 프로브와 실행 중의 모든 실제 쓰기가 함께 유지하며, 헬스 체크 자신은 쓰지 않습니다. 쓸 수 없을 때는 **HTTP `503`**을 돌려주고 `status`가 `degraded`가 되며 `detail` 한 문장이 붙습니다(Docker에서는 바인드 마운트한 호스트 디렉터리 소유자와 컨테이너 안의 실행 사용자가 다른 경우가 많으며 자세한 내용은 컨테이너 로그에 있습니다).

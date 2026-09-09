@@ -520,7 +520,7 @@ curl http://localhost:8080/admin/api/session \
 **レスポンス**：
 
 ```json
-{ "ok": true, "version": "0.2.1" }
+{ "ok": true, "version": "0.2.2" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +538,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +570,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1268,7 +1268,9 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
 
 ### POST /admin/api/registrar/tend
 
-補充を手動で一巡だけ起動します。成功は `200` ではなく `202`（開始した）です。
+補充を手動で一巡だけ走らせます。**1 巡が走り終わってから返します**（最長で約 2 分）。
+成功は `202`（開始した）ではなく `200`——**破壊的変更**です。クライアント側の
+タイムアウトをこれより短くしないでください。
 
 **リクエストボディ**：
 
@@ -1290,8 +1292,14 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 ```json
 {
   "started": true,
+  "done": true,
   "trigger": "manual",
   "channel": "moemail",
+  "outcome": {
+    "kind": "done",
+    "result": { "attempted": 1, "minted": 1, "failures": [] },
+    "capped": { "budgetMs": 70000, "mintBatch": 1, "configuredMintBatch": 5 }
+  },
   "remaining": 23,
   "resetAt": 1735776000000,
   "cooldownUntil": 1735690200000,
@@ -1299,8 +1307,11 @@ curl -X POST http://localhost:8080/admin/api/registrar/tend \
 }
 ```
 
+> [!IMPORTANT]
+> `outcome` はそのラウンドの結末です。**三つを同じ「失敗」として読んではいけません**——対処が違います：`done`（走り切った。`result` がそのラウンドの TendResult で `minted` / `attempted` / `failures` を含む）、`skipped`（`reason` は `disabled` か `blocked`。上流へのリクエストを 1 本も送っていない）、`crashed`（1 巡が例外で中断。一時メールボックスが既に作られている場合がある）。`started: true` は旧パネル互換のため残した項目で、走り終わったと言うのは `done: true` です。手動ラウンドは専用の上限（発行は最大 1 本、認証コード待ち 60 秒、予算 70 秒）を持ち、切り詰めが起きたときは `outcome.capped` が前後の値を報告します。
+
 > [!NOTE]
-> `remaining` は成功の分岐でも返します：使い切ったときだけ返すのは、運用者に何も知らせないまま壁にぶつけるのと同じだからです。拒否は全部で七種類あり、**どれも「このルートが存在しない」ではありません**：`409 registrar_disabled`（レジストラーが無効）、`409 registrar_blocked`（レジストラーは有効だが、この設定を読み込めず今回は起動しなかった）、`409 channel_not_configured`（チャネルに認証情報が無い）、`409 tend_in_flight`（同じレプリカで既に 1 ラウンド進行中）、`409 locked`（レプリカ間の短いロックを他が保持）、`429 manual_cooldown`（手動 2 回の間の最小間隔）、`429 write_budget_exhausted`（1 日の上限回数）——後ろの二つは [REGISTRAR.md](REGISTRAR.md) の「四つのガードレール」表と同じ真の出所を指します。
+> `remaining` は成功の分岐でも返します：使い切ったときだけ返すのは、運用者に何も知らせないまま壁にぶつけるのと同じだからです。**手前の拒否のステータスコードは変わっていません。** 拒否は全部で七種類あり、**どれも「このルートが存在しない」ではありません**：`409 registrar_disabled`（レジストラーが無効）、`409 registrar_blocked`（レジストラーは有効だが、この設定を読み込めず今回は起動しなかった）、`409 channel_not_configured`（チャネルに認証情報が無い）、`409 tend_in_flight`（同じレプリカで既に 1 ラウンド進行中）、`409 locked`（レプリカ間の短いロックを他が保持）、`429 manual_cooldown`（手動 2 回の間の最小間隔）、`429 write_budget_exhausted`（1 日の上限回数）——後ろの二つは [REGISTRAR.md](REGISTRAR.md) の「四つのガードレール」表と同じ真の出所を指します。
 
 ### GET /admin/api/registrar/status
 
@@ -1460,7 +1471,7 @@ curl http://localhost:8080/health
 **レスポンス**：
 
 ```json
-{ "status": "ok", "version": "0.2.1", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.2.2", "storage": { "writable": true } }
 ```
 
 `storage.writable` は「key プールが載っているストレージに本当に書き込めるか」を報告します。起動時の一度のプローブと実行中のすべての実書き込みで維持され、ヘルスチェック自身は書き込みません。書き込めないときは **HTTP `503`** を返し、`status` が `degraded` になって `detail` の一文が付きます（Docker ではバインドマウントしたホストディレクトリの所有者とコンテナ内の実行ユーザーが食い違っている場合が多く、詳細はコンテナログにあります）。

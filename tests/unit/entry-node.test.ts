@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { main, nodeDataDir, nodePort } from "../../src/entry/node.js";
 import { FileStorage } from "../../src/adapters/storage-file.js";
-import { TEND_LOCK_KEY, TEND_LOCK_TTL_MS } from "../../src/http/admin/tend-lock.js";
+import { TEND_LOCK_KEY, TEND_LOCK_TTL_CRON_MS } from "../../src/http/admin/tend-lock.js";
 import { TEND_HISTORY_KEY } from "../../src/core/admin/tend-history.js";
 import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
@@ -222,7 +222,7 @@ describe("node 入口: 补池的存储级锁（多副本共卷部署）", () => 
   it("数据目录里已经有一把没过期的锁 ⇒ 这一轮被跳过（另一个副本正在补池）", async () => {
     const dir = tmpDataDir();
     const storage = await seedFullPool(dir);
-    await storage.put(TEND_LOCK_KEY, { until: Date.now() + TEND_LOCK_TTL_MS });
+    await storage.put(TEND_LOCK_KEY, { until: Date.now() + TEND_LOCK_TTL_CRON_MS });
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);

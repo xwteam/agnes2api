@@ -11,7 +11,7 @@ import { nodeRuntime } from "../adapters/runtime-node.js";
 import { tendOnce, summarizeFailures } from "../core/registrar/tender.js";
 import { loadConfig } from "../core/config.js";
 import { startTendScheduler } from "../core/tend-scheduler.js";
-import { acquireTendLock, releaseTendLock } from "../http/admin/tend-lock.js";
+import { acquireTendLock, releaseTendLock, TEND_LOCK_TTL_CRON_MS } from "../http/admin/tend-lock.js";
 
 /**
  * **空串视同「没设」。** 只用在本文件这两个运行时开关上，不是全局规则。
@@ -149,7 +149,8 @@ export async function main(env: Record<string, string | undefined> = process.env
       // 而 Docker 的多副本共卷部署（同一个 DATA_DIR 挂给两个容器）下它形同虚设
       //——两个副本各有各的布尔，两轮补池同时跑，同时撞邮箱建号限流与上游注册风控。
       // 与 Worker 的 Cron 路径**共用同一份实现与同一把键**，见 `tend-lock.ts`。
-      const lock = await acquireTendLock(storage, Date.now());
+      // 这一路是 `scheduled()`，真有 15 分钟墙钟，所以用 Cron 那份 TTL。
+      const lock = await acquireTendLock(storage, Date.now(), TEND_LOCK_TTL_CRON_MS);
       if (!lock.ok) {
         console.warn("[registrar] 另一个副本正在补池，跳过本次触发（多副本共卷部署下这是正常的）");
         return;
