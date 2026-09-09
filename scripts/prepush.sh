@@ -2284,7 +2284,10 @@ EXPECT_NODE_FILES=164
 #   连一句话都没有。**处置是把 app 的 sink 接上去，不是改文案** —— 那条证据本来就该在。
 #   判据缺口：全仓十处 `delete_mailbox_failed` 判据全是给适配器塞假 logger 直接量
 #   `entries`，量的是「适配器发了没有」，对「发出去的那条到不到得了面板」全部保持绿色。
-#     · `tests/contract/admin-registrar.test.ts` 51 → **54**（**+3**，双运行时 ⇒ workerd 也 +3）：
+#     · `tests/contract/admin-registrar.test.ts` 48 → **51**（**+3**，双运行时 ⇒ workerd 也 +3）：
+#       ⚠️ 起止值上一版抄成了「51 → 54」，增量 +3 是对的、EXPECT_* 也对，所以第 ⑥ 格照样绿，
+#         这笔假数就这么活了下来 —— 它咬的是下一个来对账的人。发版后审计逐提交实跑
+#         （`git archive <sha>` 解出来单文件跑）才量出真值：2bd14a0=46、b7b7b85=48、028d63a=51。
 #       ① 阳性对照 + 探针（`channel_test_failed` 本来就到得了面板；没发生过的事件名不在里面）；
 #       ② 残留删不掉时 `delete_mailbox_failed` 到得了事件板块；
 #       ③ 2xx 但拿不到 id 时 `mailbox_create_unparseable` 到得了事件板块。

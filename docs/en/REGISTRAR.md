@@ -435,7 +435,7 @@ registrar to keep working, not something you should "optimize away" with concurr
 The email address, account, and password generated during registration only live in memory for
 the duration of one mint attempt — **they are discarded once used and never persisted**. Storage
 only ever contains the minted API key records. The temporary mailbox is deleted after every mint
-attempt, whether it succeeded or failed.
+attempt, whether it succeeded or failed. **Deletion is best-effort, not a guarantee**: when it fails (upstream 4xx/5xx, a dropped connection, or a round cut short by the platform) the mailbox stays until the upstream reclaims it — see the channel table above for each channel's TTL. The system does not pretend it is clean: `cleaned:false` is reported as-is.
 
 ## Troubleshooting
 

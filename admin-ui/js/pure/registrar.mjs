@@ -217,7 +217,11 @@ export function poolView(body) {
  * 最多消耗几个临时邮箱。
  *
  * 算式与 `tendOnce` 逐字相同：`rounds = min(need, mintBatch)`，`need = target - counted`
- *（后端已经把 `need` 夹到非负后叫 `gap`）。一次尝试最多建一个临时邮箱，所以两个数相等。
+ *（后端已经把 `need` 夹到非负后叫 `gap`）。一次尝试最多建 `MAX_DOMAIN_ATTEMPTS` 个临时邮箱（每换一个候选域名建一个），
+ * 而那个值**默认是 1**，所以默认配置下两个数相等。
+ * ⚠️ **调大它之后这个数会偏低**：它是给确认框当「最多消耗几个名额」的上界用的，
+ *   而面板拿不到 `maxDomainAttempts`（`/admin/api/registrar/status` 的 `pool` 块里没有它）。
+ *   v0.1.0 的默认值就是 8，所以这不是假想的配置。要么后端把那个值透出来、要么这句限定别丢。
  *
  * ⚠️ **两个外部服务的活跃邮箱上限（YYDS / MoeMail 各自那个数）一律不写进文案。**
  * 它们一个与账号档位绑定、一个是可被实例覆盖的上游默认值，**把一个当前取值印在

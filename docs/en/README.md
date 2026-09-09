@@ -104,7 +104,7 @@
 > 📖 Detailed panel guide: [ADMIN.md](ADMIN.md)
 
 - **Off by default**: with no `ADMIN_TOKEN` set the whole `/admin` tree is never registered and requests get a 404, rather than an unauthenticated panel
-- Eight sections: overview, key pool, registrar, events, usage, models, playground, settings
+- Nine sections: overview, key pool, registrar, events, usage, models, playground, API keys, settings
 - **No build step**: `admin-ui/` served as-is under `/admin/` already is the debuggable panel, and the build script only burns it byte for byte into one generated artifact
 - The token travels in the `x-admin-key` request header only — never in a cookie, never in the query string
 
@@ -459,7 +459,7 @@ npx wrangler secret put ADMIN_TOKEN
 - [x] Key pool: checkout, tiered cooldown, permanent eviction, distinguishable exhaustion reasons
 - [x] Two runtimes: Cloudflare Worker (KV) and Node / Docker (file storage) from one codebase
 - [x] Registrar: two temporary-mailbox channels as equal peers, fully automatic from code retrieval to pool insertion
-- [x] Eight-section web admin panel (no build step, off by default)
+- [x] Nine-section web admin panel (no build step, off by default)
 - [x] Admin API authentication: fail-closed, token in the request header only
 - [x] Documentation in five languages and a panel in five languages
 - [x] Thirteen CI gates plus contract tests on both runtimes

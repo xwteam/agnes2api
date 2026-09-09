@@ -105,7 +105,7 @@
 > 📖 详细面板文档：[简体中文](docs/zh-CN/ADMIN.md) | [繁體中文](docs/zh-TW/ADMIN.md) | [English](docs/en/ADMIN.md) | [日本語](docs/ja/ADMIN.md) | [한국어](docs/ko/ADMIN.md)
 
 - **默认关闭**：未设置 `ADMIN_TOKEN` 时整棵 `/admin` 树根本不注册，访问得到 404，而不是一个不鉴权的面板
-- 八个板块：概览、key 池、注册机、事件、用量、模型、调试台、设置
+- 九个板块：概览、key 池、注册机、事件、用量、模型、调试台、API 密钥、设置
 - **零构建**：`admin-ui/` 原样挂在 `/admin/` 下就是可调试的面板，构建脚本只把它逐字节烧进一份生成物
 - 口令只走 `x-admin-key` 请求头，不落 Cookie、不进 query
 
@@ -546,7 +546,7 @@ agnes2api/
 - [x] key 池：取号、分级冷却、永久剔除、可分辨的耗尽原因
 - [x] 双运行时：Cloudflare Worker（KV）与 Node / Docker（文件存储）同一份代码
 - [x] 注册机：两条临时邮箱通道平级，从收码到入池全自动
-- [x] Web 管理面板八个板块（零构建，默认关闭）
+- [x] Web 管理面板九个板块（零构建，默认关闭）
 - [x] 管理接口鉴权：fail-closed，口令只走请求头
 - [x] 五语言文档与五语言面板
 - [x] CI 十三道门禁 + 双运行时契约测试
