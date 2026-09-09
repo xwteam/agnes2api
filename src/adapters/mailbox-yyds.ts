@@ -1,8 +1,8 @@
-import type { MailProvider } from "../ports/mailbox.js";
+import type { CredentialProof, MailProvider } from "../ports/mailbox.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
-import { httpFail, redactUrl } from "../core/registrar/url.js";
+import { bodyFail, httpFail, redactUrl } from "../core/registrar/url.js";
 import { fetchChannel } from "../core/registrar/fetch.js";
 import type { Logger } from "../ports/logger.js";
 
@@ -78,10 +78,38 @@ export class YydsProvider implements MailProvider {
         provider: "YYDS", action: "列域名", method: "GET", url, status: r.status,
       });
     }
-    const data = (await r.json()) as Record<string, any>;
+    // **2xx 之后的解析失败要自己带上地址**：裸 `SyntaxError` 身上一个地址都没有
+    // （实测形态见 `../core/registrar/url.ts` 的 `bodyFail`），而这一支恰恰是
+    // 反向代理/CDN 错误页最常见的形态——它与上面那条 404 是同一个故障家族，
+    // 唯一的线索同样是「它到底打的哪个地址」。
+    let data: Record<string, any>;
+    try {
+      data = (await r.json()) as Record<string, any>;
+    } catch (err) {
+      throw bodyFail({ provider: "YYDS", action: "列域名", method: "GET", url, cause: err });
+    }
     return ((data?.data ?? []) as Array<{ domain?: string }>)
       .map((d) => d?.domain)
       .filter((d): d is string => typeof d === "string" && d.length > 0);
+  }
+
+  /**
+   * **建一个再删掉。** YYDS 侧真正会校验凭据的就是建邮箱这一步——
+   * 列域名那一步（`listDomains`）在一次真机观测里对一把故意写错的 key 照样回 200。
+   * ⇒ 想证明凭据，只能走到会校验它的那一步。
+   *
+   * ⚠️ **代价明写：每调一次消耗一个活跃邮箱名额（用完即删）。** 上限的数字与出处
+   * 见本文件头那段，这里不复述。删不掉时**如实回 `cleaned: false`**，
+   * 由调用方说出去——静默的残留会把配额慢慢吃光而没有任何信号。
+   *
+   * ⚠️ **一个 catch 都不加，这一条是承重的**：`createMailbox` 把上游那个状态码
+   * 原样挂在 Error 上（`httpFail`），限流（429）、抖动（5xx）与凭据被拒（401/403）
+   * 因此天然是三档。在这里 catch 一下再统一翻译成「凭据无效」，就等于把
+   * 「上游今天忙」说成「你的 key 是错的」——两者的处置完全相反。
+   */
+  async verifyCredentials(domain: string): Promise<CredentialProof> {
+    const mailbox = await this.createMailbox(domain);
+    return { cleaned: await this.deleteMailbox(mailbox) };
   }
 
   async createMailbox(domain: string): Promise<Mailbox> {
@@ -230,7 +258,12 @@ export class YydsProvider implements MailProvider {
     return null;
   }
 
-  async deleteMailbox(mailbox: Mailbox): Promise<void> {
+  /**
+   * ⚠️ **返回值的含义是「确认删掉了没有」，不是「抛没抛错」**（端口契约里逐字写着）。
+   * `mintOne` 不看它；看它的是 `verifyCredentials`——那条路建出来的东西删不掉时，
+   * 面板必须如实说出来。
+   */
+  async deleteMailbox(mailbox: Mailbox): Promise<boolean> {
     const url = `${this.deps.baseUrl}/v1/accounts/${encodeURIComponent(mailbox.handle)}`;
     try {
       const r = await fetchChannel({
@@ -251,6 +284,7 @@ export class YydsProvider implements MailProvider {
           fields: { provider: "yyds", address: mailbox.address, status: r.status, url: redactUrl(url) },
         });
       }
+      return r.ok;
     } catch (err) {
       // 用完即删是尽力而为：key 已经拿到了，邮箱残留是次要问题，不该让整次铸 key
       // 失败，但要留痕方便观测残留是否在堆积。
@@ -259,6 +293,7 @@ export class YydsProvider implements MailProvider {
         msg: "YYDS 删邮箱失败（残留不影响已拿到的结果）",
         fields: { provider: "yyds", address: mailbox.address, err: errMsg(err), url: redactUrl(url) },
       });
+      return false;
     }
   }
 }

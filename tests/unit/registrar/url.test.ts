@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   redactUrl, httpFailMessage, httpFail, httpFailStatus, transportFailMessage, redactInMessage,
-  UNPARSEABLE_URL, UNSAFE_MESSAGE,
+  bodyFail, UNPARSEABLE_URL, UNSAFE_MESSAGE,
 } from "../../../src/core/registrar/url.js";
 
 /**
@@ -172,5 +172,63 @@ describe("transportFailMessage", () => {
       provider: "MoeMail", action: "列域名", method: "GET", url, cause: url,
     });
     expect(out).not.toContain("sentinelsecret");
+  });
+});
+
+describe("bodyFail：上游答了 2xx、正文却读不出来", () => {
+  /**
+   * 🔴🔴 **这一支上一版一个地址都没有 —— 抛的是运行时那个裸 `SyntaxError`。**
+   *
+   * 终检实测（真装配，上游 200 + HTML 正文），事件逐字是
+   * `error="Unexpected token '<', \"<html><bod\"... is not valid JSON"`，
+   * 而面板那句话（`reg.channel.testFailedNoStatus`）逐字承诺「事件里那条失败信息
+   * 带着它实际请求的那个地址」。这一格钉的是那句承诺在这一支上也真的成立。
+   */
+  it("带上它实际请求的那个地址，且与另外两个模板同一个句式", () => {
+    const err = bodyFail({
+      provider: "YYDS", action: "列域名", method: "GET",
+      url: "https://h.invalid/v1/domains",
+      cause: new SyntaxError("Unexpected token '<' is not valid JSON"),
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message, "一个地址都没有 —— 面板让运维去翻的那份证据不存在")
+      .toContain("https://h.invalid/v1/domains");
+    // 同一个句式：`<通道> <动作>失败: <原因> (<方法> <脱敏地址>)`。
+    expect(err.message.startsWith("YYDS 列域名失败: ")).toBe(true);
+    expect(err.message).toContain("(GET https://h.invalid/v1/domains)");
+    // 运行时那句话保留下来（它是唯一说得清"读到的是什么"的东西）。
+    expect(err.message).toContain("Unexpected token");
+  });
+
+  /**
+   * 🔴 **不挂状态码。** 上游确实回了 2xx，但把 `200` 挂上去会让消费方把它读成
+   * 「这是上游的裁决」，进而走进「上游回了 HTTP 200」那句话；而这一档要说的是
+   * **正文读不出来**。没有裁决就是没有裁决，与 `transportFailMessage` 那一半同规矩。
+   */
+  it("不挂状态码 —— 不许伪造一个 200 出来", () => {
+    const err = bodyFail({
+      provider: "MoeMail", action: "列域名", method: "GET",
+      url: "https://h.invalid/api/config", cause: new SyntaxError("x"),
+    });
+    expect(httpFailStatus(err), "给一次「正文读不出来」挂了个状态码").toBeNull();
+  });
+
+  /**
+   * 🔴🔴 **`cause` 的 message 不可信，先脱敏再拼。**
+   * 它带着上游正文的片段，而 baseUrl 里的凭据也可能被运行时原样写进去。
+   * 判据用的是 `CREDS_URL` 那把哨兵串：整段丢弃（`UNSAFE_MESSAGE`）也算过——
+   * **少说一句话是对的方向，多漏一把口令不是**。
+   */
+  it("cause 里的凭据不许跟着跑出来", () => {
+    const err = bodyFail({
+      provider: "YYDS", action: "列域名", method: "GET", url: CREDS_URL,
+      cause: new Error(`parse failed for ${CREDS_URL}`),
+    });
+    expect(err.message).not.toContain("sentinelsecret");
+    expect(err.message).not.toContain("sentineluser");
+    expect(err.message).not.toContain("SENTINELQ");
+    expect(err.message).not.toContain("SENTINELF");
+    // 反向控制：地址那条线索没有被一起丢掉。
+    expect(err.message).toContain("h.invalid");
   });
 });

@@ -39,12 +39,21 @@
  *   那个上限是**配置值**，不是「实测安全」的结论；
  * · `pg.media.pollGaveUp` —— 轮询到上限就停，任务本身可能仍在进行，
  *   **面板并不知道它最终成没成**。
- * · `reg.channel.testOk` —— 通道连通性测试只走到「列出可用域名」这一步，
- *   而**有的邮箱服务这一步根本不校验凭据**：这一次到底有没有校验过，
- *   我们**无从得知**。所以那句话里必须写着「没有验证凭据」，
+ * · `reg.channel.testOkUnverified` / `reg.channel.testOkNoDomains` —— 通道连通性测试
+ *   在这两档上**没有验证过凭据**（前者：后端没给凭据结论；后者：一个可用域名都没读到，
+ *   验凭据那一步无从下手）。所以那两句话里必须写着「没有验证凭据」，
  *   更不许出现「够用 / 没问题」这一族把它升级成「凭据可用」的软化词。
  *   （另一半——那半句话在不在——由 `tests/unit/i18n-dict.test.ts`
- *   「连通那句话五语言都自己说清它没有验证凭据」那一格的五语言毒刺钉着。）
+ *   「没验凭据那两档，五语言都自己说清它没验」那一格的五语言毒刺钉着。）
+ *
+ * ⚠️⚠️ **记账：`reg.channel.testOk` 本轮从这张表上换了下来，这不是放宽。**
+ *   上一版这颗按钮**压根不验凭据**，`testOk` 描述的因此是一件我们无从得知的事，
+ *   属于「未核实」。本轮它**真的验一次**（`src/ports/mailbox.ts` 的
+ *   `verifyCredentials`），那句话描述的是**这一次量出来的结果**，不再是未核实的断言
+ *   ——留在表上会变成「一句已核实的话被当成未核实的管」，而那会逼着它继续写
+ *   「没有验证凭据」，也就是逼它说假话。
+ *   **表没有变短**：换下来一条、换上去两条（净 +1），射程覆盖的仍然是
+ *   「文案正在描述一件没核实过的事」的**全部**那几档。
  *
  * ⚠️ **这张表变短不会有任何东西替它说话**：删掉一条就等于把那条红线交还给人守。
  * 它自己不空转由 `tests/unit/check-i18n.test.ts` 的
@@ -54,7 +63,8 @@
  * 「⑨ 白名单里有字典中不存在的 key ⇒ 当场红（自带反向控制）」。
  */
 export const UNVERIFIED_KEYS = [
-  "usage.range.retention", "pg.send.readyVideo", "pg.media.pollGaveUp", "reg.channel.testOk",
+  "usage.range.retention", "pg.send.readyVideo", "pg.media.pollGaveUp",
+  "reg.channel.testOkUnverified", "reg.channel.testOkNoDomains",
 ];
 
 /**

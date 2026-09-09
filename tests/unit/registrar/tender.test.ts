@@ -438,6 +438,7 @@ describe("tendOnce", () => {
       async createMailbox(): Promise<never> { return bump(); },
       async pollCode(): Promise<never> { return bump(); },
       async deleteMailbox(): Promise<never> { return bump(); },
+      async verifyCredentials(): Promise<never> { return bump(); },
     };
   }
 
@@ -447,7 +448,9 @@ describe("tendOnce", () => {
       async listDomains(): Promise<string[]> { throw new Error("down"); },
       async createMailbox() { throw new Error("x"); },
       async pollCode() { return null; },
-      async deleteMailbox() {},
+      async deleteMailbox() { return true; },
+      /** `tendOnce` 走不到它。**抛错而不是默认成功**——桩不抛错是本仓登记的第 2 种假阳性。 */
+      async verifyCredentials(): Promise<never> { throw new Error("verifyCredentials 不该被调到"); },
     };
     const other = { n: 0 };
     const { repo, deps } = await makeDeps({ channel: "yyds", targetKeys: 2, mintBatch: 2 });
@@ -488,7 +491,9 @@ describe("tendOnce", () => {
       async listDomains(): Promise<string[]> { throw new Error("down"); },
       async createMailbox() { throw new Error("x"); },
       async pollCode() { return null; },
-      async deleteMailbox() {},
+      async deleteMailbox() { return true; },
+      /** `tendOnce` 走不到它。**抛错而不是默认成功**——桩不抛错是本仓登记的第 2 种假阳性。 */
+      async verifyCredentials(): Promise<never> { throw new Error("verifyCredentials 不该被调到"); },
     };
     const other = { n: 0 };
     const { deps } = await makeDeps({
@@ -536,7 +541,9 @@ describe("tendOnce", () => {
       async listDomains(): Promise<string[]> { throw new Error("down"); },
       async createMailbox() { throw new Error("x"); },
       async pollCode() { return null; },
-      async deleteMailbox() {},
+      async deleteMailbox() { return true; },
+      /** `tendOnce` 走不到它。**抛错而不是默认成功**——桩不抛错是本仓登记的第 2 种假阳性。 */
+      async verifyCredentials(): Promise<never> { throw new Error("verifyCredentials 不该被调到"); },
     };
     const { deps } = await makeDeps({ targetKeys: 1 });
     deps.providers = { yyds: broken };
@@ -619,7 +626,9 @@ describe("tendOnce", () => {
         return { address, handle: address };
       },
       async pollCode() { return "123456"; },
-      async deleteMailbox(m) { order.push(`delete:${m.address}`); },
+      async deleteMailbox(m) { order.push(`delete:${m.address}`); return true; },
+      /** `tendOnce` 走不到它。**抛错而不是默认成功**——桩不抛错是本仓登记的第 2 种假阳性。 */
+      async verifyCredentials(): Promise<never> { throw new Error("verifyCredentials 不该被调到"); },
     };
     const { deps } = await makeDeps({ targetKeys: 3 }, provider);
     const out = await tendOnce(deps);
@@ -653,7 +662,9 @@ describe("tendOnce", () => {
         return { address, handle: `id-${address}` };
       },
       async pollCode() { tick(); return "123456"; },
-      async deleteMailbox(m) { order.push(`delete:${m.address}`); },
+      async deleteMailbox(m) { order.push(`delete:${m.address}`); return true; },
+      /** `tendOnce` 走不到它。**抛错而不是默认成功**——桩不抛错是本仓登记的第 2 种假阳性。 */
+      async verifyCredentials(): Promise<never> { throw new Error("verifyCredentials 不该被调到"); },
     };
   }
 

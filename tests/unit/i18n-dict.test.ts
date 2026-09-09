@@ -1167,14 +1167,18 @@ describe("i18n 字典", () => {
     expect(secondStrikeProblems(undefined)).toEqual(["整行不在字典里"]);
   });
 
-  /* ── 「测试连接」那颗按钮：绿灯必须自己说清它没验凭据 ─────────────────────── */
+  /* ── 「测试连接」那颗按钮：没验凭据的那两档必须自己说清 ───────────────────── */
 
   /**
-   * 🔴🔴 **这是唯一能挡住「绿灯哪天又开始报凭据」的正向判据。**
+   * 🔴🔴 **这是唯一能挡住「没验过的那两档哪天开始报凭据」的正向判据。**
    *
-   * 这颗按钮只走到「列出可用域名」这一步，而**有的邮箱服务这一步根本不校验凭据** ——
-   * 凭据完全填错时它照样 200、照样报绿。少了这半句话，绿灯就把「我们没验」说成了
-   * 「上游没问题」，运维会据此排除「凭据有问题」这个方向，回头在建邮箱那一步被拒。
+   * ⚠️ **射程本轮换过，别照旧读**：上一版这颗按钮**压根不验凭据**，所以那根毒刺钉的是
+   * `reg.channel.testOk`。今天它**真的验一次**（`src/ports/mailbox.ts` 的
+   * `verifyCredentials`），于是「没验」收窄成两档 ——
+   * `testOkUnverified`（后端没给凭据结论）与 `testOkNoDomains`（一个域名都没读到，
+   * 验凭据那一步无从下手）。少了这半句话，一句「不知道」就会被读成「没问题」，
+   * 运维据此排除「凭据有问题」这个方向，回头在建邮箱那一步被拒。
+   * **`testOk` 那一档改由下面那格反着钉**（它必须说自己验过了）。
    *
    * ⚠️ **逐语言各一根锚点，不许合成一条**：合成一条时删掉某一种语言的那半句，
    * 会被别的语言掩盖 —— 而「简体那格红、繁体那格绿」这种形态本仓已经栽过。
@@ -1202,17 +1206,79 @@ describe("i18n 字典", () => {
     return bad;
   }
 
-  it("连通那句话五语言都自己说清它没有验证凭据", () => {
+  const UNVERIFIED_TEXT_KEYS = ["reg.channel.testOkUnverified", "reg.channel.testOkNoDomains"];
+
+  it("没验凭据那两档，五语言都自己说清它没验", () => {
+    for (const key of UNVERIFIED_TEXT_KEYS) {
+      expect(
+        noVerifyProblems(dictRow(key)),
+        `${key}: 会把「我们没验」说成「上游没问题」——运维据此排除凭据方向，回头在建邮箱那一步被拒`,
+      ).toEqual([]);
+    }
+  });
+
+  /**
+   * 🔴🔴 **镜像方向：真的验过的那一档必须自己说它验过了。**
+   *
+   * 只有上面那一格时，把 `testOk` 整句改写成一句「没有验证凭据」的免责声明也全绿 ——
+   * 而那正好把本轮做出来的那次真实校验**藏起来**，运维照旧不敢信这颗绿灯。
+   * 两格方向相反，缺一个都留着一条静默的退路。
+   */
+  const VERIFIED_ANCHORS: Record<(typeof LANGS)[number], string> = {
+    "zh-CN": "凭据也验过了",
+    "zh-TW": "憑證也驗過了",
+    en: "credentials were verified",
+    ja: "認証情報も検証済みです",
+    ko: "자격 증명도 검증했습니다",
+  };
+
+  function verifiedProblems(row: Record<string, string> | undefined): string[] {
+    if (row === undefined) return ["整行不在字典里"];
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      if (!(row[lang] ?? "").includes(VERIFIED_ANCHORS[lang])) {
+        bad.push(`${lang}: 绿灯没说它真的验过凭据（缺「${VERIFIED_ANCHORS[lang]}」）`);
+      }
+    }
+    return bad;
+  }
+
+  it("真的验过的那一档，五语言都自己说清它验过了（上面那格的镜像方向）", () => {
     expect(
-      noVerifyProblems(dictRow("reg.channel.testOk")),
-      "绿灯会把「我们没验」说成「上游没问题」——运维据此排除凭据方向，回头在建邮箱那一步被拒",
+      verifiedProblems(dictRow("reg.channel.testOk")),
+      "这一档真的拿凭据向上游要过一次东西，绿灯却不说 —— 那次校验等于白做了",
     ).toEqual([]);
-    // 「一个域名都没读到」那一档同样只走到这一步，同样没验凭据。
-    expect(noVerifyProblems(dictRow("reg.channel.testOkNoDomains"))).toEqual([]);
+  });
+
+  it("反向自检：把验过了那半句从任一语言里抠掉，上面那格必须只点名那一种语言", () => {
+    const row = dictRow("reg.channel.testOk")!;
+    for (const lang of LANGS) {
+      const anchor = VERIFIED_ANCHORS[lang];
+      expect(row[lang]!.includes(anchor), `${lang}: 夹具前提不成立`).toBe(true);
+      const poisoned = { ...row, [lang]: row[lang]!.split(anchor).join("") };
+      expect(verifiedProblems(poisoned), `${lang}: 那半句被抠掉却没被点名`)
+        .toEqual([`${lang}: 绿灯没说它真的验过凭据（缺「${anchor}」）`]);
+    }
+    expect(verifiedProblems(undefined)).toEqual(["整行不在字典里"]);
+  });
+
+  /**
+   * 🔴 **两族锚点不许互相顶替。** `testOk` 的正向锚点里含「验」字，而否定那族的锚点
+   * 是「没有验证凭据」——如果哪天有人把 `testOk` 写成「没有验证凭据……凭据也验过了」，
+   * 上面两格会**双双**绿。这一格钉的是「真的验过的那一档里，一个否定锚点都不许出现」。
+   */
+  it("真的验过那一档里，一个「没验」的锚点都不许出现（两族不许互相顶替）", () => {
+    const row = dictRow("reg.channel.testOk")!;
+    for (const lang of LANGS) {
+      expect(
+        row[lang]!.includes(NO_VERIFY_ANCHORS[lang]),
+        `${lang}: 同一句话里既说验过了又说没验凭据 —— 运维读到的是自相矛盾`,
+      ).toBe(false);
+    }
   });
 
   it("反向自检：把没有验证凭据那半句从任一语言里抠掉，上面那格必须只点名那一种语言", () => {
-    for (const key of ["reg.channel.testOk", "reg.channel.testOkNoDomains"]) {
+    for (const key of UNVERIFIED_TEXT_KEYS) {
       const row = dictRow(key)!;
       for (const lang of LANGS) {
         const anchor = NO_VERIFY_ANCHORS[lang];

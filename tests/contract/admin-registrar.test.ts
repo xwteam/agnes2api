@@ -34,7 +34,7 @@ import { httpFail } from "../../src/core/registrar/url.js";
  *   改成传 `null` ⇒ **1931/1931 全绿**。而那正是「面板写着 MoeMail、实际按主通道跑」
  *   ——handler 的 202 与响应体里那个 `"channel":"moemail"` 都是它**自己的自报**，
  *   取自它自己的局部变量，**与执行体做了什么无关**。
- * · `wire.ts` 的 `probeChannel` 函数体整个换成 `return { ok: true, domains: 0 }`
+ * · `wire.ts` 的 `probeChannel` 函数体整个换成 `return { ok: true, domains: 0, credentials: "accepted", cleaned: true }`
  *   ⇒ **1931/1931 全绿**。而设计 §10.3 第 6 条「用数据代替推荐」的全部立论，
  *   就是"把可用域名数摆出来"——产出那个数字的代码路径当时零覆盖。
  * ⇒ 下面「真装配」那一组补的就是这一截。
@@ -248,7 +248,7 @@ describe("GET /admin/api/registrar/status", () => {
     let probed = false;
     const { app, tendCalls } = await fixture({
       registrar: BLOCKED,
-      probe: async () => { probed = true; return { ok: true, domains: 1 }; },
+      probe: async () => { probed = true; return { ok: true, domains: 1, credentials: "accepted", cleaned: true }; },
     });
 
     const got = await (await status(app)).json() as { enabled: boolean; blocked: boolean };
@@ -448,7 +448,7 @@ describe("GET /admin/api/registrar/status", () => {
     // 第一行 409 就返回了，这一格量到的「零写」有一半根本没走到执行体那一侧。
     const { app } = await fixture({
       storage: st, keys: ["sk-a"],
-      probe: async () => ({ ok: true, domains: 1 }),
+      probe: async () => ({ ok: true, domains: 1, credentials: "accepted", cleaned: true }),
     });
     const before = { puts: st.puts, deletes: st.deletes, lists: st.lists, gets: st.gets };
 
@@ -549,7 +549,7 @@ describe("GET /admin/api/registrar/status", () => {
     const st2 = new CountingStorage(new MemoryStorage(undefined, () => t2));
     const okApp = await makeApp([], [], { registrar: BOTH_CHANNELS }, () => t2, {
       storage: st2,
-      registrar: { storage: st2, tend: async () => {}, probeChannel: async () => ({ ok: true, domains: 1 }) },
+      registrar: { storage: st2, tend: async () => {}, probeChannel: async () => ({ ok: true, domains: 1, credentials: "accepted", cleaned: true }) },
     });
     const b5 = st2.puts;
     for (let i = 0; i < 51; i++) {
@@ -587,21 +587,30 @@ describe("POST /admin/api/registrar/channels/:channel/test", () => {
   it("成功：ok + 可用域名数 + 耗时，两条通道同一套形状", async () => {
     const probes: Channel[] = [];
     const { app } = await fixture({
-      probe: async (channel) => { probes.push(channel); return { ok: true, domains: channel === "yyds" ? 7 : 3 }; },
+      probe: async (channel) => ({
+        ok: true, domains: (probes.push(channel), channel === "yyds" ? 7 : 3),
+        credentials: "accepted", cleaned: true,
+      }),
     });
 
     const moe = await testChannel(app, "moemail");
     const yyds = await testChannel(app, "yyds");
     expect(moe.status).toBe(200);
     expect(yyds.status).toBe(200);
-    const a = await moe.json() as { ok: boolean; channel: string; domains: number; latencyMs: number };
-    const b = await yyds.json() as { ok: boolean; channel: string; domains: number; latencyMs: number };
+    const a = await moe.json() as Record<string, unknown>;
+    const b = await yyds.json() as Record<string, unknown>;
 
     // **两条通道的响应键集合逐字相同**：设计 §10.3 第 6 条要求两个按钮
     // 「样式、位置、文案模板完全一致」，而模板一致的前提是数据形状一致。
     expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
-    expect(a).toEqual({ ok: true, channel: "moemail", domains: 3, latencyMs: 0 });
-    expect(b).toEqual({ ok: true, channel: "yyds", domains: 7, latencyMs: 0 });
+    expect(a).toEqual({
+      ok: true, channel: "moemail", domains: 3, latencyMs: 0,
+      credentials: "accepted", cleaned: true,
+    });
+    expect(b).toEqual({
+      ok: true, channel: "yyds", domains: 7, latencyMs: 0,
+      credentials: "accepted", cleaned: true,
+    });
     expect(probes, "两条通道各自真的被探了一次，且探的是自己那条").toEqual(["moemail", "yyds"]);
   });
 
@@ -678,11 +687,11 @@ describe("POST /admin/api/registrar/channels/:channel/test", () => {
    * 实现返回字面量 `0` 就能过。
    */
   it("latencyMs 是真的量出来的：时钟会走时它 > 0，冻住时它恰好是 0", async () => {
-    const ticking = await fixture({ tickingClock: true, probe: async () => ({ ok: true, domains: 1 }) });
+    const ticking = await fixture({ tickingClock: true, probe: async () => ({ ok: true, domains: 1, credentials: "accepted", cleaned: true }) });
     const a = await (await testChannel(ticking.app, "yyds")).json() as { latencyMs: number };
     expect(a.latencyMs, "时钟在走，耗时却是 0 —— 那个字段是个字面量").toBeGreaterThan(0);
 
-    const frozen = await fixture({ probe: async () => ({ ok: true, domains: 1 }) });
+    const frozen = await fixture({ probe: async () => ({ ok: true, domains: 1, credentials: "accepted", cleaned: true }) });
     const b = await (await testChannel(frozen.app, "yyds")).json() as { latencyMs: number };
     expect(b.latencyMs, "时钟冻住时耗时应当恰好是 0，不是某个常数").toBe(0);
   });
@@ -700,7 +709,7 @@ describe("POST /admin/api/registrar/channels/:channel/test", () => {
 
   it("通道名不认识：400 unknown_channel，压根不去碰执行体", async () => {
     let probed = false;
-    const { app } = await fixture({ probe: async () => { probed = true; return { ok: true, domains: 1 }; } });
+    const { app } = await fixture({ probe: async () => { probed = true; return { ok: true, domains: 1, credentials: "accepted", cleaned: true }; } });
     const res = await testChannel(app, "gmail");
     expect(res.status).toBe(400);
     expect((await res.json() as { reason: string }).reason).toBe("unknown_channel");
@@ -711,7 +720,7 @@ describe("POST /admin/api/registrar/channels/:channel/test", () => {
     let probed = false;
     const { app } = await fixture({
       registrar: null,
-      probe: async () => { probed = true; return { ok: true, domains: 1 }; },
+      probe: async () => { probed = true; return { ok: true, domains: 1, credentials: "accepted", cleaned: true }; },
     });
     const res = await testChannel(app, "yyds");
     expect(res.status).toBe(409);
@@ -723,7 +732,7 @@ describe("POST /admin/api/registrar/channels/:channel/test", () => {
     let probed = false;
     const { app } = await fixture({
       registrar: ONLY_YYDS,
-      probe: async () => { probed = true; return { ok: true, domains: 1 }; },
+      probe: async () => { probed = true; return { ok: true, domains: 1, credentials: "accepted", cleaned: true }; },
     });
     const res = await testChannel(app, "moemail");
     expect(res.status).toBe(409);
@@ -966,22 +975,23 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
    *    provider** 的话，其中一条的解析必然得到 0 个域名。
    */
   it("通道连通性走的是真 provider：打各自配的 baseUrl、各自的端点、各自的响应形态", async () => {
-    const urls: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
-      urls.push(String(url));
-      const body = String(url).includes("/v1/domains")
-        ? { data: [{ domain: "a.test" }, { domain: "b.test" }, { domain: "c.test" }] }
-        : { emailDomains: "x.test,y.test" };
-      return new Response(JSON.stringify(body), {
-        status: 200, headers: { "content-type": "application/json" },
-      });
+    const reqs: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      reqs.push(`${init?.method ?? "GET"} ${u}`);
+      if (u.includes("/v1/domains")) {
+        return json({ data: [{ domain: "a.test" }, { domain: "b.test" }, { domain: "c.test" }] });
+      }
+      // YYDS 侧验凭据走的是「建一个再删掉」，两条都得应答。
+      if (u.includes("/v1/accounts")) return json({ data: { address: "u@a.test", id: "acct-1" } });
+      return json({ emailDomains: "x.test,y.test" });
     });
 
     const h = await realApp();
     const yyds = await (await h.call("/admin/api/registrar/channels/yyds/test")).json() as
-      { ok: boolean; domains: number };
+      { ok: boolean; domains: number; credentials: string; cleaned: boolean };
     const moe = await (await h.call("/admin/api/registrar/channels/moemail/test")).json() as
-      { ok: boolean; domains: number };
+      { ok: boolean; domains: number; credentials: string; cleaned: boolean };
 
     expect(yyds.ok).toBe(true);
     expect(moe.ok).toBe(true);
@@ -989,10 +999,74 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
     // 接错线的形态就不可观测了。
     expect(yyds.domains, "YYDS 那三个域名没被解析出来 —— provider 或响应形态接错了").toBe(3);
     expect(moe.domains, "MoeMail 那两个域名没被解析出来（它是逗号分隔的字符串，不是数组）").toBe(2);
-    expect(urls, "真的 listDomains 一次都没被调到 —— 那个域名数是凭空来的").toEqual([
-      "https://yyds.invalid/v1/domains",
-      "https://moe.invalid/api/config",
+    // 两条都真的验过凭据、都没留下残留。
+    expect([yyds.credentials, moe.credentials]).toEqual(["accepted", "accepted"]);
+    expect([yyds.cleaned, moe.cleaned]).toEqual([true, true]);
+    /**
+     * 🔴🔴 **请求序列是这一格的承重断言，本轮从「两条 GET」变成了五条。**
+     *
+     * 它同时钉住三件事，而任何一件都不是「返回了个数字」能冒充的：
+     * ① 两条通道**各自**真的发起了上游调用，打的是各自配的 baseUrl 与各自的端点；
+     * ② **验凭据那一步真的走到了**（YYDS 是 POST 建 + DELETE 删，MoeMail 是重打一次
+     *    它那条会校验凭据的读端点）—— 一个「只列域名然后自称验过了」的实现在这里当场红；
+     * ③ **建出来的东西真的删掉了**：少了那条 DELETE，「用完即删」就只是一句注释。
+     */
+    expect(reqs, "验凭据那一步没走到 —— 那份「凭据可用」的结论是自报的，不是量出来的").toEqual([
+      "GET https://yyds.invalid/v1/domains",
+      "POST https://yyds.invalid/v1/accounts",
+      "DELETE https://yyds.invalid/v1/accounts/acct-1",
+      "GET https://moe.invalid/api/config",
+      "GET https://moe.invalid/api/config",
     ]);
+  });
+
+  /**
+   * 🔴 **一个可用域名都没读到时：如实回 `credentials: "not_checked"`，
+   * 而且**不去**发那一步验凭据的请求。**
+   *
+   * 建东西那条实现需要一个域名，硬编一个就是伪造。判据是请求序列（只有那一条 GET），
+   * 不是返回值 —— 一个「照发不误、失败了再吞掉」的实现从返回值那边蒙混得过去。
+   */
+  it("一个域名都没读到：不发验凭据那一步，如实回 not_checked", async () => {
+    const reqs: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      reqs.push(`${init?.method ?? "GET"} ${String(url)}`);
+      return json({ data: [] });
+    });
+    const h = await realApp();
+    const body = await (await h.call("/admin/api/registrar/channels/yyds/test")).json();
+    expect(body).toMatchObject({ ok: true, domains: 0, credentials: "not_checked", cleaned: true });
+    expect(reqs, "没有域名可用还是去验了 —— 那一步用的域名只能是伪造的").toEqual([
+      "GET https://yyds.invalid/v1/domains",
+    ]);
+  });
+
+  /**
+   * 🔴🔴 **装配这一截自己失败时：`not_attempted`，而且上游一次都没被调到。**
+   *
+   * 后端那一半的判据在这里，面板那一半在 `tests/ui/registrar.test.ts`
+   * 「后端自成一档、面板另说一句话，两句都不许指向上游」——**两层各一格**，
+   * 因为这个缺陷正是「两句话各自成立、拼起来是假的」那一族。
+   */
+  it("配置读不出来：reason 是 not_attempted，且上游一次都没被调到", async () => {
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => { fetches++; return json({ data: [{ domain: "a.test" }] }); });
+    const storage = new MemoryStorage();
+    const { app } = await buildApp(REAL_ENV, storage, workerRuntime());
+    // **装配之后才布雷**：装配自己也读存储，提前布雷会让 app 根本建不起来。
+    const realGet = storage.get.bind(storage);
+    let armed = false;
+    storage.get = async <T>(key: string): Promise<T | null> => {
+      if (armed) throw new Error("KV 读超时");
+      return realGet<T>(key);
+    };
+    armed = true;
+    const res = await app.request(
+      "/admin/api/registrar/channels/yyds/test", { method: "POST", headers: withKey },
+    );
+    expect(res.status, "测不通不是接口异常").toBe(200);
+    expect(await res.json()).toMatchObject({ ok: false, channel: "yyds", reason: "not_attempted" });
+    expect(fetches, "上游真的被打了 —— 那这一格测的就不是这个缺陷").toBe(0);
   });
 
   it("真 provider 上游返回非 2xx：200 + ok:false，且不回显上游细节", async () => {
@@ -1009,6 +1083,13 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
   /* ══════════════════════════════════════════════════════════════════════
    * 失败那一支的三档分类。**依据是这一次的状态码，不是通道名。**
    * ══════════════════════════════════════════════════════════════════════ */
+
+  /** 真装配这一组的上游替身统一走它：省得每处各写一遍 headers。 */
+  function json(body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  }
 
   /** 真装配这一侧打一次通道测试，把响应体读出来。 */
   async function probeReal(channel: string) {

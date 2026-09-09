@@ -432,10 +432,65 @@ describe("roundFailures / mintedByChannelText", () => {
 });
 
 describe("channelTestResult：两条通道同一套文案模板", () => {
-  it("成功：可用域名数 + 耗时", () => {
-    expect(channelTestResult({ ok: true, channel: "yyds", domains: 7, latencyMs: 120 })).toEqual({
+  it("成功且真的验过凭据：可用域名数 + 耗时，绿灯", () => {
+    expect(channelTestResult({ ok: true, channel: "yyds", domains: 7, latencyMs: 120, credentials: "accepted", cleaned: true })).toEqual({
       key: "reg.channel.testOk", params: { domains: 7, latencyMs: 120 }, kind: "ok",
     });
+  });
+
+  /**
+   * 🔴🔴 **`credentials` 不是 `"accepted"`（含缺字段）一律按「没验」说，绝不进绿灯。**
+   *
+   * 这一档在真装配上今天走不到（后端两个字段都是无条件带的），它守的是
+   * **面板与后端版本对不上**那一刻：少一个字段时，默认渲染必然是好的那一档，
+   * 而那正好把「不知道」静默地报成「验过了」——本仓栽过的形态。
+   */
+  it("后端没给凭据结论（含缺字段）⇒ 走「没验凭据」那句话，而且不是绿灯", () => {
+    const missing = channelTestResult({ ok: true, domains: 7, latencyMs: 120 });
+    expect(missing.key, "缺字段被读成了「验过了」").toBe("reg.channel.testOkUnverified");
+    expect(missing.kind, "一句「不知道」被渲染成绿灯").toBe("warn");
+    const notChecked = channelTestResult({
+      ok: true, domains: 7, latencyMs: 120, credentials: "not_checked", cleaned: true,
+    });
+    expect(notChecked.key).toBe("reg.channel.testOkUnverified");
+    // 表外取值同样退回「没验」那一条，不猜。
+    expect(channelTestResult({
+      ok: true, domains: 7, latencyMs: 120, credentials: "probably", cleaned: true,
+    }).key).toBe("reg.channel.testOkUnverified");
+  });
+
+  /**
+   * 🔴🔴 **验凭据时建出来的东西没删掉 ⇒ 必须换一句话说出来，不许静默进绿灯。**
+   *
+   * ⚠️ **判据是 `cleaned !== true` 而不是 `=== false`**：缺字段同样不许被读成「干净的」，
+   * 理由与上面那格逐字同源。
+   */
+  it("验过了但没清理干净 ⇒ 换一句话并报黄；缺 cleaned 字段同样不许当成干净的", () => {
+    const dirty = channelTestResult({
+      ok: true, domains: 7, latencyMs: 120, credentials: "accepted", cleaned: false,
+    });
+    expect(dirty).toEqual({
+      key: "reg.channel.testOkDirty", params: { domains: 7, latencyMs: 120 }, kind: "warn",
+    });
+    expect(
+      channelTestResult({ ok: true, domains: 7, latencyMs: 120, credentials: "accepted" }).key,
+      "缺 cleaned 被读成了「删干净了」—— 残留会悄悄吃光活跃邮箱名额",
+    ).toBe("reg.channel.testOkDirty");
+  });
+
+  /**
+   * 🔴 **「一次上游请求都没发出去」自成一句话，不许并进那两条上游档。**
+   *
+   * 那两条说的都是「上游怎么答的」（去查地址 / DNS / TLS / 上游），
+   * 而这一档一个字节都没发出去（去查存储）——排查方向正好相反。
+   */
+  it("not_attempted 自成一档，与那两条上游档都不是同一句话", () => {
+    const r = channelTestResult({ ok: false, reason: "not_attempted", latencyMs: 4 });
+    expect(r).toEqual({ key: "reg.channel.testNotAttempted", params: { latencyMs: 4 }, kind: "warn" });
+    expect(r.key).not.toBe(channelTestResult({ ok: false, reason: "upstream_error", latencyMs: 4 }).key);
+    expect(r.key).not.toBe(
+      channelTestResult({ ok: false, reason: "upstream_error", status: 503, latencyMs: 4 }).key,
+    );
   });
 
   it("上游不通：warn 而不是 err —— 「测出来不通」是这颗按钮要回答的问题，不是面板坏了", () => {
@@ -453,12 +508,17 @@ describe("channelTestResult：两条通道同一套文案模板", () => {
   });
 
   it("数字字段缺失时填 —，不伪造 0（「可用域名 0 个」与「不知道几个」是两回事）", () => {
-    expect(channelTestResult({ ok: true }).params).toEqual({ domains: "—", latencyMs: "—" });
+    expect(channelTestResult({ ok: true, credentials: "accepted", cleaned: true }).params)
+      .toEqual({ domains: "—", latencyMs: "—" });
   });
 
   it("两条通道走同一条代码路径：换个通道名，返回的 key 与 params 形状一字不变", () => {
-    const a = channelTestResult({ ok: true, channel: "moemail", domains: 3, latencyMs: 10 });
-    const b = channelTestResult({ ok: true, channel: "yyds", domains: 3, latencyMs: 10 });
+    const a = channelTestResult({
+      ok: true, channel: "moemail", domains: 3, latencyMs: 10, credentials: "accepted", cleaned: true,
+    });
+    const b = channelTestResult({
+      ok: true, channel: "yyds", domains: 3, latencyMs: 10, credentials: "accepted", cleaned: true,
+    });
     expect(a).toEqual(b);
   });
 
@@ -473,8 +533,12 @@ describe("channelTestResult：两条通道同一套文案模板", () => {
    */
   it("五档各选各的文案 key，表外 reason 退回通用那条、不冒充任何一档", () => {
     const at = (res: unknown) => channelTestResult(res);
-    expect(at({ ok: true, domains: 7, latencyMs: 120 }).key).toBe("reg.channel.testOk");
-    expect(at({ ok: true, domains: 0, latencyMs: 120 }).key).toBe("reg.channel.testOkNoDomains");
+    expect(at({ ok: true, domains: 7, latencyMs: 120, credentials: "accepted", cleaned: true }).key)
+      .toBe("reg.channel.testOk");
+    // **0 个域名那一档压过凭据结论**：没有域名可用时补池本来就跑不起来，
+    // 而后端在这一档上如实回 `credentials: "not_checked"`。
+    expect(at({ ok: true, domains: 0, latencyMs: 120, credentials: "not_checked", cleaned: true }).key)
+      .toBe("reg.channel.testOkNoDomains");
     expect(at({ ok: false, reason: "credentials_rejected", status: 401, latencyMs: 30 }))
       .toEqual({ key: "reg.channel.testRejected", params: { status: 401 }, kind: "warn" });
     expect(at({ ok: false, reason: "rate_limited", latencyMs: 30 }))
@@ -483,6 +547,8 @@ describe("channelTestResult：两条通道同一套文案模板", () => {
       .toEqual({ key: "reg.channel.testFailed", params: { status: 503, latencyMs: 30 }, kind: "warn" });
     expect(at({ ok: false, reason: "upstream_error", latencyMs: 30 }).key)
       .toBe("reg.channel.testFailedNoStatus");
+    expect(at({ ok: false, reason: "not_attempted", latencyMs: 30 }).key)
+      .toBe("reg.channel.testNotAttempted");
     // 表外：后端将来多一档而面板还没跟上时，**不猜** —— 退回那两条通用的。
     expect(at({ ok: false, reason: "teapot", latencyMs: 30 }).key).toBe("reg.channel.testFailedNoStatus");
     expect(at({ ok: false, reason: "teapot", status: 418, latencyMs: 30 }).key).toBe("reg.channel.testFailed");
@@ -495,28 +561,34 @@ describe("channelTestResult：两条通道同一套文案模板", () => {
    * 零档的判据写成 `!domains` 时两者会合流 —— 缺字段那半格就是这条的反向控制。
    */
   it("domains 恰好是 0 与 domains 读不到，选的是两句不同的话", () => {
-    const zero = channelTestResult({ ok: true, domains: 0, latencyMs: 9 });
+    const zero = channelTestResult({
+      ok: true, domains: 0, latencyMs: 9, credentials: "not_checked", cleaned: true,
+    });
     expect(zero).toEqual({ key: "reg.channel.testOkNoDomains", params: { latencyMs: 9 }, kind: "warn" });
-    const missing = channelTestResult({ ok: true, latencyMs: 9 });
+    const missing = channelTestResult({
+      ok: true, latencyMs: 9, credentials: "accepted", cleaned: true,
+    });
     expect(missing.key).toBe("reg.channel.testOk");
     expect(missing.params).toEqual({ domains: "—", latencyMs: 9 });
   });
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
- * 🔴🔴 **缺陷复现格：绿灯不许报出它没验过的东西。**
+ * 🔴🔴 **缺陷复现格：列域名端点回 200、凭据却是错的 —— 这颗按钮必须报失败。**
  *
- * ⚠️ **这一格刻意跨两层，而且只能跨两层** —— 本文件其余部分是纯函数，这一格不是，
- * 理由是这个缺陷**只存在于两层之间**：后端那句 `ok: true` 是**真的**（域名真读出来了），
- * 面板那句话也自成一句，**错的是两者拼起来之后运维读到的那个意思**。
- * 任何只看一层的判据都看不见它 —— 后端契约那侧本轮一个字节都没改，
- * 字典那侧单看也「没有假话」。⇒ 判据必须从**假上游**一路走到**运维眼里那句话**。
+ * ⚠️ **这一格的判据本轮被推翻重写过，别照旧读。** 上一版的处置是「保持绿灯 +
+ * 文案自己声明没验凭据」，那一格断言的是那句免责声明在不在。**那不解决问题**：
+ * 绿灯配小字，人读的还是颜色 —— 用户的原始遭遇就是「粘错了 apiKey、点测试看到绿灯、
+ * 回头补池在建邮箱那一步 403」。今天的判据因此是**颜色本身**：报失败，
+ * 而且失败归因是「凭据被拒」而不是「连不上」。
  *
- * **测试替身钉住的正是缺陷的前提**：这把 key 是**错的** —— 真正会校验它的是
- * 建邮箱那一步（403），而列域名那一步 **200，凭据看都不看**。
- * 两条断言把这个前提做成可证的，而不是嘴上说说：
- * ① 那一步真的没被走到（只发了列域名那一条 GET）；
- * ② 同一个替身对那个会校验的端点确实回 403。
+ * ⚠️ **它仍然刻意跨两层**，理由与上一版逐字相同：缺陷同时存在于后端那句话与面板
+ * 那句话之间，任何只看一层的判据都看不见它。
+ *
+ * **测试替身钉住的正是缺陷的前提**：这把 key 是**错的** —— 列域名那一步 200、
+ * 凭据看都不看，真正会校验它的是建邮箱那一步（403）。
+ * ⇒ 「验凭据」必须**真的走到会校验的那一步**，而这一格用 `seen` 把它做成可证的：
+ * 一个「只调 listDomains 然后自称验过了」的实现在这里当场红。
  * ══════════════════════════════════════════════════════════════════════════ */
 describe("缺陷复现：列域名端点回 200 但凭据无效", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
@@ -532,52 +604,141 @@ describe("缺陷复现：列域名端点回 200 但凭据无效", () => {
     TARGET_KEYS: "1",
   };
 
-  it("后端如实回 ok:true，而运维读到的那句话必须自己说清「没有验证凭据」", async () => {
+  /** 打一次通道测试，把「上游被请求了哪几条」与响应体一起带回来。 */
+  async function probe(upstream: (url: string | URL, init?: RequestInit) => Promise<Response>) {
     const seen: string[] = [];
-    const upstream = async (url: string | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      seen.push(`${init?.method ?? "GET"} ${String(url)}`);
+      return upstream(url, init);
+    });
+    const { app } = await buildApp(ENV, new MemoryStorage(), workerRuntime());
+    const res = await app.request(
+      "/admin/api/registrar/channels/yyds/test",
+      { method: "POST", headers: { "x-admin-key": TEST_ADMIN_TOKEN } },
+    );
+    return { seen, status: res.status, body: await res.json() as Record<string, unknown> };
+  }
+
+  /** 列域名恒 200（凭据看都不看）；建邮箱那一步按参数决定怎么回。 */
+  function upstreamWith(onCreate: () => Promise<Response>) {
+    return async (url: string | URL) => {
       const u = String(url);
-      seen.push(`${init?.method ?? "GET"} ${u}`);
-      // 列域名：**凭据看都不看**，照样 200 —— 这就是缺陷的前提。
       if (u.endsWith("/v1/domains")) {
         return new Response(
           JSON.stringify({ data: [{ domain: "a.test" }, { domain: "b.test" }, { domain: "c.test" }] }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      // 建邮箱：**这一步才校验凭据**，这把错 key 在这里被拒。
-      return new Response(JSON.stringify({ errorCode: "temp_inbox_web_app_only" }), { status: 403 });
+      return onCreate();
     };
-    vi.stubGlobal("fetch", upstream);
+  }
 
-    const { app } = await buildApp(ENV, new MemoryStorage(), workerRuntime());
-    const res = await app.request(
-      "/admin/api/registrar/channels/yyds/test",
-      { method: "POST", headers: { "x-admin-key": TEST_ADMIN_TOKEN } },
-    );
-    const body = await res.json() as Record<string, unknown>;
+  it("凭据无效时报失败，归因是「凭据被拒」而不是「连不上」，且面板那句话跟着变", async () => {
+    const { seen, status, body } = await probe(upstreamWith(
+      async () => new Response(JSON.stringify({ errorCode: "temp_inbox_web_app_only" }), { status: 403 }),
+    ));
 
-    // ① 后端这一句是真的，本轮不动它：域名确实读出来了。
-    expect(res.status).toBe(200);
-    expect(body).toMatchObject({ ok: true, channel: "yyds", domains: 3 });
-
-    // ② 前提可证之一：这颗按钮**根本没走到**那个会校验凭据的端点。
-    expect(seen, "这颗按钮不该发出第二次请求").toEqual(["GET https://yyds.invalid/v1/domains"]);
-    // ③ 前提可证之二：同一个替身对那个端点确实拒了这把 key ——
-    //    少了这一条，「凭据是错的」就只是用例名里的一句自述。
-    const rejected = await upstream("https://yyds.invalid/v1/accounts", { method: "POST" });
-    expect(rejected.status, "夹具前提不成立：这把 key 其实是好的").toBe(403);
-
-    // ④ **承重断言**：运维眼里那句话不许把「我们没验」说成「凭据没问题」。
-    const view = channelTestResult(body);
-    const shown = t(view.key, view.params);
+    // ① **承重断言**：绿灯没了。这一格就是用户那次遭遇的机器复刻。
+    expect(status, "测出来不通不是接口异常").toBe(200);
     expect(
-      shown,
-      "绿灯把一句它没验过的事说了出去：凭据完全填错时它照样这么说，"
-      + "运维会据此排除「凭据有问题」这个方向，回头在建邮箱那一步被拒",
-    ).toContain("没有验证凭据");
-    // 反向控制：它同时仍然要说出它**真的**测到的那件事，否则「整句换成一句免责声明」
-    // 也能通过上面那条，而那把这颗按钮唯一的诊断价值一起删掉了。
-    expect(shown).toContain("3");
+      body,
+      "列域名回 200 就报绿 —— 凭据完全填错时运维照样看到绿灯，回头在建邮箱那一步被 403",
+    ).toMatchObject({ ok: false, channel: "yyds", reason: "credentials_rejected", status: 403 });
+
+    // ② **前提可证**：它**真的走到了**那个会校验凭据的端点。
+    //    少了这一条，一个「只列域名然后自称验过了」的实现照样能过上面那格。
+    expect(
+      seen,
+      "没走到会校验凭据的那一步 —— 那份「验过了」的结论是它自己声明的，不是量出来的",
+    ).toEqual([
+      "GET https://yyds.invalid/v1/domains",
+      "POST https://yyds.invalid/v1/accounts",
+    ]);
+
+    // ③ 运维眼里那句话：说的是凭据，不是「连不上」。
+    const view = channelTestResult(body);
+    expect(view.key).toBe("reg.channel.testRejected");
+    expect(view.kind, "报成绿灯了").not.toBe("ok");
+    expect(t(view.key, view.params)).toContain("凭据");
+  });
+
+  /**
+   * 🔴🔴 **限流 / 上游抖动不许被说成「凭据无效」。**
+   *
+   * 三者的处置完全相反（等一会儿再试 / 去看上游 / 去改凭据），而运维手上只有面板
+   * 那一句话。**三条都是正向断言**：只写「429 没被说成凭据错」的话，
+   * 一个恒回 `upstream_error` 的空分档器照样全绿。
+   */
+  it("同一条路径上，凭据被拒 / 上游限流 / 上游抖动是三个互不相同的结论", async () => {
+    const rejected = await probe(upstreamWith(async () => new Response("{}", { status: 403 })));
+    vi.unstubAllGlobals();
+    const limited = await probe(upstreamWith(async () => new Response("{}", { status: 429 })));
+    vi.unstubAllGlobals();
+    const flaky = await probe(upstreamWith(async () => { throw new TypeError("fetch failed"); }));
+
+    expect(rejected.body.reason).toBe("credentials_rejected");
+    expect(limited.body.reason, "上游在限流，这一次什么都没证明出来 —— 不许并进凭据档").toBe("rate_limited");
+    expect(flaky.body.reason, "连不上不是凭据问题").toBe("upstream_error");
+    expect(rejected.body.reason).not.toBe(limited.body.reason);
+    expect(rejected.body.reason).not.toBe(flaky.body.reason);
+    expect(limited.body.reason).not.toBe(flaky.body.reason);
+    // 抖动那一档不伪造状态码（真的没拿到就是没拿到）。
+    expect(Object.keys(flaky.body), "给一次「没连上」补了个假状态码").not.toContain("status");
+
+    // 三条在面板上也必须是三句不同的话 —— 后端分得开而面板揉成一句等于没分。
+    const keys = [rejected, limited, flaky].map((r) => channelTestResult(r.body).key);
+    expect(new Set(keys).size, "三档在面板上被揉成了同一句话").toBe(3);
+  });
+
+  /**
+   * 🔴🔴 **建出来了却删不掉时，必须如实说，不许静默报绿。**
+   *
+   * 那个临时邮箱会占着这条通道的活跃邮箱名额，而名额是补池能不能继续工作的前提。
+   * 静默的残留只会在几天后以「补池突然全失败」的形态炸出来，那时没人会想到是这颗
+   * 按钮留下的。
+   *
+   * **前提可证**：删除那一条 DELETE 真的发出去了（不是压根没删），而且它被上游拒了。
+   */
+  it("验凭据建出来的东西删不掉时如实说，不静默", async () => {
+    const { seen, body } = await probe(upstreamWith(async () => new Response(
+      JSON.stringify({ data: { address: "u@a.test", id: "acct-1" } }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )));
+    // 上面那个替身对 DELETE 也回 200 ⇒ 先量「干净」这一档，作为下面那一档的反向控制。
+    expect(body).toMatchObject({ ok: true, credentials: "accepted", cleaned: true });
+    expect(seen).toEqual([
+      "GET https://yyds.invalid/v1/domains",
+      "POST https://yyds.invalid/v1/accounts",
+      "DELETE https://yyds.invalid/v1/accounts/acct-1",
+    ]);
+    expect(channelTestResult(body).key).toBe("reg.channel.testOk");
+
+    vi.unstubAllGlobals();
+    // 这一次删不掉（上游回 500）。
+    const dirty = await probe(async (url, init) => {
+      const u = String(url);
+      if (u.endsWith("/v1/domains")) {
+        return new Response(JSON.stringify({ data: [{ domain: "a.test" }] }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      }
+      if ((init?.method ?? "GET") === "DELETE") return new Response("nope", { status: 500 });
+      return new Response(JSON.stringify({ data: { address: "u@a.test", id: "acct-1" } }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    });
+
+    // ① 前提可证：删除那一条真的发出去了（不是「压根没删所以当然没删掉」）。
+    expect(dirty.seen.at(-1)).toBe("DELETE https://yyds.invalid/v1/accounts/acct-1");
+    // ② **承重断言**：后端如实说残留还在。
+    expect(dirty.body, "删不掉却报「干净」—— 残留会悄悄吃光活跃邮箱名额").toMatchObject({
+      ok: true, credentials: "accepted", cleaned: false,
+    });
+    // ③ 运维眼里那句话也跟着变，而且不是绿灯。
+    const view = channelTestResult(dirty.body);
+    expect(view.key).toBe("reg.channel.testOkDirty");
+    expect(view.kind).not.toBe("ok");
+    expect(t(view.key, view.params)).toContain("没能删掉");
   });
 });
 
@@ -660,6 +821,134 @@ describe("缺陷复现：列域名端点回 200，正文却读不出来", () => 
     // 反向控制：它同时仍然要说出「没拿到状态码」这件真事，否则整句换成一句
     // 「说不清」也能通过上面那条，而那把这一档与另外三档的区别一起删掉了。
     expect(shown).toContain("没拿到状态码");
+  });
+
+  /**
+   * 🔴🔴 **缺陷复现：那句话承诺「事件里带着它实际请求的那个地址」，而这一支上一版一个地址都没有。**
+   *
+   * 终检实测（真装配，上游 200 + HTML 正文），事件逐字是：
+   *   `… channel=yyds latencyMs=3 reason=upstream_error`
+   *   `error="Unexpected token '<', \"<html><bod\"... is not valid JSON"`
+   * ⇒ 两个适配器在 2xx 之后直接解析正文，抛出来的是运行时那个**裸 `SyntaxError`**，
+   * 它身上一个地址都没有。那句话因此只在「传输失败」那半支上成立
+   * ——**把运维支去翻一份并不存在的证据**，与本仓刚裁过的
+   *「横幅别指向一条当时还不存在的事件」逐字同源。
+   *
+   * 处置不是把那半句删掉，是**让这条路真的带上地址**（`src/core/registrar/url.ts`
+   * 的 `bodyFail`）：它本来就该带，「HTTP 404 却查不出为什么」那个故障的教训
+   * 在适配器的 `listDomains` 上方逐字写着，这一支只是当时漏掉的另一半。
+   *
+   * ⚠️ **观测点是事件那一条，不是响应体**：响应体**刻意不回显**上游细节
+   *（那条不许放松），地址只进已鉴权的事件板块与容器 stdout。这里读的正是后者
+   *（`ConsoleLogger` 是生产装配里那两个 sink 之一）。
+   */
+  it("那句话承诺的地址，事件里必须真的有 —— 上游 200 + 正文读不出来这一支也要有", async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => {
+      lines.push(a.map(String).join(" "));
+    });
+    try {
+      vi.stubGlobal("fetch", async () => new Response("<html><body>gateway error page</body></html>", {
+        status: 200, headers: { "content-type": "text/html" },
+      }));
+      const { app } = await buildApp(ENV, new MemoryStorage(), workerRuntime());
+      const res = await app.request(
+        "/admin/api/registrar/channels/yyds/test",
+        { method: "POST", headers: { "x-admin-key": TEST_ADMIN_TOKEN } },
+      );
+      const body = await res.json() as Record<string, unknown>;
+      // 前提可证：落的确实是「没拿到状态码」那一档，也就是面板那句话说的那一档。
+      expect(channelTestResult(body).key).toBe("reg.channel.testFailedNoStatus");
+      // 面板那句话确实在承诺这件事（承诺变了的话这一格就该跟着改，而不是静默失效）。
+      expect(t("reg.channel.testFailedNoStatus", { latencyMs: 1 })).toContain("实际请求的那个地址");
+    } finally {
+      spy.mockRestore();
+    }
+
+    const failed = lines.find((l) => l.includes("registrar.channel_test_failed"));
+    expect(failed, "那条失败事件一条都没发出来").toBeDefined();
+    expect(
+      failed,
+      "面板让运维去事件里看「它实际请求的那个地址」，而这一支的事件里一个地址都没有 —— "
+      + "那是把人支去翻一份并不存在的证据",
+    ).toContain("https://yyds.invalid/v1/domains");
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 🔴🔴 **缺陷复现格：一次上游请求都没发出去，不许被说成「上游那边出了问题」。**
+ *
+ * ⚠️ **同样刻意跨两层**：后端上一版那句 `{ ok: false, reason: "upstream_error" }`
+ * 自成一句，面板那句「请求没走通（地址、DNS、TLS、出网、超时），或者上游回了话、
+ * 正文读不出来」也自成一句 —— **错的是两者拼起来之后运维读到的那个意思**：
+ * 两支都预设着「我们真的往外打了一次」，而这一次**上游被调 0 次**。
+ *
+ * 终检实测（真装配，KV `get` 抛 `Error('KV 读超时')`）：上游 fetch **0 次**，
+ * body = `{"ok":false,"channel":"yyds","reason":"upstream_error"}`（不带 status），
+ * 面板渲染的正是那句把人支去查 DNS 与地址的话 —— 而要查的是存储，方向正好反了。
+ *
+ * **前提可证**：这一格把 fetch 计数摆出来（0 次），而不是嘴上说「它没发请求」。
+ * ══════════════════════════════════════════════════════════════════════════ */
+describe("缺陷复现：读自己的配置就失败了，一次上游请求都没发出去", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const ENV: Record<string, string | undefined> = {
+    GATEWAY_TOKEN: "gateway-token-for-registrar-fixture",
+    ADMIN_TOKEN: TEST_ADMIN_TOKEN,
+    REGISTRAR_ENABLED: "true",
+    REGISTRAR_CHANNEL: "yyds",
+    YYDS_API_KEY: "any-key",
+    YYDS_BASE_URL: "https://yyds.invalid",
+    TARGET_KEYS: "1",
+  };
+
+  it("后端自成一档、面板另说一句话，两句都不许指向上游", async () => {
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      fetches++;
+      return new Response(JSON.stringify({ data: [{ domain: "a.test" }] }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    });
+
+    const storage = new MemoryStorage();
+    const { app } = await buildApp(ENV, storage, workerRuntime());
+    // **装配之后才布雷**：装配自己也读存储，提前布雷会让 app 根本建不起来，
+    // 那测的就是另一件事了。
+    const realGet = storage.get.bind(storage);
+    let armed = false;
+    storage.get = async <T>(key: string): Promise<T | null> => {
+      if (armed) throw new Error("KV 读超时");
+      return realGet<T>(key);
+    };
+    armed = true;
+
+    const res = await app.request(
+      "/admin/api/registrar/channels/yyds/test",
+      { method: "POST", headers: { "x-admin-key": TEST_ADMIN_TOKEN } },
+    );
+    const body = await res.json() as Record<string, unknown>;
+
+    // ① **前提可证**：上游一次都没被调到。
+    expect(fetches, "上游真的被打了 —— 那这一格测的就不是这个缺陷").toBe(0);
+
+    // ② **承重断言之一**：后端不许把这一次记成上游的锅。
+    expect(res.status, "测不通不是接口异常").toBe(200);
+    expect(
+      body,
+      "一次上游请求都没发出去，却被记成 upstream_error —— 运维会去查地址、DNS 与上游，"
+      + "而要查的是存储，方向正好反了",
+    ).toEqual({ ok: false, channel: "yyds", reason: "not_attempted", latencyMs: 0 });
+
+    // ③ **承重断言之二**：运维眼里那句话跟着变，而且与那两条上游档不是同一句话。
+    const view = channelTestResult(body);
+    expect(view.key).toBe("reg.channel.testNotAttempted");
+    const shown = t(view.key, view.params);
+    expect(shown, "这一次一个字节都没发出去，那句话却说「请求没走通」").toContain("一个上游请求都没发出去");
+    expect(shown, "把运维支去看存储之外的地方").toContain("存储");
+    expect(view.key).not.toBe(
+      channelTestResult({ ok: false, reason: "upstream_error", latencyMs: 0 }).key,
+    );
   });
 });
 

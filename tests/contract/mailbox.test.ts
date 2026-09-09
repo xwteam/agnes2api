@@ -74,7 +74,10 @@ function runMailProviderContract(name: string, make: () => MailProvider) {
     it("删邮箱不抛错", async () => {
       const p = make();
       const m = await p.createMailbox("a.test");
-      await expect(p.deleteMailbox(m)).resolves.toBeUndefined();
+      // ⚠️ **返回值本轮从 `void` 变成「确认删掉了没有」**（`src/ports/mailbox.ts` 的端口契约）：
+    // `false` 就是「没删掉」，而它**仍然不抛错**——用完即删是尽力而为，这一条没变。
+    // 断言 `false` 而不是 `toBeUndefined()`：后者会在返回值有意义之后静默失效。
+    await expect(p.deleteMailbox(m)).resolves.toBe(false);
     });
   });
 }
@@ -189,7 +192,10 @@ function runDeleteFailureContract(
     // recordingLogger 断言事件名 + fields。
     const logger = recordingLogger();
     const p = make(async () => new Response("{}", { status: 404 }), logger);
-    await expect(p.deleteMailbox(mailbox)).resolves.toBeUndefined();
+    // ⚠️ **返回值本轮从 `void` 变成「确认删掉了没有」**（`src/ports/mailbox.ts` 的端口契约）：
+    // `false` 就是「没删掉」，而它**仍然不抛错**——用完即删是尽力而为，这一条没变。
+    // 断言 `false` 而不是 `toBeUndefined()`：后者会在返回值有意义之后静默失效。
+    await expect(p.deleteMailbox(mailbox)).resolves.toBe(false);
     const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
     expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
     expect(e?.fields?.address).toBe(mailbox.address);
@@ -263,7 +269,10 @@ function runCredentialLeakContract(
       // 塞进 `fields.err`，那正是口令进事件板块的一条现成通道。
       const logger = recordingLogger();
       const p = make(credentialRejectingFetch(), logger);
-      await expect(p.deleteMailbox(mailbox)).resolves.toBeUndefined();
+      // ⚠️ **返回值本轮从 `void` 变成「确认删掉了没有」**（`src/ports/mailbox.ts` 的端口契约）：
+    // `false` 就是「没删掉」，而它**仍然不抛错**——用完即删是尽力而为，这一条没变。
+    // 断言 `false` 而不是 `toBeUndefined()`：后者会在返回值有意义之后静默失效。
+    await expect(p.deleteMailbox(mailbox)).resolves.toBe(false);
       const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
       expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
       expect(JSON.stringify(e)).not.toContain(CRED_SENTINEL);

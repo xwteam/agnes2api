@@ -1348,15 +1348,13 @@ curl http://localhost:8080/admin/api/registrar/status \
 
 ### POST /admin/api/registrar/channels/{channel}/test
 
-채널 연결 테스트: 메일 서비스로 읽기 전용 GET을 한 번 보냅니다. 메일함도 만들지 않고 key도 받지 않습니다.
+채널 연결 테스트: 사용 가능한 도메인을 나열한 뒤 **실제로 자격 증명을 검증**합니다. 방식은 채널마다 다르며, 임시 메일함을 만들었다가 지우는 채널에서는 호출마다 활성 메일함 정원 하나를 씁니다. key는 받지 않습니다.
 
-응답의 `domains`는 **탐지된 도메인 개수**(정수)이며 도메인 목록이 아닙니다 — 이 엔드포인트는 업스트림 응답 본문을 내보내지 않으며, 실패했을 때 함께 나가는 것은 세 자리 상태 코드뿐입니다(아래 참조).
+`domains`는 **탐지된 도메인 개수**(정수)이며 목록이 아닙니다. `credentials`는 `accepted`(업스트림이 자격 증명을 받아들임) 또는 `not_checked`(이번에는 검증하지 않음)입니다. `cleaned`는 검증하려고 만든 것을 확실히 삭제했는지이며, `false`면 임시 메일함이 정원을 계속 차지합니다. 업스트림 응답 본문은 내보내지 않습니다. **자격 증명이 유효하지 않으면 `ok: false`이며, 초록불이 아닙니다.**
 
-**`ok: true`는 주소에 도달했고 도메인을 나열할 수 있었다는 뜻일 뿐, 자격 증명이 쓸 만하다는 뜻이 아닙니다.** 이 단계는 도메인 목록만 읽으며, 이 단계에서 자격 증명을 확인하지 않는 메일 서비스도 있습니다 — 자격 증명을 잘못 넣어도 `ok: true`가 돌아옵니다. 실제로 확인되는 곳은 보충할 때 메일함을 만드는 단계입니다.
+`domains`가 `0`일 때도 `ok: true`이지만, 그 채널은 지금 풀을 보충할 수 없습니다: 보충 단계는 쓸 수 있는 도메인이 없으면 그대로 실패합니다. 이때 `credentials`는 `not_checked`입니다.
 
-`domains`가 `0`일 때도 `ok: true`이지만, 그 채널은 지금 풀을 보충할 수 없습니다: 보충 단계는 쓸 수 있는 도메인이 없으면 그대로 실패합니다.
-
-실패는 `200` + `{ "ok": false }`로 돌아옵니다. `reason`은 세 가지입니다: `credentials_rejected`(업스트림이 이번 요청을 거부, HTTP 401 / 403), `rate_limited`(업스트림이 요청 수를 제한, HTTP 429, 이번에는 아무것도 측정하지 못함), `upstream_error`(그 밖의 경우. 5xx와 "요청이 끝까지 도달하지 못함"을 포함). 업스트림이 실제로 응답한 경우에는 `status`(그 응답의 HTTP 상태 코드)가 함께 나갑니다. 요청이 도달하지 못한 경우에는 이 필드가 **없으며**, 서버가 값을 지어내지 않습니다.
+실패는 `200` + `{ "ok": false }`로 돌아옵니다. `reason`은 네 가지입니다: `credentials_rejected`(업스트림이 거부, HTTP 401 / 403), `rate_limited`(요청 수 제한, 이번에는 아무것도 측정하지 못함, HTTP 429), `upstream_error`(그 밖의 경우. 5xx와 "요청이 끝까지 도달하지 못함"을 포함), `not_attempted`(자기 설정조차 읽지 못해 **업스트림 요청이 한 건도 나가지 않음**. 확인할 곳은 스토리지). 업스트림이 실제로 응답한 경우에만 `status`가 함께 나갑니다 — 서버가 값을 지어내지 않습니다.
 
 **요청 본문**: 이 엔드포인트는 본문을 받지 않으며 채널 이름은 경로에 씁니다(`moemail` 또는 `yyds`만).
 
@@ -1370,7 +1368,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 **응답**:
 
 ```json
-{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128 }
+{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128, "credentials": "accepted", "cleaned": true }
 ```
 
 ### GET /admin/api/usage

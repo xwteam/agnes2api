@@ -1,8 +1,8 @@
-import type { MailProvider } from "../ports/mailbox.js";
+import type { CredentialProof, MailProvider } from "../ports/mailbox.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
-import { httpFail, redactUrl } from "../core/registrar/url.js";
+import { bodyFail, httpFail, redactUrl } from "../core/registrar/url.js";
 import { fetchChannel } from "../core/registrar/fetch.js";
 import type { Logger } from "../ports/logger.js";
 
@@ -75,12 +75,56 @@ export class MoeMailProvider implements MailProvider {
         provider: "MoeMail", action: "列域名", method: "GET", url, status: r.status,
       });
     }
-    const data = (await r.json()) as Record<string, any>;
+    // 2xx 之后的解析失败要自己带上地址，理由与 YYDS 适配器同位置那段逐字同源
+    // （两条通道完全平级：只给一条带上地址，另一条的同类故障就没人守）。
+    let data: Record<string, any>;
+    try {
+      data = (await r.json()) as Record<string, any>;
+    } catch (err) {
+      throw bodyFail({ provider: "MoeMail", action: "列域名", method: "GET", url, cause: err });
+    }
     // MoeMail 用逗号分隔的字符串返回域名，与 YYDS 的数组形态不同。
     return String(data?.emailDomains ?? "")
       .split(",")
       .map((d) => d.trim())
       .filter((d) => d.length > 0);
+  }
+
+  /**
+   * **重打一次 `/api/config`，看它收不收这把凭据。**
+   *
+   * ⚠️ **不建邮箱，这条与 YYDS 侧刻意不同，理由写在这里**：MoeMail 这一步**本来就
+   * 校验凭据**（一次真机观测里，同一把错 key 在这条端点上被回了 401），
+   * 于是它是「能证明凭据」的调用里**最便宜的那一个**——建一个再删掉只会白吃一个
+   * 活跃邮箱名额，换不来任何多出来的结论。
+   *
+   * ⚠️⚠️ **它是「量」出来的，不是「声明」出来的，这条区别是本方法存在的全部意义。**
+   * 写成一格 `listDomainsProvesCredentials = true` 也能省掉这次请求，但那是一句
+   * 关于别人家服务今天行为的**静态断言**：上游哪天不在这一步查了，它就静默地
+   * 开始把「没验」报成「验过了」，而没有任何门禁看得见。这里发的是一次**真的**
+   * 带凭据的请求，结论来自这一次的应答。
+   *
+   * ⚠️ **代价明写**：因此这颗按钮在 MoeMail 这条通道上会打**两次**同样的 GET
+   *（一次列域名、一次证明凭据）。一次人工点击付得起；把两者合并回一次的写法
+   * 会让「证明凭据」重新变成一句由调用方替适配器做出的断言。
+   *
+   * `domain` 用不上（这条实现不建任何东西），端口契约里逐字写着可以忽略它。
+   */
+  async verifyCredentials(_domain: string): Promise<CredentialProof> {
+    const url = `${this.deps.baseUrl}/api/config`;
+    const r = await fetchChannel({
+      fetcher: this.deps.fetcher, provider: "MoeMail", action: "验凭据", url,
+      init: { method: "GET", headers: this.headers(), signal: this.signal() },
+    });
+    // **状态码原样挂上去，不在这里翻译**：401/403、429、5xx 的处置完全不同，
+    // 分档由 `httpFailStatus()` 的消费方做（端口契约那段逐字写着）。
+    if (!r.ok) {
+      throw httpFail({
+        provider: "MoeMail", action: "验凭据", method: "GET", url, status: r.status,
+      });
+    }
+    // 没建任何东西 ⇒ 没有残留可言，恒为 true（端口契约里逐字写着这一条）。
+    return { cleaned: true };
   }
 
   async createMailbox(domain: string): Promise<Mailbox> {
@@ -179,7 +223,11 @@ export class MoeMailProvider implements MailProvider {
     return null;
   }
 
-  async deleteMailbox(mailbox: Mailbox): Promise<void> {
+  /**
+   * ⚠️ **返回值的含义是「确认删掉了没有」，不是「抛没抛错」**（端口契约里逐字写着）。
+   * 与 YYDS 适配器同位置那段同源：`mintOne` 不看它，`verifyCredentials` 看它。
+   */
+  async deleteMailbox(mailbox: Mailbox): Promise<boolean> {
     const url = `${this.deps.baseUrl}/api/emails/${encodeURIComponent(mailbox.handle)}`;
     try {
       const r = await fetchChannel({
@@ -197,6 +245,7 @@ export class MoeMailProvider implements MailProvider {
           fields: { provider: "moemail", address: mailbox.address, status: r.status, url: redactUrl(url) },
         });
       }
+      return r.ok;
     } catch (err) {
       // 用完即删是尽力而为，理由同 YYDS 适配器：key 已经拿到了，邮箱残留是次要
       // 问题，不该让整次铸 key 失败，但要留痕方便观测残留是否在堆积。
@@ -205,6 +254,7 @@ export class MoeMailProvider implements MailProvider {
         msg: "MoeMail 删邮箱失败（残留不影响已拿到的结果）",
         fields: { provider: "moemail", address: mailbox.address, err: errMsg(err), url: redactUrl(url) },
       });
+      return false;
     }
   }
 }

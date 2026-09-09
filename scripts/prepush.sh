@@ -2225,9 +2225,55 @@ EXPECT_NODE_FILES=164
 #     docs-parity 的 >200 字符表格行棘轮仍是 25 —— 这一轮压根没往文档里加长句。
 #   ⇒ Node：5101 + 3 = **5104**；文件数 **164 不动**。
 #   ⇒ workerd：**797 不动**（新增那三格都不在双运行时集合里，实测跑完仍是 43 / 797）。
-EXPECT_NODE_TESTS=5104
+#
+# ── 第 8 轮（「测试连接」真的验凭据 + 清掉上一轮那两条假话）**+24 Node / +2 workerd** ──
+#   这一轮**改了行为**，不是纯文案：这颗按钮从「只列域名」变成「列域名 + 真的验一次凭据」
+#   （怎么验由适配器自己声明，`src/ports/mailbox.ts` 的 `verifyCredentials`）。
+#   上一轮的处置是「保持绿灯 + 文案自己声明没验凭据」，而**绿灯配小字，人读的还是颜色**。
+#   多的**恰好是这 24 格**，逐文件列出来（数是跑出来的：改动前后各单文件读一次）：
+#     · `tests/ui/registrar.test.ts` 55 → **62**（**+7**）：
+#       ① 缺陷复现格重写成三格（凭据无效必须报失败并归因到凭据 / 凭据被拒·限流·抖动是三个
+#          互不相同的结论 / 验凭据建出来的东西删不掉时如实说）——三格都跨两层，
+#          理由与前两轮那一族逐字相同：缺陷只存在于后端那句话与面板那句话之间；
+#       ② 「一次上游请求都没发出去」的缺陷复现格（假话 B）；
+#       ③ 「那句话承诺的地址，事件里必须真的有」（假话 A）；
+#       ④ `channelTestResult` 那一族多出的三格（没给凭据结论 / 没清理干净 / not_attempted 自成一档）。
+#     · `tests/unit/i18n-dict.test.ts` 53 → **56**（**+3**）：
+#       「真的验过的那一档，五语言都自己说清它验过了」＋它的反向自检，
+#       外加「两族锚点不许互相顶替」（同一句话里既说验过了又说没验 ⇒ 上面两格会双双绿）。
+#       原来那两格（没验凭据那半句在不在）**改写不是新增**：射程从 `testOk` 换到
+#       `testOkUnverified` / `testOkNoDomains`，因为 `testOk` 今天真的验过了。
+#     · `tests/unit/registrar/url.test.ts` 12 → **15**（**+3**）：新工厂 `bodyFail` 三格
+#       （带地址 / 不挂状态码 / cause 里的凭据不许跑出来）。
+#     · `tests/unit/registrar/mailbox-yyds.test.ts` 30 → **35**（**+5**）、
+#       `tests/unit/registrar/mailbox-moemail.test.ts` 22 → **26**（**+4**）：
+#       两条通道**各写各的**（本仓「两条邮箱通道完全平级」那条）——「2xx 但正文读不出来」
+#       一格、`verifyCredentials` 两到三格、`deleteMailbox` 返回值的正向那一格。
+#       两家实现刻意不同（一条建一个再删掉、一条重打一次它本来就会校验凭据的读端点），
+#       合成一格就必然只测得到其中一条的形状。
+#     · `tests/contract/admin-registrar.test.ts` 46 → **48**（**+2**，双运行时 ⇒ workerd 也 +2）：
+#       「一个域名都没读到：不发验凭据那一步，如实回 not_checked」＋
+#       「配置读不出来：reason 是 not_attempted，且上游一次都没被调到」。
+#       原来那格「通道连通性走的是真 provider」**是原地加断言不是新增**：请求序列从两条 GET
+#       变成五条（含 POST 建 + DELETE 删 + MoeMail 那次验凭据的 GET）。
+#     · `tests/contract/mailbox.test.ts` / `tests/unit/registrar/tender.test.ts` /
+#       `log-prefix.test.ts` / `registrar-backoff.test.ts` **一格都没多**：
+#       只是 `deleteMailbox` 返回值从 `void` 变成 `boolean`，断言与桩跟着改。
+#     · 五语言字典、五份 API.md / REGISTRAR.md 与各处源码注释**一格判据都没新增**
+#      （check-i18n / docs-parity / docs-typography / check-comment-refs 直接覆盖）。
+#   变异实测（逐条真跑，记的是**实际**红了哪几格，跑完都还原并确认 `git status` 干净）：
+#     见本次报告的变异一节。
+#   ⚠️ **红→绿是真跑出来的**：把 `src/` 单独 stash 回 HEAD（`admin-ui/` 与 `tests/` 留新的），
+#     三格复现当场红，报文逐字就是上一版那句假话（`ok: true` / `upstream_error` /
+#     事件里那条裸 `SyntaxError`）；`git stash pop` 之后 62/62 全绿。
+#   ⚠️ **docs-typography 的 >1200 区间棘轮全程仍是 67，一格没抬**：en 那份 API.md 第一版
+#     顶到了 68，是**压短文案**压回去的（把已经作废的那段「ok:true 不代表凭据可用」
+#     并进响应字段那一段，而不是新加一段）。docs-parity 的 >200 字符棘轮全程没动。
+#   ⇒ Node：5104 + 24 = **5128**；文件数 **164 不动**（一份新测试文件都没加）。
+#   ⇒ workerd：797 + 2 = **799**（那 2 格在 `tests/contract/**`）；文件数 **43 不动**。
+EXPECT_NODE_TESTS=5128
 EXPECT_WORKERS_FILES=43
-EXPECT_WORKERS_TESTS=797
+EXPECT_WORKERS_TESTS=799
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

@@ -467,8 +467,25 @@ async function runManualTendRound(
 /**
  * 探一条通道的连通性（`POST /admin/api/registrar/channels/:channel/test` 的执行体）。
  *
- * **只调 `listDomains()`**：不建邮箱、不注册账号、不消耗任何活跃邮箱名额，
- * 也**一次存储写都不产生**（`buildTendDeps` 里那次 `loadConfig` 是读）。
+ * ── 两步，第二步是本轮加的，代价明写 ────────────────────────────────────────
+ *
+ * ① `listDomains()` —— 可用域名数（设计 §10.3 第 6 条：用数据代替推荐）；
+ * ② `verifyCredentials(domains[0])` —— **真的证明一次这把凭据能用**。
+ *
+ * ⚠️⚠️ **「这一步会不会消耗名额」由适配器决定，本函数不知道也不该知道。**
+ * YYDS 侧那条实现是「建一个再删掉」⇒ **每点一次消耗一个活跃邮箱名额（用完即删）**；
+ * MoeMail 侧那条只重打一次它本来就会校验凭据的读端点 ⇒ 零名额。
+ * **这个差别不许被搬到这里来做分支**——那就是把「谁在哪一步校验凭据」这句关于
+ * 别人家服务今天行为的断言钉回本仓，而它腐烂时没有任何门禁看得见。全文在
+ * `src/ports/mailbox.ts` 的 `MailProvider.verifyCredentials` 上方。
+ * 连点由 `src/http/admin/probe-guard.ts` 那把与单把 key 验活共用的护栏挡着，
+ * 这里不另造一套。
+ *
+ * ⚠️ **上一版这里逐字写着「只调 `listDomains()`：不建邮箱、不注册账号、不消耗任何
+ * 活跃邮箱名额」，那句话今天是假的，已随行为一起改掉**——留着它就是一句门禁看不见
+ * 的假话，而面板文案与五语言文档都是照它写的（本轮一并改了）。
+ *
+ * **仍然一次存储写都不产生**（`buildTendDeps` 里那次 `loadConfig` 是读）。
  *
  * ⚠️ **provider 走 `buildTendDeps` 拿，不在这里另建一个**。另建的那份要自己重解一遍
  * 凭据、自己传一遍 `sleep`/`now`/`logger`——于是这颗按钮测的就是**抄件**，而运维点它
@@ -480,29 +497,23 @@ async function runManualTendRound(
  * 上游报错**原样抛出**，由 `channelTestHandler` 接住转成 `{ ok: false }` 并记事件——
  * 这里不吞、也不翻译，翻译发生在唯一知道要给面板什么形状的那一层。
  * 失败那一支的**分档依据是这一次的状态码，不是通道名**（全文在 `channelTestHandler`
- * 那个 `catch` 上方）。
+ * 那个 `catch` 上方）。**`verifyCredentials` 抛出来的错走的是同一条路、同一套分档**，
+ * 于是「凭据被拒 / 上游限流 / 上游抖动」三档天然分得开——这正是端口契约要求
+ * 实现别 catch、把真实状态码原样挂上去的原因。
  *
- * ── 这一步到底证明了什么：一次真机观测，射程写死在这里 ──────────────────────
+ * ── 这一步到底证明了什么：射程写死在这里 ──────────────────────────────────
  *
- * ⚠️⚠️ **`listDomains()` 成功不等于凭据可用。** 一次真机观测（**2026-08-25，北京时间**；
- * 出处：本轮缺陷报告里那份逐条读数，**未随公开仓发布**，本仓不落任何地址与 key）：
- * · 拿一把**故意写错**的 key 打 YYDS 的列域名端点 ⇒ **200**（它这一步不看凭据）；
- * · 同一把错 key 打 MoeMail 的列域名端点 ⇒ **401**；
- * · 真正把那把错 key 拒掉的是**下一步**（建邮箱）⇒ **403**。
+ * ⚠️⚠️ **`domains` 与「凭据可用」是两条独立的结论，返回值因此分两格。**
+ * 一次真机观测（**2026-08-25，北京时间**；出处：本轮缺陷报告里那份逐条读数，
+ * **未随公开仓发布**，本仓不落任何地址与 key）：拿一把**故意写错**的 key 打 YYDS
+ * 的列域名端点 ⇒ **200**；同一把错 key 打 MoeMail 的列域名端点 ⇒ **401**。
  * **射程**：那是**那一天、那两个部署**的反应，不是这两家服务的性质，更不是常数。
+ * ⇒ 处置是**别把它写成分支**（见上面那段），而不是照着它给某条通道写一档。
  *
- * ⇒ 处置有意只有两条，**别照着这段去写第三条**：
- * ① 面板绿灯自己说清「没有验证凭据」（文案在 `admin-ui/js/i18n-dict.js`）；
- * ② **这段观测只在这里出现这一次**，一个字都不许进文案与文档——
- *    「YYDS 那条端点不校验凭据」是一句关于别人家服务今天行为的断言，
- *    上游改一次版它就腐烂成假话，而**没有任何门禁看得见它腐烂**。
- *    形态与 `src/adapters/mailbox-*.ts` 文件头那两段「活跃邮箱上限的唯一出处」同源。
- *
- * ⚠️ **刻意不发第二次请求做「负对照」**（拿一把故意写错的 key 再打一遍看它拒不拒）：
- * 它确实能在运行期量出「这个端点验不验凭据」，代价却是**每点一次就向上游主动送一次
- * 明确会失败的鉴权** —— 自建 MoeMail 上会进部署者自己的失败日志、可能触发失败锁定，
- * 而这是一颗**健康检查**按钮干出来的事；商业服务那侧有没有失败计数 / IP 封禁**未知**。
- * 这是权衡后否掉的，不是没想到。
+ * ⚠️ **一个域名都没读到时不去验凭据，`credentials` 如实回 `"not_checked"`。**
+ * 两条理由，缺一条这个早退都不成立：① 建东西那条实现需要一个域名，硬编一个
+ * 就是伪造；② 没有域名可用时补池那一步本来就会直接失败，凭据好不好都不改变处置。
+ * **这一档面板必须自己说清「没验凭据」**（`reg.channel.testOkNoDomains`）。
  */
 async function probeChannel(
   env: Record<string, string | undefined>,
@@ -513,7 +524,25 @@ async function probeChannel(
   // 而真正值得留痕的那一条（测试失败）由 handler 用 app 的 sink 打（那条带 `channel`
   // 与耗时，比这里的适配器内部日志更贴近运维要看的东西）。
   const gate: { reason: "disabled" | "blocked" | null } = { reason: null };
-  const deps = await buildTendDeps(env, storage, { gate });
+  /**
+   * ⚠️⚠️ **装配这一截单独接住，它抛错时「一次上游请求都没发出去」。**
+   *
+   * `buildTendDeps` 会读一次存储（`loadConfigWithProvenance`）。那次读抛错时，
+   * 上一版让它一路穿到 `channelTestHandler` 的 `catch`，被记成
+   * `reason: "upstream_error"` —— 而**上游被调 0 次**（本轮实测：真装配，
+   * KV `get` 抛错 ⇒ 上游 0 次，响应体 `{"ok":false,"reason":"upstream_error"}`）。
+   * 那是一句把本网关自己的故障说成上游故障的假话，处置方向正好相反：
+   * 这一档要去看的是存储/KV，不是地址、DNS、TLS 与上游。
+   *
+   * ⇒ 它有自己的一档 `probe_setup_failed`，**不并进任何一个上游档**。
+   * 原始错误不往外带（它可能带着存储实现的内部细节），详情由 handler 记事件。
+   */
+  let deps: TendRoundDeps | null;
+  try {
+    deps = await buildTendDeps(env, storage, { gate });
+  } catch (err) {
+    return { ok: false, reason: "probe_setup_failed", error: err };
+  }
   // **两档分开报**：面板对 `registrar_disabled` 的五语言文案逐字是「注册机没有打开
   // ……请先在设置里打开它」，而 blocked 那一档开关明明是开的——照旧混报就是撒谎。
   if (deps === null) {
@@ -521,7 +550,11 @@ async function probeChannel(
   }
   const provider = deps.providers[channel];
   if (provider === undefined) return { ok: false, reason: "provider_missing" };
-  return { ok: true, domains: (await provider.listDomains()).length };
+  const domains = await provider.listDomains();
+  // 见上面那段：没有域名可用时不去验，如实说没验。
+  if (domains.length === 0) return { ok: true, domains: 0, credentials: "not_checked", cleaned: true };
+  const proof = await provider.verifyCredentials(domains[0]!);
+  return { ok: true, domains: domains.length, credentials: "accepted", cleaned: proof.cleaned };
 }
 
 /**

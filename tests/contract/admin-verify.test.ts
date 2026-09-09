@@ -513,7 +513,7 @@ describe("出站探测护栏：与通道测试共用的那一套（全局约束 
     const wiring: RegistrarWiring = {
       storage,
       tend: async () => {},
-      probeChannel: async () => ({ ok: true, domains: 3 }),
+      probeChannel: async () => ({ ok: true, domains: 3, credentials: "accepted", cleaned: true }),
     };
     const { app, repo } = await makeApp(
       [], ["sk-verify-shared-0001"], { registrar: BOTH_CHANNELS }, now,
@@ -581,7 +581,7 @@ describe("出站探测护栏：与通道测试共用的那一套（全局约束 
       tend: async () => {},
       probeChannel: async () => {
         if (fail) throw new Error("上游不可达");
-        return { ok: true, domains: 2 };
+        return { ok: true, domains: 2, credentials: "accepted", cleaned: true };
       },
     };
     const { app } = await makeApp(
@@ -594,7 +594,7 @@ describe("出站探测护栏：与通道测试共用的那一套（全局约束 
     t = NOW + 3_000;
     const again = await testChannel(app, "yyds");
     expect(again.status, "上一次抛错把这条通道永久卡在了「在飞」").toBe(200);
-    expect(await again.json()).toMatchObject({ ok: true, domains: 2 });
+    expect(await again.json()).toMatchObject({ ok: true, domains: 2, credentials: "accepted", cleaned: true });
   });
 
   it("被 429 挡住的通道测试一次上游探测都不发 —— 判据是执行体被调了几次，不是状态码", async () => {
@@ -604,7 +604,7 @@ describe("出站探测护栏：与通道测试共用的那一套（全局约束 
     const wiring: RegistrarWiring = {
       storage,
       tend: async () => {},
-      probeChannel: async (channel) => { probes.push(channel); return { ok: true, domains: 1 }; },
+      probeChannel: async (channel) => { probes.push(channel); return { ok: true, domains: 1, credentials: "accepted", cleaned: true }; },
     };
     const { app } = await makeApp(
       [], [], { registrar: BOTH_CHANNELS }, () => t, { storage, registrar: wiring },

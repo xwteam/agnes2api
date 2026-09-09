@@ -125,8 +125,10 @@ export interface RegistrarWiring {
    */
   tend: (channel: Channel | null) => Promise<void>;
   /**
-   * 探一条通道的连通性：**只调 `listDomains()`，不建邮箱、不注册账号**。
-   * 返回可用域名数，由本文件加上耗时一起交给面板（设计 §10.3 第 6 条：
+   * 探一条通道的连通性：列一次可用域名，**再真的证明一次这把凭据能用**
+   *（怎么证明由适配器自己决定，见 `src/ports/mailbox.ts`；YYDS 那条实现
+   * 「建一个再删掉」⇒ 每点一次消耗一个活跃邮箱名额）。
+   * 返回可用域名数与凭据结论，由本文件加上耗时一起交给面板（设计 §10.3 第 6 条：
    * 用数据代替推荐）。上游报错时**抛出**，由本文件转成 `ok: false`。
    */
   probeChannel: (channel: Channel) => Promise<ChannelProbe>;
@@ -137,7 +139,27 @@ export interface RegistrarWiring {
  * 不能都用抛错表示：前者是运维要看的数据，后者是一句「你还没配它」。
  */
 export type ChannelProbe =
-  | { ok: true; domains: number }
+  | {
+    ok: true;
+    domains: number;
+    /**
+     * 这一次**有没有真的证明过凭据可用**。
+     *
+     * ⚠️ **它与 `domains` 是两条独立的结论，别拿一个去推另一个。** 列域名成功
+     * 完全可能发生在一把错 key 上（有的服务这一步不看凭据），所以「读到了 N 个
+     * 域名」推不出「凭据可用」——那正是本轮要修的那个缺陷。
+     * · `"accepted"` —— 上游接受了这把凭据（怎么证明的由适配器决定）。
+     * · `"not_checked"` —— 这一次**没验**（今天只有一种成因：一个域名都没读到，
+     *   建东西那条实现没有域名可用；见 `probeChannel`）。**面板必须自己说清这一档没验。**
+     */
+    credentials: "accepted" | "not_checked";
+    /**
+     * 证明凭据时建出来的东西**确认清理干净了没有**。没建过东西时恒为 `true`。
+     * `false` 必须被说出去（面板另有一句话）——静默的残留会把这条通道的活跃邮箱
+     * 配额慢慢吃光，而配额是补池能不能继续工作的前提。
+     */
+    cleaned: boolean;
+  }
   /** 注册机在「端点查过 enabled」与「真去探」之间被关掉了。 */
   | { ok: false; reason: "registrar_disabled" }
   /**
@@ -146,7 +168,16 @@ export type ChannelProbe =
    */
   | { ok: false; reason: "registrar_blocked" }
   /** 这条通道没有凭据 ⇒ `buildTendDeps` 压根没给它造 provider。 */
-  | { ok: false; reason: "provider_missing" };
+  | { ok: false; reason: "provider_missing" }
+  /**
+   * **装配这一截自己就失败了 ⇒ 一次上游请求都没发出去。**
+   *
+   * 今天唯一的成因是 `buildTendDeps` 里那次配置读（存储/KV）抛错。
+   * **与任何一个上游档分开**：那三档说的是「上游怎么答的」，这一档一个字节都没发出去，
+   * 排查方向（去看存储，不是去看地址/DNS/TLS/上游）正好相反。
+   * `error` 带出来只为记事件，**不进响应体**（它可能带着存储实现的内部细节）。
+   */
+  | { ok: false; reason: "probe_setup_failed"; error: unknown };
 
 export interface RegistrarDeps {
   /**
@@ -218,6 +249,15 @@ const REASON_BLOCKED = "registrar_blocked";
 const REASON_NOT_WIRED = "not_wired";
 const REASON_UNKNOWN_CHANNEL = "unknown_channel";
 const REASON_CHANNEL_NOT_CONFIGURED = "channel_not_configured";
+/**
+ * **这一次一个上游请求都没发出去**（`ChannelProbe` 的 `probe_setup_failed`）。
+ *
+ * ⚠️ **它不许并进 `upstream_error`。** 那一档在面板上说的是「请求没走通、
+ * 或者上游回了话正文读不出来」——两句都预设着「我们真的往外打了一次」。
+ * 而这一档连打都没打，处置是去看存储/KV。上一版正是把它记成了 `upstream_error`
+ *（本轮实测：真装配 + KV `get` 抛错 ⇒ 上游 0 次、body 是 `upstream_error`）。
+ */
+const REASON_NOT_ATTEMPTED = "not_attempted";
 
 /** 两条邮箱通道。**字母序**，理由见 `admin-ui/js/pure/registrar.mjs` 的 `CHANNELS`。 */
 const CHANNELS: readonly Channel[] = ["moemail", "yyds"];
@@ -642,15 +682,28 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
  * **两条通道用同一个 handler、同一套返回形状、同一段文案模板**——「完全等权」这件事
  * 在这里是**结构上的**，不是靠两处代码写得一样来维持的。
  *
- * **成功那一支一次存储写都不产生**；它在那一支上唯一的副作用是一次**上游 GET**
- *（`listDomains()`），不建邮箱、不注册账号、不消耗任何活跃邮箱名额。
+ * **成功那一支一次存储写都不产生。**
  *
- * ⚠️⚠️ **这颗按钮只回答「这一次，这个地址与这一步发生了什么」，不回答「这条通道行不行」。**
- * 它走到的那一步是「列出可用域名」——**有的邮箱服务这一步根本不校验凭据**，于是
- * 凭据完全填错时它照样 200。⇒ 绿灯那句话里必须自己写着「没有验证凭据」
- *（`admin-ui/js/i18n-dict.js` 的 `reg.channel.testOk`，五语言各一根毒刺钉在
- * `tests/unit/i18n-dict.test.ts`「连通那句话五语言都自己说清它没有验证凭据」）。
- * **不许把「我们没验」说成「上游没问题」。**
+ * ⚠️⚠️ **它不再是零副作用的了，这是本轮的行为变更，明写。** 上一版逐字写着
+ * 「唯一的副作用是一次上游 GET（`listDomains()`），不建邮箱、不注册账号、
+ * 不消耗任何活跃邮箱名额」——今天这颗按钮**还会真的证明一次凭据**，
+ * 而 YYDS 侧那条实现是「建一个临时邮箱再删掉」⇒ **每点一次消耗一个活跃邮箱名额**。
+ * 怎么证明由适配器自己决定（`src/ports/mailbox.ts` 的 `verifyCredentials`），
+ * **本文件一个字都不知道是哪一步验的**，也不许知道——把「谁在哪一步校验凭据」
+ * 写进这一层，就是把一句关于别人家服务今天行为的断言钉进面板。
+ * 连点由 `deps.probeGuard` 挡着（下面那段），**没有另造一套**。
+ *
+ * ⚠️⚠️ **这颗按钮回答的仍然是「这一次发生了什么」，不是「这条通道永远行不行」。**
+ * 但它现在**真的验凭据**了：凭据无效时，即使列域名那一步回 200，本端点也报
+ * `{ ok: false, reason: "credentials_rejected" }`。上一版在这里的处置是
+ * 「保持绿灯 + 文案自己声明没验凭据」，而**绿灯配小字，人读的还是颜色**——
+ * 那正是本轮要修的缺陷（缺陷复现格在 `tests/ui/registrar.test.ts`
+ * 「缺陷复现：列域名端点回 200 但凭据无效」）。
+ *
+ * ⚠️ **「没验」这一档没有消失，只是收窄了**：一个域名都没读到时不去验
+ *（建东西那条实现没有域名可用），此时 `credentials: "not_checked"`，
+ * 面板那句话必须自己说清它没验（`reg.channel.testOkNoDomains`，五语言各一根毒刺
+ * 钉在 `tests/unit/i18n-dict.test.ts`「没验凭据那两档，五语言都自己说清它没验」）。
  *
  * 失败那一支按**这一次观测到的状态码**分三档（不是按通道名），全文与它挡不住的
  * 那一档写在下面那个 `catch` 上方。
@@ -766,6 +819,25 @@ export function channelTestHandler(deps: RegistrarDeps) {
       const probe = await wiring.probeChannel(raw);
       const latencyMs = deps.now() - startedAt;
       if (!probe.ok) {
+        /**
+         * ⚠️ **这一档与下面那三个 409 不是同一件事，别顺手合并。**
+         * 那三个是「配置在这两步之间被改掉了」（一次并发编辑），这一个是
+         * 「本网关读自己的配置就失败了」——**一次上游请求都没发出去**。
+         * 走 `200 + { ok: false }` 而不是 409/500，理由与下面那个 `catch` 逐字同源：
+         * 两条通道必须同一套返回形状，而「测出来没测成」正是这颗按钮要回答的问题。
+         * 详情进事件（响应体不带原始错误，它可能有存储实现的内部细节）。
+         */
+        if (probe.reason === "probe_setup_failed") {
+          deps.logger.log({
+            level: "warn", event: "registrar.channel_test_failed",
+            msg: "通道连通性测试没测成：读本网关自己的配置就失败了，这一次一个上游请求都没发出去",
+            fields: {
+              channel: raw, latencyMs, reason: REASON_NOT_ATTEMPTED,
+              error: probe.error instanceof Error ? probe.error.message : String(probe.error),
+            },
+          });
+          return c.json({ ok: false, channel: raw, reason: REASON_NOT_ATTEMPTED, latencyMs });
+        }
         // 配置在这两步之间被改掉了（注册机被关、或这条通道的凭据被清空）。
         return c.json({
           error: { type: "conflict", message: "注册机的配置在这次测试期间被改掉了，本次没有测成" },
@@ -775,7 +847,18 @@ export function channelTestHandler(deps: RegistrarDeps) {
           channel: raw,
         }, 409);
       }
-      return c.json({ ok: true, channel: raw, domains: probe.domains, latencyMs });
+      /**
+       * ⚠️ **`credentials` 与 `cleaned` 都是无条件带上的，不是「有问题才带」。**
+       * 缺字段在面板那侧只能被读成「不知道」，而一颗健康检查按钮的默认渲染
+       * 必然是好的那一档 ⇒ 少带一个字段就等于把「没验」静默地报成「验过了」。
+       * 两条通道的响应键集合因此逐字相同（设计 §10.3 第 6 条要的「同一套文案模板」
+       * 的前提），由 `tests/contract/admin-registrar.test.ts`
+       * 「成功：ok + 可用域名数 + 耗时，两条通道同一套形状」那一格钉着。
+       */
+      return c.json({
+        ok: true, channel: raw, domains: probe.domains, latencyMs,
+        credentials: probe.credentials, cleaned: probe.cleaned,
+      });
     } catch (err) {
       /**
        * **上游报错不是 HTTP 错误**：`{ ok: false }` + 200。
@@ -810,8 +893,11 @@ export function channelTestHandler(deps: RegistrarDeps) {
        * 「同一个 401，两条通道拿到逐字相同的结论（除通道名外）」那一格钉着。
        *
        * ⚠️ **它挡不住的那一档，明写**：上游把鉴权失败回成 **200 + 错误体** 时，
-       * `listDomains()` 不抛错，这里根本不会执行，面板照样报绿。
-       * **这正是绿灯那句「没有验证凭据」非有不可的理由** —— 在这种上游下它依然为真。
+       * 适配器那两步都不抛错，这里根本不会执行，面板照样报绿。
+       * 这一档**没有**判据，也做不出判据（把「什么样的 200 算失败」写成规则，
+       * 就又是一张关于别人家服务今天行为的手写表）——如实登记为已知射程边界。
+       * 本轮把「验凭据」做成一次真的调用之后，这一档从「所有上游都命中」收窄成
+       * 「只有把鉴权失败回成 200 的上游才命中」，但它没有消失。
        *
        * ⚠️ `401` 与 `403` **刻意合成一档**：403 也可能是「凭据有效但没这个权限」
        * 「活跃邮箱名额用光」「出口地址被拒」。要分开就得去解析上游的 errorCode 字符串，
@@ -823,17 +909,21 @@ export function channelTestHandler(deps: RegistrarDeps) {
       // `null` = 这条错误没带状态码。**不伪造兜底值**，理由在
       // `src/core/registrar/url.ts` 的 `httpFail` 那段。
       // ⚠️ **别把 `null` 读成「请求压根没发出去」。** `transportFailMessage` 那一半确实
-      // 落这里，但它不是全部：适配器的 `listDomains` 在 2xx 之后那次 `await r.json()`
-      // 抛出的裸 `SyntaxError` 同样没有 `status`（上游回 200 + 非 JSON 正文），
-      // 而那一次请求发出去了、上游也答了。面板那一档的措辞因此不做穷尽承诺，
+      // 落这里，但它不是全部：适配器的 `listDomains` 在 2xx 之后那次 JSON 解析失败
+      // （上游回 200 + 非 JSON 正文）同样没有 `status`，而那一次请求发出去了、
+      // 上游也答了。面板那一档的措辞因此不做穷尽承诺，
       // 全文在 `admin-ui/js/i18n-dict.js` 的 `reg.channel.testFailedNoStatus` 上方。
+      // ⚠️ **「一次上游请求都没发出去」不落这一档**，它在上面早退成
+      // `REASON_NOT_ATTEMPTED` 了——那一档要去看的是存储，不是上游。
       const status = httpFailStatus(err);
       const reason = status === 401 || status === 403
         ? "credentials_rejected"
         : status === 429 ? "rate_limited" : "upstream_error";
       deps.logger.log({
         level: "warn", event: "registrar.channel_test_failed",
-        msg: "通道连通性测试失败（只调了 listDomains，没有建邮箱也没有注册账号）",
+        // ⚠️ 上一版这句逐字写着「只调了 listDomains，没有建邮箱也没有注册账号」——
+        // 本轮起 `verifyCredentials` 那一步可能真的建过东西（YYDS 侧），那句话成了假话。
+        msg: "通道连通性测试失败（列域名 / 验凭据这两步里的某一步）",
         // `status` 单开一格而不是只躺在消息串里：面板与日志侧要按它筛、按它聚合，
         // 而从消息串里抠数字正是 `httpFail` 那段点名禁止的那条路。
         fields: {

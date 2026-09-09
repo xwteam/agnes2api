@@ -161,7 +161,10 @@ describe("MoeMailProvider", () => {
   it("deleteMailbox 网络异常（fetch 抛错）也不向上传播", async () => {
     const fetcher = { async fetch() { throw new Error("network down"); } };
     const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
-    await expect(p.deleteMailbox({ address: "u@a.test", handle: "eid-1" })).resolves.toBeUndefined();
+    // ⚠️ **返回值本轮从 `void` 变成「确认删掉了没有」**：`false` 就是「没删掉」，
+    // 而它**仍然不抛错**（用完即删是尽力而为，这一条没变）。这里断言 `false`
+    // 而不是 `toBeUndefined()`：断言 `undefined` 会在返回值有意义之后静默失效。
+    await expect(p.deleteMailbox({ address: "u@a.test", handle: "eid-1" })).resolves.toBe(false);
   });
 
   it("deleteMailbox 失败时记 registrar.delete_mailbox_failed 事件（不新建日志端口）", async () => {
@@ -185,7 +188,10 @@ describe("MoeMailProvider", () => {
     const logger = recordingLogger();
     const { fetcher } = stubFetcher(() => ({ status: 500 }));
     const p = new MoeMailProvider({ fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
-    await expect(p.deleteMailbox({ address: "u1@a.test", handle: "eid-1" })).resolves.toBeUndefined();
+    // ⚠️ **返回值本轮从 `void` 变成「确认删掉了没有」**：`false` 就是「没删掉」，
+    // 而它**仍然不抛错**（用完即删是尽力而为，这一条没变）。这里断言 `false`
+    // 而不是 `toBeUndefined()`：断言 `undefined` 会在返回值有意义之后静默失效。
+    await expect(p.deleteMailbox({ address: "u1@a.test", handle: "eid-1" })).resolves.toBe(false);
     const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
     expect(e).toBeDefined();
     expect(e?.fields?.address).toBe("u1@a.test");
@@ -321,5 +327,91 @@ describe("MoeMailProvider", () => {
       sleep: async () => { t += 3000; }, now: () => t, logger: NULL_LOGGER,
     });
     await expect(p.pollCode({ address: "u@a.test", handle: "eid-1" }, 9000)).resolves.toBeNull();
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 本轮新增：`verifyCredentials` 与「2xx 但正文读不出来」那一支。
+ * **与 YYDS 侧各写一份**（两条通道完全平级），而两家的实现刻意不同 —— 见下。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 正文可以是任意串（`stubFetcher` 恒 `JSON.stringify`，测不了「不是 JSON」这一支）。 */
+function rawFetcher(handler: (url: string, init: RequestInit) => { status: number; text: string }) {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  return {
+    calls,
+    fetcher: {
+      async fetch(url: string, init: RequestInit) {
+        calls.push({ url, init });
+        const r = handler(url, init);
+        return new Response(r.text, { status: r.status, headers: { "content-type": "text/html" } });
+      },
+    },
+  };
+}
+
+describe("MoeMailProvider：2xx 但正文读不出来", () => {
+  /** 判据与理由与 YYDS 侧同位置那格逐字同源（只给一条通道带上地址，另一条就没人守）。 */
+  it("listDomains 上游 200 但正文不是 JSON：错误里带着地址，凭据抹掉，且不挂状态码", async () => {
+    const { fetcher } = rawFetcher(() => ({ status: 200, text: "<html><body>502</body></html>" }));
+    const p = new MoeMailProvider({
+      fetcher, baseUrl: "https://sentineluser:sentinelsecret@m.invalid",
+      apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+    });
+    const err = await p.listDomains().then(() => null, (e: unknown) => e as Error);
+    expect(err, "上游 200 + HTML 正文却没抛错").not.toBeNull();
+    expect(err!.message, "抛的还是裸 SyntaxError —— 事件里一个地址都没有").toContain("m.invalid/api/config");
+    expect(err!.message).not.toContain("sentinelsecret");
+    expect(err!.message).not.toContain("sentineluser");
+    expect(httpFailStatus(err), "给一次「正文读不出来」挂了个状态码").toBeNull();
+  });
+});
+
+describe("MoeMailProvider.verifyCredentials", () => {
+  /**
+   * 🔴🔴 **它是「量」出来的，不是「声明」出来的。**
+   *
+   * 这条实现不建任何东西（这一步上游本来就校验凭据，建一个再删掉只会白吃一个
+   * 活跃邮箱名额），但它**真的又打了一次带凭据的请求**——判据因此是「一次真的
+   * GET 打出去了」，而不是返回值。写成一格 `listDomainsProvesCredentials = true`
+   * 的实现在这里当场红，而那种写法正是本轮要避开的那句静态断言。
+   */
+  it("真的又打一次带凭据的 GET /api/config，不建任何邮箱，cleaned 恒 true", async () => {
+    const { calls, fetcher } = stubFetcher(() => ({ status: 200, body: { emailDomains: "a.test" } }));
+    const p = new MoeMailProvider({
+      fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+    });
+    expect(await p.verifyCredentials("a.test")).toEqual({ cleaned: true });
+    expect(calls.map((c) => `${c.init.method ?? "GET"} ${c.url}`), "它没有真的去问上游").toEqual([
+      "GET https://m.test/api/config",
+    ]);
+    expect(new Headers(calls[0]!.init.headers).get("x-api-key"), "不带凭据的请求证明不了凭据").toBe("k");
+  });
+
+  /** 判据与理由与 YYDS 侧同位置那格逐字同源：状态码原样穿出去，分档不在适配器里做。 */
+  it("401 / 429 / 500 的状态码原样带得回来（分档不在适配器里做）", async () => {
+    for (const status of [401, 429, 500]) {
+      const { fetcher } = stubFetcher(() => ({ status, body: {} }));
+      const p = new MoeMailProvider({
+        fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+      });
+      const err = await p.verifyCredentials("a.test").then(() => null, (e: unknown) => e);
+      expect(err, `${status}: 上游拒了却没抛错`).not.toBeNull();
+      expect(httpFailStatus(err), `${status}: 状态码被适配器吞了 —— 上层三档就分不开了`).toBe(status);
+    }
+  });
+});
+
+describe("MoeMailProvider.deleteMailbox 的返回值有两个方向", () => {
+  /**
+   * 🔴 **成对的正向那一格。** 只有「失败回 false」那几格时，一个**恒回 `false`**
+   * 的实现照样全绿 —— 而那会让面板对每一次干净的测试都报「有残留」。
+   */
+  it("删成功回 true（失败回 false 那几格的镜像方向）", async () => {
+    const { fetcher } = stubFetcher(() => ({ status: 200 }));
+    const p = new MoeMailProvider({
+      fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+    });
+    await expect(p.deleteMailbox({ address: "u@a.test", handle: "eid-1" })).resolves.toBe(true);
   });
 });

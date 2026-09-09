@@ -1346,15 +1346,13 @@ curl http://localhost:8080/admin/api/registrar/status \
 
 ### POST /admin/api/registrar/channels/{channel}/test
 
-通道連通性測試：向信箱服務發一次唯讀 GET，不建任何信箱、不領任何 key。
+通道連通性測試：列一次可用網域，再**真的驗一次憑證**。怎麼驗由每條通道自己決定——有的通道靠「建一個臨時信箱、驗完立刻刪掉」來驗，那種通道上每點一次會佔用一個活躍信箱名額。不領任何 key。
 
-回應裡的 `domains` 是**探到的網域個數**（整數），不是網域清單——這條端點不回顯上游的回應內容，失敗時只多帶一個三位數的狀態碼（見下）。
+回應裡的 `domains` 是**探到的網域個數**（整數），不是網域清單；`credentials` 是 `accepted`（上游接受了這把憑證）或 `not_checked`（這一次沒驗）；`cleaned` 說清驗憑證時建出來的東西有沒有確認刪掉，`false` 表示那個臨時信箱還佔著名額。這條端點不回顯上游的回應內容，失敗時只多帶一個三位數的狀態碼。**憑證無效時它回 `ok: false`，不是綠燈。**
 
-**`ok: true` 只說明位址通、網域列得出來，不代表憑證可用。** 這一步只讀網域清單，而有的信箱服務這一步不校驗憑證——憑證填錯時它照樣回傳 `ok: true`。真正校驗憑證的是補池時建信箱那一步。
+`domains` 是 `0` 時同樣是 `ok: true`，但這條通道現在補不了池：補池那一步沒有網域可用會直接失敗；這一檔 `credentials` 是 `not_checked`。
 
-`domains` 是 `0` 時同樣是 `ok: true`，但這條通道現在補不了池：補池那一步沒有網域可用會直接失敗。
-
-失敗時是 `200` + `{ "ok": false }`，`reason` 有三檔：`credentials_rejected`（上游拒絕了這次請求，HTTP 401 / 403）、`rate_limited`（上游在限流，HTTP 429，這一次什麼都沒測出來）、`upstream_error`（其餘，含 5xx 與「請求壓根沒走通」）。上游真的回了話時另帶一個 `status`（那次回應的 HTTP 狀態碼）；請求沒走通時**沒有**這個欄位，伺服端不偽造一個。
+失敗時是 `200` + `{ "ok": false }`，`reason` 有四檔：`credentials_rejected`（上游拒了這次請求，HTTP 401 / 403）、`rate_limited`（上游在限流，這一次什麼都沒測出來，HTTP 429）、`upstream_error`（其餘，含 5xx 與「請求壓根沒走通」）、`not_attempted`（讀本閘道自己的設定就失敗了，**一次上游請求都沒發出去**，要查的是儲存）。上游真的回了話時另帶一個 `status`；請求沒走通時**沒有**這個欄位，伺服端不偽造一個。
 
 **請求體**：本端點不收請求內容，通道名寫在路徑裡（只能是 `moemail` 或 `yyds`）。
 
@@ -1368,7 +1366,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 **回應**：
 
 ```json
-{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128 }
+{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128, "credentials": "accepted", "cleaned": true }
 ```
 
 ### GET /admin/api/usage

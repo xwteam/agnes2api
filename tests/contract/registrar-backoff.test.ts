@@ -51,7 +51,9 @@ function spies() {
       return { address: `u${calls.created}@${domain}`, handle: `id-${calls.created}` };
     },
     async pollCode(): Promise<string | null> { return "123456"; },
-    async deleteMailbox(): Promise<void> {},
+    async deleteMailbox(): Promise<boolean> { return true; },
+    /** `tendOnce` 走不到它。**抛错而不是默认成功**——桩不抛错是本仓登记的第 2 种假阳性。 */
+    async verifyCredentials(): Promise<never> { throw new Error("verifyCredentials 不该被调到"); },
   };
   const agnes = {
     platformUrl: "https://platform.test",

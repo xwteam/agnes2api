@@ -246,3 +246,40 @@ export function transportFailMessage(p: {
   const raw = p.cause instanceof Error ? p.cause.message : String(p.cause);
   return channelFailMessage({ ...p, reason: redactInMessage(raw, p.url) });
 }
+
+/**
+ * 上游**答了 2xx、正文却读不出来**时的统一错误消息模板，形如
+ * `YYDS 列域名失败: 响应正文不是 JSON: Unexpected token '<'… (GET https://h/v1/domains)`。
+ *
+ * ── 为什么它必须存在（一次实测出来的假话）────────────────────────────────────
+ *
+ * 上一版这条路径上**一个模板都没有**：适配器在 2xx 之后直接 `await r.json()`，
+ * 抛出来的是运行时那个裸 `SyntaxError`，而它的 message 里**一个地址都没有**。
+ * 实测逐字（上游 200 + HTML 正文，真装配）：
+ *   `error="Unexpected token '<', \"<html><bod\"... is not valid JSON"`
+ * 于是面板那句「事件里那条失败信息带着它实际请求的那个地址」在这一支上是假的。
+ * ⇒ 处置不是把那句话删掉，而是**让这条路真的带上地址**——它本来就该带，
+ * 「HTTP 404 却查不出为什么」那个故障的教训在 `mailbox-yyds.ts` 的 `listDomains`
+ * 上方逐字写着，而这一支只是当时漏掉的另一半。
+ *
+ * ⚠️ **不挂 `status`，这一条是刻意的。** 上游确实回了 2xx，但把 `200` 挂上去会让
+ * `httpFailStatus()` 的消费方把它读成「上游回了话、这是它的裁决」，进而走进
+ * 「上游回了 HTTP 200 —— 连上了，但这一次没读到域名」那句话；而这一档真正要说的是
+ * **正文读不出来**。没有裁决就是没有裁决，与 `transportFailMessage` 那一半同一条规矩
+ *（`httpFail` 那段逐字写着「没有就是没有，不许伪造兜底值」）。
+ *
+ * `cause` 的 message **不可信**（它带着上游正文的片段），先过一遍 `redactInMessage`
+ * 再拼——与 `transportFailMessage` 同一条理由、同一条实现路径。
+ */
+export function bodyFail(p: {
+  provider: string;
+  action: string;
+  method: string;
+  url: string;
+  cause: unknown;
+}): Error {
+  const raw = p.cause instanceof Error ? p.cause.message : String(p.cause);
+  return new Error(channelFailMessage({
+    ...p, reason: `响应正文不是 JSON: ${redactInMessage(raw, p.url)}`,
+  }));
+}

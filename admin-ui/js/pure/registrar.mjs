@@ -353,8 +353,13 @@ export function mintedByChannelText(row) {
  * 上游改一次版它就腐烂成假话 —— 而 `tests/ui/registrar.test.ts`
  * 「两条通道走同一条代码路径……」那一格就是这条的锚。
  *
- * ⚠️ **绿灯不改成黄色。** `ok: true` 时没有任何证据说这里出了问题，报黄是往反方向
- * 过度声称；「它没有验证凭据」这件事由**文案自己说**（`reg.channel.testOk`）。
+ * ⚠️ **绿灯只给「真的验过凭据、而且没留下残留」那一档。** `ok: true` 本身只说明
+ * 这两步都走完了，说不出凭据好不好 —— 后端因此另给 `credentials` 与 `cleaned` 两格，
+ * 而**这里按那两格分档，不按 `ok` 分档**。
+ *
+ * ⚠️⚠️ **`credentials` 不是 `"accepted"` 时（含缺字段）一律按「没验」说，不许猜。**
+ * 与下面「表外的 `reason` 一律退回通用那条」同一条口径：面板与后端版本对不上时，
+ * 少一个字段的默认渲染必然是好的那一档，而那正好把「不知道」静默报成「验过了」。
  *
  * ⚠️ **表外的 `reason` 一律退回那两条通用的，不猜**（与 `refuseReasonKey` 的
  * `default: null` 同一条口径）：猜错时面板会给出一句确切而错误的处置。
@@ -367,18 +372,31 @@ export function channelTestResult(res) {
   if (r.ok === true) {
     const domains = finite(r.domains);
     // ⚠️ **只在「恰好读到 0 个」时换那句话。** 缺字段 / 不是数 ⇒ `finite()` 给 `null`，
-    // 仍旧走 `testOk` 渲染成 `—`：**「读不到几个」与「0 个」是两回事**，
+    // 仍旧走下面那两条渲染成 `—`：**「读不到几个」与「0 个」是两回事**，
     // 而「0 个域名」这条结论的处置（这条通道现在补不了池）只对后者成立。
     if (domains === 0) {
       return { key: "reg.channel.testOkNoDomains", params: { latencyMs: ms }, kind: "warn" };
     }
-    return {
-      key: "reg.channel.testOk",
-      params: { domains: domains === null ? "—" : domains, latencyMs: ms },
-      kind: "ok",
-    };
+    const params = { domains: domains === null ? "—" : domains, latencyMs: ms };
+    // 见上：**默认那一档是「没验」**，`"accepted"` 是唯一进得了绿灯的取值。
+    if (r.credentials !== "accepted") {
+      return { key: "reg.channel.testOkUnverified", params, kind: "warn" };
+    }
+    // 🔴 **建出来了却删不掉 ⇒ 报黄并说出去。** 那个临时邮箱占着这条通道的活跃邮箱
+    // 名额，而名额是补池能不能继续工作的前提；静默的残留会在几天后以「补池突然全
+    // 失败」的形态炸出来，那时没人会想到是这颗按钮留下的。
+    // ⚠️ **判据是 `!== true` 而不是 `=== false`**：缺字段同样不许被读成「干净的」。
+    if (r.cleaned !== true) {
+      return { key: "reg.channel.testOkDirty", params, kind: "warn" };
+    }
+    return { key: "reg.channel.testOk", params, kind: "ok" };
   }
   const status = finite(r.status);
+  // 「一次上游请求都没发出去」自成一档：它要去看的是存储，而下面那三档说的都是
+  // 「上游怎么答的」，排查方向正好相反。
+  if (r.reason === "not_attempted") {
+    return { key: "reg.channel.testNotAttempted", params: { latencyMs: ms }, kind: "warn" };
+  }
   if (r.reason === "credentials_rejected") {
     return { key: "reg.channel.testRejected", params: { status: status === null ? "—" : status }, kind: "warn" };
   }
@@ -389,11 +407,12 @@ export function channelTestResult(res) {
   // 「上游回了 HTTP 5xx」与「这一次连状态码都没拿到」的排查方向完全相反。
   //
   // ⚠️⚠️ **这一档不等于「请求压根没走通」，文案不许照那个意思写。** 两个适配器的
-  // `listDomains` 在 2xx 之后直接 `await r.json()`，上游回 **200 + 非 JSON 正文**
-  //（反向代理/CDN 错误页那一族）时抛的裸 `SyntaxError` 身上同样没有 `status`
-  // ⇒ 也落这里，而那一次请求发出去了、上游也答了。措辞里那张
+  // `listDomains` 在 2xx 之后解析正文，上游回 **200 + 非 JSON 正文**
+  //（反向代理/CDN 错误页那一族）时同样没有 `status` ⇒ 也落这里，
+  // 而那一次请求发出去了、上游也答了。措辞里那张
   // 「地址 / DNS / TLS / 出网 / 超时」的清单因此**不许写成穷尽的候选**，
   // 全文在 `admin-ui/js/i18n-dict.js` 那条文案上方。
+  // ⚠️ 「一次都没发出去」那一支已经在上面被 `not_attempted` 接走了，不在这一档里。
   if (status === null) {
     return { key: "reg.channel.testFailedNoStatus", params: { latencyMs: ms }, kind: "warn" };
   }

@@ -1349,17 +1349,15 @@ curl http://localhost:8080/admin/api/registrar/status \
 
 ### POST /admin/api/registrar/channels/{channel}/test
 
-A channel connectivity test: one read-only GET to the mailbox service. It creates no mailbox and claims no key.
+A channel connectivity test: it lists the usable domains, then **really verifies the credentials**. How is up to each channel — some create a temporary mailbox and delete it, taking one active-mailbox slot per call.
 
-The `domains` field is **the number of domains probed** (an integer), not a list — this endpoint echoes back no upstream response body; on failure it adds only a three-digit status code.
+`domains` is **the number of domains probed** (an integer), not a list; `credentials` is `accepted` or `not_checked`; `cleaned` says whether what was created while verifying was deleted (`false` = a mailbox still holds a slot). **Invalid credentials give `ok: false`, not a green light.**
 
-**`ok: true` only means the address was reachable and the domains listed — not that the credentials work.** Some mailbox services do not check credentials at this step, so wrong ones still get `ok: true`; the mailbox-creation step of a refill is what really checks them.
+`domains: 0` is still `ok: true`, but that channel cannot refill the pool: the refill step fails outright with no domain available, and `credentials` is `not_checked`.
 
-`domains: 0` is still `ok: true`, but that channel cannot refill the pool: the refill step fails outright with no domain available.
+Failures are `200` + `{ "ok": false }`. `reason`: `credentials_rejected` (HTTP 401 / 403), `rate_limited` (HTTP 429 — nothing measured), `upstream_error` (all else, incl. 5xx and "never got through"), `not_attempted` (our own config read failed, so **no upstream request went out** — check storage). No upstream response body is echoed back; `status` appears only when the upstream really answered, and nothing is invented.
 
-Failures are `200` + `{ "ok": false }`. `reason`: `credentials_rejected` (rejected upstream, HTTP 401 / 403), `rate_limited` (HTTP 429 — nothing was measured), `upstream_error` (all else, incl. 5xx and "never got through"). `status` carries the upstream HTTP status when there was one; otherwise it is **absent** — the server invents nothing.
-
-**Request body**: this endpoint takes no body; the channel name lives in the path (either `moemail` or `yyds`).
+**Request body**: none; the channel name lives in the path (`moemail` or `yyds`).
 
 **Request**:
 
@@ -1371,7 +1369,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 **Response**:
 
 ```json
-{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128 }
+{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128, "credentials": "accepted", "cleaned": true }
 ```
 
 ### GET /admin/api/usage

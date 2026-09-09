@@ -1346,15 +1346,13 @@ curl http://localhost:8080/admin/api/registrar/status \
 
 ### POST /admin/api/registrar/channels/{channel}/test
 
-通道连通性测试：向邮箱服务发一次只读 GET，不建任何邮箱、不领任何 key。
+通道连通性测试：列一次可用域名，再**真的验一次凭据**。怎么验由每条通道自己决定——有的通道靠「建一个临时邮箱、验完立刻删掉」来验，那种通道上每点一次会占用一个活跃邮箱名额。不领任何 key。
 
-响应里的 `domains` 是**探到的域名个数**（整数），不是域名清单——这条端点不回显上游的响应体，失败时只多带一个三位数的状态码（见下）。
+响应里的 `domains` 是**探到的域名个数**（整数），不是域名清单；`credentials` 是 `accepted`（上游接受了这把凭据）或 `not_checked`（这一次没验）；`cleaned` 说清验凭据时建出来的东西有没有确认删掉，`false` 表示那个临时邮箱还占着名额。这条端点不回显上游的响应体，失败时只多带一个三位数的状态码。**凭据无效时它回 `ok: false`，不是绿灯。**
 
-**`ok: true` 只说明地址通、域名列得出来，不代表凭据可用。** 这一步只读域名列表，而有的邮箱服务这一步不校验凭据——凭据填错时它照样返回 `ok: true`。真正校验凭据的是补池时建邮箱那一步。
+`domains` 是 `0` 时同样是 `ok: true`，但这条通道现在补不了池：补池那一步没有域名可用会直接失败；这一档 `credentials` 是 `not_checked`。
 
-`domains` 是 `0` 时同样是 `ok: true`，但这条通道现在补不了池：补池那一步没有域名可用会直接失败。
-
-失败时是 `200` + `{ "ok": false }`，`reason` 有三档：`credentials_rejected`（上游拒绝了这次请求，HTTP 401 / 403）、`rate_limited`（上游在限流，HTTP 429，这一次什么都没测出来）、`upstream_error`（其余，含 5xx 与「请求压根没走通」）。上游真的回了话时另带一个 `status`（那次应答的 HTTP 状态码）；请求没走通时**没有**这个字段，服务端不伪造一个。
+失败时是 `200` + `{ "ok": false }`，`reason` 有四档：`credentials_rejected`（上游拒了这次请求，HTTP 401 / 403）、`rate_limited`（上游在限流，这一次什么都没测出来，HTTP 429）、`upstream_error`（其余，含 5xx 与「请求压根没走通」）、`not_attempted`（读本网关自己的配置就失败了，**一次上游请求都没发出去**，要查的是存储）。上游真的回了话时另带一个 `status`；请求没走通时**没有**这个字段，服务端不伪造一个。
 
 **请求体**：本端点不收请求体，通道名写在路径里（只能是 `moemail` 或 `yyds`）。
 
@@ -1368,7 +1366,7 @@ curl -X POST http://localhost:8080/admin/api/registrar/channels/moemail/test \
 **响应**：
 
 ```json
-{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128 }
+{ "ok": true, "channel": "moemail", "domains": 3, "latencyMs": 128, "credentials": "accepted", "cleaned": true }
 ```
 
 ### GET /admin/api/usage

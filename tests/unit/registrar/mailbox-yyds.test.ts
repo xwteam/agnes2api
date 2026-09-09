@@ -129,7 +129,10 @@ describe("YydsProvider", () => {
   it("deleteMailbox 失败不抛错（用完即删是尽力而为）", async () => {
     const { fetcher } = stubFetcher(() => ({ status: 500 }));
     const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
-    await expect(p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" })).resolves.toBeUndefined();
+    // ⚠️ **返回值本轮从 `void` 变成「确认删掉了没有」**：`false` 就是「没删掉」，
+    // 而它**仍然不抛错**（用完即删是尽力而为，这一条没变）。这里断言 `false`
+    // 而不是 `toBeUndefined()`：断言 `undefined` 会在返回值有意义之后静默失效。
+    await expect(p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" })).resolves.toBe(false);
   });
 
   // 补充：上面的「优先用 verificationCode 字段」用例里，正文本身抠不出码，
@@ -160,7 +163,10 @@ describe("YydsProvider", () => {
   it("deleteMailbox 网络异常（fetch 抛错）也不向上传播", async () => {
     const fetcher = { async fetch() { throw new Error("network down"); } };
     const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER });
-    await expect(p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" })).resolves.toBeUndefined();
+    // ⚠️ **返回值本轮从 `void` 变成「确认删掉了没有」**：`false` 就是「没删掉」，
+    // 而它**仍然不抛错**（用完即删是尽力而为，这一条没变）。这里断言 `false`
+    // 而不是 `toBeUndefined()`：断言 `undefined` 会在返回值有意义之后静默失效。
+    await expect(p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" })).resolves.toBe(false);
   });
 
   // === 评审回来的必修项 ===
@@ -246,7 +252,10 @@ describe("YydsProvider", () => {
     const logger = recordingLogger();
     const { fetcher } = stubFetcher(() => ({ status: 404 }));
     const p = new YydsProvider({ fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger });
-    await expect(p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" })).resolves.toBeUndefined();
+    // ⚠️ **返回值本轮从 `void` 变成「确认删掉了没有」**：`false` 就是「没删掉」，
+    // 而它**仍然不抛错**（用完即删是尽力而为，这一条没变）。这里断言 `false`
+    // 而不是 `toBeUndefined()`：断言 `undefined` 会在返回值有意义之后静默失效。
+    await expect(p.deleteMailbox({ address: "u1@a.test", handle: "u1@a.test" })).resolves.toBe(false);
     const e = logger.entries.find((x) => x.event === "registrar.delete_mailbox_failed");
     expect(e).toBeDefined();
     expect(e?.fields?.address).toBe("u1@a.test");
@@ -496,5 +505,131 @@ describe("YydsProvider", () => {
     expect(calls[0]!.url).toBe("https://y.test/v1/messages?address=u1%40a.test");
     expect(calls[1]!.url).toBe("https://y.test/v1/messages/m1?address=u1%40a.test");
     expect(calls.every((c) => !c.url.includes("acct-42"))).toBe(true);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 本轮新增：`verifyCredentials`（真的证明一次凭据）与「2xx 但正文读不出来」那一支。
+ *
+ * ⚠️ **两条通道各写一份，不共用一格**（本仓「两条邮箱通道完全平级」那条）：
+ * 两家证明凭据的方式**刻意不同**（这条建一个再删掉，那条重打一次读端点），
+ * 合成一格就必然只测得到其中一条的形状。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 正文可以是任意串（`stubFetcher` 恒 `JSON.stringify`，测不了「不是 JSON」这一支）。 */
+function rawFetcher(handler: (url: string, init: RequestInit) => { status: number; text: string }) {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  return {
+    calls,
+    fetcher: {
+      async fetch(url: string, init: RequestInit) {
+        calls.push({ url, init });
+        const r = handler(url, init);
+        return new Response(r.text, { status: r.status, headers: { "content-type": "text/html" } });
+      },
+    },
+  };
+}
+
+describe("YydsProvider：2xx 但正文读不出来", () => {
+  /**
+   * 🔴🔴 **上游 200 + 非 JSON 正文时，抛出来的错必须带着它实际请求的那个地址。**
+   *
+   * 上一版这里直接 `await r.json()`，抛的是运行时那个**裸 `SyntaxError`**——
+   * 身上一个地址都没有，而面板那句话（`reg.channel.testFailedNoStatus`）
+   * 逐字承诺「事件里那条失败信息带着它实际请求的那个地址」。
+   * 与上面那格「HTTP 404 却查不出为什么」是同一个故障家族的另一半。
+   */
+  it("listDomains 上游 200 但正文不是 JSON：错误里带着地址，凭据抹掉，且不挂状态码", async () => {
+    const { fetcher } = rawFetcher(() => ({ status: 200, text: "<html><body>502</body></html>" }));
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://sentineluser:sentinelsecret@y.invalid",
+      apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+    });
+    const err = await p.listDomains().then(() => null, (e: unknown) => e as Error);
+    expect(err, "上游 200 + HTML 正文却没抛错").not.toBeNull();
+    expect(err!.message, "抛的还是裸 SyntaxError —— 事件里一个地址都没有").toContain("y.invalid/v1/domains");
+    expect(err!.message).not.toContain("sentinelsecret");
+    expect(err!.message).not.toContain("sentineluser");
+    // **不许伪造一个 200**：`httpFailStatus` 一旦读到数字，面板走的就是另一句话
+    //（「上游回了 HTTP 200」），而这一档要说的是「正文读不出来」。
+    expect(httpFailStatus(err), "给一次「正文读不出来」挂了个状态码").toBeNull();
+  });
+});
+
+describe("YydsProvider.verifyCredentials", () => {
+  /**
+   * 🔴🔴 **它必须真的走到会校验凭据的那一步（建邮箱），而不是自称验过了。**
+   * 判据是**请求序列**：一个「只列域名然后 return {cleaned:true}」的实现在这里当场红。
+   * 用完即删同样是判据的一部分（DELETE 那一条必须打出去，而且打在服务端给的 id 上）。
+   */
+  it("建一个再删掉：POST 建邮箱 + DELETE 那个 id，返回 cleaned:true", async () => {
+    const { calls, fetcher } = stubFetcher((url, init) => {
+      if ((init.method ?? "GET") === "POST") {
+        return { status: 200, body: { data: { address: "u@a.test", id: "acct-9" } } };
+      }
+      // 真机上删除回的是 204，但 `stubFetcher` 恒带一个 body，而 204 不许带 body
+      // （`new Response(body, { status: 204 })` 直接抛）。用 200 —— 判据是 `r.ok`，两者同档。
+      return { status: 200 };
+    });
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+    });
+    expect(await p.verifyCredentials("a.test")).toEqual({ cleaned: true });
+    expect(calls.map((c) => `${c.init.method ?? "GET"} ${c.url}`)).toEqual([
+      "POST https://y.test/v1/accounts",
+      "DELETE https://y.test/v1/accounts/acct-9",
+    ]);
+  });
+
+  /**
+   * 🔴 **建出来了却删不掉 ⇒ `cleaned: false`，而且不抛错。**
+   * 抛错会把「凭据是好的、只是有残留」说成「凭据验不过」——两者的处置完全不同。
+   */
+  it("删不掉时 cleaned:false，且不抛错（凭据是好的，只是有残留）", async () => {
+    const logger = recordingLogger();
+    const { fetcher } = stubFetcher((_url, init) => {
+      if ((init.method ?? "GET") === "POST") {
+        return { status: 200, body: { data: { address: "u@a.test", id: "acct-9" } } };
+      }
+      return { status: 500 };
+    });
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger,
+    });
+    expect(await p.verifyCredentials("a.test")).toEqual({ cleaned: false });
+    expect(logger.events(), "残留连一条事件都没留").toContain("registrar.delete_mailbox_failed");
+  });
+
+  /**
+   * 🔴🔴 **状态码原样穿出去，一个 catch 都不许加。**
+   * 在适配器里 catch 一下再统一翻译成「凭据无效」，就等于把「上游今天忙」（429）
+   * 说成「你的 key 是错的」（403）—— 两者的处置完全相反。
+   * **三档都是正向断言**：只写「429 没被说成 403」的话，一个恒抛裸 Error 的实现也全绿。
+   */
+  it("403 / 429 / 500 的状态码原样带得回来（分档不在适配器里做）", async () => {
+    for (const status of [403, 429, 500]) {
+      const { fetcher } = stubFetcher(() => ({ status, body: { errorCode: "nope" } }));
+      const p = new YydsProvider({
+        fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+      });
+      const err = await p.verifyCredentials("a.test").then(() => null, (e: unknown) => e);
+      expect(err, `${status}: 上游拒了却没抛错`).not.toBeNull();
+      expect(httpFailStatus(err), `${status}: 状态码被适配器吞了 —— 上层三档就分不开了`).toBe(status);
+    }
+  });
+});
+
+describe("YydsProvider.deleteMailbox 的返回值有两个方向", () => {
+  /**
+   * 🔴 **成对的正向那一格。** 只有「失败回 false」那几格时，一个**恒回 `false`**
+   * 的实现照样全绿 —— 而那会让面板对每一次干净的测试都报「有残留」。
+   */
+  it("删成功回 true（失败回 false 那几格的镜像方向）", async () => {
+    const { fetcher } = stubFetcher(() => ({ status: 200 }));
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+    });
+    await expect(p.deleteMailbox({ address: "u@a.test", handle: "acct-1" })).resolves.toBe(true);
   });
 });

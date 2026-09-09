@@ -105,7 +105,9 @@ describe("注册机日志事件（文档对外承诺 [registrar] 前缀 + 稳定
       async listDomains(): Promise<string[]> { throw new Error("down"); },
       async createMailbox(): Promise<never> { throw new Error("unreachable"); },
       async pollCode() { return null; },
-      async deleteMailbox() {},
+      async deleteMailbox() { return true; },
+      /** `tendOnce` 走不到它。**抛错而不是默认成功**——桩不抛错是本仓登记的第 2 种假阳性。 */
+      async verifyCredentials(): Promise<never> { throw new Error("verifyCredentials 不该被调到"); },
     };
     await tendOnce({
       repo: new KeyPoolRepo(new MemoryStorage(), { now: () => 1000, logger: NULL_LOGGER }),
