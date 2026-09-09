@@ -40,7 +40,7 @@ vi.mock("../../../src/core/registrar/tender.js", async (importOriginal) => {
  * `setInterval` 也一并拦下（而不是让 `...actual` 透传真实实现）：一是防止「回退
  * 成 setInterval」这个回归在测试进程里悄悄起一个真的、每 30 分钟才触发一次的后台
  * 定时器；二是让下面「确实用的是 setTimeout」那条用例能直接断言 `intervalCalls`
- * 是空的，不必靠某个 `waitFor` 熬满 2 秒超时才发现回退——那种失败形态慢且不说明
+ * 是空的，不必靠某个 `waitFor` 熬满上限才发现回退——那种失败形态慢且不说明
  * 原因，见那条用例上方的说明。
  */
 /**
@@ -117,9 +117,9 @@ const flush = () => new Promise<void>((r) => setTimeout(r, 0));
  * 等待某个条件成立。补池一轮里夹着真实的文件读（每轮重读配置），不是纯微任务，
  * 单靠一拍 `flush()` 不保证跑完；轮询到条件成立即可，超时就当失败。
  *
- * 本文件下面大多数 `waitFor(() => timers.length === N)` 用它的 2 秒超时兜底
+ * 本文件下面大多数 `waitFor(() => timers.length === N)` 用它的默认上限兜底
  * ——如果 `node.ts` 回退成 `nodeSetInterval`，`timers` 永远不会变化，这些调用
- * 会各自等满 2 秒才报「等待条件超时」。这是已知的、**刻意接受**的次要信号：
+ * 会各自等满那个上限才报「等待条件超时」。这是已知的、**刻意接受**的次要信号：
  * 真正快、且给出明确断言消息的检测已经单独放在「调度接线」描述块最前面那条用例里
  * （拦 `setInterval` 单独计数，断言它恒为空，不依赖任何超时）。没有把这个模式
  * 铺开到本文件其余每一处 `waitFor` 调用，是因为那些调用各自还承担着别的、与
@@ -127,7 +127,25 @@ const flush = () => new Promise<void>((r) => setTimeout(r, 0));
  * 「或者 setInterval 也被调了」的旁路条件会让每一处的意图变得更难读，而收益
  * 只是把一个本来就有专门用例覆盖的次要信号从「慢」变成「更快一点点」。
  */
-async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+/**
+ * `waitFor` 的默认上限。
+ *
+ * ⚠️⚠️ **抬到 15 秒是拿一次真实的 CI 抖动换来的，不是为了让红的变绿。**
+ * 这个数原本是 2000：`7859ac0` 在 GitHub 上因本文件两格 `等待条件超时` 而红，
+ * 而上一个提交 `cc4e6ae` 是绿的，**两版之间本文件零改动** —— 同一份代码两种结果。
+ * 本机（单核）跑 `scripts/prepush.sh` 时也出现过一次同样的偶发。
+ *
+ * **抬它不削弱任何断言**：这些调用断言的是 `cond()` 本身（`tendOnceMock` 被调过一次、
+ * `timers` 长到几条），而**真的回退成 `nodeSetInterval` 时那个条件永远不成立**，
+ * 照样红，只是晚一点报。「快、且说得出原因」那条职责由上面「拦 setInterval 单独计数」
+ * 那一格单独承担，它不依赖任何超时。
+ *
+ * **数字只写在这一处**：上一版把「2 秒」抄进了三段散文与一个用例名，改一次要追七处，
+ * 追漏了就留下过期表述。现在那几处一律说「这个上限」，不复述数值。
+ */
+const WAIT_TIMEOUT_MS = 15_000;
+
+async function waitFor(cond: () => boolean, timeoutMs = WAIT_TIMEOUT_MS): Promise<void> {
   const start = Date.now();
   while (!cond()) {
     if (Date.now() - start > timeoutMs) throw new Error("等待条件超时");
@@ -222,11 +240,11 @@ beforeEach(() => {
 });
 
 describe("调度接线：两个入口确实会调到 tendOnce", () => {
-  it("确实用 setTimeout 自重排，不是 setInterval——回退成 setInterval 要能被一句断言快速抓住，不必靠某个 waitFor 熬满 2 秒超时", async () => {
+  it("确实用 setTimeout 自重排，不是 setInterval——回退成 setInterval 要能被一句断言快速抓住，不必靠某个 waitFor 熬满上限", async () => {
     // 简报变异表最后一行原判定「回退到 nodeSetInterval 需人工核对，单测覆盖不到」
     // 已经不成立——本文件其余每一条依赖 `timers.length` 的 waitFor 事实上都会在
     // 回退发生时超时变红（`timers` 永远拿不到东西）。但「等待条件超时」这个失败
-    // 形态慢（每条 2 秒，CI 里会连环拖慢）且不说明原因；这里把同一件事收敛成一条
+    // 形态慢（每条都要等满上限，CI 里会连环拖慢）且不说明原因；这里把同一件事收敛成一条
     // 立即、明确的断言：`node:timers` 的 setInterval 与 setTimeout 被同一个 mock
     // 一起拦下并分别计数，冷启动那一轮走的是 `void tick()` 直接调用（不经过任何
     // 定时器），所以 `tendOnceMock` 的调用信号在「对/错」两条实现下同样快、同样
