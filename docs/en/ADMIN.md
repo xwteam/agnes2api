@@ -223,8 +223,10 @@ channel, which credentials you have to bring, and how to troubleshoot live in
 
 - **Refill history**: when each round ran, which channel it took, whether a timer or a person
   triggered it, and how long it took.
-- **A channel test only reads that channel's list of usable domains** — no mailbox is created,
-  no account is registered, no quota is consumed.
+- **A channel test really does verify the credentials**, not just read the domain list. How it
+  verifies is up to the channel: some create a throwaway mailbox and delete it right after — on
+  those, each click holds one active-mailbox slot (and says so if the delete fails). Neither
+  channel registers an upstream account.
 
 ### The four guardrails on Tend now
 

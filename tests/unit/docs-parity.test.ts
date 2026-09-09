@@ -15052,3 +15052,55 @@ describe("五份 DEPLOY.md：缺口令那条故障排查按运行时分两段症
       .toEqual([]);
   });
 });
+
+/**
+ * 🔴 **面板说明里那句「通道测试消不消耗名额」必须跟着实现走。**
+ *
+ * 这一格治的是一句**腐烂了整整一轮没人看得见**的全称断言。五份 `ADMIN.md` 曾逐字写着
+ *「通道测试只读取这条通道的可用域名列表，**不建邮箱、不注册账号、不消耗任何名额**」——
+ * 而后来这颗按钮被改成**真验凭据**，YYDS 那条的实现就是「建一个临时邮箱再删掉」，
+ * 每点一次占一个活跃邮箱名额。同一轮里 `API.md` / `REGISTRAR.md` / CHANGELOG /
+ * 面板文案 / handler 注释全都如实改了代价，**唯独运维最先翻的那份面板说明留着相反的话**。
+ *
+ * ⚠️ **它当时逃过了全部门禁**：`check-i18n` 只管字典、`docs-parity` 的其余格只管结构、
+ * `docs-typography` 只管字数 —— **没有任何一格看得见一句话的真假**。这一格就是那个缺口。
+ *
+ * 判法不去读实现（读不动，也会跟着腐烂），而是钉住**两句互斥的话不许同时存在**：
+ * 只要 `src/ports/mailbox.ts` 那侧还声明着 `verifyCredentials`，五份 ADMIN.md 里就
+ * 不许再出现「不建邮箱 / 不消耗名额」这一族说法。哪天真把校验拆掉了，这一格会红，
+ * 提醒回来把文档改回去 —— **两个方向都拦得住。**
+ */
+const NO_COST_CLAIMS: ReadonlyArray<readonly [lang: string, needle: string]> = [
+  ["zh-CN", "不建邮箱"],
+  ["zh-TW", "不建郵箱"],
+  ["en", "no mailbox is created"],
+  ["ja", "作成もアカウント登録も行わず"],
+  ["ko", "메일박스를 만들지도"],
+];
+
+/** 检测本身抽成函数，好让下面那格拿假读取器喂毒——内联的话自检只能验空气。 */
+function noCostClaimProblems(read: (lang: string) => string): string[] {
+  const bad: string[] = [];
+  for (const [lang, needle] of NO_COST_CLAIMS) {
+    if (read(lang).includes(needle)) bad.push(`${lang}: 还写着「${needle}」，而实现会建临时邮箱`);
+  }
+  return bad;
+}
+
+describe("五份 ADMIN.md：通道测试的代价说法不许与实现相反", () => {
+  it("实现还在真验凭据时，面板说明里不许再说「不建邮箱 / 不消耗名额」", () => {
+    const verifies = readFileSync("src/ports/mailbox.ts", "utf8").includes("verifyCredentials");
+    expect(verifies, "夹具前提：端口上仍声明着 verifyCredentials；真拆掉了就回来改这一格").toBe(true);
+    expect(noCostClaimProblems((lang) => readFileSync(`docs/${lang}/ADMIN.md`, "utf8"))).toEqual([]);
+  });
+
+  it("反向自检：拿假读取器喂进那句话，必须逐语言点名 —— 只断言「空」时空检测器与真干净同形", () => {
+    for (const [lang, needle] of NO_COST_CLAIMS) {
+      expect(
+        noCostClaimProblems((l) => (l === lang ? `前面一段话。${needle}。后面一段话。` : "")),
+        `${lang}: 毒刺喂下去却没被点名`,
+      ).toEqual([`${lang}: 还写着「${needle}」，而实现会建临时邮箱`]);
+    }
+    expect(noCostClaimProblems(() => ""), "什么都没有时不许无中生有").toEqual([]);
+  });
+});
