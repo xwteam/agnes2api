@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.2.0-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.2.1-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -59,7 +59,8 @@
 
 | 日付 | 更新内容 |
 |------|----------|
-| 2026-09-09 | v0.2.0 - 🔧 **レジストラーの大改修**（破壊的変更あり）：2 本のメールボックスチャネルが「主系＋自動フォールバック」から**2 つから 1 つを選ぶ**方式になりました。`registrar.primary` / `registrar.fallback` は `registrar.channel` に統合され、既存の設定も読めますし、外れたほうのチャネルは名指しで伝えます。補充が自分自身を締め出すことはなくなりました —— 上流のレート制限に当たったらそのラウンドを即座に打ち切り、段階ごとに指数バックオフします。さらに**上流にブロックされたドメインを覚えておく**ので、次のラウンドでそれらに枠を浪費しません。パネルの「接続テスト」は**実際に認証情報を検証**するようになり、ドメイン一覧を読むだけではなくなりました（貼り間違えた鍵でも以前は緑と出ていました）。ほかに、文言が実装より多くを主張していた箇所の訂正が一式あり、いずれにも赤くなるゲートが付いています |
+| 2026-09-09 | v0.2.1 - 🧾 **リリース後の後始末**：v0.2.0 の監査結果はタグの後に直したため誰も受け取れませんでした。本版で実際に出します —— LICENSE を純粋な MIT に戻し、README のセクション数を訂正し、実装より多くを主張していた文言を一式直しました |
+| 2026-09-09 | v0.2.0 - 🔧 **レジストラーの大改修**（破壊的変更あり）：2 本のメールボックスチャネルは「主系＋自動フォールバック」から**2 つから 1 つを選ぶ**方式へ（`registrar.channel` が `primary`／`fallback` を置き換え、既存設定も読めます）。上流のレート制限に当たったら即座に打ち切って指数バックオフし、ブロックされたドメインを記憶します。「接続テスト」は実際に認証情報を検証します |
 | 2026-08-31 | v0.1.1 - 🧹 **整備リリース**：社内向け識別子を公開リポジトリからおおむね一掃しました。実際に漏れていたのはパネル配信物の 470 か所だけで、/admin/js/*.js の本文としてパネルを開いた訪問者全員に届いていました。残りはソース、テスト、ゲートスクリプト、出荷ドキュメント、コミットメッセージに散在していたものです。あわせて、組版上の除外がいつの間にか漏洩チェックの除外へ格上げされていた問題と、既定のタイムアウト境界に居座っていたテスト 3 ケースも直しています。動作の変更はありません |
 | 2026-08-31 | v0.1.0 - 🎉 **最初のリリース**：4 プロトコルのゲートウェイ、レジストラー、管理パネルが一度に揃い、同じコードが Cloudflare Worker と Node / Docker の両ランタイムで動きます。4 本の受信プロトコルは同じ上流スケジューラ、同じ key プール、同じ失敗の切り分けを共有します。レジストラーの 2 本の一時メールボックス経路は厳密に対等です。パネルは 8 つのセクションでビルド手順は不要です。ドキュメントは 5 言語に各 1 部あります |
 
@@ -206,7 +207,7 @@ docker compose logs -f
 ```bash
 # ヘルスチェック（認証不要）。Worker では自分の https://<name>.<sub>.workers.dev に置き換える
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.2.0"}
+# {"status":"ok","version": "0.2.1"}
 
 # 使えるモデルを確かめる
 curl http://localhost:8080/v1/models \

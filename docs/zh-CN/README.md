@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.2.0-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.2.1-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -59,6 +59,7 @@
 
 | 日期 | 更新内容 |
 |------|----------|
+| 2026-09-09 | v0.2.1 - 🧾 **发版后收口**：v0.2.0 的审计发现当时修在了 tag 之后，等于没发出去。这一版把它们真正发出去 —— LICENSE 恢复成纯 MIT（那段重复的 Required Notice 让 GitHub 与 GHCR 镜像都判成 NOASSERTION）、README 的「八个板块」改成实际的九个、五语言文档与面板里一批「话说得比事实满」的订正（隐私声明的全称承诺、「近 24 小时」实为当前 UTC 日历日、验凭据被跳过的理由、补池确认框的消耗上界、退避横幅一刀切掉的另一种读法），以及 26 处差了两个版本的 /health 示例（并补判据从 VERSION 现算钉住） |
 | 2026-09-09 | v0.2.0 - 🔧 **注册机大修**（含破坏性变更）：两条邮箱通道从「主备自动降级」改成**二选一**，`registrar.primary` / `registrar.fallback` 合成 `registrar.channel`，存量配置读得懂、被丢掉的那条会点名说出来。补池不再把自己锁死 —— 撞上上游限流当场中止整轮、按档指数退避，并**记住哪些域名被上游屏蔽过**，下一轮不拿它们浪费额度。面板「测试连接」现在**真的验一次凭据**，不再只读域名列表（凭据粘错时它以前照样报绿）。另有一批「话说得比事实满」的订正，每一条都配了会红的判据 |
 | 2026-08-31 | v0.1.1 - 🧹 **整备版**：把内部研发编号从公开仓大面积清掉。面板资源那 470 处会随 /admin/js/*.js 发给每个打开面板的访客，是唯一真正外泄的一块；其余散在源码、测试、门禁脚本、出货文档与提交信息里。顺带修好「一条排版豁免被静静升级成泄漏豁免」和三格卡在默认超时边界上的测试。行为面没有改动 |
 | 2026-08-31 | v0.1.0 - 🎉 **首个版本**：四协议网关、注册机与管理面板一次成型，同一份代码同时跑 Cloudflare Worker 与 Node / Docker 两种运行时。四条入站协议共用同一套上游调度、同一个 key 池、同一份失败归因；注册机的两条临时邮箱通道严格平级；面板八个板块零构建；文档五语言各一份 |
@@ -204,7 +205,7 @@ docker compose logs -f
 ```bash
 # 健康检查（不鉴权）。Worker 形态换成你的 https://<name>.<sub>.workers.dev
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.2.0"}
+# {"status":"ok","version": "0.2.1"}
 
 # 查看可用模型
 curl http://localhost:8080/v1/models \

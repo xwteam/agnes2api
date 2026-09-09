@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.2.0-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.2.1-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -59,6 +59,7 @@
 
 | 日期 | 更新內容 |
 |------|----------|
+| 2026-09-09 | v0.2.1 - 🧾 **發版後收口**：v0.2.0 的稽核發現當時修在了 tag 之後，等於沒發出去。這一版把它們真正發出去 —— LICENSE 恢復成純 MIT（那段重複的 Required Notice 讓 GitHub 與 GHCR 映像都判成 NOASSERTION）、README 的「八個板塊」改成實際的九個、五語言文件與面板裡一批「話說得比事實滿」的訂正，以及 26 處差了兩個版本的 /health 範例（並補測試從 VERSION 現算釘住） |
 | 2026-09-09 | v0.2.0 - 🔧 **註冊機大修**（含破壞性變更）：兩條信箱通道從「主備自動降級」改成**二選一**，`registrar.primary` / `registrar.fallback` 合成 `registrar.channel`，存量設定讀得懂、被丟掉的那條會點名說出來。補池不再把自己鎖死 —— 撞上上游限流當場中止整輪、按檔指數退避，並**記住哪些網域被上游封鎖過**，下一輪不拿它們浪費額度。面板「測試連線」現在**真的驗一次憑證**，不再只讀網域清單（憑證貼錯時它以前照樣報綠）。另有一批「話說得比事實滿」的訂正，每一條都配了會紅的測試 |
 | 2026-08-31 | v0.1.1 - 🧹 **整備版**：把內部研發編號從公開倉大面積清掉。面板資源那 470 處會隨 /admin/js/*.js 發給每個打開面板的訪客，是唯一真正外洩的一塊；其餘散在原始碼、測試、門禁指令稿、出貨文件與提交訊息裡。順帶修好「一條排版豁免被靜靜升級成洩漏豁免」和三格卡在預設逾時邊界上的測試。行為面沒有改動 |
 | 2026-08-31 | v0.1.0 - 🎉 **首個版本**：四協議閘道、註冊機與管理面板一次成型，同一份程式碼同時跑 Cloudflare Worker 與 Node / Docker 兩種執行時。四條入站協議共用同一套上游排程、同一個 key 池、同一份失敗歸因；註冊機的兩條臨時信箱通道嚴格平級；面板八個板塊零建置；文件五語言各一份 |
@@ -204,7 +205,7 @@ docker compose logs -f
 ```bash
 # 健康檢查（不鑑權）。Worker 形態換成你的 https://<name>.<sub>.workers.dev
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.2.0"}
+# {"status":"ok","version": "0.2.1"}
 
 # 查看可用模型
 curl http://localhost:8080/v1/models \
