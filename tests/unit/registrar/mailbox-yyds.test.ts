@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { YydsProvider } from "../../../src/adapters/mailbox-yyds.js";
 import { NULL_LOGGER } from "../../../src/ports/logger.js";
 import { recordingLogger } from "../../helpers/recording-logger.js";
+import { httpFailStatus } from "../../../src/core/registrar/url.js";
 
 function stubFetcher(handler: (url: string, init: RequestInit) => { status: number; body?: unknown }) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -43,6 +44,25 @@ describe("YydsProvider", () => {
     expect(err!.message).toContain("404");
     expect(err!.message).not.toContain("sentinelsecret");
     expect(err!.message).not.toContain("sentineluser");
+  });
+
+  /**
+   * 🔴 **非 2xx 抛出来的那个 Error 要**带得回**状态码。**
+   *
+   * 这一格拦的是「工厂加了、调用点没换」：把这处改回 `new Error(httpFailMessage(...))`
+   * ⇒ 消息一个字节都不变、上面那格照绿，而 `httpFailStatus` 读到 `null` ⇒ 面板那颗
+   *「测试连接」按钮就把一次**凭据被拒**说成「请求没走通」，方向正好反了。
+   * 两条通道**各写一格**，理由与本仓「两条通道必须完全平级」同源。
+   */
+  it("listDomains 非 2xx 抛出来的 Error 带得回状态码（工厂加了，调用点也得换）", async () => {
+    const { fetcher } = stubFetcher(() => ({ status: 403, body: { errorCode: "nope" } }));
+    const p = new YydsProvider({
+      fetcher, baseUrl: "https://y.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+    });
+    const err = await p.listDomains().then(() => null, (e: unknown) => e as unknown);
+    expect(httpFailStatus(err), "抛的是一个不带状态码的裸 Error").toBe(403);
+    // 反向控制：消息那一半没有因此退化。
+    expect((err as Error).message).toContain("403");
   });
 
   it("RM1 createMailbox 的 handle 取 data.id 而不是 data.address", async () => {

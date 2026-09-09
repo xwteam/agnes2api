@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  redactUrl, httpFailMessage, transportFailMessage, redactInMessage,
+  redactUrl, httpFailMessage, httpFail, httpFailStatus, transportFailMessage, redactInMessage,
   UNPARSEABLE_URL, UNSAFE_MESSAGE,
 } from "../../../src/core/registrar/url.js";
 
@@ -53,6 +53,38 @@ describe("httpFailMessage", () => {
     expect(msg).not.toContain("GET");
     expect(msg).toContain("h.invalid/v1/accounts");
     expect(msg).not.toContain("sentinelsecret");
+  });
+
+  /**
+   * 🔴 **`httpFail` 与 `httpFailMessage` 出自同一个工厂：消息逐字节相同，状态码取得回来。**
+   *
+   * 这一格钉两件事，缺任何一件都会长出一句假话：
+   * ① **逐字节相等** —— `httpFail` 自己另拼一句消息的话，「消息里写着 404、属性上挂着 403」
+   *    就有了长出来的地方；
+   * ② **状态码不是从 message 里抠出来的** —— 拿一个 message 长得一模一样、但**不是**
+   *    `httpFail` 造的 Error 喂进去，必须得到 `null`。改成正则抠 `HTTP (\d+)` 时这一条当场红，
+   *    而那正是 `src/core/config-provenance.ts`「不要用关键词启发式」那条禁令管着的形态。
+   */
+  it("httpFail 与 httpFailMessage 同构：message 逐字节相等，且状态码取得回来", () => {
+    const p = {
+      provider: "YYDS", action: "列域名", method: "GET",
+      url: "https://sentineluser:sentinelsecret@h.invalid/v1/domains", status: 403,
+    };
+    const err = httpFail(p);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe(httpFailMessage(p));
+    expect(httpFailStatus(err)).toBe(403);
+
+    // ② 消息串长得一模一样，但它不是这个工厂造的 ⇒ 读不到状态码，而不是「抠出 404」。
+    const handRolled = new Error(httpFailMessage({ ...p, status: 404 }));
+    expect(handRolled.message).toContain("HTTP 404");
+    expect(httpFailStatus(handRolled), "状态码是从 message 里抠出来的").toBeNull();
+
+    // 边界：不是对象 / 没有那个属性 / 属性不是有限整数 ⇒ 一律 null，**不许兜底成 0**。
+    expect(httpFailStatus(null)).toBeNull();
+    expect(httpFailStatus("HTTP 403")).toBeNull();
+    expect(httpFailStatus(Object.assign(new Error("x"), { status: "403" }))).toBeNull();
+    expect(httpFailStatus(Object.assign(new Error("x"), { status: 4.5 }))).toBeNull();
   });
 });
 

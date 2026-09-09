@@ -656,7 +656,9 @@ When the selected channel fails:
 **How to notice it**: every round's failure reasons in the refill history carry the channel name
 (the `reasons=` line), the four pool numbers in the registrar board, and — when a channel request
 fails — the event that now carries **the address actually requested**. If you see zero output,
-click "Test connection" on the other channel in the panel; if it works, switch the channel over.
+click "Test connection" on the other channel: it only says that channel is reachable and lists
+domains, **not that its credentials work** — that step does not check them. After switching, read
+the next round's failure reasons; only a minted key settles it.
 
 ### When a channel keeps failing
 

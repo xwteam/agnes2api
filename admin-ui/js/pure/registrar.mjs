@@ -347,24 +347,50 @@ export function mintedByChannelText(row) {
  *
  * `ok: false` 走的是 HTTP 200 + `{ ok: false }`：**「测出来不通」是这颗按钮要回答的
  * 问题，不是面板自己坏了**，所以它不该长得像一次接口异常。
+ *
+ * ⚠️⚠️ **选 key 只看 `reason` 与那两个数字，一个字都不看通道名。** 结论强度做成
+ * 「按通道写死的静态表」就是把一句关于别人家服务今天行为的断言钉进面板，
+ * 上游改一次版它就腐烂成假话 —— 而 `tests/ui/registrar.test.ts`
+ * 「两条通道走同一条代码路径……」那一格就是这条的锚。
+ *
+ * ⚠️ **绿灯不改成黄色。** `ok: true` 时没有任何证据说这里出了问题，报黄是往反方向
+ * 过度声称；「它没有验证凭据」这件事由**文案自己说**（`reg.channel.testOk`）。
+ *
+ * ⚠️ **表外的 `reason` 一律退回那两条通用的，不猜**（与 `refuseReasonKey` 的
+ * `default: null` 同一条口径）：猜错时面板会给出一句确切而错误的处置。
  */
 export function channelTestResult(res) {
   const r = obj(res);
   if (r === null) return { key: "reg.channel.testError", params: {}, kind: "err" };
   const latencyMs = finite(r.latencyMs);
+  const ms = latencyMs === null ? "—" : latencyMs;
   if (r.ok === true) {
     const domains = finite(r.domains);
+    // ⚠️ **只在「恰好读到 0 个」时换那句话。** 缺字段 / 不是数 ⇒ `finite()` 给 `null`，
+    // 仍旧走 `testOk` 渲染成 `—`：**「读不到几个」与「0 个」是两回事**，
+    // 而「0 个域名」这条结论的处置（这条通道现在补不了池）只对后者成立。
+    if (domains === 0) {
+      return { key: "reg.channel.testOkNoDomains", params: { latencyMs: ms }, kind: "warn" };
+    }
     return {
       key: "reg.channel.testOk",
-      params: { domains: domains === null ? "—" : domains, latencyMs: latencyMs === null ? "—" : latencyMs },
+      params: { domains: domains === null ? "—" : domains, latencyMs: ms },
       kind: "ok",
     };
   }
-  return {
-    key: "reg.channel.testFailed",
-    params: { latencyMs: latencyMs === null ? "—" : latencyMs },
-    kind: "warn",
-  };
+  const status = finite(r.status);
+  if (r.reason === "credentials_rejected") {
+    return { key: "reg.channel.testRejected", params: { status: status === null ? "—" : status }, kind: "warn" };
+  }
+  if (r.reason === "rate_limited") {
+    return { key: "reg.channel.testRateLimited", params: {}, kind: "warn" };
+  }
+  // 请求压根没走通时后端**不带** `status`（它不伪造兜底值），两句话因此分开：
+  // 「上游回了 HTTP 5xx」与「没发出去 / 没走通」的排查方向完全相反。
+  if (status === null) {
+    return { key: "reg.channel.testFailedNoStatus", params: { latencyMs: ms }, kind: "warn" };
+  }
+  return { key: "reg.channel.testFailed", params: { status, latencyMs: ms }, kind: "warn" };
 }
 
 /**

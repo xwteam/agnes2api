@@ -1167,6 +1167,65 @@ describe("i18n 字典", () => {
     expect(secondStrikeProblems(undefined)).toEqual(["整行不在字典里"]);
   });
 
+  /* ── 「测试连接」那颗按钮：绿灯必须自己说清它没验凭据 ─────────────────────── */
+
+  /**
+   * 🔴🔴 **这是唯一能挡住「绿灯哪天又开始报凭据」的正向判据。**
+   *
+   * 这颗按钮只走到「列出可用域名」这一步，而**有的邮箱服务这一步根本不校验凭据** ——
+   * 凭据完全填错时它照样 200、照样报绿。少了这半句话，绿灯就把「我们没验」说成了
+   * 「上游没问题」，运维会据此排除「凭据有问题」这个方向，回头在建邮箱那一步被拒。
+   *
+   * ⚠️ **逐语言各一根锚点，不许合成一条**：合成一条时删掉某一种语言的那半句，
+   * 会被别的语言掩盖 —— 而「简体那格红、繁体那格绿」这种形态本仓已经栽过。
+   *
+   * ⚠️ 边界：这一族毒刺只钉住**那半句话在不在**，**不担保整句为真**（译文准确与否
+   * 门禁看不见，那一档留给评审）。与本文件其余文案格是同一条边界。
+   */
+  const NO_VERIFY_ANCHORS: Record<(typeof LANGS)[number], string> = {
+    "zh-CN": "没有验证凭据",
+    "zh-TW": "沒有驗證憑證",
+    en: "did not verify the credentials",
+    ja: "認証情報は検証していません",
+    ko: "자격 증명은 검증하지 않았습니다",
+  };
+
+  /** 连通那句话里没有「没有验证凭据」这半句 ⇒ 逐语言点名。 */
+  function noVerifyProblems(row: Record<string, string> | undefined): string[] {
+    if (row === undefined) return ["整行不在字典里"];
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      if (!(row[lang] ?? "").includes(NO_VERIFY_ANCHORS[lang])) {
+        bad.push(`${lang}: 绿灯没说清它没验凭据（缺「${NO_VERIFY_ANCHORS[lang]}」）`);
+      }
+    }
+    return bad;
+  }
+
+  it("连通那句话五语言都自己说清它没有验证凭据", () => {
+    expect(
+      noVerifyProblems(dictRow("reg.channel.testOk")),
+      "绿灯会把「我们没验」说成「上游没问题」——运维据此排除凭据方向，回头在建邮箱那一步被拒",
+    ).toEqual([]);
+    // 「一个域名都没读到」那一档同样只走到这一步，同样没验凭据。
+    expect(noVerifyProblems(dictRow("reg.channel.testOkNoDomains"))).toEqual([]);
+  });
+
+  it("反向自检：把没有验证凭据那半句从任一语言里抠掉，上面那格必须只点名那一种语言", () => {
+    for (const key of ["reg.channel.testOk", "reg.channel.testOkNoDomains"]) {
+      const row = dictRow(key)!;
+      for (const lang of LANGS) {
+        const anchor = NO_VERIFY_ANCHORS[lang];
+        expect(row[lang]!.includes(anchor), `${key} / ${lang}: 夹具前提不成立`).toBe(true);
+        const poisoned = { ...row, [lang]: row[lang]!.split(anchor).join("") };
+        expect(noVerifyProblems(poisoned), `${key} / ${lang}: 那半句被抠掉却没被点名`)
+          .toEqual([`${lang}: 绿灯没说清它没验凭据（缺「${anchor}」）`]);
+      }
+    }
+    // 整行不在字典里时也要说话 —— 否则改了 key 名之后上面那格会退化成空转。
+    expect(noVerifyProblems(undefined)).toEqual(["整行不在字典里"]);
+  });
+
   /**
    * 设计文档 §7.3 / §9.1 第 6 条：`TendFailureReason` 的每个联合成员都要有
    * `reg.fail.<reason>` 键。当初特意把它收成联合类型正是为了消费时保有穷尽性，

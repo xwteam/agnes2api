@@ -15,6 +15,7 @@ import { REGISTRAR_BACKOFF_KEY } from "../../src/core/registrar/backoff.js";
 import { buildApp } from "../../src/http/wire.js";
 import { workerRuntime } from "../../src/adapters/runtime-worker.js";
 import { WORKER_ROUND_BUDGET_MS } from "../../src/core/registrar/types.js";
+import { httpFail } from "../../src/core/registrar/url.js";
 
 /**
  * `GET /admin/api/registrar/status` 与
@@ -627,6 +628,47 @@ describe("POST /admin/api/registrar/channels/:channel/test", () => {
   });
 
   /**
+   * 🔴🔴 **凭据被拒那一支：响应体里只有那个三位数，上游一个字都没有；事件里带结构化 `status`。**
+   *
+   * 把状态码放进响应体是对上一格那条「不回显上游细节」的一次**受控放宽**，
+   * 而这一格就是那条放宽的边界本身。哨兵串塞在 **URL 的路径段**里：
+   * 那正是 `src/core/registrar/url.ts` 文件头登记的「路径段里的凭据挡不住」那条已知缺口，
+   * 所以它**真的**会留在 `err.message` 里 —— 一个把 `err.message` 拼进响应的实现
+   * 会在这里当场红，而不是靠一个我们自己保证抠不出来的夹具装样子。
+   *
+   * 事件那一半是另一条**独立**的性质：`status` 必须是 `fields` 里的一格，
+   * 不是只躺在消息串里 —— 面板与日志侧要按它筛、按它聚合，而从消息串里抠数字
+   * 正是 `httpFail` 那段点名禁止的那条路。
+   */
+  it("凭据被拒：响应体只带那个三位数、上游正文一个字都不带，事件里带结构化 status", async () => {
+    const SENTINEL = "SENTINELUPSTREAMDETAIL";
+    const { app, logger } = await fixture({
+      probe: async () => {
+        throw httpFail({
+          provider: "YYDS", action: "列域名", method: "GET",
+          url: `https://yyds.invalid/${SENTINEL}/v1/domains`, status: 401,
+        });
+      },
+    });
+    const res = await testChannel(app, "yyds");
+    expect(res.status, "测不通不是接口异常").toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+
+    expect(body).toEqual({ ok: false, channel: "yyds", reason: "credentials_rejected", status: 401, latencyMs: 0 });
+    expect(JSON.stringify(body), "上游那一侧的细节漏进了这条响应").not.toContain(SENTINEL);
+
+    const failed = logger.entries.find((e) => e.event === "registrar.channel_test_failed");
+    expect(failed, "那条失败事件一条都没发出来").toBeDefined();
+    const fields = failed!.fields as Record<string, unknown>;
+    expect(
+      fields.status,
+      "状态码只躺在消息串里 —— 面板与日志侧按它筛不了，而从消息串抠数字是明令禁止的那条路",
+    ).toBe(401);
+    // 反向控制：细节没有被丢掉，只是留在了鉴权后的事件里。
+    expect(String(fields.error)).toContain(SENTINEL);
+  });
+
+  /**
    * ⚠️⚠️ **`latencyMs` 必须是真的量出来的，不是一个恒为 0 的字面量。**
    *
    * 两格成对，方向相反：
@@ -962,6 +1004,80 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
     expect(body.ok).toBe(false);
     expect(body.reason).toBe("upstream_error");
     expect(JSON.stringify(body), "把上游的响应体回显出来了").not.toContain("nope");
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════
+   * 失败那一支的三档分类。**依据是这一次的状态码，不是通道名。**
+   * ══════════════════════════════════════════════════════════════════════ */
+
+  /** 真装配这一侧打一次通道测试，把响应体读出来。 */
+  async function probeReal(channel: string) {
+    const h = await realApp();
+    const res = await h.call(`/admin/api/registrar/channels/${channel}/test`);
+    expect(res.status, "测不通不是接口异常").toBe(200);
+    return await res.json() as Record<string, unknown>;
+  }
+
+  /**
+   * 🔴🔴 **上游 401 / 429 / 500 必须是三个互不相同的结论。**
+   *
+   * ⚠️ **三条都是正向断言（`toBe` 到具体的 reason），不是「429 没被说成凭据错」。**
+   * 只写否定断言的话，一个**恒回 `upstream_error` 的空分档器**照样全绿 ——
+   * 而「空检测器与真干净长得一模一样」正是本仓栽过的那种形态。
+   * 两两不等那三条是**额外**的一层：它拦的是「三档写成了同一个字符串」。
+   */
+  it("上游 401 / 429 / 500 是三个互不相同的结论", async () => {
+    vi.stubGlobal("fetch", async () => new Response("{}", { status: 401 }));
+    const rejected = await probeReal("yyds");
+    vi.stubGlobal("fetch", async () => new Response("{}", { status: 429 }));
+    const limited = await probeReal("yyds");
+    vi.stubGlobal("fetch", async () => new Response("{}", { status: 500 }));
+    const broken = await probeReal("yyds");
+
+    expect(rejected.reason, "上游把这次请求拒了，与「没连上」是两回事").toBe("credentials_rejected");
+    expect(limited.reason, "限流那一档什么都没测出来，不许并进凭据档").toBe("rate_limited");
+    expect(broken.reason, "5xx 不是凭据问题").toBe("upstream_error");
+
+    expect(rejected.reason).not.toBe(limited.reason);
+    expect(rejected.reason).not.toBe(broken.reason);
+    expect(limited.reason).not.toBe(broken.reason);
+    // 状态码原样带出来（三位数，不含凭据、不含地址、不含上游一个字）。
+    expect([rejected.status, limited.status, broken.status]).toEqual([401, 429, 500]);
+  });
+
+  /**
+   * 🔴🔴 **同一个 401，两条通道拿到逐字相同的结论 —— 分档不看通道名。**
+   *
+   * 这一格直接钉死「不许把结论强度做成一张按通道的静态表」：那种表说的是
+   * 「别人家服务今天怎么反应」，上游改一次版它就腐烂成一句门禁看不见的假话。
+   */
+  it("同一个 401，两条通道拿到逐字相同的结论（除通道名外）", async () => {
+    vi.stubGlobal("fetch", async () => new Response("{}", { status: 401 }));
+    const yyds = await probeReal("yyds");
+    const moe = await probeReal("moemail");
+    // 耗时是墙钟，逐字比之前先剔掉它（它与分档无关）。
+    delete yyds.latencyMs;
+    delete moe.latencyMs;
+    expect(yyds.channel).toBe("yyds");
+    expect(moe.channel).toBe("moemail");
+    delete yyds.channel;
+    delete moe.channel;
+    expect(yyds, "有人给某一条通道硬编码了一档").toEqual(moe);
+    expect(yyds.reason).toBe("credentials_rejected");
+  });
+
+  /**
+   * 🔴 **请求压根没发出去时不伪造状态码。**
+   *
+   * `0` / `502` 那种兜底值会让面板把「没连上」读成「上游回了话」，两者的排查方向
+   * 正好相反。**没有就是没有**：响应体里连 `status` 这个键都不许有。
+   */
+  it("请求压根没发出去：reason 是 upstream_error，且响应体里没有 status 这个键", async () => {
+    vi.stubGlobal("fetch", async () => { throw new TypeError("fetch failed"); });
+    const body = await probeReal("yyds");
+    expect(body.ok).toBe(false);
+    expect(body.reason).toBe("upstream_error");
+    expect(Object.keys(body), "给一次「没走通」补了个假状态码").not.toContain("status");
   });
 
   /**

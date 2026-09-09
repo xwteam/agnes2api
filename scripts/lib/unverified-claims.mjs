@@ -39,6 +39,12 @@
  *   那个上限是**配置值**，不是「实测安全」的结论；
  * · `pg.media.pollGaveUp` —— 轮询到上限就停，任务本身可能仍在进行，
  *   **面板并不知道它最终成没成**。
+ * · `reg.channel.testOk` —— 通道连通性测试只走到「列出可用域名」这一步，
+ *   而**有的邮箱服务这一步根本不校验凭据**：这一次到底有没有校验过，
+ *   我们**无从得知**。所以那句话里必须写着「没有验证凭据」，
+ *   更不许出现「够用 / 没问题」这一族把它升级成「凭据可用」的软化词。
+ *   （另一半——那半句话在不在——由 `tests/unit/i18n-dict.test.ts`
+ *   「连通那句话五语言都自己说清它没有验证凭据」那一格的五语言毒刺钉着。）
  *
  * ⚠️ **这张表变短不会有任何东西替它说话**：删掉一条就等于把那条红线交还给人守。
  * 它自己不空转由 `tests/unit/check-i18n.test.ts` 的
@@ -47,7 +53,9 @@
  * 元测试是 `tests/unit/check-i18n.test.ts` 的
  * 「⑨ 白名单里有字典中不存在的 key ⇒ 当场红（自带反向控制）」。
  */
-export const UNVERIFIED_KEYS = ["usage.range.retention", "pg.send.readyVideo", "pg.media.pollGaveUp"];
+export const UNVERIFIED_KEYS = [
+  "usage.range.retention", "pg.send.readyVideo", "pg.media.pollGaveUp", "reg.channel.testOk",
+];
 
 /**
  * 软化词表：把「上限是 N 次」改写成「N 次是安全的」时最常出现的那几个词。

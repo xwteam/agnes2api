@@ -2160,9 +2160,52 @@ EXPECT_NODE_FILES=164
 #   docs-typography 的 >1200 区间棘轮 —— **压短文案压回去的，两个棘轮一格没抬**。
 #   ⇒ Node：5087 + 2 = **5089**；文件数不动。
 #   ⇒ workerd 不动：`tests/unit/**` 不进 workers 池。
-EXPECT_NODE_TESTS=5089
+#
+#   ── 「测试连接」不再报出它没验过的东西：**Node +12 / workerd +4**，文件数两边都不动。
+#   起因是一条真机观测：拿一把**故意写错**的 key 打其中一条通道的列域名端点回 **200**
+#  （那一步不看凭据），而真正拒掉它的是**下一步**（建邮箱，403）⇒ 面板绿灯把「我们没验」
+#   说成了「上游没问题」，运维据此排除了凭据这个方向。处置分两半：绿灯自己说出「没有验证
+#   凭据」，失败按**这一次的状态码**分三档（不是按通道名）。
+#   ⚠️ 三个计数都是**当场量出来的**：每份被改过的测试文件，先 `git stash push -- tests`
+#      把 HEAD 版本放回去单独跑一遍，再在工作树上跑一遍，两边读的都是 `Tests …(N)` 的
+#      **括号内总数**（HEAD 版在今天的源码上会红几格，`passed` 数不能用）。
+#
+#   ── 加格：**Node +12**（其中 4 格在 `tests/contract/**` ⇒ **workerd 也各计一次**），删格 0
+#     · `tests/contract/admin-registrar.test.ts` 42 → **46**（**+4**，两个池子都算）：
+#       ①「上游 401 / 429 / 500 是三个互不相同的结论」（三条**正向**断言 + 两两不等）、
+#       ②「凭据被拒：响应体只带那个三位数、上游正文一个字都不带，事件里带结构化 status」、
+#       ③「同一个 401，两条通道拿到逐字相同的结论（除通道名外）」、
+#       ④「请求压根没发出去：reason 是 upstream_error，且响应体里没有 status 这个键」。
+#     · `tests/ui/registrar.test.ts` 51 → **54**（**+3**）：
+#       ⑦「五档各选各的文案 key，表外 reason 退回通用那条、不冒充任何一档」、
+#       ⑦「domains 恰好是 0 与 domains 读不到，选的是两句不同的话」、
+#       ＋**缺陷复现格**「后端如实回 ok:true，而运维读到的那句话必须自己说清「没有验证凭据」」
+#       —— 这一格刻意跨两层（假上游 → 真装配 → 面板那句话），因为这个缺陷**只存在于两层
+#       之间**：后端那句 `ok: true` 是真的，字典那侧单看也没有假话。
+#     · `tests/unit/registrar/url.test.ts` 11 → **12**（**+1**）：
+#       ⑤「httpFail 与 httpFailMessage 同构：message 逐字节相等，且状态码取得回来」。
+#     · `tests/unit/registrar/mailbox-yyds.test.ts` 29 → **30**（**+1**）、
+#       `tests/unit/registrar/mailbox-moemail.test.ts` 21 → **22**（**+1**）：
+#       ⑥「listDomains 非 2xx 抛出来的 Error 带得回状态码（工厂加了，调用点也得换）」，两条通道各一格。
+#     · `tests/unit/i18n-dict.test.ts` 49 → **51**（**+2**）：
+#       ⑧「连通那句话五语言都自己说清它没有验证凭据」＋「反向自检：把那半句从任一语言里
+#       抠掉，上面那格必须只点名那一种语言」—— 只有前一格的话，空检测器与真干净长得一样。
+#     · `tests/ui/dom/registrar-section.test.ts` 55 → **55**（**改名不是新增**）：那条用例名
+#       逐字写着「显示的是『没有连上』」，而那句文案正是本轮改掉的假话。
+#     · 把 `reg.channel.testOk` 加进 `scripts/lib/unverified-claims.mjs` 的 `UNVERIFIED_KEYS`
+#       **一格都没多**（实测 `tests/unit/i18n-dict.test.ts` + `tests/unit/check-i18n.test.ts`
+#       两份里那几处都是**格内循环**，不是 `it.each`）。
+#     · 五语言字典、五份 API.md / REGISTRAR.md、CHANGELOG 与各处源码注释**一格判据都没新增**
+#      （check-i18n / docs-parity / docs-typography / check-comment-refs 直接覆盖）。
+#   变异实测（逐条真跑，记的是**实际**红了哪几格，跑完都还原并确认 `git status` 干净）：
+#     见本次报告的变异一节。
+#   ⚠️ en 那两处文案第一版顶破了 docs-typography 的 >1200 区间棘轮（67 → 69）——
+#     **是压短文案压回去的，棘轮一格没抬**；docs-parity 的 >200 字符表格行棘轮全程没动。
+#   ⇒ Node：5089 + 12 = **5101**；文件数 **164 不动**（一份新测试文件都没加）。
+#   ⇒ workerd：793 + 4 = **797**（那 4 格全在 `tests/contract/**`）；文件数 **43 不动**。
+EXPECT_NODE_TESTS=5101
 EXPECT_WORKERS_FILES=43
-EXPECT_WORKERS_TESTS=793
+EXPECT_WORKERS_TESTS=797
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

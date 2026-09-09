@@ -20,6 +20,7 @@ import {
   acquireTendLock, releaseTendLock, narrowTendLock, TEND_LOCK_KEY, type TendGate,
 } from "../tend-lock.js";
 import type { ProbeGuard } from "../probe-guard.js";
+import { httpFailStatus } from "../../../core/registrar/url.js";
 import { httpError } from "../../errors.js";
 
 /**
@@ -644,6 +645,16 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
  * **成功那一支一次存储写都不产生**；它在那一支上唯一的副作用是一次**上游 GET**
  *（`listDomains()`），不建邮箱、不注册账号、不消耗任何活跃邮箱名额。
  *
+ * ⚠️⚠️ **这颗按钮只回答「这一次，这个地址与这一步发生了什么」，不回答「这条通道行不行」。**
+ * 它走到的那一步是「列出可用域名」——**有的邮箱服务这一步根本不校验凭据**，于是
+ * 凭据完全填错时它照样 200。⇒ 绿灯那句话里必须自己写着「没有验证凭据」
+ *（`admin-ui/js/i18n-dict.js` 的 `reg.channel.testOk`，五语言各一根毒刺钉在
+ * `tests/unit/i18n-dict.test.ts`「连通那句话五语言都自己说清它没有验证凭据」）。
+ * **不许把「我们没验」说成「上游没问题」。**
+ *
+ * 失败那一支按**这一次观测到的状态码**分三档（不是按通道名），全文与它挡不住的
+ * 那一档写在下面那个 `catch` 上方。
+ *
  * ⚠️⚠️ **失败那一支不是零写，这句话原来是无条件的（通读评审）。**
  * 下面那个 `catch` 会打一条 `registrar.channel_test_failed`，而生产装配里
  * `deps.logger` 是 `multiLogger(ConsoleLogger, StoreLogger)`（`src/http/wire.ts`），
@@ -779,14 +790,54 @@ export function channelTestHandler(deps: RegistrarDeps) {
        * 它已经是事实。面板拿 `reason` 选一句自己的文案，
        * 详情留在事件里（运维在事件板块看得到，而事件板块是鉴权后的）。
        * **这一条不许放松**：URL 只进已鉴权的事件板块，不进这条响应体。
+       *
+       * ⚠️ **受控放宽，只放这一样：三位数的状态码。** 它不含凭据、不含地址、
+       * **不含上游的一个字**（上游响应体一个字都不进这条响应，由
+       * `tests/contract/admin-registrar.test.ts`「凭据被拒：响应体只带那个三位数……」
+       * 那一格钉着）。放它进来是因为
+       * 「上游拒绝了这次请求」与「请求压根没走通」的处置完全相反，而运维手上
+       * 只有面板那一句话。
+       *
+       * ── 分档：依据是**这一次的状态码**，不是通道名 ────────────────────────
+       *
+       * · `401` / `403` ⇒ 上游把这次请求拒了（权限那一层）；
+       * · `429`         ⇒ 上游在限流，这一次什么都没测出来；
+       * · 其余（含 5xx，以及压根没发出去）⇒ 一句通用的「没读到域名」。
+       *
+       * **不许把这三档做成一张按通道写死的静态表**：那种表说的是「别人家服务
+       * 今天怎么反应」，上游改一次版它就变成一句门禁看不见的假话。同一个 401 在
+       * 两条通道上必须拿到逐字相同的结论，由 `tests/contract/admin-registrar.test.ts`
+       * 「同一个 401，两条通道拿到逐字相同的结论（除通道名外）」那一格钉着。
+       *
+       * ⚠️ **它挡不住的那一档，明写**：上游把鉴权失败回成 **200 + 错误体** 时，
+       * `listDomains()` 不抛错，这里根本不会执行，面板照样报绿。
+       * **这正是绿灯那句「没有验证凭据」非有不可的理由** —— 在这种上游下它依然为真。
+       *
+       * ⚠️ `401` 与 `403` **刻意合成一档**：403 也可能是「凭据有效但没这个权限」
+       * 「活跃邮箱名额用光」「出口地址被拒」。要分开就得去解析上游的 errorCode 字符串，
+       * 而那正是 `src/core/config-provenance.ts` 明令禁止的手写关键词表。
+       * ⇒ 保留这处粗粒度，靠措辞（「上游拒绝了这次请求」+ 排查顺序）承住，
+       * **不写死「你的 key 错了」**。
        */
       const latencyMs = deps.now() - startedAt;
+      // `null` = 这条错误没带状态码 ⇒ 请求压根没发出去（`transportFailMessage` 那一半）。
+      // **不伪造兜底值**，理由在 `src/core/registrar/url.ts` 的 `httpFail` 那段。
+      const status = httpFailStatus(err);
+      const reason = status === 401 || status === 403
+        ? "credentials_rejected"
+        : status === 429 ? "rate_limited" : "upstream_error";
       deps.logger.log({
         level: "warn", event: "registrar.channel_test_failed",
         msg: "通道连通性测试失败（只调了 listDomains，没有建邮箱也没有注册账号）",
-        fields: { channel: raw, latencyMs, error: err instanceof Error ? err.message : String(err) },
+        // `status` 单开一格而不是只躺在消息串里：面板与日志侧要按它筛、按它聚合，
+        // 而从消息串里抠数字正是 `httpFail` 那段点名禁止的那条路。
+        fields: {
+          channel: raw, latencyMs, reason,
+          ...(status === null ? {} : { status }),
+          error: err instanceof Error ? err.message : String(err),
+        },
       });
-      return c.json({ ok: false, channel: raw, reason: "upstream_error", latencyMs });
+      return c.json({ ok: false, channel: raw, reason, latencyMs, ...(status === null ? {} : { status }) });
     } finally {
       // **必须在 `finally` 里**，与 `handlers/verify.ts` 同一条理由（见
       // `../probe-guard.ts` 的 `ProbeGuard.release`）：放在成功支末尾时，

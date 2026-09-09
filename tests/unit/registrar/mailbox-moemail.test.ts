@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { MoeMailProvider } from "../../../src/adapters/mailbox-moemail.js";
 import { NULL_LOGGER } from "../../../src/ports/logger.js";
 import { recordingLogger } from "../../helpers/recording-logger.js";
+import { httpFailStatus } from "../../../src/core/registrar/url.js";
 
 function stubFetcher(handler: (url: string, init: RequestInit) => { status: number; body?: unknown }) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
@@ -44,6 +45,21 @@ describe("MoeMailProvider", () => {
     expect(err!.message).toContain("404");
     expect(err!.message).not.toContain("sentinelsecret");
     expect(err!.message).not.toContain("sentineluser");
+  });
+
+  /**
+   * 🔴 **与 YYDS 侧逐条同构**：非 2xx 抛出来的 Error 要带得回状态码。
+   * 拦的是「工厂加了、调用点没换」——改回 `new Error(httpFailMessage(...))` 时消息
+   * 一个字节都不变，只有这一格会红。
+   */
+  it("listDomains 非 2xx 抛出来的 Error 带得回状态码（工厂加了，调用点也得换）", async () => {
+    const { fetcher } = stubFetcher(() => ({ status: 403, body: {} }));
+    const p = new MoeMailProvider({
+      fetcher, baseUrl: "https://m.test", apiKey: "k", sleep: noSleep, now: () => 0, logger: NULL_LOGGER,
+    });
+    const err = await p.listDomains().then(() => null, (e: unknown) => e as unknown);
+    expect(httpFailStatus(err), "抛的是一个不带状态码的裸 Error").toBe(403);
+    expect((err as Error).message).toContain("403");
   });
 
   it("createMailbox 带 X-API-Key，请求体含 name/expiryTime/domain，handle 用 id 而非 email", async () => {

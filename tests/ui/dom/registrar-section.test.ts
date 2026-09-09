@@ -372,7 +372,10 @@ describe("通道连通性测试：两个等权的按钮，返回可用域名数 
     ).not.toContain(I18N["reg.channel.testError"]!["zh-CN"]!);
   });
 
-  it("上游不通（200 + ok:false）不走异常分支，显示的是「没有连上」而不是「请求失败」", async () => {
+  // ⚠️ **用例名订正过**：这条以前逐字写着「显示的是『没有连上』」，而那句文案本身
+  // 就是本轮改掉的那句假话（上游回 401 时我们明明连上了）。现在这一档走的是
+  // `reg.channel.testFailedNoStatus`（响应体没带 `status` ⇒ 请求没走通那一档）。
+  it("上游不通（200 + ok:false）不走异常分支，显示的是那一档的失败文案而不是「请求失败」", async () => {
     const h = await openRegistrar((url) => (url.includes("/channels/")
       ? ok({ ok: false, channel: "yyds", reason: "upstream_error", latencyMs: 3000 })
       : ok(statusBody())));

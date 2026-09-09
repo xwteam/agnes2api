@@ -306,8 +306,39 @@ export const I18N = {
   // （从前这句写的是「选主通道」，主备已拆，用词跟着收。）
   "reg.channel.test":     { "zh-CN": "测试连接", "zh-TW": "測試連線", en: "Test connection", ja: "接続テスト", ko: "연결 테스트" },
   "reg.channel.testing":  { "zh-CN": "测试中…", "zh-TW": "測試中…", en: "Testing…", ja: "テスト中…", ko: "테스트 중…" },
-  "reg.channel.testOk":     { "zh-CN": "连通：可用域名 {domains} 个 · 耗时 {latencyMs} ms", "zh-TW": "連通：可用網域 {domains} 個 · 耗時 {latencyMs} ms", en: "Reachable: {domains} usable domain(s) · {latencyMs} ms", ja: "接続できました: 利用可能なドメイン {domains} 件 · {latencyMs} ms", ko: "연결됨: 사용 가능한 도메인 {domains}개 · {latencyMs} ms" },
-  "reg.channel.testFailed": { "zh-CN": "没有连上（耗时 {latencyMs} ms）。详细原因在事件板块里，事件名 registrar.channel_test_failed。", "zh-TW": "沒有連上（耗時 {latencyMs} ms）。詳細原因在事件板塊裡，事件名 registrar.channel_test_failed。", en: "Could not connect ({latencyMs} ms). The details are in the Events section under registrar.channel_test_failed.", ja: "接続できませんでした（{latencyMs} ms）。詳細はイベントセクションの registrar.channel_test_failed を参照してください。", ko: "연결하지 못했습니다({latencyMs} ms). 자세한 내용은 이벤트 섹션의 registrar.channel_test_failed에 있습니다." },
+  // ⚠️⚠️ **这一族六条讲的都是「这一次，这个地址与这一步发生了什么」，不是「这条通道行不行」。**
+  // 一句按通道写死的话都没有：结论强度做成静态表，上游改一次版它就腐烂成假话，
+  // 而没有任何门禁看得见它腐烂（全文在 `src/http/wire.ts` 的 `probeChannel` 上方）。
+  //
+  // 🔴 **`testOk` 里「没有验证凭据」那半句是承重的，别顺手删掉、也别顺手「优化」措辞。**
+  // 这颗按钮只走到「列出可用域名」这一步，而有的邮箱服务这一步根本不校验凭据 ——
+  // 凭据完全填错时它照样报绿。少了这半句，绿灯就把「我们没验」说成了「上游没问题」，
+  // 运维会据此排除「凭据有问题」这个方向，回头在建邮箱那一步被拒。
+  // 五语言各一根毒刺钉在 `tests/unit/i18n-dict.test.ts`「连通那句话五语言都自己说清它没有
+  // 验证凭据」，`reg.channel.testOk` 同时进了
+  // `scripts/lib/unverified-claims.mjs` 的 `UNVERIFIED_KEYS`（软化词当场双红）。
+  //
+  // ⚠️ **「有的服务这一步不校验凭据」是一句弱断言，方向是刻意选的**：上游哪天全都开始
+  // 校验时它变成「说少了」—— 说少不会让人去信任一把坏 key。没有门禁看得见它腐烂，如实登记。
+  "reg.channel.testOk":     { "zh-CN": "读到可用域名 {domains} 个 · {latencyMs} ms。这一步只读域名列表，没有验证凭据 —— 有的服务这一步不校验凭据。", "zh-TW": "讀到可用網域 {domains} 個 · {latencyMs} ms。這一步只讀網域清單，沒有驗證憑證 —— 有的服務這一步不校驗憑證。", en: "Read {domains} usable domain(s) · {latencyMs} ms. This step only reads the domain list; it did not verify the credentials — some services do not check them at this step.", ja: "利用可能なドメインを {domains} 件読み取りました · {latencyMs} ms。この手順はドメイン一覧を読むだけで、認証情報は検証していません —— この手順で認証情報を確認しないサービスもあります。", ko: "사용 가능한 도메인 {domains}개를 읽었습니다 · {latencyMs} ms. 이 단계는 도메인 목록만 읽으며 자격 증명은 검증하지 않았습니다 — 이 단계에서 자격 증명을 확인하지 않는 서비스도 있습니다." },
+  // 「一个都没读到」与「读不到几个」是两回事，只有前者走这条：补池那一步没有域名可用
+  // 会直接失败 ⇒ 它是一句确定的结论，不是「不知道」。判据是 `tests/ui/registrar.test.ts`
+  // 「domains 恰好是 0 与 domains 读不到，选的是两句不同的话」那一格。
+  "reg.channel.testOkNoDomains": { "zh-CN": "一个可用域名都没读到（{latencyMs} ms）。这条通道现在补不了池 —— 补池那一步没有域名可用就会直接失败。这一步同样没有验证凭据。", "zh-TW": "一個可用網域都沒讀到（{latencyMs} ms）。這條通道現在補不了池 —— 補池那一步沒有網域可用就會直接失敗。這一步同樣沒有驗證憑證。", en: "Read zero usable domains ({latencyMs} ms). This channel cannot refill the pool right now — the refill step fails outright when no domain is available. This step likewise did not verify the credentials.", ja: "利用可能なドメインを 1 件も読み取れませんでした（{latencyMs} ms）。このチャネルは今プールを補充できません —— 補充の手順は使えるドメインが無いとそのまま失敗します。この手順でも認証情報は検証していません。", ko: "사용 가능한 도메인을 하나도 읽지 못했습니다({latencyMs} ms). 이 채널은 지금 풀을 보충할 수 없습니다 — 보충 단계는 쓸 수 있는 도메인이 없으면 그대로 실패합니다. 이 단계에서도 자격 증명은 검증하지 않았습니다." },
+  // 401 与 403 合成一档：403 也可能是「凭据有效但没这个权限」「活跃邮箱名额用光」
+  // 「出口地址被拒」。要分开只能去解析上游的 errorCode 字符串，而那是
+  // `src/core/config-provenance.ts` 明令禁止的手写关键词表 ⇒ 措辞只说「被拒的是权限那一层」，
+  // 再给一个排查顺序，**不写死「你的 key 错了」**。
+  "reg.channel.testRejected": { "zh-CN": "上游拒绝了这次请求（HTTP {status}）。地址是通的，被拒的是权限那一层：先核对这条通道的凭据，再看这把凭据有没有权限。详情在事件板块里，事件名 registrar.channel_test_failed。", "zh-TW": "上游拒絕了這次請求（HTTP {status}）。位址是通的，被拒的是權限那一層：先核對這條通道的憑證，再看這把憑證有沒有權限。詳情在事件板塊裡，事件名 registrar.channel_test_failed。", en: "The upstream rejected this request (HTTP {status}). The address is reachable; what was rejected is the permission layer: first check this channel's credentials, then check whether they carry the permission needed. The details are in the Events section under registrar.channel_test_failed.", ja: "上流がこのリクエストを拒否しました（HTTP {status}）。アドレスには到達しています。拒否されたのは権限の層です: まずこのチャネルの認証情報を確認し、次にその認証情報に権限があるかを確認してください。詳細はイベントセクションの registrar.channel_test_failed を参照してください。", ko: "업스트림이 이번 요청을 거부했습니다(HTTP {status}). 주소에는 도달했고 거부된 것은 권한 계층입니다: 먼저 이 채널의 자격 증명을 확인하고, 그다음 그 자격 증명에 권한이 있는지 확인하세요. 자세한 내용은 이벤트 섹션의 registrar.channel_test_failed에 있습니다." },
+  // 限流那一档**什么都没测出来**，所以它既不许说通、也不许说不通 —— 凭据是好是坏同样没有结论。
+  "reg.channel.testRateLimited": { "zh-CN": "上游在限流（HTTP 429）。这一次什么都没测出来，凭据是好是坏同样没有结论，隔一会儿再试。", "zh-TW": "上游在限流（HTTP 429）。這一次什麼都沒測出來，憑證是好是壞同樣沒有結論，隔一會兒再試。", en: "The upstream is rate-limiting (HTTP 429). This attempt measured nothing at all, and it says nothing about whether the credentials work either. Try again in a while.", ja: "上流がレート制限をかけています（HTTP 429）。今回は何も測れておらず、認証情報が使えるかどうかについても結論はありません。しばらくしてからやり直してください。", ko: "업스트림이 요청 수를 제한하고 있습니다(HTTP 429). 이번에는 아무것도 측정하지 못했고, 자격 증명이 쓸 만한지에 대해서도 결론이 없습니다. 잠시 뒤에 다시 시도하세요." },
+  // ⚠️ 上一版这一条逐字写着「没有连上」，而上游回 401 时**我们明明连上了** —— 那句话
+  // 会把运维支去查 DNS 与地址，方向正好反了。现在它只在「上游回了话、但这一次没读到域名」
+  // 那一档出现，状态码原样摆出来。
+  "reg.channel.testFailed": { "zh-CN": "上游回了 HTTP {status}（{latencyMs} ms）—— 连上了，但这一次没读到域名。详细原因在事件板块里，事件名 registrar.channel_test_failed。", "zh-TW": "上游回了 HTTP {status}（{latencyMs} ms）—— 連上了，但這一次沒讀到網域。詳細原因在事件板塊裡，事件名 registrar.channel_test_failed。", en: "The upstream answered HTTP {status} ({latencyMs} ms) — it was reached, but no domain was read this time. The details are in the Events section under registrar.channel_test_failed.", ja: "上流が HTTP {status} を返しました（{latencyMs} ms）—— 到達はしましたが、今回はドメインを読み取れませんでした。詳細はイベントセクションの registrar.channel_test_failed を参照してください。", ko: "업스트림이 HTTP {status}를 반환했습니다({latencyMs} ms) — 도달은 했지만 이번에는 도메인을 읽지 못했습니다. 자세한 내용은 이벤트 섹션의 registrar.channel_test_failed에 있습니다." },
+  // 后端在「请求压根没走通」那一档**不带状态码、也不伪造一个**（`src/core/registrar/url.ts`
+  // 的 `httpFail` 那段），所以这里是独立的一句话：排查方向与上一条正好相反。
+  "reg.channel.testFailedNoStatus": { "zh-CN": "这次请求没发出去或者没走通（{latencyMs} ms）：地址、DNS、TLS、出网、超时都在这一档里。事件里那条失败信息带着它实际请求的那个地址，事件名 registrar.channel_test_failed。", "zh-TW": "這次請求沒發出去或者沒走通（{latencyMs} ms）：位址、DNS、TLS、出網、逾時都在這一檔裡。事件裡那條失敗訊息帶著它實際請求的那個位址，事件名 registrar.channel_test_failed。", en: "The request never went out or never got through ({latencyMs} ms): address, DNS, TLS, egress and timeouts all land in this bucket. The failure entry in Events carries the address it actually requested, under registrar.channel_test_failed.", ja: "リクエストが送信されなかったか、最後まで届きませんでした（{latencyMs} ms）: アドレス、DNS、TLS、外向き通信、タイムアウトはすべてこの区分に入ります。イベントに残る失敗メッセージには実際にリクエストしたアドレスが含まれます（registrar.channel_test_failed）。", ko: "이번 요청이 나가지 못했거나 끝까지 도달하지 못했습니다({latencyMs} ms): 주소, DNS, TLS, 아웃바운드, 타임아웃이 모두 이 구간에 들어갑니다. 이벤트에 남는 실패 메시지에는 실제로 요청한 주소가 함께 들어갑니다(registrar.channel_test_failed)." },
   "reg.channel.testError":  { "zh-CN": "测试请求本身失败了，没有测到这条通道", "zh-TW": "測試請求本身失敗了，沒有測到這條通道", en: "The test request itself failed, so this channel was never reached", ja: "テストのリクエスト自体が失敗したため、このチャネルには到達していません", ko: "테스트 요청 자체가 실패해 이 채널에는 도달하지 못했습니다" },
   "reg.channel.testHint":   { "zh-CN": "测试只读取这条通道的可用域名列表，不建邮箱、不注册账号，不消耗任何名额。测不通时，事件里那条失败信息会带上它实际请求的那个地址。", "zh-TW": "測試只讀取這條通道的可用網域清單，不建郵箱、不註冊帳號，不消耗任何名額。測不通時，事件裡那條失敗訊息會帶上它實際請求的那個位址。", en: "The test only reads this channel's list of usable domains: no mailbox is created, no account is registered, no quota is consumed. When it fails, the failure entry in Events carries the address it actually requested.", ja: "テストはこのチャネルの利用可能ドメイン一覧を読むだけです。メールボックスの作成もアカウント登録も行わず、枠も消費しません。失敗した場合、イベントに残る失敗メッセージには実際にリクエストしたアドレスが含まれます。", ko: "테스트는 이 채널의 사용 가능한 도메인 목록만 읽습니다. 메일박스를 만들지도, 계정을 등록하지도, 정원을 소비하지도 않습니다. 실패하면 이벤트에 남는 실패 메시지에 실제로 요청한 주소가 함께 들어갑니다." },
 

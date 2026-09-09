@@ -1351,7 +1351,13 @@ curl http://localhost:8080/admin/api/registrar/status \
 
 A channel connectivity test: one read-only GET to the mailbox service. It creates no mailbox and claims no key.
 
-The `domains` field in the response is **the number of domains probed** (an integer), not a list of them — this endpoint deliberately echoes back no upstream detail.
+The `domains` field is **the number of domains probed** (an integer), not a list — this endpoint echoes back no upstream response body; on failure it adds only a three-digit status code.
+
+**`ok: true` only means the address was reachable and the domains listed — not that the credentials work.** Some mailbox services do not check credentials at this step, so wrong ones still get `ok: true`; the mailbox-creation step of a refill is what really checks them.
+
+`domains: 0` is still `ok: true`, but that channel cannot refill the pool: the refill step fails outright with no domain available.
+
+Failures are `200` + `{ "ok": false }`. `reason`: `credentials_rejected` (rejected upstream, HTTP 401 / 403), `rate_limited` (HTTP 429 — nothing was measured), `upstream_error` (all else, incl. 5xx and "never got through"). `status` carries the upstream HTTP status when there was one; otherwise it is **absent** — the server invents nothing.
 
 **Request body**: this endpoint takes no body; the channel name lives in the path (either `moemail` or `yyds`).
 

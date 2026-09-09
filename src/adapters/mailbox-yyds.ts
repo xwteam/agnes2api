@@ -2,7 +2,7 @@ import type { MailProvider } from "../ports/mailbox.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
-import { httpFailMessage, redactUrl } from "../core/registrar/url.js";
+import { httpFail, redactUrl } from "../core/registrar/url.js";
 import { fetchChannel } from "../core/registrar/fetch.js";
 import type { Logger } from "../ports/logger.js";
 
@@ -74,9 +74,9 @@ export class YydsProvider implements MailProvider {
       init: { method: "GET", headers: this.headers(), signal: this.signal() },
     });
     if (!r.ok) {
-      throw new Error(httpFailMessage({
+      throw httpFail({
         provider: "YYDS", action: "列域名", method: "GET", url, status: r.status,
-      }));
+      });
     }
     const data = (await r.json()) as Record<string, any>;
     return ((data?.data ?? []) as Array<{ domain?: string }>)
@@ -99,9 +99,9 @@ export class YydsProvider implements MailProvider {
       },
     });
     if (!r.ok) {
-      throw new Error(httpFailMessage({
+      throw httpFail({
         provider: "YYDS", action: "建邮箱", method: "POST", url, status: r.status,
-      }));
+      });
     }
     // 2xx 之后的任何解析失败都意味着同一件事：邮箱**可能已经在上游建出来了**，
     // 而我们手上没有它的 id，于是它删不掉——处置见下面那段注释。

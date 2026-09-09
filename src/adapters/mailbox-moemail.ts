@@ -2,7 +2,7 @@ import type { MailProvider } from "../ports/mailbox.js";
 import { REGISTRAR_REQUEST_TIMEOUT_MS, type Mailbox } from "../core/registrar/types.js";
 import type { Fetcher } from "../ports/fetcher.js";
 import { extractCode, normalizeBody } from "../core/registrar/code.js";
-import { httpFailMessage, redactUrl } from "../core/registrar/url.js";
+import { httpFail, redactUrl } from "../core/registrar/url.js";
 import { fetchChannel } from "../core/registrar/fetch.js";
 import type { Logger } from "../ports/logger.js";
 
@@ -71,9 +71,9 @@ export class MoeMailProvider implements MailProvider {
       init: { method: "GET", headers: this.headers(), signal: this.signal() },
     });
     if (!r.ok) {
-      throw new Error(httpFailMessage({
+      throw httpFail({
         provider: "MoeMail", action: "列域名", method: "GET", url, status: r.status,
-      }));
+      });
     }
     const data = (await r.json()) as Record<string, any>;
     // MoeMail 用逗号分隔的字符串返回域名，与 YYDS 的数组形态不同。
@@ -99,9 +99,9 @@ export class MoeMailProvider implements MailProvider {
       },
     });
     if (!r.ok) {
-      throw new Error(httpFailMessage({
+      throw httpFail({
         provider: "MoeMail", action: "建邮箱", method: "POST", url, status: r.status,
-      }));
+      });
     }
     let data: Record<string, any> | null = null;
     try {

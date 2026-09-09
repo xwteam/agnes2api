@@ -184,6 +184,51 @@ export function httpFailMessage(p: {
 }
 
 /**
+ * 与 `httpFailMessage` **同一个工厂**：产出那条消息**逐字节不变**的 Error，
+ * 另把上游那个状态码原样挂在它身上，让调用方**读得回来**。
+ *
+ * ── 为什么非要是同一个工厂 ──────────────────────────────────────────────────
+ *
+ * 「消息里写着 404、属性上挂着 403」是这类改动最容易长出来的假话，而它只会在
+ * **两条路各产一半**时出现。这里只有一条路：消息由 `httpFailMessage` 产、
+ * 状态码由同一次调用的同一个 `p.status` 挂。**下一个人不许只改一边**——
+ * 要改消息模板就改 `httpFailMessage`，两边一起动。
+ * 这条同构由 `tests/unit/registrar/url.test.ts`
+ *「httpFail 与 httpFailMessage 同构：message 逐字节相等，且状态码取得回来」那一格钉着。
+ *
+ * ⚠️⚠️ **绝不许用正则从 `err.message` 里抠 `HTTP (\d+)`。** 那是一张手写启发式，
+ * 与 `src/core/config-provenance.ts` 里那条禁令（「不要用关键词启发式去兜底」）
+ * 是同一条：消息模板是给人看的、会被翻译会被改写，而它一改，抠数字的那一头
+ * **静默地开始答错**，门禁全绿。状态码只从这里挂、只从 `httpFailStatus` 读。
+ *
+ * ⚠️ **只覆盖「发出去了、上游回了非 2xx」那一半。** 另一半（请求压根没发出去，
+ * 走 `transportFailMessage`）**没有状态码，也不许伪造一个**：`0` / `502` 那种
+ * 兜底值会让调用方把「没连上」读成「上游回了话」。没有就是没有。
+ */
+export function httpFail(p: {
+  provider: string;
+  action: string;
+  method: string;
+  url: string;
+  status: number;
+}): Error {
+  return Object.assign(new Error(httpFailMessage(p)), { status: p.status });
+}
+
+/**
+ * 把 `httpFail` 挂上去的那个状态码读回来；**读不到就是 `null`**。
+ *
+ * `null` 的含义是「这条错误没带状态码」，与「带了个 0」是两件事：前者的处置是
+ * 「按『请求没走通』说话」，后者会被读成一次真实的上游应答。所以这里只认**有限整数**，
+ * 别的一律 `null`——包括 `"403"` 这种字符串（它只可能来自某处的手写兜底）。
+ */
+export function httpFailStatus(err: unknown): number | null {
+  if (typeof err !== "object" || err === null) return null;
+  const s = (err as { status?: unknown }).status;
+  return typeof s === "number" && Number.isInteger(s) ? s : null;
+}
+
+/**
  * 通道请求**根本没发出去**时的统一错误消息模板，形如
  * `YYDS 列域名失败: Request cannot be constructed … https://***@h/v1 (GET https://***@h/v1)`。
  *
