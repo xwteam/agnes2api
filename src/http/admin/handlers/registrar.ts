@@ -802,7 +802,7 @@ export function channelTestHandler(deps: RegistrarDeps) {
        *
        * · `401` / `403` ⇒ 上游把这次请求拒了（权限那一层）；
        * · `429`         ⇒ 上游在限流，这一次什么都没测出来；
-       * · 其余（含 5xx，以及压根没发出去）⇒ 一句通用的「没读到域名」。
+       * · 其余（含 5xx，以及压根没拿到状态码的那一支）⇒ 一句通用的「没读到域名」。
        *
        * **不许把这三档做成一张按通道写死的静态表**：那种表说的是「别人家服务
        * 今天怎么反应」，上游改一次版它就变成一句门禁看不见的假话。同一个 401 在
@@ -820,8 +820,13 @@ export function channelTestHandler(deps: RegistrarDeps) {
        * **不写死「你的 key 错了」**。
        */
       const latencyMs = deps.now() - startedAt;
-      // `null` = 这条错误没带状态码 ⇒ 请求压根没发出去（`transportFailMessage` 那一半）。
-      // **不伪造兜底值**，理由在 `src/core/registrar/url.ts` 的 `httpFail` 那段。
+      // `null` = 这条错误没带状态码。**不伪造兜底值**，理由在
+      // `src/core/registrar/url.ts` 的 `httpFail` 那段。
+      // ⚠️ **别把 `null` 读成「请求压根没发出去」。** `transportFailMessage` 那一半确实
+      // 落这里，但它不是全部：适配器的 `listDomains` 在 2xx 之后那次 `await r.json()`
+      // 抛出的裸 `SyntaxError` 同样没有 `status`（上游回 200 + 非 JSON 正文），
+      // 而那一次请求发出去了、上游也答了。面板那一档的措辞因此不做穷尽承诺，
+      // 全文在 `admin-ui/js/i18n-dict.js` 的 `reg.channel.testFailedNoStatus` 上方。
       const status = httpFailStatus(err);
       const reason = status === 401 || status === 403
         ? "credentials_rejected"

@@ -1227,6 +1227,64 @@ describe("i18n 字典", () => {
   });
 
   /**
+   * 🔴🔴 **「没拿到状态码」那一档不许把排查方向列成一张穷尽的候选表。**
+   *
+   * 这一档的判据是**没拿到状态码**，不是「请求没发出去」：两个邮箱适配器的
+   * `listDomains` 在 2xx 之后直接 `await r.json()`，上游回 **200 + 非 JSON 正文**
+   *（反向代理/CDN 错误页、正文截断、读正文时中止）时抛的是裸 `SyntaxError`，
+   * 身上没有 `status` ⇒ 同样落进这一档。上一版逐字把「地址、DNS、TLS、出网、超时」
+   * 写成了这一档的全部候选，而那一次上游明明答了 200 —— 那句话会把运维支去查 DNS
+   * 与地址，与 `testFailed` 上一版那句「没有连上」是同一个形态。
+   *
+   * ⚠️ **逐语言各一根锚点，理由与上面那一族逐字相同**：合成一条时删掉某一种语言的
+   * 那半句会被别的语言掩盖。
+   *
+   * ⚠️ 边界：这一族毒刺只钉住**那一支在不在**，**不担保整句为真**。
+   * 「这一支落进来的到底是不是这一档」是另一件事，由 `tests/ui/registrar.test.ts`
+   * 「后端如实回 ok:false 且不带状态码，而运维读到的那句话不许把五样列成穷尽的候选」
+   * 那一格从假上游一路走到面板文案钉着。
+   */
+  const BODY_UNREADABLE_ANCHORS: Record<(typeof LANGS)[number], string> = {
+    "zh-CN": "正文读不出来",
+    "zh-TW": "正文讀不出來",
+    en: "its body could not be read",
+    ja: "本文を読み取れなかった",
+    ko: "본문을 읽지 못한",
+  };
+
+  /** 没拿到状态码那句话里没有「上游答了话、正文读不出来」这一支 ⇒ 逐语言点名。 */
+  function bodyUnreadableProblems(row: Record<string, string> | undefined): string[] {
+    if (row === undefined) return ["整行不在字典里"];
+    const bad: string[] = [];
+    for (const lang of LANGS) {
+      if (!(row[lang] ?? "").includes(BODY_UNREADABLE_ANCHORS[lang])) {
+        bad.push(`${lang}: 把排查方向列成了穷尽的候选（缺「${BODY_UNREADABLE_ANCHORS[lang]}」）`);
+      }
+    }
+    return bad;
+  }
+
+  it("没拿到状态码那一档，五语言都留着上游答了话、正文读不出来那一支", () => {
+    expect(
+      bodyUnreadableProblems(dictRow("reg.channel.testFailedNoStatus")),
+      "上游回 200 + 正文解析不了时同样落这一档，而那句话把 DNS/TLS/出网/超时列成了全部候选"
+      + " —— 运维会被支去查一个根本没问题的方向",
+    ).toEqual([]);
+  });
+
+  it("反向自检：把正文读不出来那一支从任一语言里抠掉，上面那格必须只点名那一种语言", () => {
+    const row = dictRow("reg.channel.testFailedNoStatus")!;
+    for (const lang of LANGS) {
+      const anchor = BODY_UNREADABLE_ANCHORS[lang];
+      expect(row[lang]!.includes(anchor), `${lang}: 夹具前提不成立`).toBe(true);
+      const poisoned = { ...row, [lang]: row[lang]!.split(anchor).join("") };
+      expect(bodyUnreadableProblems(poisoned), `${lang}: 那一支被抠掉却没被点名`)
+        .toEqual([`${lang}: 把排查方向列成了穷尽的候选（缺「${anchor}」）`]);
+    }
+    expect(bodyUnreadableProblems(undefined)).toEqual(["整行不在字典里"]);
+  });
+
+  /**
    * 设计文档 §7.3 / §9.1 第 6 条：`TendFailureReason` 的每个联合成员都要有
    * `reg.fail.<reason>` 键。当初特意把它收成联合类型正是为了消费时保有穷尽性，
    * 「这笔前期投资这次要用上」。

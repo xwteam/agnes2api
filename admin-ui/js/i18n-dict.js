@@ -336,9 +336,24 @@ export const I18N = {
   // 会把运维支去查 DNS 与地址，方向正好反了。现在它只在「上游回了话、但这一次没读到域名」
   // 那一档出现，状态码原样摆出来。
   "reg.channel.testFailed": { "zh-CN": "上游回了 HTTP {status}（{latencyMs} ms）—— 连上了，但这一次没读到域名。详细原因在事件板块里，事件名 registrar.channel_test_failed。", "zh-TW": "上游回了 HTTP {status}（{latencyMs} ms）—— 連上了，但這一次沒讀到網域。詳細原因在事件板塊裡，事件名 registrar.channel_test_failed。", en: "The upstream answered HTTP {status} ({latencyMs} ms) — it was reached, but no domain was read this time. The details are in the Events section under registrar.channel_test_failed.", ja: "上流が HTTP {status} を返しました（{latencyMs} ms）—— 到達はしましたが、今回はドメインを読み取れませんでした。詳細はイベントセクションの registrar.channel_test_failed を参照してください。", ko: "업스트림이 HTTP {status}를 반환했습니다({latencyMs} ms) — 도달은 했지만 이번에는 도메인을 읽지 못했습니다. 자세한 내용은 이벤트 섹션의 registrar.channel_test_failed에 있습니다." },
-  // 后端在「请求压根没走通」那一档**不带状态码、也不伪造一个**（`src/core/registrar/url.ts`
-  // 的 `httpFail` 那段），所以这里是独立的一句话：排查方向与上一条正好相反。
-  "reg.channel.testFailedNoStatus": { "zh-CN": "这次请求没发出去或者没走通（{latencyMs} ms）：地址、DNS、TLS、出网、超时都在这一档里。事件里那条失败信息带着它实际请求的那个地址，事件名 registrar.channel_test_failed。", "zh-TW": "這次請求沒發出去或者沒走通（{latencyMs} ms）：位址、DNS、TLS、出網、逾時都在這一檔裡。事件裡那條失敗訊息帶著它實際請求的那個位址，事件名 registrar.channel_test_failed。", en: "The request never went out or never got through ({latencyMs} ms): address, DNS, TLS, egress and timeouts all land in this bucket. The failure entry in Events carries the address it actually requested, under registrar.channel_test_failed.", ja: "リクエストが送信されなかったか、最後まで届きませんでした（{latencyMs} ms）: アドレス、DNS、TLS、外向き通信、タイムアウトはすべてこの区分に入ります。イベントに残る失敗メッセージには実際にリクエストしたアドレスが含まれます（registrar.channel_test_failed）。", ko: "이번 요청이 나가지 못했거나 끝까지 도달하지 못했습니다({latencyMs} ms): 주소, DNS, TLS, 아웃바운드, 타임아웃이 모두 이 구간에 들어갑니다. 이벤트에 남는 실패 메시지에는 실제로 요청한 주소가 함께 들어갑니다(registrar.channel_test_failed)." },
+  // 后端在这一档**不带状态码、也不伪造一个**（`src/core/registrar/url.ts` 的 `httpFail`
+  // 那段），所以这里是独立的一句话：排查方向与上一条正好相反。
+  //
+  // ⚠️⚠️ **这一档的判据是「没拿到状态码」，不是「请求没发出去」，措辞不许把它说成后者。**
+  // 上一版逐字写着「这次请求没发出去或者没走通：地址、DNS、TLS、出网、超时都在这一档里」
+  // —— 那是一句**排他式**的枚举，而它有一支为假：两个邮箱适配器的 `listDomains` 在 2xx
+  // 之后直接 `await r.json()`（`src/adapters/mailbox-yyds.ts` / `mailbox-moemail.ts`），
+  // 上游回 **200 + 非 JSON 正文**（反向代理/CDN 错误页、正文截断、读正文时中止）时抛的是
+  // 裸 `SyntaxError`，身上没有 `status` ⇒ `httpFailStatus()` 给 `null` ⇒ 落到这一档。
+  // 那一次请求**发出去了、上游答了 200**，DNS/TLS/出网/超时全都正常，而那句话把这五样
+  // 列成了穷尽的候选，会把运维支去查 DNS 与地址 —— 与 `testFailed` 上一版那句「没有连上」
+  // 是同一个形态，只是换了触发条件。
+  // ⇒ **不做穷尽承诺**：先说这一次确定的事实（没读到域名列表、没拿到状态码），
+  // 再把两支都摆出来。判据是 `tests/ui/registrar.test.ts`
+  // 「缺陷复现：列域名端点回 200，正文却读不出来」那一格（真装配，从假上游走到运维眼里那句话），
+  // 五语言各一根毒刺在 `tests/unit/i18n-dict.test.ts`
+  // 「没拿到状态码那一档，五语言都留着上游答了话、正文读不出来那一支」。
+  "reg.channel.testFailedNoStatus": { "zh-CN": "这一次没从上游读到域名列表（{latencyMs} ms），而且没拿到状态码：请求没走通（地址、DNS、TLS、出网、超时），或者上游回了话、正文读不出来。事件里那条失败信息带着它实际请求的那个地址，事件名 registrar.channel_test_failed。", "zh-TW": "這一次沒從上游讀到網域清單（{latencyMs} ms），而且沒拿到狀態碼：請求沒走通（位址、DNS、TLS、出網、逾時），或者上游回了話、正文讀不出來。事件裡那條失敗訊息帶著它實際請求的那個位址，事件名 registrar.channel_test_failed。", en: "No domain list was read from the upstream this time ({latencyMs} ms), and no status code came back: either the request never got through (address, DNS, TLS, egress, timeouts), or the upstream answered and its body could not be read. The failure entry in Events carries the address it actually requested, under registrar.channel_test_failed.", ja: "今回は上流からドメイン一覧を読み取れず、ステータスコードも返ってきませんでした（{latencyMs} ms）: リクエストが最後まで届かなかった（アドレス、DNS、TLS、外向き通信、タイムアウト）か、上流は応答したが本文を読み取れなかったかのどちらかです。イベントに残る失敗メッセージには実際にリクエストしたアドレスが含まれます（registrar.channel_test_failed）。", ko: "이번에는 업스트림에서 도메인 목록을 읽지 못했고 상태 코드도 받지 못했습니다({latencyMs} ms): 요청이 끝까지 도달하지 못했거나(주소, DNS, TLS, 아웃바운드, 타임아웃), 업스트림이 응답했지만 본문을 읽지 못한 것입니다. 이벤트에 남는 실패 메시지에는 실제로 요청한 주소가 함께 들어갑니다(registrar.channel_test_failed)." },
   "reg.channel.testError":  { "zh-CN": "测试请求本身失败了，没有测到这条通道", "zh-TW": "測試請求本身失敗了，沒有測到這條通道", en: "The test request itself failed, so this channel was never reached", ja: "テストのリクエスト自体が失敗したため、このチャネルには到達していません", ko: "테스트 요청 자체가 실패해 이 채널에는 도달하지 못했습니다" },
   "reg.channel.testHint":   { "zh-CN": "测试只读取这条通道的可用域名列表，不建邮箱、不注册账号，不消耗任何名额。测不通时，事件里那条失败信息会带上它实际请求的那个地址。", "zh-TW": "測試只讀取這條通道的可用網域清單，不建郵箱、不註冊帳號，不消耗任何名額。測不通時，事件裡那條失敗訊息會帶上它實際請求的那個位址。", en: "The test only reads this channel's list of usable domains: no mailbox is created, no account is registered, no quota is consumed. When it fails, the failure entry in Events carries the address it actually requested.", ja: "テストはこのチャネルの利用可能ドメイン一覧を読むだけです。メールボックスの作成もアカウント登録も行わず、枠も消費しません。失敗した場合、イベントに残る失敗メッセージには実際にリクエストしたアドレスが含まれます。", ko: "테스트는 이 채널의 사용 가능한 도메인 목록만 읽습니다. 메일박스를 만들지도, 계정을 등록하지도, 정원을 소비하지도 않습니다. 실패하면 이벤트에 남는 실패 메시지에 실제로 요청한 주소가 함께 들어갑니다." },
 

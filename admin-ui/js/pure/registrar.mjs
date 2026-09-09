@@ -385,8 +385,15 @@ export function channelTestResult(res) {
   if (r.reason === "rate_limited") {
     return { key: "reg.channel.testRateLimited", params: {}, kind: "warn" };
   }
-  // 请求压根没走通时后端**不带** `status`（它不伪造兜底值），两句话因此分开：
-  // 「上游回了 HTTP 5xx」与「没发出去 / 没走通」的排查方向完全相反。
+  // 后端拿不到状态码时**不带** `status`（它不伪造兜底值），两句话因此分开：
+  // 「上游回了 HTTP 5xx」与「这一次连状态码都没拿到」的排查方向完全相反。
+  //
+  // ⚠️⚠️ **这一档不等于「请求压根没走通」，文案不许照那个意思写。** 两个适配器的
+  // `listDomains` 在 2xx 之后直接 `await r.json()`，上游回 **200 + 非 JSON 正文**
+  //（反向代理/CDN 错误页那一族）时抛的裸 `SyntaxError` 身上同样没有 `status`
+  // ⇒ 也落这里，而那一次请求发出去了、上游也答了。措辞里那张
+  // 「地址 / DNS / TLS / 出网 / 超时」的清单因此**不许写成穷尽的候选**，
+  // 全文在 `admin-ui/js/i18n-dict.js` 那条文案上方。
   if (status === null) {
     return { key: "reg.channel.testFailedNoStatus", params: { latencyMs: ms }, kind: "warn" };
   }

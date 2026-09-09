@@ -581,6 +581,88 @@ describe("缺陷复现：列域名端点回 200 但凭据无效", () => {
   });
 });
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * 🔴🔴 **缺陷复现格：没拿到状态码那一档，不许把五样列成穷尽的候选。**
+ *
+ * ⚠️ **这一格与上一格同族，同样刻意跨两层，理由同样是「缺陷只存在于两层之间」**：
+ * 后端那句 `{ ok: false, reason: "upstream_error" }` **不带 status** 是真的
+ *（它不伪造兜底值），面板那句话也自成一句，**错的是两者拼起来之后运维读到的那个意思**。
+ *
+ * **这一支之前一格判据都没有**：`channelTestResult` 那边只有「响应体没带 status ⇒
+ * 选 `testFailedNoStatus`」的纯函数格，而**那个响应体是怎么来的**没人钉过。
+ *
+ * **测试替身钉住的正是缺陷的前提**：上游**回了 200**、正文却不是 JSON
+ *（反向代理/CDN 错误页是最常见的形态）。两个适配器的 `listDomains` 在 2xx 之后
+ * 直接 `await r.json()`，抛出来的是裸 `SyntaxError`，身上没有 `status`
+ * ⇒ `httpFailStatus()` 给 `null` ⇒ 落进这一档。
+ * 三条断言把这个前提做成可证的，而不是嘴上说说：
+ * ① 那一次请求**真的发出去了**（替身被调到，且只调了列域名那一条 GET）；
+ * ② 替身回的**确实是 200**（不是伪装成 200 的失败）；
+ * ③ 后端这一档**确实没带 status**（否则走的是另一句话，这一格就测了个寂寞）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+describe("缺陷复现：列域名端点回 200，正文却读不出来", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const ENV: Record<string, string | undefined> = {
+    GATEWAY_TOKEN: "gateway-token-for-registrar-fixture",
+    ADMIN_TOKEN: TEST_ADMIN_TOKEN,
+    REGISTRAR_ENABLED: "true",
+    REGISTRAR_CHANNEL: "yyds",
+    YYDS_API_KEY: "any-key",
+    YYDS_BASE_URL: "https://yyds.invalid",
+    TARGET_KEYS: "1",
+  };
+
+  it("后端如实回 ok:false 且不带状态码，而运维读到的那句话不许把五样列成穷尽的候选", async () => {
+    const seen: string[] = [];
+    // 反向代理/CDN 的错误页：**HTTP 200，正文是 HTML**。
+    const upstream = async (url: string | URL, init?: RequestInit) => {
+      seen.push(`${init?.method ?? "GET"} ${String(url)}`);
+      return new Response("<html><body>gateway error page</body></html>", {
+        status: 200, headers: { "content-type": "text/html" },
+      });
+    };
+    vi.stubGlobal("fetch", upstream);
+
+    const { app } = await buildApp(ENV, new MemoryStorage(), workerRuntime());
+    const res = await app.request(
+      "/admin/api/registrar/channels/yyds/test",
+      { method: "POST", headers: { "x-admin-key": TEST_ADMIN_TOKEN } },
+    );
+    const body = await res.json() as Record<string, unknown>;
+
+    // ① 前提可证之一：请求**真的发出去了**，而且只发了列域名那一条。
+    expect(seen, "请求压根没发出去 —— 那这一格测的就不是这个缺陷")
+      .toEqual(["GET https://yyds.invalid/v1/domains"]);
+    // ② 前提可证之二：替身回的确实是 200。
+    expect((await upstream("https://yyds.invalid/v1/domains")).status, "夹具前提不成立").toBe(200);
+
+    // ③ 后端这一档确实**不带** status（它不伪造兜底值），落的正是这一支。
+    //    **判据是键集合**而不是逐字相等：这一格走的是真装配、真时钟，`latencyMs` 不是常数。
+    expect(res.status, "测不通不是接口异常").toBe(200);
+    expect(body).toMatchObject({ ok: false, channel: "yyds", reason: "upstream_error" });
+    expect(
+      Object.keys(body).sort(),
+      "响应体多了或少了字段 —— 带上 status 的话走的就是另一句话，这一格测的不是这个缺陷",
+    ).toEqual(["channel", "latencyMs", "ok", "reason"]);
+    const view = channelTestResult(body);
+    expect(view.key, "落的不是「没拿到状态码」那一档 —— 这一格测的就不是这个缺陷")
+      .toBe("reg.channel.testFailedNoStatus");
+
+    // ④ **承重断言**：这一次上游答了 200，DNS / TLS / 出网 / 超时全都正常，
+    //    那句话不许把这五样列成穷尽的候选，把运维支去查 DNS 与地址。
+    const shown = t(view.key, view.params);
+    expect(
+      shown,
+      "面板把「请求没走通」当成了这一档的全部：上游明明答了 200，"
+      + "而这句话会把运维支去查 DNS 与地址，方向正好反了",
+    ).toContain("正文读不出来");
+    // 反向控制：它同时仍然要说出「没拿到状态码」这件真事，否则整句换成一句
+    // 「说不清」也能通过上面那条，而那把这一档与另外三档的区别一起删掉了。
+    expect(shown).toContain("没拿到状态码");
+  });
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // 域名台账与退避横幅
 // ───────────────────────────────────────────────────────────────────────────

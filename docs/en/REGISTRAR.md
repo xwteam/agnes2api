@@ -657,8 +657,8 @@ When the selected channel fails:
 (the `reasons=` line), the four pool numbers in the registrar board, and — when a channel request
 fails — the event that now carries **the address actually requested**. If you see zero output,
 click "Test connection" on the other channel: it only says that channel is reachable and lists
-domains, **not that its credentials work** — that step does not check them. After switching, read
-the next round's failure reasons; only a minted key settles it.
+domains, **not that its credentials work** — some services do not check them at this step. After
+switching, read the next round's failure reasons; only a minted key settles it.
 
 ### When a channel keeps failing
 
