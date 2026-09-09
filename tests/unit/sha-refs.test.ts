@@ -222,13 +222,43 @@ const scanRepo = () => scan(trackedTexts());
  * ⚠️ 真扫描与正向/反向控制**共用这一个函数**。只共用分词器是不够的：本期的教训是
  * 「判据用错工具时不会报错，会静静地放行」，而放行发生在分词之后的每一层。
  */
+/**
+ * 这个 commit 从 `HEAD` **走得到**吗。
+ *
+ * ⚠️⚠️ **只问「对象在不在」是不够的，这条是拿一次真实事故换来的。**
+ * `git filter-branch` 重写提交信息之后，被重写掉的那些提交**换了 sha**；旧 sha 指向的
+ * 对象在**本机**还躺着（git 不会立刻 gc），于是 `cat-file --batch-check` 照样回
+ * `commit` ⇒ 本地全绿。而 CI 是一个**全新 clone**，那些孤儿对象根本不存在 ⇒ 那边红。
+ * 本仓真的这样连红过 5 次推送，而每一次 `scripts/prepush.sh` 都是 8 格全过 ——
+ * **prepush 跑在有孤儿对象的那棵树上，它结构上看不见这一类。**
+ *
+ * 可达性问的才是读者会遇到的那个问题：**新 clone 里点得开吗。**
+ */
+function reachableFromHead(sha: string): boolean {
+  try {
+    git(["merge-base", "--is-ancestor", sha, "HEAD"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function offenders(entries: { file: string; text: string }[]): string[] {
   const hits = scan(entries).filter((h) => hasHexLetter(h.token));
   if (hits.length === 0) return [];
   const types = resolveTypes([...new Set(hits.map((h) => h.token))]);
+  const reach = new Map<string, boolean>();
+  for (const t of new Set(hits.map((h) => h.token))) {
+    if (types.get(t) === "commit") reach.set(t, reachableFromHead(t));
+  }
   return hits
-    .filter((h) => types.get(h.token) !== "commit" && !(h.token in DESTROYED_OBJECTS))
-    .map((h) => `${h.file}:${h.line} 的 ${h.token} 在本仓 ${types.get(h.token)}\n    ${h.text}`);
+    .filter((h) => !(h.token in DESTROYED_OBJECTS))
+    .filter((h) => types.get(h.token) !== "commit" || reach.get(h.token) === false)
+    .map((h) =>
+      types.get(h.token) === "commit"
+        ? `${h.file}:${h.line} 的 ${h.token} 是孤儿：对象还在本机，但不是 HEAD 的祖先 —— 新 clone 里点不开\n    ${h.text}`
+        : `${h.file}:${h.line} 的 ${h.token} 在本仓 ${types.get(h.token)}\n    ${h.text}`,
+    );
 }
 
 describe("tracked 文件里的提交 sha 引用", () => {
@@ -249,6 +279,25 @@ describe("tracked 文件里的提交 sha 引用", () => {
       "这是一个浅仓（--is-shallow-repository 不是 false），老提交本来就解析不开，" +
         "此时这条守卫给不出可信答案 —— 按失败处理，不是 sha 烂了",
     ).toBe("false");
+  });
+
+  /**
+   * 🔴 **反向自检：可达性这一步不许退化成恒真。**
+   *
+   * 上面那格断言的是「一处都没有」，而**空检测器与真干净长得一模一样**：把
+   * `reachableFromHead` 改成 `return true` 之后，本文件六格照样全绿（我实测过）。
+   * 所以这一格当场造一个**孤儿 commit**（用 `commit-tree` 指向 HEAD 的树、不给父节点）
+   * 喂给它 —— 那个对象确实写进了本仓，却不是 `HEAD` 的祖先，正是新 clone 里点不开的那一类。
+   * 它不依赖本机残留的任何垃圾对象，在全新 clone 里同样跑得出来。
+   */
+  it("(a-自检) 孤儿 commit 必须判成不可达，HEAD 必须判成可达", () => {
+    const tree = git(["rev-parse", "HEAD^{tree}"]).trim();
+    const orphan = git(["commit-tree", tree, "-m", "sha-refs 自检用的孤儿提交"]).trim();
+    expect(orphan, "commit-tree 没给出 sha，自检夹具本身坏了").toMatch(/^[0-9a-f]{40}$/);
+    // 前提：这个对象**确实存在**（否则下面那句「不可达」证明不了可达性检查在起作用）。
+    expect(resolveTypes([orphan]).get(orphan), "孤儿对象没写进本仓，夹具不成立").toBe("commit");
+    expect(reachableFromHead(orphan), "孤儿 commit 被判成可达 —— 可达性检查退化了").toBe(false);
+    expect(reachableFromHead(git(["rev-parse", "HEAD"]).trim()), "HEAD 自己被判成不可达").toBe(true);
   });
 
   it("(a) 每一处 sha 引用要么解析得开是 commit，要么在已销毁名册上", () => {

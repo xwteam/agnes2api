@@ -1470,7 +1470,7 @@ BANNER='[collection-guard] ✅'
 #     `tests/ui/dom/usage-section.test.ts` 32 → 35（**+3**：横幅不许说「没有记下任何用量」/
 #       被夹过时那句话不许消失 / 六张卡仍写 0 不画 EM DASH）。
 #
-#   ── 乙：commit 9d6f299（五份 DEPLOY.md「丢失不是延迟」）**+12**，它也没改 EXPECT_*。
+#   ── 乙：commit a83ec7a（五份 DEPLOY.md「丢失不是延迟」）**+12**，它也没改 EXPECT_*。
 #     `tests/unit/docs-parity.test.ts` 625 → 637（五张「每语言一个 token」的锚表 ×
 #       各自的探针与「不乱红」；`tests/unit/docs-typography.test.ts` 94 → 94 **格数不变**，
 #       它改的是 `P5_OUTSIDE_ALERT` 那两条绝对行号）。
@@ -1693,8 +1693,8 @@ BANNER='[collection-guard] ✅'
 #     · 把设置页横幅改回无条件用 `set.loadBlocked.fatal` ⇒ **只红 1**。
 #   ⇒ Node：4856 + 47 = 4903；文件数 156 + 3 = 159。
 #
-#   ── 第 4 轮（评审回填，commit 439bd5d）：**+15**，四个数里只有 EXPECT_NODE_TESTS 动
-#   ⚠️ 这一笔是**补记**：439bd5d 当时加了判据却没改 EXPECT_*、也没进这张账，于是账面
+#   ── 第 4 轮（评审回填，commit 8f5fd5a）：**+15**，四个数里只有 EXPECT_NODE_TESTS 动
+#   ⚠️ 这一笔是**补记**：8f5fd5a 当时加了判据却没改 EXPECT_*、也没进这张账，于是账面
 #      停在 4903 而树上已经是 4918 —— 第 ⑥ 格本来会红。补的时候每个数都是重新量的，
 #      不是照着差值倒推：
 #     · `tests/unit/source-guards.test.ts` 206 → **217**（**+11**）＝ 3 格普通 `it`
@@ -2324,7 +2324,21 @@ EXPECT_NODE_FILES=164
 #   没有动那本欠账台账**。
 #   ⇒ Node：5131 + 2 = **5133**；文件数不动。
 #   ⇒ workerd 不动：`tests/unit/**` 不进 workers 池。
-EXPECT_NODE_TESTS=5133
+#
+#   ── sha 引用查可达性而不只是查存在（**GitHub CI 连红 5 次的真因**）：**+1**
+#   起因：用 `git filter-branch` 重写提交信息之后，被重写的提交**换了 sha**。旧 sha 指向的
+#   对象在**本机**还躺着（git 不会立刻 gc）⇒ `cat-file --batch-check` 照样回 `commit`
+#   ⇒ 本地全绿；而 CI 是**全新 clone**，那些孤儿对象根本不存在 ⇒ 那边红。
+#   实际后果：ad8322c 起连续 5 次推送 GitHub 上都是 failure，而每一次本脚本都是 8 格全过 ——
+#   **本脚本跑在有孤儿对象的那棵树上，结构上看不见这一类。**
+#   本轮同时改正了三处指向孤儿的引用（本文件 :1473 / :1696 / :1697）。
+#     · `tests/unit/sha-refs.test.ts` 6 → **7**（**+1**）：
+#       「孤儿 commit 必须判成不可达，HEAD 必须判成可达」—— 当场用 `commit-tree` 造一个
+#       孤儿（指向 HEAD 的树、不给父节点）喂进去，不依赖本机残留的任何垃圾对象。
+#   变异实测：把改正过的引用换回孤儿 sha ⇒ 主判据红并点名「是孤儿…新 clone 里点不开」；
+#   把 `reachableFromHead` 改成 `return true` ⇒ **补这一格之前 7 格全绿，补完只红这一格**。
+#   ⇒ Node：5133 + 1 = **5134**；文件数不动。workerd 不动（`tests/unit/**` 不进 workers 池）。
+EXPECT_NODE_TESTS=5134
 EXPECT_WORKERS_FILES=43
 EXPECT_WORKERS_TESTS=802
 
