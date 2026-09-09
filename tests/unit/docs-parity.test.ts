@@ -6728,7 +6728,11 @@ describe(FIRST_VISIT_GROUP, () => {
     const v = realVersion();
     const want = changelogReleaseDate(realChangelog(), v);
     expect(want, "认不出 CHANGELOG 的发版日期——这一格的前提没了").not.toBeNull();
-    const mutated = realChangelog().replace(`## [${v}] - ${want}`, `## [${v}] - 2026-09-09`);
+    // ⚠️ **变异用的那个日期必须从真日期派生，不许写死。**
+    //    上一版写死成 `2026-09-09`，而 0.2.0 的发版日恰好就是那天 ⇒ 替换成了空操作、
+    //    这一格当场以「变异没落地」红掉。写死的探针值迟早会与真值撞上一次。
+    const other = `${want}`.endsWith("1") ? `${want}`.slice(0, -1) + "2" : `${want}`.slice(0, -1) + "1";
+    const mutated = realChangelog().replace(`## [${v}] - ${want}`, `## [${v}] - ${other}`);
     expect(mutated, "变异没落地——CHANGELOG 里没找到那条带日期的版本条目").not.toEqual(realChangelog());
     const failures = releaseDateFailures(() => mutated);
     expect(failures, `报文：\n${failures.join("\n")}`).toHaveLength(SIX_READMES.length);
