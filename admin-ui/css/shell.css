@@ -30,8 +30,11 @@
    顶栏横跨两列，所以栅格是「一行自适应高度的顶栏 + 一行内容」：
    `grid-template-rows: auto 1fr` 那个 `1fr` 是内容行，没有它侧栏在内容很短时不到底。 */
 .shell { display: none; }
+/* ⚠️ **侧栏那一列走 `var(--sidebar-w)`（定义在 `admin-ui/css/base.css` 的 :root），
+   不再是写死的 220px**：本文件末尾 ≤1024 那一档要把它收窄一档，≤900 那一档要把
+   整条侧栏改成横向导航带 —— 同一个数散在三处各写一遍时，改断点必漏其中一处。 */
 .shell.on {
-  display: grid; grid-template-columns: 220px 1fr; grid-template-rows: auto 1fr;
+  display: grid; grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: auto 1fr;
   min-height: 100vh;
 }
 /* 顶栏是 kiro2api 那条**毛玻璃**条：内容从它下面滚过去时透出一层模糊。
@@ -42,10 +45,16 @@
    · `backdrop-filter: blur()` —— 真正的模糊；只有半透明底而没有它就只是一层薄纱。
    ⚠️ **`-webkit-` 那一行不是可有可无的**：Safari 到今天仍只认带前缀的写法，
    少了它 macOS / iOS 上这条顶栏是半透明但**不模糊**的，滚动时底下的文字会直接透上来。 */
+/* ⚠️ **`flex-wrap: wrap` 不是可有可无的**：这一行里站着六样东西（品牌、状态徽章、
+   仓库链接、语言下拉、主题、退出），它们的 min-content 加起来是几百像素，而
+   `.icon-btn` 那三颗是**固定 32px、一步都不缩**的。不换行的话，视口窄到装不下时
+   顶栏不会重排，是**整页**长出一条横向滚动条 —— 面板每一屏都跟着横着晃。
+   换行的代价是顶栏在窄屏上会变成两行（因此它的高度是内容决定的，不是一个常数
+   ——文件末尾 ≤900 那一档的导航带为什么不做 sticky，理由正是这一句）。 */
 .topbar {
   grid-column: 1 / -1;
   position: sticky; top: 0; z-index: 30;
-  display: flex; align-items: center; gap: var(--gap);
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap);
   padding: 10px var(--gap);
   background: var(--glass); border-bottom: 1px solid var(--border);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
@@ -73,7 +82,9 @@
 .health-badge { cursor: pointer; font: inherit; font-size: 12px; }
 .health-badge::before { content: "●"; margin-right: 6px; }
 /* `margin-left: auto` 把动作区推到最右，中间那段空白留给徽章这类以后要挂上来的东西。 */
-.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--gap-sm); }
+/* `flex-wrap: wrap` 与上面那条同一个理由：动作区自己也装着四样东西，顶栏换行之后
+   它整块掉到第二行，而这四样在很窄的屏上还要再换一次。 */
+.topbar-actions { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-sm); }
 .topbar-actions select { width: auto; padding: 6px 8px; }
 /* 仓库链接：外观对齐 `.icon-btn`（同样的高度与圆角），但它是 <a> 不是 <button>
    ——中键 / Ctrl 点开新标签这类浏览器原生行为只有真链接才有。 */
@@ -111,7 +122,15 @@
    亮色 4.78:1 / 深色 6.24:1，两档都过 4.5:1。 */
 .nav-item.active { background: var(--primary-10); color: var(--primary); font-weight: 600; }
 
-.main { padding: var(--gap); overflow: auto; }
+/* ⚠️ **`min-width: 0` 是这条栅格能收窄的前提，删了整页会横着滚。**
+   栅格里那条 `1fr` 轨道的**自动最小尺寸**默认是「里面那件东西的 min-content」
+   ——也就是说主区装了一张十三列的宽表时，`1fr` 会被顶成那张表那么宽，
+   `.shell.on` 于是比视口宽，横向滚动条长在**整页**上（连顶栏一起晃）。
+   `min-width: 0` 把那条自动最小尺寸解除掉，轨道才真的跟着视口缩；
+   表格自己该滚的那一层由 `admin-ui/css/sections.css` 里的横向滚动容器接住。
+   ⚠️ 它与 `.cfg-col` / `.pg-cols` 上那两条 `min-width: 0` 是同一个坑的不同门派
+   （那两条是 flex 子项的 `min-width: auto`，这条是 grid 轨道的自动最小尺寸）。 */
+.main { padding: var(--gap); overflow: auto; min-width: 0; }
 .section { display: none; }
 .section.active { display: block; }
 
@@ -149,3 +168,84 @@
 }
 .modal h2 { margin: 0 0 12px; font-size: 16px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--gap-sm); margin-top: 16px; }
+
+/* ── 断点（三档：1024 / 900 / 640）─────────────────────────────────────────
+   **这个面板此前一条 `@media` 都没有**（三份 CSS 加起来 `@media` 零命中），
+   而 `index.html` 的 `<meta name="viewport">` 是对的 ⇒ 窄屏上看到的错位是真错位，
+   不是"没告诉浏览器要自适应"那一类。
+
+   ⚠️ **三个数是对齐来的，不是量出来的**：kiro2api 的面板用的就是 1024 / 900 / 640。
+   同一个运维会同时开着两个结构一模一样的面板（这也是本仓主色跟着它走的那条理由，
+   见 `admin-ui/css/base.css` 开头），两边在同一个窗口宽度上同时变形，手感才是一套；
+   各挑各的"最佳断点"会让并排使用时一边已经收起、另一边还杵着。
+   **要改这三个数，先去看那边改没改**，别在这里单方面漂。
+
+   ⚠️ **每一档都统一追加在各自文件的末尾，不插在被覆盖的那条规则旁边。**
+   媒体查询本身对特指度**没有任何贡献**（`@media` 里的 `.side` 与外面的 `.side`
+   同分），谁赢只看谁写在后面 —— 追加到末尾时"覆盖得到吗"这件事一眼可判，
+   插在中间则要人去数它后面还有没有同名规则。三份 CSS 的加载序是
+   base → shell → sections（`admin-ui/index.html` 里那三条 `<link>` 的顺序），
+   所以本文件末尾这几档压不过 sections.css，各文件只管自己那一份。 */
+
+/* ── ≤1024：侧栏先瘦一档，结构不动 ──────────────────────────────────────
+   这一档只把侧栏从 220px 收到 180px，把那 40px 还给主区（最宽的那几张表就靠它）。
+   ⚠️ **180px 不是量出来的下限**（导航项能不能一行装下取决于是哪门语言，本仓没有
+   布局引擎，写一个像素数就是写一个没有测法的数）——它是"再窄就该换结构了"的那个
+   位置：继续往下硬收只会换来一排折行的导航项，而那时候横过来铺（下一档做的事）
+   本来就比竖着挤更好使。 */
+@media (max-width: 1024px) {
+  :root { --sidebar-w: 180px; }
+}
+
+/* ── ≤900：侧栏从左列变成顶栏底下一条可横向滚的导航带 ──────────────────
+   **这一档才是"没有自适应"那句反馈的正主。** 侧栏此前是一条**任何宽度都不收起**的
+   定宽列：380px 视口下 220px 归它，主区只剩 160px（上一档收到 180px 也只是变成 200px，
+   再减去 `.main` 两边的内边距不到 170px）——一张表、一张卡、一句提示全在那点宽度里
+   挤成一团。⇒ 这一档不再"收窄"，而是**换结构**：侧栏退出左列，横过来铺在顶栏底下。
+
+   ⚠️⚠️ **刻意不做 off-canvas 抽屉（汉堡按钮 + 遮罩层 + 一条 i18n 文案）。**
+   抽屉要的是：一颗触发按钮、一层遮罩、开关状态、点遮罩/按 Esc 关闭、焦点管理，
+   外加至少一条"打开导航"的五语言文案 —— 几十行 JS 加一次 `i18n-dict.js` 改动，
+   而本面板只有**九个**导航项，横过来铺一条带子零 JS、零 i18n、少一次点击
+   （抽屉是"点开→选→关上"，带子是"选"）。⇒ 取舍是**九个项这个量级**下抽屉不值。
+   哪天导航项长到二十个、或者带子在 320px 上要滑动好几屏才够得着最后一项，
+   再回来重新评这一条。
+
+   ⚠️ **这条带子刻意不 sticky。** 顶栏本身是 `position: sticky; top: 0`，而它的高度
+   **不是常数**（窄屏上那六样东西会换行，见上面 `.topbar` 那段）⇒ 带子要粘在顶栏
+   底下就得写一个 `top: 某个常数`，那个数在顶栏换行的当天就错，而 CSS 这一侧读不到
+   顶栏的实际高度（要读就得上 JS，与上面否掉抽屉是同一笔账）。粘在 `top: 0` 更糟：
+   它与顶栏抢同一个位置，z-index 高就盖住顶栏、低就被顶栏盖住，两种都是叠影。
+   ⇒ 带子跟着内容滚走，要换板块时往上滚一下 —— 短屏上把两条常驻横条摞在一起，
+   本来也会吃掉小半屏。
+
+   ⚠️ **`grid-template-rows` 必须在这里一起改成三行。** 单列之后三个孩子各占一行，
+   而原来那份 `auto 1fr` 只写了两行 ⇒ `1fr` 会落到**导航带**那一行上（把它拉到
+   撑满剩余高度），主区反而掉进隐式行里。三行 `auto auto 1fr` 才是"顶栏、导航带
+   各按内容高，剩下的全给主区"。 */
+@media (max-width: 900px) {
+  .shell.on { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
+  .side {
+    flex-direction: row; align-items: center; gap: var(--gap-sm);
+    padding: var(--gap-sm) var(--gap); overflow-x: auto;
+    border-right: 0; border-bottom: 1px solid var(--border);
+  }
+  .side nav { flex-direction: row; gap: 4px; }
+  /* 导航项在带子里**不许缩、不许折行**：缩了就是九个半截词，折行会让带子忽高忽低。
+     装不下的那几项由 `.side` 那条 `overflow-x: auto` 横着滚出来。 */
+  .nav-item { flex: none; white-space: nowrap; }
+}
+
+/* ── ≤640：手机档。留白收一档，浮层不许顶到屏幕边 ────────────────────── */
+@media (max-width: 640px) {
+  /* 顶栏与主区的内边距从 16px 收到 8px：这一档每一个像素都是内容的。 */
+  .topbar { gap: var(--gap-sm); padding: var(--gap-sm); }
+  .main { padding: var(--gap-sm); }
+  /* modal 原来是 `width: 100%` + `max-width: 420px`，360px 的屏上它就是**整幅贴边**，
+     四周一点余白都没有，看着像页面被替换掉而不是浮起来一层。
+     `min(92vw, 420px)`：宽屏那一半（420px）分毫不变，窄屏留出两边各 4vw。 */
+  .modal { max-width: min(92vw, 420px); }
+  /* toast 只钉了 `right`，一句长提示会一路顶到左边缘。补一个 `left` 把它框在
+     两侧留白之内 —— 超出的部分换行，不是贴边。 */
+  .toast-host { left: var(--gap); }
+}

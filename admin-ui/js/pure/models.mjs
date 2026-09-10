@@ -8,7 +8,7 @@
  * 的形式从那份响应里进来，本文件里连一个协议 id 的字面量都没有。
  *
  * ⚠️ **面板显示的可用性与 `geminiModelList()` 交出去的 `supportedGenerationMethods`
- * 不一致，这是刻意的、不是缺陷**：后者对全部 4 个模型一律声明支持 generateContent，
+ * 不一致，这是刻意的、不是缺陷**：后者对全部 12 个模型一律声明支持 generateContent，
  * 包括那个视频模型（`src/core/protocol/gemini.ts`）。
  * 那条对外契约的不实已另行登记、本期不动它，协议目录按**真实可用性**填。理由全文在
  * `src/core/admin/protocol-catalog.ts` 的文件头，**别把这处差异当成目录算错了**。

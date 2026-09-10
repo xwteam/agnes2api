@@ -116,7 +116,7 @@ describe("协议可用性矩阵", () => {
    * **契约档：夹具直接用真源。**
    *
    * 面板显示的可用性与 `geminiModelList()` 交出去的 `supportedGenerationMethods`
-   * 不一致，**这是刻意的**：后者对全部 4 个模型一律声明支持 generateContent，
+   * 不一致，**这是刻意的**：后者对全部 12 个模型一律声明支持 generateContent，
    * 包括那个视频模型。面板按真实可用性画，那条对外契约的不实登记另行处置。
    * 这一格钉的就是「面板不许照抄那份不实」。
    */
@@ -136,7 +136,10 @@ describe("协议可用性矩阵", () => {
       expect(availableCount, `${m.id} 的可用协议数不对`).toBe(m.modality === "chat" ? 4 : 0);
     }
     // 反向自检：上面那个循环在 `models` 是空数组时恒绿。
-    expect(models.map((m) => m.modality).sort()).toEqual(["chat", "image", "image", "video"]);
+    expect(models.map((m) => m.modality).sort()).toEqual([
+      "chat", "chat", "chat", "chat", "chat", "chat",
+      "image", "image", "image", "video", "video", "video",
+    ]);
   });
 });
 
@@ -151,8 +154,10 @@ describe("按协议筛选", () => {
     // 协议 id 手写字面量（**不从 `catalogProtocols()` 取第一个**：那样写的话
     // 真源改掉协议 id 时这一格会跟着改，等于没有锚）。
     const rows = filterByProtocol(models, "anthropic") as ModelRow[];
-    expect(rows.map((m) => m.modality), "媒体模型混进了对话协议的筛选结果").toEqual(["chat"]);
-    expect(rows.length).toBe(1);
+    // 手写字面量：真源今天六个对话模型，筛出来的必须全是 chat，一个媒体模型都不许有。
+    expect(rows.map((m) => m.modality), "媒体模型混进了对话协议的筛选结果")
+      .toEqual(["chat", "chat", "chat", "chat", "chat", "chat"]);
+    expect(rows.length).toBe(6);
   });
 
   /**
@@ -164,8 +169,8 @@ describe("按协议筛选", () => {
     const models = catalogModels(catalogPayload())! as ModelRow[];
     expect(filterByProtocol(models, ""), "空串被当成了一个协议 id").toBe(models);
     expect(filterByProtocol(models, null), "null 被当成了一个协议 id").toBe(models);
-    // 手写下界：真源今天四个模型，全部那一档一个都不许少。
-    expect(models.length).toBe(4);
+    // 手写下界：真源今天十二个模型，全部那一档一个都不许少。
+    expect(models.length).toBe(12);
   });
 
   it("表外的协议 id 筛出空清单 —— 不是悄悄退回「全部」", () => {

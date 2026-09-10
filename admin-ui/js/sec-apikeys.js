@@ -28,7 +28,11 @@
  */
 import { api, ApiError } from "./api.js";
 import { t } from "./i18n.js";
-import { el, elI18n, toast, openModal, confirmModal, copy } from "./ui.js";
+import {
+  REVEAL_KINDS, createRevealState, revealMessageKey, revealOutcome,
+} from "./pure/reveal.mjs";
+import { el, elI18n, toast, openModal, confirmModal, copy, revealControls,
+} from "./ui.js";
 import { fmtCount, fmtDash, fmtDuration, fmtInstant } from "./pure/format.mjs";
 import { offsetMs, freshnessValues } from "./pure/overview.mjs";
 // 错误码 → 文案。**全仓唯一那份「码 → i18n key」的翻译**，两族管理端点共用它
@@ -75,6 +79,9 @@ let usageFailed = false;
 let usageSeq = 0;
 
 /** 把一次管理接口错误翻成一句话。**两族端点共用同一份翻译**，见上面的 import。 */
+/** 见 `admin-ui/js/sec-keys.js` 同名常量：明文只活在这里，不进列表数据。 */
+const revealState = createRevealState();
+
 function errorMessage(e, genericKey) {
   return adminErrorText(adminErrorFields(e), t, genericKey);
 }
@@ -177,7 +184,19 @@ function itemCard(v) {
   card.appendChild(head);
 
   const meta = el("div", { class: "ak-item-meta" });
-  meta.appendChild(el("span", { class: "mono" }, String(v.masked ?? fmtDash(null))));
+  // 掩码 + 显示明文 + 复制。
+  // ⚠️ **`plaintextRetrievable` 是契约不是猜测**：它由后端算（`/admin/api/capabilities`），
+  // 面板据它决定这两颗按钮出不出现 —— **不许在前端写死**，写死就会在哪天有人改了
+  // 后端存法时变成假话。取不回来的部署（或升级前签发的那些）仍然只画掩码。
+  if (cap.plaintextRetrievable) {
+    meta.appendChild(revealControls({
+      id: v.id, masked: String(v.masked ?? fmtDash(null)), state: revealState,
+      fetchSecret: (id) => api.get(REVEAL_KINDS.apikey.path(id)),
+      outcomeOf: revealOutcome, messageKeyOf: revealMessageKey,
+    }));
+  } else {
+    meta.appendChild(el("span", { class: "mono" }, String(v.masked ?? fmtDash(null))));
+  }
   const off = offsetMs();
   meta.appendChild(el("span", { class: "muted" },
     `${t("ak.createdAt")} ${fmtInstant(v.createdAt, off)}`));

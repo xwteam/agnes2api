@@ -960,6 +960,21 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 任何人都能远程消耗你在上游的配额——与 `POST /admin/api/registrar/tend`
     // 那条的理由同型，只是这一条连"写"都不是，更容易被误当成无害的只读端点放行。
     "GET /admin/api/upstream/models",
+    // ── 逐模型连通性测试 ──────────────────────────────────────────────────────
+    //
+    // 它用 `admin.post()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
+    // `EXPECTED_MIDDLEWARE` 保持不变。**每一次新增端点都要在这里明确表一次态。**
+    //
+    // ⚠️ **`PUBLIC_PATHS` 不增长，理由与上面那条列上游模型同型、而且更重**：
+    // 那一条按一下打**一次**上游，这一条是一颗「把整份模型清单挨个打一遍」的按钮
+    // 的单格入口——免鉴权意味着任何人都能远程把这个账号的上游配额一轮一轮地消耗掉。
+    // ⚠️ **它比那一条多一层**：图片 / 视频模型在 handler 里被 400 挡住
+    //（测一次就是真生成一张图 / 建一个任务），那道闸同样只在 admin 域里才有意义。
+    //
+    // ⚠️ **它是四段（`models/:id/test`），`GET /admin/api/models` 是三段，今天吃不掉它**；
+    // 会出事的仍是那个老坑：将来加一条更宽的 `/admin/api/models/:id/:something` 时
+    // 它必须排在本条之后（Hono 按注册顺序匹配）。
+    "POST /admin/api/models/:id/test",
     // ── 用量三条 ──────────────────────────────────────────────────────────────
     //
     // 三条都用 `admin.get()` 注册（**不是 `use()`**）⇒ 不产生 ALL 条目，
@@ -997,6 +1012,18 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 碰不上；但顺序反了之后加一条更宽的 `/admin/api/keys/:id/:something` 就会静默把它
     // 吃掉——与 `bulk` vs `:id` 是同一个坑（见 `src/http/admin/router.ts` 里那几段注释）。
     "POST /admin/api/keys/:id/verify",
+    // ── 明文取回两条（2026-09-10 新增）──────────────────────────────────────
+    //
+    // 🔴 **这两条是本表上仅有的、会把凭据明文放进响应体的端点**，鉴权失效的后果比
+    // 上面 `verify` 那条还重一档：`verify` 泄漏的是「某把 key 死没死」，
+    // 而这两条泄漏的是**明文本身** —— 上游 Agnes key 与我们签发给客户端的 sk-。
+    // ⇒ 它们当然只能待在 admin 域里，`PUBLIC_PATHS` 同样不增长；
+    //   每次调用另记一条 `key.revealed` / `apikey.revealed` 审计事件（只含 id）。
+    //
+    // ⚠️ 两条都是**四段**，与三段的 `DELETE` / `PATCH /admin/api/{keys,apikeys}/:id`
+    // 碰不上；但顺序反了之后加一条更宽的 `/:id/:something` 就会静默把它们吃掉 ——
+    // 与 `bulk` vs `:id` 同一个坑。
+    "GET /admin/api/keys/:id/reveal",
     // ── 对外 API 密钥五条 ──────────────────────────────────────────────────────
     //
     // ⚠️⚠️ **路径是 `apikeys`，与上面那一族 `keys` 是两回事。** 那一族是**我们持有的**
@@ -1025,6 +1052,7 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     "GET /admin/api/apikeys",
     "POST /admin/api/apikeys",
     "POST /admin/api/apikeys/purge",
+    "GET /admin/api/apikeys/:id/reveal",
     "DELETE /admin/api/apikeys/:id",
     "PATCH /admin/api/apikeys/:id",
   ] as const;
@@ -1067,6 +1095,15 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
     // 用不存在的 id ⇒ handler 在 `repo.get()` 那一步就 404，护栏都不会被占。
     // 404 不是 401，矩阵那一格断言的「不该被判 401」照样成立。
     "/admin/api/keys/:id/verify": "/admin/api/keys/deadbeefdeadbeef/verify",
+    // 逐模型连通性测试。**必须用一个目录里没有的模型 id**，与上面验活那条同一条
+    // 理由：矩阵会拿正确的管理口令把每条路由真的打一遍，而这一条打通了就是**一次真的
+    // 出站请求**。用目录外的 id ⇒ handler 在查表那一步就 404，护栏都不会被占。
+    // 404 不是 401，矩阵那一格断言的「不该被判 401」照样成立。
+    // ⚠️ **别改成一个真的模型 id**：那样这一格会开始消费护栏的最小间隔，而护栏是
+    // **全局一个 kind** 的（见 `src/http/admin/handlers/model-test.ts` 的不同点 ③）
+    // ⇒ 矩阵里后面那几次同一条路由的探测会拿到 429，而 429 也不是 401，
+    // 用例仍然绿——**它会静静地把这条路由的鉴权判据变成一次 429 探测**。
+    "/admin/api/models/:id/test": "/admin/api/models/no-such-model-in-catalog/test",
   };
 
   const GATEWAY = TEST_CONFIG.gatewayToken;
@@ -1293,7 +1330,11 @@ describe("枚举式鉴权矩阵（路由 × 凭据状态，笛卡尔积）", () 
       "扫到的 /admin/api/* 条目数不对。**先确认新端点没有被前面更宽的模式吃掉**"
       + "（下面那格「窗口内更宽的模式不许排在更窄的之前」会逐条点名），"
       + "再改这个数：filter 写坏了、或者有人加/删了端点没回来改它，都会落到这一句上",
-    ).toBe(30);
+    // ⚠️ **逐模型连通性测试那一条进来之后，这个数从 30 改成 31。**
+    // 与上面那句一样：改数字不是削弱，是它在按设计工作。
+    // 它挂在 `GET /admin/api/models`（三段）之后、四段的 `POST /admin/api/models/:id/test`
+    // 没有被任何更宽的模式吃掉——那一半由下面那格逐条点名。
+    ).toBe(33);
   });
 
   /**

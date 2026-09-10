@@ -6,7 +6,7 @@ describe("POST /v1/messages", () => {
     const { app } = await makeApp([]);
     const res = await app.request("/v1/messages", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "agnes-2.0-flash", max_tokens: 100, messages: [] }),
+      body: JSON.stringify({ model: "agnes-2.0-flash", max_tokens: 100, messages: [{ role: "user", content: "x" }] }),
     });
     expect(res.status).toBe(401);
   });

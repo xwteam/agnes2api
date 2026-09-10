@@ -67,7 +67,7 @@ GATEWAY_TOKEN=長いランダム文字列に置き換える
 
 - `GATEWAY_TOKEN` は常に有効で、**その判定はストレージ読み取りを一切発生させません**——この性質こそが脱出口そのものです。キー表が壊れていても、ストレージが読めなくても、マスタートークンを使うクライアントは 1 バイトの影響も受けません；
 - 対外 API キーは 1 本ずつ名前と有効期限を持ち、いつでも停止・失効させられます。マスタートークンを渡さずに、下流ごとに別々の 1 本を配れます；
-- ゲートウェイが保存するのは SHA-256 ダイジェストだけで、**平文は発行時のレスポンスにしか現れません**；
+- ゲートウェイは認証用の SHA-256 ダイジェストに加えて、**2026-09-10 から平文も保存します**：平文は発行時のレスポンスで全部渡され、以後も `GET /admin/api/apikeys/{id}/reveal` で取り出せます（それ以前に発行したものは取り出せません）。この取捨の代価はそのエンドポイントの項にあります；
 - 停止や削除は**即時ではありません**：ほかのインスタンスが気づくまで最大で約 6 分かかります。下の `PATCH /admin/api/apikeys/{id}` を参照してください。
 
 `401` のボディは「そのキーが存在しない」「停止済み」「期限切れ」の 3 つに対して**まったく同じ文言**を返します——区別することはスキャナーに列挙用の窓口を渡すのと同じだからです。本当の理由はイベントログ（`apikey.rejected`、`id` と区分付き）にだけ記録され、そこは運用者しか見られません。
@@ -165,14 +165,22 @@ Gemini の二つのエンドポイントはモデル名をボディではなく�
 
 ## モデル
 
-ゲートウェイは四つのモデルを公開しており、どのエンドポイントを呼ぶかでどれを送るかが決まります：
+ゲートウェイは十二のモデルを公開しており、どのエンドポイントを呼ぶかでどれを送るかが決まります：
 
 | モデル | 用途 |
 |------|----|
 | `agnes-2.0-flash` | 対話/テキスト系のエンドポイント |
+| `agnes-2.5-flash` | 対話/テキスト系のエンドポイント |
+| `agnes-2.5-pro` | 対話/テキスト系のエンドポイント |
+| `agnes-2.5-pro-alpha` | 対話/テキスト系のエンドポイント |
+| `agnes-2.5-pro-beta` | 対話/テキスト系のエンドポイント |
+| `agnes-3.0-flash` | 対話/テキスト系のエンドポイント |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
+| `agnes-image-2.5-flash` | `/v1/images/generations` |
 | `agnes-video-v2.0` | `/v1/videos` |
+| `agnes-video-2.5` | `/v1/videos` |
+| `agnes-video-2.5-flash` | `/v1/videos` |
 
 ## OpenAI 互換 API
 
@@ -194,9 +202,17 @@ curl http://localhost:8080/v1/models \
   "object": "list",
   "data": [
     { "id": "agnes-2.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro-alpha", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro-beta", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-3.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
     { "id": "agnes-image-2.1-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
     { "id": "agnes-image-2.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
-    { "id": "agnes-video-v2.0", "object": "model", "created": 1735689600, "owned_by": "agnes2api" }
+    { "id": "agnes-image-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-v2.0", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-2.5", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" }
   ]
 }
 ```
@@ -209,7 +225,7 @@ OpenAI Chat Completions プロトコル。非ストリーミングのレスポ�
 
 | パラメータ | 型 | 必須 | 説明 |
 |----------|----|----|----|
-| `model` | string | はい | `agnes-2.0-flash` を指定します。 |
+| `model` | string | はい | 任意の対話モデル（例: `agnes-2.0-flash`）を指定します。 |
 | `messages` | array | はい | 標準的な OpenAI のメッセージ配列。 |
 | `stream` | boolean | いいえ | `true` を送るとストリーミング。既定は `false`。 |
 
@@ -249,7 +265,7 @@ OpenAI-Responses プロトコル。ボディの `instructions` と配列形態�
 
 | パラメータ | 型 | 必須 | 説明 |
 |----------|----|----|----|
-| `model` | string | はい | `agnes-2.0-flash` を指定します。 |
+| `model` | string | はい | 任意の対話モデル（例: `agnes-2.0-flash`）を指定します。 |
 | `input` | string / array | はい | 文字列、または標準的な Responses の入力配列。 |
 | `instructions` | string | いいえ | system メッセージ一件に変換されます。 |
 | `stream` | boolean | いいえ | `true` を送るとストリーミング。既定は `false`。 |
@@ -298,7 +314,7 @@ Anthropic Messages プロトコル。ボディの `system` と配列形態の `c
 
 | パラメータ | 型 | 必須 | 説明 |
 |----------|----|----|----|
-| `model` | string | はい | `agnes-2.0-flash` を指定します。 |
+| `model` | string | はい | 任意の対話モデル（例: `agnes-2.0-flash`）を指定します。 |
 | `max_tokens` | number | はい | Anthropic プロトコル自身の必須項目。 |
 | `messages` | array | はい | 標準的な Anthropic のメッセージ配列。 |
 | `system` | string / array | いいえ | 上流へ転送する前にプレーンテキストへ平坦化されます。 |
@@ -357,9 +373,17 @@ curl http://localhost:8080/v1beta/models \
 {
   "models": [
     { "name": "models/agnes-2.0-flash", "displayName": "agnes-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-flash", "displayName": "agnes-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro", "displayName": "agnes-2.5-pro", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro-alpha", "displayName": "agnes-2.5-pro-alpha", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro-beta", "displayName": "agnes-2.5-pro-beta", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-3.0-flash", "displayName": "agnes-3.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
+    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
   ]
 }
 ```
@@ -428,7 +452,7 @@ data: {"candidates":[{"content":{"role":"model","parts":[{"text":"こんにち�
 
 | パラメータ | 型 | 必須 | 説明 |
 |----------|----|----|----|
-| `model` | string | はい | `agnes-image-2.1-flash` または `agnes-image-2.0-flash` を指定します。 |
+| `model` | string | はい | 任意の画像モデル（例: `agnes-image-2.1-flash`）を指定します。 |
 | `prompt` | string | はい | 上流へそのまま転送されます。 |
 
 **リクエスト**：
@@ -454,7 +478,7 @@ curl -X POST http://localhost:8080/v1/images/generations \
 
 | パラメータ | 型 | 必須 | 説明 |
 |----------|----|----|----|
-| `model` | string | はい | `agnes-video-v2.0` を指定します。 |
+| `model` | string | はい | 任意の動画モデル（例: `agnes-video-v2.0`）を指定します。 |
 | `prompt` | string | はい | 上流へそのまま転送されます。 |
 
 **リクエスト**：
@@ -504,7 +528,7 @@ curl http://localhost:8080/v1/videos/task-1 \
 `ADMIN_TOKEN` が未設定、または硬いルール（前後の空白、印字不可能な ASCII、24 文字未満）を満たさない場合、**`/admin` のツリーは丸ごと登録されません**——アクセスすると `401` ではなく `404` になり、「ここに管理画面がある」ことを漏らしません。
 
 > [!WARNING]
-> 管理インターフェースのレスポンスはプール内の key の平文をどこにも echo せず、reveal エンドポイントもありません。しかし `ADMIN_TOKEN` を握った人はプール全体を空にでき、`GATEWAY_TOKEN` を変更でき、レジストラーを有効にできます——**中継トークンより重い方の鍵として扱ってください**。
+> 一覧も通常のレスポンスも平文をどこにも echo しません：平文が通るのは専用の reveal エンドポイント 2 本（下記）だけで、それらは毎回痕跡を残す**明示的な操作**です。しかし `ADMIN_TOKEN` を握った人は、プール内の上流 key と対外キーの平文を一本ずつ取り出せるうえ、プール全体を空にでき、`GATEWAY_TOKEN` を変更でき、レジストラーを有効にできます——**中継トークンより重い方の鍵として扱ってください**。
 
 ### GET /admin/api/session
 
@@ -520,7 +544,7 @@ curl http://localhost:8080/admin/api/session \
 **レスポンス**：
 
 ```json
-{ "ok": true, "version": "0.2.2" }
+{ "ok": true, "version": "0.3.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +562,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.2.2",
+  "version": "0.3.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +594,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.2.2",
+  "version": "0.3.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -652,9 +676,50 @@ curl http://localhost:8080/admin/api/upstream/models \
 }
 ```
 
+### POST /admin/api/models/{id}/test
+
+プール内の key を 1 本使い、このモデル ID で上流へ最小のチャットリクエストを実際に 1 回
+送って、応答するかどうかと速さだけを見ます。**上の 2 つと併存します**：上の 2 つは
+「このゲートウェイが対応するプロトコルとエンドポイント」と「上流アカウントが今返した内容」、
+こちらは「今この瞬間このモデルが実際に応答を出せるか」です。**ストレージ書き込みはゼロ**で、
+ボディのパラメータも一切取りません（未知のフィールドは 400。
+「ここでモデルを指定できると思った」が黙って無視されるのを防ぐためです）。
+
+**対象はチャットモデルのみ。** 画像・動画モデルは一律 400 と `reason: "modality_not_testable"`
+——画像モデルを試すと実際に画像が 1 枚生成され、動画モデルを試すとジョブを作成して
+繰り返しポーリングします。どちらもこのアカウントの生成枠を実際に消費します。
+カタログに無いモデル ID は 404。プールに使える key が無い場合は 5xx ではなく
+`ok: false` と `reason: "no_key"`。上流が 2xx 以外を返した場合は実際のステータスコード付きで
+`reason: "upstream_error"` となり、上流のエラー本文は 1 バイトも返しません。
+
+ガードは単一 key の疎通確認および上流モデル一覧と共用しますが、
+**このエンドポイントの粒度はグローバルです**：別のモデルに変えてすぐ試しても、
+最小間隔内なら同じく 429（トップレベルの `reason` は `probe_in_flight` または
+`probe_cooldown`）。これは意図的です——マトリクス 1 周は同じ上流アカウントを叩くため、
+スロットルを 1 枠共有することが上流のエッジ側レート制限に耐える仕組みそのものです。
+各モデルは**直列**に送ってください。並列は不可です。
+
+**リクエスト**：
+
+```bash
+curl -X POST http://localhost:8080/admin/api/models/agnes-2.0-flash/test \
+  -H "x-admin-key: your-admin-token"
+```
+
+**レスポンス**：
+
+```json
+{
+  "ok": true,
+  "status": 200,
+  "latencyMs": 412,
+  "reason": null
+}
+```
+
 ### GET /admin/api/keys
 
-Key プールの読み取り専用一覧で、絞り込みとページングが付きます。**投影に平文の key は決して含まれません。**
+Key プールの読み取り専用一覧で、絞り込みとページングが付きます。**投影に平文の key は決して含まれません**——平文が要るときは下の `GET /admin/api/keys/{id}/reveal` を明示的に呼びます。
 
 **リクエストボディ**：このエンドポイントはクエリパラメータのみを取り、ボディは取りません。
 
@@ -845,6 +910,28 @@ curl http://localhost:8080/admin/api/keys/9f2c/usage \
 }
 ```
 
+### GET /admin/api/keys/{id}/reveal
+
+**上流 Agnes key 一本の平文**を取り出します。平文を上の一覧に入れないのは意図的です：一覧は**高頻度で、無意識に**呼ばれるので、入れてしまえばパネルのポーリング一回ごと、記録されたレスポンスボディ一つごと、中間層のキャッシュ一つごとにプール全体の認証情報が乗ります。このエンドポイントは**明示的な操作**なので、監査できます。
+
+> [!NOTE]
+> この一族は**もともと平文で保存されています**（五つの DEPLOY.md が初日から、上流 key は「KV / `store.json` に平文で載るので認証情報として扱うこと」と書いています）⇒ このエンドポイントは**新しい保管上のリスクを持ち込んではおらず**、すでにそこにあるものをパネルで明示的に見せるだけです。
+
+**リクエスト**：
+
+```bash
+curl http://localhost:8080/admin/api/keys/9f2c/reveal \
+  -H "x-admin-key: your-admin-token"
+```
+
+**レスポンス**：マスクではなく、完全な平文です。
+
+```json
+{ "key": "sk-…" }
+```
+
+その key が無いときは `404` とトップレベルの `reason: "key_not_found"` です。呼ぶたびに `key.revealed` イベントが 1 件残ります——**イベントに入るのは id だけで、平文そのものは決して入りません**。
+
 ### POST /admin/api/keys/{id}/verify
 
 単体 key の疎通確認：その key で上流へ最小のリクエストを一度送り、**ステータスコードだけを返し、本文は返しません**。
@@ -869,7 +956,7 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 
 ### GET /admin/api/apikeys
 
-対外 API キーを一覧します。**レスポンスに平文は決して含まれません**——マスクと末尾 4 文字だけです。
+対外 API キーを一覧します。**このエンドポイントのレスポンスに平文は決して含まれません**——マスクと末尾 4 文字だけです。平文が要るときは `GET /admin/api/apikeys/{id}/reveal` を明示的に呼びます。
 
 **リクエスト**：
 
@@ -911,7 +998,7 @@ curl http://localhost:8080/admin/api/apikeys \
 対外 API キーを新規に発行します。成功時は `201` です。
 
 > [!WARNING]
-> **平文はこの一回のレスポンスにしか現れず、以後どのエンドポイントからも取得できません。** ゲートウェイが保存するのは SHA-256 ダイジェストだけです。紛失した場合は復元できないので、削除して発行し直してください。
+> 平文はこのレスポンスで全部渡されます。**2026-09-10 から `GET /admin/api/apikeys/{id}/reveal` で取り出し直すこともできます**が、それ以前に発行したキーは取り出せず、紛失した場合は削除して発行し直すほかありません。この変更の代価（保管先にそのまま使えるクライアント認証情報が残ること）は reveal の項に書いてあるので、続けて読んでください。
 
 **リクエストボディ**：
 
@@ -951,6 +1038,35 @@ curl -X POST http://localhost:8080/admin/api/apikeys \
 
 > [!NOTE]
 > **このエンドポイントは `version` を受け取りません**：発行は追記であり、サーバーが読み直した直後の内容の上に載るため、他者が書いたレコードを上書きすることはありません。
+
+### GET /admin/api/apikeys/{id}/reveal
+
+**ゲートウェイ自身が発行した対外 API キー（`sk-` 始まり）一本の平文**を取り出します。認証もエラーの形も上流 key のそれと同じで、そのキーが無いときのトップレベルの `reason` が `apikey_not_found` になる点だけが違います。呼ぶたびに `apikey.revealed` イベントが 1 件残り、こちらも**入るのは id だけで、平文そのものは入りません**。
+
+**リクエスト**：
+
+```bash
+curl http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08/reveal \
+  -H "x-admin-key: your-admin-token"
+```
+
+**レスポンス**：
+
+```json
+{ "secret": "sk-…" }
+```
+
+**アップグレード前に発行されたキーには、取り出せる平文がありません。** そのときも `200` ですが、`secret` は `null` です：
+
+```json
+{ "secret": null, "reason": "issued_before_plaintext" }
+```
+
+> [!WARNING]
+> このエンドポイントには**保管の意味づけを壊す変更**が伴います：以前このリポジトリは平文の SHA-256 ダイジェストと末尾 4 文字だけを保存し、平文は発行時の `201` にしか現れませんでした。2026-09-10 からキーのレコードは**平文も一緒に保存します**。安全性と引き換えに利便性を取った取捨であり、代価は次のとおりです：パネルが一度破られれば**すべてのクライアント側キーの平文が一度に漏れます**（以前漏れるのは逆算できないダイジェストだけでした）；保管媒体（KV / `store.json`）も「そのまま使えるクライアント認証情報を含まない」から「含む」に変わるので、バックアップとスナップショットの取り扱い区分もそれに合わせて上げてください。
+
+> [!NOTE]
+> これに伴い `GET /admin/api/capabilities` の `apiKeys.plaintextRetrievable` は恒 `false` から `true` に変わりました。パネルはこれを見て「平文を表示 / コピー」の 2 つのボタンを出すかどうかを決めます。意味は「**この配備が平文を取り出せるかどうか**」であって「どのキーも取り出せる」ではありません——アップグレード前に発行されたものは、やはり取り出せません。
 
 ### PATCH /admin/api/apikeys/{id}
 
@@ -1471,7 +1587,7 @@ curl http://localhost:8080/health
 **レスポンス**：
 
 ```json
-{ "status": "ok", "version": "0.2.2", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.3.0", "storage": { "writable": true } }
 ```
 
 `storage.writable` は「key プールが載っているストレージに本当に書き込めるか」を報告します。起動時の一度のプローブと実行中のすべての実書き込みで維持され、ヘルスチェック自身は書き込みません。書き込めないときは **HTTP `503`** を返し、`status` が `degraded` になって `detail` の一文が付きます（Docker ではバインドマウントしたホストディレクトリの所有者とコンテナ内の実行ユーザーが食い違っている場合が多く、詳細はコンテナログにあります）。

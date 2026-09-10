@@ -1,8 +1,25 @@
 import { Hono } from "hono";
 import { dispatch, type DispatchDeps } from "../../core/dispatcher.js";
 import { modelListResponse } from "../../core/protocol/openai.js";
-import { readJson } from "../errors.js";
+import { httpError, readJson } from "../errors.js";
+import {
+  InvalidRequestError, requireArray, requireObject, requireString,
+} from "../../core/protocol/request-shape.js";
 import { recordUsage, type UsageRecording } from "../usage-sink.js";
+
+/**
+ * 把 `InvalidRequestError` 转成 400。与另三条路由同构，理由见 `request-shape.ts`。
+ */
+function shapeGuard<T>(f: () => T): T {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof InvalidRequestError) {
+      throw httpError(400, "invalid_request_error", e.message);
+    }
+    throw e;
+  }
+}
 
 export function openaiRoutes(deps: DispatchDeps & UsageRecording): Hono {
   const app = new Hono();
@@ -11,6 +28,27 @@ export function openaiRoutes(deps: DispatchDeps & UsageRecording): Hono {
 
   app.post("/v1/chat/completions", async (c) => {
     const body = await readJson<{ stream?: boolean; model?: unknown }>(c);
+    // 🔴 **本地校验，别把畸形请求转发上游**（2026-09-10 实测缺陷）。
+    //
+    // 这条路由是原样透传（不做结构转换），于是从前**一次本地校验都没有**：
+    // `{"foo":1}` 会被原封不动送去上游，由上游回 400。证据是那次响应体里带着上游的
+    // `"type":"AgnesAI_error"` 与上游 request id，延迟也对得上（本地拦截稳定 1.5~2ms，
+    // 走上游是 25ms 量级）。
+    //
+    // **代价不是「多一次往返」那么轻**：上游那层 CF 约 2 次快请求就回 1015，
+    // 而限流额度是**整个网关共享**的 ⇒ 一个客户端 bug 循环重试畸形请求，几秒内就能
+    // 把所有人的上游通道打死。而且这条转发路径**不受注册机退避状态保护**
+    //（实测容器正处在 `registrar.rate_limited` 窗口里，转发照走不误）。
+    //
+    // ⚠️ **只校验这条端点没它就跑不起来的三样**，不做更严的形状检查：
+    // 上游接受的字段集合（tools / response_format / …）是它的事，本仓不复刻，
+    // 校严了就会把上游本来接受的请求挡在门外。
+    const shaped = shapeGuard(() => {
+      const o = requireObject(body, "请求体");
+      requireString(o.model, "model");
+      requireArray(o.messages, "messages");
+    });
+    void shaped;
     const stream = body.stream === true;
     const startedAt = deps.now();
     // 超时档由 stream 决定：流式请求的首字节只代表「上游开始说话」，8 秒足够；

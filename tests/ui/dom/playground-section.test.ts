@@ -542,14 +542,18 @@ describe("左栏：档位与模型全部来自协议目录", () => {
   /**
    * **模型下拉只列这条协议上真的可用的。**
    * 变红条件：把 `buildModelSelect()` 里的 `modelIdsForProtocol(...)` 换成
-   * `catalog.models.map((m) => m.id)` ⇒ 两个图片模型与一个视频模型会混进来，
+   * `catalog.models.map((m) => m.id)` ⇒ 三个图片模型与三个视频模型会混进来，
    * 而选中它们只会换来一次注定失败的请求。
    */
   it("模型下拉里只有这条协议上可用的模型 —— 媒体模型一个都不许混进来", async () => {
     const h = await openPg(respondWith());
     const sec = h.section("playground");
     const opts = pick(one(sec, ".pg-model"), "option");
-    expect(opts.map((o) => o.getAttribute("value"))).toEqual(["agnes-2.0-flash"]);
+    // 手写字面量：真源今天六个对话模型，三个图片 + 三个视频模型一个都不许混进来。
+    expect(opts.map((o) => o.getAttribute("value"))).toEqual([
+      "agnes-2.0-flash", "agnes-2.5-flash", "agnes-2.5-pro",
+      "agnes-2.5-pro-alpha", "agnes-2.5-pro-beta", "agnes-3.0-flash",
+    ]);
     expect(one(sec, ".pg-model").value).toBe("agnes-2.0-flash");
   });
 
@@ -572,17 +576,19 @@ describe("左栏：档位与模型全部来自协议目录", () => {
    * ③ 把 `buildModeBar()` 里那句 `if (mode === m.mode) return;` 之后的 `render()` 删掉
    *    ⇒ 点了不重画 ⇒ 红；
    * ④ 往 `MODEL_CATALOG` 里再加一条 `modality: "video"` 的模型
-   *    ⇒ **只红视频那一条**（实测 `video 档下拉里的模型条数不对: expected 2 to be 1`），图片档照旧绿。
+   *    ⇒ **只红视频那一条**（当时实测 `video 档下拉里的模型条数不对: expected 2 to be 1`
+   *    ——那次实测跑在目录只有 1 个视频模型的版本上；今天是 3 个，报文里的两个数跟着变，
+   *    结论不变），图片档照旧绿。
    *
    * ⚠️ **④ 有两种看着对、其实打不中 video 那一半的改法，都实测过，别拿它们当红法**：
    * · 把 `agnes-video-v2.0` 那行的 `modality` 改成 `"image"` ⇒ **先红在 image 那一条**
-   *   （`expected 3 to be 2`），循环里 video 那一趟根本轮不到执行
+   *   （当时实测 `expected 3 to be 2`，今天两个数各 +1），循环里 video 那一趟根本轮不到执行
    *   ——「第二层替第一层挡住变异」的又一例；
    * · 直接删掉 `MODEL_CATALOG` 里那一行 ⇒ 实测整份目录**窄化不过**，面板落进「读不出来」
    *   那一档，本文件大面积红（连模式条都不画了），那不是这一条断言的射程。
    *
-   * ⚠️ **每档的模型条数（image 2 / video 1）为什么在这一格**：`sec-playground.js` 的 `MODES`
-   * 上方那段拿「`MODEL_CATALOG` 钉着 2 个 image + 1 个 video 模型」当**前提**，据此裁定
+   * ⚠️ **每档的模型条数（image 3 / video 3）为什么在这一格**：`sec-playground.js` 的 `MODES`
+   * 上方那段拿「`MODEL_CATALOG` 钉着 3 个 image + 3 个 video 模型」当**前提**，据此裁定
    * `pg.model.noneMedia` 在形态名不漂时取不到。这个前提原来只有 image 那一半有机器
    *（漂移那组的反向控制断言 image 档 2 项），**video 那一半一条断言都没有** ⇒ 真源哪天
    * **多**一个视频模型，那段裁定里的「1 个 video」就静默变假（**少**一个不会静默——
@@ -601,8 +607,8 @@ describe("左栏：档位与模型全部来自协议目录", () => {
     expect(pick(sec, ".pg-media-endpoint").length, "对话档下画出了媒体端点那一行").toBe(0);
 
     for (const [name, wanted, models] of [
-      ["image", `POST ${PANEL_ORIGIN}/v1/images/generations`, 2],
-      ["video", `POST ${PANEL_ORIGIN}/v1/videos`, 1],
+      ["image", `POST ${PANEL_ORIGIN}/v1/images/generations`, 3],
+      ["video", `POST ${PANEL_ORIGIN}/v1/videos`, 3],
     ] as const) {
       pick(sec, "[data-mode]").find((b) => b.getAttribute("data-mode") === name)!.click();
       await settle();
@@ -803,7 +809,7 @@ describe("左栏：档位与模型全部来自协议目录", () => {
  * **第二次变假的代价会更高**：读到它的人会以为这三条已经被量过了。
  *
  * ⚠️ **「结构性不可达」这个判断依赖一个没人守的前提。** 这两个 key 在**形态名不漂**
- * 的前提下确实取不到（`MODEL_CATALOG` 钉着 2 个 image + 1 个 video 模型、
+ * 的前提下确实取不到（`MODEL_CATALOG` 钉着 3 个 image + 3 个 video 模型、
  * `MEDIA_ENDPOINTS` 两档各有一条 `op === "generate"`，两者恒非空）——而那个前提
  * 正是 `MODES` 上方那段注释自己登记着**会漂**的东西。这一格守的就是那个前提。
  *
@@ -868,7 +874,7 @@ describe("形态名一漂，媒体那一档的三处兜底文案逐条上屏", (
    *   ⇒ **别把这一条读成「它单独守着端点那一行」**——单独守着端点那一行的是
    *   同格反向控制里的「端点行 1」那条（只改 `m.op === "generate"` 一处就红）。
    */
-  it("端点行 0（真源为 1）、模型下拉 0 项（真源为 2）、发送按钮停用且两句文案逐字上屏", async () => {
+  it("端点行 0（真源为 1）、模型下拉 0 项（真源为 3）、发送按钮停用且两句文案逐字上屏", async () => {
     const h = await openPg(respondWith({ catalog: { status: 200, body: drift() } }));
     const sec = h.section("playground");
     // 前置条件：目录**读得回来**。落进「读不出来」那一档的话，下面那些「没画出来」类的断言
@@ -950,14 +956,14 @@ describe("形态名一漂，媒体那一档的三处兜底文案逐条上屏", (
    * ── **这一格每条断言各自的红法（同样是量出来的）** ────────────────────────────
    * · 端点行 1：`currentMediaEndpoint()` 里 `m.op === "generate"` 改成 `"poll"`
    *  （这也是**唯一单点就能打红端点那一行**的地方，上一格那条端点断言做不到）；
-   * · 下拉 2 项：`currentModelIds()` 媒体那一路换成 `catalog.models.map(...)`（红成 4）；
+   * · 下拉 3 项：`currentModelIds()` 媒体那一路换成 `catalog.models.map(...)`（红成 12）；
    * · tooltip 不该是那一句：`sendBlockedKey()` 里 `pg.send.blockedNoToken` 那一路
    *   改成返回 `pg.send.blockedNoEndpoint`（**上一格照旧绿**——这正是这一格独有的射程）；
    * · `data-i18n` 不该出现：那句 `if (ids.length === 0)` 改成 `if (true)`；
    * · 那句话不该上屏：`if (true)` **并且**把那段中文硬编码进 `el()`（绕开 key）
    *   ⇒ **只有这一条红**，`data-i18n` 那条照旧绿——两条不是重复。
    */
-  it("反向控制（同格 describe）：真源原样时端点行 1、模型下拉 2 项", async () => {
+  it("反向控制（同格 describe）：真源原样时端点行 1、模型下拉 3 项", async () => {
     const h = await openPg(respondWith());
     const sec = h.section("playground");
     toMode(sec, "image");
@@ -966,7 +972,7 @@ describe("形态名一漂，媒体那一档的三处兜底文案逐条上屏", (
     expect(pick(sec, ".pg-media-endpoint").length,
       "真源原样，图片档却挑不到那条生成端点").toBe(1);
     expect(pick(sec, "option").length,
-      "真源原样，图片档却列不出那两个图片模型").toBe(2);
+      "真源原样，图片档却列不出那三个图片模型").toBe(3);
     expect(one(sec, ".pg-send").getAttribute("title"),
       "真源原样，却说「目录里没有这个形态的端点」")
       .not.toBe("协议目录里没有这个形态的端点，这一档发不出请求。");

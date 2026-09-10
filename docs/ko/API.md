@@ -67,7 +67,7 @@ GATEWAY_TOKEN=긴-무작위-문자열로-바꾸세요
 
 - `GATEWAY_TOKEN`은 언제나 유효하며, **그 판정은 저장소 읽기를 전혀 일으키지 않습니다** — 이 성질이 곧 탈출구입니다. 키 표가 망가져도, 저장소를 읽지 못해도 마스터 토큰을 쓰는 클라이언트는 1바이트도 영향을 받지 않습니다;
 - 외부용 API 키는 하나씩 이름과 만료를 두고 언제든 중지·폐기할 수 있어, 마스터 토큰을 넘기지 않고 다운스트림마다 따로 한 개씩 나눠 줄 수 있습니다;
-- 게이트웨이는 각 키의 SHA-256 다이제스트만 저장하며, **평문은 발급한 그 응답에만 나타납니다**;
+- 게이트웨이는 인증용 SHA-256 다이제스트에 더해 **2026-09-10부터 평문도 저장합니다**: 평문은 발급하는 응답에서 전부 건네지고, 이후에도 `GET /admin/api/apikeys/{id}/reveal`로 가져올 수 있습니다(그 전에 발급한 것은 가져올 수 없습니다). 이 맞바꿈의 대가는 그 엔드포인트 항목에 적혀 있습니다;
 - 중지나 삭제는 **즉시가 아닙니다**: 다른 인스턴스가 알아차리기까지 약 6분이 걸릴 수 있습니다. 아래 `PATCH /admin/api/apikeys/{id}`를 보세요.
 
 `401` 본문은 「그런 키가 없음」 「중지됨」 「만료됨」 세 경우에 **똑같은 문장**을 돌려줍니다 — 구분해 주는 것은 스캐너에게 열거 창구를 내주는 일이기 때문입니다. 진짜 이유는 이벤트 로그(`apikey.rejected`, `id`와 구분값 포함)에만 기록되며, 그곳은 운영자만 볼 수 있습니다.
@@ -165,14 +165,22 @@ Gemini의 두 엔드포인트는 모델 이름을 본문이 아니라 경로에 
 
 ## 모델
 
-게이트웨이는 네 모델을 노출하며, 어느 엔드포인트를 부르느냐가 무엇을 보낼지 정합니다:
+게이트웨이는 열두 모델을 노출하며, 어느 엔드포인트를 부르느냐가 무엇을 보낼지 정합니다:
 
 | 모델 | 쓰는 곳 |
 |----|-------|
 | `agnes-2.0-flash` | 대화/텍스트 계열 엔드포인트 |
+| `agnes-2.5-flash` | 대화/텍스트 계열 엔드포인트 |
+| `agnes-2.5-pro` | 대화/텍스트 계열 엔드포인트 |
+| `agnes-2.5-pro-alpha` | 대화/텍스트 계열 엔드포인트 |
+| `agnes-2.5-pro-beta` | 대화/텍스트 계열 엔드포인트 |
+| `agnes-3.0-flash` | 대화/텍스트 계열 엔드포인트 |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
+| `agnes-image-2.5-flash` | `/v1/images/generations` |
 | `agnes-video-v2.0` | `/v1/videos` |
+| `agnes-video-2.5` | `/v1/videos` |
+| `agnes-video-2.5-flash` | `/v1/videos` |
 
 ## OpenAI 호환 API
 
@@ -194,9 +202,17 @@ curl http://localhost:8080/v1/models \
   "object": "list",
   "data": [
     { "id": "agnes-2.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro-alpha", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro-beta", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-3.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
     { "id": "agnes-image-2.1-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
     { "id": "agnes-image-2.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
-    { "id": "agnes-video-v2.0", "object": "model", "created": 1735689600, "owned_by": "agnes2api" }
+    { "id": "agnes-image-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-v2.0", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-2.5", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" }
   ]
 }
 ```
@@ -209,7 +225,7 @@ OpenAI Chat Completions 프로토콜. 비스트리밍 응답은 업스트림의 
 
 | 파라미터 | 타입 | 필수 | 설명 |
 |--------|----|----|----|
-| `model` | string | 예 | `agnes-2.0-flash`를 씁니다. |
+| `model` | string | 예 | 대화 모델 중 하나(예: `agnes-2.0-flash`)를 씁니다. |
 | `messages` | array | 예 | 표준 OpenAI 메시지 배열. |
 | `stream` | boolean | 아니오 | `true`를 보내면 스트리밍. 기본값은 `false`. |
 
@@ -249,7 +265,7 @@ OpenAI-Responses 프로토콜. 본문의 `instructions`와 배열 형태의 `inp
 
 | 파라미터 | 타입 | 필수 | 설명 |
 |--------|----|----|----|
-| `model` | string | 예 | `agnes-2.0-flash`를 씁니다. |
+| `model` | string | 예 | 대화 모델 중 하나(예: `agnes-2.0-flash`)를 씁니다. |
 | `input` | string / array | 예 | 문자열 또는 표준 Responses 입력 배열. |
 | `instructions` | string | 아니오 | system 메시지 하나로 변환됩니다. |
 | `stream` | boolean | 아니오 | `true`를 보내면 스트리밍. 기본값은 `false`. |
@@ -298,7 +314,7 @@ Anthropic Messages 프로토콜. 본문의 `system`과 배열 형태의 `content
 
 | 파라미터 | 타입 | 필수 | 설명 |
 |--------|----|----|----|
-| `model` | string | 예 | `agnes-2.0-flash`를 씁니다. |
+| `model` | string | 예 | 대화 모델 중 하나(예: `agnes-2.0-flash`)를 씁니다. |
 | `max_tokens` | number | 예 | Anthropic 프로토콜 자체의 필수 항목. |
 | `messages` | array | 예 | 표준 Anthropic 메시지 배열. |
 | `system` | string / array | 아니오 | 업스트림으로 전달하기 전에 평문으로 평탄화됩니다. |
@@ -357,9 +373,17 @@ curl http://localhost:8080/v1beta/models \
 {
   "models": [
     { "name": "models/agnes-2.0-flash", "displayName": "agnes-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-flash", "displayName": "agnes-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro", "displayName": "agnes-2.5-pro", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro-alpha", "displayName": "agnes-2.5-pro-alpha", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro-beta", "displayName": "agnes-2.5-pro-beta", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-3.0-flash", "displayName": "agnes-3.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
+    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
   ]
 }
 ```
@@ -428,7 +452,7 @@ data: {"candidates":[{"content":{"role":"model","parts":[{"text":"안녕하세�
 
 | 파라미터 | 타입 | 필수 | 설명 |
 |--------|----|----|----|
-| `model` | string | 예 | `agnes-image-2.1-flash` 또는 `agnes-image-2.0-flash`를 씁니다. |
+| `model` | string | 예 | 이미지 모델 중 하나(예: `agnes-image-2.1-flash`)를 씁니다. |
 | `prompt` | string | 예 | 업스트림으로 그대로 전달됩니다. |
 
 **요청**:
@@ -454,7 +478,7 @@ curl -X POST http://localhost:8080/v1/images/generations \
 
 | 파라미터 | 타입 | 필수 | 설명 |
 |--------|----|----|----|
-| `model` | string | 예 | `agnes-video-v2.0`을 씁니다. |
+| `model` | string | 예 | 동영상 모델 중 하나(예: `agnes-video-v2.0`)를 씁니다. |
 | `prompt` | string | 예 | 업스트림으로 그대로 전달됩니다. |
 
 **요청**:
@@ -504,7 +528,7 @@ curl http://localhost:8080/v1/videos/task-1 \
 `ADMIN_TOKEN`이 없거나 단단한 규칙(앞뒤 공백, 인쇄 불가능한 ASCII, 24자 미만)을 만족하지 않으면 **`/admin` 트리 전체가 등록되지 않습니다** — 접근하면 `401`이 아니라 `404`가 되어 "여기 관리 화면이 있다"는 사실 자체를 흘리지 않습니다.
 
 > [!WARNING]
-> 관리 인터페이스 응답은 풀에 있는 key의 평문을 어디서도 되비추지 않고 reveal 엔드포인트도 없습니다. 하지만 `ADMIN_TOKEN`을 쥔 사람은 풀 전체를 비우고, `GATEWAY_TOKEN`을 바꾸고, 레지스트라를 켤 수 있습니다 — **중계 토큰보다 더 무거운 열쇠로 다루세요**.
+> 목록도 여느 응답도 평문을 어디서든 되비추지 않습니다: 평문이 지나는 길은 아래 전용 reveal 엔드포인트 두 개뿐이며, 그 둘은 부를 때마다 흔적을 남기는 **명시적인 동작**입니다. 하지만 `ADMIN_TOKEN`을 쥔 사람은 풀에 있는 업스트림 key와 외부용 키의 평문을 하나씩 전부 가져갈 수 있고, 풀 전체를 비우고, `GATEWAY_TOKEN`을 바꾸고, 레지스트라를 켤 수 있습니다 — **중계 토큰보다 더 무거운 열쇠로 다루세요**.
 
 ### GET /admin/api/session
 
@@ -520,7 +544,7 @@ curl http://localhost:8080/admin/api/session \
 **응답**:
 
 ```json
-{ "ok": true, "version": "0.2.2" }
+{ "ok": true, "version": "0.3.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +562,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.2.2",
+  "version": "0.3.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +594,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.2.2",
+  "version": "0.3.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -652,9 +676,50 @@ curl http://localhost:8080/admin/api/upstream/models \
 }
 ```
 
+### POST /admin/api/models/{id}/test
+
+풀에 있는 key 하나로 이 모델 ID를 써서 업스트림에 최소 대화 요청을 실제로 한 번 보내고,
+응답 여부와 속도만 확인합니다. **위 두 엔드포인트와 함께 존재합니다**: 위 둘은
+「이 게이트웨이가 지원하는 프로토콜과 엔드포인트」와 「업스트림 계정이 방금 반환한 것」을,
+이 엔드포인트는 「지금 이 순간 이 모델이 실제로 답을 낼 수 있는지」를 말합니다.
+**스토리지 쓰기는 0**이며 본문 파라미터도 전혀 받지 않습니다(모르는 필드는 400 —
+「여기서 모델을 지정할 수 있는 줄 알았다」가 조용한 오조작이 되지 않게 하기 위함입니다).
+
+**대화 모델만 받습니다.** 이미지와 동영상 모델은 일률적으로 400과
+`reason: "modality_not_testable"`을 반환합니다 — 이미지 모델을 테스트하면 실제로 이미지가
+한 장 생성되고, 동영상 모델을 테스트하면 작업을 만들어 반복 폴링합니다. 둘 다 이 계정의
+생성 할당량을 실제로 소모합니다. 카탈로그에 없는 모델 ID는 404입니다. 풀에 쓸 수 있는
+key가 없으면 5xx가 아니라 `ok: false`와 `reason: "no_key"`를 반환합니다. 업스트림이 2xx가
+아닌 응답을 주면 실제 상태 코드와 함께 `reason: "upstream_error"`가 되며, 업스트림 오류
+본문은 1바이트도 반환하지 않습니다.
+
+가드는 단일 key 확인 및 업스트림 모델 목록과 공유하지만 **이 엔드포인트의 단위는
+전역입니다**: 다른 모델로 바꿔 바로 테스트해도 최소 간격 안이면 똑같이 429입니다
+(최상위 `reason`은 `probe_in_flight` 또는 `probe_cooldown`). 이는 의도된 것입니다 —
+한 바퀴 전체가 같은 업스트림 계정을 호출하므로, 스로틀 한 칸을 공유하는 것이야말로
+업스트림 엣지 레이트 리밋을 버티는 장치입니다. 각 모델은 **순차**로 보내세요. 병렬은 안 됩니다.
+
+**요청**:
+
+```bash
+curl -X POST http://localhost:8080/admin/api/models/agnes-2.0-flash/test \
+  -H "x-admin-key: your-admin-token"
+```
+
+**응답**:
+
+```json
+{
+  "ok": true,
+  "status": 200,
+  "latencyMs": 412,
+  "reason": null
+}
+```
+
 ### GET /admin/api/keys
 
-Key 풀의 읽기 전용 목록이며 필터와 페이지네이션이 있습니다. **투영에는 평문 key가 절대 들어가지 않습니다.**
+Key 풀의 읽기 전용 목록이며 필터와 페이지네이션이 있습니다. **투영에는 평문 key가 절대 들어가지 않습니다** — 평문이 필요하면 아래 `GET /admin/api/keys/{id}/reveal`을 명시적으로 부르세요.
 
 **요청 본문**: 이 엔드포인트는 쿼리 파라미터만 받고 본문은 받지 않습니다.
 
@@ -845,6 +910,28 @@ curl http://localhost:8080/admin/api/keys/9f2c/usage \
 }
 ```
 
+### GET /admin/api/keys/{id}/reveal
+
+**업스트림 Agnes key 한 개의 평문**을 가져옵니다. 평문을 위 목록에 넣지 않은 것은 의도한 선택입니다: 목록은 **높은 빈도로, 무심코** 불리므로 거기에 넣으면 패널이 한 번 폴링할 때마다, 기록으로 남는 응답 본문마다, 중간 계층 캐시마다 풀 전체의 자격 증명이 실려 다니게 됩니다. 이 엔드포인트는 **명시적인 동작**이며, 그래서 감사할 수 있습니다.
+
+> [!NOTE]
+> 이 계열은 **처음부터 평문으로 저장됩니다** — 다섯 벌의 DEPLOY.md가 첫날부터 업스트림 key는 「KV / `store.json`에 평문으로 놓이니 자격 증명으로 다루라」고 적어 왔습니다. 그러므로 이 엔드포인트는 **새로운 저장 위험을 들여오지 않고**, 이미 거기 있던 것을 패널에서 드러내 보일 뿐입니다.
+
+**요청**:
+
+```bash
+curl http://localhost:8080/admin/api/keys/9f2c/reveal \
+  -H "x-admin-key: your-admin-token"
+```
+
+**응답**: 마스크가 아니라 완전한 평문입니다.
+
+```json
+{ "key": "sk-…" }
+```
+
+그 key가 없으면 `404`이고 최상위 `reason`은 `key_not_found`입니다. 부를 때마다 `key.revealed` 이벤트가 한 건 남습니다 — **이벤트에 들어가는 것은 id뿐이며 평문 자체는 절대 들어가지 않습니다**.
+
 ### POST /admin/api/keys/{id}/verify
 
 단일 key 확인: 그 key로 업스트림에 최소한의 요청을 한 번 보내고 **상태 코드만 돌려주며 본문은 돌려주지 않습니다**.
@@ -869,7 +956,7 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 
 ### GET /admin/api/apikeys
 
-외부용 API 키를 모두 나열합니다. **응답에는 평문이 절대 들어가지 않고**, 마스크와 마지막 4자리만 들어갑니다.
+외부용 API 키를 모두 나열합니다. **이 엔드포인트의 응답에는 평문이 절대 들어가지 않고**, 마스크와 마지막 4자리만 들어갑니다. 평문이 필요하면 `GET /admin/api/apikeys/{id}/reveal`을 명시적으로 부르세요.
 
 **요청**:
 
@@ -911,7 +998,7 @@ curl http://localhost:8080/admin/api/apikeys \
 외부용 API 키를 새로 발급합니다. 성공은 `201`입니다.
 
 > [!WARNING]
-> **평문은 이 한 번의 응답에만 나타나며, 이후 어떤 엔드포인트로도 가져올 수 없습니다.** 게이트웨이는 SHA-256 다이제스트만 저장합니다. 잃어버리면 복구할 수 없으니 삭제하고 다시 발급하세요.
+> 평문은 이 응답에서 전부 건네집니다. **2026-09-10부터는 `GET /admin/api/apikeys/{id}/reveal`로 다시 가져올 수도 있습니다**만, 그 전에 발급한 키는 가져올 수 없어 잃어버리면 삭제하고 다시 발급하는 수밖에 없습니다. 이 변경의 대가(바로 쓸 수 있는 클라이언트 자격 증명이 저장소에 남는다는 것)는 그 reveal 항목에 적어 두었으니 이어서 읽으세요.
 
 **요청 본문**:
 
@@ -951,6 +1038,35 @@ curl -X POST http://localhost:8080/admin/api/apikeys \
 
 > [!NOTE]
 > **이 엔드포인트는 `version`을 받지 않습니다**: 발급은 추가이며 서버가 방금 다시 읽은 내용 위에 얹히므로 다른 사람이 쓴 레코드를 덮어쓸 수 없습니다.
+
+### GET /admin/api/apikeys/{id}/reveal
+
+**게이트웨이가 스스로 발급한 외부용 API 키(`sk-`로 시작) 한 개의 평문**을 가져옵니다. 인증도 오류 형태도 위 업스트림 key 쪽과 같고, 그 키가 없을 때의 최상위 `reason`이 `apikey_not_found`라는 점만 다릅니다. 부를 때마다 `apikey.revealed` 이벤트가 한 건 남으며, 여기에도 **들어가는 것은 id뿐이고 평문은 들어가지 않습니다**.
+
+**요청**:
+
+```bash
+curl http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08/reveal \
+  -H "x-admin-key: your-admin-token"
+```
+
+**응답**:
+
+```json
+{ "secret": "sk-…" }
+```
+
+**업그레이드 전에 발급된 키에는 돌려줄 평문이 없습니다.** 그때도 `200`이지만 `secret`은 `null`입니다:
+
+```json
+{ "secret": null, "reason": "issued_before_plaintext" }
+```
+
+> [!WARNING]
+> 이 엔드포인트에는 **저장 의미를 깨뜨리는 변경**이 따라옵니다: 예전에는 평문의 SHA-256 다이제스트와 마지막 4자리만 저장했고 평문은 발급하던 그 `201`에만 나타났습니다. 2026-09-10부터 키 레코드는 **평문도 함께 저장합니다**. 안전성을 내주고 편의를 택한 맞바꿈이며, 대가는 이렇습니다: 패널이 한 번 뚫리면 **모든 클라이언트 키의 평문이 한꺼번에 새어 나갑니다**(예전에 새는 것은 되돌릴 수 없는 다이제스트뿐이었습니다); 저장 매체(KV / `store.json`)도 「바로 쓸 수 있는 클라이언트 자격 증명이 없음」에서 「있음」으로 바뀌므로 백업과 스냅숏의 취급 등급도 그에 맞춰 올려야 합니다.
+
+> [!NOTE]
+> 이에 따라 `GET /admin/api/capabilities`의 `apiKeys.plaintextRetrievable`은 항상 `false`이던 값에서 `true`로 바뀝니다. 패널은 이 값을 보고 「평문 표시 / 복사」 버튼을 그릴지 말지 정합니다. 뜻은 「**이 배포가 평문을 가져올 수 있는가**」이지 「어느 키든 가져올 수 있다」가 아닙니다 — 업그레이드 전에 발급된 것은 여전히 가져올 수 없습니다.
 
 ### PATCH /admin/api/apikeys/{id}
 
@@ -1478,7 +1594,7 @@ curl http://localhost:8080/health
 **응답**:
 
 ```json
-{ "status": "ok", "version": "0.2.2", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.3.0", "storage": { "writable": true } }
 ```
 
 `storage.writable`은 "key 풀이 올라가 있는 스토리지에 정말 쓸 수 있는가"를 알려 줍니다. 시작할 때의 한 번의 프로브와 실행 중의 모든 실제 쓰기가 함께 유지하며, 헬스 체크 자신은 쓰지 않습니다. 쓸 수 없을 때는 **HTTP `503`**을 돌려주고 `status`가 `degraded`가 되며 `detail` 한 문장이 붙습니다(Docker에서는 바인드 마운트한 호스트 디렉터리 소유자와 컨테이너 안의 실행 사용자가 다른 경우가 많으며 자세한 내용은 컨테이너 로그에 있습니다).

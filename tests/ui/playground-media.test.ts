@@ -540,14 +540,18 @@ describe("媒体模式的模型与请求构造", () => {
    * 变红条件：把 `modelIdsForModality()` 换成 `models.map((m) => m.id)`
    * ⇒ 对话模型会混进图片下拉，而选中它只会换来一次注定 4xx 的请求。
    *
-   * 期望值手写字面量（真源里今天就是这三个媒体模型）。
+   * 期望值手写字面量（真源里今天就是这三档模型，图片 3 个、视频 3 个、对话 6 个）。
    */
   it("图片与视频各自只列自己形态的模型 —— 对话模型混进来就是一次注定 4xx 的请求", () => {
     const models = (realPayload() as { models: unknown }).models;
     expect(modelIdsForModality("image", models))
-      .toEqual(["agnes-image-2.1-flash", "agnes-image-2.0-flash"]);
-    expect(modelIdsForModality("video", models)).toEqual(["agnes-video-v2.0"]);
-    expect(modelIdsForModality("chat", models)).toEqual(["agnes-2.0-flash"]);
+      .toEqual(["agnes-image-2.1-flash", "agnes-image-2.0-flash", "agnes-image-2.5-flash"]);
+    expect(modelIdsForModality("video", models))
+      .toEqual(["agnes-video-v2.0", "agnes-video-2.5", "agnes-video-2.5-flash"]);
+    expect(modelIdsForModality("chat", models)).toEqual([
+      "agnes-2.0-flash", "agnes-2.5-flash", "agnes-2.5-pro",
+      "agnes-2.5-pro-alpha", "agnes-2.5-pro-beta", "agnes-3.0-flash",
+    ]);
     expect(modelIdsForModality("", models)).toEqual([]);
     expect(modelIdsForModality("image", null)).toEqual([]);
   });

@@ -4,11 +4,23 @@ import type { Context } from "hono";
 /**
  * 网关自己产生的错误一律走这个信封：`{ error: { type, message } }`，
  * 与四种协议的错误体形状一致，客户端 SDK 解析得动。
+ *
+ * `extraHeaders` 是给**协议要求响应头**的那几档留的口子，今天只有一个用户：
+ * 405 必须带 `Allow`（RFC 9110 §15.5.6 是 MUST）。刻意做成可选形参而不是让调用方
+ * 自己 `new Response`——信封只能有一个出口，否则「哪天要给 `error` 加一个字段」
+ * 会漏掉绕过去的那几处（`src/http/admin/handlers/usage.ts` 那条同样措辞的告诫）。
+ * ⚠️ 它**在 `content-type` 之后展开**，也就是理论上能覆盖掉 `application/json`；
+ * 别拿它干这件事，信封的类型就是信封的一部分。
  */
-export function errorResponse(status: number, type: string, message: string): Response {
+export function errorResponse(
+  status: number,
+  type: string,
+  message: string,
+  extraHeaders?: Readonly<Record<string, string>>,
+): Response {
   return new Response(JSON.stringify({ error: { type, message } }), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
   });
 }
 

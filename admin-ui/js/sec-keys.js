@@ -62,12 +62,16 @@
  */
 import { api } from "./api.js";
 import { t } from "./i18n.js";
+import {
+  REVEAL_KINDS, createRevealState, revealMessageKey, revealOutcome,
+} from "./pure/reveal.mjs";
 // 【自动注册】两项与注册机板块共用同一个确认弹窗与同一条发起路径，见下面
 // buildAddKeyMenu() 里那段说明。**不是循环依赖**：sec-registrar.js 不 import 本文件。
 import { confirmAndTend } from "./sec-registrar.js";
 // 通道顺序的单一真源（字母序），与注册机板块两张卡用的是同一个常量。
 import { CHANNELS } from "./pure/registrar.mjs";
-import { el, elI18n, toast, openModal, confirmModal } from "./ui.js";
+import { el, elI18n, toast, openModal, confirmModal, revealControls,
+} from "./ui.js";
 import { fmtCount, fmtDash, fmtDuration, fmtInstant, fmtPercent } from "./pure/format.mjs";
 import {
   CARDS, AUTO_SECONDS, cardCounts, badgeClass, bucketLabelKey, autoLabelKey,
@@ -136,6 +140,12 @@ let knobs = { ttl: null, touch: null, edge: null };
 const verifyState = new Map();
 
 /** 取（必要时新建）某一把 key 的验活状态。 */
+/**
+ * 这一板块的「哪几行现在是明文态」。**模块级、不进列表数据**：
+ * 列表随轮询整份重建，明文塞进去会跟着进下一次渲染与任何序列化。
+ */
+const revealState = createRevealState();
+
 function verifyStateFor(id) {
   let s = verifyState.get(id);
   if (s === undefined) {
@@ -379,7 +389,15 @@ function row(v, now, offset, approximate) {
   const tr = el("tr", { "data-key-id": v.id });
   tr.appendChild(selectCell(v));
   tr.appendChild(el("td", null, `#${v.seq}`));
-  tr.appendChild(el("td", { class: "mono" }, v.masked));
+  // 掩码 + 显示明文 + 复制。**这一族本来就以明文存**（要拿去打上游，五份 DEPLOY.md
+  // 从第一天就写着），所以 reveal 没有引入新的存储风险，只是把已有的东西显式露出来。
+  const keyCell = el("td");
+  keyCell.appendChild(revealControls({
+    id: v.id, masked: v.masked, state: revealState,
+    fetchSecret: (id) => api.get(REVEAL_KINDS.pool.path(id)),
+    outcomeOf: revealOutcome, messageKeyOf: revealMessageKey,
+  }));
+  tr.appendChild(keyCell);
   const bucketCell = el("td");
   bucketCell.appendChild(el("span", { class: badgeClass(v.bucket) }, t(bucketLabelKey(v.bucket))));
   tr.appendChild(bucketCell);

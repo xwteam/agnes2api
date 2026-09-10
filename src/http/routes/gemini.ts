@@ -1,8 +1,29 @@
 import { Hono } from "hono";
 import { dispatch, type DispatchDeps } from "../../core/dispatcher.js";
 import { toInternalRequest, toGeminiResponse, toGeminiStream, geminiModelList, type GeminiRequest } from "../../core/protocol/gemini.js";
-import { readJson } from "../errors.js";
+import { httpError, readJson } from "../errors.js";
+import { InvalidRequestError } from "../../core/protocol/request-shape.js";
 import { recordUsage, upstreamTokens, type UsageRecording } from "../usage-sink.js";
+
+/**
+ * 把 `InvalidRequestError` 转成 400。
+ *
+ * 🔴 **catch 的是基类，不是某一种具体错误。** 上一版 Anthropic 那条只 catch 了
+ * `UnsupportedContentError`，于是同一条路由上「漏写 messages」照样抛裸 TypeError
+ * ⇒ 被 onError 兜成 **500「网关内部错误」**，把客户端的错报成服务端的错。
+ * 客户端错误必须是 4xx：OpenAI 官方 SDK 对 5xx 默认重试 2 次，一个永远修不好的
+ * 请求会被放大成 3 倍，而上游那层 CF 的限流额度是整个网关共享的。
+ */
+function shapeGuard<T>(f: () => T): T {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof InvalidRequestError) {
+      throw httpError(400, "invalid_request_error", e.message);
+    }
+    throw e;
+  }
+}
 
 export function geminiRoutes(deps: DispatchDeps & UsageRecording): Hono {
   const app = new Hono();
@@ -21,7 +42,7 @@ export function geminiRoutes(deps: DispatchDeps & UsageRecording): Hono {
     const stream = method === "streamGenerateContent";
 
     const req = await readJson<GeminiRequest>(c);
-    const internal = { ...toInternalRequest(req, model), stream };
+    const internal = { ...shapeGuard(() => toInternalRequest(req, model)), stream };
     // 超时档由 stream 决定：非流式要等上游把整段回答生成完才发响应头，与图片生成
     // 同一种延迟语义，必须用同步档（见 TimeoutProfile）。
     const startedAt = deps.now();

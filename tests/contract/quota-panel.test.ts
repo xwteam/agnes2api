@@ -57,7 +57,7 @@ describe("面板轮询的配额账", () => {
     const fwd = await app.request("/v1/chat/completions", {
       method: "POST",
       headers: { authorization: "Bearer t", "content-type": "application/json" },
-      body: JSON.stringify({ model: "m", messages: [] }),
+      body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "x" }] }),
     });
     expect(fwd.status, "前置条件：转发这一次要真的走完并装载快照").toBe(200);
 

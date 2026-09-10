@@ -180,7 +180,7 @@ describe("GET /admin/api/keys", () => {
     const call = () => app.request("/v1/chat/completions", {
       method: "POST",
       headers: { authorization: `Bearer ${TEST_CONFIG.gatewayToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: "m", messages: [] }),
+      body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "x" }] }),
     });
     for (const expected of [200, 200, 200, 500, 400]) {
       expect((await call()).status, "前置条件：这五次转发的结果必须如夹具所设").toBe(expected);
@@ -215,7 +215,7 @@ describe("GET /admin/api/keys", () => {
     const call = () => app.request("/v1/chat/completions", {
       method: "POST",
       headers: { authorization: `Bearer ${TEST_CONFIG.gatewayToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: "m", messages: [] }),
+      body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "x" }] }),
     });
     for (const expected of [200, 200, 200, 500]) {
       expect((await call()).status).toBe(expected);

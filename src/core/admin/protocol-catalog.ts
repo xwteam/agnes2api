@@ -15,7 +15,7 @@
  * 的全目录扫描守着。
  *
  * ⚠️ **它与 `geminiModelList()` 存在一处已知分歧，是刻意的**：
- * `src/core/protocol/gemini.ts:73-81` 对全部 4 个模型一律声明
+ * `src/core/protocol/gemini.ts:73-81` 对全部 12 个模型一律声明
  * `supportedGenerationMethods: ["generateContent","streamGenerateContent"]`，
  * **包括那个视频模型**——而视频真正的路径是 `POST /v1/videos` + `GET /v1/videos/:id`
  * 的两段式（见下面的 `MEDIA_ENDPOINTS`）。本目录按**真实可用性**填，
@@ -237,6 +237,20 @@ const CHAT_PROTOCOLS: readonly ProtocolId[] = ["openai", "anthropic", "responses
  * 少一个、多一个、顺序不同都要红）。
  * 那份 `MODELS` 是 `/v1/models` 与 `/v1beta/models` 两条对外端点的来源，
  * 本目录多写一个模型就是在面板上承诺一个网关不认的 id。
+ *
+ * ⚠️ **形态按模型名里的关键字分：带 `image` 的是图片、带 `video` 的是视频、其余是对话。**
+ * 这条判法**没有被写成一个函数**，是刻意的：形态决定这个模型走哪条端点，
+ * 而端点是逐条手写钉住的（见下面每条的 `endpoints` 与
+ * `tests/unit/admin/protocol-catalog.test.ts`「每个模型的形态与可用协议逐条手写钉死」）。
+ * 从名字推形态等于把一条上游命名约定当成本仓的控制流——上游哪天发一个不带关键字的
+ * 图片模型，推导会静默把它归成对话模型并教出一条注定 4xx 的调法，而没有任何东西会红。
+ *
+ * ⚠️ **`endpoints` 逐条手写，不从 `PROTOCOLS` 生成。** 生成会把
+ * 「对话模型的 endpoints 与 PROTOCOLS 逐条一致」那一格变成同义反复（它比的正是
+ * 手写的这一端对 `PROTOCOLS` 的推导值）。加对话模型时抄一遍那四行是这条判据的代价。
+ *
+ * ⚠️ **本目录写死，不在运行期向上游拉。** 理由与代价见
+ * `src/core/protocol/openai.ts` 的 `MODELS` 上方那段，两处是同一个决定。
  */
 export const MODEL_CATALOG: readonly ModelEntry[] = [
   {
@@ -249,6 +263,51 @@ export const MODEL_CATALOG: readonly ModelEntry[] = [
     ],
   },
   {
+    id: "agnes-2.5-flash", modality: "chat", protocols: CHAT_PROTOCOLS,
+    endpoints: [
+      { method: "POST", path: "/v1/chat/completions" },
+      { method: "POST", path: "/v1/messages" },
+      { method: "POST", path: "/v1/responses" },
+      { method: "POST", path: "/v1beta/models/agnes-2.5-flash:generateContent" },
+    ],
+  },
+  {
+    id: "agnes-2.5-pro", modality: "chat", protocols: CHAT_PROTOCOLS,
+    endpoints: [
+      { method: "POST", path: "/v1/chat/completions" },
+      { method: "POST", path: "/v1/messages" },
+      { method: "POST", path: "/v1/responses" },
+      { method: "POST", path: "/v1beta/models/agnes-2.5-pro:generateContent" },
+    ],
+  },
+  {
+    id: "agnes-2.5-pro-alpha", modality: "chat", protocols: CHAT_PROTOCOLS,
+    endpoints: [
+      { method: "POST", path: "/v1/chat/completions" },
+      { method: "POST", path: "/v1/messages" },
+      { method: "POST", path: "/v1/responses" },
+      { method: "POST", path: "/v1beta/models/agnes-2.5-pro-alpha:generateContent" },
+    ],
+  },
+  {
+    id: "agnes-2.5-pro-beta", modality: "chat", protocols: CHAT_PROTOCOLS,
+    endpoints: [
+      { method: "POST", path: "/v1/chat/completions" },
+      { method: "POST", path: "/v1/messages" },
+      { method: "POST", path: "/v1/responses" },
+      { method: "POST", path: "/v1beta/models/agnes-2.5-pro-beta:generateContent" },
+    ],
+  },
+  {
+    id: "agnes-3.0-flash", modality: "chat", protocols: CHAT_PROTOCOLS,
+    endpoints: [
+      { method: "POST", path: "/v1/chat/completions" },
+      { method: "POST", path: "/v1/messages" },
+      { method: "POST", path: "/v1/responses" },
+      { method: "POST", path: "/v1beta/models/agnes-3.0-flash:generateContent" },
+    ],
+  },
+  {
     id: "agnes-image-2.1-flash", modality: "image", protocols: [],
     endpoints: [{ method: "POST", path: "/v1/images/generations" }],
   },
@@ -257,7 +316,25 @@ export const MODEL_CATALOG: readonly ModelEntry[] = [
     endpoints: [{ method: "POST", path: "/v1/images/generations" }],
   },
   {
+    id: "agnes-image-2.5-flash", modality: "image", protocols: [],
+    endpoints: [{ method: "POST", path: "/v1/images/generations" }],
+  },
+  {
     id: "agnes-video-v2.0", modality: "video", protocols: [],
+    endpoints: [
+      { method: "POST", path: "/v1/videos" },
+      { method: "GET", path: "/v1/videos/:id" },
+    ],
+  },
+  {
+    id: "agnes-video-2.5", modality: "video", protocols: [],
+    endpoints: [
+      { method: "POST", path: "/v1/videos" },
+      { method: "GET", path: "/v1/videos/:id" },
+    ],
+  },
+  {
+    id: "agnes-video-2.5-flash", modality: "video", protocols: [],
     endpoints: [
       { method: "POST", path: "/v1/videos" },
       { method: "GET", path: "/v1/videos/:id" },

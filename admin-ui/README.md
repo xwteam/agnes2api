@@ -94,7 +94,12 @@ CI 的漂移门禁同样会红。
 
 `js/pure/` 下另有几份**不与板块一一对应**的共用纯逻辑：`js/pure/format.mjs`、
 `js/pure/session.mjs`、`js/pure/storage-keys.mjs`、`js/pure/sendable.mjs`、
-`js/pure/examples.mjs`、`js/pure/keys-write.mjs`、`js/pure/health.mjs`。上表不管它们，只钉
+`js/pure/examples.mjs`、`js/pure/keys-write.mjs`、`js/pure/health.mjs`、
+`js/pure/model-test.mjs`（模型板块第三张卡「模型测试」的取值与状态机 —— 它不与板块
+一一对应，因为一个板块只配一份同名纯逻辑，而这张卡的判据自成一族）、
+`js/pure/reveal.mjs`（「掩码 / 点击显示明文 / 复制」的三态状态机 —— **Key 池与 API 密钥
+两个板块共用**，所以它谁的名都不占；DOM 那半住在全站共用件 `js/ui.js` 的
+`revealControls()`）。上表不管它们，只钉
 「一个板块 ⇒ 两份同名文件」这一条。
 
 板块之外的共用件：`js/boot.js`（见上，全站唯一的经典脚本）、`js/app.js`（外壳：登录闸、

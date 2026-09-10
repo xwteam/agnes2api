@@ -1,3 +1,4 @@
+import { requireArray, requireObject } from "./request-shape.js";
 import { parseSseStream, sseEvent, toSseStream } from "./sse.js";
 import { MODELS } from "./openai.js";
 
@@ -12,6 +13,9 @@ const partsText = (parts: Part[]) => parts.map((p) => p.text ?? "").join("");
 const FINISH: Record<string, string> = { stop: "STOP", length: "MAX_TOKENS", content_filter: "SAFETY" };
 
 export function toInternalRequest(req: GeminiRequest, model: string) {
+  // 见 anthropic.ts 同位置：`req.contents` 的 for-of 在漏写时抛裸 TypeError ⇒ 500。
+  const o = requireObject(req, "请求体");
+  requireArray(o.contents, "contents");
   const messages: { role: string; content: string }[] = [];
   if (req.systemInstruction) {
     messages.push({ role: "system", content: partsText(req.systemInstruction.parts) });

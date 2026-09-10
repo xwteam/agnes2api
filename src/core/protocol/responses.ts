@@ -1,3 +1,4 @@
+import { requireArray, requireObject, requireString } from "./request-shape.js";
 import { parseSseStream, sseEvent, toSseStream } from "./sse.js";
 
 interface InputPart { type: string; text?: string }
@@ -13,6 +14,11 @@ const flat = (c: string | InputPart[]) =>
   typeof c === "string" ? c : c.map((p) => p.text ?? "").join("");
 
 export function toInternalRequest(req: ResponsesRequest) {
+  // 见 anthropic.ts 同位置。`input` 两种合法形态（字符串 / 非空数组）都要放行，
+  // 所以这里不能直接 `requireArray` —— 只在它不是字符串时才要求是非空数组。
+  const o = requireObject(req, "请求体");
+  requireString(o.model, "model");
+  if (typeof o.input !== "string") requireArray(o.input, "input");
   const messages: { role: string; content: string }[] = [];
   if (req.instructions) messages.push({ role: "system", content: req.instructions });
   if (typeof req.input === "string") {

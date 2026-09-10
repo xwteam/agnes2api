@@ -9,6 +9,11 @@ describe("GET /v1beta/models", () => {
     const body = await res.json() as { models: { name: string }[] };
     expect(Array.isArray(body.models)).toBe(true);
     expect(body.models.map((m) => m.name)).toContain("models/agnes-2.0-flash");
+    // ⚠️ 与 `tests/contract/openai.test.ts`「返回 OpenAI 格式的模型清单」同一条理由：
+    // 两条列模型端点交出的是同一份 `MODELS`，做模型发现的客户端只认它们其中一条
+    // ⇒ 少列一个模型，对那个客户端就是这个模型不存在。数字与 id 都是手写字面量。
+    expect(body.models.map((m) => m.name)).toContain("models/agnes-2.5-flash");
+    expect(body.models.length, "这条端点交出去的模型数变了").toBe(12);
   });
 
   it("缺少凭据时 401", async () => {

@@ -376,8 +376,8 @@ go by it and never parse `msg`:
 
   > [!WARNING]
   > **No model in today's catalog is available on one
-  > protocol and unavailable on another**: the one chat model is available on all four, and the
-  > three media models have an empty column. You can filter by protocol; when the filter matches
+  > protocol and unavailable on another**: the six chat models are available on all four, and the
+  > six media models have an empty column. You can filter by protocol; when the filter matches
   > nothing, this page says "no models are available on this protocol" instead of drawing an
   > empty table.
 
@@ -395,7 +395,7 @@ go by it and never parse `msg`:
 
 > [!WARNING]
 > **One known divergence in the public contract, recorded as it is**: the Gemini model-list
-> endpoint declares `generateContent` for **every** model, **including the video one**, while
+> endpoint declares `generateContent` for **every** model, **including the three video ones**, while
 > the real path for video is the two-step "create the job, then poll". This page is filled in
 > by real availability; when the two disagree, this page is the one to believe.
 

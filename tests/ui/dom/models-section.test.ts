@@ -306,19 +306,25 @@ describe("四模型 × 四协议矩阵", () => {
     ]);
   });
 
-  it("四个模型各一行，类型那一列画的是译名不是裸英文词", async () => {
+  it("十二个模型各一行，类型那一列画的是译名不是裸英文词", async () => {
     const h = await openModels(respondWithCatalog());
     const sec = h.section("models");
     const rows = dataRows(sec);
-    // 期望值手写字面量：真源今天就是这四个 id，多一个少一个都该在这里被看见。
+    // 期望值手写字面量：真源今天就是这十二个 id，多一个少一个都该在这里被看见。
     expect(rows.map((tr) => tr.getAttribute("data-model"))).toEqual([
-      "agnes-2.0-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash", "agnes-video-v2.0",
+      "agnes-2.0-flash", "agnes-2.5-flash", "agnes-2.5-pro",
+      "agnes-2.5-pro-alpha", "agnes-2.5-pro-beta", "agnes-3.0-flash",
+      "agnes-image-2.1-flash", "agnes-image-2.0-flash", "agnes-image-2.5-flash",
+      "agnes-video-v2.0", "agnes-video-2.5", "agnes-video-2.5-flash",
     ]);
-    // 期望值手写字面量：四行的类型格逐个列全，**不是只挑一个来看**。
+    // 期望值手写字面量：十二行的类型格逐个列全，**不是只挑一个来看**。
     // 裸英文形态名（`chat` / `image` / `video`）一个都不许出现在这一列上
-    // ——`modalityLabelKey()` 返回 `null` 时才照实显示原值，而这四个它都认识。
+    // ——`modalityLabelKey()` 返回 `null` 时才照实显示原值，而这三种它都认识。
     expect(rows.map((tr) => modalityOf(tr)), "类型那一列画出了裸的英文形态名")
-      .toEqual(["对话", "图片", "图片", "视频"]);
+      .toEqual([
+        "对话", "对话", "对话", "对话", "对话", "对话",
+        "图片", "图片", "图片", "视频", "视频", "视频",
+      ]);
   });
 });
 
@@ -364,7 +370,7 @@ describe("按协议筛选（工具栏）", () => {
   it("点某一条协议之后只剩对话模型 —— 图片与视频模型一行都不出现", async () => {
     const h = await openModels(respondWithCatalog());
     const sec = h.section("models");
-    expect(dataRows(sec).length, "前置条件：默认档下四行都在").toBe(4);
+    expect(dataRows(sec).length, "前置条件：默认档下十二行都在").toBe(12);
 
     const btn = filterButtons(sec).find((b) => b.getAttribute("data-protocol") === "anthropic");
     expect(btn, "前置条件：工具栏上得有那条协议的分段按钮").not.toBe(undefined);
@@ -372,7 +378,10 @@ describe("按协议筛选（工具栏）", () => {
     await settle();
 
     expect(dataRows(sec).map((tr) => tr.getAttribute("data-model")), "媒体模型混进了对话协议的筛选结果")
-      .toEqual(["agnes-2.0-flash"]);
+      .toEqual([
+        "agnes-2.0-flash", "agnes-2.5-flash", "agnes-2.5-pro",
+        "agnes-2.5-pro-alpha", "agnes-2.5-pro-beta", "agnes-3.0-flash",
+      ]);
 
     // ⚠️ **选中态也要画出来**（评审 m1：删掉两行 `classList.toggle("active", …)` 原来全绿）
     //    ——表筛过了，而没有任何东西保证用户看得出**当前停在哪一档**。
@@ -445,6 +454,14 @@ describe("按协议筛选（工具栏）", () => {
    * 只把 5 改成 6 的话，这一格从此对「换掉其中一颗」全瞎；列出身份之后，
    * 多一颗刷新、少一个档位、或者把上游那颗改成刷新，三种都当场红
    *（**实测**：把 `upstreamCard()` 里那颗的 class 改成 `models-retry` ⇒ 本格红）。
+   *
+   * ⚠️ **第三张卡（模型测试）落地之后这份阵容多了第二颗真按钮**（`models-test-btn`）。
+   * 它与上游那颗是**两件事**：那颗是「问一次上游此刻有哪些模型 id」（一次出站），
+   * 这颗是「拿每一个对话模型各真发一次请求，看它通不通」（串行的一整轮出站）。
+   * 两者都不是「刷新一份硬编码目录」，所以这一格要防的那颗刷新按钮**仍然不在阵容里**。
+   * ⚠️ **顺序也被这一格钉着**：它按 DOM 顺序列，而 `render()` 里三张卡的先后是
+   * 目录 → 上游 → 测试。把测试卡插到目录表前面会当场红——那不是排版偏好，
+   * 是「先看清本网关认得哪些模型，再决定要不要挨个去打上游」这条阅读顺序。
    */
   it("目录工具栏上只有筛选档位；板块里那颗真按钮是「去问上游」不是刷新", async () => {
     const h = await openModels(respondWithCatalog());
@@ -462,7 +479,7 @@ describe("按协议筛选（工具栏）", () => {
     }
     expect(ids, "板块里的按钮阵容变了 —— 是不是加了刷新？").toEqual([
       "filter:", "filter:openai", "filter:anthropic", "filter:responses", "filter:gemini",
-      "models-up-btn",
+      "models-up-btn", "models-test-btn",
     ]);
   });
 
@@ -471,16 +488,17 @@ describe("按协议筛选（工具栏）", () => {
    * **变红条件**：把 `filterByProtocol` 的 `if (!protocolId) return models;` 删掉
    * ⇒ 空串走进 `includes("")` ⇒ 切回「全部」之后一行都不剩。
    */
-  it("筛完再点回「全部」，四行都回来 —— 空串不是一个协议 id", async () => {
+  it("筛完再点回「全部」，十二行都回来 —— 空串不是一个协议 id", async () => {
     const h = await openModels(respondWithCatalog());
     const sec = h.section("models");
     filterButtons(sec).find((b) => b.getAttribute("data-protocol") === "gemini")!.click();
     await settle();
-    expect(dataRows(sec).length, "前置条件：筛过一次之后行数得真的变了").toBe(1);
+    // 六个对话模型挂着 gemini，六个媒体模型一个都不挂 ⇒ 筛过之后行数必须真的少一半。
+    expect(dataRows(sec).length, "前置条件：筛过一次之后行数得真的变了").toBe(6);
 
     filterButtons(sec).find((b) => b.getAttribute("data-protocol") === "")!.click();
     await settle();
-    expect(dataRows(sec).length).toBe(4);
+    expect(dataRows(sec).length).toBe(12);
     // 选中态跟着回到「全部」那一档（同 m1：整排一起断言）。
     expect(
       filterButtons(sec).map((b) => b.classList.contains("active")),
@@ -509,7 +527,7 @@ describe("网络行为", () => {
 
     expect(h.calls.filter((c) => c.url.startsWith("/admin/api/models")).length, "重复读了一份静态目录")
       .toBe(before);
-    expect(dataRows(h.section("models")).length, "切回来之后表没了").toBe(4);
+    expect(dataRows(h.section("models")).length, "切回来之后表没了").toBe(12);
   });
 
   /**
@@ -528,7 +546,7 @@ describe("网络行为", () => {
     navTo(h, "models");
     await settle(12);
 
-    expect(dataRows(h.section("models")).length, "失败之后再也没有重试过").toBe(4);
+    expect(dataRows(h.section("models")).length, "失败之后再也没有重试过").toBe(12);
   });
 
   /**
@@ -547,7 +565,7 @@ describe("网络行为", () => {
 
     expect(h.calls.filter((c) => c.url.startsWith("/admin/api/models")).length, "按了却没有再读一次")
       .toBe(before + 1);
-    expect(dataRows(sec).length).toBe(4);
+    expect(dataRows(sec).length).toBe(12);
   });
 
   /**
@@ -617,13 +635,13 @@ describe("网络行为", () => {
     // 先发的那一条**成功**回来：表画出来。
     pending[0]!({ status: 200, body: catalogPayload() });
     await settle(12);
-    expect(dataRows(h.section("models")).length, "前置条件：成功的那一条得先把表画出来").toBe(4);
+    expect(dataRows(h.section("models")).length, "前置条件：成功的那一条得先把表画出来").toBe(12);
 
     // 再把所有**晚到的**那些喂成失败。修复后这里一条都没有。
     for (const resolve of pending.slice(1)) resolve({ status: 500, body: {} });
     await settle(12);
 
-    expect(dataRows(h.section("models")).length, "晚到的失败把已经画好的表抹掉了").toBe(4);
+    expect(dataRows(h.section("models")).length, "晚到的失败把已经画好的表抹掉了").toBe(12);
     expect(
       h.section("models").querySelectorAll(".models-unknown").length,
       "晚到的失败把一张正确的表换成了「读不出来」",
@@ -683,7 +701,7 @@ describe("网络行为", () => {
     // 新发的那一条**先**成功回来：表画出来。
     hung[1]!({ status: 200, body: catalogPayload() });
     await settle(12);
-    expect(dataRows(sec).length, "前置条件：新发的那一条得先把表画出来").toBe(4);
+    expect(dataRows(sec).length, "前置条件：新发的那一条得先把表画出来").toBe(12);
 
     // ⚠️⚠️ **被抢占的那条要在这之后才落地 —— 顺序就是这一格的全部内容。**
     //    上一版把它放在前面 resolve，于是新那条的成功紧随其后把一切覆盖掉
@@ -693,7 +711,7 @@ describe("网络行为", () => {
     hung[0]!({ status: 500, body: {} });
     await settle(12);
 
-    expect(dataRows(sec).length, "被抢占的那条晚到的失败把表抹掉了 —— catch 里的世代号没挡住它").toBe(4);
+    expect(dataRows(sec).length, "被抢占的那条晚到的失败把表抹掉了 —— catch 里的世代号没挡住它").toBe(12);
     expect(sec.querySelectorAll(".models-unknown").length, "表被换成了「读不出来」").toBe(0);
   });
 
@@ -709,10 +727,10 @@ describe("网络行为", () => {
     sec.querySelectorAll(".models-retry")[0]!.click();
     await settle(12);
 
-    // 新发的那条交出**真源**那一份（四个模型）。
+    // 新发的那条交出**真源**那一份（十二个模型）。
     hung[1]!({ status: 200, body: catalogPayload() });
     await settle(12);
-    expect(dataRows(sec).length, "前置条件：新发的那一条得先把表画出来").toBe(4);
+    expect(dataRows(sec).length, "前置条件：新发的那一条得先把表画出来").toBe(12);
 
     // 被抢占的那条晚到，**而且它交出的是一份内容不同的目录**（只有一个模型）。
     // 两份都「成功」⇒ 只有世代号分得开它们（夹具 A/B 必须不同值，第 1 种假阳性）。
@@ -722,7 +740,12 @@ describe("网络行为", () => {
     expect(
       dataRows(sec).map((tr) => tr.getAttribute("data-model")),
       "被抢占的那条晚到的成功生效了 —— 面板退回了一份更旧的目录",
-    ).toEqual(["agnes-2.0-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash", "agnes-video-v2.0"]);
+    ).toEqual([
+      "agnes-2.0-flash", "agnes-2.5-flash", "agnes-2.5-pro",
+      "agnes-2.5-pro-alpha", "agnes-2.5-pro-beta", "agnes-3.0-flash",
+      "agnes-image-2.1-flash", "agnes-image-2.0-flash", "agnes-image-2.5-flash",
+      "agnes-video-v2.0", "agnes-video-2.5", "agnes-video-2.5-flash",
+    ]);
   });
 
   /**

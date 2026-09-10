@@ -59,7 +59,7 @@ describe("dispatch() 内部读到的配置同样能被撤销（不止 gatewayTok
     const send = () => app.request("/v1/chat/completions", {
       method: "POST",
       headers: { authorization: "Bearer t", "content-type": "application/json" },
-      body: JSON.stringify({ model: "m", messages: [] }),
+      body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "x" }] }),
     });
 
     await send();

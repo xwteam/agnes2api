@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { dispatch, type DispatchDeps } from "../../core/dispatcher.js";
 import { toInternalRequest, toAnthropicResponse, toAnthropicStream, UnsupportedContentError, type AnthropicRequest } from "../../core/protocol/anthropic.js";
 import { httpError, readJson } from "../errors.js";
+import { InvalidRequestError } from "../../core/protocol/request-shape.js";
 import { recordUsage, upstreamTokens, type UsageRecording } from "../usage-sink.js";
 
 export function anthropicRoutes(deps: DispatchDeps & UsageRecording): Hono {
@@ -14,8 +15,13 @@ export function anthropicRoutes(deps: DispatchDeps & UsageRecording): Hono {
     try {
       internal = toInternalRequest(req);
     } catch (e) {
-      // 无法无损转换的内容块是客户端请求的问题，明确告知而不是悄悄丢掉。
-      if (e instanceof UnsupportedContentError) {
+      // 🔴 **catch 的是基类 `InvalidRequestError`，不是 `UnsupportedContentError`。**
+      // 上一版只 catch 了内容块那一种，于是同一条路由上「漏写 messages」抛的是裸
+      // TypeError ⇒ 被 onError 兜成 500「网关内部错误」。实测：`{"model":"…"}`
+      // （模型名合法、只是少传 messages）在这条路由上就是 500——不是构造出来的畸形
+      // 输入，是真实客户端很容易犯的错，而用户会以为网关挂了来报障。
+      // 无法无损转换的内容块仍走这里（它现在是基类的子类）。
+      if (e instanceof InvalidRequestError) {
         throw httpError(400, "invalid_request_error", e.message);
       }
       throw e;

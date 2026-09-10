@@ -67,7 +67,7 @@ In all four transports above, the value may be either `GATEWAY_TOKEN` or an **ou
 
 - `GATEWAY_TOKEN` is always valid, and **checking it performs no storage read at all** — that property is the escape hatch itself: if the key table is corrupted or storage cannot be read, clients using the master token are not affected by a single byte;
 - an outbound API key can be named, given an expiry, and revoked at any time, so each downstream consumer gets its own instead of the master token;
-- the gateway stores only the SHA-256 digest of each key; **the plaintext appears only in the response to the request that issued it**;
+- the gateway stores each key's SHA-256 digest and, **since 2026-09-10, the plaintext too**, retrievable via `GET /admin/api/apikeys/{id}/reveal`;
 - disabling or deleting one is **not instantaneous**: other instances may take about 6 minutes to notice — see `PATCH /admin/api/apikeys/{id}` below.
 
 The `401` body says **exactly the same thing** for “no such key”, “disabled” and “expired” — telling them apart would hand a scanner an enumeration oracle. The real reason goes only to the event log (`apikey.rejected`, with the `id` and the bucket).
@@ -165,14 +165,22 @@ Upstream response headers are not forwarded verbatim either: only `content-type`
 
 ## Models
 
-The gateway exposes four models; which endpoint you call decides which one to send:
+The gateway exposes twelve models; which endpoint you call decides which one to send:
 
 | Model | Used by |
 |-----|-------|
 | `agnes-2.0-flash` | The chat/text endpoints |
+| `agnes-2.5-flash` | The chat/text endpoints |
+| `agnes-2.5-pro` | The chat/text endpoints |
+| `agnes-2.5-pro-alpha` | The chat/text endpoints |
+| `agnes-2.5-pro-beta` | The chat/text endpoints |
+| `agnes-3.0-flash` | The chat/text endpoints |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
+| `agnes-image-2.5-flash` | `/v1/images/generations` |
 | `agnes-video-v2.0` | `/v1/videos` |
+| `agnes-video-2.5` | `/v1/videos` |
+| `agnes-video-2.5-flash` | `/v1/videos` |
 
 ## OpenAI Compatible API
 
@@ -194,9 +202,17 @@ curl http://localhost:8080/v1/models \
   "object": "list",
   "data": [
     { "id": "agnes-2.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro-alpha", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro-beta", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-3.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
     { "id": "agnes-image-2.1-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
     { "id": "agnes-image-2.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
-    { "id": "agnes-video-v2.0", "object": "model", "created": 1735689600, "owned_by": "agnes2api" }
+    { "id": "agnes-image-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-v2.0", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-2.5", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" }
   ]
 }
 ```
@@ -209,7 +225,7 @@ The OpenAI Chat Completions protocol. A non-streaming response is upstream's Ope
 
 | Parameter | Type | Required | Description |
 |---------|----|--------|-----------|
-| `model` | string | Yes | Use `agnes-2.0-flash`. |
+| `model` | string | Yes | Any chat model, e.g. `agnes-2.0-flash`. |
 | `messages` | array | Yes | A standard OpenAI message array. |
 | `stream` | boolean | No | Send `true` for a streaming response; defaults to `false`. |
 
@@ -249,7 +265,7 @@ The OpenAI-Responses protocol. `instructions` and an array-shaped `input` are co
 
 | Parameter | Type | Required | Description |
 |---------|----|--------|-----------|
-| `model` | string | Yes | Use `agnes-2.0-flash`. |
+| `model` | string | Yes | Any chat model, e.g. `agnes-2.0-flash`. |
 | `input` | string / array | Yes | A string, or a standard Responses input array. |
 | `instructions` | string | No | Converted into a single system message. |
 | `stream` | boolean | No | Send `true` for a streaming response; defaults to `false`. |
@@ -298,7 +314,7 @@ The Anthropic Messages protocol. `system` and an array-shaped `content` are flat
 
 | Parameter | Type | Required | Description |
 |---------|----|--------|-----------|
-| `model` | string | Yes | Use `agnes-2.0-flash`. |
+| `model` | string | Yes | Any chat model, e.g. `agnes-2.0-flash`. |
 | `max_tokens` | number | Yes | Required by the Anthropic protocol itself. |
 | `messages` | array | Yes | A standard Anthropic message array. |
 | `system` | string / array | No | Flattened into plain text before being forwarded upstream. |
@@ -357,9 +373,17 @@ curl http://localhost:8080/v1beta/models \
 {
   "models": [
     { "name": "models/agnes-2.0-flash", "displayName": "agnes-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-flash", "displayName": "agnes-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro", "displayName": "agnes-2.5-pro", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro-alpha", "displayName": "agnes-2.5-pro-alpha", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro-beta", "displayName": "agnes-2.5-pro-beta", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-3.0-flash", "displayName": "agnes-3.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
+    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
   ]
 }
 ```
@@ -428,7 +452,7 @@ Synchronous image generation. Request and response bodies are forwarded and pass
 
 | Parameter | Type | Required | Description |
 |---------|----|--------|-----------|
-| `model` | string | Yes | Use `agnes-image-2.1-flash` or `agnes-image-2.0-flash`. |
+| `model` | string | Yes | Any image model, e.g. `agnes-image-2.1-flash`. |
 | `prompt` | string | Yes | Forwarded upstream verbatim. |
 
 **Request**:
@@ -454,7 +478,7 @@ Creates a video generation task and returns immediately; the task runs asynchron
 
 | Parameter | Type | Required | Description |
 |---------|----|--------|-----------|
-| `model` | string | Yes | Use `agnes-video-v2.0`. |
+| `model` | string | Yes | Any video model, e.g. `agnes-video-v2.0`. |
 | `prompt` | string | Yes | Forwarded upstream verbatim. |
 
 **Request**:
@@ -504,7 +528,7 @@ The `/admin` panel (static assets embedded at build time) is driven by the `/adm
 When `ADMIN_TOKEN` is unset, or fails the hard rules (leading/trailing whitespace, non-printable ASCII, shorter than 24 characters), **the whole `/admin` tree is left unregistered** — visiting it gives `404` rather than `401`, so it does not leak the fact that a panel exists.
 
 > [!WARNING]
-> No admin response ever echoes the plaintext of a key in the pool, and there is no reveal endpoint. But whoever holds `ADMIN_TOKEN` can purge the whole pool, change `GATEWAY_TOKEN` and switch the registrar on — **treat it as the more sensitive of the two tokens**.
+> No listing and no ordinary response ever echoes plaintext; plaintext travels through the two dedicated reveal endpoints below and nowhere else, and those are **explicit actions** that leave a trace every time. But whoever holds `ADMIN_TOKEN` can pull the plaintext of every upstream key and every outbound key one by one, purge the whole pool, change `GATEWAY_TOKEN` and switch the registrar on — **treat it as the more sensitive of the two tokens**.
 
 ### GET /admin/api/session
 
@@ -520,7 +544,7 @@ curl http://localhost:8080/admin/api/session \
 **Response**:
 
 ```json
-{ "ok": true, "version": "0.2.2" }
+{ "ok": true, "version": "0.3.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +562,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.2.2",
+  "version": "0.3.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +594,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.2.2",
+  "version": "0.3.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -653,9 +677,45 @@ curl http://localhost:8080/admin/api/upstream/models \
 }
 ```
 
+### POST /admin/api/models/{id}/test
+
+Uses one key from the pool to send a single minimal chat request upstream with this model id,
+just to see whether it answers and how fast. It coexists with the two endpoints above: those
+say what this gateway supports and what the account returned; this one says whether the model
+can answer **right now**. **Zero storage writes**; an unknown body field is a 400.
+
+**Chat models only.** Image and video models get a 400 with `reason: "modality_not_testable"`:
+testing them really generates an image, or creates a job and polls it, spending real quota.
+An id outside the catalogue is a 404; an empty pool answers `reason: "no_key"`, not a 5xx.
+A non-2xx upstream answer becomes `reason: "upstream_error"` with the real status code, and
+no byte of the upstream error body is returned.
+
+The probe guard is shared, **and this endpoint's slot is global**: another model tested inside
+the minimum interval still gets a 429 (`probe_in_flight` / `probe_cooldown`). That is
+deliberate — a whole run hits one upstream account, so send the models **serially**.
+
+**Request**:
+
+```bash
+curl -X POST http://localhost:8080/admin/api/models/agnes-2.0-flash/test \
+  -H "x-admin-key: your-admin-token"
+```
+
+**Response**:
+
+```json
+{
+  "ok": true,
+  "status": 200,
+  "latencyMs": 412,
+  "reason": null
+}
+```
+
+
 ### GET /admin/api/keys
 
-The read-only key-pool listing with filtering and pagination. **The projection never contains a plaintext key.**
+The read-only key-pool listing with filtering and pagination. **The projection never contains a plaintext key** — for that you have to call `GET /admin/api/keys/{id}/reveal` below explicitly.
 
 **Request body**: this endpoint takes query parameters only, no body.
 
@@ -846,6 +906,28 @@ curl http://localhost:8080/admin/api/keys/9f2c/usage \
 }
 ```
 
+### GET /admin/api/keys/{id}/reveal
+
+Returns the **plaintext of one upstream Agnes key**. Plaintext is deliberately kept out of the listing above: that listing is called often and unthinkingly, so putting it there would mean every panel poll, every recorded response body and every intermediate cache carried the whole pool of credentials. This endpoint is an **explicit action**, which is what makes it auditable.
+
+> [!NOTE]
+> This family is **stored as plaintext to begin with** — all five copies of DEPLOY.md have said since day one that upstream keys “sit in KV / `store.json` as plaintext, so treat that storage as credential material”. This endpoint therefore **introduces no new storage risk**; it only surfaces in the panel something that was already there.
+
+**Request**:
+
+```bash
+curl http://localhost:8080/admin/api/keys/9f2c/reveal \
+  -H "x-admin-key: your-admin-token"
+```
+
+**Response**: the full plaintext, not a mask.
+
+```json
+{ "key": "sk-…" }
+```
+
+No such key is a `404` with a top-level `reason: "key_not_found"`. Every call records one `key.revealed` event — **the event carries the id alone and never the plaintext itself**.
+
 ### POST /admin/api/keys/{id}/verify
 
 Verifies one key by sending a minimal request upstream with it and returning **the status code only, never the body**.
@@ -870,7 +952,7 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 
 ### GET /admin/api/apikeys
 
-List every outbound API key. **The response never contains plaintext** — only the mask and the last 4 characters.
+List every outbound API key. **This endpoint's response never contains plaintext** — only the mask and the last 4 characters; for plaintext you have to call `GET /admin/api/apikeys/{id}/reveal` explicitly.
 
 **Request**:
 
@@ -912,7 +994,7 @@ curl http://localhost:8080/admin/api/apikeys \
 Issue a new outbound API key. Success is `201`.
 
 > [!WARNING]
-> **The plaintext appears in this one response and nowhere else, ever.** The gateway stores only its SHA-256 digest; if you lose it, it cannot be recovered — delete the key and issue a new one.
+> The plaintext is handed over in full by this response and, **since 2026-09-10, can be fetched again through `GET /admin/api/apikeys/{id}/reveal`**; keys issued before that date cannot be, so a lost one has to be deleted and re-issued. What the change costs — a directly usable client credential now sitting in storage — is written under that endpoint; read the two together.
 
 **Request body**:
 
@@ -952,6 +1034,35 @@ curl -X POST http://localhost:8080/admin/api/apikeys \
 
 > [!NOTE]
 > **This endpoint takes no `version`**: issuing appends, and it is applied on top of the copy the server just read back, so it cannot overwrite records somebody else wrote.
+
+### GET /admin/api/apikeys/{id}/reveal
+
+Returns the **plaintext of one outbound API key the gateway issued** (`sk-…`). Auth and errors match the key-pool reveal above, top-level `reason: "apikey_not_found"`. Each call records an `apikey.revealed` event — **id only, no plaintext**.
+
+**Request**:
+
+```bash
+curl http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08/reveal \
+  -H "x-admin-key: your-admin-token"
+```
+
+**Response**:
+
+```json
+{ "secret": "sk-…" }
+```
+
+**Keys issued before the upgrade have no plaintext to give back.** Still `200`, `secret` is `null`:
+
+```json
+{ "secret": null, "reason": "issued_before_plaintext" }
+```
+
+> [!WARNING]
+> This endpoint comes with a **breaking change in what storage holds**: until 2026-09-10 only the SHA-256 digest and last 4 characters were kept, and the plaintext existed just once, in the issuing `201`. The record now **stores the plaintext too** — security deliberately traded for convenience. Break into the panel and **every client key's plaintext leaks at once**; before, it was a digest nothing reverses. Storage (KV / `store.json`) now holds directly usable client credentials — handle backups and snapshots to match.
+
+> [!NOTE]
+> `apiKeys.plaintextRetrievable` in `GET /admin/api/capabilities` therefore flips from constant `false` to `true`; the panel reads it to show or hide the “reveal / copy” buttons. It means “**can this deployment retrieve plaintext**”, not “every key can” — see the `null` case above.
 
 ### PATCH /admin/api/apikeys/{id}
 
@@ -1478,7 +1589,7 @@ curl http://localhost:8080/health
 **Response**:
 
 ```json
-{ "status": "ok", "version": "0.2.2", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.3.0", "storage": { "writable": true } }
 ```
 
 `storage.writable` reports whether the storage holding the key pool really is writable. It is maintained by one probe at startup plus every real write at runtime; the health check itself never writes. When storage is not writable the endpoint returns **HTTP `503`**, `status` becomes `degraded` and a `detail` sentence is attached (on Docker this usually means the bind-mounted host directory is owned by a different user than the one inside the container — see the container log).

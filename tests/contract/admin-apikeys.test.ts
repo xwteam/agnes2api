@@ -206,11 +206,47 @@ describe("对外 API 密钥：明文只在签发那一次出现", () => {
     expect(list).not.toContain(hash);
   });
 
-  it("存储里一个字节的明文都没有 —— 这一族存的是摘要", async () => {
+  /**
+   * ⚠️⚠️ **这一格的断言在 2026-09-10 被整个翻转了，翻转是用户拍板的结果，不是回归。**
+   *
+   * 它从前逐字断言「存储里一个字节的明文都没有 —— 这一族存的是摘要」。用户明确要求
+   * 面板能「点击显示明文并复制」，而这一族的明文在签发那次 201 之后**不存在于世界上**，
+   * 唯一的实现路径就是把明文一并存下来。代价已在
+   * `src/core/admin/api-keys.ts` 的 `ApiKeyRecord.secret` 里如实登记：
+   * 面板被打穿 = 全部客户端密钥明文一次性泄漏；存储介质的处置级别要跟着升。
+   *
+   * 🔴 **翻转的是「存不存」，不是「随便给」。** 下面第二、三条钉住的才是真正的防线，
+   * 它们一个字都没松：**明文不进列表响应、不进事件**。
+   */
+  it("签发的明文会落进存储 —— 这是用户拍板的取舍，不是漏存摘要", async () => {
     const { app, storage } = await akApp();
     const issued = await issue(app, { name: "storage-probe" });
     const raw = JSON.stringify(await storage.get(APIKEY_KEY));
-    expect(raw).not.toContain(issued.body.secret as string);
+    expect(raw, "明文没落盘 ⇒ 面板的『显示明文』永远只能回 null").toContain(issued.body.secret as string);
+    // 摘要仍然在，且仍是鉴权那条热路径的依据 —— 这次改动一个字都没动鉴权。
+    expect(raw).toContain('"hash"');
+  });
+
+  it("明文绝不进列表响应 —— 列表是高频无意识调用的，塞进去等于到处都是凭据", async () => {
+    const { app } = await akApp();
+    const issued = await issue(app, { name: "list-probe" });
+    const res = await app.request("/admin/api/apikeys", { headers: AUTH });
+    const text = await res.text();
+    expect(text, "明文出现在列表响应里了").not.toContain(issued.body.secret as string);
+  });
+
+  it("取明文要留痕，但事件里绝不含明文本身", async () => {
+    const { app, logger } = await akApp();
+    const issued = await issue(app, { name: "reveal-probe" });
+    const id = (issued.body.record as { id: string }).id;
+    const res = await app.request(`/admin/api/apikeys/${id}/reveal`, { headers: AUTH });
+    expect(res.status).toBe(200);
+    expect((await res.json() as { secret: string }).secret).toBe(issued.body.secret);
+
+    const e = logger.entries.find((x) => x.event === "apikey.revealed");
+    expect(e, "取回明文是一次凭据访问，必须留痕").toBeDefined();
+    expect(JSON.stringify(e), "事件里带上了明文 —— 事件常被转发到第三方")
+      .not.toContain(issued.body.secret as string);
   });
 });
 
@@ -325,7 +361,9 @@ describe("对外 API 密钥：乐观并发、上限与接线", () => {
     expect(cap.apiKeys.wired).toBe(true);
     expect(cap.apiKeys.max).toBe(APIKEY_MAX);
     // **恒 false 是一条契约不是一格状态**：这一族存的是摘要，明文只出现过一次。
-    expect(cap.apiKeys.plaintextRetrievable).toBe(false);
+    // ⚠️ **2026-09-10 起是 true**：用户拍板把明文一并存下来（以安全性换面板上的
+    // 「显示明文 / 复制」）。这一格当初被设计成「契约而不是状态」正是为了这一天。
+    expect(cap.apiKeys.plaintextRetrievable).toBe(true);
     // 夹具把 TTL 设成 0（不缓存），`capabilities` 报的必须是**生效**的那个值。
     expect(cap.apiKeys.cacheTtlMs).toBe(0);
 

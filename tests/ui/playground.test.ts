@@ -132,8 +132,11 @@ describe("模型下拉：只列这条协议上真的可用的", () => {
    */
   it("媒体模型不出现在对话协议的模型下拉里 —— 选中它只会换来一次注定失败的请求", () => {
     const proto = realProtocols()[0]!;
-    // 期望值手写字面量：真实目录里今天只有这一个对话模型。
-    expect(modelIdsForProtocol(proto, catalogPayload().models)).toEqual(["agnes-2.0-flash"]);
+    // 期望值手写字面量：真实目录里今天这六个是对话模型，媒体模型一个都不该在里面。
+    expect(modelIdsForProtocol(proto, catalogPayload().models)).toEqual([
+      "agnes-2.0-flash", "agnes-2.5-flash", "agnes-2.5-pro",
+      "agnes-2.5-pro-alpha", "agnes-2.5-pro-beta", "agnes-3.0-flash",
+    ]);
   });
 
   it("这条协议上一个模型都没有时是空数组 —— 调用方按「这一档没得选」画", () => {

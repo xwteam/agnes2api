@@ -179,8 +179,31 @@ describe("管理接口错误码：码是码，文案在五语言字典里", () =
  * `refuseReasonKey()` 是一张逐条列出的表），后端的中文 `message` 够不着
  * `sec-keys.js` 的 `errorMessage()` 那条渲染路径。
  * 给它们发码 = 在一个够不着屏幕的位置上多两条要五语言维护的契约。**69 + 2 = 71。**
+ *
+ * ⚠️ **2026-09-10 从 71 改成 73，同样逐条表态**（两条 reveal 端点各一条 404）：
+ * · `GET /admin/api/keys/{id}/reveal` 的「没有这把 key」
+ * · `GET /admin/api/apikeys/{id}/reveal` 的「没有这把对外 API 密钥」
+ * 两条**都复用已在 `ADMIN_ERROR_CODES` 闭集里、且已有面板映射的现成码**
+ *（`key_not_found` / `apikey_not_found`，映射在 `admin-ui/js/pure/keys-write.mjs`
+ * 与 `admin-ui/js/pure/apikeys.mjs`）⇒ **不新增任何一条要五语言维护的契约**，
+ * 面板拿到的是它本来就认得的那两个码。**71 + 2 = 73。**
+ *
+ * ⚠️ **这一次从 73 改成 78，逐条表态**（逐模型连通性测试那条端点，
+ * 五条落点全在 `src/http/admin/handlers/model-test.ts` 一个文件里）：
+ * · 「这个网关的模型目录里没有这个模型」（404）；
+ * · 「只有对话模型能做连通性测试……」（400，顶层 `reason: "modality_not_testable"`）；
+ * · `rejectAnyBody` 那三条（「请求体不是合法的 JSON」/「请求体必须是一个 JSON 对象」/
+ *   「模型测试不接受任何参数，不认识的字段：…」）。
+ * **五条都不进 `ADMIN_ERROR_CODES`**，理由与同一族的 `handlers/verify.ts` 逐字同源：
+ * 面板这一侧读的是**顶层 `reason` 与状态码**（`admin-ui/js/pure/model-test.mjs` 的
+ * `modelTestTransportCode()` 是一张逐条列出的表，404 → `model_not_found`、
+ * 400 + `modality_not_testable` → 各自一句五语言文案），后端的中文 `message`
+ * 够不着 `admin-ui/js/sec-keys.js` 的 `errorMessage()` 那条渲染路径。
+ * ⚠️ 那三条信封级的更彻底：**面板根本不带请求体调这条 POST**，它们只有 curl /
+ * 脚本读得到。给它们发码 = 在一个够不着屏幕的位置上多五条要五语言维护的契约。
+ * **73 + 5 = 78。**
  */
-const ADMIN_MESSAGE_SITES = 71;
+const ADMIN_MESSAGE_SITES = 78;
 
 describe("面不许增长", () => {
   it("面不许增长：src/http/admin/ 下带中文 message 的落点恰好这么多", () => {
@@ -195,9 +218,25 @@ describe("面不许增长", () => {
   });
 
   it("反向控制：判据在一段没有中文 message 的真代码上不乱红", () => {
-    // `src/core/protocol/` 是四协议的解析与改写，一条 HTTP 错误 message 都不产生
-    // ——而它里面**有**中文注释、也**有**中文日志文案，正好证明判据没有宽到「见汉字就红」。
-    expect(messageSites("src/core/protocol")).toEqual([]);
+    // `src/core/protocol/` 是四协议的解析与改写，里面**满是**中文注释与中文日志文案，
+    // 而下面这份名单恰好只有一条 —— 这正是本格要证的：判据没有宽到「见汉字就红」。
+    //
+    // ⚠️ **2026-09-10 从「恒为空」改成「恰好这一条」，不是把断言放宽。**
+    // 那一条是 Anthropic 流式新增的 `event: error` 的载荷文案：从前上游中途断流时
+    // 生成器静默退出、照常补 `message_stop` 并声称 `stop_reason: "end_turn"`
+    // ⇒ **客户端把「被截断」当成「正常说完」**。补这条事件是修那个缺陷的唯一办法。
+    // 🔴 它**不进面板**（走的是 SSE 事件体，给的是 API 客户端，不是 `/admin` 那条渲染路径）
+    // ⇒ 与上面 `ADMIN_MESSAGE_SITES` 的记账同一条口径：够不着屏幕的位置不发码、
+    // 不新增要五语言维护的契约。**列成逐字名单而不是放宽成「≤1 条」**：
+    // 再多一条就会红，那正是这一族判据存在的意义。
+    // ⚠️ **只钉「恰好一条 + 是哪个文件的哪句话」，刻意不钉行号。**
+    // 行号会因为该文件上方**任何一次无关编辑**而漂（实测：加一行 import 就从 144 变 147），
+    // 那是噪音不是信号 —— 而这一格真正要拦的是「这个目录里冒出了第二条 HTTP 错误
+    // message」。再多一条就会红，那正是这一族判据存在的意义。
+    const sites = messageSites("src/core/protocol");
+    expect(sites, "这个目录里冒出了第二条 HTTP 错误 message").toHaveLength(1);
+    expect(sites[0]).toContain("src/core/protocol/anthropic.ts");
+    expect(sites[0]).toContain("上游流式响应中断，本次回答不完整");
   });
 });
 

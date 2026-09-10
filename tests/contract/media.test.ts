@@ -435,7 +435,7 @@ describe("端点的超时档位", () => {
     );
     const res = await app.request("/v1/chat/completions", {
       method: "POST", headers: AUTH,
-      body: JSON.stringify({ model: "m", messages: [], stream: true }),
+      body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "x" }], stream: true }),
     });
     expect(res.status).toBe(503);
     expect((await repo.all())[0]!.strikes).toBe(1);

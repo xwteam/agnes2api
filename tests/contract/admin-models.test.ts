@@ -14,7 +14,7 @@ import { SAMPLE_PROMPT } from "../../src/core/admin/protocol-catalog.js";
 const withKey = { headers: { "x-admin-key": TEST_ADMIN_TOKEN } };
 
 describe("GET /admin/api/models", () => {
-  it("把协议目录整份交出去 —— 四条协议 + 四个模型，一条都不许在路上丢", async () => {
+  it("把协议目录整份交出去 —— 四条协议 + 十二个模型，一条都不许在路上丢", async () => {
     const { app } = await makeApp();
     const res = await app.request("/admin/api/models", withKey);
     expect(res.status).toBe(200);
@@ -25,7 +25,10 @@ describe("GET /admin/api/models", () => {
     // 期望值手写字面量，不写 PROTOCOLS.length / MODEL_CATALOG.length（第 6 种假阳性）
     expect(body.protocols.map((p) => p.id)).toEqual(["openai", "anthropic", "responses", "gemini"]);
     expect(body.models.map((m) => m.id)).toEqual([
-      "agnes-2.0-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash", "agnes-video-v2.0",
+      "agnes-2.0-flash", "agnes-2.5-flash", "agnes-2.5-pro",
+      "agnes-2.5-pro-alpha", "agnes-2.5-pro-beta", "agnes-3.0-flash",
+      "agnes-image-2.1-flash", "agnes-image-2.0-flash", "agnes-image-2.5-flash",
+      "agnes-video-v2.0", "agnes-video-2.5", "agnes-video-2.5-flash",
     ]);
   });
 

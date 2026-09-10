@@ -1,0 +1,383 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import {
+  testableModels, initTestRows, withRowActive, withRowResult, testProgress,
+  rowStatusLabelKey, modelTestBodyReasonCode, modelTestResultCode,
+  modelTestTransportCode, modelTestLabelKey,
+} from "../../admin-ui/js/pure/model-test.mjs";
+import { MODEL_CATALOG } from "../../src/core/admin/protocol-catalog.js";
+import { I18N } from "../../admin-ui/js/i18n-dict.js";
+import { stripComments } from "../helpers/strip-comments.js";
+
+/**
+ * **「模型测试」那张卡的取值判定与状态机**（`admin-ui/js/pure/model-test.mjs`）。
+ *
+ * ⚠️ **夹具分两类，与 `tests/ui/models.test.ts` 同一条纪律**：
+ * · 「这个函数在不在看那个字段」这类**行为**断言用**手写**的最小夹具
+ *   （手写才控得住「三种形态同时在场」这种必须同时出现的状态）；
+ * · 「哪些真模型进得了这一轮」这类**契约**断言直接用真的 `MODEL_CATALOG`，
+ *   **不手抄一份**（第 7 种假阳性：测的是抄件不是原件）。
+ *
+ * ⚠️ **期望值一律手写字面量**（第 6 种假阳性）：下面每一个数、每一个 id 都是手写的，
+ * 不是从被测对象自己推导出来的——两边一起错时那种写法一声不吭。
+ */
+
+/** 本文件给 `.mjs` 返回值加的一层**局部形状标注**（`js/pure/*.mjs` 不做类型检查）。 */
+type Row = {
+  id: string;
+  state: string;
+  code: string | null;
+  status: number | null;
+  latencyMs: number | null;
+};
+
+/** 三种形态同时在场的最小夹具：**一个都不许少**，理由见下面第一格。 */
+const MIXED_MODELS = [
+  { id: "probe-chat-a", modality: "chat" },
+  { id: "probe-image", modality: "image" },
+  { id: "probe-chat-b", modality: "chat" },
+  { id: "probe-video", modality: "video" },
+];
+
+describe("这一轮该测哪些模型", () => {
+  /**
+   * 🔴 **这一格守的是那条硬边界本身**：图片 / 视频模型一个都不许进这一轮。
+   *
+   * **变红条件（已实测）**：把 `testableModels` 的白名单
+   *（`m.modality !== "chat"` 跳过）换成黑名单
+   *（`m.modality === "image" || m.modality === "video"` 跳过）时这一格**仍然绿**
+   * ——所以下面单独有一格喂一个表外形态，那一格才是白名单与黑名单的分水岭。
+   * 本格挡的是「压根没筛」与「筛错了边」。
+   *
+   * ⚠️ **夹具必须三种形态都在**：只放对话模型的话，「筛」与「不筛」在数学上等价，
+   * 这条不变量不可观测（本仓登记的第 5 种假阳性）。
+   */
+  it("只有对话模型进这一轮 —— 测一次图片模型会真的生成一张图，测一次视频模型会建任务并反复轮询", () => {
+    // 手写 2：没筛的实现会交出 4 条，而那两条多出来的每一条都会真的花掉生成额度。
+    expect(testableModels(MIXED_MODELS)).toEqual(["probe-chat-a", "probe-chat-b"]);
+  });
+
+  /**
+   * **白名单与黑名单的分水岭。** 真源新增一个形态时：
+   * · 白名单 ⇒ 那个新形态**暂时测不了**（代价已知，且是可见的一行都不出现）；
+   * · 黑名单 ⇒ 那个新形态被**默认放行**，而放行的代价是未知的。
+   */
+  it("表外的形态不进这一轮 —— 白名单的代价是「暂时测不了」，黑名单的代价是「默认放行一个没人评估过的形态」", () => {
+    expect(testableModels([{ id: "probe-new", modality: "audio" }])).toEqual([]);
+  });
+
+  it("形状读不出来的条目直接跳过，不会变成一行没有 id 的空行", () => {
+    expect(testableModels([
+      null, 42, { modality: "chat" }, { id: "", modality: "chat" }, { id: "ok", modality: "chat" },
+    ])).toEqual(["ok"]);
+    expect(testableModels("not-an-array"), "不是数组时交出空清单，不是抛").toEqual([]);
+  });
+
+  /**
+   * **契约档：夹具直接用真源。** 目录里今天真有图片与视频模型
+   *（`agnes-image-*` 三个、`agnes-video-*` 三个），它们一个都不许出现在这一轮里。
+   */
+  it("拿真的模型目录跑一遍：六个对话模型全进，三个图片与三个视频模型一个都不进", () => {
+    const ids = testableModels(MODEL_CATALOG as unknown as Array<Record<string, unknown>>);
+    // 手写期望值，**不是从 MODEL_CATALOG 推导的**。
+    expect(ids).toEqual([
+      "agnes-2.0-flash", "agnes-2.5-flash", "agnes-2.5-pro",
+      "agnes-2.5-pro-alpha", "agnes-2.5-pro-beta", "agnes-3.0-flash",
+    ]);
+    expect(ids.filter((x) => x.includes("image") || x.includes("video")),
+      "一个媒体模型都不许混进来 —— 每一个都会真的花掉生成额度").toEqual([]);
+  });
+});
+
+describe("一轮测试的状态机", () => {
+  const ids = ["m1", "m2", "m3"];
+
+  it("初始三行全是 pending，两个数都是 null —— 「还没测过」不许被伪造成 0 毫秒", () => {
+    const rows = initTestRows(ids) as Row[];
+    expect(rows.map((r) => r.state)).toEqual(["pending", "pending", "pending"]);
+    expect(rows.map((r) => r.latencyMs)).toEqual([null, null, null]);
+    expect(rows.map((r) => r.status)).toEqual([null, null, null]);
+    expect(rows.map((r) => r.code)).toEqual([null, null, null]);
+  });
+
+  /**
+   * ⚠️ **一次调用里同时有「被改的那一行」与「没被改的那两行」**（第 5 种假阳性的对策）：
+   * 「把所有行都标成 active」这种坏实现在只放一行的夹具下看不出来。
+   */
+  it("标成 active 只动那一行，别的行原样不动", () => {
+    const rows = withRowActive(initTestRows(ids), "m2") as Row[];
+    expect(rows.map((r) => r.state)).toEqual(["pending", "active", "pending"]);
+  });
+
+  it("找不到那个 id 时原样返回 —— 凭空插一行进去是把一个 bug 画成一条数据", () => {
+    const rows = withRowActive(initTestRows(ids), "nope") as Row[];
+    expect(rows.map((r) => r.id)).toEqual(["m1", "m2", "m3"]);
+    expect(rows.map((r) => r.state)).toEqual(["pending", "pending", "pending"]);
+  });
+
+  it("回来了那一行收下 code / status / latencyMs，别的行还是 pending", () => {
+    const rows = withRowResult(initTestRows(ids), "m1", "ok", 200, 412) as Row[];
+    expect(rows[0]).toEqual({ id: "m1", state: "done", code: "ok", status: 200, latencyMs: 412 });
+    expect(rows.slice(1).map((r) => r.state)).toEqual(["pending", "pending"]);
+  });
+
+  /**
+   * ⚠️ **`latencyMs` 不许兜底成 0**：0 毫秒是一句关于链路的话（「快到没有耗时」），
+   * 而「后端没给这个数」是一句关于我们自己的话。两者在屏幕上必须分得开
+   *（`fmtCount(null)` 是破折号，`fmtCount(0)` 是 `0`）。
+   */
+  it("后端没给 latencyMs / status 时它们保持 null，不兜底成 0", () => {
+    const rows = withRowResult(initTestRows(ids), "m1", "network_error", null, undefined) as Row[];
+    expect(rows[0]!.latencyMs).toBe(null);
+    expect(rows[0]!.status).toBe(null);
+  });
+
+  /**
+   * **进度只数真回来了的那些。** 把在飞的那一行算进去，进度会在最后一次请求
+   * 还没回来时就显示「全跑完了」，而那正是运维最需要知道「还在跑」的一刻。
+   */
+  it("进度只数 done，active 不算 —— 算上在飞的那一行，进度会提前显示成跑完了", () => {
+    let rows = initTestRows(ids);
+    expect(testProgress(rows)).toEqual({ done: 0, total: 3 });
+    rows = withRowResult(rows, "m1", "ok", 200, 10);
+    rows = withRowActive(rows, "m2");
+    expect(testProgress(rows)).toEqual({ done: 1, total: 3 });
+    rows = withRowResult(rows, "m2", "timeout", null, 8000);
+    rows = withRowResult(rows, "m3", "ok", 200, 20);
+    expect(testProgress(rows)).toEqual({ done: 3, total: 3 });
+  });
+});
+
+describe("一行「结果」那一格说什么", () => {
+  /**
+   * ⚠️⚠️ **「还没测」「正在测」「测过了、没通」是三句话，一句都不许合并。**
+   * 把没测过的说成没通，运维会去查一条根本没发生过的故障。
+   */
+  it.each([
+    ["还没轮到它", { id: "m", state: "pending", code: null }, "models.test.pending"],
+    ["正在打", { id: "m", state: "active", code: null }, "models.test.active"],
+    ["回来了、通了", { id: "m", state: "done", code: "ok" }, "models.test.ok"],
+    ["回来了、上游没正常回", { id: "m", state: "done", code: "upstream_error" }, "models.test.upstreamError"],
+  ])("%s ⇒ %s", (_name, row, expected) => {
+    expect(rowStatusLabelKey(row)).toBe(expected);
+  });
+
+  /**
+   * ⚠️ **表外的状态落 `mismatch`，不冒充 `pending`**：走到那里说明这一行的状态是
+   * 本面板不认识的东西，那是一句关于两边版本的话，不是「还没轮到它」。
+   */
+  it.each([
+    ["面板不认识的行状态", { id: "m", state: "queued", code: null }],
+    ["压根不是一行", null],
+  ])("%s ⇒ models.test.mismatch（不冒充「还没轮到它」）", (_name, row) => {
+    expect(rowStatusLabelKey(row)).toBe("models.test.mismatch");
+  });
+});
+
+describe("200 响应体 → 文案 code", () => {
+  /**
+   * **四种结局各自一档**，一档都不许合并：
+   * · 通了 —— 上游用这个模型正常回了一次；
+   * · 上游没正常回 —— 连上了，但这个模型没给出一次正常响应；
+   * · 超时 —— 在超时档内没拿到响应头；
+   * · 连不上 —— 这次请求没拿到任何响应。
+   * ⚠️ 外加 `no_key` 那一档：它与上面三种失败**不是一族**——那一次
+   * **一个出站请求都没有发生过**，说成「上游出错了」会让运维去查一条不存在的故障。
+   */
+  it.each([
+    ["通了", { ok: true, status: 200, latencyMs: 412, reason: null }, "ok", "models.test.ok"],
+    ["上游没正常回", { ok: false, status: 502, latencyMs: 88, reason: "upstream_error" }, "upstream_error", "models.test.upstreamError"],
+    ["超时", { ok: false, status: null, latencyMs: 8000, reason: "timeout" }, "timeout", "models.test.timeout"],
+    ["连不上", { ok: false, status: null, latencyMs: 12, reason: "network_error" }, "network_error", "models.test.networkError"],
+    ["池里没有能用的 key", { ok: false, status: null, latencyMs: 0, reason: "no_key" }, "no_key", "models.test.noKey"],
+  ])("%s ⇒ %s", (_name, resp, code, key) => {
+    expect(modelTestResultCode(resp)).toBe(code);
+    expect(modelTestLabelKey(code)).toBe(key);
+  });
+
+  /**
+   * 🔴 **表外的 reason 交出 `null`，不兜底成任何一档「上游怎么了」。**
+   *
+   * 这张表必须是显式的：后端加一种 reason 是一行 diff，而落进一个错误档的后果是
+   * 面板对运维说一件没发生的事。`null` 由 `modelTestResultCode()` 翻成 `mismatch`
+   * ——那是一句**关于两边版本**的话，不是关于上游的话。
+   *
+   * ⚠️ **这一格直接测那张表本身，不只测外面那层**：只测外层的话，一个
+   *「不认识就当 network_error」的坏实现在这里同样交不出 `mismatch`，但错因完全不同。
+   */
+  it.each([
+    ["后端新加的一种 reason", "body_incomplete"],
+    ["压根不是这条端点的 reason", "bad_payload"],
+    ["空串", ""],
+  ])("表外的 reason「%s」⇒ modelTestBodyReasonCode 返回 null，不兜底", (_name, reason) => {
+    expect(modelTestBodyReasonCode(reason)).toBe(null);
+    expect(modelTestResultCode({ ok: false, status: null, latencyMs: 0, reason }))
+      .toBe("mismatch");
+  });
+
+  it("表内的五条一条都没漏 —— 否则上面那格「表外返回 null」什么都没证明", () => {
+    // 手写清单，**不是从被测函数推导的**。
+    for (const r of ["no_key", "upstream_error", "timeout", "network_error"]) {
+      expect(modelTestBodyReasonCode(r), `${r} 掉出表了`).toBe(r);
+    }
+  });
+
+  it.each([
+    ["压根不是对象", "nope"],
+    ["ok 不是 true 而且没有 reason", { ok: false, status: null, latencyMs: 0, reason: null }],
+  ])("%s ⇒ mismatch（这是一句关于两边版本的话，不是关于上游的话）", (_name, resp) => {
+    expect(modelTestResultCode(resp)).toBe("mismatch");
+  });
+});
+
+describe("管理层传输错误 → 文案 code", () => {
+  /**
+   * ⚠️⚠️ **判据是顶层 `reason` 而不是状态码**：护栏在同一个 **429** 下产出两种拒绝，
+   * 处置完全不同（等它回来 / 稍后再试）。只看 429 会把两者合成一句话，
+   * 而这两句话与「这个模型不通」更是三件事——那一次一个出站请求都没有发生过。
+   */
+  it.each([
+    ["护栏说上一次还在飞", { status: 429, body: { reason: "probe_in_flight" } }, "probe_in_flight", "models.test.probeInFlight"],
+    ["护栏说间隔没过", { status: 429, body: { reason: "probe_cooldown" } }, "probe_cooldown", "models.test.probeCooldown"],
+    ["这个模型不能这么测", { status: 400, body: { reason: "modality_not_testable" } }, "modality_not_testable", "models.test.modalityNotTestable"],
+    ["目录里没有这个模型", { status: 404, body: null }, "model_not_found", "models.test.modelNotFound"],
+    ["管理会话没了", { status: 401, body: null }, "unauthorized_admin", "models.test.unauthorizedAdmin"],
+    ["别的 429（表外）", { status: 429, body: { reason: "something_else" } }, "transport_error", "models.test.transportError"],
+  ])("%s ⇒ %s", (_name, err, code, key) => {
+    expect(modelTestTransportCode(err)).toBe(code);
+    expect(modelTestLabelKey(code)).toBe(key);
+  });
+
+  /**
+   * **护栏那两条与验活、上游模型两张卡共用同一把护栏**，所以三处的读法必须一致
+   * ——不一致就会出现「同一次拒绝、几张卡几种说法」。这一格从 `probe-guard.ts`
+   * 的源码里把它会产出的 reason 读出来对表，不手抄一份清单。
+   */
+  it("护栏那两条 reason 面板也都有一档 —— 它们与验活、上游模型共用同一把护栏", () => {
+    const sites = reasonSites(readFileSync("src/http/admin/probe-guard.ts", "utf8"));
+    expect(sites.literals).toEqual(["probe_cooldown", "probe_in_flight"]);
+    const unmapped = sites.literals
+      .filter((r) => modelTestTransportCode({ status: 429, body: { reason: r } }) === "transport_error");
+    expect(unmapped, "护栏会产出这些 reason，而面板把它们当成了一次说不出所以然的失败").toEqual([]);
+  });
+});
+
+/**
+ * **后端会产出的每一条 reason，面板都得认得。**
+ *
+ * ⚠️ 这一组扫的是后端源码，不是一份手抄的清单：后端加一种 reason 是一行 diff，
+ * 而「面板没跟上」在本仓的出站探测护栏那一轮真实发生过一次。
+ * 实现照搬 `tests/ui/models.test.ts` 里那一个（同一个问题、同一种写法）。
+ */
+function reasonSites(src: string): { literals: string[]; dynamic: string[] } {
+  const literals = new Set<string>();
+  const dynamic: string[] = [];
+  for (const m of stripComments(src).matchAll(/\breason:\s*([^,\n}]*)/g)) {
+    const expr = m[1]!.trim();
+    if (expr === "" || expr === "null") continue;
+    const found = [...expr.matchAll(/"([A-Za-z0-9_]+)"/g)].map((x) => x[1]!);
+    if (found.length === 0) { dynamic.push(expr); continue; }
+    for (const f of found) literals.add(f);
+  }
+  return { literals: [...literals].sort(), dynamic };
+}
+
+describe("后端产出的 reason × 面板认得的 reason", () => {
+  /**
+   * ⚠️ **这条 handler 的 reason 分属两半，所以清单也手写成两半**：
+   * · 200 响应体里的那几条走 `modelTestResultCode()`；
+   * · `modality_not_testable` 是 **400** ⇒ `js/api.js` 会把它抛成 `ApiError`，
+   *   走 `modelTestTransportCode()` 那一半。
+   * 把它塞进前一半去查的话，这一格会红在一件不成立的事上。
+   * **两半的并集**与源码扫出来的集合逐字相等，所以后端多一条 / 少一条照样当场红。
+   */
+  it("模型测试那条 handler 的每一条 reason 面板都有一档 —— 认不得的会被说成「面板还不认识」，而这一格要求根本别走到那里", () => {
+    const sites = reasonSites(readFileSync("src/http/admin/handlers/model-test.ts", "utf8"));
+    // 手写的两半，**不是从被测函数推导的**。
+    const bodyReasons = ["network_error", "no_key", "timeout", "upstream_error"];
+    const non2xxReasons = ["modality_not_testable"];
+    expect(sites.literals, "后端多一条 / 少一条 reason 都在这里当场红")
+      .toEqual([...bodyReasons, ...non2xxReasons].sort());
+    // 唯一动态的那一处是护栏那条 429，它走 `modelTestTransportCode()` 那一半（上一组）。
+    expect(sites.dynamic).toEqual(["g.reason"]);
+
+    const unmappedBody = bodyReasons
+      .filter((r) => modelTestResultCode({ ok: false, status: null, latencyMs: 0, reason: r }) === "mismatch");
+    expect(unmappedBody, "后端会在 200 里产出这些 reason，而面板还没给它们文案").toEqual([]);
+
+    const unmappedNon2xx = non2xxReasons
+      .filter((r) => modelTestTransportCode({ status: 400, body: { reason: r } }) === "transport_error");
+    expect(unmappedNon2xx, "后端会在非 2xx 里产出这些 reason，而面板把它们说成了一次说不出所以然的失败").toEqual([]);
+
+    const keys = [
+      ...bodyReasons.map((r) => modelTestLabelKey(modelTestResultCode({ ok: false, status: null, latencyMs: 0, reason: r }))),
+      ...non2xxReasons.map((r) => modelTestLabelKey(modelTestTransportCode({ status: 400, body: { reason: r } }))),
+    ];
+    expect(new Set(keys).size, "两条 reason 共用了同一句文案").toBe(sites.literals.length);
+  });
+
+  /**
+   * **反向自检：这个扫描器真的会看见东西。** 少了它，扫描本身瞎掉时上面那一格
+   * 会对着一个空集合报绿（第 1 类假阳性）。
+   */
+  it("反向自检：扫描器在一段手写的坏文本上认得出字面量与动态表达式", () => {
+    const sites = reasonSites([
+      'return c.json({ reason: "alpha" });',
+      "// reason: \"in_a_comment\"",
+      "return c.json({ reason: g.reason });",
+      'return c.json({ reason: flag ? "beta" : "gamma" });',
+    ].join("\n"));
+    expect(sites.literals).toEqual(["alpha", "beta", "gamma"]);
+    expect(sites.dynamic).toEqual(["g.reason"]);
+  });
+});
+
+describe("i18n key 这一族", () => {
+  /** 这一族全部的 code。**手写清单**，不是从被测函数推导的。 */
+  const CODES = [
+    "ok", "no_key", "upstream_error", "timeout", "network_error",
+    "probe_in_flight", "probe_cooldown", "modality_not_testable", "model_not_found",
+    "unauthorized_admin", "transport_error", "mismatch",
+  ];
+
+  /**
+   * ⚠️ **按名字锚扫源码，不是行为断言**：拼出来的 key 与写死的 key 在行为上可以
+   * 逐字节相同，而三道 i18n 门禁里有两道只认字面量（全局约束 12）。
+   */
+  it("每一个 code 的 i18n key 都以字面量出现在源码里，并且都在字典里", () => {
+    const src = readFileSync("admin-ui/js/pure/model-test.mjs", "utf8");
+    const keys = CODES.map((c) => modelTestLabelKey(c));
+    expect(new Set(keys).size, "两个 code 共用了同一个 key").toBe(CODES.length);
+    for (const k of keys) {
+      expect(src.includes(`"${k}"`), `${k} 不是以字面量出现的`).toBe(true);
+      expect(k in I18N, `${k} 不在字典里`).toBe(true);
+    }
+  });
+
+  it("三种行状态的 key 同样是字面量、同样在字典里", () => {
+    const src = readFileSync("admin-ui/js/pure/model-test.mjs", "utf8");
+    for (const k of ["models.test.pending", "models.test.active"]) {
+      expect(src.includes(`"${k}"`), `${k} 不是以字面量出现的`).toBe(true);
+      expect(k in I18N, `${k} 不在字典里`).toBe(true);
+    }
+  });
+
+  /**
+   * ⚠️ **`modelTestLabelKey()` 与 `rowStatusLabelKey()` 交出来的 key 一个都不许带
+   * `{占位符}`。** 它们在源码里的形态是 `return "…";`（后面跟的是 `;` 不是 `,`），
+   * 而 `scripts/check-i18n.mjs` 第 ⑧ 条正是拿「后面紧跟着什么」当判据 ⇒ 真带了占位符，
+   * 那道门禁当场 exit 1。这一格把那条约束钉在字典这一侧，别等门禁去发现。
+   */
+  it("这一族 key 五种语言里一个 {占位符} 都没有 —— 它们是不带参数的裸标签", () => {
+    const dict = I18N as unknown as Record<string, Record<string, string>>;
+    const bad: string[] = [];
+    for (const k of [...CODES.map((c) => modelTestLabelKey(c)), "models.test.pending", "models.test.active"]) {
+      for (const [lang, s] of Object.entries(dict[k]!)) if (/\{\w+\}/.test(s)) bad.push(`${k}/${lang}`);
+    }
+    expect(bad).toEqual([]);
+    // 反向自检：判据不瞎 —— 这张卡里带占位符的那两个 key 确实被它认出来。
+    for (const k of ["models.test.progress", "models.test.status"]) {
+      expect(Object.values(dict[k]!).some((s) => /\{\w+\}/.test(s)), `${k} 应当带占位符`).toBe(true);
+    }
+  });
+});

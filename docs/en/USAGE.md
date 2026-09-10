@@ -61,14 +61,22 @@ the upstream keys in the pool — not one of those ever leaves the gateway.
 
 ## Supported models
 
-### What each of the four models is for
+### What each of the twelve models is for
 
 | Model | Used by |
 |-------|---------|
 | `agnes-2.0-flash` | The chat / text endpoints |
+| `agnes-2.5-flash` | The chat / text endpoints |
+| `agnes-2.5-pro` | The chat / text endpoints |
+| `agnes-2.5-pro-alpha` | The chat / text endpoints |
+| `agnes-2.5-pro-beta` | The chat / text endpoints |
+| `agnes-3.0-flash` | The chat / text endpoints |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
+| `agnes-image-2.5-flash` | `/v1/images/generations` |
 | `agnes-video-v2.0` | `/v1/videos` |
+| `agnes-video-2.5` | `/v1/videos` |
+| `agnes-video-2.5-flash` | `/v1/videos` |
 
 ### Whether the model name goes in the body or the path
 
@@ -81,7 +89,7 @@ same models in Gemini shape — one path cannot answer in two formats at once, s
 that matches your SDK.
 
 > [!NOTE]
-> Both lists are a **fixed table** of exactly those four models. Neither reflects whether the
+> Both lists are a **fixed table** of exactly those twelve models. Neither reflects whether the
 > pool currently holds a usable key. To learn that, look at the admin panel, or simply send a
 > request and see whether it comes back `503`.
 

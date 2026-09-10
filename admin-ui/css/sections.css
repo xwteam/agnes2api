@@ -33,6 +33,24 @@ th, td {
 }
 th { color: var(--muted); font-weight: 500; background: var(--panel-2); }
 tr:last-child td { border-bottom: 0; }
+/* ⚠️⚠️ **六张业务表（Key 池 / 事件 / 用量日表 / 用量分解 / 模型 / 注册机历史）
+   全部靠这一条拿到横向滚动容器，一张都不单写。**
+   在这条规则之前，六张表是**裸奔**的：`table` 上只有 `width: 100%`，而列数是固定的
+   （Key 池那张十三列、用量那张八列），窄屏上表格的 min-content 远宽于主区
+   ⇒ 溢出没有任何人接，直接把 `.main` 乃至整页顶出横向滚动条。
+
+   ⚠️ **滚动容器是表格的父元素，用 `:has(> table)` 选中，而不是在六个 `sec-*.js` 里
+   各插一个 wrapper `<div>`。** 六处都要改渲染代码 + 一个新类名 + 六处各自的 DOM
+   测试跟着动，换来的行为与这一条完全相同；而这六张表的父元素今天恰好都是**只装着
+   这张表**的容器（`.keys-body`、`.events-body`、`.usage-breakdown`、以及模型 /
+   注册机 / 用量日表那三个 `block()` 造的 body），把它变成滚动容器不会连坐别的东西。
+   ⚠️ **代价如实写：它选中的是"直接父元素"，所以哪天有人把表格和一个绝对定位的浮层
+   （像 `.dropdown-menu` 那种）放进同一个父元素里，那个浮层会被这层 overflow 裁掉。**
+   今天没有这种放法（下拉菜单在 `.toolbar` 里，与表格不同父），真要那么放时，
+   正确的处置是给那张表补一个自己的 wrapper，而不是把这条规则改窄。
+   ⚠️ `:has()` 认不出来的旧浏览器会把整条规则丢掉 ⇒ 退回本条规则之前的行为
+   （表格顶出横向滚动条），不会更坏。 */
+.main *:has(> table) { overflow-x: auto; }
 
 .badge {
   display: inline-block; padding: 2px 8px; font-size: 12px; border-radius: var(--radius-full);
@@ -235,7 +253,13 @@ tr:last-child td { border-bottom: 0; }
    `flex: 1 1 300px` 换来同一个换行行为（换行看的是 basis），但 basis 是可以被压缩的，
    容器窄到装不下时列跟着缩到容器宽 ⇒ 那 156px 回落到 0。
    `min-width: 0` 是配套的那一半：flex 子项默认的 `min-width: auto` = 内容最小宽，
-   会绕过 `flex-shrink` 再把列顶宽一次。**本仓不写媒体查询**，换行仍旧只靠 wrap。
+   会绕过 `flex-shrink` 再把列顶宽一次。
+   ⚠️⚠️ **这里原先写着「本仓不写媒体查询」—— 那句话已经作废，别照着它办事。**
+   三份 CSS 的末尾今天各有一档到三档 `@media`（1024 / 900 / 640，外壳收起、卡片
+   单列化在那里做，理由写在 `admin-ui/css/shell.css` 末尾那一大段）。
+   **但这一族仍旧一个断点都不吃**，理由不变、而且比"本仓不写"那句更强：换行阈值
+   走 `flex-basis`，看的是**容器**多宽（卡里套卡时容器远窄于视口），而断点看的是
+   **视口**多宽 —— 同一个位置上前者恒准、后者要为每一层嵌套各猜一个数。
    下面 `.cfg-grid` 那条 `min(…, 100%)` 是**同一个坑的第二例**，两条一起读。 */
 .cfg-col { flex: 1 1 300px; min-width: 0; }
 
@@ -404,7 +428,9 @@ tr:last-child td { border-bottom: 0; }
    ⚠️ 「还没查过」那根破折号**刻意不用 `.models-unknown`**：那一条是报警色，而
    「还没问过上游」不是故障。它旁边跟着一句**看得见的**说明（不是 `title`），
    所以这里只需要把破折号本身撑大、并与那句话拉开一点距离。 */
-.models-up-idle { margin: 0; }
+/* ⚠️ 「模型测试」那张卡的两档破折号（目录读不出来 / 还没测过）用的是同一条声明，
+   **合并在同一个选择器里，不各写一份取值逐字相同的**（同 `.usage-retry` 那一行的裁定）。 */
+.models-up-idle, .models-test-idle { margin: 0; }
 .models-up-dash { color: var(--muted); font-size: 22px; margin-right: var(--gap-sm); }
 /* 失败横幅里那句「上游回了几」跟在结果文案后面，别贴成一个词。 */
 .models-up-status { margin-left: var(--gap-sm); }
@@ -419,10 +445,17 @@ tr:last-child td { border-bottom: 0; }
 /* Playground 板块。
    ⚠️ **一个字节的 CSP 都没有放宽**（全局约束 17）：这里全是文本与边框，
    没有任何图片 / 视频 / iframe，也不为将来「顺手」预留。 */
-/* 左右两栏。窄屏下自动落成上下两块——`min-width` 由内容决定，不写媒体查询：
-   面板其余部分（`.card-row`）用的就是同一套 flex + wrap。 */
+/* 左右两栏。窄屏下自动落成上下两块，走的是 flex + wrap，与 `.card-row` 同一套。
+   ⚠️⚠️ **这里原先写着「`min-width` 由内容决定，不写媒体查询」——两句都是假的**：
+   下面那条下限逐字写死过 `300px`（一个常数，与内容无关），而三份 CSS 今天各自
+   末尾都有媒体查询（见 `admin-ui/css/shell.css` 末尾那一大段）。
+   ⚠️⚠️ **写死的那个硬下限已经换成 `flex: 1 1 300px` + `min-width: 0`**，与上面
+   `.cfg-col` 那一整段是同一个坑、同一种处置：`min-width` 是**压不动的**硬下限，
+   容器只剩两百来像素时这两张卡仍旧各要 300px，于是自己把布局顶出横向滚动条；
+   `flex-basis` 换来**同一个**换行阈值（换行看的就是 basis），却是可以被压缩的
+   ——容器窄到装不下时卡跟着缩到容器宽。宽屏那一半分毫不变。 */
 .pg-cols { display: flex; flex-wrap: wrap; gap: var(--gap); align-items: flex-start; }
-.pg-cols > .card { flex: 1; min-width: 300px; }
+.pg-cols > .card { flex: 1 1 300px; min-width: 0; }
 .pg-field { display: flex; align-items: center; gap: var(--gap-sm); margin-top: var(--gap-sm); }
 .pg-field > span { flex: 0 0 5.5em; }
 .pg-field > select, .pg-field > input[type="password"], .pg-field > textarea { flex: 1; min-width: 0; }
@@ -512,3 +545,56 @@ tr:last-child td { border-bottom: 0; }
 .chip:where(:not([disabled])):hover { background: var(--panel-2); border-color: var(--border-hover); }
 .chip.active { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
 .chip.active:where(:not([disabled])):hover { background: var(--primary-hover); }
+
+/* ── ≤640：手机档（本文件这一份） ───────────────────────────────────────────
+   断点为什么是 1024 / 900 / 640、为什么统一追加在文件末尾，**理由只写一处**：
+   `admin-ui/css/shell.css` 末尾那一大段。这里只说这一档在本文件里管什么。
+
+   ⚠️ **这一档只做一件事：把「一行站两三样东西」的那几处压成一行一样。**
+   本文件里绝大多数横排都已经带 `flex-wrap: wrap`（`.toolbar` / `.chips` /
+   `.row-actions` / `.ak-item-head` …），它们不需要断点；下面点名的是**没有 wrap、
+   或者 wrap 了也还挤**的那几处。
+   ⚠️ **`.cfg-col` / `.cfg-grid` 那一族刻意不在这里出现**：它们的换行阈值由容器宽
+   决定（各自上方那两段说得很清楚），断点插一脚只会与那套算法打架。 */
+@media (max-width: 640px) {
+  /* 统计瓦片 / 通道卡：`flex: 1` + `min-width: 180px` 在这一档还能并排挤下两三张，
+     而每张卡装的是一个 22px 的大数字加一行五语言标签 —— 标签在那个宽度上折不折行
+     **取决于是哪门语言**（本仓没有布局引擎，这里刻意不写一个量不出来的像素数）。
+     一行一张之后这件事不再看语言，四张瓦片也不会再一高一低。
+     ⚠️ 只改 `flex-basis`、不动 `min-width`：那条下限在这一档已经咬不到了（一行一张，
+     卡宽 = 容器宽），留着它是宽屏那一半的事。 */
+  .card-row > .card { flex-basis: 100%; }
+  /* 搜索框独占一行：`.toolbar` 本来就会换行，但搜索框的 `flex: 1` + `min-width: 160px`
+     让它在换行前先被压到那条下限上 —— 一个 160px 的输入框旁边跟着两三颗按钮，
+     哪一个都不好按。 */
+  .toolbar input[type="search"] { flex-basis: 100%; }
+  /* 这三处是本文件里**没有 wrap** 的横排，窄屏上会各自把自己撑出容器：
+     分页条（上一页 / 下一页 / 第几页）、用量详情的标题行（标题 + 关闭）、
+     示例卡那一行（说明 + 两组分段按钮）。 */
+  .pager, .usage-detail-head, .examples-bar { flex-wrap: wrap; }
+  /* 调试台的字段行：标签是定宽 `5.5em` 的一列（`.pg-field > span` 那条 `flex: 0 0`），
+     那一列在手机上与输入框抢的是同一点宽度。这一档让标签独占一行、输入框拿整行宽
+     ——`.pg-field` 原来没有 `flex-wrap`，不补这一条标签不会真的换到上面去。 */
+  .pg-field { flex-wrap: wrap; }
+  .pg-field > span { flex-basis: 100%; }
+}
+
+/* ── 掩码 / 显示明文 / 复制（Key 池与 API 密钥共用）───────────────────────
+   `.reveal-text[data-revealed]` 的 `user-select: all` 是**剪贴板的手动兜底**：
+   clipboard API 在非 TLS 下不可用是常态（面板常被部署在内网 http 上），
+   那时复制会如实 toast 失败，而单击即全选让人还能手动 Ctrl+C。
+   同一条理由下 `.ak-secret` 早就这么写了，这里沿用。
+
+   ⚠️ **`.btn-tiny` 必须自己把 hover 底色写一遍**（`tests/unit/source-guards.test.ts`
+   那格逐字点名过它）：`base.css` 的 `button:where(:not([disabled]):not(.badge)):hover`
+   会把底换成主色绿，而本条把常态底色重画成了 `--panel` ⇒ 漏写 hover 底色的话，
+   鼠标扫过时整块变绿而字色还留在中性档上。与 `button.danger` 那条是同一个坑。 */
+.reveal { display: inline-flex; align-items: center; gap: var(--gap-sm); flex-wrap: wrap; }
+.reveal-text { word-break: break-all; }
+.reveal-text[data-revealed] { user-select: all; color: var(--text); }
+.btn-tiny {
+  padding: 2px 8px; font-size: 12px; line-height: 1.6;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel); color: var(--muted);
+}
+.btn-tiny:hover { background: var(--panel); color: var(--text); border-color: var(--border-hover); }

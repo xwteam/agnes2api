@@ -83,13 +83,29 @@ describe("协议目录", () => {
    * 调一个只有两段式视频接口的模型，而全套用例照绿。
    *
    * 期望值逐条手写字面量，不从 `MODEL_CATALOG` 或 `CHAT_PROTOCOLS` 推（第 6 种假阳性）。
+   *
+   * ⚠️ **这份清单从 4 条改成 12 条，是判据钉错了对象、不是判据过时**：目录原本只写了
+   * 上游 12 个模型里的 4 个，做模型发现的客户端（list-then-pick）因此永远选不到剩下 8 个
+   * ——而这一格当时是绿的，它钉住的是「这 4 条没写歪」，从来钉不住「有没有漏」。
+   * 补完之后它仍然只钉「写没写歪」，**「漏没漏」由上游差集那条端点交给运维看**
+   *（`src/core/admin/upstream-models.ts` 的 `onlyUpstream`）。
+   * 形态那一列按模型名里的 `image` / `video` 关键字填，理由与代价见
+   * `src/core/admin/protocol-catalog.ts` 的 `MODEL_CATALOG` 上方那段。
    */
   it("每个模型的形态与可用协议逐条手写钉死 —— 媒体模型一条对话协议都不该有", () => {
     expect(MODEL_CATALOG.map((m) => [m.id, m.modality, [...m.protocols]])).toEqual([
       ["agnes-2.0-flash", "chat", ["openai", "anthropic", "responses", "gemini"]],
+      ["agnes-2.5-flash", "chat", ["openai", "anthropic", "responses", "gemini"]],
+      ["agnes-2.5-pro", "chat", ["openai", "anthropic", "responses", "gemini"]],
+      ["agnes-2.5-pro-alpha", "chat", ["openai", "anthropic", "responses", "gemini"]],
+      ["agnes-2.5-pro-beta", "chat", ["openai", "anthropic", "responses", "gemini"]],
+      ["agnes-3.0-flash", "chat", ["openai", "anthropic", "responses", "gemini"]],
       ["agnes-image-2.1-flash", "image", []],
       ["agnes-image-2.0-flash", "image", []],
+      ["agnes-image-2.5-flash", "image", []],
       ["agnes-video-v2.0", "video", []],
+      ["agnes-video-2.5", "video", []],
+      ["agnes-video-2.5-flash", "video", []],
     ]);
   });
 
@@ -153,8 +169,11 @@ describe("协议目录", () => {
   it("对话模型的 endpoints 与 PROTOCOLS 逐条一致 —— "
      + "endpoints 是 pathTemplate 在真源内的第二份拷贝，没东西绑住就必漂", () => {
     const chat = MODEL_CATALOG.filter((m) => m.modality === "chat");
-    // 手写字面量锚：今天只有一个对话模型。多一个而没人在这里表态，这一格先红。
-    expect(chat.map((m) => m.id)).toEqual(["agnes-2.0-flash"]);
+    // 手写字面量锚：今天这六个是对话模型。多一个而没人在这里表态，这一格先红。
+    expect(chat.map((m) => m.id)).toEqual([
+      "agnes-2.0-flash", "agnes-2.5-flash", "agnes-2.5-pro",
+      "agnes-2.5-pro-alpha", "agnes-2.5-pro-beta", "agnes-3.0-flash",
+    ]);
     for (const m of chat) {
       expect(m.endpoints.map((e) => `${e.method} ${e.path}`), `${m.id} 的 endpoints`).toEqual(
         PROTOCOLS.map((p) => `${p.method} ${endpointFor(p, m.id, false)}`),
@@ -252,7 +271,10 @@ describe("协议目录", () => {
     ).toEqual([
       ["agnes-image-2.1-flash", ["POST /v1/images/generations"]],
       ["agnes-image-2.0-flash", ["POST /v1/images/generations"]],
+      ["agnes-image-2.5-flash", ["POST /v1/images/generations"]],
       ["agnes-video-v2.0", ["POST /v1/videos", "GET /v1/videos/:id"]],
+      ["agnes-video-2.5", ["POST /v1/videos", "GET /v1/videos/:id"]],
+      ["agnes-video-2.5-flash", ["POST /v1/videos", "GET /v1/videos/:id"]],
     ]);
   });
 });

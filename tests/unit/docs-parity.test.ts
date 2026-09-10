@@ -3747,12 +3747,12 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
 
   /**
    * 「部分可用是常态」那一句：模型那一节原来写的是「同一个模型在一条协议上可用、在另一条上不可用**是常态**」。
-   * 实测 `MODEL_CATALOG`：唯一的对话模型挂满四条协议，三个媒体模型的 `protocols` 是空数组
+   * 实测 `MODEL_CATALOG`：六个对话模型各自挂满四条协议，六个媒体模型的 `protocols` 是空数组
    * ⇒ **今天一个这样的例子都没有**。改真之后那句话变成「今天没有一个模型是这样」，
    * 而这一格就是它的测法：哪天真出现一个「部分可用」的模型，它当场红。
    *
-   * ⚠️ 后面那条 `toEqual([4, 1, 3])` 是**手写数字**，刻意的：五份 ADMIN.md 里「四条协议 /
-   * 那个对话模型 / 三个媒体模型」这三个量词在五种语言里是汉字数词 / 英文单词 / 日文
+   * ⚠️ 后面那条 `toEqual([4, 6, 6])` 是**手写数字**，刻意的：五份 ADMIN.md 里「四条协议 /
+   * 六个对话模型 / 六个媒体模型」这三个量词在五种语言里是汉字数词 / 英文单词 / 日文
    * 「4 つ」/ 韩文「네 가지」，**没有一种正则能把五种写法一起认下来**（数字锚那张表按
    * 阿拉伯数字 + 单位词工作，这里一个都套不上）。所以数字留在这一侧：目录一动它就红，
    * 报文直接告诉人回去改哪一句。
@@ -3771,8 +3771,8 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
     const media = MODEL_CATALOG.filter((m) => m.protocols.length === 0).length;
     expect([protocols.length, full, media],
       "协议数 / 挂满协议的模型数 / 协议列为空的模型数，与五份 ADMIN.md 模型那一节写的"
-      + "「四条协议、那个对话模型、三个媒体模型」对不上了——那三个量词是手写的，得回去改")
-      .toEqual([4, 1, 3]);
+      + "「四条协议、六个对话模型、六个媒体模型」对不上了——那三个量词是手写的，得回去改")
+      .toEqual([4, 6, 6]);
   });
 
   /**
@@ -11686,6 +11686,14 @@ const SHAPE_UNCOVERED = [
   "GET /admin/api/capabilities",
   "GET /admin/api/models",
   "GET /admin/api/upstream/models",
+  // 🔴 **逐模型连通性测试进「已登记未覆盖」，而这一条的「不覆盖」要论证**：
+  // 本组的做法是把 app 真起起来打一次端点、拿活响应比文档，而这一条**按一下就拿池里的
+  // 一把 key 去打一次真实的上游请求**。给它接一个假上游是能做的，但那要先在本组里
+  // 引入一套 fetcher 桩，而本组这五格连一个桩都没有（它们全是零出站的只读端点）。
+  // 它的形状极简（`{ ok, status, latencyMs, reason }`，与验活同族），由
+  // `tests/contract/admin-model-test.test.ts`「上游 2xx ⇒ ok:true、status 是真状态码、reason 是 null」
+  // 在受控夹具里逐字钉着。
+  "POST /admin/api/models/{id}/test",
   "GET /admin/api/keys",
   "POST /admin/api/keys",
   "POST /admin/api/keys/bulk",
@@ -11694,6 +11702,14 @@ const SHAPE_UNCOVERED = [
   "POST /admin/api/keys/purge",
   "GET /admin/api/keys/{id}/usage",
   "POST /admin/api/keys/{id}/verify",
+  // 🔴 **两条 reveal 一起进「已登记未覆盖」**（2026-09-10 新增）：本组的活响应比对要真起
+  // 一个 app 打一次，而这两条**回的是凭据明文** —— 让判据把明文抓进内存、进快照、
+  // 进 CI 日志，比它能验出来的那点结构收益坏得多。它们的形状极简
+  //（`{ key }` / `{ secret }` 或 `{ secret: null, reason }`），
+  // 由 `tests/contract/admin-apikeys.test.ts` 的
+  // 「取明文要留痕，但事件里绝不含明文本身」在**受控夹具**里逐字钉着。
+  "GET /admin/api/keys/{id}/reveal",
+  "GET /admin/api/apikeys/{id}/reveal",
   "GET /admin/api/events",
   "GET /admin/api/events/download",
   "POST /admin/api/config/validate",

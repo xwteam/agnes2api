@@ -246,6 +246,9 @@ export function apiKeyIssueHandler(deps: ApiKeysDeps) {
       id: newApiKeyId(),
       name,
       hash: await digest(secret),
+      // **明文落盘**（2026-09-10 用户拍板：以安全性换面板上的「显示明文/复制」）。
+      // 代价与「升级前的记录没有这一格」两条，见 `ApiKeyRecord.secret` 的注释。
+      secret,
       hint: hintOf(secret),
       createdAt: now,
       expiresAt,
@@ -255,8 +258,9 @@ export function apiKeyIssueHandler(deps: ApiKeysDeps) {
 
     deps.logger.log({
       level: "warn", event: "apikey.issued",
-      msg: "面板签发了一把对外 API 密钥（明文只在这一次响应里出现过，此后无法找回）",
+      msg: "面板签发了一把对外 API 密钥",
       // **只记 id 与到期**，绝不记明文、绝不记摘要：日志常被转发到第三方。
+      // ⚠️ 这一条在明文落盘之后**更要紧**了，不是更不要紧。
       fields: { id: record.id, expiresAt: record.expiresAt },
     });
 
@@ -350,6 +354,42 @@ export function apiKeyPatchHandler(deps: ApiKeysDeps) {
  * 而这一族删掉的只是我们自己签发的一条验证记录，重发一把是完全正常的操作。
  * 给它加一道前置只会让「吊销一把已泄漏的密钥」变成两步——而那一步恰恰要越快越好。
  */
+/**
+ * `GET /admin/api/apikeys/:id/reveal` —— 取回一把密钥的**明文**。
+ *
+ * 🔴 **明文刻意不走列表响应，只走这条专门端点。** 塞进列表的话，每一次面板轮询、
+ * 每一条被记下的响应体、每一个中间层缓存里都会带着全部客户端密钥的明文 ——
+ * 而列表是**高频、无意识**被调用的。这条端点是**显式动作**，可以被审计。
+ *
+ * ⚠️ **升级前签发的记录没有明文**（`ApiKeyRecord.secret` 缺席）：如实回
+ * `{ secret: null, reason: "issued_before_plaintext" }`，**不许用掩码或空串冒充**。
+ */
+export function apiKeyRevealHandler(deps: ApiKeysDeps) {
+  return async (c: Context) => {
+    const wiring = deps.wiring;
+    if (wiring === null) return notWired(c);
+    const table = await readForWrite(wiring);
+    const id = paramId(c);
+    const rec = table.keys.find((r) => r.id === id);
+    if (!rec) throw adminError(404, "not_found", "apikey_not_found", "没有这把对外 API 密钥");
+
+    // **取明文是一次凭据访问，必须留痕。** 与 `apikey.issued` 同级别（warn）：
+    // 事件板块上运维要看得见「谁在什么时候把哪把密钥的明文调出来过」。
+    deps.logger.log({
+      level: "warn", event: "apikey.revealed",
+      msg: "面板取回了一把对外 API 密钥的明文",
+      // 只记 id 与「有没有明文」，**绝不记明文本身**：事件常被转发到第三方，
+      // 这一条在明文落盘之后更要紧，不是更不要紧。
+      fields: { id, available: rec.secret !== undefined },
+    });
+
+    if (rec.secret === undefined) {
+      return c.json({ secret: null, reason: "issued_before_plaintext" });
+    }
+    return c.json({ secret: rec.secret });
+  };
+}
+
 export function apiKeyDeleteHandler(deps: ApiKeysDeps) {
   return async (c: Context) => {
     const wiring = deps.wiring;
@@ -425,11 +465,21 @@ export function apiKeysCapability(deps: { wired: boolean; cacheTtlMs: number }) 
     max: APIKEY_MAX,
     nameMax: API_KEY_NAME_MAX,
     /**
-     * **恒 false，而且它是一条契约不是一格状态**：这一族凭据存的是 SHA-256，
-     * 明文只在签发那一次的 201 里出现过。面板据它决定「有没有『复制完整密钥』
-     * 这颗按钮」——**不许在前端写死**，写死就会在哪天有人改了后端存法时变成假话。
+     * **明文取不取得回来。** 面板据它决定「有没有『显示明文 / 复制完整密钥』这两颗
+     * 按钮」——**不许在前端写死**，写死就会在哪天有人改了后端存法时变成假话。
+     *
+     * ⚠️ **这一格从前是「恒 false」，2026-09-10 起不再是。** 用户拍板把
+     * `ApiKeyRecord` 改成同时存明文（以安全性换面板上的显示/复制），
+     * 代价的完整登记见 `src/core/admin/api-keys.ts` 的 `ApiKeyRecord.secret`。
+     * 这一格当初被设计成「契约而不是状态」正是为了这一天：后端存法一变，
+     * 面板自己就跟着变，不需要去改前端。
+     *
+     * 🔴 **它是「这个部署能不能取回明文」，不是「每一把都取得回来」**：
+     * 升级之前签发的记录没有明文，reveal 端点对它们会如实回
+     * `{ secret: null, reason: "issued_before_plaintext" }`，面板要照实说明，
+     * **不许用掩码或空串冒充明文**。
      */
-    plaintextRetrievable: false,
+    plaintextRetrievable: true,
     /** 生效的缓存 TTL。面板据它算「停用之后最多还能用多久」，**不许在前端写死**。 */
     cacheTtlMs: deps.cacheTtlMs,
     /** 后端常量的默认值，面板在说明里要写清「运维没调过时是多少」。 */

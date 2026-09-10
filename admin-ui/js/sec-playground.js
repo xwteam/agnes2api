@@ -155,11 +155,17 @@
  * · **anthropic / responses / gemini 这三条流是本仓自己合成的**
  *   （`src/core/protocol/anthropic.ts`、`src/core/protocol/responses.ts`、
  *   `src/core/protocol/gemini.ts` 的 `to*Stream()`）⇒ 里面有没有 usage 由本仓说了算。
- *   实况：responses 与 gemini 那两条**一个 usage 字段都不发**；anthropic 那条**硬写两处
- *   恒为 0** —— `src/core/protocol/anthropic.ts`「usage: { input_tokens: 0, output_tokens: 0 }」
- *   （`message_start`）与 `src/core/protocol/anthropic.ts`「usage: { output_tokens: 0 }」
- *   （`message_delta`）。⇒ 谁顺手把「响应里的 usage」画出来，Anthropic 那条流就会在面板上
- *   显示 **0 个 token**，那是全局约束 9 明令禁止的那件事（**伪造 0 比显示「没有」更糟**）。
+ *   实况：responses 与 gemini 那两条**一个 usage 字段都不发**。
+ *   ⚠️ **anthropic 那条 2026-09-10 变了，上一版这里写的「硬写两处恒为 0」已经不成立**：
+ *   `message_delta` 现在发的是**上游末块里的真实 token 数**
+ *   （`src/core/protocol/anthropic.ts`「usage: { input_tokens: inTok, output_tokens: outTok }」）。
+ *   `message_start` 那处仍是 0，但那是「**此刻还不知道**」——它必须在读上游之前就发出，
+ *   而 usage 要等上游末块才到，不是「拿得到也不给」。
+ *   ⇒ 从前那条「谁顺手把 usage 画出来，Anthropic 流就会显示 0 个 token」的风险
+ *   在 anthropic 这一档**已经消失**；responses / gemini 两档仍然成立
+ *   （它们压根不发 usage，画出来只能是伪造的 0，那是全局约束 9 明令禁止的）。
+ *   **本面板暂时仍然一档都不画** —— 四条流里只有一条拿得到真数，按协议分档显示
+ *   会让运维以为「另外三条是 0」，那正是这段注释一直在防的那件事。
  *   ⚠️⚠️ **上一句里 responses / gemini 那半原来是一句零判据的全称句（复评发现，本轮补上）**：
  *   anthropic 那半靠上面两个名字锚拦得住（改一个字段名 ⇒ 注释指向那道门禁当场 EXIT=1），
  *   而 responses / gemini 那半**当时仓里没有任何东西会为它变红** —— 复评把 `usage: {…}`
@@ -273,17 +279,17 @@ import {
  * · `sendBlockedKey()` 走到 `pg.send.blockedNoEndpoint` ⇒ 发送按钮**变灰**，
  *   它的 tooltip 才是「协议目录里没有这个形态的端点，这一档发不出请求。」。
  * ⇒ **`pg.model.noneMedia` 与 `pg.send.blockedNoEndpoint` 这两个 key 不是死代码**：
- * 在**形态名不漂**的前提下它们确实取不到（`MODEL_CATALOG` 钉着 2 个 image + 1 个 video 模型、
+ * 在**形态名不漂**的前提下它们确实取不到（`MODEL_CATALOG` 钉着 3 个 image + 3 个 video 模型、
  * `MEDIA_ENDPOINTS` 两档各有一条 `op === "generate"`，两者恒非空），
  * 但那个前提**正是这一段登记着会漂的东西** —— 它们是形态名漂移那一档的兜底文案，
  * 别把「结构性不可达」写成无条件的。
  * ⚠️ **这个前提本身也得有机器，两档都要**：模型条数由
  * `tests/ui/dom/playground-section.test.ts` 的
  * 「三个模式档都能选中，图片与视频各自真的挑到了自己那条端点 —— 形态名一漂就是一个永远空的档位」
- * 逐档钉着（image 2 / video 1）。原来只有 image 那一半有断言，**video 那一半是空的**
+ * 逐档钉着（image 3 / video 3）。原来只有 image 那一半有断言，**video 那一半是空的**
  *（回填时补上）。⚠️ 顺带量清楚了：这句前提的两种漂法**不是一回事**——
- * 真源**多**一个视频模型 ⇒ 上面「1 个 video」这个数当场变假，由那一格逐档钉着；
- * 真源**少**掉那唯一一个视频模型 ⇒ 实测整份目录窄化不过、面板落进「读不出来」那一档，
+ * 真源**多**一个视频模型 ⇒ 上面「3 个 video」这个数当场变假，由那一格逐档钉着；
+ * 真源**少**掉全部视频模型 ⇒ 实测整份目录窄化不过、面板落进「读不出来」那一档，
  * 这一层由目录自己拦下，根本轮不到这段裁定。
  *
  * ⇒ **两个 key 的去留结案为「留」**（欠账清单里那条同步改写）。
@@ -291,9 +297,9 @@ import {
  * `grep -rn "noneMedia\|blockedNoEndpoint" tests/` 零命中，按本仓的规矩那是待办不是守卫，
  * 而**这段话本身就是订正上一版一句假描述的产物**，第二次变假的代价更高。
  * 现在它们由 `tests/ui/dom/playground-section.test.ts` 的
- * 「端点行 0（真源为 1）、模型下拉 0 项（真源为 2）、发送按钮停用且两句文案逐字上屏」
+ * 「端点行 0（真源为 1）、模型下拉 0 项（真源为 3）、发送按钮停用且两句文案逐字上屏」
  * 与同一个 describe 里 `tests/ui/dom/playground-section.test.ts` 的
- * 「反向控制（同格 describe）：真源原样时端点行 1、模型下拉 2 项」
+ * 「反向控制（同格 describe）：真源原样时端点行 1、模型下拉 3 项」
  * 两格钉着：前者证明形态名一漂这两句真的上屏，后者证明真源原样时它们一句都不上屏。
  * ⚠️ **第二个锚前面那次路径重复不是笔误，别当冗余删掉**：`scripts/check-comment-refs.mjs`
  * 这道门禁只校验**紧跟在路径之后**的那个锚，外加 `CHAINED_ANCHOR_RE` 认得的那几个纯并列连接词

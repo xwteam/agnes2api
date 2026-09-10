@@ -1509,7 +1509,7 @@ describe("record 期出错与 flush 期出错说的不是同一句话", () => {
       const hit = () => app.request("/v1/chat/completions", {
         method: "POST",
         headers: { authorization: "Bearer t", "content-type": "application/json" },
-        body: JSON.stringify({ model: "ok-model", messages: [] }),
+        body: JSON.stringify({ model: "ok-model", messages: [{ role: "user", content: "x" }] }),
       });
       await hit();
       st.putFails = true;
@@ -1626,7 +1626,7 @@ describe("GET /admin/api/usage(/:date) 的 byApiKey 这一维", () => {
     const call = (credential: string) => app.request("/v1/chat/completions", {
       method: "POST",
       headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: "m", messages: [] }),
+      body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "x" }] }),
     });
     await call(issued.secret);
     await call(issued.secret);

@@ -2143,7 +2143,7 @@ BANNER='[collection-guard] ✅'
 #   ⇒ Node：5086 + 1 = **5087**；文件数 **164 不动**。
 #   ⇒ workerd 两个数仍然一格不动（实测 43 / 793）：新增的那一格在 `tests/unit/` 下，
 #     不进 workers 池；`tests/contract/` 一格都没加。
-EXPECT_NODE_FILES=164
+EXPECT_NODE_FILES=168
 #
 #   ── 指路不许指向一条当时还不存在的事件（终检遗留）：**+2**，全在 tests/unit/i18n-dict.test.ts
 #   起因：`reg.backoff.cluster` 里「上游列出来的域名全被判『被屏蔽』那一支，原话在
@@ -2379,9 +2379,36 @@ EXPECT_NODE_FILES=164
 #      （21 passed / 1 failed），命中精确、不误伤。
 #   ⇒ Node：5136 + 1 = **5137**；workerd：802 + 1 = **803**（contract 用例两侧都跑）；
 #     文件数两侧都不动。
-EXPECT_NODE_TESTS=5137
-EXPECT_WORKERS_FILES=43
-EXPECT_WORKERS_TESTS=803
+#
+#   ── v0.3.0 面向使用者的大修：**Node +4 文件 / +98 格；workerd +1 文件 / +41 格**
+#   四个**新建**文件（其中一个是 contract ⇒ 两个运行时都跑，workerd 那 +1 就是它）：
+#     · `tests/ui/reveal.test.ts` **9 格** —— 「掩码 / 点击显示明文 / 复制」的三态状态机。
+#       核心是 `unavailable`（签发在明文落盘之前，**永远**取不回，处置是重发）与
+#       `failed`（这一次没拿到，可重试）**不许并成「取不到」**——并了会让人对着一把
+#       永远取不回的密钥反复点。另钉「空串不许当明文塞进剪贴板」。
+#     · `tests/ui/model-test.test.ts` **39 格** —— 逐模型连通性矩阵的纯函数半。
+#     · `tests/ui/dom/models-test-card.test.ts` **9 格** —— 那张卡的 DOM 行为，
+#       钉住「上一条没回来第二条不许发」（串行是扛上游 CF 1015 的闸）与
+#       「媒体模型一次都没被打」。
+#     · `tests/contract/admin-model-test.test.ts` **20 格**（**双运行时**）——
+#       含「换一个模型立刻再测仍被 429 挡下」，那是护栏用**常量 kind** 而不是
+#       `model-test:<id>` 所决定的，夹具刻意用两个不同模型 id 才让它可观测。
+#   两个**现有**文件里加的格：
+#     · `tests/contract/errors.test.ts` 6 → 13 个 `it`（**+8 格 +1 格**）：
+#       ①「合法 JSON 但结构不对：必须 400，且一次上游都不许打」8 条参数化用例
+#      （四条协议 × 漏字段 / 非对象 / 空数组）——从前这一档是 500，
+#       而 `/v1/chat/completions` 更是把畸形请求**原样转发上游**、白烧共享限流额度；
+#       ②「兜成 500 时留下可排障的线索」——实测 14 次 500 之后事件流零记录。
+#     · `tests/contract/admin-apikeys.test.ts` 17 → 19：那格「存储里一个字节的明文都没有」
+#       被**翻转**成「明文会落盘」（用户拍板的取舍），同时**新增两条真正的防线**：
+#       「明文绝不进列表响应」与「取明文要留痕但事件里绝不含明文本身」。
+#   变异实测（本轮真跑过）：删掉 openai 的本地形状校验 ⇒ 恰好 4 条 OpenAI 用例红；
+#   把 anthropic 的 catch 从基类收窄回 `UnsupportedContentError` ⇒ 恰好 2 条 Anthropic 用例红。
+#   ⇒ Node：5137 + 98 = **5235**，文件 164 + 4 = **168**；
+#     workerd：803 + 41 = **844**，文件 43 + 1 = **44**。
+EXPECT_NODE_TESTS=5235
+EXPECT_WORKERS_FILES=44
+EXPECT_WORKERS_TESTS=844
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

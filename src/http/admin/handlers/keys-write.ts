@@ -227,6 +227,30 @@ export function keysImportHandler(deps: KeysWriteDeps) {
  * 删除**不可撤销**（记录里那把 key 材料就此消失，没有任何地方还留着它），
  * 所以它是本文件唯一一条带前置条件的写操作，见 `MUST_DISABLE_FIRST`。
  */
+/**
+ * `GET /admin/api/keys/:id/reveal` —— 取回一把**上游 Agnes key** 的明文。
+ *
+ * 与对外 API 密钥那条同一套路（明文只走专门端点、不进列表、访问要留痕），但两者
+ * **性质不同，别读混**：这一族是**别人的凭据**，我们本来就不得不可逆地存（要拿去打上游），
+ * 五份 DEPLOY.md 从第一天就写着它「以明文落在 KV / `store.json` 里，请按凭据处置」。
+ * 所以这条端点**没有引入新的存储风险**，只是把已经存在的东西在面板上显式露出来。
+ */
+export function keyRevealHandler(deps: KeysWriteDeps) {
+  return async (c: Context) => {
+    const id = c.req.param("id") ?? "";
+    const all = await deps.repo.all();
+    const rec = all.find((r) => r.id === id);
+    if (!rec) throw adminError(404, "not_found", "key_not_found", "没有这把 key");
+    deps.logger.log({
+      level: "warn", event: "key.revealed",
+      msg: "面板取回了一把上游 key 的明文",
+      // 只记 id，**绝不记明文**。
+      fields: { id },
+    });
+    return c.json({ key: rec.key });
+  };
+}
+
 export function keyDeleteHandler(deps: KeysWriteDeps) {
   return async (c: Context) => {
     const id = paramId(c);

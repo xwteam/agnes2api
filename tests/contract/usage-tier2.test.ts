@@ -241,11 +241,22 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
           headers: { authorization: "Bearer t", "content-type": "application/json" },
           body: JSON.stringify(body),
         });
-        // 手写字面量 503（`pool_empty`，池子刻意留空）。**500 = 网关自己抛了。**
+        // 🔴 **本格的主语一个字没变：绝不许 500。** 500 = 网关自己抛了 ——
+        // 那正是「归一化被放进路由闭包体」时会发生的事，也是本格存在的全部理由。
         expect(
           res.status,
-          `Tier-2 ${enabled ? "开" : "关"}着，${path} 被一个转不成字符串的 model 打成了 ${res.status}`,
-        ).toBe(503);
+          `Tier-2 ${enabled ? "开" : "关"}着，${path} 把一个转不成字符串的 model 打成了 500`,
+        ).not.toBe(500);
+        // ⚠️ **2026-09-10 期望值从 503 改成 400，是契约变了、不是判据放宽。**
+        // 从前三条路由对请求体**一次本地校验都没有**，一个 `model` 不是字符串的请求会
+        // 一路走到选 key 那步（池子空 ⇒ 503）。现在 `requireString(o.model)` 在三条路由
+        // 上都把它当**客户端写错了请求体**当场拒掉 —— 那本来就是它，而且拒得越早，
+        // 越不会白烧整个网关共享的上游限流额度。
+        // **`.not.toBe(500)` 那一句留着**：它才是本格的主语，400 与 503 都满足它。
+        expect(
+          res.status,
+          `Tier-2 ${enabled ? "开" : "关"}着，${path} 该被本地形状校验拒掉`,
+        ).toBe(400);
       }
     }
   });

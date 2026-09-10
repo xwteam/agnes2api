@@ -13,11 +13,12 @@ import { keysHandler } from "./handlers/keys.js";
 import { capabilitiesHandler } from "./handlers/capabilities.js";
 import { modelsHandler } from "./handlers/models.js";
 import { upstreamModelsHandler } from "./handlers/upstream-models.js";
+import { modelTestHandler } from "./handlers/model-test.js";
 import { overviewHandler } from "./handlers/overview.js";
 import { eventsHandler, eventsDownloadHandler } from "./handlers/events.js";
 import {
   keysImportHandler, keysBulkHandler, keyDeleteHandler, keyPatchHandler,
-  keysPurgeHandler, KEYS_PURGE_PATH,
+  keysPurgeHandler, KEYS_PURGE_PATH, keyRevealHandler,
 } from "./handlers/keys-write.js";
 import {
   manualTendHandler, registrarStatusHandler, channelTestHandler, type RegistrarWiring,
@@ -33,7 +34,7 @@ import {
 import { verifyHandler } from "./handlers/verify.js";
 import {
   apiKeysListHandler, apiKeyIssueHandler, apiKeyPatchHandler, apiKeyDeleteHandler,
-  apiKeysPurgeHandler, apiKeysCapability, APIKEYS_PURGE_PATH, type ApiKeyWiring,
+  apiKeyRevealHandler, apiKeysPurgeHandler, apiKeysCapability, APIKEYS_PURGE_PATH, type ApiKeyWiring,
 } from "./handlers/api-keys.js";
 import type { TendGate } from "./tend-lock.js";
 import { createProbeGuard } from "./probe-guard.js";
@@ -328,6 +329,10 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 「窗口内更宽的模式不许排在更窄的之前 —— 被吃掉的那一条恒不可达，而它只会回一个看起来合理的 400」
   // 从 `app.routes` 现算钉着，不用回来改任何清单。
   admin.post(KEYS_PURGE_PATH, keysPurgeHandler(keysWrite));
+  // **明文只走这条专门端点**，不进列表响应：列表是高频、无意识被调用的，
+  // 塞进去等于每次轮询、每条被记下的响应体、每个中间层缓存里都带着全部凭据明文。
+  // 路径比 `/:id` 多一段，与它不冲突。
+  admin.get("/admin/api/keys/:id/reveal", keyRevealHandler(keysWrite));
   admin.delete("/admin/api/keys/:id", keyDeleteHandler(keysWrite));
   admin.patch("/admin/api/keys/:id", keyPatchHandler(keysWrite));
   // **单把 key 的 Tier-1 计数。挂在上面那两条 `:id` 之后。**
@@ -494,6 +499,32 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
     guard: probeGuard,
   }));
 
+  // ── 逐模型连通性测试 ─────────────────────────────────────────────────────
+  //
+  // **第三条并存的端点，回答第三个问题**：`/admin/api/models` 说「本网关认得哪些模型、
+  // 怎么调」，`/admin/api/upstream/models` 说「上游账号此刻回了哪些 id」，
+  // 而这一条说「**拿这一个模型 id 真发一次请求，它通不通**」。前两条都答不了它：
+  // 一个模型出现在上游清单里、与它此刻真的能出话，是两件事。
+  //
+  // ⚠️ **它是四段（`models/:id/test`），上面那条 `/admin/api/models` 是三段，吃不掉它。**
+  // 会出事的仍是那个老坑（本文件里同一个坑的第六处）：将来加一条更宽的
+  // `/admin/api/models/:id/:something` 时它必须排在本条之后（Hono 按注册顺序匹配）。
+  // 由 `tests/contract/admin-auth.test.ts` 的
+  // 「窗口内更宽的模式不许排在更窄的之前 —— 被吃掉的那一条恒不可达，而它只会回一个看起来合理的 400」
+  // 从 `app.routes` 现算钉着。
+  //
+  // **它一次存储写都不产生**（只读探针，与验活、列上游模型同一条），所以配额账的写侧
+  // 不用改；读侧它消费的是 `repo.all()` 那份 isolate 快照，与面板别的板块共用。
+  //
+  // ⚠️ **护栏与那两条共用同一把 `probeGuard`，而它的 kind 是常量**——理由（整轮测试
+  // 要互相挡，那才是扛上游边缘限流的闸）在 `handlers/model-test.ts` 的文件头，
+  // 是唯一一份，这里不抄第二遍。
+  admin.post("/admin/api/models/:id/test", modelTestHandler({
+    repo: deps.repo, fetcher: deps.fetcher, now: deps.now,
+    config: () => deps.configHolder.current(),
+    guard: probeGuard,
+  }));
+
   // ── Tier-2 用量 ─────────────────────────────────────────────────────────
   //
   // 两条都是只读的。**唯一会烧配额的是读扇出**：`30d` 那一档一次请求发
@@ -591,6 +622,8 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   admin.get("/admin/api/apikeys", apiKeysListHandler(apiKeys));
   admin.post("/admin/api/apikeys", apiKeyIssueHandler(apiKeys));
   admin.post(APIKEYS_PURGE_PATH, apiKeysPurgeHandler(apiKeys));
+  // 同上：明文走专门端点、可审计。升级前签发的记录没有明文，这条会如实回 null。
+  admin.get("/admin/api/apikeys/:id/reveal", apiKeyRevealHandler(apiKeys));
   admin.delete("/admin/api/apikeys/:id", apiKeyDeleteHandler(apiKeys));
   admin.patch("/admin/api/apikeys/:id", apiKeyPatchHandler(apiKeys));
 

@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.2.2-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.3.0-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -48,7 +48,7 @@
 > This project is neither affiliated with nor endorsed by Agnes AI. It wraps the Agnes AI service into a multi-protocol compatible API, and that usage may not comply with the upstream terms of service; acquiring free quota in bulk is in tension with those terms as well. Use it at your own risk — the author is not responsible for any account penalty or data loss.
 
 > [!TIP]
-> The upstream is served by a pool of Agnes API keys: chat runs on `agnes-2.0-flash`, images on `agnes-image-2.1-flash` and `agnes-image-2.0-flash`, video on `agnes-video-v2.0` (create a task, then poll it). The key pool heals itself — an upstream `429`/`402` puts that key into cooldown, `401`/`403` evicts it permanently, and repeated transient failures accumulate up to `MAX_STRIKES` and then put it into a long cooldown (`COOLDOWN_STRIKE_MS`, 30 minutes by default) rather than evicting it. The cases that recover on expiry need no manual intervention.
+> The upstream is served by a pool of Agnes API keys: chat runs on `agnes-2.0-flash` and 5 more, images on `agnes-image-2.1-flash` and 2 more, video on `agnes-video-v2.0` and 2 more (create a task, then poll it); the full list is in [API.md](API.md). The key pool heals itself — an upstream `429`/`402` puts that key into cooldown, `401`/`403` evicts it permanently, and repeated transient failures accumulate up to `MAX_STRIKES` and then put it into a long cooldown (`COOLDOWN_STRIKE_MS`, 30 minutes by default) rather than evicting it. The cases that recover on expiry need no manual intervention.
 
 > [!IMPORTANT]
 > **This gateway is fail-closed: there is no mode in which it serves traffic while no token is configured.** `GATEWAY_TOKEN` is mandatory, and when it is missing the gateway **refuses to start** (`src/core/config.ts` throws `缺少 GATEWAY_TOKEN，网关无法启动`); note that this startup path **only checks presence, never length**, so a short token still brings the gateway up and how strong it is remains your call. The admin panel does not exist by default: with no `ADMIN_TOKEN` set, the whole `/admin` tree is never registered at all and requests get a 404; set one shorter than 24 characters (`ADMIN_TOKEN_MIN_LENGTH`) and it stays disabled too, with a log line saying the panel is not enabled while gateway forwarding is unaffected; set one that is long enough but **identical** to `GATEWAY_TOKEN` and the admin API keeps returning 503 (forwarding still works). `ADMIN_TOKEN` is read from the environment only, never from storage, so the panel cannot rotate its own key.
@@ -57,13 +57,15 @@
 
 ## 📝 Recent Updates
 
+> Latest 5 releases only. **Full history in [CHANGELOG](../../CHANGELOG.md)** — this table grows one row per release, so it is capped.
+
 | Date | What changed |
 |------|--------------|
+| 2026-09-10 | v0.3.0 - 🚀 **User-facing overhaul** (breaking): model catalog 4 → 12, the panel finally has breakpoints, credentials can be revealed and copied, per-model connectivity test |
 | 2026-09-09 | v0.2.2 - 🐛 **Manual refill actually works** (breaking): it returned 202, then Cloudflare silently killed the round and leaked the lock 15 min. Now returns 200 with the outcome |
-| 2026-09-09 | v0.2.1 - 🧾 **Post-release cleanup**: v0.2.0's audit fixes landed after the tag, so nobody could get them. This ships them — LICENSE back to plain MIT, a corrected section count, and 26 stale /health samples |
-| 2026-09-09 | v0.2.0 - 🔧 **Registrar overhaul** (breaking): the two mailbox channels become **pick one** — `registrar.channel` replaces `primary` / `fallback`. Refilling now backs off on an upstream rate limit and remembers blocked domains |
-| 2026-08-31 | v0.1.1 - 🧹 **Housekeeping release**: internal development identifiers removed from the public repository — the 470 in the panel assets were the only ones genuinely leaking. Behaviour is unchanged |
-| 2026-08-31 | v0.1.0 - 🎉 **First release**: four-protocol gateway, registrar and admin panel land at once; one codebase runs on both the Cloudflare Worker and Node / Docker |
+| 2026-09-09 | v0.2.1 - 🧾 **Post-release cleanup**: v0.2.0's audit fixes landed after the tag, so nobody could get them. LICENSE back to plain MIT, plus 26 stale /health samples |
+| 2026-09-09 | v0.2.0 - 🔧 **Registrar overhaul** (breaking): the two mailbox channels become **pick one**; refilling backs off on upstream rate limits and remembers blocked domains |
+| 2026-08-31 | v0.1.1 - 🧹 **Housekeeping**: internal development identifiers removed from the public repository — the 470 in the panel assets were the only ones genuinely leaking. Behaviour is unchanged |
 
 > The full changelog lives in [CHANGELOG.md](../../CHANGELOG.md).
 
@@ -208,7 +210,7 @@ docker compose logs -f
 ```bash
 # Health check (unauthenticated). On the Worker use your https://<name>.<sub>.workers.dev
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.2.2"}
+# {"status":"ok","version": "0.3.0"}
 
 # List the available models
 curl http://localhost:8080/v1/models \

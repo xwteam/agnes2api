@@ -207,3 +207,67 @@ export async function copy(text) {
     toast(t("common.copyFailed"), "warn");
   }
 }
+
+/**
+ * 「掩码 + 显示明文 + 复制」这一组控件。**Key 池与 API 密钥共用同一份实现。**
+ *
+ * 传入的 `fetchSecret()` 由调用方注入（各自的端点不同），本函数只管交互与三态渲染。
+ * 状态机在 `admin-ui/js/pure/reveal.mjs`，那一半是纯函数、可以不起浏览器地验。
+ *
+ * 🔴 **明文不写回列表数据**：它只活在注入的 `state` 里（`createRevealState()`），
+ * 而列表随轮询整份重建 ⇒ 切板块、刷新之后自动回到掩码态。把明文塞进列表数据会让它
+ * 跟着进下一次渲染、进任何对列表做的序列化。
+ *
+ * ⚠️ **复制那颗按钮在未显示时也能用**：它会先取一次明文再写剪贴板 ——
+ * 运维要的是「把密钥贴到别处」，不是「先让它出现在屏幕上」。
+ * 少一次「明文上屏」反而更安全（肩窥、录屏、截图）。
+ */
+export function revealControls(o) {
+  const wrap = el("span", { class: "reveal" });
+  const text = el("code", { class: "mono reveal-text" }, o.masked);
+  wrap.appendChild(text);
+
+  const render = () => {
+    const s = o.state.secretOf(o.id);
+    const shown = o.state.isShown(o.id);
+    text.textContent = shown && s !== null ? s : o.masked;
+    // `user-select: all` 让明文态单击即可全选 —— 剪贴板在非 TLS 下不可用时的手动兜底。
+    if (shown) text.setAttribute("data-revealed", "");
+    else text.removeAttribute("data-revealed");
+    eye.textContent = t(shown ? "reveal.hide" : "reveal.show");
+  };
+
+  const load = async () => {
+    const had = o.state.secretOf(o.id);
+    if (had !== null) return had;
+    const body = await o.fetchSecret(o.id);
+    const out = o.outcomeOf(body);
+    if (out.state !== "ok") {
+      // **三态各说各的话**，不并成「取不到」：见 `revealOutcome` 上方那段。
+      toast(t(o.messageKeyOf(out)), "warn", { sticky: true });
+      return null;
+    }
+    o.state.remember(o.id, out.secret);
+    return out.secret;
+  };
+
+  const eye = el("button", { type: "button", class: "btn-tiny" }, t("reveal.show"));
+  eye.addEventListener("click", async () => {
+    if (o.state.isShown(o.id)) { o.state.hide(o.id); render(); return; }
+    const s = await load();
+    if (s === null) return;
+    render();
+  });
+  wrap.appendChild(eye);
+
+  const cp = elI18n("button", "common.copy", { type: "button", class: "btn-tiny" });
+  cp.addEventListener("click", async () => {
+    const s = await load();
+    if (s === null) return;
+    await copy(s);
+  });
+  wrap.appendChild(cp);
+
+  render();
+  return wrap;
+}

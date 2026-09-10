@@ -67,7 +67,7 @@ GATEWAY_TOKEN=換成一把長隨機字串
 
 - `GATEWAY_TOKEN` 永遠有效，**判定它一次儲存讀都不產生**——這條性質是逃生口本身：密鑰表被寫壞、儲存讀不出來時，拿主口令呼叫的用戶端一個位元組都不受影響；
 - 對外 API 密鑰可以逐把命名、設到期、隨時停用或吊銷，用來給不同的下游各發一把，而不必把主口令交出去；
-- 閘道只存密鑰的 SHA-256 摘要，**明文只在簽發那一次的回應裡出現過**；
+- 閘道存的是密鑰的 SHA-256 摘要**與明文**（2026-09-10 起）：明文事後可經 `GET /admin/api/apikeys/{id}/reveal` 取回，這筆取捨的代價寫在那條端點的警告裡；
 - 停用或刪除**不是即時的**：別的實例最多還要約 6 分鐘才看得見，見下面 `PATCH /admin/api/apikeys/{id}` 那條的說明。
 
 `401` 的回應體對「沒有這把密鑰」「已停用」「已過期」三種情況**說的是同一句話**——區分它們等於給掃描者一個列舉介面。真正的原因只寫進事件日誌（`apikey.rejected`，帶 `id` 與檔位），那是維運才看得到的地方。
@@ -165,14 +165,22 @@ Gemini 那兩條端點把模型名寫在路徑裡、不在請求內容中。路�
 
 ## 模型
 
-閘道暴露四個模型，呼叫哪個端點決定該傳哪個：
+閘道暴露十二個模型，呼叫哪個端點決定該傳哪個：
 
 | 模型 | 用於 |
 |----|----|
 | `agnes-2.0-flash` | 對話/文字類端點 |
+| `agnes-2.5-flash` | 對話/文字類端點 |
+| `agnes-2.5-pro` | 對話/文字類端點 |
+| `agnes-2.5-pro-alpha` | 對話/文字類端點 |
+| `agnes-2.5-pro-beta` | 對話/文字類端點 |
+| `agnes-3.0-flash` | 對話/文字類端點 |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
+| `agnes-image-2.5-flash` | `/v1/images/generations` |
 | `agnes-video-v2.0` | `/v1/videos` |
+| `agnes-video-2.5` | `/v1/videos` |
+| `agnes-video-2.5-flash` | `/v1/videos` |
 
 ## OpenAI 相容 API
 
@@ -194,9 +202,17 @@ curl http://localhost:8080/v1/models \
   "object": "list",
   "data": [
     { "id": "agnes-2.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro-alpha", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-2.5-pro-beta", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-3.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
     { "id": "agnes-image-2.1-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
     { "id": "agnes-image-2.0-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
-    { "id": "agnes-video-v2.0", "object": "model", "created": 1735689600, "owned_by": "agnes2api" }
+    { "id": "agnes-image-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-v2.0", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-2.5", "object": "model", "created": 1735689600, "owned_by": "agnes2api" },
+    { "id": "agnes-video-2.5-flash", "object": "model", "created": 1735689600, "owned_by": "agnes2api" }
   ]
 }
 ```
@@ -209,7 +225,7 @@ OpenAI Chat Completions 協議。非流式回應就是上游的 OpenAI 格式 JS
 
 | 參數 | 型別 | 必填 | 說明 |
 |----|----|----|----|
-| `model` | string | 是 | 取 `agnes-2.0-flash`。 |
+| `model` | string | 是 | 取任一對話模型，例如 `agnes-2.0-flash`。 |
 | `messages` | array | 是 | 標準 OpenAI 訊息陣列。 |
 | `stream` | boolean | 否 | 傳 `true` 拿流式回應，預設 `false`。 |
 
@@ -249,7 +265,7 @@ OpenAI-Responses 協議。請求內容中的 `instructions` 與陣列形態的 `
 
 | 參數 | 型別 | 必填 | 說明 |
 |----|----|----|----|
-| `model` | string | 是 | 取 `agnes-2.0-flash`。 |
+| `model` | string | 是 | 取任一對話模型，例如 `agnes-2.0-flash`。 |
 | `input` | string / array | 是 | 字串或標準 Responses 輸入陣列。 |
 | `instructions` | string | 否 | 會被轉換成一條 system 訊息。 |
 | `stream` | boolean | 否 | 傳 `true` 拿流式回應，預設 `false`。 |
@@ -298,7 +314,7 @@ Anthropic Messages 協議。請求內容中的 `system` 與陣列形態的 `cont
 
 | 參數 | 型別 | 必填 | 說明 |
 |----|----|----|----|
-| `model` | string | 是 | 取 `agnes-2.0-flash`。 |
+| `model` | string | 是 | 取任一對話模型，例如 `agnes-2.0-flash`。 |
 | `max_tokens` | number | 是 | Anthropic 協議自身的必填項。 |
 | `messages` | array | 是 | 標準 Anthropic 訊息陣列。 |
 | `system` | string / array | 否 | 會在轉發上游前被壓平成純文字。 |
@@ -357,9 +373,17 @@ curl http://localhost:8080/v1beta/models \
 {
   "models": [
     { "name": "models/agnes-2.0-flash", "displayName": "agnes-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-flash", "displayName": "agnes-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro", "displayName": "agnes-2.5-pro", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro-alpha", "displayName": "agnes-2.5-pro-alpha", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-2.5-pro-beta", "displayName": "agnes-2.5-pro-beta", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-3.0-flash", "displayName": "agnes-3.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
+    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
+    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
   ]
 }
 ```
@@ -428,7 +452,7 @@ data: {"candidates":[{"content":{"role":"model","parts":[{"text":"你好"}]},"in
 
 | 參數 | 型別 | 必填 | 說明 |
 |----|----|----|----|
-| `model` | string | 是 | 取 `agnes-image-2.1-flash` 或 `agnes-image-2.0-flash`。 |
+| `model` | string | 是 | 取任一圖片模型，例如 `agnes-image-2.1-flash`。 |
 | `prompt` | string | 是 | 原樣轉發給上游。 |
 
 **請求**：
@@ -454,7 +478,7 @@ curl -X POST http://localhost:8080/v1/images/generations \
 
 | 參數 | 型別 | 必填 | 說明 |
 |----|----|----|----|
-| `model` | string | 是 | 取 `agnes-video-v2.0`。 |
+| `model` | string | 是 | 取任一影片模型，例如 `agnes-video-v2.0`。 |
 | `prompt` | string | 是 | 原樣轉發給上游。 |
 
 **請求**：
@@ -504,7 +528,7 @@ curl http://localhost:8080/v1/videos/task-1 \
 沒有設定 `ADMIN_TOKEN`、或它不滿足硬規則（首尾有空白、含非可列印 ASCII、短於 24 位）時，**整棵 `/admin` 樹都不註冊**——存取它得到 `404` 而不是 `401`，不洩漏「這裡有個後台」。
 
 > [!WARNING]
-> 管理介面的回應裡沒有任何一處會回顯池裡 key 的明文，也沒有任何 reveal 端點。但拿到 `ADMIN_TOKEN` 的人可以清空整個池、改掉 `GATEWAY_TOKEN`、把註冊機打開——**請把它當成比中轉口令更要緊的那一把**。
+> 管理介面有兩條 reveal 端點會回傳憑證明文（上游 key 與對外 API 密鑰各一條），其餘回應一律只給遮罩。拿到 `ADMIN_TOKEN` 的人不只能把明文逐把調出來，還可以清空整個池、改掉 `GATEWAY_TOKEN`、把註冊機打開——**請把它當成比中轉口令更要緊的那一把**。
 
 ### GET /admin/api/session
 
@@ -520,7 +544,7 @@ curl http://localhost:8080/admin/api/session \
 **回應**：
 
 ```json
-{ "ok": true, "version": "0.2.2" }
+{ "ok": true, "version": "0.3.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -538,7 +562,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.2.2",
+  "version": "0.3.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -570,7 +594,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.2.2",
+  "version": "0.3.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -647,6 +671,42 @@ curl http://localhost:8080/admin/api/upstream/models \
     "onlyUpstream": [],
     "onlyCatalog": ["agnes-video-v2.0"]
   }
+}
+```
+
+### POST /admin/api/models/{id}/test
+
+拿池裡的一把 key，用這一個模型 id 向上游真發一次最小對話請求，只看它通不通、多快。
+**與上面兩條並存**：那兩條說的是「本閘道支援哪些協議與端點」與「上游帳號此刻回了什麼」，
+這一條說的是「這一刻這個模型真的能不能出話」。**零儲存寫**，也不收任何請求內容參數
+（帶了不認識的欄位一律 400，免得「我以為能指定模型」變成一次靜默誤操作）。
+
+**只接受對話模型。** 圖片與影片模型一律 400 加 `reason: "modality_not_testable"`
+——測一次圖片模型會真的生成一張圖，測一次影片模型會建一個任務並反覆輪詢，
+兩者都會真的花掉這個帳號的生成額度。目錄裡沒有的模型 id 回 404。
+池裡一把可用的 key 都沒有時回 `ok: false` 與 `reason: "no_key"`，不是 5xx。
+非 2xx 回 `reason: "upstream_error"` 並帶上真實狀態碼；上游的錯誤正文一個位元組都不回。
+
+護欄與單把 key 驗活、列上游模型共用同一把，**而這條端點的粒度是全域的**：
+換一個模型立刻再測，在最小間隔之內同樣回 429（頂層 `reason` 是 `probe_in_flight`
+或 `probe_cooldown`）。那是刻意的——整輪逐模型測試打的都是同一個上游帳號，
+共用一格節流才是它扛住上游邊緣限流的那道閘。所以逐個模型請**串列**發，別並行打。
+
+**請求**：
+
+```bash
+curl -X POST http://localhost:8080/admin/api/models/agnes-2.0-flash/test \
+  -H "x-admin-key: your-admin-token"
+```
+
+**回應**：
+
+```json
+{
+  "ok": true,
+  "status": 200,
+  "latencyMs": 412,
+  "reason": null
 }
 ```
 
@@ -865,9 +925,34 @@ curl -X POST http://localhost:8080/admin/api/keys/9f2c/verify \
 > [!NOTE]
 > 這條端點帶對外探測護欄，粒度是 `verify:<id>`：同一把 key 連著點會拿到 `429` 加頂層 `reason`，而驗別的 key 不受影響。它一次儲存寫都不產生。
 
+### GET /admin/api/keys/{id}/reveal
+
+取回**一把上游 Agnes key 的明文**。鑑權與其餘管理端點一致：只認 `x-admin-key`。
+
+**請求**：
+
+```bash
+curl http://localhost:8080/admin/api/keys/9f2c/reveal \
+  -H "x-admin-key: your-admin-token"
+```
+
+**回應**：完整明文，不是遮罩。
+
+```json
+{ "key": "sk-…" }
+```
+
+找不到那把 key 時是 `404` 加頂層 `reason: "key_not_found"`。
+
+> [!NOTE]
+> **明文刻意不放進 `GET /admin/api/keys` 的清單。** 清單是高頻、無意識被呼叫的，塞進去等於每一次面板輪詢、每一條被記下的回應內容、每一層中間快取裡都帶著全部憑證的明文。這條端點是**顯式動作**，因此可以被稽核：每次呼叫記一條 `key.revealed` 事件（**事件裡只有 id，絕不含明文本身**）。
+
+> [!IMPORTANT]
+> 這一族**本來就以明文儲存**——五份 DEPLOY.md 從第一天就寫著上游 key「以明文落在 KV / `store.json` 裡，請按憑證處置」。所以這條端點**沒有引入新的儲存風險**，只是把已經存在的東西在面板上顯式露出來。
+
 ### GET /admin/api/apikeys
 
-列出全部對外 API 密鑰。**回應裡永遠沒有明文**，只有遮罩與末 4 位。
+列出全部對外 API 密鑰。**清單回應裡永遠沒有明文**，只有遮罩與末 4 位；取明文要走下面那條專門端點。
 
 **請求**：
 
@@ -909,7 +994,7 @@ curl http://localhost:8080/admin/api/apikeys \
 簽發一把新的對外 API 密鑰。成功是 `201`。
 
 > [!WARNING]
-> **明文只在這一次回應裡出現，此後任何端點都拿不到它。** 閘道只存它的 SHA-256 摘要，丟了找不回來，只能刪掉重發。
+> **這次回應是拿到明文最省事的一次，但已經不是唯一一次**：2026-09-10 起閘道連明文一起存，事後可經 `GET /admin/api/apikeys/{id}/reveal` 取回。在那之前簽發的密鑰只有 SHA-256 摘要，丟了找不回來，只能刪掉重發。
 
 **請求體**：
 
@@ -949,6 +1034,35 @@ curl -X POST http://localhost:8080/admin/api/apikeys \
 
 > [!NOTE]
 > **本端點不收 `version`**：簽發是追加，它落在伺服器剛回讀出來的那一份之上，不會覆蓋別人寫下的記錄。
+
+### GET /admin/api/apikeys/{id}/reveal
+
+取回**一把閘道自己簽發的對外 API 密鑰（`sk-` 開頭）的明文**。鑑權與錯誤形狀同上游 key 那條，找不到時 `reason` 是 `apikey_not_found`。
+
+**請求**：
+
+```bash
+curl http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08/reveal \
+  -H "x-admin-key: your-admin-token"
+```
+
+**回應**：
+
+```json
+{ "secret": "sk-…" }
+```
+
+**升級前簽發的那些密鑰沒有明文可取**，此時仍是 `200`，但 `secret` 如實回 `null`，不拿遮罩或空字串冒充：
+
+```json
+{ "secret": null, "reason": "issued_before_plaintext" }
+```
+
+> [!WARNING]
+> 🔴 **這條端點伴隨一次儲存語義的破壞性改變。** 本閘道從前只存明文的 SHA-256 與末 4 位，明文只在簽發那一次的 `201` 裡出現過；2026-09-10 起 `ApiKeyRecord` **同時存明文**，這是**以安全性換便利性**的取捨，代價有兩筆：面板一旦被打穿，**全部用戶端密鑰的明文會一次性外洩**（從前外洩的只是不可反推的摘要）；儲存介質（KV / `store.json`）也從「不含可直接使用的用戶端憑證」變成「含」，備份與快照的處置級別要跟著升。
+
+> [!NOTE]
+> 每次呼叫記一條 `apikey.revealed` 事件（同樣只有 id，不含明文）。`GET /admin/api/capabilities` 的 `apiKeys.plaintextRetrievable` 因此**從恆 `false` 變成 `true`**，面板據它決定顯不顯示「顯示明文 / 複製」按鈕。它的意思是「**這個部署能不能取回明文**」，不是「每一把都取得回來」——升級前簽發的那些仍然取不回。
 
 ### PATCH /admin/api/apikeys/{id}
 
@@ -1468,7 +1582,7 @@ curl http://localhost:8080/health
 **回應**：
 
 ```json
-{ "status": "ok", "version": "0.2.2", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.3.0", "storage": { "writable": true } }
 ```
 
 `storage.writable` 報告的是「key 池所在的儲存是否真的寫得進去」。它由啟動時的一次探測與執行期每一次真實寫操作共同維護，健康檢查自身不寫盤。儲存不可寫時回傳 **HTTP `503`**，`status` 變成 `degraded` 並附一句 `detail`（Docker 部署常見於繫結掛載的主機目錄擁有者與容器內執行使用者不一致，詳見容器日誌）。

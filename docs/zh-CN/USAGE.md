@@ -51,14 +51,22 @@
 
 ## 支持的模型
 
-### 四个模型各自的落点
+### 十二个模型各自的落点
 
 | 模型 | 用于 |
 |------|------|
 | `agnes-2.0-flash` | 对话/文本类端点 |
+| `agnes-2.5-flash` | 对话/文本类端点 |
+| `agnes-2.5-pro` | 对话/文本类端点 |
+| `agnes-2.5-pro-alpha` | 对话/文本类端点 |
+| `agnes-2.5-pro-beta` | 对话/文本类端点 |
+| `agnes-3.0-flash` | 对话/文本类端点 |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
+| `agnes-image-2.5-flash` | `/v1/images/generations` |
 | `agnes-video-v2.0` | `/v1/videos` |
+| `agnes-video-2.5` | `/v1/videos` |
+| `agnes-video-2.5-flash` | `/v1/videos` |
 
 ### 模型名写在请求体还是路径里
 
@@ -67,7 +75,7 @@ OpenAI、OpenAI-Responses 与 Anthropic 三种协议把模型名放在请求体�
 `GET /v1/models` 返回 OpenAI 形状的模型列表，`GET /v1beta/models` 返回 Gemini 形状的同一批模型——同一条路径没法同时返回两种格式，按你用的 SDK 选一条即可。
 
 > [!NOTE]
-> 这两条列表都是**固定表**，四个模型一个不多一个不少，它不反映池子里此刻有没有可用 key。池子空不空要看管理面板，或者直接发一次请求看回不回 `503`。
+> 这两条列表都是**固定表**，十二个模型一个不多一个不少，它不反映池子里此刻有没有可用 key。池子空不空要看管理面板，或者直接发一次请求看回不回 `503`。
 
 ## OpenAI SDK
 

@@ -21,7 +21,15 @@ describe("全应用级 nosniff", () => {
     { name: "网关 401（错凭据，响应体会回显部分请求内容）", path: "/v1/models" },
     { name: "管理 401", path: "/admin/api/session" },
     { name: "管理 200", path: "/admin/api/session", headers: { "x-admin-key": TEST_ADMIN_TOKEN } },
-    { name: "Hono 默认 404（压根没注册的路径）", path: "/definitely-not-a-route" },
+    // ⚠️ **这一格的名字订正过**：它原来叫「Hono 默认 404」，而那个对象已经不存在了
+    // ——`src/http/app.ts` 现在挂了 `app.notFound(...)`，兜底 404 是 `errorResponse()`
+    // 返回的**裸 `Response`**（JSON 信封），不再是 Hono 自己构造的纯文本。
+    // **断言一个字没改，改的只是它指着谁**：名字留着旧对象的话，下一个人会以为
+    // 这一格还在证明「Hono 自己构造的响应也带 nosniff」，而它现在证明的是
+    // 「连兜底那条裸 Response 都带 nosniff」——后者恰恰是更强的那一句
+    //（裸 Response 正是 `c.header` 写在 `next()` 之前时会被静默丢掉的那一族，
+    // 见本文件末尾那条 Hono 语义用例）。
+    { name: "兜底 404（压根没注册的路径，裸 Response 的 JSON 信封）", path: "/definitely-not-a-route" },
   ];
 
   for (const { name, path, headers } of CASES) {
@@ -32,7 +40,9 @@ describe("全应用级 nosniff", () => {
     });
   }
 
-  it("未设 ADMIN_TOKEN 时 /admin 落到 Hono 默认 404，也带 nosniff", async () => {
+  // 名字同上一处订正：这条 404 现在也是 `app.notFound(...)` 那份 JSON 信封
+  //（整棵 /admin 树没注册 ⇒ 连 `uiRoutes()` 自己那条 404 都走不到），不是 Hono 的默认响应。
+  it("未设 ADMIN_TOKEN 时 /admin 落到兜底 404，也带 nosniff", async () => {
     const { app } = await makeApp([], ["k1"], {}, undefined, { adminToken: undefined });
     const res = await app.request("/admin");
     expect(res.status).toBe(404);

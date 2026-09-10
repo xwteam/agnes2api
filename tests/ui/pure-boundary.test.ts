@@ -113,7 +113,16 @@ describe("硬规则 1 的另一半：sec-*.js 不许重新声明 pure/*.mjs 已�
     // 的顶栏里，不是板块 ⇒ **14 → 15，板块数不变**。与 `gw-api.js` 同一条理由，
     // 同一轮新建的 `admin-ui/js/health.js` 两边都不算。
     // API 密钥那一轮各再加一个（`pure/apikeys.mjs` 与 `sec-apikeys.js`）⇒ **15 → 16、8 → 9**。
-    expect(pureModules().length, "pure 模块数变了").toBe(16);
+    // 「掩码 / 显示明文 / 复制」那一轮**只加了 pure 那一侧**（`pure/reveal.mjs`）：
+    // 它是 Key 池与 API 密钥**两个板块共用**的状态机，不属于任何一个板块，
+    // DOM 那半住在 `admin-ui/js/ui.js` 的 `revealControls()`（那是全站共用件、不是板块）
+    // ⇒ **16 → 17，板块数不变**。与 `gw-api.js` / `health.js` 同一条理由。
+    // 「模型测试」那一轮**同样只加了 pure 那一侧**（`pure/model-test.mjs`）：
+    // 它是模型板块的**第三张卡**，DOM 那半住在已有的 `sec-models.js` 里
+    //（新开一个板块要同时改 `index.html` 的 nav+section、`app.js` 的 SECTIONS，
+    // 还要加一族 `nav.*` 五语言键，而它与调试台在语义上重叠）
+    // ⇒ **17 → 18，板块数不变**。与「集成示例」那一轮同一条理由。
+    expect(pureModules().length, "pure 模块数变了").toBe(18);
     expect(sectionFiles().length, "板块文件数变了").toBe(9);
   });
 

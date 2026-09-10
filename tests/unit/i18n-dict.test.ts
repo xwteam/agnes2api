@@ -68,6 +68,13 @@ const NAMESPACES = [
   // 字典里，前缀是把它们分开的第一道线（后端那两条路径同理，见
   // `src/core/admin/api-keys.ts` 的文件头）。
   "ak",
+  // ⚠️ `reveal` 是「掩码 / 点击显示明文 / 复制」那一轮开的命名空间，与 `err` / `ak`
+  // 同一条来路：被 `admin-ui/js/pure/reveal.mjs` 与 `admin-ui/js/ui.js` 的
+  // `revealControls()` 真的用作 key 前缀，而这张表没跟上 ⇒ 反向自检 ② 当场红并点名
+  // `reveal`。**那正是它按设计工作。**
+  // ⚠️ 它刻意**不挂在 `keys.` 或 `ak.` 底下**：这一族是**两个板块共用**的（上游 key 池
+  // 与我们签发的对外密钥各有一半），挂进任一族的前缀都会让另一族的键读起来像是走错了门。
+  "reveal",
 ] as const;
 // ⚠️ **两种引号都要扫。** 与 `scripts/check-i18n.mjs` 规则 ⑧ 早就补上的那条同源：
 // 实测 `elI18n('h2','usage.titel')`（单引号 + 拼错）能让六道脚本门禁 + 全量用例

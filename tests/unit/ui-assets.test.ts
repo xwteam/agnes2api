@@ -157,6 +157,14 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // 需要测试的逻辑必须落在 js/pure/ 下，它由 tests/ui/keys.test.ts 跑着。
       // 逐条确认过：纯函数、无配置、无数据，公开可取没有问题。
       "/admin/js/pure/keys.mjs",
+      // 模型板块**第三张卡**（逐模型连通性测试）的取值决策与状态机
+      //（哪些模型进得了这一轮、一行的三态、四种结局与护栏那两档 → 文案 code）。
+      // 同一条硬规则、同一份理由，由 tests/ui/model-test.test.ts 跑着。
+      // **逐条确认过：纯函数、无配置、无数据、不碰凭据**——它连一条端点路径、
+      // 一个协议 id 都不认识（模型 id 以参数形式从 `GET /admin/api/models` 的响应里进来），
+      // 唯一的字面量是 `chat` 这个形态名与一族 i18n key，公开可取没有问题。
+      // `-` 的字符码比 `.` 小，字典序排在 models.mjs 之前。
+      "/admin/js/pure/model-test.mjs",
       // 模型 × 协议可用性矩阵的取值决策（四个徽章恒在、
       // 按协议筛选、响应窄化的「读不出来 ≠ 空清单」、形态 → 文案 key）。
       // 同一条硬规则、同一份理由，由 tests/ui/models.test.ts 跑着。
@@ -180,6 +188,7 @@ describe("生成物与 admin-ui/ 源逐字节相同", () => {
       // ——它一个字节的部署信息都不带（通道名 `moemail`/`yyds` 是本仓写死的两个
       // 枚举值，不是这套部署配了什么），公开可取没有问题。
       "/admin/js/pure/registrar.mjs",
+      "/admin/js/pure/reveal.mjs",
       // 会话绝对上限的判定（`sessionExpired`）。计划原本把它
       // 归给人工冒烟（理由是「碰 localStorage 与 Date」），执行时订正：把两个时刻
       // 都变成参数之后判定是纯函数，于是照硬规则 1 落在这里，由

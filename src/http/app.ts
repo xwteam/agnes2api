@@ -196,15 +196,104 @@ function dispatchDeps(deps: AppDeps): DispatchDeps & UsageRecording {
   };
 }
 
+/**
+ * 这条路径上**除了 `method` 之外还注册了哪些方法**——405 的 `Allow` 就是它的结果。
+ *
+ * ⚠️ **Hono 不区分「路径不存在」与「方法不对」，两者都落进 `notFound`**，所以这件事
+ * 得自己算。已实测（Hono 4.13.2，最小复现跑过）：`app.router.match(m, path)` 返回的
+ * 每一项是 `[[handler, RouterRoute], params]`，其中 `RouterRoute.method` 是**大写的
+ * 具体方法名**（`"POST"`）或中间件的 `"ALL"`：
+ *
+ * ```
+ * GET /v1/chat/completions（只注册了 POST）→ notFound
+ *   probe GET  => [ {ALL,'/*'}, {ALL,'/v1/*'} ]                       ← 只有中间件
+ *   probe POST => [ {ALL,'/*'}, {ALL,'/v1/*'}, {POST,'/v1/chat/completions'} ]
+ * GET /definitely-not-a-route → 每个方法都只有 {ALL,'/*'}
+ * ```
+ *
+ * 于是判据就是「**有没有 `method !== "ALL"` 的命中项**」：`"ALL"` 全是 `app.use()` 挂的
+ * 中间件，它们对任何方法都命中，拿它们当证据的话每一条 404 都会变成 405。
+ *
+ * **要探的方法集从 `app.routes` 现算**，不写死一张常量表：写死的表会在有人
+ * `app.on("QUERY", …)`（Hono 的 `METHODS` 里真有这一个）时**静默漏报**成 404，
+ * 而从实际注册表里取，覆盖面永远跟着路由走。
+ *
+ * **跳过 `method` 自己**：它要是命中了具体路由，这个请求根本不会走到 `notFound`
+ * ——顺带让「Allow 里列着请求方自己用的那个方法」这种自相矛盾的响应在结构上不成立。
+ */
+function otherMethodsFor(app: Hono, method: string, path: string): string[] {
+  const candidates = new Set<string>();
+  for (const r of app.routes) {
+    if (r.method !== "ALL" && r.method !== method) candidates.add(r.method);
+  }
+
+  const allow: string[] = [];
+  for (const candidate of candidates) {
+    const [entries] = app.router.match(candidate, path);
+    // `RouterRoute.method` 对中间件是 "ALL"，只有具体方法名才算「这条路由支持它」。
+    if (entries.some(([handler]) => handler[1].method === candidate)) allow.push(candidate);
+  }
+  return allow.sort();
+}
+
 export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
 
   // 没有这个兜底时，任何未捕获异常都会变成 Hono 默认的 `500 Internal Server Error`
   // 纯文本响应——四种协议的客户端 SDK 都会在解析 JSON 时二次报错，拿不到任何线索。
   // 只输出固定文案，不回显 err.message：异常信息里可能含上游 URL、栈帧等内部细节。
-  app.onError((err) => {
+  app.onError((err, c) => {
     if (err instanceof HTTPException) return err.getResponse();
+    // 🔴 **兜成 500 的那一刻必须留下线索**（2026-09-10 实测缺陷）：
+    // 从前这里只把异常吞掉换成一句固定文案，`/admin/api/events` 与容器日志里
+    // **一条记录都没有** ⇒ 线上真出 500 时，运维无从知道是哪个端点、哪种请求体触发的，
+    // 只能靠复现。实测 14 次 500 之后事件流里零记录。
+    //
+    // ⚠️ **仍然不回显 `err.message` 给客户端**（响应体一个字没变）：异常信息里可能带
+    // 上游 URL、路径、栈帧。线索走**事件与日志**这一侧，那是只有运维看得到的地方。
+    deps.logger?.log({
+      level: "error", event: "http.unhandled_error",
+      msg: "请求处理中抛出了未预期的异常，已兜成 500",
+      fields: {
+        method: c.req.method,
+        path: new URL(c.req.url).pathname,
+        error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      },
+    });
     return errorResponse(500, "internal_error", "网关内部错误");
+  });
+
+  /**
+   * 没有路由命中时的兜底。**两处一致性问题，2026-09-10 验收实测发现：**
+   *
+   * ① **从前的 404 是 Hono 默认的 `text/plain` 「404 Not Found」**，而同一个网关的
+   *    400 / 401 / 500 全是 JSON 信封。OpenAI 兼容客户端（openai-python 等）遇到 4xx
+   *    会先去 `response.json()` 拿错误体 ⇒ 拿到纯文本时抛的是**解析异常**，而不是一个
+   *    干净的 `NotFoundError`：用户看到的报错与「路径写错了」毫无关系。
+   *    现在它与其余错误同族，`{ error: { type, message } }` 一个形状。
+   * ② **方法不对也回 404**（`GET /v1/chat/completions` 就是最容易撞上的那一条），
+   *    排障会被带偏成「路由不存在 / 版本号不对 / 网关没起来」，而真相只是方法写错了。
+   *    现在回 **405 + `Allow`**（RFC 9110 §15.5.6 要求 405 必须带 `Allow`），
+   *    那一行头就是答案本身，不用再翻文档。
+   *
+   * ⚠️ **`notFound` 是整个 app 唯一一处兜底，不覆盖已经命中 handler 的 404**：
+   *`/admin` 那棵树里静态资源查表落空时是 `uiRoutes()` 自己返回的 404（纯文本 +
+   * 全套面板安全头），那条走不到这里——它服务的是浏览器而不是 SDK，见
+   * `src/ui/serve.ts` 里那段说明。
+   *
+   * `c.req.path` 而不是 `new URL(c.req.url).pathname`：前者**正是 Hono 刚才拿去匹配的
+   * 那个字符串**，探测必须与匹配用同一把尺子（上面 `app.onError` 里那处是纯日志字段，
+   * 不参与匹配，所以两边写法不同不是笔误）。
+   */
+  app.notFound((c) => {
+    const allow = otherMethodsFor(app, c.req.method, c.req.path);
+    if (allow.length > 0) {
+      return errorResponse(
+        405, "method_not_allowed", "这条路由不支持这个请求方法，见 Allow 响应头",
+        { allow: allow.join(", ") },
+      );
+    }
+    return errorResponse(404, "not_found", "没有这条路由");
   });
 
   // ★ 顺序敏感（已实测 Hono 4.13.2）：把 route 写在 use 之前，中间件会**静默失效
@@ -260,18 +349,31 @@ export function createApp(deps: AppDeps): Hono {
    * ⚠️ **必须写在 `await next()` 之后。** 已实测（Hono 4.13.2，两个方向都跑过，
    * 见 security-headers.test.ts 末尾那条把这个语义直接钉住的用例）：
    * 写在 next() **之前**时，`c.header()` 进的是 preparedHeaders，只对 **Hono 自己
-   * 构造**的响应（`c.json` / 默认 404）生效；handler 直接 `return new Response(...)`
-   * 的形态（流式转发、dispatcher 的错误响应、uiRoutes 的 200/301/304/404）
-   * **整条头会被静默丢掉**。写在之后则五种形态全部生效。
+   * 构造**的响应（`c.json` 这一族）生效；handler 直接 `return new Response(...)`
+   * 的形态（流式转发、dispatcher 的错误响应、uiRoutes 的 200/301/304/404、
+   * 上面那条兜底 `notFound` 的 404/405）**整条头会被静默丢掉**。
+   * 写在之后则全部形态生效。
+   *
+   * ⚠️ **括号里原来还列着「默认 404」当 Hono 自构造那一族的例子，那个对象已经没有了**：
+   * 上面挂了 `app.notFound(...)` 之后，兜底 404 走的是 `errorResponse()` 返回的裸
+   * `Response`，它从「不受这条变异影响」那一族**换到了受影响的那一族**——所以下面
+   * 那个实测数字跟着变了，见那一段。
    *
    * ⚠️ **这里原来写着「今天这条变异在本仓是不可观测的（唯一返回裸 Response 的
    * /admin 那棵树自己也设了 nosniff）」——那句现在是假的，两处都假**
    *（通读评审查实）：
-   * ① 把这一行**移动**到 `next()` 之前（不是新增一行）之后实测 **2 failed**：
+   * ① 把这一行**移动**到 `next()` 之前（不是新增一行）之后实测 **4 failed**
+   *    （这个数从 2 涨到 4 是因为上面新挂的 `notFound` 兜底，重新实测过；
+   *    能观测到这条变异的测试文件就是 `grep -rln "x-content-type-options" tests/`
+   *    的那四份，本次跑的正是它们）：
    *    `tests/contract/admin-events.test.ts` 的「下载端点是裸 Response，且**仍然**带全局 nosniff」
    *    （`/admin/api/events/download` 是裸 `Response`，且它自己**不**设 nosniff——
-   *    全靠这条全局的）与 `tests/contract/media.test.ts` 的
-   *    「上游 text/html 经这条真实路由出来时是 application/octet-stream，且 nosniff 还在」；
+   *    全靠这条全局的）、`tests/contract/media.test.ts` 的
+   *    「上游 text/html 经这条真实路由出来时是 application/octet-stream，且 nosniff 还在」，
+   *    以及 `tests/contract/security-headers.test.ts`「全应用级 nosniff」那组里
+   *    新加入的两格：兜底 404 那条 CASES 条目（tests/contract/security-headers.test.ts:32
+   *    ——那一格的用例名是 `${name} 带 nosniff` 拼出来的，没有字面量可锚，只能给行号）
+   *    与「未设 ADMIN_TOKEN 时 /admin 落到兜底 404，也带 nosniff」；
    * ② 「唯一返回裸 Response 的是 /admin 那棵树」本身也不成立——`routes/media.ts`
    *    在 `/v1` 上就返回裸 `Response`。
    * 所以这条变异**今天就是一个可观测的现存缺陷**，不是"留给下一个 handler 的陷阱"。

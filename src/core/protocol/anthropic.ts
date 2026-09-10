@@ -1,3 +1,6 @@
+import {
+  InvalidRequestError, requireArray, requireObject, requireString,
+} from "./request-shape.js";
 import { parseSseStream, sseEvent, toSseStream } from "./sse.js";
 
 export interface AnthropicContentPart { type: string; text?: string }
@@ -21,7 +24,7 @@ export interface AnthropicRequest {
  * 原实现是静默过滤掉非 text 块——客户端发了图片却得到一个只看了文字的回答，
  * 既无从察觉也无从排查。宁可明确报 400。
  */
-export class UnsupportedContentError extends Error {
+export class UnsupportedContentError extends InvalidRequestError {
   constructor(readonly blockType: string) {
     super(`不支持的内容块类型: ${blockType}（本网关仅支持 text）`);
     this.name = "UnsupportedContentError";
@@ -39,6 +42,11 @@ function flatten(content: string | AnthropicContentPart[]): string {
 }
 
 export function toInternalRequest(req: AnthropicRequest) {
+  // 形状校验放在最前面：下面 `req.messages` 的 for-of 与 `req.system` 的属性访问，
+  // 在请求体不是对象 / 漏写 messages 时会抛裸 TypeError ⇒ 被 onError 兜成 500。
+  const o = requireObject(req, "请求体");
+  requireString(o.model, "model");
+  requireArray(o.messages, "messages");
   const messages: { role: string; content: string }[] = [];
   const system = req.system === undefined ? "" : flatten(req.system);
   if (system) messages.push({ role: "system", content: system });
@@ -81,6 +89,10 @@ export function toAnthropicStream(upstream: ReadableStream<Uint8Array>, model: s
 
   async function* gen(): AsyncGenerator<string> {
     let finish = "stop";
+    // 上游把 usage 放在**末块**（实测：`{"choices":[{"delta":{}}],"usage":{...}}`，
+    // 不传 `stream_options.include_usage` 也照给）。攒在这里，收尾时如实报出去。
+    let inTok = 0;
+    let outTok = 0;
 
     // message_start 与 content_block_start 必须在读取上游之前产出，
     // 否则客户端要等到上游有数据（甚至上游结束）才能看到第一个字节，
@@ -90,6 +102,11 @@ export function toAnthropicStream(upstream: ReadableStream<Uint8Array>, model: s
       message: {
         id: messageId, type: "message", role: "assistant", model,
         content: [], stop_reason: null, stop_sequence: null,
+        // ⚠️ **这里的 0 是「此刻还不知道」，不是「永远是 0」。**
+        // `message_start` 必须在读上游之前就发出（否则这条流退化成「攒完再吐」，
+        // 见上面那段），而 usage 要等上游末块才到 —— 那时这个事件早发出去了。
+        // 真实值在收尾的 `message_delta.usage` 里给（真 Anthropic 也是在那里给
+        // 累计 output_tokens 的）。
         usage: { input_tokens: 0, output_tokens: 0 },
       },
     });
@@ -97,24 +114,50 @@ export function toAnthropicStream(upstream: ReadableStream<Uint8Array>, model: s
       type: "content_block_start", index: 0, content_block: { type: "text", text: "" },
     });
 
-    for await (const raw of parseSseStream(upstream, controller.signal)) {
-      let chunk: any;
-      try { chunk = JSON.parse(raw); } catch { continue; }
-      const choice = chunk.choices?.[0];
-      if (choice?.finish_reason) finish = choice.finish_reason;
-      const text = choice?.delta?.content;
-      if (typeof text === "string" && text.length > 0) {
-        yield sseEvent("content_block_delta", {
-          type: "content_block_delta", index: 0, delta: { type: "text_delta", text },
-        });
+    try {
+      for await (const raw of parseSseStream(upstream, controller.signal)) {
+        let chunk: any;
+        try { chunk = JSON.parse(raw); } catch { continue; }
+        const choice = chunk.choices?.[0];
+        if (choice?.finish_reason) finish = choice.finish_reason;
+        // usage 在末块，与 choices 同级。取到就记下，取不到保持 0。
+        const u = chunk.usage;
+        if (u && typeof u === "object") {
+          if (typeof u.prompt_tokens === "number") inTok = u.prompt_tokens;
+          if (typeof u.completion_tokens === "number") outTok = u.completion_tokens;
+        }
+        const text = choice?.delta?.content;
+        if (typeof text === "string" && text.length > 0) {
+          yield sseEvent("content_block_delta", {
+            type: "content_block_delta", index: 0, delta: { type: "text_delta", text },
+          });
+        }
       }
+    } catch (err) {
+      // 🔴 **上游中途断掉必须说出来**（2026-09-10 实测缺陷）。
+      //
+      // 从前这里没有 try：响应头一旦发出（`res.ok` 已为 true），上游中途报错/断流时
+      // 生成器**静默退出**，照常补一个 `message_stop` 并声称 `stop_reason: "end_turn"`
+      // ⇒ **客户端把「被截断」当成「正常说完」**。对做内容完整性校验的下游，
+      // 这是一种会悄悄产出错误结果的失败。真 Anthropic 在这一档有 `error` 事件。
+      //
+      // ⚠️ 只报「上游流中断」这一句，**不回显 `err.message`**：它可能带上游 URL 与栈帧。
+      yield sseEvent("error", {
+        type: "error",
+        error: { type: "api_error", message: "上游流式响应中断，本次回答不完整" },
+      });
+      return;
     }
 
     yield sseEvent("content_block_stop", { type: "content_block_stop", index: 0 });
     yield sseEvent("message_delta", {
       type: "message_delta",
       delta: { stop_reason: STOP_REASON[finish] ?? "end_turn", stop_sequence: null },
-      usage: { output_tokens: 0 },
+      // 🔴 **真实值，不是硬编码 0**（2026-09-10 实测缺陷）：从前这里写死 0，
+      // 而非流式路径证明这两个数网关明明拿得到 ⇒ 任何靠流式 usage 做计费/配额/统计的
+      // 下游读到的永远是 0。**0 比缺字段更坏 —— 它长得像一个真值。**
+      // 上游没给 usage 时仍是 0，那一档是「上游真没给」，与从前「拿得到也不给」不同。
+      usage: { input_tokens: inTok, output_tokens: outTok },
     });
     yield sseEvent("message_stop", { type: "message_stop" });
   }

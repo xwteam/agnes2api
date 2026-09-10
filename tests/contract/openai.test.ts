@@ -9,6 +9,12 @@ describe("GET /v1/models", () => {
     const body = await res.json() as { object: string; data: { id: string }[] };
     expect(body.object).toBe("list");
     expect(body.data.map((m) => m.id)).toContain("agnes-2.0-flash");
+    // ⚠️ **这两条是补的，不是装饰**：目录原来只列了上游 12 个模型里的 4 个，而做模型发现的
+    // 客户端（Cherry Studio / NextChat / OpenAI SDK 的 list-then-pick）只认这条端点交出来的清单
+    // ⇒ 漏掉的那 8 个对它们**结构性不存在**。`toContain` 一条 id 的写法漏 8 个照绿。
+    // 数字与那个 id 都是手写字面量，`MODELS` 一改这里就红（那正是要的：改清单的人必须在这里表态）。
+    expect(body.data.map((m) => m.id)).toContain("agnes-2.5-flash");
+    expect(body.data.length, "这条端点交出去的模型数变了").toBe(12);
   });
 });
 
@@ -29,7 +35,7 @@ describe("POST /v1/chat/completions", () => {
     const { app } = await makeApp([]);
     const res = await app.request("/v1/chat/completions", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "agnes-2.0-flash", messages: [] }),
+      body: JSON.stringify({ model: "agnes-2.0-flash", messages: [{ role: "user", content: "x" }] }),
     });
     expect(res.status).toBe(401);
   });
@@ -40,7 +46,7 @@ describe("POST /v1/chat/completions", () => {
     const res = await app.request("/v1/chat/completions", {
       method: "POST",
       headers: { authorization: "Bearer t", "content-type": "application/json" },
-      body: JSON.stringify({ model: "agnes-2.0-flash", stream: true, messages: [] }),
+      body: JSON.stringify({ model: "agnes-2.0-flash", stream: true, messages: [{ role: "user", content: "x" }] }),
     });
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     expect(await res.text()).toContain('"content":"a"');
@@ -56,7 +62,7 @@ describe("POST /v1/chat/completions", () => {
     const res = await app.request("/v1/chat/completions", {
       method: "POST",
       headers: { authorization: "Bearer t", "content-type": "application/json" },
-      body: JSON.stringify({ model: "agnes-2.0-flash", stream: true, messages: [] }),
+      body: JSON.stringify({ model: "agnes-2.0-flash", stream: true, messages: [{ role: "user", content: "x" }] }),
     });
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     expect(res.headers.get("cache-control")).toBe("no-transform");

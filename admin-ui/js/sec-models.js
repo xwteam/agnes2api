@@ -1,14 +1,19 @@
 /**
- * 模型板块（设计文档 §10.7 / §11）：两张卡 ——
+ * 模型板块（设计文档 §10.7 / §11）：三张卡 ——
  * ① **模型目录**（一张只读表：模型 ID / 类型（字段名 `modality`）/
  *    协议可用性矩阵（四个徽章）/ 端点），来自本仓写死的协议目录，零网络出站；
  * ② **上游模型**（一颗按钮 + 这次拉回来的清单与两个方向的差集），
- *    它拿池里的一把 key 去真打一次上游。
+ *    它拿池里的一把 key 去真打一次上游；
+ * ③ **模型测试**（一颗按钮 + 一张「模型 / 结果 / 延迟」表），
+ *    逐个模型向上游真发一次最小对话请求，串行跑。
  *
- * ⚠️⚠️ **② 不替换 ①，两者回答的是两个问题**：① 是「**本网关**支持什么、怎么调」，
- * ② 是「**上游账号**此刻有什么」。上游那份没有协议归属、没有端点，
- * 拿它替掉目录会让集成示例 / 调试台 / 这张表一起失去所有可照抄的调用方式。
- * 后端那一半的全文在 `src/core/admin/upstream-models.ts` 的文件头。
+ * ⚠️⚠️ **三张卡回答的是三个问题，谁也不替代谁**：① 是「**本网关**支持什么、怎么调」，
+ * ② 是「**上游账号**此刻有什么」，③ 是「**这一刻这个模型通不通、多快**」。
+ * 上游那份没有协议归属、没有端点，拿它替掉目录会让集成示例 / 调试台 / 这张表
+ * 一起失去所有可照抄的调用方式；而一个模型出现在 ② 的清单里、与它在 ③ 里真的能出话，
+ * 同样是两件事（前者是账号的权限表，后者是这一刻的链路）。
+ * 后端那两半的全文在 `src/core/admin/upstream-models.ts`
+ * 与 `src/http/admin/handlers/model-test.ts` 的文件头。
  *
  * 板块契约（设计文档 §9.3）：`{ init?, onShow?, onHide? }`，见 admin-ui/js/app.js
  * 的 showSection。**板块内不许监听 langchange**——框架层会 apply(document) 之后
@@ -136,11 +141,15 @@
 import { api } from "./api.js";
 import { t } from "./i18n.js";
 import { el, elI18n } from "./ui.js";
-import { fmtDash } from "./pure/format.mjs";
+import { fmtDash, fmtCount } from "./pure/format.mjs";
 import {
   protocolBadges, filterByProtocol, catalogProtocols, catalogModels, modalityLabelKey,
   upstreamModelsView, upstreamResultCode, upstreamTransportCode, upstreamLabelKey,
 } from "./pure/models.mjs";
+import {
+  testableModels, initTestRows, withRowActive, withRowResult, testProgress,
+  rowStatusLabelKey, modelTestResultCode, modelTestTransportCode,
+} from "./pure/model-test.mjs";
 
 let nodes = null;
 /**
@@ -195,6 +204,18 @@ let abort = null;
  * `upstream_error` 那一档有意义（上游回了几）。`view` 是窄化之后的清单。
  */
 let up = { state: "idle", code: null, status: null, view: null };
+/**
+ * 「模型测试」那张卡的状态。
+ *
+ * `rows === null` = **这一次进面板以来还没测过**，与「测过了、一行都没通」是两句
+ * 完全不同的话，所以它们不共用一档（与上面 `up` 的 `idle` / `ok` 是同一条纪律）。
+ * 每一行自己的三态（待测 / 进行中 / 回来了）在 `js/pure/model-test.mjs` 里。
+ *
+ * ⚠️ **`running` 是本板块这一侧的护栏，不是唯一那道**：后端那把 ProbeGuard
+ * 才是「这台网关」级别的闸（两个标签页、一条 curl 循环都绕得过这里，绕不过它）。
+ * 理由全文在 `src/http/admin/handlers/model-test.ts` 的文件头不同点 ③。
+ */
+let test = { rows: null, running: false };
 
 /** 一个内容块：标题 + 空的 body 容器。 */
 function block(titleKey) {
@@ -451,6 +472,145 @@ function loadUpstream() {
 }
 
 /**
+ * 「模型测试」那张卡。**它与上面两张并存**，理由见本文件头那三句。
+ *
+ * ⚠️ **没有自动加载，只有一颗按钮**（全局约束 14：按一下就打上游的按钮必须自带告知
+ * 与护栏）。挂在 `onShow()` 上的话，每切一次板块就把整份模型清单向上游打一遍。
+ * 告知写在卡的说明里（`models.test.desc`，它把「每一行都真的打一次上游」和
+ * 「为什么只测对话模型」两句都说了），护栏由后端那把与验活共用的 ProbeGuard 兜底，
+ * 面板这一侧再加两条：跑的时候按钮 `disabled` + 显示进度，以及 `runTests()` 开头的早退。
+ * ⚠️ **早退那条才是护栏**：`disabled` 在 `tests/ui/dom/fake-dom-parity.test.ts` 的
+ * `KNOWN_BLIND_SPOTS` 里挂着（「`.disabled` 挂错宿主」），DOM 用例观测不到它。
+ */
+function testCard() {
+  const { wrap, body } = block("models.test.title");
+  body.appendChild(elI18n("p", "models.test.desc", { class: "muted note" }));
+
+  // 目录读不出来时，连「有哪些模型可测」都不知道 ⇒ 画一根破折号 + 那句**看得见的**话。
+  // ⚠️ **不许在这一档画一颗按钮**：按下去只会发出零个请求，而屏幕上什么都不会变。
+  if (catalog === null) {
+    const p = el("p", { class: "models-test-idle" });
+    p.appendChild(el("span", { class: "models-up-dash" }, fmtDash(null)));
+    p.appendChild(elI18n("span", "models.unavailable", { class: "muted" }));
+    body.appendChild(p);
+    return wrap;
+  }
+
+  // 🔴 **哪些模型进这一轮由 `js/pure/model-test.mjs` 决定**（图片 / 视频一个都不进），
+  //    这里不自己判 `modality`——把那条硬边界抄回 DOM 代码就是硬规则 1 要防的事。
+  const ids = testableModels(catalog.models);
+  if (ids.length === 0) {
+    // ⚠️ 「目录里一个模型都没有」与「目录里没有能这么测的模型」是两句话：
+    //    图片与视频模型确实在目录里，只是这颗按钮不许碰它们。
+    body.appendChild(elI18n("p", "models.test.empty", { class: "muted note" }));
+    return wrap;
+  }
+
+  const prog = testProgress(test.rows);
+  // 跑的时候按钮上写的是进度，**不是一句静态的「正在测」**：几十秒里运维得看得见它在动。
+  // ⚠️ 进度那个 key 带 `{done}` / `{total}` 两个占位符 ⇒ 必须走 `t(key, params)`，
+  //    `elI18n` 内部调的是不带参数的 `t()`，用它会让屏幕上出现裸占位符。
+  const btn = el("button", { type: "button", class: "models-test-btn" },
+    test.running ? t("models.test.progress", { done: prog.done, total: prog.total }) : t("models.test.run"));
+  btn.disabled = test.running;
+  btn.addEventListener("click", () => { runTests(); });
+  body.appendChild(btn);
+
+  if (test.rows === null) {
+    // 一根破折号 + **一句看得见的话**（与上游那张卡的 idle 档同一条理由：
+    // 「还没测过」最容易被误读成「这些模型都不通」）。
+    const p = el("p", { class: "models-test-idle" });
+    p.appendChild(el("span", { class: "models-up-dash" }, fmtDash(null)));
+    p.appendChild(elI18n("span", "models.test.idle", { class: "muted" }));
+    body.appendChild(p);
+    return wrap;
+  }
+
+  const table = el("table");
+  table.appendChild(headRow([
+    "models.test.col.model", "models.test.col.result", "models.test.col.latency",
+  ]));
+  for (const row of test.rows) {
+    const tr = el("tr", { class: "models-test-row", "data-model": row.id, "data-state": row.state });
+    tr.appendChild(el("td", { class: "mono" }, row.id));
+
+    const result = el("td");
+    result.appendChild(el("span", { "data-test": "msg" }, t(rowStatusLabelKey(row))));
+    // 状态码**另起一句**，不拼进上面那句：`rowStatusLabelKey()` 交出来的每一个 key
+    // 都不许带 `{占位符}`，而「上游回了几」只在真收到过响应头的那几档有意义。
+    if (row.status !== null) {
+      result.appendChild(el("span", { class: "models-up-status", "data-test": "status" },
+        t("models.test.status", { status: row.status })));
+    }
+    tr.appendChild(result);
+
+    // ⚠️ **`fmtCount` 而不是自己写 `String(...)`**：它对 `null` 交出破折号，
+    //    而**绝不伪造 0**——0 毫秒是一句关于链路的话，「没有这个数」是关于我们自己的话。
+    tr.appendChild(el("td", { class: "mono" }, fmtCount(row.latencyMs)));
+    table.appendChild(tr);
+  }
+  body.appendChild(table);
+  return wrap;
+}
+
+/**
+ * 跑一轮逐模型测试。**只有那颗按钮会调它**，没有任何隐式入口。
+ *
+ * 🔴 **串行发，一条一条 `await`，上一条回来了才发下一条。**
+ * 并发会当场撞上游的边缘限流（约 2 次快请求就被挡），把整轮变成一片红，
+ * 而那片红说的是「被限流了」不是「模型不通」——运维读到的每一格都是假的。
+ * 后端那把常量 kind 的护栏是同一件事的另一半（见
+ * `src/http/admin/handlers/model-test.ts` 的文件头不同点 ③）。
+ *
+ * 🔴 **每一步都 `render()` 一次，不许等整轮跑完再一次性渲染。**
+ * 一轮几十秒，中途不重画的话运维在那几十秒里看不到任何进展，
+ * 与一个挂死的面板长得一模一样。
+ *
+ * ⚠️ **两类失败落在两个函数上**：200 的响应体走 `modelTestResultCode()`，
+ * 非 2xx（`js/api.js` 抛的 `ApiError`）走 `modelTestTransportCode()`。
+ * 混成一个的后果与上游那张卡逐字相同：护栏的 429 会被说成「上游出错了」，
+ * 而那一次**一个出站请求都没有发生过**。
+ *
+ * ⚠️ **代价，如实登记：这一轮没有中途退出的条件。**
+ * 会话在半路失效（`js/api.js` 对 401 会清凭据 + 回登录闸）时，剩下那几条**照样会
+ * 逐个发出去**，各自拿一个 401 回来、各画成「管理会话已失效」。
+ * 那几次都止步在管理接口这一段、**一个上游请求都不会发生**，所以它不烧上游额度；
+ * 但它确实多打了几次注定失败的往返。**今天不加那条早退**：它要一个新的判据
+ *（「哪几种 code 该中止整轮」），而那张表一旦写歪，就会把一条**该继续**的失败
+ *（比如某一个模型 404）也当成整轮的终止条件，静默少测掉后面全部模型。
+ */
+async function runTests() {
+  if (test.running) return;
+  if (catalog === null) return;
+  const ids = testableModels(catalog.models);
+  if (ids.length === 0) return;
+  test = { rows: initTestRows(ids), running: true };
+  render();
+  for (const id of ids) {
+    test = { rows: withRowActive(test.rows, id), running: true };
+    render();
+    let code = null;
+    let status = null;
+    let latencyMs = null;
+    try {
+      // ⚠️ **`encodeURIComponent`**：模型 id 来自一次网络往返，即便今天它由本仓写死
+      //    也不该被原样拼进 URL——那是一条「今天安全」而不是「不可能出事」的路径。
+      const resp = await api.post(`/models/${encodeURIComponent(id)}/test`);
+      code = modelTestResultCode(resp);
+      status = resp && typeof resp.status === "number" ? resp.status : null;
+      latencyMs = resp && typeof resp.latencyMs === "number" ? resp.latencyMs : null;
+    } catch (e) {
+      // 传输层失败这一档**没有 `status` 也没有 `latencyMs`**：这一次连响应体都没有。
+      code = modelTestTransportCode(e);
+    }
+    test = { rows: withRowResult(test.rows, id, code, status, latencyMs), running: true };
+    render();
+  }
+  test = { rows: test.rows, running: false };
+  render();
+}
+
+/**
  * 读不出来那一档。
  *
  * ⚠️⚠️ **这里绝不能退化成「渲染一张空表」**（全局约束 9 的同型）：一张空表会被读成
@@ -494,6 +654,10 @@ function render() {
   // 这条要真打一次上游。把它塞进 `catalog !== null` 那一支的后果是，一次目录读失败
   // 会连带把一个完全能用的功能藏起来，而屏幕上不会有任何东西说它去哪了。
   host.appendChild(upstreamCard());
+  // ⚠️ **同一条理由：目录读不出来时这张卡也照画。** 它自己那一档会说清
+  // 「目录读不出来 ⇒ 不知道有哪些模型可测」，而把整张卡藏起来的话，
+  // 屏幕上不会有任何东西说它去哪了。
+  host.appendChild(testCard());
 }
 
 /**

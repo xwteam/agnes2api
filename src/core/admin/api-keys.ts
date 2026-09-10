@@ -91,7 +91,31 @@ export interface ApiKeyRecord {
   /** 运维起的名字。允许重名——「编号冲突检查」是自增 id 的遗产，随 id 一起去掉。 */
   name: string;
   /**
-   * 明文的 SHA-256，64 位十六进制小写。**唯一的验证依据；明文一个字节都不存。**
+   * **签发时的明文，用于面板「点击显示明文 / 复制」。**
+   *
+   * 🔴🔴 **这是一次由用户拍板的、以安全性换便利性的取舍（2026-09-10）。**
+   * 本仓从第一天起的姿态是「我们签发、只用来验证别人的这一族**根本不需要**可逆存」，
+   * 那条论证在下面 `hash` 的注释里还完整留着 —— 它**在技术上依然成立**。
+   * 改成存明文之后：
+   * · **面板一旦被打穿，所有客户端密钥的明文一次性泄漏**（从前泄漏的只是摘要，
+   *   而 128 位均匀随机 + SHA-256 是不可反推的）；
+   * · 存储介质（KV / `store.json`）从「不含可直接使用的凭据」变成「含」，
+   *   备份与快照的处置级别要跟着升。
+   * 用户已被明确告知这两点并坚持要这个功能，**这里如实记下代价，不粉饰**。
+   *
+   * ⚠️ **可选字段，别当成必然存在**：升级之前签发的记录**没有**这一格 ——
+   * 它们的明文在当初那次 201 响应之后就不存在于世界上了，任何代码都变不出来。
+   * 面板对这一档要照实说「此密钥签发于升级前，无明文可显示」，
+   * **不许用空串或掩码冒充明文**。
+   */
+  secret?: string;
+  /**
+   * 明文的 SHA-256，64 位十六进制小写。**验证依据。**
+   *
+   * ⚠️ **上面新增 `secret` 之后，「明文一个字节都不存」这句话已经不成立了** ——
+   * 那句话曾经逐字写在这里，现在挪不动地删掉，免得它变成一句门禁看不见的假话。
+   * 保留 `hash` 而不是改成直接比明文：鉴权那条热路径一个字都不用动，
+   * 是这次改动里风险最低的做法。
    *
    * ── 与「凭据永远没有明文回显」那条既有姿态的对账 ─────────────────────────
    * `admin-ui/js/pure/settings.mjs` 的 `credentialView` 写着「永远没有明文，
@@ -392,6 +416,9 @@ export function isApiKeyRecord(v: unknown): v is ApiKeyRecord {
   if (typeof r.hash !== "string" || r.hash === "") return false;
   if (typeof r.hint !== "string") return false;
   if (r.disabled !== undefined && typeof r.disabled !== "boolean") return false;
+  // `secret` 是升级后才有的可选字段：**缺席合法**（升级前签发的记录没有它），
+  // 但出现时必须是非空字符串 —— 空串会被前端当成「有明文但是空的」渲染出去。
+  if (r.secret !== undefined && (typeof r.secret !== "string" || r.secret === "")) return false;
   if (typeof r.createdAt !== "number" || !Number.isFinite(r.createdAt)) return false;
   if (r.expiresAt !== null && (typeof r.expiresAt !== "number" || !Number.isFinite(r.expiresAt))) return false;
   return true;

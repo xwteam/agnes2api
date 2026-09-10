@@ -51,14 +51,22 @@ SDK마다 자기 기본 요청 헤더를 보냅니다. 게이트웨이는 아래
 
 ## 지원 모델
 
-### 네 모델이 각각 쓰이는 자리
+### 열두 모델이 각각 쓰이는 자리
 
 | 모델 | 쓰이는 곳 |
 |------|-----------|
 | `agnes-2.0-flash` | 대화 / 텍스트 계열 엔드포인트 |
+| `agnes-2.5-flash` | 대화 / 텍스트 계열 엔드포인트 |
+| `agnes-2.5-pro` | 대화 / 텍스트 계열 엔드포인트 |
+| `agnes-2.5-pro-alpha` | 대화 / 텍스트 계열 엔드포인트 |
+| `agnes-2.5-pro-beta` | 대화 / 텍스트 계열 엔드포인트 |
+| `agnes-3.0-flash` | 대화 / 텍스트 계열 엔드포인트 |
 | `agnes-image-2.1-flash` | `/v1/images/generations` |
 | `agnes-image-2.0-flash` | `/v1/images/generations` |
+| `agnes-image-2.5-flash` | `/v1/images/generations` |
 | `agnes-video-v2.0` | `/v1/videos` |
+| `agnes-video-2.5` | `/v1/videos` |
+| `agnes-video-2.5-flash` | `/v1/videos` |
 
 ### 모델 이름은 본문에 넣는가, 경로에 넣는가
 
@@ -67,7 +75,7 @@ OpenAI, OpenAI-Responses, Anthropic 세 프로토콜은 모델 이름을 요청 
 `GET /v1/models`는 OpenAI 모양의 모델 목록을, `GET /v1beta/models`는 같은 모델들을 Gemini 모양으로 돌려줍니다 — 한 경로가 두 형식을 동시에 돌려줄 수는 없으니 쓰는 SDK에 맞는 쪽을 고르세요.
 
 > [!NOTE]
-> 두 목록 모두 네 모델이 더도 덜도 없이 들어 있는 **고정 표**입니다. 지금 이 순간 풀에 쓸 수 있는 key가 있는지는 반영하지 않습니다. 그것을 알려면 관리 패널을 보거나, 그냥 요청을 한 번 보내 `503`이 오는지 보세요.
+> 두 목록 모두 열두 모델이 더도 덜도 없이 들어 있는 **고정 표**입니다. 지금 이 순간 풀에 쓸 수 있는 key가 있는지는 반영하지 않습니다. 그것을 알려면 관리 패널을 보거나, 그냥 요청을 한 번 보내 `503`이 오는지 보세요.
 
 ## OpenAI SDK
 

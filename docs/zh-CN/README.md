@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.2.2-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.3.0-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -48,7 +48,7 @@
 > 本项目与 Agnes AI 无任何关联或授权关系。它把 Agnes AI 服务封装成多协议兼容 API，这种用法可能不符合上游的服务条款；批量获取免费额度的做法与上游条款存在张力。使用风险自负，作者不对任何账号处罚或数据丢失承担责任。
 
 > [!TIP]
-> 上游由一池 Agnes API key 供给：对话走 `agnes-2.0-flash`，图片走 `agnes-image-2.1-flash` 与 `agnes-image-2.0-flash`，视频走 `agnes-video-v2.0`（建任务 + 轮询两段式）。key 池会自愈——上游 `429`/`402` 让对应 key 进入冷却，`401`/`403` 把它永久剔除，连续瞬时故障累计到 `MAX_STRIKES` 后让它进入长冷却（`COOLDOWN_STRIKE_MS`，默认 30 分钟）而不是剔除。到期自动恢复的那几类不需要人工干预。
+> 上游由一池 Agnes API key 供给：对话走 `agnes-2.0-flash` 等 6 个模型，图片走 `agnes-image-2.1-flash` 等 3 个，视频走 `agnes-video-v2.0` 等 3 个（建任务 + 轮询两段式），完整清单见 [API.md](API.md)。key 池会自愈——上游 `429`/`402` 让对应 key 进入冷却，`401`/`403` 把它永久剔除，连续瞬时故障累计到 `MAX_STRIKES` 后让它进入长冷却（`COOLDOWN_STRIKE_MS`，默认 30 分钟）而不是剔除。到期自动恢复的那几类不需要人工干预。
 
 > [!IMPORTANT]
 > **本网关是 fail-closed 的，不存在「不配口令也能用」这种状态。** `GATEWAY_TOKEN` 是必填项，缺失时网关**直接拒绝启动**（`src/core/config.ts` 抛「缺少 GATEWAY_TOKEN，网关无法启动」）；注意这条启动路径**只判存在、不判长度**，短口令照样能把网关拉起来，够不够强由你自己负责。管理面板默认**不存在**：未设置 `ADMIN_TOKEN` 时整棵 `/admin` 树根本不注册、访问得到 404；设了但短于 24 位（`ADMIN_TOKEN_MIN_LENGTH`）同样不启用，日志写「管理面板未启用（网关转发不受影响）」；设了且够长、却与 `GATEWAY_TOKEN` **相同**时，管理接口持续返回 503（网关转发照常）。`ADMIN_TOKEN` 只从环境变量读、不从存储读，面板无法自助轮换自己的钥匙。
@@ -57,13 +57,15 @@
 
 ## 📝 最近更新
 
+> 只列最近 5 版。**完整历史见 [CHANGELOG](../../CHANGELOG.md)** —— 这张表每发一版长一行，不设上限迟早顶穿排版棘轮。
+
 | 日期 | 更新内容 |
 |------|----------|
+| 2026-09-10 | v0.3.0 - 🚀 **面向使用者的大修**（含破坏性变更）：模型目录 4 → 12（从前漏掉唯一能对话的那个）、面板补上响应式（从前一个断点都没有）、凭据可在面板显示明文并复制、新增逐模型连通性测试，另修一批实测缺陷 |
 | 2026-09-09 | v0.2.2 - 🐛 **修好「立即补池」**（含破坏性变更）：这颗按钮以前回 202「已开始」之后整轮被 Cloudflare 静默取消，池子不动、历史不加行，还会把补池锁泄漏一刻钟、连定时轮一起挡掉。现在改成跑完再返回 200 并带上真实结果；手动轮有了自己那一族上限（单轮 1 把 / 等码 60 秒 / 锁 3 分钟） |
 | 2026-09-09 | v0.2.1 - 🧾 **发版后收口**：v0.2.0 的审计发现修在了 tag 之后，等于没发出去，这一版真正发出去 —— LICENSE 恢复成纯 MIT（那段重复的 Required Notice 让 GitHub 与 GHCR 都判成 NOASSERTION）、README 的「八个板块」改成实际的九个、一批「话说得比事实满」的订正，以及 26 处过期的 /health 示例 |
 | 2026-09-09 | v0.2.0 - 🔧 **注册机大修**（含破坏性变更）：两条邮箱通道从「主备自动降级」改成**二选一**，`registrar.primary` / `registrar.fallback` 合成 `registrar.channel`，存量配置读得懂、被丢掉的那条会点名说出来。补池不再把自己锁死 —— 撞上上游限流当场中止整轮、按档指数退避，并**记住哪些域名被上游屏蔽过**，下一轮不拿它们浪费额度。面板「测试连接」现在**真的验一次凭据**，不再只读域名列表（凭据粘错时它以前照样报绿）。另有一批「话说得比事实满」的订正，每一条都配了会红的判据 |
 | 2026-08-31 | v0.1.1 - 🧹 **整备版**：把内部研发编号从公开仓大面积清掉。面板资源那 470 处会随 /admin/js/*.js 发给每个打开面板的访客，是唯一真正外泄的一块；其余散在源码、测试、门禁脚本、出货文档与提交信息里。顺带修好「一条排版豁免被静静升级成泄漏豁免」和三格卡在默认超时边界上的测试。行为面没有改动 |
-| 2026-08-31 | v0.1.0 - 🎉 **首个版本**：四协议网关、注册机与管理面板一次成型，同一份代码同时跑 Cloudflare Worker 与 Node / Docker 两种运行时。四条入站协议共用同一套上游调度、同一个 key 池、同一份失败归因；注册机的两条临时邮箱通道严格平级；面板八个板块零构建；文档五语言各一份 |
 
 > 完整更新日志请查看 [CHANGELOG.md](../../CHANGELOG.md)。
 
@@ -206,7 +208,7 @@ docker compose logs -f
 ```bash
 # 健康检查（不鉴权）。Worker 形态换成你的 https://<name>.<sub>.workers.dev
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.2.2"}
+# {"status":"ok","version": "0.3.0"}
 
 # 查看可用模型
 curl http://localhost:8080/v1/models \
