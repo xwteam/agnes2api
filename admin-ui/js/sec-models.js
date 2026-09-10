@@ -149,6 +149,7 @@ import {
 import {
   testableModels, initTestRows, withRowActive, withRowResult, testProgress,
   rowStatusLabelKey, modelTestResultCode, modelTestTransportCode,
+  nextTestDelayMs, testRoundMinSec,
 } from "./pure/model-test.mjs";
 
 let nodes = null;
@@ -214,8 +215,24 @@ let up = { state: "idle", code: null, status: null, view: null };
  * ⚠️ **`running` 是本板块这一侧的护栏，不是唯一那道**：后端那把 ProbeGuard
  * 才是「这台网关」级别的闸（两个标签页、一条 curl 循环都绕得过这里，绕不过它）。
  * 理由全文在 `src/http/admin/handlers/model-test.ts` 的文件头不同点 ③。
+ *
+ * `waiting` = **这一刻正卡在两条之间的那段最小间隔上**（`running` 恒为 `true`）。
+ * ⚠️⚠️ **它不是一个可有可无的装饰位，它是这一轮加间隔的另一半**：一轮现在要二十几秒，
+ * 其中大半时间**一条请求都没在飞、一行状态都不会变**。屏幕上不说这件事的话，
+ * 那几秒与一个挂死的面板长得一模一样，而这张卡的进度文案本来就是照着
+ *「几十秒里运维得看得见它在动」写的。见 `testCard()` 里那颗按钮的文案。
  */
-let test = { rows: null, running: false };
+let test = { rows: null, running: false, waiting: false };
+
+/**
+ * 单纯等一段时间。**只有 `runTests()` 用它**。
+ *
+ * ⚠️ **它没有取消口**：整轮没有中途退出的条件（理由与代价在 `runTests()` 上方），
+ * 加一个取消口而不加那条早退，只会多出一条「等着的那一条被取消、但请求照样发」的路。
+ */
+function sleep(ms) {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
 
 /** 一个内容块：标题 + 空的 body 容器。 */
 function block(titleKey) {
@@ -506,12 +523,34 @@ function testCard() {
     return wrap;
   }
 
+  // 整轮**至少**要多少秒，先把话说在前面：一轮二十几秒，事先不说的话运维会
+  // 在第一段间隔里就以为它卡住了。⚠️ 那个数由 `js/pure/model-test.mjs` 算，
+  // 这里不自己乘一遍（硬规则 1），也不改口说成「大约」——它只算得出间隔那几段。
+  const etaSec = testRoundMinSec(ids.length);
+  if (etaSec > 0) {
+    body.appendChild(el("p", { class: "muted note", "data-test": "eta" },
+      t("models.test.eta", { n: ids.length, sec: etaSec })));
+  }
+
   const prog = testProgress(test.rows);
   // 跑的时候按钮上写的是进度，**不是一句静态的「正在测」**：几十秒里运维得看得见它在动。
   // ⚠️ 进度那个 key 带 `{done}` / `{total}` 两个占位符 ⇒ 必须走 `t(key, params)`，
   //    `elI18n` 内部调的是不带参数的 `t()`，用它会让屏幕上出现裸占位符。
-  const btn = el("button", { type: "button", class: "models-test-btn" },
-    test.running ? t("models.test.progress", { done: prog.done, total: prog.total }) : t("models.test.run"));
+  // ⚠️⚠️ **在等间隔的那几秒必须换一句话，不许还写着「正在逐个测」**：那几秒里
+  //    一条请求都没在飞、一行状态都不会变，只有这颗按钮上的字能说出「为什么慢」。
+  //    还写着「正在逐个测：1/6」的话，那句话在那几秒里是**假的**（没有任何一条在测），
+  //    而运维读到的是一个停在 1/6 不动的进度 —— 与挂死不可区分。
+  //    由 `tests/ui/dom/models-test-card.test.ts` 的
+  //   「等间隔的那几秒里按钮说的是「在等节流」，不是一句停住不动的「正在逐个测」」那一格钉着。
+  // ⚠️ 两个 key **各写成一次完整的 `t(key, params)`**，不写成 `t(三元, params)`：
+  //    `scripts/check-i18n.mjs` 第 ⑧ 条对三元里的 key 结构性地看不见，它会把这两个
+  //    带占位符的 key 判成「当成不带参数的标签用了」并把 CI 打红（本任务实测踩过）。
+  const label = () => {
+    if (!test.running) return t("models.test.run");
+    if (test.waiting) return t("models.test.progressWaiting", { done: prog.done, total: prog.total });
+    return t("models.test.progress", { done: prog.done, total: prog.total });
+  };
+  const btn = el("button", { type: "button", class: "models-test-btn" }, label());
   btn.disabled = test.running;
   btn.addEventListener("click", () => { runTests(); });
   body.appendChild(btn);
@@ -562,6 +601,18 @@ function testCard() {
  * 后端那把常量 kind 的护栏是同一件事的另一半（见
  * `src/http/admin/handlers/model-test.ts` 的文件头不同点 ③）。
  *
+ * 🔴🔴 **光「串行」不够，两条之间还必须真的隔满最小间隔**（v0.3.0 的缺陷，线上实测修正）。
+ * ⚠️ **上一版这里只写了「串行」，而串行 ≠ 有间隔**：上游实测 471~766ms 就回了，
+ * 于是整轮 824ms 跑完，6 行里 **5 行是 `probe_cooldown`** ——被我们**自己**后端那把
+ * 3 秒护栏挡的，而它的 kind 是常量、整轮互相挡。屏幕上是 1 行「通了」+ 5 行
+ *「被节流挡下了，请稍后再测」，而「稍后再测」是死路：再点一次连第一行都在冷却窗口里。
+ * ⇒ 这颗按钮永远回答不了它承诺回答的那个问题，**而那 5 行盖住的可能是真的不通的模型**。
+ * ⚠️ **别把后端那把护栏读成「整轮会自动被摊开」**：共用一个 kind 只会**截断**一轮，
+ * 摊开一轮**必须由发起方限速**——也就是下面那个 `nextTestDelayMs()`。
+ * 数值与参照点的选法全文在 `js/pure/model-test.mjs` 的 `TEST_MIN_INTERVAL_MS`
+ * 与 `nextTestDelayMs()` 上方（Key 池的验活按钮从第一天起就镜像着同一个数，
+ * `js/pure/keys-write.mjs` 的 `VERIFY_MIN_INTERVAL_MS`；v0.3.0 这张新卡漏了这一半）。
+ *
  * 🔴 **每一步都 `render()` 一次，不许等整轮跑完再一次性渲染。**
  * 一轮几十秒，中途不重画的话运维在那几十秒里看不到任何进展，
  * 与一个挂死的面板长得一模一样。
@@ -571,23 +622,39 @@ function testCard() {
  * 混成一个的后果与上游那张卡逐字相同：护栏的 429 会被说成「上游出错了」，
  * 而那一次**一个出站请求都没有发生过**。
  *
- * ⚠️ **代价，如实登记：这一轮没有中途退出的条件。**
+ * ⚠️ **代价，如实登记：这一轮没有中途退出的条件，而它现在要跑二十几秒。**
  * 会话在半路失效（`js/api.js` 对 401 会清凭据 + 回登录闸）时，剩下那几条**照样会
  * 逐个发出去**，各自拿一个 401 回来、各画成「管理会话已失效」。
  * 那几次都止步在管理接口这一段、**一个上游请求都不会发生**，所以它不烧上游额度；
- * 但它确实多打了几次注定失败的往返。**今天不加那条早退**：它要一个新的判据
- *（「哪几种 code 该中止整轮」），而那张表一旦写歪，就会把一条**该继续**的失败
- *（比如某一个模型 404）也当成整轮的终止条件，静默少测掉后面全部模型。
+ * 但它确实多打了几次注定失败的往返，**而加了间隔之后这几次还会被摊到二十几秒里**
+ *（切走板块同理：这一轮不会因为切板块而停）。
+ * **今天仍然不加那条早退**：它要一个新的判据（「哪几种 code 该中止整轮」），
+ * 而那张表一旦写歪，就会把一条**该继续**的失败（比如某一个模型 404）也当成整轮的
+ * 终止条件，静默少测掉后面全部模型 —— 那比多打几次 401 坏得多。
+ * 变的只是这条代价的**时长**，不是它的**性质**（请求条数一条都没多）。
  */
 async function runTests() {
   if (test.running) return;
   if (catalog === null) return;
   const ids = testableModels(catalog.models);
   if (ids.length === 0) return;
-  test = { rows: initTestRows(ids), running: true };
+  test = { rows: initTestRows(ids), running: true, waiting: false };
   render();
+  /** 上一条**落定**的时刻（拿到响应或拿到错误都算）；这一轮第一条是 `null`。 */
+  let prevSettledAt = null;
   for (const id of ids) {
-    test = { rows: withRowActive(test.rows, id), running: true };
+    // 🔴 **这段等待就是「整轮真的跑得完」那条不变量本身，删掉它整轮又会退回
+    //    「1 行结果 + 5 行自制的节流」。** 参照点为什么取「上一条落定」而不是
+    //    「上一条发起」，见 `js/pure/model-test.mjs` 的 `nextTestDelayMs()` 上方。
+    const delay = nextTestDelayMs(prevSettledAt, Date.now());
+    if (delay > 0) {
+      // 等之前先把「在等节流」画出来：这几秒里一行状态都不会变，
+      // 不说话就与挂死不可区分（见 `test.waiting` 上方那段）。
+      test = { rows: test.rows, running: true, waiting: true };
+      render();
+      await sleep(delay);
+    }
+    test = { rows: withRowActive(test.rows, id), running: true, waiting: false };
     render();
     let code = null;
     let status = null;
@@ -603,10 +670,14 @@ async function runTests() {
       // 传输层失败这一档**没有 `status` 也没有 `latencyMs`**：这一次连响应体都没有。
       code = modelTestTransportCode(e);
     }
-    test = { rows: withRowResult(test.rows, id, code, status, latencyMs), running: true };
+    // ⚠️ **成功与失败共用同一个参照点，别只在成功支记。** 一次传输层失败同样
+    //    在后端那把护栏上占过一次（走到 handler 才被 429 挡下的那一族除外，
+    //    而那一族记晚了只会等得更久、不会等得更短）。
+    prevSettledAt = Date.now();
+    test = { rows: withRowResult(test.rows, id, code, status, latencyMs), running: true, waiting: false };
     render();
   }
-  test = { rows: test.rows, running: false };
+  test = { rows: test.rows, running: false, waiting: false };
   render();
 }
 

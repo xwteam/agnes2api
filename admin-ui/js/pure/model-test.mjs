@@ -31,6 +31,83 @@ function obj(v) {
 }
 
 /**
+ * 整轮测试**两条之间的最小间隔**，前端这一侧的那一份。
+ *
+ * 🔴 **没有它的时候这颗按钮回答不了它承诺回答的那个问题。** 线上实测（v0.3.0）：
+ * 整轮 824ms 跑完，6 行里 5 行是 `probe_cooldown` ——
+ * 因为板块那一侧的循环里**一个间隔都没有**，而后端那把护栏的最小间隔是 3 秒、
+ * 且 `POST /admin/api/models/:id/test` 的 kind 是常量（整轮互相挡，
+ * 全文在 `src/http/admin/handlers/model-test.ts` 的文件头不同点 ③）。
+ * 于是屏幕上是 1 行「通了」+ 5 行「被节流挡下了，请稍后再测」，而「稍后再测」是死路：
+ * 再点一次连第一行都在冷却窗口里。**那 5 行盖住的可能是真的不通的模型。**
+ *
+ * ⚠️⚠️ **它不是护栏，别把它读成护栏**（与 `./keys-write.mjs` 的
+ * `VERIFY_MIN_INTERVAL_MS` 逐字同一条口径）：真正的护栏在后端
+ *（`src/http/admin/probe-guard.ts` 的 `PROBE_MIN_INTERVAL_MS`），两个标签页、
+ * 一条 curl 循环都绕得过这里、绕不过它。这个数只做一件事：**让整轮真的跑得完，
+ * 而不是把我们自己的节流当成一张连通性矩阵交给运维。**
+ *
+ * **三个数必须相等**，由 `tests/ui/model-test.test.ts` 的
+ * 「整轮的最小间隔与后端 PROBE_MIN_INTERVAL_MS、与 Key 池验活那一份是同一个数」
+ * 那一格钉着（它直接 import 那两个常量比对，任何一处漂了就红）。
+ * ⚠️ **为什么是各写一份而不是 import 一份**：`js/pure/` 下禁止 `import`
+ *（`scripts/build-ui.mjs` 规则 3 硬拦），所以镜像 + 比对判据是这一层唯一的做法。
+ */
+export const TEST_MIN_INTERVAL_MS = 3_000;
+
+/**
+ * 下一条该等多久才发。`prevSettledAt` = **上一条落定（拿到响应/拿到错误）的时刻**，
+ * 这一轮的第一条传 `null`。
+ *
+ * ⚠️⚠️ **参照点刻意取「上一条落定」而不是「上一条发起」，与 `./keys-write.mjs`
+ * 那一份不同，理由写清楚**：那一份管的是一颗按钮什么时候变回可点（度量两次**发起**
+ * 之间的距离，与上游快慢无关，边界上换回一次 429 也无所谓——那一次是用户手动点的）。
+ * 这一份要的是**更强的一条**：下一条**必须不被挡下**，否则那一行就落成一句
+ * 「被节流挡下了」的假结果，而整轮里没有第二次机会。
+ * 后端记的 `lastAt` 是它**收到**请求的时刻，它一定落在
+ * 「我们发起」与「我们收到响应」之间 ⇒ 拿**上一条落定的时刻**当参照点，
+ * 就是拿一个**一定不早于后端 `lastAt`** 的本地时刻起算，冷却必然先在后端那边到期。
+ * 换成「上一条发起」的话，两边各量 3 秒、中间差着一次网络往返，
+ * 到期时刻是一次抛硬币——**而那正是要一个凭空捏出来的余量常数或一条重试路径的地方**。
+ * 代价如实登记：整轮比理论下限慢了「每条一次往返」（实测上游 471~766ms，
+ * 6 个模型 ≈ 多 3 秒），换掉的是一个没人能核的余量数。
+ *
+ * ⚠️ **时钟回拨（`now` 比参照点还早）按「等满一整个间隔」处置**，不许把负的已等时长
+ * 当成「已经等够了」——那会在系统对时的那一刻把整轮打回零间隔，也就是这条缺陷本身。
+ *
+ * ⚠️⚠️ **如实登记一条盲点：「调用方传的是哪一个时刻」没有任何判据守着。**
+ * 本函数只看得见两个数；而 `tests/ui/dom/models-test-card.test.ts` 的
+ *「两条请求之间真的隔满了最小间隔 —— 零间隔时后面每一条都被我们自己的护栏挡成节流」
+ * 那一格所在的那一侧，`Date.now()` 被 `bootPanel({ now })` 钉死成一个常数 ⇒ 传「上一条落定」还是传
+ *「上一条发起」，在两层判据上**都不可观测**（本仓登记的第 5 种假阳性：
+ * 覆盖的状态让被测的选择不可观测）。上面那段话是这个选择今天唯一的载体，
+ * 改 `runTests()` 里那句 `prevSettledAt = Date.now()` 的位置之前先回来读它。
+ *
+ * @returns {number} 毫秒；`0` = 不用等，直接发。
+ */
+export function nextTestDelayMs(prevSettledAt, now) {
+  if (typeof prevSettledAt !== "number" || !Number.isFinite(prevSettledAt)) return 0;
+  if (typeof now !== "number" || !Number.isFinite(now)) return TEST_MIN_INTERVAL_MS;
+  const waited = now - prevSettledAt;
+  if (waited < 0) return TEST_MIN_INTERVAL_MS;
+  if (waited >= TEST_MIN_INTERVAL_MS) return 0;
+  return TEST_MIN_INTERVAL_MS - waited;
+}
+
+/**
+ * 整轮**至少**要多少秒，用来在卡的说明里先把话说在前面。
+ *
+ * ⚠️ **说「至少」不是含糊其辞，是这个数唯一诚实的说法**：它只算得出 n−1 段间隔
+ *（`n` 条请求之间有 n−1 段），而每一条自己还要花掉一次上游往返，那一段本模块量不到。
+ * 报一个「大约」的总数就要在前端猜上游有多快，猜出来的那个数在慢链路上是假话。
+ * ⚠️ **少于两个模型时是 0**：一条请求前后一段间隔都没有，写成一句「至少 3 秒」是假的。
+ */
+export function testRoundMinSec(count) {
+  if (typeof count !== "number" || !Number.isFinite(count) || count < 2) return 0;
+  return Math.round(((Math.floor(count) - 1) * TEST_MIN_INTERVAL_MS) / 1000);
+}
+
+/**
  * 这一轮该测哪些模型：**只有对话模型**，按目录里的顺序。
  *
  * 🔴 **图片 / 视频模型一个都不进来，这是硬边界不是保守**：测一次图片模型 =

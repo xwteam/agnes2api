@@ -172,7 +172,11 @@ const BLIND_SPOTS: ReadonlyArray<{ probe: string; why: string }> = [
  *   ⚠️ **随机数刻意没跟着进来**：签发一把新密钥要 `crypto.getRandomValues`，而
  *   「不可重放」正是这条硬约束存在的理由 ⇒ 铸币住在 `src/http/apikey-store.ts`
  *   （那一层本来就允许 IO），core 这一侧只有摘要这一处。
- * - 两处 `crypto.randomUUID`：协议层给响应造 id（`msg_…` / `resp_…`）。同上。
+ * - 三处 `crypto.randomUUID`：协议层给响应造 id（`msg_…` / `resp_…`）。同上。
+ *   ⚠️ **`responses.ts` 那一格 2026-09-10 从 ×1 变成 ×2**：补齐官方最小事件序列时，
+ *   除了 `response` 自己的 id，那条 message **输出项**也要有自己的 id
+ *   （官方事件里的 `item_id`，下游按它把增量归到某一项上，与 response id 不是一个东西）。
+ *   同一条依据、同一个 API，只是多造一个 id —— 不是新引入一种能力。
  * - `storage-health.ts` 与 `registrar/mint.ts` 的 `Date.now` / `Math.random`：都是
  *   **可注入参数的默认值**（`now: () => number = () => Date.now()`、
  *   `deps.rand ?? Math.random`），测试里全都传了假的进去。
@@ -185,7 +189,7 @@ const CORE_IO_EXEMPTIONS: readonly string[] = [
   "src/core/dispatcher.ts :: setTimeout ×1",
   "src/core/keypool-repo.ts :: crypto.subtle ×1",
   "src/core/protocol/anthropic.ts :: crypto.randomUUID ×1",
-  "src/core/protocol/responses.ts :: crypto.randomUUID ×1",
+  "src/core/protocol/responses.ts :: crypto.randomUUID ×2",
   "src/core/registrar/mint.ts :: Math.random ×1",
   "src/core/storage-health.ts :: Date.now ×1",
 ];

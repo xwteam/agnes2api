@@ -7,11 +7,12 @@
  * **协议 id、协议展示名、端点的方法与路径，本模块一个都不认识**——它们全部以参数
  * 的形式从那份响应里进来，本文件里连一个协议 id 的字面量都没有。
  *
- * ⚠️ **面板显示的可用性与 `geminiModelList()` 交出去的 `supportedGenerationMethods`
- * 不一致，这是刻意的、不是缺陷**：后者对全部 12 个模型一律声明支持 generateContent，
- * 包括那个视频模型（`src/core/protocol/gemini.ts`）。
- * 那条对外契约的不实已另行登记、本期不动它，协议目录按**真实可用性**填。理由全文在
- * `src/core/admin/protocol-catalog.ts` 的文件头，**别把这处差异当成目录算错了**。
+ * ⚠️ **那处差异 2026-09-10 消掉了，这一段随之改写**：从前 `geminiModelList()`
+ * 对全部 12 个模型一律声明支持 generateContent，包括三个视频模型
+ *（`src/core/protocol/gemini.ts`），当时这里写的是「刻意的、不是缺陷，
+ * 那条对外契约的不实已另行登记」——**那是一笔待办债，不是裁定**。
+ * 现在那条端点直接读协议目录的形态，两边说同一句话。理由全文在
+ * `src/core/admin/protocol-catalog.ts` 的文件头。
  *
  * ⚠️ 顺带记一条本文件自己踩过的坑：**上面那一段原来把那条对外端点写成了行内代码
  *（反引号紧挨着路径），而 `tests/ui/no-hardcoded-endpoints.test.ts` 的

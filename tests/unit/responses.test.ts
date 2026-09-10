@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { toInternalRequest, toResponsesResponse, toResponsesStream } from "../../src/core/protocol/responses.js";
+import { UnsupportedContentError, UnsupportedParamError } from "../../src/core/protocol/request-shape.js";
 
 describe("toInternalRequest", () => {
   it("字符串形态的 input 转成单条 user 消息", () => {
@@ -40,6 +41,52 @@ describe("toInternalRequest", () => {
   it("透传 stream 标志", () => {
     const r = toInternalRequest({ model: "m", input: "x", stream: true });
     expect(r.stream).toBe(true);
+  });
+
+  /**
+   * **防住的真实故障**：客户端发了一张图，网关回 200、回一段读起来很正常的答案，
+   * 而那段答案是模型在**完全没看到图**的前提下编出来的 —— 从前 `flat()` 是
+   * `c.map((p) => p.text ?? "").join("")`，`input_image` / `input_file` 直接蒸发，
+   * 没有错误码、没有告警、没有事件。这正是本仓在 `anthropic.ts` 那条上判定为
+   * 「不可接受、宁可 400」的失败形态，当时那句承诺只覆盖了三条协议里的一条。
+   *
+   * ⚠️ **`output_text` 必须放行**：把上一轮回答原样喂回去时用的就是它，
+   * 拿它当「非文本块」拒掉会把一条最常见的多轮用法判成 400
+   * （本文件「数组形态的 input 逐条转换并压平 content」那一格正用着它）。
+   *
+   * **变红条件（实测）**：把 `src/core/protocol/responses.ts` 的 `flat()` 改回
+   * `c.map((p) => p.text ?? "").join("")` ⇒ 三格全部不抛，本格红。
+   */
+  it("遇到无法映射的内容块时抛错，而不是静默丢掉一张图再照常回 200", () => {
+    for (const type of ["input_image", "input_file", "refusal"]) {
+      expect(() => toInternalRequest({
+        model: "m",
+        input: [{ role: "user", content: [{ type: "input_text", text: "这图什么颜色?" }, { type }] }],
+      }), `${type} 被静默吃掉了`).toThrow(UnsupportedContentError);
+    }
+  });
+
+  /**
+   * 采样参数两格透传、工具两格 400。三档裁定在
+   * `src/core/protocol/request-shape.ts` 的 `UnsupportedParamError` 上方。
+   *
+   * **变红条件（实测）**：把返回值里的 `temperature: req.temperature, top_p: req.top_p`
+   * 删掉 ⇒ 前两条断言红；把那两行 `throw` 删掉 ⇒ 后面那圈红。
+   */
+  it("temperature / top_p 透传，tools / tool_choice 一律 400 点名", () => {
+    const r = toInternalRequest({ model: "m", input: "x", temperature: 0, top_p: 0.1 });
+    expect(r.temperature, "temperature 没带上 —— 客户端设了 0 却拿到随机输出").toBe(0);
+    expect(r.top_p).toBe(0.1);
+
+    for (const [field, extra] of [
+      ["tools", { tools: [{ type: "function", name: "f" }] }],
+      ["tool_choice", { tool_choice: "required" }],
+    ] as const) {
+      let err: unknown = null;
+      try { toInternalRequest({ model: "m", input: "x", ...extra }); } catch (e) { err = e; }
+      expect(err, `${field} 被静默吃掉了`).toBeInstanceOf(UnsupportedParamError);
+      expect(String((err as Error).message)).toContain(field);
+    }
   });
 });
 
@@ -83,7 +130,25 @@ function upstreamSse(chunks: unknown[]): ReadableStream<Uint8Array> {
 }
 
 describe("toResponsesStream", () => {
-  it("产出完整且顺序正确的事件序列", async () => {
+  /**
+   * ⚠️⚠️ **这一格的期望值 2026-09-10 整个改写了，因为它钉的是一个已被推翻的形态。**
+   *
+   * 上一版写死的是「`created` + 若干 `delta` + `completed`」三类事件 —— 那**正是**
+   * 让官方 SDK 崩掉的那个形态，而它被写成了本仓的正确性判据。**绿得最危险的一种**：
+   * 判据钉住了缺陷本身，任何人把它修好都会先看到这一格变红。
+   *
+   * 定案证据（本地回放，零上游请求）：把网关真吐出去的字节喂给官方 `openai` 3.11.0，
+   * `client.responses.stream(...)` 在 `openai/lib/streaming/responses/_responses.py` 的
+   * `output = snapshot.output[event.output_index]` 抛 **IndexError: list index out of range**，
+   * 栈里全是 openai 包的文件；同一份字节走裸 `create(stream=True)` 逐事件迭代却是通的。
+   * ⇒ 缺的是 SDK 累积器用来建出 `snapshot.output[0]` / `output.content[0]` 的那两条
+   * `*.added` 事件，以及收尾那三条 `*.done`。修好之后同一份回放：
+   * `get_final_response()` 通过，16 个事件，`output_text` 完整、`output[0].status == "completed"`。
+   *
+   * 期望值逐条手写、**顺序即契约**：`*.added` 排在任何一条 delta 之前是 SDK 累积器的
+   * 硬前提，把顺序打乱这一格照样红。
+   */
+  it("产出官方最小事件序列：两条 added 打头、三条 done 收尾 —— 少任何一条官方 SDK 的 stream() 都崩在自己内部", async () => {
     const upstream = upstreamSse([
       { id: "c1", choices: [{ delta: { role: "assistant" } }] },
       { id: "c1", choices: [{ delta: { content: "你" } }] },
@@ -95,10 +160,108 @@ describe("toResponsesStream", () => {
 
     expect(events).toEqual([
       "response.created",
+      "response.output_item.added",
+      "response.content_part.added",
       "response.output_text.delta",
       "response.output_text.delta",
+      "response.output_text.done",
+      "response.content_part.done",
+      "response.output_item.done",
       "response.completed",
     ]);
+  });
+
+  /**
+   * **官方 SDK 累积器的三条前置条件，逐条钉住。**
+   *
+   * ⚠️ **它是那条 IndexError 的可执行复述，不是它的替身**：真证据是本地回放
+   *（见上一格那段），而回放要 python + `openai` 包，进不了本仓的 CI。这一格把
+   * `openai/lib/streaming/responses/_responses.py` 的 `accumulate_event()` /
+   * `handle_event()` **真的会读的那几格**写成断言，让 CI 里也有一张网：
+   * · 每条 `output_text.delta` 之前必须已经出现过同 `output_index` 的
+   *   `output_item.added`（SDK 靠它 append 出 `snapshot.output[i]`）与同
+   *   `content_index` 的 `content_part.added`（靠它 append 出 `output.content[j]`）；
+   * · delta 与 done 两档必须带 `item_id` / `sequence_number` / `logprobs`
+   *   —— SDK 的 `handle_event()` 直接读这三个属性去重建它自己的事件对象，
+   *   缺一个就是一次 AttributeError。
+   *
+   * **变红条件（实测）**：把 `src/core/protocol/responses.ts` 里那两条 `*.added`
+   * 中的任意一条删掉；或者把 delta 事件上的 `item_id` / `sequence_number` /
+   * `logprobs` 任意一格删掉。
+   */
+  it("每条 output_text.delta 之前都已建出它要落进去的那一格，且带齐 SDK 会读的三个字段", async () => {
+    const upstream = upstreamSse([
+      { id: "c1", choices: [{ delta: { content: "甲" } }] },
+      { id: "c1", choices: [{ delta: { content: "乙" } }] },
+    ]);
+    const text = await new Response(toResponsesStream(upstream, "m")).text();
+    const payloads = [...text.matchAll(/^data: (.+)$/gm)].map((m) => JSON.parse(m[1]!));
+
+    // SDK 那两份表：出现过的 output_index / content_index。
+    const items = new Set<number>();
+    const parts = new Set<number>();
+    let seen = 0;
+    for (const p of payloads) {
+      if (p.type === "response.output_item.added") items.add(p.output_index);
+      if (p.type === "response.content_part.added") parts.add(p.content_index);
+      if (p.type !== "response.output_text.delta" && p.type !== "response.output_text.done") continue;
+      seen++;
+      expect(items.has(p.output_index), `${p.type} 落在一个还没被 output_item.added 建出来的 output_index 上`).toBe(true);
+      expect(parts.has(p.content_index), `${p.type} 落在一个还没被 content_part.added 建出来的 content_index 上`).toBe(true);
+      expect(typeof p.item_id, `${p.type} 少了 item_id`).toBe("string");
+      expect(typeof p.sequence_number, `${p.type} 少了 sequence_number`).toBe("number");
+      expect(Array.isArray(p.logprobs), `${p.type} 少了 logprobs`).toBe(true);
+    }
+    // 前置条件：真的检查过东西（两条 delta + 一条 done）。
+    expect(seen, "一条 delta/done 都没检查到 —— 上面那圈断言是空转的").toBe(3);
+  });
+
+  /**
+   * **防住的真实故障**：即便有人绕开 `stream()` helper 用裸迭代，
+   * `response.completed.response` 里没有 `output` 就意味着「最终对象」拿不到
+   * ——`get_final_response()` 返回的正是它，下游读到的是空。
+   *
+   * **变红条件（实测）**：把 `src/core/protocol/responses.ts` 的 `response.completed`
+   * 那个负载里的 `output: [...]` 删掉。
+   */
+  it("response.completed 里带着完整的 output —— 那就是 get_final_response() 返回的那个对象", async () => {
+    const upstream = upstreamSse([
+      { id: "c1", choices: [{ delta: { content: "甲" } }] },
+      { id: "c1", choices: [{ delta: { content: "乙" } }] },
+    ]);
+    const text = await new Response(toResponsesStream(upstream, "m")).text();
+    const last = JSON.parse([...text.matchAll(/^data: (.+)$/gm)].map((m) => m[1]!).at(-1)!);
+    expect(last.type).toBe("response.completed");
+    expect(last.response.output, "completed 里一个 output 都没有").toHaveLength(1);
+    expect(last.response.output[0].content[0], "最终对象里的正文与流里的增量对不上").toMatchObject({
+      type: "output_text", text: "甲乙",
+    });
+  });
+
+  /**
+   * **防住的真实故障**：响应头一旦发出，上游中途断流时生成器静默退出、照常补一个
+   * `response.completed` 并声称 `status: "completed"` ⇒ **客户端把「被截断」当成
+   * 「正常说完」**。`anthropic.ts` 在 v0.3.0 已经为这一条补了 `error` 事件，
+   * 而同一类缺陷当时在 responses / gemini 两条上原样留着。
+   *
+   * ⚠️ **两条断言缺一不可**：只断言「发了 failed」的话，一个既发 failed 又照发
+   * completed 的实现照样绿 —— 而官方 SDK 见到 completed 就认为这一轮成功了。
+   *
+   * **变红条件（实测）**：把那圈 `try/catch` 去掉（让异常一路冒出去）⇒ 流里
+   * 既没有 `response.failed`、`completed` 也不会出现，第一条断言红。
+   */
+  it("上游中途断流：发 response.failed 且绝不再发 completed —— 别让断流退化成一次静默的正常收尾", async () => {
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(
+          `data: ${JSON.stringify({ id: "c1", choices: [{ delta: { content: "半" } }] })}\n\n`));
+        c.error(new Error("上游炸了"));
+      },
+    });
+    const text = await new Response(toResponsesStream(upstream, "m")).text();
+    const events = [...text.matchAll(/^event: (.+)$/gm)].map((m) => m[1]);
+    expect(events, "上游断了，网关一句都没说").toContain("response.failed");
+    expect(events, "断流之后还照发 completed —— 客户端会把残缺当完整收下").not.toContain("response.completed");
   });
 
   it("文本增量按顺序出现在 response.output_text.delta 里", async () => {
@@ -118,14 +281,31 @@ describe("toResponsesStream", () => {
       { id: "c1", choices: [{ delta: {}, finish_reason: "stop" }] },
     ]);
     const text = await new Response(toResponsesStream(upstream, "m")).text();
-    const events = [...text.matchAll(/^event: (.+)$/gm)].map((m) => m[1]);
-    expect(events).toEqual(["response.created", "response.output_text.delta", "response.completed"]);
+    // 只数 delta：整串事件的构成由上面那一格钉着，这一格只管「空增量不产事件」。
+    const deltas = [...text.matchAll(/^event: (.+)$/gm)]
+      .map((m) => m[1]).filter((e) => e === "response.output_text.delta");
+    expect(deltas).toHaveLength(1);
   });
 
-  it("上游一个增量都没有时仍产出 created 与 completed", async () => {
+  /**
+   * 上游一个增量都没有时事件序列**照样发全**：官方 SDK 的累积器不认「空流」这一档，
+   * 少发 `*.added` 一样会崩（同一条 IndexError），少发 `*.done` 则
+   * `get_final_response()` 拿不到最终对象。
+   */
+  it("上游一个增量都没有时仍产出完整序列，正文是空串", async () => {
     const text = await new Response(toResponsesStream(upstreamSse([]), "m")).text();
     const events = [...text.matchAll(/^event: (.+)$/gm)].map((m) => m[1]);
-    expect(events).toEqual(["response.created", "response.completed"]);
+    expect(events).toEqual([
+      "response.created",
+      "response.output_item.added",
+      "response.content_part.added",
+      "response.output_text.done",
+      "response.content_part.done",
+      "response.output_item.done",
+      "response.completed",
+    ]);
+    const last = JSON.parse([...text.matchAll(/^data: (.+)$/gm)].map((m) => m[1]!).at(-1)!);
+    expect(last.response.output[0].content[0].text).toBe("");
   });
 
   it("首个事件在上游尚未结束时就已产出（真流式）", async () => {

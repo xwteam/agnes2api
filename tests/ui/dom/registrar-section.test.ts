@@ -480,6 +480,54 @@ describe("立即补池：设计 §10.2 第 3 条护栏（确认弹窗必须明�
       "「今天的额度用完了」这种四秒读不完的信息没有挂手动关闭按钮",
     ).toBe(1);
   });
+
+  /**
+   * 🔴 **承重格：退避窗口里点一下，不许弹「这一轮跑完了：铸出 0 把，尝试 0 次」。**
+   *
+   * 后端那一轮是真话（`tendOnce` 在退避闸上早退，`attempted:0` +
+   * `failures:[upstream_backoff]`，`wireTend` 一律包成 `kind:"done"`），
+   * **缺陷只存在于面板那句话里** —— 而「跑完了但没产出」与「根本没跑起来」的排查
+   * 方向正好相反：前者去查上游，后者要看的是本网关自己的退避状态。
+   *
+   * ⚠️ **这一格必须走 DOM，不能只有 `tests/ui/registrar.test.ts` 那几格 pure 用例**：
+   * 缺陷当时长在**板块文件的接线**上（`startTend` 压根没调过任何取值判据），
+   * 只测 pure 模块的话，接线漏接了照样全绿。
+   *
+   * 变异实测（2026-09-10）：把 `sec-registrar.js` 的 `startTend` 改回
+   *「`o.kind === "done"` 就直接 `t("reg.tend.done", …)`」⇒ 本格第一条断言当场红。
+   */
+  it("退避窗口里点一下：说「一次尝试都没开始」+ 退避那条归因，不说「跑完了，0/0」", async () => {
+    const h = await openRegistrar((url) => (url === "/admin/api/registrar/tend"
+      ? ok({
+        outcome: {
+          kind: "done", capped: null,
+          result: {
+            skipped: false, available: 18, attempted: 0, minted: 0, mintedByChannel: {},
+            failures: [{ reason: "upstream_backoff", channel: "yyds" }],
+            at: NOW, primaryChannel: "yyds", durationMs: 1,
+          },
+        },
+      })
+      : ok(statusBody())));
+    const section = h.section("registrar");
+    byI18n(section, "reg.tend.button")!.click();
+    await settle();
+    byI18n(h.dom.document.body, "common.confirm")!.click();
+    await settle();
+
+    const host = h.dom.byId("toast-host");
+    expect(
+      host.textContent,
+      "「根本没跑起来」被报成了「跑完了但没产出」—— 排查方向正好相反",
+    ).not.toContain("这一轮跑完了：铸出");
+    expect(host.textContent).toContain("这一轮一次尝试都没开始");
+    expect(
+      host.textContent,
+      "只说了「没跑」、没说为什么没跑，运维学不到任何东西",
+    ).toContain(I18N["reg.fail.upstream_backoff"]!["zh-CN"]!);
+    // 这条读漏了会让人在冷却里反复点，必须留在屏幕上。
+    expect(host.querySelectorAll(".toast-close").length).toBe(1);
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────

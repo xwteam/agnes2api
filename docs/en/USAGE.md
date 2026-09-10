@@ -224,7 +224,9 @@ for chunk in client.models.generate_content_stream(
 
 Each event in the streamed response is a `data:` line with no `event:` field, and there is
 **no `[DONE]` sentinel** — the stream simply closes when it ends. If you write your own parser
-for this protocol, do not sit waiting for a terminator that never arrives.
+for this protocol, do not sit waiting for a `[DONE]` that never arrives. **The "finished" signal
+is the last frame**: empty `parts`, carrying `finishReason` (`STOP` / `MAX_TOKENS` / `SAFETY`)
+and `usageMetadata`.
 
 ### The base_url does not include `/v1beta`
 
@@ -275,8 +277,14 @@ curl -N -X POST http://localhost:8080/v1/responses \
 | Event | When it shows up |
 |-------|------------------|
 | `response.created` | The first frame of the stream |
+| `response.output_item.added` | Creates the message output item |
+| `response.content_part.added` | Creates the text content part |
 | `response.output_text.delta` | One or more; every content increment arrives here |
-| `response.completed` | The last frame of the stream |
+| `response.output_text.done` | Text is finished; carries the complete text |
+| `response.content_part.done` | That content part is finished |
+| `response.output_item.done` | That output item is finished |
+| `response.completed` | The last frame of the stream; `response.output[]` is the final object |
+| `response.failed` | Only when the upstream stream breaks; no `response.completed` follows it |
 
 ## Images and video
 

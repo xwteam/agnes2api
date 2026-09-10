@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.3.0-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.3.1-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -61,11 +61,11 @@
 
 | 日期 | 更新内容 |
 |------|----------|
+| 2026-09-10 | v0.3.1 - 🔍 **审计收口**：v0.3.0 之后跑了一轮六轴审计，36 条发现经对抗式复核确认 20 条，本版全修。含两条 critical —— 安全文档把「没有 reveal 端点」当成保证写着（而那正是 v0.3.0 加的），以及 `/v1/responses` 流式让官方 SDK 崩在自己内部 |
 | 2026-09-10 | v0.3.0 - 🚀 **面向使用者的大修**（含破坏性变更）：模型目录 4 → 12（从前漏掉唯一能对话的那个）、面板补上响应式（从前一个断点都没有）、凭据可在面板显示明文并复制、新增逐模型连通性测试，另修一批实测缺陷 |
 | 2026-09-09 | v0.2.2 - 🐛 **修好「立即补池」**（含破坏性变更）：这颗按钮以前回 202「已开始」之后整轮被 Cloudflare 静默取消，池子不动、历史不加行，还会把补池锁泄漏一刻钟、连定时轮一起挡掉。现在改成跑完再返回 200 并带上真实结果；手动轮有了自己那一族上限（单轮 1 把 / 等码 60 秒 / 锁 3 分钟） |
 | 2026-09-09 | v0.2.1 - 🧾 **发版后收口**：v0.2.0 的审计发现修在了 tag 之后，等于没发出去，这一版真正发出去 —— LICENSE 恢复成纯 MIT（那段重复的 Required Notice 让 GitHub 与 GHCR 都判成 NOASSERTION）、README 的「八个板块」改成实际的九个、一批「话说得比事实满」的订正，以及 26 处过期的 /health 示例 |
 | 2026-09-09 | v0.2.0 - 🔧 **注册机大修**（含破坏性变更）：两条邮箱通道从「主备自动降级」改成**二选一**，`registrar.primary` / `registrar.fallback` 合成 `registrar.channel`，存量配置读得懂、被丢掉的那条会点名说出来。补池不再把自己锁死 —— 撞上上游限流当场中止整轮、按档指数退避，并**记住哪些域名被上游屏蔽过**，下一轮不拿它们浪费额度。面板「测试连接」现在**真的验一次凭据**，不再只读域名列表（凭据粘错时它以前照样报绿）。另有一批「话说得比事实满」的订正，每一条都配了会红的判据 |
-| 2026-08-31 | v0.1.1 - 🧹 **整备版**：把内部研发编号从公开仓大面积清掉。面板资源那 470 处会随 /admin/js/*.js 发给每个打开面板的访客，是唯一真正外泄的一块；其余散在源码、测试、门禁脚本、出货文档与提交信息里。顺带修好「一条排版豁免被静静升级成泄漏豁免」和三格卡在默认超时边界上的测试。行为面没有改动 |
 
 > 完整更新日志请查看 [CHANGELOG.md](../../CHANGELOG.md)。
 
@@ -208,7 +208,7 @@ docker compose logs -f
 ```bash
 # 健康检查（不鉴权）。Worker 形态换成你的 https://<name>.<sub>.workers.dev
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.3.0"}
+# {"status":"ok","version": "0.3.1"}
 
 # 查看可用模型
 curl http://localhost:8080/v1/models \

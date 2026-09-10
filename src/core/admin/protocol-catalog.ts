@@ -14,13 +14,15 @@
  * 与浏览器。这条由 `tests/unit/source-guards.test.ts`「硬约束：src/core 零 IO」
  * 的全目录扫描守着。
  *
- * ⚠️ **它与 `geminiModelList()` 存在一处已知分歧，是刻意的**：
- * `src/core/protocol/gemini.ts:73-81` 对全部 12 个模型一律声明
+ * ⚠️ **那条「已知分歧」2026-09-10 消掉了，这一段随之改写**：
+ * 从前 `geminiModelList()` 对全部 12 个模型一律声明
  * `supportedGenerationMethods: ["generateContent","streamGenerateContent"]`，
- * **包括那个视频模型**——而视频真正的路径是 `POST /v1/videos` + `GET /v1/videos/:id`
- * 的两段式（见下面的 `MEDIA_ENDPOINTS`）。本目录按**真实可用性**填，
- * 那条对外契约的不实登记另行处置（同一轮里既改契约又建面板，出问题时分不清是哪一半）。
- * 别把面板与 `/v1beta/models` 的差异当成本目录算错了。
+ * **包括三个图片模型与三个视频模型**——而它们真正的路径是
+ * `POST /v1/images/generations` 与 `POST /v1/videos` + `GET /v1/videos/:id` 的两段式
+ *（见下面的 `MEDIA_ENDPOINTS`）。当时这里写的是「本目录按真实可用性填，
+ * 那条对外契约的不实登记另行处置」——**那是一笔明写的待办债，不是「契约就该这么说」的裁定**。
+ * 现在 `src/core/protocol/gemini.ts` 的 `geminiModelList()` 直接读本目录的 `modality`，
+ * 两边不再有第二份答案。面板与 `/v1beta/models` 从此说同一句话。
  */
 export type ProtocolId = "openai" | "anthropic" | "responses" | "gemini";
 export type Modality = "chat" | "image" | "video";

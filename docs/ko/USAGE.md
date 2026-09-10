@@ -194,7 +194,7 @@ for chunk in client.models.generate_content_stream(
     print(chunk.text or "", end="")
 ```
 
-스트리밍 응답의 각 이벤트는 `event:` 필드가 없는 `data:` 줄이고, **`[DONE]` 종료 표시가 없습니다** — 스트림은 끝나면 그냥 닫힙니다. 이 프로토콜용 파서를 직접 쓴다면 영영 오지 않을 종료 프레임을 기다리지 마세요.
+스트리밍 응답의 각 이벤트는 `event:` 필드가 없는 `data:` 줄이고, **`[DONE]` 종료 표시가 없습니다** — 스트림은 끝나면 그냥 닫힙니다. 이 프로토콜용 파서를 직접 쓴다면 영영 오지 않을 `[DONE]`을 기다리지 마세요. **"다 말했다"의 신호는 마지막 프레임**입니다: `parts`가 비어 있고 `finishReason`(`STOP` / `MAX_TOKENS` / `SAFETY`)과 `usageMetadata`를 담습니다.
 
 ### base_url에 `/v1beta`를 붙이지 않는다
 
@@ -240,8 +240,14 @@ curl -N -X POST http://localhost:8080/v1/responses \
 | 이벤트 | 언제 나오는가 |
 |--------|---------------|
 | `response.created` | 스트림의 첫 프레임 |
+| `response.output_item.added` | message 출력 항목을 만듭니다 |
+| `response.content_part.added` | 본문 콘텐츠 파트를 만듭니다 |
 | `response.output_text.delta` | 하나 이상. 본문 증분은 전부 여기로 옵니다 |
-| `response.completed` | 스트림의 마지막 프레임 |
+| `response.output_text.done` | 본문 마무리. 완전한 텍스트를 담습니다 |
+| `response.content_part.done` | 그 콘텐츠 파트의 마무리 |
+| `response.output_item.done` | 그 출력 항목의 마무리 |
+| `response.completed` | 스트림의 마지막 프레임. `response.output[]`가 최종 객체 |
+| `response.failed` | 업스트림 스트림이 중간에 끊길 때만. 이후 `response.completed`는 없습니다 |
 
 ## 이미지와 비디오
 

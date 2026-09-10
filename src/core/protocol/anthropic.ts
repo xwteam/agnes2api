@@ -1,7 +1,17 @@
 import {
-  InvalidRequestError, requireArray, requireObject, requireString,
+  requireArray, requireObject, requireString,
+  UnsupportedContentError, UnsupportedParamError,
 } from "./request-shape.js";
 import { parseSseStream, sseEvent, toSseStream } from "./sse.js";
+
+/**
+ * ⚠️ **`UnsupportedContentError` 的定义 2026-09-10 挪去了 `./request-shape.js`**
+ * （gemini / responses 两条协议现在也用它，理由写在那边它自己上方）。
+ * 这里原样再导出一次，让 `src/http/routes/anthropic.ts` 与
+ * `tests/unit/anthropic.test.ts` 的既有 import 路径继续成立 —— 类的身份只有一个，
+ * `instanceof` 在两条 import 路径上是同一个答案。
+ */
+export { UnsupportedContentError };
 
 export interface AnthropicContentPart { type: string; text?: string }
 export interface AnthropicRequest {
@@ -15,20 +25,15 @@ export interface AnthropicRequest {
   system?: string | AnthropicContentPart[];
   stream?: boolean;
   messages: { role: string; content: string | AnthropicContentPart[] }[];
-}
-
-/**
- * 请求里出现了本网关无法映射到 OpenAI chat 格式的内容块。
- *
- * 内部规范格式只有纯文本，`image` / `tool_use` / `tool_result` 等块无法无损转换。
- * 原实现是静默过滤掉非 text 块——客户端发了图片却得到一个只看了文字的回答，
- * 既无从察觉也无从排查。宁可明确报 400。
- */
-export class UnsupportedContentError extends InvalidRequestError {
-  constructor(readonly blockType: string) {
-    super(`不支持的内容块类型: ${blockType}（本网关仅支持 text）`);
-    this.name = "UnsupportedContentError";
-  }
+  /** 见 `UnsupportedParamError` 上方那张三档表：①透传。 */
+  temperature?: number;
+  top_p?: number;
+  stop_sequences?: string[];
+  /** ②上游没有这一格。 */
+  top_k?: number;
+  /** ③传得过去但响应转换不了。 */
+  tools?: unknown;
+  tool_choice?: unknown;
 }
 
 function flatten(content: string | AnthropicContentPart[]): string {
@@ -47,17 +52,40 @@ export function toInternalRequest(req: AnthropicRequest) {
   const o = requireObject(req, "请求体");
   requireString(o.model, "model");
   requireArray(o.messages, "messages");
+  // 生成参数三档，表与理由在 `UnsupportedParamError` 上方（三条协议共用那一张）。
+  // **判在压平之前**：这一档是纯字段判断，比逐块压平便宜，也让报文只说一件事。
+  if (o.tools !== undefined) throw new UnsupportedParamError("tools", "本网关不转换工具调用");
+  if (o.tool_choice !== undefined) throw new UnsupportedParamError("tool_choice", "本网关不转换工具调用");
+  if (o.top_k !== undefined) throw new UnsupportedParamError("top_k", "上游的 OpenAI 兼容请求体里没有这一格");
   const messages: { role: string; content: string }[] = [];
   const system = req.system === undefined ? "" : flatten(req.system);
   if (system) messages.push({ role: "system", content: system });
   for (const m of req.messages) messages.push({ role: m.role, content: flatten(m.content) });
-  return { model: req.model, messages, max_tokens: req.max_tokens, stream: req.stream === true };
+  return {
+    model: req.model, messages, max_tokens: req.max_tokens, stream: req.stream === true,
+    temperature: req.temperature, top_p: req.top_p, stop: req.stop_sequences,
+  };
 }
 
+/**
+ * 上游 `finish_reason` → Anthropic `stop_reason`。
+ *
+ * ⚠️ **`content_filter` 映到 `refusal`，不是 `stop_sequence`**（2026-09-10 实测缺陷）：
+ * 从前这张表把它映成 `stop_sequence`，而本文件两条出口（非流式那条与流式
+ * `message_delta` 那条）都把配套的 `stop_sequence` 字段写死成 `null`
+ * ——**一个说「命中了停止词」、一个说「没有停止词」，自相矛盾**。
+ * 后果是上游内容过滤/拒答被下游读成「正常因停止词结束」：不触发重试、不触发告警，
+ * 做审计的下游把「被过滤」记成「正常结束」。
+ * ⚠️ 而且经本网关「真的命中停止词」这件事**从来就发生不了**——`stop_sequences`
+ * 直到本轮才开始往上游转（见上面那三档），在那之前一格都不转。
+ * `refusal` 是 Anthropic 现行取值里语义对得上的那一档，不带任何配套字段，
+ * 不存在「没有合适值只好凑一个」的辩护。同批适配器 `gemini.ts` 的 `FINISH`
+ * 早就把同一个上游值正确映成了 `SAFETY`，可作参照。
+ */
 const STOP_REASON: Record<string, string> = {
   stop: "end_turn",
   length: "max_tokens",
-  content_filter: "stop_sequence",
+  content_filter: "refusal",
 };
 
 export function toAnthropicResponse(openai: any, model: string) {

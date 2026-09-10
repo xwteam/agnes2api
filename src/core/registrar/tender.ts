@@ -338,7 +338,6 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   }
 
   const rounds = Math.min(need, deps.config.mintBatch);
-  const roundStartedAt = startedAt;
   const failures: TendResult["failures"] = [];
   const mintedByChannel: Record<string, number> = {};
   let attempted = 0;
@@ -407,6 +406,40 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
       });
     }
   }
+
+  /**
+   * 轮级墙钟预算的**起点**。
+   *
+   * 🔴🔴 **它从 `startedAt` 挪到了这里（准备阶段之后），这是一条修复不是整理。**
+   *
+   * 预算判据（下面 `elapsedMs + delayMs + worstAttemptMs > roundBudgetMs`）问的是
+   * **「还开不开得起一次完整的尝试」**。而从 `startedAt` 算起时，`elapsedMs` 里装着
+   * 上面那一整段准备（`repo.all()`、`loadBackoff()`、`loadDomainLedger()`、
+   * `provider.listDomains()`），其中 `listDomains` 单请求就允许
+   * `REGISTRAR_REQUEST_TIMEOUT_MS`（15 秒，见 `./types.ts`；挂起超时后只记一条 warn、
+   * `allDomains=[]`，照样往下走到这里）。
+   *
+   * 手动轮的预算是 `MANUAL_ROUND_BUDGET_MS`（70 秒），而三格压顶之后
+   * `worstAttemptMs` 恒 = 60 秒 ⇒ 留给 `elapsedMs` 的只有 10 秒
+   * ⇒ **上游邮箱服务挂起一次（15 秒 > 10 秒），i=0 那次判定就不通过**，
+   * 整颗按钮变成 `MANUAL_MAX_DOMAIN_ATTEMPTS` 那段专门要防的「诚实空转」，
+   * 而且空转时打出的是 `registrar.round_budget_impossible`：
+   * 「这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS」——**一条确切而错误的处置**
+   *（何况手动轮已经把 `codeTimeoutMs` 用 `Math.min` 压到 60 秒，调它根本不起作用）。
+   * 人恰恰是在池子出问题时才会去点那颗按钮，也就是最可能撞上这一格的时刻。
+   *
+   * ⇒ 起点挪到准备之后，i=0 时 `elapsedMs ≈ 0`，判据退化成
+   * `worstAttemptMs > roundBudgetMs` ——**一个纯配置量**。那条 error 因此重新变回真话：
+   * 走到它的时候确实只有配置能解释，`attempted === 0` 那一支的措辞不必再分岔。
+   *
+   * ⚠️ **代价明写（不是零成本）**：准备阶段不再计入预算 ⇒ Cron 那一轮的实际墙钟
+   * 最坏比 `WORKER_ROUND_BUDGET_MS`（780 秒）多出一段准备时间。**这一段本来就是
+   * 那份预算留了余量的东西**：`./types.ts` 里 `WORKER_ROUND_BUDGET_MS` 的 JSDoc 逐字
+   * 写着「注册链上那几个 `REGISTRAR_REQUEST_TIMEOUT_MS` 仍然没算进去，这 120 秒就是
+   * 留给这些尾巴的」，而准备阶段最多再要一个 15 秒的 `listDomains` 加两次存储读，
+   * 780 + 余量仍在 `WORKER_CRON_WALL_CLOCK_MS`（900 秒）之内。
+   */
+  const roundStartedAt = deps.now();
 
   /** 撞上限流时要写回去的退避状态；`null` = 清掉；`undefined` = 这一轮不动它。 */
   let backoffToSave: BackoffState | null | undefined = undefined;

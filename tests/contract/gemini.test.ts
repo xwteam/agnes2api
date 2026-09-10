@@ -16,6 +16,30 @@ describe("GET /v1beta/models", () => {
     expect(body.models.length, "这条端点交出去的模型数变了").toBe(12);
   });
 
+  /**
+   * **防住的真实故障**：`supportedGenerationMethods` 是 Gemini 协议里机器可读的
+   * 「这个模型能干什么」，而从前这条端点对**视频模型**也声明支持 `generateContent`
+   * ⇒ 照它渲染下拉框的客户端把 `agnes-video-2.5` 列成可对话模型，选中发一次对话
+   * 就白烧一把 key + 一次全网关共享的限流额度。
+   *
+   * ⚠️ 这一格观测的是**端点真吐出去的 JSON**；「按形态分档」那条判据本身由
+   * `tests/unit/gemini.test.ts`
+   * 「只有对话模型声明支持那两个方法 —— 图片/视频模型给空数组，别把它们列成可对话模型」
+   * 钉着。两条模型名是手写字面量。
+   *
+   * **变红条件（实测）**：把 `geminiModelList()` 里那个按 `modality` 分档的三元
+   * 改回无条件给两条方法。
+   */
+  it("视频模型不声明支持 generateContent —— 那是一句会让客户端白烧一把 key 的假话", async () => {
+    const { app } = await makeApp([]);
+    const res = await app.request("/v1beta/models", { headers: { authorization: "Bearer t" } });
+    const body = await res.json() as { models: { name: string; supportedGenerationMethods: string[] }[] };
+    const of = (n: string) => body.models.find((m) => m.name === n)!.supportedGenerationMethods;
+    expect(of("models/agnes-video-2.5"), "视频模型被声明成可对话").toEqual([]);
+    // 反向控制（同格）：对话那一档没有被一起打掉。
+    expect(of("models/agnes-2.0-flash")).toEqual(["generateContent", "streamGenerateContent"]);
+  });
+
   it("缺少凭据时 401", async () => {
     const { app } = await makeApp([]);
     const res = await app.request("/v1beta/models");
@@ -106,6 +130,73 @@ describe("POST /v1beta/models/{model}:generateContent", () => {
     });
     expect(res.status).toBe(401);
   });
+
+  /**
+   * 🔴 **方法名白名单：`:countTokens` 这类请求一次上游都不许发。**
+   *
+   * **防住的真实故障（线上真打复现过）**：从前方法名一个字都不校验，
+   * `:countTokens` / `:embedContent` / 拼错的 `:generatecontent` 统统落进
+   * generateContent 那个 handler。实测带合法 `contents` 打 `:countTokens` 返回
+   * **200**，正文是一段真回答、`candidatesTokenCount: 43` —— 一次「数一下 token」
+   * 被当成完整对话烧掉了：白烧池中一把 key + 一次**全网关共享**的 CF 限流额度，
+   * 而客户端解析 `totalTokens` 拿到的是 undefined。`google-genai` 的
+   * `client.models.count_tokens()` 走的正是这条路。
+   *
+   * ⚠️⚠️ **`fetcher.sentBodies` 那条断言才是这一格的重点**：只断言状态码的话，
+   * 一个「先转发上游、再把响应丢掉返回 404」的实现照样绿，而账单和限流照收。
+   *
+   * **变红条件（实测）**：把 `src/http/routes/gemini.ts` 里那道白名单去掉。
+   */
+  it.each(["countTokens", "embedContent", "generatecontent"])(
+    ":%s 一律 404，且一次上游请求都不发 —— 白烧的是全网关共享的限流额度",
+    async (method) => {
+      const upstream = { id: "c1", choices: [{ index: 0, finish_reason: "stop", message: { content: "ok" } }] };
+      const { app, fetcher } = await makeApp([{ status: 200, body: JSON.stringify(upstream) }]);
+      const res = await app.request(`/v1beta/models/agnes-2.0-flash:${method}`, {
+        method: "POST",
+        headers: { authorization: "Bearer t", "content-type": "application/json" },
+        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }),
+      });
+      expect(res.status, `:${method} 没有被挡住`).toBe(404);
+      expect(fetcher.sentBodies, `:${method} 真的打了一次上游`).toHaveLength(0);
+      // 报文要点名本网关只实现哪两个方法，客户端才知道该怎么改。
+      const body = await res.json() as { error: { message: string } };
+      expect(body.error.message).toContain("generateContent");
+    },
+  );
+
+  /**
+   * **防住的真实故障（线上真打复现过）**：带一张 8×8 红色 PNG 的 `inline_data`
+   * 打 `:generateContent` 回 **HTTP 200**，正文逐字是 `NO_IMAGE_RECEIVED` ——
+   * 模型在完全没看到图的前提下编出来的答案，没有错误码、没有告警、没有事件。
+   * `docs/zh-CN/API.md` 里那条「非 text 块一律 400」的承诺从前只覆盖 Anthropic。
+   *
+   * ⚠️ **`sentBodies` 那条断言同样是重点**：本地判得出来的畸形请求不许送上游。
+   *
+   * **变红条件（实测）**：把 `src/core/protocol/gemini.ts` 的 `partsText` 改回
+   * `parts.map((p) => p.text ?? "").join("")`。
+   */
+  it("带图片的请求一律 400，不许静默丢掉图再回一段 200 的答案", async () => {
+    const upstream = { id: "c1", choices: [{ index: 0, finish_reason: "stop", message: { content: "ok" } }] };
+    const { app, fetcher } = await makeApp([{ status: 200, body: JSON.stringify(upstream) }]);
+    const res = await app.request("/v1beta/models/agnes-2.0-flash:generateContent", {
+      method: "POST",
+      headers: { authorization: "Bearer t", "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          role: "user",
+          parts: [
+            { text: "这图什么颜色?" },
+            { inline_data: { mime_type: "image/png", data: "iVBORw0KGgo=" } },
+          ],
+        }],
+      }),
+    });
+    expect(res.status, "带图的请求拿到了 200 —— 那段答案是模型没看到图编的").toBe(400);
+    expect(fetcher.sentBodies, "本地判得出来的请求还是送去了上游").toHaveLength(0);
+    const body = await res.json() as { error: { message: string } };
+    expect(body.error.message).toContain("inline_data");
+  });
 });
 
 describe("POST /v1beta/models/{model}:streamGenerateContent", () => {
@@ -125,9 +216,14 @@ describe("POST /v1beta/models/{model}:streamGenerateContent", () => {
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     const text = await res.text();
     const payloads = [...text.matchAll(/^data: (.+)$/gm)].map((m) => JSON.parse(m[1]!));
-    expect(payloads).toHaveLength(2);
+    // 2 条正文 + 1 条终帧（`finishReason` + `usageMetadata`，形状由
+    // `tests/unit/gemini.test.ts`
+    // 「终帧带 finishReason 与 usageMetadata —— 少了它们，被截断的半截回答与完整回答逐字节不可区分」
+    // 钉着；这里只确认这条真路由上它也在）。
+    expect(payloads).toHaveLength(3);
     expect(payloads[0].candidates[0].content).toEqual({ role: "model", parts: [{ text: "你" }] });
     expect(payloads[1].candidates[0].content).toEqual({ role: "model", parts: [{ text: "好" }] });
+    expect(payloads[2].candidates[0].finishReason).toBe("STOP");
   });
 
   it("请求体里 stream 标志按 :streamGenerateContent 方法名推导，不依赖客户端传入字段", async () => {

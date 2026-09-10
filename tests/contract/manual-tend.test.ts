@@ -658,8 +658,21 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
    * 绿色恰恰是它最危险的样子。
    *
    * **观测点换成 `registrar.manual_round_capped` 事件**（旧那条
-   * `round_budget_impossible` 已经不可能触发了：三格压顶之后
+   * `round_budget_impossible` 在手动这一轮上打不出来：三格压顶之后
    * `worstAttemptMs` 恒 = 60 秒 < 70 秒预算，这正是压顶的目的之一）。
+   *
+   * ⚠️⚠️ **上一版这段括号里写的是「已经不可能触发了」，那句话当时是假的。**
+   * 预算判据是 `elapsedMs + delayMs + worstAttemptMs > roundBudgetMs`，而 `elapsedMs`
+   * 当时从**整轮开头**算起 ⇒ 留给准备阶段的只有 10 秒，而准备阶段里的
+   * `provider.listDomains()` 单请求就允许 `REGISTRAR_REQUEST_TIMEOUT_MS`（15 秒）
+   * ⇒ 上游邮箱服务挂起一次，那条 error 就会打出来、按钮诚实空转，
+   * 还甩锅给一个手动轮根本不看的 `CODE_TIMEOUT_MS`。
+   * 括号里那句话**现在**才成立：`src/core/registrar/tender.ts` 已经把预算判据的起点
+   * 挪到准备阶段之后（全文在那里 `roundStartedAt` 的上方），判据因此退化成
+   * 纯配置量 `worstAttemptMs > roundBudgetMs`。**正面钉住它的是**
+   * `tests/unit/registrar/tender.test.ts` 的
+   *「准备阶段（列域名）慢了 15 秒时，手动那一轮照样开得起来 —— 不许诚实空转、更不许甩锅给 CODE_TIMEOUT_MS」
+   * ——这一格自己不测那件事，别把这段散文当成判据。
    *
    * 三条变异各自拦得住：
    * · **不压顶**（`Math.min` 那三行删掉）⇒ 这条事件不出现 ⇒ 红；

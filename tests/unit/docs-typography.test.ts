@@ -1281,8 +1281,13 @@ const P5_OUTSIDE_ALERT: ReadonlyArray<readonly [path: string, no: number, why: s
   //    **红是对的**：它逼人回来确认「那句括注还在原处、还是同一句」，而不是让登记
   //    悄悄指到别的行上去。改的时候要照着报文里的新行号去核对那一行的内容。
   //    ⚠️ 这两轮都是照这条做的：两处的**原文一个字都没动**，只是被上面新增的段落往下推。
-  [join("docs", "en", "DEPLOY.md"), 973, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
-  [join("docs", "ja", "DEPLOY.md"), 956, "同上，ja 那一份的对应括注"],
+  //    运维闭环那一轮（`DATA_DIR` 与卷挂载绑死的警示、Docker「验证」里补的两条基础命令、
+  //    「更新」里补的 `IMAGE_TAG` 与 `docker compose restart` 反例）全部落在这两处**之上**，
+  //    973 → 1009、956 → 993。照上面那条做法核对过：两处的原文仍逐字相同（`sed -n '1009p'`
+  //    打出来的还是 `(we have only verified this on Node; … is unverified)` 那一句），
+  //    只是又被往下推了一次。
+  [join("docs", "en", "DEPLOY.md"), 1009, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
+  [join("docs", "ja", "DEPLOY.md"), 993, "同上，ja 那一份的对应括注"],
 ];
 
 describe("R20/P5 风险语义句必须住在 alert 块里（内容锚定的下限，不可灌水）", () => {

@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { toInternalRequest, toGeminiResponse, toGeminiStream, geminiModelList } from "../../src/core/protocol/gemini.js";
+import { UnsupportedContentError, UnsupportedParamError } from "../../src/core/protocol/request-shape.js";
+import { MODEL_CATALOG } from "../../src/core/admin/protocol-catalog.js";
 
 describe("toInternalRequest", () => {
   it("把 contents 的 parts 压平为 messages", () => {
@@ -36,6 +38,82 @@ describe("toInternalRequest", () => {
     expect(r.max_tokens).toBe(256);
     expect(r.temperature).toBe(0.5);
   });
+
+  /**
+   * **防住的真实故障**：客户端设了 `stopSequences`，模型不在该停的地方停；
+   * 设了 `topP`，输出照旧 —— 从前这两格一个都不往上游带，而网关回 200、
+   * 一句提示都没有。三档裁定在 `src/core/protocol/request-shape.ts` 的
+   * `UnsupportedParamError` 上方。
+   *
+   * **变红条件（实测）**：把 `src/core/protocol/gemini.ts` 返回值里的
+   * `top_p: cfg?.topP, stop: cfg?.stopSequences` 删掉。
+   */
+  it("generationConfig.topP / stopSequences 映射成上游同名同义的那两格", () => {
+    const r = toInternalRequest({
+      contents: [{ role: "user", parts: [{ text: "x" }] }],
+      generationConfig: { topP: 0.1, stopSequences: ["END"] },
+    }, "m");
+    expect(r.top_p, "topP 没带上").toBe(0.1);
+    expect(r.stop, "stopSequences 没带上 —— 模型不会在该停的地方停").toEqual(["END"]);
+  });
+
+  /**
+   * 转达不了的那几格一律 400 点名。`candidateCount: 1` 与不传逐字等价 ⇒ 放行，
+   * 为它报 400 只是在骂人；`> 1` 才是转换不了的那一档（`toGeminiResponse` 只转
+   * 第一条 candidate，客户端付了 n 份的钱只拿得到一份）。
+   *
+   * **变红条件（实测）**：把那几行 `throw` 删掉 ⇒ 前面那圈红；
+   * 把 `!== 1` 那个条件改成「只要有 candidateCount 就抛」⇒ 最后那条反向控制红。
+   */
+  it("tools / toolConfig / topK / candidateCount>1 一律 400 点名，candidateCount:1 放行", () => {
+    const base = { contents: [{ role: "user", parts: [{ text: "x" }] }] };
+    for (const [field, extra] of [
+      ["tools", { tools: [{ functionDeclarations: [] }] }],
+      ["toolConfig", { toolConfig: {} }],
+      ["topK", { generationConfig: { topK: 40 } }],
+      ["candidateCount", { generationConfig: { candidateCount: 2 } }],
+    ] as const) {
+      let err: unknown = null;
+      try { toInternalRequest({ ...base, ...extra } as never, "m"); } catch (e) { err = e; }
+      expect(err, `${field} 被静默吃掉了`).toBeInstanceOf(UnsupportedParamError);
+      expect(String((err as Error).message)).toContain(field);
+    }
+
+    // 反向控制（同格）：不许把「等价于不传」的那一档也拒掉。
+    expect(() => toInternalRequest({ ...base, generationConfig: { candidateCount: 1 } }, "m"))
+      .not.toThrow();
+  });
+
+  /**
+   * **防住的真实故障（线上真打复现过）**：带一张 8×8 红色 PNG 的 `inline_data`
+   * 打 `:generateContent` 回 **HTTP 200**，正文逐字是 `NO_IMAGE_RECEIVED`
+   *（提示词里让模型在没收到图时这么回）—— 用户拿到的是一段模型在**完全没看到图**
+   * 的前提下编出来的答案，没有错误码、没有告警、没有事件。这正是本仓在
+   * `anthropic.ts` 那条上判定为「不可接受、宁可 400」的失败形态。
+   *
+   * ⚠️ **报文必须点名是哪一种块**：Gemini 的 part 没有 `type` 格，只能报键名。
+   *
+   * **变红条件（实测）**：把 `partsText` 改回 `parts.map((p) => p.text ?? "").join("")`。
+   */
+  it("遇到无法映射的 part 时抛错，而不是静默丢掉一张图再照常回 200", () => {
+    for (const key of ["inlineData", "fileData", "functionCall"]) {
+      let err: unknown = null;
+      try {
+        toInternalRequest({
+          contents: [{ role: "user", parts: [{ text: "这图什么颜色?" }, { [key]: {} }] }],
+        }, "m");
+      } catch (e) { err = e; }
+      expect(err, `${key} 被静默吃掉了`).toBeInstanceOf(UnsupportedContentError);
+      expect(String((err as Error).message)).toContain(key);
+    }
+  });
+
+  it("systemInstruction 里出现无法映射的 part 时同样抛错", () => {
+    expect(() => toInternalRequest({
+      systemInstruction: { parts: [{ inlineData: {} }] },
+      contents: [{ role: "user", parts: [{ text: "x" }] }],
+    }, "m")).toThrow(UnsupportedContentError);
+  });
 });
 
 describe("toGeminiResponse", () => {
@@ -67,6 +145,45 @@ describe("geminiModelList", () => {
     expect(list.models[0]!.name).toMatch(/^models\//);
     expect(list.models.map((m) => m.name)).toContain("models/agnes-2.0-flash");
   });
+
+  /**
+   * **防住的真实故障**：`supportedGenerationMethods` 是 Gemini 协议里**机器可读**的
+   * 「这个模型能干什么」。从前对全部 12 条一律声明支持
+   * `generateContent` / `streamGenerateContent`，**包括三个图片模型与三个视频模型**
+   * —— 照着这条端点渲染模型下拉框的客户端会把 `agnes-video-2.5` 列成可对话模型，
+   * 运维选中发一次对话，网关照常转发 ⇒ 白烧一把 key + 一次全网关共享的限流额度，
+   * 最后拿回一个上游错误。而真源就在隔壁：`MODEL_CATALOG` 每条都带 `modality`。
+   *
+   * ⚠️ **期望值从 `MODEL_CATALOG` 现算，不在这里手抄第二份模型名单**：手抄的那份
+   * 与真源一起改错时照样绿；而「本清单与 `MODELS` 逐条同序一致」由
+   * `tests/unit/admin/protocol-catalog.test.ts`「模型 id 与 /v1/models 的来源逐条一致」
+   * 另外钉着，两格合起来才封死。
+   *
+   * ⚠️ **两侧都断言**：只断言「视频模型是空的」的话，一个恒返回空数组的实现照样绿。
+   *
+   * **变红条件（实测）**：把 `geminiModelList()` 里那个三元表达式改回无条件
+   * 给两条方法。
+   */
+  it("只有对话模型声明支持那两个方法 —— 图片/视频模型给空数组，别把它们列成可对话模型", () => {
+    const got = new Map((geminiModelList() as { models: { name: string; supportedGenerationMethods: string[] }[] })
+      .models.map((m) => [m.name, m.supportedGenerationMethods]));
+    let chat = 0;
+    let media = 0;
+    for (const m of MODEL_CATALOG) {
+      const methods = got.get(`models/${m.id}`);
+      if (m.modality === "chat") {
+        chat++;
+        expect(methods, `${m.id} 是对话模型，却没声明那两个方法`)
+          .toEqual(["generateContent", "streamGenerateContent"]);
+      } else {
+        media++;
+        expect(methods, `${m.id} 是 ${m.modality} 模型，却被声明成支持 generateContent`).toEqual([]);
+      }
+    }
+    // 前置条件：两侧都真的量到了（一侧为 0 时上面那圈是半边空转）。
+    expect(chat, "目录里一条对话模型都没有？").toBeGreaterThan(0);
+    expect(media, "目录里一条媒体模型都没有 —— 这一格的另一半是空转的").toBeGreaterThan(0);
+  });
 });
 
 function upstreamSse(chunks: unknown[]): ReadableStream<Uint8Array> {
@@ -84,7 +201,8 @@ describe("toGeminiStream", () => {
     ]);
     const text = await new Response(toGeminiStream(upstream, "agnes-2.0-flash")).text();
     const payloads = [...text.matchAll(/^data: (.+)$/gm)].map((m) => JSON.parse(m[1]!));
-    expect(payloads).toHaveLength(2);
+    // 2 条正文 + 1 条终帧（终帧本身由下面「终帧」那一格钉着）。
+    expect(payloads).toHaveLength(3);
     expect(payloads[0].candidates[0].content).toEqual({ role: "model", parts: [{ text: "甲" }] });
     expect(payloads[0].modelVersion).toBe("agnes-2.0-flash");
     expect(payloads[1].candidates[0].content).toEqual({ role: "model", parts: [{ text: "乙" }] });
@@ -98,8 +216,10 @@ describe("toGeminiStream", () => {
     ]);
     const text = await new Response(toGeminiStream(upstream, "m")).text();
     const payloads = [...text.matchAll(/^data: (.+)$/gm)].map((m) => JSON.parse(m[1]!));
-    expect(payloads).toHaveLength(1);
-    expect(payloads[0].candidates[0].content.parts[0].text).toBe("只有这条");
+    // 带正文的只有一条；末尾那条是终帧（`parts` 为空）。
+    const withText = payloads.filter((p) => (p.candidates[0].content.parts as unknown[]).length > 0);
+    expect(withText).toHaveLength(1);
+    expect(withText[0].candidates[0].content.parts[0].text).toBe("只有这条");
   });
 
   /**
@@ -175,43 +295,76 @@ describe("toGeminiStream", () => {
   });
 
   /**
-   * ── **这一格是 Playground 那句文案的红线之一（回填时补的）** ─────────────────────
+   * ── **这一格 2026-09-10 整个改写了：它上一版钉的是一条已被推翻的行为** ──────────
    *
-   * 与 `tests/unit/responses.test.ts` 的
-   * 「toResponsesStream() 吐出去的字节里一个 usage 字段都没有」是**同一句全称句的另一半**：
-   * `admin-ui/js/sec-playground.js` 文件头写着「responses 与 gemini 那两条
-   * **一个 usage 字段都不发**」，而写下的时候两条**都**没有任何东西会为它变红
-   *（复评实测：把 usage 加进 responses 那条流 ⇒ 全仓 3176/3176 全绿）。
+   * 上一版叫「toGeminiStream() 吐出去的字节里一个 usage 字段都没有」，断言是
+   * 「整条流里搜不到 `usage`」。那句话来自 `admin-ui/js/sec-playground.js` 文件头
+   * 把**当时的现状**如实登记的一句全称句（「responses 与 gemini 那两条一个 usage
+   * 字段都不发」），**是登记缺口，不是裁定这样才对** —— 而它被当成了正确性判据。
+   * responses 那半另有裁定（`response.completed` 不带 usage，理由在
+   * `src/core/protocol/responses.ts` 的 `toResponsesStream` 上方），**gemini 这半没有**：
+   * 缺 `usageMetadata` 让所有走 Gemini SDK 的下游一个 token 数都拿不到，
+   * 缺 `finishReason` 更糟 —— 那是客户端判断「说完了 / 撞了 MAX_TOKENS / 被 SAFETY 拦了」
+   * 的**唯一信号**，少了它，一个被截断的半截回答和一个完整回答**逐字节不可区分**。
    *
-   * ⚠️ **判据是子串搜 `usage`（转小写之后）**：gemini 那条协议里 token 用量叫
-   * `usageMetadata`，按 key 精确找 `usage` 会**恰好漏掉它自己那个名字**。
-   * 转小写之后的子串既盖得住 `usageMetadata`，也盖得住有人顺手塞进来的 `usage`。
+   * 定案证据（本地回放，零上游请求）：官方 `google-genai` 2.22.0 吃网关真吐的字节，
+   * 修之前 `last.candidates[0].finish_reason` 与 `last.usage_metadata` **都是 None**；
+   * 修之后分别是 `FinishReason.STOP` 与 `prompt_token_count=291 / candidates_token_count=16`。
+   * 「上游没给」这条辩护也堵死了：同一网关 `/v1/chat/completions` 原样透传的流式末尾
+   * 真实字节里含 `"finish_reason":"length"` 与 `"usage":{...}`。
    *
-   * ⚠️ **反向控制用的是仓里真实存在的东西**：非流式那条（`toGeminiResponse()`）
-   * **真的**带 `usageMetadata` —— 同一份判据必须在它身上认得出来。
+   * ⚠️ **改写而不是删除**：断言换成「终帧必须带这两样」，射程与上一版正好相反，
+   * 但守的是同一处字节。**不许退化成「怎样都绿」**——下面第一条断言先钉住
+   * 「最后一帧就是终帧」，缺帧时它先红。
+   *
+   * **变红条件（实测，见下方三条变异）**：删掉终帧那条 yield / 把 `finishReason`
+   * 去掉 / 把 `usageMetadata` 去掉，三种各红一条断言。
    */
-  it("toGeminiStream() 吐出去的字节里一个 usage 字段都没有", async () => {
+  it("终帧带 finishReason 与 usageMetadata —— 少了它们，被截断的半截回答与完整回答逐字节不可区分", async () => {
     const upstream = upstreamSse([
       { id: "c1", choices: [{ delta: { content: "甲" } }] },
-      { id: "c1", choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 2 } },
+      { id: "c1", choices: [{ delta: {}, finish_reason: "length" }], usage: { prompt_tokens: 1, completion_tokens: 2 } },
     ]);
     const wire = await new Response(toGeminiStream(upstream, "m")).text();
+    const payloads = [...wire.matchAll(/^data: (.+)$/gm)].map((m) => JSON.parse(m[1]!));
 
-    // 前置条件：这一条流**真的**跑出了内容（不然下面那句「搜不到」是在空串上成立的）。
-    expect(wire, "这一格没跑出流来，「搜不到 usage」是在空串上成立的").toContain("candidates");
+    // 前置条件：这一条流**真的**跑出了正文（不然下面几句是在一条空流上成立的）。
+    expect(payloads[0]?.candidates[0].content.parts[0].text,
+      "这一格没跑出正文来，下面几条断言是在一条空流上成立的").toBe("甲");
 
-    expect(wire.toLowerCase(),
-      "gemini 那条流吐出了 usage —— Playground 文件头那句「一个 usage 字段都不发」"
-      + "已经变成假话，而面板上那句「本面板不读 token 用量」正靠它撑着射程")
-      .not.toContain("usage");
+    const last = payloads.at(-1);
+    // 期望值手写字面量：上游给的是 `length`，Gemini 那一档就该是 MAX_TOKENS
+    //（映成 STOP 的话客户端会把一个被 max_tokens 截断的回答当成正常说完）。
+    expect(last.candidates[0].finishReason, "终帧没有 finishReason —— 截断与说完在客户端看来一模一样")
+      .toBe("MAX_TOKENS");
+    expect(last.usageMetadata, "终帧没有 usageMetadata —— 下游一个 token 数都拿不到").toEqual({
+      promptTokenCount: 1, candidatesTokenCount: 2, totalTokenCount: 3,
+    });
+    // 终帧不许夹带正文：夹了的话面板与 SDK 会把它当成又一块回答接在后面。
+    expect(last.candidates[0].content.parts, "终帧夹了正文").toEqual([]);
+  });
 
-    // **反向控制（同判据，用仓里真实存在的东西）**：非流式那条真的带 usageMetadata。
-    const nonStream = JSON.stringify(toGeminiResponse({
-      usage: { prompt_tokens: 1, completion_tokens: 2 },
-      choices: [{ finish_reason: "stop", message: { content: "甲" } }],
-    }, "m"));
-    expect(nonStream.toLowerCase(),
-      "判据在一个真的带着 usageMetadata 的负载上都搜不到它 —— 上面那条 not.toContain 是空转的")
-      .toContain("usage");
+  /**
+   * **防住的真实故障**：上游中途断流时生成器静默退出、流直接关闭，客户端看到的
+   * 与「正常说完」**逐字节相同**（gemini 这条流本来就没有 `[DONE]` 终止标记）。
+   * `anthropic.ts` 在 v0.3.0 已经为这一条补了 `error` 事件，当时只修了三分之一。
+   *
+   * ⚠️ **第二条断言不许省**：断流那一帧要是也带上 `usageMetadata`，
+   * 下游会把一次半截的回答按一个看起来正常的 token 数记进账。
+   *
+   * **变红条件（实测）**：把 `toGeminiStream` 里那圈 `try/catch` 去掉。
+   */
+  it("上游中途断流：终帧的 finishReason 是 OTHER，且不报 token 数", async () => {
+    const upstream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(
+          `data: ${JSON.stringify({ id: "c1", choices: [{ delta: { content: "半" } }] })}\n\n`));
+        c.error(new Error("上游炸了"));
+      },
+    });
+    const wire = await new Response(toGeminiStream(upstream, "m")).text();
+    const last = [...wire.matchAll(/^data: (.+)$/gm)].map((m) => JSON.parse(m[1]!)).at(-1);
+    expect(last?.candidates[0].finishReason, "上游断了，这条流却收得和正常说完一模一样").toBe("OTHER");
+    expect(last.usageMetadata, "断流那一帧不该报 token 数").toBeUndefined();
   });
 });

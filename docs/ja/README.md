@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.3.0-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.3.1-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -61,11 +61,11 @@
 
 | 日付 | 更新内容 |
 |------|----------|
+| 2026-09-10 | v0.3.1 - 🔍 **監査の締め**：36 件の指摘を対抗的レビューで 20 件確認し、本版で全て修正。critical 2 件 —— SECURITY.md が v0.3.0 で失われた保証をそのまま記載、`/v1/responses` のストリーミングが公式 SDK 内部でクラッシュ |
 | 2026-09-10 | v0.3.0 - 🚀 **利用者向けの大改修**（破壊的変更あり）：モデル目録 4 → 12、パネルにブレークポイントを追加、認証情報の平文表示とコピー、モデル別の疎通テスト。ほか実測不具合を一括修正 |
 | 2026-09-09 | v0.2.2 - 🐛 **「今すぐ補充」を修正**（破壊的変更あり）：202 を返した後にラウンド全体が Cloudflare に無言で打ち切られ、ロックが 15 分漏れて定時ラウンドまで塞いでいました。今は完了を待って 200 と実際の結果を返します |
 | 2026-09-09 | v0.2.1 - 🧾 **リリース後の後始末**：v0.2.0 の監査結果はタグの後に直したため誰も受け取れませんでした。本版で実際に出します —— LICENSE を純粋な MIT に戻し、README のセクション数を訂正し、実装より多くを主張していた文言を一式直しました |
 | 2026-09-09 | v0.2.0 - 🔧 **レジストラーの大改修**（破壊的変更あり）：2 本のメールボックスチャネルは「主系＋自動フォールバック」から**2 つから 1 つを選ぶ**方式へ（`registrar.channel` が `primary`／`fallback` を置き換え、既存設定も読めます）。上流のレート制限に当たったら即座に打ち切って指数バックオフし、ブロックされたドメインを記憶します。「接続テスト」は実際に認証情報を検証します |
-| 2026-08-31 | v0.1.1 - 🧹 **整備リリース**：社内向け識別子を公開リポジトリからおおむね一掃しました。実際に漏れていたのはパネル配信物の 470 か所だけで、/admin/js/*.js の本文としてパネルを開いた訪問者全員に届いていました。残りはソース、テスト、ゲートスクリプト、出荷ドキュメント、コミットメッセージに散在していたものです。あわせて、組版上の除外がいつの間にか漏洩チェックの除外へ格上げされていた問題と、既定のタイムアウト境界に居座っていたテスト 3 ケースも直しています。動作の変更はありません |
 
 > 変更履歴の全文は [CHANGELOG.md](../../CHANGELOG.md) にあります。
 
@@ -210,7 +210,7 @@ docker compose logs -f
 ```bash
 # ヘルスチェック（認証不要）。Worker では自分の https://<name>.<sub>.workers.dev に置き換える
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.3.0"}
+# {"status":"ok","version": "0.3.1"}
 
 # 使えるモデルを確かめる
 curl http://localhost:8080/v1/models \

@@ -25,10 +25,18 @@ export const REVEAL_KINDS = {
 /**
  * 把一次 reveal 的响应**归一化成三态**，供 UI 直接选文案。
  *
+ * ⚠️⚠️ **它只吃 2xx 的响应体，别把「三态」读成「三条路都走得到」**（本轮评审实测订正）：
+ * `admin-ui/js/api.js` 的 `json()` 对任何非 2xx 都抛 `ApiError` ⇒ 那一族**根本进不了
+ * 这个函数**，得由下面的 `revealErrorOutcome()` 接。上一版这里（以及下面 `failed`
+ * 那一档的说明）逐字写着 `failed` 治的是「网络断了、401、500」，而当时
+ * `revealControls()` 的 `load()` 没有 `try/catch` ⇒ 那三个成因里有两个到不了这一档，
+ * 它们落成一条无人接的 promise 拒绝，屏幕上一个字都不变。
+ * **举的例子到不了自己写的那一档，是这条缺陷唯一的书面痕迹**，别把它删了了事。
+ *
  * 🔴 **`unavailable` 与 `failed` 必须分开，不许并成「取不到」。**
  * 前者是「这把密钥签发在明文落盘之前，服务端从来就没有过它的明文」——
  * 一个**永远不会变**的事实，运维该做的是重发一把；
- * 后者是「这一次没拿到」（网络断了、401、500），**重试可能就好了**。
+ * 后者是「这一次没拿到」，**重试可能就好了**。
  * 把两者混成一句话，会让人对着一把永远取不回的密钥反复点。
  *
  * ⚠️ **`ok` 那一档要求明文是非空字符串**：后端约定 `secret: null` 表示前一档，
@@ -52,9 +60,44 @@ export function revealOutcome(body) {
   return { state: "failed" };
 }
 
-/** 三态各自的五语言文案键。表外不兜底 —— 与本仓其余「表外返回 null」同一条纪律。 */
+/**
+ * **抛出来的那一族**（`admin-ui/js/api.js` 的 `ApiError`，以及 `fetch` 自己抛的
+ * `TypeError`）→ 与上面同一套形状的 outcome。
+ *
+ * 🔴 **它存在的全部理由：那两颗按钮在任何 HTTP 错误下曾经是「点了什么都不会发生」。**
+ * `load()` 里那一句 `await o.fetchSecret(o.id)` 从前没有 `try/catch`，而 `json()` 对
+ * 任何非 2xx 一律抛 ⇒ 异常穿过 `load()` 落在两个 `async` 点击监听器上无人接，
+ * 全站也没有 `unhandledrejection` 兜底 ⇒ 屏幕上一个字不变、剪贴板里什么都没有，
+ * 只有开发者工具的控制台里一条拒绝。**本仓的纪律是「点了什么都不会发生的按钮比没有更糟」**
+ *（同一族的其它行内动作全都写着 `.catch(e => toast(...))`）。
+ *
+ * ⚠️ **404 单独一档（`gone`），不许并进 `failed`。** Key 池那张表是轮询刷新的：
+ * 一把 key 在另一个标签页被删、被别的副本剔除之后，这一行还在屏幕上，而它的 reveal
+ * 一定是 404。那一档的处置是「刷新一下列表」，`failed` 那一档的处置是「等一会儿再点」
+ * ——把它们并成一句话，运维会对着一条已经不存在的记录反复点
+ *（与上面 `unavailable` / `failed` 不许并档是同一条纪律）。
+ *
+ * ⚠️ **401 刻意落在 `failed`，不另起一档，明写理由**：`api.js` 对 401 已经先
+ * `unauthorizedHandler()` 清凭据 + 弹登录闸了，那一屏本身就是最强的反馈；而
+ * 「这一次没取到明文，稍后再试」对它**也是真话**（重新登录之后再点就是了）。
+ * 为它单开一句话只会在登录闸上叠一句更长的解释。
+ *
+ * ⚠️ **判据是 `status`，不是 `err.body.error.code`**：那个码由后端定义
+ *（`key_not_found` / `apikey_not_found` 两族各一个），照它分档就等于在前端抄一份
+ * 后端的错误码表，而这一族只需要分「没有这条记录」与「这一次没成」两种处置。
+ *
+ * @returns {{state:"gone"}|{state:"failed"}}
+ */
+export function revealErrorOutcome(err) {
+  const status = err !== null && typeof err === "object" && typeof err.status === "number" ? err.status : 0;
+  if (status === 404) return { state: "gone" };
+  return { state: "failed" };
+}
+
+/** 四态各自的五语言文案键。表外不兜底 —— 与本仓其余「表外返回 null」同一条纪律。 */
 export function revealMessageKey(outcome) {
   if (outcome.state === "unavailable") return "reveal.unavailable";
+  if (outcome.state === "gone") return "reveal.gone";
   if (outcome.state === "failed") return "reveal.failed";
   return null;
 }

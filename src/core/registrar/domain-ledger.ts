@@ -234,10 +234,25 @@ export function bodySnippet(body: string): string {
 }
 
 /** 回查还是命中时整段丢掉。措辞与 `./url.ts` 的 `UNSAFE_MESSAGE` 同一形态。 */
-export const UNSAFE_UPSTREAM_MESSAGE = "<上游正文里仍有邮箱地址，已整段丢弃>";
+export const UNSAFE_UPSTREAM_MESSAGE = "<上游正文里仍有邮箱地址或凭据，已整段丢弃>";
 
 /** 被抹掉的邮箱地址在消息里留下的占位。 */
 export const ADDRESS_PLACEHOLDER = "<邮箱地址>";
+
+/** 被抹掉的**已知**凭据（我们自己生成的口令、上一步拿到的令牌）留下的占位。 */
+export const SECRET_PLACEHOLDER = "<凭据>";
+
+/**
+ * 看起来像一把 key 的东西。**判据与射程逐字照搬 `src/core/dispatcher.ts` 的
+ * `CREDENTIAL_LIKE`**（只认 `sk-` 那一族，刻意不做「任何 20 位以上十六进制」那种
+ * 宽匹配——错误体里的 request id / trace id 不是凭据，打成星号只会让运维丢线索）。
+ *
+ * ⚠️ **它是兜底，不是主力。** 主力是调用点交进来的 `secrets`（那些我们**知道**值是
+ * 什么的东西）。这一条只覆盖「上游把一把我们还没拿到手的 key 回显在错误体里」
+ * 这一种 —— 而那正是 `./mint.ts` 建 key 那一步最可能踩的。
+ */
+const CREDENTIAL_LIKE = /sk-[A-Za-z0-9_-]{6,}/g;
+const CREDENTIAL_MASK = "sk-***";
 
 /**
  * 把上游正文变成可以安全写进事件的一句话：**截断 + 抹掉邮箱地址 + 后置回查**。
@@ -260,17 +275,72 @@ export const ADDRESS_PLACEHOLDER = "<邮箱地址>";
  * ⚠️ **代价明写**：回查只查**完整地址**（含 URL 编码形态），**不查本地部分**。
  * 本地部分是邮箱通道自己生成的短串（形如 `u0`），回查它会把一大堆本来无害的正文
  * 整段丢掉，而那正是这条诊断存在的理由。这是有意取舍，不是遗漏。
+ *
+ * ── `secrets`：调用点**知道值是什么**的那几样 ────────────────────────────────
+ *
+ * 🔴 **注册链后三步的正文比发码那一步危险得多**：注册那一步的请求里带着我们自己
+ * 生成的口令，建 key 那一步的请求头里带着上一步换来的令牌，而回显请求内容是错误体
+ * 最常见的写法。地址那一条纪律（替换 + 回查 + 命中就整段丢）在这里逐字照用，
+ * 只是被查的东西多了几样。**空串会被跳过**：`"".split("")` 会把整条正文拆成单字符，
+ * 而 `includes("")` 恒为真 —— 不跳过的话一个空 secret 就能让每一条诊断都变成
+ * `UNSAFE_UPSTREAM_MESSAGE`。
+ *
+ * ⚠️ **顺序仍然是「先脱敏、后截断」**，`CREDENTIAL_LIKE` 也一样：截断在前的话，
+ * 一把 key 正好跨在 512 那一刀上时前半截会原样留下，而回查（查完整串）查不出来。
  */
-export function upstreamMessage(body: string, address: string): string {
-  if (address === "") return bodySnippet(body);
-  const redacted = body
-    .split(address).join(ADDRESS_PLACEHOLDER)
-    .split(encodeURIComponent(address)).join(ADDRESS_PLACEHOLDER);
+export function upstreamMessage(
+  body: string, address: string, secrets: readonly string[] = [],
+): string {
+  const hunted = [address, ...secrets].filter((s) => s !== "");
+  let redacted = body;
+  if (address !== "") {
+    redacted = redacted
+      .split(address).join(ADDRESS_PLACEHOLDER)
+      .split(encodeURIComponent(address)).join(ADDRESS_PLACEHOLDER);
+  }
+  for (const s of secrets) {
+    if (s === "") continue;
+    redacted = redacted.split(s).join(SECRET_PLACEHOLDER)
+      .split(encodeURIComponent(s)).join(SECRET_PLACEHOLDER);
+  }
+  redacted = redacted.replace(CREDENTIAL_LIKE, CREDENTIAL_MASK);
   const out = bodySnippet(redacted);
   // 回查打在**真正会被写出去的那一段**上：替换本身也可能拼出新的一处命中。
-  return out.includes(address) || out.includes(encodeURIComponent(address))
+  return hunted.some((s) => out.includes(s) || out.includes(encodeURIComponent(s)))
     ? UNSAFE_UPSTREAM_MESSAGE
     : out;
+}
+
+/**
+ * 一段 JSON 对象正文的**字段名清单**（顶层 + `data` 下一层），形如
+ * `["code", "msg", "data.token_id"]`；正文不是 JSON 对象时返回 `null`。
+ *
+ * 🔴 **它存在的理由只有一条：上游回了 2xx、我们却没在正文里认出目标字段。**
+ * 那一档的正文**极可能就装着那把令牌/key 本身**（「上游把字段改名了」正是这一档
+ * 要说的话），把正文原样写进事件 = 把一把还没进池子的凭据贴进事件板块、容器 stdout
+ * 与 `GET /admin/api/events/download`。而运维在这一档需要的恰恰**只是字段名**：
+ * 看到 `data.token_id` 他就知道上游改了名字，一个值都不需要看见。
+ *
+ * ⚠️ **只走两层、只取 20 个**：再深就等于把整份响应结构画出来，而这条诊断只需要
+ * 认出「名字变了」。⚠️ **数组、字符串、数字这些非对象正文一律 `null`**（交回给
+ * `upstreamMessage` 那条路）：它们没有「字段名」，硬凑出来的清单只会是假话。
+ */
+export function bodyFieldNames(body: string): string[] | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(body) as unknown;
+  } catch {
+    return null;
+  }
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
+  const names: string[] = [];
+  for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
+    names.push(k);
+    if (k === "data" && typeof v === "object" && v !== null && !Array.isArray(v)) {
+      for (const sub of Object.keys(v as Record<string, unknown>)) names.push(`${k}.${sub}`);
+    }
+  }
+  return names.slice(0, 20);
 }
 
 // ── 候选域名的排序 ──────────────────────────────────────────────────────────

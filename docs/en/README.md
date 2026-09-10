@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.3.0-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.3.1-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -61,11 +61,11 @@
 
 | Date | What changed |
 |------|--------------|
+| 2026-09-10 | v0.3.1 - 🔍 **Audit close-out**: 36 findings, 20 confirmed adversarially, all fixed. Two critical: a stale guarantee in SECURITY.md, and `/v1/responses` streaming crashing the SDK |
 | 2026-09-10 | v0.3.0 - 🚀 **User-facing overhaul** (breaking): model catalog 4 → 12, the panel finally has breakpoints, credentials can be revealed and copied, per-model connectivity test |
 | 2026-09-09 | v0.2.2 - 🐛 **Manual refill actually works** (breaking): it returned 202, then Cloudflare silently killed the round and leaked the lock 15 min. Now returns 200 with the outcome |
 | 2026-09-09 | v0.2.1 - 🧾 **Post-release cleanup**: v0.2.0's audit fixes landed after the tag, so nobody could get them. LICENSE back to plain MIT, plus 26 stale /health samples |
 | 2026-09-09 | v0.2.0 - 🔧 **Registrar overhaul** (breaking): the two mailbox channels become **pick one**; refilling backs off on upstream rate limits and remembers blocked domains |
-| 2026-08-31 | v0.1.1 - 🧹 **Housekeeping**: internal development identifiers removed from the public repository — the 470 in the panel assets were the only ones genuinely leaking. Behaviour is unchanged |
 
 > The full changelog lives in [CHANGELOG.md](../../CHANGELOG.md).
 
@@ -210,7 +210,7 @@ docker compose logs -f
 ```bash
 # Health check (unauthenticated). On the Worker use your https://<name>.<sub>.workers.dev
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.3.0"}
+# {"status":"ok","version": "0.3.1"}
 
 # List the available models
 curl http://localhost:8080/v1/models \

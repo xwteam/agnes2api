@@ -11,6 +11,10 @@ import type { Channel, RegistrarConfig } from "../../../src/core/registrar/confi
 import { recordingLogger } from "../../helpers/recording-logger.js";
 import { NULL_LOGGER } from "../../../src/ports/logger.js";
 import { emptyDomainLedger, type DomainLedger } from "../../../src/core/registrar/domain-ledger.js";
+import {
+  MANUAL_CODE_TIMEOUT_MS, MANUAL_MAX_DOMAIN_ATTEMPTS, MANUAL_MINT_BATCH, MANUAL_ROUND_BUDGET_MS,
+  REGISTRAR_REQUEST_TIMEOUT_MS,
+} from "../../../src/core/registrar/types.js";
 import type { BackoffState } from "../../../src/core/registrar/backoff.js";
 
 // 显式标注 RegistrarConfig：brief 给的字面量没有类型注解，`channel` 会被收窄成
@@ -770,6 +774,64 @@ describe("tendOnce", () => {
     const e = logger.entries.find((x) => x.event === "registrar.round_budget_exhausted");
     expect(e).toBeDefined();
     expect(e?.level).toBe("warn");
+  });
+
+  /**
+   * 🔴 **承重格：预算的起点是「准备阶段之后」，不是整轮开头。**
+   *
+   * 手动轮的预算 70 秒（`MANUAL_ROUND_BUDGET_MS`），而三格压顶之后 `worstAttemptMs`
+   * 恒 = 60 秒 ⇒ 从整轮开头算起时，留给准备阶段的只有 **10 秒**；而准备阶段里
+   * `provider.listDomains()` 单请求就允许 `REGISTRAR_REQUEST_TIMEOUT_MS`（**15 秒**，
+   * 两个适配器的 `signal()` 都用它）。**上游邮箱服务挂起一次就必然超过 10 秒**
+   *（挂起超时后只记一条 `registrar.list_domains_failed`、`allDomains=[]`，照样往下走
+   * 到预算判据）⇒ i=0 那次判定不通过 ⇒ 整颗「立即补池」按钮变成
+   * `src/core/registrar/types.ts` 里 `MANUAL_MAX_DOMAIN_ATTEMPTS` 那段专门要防的
+   * 「诚实空转」，还打出一条**确切而错误**的处置（「请调小 CODE_TIMEOUT_MS」——
+   * 而手动轮的 `codeTimeoutMs` 已经被 `Math.min` 压到 60 秒，调它根本不起作用）。
+   *
+   * **这一格不是假设**：`types.ts` 里那句「多出来的 10 秒留给 elapsedMs」是作者写下的
+   * 一条错误断言，本仓自己的 15 秒超时把它推翻了。
+   *
+   * 变异实测（2026-09-10）：把 `tender.ts` 的 `const roundStartedAt = deps.now();`
+   * 改回 `const roundStartedAt = startedAt;` 并挪回准备阶段之前
+   * ⇒ 本格「真的开跑了」那条红（`attempted` 变成 0），
+   * 「不许打出那条指向 CODE_TIMEOUT_MS 的 error」那条也红。
+   */
+  it("准备阶段（列域名）慢了 15 秒时，手动那一轮照样开得起来 —— 不许诚实空转、更不许甩锅给 CODE_TIMEOUT_MS", async () => {
+    const logger = recordingLogger();
+    let t = 0;
+    const order: string[] = [];
+    const fast = clockedProvider("yyds", () => { t += 1_000; }, order);
+    // 上游邮箱服务挂起一次 = 列域名一直挂到单请求超时上限才回来。
+    const slow: MailProvider = {
+      ...fast,
+      async listDomains() { t += REGISTRAR_REQUEST_TIMEOUT_MS; return ["a.test"]; },
+    };
+    // 手动轮的形状：三格压顶（`src/http/wire.ts` 的 `runManualTendRound`）。
+    const { deps } = await makeDeps({
+      targetKeys: 1, mintBatch: MANUAL_MINT_BATCH,
+      codeTimeoutMs: MANUAL_CODE_TIMEOUT_MS, maxDomainAttempts: MANUAL_MAX_DOMAIN_ATTEMPTS,
+    }, slow);
+    deps.now = () => t;
+    deps.sleep = async (ms: number) => { t += ms; };
+    deps.roundBudgetMs = MANUAL_ROUND_BUDGET_MS;
+    deps.logger = logger;
+
+    const out = await tendOnce(deps);
+
+    // ① 真的开跑了。
+    expect(out.attempted, "准备阶段慢了一次，整颗按钮就诚实空转了").toBe(1);
+    expect(out.minted).toBe(1);
+    // ② 不许打出那条指向 CODE_TIMEOUT_MS 的 error：这一轮的问题跟它一点关系都没有，
+    //    运维照着它去改一个**手动轮根本不看**的旋钮。
+    expect(
+      logger.has("registrar.round_budget_impossible"),
+      "把运维支去调一个与本次失败无关、而且对手动轮不起作用的旋钮",
+    ).toBe(false);
+    // ③ **`durationMs` 照样从整轮开头算起**：起点只挪了预算判据那一个，
+    //    面板上那一行报的耗时不许因此少说 15 秒。
+    expect(out.durationMs, "耗时统计跟着预算起点一起挪了 ⇒ 补池历史开始少报耗时")
+      .toBeGreaterThanOrEqual(REGISTRAR_REQUEST_TIMEOUT_MS);
   });
 
   it("通道缺 provider 时记录一条失败，而不是静默空转", async () => {

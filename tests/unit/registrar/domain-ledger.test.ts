@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   DOMAIN_LEDGER_CAP, OK_TTL_MS, BLOCK_TTL_MS,
-  classifySendCode, edgeMarker, upstreamMessage, UNSAFE_UPSTREAM_MESSAGE, ADDRESS_PLACEHOLDER,
+  classifySendCode, edgeMarker, upstreamMessage, bodyFieldNames,
+  UNSAFE_UPSTREAM_MESSAGE, ADDRESS_PLACEHOLDER, SECRET_PLACEHOLDER,
   emptyDomainLedger, narrowDomainLedger, selectDomains, isKnownGood,
   newJournal, recordVerdict, commitJournal, mergeDomainLedger, summarizeLedger,
   type DomainLedger,
@@ -69,6 +70,68 @@ describe("classifySendCode：同一个 400 有两种含义，正文是唯一线�
     ]) {
       expect(classifySendCode(400, body), body).toBe("rate_limited_app");
     }
+  });
+});
+
+/**
+ * `secrets` 与 `sk-` 兜底这一族，**是给注册链后三步用的**（`src/core/registrar/mint.ts`
+ * 的 `stepMessage`）：那三步的请求里带着我们自己生成的口令与上一步换来的令牌，
+ * 而回显请求内容是错误体最常见的写法。端到端那几格在
+ * `tests/unit/registrar/mint.test.ts`「注册被拒：上游正文里回显的**邮箱地址与我们自己生成的口令**都不许进事件」，
+ * 这里钉的是这个函数自己的边界。
+ */
+describe("upstreamMessage：调用点交进来的已知凭据与 sk- 片段", () => {
+  it("已知凭据被换成占位符，回查还命中就整段丢掉", () => {
+    const out = upstreamMessage('{"message":"password P4ssw0rd! rejected"}', "", ["P4ssw0rd!"]);
+    expect(out).not.toContain("P4ssw0rd!");
+    expect(out).toContain(SECRET_PLACEHOLDER);
+  });
+
+  it("**空串不算 secret**：不跳过的话一个空串就能把每一条诊断都变成「整段丢弃」", () => {
+    // 变异：把 `upstreamMessage` 里 `if (s === "") continue;` 那一行删掉 ⇒ 这一格红
+    //（`"".split("")` 把整条正文拆成单字符，`includes("")` 又恒为真）。
+    const out = upstreamMessage('{"message":"nope"}', "", ["", "u"]);
+    expect(out, "一条本来无害的诊断被一个空 secret 整段吃掉了").toContain("nope");
+    expect(out).not.toBe(UNSAFE_UPSTREAM_MESSAGE);
+  });
+
+  it("我们**还没拿到手**的那把 key 靠 sk- 兜底打码（判据照搬 dispatcher 的 CREDENTIAL_LIKE）", () => {
+    const out = upstreamMessage('{"key":"sk-liveABCDEF123456"}', "", []);
+    expect(out, "刚铸出来的 key 原样进了事件").not.toContain("sk-liveABCDEF123456");
+    expect(out).toContain("sk-***");
+  });
+
+  /**
+   * 🔴 顺序与地址那一格逐字同源：**先脱敏、后截断**。
+   * 反过来写的话，一把正好跨在 512 那一刀上的 key 会**留下前半截**：
+   * 这个夹具里漏的是 `sk-live` —— `sk-` 之后只剩 4 个字符，**短到连事后再扫一遍
+   * `CREDENTIAL_LIKE` 都认不出来**（它要求 6 个以上），于是那 7 个字符原样进事件。
+   *
+   * 变异：把 `upstreamMessage` 里 `redacted.replace(CREDENTIAL_LIKE, …)` 挪到
+   * `bodySnippet()` **之后** ⇒ 这一格红。
+   */
+  it("先脱敏后截断对凭据同样成立：一把跨在 512 那一刀上的 key 不许漏出前半截", () => {
+    const key = "sk-liveABCDEF123456";
+    const out = upstreamMessage("y".repeat(505) + key, "", []);
+    expect(out, "截断在前 ⇒ key 的前 7 个字符原样留在事件里").not.toContain("sk-live");
+    expect(out).toContain("sk-***");
+  });
+});
+
+describe("bodyFieldNames：2xx 却认不出目标字段时，只说字段名", () => {
+  it("顶层 + data 下一层的字段名都列出来", () => {
+    expect(bodyFieldNames('{"code":0,"data":{"token_id":"x"}}')).toEqual(["code", "data", "data.token_id"]);
+  });
+
+  it("不是 JSON 对象的正文一律 null（交回给 upstreamMessage 那条路）", () => {
+    // 数组、字符串、数字、维护页都没有「字段名」可说，硬凑出来的清单只会是假话。
+    for (const body of ["[1,2]", '"tok"', "42", "<html>maintenance</html>", ""]) {
+      expect(bodyFieldNames(body), body).toBeNull();
+    }
+  });
+
+  it("**一个值都不带出来**：认不出来的那个字段值往往就是令牌本身", () => {
+    expect(bodyFieldNames('{"data":{"token_id":"eyJhbGciSECRET"}}')!.join(",")).not.toContain("eyJhbGciSECRET");
   });
 });
 

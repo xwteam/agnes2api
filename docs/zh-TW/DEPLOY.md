@@ -196,6 +196,18 @@ GATEWAY_TOKEN=換成你自己的長隨機串
 PORT=8080
 ```
 
+> [!WARNING]
+> **`DATA_DIR` 與 docker-compose.yml 的卷掛載綁死，Docker 形態下別單獨改它。**
+> 那一行 `./data:/app/data` 是寫死的，`.env` 裡的 `DATA_DIR` 完全不參與它的插值。
+> 把 `DATA_DIR` 改成別的路徑而不動那一行，什麼都不會攔你：容器起得來、`/health` 回
+> `ok`、面板與 key 池一切正常、註冊機照常補池，而 store.json 落進**容器可寫層**——
+> 下一次照「更新」升級一次，容器一重建，整池 key、已簽發的對外 API 密鑰、面板設定
+> 一起消失，而你一直在備份的 `./data` 從頭到尾是空的。
+> 要換資料落在宿主哪兒，改那行掛載的**左半邊**；真要改右半邊，就把 `DATA_DIR` 改成
+> 同一個路徑，兩邊一起改。容器啟動時 entrypoint 會檢查這件事：它沒落在任何
+> 掛載點上時，容器日誌裡有一條「沒有落在任何掛載點上」的警告——那是這條鏈上唯一的
+> 訊號，`/health` 不報資料落在哪兒。
+
 #### 資料目錄與擁有者：容器會改寫 `./data`（請先知悉）
 
 容器**以 root 進入 entrypoint**，做兩件事後再降權：
@@ -247,12 +259,32 @@ curl http://localhost:8080/health
 映像檔內建 `HEALTHCHECK`，Docker 會依此回報容器健康狀態。資料目錄不可寫時 `/health`
 回傳 `503` 且 `status` 為 `degraded`，容器會被標成 unhealthy，具體原因見容器日誌。
 
+下面兩條是查問題時反覆要用的，先在這兒給全——本文後面凡是說「見容器日誌」，指的都是
+第二條：
+
+```bash
+docker compose ps                     # 容器在不在、健康不健康
+docker compose logs -f --tail=100     # 容器日誌：entrypoint 的警告、admin.token_rejected 都在這裡
+```
+
 ### 更新
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
+
+`docker compose pull` 拉的是 `.env` 裡 `IMAGE_TAG` 指定的那個 tag（不設就是 `latest`）。
+映像全名是 `ghcr.io/xwteam/agnes2api`，有哪些 tag 見
+[GHCR 的 packages 頁](https://github.com/xwteam/agnes2api/pkgs/container/agnes2api)。
+**升級 = 把 `IMAGE_TAG` 改成要升的版本號再 `docker compose up -d`；回滾 = 改回上一版。**
+釘住版本號之後，這份 `.env` 才答得出「現在跑的是哪一版」，`:latest` 答不出。
+
+> [!IMPORTANT]
+> **改完 `.env` 要跑 `docker compose up -d`，不是 `docker compose restart`。**
+> 後者只是重啟同一個容器，而容器的環境是**建立**時固化的，改了 `.env` 一個位元組都不會
+> 變；`up -d` 偵測到設定變化才會重建容器。補 `ADMIN_TOKEN` 與輪換口令踩的是同一個坑，
+> 後者更隱蔽：你以為輪換完了，舊口令其實還在生效。
 
 `./data` 不動，key 池與設定都在那兒。**升級前先備份那個目錄**（見下文「備份與還原」）：
 它是已匯入 key 池的唯一副本，沒有第二份。
@@ -274,7 +306,7 @@ docker compose up -d
 | `POOL_TOUCH_INTERVAL_MS` | 否 | `21600000` | key 的「最後使用時間」最多多久寫入一次；`0` = 每次成功請求都寫入。它是純展示欄位、不參與排程，同一個間隔也管著面板上的用量計數。代價與「怎麼清計數」見下文。 **建立實例時讀一次**（`src/http/wire.ts`）：改了要重啟容器 / 等 isolate 回收才生效，**面板改它不會立刻生效**。 |
 | `USAGE_STATS_ENABLED` | 否 | `false` | 面板「用量」板塊的 Tier-2 時間序列（按天／小時／模型／協定）。**判據是逐字的 `true`**，寫 `1` / `yes` 都算關。**預設關，而且「關」是零成本的**。打開之後的開銷、**短命實例上計數會丟而不是遲到**見下文。建 app 時讀一次，改了要重啟容器 / 等 isolate 回收才生效。 |
 | `PORT` | 否（僅 Node/Docker） | `8080` | Node 執行時的監聽埠，Worker 不使用此變數。 |
-| `DATA_DIR` | 否（僅 Node/Docker） | `/app/data` | 檔案儲存寫入 `store.json` 的目錄，Worker 不使用此變數。 |
+| `DATA_DIR` | 否（僅 Node/Docker） | `/app/data` | 檔案儲存寫入 `store.json` 的目錄，Worker 不使用此變數。**Docker 形態下別單獨改它**：它與 compose 的卷掛載綁死，見上文「Docker 部署 → 設定」。 |
 | `APIKEY_CACHE_TTL_MS` | 否 | `300000` | 對外 API 密鑰表在每個實例裡的快取時長；`0` = 關快取。它同時決定停用一把密鑰多久才在別處失效，見下文「配額帳」。**建立實例時讀一次。** |
 
 ### 取值範圍與兩個「建立實例時讀一次」的例外
@@ -1259,8 +1291,9 @@ curl -s "$BASE/v1/chat/completions" \
 **解決方案**：
 
 1. 這就是**沒設定 `ADMIN_TOKEN`** 時的正常形態：整棵樹根本沒註冊，所以不會洩漏「這裡有個後台」。
-2. 設定了仍然 404：口令不合規（少於 24 位 / 首尾有空白 / 含非可列印 ASCII），容器日誌裡會有一條 `admin.token_rejected`。
-3. 面板能開但介面回 `503`：`ADMIN_TOKEN` 與儲存裡的 `gatewayToken` 撞了，日誌裡是 `admin.token_conflict`，按上文那一段處置。
+2. 設定了仍然 404，**先確認容器真的重建過**：Docker 形態下改完 `.env` 要跑 `docker compose up -d`，`docker compose restart` 不會重讀它。這一步沒做的話，下面第 3 條會把你引向一個錯誤的方向。
+3. 重建過仍然 404：口令不合規（少於 24 位 / 首尾有空白 / 含非可列印 ASCII），容器日誌裡會有一條 `admin.token_rejected`。
+4. 面板能開但介面回 `503`：`ADMIN_TOKEN` 與儲存裡的 `gatewayToken` 撞了，日誌裡是 `admin.token_conflict`，按上文那一段處置。
 
 ### 改了面板裡的設定，別的實例半天不生效
 
@@ -1291,6 +1324,7 @@ curl -s "$BASE/v1/chat/completions" \
 1. 九成是資料目錄寫不進去。看容器日誌裡 entrypoint 那幾行，確認 `./data` 的擁有者是不是 `100:101`。
 2. 用 `--user` 或 compose 的 `user:` 指定了非 root 執行時，entrypoint **不會** chown，擁有者與可寫性得你自己準備。
 3. `DATA_DIR` 被設成 `/` 或某個頂層系統目錄時 entrypoint 拒絕遞迴 chown，只印警告——換一個正常的目錄。
+4. **擁有者查了三遍都對，卻還是 degraded**：多半是 `store.json` 解析不了。前三條全是權限，這一條不是——儲存層讀不出合法 JSON 時每次讀寫都拋，啟動探測因此把「可寫」記成 false，`/health` 同樣回 `503` degraded。停容器後 `python3 -m json.tool ./data/store.json` 驗一下：上文「多帳號設定」教的手工編輯正是最常見的寫壞方式（多一個逗號就夠），壞了就從備份還原。真因原文在容器日誌的第一行。
 
 ## 效能優化
 
@@ -1364,16 +1398,20 @@ USAGE_STATS_ENABLED=true
 ### 升級前
 
 1. **先備份儲存。** key 池與設定只有一份，見下文「備份與還原」。
-2. **看一眼 CHANGELOG。** 破壞性變更會寫在那裡；本倉庫的版本號在六份 README 的徽章上。
-3. **升級不需要清空儲存。** 儲存裡的記錄是向後相容的，`pool:index` 的 `v` 欄位今天恆為 `1`。
+2. **記下基線：目前的 `version` 與 key 池筆數。** 前者就是 `curl -s "$BASE/health"` 回的那個欄位，後者在面板概覽頁。沒有基線，下面那三條確認就分不清「升上去了」和「根本沒升」。
+3. **看一眼 CHANGELOG。** 破壞性變更會寫在那裡；本倉庫的版本號在六份 README 的徽章上。
+4. **升級不需要清空儲存。** 儲存裡的記錄是向後相容的，`pool:index` 的 `v` 欄位今天恆為 `1`。
 
 ### 升級之後確認什麼
 
-1. `/health` 回 `200` 且 `status` 為 `ok`。
-2. 面板（如果開著）能登入，key 池的筆數與升級前一致。
+1. `/health` 回 `200`、`status` 為 `ok`，**並且 `version` 等於你這次升的版本號**。三條裡只有這半句分得開「升上去了」和「根本沒升」：`version` 是編譯期常數、燒在映像裡，而另外兩條在舊版本上一字不差地全綠。映像沒發出去時（建置被取消而 Release 已經發了，本倉庫真出過一次）`docker compose pull` 是一次靜默成功的空操作。
+2. 面板（如果開著）能登入，key 池的筆數與升級前一致；概覽頁執行時那一格也寫著版本號，與上一條互為佐證。
 3. 跑一次上文「驗證」裡的第三條，確認真的能打到上游。
 
-回滾：Docker 把映像 tag 釘回上一版再 `docker compose up -d`；
+回滾：Docker 把 `.env` 裡的 `IMAGE_TAG` 改回上一版再 `docker compose up -d`（映像全名與
+tag 列在哪兒，見上文「Docker 部署 → 更新」）。
+**先確認那個 tag 在 registry 上真的存在**：拉不到時 compose 不會當場失敗，而是拿你**目前
+工作樹**本機建置一個頂著那個版本號的映像，於是回滾「成功」而故障照舊。
 Worker 在 Cloudflare 控制台的 Deployments 裡回滾，或者 `git checkout` 到上一個 tag 重新 `npx wrangler deploy`。
 
 ## 備份與還原
@@ -1388,17 +1426,34 @@ cp -a ./data ./data.bak
 docker compose start
 ```
 
-停一下再拷是為了避開寫入競爭。`./data/store.json` 裡就是全部：key 記錄、`pool:index`、以及儲存側的設定。
+停一下再拷是為了避開寫入競爭。`./data/store.json` 裡就是全部——不只是 key 記錄與
+`pool:index`，還有 `apikeys`（已簽發的對外 API 密鑰表）、`config`（面板儲存的那份設定）、
+`registrar:domains` 與 `registrar:backoff`（註冊機的網域可用性與退避帳）、
+`tend:history`（補池歷史），以及事件環。
 還原就是把目錄拷回去再 `docker compose up -d`。
 
 ### Cloudflare Worker
 
 ```bash
-npx wrangler kv key list --binding=POOL --remote
-npx wrangler kv key get --binding=POOL "pool:index" --remote
+# 先列鍵名。**這一份就是備份清單：list 出來的每一把都要 get 下來**
+npx wrangler kv key list --binding=POOL --remote > kv-keys.json
+
+# 再逐把取值。key:<id> / registrar:* / tend:history 照下面這三行的寫法逐個取
+npx wrangler kv key get --binding=POOL "pool:index" --remote > kv-pool-index.json
+npx wrangler kv key get --binding=POOL "apikeys"    --remote > kv-apikeys.json
+npx wrangler kv key get --binding=POOL "config"     --remote > kv-config.json
 ```
 
-逐個 `key:<id>` 取出來存成檔案即可；還原走 `npx wrangler kv key put`，與下文匯入 key 的寫法一樣。
+還原走 `npx wrangler kv key put`，與上文匯入 key 的寫法一樣。
+
+> [!WARNING]
+> **只備份 `key:<id>` 與 `pool:index` 會漏掉四族鍵，而漏掉它們在還原現場一點都看不出來。**
+> 照那種清單還原之後：上游 key 池回來了、`/health` 回 `ok`、你自己拿 `GATEWAY_TOKEN`
+> 一測也通——而每一個下游使用者手上的子密鑰全部 `401`。漏的是這四族：
+> `apikeys`（已簽發的對外 API 密鑰表，不還原它等於把所有子密鑰一次吊銷，而明文只在
+> 簽發那一次給過、找不回來，只能全部重發一遍）、`config`（面板儲存的設定，含閘道口令
+> 與兩條信箱通道的憑證）、`registrar:domains` 與 `registrar:backoff`（丟了之後註冊機變成
+> 「已啟用 · 本次沒跑起來」）、`tend:history`（補池歷史）。
 
 > [!WARNING]
 > 備份檔案裡是**明文 key 與明文憑證**（閘道口令、兩條信箱通道的 API Key 都在儲存側的設定裡）。

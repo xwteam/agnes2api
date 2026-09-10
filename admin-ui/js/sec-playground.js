@@ -155,27 +155,33 @@
  * · **anthropic / responses / gemini 这三条流是本仓自己合成的**
  *   （`src/core/protocol/anthropic.ts`、`src/core/protocol/responses.ts`、
  *   `src/core/protocol/gemini.ts` 的 `to*Stream()`）⇒ 里面有没有 usage 由本仓说了算。
- *   实况：responses 与 gemini 那两条**一个 usage 字段都不发**。
  *   ⚠️ **anthropic 那条 2026-09-10 变了，上一版这里写的「硬写两处恒为 0」已经不成立**：
  *   `message_delta` 现在发的是**上游末块里的真实 token 数**
  *   （`src/core/protocol/anthropic.ts`「usage: { input_tokens: inTok, output_tokens: outTok }」）。
  *   `message_start` 那处仍是 0，但那是「**此刻还不知道**」——它必须在读上游之前就发出，
  *   而 usage 要等上游末块才到，不是「拿得到也不给」。
- *   ⇒ 从前那条「谁顺手把 usage 画出来，Anthropic 流就会显示 0 个 token」的风险
- *   在 anthropic 这一档**已经消失**；responses / gemini 两档仍然成立
- *   （它们压根不发 usage，画出来只能是伪造的 0，那是全局约束 9 明令禁止的）。
- *   **本面板暂时仍然一档都不画** —— 四条流里只有一条拿得到真数，按协议分档显示
- *   会让运维以为「另外三条是 0」，那正是这段注释一直在防的那件事。
- *   ⚠️⚠️ **上一句里 responses / gemini 那半原来是一句零判据的全称句（复评发现，本轮补上）**：
+ *   ⚠️⚠️ **gemini 那条同一天也变了，「responses 与 gemini 那两条一个 usage 字段都不发」
+ *   这句全称句从此只剩 responses 那一半**：gemini 的流从前连终帧都没有，
+ *   `finishReason` 与 `usageMetadata` 一次都不出现 ⇒ 客户端分不清「说完了」和
+ *   「被截断 / 被安全拦了」。那不是取舍，是缺口（上一版把它当成「如实登记」写在这里，
+ *   而那句登记被当成了正确性判据）。现在收尾补了一帧，**带上游末块里的真实 token 数**
+ *   （`src/core/protocol/gemini.ts`「promptTokenCount: inTok」）。
+ *   ⇒ 四条流里现在有**两条**拿得到真数（anthropic / gemini），
+ *   responses 那条仍然一个 usage 字段都不发（那一档是裁定，理由写在
+ *   `src/core/protocol/responses.ts` 的 `toResponsesStream` 上方），
+ *   openai 那条未核实（下一段）。
+ *   **本面板仍然一档都不画** —— 四条里两条有真数、一条没有、一条不知道，
+ *   按协议分档显示会让运维以为「另外那两条是 0」，那正是这段注释一直在防的那件事。
+ *   ⚠️⚠️ **上一句里 responses / gemini 那半原来是一句零判据的全称句（复评发现，当时补上）**：
  *   anthropic 那半靠上面两个名字锚拦得住（改一个字段名 ⇒ 注释指向那道门禁当场 EXIT=1），
  *   而 responses / gemini 那半**当时仓里没有任何东西会为它变红** —— 复评把 `usage: {…}`
  *   加进 `src/core/protocol/responses.ts` 的 `response.completed` ⇒ **全仓 3176/3176 全绿**。
- *   **补上判据之后同一次变异重跑（本轮亲手跑的）：那个文件当场 1 failed / 16 passed**；
- *   gemini 那条同款变异（往流式事件里加 `usageMetadata`）同样当场红。
- *   ⇒ 现在它由 `tests/unit/responses.test.ts`
- *   「toResponsesStream() 吐出去的字节里一个 usage 字段都没有」与 `tests/unit/gemini.test.ts`
- *   「toGeminiStream() 吐出去的字节里一个 usage 字段都没有」两格钉着，
- *   两格各带一条反向控制（非流式那条**真的**带 usage，同一份判据在它身上认得出来）。
+ *   ⇒ responses 那半今天由 `tests/unit/responses.test.ts`
+ *   「toResponsesStream() 吐出去的字节里一个 usage 字段都没有」钉着
+ *   （带一条反向控制：非流式那条**真的**带 usage，同一份判据在它身上认得出来）；
+ *   gemini 那半的判据**换了方向**——`tests/unit/gemini.test.ts`
+ *   「终帧带 finishReason 与 usageMetadata —— 少了它们，被截断的半截回答与完整回答逐字节不可区分」
+ *   守的是「必须带」，而上面那句「gemini 有真数」正靠它撑着。
  *
  * · **openai 那条是上游字节原样透传，「流末带不带 usage」是上游决定的、本仓未核实。**
  *   `src/http/routes/openai.ts` 不传 `expectJson` ⇒ 网关从头到尾没有 `JSON.parse` 过它。

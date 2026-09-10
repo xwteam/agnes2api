@@ -4,7 +4,7 @@ import {
   failureReasonKey, refuseReasonKey, refuseKeyOf,
   statusView, channelCards, poolView, tendCost, manualQuotaView,
   historyRows, historyMalformed, roundOutcome, roundFailures, mintedByChannelText,
-  channelTestResult, domainLedgerView, backoffView,
+  channelTestResult, domainLedgerView, backoffView, tendToast,
 } from "../../admin-ui/js/pure/registrar.mjs";
 import { TEND_FAILURE_REASONS, type TendFailureReason } from "../../src/core/registrar/tender.js";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
@@ -386,6 +386,88 @@ describe("roundOutcome：四种形态靠 skipped + attempted + failures 三个�
     const keys = ["reg.row.skipped", "reg.row.healthy", "reg.row.noAttempt", "reg.row.minted", "reg.row.unreadable"];
     expect(new Set(keys).size).toBe(5);
     for (const k of keys) expect(k in I18N, `${k} 不在字典里`).toBe(true);
+  });
+});
+
+/**
+ * 🔴 **承重格：「立即补池」按钮不许把「根本没跑起来」报成「跑完了，0/0」。**
+ *
+ * 上一版 `startTend` 只判 `outcome.kind === "done"` 就一律套 `reg.tend.done`，
+ * `result.failures` 与 `attempted === 0` 一个字都不看；而 `tendOnce` 有两条
+ * `attempted === 0` 的早退（池子已满 / 还在退避窗口里），`wireTend` 又把任何
+ * `TendResult` 一律包成 `kind:"done"` ⇒ 退避里点一下，面板说「这一轮跑完了：铸出 0 把，
+ * 尝试 0 次」，而本网关其实一次上游请求都没发。**这句话正是 `roundOutcome` 上方
+ * 逐字禁掉的那一句**（补池历史那张表守着，按钮这条路却在做被禁的事），
+ * 而人恰恰是在池子出问题时才会去点它。
+ *
+ * 变异实测（2026-09-10）：把 `tendToast` 里 `attempted !== 0` 那个判断改成恒真
+ *（= 回到只看 `kind === "done"` 的那一版）⇒ 下面「退避窗口」与「池子已满」两格
+ * 的第一条断言当场红（key 变回 `reg.tend.done`）。
+ */
+describe("tendToast：那颗按钮点完之后说哪句话", () => {
+  const doneOutcome = (over: Record<string, unknown>) => ({ kind: "done", result: round(over), capped: null });
+
+  it("真的铸出来了 —— 报真实的 铸出/尝试 数，而且是「成功」那一档", () => {
+    const v = tendToast(doneOutcome({ attempted: 2, minted: 2 }));
+    expect(v.key).toBe("reg.tend.done");
+    expect(v.params).toEqual({ minted: 2, attempted: 2 });
+    expect(v.reason).toBeNull();
+    expect(v.ok).toBe(true);
+  });
+
+  it("尝试过但一把都没铸出来 —— 还是那句「跑完了」，但不是「成功」那一档（会 sticky 留在屏幕上）", () => {
+    const v = tendToast(doneOutcome({ attempted: 2, minted: 0 }));
+    expect(v.key).toBe("reg.tend.done");
+    expect(v.ok).toBe(false);
+  });
+
+  it("还在退避窗口里（attempted=0 + upstream_backoff）：说「一次尝试都没开始」并带上退避那条归因", () => {
+    const v = tendToast(doneOutcome({
+      attempted: 0, minted: 0, mintedByChannel: {},
+      failures: [{ reason: "upstream_backoff", channel: "yyds" }],
+    }));
+    expect(v.key, "「根本没跑起来」被说成了「跑完了但没产出」").toBe("reg.tend.noRun");
+    expect(v.key).not.toBe("reg.tend.done");
+    // 归因必须跟着出来：没有它，运维只知道「没跑」，不知道为什么没跑。
+    expect(v.reason).toEqual({ key: "reg.fail.upstream_backoff", params: {} });
+    expect(v.ok).toBe(false);
+    // 渲染出来的那两句话真的在字典里（渲染一个字典里没有的 key = 把 key 显示给运维）。
+    expect("reg.tend.noRun" in I18N).toBe(true);
+    // 文案里必须留着「这次点击照样花掉了」那半句：护栏是**跑之前**就落盘的
+    //（`src/http/admin/handlers/registrar.ts`），两条早退都不退款。
+    expect(I18N["reg.tend.noRun"]!["zh-CN"]).toContain("冷却与当天名额照样扣掉了");
+  });
+
+  it("池子已经满了（attempted=0 且 failures 是空的）：落回 roundOutcome 那句「不需要铸」", () => {
+    const v = tendToast(doneOutcome({ attempted: 0, minted: 0, mintedByChannel: {}, failures: [] }));
+    expect(v.key).toBe("reg.tend.noRun");
+    expect(v.reason?.key, "「池子满了」与「还在退避」被揉成同一句话").toBe("reg.row.healthy");
+  });
+
+  it("表外的失败归因不丢掉：原样把 reason 显示出来", () => {
+    const v = tendToast(doneOutcome({
+      attempted: 0, minted: 0, failures: [{ reason: "from_the_future", channel: "yyds" }],
+    }));
+    expect(v.reason).toEqual({ key: "reg.fail.unknownReason", params: { reason: "from_the_future" } });
+  });
+
+  it("attempted 读不出来时**不许**断言「一次都没开始」——走「跑完了」那一支并把数字显示成 —", () => {
+    const v = tendToast({ kind: "done", result: round({ attempted: "2", minted: null }), capped: null });
+    expect(v.key).toBe("reg.tend.done");
+    expect(v.params).toEqual({ minted: "—", attempted: "—" });
+    expect(v.ok).toBe(false);
+  });
+
+  it("skipped / crashed / 表外结局三条路各自说自己的话，不许合并成「失败」", () => {
+    expect(tendToast({ kind: "skipped", reason: "disabled", capped: null }).key).toBe("reg.tend.skipped");
+    expect(tendToast({ kind: "crashed", error: "x", capped: null }).key).toBe("reg.tend.crashed");
+    expect(tendToast({ kind: "from_the_future" }).key).toBe("reg.tend.unknownOutcome");
+    expect(tendToast(null).key).toBe("reg.tend.unknownOutcome");
+    for (const v of [
+      tendToast({ kind: "skipped", reason: "disabled", capped: null }),
+      tendToast({ kind: "crashed", error: "x", capped: null }),
+      tendToast(null),
+    ]) expect(v.ok).toBe(false);
   });
 });
 

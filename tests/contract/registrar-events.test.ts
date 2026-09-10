@@ -204,13 +204,25 @@ describe("注册机事件落库（两种运行时各跑一遍）", () => {
     expect(Number.isFinite(history[0]!.durationMs)).toBe(true);
   });
 
+  /**
+   * ⚠️ **显式放宽超时到 30 秒，不是「这一格慢」，是它在满负载下会被误判成失败。**
+   *
+   * 实测：单独跑 **1762ms**（三轮真活，每轮都装一次依赖、走一次 `tendOnce`），
+   * 而在 `pnpm test` 的全量并行下超过 vitest 默认的 5000ms ⇒ 一格**与被测行为无关**
+   * 的红。本仓已有同族先例（`tests/unit/source-internal-refs.test.ts` 那几格
+   * `}, 60_000)`，理由同样是「真活 + 并行争用」）。
+   *
+   * 🔴 **放宽的是超时，不是断言**：下面那句 `toBe(3)` 一个字没动 ——
+   * 「三轮之后历史里恰好三条」正是这一格的全部内容，它该红的时候照样红。
+   * 把一格因超时而红的判据「改成重跑一次」或「删掉」才是把回归登记成现状。
+   */
   it("连跑三轮：tend:history 是追加的，不是每轮覆盖成一条", async () => {
     const store = new Map<string, string>();
     await runRound(store);
     await runRound(store);
     await runRound(store);
     expect(storedHistory(store).length).toBe(3);
-  });
+  }, 30_000);
 
   /**
    * **存储里混进一条 `null`，下一轮照样能写进去，且那条坏的被清掉。**

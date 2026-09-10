@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mintOne } from "../../../src/core/registrar/mint.js";
+import { randomPassword } from "../../../src/core/registrar/agnes.js";
+import { ADDRESS_PLACEHOLDER, SECRET_PLACEHOLDER } from "../../../src/core/registrar/domain-ledger.js";
 import { FakeMailProvider } from "../../helpers/fake-mailbox.js";
 import { recordingLogger } from "../../helpers/recording-logger.js";
 import { NULL_LOGGER } from "../../../src/ports/logger.js";
@@ -11,11 +13,17 @@ import { emptyDomainLedger, newJournal } from "../../../src/core/registrar/domai
  * 是区分「域名被屏蔽的 400」与「出口被限流的 400」的唯一线索**。
  * 只给状态码的旧写法保留成 `number` 简写（正文按 `{}` 补），免得每一格都要写两遍。
  */
+/**
+ * ⚠️ **后三步同样可以给「状态码 + 正文」了**（`register` / `login` / `key` 三格都收
+ * `{status, body}`）。理由与 `sendCode` 那一格逐字同源：上一版这三步只交回
+ * `boolean` / `string | null`，于是四种真因在事件里长同一个样。旧的简写
+ *（`register: false` / `login: "tok"` / `key: null`）**保留**，免得每一格都要写两遍。
+ */
 function agnesStub(plan: {
   sendCode?: (email: string) => number | { status: number; body: string };
-  register?: boolean;
-  login?: string | null;
-  key?: string | null;
+  register?: boolean | { status: number; body: string };
+  login?: string | null | { status: number; body: string };
+  key?: string | null | { status: number; body: string };
 }) {
   const seen: string[] = [];
   return {
@@ -32,13 +40,19 @@ function agnesStub(plan: {
             return new Response(body, { status });
           }
           if (url.includes("/api/user/register")) {
-            return new Response("{}", { status: plan.register === false ? 422 : 200 });
+            const r = plan.register;
+            if (typeof r === "object" && r !== null) return new Response(r.body, { status: r.status });
+            return new Response("{}", { status: r === false ? 422 : 200 });
           }
           if (url.includes("/api/user/login")) {
-            return new Response(JSON.stringify({ data: { access_token: plan.login ?? null } }), { status: 200 });
+            const r = plan.login;
+            if (typeof r === "object" && r !== null) return new Response(r.body, { status: r.status });
+            return new Response(JSON.stringify({ data: { access_token: r ?? null } }), { status: 200 });
           }
           if (url.includes("/api/token")) {
-            return new Response(JSON.stringify({ data: { key: plan.key ?? null } }), { status: 200 });
+            const r = plan.key;
+            if (typeof r === "object" && r !== null) return new Response(r.body, { status: r.status });
+            return new Response(JSON.stringify({ data: { key: r ?? null } }), { status: 200 });
           }
           return new Response("{}", { status: 200 });
         },
@@ -476,6 +490,106 @@ describe("mintOne", () => {
     expect(e).toBeDefined();
     expect(e?.fields?.address).toBe(provider.created[0]!);
     expect(e?.fields?.tokenName).toBe("my-token-name");
+  });
+
+  // === 后三步的事件必须带上游那句话，且不许把凭据带进去 ===
+  //
+  // 🔴 **上面那四格只钉住「事件被记过 + 带得出定位信息」，钉不住归因。**
+  // 实测过：只有 `address` 的那一版里，「注册这一步把域名拉黑了」「验证码过期」
+  // 「上游改了字段名」「这个出口的注册额度到顶」四种真因在面板上**逐字相同**
+  //（都是「Agnes 注册被拒（验证码已正常收到）」），运维只能靠猜或者去抓包。
+  // 下面五格钉的是**那句话真的跟着上游变**，以及**变的过程中凭据没跟着漏出去**。
+  //
+  // 变异实测（2026-09-10，逐条做过，红的位置写在每一格里）。
+
+  it("注册被拒：事件带上游的状态码，且 message 里有上游那句话", async () => {
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
+    const { agnes } = agnesStub({
+      register: { status: 429, body: JSON.stringify({ message: "Too many registrations from this IP" }) },
+    });
+    await mintOne({ provider, agnes, ...base(), ...only, logger });
+    const e = logger.entries.find((x) => x.event === "registrar.register_rejected");
+    // 变异：把 `fields.status` 那一行删掉 ⇒ 这一条红。
+    expect(e?.fields?.status, "状态码没进事件 ⇒ 限流与拒绝分不开").toBe(429);
+    // 变异：把 `message` 那一行删掉 ⇒ 这一条红（`undefined` 上调 String 也不含这句话）。
+    expect(String(e?.fields?.message)).toContain("Too many registrations from this IP");
+  });
+
+  it("注册被拒：上游正文里回显的**邮箱地址与我们自己生成的口令**都不许进事件", async () => {
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
+    // `base()` 的 `rand` 是 `() => 0.5` ⇒ 口令是可复现的那一把。
+    const password = randomPassword(() => 0.5);
+    const { agnes } = agnesStub({
+      register: {
+        status: 400,
+        body: JSON.stringify({ message: `password ${password} rejected for u0@only.test` }),
+      },
+    });
+    await mintOne({ provider, agnes, ...base(), ...only, logger });
+    const msg = String(logger.entries.find((x) => x.event === "registrar.register_rejected")?.fields?.message);
+    // 变异：把 `stepMessage(...)` 的第四个实参 `[password]` 改成 `[]`
+    // ⇒ 这一条红（口令原样出现在事件里）。
+    expect(msg, "我们自己生成的账号口令原样进了事件板块/容器 stdout/事件导出").not.toContain(password);
+    expect(msg).toContain(SECRET_PLACEHOLDER);
+    // 变异：把 `stepMessage` 里的 `upstreamMessage(...)` 换成裸 `body` ⇒ 这一条也红。
+    expect(msg, "临时邮箱地址原样进了事件").not.toContain(provider.created[0]!);
+    expect(msg).toContain(ADDRESS_PLACEHOLDER);
+  });
+
+  it("登录 2xx 却认不出令牌：只说字段名，**一个值都不说**（正文里那个值很可能就是令牌本身）", async () => {
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
+    const { agnes } = agnesStub({
+      // 上游把字段改名了：`access_token` → `token_id`。这一档正文里装的就是那把令牌。
+      login: { status: 200, body: JSON.stringify({ code: 0, data: { token_id: "eyJhbGciSECRET" } }) },
+    });
+    await mintOne({ provider, agnes, ...base(), ...only, logger });
+    const e = logger.entries.find((x) => x.event === "registrar.login_no_token");
+    expect(e?.fields?.status).toBe(200);
+    const msg = String(e?.fields?.message);
+    // 变异：把 `stepMessage` 的 2xx 那一支删掉（一律走 `upstreamMessage`）
+    // ⇒ 下面这条红：令牌值原样进事件（`upstreamMessage` 不认识它，它不带 `sk-`）。
+    expect(msg, "认不出来的那个字段值就是令牌本身，不许写进事件").not.toContain("eyJhbGciSECRET");
+    // 变异：把 `bodyFieldNames` 的 `data` 下一层那个循环删掉 ⇒ 这一条红
+    //（只剩 `code, data`，而「改成什么名字了」正是这一档唯一要说的话）。
+    expect(msg, "运维在这一档要看的就是新字段叫什么").toContain("data.token_id");
+  });
+
+  it("建 key 非 2xx：上游正文里回显的**上一步那个令牌**不许进事件", async () => {
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
+    const { agnes } = agnesStub({
+      login: "tok-SECRET-123",
+      // 错误体回显 authorization 头是常见写法。
+      key: { status: 401, body: JSON.stringify({ message: "invalid bearer tok-SECRET-123" }) },
+    });
+    await mintOne({ provider, agnes, ...base(), ...only, logger });
+    const e = logger.entries.find((x) => x.event === "registrar.key_not_returned");
+    expect(e?.fields?.status).toBe(401);
+    const msg = String(e?.fields?.message);
+    // 变异：把建 key 那处 `stepMessage(...)` 的 `[token]` 改成 `[]` ⇒ 这一条红。
+    expect(msg, "上一步换来的令牌原样进了事件").not.toContain("tok-SECRET-123");
+    expect(msg).toContain(SECRET_PLACEHOLDER);
+  });
+
+  it("建 key 2xx 却认不出 key：字段名照说，而那把 key 一个字节都不许露出来", async () => {
+    const logger = recordingLogger();
+    const provider = new FakeMailProvider({ domains: ["only.test"] });
+    const only = { candidates: ["only.test"] };
+    const { agnes } = agnesStub({
+      login: "tok",
+      key: { status: 200, body: JSON.stringify({ data: { api_key: "sk-liveABCDEF123456" } }) },
+    });
+    await mintOne({ provider, agnes, ...base(), ...only, logger });
+    const msg = String(logger.entries.find((x) => x.event === "registrar.key_not_returned")?.fields?.message);
+    expect(msg, "刚铸出来的那把 key 原样进了事件").not.toContain("sk-liveABCDEF123456");
+    expect(msg).toContain("data.api_key");
   });
 
   it("成功铸出 key 的路径不产生这四条事件（不是无条件乱记日志）", async () => {

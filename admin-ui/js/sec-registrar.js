@@ -46,7 +46,7 @@ import {
   statusView, channelCards, poolView, tendCost, manualQuotaView,
   domainLedgerView, backoffView,
   historyRows, historyMalformed, roundOutcome, roundFailures, mintedByChannelText,
-  channelTestResult, refuseKeyOf,
+  channelTestResult, refuseKeyOf, tendToast,
 } from "./pure/registrar.mjs";
 
 let nodes = null;
@@ -232,34 +232,32 @@ export async function confirmAndTend(channel) {
  * 约 30 秒把它取消掉（实测 3/3）——于是面板报了「已开始」，而那一轮**什么都没发生**，
  * 补池历史里连一行都不会有。「已开始」这个提示本身就是那条缺陷的门面。
  *
- * 三条路必须分开说，**不许合并成「失败」**：
- * · `done` —— 跑完了，报真实的 铸出/尝试 数；
+ * 四条路必须分开说，**不许合并成「失败」**：
+ * · `done` 且真的开跑过 —— 报真实的 铸出/尝试 数；
+ * · `done` 但 `attempted === 0` —— **根本没跑起来**（池子已满 / 还在退避窗口里），
+ *   不许说成「跑完了，0/0」；
  * · `skipped` —— 一次上游请求都没发（配置在两步之间被改掉）；
- * · `crashed` —— 整轮抛错，**可能已经建出临时邮箱**，处置与上面两条都不同。
+ * · `crashed` —— 整轮抛错，**可能已经建出临时邮箱**，处置与上面几条都不同。
  * 网络错误那一支的文案是「结果未知，去补池历史里看」——**既不许渲染成成功、
  * 也不许渲染成失败**：请求断了不等于那一轮没跑（兜底网还攥着它）。
+ *
+ * ⚠️ **这几条的取值决策整个在 `js/pure/registrar.mjs` 的 `tendToast()` 里**
+ *（admin-ui/README.md 硬规则 1），这里只剩「翻译 + 弹出来」。第二条的全文
+ *（它为什么是本仓自己禁掉的那句话）写在那个函数上方。
  */
 async function startTend(channel) {
   try {
     const r = await api.post("/registrar/tend", channel === null ? {} : { channel });
-    const o = r && r.outcome;
-    if (o && o.kind === "done") {
-      const minted = Number(o.result && o.result.minted) || 0;
-      const attempted = Number(o.result && o.result.attempted) || 0;
-      toast(
-        t("reg.tend.done", { minted: fmtCount(minted), attempted: fmtCount(attempted) }),
-        minted > 0 ? "ok" : "warn",
-        minted > 0 ? undefined : { sticky: true },
-      );
-    } else if (o && o.kind === "skipped") {
-      toast(t("reg.tend.skipped"), "warn", { sticky: true });
-    } else if (o && o.kind === "crashed") {
-      toast(t("reg.tend.crashed"), "warn", { sticky: true });
-    } else {
-      // 后端比面板新、给了一种这一版不认识的结局。**照实说不认识**，
-      // 别冒充成功——与 `failureReasonKey()` 表外返回 null 是同一条纪律。
-      toast(t("reg.tend.unknownOutcome"), "warn", { sticky: true });
+    const v = tendToast(r && r.outcome);
+    // 数字过 `fmtCount`、`reason` 过 `t()` —— 两样都是**渲染**，pure 模块拿不到它们
+    //（那个目录禁 `import`）。这里刻意不按 key 分岔：分岔就是把判据抄回板块文件。
+    const params = {};
+    for (const k of Object.keys(v.params)) {
+      const val = v.params[k];
+      params[k] = typeof val === "number" ? fmtCount(val) : val;
     }
+    if (v.reason !== null) params.reason = t(v.reason.key, v.reason.params);
+    toast(t(v.key, params), v.ok ? "ok" : "warn", v.ok ? undefined : { sticky: true });
   } catch (e) {
     const key = refuseKeyOf(e && e.body);
     if (key === null && !(e && e.body)) {

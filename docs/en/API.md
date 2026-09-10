@@ -107,6 +107,11 @@ The two Gemini endpoints carry the model name in the path rather than in the bod
 
 Errors the gateway itself produces always use the envelope `{ "error": { "type": ..., "message": ... } }`, which all four protocol SDKs can parse. Errors produced upstream are passed through unchanged, keeping the upstream error structure.
 
+Two kinds of request are rejected locally **before anything reaches upstream**, burning neither a key nor the shared upstream rate-limit budget.
+
+- **Content blocks that cannot become plain text** — `/v1/messages`, `/v1/responses` and `:generateContent` accept text blocks only; anything else (`image`, `input_image`, `inlineData`, `tool_use`, …) returns `400` naming the block type, and is **never** dropped silently. `/v1/chat/completions` passes the body through verbatim and skips this check.
+- **Generation parameters that cannot be relayed** — on those same three, `tools` / `tool_choice` (tool calls are not converted), `top_k` / `topK` (no such field upstream) and `candidateCount > 1` (only the first candidate is converted) return `400` naming the field. Forwarded safely: `temperature`, `top_p` (`topP`) and `stop` (`stop_sequences` / `stopSequences`). Fields absent from a request-body table are not forwarded.
+
 ### Common status codes
 
 | Status | Meaning |
@@ -302,7 +307,7 @@ curl -X POST http://localhost:8080/v1/responses \
 }
 ```
 
-With `"stream": true` the response is `text/event-stream` and carries `response.created`, one or more `response.output_text.delta`, then `response.completed`.
+With `"stream": true` the response is `text/event-stream` and carries the official minimal event sequence in order: `response.created`, `response.output_item.added`, `response.content_part.added`, one or more `response.output_text.delta`, `response.output_text.done`, `response.content_part.done`, `response.output_item.done`, `response.completed`. The last event carries the complete final object in `response.output[]`. If the upstream stream breaks midway the gateway emits `response.failed` instead and **never** follows it with `response.completed`.
 
 ## Anthropic Compatible API
 
@@ -352,7 +357,7 @@ curl -X POST http://localhost:8080/v1/messages \
 With `"stream": true` the response is `text/event-stream` and carries the standard Anthropic event sequence: `message_start`, `content_block_start`, one or more `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`.
 
 > [!IMPORTANT]
-> If the `content` (or `system`) array contains a block that cannot be mapped to the internal plain-text format — any non-`text` type such as `image`, `tool_use` or `tool_result` — the gateway returns `400` before forwarding anything upstream instead of silently dropping the block the way early versions did. In the message `不支持的内容块类型: image（本网关仅支持 text）` the block type is replaced with whatever was actually received.
+> If the `content` (or `system`) array contains a block that cannot be mapped to the internal plain-text format — any non-`text` type such as `image`, `tool_use` or `tool_result` — the gateway returns `400` before forwarding anything upstream instead of silently dropping the block the way early versions did. In the message `不支持的内容块类型: image（本网关仅支持 text）` the block type is replaced with whatever was actually received. **The same rule now applies to `/v1/responses` and `:generateContent`** (early versions enforced it on this protocol only); see the Error Responses section.
 
 ## Gemini Native API
 
@@ -378,12 +383,12 @@ curl http://localhost:8080/v1beta/models \
     { "name": "models/agnes-2.5-pro-alpha", "displayName": "agnes-2.5-pro-alpha", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-2.5-pro-beta", "displayName": "agnes-2.5-pro-beta", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-3.0-flash", "displayName": "agnes-3.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
+    { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": [] }
   ]
 }
 ```
@@ -424,6 +429,9 @@ curl -X POST "http://localhost:8080/v1beta/models/agnes-2.0-flash:generateConten
 }
 ```
 
+> [!IMPORTANT]
+> The method name in the path is a whitelist: only `generateContent` and `streamGenerateContent` are implemented. `:countTokens`, `:embedContent` and any misspelled method return `404` and are **never** turned into a real upstream conversation.
+
 ### POST /v1beta/models/{model}:streamGenerateContent
 
 The body has the same shape as `generateContent`; the path ends in `:streamGenerateContent`. The response is `text/event-stream` where every event is a `data:` line with no `event:` field and there is no `[DONE]` terminator — the stream simply closes when it ends.
@@ -440,7 +448,10 @@ curl -X POST "http://localhost:8080/v1beta/models/agnes-2.0-flash:streamGenerate
 
 ```text
 data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]},"index":0}],"modelVersion":"agnes-2.0-flash"}
+data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP","index":0}],"modelVersion":"agnes-2.0-flash","usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5}}
 ```
+
+The last frame is the **terminal frame**: empty `parts`, carrying `finishReason` (`STOP` / `MAX_TOKENS` / `SAFETY`) and `usageMetadata`. Clients use it to tell "finished" apart from "truncated / blocked". If the upstream stream breaks midway, the terminal frame's `finishReason` is `OTHER` and it carries no `usageMetadata`.
 
 ## Images and Videos API
 
@@ -544,7 +555,7 @@ curl http://localhost:8080/admin/api/session \
 **Response**:
 
 ```json
-{ "ok": true, "version": "0.3.0" }
+{ "ok": true, "version": "0.3.1" }
 ```
 
 ### GET /admin/api/capabilities
@@ -562,7 +573,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -594,7 +605,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1589,7 +1600,7 @@ curl http://localhost:8080/health
 **Response**:
 
 ```json
-{ "status": "ok", "version": "0.3.0", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.3.1", "storage": { "writable": true } }
 ```
 
 `storage.writable` reports whether the storage holding the key pool really is writable. It is maintained by one probe at startup plus every real write at runtime; the health check itself never writes. When storage is not writable the endpoint returns **HTTP `503`**, `status` becomes `degraded` and a `detail` sentence is attached (on Docker this usually means the bind-mounted host directory is owned by a different user than the one inside the container — see the container log).

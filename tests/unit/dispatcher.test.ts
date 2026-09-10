@@ -555,6 +555,75 @@ describe("dispatch", () => {
     expect(await res.text()).not.toContain("secret");
   });
 
+  /**
+   * ⚠️⚠️ **上游非 2xx 的正文里像凭据的片段必须被打掉。**
+   *
+   * 上一版这里只关了 401/403 那一档（整个错误体都不透传），而 `evict` 上方的注释
+   * 逐字写着「**这是本项目唯一一条上游 key 可能触达客户端的通路**」——**那句话不完整**：
+   * 429 / 402 / 5xx 与其余 4xx 的上游正文一直是**逐字透传**的，而「凭据无效」并不是
+   * 各家 API 唯一会回显 key 片段的地方，配额耗尽、账号被禁这类文案同样会带。
+   *
+   * **变红条件**：把 `sanitizeError()` 换回 `sanitize()`（即恢复逐字透传）。
+   */
+  describe("上游错误体里的凭据片段", () => {
+    it("4xx 直通那一档：像凭据的片段被打掉，其余文字原样留着", async () => {
+      const repo = await makeRepo(["k1"]);
+      const f = new FakeFetcher([
+        { status: 400, body: '{"error":"bad request for key sk-live-AbCd1234EfGh, retry later"}' },
+      ]);
+      const res = await dispatch({
+        path: "/chat/completions", body: {}, stream: false,
+        deps: { repo, fetcher: f, config: CONFIG, now: () => 1000 },
+      });
+      expect(res.status, "4xx 仍然直通，状态码不许被改写").toBe(400);
+      const text = await res.text();
+      expect(text, "上游错误体里的 key 片段被透传给客户端了").not.toContain("sk-live-AbCd1234EfGh");
+      expect(text).toContain("sk-***");
+      // **其余文字必须原样留着**：错误体是运维的排障线索，打成一片星号等于毁掉它。
+      expect(text).toContain("bad request for key");
+      expect(text).toContain("retry later");
+    });
+
+    it("5xx 那一档同样打码（它走的是 lastError 那条路，与 4xx 不同）", async () => {
+      const repo = await makeRepo(["k1"]);
+      const f = new FakeFetcher([{ status: 500, body: "boom while using sk-abcdef123456" }]);
+      const res = await dispatch({
+        path: "/chat/completions", body: {}, stream: false,
+        deps: { repo, fetcher: f, config: CONFIG, now: () => 1000 },
+      });
+      expect(res.status).toBe(500);
+      const text = await res.text();
+      expect(text).not.toContain("sk-abcdef123456");
+      expect(text).toContain("boom while using");
+    });
+
+    /**
+     * **凭据横跨块边界时也要打掉。**
+     * 流式改写是逐块做的，`sk-` 正好落在块尾时，朴素实现会把前半截原样放行。
+     * **变红条件**：把 `redactBody()` 里那段「从尾部往回找最后一个 `sk-`」删掉、整块直接放行。
+     */
+    it("凭据被切在两个块中间也认得出来", async () => {
+      const repo = await makeRepo(["k1"]);
+      const enc = new TextEncoder();
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(enc.encode("upstream said sk-liv"));
+          c.enqueue(enc.encode("eSECRET99 and stopped"));
+          c.close();
+        },
+      });
+      const fetcher = { async fetch() { return new Response(body, { status: 400 }); } };
+      const res = await dispatch({
+        path: "/chat/completions", body: {}, stream: false,
+        deps: { repo, fetcher: fetcher as never, config: CONFIG, now: () => 1000 },
+      });
+      const text = await res.text();
+      expect(text, "凭据被切在块边界上就漏出去了").not.toContain("sk-liveSECRET99");
+      expect(text).toContain("upstream said sk-***");
+      expect(text).toContain("and stopped");
+    });
+  });
+
   // ── 换 key 重试时被丢弃的上游响应体必须被取消 ───────────────────────────
 
   it("换 key 重试时取消掉被丢弃的上游响应体", async () => {

@@ -2143,7 +2143,7 @@ BANNER='[collection-guard] ✅'
 #   ⇒ Node：5086 + 1 = **5087**；文件数 **164 不动**。
 #   ⇒ workerd 两个数仍然一格不动（实测 43 / 793）：新增的那一格在 `tests/unit/` 下，
 #     不进 workers 池；`tests/contract/` 一格都没加。
-EXPECT_NODE_FILES=168
+EXPECT_NODE_FILES=170
 #
 #   ── 指路不许指向一条当时还不存在的事件（终检遗留）：**+2**，全在 tests/unit/i18n-dict.test.ts
 #   起因：`reg.backoff.cluster` 里「上游列出来的域名全被判『被屏蔽』那一支，原话在
@@ -2406,9 +2406,37 @@ EXPECT_NODE_FILES=168
 #   把 anthropic 的 catch 从基类收窄回 `UnsupportedContentError` ⇒ 恰好 2 条 Anthropic 用例红。
 #   ⇒ Node：5137 + 98 = **5235**，文件 164 + 4 = **168**；
 #     workerd：803 + 41 = **844**，文件 43 + 1 = **44**。
-EXPECT_NODE_TESTS=5235
+#
+#   ── v0.3.1 审计收口：**Node +2 文件 / +107 格；workerd +0 文件 / +6 格**
+#   起因：v0.3.0 发出去之后跑了一轮六轴审计 + 对抗式复核，36 条原始发现确认 20 条，本版全修。
+#   两个**新建**文件（都只进 Node 池，`tests/ui/**` 与 `tests/unit/**` 不进 workers 池）：
+#     · `tests/ui/dom/reveal-controls.test.ts` **6 格** —— 「显示明文 / 复制」两颗按钮
+#       在 **HTTP 错误下不许静默**。实测缺陷：`load()` 没有 `try/catch`，而 `api.js` 对任何
+#       非 2xx 一律抛 ⇒ 异常落在两个 `async` 点击监听器上无人接，**屏幕上一个字不变**，
+#       只有浏览器控制台里一条拒绝。本仓纪律是「点了什么都不会发生的按钮比没有更糟」。
+#       其中一格专钉 **404 单独一档**（这两张表轮询刷新，记录在别处被删之后那一行还在，
+#       点下去必是 404 ⇒ 处置是「刷新列表」，与「等一会儿再点」不是一回事）。
+#     · `tests/unit/ops-closure.test.ts` **31 格** —— 运维闭环的七个缺口，其中两条最重：
+#       `DATA_DIR` 与 compose 卷**硬耦合**（改一下 ⇒ 一切正常 ⇒ 下次升级整池 key 静默消失）、
+#       Worker 备份清单只列两类键（照它恢复会**静默吊销全部已签发的对外 API 密钥**）。
+#   其余 **+70 格**摊在 20 个现有文件里，最集中的几处：
+#     · `tests/unit/responses.test.ts` +5（官方最小事件序列 / delta 带齐 item_id /
+#       completed 带 output / 断流发 response.failed 且**绝不再发 completed**）
+#     · `tests/unit/gemini.test.ts` +6（终帧带 finishReason 与 usageMetadata /
+#       断流终帧是 OTHER 且不报 token 数 / 非文本 part 400 / 参数三档）
+#     · `tests/unit/dispatcher.test.ts` +3（非 2xx 正文里像凭据的片段被打掉、
+#       **其余文字原样留着**、以及**凭据被切在两个块中间也认得出来**）
+#     · `tests/contract/gemini.test.ts` +5（方法白名单：`:countTokens` 一类一律 404，
+#       且**同格钉 `fetcher.sentBodies` 为空** —— 只判状态码的话「先转发再丢掉」照样绿）
+#   workerd 的 +6 全部来自 contract 层那几个双运行时文件的新增格，文件数不变。
+#   变异实测（四组各自亲手跑过，逐条记在各自的注释里）：删掉 `output_item.added` ⇒
+#   **官方 openai 3.11.0 在本地回放里当场 IndexError**（零上游请求）；删掉 Gemini 终帧 ⇒
+#   google-genai 回放 `finish_reason=None`；把错误体换回逐字透传 ⇒ 脱敏那 3 格全红。
+#   ⇒ Node：5235 + 107 = **5342**，文件 168 + 2 = **170**；
+#     workerd：844 + 6 = **850**，文件仍是 **44**。
+EXPECT_NODE_TESTS=5342
 EXPECT_WORKERS_FILES=44
-EXPECT_WORKERS_TESTS=844
+EXPECT_WORKERS_TESTS=850
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。

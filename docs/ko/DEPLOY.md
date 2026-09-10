@@ -215,6 +215,20 @@ GATEWAY_TOKEN=본인의 긴 랜덤 문자열로 교체
 PORT=8080
 ```
 
+> [!WARNING]
+> **`DATA_DIR`는 docker-compose.yml의 볼륨 마운트와 묶여 있습니다. Docker 형태에서는 이것만
+> 따로 바꾸지 마세요.** 그 줄 `./data:/app/data`는 하드코딩이고 `.env`의 `DATA_DIR`는 그
+> 보간에 전혀 관여하지 않습니다. 그 줄을 그대로 두고 `DATA_DIR`만 다른 경로로 바꿔도 아무도
+> 막지 않습니다: 컨테이너는 뜨고 `/health`는 `ok`를 주며 패널도 key 풀도 정상이고 등록기도
+> 계속 채웁니다 —— 그동안 store.json은 **컨테이너 쓰기 계층**에 떨어집니다. 다음에 "업데이트"
+> 대로 한 번 올리면 컨테이너가 재생성되면서 key 풀 전체, 발급된 외부용 API 키, 패널 설정이
+> 함께 사라지고, 당신이 계속 백업해 온 `./data`는 처음부터 비어 있습니다.
+> 데이터를 호스트의 어디에 둘지 바꾸려면 그 마운트 줄의 **왼쪽 절반**을 바꾸고, 오른쪽 절반을
+> 바꾸려면 `DATA_DIR`도 같은 경로로 함께 바꿉니다. 기동할 때 entrypoint가 이것을 검사해서,
+> 어떤 마운트 지점에도 얹혀 있지 않으면 컨테이너 로그에 "어떤 마운트 지점에도
+> 얹혀 있지 않다"는 경고를 남깁니다 —— 이 연쇄에서 유일한 신호가 그 한 줄이고, `/health`는
+> 데이터가 어디에 떨어졌는지 알려 주지 않습니다.
+
 #### 데이터 디렉터리와 소유자: 컨테이너가 `./data`를 바꿉니다 (먼저 확인하세요)
 
 컨테이너는 **root로 entrypoint에 진입**해 두 가지를 한 뒤 권한을 낮춥니다:
@@ -276,12 +290,34 @@ curl http://localhost:8080/health
 `degraded`인 `503`을 반환하고 컨테이너는 unhealthy로 표시됩니다. 구체적인 원인은
 컨테이너 로그를 확인하세요.
 
+문제 해결에서 반복해서 쓰는 두 줄을 먼저 여기 적어 둡니다. 이 문서에서 이후에 나오는
+"컨테이너 로그"는 모두 두 번째 줄을 가리킵니다.
+
+```bash
+docker compose ps                     # 떠 있는지, 건강한지
+docker compose logs -f --tail=100     # 컨테이너 로그: entrypoint 경고도 admin.token_rejected도 여기
+```
+
 ### 업데이트
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
+
+`docker compose pull`이 가져오는 것은 `.env`의 `IMAGE_TAG`가 가리키는 tag입니다(설정하지
+않으면 `latest`). 이미지 전체 이름은 `ghcr.io/xwteam/agnes2api`이고, 사용할 수 있는 tag는
+[GHCR packages 페이지](https://github.com/xwteam/agnes2api/pkgs/container/agnes2api)에 있습니다.
+**업그레이드 = `IMAGE_TAG`를 올릴 버전으로 바꾸고 `docker compose up -d`, 롤백 = 되돌리기.**
+tag를 고정해야 비로소 이 `.env`가 "지금 어느 버전이 도는가"에 답할 수 있습니다. `:latest`는
+답하지 못합니다.
+
+> [!IMPORTANT]
+> **`.env`를 고쳤으면 `docker compose restart`가 아니라 `docker compose up -d`를 실행하세요.**
+> 후자는 같은 컨테이너를 다시 시작할 뿐이고, 컨테이너의 환경은 **생성** 시점에 고정되므로
+> `.env`를 바꿔도 1바이트도 달라지지 않습니다. `up -d`가 설정 변화를 감지해야 컨테이너를
+> 재생성합니다. `ADMIN_TOKEN` 추가와 토큰 교체가 같은 함정이고, 후자가 더 고약합니다:
+> 교체했다고 믿는데 옛 토큰이 그대로 살아 있습니다.
 
 `./data`는 그대로이고 key 풀과 설정이 거기 있습니다. **업그레이드 전에 그 디렉터리를 백업하세요**
 (아래 "백업과 복구" 참고). 임포트한 key 풀의 유일한 사본이며, 두 번째 사본은 없습니다.
@@ -303,7 +339,7 @@ docker compose up -d
 | `POOL_TOUCH_INTERVAL_MS` | 아니오 | `21600000` | key의 "마지막 사용 시각"을 최대 얼마 만에 한 번 저장할지. `0`이면 성공한 요청마다 저장. 표시 전용 필드로 스케줄링은 전혀 읽지 않으며, 같은 간격은 패널의 사용량 카운터에도 적용됨. 대가와 "카운터를 지우는 법"은 아래. **인스턴스를 만들 때 한 번만** 읽습니다(`src/http/wire.ts`). 변경은 컨테이너 재시작 또는 isolate 회수 이후에 반영되며, **패널에서 바꿔도 즉시 반영되지 않습니다**. |
 | `USAGE_STATS_ENABLED` | 아니오 | `false` | 패널 "사용량" 섹션의 Tier-2 시계열(일／시간／모델／프로토콜별). **판정은 문자 그대로 `true`**이며 `1`이나 `yes`는 꺼짐으로 봅니다. **기본값은 꺼짐이고 그 "꺼짐"은 무비용**입니다. 켰을 때 무엇을 치르는지, 그리고 **수명이 짧은 인스턴스에서는 카운트가 늦는 게 아니라 사라진다**는 점은 아래를 보세요. app 빌드 시 한 번 읽으므로 변경은 컨테이너 재시작／isolate 회수 후에 적용됩니다. |
 | `PORT` | 아니오 (Node/Docker 전용) | `8080` | Node 런타임의 리스닝 포트. Worker에서는 사용되지 않음. |
-| `DATA_DIR` | 아니오 (Node/Docker 전용) | `/app/data` | 파일 저장소가 `store.json`을 쓰는 디렉터리. Worker에서는 사용되지 않음. |
+| `DATA_DIR` | 아니오 (Node/Docker 전용) | `/app/data` | 파일 저장소가 `store.json`을 쓰는 디렉터리. Worker에서는 사용되지 않음. **Docker 형태에서는 이것만 따로 바꾸지 마세요**: compose 볼륨 마운트와 묶여 있습니다. 위의 "Docker 배포 → 설정" 참고. |
 | `APIKEY_CACHE_TTL_MS` | 아니오 | `300000` | 외부용 API 키 표를 각 인스턴스가 캐시하는 시간. `0`이면 끔. 중지한 키가 다른 곳에서 언제 실효되는지도 정합니다. 아래 할당량 계산 참고. |
 
 ### 허용 범위와 "인스턴스 생성 시 한 번만 읽는" 두 가지 예외
@@ -1453,8 +1489,9 @@ curl -s "$BASE/v1/chat/completions" \
 **해결**:
 
 1. **`ADMIN_TOKEN`을 설정하지 않았을 때**의 정상적인 모습입니다. 트리 자체가 등록되지 않으므로 "여기에 관리 화면이 있다"는 사실조차 새지 않습니다.
-2. 설정했는데도 404: 토큰이 규칙에 어긋납니다(24자 미만 / 앞뒤 공백 / 출력 불가 ASCII). 컨테이너 로그에 `admin.token_rejected`가 남습니다.
-3. 패널은 열리는데 엔드포인트가 `503`: `ADMIN_TOKEN`이 저장소의 `gatewayToken`과 충돌했습니다. 로그는 `admin.token_conflict`이고, 처리 방법은 위 절에 있습니다.
+2. 설정했는데도 404라면 **먼저 컨테이너가 정말 재생성됐는지 확인하세요**: Docker 형태에서는 `.env`를 고친 뒤 `docker compose up -d`가 필요하고, `docker compose restart`는 다시 읽지 않습니다. 이 단계를 건너뛰면 아래 3번이 엉뚱한 방향으로 이끕니다.
+3. 재생성했는데도 404: 토큰이 규칙에 어긋납니다(24자 미만 / 앞뒤 공백 / 출력 불가 ASCII). 컨테이너 로그에 `admin.token_rejected`가 남습니다.
+4. 패널은 열리는데 엔드포인트가 `503`: `ADMIN_TOKEN`이 저장소의 `gatewayToken`과 충돌했습니다. 로그는 `admin.token_conflict`이고, 처리 방법은 위 절에 있습니다.
 
 ### 패널에서 저장한 설정이 다른 인스턴스에 한참 반영되지 않는다
 
@@ -1485,6 +1522,7 @@ curl -s "$BASE/v1/chat/completions" \
 1. 열에 아홉은 데이터 디렉터리에 쓰지 못하는 경우입니다. 컨테이너 로그의 entrypoint 줄을 읽고 `./data`의 소유자가 `100:101`인지 확인하세요.
 2. `--user`나 compose의 `user:`로 비 root를 지정했다면 entrypoint는 chown을 **하지 않습니다**. 소유자와 쓰기 가능 여부는 직접 준비해야 합니다.
 3. `DATA_DIR`가 `/`나 최상위 시스템 디렉터리를 가리키면 entrypoint는 재귀 chown을 거부하고 경고만 찍습니다 —— 멀쩡한 디렉터리로 바꾸세요.
+4. **소유자를 세 번 확인해도 맞는데 여전히 degraded**: 대개 `store.json`을 파싱하지 못하는 경우입니다. 위 세 항목은 모두 권한 이야기지만 이것은 아닙니다 —— 저장 계층이 올바른 JSON을 읽지 못하면 읽고 쓸 때마다 예외가 나고, 기동 프로브가 "쓰기 가능"을 false로 기록해 `/health`도 똑같이 `503` degraded를 줍니다. 컨테이너를 멈추고 `python3 -m json.tool ./data/store.json`으로 검증하세요: 위 "다중 계정 설정"이 가르치는 손편집이 가장 흔한 파손 경로입니다(쉼표 하나면 충분합니다). 깨졌으면 백업에서 복구하세요. 진짜 원인은 컨테이너 로그 첫 줄에 그대로 나옵니다.
 
 ## 성능 최적화
 
@@ -1567,20 +1605,31 @@ KV 형태에서는 `USAGE_FLUSH_INTERVAL_MS`를 줄일 수 없고, 억지로 줄
 ### 업그레이드 전에
 
 1. **먼저 저장소를 백업합니다.** key 풀과 설정은 사본이 하나뿐입니다. 아래 "백업과 복구" 참고.
-2. **CHANGELOG를 한 번 봅니다.** 파괴적 변경은 거기 적힙니다. 여섯 개 README의 배지가 그곳을
+2. **기준선을 적어 둡니다: 지금의 `version`과 key 풀 개수.** 앞의 것은
+   `curl -s "$BASE/health"`가 돌려주는 그 필드이고, 뒤의 것은 패널 개요 페이지에 있습니다.
+   기준선이 없으면 아래 세 가지 확인으로는 "올라갔다"와 "아예 안 올라갔다"를 가릴 수 없습니다.
+3. **CHANGELOG를 한 번 봅니다.** 파괴적 변경은 거기 적힙니다. 여섯 개 README의 배지가 그곳을
    가리킵니다.
-3. **업그레이드에 저장소 초기화는 필요 없습니다.** 저장된 레코드는 하위 호환이며 `pool:index`의
+4. **업그레이드에 저장소 초기화는 필요 없습니다.** 저장된 레코드는 하위 호환이며 `pool:index`의
    `v` 필드는 오늘 기준 항상 `1`입니다.
 
 ### 업그레이드 후 확인할 것
 
-1. `/health`가 `200`을 주고 `status`가 `ok`일 것.
-2. 패널을(돌리고 있다면) 로그인할 수 있고 key 풀의 개수가 업그레이드 전과 같을 것.
+1. `/health`가 `200`, `status`가 `ok`이고 **`version`이 이번에 올린 버전 번호와 같을 것**.
+   세 가지 중 이 뒷부분만이 "올라갔다"와 "아예 안 올라갔다"를 가릅니다: `version`은 컴파일
+   시점 상수로 이미지에 구워지고, 나머지 둘은 옛 버전에서도 한 글자 틀리지 않고 통과합니다.
+   이미지가 배포되지 않았을 때(Release는 나갔는데 빌드가 취소된 사고, 이 저장소가 실제로 겪음)
+   `docker compose pull`은 조용히 성공하는 빈 동작입니다.
+2. 패널을(돌리고 있다면) 로그인할 수 있고 key 풀의 개수가 업그레이드 전과 같을 것. 개요
+   페이지 런타임 칸에도 버전 번호가 있어 1번과 서로 뒷받침합니다.
 3. 위 "검증"의 세 번째 명령을 한 번 돌려 실제로 업스트림까지 닿는지 확인할 것.
 
-롤백: Docker는 이미지 tag를 이전 버전으로 고정하고 `docker compose up -d`를 다시 실행합니다.
-Worker는 Cloudflare 대시보드의 Deployments에서 되돌리거나, `git checkout`으로 이전 tag로
-돌아가 `npx wrangler deploy`를 다시 실행합니다.
+롤백: Docker는 `.env`의 `IMAGE_TAG`를 이전 버전으로 되돌리고 `docker compose up -d`를 다시
+실행합니다(이미지 전체 이름과 tag 목록 위치는 위 "Docker 배포 → 업데이트").
+**그 tag가 registry에 정말 있는지 먼저 확인하세요**: 받아오지 못하면 compose는 실패하지 않고
+**지금의 작업 트리**로 그 버전 번호를 단 이미지를 빌드합니다. 롤백은 "성공"하고 장애는 그대로
+남습니다. Worker는 Cloudflare 대시보드의 Deployments에서 되돌리거나, `git checkout`으로 이전
+tag로 돌아가 `npx wrangler deploy`를 다시 실행합니다.
 
 ## 백업과 복구
 
@@ -1595,19 +1644,35 @@ cp -a ./data ./data.bak
 docker compose start
 ```
 
-한 번 멈추는 것은 쓰기 경합을 피하기 위해서입니다. `./data/store.json` 안에 전부 들어 있습니다:
-key 레코드, `pool:index`, 그리고 저장소 쪽 설정. 복구는 디렉터리를 되돌려 놓고
+한 번 멈추는 것은 쓰기 경합을 피하기 위해서입니다. `./data/store.json` 안에 전부 들어 있습니다
+—— key 레코드와 `pool:index`뿐 아니라 `apikeys`(발급된 외부용 API 키 표), `config`(패널이 저장한
+설정), `registrar:domains`와 `registrar:backoff`(등록기의 도메인 가용성·백오프 장부),
+`tend:history`(보충 이력), 그리고 이벤트 링까지. 복구는 디렉터리를 되돌려 놓고
 `docker compose up -d` 하면 됩니다.
 
 ### Cloudflare Worker
 
 ```bash
-npx wrangler kv key list --binding=POOL --remote
-npx wrangler kv key get --binding=POOL "pool:index" --remote
+# 먼저 키 이름을 나열합니다. **이 목록이 곧 백업 대상: 나온 것을 전부 get 해야 합니다**
+npx wrangler kv key list --binding=POOL --remote > kv-keys.json
+
+# 그다음 하나씩 값을 받습니다. key:<id> / registrar:* / tend:history도 아래 세 줄과 같은 방식
+npx wrangler kv key get --binding=POOL "pool:index" --remote > kv-pool-index.json
+npx wrangler kv key get --binding=POOL "apikeys"    --remote > kv-apikeys.json
+npx wrangler kv key get --binding=POOL "config"     --remote > kv-config.json
 ```
 
-`key:<id>`를 하나씩 꺼내 파일로 남기면 됩니다. 복구는 `npx wrangler kv key put`으로 하며,
-아래 key 임포트와 같은 방식입니다.
+복구는 `npx wrangler kv key put`으로 하며, 위 key 임포트와 같은 방식입니다.
+
+> [!WARNING]
+> **`key:<id>`와 `pool:index`만 백업하면 네 갈래의 키를 빠뜨리고, 그 누락은 복구 현장에서
+> 전혀 보이지 않습니다.** 그 목록대로 복구하면: 업스트림 key 풀은 돌아오고 `/health`는 `ok`를
+> 주고 직접 `GATEWAY_TOKEN`으로 찔러 봐도 통합니다 —— 그런데 다운스트림 사용자 손에 있는
+> 서브키는 전부 `401`입니다. 빠지는 것은 이 네 갈래: `apikeys`(발급된 외부용 API 키 표.
+> 복구하지 않는 것은 모든 서브키를 한 번에 폐기하는 것과 같고, 평문은 발급 그 한 번만
+> 보여 주므로 되찾을 수 없어 전부 재발급해야 합니다), `config`(패널이 저장한 설정. 게이트웨이
+> 토큰과 두 메일함 채널의 자격 증명 포함), `registrar:domains`와 `registrar:backoff`(잃으면
+> 등록기가 "사용 중 · 이번에는 기동하지 못함"이 됩니다), `tend:history`(보충 이력).
 
 > [!WARNING]
 > 백업 파일에는 **평문 key와 평문 자격 증명**이 들어 있습니다(게이트웨이 토큰도, 두 메일함

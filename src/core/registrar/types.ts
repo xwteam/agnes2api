@@ -35,6 +35,11 @@ export const WORKER_CRON_WALL_CLOCK_MS = 900_000;
  * `REGISTRAR_REQUEST_TIMEOUT_MS` 仍然没算进去**，这 120 秒就是留给这些尾巴的。
  * 把它们也算进判据是行不通的——理论最坏本来就高于 900 秒，那样会变成一次尝试都不敢开始。
  *
+ * ⚠️ **这 120 秒现在还多兜一样东西，如实登记**：预算判据的起点已经挪到**准备阶段之后**
+ *（`./tender.ts` 的 `roundStartedAt`，理由与代价全文在那里），于是那一段
+ *（`loadDomainLedger()` + 一次 `listDomains()`，最坏是一个 `REGISTRAR_REQUEST_TIMEOUT_MS`
+ * 加两次存储读）同样落在这份余量里。780 + 余量仍在 900 秒之内。
+ *
  * ⚠️ **这段原来写的是「与 403 退避」。** 那是指着一条**死分支**说话的陈旧注释：
  * 从前撞上限流会 `sleep(5000)` 再换个域名接着打，而实测上游回的是 429 与 400，
  * 那条 403 分支一次都没走到过。它连同那句注释一起删掉了 ——
@@ -104,6 +109,17 @@ export const MANUAL_CODE_TIMEOUT_MS = 60_000;
  * 🔴 **它不是耗时上界，别读成上界。** 在 `MANUAL_MINT_BATCH = 1` 之下它**只被判一次**
  *（`tender.ts` 里 `i === 0` 那次），语义是「这一次尝试开不开得起来」。
  * 唯一的硬约束是**必须严格大于 `worstAttemptMs`**（= `MANUAL_CODE_TIMEOUT_MS` = 60 秒），
- * 否则见 `MANUAL_MAX_DOMAIN_ATTEMPTS` 那段说的诚实空转。多出来的 10 秒留给 `elapsedMs`。
+ * 否则见 `MANUAL_MAX_DOMAIN_ATTEMPTS` 那段说的诚实空转。
+ *
+ * ⚠️⚠️ **这里原来写着「多出来的 10 秒留给 `elapsedMs`」——那句话是错的，而它错得很贵。**
+ * 判据里的 `elapsedMs` 从前是从**整轮开头**算起的，中间隔着 `listDomains()` 这类
+ * 单请求就允许 `REGISTRAR_REQUEST_TIMEOUT_MS`（15 秒）的准备动作：**10 秒的余量根本
+ * 不够，上游邮箱服务慢一次这颗按钮就诚实空转**，还打出一条指向 `CODE_TIMEOUT_MS` 的
+ * 错误处置（而手动轮的 `codeTimeoutMs` 已经被 `Math.min` 压到 60 秒，调它没有用）。
+ * ⇒ 处置**不是**把这个数抬到 85 秒（那只是把同一条赌注的赔率改一改，且要连着五语言
+ * 文档里那句「预算 70 秒」一起动）：`tender.ts` 里那个起点已经挪到准备阶段**之后**，
+ * i=0 时 `elapsedMs ≈ 0`，判据退化成纯配置量 `worstAttemptMs > roundBudgetMs`。
+ * 全文与代价记在 `tender.ts` 的 `roundStartedAt` 上方。这 10 秒因此是**余量**，
+ * 不再是「留给准备阶段」的预算。
  */
 export const MANUAL_ROUND_BUDGET_MS = 70_000;

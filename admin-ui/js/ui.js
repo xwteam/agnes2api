@@ -8,6 +8,10 @@
  *    而 innerHTML 拼 SVG 是这条约束最容易被顺手破坏的地方）。
  */
 import { t } from "./i18n.js";
+// `revealControls()` 是 `js/pure/reveal.mjs` 那台状态机的 DOM 那一半（`tests/ui/pure-boundary.test.ts`
+// 的清单里逐字这么登记着），所以它够得着同一台状态机里「抛出来的那一族」怎么归档。
+// 为什么这一个不走注入，见 `load()` 的 catch 里那一段。
+import { revealErrorOutcome } from "./pure/reveal.mjs";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -211,7 +215,9 @@ export async function copy(text) {
 /**
  * 「掩码 + 显示明文 + 复制」这一组控件。**Key 池与 API 密钥共用同一份实现。**
  *
- * 传入的 `fetchSecret()` 由调用方注入（各自的端点不同），本函数只管交互与三态渲染。
+ * 传入的 `fetchSecret()` 由调用方注入（各自的端点不同），本函数只管交互与四态渲染
+ *（`ok` / `unavailable` / `gone` / `failed` —— 后两态里的 `gone` 是本轮补的，
+ * 它与整条错误路径此前根本没有反馈这件事一起，见 `load()` 的 catch）。
  * 状态机在 `admin-ui/js/pure/reveal.mjs`，那一半是纯函数、可以不起浏览器地验。
  *
  * 🔴 **明文不写回列表数据**：它只活在注入的 `state` 里（`createRevealState()`），
@@ -240,10 +246,30 @@ export function revealControls(o) {
   const load = async () => {
     const had = o.state.secretOf(o.id);
     if (had !== null) return had;
-    const body = await o.fetchSecret(o.id);
-    const out = o.outcomeOf(body);
+    let out;
+    try {
+      out = o.outcomeOf(await o.fetchSecret(o.id));
+    } catch (e) {
+      // 🔴 **这个 catch 是这两颗按钮唯一的反馈来源，别把它「顺手」删回去。**
+      // 没有它时：`js/api.js` 的 `json()` 对任何非 2xx 一律抛，异常穿过本函数落在
+      // 下面两个 `async` 监听器上**无人接**（全站零处 `unhandledrejection`）
+      // ⇒ 点「显示明文」/「复制」屏幕上一个字都不变、剪贴板里也什么都没有，
+      // 运维只会以为自己没点上、反复点。而 404 在这两条端点上是**常态路径**：
+      // 这两张表都是轮询刷新的，一把 key 在另一个标签页被删之后，屏幕上那一行还在。
+      // 由 `tests/ui/dom/reveal-controls.test.ts` 的
+      // 「reveal 回 404：屏幕上必须出现一句话 —— 静默是本仓明令禁止的那一种坏法」钉着。
+      //
+      // ⚠️ **这一个判据是 `import` 进来的，不像上面那三个是注入的，理由写清楚**：
+      // 注入项**漏传一个不会有任何编译期或运行期信号**——它只会在 catch 里抛
+      // `TypeError: o.errorOutcomeOf is not a function`，而那一抛落回的正是
+      // 「无人接的 promise 拒绝 + 屏幕上什么都不变」，也就是本次修的这个缺陷本身。
+      // 别的注入项漏传会当场炸在渲染主路径上（一眼就能看见），这一个不会。
+      // 它也确实没有按调用方分叉的余地：两族走的都是 `js/api.js` 的同一个 `ApiError`。
+      out = revealErrorOutcome(e);
+    }
     if (out.state !== "ok") {
-      // **三态各说各的话**，不并成「取不到」：见 `revealOutcome` 上方那段。
+      // **四态各说各的话**，不并成「取不到」：见 `revealOutcome` 与
+      // `revealErrorOutcome` 上方那两段。
       toast(t(o.messageKeyOf(out)), "warn", { sticky: true });
       return null;
     }

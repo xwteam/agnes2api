@@ -107,6 +107,11 @@ Gemini의 두 엔드포인트는 모델 이름을 본문이 아니라 경로에 
 
 게이트웨이가 스스로 만드는 오류는 언제나 `{ "error": { "type": ..., "message": ... } }`라는 봉투이며, 네 프로토콜의 SDK가 모두 파싱할 수 있습니다. 업스트림이 만든 오류는 그대로 통과시켜 업스트림 자신의 오류 구조를 유지합니다.
 
+다음 두 종류의 요청은 **업스트림으로 전달하기 전에** 로컬에서 거부됩니다. key도, 업스트림 쪽 공유 레이트 리밋 예산도 쓰지 않습니다.
+
+- **평문으로 옮길 수 없는 콘텐츠 블록** —— `/v1/messages`, `/v1/responses`, `:generateContent`는 요청 본문을 변환할 때 텍스트 블록만 받으며, `image` / `input_image` / `inlineData` / `tool_use` 같은 것은 블록 종류를 짚어 `400`을 돌려줍니다. 조용히 버리고 아무 일 없었다는 듯 답을 돌려주는 일은 **없습니다**. `/v1/chat/completions`는 그대로 통과시키므로 이 검사를 하지 않습니다.
+- **전달할 수 없는 생성 파라미터** —— 같은 세 프로토콜에서 `tools` / `tool_choice`(도구 호출을 변환하지 않습니다), Anthropic의 `top_k`와 Gemini의 `topK`(업스트림 본문에 해당 칸이 없습니다), Gemini의 `candidateCount > 1`(첫 candidate만 변환합니다)은 필드 이름을 짚어 `400`을 돌려줍니다. 안전하게 전달되는 것은 `temperature`, `top_p`(Gemini에서는 `topP`), `stop`(Anthropic에서는 `stop_sequences`, Gemini에서는 `stopSequences`)입니다. 각 절의 요청 본문 표에 없는 나머지 필드는 전달되지 않습니다.
+
 ### 자주 나오는 오류 코드
 
 | 상태 코드 | 설명 |
@@ -302,7 +307,7 @@ curl -X POST http://localhost:8080/v1/responses \
 }
 ```
 
-`"stream": true`일 때 응답은 `text/event-stream`이며 `response.created`, 하나 이상의 `response.output_text.delta`, `response.completed`를 실어 나릅니다.
+`"stream": true`일 때 응답은 `text/event-stream`이며 공식 최소 이벤트 순서를 차례로 실어 나릅니다: `response.created`, `response.output_item.added`, `response.content_part.added`, 하나 이상의 `response.output_text.delta`, `response.output_text.done`, `response.content_part.done`, `response.output_item.done`, `response.completed`. 마지막 이벤트의 `response.output[]`가 완전한 최종 객체입니다. 업스트림 스트림이 중간에 끊기면 `response.failed`를 보내며 `response.completed`는 **보내지 않습니다**.
 
 ## Anthropic 호환 API
 
@@ -352,7 +357,7 @@ curl -X POST http://localhost:8080/v1/messages \
 `"stream": true`일 때 응답은 `text/event-stream`이며 표준 Anthropic 이벤트 순서를 실어 나릅니다: `message_start`, `content_block_start`, 하나 이상의 `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`.
 
 > [!IMPORTANT]
-> `content`(또는 `system`) 배열에 내부 평문 형식으로 옮길 수 없는 블록 — `image`, `tool_use`, `tool_result` 같은 `text` 이외의 모든 타입 — 이 있으면 게이트웨이는 업스트림으로 아무것도 보내기 전에 `400`을 돌려줍니다. 초기 버전처럼 그 블록을 조용히 버리지 않습니다. 메시지 `不支持的内容块类型: image（本网关仅支持 text）`의 블록 타입은 실제로 받은 값으로 바뀝니다.
+> `content`(또는 `system`) 배열에 내부 평문 형식으로 옮길 수 없는 블록 — `image`, `tool_use`, `tool_result` 같은 `text` 이외의 모든 타입 — 이 있으면 게이트웨이는 업스트림으로 아무것도 보내기 전에 `400`을 돌려줍니다. 초기 버전처럼 그 블록을 조용히 버리지 않습니다. 메시지 `不支持的内容块类型: image（本网关仅支持 text）`의 블록 타입은 실제로 받은 값으로 바뀝니다. **이 규칙은 이제 `/v1/responses`와 `:generateContent`에도 적용됩니다**(초기 버전은 이 프로토콜에만 적용했습니다). 자세한 내용은 에러 응답 형식 절을 참고하세요.
 
 ## Gemini 원생 API
 
@@ -378,12 +383,12 @@ curl http://localhost:8080/v1beta/models \
     { "name": "models/agnes-2.5-pro-alpha", "displayName": "agnes-2.5-pro-alpha", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-2.5-pro-beta", "displayName": "agnes-2.5-pro-beta", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-3.0-flash", "displayName": "agnes-3.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
+    { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": [] }
   ]
 }
 ```
@@ -424,6 +429,9 @@ curl -X POST "http://localhost:8080/v1beta/models/agnes-2.0-flash:generateConten
 }
 ```
 
+> [!IMPORTANT]
+> 경로의 메서드 이름은 화이트리스트입니다: 이 게이트웨이는 `generateContent`와 `streamGenerateContent`만 구현합니다. `:countTokens`, `:embedContent` 및 잘못 쓴 메서드 이름은 `404`이며, 대화로 취급해 업스트림에 보내는 일은 **없습니다**.
+
 ### POST /v1beta/models/{model}:streamGenerateContent
 
 본문 형태는 `generateContent`와 같고 경로가 `:streamGenerateContent`로 끝납니다. 응답은 `text/event-stream`이고 각 이벤트는 `event:` 필드가 없는 `data:` 줄이며 `[DONE]` 종료 표시가 없습니다 — 스트림이 끝나면 그대로 닫힙니다.
@@ -440,7 +448,10 @@ curl -X POST "http://localhost:8080/v1beta/models/agnes-2.0-flash:streamGenerate
 
 ```text
 data: {"candidates":[{"content":{"role":"model","parts":[{"text":"안녕하세요"}]},"index":0}],"modelVersion":"agnes-2.0-flash"}
+data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP","index":0}],"modelVersion":"agnes-2.0-flash","usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5}}
 ```
+
+스트림의 마지막은 **종료 프레임**입니다: `parts`가 비어 있고 `finishReason`(`STOP` / `MAX_TOKENS` / `SAFETY`)과 `usageMetadata`를 담습니다. 클라이언트는 이걸로 "다 말했다"와 "잘렸다 / 안전 필터에 막혔다"를 구분합니다. 업스트림 스트림이 중간에 끊기면 종료 프레임의 `finishReason`은 `OTHER`이고 `usageMetadata`는 없습니다.
 
 ## 이미지와 비디오 API
 
@@ -544,7 +555,7 @@ curl http://localhost:8080/admin/api/session \
 **응답**:
 
 ```json
-{ "ok": true, "version": "0.3.0" }
+{ "ok": true, "version": "0.3.1" }
 ```
 
 ### GET /admin/api/capabilities
@@ -562,7 +573,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -594,7 +605,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1594,7 +1605,7 @@ curl http://localhost:8080/health
 **응답**:
 
 ```json
-{ "status": "ok", "version": "0.3.0", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.3.1", "storage": { "writable": true } }
 ```
 
 `storage.writable`은 "key 풀이 올라가 있는 스토리지에 정말 쓸 수 있는가"를 알려 줍니다. 시작할 때의 한 번의 프로브와 실행 중의 모든 실제 쓰기가 함께 유지하며, 헬스 체크 자신은 쓰지 않습니다. 쓸 수 없을 때는 **HTTP `503`**을 돌려주고 `status`가 `degraded`가 되며 `detail` 한 문장이 붙습니다(Docker에서는 바인드 마운트한 호스트 디렉터리 소유자와 컨테이너 안의 실행 사용자가 다른 경우가 많으며 자세한 내용은 컨테이너 로그에 있습니다).

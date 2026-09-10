@@ -1,6 +1,23 @@
 services:
   agnes2api:
-    image: ghcr.io/xwteam/agnes2api:latest
+    # 镜像 tag 走 `.env` 的插值，**不写死 `:latest`**。不设 `IMAGE_TAG` 时回落 `latest`，
+    # 与此前逐字同行为，所以这不是一次破坏性变更，只是**多了一个抓手**。
+    # 为什么要这个抓手：`:latest` 下 `docker compose ps` 与这份文件都答不出「现在跑的是
+    # 哪一版」，而 DEPLOY.md 的回滚只有一句「把 tag 钉回上一版」——**钉在哪儿此前全仓没写过**，
+    # 连镜像叫什么名字文档里都查不到（五份 DEPLOY.md 与六份 README 里 `ghcr` 零命中）。
+    # 用法（五份 DEPLOY.md 的「Docker 部署 → 更新」与「升级服务」两节各写了一遍）：
+    #   · 升级 = 把 `.env` 里的 `IMAGE_TAG` 改成要升的版本号，再 `docker compose up -d`；
+    #   · 回滚 = 改回上一版再 `up -d`。全部可用 tag 见 GHCR 的 packages 页。
+    # ⚠️ `IMAGE_TAG` **刻意不进 `.env.example`**：那份文件的头一句是「列出网关认得的
+    #   **每一个**环境变量」，而网关根本不读这一个——它是 compose 自己插值用的。塞进去
+    #   要么让那句话当场变假，要么逼 `tests/unit/env-example-parity.test.ts` 的
+    #   「反向控制：.env.example 里出现的变量不许是真源里没有的（防写错名字）」
+    #   长出第二张手写豁免表。教人在哪儿写它是 DEPLOY.md 的活，不是那份模板的活。
+    # ⚠️ **敲错 tag 不会当场失败**：下面那段 `build:` 会接住它，拿**当前工作树**构建出一个
+    #   顶着旧版号的镜像（实测：写不存在的 `:0.2.9` ⇒ `Image not found` ⇒ `Building` ⇒
+    #   `naming to ghcr.io/xwteam/agnes2api:0.2.9`），于是「回滚成功而故障依旧」。
+    #   回滚前先确认那个 tag 在 registry 上真的存在——这一句在 DEPLOY.md 里也写着。
+    image: ghcr.io/xwteam/agnes2api:${IMAGE_TAG:-latest}
     # ⚠️ 没有已发布镜像时（首个 release 之前，或 fork 之后），compose 会回落到本地构建。
     # 删掉这三行 ⇒ `docker compose up -d` 在那两种情形下直接失败（拉不到那个 tag）。
     # 镜像发布由 .github/workflows/docker-publish.yml 的两个触发器决定：`push` 一个
@@ -19,6 +36,23 @@ services:
     ports:
       - "${PORT:-8080}:${PORT:-8080}"
     volumes:
+      # ⚠️ **这一行与 `.env` 里的 `DATA_DIR` 绑死，而绑法是「两边各写死同一个值」，不是插值。**
+      # 右半边 `/app/data` 恰好等于 `DATA_DIR` 的内置默认值（`src/entry/node.ts`）。
+      # 只改 `.env` 里的 `DATA_DIR` 而不动这一行 ⇒ store.json 落进**容器可写层**：
+      # `/health` 照回 ok、面板与 key 池一切正常、注册机照常补池，而 `docker compose up -d`
+      # 一重建，整池 key 与面板配置一起消失，且备份下来的 `./data` 从头到尾是空的。
+      # 这条失效链由 `docker-entrypoint.sh` 的挂载点探测在启动日志里点破（它是唯一的信号，
+      # `/health` 不报数据落在哪儿），五份 DEPLOY.md 的「Docker 部署 → 配置」也写着
+      # （那条 alert 由 `tests/unit/ops-closure.test.ts` 的
+      #   「H1 五份 DEPLOY.md 的 Docker「配置」节里都有一条 alert 写着这件事」逐份钉着，
+      #   而且它点名的挂载写法是**从本行现读**的：本行改了，五份文档要跟着改）。
+      # ⚠️ **别顺手改成 `- ./data:${DATA_DIR:-/app/data}` 去「让变量贯通」**：
+      #   `scripts/smoke-dual-runtime.sh` 从这一行**现读**容器内那段路径
+      #   （`grep -oE '^[[:space:]]*-[[:space:]]*\./data:/…'`），插值形态它认不出来，
+      #   冒烟会当场判「判据坏了」拒跑（那条现读由 `tests/unit/smoke-guard.test.ts` 的
+      #   「(数据隔离) 认不出要吵：docker-compose.yml 里认不出 ./data 那条挂载时当场抛」钉着）。
+      #   要贯通得先改那两处，而**容器内路径本来就是实现细节**，可配没有收益：
+      #   运维要换的是数据落在**宿主**哪儿，那是这一行左半边的事。
       - ./data:/app/data
       # 只读挂宿主的本地时间。**它对本仓今天是空操作**，留着只是因为两参照仓的 compose
       # 都有这一行（模板形态），不是因为它修好了什么。

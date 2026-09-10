@@ -60,24 +60,24 @@ describe("sendCode", () => {
 describe("register", () => {
   it("password_confirm 与 password 相同", async () => {
     const { calls, fetcher } = recordingFetcher([{ status: 200 }]);
-    const ok = await register({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw", "123456");
-    expect(ok).toBe(true);
+    const r = await register({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw", "123456");
+    expect(r.ok).toBe(true);
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({
       email: "a@x.test", password: "pw", password_confirm: "pw", code: "123456",
     });
   });
 
-  it("非 2xx 返回 false", async () => {
+  it("非 2xx 时 ok 为 false", async () => {
     const { fetcher } = recordingFetcher([{ status: 422 }]);
-    expect(await register({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw", "000000")).toBe(false);
+    expect((await register({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw", "000000")).ok).toBe(false);
   });
 });
 
 describe("login", () => {
   it("用 username 字段传邮箱，从 data.access_token 取令牌", async () => {
     const { calls, fetcher } = recordingFetcher([{ status: 200, body: { data: { access_token: "tok-1" } } }]);
-    const t = await login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw");
-    expect(t).toBe("tok-1");
+    const r = await login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw");
+    expect(r.token).toBe("tok-1");
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ username: "a@x.test", password: "pw" });
   });
 
@@ -86,46 +86,109 @@ describe("login", () => {
       { data: { token: "t" } }, { access_token: "t" }, { token: "t" },
     ]) {
       const { fetcher } = recordingFetcher([{ status: 200, body }]);
-      expect(await login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw")).toBe("t");
+      expect((await login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw")).token).toBe("t");
     }
   });
 
-  it("取不到令牌时返回 null 而不是抛错", async () => {
+  it("取不到令牌时 token 为 null 而不是抛错", async () => {
     const { fetcher } = recordingFetcher([{ status: 200, body: { data: {} } }]);
-    expect(await login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw")).toBeNull();
+    expect((await login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw")).token).toBeNull();
   });
 
-  it("响应体不是合法 JSON 时返回 null 而不是抛错（网关超时/维护页等可能以 200 返回非 JSON 正文）", async () => {
+  it("响应体不是合法 JSON 时 token 为 null 而不是抛错（网关超时/维护页等可能以 200 返回非 JSON 正文）", async () => {
     const fetcher = {
       async fetch() {
         return new Response("<html>maintenance</html>", { status: 200 });
       },
     };
-    await expect(login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw")).resolves.toBeNull();
+    const r = await login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw");
+    expect(r.token).toBeNull();
+    // 正文照样交出来：`mint.ts` 在这一档要靠它说清「上游回的是一张维护页」。
+    expect(r.body).toBe("<html>maintenance</html>");
   });
 });
 
 describe("createKey", () => {
   it("带 Bearer 令牌，从 data.key 取 key", async () => {
     const { calls, fetcher } = recordingFetcher([{ status: 200, body: { data: { key: "sk-x" } } }]);
-    const k = await createKey({ fetcher, platformUrl: PLATFORM }, "tok-1", "auto");
-    expect(k).toBe("sk-x");
+    const r = await createKey({ fetcher, platformUrl: PLATFORM }, "tok-1", "auto");
+    expect(r.key).toBe("sk-x");
     expect(new Headers(calls[0]!.init.headers).get("authorization")).toBe("Bearer tok-1");
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ name: "auto" });
   });
 
-  it("非 2xx 返回 null", async () => {
+  it("非 2xx 时 key 为 null", async () => {
     const { fetcher } = recordingFetcher([{ status: 401 }]);
-    expect(await createKey({ fetcher, platformUrl: PLATFORM }, "bad", "auto")).toBeNull();
+    expect((await createKey({ fetcher, platformUrl: PLATFORM }, "bad", "auto")).key).toBeNull();
   });
 
-  it("响应体不是合法 JSON 时返回 null 而不是抛错（网关超时/维护页等可能以 200 返回非 JSON 正文）", async () => {
+  it("响应体不是合法 JSON 时 key 为 null 而不是抛错（网关超时/维护页等可能以 200 返回非 JSON 正文）", async () => {
     const fetcher = {
       async fetch() {
         return new Response("<html>maintenance</html>", { status: 200 });
       },
     };
-    await expect(createKey({ fetcher, platformUrl: PLATFORM }, "tok-1", "auto")).resolves.toBeNull();
+    const r = await createKey({ fetcher, platformUrl: PLATFORM }, "tok-1", "auto");
+    expect(r.key).toBeNull();
+    expect(r.body).toBe("<html>maintenance</html>");
+  });
+});
+
+/**
+ * 🔴 **承重格：注册链后三步必须把上游的状态码与正文交回给调用方。**
+ *
+ * 这一族此前是 `boolean` / `string | null` / `string | null` —— 状态码与正文在函数
+ * 边界就被丢光了，`src/core/registrar/mint.ts` 因此只写得出「Agnes 注册被拒」这一句
+ * 空话，而四种真因（注册这一步把域名拉黑了 / 验证码过期 / 上游改了字段名 / 这个出口的
+ * 注册额度到顶）处置完全不同。`src/core/registrar/fetch.ts` 只包装**传输层**异常，
+ * 非 2xx 压根不走它，所以别处补不回来 —— 只能在这里交出来。
+ *
+ * **断言的是「那两样真的能被读回来」，不是「函数返回了个对象」**：
+ * 状态码逐值相等、正文逐字节相等。
+ *
+ * 变异实测（2026-09-10，逐条做过）：
+ * · 把 `register` 的 `return` 改回 `r.ok`（并把返回类型改回 `boolean`）
+ *   ⇒ 本格「注册」那三条断言里 `status` / `body` 两条红（`r.status` 是 undefined）；
+ * · 把 `login` 的 `fail` 改回裸 `null`
+ *   ⇒ 本格「登录」那一段在读 `.status` 时红；
+ * · 把 `createKey` 的 `fail` 改回裸 `null` ⇒ 同上，在「建 key」那一段红。
+ */
+describe("注册链后三步把上游的状态码与正文原样交回调用方", () => {
+  it("注册：非 2xx 的状态码与正文都读得回来", async () => {
+    const { fetcher } = recordingFetcher([{ status: 429, body: { message: "too many registrations" } }]);
+    const r = await register({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw", "123456");
+    expect(r.ok).toBe(false);
+    expect(r.status, "状态码丢了 ⇒ 面板上「注册被拒」与「这个出口被限流」长同一个样").toBe(429);
+    expect(JSON.parse(r.body)).toEqual({ message: "too many registrations" });
+  });
+
+  it("登录：2xx 但字段改了名时，状态码是 200 且正文原样交出（归因靠的就是这两样）", async () => {
+    const { fetcher } = recordingFetcher([{ status: 200, body: { data: { token_id: "eyJhbGciOi" } } }]);
+    const r = await login({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw");
+    expect(r.token).toBeNull();
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body)).toEqual({ data: { token_id: "eyJhbGciOi" } });
+  });
+
+  it("建 key：401 的状态码与正文都读得回来", async () => {
+    const { fetcher } = recordingFetcher([{ status: 401, body: { message: "token expired" } }]);
+    const r = await createKey({ fetcher, platformUrl: PLATFORM }, "tok-1", "auto");
+    expect(r.key).toBeNull();
+    expect(r.status).toBe(401);
+    expect(JSON.parse(r.body)).toEqual({ message: "token expired" });
+  });
+
+  it("正文读不出来（连接中途断了）时按空正文处理，状态码照样交出，不抛错", async () => {
+    const fetcher = {
+      async fetch(): Promise<Response> {
+        return {
+          status: 500, ok: false,
+          async text(): Promise<string> { throw new Error("aborted"); },
+        } as unknown as Response;
+      },
+    };
+    const r = await register({ fetcher, platformUrl: PLATFORM }, "a@x.test", "pw", "1");
+    expect(r).toEqual({ ok: false, status: 500, body: "" });
   });
 });
 

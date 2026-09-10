@@ -420,12 +420,18 @@ describe("流式：协议目录的 streamTextPath 与网关真吐出去的字节
    * ⚠️ **哪几条协议上这一格不是空转，逐条写清（评审实测订正）**：
    * · **anthropic / responses**：流里夹着自己合成的事件行（`message_start` /
    *   `content_block_start` / `message_delta` / `message_stop`、`response.created` /
-   *   `response.completed`）——**天然不空转**；
+   *   `response.output_item.added` / `response.completed` / …）——**天然不空转**；
    * · **openai**：它原样透传上游字节，所以只有当**上游**发一块不带 `delta.content`
    *   的块时才有非正文行。**`upstreamStream()` 末尾那块 `finish_reason` 就是为它加的**
    *   ——在那之前这一格对 openai 是 3/3 的空转（我原来的注释只点了 gemini，**漏了它**）；
-   * · **gemini**：`toGeminiStream()` 只在有 content 时 yield，一行都不夹
-   *   ⇒ **这一格对 gemini 至今仍是空转**，如实登记。
+   * · **gemini**：**2026-09-10 起也不空转了**。上一版这里写的是「`toGeminiStream()`
+   *   只在有 content 时 yield，一行都不夹 ⇒ 这一格对 gemini 至今仍是空转」——
+   *   那条「一行都不夹」正是同一天被判定为缺陷的东西：**流里没有终帧，
+   *   `finishReason` 与 `usageMetadata` 一次都不出现**，客户端因此分不清
+   *   「说完了」和「被截断 / 被安全拦了」。现在收尾补了一帧（`parts` 为空 ⇒
+   *   按 `streamTextPath` 取到的是空串 ⇒ 落进 blank 那一格），
+   *   全文与证据在 `tests/unit/gemini.test.ts`
+   *   「终帧带 finishReason 与 usageMetadata —— 少了它们，被截断的半截回答与完整回答逐字节不可区分」。
    */
   it.each(PROTOCOLS.map((p) => [p.id, p] as const))(
     "%s：带正文的行恰好三条，其余事件行读得出来但不带正文 —— 混进协议内部的词就是对话框在撒谎",
@@ -450,14 +456,20 @@ describe("流式：协议目录的 streamTextPath 与网关真吐出去的字节
        *
        * 上面那条「带正文恰好 3」**说不出这一格对谁是空转的**——一条协议如果压根
        * 不发非正文行，那它就只是在重复上一格。这张表把「这条流里有几行、其中几行
-       * 不带正文」写成手写字面量，**顺带把「gemini 至今仍是空转」这件事变成可见的 0**。
+       * 不带正文」写成手写字面量。
        * 数字全部实测得来（同一装置跑一遍打出来的），不是从被测数据推导的。
+       *
+       * ⚠️ **responses 与 gemini 两行 2026-09-10 改过，两处都是因为流的形状变了**：
+       * responses 从 5/2 变成 10/7（补齐官方最小事件序列：两条 `*.added` 打头、
+       * 三条 `*.done` 收尾，少了它们官方 SDK 的 `stream()` 崩在自己内部）；
+       * gemini 从 3/0 变成 4/1（补了一帧带 `finishReason` / `usageMetadata` 的终帧）。
+       * **那个 0 从前是「如实登记的空转」，现在它不空转了** —— 见上面那段。
        */
       const COMPOSITION: Record<string, { payloads: number; blank: number }> = {
         openai: { payloads: 4, blank: 1 },      // 3 块正文 + 上游那块 finish_reason（原样透传）
         anthropic: { payloads: 8, blank: 5 },   // + message_start / content_block_start / _stop / message_delta / message_stop
-        responses: { payloads: 5, blank: 2 },   // + response.created / response.completed
-        gemini: { payloads: 3, blank: 0 },      // **一行都不夹 ⇒ 这一格对 gemini 是空转，如实登记**
+        responses: { payloads: 10, blank: 7 },  // + created / output_item.added / content_part.added / output_text.done / content_part.done / output_item.done / completed
+        gemini: { payloads: 4, blank: 1 },      // + 终帧（parts 为空 ⇒ 取到空串）
       };
       const want = COMPOSITION[p.id]!;
       expect(payloads.length, `${p.id} 这条流的行数变了`).toBe(want.payloads);

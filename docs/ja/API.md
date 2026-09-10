@@ -107,6 +107,11 @@ Gemini の二つのエンドポイントはモデル名をボディではなく�
 
 ゲートウェイ自身が生むエラーは常に `{ "error": { "type": ..., "message": ... } }` という封筒で、四つのプロトコルの SDK がどれも解析できます。上流が生んだエラーはそのまま透過され、上流自身のエラー構造を保ちます。
 
+次の二種類のリクエストは**上流へ転送する前に**ローカルで弾かれます。key も、上流側の共有レート制限枠も消費しません。
+
+- **プレーンテキストに写せないコンテンツブロック** —— `/v1/messages`、`/v1/responses`、`:generateContent` はリクエストボディの変換時にテキストブロックしか受け付けず、`image` / `input_image` / `inlineData` / `tool_use` などはブロック種別を名指しした `400` になります。黙って捨てて何事もなかったように答えを返すことは**ありません**。`/v1/chat/completions` はそのまま透過するのでこの判定はしません。
+- **中継できない生成パラメータ** —— 同じ三つで、`tools` / `tool_choice`（ツール呼び出しは変換しません）、Anthropic の `top_k` と Gemini の `topK`（上流のボディに該当欄がありません）、Gemini の `candidateCount > 1`（最初の candidate しか変換しません）はフィールド名を名指しした `400` になります。安全に転送されるのは `temperature`、`top_p`（Gemini では `topP`）、`stop`（Anthropic では `stop_sequences`、Gemini では `stopSequences`）です。各節のリクエストボディ表にないフィールドは転送されません。
+
 ### よくあるエラーコード
 
 | ステータス | 説明 |
@@ -302,7 +307,7 @@ curl -X POST http://localhost:8080/v1/responses \
 }
 ```
 
-`"stream": true` のときレスポンスは `text/event-stream` になり、`response.created`、一つ以上の `response.output_text.delta`、`response.completed` を運びます。
+`"stream": true` のときレスポンスは `text/event-stream` になり、公式の最小イベント列を順に運びます：`response.created`、`response.output_item.added`、`response.content_part.added`、一つ以上の `response.output_text.delta`、`response.output_text.done`、`response.content_part.done`、`response.output_item.done`、`response.completed`。最後のイベントの `response.output[]` が完全な最終オブジェクトです。上流のストリームが途中で切れた場合は `response.failed` を送り、`response.completed` は**送りません**。
 
 ## Anthropic 互換 API
 
@@ -352,7 +357,7 @@ curl -X POST http://localhost:8080/v1/messages \
 `"stream": true` のときレスポンスは `text/event-stream` になり、標準的な Anthropic のイベント列を運びます：`message_start`、`content_block_start`、一つ以上の `content_block_delta`、`content_block_stop`、`message_delta`、`message_stop`。
 
 > [!IMPORTANT]
-> `content`（または `system`）配列に内部のプレーンテキスト形式へ写像できないブロック——`image`、`tool_use`、`tool_result` のような `text` 以外のあらゆる型——があると、ゲートウェイは上流へ転送する前に `400` を返します。初期の版のようにそのブロックを黙って捨てることはしません。メッセージ `不支持的内容块类型: image（本网关仅支持 text）` のブロック型は実際に受け取った値に置き換わります。
+> `content`（または `system`）配列に内部のプレーンテキスト形式へ写像できないブロック——`image`、`tool_use`、`tool_result` のような `text` 以外のあらゆる型——があると、ゲートウェイは上流へ転送する前に `400` を返します。初期の版のようにそのブロックを黙って捨てることはしません。メッセージ `不支持的内容块类型: image（本网关仅支持 text）` のブロック型は実際に受け取った値に置き換わります。**このルールは現在 `/v1/responses` と `:generateContent` にも適用されます**（初期版はこのプロトコルだけでした）。詳細は「エラーコード」の節を参照。
 
 ## Gemini 原生 API
 
@@ -378,12 +383,12 @@ curl http://localhost:8080/v1beta/models \
     { "name": "models/agnes-2.5-pro-alpha", "displayName": "agnes-2.5-pro-alpha", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-2.5-pro-beta", "displayName": "agnes-2.5-pro-beta", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-3.0-flash", "displayName": "agnes-3.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
+    { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": [] }
   ]
 }
 ```
@@ -424,6 +429,9 @@ curl -X POST "http://localhost:8080/v1beta/models/agnes-2.0-flash:generateConten
 }
 ```
 
+> [!IMPORTANT]
+> パス内のメソッド名はホワイトリストです：本ゲートウェイは `generateContent` と `streamGenerateContent` だけを実装します。`:countTokens`、`:embedContent`、綴り間違いのメソッド名は `404` になり、対話として上流へ送られることは**ありません**。
+
 ### POST /v1beta/models/{model}:streamGenerateContent
 
 ボディの形は `generateContent` と同じで、パスが `:streamGenerateContent` で終わります。レスポンスは `text/event-stream` で、各イベントは `event:` フィールドの無い `data:` 行、`[DONE]` の終端マーカーはありません——ストリームは終わるときにそのまま閉じます。
@@ -440,7 +448,10 @@ curl -X POST "http://localhost:8080/v1beta/models/agnes-2.0-flash:streamGenerate
 
 ```text
 data: {"candidates":[{"content":{"role":"model","parts":[{"text":"こんにちは"}]},"index":0}],"modelVersion":"agnes-2.0-flash"}
+data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP","index":0}],"modelVersion":"agnes-2.0-flash","usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5}}
 ```
+
+ストリームの最後は**終端フレーム**です：`parts` が空で、`finishReason`（`STOP` / `MAX_TOKENS` / `SAFETY`）と `usageMetadata` を持ちます。クライアントはこれで「言い終わった」と「打ち切られた / 安全機構に止められた」を区別します。上流のストリームが途中で切れた場合、終端フレームの `finishReason` は `OTHER` になり `usageMetadata` は付きません。
 
 ## 画像と動画 API
 
@@ -544,7 +555,7 @@ curl http://localhost:8080/admin/api/session \
 **レスポンス**：
 
 ```json
-{ "ok": true, "version": "0.3.0" }
+{ "ok": true, "version": "0.3.1" }
 ```
 
 ### GET /admin/api/capabilities
@@ -562,7 +573,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -594,7 +605,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1587,7 +1598,7 @@ curl http://localhost:8080/health
 **レスポンス**：
 
 ```json
-{ "status": "ok", "version": "0.3.0", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.3.1", "storage": { "writable": true } }
 ```
 
 `storage.writable` は「key プールが載っているストレージに本当に書き込めるか」を報告します。起動時の一度のプローブと実行中のすべての実書き込みで維持され、ヘルスチェック自身は書き込みません。書き込めないときは **HTTP `503`** を返し、`status` が `degraded` になって `detail` の一文が付きます（Docker ではバインドマウントしたホストディレクトリの所有者とコンテナ内の実行ユーザーが食い違っている場合が多く、詳細はコンテナログにあります）。

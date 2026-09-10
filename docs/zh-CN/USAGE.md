@@ -194,7 +194,7 @@ for chunk in client.models.generate_content_stream(
     print(chunk.text or "", end="")
 ```
 
-流式响应的每个事件是不带 `event:` 字段的 `data:` 行，**没有 `[DONE]` 终止标记**——流结束时直接关闭连接。按这条协议自己写解析器的话，别去等一个永远不来的终止帧。
+流式响应的每个事件是不带 `event:` 字段的 `data:` 行，**没有 `[DONE]` 终止标记**——流结束时直接关闭连接。按这条协议自己写解析器的话，别去等一个永远不来的 `[DONE]`。**「说完了」的信号是最后那一帧**：`parts` 为空，带 `finishReason`（`STOP` / `MAX_TOKENS` / `SAFETY`）与 `usageMetadata`。
 
 ### base_url 不带 `/v1beta`
 
@@ -240,8 +240,14 @@ curl -N -X POST http://localhost:8080/v1/responses \
 | 事件 | 何时出现 |
 |------|----------|
 | `response.created` | 流的第一帧 |
+| `response.output_item.added` | 建出那条 message 输出项 |
+| `response.content_part.added` | 建出那一格正文 |
 | `response.output_text.delta` | 一个或多个，正文增量都在这里 |
-| `response.completed` | 流的最后一帧 |
+| `response.output_text.done` | 正文收尾，带完整文本 |
+| `response.content_part.done` | 那一格正文收尾 |
+| `response.output_item.done` | 那条输出项收尾 |
+| `response.completed` | 流的最后一帧，`response.output[]` 就是最终对象 |
+| `response.failed` | 只在上游流中途断开时出现，出现后不再有 `response.completed` |
 
 ## 图片与视频
 

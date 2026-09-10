@@ -107,6 +107,11 @@ Gemini 那兩條端點把模型名寫在路徑裡、不在請求內容中。路�
 
 閘道自己產生的錯誤一律是 `{ "error": { "type": ..., "message": ... } }` 這個信封，四種協議的 SDK 都解析得動。上游產生的錯誤則原樣透傳，保持上游自身的錯誤結構。
 
+下面兩類請求會在**轉發上游之前**被本地判掉：既不消耗 key，也不消耗上游那層共享的限流額度。
+
+- **無法映射成純文字的內容區塊** —— `/v1/messages`、`/v1/responses`、`:generateContent` 三條協議轉換請求內容時只認文字區塊，遇到 `image` / `input_image` / `inlineData` / `tool_use` 之類一律回傳 `400` 並點名區塊型別，**不會**靜默丟掉再照常回一段答案。`/v1/chat/completions` 原樣透傳，不做這層判斷。
+- **轉達不了的生成參數** —— 同上三條協議裡，`tools` / `tool_choice`（不轉換工具呼叫）、Anthropic 的 `top_k` 與 Gemini 的 `topK`（上游請求內容沒有這一格）、Gemini 的 `candidateCount > 1`（只轉換第一條 candidate）一律回傳 `400` 並點名欄位。能安全轉發的是 `temperature`、`top_p`（Gemini 寫作 `topP`）與 `stop`（Anthropic 寫作 `stop_sequences`、Gemini 寫作 `stopSequences`）；各節請求內容表裡沒列出的其餘欄位不會轉發給上游。
+
 ### 常見錯誤碼
 
 | 狀態碼 | 說明 |
@@ -302,7 +307,7 @@ curl -X POST http://localhost:8080/v1/responses \
 }
 ```
 
-傳 `"stream": true` 時回應為 `text/event-stream`，攜帶：`response.created`、一個或多個 `response.output_text.delta`、`response.completed`。
+傳 `"stream": true` 時回應為 `text/event-stream`，按官方最小事件序列依次攜帶：`response.created`、`response.output_item.added`、`response.content_part.added`、一個或多個 `response.output_text.delta`、`response.output_text.done`、`response.content_part.done`、`response.output_item.done`、`response.completed`。最後那個事件的 `response.output[]` 是完整的最終物件。上游串流中途斷開時改發 `response.failed`，而且**不會**再發 `response.completed`。
 
 ## Anthropic 相容 API
 
@@ -352,7 +357,7 @@ curl -X POST http://localhost:8080/v1/messages \
 傳 `"stream": true` 時回應為 `text/event-stream`，攜帶標準 Anthropic 事件序列：`message_start`、`content_block_start`、一個或多個 `content_block_delta`、`content_block_stop`、`message_delta`、`message_stop`。
 
 > [!IMPORTANT]
-> 若 `content`（或 `system`）陣列裡出現無法對應到內部純文字格式的區塊——任何非 `text` 型別，例如 `image`、`tool_use`、`tool_result`——閘道會在轉發上游前直接回傳 `400`，而不是像早期版本那樣靜默丟棄該區塊。報文裡那句 `不支持的内容块类型: image（本网关仅支持 text）` 中的區塊型別會換成實際收到的值。
+> 若 `content`（或 `system`）陣列裡出現無法對應到內部純文字格式的區塊——任何非 `text` 型別，例如 `image`、`tool_use`、`tool_result`——閘道會在轉發上游前直接回傳 `400`，而不是像早期版本那樣靜默丟棄該區塊。報文裡那句 `不支持的内容块类型: image（本网关仅支持 text）` 中的區塊型別會換成實際收到的值。**這條規則今天同樣適用於 `/v1/responses` 與 `:generateContent`**（早期版本只有本條協議執行它），逐條見「錯誤碼」一節。
 
 ## Gemini 原生 API
 
@@ -378,12 +383,12 @@ curl http://localhost:8080/v1beta/models \
     { "name": "models/agnes-2.5-pro-alpha", "displayName": "agnes-2.5-pro-alpha", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-2.5-pro-beta", "displayName": "agnes-2.5-pro-beta", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
     { "name": "models/agnes-3.0-flash", "displayName": "agnes-3.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] },
-    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": ["generateContent", "streamGenerateContent"] }
+    { "name": "models/agnes-image-2.1-flash", "displayName": "agnes-image-2.1-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-image-2.0-flash", "displayName": "agnes-image-2.0-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-image-2.5-flash", "displayName": "agnes-image-2.5-flash", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-v2.0", "displayName": "agnes-video-v2.0", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-2.5", "displayName": "agnes-video-2.5", "supportedGenerationMethods": [] },
+    { "name": "models/agnes-video-2.5-flash", "displayName": "agnes-video-2.5-flash", "supportedGenerationMethods": [] }
   ]
 }
 ```
@@ -424,6 +429,9 @@ curl -X POST "http://localhost:8080/v1beta/models/agnes-2.0-flash:generateConten
 }
 ```
 
+> [!IMPORTANT]
+> 路徑裡的方法名是白名單：本閘道只實作 `generateContent` 與 `streamGenerateContent`。`:countTokens`、`:embedContent` 以及任何拼錯的方法名一律回傳 `404`，**不會**被當成一次對話真發給上游。
+
 ### POST /v1beta/models/{model}:streamGenerateContent
 
 請求內容形態與 `generateContent` 相同，路徑以 `:streamGenerateContent` 結尾。回應為 `text/event-stream`，每個事件是不帶 `event:` 欄位的 `data:` 行，沒有 `[DONE]` 終止標記——流結束時直接關閉。
@@ -440,7 +448,10 @@ curl -X POST "http://localhost:8080/v1beta/models/agnes-2.0-flash:streamGenerate
 
 ```text
 data: {"candidates":[{"content":{"role":"model","parts":[{"text":"你好"}]},"index":0}],"modelVersion":"agnes-2.0-flash"}
+data: {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP","index":0}],"modelVersion":"agnes-2.0-flash","usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5}}
 ```
+
+串流的最後一幀是**終幀**：`parts` 為空，帶 `finishReason`（`STOP` / `MAX_TOKENS` / `SAFETY`）與 `usageMetadata`。用戶端靠它區分「說完了」和「被截斷 / 被安全攔了」。上游串流中途斷開時終幀的 `finishReason` 是 `OTHER`，且不帶 `usageMetadata`。
 
 ## 圖片與影片 API
 
@@ -544,7 +555,7 @@ curl http://localhost:8080/admin/api/session \
 **回應**：
 
 ```json
-{ "ok": true, "version": "0.3.0" }
+{ "ok": true, "version": "0.3.1" }
 ```
 
 ### GET /admin/api/capabilities
@@ -562,7 +573,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -594,7 +605,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -1582,7 +1593,7 @@ curl http://localhost:8080/health
 **回應**：
 
 ```json
-{ "status": "ok", "version": "0.3.0", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.3.1", "storage": { "writable": true } }
 ```
 
 `storage.writable` 報告的是「key 池所在的儲存是否真的寫得進去」。它由啟動時的一次探測與執行期每一次真實寫操作共同維護，健康檢查自身不寫盤。儲存不可寫時回傳 **HTTP `503`**，`status` 變成 `degraded` 並附一句 `detail`（Docker 部署常見於繫結掛載的主機目錄擁有者與容器內執行使用者不一致，詳見容器日誌）。

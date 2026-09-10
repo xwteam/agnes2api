@@ -213,6 +213,19 @@ GATEWAY_TOKEN=replace-with-your-own-long-random-string
 PORT=8080
 ```
 
+> [!WARNING]
+> **`DATA_DIR` is welded to the volume mount in docker-compose.yml — under Docker, never
+> change it on its own.** That line, `./data:/app/data`, is hard-coded and the `DATA_DIR`
+> in `.env` takes no part in it. Point `DATA_DIR` elsewhere without editing that line and
+> nothing stops you: the container starts, `/health` answers `ok`, the panel and key pool
+> work — while store.json lands in the **container's writable layer**. One upgrade later
+> the container is recreated and the whole key pool, every issued outbound API key and the
+> panel config go with it, while the `./data` you kept backing up was empty all along.
+> To move where the data lives, change the **left** half of that mount line; to change the
+> right half, set `DATA_DIR` to the same path — both together. The entrypoint checks this
+> at startup and logs a "not on any mount point" warning. That line is the only signal in
+> this chain: `/health` never says where the data landed.
+
 #### The data directory and its owner: the container rewrites `./data` (read this first)
 
 The container **enters its entrypoint as root**, does two things, and only then drops
@@ -273,12 +286,35 @@ The image also ships a `HEALTHCHECK` that Docker uses to report container health
 data directory is not writable, `/health` answers `503` with `"status": "degraded"`, the
 container is marked unhealthy, and the underlying reason is in the container logs.
 
+These two commands come up over and over while troubleshooting, so here they are up front —
+every later "see the container logs" in this document means the second one:
+
+```bash
+docker compose ps                     # is the container up, is it healthy
+docker compose logs -f --tail=100     # container logs: entrypoint warnings, admin.token_rejected
+```
+
 ### Update
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
+
+`docker compose pull` pulls the tag named by `IMAGE_TAG` in `.env` (unset means `latest`). The
+full image name is `ghcr.io/xwteam/agnes2api`; the available tags are listed on the
+[GHCR packages page](https://github.com/xwteam/agnes2api/pkgs/container/agnes2api).
+**Upgrading = set `IMAGE_TAG` to the version you want and run `docker compose up -d`; rolling
+back = set it back.** Once the tag is pinned, this `.env` can answer "which version is running
+right now"; `:latest` cannot.
+
+> [!IMPORTANT]
+> **After editing `.env`, run `docker compose up -d`, not `docker compose restart`.** The
+> latter only restarts the same container, and a container's environment is frozen at
+> **creation** time — nothing in it changes when `.env` does. `up -d` notices the changed
+> config and recreates the container. Adding `ADMIN_TOKEN` and rotating a token hit the same
+> trap; the second one is worse, because you believe the rotation happened while the old
+> token is still live.
 
 `./data` is left alone — the key pool and the config live there. **Back that directory up before
 upgrading** (see "Backup and Restore" below): it is the only copy of the imported key pool, and
@@ -301,7 +337,7 @@ there is no second one.
 | `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted; `0` = every successful request. Cost below. **Read once at instance build** (`src/http/wire.ts`): a container restart or an isolate recycle is required — **editing it in the admin panel does not take effect immediately**. |
 | `USAGE_STATS_ENABLED` | no | `false` | Tier-2 time series in the panel's "Usage" section (by day / hour / model / protocol). **The check is a literal `true`**; `1` / `yes` count as off. **Off by default, and "off" is zero-cost**. What it costs, and how short-lived instances **lose** counts, is below. Read once when the app is built. |
 | `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
-| `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. |
+| `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. **Welded to the compose mount — never change it alone.** |
 | `APIKEY_CACHE_TTL_MS` | no | `300000` | How long each instance caches the outbound API key table; `0` disables it. It also sets how long a disabled key lives on elsewhere. See the quota budget. |
 
 ### Accepted ranges, and the two "read once at construction" exceptions
@@ -1507,8 +1543,9 @@ channel is missing its API key, or no channel has been selected at all.
 **Fix**:
 
 1. That is exactly what **no `ADMIN_TOKEN`** looks like: the whole tree is never registered, so nothing leaks the fact that there is a panel here.
-2. Set and still 404: the token is non-compliant (under 24 characters / leading or trailing whitespace / non-printable ASCII), and the container log has an `admin.token_rejected` line.
-3. The panel opens but its endpoints answer `503`: `ADMIN_TOKEN` collides with the stored `gatewayToken`; the log says `admin.token_conflict`, and the section above tells you how to handle it.
+2. Set and still 404 — **first confirm the container was really recreated**: under Docker, editing `.env` has to be followed by `docker compose up -d`; `docker compose restart` does not re-read it. Skip this step and item 3 below will send you down the wrong path.
+3. Recreated and still 404: the token is non-compliant (under 24 characters / leading or trailing whitespace / non-printable ASCII), and the container log has an `admin.token_rejected` line.
+4. The panel opens but its endpoints answer `503`: `ADMIN_TOKEN` collides with the stored `gatewayToken`; the log says `admin.token_conflict`, and the section above tells you how to handle it.
 
 ### A setting saved in the panel takes ages to reach the other replicas
 
@@ -1539,6 +1576,7 @@ channel is missing its API key, or no channel has been selected at all.
 1. Nine times out of ten the data directory is not writable. Read the entrypoint lines in the container log and check whether `./data` is owned by `100:101`.
 2. If you pinned a non-root user with `--user` or compose's `user:`, the entrypoint **does not** chown anything and you have to prepare ownership and writability yourself.
 3. When `DATA_DIR` points at `/` or a top-level system directory the entrypoint refuses to chown recursively and only prints a warning — point it somewhere sane.
+4. **Ownership checks out three times over and it is still degraded**: most likely `store.json` cannot be parsed. The first three items are permissions; this one is not — when the storage layer cannot read valid JSON every read and write throws, so the startup probe records "writable" as false and `/health` answers the same `503` degraded. Stop the container and run `python3 -m json.tool ./data/store.json`: the hand-editing taught above is the most common way to break it (one comma too many is enough). Restore from a backup; the real reason is on the first line of the container log.
 
 ## Performance Tips
 
@@ -1622,21 +1660,30 @@ is about everything around those two commands that is the same on both sides.
 
 1. **Back the storage up first.** There is exactly one copy of the key pool and the config; see
    "Backup and Restore" below.
-2. **Glance at the CHANGELOG.** Breaking changes are recorded there; the version badge in all six
+2. **Write down the baseline: the current `version` and the size of the key pool.** The former is
+   the field `curl -s "$BASE/health"` returns, the latter is on the panel's overview page. Without
+   a baseline the three checks below cannot tell "upgraded" from "never upgraded at all".
+3. **Glance at the CHANGELOG.** Breaking changes are recorded there; the version badge in all six
    READMEs points at it.
-3. **An upgrade never requires wiping storage.** Stored records are backward compatible, and the
+4. **An upgrade never requires wiping storage.** Stored records are backward compatible, and the
    `v` field of `pool:index` is always `1` today.
 
 ### What to check afterwards
 
-1. `/health` answers `200` with `status` set to `ok`.
-2. The panel (if you run one) still logs in and the key pool has the same number of entries as
-   before.
-3. Run the third command from "Verification" above to confirm requests really reach upstream.
+1. `/health` answers `200` with `status` `ok`, **and `version` equals the version you just
+   upgraded to**. Only that last clause tells "upgraded" from "never upgraded": `version` is a
+   compile-time constant baked into the image, while the other two pass word for word on the old
+   one. If the image was never published (a build cancelled after the release was cut — this repo
+   has lived through it), `docker compose pull` is a silently successful no-op.
+2. The panel (if you run one) still logs in, the key pool has the same number of entries as
+   before, and the overview page's runtime tile shows the same version.
+3. Run the third command from "Verification" above to confirm requests reach upstream.
 
-Rolling back: on Docker, pin the image tag to the previous version and run `docker compose up -d`
-again; on the Worker, roll back from Deployments in the Cloudflare dashboard, or `git checkout`
-the previous tag and run `npx wrangler deploy` again.
+Rolling back: on Docker, set `IMAGE_TAG` in `.env` back to the previous version and run
+`docker compose up -d` (image name and tag list: "Update" under Docker Deployment above).
+**Confirm that tag exists in the registry first**: if it cannot be pulled compose does not fail,
+it builds one from your **current working tree**, so the rollback "succeeds" and the fault stays. On the Worker, roll back from Deployments in the Cloudflare
+dashboard, or `git checkout` the previous tag and `npx wrangler deploy` again.
 
 ## Backup and Restore
 
@@ -1651,19 +1698,37 @@ cp -a ./data ./data.bak
 docker compose start
 ```
 
-Stopping first avoids a write race. `./data/store.json` holds everything: the key records,
-`pool:index`, and the storage-side config. Restoring is copying the directory back and running
-`docker compose up -d`.
+Stopping first avoids a write race. `./data/store.json` holds everything — not just the key
+records and `pool:index`, but also `apikeys` (the table of issued outbound API keys), `config`
+(the configuration saved from the panel), `registrar:domains` and `registrar:backoff` (the
+registrar's domain-availability and backoff ledgers), `tend:history` (the refill history) and the
+event ring. Restoring is copying the directory back and running `docker compose up -d`.
 
 ### Cloudflare Worker
 
 ```bash
-npx wrangler kv key list --binding=POOL --remote
-npx wrangler kv key get --binding=POOL "pool:index" --remote
+# List the key names first. **That listing is the backup manifest: every key it names must be
+# pulled down, not just key:<id> and pool:index**
+npx wrangler kv key list --binding=POOL --remote > kv-keys.json
+
+# Then pull them one by one. key:<id> / registrar:* / tend:history follow the same three lines
+npx wrangler kv key get --binding=POOL "pool:index" --remote > kv-pool-index.json
+npx wrangler kv key get --binding=POOL "apikeys"    --remote > kv-apikeys.json
+npx wrangler kv key get --binding=POOL "config"     --remote > kv-config.json
 ```
 
-Pull each `key:<id>` out into a file; restoring goes through `npx wrangler kv key put`, exactly
-like importing a key below.
+Restoring goes through `npx wrangler kv key put`, exactly like importing a key above.
+
+> [!WARNING]
+> **Backing up only `key:<id>` and `pool:index` misses four families of keys, and missing them
+> is invisible at restore time.** Restore from a manifest like that and the upstream key pool is
+> back, `/health` answers `ok`, your own smoke test with `GATEWAY_TOKEN` passes — while every
+> sub-key in your downstream users' hands answers `401`. The four families: `apikeys` (the table
+> of issued outbound API keys; not restoring it revokes every sub-key at once, and the plaintext
+> was shown exactly once at issue time, so it cannot be recovered — every key has to be reissued),
+> `config` (the configuration saved from the panel, including the gateway token and both mailbox
+> channels' credentials), `registrar:domains` and `registrar:backoff` (lose them and the registrar
+> turns into "enabled - did not start this time"), and `tend:history` (the refill history).
 
 > [!WARNING]
 > A backup file contains **keys and credentials in plain text** (the gateway token and both

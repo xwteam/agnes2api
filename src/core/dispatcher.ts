@@ -132,11 +132,70 @@ function sanitize(res: Response): Response {
 }
 
 /**
- * 丢弃一个不再需要的上游响应。
+ * 看起来像一把凭据的东西。**只认 `sk-` 开头那一族**——上游（Agnes）与本网关签发的
+ * 对外密钥都是这个前缀，而普通英文错误文案里几乎不会出现它。
  *
- * 换 key 重试时被覆盖的那个 Response 如果不取消，它的响应体就一直挂在连接上没人消费；
- * 上游 5xx 风暴时每个请求会泄漏「池大小 - 1」个响应体——恰恰是资源压力最大的时候。
+ * ⚠️ **刻意不做更宽的匹配**（例如「任何 20 位以上的十六进制」）：错误体里本来就常带
+ * request id、trace id、模型指纹，把那些一并打码会让运维**丢掉排障线索**，
+ * 而它们不是凭据。宁可漏掉一种没见过的凭据格式，也不要把有用的错误体变成一片星号。
  */
+const CREDENTIAL_LIKE = /sk-[A-Za-z0-9_-]{6,}/g;
+
+/**
+ * 一次能横跨块边界的匹配最多回看这么多字符。
+ *
+ * `sk-` 之后是一串合法字符，而块边界可能正好落在中间 ⇒ 必须把「可能才写了一半的那一段」
+ * 留到下一块再判。256 远大于任何真实密钥长度，同时给内存一个硬上界。
+ */
+const REDACT_CARRY = 256;
+
+/**
+ * **错误响应专用**的脱敏搬运：边流边打掉像凭据的片段。
+ *
+ * ── 为什么需要它 ─────────────────────────────────────────────────────────
+ * 下面 `evict` 那一档的注释从前写着「401/403 ……**这是本项目唯一一条上游 key 可能
+ * 触达客户端的通路**」。**那句话不完整**：401/403 确实被合成成网关自己的错误体，
+ * 但 **429 / 402 / 5xx 与其余 4xx 的上游正文一直是逐字透传的**，而「凭据无效」
+ * 并不是各家 API 唯一会回显 key 片段的地方——配额耗尽、账号被禁这类文案同样会带。
+ *
+ * ── 为什么是流式改写，不是 `await res.text()` 之后再替换 ────────────────
+ * 🔴 **第一版就是那么写的，被判据当场抓住**：`tests/unit/dispatcher.test.ts` 的
+ * 「换 key 重试时取消掉被丢弃的上游响应体」用了一个**永不关闭**的 ReadableStream，
+ * 于是 `text()` 挂死、那一格 5 秒超时。真实上游会关闭错误体，但**半开连接不会** ——
+ * 把整个请求卡死在读一个错误体上，是拿一条可用性风险去换一条泄漏防护。
+ * 流式改写没有这个问题：不缓冲全体、取消可以照常向上游传播、也不引入新的等待。
+ */
+function redactBody(body: ReadableStream<Uint8Array> | null): ReadableStream<Uint8Array> | null {
+  if (body === null) return null;
+  const dec = new TextDecoder();
+  const enc = new TextEncoder();
+  let carry = "";
+  const emit = (ctrl: TransformStreamDefaultController<Uint8Array>, text: string): void => {
+    if (text !== "") ctrl.enqueue(enc.encode(text.replace(CREDENTIAL_LIKE, "sk-***")));
+  };
+  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, ctrl) {
+      const text = carry + dec.decode(chunk, { stream: true });
+      // 只有**可能还没写完**的那一段要留下：从尾部往回找最后一个 `sk-`，
+      // 它之后的内容都可能是一个正在成形的匹配。找不到就整块放行。
+      const idx = text.lastIndexOf("sk-");
+      const cut = idx >= Math.max(0, text.length - REDACT_CARRY) ? idx : text.length;
+      emit(ctrl, text.slice(0, cut));
+      carry = text.slice(cut);
+      // 兜底：`sk-` 后面跟着几千个合法字符的东西不是凭据，别让 carry 无界增长。
+      if (carry.length > REDACT_CARRY * 4) { emit(ctrl, carry); carry = ""; }
+    },
+    flush(ctrl) {
+      emit(ctrl, carry + dec.decode());
+    },
+  }));
+}
+
+/** 错误路径专用：白名单重建响应头 + 流式脱敏正文。**成功路径仍走 `sanitize()`。** */
+function sanitizeError(res: Response): Response {
+  return new Response(redactBody(res.body), { status: res.status, headers: safeHeaders(res) });
+}
+
 async function discard(res: Response | null): Promise<void> {
   if (!res || !res.body || res.bodyUsed) return;
   try {
@@ -480,13 +539,17 @@ export async function dispatch(args: {
       // （跨 2 个触达间隔），而不是 10 次。设计文档 §6.1 说要把它按次计进配额账的
       // 那半因此不成立，订正登记在案。
       await commitOutcome(slot, record, "clientError", null);
-      return done(sanitize(res));
+      return done(sanitizeError(res));
     }
 
     if (action.kind === "evict") {
       // 上游 401/403 说的是「池里这把 key 失效了」，与客户端无关，绝不能把上游的
-      // 错误体透传出去：凭据无效的错误体恰恰是各家 API 最爱回显 key 片段的地方，
-      // 这是本项目唯一一条上游 key 可能触达客户端的通路。改为合成网关自己的错误体。
+      // 错误体透传出去：凭据无效的错误体恰恰是各家 API 最爱回显 key 片段的地方。
+      // ⚠️ **上一版这里还写着「这是本项目唯一一条上游 key 可能触达客户端的通路」——
+      // 那句话不完整**：429 / 402 / 5xx 与其余 4xx 的上游正文一直是逐字透传的，
+      // 而配额耗尽、账号被禁这类文案同样会带 key 片段。那一半现在由
+      // `sanitizeError()` 兜着（内容级打码），本档仍然是**整个错误体都不透传**——
+      // 两者一严一宽，因为这一档的错误体对客户端**没有任何信息价值**。
       // 注意只丢弃这次的 401 响应，不动 lastError：先前某把 key 的真实上游错误
       // （例如 500）仍然是更有信息量的回复，不该被一次凭据失效抹掉。
       await discard(res);
@@ -495,7 +558,7 @@ export async function dispatch(args: {
     }
 
     await discard(lastError);
-    lastError = sanitize(res);
+    lastError = sanitizeError(res);
 
     if (action.kind === "cooldown") {
       await commitOutcome(slot, applyCooldown(record, now(), action.ms, action.reason), "failed", action.reason);

@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.3.0-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.3.1-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -61,11 +61,11 @@
 
 | 날짜 | 변경 내용 |
 |------|----------|
+| 2026-09-10 | v0.3.1 - 🔍 **감사 마무리**: 36건 중 적대적 검증으로 20건을 확인해 이번 버전에서 모두 수정. critical 2건 — SECURITY.md가 v0.3.0에서 사라진 보장을 그대로 적어 두었고, `/v1/responses` 스트리밍이 공식 SDK 내부에서 크래시 |
 | 2026-09-10 | v0.3.0 - 🚀 **사용자 대상 대규모 개편**(파괴적 변경 포함): 모델 목록 4 → 12, 패널에 브레이크포인트 추가, 자격 증명 평문 표시·복사, 모델별 연결성 테스트. 그 밖에 실측 결함 일괄 수정 |
 | 2026-09-09 | v0.2.2 - 🐛 **'지금 보충' 수정**(파괴적 변경 포함): 202를 돌려준 뒤 라운드 전체가 Cloudflare에 조용히 취소되고, 잠금이 15분간 새어 정시 라운드까지 막았습니다. 이제는 완료를 기다려 200과 실제 결과를 돌려줍니다 |
 | 2026-09-09 | v0.2.1 - 🧾 **릴리스 후 마무리**: v0.2.0 감사 결과를 태그 이후에 고쳐서 아무도 받을 수 없었습니다. 이번 판에서 실제로 내보냅니다 — LICENSE를 순수 MIT로 되돌리고, README의 섹션 수를 정정하고, 구현보다 더 많이 주장하던 문구들을 일괄 손봤습니다 |
 | 2026-09-09 | v0.2.0 - 🔧 **레지스트라 대수술**(파괴적 변경 포함): 두 메일함 채널이 "주 채널 + 자동 대체"에서 **둘 중 하나를 고르는** 방식으로(`registrar.channel`이 `primary`/`fallback`을 대체, 기존 설정도 읽음). 업스트림 속도 제한에 걸리면 즉시 중단하고 지수 백오프하며 차단된 도메인을 기억합니다. "연결 테스트"는 실제로 자격 증명을 검증합니다 |
-| 2026-08-31 | v0.1.1 - 🧹 **정비 릴리스**: 내부 개발 식별자를 공개 저장소에서 대부분 걷어냈습니다. 실제로 새고 있던 곳은 패널 배포물의 470곳으로, 패널을 연 방문자 전원에게 전달되고 있었습니다. 조판 축의 예외가 조용히 유출 축의 예외로 승격돼 있던 문제도 고쳤습니다. 동작 변경은 없습니다 |
 
 > 전체 변경 이력은 [CHANGELOG.md](../../CHANGELOG.md)에 있습니다.
 
@@ -209,7 +209,7 @@ docker compose logs -f
 ```bash
 # 헬스 체크(인증 없음). Worker에서는 자신의 https://<name>.<sub>.workers.dev로 바꾼다
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.3.0"}
+# {"status":"ok","version": "0.3.1"}
 
 # 쓸 수 있는 모델을 확인한다
 curl http://localhost:8080/v1/models \

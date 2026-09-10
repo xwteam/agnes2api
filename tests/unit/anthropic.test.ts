@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { UnsupportedParamError } from "../../src/core/protocol/request-shape.js";
 import { toInternalRequest, toAnthropicResponse, toAnthropicStream, UnsupportedContentError } from "../../src/core/protocol/anthropic.js";
 
 describe("toInternalRequest", () => {
@@ -78,6 +79,56 @@ describe("toInternalRequest", () => {
     });
     expect(r.stream).toBe(true);
   });
+
+  /**
+   * **防住的真实故障**：用户为了拿可复现的输出把 `temperature` 设成 0 发过来，
+   * 网关回 200、结果照旧是随机的 —— 因为这一格从前压根不往上游带
+   * （`return { model, messages, max_tokens, stream }`，一个采样参数都没有）。
+   * 他会怀疑模型、怀疑上游、怀疑自己，唯独不会怀疑网关把字段扔了，因为一句提示都没有。
+   *
+   * **变红条件（实测）**：把 `src/core/protocol/anthropic.ts` 的返回值改回
+   * `{ model, messages, max_tokens, stream }`（去掉那三格）⇒ 本格三条断言全红
+   * （`undefined` ≠ 0 / 0.1 / `["END"]`）。
+   *
+   * ⚠️ **期望值是手写字面量，不从入参推导**：`r.temperature` 与入参同一个变量时，
+   * 两边一起改错照样绿。
+   */
+  it("temperature / top_p / stop_sequences 三格真的带到了上游请求体上", () => {
+    const r = toInternalRequest({
+      model: "agnes-2.0-flash", max_tokens: 100,
+      messages: [{ role: "user", content: "x" }],
+      temperature: 0, top_p: 0.1, stop_sequences: ["END"],
+    });
+    expect(r.temperature, "temperature 没带上 —— 客户端设了 0 却拿到随机输出").toBe(0);
+    expect(r.top_p).toBe(0.1);
+    // Anthropic 的 `stop_sequences` 在上游 OpenAI 兼容体上叫 `stop`。
+    expect(r.stop).toEqual(["END"]);
+  });
+
+  /**
+   * **防住的真实故障（实测复现过）**：带 `tools` + `tool_choice:"required"` 的同一份
+   * 请求，走 `/v1/chat/completions` 上游返回**真的工具调用**，走 `/v1/messages`
+   * 返回 **200**、正文是模型自己吐的 `<tool_call><tool_call>…` 乱码、`stop_reason`
+   * 还写着正常结束。静默丢弃比报错坏得多：客户端完全无从察觉。
+   * 三档裁定（哪些透传、哪些 400）写在 `src/core/protocol/request-shape.ts` 的
+   * `UnsupportedParamError` 上方。
+   *
+   * **变红条件（实测）**：把那三行 `throw` 删掉 ⇒ 三格全部不抛，本格红。
+   */
+  it("转达不了的生成参数一律 400 点名，不静默丢弃", () => {
+    const base = { model: "agnes-2.0-flash", max_tokens: 100, messages: [{ role: "user", content: "x" }] };
+    for (const [field, extra] of [
+      ["tools", { tools: [{ name: "get_weather" }] }],
+      ["tool_choice", { tool_choice: { type: "any" } }],
+      ["top_k", { top_k: 5 }],
+    ] as const) {
+      let err: unknown = null;
+      try { toInternalRequest({ ...base, ...extra }); } catch (e) { err = e; }
+      expect(err, `${field} 被静默吃掉了`).toBeInstanceOf(UnsupportedParamError);
+      // 报文必须点名是哪一格 —— 客户端拿到 400 要知道删哪个字段。
+      expect(String((err as Error).message)).toContain(field);
+    }
+  });
 });
 
 describe("toAnthropicResponse", () => {
@@ -114,6 +165,34 @@ describe("toAnthropicResponse", () => {
       id: "c1", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "x" } }],
     }, "m");
     expect(a.usage).toEqual({ input_tokens: 0, output_tokens: 0 });
+  });
+
+  /**
+   * **防住的真实故障**：上游做了内容过滤/拒答，而 Anthropic 客户端读到的是
+   * `stop_reason: "stop_sequence"` —— 那个取值的语义是「命中了客户端给的某个停止词」，
+   * 配套的 `stop_sequence` 必须是命中的那一条，而本文件两条出口都把它写死成 `null`。
+   * **一个说命中、一个说 null，自相矛盾**；客户端不会触发任何重试/告警/降级分支，
+   * 做审计的下游把「被过滤」记成「正常结束」。
+   * 而经本网关「真的命中停止词」这件事在 `stop_sequences` 开始转发之前根本发生不了。
+   *
+   * ⚠️ **两条断言缺一不可**：只断言「是 refusal」的话，谁把整张表改成恒返回
+   * `"refusal"` 照样绿；下面那条 `stop` → `end_turn` 是同格的反向控制。
+   *
+   * **变红条件（实测）**：把 `src/core/protocol/anthropic.ts` 的 `STOP_REASON` 里
+   * `content_filter` 改回 `"stop_sequence"` ⇒ 第一条断言红。
+   */
+  it("content_filter 映射为 refusal —— 映成 stop_sequence 会和恒为 null 的 stop_sequence 字段自相矛盾", () => {
+    const a = toAnthropicResponse({
+      id: "c1", choices: [{ index: 0, finish_reason: "content_filter", message: { content: "x" } }],
+    }, "m");
+    expect(a.stop_reason, "被内容过滤拦下的回答被报成了「正常因停止词结束」").toBe("refusal");
+    expect(a.stop_sequence, "这一格恒为 null 正是上面那条断言存在的理由").toBe(null);
+
+    // 反向控制（同格）：正常收尾那一档没有跟着漂。
+    const ok = toAnthropicResponse({
+      id: "c1", choices: [{ index: 0, finish_reason: "stop", message: { content: "x" } }],
+    }, "m");
+    expect(ok.stop_reason, "整张表被改成恒返回同一个值了 —— 上面那条断言是空转的").toBe("end_turn");
   });
 });
 

@@ -4,7 +4,7 @@ import { sendCode, register, login, createKey, randomPassword, type AgnesDeps } 
 import type { Logger } from "../../ports/logger.js";
 import type { BackoffKind } from "./backoff.js";
 import {
-  classifySendCode, edgeMarker, upstreamMessage, isKnownGood, recordVerdict,
+  classifySendCode, edgeMarker, upstreamMessage, bodyFieldNames, isKnownGood, recordVerdict,
   type DomainJournal, type DomainLedger,
 } from "./domain-ledger.js";
 
@@ -74,6 +74,39 @@ export interface MintDeps {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * 注册链后三步失败时，进事件的那句「上游到底说了什么」。
+ *
+ * ── 为什么这三步非要有它 ────────────────────────────────────────────────────
+ *
+ * 这三步是最贵的失败：走到这里时临时邮箱已经真的建出来、验证码已经真的向 Agnes 要过
+ * 一次（吃掉的是全网关共享的限流预算），上游那边甚至可能已经把账号建好了。而
+ * 上一版的三条 warn 只有 `address`（+`tokenName`）——四种真因（注册这一步把域名
+ * 拉黑了 / 验证码过期 / 上游把字段改名了 / 这个出口的注册额度到顶）在面板上
+ * **长得一模一样**，处置却完全不同，运维只能靠猜或者去抓包。
+ * 发码那一步早就把 `{status, body}` 交出来并分成四档了，这三步只是当时漏掉的另一半。
+ *
+ * ── 两档，分岔的判据是**上游认不认这次请求** ─────────────────────────────────
+ *
+ * · **非 2xx** ⇒ 上游拒了，正文是它的裁决词 ⇒ 走 `upstreamMessage`：抹掉邮箱地址、
+ *   抹掉**本步在场的已知凭据**（注册/登录带着我们自己生成的口令，建 key 带着上一步
+ *   换来的令牌）、抹掉像 key 的片段，再截断 + 回查。
+ * · **2xx 却没解析出目标字段** ⇒ 🔴 **只说字段名，一个值都不说。** 这一档的正文
+ *   **极可能就装着那把令牌/key 本身**（「上游把字段改名了」正是它要说的话），
+ *   而运维在这一档需要的恰恰只有字段名：看到 `data.token_id` 他就知道名字变了。
+ *   正文不是 JSON 对象（维护页、网关超时页）时没有字段名可说，落回上一档——
+ *   那种正文里不会有我们没认出来的令牌，只可能有已知凭据或 `sk-` 片段，都被挡着。
+ */
+function stepMessage(
+  status: number, body: string, address: string, secrets: readonly string[],
+): string {
+  if (status >= 200 && status < 300) {
+    const names = bodyFieldNames(body);
+    if (names !== null) return `上游回了 2xx 但没有目标字段；正文字段名：${names.join(", ")}`;
+  }
+  return upstreamMessage(body, address, secrets);
 }
 
 export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
@@ -246,32 +279,52 @@ export async function mintOne(deps: MintDeps): Promise<MintOutcome> {
         return { ok: false, reason: "code_timeout" };
       }
 
+      // 🔴 这三条 warn 的 `status` 与 `message` 是**运维唯一能拿到的归因**，
+      // 缺一条就退回「四种真因长同一个样」那一版，理由全文见 `stepMessage`。
+      // 脱敏交给 `stepMessage`：**别在这里直接把 `.body` 塞进 fields**。
       const password = randomPassword(rand);
-      if (!(await register(deps.agnes, mailbox.address, password, code))) {
+      const reg = await register(deps.agnes, mailbox.address, password, code);
+      if (!reg.ok) {
         deps.logger.log({
           level: "warn", event: "registrar.register_rejected",
-          msg: "Agnes 注册被拒（验证码已正常收到）", fields: { address: mailbox.address },
+          msg: "Agnes 注册被拒（验证码已正常收到）；上游的状态码与那句话在下面",
+          fields: {
+            address: mailbox.address, status: reg.status,
+            message: stepMessage(reg.status, reg.body, mailbox.address, [password]),
+          },
         });
         return { ok: false, reason: "register_failed" };
       }
-      const token = await login(deps.agnes, mailbox.address, password);
-      if (!token) {
+      const lo = await login(deps.agnes, mailbox.address, password);
+      if (!lo.token) {
         deps.logger.log({
           level: "warn", event: "registrar.login_no_token",
-          msg: "Agnes 登录未返回令牌（账号已注册成功）", fields: { address: mailbox.address },
+          msg: "Agnes 登录未返回令牌（账号已注册成功）；上游的状态码与那句话在下面",
+          fields: {
+            address: mailbox.address, status: lo.status,
+            message: stepMessage(lo.status, lo.body, mailbox.address, [password]),
+          },
         });
         return { ok: false, reason: "login_failed" };
       }
+      const token = lo.token;
 
-      const key = await createKey(deps.agnes, token, deps.tokenName);
-      if (!key) {
+      const created = await createKey(deps.agnes, token, deps.tokenName);
+      if (!created.key) {
         deps.logger.log({
           level: "warn", event: "registrar.key_not_returned",
-          msg: "Agnes 建 key 未返回 key（注册与登录都成功）",
-          fields: { address: mailbox.address, tokenName: deps.tokenName },
+          msg: "Agnes 建 key 未返回 key（注册与登录都成功）；上游的状态码与那句话在下面",
+          fields: {
+            address: mailbox.address, tokenName: deps.tokenName, status: created.status,
+            // 已知凭据是**上一步换来的那个令牌**（它就在这次请求的 authorization 头里，
+            // 错误体回显请求头是常见写法）。那把**还没拿到手**的 key 由
+            // `./domain-ledger.ts` 里那条 `sk-` 兜底打码接着（我们说不出它的值）。
+            message: stepMessage(created.status, created.body, mailbox.address, [token]),
+          },
         });
         return { ok: false, reason: "key_failed" };
       }
+      const key = created.key;
 
       // 账号密码到此为止，不返回也不持久化（设计文档 §4.3）。
       return { ok: true, key };

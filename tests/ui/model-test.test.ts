@@ -4,7 +4,10 @@ import {
   testableModels, initTestRows, withRowActive, withRowResult, testProgress,
   rowStatusLabelKey, modelTestBodyReasonCode, modelTestResultCode,
   modelTestTransportCode, modelTestLabelKey,
+  TEST_MIN_INTERVAL_MS, nextTestDelayMs, testRoundMinSec,
 } from "../../admin-ui/js/pure/model-test.mjs";
+import { VERIFY_MIN_INTERVAL_MS } from "../../admin-ui/js/pure/keys-write.mjs";
+import { PROBE_MIN_INTERVAL_MS } from "../../src/http/admin/probe-guard.js";
 import { MODEL_CATALOG } from "../../src/core/admin/protocol-catalog.js";
 import { I18N } from "../../admin-ui/js/i18n-dict.js";
 import { stripComments } from "../helpers/strip-comments.js";
@@ -379,5 +382,118 @@ describe("i18n key 这一族", () => {
     for (const k of ["models.test.progress", "models.test.status"]) {
       expect(Object.values(dict[k]!).some((s) => /\{\w+\}/.test(s)), `${k} 应当带占位符`).toBe(true);
     }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 整轮的节奏：两条之间隔满最小间隔（v0.3.0 缺陷，线上实测修正）
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * 🔴 **这一组守的是「这颗按钮真的回答得了它承诺回答的那个问题」。**
+ *
+ * v0.3.0 的板块循环里**一个间隔都没有**，而后端那把护栏最小间隔 3 秒、kind 是常量
+ *（整轮互相挡）⇒ 线上实测整轮 824ms 跑完，6 行里 **5 行 `probe_cooldown`**：
+ * 1 行「通了」+ 5 行「被节流挡下了，请稍后再测」，而「稍后再测」是死路
+ *（再点一次连第一行都在冷却窗口里）。那 5 行盖住的可能是真的不通的模型。
+ *
+ * ⚠️ **纯函数这一层只钉「等多久」，钉不住「有没有真的等」**：真的停顿那一半在
+ * `admin-ui/js/sec-models.js` 的 `runTests()` 里，由
+ * `tests/ui/dom/models-test-card.test.ts` 的
+ * 「两条请求之间真的隔满了最小间隔 —— 零间隔时后面每一条都被我们自己的护栏挡成节流」
+ * 那一格钉着。两格分工不同，缺哪一格都留着一整条路没人守。
+ */
+describe("两条之间的最小间隔", () => {
+  /**
+   * **三个数必须相等。** 直接 import 那两个真常量比对，任何一处漂了这一格就红。
+   *
+   * ⚠️ 边界值下面那几格**手写字面量**（第 6 种假阳性：拿被测常量去算期望值，
+   * 两边一起错时一声不吭），与 `tests/ui/keys-write.test.ts` 的
+   *「前端这个最小间隔与后端 PROBE_MIN_INTERVAL_MS 是同一个数」那一格同一条纪律。
+   *
+   * **变红条件**：把 `TEST_MIN_INTERVAL_MS` 改成别的数（比如「反正快一点也没事」的 1000）。
+   */
+  it("整轮的最小间隔与后端 PROBE_MIN_INTERVAL_MS、与 Key 池验活那一份是同一个数", () => {
+    expect(TEST_MIN_INTERVAL_MS).toBe(PROBE_MIN_INTERVAL_MS);
+    expect(TEST_MIN_INTERVAL_MS, "与 Key 池验活那一份漂了 —— 同一把护栏，前端两处两个数")
+      .toBe(VERIFY_MIN_INTERVAL_MS);
+    // 反向自检：常量本身没了 / 被改成 0（那等于把这条不变量删掉，而上面两条会跟着一起变）。
+    expect(TEST_MIN_INTERVAL_MS).toBe(3_000);
+  });
+
+  /** 这一轮的第一条前面没有任何一条，**不等**——凭空多等 3 秒是白等的。 */
+  it("这一轮的第一条不等：参照点是 null ⇒ 0", () => {
+    expect(nextTestDelayMs(null, 1_700_000_000_000)).toBe(0);
+  });
+
+  /**
+   * 🔴 **本组最要紧的一格：上一条刚落定 ⇒ 必须等满一整个间隔。**
+   * 这里回 0 的实现就是 v0.3.0 那一版（零间隔），线上后果见本组文件头。
+   */
+  it("上一条刚落定就要发下一条 ⇒ 等满 3000 毫秒", () => {
+    expect(nextTestDelayMs(1_700_000_000_000, 1_700_000_000_000)).toBe(3_000);
+  });
+
+  /** 已经等掉的那部分要扣掉：只等剩下的。手写 1000 / 2000，不写成常量减法。 */
+  it("已经过去 1000 毫秒 ⇒ 只等剩下的 2000", () => {
+    expect(nextTestDelayMs(1_700_000_000_000, 1_700_000_001_000)).toBe(2_000);
+  });
+
+  /**
+   * **边界两侧各一格**：差 1 毫秒还要等 1 毫秒，整好到点就不等了。
+   * 只测一侧的话，`>` 与 `>=` 写反在任何一格上都不可观测。
+   */
+  it("差 1 毫秒仍然要等，整好到点就不等了", () => {
+    expect(nextTestDelayMs(1_700_000_000_000, 1_700_000_002_999)).toBe(1);
+    expect(nextTestDelayMs(1_700_000_000_000, 1_700_000_003_000)).toBe(0);
+    expect(nextTestDelayMs(1_700_000_000_000, 1_700_000_009_999)).toBe(0);
+  });
+
+  /**
+   * ⚠️ **时钟回拨按「等满一整个间隔」处置，绝不许当成「已经等够了」。**
+   * 把负的已等时长当成已等够，会在系统对时的那一刻把整轮打回零间隔
+   * ——也就是这条缺陷本身，而且只在真机上偶发。
+   *
+   * **变红条件**：把 `waited < 0` 那一支删掉 ⇒ 这一格拿到 `3_000 - (-5_000) = 8_000`
+   * 那种更长的等待还算好的；换成先判 `waited >= TEST_MIN_INTERVAL_MS` 的写法就会回 0。
+   */
+  it("本地时钟被拨回去了 ⇒ 等满一整个间隔，不许判成「已经等够了」", () => {
+    expect(nextTestDelayMs(1_700_000_005_000, 1_700_000_000_000)).toBe(3_000);
+  });
+
+  /** 参照点不是有限数（`NaN` / `Infinity` / 缺字段）时按「没有参照点」处置。 */
+  it("参照点不是有限数 ⇒ 当成这一轮的第一条", () => {
+    for (const bad of [undefined, NaN, Infinity, "1700000000000", {}]) {
+      expect(nextTestDelayMs(bad as never, 1_700_000_000_000), `${String(bad)} 没被当成没有参照点`).toBe(0);
+    }
+  });
+
+  /** `now` 读不出来时**宁可等满**：那一档下「已等多久」这个问题根本没有答案。 */
+  it("now 不是有限数 ⇒ 等满一整个间隔，不许当成 0", () => {
+    expect(nextTestDelayMs(1_700_000_000_000, NaN)).toBe(3_000);
+  });
+});
+
+describe("整轮至少要多少秒", () => {
+  /**
+   * ⚠️ **`n` 条请求之间只有 `n−1` 段间隔。** 写成 `n` 段的话，卡上那句话会对运维
+   * 多报一段它其实不会等的时间；而这句话是运维在第一段间隔里判断「它是不是卡住了」
+   * 的唯一依据。真源目录里今天有 6 个对话模型 ⇒ 5 段 × 3 秒 = 15 秒。
+   */
+  it("六个对话模型 ⇒ 至少 15 秒（五段间隔，不是六段）", () => {
+    expect(testRoundMinSec(6)).toBe(15);
+    expect(testRoundMinSec(2)).toBe(3);
+    // 契约侧：真源目录里的对话模型条数就是面板上那句话用的那个 n。
+    expect(testRoundMinSec(testableModels(MODEL_CATALOG).length)).toBe(15);
+  });
+
+  /**
+   * **少于两个模型时是 0，调用方据它决定这句话画不画。**
+   * 一条请求前后一段间隔都没有，写成一句「至少 3 秒」是假话。
+   */
+  it("零个 / 一个模型 ⇒ 0，那句话不该出现在屏幕上", () => {
+    expect(testRoundMinSec(0)).toBe(0);
+    expect(testRoundMinSec(1)).toBe(0);
+    expect(testRoundMinSec(NaN)).toBe(0);
   });
 });

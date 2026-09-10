@@ -115,12 +115,16 @@ describe("协议可用性矩阵", () => {
   /**
    * **契约档：夹具直接用真源。**
    *
-   * 面板显示的可用性与 `geminiModelList()` 交出去的 `supportedGenerationMethods`
-   * 不一致，**这是刻意的**：后者对全部 12 个模型一律声明支持 generateContent，
-   * 包括那个视频模型。面板按真实可用性画，那条对外契约的不实登记另行处置。
-   * 这一格钉的就是「面板不许照抄那份不实」。
+   * ⚠️ **这段说明 2026-09-10 改写了：那处分歧已经不存在。** 上一版写的是
+   * 「面板显示的可用性与 `geminiModelList()` 的 `supportedGenerationMethods` 不一致，
+   * 这是刻意的」——后者当时对全部 12 个模型一律声明支持 generateContent，
+   * 包括视频模型，而那笔账在 `src/core/admin/protocol-catalog.ts` 的文件头里
+   * 记的是「另行处置」，是待办债不是裁定。现在 `geminiModelList()` 直接读
+   * `MODEL_CATALOG` 的 `modality`（媒体模型给空数组），两边说同一句话。
+   * 这一格的射程一个字没变：它钉的是**面板这一侧**按真实可用性画，
+   * 与那条对外契约今天一致、哪天再分叉也照样红。
    */
-  it("图片模型与视频模型在四条对话协议上全不可用 —— 面板不许照抄 gemini 模型列表那份不实", () => {
+  it("图片模型与视频模型在四条对话协议上全不可用 —— 面板按真实可用性画", () => {
     const payload = catalogPayload();
     const protocols = catalogProtocols(payload)!;
     const models = catalogModels(payload)! as ModelRow[];

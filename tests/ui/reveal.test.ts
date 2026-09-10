@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  REVEAL_KINDS, createRevealState, revealMessageKey, revealOutcome,
+  REVEAL_KINDS, createRevealState, revealMessageKey, revealOutcome, revealErrorOutcome,
 } from "../../admin-ui/js/pure/reveal.mjs";
 
 /**
@@ -54,6 +54,66 @@ describe("revealOutcome：三态必须分得开", () => {
 
   it("ok 那一档没有文案键 —— 表外不兜底", () => {
     expect(revealMessageKey({ state: "ok", secret: "x" })).toBeNull();
+  });
+});
+
+/**
+ * **抛出来的那一族**（`js/api.js` 的 `ApiError`）怎么归档。
+ *
+ * 🔴 **这一组存在的理由是一条真缺陷**：`revealControls()` 的 `load()` 从前没有
+ * `try/catch`，而 `json()` 对任何非 2xx 一律抛 ⇒ 那两颗按钮在**任何** HTTP 错误下
+ * 静默无反应（只有控制台里一条无人接的 promise 拒绝）。于是 `revealOutcome()` 上方
+ * 那句「`failed` 治的是网络断了 / 401 / 500」**在真实错误路径上到不了**：
+ * 只有「200 但响应体畸形」走得进 `revealOutcome()`。
+ *
+ * ⚠️ **纯函数这一层只钉「怎么归档」，钉不住「有没有人去接」**：真的接住那一半在
+ * `admin-ui/js/ui.js` 的 `load()` 里，由 `tests/ui/dom/reveal-controls.test.ts` 的
+ * 「reveal 回 404：屏幕上必须出现一句话 —— 静默是本仓明令禁止的那一种坏法」那一格钉着。
+ * 两格分工不同，缺哪一格都留着一整条路没人守。
+ */
+describe("revealErrorOutcome：抛出来的那一族也得有一句话", () => {
+  /**
+   * 🔴 **404 与「这一次没成」是两种处置，不许并档。**
+   * 这两张表都是轮询刷新的：一条记录在别处被删掉之后屏幕上那一行还在，点下去必是 404。
+   * 那一档的处置是「刷新列表」，`failed` 那一档是「等一会儿再点」。
+   *
+   * **变红条件**：把 `revealErrorOutcome()` 里那句 `status === 404` 删掉
+   *（本任务变异实测：这一格与 DOM 那三格一起红）。
+   */
+  it("404 ⇒ gone（这一条已经不在了），不许并进 failed", () => {
+    expect(revealErrorOutcome({ status: 404, body: { error: { code: "key_not_found" } } }))
+      .toEqual({ state: "gone" });
+    expect(revealMessageKey({ state: "gone" })).toBe("reveal.gone");
+    expect(revealMessageKey({ state: "gone" }), "与「这一次没成」共用一句文案就等于没分开")
+      .not.toBe(revealMessageKey({ state: "failed" }));
+  });
+
+  /**
+   * **其余一律 failed，包括 401。**
+   * 401 刻意不另起一档：`js/api.js` 对它已经先清凭据 + 弹登录闸了，那一屏本身就是
+   * 最强的反馈；而「这一次没取到，稍后再试」对它也是真话。
+   */
+  it.each([
+    ["服务端内部错", { status: 500 }],
+    ["网关挂了", { status: 502 }],
+    ["管理会话失效", { status: 401 }],
+    ["被拒绝", { status: 403 }],
+    ["fetch 自己抛的 TypeError（连请求都没发出去）", new TypeError("Failed to fetch")],
+    ["压根不是个错误对象", null],
+    ["状态码不是数", { status: "404" }],
+  ])("%s ⇒ failed（重试可能就好了）", (_name, err) => {
+    expect(revealErrorOutcome(err as never)).toEqual({ state: "failed" });
+  });
+
+  /** 四态各有各的一句话，且都在字典里 —— 少一句就是 `t()` 拿到 `null`。 */
+  it("四态的文案键互不相同，一个都不许缺", () => {
+    const keys = [
+      revealMessageKey({ state: "unavailable" }),
+      revealMessageKey({ state: "gone" }),
+      revealMessageKey({ state: "failed" }),
+      revealMessageKey({ state: "ok", secret: "x" }),
+    ];
+    expect(keys).toEqual(["reveal.unavailable", "reveal.gone", "reveal.failed", null]);
   });
 });
 

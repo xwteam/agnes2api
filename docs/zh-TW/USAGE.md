@@ -194,7 +194,7 @@ for chunk in client.models.generate_content_stream(
     print(chunk.text or "", end="")
 ```
 
-串流回應的每個事件是不帶 `event:` 欄位的 `data:` 行，**沒有 `[DONE]` 終止標記**——串流結束時直接關閉連線。按這條協議自己寫解析器的話，別去等一個永遠不來的終止影格。
+串流回應的每個事件是不帶 `event:` 欄位的 `data:` 行，**沒有 `[DONE]` 終止標記**——串流結束時直接關閉連線。按這條協議自己寫解析器的話，別去等一個永遠不來的 `[DONE]`。**「說完了」的信號是最後那一影格**：`parts` 為空，帶 `finishReason`（`STOP` / `MAX_TOKENS` / `SAFETY`）與 `usageMetadata`。
 
 ### base_url 不帶 `/v1beta`
 
@@ -240,8 +240,14 @@ curl -N -X POST http://localhost:8080/v1/responses \
 | 事件 | 何時出現 |
 |------|----------|
 | `response.created` | 串流的第一影格 |
+| `response.output_item.added` | 建出那條 message 輸出項 |
+| `response.content_part.added` | 建出那一格正文 |
 | `response.output_text.delta` | 一個或多個，正文增量都在這裡 |
-| `response.completed` | 串流的最後一影格 |
+| `response.output_text.done` | 正文收尾，帶完整文字 |
+| `response.content_part.done` | 那一格正文收尾 |
+| `response.output_item.done` | 那條輸出項收尾 |
+| `response.completed` | 串流的最後一影格，`response.output[]` 就是最終物件 |
+| `response.failed` | 只在上游串流中途斷開時出現，出現後不再有 `response.completed` |
 
 ## 圖片與影片
 

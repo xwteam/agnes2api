@@ -194,7 +194,7 @@ for chunk in client.models.generate_content_stream(
     print(chunk.text or "", end="")
 ```
 
-ストリーミングレスポンスの各イベントは `event:` フィールドを持たない `data:` 行で、**`[DONE]` の終端マーカーはありません**——ストリームは終わるとそのまま閉じます。このプロトコル向けに自分でパーサーを書くなら、永遠に来ない終端フレームを待たないでください。
+ストリーミングレスポンスの各イベントは `event:` フィールドを持たない `data:` 行で、**`[DONE]` の終端マーカーはありません**——ストリームは終わるとそのまま閉じます。このプロトコル向けに自分でパーサーを書くなら、永遠に来ない `[DONE]` を待たないでください。**「言い終わった」の合図は最後のフレーム**です：`parts` が空で、`finishReason`（`STOP` / `MAX_TOKENS` / `SAFETY`）と `usageMetadata` を持ちます。
 
 ### base_url に `/v1beta` は付けない
 
@@ -240,8 +240,14 @@ curl -N -X POST http://localhost:8080/v1/responses \
 | イベント | いつ現れるか |
 |----------|--------------|
 | `response.created` | ストリームの最初のフレーム |
+| `response.output_item.added` | message 出力アイテムを作ります |
+| `response.content_part.added` | 本文のコンテンツパートを作ります |
 | `response.output_text.delta` | 一つ以上。本文の増分はすべてここに来ます |
-| `response.completed` | ストリームの最後のフレーム |
+| `response.output_text.done` | 本文の締め。完全なテキストを持ちます |
+| `response.content_part.done` | そのコンテンツパートの締め |
+| `response.output_item.done` | その出力アイテムの締め |
+| `response.completed` | ストリームの最後のフレーム。`response.output[]` が最終オブジェクト |
+| `response.failed` | 上流のストリームが途中で切れたときだけ。以降 `response.completed` は来ません |
 
 ## 画像と動画
 

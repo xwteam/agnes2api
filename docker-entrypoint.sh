@@ -17,6 +17,42 @@ set -e
 
 DATA_DIR="${DATA_DIR:-/app/data}"
 
+# ── DATA_DIR 到底落在挂载点上没有 ────────────────────────────────────────────
+# 这里堵的是与「空串」不同的**另一条**失效链。`src/entry/node.ts` 只把空串归一成
+# `/app/data`，`DATA_DIR=/app/store` 这种「非空但底下没挂任何卷」的值一路畅通：
+# 下面的 mkdir -p 建得出来、启动探测判可写、`/health` 回 ok、面板与 key 池一切正常，
+# 而 store.json 落在容器可写层 —— `docker compose up -d`（升级、改 .env 都会重建容器）
+# 一执行，整池 key 与面板配置一起消失，运维备份的 ./data 从头到尾是空的。
+# **在这一行之前，没有任何一处会提这件事**：/health 不报数据落在哪儿，日志也只有
+# 「listening on」和索引引导那两行。所以这条警告是那条链上唯一的信号。
+#
+# 判据取「DATA_DIR **或它的任一级祖先**是不是挂载点」，不是「DATA_DIR 自己是不是」：
+# 把整个 /app 挂出来（`-v vol:/app`）时 /app/data 自己不是挂载点而数据是持久的，
+# 只判自己会对这种部署误报。走到 `/` 就停 —— 容器的 `/` 是 overlay 可写层，它不算数。
+#
+# 读不到 mountinfo（非 Linux、/proc 没挂）时**一律判成「有挂载」不报**：判不了就闭嘴，
+# 一条判不准的警告只会训练人忽略警告。
+# ⚠️ `AGNES_MOUNTINFO` 只为判据留：`/proc/self/mountinfo` 在测试进程里伪造不了，
+#   而这段逻辑恰恰只能拿伪造的挂载表去验。生产上没人设它，也不必设。
+data_dir_on_mount() {
+  _mi="${AGNES_MOUNTINFO:-/proc/self/mountinfo}"
+  [ -r "$_mi" ] || return 0
+  _p="$1"
+  while [ -n "$_p" ] && [ "$_p" != "/" ]; do
+    # mountinfo 的第 5 个字段就是挂载点路径；整串相等才算，别用子串匹配
+    #（`/app/data-old` 会被 `/app/data` 的子串匹配误判成已挂载）。
+    if awk -v want="$_p" '$5 == want { hit = 1 } END { exit hit ? 0 : 1 }' "$_mi"; then
+      return 0
+    fi
+    _p="${_p%/*}"
+  done
+  return 1
+}
+
+if ! data_dir_on_mount "$DATA_DIR"; then
+  echo "[agnes2api] 警告：DATA_DIR=$DATA_DIR 没有落在任何挂载点上 —— store.json 会写进容器可写层，容器一重建（docker compose up -d / pull 之后）整池 key 与面板配置就一起没了，而你备份的宿主目录是空的。docker-compose.yml 挂的是 ./data:/app/data：改了 DATA_DIR 就要同步改那一行的右半边" >&2
+fi
+
 # 非 root（`docker run --user` / compose 的 `user:`）：没有 chown 的权限，直接以当前身份
 # 执行。数据目录是否可写交给启动时的存储探测去暴露（/health 会报 degraded）。
 if [ "$(id -u)" != "0" ]; then

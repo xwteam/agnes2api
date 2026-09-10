@@ -319,6 +319,82 @@ export function roundFailures(row) {
 }
 
 /**
+ * 「立即补池」那颗按钮**点完之后该弹哪句话**。
+ *
+ * ── 它为什么必须存在（一句被本仓自己禁掉、却从按钮这条路漏出去的话）──────────
+ *
+ * 🔴 上一版这颗按钮只判 `outcome.kind === "done"`，然后一律套
+ * `reg.tend.done`＝「这一轮跑完了：铸出 {minted} 把，尝试 {attempted} 次」，
+ * `result.failures` 与 `attempted === 0` **一个字都不看**。而 `tendOnce`
+ *（`src/core/registrar/tender.ts`）有两条 `attempted === 0` 的早退——**池子已经满了**、
+ * **还在退避窗口里**（后者 `failures = [{reason:"upstream_backoff"}]`）——两条都返回
+ * `skipped: false`，`src/http/wire.ts` 的 `wireTend` 又把任何 `TendResult` 一律包成
+ * `kind: "done"` ⇒ 于是按钮报出「跑完了：铸出 0 把，尝试 0 次」。
+ *
+ * **这句话正是本文件上面 `roundOutcome` 逐字禁掉的那一句**：「不许渲染成『铸出 0/0 把』：
+ * 那句话读起来像『跑完了但没产出』，而它其实是『根本没跑起来』」——补池历史那张表
+ * 守着这条规矩，按钮这条路却在做被禁的事。而人恰恰是在池子出问题时才会去点它，
+ * 也就是必然撞上这一格：退避窗口（app 档起步 30 分钟、指数封顶 4 小时）里点一下，
+ * 得到的是「跑完了，0/0」，听起来像上游没反应，实际是本网关自己一次请求都没发。
+ *
+ * ⇒ `attempted === 0` 时改说 `reg.tend.noRun`，**归因来自 `failures` 那一条**
+ *（`upstream_backoff` 有自己的五语言文案），没有 `failures` 时（池子已满）落回
+ * `roundOutcome` 已经算好的那一句。两个判据都是现成的，不新增分类器。
+ *
+ * ── 冷却与名额为什么写进文案 ────────────────────────────────────────────────
+ *
+ * `src/http/admin/handlers/registrar.ts` 里护栏是**跑之前**就落盘的
+ *（`used + 1`、`cooldownUntil = now + 10min`），两条早退都不退款。
+ * ⚠️ **这条不该靠「跑完发现没干活就退款」去修**：那道护栏挡的是**存储写配额**
+ *（429 那一支的措辞逐字写着），退款本身就是又一次 put，等于用它要省的东西去省它；
+ * 而且护栏落盘同时兼着并发闸，挪到轮次之后会让两次并发点击都通过检查。
+ * ⇒ 处置是**如实说出来**：这一轮什么都没做，但这次点击照样花掉了。
+ *
+ * ── 返回形状 ──────────────────────────────────────────────────────────────
+ *
+ * `{ key, params, reason, ok }`：`reason` 是**另一条 i18n key**（或 `null`），由板块
+ * 文件翻译完再填进 `params.reason` —— 本目录禁 `import`，pure 模块拿不到 `t()`。
+ * `ok` 只在「真的铸出来了」时为真；其余一律 warn + sticky（同一条纪律：读漏了会让人
+ * 反复点，而每点一次都要再吃 10 分钟冷却）。
+ */
+export function tendToast(outcome) {
+  const o = obj(outcome);
+  if (o === null || o.kind === undefined) {
+    // 后端比面板新、给了一种这一版不认识的结局。**照实说不认识**，别冒充成功
+    // ——与 `failureReasonKey()` 表外返回 null 是同一条纪律。
+    return { key: "reg.tend.unknownOutcome", params: {}, reason: null, ok: false };
+  }
+  if (o.kind === "skipped") return { key: "reg.tend.skipped", params: {}, reason: null, ok: false };
+  if (o.kind === "crashed") return { key: "reg.tend.crashed", params: {}, reason: null, ok: false };
+  if (o.kind !== "done") return { key: "reg.tend.unknownOutcome", params: {}, reason: null, ok: false };
+
+  const result = obj(o.result);
+  const attempted = result === null ? null : finite(result.attempted);
+  if (attempted !== 0) {
+    // `attempted` 读不出来时**也走这一支**：不知道尝试了几次，就不能断言「一次都没开始」。
+    const minted = result === null ? null : finite(result.minted);
+    return {
+      key: "reg.tend.done",
+      params: { minted: minted === null ? "—" : minted, attempted: attempted === null ? "—" : attempted },
+      reason: null,
+      ok: minted !== null && minted > 0,
+    };
+  }
+  // 一次都没开始。归因优先取 `failures` 的第一条（手动轮 `mintBatch = 1`，这两条
+  // 早退各自最多产出一条），取不到就落回 `roundOutcome` 那句话。
+  // **多于一条时余下的交给下面那张补池历史表**，它逐条渲染，这里不重复一遍。
+  const failures = roundFailures(result);
+  const first = failures.length > 0 ? failures[0] : null;
+  const reason = first === null
+    ? roundOutcome(result)
+    : (first.key === null
+      // 表外的 reason 不丢掉，原样显示（与 `roundFailures` 的契约同一条）。
+      ? { key: "reg.fail.unknownReason", params: { reason: first.reason } }
+      : { key: first.key, params: {} });
+  return { key: "reg.tend.noRun", params: {}, reason, ok: false };
+}
+
+/**
  * 逐通道的铸出数，渲染成 `moemail 2 · yyds 1`。
  *
  * ⚠️ **旧理由已经不成立，别照旧读**：从前这里写的是「一轮全靠备通道铸出来时，

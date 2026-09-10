@@ -80,12 +80,23 @@ tab does not clear it — on a shared machine, use the panel's sign-out.
 **Where that lifetime is defined:** `SESSION_MAX_AGE_MS` in `admin-ui/js/pure/session.mjs`.
 This page is checked against it.
 
-### Stored upstream keys are not echoed back in full
+### Credential plaintext never appears in list responses
 
-Key values are masked in admin responses, and there is no "reveal" endpoint.
+Every listing masks key values. Plaintext is reachable **only** through
+`GET /admin/api/keys/{id}/reveal` and `GET /admin/api/apikeys/{id}/reveal`, each of which records
+an audit event (`key.revealed` / `apikey.revealed`) carrying the id and nothing else.
 
-**What pins it:** the contract case `tests/contract/admin-keys.test.ts`「响应体整段文本里都找不到明文 key」
-searches the entire response body for the plaintext and fails if it turns up anywhere in it.
+> [!WARNING]
+> **This section said "there is no reveal endpoint" until v0.3.1**, and that wording stood for one
+> release after the endpoints shipped. Anyone who read it as a guarantee in that window was misled.
+> The statement of record is: **whoever holds `ADMIN_TOKEN` can read any credential this gateway
+> stores.** Gateway-issued API keys are kept in plaintext as of v0.3.0 — an owner-decided
+> convenience-for-security trade-off spelled out in `CHANGELOG.md`.
+
+**What pins it:** `tests/contract/admin-keys.test.ts`「响应体整段文本里都找不到明文 key」and
+`tests/contract/admin-apikeys.test.ts`「明文绝不进列表响应 —— 列表是高频无意识调用的，塞进去等于到处都是凭据」
+each scan a whole *listing* body for the plaintext. Neither covers the reveal endpoints — those
+are meant to return it.
 
 ### Admin endpoints are authenticated as a group, not one at a time
 
