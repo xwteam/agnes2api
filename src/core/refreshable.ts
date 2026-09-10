@@ -75,7 +75,7 @@ export class Refreshable<T> {
     if (!this.inFlight) {
       const clear = () => { this.inFlight = null; };
       // reload() 内部已全量 try/catch，理论上不会 reject；两个回调都挂上是为了
-      // 万一它真的 reject 也不会让 inFlight 永久卡住（那等于整个 isolate 再也不刷新）。
+      // 万一它真的 reject 也不会让 inFlight 永久卡住（那等于整个副本 再也不刷新）。
       this.inFlight = this.reload().then(clear, clear);
     }
     return this.inFlight;
@@ -118,10 +118,10 @@ export class Refreshable<T> {
     // 那次装载并立刻重来，于是**在最需要缓存的时候引发 reload 风暴**，把「读取次数
     // 与请求数解耦」整个打掉。
     //
-    // 代价：在途 reload 落地时会盖掉刚写穿透的那份，该状态在**本 isolate 的快照**里
-    // 最多晚一个 TTL 才可见（**存储里始终是对的**）。而「跨 isolate 最多晚一个 TTL
+    // 代价：在途 reload 落地时会盖掉刚写穿透的那份，该状态在**本实例 的快照**里
+    // 最多晚一个 TTL 才可见（**存储里始终是对的**）。而「跨副本最多晚一个 TTL
     // 才看到别人判的冷却/剔除」这条上界本来就已被接受并写进文档，所以这个取舍没有
-    // 把已承诺的上界变松，只是让本 isolate 在极窄的竞态窗口里退化到同一水平。
+    // 把已承诺的上界变松，只是让本实例 在极窄的竞态窗口里退化到同一水平。
     //
     // 根据是两者承诺强度不同：invalidate() 的「下一次一定重载」是**硬保证**，
     // 写穿透只是「我自己写的我立刻看得见」的尽力优化——只有硬保证值得付那个代价。

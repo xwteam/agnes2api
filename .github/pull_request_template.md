@@ -12,9 +12,11 @@
 - [ ] Every check in
       [`.github/workflows/ci.yml`](https://github.com/xwteam/agnes2api/blob/main/.github/workflows/ci.yml) was run locally, in the
       order that file lists them, and each one exited 0.
-- [ ] `pnpm test` and `pnpm test:workers` are both green, and the totals went **up**, not down.
-- [ ] New contract tests live in `tests/contract/` and therefore run under **both** runtimes.
-      A case that only runs under Node covers half the product.
+- [ ] `pnpm test` is green, and the totals went **up**, not down.
+- [ ] New contract tests live in `tests/contract/`, next to the other end-to-end-shaped cases.
+      This box used to also demand that they run under **both** runtimes; the Cloudflare Worker
+      shape and its `workerd` test entry point were removed in v0.4.0, so nothing checks
+      two-runtime agreement today — there is no second runtime left to disagree.
 - [ ] **Mutation evidence** is filled in below. Every new assertion was made to go red on
       purpose, and the message it printed names the thing that was broken.
 - [ ] A **reverse control** is included: something genuinely different but not wrong, built out

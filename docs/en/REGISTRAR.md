@@ -111,9 +111,9 @@ REGISTRAR_CHANNEL=
 TARGET_KEYS=20
 # Maximum keys minted per round. (optional, default 5)
 MINT_BATCH=5
-# Node-side refill scheduling interval in ms; on the Worker this is instead
-# governed by the Cron in wrangler.toml, see below.
-# (optional, default 1800000 = 30 min, read by Node/Docker only)
+# How often a refill round runs, in ms. The same timer also reconciles
+# pool:index, so it keeps ticking with the registrar off.
+# (optional, default 1800000 = 30 min)
 TEND_INTERVAL_MS=1800000
 # Timeout waiting for the verification code on a single mint attempt, in ms.
 # (optional, default 120000 = 120s)
@@ -153,55 +153,47 @@ MOEMAIL_API_KEY=
 ```
 
 Every variable in the block above has its own line in `.env.example` (the defaults are usually
-fine, so you rarely need to touch them), and both deployment targets read them. Every numeric
-variable above must be a positive integer; the gateway refuses to start otherwise.
+fine, so you rarely need to touch them). Every numeric variable above must be a positive integer;
+the gateway refuses to start otherwise.
 
-## Scheduling differences between the two runtimes
+## Scheduling: who triggers a round, and how long one may run
 
 ### Who triggers it, and where the interval comes from
 
-| Deployment target | Trigger | What controls the interval |
+| What runs it | Trigger | What controls the interval |
 |-----------------|-------|--------------------------|
-| Cloudflare Worker | Cron under `[triggers]` in `wrangler.toml` (default `*/30 * * * *`, every 30 minutes) | Edit the cron expression in `wrangler.toml` |
-| Node / Docker | An in-process timer | `TEND_INTERVAL_MS` (default `1800000` ms) |
+| The scheduled round | An in-process self-rescheduling timer | `TEND_INTERVAL_MS` (default `1800000` ms) |
+| "Refill now" in the panel | A human clicking the button | Not scheduled at all; four guardrails, see below |
 
-Here is what each of the two settings looks like:
-
-```toml
-# wrangler.toml -- on the Worker the trigger interval comes only from here
-[triggers]
-crons = ["*/30 * * * *"]
-```
+Here is what that one setting looks like:
 
 ```env
-# .env -- the trigger interval on Node / Docker, in milliseconds
+# .env -- how often a refill round runs, in milliseconds
 TEND_INTERVAL_MS=1800000
 ```
 
-Both runtimes ultimately call **the same refill function**. The difference is **who is
-responsible for triggering it on time**, and **where the trigger interval comes from**:
+Changing it takes effect **next round**: the round in flight finishes on the old interval first,
+so up to 30 minutes by default. **No restart is needed** — the value is resolved per round from
+the environment variable, then the stored config, then the default.
 
-| | Trigger | Interval source | Effect of changing it |
-|----|-------|---------------|---------------------|
-| Node / Docker | An in-process self-rescheduling timer | `TEND_INTERVAL_MS` (env var > stored config > default `1800000`) | Takes effect **next round** (the current round finishes on the old interval first — up to 30 minutes by default). **No restart needed** |
-| Cloudflare Worker | The platform's Cron Trigger | `[triggers].crons` in `wrangler.toml` | **Changing the config has no effect** — you must edit `wrangler.toml` and redeploy |
+The same timer also reconciles `pool:index` against the actual `key:` records, and that half runs
+**whether or not the registrar is enabled** — see "The index and how long changes take to show
+up" in [DEPLOY.md](DEPLOY.md).
 
-Every refill setting other than the trigger interval (`TARGET_KEYS`, `MINT_BATCH`, channel
-credentials, …) really is identical between the two runtimes.
+### The tend lock's TTL, and why one round has to fit inside it (read before tuning the numbers)
 
-### Cloudflare Cron Trigger's wall-clock limit (read before tuning the numbers)
+A scheduled round holds a storage lock (`registrar_tend_lock`) for **15 minutes (900 seconds)**,
+and nothing else bounds how long the round may run. Read this section before touching any of the
+numbers below.
 
-If you deploy to the Worker, refills are triggered by a Cron Trigger. Read this section before
-touching any of the numbers.
-
-#### The four hard limits the platform gives you
+#### The limits a round actually runs against
 
 | Limit | Value | Notes |
 |-----|-----|-----|
-| Wall clock per invocation | **15 minutes (900 seconds)** | The Cron Trigger's hard limit; hitting it means the platform aborts the invocation. |
-| `ctx.waitUntil()` | **Does not extend this limit** | That grace period only applies to HTTP requests, not to Cron-triggered invocations. |
-| CPU time | 30 seconds | The `await`ed network calls during a refill (sending and polling for the verification code) don't count against CPU time, so the CPU limit isn't the real constraint. |
+| Tend lock TTL | **15 minutes (900 seconds)** | Our own choice, not a platform rule. It has to be **well under** `TEND_INTERVAL_MS` (a hard-killed process never releases the lock, so the worst case is "one round skipped") and still **cover one real worst-case round**. |
+| Per-round budget | **780 seconds (87% of the TTL)** | The ~120 seconds left over cover the per-request tails the budget deliberately does not count. |
 | Per-request timeout | 15 seconds | Carried by **every** HTTP request on the registrar's path; a fixed value, not configurable. |
+| Wall clock of a scheduled round | **Not enforced** | Nothing cuts it off mid-flight; the budget above is a cross-check at startup, and the round's real ceiling is your patience. |
 
 **The per-request timeout is what makes the two estimates below meaningful**: without it, a
 single hung connection can stretch a round indefinitely.
@@ -210,55 +202,56 @@ single hung connection can stretch a round indefinitely.
 
 | Estimate | Formula | Result with the defaults |
 |--------|-------|------------------------|
-| **Typical duration** | `MINT_BATCH × CODE_TIMEOUT_MS` + `(MINT_BATCH − 1) × MINT_DELAY_MAX_MS` | 600 + 360 = **960s**, **already past the 900s wall clock** — see the round budget below |
+| **Typical duration** | `MINT_BATCH × CODE_TIMEOUT_MS` + `(MINT_BATCH − 1) × MINT_DELAY_MAX_MS` | 600 + 360 = **960s**, **already past the 900s lock TTL** — see below |
 | **Theoretical worst case** (one mint) | `CODE_TIMEOUT_MS + (3 × MAX_DOMAIN_ATTEMPTS + 3) × 15s + (MAX_DOMAIN_ATTEMPTS − 1) × MINT_DELAY_MAX_MS` | 120 + 90 = **210s** at cap 1 |
 
 - **Typical** means every request returns quickly and the first domain isn't blocked, so the time
   is dominated by waiting for the verification code plus the gaps between slots:
   `MINT_BATCH × CODE_TIMEOUT_MS` = 5 × 120s = 600s, plus 4 gaps of up to 90s each = 360s.
 - **That gap term used to be negligible; it no longer is.** After `MINT_DELAY_MAX_MS` went
-  from 5s to 90s it grew from 20s to 360s, putting the worst round at 960s > 900s.
-  **This is not a new defect** — the round budget below exists precisely for it: on Worker the
-  worst case still completes 4 slots and leaves the 5th to the next round.
+  from 5s to 90s it grew from 20s to 360s, putting the worst round at 960s > 900s. **A round that
+  long outlives its own lock**: once the lock expires the next trigger — or another container on
+  the same volume — starts a second round while the first is still running, and the two hit the
+  mailbox service's creation limit and the upstream's registration risk control together.
+  Lower `MINT_BATCH` or `CODE_TIMEOUT_MS` if that estimate applies to you.
 - **The request count in the worst case** comes from this: besides polling for the code, one mint
   issues "3 per domain attempted (create mailbox, send code, delete mailbox) + 3 more (register,
   log in, create key)"; listing domains moved up to **round level** (once per round, no longer
-  once per slot). If you want even the pathological case to stay within the wall clock, set
+  once per slot). If you want even the pathological case to stay inside the lock TTL, set
   `MINT_BATCH` to 1–2, or lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
 - **There used to be a "number of channels" factor here.** The two channels were once a
   primary/fallback pair, so "the verification code never arrives" fell back and made the same
   refill slot wait out `CODE_TIMEOUT_MS` on each channel. Now that you pick one of the two,
-  there is no second wait and the factor is gone entirely. The startup warning
-  `TEND_INTERVAL_MS is below the worst-case round duration` uses exactly this model:
+  there is no second wait and the factor is gone entirely. The startup warning about
+  `TEND_INTERVAL_MS` being below the worst-case round duration uses exactly this model:
   `MINT_BATCH × CODE_TIMEOUT_MS + (MINT_BATCH − 1) × MINT_DELAY_MAX_MS`.
 
-#### On Worker the registrar stops on its own before the wall clock runs out
+#### Nothing cuts a scheduled round short — the budget belongs to "Refill now"
 
-**This covers the "worst case" row above, but *not* the "theoretical worst case" one.** Before
-starting each mint it checks whether the remaining wall clock can hold one complete mint
-(`CODE_TIMEOUT_MS`, plus the inter-attempt delay). If it cannot, that
-attempt is **never started**: the round ends early, a `registrar.round_budget_exhausted` warning
-is logged (something like "not enough wall-clock budget left to complete another mint, ending the
-round early"), keys already minted are kept, and the remaining slots roll over to the next
-scheduled round. If even the *first* attempt doesn't fit, a different event fires instead —
-`registrar.round_budget_impossible`, at error level; see the next subsection.
+**The scheduled round has no wall-clock ceiling and no round budget.** It runs until it is done,
+and the only thing that can go wrong is the one above: outliving its lock. `MINT_BATCH` is
+therefore honoured in full on that path.
 
-Not starting is the whole point, as opposed to being cut off mid-flight: when the platform aborts
-a round, the temporary mailbox in use at that moment is never deleted (it expires ~24h later on
-YYDS via `expiresAt`, or after the 1h TTL on MoeMail). So on Worker **`MINT_BATCH` is a per-round
-ceiling, not a guarantee**: the round may simply not fill it. Node/Docker has no platform wall
-clock, so the **scheduled** round does not engage this mechanism and uses `MINT_BATCH` in full.
+**The panel's "Refill now" is the one round that carries a budget, and a far tighter one — 70 s
+against the scheduled round's 780 s.** Before starting a mint it checks whether the remaining
+budget can hold one complete attempt (`CODE_TIMEOUT_MS`, plus the inter-attempt delay). If it
+cannot, that attempt is **never started**: the round ends early, keys already minted are kept,
+and the remaining slots roll over. Not starting is the whole point, as opposed to being cut off
+mid-flight: an aborted call leaves the temporary mailbox in use undeleted (it expires ~24h later
+on YYDS via `expiresAt`, or after the 1h TTL on MoeMail).
 
 > [!IMPORTANT]
-> **The panel's "Refill now" is the exception: both runtimes carry the same per-round budget, and
-> a far tighter one — 70 s against the scheduled round's 780 s.** That ceiling belongs to the
-> button, not the runtime: one click mints **at most one key**; the rest waits for the next round.
+> **That budget belongs to the button, not to a runtime.** One click mints **at most one key**,
+> waits at most **60 s** for the code and tries **one** mail domain; the rest waits for the next
+> scheduled round. Those three clamps are what keeps `worstAttemptMs` a constant on that path, so
+> raising `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS` cannot turn the button into an honest no-op.
 
 > [!WARNING]
 > **The budget is not a blanket guarantee — a residual case remains.** The check counts
 > `CODE_TIMEOUT_MS + (MAX_DOMAIN_ATTEMPTS − 1) × MINT_DELAY_MAX_MS`. It deliberately does
 > **not** include the 15-second per-request timeouts: including them would mean no attempt ever
-> dares to start. The budget is 87% of the wall clock, and the ~120s left over covers those tails:
+> dares to start. The ~120 seconds the scheduled budget leaves against the lock TTL cover those
+> tails on that side.
 >
 > **This paragraph used to say "or the 403 back-offs", which pointed at a dead branch.**
 > Hitting a rate limit now **ends the whole round on the spot and records a cross-round backoff
@@ -267,19 +260,19 @@ clock, so the **scheduled** round does not engage this mechanism and uses `MINT_
 
 | Where the slowness is | Does the budget cover it | Consequence |
 |---------------------|------------------------|-----------|
-| **The upstream isn't delivering the code** (the common slow case) | **Fully covered** | The round ends early; remaining slots roll over to the next scheduled round |
-| **Nearly every HTTP request hangs for its full 15s** (pathological) | A single attempt can exceed the reserved headroom | It is still aborted by the platform, leaving that temporary mailbox behind |
+| **The upstream isn't delivering the code** (the common slow case) | **Fully covered** | The manual round ends early; the scheduled round simply takes longer |
+| **Nearly every HTTP request hangs for its full 15s** (pathological) | A single attempt can exceed the reserved headroom | The scheduled round can outlive its lock; see the concurrency risk above |
 
 If the second row worries you, work the "theoretical worst case" formula above and set
 `MINT_BATCH` to 1–2, or lower `CODE_TIMEOUT_MS` / `MAX_DOMAIN_ATTEMPTS`.
 
 #### Two log lines: grep them by event name when the limit is exceeded
 
-**Do not set `CODE_TIMEOUT_MS` too high.** Once `CODE_TIMEOUT_MS` exceeds the
-per-round budget (87% of the wall clock), **no attempt can start at all** on Worker and the refill
-produces nothing, round after round. Two log lines cover this — grep by **event name** (see
-"Troubleshooting" below; more reliable than grepping prose, which can drift across wording
-changes and is not translated into the language you are reading):
+**Do not set `CODE_TIMEOUT_MS` too high.** Once a single attempt's worst case exceeds the
+per-round budget (87% of the lock TTL), a scheduled round can run past its own lock. Two log
+lines cover this — grep by **event name** (see "Troubleshooting" below; more reliable than
+grepping prose, which can drift across wording changes and is not translated into the language
+you are reading):
 
 The two fences below are what the gateway prints **verbatim**: `msg` is hard-coded Simplified
 Chinese in the source and is **not translated into the language of this page**; one entry is also
@@ -292,28 +285,30 @@ by event name, never by the prose on this page.
 something like:
 
 ```text
-[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS 超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来（每轮 attempted=0），请调小 CODE_TIMEOUT_MS。Node/Docker 的定时轮没有平台墙钟上限、不受此限制，但面板的「立即补池」在两种运行时上都带同一份轮级预算，Node/Docker 上同样铸不出来。 codeTimeoutMs=... worstAttemptMs=... workerRoundBudgetMs=...
+[registrar] registrar.attempt_exceeds_worker_budget CODE_TIMEOUT_MS 大到一次尝试就可能跑过补池锁的有效期（15 分钟）：锁在这一轮还没跑完时就过期，下一次触发或另一个共卷副本会并发开跑，同时撞邮箱建号限流与上游注册风控。请调小 CODE_TIMEOUT_MS。（面板的「立即补池」不受影响：那一轮把等码超时压到 60 秒。） codeTimeoutMs=... worstAttemptMs=... roundBudgetMs=...
 ```
 
-It does **not** stop the gateway from starting — unlike "missing credentials fail at startup".
-Node/Docker has no platform wall clock and the same configuration is perfectly valid there, so
-both runtimes print this warning but only Worker is actually affected.
+**The event name still says `worker`, and that is a known leftover kept on purpose**: it is the
+literal string these five documents hand you to grep, so renaming it has to happen in the source
+and in all five documents in the same change. It does **not** stop the gateway from starting —
+unlike "missing credentials fail at startup" — because the configuration is runnable, just
+concurrency-risky, and you can put the value back from the panel.
 
-**(2) On every Worker refill round** where not even the first attempt fits, an **error**
-(`console.error`), event name `registrar.round_budget_impossible`
+**(2) On a "Refill now" round** where not even the first attempt fits the button's 70 s budget, an
+**error** (`console.error`), event name `registrar.round_budget_impossible`
 (`grep 'registrar.round_budget_impossible'`), something like:
 
 ```text
 [registrar] registrar.round_budget_impossible 单次铸 key 的最坏耗时已超过本轮墙钟预算，一次尝试都无法开始，补池将持续零产出——这是配置问题不是瞬时状况，请调小 CODE_TIMEOUT_MS worstAttemptMs=... roundBudgetMs=...
 ```
 
-It repeats every round, which is how you tell this is a standing condition rather than a one-off.
+It repeats on every click, which is how you tell this is a standing condition rather than a
+one-off.
 
 **Before raising `MINT_BATCH`, `CODE_TIMEOUT_MS` or `MAX_DOMAIN_ATTEMPTS`, work the numbers out
-with both formulas above.** When the limit is hit, the platform aborts that Cron invocation.
-Being aborted does not lose any key that was already minted — each key is written to storage as
-soon as it's minted, so an interrupted round is simply incomplete; the next scheduled round picks
-up where it left off.
+with both formulas above.** Nothing is lost when a round is interrupted for any reason — each key
+is written to storage as soon as it is minted, so an interrupted round is simply incomplete and
+the next scheduled round picks up where it left off.
 
 ## How the gap is computed (which keys occupy a `TARGET_KEYS` slot)
 
@@ -358,10 +353,12 @@ one domain attempt, 60 s of waiting for the code, a 70 s wall-clock budget. Each
 than overrides, so a smaller configured value stays smaller; when one bites, the response gives
 the value before and after.
 
-It used to answer `202` and hand the round to the background, where the platform cancelled it
-about 30 seconds later **without raising anything**: nothing recorded, no event, the lock never
-released — that round was indistinguishable from a click that never happened, and the leaked lock
-blocked the scheduled rounds too.
+It used to answer `202` and hand the round to a background task, which could be cut short
+**without raising anything**: nothing recorded, no event, the lock never released — that round was
+indistinguishable from a click that never happened, and the leaked lock blocked the scheduled
+rounds too. The fix was to change the carrier: the endpoint now awaits the round and answers with
+its real outcome, which is also why that round needs a budget of its own — its ceiling is now
+however long the browser or the reverse proxy in front is willing to wait.
 
 ### The four guardrails
 
@@ -369,10 +366,10 @@ It has **four guardrails**; failing any one of them means the round never starts
 
 | Guardrail | Response when it fails | What it blocks |
 |---------|----------------------|--------------|
-| In-flight guard within the process / isolate | `409 tend_in_flight` | The scheduled round colliding with the button, and two concurrent clicks on one replica |
-| Storage-level short lock (`registrar_tend_lock`, 3 min manual / 15 min scheduled) | `409 locked` | Overlap **across replicas** (several containers on a shared volume; the Worker's two isolates) |
+| In-flight guard within the process | `409 tend_in_flight` | The scheduled round colliding with the button, and two concurrent clicks on one replica |
+| Storage-level short lock (`registrar_tend_lock`, 3 min manual / 15 min scheduled) | `409 locked` | Overlap **across replicas** (several containers sharing one volume) |
 | At least 10 minutes between two manual rounds | `429 manual_cooldown` | Click-spamming through your temporary-mailbox quota |
-| At most **24** times per day | `429 write_budget_exhausted` | Click-spamming through your **storage write quota** (arithmetic in the "quota ledger" of [DEPLOY.md](DEPLOY.md)) |
+| At most **24** times per day | `429 write_budget_exhausted` | Click-spamming through your temporary-mailbox quota and the upstream's registration risk control |
 
 The `429` body carries `remaining` (how many are left today), `resetAt` (recovers at UTC
 midnight) and `retryAfterMs`. **The `200` body carries `remaining` too**, so the panel can state
@@ -382,10 +379,10 @@ the endpoint answers `409 registrar_disabled`.
 ### The honest limits and the residual risk
 
 > [!WARNING]
-> **An honest limit — do not read this as "concurrency is solved".** KV is eventually
-> consistent, so that storage lock is **best-effort, not a mutual-exclusion primitive**. What it
-> blocks is the common case — "the previous round is clearly still running"; two clicks issued in
-> the same millisecond can still both take it. The guard key and the tend history are read-modify-write
+> **An honest limit — do not read this as "concurrency is solved".** That storage lock is a
+> read-modify-write on a JSON file, so it is **best-effort, not a mutual-exclusion primitive**.
+> What it blocks is the common case — "the previous round is clearly still running"; two clicks
+> issued in the same millisecond can still both take it. The guard key and the tend history are read-modify-write
 > as well, so updates can be lost inside a concurrency window — bounded by "the gate lets through at
 > most (concurrency − 1) extra rounds, and the tend history misses at most (concurrency − 1) rows".
 
@@ -404,10 +401,8 @@ exactly one of each; stale values are always decided by **comparing values**, so
 behind is harmless.
 
 **The cost, stated plainly**: if you turn the registrar off for good, or delete the deployment but
-keep the KV namespace, they will not disappear. To clean up, delete the keys by hand:
-
-- Worker: `wrangler kv key delete --binding=POOL registrar_manual_guard` (once per key)
-- Node / Docker: edit `DATA_DIR/store.json` and remove those five top-level fields
+keep the data directory, they will not disappear. To clean up, stop the container, edit
+`DATA_DIR/store.json` and remove those five top-level fields.
 
 **`registrar:domains` is also the only manual escape hatch when the domain ledger got something
 wrong**: deleting it sends the registrar back to a cold start.
@@ -422,15 +417,14 @@ operators usually turn the registrar off **because** something went wrong.
 
 Top-up and forwarding use two independent key-pool repository instances. The top-up one really
 reads storage every round (it has to see the true current availability, otherwise it would
-re-mint and burn mailbox quota for nothing); the forwarding one holds an isolate/process-level
-snapshot. Each keeps its own cache, so after top-up writes a key, the forwarding path only sees
-it once **its own** snapshot expires. On the Worker this is per active isolate, each with its own
-TTL.
+re-mint and burn mailbox quota for nothing); the forwarding one holds a process-level snapshot.
+Each keeps its own cache, so after top-up writes a key, the forwarding path only sees it once
+**its own** snapshot expires — and every container sharing the volume has its own TTL.
 
 **This is easiest to misread when the pool has been drained**: the log already says
 `[registrar] … minted=1` while the gateway keeps returning `503 pool_empty` for up to one TTL.
 That does not mean the top-up failed — wait one `POOL_CACHE_TTL_MS`. Lower the value to shorten
-the window (see the quota budget in [DEPLOY.md](DEPLOY.md) for the cost).
+the window; the cost is one more file read per process per interval.
 
 ## Why keys are minted sequentially, not concurrently
 
@@ -455,7 +449,7 @@ attempt, whether it succeeded or failed. **Deletion is best-effort, not a guaran
 The registrar is not simply on or off — there are **three** states.
 
 - **Disabled**: `REGISTRAR_ENABLED` is unset, or the panel toggle is off. Nothing runs, nothing is sent.
-- **Enabled**: on, and this configuration loads. Tending runs on `TEND_INTERVAL_MS` (or the Worker Cron).
+- **Enabled**: on, and this configuration loads. Tending runs on the `TEND_INTERVAL_MS` timer.
 - **Enabled · not started this time**: the toggle is on, but this configuration could not be loaded
   (no channel selected, the selected channel is missing its credentials, …), so it was not
   started. **Gateway forwarding is entirely unaffected** — only the refilling stops.
@@ -604,7 +598,7 @@ branches that event is never emitted at all. The price is recorded here honestly
 #### How much request volume the third tier leaves behind
 
 In numbers (built-in values, measured against test doubles): past the exponential cap it fires
-**once every 8 rounds, at `MINT_BATCH` = 5 verification requests each**. At one Cron round every 30 minutes that is
+**once every 8 rounds, at `MINT_BATCH` = 5 verification requests each**. At one round every 30 minutes that is
 48 rounds/day ÷ 8 × 5 = **about 30 per day**.
 Two figures to compare against: **before this tier caught it, every round went out in full ⇒ about
 240 per day**; and the second tier (where the upstream's wording does land in our word list) aborts
@@ -628,7 +622,7 @@ The registrar section shows a backoff banner:
 > channels when you see the backoff banner is wasted effort.
 
 **Filling an empty pool is now noticeably slower**: a target of 20 keys goes from "a few minutes"
-to roughly 4–5 rounds. At one Cron round every 30 minutes that is **about 2–2.5 hours**. This is
+to roughly 4–5 rounds. At one round every 30 minutes that is **about 2–2.5 hours**. This is
 the direct price of trading "burn the allowance and keep hammering for nothing" for "slow but
 actually produces keys".
 
@@ -648,10 +642,9 @@ When the selected channel fails:
   - **hitting an upstream rate limit (`rate_limited`)** — see "What happens when the upstream
     rate-limits you" below.
 - **Apart from rate limiting there is no cross-round backoff and no exponential retry.** An
-  ordinary failure does not change when the next round runs: Node/Docker uses the fixed
-  `TEND_INTERVAL_MS` timer, Worker uses the Cron in `wrangler.toml`. Throttling within a round
-  already has two layers (the random pause between attempts and, on Worker, the per-round
-  wall-clock budget).
+  ordinary failure does not change when the next round runs: the fixed `TEND_INTERVAL_MS` timer
+  keeps its own pace. Throttling within a round comes from the random pause between attempts, and
+  on the "Refill now" path from that round's own budget.
 
 #### The price, and how to notice it
 
@@ -680,7 +673,7 @@ After switching, read the next round's failure reasons; only a minted key settle
 ## Next Steps
 
 - Usage and SDK wiring for all four protocols: [USAGE.md](USAGE.md)
-- Both deployment forms and every environment variable: [DEPLOY.md](DEPLOY.md)
+- The deployment walkthrough and every environment variable: [DEPLOY.md](DEPLOY.md)
 - The web admin panel: [ADMIN.md](ADMIN.md)
 - Endpoints and request / response shapes for all four protocols: [API.md](API.md)
 - What this project is, and how to get started: [README.md](../../README.md)

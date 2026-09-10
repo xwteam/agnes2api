@@ -66,43 +66,38 @@ function discoverConfigs(): string[] {
 }
 
 const NODE = "vitest.config.ts";
-const WORKERS = "vitest.workers.config.ts";
 
 /**
  * **哪个目录要求被哪几份配置收集——显式声明，不隐含在 glob 里。**
  *
- * ⚠️ 这张表是为了修掉一个**并集语义**的盲区。原先的判定是「这个文件被**某**份配置
- * 收集到就算过」，于是 `vitest.workers.config.ts` 的 include 被**收窄**（不是清空）
- * 对它完全不可见。已复现：把 workers 的 include 收窄成两个文件后——
+ * ⚠️⚠️ **这张表在 v0.4.0 从「逐配置」缩成了「只有一份配置」，而它的结构一格没动。**
+ * 从前磁盘上有两份配置（`vitest.config.ts` 与当时那份 workers 专用配置），
+ * `tests/contract/**` 要求**同时**出现在两份**各自的**收集结果里。那条要求是为了修
+ * 一个**并集语义**的盲区：原先的判定是「被**某**份配置收集到就算过」，于是 workers
+ * 那份的 include 被**收窄**（不是清空）对它完全不可见。已复现过——
  *
  *     node 侧   [collection-guard] ✅ 51 个测试文件 × 2 份配置，无漏收集   ← 假阳性
  *     workers   Test Files  2 passed (2)                                  ← 15 个契约测试静默消失
  *
- * **两个入口都是绿的，零红色信号**，而消失的正是 admin 的 CSP / nosniff / 资产伺服
- * 在 **workerd 侧**的覆盖——设计文档 §4.2 的整个立论（pool 会丢弃 `[assets]` 的
- * directory，所以必须双运行时验证）就靠那一份。
+ * **两个入口都是绿的，零红色信号。**
  *
- * 所以判定改成**逐配置**：`tests/contract/**` 的每个文件必须**同时**出现在两份配置
- * **各自的**收集结果里，出现在并集里不算过。
+ * ⚠️ **摘掉 Worker 形态之后那份 workers 专用配置删了，只剩一份配置**，
+ * 于是「并集 vs 逐配置」这个区别在今天**没有可观测差异**。
+ * **判定逻辑仍然写成逐配置（下面 `byConfig` 那一段），这是刻意的**：
+ * 它是这道门禁唯一见过的真实失效形态，而恢复成逐配置的成本是一次重写；
+ * 何况 `discoverConfigs()` 是从磁盘扫的——**哪天真加回第二份配置，这里立刻就管用**，
+ * 不需要有人记得回来改。
+ *
+ * ⇒ 今天这张表还在干的活只剩一件：**每个测试目录都必须在这里表过态**
+ *（`POLICY.find` 找不到就报错），新开一个 `tests/xxx/` 目录而没在 include 里加它
+ * 会当场红。
  *
  * ──────────────────────────────────────────────────────────────────────────
  * ⚠️ **这套机制只挡一半，另一半是有意留给代码评审的——写清楚，别以为是漏了。**
  *
  * 它校验的是「文件**在哪个目录** ⇒ 该被哪几份配置收集」，
  * **不校验目录归属本身是否合理**。把一个契约测试 `git mv` 进 `tests/unit/`，
- * 它就**合法地**只跑 node 侧，这里不会报错——已实测：把
- * `tests/contract/ui-serve.test.ts` 的「每个响应都带全套安全头」
- * （正是验证 admin 的 CSP/nosniff 在 workerd 侧
- * 覆盖的那个文件）挪进 `tests/unit/`，两个入口全绿，横幅照常打 ✅，
- * 只是双跑计数从 18 静默降到 17。
- *
- * **为什么只自动化了另一半**：两种改动的**可见性差一个量级**。
- * `git mv` 在任何 PR diff 里都是显眼的 rename；而 include 收窄是配置文件里
- * 一行不起眼的改动，正是评审最容易滑过去的形态。
- *
- * **为什么不加「双跑计数必须等于 N」的绊线**：后续几期要新增大量契约测试，
- * 每次都得改那个数字，久了就变成机械 bump，绊线自己先失效——成本是长期反复的，
- * 而收益已经被上面那条高可见度信号覆盖了。
+ * 在只剩一份配置的今天它**连一格差别都没有**（两个目录同一份 include）。
  *
  * 同一类边界还有两处，是一脉相承的同一个取舍：
  * `tests/unit/ui-assets.test.ts` 的「资产清单与显式快照一致——admin-ui/ 里多一个文件
@@ -113,18 +108,18 @@ const WORKERS = "vitest.workers.config.ts";
 const POLICY: ReadonlyArray<{ dir: string; configs: readonly string[]; why: string }> = [
   {
     dir: "tests/contract/",
-    configs: [NODE, WORKERS],
-    why: "契约测试要求**双运行时对等**：同一份断言在 node 与 workerd 下各跑一遍",
+    configs: [NODE],
+    why: "契约测试：整条 app 起来的端到端断言",
   },
   {
     dir: "tests/unit/",
     configs: [NODE],
-    why: "单测要用 node:fs / child_process，workerd 里没有",
+    why: "单测要用 node:fs / child_process",
   },
   {
     dir: "tests/ui/",
     configs: [NODE],
-    why: "前端纯函数，不碰任何运行时能力，跑两遍只是浪费",
+    why: "前端纯函数，不碰任何运行时能力",
   },
 ];
 
@@ -170,9 +165,9 @@ export default function setup(project?: MaybeProject): void {
    * 分档：带文件过滤器就跳过。
    *
    * 门禁要防的是「**有人改配置悄悄关掉一整条通道，而 CI 全绿**」。
-   * 带过滤器是开发者的显式局部动作，威胁模型完全不同；而这道门禁要 spawn 两次
-   * `vitest list`（约 5 秒），加在每一次单文件调试上是真摩擦——**摩擦会推着人去
-   * 绕过它**，那就本末倒置了。
+   * 带过滤器是开发者的显式局部动作，威胁模型完全不同；而这道门禁每份配置都要
+   * spawn 一次 `vitest list`（今天一份，几秒），加在每一次单文件调试上是真摩擦
+   * ——**摩擦会推着人去绕过它**，那就本末倒置了。
    *
    * ⚠️ **这条分档依赖一个前提：CI 跑的是全量、不带测试文件过滤器。**
    * 前提一旦破了（比如有人为了分片把 CI 命令改成按文件名过滤），这道门禁在 CI 上
@@ -259,10 +254,12 @@ export default function setup(project?: MaybeProject): void {
    * 门禁失效的形态是「静默跳过」——比如有人把上面的过滤器检测改成裸解析
    * process.argv，于是每次调用都被判成带过滤器，门禁再也不跑而 CI 全绿。
    * 那种情况下这行**不会出现**，CI 那条断言 grep 它即可发现。
+   *
+   * ⚠️ **横幅尾巴上原来还有一句「其中 N 个要求双运行时」，v0.4.0 删了**：
+   * 只剩一份配置之后那个 N 恒为 0，一句恒为 0 的统计比不说更糟。
+   * 报文形状（前半句）刻意没动——`scripts/prepush.sh` grep 的是它。
    */
-  const dual = onDisk.filter((f) => (POLICY.find((r) => f.startsWith(r.dir))?.configs.length ?? 0) > 1);
   console.log(
-    `[collection-guard] ✅ ${onDisk.length} 个测试文件 × ${configs.length} 份配置逐一核对，`
-    + `其中 ${dual.length} 个要求双运行时`,
+    `[collection-guard] ✅ ${onDisk.length} 个测试文件 × ${configs.length} 份配置逐一核对`,
   );
 }

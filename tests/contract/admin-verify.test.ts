@@ -13,7 +13,7 @@ import type { KeyRecord } from "../../src/core/types.js";
  * `POST /admin/api/keys/:id/verify` —— 单把 key 的验活，以及与通道连通性测试
  * **共用的**出站探测护栏（设计 §10.2 / §11 与那条订正）。
  *
- * **contract ⇒ node 与 workerd 各跑一遍**（`tests/global-setup.ts` 的 `POLICY` 强制）。
+ * ⚠️ 这份文件头原来写着「contract ⇒ node 与 workerd 各跑一遍」，v0.4.0 之后只剩一份配置。
  *
  * ── 这一组的头等纪律：观测点一律不落在响应体上 ──────────────────────────────
  *

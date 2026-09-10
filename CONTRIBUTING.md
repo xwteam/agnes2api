@@ -32,23 +32,28 @@ so trust them and not this paragraph.
 > the script names they call live in `package.json`. Run what that file runs, in that order —
 > the same knowledge written down twice will drift.
 
-### The two you will run most often
+### The one you will run most often
 
 - `pnpm test` — unit, contract and front-end pure-function tests, on the Node runtime.
-- `pnpm test:workers` — the contract tests again, this time inside `workerd`.
 
-Contract tests are expected to run under **both** runtimes; that is the point of having them
-in `tests/contract/`. A new case that only runs under Node covers half the product.
+There used to be a second line here — a `test:workers` script that re-ran everything in
+`tests/contract/` inside `workerd` — plus a paragraph telling you that a case running under
+only one runtime covers half the product. The Cloudflare Worker deployment shape was removed
+in v0.4.0 and that entry point went with it, together with its own vitest config. **What that
+line used to guard — the two runtimes never disagreeing — has no guard today, because there
+is no second runtime left to disagree.** Cases under `tests/contract/` still exist and still
+run; they now run once. The same removal is why the pre-push smoke test further down this
+page covers one deployment shape rather than two.
 
 ### Nothing checks that a case is in the right directory
 
 **No machine will tell you that you put a case in the wrong directory.** The collection guard
 in `tests/global-setup.ts` checks that every file *already in* `tests/contract/` is collected
-by both vitest configs — it does not judge where a case belongs. Its own note says so in as
-many words: `tests/global-setup.ts`「不校验目录归属本身是否合理」. Write a contract-shaped case
-into `tests/unit/` and it legitimately runs on Node only, with a green run and an unchanged
-banner. Catching that is a reviewer's job, and it is one of the things the pull request
-template asks about.
+by every vitest config it finds on disk — one, today — and it does not judge where a case
+belongs. Its own note says so in as many words:
+`tests/global-setup.ts`「不校验目录归属本身是否合理」. Write a contract-shaped case into
+`tests/unit/` and it still runs, with a green run and an unchanged banner. Catching that is a
+reviewer's job, and it is one of the things the pull request template asks about.
 
 ### If you touch the panel
 
@@ -204,7 +209,7 @@ translated README.
 2. Write the entry in `CHANGELOG.md`.
 3. Run the pre-push checklist — `bash scripts/prepush.sh` — and make it green. It re-runs the
    CI gates in CI's own order, plus the few things CI structurally cannot see (a dirty working
-   tree, the branch, the author identity, the test counts, and a real two-runtime smoke test).
+   tree, the branch, the author identity, the test counts, and a real Docker smoke test).
 4. Commit and push **the commit alone**, then wait for CI on it. The tag has to point at
    whatever `origin/main` ends up being, so it cannot be created before the push.
 5. Run the tag gate — `bash scripts/pretag.sh` — and make its six cells green. The section

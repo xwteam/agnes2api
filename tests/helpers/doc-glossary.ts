@@ -154,17 +154,10 @@ export const GLOSSARY: readonly GlossaryTerm[] = [
       ko: ["저장소"],
     },
   },
-  {
-    term: "免费档",
-    note: "四种语言里有三种把 Cloudflare 的 free tier 写成了两个词",
-    scope: "all",
-    renderings: {
-      "zh-TW": ["免費方案", "免費檔"],
-      en: ["free tier", "free plan"],
-      ja: ["無料枠", "無料プラン"],
-      ko: ["무료 등급", "무료 요금제"],
-    },
-  },
+  // 🔴 **`免费档` 那一条 v0.4.0 删掉了。** 它指的是 Cloudflare 免费档（free tier）——
+  // 那是 KV 配额那一节的专有名词，整节随 Worker 形态一起退场，今天 40 份出货文档里
+  // **一次都不出现**。表里留着它会被「每个源词都真的出现在 zh-CN 出货文档里」那一格
+  // 当场判成「表锈了」，而那正是它该说的话：**源词没了就该从表上删，不是留着守空气。**
   {
     term: "判据",
     note: "zh-TW 的 `判據` vs `判準`",

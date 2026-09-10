@@ -50,7 +50,7 @@ function body(cred: unknown): unknown {
     editable: [],
     secrets: [MASTER_KEY_PATH],
     resetBlocked: [],
-    propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
+    propagation: { configTtlMs: 30000, visibilityUpperBoundMs: 30000 },
   };
 }
 

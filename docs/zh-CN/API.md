@@ -6,7 +6,7 @@
 
 `/v1/*` 与 `/v1beta/*` 下的所有路由都需要凭据，`/health` 不需要。以下四种传递方式任选其一即可——正好对应各协议官方 SDK 默认发送的凭据形式，通常无需额外配置。
 
-以下示例统一使用 `http://localhost:8080`（Docker/Node 的监听地址）。若部署在 Cloudflare Worker 上，替换成你的 `*.workers.dev` 域名（或自定义域名）即可。`your-gateway-token` 是你设置的 `GATEWAY_TOKEN` 的占位符。
+以下示例统一使用 `http://localhost:8080`（容器的监听地址）。若你在前面挂了域名或反向代理，替换成那个主机名即可。`your-gateway-token` 是你设置的 `GATEWAY_TOKEN` 的占位符。
 
 ### 方式 1：Authorization Bearer 请求头
 
@@ -68,7 +68,7 @@ GATEWAY_TOKEN=换成一把长随机串
 - `GATEWAY_TOKEN` 永远有效，**判定它一次存储读都不产生**——这条性质是逃生口本身：密钥表被写坏、存储读不出来时，拿主口令调用的客户端一个字节都不受影响；
 - 对外 API 密钥可以逐把命名、设到期、随时停用或吊销，用来给不同的下游各发一把，而不必把主口令交出去；
 - 网关存密钥的 SHA-256 摘要用来鉴权，**2026-09-10 起同时也存明文**：明文在签发那一次的响应里给全，此后还能经 `GET /admin/api/apikeys/{id}/reveal` 取回（那之前签发的取不回），代价见那一条；
-- 停用或删除**不是即时的**：别的实例最多还要约 6 分钟才看得见，见下面 `PATCH /admin/api/apikeys/{id}` 那条的说明。
+- 停用或删除**不是即时的**：别的实例最多还要约 5 分钟才看得见，见下面 `PATCH /admin/api/apikeys/{id}` 那条的说明。
 
 `401` 的响应体对「没有这把密钥」「已停用」「已过期」三种情况**说的是同一句话**——区分它们等于给扫描者一个枚举接口。真正的原因只写进事件日志（`apikey.rejected`，带 `id` 与档位），那是运维才看得到的地方。
 
@@ -555,7 +555,7 @@ curl http://localhost:8080/admin/api/session \
 **响应**：
 
 ```json
-{ "ok": true, "version": "0.3.1" }
+{ "ok": true, "version": "0.4.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -573,7 +573,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -605,7 +605,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -614,11 +614,10 @@ curl http://localhost:8080/admin/api/overview \
   "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true },
   "freshness": {
     "poolCacheTtlMs": 60000,
-    "poolVisibilityUpperBoundMs": 120000,
+    "poolVisibilityUpperBoundMs": 60000,
     "poolTouchIntervalMs": 21600000,
     "configTtlMs": 30000,
-    "configVisibilityUpperBoundMs": 90000,
-    "kvEdgeCacheMs": 60000
+    "configVisibilityUpperBoundMs": 30000
   },
   "config": {
     "registrarEnabled": true,
@@ -919,7 +918,7 @@ curl http://localhost:8080/admin/api/keys/9f2c/usage \
 取回**一把上游 Agnes key 的明文**。明文刻意不进上面那条列表：列表是高频、无意识被调用的，把明文塞进去等于每一次面板轮询、每一条被记下的响应体、每一层中间缓存里都带着整池凭据。这条端点是**显式动作**，因此可以被审计。
 
 > [!NOTE]
-> 这一族**本来就以明文存**（五份 DEPLOY.md 从第一天就写着上游 key「以明文落在 KV / `store.json` 里，请按凭据处置」）⇒ 这条端点**没有引入新的存储风险**，只是把已经存在的东西在面板上显式露出来。
+> 这一族**本来就以明文存**（五份 DEPLOY.md 从第一天就写着上游 key「以明文落在 `store.json` 里，请按凭据处置」）⇒ 这条端点**没有引入新的存储风险**，只是把已经存在的东西在面板上显式露出来。
 
 **请求**：
 
@@ -1067,7 +1066,7 @@ curl http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08/reveal \
 ```
 
 > [!WARNING]
-> 这条端点伴随一次**存储语义的破坏性改变**：本仓从前只存明文的 SHA-256 摘要与末 4 位，明文只在签发那一次的 `201` 里出现过；2026-09-10 起密钥记录**同时存明文**。这是以安全性换便利性的取舍，代价必须看清楚：面板一旦被打穿，**所有客户端密钥的明文一次性泄漏**（从前泄漏的只是不可反推的摘要）；存储介质（KV / `store.json`）也从「不含可直接使用的客户端凭据」变成「含」，备份与快照的处置级别要跟着升。
+> 这条端点伴随一次**存储语义的破坏性改变**：本仓从前只存明文的 SHA-256 摘要与末 4 位，明文只在签发那一次的 `201` 里出现过；2026-09-10 起密钥记录**同时存明文**。这是以安全性换便利性的取舍，代价必须看清楚：面板一旦被打穿，**所有客户端密钥的明文一次性泄漏**（从前泄漏的只是不可反推的摘要）；存储介质（`store.json`）也从「不含可直接使用的客户端凭据」变成「含」，备份与快照的处置级别要跟着升。
 
 > [!NOTE]
 > `GET /admin/api/capabilities` 里的 `apiKeys.plaintextRetrievable` 因此从恒 `false` 变成 `true`，面板据它决定显不显示「显示明文 / 复制」两颗按钮。它说的是「**这个部署能不能取回明文**」，不是「每一把都取得回来」——升级前签发的那些仍然取不回。
@@ -1115,7 +1114,7 @@ curl -X PATCH http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08 \
 ```
 
 > [!WARNING]
-> **停用不是即时的。** 处理这次请求的实例立刻生效，而别的实例最多还要一个 `APIKEY_CACHE_TTL_MS`（默认 5 分钟）加 KV 边缘缓存的约 60 秒，合计**约 6 分钟**才看得见。要更快就把 `APIKEY_CACHE_TTL_MS` 调小，代价是读配额等量放大（见 DEPLOY.md 的配额账）。
+> **停用不是即时的。** 处理这次请求的实例立刻生效，而共用同一个卷的别的容器最多还要一个 `APIKEY_CACHE_TTL_MS`（默认**约 5 分钟**）才看得见。要更快就把 `APIKEY_CACHE_TTL_MS` 调小，代价只是每个实例每个间隔多读一次表（见 DEPLOY.md 的「对外 API 密钥：吊销不是立刻生效」）。
 
 拿旧版本号来写时：
 
@@ -1250,7 +1249,7 @@ curl http://localhost:8080/admin/api/config \
   "editable": ["upstreamTimeoutMs"],
   "secrets": ["gatewayToken"],
   "resetBlocked": [],
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1285,7 +1284,7 @@ curl -X PUT http://localhost:8080/admin/api/config \
   "changed": ["upstreamTimeoutMs"],
   "credentialsChanged": [],
   "appliedAt": 1735689600000,
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1344,7 +1343,7 @@ curl -X POST http://localhost:8080/admin/api/config/secrets/clear \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "resetBlocked": [],
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1379,12 +1378,12 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
   "credentialsChanged": [],
   "resetBlocked": [],
   "appliedAt": 1735689600000,
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
 > [!IMPORTANT]
-> `appliedAt` **不是「已生效」的承诺**，它就是服务器落盘的那一刻。别的副本/别的 isolate 多久能看见，由 `propagation` 里那三个数说了算——面板不许把它渲染成「已重置并生效」。
+> `appliedAt` **不是「已生效」的承诺**，它就是服务器落盘的那一刻。共用同一个卷的别的容器多久能看见，由 `propagation` 里那三个数说了算——面板不许把它渲染成「已重置并生效」。
 
 ### POST /admin/api/registrar/tend
 
@@ -1593,7 +1592,7 @@ curl http://localhost:8080/health
 **响应**：
 
 ```json
-{ "status": "ok", "version": "0.3.1", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.4.0", "storage": { "writable": true } }
 ```
 
 `storage.writable` 报告的是「key 池所在的存储是否真的写得进去」。它由启动时的一次探测与运行期每一次真实写操作共同维护，健康检查自身不写盘。存储不可写时返回 **HTTP `503`**，`status` 变成 `degraded` 并附一句 `detail`（Docker 部署常见于绑定挂载的宿主目录属主与容器内运行用户不一致，详见容器日志）。

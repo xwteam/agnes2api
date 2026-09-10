@@ -3,7 +3,7 @@ import {
   MANUAL_GUARD_KEY, MANUAL_TEND_COOLDOWN_MS, MANUAL_TENDS_PER_DAY,
   checkManualTend, dayEndsAt, dayIndex, narrowManualGuard, type ManualGuard,
 } from "../../../src/core/admin/tend-guard.js";
-import { TEND_LOCK_KEY, TEND_LOCK_TTL_CRON_MS } from "../../../src/http/admin/tend-lock.js";
+import { TEND_LOCK_KEY, TEND_LOCK_TTL_SCHEDULED_MS } from "../../../src/http/admin/tend-lock.js";
 import { TEND_HISTORY_KEY } from "../../../src/core/admin/tend-history.js";
 
 /** 某一天的 UTC 零点（day 序号 20000 = 2024-10-04），加上一点偏移当"上午"。 */
@@ -46,13 +46,13 @@ describe("手动补池护栏的两个数字本身就是策略，独立钉死", (
    * 也是「释放锁失败之后最长停摆多久」的上界，五语言 REGISTRAR.md 写着 15 分钟。
    *
    * ⚠️ **评审发现：这个数往大改可以全仓逃逸。** 改成 `86_400_000`（24 小时）⇒
-   * **1816/1816 全绿**——唯一那个观测点当时写的是 `until: NOW + TEND_LOCK_TTL_CRON_MS`，
+   * **1816/1816 全绿**——唯一那个观测点当时写的是 `until: NOW + TEND_LOCK_TTL_SCHEDULED_MS`，
    * **期望值从被测对象自己推导**（第 6 种假阳性）。
    * 修法照 `roundBudgetMs` 那条：**手写字面量 + 常量本身也钉一次**，
    * 于是「改常量」与「两边一起改」都拦得住。
    */
   it("补池锁的有效期是 15 分钟这个数字本身就是策略，独立钉死", () => {
-    expect(TEND_LOCK_TTL_CRON_MS).toBe(900_000);
+    expect(TEND_LOCK_TTL_SCHEDULED_MS).toBe(900_000);
   });
 });
 

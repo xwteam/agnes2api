@@ -50,8 +50,8 @@ opening a pull request from it does.
 
 Whether a running gateway holds up is decided by things this repository cannot see: whether
 you set a strong `GATEWAY_TOKEN` and a strong admin token, whether the panel is exposed to the
-open internet, whether TLS terminates in front of it, who can read your Worker KV namespace or
-the Docker volume that holds the key pool, and what the upstream service does with the traffic
+open internet, whether TLS terminates in front of it, who can read the Docker volume that holds
+the key pool, and what the upstream service does with the traffic
 you send it.
 
 > [!WARNING]
@@ -127,7 +127,7 @@ which also keeps a registered list of the shapes that check cannot recognise.
 |---------|---------|
 | Set `GATEWAY_TOKEN` and the admin token to values you generated, and never reuse them. | They are the two secrets the product itself checks: `GATEWAY_TOKEN` on every `/v1/*` and `/v1beta/*` call, the admin token on every `/admin/api/*` call. Nothing else in it authenticates a caller. |
 | Do not expose the admin panel to the open internet unless you meant to. | Whoever holds the admin token can empty the pool, rewrite `GATEWAY_TOKEN` and switch the registrar on. |
-| Treat the storage behind the gateway — Worker KV namespace, or the Docker data volume — as credential material. | It holds the upstream key pool in usable form. |
+| Treat the storage behind the gateway — the Docker data volume — as credential material. | It holds the upstream key pool in usable form. |
 | Keep upstream keys disposable. | The pool cools down and evicts misbehaving keys by design; losing one should be an inconvenience, not an incident. |
 
 ---

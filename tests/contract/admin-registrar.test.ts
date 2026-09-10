@@ -13,8 +13,7 @@ import { TEND_HISTORY_KEY, type TendRecord } from "../../src/core/admin/tend-his
 import { DOMAIN_LEDGER_KEY } from "../../src/core/registrar/domain-ledger.js";
 import { REGISTRAR_BACKOFF_KEY } from "../../src/core/registrar/backoff.js";
 import { buildApp } from "../../src/http/wire.js";
-import { workerRuntime } from "../../src/adapters/runtime-worker.js";
-import { WORKER_ROUND_BUDGET_MS } from "../../src/core/registrar/types.js";
+import { SCHEDULED_ROUND_BUDGET_MS } from "../../src/core/registrar/types.js";
 import { httpFail } from "../../src/core/registrar/url.js";
 
 /**
@@ -873,15 +872,19 @@ describe("立即补池的 channel 参数：「只用这一条通道」", () => {
  * **零网络怎么做到的，两道保险**（照抄 `tests/contract/manual-tend.test.ts` 的
  * 「手动补池用自己那一族预算，且把设置里更大的值压顶后如实说出来」
  * 那一组的做法）：
- * ① `CODE_TIMEOUT_MS` 调到比 `WORKER_ROUND_BUDGET_MS` 还大 ⇒ `tendOnce` 判定
+ * ① `CODE_TIMEOUT_MS` 调到比 `SCHEDULED_ROUND_BUDGET_MS` 还大 ⇒ `tendOnce` 判定
  *    「单次最坏耗时装不下本轮预算」，**一次尝试都不开始**就返回（补池那一组用它）；
  * ② 两条通道的 baseUrl 都指向保留 TLD `.invalid`（RFC 6761，永不解析）——
  *    即使第一道保险失效也只会 DNS 失败，不会触达任何真实服务。
  *    **通道连通性那一组还额外把全局 `fetch` 换成桩**（`NativeFetcher` 调的就是它），
  *    所以那一组连 DNS 都不查。
  *
- * 运行时用 `workerRuntime()`：后台任务落进我们自己的 `ctx.waitUntil` 数组里，
- * 用例可以 `await` 完再断言存储，**不依赖任何"等一会儿"**。
+ * ⚠️ **这个夹具原来要注入 `workerRuntime()` 并自备一个 `ctx.waitUntil` 数组**：
+ * 那时「立即补池」把整轮交给后台载体，用例只能靠收集 `waitUntil` 的 promise 再
+ * `await` 完才敢断言存储。**v0.4.0 之后端点自己 `await` 整轮再返回**（那条兜底网
+ * 随 Worker 形态一起删了，见 `src/http/admin/handlers/registrar.ts`），
+ * `await app.request(...)` 返回时该写的已经全写完 —— 夹具因此少了一整层，
+ * 而「不依赖任何『等一会儿』」这条性质原样保住。
  */
 describe("真装配（buildApp）：channel 参数与通道连通性走的是 wire.ts 那一截", () => {
   const REAL_ENV: Record<string, string | undefined> = {
@@ -897,30 +900,24 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
     MOEMAIL_API_KEY: "mk",
     MOEMAIL_BASE_URL: "https://moe.invalid",
     TARGET_KEYS: "1",
-    CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1),
+    CODE_TIMEOUT_MS: String(SCHEDULED_ROUND_BUDGET_MS + 1),
   };
 
   async function realApp(extra: Record<string, string> = {}) {
     const storage = new MemoryStorage();
-    const { app } = await buildApp({ ...REAL_ENV, ...extra }, storage, workerRuntime());
-    const waited: Array<Promise<unknown>> = [];
-    const ctx = { waitUntil: (p: Promise<unknown>) => { waited.push(p); } };
+    const { app } = await buildApp({ ...REAL_ENV, ...extra }, storage);
     return {
       storage,
-      /** 打一次请求并把后台任务跑完（`waitUntil` 里那个）。 */
+      /** 打一次请求。整轮在端点里 `await` 完才返回，返回即代表该写的都写了。 */
       async call(path: string, body?: unknown): Promise<Response> {
-        const res = await app.request(
+        return await app.request(
           path,
           {
             method: "POST",
             headers: body === undefined ? withKey : jsonHeaders,
             body: body === undefined ? undefined : JSON.stringify(body),
           },
-          undefined,
-          ctx as unknown as ExecutionContext,
         );
-        await Promise.all(waited);
-        return res;
       },
       history: () => storage.get<TendRecord[]>(TEND_HISTORY_KEY),
     };
@@ -1055,12 +1052,12 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
     let fetches = 0;
     vi.stubGlobal("fetch", async () => { fetches++; return json({ data: [{ domain: "a.test" }] }); });
     const storage = new MemoryStorage();
-    const { app } = await buildApp(REAL_ENV, storage, workerRuntime());
+    const { app } = await buildApp(REAL_ENV, storage);
     // **装配之后才布雷**：装配自己也读存储，提前布雷会让 app 根本建不起来。
     const realGet = storage.get.bind(storage);
     let armed = false;
     storage.get = async <T>(key: string): Promise<T | null> => {
-      if (armed) throw new Error("KV 读超时");
+      if (armed) throw new Error("存储读超时");
       return realGet<T>(key);
     };
     armed = true;
@@ -1174,7 +1171,7 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
       status: 200, headers: { "content-type": "application/json" },
     }));
     const st = new CountingStorage(new MemoryStorage());
-    const { app } = await buildApp(REAL_ENV, st, workerRuntime());
+    const { app } = await buildApp(REAL_ENV, st);
     const before = { puts: st.puts, deletes: st.deletes };
     const res = await app.request(
       "/admin/api/registrar/channels/yyds/test", { method: "POST", headers: withKey },
@@ -1190,14 +1187,14 @@ describe("真装配（buildApp）：channel 参数与通道连通性走的是 wi
    * 真装配这一侧要单独量的是：`buildTendDeps` 那一截 + 真 `StoreLogger` 合起来，
    * 失败请求**自己**这一次到底写不写。量出来是 **0**：事件进缓冲，
    * 落盘由 `logFlush` → `maybeFlush()` 决定，而 sink 的 `lastFlushAt` 在构造时就置成
-   * `now()` ⇒ 同一个 isolate 上紧接着的这次请求隔不到 60 秒，落不了盘。
+   * `now()` ⇒ 同一个进程上紧接着的这次请求隔不到 60 秒，落不了盘。
    * 「之后什么时候落、落几次」由上面夹具 A 那一格拿假时钟逐格量死
-   *（1 次 put + 1 次 get，每 isolate 每天封顶 12 次），这里不重复。
+   *（1 次 put + 1 次 get，每实例每天封顶 12 次），这里不重复。
    */
   it("真装配的通道连通性测试失败时：200 + ok:false，且这一次请求自己仍然 0 次 put", async () => {
     vi.stubGlobal("fetch", async () => { throw new Error("上游不可达"); });
     const st = new CountingStorage(new MemoryStorage());
-    const { app } = await buildApp(REAL_ENV, st, workerRuntime());
+    const { app } = await buildApp(REAL_ENV, st);
     const before = { puts: st.puts, deletes: st.deletes };
     const res = await app.request(
       "/admin/api/registrar/channels/yyds/test", { method: "POST", headers: withKey },
@@ -1258,7 +1255,7 @@ describe("真装配：验凭据留下的痕迹，运维在事件板块里真的�
     const now = () => t;
     vi.stubGlobal("fetch", upstream);
     const storage = new MemoryStorage(undefined, now);
-    const { app } = await buildApp(ENV, storage, workerRuntime(), { now });
+    const { app } = await buildApp(ENV, storage, { now });
 
     const res = await app.request(
       "/admin/api/registrar/channels/yyds/test", { method: "POST", headers: withKey },

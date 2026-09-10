@@ -431,14 +431,18 @@ describe("hasNote：备注格显示内容还是显示 —", () => {
   });
 });
 
-describe("knobsLoaded：三个旋钮是不是已经拿到过一次生效值", () => {
-  it("三个都是 null：还没拿到", () => {
-    expect(knobsLoaded({ ttl: null, touch: null, edge: null })).toBe(false);
+/**
+ * ⚠️ **上一版这里是三个旋钮**（`ttl` / `touch` / `edge`），第三个是 KV 边缘缓存
+ * 那个量；v0.4.0 把那一整层删了（KV 随 Worker 形态一起没了）⇒ 收成两个。
+ * 判据守的东西没变：「只要有一个非 null 就算拿到过」＋「非法输入不抛」。
+ */
+describe("knobsLoaded：两个旋钮是不是已经拿到过一次生效值", () => {
+  it("两个都是 null：还没拿到", () => {
+    expect(knobsLoaded({ ttl: null, touch: null })).toBe(false);
   });
-  it("任意一个非 null：算拿到过——三个字段来自同一次响应的同一个块", () => {
-    expect(knobsLoaded({ ttl: 60_000, touch: null, edge: null })).toBe(true);
-    expect(knobsLoaded({ ttl: null, touch: 21_600_000, edge: null })).toBe(true);
-    expect(knobsLoaded({ ttl: null, touch: null, edge: 60_000 })).toBe(true);
+  it("任意一个非 null：算拿到过——两个字段来自同一次响应的同一个块", () => {
+    expect(knobsLoaded({ ttl: 60_000, touch: null })).toBe(true);
+    expect(knobsLoaded({ ttl: null, touch: 21_600_000 })).toBe(true);
   });
   it("非法输入：还没拿到，不抛异常", () => {
     expect(knobsLoaded(null)).toBe(false);

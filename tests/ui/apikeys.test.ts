@@ -203,16 +203,24 @@ describe("到期换算", () => {
   });
 });
 
+/**
+ * ⚠️ **上一版这两格测的是「生效的缓存 TTL **+ KV 边缘缓存**」两个入参**
+ *（`(300_000, 60_000) → 360_000`）。v0.4.0 把 KV 边缘缓存那一整层删了
+ *（KV 随 Worker 形态一起没了），这个数退回**只有一个来源**：`capabilities`
+ * 报的 `APIKEY_CACHE_TTL_MS`。**判别力一格没丢，锚换了**：原来守的是
+ * 「两个数都从后端来、任一读不出就画 —」，现在守的是「这个数从后端来、
+ * 读不出就画 —」，反面那一格照旧在。
+ */
 describe("「多久才在别处失效」那个数", () => {
-  it("= 生效的缓存 TTL + KV 边缘缓存，两个数都从后端来", () => {
-    expect(akRevokeDelayMs(300_000, 60_000)).toBe(360_000);
+  it("= 生效的缓存 TTL 本身，从后端来（中间不再有任何一层缓存）", () => {
+    expect(akRevokeDelayMs(300_000)).toBe(300_000);
   });
 
-  it("任何一个读不出来就回 null（画成 —），**不编一个数出来**", () => {
+  it("读不出来就回 null（画成 —），**不编一个数出来**", () => {
     // 这句话是安全相关的：编一个数出来会让运维以为吊销比实际更快。
-    expect(akRevokeDelayMs(null, 60_000)).toBeNull();
-    expect(akRevokeDelayMs(300_000, null)).toBeNull();
-    expect(akRevokeDelayMs("300000", 60_000)).toBeNull();
+    expect(akRevokeDelayMs(null)).toBeNull();
+    expect(akRevokeDelayMs(undefined)).toBeNull();
+    expect(akRevokeDelayMs("300000")).toBeNull();
   });
 });
 

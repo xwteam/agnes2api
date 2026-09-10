@@ -9,6 +9,84 @@
 
 （下一版的条目攒在这里。）
 
+## [0.4.0] - 2026-09-10
+
+**这一版把 Cloudflare Worker 形态整个删掉了，只剩 Docker 一种。这是破坏性变更。**
+
+### Removed
+
+#### 🔴 不再支持部署到 Cloudflare Workers（破坏性）
+
+`wrangler.toml`、Worker 入口、KV 存储适配器、`deploy-worker.yml` 全部删除。
+**跑在 Worker 上的部署没有升级路径**：0.4.0 不认 KV，池数据要先从 KV 导出再导入文件存储。
+留在 0.3.1 不动是安全的，那一版仍然两种形态都跑得起来。
+
+为什么砍：Worker 那一侧有两条不是靠写代码能绕开的限制，而维护两套形态的代价是逐格的。
+
+- **注册机在 Worker 上铸不出 key**。Agnes 上游的注册限流是**按 IP** 的
+  （`Too many registration attempts from this IP`），Worker 的出口 IP 池不但没帮上忙，
+  还让同一个池里的别人先把额度用掉。同一份代码在 Docker 上正常出 key。
+- **`waitUntil` 会在响应后约 30 秒静默取消整轮补池**（v0.3.0 实测 3/3），
+  取消**不抛异常**，`try/catch/finally` 两层都拦不住。那一版是靠换载体绕过去的，
+  但这个坑对任何「一轮要跑一分钟以上」的后台活都还在。
+
+#### 面板与 API 响应里三个字段没了
+
+- `GET /admin/api/overview` 的 `freshness.kvEdgeCacheMs`
+- `GET /admin/api/config` 的 `propagation.kvEdgeCacheMs`
+- `GET /admin/api/capabilities` 的 `runtime.colo`（Node 上恒 `null`，与字段消失渲染一致）
+
+### Fixed
+
+#### 面板把子密钥吊销上界多报了 1 分钟（安全相关）
+
+面板与五份 `API.md` 写着吊销一把对外 API 密钥「最长约 **6 分钟**」生效，
+而 `DEPLOY.md` / `ADMIN.md` 写的是 5 分钟。**多出来的那 1 分钟是 KV 的边缘缓存**——
+文件存储上根本没有这一层。同理，池快照与配置的传播上界从 120 / 90 秒更正为 **60 / 30 秒**。
+
+这三个数不是变快了，是原来说得比事实满。一把泄露的 key 到底多久真正失效，
+是运维要拿来做判断的数，写大了会让人以为还得再等一分钟。
+同一份 `API.md` 里其实早就同时写着 6 分钟和 5 分钟两个互相矛盾的答案。
+
+#### 一条启动期告警的后半句是假话
+
+`registrar.attempt_exceeds_worker_budget` 的报文说「Node/Docker 上同样铸不出来」。
+**摘掉 Worker 之前它就是假的**：手动补池把等码超时压到 60 秒，永远撞不到那个预算。
+今天真实的后果是另一件事——一轮可能跑过补池锁的有效期，于是下一轮并发开跑。报文已改写。
+
+（事件名里那个 `worker` 字样**刻意保留**：它是五语言文档里给运维的 grep 锚点，
+改名必须源码与五份文档同一次改完，本版没做。）
+
+#### `TRUST_PROXY` 的说明从「事实」降级成「有前提的取舍」
+
+`CF-Connecting-IP` 优先于 `X-Forwarded-For` 这条排序，在 Worker 形态下是**由平台保证的**
+（Cloudflare 定义上就在最前面）。摘掉之后没有任何东西保证了：只挂自建 nginx / Caddy 时，
+攻击者自带一个这个头就会压过反代写的 `X-Forwarded-For`。
+**排序没改**，但 `.env.example` 与 `DEPLOY.md` 现在写明了它成立的前提，
+以及通用反代形态必须在反代上把这个头剥掉。
+
+### Changed
+
+- CI 从 13 道门禁收成 **11 道**（删掉 workerd 运行时那一批契约测试、以及钉 KV 命名空间
+  占位符的那道）。**行为判据一格没丢**——同一批用例在 Node 那一步照跑；
+  丢的是「两个运行时对等」这一维。凭据进公开仓那类风险由 `scripts/scan-secrets.sh`
+  接着守，它的射程是整棵工作树 + 全历史。
+- 推送前门禁从 8 格里的「双形态真机冒烟」收成单形态，冒烟本身从 5 格收成 4 格。
+- API 密钥板块每次进入少打一次 `GET /admin/api/overview`（那次请求的唯一消费者
+  就是上面删掉的边缘缓存字段）。
+- 测试从 170 文件 / 5342 格变成 **166 文件 / 5243 格**。少掉的 99 格逐格点名记在
+  `scripts/prepush.sh` 的记账段里。
+
+### 如实说明：两处判别力下降
+
+摘形态的口径是「只摘不补」，以下两处**今天真的没人守**，记在这里不是为了好看：
+
+- **删除持久性契约只剩内存存储在跑**。原来 workerd 那一侧用真 KV 跑过「删掉的 key
+  不会在重启后复活」，今天没有任何一格拿**真会落盘的** `FileStorage` 验这条。
+- **「补池抛错的那一轮也会释放锁」没人钉了**。原来由 Worker 侧那一格守着。
+
+两处的补法都很便宜（各加一格），本版没做。
+
 ## [0.3.1] - 2026-09-10
 
 **v0.3.0 发出去之后跑了一轮六轴审计 + 对抗式复核：36 条原始发现 → 确认 20 条，本版全修。**
@@ -737,8 +815,8 @@ Cloudflare Worker 与 Node / Docker 两种运行时。
   字段切流式，`gemini` 换走 `:streamGenerateContent` 那条路径；另有图片与视频
   三条媒体端点 `image.generate` / `video.create` / `video.poll`。这几条的路径、
   上游路径与取正文的位置都从 `src/core/admin/protocol-catalog.ts` 一份真源现取。
-- **Key 池与调度**：池索引与取号（Worker 形态落在 KV 上，走 `KvStorage`；
-  Node / Docker 形态落在单文件 JSON 上，走 `FileStorage`）、失败归因与冷却；
+- **Key 池与调度**：池索引与取号（落在挂载卷上的单文件 JSON 里，走 `FileStorage`）、
+  失败归因与冷却；
   上游一个都用不上时回 503，其中「同步档把总预算耗光、一把 key 都没应答」那一种回 504，
   `reason` 逐种可分辨、五语言 API.md 逐份列全。
 
@@ -762,11 +840,10 @@ Cloudflare Worker 与 Node / Docker 两种运行时。
   推 `v*` 标签由 `.github/workflows/docker-publish.yml` 把镜像发到 `ghcr.io`。
 - **五语言**：面板与文档（README / ADMIN / API / DEPLOY / REGISTRAR / SPONSORS / USAGE）
   各有 `zh-CN` / `zh-TW` / `en` / `ja` / `ko` 五份。
-- **CI 十三道门禁**：跟踪文件不许是二进制、具名放行的 PNG 结构审计、凭据扫描、
-  生成面板资源、生成物一致性、面板体积预算、i18n 完整性、KV namespace id 仍是占位符、
-  注释里的指向必须解析得开、类型检查、单元 / 契约 / 前端纯函数测试、
-  契约测试（workerd 运行时）、构建
-  —— 这一串短名逐个对应 `.github/workflows/ci.yml` 里那十三步，顺序也是那边的顺序。
+- **CI 十一道门禁**：跟踪文件不许是二进制、具名放行的 PNG 结构审计、凭据扫描、
+  生成面板资源、生成物一致性、面板体积预算、i18n 完整性、
+  注释里的指向必须解析得开、类型检查、全部测试（单元 / 契约 / 前端纯函数）、构建
+  —— 这一串短名逐个对应 `.github/workflows/ci.yml` 里那十一步，顺序也是那边的顺序。
 
 ### 已知限制
 

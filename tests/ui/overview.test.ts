@@ -16,9 +16,9 @@ const body = {
   pool: { total: 5, fresh: 2, cooling: 1, evicted: 2, disabled: 0 },
   poolStats: { requests: 100, success: 90, failed: 8, clientErrors: 2, approximate: true },
   freshness: {
-    poolCacheTtlMs: 60_000, poolVisibilityUpperBoundMs: 120_000,
+    poolCacheTtlMs: 60_000, poolVisibilityUpperBoundMs: 60_000,
     poolTouchIntervalMs: 21_600_000, configTtlMs: 30_000,
-    configVisibilityUpperBoundMs: 90_000, kvEdgeCacheMs: 60_000,
+    configVisibilityUpperBoundMs: 30_000,
   },
   config: {
     registrarEnabled: true, registrarBlocked: false, channel: "yyds",
@@ -61,9 +61,18 @@ describe("poolCounts：没有数据就是没有数据", () => {
 });
 
 /**
- * **产品不变式 11**：Worker 形态下内存/CPU/PID 必须显示「Serverless · 无常驻进程」，
+ * **产品不变式 11**：`process` 这一块取不到时必须显示「Serverless · 无常驻进程」，
  * 不是 0、不是空、不隐藏格子。**判据是 `process === null`，不是 `runtime.name`**
- * ——设计文档 §13.3 第 6 条与硬约束 1 都点名要求。
+ * ——设计文档 §13.3 第 6 条点名要求。
+ *
+ * ⚠️⚠️ **这一族今天钉的是「面板不许自己按 `runtime.name` 猜」，而不是任何一种形态。**
+ * `process === null` 原来有两个成因（Worker 形态本来就没有常驻进程 / `block()` 兜住了
+ * 一次抖动），v0.4.0 摘掉 Worker 形态之后**只剩后一个**
+ *（见 `src/http/admin/handlers/overview.ts` 那段 `block()` 的说明）。
+ * 🟡 **面板那句「Serverless · 无常驻进程」因此偏了**：真正发生的是「这一次取进程指标
+ * 出错了」。改文案要动 `admin-ui/js/pure/overview.mjs` 与五语言 i18n，属于面板那一面。
+ * 下面几格里那些 `runtime: { name: "worker" }` 是**故意喂进去的非法值**：判据不看它，
+ * 喂什么都不该改变结论——这正是这几格的全部内容，别把它读成「今天还有 worker 形态」。
  */
 describe("processCells：判据是 process === null，不是 runtime.name", () => {
   it("process 为 null ⇒ serverless，不管 runtime.name 写的是什么", () => {
@@ -279,11 +288,11 @@ describe("storageInfo", () => {
 });
 
 describe("freshnessValues", () => {
-  it("freshness 缺失/畸形时六项都是 null", () => {
+  it("freshness 缺失/畸形时五项都是 null", () => {
     for (const empty of [null, undefined, {}]) {
       expect(freshnessValues({ ...body, freshness: empty })).toEqual({
         poolCacheTtlMs: null, poolVisibilityUpperBoundMs: null, poolTouchIntervalMs: null,
-        configTtlMs: null, configVisibilityUpperBoundMs: null, kvEdgeCacheMs: null,
+        configTtlMs: null, configVisibilityUpperBoundMs: null,
       });
     }
   });
@@ -297,16 +306,17 @@ describe("freshnessValues", () => {
  * `{touch}` 占位符在最初交付时没有数据源，暂用「点名旋钮 + 括注默认值」。
  * 这个函数是它们现在唯一的数据源——两个板块共用同一份取值，不许各写各的。
  *
- * ⚠️ **`edge` 是后来加的第三个旋钮**（待办第 4 条的收尾）：
- * `keys.freshness` 那句文案曾经把「约 60 秒」的 KV 边缘缓存耗时硬编码进
- * 五语言字典，现在与 `ov.freshness.pool` 一样由 `kvEdgeCacheMs` 驱动。
+ * ⚠️ **上一版还有第三个旋钮 `edge`（KV 边缘缓存那个量），v0.4.0 整层删掉了**：
+ * KV 随 Worker 形态一起没了 ⇒ 两条「多久能看见」的上界就等于各自的 TTL。
+ * 这两格守的东西没变（「从响应里取，缺了就 null，不回落到旧的硬编码默认值」），
+ * 只是射程从三个旋钮收成两个。
  */
-describe("poolKnobs：Key 池板块与概览板块共用的三个旋钮当前值", () => {
-  it("正常响应：从 freshness 里取出 ttl / touch / edge", () => {
-    expect(poolKnobs(body)).toEqual({ ttl: 60_000, touch: 21_600_000, edge: 60_000 });
+describe("poolKnobs：Key 池板块与概览板块共用的两个旋钮当前值", () => {
+  it("正常响应：从 freshness 里取出 ttl / touch", () => {
+    expect(poolKnobs(body)).toEqual({ ttl: 60_000, touch: 21_600_000 });
   });
-  it("freshness 缺失时三者都是 null（渲染成 —，不是旧的硬编码默认值）", () => {
-    expect(poolKnobs({ ...body, freshness: null })).toEqual({ ttl: null, touch: null, edge: null });
+  it("freshness 缺失时两者都是 null（渲染成 —，不是旧的硬编码默认值）", () => {
+    expect(poolKnobs({ ...body, freshness: null })).toEqual({ ttl: null, touch: null });
   });
 });
 
@@ -360,6 +370,9 @@ describe("分档与形态标签的映射（同 keys.mjs 的 bucketLabelKey 那�
     ]);
     for (const k of POOL_CARDS.map(poolCardLabelKey)) expect(I18N, k).toHaveProperty(k);
   });
+  // ⚠️ `runtimeNameLabelKey()` 与 `ov.runtime.worker` 这条 i18n 键都还在
+  // `admin-ui/` 里（面板那一面的东西，本次没动）。后端今天恒发 `"node"`，
+  // 所以那条分支在生产上走不到了；**这一格照旧钉着它的映射**，等面板那一面来收。
   it("runtimeNameLabelKey：只有 worker 才是 worker 文案，别的（含未知值）一律 node", () => {
     expect(runtimeNameLabelKey("worker")).toBe("ov.runtime.worker");
     expect(runtimeNameLabelKey("node")).toBe("ov.runtime.node");

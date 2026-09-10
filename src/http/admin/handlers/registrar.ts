@@ -1,7 +1,6 @@
 import type { Context } from "hono";
 import type { Logger } from "../../../ports/logger.js";
 import type { Storage } from "../../../ports/storage.js";
-import type { RuntimeInfo, BackgroundCtx } from "../../../ports/runtime.js";
 import type { KeyPoolRepo } from "../../../core/keypool-repo.js";
 import type { ConfigHolder } from "../../config-holder.js";
 import type { ManualTendOutcome } from "../../../core/registrar/tender.js";
@@ -51,10 +50,10 @@ import { httpError } from "../../errors.js";
  *
  * | # | 护栏 | 落点 | 挡什么 |
  * |---|---|---|---|
- * | 1a | 进程/isolate 内在途守卫 | `deps.gate.tryEnter()` | 同副本内的重入（定时轮 × 按钮、两个并发请求） |
- * | 1b | 存储级短锁 | `acquireTendLock()` | **跨副本**的重叠（多容器共卷 / Worker 两个 isolate） |
+ * | 1a | 进程内在途守卫 | `deps.gate.tryEnter()` | 同副本内的重入（定时轮 × 按钮、两个并发请求） |
+ * | 1b | 存储级短锁 | `acquireTendLock()` | **跨副本**的重叠（多容器共卷） |
  * | 2 | 10 分钟手动冷却 | `checkManualTend()` 的 `cooldownUntil` | 连点烧邮箱名额 |
- * | 4 | 每天 K 次写预算闸 | `checkManualTend()` 的 `day` / `used` | 连点烧 **KV 写配额**（三重护栏挡不住这一条） |
+ * | 4 | 每天 K 次写预算闸 | `checkManualTend()` 的 `day` / `used` | 连点把 `store.json` 反复整文件重写（三重护栏挡不住这一条） |
  *
  * 第 3 条护栏（确认弹窗明示消耗）在**面板**上，后端做不了；它要的那两个数字
  *（本次最多铸几把 key / 最多消耗几个临时邮箱）由 `status` 的 `pool` 块给出
@@ -81,7 +80,13 @@ import { httpError } from "../../errors.js";
  *
  * ── 诚实限定，不许被改写成「并发已解决」─────────────────────────────────
  *
- * KV 是最终一致的，存储锁与护栏键都是**读改写**，两者都会丢更新：
+ * ⚠️ **这一段的前提换过一次，结论没变**：原来的理由是「KV 是最终一致的」，
+ * 而 v0.4.0 之后存储只剩 `FileStorage`。**丢更新仍然在**，来源换成了
+ * **多容器共卷**：`FileStorage` 的写队列只串行化**本进程**的读改写
+ *（见 `src/adapters/storage-file.ts` 的并发说明），两个容器各自读一份 `store.json`、
+ * 各自整文件写回，后写的那次直接覆盖先写的那次。单容器部署没有这一族问题。
+ *
+ * 存储锁与护栏键都是**读改写**，跨容器时两者都会丢更新：
  *
  * | 处 | 丢更新的后果 | 上界 |
  * |---|---|---|
@@ -175,7 +180,7 @@ export type ChannelProbe =
   /**
    * **装配这一截自己就失败了 ⇒ 一次上游请求都没发出去。**
    *
-   * 今天唯一的成因是 `buildTendDeps` 里那次配置读（存储/KV）抛错。
+   * 今天唯一的成因是 `buildTendDeps` 里那次配置读（存储）抛错。
    * **与任何一个上游档分开**：那三档说的是「上游怎么答的」，这一档一个字节都没发出去，
    * 排查方向（去看存储，不是去看地址/DNS/TLS/上游）正好相反。
    * `error` 带出来只为记事件，**不进响应体**（它可能带着存储实现的内部细节）。
@@ -194,11 +199,9 @@ export interface RegistrarDeps {
    * 的一个原因，漏在事件板块外面，那个板块就只说了一半真话。
    */
   logger: Logger;
-  /** 后台任务的载体（Worker 的 `ctx.waitUntil` / Node 的 fire-and-forget），见 `RuntimeInfo`。 */
-  runtime: RuntimeInfo;
   /** 判「注册机开没开」用它，零额外 IO（`configRefresh` 中间件本请求已经刷过一次）。 */
   configHolder: ConfigHolder;
-  /** 进程/isolate 内的在途守卫。**与定时轮共用同一把**，见 `tend-lock.ts` 的对照表。 */
+  /** 进程内的在途守卫。**与定时轮共用同一把**，见 `tend-lock.ts` 的对照表。 */
   gate: TendGate;
   /**
    * 出站探测的护栏。**与单把 key 验活共用同一份实现、同一个实例**，
@@ -208,24 +211,9 @@ export interface RegistrarDeps {
   probeGuard: ProbeGuard;
   /**
    * **与转发路径同一个实例**（见 `AdminRouterDeps.repo`）。`status` 用它数
-   * 「占名额数」，走的是共用的 isolate 快照 ⇒ 面板刷新不额外读存储。
+   * 「占名额数」，走的是共用的进程内快照 ⇒ 面板刷新不额外读存储。
    */
   repo: KeyPoolRepo;
-}
-
-/**
- * Hono 的 `c.executionCtx` 在**没有** `ExecutionContext` 时抛错，不是返回 `undefined`
- *（Node 形态、以及 `app.request(url)` 这种不带 ctx 的调用都会走到）。
- *
- * 这里 `try/catch` 问的是「Hono 这次请求有没有带载体」，**不是在嗅探运行时**——
- * 拿到之后做什么完全由注入的 `runtime.background` 决定（Node 侧那份连看都不看它）。
- */
-function backgroundCtx(c: Context): BackgroundCtx | null {
-  try {
-    return c.executionCtx;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -257,8 +245,8 @@ const REASON_CHANNEL_NOT_CONFIGURED = "channel_not_configured";
  *
  * ⚠️ **它不许并进 `upstream_error`。** 那一档在面板上说的是「请求没走通、
  * 或者上游回了话正文读不出来」——两句都预设着「我们真的往外打了一次」。
- * 而这一档连打都没打，处置是去看存储/KV。上一版正是把它记成了 `upstream_error`
- *（本轮实测：真装配 + KV `get` 抛错 ⇒ 上游 0 次、body 是 `upstream_error`）。
+ * 而这一档连打都没打，处置是去看存储。上一版正是把它记成了 `upstream_error`
+ *（本轮实测：真装配 + 存储 `get` 抛错 ⇒ 上游 0 次、body 是 `upstream_error`）。
  */
 const REASON_NOT_ATTEMPTED = "not_attempted";
 
@@ -471,26 +459,19 @@ export function manualTendHandler(deps: RegistrarDeps) {
       })();
       started = true;
 
-      // 🔴🔴 **同一个 promise 既交给兜底网、又在下面 `await`——这是刻意的，不是冗余。**
+      // 🔴 **整轮的载体就是下面那行 `await`，此处不再另挂任何"兜底网"。**
       //
-      // 从前这里只有 `background(task, …)` 然后立刻回 202，于是整轮的载体是
-      // `ctx.waitUntil`。而 Cloudflare 在响应结束后**约 30 秒**就取消它
-      //（实测 3/3，日志原话见 `src/core/registrar/types.ts` 的 `MANUAL_MINT_BATCH`），
-      // 取消**不抛异常** ⇒ 下面那个 `finally` 里的 `releaseTendLock()` 与 `leave()`
-      // 一个都不跑 ⇒ 锁泄漏到自然过期，**期间连 Cron 轮也一起被挡掉**。
+      // 这里从前还有一句 `runtime.background(task, c.executionCtx)`：那个兜底网的
+      // 全部意义是 Worker 形态下**客户端中途断开时请求上下文被销毁**，而
+      // `ctx.waitUntil` 还攥着同一个 promise、再给约 30 秒，让 `mintOne` 的
+      // `finally`（删临时邮箱）有机会跑完。**v0.4.0 摘掉 Worker 形态之后那个前提没了**：
+      // Node 是长寿进程，`task` 这个 promise 一经创建就自己跑到底，谁也不会把它砍断，
+      // 断开连接顶多让下面那个 `c.json(...)` 写不出去。再留一句 `void task` 是
+      // **一次不做任何事的调用**——它唯一的作用是让人误以为这里还有一层保护。
       //
-      // 现在的分工：
-      // ① **正常路径的载体是下面那行 `await`**（`fetch` handler 自己撑着），
-      //    它保证 `try/finally` 真的跑完——写补池历史、放锁、`leave()`。
-      // ② `background()` 降级成**客户端中途断开时的兜底网**：那时请求上下文被销毁，
-      //    但 `waitUntil` 还攥着同一个 promise，再给约 30 秒，让 `mintOne` 的
-      //    `finally`（删临时邮箱）有机会跑完。**两条路都不需要平台给我们 13 分钟。**
-      // ⇒ `runtime.background` 因此保住了存在理由（双运行时断言照旧成立），
-      //    只是从「承载整轮」变成「承载断开后的余生」。
-      //
-      // ⚠️ 交给兜底网的必须是**上面这个已经在跑的 `task` 本身**。另起一个
-      // `wiring.tend()` 就是同一轮跑两遍，会同时撞邮箱建号限流与上游注册风控。
-      deps.runtime.background(task, backgroundCtx(c));
+      // ⚠️ 反过来说：**`task` 必须在上面就地创建并立刻开始跑**，不能挪到 `await` 那一行
+      // 才 `wiring.tend(...)`。上面那个 `try/finally`（写补池历史、放锁、`leave()`）
+      // 是靠它自己撑着的，不是靠这条 handler 的生命周期。
 
       deps.logger.log({
         level: "info", event: "registrar.manual_tend_started",
@@ -540,7 +521,7 @@ export function manualTendHandler(deps: RegistrarDeps) {
  * `GET /admin/api/registrar/status` —— 注册机板块的唯一取数端点（设计 §11）。
  *
  * **稳态下一次存储写都不产生**，读侧是 5 次 `get`（补池历史 + 锁 + 护栏键 +
- * 域名台账 + 退避状态）加一次共用 isolate 快照的 `repo.all()`，
+ * 域名台账 + 退避状态）加一次共用进程内快照的 `repo.all()`，
  * **没有 `list()`**（红线 1）。
  *
  * ⚠️ **上面那个数从 3 变成 5 是本轮改动**（新增域名台账与退避两块）。
@@ -560,7 +541,7 @@ export function manualTendHandler(deps: RegistrarDeps) {
  * 而 `repo.all()` 有两条会 `list()` **并写索引**的支路——`bootstrapFromListThrottled()`
  *（`pool:index` 读不出来/结构损坏）与 `rescanEmptyResult()`（索引合法却一条活记录都
  * 读不到，`writeIndexBestEffort`）。**复现**：KV 里有 `key:` 记录但 `pool:index` 缺失
- *（DEPLOY.md 里「手工写记录不会自动进索引」那个场景）⇒ 冷 isolate 上第一次
+ *（DEPLOY.md 里「手工写记录不会自动进索引」那个场景）⇒ 冷启动的实例 上第一次
  * `GET /admin/api/registrar/status` = **1 次 list + 1 次索引 put**。
  * 两条支路都有 10 分钟退避窗、都是自愈的，且这是 `repo.all()` 一直就有的固有性质，
  * 不是本端点引入的——**所以订正的是措辞，不是处置**。钉住上面那句零写的用例
@@ -764,7 +745,7 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
  * · 60 秒内连续失败 9 次：**还是 0 次** —— 这一段是**批量**的，不是每次一写；
  * · 跨过 60 秒之后的下一个非 `/health` 请求：**1 次 put + 1 次 get**；
  * · 之后每次都跨 60 秒再失败 100 次：**只多 11 次**，合计 12 ——
- *   撞上 `EVENT_WRITES_PER_DAY`（每 isolate 每天 12 次）。
+ *   撞上 `EVENT_WRITES_PER_DAY`（每实例每天 12 次）。
  * ⇒ **它吃的不是一笔新账，是事件 sink 那笔已经在配额账里记过的旧账**；
  * 这也是为什么五语言 DEPLOY.md 的「面板写操作的写侧」清单里没有这两条端点。
  *
@@ -778,7 +759,7 @@ export function registrarStatusHandler(deps: RegistrarDeps) {
  * 『已经防住了』；真要上护栏，该与验活一起做一套共用的」。**后来就是那一次。**
  *
  * 现在两道闸落在 `deps.probeGuard` 上（`../probe-guard.ts`）：在途去重挡「连点」，
- * 最小间隔挡「按住不放」。**它是进程/isolate 内的，刻意不是存储级的**——
+ * 最小间隔挡「按住不放」。**它是进程内的，刻意不是存储级的**——
  * 当时不上护栏的第 ② 条理由（存储护栏要给一条零写端点新增一次无条件的写，
  * 并且要回去改五语言 DEPLOY.md 的配额账）**今天仍然成立，所以那条路仍然没走**。
  * ⇒ **配额账一个字都不用改：本次新增的写是 0。**（全局约束 13 只管「会写存储的

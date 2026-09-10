@@ -14,9 +14,10 @@ const BASE_HEADERS = {
 } as const;
 
 /**
- * 注册链四步各自的单请求超时。没有它，一个挂起的连接就能把整轮补池拖过 Worker
- * Cron 的 15 分钟墙钟，正在铸的那个邮箱的清理（mintOne 的 finally）也就永远不会
- * 执行。与转发路径（core/dispatcher.ts）带 AbortController 的做法一致。
+ * 注册链四步各自的单请求超时。没有它，一个挂起的连接就能把整轮补池拖过
+ * 补池锁那份 15 分钟 TTL（`SCHEDULED_ROUND_WALL_CLOCK_MS`）—— 下一轮会在它还活着的
+ * 时候并发开跑；而进程若在这期间被硬杀，正在铸的那个邮箱的清理（mintOne 的 finally）
+ * 也就永远不会执行。与转发路径（core/dispatcher.ts）带 AbortController 的做法一致。
  */
 const timeoutSignal = () => AbortSignal.timeout(REGISTRAR_REQUEST_TIMEOUT_MS);
 

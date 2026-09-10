@@ -76,8 +76,7 @@ const FAVICON_ETAG = `"favicon-${UI_ASSETS["/admin"]!.etag.slice(1, -1)}"`;
 
 /**
  * 静态资源路由。**查表命中制**——没有任何文件系统路径拼接，因此路径穿越在结构上
- * 就不成立（仍有测试守着）。Worker 与 Node 走的是同一条代码路径：这张表是编译期
- * 常量，两种运行时下连字节都一样。
+ * 就不成立（仍有测试守着）。这张表是编译期常量，进程一起来就冻在那里。
  *
  * 不用 `hono/serve-static`：它带 path join、isDir → index.html 默认文档、
  * precompressed 探测等一堆用不上的语义，而 ETag / 304 / Cache-Control 又要自己接。

@@ -5,12 +5,23 @@ import { PROTOCOLS } from "../../../core/admin/protocol-catalog.js";
 import { apiKeysCapability } from "./api-keys.js";
 
 /**
- * **双运行时差异的唯一出口**（设计文档 §11）。面板启动时调一次，
- * 所有形态分支读它——不许 `runtime === "worker"` 散落进 8 个板块。
+ * **面板的形态出口**（设计文档 §11）。面板启动时调一次，所有形态分支读它——
+ * 不许「这个部署有没有 X」散落进 8 个板块各写一次。
+ *
+ * ⚠️ **它原来的定位是「双运行时差异的唯一出口」，那个定位在 v0.4.0 没了。**
+ * 摘掉 Worker 形态之后 `runtime.name` / `storage.backend` / `quota.model` /
+ * `process.metrics` 四格**各自只剩一个取值**，而且**今天没有一个前端消费者**
+ *（面板的运行时格子读的是 `GET /admin/api/overview` 的 `runtime.name` 与
+ * `storage.backend`，不是这里的）。**留着它们是范围取舍，不是它们还在干活**：
+ * 删这四格要同步改五语言 API.md 里那份响应样例与 `docs-parity` 的形状用例。
+ * **登记在这里，别把它读成「这四格还是形态分支的真源」。**
+ * **真正还在分叉、真正有人读的是下面那几格**：`storage.writable`、
+ * `stats.tier2Enabled`、`stats.flushIntervalMs`、`stats.tokensCoverage`、
+ * `apiKeys` 那一组。
  *
  * **零存储读**：全部来自内存（注入的 RuntimeInfo + StorageHealth 的内存状态 +
  * 装配时算好的 envLocked）。它是面板启动必调的第一个接口，
- * 让它去读一次存储就等于给每次刷新加一次 KV 读。
+ * 让它去读一次存储就等于给每次刷新加一次存储读。
  */
 export function capabilitiesHandler(deps: {
   runtime: RuntimeInfo;
@@ -22,7 +33,7 @@ export function capabilitiesHandler(deps: {
    * ⚠️ **它必须来自「这个 app 到底建没建 sink」，不许来自 `configHolder` 现读的
    * `usageStatsEnabled`。** 两者在一种真实情形下会分叉：那个开关是**建 app 时读一次**的
    *（见 `GatewayConfig.usageStatsEnabled`），有人往存储里把它改成 true 之后，
-   * 现读会说 true 而这个 isolate 根本没有 sink ⇒ 面板画一张空图表并把它当成
+   * 现读会说 true 而这个副本 根本没有 sink ⇒ 面板画一张空图表并把它当成
    * 「这段时间没有流量」，那是三态混一（全局约束 9）。
    * `createApp` 因此传的是 `deps.usageSink !== undefined`——**同一个事实的同一个来源**。
    */
@@ -42,23 +53,30 @@ export function capabilitiesHandler(deps: {
   apiKeys: ReturnType<typeof apiKeysCapability>;
 }) {
   return (c: Context) => {
-    // `cf` 只在 Cloudflare 边缘存在。**取不到就如实 null**，不伪造一个 "unknown"。
-    const cf = (c.req.raw as { cf?: { colo?: unknown } }).cf;
-    const colo = typeof cf?.colo === "string" && cf.colo !== "" ? cf.colo : null;
+    // ⚠️ **`runtime.colo` 这一格在 v0.4.0 删掉了。** 它读的是 `c.req.raw.cf.colo`
+    //（请求打在哪个 Cloudflare 边缘机房），那是 Workers 运行时给 `Request` 挂的
+    // 非标准扩展属性——Node 的 `fetch`（undici）里根本没有这个属性，**它恒为 `null`**。
+    // 一个恒为 null 的字段在面板上只会让人以为「这次没取到」。
+    // 面板那一侧读它时本来就是防御性的（`typeof caps.runtime.colo === "string"`），
+    // 字段消失与恒 null 渲染出来一模一样。
     return c.json({
       version: deps.version,
-      runtime: { name: deps.runtime.name, colo },
+      runtime: { name: deps.runtime.name },
       storage: { backend: deps.runtime.storageBackend, writable: deps.storageHealth.status().writable },
       quota: { model: deps.runtime.quotaModel },
       process: { metrics: deps.runtime.process() !== null },
       logs: {
         /**
-         * 进程内日志区。**两种运行时都是 false，这是本期的刻意选择。**
-         * 设计文档 §7.2 想在 Node 侧多一个「进程日志」区（MemoryLogger），
-         * 但那会让双运行时冒烟多出一整套只在一侧存在的分支。
-         * 现在先把两种形态的事件板块做成完全一样的，那一条另行登记。
-         * 事件板块顶部**两种形态都写**同一句：逐请求日志请看容器 stdout /
-         * Cloudflare 控制台的 Workers Logs。
+         * 进程内日志区。**恒 false，这仍是刻意选择。**
+         * 设计文档 §7.2 想多一个「进程日志」区（MemoryLogger）。
+         *
+         * ⚠️ **当时不做的理由（「那会让双运行时冒烟多出一整套只在一侧存在的分支」）
+         * 在 v0.4.0 没了**，只剩一种运行时。**结论仍然是不做，理由换成这一条**：
+         * 逐请求日志在 Docker 部署上有一个现成且更好的去处——`docker logs`
+         *（`ConsoleLogger` 一条不落地往 stdout 打）。在面板里再攒一份内存日志，
+         * 攒的是同一批行，代价是常驻内存 + 一个只有本进程看得见的第二真源。
+         * 事件板块顶部那句话因此也只剩一句：逐请求日志请看容器 stdout。
+         * **要做的话它是一次独立的功能决定，不是这次摘形态的顺带产物。**
          */
         processLog: false,
       },

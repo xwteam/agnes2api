@@ -32,7 +32,8 @@ function extractPayloads(block: string): { payloads: string[]; done: boolean } {
  *
  * ⚠️⚠️ **本函数在 `admin-ui/js/pure/playground.mjs` 里有一份逐字节相同的孪生体**，
  * 而在下面那道守卫立起来之前**没有任何机器要求两份一致**：实测只给这一份加上裸 `\r\r` 支持、
- * 面板那份一字不动 ⇒ node 与 workerd 两套用例**零信号**。
+ * 面板那份一字不动 ⇒ 当时 node 与 workerd 两套用例**零信号**（今天只剩一套，
+ * 同样零信号——两份实现的孪生关系由 `tests/unit/source-guards.test.ts` 那一格钉着）。
  * 现在由 `tests/unit/source-guards.test.ts` 的
  * 「两份 frameEnd 的函数体逐字节相同 —— 只改一边的话两个运行时都不会有任何信号」
  * 逐字节盯着。**改这个函数体的人必须同时改那一份**（那一格会点名，但它不会替你改）。

@@ -5,7 +5,6 @@ import { NULL_LOGGER } from "../../src/ports/logger.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import type { Storage } from "../../src/ports/storage.js";
 import type { KeyRecord } from "../../src/core/types.js";
-import { IS_WORKERD } from "../helpers/is-workerd.js";
 
 /**
  * `pool:index` 存了非 JSON 字节时的契约，**在真 KV 上跑一遍**。
@@ -13,7 +12,7 @@ import { IS_WORKERD } from "../helpers/is-workerd.js";
  * 单元测试里的计数桩用 `JSON.parse(raw)` 模拟 `KvStorage.get(k, "json")`，形状是对的，
  * 但这条防线的成因恰恰是「适配器在 parse 之前就抛」这个真实行为——用假实现验证一条
  * 关于真实现的断言，正是本项目反复栽进去的那类假阳性。这个文件在 workers 池里拿到的
- * 是 miniflare 的真 KV（见 vitest.workers.config.ts 与 storage.test.ts 的同款分流）。
+ * 是 miniflare 的真 KV（那份 workers 专用配置与那一族分流都在 v0.4.0 删了）。
  *
  * 为什么必须不抛：`all()` 抛 ⇒ 每个转发请求 500；而被指定为修复者的
  * `reconcileIndex()` 读同一个键**同样抛** ⇒ 两个入口的 try/catch 只吞掉记一条日志，
@@ -76,17 +75,12 @@ runCorruptIndexContract("MemoryStorage", () => {
   return { storage, putRaw: async (key, raw) => { map.set(key, raw); } };
 });
 
-// workerd 下追加一遍真 KV（与 storage.test.ts 同款的运行时分流）。
+// ⚠️ **这里原来还有一遍真 KV**（`if (IS_WORKERD)` + miniflare 的 `cloudflare:test`）。
+// v0.4.0 摘掉 Worker 形态之后 `KvStorage` 不存在了，整块删。
 //
-// **刻意不跑 FileStorage**：它把整个 `store.json` 当一份 JSON 读，「只有 pool:index
-// 这一个值坏了」在文件形态下压根不是一个能存在的状态——真把那一段写坏，坏掉的是
-// 整份存储，`get`/`list`/`put` 全都抛，那是另一个（早期遗留的）问题，不是这条契约。
-// 硬把它塞进来只会得到一条断言了假命题的用例。
-if (IS_WORKERD) {
-  const { env } = await import("cloudflare:test");
-  const { KvStorage } = await import("../../src/adapters/storage-kv.js");
-  runCorruptIndexContract("KvStorage（miniflare 真 KV）", () => {
-    const kv = (env as { POOL: KVNamespace }).POOL;
-    return { storage: new KvStorage(kv), putRaw: async (key, raw) => { await kv.put(key, raw); } };
-  });
-}
+// **同一段里那句「刻意不跑 FileStorage」今天更要紧了，所以留下来**：`FileStorage`
+// 把整个 `store.json` 当一份 JSON 读，「只有 `pool:index` 这一个值坏了」在文件形态下
+// 压根不是一个能存在的状态——真把那一段写坏，坏掉的是整份存储，`get`/`list`/`put`
+// 全都抛，那是另一个问题，不是这条契约。硬把它塞进来只会得到一条断言了假命题的用例。
+// ⇒ **这条契约今天只在 `MemoryStorage`（可以精确写坏一个键）上成立**，
+// 它验的是 `KeyPoolRepo` 面对一个坏索引值时的自愈逻辑，不是某个存储实现的性质。

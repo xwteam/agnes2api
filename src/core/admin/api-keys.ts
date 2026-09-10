@@ -131,7 +131,9 @@ export interface ApiKeyRecord {
    * ① 密钥是 128 位均匀随机（我们生成的，不是人选的口令）⇒ 没有字典可爆破，
    *    慢哈希想抵抗的那件事在这里不存在；
    * ② 慢哈希**不可查表**：每请求都要拿明文对全表逐条算一遍，200 把就是 200 次
-   *    KDF，Worker 的 10 ms CPU 限额上直接不可行。单轮摘要则是**算一次、查一次表**。
+   *    KDF —— 它跑在转发热路径上、与四条协议抢同一个事件循环，几十毫秒的同步 CPU
+   *    是不可接受的（当年的 Worker 形态更硬：10 ms CPU 限额上直接不可行）。
+   *    单轮摘要则是**算一次、查一次表**。
    * ③ 无盐是可查表的前提，而它在这里不损失什么：盐防的是「同一个口令在两处的
    *    摘要相同」，而这一族里两把密钥相同的概率是 2⁻¹²⁸。
    */
@@ -405,8 +407,7 @@ export function checkApiKeyExpiresAt(v: unknown, now: number): ApiKeyExpiryProbl
 /**
  * 一条记录的结构校验。**坏一条 = 整张表不认**（见 `parseApiKeyTable`）。
  *
- * 逐字段窄化而不是 `as`：这份 blob 来自存储，而存储的内容在双运行时下有两条来源
- *（KV 与 `store.json`），两条都可能被人手工编辑过。
+ * 逐字段窄化而不是 `as`：这份 blob 来自存储，而 `store.json` 可能被人手工编辑过。
  */
 export function isApiKeyRecord(v: unknown): v is ApiKeyRecord {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;

@@ -3,7 +3,7 @@ import { makeApp, TEST_ADMIN_TOKEN, TEST_CONFIG } from "../helpers/make-app.js";
 import type { KeyView } from "../../src/core/admin/key-view.js";
 
 /**
- * **contract ⇒ node 与 workerd 各跑一遍**（两份 vitest 配置的 include 都收 tests/contract）。
+ * ⚠️ 这份文件头原来写着「contract ⇒ node 与 workerd 各跑一遍」，v0.4.0 之后只剩一份配置。
  *
  * 每条用例的注释都写清它防住哪个真实故障——只写「测 keys 端点」的用例，
  * 在被删掉一半功能之后照样绿。

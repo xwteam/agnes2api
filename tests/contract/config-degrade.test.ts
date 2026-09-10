@@ -50,7 +50,7 @@ describe("注册机装不起来时，网关照常活着（真机 74% 500 的回�
     // **走真的 `buildApp`**，不是夹具装配：这次缺陷的成因整条链是
     // `buildApp → createConfigHolder → prime → loadConfig → registrarFromEnv`，
     // 照抄一份装配永远验证不了原件。
-    return buildApp({ GATEWAY_TOKEN: GW, ADMIN_TOKEN: ADMIN }, storage, nodeRuntime());
+    return buildApp({ GATEWAY_TOKEN: GW, ADMIN_TOKEN: ADMIN }, storage);
   }
 
   it("冷装配本身不抛，且一行「装配失败」都没打", async () => {

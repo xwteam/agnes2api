@@ -12,13 +12,10 @@ import {
 } from "../../src/http/admin/tend-lock.js";
 import type { RegistrarWiring } from "../../src/http/admin/handlers/registrar.js";
 import { buildApp } from "../../src/http/wire.js";
-import { workerRuntime } from "../../src/adapters/runtime-worker.js";
-import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 import {
-  MANUAL_CODE_TIMEOUT_MS, MANUAL_MINT_BATCH, MANUAL_ROUND_BUDGET_MS, WORKER_ROUND_BUDGET_MS,
+  MANUAL_CODE_TIMEOUT_MS, MANUAL_MINT_BATCH, MANUAL_ROUND_BUDGET_MS, SCHEDULED_ROUND_BUDGET_MS,
 } from "../../src/core/registrar/types.js";
 import { TEND_HISTORY_KEY, type TendRecord } from "../../src/core/admin/tend-history.js";
-import type { BackgroundCtx, RuntimeInfo } from "../../src/ports/runtime.js";
 import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 
@@ -93,7 +90,6 @@ async function fixtureA(o: {
   run?: () => Promise<void>;
   wire?: boolean;
   now?: () => number;
-  runtime?: RuntimeInfo;
   tendGate?: ReturnType<typeof createTendGate>;
   config?: Partial<GatewayConfig>;
 } = {}) {
@@ -111,7 +107,7 @@ async function fixtureA(o: {
     };
   const h = await makeApp(
     [], [], { registrar: REGISTRAR_ON, ...o.config }, now,
-    { storage, registrar: wiring, runtime: o.runtime, tendGate: o.tendGate },
+    { storage, registrar: wiring, tendGate: o.tendGate },
   );
   return { ...h, storage };
 }
@@ -140,7 +136,7 @@ describe("护栏 1：两个副本 / 两个并发请求，只有一个真的跑�
    * 那时锁根本轮不到出手 ⇒ 这一格会变成在测冷却，**对「锁存不存在」完全无感**
    *（第 5 种假阳性：覆盖的状态让被测的选择不可观测）。
    * **而「冷却过了、上一轮还在跑」这个窗口是真实存在的**：单轮墙钟预算是
-   * `WORKER_ROUND_BUDGET_MS` = 13 分钟，比 10 分钟的冷却长——**那正是存储锁唯一
+   * `SCHEDULED_ROUND_BUDGET_MS` = 13 分钟，比 10 分钟的冷却长——**那正是存储锁唯一
    * 无可替代的那段时间**。
    *
    * ⚠️ **替身存储带 `delayMs`**（第 8 种候选形态）：零延迟的替身让任何
@@ -175,7 +171,7 @@ describe("护栏 1：两个副本 / 两个并发请求，只有一个真的跑�
    *（线上实测发生过两次，日志里留着两条「上一轮补池仍在进行，跳过本次 Cron 触发」）。
    * 短于冷却之后，最坏情况下那把泄漏的锁在下一次可点之前就已经自己过期了。
    *
-   * **变红条件**：把 `TEND_LOCK_TTL_MANUAL_MS` 改回 `WORKER_CRON_WALL_CLOCK_MS`。
+   * **变红条件**：把 `TEND_LOCK_TTL_MANUAL_MS` 改回 `SCHEDULED_ROUND_WALL_CLOCK_MS`。
    */
   it("手动锁的 TTL 必须短于手动冷却 —— 泄漏的锁不许活到下一次可点", () => {
     expect(TEND_LOCK_TTL_MANUAL_MS).toBe(180_000);
@@ -378,7 +374,7 @@ describe("护栏 2 与 4：手动冷却 + 每日写预算闸（评审那条护�
    *
    * 手动补池是人驱动的、可能打到任意 isolate。计数做成实例字段的话，
    * **每一个新 isolate 都带着一份全新的预算** ⇒ 那道闸既拦不住什么也不构成上界，
-   * 而 Worker 上 isolate 是逐请求随机新建/回收的。
+   * （这句话原来的另一半说的是 Worker 上 isolate 逐请求随机新建/回收，那个形态没了）。
    * **变红条件**：把 `used` 搬进 handler 闭包 / app 实例字段。
    */
   it("两个 app 实例不许各拿一份新预算 —— 计数在存储里，不在实例上", async () => {
@@ -412,43 +408,48 @@ describe("护栏 2 与 4：手动冷却 + 每日写预算闸（评审那条护�
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 载体：Worker 的 waitUntil vs Node 的 fire-and-forget（硬约束 1）
+// 载体：整轮由端点自己 await 到底
+//
+// ⚠️ **这一节原来是两格，标题是「两种运行时的差异必须是被断言的」（硬约束 1）：**
+// 一格钉「Worker 侧必须把整轮交给 `ctx.waitUntil`」，一格是它的镜像
+// 「Node 侧连看都不看 `ctx`」。**v0.4.0 摘掉 Worker 形态之后，被对照的那一侧没了**，
+// `runtime.background` 与 `backgroundCtx()` 一起从源码里删掉了。
+//
+// **两格并成一格，判别力逐条交代**：
+// · 「响应必须等整轮跑完才返回」——**整条修复的承重断言，原样保留**（下面第一半）。
+//   它与运行时无关：变红条件仍是把 handler 里那行 `await task;` 删掉。
+// · 「不许再挂任何后台载体」——**保留**（下面第二半），但它今天钉的**不是**对等，
+//   而是「别再把那个空操作加回来」：Node 是长寿进程，`task` 一经创建就跑到底，
+//   再挂一次 `ctx.waitUntil` 是一次不做任何事的调用，只会让人以为还有一层保护。
+// · 「Worker 侧必须挂 waitUntil」——**删**，被断言的那个对象不存在了。
 // ───────────────────────────────────────────────────────────────────────────
 
-describe("整轮跑完之后由谁兜底 —— 两种运行时的差异必须是被断言的", () => {
-  function fakeCtx(): { ctx: BackgroundCtx; waited: Array<Promise<unknown>> } {
-    const waited: Array<Promise<unknown>> = [];
-    return { ctx: { waitUntil: (p) => { waited.push(p); } }, waited };
-  }
-
+describe("整轮由端点自己 await 到底", () => {
   /**
-   * **Worker 侧必须挂 `ctx.waitUntil`。**
-   * 不挂的话响应一返回 isolate 就可能停摆，补池被从中间砍断 ⇒ `mintOne` 的 `finally`
-   * 不跑 ⇒ **临时邮箱漏删**，攒够几个就把活跃邮箱名额吃光。
+   * 🔴 **这一格就是整条修复。** 从前端点起跑之后立刻回 202，整轮的载体只有
+   * `ctx.waitUntil`，而平台在响应后约 30 秒把它取消掉（实测 3/3）；取消不抛异常，
+   * 于是锁不放、历史不写、面板上与「压根没点过」逐字节不可区分。
+   * **变红条件**：把 handler 里那行 `await task;` 删掉。
    *
-   * **变红条件**：`workerRuntime().background` 改成裸 `void task`。
-   * ⚠️ **只断言「补池被调用过」抓不住这一条**（fire-and-forget 同样会调用它），
-   * 所以判据是**那个 promise 真的交到了 `waitUntil` 手里**，而且**它落定的那一刻
-   * 补池才算跑完**（执行体是 gated 的，202 返回时它还挂着）。
+   * 第二半（`waited.length === 0`）：**即使调用方递一个带 `waitUntil` 的 ctx 进来，
+   * handler 也一格都不许碰它。** 见本节顶部那段——它防的是「把那个空操作加回来」。
    */
-  it("Worker 形态：整轮交给 ctx.waitUntil 当兜底网，且响应必须等它跑完才返回", async () => {
+  it("响应等整轮跑完才返回；即使递一个带 waitUntil 的 ctx 进来也一格都不碰", async () => {
     const g = gatedRun();
-    const a = await fixtureA({ run: g.run, runtime: workerRuntime() });
-    const { ctx, waited } = fakeCtx();
+    const a = await fixtureA({ run: g.run });
+    const waited: Array<Promise<unknown>> = [];
+    const ctx = { waitUntil: (p: Promise<unknown>) => { waited.push(p); } };
 
     const p = a.app.request(
       "/admin/api/registrar/tend",
       { method: "POST", headers: withKey },
       undefined,
-      ctx as unknown as ExecutionContext,
+      // 第三个参数是 Hono 的 executionCtx。平台形态砍掉之后本仓没有任何生产路径
+      // 会填它，所以这里就地造一个结构等价物 —— 断言的就是 handler 一格都不碰它。
+      ctx as unknown as Parameters<typeof a.app.request>[3],
     );
     await started(g);
-    expect(waited.length, "补池没有交给 ctx.waitUntil —— 客户端断开时它会被截断").toBe(1);
 
-    // 🔴 **这一条断言就是整条修复。** 从前端点起跑之后立刻回 202，整轮的载体只有
-    // `ctx.waitUntil`，而平台在响应后约 30 秒把它取消掉（实测 3/3）；取消不抛异常，
-    // 于是锁不放、历史不写、面板上与「压根没点过」逐字节不可区分。
-    // **变红条件**：把 handler 里那行 `await task;` 删掉。
     let responded = false;
     void Promise.resolve(p).then(() => { responded = true; });
     await new Promise((r) => setTimeout(r, 20));
@@ -458,33 +459,7 @@ describe("整轮跑完之后由谁兜底 —— 两种运行时的差异必须�
     const res = await p;
     expect(res.status).toBe(200);
     expect(g.starts()).toBe(1);
-  });
-
-  /**
-   * **Node 形态：连看都不看 `ctx`。**
-   *
-   * 这是上一格的镜像另一半。Node 是长寿进程，fire-and-forget 就够；而**即使调用方
-   * 递了一个 ctx 进来也不许用它**——用了的话 Node 侧的行为就取决于一个只有 Worker
-   * 才有的东西，双运行时差异从"被断言的"退回"被容忍的"。
-   * **变红条件**：`nodeRuntime().background` 改成 `ctx?.waitUntil(task)`。
-   */
-  it("Node 形态：即使递了一个 ctx 进来也不用它，补池照样跑完", async () => {
-    const g = gatedRun();
-    const a = await fixtureA({ run: g.run, runtime: nodeRuntime() });
-    const { ctx, waited } = fakeCtx();
-
-    const p = a.app.request(
-      "/admin/api/registrar/tend",
-      { method: "POST", headers: withKey },
-      undefined,
-      ctx as unknown as ExecutionContext,
-    );
-    await started(g);
-    expect(waited.length, "Node 侧不该碰 ctx.waitUntil").toBe(0);
-    g.release();
-    const res = await p;
-    expect(res.status).toBe(200);
-    expect(g.starts(), "但补池确实跑起来了").toBe(1);
+    expect(waited.length, "handler 又挂了一层后台载体 —— 那是一次不做任何事的调用").toBe(0);
     await g.settled();
   });
 });
@@ -578,12 +553,14 @@ describe("鉴权与不可用状态", () => {
  * ⚠️ **这一组跑的是 `wire.ts` 里那份真的 `runManualTendRound` 与真的 `tendOnce`。**
  *
  * 夹具挑的是 `registrar.round_budget_impossible` 这条路径（照抄
- * `tests/contract/registrar-events.test.ts` 的同一个做法）：`CODE_TIMEOUT_MS` 调到比
- * `WORKER_ROUND_BUDGET_MS` 还大 ⇒ `tendOnce` 判定「单次最坏耗时装不下本轮预算」，
+ * `tests/unit/registrar/scheduling-wiring.test.ts` 的同一个做法）：`CODE_TIMEOUT_MS` 调到比
+ * `SCHEDULED_ROUND_BUDGET_MS` 还大 ⇒ `tendOnce` 判定「单次最坏耗时装不下本轮预算」，
  * **一次尝试都不开始**就打一条 error 事件并返回 ⇒ 零网络、毫秒级返回。
  *
- * 运行时用 `workerRuntime()`：那样后台任务会落进我们自己的 `ctx.waitUntil` 数组里，
- * 用例可以 `await` 完再断言存储，**不依赖任何"等一会儿"**。
+ * ⚠️ **这一组原来要注入 `workerRuntime()` 并自备一个 `ctx.waitUntil` 数组**，
+ * 好让用例 `await` 完后台任务再断言存储。**v0.4.0 之后端点自己 `await` 整轮再返回**
+ *（见本文件「整轮由端点自己 await 到底」那一节），`await app.request(...)` 返回时
+ * 该写的已经全写完 —— 夹具因此少了一整层，而「不依赖任何『等一会儿』」原样保住。
  */
 describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
   async function realApp(extra: Record<string, string> = {}) {
@@ -597,7 +574,7 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
       TARGET_KEYS: "1",
       // 刻意配一个**远大于手动上限**的值：这一轮会被 `Math.min` 压回
       // `MANUAL_CODE_TIMEOUT_MS`，而「压了没说」正是下面那一格要钉的东西。
-      CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1),
+      CODE_TIMEOUT_MS: String(SCHEDULED_ROUND_BUDGET_MS + 1),
       MINT_BATCH: "5",
       // ⚠️ **第二道保险，不是装饰**：本夹具"零网络"的第一道保险是生产代码真的传了
       // `roundBudgetMs`（`tendOnce` 一次尝试都不开始）。**变异把那一行删掉之后，
@@ -609,17 +586,12 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
 
       ...extra,
     };
-    const { app } = await buildApp(env, storage, workerRuntime());
-    const waited: Array<Promise<unknown>> = [];
-    const ctx = { waitUntil: (p: Promise<unknown>) => { waited.push(p); } };
+    const { app } = await buildApp(env, storage);
     const res = await app.request(
       "/admin/api/registrar/tend",
       { method: "POST", headers: withKey },
-      undefined,
-      ctx as unknown as ExecutionContext,
     );
-    await Promise.all(waited);
-    return { res, storage, waited };
+    return { res, storage };
   }
 
   /** 存储里所有 `event:` 分片里的全部条目。 */
@@ -636,7 +608,7 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
   /**
    * ⚠️⚠️ **手动补池必须传 `roundBudgetMs`，而且要与 Cron 那一份逐字相同。**
    *
-   * 不传的话：点一次「立即补池」，Worker 铸到第三把被平台回收，`mintOne` 的
+   * 不传的话：点一次「立即补池」，铸到第三把时进程被硬杀，`mintOne` 的
    * `finally` 不跑，**两个临时邮箱留在上游**；点几次占满活跃邮箱名额 ⇒ 注册机
    * 彻底铸不出 key，而面板上没有任何东西会说明原因。
    *
@@ -644,7 +616,7 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
    * · **不传** ⇒ `tendOnce` 根本不做预算判断 ⇒ 这条事件不会出现 ⇒ 红；
    * · **传另一个值** ⇒ 字段值对不上那个手写字面量 ⇒ 红。
    *
-   * ⚠️ **期望值写手写字面量 `780_000`，不写 `WORKER_ROUND_BUDGET_MS`**：从被测对象
+   * ⚠️ **期望值写手写字面量 `780_000`，不写 `SCHEDULED_ROUND_BUDGET_MS`**：从被测对象
    * 推导出来的期望值恒等于实际值，那样「两边一起改」就绕过去了。
    * 下面第二条断言把那个常量本身也钉成同一个字面量 —— Cron 路径用的正是它。
    */
@@ -703,11 +675,11 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
     expect(
       Number(MANUAL_ROUND_BUDGET_MS),
       "手动与 Cron 共用一份预算 —— 那正是被平台砍断的那个缺陷",
-    ).not.toBe(Number(WORKER_ROUND_BUDGET_MS));
+    ).not.toBe(Number(SCHEDULED_ROUND_BUDGET_MS));
     expect(MANUAL_ROUND_BUDGET_MS).toBe(70_000);
     expect(MANUAL_CODE_TIMEOUT_MS).toBe(60_000);
     expect(MANUAL_MINT_BATCH).toBe(1);
-    expect(WORKER_ROUND_BUDGET_MS, "Cron 那一份不该被这次改动碰到").toBe(780_000);
+    expect(SCHEDULED_ROUND_BUDGET_MS, "Cron 那一份不该被这次改动碰到").toBe(780_000);
   });
 
   /**
@@ -741,19 +713,13 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
       ADMIN_TOKEN: TEST_ADMIN_TOKEN,
       REGISTRAR_ENABLED: "true", REGISTRAR_PRIMARY: "yyds", YYDS_API_KEY: "k",
       // 目标 2、池里 1 ⇒ 缺口 1 ⇒ 真的走进补池循环（而不是 `need <= 0` 提前返回）。
-      TARGET_KEYS: "2", CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1),
+      TARGET_KEYS: "2", CODE_TIMEOUT_MS: String(SCHEDULED_ROUND_BUDGET_MS + 1),
       // 零网络的第二道保险，理由见 `realApp()` 里同名字段那一段。
       YYDS_BASE_URL: "https://yyds.invalid",
     };
-    const { app } = await buildApp(env, st, workerRuntime());
+    const { app } = await buildApp(env, st);
     st.lists = 0;
-    const waited: Array<Promise<unknown>> = [];
-    const ctx = { waitUntil: (p: Promise<unknown>) => { waited.push(p); } };
-    await app.request(
-      "/admin/api/registrar/tend", { method: "POST", headers: withKey },
-      undefined, ctx as unknown as ExecutionContext,
-    );
-    await Promise.all(waited);
+    await app.request("/admin/api/registrar/tend", { method: "POST", headers: withKey });
     expect(st.lists, "手动补池这条路上出现了 list()").toBe(0);
   });
 
@@ -772,7 +738,7 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
    * 静默变成假的。这一格就是补上的那个锚。
    *
    * ⚠️⚠️ **本格的 `env` 与本 describe 里其余几格不同，这不是疏忽：**
-   * 那几格用 `CODE_TIMEOUT_MS = WORKER_ROUND_BUDGET_MS + 1` 换「零网络」，
+   * 那几格用 `CODE_TIMEOUT_MS = SCHEDULED_ROUND_BUDGET_MS + 1` 换「零网络」，
    * 而那个取值同时踩中**两条逐轮配置警告**（`registrar.interval_shorter_than_worst_round`
    * 与 `registrar.attempt_exceeds_worker_budget`，`buildTendDeps` 里打）。
    * **实测**：拿那份 env 量到的是 **4 次 put**（多出来的第 4 次是 `event:` 分片，
@@ -800,15 +766,11 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
         YYDS_BASE_URL: "https://yyds.invalid",
         ...extra,
       };
-      const { app } = await buildApp(env, st, workerRuntime());
+      const { app } = await buildApp(env, st);
       const before = { puts: st.puts, deletes: st.deletes, lists: st.lists };
-      const waited: Array<Promise<unknown>> = [];
-      const ctx = { waitUntil: (p: Promise<unknown>) => { waited.push(p); } };
       const res = await app.request(
         "/admin/api/registrar/tend", { method: "POST", headers: withKey },
-        undefined, ctx as unknown as ExecutionContext,
       );
-      await Promise.all(waited);
       return {
         st, res,
         puts: st.puts - before.puts,
@@ -840,7 +802,7 @@ describe("真装配：手动补池的 roundBudgetMs 与补池历史", () => {
     // ── ② 对照组：同一次点击，配置换成会打逐轮警告的那一份 ⇒ 4 次 put ──────
     // 这一段是这个 3 的**判别力来源**：没有它，`toBe(3)` 证明不了计数器对
     // 「多落一次盘」是敏感的（本仓登记过的「覆盖态让被测的选择不可观测」）。
-    const warned = await clickOnce({ CODE_TIMEOUT_MS: String(WORKER_ROUND_BUDGET_MS + 1) });
+    const warned = await clickOnce({ CODE_TIMEOUT_MS: String(SCHEDULED_ROUND_BUDGET_MS + 1) });
     expect(warned.res.status).toBe(200);
     expect(
       warned.puts,

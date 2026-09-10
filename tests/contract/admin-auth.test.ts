@@ -420,7 +420,8 @@ describe("客户端 IP", () => {
   // ── 门控之内：CF-Connecting-IP 优先，XFF 只作兜底 ────────────────────────
   // 两个头的**可伪造性根本不同**：CF-Connecting-IP 由 Cloudflare 边缘写入，且会覆盖
   // 客户端传来的同名头，请求真的经过 CF 时伪造不了；XFF 是任何中间件都能追加的链，
-  // 客户端可以自己发一个假的。Worker 形态下 CF 定义上就在前面，那里优先 XFF 是错的。
+  // 客户端可以自己发一个假的。⚠️ 原来的理由是「Worker 形态下 CF 定义上就在前面」，
+  // 那个保证没了 —— 排序的取舍与代价改写在 `src/http/client-ip.ts` 里。
 
   it("TRUST_PROXY=1 且两个头同时在场时取 CF-Connecting-IP，**不**取伪造的 XFF", async () => {
     // 两个头刻意给**不同的值**：给同一个值的话谁赢都通过，是这个项目的第 1 种假阳性。
@@ -548,7 +549,7 @@ describe("审计字段不原样承载请求数据", () => {
 //
 // 装配期那次 checkAdminToken 挡不住这个：`loadConfig` 是
 // `env.GATEWAY_TOKEN ?? stored.gatewayToken`，部署者**没设**环境变量、改由存储提供时
-// （文档里教的 `wrangler kv key put` / 直接编辑 store.json，以及将来的面板，
+// （文档里教的直接编辑 store.json，以及面板，
 // 都能写这个键），gatewayToken 可以在运行中被改成等于 ADMIN_TOKEN——而中转口令是发给
 // **每一个下游用户**的，届时任何下游用户都能开后台，直到重启 / isolate 回收为止。
 //

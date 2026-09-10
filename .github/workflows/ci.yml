@@ -33,8 +33,8 @@ jobs:
       # ⚠️ **这里不许再写 `with: { version: … }`。** `pnpm/action-setup@v4` 会自己读
       # `package.json` 的 `packageManager`（今天是 `pnpm@9.15.4`）；两处都给的话它
       # **不是二选一而是硬失败**：`Error: Multiple versions of pnpm specified` ——
-      # 装都没装上，后面十三步一步都没跑。本仓在公开仓上一直红在这一步，而
-      # `scripts/prepush.sh` 是在本机直接跑那十三步的、看不见这一层。
+      # 装都没装上，后面每一道门禁都没跑。本仓在公开仓上一直红在这一步，而
+      # `scripts/prepush.sh` 是在本机直接跑那几道的、看不见这一层。
       # 判据在 `tests/unit/scripts-guard.test.ts`（`packageManager` 与 `version:` 不许同时在场）。
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -46,7 +46,7 @@ jobs:
       # 扫凭据的副作用去兜底）；这一步先把"是不是文本"这个前提确认掉，后面的
       # 评审包 diff、代码审计 grep、五语言 grep 核对、scan-secrets 才都建立在
       # 同一个成立的前提上。起因见 scripts/check-no-binary.mjs 文件头。
-      - name: 1/13 跟踪文件不许是二进制
+      - name: 1/11 跟踪文件不许是二进制
         run: node scripts/check-no-binary.mjs
       # 紧挨着上一步，因为它俩是**同一个决定的两半**：上一步对 docs/logo.png 开了一个
       # 具名放行（模板要求 README 头部块摆这张图），放行让出的那块——"这个文件里藏没藏
@@ -61,7 +61,7 @@ jobs:
       # 排在凭据扫描之前，理由与上一步相同：凭据扫描对"被压过一道的字节"和"不长成那六条
       # 形态的东西"读不到（本机实测，逐档数据在 scripts/check-png.mjs 文件头），
       # 所以进仓的那个二进制文件必须先被单独审一遍，而不是指望后面某一步顺带兜底。
-      - name: 2/13 具名放行的 PNG 结构审计 + 面板内联副本对账
+      - name: 2/11 具名放行的 PNG 结构审计 + 面板内联副本对账
         run: node scripts/check-png.mjs
       # 凭据扫描跑两条命令：第一条只扫工作树，第二条是它的**超集**（工作树，再加可达
       # 历史：blob / 提交信息 / 标签说明）。工作树因此被扫两遍，那是有意留着的：红出来
@@ -84,7 +84,7 @@ jobs:
       #    打了出来。条数会随每次提交漂，没人守得住，所以这里不写死一个数——要看就自己
       #    跑一次）。推出去的历史本身同样是公开的，日志只是把它照抄一遍 ——
       #    所以处置永远是**先把历史里那条命中弄干净再推**，而不是把这道门禁的输出藏起来。
-      - name: 3/13 凭据扫描
+      - name: 3/11 凭据扫描
         shell: bash
         run: |
           bash scripts/scan-secrets.sh
@@ -93,39 +93,48 @@ jobs:
             echo "::error::历史档失败。历史里那笔泄漏已经在一次性历史重写里清干净了（那之后全历史 0 命中），所以这一档红是新回归：多半是某个新提交的提交信息、或某个已删文件留在历史里的 blob。处置是把那几个提交改掉，不是再做一次历史重写，也不是放宽这道门禁。命中的原文见本步骤 stderr，边界与欠账见 scripts/scan-secrets.sh 文件头"
             exit $rc
           }
-      - name: 4/13 生成面板资源
+      - name: 4/11 生成面板资源
         run: node scripts/build-ui.mjs
-      - name: 5/13 生成物一致性（仓库里那份必须与 admin-ui/ 一致）
+      - name: 5/11 生成物一致性（仓库里那份必须与 admin-ui/ 一致）
         run: git diff --exit-code src/ui/assets.generated.ts
-      - name: 6/13 面板体积预算
+      - name: 6/11 面板体积预算
         run: node scripts/check-ui-budget.mjs
-      - name: 7/13 i18n 完整性
+      - name: 7/11 i18n 完整性
         run: node scripts/check-i18n.mjs
-      - name: 8/13 KV namespace id 仍是占位符
-        run: node scripts/check-wrangler-placeholder.mjs
+      # ⚠️ **这里原来还有一道「KV namespace id 仍是占位符」**（`node scripts/check-wrangler-placeholder.mjs`）。
+      # 它守的是「真实的 KV 命名空间 id 被提交进公开仓 = 泄漏部署细节」，而 v0.4.0 摘掉
+      # Cloudflare Worker 形态之后 `wrangler.toml` 与那个脚本一起没了 ⇒ **不是这条不变量
+      # 不重要了，是它的被测对象不存在了**。同一类风险（凭据 / 部署细节进公开仓）本仓另有
+      # 独立的一道：`bash scripts/scan-secrets.sh`，射程是整棵工作树与全历史。
       # 后补的这一道：**注释里指向的位置必须真实存在。**
       # 排在类型检查之前是有意为之——它只读文本、几百毫秒就跑完，而它抓的那类缺陷
       # （「这条由 X 用例钉着」指向一条根本不存在的用例）恰恰是**读代码的人会当真、
       # 而所有其它门禁都看不见**的那一类。本仓台账已为它记了二十余次。
-      - name: 9/13 注释里的指向必须解析得开
+      - name: 8/11 注释里的指向必须解析得开
         run: node scripts/check-comment-refs.mjs
-      - name: 10/13 类型检查
+      - name: 9/11 类型检查
         run: pnpm typecheck
-      # 下面 `pnpm test 2>&1` / `pnpm test:workers 2>&1` 这两处**不得**追加任何
+      # 下面那一步里的 `pnpm test` **不得**追加任何
       # 文件路径过滤器（如 `pnpm test tests/foo.test.ts`）。tests/global-setup.ts 里
       # 的收集门禁按「带没带过滤器」分档，一旦 CI 带了过滤器，门禁会在**不报错、不提示**
-      # 的情况下静默跳过——这个前提由 tests/unit/scripts-guard.test.ts 钉住，改这两行前
+      # 的情况下静默跳过——这个前提由 tests/unit/scripts-guard.test.ts 钉住，改这一行前
       # 先去看那份测试。
+      # ⚠️ **这段话里刻意不写那条命令的完整字面**（带重定向的那一串）：
+      # `tests/unit/scripts-guard.test.ts` 的「跑测试那一步显式声明 shell: bash」在 v0.4.0
+      # 改成了**按内容定位**——它找的就是那个字面，先撞上注释里的一份副本就会锚到上一步去，
+      # 于是那一格测的是「类型检查那一步有没有 shell: bash」，实测当场红。
       #
       # 门禁本身是否真的跑过，光看 `pnpm test` 的退出码看不出来（静默跳过时退出码同样是
       # 0）。所以下面用 tee 把输出落一份日志，再 grep 收集门禁自己打的成功横幅
       # `[collection-guard] ✅`——横幅缺失就说明门禁没跑，即使测试全绿也要让这一步失败。
       #
       # 这里**不**在 CI 层重新做一遍「磁盘清单 vs 实际收集」的比对：那套比对已经在
-      # tests/global-setup.ts 里逐配置（node 一份、workerd 一份，各自独立核对，不取并集）
-      # 实现过一次，CI 只需要确认它被跑到——重新实现一遍等于多一处可能出现同一类并集
-      # 语义盲区的地方。
-      - name: 11/13 单元 / 契约 / 前端纯函数测试（Node 运行时）
+      # tests/global-setup.ts 里实现过一次，CI 只需要确认它被跑到——重新实现一遍等于多一处
+      # 可能出现同一类并集语义盲区的地方。
+      # ⚠️ 那套比对的判定**写法**仍然是「逐配置各自核对、不取并集」，只是 v0.4.0 之后
+      # 全仓只剩一份 vitest 配置 ⇒ 「逐配置」与「并集」今天没有可观测差异。
+      # 这句话不是说盲区被修好了：它是那份文件刻意留着的形状，理由写在那边的文件头。
+      - name: 10/11 全部测试（单元 / 契约 / 前端纯函数）
         shell: bash
         run: |
           pnpm test 2>&1 | tee /tmp/test-node.log
@@ -133,13 +142,10 @@ jobs:
             echo "::error::收集门禁没有跑过（日志里没见到 [collection-guard] ✅），它可能被静默跳过了"
             exit 1
           }
-      - name: 12/13 契约测试（workerd 运行时）
-        shell: bash
-        run: |
-          pnpm test:workers 2>&1 | tee /tmp/test-workers.log
-          grep -qF '[collection-guard] ✅' /tmp/test-workers.log || {
-            echo "::error::收集门禁没有跑过（日志里没见到 [collection-guard] ✅），它可能被静默跳过了"
-            exit 1
-          }
-      - name: 13/13 构建
+      # ⚠️ **这里原来还有一步「契约测试（workerd 运行时）」**（`pnpm test:workers`，日志落
+      # `/tmp/test-workers.log`，横幅同样 grep 一次）。v0.4.0 摘掉 Cloudflare Worker 形态之后
+      # 那个测试入口连同 `vitest.workers.config.ts` 一起没了 ⇒ 全仓只剩上面这一个入口。
+      # `scripts/prepush.sh` 的测试计数那一格与它同步收成一份日志；
+      # `tests/unit/scripts-guard.test.ts` 反过来钉着「package.json 里不许再长出第二个测试入口」。
+      - name: 11/11 构建
         run: pnpm build

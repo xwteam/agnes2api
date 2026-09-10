@@ -448,7 +448,7 @@ describe("四元组与凭据的读法", () => {
     },
     secrets: ["gatewayToken"],
     changed: ["maxStrikes"],
-    propagation: { configTtlMs: 30_000, kvEdgeCacheMs: 60_000, visibilityUpperBoundMs: 90_000 },
+    propagation: { configTtlMs: 30_000, visibilityUpperBoundMs: 30_000 },
   };
 
   it("锁定字段：locked 为真，且带着是哪个环境变量", () => {
@@ -475,9 +475,13 @@ describe("四元组与凭据的读法", () => {
     expect(changedFields({}), "没有这一格时是空数组，不是 null").toEqual([]);
   });
 
-  /** **不许写「立即生效」**（设计 §5.2）：读不到就不渲染那一行，不伪造 0。 */
+  /**
+   * **不许写「立即生效」**（设计 §5.2）：读不到就不渲染那一行，不伪造 0。
+   * ⚠️ 上界从 90_000 变成 30_000 是因为 KV 边缘缓存那一层在 v0.4.0 整层删了
+   *（上界退回 `CONFIG_TTL_MS` 本身），不是判据放宽。
+   */
   it("传播上界读不到时逐格 null，不伪造 0", () => {
-    expect(propagationView(body).visibilityUpperBoundMs).toBe(90_000);
+    expect(propagationView(body).visibilityUpperBoundMs).toBe(30_000);
     expect(propagationView({}).visibilityUpperBoundMs).toBeNull();
   });
 

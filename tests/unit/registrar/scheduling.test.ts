@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { buildTendDeps } from "../../../src/http/wire.js";
 import { KeyPoolRepo } from "../../../src/core/keypool-repo.js";
 import { MemoryStorage } from "../../helpers/fake-storage.js";
@@ -62,19 +62,12 @@ describe("buildTendDeps", () => {
   });
 });
 
-describe("Worker scheduled 处理器", () => {
-  it("未启用时不调 tendOnce", async () => {
-    const mod = await import("../../../src/entry/worker.js");
-    const spy = vi.fn();
-    // scheduled 内部通过 buildTendDeps 得到 null 后直接返回，不应抛错
-    await expect(
-      mod.default.scheduled!(
-        { scheduledTime: Date.now(), cron: "*/30 * * * *" } as ScheduledController,
-        { GATEWAY_TOKEN: "t", POOL: new MemoryStorage() } as never,
-        { waitUntil: spy, passThroughOnException: () => {} } as never,
-      ),
-    ).resolves.toBeUndefined();
-    // 未启用时零副作用：waitUntil 不该被调用（没有后台任务要延长执行）。
-    expect(spy).not.toHaveBeenCalled();
-  });
-});
+/*
+ * ⚠️ **这里原来还有一个 `describe("Worker scheduled 处理器")`，v0.4.0 整块删掉了。**
+ * 它只有一格：「未启用时不调 tendOnce」，被测对象是 Worker 入口那个 `scheduled()` 导出，
+ * 而那个入口连同整个 Worker 形态一起删了。
+ * **同一条不变量在 Node 那一侧一直有自己的一格**：
+ * `tests/unit/registrar/scheduling-wiring.test.ts` 的
+ * 「Node 侧：REGISTRAR_ENABLED=false（默认）时一次都不调 tendOnce」——
+ * 删掉的是那一格的孪生体，不是那条不变量本身。
+ */

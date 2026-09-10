@@ -11,7 +11,7 @@ const AUTH = { headers: { "x-admin-key": TEST_ADMIN_TOKEN } };
  * 有事件落盘"）用的是**零延迟**的 `MemoryStorage`——它的 `get`/`put` 是包了 `async`
  * 的同步 Map 操作，每次 `await` 只消耗**一个微任务 tick**，不产生任何真实的异步
  * 延迟。**实测**：把 `log-flush.ts` 的 `await flush()` 改成 fire-and-forget 的
- * `flush()` 之后，那条用例**仍然全绿**（两种运行时都是）——因为 Hono 自身处理
+ * `flush()` 之后，那条用例**仍然全绿**（当时两种运行时都是）——因为 Hono 自身处理
  * 一个请求要经过的微任务链，比 `maybeFlush()` 内部 `get→put` 那几级 `await` 更长，
  * 零延迟存储的写入总能在 `app.request()` 真正返回前"追上"，掩盖了
  * await/fire-and-forget 的差异。这正是硬要求 B 第 4 条点名的第二种 ESCAPED
@@ -20,7 +20,7 @@ const AUTH = { headers: { "x-admin-key": TEST_ADMIN_TOKEN } };
  *
  * 用 `new MemoryStorage(5)`（**真实带异步延迟**，5ms，与 `FakeFetcher` 的
  * `delayMs` 同一个机制，见 `tests/helpers/fake-storage.ts` 的说明）包一层，
- * 才能把"响应有没有等写完"这件事变得可观测——这与生产里 Worker 真实 KV 写入 /
+ * 才能把"响应有没有等写完"这件事变得可观测——这与生产里真实落盘 /
  * Node 真实磁盘写入都有不可忽略的 IO 延迟是同一个道理。下面这些用例就是诊断出
  * 这一点之后新补的，是本任务里唯一真正守住「响应返回前必须落盘」的用例；上面那条照抄简报的
  * 用例继续保留（它仍然验证"最终确实落盘"，只是不验证"响应返回前"这个时序）。
@@ -90,10 +90,11 @@ describe("GET /admin/api/events", () => {
   /**
    * **（订正 / 待验证）这是本期唯一一处依赖运行时调度时序的地方。**
    * 事件落库的 `put` 在中间件里被 `await`，必须在响应返回前完成。
-   * 两种运行时**各断言一遍**——workerd 的 isolate 生命周期与 node 完全不同，
-   * 只在 node 侧验过就假设 worker 侧一样，正是这个项目栽过的那类「未经核实的前提」。
+   * 两种运行时**各断言一遍**——当年 workerd 的 isolate 生命周期与 node 完全不同，
+   * 只在一侧验过就假设另一侧一样，正是这个项目栽过的那类「未经核实的前提」。
+   * ⚠️ v0.4.0 之后只剩一侧，这条限定没有对象了，断言本身照旧成立。
    */
-  it("一次请求之后，存储里确实有事件分片落盘（两种运行时各跑一遍）", async () => {
+  it("一次请求之后，存储里确实有事件分片落盘（当时是两种运行时各跑一遍，v0.4.0 之后只剩一遍）", async () => {
     let t = 0;
     // `st` 的内部 MemoryStorage 与下面 makeApp 的 `now` 必须共用同一个 `t`
     // （评审发现：TTL 判定默认走真实 Date.now()，不对齐会让刚落盘的事件"生下来
@@ -147,7 +148,7 @@ describe("GET /admin/api/events", () => {
    * "`await flush()` 与否"这件事才会在**响应返回的那一刻**产生可观测的差异：
    * awaited 版本里 `app.request()` 的 Promise 要等 `maybeFlush()` 的存储调用全部
    * 落定才会 resolve；fire-and-forget 版本里 `app.request()` 提前 resolve，
-   * 这时候存储里还没有写完。两种运行时各跑一遍。
+   * 这时候存储里还没有写完。当时是两种运行时各跑一遍，v0.4.0 之后只剩一遍。
    */
   it("响应返回的那一刻（不是之后某个时刻），事件已经落盘（真实异步延迟下可观测）", async () => {
     let t = 0;

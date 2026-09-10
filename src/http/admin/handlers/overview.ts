@@ -5,13 +5,10 @@ import type { StorageHealth } from "../../../core/storage-health.js";
 import type { RuntimeInfo } from "../../../ports/runtime.js";
 import { poolHealth } from "../../../core/keypool.js";
 import { sumStats } from "../../../core/admin/stats.js";
-// **两个数都从 `config-holder.ts` 取，这里一个字面量都没有。**
-// `KV_EDGE_CACHE_MS` 原本是本文件的模块私有常量，设置页那一轮把它移了过去：
-// `PUT /admin/api/config` 的 `propagation` 块要报同一个上界，而那个数字在五语言
-// DEPLOY.md 里是对用户的承诺——抄成两份就等于允许概览页与保存回执各说一个数。
-// 面板上的两条「多久能看见」上界都要把它算进去：设计 §5.2 在 config 那条上算了，
-// 池快照那条原来漏了，五语言文档已经改准。
-import { CONFIG_TTL_MS, KV_EDGE_CACHE_MS } from "../../config-holder.js";
+// **这个数从 `config-holder.ts` 取，这里一个字面量都没有**：`PUT /admin/api/config`
+// 的 `propagation` 块要报同一个上界，而那个数字在五语言 DEPLOY.md 里是对用户的承诺
+// ——抄成两份就等于允许概览页与保存回执各说一个数。
+import { CONFIG_TTL_MS } from "../../config-holder.js";
 
 /**
  * 逐块取数，**某块失败就该块返回 `null`**（设计文档 §10.1 的失败降级纪律）。
@@ -51,10 +48,13 @@ export function overviewHandler(deps: {
     /**
      * **`process()` 包 `block()`**：`nodeRuntime().process()` 内部调用
      * `process.memoryUsage()`，理论上可抛（V8 罕见故障）；不包的话一次这样的抖动
-     * 会让整个 `overview` 请求 500，与「逐块降级」的立意矛盾。类型上与「Worker
-     * 恒 null」天然复用同一个 `ProcessMetrics | null`——block() 失败与「本来就是
-     * serverless」在前端渲染成同一句「Serverless · 无常驻进程」，这个简化是可接受的：
-     * 两者对用户来说都是「这里没有可看的进程指标」。
+     * 会让整个 `overview` 请求 500，与「逐块降级」的立意矛盾。
+     * ⚠️ 这段原来还有半句：「类型上与『Worker 恒 null』天然复用同一个
+     * `ProcessMetrics | null`」——**Worker 形态没了，`null` 今天只剩 `block()` 失败
+     * 这一个成因**。面板那一侧仍然把它渲染成「Serverless · 无常驻进程」，
+     * **那句话现在偏了**：真正发生的是「这一次取进程指标出错了」。
+     * 🟡 登记在这里：改文案要动 `admin-ui/js/pure/overview.mjs` 的 `processCells()`
+     * 与五语言 i18n，属于面板那一面的活。
      */
     const processMetrics = await block(() => deps.runtime.process());
 
@@ -89,16 +89,21 @@ export function overviewHandler(deps: {
       })(),
       /**
        * 两个 TTL **都要给**（当时登记的那条发现）：只显示一个就是又一个
-       * 「面板不撒谎」的破口。两个上界都把 KV 边缘缓存算进去——池快照那条原来漏了。
+       * 「面板不撒谎」的破口。
+       *
+       * ⚠️ **两条上界就等于各自的 TTL，中间不许再加任何一项。** 上一版这里各加了一个
+       * 「KV 边缘缓存」的量（池那条 = 池 TTL + 60s、config 那条 = 30s + 60s），
+       * 而 KV 这一层随 Worker 形态一起没了，`FileStorage.get` 是直接 `readFile`
+       * ⇒ 那两个数是**面板直接显示给运维**的传播上界，多加一项就是多报 60 秒。
+       * 相加逻辑整层删掉之后，别再顺手把它加回来（详见 `config-holder.ts`）。
        * `cfg` 恒有值，这两个数因此恒是数字，不再是 `number | null`。
        */
       freshness: {
         poolCacheTtlMs: poolTtl,
-        poolVisibilityUpperBoundMs: poolTtl + KV_EDGE_CACHE_MS,
+        poolVisibilityUpperBoundMs: poolTtl,
         poolTouchIntervalMs: touch,
         configTtlMs: CONFIG_TTL_MS,
-        configVisibilityUpperBoundMs: CONFIG_TTL_MS + KV_EDGE_CACHE_MS,
-        kvEdgeCacheMs: KV_EDGE_CACHE_MS,
+        configVisibilityUpperBoundMs: CONFIG_TTL_MS,
       },
       config: {
         registrarEnabled: cfg.registrar.enabled,

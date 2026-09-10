@@ -12,7 +12,7 @@ import type { Storage } from "../../src/ports/storage.js";
 /**
  * 用量三条端点的契约。
  *
- * **contract ⇒ node 与 workerd 各跑一遍**（`tests/global-setup.ts` 的 `POLICY` 强制）。
+ * ⚠️ 这份文件头原来写着「contract ⇒ node 与 workerd 各跑一遍」，v0.4.0 之后只剩一份配置。
  *
  * ── 这一组的头等目标：把「长得一模一样的六件事」变成六种可区分的响应 ──────────
  *
@@ -484,7 +484,7 @@ describe("GET /admin/api/usage 的查询参数契约", () => {
     expect(body.note).toBe("range_clamped");
   });
 
-  it("timezone 恒是 UTC 并且写在响应里 —— Worker 是多 colo 的，硬编码 CST 是自托管单地域的假设", async () => {
+  it("timezone 恒是 UTC 并且写在响应里 —— 硬编码 CST 是「部署在哪个时区」的假设，改容器 TZ 就错位", async () => {
     const { get } = await tier2On({ now: () => NOW });
     const body = await (await get("/admin/api/usage")).json() as { timezone: string };
     expect(body.timezone).toBe("UTC");
@@ -956,7 +956,7 @@ describe("30d 那一档失败得诚实", () => {
    * KV 算哪一行）。⇒ **任何注释都不许写成「60 次是安全的」**，能做的只有让它
    * **失败得诚实**。
    * ⚠️ 真机冒烟（`scripts/smoke-dual-runtime.sh` 的 ④ 那一格）已经量过「跑不跑得完」
-   * 那一半：本次实测在本地 workerd 上跑得完。**「线上免费档会不会超」那一半仍然没有
+   * 那一半：真机冒烟量过它跑得完。**「那个平台上限」那一半随 Worker 形态一起没了，
    * 答案**（本地 dev 不是线上边缘），所以这一格照旧存在，措辞照旧不许软化——
    * 两句话的射程差别写在 `src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方。
    *
@@ -1502,7 +1502,7 @@ describe("record 期出错与 flush 期出错说的不是同一句话", () => {
       const st = new UsageReadCounter(new MemoryStorage(undefined, () => t));
       const { app } = await buildApp(
         { GATEWAY_TOKEN: "t", ADMIN_TOKEN: TEST_ADMIN_TOKEN, USAGE_STATS_ENABLED: "true" },
-        st, nodeRuntime(), { now: () => t, newShardId: () => "u2" },
+        st, { now: () => t, newShardId: () => "u2" },
       );
       // 池子空 ⇒ 转发直接 503 `pool_empty`，一个出站请求都不发，而 Tier-2 该记的
       // 终态一样不少（`ok: false` 也是终态）。

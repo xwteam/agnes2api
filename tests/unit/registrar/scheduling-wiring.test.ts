@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileStorage } from "../../../src/adapters/storage-file.js";
 import type { TendResult } from "../../../src/core/registrar/tender.js";
-import type { Env } from "../../../src/entry/worker.js";
 
 /**
  * 调度接线的守护测试。
@@ -94,7 +93,6 @@ vi.mock("node:timers", async (importOriginal) => {
 });
 
 const { main } = await import("../../../src/entry/node.js");
-const worker = (await import("../../../src/entry/worker.js")).default;
 
 const RESULT: TendResult = {
   skipped: false, available: 0, attempted: 0, minted: 0, mintedByChannel: {}, failures: [],
@@ -175,63 +173,18 @@ function close(server: Awaited<ReturnType<typeof main>>): Promise<void> {
   });
 }
 
-interface KvCounts { list: number; get: number; put: number; delete: number }
-
-/**
- * 只实现 KvStorage 用到的四个方法，行为对齐真实 KV（存字符串、按 json 取回）。
- * 四种操作全数上：只数其中几种的计数桩，关于漏掉那几种的断言就是假的（早先的教训）。
+/*
+ * ⚠️ **这里原来还有三样 Worker 侧的夹具，v0.4.0 一并删掉了**（那个入口没了）：
+ * `interface KvCounts`、`fakeKv()`（只实现 `KvStorage` 用到的四个方法的 KV 替身）、
+ * `workerEnv()`。Node 侧的对应物是 `nodeEnv()` + 真 `FileStorage`，
+ * 「注册机关着也要对账一次」那一格因此改用 `vi.spyOn(FileStorage.prototype, "list")` 计数。
  */
-function fakeKv(counts: KvCounts = { list: 0, get: 0, put: 0, delete: 0 }): Env["POOL"] {
-  const store = new Map<string, string>();
-  return {
-    async get(key: string) {
-      counts.get++;
-      const raw = store.get(key);
-      return raw === undefined ? null : JSON.parse(raw);
-    },
-    async put(key: string, value: string) {
-      counts.put++;
-      store.set(key, value);
-    },
-    async delete(key: string) {
-      counts.delete++;
-      store.delete(key);
-    },
-    async list({ prefix }: { prefix?: string } = {}) {
-      counts.list++;
-      const keys = [...store.keys()]
-        .filter((k) => prefix === undefined || k.startsWith(prefix))
-        .map((name) => ({ name }));
-      return { keys, list_complete: true, cacheStatus: null };
-    },
-  } as unknown as Env["POOL"];
-}
 
-function workerEnv(extra: Record<string, unknown> = {}): Env {
-  return {
-    GATEWAY_TOKEN: "t",
-    POOL: fakeKv(),
-    REGISTRAR_ENABLED: "true",
-    REGISTRAR_PRIMARY: "yyds",
-    YYDS_API_KEY: "k",
-    ...extra,
-  } as unknown as Env;
-}
-
-function controller(): ScheduledController {
-  return { scheduledTime: Date.now(), cron: "*/30 * * * *" } as ScheduledController;
-}
-
-function fakeCtx(): { ctx: ExecutionContext; waited: Array<Promise<unknown>> } {
-  const waited: Array<Promise<unknown>> = [];
-  const ctx = {
-    waitUntil: (p: Promise<unknown>) => {
-      waited.push(p);
-    },
-    passThroughOnException: () => undefined,
-  } as unknown as ExecutionContext;
-  return { ctx, waited };
-}
+/*
+ * ⚠️ **`controller()` 与 `fakeCtx()` 两个夹具也随 Worker 形态一起删了**：
+ * 前者造 `ScheduledController`、后者造带 `waitUntil` 的 `ExecutionContext`，
+ * 两者都只服务于 `worker.scheduled!(controller(), env, ctx)` 这种调用。
+ */
 
 beforeEach(() => {
   tendOnceMock.mockReset();
@@ -337,58 +290,24 @@ describe("调度接线：两个入口确实会调到 tendOnce", () => {
     }
   });
 
-  it("Worker 侧：scheduled 交给 ctx.waitUntil 的 promise 确实会调用 tendOnce", async () => {
-    tendOnceMock.mockResolvedValue(RESULT);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const { ctx, waited } = fakeCtx();
-    try {
-      await worker.scheduled!(controller(), workerEnv(), ctx);
-      expect(waited).toHaveLength(1);
-      await waited[0];
-      expect(tendOnceMock).toHaveBeenCalledTimes(1);
-      const deps = tendOnceMock.mock.calls[0]![0] as { config: { enabled: boolean }; providers: Record<string, unknown> };
-      expect(deps.config.enabled).toBe(true);
-      expect(deps.providers.yyds).toBeDefined();
-    } finally {
-      logSpy.mockRestore();
-    }
-  });
-
-  it("Worker 侧：REGISTRAR_ENABLED 未开时不调 tendOnce（不触达邮箱/Agnes）", async () => {
-    // 注意口径：这里承诺的是**不产生外部副作用**（不触达邮箱服务、不触达 Agnes），
-    // 而不是「一次存储访问都没有」——loadConfig 本来就要读一次配置，从某一版
-    // 起索引对账也会读一次存储，见下面那条用例。
-    tendOnceMock.mockResolvedValue(RESULT);
-    const { ctx, waited } = fakeCtx();
-    await worker.scheduled!(controller(), workerEnv({ REGISTRAR_ENABLED: undefined, REGISTRAR_PRIMARY: undefined }), ctx);
-    expect(tendOnceMock).not.toHaveBeenCalled();
-    expect(waited).toHaveLength(0);
-  });
+  /*
+   * ⚠️ **这里原来还有两格 Worker 侧的孪生体，v0.4.0 删掉了**（入口本身没了）：
+   * ·「Worker 侧：scheduled 交给 ctx.waitUntil 的 promise 确实会调用 tendOnce」
+   * ·「Worker 侧：REGISTRAR_ENABLED 未开时不调 tendOnce（不触达邮箱/Agnes）」
+   * 两条不变量本身都由上面的 Node 侧那两格接着钉（「启动立即跑一轮……」与
+   * 「REGISTRAR_ENABLED=false（默认）时一次都不调 tendOnce」），删的是孪生体不是判据。
+   */
 });
 
 describe("key 池索引对账接在「注册机是否启用」的判断之前", () => {
-  // 两个入口都是 `if (!deps) return`，对账放在它后面等于**注册机关着时永不对账**，
-  // 而索引残留（孤儿记录 / 幽灵索引项）恰恰不挑注册机开没开。挪到后面这两条即变红。
+  // 入口是 `if (!deps) return`，对账放在它后面等于**注册机关着时永不对账**，
+  // 而索引残留（孤儿记录 / 幽灵索引项）恰恰不挑注册机开没开。挪到后面这一条即变红。
 
-  it("Worker 侧：REGISTRAR_ENABLED 未开，scheduled() 仍然对账一次（产生 list）", async () => {
-    tendOnceMock.mockResolvedValue(RESULT);
-    const counts: KvCounts = { list: 0, get: 0, put: 0, delete: 0 };
-    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const { ctx, waited } = fakeCtx();
-    try {
-      await worker.scheduled!(
-        controller(),
-        workerEnv({ POOL: fakeKv(counts), REGISTRAR_ENABLED: undefined, REGISTRAR_PRIMARY: undefined }),
-        ctx,
-      );
-      expect(tendOnceMock, "注册机确实是关着的").not.toHaveBeenCalled();
-      expect(waited).toHaveLength(0);
-      expect(counts.list, "对账必须发生在「注册机是否启用」的判断之前").toBe(1);
-    } finally {
-      infoSpy.mockRestore();
-    }
-  });
-
+  /*
+   * ⚠️ **这里原来还有一格「Worker 侧：REGISTRAR_ENABLED 未开，scheduled() 仍然对账一次」，
+   * v0.4.0 删掉了**（入口没了）。同一条不变量由下面 Node 侧那一格接着钉。
+   * ⚠️ **上面那句「两个入口都是 `if (!deps) return`」也跟着改了**：今天只剩一个入口。
+   */
   it("Node 侧：REGISTRAR_ENABLED 未开，每一轮仍然对账一次（产生 list）", async () => {
     tendOnceMock.mockResolvedValue(RESULT);
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -431,7 +350,7 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
    *
    * ⚠️ **这一格是变异验证逼出来的，成因如实登记**：那条变异的 Node 那一半
    * （`src/entry/node.ts` 的 `finally` 里删掉 `await deps.flush()`）在补上这一格
-   * **之前是 ESCAPED 的**——`tests/contract/registrar-events.test.ts` 的
+   * **之前是 ESCAPED 的**——当时那份 `registrar-events` 契约测试的
    * 「一轮补池之后，event: 键空间里确实有 registrar.* 事件」只驱动
    * **Worker** 入口（契约测试要在 workerd 下也跑一遍，而 `src/entry/node.ts`
    * 依赖 `@hono/node-server` / `node:timers`，在 workerd 里 import 不进去）。
@@ -500,7 +419,7 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
    * 不确定，**未变异下会绿、变异下也会绿**。判据必须是**延迟**，不是顺序。
    *
    * 这是「双运行时对等——差异必须被断言而非容忍」里 Node 那一半最后一个没被
-   * 断言的口子（Worker 那一半由 `tests/contract/registrar-events.test.ts` 的
+   * 断言的口子（Worker 那一半由当时那份 `registrar-events` 契约测试的
    * 「waitUntil 的 promise 落定时事件已经落盘，不是之后某个时刻（真实异步延迟下可观测）」
    * 用带 5ms 延迟的替身盖住）。
    */
@@ -602,7 +521,7 @@ describe("key 池索引对账接在「注册机是否启用」的判断之前", 
 
 });
 
-describe("Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）", () => {
+describe("Node 侧每轮重读配置（面板改完不必重启进程）", () => {
   it("从存储把注册机打开/关掉，都无需重启进程就能生效", async () => {
     // 面板就是这份配置的编辑器（设计 §11）。此前 Node 侧把配置冻结在启动
     // 时刻：启动时关着就根本没有定时器（怎么改存储都打不开），启动时开着就从
@@ -688,40 +607,31 @@ describe("Node 侧每轮重读配置（与 Worker 每次 Cron 重读对齐）", 
   });
 });
 
-describe("轮级墙钟预算只装在有平台墙钟上限的那个入口上", () => {
-  // 预算本身**做什么**由 tender.test.ts 的三条用例守（真时钟推进、真的少跑一次、
-  // 每次尝试都完整走完）。这里守的是接线：预算只能出现在 Worker 那一侧，而且它的
-  // 取值必须同时满足两条真实约束——比 Cron 墙钟小（否则等于没有余量，照样会被平台
-  // 从中间砍断、邮箱漏删），又比默认配置下的单次最坏耗时大（否则一次尝试都不敢
-  // 开始，注册机直接瘫掉）。只断言「有这个字段」是不够的。
-
-  /** Cloudflare Cron Trigger 单次调用的墙钟上限。 */
-  const CRON_WALL_CLOCK_MS = 900_000;
-  /** 默认配置下单次铸 key 的最坏墙钟：CODE_TIMEOUT_MS(120s) × 通道数(最多 2)。 */
-  const WORST_ATTEMPT_DEFAULT_MS = 120_000 * 2;
+describe("定时轮不带轮级墙钟预算", () => {
+  /*
+   * 预算本身**做什么**由 tender.test.ts 的三条用例守（真时钟推进、真的少跑一次、
+   * 每次尝试都完整走完）。这里守的是接线。
+   *
+   * ⚠️⚠️ **这一组原来叫「轮级墙钟预算只装在有平台墙钟上限的那个入口上」，是两格
+   * 一正一反；v0.4.0 之后只剩一格，而且剩下的是**反**的那一格。** 交代清楚：
+   * · 删掉的那格是「Worker 侧传预算，且取值留出了余量、又足够开始一次尝试」——
+   *   传预算的是 Worker 入口那个 `scheduled()` 导出，那个入口整个删了。
+   *   ⇒ **今天 `tendOnce` 的 `roundBudgetMs` 只有手动补池那一条路会传**
+   *   （`src/http/wire.ts` 传 `MANUAL_ROUND_BUDGET_MS`），由
+   *   `tests/contract/manual-tend.test.ts`「手动补池用自己那一族预算，且把设置里更大的值压顶后如实说出来」盖着。
+   * · 留下的这一格钉的是**定时轮一格预算都不带**。它今天比从前更要紧：
+   *   `SCHEDULED_ROUND_BUDGET_MS` 这个常量还在（启动期告警拿它当阈值），
+   *   而「它没有运行期消费者」正是那条告警的文案必须说人话的前提
+   *   （全文在 `src/core/registrar/config.ts` 那条告警上方与那个常量的 JSDoc 里）。
+   *   有人顺手把它接到定时轮上，就是一次没人要求过的行为变更 —— 这一格会红。
+   */
 
   function budgetOf(): number | undefined {
     const deps = tendOnceMock.mock.calls[0]![0] as { roundBudgetMs?: number };
     return deps.roundBudgetMs;
   }
 
-  it("Worker 侧传预算，且取值留出了余量、又足够开始一次尝试", async () => {
-    tendOnceMock.mockResolvedValue(RESULT);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const { ctx, waited } = fakeCtx();
-    try {
-      await worker.scheduled!(controller(), workerEnv(), ctx);
-      await waited[0];
-      const budget = budgetOf();
-      expect(budget).toBeDefined();
-      expect(budget!).toBeLessThan(CRON_WALL_CLOCK_MS);
-      expect(budget!).toBeGreaterThan(WORST_ATTEMPT_DEFAULT_MS);
-    } finally {
-      logSpy.mockRestore();
-    }
-  });
-
-  it("Node 侧不传预算（没有平台墙钟上限，硬塞一个反而会平白少铸 key）", async () => {
+  it("定时轮不传 roundBudgetMs —— 硬塞一个是一次没人要求过的行为变更（会平白少铸 key）", async () => {
     tendOnceMock.mockResolvedValue(RESULT);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const server = await main(nodeEnv());
@@ -782,23 +692,10 @@ describe("收尾日志要把 TendResult.failures 的归因打出来", () => {
     }
   });
 
-  it("Worker 侧：minted < attempted 时 warn 出同一份聚合归因", async () => {
-    tendOnceMock.mockResolvedValue(FAILED);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const { ctx, waited } = fakeCtx();
-    try {
-      await worker.scheduled!(controller(), workerEnv(), ctx);
-      await waited[0];
-      const line = reasonsLine(warnSpy);
-      expect(line).toBeDefined();
-      expect(line).toContain("yyds:register_failed×3");
-      expect(line).toContain("moemail:code_timeout×1");
-    } finally {
-      warnSpy.mockRestore();
-      logSpy.mockRestore();
-    }
-  });
+  /*
+   * ⚠️ **这里原来还有一格「Worker 侧：minted < attempted 时 warn 出同一份聚合归因」，
+   * v0.4.0 删掉了**（入口没了）。同一条由上面 Node 侧那一格钉着。
+   */
 
   it("名额全部铸出时不打这条 warn（不是无条件噪音）", async () => {
     tendOnceMock.mockResolvedValue({
@@ -807,14 +704,15 @@ describe("收尾日志要把 TendResult.failures 的归因打出来", () => {
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const { ctx, waited } = fakeCtx();
+    const server = await main(nodeEnv());
     try {
-      await worker.scheduled!(controller(), workerEnv(), ctx);
-      await waited[0];
+      await waitFor(() => tendOnceMock.mock.calls.length === 1);
+      await waitFor(() => timers.length === 1);
       expect(reasonsLine(warnSpy)).toBeUndefined();
     } finally {
       warnSpy.mockRestore();
       logSpy.mockRestore();
+      await close(server);
     }
   });
 });
@@ -878,50 +776,22 @@ describe("补池轮次不可并发重入", () => {
     }
   });
 
-  it("Worker 侧：上一轮的 KV 短锁还在时，本次 Cron 触发被跳过", async () => {
-    const gate = deferred();
-    tendOnceMock.mockImplementation(() => gate.promise);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    // 同一个 env（同一个 KV）才谈得上锁：Cloudflare 不会串行化重叠的 Cron 调用。
-    const env = workerEnv();
-    const { ctx, waited } = fakeCtx();
-    try {
-      await worker.scheduled!(controller(), env, ctx);
-      expect(tendOnceMock).toHaveBeenCalledTimes(1);
-      expect(waited).toHaveLength(1);
-
-      await worker.scheduled!(controller(), env, ctx);
-      expect(tendOnceMock).toHaveBeenCalledTimes(1);
-      expect(waited).toHaveLength(1);
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("跳过本次 Cron 触发"));
-
-      // 上一轮结束 → 锁释放 → 下一次 Cron 恢复正常。
-      gate.resolve(RESULT);
-      await waited[0];
-      await worker.scheduled!(controller(), env, ctx);
-      expect(tendOnceMock).toHaveBeenCalledTimes(2);
-    } finally {
-      warnSpy.mockRestore();
-      logSpy.mockRestore();
-    }
-  });
-
-  it("Worker 侧：补池抛错也会释放锁，下一次 Cron 不会被永久挡住", async () => {
-    tendOnceMock.mockRejectedValue(new Error("boom"));
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const env = workerEnv();
-    const { ctx, waited } = fakeCtx();
-    try {
-      await worker.scheduled!(controller(), env, ctx);
-      await waited[0];
-      await worker.scheduled!(controller(), env, ctx);
-      expect(tendOnceMock).toHaveBeenCalledTimes(2);
-      expect(errSpy).toHaveBeenCalledWith("[registrar] 补池失败", expect.any(Error));
-    } finally {
-      errSpy.mockRestore();
-    }
-  });
+  /*
+   * ⚠️ **这里原来还有两格 Worker 侧的存储锁用例，v0.4.0 删掉了**（入口没了）：
+   * ·「Worker 侧：上一轮的 KV 短锁还在时，本次 Cron 触发被跳过」
+   * ·「Worker 侧：补池抛错也会释放锁，下一次 Cron 不会被永久挡住」
+   *
+   * **第一条的不变量有人接**：`tests/unit/entry-node.test.ts` 的
+   * 「数据目录里已经有一把没过期的锁 ⇒ 这一轮被跳过（另一个副本正在补池）」
+   * 与它的镜像「没有锁 ⇒ 这一轮真的跑，跑完锁被释放」，跑的是真 `main()` + 真
+   * `FileStorage`，比这里的替身更接近生产。
+   *
+   * 🟡 **第二条的不变量今天没有人接，明写在这里，不是没看见**：
+   * 「**补池抛错的那一轮也会释放锁**」在 Node 侧只由 `src/entry/node.ts` 的
+   * `finally { releaseTendLock(...) }` 那几行保证，没有任何一格钉它。
+   * 补的办法是在 `tests/unit/entry-node.test.ts` 那一组里加一格
+   *（让 `tendOnce` 抛错、断言锁仍被删掉）；这次没做，因为口径是「摘形态、不新增覆盖」。
+   */
 });
 
 /**

@@ -34,8 +34,8 @@ export interface GatewayConfig {
   /**
    * 见 `KeyPoolRepoOptions.cacheTtlMs`。**0 = 关闭缓存。**
    *
-   * **建 app 时读一次**，不是逐次生效：它绑定的是部署形态（活跃 isolate 数 ×
-   * 池大小），不是逐次可调的策略。改它要重启容器 / 等 isolate 回收，
+   * **建 app 时读一次**，不是逐次生效：它绑定的是部署形态（活跃副本 数 ×
+   * 池大小），不是逐次可调的策略。改它要重启容器，
    * `.env.example` 与五语言 DEPLOY.md 都写明了这一点，面板文案不许写「立即生效」。
    */
   poolCacheTtlMs: number;
@@ -63,17 +63,21 @@ export interface GatewayConfig {
    * Tier-2 时间序列统计。**默认 false，且「关」必须是零成本**（这是一条全局约束）：
    * 关闭时不建累加器、不挂中间件、一次 `storage.put` 都没有。
    *
-   * 为什么默认关，两条理由（设计 §7.1 只写了第一条）：
-   * ① 它与 key 池的状态回写抢同一个每天 1,000 次的写桶，
-   *    「统计吃掉写配额会连带打死 key 池的状态回写」；
-   * ② **Worker 形态下存活不足一个落盘间隔（2 小时）的 isolate 一个字都存不下**
-   *    ——sink 构造时 `lastFlushAt = now()`，短命 isolate 攒的计数随它一起消失。
+   * 为什么默认关，两条理由——⚠️ **两条都在 v0.4.0 换过说法，别按旧版读**：
+   * ① 旧话是「它与 key 池的状态回写抢同一个每天 1,000 次的写桶」，那个桶是
+   *    Cloudflare KV 的，随 Worker 形态一起没了。**今天成立的是**：`FileStorage`
+   *    每次 put 都**重写整个 `store.json`**，多一条写路径就是实打实的磁盘写放大，
+   *    而它与 key 池的状态回写写的是同一个文件、走同一条写队列。
+   * ② 旧话点的是「Worker 短命 isolate 一个字都存不下」。**同一个失效在 Docker 上
+   *    照样存在，只是触发条件变了**：sink 构造时 `lastFlushAt = now()`，
+   *    **存活不足一个落盘间隔（默认 2 小时）的进程一个字都存不下**——频繁重启、
+   *    崩溃重启循环、或者一天里滚动更新好几次的部署都够得着。
    *    开着它会得到一份看起来完整、实际残缺的数字。
    *
    * ⚠️ **它是「建 app 时读一次」的旋钮，与 `poolCacheTtlMs` / `poolTouchIntervalMs`
    * 同一类**：`buildApp` 用它决定要不要**构造**那个 sink（`src/http/wire.ts`），
    * 而全局约束 16 不允许「先建好、再靠一个 if 拦住写」——那条路径迟早会被某次改动
-   * 接上写。⇒ 改了它要重启容器 / 等 isolate 回收才生效。
+   * 接上写。⇒ 改了它要重启容器才生效。
    *
    * ⚠️ **今天它不在 `EDITABLE`（面板改不了），但仍然在 `ENV_LOCK_MAP` 里。**
    * 两件事各有各的理由，别把其中一条当成另一条的推论：
@@ -141,7 +145,7 @@ export async function loadConfig(
      *    `Refreshable.reload()` 处理**，不许在这里截胡。
      * ② `createConfigHolder` 的 `prime()`（冷启动）与两个入口各自的
      *    `buildTendDeps`——这里没有「上一份合法快照」可退，抛出去的后果是
-     *    Worker 冷 isolate 全部 500 / Node 重启循环，而 GATEWAY_TOKEN 通常就在
+     *    进程直接起不来（容器重启循环），而 GATEWAY_TOKEN 通常就在
      *    环境变量里，存储那份只是覆盖层，读不出来不该让整个网关起不来。
      *    **只有这条路径才该传 true。**
      */

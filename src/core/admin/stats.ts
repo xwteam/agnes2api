@@ -50,7 +50,7 @@ export function normalizeStats(raw: unknown): KeyStats {
  * 存在的理由是「基线被往回写」那条缺陷的两半：
  * · 调用方（`dispatch` 的 `commit`）把**未合并的 next** 写回 `records[at]`，
  *   于是它下一次交上来的 `prev` 比存储**旧**——直接采信就会把已落盘的计数往回写；
- * · 而快照过了 TTL 之后又可能带回**别的 isolate 写得更高**的值，那时该采信它。
+ * · 而快照过了 TTL 之后又可能带回**别的副本 写得更高**的值，那时该采信它。
  * 一个 `max` 同时处理这两个方向，且不需要知道是哪一种。
  *
  * ⚠️ **它对 `lastErrorKind` 不可交换，这是有意的、写下来免得后人以为它是对称的**：

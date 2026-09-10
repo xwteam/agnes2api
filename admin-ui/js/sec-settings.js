@@ -881,7 +881,7 @@ function confirmReset() {
   const p = propagationView(data);
   if (p.visibilityUpperBoundMs !== null) {
     // **必须显示，不许写「立即生效」**（设计 §5.2）：本进程确实立刻生效，
-    // 别的副本要等 `CONFIG_TTL_MS` + KV 边缘缓存。
+    // 别的副本要等一个 `CONFIG_TTL_MS`（中间不再有任何一层缓存）。
     body.appendChild(el("p", { class: "muted note" },
       t("set.danger.reset.propagation", { bound: fmtDuration(p.visibilityUpperBoundMs) })));
   } else {

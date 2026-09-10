@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { main, nodeDataDir, nodePort } from "../../src/entry/node.js";
 import { FileStorage } from "../../src/adapters/storage-file.js";
-import { TEND_LOCK_KEY, TEND_LOCK_TTL_CRON_MS } from "../../src/http/admin/tend-lock.js";
+import { TEND_LOCK_KEY, TEND_LOCK_TTL_SCHEDULED_MS } from "../../src/http/admin/tend-lock.js";
 import { TEND_HISTORY_KEY } from "../../src/core/admin/tend-history.js";
 import { KeyPoolRepo } from "../../src/core/keypool-repo.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
@@ -182,7 +182,7 @@ describe.skipIf(!notRoot)("node 入口: 数据目录不可写", () => {
 // 起 `main()`，它那一轮必须被跳过。两个方向都验：有锁跳过、无锁真跑。
 //
 // ⚠️⚠️ **夹具必须是「池子已经满了」（`need <= 0` 提前返回），不能用
-// `CODE_TIMEOUT_MS > WORKER_ROUND_BUDGET_MS` 那一招。** 那一招只在**传了轮级预算**的
+// `CODE_TIMEOUT_MS > SCHEDULED_ROUND_BUDGET_MS` 那一招。** 那一招只在**传了轮级预算**的
 // 路径上零网络，而 **Node 的定时轮刻意不传 `roundBudgetMs`**（`src/entry/node.ts`：
 // Node/Docker 没有平台墙钟上限）——实测：照抄那个夹具会让这条用例**真的去打 YYDS 的
 // 线上接口**（拿到 HTTP 403/429 与八个真实域名）。这不是理论风险，是本任务写这两格
@@ -222,7 +222,7 @@ describe("node 入口: 补池的存储级锁（多副本共卷部署）", () => 
   it("数据目录里已经有一把没过期的锁 ⇒ 这一轮被跳过（另一个副本正在补池）", async () => {
     const dir = tmpDataDir();
     const storage = await seedFullPool(dir);
-    await storage.put(TEND_LOCK_KEY, { until: Date.now() + TEND_LOCK_TTL_CRON_MS });
+    await storage.put(TEND_LOCK_KEY, { until: Date.now() + TEND_LOCK_TTL_SCHEDULED_MS });
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);

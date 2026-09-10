@@ -59,7 +59,7 @@ import { protocolById, MODEL_CATALOG } from "../../../core/admin/protocol-catalo
  *    档位取 `config.upstreamTimeoutMs`（首字节档，默认 8 秒）：验活只要一个响应头
  *    就够了，给它同步档（默认 2 分钟）等于让面板挂两分钟。
  *
- * 5. **`repo.get(id)` 直读存储，不读 isolate 快照**。`repo.all()` 交出来的最多是一个
+ * 5. **`repo.get(id)` 直读存储，不读 进程内快照**。`repo.all()` 交出来的最多是一个
  *    `POOL_CACHE_TTL_MS` 之前的视图，拿它去验一把刚被改过的 key 是在验旧值——
  *    而「刚改过就想验一下」正是运维点这颗按钮的主要场景。
  *
@@ -113,7 +113,7 @@ export function verifyHandler(deps: VerifyDeps) {
     // 静态类型是 `string | undefined`，**刻意不写 `as string`**——落到空串时下面那次
     // `repo.get("")` 如实 404。
     const id = c.req.param("id") ?? "";
-    // 约束 5：直读存储，不读 isolate 快照。
+    // 约束 5：直读存储，不读 进程内快照。
     const rec = await deps.repo.get(id);
     if (rec === null) throw httpError(404, "not_found", "没有这把 key");
 

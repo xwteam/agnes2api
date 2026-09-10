@@ -114,14 +114,12 @@ function renderFreshness() {
     : t("ov.freshness.pool", {
       upper: fmtDuration(f.poolVisibilityUpperBoundMs),
       ttl: fmtDuration(f.poolCacheTtlMs),
-      edge: fmtDuration(f.kvEdgeCacheMs),
     });
   nodes.freshness.config.textContent = f.configTtlMs === null
     ? fmtDash(null)
     : t("ov.freshness.config", {
       upper: fmtDuration(f.configVisibilityUpperBoundMs),
       ttl: fmtDuration(f.configTtlMs),
-      edge: fmtDuration(f.kvEdgeCacheMs),
     });
 }
 

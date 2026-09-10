@@ -166,7 +166,7 @@ export function storageInfo(body) {
 }
 
 /**
- * 新鲜度卡的六个数，原样投影（`overview.freshness` 本身不参与逐块降级，
+ * 新鲜度卡的五个数，原样投影（`overview.freshness` 本身不参与逐块降级，
  * 除非整段响应都拿不到）。
  */
 export function freshnessValues(body) {
@@ -175,7 +175,7 @@ export function freshnessValues(body) {
   if (!f || typeof f !== "object") {
     return {
       poolCacheTtlMs: null, poolVisibilityUpperBoundMs: null, poolTouchIntervalMs: null,
-      configTtlMs: null, configVisibilityUpperBoundMs: null, kvEdgeCacheMs: null,
+      configTtlMs: null, configVisibilityUpperBoundMs: null,
     };
   }
   return {
@@ -184,13 +184,11 @@ export function freshnessValues(body) {
     poolTouchIntervalMs: numOrNull(f.poolTouchIntervalMs),
     configTtlMs: numOrNull(f.configTtlMs),
     configVisibilityUpperBoundMs: numOrNull(f.configVisibilityUpperBoundMs),
-    kvEdgeCacheMs: numOrNull(f.kvEdgeCacheMs),
   };
 }
 
 /**
- * `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` / `kvEdgeCacheMs` 三个旋钮的
- * **当前生效值**。
+ * `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` 两个旋钮的**当前生效值**。
  *
  * **两个板块共用这一个函数**：Key 池板块（`sec-keys.js`）的文案曾经只能
  * 「点名旋钮 + 括注默认值」，因为那时没有任何接口报告这两个旋钮的实际值——它们是
@@ -198,14 +196,14 @@ export function freshnessValues(body) {
  * 只有 `overview.freshness` 报告了它们。两个板块各自 fetch 一次 `/overview`
  * 拿到同一份数据，用这个函数取出同一组数字，不许各写各的取值逻辑。
  *
- * ⚠️ **`edge` 是一条待办的收尾**：`keys.freshness` 那句文案曾经把
- * 「约 60 秒」的 KV 边缘缓存耗时硬编码进五语言字典，与概览页的 `ov.freshness.pool`
- * （早已经由 `kvEdgeCacheMs` 驱动）各说各的——两处一旦有一处改了默认值就会当场
- * 发散，而没有任何东西拦得住。现在两个板块从这同一个函数取同一个数字。
+ * ⚠️ **上一版这里还有第三个旋钮 `edge`（KV 边缘缓存那个量），v0.4.0 整层删掉了**：
+ * KV 随 Worker 形态一起没了，`FileStorage.get` 是直接 `readFile`，那一层不存在
+ * ⇒ 两条「多久能看见」的上界就等于各自的 TTL（见 `src/http/config-holder.ts`）。
+ * 两个板块照旧从这同一个函数取同一组数字，别再各写各的取值逻辑。
  */
 export function poolKnobs(body) {
   const f = freshnessValues(body);
-  return { ttl: f.poolCacheTtlMs, touch: f.poolTouchIntervalMs, edge: f.kvEdgeCacheMs };
+  return { ttl: f.poolCacheTtlMs, touch: f.poolTouchIntervalMs };
 }
 
 /**

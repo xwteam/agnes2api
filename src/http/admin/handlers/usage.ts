@@ -141,7 +141,7 @@ export type UsageNote = (typeof USAGE_NOTES)[number];
  * 单把 key 的 Tier-1 计数。**与 Tier-2 完全无关**，Tier-2 关着时它照样可用
  * （设计 §10.6：「Tier-1 的按 key 用量在 Tier-2 关闭时也仍然可用」）。
  *
- * **零额外读**：走 `repo.all()`，与转发路径共用同一个 isolate 快照。
+ * **零额外读**：走 `repo.all()`，与转发路径共用同一个 进程内快照。
  * 这条由 `tests/contract/admin-usage.test.ts` 的
  * 「连打 20 次逐 key 用量：get / list 计数一次都不增加 —— 面板轮询不许各自去读一遍存储」
  * 数着计数钉住。
@@ -312,7 +312,8 @@ function parseRange(c: Context, nowMs: number): RangeParse {
   };
 }
 
-/** UTC 日序号 → `YYYY-MM-DD`。**日期一律 UTC**（设计 §7.1 末条：Worker 是多 colo 的）。 */
+/** UTC 日序号 → `YYYY-MM-DD`。**日期一律 UTC**：与部署在哪个时区无关，也与运维改
+ * 容器 `TZ` 无关——按本地时区分桶会让同一份数据在改时区之后整体错位。 */
 function utcDateString(day: number): string {
   return new Date(day * USAGE_DAY_MS).toISOString().slice(0, 10);
 }
@@ -366,19 +367,17 @@ type ReadBlock =
  * 设计那一段自己的原话是**「接口失败显示 `—`，绝不伪造 `0`」**（精度纪律那一条），
  * 结论同源、措辞不同。**上一版把计划的话记在了设计头上。**
  * 两份文档都未随公开仓发布；被订正的那句结论逐字留在这里，不依赖它们。
- * 而 30 天那一档正是本仓第一个会一次发出 60 次子请求的读扇出
- * ——`src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方记着那条裁定：
- * **Cloudflare 的两页官方文档在「一次调用能发多少次子请求」上互相对不上**
- * （Workers limits 页免费档 50，KV limits 页 1,000，而前者没有定义 KV 算哪一行），
- * 所以**这里不许写成「60 次是安全的」**——那句裁定至今有效，理由见那一段。
- * ⚠️ **真机冒烟（`scripts/smoke-dual-runtime.sh` 的 ④ 那一格）已经把「跑不跑得完」
- * 这一半量出来了：本次实测在本地 workerd 上跑得完**（回的是 `tier2` + 30 段 days，
- * 不是 `read_failed`）。**但它跑的是 `wrangler dev`，不是线上边缘**，
- * 所以「线上免费档会不会超」仍然没有答案，那一半仍然按「没有平台承诺」处置。
- * 能写下来的仍然只有那一句：**它在 Worker 上失败的时候要失败得诚实。**
+ * 而 30 天那一档正是本仓唯一一个会一次发出 60 次存储读的扇出。
+ * ⚠️ **这一段原来的立论是 Cloudflare 的子请求上限**（`USAGE_DAY_RETAIN` 上方那条裁定：
+ * 两页官方文档互相对不上，所以不许写成「60 次是安全的」），**那个上限在 v0.4.0
+ * 随 Worker 形态一起没了**。**「必须失败得诚实」这条结论一个字没变，防的那件事换了**：
+ * 今天这 60 次是 60 遍整份 `store.json` 的 `readFile` + `JSON.parse`，
+ * 扇出里任何一次抛错都不许被渲染成「这段时间没有流量」。
+ * 真机冒烟仍然量着「跑不跑得完」那一半（`scripts/smoke-dual-runtime.sh` 的 ③ 那一格，
+ * v0.4.0 之后打的是真容器：回的是 `tier2` + 30 段 days，不是 `read_failed`）。
  *
  * `Promise.all` 而不是逐个 `await`：串行 60 次要付 60 个往返，并发只付 1 个。
- * ⚠️ **刻意不写「串行要几秒」**：本仓对 KV 的往返延迟没有任何量测，
+ * ⚠️ **刻意不写「串行要几秒」**：本仓对存储往返延迟没有任何量测，
  * 那个数会是一句编出来的话（上一版写的正是「串行在 KV 上是秒级的」）。
  * ⚠️ **它不改变 get 的次数**（`Promise.all` 不做去重也不短路），
  * 所以读扇出那四格数出来的仍然是 `天数 × USAGE_SLOTS`。
@@ -448,7 +447,7 @@ const EMPTY_DAY: UsageBucket = Object.freeze({
  * | ⑧ | **一部分分片畸形**（数据不完整） | 200 | `"tier2"` | 有 | 有，**但不完整** | **> 0** | **> 0** | 有 | `partial_malformed` |
  *
  * ③ 与 ④ 是两件事，第一版会把它们压成同一个「今日请求数 0」：前者说「这段时间
- * 这个部署没有记下任何东西」（可能是没流量，也可能是 isolate 没活到一次落盘），
+ * 这个部署没有记下任何东西」（可能是没流量，也可能是 实例没活到一次落盘），
  * 后者说「有实例落过盘，那些盘里的请求数就是 0」。**判据是 `shards`，不是 `total`。**
  *
  * ⚠️⚠️ **⑦ 是评审抓出来的，缺陷只有一条：`note` 那句话是假的。**
@@ -586,14 +585,14 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
     //
     // ⇒ **留着它的理由只有一条，写清楚**：上面那个互斥论证**依赖 `utcDateString` 会抛**。
     // 哪天有人把它改成「抛不出来就回个兜底串」（一个看起来更稳健的改动），互斥当场瓦解，
-    // 而失效形态是**不返回**、不是数字变大——那是挂死 isolate，不是一条错数据。
+    // 而失效形态是**不返回**、不是数字变大——那是挂死进程，不是一条错数据。
     // 一行结构性的闸换掉那个风险是划算的；**但它不是今天的护栏，别在报告里那么写。**
     //
     // ⚠️ **另有一条残留，如实登记、不为它加 try/catch**：`now` 大到 `d > 1e8` 时
     // 这条端点是 **500**（`RangeError`）。它**从 `Date.now()` 到不了**（两个生产入口
     // 的时钟都是它），而为一条到不了的路加防御正是本仓用 `String()` 那一课换来的教训
     //（`src/core/admin/usage-stats.ts` 的 `USAGE_MODEL_KEY_MAX_LEN` 上方全文）。
-    // 「它返回 500 而不是挂死」由「时钟是 1e300 这种「有限但荒诞」的数：端点必须返回，不许把 isolate 挂死」那一格如实记着。
+    // 「它返回 500 而不是挂死」由「时钟是 1e300 这种「有限但荒诞」的数：端点必须返回，不许把进程挂死」那一格如实记着。
     for (let d = parsed.fromDay, n = 0; d <= parsed.toDay && n < USAGE_DAY_RETAIN; d++, n++) {
       // ⚠️ **`byDay` 是无原型对象**（`mergeDayShards` 的硬契约）：这里只做下标取值 +
       // `?? null`，**不许调 `.hasOwnProperty()` / `.toString()` 这类 `Object.prototype`
@@ -661,7 +660,7 @@ export function usageHandler(deps: { usage: UsageWiring | null; now: () => numbe
  * `GET /admin/api/usage/:date`（单日下钻，`date` 是 UTC 的 `YYYY-MM-DD`）。
  *
  * **没有逐请求流水**（设计 §10.6）⇒ 常态下 `note` 恒是 `no_request_detail`，
- * 让面板能渲染那句「需要逐请求粒度请看容器 stdout / Cloudflare Workers Logs」，
+ * 让面板能渲染那句「需要逐请求粒度请看容器 stdout」，
  * **而不是给一张永远空着的表**。
  * ⚠️ **代价明写**：`note` 只有一格，出问题时它会被 `read_failed` 这类占掉，
  * 那句指路的话就不显示了。这是刻意的取舍——**出问题的时候先说出问题**，

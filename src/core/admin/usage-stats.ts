@@ -9,11 +9,11 @@
  * ⚠️ 后者**不是文件头**——`logger-store.ts` 的**首行就是 `import`**，那段话在 `StoreLogger`
  * 的类说明块里；本仓自己区分这两者，`logger-store.ts:35` 的原话就是「详见
  * `src/core/admin/event-ring.ts` 文件头」。
- * 有界性依赖「落盘节奏恰好规律」这个前提，稀疏落盘或多 isolate 各写各的随机分片时
+ * 有界性依赖「落盘节奏恰好规律」这个前提，稀疏落盘或多副本 各写各的随机分片时
  * **清理率能跌到 0**）；而 Cron 压实还额外依赖「Cron 按表达式可靠触发」，
  * 设计 §17 自己已经核实过**官方没有文档化任何触发保证**。两个前提叠在一起，没有一端立得住。
  * ⇒ 有界性改用 `Storage.put` 的 `expiresAt`（TTL）：它是**存储自己的性质**，
- * 与落盘节奏、槽位选择、isolate 会不会被回收全部无关。**不做压实、不 delete。**
+ * 与落盘节奏、槽位选择、进程会不会被结束全部无关。**不做压实、不 delete。**
  *
  * **但「日键 + 值里装小时槽」这一半必须保留，第一版把它一起换掉是过度类比**（评审发现）：
  * 事件与用量有一处决定性差异 ——
@@ -94,14 +94,14 @@ export function emptyBucket(): UsageBucket {
 }
 
 /**
- * 一个 isolate 在某一个 UTC 日里攒下的全部计数。**一次落盘就是把这整份覆写进一个键。**
+ * 一个副本 在某一个 UTC 日里攒下的全部计数。**一次落盘就是把这整份覆写进一个键。**
  *
  * `hours` 的键是 `"00"`…`"23"`（UTC 小时，两位补零，与设计 §7.1 的
  * `hours: { "00": Bucket, … "23": Bucket }` 逐字相同），
  * 让面板的单日下钻（设计 §10.6「这一天按小时 / 按模型 / 按协议的分解」）不必额外读键。
  */
 export interface UsageDayShard {
-  /** 写它的那个 isolate/进程。面板用它显示「这一天有几个分片贡献了数据」。 */
+  /** 写它的那个副本/进程。面板用它显示「这一天有几个分片贡献了数据」。 */
   shardId: string;
   /**
    * UTC 日序号（`floor(at / 86400000)`），**不是设计 §7.1 里那个日期字符串**：
@@ -129,9 +129,9 @@ export interface UsageDayShard {
 export const USAGE_DAY_MS = 86_400_000;
 
 /**
- * 槽位数。**取 2，与 `EVENT_SLOTS` 相同**：它是「同一天里最多几个 isolate 能各写各的
- * 而不互相覆盖」。取大了读扇出线性变大，取小了并发 isolate 会互相覆盖。
- * ⚠️ **这不是「不会丢计数」的保证**：超过 2 个 isolate 时同槽位仍是 last-write-wins。
+ * 槽位数。**取 2，与 `EVENT_SLOTS` 相同**：它是「同一天里最多几个副本 能各写各的
+ * 而不互相覆盖」。取大了读扇出线性变大，取小了并发副本 会互相覆盖。
+ * ⚠️ **这不是「不会丢计数」的保证**：超过 2 个副本 时同槽位仍是 last-write-wins。
  * 这正是 Tier-2 全程要打 `≈` 的原因之一（设计 §14 第 2 条：
  * 「Tier-1 并发下少计、Tier-2 丢最后一个未落盘窗口……全部带 `≈` 标注」）。
  */
@@ -142,6 +142,11 @@ export const USAGE_SLOTS = 2;
  * （订正）。
  *
  * ⚠️ **它同时决定读扇出的硬上界 `USAGE_DAY_RETAIN × USAGE_SLOTS` = 60 次 get**
+ * ⚠️⚠️ **下面这一整段的对象（Cloudflare 的子请求上限与 KV 配额桶）在 v0.4.0 没了**，
+ * 全文见 `src/ports/storage.ts` 的文件级登记。**保留它是因为那 60 次扇出本身还在**：
+ * 今天它是 60 次整份 `store.json` 的 `readFile`，而「失败得诚实」那条结论一个字没变。
+ * 下面那段调研原样留着，读的时候请把它读成「当年那个平台上的账」。
+ *
  * （见 `usageCandidateKeys`）。待验证清单里那一条查过 Cloudflare 官方 limits 页，**结论不是一个干净
  * 的数，照实记在这里**：Workers 的 limits 页把子请求分成两行——
  * 「Subrequests per invocation」免费档 50、「Subrequests to internal services」免费档 1,000
@@ -173,7 +178,7 @@ export const USAGE_SLOTS = 2;
  * ——**它验的是「失败得诚实」，一个字都没验「60 次会不会超」**，那仍然是线上才答得了的事。
  *
  * ⚠️ **不许拿事件板块的 48 次冷读当佐证**（那个 48 在
- * `docs/zh-CN/DEPLOY.md`「单次请求最多回看 24 个时间窗 × 2 个槽位 = **48** 次 get」，
+ * `docs/zh-CN/DEPLOY.md`「而且单次轮询最多回看 48 个键」，
  * 而「每点一次「级别」筛选按钮就是一次满额冷读」在同一份文档的
  * 「⚠️ **这个数是「稳态空闲界」，不是上界。**」那一段——**两处合起来才是那句话**，
  * 单独任何一处都不承载它；今天在生产上跑着）：
@@ -185,7 +190,7 @@ export const USAGE_SLOTS = 2;
 export const USAGE_DAY_RETAIN = 30;
 
 /**
- * 每个 isolate 每天最多写几次。**这个数数的是 `put` 次数，不是 flush 次数**（评审发现）。
+ * 每个副本 每天最多写几次。**这个数数的是 `put` 次数，不是 flush 次数**（评审发现）。
  *
  * 第一版的不变量数的是 flush 次数，而当时的键形状让一次 flush 写 2–3 个键
  * ⇒ 真实写量是它算出来的 2–3 倍，而不变量照样绿。
@@ -218,7 +223,7 @@ export const USAGE_WRITES_PER_DAY = 13;
  *
  * **代价（一条，不是两条）**：未落盘的尾巴最长等于这个间隔。它的两种表现是
  * 同一个事实：① 面板上「今天」的数字最多旧 2 小时；
- * ② 存活不足一个间隔的实例（Worker 短命 isolate、Docker 快速重启）攒的计数随实例消失。
+ * ② 存活不足一个间隔的实例（频繁重启 / 崩溃重启循环 / 一天滚动更新好几次）攒的计数随实例消失。
  * ⚠️ **②不是「默认关」的独立理由**——第一版这么写过，那是循环论证：
  * 「活不满一个落盘间隔的实例存不下」在 `lastFlushAt = now()` 下恒真，
  * 而让它变严重的正是这个间隔取值本身，那是本计划自己选的。
@@ -265,7 +270,7 @@ export function usageDayIndex(at: number): number {
   return Math.floor(at / USAGE_DAY_MS);
 }
 
-/** UTC 小时，两位补零。日键用 UTC 是设计 §7.1 末条：agnes 的 Worker 是多 colo 的。 */
+/** UTC 小时，两位补零。日键用 UTC 与部署时区无关（理由见 `usageDayKey()` 那一侧）。 */
 export function usageHourOf(at: number): string {
   const h = Math.floor((at - usageDayIndex(at) * USAGE_DAY_MS) / 3_600_000);
   return String(h).padStart(2, "0");

@@ -19,9 +19,9 @@ import { httpError } from "../../errors.js";
  * ② **响应体里一次都不许出现明文 key**（约束 11(a)）。请求体里必然有明文
  *    （导入就是干这个的），响应体里没有任何正当理由再出现它——面板没有、
  *    也永远不会有 reveal 端点（设计 §6.4），而一个会回显的写端点就是那个端点。
- * ③ **写操作看当前真值**：全部走 `repo.get(id)`，那是**直接读存储、绕过 isolate
+ * ③ **写操作看当前真值**：全部走 `repo.get(id)`，那是**直接读存储、绕过进程内
  *    快照**的（`src/core/keypool-repo.ts` 的 `get`）。读快照的话，一次「停用」
- *    可能建立在一份最多一个 `POOL_CACHE_TTL_MS` 前的视图上，把这期间别的 isolate
+ *    可能建立在一份最多一个 `POOL_CACHE_TTL_MS` 前的视图上，把这期间别的副本
  *    写下的 `evicted` / `cooldownUntil` 原样覆盖回去。
  *    由 `tests/contract/admin-keys-write.test.ts` 的
  *    「PATCH 读的是存储里的当前真值，不是最多一个 TTL 前的快照」钉着。
@@ -358,7 +358,7 @@ export const PATCH_FIELDS = [
  * 「新建」分支头一行就是 `this.pendingStats.delete(next.id)`
  * （`src/core/keypool-repo.ts`）⇒ 本实例攒着的基线与未落盘增量一并作废。
  * ⚠️ **它清的只是「处理这次请求的那个实例」那一份，而且只对「这次重置之后才开始的
- * 请求」成立。** 同时在跑的别的实例（Worker 的其它 isolate / 同一个卷上的另一个容器）
+ * 请求」成立。** 同时在跑的别的实例（同一个卷上的另一个容器）
  * 各有各的基线，仍可能把旧值再顶回来一次——这条限制五份 DEPLOY.md 里逐份写着，
  * 别在任何一侧把它说没了。
  * 绊线是 `tests/contract/admin-keys-write.test.ts` 的
@@ -376,7 +376,7 @@ export const PATCH_FIELDS = [
  * （`timeout: "sync"`）的等待预算是 `UPSTREAM_SYNC_TIMEOUT_MS`，流式端点是每把 key
  * 一个 `UPSTREAM_TIMEOUT_MS` 的首字节预算、逐把重试。
  * **它今天没有被修，只是被说清楚了**：要修得在 repo 里给「刚重置过」立一个不吸收
- * `seen` 的标记，而 `trackBaseline` 恰恰是靠吸收 `seen` 才不会把别的 isolate
+ * `seen` 的标记，而 `trackBaseline` 恰恰是靠吸收 `seen` 才不会把别的副本
  * 写得更高的计数压回去——两者是同一个旋钮的两个方向，不是顺手一行。
  * 两个方向各有一格用例钉着：
  * `tests/contract/admin-keys-write.test.ts`
@@ -587,7 +587,7 @@ function bulkEvent(op: BulkOp, changed: readonly string[]) {
 /**
  * `POST /admin/api/keys/purge` 的注册路径。**这个字符串是真源**：
  * `src/http/admin/router.ts` 从这里取，`tests/unit/docs-parity.test.ts` 的
- * 「危险区那两条端点的路径在五份 DEPLOY.md 的配额账里逐份写着 —— 路径从真源常量现算」
+ * 「危险区那两条端点的路径在五份 DEPLOY.md 里逐份写着 —— 路径从真源常量现算」
  * 也从这里取 ⇒ 改了它而五份文档没跟着改，那一格当场红。
  */
 export const KEYS_PURGE_PATH = "/admin/api/keys/purge";

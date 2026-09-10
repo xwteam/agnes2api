@@ -180,10 +180,14 @@ export interface TendResult {
   /**
    * 这一轮**开始**的时刻（`deps.now()`，不是结束时刻）。
    *
-   * 下面三个字段是本任务（`tend:history`）加的。**由 `tendOnce` 而不是两个入口
-   * 各自填**：入口有两个（`src/entry/node.ts` / `src/entry/worker.ts`），让它们
-   * 各算一遍就是同一个判据的第二份实现——而"两个入口各写一份口径"正是
-   * `summarizeFailures()` 当初被提到这里来的全部理由，见那个函数的说明。
+   * 下面三个字段是本任务（`tend:history`）加的。**由 `tendOnce` 而不是调用方各自填**：
+   * 今天的调用方有两个（`src/entry/node.ts` 的定时轮 / `src/http/wire.ts` 的
+   * `runManualTendRound`），让它们各算一遍就是同一个判据的第二份实现——
+   * 而"调用方各写一份口径"正是 `summarizeFailures()` 当初被提到这里来的全部理由，
+   * 见那个函数的说明。
+   * ⚠️ 这句话原来写的是「入口有两个（node / worker）」，那两个入口今天只剩一个，
+   * **但结论一个字没变**：调用方仍然是两个，只是第二个从 Worker 的 `scheduled()`
+   * 换成了面板那颗按钮。
    */
   at: number;
   /**
@@ -208,7 +212,7 @@ export interface TendResult {
  * `yyds:register_failed×3 moemail:code_timeout×1`。
  *
  * 放在这里而不是各自的入口里：两个入口的收尾日志必须给出**同一份口径**，否则
- * Docker 与 Worker 的排障方式就得写两套，而在面板出现之前这条日志是唯一的归因出口
+ * 排障方式就得按形态写两套，而在面板出现之前这条日志是唯一的归因出口
  *（面板才会消费结构化的 `failures` 本身）。没有它，运维只能看到一行
  * `minted=0`，无法区分是 Agnes 挂了、邮箱通道挂了、还是自己配错了通道。
  */
@@ -232,21 +236,28 @@ export interface TendDeps {
   /**
    * 本轮可用的墙钟预算（毫秒）。**可选**——不传就没有预算约束。
    *
-   * 只有存在平台墙钟上限的运行时才需要它：Cloudflare 的 Cron Trigger 单次调用最多
-   * 15 分钟，超时**被平台直接中止**，此刻正在 `mintOne` 的 try 块里的那个临时邮箱，
-   * 它的 finally（`deleteMailbox`）不会执行 —— 邮箱泄漏，且没有任何日志。攒够几个
-   * 就把活跃邮箱配额吃光，建邮箱一律失败。这正是前两轮花了很大力气才杀掉的那条
-   * 死亡链，不能靠「文档告诉用户把 MINT_BATCH 调小」来兜。
+   * ⚠️⚠️ **这一段的立论在 v0.4.0 换过，别按旧版读。** 原话是「只有存在平台墙钟上限的
+   * 运行时才需要它」：Cloudflare 的 Cron Trigger 单次调用最多 15 分钟，超时**被平台
+   * 直接中止**，此刻正在 `mintOne` 的 try 块里的那个临时邮箱，它的 finally
+   *（`deleteMailbox`）不会执行 —— 邮箱泄漏，且没有任何日志。
+   * **那个平台上限没了**，而这个可选参数仍然在，理由换成：一轮跑多久没有任何东西
+   * 会截断它，而**补池锁的 TTL 是有限的**（`SCHEDULED_ROUND_WALL_CLOCK_MS`）⇒
+   * 跑过头就是「锁过期了而这一轮还活着」，下一轮并发开跑。
    *
-   * Node/Docker 侧没有这种上限，因此 `src/entry/node.ts` **不传**这个字段，行为与
-   * 引入它之前完全一致；给 Node 硬编码一个预算反而是错的。
+   * 定时轮**不传**这个字段（见 `src/core/registrar/types.ts` 的
+   * `SCHEDULED_ROUND_BUDGET_MS`：它今天只剩启动期告警一个读者），行为与
+   * 引入它之前完全一致；给定时轮硬塞一个预算是一次没人要求过的行为变更，由
+   * `tests/unit/registrar/scheduling-wiring.test.ts`「定时轮不传 roundBudgetMs —— 硬塞一个是一次没人要求过的行为变更（会平白少铸 key）」钉着。
    */
   roundBudgetMs?: number;
   /** 事件日志 sink，由调用方注入——core 不直接碰 console。 */
   logger: Logger;
   /**
-   * 域名台账与退避状态的读写。**四个都必填、都不给默认值**，与 `buildApp` 的
-   * `runtime` 同一条纪律：给默认值就等于某个入口忘接线时静默退化成
+   * 域名台账与退避状态的读写。**四个都必填、都不给默认值**：
+   *（⚠️ 这里原来拿 `buildApp` 的 `runtime` 参数当同一条纪律的例子，
+   * 那个参数在 v0.4.0 删了——只剩一个运行时之后必填只是让调用点抄一遍字面量。
+   * **这四个字段的必填照旧成立**，它们真的有不止一种接法。）
+   * 给默认值就等于某个调用方忘接线时静默退化成
    * 「每轮重新洗牌 + 撞了限流照打」——也就是本次要修的那个缺陷原封不动地回来。
    *
    * 落点在 `src/http/wire.ts` 的 `buildTendDeps`（**只有它手上有存储**）。
@@ -266,7 +277,7 @@ export interface TendDeps {
  * **顺序执行，不并发**（设计 §4.2）。并发会同时撞 YYDS 的建号限流（短时超过约 10 次
  * 返回 403）与 Agnes 自身的注册风控，因此每次尝试之间要插入
  * `mintDelayMinMs`~`mintDelayMaxMs` 的随机间隔，而不是把一批 `mintOne` 一股脑
- * `Promise.all` 出去。`mintBatch` 存在的理由类似：Worker Cron 有墙钟时长限制，
+ * `Promise.all` 出去。`mintBatch` 存在的理由类似：一轮补池不该无限期占着那把锁，
  * 而单次注册光轮询验证码最长就要 `codeTimeoutMs`（默认 120 秒），一轮铸太多会撞墙钟。
  */
 export async function tendOnce(deps: TendDeps): Promise<TendResult> {
@@ -357,9 +368,9 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
   // 等待了，这个因子整个消失 —— 顺带把「配了备通道才会撞上的那个墙钟死局」也消掉了。
   //
   // 同一份口径散在**五处**，改一处就得五处一起改：`src/core/registrar/types.ts` 的
-  // `WORKER_ROUND_BUDGET_MS`、`src/core/registrar/config.ts` 的最坏耗时告警、
+  // `SCHEDULED_ROUND_BUDGET_MS`、`src/core/registrar/config.ts` 的最坏耗时告警、
   // `src/core/registrar/tender.ts` 的 `worstAttemptMs`、`src/http/wire.ts` 传给
-  // 「立即补池」的那个预算、`wrangler.toml` 的 Cron 估算段（外加五语言 REGISTRAR.md
+  // 「立即补池」的那个预算（外加五语言 REGISTRAR.md
   // 的散文）。⚠️ 上一版这张表被写了四份、四份点名的集合互相不一致 —— 照任一份走
   // 都会漏掉一个文件。
   const worstAttemptMs = deps.config.codeTimeoutMs
@@ -433,11 +444,11 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
    * 走到它的时候确实只有配置能解释，`attempted === 0` 那一支的措辞不必再分岔。
    *
    * ⚠️ **代价明写（不是零成本）**：准备阶段不再计入预算 ⇒ Cron 那一轮的实际墙钟
-   * 最坏比 `WORKER_ROUND_BUDGET_MS`（780 秒）多出一段准备时间。**这一段本来就是
-   * 那份预算留了余量的东西**：`./types.ts` 里 `WORKER_ROUND_BUDGET_MS` 的 JSDoc 逐字
+   * 最坏比 `SCHEDULED_ROUND_BUDGET_MS`（780 秒）多出一段准备时间。**这一段本来就是
+   * 那份预算留了余量的东西**：`./types.ts` 里 `SCHEDULED_ROUND_BUDGET_MS` 的 JSDoc 逐字
    * 写着「注册链上那几个 `REGISTRAR_REQUEST_TIMEOUT_MS` 仍然没算进去，这 120 秒就是
    * 留给这些尾巴的」，而准备阶段最多再要一个 15 秒的 `listDomains` 加两次存储读，
-   * 780 + 余量仍在 `WORKER_CRON_WALL_CLOCK_MS`（900 秒）之内。
+   * 780 + 余量仍在 `SCHEDULED_ROUND_WALL_CLOCK_MS`（900 秒）之内。
    */
   const roundStartedAt = deps.now();
 
@@ -554,7 +565,7 @@ export async function tendOnce(deps: TendDeps): Promise<TendResult> {
          * 从前 `provider_error` 与 `code_timeout` 会把 `tryFallback` 置真、降级到备
          * 通道；现在这两支与其余几支的处置完全一样：**本次名额作废，本轮的下一个名额
          * 照常开始**（先睡 mintDelayMin~Max）。没有跨轮退避、也不新增：失败不改变下一轮
-         * 的时间（Node 是固定 TEND_INTERVAL_MS 定时器、Worker 是 Cron），轮内节流已有
+         * 的时间（固定的 TEND_INTERVAL_MS 定时器），轮内节流已有
          * 两层（尝试间的随机间隔 + 轮级墙钟预算）。加自动退避等于偷偷把「二选一」变成
          * 「二选一 + 自适应调度」，运维在面板上看到的补池节奏会与配置对不上。
          *

@@ -44,12 +44,13 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
   /** 见 `clientIp`：设了才信 `X-Forwarded-For`。默认 false。 */
   trustProxy?: boolean;
   /**
-   * 双运行时差异的唯一注入点（`GET /admin/api/capabilities` 与 `overview` 的来源）。
+   * 运行时能力（`GET /admin/api/capabilities` 与 `overview` 的来源）。
    *
-   * **这里可选、默认 `nodeRuntime()`**——与 `wire.ts` 里 `buildApp` 那个必填参数
-   * 刻意不同：那里是两个**生产入口**唯一装配 app 的地方，忘传就是真实的双运行时
-   * 失配；这里是被海量既有测试直接调用的底层装配函数，给它一个安全的默认值
-   * 换来的是不必为一个与 runtime 无关的测试改动去牵连几十个调用点。
+   * **可选、默认 `nodeRuntime()`。** ⚠️ 这里原来写着「与 `wire.ts` 里 `buildApp`
+   * 那个**必填**参数刻意不同」——**那个参数在 v0.4.0 删了**（只剩一个运行时，
+   * 必填只是让每个调用点抄一遍同一个字面量）。今天两处都不要求调用方给它。
+   * **留着这一格可选注入**的理由是测试：`tests/contract/admin-overview.test.ts` 那一格
+   * 注入一个 `process()` 会抛的实现，才验得到 overview 的逐块降级。
    */
   runtime?: RuntimeInfo;
   /** 被环境变量锁定的字段清单（`envLockedFields` 的结果）。默认空数组，理由同 `runtime`。 */
@@ -79,9 +80,11 @@ export interface AppDeps extends Omit<DispatchDeps, "config"> {
   /**
    * 补池在途守卫。**可选，缺省新建一个只属于这个 app 的**。
    *
-   * `wire.ts` 显式传入并把同一把交给 `src/entry/node.ts` 的定时轮：Node 是单进程，
-   * 定时轮与面板按钮必须共用**这一把**。Worker 的 `fetch` isolate 与 `scheduled`
-   * isolate 本来就不共享内存，那里各自一把是**正确的**，跨 isolate 由存储锁负责。
+   * `wire.ts` 显式传入并把同一把交给 `src/entry/node.ts` 的定时轮：这是单进程，
+   * 定时轮与面板按钮必须共用**这一把**，各拿各的等于形同虚设。
+   * ⚠️ 这段原来还有半句「Worker 的 `fetch` 与 `scheduled` 是两个副本，
+   * 那里各自一把是正确的」——那个形态没了；**跨副本（多容器共卷）那一层仍然由
+   * 存储锁负责**，见 `./admin/tend-lock.ts` 的对照表。
    */
   tendGate?: TendGate;
   /**
@@ -417,7 +420,7 @@ export function createApp(deps: AppDeps): Hono {
     version: deps.version,
     logger: deps.logger,
     trustProxy: deps.trustProxy ?? false,
-    // **原样传转发路径那一个 repo**，不新建：面板与转发共用同一份 isolate 快照，
+    // **原样传转发路径那一个 repo**，不新建：面板与转发共用同一份 进程内快照，
     // 面板轮询才不会各自去读一遍存储（设计文档 §2.4 第 1、2 条）。
     repo: deps.repo,
     // **原样传转发路径那一个 fetcher**：单把 key 验活不经 `dispatch()`，
@@ -426,12 +429,13 @@ export function createApp(deps: AppDeps): Hono {
     now: deps.now,
     configHolder: deps.configHolder,
     storageHealth: deps.storageHealth,
-    // 双运行时差异的唯一注入点，见 AppDeps.runtime 的说明。
+    // 运行时能力，见 AppDeps.runtime 的说明。
     runtime: deps.runtime ?? nodeRuntime(),
     envLocked: deps.envLocked ?? [],
     storeLogger,
     // 注册机接线。两者都可选，缺省的后果各自写在 `AppDeps` 上：
-    // 没接执行体 ⇒ 三条端点如实回 503；没传守卫 ⇒ 这个 app 自己一把（Worker 形态本来就该这样）。
+    // 没接执行体 ⇒ 三条端点如实回 503；没传守卫 ⇒ 这个 app 自己一把（只有直接调
+    // `createApp` 的测试会走到，生产装配一律由 `wire.ts` 显式传同一把）。
     registrar: deps.registrar ?? null,
     tendGate: deps.tendGate ?? createTendGate(),
     config: deps.config ?? null,

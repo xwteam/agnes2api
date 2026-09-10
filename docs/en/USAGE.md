@@ -13,7 +13,7 @@ This page is about the **client side**: pointing each protocol's official SDK at
 
 | Thing | Where it comes from |
 |-------|---------------------|
-| The gateway URL | A Worker's `*.workers.dev` domain, your own domain, or `http://localhost:8080` for Docker |
+| The gateway URL | `http://localhost:8080`, or whatever domain you put in front of the container |
 | The gateway token | The `GATEWAY_TOKEN` you set at deploy time — see the [deployment guide](DEPLOY.md#environment-variables) |
 | At least one working upstream key | Imported into the pool from the admin panel — see the [admin panel](ADMIN.md) |
 

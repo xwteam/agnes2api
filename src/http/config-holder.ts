@@ -6,10 +6,10 @@ import type { Logger } from "../ports/logger.js";
 /**
  * 配置持有者。放入口层而不是 core：它要碰存储。
  *
- * `AppDeps.config` 从**值**改成它，是因为原来那份值在建 app 那一刻就被闭包捕获了
- * （src/http/app.ts:33-34），Worker 的 isolate 与 Node 的进程各自把它冻结到生命周期结束。
+ * `AppDeps.config` 从**值**改成它，是因为原来那份值在建 app 那一刻就被闭包捕获了，
+ * 进程把它冻结到自己的生命周期结束。
  * 后果不只是「保存没生效」，而是**一个撤销不掉的凭据**：没设 GATEWAY_TOKEN 环境变量时，
- * worker.ts 的缓存判断恒为 false，热 isolate 里的旧口令无限期继续有效。
+ * 那时入口层那个「口令变了才重建 app」的缓存判断恒为 false，进程里的旧口令无限期继续有效。
  */
 export interface ConfigHolder {
   /** 同步读，**永不抛**。createConfigHolder 已经 prime 过，所以一定有值。 */
@@ -23,37 +23,31 @@ export interface ConfigHolder {
 /**
  * 30 秒。
  *
- * 不取 10：miniflare 写死 `MIN_CACHE_TTL_SECONDS: 30`，小于它直接抛
- * `Invalid cache_ttl of N. Cache TTL must be at least 30.`（已核实）。虽然本项目
- * **不给 KV 的 get 传 cacheTtl**（走默认值），把 holder 的 TTL 和它对齐可以避免
- * 「holder 比边缘缓存还快，于是快出来的那部分毫无意义」。
+ * ⚠️⚠️ **取 30 的原理由在 v0.4.0 没了，如实登记。** 原话是：「不取 10：miniflare 写死
+ * `MIN_CACHE_TTL_SECONDS: 30`，小于它直接抛；把 holder 的 TTL 和 KV 边缘缓存对齐，
+ * 可以避免『holder 比边缘缓存还快，于是快出来的那部分毫无意义』。」
+ * **摘掉 Worker/KV 形态之后没有边缘缓存可对齐**，`FileStorage.get` 是直接 `readFile`。
+ * **值没有跟着改**，理由换成今天成立的这一条：这个 TTL 决定的是**每个请求路径上
+ * 那次配置读的摊薄倍数**——每次 `ensureFresh` 真读一次就是一遍整份 `store.json` 的
+ * `readFile` + `JSON.parse`，30 秒把它摊薄到 2,880 次/天/副本；取更小是拿一次全量
+ * 反序列化去换更快的生效，取更大则是让面板「保存」看起来更久不生效。
  *
- * **用户可见的总生效上界 = 本 TTL(30s) + KV 边缘缓存默认 60s ≈ 90 秒。**
- * 那条待复核项已核实：Cloudflare KV 的 `cacheTtl` 最小值 30、默认值 60（官方文档
- * https://developers.cloudflare.com/kv/api/read-key-value-pairs/ ，"cacheTtl... minimum:
- * 30"、"60 is the default"，2026-08-19 复核），与本文件上面那句「miniflare 写死 30」
- * 一致，因此这个数字**可以**写进 UI 文案与用户文档，并且**必须**写——设计文档 §5.2
- * 明说「面板文案必须写这个数，不许写『立即生效』」。
+ * **用户可见的总生效上界就是本 TTL 的 30 秒**，中间不再有任何一层缓存。
+ * ⚠️ **上一版这里登记的是「本 TTL(30s) + KV 边缘缓存默认 60s ≈ 90 秒」，那笔欠账
+ * 已经结清，别再照那句话读。** 当时的登记说：那 60 秒是 Cloudflare KV 边缘读的陈旧
+ * 窗口、这一层随 Worker 形态一起没了，但那个数已经以一个常量 + 一个字段的形态进了
+ * `GET /admin/api/overview` 的 `freshness` 块、`PUT /admin/api/config` 的
+ * `propagation` 块、面板三个板块的文案与五语言文档，删它要跨后端 / 面板 / 五语言
+ * 文档一起动，所以先登记着。**v0.4.0 里那一整层已经全部删干净**（常量、两个响应块
+ * 里的那个字段、面板取值与五语言文案），两条「多久能看见」的上界因此退化成各自的
+ * TTL。设计文档 §5.2 那条「面板文案必须写这个数，不许写『立即生效』」照旧成立。
  *
- * ⚠️ 别把它和 `POOL_CACHE_TTL_MS` 那条上界搞混：那条是「别的 isolate 判的冷却/剔除
- * 多久能看到」，= `POOL_CACHE_TTL_MS + 约 60 秒`（默认约 120 秒），是另一个数，
+ * ⚠️ 别把它和 `POOL_CACHE_TTL_MS` 那条上界搞混：那条是「别的副本判的冷却/剔除
+ * 多久能看到」，= `POOL_CACHE_TTL_MS` 本身（默认 60 秒），是另一个数，
  * 见 `keypool-repo.ts` 的 `KeyPoolRepoOptions.cacheTtlMs` 注释。
  * **面板要把两个数都显示出来**，只显示一个就是又一个「面板不撒谎」的破口。
  */
 export const CONFIG_TTL_MS = 30_000;
-
-/**
- * KV 边缘缓存的默认 `cacheTtl`（秒 → 毫秒）。
- *
- * **已核实**：Cloudflare KV 的 `cacheTtl` 最小 30、默认 60（设计文档 §17，2026-08-19）。
- *
- * ⚠️ **它原来是 `src/http/admin/handlers/overview.ts` 里的一个模块私有常量**，
- * 设置页那一轮把它**移**到这里（不是新增第二份）：`PUT /admin/api/config` 的
- * `propagation` 块要报同一个「多久能看见」上界，而那个数字在五语言 DEPLOY.md 里
- * 是对用户的承诺。抄第二份的后果是概览页与保存回执可以给出两个不同的数——
- * 「面板不撒谎」这条在本仓已经因为同一形态破过一次。
- */
-export const KV_EDGE_CACHE_MS = 60_000;
 
 export async function createConfigHolder(deps: {
   env: Record<string, string | undefined>;

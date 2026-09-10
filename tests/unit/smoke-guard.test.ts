@@ -99,7 +99,7 @@ const intervalCriterionFailures = (read: Read): string[] => {
 
 /* ── ③ 的结论真的被那一格采纳 ────────────────────────────────────────────── */
 
-const REAL_VERDICT_ADOPTED = "cell_stream_interval 真的把 check_stream 的返回值当成这一格的成败，两个形态各一处";
+const REAL_VERDICT_ADOPTED = "cell_stream_interval 真的把 check_stream 的返回值当成这一格的成败";
 
 /**
  * ⚠️ **一个不会自己红的清单不是守卫，是待办。** 到达间隔那一组只看 `check_stream` 的函数体文本，
@@ -110,10 +110,11 @@ const REAL_VERDICT_ADOPTED = "cell_stream_interval 真的把 check_stream 的返
 const streamVerdictAdoptedFailures = (read: Read): string[] => {
   const body = fnBody(read(SMOKE), "cell_stream_interval");
   const out: string[] = [];
-  for (const label of ["Docker", "Worker"]) {
-    if (!new RegExp(`if ! check_stream "${label}" "[^"]+"; then bad=1; fi`).test(body)) {
-      out.push(`cell_stream_interval 没把 ${label} 那次 check_stream 的返回值接进 bad —— ③ 可以被静默阉割而这份清单全绿`);
-    }
+  // ⚠️ **这里原来循环 `["Docker", "Worker"]` 两侧**，v0.4.0 摘掉 Worker 形态之后
+  // 那一格只探 Docker 这一侧了。判据一个字没松：那一次 `check_stream` 的返回值
+  // 必须接进 `bad`，`|| true` 吞掉就当场红。
+  if (!/if ! check_stream "Docker" "[^"]+"; then bad=1; fi/.test(body)) {
+    out.push("cell_stream_interval 没把 Docker 那次 check_stream 的返回值接进 bad —— 那一格可以被静默阉割而这份清单全绿");
   }
   if (!body.includes("if (( bad != 0 )); then return 1; fi")) {
     out.push("cell_stream_interval 不再按 bad 决定这一格的成败 —— 红了也会算 PASS");
@@ -150,12 +151,11 @@ const chunkSourceFailures = (read: Read): string[] => {
   if (/const CHUNKS = \d/.test(src)) {
     out.push("stub 里又把块数写成了字面量 —— 这正是上一版那两个手抄数的死法");
   }
-  // 两处起 stub 的地方都要把它传进去：宿主机那份 + compose 网络里那份。
-  if (!src.includes('node "$TMP/upstream-stub.mjs" "$STUB_PORT" "$STUB_GAP_MS" "$STUB_CHUNKS"')) {
-    out.push("宿主机那份 stub 起的时候没把 STUB_CHUNKS 传进去");
-  }
+  // ⚠️ **这里原来查两处起 stub 的地方**（宿主机那份 + compose 网络里那份）。
+  // 宿主机那份是给 `wrangler dev` 那一侧连 `127.0.0.1` 用的，随 Worker 形态一起删了
+  // ⇒ 今天只剩 compose 网络里这一份，判据跟着只剩这一条。
   if (!src.includes('"${STUB_PORT_IN_NET}", "${STUB_GAP_MS}", "${STUB_CHUNKS}"')) {
-    out.push("compose 网络里那份 stub 起的时候没把 STUB_CHUNKS 传进去 —— 两份 stub 会发不一样多的块");
+    out.push("compose 网络里那份 stub 起的时候没把 STUB_CHUNKS 传进去 —— stub 与判据两侧会各自漂");
   }
   const body = fnBody(src, "check_stream");
   if (!body.includes("(( deltas != STUB_CHUNKS ))")) {
@@ -236,18 +236,19 @@ const dataIsolationFailures = (read: Read): string[] => {
 
 /* ── 收尾无条件 ───────────────────────────────────────────────────────────── */
 
-const REAL_CLEANUP = "收尾是无条件的：trap 挂在 EXIT 上，容器 / wrangler / 临时目录三样都收，最后比一遍工作树";
+const REAL_CLEANUP = "收尾是无条件的：trap 挂在 EXIT 上，容器与临时目录都收，最后比一遍工作树";
 
 const cleanupFailures = (read: Read): string[] => {
   const src = read(SMOKE);
   const out: string[] = [];
   if (!/^trap cleanup EXIT$/m.test(src)) {
-    out.push("没有 `trap cleanup EXIT` ⇒ 中途失败时容器与 wrangler 会留在机器上");
+    out.push("没有 `trap cleanup EXIT` ⇒ 中途失败时容器会留在机器上");
   }
   const body = fnBody(src, "cleanup");
+  // ⚠️ **这张表原来有四项，第二项是 `kill -TERM`（按进程组杀 `wrangler dev`）**，
+  // 它连同 Worker 形态一起没了；今天冒烟起的唯一长驻进程就是容器本身。
   const need: readonly (readonly [string, string])[] = [
     ["compose down -v", "收尾不关容器"],
-    ["kill -TERM", "收尾不杀 wrangler"],
     ['rm -rf "$TMP"', "收尾不删临时目录"],
     ['if [[ $after != "$GIT_BASELINE" ]]; then', "收尾不再拿工作树与开跑前比 —— 探针留在树里就没人会发现"],
   ];
@@ -335,12 +336,12 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(r.stderr).toContain("认不出的参数");
   });
 
-  it("--print-plan 是干跑档：五格逐格打出来，一格都不执行，stderr 恰好 0 字节", () => {
+  it("--print-plan 是干跑档：四格逐格打出来，一格都不执行，stderr 恰好 0 字节", () => {
     const r = run("--print-plan");
     expect(r.code).toBe(0);
     expect(r.stderr.length, `干跑档不该往 stderr 写东西：${r.stderr}`).toBe(0);
     const ids = [...r.stdout.matchAll(/^### CELL (\S+) \| /gm)].map((m) => m[1]!);
-    expect(ids).toEqual(["①", "②", "③", "④", "⑤"]);
+    expect(ids).toEqual(["①", "②", "③", "④"]);
   });
 
   /**
@@ -433,8 +434,10 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
 
   it("(零联网) 该红时红：把上游指回真的 Agnes —— 点名那个主机名", () => {
     probeBase(realUpstreamFailures(realRead), REAL_UPSTREAM);
+    // ⚠️ 这条变异原来打在 Worker 那一侧的 `http://127.0.0.1:$STUB_PORT/worker/v1` 上，
+    // 那一行随 Worker 形态一起删了 ⇒ 改打在今天唯一那条上游地址上。
     const mutated = realRead(SMOKE)
-      .replace("http://127.0.0.1:$STUB_PORT/worker/v1", "https://apihub.agnes-ai.com/v1");
+      .replace("http://smoke-upstream:${STUB_PORT_IN_NET}/docker/v1", "https://apihub.agnes-ai.com/v1");
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
     const failures = realUpstreamFailures(patchRead(realRead, SMOKE, mutated));
     expect(failures).toHaveLength(1);
@@ -548,14 +551,14 @@ describe("scripts/smoke-dual-runtime.sh：判据不许被换成没有鉴别力�
     expect(failures.join("\n")).toContain("写死的块数（4）");
   });
 
-  it("(块数真源) 该红时红：compose 那份 stub 没拿到块数 —— 两份 stub 会发不一样多的块", () => {
+  it("(块数真源) 该红时红：compose 那份 stub 没拿到块数 —— stub 与判据两侧会各自漂", () => {
     probeBase(chunkSourceFailures(realRead), REAL_CHUNK_SOURCE);
     const mutated = realRead(SMOKE)
       .replace('"${STUB_PORT_IN_NET}", "${STUB_GAP_MS}", "${STUB_CHUNKS}"', '"${STUB_PORT_IN_NET}", "${STUB_GAP_MS}"');
     expect(mutated, "变异没落地").not.toBe(realRead(SMOKE));
     const failures = chunkSourceFailures(patchRead(realRead, SMOKE, mutated));
     expect(failures).toHaveLength(1);
-    expect(failures[0] ?? "").toContain("两份 stub 会发不一样多的块");
+    expect(failures[0] ?? "").toContain("stub 与判据两侧会各自漂");
   });
 
   it("(块数真源) 认不出要吵：STUB_CHUNKS 整个读不出来时当场抛", () => {

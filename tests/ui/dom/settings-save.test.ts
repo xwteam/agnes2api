@@ -69,7 +69,7 @@ function configBody(over: Record<string, unknown> = {}) {
     // 夹具里原来漏了它 —— 而「读得到配置却读不到 `resetBlocked`」在真机上不存在。
     // 补上它之后「读不到」那一档只由真正读不到的用例（`GET` 500）触发，不再被夹具白占。
     resetBlocked: [],
-    propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
+    propagation: { configTtlMs: 30000, visibilityUpperBoundMs: 30000 },
     ...over,
   };
 }
@@ -432,8 +432,11 @@ describe("建实例时读一次的旋钮：保存回执分岔", () => {
     const text = await saveChanging([["maxStrikes", "9"]]);
     expect(text, "逐次生效的字段也被说成了「要重启」—— 例外分支扩得太宽").not.toContain(BUILD_TIME_LINE);
     expect(text, "传播上界那句被一起删掉了 —— 那是当初论证出来的必须显示项").toContain(LIVE_LINE);
-    // 90_000 ms 经 `fmtDuration` 是「1分30秒」。
-    expect(text).toContain("1分30秒");
+    // 30_000 ms 经 `fmtDuration` 是「30秒」。⚠️ **连着前后文一起断言，不许只写「30秒」**：
+    // 那三个字是「1分30秒」的子串 ⇒ 只写它的话，KV 边缘缓存那一层被加回来（上界
+    // 又变回 90_000）这一格照样绿。上界从 90_000 变成 30_000 是因为那一层在 v0.4.0
+    // 整层删了（上界退回 `CONFIG_TTL_MS` 本身），不是判据放宽。
+    expect(text).toContain("最长 30秒 之后");
   });
 
   /**
@@ -811,11 +814,12 @@ describe("接线：不轮询、传播上界要显示出来", () => {
   });
 
   /** **不许写「立即生效」**（设计 §5.2）：那句上界必须显示出来。 */
-  it("传播上界（90 秒）显示在页面上，而不是一句「立即生效」", async () => {
+  it("传播上界（30 秒）显示在页面上，而不是一句「立即生效」", async () => {
     const h = await openSettings(() => ok(configBody()));
     expect(screenText(h)).not.toContain("立即生效");
-    // 90_000 ms 经 `fmtDuration` 是「1分30秒」。
-    expect(screenText(h)).toContain("1分30秒");
+    // 30_000 ms 经 `fmtDuration` 是「30秒」。⚠️ **连着前后文一起断言，不许只写「30秒」**：
+    // 那三个字是「1分30秒」的子串（理由同上面那一格）。
+    expect(screenText(h)).toContain("最长 30秒 之后");
   });
 });
 
@@ -861,7 +865,7 @@ describe("装载不起来时的诊断视图（评审那条的前端那一半）"
     // 下一次入口**（本任务已经栽过三次：无冲突数据、两条通道取值全等、
     // 以及这份夹具第一版的 `editable: []` / `secrets: []`）。
     secrets: [...SECRET_FIELDS],
-    propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
+    propagation: { configTtlMs: 30000, visibilityUpperBoundMs: 30000 },
   };
 
   /**

@@ -196,7 +196,7 @@ describe("请求本体", () => {
     await sendToGateway(req, GW_TOKEN, { origin: ORIGIN });
     const init = fetchCalls[0]!.init;
     expect(init.method).toBe("POST");
-    // `credentials` 在 workerd 的 `RequestInit` 类型里没有这一格，而浏览器有；
+    // `credentials` 在 Node 的 `RequestInit` 类型里没有这一格，而浏览器有；
     // 这里只是把替身记下来的那份原样读出来，不是给发货代码加类型。
     expect((init as unknown as { credentials?: string }).credentials).toBe("omit");
     // 请求体逐字：期望值手写，用户那句话必须真的在里面。

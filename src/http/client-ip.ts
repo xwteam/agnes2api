@@ -34,18 +34,23 @@ function ipOrNull(raw: string | undefined): string | null {
  *
  * ① **门控**：`TRUST_PROXY` 之外一律返回 `null`，`CF-Connecting-IP` 也不例外。
  *    它常被说成「平台注入、不可伪造」，但那个性质只在**请求真的经过 Cloudflare**
- *    时成立；Node/Docker 直连暴露时没有任何东西会覆盖这个头，客户端自己发一个
+ *    时成立；直连暴露时没有任何东西会覆盖这个头，客户端自己发一个
  *    `CF-Connecting-IP: 1.2.3.4` 就算数。而直连正是 Docker 部署的默认形态。
  *
- * ② **门控之内，`CF-Connecting-IP` 优先，`X-Forwarded-For` 只作兜底**。两个头的
- *    可伪造性根本不同：
- *    · `CF-Connecting-IP` 由 Cloudflare 边缘写入，且会**覆盖**客户端传来的同名头，
- *      所以请求真的经过 CF 时伪造不了。**Worker 形态下 CF 定义上就在前面**，它是
- *      那里的权威值。
- *    · `X-Forwarded-For` 是任何中间件都能追加的链，客户端可以自己发一个假的，
- *      可信与否完全取决于你的代理链长什么样。
- *    因此在 Worker 上优先 XFF 是错的——那里 XFF 里可能装着客户端塞的垃圾，而权威
- *    值就在旁边。
+ * ② **门控之内，`CF-Connecting-IP` 优先，`X-Forwarded-For` 只作兜底**。
+ *
+ *    ⚠️⚠️ **这条排序的原理由在 v0.4.0 没了，如实登记：** 原话是「**Worker 形态下 CF
+ *    定义上就在前面**，它是那里的权威值 ⇒ 在 Worker 上优先 XFF 是错的」。
+ *    摘掉 Worker 形态之后，**没有任何东西保证 Cloudflare 在前面了**。
+ *
+ *    **排序没改，它从「由形态保证的事实」降级成一个有代价的取舍**：
+ *    · CF 真的在前面时（把 Docker 部署挂在 Cloudflare 代理后面，是本仓最常见的形态），
+ *      `CF-Connecting-IP` 由边缘写入并**覆盖**客户端传来的同名头 ⇒ 伪造不了，
+ *      而同一趟请求里的 `X-Forwarded-For` 里可能还装着客户端自己塞进来的前缀。
+ *    · CF **不在**前面时（只挂自建 nginx / Caddy），`CF-Connecting-IP` 没有任何人会覆盖，
+ *      攻击者自己带一个就会**优先于**反代写的 `X-Forwarded-For` 胜出。
+ *    ⇒ **后一种形态的处置写在下面第 ③ 条里**（在反代上把这个头剥掉，五语言 DEPLOY.md
+ *    有命令），它今天从「一个边角提醒」变成了**这条排序成立的前提**。
  *
  * ③ **两个头都过一遍形态校验**（见 ipOrNull）。门控之内并不等于「值一定干净」：
  *    `TRUST_PROXY=1` 的另一种常见形态是网关挂在自建 nginx / Caddy 后面，那时

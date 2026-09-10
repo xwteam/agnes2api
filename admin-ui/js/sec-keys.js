@@ -110,12 +110,12 @@ let abort = null;
 let data = null;
 let loadError = false;
 /**
- * `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` / `kvEdgeCacheMs` 的当前生效值。
- * **只拉一次**——前两个是建 app 时读一次的部署期常量（见 wire.ts），不随
- * `ConfigHolder` 刷新，没必要跟着每次 `load()` / 自动刷新重新去问；`kvEdgeCacheMs`
- * 同样是常量。默认 null（渲染成 —），拿到之前不假装知道旧的硬编码默认值。
+ * `POOL_CACHE_TTL_MS` / `POOL_TOUCH_INTERVAL_MS` 的当前生效值。
+ * **只拉一次**——两个都是建 app 时读一次的部署期常量（见 wire.ts），不随
+ * `ConfigHolder` 刷新，没必要跟着每次 `load()` / 自动刷新重新去问。
+ * 默认 null（渲染成 —），拿到之前不假装知道旧的硬编码默认值。
  */
-let knobs = { ttl: null, touch: null, edge: null };
+let knobs = { ttl: null, touch: null };
 
 /**
  * 验活的行内状态，**按 key id 索引**。
@@ -468,9 +468,7 @@ function render() {
   // 每次 render() 都用 `knobs` 现有的值重写这两句——拿到之后立刻生效，没拿到时
   // fmtDuration(null) 给出 —，不假装知道旧的硬编码默认值。
   nodes.autoNote.textContent = t("keys.autoNote", { ttl: fmtDuration(knobs.ttl) });
-  nodes.freshnessNote.textContent = t("keys.freshness", {
-    poolTtl: fmtDuration(knobs.ttl), edge: fmtDuration(knobs.edge),
-  });
+  nodes.freshnessNote.textContent = t("keys.freshness", { poolTtl: fmtDuration(knobs.ttl) });
 
   // 分页控件先复位：读失败 / 空列表时留着上一次的「第 1/2 页 · 共 3 条」，
   // 等于在展示一份已经不存在的数据。

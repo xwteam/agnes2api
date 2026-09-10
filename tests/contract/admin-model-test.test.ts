@@ -9,7 +9,7 @@ import { MODEL_CATALOG } from "../../src/core/admin/protocol-catalog.js";
 /**
  * `POST /admin/api/models/:id/test` —— 逐模型连通性矩阵里的一格。
  *
- * **contract ⇒ node 与 workerd 各跑一遍**（`tests/global-setup.ts` 的 `POLICY` 强制）。
+ * ⚠️ 这份文件头原来写着「contract ⇒ node 与 workerd 各跑一遍」，v0.4.0 之后只剩一份配置。
  *
  * ── 观测点的纪律，与 `admin-verify.test.ts` / `admin-upstream-models.test.ts` 同一条 ──
  * 响应里的 `ok` / `status` / `reason` **全是 handler 自报**，拿它们做判据只能证明

@@ -6,7 +6,7 @@
 
 `/v1/*`와 `/v1beta/*` 아래의 모든 라우트는 자격 증명이 필요하고 `/health`는 필요 없습니다. 아래 네 가지 전달 방식 중 하나만 고르면 됩니다 — 각 프로토콜 공식 SDK가 기본으로 보내는 형태와 그대로 맞아떨어지므로 보통 추가 설정이 필요 없습니다.
 
-아래 예제는 모두 `http://localhost:8080`(Docker/Node가 듣는 주소)을 씁니다. Cloudflare Worker에 배포했다면 여러분의 `*.workers.dev` 도메인(또는 커스텀 도메인)으로 바꾸면 됩니다. `your-gateway-token`은 여러분이 설정한 `GATEWAY_TOKEN`의 자리표시자입니다.
+아래 예제는 모두 `http://localhost:8080`(컨테이너가 듣는 주소)을 씁니다. 앞에 도메인이나 리버스 프록시를 두었다면 그 호스트명으로 바꾸면 됩니다. `your-gateway-token`은 여러분이 설정한 `GATEWAY_TOKEN`의 자리표시자입니다.
 
 ### 방식 1: Authorization Bearer 헤더
 
@@ -68,7 +68,7 @@ GATEWAY_TOKEN=긴-무작위-문자열로-바꾸세요
 - `GATEWAY_TOKEN`은 언제나 유효하며, **그 판정은 저장소 읽기를 전혀 일으키지 않습니다** — 이 성질이 곧 탈출구입니다. 키 표가 망가져도, 저장소를 읽지 못해도 마스터 토큰을 쓰는 클라이언트는 1바이트도 영향을 받지 않습니다;
 - 외부용 API 키는 하나씩 이름과 만료를 두고 언제든 중지·폐기할 수 있어, 마스터 토큰을 넘기지 않고 다운스트림마다 따로 한 개씩 나눠 줄 수 있습니다;
 - 게이트웨이는 인증용 SHA-256 다이제스트에 더해 **2026-09-10부터 평문도 저장합니다**: 평문은 발급하는 응답에서 전부 건네지고, 이후에도 `GET /admin/api/apikeys/{id}/reveal`로 가져올 수 있습니다(그 전에 발급한 것은 가져올 수 없습니다). 이 맞바꿈의 대가는 그 엔드포인트 항목에 적혀 있습니다;
-- 중지나 삭제는 **즉시가 아닙니다**: 다른 인스턴스가 알아차리기까지 약 6분이 걸릴 수 있습니다. 아래 `PATCH /admin/api/apikeys/{id}`를 보세요.
+- 중지나 삭제는 **즉시가 아닙니다**: 다른 인스턴스가 알아차리기까지 약 5분이 걸릴 수 있습니다. 아래 `PATCH /admin/api/apikeys/{id}`를 보세요.
 
 `401` 본문은 「그런 키가 없음」 「중지됨」 「만료됨」 세 경우에 **똑같은 문장**을 돌려줍니다 — 구분해 주는 것은 스캐너에게 열거 창구를 내주는 일이기 때문입니다. 진짜 이유는 이벤트 로그(`apikey.rejected`, `id`와 구분값 포함)에만 기록되며, 그곳은 운영자만 볼 수 있습니다.
 
@@ -555,7 +555,7 @@ curl http://localhost:8080/admin/api/session \
 **응답**:
 
 ```json
-{ "ok": true, "version": "0.3.1" }
+{ "ok": true, "version": "0.4.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -573,7 +573,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -605,7 +605,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -614,11 +614,10 @@ curl http://localhost:8080/admin/api/overview \
   "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true },
   "freshness": {
     "poolCacheTtlMs": 60000,
-    "poolVisibilityUpperBoundMs": 120000,
+    "poolVisibilityUpperBoundMs": 60000,
     "poolTouchIntervalMs": 21600000,
     "configTtlMs": 30000,
-    "configVisibilityUpperBoundMs": 90000,
-    "kvEdgeCacheMs": 60000
+    "configVisibilityUpperBoundMs": 30000
   },
   "config": {
     "registrarEnabled": true,
@@ -926,7 +925,7 @@ curl http://localhost:8080/admin/api/keys/9f2c/usage \
 **업스트림 Agnes key 한 개의 평문**을 가져옵니다. 평문을 위 목록에 넣지 않은 것은 의도한 선택입니다: 목록은 **높은 빈도로, 무심코** 불리므로 거기에 넣으면 패널이 한 번 폴링할 때마다, 기록으로 남는 응답 본문마다, 중간 계층 캐시마다 풀 전체의 자격 증명이 실려 다니게 됩니다. 이 엔드포인트는 **명시적인 동작**이며, 그래서 감사할 수 있습니다.
 
 > [!NOTE]
-> 이 계열은 **처음부터 평문으로 저장됩니다** — 다섯 벌의 DEPLOY.md가 첫날부터 업스트림 key는 「KV / `store.json`에 평문으로 놓이니 자격 증명으로 다루라」고 적어 왔습니다. 그러므로 이 엔드포인트는 **새로운 저장 위험을 들여오지 않고**, 이미 거기 있던 것을 패널에서 드러내 보일 뿐입니다.
+> 이 계열은 **처음부터 평문으로 저장됩니다** — 다섯 벌의 DEPLOY.md가 첫날부터 업스트림 key는 「`store.json`에 평문으로 놓이니 자격 증명으로 다루라」고 적어 왔습니다. 그러므로 이 엔드포인트는 **새로운 저장 위험을 들여오지 않고**, 이미 거기 있던 것을 패널에서 드러내 보일 뿐입니다.
 
 **요청**:
 
@@ -1074,7 +1073,7 @@ curl http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08/reveal \
 ```
 
 > [!WARNING]
-> 이 엔드포인트에는 **저장 의미를 깨뜨리는 변경**이 따라옵니다: 예전에는 평문의 SHA-256 다이제스트와 마지막 4자리만 저장했고 평문은 발급하던 그 `201`에만 나타났습니다. 2026-09-10부터 키 레코드는 **평문도 함께 저장합니다**. 안전성을 내주고 편의를 택한 맞바꿈이며, 대가는 이렇습니다: 패널이 한 번 뚫리면 **모든 클라이언트 키의 평문이 한꺼번에 새어 나갑니다**(예전에 새는 것은 되돌릴 수 없는 다이제스트뿐이었습니다); 저장 매체(KV / `store.json`)도 「바로 쓸 수 있는 클라이언트 자격 증명이 없음」에서 「있음」으로 바뀌므로 백업과 스냅숏의 취급 등급도 그에 맞춰 올려야 합니다.
+> 이 엔드포인트에는 **저장 의미를 깨뜨리는 변경**이 따라옵니다: 예전에는 평문의 SHA-256 다이제스트와 마지막 4자리만 저장했고 평문은 발급하던 그 `201`에만 나타났습니다. 2026-09-10부터 키 레코드는 **평문도 함께 저장합니다**. 안전성을 내주고 편의를 택한 맞바꿈이며, 대가는 이렇습니다: 패널이 한 번 뚫리면 **모든 클라이언트 키의 평문이 한꺼번에 새어 나갑니다**(예전에 새는 것은 되돌릴 수 없는 다이제스트뿐이었습니다); 저장 매체(`store.json`)도 「바로 쓸 수 있는 클라이언트 자격 증명이 없음」에서 「있음」으로 바뀌므로 백업과 스냅숏의 취급 등급도 그에 맞춰 올려야 합니다.
 
 > [!NOTE]
 > 이에 따라 `GET /admin/api/capabilities`의 `apiKeys.plaintextRetrievable`은 항상 `false`이던 값에서 `true`로 바뀝니다. 패널은 이 값을 보고 「평문 표시 / 복사」 버튼을 그릴지 말지 정합니다. 뜻은 「**이 배포가 평문을 가져올 수 있는가**」이지 「어느 키든 가져올 수 있다」가 아닙니다 — 업그레이드 전에 발급된 것은 여전히 가져올 수 없습니다.
@@ -1122,7 +1121,7 @@ curl -X PATCH http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08 \
 ```
 
 > [!WARNING]
-> **중지는 즉시가 아닙니다.** 이 요청을 처리한 인스턴스에서는 바로 적용되지만, 다른 인스턴스는 최대 `APIKEY_CACHE_TTL_MS`(기본 5분)에 KV 엣지 캐시 약 60초를 더한 **약 6분**이 걸립니다. 더 빠르게 하려면 `APIKEY_CACHE_TTL_MS`를 줄이면 되고, 그만큼 읽기 쿼터가 늘어납니다(DEPLOY.md의 쿼터 장부 참고).
+> **중지는 즉시가 아닙니다.** 이 요청을 처리한 인스턴스에서는 바로 적용되지만, 같은 볼륨을 공유하는 다른 컨테이너는 최대 `APIKEY_CACHE_TTL_MS`(기본 **약 5분**)가 걸립니다. 더 빠르게 하려면 `APIKEY_CACHE_TTL_MS`를 줄이면 되고, 대가는 인스턴스마다 한 간격에 표를 한 번 더 읽는 것뿐입니다(DEPLOY.md의 「외부용 API 키: 실효는 즉시가 아닙니다」 참고).
 
 오래된 버전 번호로 쓰면:
 
@@ -1257,7 +1256,7 @@ curl http://localhost:8080/admin/api/config \
   "editable": ["upstreamTimeoutMs"],
   "secrets": ["gatewayToken"],
   "resetBlocked": [],
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1292,7 +1291,7 @@ curl -X PUT http://localhost:8080/admin/api/config \
   "changed": ["upstreamTimeoutMs"],
   "credentialsChanged": [],
   "appliedAt": 1735689600000,
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1351,7 +1350,7 @@ curl -X POST http://localhost:8080/admin/api/config/secrets/clear \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "resetBlocked": [],
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1386,12 +1385,12 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
   "credentialsChanged": [],
   "resetBlocked": [],
   "appliedAt": 1735689600000,
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
 > [!IMPORTANT]
-> `appliedAt`은 **"이미 적용되었다"는 약속이 아니라** 서버가 저장한 그 순간입니다. 다른 복제본이나 다른 isolate가 언제 보게 되는지는 `propagation`의 세 숫자가 말합니다 — 패널은 이것을 "초기화되어 적용됨"으로 그리면 안 됩니다.
+> `appliedAt`은 **"이미 적용되었다"는 약속이 아니라** 서버가 저장한 그 순간입니다. 같은 볼륨을 공유하는 다른 컨테이너가 언제 보게 되는지는 `propagation`의 세 숫자가 말합니다 — 패널은 이것을 "초기화되어 적용됨"으로 그리면 안 됩니다.
 
 ### POST /admin/api/registrar/tend
 
@@ -1605,7 +1604,7 @@ curl http://localhost:8080/health
 **응답**:
 
 ```json
-{ "status": "ok", "version": "0.3.1", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.4.0", "storage": { "writable": true } }
 ```
 
 `storage.writable`은 "key 풀이 올라가 있는 스토리지에 정말 쓸 수 있는가"를 알려 줍니다. 시작할 때의 한 번의 프로브와 실행 중의 모든 실제 쓰기가 함께 유지하며, 헬스 체크 자신은 쓰지 않습니다. 쓸 수 없을 때는 **HTTP `503`**을 돌려주고 `status`가 `degraded`가 되며 `detail` 한 문장이 붙습니다(Docker에서는 바인드 마운트한 호스트 디렉터리 소유자와 컨테이너 안의 실행 사용자가 다른 경우가 많으며 자세한 내용은 컨테이너 로그에 있습니다).

@@ -86,7 +86,7 @@ async function realApp(o: {
     ADMIN_TOKEN: TEST_ADMIN_TOKEN,
     ...(o.env ?? { GATEWAY_TOKEN: GW }),
   };
-  const built = await buildApp(env, storage, nodeRuntime());
+  const built = await buildApp(env, storage);
   for (const k of o.keys ?? []) await built.repo.add(k);
   return { ...built, storage, env };
 }

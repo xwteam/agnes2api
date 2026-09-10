@@ -1,7 +1,7 @@
 {
   "name": "agnes2api",
-  "version": "0.3.1",
-  "description": "AI gateway that speaks the OpenAI, Anthropic, OpenAI Responses and Google Gemini protocols over one shared upstream pool, with a built-in admin panel. One codebase, two runtimes: Cloudflare Workers and Node/Docker.",
+  "version": "0.4.0",
+  "description": "AI gateway that speaks the OpenAI, Anthropic, OpenAI Responses and Google Gemini protocols over one shared upstream pool, with a built-in admin panel. Ships as a single Docker image.",
   "type": "module",
   "license": "MIT",
   "author": "xwteam",
@@ -20,14 +20,10 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
-    "test:workers": "vitest run --config vitest.workers.config.ts",
     "build": "tsc -p tsconfig.build.json",
     "ui:build": "node scripts/build-ui.mjs",
     "dev:node": "node scripts/build-ui.mjs && pnpm build && node dist/entry/node.js",
-    "dev:worker": "node scripts/build-ui.mjs && wrangler dev",
-    "setup:worker": "node scripts/setup-worker.mjs",
     "check:ui": "node scripts/check-ui-budget.mjs",
-    "check:wrangler": "node scripts/check-wrangler-placeholder.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:refs": "node scripts/check-comment-refs.mjs"
   },
@@ -37,7 +33,7 @@
     "anthropic",
     "responses",
     "gemini",
-    "cloudflare-workers",
+    "docker",
     "hono",
     "llm-proxy"
   ],
@@ -46,11 +42,8 @@
     "hono": "4.13.2"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "0.21.3",
-    "@cloudflare/workers-types": "5.20260815.1",
     "@types/node": "22",
     "typescript": "7.0.2",
-    "vitest": "4.1.10",
-    "wrangler": "4.123.0"
+    "vitest": "4.1.10"
   }
 }

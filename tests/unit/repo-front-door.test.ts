@@ -393,7 +393,11 @@ const FILE_TAIL_RE = /\.[A-Za-z0-9]{1,6}$/;
 /** git 索引里的全部路径。**顶层目录**与**顶层文件**两侧共用这一个入口，不各扫各的。 */
 function gitLsFiles(): string[] {
   const raw = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" });
-  const files = raw.split("\0").filter(Boolean);
+  // ⚠️ **再滤一道 `existsSync`**：`git ls-files` 报的是**索引**，一份「已经从磁盘删掉、
+  // 但删除还没 stage」的文件照样在里面。判据问的是「仓库根目录**现在**摆着哪些文件」，
+  // 索引里那份幽灵会让下面 (m) 那一格在一次还没 `git add` 的删除面前红得莫名其妙。
+  // **不放宽任何东西**：真多出一份文件、真少一份文件，两个方向照旧各自点名。
+  const files = raw.split("\0").filter(Boolean).filter((f) => existsSync(f));
   if (files.length === 0) {
     throw new Error("`git ls-files` 一个文件都没列出来 —— 扫描坏了，不许静默当成空集");
   }
@@ -440,9 +444,13 @@ const TOP_LEVEL_FILES: readonly string[] = [
   "CHANGELOG.md", "CONTRIBUTING.md", "LICENSE", "README.md", "SECURITY.md", "SPONSORS.md",
   // Docker 形态
   "Dockerfile", "docker-compose.yml", "docker-entrypoint.sh",
-  // Node / 构建 / 测试 / Worker 形态
+  // Node / 构建 / 测试
+  // ⚠️ **这一行原来还有 `vitest.workers.config.ts` 与 `wrangler.toml`**，
+  // 两者随 Cloudflare Worker 形态一起在 v0.4.0 删了（上面那条注释里的
+  // 「/ Worker 形态」也跟着去掉）。**这份白名单是双向差集的一侧**：
+  // 白名单里留一个磁盘上不存在的名字，另一个方向当场红——所以它删得干净，不是"顺手"。
   "VERSION", "package.json", "pnpm-lock.yaml", "tsconfig.build.json", "tsconfig.json",
-  "vitest.config.ts", "vitest.workers.config.ts", "wrangler.toml",
+  "vitest.config.ts",
 ];
 
 /** 仓里真实存在的顶层文件（不含目录），从 `git ls-files` 现算。 */
@@ -1330,16 +1338,26 @@ describe("公开仓的门面：社区文件 / CI 徽章 / node 大版本 / 工�
     expect(failures, `报文：\n${failures.join("\n")}`).toEqual([]);
   });
 
-  it("(f2) 该红时红：把 `pnpm test:workers` 写成 `pnpm test:worker` —— 点名那份文件与那个名字", () => {
+  /**
+   * ⚠️ **变异标本换过一次，理由不是「原来那个不好使」，是它不存在了。**
+   * 原标本是 `pnpm test:workers` → `pnpm test:worker`（漏一个字母）。v0.4.0 摘掉
+   * Cloudflare Worker 形态之后 `test:workers` 这个 script 连同 `CONTRIBUTING.md` 里
+   * 那一行一起没了 ⇒ **拿一个已经不在文档里的串做变异，`not.toBe` 那一条会先红，
+   * 而它红的原因是「变异没落地」，不是判据坏了**——那正是这一格最不该发出的信号。
+   * 换成 `pnpm ui:build` → `pnpm ui:builds`：同一种形态（带冒号的 script 名少/多一个
+   * 字母），而且标本这一侧**今天真的存在**（`package.json` 里有 `ui:build`，
+   * `CONTRIBUTING.md` 里恰好写着一处）。判据一个字都没放宽。
+   */
+  it("(f2) 该红时红：把 `pnpm ui:build` 写成 `pnpm ui:builds` —— 点名那份文件与那个名字", () => {
     probeBase(
       pnpmScriptFailures(realRead, realExists, realList),
       "社区文件里写下的每一条 `pnpm <名字>` 都是 package.json 里真有的 script",
     );
     const at = "CONTRIBUTING.md";
-    const mutated = realRead(at).replaceAll("`pnpm test:workers`", "`pnpm test:worker`");
-    expect(mutated, "变异没落地 —— CONTRIBUTING.md 里已经不写 `pnpm test:workers`").not.toBe(realRead(at));
+    const mutated = realRead(at).replaceAll("`pnpm ui:build`", "`pnpm ui:builds`");
+    expect(mutated, "变异没落地 —— CONTRIBUTING.md 里已经不写 `pnpm ui:build`").not.toBe(realRead(at));
     const failures = pnpmScriptFailures(patchRead(realRead, at, mutated), realExists, realList);
-    expect(failures).toEqual([`${at} 让人跑 \`pnpm test:worker\`，而 package.json 里没有这个 script`]);
+    expect(failures).toEqual([`${at} 让人跑 \`pnpm ui:builds\`，而 package.json 里没有这个 script`]);
   });
 
   it(REAL_REPO_BLOB, () => {

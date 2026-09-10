@@ -6,7 +6,7 @@
 
 `/v1/*` 與 `/v1beta/*` 底下的所有路由都需要憑證，`/health` 不需要。以下四種傳遞方式任選其一即可——正好對應各協議官方 SDK 預設送出的憑證形式，通常不必額外設定。
 
-以下範例統一使用 `http://localhost:8080`（Docker/Node 的監聽位址）。若部署在 Cloudflare Worker 上，換成你的 `*.workers.dev` 網域（或自訂網域）即可。`your-gateway-token` 是你設定的 `GATEWAY_TOKEN` 的佔位符。
+以下範例統一使用 `http://localhost:8080`（容器的監聽位址）。若你在前面掛了網域或反向代理，換成那個主機名即可。`your-gateway-token` 是你設定的 `GATEWAY_TOKEN` 的佔位符。
 
 ### 方式 1：Authorization Bearer 請求標頭
 
@@ -68,7 +68,7 @@ GATEWAY_TOKEN=換成一把長隨機字串
 - `GATEWAY_TOKEN` 永遠有效，**判定它一次儲存讀都不產生**——這條性質是逃生口本身：密鑰表被寫壞、儲存讀不出來時，拿主口令呼叫的用戶端一個位元組都不受影響；
 - 對外 API 密鑰可以逐把命名、設到期、隨時停用或吊銷，用來給不同的下游各發一把，而不必把主口令交出去；
 - 閘道存的是密鑰的 SHA-256 摘要**與明文**（2026-09-10 起）：明文事後可經 `GET /admin/api/apikeys/{id}/reveal` 取回，這筆取捨的代價寫在那條端點的警告裡；
-- 停用或刪除**不是即時的**：別的實例最多還要約 6 分鐘才看得見，見下面 `PATCH /admin/api/apikeys/{id}` 那條的說明。
+- 停用或刪除**不是即時的**：別的實例最多還要約 5 分鐘才看得見，見下面 `PATCH /admin/api/apikeys/{id}` 那條的說明。
 
 `401` 的回應體對「沒有這把密鑰」「已停用」「已過期」三種情況**說的是同一句話**——區分它們等於給掃描者一個列舉介面。真正的原因只寫進事件日誌（`apikey.rejected`，帶 `id` 與檔位），那是維運才看得到的地方。
 
@@ -555,7 +555,7 @@ curl http://localhost:8080/admin/api/session \
 **回應**：
 
 ```json
-{ "ok": true, "version": "0.3.1" }
+{ "ok": true, "version": "0.4.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -573,7 +573,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -605,7 +605,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -614,11 +614,10 @@ curl http://localhost:8080/admin/api/overview \
   "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true },
   "freshness": {
     "poolCacheTtlMs": 60000,
-    "poolVisibilityUpperBoundMs": 120000,
+    "poolVisibilityUpperBoundMs": 60000,
     "poolTouchIntervalMs": 21600000,
     "configTtlMs": 30000,
-    "configVisibilityUpperBoundMs": 90000,
-    "kvEdgeCacheMs": 60000
+    "configVisibilityUpperBoundMs": 30000
   },
   "config": {
     "registrarEnabled": true,
@@ -959,7 +958,7 @@ curl http://localhost:8080/admin/api/keys/9f2c/reveal \
 > **明文刻意不放進 `GET /admin/api/keys` 的清單。** 清單是高頻、無意識被呼叫的，塞進去等於每一次面板輪詢、每一條被記下的回應內容、每一層中間快取裡都帶著全部憑證的明文。這條端點是**顯式動作**，因此可以被稽核：每次呼叫記一條 `key.revealed` 事件（**事件裡只有 id，絕不含明文本身**）。
 
 > [!IMPORTANT]
-> 這一族**本來就以明文儲存**——五份 DEPLOY.md 從第一天就寫著上游 key「以明文落在 KV / `store.json` 裡，請按憑證處置」。所以這條端點**沒有引入新的儲存風險**，只是把已經存在的東西在面板上顯式露出來。
+> 這一族**本來就以明文儲存**——五份 DEPLOY.md 從第一天就寫著上游 key「以明文落在 `store.json` 裡，請按憑證處置」。所以這條端點**沒有引入新的儲存風險**，只是把已經存在的東西在面板上顯式露出來。
 
 ### GET /admin/api/apikeys
 
@@ -1070,7 +1069,7 @@ curl http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08/reveal \
 ```
 
 > [!WARNING]
-> 🔴 **這條端點伴隨一次儲存語義的破壞性改變。** 本閘道從前只存明文的 SHA-256 與末 4 位，明文只在簽發那一次的 `201` 裡出現過；2026-09-10 起 `ApiKeyRecord` **同時存明文**，這是**以安全性換便利性**的取捨，代價有兩筆：面板一旦被打穿，**全部用戶端密鑰的明文會一次性外洩**（從前外洩的只是不可反推的摘要）；儲存介質（KV / `store.json`）也從「不含可直接使用的用戶端憑證」變成「含」，備份與快照的處置級別要跟著升。
+> 🔴 **這條端點伴隨一次儲存語義的破壞性改變。** 本閘道從前只存明文的 SHA-256 與末 4 位，明文只在簽發那一次的 `201` 裡出現過；2026-09-10 起 `ApiKeyRecord` **同時存明文**，這是**以安全性換便利性**的取捨，代價有兩筆：面板一旦被打穿，**全部用戶端密鑰的明文會一次性外洩**（從前外洩的只是不可反推的摘要）；儲存介質（`store.json`）也從「不含可直接使用的用戶端憑證」變成「含」，備份與快照的處置級別要跟著升。
 
 > [!NOTE]
 > 每次呼叫記一條 `apikey.revealed` 事件（同樣只有 id，不含明文）。`GET /admin/api/capabilities` 的 `apiKeys.plaintextRetrievable` 因此**從恆 `false` 變成 `true`**，面板據它決定顯不顯示「顯示明文 / 複製」按鈕。它的意思是「**這個部署能不能取回明文**」，不是「每一把都取得回來」——升級前簽發的那些仍然取不回。
@@ -1118,7 +1117,7 @@ curl -X PATCH http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08 \
 ```
 
 > [!WARNING]
-> **停用不是即時的。** 處理這次請求的實例立刻生效，而別的實例最多還要一個 `APIKEY_CACHE_TTL_MS`（預設 5 分鐘）加 KV 邊緣快取的約 60 秒，合計**約 6 分鐘**才看得見。要更快就把 `APIKEY_CACHE_TTL_MS` 調小，代價是讀配額等量放大（見 DEPLOY.md 的配額帳）。
+> **停用不是即時的。** 處理這次請求的實例立刻生效，而共用同一個磁碟區的別的容器最多還要一個 `APIKEY_CACHE_TTL_MS`（預設**約 5 分鐘**）才看得見。要更快就把 `APIKEY_CACHE_TTL_MS` 調小，代價只是每個實例每個間隔多讀一次表（見 DEPLOY.md 的「對外 API 密鑰：吊銷不是立刻生效」）。
 
 拿舊版本號來寫時：
 
@@ -1253,7 +1252,7 @@ curl http://localhost:8080/admin/api/config \
   "editable": ["upstreamTimeoutMs"],
   "secrets": ["gatewayToken"],
   "resetBlocked": [],
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1288,7 +1287,7 @@ curl -X PUT http://localhost:8080/admin/api/config \
   "changed": ["upstreamTimeoutMs"],
   "credentialsChanged": [],
   "appliedAt": 1735689600000,
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1347,7 +1346,7 @@ curl -X POST http://localhost:8080/admin/api/config/secrets/clear \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "resetBlocked": [],
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1382,12 +1381,12 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
   "credentialsChanged": [],
   "resetBlocked": [],
   "appliedAt": 1735689600000,
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
 > [!IMPORTANT]
-> `appliedAt` **不是「已生效」的承諾**，它就是伺服器落盤的那一刻。別的副本/別的 isolate 多久能看見，由 `propagation` 裡那三個數說了算——面板不許把它算繪成「已重設並生效」。
+> `appliedAt` **不是「已生效」的承諾**，它就是伺服器落盤的那一刻。共用同一個磁碟區的別的容器多久能看見，由 `propagation` 裡那三個數說了算——面板不許把它算繪成「已重設並生效」。
 
 ### POST /admin/api/registrar/tend
 
@@ -1593,7 +1592,7 @@ curl http://localhost:8080/health
 **回應**：
 
 ```json
-{ "status": "ok", "version": "0.3.1", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.4.0", "storage": { "writable": true } }
 ```
 
 `storage.writable` 報告的是「key 池所在的儲存是否真的寫得進去」。它由啟動時的一次探測與執行期每一次真實寫操作共同維護，健康檢查自身不寫盤。儲存不可寫時回傳 **HTTP `503`**，`status` 變成 `degraded` 並附一句 `detail`（Docker 部署常見於繫結掛載的主機目錄擁有者與容器內執行使用者不一致，詳見容器日誌）。

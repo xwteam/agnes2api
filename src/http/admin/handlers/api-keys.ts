@@ -28,7 +28,7 @@ import { adminError, readAdminJson } from "../errors.js";
  *    哪天有人把明文塞进 `debug` 或错误信息里它照样绿）；
  * ③ **写操作看当前真值**：全部先 `loadApiKeyTable()` 直接读存储，不读持有者的快照
  *    ——读快照的话，一次「停用」可能建立在一份最多一个 TTL 前的视图上，
- *    把这期间别的 isolate（或别的运维）写下的记录整份覆盖回去。
+ *    把这期间别的副本（或别的运维）写下的记录整份覆盖回去。
  *
  * ── 读侧的配额账（写进五份 DEPLOY.md）─────────────────────────────────────────
  * `GET /admin/api/apikeys` **每次面板打开这个板块 1 次 get**。它刻意不走持有者的
@@ -283,7 +283,7 @@ export const APIKEY_PATCH_FIELDS = ["name", "disabled", "expiresAt"] as const;
 /**
  * `PATCH /admin/api/apikeys/:id` —— 改名 / 停用启用 / 改到期。
  *
- * ⚠️ **停用不是即时的**：本实例立刻生效（下面 `invalidate()`），而别的 isolate
+ * ⚠️ **停用不是即时的**：本实例立刻生效（下面 `invalidate()`），而别的副本
  * 最多还要一个 `APIKEY_CACHE_TTL_MS` + KV 边缘缓存 ≈ **6 分钟**才看得见。
  * 这是安全相关的，面板的成功提示里要写这个具体数字，见 `apikey-holder.ts`。
  */

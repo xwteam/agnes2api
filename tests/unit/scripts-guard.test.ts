@@ -1,53 +1,33 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
-const PLACEHOLDER = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID";
-
-describe("wrangler.toml 的 KV id 必须仍是占位符", () => {
-  it("仓库里那份是占位符——真实 id 提交进公开仓等于泄漏部署细节", () => {
-    expect(readFileSync("wrangler.toml", "utf8")).toContain(PLACEHOLDER);
-  });
-
-  it("门禁脚本本身在占位符被替换成真实 id 时会 exit 1", () => {
-    // 把真实形态（32 位 hex）喂给它，断言它真的拒绝。
-    // 只跑「当前仓库通过」是形状断言：脚本改成 `exit 0` 也会绿。
-    const fake = readFileSync("wrangler.toml", "utf8")
-      .replace(PLACEHOLDER, "0123456789abcdef0123456789abcdef");
-    expect(() => execFileSync("node", ["scripts/check-wrangler-placeholder.mjs"], {
-      input: fake, env: { ...process.env, WRANGLER_TOML_FROM_STDIN: "1" }, stdio: "pipe",
-    })).toThrow();
-  });
-});
-
-/**
- * 复验登记的缺口：占位符门禁只查 id，不查 binding 名——把 `[[kv_namespaces]]`
- * 的 `binding = "POOL"` 改成别的名字，占位符检查照样通过，契约测试的 miniflare
- * `kvNamespaces: ["POOL"]` 也不读 wrangler.toml 所以照样通过，唯独真机部署时
- * `env.POOL`（`src/entry/worker.ts`）会是 `undefined`，运行时才炸。
- * 这里做真变异（改坏 binding 名喂给脚本），不是只读代码。
+/*
+ * ⚠️⚠️ **这里原来有两组 `wrangler.toml` 的门禁用例，v0.4.0 整块删掉了。**
+ * 逐组点名，别当成漏了：
+ * · 「`wrangler.toml` 的 KV id 必须仍是占位符」（2 格）——它守的是「真实 KV
+ *   命名空间 id 提交进公开仓等于泄漏部署细节」；
+ * · 「`wrangler.toml` 的 KV binding 名必须与代码期望的 `env.POOL` 一致」（3 格）——
+ *   它守的是「binding 改名之后占位符检查与 miniflare 都发现不了，只有真机部署时
+ *   `env.POOL` 变 `undefined` 才炸」。
+ * **两组的被测对象是同一个文件 `wrangler.toml` 与同一个脚本
+ * `check-wrangler-placeholder.mjs`（原在 `scripts/` 下），两者随 Cloudflare Worker
+ * 形态一起删了** ⇒ 不是「这两条不变量不重要了」，是**它们的对象不存在了**。
+ * 它们守的那类风险（凭据/部署细节进公开仓）在本仓另有独立的一道：
+ * `scripts/scan-secrets.sh` + `tests/unit/scan-secrets.test.ts`，射程是整棵工作树与全历史。
+ *
+ * ⚠️ **同一轮里 `setup-worker.mjs` 也删了**（原在 `scripts/` 下，`package.json` 的
+ * `setup:worker` 已随之拿掉）。它不是门禁，是**部署辅助**：建 KV 命名空间并把 id
+ * 写回 `wrangler.toml`。Worker 形态退场之后它一个调用点都没有，写回的目标文件也没了。
+ * 它守的那件事（「别把本机改写过的 `wrangler.toml` 提交上来」）今天**没人接**——
+ * 因为已经没有那个文件、也没有那次改写。Docker 那条形态上的同类问题
+ *（`.env` 里的真凭据别提交）由 `.gitignore` 与 `scripts/scan-secrets.sh` 接着守。
+ *
+ * ⚠️ **上面这两处路径刻意写成裸文件名、不带 `scripts/` 前缀**：
+ * `scripts/check-comment-refs.mjs` 的规则 A 要求注释里每一个仓内路径都解析得开，
+ * 而这两份已经不存在。写裸名是本仓给「点名一个已删文件」留的写法
+ *（同一段里 `wrangler.toml` 也是这么写的）。
  */
-describe("wrangler.toml 的 KV binding 名必须与代码期望的 env.POOL 一致", () => {
-  it("当前仓库的 binding 是 \"POOL\"，与 src/entry/worker.ts 的 env.POOL 一致", () => {
-    execFileSync("node", ["scripts/check-wrangler-placeholder.mjs"], { stdio: "pipe" });
-  });
-
-  it("binding 被改名后门禁 exit 1，而不是静默放行", () => {
-    const renamed = readFileSync("wrangler.toml", "utf8")
-      .replace('binding = "POOL"', 'binding = "KV_POOL"');
-    expect(() => execFileSync("node", ["scripts/check-wrangler-placeholder.mjs"], {
-      input: renamed, env: { ...process.env, WRANGLER_TOML_FROM_STDIN: "1" }, stdio: "pipe",
-    })).toThrow();
-  });
-
-  it("缺少 binding 声明时也 exit 1（不是把 undefined 当成通过）", () => {
-    const stripped = readFileSync("wrangler.toml", "utf8")
-      .replace(/^\s*binding\s*=\s*"POOL"\s*$/m, "");
-    expect(() => execFileSync("node", ["scripts/check-wrangler-placeholder.mjs"], {
-      input: stripped, env: { ...process.env, WRANGLER_TOML_FROM_STDIN: "1" }, stdio: "pipe",
-    })).toThrow();
-  });
-});
 
 describe("体积预算门禁", () => {
   it("当前资源在预算内", () => {
@@ -69,8 +49,9 @@ describe("tests/ui 真的被 vitest 收集了", () => {
 
 /**
  * @refs-ignore（本段的 `tests/foo.test.ts` 是举例说明「带了过滤器」长什么样，不是真实指向）
- * CI 门禁的前提：`pnpm test` / `pnpm test:workers` 必须是**裸命令**，不带任何文件路径
+ * CI 门禁的前提：`pnpm test` 必须是**裸命令**，不带任何文件路径
  * 过滤器（如 `pnpm test tests/foo.test.ts`）。
+ * ⚠️ 这句话原来还并列着 `pnpm test:workers`，那条脚本随 Worker 形态一起删了。
  *
  * tests/global-setup.ts 里的收集门禁按「本次调用带没带显式文件过滤器」分档——带了就
  * 跳过，理由是单文件调试不该多背 5 秒摩擦。这个分档本身没问题，**但它依赖一个前提：
@@ -78,22 +59,25 @@ describe("tests/ui 真的被 vitest 收集了", () => {
  * 过滤），门禁在 CI 上就完全不生效，而且**不会有任何红色信号**——退出码照样是 0。
  *
  * 下面两组断言各自独立钉住这个前提的两半：
- * · package.json 里 `test` / `test:workers` 脚本本身不能预置过滤器；
- * · .github/workflows/ci.yml 调用它们时不能追加过滤器参数。
+ * · package.json 里 `test` 脚本本身不能预置过滤器；
+ * · .github/workflows/ci.yml 调用它时不能追加过滤器参数。
  * 两个期望值都是手写字面量，不是从被测文件里读出来再回填——避免第 6 种假阳性
  * （断言的期望值从被测对象自己推导出来，等于同义反复）。
  */
 describe("CI 的测试命令不带文件过滤器（收集门禁分档的前提）", () => {
-  it("package.json 的 test / test:workers 脚本是裸的 `vitest run --config ...`", () => {
+  it("package.json 的 test 脚本是裸的 `vitest run --config ...`，且不许再长出第二个测试入口", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
     expect(pkg.scripts.test).toBe("vitest run --config vitest.config.ts");
-    expect(pkg.scripts["test:workers"]).toBe("vitest run --config vitest.workers.config.ts");
+    // ⚠️ **反向那一半**：`test:workers` 随 Worker 形态一起删了，而下面 ci.yml 那两格
+    // 与 `scripts/prepush.sh` 的第 ⑥ 格都按「只有一个测试入口」记账。
+    // 悄悄加回第二个入口 ⇒ 那两处的账当场对不上，却没有任何一格会红 —— 这一句就是那一格。
+    expect(Object.keys(pkg.scripts).filter((k) => k === "test" || k.startsWith("test:")))
+      .toEqual(["test"]);
   });
 
-  it("ci.yml 用裸命令调用它们，没有追加任何文件路径过滤器", () => {
+  it("ci.yml 用裸命令调用它，没有追加任何文件路径过滤器", () => {
     const ci = readFileSync(".github/workflows/ci.yml", "utf8");
     expect(ci).toContain("pnpm test 2>&1");
-    expect(ci).toContain("pnpm test:workers 2>&1");
   });
 
   /**
@@ -103,12 +87,13 @@ describe("CI 的测试命令不带文件过滤器（收集门禁分档的前提�
    * 横幅缺失就说明门禁没跑，即使测试全绿也要让那一步失败。
    * 这条断言钉住 ci.yml 里确实接了这个 grep，而不是只跑了 `pnpm test` 就完事。
    */
-  it("ci.yml 会 grep 收集门禁的成功横幅，两个测试入口（node / workerd）各一次", () => {
+  it("ci.yml 会 grep 收集门禁的成功横幅，唯一那个测试入口一次", () => {
     const ci = readFileSync(".github/workflows/ci.yml", "utf8");
     // 数的是**真正执行的 grep 调用**，不是横幅字样在注释/echo 里出现的次数——
-    // 那些文本提及不构成校验，混进计数会让这条断言对「删掉其中一次 grep」不敏感。
+    // 那些文本提及不构成校验，混进计数会让这条断言对「删掉那次 grep」不敏感。
+    // ⚠️ 这个数原来是 2（node / workerd 各一次），v0.4.0 之后只剩一个测试入口。
     const grepCalls = ci.match(/grep -qF '\[collection-guard\] ✅'/g) ?? [];
-    expect(grepCalls.length).toBe(2);
+    expect(grepCalls.length).toBe(1);
   });
 });
 
@@ -236,7 +221,7 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
       "fetch-depth: 0 不在 checkout 那一步自己的块里 ⇒ 拉到的还是浅仓，历史那一档只会 fail closed",
     ).toContain("fetch-depth: 0");
 
-    const scan = blockOf("name: 3/13 凭据扫描");
+    const scan = blockOf("name: 3/11 凭据扫描");
     expect(scan, "历史那一档不在凭据扫描那一步自己的块里 ⇒ 它根本没被跑到").toContain(
       "bash scripts/scan-secrets.sh --history",
     );
@@ -283,8 +268,8 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
    */
   it("历史那一档失败时会在日志里自报处置办法，工作树那一条刻意不带注解", () => {
     const yml = readFileSync(".github/workflows/ci.yml", "utf8");
-    const i = yml.indexOf("name: 3/13 凭据扫描");
-    expect(i, "ci.yml 里找不到「name: 3/13 凭据扫描」").toBeGreaterThan(-1);
+    const i = yml.indexOf("name: 3/11 凭据扫描");
+    expect(i, "ci.yml 里找不到「name: 3/11 凭据扫描」").toBeGreaterThan(-1);
     const end = yml.indexOf("\n      - ", i + 1);
     const lines = yml
       .slice(i, end === -1 ? yml.length : end)
@@ -311,16 +296,21 @@ describe("历史凭据扫描进了 CI，且它的前提也在场", () => {
  * 而少跑一道的形态恰恰是静默的（那一步被删掉之后没有任何东西会红）。
  * 期望值是**手写字面量**，不是从 yml 里数出来再回填。
  */
-it("CI 恰好十三道门，编号 1/13 到 13/13 各出现一次", () => {
+it("CI 恰好十一道门，编号 1/11 到 11/11 各出现一次", () => {
   const ci = readFileSync(".github/workflows/ci.yml", "utf8");
-  for (let i = 1; i <= 13; i++) {
-    const n = ci.split(`name: ${i}/13 `).length - 1;
-    expect(n, `编号 ${i}/13 出现了 ${n} 次`).toBe(1);
+  for (let i = 1; i <= 11; i++) {
+    const n = ci.split(`name: ${i}/11 `).length - 1;
+    expect(n, `编号 ${i}/11 出现了 ${n} 次`).toBe(1);
   }
   // 反向：不许还剩下旧编号（评审发现从十道扩到十一道；后一条评审发现又插入
   // check-comment-refs 又插了一步进去，原来的 8/11..11/11 全部跟着挪一位；
-  // 后来给 docs/logo.png 配的那道 PNG 结构审计插在第二位，2/12..12/12 又挪了一位）。
-  for (const stale of [10, 11, 12]) {
+  // 后来给 docs/logo.png 配的那道 PNG 结构审计插在第二位，2/12..12/12 又挪了一位；
+  // v0.4.0 摘掉 Cloudflare Worker 形态之后「KV id 仍是占位符」与「workerd 契约测试」
+  // 两步一起退场，十三道缩回十一道）。
+  // ⚠️ **这张名单挑的是「今天不存在的分母」，改的时候要重挑、不是照着旧数留着**：
+  // 十一道之下 `11` 是**今天真实的分母**，留在名单里会让上面那圈刚验过的编号
+  // 当场被自己判红。今天的历史分母是 10 / 12 / 13。
+  for (const stale of [10, 12, 13]) {
     expect(ci, `还有步骤写着 N/${stale}`).not.toMatch(new RegExp(`name: \\d+\\/${stale} `));
   }
 });
@@ -382,29 +372,33 @@ describe("check-comment-refs 在 CI 门禁列表里", () => {
 });
 
 /**
- * CI 里跑 `pnpm test` / `pnpm test:workers` 那两步的退出码**全靠 `shell: bash` 提供的 pipefail**：
- * 它们是 `pnpm test 2>&1 | tee ... ; grep ...`，没有 pipefail 时管道的退出码取最后一条命令，
+ * CI 里跑 `pnpm test` 那一步的退出码**全靠 `shell: bash` 提供的 pipefail**：
+ * 它是 `pnpm test 2>&1 | tee ... ; grep ...`，没有 pipefail 时管道的退出码取最后一条命令，
  * **测试失败会被 tee/grep 的成功退出码吃掉，CI 全绿**。
- * 上面那组断言了这两步的裸命令、grep 次数、pnpm build——**唯独没断言它**。
+ * 上面那组断言了它的裸命令、grep 次数、pnpm build——**唯独没断言它**。
  * 今天它在位（评审核过），所以这是「护栏的护栏」，不是现存缺陷。
+ *
+ * ⚠️ **这一格原来盯的是两步**（Node 运行时 + workerd 运行时），而且**按步骤标题
+ * 的字面量定位**（`"11/13 …"` / `"12/13 …"`）。v0.4.0 摘掉 Worker 形态之后
+ * workerd 那一步没了，而且总步数一变，所有 `N/13` 的标题都会跟着改
+ * ⇒ **改成按内容定位**：找到那个真的跑 `pnpm test 2>&1` 的 YAML 块。
+ * 这不是把判据放宽——它照旧要求「跑测试那一步必须有 `shell: bash`」，
+ * 只是不再依赖一个每次增删步骤都会漂的标题字面量。
  */
-it("跑测试的两步显式声明 shell: bash（pipefail 的唯一来源）", () => {
+it("跑测试那一步显式声明 shell: bash（pipefail 的唯一来源）", () => {
   const yml = readFileSync(".github/workflows/ci.yml", "utf8");
-  // 期望值手写字面量：断言这两步各自的 name 与**下一个 `- name:`（或文件末尾）
-  // 之间**出现 `shell: bash`。
-  //
   // ⚠️ **不能用固定长度的窗口**——已实测踩过：切成 400 字符的窗口会越界吃到
-  // 紧挨着的下一步。把 8/10 那一行 `shell: bash` 真的删掉后，这条断言当时依旧
-  // 全绿，因为窗口滑进了 9/10 自己的 `shell: bash`，「变异点与被守护的不变量」
-  // 没对齐。判据必须锚在**这一步自己的 YAML 块**，用下一个 `- name:` 当右边界，
-  // 而不是一个跟内容脱钩的字符数。
-  for (const name of ["11/13 单元 / 契约 / 前端纯函数测试（Node 运行时）", "12/13 契约测试（workerd 运行时）"]) {
-    const i = yml.indexOf(`name: ${name}`);
-    expect(i, `找不到步骤 ${name}`).toBeGreaterThan(0);
-    const nextStep = yml.indexOf("\n      - name:", i);
-    const chunk = yml.slice(i, nextStep === -1 ? yml.length : nextStep);
-    expect(chunk, `${name} 缺 shell: bash，管道里的失败会被 tee/grep 吃掉`).toContain("shell: bash");
-  }
+  // 紧挨着的下一步，于是把那一行 `shell: bash` 真的删掉之后断言依旧全绿
+  //（窗口滑进了下一步自己的 `shell: bash`），「变异点与被守护的不变量」没对齐。
+  // 判据必须锚在**这一步自己的 YAML 块**：用它自己的 `- name:` 当左边界、
+  // 下一个 `- name:`（或文件末尾）当右边界。
+  const at = yml.indexOf("pnpm test 2>&1");
+  expect(at, "ci.yml 里没有任何一步跑 `pnpm test 2>&1` —— 这一格测的是空气").toBeGreaterThan(0);
+  const start = yml.lastIndexOf("\n      - name:", at);
+  expect(start, "找不到这一步自己的 `- name:` 左边界").toBeGreaterThan(0);
+  const nextStep = yml.indexOf("\n      - name:", at);
+  const chunk = yml.slice(start, nextStep === -1 ? yml.length : nextStep);
+  expect(chunk, "跑测试那一步缺 shell: bash，管道里的失败会被 tee/grep 吃掉").toContain("shell: bash");
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -414,17 +408,28 @@ it("跑测试的两步显式声明 shell: bash（pipefail 的唯一来源）", (
  * `with: { version: 9 }`，而 `package.json` 里也写着 `"packageManager": "pnpm@9.15.4"`。
  * `action-setup@v4` 遇到两处都给**不是二选一而是硬失败**：
  *   `Error: Multiple versions of pnpm specified` —— pnpm 装都没装上，
- *   后面那十三步一步都没跑。公开仓上 `main` 的 CI 从来没绿过。
+ *   后面每一步都没跑。公开仓上 `main` 的 CI 从来没绿过。
+ *   （⚠️ 这里刻意不写「后面那 N 步」：那个数随 ci.yml 增删步骤就变假，
+ *     v0.4.0 摘掉 Worker 形态时它已经从十三变成十一。）
  *
  * ⚠️ **为什么 `scripts/prepush.sh` 七格全过却看不见它**：prepush 是在本机
- * 用已经装好的 pnpm 直接跑那十三步，它复刻的是**步骤与顺序**，不是 runner 上
+ * 用已经装好的 pnpm 直接跑 ci.yml 里那几步，它复刻的是**步骤与顺序**，不是 runner 上
  * 「怎么把 pnpm 装起来」这一层。⇒ 这一层得由一格静态判据来守。
  *
  * 这一格盯的是**冲突本身**，不是某个版本号：哪天想换 pnpm 大版本，改
  * `package.json` 的 `packageManager` 一处即可，这一格不会拦。
  * ───────────────────────────────────────────────────────────────────────────── */
 describe("pnpm 版本只有一处真源：workflow 里不许再给 `pnpm/action-setup` 传 version", () => {
-  const WORKFLOWS = [".github/workflows/ci.yml", ".github/workflows/deploy-worker.yml"] as const;
+  /**
+   * ⚠️ **这份清单原来是手写的两项**（`ci.yml` 与 `deploy-worker.yml`），
+   * 而 `deploy-worker.yml` 随 Cloudflare Worker 形态一起在 v0.4.0 删了。
+   * **改成从磁盘扫**而不是把清单改成一项：手写清单在「新加一份 workflow」时
+   * 会静默地不覆盖它，而那正是这一格要防的那类漂移。
+   */
+  const WORKFLOWS = readdirSync(".github/workflows")
+    .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
+    .sort()
+    .map((f) => `.github/workflows/${f}`);
 
   /** 一份 workflow 里 `pnpm/action-setup` 那一步之后紧跟的 `with:` 行。没有则返回 `null`。 */
   const setupWith = (yml: string): string | null => {
@@ -440,9 +445,13 @@ describe("pnpm 版本只有一处真源：workflow 里不许再给 `pnpm/action-
     // 认不出要吵：`packageManager` 没了的话，不带 version 的 action-setup 会装不上 pnpm，
     // 这一格的方向就整个反过来了 —— 不许静静放行。
     expect(pm, "package.json 里认不出 `packageManager`：那 workflow 里不带 version 反而会装不上 pnpm").not.toBeNull();
-    for (const p of WORKFLOWS) {
+    // **不是每一份 workflow 都装 pnpm**（例如只构建镜像的那一份就不装），
+    // 所以射程是「装了 pnpm 的那几份」，而**不许一份都没有**——那说明扫的是空气。
+    const usingPnpm = WORKFLOWS.filter((p) => readFileSync(p, "utf8").includes("uses: pnpm/action-setup@"));
+    expect(usingPnpm.length, "一份用 pnpm/action-setup 的 workflow 都没扫到 —— 这一格测的是空气")
+      .toBeGreaterThan(0);
+    for (const p of usingPnpm) {
       const yml = readFileSync(p, "utf8");
-      expect(yml, `${p} 里没有 pnpm/action-setup 这一步 —— 这一格测的是空气`).toContain("uses: pnpm/action-setup@");
       expect(setupWith(yml),
         `${p} 的 pnpm/action-setup 又带上 \`with:\` 了。package.json 已经给了 ${pm}，`
         + "两处都给会让这一步硬失败（`Error: Multiple versions of pnpm specified`），"

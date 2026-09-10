@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
-# ── agnes2api 双形态（Docker / Cloudflare Worker）真机冒烟 ───────────────────
+# ── agnes2api 真机冒烟（Docker 形态）─────────────────────────────────────────
+#
+# ⚠️ **文件名里那个 `dual-runtime` 是历史残留。** v0.4.0 摘掉 Cloudflare Worker 形态
+#   之后只剩 Docker 一种，五格收成四格（逐格交代在下面那张表里）。
+#   **没有改文件名是刻意的**：`scripts/prepush.sh` 的第 ⑦ 格、
+#   `tests/unit/smoke-guard.test.ts` 整份、以及仓里几处注释都按这个路径指过来，
+#   改名的收益是一个更好听的名字，代价是一次跨五处的连带改动。
 #
 # 用法：
-#   bash scripts/smoke-dual-runtime.sh            # 五格全跑，末尾打一张逐格表
-#   bash scripts/smoke-dual-runtime.sh --print-plan  # 干跑：只把五格的编号与标题打出来，
+#   bash scripts/smoke-dual-runtime.sh            # 四格全跑，末尾打一张逐格表
+#   bash scripts/smoke-dual-runtime.sh --print-plan  # 干跑：只把四格的编号与标题打出来，
 #                                                    # **一格都不执行**（给守卫用的机器档）
 #
-# **它不是单元测试的替代品，是仓里那几处「等双形态真机验收」的钉子唯一的了结方式。**
+# **它不是单元测试的替代品，是仓里那几处「等真机验收」的钉子唯一的了结方式。**
 # 那几处钉子逐条写着自己为什么不能被机器测网罩住，摘要成下面这张表：
 #
 #   ① Docker 形态起得来        全仓没有任何一格用例构建镜像或跑容器
-#   ② Worker 形态起得来        契约用例走的是进程内的 `app.request()`，
-#                              **不经 workerd 的 HTTP 服务层，也不经 src/entry/worker.ts**
-#   ③ 两形态的流式逐块到达      `admin-ui/js/sec-playground.js` 逐字写着
-#                              「workerd 哪天改成缓冲，一格测试都不会红」
-#   ④ 用量 30 天档在 Worker 上跑得完   一次 60 次 KV 子请求，而 Cloudflare 两页官方
-#                              文档在「一次调用能发多少次子请求」上互相对不上
-#   ⑤ 两形态的 /admin 都出得来  静态兜底在两个 entry 里是两份装配
+#   ② 流式逐块到达              契约用例走的是进程内的 `app.request()`，
+#                              **一个字节都不经 HTTP 服务层**（`@hono/node-server`）
+#   ③ 用量 30 天档跑得完        一次要发 60 次存储读，而没有任何一格用例在真机上发过
+#   ④ /admin 出得来            静态兜底那条路只有真起进程才走得到
+#
+# ⚠️ **原来的 ② 「Worker 形态起得来（wrangler dev + /health 200）」整格删了**：
+#   被测的那个形态不存在了。原来的 ③④⑤ 各自留下 Docker 那一半，逐格的说明写在各自头上。
 #
 # ⚠️ **一个字节的真上游都不联网**：上游一律指向本脚本自己起的 stub（下面那段
 #   `UPSTREAM_STUB` 就是它的全文，收发什么一目了然）。**它验的是「两个形态自己跑不跑得
@@ -27,12 +33,12 @@
 #   宿主机在网桥上的那个地址，而本机的 iptables INPUT 链默认 REJECT ⇒ 那条路是不通的
 #   （实测：`host.docker.internal` 解析得出 172.17.0.1，连过去 fetch failed，网关如实
 #   回 503 upstream_error）。**把这条依赖留着，这份冒烟就只在防火墙宽松的机器上跑得起来。**
-#   ⇒ Worker 那侧连宿主机上的那份（`127.0.0.1`），Docker 那侧连 compose 网络里的那份
-#   （服务名 `smoke-upstream`）。两份是同一个文件、同一套行为。
+#   ⇒ **v0.4.0 之后只剩 compose 网络里那一份**（服务名 `smoke-upstream`）；
+#   宿主机上那份是给已删的 Worker 形态用的，连同它一起去掉。
 #
 # ⚠️ **凭据现生成、用完即弃**：网关口令与管理口令每次跑都重新随机生成，只经由
-#   `docker compose` 的 override 文件（临时目录里，收尾时删）与 `wrangler dev --var`
-#   传进去，**一个字符都不写进仓库里任何被 git 跟踪的文件**。
+#   `docker compose` 的 override 文件（临时目录里，收尾时删）传进去，
+#   **一个字符都不写进仓库里任何被 git 跟踪的文件**。
 #
 # ⚠️ **开发者自己的 `./data` 与 `.env`，这份脚本一个字节都不写、也不删**
 #   （这两条是本任务复评实测出来的，上一版两样都动）：
@@ -56,7 +62,7 @@
 #   必须**逐格跑完再汇总**，只红一格就中止的话「哪几格红」这个唯一想读出来的结论就没了。
 #   每一格自己跑在 `( set -e; … )` 子壳里，格内的意外失败当场把这一格弄红。
 #
-# ⚠️ **收尾无条件**：`trap cleanup EXIT` 里关容器、按进程组杀 wrangler、删临时目录，
+# ⚠️ **收尾无条件**：`trap cleanup EXIT` 里关容器、删临时目录，
 #   最后把**跑之前的 `git status --porcelain` 快照**与跑之后的比一遍——本仓的工作流
 #   经常把探针留在树里，那条比对就是它的绊线。
 #
@@ -105,10 +111,9 @@ run_cell() { # $1 = 序号符 $2 = 标题 $3 = 函数名
 
 CELL_PLAN=(
   "①	Docker 形态起得来（compose up + /health 200）	cell_docker_up"
-  "②	Worker 形态起得来（wrangler dev + /health 200）	cell_worker_up"
-  "③	两形态的流式都是逐块到达（量到达间隔）	cell_stream_interval"
-  "④	用量 30 天档在 Worker 上跑得完	cell_usage_30d"
-  "⑤	两形态的 /admin 都出得来	cell_admin_html"
+  "②	流式逐块到达（量到达间隔）	cell_stream_interval"
+  "③	用量 30 天档跑得完	cell_usage_30d"
+  "④	/admin 出得来	cell_admin_html"
 )
 
 case "${1:-}" in
@@ -149,13 +154,11 @@ fi
 free_port() {
   node -e "const net=require('node:net');const s=net.createServer();s.listen(0,'0.0.0.0',()=>{const p=s.address().port;s.close(()=>console.log(p));});"
 }
-STUB_PORT=$(free_port)
 DOCKER_PORT=$(free_port)
-WORKER_PORT=$(free_port)
 # compose 网络里那份 stub 的端口不用现问系统要：它在容器自己的网络命名空间里，
 # 不与宿主机上任何东西抢，也不往宿主机发布。
 STUB_PORT_IN_NET=8099
-for p in "$STUB_PORT" "$DOCKER_PORT" "$WORKER_PORT"; do
+for p in "$DOCKER_PORT"; do
   if [[ ! $p =~ ^[0-9]+$ ]]; then
     echo "❌ 要不到空闲端口（拿到「$p」）—— node 不在，或系统拒绝了监听" >&2
     exit 2
@@ -163,8 +166,6 @@ for p in "$STUB_PORT" "$DOCKER_PORT" "$WORKER_PORT"; do
 done
 
 TMP=$(mktemp -d)
-STUB_LOG="$TMP/stub.log"
-WRANGLER_LOG="$TMP/wrangler.log"
 OVERRIDE="$TMP/compose.override.yml"
 COMPOSE_PROJECT="agnes2api-smoke"
 # 容器写存储的地方。**必须落在临时目录，不许用仓库根下的 `./data`**：
@@ -185,17 +186,11 @@ if [[ -z $COMPOSE_DATA_TARGET ]]; then
 fi
 
 # 收尾要用的状态。**每一项都在建立之前先记下来**：只删自己造出来的东西。
-STUB_PID=""
-WRANGLER_PID=""
-WRANGLER_PGID=""
 COMPOSE_UP=0
-WRANGLER_DIR_CREATED=0
 GIT_BASELINE=$(git status --porcelain 2>/dev/null || true)
 
 DOCKER_OK=0
-WORKER_OK=0
 DOCKER_BASE="http://127.0.0.1:$DOCKER_PORT"
-WORKER_BASE="http://127.0.0.1:$WORKER_PORT"
 
 compose() { docker compose -p "$COMPOSE_PROJECT" -f docker-compose.yml -f "$OVERRIDE" "$@"; }
 
@@ -208,23 +203,10 @@ cleanup() {
   if (( COMPOSE_UP == 1 )); then
     compose down -v --remove-orphans >/dev/null 2>&1 || echo "⚠️ docker compose down 没跑成，容器可能还在"
   fi
-  if [[ -n $WRANGLER_PGID ]]; then
-    # **按进程组杀，不按名字匹配**：wrangler 会 fork 出 workerd，只杀父进程会留下一个
-    # 占着端口的孤儿；而按名字匹配（`pkill -f wrangler`）会误伤这台机器上别人的 wrangler。
-    # 进程组号是起完之后从 `ps` 现读的，不是「假定 setsid 一定成功」——
-    # 万一它没成功、读回来的正是本脚本自己的组号，那就退回只杀那一个 PID
-    # （杀自己的组等于把这次收尾连同它自己一起干掉，容器就留在机器上了）。
-    if [[ $WRANGLER_PGID == "$$" || $WRANGLER_PGID == "$(ps -o pgid= -p $$ | tr -d ' ')" ]]; then
-      echo "⚠️ wrangler 没能自成进程组，退回只杀 PID $WRANGLER_PID"
-      kill -TERM "$WRANGLER_PID" 2>/dev/null || true
-    else
-      kill -TERM -- "-$WRANGLER_PGID" 2>/dev/null || true
-      sleep 2
-      kill -KILL -- "-$WRANGLER_PGID" 2>/dev/null || true
-    fi
-  fi
-  if [[ -n $STUB_PID ]]; then kill -TERM "$STUB_PID" 2>/dev/null || true; fi
-  if (( WRANGLER_DIR_CREATED == 1 )); then rm -rf .wrangler; fi
+  # ⚠️ **这里原来还有两段收尾，v0.4.0 一起删了**：按进程组杀 `wrangler dev`
+  #（它会 fork 出 workerd，只杀父进程会留下一个占着端口的孤儿）、以及删掉本次
+  # 跑之前不存在的 `.wrangler/` 本地状态目录。两段的对象随 Worker 形态一起没了。
+  # 宿主机上那份假上游同理：现在只剩 compose 网络里那一份，它随容器一起被 down 掉。
   # 临时 DATA_DIR 里的文件属主被 entrypoint 改成了容器内的 app（宿主上看是一个陌生 uid），
   # 连那个目录本身也被 chown 走 ⇒ 宿主这边 `rm -rf` 会 Permission denied。
   # 借同一个镜像以 root 身份把它整个删掉，再由宿主删父目录。
@@ -321,18 +303,12 @@ STUB_CHUNKS=4
 STUB_GAP_MS=1000
 STREAM_SPREAD_MIN_MS=$(( (STUB_CHUNKS - 1) * STUB_GAP_MS / 2 ))
 if (( STUB_CHUNKS < 2 || STREAM_SPREAD_MIN_MS < 1 )); then
-  echo "❌ ③ 的门槛算出来是 ${STREAM_SPREAD_MIN_MS}ms（块数 $STUB_CHUNKS、间隔 ${STUB_GAP_MS}ms）—— 那一格会变成零鉴别力，不许这么跑" >&2
+  echo "❌ ② 的门槛算出来是 ${STREAM_SPREAD_MIN_MS}ms（块数 $STUB_CHUNKS、间隔 ${STUB_GAP_MS}ms）—— 那一格会变成零鉴别力，不许这么跑" >&2
   exit 2
 fi
-node "$TMP/upstream-stub.mjs" "$STUB_PORT" "$STUB_GAP_MS" "$STUB_CHUNKS" >"$STUB_LOG" 2>&1 &
-STUB_PID=$!
-sleep 1
-if ! kill -0 "$STUB_PID" 2>/dev/null; then
-  echo "❌ 宿主机上那份假上游没起来：" >&2
-  cat "$STUB_LOG" >&2
-  exit 2
-fi
-echo "· 假上游（宿主机，给 Worker 用）PID $STUB_PID，端口 $STUB_PORT"
+# ⚠️ **这里原来还会在宿主机上再起一份假上游**（给 `wrangler dev` 那一侧连
+# `127.0.0.1` 用），v0.4.0 连同 Worker 形态一起去掉。今天只剩 compose 网络里那一份，
+# 由 `cell_docker_up` 一起 `up` 起来、随容器一起 `down` 掉。
 
 # ── 小工具 ──────────────────────────────────────────────────────────────────
 LAST_CODE=""
@@ -467,45 +443,13 @@ YML
   return 0
 }
 
-# ── ② Worker 形态起得来 ─────────────────────────────────────────────────────
-# ⚠️ 这一格要的是**真 workerd**：契约用例走的是进程内的 `app.request()`，请求对象直接
-#   交给 Hono、响应对象直接拿回来，**HTTP 服务层与 `src/entry/worker.ts` 一个字节都没跑到**。
-# 口令走 `--var`，不落任何文件；`.wrangler/` 是 wrangler 自己建的本地状态目录，
-# 只有本次跑之前它不存在时才在收尾里删掉。
-cell_worker_up() {
-  local pid pgid
-  if [[ ! -d .wrangler ]]; then export_state WRANGLER_DIR_CREATED 1; fi
-  echo "· wrangler dev（端口 $WORKER_PORT）"
-  # ⚠️ `--no-install`：裸 `npx wrangler` 在**仓外**跑会去下载一个最新版
-  #   （本机实测：仓内 4.123.0、仓外 4.127.1）⇒ 那样这一格验的就不是 package.json
-  #   钉住的那个 wrangler 了。这里只认 node_modules 里的那一份，不在就当场吵。
-  setsid npx --no-install wrangler dev --port "$WORKER_PORT" --ip 127.0.0.1 \
-    --var "GATEWAY_TOKEN:$GATEWAY_TOKEN" \
-    --var "ADMIN_TOKEN:$ADMIN_TOKEN" \
-    --var "AGNES_BASE_URL:http://127.0.0.1:$STUB_PORT/worker/v1" \
-    --var "USAGE_STATS_ENABLED:true" \
-    >"$WRANGLER_LOG" 2>&1 &
-  pid=$!
-  export_state WRANGLER_PID "$pid"
-  sleep 1
-  # **进程组号现读，不假定 setsid 一定成了**（见收尾里那段）。
-  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
-  export_state WRANGLER_PGID "${pgid:-}"
-  echo "· wrangler PID $pid，进程组 ${pgid:-读不到}"
-  if ! wait_http "$WORKER_BASE/health" 90; then
-    echo "❌ /health 在 90 秒里没回过 200（最后一次是 ${LAST_CODE:-无响应}）" >&2
-    tail -40 "$WRANGLER_LOG" >&2 || true
-    return 1
-  fi
-  echo "· /health 200："
-  curl -s --max-time 5 "$WORKER_BASE/health"
-  echo ""
-  export_state WORKER_OK 1
-  echo "✅ Worker 形态起得来（真 workerd）"
-  return 0
-}
+# ⚠️ **这里原来是第 ② 格「Worker 形态起得来（wrangler dev + /health 200）」，
+# v0.4.0 整块删了。** 它起一个真 workerd（`setsid npx --no-install wrangler dev`，
+# 口令走 `--var` 不落文件），因为契约用例走的是进程内的 `app.request()`、
+# 一个字节都不经 workerd 的 HTTP 服务层。被测的那个形态不存在了 ⇒ 整格删。
+# **Docker 那一侧的同款判据在第 ① 格**，一直都在。
 
-# ── ③ 两形态的流式都是逐块到达 ─────────────────────────────────────────────
+# ── ② 流式逐块到达 ────────────────────────────────────────────────────────
 # ⚠️⚠️ **判据是「到达间隔」，不是「拿到了几块」。**
 #   一次性缓冲的实现**最终也会把全部内容交出来** ⇒ 只看总量是零鉴别力
 #   （与明令禁止的「往单块表里加一行 CRLF 样本」是同一条）。
@@ -582,6 +526,8 @@ check_stream() { # $1 = 形态名 $2 = 探针输出
 
 cell_stream_interval() {
   local bad=0
+  # ⚠️ **这里原来是两侧各探一次（Docker / Worker），v0.4.0 之后只剩 Docker 这一侧。**
+  # 判据（`check_stream`）一个字没改：铺开量 vs 门槛、首块领先上游末块。
   if (( DOCKER_OK == 1 )); then
     stream_probe "$DOCKER_BASE" "$TMP/stream-docker.txt" || true
     if ! check_stream "Docker" "$TMP/stream-docker.txt"; then bad=1; fi
@@ -589,22 +535,22 @@ cell_stream_interval() {
     echo "❌ Docker 形态没起来，这一格在它上面没有观测面（不是「跳过」，是没验到）" >&2
     bad=1
   fi
-  if (( WORKER_OK == 1 )); then
-    stream_probe "$WORKER_BASE" "$TMP/stream-worker.txt" || true
-    if ! check_stream "Worker" "$TMP/stream-worker.txt"; then bad=1; fi
-  else
-    echo "❌ Worker 形态没起来，这一格在它上面没有观测面（不是「跳过」，是没验到）" >&2
-    bad=1
-  fi
   if (( bad != 0 )); then return 1; fi
-  echo "✅ 两个形态的正文首末块都铺开到了 ${STREAM_SPREAD_MIN_MS}ms 以上，且首块早于上游末块发出 ⇒ 都是逐块透传"
+  echo "✅ 正文首末块铺开到了 ${STREAM_SPREAD_MIN_MS}ms 以上，且首块早于上游末块发出 ⇒ 是逐块透传"
   return 0
 }
 
-# ── ④ 用量 30 天档在 Worker 上跑得完 ───────────────────────────────────────
-# 这一档一次要发 `USAGE_DAY_RETAIN × USAGE_SLOTS` = 60 次 KV get，而 Cloudflare 的两页
-# 官方文档在「一次调用能发多少次子请求」上互相对不上（Workers limits 页免费档 50、
-# KV limits 页 1,000，而前者没有定义 KV 绑定调用算哪一行）。
+# ── ③ 用量 30 天档跑得完 ───────────────────────────────────────────────────
+# 这一档一次要发 `USAGE_DAY_RETAIN × USAGE_SLOTS` = **60 次存储读**。
+#
+# ⚠️ **它原来叫「在 Worker 上跑得完」，立论是 Cloudflare 的子请求上限**（两页官方文档
+#   在「一次调用能发多少次子请求」上互相对不上：Workers limits 页免费档 50、
+#   KV limits 页 1,000，而前者没定义 KV 绑定调用算哪一行）。**那个上限随 Worker 形态
+#   一起没了**，而这一格留下来，理由换成今天成立的那一条：**全仓没有任何一格用例
+#   在真机上把这 60 次扇出跑过一遍**——契约测试跑的是 `MemoryStorage`（一次 Map 查表），
+#   真机上是 60 次 `readFile` + JSON.parse，量级完全不同，而扇出失败时这条端点
+#   会**诚实地降级**（`note: "read_failed"`）⇒ 面板上看不出「它其实没跑完」。
+#
 # ⚠️ **判据是「那次请求真的返回了完整的 30 天」**，不是「进程没崩」：
 #   · `tier` 必须是 `tier2` —— 是 `off` 的话 handler 在扇出**之前**就 return 了，
 #     那 60 次 get 一次都没发生，这一格等于空转；
@@ -613,15 +559,15 @@ cell_stream_interval() {
 #     发出去的根本不是 60 次。
 cell_usage_30d() {
   local to from resp
-  if (( WORKER_OK != 1 )); then
-    echo "❌ Worker 形态没起来，这一格没有观测面（这一档要验的就是 Worker 那一侧）" >&2
+  if (( DOCKER_OK != 1 )); then
+    echo "❌ Docker 形态没起来，这一格没有观测面（不是「跳过」，是没验到）" >&2
     return 1
   fi
   to=$(date +%s%3N)
   from=$(( to - (USAGE_RANGE_DAYS - 1) * DAY_MS ))
   echo "· GET /admin/api/usage?from=$from&to=$to（$USAGE_RANGE_DAYS 天档）"
   resp=$(curl -s --max-time 30 -H "x-admin-key: $ADMIN_TOKEN" \
-    "$WORKER_BASE/admin/api/usage?from=$from&to=$to" 2>/dev/null || true)
+    "$DOCKER_BASE/admin/api/usage?from=$from&to=$to" 2>/dev/null || true)
   printf '   响应：%s\n' "${resp:0:400}"
   RESP="$resp" EXPECT_DAYS="$USAGE_RANGE_DAYS" node -e '
     const r = JSON.parse(process.env.RESP || "null");
@@ -629,7 +575,7 @@ cell_usage_30d() {
     const bad = [];
     if (r === null) bad.push("响应根本不是 JSON（多半是这次请求没返回）");
     else {
-      if (r.tier !== "tier2") bad.push(`tier 是 ${JSON.stringify(r.tier)}，不是 tier2 ⇒ 那 60 次 get 一次都没发生`);
+      if (r.tier !== "tier2") bad.push(`tier 是 ${JSON.stringify(r.tier)}，不是 tier2 ⇒ 那 60 次读一次都没发生`);
       if (r.note === "read_failed") bad.push("note 是 read_failed ⇒ 读扇出真的失败了（它失败得诚实，但这一档没跑完）");
       if (!Array.isArray(r.days) || r.days.length !== want) {
         bad.push(`days 不是 ${want} 段（拿到 ${Array.isArray(r.days) ? r.days.length : JSON.stringify(r.days)}）`);
@@ -639,12 +585,15 @@ cell_usage_30d() {
     if (bad.length) { console.error("❌ " + bad.join("；")); process.exit(1); }
     console.log(`   tier=${r.tier} note=${r.note} days=${r.days.length} clamped=${r.range.clamped}`);
   ' || return 1
-  echo "✅ 本次实测在 wrangler dev 起的 workerd 上跑得完（官方两页文档口径仍对不上，见 src/core/admin/usage-stats.ts 的 USAGE_DAY_RETAIN 上方那段）"
+  echo "✅ 本次实测在真容器上跑得完（60 次存储读扇出，见 src/core/admin/usage-stats.ts 的 USAGE_DAY_RETAIN 上方那段）"
   return 0
 }
 
-# ── ⑤ 两形态的 /admin 都出得来 ─────────────────────────────────────────────
-# 静态兜底在两个 entry 里是两份装配，而它排错位置的失败形态是**整棵 /admin 变 404**。
+# ── ④ /admin 出得来 ───────────────────────────────────────────────────────
+# ⚠️ **这一格原来的理由是「静态兜底在两个 entry 里是两份装配」，v0.4.0 之后只剩一份。**
+# 留下来的理由换成：静态兜底那条路只有**真起进程**才走得到（契约测试走的是
+# `app.request()`，`src/ui/serve.ts` 那份资产表在两条路上是同一份，但「镜像里到底有没有
+# 打进那些资产」只有真容器答得出来），而它排错位置的失败形态是**整棵 /admin 变 404**。
 check_admin() { # $1 = 形态名 $2 = 基址
   local label="$1" base="$2" code head
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$base/admin" 2>/dev/null || true)
@@ -669,14 +618,8 @@ cell_admin_html() {
     echo "❌ Docker 形态没起来，这一格在它上面没有观测面" >&2
     bad=1
   fi
-  if (( WORKER_OK == 1 )); then
-    if ! check_admin "Worker" "$WORKER_BASE"; then bad=1; fi
-  else
-    echo "❌ Worker 形态没起来，这一格在它上面没有观测面" >&2
-    bad=1
-  fi
   if (( bad != 0 )); then return 1; fi
-  echo "✅ 两个形态的 /admin 都是面板 HTML"
+  echo "✅ /admin 是面板 HTML"
   return 0
 }
 
@@ -684,19 +627,18 @@ cell_admin_html() {
 for line in "${CELL_PLAN[@]}"; do
   IFS=$'\t' read -r id title fn <<<"$line"
   run_cell "$id" "$title" "$fn"
-  # 两个形态起来之后各塞一把 key：转发路径没有可用 key 时会直接 pool_empty，
-  # ③ 就永远走不到上游。**放在这里而不是各自格子里**，是为了让 ① ② 只回答
+  # 起来之后塞一把 key：转发路径没有可用 key 时会直接 pool_empty，
+  # ② 就永远走不到上游。**放在这里而不是格子里**，是为了让 ① 只回答
   # 「起没起得来」这一件事。
-  if [[ $id == "②" ]]; then
+  if [[ $id == "①" ]]; then
     if (( DOCKER_OK == 1 )); then echo "· Docker 导入 key：$(import_key "$DOCKER_BASE")"; fi
-    if (( WORKER_OK == 1 )); then echo "· Worker 导入 key：$(import_key "$WORKER_BASE")"; fi
   fi
 done
 
 # ── 逐格表 ──────────────────────────────────────────────────────────────────
 # 补齐的那一列必须是 ASCII 状态、不是按字节补不准的中日韩标题（与推送前复跑脚本同一条）。
 pass=0; failed=0
-printf '\n══════════ 双形态冒烟逐格表 ══════════\n'
+printf '\n══════════ 真机冒烟逐格表 ══════════\n'
 for id in "${CELL_IDS[@]}"; do
   printf '  %s %-16s %s\n' "$id" "${CELL_STATUS[$id]}" "${CELL_TITLE[$id]}"
   case "${CELL_STATUS[$id]}" in
@@ -706,7 +648,7 @@ for id in "${CELL_IDS[@]}"; do
 done
 printf '  ── %s 格 PASS / %s 格 FAIL\n' "$pass" "$failed"
 if (( failed != 0 )); then
-  printf '  ⇒ 双形态没验过。\n'
+  printf '  ⇒ 真机没验过。\n'
   exit 1
 fi
 printf '  ⇒ %s 格全过。\n' "$pass"

@@ -249,7 +249,7 @@
  *      一格不响 —— 它们连本轴的族表都还没进。
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { UPPER, ROUND, expand } from "../helpers/internal-ref-placeholders.js";
@@ -262,7 +262,11 @@ import { UPPER, ROUND, expand } from "../helpers/internal-ref-placeholders.js";
  */
 function trackedFiles(): readonly string[] {
   const raw = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" });
-  const files = raw.split("\0").filter(Boolean);
+  // ⚠️ **必须再滤一道 `existsSync`**：`git ls-files` 报的是**索引**，一份「已经从磁盘
+  // 删掉、但删除还没 stage」的文件照样在里面。不滤的话下面 `isBinary()` 的
+  // `readFileSync` 会 ENOENT，**整份文件一格都跑不起来**（v0.4.0 摘 Worker 形态时
+  // 当场撞到过）。滤掉它不会放过任何东西——一份磁盘上不存在的文件里没有字可扫。
+  const files = raw.split("\0").filter(Boolean).filter((f) => existsSync(f));
   if (files.length === 0) {
     throw new Error("`git ls-files` 一份文件都没列出来 —— 扫描坏了，不许静默当成空集");
   }

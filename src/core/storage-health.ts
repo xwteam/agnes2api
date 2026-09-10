@@ -29,9 +29,10 @@ export interface StorageHealth {
 /**
  * 初始状态取「可写」这一乐观值，因为它表示的是「尚未观测到任何写失败」。
  *
- * Node/Docker 形态启动时会立刻探测一次，乐观初值存在的时间不超过几毫秒；Worker/KV
- * 形态没有绑定挂载这一类失败模式（也不该为了健康检查而每次冷启动都消耗一次 KV 写配额），
- * 由运行期的真实写操作来修正它。
+ * `src/entry/node.ts` 启动时会立刻探测一次（`probeStorage: true`），乐观初值存在的
+ * 时间不超过几毫秒。⚠️ 这里原来还有半句「Worker/KV 形态没有绑定挂载这一类失败模式，
+ * 由运行期的真实写操作来修正它」——那个形态没了；**今天不存在「不探测」的生产路径**，
+ * 乐观初值只在探测落地前的那几毫秒、以及直接调 `createApp` 的测试里出现。
  */
 export function createStorageHealth(): StorageHealth {
   let status: StorageStatus = { writable: true, checkedAt: null };

@@ -34,7 +34,7 @@ import {
 import { el, elI18n, toast, openModal, confirmModal, copy, revealControls,
 } from "./ui.js";
 import { fmtCount, fmtDash, fmtDuration, fmtInstant } from "./pure/format.mjs";
-import { offsetMs, freshnessValues } from "./pure/overview.mjs";
+import { offsetMs } from "./pure/overview.mjs";
 // 错误码 → 文案。**全仓唯一那份「码 → i18n key」的翻译**，两族管理端点共用它
 // （那张表的名字里没有 keys 字样，射程本来就是整棵管理树）。
 import { adminErrorFields, adminErrorText } from "./pure/keys-write.mjs";
@@ -64,8 +64,6 @@ let loadError = false;
 let abort = null;
 /** `capabilities` 里那一块。**只拉一次**：三格都是建 app 时定死的部署期常量。 */
 let cap = { wired: null, max: null, nameMax: null, plaintextRetrievable: false, cacheTtlMs: null };
-/** KV 边缘缓存那个数，同样来自后端（概览页那条链）。 */
-let edgeMs = null;
 /**
  * 最近一次 `GET /admin/api/usage`（近 24 小时那一档）的响应，每张卡的用量那一行读它。
  *
@@ -314,10 +312,9 @@ function render() {
   for (const v of visible) host.appendChild(itemCard(v));
 }
 
-/** 「停用之后最多还能再用多久」那句话。**两个数都从后端来，一个都不写死。** */
+/** 「停用之后最多还能再用多久」那句话。**这个数从后端来，不写死。** */
 function revokeDelayText() {
-  const ms = akRevokeDelayMs(cap.cacheTtlMs, edgeMs);
-  return t("ak.revokeDelay", { delay: fmtDuration(ms) });
+  return t("ak.revokeDelay", { delay: fmtDuration(akRevokeDelayMs(cap.cacheTtlMs)) });
 }
 
 // ── 网络 ────────────────────────────────────────────────────────────────────
@@ -330,18 +327,6 @@ async function loadCapabilities() {
     void kv;
   } catch (e) {
     // 读不出来时保持 `wired: null`（「还不知道」），不假装它没接。
-  }
-  try {
-    const ov = await api.get("/overview");
-    // ⚠️ **这个数在 `freshness` 那一格，不在 `config`**（`handlers/overview.ts` 的
-    // 响应形状：`config` 只装注册机与降级那几项）。第一版按 `ov.config.kvEdgeCacheMs`
-    // 取，恒是 `undefined` ⇒ `edgeMs` 恒为 null ⇒ 停用/删除后那条 sticky 提示里的
-    // 时长恒画成 `—`，也就是把「安全相关、必须给具体数字」那条要求整条落空。
-    // ⇒ **走 `freshnessValues()`，与 `sec-overview.js` 同一个投影函数**：自己在这里
-    // 再手写一遍取字段，就是给同一处漂移留第二个入口。
-    edgeMs = freshnessValues(ov).kvEdgeCacheMs;
-  } catch (e) {
-    edgeMs = null;
   }
 }
 

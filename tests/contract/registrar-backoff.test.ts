@@ -11,7 +11,7 @@ import type { BackoffState } from "../../src/core/registrar/backoff.js";
 /**
  * 🔴 **承重判据：还在退避窗口里的那一轮，一次上游请求都不发、一个临时邮箱都不建。**
  *
- * 这一格**放在 `tests/contract/` 是有意的**（`vitest.workers.config.ts` 的 include
+ * 这一格**放在 `tests/contract/` 原来是有意的**（当时那份 workers 专用配置的 include
  * 只收这个目录）：它要在 **Node 与 workerd 两种运行时下各跑一遍**。
  * 「双运行时同一套代码」是硬约束，而这条闸门是本次唯一新增的、能整轮改变行为的
  * 早退分支——它在两种运行时上必须是同一个行为。

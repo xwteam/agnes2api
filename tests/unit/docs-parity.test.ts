@@ -29,7 +29,7 @@ import { REGISTRAR_BACKOFF_KEY } from "../../src/core/registrar/backoff.js";
 import { HEALTH_PROBE_KEY } from "../../src/core/storage-health.js";
 import { APIKEY_KEY } from "../../src/http/apikey-store.js";
 import { APIKEYS_PURGE_PATH } from "../../src/http/admin/handlers/api-keys.js";
-import { CONFIG_TTL_MS, KV_EDGE_CACHE_MS } from "../../src/http/config-holder.js";
+import { CONFIG_TTL_MS } from "../../src/http/config-holder.js";
 import { DEFAULT_POOL_CACHE_TTL_MS } from "../../src/core/keypool-repo.js";
 import { SESSION_MAX_AGE_MS } from "../../admin-ui/js/pure/session.mjs";
 // 复评回填：设置卡与字符集那两句话的期望值一律从这几份真源现算，不手抄。
@@ -48,7 +48,6 @@ import type { KeyRecord } from "../../src/core/types.js";
 import { TEST_ADMIN_TOKEN, makeApp } from "../helpers/make-app.js";
 import { DEFAULTS } from "../../src/core/config-provenance.js";
 import { buildApp } from "../../src/http/wire.js";
-import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { KEYS_PURGE_PATH } from "../../src/http/admin/handlers/keys-write.js";
 import { CHANNELS } from "../../admin-ui/js/pure/registrar.mjs";
@@ -106,264 +105,62 @@ type Lang = (typeof LANGS)[number];
  */
 describe("五语言 DEPLOY.md 的关键数字对等", () => {
   const NUMBERS: ReadonlyArray<{ token: string; why: string }> = [
-    // ⚠⚠ **这两个 token 从真源常量现算，不写字面量**（回填时改的，理由与下面 `${MANUAL_TENDS_PER_DAY} × 3` 那一条逐字相同）。
-    // 上一版它俩写死成 `"**120"` / `"**90"`，而「常量真改了、五份 DEPLOY.md 一起没跟上」
-    // 那一种靠的是另一组判据（它们把同一批数钉在常量上）——而那一组的期望源是一份
-    // 内部设计文档，已随全部内部设计文档移出本仓。现算之后常量一改，token 就成了
+    // ⚠⚠ **这两个 token 从真源常量现算，不写字面量**（回填时改的，理由与下面
+    // `${MANUAL_TENDS_PER_DAY}` 那一条逐字相同）：现算之后常量一改，token 就成了
     // 五份文档里查不到的串 ⇒ 下面那条 `total === 0` 当场红并点名 DEPLOY.md。
     // ⚠️ 它们仍然挡不住「五份被同一个错误值同步污染」——那是跨语言互校的固有边界。
+    //
+    // ✅ **v0.4.0 已了结：这两个数各自少了一项加数，而那不是「判据碍事」，是加数本身没了。**
+    // 旧值是「池 TTL + 边缘缓存」（120 秒）与「配置 TTL + 边缘缓存」（90 秒）——那一项是
+    // 「Cloudflare KV 的边缘缓存默认 cacheTtl」，一条**平台事实**。摘掉 Worker / KV 之后
+    // 文件存储那一侧没有任何缓存夹在中间，两条上界就退化成 TTL 本身（60 秒 / 30 秒）。
+    // 这条登记上一版还挂着一句给主线的警示（「配套的源码改动不在本文件的射程里，
+    // 必须一起做，否则面板会比文档多报 60 秒」）——**那笔配套改动已经落地**：
+    // `src/http/admin/handlers/overview.ts` 与 `.../config.ts` 的两条上界现在就等于
+    // 各自的 TTL，那一整层（常量、两个响应块里的字段、面板取值与五语言文案）已删干净。
+    // 留着这几行只为交代这两个 token 为什么从 120/90 变成了 60/30。
     {
-      token: `**${(DEFAULT_POOL_CACHE_TTL_MS + KV_EDGE_CACHE_MS) / 1000}`,
-      why: "key 池快照的真实上界（DEFAULT_POOL_CACHE_TTL_MS + KV_EDGE_CACHE_MS），加粗标记只在这句出现",
+      token: `**${DEFAULT_POOL_CACHE_TTL_MS / 1000}`,
+      why: "key 池快照的真实上界（DEFAULT_POOL_CACHE_TTL_MS），加粗标记只在这句出现",
     },
-    // ⚠️ **这个锚点是复评回填补的，照本组的规矩「数过再加」**：
-    // 加之前 `**90` 在五份里**各 1 次**（就是配置生效上界那一句，五份都用加粗包住数字），
-    // 完全一致 ⇒ 是个能指得出是哪一句的锚点，不是 `48` 那种散落 7~9 次的噪声锚点。
-    // 补它的直接理由是实测：把 `docs/zh-CN/DEPLOY.md` 那句 `**90 秒**` 改成 `**95 秒**`，
-    // **docs-parity 251 格全绿** —— 这个数在五份文档里当时一点守卫都没有。
-    // ⚠️ **它上一版挡不住那一种，现在挡得住了**：写死 `"**90"` 时，
-    // `CONFIG_TTL_MS`/`KV_EDGE_CACHE_MS` 真改了值、五份 DEPLOY.md 一起没跟上 ⇒ 计数依然对等 ⇒ 依然绿。
-    // 改成现算之后，常量一改 token 就变成了五份文档里查不到的串 ⇒ `total === 0` 当场红。
     {
-      token: `**${(CONFIG_TTL_MS + KV_EDGE_CACHE_MS) / 1000}`,
-      why: "配置保存后其他 isolate 的生效上界（CONFIG_TTL_MS + KV_EDGE_CACHE_MS），五份各只此一处",
+      token: `**${CONFIG_TTL_MS / 1000}`,
+      why: "配置保存后别的副本的生效上界（CONFIG_TTL_MS），五份各写两处（正文 + 排障）",
     },
-    { token: "100,000", why: "免费档每天读配额" },
-    { token: "1,000", why: "免费档每天写 / 删除 / list 配额" },
-    // ⚠️ **这个锚点是评审补的，补之前它不在表里**——于是"安静部署"那条
-    // 读配额包线在五语言里写歪了没有任何东西会红。它同时是本仓唯一一个"文档里的
-    // 数字与一条会变红的用例（events-cursor-heal.test.ts:269 的基准线）同源"的锚点：
-    // 那条用例量出来的是 70,560，文档写的也必须是 70,560。
-    { token: "70,560", why: "「安静」部署单开一个面板标签页的稳态读配额包线（48 次事件 get + 1 次配置读，每天 1,440 轮）" },
-    // ⚠️ **这两个锚点是后来补的，加之前先数过**：改动前 `272` / `320` 在五份
-    // 文档里**一次都没出现过**，加进来之后各出现 2 次（配额三栏表里一次、下面那句
-    // 「这三个数都不是上界」里一次），五份完全一致。
-    //
-    // ⚠️⚠️ **这段说明的第一版把这道门禁的语义讲反了，评审抓到，如实登记。**
-    // 当时写的是「把 `48` 当锚点等于『删掉目标句子计数依然 ≥1，门禁永远不会因为
-    // 这个删除变红』」——**那句话是假的**，它描述的是本文件上面第四条 ⚠️ 记的那个
-    // **已经被修掉**的旧判据（`toBeGreaterThanOrEqual`）。今天的判据是**跨语言
-    // 计数相等**（`toEqual`），`toBeGreaterThan(0)` 只挡「五份都是 0」这种平凡相等。
-    // 实测：把 `48` 加进本表、只把 ja 那份里的一个 `48` 改成 `49` ⇒ **红**。
-    // **`48` 是一个能用的锚点，不是一个失效的锚点。**
-    //
-    // **那为什么仍然不加它**（结论不变，理由换掉）：
-    // ① 它在五份里各已出现 7~9 次，散落在时间窗×槽位、Cron 每天的轮数、索引对账、
-    //    锁释放等**互不相干**的句子里 ⇒ 变红时只说「ja 是 8、其余是 9」，
-    //    **指不出是哪一句坏了**，而定位成本正是这道门禁存在的意义；
-    // ② 任何一处无关改动只要在某一种语言里多写/少写一个 `48` 就会红，
-    //    噪声会逼后来的人去调表而不是去改文档。
-    // **它挡不住的那一种，两个锚点并无差别**：五份被同一个错误值同步污染
-    //（`48` 五份一起改成 `49`、`272` 五份一起删）⇒ 计数依然对等 ⇒ 依然绿。
-    // 这是跨语言互校这条判据的固有边界，不是选哪个数字能解决的。
-    // ⚠️ **这两个数改过一次，理由不是「判据碍事」，是账本身多了一笔**：注册机新增了
-    // 一把每轮最多写一次的域名台账键（`registrar:domains`），两栏各按上界 +48。
-    // 旧值 `272` / `320` 从此在五份文档里各 0 次 —— 不改这里的话，下面那条
-    // `total === 0` 会当场红并点名 DEPLOY.md（那正是它该做的）。
-    // ⚠️⚠️ **`368` 改成 `416`，理由同样是「账本身又多了一笔」，不是判据碍事**（评审回填）：
-    // 退避键（`registrar:backoff`）从头到尾没进过按轮计费那张清单 —— 而它每轮最多写 1 次，
-    // 上界 48 次/天。**只加在第三栏**：写它的只有撞上限流的那些轮次，而那些轮次必然产出失败
-    // 事件；「每轮都健康」那一栏里它是 0（清掉一次之后那把键就是空的，`saveBackoff(null)`
-    // 之后 `p.backoff !== null` 不再成立），所以 `320` 一个字都没动。
-    // 旧值 `368` 从此在五份文档里各 0 次 —— 不改这里的话，下面那条 `total === 0` 会当场红。
-    { token: "320", why: "注册机开着且每轮都健康时的写侧合计（80 + 96 + 48 + 0 + 48 + 48 + 0）" },
-    { token: "416", why: "注册机开着且每轮都有失败事件时的写侧合计（80 + 96 + 48 + 48 + 48 + 48 + 48）" },
-    // ⚠️ **这三个是第三轮补的，理由与上面两个一样：数过再加。**
-    // 改动前 `1,040` 在五份里各 0 次、`288` 各 0 次、`600000` 各 0 次；
-    // 现在分别是 1 / 6 / 5，五份完全一致。它们承载的是配额账里**最容易写歪**的
-    // 那三处：打穿写配额的那个合计、Cron `*/5` 每天的轮数、以及触发逐轮配置
-    // 警告的那个阈值（`MINT_BATCH × CODE_TIMEOUT_MS × 通道数`）。
-    // **不加 `300000`**：改完之后它在五份里各 **0** 次——那个例子已经从
-    // `TEND_INTERVAL_MS=300000` 换成了 Cron `*/5`（订正 ⑤：本节讲的是 Worker
-    // 形态，而 `TEND_INTERVAL_MS` 只被 Node 调度器消费，在 Worker 上调它一轮都不会多）。
-    // 加一个五份都不存在的 token 会被上面那条 `toBeGreaterThan(0)` 当场判死。
-    // ⚠️ **`1,328 → 1,616`**：同上，最坏那一行的算式跟着多一个 `288`
-    //（`80 + 96 + 288 × 5`）。它与上面 `416` 是同一笔账的两个轮数口径，改一个必须改另一个。
-    { token: "1,616", why: "两轴叠加的最坏合计（Cron */5 且每轮都有事件），已打穿 1,000" },
-    { token: "288", why: "Cron `*/5 * * * *` 每天的轮数，五笔按轮计费的乘数" },
-    // ⚠️ 阈值的公式变了（名额之间那几段间隔算进来了），默认值随之从 600000 变成 960000。
-    { token: "960000", why: "逐轮配置警告的阈值 MINT_BATCH×CODE_TIMEOUT_MS + (MINT_BATCH−1)×MINT_DELAY_MAX_MS 的默认值" },
-    // ⚠️ **后来补的，同样是先数过再加**：改动前 `201` 在五份文档里各 **0** 次
-    //（`git show HEAD:docs/<lang>/DEPLOY.md | grep -o 201 | wc -l`），加进来之后各 **1** 次。
-    // 选它而不选同一段里的 `200`（一次导入的上限）：`200` 在五份里各已出现 7 次，
-    // 散落在 HTTP 200、note 长度上限等互不相干的句子里 —— 变红时指不出是哪一句坏了，
-    // 而定位成本正是这道门禁存在的意义（同 `48` 那条不加的理由）。
-    // `201` 只出现在「面板单次点击的写侧上界」那一句里，是那一段唯一的锚。
-    { token: "201", why: "一次导入 200 把 key 的写侧上界（200 条记录 + 1 次索引），面板单次点击最贵的动作" },
-    // ⚠️ **后来补的三个，同样是先数过再加**：改动前 `392` / `632` / `24 × 3`
-    // 在五份文档里各 **0** 次（`grep -o` 数过），加进来之后各 **1** 次，五份完全一致。
-    // 选它们而不选 `24`：`24` 在五份里散落在时间窗口、小时数、`24 小时` 这类互不相干的
-    // 句子里各已出现十余次 —— 变红时指不出是哪一句坏了，而定位成本正是这道门禁存在的
-    // 意义（同 `48` 那条不加的理由）。这三个只出现在「立即补池的日预算」那一段里。
-    //
-    // **三个一起加，因为它们是同一笔账的三段，各自都会被单独写歪**：
-    // `24 × 3` 是算式本身、`392` 是可持续那一栏的合计、`632` 是突发上界那一栏的合计。
-    // 只锚一个的话，另外两段在某一种语言里抄错一位不会有任何东西变红。
-    // ⚠️⚠️ **算式那一条从真源常量现算，不写字面量**（评审回填）：
-    // 写死 `"24 × 3"` 的话，`MANUAL_TENDS_PER_DAY` 一改，五份文档里那句算式原地变成
-    // 假话而本表照绿。现算之后常量一改，token 就成了文档里查不到的串 ⇒ 下面那条
-    // `total === 0` 当场红并点名 DEPLOY.md。理由与 `1 + ${…}` 那两条逐字相同。
-    // ⚠️ **每次点击的非铸造写侧从 3 次 put 变成 4 次**（多了域名台账那一把），
-    // 于是这三个数一起重算：`24 × 4 = 96`、`96 + 368 = 464`、`24 × 14 = 336`、`336 + 368 = 704`。
-    // ⚠️⚠️ **又改了一次，而这一次连口径都换了**（评审回填）：那个「固定 4 次」本身就是假的——
-    // `tests/contract/manual-tend.test.ts` 的
-    // 「成功一轮的确切代价：3 次 put（抢锁 + 护栏键 + tend:history）+ 1 次 delete，手写字面量」
-    // 实测出来的是 **3**，域名台账那一笔是**条件写**（`commitJournal` 的 `dirty` 为假时零写）。
-    // 现在的口径是「3 次固定 + 域名台账/退避键各最多 1 次条件写 ⇒ 上界 5」，于是
-    // `24 × 5 = 120`、`120 + 416 = 536`、`24 × 15 = 360`、`360 + 416 = 776`。
+    // ⚠️ **「立即补池」的每日上限从真源常量现算**：文档里那一处逐字写成 `**24**`
+    //（加粗包住数字），是那一段唯一的锚；裸 `24` 在五份里散落在时间窗口、小时数里十余次。
     {
-      token: `${MANUAL_TENDS_PER_DAY} × 5`,
-      why: "「立即补池」可持续写侧的算式（每天 MANUAL_TENDS_PER_DAY 次 × 每次上界 5 次 put）",
+      token: `**${MANUAL_TENDS_PER_DAY}**`,
+      why: "「立即补池」的每日上限（MANUAL_TENDS_PER_DAY），五份 DEPLOY.md 各只此一处",
     },
-    { token: "536", why: "「立即补池」可持续写侧叠上稳态第三栏之后的合计（120 + 416）" },
-    { token: "776", why: "「立即补池」每次都铸满 MINT_BATCH 时的突发上界合计（360 + 416）" },
-    // ⚠️ **再后来补的五个，同样是先数过再加**：改动前 `104` / `13 × 8` / `280` /
-    // `424` / 最坏那一行的合计在五份文档里**各 0 次**（`grep -o -F` 逐份数过），
-    // 加进来之后 `13 × 8` / `104` / `280` / `424` / 最坏那一行分别是 **1 / 4 / 1 / 1 / 1** 次，
-    // 五份完全一致（定向复评：上一版这里写的是「3 / 1 / 1 / 1 / 1」，
-    // **前两个配反了，而且 `104` 后来又多了一处，早就不是 3**。
-    // ⭐ 这类「注释里抄一份计数」天生会过期 —— **能变红的是下面那条跨语言互校，
-    // 不是这段话**，读的人别把它当判据）。
-    //
-    // **五个一起加，因为它们是同一笔账里五段各自会被单独写歪的数**：
-    // `13 × 8` 是算式本身、`104` 是 Tier-2 的写量增量，`280`/`424`/最坏那一行是四行场景表里
-    // 新增的那三行合计（第一行 `176` 与 Tier-2 关掉时逐字相同，已被上面那个锚覆盖）。
-    // 只锚 `104` 的话，某一种语言把最坏那一行抄错一位不会有任何东西变红——而那一行恰恰是
-    // 「开了之后会不会打穿写配额」这个问题的答案，写歪一位就是相反的结论。
-    //
-    // ⚠️⚠️ **最坏那一行从真源常量现算，不写字面量**（评审发现）。
-    // 它上一版写死的是 `856`（= 424 + 每 10 分钟点一次立即补池的 `144 × 3 = 432`），
-    // 而 `MANUAL_TENDS_PER_DAY = 24` 那道闸把点击次数压到 24 次/天
-    // ⇒ 真实的那一行是 `424 + 24 × 3 = 496`。**上一版的守卫在保证五份把同一个错数
-    // 抄得一模一样**——这正是本表开头那段边界说明（「只能证明五份写得一样，不能证明
-    // 五份说得对」）的一个活实例。现算之后常量一改，token 就成了文档里查不到的串
-    // ⇒ 下面那条 `total === 0` 当场红并点名 DEPLOY.md。
-    // ⚠️ `520` 仍是字面量：它是上一行的合计（416 + 104），与这道闸无关。
-    //    每次点击**不铸新 key** 时的写侧是 3 次固定 put + 域名台账/退避键各最多 1 次条件写
-    //    ⇒ 上界 5（`tend-guard.ts` 文件头那段算式），五份文档里那一行也是按这个口径写的。
-    // ⚠️⚠️ **上面那句「`424 + 24 × 3 = 496`」是这一版之前的算式，别照着它读今天的表**：
-    //    最坏那一行今天是 `520 + 24 × 5 = 640`，而它就在下面那一格里从常量现算。
-    //
-    // ⚠️ **不加 `13`**：它在五份里散落在「13 次 put」「12 + 1」等十几处，
-    // 变红时指不出是哪一句坏了，而定位成本正是这道门禁存在的意义（同 `48` 那条不加的理由）。
-    // `13 × 8` 只出现在那一句算式里，是那一段唯一的锚。
-    { token: "13 × 8", why: "Tier-2 每天写量的算式（每实例 13 次 put × 8 个并发 isolate）" },
-    { token: "104", why: "Tier-2 打开之后每天新增的 put 数，配额账里本期唯一的新写者" },
-    { token: "280", why: "Tier-2 开、注册机关着时的写侧合计（176 + 104）" },
-    { token: "520", why: "Tier-2 开、注册机开着且每轮有失败事件时的写侧合计（416 + 104）" },
-    {
-      token: String(520 + MANUAL_TENDS_PER_DAY * 5),
-      why: "四行场景表里最坏那一行的合计（520 + MANUAL_TENDS_PER_DAY × 5）—— 「开了也不打穿」这条结论就靠它",
-    },
-    // ⚠️ **后来补的，同样是先数过再加**：改动前 `.dev.vars.off` 在五份文档里
-    // **各 0 次**（`grep -o -F | wc -l` 逐份数过），加进来之后**各 1 次**，五份完全一致。
-    //
-    // **这一条不是数字，是本表第一个字面 token，理由与选数字时完全一样**：本表要的是
-    // 「跨五种语言稳定、且只出现在目标那一句里」的锚，`.dev.vars.off` 两条都满足——
-    // 它是一条 shell 命令的产物名，五种语言都不会去翻译它，而且全仓只有那一句提到它。
-    // **不选 `.dev.vars`**：它在五份里各已出现 3 次（本节原有那两句 + 新增这句），
-    // 变红时指不出是哪一句坏了，而定位成本正是这道门禁存在的意义（同 `48` 那条不加的理由）。
-    //
-    // 它守的那一句是那条绊线的**唯一出路说明**：`.dev.vars` 会被
-    // `pnpm test:workers` 无退出口地读进 workerd 的 env（见
-    // `tests/contract/dev-vars-guard.test.ts` 的「workerd 的 env 里只该有 POOL —— .dev.vars
-    // 被 pnpm test:workers 读进来了」）。绊线红了而某一种语言的文档偏偏没写出路，
-    // 那种语言的读者就只剩一条无解的红——这个锚点管的正是这件事。
-    { token: ".dev.vars.off", why: "`.dev.vars` 绊线红了之后的出路（跑测试前改名），五份 DEPLOY.md 各只此一处" },
-    // ⚠️ **后来补的，同样是先数过再加**：改动前 `src/http/wire.ts` 在五份文档里
-    // **各 0 次**（`grep -o -F | wc -l` 逐份数过），加进来之后**各 2 次**——
-    // `POOL_CACHE_TTL_MS` 与 `POOL_TOUCH_INTERVAL_MS` 两格各一次，五份完全一致。
-    //
-    // **它守的是这两格里新补的那句「面板改它不会立刻生效」**。这句话在改动前
-    // **一份都没写进那两格**：五份 DEPLOY.md 的正文里确实有一段说了这件事
-    //（就在环境变量表下面），但**表格那两格没有**，而那张表的开场白自己写着
-    // 「完整的取值范围与代价以本表为准」——照着表逐格读参数的人看不到这条代价。
-    // 与之配套的面板那一半是 `admin-ui/js/pure/settings.mjs` 的 `BUILD_TIME_FIELDS`：
-    // 面板的**保存回执**不再对这两格谎称「本实例已经生效」。三处说法必须一起动，
-    // 只改一处就是换个地方继续说假话。
-    // ⚠️ **那句话要带射程，别读成「面板任何时候都不会说本实例已经生效」**：
-    // 读取态下 `set.propagation` 照旧要显示（它讲的是这个部署的传播上界本身，
-    // 是当初论证出来的必须显示项），只是保存留下的回读行与高亮会在回到读取态时
-    // 一并作废——那一档由 `tests/ui/dom/settings-save.test.ts` 的
-    // 「④ 只是读了一次配置（还没保存过）：重启那句不出现，传播上界照常在」
-    // 与「⑤ 保存旋钮之后回到读取态：回读行与高亮一并作废」两格钉着
-    //（⑤ 来自复评发现：改动前保存完点一下「刷新」，屏幕上就编出
-    // 「你刚改的那格本实例已经生效」）。
-    //
-    // ⚠️⚠️ **这条计数锚管不了那句正文还在不在**，别把它当成那句话的守卫：
-    // 复评时实测「五份同步删掉正文、只留这个路径」，本表全绿。正文那一半在
-    // `tests/ui/settings.test.ts` 的「五语言 DEPLOY.md 的那两格里，正文逐格写着
-    // 「面板改它不会立刻生效」，而且指着出处」那一格（逐语言查本地化正文 + 反向控制）。
-    // 本条锚今天仍然有意义：它管的是**跨五种语言对等**（某一份漏改当场红），
-    // 那是另一件事。
-    //
-    // **为什么选一条源码路径当锚**（本表第二个非数字 token）：本表要的是「跨五种语言
-    // 稳定、且只出现在目标那一句里」的锚。`src/http/wire.ts` 两条都满足——路径不会被
-    // 翻译，而且它**恰好就是这句话的出处**（那两个旋钮就是在那个文件里被读掉一次的），
-    // 不是随手挑来当记号的。**不选「isolate」**：它在五份里各已出现 50 次上下，
-    // 散落在配额账、可见性上界、冷启动等互不相干的句子里，变红时指不出是哪一句坏了
-    //（同 `48` 那条不加的理由）。
-    // ⚠️ **`why` 里不写计数**（复评发现 4）：上一版写的是「五份 DEPLOY.md 各 2 次」，
-    // 而 `why` 会进用例名，判据却只验「五份彼此相等 + 总数 > 0」——实测（回填时复跑过
-    // 一次）五份各加到 3 次，本文件 66 格照旧全绿，用例名却还念着「各 2 次」。
-    // **能删数字就删数字**：期望值本来就该
-    // 从其余四种语言来，不从手写常数来（那是本表的设计），所以删的是那句话，不是加一个
-    // `toBe(2)` 去和本表的设计对着干。「那两格里各有一处」这件事本身由
-    // `tests/ui/settings.test.ts` 那条逐行查的正文守卫钉着，那里是逐格取行的。
+    // ⚠️ **`budgetPerDay` / `usage:<UTC` 是 v0.4.0 新加的两个锚，加之前先数过**：
+    // 它们钉的是折叠块里那两点——「文件存储没有每天写预算这道闸」与「同一天只留得下
+    // 2 个实例的数据」。这两句是 Tier-2 用量数字带「≈」的全部理由，写歪了没有别的判据看得见。
+    { token: "budgetPerDay", why: "文件存储上那道每日写预算闸是空的（Tier-2 折叠块第 ② 点）" },
+    { token: "usage:<UTC", why: "用量分片的键形状，「只有 2 个槽、后写覆盖先写」那一点的锚" },
+    // ⚠️ 这两个文件路径是「这条规矩写在哪儿」的出处，改了源码结构必须一起改文档。
     { token: "src/http/wire.ts", why: "这两个旋钮「建实例时读一次」的出处" },
-    // ⚠️ **再后来补的四个，同样是先数过再加**：改动前 `1 + 60` / `30 × 2` /
-    // `Subrequests per invocation` / `Operations/Worker invocation` 在五份 DEPLOY.md 里
-    // **各 0 次**（`grep -o -F | wc -l` 逐份数过），加进来之后五份完全一致。
-    // ⭐ **这段话里的计数不是判据**（同上面那条 ⭐）：能变红的是下面那条跨语言互校。
-    //
-    // **它们守的是本任务新写进配额账的两笔（那一轮的第 (3) 笔）**：
-    // ① Tier-2 用量的读侧 —— `30d` 那一档一次请求发 `30 × 2` = 60 次 KV get，
-    //    而 Cloudflare 两页官方文档在「一次调用能发多少条子请求」上对不上；
-    // ② Playground 的视频档一次任务最多 `1 + 60` 次上游请求。
-    //
-    // **`Subrequests per invocation` 与 `Operations/Worker invocation` 两个都要**：
-    // 那句话的全部意义是「两页对不上」，只留一行就不再是一处分歧，而是一条看起来
-    // 干净的结论 —— **少掉哪一行都会让那段话变成另一件事**，所以两行各上一个锚。
-    // 它们是 Cloudflare 官方文档里的行名，五种语言都不翻译（本表第三、四个非数字 token，
-    // 理由同 `.dev.vars.off`：跨语言稳定、且全仓只有那一句提到它）。
-    //
-    // ⚠️ **不加裸 `60` / 裸 `50`**：它们在五份里散落在这两笔账、`VIDEO_POLL_MAX_ATTEMPTS`、
-    // 60 秒轮询上限、`60000`、`750` 这类**子串**等互不相干的地方，变红时指不出是哪一句坏了，
-    // 而定位成本正是这道门禁存在的意义（同 `48` 那条不加的理由）。
-    //
-    // ⚠️⚠️ **这两个 token 从真源常量现算，不写字面量**（复评发现）。上一版写死了
-    // `"1 + 60"` 与 `"30 × 2"`，复评拿真源变更做过两次变异：`USAGE_DAY_RETAIN 30→14`、
-    // `VIDEO_POLL_MAX_ATTEMPTS 60→30`，两次都**只红 3 格且全部点名 ADMIN.md**
-    //（那三格是下面 `ADMIN_NUMBERS` 派生出来的），本表这两格照绿——而那三格的报文
-    // 逐字写着「要么常量改了而这一份文档没跟着改」，照它做完只改五份 ADMIN.md，
-    // 五份 DEPLOY.md 里的 `30 × 2` = 60 原地变成假话且全绿。**报文可以亲手把人引进坑**。
-    // 改成现算之后，常量一改，token 就成了文档里查不到的串 ⇒ 下面那条
-    // `total === 0` 当场红，报文点名 DEPLOY.md。测法是本组末尾那两格探针。
+    { token: "src/http/usage-sink.ts", why: "`USAGE_FLUSH_INTERVAL_MS` 那道校验在装配期抛错的出处" },
+    { token: "APIKEY_CACHE_TTL_MS", why: "对外密钥吊销延迟那笔账的唯一旋钮，五份各三处" },
+    // ⚠️ **这一行由 `admin-ui/js/sec-playground.js` 的注释具名指着**（见下面那一格）：
+    // token 从 `VIDEO_POLL_MAX_ATTEMPTS` 现算，常量改了而文档没跟上它同样会红。
+    // v0.4.0 把它从「配额账」那一节搬到了「面板里点一下会写什么」，**这笔账本身没变**：
+    // 它算的是**上游**请求数，与存储形态无关。
     {
       token: `1 + ${VIDEO_POLL_MAX_ATTEMPTS}`,
       why: "Playground 视频档一次任务的上游请求上界（1 次建任务 + 最多 VIDEO_POLL_MAX_ATTEMPTS 拍轮询）",
     },
+    // ⚠️ 同上，也是搬了位置没换含义：`30d` 那一档一次请求要读多少个用量分片。
     {
       token: `${USAGE_DAY_RETAIN} × ${USAGE_SLOTS}`,
-      why: "「30d」那一档一次请求的 KV get 数（USAGE_DAY_RETAIN × USAGE_SLOTS，两个都现算）",
+      why: "「30d」那一档一次请求读的分片数（USAGE_DAY_RETAIN × USAGE_SLOTS，两个都现算）",
     },
-    { token: "Subrequests per invocation", why: "Cloudflare Workers limits 页免费档 50 的那一行，口径分歧的一半" },
-    { token: "Operations/Worker invocation", why: "Cloudflare KV limits 页 1,000 的那一行，口径分歧的另一半" },
-    // ⚠️ **最后补的两个，同样是先数过再加**：改动前这两条路径在五份 DEPLOY.md 里
-    // **各 0 次**（`grep -o -F | wc -l` 逐份数过），加进来之后**各 1 次**，五份完全一致。
-    // 它们守的是本任务往配额账里新写的那两笔（全局约束 14：新增一条会写存储的代码路径，
-    // 同一个提交里必须更新五语言 DEPLOY.md 的配额账）。
-    //
-    // ⚠️⚠️ **两个 token 都从真源常量现算，不写字面量**——理由与上面 `1 + ${…}` 那两条
-    // 逐字相同（那次复评的教训）：写死字符串的话，端点路径一改，五份文档里
-    // 那两行原地变成假话而本组照绿。现算之后，路径一改 token 就成了文档里查不到的串
-    // ⇒ 下面那条 `total === 0` 当场红，报文点名 DEPLOY.md。
     //
     // **为什么选路径而不选那两个数**（`1 次 put` / `N 次 delete`）：本表要的是「跨五种语言
     // 稳定、且只出现在目标那一句里」的锚。路径两条都满足（不会被翻译、全仓只有那一句提到）；
-    // 而裸 `1` 与裸 `N` 在五份里各出现几十次，变红时指不出是哪一句坏了（同 `48` 那条不加的理由）。
-    { token: CONFIG_RESET_PATH, why: "危险区「重置配置」那条端点的路径（1 次 put），五份 DEPLOY.md 各只此一处" },
-    { token: KEYS_PURGE_PATH, why: "危险区「清空 Key 池」那条端点的路径（N 次 delete + 1 次 put），五份 DEPLOY.md 各只此一处" },
+    // 而裸 `1` 与裸 `N` 在五份里各出现几十次，变红时指不出是哪一句坏了。
+    { token: CONFIG_RESET_PATH, why: "危险区「重置配置」那条端点的路径，五份 DEPLOY.md 各只此一处" },
+    { token: KEYS_PURGE_PATH, why: "危险区「清空 Key 池」那条端点的路径，五份 DEPLOY.md 各只此一处" },
   ];
 
   for (const { token, why } of NUMBERS) {
@@ -386,7 +183,7 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
    * 逐行断言那两个派生 token 还在表上：删掉任意一行 ⇒ 这一格红；
    * 删掉这一格本身 ⇒ 注释里的名字锚落空 ⇒ 那道门禁红。两条路都不静默。
    */
-  it("NUMBERS 表里那两个从真源常量现算的 token 都还在：Playground 视频档的上游请求上界、30d 那一档的 KV get 数", () => {
+  it("NUMBERS 表里那两个从真源常量现算的 token 都还在：Playground 视频档的上游请求上界、30d 那一档的分片读数", () => {
     const tokens = NUMBERS.map((n) => n.token);
     expect(tokens, "`1 + VIDEO_POLL_MAX_ATTEMPTS` 那一行不在 NUMBERS 表上了——"
       + "`admin-ui/js/sec-playground.js` 那段注释正声称它由那一格钉着，要么把行加回来，要么改那段注释")
@@ -406,7 +203,7 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
    * 是合法的，而 `why` 里逐字写着「各只此一处」。删掉表上那一行 ⇒ 这一格红；
    * 删掉这一格 ⇒ 三处注释的名字锚落空 ⇒ `check-comment-refs` 红。两条路都不静默。
    */
-  it("危险区那两条端点的路径在五份 DEPLOY.md 的配额账里逐份写着 —— 路径从真源常量现算", () => {
+  it("危险区那两条端点的路径在五份 DEPLOY.md 里逐份写着 —— 路径从真源常量现算", () => {
     const tokens = NUMBERS.map((n) => n.token);
     for (const path of [CONFIG_RESET_PATH, KEYS_PURGE_PATH]) {
       expect(tokens, `${path} 那一行不在 NUMBERS 表上了——`
@@ -415,7 +212,7 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
       const counts = Object.fromEntries(
         LANGS.map((l) => [l, realDoc("DEPLOY")(l).split(path).length - 1]),
       );
-      expect(counts, `${path} 在五份 DEPLOY.md 的配额账里不是各出现 1 次（${JSON.stringify(counts)}）`
+      expect(counts, `${path} 在五份 DEPLOY.md 里不是各出现 1 次（${JSON.stringify(counts)}）`
         + "——要么某一份漏写了这笔配额账（全局约束 14：新增一条会写存储的代码路径，"
         + "同一个提交里必须更新五语言 DEPLOY.md），要么端点路径改了而文档没跟上")
         .toEqual(Object.fromEntries(LANGS.map((l) => [l, 1])));
@@ -462,11 +259,12 @@ describe("五语言 DEPLOY.md 的关键数字对等", () => {
   });
 
   it("该红时红：只把 ko 那份里的一处锚点抹掉 ⇒ 计数分叉那一格必须点名 ko", () => {
-    // 反向控制用仓里真实存在的串：`.dev.vars.off` 今天真的在五份 DEPLOY.md 里各 1 次。
+    // 反向控制用仓里真实存在的串：`usage:<UTC` 今天真的在五份 DEPLOY.md 里各 1 次。
+    //（上一版用的是 `.dev.vars.off`，那个串随 Worker 形态一起从五份文档里消失了。）
     const failures = numberTokenFailures(
-      ".dev.vars.off",
-      ".dev.vars 绊线红了之后的出路",
-      readerWith("ko", (s) => s.split(".dev.vars.off").join(".dev.vars.disabled"), "DEPLOY"),
+      "usage:<UTC",
+      "用量分片的键形状",
+      readerWith("ko", (s) => s.split("usage:<UTC").join("usage:<日"), "DEPLOY"),
     );
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
     expect(failures[0]).toContain("不一致");
@@ -988,7 +786,7 @@ describe("五语言 API.md 逐份写着视频任务标识的字符集", () => {
  * 会回来更新注释。**能变红的是下面那条用例，不是这段话**，要数字就当场自己数一遍。
  *
  * ⚠️ **不许把它挪成一个独立的门禁脚本 + 新增一道 CI 步骤**：那会让
- * `tests/unit/scripts-guard.test.ts「CI 恰好十三道门，编号 1/13 到 13/13 各出现一次」` 当场红，
+ * `tests/unit/scripts-guard.test.ts「CI 恰好十一道门，编号 1/11 到 11/11 各出现一次」` 当场红，
  * 代价要么是改那条手写字面量（削弱一道现存守卫），要么是把新门禁塞进已有步骤里
  * 假装不是新的。放进 CI 跑 `pnpm test` 那一步的 vitest 里零副作用。
  *
@@ -1559,10 +1357,13 @@ describe("五语言文档的派生结构对等（R1–R6）", () => {
   const everyRealDoc = () => DOCS.flatMap((d) => LANGS.map((l) => readFileSync(docPath(".", l, d), "utf8")));
   const sum = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
 
-  it("缩进围栏那条今天仍然承重：真文档里确实有缩进围栏，顶格锚会漏掉它们", () => {
-    const missed = sum(everyRealDoc().map((s) => fences(s).length - NARROW.topLevelFences(s)));
-    expect(missed, "真仓里已经没有缩进围栏了——`fences` 认缩进这件事不再承重，回来重新评估要不要保留").toBeGreaterThan(0);
-  });
+  // 🔴 **「缩进围栏那条今天仍然承重」那一格 v0.4.0 删掉了——照它自己写的处置办。**
+  // 它的报文原话是「真仓里已经没有缩进围栏了——`fences` 认缩进这件事不再承重，回来重新
+  // 评估要不要保留」。全仓唯一的缩进围栏是配额账里那两条缩进公式（`(86400 ÷ …) × …`），
+  // 那一整节随免费档 KV 配额一起删了 ⇒ 今天 40 份出货文档里一处缩进围栏都没有。
+  // **`fences()` 认缩进这个能力没删**（它是防御性的，将来再出现缩进围栏时照样管用），
+  // 删掉的只是这条「今天有实例给它撑腰」的自守——留着它只会红在「仓里没有实例」上，
+  // 而那不是回归。为它专门去造一个缩进围栏才是本末倒置。
 
   it("围栏内 `# ` 那条今天仍然承重：真文档的围栏里确实有 `# ` 开头的行，不剥围栏就会被当成一级标题", () => {
     const fake = sum(everyRealDoc().map((s) => NARROW.rawHeadings(s) - headings(s).length));
@@ -1577,7 +1378,12 @@ describe("五语言文档的派生结构对等（R1–R6）", () => {
   });
 
   it("跨行 span 那条的落点：那处跨行 span 归一之后五份 DEPLOY.md 都抽得到，且它至少在一种语言里是跨行写的", () => {
-    const SPAN = "npx wrangler kv namespace create POOL";
+    // 🔴 **v0.4.0 换了落点**：上一版钉的是 `npx wrangler kv namespace create POOL`，
+    // 那条命令随 Worker 形态一起没了。今天的落点是排障那条「`store.json` 解析不开」里
+    // 的 `python3 -m json.tool ./data/store.json` —— 五份各写一次，而 en 那份里它**跨行**
+    // 写着（那一行本来就长，换行是自然排版，不是为判据造的）。
+    // **换落点不是放宽判据**：归一口径一个字没动。
+    const SPAN = "python3 -m json.tool ./data/store.json";
     const deploy = (l: Lang) => readFileSync(docPath(".", l, "DEPLOY"), "utf8");
     expect(
       LANGS.filter((l) => !codeSpans(deploy(l)).includes(SPAN)),
@@ -1609,11 +1415,18 @@ describe("五语言文档的派生结构对等（R1–R6）", () => {
 describe("R1–R6 的反向控制（临时目录夹具）", () => {
   /** 夹具里的译文差异——结构必须完全相同，只有这些串随语言变。 */
   const PROSE: Record<Lang, { title: string; section: string; note: string; formula: string; link: string }> = {
-    "zh-CN": { title: "网关部署", section: "环境变量", note: "必填", formula: "key 数 × 4", link: "用法" },
-    "zh-TW": { title: "閘道部署", section: "環境變數", note: "必填", formula: "key 數 × 4", link: "用法" },
-    en: { title: "Gateway deployment", section: "Environment variables", note: "required", formula: "pool size × 4", link: "Usage" },
-    ja: { title: "ゲートウェイ配備", section: "環境変数", note: "必須", formula: "key 数 × 4", link: "使い方" },
-    ko: { title: "게이트웨이 배포", section: "환경 변수", note: "필수", formula: "key 수 × 4", link: "사용법" },
+    // 🔴 **`formula` 那一列 v0.4.0 换了取材，不是换了口径。** 上一版取的是配额账里
+    // 「写侧稳态 = `key 数 × 4`」那一族逐语言写法，配额账整节随免费档 KV 配额删了
+    // ⇒ 下面那格「必须是仓里真实存在的串」会当场红。今天取的是五份 DEPLOY.md 前置条件
+    // 那句跨文档指认里的 README 节名 —— 它同样是**逐语言不同、且不进 `IDENTIFIER`**
+    // 的 code span（带空格与 emoji），正是这组控制需要的形状。
+    // ⚠️ zh-CN 与 zh-TW 两岸同文，这一列因此只有 4 种取值；下面那格判的是「> 1 种」，
+    // 不是「5 种各不相同」，这一点没变。
+    "zh-CN": { title: "网关部署", section: "环境变量", note: "必填", formula: "## ⚡ 快速部署", link: "用法" },
+    "zh-TW": { title: "閘道部署", section: "環境變數", note: "必填", formula: "## ⚡ 快速部署", link: "用法" },
+    en: { title: "Gateway deployment", section: "Environment variables", note: "required", formula: "## ⚡ Quick Deployment", link: "Usage" },
+    ja: { title: "ゲートウェイ配備", section: "環境変数", note: "必須", formula: "## ⚡ クイックデプロイ", link: "使い方" },
+    ko: { title: "게이트웨이 배포", section: "환경 변수", note: "필수", formula: "## ⚡ 빠른 배포", link: "사용법" },
   };
 
   /** 结构完全相同、只有译文不同的一份假文档。 */
@@ -2720,7 +2533,7 @@ describe("五份 ADMIN.md 的措辞与数字守卫", () => {
       const out = src.replace("\n## 面板的「立即补池」\n", "\n## 面板的「马上补池」\n");
       if (out === src) throw new Error("变异没落到 docs/zh-CN/REGISTRAR.md 上——这一格控制是空的");
       // 落点断言：散文里那处同名还在，判据必须**不**被它蒙混过去。
-      if (!out.includes("但面板的「立即补池」是例外")) {
+      if (!out.includes("面板那颗「立即补池」才是带预算的那一轮")) {
         throw new Error("散文里那处同名不见了——这一格就退化成了「全文找不到」，测不出收窄");
       }
       return out;
@@ -4721,78 +4534,58 @@ function tokenTableFailures(label: string, table: Partial<Record<Lang, string>>)
   return out;
 }
 
-describe("五语言 DEPLOY.md 的三笔欠账各自上锚", () => {
+describe("五语言 DEPLOY.md 的欠账上锚", () => {
   /**
-   * (2) ③ 段那句「欠下的那几天会在恢复之后补上」后面必须紧跟的限定。
-   * 依据：`src/http/usage-sink.ts` 的 `days`/`dirty` 累加器只在内存里，
-   * 而同一份文档 ② 段自己写着 Worker 的 isolate 常常只活分钟级
-   * ⇒ 「恢复之后补上」在 Worker 形态下**结构上到不了**，那半句必须带限定。
+   * 🔴 **这一组原来有三张锚表（(2) / (2\') / (4)），v0.4.0 只剩 (2\')。逐条说为什么。**
+   *
+   * · **(2) ③ 段那句承诺的限定**（「欠下的那几天会在恢复之后补上——**只要这个实例还
+   *   活着**」）：它限定的是「每天 13 次写预算耗尽 ⇒ 次日恢复 ⇒ 补写欠下的那几天」
+   *   这条承诺，而那道预算闸只在存储有写配额时存在。摘掉 KV 之后
+   *   `budgetPerDay` 恒为 `null` ⇒ **没有耗尽、没有恢复、也没有要补的那几天**，
+   *   被限定的那句承诺整个没了，限定自然一起没。
+   * · **(4) 保存一次设置要发几次 get**：那是配额账里逐操作的读写单价，整节随
+   *   免费档 KV 配额一起删。**次数本身没有变**，只是不再是一件需要向用户交代的事——
+   *   文件存储上「一次保存要读几次文件」不构成任何预算。
+   * · **(2\') 那道闸在本形态下压根不存在**：**留下来了，而且比从前更承重**。
+   *   它原本是「Docker 那一半」的限定，今天是唯一一半；这正是那句复评抓出来的假话
+   *  （「Docker 形态下进程长活，这句承诺才是常态成立的」）最容易复活的位置。
    */
-  const ALIVE_QUALIFIER: Record<Lang, string> = {
-    "zh-CN": "这个实例还活着",
-    "zh-TW": "這個實例還活著",
-    en: "provided the instance is still alive",
-    ja: "インスタンスが生きている",
-    ko: "인스턴스가 살아 있",
-  };
 
   /**
-   * (2') 同一段里紧跟着的那句：**这道闸在 Docker 形态下压根不存在**。
+   * (2\') **本形态下没有「每天写预算」这道闸。**
    *
-   * ⚠️ **它是复评抓出来的一句假话的替身，不是锦上添花**：上一版这里写的是
-   * 「Docker 形态下进程长活，这句承诺才是常态成立的」，而
-   * `src/http/usage-sink.ts` 的 `resolveUsageFlushInterval()` 是
-   * `budgetPerDay = hasWriteQuota ? USAGE_WRITES_PER_DAY : null`，
-   * `src/http/wire.ts` 传进去的是 `runtime.quotaModel === "kv"`，
-   * 而 `src/adapters/runtime-node.ts` 的 `quotaModel` 恒 `"file"`
-   * ⇒ **Docker 上这道闸根本不存在**，既不会耗尽也没有「恢复」。
-   * 既有契约测试逐字钉着这件事：`tests/contract/usage-tier2.test.ts`
-   * 的「没设这个环境变量时：两种存储形态拿到逐字相同的间隔（2 小时），差别只在
-   * 「有没有写配额」那道闸」（`budgetPerDay: null`）。
-   * 同一份文档 ④ 段自己也写着「文件存储（Docker）没有写配额 …… 不再有每天的写预算」
-   * ——那句假话是被同一份文档紧接着的 ④ 正面证伪的，**而五份齐说，跨语言判据一格都不响**。
-   * 所以这句改真之后必须自带锚：漏改一份、或哪天有人把它改回「常态成立」，这里当场红。
+   * 依据：`src/http/usage-sink.ts` 的 `resolveUsageFlushInterval()` 是
+   * `budgetPerDay = hasWriteQuota ? USAGE_WRITES_PER_DAY : null`，而
+   * `src/http/wire.ts` 传进去的 `hasWriteQuota` 在文件存储上恒为假
+   * ⇒ **这道闸根本不存在**，既不会耗尽也没有「恢复」。
+   * 既有契约测试守着这件事：`tests/contract/usage-tier2.test.ts`
+   * 「走 buildApp 的接线证据：USAGE_FLUSH_INTERVAL_MS 同时改变了落盘节奏与 capabilities 报出去的那个数」。
+   *
+   * ⚠️ **它是复评抓出来的一句假话的替身，不是锦上添花**：上一版文档里写的是
+   * 「Docker 形态下进程长活，这句承诺才是常态成立的」——那句假话五份齐说，
+   * 跨语言计数判据一格都不响。所以这句改真之后必须自带**每语言各一个**的 token：
+   * 漏改一份、或哪天有人把它改回「常态成立」，这里当场红。
    */
   const FILE_HAS_NO_GATE: Record<Lang, string> = {
-    "zh-CN": "Docker 形态下这道闸压根不存在",
-    "zh-TW": "Docker 形態下這道閘壓根不存在",
-    en: "On Docker this gate does not exist at all",
-    ja: "Docker 形態ではこの閘門そのものが存在しません",
-    ko: "Docker 형태에서는 이 게이트 자체가 없으므로",
-  };
-
-  /**
-   * (4) 「保存一次设置要发几次 get」——账本逐字登记过的那条无锚新账。
-   * 五种语言写法本来就不同，逐份一个 token。
-   *
-   * ⚠️ 简繁两份的锚**往左扩到了行首的正字与端点**（复评发现）：右半截
-   * 「**1 次 put** + 3~4 次 get」两份逐字相同，只锚右半截就得去拧其中一份的正文。
-   * 扩完之后这两个 token 顺带锚住了端点（`PUT /admin/api/config`）与 put 次数。
-   */
-  const GET_COUNT_HINT: Record<Lang, string> = {
-    "zh-CN": "保存一次设置**（`PUT /admin/api/config`）：**1 次 put** + 3~4 次 get",
-    "zh-TW": "儲存一次設定**（`PUT /admin/api/config`）：**1 次 put** + 3~4 次 get",
-    en: "3–4 gets",
-    ja: "get 3〜4 回",
-    ko: "get 3~4회",
+    "zh-CN": "本形态下没有「每天写预算」这道闸",
+    "zh-TW": "本形態下沒有「每天寫預算」這道閘",
+    en: "There is no daily write budget on this deployment form",
+    ja: "この形態には「1 日の書き込み予算」というゲートがありません",
+    ko: '이 형태에는 "하루 쓰기 예산"이라는 게이트가 없습니다',
   };
 
   const TABLES = [
-    { label: "(2) ③ 段那句承诺的限定", table: ALIVE_QUALIFIER },
-    { label: "(2') 那道闸在 Docker 形态下压根不存在", table: FILE_HAS_NO_GATE },
-    { label: "(4) 保存一次设置的 get 次数", table: GET_COUNT_HINT },
+    { label: "(2\') 那道闸在本形态下压根不存在", table: FILE_HAS_NO_GATE },
   ] as const;
-
 
   it.each([...TABLES])("$label：五份 DEPLOY.md 各自写着自己那种语言的写法，且不串门", ({ label, table }) => {
     const failures = perLangTokenFailures(label, table, realDoc("DEPLOY"));
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-
   // 这一格同时是下面那格探针的「我对 X 不乱红」那一半：两格共用 `tokenTableFailures`，
-  // 探针证明三条分支各自点得出名，这一格证明它们在三张真表上一格都不响。
-  it("反向自检：三张锚表的语言集恰好等于 LANGS，且没有两种语言共用（或互为子串）同一个 token", () => {
+  // 探针证明三条分支各自点得出名，这一格证明它们在真表上一格都不响。
+  it("反向自检：锚表的语言集恰好等于 LANGS，且没有两种语言共用（或互为子串）同一个 token", () => {
     for (const { label, table } of TABLES) {
       const failures = tokenTableFailures(label, table);
       expect(failures, failures.join("\n")).toEqual([]);
@@ -4801,18 +4594,19 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚", () => {
 
   it("该红时红：两种语言共用同一个 token / 其中一个是另一个的子串 / 表里少一种语言 —— 三条各自当场点名", () => {
     // ⚠️ **反向控制用仓里真实存在的串**：下面三张畸形表都从今天真的写在
-    // `GET_COUNT_HINT` 里的那五个 token 派生，`"gets"` 也真的写在 docs/en/DEPLOY.md 里。
-    const shared = tokenTableFailures("共用", { ...GET_COUNT_HINT, ko: GET_COUNT_HINT.en });
+    // `FILE_HAS_NO_GATE` 里的那五个 token 派生，`"no daily write budget"` 也真的
+    // 写在 docs/en/DEPLOY.md 里（它是 en 那个 token 的一段真子串）。
+    const shared = tokenTableFailures("共用", { ...FILE_HAS_NO_GATE, ko: FILE_HAS_NO_GATE.en });
     expect(shared.length, `应当只红一条，实际：\n${shared.join("\n")}`).toBe(1);
     expect(shared[0]).toContain("共用了同一个锚 token");
-    expect(shared[0]).toContain(GET_COUNT_HINT.en);
+    expect(shared[0]).toContain(FILE_HAS_NO_GATE.en);
 
-    const substring = tokenTableFailures("子串", { ...GET_COUNT_HINT, ko: "gets" });
+    const substring = tokenTableFailures("子串", { ...FILE_HAS_NO_GATE, ko: "no daily write budget" });
     expect(substring.length, `应当只红一条，实际：\n${substring.join("\n")}`).toBe(1);
     expect(substring[0]).toContain("整个包住了");
-    expect(substring[0]).toContain("「gets」");
+    expect(substring[0]).toContain("「no daily write budget」");
 
-    const short: Partial<Record<Lang, string>> = { ...GET_COUNT_HINT };
+    const short: Partial<Record<Lang, string>> = { ...FILE_HAS_NO_GATE };
     delete short.ko;
     const missing = tokenTableFailures("少一种语言", short);
     expect(missing.length, `应当只红一条，实际：\n${missing.join("\n")}`).toBe(1);
@@ -4822,41 +4616,17 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚", () => {
 
   // ── 探针：变异只改一份，其余四份照旧走真文档；共用上面那份 `perLangTokenFailures` ──
   //
-  // ⚠️ **反向控制用仓里真实存在的串**：下面三格都从今天真的写在文档里的那句话派生，
+  // ⚠️ **反向控制用仓里真实存在的串**：下面两格都从今天真的写在文档里的那句话派生，
   // 不另造一个仓里不存在的世界。`readerWith` 在变异没落地时当场炸，所以「探针绿」
   // 不可能是「变异压根没打中」造成的。
 
-  it("探针①：只改四份、ko 那份的限定被删掉 ⇒ 变红并点名 ko", () => {
+  it("探针①：把 zh-CN 那句改回复评抓到的那句假话（「Docker 形态下进程长活…常态成立」）⇒ 变红并点名 zh-CN", () => {
     const failures = perLangTokenFailures(
-      "(2) ③ 段那句承诺的限定",
-      ALIVE_QUALIFIER,
-      readerWith("ko", (s) => s.split(ALIVE_QUALIFIER.ko).join("인스턴스가 죽어 있"), "DEPLOY"),
-    );
-    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
-    expect(failures[0]).toContain("docs/ko/DEPLOY.md");
-    expect(failures[0]).toContain("出现 0 次");
-  });
-
-  it("探针②：把 ja 那份的 `get 3〜4 回` 改成 `get 2〜3 回` ⇒ 变红并点名 ja", () => {
-    const failures = perLangTokenFailures(
-      "(4) 保存一次设置的 get 次数",
-      GET_COUNT_HINT,
-      readerWith("ja", (s) => s.split("get 3〜4 回").join("get 2〜3 回"), "DEPLOY"),
-    );
-    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
-    expect(failures[0]).toContain("docs/ja/DEPLOY.md");
-    expect(failures[0]).toContain("出现 0 次");
-  });
-
-  it("探针①'：把 zh-CN 那句改回复评抓到的那句假话（「Docker 形态下进程长活…常态成立」）⇒ 变红并点名 zh-CN", () => {
-    // 这一格钉的是那条复评发现：那句假话五份齐说，跨语言计数判据一格都不响，
-    // 所以改真之后必须有一个**每语言各一个**的 token 盯着它，改回去当场红。
-    const failures = perLangTokenFailures(
-      "(2') 那道闸在 Docker 形态下压根不存在",
+      "(2\') 那道闸在本形态下压根不存在",
       FILE_HAS_NO_GATE,
       readerWith(
         "zh-CN",
-        (s) => s.split(FILE_HAS_NO_GATE["zh-CN"]).join("Docker 形态下进程长活，这句承诺才是常态成立的"),
+        (s) => s.split(FILE_HAS_NO_GATE["zh-CN"]).join("进程长活，这句承诺才是常态成立的"),
         "DEPLOY",
       ),
     );
@@ -4865,22 +4635,20 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚", () => {
     expect(failures[0]).toContain("出现 0 次");
   });
 
-  it("探针③：把 en 那句英文原样塞进 ko 那份（「五份都塞同一句英文」那种糊弄法）⇒ 变红并点名 ko", () => {
-    // 这一格测的是上面第 ② 条：光看「每份都含自己的 token」是抓不住串门的
-    // ——ko 那份仍然写着自己的 `get 3~4회`，正向那一半照绿。
+  it("探针②：把 en 那句英文原样塞进 ko 那份（「五份都塞同一句英文」那种糊弄法）⇒ 变红并点名 ko", () => {
+    // 这一格测的是串门那一半：光看「每份都含自己的 token」是抓不住它的
+    // ——ko 那份仍然写着自己的 token，正向那一半照绿。
     const failures = perLangTokenFailures(
-      "(4) 保存一次设置的 get 次数",
-      GET_COUNT_HINT,
-      readerWith("ko", (s) => s.split("get 3~4회").join("get 3~4회（3–4 gets）"), "DEPLOY"),
+      "(2\') 那道闸在本形态下压根不存在",
+      FILE_HAS_NO_GATE,
+      readerWith("ko", (s) => s.split(FILE_HAS_NO_GATE.ko).join(`${FILE_HAS_NO_GATE.ko}(${FILE_HAS_NO_GATE.en})`), "DEPLOY"),
     );
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
     expect(failures[0]).toContain("docs/ko/DEPLOY.md");
-    expect(failures[0]).toContain("3–4 gets");
+    expect(failures[0]).toContain(FILE_HAS_NO_GATE.en);
   });
 
   it("不乱红：五份一起合法地多写一句无关的话 —— 上面那几格不许因此假红", () => {
-    // 与探针同源的「我对 X 不乱红」那一半：五份各追加一段既不含任何锚 token、
-    // 又与那两句话无关的正文，真扫描必须仍然是空。
     const noisy: ApiDocReader = (lang) => `${realDoc("DEPLOY")(lang)}\n\n<!-- 无关的一行 -->\n`;
     for (const { label, table } of TABLES) {
       const failures = perLangTokenFailures(label, table, noisy);
@@ -4889,93 +4657,6 @@ describe("五语言 DEPLOY.md 的三笔欠账各自上锚", () => {
   });
 });
 
-/**
- * ── `USAGE_STATS_ENABLED` **自己那三处**说明里的「丢失」语义 ────────────────────
- *
- * **先说清楚这一组不是在补一句「文档从来没说过丢失」**——那是假话。丢失语义在
- * 五份 DEPLOY.md 的配额账折叠块里（② 段与紧跟着 ③ 段的那条 `> [!IMPORTANT]`）、
- * 在 `.env.example` 的 `USAGE_STATS_ENABLED` 段里、在五份 ADMIN.md 的「为什么这些数
- * 标着约等于」里都写着，`docs/zh-CN/DEPLOY.md` 那条 `> [!IMPORTANT]` 甚至逐字写着
- * 「随实例一起消失，不是延迟到账」，并且已经由上面 `ALIVE_QUALIFIER` 那一组钉着。
- *
- * **真正的缺口在另一处**：读者是照着**开关自己**那三处做决定的——环境变量表那一行、
- * 「打开之后要付什么」那一节、以及文末那段照抄就能用的 ```env 片段——而那三处
- * 改动前**只给了「延迟」语义**（「未落盘的尾巴最长 2 小时」/「tail」/「尻尾」/「꼬리」）。
- * 「尾巴」这个词框定的就是「最晚 2 小时会补上」，而 Tier-2 的累加器只在
- * `src/http/usage-sink.ts` 的实例内存里，Worker 的 isolate 闲置就被回收
- * ⇒ **低流量部署上那些计数是丢掉，不是迟到**。
- * 那张表自己的开场白写着「完整的取值范围与代价以本表为准」，所以「代价写在别处」
- * 不构成豁免。
- *
- * ── 这一组钉的是什么 ────────────────────────────────────────────────────────
- * 五张「每语言一个 token」的锚表 × 五份 DEPLOY.md，复用上面那一组的
- * `perLangTokenFailures` / `tokenTableFailures`（**不另抄一份实现**，理由与那一组
- * 顶上写的逐字相同：两份实现的口径会各自漂，而其中一份坏了另一份不会响）：
- * · (A) 环境变量表那一格里的丢失语义；
- * · (B) 「打开之后要付什么」那一节里「消失而不是延迟」那一句；
- * · (C) 文末 ```env 片段的注释里的同一件事（照抄那段的人只看得到这几行注释）；
- * · (D) `USAGE_FLUSH_INTERVAL_MS` 那一节里「Worker 上抛错变成不带原因的 500」；
- * · (E) 「低流量部署正是这件事最常发生的场景」——把「低流量」这个词和 Tier-2 绑在一起；
- * · (F) 同一节里「这道校验与 `USAGE_STATS_ENABLED` 开没开无关」；
- * · (G) 同一节里「把开关关回去也解不了这场 500」那句处置。
- *
- * ── 每一格都写明「在哪一段里找」（复评发现：标签写着位置、断言却扫整份）────────
- * 上一版五格全部 `read(lang)` 扫**整份** DEPLOY.md，而 (A)/(C) 的标签写着
- * 「表格那一格」「env 片段注释里」——把那句话从表格行搬到正文任意位置，两格照绿，
- * 而表格那一格回到改动前只说开销的样子。现在五格各自带一个 `TokenScope`：
- * · (A) → 环境变量表里 `| \`USAGE_STATS_ENABLED\`` 起头的**那一行**；
- * · (B)(E) → `### USAGE_STATS_ENABLED …` **那一节**（`sectionBody`）；
- * · (C) → 含 `USAGE_STATS_ENABLED=true` 的**那一段 ```env 围栏**（`envFences`）；
- * · (D)(F)(G) → `### USAGE_FLUSH_INTERVAL_MS …` **那一节**。
- * 收窄的只是「自己那份里出现几次」，跨语言互校仍然扫整份（理由见
- * `perLangTokenFailures` 顶上）。**三个切法都配了「切得出、切得准」的自守格**——
- * 一个切出空串的射程会把所有 token 判成 0 次，那是一格会瞎报的判据。
- *
- * ── (F)(G) 补的是这个地雷最要命的一半 ──────────────────────────────────────
- * `src/http/wire.ts` 的 `resolveUsageFlushInterval()` 调用点在
- * `cfg.usageStatsEnabled ? new UsageSink(…) : undefined` 那个三元**之外**，
- * 无条件执行 ⇒ 填错了这个值之后，**把刚打开的 `USAGE_STATS_ENABLED` 关回 `false`
- * 并不能解除每请求 500**。而读者照 (D) 定位到「填错了一个数字」时，最自然的第一步
- * 恰恰就是关开关。改动前五份文档一句没写这半句，`.env.example` 也没写。
- *
- * ── (D) 那条链是查证过的，三个文件各读了一遍 ────────────────────────────────
- * · `src/http/wire.ts` 里 `resolveUsageFlushInterval()` 的调用点**无条件执行**
- *   （开关关着也算一次，那里的注释自己写着理由）；
- * · `src/http/usage-sink.ts` 的 `resolveUsageFlushInterval()` 在「有写配额」那一侧
- *   `间隔 × (预算 − 1) < 一天` 时**直接抛**，最小可用值 7200000 —— 由
- *   `tests/contract/usage-tier2.test.ts` 的「有写配额的存储上把间隔调到 300 秒：启动就抛，
- *   且消息里给出最小可用值 7200000 —— 写量合格而数据从中午起就是假的，比起不来更难发现」钉着；
- * · `src/entry/worker.ts` 的 `fetch()` 把 `buildApp` 的异常 catch 成一条**不带配置细节**的
- *   响应，并且 `cachedApp` 停在 `null` ⇒ **每一个请求都会重走一遍并再抛一遍**，
- *   完整原因只落在 `console.error`。
- *   ⚠️ **这一条被订正过**：那条响应现在**分两档**——「运维配错」（`ConfigRefusal`）回
- *   `503` + `reason: "not_configured"`，其余（按定义是代码 bug）维持不透明的 `500`。
- *   两档的形状分别由 `tests/unit/entry-worker.test.ts` 的
- *   「缺 GATEWAY_TOKEN 时每个请求回 503 + reason:"not_configured"，不回显异常细节——这是未鉴权路径」
- *   与「非 ConfigRefusal 的装配异常仍然回不透明的 500（那是代码 bug，不是运维配错）」钉着。
- * ⇒ 「`wrangler deploy` 成功，然后每个请求 500」是这三条的直接后果，不是推测。
- *
- * ⚠️⚠️ **Node 那一侧根本走不到这个抛错**（复评推翻了上一版写在这里的那句
- * 「同一个抛错会让进程起不来（`src/entry/node.ts` 不 catch）」——两半都是假的）：
- * · `src/http/usage-sink.ts` 里那道下限的判据第一项是 `hasWriteQuota`，而
- *   `src/http/wire.ts` 把它接成 `runtime.quotaModel === "kv"`；
- * · `src/adapters/runtime-node.ts` 的 `quotaModel` 恒为 `"file"`，而 `src/entry/node.ts`
- *   是仓里唯一的 Node 入口、存储恒为 `FileStorage` ⇒ `hasWriteQuota` 在 Node 上恒为假
- *   ⇒ **这道下限在 Node/Docker 上不存在，那个抛错不可达**。
- *   现成的用例就是证据：`tests/contract/usage-tier2.test.ts` 的
- *   「走 buildApp 的接线证据：USAGE_FLUSH_INTERVAL_MS 同时改变了落盘节奏与 capabilities 报出去的那个数」
- *   正是 `USAGE_FLUSH_INTERVAL_MS: "300000"` + `nodeRuntime()` 建起了 app。
- * · 而 `src/entry/node.ts` **恰恰 catch**：`main().catch(…)` 打印 `err.message` 之后
- *   `process.exit(1)`。所以「Node 上失败是响的」这句话为真的对象是**另一类值**——
- *   `usage-sink.ts` 那条「必须是不小于 1 的整数」，它与存储形态无关。
- * ⇒ 文档里那两句现在这么分：Worker = 静默 500；文件存储（Docker / Node）= 压根没有这道下限。
- *
- * ── 它验不了什么（照本文件一贯的口径明写）──────────────────────────────────
- * 它认的是**七个 token 在不在、在不在自己那种语言里、在不在该在的那一段里**，
- * 不认「这一节写得对不对」。五份被同一句错话同步污染时它不响——那是跨语言互校的
- * 固有边界，与本文件开头 `NUMBERS` 那一段写的是同一条。
- * 「④ 段里那句互斥的旧说法」不归本组，归紧跟在后面的那一组。
- */
 describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着「丢失」，不只是「延迟」", () => {
   /** `### USAGE_STATS_ENABLED …` 那一节的标题，逐语言（`sectionBody` 要逐字对上）。 */
   const STATS_HEADING: Record<Lang, string> = {
@@ -4988,11 +4669,11 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
 
   /** `### USAGE_FLUSH_INTERVAL_MS …` 那一节的标题，逐语言。 */
   const FLUSH_HEADING: Record<Lang, string> = {
-    "zh-CN": "`USAGE_FLUSH_INTERVAL_MS`：KV 形态下调不小，而且调坏了不会明说",
-    "zh-TW": "`USAGE_FLUSH_INTERVAL_MS`：KV 形態下調不小，而且調壞了不會明說",
-    en: "`USAGE_FLUSH_INTERVAL_MS`: on KV you cannot shrink it, and getting it wrong says nothing",
-    ja: "`USAGE_FLUSH_INTERVAL_MS`: KV 形態では小さくできず、間違えても何も言いません",
-    ko: "`USAGE_FLUSH_INTERVAL_MS`: KV 형태에서는 줄일 수 없고, 잘못 넣어도 알려주지 않습니다",
+    "zh-CN": "`USAGE_FLUSH_INTERVAL_MS`：能买回什么，买不回什么",
+    "zh-TW": "`USAGE_FLUSH_INTERVAL_MS`：能買回什麼，買不回什麼",
+    en: "`USAGE_FLUSH_INTERVAL_MS`: what you can buy back, and what stays",
+    ja: "`USAGE_FLUSH_INTERVAL_MS`: 何を買い戻せて、何は買い戻せないか",
+    ko: "`USAGE_FLUSH_INTERVAL_MS`: 무엇을 되살 수 있고 무엇은 남는가",
   };
 
   /**
@@ -5074,33 +4755,36 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
    * 「实例活不到一个落盘间隔」，与 (A) 同一个限定。
    */
   const ENV_SNIPPET_LOSS: Record<Lang, string> = {
-    "zh-CN": "那条尾巴在短命实例上会直接变成丢数",
-    "zh-TW": "那條尾巴在短命實例上會直接變成丟數",
-    en: "an instance that dies inside that window takes those counts with it",
-    ja: "落とし切る前に死んだインスタンスはそのカウントごと消える",
-    ko: "기록 간격을 넘기지 못한 인스턴스는 그 카운트를 그대로 가지고 사라진다",
+    "zh-CN": "计数就随它消失，不是延迟到账",
+    "zh-TW": "計數就隨它消失，不是延遲入帳",
+    en: "takes those counts with it — loss, not late posting",
+    ja: "そのカウントごと消える（遅れて計上されるのではない）",
+    ko: "그 카운트를 그대로 가지고 사라진다(늦게 반영되는 것이 아니다)",
   };
 
-  /** (D) `USAGE_FLUSH_INTERVAL_MS` 那一节：Worker 上的静默 500（链条见本组顶上）。 */
-  const SILENT_500: Record<Lang, string> = {
-    "zh-CN": "而是变成一个不说原因的 500",
-    "zh-TW": "而是變成一個不說原因的 500",
-    en: "It turns into a 500 that gives no reason at all",
-    ja: "理由を言わない 500 に化けます",
-    ko: "이유를 말하지 않는 500으로 바뀝니다",
-  };
+  // 🔴 **(D) 那一格 v0.4.0 删掉了，理由是它钉的那件事已经不存在。**
+  // 它钉的是「`USAGE_FLUSH_INTERVAL_MS` 低于 KV 下限之后，Worker 上是每请求一个不说原因的
+  // 500」——两个前提一起没了：那道下限只在「存储有写配额」时成立（`runtime.quotaModel === "kv"`），
+  // 而 Worker 那个入口本身也删了。文件存储上根本走不到那个抛错，能抛的只剩「不是整数 / 小于 1」，
+  // 而那一种是**进程打印原因并退出**，不是静默 500 —— 把 (D) 原样留着等于让判据去守一句假话。
+  // 承接它的是下面 (F)/(G) 两格：那道校验今天仍然与开关无关，处置也仍然要写出来。
 
   /**
-   * (E) 「低流量」这个词与 Tier-2 绑在一起。
+   * (E) 「什么时候真的会遇到」必须写出来。
    * **单独上一个锚的理由**：(A)~(C) 就算全在，只要没有这一句，读者仍然会把丢失
-   * 读成「偶尔重启才会遇到的边角情况」，而它恰恰是**低流量部署的常态**。
+   * 读成「理论上存在的边角情况」，而它恰恰是**日常运维动作的常态后果**。
+   *
+   * 🔴 **v0.4.0 换了触发场景，不是换了说法**：旧锚是「低流量部署正是这件事最常发生的场景」，
+   * 那句话的机制是「闲下来的 Worker isolate 被回收」——摘掉 Worker 之后 Node 进程不会因为
+   * 没流量就消失，那条因果不再成立。今天真正的常态触发是**为改一个环境变量重建容器**，
+   * 五份文档改的就是这一句。**结论没变（计数会丢），变的是「什么时候会丢」。**
    */
   const LOW_TRAFFIC: Record<Lang, string> = {
-    "zh-CN": "低流量部署正是这件事最常发生的场景",
-    "zh-TW": "低流量部署正是這件事最常發生的場景",
-    en: "Low-traffic deployments are where this happens",
-    ja: "低トラフィックのデプロイこそこれが最も起きやすい",
-    ko: "저트래픽 배포야말로 이 일이 가장 자주 벌어지는 상황입니다",
+    "zh-CN": "重建容器正是这件事最常发生的场景",
+    "zh-TW": "重建容器正是這件事最常發生的場景",
+    en: "Restarts are where this bites",
+    ja: "コンテナの作り直しこそこれが最も起きやすい場面です",
+    ko: "컨테이너를 다시 만드는 순간이야말로 이 일이 가장 자주 벌어지는 상황입니다",
   };
 
   /**
@@ -5109,33 +4793,37 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
    * `cfg.usageStatsEnabled ? new UsageSink(…) : undefined` 那个三元**之外**。
    */
   const OFF_DOES_NOT_HELP: Record<Lang, string> = {
-    "zh-CN": "这道校验与 `USAGE_STATS_ENABLED` 开没开无关",
-    "zh-TW": "這道校驗與 `USAGE_STATS_ENABLED` 開沒開無關",
+    "zh-CN": "这道校验与 `USAGE_STATS_ENABLED`",
+    "zh-TW": "這道校驗與 `USAGE_STATS_ENABLED`",
     en: "The check runs whether or not `USAGE_STATS_ENABLED` is on",
     ja: "このチェックは `USAGE_STATS_ENABLED` がオンかどうかとは無関係です",
-    ko: "이 검사는 `USAGE_STATS_ENABLED`가 켜져 있는지와 무관합니다",
+    ko: "이 검사는 `USAGE_STATS_ENABLED`가 켜져 있는지와 무관하므로",
   };
 
   /**
    * (G) 处置。**必须与 (F) 分开钉**：只说「无关」而不说「那该怎么办」，
    * 读者仍然会在面板与环境变量之间来回试。
+   *
+   * 🔴 **v0.4.0 改了这几个串，理由是「要处置的那件事换了」，不是措辞偏好**：
+   * 旧串写的是「把统计开关关回 `false` 并不能解除这场 500」——那场 500 是 Worker 那一侧的
+   * 症状，随 (D) 一起没了。今天的症状是容器起不来，而处置仍然是同一件事：**改那个数，
+   * 或者删掉那一行**。所以这一格没删，只是把锚落到处置本身上。
    */
   const FIX_IS_THE_NUMBER: Record<Lang, string> = {
-    "zh-CN": "把统计开关关回 `false` **并不能解除这场 500**",
-    "zh-TW": "把統計開關關回 `false` **並不能解除這場 500**",
-    en: "turning statistics off **does not clear the 500**",
-    ja: "統計をオフに戻しても**この 500 は解けません**",
-    ko: "통계를 다시 꺼도 **이 500은 풀리지 않습니다**",
+    "zh-CN": "要么把值改对，要么把这一行删掉",
+    "zh-TW": "要嘛把值改對，要嘛把這一行刪掉",
+    en: "fix the value or delete the line",
+    ja: "値を直すか、その行ごと消してください",
+    ko: "값을 고치거나 그 줄을 지우세요",
   };
 
   const LOSS_TABLES = [
     { label: "(A) 环境变量表那一格的丢失语义", table: TABLE_CELL_LOSS, scope: ROW_SCOPE },
     { label: "(B) 「打开之后要付什么」那一节的丢失语义", table: SECTION_LOSS, scope: STATS_SCOPE },
     { label: "(C) 文末 ```env 片段注释里的丢失语义", table: ENV_SNIPPET_LOSS, scope: FENCE_SCOPE },
-    { label: "(D) `USAGE_FLUSH_INTERVAL_MS` 调小之后 Worker 上的静默 500", table: SILENT_500, scope: FLUSH_SCOPE },
     { label: "(E) 「低流量」与 Tier-2 绑在一起", table: LOW_TRAFFIC, scope: STATS_SCOPE },
     { label: "(F) 这道校验与 `USAGE_STATS_ENABLED` 开没开无关", table: OFF_DOES_NOT_HELP, scope: FLUSH_SCOPE },
-    { label: "(G) 关掉统计解不了这场 500，得改那个数", table: FIX_IS_THE_NUMBER, scope: FLUSH_SCOPE },
+    { label: "(G) 处置写得出来：改那个数，或者删掉那一行", table: FIX_IS_THE_NUMBER, scope: FLUSH_SCOPE },
   ] as const;
 
   it.each([...LOSS_TABLES])("$label：五份 DEPLOY.md 各自写着自己那种语言的写法、写在该写的那一段里，且不串门", ({ label, table, scope }) => {
@@ -5236,22 +4924,13 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
     expect(failures[0]).toContain("出现 0 次");
   });
 
-  it("探针④：把 ko 那句静默 500 改写成「启动就报错」那种误导说法 ⇒ (D) 红并点名 ko", () => {
-    // ⚠️ 「기동 시점에 바로 오류로 알려줍니다」（＝「启动就报错」）**两个运行时上都不成立**：
-    // Worker 上 `wrangler deploy` 照样成功、失败是每请求一个静默 500；
-    // 文件存储（Docker / Node）上压根没有这道下限，这个抛错不可达
-    //（论证见本组顶上那段 ⚠️⚠️）。本组 (D) 守的就是「Worker 那一半怎么表现」。
-    // 同一句误导说法在 ④ 段与 `.env.example` 里的版本，由紧跟着的那一组盯着。
-    const failures = probe(LOSS_TABLES[3], "ko", (s) => s.split(SILENT_500.ko).join("기동 시점에 바로 오류로 알려줍니다"));
-    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
-    expect(failures[0]).toContain("docs/ko/DEPLOY.md");
-    expect(failures[0]).toContain("出现 0 次");
-  });
+  // 🔴 **探针④随 (D) 一起删掉了**（它变异的 `SILENT_500.ko` 已经不在五份文档里，
+  // `readerWith` 会在变异没落地时当场炸——那不是「探针红了」，是探针自己坏了）。
 
   it("探针④b：把 en 那句「与开关无关」删掉 ⇒ (F) 红并点名 en", () => {
-    // 删掉它，读者照 (D) 定位到「填错了一个数字」之后最自然的第一步——
+    // 删掉它，读者定位到「填错了一个数字」之后最自然的第一步——
     // 把刚打开的 `USAGE_STATS_ENABLED` 关回去——就又变成一条没人拦的死路。
-    const failures = probe(LOSS_TABLES[5], "en", (s) => s.split(OFF_DOES_NOT_HELP.en).join("This check"));
+    const failures = probe(LOSS_TABLES[4], "en", (s) => s.split(OFF_DOES_NOT_HELP.en).join("This check"));
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
     expect(failures[0]).toContain("docs/en/DEPLOY.md");
     expect(failures[0]).toContain("出现 0 次");
@@ -5259,7 +4938,7 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
 
   it("探针④c：把 zh-TW 那句处置删掉 ⇒ (G) 红并点名 zh-TW", () => {
     const failures = probe(
-      LOSS_TABLES[6], "zh-TW", (s) => s.split(FIX_IS_THE_NUMBER["zh-TW"]).join("把統計開關關回 `false` 就好"),
+      LOSS_TABLES[5], "zh-TW", (s) => s.split(FIX_IS_THE_NUMBER["zh-TW"]).join("照著上面那句做就好"),
     );
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
     expect(failures[0]).toContain("docs/zh-TW/DEPLOY.md");
@@ -5272,7 +4951,7 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
     // ⚠️ 它同时是「收窄没有把跨语言互校一起收窄」的证据：塞进去的那句英文
     // **不在 en 自己那一节里**，只有扫整份的那一半看得见。
     const failures = probe(
-      LOSS_TABLES[4], "zh-TW",
+      LOSS_TABLES[3], "zh-TW",
       (s) => s.split(LOW_TRAFFIC["zh-TW"]).join(`${LOW_TRAFFIC["zh-TW"]}（${LOW_TRAFFIC.en}）`),
     );
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
@@ -5280,7 +4959,7 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
     expect(failures[0]).toContain(LOW_TRAFFIC.en);
   });
 
-  it("不乱红：五份一起合法地多写一句无关的话 —— 上面七格不许因此假红", () => {
+  it("不乱红：五份一起合法地多写一句无关的话 —— 上面六格不许因此假红", () => {
     const noisy: ApiDocReader = (lang) => `${realDoc("DEPLOY")(lang)}\n\n<!-- 无关的一行 -->\n`;
     for (const { label, table, scope } of LOSS_TABLES) {
       const failures = perLangTokenFailures(label, table, noisy, scope(noisy));
@@ -5289,160 +4968,23 @@ describe("五语言 DEPLOY.md：`USAGE_STATS_ENABLED` 自己那三处也写着�
   });
 });
 
-/**
- * ── 破了那道 KV 下限之后到底发生什么：④ 段与 `.env.example` 也得说分运行时的真话 ──
+/* ══════════════════════════════════════════════════════════════════════════
+ * 🔴 **这里原来有一整组「破了那道 KV 下限之后的后果」，v0.4.0 整组删掉了。**
  *
- * **它补的是一条真实发生过的自相矛盾**（复评发现）：上一轮新开的
- * `### USAGE_FLUSH_INTERVAL_MS` 一节写着「Worker 上这个抛错不会出现在部署输出里，
- * 而是变成一个不说原因的 500」，而**同一份 DEPLOY.md** 往下两百多行的配额账 ④ 段
- * 原封不动写着「破了**启动就报错**并告诉你最小可用值」，`.env.example` 里也是同一句。
- * 上一版的判据一个字都不认这件事：(D) 只钉新那一节里有没有那句话，④ 段照着旧说法读
- * 的人拿到的仍然是「部署时会响」。**两种互斥说法住在同一份文件里，等于没修。**
+ * 它钉的是六份文件（五语言 DEPLOY.md + `.env.example`）里那道 KV 写配额下限
+ *（`间隔 × (13 − 1) >= 一天`，最小可用值 7200000）所在的那一段：不许写「启动就报错」、
+ * 必须写「每请求一个不说原因的 500」。
  *
- * ── 为什么「启动就报错」是错的（两个运行时都错）─────────────────────────────
- * · Worker：`buildApp` 是在 `fetch()` 里懒装配的（`src/entry/worker.ts`），
- *   抛错被 catch 成一条不带原因的 500 ⇒ `wrangler deploy` 成功，失败在**每个请求**上，
- *   真原因只在 `console.error`。压根没有一个「启动」时刻给运维看。
- * · 文件存储（Docker / Node）：`src/adapters/runtime-node.ts` 的 `quotaModel` 恒为
- *   `"file"` ⇒ `src/http/wire.ts` 传给 `resolveUsageFlushInterval()` 的 `hasWriteQuota`
- *   恒为假 ⇒ **这道下限在那一侧根本不存在**，谈不上「启动就报错」。
+ * **两个前提一起没了**：那道下限只在存储有写配额时成立
+ *（`src/http/wire.ts` 把它传给 `resolveUsageFlushInterval()`），而那个运行时入口
+ * 在 v0.4.0 删掉了；文件存储那一侧 `hasWriteQuota`
+ * 恒为假 ⇒ 那道下限不可达，那一段本身已经从六份文件里消失。
+ * **留着它就是让判据去守一句已经不存在的话**（`boundParagraph` 找不到 `(13 − 1)`
+ * 会当场抛，报文还会把人指去「这一段被改写了」——一条确切而错误的处置）。
  *
- * ── 这一组钉的是什么 ────────────────────────────────────────────────────────
- * 六份文件（五语言 DEPLOY.md + `.env.example`）**含那道下限的那一段**里：
- * · **不许**出现「启动就报错 / fails at startup / 起動時にエラー / 시작할 때 오류」；
- * · **必须**写着「Worker 上是每个请求一个不说原因的 500」。
- * 射程收在那一段而不是整份，是有意的：`docs/ja/REGISTRAR.md` 里「起動時にエラー」
- * 说的是注册机凭据（那一条**在 Node 上确实为真**），整份扫会把它一起判红。
- *
- * ── 它验不了什么 ────────────────────────────────────────────────────────────
- * 反面那一半只认**这一种措辞**：有人改写成「启动时报错」它就看不见了。
- * 真正扛事的是正面那一半（那句 500 必须在），反面只是把今天这句原话钉死不许回潮。
- */
-describe("破了那道 KV 下限之后的后果：④ 段与 `.env.example` 里也是分运行时的真话", () => {
-  /** 一份文件在这件事上的两条措辞：不许出现的、必须出现的。 */
-  type BoundClaim = { readonly startupOnly: string; readonly perRequest500: string };
-
-  /** 键 = 语言码或 `.env.example`（后者用简体措辞，它本来就是简体文件）。 */
-  const BOUND_CLAIMS: Record<string, BoundClaim> = {
-    "zh-CN": { startupOnly: "启动就报错", perRequest500: "每个请求一个不说原因的 500" },
-    "zh-TW": { startupOnly: "啟動就報錯", perRequest500: "每個請求一個不說原因的 500" },
-    en: { startupOnly: "fails at startup", perRequest500: "every request gets a 500 with no reason" },
-    ja: { startupOnly: "起動時にエラー", perRequest500: "すべてのリクエストが理由のない 500" },
-    ko: { startupOnly: "시작할 때 오류", perRequest500: "모든 요청이 이유 없는 500" },
-    ".env.example": { startupOnly: "启动就报错", perRequest500: "每个请求一个不说原因的 500" },
-  };
-
-  /**
-   * 含 `(13 − 1)` 那一行所在的**整段**：向上向下各扩到第一条空行为止
-   *（`.env.example` 里只有一个 `#` 的行同样算空行——那是它的段落分隔）。
-   * **那道下限在一份文件里出现的次数不是 1 就当场炸**：0 次说明这一段被改写了、
-   * 判据在守空气，2 次以上说明射程认不准是哪一段。
-   */
-  const boundParagraph = (label: string, src: string): string => {
-    const lines = src.split("\n");
-    const hits = lines.flatMap((l, i) => (l.includes("(13 − 1)") ? [i] : []));
-    if (hits.length !== 1) throw new Error(`${label} 里「(13 − 1)」那道下限出现 ${hits.length} 次，应当恰好 1 次`);
-    const blank = (l: string | undefined): boolean => l === undefined || l.trim() === "" || l.trim() === "#";
-    let from = hits[0] as number;
-    let to = hits[0] as number;
-    while (!blank(lines[from - 1])) from -= 1;
-    while (!blank(lines[to + 1])) to += 1;
-    return lines.slice(from, to + 1).join("\n");
-  };
-
-  /** 判定本体。**只读文本、不碰磁盘**，反向控制因此可以直接喂变异过的字符串。 */
-  const boundFailures = (files: ReadonlyArray<readonly [label: string, text: string]>): string[] => {
-    const out: string[] = [];
-    for (const [label, text] of files) {
-      const claim = BOUND_CLAIMS[label];
-      if (claim === undefined) {
-        out.push(`${label}：没有登记它的措辞表 —— 射程与登记表对不上，先补登记`);
-        continue;
-      }
-      const para = boundParagraph(label, text);
-      if (para.includes(claim.startupOnly)) {
-        out.push(
-          `${label}：那道下限所在的那一段里还写着「${claim.startupOnly}」——`
-          + "Worker 上 `wrangler deploy` 照样成功（失败在每个请求上），"
-          + "文件存储那一侧压根没有这道下限，两个运行时上这句话都不成立",
-        );
-      }
-      if (!para.includes(claim.perRequest500)) {
-        out.push(
-          `${label}：那道下限所在的那一段里没写「${claim.perRequest500}」——`
-          + "读者照这一段读到的仍然是「部署时会响」，与 `USAGE_FLUSH_INTERVAL_MS` 那一节打架",
-        );
-      }
-    }
-    return out;
-  };
-
-  /** 六份真文件。 */
-  const realFiles = (): ReadonlyArray<readonly [string, string]> => [
-    ...LANGS.map((l) => [l, readFileSync(docPath(".", l, "DEPLOY"), "utf8")] as const),
-    [".env.example", readFileSync(".env.example", "utf8")] as const,
-  ];
-
-  /** 变异只改一份，其余五份照旧。**改不动就当场炸。** */
-  const filesWith = (target: string, edit: (s: string) => string): ReadonlyArray<readonly [string, string]> =>
-    realFiles().map(([label, text]) => {
-      if (label !== target) return [label, text] as const;
-      const out = edit(text);
-      if (out === text) throw new Error(`变异没落到 ${target} 上——这一格控制是空的`);
-      return [label, out] as const;
-    });
-
-  it("射程自守：六份文件都切得出那一段，每一段都含着那道下限、而且严格短于整份", () => {
-    const files = realFiles();
-    expect(files.length, "射程不是六份 —— 五语言 DEPLOY.md + .env.example").toBe(6);
-    for (const [label, text] of files) {
-      const para = boundParagraph(label, text);
-      expect(para, `${label}：切出来的那一段里没有那道下限`).toContain("(13 − 1)");
-      expect(para.length, `${label}：切出来的那一段与整份一样长 —— 那就没收窄`).toBeLessThan(text.length);
-    }
-  });
-
-  it("六份文件的那一段里：没有「启动就报错」那种说法，而且写着 Worker 上是每请求一个不说原因的 500", () => {
-    const failures = boundFailures(realFiles());
-    expect(failures, failures.join("\n")).toEqual([]);
-  });
-
-  it("该红时红：把 zh-CN ④ 段那句改回「启动就报错」⇒ 红并点名 zh-CN", () => {
-    const failures = boundFailures(filesWith(
-      "zh-CN", (s) => s.split("破了在装配时就抛错并告诉你最小可用值").join("破了**启动就报错**并告诉你最小可用值"),
-    ));
-    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
-    expect(failures[0]).toContain("zh-CN");
-    expect(failures[0]).toContain("启动就报错");
-  });
-
-  it("该红时红：把 .env.example 那一段里的「每请求 500」删掉 ⇒ 红并点名 .env.example", () => {
-    const failures = boundFailures(filesWith(
-      ".env.example", (s) => s.split("之后是每个请求一个不说原因的 500，").join("之后就那样了，"),
-    ));
-    expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
-    expect(failures[0]).toContain(".env.example");
-    expect(failures[0]).toContain("没写");
-  });
-
-  it("不乱红：六份一起合法地多写一句无关的话 —— 上面两格不许因此假红", () => {
-    const noisy = realFiles().map(([label, text]) => [label, `${text}\n\n<!-- 无关的一行 -->\n`] as const);
-    const failures = boundFailures(noisy);
-    expect(failures, `六份一起多写了一句无关的话，判据却红了\n${failures.join("\n")}`).toEqual([]);
-  });
-
-  /**
-   * `.env.example` 那一段还要自己写一遍「与开关无关」。
-   * **不能靠 DEPLOY.md 那边的 (F)**：照抄 `.env.example` 的人往往一眼都不看文档，
-   * 而「把刚打开的 `USAGE_STATS_ENABLED` 关回去」恰恰是他最自然的第一步。
-   */
-  it("`.env.example` 的那一段里也写着「这道校验与 USAGE_STATS_ENABLED 开没开无关」", () => {
-    const src = readFileSync(".env.example", "utf8");
-    const para = boundParagraph(".env.example", src);
-    expect(para, "关掉统计并不能解除那场 500 —— 这半句在 .env.example 里没写")
-      .toContain("这道校验与上面的 USAGE_STATS_ENABLED 开没开无关");
-  });
-});
+ * **它守的那件事没有落空**：「这道校验与 `USAGE_STATS_ENABLED` 开没开无关」与
+ * 「处置是改那个数或删掉那一行」两句今天仍然要写，由上面那一组的 (F)/(G) 两格钉着。
+ * ══════════════════════════════════════════════════════════════════════════ */
 
 /**
  * ── 那条红线在 DEPLOY.md 一侧的机器化（复评发现）──────────────────────────────
@@ -5450,9 +4992,8 @@ describe("破了那道 KV 下限之后的后果：④ 段与 `.env.example` 里�
  * 红线原话（一直立着，登记在 `admin-ui/js/pure/playground.mjs` 自己的注释里）：
  * **真机了结之前，任何文案都不许把一个没量过的上限写成「足够 / 安全」。**
  * 它在 ADMIN.md 那一侧由上面那张软化词矩阵**整份**守着（Task 26A）。
- * 当时把**同一条红线性质的结论**写进了五份 DEPLOY.md 的配额账里，却没有把射程
- * 扩过去——复评实测：把 `docs/zh-CN/DEPLOY.md` 里
- * 「两页对不上，我们也没有在真机上了结过它 …… 60 就是超的」改写成
+ * 当时把**同一条红线性质的结论**写进了五份 DEPLOY.md 里，却没有把射程
+ * 扩过去——复评实测：把 zh-CN 那份里那句「本仓没有在真机上了结过它」改写成
  * 「已经在真机上了结过了 …… 这 60 次是安全的、足够用」⇒ **202 passed，EXIT=0**，一格不红。
  *
  * ⚠️ **为什么不能像 ADMIN.md 那样整份扫**：五份 DEPLOY.md 里这六族词各已**合法**出现
@@ -5481,7 +5022,7 @@ describe("五语言 DEPLOY.md 的两笔「没在真机上了结过」配额账�
     {
       id: "tier2-read-fanout",
       anchor: `${USAGE_DAY_RETAIN} × ${USAGE_SLOTS}`,
-      why: "`30d` 那一档一次请求的 KV get 数——Cloudflare 两页官方文档对不上，本仓没在真机上量过",
+      why: "`30d` 那一档一次请求要读的分片数——这段读扇出本仓没在真机上量过",
     },
     {
       id: "playground-video",
@@ -5547,8 +5088,8 @@ describe("五语言 DEPLOY.md 的两笔「没在真机上了结过」配额账�
     // docs/zh-CN/DEPLOY.md 里，替换文就是复评做过的那次真文件变异。
     const failures = redlineFailures(readerWith(
       "zh-CN",
-      (s) => s.split("**两页对不上，我们也\n  没有在真机上了结过它**")
-        .join("**两页虽然写法不同，但已经\n  在真机上了结过了**，这 60 次是安全的、足够用"),
+      (s) => s.split("**这段扇出本仓没有在真机上了结过它**")
+        .join("**这段扇出本仓已经在真机上了结过了**，这 60 次是安全的、足够用"),
       "DEPLOY",
     ));
     // ⚠️ **三条不是两条**：「足够用」这三个字同时命中 `enough` 的两个说法
@@ -6071,16 +5612,21 @@ describe(FIRST_VISIT_GROUP, () => {
   });
 
   /**
-   * 两个运行时入口各自选的存储实现，从 `src/entry/*.ts` 的 import 现算。**认不出返回 `null`**。
+   * 运行时入口选的存储实现，从 `src/entry/*.ts` 的 import 现算。**认不出返回 `null`**。
    *
    * 这一条是复评抓到的第一句假话的测法：CHANGELOG 第一版写「**KV 上的**池索引与取号」，
-   * 而同一条版本条目开头刚说「同一份代码同时跑 Cloudflare Worker 与 Node / Docker 两种运行时」
-   * —— Docker 形态下没有 KV（`src/entry/node.ts` 用的是 `FileStorage`）。
-   * 与刚修掉的「Docker 侧那句假话」同型，**修一处前得先查修法有没有把别处的问题搬回来**。
+   * 而 Docker 形态下没有 KV（`src/entry/node.ts` 用的是 `FileStorage`）。
+   * **修一处前得先查修法有没有把别处的问题搬回来。**
+   *
+   * 🔴 **v0.4.0：入口从两个收成一个。** 那个 Worker 入口文件删了，照旧读它只会
+   * ENOENT 当场炸——那不是「CHANGELOG 写错了」，是判据自己指着一个不存在的文件。**这一格守的事一个字没变**：CHANGELOG 提到的存储实现必须与入口
+   * 真正 import 的那一个对得上，多写一个已经没人用的实现同样红。
    */
+  const ENTRY_FILES = ["node"] as const;
+
   const entryStorages = (read: (p: string) => string = readReal): ReadonlyArray<readonly [string, string]> | null => {
     const out: Array<readonly [string, string]> = [];
-    for (const entry of ["worker", "node"]) {
+    for (const entry of ENTRY_FILES) {
       const m = /import \{ (\w+Storage) \} from "\.\.\/adapters\/storage-[\w-]+\.js";/.exec(read(`src/entry/${entry}.ts`));
       if (m === null) return null;
       out.push([entry, m[1]!] as const);
@@ -6102,7 +5648,7 @@ describe(FIRST_VISIT_GROUP, () => {
     if (text === null) return ["CHANGELOG.md 里一条 `## [x.y.z]` 发版条目都认不出 —— 这一格无从判起"];
     const st = entryStorages();
     if (st === null) {
-      return ["src/entry/{worker,node}.ts 里认不出 `import { XxxStorage } from \"../adapters/storage-*.js\"` "
+      return ["src/entry/node.ts 里认不出 `import { XxxStorage } from \"../adapters/storage-*.js\"` "
         + "—— 认不出要吵，不是 CHANGELOG 写对了"];
     }
     const out: string[] = [];
@@ -6111,12 +5657,12 @@ describe(FIRST_VISIT_GROUP, () => {
     for (const [entry, cls] of st) {
       if (!named.includes(cls)) {
         out.push(`src/entry/${entry}.ts 用的是 \`${cls}\`，CHANGELOG 那条版本条目里一次都没提到它`
-          + " —— 两种运行时的存储形态不许只写一种");
+          + " —— 存储形态不许不写");
       }
     }
     for (const cls of named) {
       if (!want.includes(cls)) {
-        out.push(`CHANGELOG 那条版本条目里写着 \`${cls}\`，而两个运行时入口现算用的是 ${want.join(" / ")}`
+        out.push(`CHANGELOG 那条版本条目里写着 \`${cls}\`，而运行时入口现算用的是 ${want.join(" / ")}`
           + " —— 这个存储实现已经没人用了");
       }
     }
@@ -6142,7 +5688,7 @@ describe(FIRST_VISIT_GROUP, () => {
     expect(failures, failures.join("\n")).toEqual([]);
   });
 
-  it("该红时红：CHANGELOG 把 Node / Docker 那一半存储删掉（只剩 KV 那句）—— 点名 src/entry/node.ts 用的那个实现", () => {
+  it("该红时红：CHANGELOG 把存储实现那句删掉 —— 点名 src/entry/node.ts 用的那个实现", () => {
     probeBase(storageFailures(realChangelog), STORAGE_CELL);
     const st = entryStorages();
     expect(st, "认不出两个入口的存储实现——这一格的前提没了").not.toBeNull();
@@ -6183,7 +5729,7 @@ describe(FIRST_VISIT_GROUP, () => {
     return items.length === 0 ? null : items;
   };
 
-  it("CHANGELOG 里那三串手抄清单（协议括号标签 / 六份文档 / 十三道门禁）逐项对齐真源", () => {
+  it("CHANGELOG 里那三串手抄清单（协议括号标签 / 六份文档 / CI 那几道门禁）逐项对齐真源", () => {
     // **这一格接的是 `documentedEntriesText`（发版条目 ∪ `[Unreleased]`）**，
     // 不是 `releaseEntriesText`：它比的是当前这棵树上的真源，理由全文在那个函数上方。
     const entries = documentedEntriesText(realChangelog());
@@ -6260,18 +5806,6 @@ describe(FIRST_VISIT_GROUP, () => {
   };
 
   /**
-   * 那颗一键部署按钮今天铺在哪几份 README 上：根 README + 五语言各一份，从磁盘现扫
-   *（认的是模块级那个 `BUTTON_MARKUP`，与「跨文档指认」的 (B) 同一份字面）。
-   * **一份都扫不到返回 `null`**：返回空表会让下面那条份数锚在按钮被全仓删干净时
-   * 静静地改判成「零份」，而 CHANGELOG 那句话已经成了假话。
-   */
-  const deployButtonReadmes = (read: (p: string) => string = readReal): string[] | null => {
-    const files = ["README.md", ...LANGS.map((l) => docPath(".", l, "README"))];
-    const hit = files.filter((f) => read(f).includes(BUTTON_MARKUP));
-    return hit.length === 0 ? null : hit;
-  };
-
-  /**
    * Node / Docker 那一侧的两处 healthcheck 各自在不在：`Dockerfile` 的 `HEALTHCHECK`
    * 指令、`docker-compose.yml` 服务下的 `healthcheck:` 块。返回**认得出的那几处**。
    * 两处都认不出时返回空表，下面那一格据此吵——不是静静放行。
@@ -6283,43 +5817,9 @@ describe(FIRST_VISIT_GROUP, () => {
     return out;
   };
 
-  /** 那份 Worker 配置的路径。下面两处（读它、点名它）共用这一份字面。 */
-  const WRANGLER = "wrangler.toml";
-
-  /** 「KV 命名空间 id 还是不是占位符」认的那个占位符字面：从门禁脚本现读，不手抄。 */
-  const kvPlaceholder = (read: (p: string) => string = readReal): string | null =>
-    /^const PLACEHOLDER = "([^"]+)";/m.exec(read("scripts/check-wrangler-placeholder.mjs"))?.[1] ?? null;
-
-  /**
-   * `wrangler.toml` 里那两处「一键部署按完仍得自己补」的空位，现算：
-   *   · `kvId`：`[[kv_namespaces]]` 段里 `id = "…"` 的实际取值（认不出为 `null`）；
-   *     它等于 `placeholder` 时，才说明这一格还空着、读者非补不可。
-   *   · `token`：`GATEWAY_TOKEN` 在这份文件里的形态——`"secret"` 表示只在注释里以
-   *     `.dev.vars` / `wrangler secret put` 的说法出现（还得自己补）；`"plain"` 表示
-   *     文件里有 `GATEWAY_TOKEN = …` 这样的明文赋值（那既让「仍要自己补」成了假话，
-   *     也是一条内置凭据）；`null` 表示整份文件没提过它。
-   *
-   * **两样都认不出返回 `null`**：返回一个「两样都空着」的对象会让下面那一格在 toml
-   * 换了写法时静静地改判成「文档写错了」，方向正好反了。
-   */
-  const wranglerBlanks = (read: (p: string) => string = readReal): {
-    kvId: string | null;
-    placeholder: string | null;
-    token: "secret" | "plain" | null;
-  } | null => {
-    const toml = read(WRANGLER);
-    const kvSection = /\[\[kv_namespaces\]\]([\s\S]*?)(?=\n\[|$)/.exec(toml)?.[1] ?? null;
-    const kvId = kvSection === null ? null : (/^\s*id\s*=\s*"([^"]*)"/m.exec(kvSection)?.[1] ?? null);
-    const tokenLines = toml.split("\n").filter((l) => l.includes("GATEWAY_TOKEN"));
-    const token = tokenLines.length === 0
-      ? null
-      : (tokenLines.some((l) => /^\s*GATEWAY_TOKEN\s*=/.test(l)) ? "plain" : "secret");
-    if (kvId === null && token === null) return null;
-    return { kvId, placeholder: kvPlaceholder(read), token };
-  };
-
-  /** 那条 bullet 里指代「KV 命名空间 id 这一格还空着」的字面。 */
-  const KV_BLANK_PHRASE = "KV 命名空间 id";
+  // 🔴 **`WRANGLER` / `kvPlaceholder()` / `wranglerBlanks()` / `KV_BLANK_PHRASE`
+  // 这四样 v0.4.0 一起删掉了**：它们全部读 `wrangler.toml`，而那个文件删了。
+  // 用它们的那一段（⑥「按完按钮还得自己补的那两格」）已经在上面具名删除。
 
   /**
    * `readLog` 是 CHANGELOG 的注入点，`readSrc` 是**真源侧**的注入点（今天只有 ⑥ 组用得上：
@@ -6413,19 +5913,15 @@ describe(FIRST_VISIT_GROUP, () => {
       }
     }
 
-    // ── ⑤ 两种部署形态的入口：按钮铺了几份 README、healthcheck 落在哪两处 ──
-    //   这两条与 ④ 同在「两种部署形态各自的入口」那一条 bullet 里。复评
-    //   第二轮实测：④ 接了真源之后，同一条 bullet 里的**前三行**仍然一个锚都没有——
-    //   「六份 README」改成「三份」、「两处各带一条 healthcheck」改成「两处都没有
-    //   healthcheck」，全量 4282 格零红。一条 bullet 里只锚住最后一句，等于前三句
-    //   随便写。
-    const btn = deployButtonReadmes();
-    if (btn === null) {
-      out.push(`根 README 与五语言 README 里一颗一键部署按钮都扫不到（找不到 \`${BUTTON_MARKUP}\`）`
-        + " —— 认不出要吵，不是 CHANGELOG 写对了");
-    } else {
-      needCount(btn.length, "份 README", `根 README + 五语言 README 里带 \`${BUTTON_MARKUP}\` 的那几份`);
-    }
+    // ── ⑤ 部署形态的入口：healthcheck 落在哪两处 ──
+    //   它与 ④ 同在「部署形态的入口」那一条 bullet 里。复评第二轮实测：④ 接了真源之后，
+    //   同一条 bullet 里的**前几行**仍然一个锚都没有——把「两处各带一条 healthcheck」
+    //   改成「两处都没有 healthcheck」，全量 4282 格零红。一条 bullet 里只锚住最后一句，
+    //   等于前几句随便写。
+    //
+    //   🔴 **v0.4.0 删掉了这里的「按钮铺了几份 README」那一半**：那颗一键部署按钮部署的
+    //   是 Worker 形态，形态摘掉之后六份 README 里的按钮一起删 ⇒ 被数的东西不存在了。
+    //   `healthcheck` 那一半原样留着。
     const hc = healthcheckPlaces();
     if (hc.length === 0) {
       out.push("`Dockerfile` 的 `HEALTHCHECK` 与 `docker-compose.yml` 的 `healthcheck:` 两处一处都认不出"
@@ -6439,70 +5935,18 @@ describe(FIRST_VISIT_GROUP, () => {
       needCount(hc.length, "处各带一条 healthcheck", "Dockerfile 的 `HEALTHCHECK` 与 docker-compose.yml 的 `healthcheck:`");
     }
 
-    // ── ⑥ 按完按钮还得自己补的那两格：wrangler.toml 的 KV 命名空间 id 与 GATEWAY_TOKEN ──
-    //   ⚠️ **取值范围是那条 bullet，不是整条版本条目**（复评预言过、随后当场发生的那个空档）：
-    //   这三个字面此前用 `text.includes(...)` 在**整段**里找，那时全段只有那条 bullet 写过它们，
-    //   所以「今天等价于 bullet 级锚定」。复评把这一条列为 Minor 并写明「空档只在将来
-    //   同段别处再写出这三个字面时才出现」——而下一笔提交往同一条版本条目里写了
-    //   `wrangler.toml`（讲那批清理触及了哪四份配置），空档当场成真：
-    //   把 bullet 换成语义相反的「开箱即用」之后，反向控制只红 2 格而不是 3 格，
-    //   因为 `wrangler.toml` 在同段别处仍找得到。**收窄到 bullet 之后它才真的只认那一句。**
-    //   同一条 bullet 的第二行。复评实测：⑤ 补上「六份 README」「两处 healthcheck」
-    //   之后，这一行仍然一个断言都打不中——把它整句换成语义相反的「按完开箱即用，什么都
-    //   不用补」，全仓会读 CHANGELOG 的测试文件一起跑仍是零红。这一行恰恰是读者按完按钮
-    //   之后能不能把网关跑起来的唯一说明，写反了比不写更坏。
-    /**
-     * 那条 bullet 的正文：从 `- **两种部署形态各自的入口**` 起，到下一条同级 bullet 之前。
-     * 认不出就是空串 —— 空串会让下面三条断言一起红并点名，而不是静默放行
-     * （「认不出要吵」，与本组 `wb === null` 那一支同一条纪律）。
-     */
-    const DEPLOY_BULLET_HEAD = "- **两种部署形态各自的入口**";
-    const bulletText = ((): string => {
-      const i = text.indexOf(DEPLOY_BULLET_HEAD);
-      if (i < 0) return "";
-      const rest = text.slice(i + DEPLOY_BULLET_HEAD.length);
-      const j = rest.search(/\n- \*\*/);
-      return j < 0 ? rest : rest.slice(0, j);
-    })();
-    const wb = wranglerBlanks(readSrc);
-    if (wb === null) {
-      out.push(`${WRANGLER} 里 KV 命名空间的 \`id = "…"\` 与 \`GATEWAY_TOKEN\` 两样一样都认不出`
-        + " —— 认不出要吵，不是 CHANGELOG 写对了");
-    } else {
-      if (!bulletText.includes(`\`${WRANGLER}\``)) {
-        out.push(`CHANGELOG 那条版本条目里没点名 \`${WRANGLER}\` —— 按完一键部署按钮还得回去补的就是这份文件`);
-      }
-      // KV 命名空间 id
-      if (wb.kvId === null || wb.placeholder === null) {
-        out.push(`${WRANGLER} 的 \`[[kv_namespaces]]\` 段里认不出 \`id = "…"\`，`
-          + "或 scripts/check-wrangler-placeholder.mjs 里认不出 `const PLACEHOLDER = \"…\"`"
-          + " —— 认不出要吵，不是 CHANGELOG 写对了");
-      } else if (wb.kvId !== wb.placeholder) {
-        out.push(`${WRANGLER} 里的 KV 命名空间 id 已经不是占位符（现在是 "${wb.kvId}"，`
-          + `占位符应为 "${wb.placeholder}"）—— CHANGELOG 那句「按完仍要自己补 ${KV_BLANK_PHRASE}」就此成了假话，`
-          + "而且这个 id 会随仓库一起出门");
-      } else if (!bulletText.includes(KV_BLANK_PHRASE)) {
-        out.push(`CHANGELOG 那条版本条目里没说还得补「${KV_BLANK_PHRASE}」`
-          + `（${WRANGLER} 里那一格现算仍是占位符 "${wb.placeholder}"）`
-          + " —— 不补它 `env.POOL` 就是 undefined，网关起不来");
-      }
-      // GATEWAY_TOKEN
-      if (wb.token === null) {
-        out.push(`${WRANGLER} 里一处都没提过 \`GATEWAY_TOKEN\` —— 认不出要吵，不是 CHANGELOG 写对了`);
-      } else if (wb.token === "plain") {
-        out.push(`${WRANGLER} 里有 \`GATEWAY_TOKEN = …\` 这样的明文赋值 —— CHANGELOG 那句「仍要自己补`
-          + " `GATEWAY_TOKEN`」成了假话，而且这是一条会被提交进公开仓的内置凭据");
-      } else if (!bulletText.includes("`GATEWAY_TOKEN`")) {
-        out.push("CHANGELOG 那条版本条目里没点名 `GATEWAY_TOKEN`"
-          + `（${WRANGLER} 现算：它只以 \`.dev.vars\` / \`wrangler secret put\` 的说法出现，文件里没有值）`
-          + " —— 不补它网关同样起不来");
-      }
-    }
+    // 🔴 **⑥「按完按钮还得自己补的那两格」（`wrangler.toml` 的 KV 命名空间 id 与
+    //   `GATEWAY_TOKEN` secret）v0.4.0 整段删掉了。** 被查的两侧一起没了：那颗一键部署
+    //   按钮删了，`wrangler.toml` 这个文件也删了 —— `wranglerBlanks()` 读它只会 ENOENT。
+    //   **它守的那件事没有落空**：`GATEWAY_TOKEN` 是必填、缺了起不来这件事，由
+    //   `tests/unit/entry-fail-closed.test.ts`「抛出错误而不是使用空值」与五份 DEPLOY.md
+    //   的排障第一条守着。
+
     return out;
   };
 
   const BULLET_CELL = "CHANGELOG 版本条目里的鉴权通道 / 流式切法 / 媒体端点 / 发镜像标签"
-    + " / 按钮份数 / healthcheck 两处 / 按完还得补的那两格都从真源现算";
+    + " / healthcheck 两处都从真源现算";
 
   it(BULLET_CELL, () => {
     const failures = bulletFailures(realChangelog);
@@ -6558,19 +6002,8 @@ describe(FIRST_VISIT_GROUP, () => {
       .toBe(false);
   });
 
-  it("该红时红：那条 bullet 把一键部署按钮的份数写小 —— 点名现扫出来的那个份数", () => {
-    probeBase(bulletFailures(realChangelog), BULLET_CELL);
-    const btn = deployButtonReadmes();
-    expect(btn, "根 + 五语言 README 里一颗按钮都扫不到——这一格的前提没了").not.toBeNull();
-    const forms = cnForms(btn!.length);
-    expect(forms, `现扫出 ${btn!.length} 份，超出中文数字表——这一格的前提没了`).not.toBeNull();
-    // 变异的是**文档**：把「六份 README」写成「三份 README」，磁盘上那六份一个没动。
-    const mutated = realChangelog().replace(`${forms![0]}份 README`, "三份 README");
-    expect(mutated, `变异没落地——CHANGELOG 里没找到「${forms![0]}份 README」`).not.toEqual(realChangelog());
-    const failures = bulletFailures(() => mutated).join("\n");
-    expect(failures, `写小了份数居然还绿（现扫 ${btn!.length} 份）`).toContain(`${forms![0]}份 README`);
-    expect(failures, "红了但报文没说这个数是从哪儿现算的").toContain(BUTTON_MARKUP);
-  });
+  // 🔴 **「那条 bullet 把一键部署按钮的份数写小」那一格随按钮一起删了**：
+  // 被数的那颗按钮在 v0.4.0 从六份 README 里删干净了（它部署的是 Worker 形态）。
 
   it("该红时红：那条 bullet 把两处 healthcheck 说成没有 —— 点名 Dockerfile 与 docker-compose.yml 现算的处数", () => {
     probeBase(bulletFailures(realChangelog), BULLET_CELL);
@@ -6583,50 +6016,20 @@ describe(FIRST_VISIT_GROUP, () => {
     expect(failures, "把带 healthcheck 说成不带居然还绿").toContain("处各带一条 healthcheck");
   });
 
-  it("该红时红：那条 bullet 把「按完还得补两格」改写成「开箱即用」—— 逐个点名 wrangler.toml / KV 命名空间 id / GATEWAY_TOKEN", () => {
-    probeBase(bulletFailures(realChangelog), BULLET_CELL);
-    const wb = wranglerBlanks();
-    expect(wb, `${WRANGLER} 里两格一格都认不出——这一格的前提没了`).not.toBeNull();
-    expect(wb!.kvId, "KV 命名空间 id 现在已不是占位符——这一格的前提没了").toBe(wb!.placeholder);
-    expect(wb!.token, "GATEWAY_TOKEN 不是「只以 secret / .dev.vars 形式出现」——这一格的前提没了").toBe("secret");
-    // 变异的是**文档**：把那半句整个换成语义相反的说法，磁盘上两格照旧空着。
-    const half = "按完仍要自己补 `wrangler.toml` 里的 KV 命名空间 id 与 `GATEWAY_TOKEN`，缺一个网关都起不来；";
-    const mutated = realChangelog().replace(half, "按完开箱即用，什么都不用补，网关立刻就能跑；");
-    expect(mutated, "变异没落地——CHANGELOG 里没找到那半句").not.toEqual(realChangelog());
-    const failures = bulletFailures(() => mutated);
-    expect(failures.length, `报文：\n${failures.join("\n")}`).toBe(3);
-    for (const lit of [WRANGLER, KV_BLANK_PHRASE, "GATEWAY_TOKEN"]) {
-      expect(failures.join("\n"), `红了但报文没点名「${lit}」`).toContain(lit);
-    }
-  });
+  // 🔴 **两格反向控制随 ⑥ 一起删掉了**：
+  // ·「那条 bullet 把「按完还得补两格」改写成「开箱即用」」——被改写的那半句已经不在
+  //   CHANGELOG 里，`wranglerBlanks()` 读的文件也没了；
+  // ·「`wrangler.toml` 的 KV id 换成一个真 id，占位符没了」——同上，而且
+  //   `check-wrangler-placeholder.mjs` 这道门禁本身也随形态一起退场。
 
-  it("该红时红：真源改了而 CHANGELOG 没跟 —— wrangler.toml 的 KV id 换成一个真 id，占位符没了", () => {
-    probeBase(bulletFailures(realChangelog), BULLET_CELL);
-    const wb = wranglerBlanks();
-    expect(wb?.placeholder, "认不出门禁脚本里那个占位符字面——这一格的前提没了").not.toBeNull();
-    const REAL_ID = "0123456789abcdef0123456789abcdef";
-    const swapped = (p: string): string => (p === WRANGLER
-      ? readReal(p).replace(wb!.placeholder!, REAL_ID)
-      : readReal(p));
-    expect(wranglerBlanks(swapped)?.kvId, `变异没落地——${WRANGLER} 里没找到那个占位符`).toBe(REAL_ID);
-    // ⚠️ 变异的是**真源**不是文档：CHANGELOG 一个字没动，它写的「仍要自己补」就此成了假话。
-    const failures = bulletFailures(realChangelog, swapped);
-    expect(failures.length, `报文：\n${failures.join("\n")}`).toBe(1);
-    expect(failures[0], "红了但报文没点名换上去的那个真 id").toContain(REAL_ID);
-  });
-
-  it("认不出要吵：按钮字面全被删 / 两份部署文件里的 healthcheck 全被删 / wrangler.toml 两格都认不出 ⇒ 三个探测器分别返回 null、空表、null", () => {
-    // 这两条分支上，`bulletFailures` 走的是 `out.push("… 认不出要吵 …")`——不是静静放行。
-    expect(deployButtonReadmes(() => "一份没有按钮的 README\n"),
-      "按钮全被删了还能扫出份数——那这个份数是编的").toBeNull();
+  it("认不出要吵：两份部署文件里的 healthcheck 全被删 ⇒ 探测器返回空表", () => {
+    // 这条分支上，`bulletFailures` 走的是 `out.push("… 认不出要吵 …")`——不是静静放行。
+    // 🔴 **v0.4.0：另外两个探测器（按钮份数 / `wrangler.toml` 两格）随它们守的东西一起删了**，
+    // 这一格因此只剩 healthcheck 这一个。
     expect(healthcheckPlaces(() => "FROM node:22-alpine\nservices:\n  gateway:\n    image: x\n"),
       "两份部署文件里都没有 healthcheck 了还能认出来").toEqual([]);
-    expect(wranglerBlanks(() => "name = \"agnes2api\"\nmain = \"src/entry/worker.ts\"\n"),
-      "toml 里既没有 KV 段也没提 GATEWAY_TOKEN 了，还能算出「两格都空着」——那这个判断是编的").toBeNull();
-    // 反向：真源没被动的时候三个探测器都认得出，上面那三条不是恒真。
-    expect(deployButtonReadmes()).not.toBeNull();
+    // 反向：真源没被动的时候它认得出，上面那条不是恒真。
     expect(healthcheckPlaces().length).toBe(2);
-    expect(wranglerBlanks()).not.toBeNull();
   });
 
   it("能力清单那根轴的射程是「全部发版条目」：只有 `## [Unreleased]` ⇒ 认不出要吵；发下一版 ⇒ 不许因此红", () => {
@@ -7874,7 +7277,7 @@ describe("「改一把 key」那份动作枚举从 `PATCH_FIELDS` 现算（复�
     // 变异串逐字取自那一行今天的原文。
     const failures = enumerationFailures(
       PATCH_FIELDS,
-      readerWith("zh-CN", (s) => s.split(" / 重置用量计数）：").join("）："), "DEPLOY"),
+      readerWith("zh-CN", (s) => s.split(" / 重置用量计数）\n").join("）\n"), "DEPLOY"),
     );
     expect(failures.length, `应当只红一条，实际：\n${failures.join("\n")}`).toBe(1);
     expect(failures[0]).toContain("docs/zh-CN/DEPLOY.md");
@@ -8117,10 +7520,13 @@ describe("「某一份根本没翻译」：en 与 ko 的正文里不许有汉字
  * （某一份漏改 ⇒ 当场红并点名）。**只钉一端等于没钉**：只查文档的话脚本改名不会红，
  * 只查脚本的话文档漏改不会红。
  */
-it("五份 DEPLOY.md 都写着 package.json 里那两条本地开发脚本，而它们确实都先生成面板资源", () => {
+it("五份 DEPLOY.md 都写着 package.json 里那条本地开发脚本，而它确实先生成面板资源", () => {
   const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
   const BUILD_UI = "node scripts/build-ui.mjs";
-  const names = ["dev:worker", "dev:node"] as const;
+  // 🔴 **v0.4.0：`dev:worker` 那一条没了**（它跑的是 `wrangler dev`）。
+  // **这一格守的两端一个字没变**：脚本名与「以 build-ui 开头」从 `package.json` 现算，
+  // 五份文档各自必须提到它；只钉一端等于没钉。
+  const names = ["dev:node"] as const;
   for (const n of names) {
     expect(
       pkg.scripts[n],
@@ -8129,8 +7535,8 @@ it("五份 DEPLOY.md 都写着 package.json 里那两条本地开发脚本，而
     expect(
       pkg.scripts[n],
       `\`${n}\` 不再以 \`${BUILD_UI}\` 开头 —— 五份 DEPLOY.md 里那句`
-      + "「两条都以 node scripts/build-ui.mjs 开头」当场变成假话，"
-      + "而它正是「别用裸 wrangler dev」那条建议的全部理由",
+      + "「它以 node scripts/build-ui.mjs 开头」当场变成假话，"
+      + "而它正是「别裸跑 dist/entry/node.js」那条建议的全部理由",
     ).toMatch(new RegExp(`^${BUILD_UI.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`));
   }
   const missing: string[] = [];
@@ -8633,6 +8039,22 @@ describe("五份 SPONSORS.md 的字面恒等式（那一笔的验收 ①②③�
  *        （标签字面或 `deploy.workers.cloudflare.com` 那个 markup），根 README 里就
  *        必须真的有它。
  *
+ * ── ✅ 已了结（v0.4.0）：按钮随 Worker 形态一起删了，(B) 的前件重新变空 ────────────
+ * 下面那两段记的是**上一轮**的状态（按钮被加回六份 README）。Worker 形态整体摘除之后
+ * 那颗按钮在全仓零命中，**(B) 的前件又空了、因而重新恒真**——也就是说，下面那段
+ * 「(B) 从恒真的空判据升级成活判据」今天**不再成立**，别照着它读。
+ * 那一段自己写着「哪天按钮又被全仓删干净，非空锚那一格会红着提醒人回来重读这一段」——
+ * **那一格确实红过，本轮就是照它的指示回来重读并结清的**：非空锚与两侧活性夹具随按钮
+ * 一起删掉了（它们的被测对象不存在了），(B) 只剩下面两格——「前件为假不许红」与
+ * 「认不出要吵」。
+ * 🔴 **如实说清代价**：(B) 今天**没有任何一格证明它不是死代码**。恒真的空判据就是
+ * 恒绿的，这是知情接受、不是没看见——它守的那件事（谁提到按钮，根 README 里就得真有）
+ * 在没有按钮的仓里没有可守之物。哪天再引入这类「文档 A 指认文档 B 里有 X」的按钮式
+ * markup，回来把活性夹具配回去。
+ * `BUTTON_LABEL` / `BUTTON_MARKUP` 两个常量刻意留着，它们是那条蕴含式的射程定义。
+ *
+ * ── 以下为历史记录，描述的是上一轮真实发生过的事，不是今天的能力声明 ──────────────
+ *
  * ── 🔴 按钮回来了，(B) 的前提**变了**（用户裁定，本组据此改写）──────────────────
  * 回填本组时按钮全仓零命中，(B) 的**前件是空的**、因而恒真；那一版只好给它配两侧夹具
  *（「文档提到、根上没有」必须红；「文档提到、根上真有」必须绿），靠夹具证明这段代码
@@ -8650,8 +8072,10 @@ describe("五份 SPONSORS.md 的字面恒等式（那一笔的验收 ①②③�
  *   (B) 会悄悄退回恒真，那一格会红着提醒人回来重读这一段。
  *
  * ── 恢复按钮**没有**推翻那两条技术事实（它们仍然为真，只是改了写法）────────────
+ * 🔴 **v0.4.0 更正：① 今天已经作废**——`wrangler.toml` 与钉它的那道门禁随 Worker 形态
+ * 一起删了，一个占位符都没有了，所以「它仍然为真」这半句对 ① 不成立。② 原样为真。
  * ① `wrangler.toml` 的 KV namespace id 恒为占位符 `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`，
- *    而且这件事由 `scripts/check-wrangler-placeholder.mjs` 在 CI 里钉死（ci.yml 第 8 道）。
+ *    而且这件事由 `check-wrangler-placeholder.mjs` 在 CI 里钉死（当时的 ci.yml 第 8 道）。
  * ② `GATEWAY_TOKEN` 是必填值，`src/core/config.ts` 读不到它直接
  *    `throw new Error("缺少 GATEWAY_TOKEN，网关无法启动")`。
  * 回填时据此把按钮判成「弃用」，理由是**一键流程办不了这两项**。后来的做法不是否认
@@ -8857,43 +8281,16 @@ describe("跨文档指认的真实性：文档里说「那份 README 里有 X」
     buttonScanFiles().filter((f) => f !== "README.md")
       .filter((f) => read(f).includes(BUTTON_LABEL) || read(f).includes(BUTTON_MARKUP));
 
-  it("🔴 (B) 的非空锚：前件今天真的非空 —— 五份语言版 README 各自提到了那颗按钮", () => {
-    // ⚠️ 这一格是换掉老夹具之后 (B) 的**唯一活性证明**。哪天按钮又被全仓删干净，
-    // (B) 会悄悄退回「前件为空 ⇒ 恒真」，那时这一格会红着把人叫回本组顶上那段读一遍：
-    // 要么按钮是有意再次弃用（那 (B) 得重新配两侧夹具），要么是谁误删了。
-    expect(buttonMentioners(readFile).sort(),
-      "提到按钮的文档不再是那五份语言版 README —— (B) 的前件变了，回本组顶上那段重新表态")
-      .toEqual(LANGS.map((l) => docPath(".", l, "README")).sort());
-  });
-
-  it("(B) 该红时红：把根 README 那颗按钮删掉、五份语言版照旧留着 ⇒ 红并逐份点名", () => {
-    probeGreen(buttonClaimFailures(readFile, buttonScanFiles()), REAL_B);
-    const at = "README.md";
-    const mutated = readFile(at).split("\n").filter((l) => !l.includes(BUTTON_MARKUP)).join("\n");
-    expect(mutated, "变异没落地 —— 根 README 里本来就没有按钮？").not.toBe(readFile(at));
-    const failures = buttonClaimFailures(patchPath(readFile, at, mutated), buttonScanFiles());
-    expect(failures, `删掉根上的按钮之后 (B) 居然还绿：\n${failures.join("\n")}`)
-      .toHaveLength(LANGS.length);
-    for (const l of LANGS) {
-      expect(failures.join("\n"), `没点名 ${l} 那一份`).toContain(docPath(".", l, "README"));
-    }
-  });
-
-  it("(B) 该红时红（另一侧）：某份 DEPLOY.md 也写上按钮字面、而根上那颗被删了 ⇒ 连它一起点名", () => {
-    // 老版本的这一格只删 DEPLOY 那一侧、不动根，按钮回来之后它**必然绿**（那句话成了真话）。
-    // ⇒ 改成两处一起变异：证明 (B) 的射程真的覆盖 README 之外的文档，不只覆盖那五份。
-    probeGreen(buttonClaimFailures(readFile, buttonScanFiles()), REAL_B);
-    const noButton = readFile("README.md").split("\n").filter((l) => !l.includes(BUTTON_MARKUP)).join("\n");
-    const at = docPath(".", "en", "DEPLOY");
-    const read = (p: string) => {
-      if (p === "README.md") return noButton;
-      if (p === at) return `${readFile(p)}\n### Option A — ${BUTTON_LABEL} button\n\nClick the button in the root [README](../../README.md).\n`;
-      return readFile(p);
-    };
-    const failures = buttonClaimFailures(read, buttonScanFiles());
-    expect(failures).toHaveLength(LANGS.length + 1);
-    expect(failures.join("\n")).toContain("docs/en/DEPLOY.md");
-  });
+  // 🔴 **(B) 的三格活性证明 v0.4.0 删掉了 —— 照这一组顶上那段自己写的处置办。**
+  // 那段原话：「哪天按钮又被全仓删干净，(B) 会悄悄退回「前件为空 ⇒ 恒真」，那时这一格会
+  // 红着把人叫回本组顶上那段读一遍：**要么按钮是有意再次弃用**（那 (B) 得重新配两侧夹具），
+  // 要么是谁误删了。」——今天正是前一种：那颗按钮部署的是 Worker 形态，形态摘掉之后
+  // 六份 README 里的按钮一起删。
+  //
+  // ⇒ 三格删掉的是「按钮今天真的还在」这个**活性前提**，不是 (B) 这条判据本身：
+  // `buttonClaimFailures()` 与它下面那两格（前件为假不许红 / 认不出要吵）都留着，
+  // 哪天有人再往任何一份文档里写上按钮字面而根 README 里没有它，(B) 照样当场红。
+  // **今天它是一条恒真的蕴含式，而这件事被写在这里，不是靠人自己发现。**
 
   it("(B) 不该红时不红：谁都没提按钮、根上也没有 ⇒ 前件为假，不许红", () => {
     // 蕴含式的另一半：没有指认就没有假指认。这一格钉住 (B) 不是「根上必须有按钮」——
@@ -8926,185 +8323,20 @@ describe("跨文档指认的真实性：文档里说「那份 README 里有 X」
   });
 });
 
-/**
- * **Cloudflare 一键部署按钮的形态锚**（用户裁定把按钮加回来之后配的）。
+/* ══════════════════════════════════════════════════════════════════════════
+ * 🔴 **这里原来有一整组「Cloudflare 一键部署按钮：六份逐字节相同、位置在 clone 围栏
+ * 之前、slug 取自 package.json」，v0.4.0 整组删掉了。**
  *
- * ── 它跟「跨文档指认」的 (B) 的分界（两组守的**不是**同一个方向）──────────────
- * · 跨文档指认 (B)：**指认 ⇒ 被指认者存在**。谁提到按钮，根 README 里就得真有。
- *   它对「五份语言版里少了一颗」**看不见**——语言版少一颗只是少一个提及方，
- *   蕴含式照样成立。
- * · 本组：**六份 README 里那颗按钮的形态本身**——份数、位置、逐字节相同、
- *   仓库 slug 取自真源。少一份、挪到 `git clone` 围栏后面、alt 被翻译，都在这里红。
- * ⇒ 删干净了谁红？六份全删 ⇒ 跨文档指认那条非空锚红 + 偏离名册第 23 条红 + 本组红；
- *   只删语言版一份 ⇒ 只有本组红。这就是本组存在的理由。
+ * 它钉的是六份 README（根 + 五语言）`## ⚡ 快速部署` 节里那颗
+ * `deploy.workers.cloudflare.com` 按钮的形态。**被钉的东西本身没了**：那颗按钮部署的
+ * 是 Worker 形态，而 Worker 形态在 v0.4.0 摘掉了，六份 README 里的按钮与它上面那段
+ *「一键部署替不了你两件事」的说明一起删。**留着它只会指着一个不存在的按钮报红。**
  *
- * ── 为什么按钮**回来了**（用户裁定）────────────────────────────────────────
- * 它在 `6771af4` 引入、阶段 5 重写六份 README 时被删（根 `5d96e7d` + 五份语言版
- * 重写那五笔），跨文档指认那一组就是因为「五份 DEPLOY.md 还指着一颗不存在的按钮」才建的。
- * ⚠️ 交接材料把根那一笔记成了**另一个 sha**，那个串在本仓解析不开（三次历史重写
- * 之后已经不存在），这里刻意不抄它——`tests/unit/sha-refs.test.ts「(a) 每一处 sha 引用要么
- * 解析得开是 commit，要么在已销毁名册上」`会把任何解析不开的 sha 引用当场判红，而它判得对：
- * 读者点过去只会看到 Not a valid object name（本轮初稿抄了那个 sha，就是被这一格逮住的）。
- * 真正删掉根 README 那颗按钮的是 `5d96e7d`，`git log -S deploy.workers.cloudflare.com`
- * 的命中集合可复核 —— 与本组上方那段的归因一致。
- * 用户裁定要它回来。实测过入口是活的：按钮图 `https://deploy.workers.cloudflare.com/button`
- * 回 200 且 `image/svg+xml`，部署入口 `?url=https://github.com/xwteam/agnes2api` 回 307。
- * 两个参照仓（kiro2api / gemini2api）**都没有同类按钮**——它们是纯 Docker、没有 Worker
- * 形态，所以这不是模板对齐项而是**本仓独有的增项**，登记在偏离名册第 23 条。
- *
- * ── 🔴 alt 文本为什么是**六份逐字相同的英文**，而不是各按语言翻译 ────────────
- * 这是本组要钉的那个选择，理由三条，都可机器复核：
- * ① **图本身是英文的**。`deploy.workers.cloudflare.com/button` 渲染出来的 SVG 上印着
- *    "Deploy to Cloudflare"；alt 的职责是替代**看不见的那张图**，写成「一键部署到
- *    Cloudflare」会与读者（或读屏软件用户之外的任何人）实际看到的字不一致。
- * ② **本仓已有的成例就是这样**：六份 README 头部 7 枚 `img.shields.io` 徽章的 alt
- *    （`TypeScript` / `Hono` / `Cloudflare Workers` / `Docker` / `Arch` / `License` /
- *    `Version`）与两枚动态徽章的 alt（`Issues` / `Stars`）**六份逐字全同、一个都没翻译**，
- *    「六份徽章 URL 有序逐字节相同」那一格已经把这条成例钉死了。按钮是同一类
- *    徽章型图片，跟着同一条成例走；单给它开翻译的口子，才是本仓里那个不一致的东西。
- *    ⇒ 下面「与徽章成例同轨」那一格**从磁盘现数**这九枚 alt 的六份自等式，
- *    成例哪天变了，这条理由会跟着红，而不是留在注释里发霉。
- * ③ 混着来是明确禁止的：本组要求六份**逐字节相同**，所以不存在「zh 翻译、en 不翻译」
- *    这种半吊子状态——要改就六份一起改，改了本组当场红，人会被迫回来重读 ① 和 ②。
- *
- * ── 它验不了什么 ──────────────────────────────────────────────────────────
- * 按钮点下去到底能不能部署成功（那要真去 Cloudflare 走一遍，不是仓内可判的事）；
- * 按钮下方那句「它替不了你两件事」的白话译得好不好——**但那两件事本身是真的**：
- * KV 占位符由 `scripts/check-wrangler-placeholder.mjs` 钉着，`GATEWAY_TOKEN` 缺失由
- * `src/core/config.ts` 抛错钉着，两处都在别的判据射程里。
- */
-describe("Cloudflare 一键部署按钮：六份逐字节相同、位置在 clone 围栏之前、slug 取自 package.json", () => {
-  const SIX_README: readonly string[] = ["README.md", ...LANGS.map((l) => docPath(".", l, "README"))];
-  const readFile = (p: string) => readFileSync(p, "utf8");
-  const patchPath = (base: (p: string) => string, at: string, body: string) =>
-    (p: string) => (p === at ? body : base(p));
-
-  /** 按钮那一行（整行）。一份里可能有 0 行、1 行或多行 —— 三种都要能分辨。 */
-  const buttonLines = (body: string): string[] =>
-    body.split("\n").filter((l) => l.includes("deploy.workers.cloudflare.com"));
-
-  /** 从 `package.json` 现算仓库 slug —— 按钮 URL 里那个 `xwteam/agnes2api` 的真源。 */
-  const slugFromPackageJson = (): string => {
-    const url = (JSON.parse(readFile("package.json")) as { repository?: { url?: string } }).repository?.url ?? "";
-    const m = /github\.com\/([^/]+\/[^/.]+)/.exec(url);
-    if (m === null) throw new Error(`package.json 的 repository.url 里取不出 slug：${url}`);
-    return m[1] ?? "";
-  };
-
-  /** 形态判定本体。**真扫描与反向控制共用它**，`read` 是唯一注入点。 */
-  const shapeFaults = (read: (p: string) => string): string[] => {
-    const out: string[] = [];
-    const slug = slugFromPackageJson();
-    let base: string | null = null;
-    for (const p of SIX_README) {
-      const body = read(p);
-      const lines = buttonLines(body);
-      if (lines.length !== 1) {
-        out.push(`${p} 里的一键部署按钮有 ${lines.length} 行，登记的是恰 1 行`);
-        continue;
-      }
-      const line = lines[0] ?? "";
-      base ??= line;
-      if (line !== base) {
-        out.push(`${p} 的按钮那一行与根 README 不同 —— 六份必须逐字节相同（含 alt）：\n  根：${base}\n  它：${line}`);
-      }
-      if (!line.includes(`/?url=https://github.com/${slug}`)) {
-        out.push(`${p} 的按钮入口没指向 package.json 里那个仓库（${slug}）：${line}`);
-      }
-      // 位置：必须落在 `#### Cloudflare Worker` 这一节里，且在那节第一道围栏**之前**
-      //（一键入口是给不想克隆的人看的，排在 `git clone` 后面就本末倒置了）。
-      const rows = body.split("\n");
-      const head = rows.findIndex((l) => l === "#### Cloudflare Worker");
-      if (head < 0) { out.push(`${p} 里找不到 \`#### Cloudflare Worker\` 这行标题 —— 按钮的落点没了`); continue; }
-      const at = rows.indexOf(line);
-      const fence = rows.findIndex((l, i) => i > head && l.startsWith("```"));
-      if (at < head) out.push(`${p} 的按钮跑到了 \`#### Cloudflare Worker\` 前面（第 ${at + 1} 行 vs 第 ${head + 1} 行）`);
-      else if (fence >= 0 && at > fence) out.push(`${p} 的按钮排在了 \`git clone\` 围栏之后（第 ${at + 1} 行 vs 第 ${fence + 1} 行）—— 一键入口要在前面`);
-    }
-    if (base === null) throw new Error("六份 README 里一行按钮都没抽到 —— 判据坏了，不许静默当成「形态都对」");
-    return out;
-  };
-
-  const REAL = "六份 README 各恰有 1 行按钮，逐字节相同、slug 取自 package.json、位置在 clone 围栏之前";
-
-  it(REAL, () => {
-    const faults = shapeFaults(readFile);
-    expect(faults, faults.join("\n")).toEqual([]);
-  });
-
-  it("alt 就是六份共用的那个英文字面（① 图上印的就是它）", () => {
-    for (const p of SIX_README) {
-      const line = buttonLines(readFile(p))[0] ?? "";
-      expect(line, `${p} 的按钮 alt 不是 \`Deploy to Cloudflare\``).toContain("[![Deploy to Cloudflare](");
-    }
-  });
-
-  it("🔴 与徽章成例同轨：九枚徽章 alt 六份逐字全同 —— alt 不翻译这条成例今天真的成立", () => {
-    // 这一格是「为什么 alt 用英文」那条理由 ② 的**机器复核**：成例是从磁盘现数出来的，
-    // 不是注释里的一句断言。哪天有人把某一份的徽章 alt 翻译了，这一格会红，
-    // 那时按钮 alt 该不该跟着翻译就得重新裁一次，而不是默认沿用。
-    const alts = (body: string) => [...body.matchAll(/<img src="https:\/\/img\.shields\.io\/[^"]+" alt="([^"]+)">/g)]
-      .map((m) => m[1] ?? "");
-    const base = alts(readFile("README.md"));
-    expect(base.length, "根 README 头部数不到 9 枚徽章 alt —— 成例的射程写错了").toBe(9);
-    expect(base.some((a) => /[぀-ヿ一-鿿가-힯]/.test(a)),
-      "徽章 alt 里出现了非拉丁字面 —— 成例变了").toBe(false);
-    for (const p of SIX_README) {
-      expect(alts(readFile(p)), `${p} 的徽章 alt 与根 README 不同 —— 「alt 六份不翻译」这条成例破了`).toEqual(base);
-    }
-  });
-
-  it("该红时红：把 docs/ja/README.md 的 alt 翻成日文 —— 六份不再逐字节相同，必须红并点名它", () => {
-    const at = docPath(".", "ja", "README");
-    const mutated = readFile(at).replace("[![Deploy to Cloudflare](", "[![Cloudflare にワンクリックでデプロイ](");
-    expect(mutated, "变异没落地").not.toBe(readFile(at));
-    const faults = shapeFaults(patchPath(readFile, at, mutated));
-    expect(faults).toHaveLength(1);
-    expect(faults[0] ?? "").toContain(at);
-    expect(faults[0] ?? "").toContain("逐字节相同");
-  });
-
-  it("该红时红：把 docs/ko/README.md 的按钮挪到 `git clone` 围栏之后 —— 逐字节还相同，本格必须红", () => {
-    const at = docPath(".", "ko", "README");
-    const rows = readFile(at).split("\n");
-    const i = rows.findIndex((l) => l.includes("deploy.workers.cloudflare.com"));
-    const line = rows[i] ?? "";
-    // 拎出来，塞到同一节末尾（`#### Docker` 之前）—— 还在那一节里，但落在围栏后面了。
-    const mutated = rows.filter((_, k) => k !== i).join("\n")
-      .replace("#### Docker", `${line}\n\n#### Docker`);
-    expect(mutated, "变异没落地").not.toBe(readFile(at));
-    expect(buttonLines(mutated), "变异之后按钮不是恰 1 行 —— 这一格要单独测「位置」，别把份数一起搅进来")
-      .toHaveLength(1);
-    const faults = shapeFaults(patchPath(readFile, at, mutated));
-    expect(faults, faults.join("\n")).toHaveLength(1);
-    expect(faults[0] ?? "").toContain("围栏之后");
-  });
-
-  it("该红时红：从 docs/en/README.md 删掉那颗按钮 —— 跨文档指认 (B) 不会红（少一个提及方而已），本格必须红", () => {
-    const at = docPath(".", "en", "README");
-    const mutated = readFile(at).split("\n").filter((l) => !l.includes("deploy.workers.cloudflare.com")).join("\n");
-    expect(mutated, "变异没落地").not.toBe(readFile(at));
-    const faults = shapeFaults(patchPath(readFile, at, mutated));
-    expect(faults).toHaveLength(1);
-    expect(faults[0] ?? "").toContain("有 0 行");
-  });
-
-  it("该红时红：把按钮 URL 换成另一个仓 —— slug 与 package.json 对不上，必须红", () => {
-    const at = "README.md";
-    const mutated = readFile(at).replace("/?url=https://github.com/xwteam/agnes2api", "/?url=https://github.com/someone/else");
-    expect(mutated, "变异没落地").not.toBe(readFile(at));
-    const faults = shapeFaults(patchPath(readFile, at, mutated));
-    // 根变了 ⇒ 它自己 slug 不对（1 条）+ 另外五份与它逐字节不同（5 条）。
-    expect(faults.length, faults.join("\n")).toBe(1 + LANGS.length);
-    expect(faults.join("\n")).toContain("没指向 package.json 里那个仓库");
-  });
-
-  it("认不出要吵：六份都读不到按钮时当场抛，不静默当成「形态都对」", () => {
-    const blind = (p: string) => readFile(p).split("\n")
-      .filter((l) => !l.includes("deploy.workers.cloudflare.com")).join("\n");
-    expect(() => shapeFaults(blind)).toThrow(/判据坏了/);
-  });
-});
+ * 配套删掉的还有偏离名册里那一条（见 `tests/unit/docs-deviations.test.ts` 的
+ * 「刻意偏离名册：每条今天都真成立（方向 ①）」那一组）：那条登记的 `until` 逐字写着
+ * 「哪天 Worker 形态被砍掉（那按钮就没有落点了）……那时六份的按钮与这条登记一起删，
+ * `docs-parity.test.ts` 里按钮形态锚整组跟着删」——今天到期了，照它办。
+ * ══════════════════════════════════════════════════════════════════════════ */
 
 /**
  * ⑧ 五份 README 的 `## 📄` 节末段逐字节登记（第 1 轮评审回填）。
@@ -9309,8 +8541,6 @@ const DOC_SECTIONS = {
     "zh-CN": [
       "## 环境要求",                    // K∩G
       "## 获取 Agnes 凭据",             // K∩G 句式
-      "## 选哪种形态",                  // §1.10 必须变体（模板无先例）
-      "## Cloudflare Worker 部署",      // §1.10 变体
       "## Docker 部署",                 // K∩G
       "## 环境变量",                    // 骨架决定第 ② 条保留（agnes 现名）
       "## 多账号配置",                  // K∩G
@@ -9326,8 +8556,6 @@ const DOC_SECTIONS = {
     "zh-TW": [
       "## 系統要求",                    // K∩G(zh-TW DEPLOY)
       "## 取得 Agnes 憑證",             // K 句式 `取得 Kiro 憑證`
-      "## 選哪種形態",                  // 推导
-      "## Cloudflare Worker 部署",      // 推导
       "## Docker 部署",                 // K∩G
       "## 環境變數",                    // agnes 现名
       "## 多帳號設定",                  // 推导（ja/ko 实测用「設定」）
@@ -9343,8 +8571,6 @@ const DOC_SECTIONS = {
     en: [
       "## System Requirements",         // K∩G
       "## Getting Agnes Credentials",   // K 句式 `Getting Credentials`
-      "## Choosing a Deployment Form",  // 推导
-      "## Cloudflare Worker Deployment",// 推导
       "## Docker Deployment",           // K∩G
       "## Environment Variables",       // agnes 现名，按模板体例改成 Title Case
       "## Multi-Account Configuration", // 推导
@@ -9360,8 +8586,6 @@ const DOC_SECTIONS = {
     ja: [
       "## 環境要件",                    // K∩G
       "## Agnes 認証情報の取得",        // K 句式 `Kiro 認証情報の取得`
-      "## どちらの形態を選ぶか",        // 推导
-      "## Cloudflare Worker デプロイ",  // 推导
       "## Docker デプロイ",             // K∩G
       "## 環境変数",                    // agnes 现名
       "## マルチアカウント設定",        // K∩G
@@ -9377,8 +8601,6 @@ const DOC_SECTIONS = {
     ko: [
       "## 환경 요구사항",               // K∩G
       "## Agnes 자격 증명 준비",        // K 句式 `Kiro 자격 증명 준비`
-      "## 어떤 형태를 선택할까",        // 推导
-      "## Cloudflare Worker 배포",      // 推导
       "## Docker 배포",                 // K∩G
       "## 환경 변수",                   // agnes 现名
       "## 다중 계정 설정",              // K∩G
@@ -9636,8 +8858,13 @@ describe("非 README 文档的五语言 `##` 译名常量表", () => {
     ).toEqual(["API", "DEPLOY"]);
   });
 
-  it("五语言等长，且节数就是裁定的 DEPLOY 15 / API 13", () => {
-    const EXPECT_LEN: Record<SectionDoc, number> = { DEPLOY: 15, API: 13 };
+  it("五语言等长，且节数就是裁定的 DEPLOY 13 / API 13", () => {
+    // 🔴 **v0.4.0：DEPLOY 15 → 13。** 裁定原文是「12 节 − 1（第 3 槽）+ 3（§1.10 双形态）
+    // + 1（保留下来的 `## 环境变量`）= 15」，其中那个 **+3 就是双形态本身**
+    //（`## 选哪种形态` / `## Cloudflare Worker 部署` / `## Docker 部署` 三节）。
+    // 摘掉 Worker 之后只剩 `## Docker 部署` 一节 ⇒ +3 变成 +1 ⇒ 12 − 1 + 1 + 1 = **13**。
+    // **不是把骨架改松了，是那条 §1.10「两条部署路必须对仗」的前提没了。**
+    const EXPECT_LEN: Record<SectionDoc, number> = { DEPLOY: 13, API: 13 };
     const wrong: string[] = [];
     for (const doc of Object.keys(DOC_SECTIONS) as SectionDoc[]) {
       for (const lang of LANGS) {
@@ -9647,7 +8874,7 @@ describe("非 README 文档的五语言 `##` 译名常量表", () => {
     }
     expect(
       wrong,
-      "DEPLOY 15 = §1.9.1 的 12 节 − 1（第 3 槽）+ 3（§1.10 双形态）+ 1（保留下来的 `## 环境变量`）；"
+      "DEPLOY 13 = §1.9.1 的 12 节 − 1（第 3 槽）+ 1（唯一那条部署路）+ 1（保留下来的 `## 环境变量`）；"
       + "API 13 = §1.9.2 的 12 项 + 1（保留下来的 `## 模型`）。改这两个数之前先去改裁定",
     ).toEqual([]);
   });
@@ -9701,17 +8928,17 @@ describe("非 README 文档的五语言 `##` 译名常量表", () => {
 
   it("该红时红：ja 的 DEPLOY 第 7 节被换掉 ⇒ 恰 1 条失败，报文点名「ja」「第 7 节」（译名表的验收，走真抽取器）", () => {
     const mutated: string[] = [...DOC_SECTIONS.DEPLOY.ja];
-    expect(mutated[6], "第 7 槽的落点变了 —— 先回来改这一格").toBe("## マルチアカウント設定");
-    mutated[6] = "## アカウント設定";
+    expect(mutated[6], "第 7 槽的落点变了 —— 先回来改这一格").toBe("## トラブルシューティング");
+    mutated[6] = "## こまったときは";
     // 关键：不是把数组直接喂给比较器，而是先铺成 markdown 再让 `sectionTitles()` 抽回来。
     const extracted = sectionTitles(renderSectionDoc(mutated));
-    expect(extracted, "抽取器没把这份合成文档还原成 15 个 `##` —— 坏的是抽取器，不是骨架")
+    expect(extracted, "抽取器没把这份合成文档还原成 13 个 `##` —— 坏的是抽取器，不是骨架")
       .toEqual(mutated);
     const failures = sectionFailures("DEPLOY", "ja", extracted);
     expect(failures).toHaveLength(1);
     expect(failures[0] ?? "").toContain("ja 第 7 节对不上");
-    expect(failures[0] ?? "").toContain("## マルチアカウント設定");
-    expect(failures[0] ?? "").toContain("## アカウント設定");
+    expect(failures[0] ?? "").toContain("## トラブルシューティング");
+    expect(failures[0] ?? "").toContain("## こまったときは");
   });
 
   it("该红时红：少一节 / 多一节都要先报「节数对不上」，再逐槽点名", () => {
@@ -10132,15 +9359,19 @@ describe("列表嵌套只用 2 空格，深度硬上限 1 层", () => {
   });
 
   it("该红时红：把一处嵌套改回 4 空格 —— 两条判据里的第一条红并点名行号", () => {
-    const target = join("docs", "zh-CN", "DEPLOY.md");
-    const docs = shipDocsWith(target, (s) => s.replace(/^ {2}- \*\*补池锁\*\*/m, "    - **补池锁**"));
+    // 🔴 **v0.4.0 换了落点**：上一版拿的是 `docs/zh-CN/DEPLOY.md` 配额账里的
+    // `- **补池锁**`，那一整节随免费档 KV 配额删了。今天全仓的 2 空格嵌套只剩
+    // 五份 REGISTRAR.md 里「整轮当场结束的那两种例外」那一对，落点换到它上面。
+    const target = join("docs", "zh-CN", "REGISTRAR.md");
+    const docs = shipDocsWith(target, (s) => s.replace(/^ {2}- /m, "    - "));
     expect(docs.find(([p]) => p === target)?.[1], "变异没落地 —— 那一行的锚字面改了")
       .not.toEqual(readFileSync(target, "utf8"));
     expect(bodyHits(docs, NESTED_4).join("\n"), "4 空格嵌套回来了却没红").toContain(`${target}:`);
   });
 
   it("该红时红：套出第二层 —— `^      [-*] ` 那一格红", () => {
-    const target = join("docs", "en", "DEPLOY.md");
+    // 落点同上：`docs/en/DEPLOY.md` 里今天没有 2 空格嵌套了。
+    const target = join("docs", "en", "REGISTRAR.md");
     const docs = shipDocsWith(target, (s) => s.replace(/^ {2}- /m, "      - "));
     expect(docs.find(([p]) => p === target)?.[1], "变异没落地").not.toEqual(readFileSync(target, "utf8"));
     expect(bodyHits(docs, NESTED_6).join("\n"), "第二层嵌套进来了却没红").toContain(`${target}:`);
@@ -10157,9 +9388,13 @@ describe("列表嵌套只用 2 空格，深度硬上限 1 层", () => {
   });
 
   it("射程自守：今天真的存在 2 空格的一层嵌套 —— 否则上面几格是在守一片空地", () => {
+    // 🔴 **v0.4.0：下限 50 → 20。** 掉的那一批全在五份 DEPLOY.md 的配额账里
+    //（按轮计费那五笔、面板写操作的单价那一串），整节随免费档 KV 配额一起删。
+    // **这条下限的语义是「判据有没有被守护的对象」，不是「文档该有多少嵌套」**：
+    // 今天全仓 28 处（五份 REGISTRAR.md 各 2 + CHANGELOG 18），下限取 20 仍然只许升不许降。
     const flat = bodyHits(shipDocPairs(), /^ {2}[-*] /);
-    expect(flat.length, "40 份文档里一处 2 空格嵌套列表都没有 —— 展平判据没有被守护的对象，"
-      + "多半是正则或剥围栏写坏了").toBeGreaterThan(50);
+    expect(flat.length, "40 份文档里 2 空格嵌套列表少于 20 处 —— 展平判据快没有被守护的对象了，"
+      + "要么是正则或剥围栏写坏了，要么该回来重新量一遍这个下限").toBeGreaterThan(20);
   });
 });
 
@@ -10525,7 +9760,11 @@ describe("表格行与单元格的长度上限（R22e ≤ 340 / R22e2 ≤ 300）
     // ⚠️ 26 → 25：注册机那张配置卡搬到注册机板块的「设置」分页之后，五份 ADMIN.md 的
     // 设置卡表各少了一行，而那一行（射程内的那一份）正是这 26 行里的一行。
     // **不是「有人把长句改短了」，是那一行整条不在了。**
-    const OVER_200_TODAY = 25;
+    // ⚠️ 25 → 21（v0.4.0）：五份 DEPLOY.md 环境变量表里 `PORT` / `DATA_DIR` 两行
+    // 原来各挂着一句「Worker 不使用该变量」，摘掉形态之后那半句删了，四行因此掉到
+    // 200 以下（zh-CN/zh-TW 的 `DATA_DIR` 那一行本来就 <200）。**同样是「那半句整条不在了」，
+    // 不是有人把长句改短。**
+    const OVER_200_TODAY = 21;
     const { over200 } = scanWideRows(non25Pairs());
     expect(
       over200.length,
@@ -10604,17 +9843,25 @@ describe("表格行与单元格的长度上限（R22e ≤ 340 / R22e2 ≤ 300）
  * 截断，其余四种语言都没有这个形状）。**这条判据是靠它才被发现的。**
  * ══════════════════════════════════════════════════════════════════════════ */
 
-/** `### 配额账` 那一节的五语言标题（逐字，取自五份真文档）。 */
+/**
+ * 折叠块所在那一节的五语言标题（逐字，取自五份真文档）。
+ *
+ * 🔴 **v0.4.0 换了落点，不是换了口径**：从前它是 `### 配额账：Worker + 免费档 KV 能撑
+ * 多少请求` —— 那一整节讲的是免费档 KV 的读写配额，摘掉 Worker / KV 之后整节没了。
+ * 折叠块跟着搬到了 `### USAGE_FLUSH_INTERVAL_MS …` 之下（「尾巴最长 2 小时到底承诺了
+ * 什么」那四点），**它仍然是这 25 份非 README 文档里唯一一处 `<details>`**，
+ * 具名例外因此还在，只是指向另一节。
+ */
 const QUOTA_SECTION_HEADING: Record<Lang, string> = {
-  "zh-CN": "### 配额账：Worker + 免费档 KV 能撑多少请求",
-  "zh-TW": "### 配額帳：Worker + 免費方案 KV 能撐多少請求",
-  en: "### Quota budget: how many requests a Worker on the free KV tier can serve",
-  ja: "### クォータの見積もり: Worker + 無料枠 KV で 1 日に何リクエストさばけるか",
-  ko: "### 할당량 계산: Worker + 무료 등급 KV로 하루 몇 건을 처리할 수 있나",
+  "zh-CN": "### `USAGE_FLUSH_INTERVAL_MS`：能买回什么，买不回什么",
+  "zh-TW": "### `USAGE_FLUSH_INTERVAL_MS`：能買回什麼，買不回什麼",
+  en: "### `USAGE_FLUSH_INTERVAL_MS`: what you can buy back, and what stays",
+  ja: "### `USAGE_FLUSH_INTERVAL_MS`: 何を買い戻せて、何は買い戻せないか",
+  ko: "### `USAGE_FLUSH_INTERVAL_MS`: 무엇을 되살 수 있고 무엇은 남는가",
 };
 
 /**
- * **`<details>` 的偏离名册（射程铁律的具名例外，配额账那一处）。**
+ * **`<details>` 的偏离名册（射程铁律的具名例外，折叠块那一处）。**
  *
  * 双向：名册之外出现 `<details>` ⇒ 红（射程铁律被破）；名册之内没有 ⇒ 也红
  * （具名例外被人顺手删掉，而「不拆 QUOTA.md」那条裁定的前提就没了）。
@@ -10622,7 +9869,7 @@ const QUOTA_SECTION_HEADING: Record<Lang, string> = {
 const DETAILS_ALLOWLIST: readonly string[] =
   LANGS.map((lang) => join("docs", lang, "DEPLOY.md"));
 
-/** 一份文档里 `### 配额账` 那一节的正文行（含标题行），到下一个 `###`/`##` 为止。 */
+/** 一份文档里折叠块所在那一节的正文行（含标题行），到下一个 `###`/`##` 为止。 */
 function quotaSection(lang: Lang, src: string): string[] {
   const lines = src.split("\n");
   const at = lines.findIndex((l) => l === QUOTA_SECTION_HEADING[lang]);
@@ -10673,20 +9920,25 @@ const detailsTags = (src: string): { open: number; close: number; summary: numbe
   return { open, close, summary };
 };
 
-/** 配额账那一节的 text-run 上限。**这个数是规格给的验收值，不是量出来的**。 */
+/** 折叠块那一节的 text-run 上限。**这个数是规格给的验收值，不是量出来的**。 */
 const QUOTA_MAX_RUN = 1500;
 
-describe("`### 配额账` 的折叠与分层（`<details>` 是射程铁律的具名例外）", () => {
+describe("折叠块那一节：`<details>` 是射程铁律的具名例外", () => {
   const realDeploy = (lang: Lang): string => readFileSync(docPath(".", lang, "DEPLOY"), "utf8");
 
-  it("射程自守：五份 DEPLOY 都定位得到那一节，且那一节确实是全仓最大的一块散文", () => {
+  // 🔴 **「那一节确实是全仓最大的一块散文」（>200 行）那半条 v0.4.0 删掉了**：
+  // 它成立的前提是那一节就是配额账那 283 行，而那一节整个没了。今天折叠块住在
+  // `### USAGE_FLUSH_INTERVAL_MS …` 之下，只有几十行 —— 拿旧下限去量它是拿一个失效
+  // 的前提当判据。**射程自守那一半没删**：定位器切出空文本会让整组在空气上全绿，
+  // 那条风险与节多长无关。
+  it("射程自守：五份 DEPLOY 都定位得到那一节，且切出来的不是空文本", () => {
     for (const lang of LANGS) {
       const sec = quotaSection(lang, realDeploy(lang));
-      expect(sec.length, `docs/${lang}/DEPLOY.md 的配额账只有 ${sec.length} 行 —— `
+      expect(sec.length, `docs/${lang}/DEPLOY.md 的折叠块那一节只有 ${sec.length} 行 —— `
         + "定位器多半在下一个 `###` 上提前收尾了，本组会在一段空文本上全绿")
-        .toBeGreaterThan(200);
-      expect(textRuns(sec).length, `docs/${lang}/DEPLOY.md 的配额账一个 text-run 都没抽到`)
         .toBeGreaterThan(20);
+      expect(textRuns(sec).length, `docs/${lang}/DEPLOY.md 的折叠块那一节一个 text-run 都没抽到`)
+        .toBeGreaterThan(5);
     }
   });
 
@@ -10699,12 +9951,12 @@ describe("`### 配额账` 的折叠与分层（`<details>` 是射程铁律的具
       withDetails,
       "非 README 文档的 `<details>` 与偏离名册对不上。\n"
       + "· 多出来 ⇒ 射程铁律（这 25 份不用折叠块）被破，要么撤掉，要么先来改名册；\n"
-      + "· 少掉 ⇒ 配额账那处**具名例外**被人顺手删了，而「不拆 QUOTA.md」那条裁定的前提"
-      + "就是「那一节可以就地折叠起来」——删掉它等于把那条裁定推翻，却一格都不红。",
+      + "· 少掉 ⇒ 那处**具名例外**被人顺手删了，而「长说明就地折叠、不另开一份文档」"
+      + "那条裁定的前提就是「那一节可以就地折叠起来」——删掉它等于把那条裁定推翻，却一格都不红。",
     ).toEqual([...DETAILS_ALLOWLIST].sort());
   });
 
-  it("名册里那 5 份各恰 1 组 `<details>`/`</details>`/`<summary>`，且折叠块落在配额账那一节里", () => {
+  it("名册里那 5 份各恰 1 组 `<details>`/`</details>`/`<summary>`，且折叠块落在那一节里", () => {
     const bad: string[] = [];
     for (const lang of LANGS) {
       const src = realDeploy(lang);
@@ -10714,21 +9966,21 @@ describe("`### 配额账` 的折叠与分层（`<details>` 是射程铁律的具
       }
       const sec = quotaSection(lang, src).join("\n");
       if (!sec.includes("<details>") || !sec.includes("</details>")) {
-        bad.push(`docs/${lang}/DEPLOY.md 的折叠块不在 \`### 配额账\` 那一节里 —— `
+        bad.push(`docs/${lang}/DEPLOY.md 的折叠块不在 \`### USAGE_FLUSH_INTERVAL_MS …\` 那一节里 —— `
           + "具名例外是给那一节的，挪到别处就是新开了一处偏离");
       }
     }
     expect(bad, bad.join("\n")).toEqual([]);
   });
 
-  it(`那一节的最长 text-run ≤ ${QUOTA_MAX_RUN} 字符（配额账那一组的验收）`, () => {
+  it(`那一节的最长 text-run ≤ ${QUOTA_MAX_RUN} 字符（折叠块那一组的验收）`, () => {
     const over: string[] = [];
     for (const lang of LANGS) {
       const sec = quotaSection(lang, realDeploy(lang));
       for (const r of textRuns(sec)) {
         const n = [...r.text].length;
         if (n > QUOTA_MAX_RUN) {
-          over.push(`docs/${lang}/DEPLOY.md 配额账第 ${r.at + 1} 行起：${n} 字符 > ${QUOTA_MAX_RUN}`
+          over.push(`docs/${lang}/DEPLOY.md 折叠块那一节第 ${r.at + 1} 行起：${n} 字符 > ${QUOTA_MAX_RUN}`
             + `\n      ${r.text.slice(0, 70)}…`);
         }
       }
@@ -10741,15 +9993,11 @@ describe("`### 配额账` 的折叠与分层（`<details>` 是射程铁律的具
     ).toEqual([]);
   });
 
-  it("那一节真的分了层：五份各 ≥5 个 `####`（只折叠不分层等于把问题藏起来）", () => {
-    for (const lang of LANGS) {
-      const sec = quotaSection(lang, realDeploy(lang));
-      const h4 = sec.filter((l) => /^#### /.test(l)).length;
-      expect(h4, `docs/${lang}/DEPLOY.md 的配额账只有 ${h4} 个 \`####\` —— `
-        + "本组要的是「折叠 + 分层」两件事，只做前一件等于把 283 行原样塞进一个折叠块")
-        .toBeGreaterThanOrEqual(5);
-    }
-  });
+  // 🔴 **「五份各 ≥5 个 `####`」那一格 v0.4.0 删掉了，理由与 >200 行同一条**：
+  // 它要的是「别把 283 行原样塞进一个折叠块」，而那 283 行已经不存在。今天折叠块里是
+  // 四点带编号的正文，套一个 `####` 下限只会逼人为凑数插标题——那正是 `docs-typography`
+  // 那条「空壳标题只会让薄标题占比变坏」判据要挡的东西。**分层这件事没有落空**：
+  // 折叠块里的四点各自带编号，最长 text-run 由上面那一格钉着。
 
   /* ── 反向控制 ───────────────────────────────────────────────────────────── */
 
@@ -10775,30 +10023,27 @@ describe("`### 配额账` 的折叠与分层（`<details>` 是射程铁律的具
     expect(withDetails, "非 README 文档多长出一个折叠块却没红").toContain(target);
   });
 
-  it("该红时红：把 en 那两段合回一段、并把提出去的那条 alert 退回散文 ⇒ 1500 那格点名 en", () => {
-    // ⚠️ 变异用的是**仓里真实存在过的形状**：这两段今天之所以是两段，正是本组拆的。
+  it("该红时红：把 en 折叠块里那四点之间的空行去掉（合成一段）⇒ 1500 那格点名 en", () => {
+    // ⚠️ **变异用的是这条判据真正要挡的那种坏法**：折叠块里那四点今天各自成段，
+    // 段与段之间的空行就是读者的视觉锚点。把空行去掉，四点合成一段连续正文 ——
+    // 内容一个字没删，可读性整段塌掉，而这正是 `textRuns` 的口径要抓的东西。
     //
-    // 🔴【后补】变异要多做一步。早先只合这两段就能顶穿 1500，因为紧跟其后的
-    // 「别拿 48 次冷读当佐证」那三行当时是**同一个 run 里的散文**；转 alert 那一笔把它判成
-    // `> [!WARNING]` 之后，`>` 起头 = run 的分界 ⇒ 只合前两段只剩 ~1.2k，这一格会
-    // 「变异落地了却打不中」——那是**假绿**，不是判据变宽松了。
-    // ⇒ 变异改成「退回拆分之前 **且** 转 alert 之前的形状」，实测 max run = 1552 > 1500。
+    // 🔴【沿革】上一版变异的是配额账里 `60 is over` 那一段前后的两处形状，
+    // 那一节随 Worker 形态一起删了 ⇒ 支点不在，变异打不中。**换支点不是放宽判据**：
+    // 阈值 1500 一个字没动，换的只是「拿哪一处真实形状去证明它咬得住」。
     const real = readFileSync(docPath(".", "en", "DEPLOY"), "utf8");
-    const ALERT_HEAD = "  picture.\n\n  > [!WARNING]\n  > ";
-    expect(real.split(ALERT_HEAD).length - 1, "变异的支点不在了 —— `60 is over` 那段后面那条 alert 换形状了")
-      .toBe(1);
-    const src = real
-      .split("**60 is over**.\n\n  So the `30d` range").join("**60 is over**.\n  So the `30d` range")
-      .split(ALERT_HEAD).join("  picture.\n  ")
-      .split("\n  > under both readings").join("\n  under both readings")
-      .split("\n  > range on the free plan").join("\n  range on the free plan");
+    const from = real.indexOf("<details>");
+    const to = real.indexOf("</details>");
+    expect(from >= 0 && to > from, "en 那份里定位不到折叠块 —— 先看上面「射程自守」那一格").toBe(true);
+    const flattened = real.slice(from, to).split("\n\n").join("\n");
+    const src = real.slice(0, from) + flattened + real.slice(to);
     expect(src, "变异没落地").not.toEqual(real);
     const over = textRuns(quotaSection("en", src)).filter((r) => [...r.text].length > QUOTA_MAX_RUN);
-    expect(over.length, "合回一段之后没有任何 run 超过 1500 —— 这一格没打中，回来换一处变异")
+    expect(over.length, "把四点之间的空行去掉之后没有任何 run 超过 1500 —— 这一格没打中，回来换一处变异")
       .toBeGreaterThan(0);
   });
 
-  it("认不出要吵：配额账的标题被改名时当场抛，不许静静地扫一段空文本", () => {
+  it("认不出要吵：折叠块那一节的标题被改名时当场抛，不许静静地扫一段空文本", () => {
     expect(() => quotaSection("zh-CN", "# 部署指南\n\n### 别的标题\n\n正文。\n"))
       .toThrow(/判据的落点变了/);
   });
@@ -10918,41 +10163,23 @@ function envFenceFailures(lang: Lang, where: string, body: readonly string[]): s
   return out;
 }
 
-describe("五份 DEPLOY.md 的 15 节骨架之下的四条验收", () => {
+describe("五份 DEPLOY.md 的 13 节骨架之下的三条验收", () => {
   const deploy = (lang: Lang): string => readFileSync(docPath(".", lang, "DEPLOY"), "utf8");
-  /** 两条部署路与三个专题节在 `DOC_SECTIONS` 里的槽位（0 基）。 */
-  const SLOT = { choose: 2, worker: 3, docker: 4, faq: 8, security: 13, footer: 14 } as const;
+  /** 那条部署路与三个专题节在 `DOC_SECTIONS` 里的槽位（0 基）。 */
+  // 🔴 **v0.4.0：`choose` / `worker` 两个槽没了，其余整体前移两位。**
+  const SLOT = { docker: 2, faq: 6, security: 11, footer: 12 } as const;
   const headingAt = (lang: Lang, slot: number): string => DOC_SECTIONS.DEPLOY[lang][slot]!;
 
-  /* ── 对仗恒等式 / §1.10 ─────────────────────────────────────────────────── */
-
-  it("§1.10 的对仗恒等式：两条部署路的 `###` 数组互相 `toEqual`（逐条同名同序）", () => {
-    for (const lang of LANGS) {
-      const src = deploy(lang);
-      const wk = h3sOf(h2Section(src, headingAt(lang, SLOT.worker)));
-      const dk = h3sOf(h2Section(src, headingAt(lang, SLOT.docker)));
-      expect(wk.length, `docs/${lang}/DEPLOY.md 的 Worker 那一节一个 \`###\` 都没有 —— 定位器坏了`)
-        .toBeGreaterThan(0);
-      expect(
-        dk,
-        `docs/${lang}/DEPLOY.md 两条部署路的 \`###\` 对不上（§1.10：对仗是恒等式，不是风格）：\n`
-        + `  Worker: ${JSON.stringify(wk)}\n  Docker: ${JSON.stringify(dk)}\n`
-        + "⇒ 两条路的步骤一旦错位，读者分不清哪一步属于哪条路。要改就两边一起改。",
-      ).toEqual(wk);
-    }
-  });
-
-  it("§1.10：`## 选哪种形态` 之下恰 1 张表，且那张表恰 3 列", () => {
-    for (const lang of LANGS) {
-      const sec = h2Section(deploy(lang), headingAt(lang, SLOT.choose));
-      const seps = sec.filter((l) => SEPARATOR_ROW.test(l));
-      expect(seps.length, `docs/${lang}/DEPLOY.md 的「选哪种形态」有 ${seps.length} 张表，规格要的是恰 1 张`)
-        .toBe(1);
-      expect(rowCells(seps[0]!.trim()).length,
-        `docs/${lang}/DEPLOY.md 的那张对比表不是 3 列 —— 规格要的是「维度 / Worker / Docker」三列`)
-        .toBe(3);
-    }
-  });
+  /* ── §1.10 那两格 v0.4.0 删掉了 ───────────────────────────────────────────
+   * · **对仗恒等式**（两条部署路的 `###` 数组互相 `toEqual`）：它守的是「两条路的步骤
+   *   不许错位」，而今天只剩一条路 —— 一个数组跟自己比恒真，留着就是一格恒绿的摆设。
+   * · **`## 选哪种形态` 之下恰 1 张 3 列表**（「维度 / Worker / Docker」）：那一整节
+   *   随双形态一起删了，`h2Section` 找不到标题会当场抛。
+   * **两格都不是「改判据去迁就文档」**：被它们守的那件事（有两条路要对仗）本身不存在了。
+   * 唯一那条路的形态没有失守：`### 前置条件/配置/部署/验证/更新` 这一串仍然由
+   * 「非 README 文档的五语言 `##` 译名常量表」那一组的 `toEqual DOC_SECTIONS` 与
+   * `docs-typography` 的「五语言标题层级序列逐位相等」两头钉着。
+   * ────────────────────────────────────────────────────────────────────────── */
 
   /* ── env 围栏 ───────────────────────────────────────────────────────────── */
 
@@ -11796,7 +11023,6 @@ async function shapeApp() {
       GATEWAY_TOKEN: "gateway-token-for-docs-parity-shape-tests",
     },
     storage,
-    nodeRuntime(),
   );
   return app;
 }
@@ -12400,12 +11626,18 @@ describe("五份 REGISTRAR.md 的两级分层与 Cron 那一节的拆分", () =>
   const realRegSrc: ApiDocReader = realDoc("REGISTRAR");
 
   /** Cron 墙钟那一节的 `###` 标题，逐语言。**不是现找的**——找不到时下面当场抛。 */
+  // 🔴 **v0.4.0：这一节从「Cloudflare Cron 触发器的墙钟上限」改名成「补池锁的有效期」。**
+  // 旧标题里那个墙钟是**平台事实**（Cron Trigger 单次调用 15 分钟），摘掉 Worker 之后没了。
+  // **那个 15 分钟没变、87% 没变**——`src/core/registrar/types.ts` 把
+  // `SCHEDULED_ROUND_WALL_CLOCK_MS` 的出处换成了「我们自己给补池锁选的 TTL」，
+  // 值与比例一个字没动，五份 REGISTRAR.md 拿这两个数向运维解释余量从哪来这件事也没变。
+  // ⇒ **改的是标题指向哪一节，不是这一组守什么。**
   const CRON_HEADING: Record<Lang, string> = {
-    "zh-CN": "### Cloudflare Cron 触发器的墙钟上限（务必读完再调参数）",
-    "zh-TW": "### Cloudflare Cron 觸發器的牆鐘上限（務必讀完再調整參數）",
-    en: "### Cloudflare Cron Trigger's wall-clock limit (read before tuning the numbers)",
-    ja: "### Cloudflare Cron トリガーの壁時計時間の上限（パラメータ調整前に必読）",
-    ko: "### Cloudflare Cron 트리거의 월클록(wall-clock) 상한(파라미터 조정 전 필독)",
+    "zh-CN": "### 补池锁的有效期，以及一轮为什么必须装得进去（务必读完再调参数）",
+    "zh-TW": "### 補池鎖的有效期，以及一輪為什麼必須裝得進去（務必讀完再調整參數）",
+    en: "### The tend lock's TTL, and why one round has to fit inside it (read before tuning the numbers)",
+    ja: "### 補充ロックの有効期限と、1 ラウンドがそこに収まらなければならない理由（パラメータ調整前に必読）",
+    ko: "### 보충 잠금의 유효 기간, 그리고 한 라운드가 왜 그 안에 들어가야 하는가(파라미터 조정 전 필독)",
   };
 
   /**
@@ -12620,13 +11852,21 @@ describe("五份 REGISTRAR.md 的那三条 `> [!IMPORTANT]`", () => {
     ko: "메일박스 채널을 바꿔도 이 구간은 피할 수 없습니다",
   };
 
-  /** 第 2 条（判型落点）里必须写着的话，逐语言。同样是逐字抄自五份真文档。 */
+  /**
+   * 第 2 条（判型落点）里必须写着的话，逐语言。同样是逐字抄自五份真文档。
+   *
+   * 🔴 **v0.4.0 换了措辞，钉的是同一件事。** 旧串是「但面板的「立即补池」**是例外**」——
+   * 那个「例外」是相对于「两种运行时」说的（定时轮按运行时分岔，按钮不分）。
+   * 只剩一种运行时之后那个对照没了，而**这条 alert 要说的事一个字没变**：
+   * 那份 70 秒预算属于这颗按钮，不属于某种运行时/形态，所以它今天写成
+   * 「那份预算属于这颗按钮，不属于某种运行时」。判型（「有例外」⇒ IMPORTANT）照旧。
+   */
   const TEND_EXCEPTION: Record<Lang, string> = {
-    "zh-CN": "但面板的「立即补池」是例外",
-    "zh-TW": "但面板的「立即補池」是例外",
-    en: 'The panel\'s "Refill now" is the exception',
-    ja: "ただしパネルの「今すぐ補充」は例外で",
-    ko: "다만 패널의 「지금 보충」은 예외로",
+    "zh-CN": "那份预算属于这颗按钮，不属于某种运行时",
+    "zh-TW": "那份預算屬於這顆按鈕，不屬於某種執行時",
+    en: "That budget belongs to the button, not to a runtime",
+    ja: "あの予算はボタンのものであって、ランタイムのものではありません",
+    ko: "그 예산은 이 버튼의 것이지 어떤 런타임의 것이 아닙니다",
   };
 
   /** 一份文档里全部 `> [!IMPORTANT]` 块的正文（不含那一行标记本身）。 */
@@ -12688,7 +11928,7 @@ describe("五份 REGISTRAR.md 的那三条 `> [!IMPORTANT]`", () => {
   it("该红时红：条数没变、但「立即补池是例外」那条被换成别的话 ⇒ 第 2 条内容锚红", () => {
     const read = readerWith(
       "zh-TW",
-      (s) => s.replace("> **但面板的「立即補池」是例外，", "> **面板的「立即補池」與定時輪一樣，"),
+      (s) => s.replace("> **那份預算屬於這顆按鈕，不屬於某種執行時。**", "> **那份預算與定時輪那份是同一份。**"),
       "REGISTRAR",
     );
     expect(alertBodies(read("zh-TW")), "条数变了 —— 这一格要证的是「条数不变而内容变了」")
@@ -12744,7 +11984,11 @@ describe("五份 REGISTRAR.md 的代码围栏", () => {
   const realRegSrc: ApiDocReader = realDoc("REGISTRAR");
 
   /** 今天的实测值，同时是**不回退下限**（只许升不许降，与 ADMIN 围栏那一条同一种形态）。 */
-  const FENCE_FLOOR = 5;
+  // 🔴 **v0.4.0：5 → 4，掉的那一段是 ```toml 那个 `wrangler.toml` 示例。**
+  // 它教读者写 `[triggers] crons = [...]`，而 `wrangler.toml` 与 Worker 形态一起删了
+  // ⇒ 那一段没有落点了。**不是「围栏写少了」，是那件要教的事不存在了**，
+  // 所以下限跟着降一格；它仍然只许升不许降。
+  const FENCE_FLOOR = 4;
 
   /** **开围栏**的语言标记序列（口径与 ADMIN 围栏那一条同源，理由见那里的注释）。 */
   const openFences = (src: string): string[] => {
@@ -12758,16 +12002,6 @@ describe("五份 REGISTRAR.md 的代码围栏", () => {
     }
     return out;
   };
-
-  /** `wrangler.toml` 里真的那一行 cron。**真源现算**，抠不出来当场抛。 */
-  function realCronLine(): string {
-    const src = readFileSync("wrangler.toml", "utf8");
-    const m = /^crons\s*=\s*(\[[^\]]*\])\s*$/m.exec(src);
-    if (m === null || m[1] === undefined) {
-      throw new Error("wrangler.toml 里抠不出 `crons = [...]` —— 真源换写法了，这一格测的是空气");
-    }
-    return `crons = ${m[1]}`;
-  }
 
   it("五份各 ≥5 段代码围栏，且带语言标注率 100%（裸 ``` 开围栏一处都不许有）", () => {
     const failures: string[] = [];
@@ -12793,21 +12027,11 @@ describe("五份 REGISTRAR.md 的代码围栏", () => {
     expect(failures[0] ?? "").toContain("zh-TW/REGISTRAR.md");
   });
 
-  it("那段 ```toml 围栏教读者写的 cron 与 `wrangler.toml` 里真的那一行逐字相同", () => {
-    const want = realCronLine();
-    // 非空锚：真源抠出来的不该是空壳，否则下面那格会平凡地全绿。
-    expect(want, "从 wrangler.toml 抠出来的 cron 行是空的").toMatch(/^crons = \[".+"\]$/);
-    expect(
-      LANGS.filter((lang) => !realRegSrc(lang).includes(want)),
-      `这些语言的 REGISTRAR.md 里没有 \`${want}\` —— 文档手抄的那一行与 wrangler.toml 漂开了`,
-    ).toEqual([]);
-  });
-
-  it("该红时红：`wrangler.toml` 的 cron 改一位而文档没跟上 ⇒ 五份一起红（证明期望值不是手写的）", () => {
-    const drifted = 'crons = ["*/15 * * * *"]';
-    expect(drifted, "变异值与今天的真值撞了 —— 这一格控制是空的").not.toBe(realCronLine());
-    expect(LANGS.filter((lang) => !realRegSrc(lang).includes(drifted))).toEqual([...LANGS]);
-  });
+  // 🔴 **「那段 ```toml 围栏教读者写的 cron 与 wrangler.toml 逐字相同」那两格 v0.4.0 删掉了。**
+  // 被咬合的两侧一起没了：`wrangler.toml` 这个文件删了，五份 REGISTRAR.md 里那段
+  // ```toml 示例也删了（补池间隔今天只有 `TEND_INTERVAL_MS` 一个来源）。
+  // **那件事本身没有落空**：「间隔由谁决定」现在钉在下面那段 ```env 上，
+  // 而 `TEND_INTERVAL_MS` 的默认值由 `.env.example` 与标识符多重集那一组两头对着。
 
   /* ── 两段 ```text 围栏的源码咬合（阶段 7C 第 1 轮评审回填）─────────────────
    * 🔴 **这两段围栏此前一个字都没被钉，而没钉的那两处恰好是错的**（评审实测）：
@@ -13365,7 +12589,7 @@ const langProbeLines = (text: string, isEnglishDoc = false): ReadonlyArray<{ no:
 };
 
 /** R15 页脚那一行是**刻意的英文**，六份 README 逐字相同 —— 拉丁散文那一条要放它过。 */
-const ENGLISH_FOOTER = "Built with TypeScript + Hono + Cloudflare Workers";
+const ENGLISH_FOOTER = "Built with TypeScript + Hono + Docker";
 
 /** 一份文档的语种体检。返回逐条人话，空数组 = 干净。 */
 function languageFaults(path: string, text: string): string[] {
@@ -14633,16 +13857,18 @@ describe("头部徽章 / logo 引用 / 页脚 `<sub>`：六份自等式 + 从 `p
   const withOne = (at: string, mutate: (s: string) => string) =>
     (p: string) => (p === at ? mutate(read(p)) : read(p));
 
-  it("射程自守：六份都取得到 7 枚静态徽章、logo 行与 `<sub>` 行", () => {
+  // 🔴 **v0.4.0：7 枚 → 6 枚。** 掉的是第 3 枚 `Cloudflare Workers-edge`：它宣称的是
+  // 「这个仓能部署到 Workers」，而 Worker 形态摘掉了 —— 徽章留着就是首屏第一眼的假话。
+  it("射程自守：六份都取得到 6 枚静态徽章、logo 行与 `<sub>` 行", () => {
     for (const p of SIX) {
       const body = read(p);
-      expect(staticBadges(body).length, `${p} 的静态徽章数不是 7`).toBe(7);
+      expect(staticBadges(body).length, `${p} 的静态徽章数不是 6`).toBe(6);
       expect(logoLine(body), `${p} 第 3 行不是 logo 引用`).toContain("<img src=");
       expect(subText(body), `${p} 里没有 \`<sub>\` 页脚行`).not.toBe("");
     }
   });
 
-  it("R8 自等式：六份的 7 枚静态徽章 URL **有序**逐字节相同", () => {
+  it("R8 自等式：六份的 6 枚静态徽章 URL **有序**逐字节相同", () => {
     const base = staticBadges(read("README.md"));
     for (const p of SIX.slice(1)) {
       expect(staticBadges(read(p)), `${p} 的徽章与根 README 不同 —— `
@@ -14650,7 +13876,7 @@ describe("头部徽章 / logo 引用 / 页脚 `<sub>`：六份自等式 + 从 `p
     }
   });
 
-  it("R8 真源锚：槽 1–3 从 `package.json` 的依赖现算（自等式挡不住「六份一起抄错」）", () => {
+  it("R8 真源锚：槽 1–2 从 `package.json` 的依赖现算（自等式挡不住「六份一起抄错」）", () => {
     const p = pkg();
     const ts = p.devDependencies?.typescript ?? "";
     const hono = p.dependencies?.hono ?? "";
@@ -14661,11 +13887,12 @@ describe("头部徽章 / logo 引用 / 页脚 `<sub>`：六份自等式 + 从 `p
       .toContain(`/badge/TypeScript-${minor(ts)}-`);
     expect(badges[1], `槽 2 应当是 Hono-${minor(hono)}（从 dependencies.hono 现算）`)
       .toContain(`/badge/Hono-${minor(hono)}-`);
-    // 槽 3 说的是「这个仓能部署到 Workers」——真源是 wrangler 这个依赖 + wrangler.toml。
-    expect(p.devDependencies?.wrangler ?? "", "`devDependencies.wrangler` 没了，"
-      + "槽 3 那枚 Cloudflare Workers 徽章就没有真源了").not.toBe("");
-    expect(existsSync("wrangler.toml"), "`wrangler.toml` 不在了，同上").toBe(true);
-    expect(badges[2]).toContain("/badge/Cloudflare%20Workers-");
+    // 🔴 **槽 3 那枚 `Cloudflare Workers-edge` 徽章 v0.4.0 删了**：它宣称的是「这个仓
+    // 能部署到 Workers」，而那条部署路摘掉了 —— 徽章留着就是首屏第一眼的假话。
+    // 这里正面钉住「它不许回来」；它的两样旧真源（`devDependencies.wrangler` /
+    // `wrangler.toml`）不属于本文件的射程，由仓根那一面处置。
+    expect(badges.join("\n"), "首屏还挂着 Cloudflare Workers 徽章，而这个仓已经不部署到 Workers 了")
+      .not.toContain("/badge/Cloudflare%20Workers-");
   });
 
   it("R15 自等式 + 真源锚：六份的 `<sub>` 逐字节相同，且技术栈名与上游名都现算得出来", () => {
@@ -14680,7 +13907,13 @@ describe("头部徽章 / logo 引用 / 页脚 `<sub>`：六份自等式 + 从 `p
     expect(base, "`<sub>` 里没提 TypeScript，而 `devDependencies.typescript` 在").toContain("TypeScript");
     expect(p.dependencies?.hono ?? "", "").not.toBe("");
     expect(base, "`<sub>` 里没提 Hono，而 `dependencies.hono` 在").toContain("Hono");
-    expect(base, "`<sub>` 里没提 Cloudflare Workers，而 `wrangler.toml` 在").toContain("Cloudflare Workers");
+    // 🔴 **v0.4.0：第三个技术栈名从 Cloudflare Workers 换成 Docker。**
+    // 真源同样换了：撑着这句话的是 `Dockerfile` 与 `docker-compose.yml`。
+    expect(existsSync("Dockerfile") && existsSync("docker-compose.yml"),
+      "`Dockerfile` / `docker-compose.yml` 不在了，`<sub>` 里那个 Docker 就没有真源了").toBe(true);
+    expect(base, "`<sub>` 里没提 Docker，而 `Dockerfile` 与 `docker-compose.yml` 都在").toContain("Docker");
+    expect(base, "`<sub>` 里还挂着 Cloudflare Workers，而这个仓已经不部署到 Workers 了")
+      .not.toContain("Cloudflare Workers");
     // 上游名从 `DEFAULTS.agnesBaseUrl` 的主机名现算 —— 换了上游，这句话必须跟着改。
     const host = new URL(DEFAULTS.agnesBaseUrl).hostname;
     const brand = (host.split(".").find((seg) => seg !== "" && seg !== "www" && seg !== "apihub") ?? "")
@@ -14727,7 +13960,7 @@ describe("头部徽章 / logo 引用 / 页脚 `<sub>`：六份自等式 + 从 `p
   it("该红时红（评审举的那条反例，规格自己举过）：ja 的 `<sub>` 抄成 kiro 的技术栈 —— 自等式与真源锚同时红", () => {
     const at = join("docs", "ja", "README.md");
     const r = withOne(at, (s) => s.replace(
-      "Built with TypeScript + Hono + Cloudflare Workers | Powered by Agnes AI",
+      "Built with TypeScript + Hono + Docker | Powered by Agnes AI",
       "Built with Rust + axum + tokio | Powered by Kiro (CodeWhisperer)"));
     expect(r(at), "变异没落地 —— `<sub>` 的字面变了，回来改这条变异").not.toEqual(read(at));
     expect(subText(r(at)), "改掉一份的 `<sub>` 之后六份居然还相等").not.toBe(subText(read("README.md")));
@@ -14917,40 +14150,55 @@ describe("五份 DEPLOY.md：缺口令那条故障排查按运行时分两段症
     return end < 0 ? rest : rest.slice(0, end + 1);
   }
 
-  /** Worker 专属症状必须说到的两件事，逐语言。**都是文档正文里的字面串。** */
-  const WORKER_SYMPTOM: Record<Lang, readonly string[]> = {
-    "zh-CN": ["部署会显示成功", "503", "wrangler tail"],
-    "zh-TW": ["部署會顯示成功", "503", "wrangler tail"],
-    en: ["the deploy reports success", "503", "wrangler tail"],
-    ja: ["デプロイは成功と表示される", "503", "wrangler tail"],
-    ko: ["배포는 성공으로 표시", "503", "wrangler tail"],
+  /**
+   * 症状必须说到的三件事，逐语言。**都是文档正文里的字面串。**
+   *
+   * 🔴 **v0.4.0：这张表从「Worker 专属症状」换成了「今天唯一那种症状」，而这不是
+   * 换个说法。** 上一版钉的是 Worker 那一半（部署显示成功 / 每请求 503 / 线索只在
+   * `wrangler tail`），那三样随入口一起没了。**留下来的是 Node 那一半**，而且它今天
+   * 是唯一一半：容器起来就退、`docker compose ps` 上看得见、日志里只有那一行。
+   * ⚠️ **那行日志逐字取自 `src/core/config.ts` 抛的那句简体中文**——它不翻译，
+   * 五份文档写的是同一个串，这也正是运维能 grep 到的那一个。
+   */
+  const SYMPTOM: Record<Lang, readonly string[]> = {
+    "zh-CN": ["一启动就退出", "docker compose ps", "缺少 GATEWAY_TOKEN"],
+    "zh-TW": ["一啟動就退出", "docker compose ps", "缺少 GATEWAY_TOKEN"],
+    en: ["exits right after startup", "docker compose ps", "缺少 GATEWAY_TOKEN"],
+    ja: ["起動直後に終了", "docker compose ps", "缺少 GATEWAY_TOKEN"],
+    ko: ["기동 직후 종료", "docker compose ps", "缺少 GATEWAY_TOKEN"],
   };
 
-  /** 「一启动就退出」那种把两种运行时合并说的旧措辞，逐语言。 */
-  const MERGED_CLAIM: Record<Lang, readonly string[]> = {
-    "zh-CN": ["容器或 Worker 一启动就退出"],
-    "zh-TW": ["容器或 Worker 一啟動就退出"],
-    en: ["The container or the Worker exits right after startup"],
-    ja: ["コンテナまたは Worker が起動直後に終了"],
-    ko: ["컨테이너나 Worker가 기동 직후 종료"],
+  /**
+   * 「半死不活」那一档必须被明确否掉，逐语言。
+   *
+   * **它替下了上一版那条「不许把两种运行时合并成『一启动就退出』」**：那条挡的是
+   * 「Worker 上也会退出」这句假话，而 Worker 没了之后那句话本身不可能再出现。
+   * 今天真正该挡的是反向的一种误读——「起不来 = 每个请求回 503」。五份都必须写明
+   * **没有那一档**：网关宁可拒绝装配，所以不用谁去打端点就看得见。
+   */
+  const NO_HALF_ALIVE: Record<Lang, string> = {
+    "zh-CN": "这里没有「半死不活」这一档",
+    "zh-TW": "這裡沒有「半死不活」這一檔",
+    en: "There is no\nhalf-working state here",
+    ja: "中途半端な状態はここには\nありません",
+    ko: "어중간한 상태는 여기\n없습니다",
   };
 
-  it("五份都写了 Worker 专属症状段：部署成功 + 503 + 线索在 wrangler tail", () => {
+  it("五份都写了今天唯一那种症状：容器起来就退 + docker compose ps 看得见 + 日志里那一行", () => {
     const missing = LANGS.flatMap((l) => {
       const body = entry(l);
-      return WORKER_SYMPTOM[l].filter((w) => !body.includes(w)).map((w) => `docs/${l}/DEPLOY.md 缺「${w}」`);
+      return SYMPTOM[l].filter((w) => !body.includes(w)).map((w) => `docs/${l}/DEPLOY.md 缺「${w}」`);
     });
-    expect(missing, `Worker 那一半的症状没写全：\n${missing.join("\n")}\n`
+    expect(missing, `症状没写全：\n${missing.join("\n")}\n`
       + "⇒ 症状对不上的人不会点进这一条，唯一的救命步骤就白写了").toEqual([]);
   });
 
-  it("五份都不再把两种运行时合并成「一启动就退出」——那句话对 Worker 是假的", () => {
-    const bad = LANGS.flatMap((l) => {
-      const src = readDeploy(l);
-      return MERGED_CLAIM[l].filter((w) => src.includes(w)).map((w) => `docs/${l}/DEPLOY.md 仍有「${w}」`);
-    });
-    expect(bad, `旧措辞回来了：\n${bad.join("\n")}\n`
-      + "⇒ Worker 上装配失败不会「退出」，它会部署成功然后每个请求回 503").toEqual([]);
+  it("五份都明确否掉「半死不活」那一档：网关拒绝装配，不是每个请求回 503", () => {
+    const bad = LANGS.filter((l) => !entry(l).includes(NO_HALF_ALIVE[l]))
+      .map((l) => `docs/${l}/DEPLOY.md 缺「${NO_HALF_ALIVE[l].replace(/\n/g, " ")}」`);
+    expect(bad, `这一档没被否掉：\n${bad.join("\n")}\n`
+      + "⇒ 不写明的话，「起不来」最容易被读成「起来了但每个请求都 503」，"
+      + "而那种读法会把人引去查转发链路，真因却在 `.env` 的一行上").toEqual([]);
   });
 
   /**
@@ -15002,7 +14250,7 @@ describe("五份 DEPLOY.md：缺口令那条故障排查按运行时分两段症
     const bad = LANGS.flatMap((l) => {
       const { steps, warning } = split(l);
       return [
-        steps.includes("wrangler secret put GATEWAY_TOKEN") ? [] : [`docs/${l}/DEPLOY.md 步骤区里没有那两步`],
+        steps.includes("docker compose up -d") ? [] : [`docs/${l}/DEPLOY.md 步骤区里没有那两步`],
         warning.startsWith(WARN_MARK) ? [] : [`docs/${l}/DEPLOY.md 警示区没从告警块起头`],
       ].flat();
     });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { WORKER_CRON_WALL_CLOCK_MS, WORKER_ROUND_BUDGET_MS } from "../../../src/core/registrar/types.js";
+import { SCHEDULED_ROUND_WALL_CLOCK_MS, SCHEDULED_ROUND_BUDGET_MS } from "../../../src/core/registrar/types.js";
 import {
   registrarFromEnv, requireChannel, migrateStoredRegistrar,
 } from "../../../src/core/registrar/config.js";
@@ -339,11 +339,15 @@ describe("registrarFromEnv", () => {
     expect(logger.has("registrar.interval_shorter_than_worst_round")).toBe(false);
   });
 
-  it("轮级预算告警①：CODE_TIMEOUT_MS 超过 Worker 轮级预算时启动期记 registrar.attempt_exceeds_worker_budget（否则是永久静默停摆）", () => {
-    // CODE_TIMEOUT_MS 无上界，而 Worker 的轮级预算是固定值。超过之后 tendOnce 连
-    // 第一次尝试都不敢开始：attempted=0、minted=0、failures=[]，两个入口的归因日志
+  it("轮级预算告警①：CODE_TIMEOUT_MS 超过轮级预算时启动期记 registrar.attempt_exceeds_worker_budget（否则是永久静默停摆）", () => {
+    // CODE_TIMEOUT_MS 无上界，而轮级预算是固定值。超过之后 tendOnce 连
+    // 第一次尝试都不敢开始：attempted=0、minted=0、failures=[]，归因日志
     // 走的是 `minted < attempted`（0<0 为假）一条都不打——用户只看到「本轮预算不足」，
     // 读起来像瞬时状况，实际每一轮都零产出。
+    //
+    // ⚠️ **事件名里那个 `worker` 是 v0.4.0 之后的已知残留，不是这一格写错了**：
+    // 它是五语言 REGISTRAR.md 逐字给运维的 grep 锚点，改名必须源码与五份文档
+    // 同一次改完。全文与建议的新名记在 `src/core/registrar/config.ts` 那条 warn 上方。
     const logger = recordingLogger();
     // 800s > 780s 预算。TEND_INTERVAL_MS 给得足够大，避免上面那条重叠告警混进来。
     registrarFromEnv(
@@ -353,8 +357,17 @@ describe("registrarFromEnv", () => {
     const e = logger.entries.find((x) => x.event === "registrar.attempt_exceeds_worker_budget");
     expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
     expect(e?.fields?.worstAttemptMs).toBe(800000);
-    // 必须点明形态差异，否则 Node 用户会以为自己也中招。
-    expect(e?.msg).toContain("Node/Docker");
+    // ⚠️ **这一条断言换过一次，前提没了、判据换了**（v0.4.0）：原来断的是
+    // `e?.msg` 里必须出现「Node/Docker」——旧文案要点明「定时轮只有 Worker 受限、
+    // Node 不受限，而手动补池两边都受限」这个形态差异。**摘掉 Worker 形态之后，
+    // 那句话的两半都不成立了**：传 `roundBudgetMs` 的 `scheduled()` 入口没了，
+    // 而手动那一轮把等码超时压到 60 秒、从来不会因为这个值铸不出来
+    //（全文在 `src/core/registrar/config.ts` 那条告警上方）。
+    // 判据因此改成钉**今天真实的处置与后果**：动哪个旋钮 + 后果是并发开跑。
+    expect(e?.msg, "这条 warn 没告诉运维该动哪个旋钮").toContain("CODE_TIMEOUT_MS");
+    expect(e?.msg, "没说清真正的后果是「锁过期 ⇒ 并发开跑」").toContain("并发");
+    // 事实字段也一并钉住：光有文案、数字对不上的话，运维算不出该调到多少。
+    expect(e?.fields?.roundBudgetMs).toBe(780_000);
   });
 
   it("轮级预算告警②：400s 不告警（400s < 780s 预算，与①成对）", () => {
@@ -533,7 +546,7 @@ describe("五语言文档对轮级预算的表述必须有条件、且与代码�
   it("文档写的 87% 与代码里的预算/墙钟比例一致（改了常量就得改文档）", () => {
     // 五语言都拿 87% 这个数向用户解释余量从哪来。它是从两个常量算出来的，
     // 只调常量不改文档就会对不上——这条把它们钉在一起。
-    const pct = Math.round((WORKER_ROUND_BUDGET_MS / WORKER_CRON_WALL_CLOCK_MS) * 100);
+    const pct = Math.round((SCHEDULED_ROUND_BUDGET_MS / SCHEDULED_ROUND_WALL_CLOCK_MS) * 100);
     expect(pct).toBe(87);
     for (const { lang } of LANGS) {
       expect(readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8"), `${lang} 没写 ${pct}%`)
@@ -542,7 +555,7 @@ describe("五语言文档对轮级预算的表述必须有条件、且与代码�
     // 只钉比例是不够的：按比例同改两个常量（例如 1560000/1800000）pct 仍是 87、
     // 全绿，而文档里「约 120 秒余量」会变成 240 秒且无人发觉。余量的**绝对值**才是
     // 五语言拿来解释「尾巴由谁吸收」的那个数，一并钉住。
-    const marginMs = WORKER_CRON_WALL_CLOCK_MS - WORKER_ROUND_BUDGET_MS;
+    const marginMs = SCHEDULED_ROUND_WALL_CLOCK_MS - SCHEDULED_ROUND_BUDGET_MS;
     expect(marginMs).toBe(120_000);
     for (const { lang } of LANGS) {
       expect(readFileSync(`docs/${lang}/REGISTRAR.md`, "utf8"), `${lang} 没写 ${marginMs / 1000} 秒余量`)
@@ -571,7 +584,11 @@ describe("五语言文档对轮级预算的表述必须有条件、且与代码�
     const e = logger.entries.find((x) => x.event === EVENT);
     expect(e, `实际事件：${JSON.stringify(logger.events())}`).toBeDefined();
     // 启动期**不能**用 error：那会与「缺凭据启动即报错、网关起不来」混为一谈，
-    // 而这里刻意选了不阻止启动（Node 侧同一份配置完全合法）。
+    // 而这里刻意选了不阻止启动。
+    // ⚠️ **括号里原来写的是「Node 侧同一份配置完全合法」，那半句在 v0.4.0 变假了**
+    //（只剩一种运行时，这份配置在哪儿都铸不出 key）。**结论没变**，理由换成：
+    // 这是一份起得来、只是永远零产出的配置，让网关整个起不来是过度处置，
+    // 而且这个值面板上改得动，运维看到 warn 就能自己调回去。
     expect(e?.level).toBe("warn");
     expect(logger.entries.some((x) => x.level === "error")).toBe(false);
     for (const { lang } of LANGS) {

@@ -181,7 +181,7 @@ const ENV_LOCK_MAP: Readonly<Record<string, string>> = {
   // ── 注册机（`registrarFromEnv` 直接读的 12 个）────────────────────────────
   REGISTRAR_ENABLED: "registrar.enabled",
   REGISTRAR_CHANNEL: "registrar.channel",
-  // **兼容别名**：公开仓已发过 tag，别人的 compose / wrangler 里躺着这个名字。
+  // **兼容别名**：公开仓已发过 tag，别人的 compose / `.env` 里躺着这个名字。
   // 它与上面那个映到**同一个字段路径**，理由见本表上方那段 ⚠️。
   REGISTRAR_PRIMARY: "registrar.channel",
   // ⚠️ **`REGISTRAR_FALLBACK` 刻意不在这张表里。** 它已经不锁任何字段，留着就是让
@@ -227,7 +227,7 @@ const ENV_OF_FIELD: Readonly<Record<string, readonly string[]>> = (() => {
  * 这个字段今天**该报哪个环境变量名**。
  *
  * 判据是「env 里实际存在的那一个」，不是「正式名字是哪个」：运维要拿这个名字去
- * 自己的 compose / wrangler 里找那一行。都不存在时报第一个候选（正式名），
+ * 自己的 compose / `.env` 里找那一行。都不存在时报第一个候选（正式名），
  * 那一档只出现在「没被锁」的场合，报什么都不会误导人。
  */
 export function envNameForField(
@@ -327,7 +327,7 @@ export function num(
     if (!isIntAtLeast(stored, min)) {
       // **存储的非法值改为字段级降级**（设计文档 §5.4 第 2 条）。
       // 抛错的后果是 Node 侧 process.exit(1) 进入重启循环，而且**没有面板可以进去改回来**；
-      // Worker 侧则是全部转发流量挂掉。一次误操作把网关砖掉是不可接受的。
+      // 一次误操作把网关砖掉是不可接受的。
       logger.log({
         level: "warn", event: "config.invalid",
         msg: "存储中的配置值非法，本字段回落到默认值",
@@ -522,7 +522,7 @@ export async function loadConfigWithProvenance(
   // 唯一保留 fatal 的一条：没有口令就无法鉴权，继续跑比停下来更危险。
   // **message 逐字不动**：`src/entry/node.ts` 的 `main().catch` 打的就是它，
   // 五语言 DEPLOY.md 的故障排查条目引的也是这句原文。换的只有类——
-  // `ConfigRefusal` 让 `src/entry/worker.ts` 分得开「运维配错」与「代码 bug」。
+  // `ConfigRefusal` 让调用方分得开「运维配错」与「代码 bug」（见 `./config-errors.ts`）。
   if (!gatewayToken) throw new ConfigRefusal("缺少 GATEWAY_TOKEN，网关无法启动");
 
   // 字段级降级也要计入 degraded：`num()` 与注册机的 `posInt()` 走 config.invalid

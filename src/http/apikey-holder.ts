@@ -36,14 +36,17 @@ export interface ApiKeyHolder {
  * ——池子每次转发都可能改 cooldown / strikes，而这张表只有人点面板才变。
  *
  * 读的算式（体例同五份 DEPLOY.md 的配额账）：
- *   有客户端用子密钥时，每个活跃 isolate 每天 = 86400 ÷ (本 TTL 的秒数) × 1
- *   默认 300 秒 ⇒ **288 次/isolate/天**；3 个活跃 isolate = 864 次/天（读配额 0.86%），
+ *   有客户端用子密钥时，每个活跃副本 每天 = 86400 ÷ (本 TTL 的秒数) × 1
+ *   默认 300 秒 ⇒ **288 次/副本/天**；3 个活跃副本 = 864 次/天（读配额 0.86%），
  *   8 个 = 2,304 次/天（2.30%）。
  *   **一把子密钥都没发过、或全部客户端都用主口令时：0 次/天**（见文件头）。
  *
- * **用户可见的总生效上界 = 本 TTL(5 分钟) + KV 边缘缓存默认 60 秒 ≈ 6 分钟**
- *（`KV_EDGE_CACHE_MS`，那个数已核实，见 `config-holder.ts`）。
- * ⇒ **「在面板上停用了一把密钥，它最多还能再用约 6 分钟」**——这是安全相关的，
+ * **用户可见的总生效上界 = 本 TTL，就是 5 分钟**，中间不再有任何一层缓存。
+ * ⚠️ **上一版这里写的是「本 TTL(5 分钟) + KV 边缘缓存默认 60 秒 ≈ 6 分钟」，
+ * 那笔欠账已经结清，别再照那句话读**：那 60 秒是 Cloudflare KV 边缘缓存的默认
+ * `cacheTtl`，KV 这一层随 Worker 形态一起没了（`FileStorage.get` 直接 `readFile`），
+ * v0.4.0 已经把那一整层从常量、公开响应体、面板文案与五语言文档里删干净。
+ * ⇒ **「在面板上停用了一把密钥，它最多还能再用约 5 分钟」**——这是安全相关的，
  * 面板文案、ADMIN.md、DEPLOY.md 三处都要写这个具体数字，不许写「稍后生效」。
  * 想更快就调小 `APIKEY_CACHE_TTL_MS`，代价是上面那本读账等量放大，**两头都要写**。
  */
@@ -66,7 +69,7 @@ export function resolveApiKeyCacheTtl(raw: string | undefined): number {
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 0) {
     // **`ConfigRefusal` 而不是裸 `Error`**，理由与 `resolveUsageFlushInterval`
-    // 那一处逐字相同：运维配错要落进 Worker 入口的 503 那一支，不是 500。
+    // 那一处逐字相同（那边写着全文）：运维配错与代码 bug 必须分得开。
     throw new ConfigRefusal(`环境变量 APIKEY_CACHE_TTL_MS 必须是不小于 0 的整数: ${raw}`);
   }
   return n;

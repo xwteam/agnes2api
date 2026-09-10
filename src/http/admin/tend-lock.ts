@@ -1,28 +1,30 @@
 import type { Storage } from "../../ports/storage.js";
-import { WORKER_CRON_WALL_CLOCK_MS } from "../../core/registrar/types.js";
+import { SCHEDULED_ROUND_WALL_CLOCK_MS } from "../../core/registrar/types.js";
 
 /**
- * 补池的**两把重入锁**。一把在进程/isolate 内，一把跨副本，**作用域不同、不是冗余**。
+ * 补池的**两把重入锁**。一把在进程内，一把跨副本，**作用域不同、不是冗余**。
  *
  * ── 为什么是两把（这一段是本文件存在的全部理由，别删掉其中一把）─────────────
  *
  * | | `createTendGate()` | `acquireTendLock()` |
  * |---|---|---|
  * | 落在哪 | 一个进程内的布尔变量 | 存储里的 `registrar_tend_lock` 键 |
- * | 挡什么 | **同一个进程/isolate 内**的重入（Node 的定时轮 × 面板按钮、同一个 isolate 上两个并发请求） | **跨副本 / 跨 isolate** 的重叠（多容器共卷、Worker 的 `scheduled()` 与 `fetch()` 是两个 isolate） |
- * | 挡不住什么 | 另一个副本（它有自己的那个布尔） | 纳秒级竞态（KV 最终一致，`get` 与 `put` 之间有真实窗口） |
+ * | 挡什么 | **同一个进程内**的重入（定时轮 × 面板按钮、同一个进程上两个并发请求） | **跨副本**的重叠（多容器共卷同一个 `DATA_DIR`） |
+ * | 挡不住什么 | 另一个副本（它有自己的那个布尔） | 纳秒级竞态（`get` 与 `put` 之间有真实窗口） |
  *
- * 删掉进程内那把 ⇒ 同一个 isolate 上两个并发请求在存储锁的 `get`→`put` 窗口里**双双
- * 抢到**；删掉存储那把 ⇒ 多副本部署下形同虚设（Node 侧此前**只有**进程内那把，
- * 这正是设计 §10.2 第 1 条点名要补的洞）。两条用例各钉一把，见
- * `tests/contract/manual-tend.test.ts` 的
+ * 删掉进程内那把 ⇒ 同一个进程上两个并发请求在存储锁的 `get`→`put` 窗口里**双双
+ * 抢到**；删掉存储那把 ⇒ 多副本部署下形同虚设（这正是设计 §10.2 第 1 条点名要补的洞）。
+ * 两条用例各钉一把，见 `tests/contract/manual-tend.test.ts` 的
  * 「同一个副本上两个并发请求：只有一个真跑（进程内守卫，存储锁在这里拦不住）」与
  * 「上一轮（Cron）还持着锁时，手动点击拿到 409 locked 且执行体一次都不跑」。
  *
- * ⚠️ **诚实限定，不许被改写成「并发已解决」。** KV 是最终一致的，存储锁是**尽力而为、
- * 不是互斥原语**；它挡的是「上一轮明明还在跑」这种最常见的重叠，不是纳秒级竞态。
- * 同一个限定在 `src/entry/worker.ts` 的 Cron 路径上从第一天就写着，本文件只是把它
- * 抽出来给两种运行时共用。
+ * ⚠️ **诚实限定，不许被改写成「并发已解决」。** 存储锁是**尽力而为、不是互斥原语**：
+ * `acquireTendLock` 是「读 → 判 → 写」三步，中间跨着 await 点，两个容器可以双双读到
+ * 空锁再双双写回。**这条限定的理由换过一次，结论没变**：原来的理由是「KV 是最终
+ * 一致的」，v0.4.0 摘掉 Worker/KV 形态之后换成 `FileStorage` 的形态——它的写队列
+ * 只串行化**本进程**的读改写（见 `src/adapters/storage-file.ts` 的并发说明），
+ * 跨容器时两个进程各读一份 `store.json`、各整文件写回。
+ * 它挡的是「上一轮明明还在跑」这种最常见的重叠，不是纳秒级竞态。
  *
  * ── ⚠️ 它为什么住在 `src/http/admin/`：**一条约定，不是一道门禁**───────────────
  *
@@ -45,49 +47,49 @@ import { WORKER_CRON_WALL_CLOCK_MS } from "../../core/registrar/types.js";
  *
  * ⇒ **本文件今天违反了那条约定**：`TEND_LOCK_KEY` / 两份 `TEND_LOCK_TTL_*` /
  * `narrowTendLock()` 三样按约定该住 `src/core/admin/`，只有 `acquire`/`release`
- * 该留在这里。**没拆是范围取舍，不是有什么东西拦着**——拆开要动两个入口 + wire + handler
- * 的 import，而本任务是本期风险最高的一个。**拆分成本很低，随时可以做，
- * 而且做完之后本段可以整个删掉。**
+ * 该留在这里。**没拆是范围取舍，不是有什么东西拦着**——拆开要动入口 + wire + handler
+ * 的 import。**拆分成本很低，随时可以做，而且做完之后本段可以整个删掉。**
  */
 
 /** 补池轮次的重入锁，落在与 key 池同一个存储命名空间里（不新增依赖）。 */
 export const TEND_LOCK_KEY = "registrar_tend_lock";
 
 /**
- * **定时（Cron）轮**的锁有效期。取 Cloudflare Cron Trigger 单次调用的墙钟上限
- *（15 分钟）：超过它，上一轮要么已经结束、要么已经被平台中止，锁不该再拦住新的一轮
- * ——否则一次被中止的调用会让补池永久停摆。
+ * **定时轮**的锁有效期，取 `SCHEDULED_ROUND_WALL_CLOCK_MS`（15 分钟）。
  *
- * ⚠️ **只给 `scheduled()` 那条路用。** 手动那条路走 `TEND_LOCK_TTL_MANUAL_MS`，
+ * ⚠️ **那个数原来是「Cloudflare Cron Trigger 单次调用的墙钟上限」，v0.4.0 之后
+ * 不是了**（Node 的定时轮没有任何平台会来砍它）。它今天的两条依据写在那个常量上：
+ * 上界是「必须明显短于 `TEND_INTERVAL_MS`，硬杀之后最多跳过一轮」，
+ * 下界是「必须盖得住一轮的真实最坏耗时」。锁到期不代表上一轮真的结束了，
+ * 只代表**再拦下去的代价已经大于放行的代价**。
+ *
+ * ⚠️ **只给定时轮那条路用。** 手动那条路走 `TEND_LOCK_TTL_MANUAL_MS`，
  * 两者混用过一次，代价见那一段。
  *
  * ⚠️ **这把键写的时候不传 `expiresAt`**：有界性靠「单一固定键、数量恒为 1」，
  * 陈旧值无害——读侧是 `until > now` 的**值比较**，过期的锁不拦任何人。
  */
-export const TEND_LOCK_TTL_CRON_MS = WORKER_CRON_WALL_CLOCK_MS;
-
-/**
- * Cloudflare KV 边缘读的陈旧窗口。**平台默认值，不是我们的取舍。**
- *
- * `src/adapters/storage-kv.ts` 走的是裸 `kv.get(key, "json")`、没有传 `cacheTtl`，
- * 于是另一个 colo 读到的锁最多可能陈旧这么久。**任何一份锁 TTL 都必须大于它**，
- * 否则一把还活着的锁会被别的副本读成空的，两轮同时开跑——那正是这把锁存在的全部理由。
- */
-export const KV_READ_STALENESS_MS = 60_000;
+export const TEND_LOCK_TTL_SCHEDULED_MS = SCHEDULED_ROUND_WALL_CLOCK_MS;
 
 /**
  * **手动补池专用的锁有效期。**
  *
- * 🔴 与 Cron 那份分开、且**照轮次的真实墙钟定，不照载体定**。取 180 秒的两头夹：
+ * 🔴 与定时轮那份分开、且**照轮次的真实墙钟定，不照载体定**。取 180 秒的两头夹：
  *
- * - **下界①**：手动一轮的真实最坏 ≈ 60 秒（`MANUAL_CODE_TIMEOUT_MS` 等码）
+ * - **下界**：手动一轮的真实最坏 ≈ 60 秒（`MANUAL_CODE_TIMEOUT_MS` 等码）
  *   ＋ 注册链上约 5 个 `REGISTRAR_REQUEST_TIMEOUT_MS` = 15 秒的请求尾巴
  *  （发码 / 轮询 / 注册 / 登录 / 建 key）≈ **135 秒**。锁必须盖得住它，否则
  *   `releaseTendLock` 那个**无条件** `storage.delete` 会去删掉别人刚抢到的锁。
- * - **下界②**：必须大于 `KV_READ_STALENESS_MS`（60 秒），理由见那一段。
- * - **上界**：手动冷却是 600 秒、Cron 间隔 1800 秒。取 180 秒 ⇒ 一次被中断的点击
- *   最多挡住补池 3 分钟，撞上 Cron 的概率 180/1800 = 10%，撞上也只跳一轮
- *  （对比出事时那份 15 分钟：**必然**挡掉至少一轮 Cron）。
+ * - **上界**：手动冷却是 600 秒、定时轮间隔 1800 秒。取 180 秒 ⇒ 一次被中断的点击
+ *   最多挡住补池 3 分钟，撞上定时轮的概率 180/1800 = 10%，撞上也只跳一轮
+ *  （对比出事时那份 15 分钟：**必然**挡掉至少一轮）。
+ *
+ * ⚠️ **这里原来还有一条「下界②：必须大于 `KV_READ_STALENESS_MS`（60 秒）」，
+ * 连同那个常量一起在 v0.4.0 删掉了。** 那 60 秒是 Cloudflare KV 边缘读的陈旧窗口
+ * ——「另一个 colo 读到的锁最多陈旧这么久」。`FileStorage` 没有这一层：`get` 直接
+ * `readFile`，多容器共卷时看到的是同一份 `store.json`，陈旧窗口是文件系统级的、
+ * 不是分钟级的。**删掉它之后 180 秒仍然合格**，因为它由上面那条下界（≈135 秒）
+ * 独立地定着，不是靠那 60 秒撑起来的。
  */
 export const TEND_LOCK_TTL_MANUAL_MS = 180_000;
 
@@ -123,18 +125,19 @@ export async function acquireTendLock(
 
 /**
  * 释放锁。**调用方必须放在 `finally` 里**——放在 `try` 的末尾时，一次抛错的补池会
- * 让锁留到自然过期（Cron 轮最长 15 分钟、手动轮最长 3 分钟）才肯放下一轮进来，
+ * 让锁留到自然过期（定时轮最长 15 分钟、手动轮最长 3 分钟）才肯放下一轮进来，
  * 也就是一次失败换来一段停摆。
  *
- * ⚠️ **`finally` 挡不住平台级的中止**：执行上下文被销毁时它一行都不跑。那正是手动
- * 那份 TTL 必须短于冷却的理由——`finally` 失效时，短 TTL 是最后一道兜底。
+ * ⚠️ **`finally` 挡不住进程被硬杀**：`SIGKILL` / OOM kill / 容器重建时它一行都不跑
+ *（`SIGTERM` 那一档 Node 会跑完当前微任务，但没有任何保证）。那正是两份 TTL 都必须
+ * 有限、且手动那份必须短于冷却的理由——`finally` 失效时，TTL 是最后一道兜底。
  */
 export async function releaseTendLock(storage: Storage): Promise<void> {
   await storage.delete(TEND_LOCK_KEY);
 }
 
 /**
- * 进程 / isolate 内的在途守卫。
+ * 进程内的在途守卫。
  *
  * **同步获取**是它的关键性质：`tryEnter()` 里没有任何 `await`，所以两个并发调用之间
  * 不存在检查与占用之间的窗口。写成「先问 `busy()` 再 `run()`」就把那个窗口造回来了

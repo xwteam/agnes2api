@@ -263,7 +263,7 @@ describe("R20/P1 alert 的语义位置：头部恰 4 块、系统要求节末恰
 
 /* ── R20/P2 —— `<details>` 的位置与数量 ───────────────────────────────────
  * 非 README 那一半（恰 5 处 + 五条路径白名单）在 `tests/unit/docs-parity.test.ts` 的
- * 「`### 配额账` 的折叠与分层」组里跑着（`DETAILS_ALLOWLIST` 双向钉死），
+ * 「折叠块那一节：`<details>` 是射程铁律的具名例外」组里跑着（`DETAILS_ALLOWLIST` 双向钉死），
  * 本组只补 README 这一半。
  * ────────────────────────────────────────────────────────────────────────── */
 
@@ -726,28 +726,32 @@ describe("R25a–e emoji 标题按文档类分档（两端都查）", () => {
  * 留 10% 余量是给正常的精简留路，掉出 10% 就该有人来说明为什么。
  * **口径**：`wc -l`，即换行符个数（与基线文件第 16 项逐字同口径）。
  */
+// 🔴 **v0.4.0：五份 `DEPLOY.md` 的下限重量了一遍**（其余 35 份一个字没动）。
+// 原因是 Worker 形态那三节（选哪种形态 / Worker 部署 / 免费档 KV 配额账）整段退场，
+// 五份各掉 300~600 行 —— **是那些内容不再存在，不是把长句删短**。
+// 新值仍按同一口径算：**当日实测行数的 90%（向下取整）**，`wc -l` 计法不变。
 const VOLUME_FLOOR: Readonly<Record<string, number>> = {
   // 仓根 5 份
   "CHANGELOG.md": 43, "CONTRIBUTING.md": 207, "README.md": 554,
   "SECURITY.md": 112, "SPONSORS.md": 27,
   // docs/en
-  "docs/en/ADMIN.md": 534, "docs/en/API.md": 1184, "docs/en/DEPLOY.md": 1355,
+  "docs/en/ADMIN.md": 534, "docs/en/API.md": 1184, "docs/en/DEPLOY.md": 1084,
   "docs/en/README.md": 452, "docs/en/REGISTRAR.md": 392, "docs/en/SPONSORS.md": 27,
   "docs/en/USAGE.md": 360,
   // docs/ja
-  "docs/ja/ADMIN.md": 527, "docs/ja/API.md": 1184, "docs/ja/DEPLOY.md": 1332,
+  "docs/ja/ADMIN.md": 527, "docs/ja/API.md": 1184, "docs/ja/DEPLOY.md": 1077,
   "docs/ja/README.md": 452, "docs/ja/REGISTRAR.md": 392, "docs/ja/SPONSORS.md": 27,
   "docs/ja/USAGE.md": 308,
   // docs/ko
-  "docs/ko/ADMIN.md": 520, "docs/ko/API.md": 1184, "docs/ko/DEPLOY.md": 1306,
+  "docs/ko/ADMIN.md": 520, "docs/ko/API.md": 1184, "docs/ko/DEPLOY.md": 1061,
   "docs/ko/README.md": 451, "docs/ko/REGISTRAR.md": 382, "docs/ko/SPONSORS.md": 27,
   "docs/ko/USAGE.md": 308,
   // docs/zh-CN
-  "docs/zh-CN/ADMIN.md": 452, "docs/zh-CN/API.md": 1184, "docs/zh-CN/DEPLOY.md": 1140,
+  "docs/zh-CN/ADMIN.md": 452, "docs/zh-CN/API.md": 1184, "docs/zh-CN/DEPLOY.md": 934,
   "docs/zh-CN/README.md": 450, "docs/zh-CN/REGISTRAR.md": 336, "docs/zh-CN/SPONSORS.md": 27,
   "docs/zh-CN/USAGE.md": 308,
   // docs/zh-TW
-  "docs/zh-TW/ADMIN.md": 452, "docs/zh-TW/API.md": 1184, "docs/zh-TW/DEPLOY.md": 1143,
+  "docs/zh-TW/ADMIN.md": 452, "docs/zh-TW/API.md": 1184, "docs/zh-TW/DEPLOY.md": 934,
   "docs/zh-TW/README.md": 450, "docs/zh-TW/REGISTRAR.md": 336, "docs/zh-TW/SPONSORS.md": 27,
   "docs/zh-TW/USAGE.md": 308,
 };
@@ -781,8 +785,12 @@ describe("R28 排版基线不回退（那 16 个指标里，能进仓的那几�
     const src = readFileSync(".env.example", "utf8");
     const lines = src.split("\n").length - 1;
     const comments = src.split("\n").filter((l) => l.startsWith("#")).length;
-    expect([lines >= 197, comments >= 139], `.env.example 现在 ${lines} 行 / ${comments} 条注释行，`
-      + "登记的下限是 197 / 139 —— 这一条是 agnes 刻意超出模板的部分（K 17/13、G 54/15），"
+    // 🔴 **v0.4.0：197/139 → 185/130。** 掉的那一段是「key 池的读写配额（Cloudflare
+    // Worker + KV 免费档才需要关心）」那一大块注释与 `USAGE_FLUSH_INTERVAL_MS` 的 KV
+    // 下限分支 —— **那些话的前提没了，不是有人把注释删短了**。新值同样按当日实测的
+    // 90%（向下取整）算，口径与体量下限那一格相同。
+    expect([lines >= 185, comments >= 130], `.env.example 现在 ${lines} 行 / ${comments} 条注释行，`
+      + "登记的下限是 185 / 130 —— 这一条是 agnes 刻意超出模板的部分（K 17/13、G 54/15），"
       + "只能守住不回退，不能拿模板当目标").toEqual([true, true]);
   });
 
@@ -941,7 +949,11 @@ const intervalsOf = (docs: readonly Doc[]): readonly Interval[] => {
  * 绝对数不行 —— 想让它降只能真的把长段切开。
  * 登记在偏离名册第 21 条，**降到 0 那天这个常量与那条登记一起删**。
  */
-const R23A_OVERLONG_RATCHET = 66;
+// 🔴 **v0.4.0：66 → 47。** 掉的 19 个区间全在五份 DEPLOY.md 的配额账里
+// （那一节整段是 bullet 洪流，每份贡献三四个 >1200 的区间），整节随免费档 KV 配额删掉。
+// **不是「靠删内容达标」**：下面那条体量下限盯着删了多少行，而这次是整节退场
+// 不是把长句删短。棘轮语义没变——只许降不许升。
+const R23A_OVERLONG_RATCHET = 47;
 /** R23'A 的长度线。 */
 const R23A_LIMIT = 1200;
 /** R23'B 的薄标题线与占比上限（出处见上面那段逐字裁定）。 */
@@ -1243,7 +1255,12 @@ const RISK_WORDS: ReadonlyArray<readonly [concept: string, cells: Readonly<Recor
   }],
   ["未经核实（诚实限定）", {
     "zh-CN": { words: ["未经核实"], reserve: true }, "zh-TW": { words: ["未經核實"], reserve: true },
-    en: { words: ["unverified"] }, ja: { words: ["未検証"] }, ko: { words: ["검증되지 않"] },
+    // 🔴 **v0.4.0：en 那格从 `unverified` 换成 `not verified`。** 上一版那个词今天在
+    // 40 份出货文档里一次都不命中 —— 它唯一的落点是五份 DEPLOY.md 里
+    // 「`0x80–0xFF` 这一段我们只在 Node 上验过，Cloudflare Workers 侧未验」那句括注，
+    // 而 Worker 侧不存在了，那半句一起删。en 今天在用的说法是 `not verified`
+    //（`docs/en/API.md` 三处上游事实限定），换成它才是「这门语言真的在用的说法」。
+    en: { words: ["not verified"] }, ja: { words: ["未検証"] }, ko: { words: ["검증되지 않"] },
   }],
   ["数据丢失", {
     "zh-CN": { words: ["数据丢失"] }, "zh-TW": { words: ["資料遺失"] },
@@ -1286,8 +1303,11 @@ const P5_OUTSIDE_ALERT: ReadonlyArray<readonly [path: string, no: number, why: s
   //    973 → 1009、956 → 993。照上面那条做法核对过：两处的原文仍逐字相同（`sed -n '1009p'`
   //    打出来的还是 `(we have only verified this on Node; … is unverified)` 那一句），
   //    只是又被往下推了一次。
-  [join("docs", "en", "DEPLOY.md"), 1009, "长段中间的括注：`(we have only verified this on Node; … is unverified)`"],
-  [join("docs", "ja", "DEPLOY.md"), 993, "同上，ja 那一份的对应括注"],
+  // 🔴 **v0.4.0：这两条登记删掉了 —— 照这一格自己的双向语义办。**
+  // 它们登记的是 en/ja 两份 DEPLOY.md 里那句括注
+  //「`0x80–0xFF` 这一段我们只在 Node 上验过，Cloudflare Workers 侧未验」。
+  // Worker 侧不存在了，那半句一起删 ⇒ 那两行今天不再命中词表 ⇒ 登记过期，该删而不是留着守空气
+  //（与上面那条 `docs/ko/ADMIN.md:429` 被判成过期后删掉是同一件事）。
 ];
 
 describe("R20/P5 风险语义句必须住在 alert 块里（内容锚定的下限，不可灌水）", () => {

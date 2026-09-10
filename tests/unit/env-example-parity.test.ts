@@ -127,7 +127,7 @@ const EXTRA_ENV = ["DATA_DIR"];
  * 「`RUNTIME_ONLY_ENV` 里的每个变量也在 `.env.example` 里」。
  *
  * · `ADMIN_TOKEN` —— `src/http/wire.ts` 交给 `src/http/admin/router.ts`；只从环境变量读。
- * · `PORT` —— `src/entry/node.ts` 的监听端口，Worker 形态用不到。
+ * · `PORT` —— `src/entry/node.ts` 的监听端口。
  * · `RESET_CONFIG` —— `src/core/config-provenance.ts` 的逃生口，置 1 时忽略存储里的 config 键。
  * · `TRUST_PROXY` —— `src/http/wire.ts` 交给 `src/http/client-ip.ts` 决定信不信转发头。
  * · `USAGE_FLUSH_INTERVAL_MS` —— `src/http/wire.ts` 交给 `src/http/usage-sink.ts` 的落盘间隔。
@@ -145,7 +145,7 @@ const RUNTIME_ONLY_ENV = [
  * **已弃用的环境变量名：`src/` 仍然读它们，而 `.env.example` 里刻意不再声明。**
  *
  * 两条纪律各自成立，别把它们合成一条：
- * · **仍然读** —— 公开仓已经发过 tag，别人的 compose / wrangler 里躺着这两个名字。
+ * · **仍然读** —— 公开仓已经发过 tag，别人的 compose 与 `.env` 里躺着这两个名字。
  *   直接不读 = 一台跑得好好的部署升级后静默变成「没选通道」，而面板会说一个假原因。
  * · **不再声明** —— `.env.example` 是教陌生人的那份文件，它不该教一个已弃用的名字。
  *
@@ -158,19 +158,17 @@ const RUNTIME_ONLY_ENV = [
  */
 const DEPRECATED_ENV = ["REGISTRAR_PRIMARY", "REGISTRAR_FALLBACK"];
 
-/**
- * `env` 上的名字里**根本不是环境变量**的那些：Cloudflare 的绑定。
- *
- * · `POOL` —— KV namespace 绑定，由 `wrangler.toml` 的 `[[kv_namespaces]]` 注入到
- *   Worker 的 `env` 上。**写进 `.env.example` 反而是误导**（Docker 形态设它什么也不会
- *   发生），所以它进的是这张表而不是上面两张。下面「wrangler.toml 里声明过」那一格
- *   不让这张表长出一个 `wrangler.toml` 里查不到的名字。
- */
-const WORKER_BINDINGS = ["POOL"];
+// 🔴 **`WORKER_BINDINGS`（唯一一项是 `POOL`）v0.4.0 删掉了。**
+// 它登记的是「`env` 上那个名字根本不是环境变量，而是平台注入的 KV 绑定」——
+// 绑定、那份平台编排文件、读它的那个运行时入口三样一起没了
+// ⇒ `src/` 里再没有任何一处 `env.POOL`，
+// 这张豁免表因此没有豁免对象。**下面那格「WORKER_BINDINGS 里的每个名字都在
+// wrangler.toml 里声明成 binding」跟着删**：它读的文件不存在了。
+// ⚠️ **豁免不是消失了，是变成不需要**：真有人再往 `src/` 里写 `env.POOL`，
+// 「src/ 里读到的每个环境变量都得有个去处」那一格会当场点名它。
 
 /**
- * `.env.example` 该有的全部名字。绑定不在其中，理由见 `WORKER_BINDINGS`；
- * 已弃用的那几个也不在，理由见 `DEPRECATED_ENV`。
+ * `.env.example` 该有的全部名字。已弃用的那几个不在其中，理由见 `DEPRECATED_ENV`。
  */
 const expectedInEnvExample = (): string[] => [
   ...envLockNames().filter((n) => !DEPRECATED_ENV.includes(n)),
@@ -295,7 +293,7 @@ describe(".env.example 与真源对齐", () => {
    * 这一格逼作者表态——进 `ENV_LOCK_MAP`（配置字段），还是进上面那两张手写表之一。
    */
   it("src/ 里读到的每个环境变量都得有个去处 —— 要么在锁定表里，要么在手写的那几张表里点名", () => {
-    const known = new Set([...expectedInEnvExample(), ...WORKER_BINDINGS, ...DEPRECATED_ENV]);
+    const known = new Set([...expectedInEnvExample(), ...DEPRECATED_ENV]);
     expect(
       envNamesReadInSrc().filter((k) => !known.has(k)),
       "src/ 里读了这些环境变量，而它们既不在 ENV_LOCK_MAP 里、也没在本文件的手写表里点名。"
@@ -329,13 +327,6 @@ describe(".env.example 与真源对齐", () => {
     ).toEqual([]);
   });
 
-  it("WORKER_BINDINGS 里的每个名字都在 wrangler.toml 里声明成 binding", () => {
-    const toml = readFileSync("wrangler.toml", "utf8");
-    expect(
-      WORKER_BINDINGS.filter((k) => !new RegExp(String.raw`^\s*binding\s*=\s*"${k}"`, "m").test(toml)),
-      "这些名字被当成 Cloudflare 绑定豁免掉了，而 wrangler.toml 里并没有这么一条绑定 ⇒ 豁免的理由不成立",
-    ).toEqual([]);
-  });
 });
 
 /**

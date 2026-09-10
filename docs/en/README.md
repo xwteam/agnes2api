@@ -4,16 +4,15 @@
 
 <h1>agnes2api</h1>
 <h3>Multi-protocol AI relay · Agnes backend</h3>
-<p>One codebase that speaks all four mainstream AI SDK dialects — OpenAI / Anthropic / OpenAI-Responses / Gemini — backed by Agnes AI for chat plus image and video generation, with the Cloudflare Worker and Node runtimes sharing a single forwarding core and a one-command Docker deployment.</p>
+<p>One codebase that speaks all four mainstream AI SDK dialects — OpenAI / Anthropic / OpenAI-Responses / Gemini — backed by Agnes AI for chat plus image and video generation, with a one-command Docker deployment.</p>
 
 <p>
   <img src="https://img.shields.io/badge/TypeScript-7.0-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/Hono-4.13-E36002?style=flat-square&logo=hono&logoColor=white" alt="Hono">
-  <img src="https://img.shields.io/badge/Cloudflare%20Workers-edge-F38020?style=flat-square&logo=cloudflareworkers&logoColor=white" alt="Cloudflare Workers">
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.3.1-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.4.0-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -61,11 +60,11 @@
 
 | Date | What changed |
 |------|--------------|
+| 2026-09-10 | v0.4.0 - ✂️ **Cloudflare Worker support removed** (breaking): Docker only. The registrar could not mint keys on Workers, and `waitUntil` silently kills long rounds |
 | 2026-09-10 | v0.3.1 - 🔍 **Audit close-out**: 36 findings, 20 confirmed adversarially, all fixed. Two critical: a stale guarantee in SECURITY.md, and `/v1/responses` streaming crashing the SDK |
 | 2026-09-10 | v0.3.0 - 🚀 **User-facing overhaul** (breaking): model catalog 4 → 12, the panel finally has breakpoints, credentials can be revealed and copied, per-model connectivity test |
 | 2026-09-09 | v0.2.2 - 🐛 **Manual refill actually works** (breaking): it returned 202, then Cloudflare silently killed the round and leaked the lock 15 min. Now returns 200 with the outcome |
 | 2026-09-09 | v0.2.1 - 🧾 **Post-release cleanup**: v0.2.0's audit fixes landed after the tag, so nobody could get them. LICENSE back to plain MIT, plus 26 stale /health samples |
-| 2026-09-09 | v0.2.0 - 🔧 **Registrar overhaul** (breaking): the two mailbox channels become **pick one**; refilling backs off on upstream rate limits and remembers blocked domains |
 
 > The full changelog lives in [CHANGELOG.md](../../CHANGELOG.md).
 
@@ -97,11 +96,11 @@
 - **Automatic refill is off by default**: turn on `REGISTRAR_ENABLED` and the gateway registers Agnes accounts to top the pool back up whenever usable keys fall below `TARGET_KEYS`
 - The registrar's two temporary-mailbox channels (`yyds` / `moemail`) are **strictly equal peers**; you pick one of the two, the choice is yours, and no default preference is baked in
 
-### 🔀 Two runtimes, one forwarding core
+### 🔀 Storage decoupled from traffic
 
-- The same TypeScript code runs on **Cloudflare Worker** (key pool in KV) and on **Node / Docker** (key pool in a single JSON file), and the request-handling logic is identical to the letter
-- Storage access is decoupled from traffic: the key pool is cached per isolate/process and updates that touch only telemetry fields are dropped outright, so in steady state neither storage reads nor writes grow with request volume
-- On the Worker the refill schedule runs on a Cron trigger and on Node it runs on an in-process timer, with the same refill semantics on both sides
+- All state lands in one single-file JSON store (`store.json`): the key pool, the panel configuration, the outbound key table and the event ring all live on the same mounted volume
+- Storage access is decoupled from traffic: the key pool is cached per process and updates that touch only telemetry fields are dropped outright, so in steady state neither storage reads nor writes grow with request volume
+- Refilling and `pool:index` reconciliation share one in-process timer (`TEND_INTERVAL_MS`); reconciliation keeps running even with the registrar off
 
 ### 🖥 Web admin panel
 
@@ -114,9 +113,9 @@
 
 ### ⚡ High-performance architecture
 
-- Built on **TypeScript + Hono**, with the Worker entry and the Node entry sharing one routing tree
+- Built on **TypeScript + Hono**, with one routing tree carrying the four protocols, the media endpoints and the `/admin` subtree
 - Upstream responses are forwarded as streams by default; a non-streaming request goes upstream with `stream:false` as-is, and the gateway parses that upstream JSON and translates it into the shape of the protocol you called
-- Ports are separated from adapters (storage, fetch, logging and mailbox are all replaceable ports), and the contract tests run once on each runtime
+- Ports are separated from adapters (storage, fetch, logging and mailbox are all replaceable ports), and the contract tests drive the real assembled routing tree
 - Multi-stage Docker build, non-root runtime, multi-architecture images (amd64 / arm64), health check
 
 ---
@@ -128,10 +127,10 @@
 | Node.js | 22.13+ | Only needed to build from source or to run under Node directly; a Docker deployment needs no local install |
 | Docker | 20.10+ | The recommended way to deploy; the official image is multi-architecture |
 | Agnes account | — | At least one valid Agnes API key (or let the registrar refill the pool for you) |
-| Cloudflare account | wrangler 4+ | Only for the Cloudflare Worker form: one KV namespace plus one deploy |
+| Mounted volume | — | The container mounts `./data` at `/app/data`; all state lands there, so back it up before upgrading |
 
 > [!TIP]
-> Deploying with Docker needs no local Node.js install — Docker plus a valid Agnes API key is enough. Deploying to a Cloudflare Worker needs no server at all, only a Cloudflare account and the wrangler command line.
+> Deploying with Docker needs no local Node.js install — Docker plus a valid Agnes API key is enough.
 
 ---
 
@@ -139,35 +138,13 @@
 
 > 📖 Full deployment guide: [DEPLOY.md](DEPLOY.md)
 
-> **Prerequisites**: at least one valid Agnes API key, plus either a Cloudflare account (Worker form) or a machine that can run Docker.
+> **Prerequisites**: at least one valid Agnes API key, plus a machine that can run Docker.
 
 ### 1. Get an upstream key
 
 Create an API key on the Agnes AI platform and keep it handy. If you would rather not prepare one by hand, bring the gateway up first and then turn on the registrar so it refills the pool for you — both routes are written out in full in the deployment guide.
 
 ### 2. Deploy
-
-#### Cloudflare Worker
-
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xwteam/agnes2api)
-
-The one-click flow saves you the local clone, but there are two things it cannot do for you: the KV namespace id in `wrangler.toml` (the one in the repository is always a placeholder) and the `GATEWAY_TOKEN` secret — miss either and the gateway will not start. To walk every step yourself, or to fill those two in after deploying, use the commands below:
-
-```bash
-git clone https://github.com/xwteam/agnes2api.git
-cd agnes2api
-pnpm install
-
-# Create a KV namespace and put the returned id into wrangler.toml
-npx wrangler kv namespace create POOL
-
-# The gateway token is a mandatory secret; inject it, never commit it
-npx wrangler secret put GATEWAY_TOKEN
-
-npx wrangler deploy
-```
-
-#### Docker
 
 ```bash
 # Clone the project
@@ -208,9 +185,9 @@ docker compose logs -f
 ### 3. Verify
 
 ```bash
-# Health check (unauthenticated). On the Worker use your https://<name>.<sub>.workers.dev
+# Health check (unauthenticated). Swap in your own address if you put a domain in front
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.3.1"}
+# {"status":"ok","version": "0.4.0"}
 
 # List the available models
 curl http://localhost:8080/v1/models \
@@ -236,7 +213,7 @@ Text coming back from the AI means the deployment succeeded. A 401 means the API
 > - `x-goog-api-key: <token>` (what the Google GenAI SDK sends by default)
 > - the `?key=<token>` query parameter (manual calls and browser scenarios)
 >
-> Replace `http://localhost:8080` below with wherever you actually deployed (the Worker's `*.workers.dev` domain, a custom domain, or the local address of a Docker deployment), and replace `your-gateway-token` with your real gateway token.
+> Replace `http://localhost:8080` below with wherever you actually deployed (the local address, or a domain you put in front), and replace `your-gateway-token` with your real gateway token.
 
 <details>
 <summary><b>OpenAI SDK (Python)</b></summary>
@@ -406,7 +383,7 @@ The task runs asynchronously upstream; the gateway only forwards and polls, and 
 |------|--------|-------|
 | GET | `/health` | Liveness (unauthenticated; returns the version and storage health) |
 
-> The `localhost:8080` in these URLs is only an example: on Node the port comes from `PORT`, on the Worker it is your own `*.workers.dev` or custom domain — substitute whatever you deployed.
+> The `localhost:8080` in these URLs is only an example: the port comes from `PORT`, and a reverse proxy or domain in front replaces the host — substitute whatever you deployed.
 >
 > The auth gate accepts four credential channels: `Authorization: Bearer`, `x-api-key`, `x-goog-api-key` and the `?key=` query parameter. Each vendor's native header and parameter are **accepted just the same**, so official SDKs connect by changing nothing but the base URL; what you do change is the **value** — whatever travels in any channel must be *this gateway's* token, not a real vendor key.
 
@@ -421,21 +398,21 @@ Precedence: **environment variable > configuration in storage > built-in default
 | `GATEWAY_TOKEN` | ✅ | — | Gateway token; clients use it to call this gateway, and the gateway refuses to start without it |
 | `ADMIN_TOKEN` | ❌ | — | Admin panel token; unset means the whole `/admin` tree is never registered, and if set it must differ from the gateway token and be at least 24 characters |
 | `AGNES_BASE_URL` | ❌ | `https://apihub.agnes-ai.com/v1` | Agnes upstream base URL |
-| `PORT` | ❌ | `8080` | Listening port on Node (unused on the Worker) |
-| `DATA_DIR` | ❌ | `/app/data` | Directory the file storage writes to (unused on the Worker) |
+| `PORT` | ❌ | `8080` | Listening port inside the container; compose publishes the same number on the host |
+| `DATA_DIR` | ❌ | `/app/data` | Directory the file storage writes to; welded to the compose volume mount |
 | `UPSTREAM_TIMEOUT_MS` | ❌ | `8000` | Upstream time-to-first-byte budget for streaming responses and video polling (milliseconds) |
 | `UPSTREAM_SYNC_TIMEOUT_MS` | ❌ | `120000` | Overall timeout budget for synchronous endpoints (milliseconds) |
 | `MAX_STRIKES` | ❌ | `3` | Transient-failure ceiling; reaching it sends the key into a long cooldown |
-| `POOL_CACHE_TTL_MS` | ❌ | `60000` | How long a key-pool snapshot lives inside one isolate/process (milliseconds) |
+| `POOL_CACHE_TTL_MS` | ❌ | `60000` | How long a key-pool snapshot lives inside one process (milliseconds) |
 | `REGISTRAR_ENABLED` | ❌ | `false` | Registrar master switch; once on, usable keys below the target trigger an automatic refill |
-| `TRUST_PROXY` | ❌ | — | Set it to 1 to trust forwarding headers; you should when running behind Cloudflare |
+| `TRUST_PROXY` | ❌ | — | Set it to 1 to trust forwarding headers; only when the container really sits behind a proxy or CDN |
 | `USAGE_STATS_ENABLED` | ❌ | `false` | Time series for the panel's usage section; off by default, and costs nothing while off |
 
-**Cloudflare Worker settings do not go through `.env`**: non-sensitive entries live in the `[vars]` block of `wrangler.toml`, sensitive values are injected as secrets, and the KV namespace and the refill Cron are declared in that same file.
+**After editing `.env`, run `docker compose up -d`, not `docker compose restart`**: a container's environment is frozen at creation time, so restarting the same container re-reads nothing.
 
 ```bash
-npx wrangler secret put GATEWAY_TOKEN
-npx wrangler secret put ADMIN_TOKEN
+docker compose up -d      # recreate the container so the new config takes effect
+docker compose logs -f    # read the startup log to confirm it took
 ```
 
 ---
@@ -448,7 +425,7 @@ npx wrangler secret put ADMIN_TOKEN
 
 3. **Key pool self-healing**: an upstream `429`/`402` cools the key down, and consecutive transient failures put it into a long cooldown (`COOLDOWN_STRIKE_MS`, 30 minutes by default) once they hit `MAX_STRIKES`, recovered automatically on expiry; **permanent eviction only happens on an upstream `401`/`403`**. When no usable key is left it returns `503` with a distinguishable reason; the synchronous path returns `504` for the case where the whole budget was spent and no key ever answered.
 
-4. **Cloudflare's free KV quota**: the daily read count depends only on the refresh interval and the number of active isolates, not on request volume — but the defaults already sit close to the line at the recommended settings. Work through the "quota budget" in the deployment guide before going live, and raise `POOL_CACHE_TTL_MS` if you need to.
+4. **The data directory is all of the state**: the key pool, the panel configuration and every issued outbound key live in `./data/store.json` — one copy, no second one, and **in plain text**. Run `cp -a ./data ./data.bak` before upgrading, and treat that directory as credential material.
 
 5. **Network access**: the deployment side needs to reach the Agnes upstream (`AGNES_BASE_URL`). With the registrar enabled it also needs to reach the temporary mailbox service you chose and the Agnes platform backend.
 
@@ -461,12 +438,12 @@ npx wrangler secret put ADMIN_TOKEN
 - [x] Streaming (SSE) and non-streaming behave alike across all four protocols
 - [x] Image generation forwarding and two-step video generation forwarding
 - [x] Key pool: checkout, tiered cooldown, permanent eviction, distinguishable exhaustion reasons
-- [x] Two runtimes: Cloudflare Worker (KV) and Node / Docker (file storage) from one codebase
+- [x] Single-file JSON storage: key pool, config, outbound key table and event ring on one mounted volume
 - [x] Registrar: two temporary-mailbox channels as equal peers, fully automatic from code retrieval to pool insertion
 - [x] Nine-section web admin panel (no build step, off by default)
 - [x] Admin API authentication: fail-closed, token in the request header only
 - [x] Documentation in five languages and a panel in five languages
-- [x] Thirteen CI gates plus contract tests on both runtimes
+- [x] Thirteen CI gates plus contract tests
 - [ ] Check the protocol catalogue against real upstream samples (every entry in today's upstream fact table is marked assumed)
 - [ ] Publish the first public container image
 
@@ -493,7 +470,7 @@ Please read [CONTRIBUTING.md](../../CONTRIBUTING.md) before sending code. For a 
 
 ## 🙏 Acknowledgments
 
-Thanks to everyone willing to spend time trying this out. Bug reproductions, logs, compatibility reports and feature ideas are all welcome in [Issues](https://github.com/xwteam/agnes2api/issues) — this is the first release, and the key pool, the registrar, the dual runtime, the multi-protocol compatibility and the web panel are all still waiting for real-world scenarios to sharpen them.
+Thanks to everyone willing to spend time trying this out. Bug reproductions, logs, compatibility reports and feature ideas are all welcome in [Issues](https://github.com/xwteam/agnes2api/issues) — this is the first release, and the key pool, the registrar, the multi-protocol compatibility and the web panel are all still waiting for real-world scenarios to sharpen them.
 
 ---
 
@@ -509,5 +486,5 @@ This project is not affiliated with Agnes AI. It comes with no warranty and no s
 ---
 
 <div align="center">
-  <sub>Built with TypeScript + Hono + Cloudflare Workers | Powered by Agnes AI</sub>
+  <sub>Built with TypeScript + Hono + Docker | Powered by Agnes AI</sub>
 </div>

@@ -14,7 +14,6 @@ import { t } from "../../admin-ui/js/i18n.js";
 import { buildApp } from "../../src/http/wire.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import { TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
-import { workerRuntime } from "../../src/adapters/runtime-worker.js";
 
 /**
  * 注册机板块的取值决策（`admin-ui/js/pure/registrar.mjs`）。
@@ -693,7 +692,7 @@ describe("缺陷复现：列域名端点回 200 但凭据无效", () => {
       seen.push(`${init?.method ?? "GET"} ${String(url)}`);
       return upstream(url, init);
     });
-    const { app } = await buildApp(ENV, new MemoryStorage(), workerRuntime());
+    const { app } = await buildApp(ENV, new MemoryStorage());
     const res = await app.request(
       "/admin/api/registrar/channels/yyds/test",
       { method: "POST", headers: { "x-admin-key": TEST_ADMIN_TOKEN } },
@@ -867,7 +866,7 @@ describe("缺陷复现：列域名端点回 200，正文却读不出来", () => 
     };
     vi.stubGlobal("fetch", upstream);
 
-    const { app } = await buildApp(ENV, new MemoryStorage(), workerRuntime());
+    const { app } = await buildApp(ENV, new MemoryStorage());
     const res = await app.request(
       "/admin/api/registrar/channels/yyds/test",
       { method: "POST", headers: { "x-admin-key": TEST_ADMIN_TOKEN } },
@@ -933,7 +932,7 @@ describe("缺陷复现：列域名端点回 200，正文却读不出来", () => 
       vi.stubGlobal("fetch", async () => new Response("<html><body>gateway error page</body></html>", {
         status: 200, headers: { "content-type": "text/html" },
       }));
-      const { app } = await buildApp(ENV, new MemoryStorage(), workerRuntime());
+      const { app } = await buildApp(ENV, new MemoryStorage());
       const res = await app.request(
         "/admin/api/registrar/channels/yyds/test",
         { method: "POST", headers: { "x-admin-key": TEST_ADMIN_TOKEN } },
@@ -994,13 +993,13 @@ describe("缺陷复现：读自己的配置就失败了，一次上游请求都�
     });
 
     const storage = new MemoryStorage();
-    const { app } = await buildApp(ENV, storage, workerRuntime());
+    const { app } = await buildApp(ENV, storage);
     // **装配之后才布雷**：装配自己也读存储，提前布雷会让 app 根本建不起来，
     // 那测的就是另一件事了。
     const realGet = storage.get.bind(storage);
     let armed = false;
     storage.get = async <T>(key: string): Promise<T | null> => {
-      if (armed) throw new Error("KV 读超时");
+      if (armed) throw new Error("存储读超时");
       return realGet<T>(key);
     };
     armed = true;

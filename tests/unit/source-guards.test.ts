@@ -241,9 +241,14 @@ describe("硬约束：src/core 零 IO", () => {
  * **注册机装载器不许再抛。**
  *
  * 这条约束的来历是一次真机事故：注册机开着却缺 `MOEMAIL_API_KEY`，`registrarFromEnv`
- * 抛错 ⇒ `buildApp` 抛 ⇒ 在 Cloudflare Worker 上**部署"成功"、81 次探测 60 次 500**
- *（`/health` 也在内），而真原因只落在 `console.error` 里，要 `wrangler tail` 才看得见。
- * 注册机是**可选子系统**：它缺凭据不该让转发、`/health`、面板一起死。
+ * 抛错 ⇒ `buildApp` 抛 ⇒ 在当时的 Cloudflare Worker 形态上**部署"成功"、81 次探测
+ * 60 次 500**（`/health` 也在内），而真原因只落在 `console.error` 里。
+ *
+ * ⚠️ **那个形态在 v0.4.0 摘掉了，这条约束不但没松，后果还更硬**：
+ * 今天同一个抛错的落点是 `src/entry/node.ts` 的 `main().catch` ⇒ `process.exit(1)`
+ * ⇒ **容器起不来**。比起「部署成功但每个请求 500」，起不来至少是响的；
+ * 但代价一样不可接受——注册机是**可选子系统**，它缺一格凭据不该让转发、`/health`、
+ * 面板一起没有。
  *
  * ⇒ 装载器改成产出 `blockers`，本目录下**模块级零 `throw`**。
  *
@@ -396,7 +401,7 @@ describe("硬约束：src/core/registrar 一格存储都不碰", () => {
   it("反向自检：检测器真的认得出一处 import（否则上面那格空转也是绿的）", () => {
     // 上面那格全绿也可能是因为**判据一个都匹配不上**（正则写错、walkTs 扫了空目录）。
     expect(importsStorage('import type { Storage } from "../../ports/storage.js";')).toBe(true);
-    expect(importsStorage('import { KvStorage } from "../../adapters/storage-kv.js";')).toBe(false);
+    expect(importsStorage('import { SomeStorage } from "../../adapters/storage-else.js";')).toBe(false);
     // 注释里提到不算数——这个仓库的注释极其爱复述代码。
     expect(importsStorage('// 读写在 wire.ts，本文件不 import "../../ports/storage.js"')).toBe(false);
   });
@@ -411,19 +416,22 @@ describe("硬约束：src/core/registrar 一格存储都不碰", () => {
 /**
  * **凡是「消息里点名了某个环境变量」的 `throw`，一律得是 `ConfigRefusal`。**
  *
- * 这条门禁的来历是一次评审打脸，形态与本文件开头那次一模一样：
- * `src/entry/worker.ts` 的 catch 靠 `err instanceof ConfigRefusal` 把「运维配错」
- *（`503` + `reason:"not_configured"`）与「代码 bug」（不透明 `500`）分成两档。
- * 那一轮把 `resolveUsageFlushInterval()` 的**第一处** throw 换成了 `ConfigRefusal`，
- * **同一个函数里的第二处原样留着裸 `Error`**——而 `src/http/wire.ts` 无条件调它、
- * Worker 的 `quotaModel === "kv"` ⇒ `wrangler.toml [vars]` 里一句
- * `USAGE_FLUSH_INTERVAL_MS=300000` 就走得到，且它是纯运维笔误。
- * 于是运维得到的是「网关内部错误」的 500，被支去查一份根本没问题的代码。
+ * 这条门禁的来历是一次评审打脸，形态与本文件开头那次一模一样：当时的 Worker 入口
+ * 靠 `err instanceof ConfigRefusal` 把「运维配错」（`503` + `reason:"not_configured"`）
+ * 与「代码 bug」（不透明 `500`）分成两档。那一轮把 `resolveUsageFlushInterval()` 的
+ * **第一处** throw 换成了 `ConfigRefusal`，**同一个函数里的第二处原样留着裸 `Error`**，
+ * 而那一处是纯运维笔误走得到的路径 ⇒ 运维得到的是「网关内部错误」的 500，
+ * 被支去查一份根本没问题的代码。
  *
- * **漏的那一处当时写在两份自述里都说已经改完了**——
- * `tests/unit/entry-worker.test.ts`「非 ConfigRefusal 的装配异常仍然回不透明的 500（那是代码 bug，不是运维配错）」
- * 那格的注释、以及 `CHANGELOG.md` 的 Changed 段——一格判据都没红，因为当时
+ * **漏的那一处当时写在两份自述里都说已经改完了**（当时那份 `entry-worker` 单测
+ * 那格的注释、以及 `CHANGELOG.md` 的 Changed 段），却一格判据都没红——因为
  * 「都改完了」这件事**只写在注释里，没有任何机器守着**。这一格就是那个机器。
+ *
+ * ⚠️ **来历里那个入口在 v0.4.0 删了，这条门禁没有跟着失去意义**：分档的消费者
+ * 换成了 `src/http/admin/` 那几条端点与 `loadConfigWithProvenance` 的字段级降级，
+ * 而「一条运维配错被当成代码 bug 报出去」这个后果一个字没变。
+ * 那一处引发本门禁的抛点本身**已经在 v0.4.0 连同它的闸一起删掉了**，
+ * 逐条交代见下面 `OPS_THROW_SITES` 上方。
  *
  * ── 为什么判据是「消息里点名了环境变量」，而不是「扫 `buildApp` 的调用树」 ────
  * 后者是评审给的建议，落地时**换了个更钉得住的射程**，理由具体：
@@ -517,20 +525,28 @@ const OPS_THROW_SKIP: readonly string[] = ["src/ui/assets.generated.ts"];
  * 清单变长 = 有人新加了一处运维配错抛点，**评审必须显式看见它，并确认它是
  * `ConfigRefusal`**；清单变短 = 有人删了一处 fail-closed，同样要被看见。
  *
- * 六处的来历（同一个文件出现两次就写两行，行内不写行号——行号会漂）：
+ * 五处的来历（同一个文件出现两次就写两行，行内不写行号——行号会漂）：
  * · `src/core/config.ts` × 1：`configFromEnv` 那句「缺 `GATEWAY_TOKEN` 就抛」；
  * · `src/core/config-provenance.ts` × 2：`num()` 的 env 侧非法值、以及带溯源那份
  *   装载器里同一句「缺 `GATEWAY_TOKEN` 就抛」；
  * · `src/http/apikey-holder.ts` × 1：`APIKEY_CACHE_TTL_MS` 非法；
- * · `src/http/usage-sink.ts` × 2：`USAGE_FLUSH_INTERVAL_MS` 非整数、以及**有写配额
- *   时间隔太小**那一处——**第二处正是这一格的来历**，它曾经是裸 `Error`。
+ * · `src/http/usage-sink.ts` × 1：`USAGE_FLUSH_INTERVAL_MS` 非整数。
+ *
+ * ⚠️⚠️ **这份清单在 v0.4.0 从六处减到五处，减掉的正是这道门禁的来历那一处**，
+ * 交代清楚：减掉的是 `src/http/usage-sink.ts` 的**第二处**——「有写配额时间隔太小」
+ * 那句 fail-closed。它的判据是 `hasWriteQuota`，唯一的真值来源是 Cloudflare KV 的
+ * 每日写配额；Worker/KV 形态整体摘除之后那个参数没有第二个合法取值，
+ * **整段闸连同这处抛点一起删了**（全文在 `src/http/usage-sink.ts` 的
+ * `resolveUsageFlushInterval()` 上方）。
+ * **减一处不等于这道门禁松了**：它守的是「运维配错必须是 `ConfigRefusal`」，
+ * 而不是「必须有六处」；剩下五处一处不少，反向自检那一格也照旧要求全部是
+ * `ConfigRefusal`、且不许只剩一处。
  */
 const OPS_THROW_SITES: readonly string[] = [
   "src/core/config-provenance.ts :: ConfigRefusal",
   "src/core/config-provenance.ts :: ConfigRefusal",
   "src/core/config.ts :: ConfigRefusal",
   "src/http/apikey-holder.ts :: ConfigRefusal",
-  "src/http/usage-sink.ts :: ConfigRefusal",
   "src/http/usage-sink.ts :: ConfigRefusal",
 ];
 
@@ -582,10 +598,10 @@ describe("硬约束：运维配错形状的 throw 一律是 ConfigRefusal", () =
     }
     expect(
       hits.sort(),
-      "运维配错形状的抛点变了。**它必须是 `ConfigRefusal`**：`src/entry/worker.ts` 的 catch "
-      + "靠这个类把「运维配错」（503 + reason:\"not_configured\"）与「代码 bug」（不透明 500）分开，"
-      + "留成裸 `Error` 的话，一句 `wrangler.toml [vars]` 里的笔误会得到一个「网关内部错误」，"
-      + "原因只在 `wrangler tail`。新增/删除抛点时连同理由一起改 OPS_THROW_SITES",
+      "运维配错形状的抛点变了。**它必须是 `ConfigRefusal`**：`src/http/admin/` 那几条端点"
+      + "靠这个类把「运维配错」与「代码 bug」分开报，而 `loadConfigWithProvenance` 靠它区分"
+      + "「拒绝服务」与「字段级降级」。留成裸 `Error` 的话，一句 `.env` 里的笔误会被当成代码 bug，"
+      + "把运维支去查一份根本没问题的代码。新增/删除抛点时连同理由一起改 OPS_THROW_SITES",
     ).toEqual([...OPS_THROW_SITES]);
   });
 
@@ -851,7 +867,7 @@ const REGEX_STRIP_EXEMPT = "scripts/lib/strip-comments.mjs";
  *    字面量全等绊线，这张当时没有。
  * 5. **仓根那一层散装文件也要收**：上一版的射程只有四个目录，**仓根被漏在外面**——
  *    复评实测把第六份副本写进 `vitest.config.ts` ⇒ **绿、零信号**。
- *    仓根今天有 `vitest.config.ts` 与 `vitest.workers.config.ts` 两个 `.ts`，
+ *    仓根今天只有 `vitest.config.ts` 一个 `.ts`（那份 workers 专用配置 v0.4.0 已删），
  *    它们是真会被人顺手加工具函数的地方。**只收仓根这一层、不递归**：再往下就是
  *    `node_modules` / `dist`，那不是本仓的代码。
  */

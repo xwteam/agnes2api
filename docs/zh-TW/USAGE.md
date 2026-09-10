@@ -11,7 +11,7 @@
 
 | 東西 | 從哪兒來 |
 |------|----------|
-| 閘道位址 | Worker 的 `*.workers.dev` 網域、你的自訂網域，或 Docker 部署時的 `http://localhost:8080` |
+| 閘道位址 | `http://localhost:8080`，或者你在容器前面掛的網域 |
 | 閘道口令 | 部署時設定的 `GATEWAY_TOKEN`，見 [部署指南](DEPLOY.md#環境變數) |
 | 一把可用的上游 key | 由管理面板匯入池子，見 [管理面板](ADMIN.md) |
 

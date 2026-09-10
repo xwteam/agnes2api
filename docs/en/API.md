@@ -6,7 +6,7 @@ This document walks through every protocol endpoint, admin interface and error c
 
 Every route under `/v1/*` and `/v1beta/*` requires a credential; `/health` does not. Pick any one of the four ways below — each matches what one of the official SDKs sends by default, so usually no extra configuration is needed.
 
-All examples use `http://localhost:8080` (the address Docker/Node listens on). If you deployed to a Cloudflare Worker, swap in your `*.workers.dev` hostname (or your custom domain). `your-gateway-token` is a placeholder for the `GATEWAY_TOKEN` you configured.
+All examples use `http://localhost:8080` (the address the container listens on). If you put a domain or a reverse proxy in front, swap in that hostname. `your-gateway-token` is a placeholder for the `GATEWAY_TOKEN` you configured.
 
 ### Method 1: Authorization Bearer header
 
@@ -68,7 +68,7 @@ In all four transports above, the value may be either `GATEWAY_TOKEN` or an **ou
 - `GATEWAY_TOKEN` is always valid, and **checking it performs no storage read at all** — that property is the escape hatch itself: if the key table is corrupted or storage cannot be read, clients using the master token are not affected by a single byte;
 - an outbound API key can be named, given an expiry, and revoked at any time, so each downstream consumer gets its own instead of the master token;
 - the gateway stores each key's SHA-256 digest and, **since 2026-09-10, the plaintext too**, retrievable via `GET /admin/api/apikeys/{id}/reveal`;
-- disabling or deleting one is **not instantaneous**: other instances may take about 6 minutes to notice — see `PATCH /admin/api/apikeys/{id}` below.
+- disabling or deleting one is **not instantaneous**: other instances may take about 5 minutes to notice — see `PATCH /admin/api/apikeys/{id}` below.
 
 The `401` body says **exactly the same thing** for “no such key”, “disabled” and “expired” — telling them apart would hand a scanner an enumeration oracle. The real reason goes only to the event log (`apikey.rejected`, with the `id` and the bucket).
 
@@ -555,7 +555,7 @@ curl http://localhost:8080/admin/api/session \
 **Response**:
 
 ```json
-{ "ok": true, "version": "0.3.1" }
+{ "ok": true, "version": "0.4.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -573,7 +573,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -605,7 +605,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -614,11 +614,10 @@ curl http://localhost:8080/admin/api/overview \
   "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true },
   "freshness": {
     "poolCacheTtlMs": 60000,
-    "poolVisibilityUpperBoundMs": 120000,
+    "poolVisibilityUpperBoundMs": 60000,
     "poolTouchIntervalMs": 21600000,
     "configTtlMs": 30000,
-    "configVisibilityUpperBoundMs": 90000,
-    "kvEdgeCacheMs": 60000
+    "configVisibilityUpperBoundMs": 30000
   },
   "config": {
     "registrarEnabled": true,
@@ -922,7 +921,7 @@ curl http://localhost:8080/admin/api/keys/9f2c/usage \
 Returns the **plaintext of one upstream Agnes key**. Plaintext is deliberately kept out of the listing above: that listing is called often and unthinkingly, so putting it there would mean every panel poll, every recorded response body and every intermediate cache carried the whole pool of credentials. This endpoint is an **explicit action**, which is what makes it auditable.
 
 > [!NOTE]
-> This family is **stored as plaintext to begin with** — all five copies of DEPLOY.md have said since day one that upstream keys “sit in KV / `store.json` as plaintext, so treat that storage as credential material”. This endpoint therefore **introduces no new storage risk**; it only surfaces in the panel something that was already there.
+> This family is **stored as plaintext to begin with** — all five copies of DEPLOY.md have said since day one that upstream keys “sit in `store.json` as plaintext, so treat that storage as credential material”. This endpoint therefore **introduces no new storage risk**; it only surfaces in the panel something that was already there.
 
 **Request**:
 
@@ -1070,7 +1069,7 @@ curl http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08/reveal \
 ```
 
 > [!WARNING]
-> This endpoint comes with a **breaking change in what storage holds**: until 2026-09-10 only the SHA-256 digest and last 4 characters were kept, and the plaintext existed just once, in the issuing `201`. The record now **stores the plaintext too** — security deliberately traded for convenience. Break into the panel and **every client key's plaintext leaks at once**; before, it was a digest nothing reverses. Storage (KV / `store.json`) now holds directly usable client credentials — handle backups and snapshots to match.
+> This endpoint comes with a **breaking change in what storage holds**: until 2026-09-10 only the SHA-256 digest and last 4 characters were kept, and the plaintext existed just once, in the issuing `201`. The record now **stores the plaintext too** — security deliberately traded for convenience. Break into the panel and **every client key's plaintext leaks at once**; before, it was a digest nothing reverses. Storage (`store.json`) now holds directly usable client credentials — handle backups and snapshots to match.
 
 > [!NOTE]
 > `apiKeys.plaintextRetrievable` in `GET /admin/api/capabilities` therefore flips from constant `false` to `true`; the panel reads it to show or hide the “reveal / copy” buttons. It means “**can this deployment retrieve plaintext**”, not “every key can” — see the `null` case above.
@@ -1118,7 +1117,7 @@ curl -X PATCH http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08 \
 ```
 
 > [!WARNING]
-> **Disabling is not instantaneous.** It takes effect immediately on the instance that handled the request, but other instances may take up to one `APIKEY_CACHE_TTL_MS` (5 minutes by default) plus roughly 60 seconds of KV edge cache — **about 6 minutes** in total. Lower `APIKEY_CACHE_TTL_MS` to shorten that, at the cost of proportionally more read quota (see the quota ledger in DEPLOY.md).
+> **Disabling is not instantaneous.** It takes effect immediately on the instance that handled the request, but another container sharing the volume may take up to one `APIKEY_CACHE_TTL_MS` — **about 5 minutes** by default. Lower `APIKEY_CACHE_TTL_MS` to shorten that, at the cost of one more table read per instance per interval (see "Outbound API keys: revocation is not instant" in DEPLOY.md).
 
 Writing with a stale version:
 
@@ -1253,7 +1252,7 @@ curl http://localhost:8080/admin/api/config \
   "editable": ["upstreamTimeoutMs"],
   "secrets": ["gatewayToken"],
   "resetBlocked": [],
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1288,7 +1287,7 @@ curl -X PUT http://localhost:8080/admin/api/config \
   "changed": ["upstreamTimeoutMs"],
   "credentialsChanged": [],
   "appliedAt": 1735689600000,
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1347,7 +1346,7 @@ curl -X POST http://localhost:8080/admin/api/config/secrets/clear \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "resetBlocked": [],
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1382,12 +1381,12 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
   "credentialsChanged": [],
   "resetBlocked": [],
   "appliedAt": 1735689600000,
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
 > [!IMPORTANT]
-> `appliedAt` is **not a promise that the change is live**; it is the moment the server persisted it. How long other replicas and other isolates take to see it is what `propagation` says — the panel must not render it as "reset and in effect".
+> `appliedAt` is **not a promise that the change is live**; it is the moment the server persisted it. How long another container sharing the volume takes to see it is what `propagation` says — the panel must not render it as "reset and in effect".
 
 ### POST /admin/api/registrar/tend
 
@@ -1600,7 +1599,7 @@ curl http://localhost:8080/health
 **Response**:
 
 ```json
-{ "status": "ok", "version": "0.3.1", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.4.0", "storage": { "writable": true } }
 ```
 
 `storage.writable` reports whether the storage holding the key pool really is writable. It is maintained by one probe at startup plus every real write at runtime; the health check itself never writes. When storage is not writable the endpoint returns **HTTP `503`**, `status` becomes `degraded` and a `detail` sentence is attached (on Docker this usually means the bind-mounted host directory is owned by a different user than the one inside the container — see the container log).

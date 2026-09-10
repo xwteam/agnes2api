@@ -4,7 +4,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types", "node", "@cloudflare/vitest-pool-workers/types"],
+    // ⚠️ **这里原来是 `["@cloudflare/workers-types", "node", "@cloudflare/vitest-pool-workers/types"]`。**
+    // 两个 `@cloudflare/*` 包随 Worker 形态一起在 v0.4.0 从 devDependencies 里删了，
+    // 留着名字 ⇒ `pnpm install --frozen-lockfile` 之后 tsc 报 TS2688（找不到类型定义）。
+    "types": ["node"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "verbatimModuleSyntax": true,
@@ -23,7 +26,7 @@
   // 新写的纯函数往往先落地、测试后补，那段窗口里它就是唯一的防线。
   //
   // admin-ui 只放进 `js/pure`：其余前端文件碰 DOM 全局，而这份 tsconfig 的 lib 里
-  // 没有 DOM（加 DOM 会把 Worker/Node 侧的全局也一起污染）。
+  // 没有 DOM（加 DOM 会把服务端那侧的全局也一起污染）。
   // tsconfig.build.json 的 include 是 ["src"]，覆盖了这一条，所以 dist/ 不受影响。
   "include": ["src", "tests", "admin-ui/js/pure"]
 }

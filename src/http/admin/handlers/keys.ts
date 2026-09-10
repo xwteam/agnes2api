@@ -25,7 +25,7 @@ function intParam(raw: string | undefined, fallback: number, min: number, max: n
 /**
  * Key 池只读列表。
  *
- * **零 `list()`、零额外读**：走 `deps.repo.all()`，与转发路径**共用同一个 isolate 快照**
+ * **零 `list()`、零额外读**：走 `deps.repo.all()`，与转发路径**共用同一个 进程内快照**
  *（设计文档 §2.4 第 1、2 条）。面板每刷新一次不产生独立的存储开销——
  * 这条由 `tests/contract/quota-panel.test.ts` 的
  * 「连打 20 次 /admin/api/keys……get 次数不增加」数着 list/get 次数钉住。

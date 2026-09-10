@@ -57,7 +57,7 @@ async function realApp(o: {
     ADMIN_TOKEN: TEST_ADMIN_TOKEN,
     ...(o.env ?? { GATEWAY_TOKEN: GW }),
   };
-  const { app, configHolder } = await buildApp(env, storage, nodeRuntime());
+  const { app, configHolder } = await buildApp(env, storage);
   return { app, storage, env, configHolder };
 }
 
@@ -207,7 +207,7 @@ describe("凭据只写不读（设计 §8.6）", () => {
 
     // ① 真的从存储里没了。
     expect((await storage.get<Record<string, unknown>>("config"))?.gatewayToken).toBeUndefined();
-    // ② 下一次**冷启动**读不到它 ⇒ Node 侧 process.exit(1)、Worker 侧冷 isolate 全部 500。
+    // ② 下一次**冷启动**读不到它 ⇒ 进程 `process.exit(1)`，容器起不来。
     await expect(loadConfig(env, storage, NULL_LOGGER)).rejects.toThrow("缺少 GATEWAY_TOKEN");
   });
 
@@ -514,17 +514,22 @@ describe("保存之后同一个进程立刻回读到新值", () => {
 
   /**
    * **`propagation` 必须给，而且不许写「立即生效」**（设计 §5.2）。
-   * 本进程确实立刻生效（上面那次 `invalidate()`），别的 isolate 要等
-   * `CONFIG_TTL_MS` + KV 边缘缓存。**两个数手写字面量**——它们是五语言 DEPLOY.md
-   * 对用户的承诺，从被测常量推导出来的期望值恒等于实际值。
+   * 本进程确实立刻生效（上面那次 `invalidate()`），别的副本要等一个
+   * `CONFIG_TTL_MS`。**数手写字面量**——它是五语言 DEPLOY.md 对用户的承诺，
+   * 从被测常量推导出来的期望值恒等于实际值。
+   *
+   * ⚠️ **上一版这一格钉的是「30 秒 + 60 秒 = 90 秒」**，那 60 秒是 KV 边缘缓存，
+   * v0.4.0 整层删了（KV 随 Worker 形态一起没了）⇒ 上界退回 `CONFIG_TTL_MS` 本身。
+   * **`toEqual` 是全等，形状也一起钉住**：那个字段再长回来、或者上界又被加上一项，
+   * 这一格当场红——而那正是这一整轮删除要防的回归（保存回执会比事实多报 60 秒）。
    */
-  it("回执里带传播上界（30 秒 + 60 秒 = 90 秒，手写字面量）", async () => {
+  it("回执里带传播上界（= CONFIG_TTL_MS 的 30 秒，手写字面量，中间没有别的缓存）", async () => {
     const { app } = await realApp();
     const body = await (await put(app, { maxStrikes: 9 })).json() as {
-      propagation: { configTtlMs: number; kvEdgeCacheMs: number; visibilityUpperBoundMs: number };
+      propagation: { configTtlMs: number; visibilityUpperBoundMs: number };
     };
     expect(body.propagation).toEqual({
-      configTtlMs: 30_000, kvEdgeCacheMs: 60_000, visibilityUpperBoundMs: 90_000,
+      configTtlMs: 30_000, visibilityUpperBoundMs: 30_000,
     });
     // 常量本身也钉成同一个字面量：「两边一起改」因此也拦得住（形态抄 roundBudgetMs 那条双锚）。
     expect(CONFIG_TTL_MS).toBe(30_000);
@@ -560,7 +565,7 @@ describe("保存之后同一个进程立刻回读到新值", () => {
    * 那两格喂的是**替身**响应，替身长什么样是用例自己写的。
    *
    * ⚠️ **这一格必须在 `tests/contract/` 里**：它是**后端响应形状**的契约，
-   * 两个运行时都要成立（`vitest.workers.config.ts` 只收 `tests/contract/**`）。
+   * **这句话原来写的是「两个运行时都要成立」，v0.4.0 之后只剩一个运行时**；断言本身没变。
    */
   it("GET 与 secrets/clear 的响应里没有 changed —— 面板靠它分辨读取态与保存回执", async () => {
     const { app } = await realApp({ env: {}, stored: { gatewayToken: GW } });
@@ -655,7 +660,7 @@ describe("事件：配置被改过要留痕，但一个值都不许进日志", (
    * 换到注入的 sink 上没有削弱判别力：本组两条断言一条是「打了」、一条是
    * **「没带凭据的值」**——后者属于「不出网类」，自报只会让它更容易泄漏、
    * 不会让它更容易隐藏。`registrar.*` 事件真的能进事件板块这条链，先建起来、
-   * `tests/contract/registrar-events.test.ts` 的「一轮补池之后，event: 键空间里确实有
+   * `tests/unit/registrar/scheduling-wiring.test.ts` 的「Node 侧：一轮补池之后 event: 里有 registrar.*，tend:history 里有一条 trigger=cron」（原来指的是当时那份 `registrar-events` 契约测试的「一轮补池之后，event: 键空间里确实有
    * registrar.* 事件」负责，不是本任务要重证的东西。
    */
   it("config.updated 只记路径，凭据的值一个字都不记", async () => {

@@ -58,7 +58,8 @@ export class YydsProvider implements MailProvider {
   /**
    * 单请求超时。注意 `pollCode` 的截止判断只在每轮循环开头做一次，请求本身挂起
    * 是不计入的——没有这个超时，一个挂死的连接就能让单轮无限拖长，把整轮补池推过
-   * Worker Cron 的墙钟上限，届时 mintOne 的 finally 不会执行，邮箱就漏了。
+   * 补池锁的有效期（`SCHEDULED_ROUND_WALL_CLOCK_MS`），届时下一轮会在它还活着的
+   * 时候并发开跑；进程这时被硬杀则 mintOne 的 finally 不会执行，邮箱就漏了。
    */
   private signal(): AbortSignal {
     return AbortSignal.timeout(REGISTRAR_REQUEST_TIMEOUT_MS);

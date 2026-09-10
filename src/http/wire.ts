@@ -5,7 +5,6 @@ import { createConfigHolder, type ConfigHolder } from "./config-holder.js";
 import { loadConfig, envLockedFields } from "../core/config.js";
 import { loadConfigWithProvenance } from "../core/config-provenance.js";
 import { KeyPoolRepo } from "../core/keypool-repo.js";
-import type { RuntimeInfo } from "../ports/runtime.js";
 import { NativeFetcher } from "../adapters/fetcher-native.js";
 import { createStorageHealth, probeWritable, watchStorage } from "../core/storage-health.js";
 import { VERSION } from "../version.js";
@@ -25,6 +24,7 @@ import { UsageSink, resolveUsageFlushInterval, USAGE_ERROR_REPORT } from "./usag
 import { multiLogger } from "../adapters/logger-multi.js";
 import type { Logger } from "../ports/logger.js";
 import { createTendGate, type TendGate } from "./admin/tend-lock.js";
+import { nodeRuntime } from "../adapters/runtime-node.js";
 import type { ChannelProbe } from "./admin/handlers/registrar.js";
 import { tendOnce, summarizeFailures, type ManualTendCap, type ManualTendOutcome } from "../core/registrar/tender.js";
 import {
@@ -41,15 +41,16 @@ export interface BuildOptions {
   /**
    * 装配时探一次存储可写性（写一个探针键再删掉）。
    *
-   * 只有 Node/Docker 形态该开：那里的数据目录是绑定挂载，属主不匹配就整个网关不可用，
-   * 必须在启动那一刻就发现。Worker/KV 形态没有这个失败模式，而 worker 入口在每个隔离体
-   * 冷启动时都会重新装配一次 app，开着它等于把 KV 的写配额消耗在健康检查上。
+   * **只有真正的启动路径（`src/entry/node.ts`）该开**：数据目录是绑定挂载，
+   * 属主不匹配就整个网关不可用，必须在启动那一刻就发现。
+   * 测试里绝大多数 `buildApp` 不开它——那些用例装的是 `MemoryStorage`，
+   * 探针只是白白多一次 put + 一次 delete，会把「这一段到底写了几次」的量测搅浑。
    */
   probeStorage?: boolean;
   /**
    * 事件落库分片 id 的生成函数。**生产用 `crypto.randomUUID().slice(0, 8)`**
-   * ——每个 isolate/进程装配一次 app 时生成一次，此后终生不变（见
-   * `StoreLogger` 的存储形态说明：`event:<shardId>` 每 isolate 一份）。
+   * ——每个进程装配一次 app 时生成一次，此后终生不变（见
+   * `StoreLogger` 的存储形态说明：`event:<shardId>` 每实例一份）。
    * 测试注入固定值，好让分片 key 可预测、可断言。
    */
   newShardId?: () => string;
@@ -88,9 +89,9 @@ export interface BuiltApp {
    */
   repo: KeyPoolRepo;
   /**
-   * 这个进程 / isolate 的补池在途守卫。
+   * 这个进程的补池在途守卫。
    *
-   * **交出来的理由与 `repo` 完全同源**：Node 入口的定时轮与面板的「立即补池」必须
+   * **交出来的理由与 `repo` 完全同源**：定时轮与面板的「立即补池」必须
    * 共用**这一把**——各拿各的等于同一个进程里两条补池可以同时跑，而「顺序铸、不并发」
    * 是功能性约束（并发会同时撞邮箱服务的建号限流与上游的注册风控），不是性能取舍。
    * `src/entry/node.ts` 原来那个 `let inFlight = false` 就是它的前身。
@@ -101,8 +102,13 @@ export interface BuiltApp {
 }
 
 /**
- * 从环境变量与存储装配出完整的 app。两个入口（worker/node）都调用它，
- * 只在“用哪种 Storage 实现”上有区别，其余装配逻辑完全共用。
+ * 从环境变量与存储装配出完整的 app。
+ *
+ * ⚠️ **它原来的签名多一个必填的 `runtime: RuntimeInfo`**，理由是「两个入口
+ *（worker/node）各自显式传入，给默认值会让某个入口忘了传时静默退化成另一种形态」。
+ * v0.4.0 摘掉 Worker 形态之后**只剩一个入口、一种运行时**，那个参数没有第二个
+ * 合法取值了 ⇒ 删掉它，`nodeRuntime()` 在这里建。留着它只是让每个调用点抄一遍
+ * 同一个字面量，而抄一遍从来挡不住任何东西。
  *
  * 用 loadConfig 而不是 configFromEnv：buildApp 的调用方（两个入口）手上
  * 总是已经有一个 Storage 实例，loadConfig 能在 env 未显式设置时回退到
@@ -117,14 +123,9 @@ export interface BuiltApp {
 export async function buildApp(
   env: Record<string, string | undefined>,
   storage: Storage,
-  /**
-   * **必填，不给默认值。** 默认值会让某个入口忘了传时静默退化成另一种运行时形态，
-   * 而那正是「双运行时对等」（硬约束 1）最难查的失效形态——两个入口各自
-   * `nodeRuntime()` / `workerRuntime()` 显式传入。
-   */
-  runtime: RuntimeInfo,
   options: BuildOptions = {},
 ): Promise<BuiltApp> {
+  const runtime = nodeRuntime();
   // **这次装配的唯一时钟**，见 `BuildOptions.now`：下面每一个要时间的组件都用它，
   // 不许有第二个时间来源。
   const now = options.now ?? (() => Date.now());
@@ -135,7 +136,7 @@ export async function buildApp(
   const watched = watchStorage(storage, storageHealth, now);
 
   /**
-   * 这个 isolate/进程的分片 id。**生成一次，事件 sink 与用量 sink 共用同一个。**
+   * 这个进程的分片 id。**生成一次，事件 sink 与用量 sink 共用同一个。**
    *
    * 共用是想要的：两者都在回答「这份数据是哪个实例写的」，面板上那句
    * 「这一天有几个分片贡献了数据」跨两个板块指的必须是同一批实例。
@@ -178,8 +179,8 @@ export async function buildApp(
 
   const configHolder = await createConfigHolder({ env, storage: watched, logger, now });
   // **这两个旋钮是建 app 时读一次的**，不随 ConfigHolder 每次刷新而变：它们绑定的是
-  // 部署形态（活跃 isolate 数 × 池大小），不是逐次生效的策略。改了要重启容器 /
-  // 等 isolate 回收——`.env.example` 与五语言 DEPLOY.md 的环境变量表**那两格逐格写明了**，
+  // 部署形态（活跃副本数 × 池大小），不是逐次生效的策略。改了要重启容器
+  // ——`.env.example` 与五语言 DEPLOY.md 的环境变量表**那两格逐格写明了**，
   // 面板文案同样不许写「立即生效」。
   //
   // ⚠️ **上面那半句一度是假的，如实登记（勘察当日逐份读过）**：
@@ -222,15 +223,19 @@ export async function buildApp(
    *
    * ⚠️ **开关为假时这里必须是 `undefined`，不是「建好再用一个 if 拦住写」**
    *（那条全局约束的原话：关闭时一次存储访问都不许有、**一个内存累加器都不许建**）。
-   * 设计 §7.1 给的理由是「统计吃掉写配额会连带打死 key 池的状态回写」——两者抢的是
-   * 同一个每天 1,000 次的写桶。而一条「反正没写盘」的累加路径挂在那里，
-   * **迟早会被某次改动接上写**，那时没有任何东西会响。
+   * ⚠️ **设计 §7.1 给的那条理由已经失效**：它写的是「统计吃掉写配额会连带打死
+   * key 池的状态回写——两者抢的是同一个每天 1,000 次的写桶」，而那个写桶是
+   * Cloudflare KV 的，v0.4.0 摘掉 Worker 形态之后不存在了。
+   * **今天成立的理由是另外两条**：① `FileStorage` 每次 put 都**重写整个
+   * `store.json`**，一条没人要的累加路径接上写之后是实打实的磁盘写放大；
+   * ② 一条「反正没写盘」的累加路径挂在那里，**迟早会被某次改动接上写**，
+   * 那时没有任何东西会响——这一条与存储后端无关，是这条约束真正的分量所在。
    * 由 `tests/contract/usage-tier2.test.ts` 的
    * 「USAGE_STATS_ENABLED 不为 true 时：连打 50 次 /v1，usage: 前缀的 put 计数一次都不涨 ——……」
    * 数着 put 计数钉住（**不是断言「sink 是不是 null」**——那是形状断言）。
    *
    * ⚠️ **`cfg` 是建 app 时读的那一份，不逐次刷新**，与上面两个池子旋钮同一条理由：
-   * 它绑定的是部署形态，不是逐次生效的策略。改了要重启容器 / 等 isolate 回收，
+   * 它绑定的是部署形态，不是逐次生效的策略。改了要重启容器，
    * `.env.example` 与五语言 DEPLOY.md 都写明了。
    *
    * `onError` 走 `consoleLogger` 而不是 fan-out 之后的 `logger`：与上面事件 sink
@@ -239,19 +244,24 @@ export async function buildApp(
    * 塞一条，下一次请求把它落盘 ⇒ **统计故障自己制造额外的写**，正好打在
    * 存储已经出问题的时候。
    */
-  // 落盘间隔与每天写预算。**判据是存储有没有写配额（`runtime.quotaModel`），
-  // 不是在哪个运行时上跑**——完整论证见 `resolveUsageFlushInterval()` 上方那段。
+  // 落盘间隔。
   // ⚠️ **无论 Tier-2 开没开都要算一次**：① 非法值必须在启动时就抛（部署时错误，
   // 不许等到有人打开开关的那天才发现）；② `capabilities` 要如实报出生效的那个间隔，
   // 而面板拿它算「未落盘的尾巴最长多久」，关着的时候那句说明卡也要说得准。
-  const usageFlush = resolveUsageFlushInterval(env.USAGE_FLUSH_INTERVAL_MS, runtime.quotaModel === "kv");
+  const usageFlush = resolveUsageFlushInterval(env.USAGE_FLUSH_INTERVAL_MS);
   const usageSink = cfg.usageStatsEnabled
     ? new UsageSink({
       storage: watched,
       now,
       shardId,
       flushIntervalMs: usageFlush.flushIntervalMs,
-      budgetPerDay: usageFlush.budgetPerDay,
+      // **显式 `null` = 这条 sink 没有每天的写预算闸。**
+      // 那道闸是为 Cloudflare KV 的每日写配额存在的，文件存储从来没有过它
+      //（`resolveUsageFlushInterval()` 从前接的是 `runtime.quotaModel === "kv"`，
+      // 而 Node 那一侧恒是 `"file"`）。v0.4.0 摘掉 Worker 形态之后它**没有生产
+      // 调用方了**——不写这个 `null` 就会掉进 `UsageSink` 那个"缺省 = 有预算"的
+      // 默认值里，凭空给 Docker 部署加一道从来不存在的闸。
+      budgetPerDay: null,
       // ⚠️ **查表，不在这里写三元**（认账修正）：两个 phase 的事件名与
       // 文案住在 `USAGE_ERROR_REPORT` 里，连同「为什么两句话必须分家」「record 那条
       // 今天到底可不可达」的全文。在这里再写一份三元的后果是加新 phase 时 else
@@ -335,31 +345,19 @@ export async function buildApp(
 /**
  * 跑一轮**手动**补池（面板「立即补池」的执行体）。
  *
- * 🔴🔴 **手动这一轮用的是 `MANUAL_*` 那一族，与 Cron 那份 780_000 不是一回事。**
- * 上一版这里逐字写着「与 Cron 那一份逐字相同」，**那句话本身就是那条严重缺陷**：
+ * 🔴🔴 **手动这一轮用的是 `MANUAL_*` 那一族，与定时轮那份 780_000 不是一回事。**
+ * 上一版这里逐字写着「与定时轮那一份逐字相同」，**那句话本身就是一条实测出来的
+ * 严重缺陷**：当时手动轮的载体是 `ctx.waitUntil`，而 Cloudflare 在响应结束后约
+ * 30 秒就把它取消掉（3/3 复现），这里却传着 13 分钟的预算——差了约 26 倍。
+ * 取消不抛异常 ⇒ 本函数与端点那一层**两层 `try/catch/finally` 全都不执行**
+ * ⇒ 不写补池历史、不发事件、锁也不放，面板上那一轮与「压根没点过」不可区分。
+ * 处置是**换载体**：端点改成 `await` 这一轮再返回
+ *（见 `src/http/admin/handlers/registrar.ts`）。
  *
- * 2026-09-09（北京时间）实测，Cloudflare 平台日志原话——
- *   `waitUntil() tasks did not complete within the allowed time after invocation end
- *    and have been cancelled.`
- * 手动轮 21:52:32 / 22:25:57 / 22:41:17 三次，对应取消 21:53:05 / 22:26:28 / 22:41:50，
- * **3/3 复现，间隔恒定 31~33 秒**。也就是说 `fetch` 路径上 `ctx.waitUntil` 的实际额度
- * ≈ 30 秒，而这里传的是 13 分钟——**差了约 26 倍**。
- *
- * 上一版那段「`ctx.waitUntil` 的实际上限本仓没有核实过，不许当既定事实用」的登记是对的，
- * 但处置错了：它选择了「继续用那个没核实过的数」。现在核实了，值与载体一起换。
- *
- * ⚠️ **取消不抛异常**，整个执行上下文被销毁 ⇒ 本函数的 `try/catch/finally` 与
- * 端点那一层的 `try/catch/finally` **两层全都不执行** ⇒ 不写补池历史、不发事件、
- * 锁也不放。面板上那一轮与「压根没点过」逐字节不可区分。
- *
- * ⇒ **处置是换载体**：端点改成 `await` 这一轮再返回（见
- * `src/http/admin/handlers/registrar.ts`），`runtime.background` 降级成
- * 「客户端断开后的兜底网」。**光调小预算是不够的**——那只是把静默截断的概率压小，
- * 没有消除它。
- *
- * ⚠️ **两种运行时仍然传同一族值，这一条没变、仍是刻意的。**
- * 「一次点击最多跑多久」是**这颗按钮自己的**性质，不是运行时的性质；两侧不同就等于
- * 同一颗按钮在两种部署下能铸出不同把数，而那个差异没有任何人会去断言。
+ * ⚠️ **v0.4.0 摘掉 Worker 形态之后那个平台前提没了，而两族仍然不许合并**——
+ * 理由换成今天成立的那一条：换完载体之后，手动一轮的载体就是**这条 HTTP 请求本身**，
+ * 它的墙钟上限是「浏览器 / 反向代理愿意等多久」（十几秒到一分钟的量级），
+ * 而定时轮的上限是补池间隔（默认 30 分钟）。**两者差一个量级，且这个差别与运行时无关。**
  * 代价：手动一轮**最多铸 1 把**（`MANUAL_MINT_BATCH`），剩下的交给定时轮接着补。
  *
  * ⚠️ **三格上限一律用 `Math.min` 压顶、不是赋值**：运维把 `CODE_TIMEOUT_MS` 调到 30 秒时
@@ -367,17 +365,14 @@ export async function buildApp(
  * 设置页写着 5 把 / 120 秒而这一轮实际跑 1 把 / 60 秒，不说出来就是本仓反复裁过的
  * 「面板说 A、实际做 B」。
  *
- * 同一份口径散在**五处**，改一处就得五处一起改：`src/core/registrar/types.ts` 的
- * `WORKER_ROUND_BUDGET_MS` 与 `MANUAL_*` 一族、`src/core/registrar/config.ts` 的最坏耗时
- * 告警、`src/core/registrar/tender.ts` 的 `worstAttemptMs`、`src/http/wire.ts` 传给
- * 「立即补池」的那份预算、`wrangler.toml` 的 Cron 估算段（外加五语言 REGISTRAR.md
- * 的散文）。⚠️ 上一版这张表被写了四份、四份点名的集合互相不一致 —— 照任一份走
- * 都会漏掉一个文件。
+ * ⚠️ **这份口径散在多处，那张点名表只写在 `src/core/registrar/types.ts` 的
+ * `SCHEDULED_ROUND_BUDGET_MS` 上方一处**（它原来被抄了三四份，几份点名的集合还互相
+ * 不一致，照任一份走都会漏文件）。改这里之前先去读那一处。
  *
- * **每一轮新建一个事件 sink 并在 `finally` 里 `flush()`**，理由与两个入口的 Cron 轮
- * 完全相同（见 `src/entry/worker.ts` 里同位置那段）：`maybeFlush()` 会把毫秒级返回的
- * 那一轮整轮吃掉，而手动补池恰恰经常是毫秒级返回的（`need <= 0` 的健康池）。
- * 这里**不能**靠 app 那个 sink 的 `logFlush` 中间件——响应早就返回了。
+ * **每一轮新建一个事件 sink 并在 `finally` 里 `flush()`**，理由与定时轮那一条完全相同
+ *（见 `src/entry/node.ts` 的 `runTend`）：`maybeFlush()` 会把毫秒级返回的那一轮整轮
+ * 吃掉，而手动补池恰恰经常是毫秒级返回的（`need <= 0` 的健康池）。
+ * 这里**不能**只靠 app 那个 sink 的 `logFlush` 中间件——那是请求收尾时才跑的。
  */
 async function runManualTendRound(
   env: Record<string, string | undefined>,
@@ -463,7 +458,7 @@ async function runManualTendRound(
   const roundStartedAt = Date.now();
   try {
     const r = await tendOnce({ ...deps, config, roundBudgetMs: MANUAL_ROUND_BUDGET_MS });
-    // `trigger: "manual"` —— 补池历史里这一行必须能与 Cron 那些区分开，
+    // `trigger: "manual"` —— 补池历史里这一行必须能与定时轮那些区分开，
     // 否则运维看到池子突然多了两把 key 时分不清是自动补的还是有人点的。
     await deps.recordRound(r, "manual");
     // ⚠️ **这里刻意没有两个入口那两行裸 `console`**（`补池完成 …` / `本轮有名额未铸出 …`），
@@ -473,7 +468,7 @@ async function runManualTendRound(
     //    在面板上看结果，不是在容器日志里 grep；
     // ② 换成 `deps.logger.log()` 的话每一次点击都多一条事件 ⇒ **多一次 put**，
     //    而配额账里手动补池那一栏算的是 3 次（护栏键 + 抢锁 + `tend:history`）。
-    //    健康的一轮不写事件，这条性质与 Cron 那一栏是同一条，不该在这里被打破。
+    //    健康的一轮不写事件，这条性质与定时轮那一栏是同一条，不该在这里被打破。
     // 容器日志里仍然看得见这次点击：`registrar.manual_tend_started` 走的是 app 的
     // `multiLogger(ConsoleLogger, StoreLogger)`，`ConsoleLogger` 那一路会打出来。
     if (r.minted < r.attempted) {
@@ -487,7 +482,7 @@ async function runManualTendRound(
     }
     return { kind: "done", result: r, capped };
   } catch (err) {
-    // **抛错那一轮也必须在面板上占一格**（与两个入口的 Cron 轮同一条口径，评审发现）：
+    // **抛错那一轮也必须在面板上占一格**（与定时轮同一条口径，评审发现）：
     // `recordRound` 排在 `tendOnce` 之后、一抛就整个跳过 ⇒ 不补这两件事的话，
     // 面板上这一轮什么都没有，与「压根没点过」逐字节不可区分。
     deps.logger.log({
@@ -604,9 +599,9 @@ async function probeChannel(
    * `buildTendDeps` 会读一次存储（`loadConfigWithProvenance`）。那次读抛错时，
    * 上一版让它一路穿到 `channelTestHandler` 的 `catch`，被记成
    * `reason: "upstream_error"` —— 而**上游被调 0 次**（本轮实测：真装配，
-   * KV `get` 抛错 ⇒ 上游 0 次，响应体 `{"ok":false,"reason":"upstream_error"}`）。
+   * 存储 `get` 抛错 ⇒ 上游 0 次，响应体 `{"ok":false,"reason":"upstream_error"}`）。
    * 那是一句把本网关自己的故障说成上游故障的假话，处置方向正好相反：
-   * 这一档要去看的是存储/KV，不是地址、DNS、TLS 与上游。
+   * 这一档要去看的是存储，不是地址、DNS、TLS 与上游。
    *
    * ⇒ 它有自己的一档 `probe_setup_failed`，**不并进任何一个上游档**。
    * 原始错误不往外带（它可能带着存储实现的内部细节），详情由 handler 记事件。
@@ -654,9 +649,8 @@ export type TendRoundDeps = TendDeps & {
 /**
  * 为 `tendOnce` 装配依赖。注册机未启用（`registrar.enabled=false`，默认状态）时
  * 在构造任何 provider 之前就返回 `null`——两个入口据此判断要不要起调度
- * （Worker 的 `scheduled` 导出 / Node 的定时器），未启用时不会产生触达邮箱/Agnes
- * 侧的网络请求（`loadConfig` 本身仍会读一次存储，对 Worker/KV 形态而言是一次
- * 真实的 KV 读取，不在此列）。
+ * （`src/entry/node.ts` 的定时轮 / 面板那颗「立即补池」），未启用时不会产生
+ * 触达邮箱/Agnes 侧的网络请求（`loadConfig` 本身仍会读一次存储，不在此列）。
  *
  * 不复用 `buildApp` 内部 watchStorage 包过的存储：补池失败已经由调用方各自
  * 的 try/catch 兜底并打日志（见两个入口），不需要接入 `/health` 的可写性
@@ -680,7 +674,7 @@ export async function buildTendDeps(
     /**
      * 返回 `null` 时**是哪一档**。与 `num()` 的 `flags` 同一套「可变标记」形态，
      * 理由也一样：把它做成返回值的一部分会牵连全部 `=== null` 的调用点，
-     * 而让调用方自己再读一次配置就是多付一次 KV 读。
+     * 而让调用方自己再读一次配置就是多付一次存储读。
      *
      * **两档的处置完全不同**：`disabled` = 「去设置里打开它」，
      * `blocked` = 「它开着，但这份配置装不起来，去补齐缺的那几格」。
@@ -692,17 +686,17 @@ export async function buildTendDeps(
   // **接上这条线之前，这里是裸 `ConsoleLogger`**，`registrar.*` 事件因此进不了
   // `/admin/api/events`——早先验收「看到最近的补池发生了什么」实测为零就是
   // 这么来的。当时不接的理由记在这里，因为它同时
-  // 解释了现在这个形状：Worker 的 `scheduled()` 与 `fetch()` 是**两个独立的
-  // isolate 生命周期**，没有请求/响应边界可以挂 `logFlush` 那种"收尾 await"的
-  // 中间件 ⇒ 落盘触发点只能由入口层在补池收尾时自己给（Worker 走 `ctx.waitUntil`
-  // 里的 `finally`、Node 走 `runTend` 的 `finally`），所以 `flush` 是参数不是内部行为。
+  // 解释了现在这个形状：补池轮**不在任何一次请求里**（定时轮由 `setTimeout` 驱动、
+  // 手动轮的收尾在响应之外），没有请求/响应边界可以挂 `logFlush` 那种"收尾 await"的
+  // 中间件 ⇒ 落盘触发点只能由调用方在补池收尾的 `finally` 里自己给，
+  // 所以 `flush` 是参数不是内部行为。
   //
-  // ⚠️ **写预算这根轴换掉了，不许照抄事件 sink 那一套**（订正）：
-  // `EVENT_WRITES_PER_DAY`（每实例每天 12 次）在 `fetch` 路径上有意义，是因为
-  // 一个 isolate 服务很多请求、预算在一个长寿实例上被反复消费。**`scheduled()`
-  // 那条路上这根轴没了**——每次 Cron 触发很可能是一个新 isolate，一生只有一次
-  // 落盘机会，每次都带着一份全新的预算 ⇒ 那套预算既拦不住什么也不构成上界。
-  // **真正的上界是补池频率本身**（Worker 的 Cron、Node 的 `TEND_INTERVAL_MS`），
+  // ⚠️ **写预算这根轴对补池不适用，不许照抄事件 sink 那一套**（订正）：
+  // `EVENT_WRITES_PER_DAY`（每实例每天 12 次）在转发路径上有意义，是因为
+  // 一个进程服务很多请求、预算在一个长寿实例上被反复消费。**补池这条路上不是**——
+  // 每一轮都新建一个 `StoreLogger`（见两个调用方），一生只有一次落盘机会、
+  // 每次都带着一份全新的预算 ⇒ 那套预算既拦不住什么也不构成上界。
+  // **真正的上界是补池频率本身**（`TEND_INTERVAL_MS` 与手动那条的 10 分钟冷却），
   // 五语言 DEPLOY.md 里就是这么写的。
   const logger: Logger = opts.logger ?? new ConsoleLogger();
   const flush = opts.flush ?? (async () => {});
@@ -784,11 +778,13 @@ export async function buildTendDeps(
    * 域名台账与退避状态的读写。**四个都是必填字段，不给默认值**（`TendDeps` 那里
    * 逐字写着理由：给默认值就等于某个入口忘接线时静默退化成本次要修的那个缺陷）。
    *
-   * ⚠️ **写回一律「先 get 再 merge」，不是裸覆盖。** KV 没有 CAS，这是本仓第四处
-   * 读-改-写（前三处是 `pool:index`、`registrar_manual_guard` / `registrar_tend_lock`、
-   * `tend:history`，`src/http/admin/handlers/registrar.ts` 顶部那张诚实表列着）。
+   * ⚠️ **写回一律「先 get 再 merge」，不是裸覆盖。** `Storage` 端口没有 CAS
+   *（`FileStorage` 也给不出：它的写队列只串行化本进程，多容器共卷时各写各的整份
+   * `store.json`），这是本仓第四处读-改-写（前三处是 `pool:index`、
+   * `registrar_manual_guard` / `registrar_tend_lock`、`tend:history`，
+   * `src/http/admin/handlers/registrar.ts` 顶部那张诚实表列着）。
    * 丢一条域名结论只是下一轮重学（便宜）；**丢掉退避的截止时刻等于退避窗口凭空消失
-   * ⇒ 继续打 ⇒ 每打一次把上游的惩罚窗口续一次 ⇒ 正好回到本次要修的那个缺陷**。
+   * ⇒ 继续打 ⇒ 每打一次把上游的惩罚窗口续一次 ⇒ 正好回到当初要修的那个缺陷**。
    * merge 把丢更新的后果从「覆盖」降到「取更保守的那个」，**但消灭不了它**——
    * 没有 CAS 就消灭不了，这句限定不许被改写成「并发已解决」。
    */
@@ -827,18 +823,21 @@ export async function buildTendDeps(
       // ⚠️ **这是与 `buildApp` 那个 repo 相互独立的第二个实例，有可观测的后果**：
       // `add()` 里那次 `invalidate()` 打在**这一个**实例上，转发路径永远读不到它，
       // 所以补池铸出来的 key **在转发路径上最多晚一个 `POOL_CACHE_TTL_MS` 才可见**
-      // （Worker 上还要 × 每个活跃 isolate 各自的 TTL）。空池 + 补池成功时，日志已经
+      //（多容器共卷部署下还要 × 每个副本各自的 TTL）。空池 + 补池成功时，日志已经
       // 报了 `minted=1` 而网关还会继续 503 长达一个 TTL——这条写进了五语言
       // REGISTRAR.md，别让它只留在这里。
       //
-      // **为什么不改成共用 `BuiltApp.repo`**（评估过，三条都拦着）：
-      // ① Worker 的 `scheduled` 与 `fetch` 是两次独立装配，根本不共享实例。只在 Node
-      //    侧改就制造出一处**运行时行为分叉**，而双运行时对等是硬约束——分叉了就得写进
-      //    文档，那还不如老老实实把上界写清楚。
+      // **为什么不改成共用 `BuiltApp.repo`**（评估过，两条拦着）：
       // ② `buildApp` 用的是 `watchStorage` 包过的存储，写失败会记进 `/health` 的可写性
       //    信号；补池刻意不接那条线（见本函数上面的说明），共用实例就把两者绑死了。
       // ③ 补池必须看当前真实可用数，共用之后得在 `tendOnce` 开头调一次 `invalidate()`，
-      //    照样付 1+N 次读——省不掉任何东西，只换来上面两处耦合。
+      //    照样付 1+N 次读——省不掉任何东西，只换来上面那处耦合。
+      //
+      // ⚠️ **原来的第 ① 条已经删掉，它的前提在 v0.4.0 没了**：那条写的是
+      //「Worker 的 `scheduled` 与 `fetch` 是两次独立装配，根本不共享实例，只在 Node
+      // 侧改就制造出一处运行时行为分叉」。现在只剩一个进程、一次装配，那条不成立了。
+      // **删掉它之后结论没变**：② 与 ③ 各自独立地拦着，任一条都足够。
+      // 编号保留成 ②③ 是刻意的——好让「原来有三条、少了哪一条」在 diff 里看得见。
       cacheTtlMs: 0,
     }),
     config: reg,

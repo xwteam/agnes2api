@@ -5,7 +5,7 @@ import { faviconPngFrom } from "../../src/ui/serve.js";
 import { VERSION } from "../../src/version.js";
 
 /**
- * **contract ⇒ node 与 workerd 各跑一遍**（vitest.config.ts 与 vitest.workers.config.ts
+ * **这份文件头原来写着「contract ⇒ node 与 workerd 各跑一遍」**（vitest.config.ts 与当时那份 workers 专用配置
  * 的 include 都收 tests/contract）。静态资源在两种运行时下走的是**同一条代码路径**
  * ——查 `UI_ASSETS` 这张编译期常量表——所以这一组用例本身就是「双运行时对等」的证据。
  *

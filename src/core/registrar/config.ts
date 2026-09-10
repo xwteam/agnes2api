@@ -1,4 +1,4 @@
-import { WORKER_ROUND_BUDGET_MS } from "./types.js";
+import { SCHEDULED_ROUND_BUDGET_MS } from "./types.js";
 import { NULL_LOGGER, type Logger } from "../../ports/logger.js";
 import type { ConfigError } from "../config-errors.js";
 
@@ -63,8 +63,10 @@ export interface RegistrarConfig {
  * 见它自己的说明），由 `tests/unit/source-guards.test.ts` 的
  * 「`src/core/registrar/` 下的 throw 恰好等于手写豁免清单」钉着。
  * 理由：注册机是**可选子系统**，它缺凭据不该让转发、`/health`、面板一起死。
- * 这条在 Worker 形态上尤其要命——那里没有「启动」这回事，`buildApp` 每个 isolate
- * 懒执行，抛错的结果是「部署成功、每个请求 500、真原因只在 `wrangler tail`」。
+ * ⚠️ 这条原来还带着一句「在 Worker 形态上尤其要命——那里没有『启动』这回事，
+ * `buildApp` 每个副本懒执行，抛错的结果是『部署成功、每个请求 500』」。
+ * **那个形态没了，而结论一点没松**：今天抛错的结果是**容器起不来**，
+ * 一个可选子系统缺一格凭据不该有这种后果。
  */
 export interface RegistrarLoad {
   config: RegistrarConfig;
@@ -79,7 +81,7 @@ export interface RegistrarLoad {
    * 一个已经没意义的旧键被拦停——那是拿正确性换洁癖。
    *
    * ⚠️ **它是状态，不是事件。** 走 `GET /admin/api/config`（零写）带出去、面板渲染成
-   * 常驻横幅。做成事件的两条硬理由各自单独成立：① 装载器每 30 秒刷一次 ⇒ 每 isolate
+   * 常驻横幅。做成事件的两条硬理由各自单独成立：① 装载器每 30 秒刷一次 ⇒ 每实例
    * 每天约 2880 次装载，而事件环只有 100 格，它会在运维升级完来查问题的那一刻把
    * 诊断挤出去；② 补池每轮都重新装载一次，装载期的无条件 warn 会把「健康的一轮零事件
    * 零写」变成「每轮至少一条事件 ⇒ 跨过刷新窗后每轮一次 put」，五语言 DEPLOY.md 的
@@ -113,7 +115,7 @@ export const DEFAULTS = {
    */
   mintDelayMinMs: 60_000,
   /**
-   * 🟡 **不是实测，是抖动上界。** 依据是本仓自己的部署形态：Worker 多 isolate、
+   * 🟡 **不是实测，是抖动上界。** 依据是本仓自己的部署形态：多容器共卷、
    * 多副本 Docker 共卷都可能同时起轮，固定 60 秒会把它们锁成同一个节拍。
    */
   mintDelayMaxMs: 90_000,
@@ -141,7 +143,7 @@ type Env = Record<string, string | undefined>;
  *
  * ⚠️⚠️ **非法值两侧都降级，不抛错——这是本轮改动里唯一一处主动放弃的 fail-fast。**
  * 从前 env 侧与存储侧都是抛：`TARGET_KEYS=abc` 在 Node 上让容器起不来（运维立刻
- * 看得见），在 Worker 上则是**部署成功、每个请求 500、原因只在 `wrangler tail`**。
+ * 看得见）。
  * 现在两侧一律回落默认值 + 一条 `config.invalid` + `flags.degraded = true`。
  * **它与 `config-provenance.ts` 的 `num()` 对 env 的策略故意不一致**，理由与「别来
  * 抹平」的告诫写在 `num()` 那段注释旁边（有没有安全的降能模式）。
@@ -472,15 +474,13 @@ export function registrarFromEnv(
   //
   // ⚠️ **这里从前还乘着一个「通道数」**：配了备通道时「验证码超时」属于通道级失败、
   // 会降级重试一次，同一个名额最坏要等两次超时。两条通道改成二选一之后没有第二次
-  // 了，这个因子整个消失。同一份口径散在**五处**，改一处就得五处一起改：`src/core/registrar/types.ts` 的
-  // `WORKER_ROUND_BUDGET_MS`、`src/core/registrar/config.ts` 的最坏耗时告警、
-  // `src/core/registrar/tender.ts` 的 `worstAttemptMs`、`src/http/wire.ts` 传给
-  // 「立即补池」的那个预算、`wrangler.toml` 的 Cron 估算段（外加五语言 REGISTRAR.md
-  // 的散文）。⚠️ 上一版这张表被写了四份、四份点名的集合互相不一致 —— 照任一份走
-  // 都会漏掉一个文件。
+  // 了，这个因子整个消失。**这份口径散在多处，那张点名表只写在
+  // `src/core/registrar/types.ts` 的 `SCHEDULED_ROUND_BUDGET_MS` 上方一处**
+  //（它原来被抄了好几份、几份点名的集合还互相不一致）。改这里之前先去读那一处。
   //
-  // 它超过补池间隔时，轮次会重叠着跑——两个入口各有兜底（Node 的在途守卫、Worker
-  // 的 KV 短锁）会把重叠的那次跳过，但被跳过的名额就白白浪费了，该调的是配置本身。
+  // 它超过补池间隔时，轮次会重叠着跑——两把锁会把重叠的那次跳过（进程内在途守卫 +
+  // 存储级短锁，见 `src/http/admin/tend-lock.ts`），但被跳过的名额就白白浪费了，
+  // 该调的是配置本身。
   // 与上面 MINT_DELAY_MIN/MAX 的交叉校验同一性质，区别是这里只 warn、连 blocker 都不产：
   // 数值各自都合法，只是搭配不划算，没到该让注册机停跑的程度。这条 warn 受 enabled 门控，
   // 关着的注册机不会打。
@@ -510,37 +510,53 @@ export function registrarFromEnv(
     });
   }
 
-  // CODE_TIMEOUT_MS 没有上界（posInt 只管正整数），而 Worker 形态的轮级预算是个
-  // 固定值。`codeTimeoutMs` 一旦超过它，tendOnce 连**第一次**尝试都不敢
-  // 开始：attempted=0、minted=0、failures 为空——两个入口的归因日志走的是
-  // `minted < attempted`（0 < 0 为假）所以一条都不打，用户只看到「本轮墙钟预算
-  // 不足」，读起来像瞬时状况，实际是永久停摆。启动期把它说破。
+  // CODE_TIMEOUT_MS 没有上界（posInt 只管正整数），而一轮补池最坏能跑多久由它主导。
   //
-  // 只 warn 不产 blocker：Node/Docker 上**定时轮**没有平台墙钟上限，同一份配置在那边的
-  // 定时轮上完全合法，让注册机停跑会打掉一个正当的 Node 部署。文案里点明形态差异。
+  // ⚠️⚠️ **这条 warn 的后果在 v0.4.0 整个换了，别按旧文案读——旧文案两半都不成立。**
+  // 旧文案说：「Cloudflare Worker 形态下补池会一把 key 都铸不出来（每轮 attempted=0），
+  // Node/Docker 的定时轮没有平台墙钟上限、不受此限制，但面板的「立即补池」在两种运行时
+  // 上都带同一份轮级预算，Node/Docker 上同样铸不出来。」
+  // · **前半句**的落点是 Worker 入口那个 `scheduled()` 导出——**它传了
+  //   `roundBudgetMs`，而那个入口在 v0.4.0 整个删掉了**。今天 `tendOnce` 的
+  //   `roundBudgetMs` 只有 `runManualTendRound` 传，定时轮一直不传。
+  // · **后半句是假的，而且在摘形态之前就已经是假的**（这次顺带查出来的）：
+  //   `runManualTendRound` 用 `Math.min` 把 `codeTimeoutMs` 压到
+  //   `MANUAL_CODE_TIMEOUT_MS`（60 秒）、把 `maxDomainAttempts` 压到 1
+  //   ⇒ 手动那一轮的 `worstAttemptMs` 恒等于 60 秒 < `MANUAL_ROUND_BUDGET_MS`（70 秒）
+  //   ⇒ **无论 `CODE_TIMEOUT_MS` 配多大，「立即补池」都不会因此铸不出来。**
   //
-  // ⚠️ **末句的措辞是订正过的，别改回去。** 上一版写的是
-  // 「Node/Docker 没有平台墙钟上限，不受此限制」——**面板那颗「立即补池」上线之后那句就不再准确**：
-  // 面板的「立即补池」在**两种运行时上都**传同一份 `WORKER_ROUND_BUDGET_MS`
-  //（见 `src/http/wire.ts` 的 `runManualTendRound`，那里写着理由：一次点击最多跑多久
-  // 是这颗按钮自己的性质，不是运行时的性质）。于是同一份把 `CODE_TIMEOUT_MS` 调过头的
-  // 配置，在 Node 上**定时轮照常铸、手动补池一把都铸不出来**，而运维照着旧措辞会以为
-  // 自己这边完全不受影响。五语言 REGISTRAR.md 同一段也已一并订正。
+  // **今天真实的后果是另一件事，这条 warn 报的就是它**：一轮补池没有任何东西会
+  // 把它截断，而补池锁的有效期是 `SCHEDULED_ROUND_WALL_CLOCK_MS`（15 分钟）。
+  // 一次尝试的最坏耗时超过 `SCHEDULED_ROUND_BUDGET_MS`（= 锁 TTL 的 87%，
+  // 那 120 秒余量正是留给准备阶段与注册链尾巴的）⇒ **这一轮可能跑过自己那把锁的
+  // 有效期**，锁一过期，下一轮触发或另一个共卷副本就会在它还活着的时候并发开跑，
+  // 同时撞邮箱建号限流与上游注册风控——而「顺序铸、不并发」是功能性约束。
+  //
+  // 只 warn 不产 blocker：这是一份**起得来、只是有并发风险**的配置，
+  // 让注册机整个停跑是过度处置；而且这个值面板上改得动，运维看到 warn 就能自己调回去。
+  //
+  // 🟡 **事件名里那个 `worker` 是一处已知残留，本次刻意没改，登记在这里。**
+  // `registrar.attempt_exceeds_worker_budget` 这个字符串是五语言 REGISTRAR.md
+  // 逐字给运维的 grep 锚点，而 `tests/unit/registrar/config.test.ts` 的
+  // 「启动那条是 warn 不是 error，且五语言给的可 grep 事件名与代码真实输出一致」
+  // 两头钉着它。改名必须**源码与五份文档同一次改完**，单改一边当场红。
+  // 建议的新名是 `registrar.attempt_exceeds_round_budget`。
+  //
   // **与 `./tender.ts` 的 `worstAttemptMs` 同一个公式**（那里是判据、这里是启动期
   // 交叉校验，各写一个字面量迟早漂移）：一次尝试 = 等满一次验证码超时，外加这次
   // 尝试里换域名要付的 `maxDomainAttempts − 1` 段间隔。
   const worstAttemptMs = cfg.codeTimeoutMs
     + Math.max(0, cfg.maxDomainAttempts - 1) * cfg.mintDelayMaxMs;
-  if (enabled && worstAttemptMs > WORKER_ROUND_BUDGET_MS) {
+  if (enabled && worstAttemptMs > SCHEDULED_ROUND_BUDGET_MS) {
     logger.log({
       level: "warn", event: "registrar.attempt_exceeds_worker_budget",
-      msg: "CODE_TIMEOUT_MS 超过 Worker 单轮墙钟预算：Cloudflare Worker 形态下补池会一把 key 都铸不出来"
-        + "（每轮 attempted=0），请调小 CODE_TIMEOUT_MS。"
-        + "Node/Docker 的定时轮没有平台墙钟上限、不受此限制，"
-        + "但面板的「立即补池」在两种运行时上都带同一份轮级预算，Node/Docker 上同样铸不出来。",
+      msg: "CODE_TIMEOUT_MS 大到一次尝试就可能跑过补池锁的有效期（15 分钟）："
+        + "锁在这一轮还没跑完时就过期，下一次触发或另一个共卷副本会并发开跑，"
+        + "同时撞邮箱建号限流与上游注册风控。请调小 CODE_TIMEOUT_MS。"
+        + "（面板的「立即补池」不受影响：那一轮把等码超时压到 60 秒。）",
       fields: {
         codeTimeoutMs: cfg.codeTimeoutMs, worstAttemptMs,
-        workerRoundBudgetMs: WORKER_ROUND_BUDGET_MS,
+        roundBudgetMs: SCHEDULED_ROUND_BUDGET_MS,
       },
     });
   }

@@ -737,7 +737,7 @@ describe("档位 → (from, to)：差一天会让那句警告永久常驻", () =
     expect(rangeToQuery("24h", Number.POSITIVE_INFINITY)).toBe(null);
   });
 
-  it("30d 不是默认档 —— 那一档一次要发 30 天的子请求，而它在 Worker 上的上限还没在真机上了结", () => {
+  it("30d 不是默认档 —— 那一档一次要发 30 天的读扇出，一次点击就是 60 遍整份 store.json 的反序列化", () => {
     expect(DEFAULT_RANGE).toBe("24h");
     expect(RANGES).toEqual(["24h", "3d", "7d", "30d"]);
     expect(RANGES.includes(DEFAULT_RANGE)).toBe(true);

@@ -55,7 +55,7 @@ export interface AdminRouterDeps {
   trustProxy: boolean;
   /**
    * **与转发路径同一个实例**（`wire.ts` 把 `BuiltApp.repo` 交出来正是为了这个）。
-   * 面板另建一个的话就是另一份 isolate 快照：面板每刷新一次都要真读一遍存储，
+   * 面板另建一个的话就是另一份 进程内快照：面板每刷新一次都要真读一遍存储，
    * 而设计文档 §2.4 第 1、2 条那笔「面板轮询不额外烧配额」的账全靠共用这一份。
    * `tests/contract/quota-panel.test.ts` 的
    * 「转发先预热之后，面板请求零存储访问——两边不是各自一份快照」
@@ -76,7 +76,7 @@ export interface AdminRouterDeps {
   configHolder: ConfigHolder;
   /** 见 `capabilitiesHandler` / `overviewHandler`：存储可写性的内存状态，零额外 I/O。 */
   storageHealth: StorageHealth;
-  /** 双运行时差异的唯一注入点，见 `src/ports/runtime.ts`。 */
+  /** 运行时能力（进程指标 / 存储后端名），见 `src/ports/runtime.ts`。 */
   runtime: RuntimeInfo;
   /** 被环境变量锁定的字段清单（`envLockedFields` 的结果），装配时算好，不逐请求重算。 */
   envLocked: readonly string[];
@@ -91,7 +91,7 @@ export interface AdminRouterDeps {
    * 见 `RegistrarWiring`。
    */
   registrar: RegistrarWiring | null;
-  /** 补池在途守卫（进程/isolate 内）。见 `./tend-lock.ts` 里两把锁的对照表。 */
+  /** 补池在途守卫（进程内）。见 `./tend-lock.ts` 里两把锁的对照表。 */
   tendGate: TendGate;
   /**
    * 配置读写的接线。**`null` = 这个 app 没接**，四条端点仍然注册、
@@ -223,8 +223,8 @@ const REJECT_MESSAGE: Readonly<Record<NonNullable<AdminTokenCheck["reason"]>, st
  * 不会变的输入上。
  *
  * 不合规时**只拒绝注册面板、不让网关停摆**：转发能力与管理能力相互独立。
- * 这里绝不能 throw——抛出去 Node 侧是重启循环、Worker 侧是全部转发流量挂掉，
- * 而起因只是一个配错的管理口令。
+ * 这里绝不能 throw——抛出去就是**进程退出 + 容器重启循环**（`src/entry/node.ts`
+ * 末尾那个 `main().catch` 会 `process.exit(1)`），而起因只是一个配错的管理口令。
  */
 export function adminRouter(deps: AdminRouterDeps): Hono | null {
   const token = deps.adminToken;
@@ -239,11 +239,11 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   //
   // ⚠️ **「两把钥匙不得相同」这条刻意不在这里拦，尽管它是三条里最要紧的那条。**
   // 它的另一个输入 `gatewayToken` 是 `env.GATEWAY_TOKEN ?? stored.gatewayToken`，
-  // 运行中能被 `wrangler kv key put` / 手工编辑 `store.json` / 将来的面板改掉。
-  // 在装配期拦它会造成**分裂脑**（评审实测）：冲突期间冷启动的 isolate 整棵 /admin
+  // 运行中能被手工编辑 `store.json` / 面板改掉。
+  // 在装配期拦它会造成**分裂脑**（评审实测）：冲突期间冷启动的实例 整棵 /admin
   // 树 404，而**把配置改回去之后仍然 404、必须重启**——装配期检查没有第二次求值的
-  // 机会；与此同时冲突之前建好的那批 isolate 只是 503，改回去立刻恢复。同一份配置、
-  // 同一时刻，取决于 isolate 是在冲突前还是冲突中冷启动的，管理端返回 200/404 两种
+  // 机会；与此同时冲突之前建好的那批实例 只是 503，改回去立刻恢复。同一份配置、
+  // 同一时刻，取决于进程是在冲突前还是冲突中启动的，管理端返回 200/404 两种
   // 结果，而 DEPLOY.md 无条件承诺的「改回去不需要重启」对其中一半是假话。
   // 所以这条整个交给 `adminAuth` 的每请求复查（503 + `admin.token_conflict`）——
   // 那里每次都重新求值，不存在冻结问题。
@@ -316,7 +316,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   //
   // **路径从 `KEYS_PURGE_PATH` 取，不写第二遍字面量**：五语言 DEPLOY.md 的配额账
   // 里逐份写着这条路径，而 `tests/unit/docs-parity.test.ts` 的
-  // 「危险区那两条端点的路径在五份 DEPLOY.md 的配额账里逐份写着 —— 路径从真源常量现算」
+  // 「危险区那两条端点的路径在五份 DEPLOY.md 里逐份写着 —— 路径从真源常量现算」
   // 从那个常量现算 ⇒ 改路径而文档没跟上，那一格当场红。
   //
   // ⚠️ **它排在 `bulk` 之后、两条 `:id` 之前，与 `bulk` 是同一条规矩**：Hono 按注册
@@ -488,7 +488,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 从 `app.routes` 现算钉着。
   //
   // **它一次存储写都不产生**（只读探针，与验活同一条），所以配额账的写侧不用改；
-  // 读侧它消费的是 `repo.all()` 那份 isolate 快照，与面板别的板块共用。
+  // 读侧它消费的是 `repo.all()` 那份进程内快照，与面板别的板块共用。
   //
   // 面板这一侧的消费者是模型板块那张「上游模型」卡（`admin-ui/js/sec-models.js`）；
   // 文档面是五份 API.md 的「GET /admin/api/upstream/models」那一节与五份 ADMIN.md
@@ -514,7 +514,7 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
   // 从 `app.routes` 现算钉着。
   //
   // **它一次存储写都不产生**（只读探针，与验活、列上游模型同一条），所以配额账的写侧
-  // 不用改；读侧它消费的是 `repo.all()` 那份 isolate 快照，与面板别的板块共用。
+  // 不用改；读侧它消费的是 `repo.all()` 那份进程内快照，与面板别的板块共用。
   //
   // ⚠️ **护栏与那两条共用同一把 `probeGuard`，而它的 kind 是常量**——理由（整轮测试
   // 要互相挡，那才是扛上游边缘限流的闸）在 `handlers/model-test.ts` 的文件头，
@@ -527,14 +527,13 @@ export function adminRouter(deps: AdminRouterDeps): Hono | null {
 
   // ── Tier-2 用量 ─────────────────────────────────────────────────────────
   //
-  // 两条都是只读的。**唯一会烧配额的是读扇出**：`30d` 那一档一次请求发
-  // `30 × USAGE_SLOTS = 60` 次 get（计划 §配额账「读侧」那张表），
-  // 而 `src/core/admin/usage-stats.ts` 的 `USAGE_DAY_RETAIN` 上方记着那条裁定
-  // ——**Cloudflare 的两页官方文档在这个数上互相对不上，不许把 60 写成「安全的」**。
-  // 所以那一档必须失败得诚实，见 `usageHandler`。
-  // ⚠️ 真机冒烟已经量过「跑不跑得完」那一半（`scripts/smoke-dual-runtime.sh` 的 ④），
-  // 本次实测在本地 workerd 上跑得完；**「线上会不会超」那一半仍然没有答案**，
-  // 两句话的射程差别写在 `USAGE_DAY_RETAIN` 上方。
+  // 两条都是只读的。**唯一贵的是读扇出**：`30d` 那一档一次请求发
+  // `30 × USAGE_SLOTS = 60` 次 get —— 而每一次 get 都是整份 `store.json` 的
+  // `readFile` + `JSON.parse`。那一档必须失败得诚实，见 `usageHandler`。
+  // ⚠️ **这里原来的立论是 Cloudflare 的子请求上限**（两页官方文档互相对不上），
+  // 那个上限随 Worker 形态一起没了；**「必须失败得诚实」这条结论一个字没变**，
+  // 换掉的只是它防的那件事。真机冒烟仍然量着「跑不跑得完」那一半
+  //（`scripts/smoke-dual-runtime.sh` 的 ③ 那一格，v0.4.0 之后打的是真容器）。
   //
   // ⚠️ **`/admin/api/usage` 与 `/admin/api/usage/:date` 不会互相吃掉**：
   // Hono 按注册顺序匹配，而两者段数不同（三段 vs 四段），形状上不可能重叠。

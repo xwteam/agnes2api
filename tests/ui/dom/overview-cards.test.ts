@@ -80,9 +80,9 @@ const FULL = {
     poolStats: { requests: 100, success: 90, failed: 7, clientErrors: 3, approximate: true },
     storage: { backend: "file", writable: true, checkedAt: NOW },
     freshness: {
-      poolCacheTtlMs: 60_000, poolVisibilityUpperBoundMs: 120_000,
+      poolCacheTtlMs: 60_000, poolVisibilityUpperBoundMs: 60_000,
       poolTouchIntervalMs: 21_600_000, configTtlMs: 30_000,
-      configVisibilityUpperBoundMs: 90_000, kvEdgeCacheMs: 60_000,
+      configVisibilityUpperBoundMs: 30_000,
     },
     config: {
       registrarEnabled: true, primary: "a.example.com", fallback: "b.example.com",

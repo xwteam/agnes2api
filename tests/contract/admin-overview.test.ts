@@ -1,20 +1,17 @@
 import { describe, it, expect } from "vitest";
 import { makeApp, TEST_ADMIN_TOKEN, TEST_CONFIG } from "../helpers/make-app.js";
-import { workerRuntime } from "../../src/adapters/runtime-worker.js";
 import { nodeRuntime } from "../../src/adapters/runtime-node.js";
 import type { Storage } from "../../src/ports/storage.js";
+import type { RuntimeInfo } from "../../src/ports/runtime.js";
 
-/**
- * **contract ⇒ node 与 workerd 各跑一遍**（两份 vitest 配置的 include 都收 tests/contract）。
- */
 const AUTH = { headers: { "x-admin-key": TEST_ADMIN_TOKEN } };
 
 interface OverviewBody {
   version: string;
   serverTime: number;
-  runtime: { name: "node" | "worker" };
+  runtime: { name: "node" };
   process: { pid: number; rssBytes: number; uptimeMs: number } | null;
-  storage: { backend: "file" | "kv"; writable: boolean; checkedAt: number | null };
+  storage: { backend: "file"; writable: boolean; checkedAt: number | null };
   pool: { total: number; fresh: number; cooling: number; evicted: number; disabled: number } | null;
   /**
    * **不含 `lastErrorAt`/`lastErrorKind`**（评审裁定，见 overview.ts 的说明）：
@@ -27,7 +24,6 @@ interface OverviewBody {
   freshness: {
     poolCacheTtlMs: number; poolVisibilityUpperBoundMs: number;
     poolTouchIntervalMs: number; configTtlMs: number; configVisibilityUpperBoundMs: number;
-    kvEdgeCacheMs: number;
   };
   /** `ConfigHolder.current()` 永不抛，`config` 恒有值，不再是 `... | null`。 */
   config: {
@@ -57,20 +53,36 @@ describe("GET /admin/api/overview", () => {
   });
 
   /**
-   * **诚实性第 6 条**：Worker 形态下 `process` 必须是 `null`，前端据此渲染
-   * 「Serverless · 无常驻进程」——不是 0、不是空、不隐藏格子。
+   * `process` 这一块的两格。**两格都要，缺一格就有一种实现能蒙混过去。**
    *
-   * **两格都要**：只测 null 那一格的话，「process 永远返回 null」的实现也能过
-   * （只有 workerRuntime 那一格会绿）。加反向那一格（nodeRuntime 时是对象且 pid > 0），
-   * 才能证明 `deps.runtime.process()` 真的被读了、而不是硬编码。
+   * ⚠️ **这两格的第一格换过一次，前提没了、判据换了、结论留下**（v0.4.0）：
+   * 原来的第一格是「**Worker 形态**下 `process` 必须严格是 `null`」——诚实性第 6 条，
+   * 前端据它渲染「Serverless · 无常驻进程」。**Worker 形态整体摘掉之后，
+   * 「本来就没有常驻进程」这种成因不存在了**，`nodeRuntime().process()` 恒返回对象。
+   *
+   * **但 `process: null` 这条响应形态本身没有消失**，它今天有另一个真实成因：
+   * `overviewHandler` 把 `runtime.process()` 包在 `block()` 里（那里逐字写着理由：
+   * `process.memoryUsage()` 理论上可抛，一次抖动不该让整个 overview 500）。
+   * ⇒ 第一格改成注入一个 `process()` 会抛的 `RuntimeInfo`，断言这一块降级成 `null`
+   * 而**别的块没跟着塌**。它同时替下面那条「逐块降级」把 `process` 这一块也覆盖上了。
+   *
+   * 第二格（`nodeRuntime()` 时是对象且 pid > 0）原样保留：**两格合起来才能证明
+   * `deps.runtime.process()` 真的被读了、而不是硬编码**——只有第二格的话，
+   * 「handler 自己去调 `process.memoryUsage()`、根本不看注入的那份」也能绿。
    */
-  it("worker 形态：process 必须严格是 null", async () => {
-    const { app } = await makeApp([], ["k1"], {}, () => 1000, { runtime: workerRuntime() });
+  it("process() 抛错时这一块降级成 null，其余块不受连累（不是 0、不是缺字段）", async () => {
+    const throwing: RuntimeInfo = {
+      ...nodeRuntime(),
+      process() { throw new Error("memoryUsage exploded"); },
+    };
+    const { app } = await makeApp([], ["k1"], {}, () => 1000, { runtime: throwing });
     const body = await getOverview(app);
-    expect(body.process).toBeNull();
+    expect(body.process, "逐块降级：这一块 null").toBeNull();
+    expect(body.runtime.name, "别的块不许跟着塌").toBe("node");
+    expect(body.pool, "别的块不许跟着塌").not.toBeNull();
   });
 
-  it("反向那一格：node 形态时 process 是对象且 pid > 0", async () => {
+  it("反向那一格：注入真实的 nodeRuntime() 时 process 是对象且 pid > 0", async () => {
     const { app } = await makeApp([], ["k1"], {}, () => 1000, { runtime: nodeRuntime() });
     const body = await getOverview(app);
     expect(body.process).not.toBeNull();
@@ -148,17 +160,21 @@ describe("GET /admin/api/overview", () => {
   });
 
   /**
-   * 两个 TTL **都在**，且两条上界都比各自的 TTL 大一个 KV 边缘缓存的量。
+   * 两个 TTL **都在**，且两条上界**就等于各自的 TTL**，中间不许再夹任何一层。
    *
-   * ⚠️ 前两条是「关系」断言，后两条是「字面量」断言，**两种都要**。**关系断言必须
-   * 从响应自身的 `kvEdgeCacheMs` 推导**：推导之后，常数本身被改错时关系式两边
-   * 一起偏移、关系照样成立，于是这条关系断言专职看守「相加逻辑还在不在」（已实测：
-   * 删掉 `+ KV_EDGE_CACHE_MS` 会红）；「常数被改错」那一种交给下面的字面量断言
-   * 单独逮（已实测：把 `KV_EDGE_CACHE_MS` 改成 `30_000`，关系断言仍绿、只有字面量
-   * 断言红）。若把 `60_000` 硬编码进关系断言，两条断言就在测同一件事，分工失效
-   * ——这一段曾经写反过（把「硬编码字面量」错记成「抓不住常数改错」），已按实测订正。
+   * ⚠️ **上一版这一格钉的是「两条上界各比 TTL 大一个 KV 边缘缓存的量」**，分工是
+   * 两条关系断言（从响应自身的那个字段推导，专职看守「相加逻辑还在不在」）+ 两条
+   * 字面量断言（专职逮「常数被改错」）。v0.4.0 把 KV 边缘缓存整层删了（KV 随
+   * Worker 形态一起没了，`FileStorage.get` 是直接 `readFile`）⇒ **那个常数与那个
+   * 字段都不存在了，「常数被改错」这一档没有了主语**，字面量那一条随之退场。
+   *
+   * **关系断言这一半不但留着，判别力还更强了**：上界与 TTL 现在是恒等关系，
+   * 任何人往回加一项（哪怕加回同一个 60 秒）当场红——而这正是这一整轮删除要防的
+   * 那个回归：那两个数是**面板直接显示给运维**的传播上界，多加一项就是多报 60 秒。
+   * `freshness` 的 `toEqual` 形状断言另有其格（`propagation` 那边同理），
+   * 一个悄悄长回来的多余字段不会从这里溜过去。
    */
-  it("两个 TTL 都在，且两条上界都把 KV 边缘缓存算进去", async () => {
+  it("两个 TTL 都在，且两条上界就等于各自的 TTL —— 中间没有任何一层缓存", async () => {
     const { app } = await makeApp(
       [], ["k1"], { poolCacheTtlMs: 60_000, poolTouchIntervalMs: 21_600_000 }, () => 1000,
     );
@@ -166,10 +182,14 @@ describe("GET /admin/api/overview", () => {
     const f = body.freshness;
     expect(f.poolCacheTtlMs).toBe(60_000);
     expect(f.poolTouchIntervalMs).toBe(21_600_000);
-    expect(f.poolVisibilityUpperBoundMs).toBe(f.poolCacheTtlMs + f.kvEdgeCacheMs);
-    expect(f.configVisibilityUpperBoundMs).toBe(f.configTtlMs + f.kvEdgeCacheMs);
+    expect(f.poolVisibilityUpperBoundMs).toBe(f.poolCacheTtlMs);
+    expect(f.configVisibilityUpperBoundMs).toBe(f.configTtlMs);
     expect(f.configTtlMs).toBe(30_000);       // 手写字面量
-    expect(f.kvEdgeCacheMs).toBe(60_000);     // 手写字面量
+    // **形状也钉住**：上一版那个边缘缓存字段之类的多余项再长回来，这里当场红。
+    expect(Object.keys(f).sort()).toEqual([
+      "configTtlMs", "configVisibilityUpperBoundMs",
+      "poolCacheTtlMs", "poolTouchIntervalMs", "poolVisibilityUpperBoundMs",
+    ]);
   });
 
   /**

@@ -719,20 +719,29 @@ describe("2(d)：导入结果里「重置了几把」显示的是 reset，不是
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// keys.freshness 由 kvEdgeCacheMs 驱动，不是硬编码 60 秒
+// keys.freshness 里那个数由响应驱动，不是前端硬编码的默认值
 // ───────────────────────────────────────────────────────────────────────────
 
-describe("keys.freshness 的 KV 边缘缓存耗时由响应驱动", () => {
-  it("kvEdgeCacheMs=45000 时新鲜度提示显示 45秒，不是硬编码的 60秒", async () => {
+/**
+ * ⚠️ **这一格的锚换过一次，守的东西没变。** 上一版钉的是
+ * 「边缘缓存那个字段 = 45000 时显示 45秒，不是硬编码的 60秒」——v0.4.0 把 KV 边缘缓存
+ * 那一整层删了（KV 随 Worker 形态一起没了），那个字段不再存在。
+ * **它真正守的是「这句提示里的数字是后端现算的值，不是前端写死的」**，
+ * 于是改钉今天还在的那个旋钮 `POOL_CACHE_TTL_MS`（`freshness.poolCacheTtlMs`）：
+ * 它的内置默认值同样是 60 秒，所以「显示 45秒、不许出现 60秒」这对正反断言
+ * 逐字照旧成立，判别力一格没丢。
+ */
+describe("keys.freshness 里那个时长由响应驱动", () => {
+  it("poolCacheTtlMs=45000 时新鲜度提示显示 45秒，不是硬编码的 60秒", async () => {
     const h = await openKeys((url) => {
       if (url.startsWith("/admin/api/overview")) {
         return {
           status: 200,
           body: {
             freshness: {
-              poolCacheTtlMs: 60_000, poolVisibilityUpperBoundMs: 120_000,
+              poolCacheTtlMs: 45_000, poolVisibilityUpperBoundMs: 45_000,
               poolTouchIntervalMs: 21_600_000, configTtlMs: 30_000,
-              configVisibilityUpperBoundMs: 90_000, kvEdgeCacheMs: 45_000,
+              configVisibilityUpperBoundMs: 30_000,
             },
           },
         };
@@ -744,7 +753,7 @@ describe("keys.freshness 的 KV 边缘缓存耗时由响应驱动", () => {
 
     const notes = h.section("keys").querySelectorAll(".note");
     const freshnessText = notes[notes.length - 1]!.textContent;
-    expect(freshnessText, "边缘缓存耗时没有显示出 45秒 —— 很可能仍然是硬编码的默认值").toContain("45秒");
+    expect(freshnessText, "池快照 TTL 没有显示出 45秒 —— 很可能仍然是硬编码的默认值").toContain("45秒");
     expect(freshnessText, "仍然硬编码着旧的默认值 60秒").not.toContain("60秒");
   });
 });

@@ -3,7 +3,7 @@
 #
 # 用法：
 #   bash scripts/prepush.sh                        # 逐格全跑，末尾打一张逐格表
-#   bash scripts/prepush.sh --skip-smoke           # 同上，但跳过⑦那一格（双形态真机冒烟）
+#   bash scripts/prepush.sh --skip-smoke           # 同上，但跳过⑦那一格（真机冒烟）
 #   bash scripts/prepush.sh --print-gates [ci 路径] # 干跑：把从 ci.yml 抽出来的门禁原样打出来，
 #                                                  # **一道都不执行**。第二个参数只给
 #                                                  # tests/unit/prepush-guard.test.ts 的夹具用。
@@ -38,7 +38,7 @@
 #   给自己开豁免的清单，下一次就会被人当成绿的。**别再把它加回来。**
 #
 # ⚠️ **这个脚本自己不是门禁的一道**，它是把 ci.yml 里已有的那几道按同一个顺序重跑一遍，
-#   再补上 CI 结构上看不见的那几格（工作树、分支、作者身份、测试计数、双形态真机冒烟）。
+#   再补上 CI 结构上看不见的那几格（工作树、分支、作者身份、测试计数、真机冒烟）。
 #   那几道从 ci.yml **当场抽**，不在这里手抄一份——手抄的那份会漂，而漂了没人会发现。
 # ⚠️ **连「一共几道」这个数都不写进本文件的正文**：它今天是一个确定的数，而写下去的那一刻
 #   就会在有人增删一道的那天静静变假（逻辑早就是从步名 `N/M` 推的，只有话是写死的）。
@@ -200,7 +200,8 @@ exec 2>&1
 # 抄来的东西会漂，所以 ⑥ 那一格开头会回到 ci.yml 抽出来的真源上核对这三个值还在被用
 # ——对不上就红在「⑥ 的常量与 ci.yml 对不上」，而不是安安静静地去读一个没人写的日志。
 NODE_LOG="/tmp/test-node.log"
-WORKERS_LOG="/tmp/test-workers.log"
+# ⚠️ **这里原来还有一个 `WORKERS_LOG="/tmp/test-workers.log"`**（`pnpm test:workers`
+#   那一步的日志），随 Cloudflare Worker 形态一起在 v0.4.0 删掉了。
 BANNER='[collection-guard] ✅'
 
 # ⚠️ **基线数：最近一次全量跑当场取的，随取随改，它不是一个恒定常量。**
@@ -629,7 +630,7 @@ BANNER='[collection-guard] ✅'
 #   补完再放宽 ⇒ **1 格红**（改之前是 0 格）。
 #   同批把抽取逻辑收成唯一一份 `docEnvVarsFrom(md)`，那格探针改成调它
 #   ——**格数不变**，只是探针与真扫描不再各走一份抄出来的正则。
-# 取法：跑一次 `pnpm test` / `pnpm test:workers`，抄尾部那两行
+# 取法：跑一次 `pnpm test`，抄尾部那两行
 # `Test Files  N passed (N)` / `Tests  N passed (N)`。
 # ⚠️ **写等号，绝不写 `>=`。** 本仓在这上面栽过一次，事情记在
 # `tests/unit/docs-parity.test.ts` 的文件头：判据当时是「每种语言各自至少出现 N 次」，
@@ -2143,7 +2144,7 @@ BANNER='[collection-guard] ✅'
 #   ⇒ Node：5086 + 1 = **5087**；文件数 **164 不动**。
 #   ⇒ workerd 两个数仍然一格不动（实测 43 / 793）：新增的那一格在 `tests/unit/` 下，
 #     不进 workers 池；`tests/contract/` 一格都没加。
-EXPECT_NODE_FILES=170
+EXPECT_NODE_FILES=166
 #
 #   ── 指路不许指向一条当时还不存在的事件（终检遗留）：**+2**，全在 tests/unit/i18n-dict.test.ts
 #   起因：`reg.backoff.cluster` 里「上游列出来的域名全被判『被屏蔽』那一支，原话在
@@ -2434,9 +2435,71 @@ EXPECT_NODE_FILES=170
 #   google-genai 回放 `finish_reason=None`；把错误体换回逐字透传 ⇒ 脱敏那 3 格全红。
 #   ⇒ Node：5235 + 107 = **5342**，文件 168 + 2 = **170**；
 #     workerd：844 + 6 = **850**，文件仍是 **44**。
-EXPECT_NODE_TESTS=5342
-EXPECT_WORKERS_FILES=44
-EXPECT_WORKERS_TESTS=850
+#
+#   ── v0.4.0 摘掉 Cloudflare Worker 形态：**四个数变两个，Node 那两个 −4 文件 / −98 格** ──
+#   🔴 **`EXPECT_WORKERS_FILES` / `EXPECT_WORKERS_TESTS` 两行整个删掉**：`pnpm test:workers`
+#     这个入口连同 `vitest.workers.config.ts` 一起没了，⑥ 那一格现在只核一份日志。
+#
+#   Node 那两个数逐笔点名（**只记本次这一面亲手动的**，见下面那条限定；
+#   5342 → 5244 是 −98；本面自己的账是 −51，**差额 −47 在文档那一面的
+#   `tests/unit/docs-*.test.ts`（不归本面）**）：
+#   · **删掉 4 份测试文件、共 29 格**（170 → 166 文件）：
+#     · `tests/unit/entry-worker.test.ts` **−8**（被测对象是 Worker 入口的 fetch/scheduled 两个导出）；
+#     · `tests/unit/storage-kv.test.ts` **−5**（被测对象是 `KvStorage` 适配器）；
+#     · `tests/contract/dev-vars-guard.test.ts` **−3**（整份的立论是「`.dev.vars` 被
+#       `pnpm test:workers` 读进 workerd 的 env」，node 侧只跑得到其中 1 格）；
+#     · `tests/contract/registrar-events.test.ts` **−13**（整份靠 `workerEntry.scheduled!()`
+#       驱动；它的核心不变量在 `tests/unit/registrar/scheduling-wiring.test.ts` 的
+#       Node 侧同名几格里一直都有，逐条对照写在那份文件里）。
+#   · **在既有文件里删掉的格，共 −22**（逐份点名，理由一律是「整格的意义就是双运行时
+#     对等 / 被测对象随形态一起没了」，每一处都在原地留了一段交代删了哪几格）：
+#     `admin-capabilities` −3（worker/kv/kv 那格 + 两格 `colo`）、`usage-tier2` −3、
+#     `manual-tend` −1（Worker 侧 waitUntil 那格；它的镜像与它并成一格）、
+#     `scheduling.test.ts` −1、`scheduling-wiring` −7、
+#     `scripts-guard` −5（两组 `wrangler.toml` 门禁）、
+#     `ops-closure` −2（Worker 备份那一节逐族点名 + `kv key list` 那句收口）。
+#   ⇒ **本面自己的账合计 −29（文件）−22（格内）= −51 格。**
+#   · **改写但格数不变**的：`admin-overview` 的「worker 形态 process 必须是 null」
+#     换成「`process()` 抛错时逐块降级成 null」（判别力保住，见那一格上方）。
+#
+#   ⚠️⚠️ **下面这两个数是本次实测当场取的，但取的那棵树里同时有别的面在改文档**
+#   （`docs/**` 与 `tests/unit/docs-*.test.ts` 不归本面）⇒ **合流之后必须重取一次**。
+#   本面自己的账如上，合不上时先按那份账对，再看文档那一面动了几格。
+#
+#   ── 合流收口（跨面门禁残留这一面）：重取的那一次就在这里，**5244 → 5243** ─────
+#   🔴 **上面那笔账一个字都不改，它是当时那棵树上的记录；这一段是补记，不是覆盖。**
+#   **本面自己对这两个数的贡献是 0 文件 / 0 格**：这一轮动的全是判据的**锚**
+#   （门禁总步数从十三缩到十一之后写死在判据里的那几处 `N/M`、一个已经不存在的
+#   `test:workers` 锚、两份没有调用点的孤儿脚本、以及 `CONTRIBUTING.md` 与 PR 模板里
+#   指向已删 script 的两句话），**一个 `it(` 都没增删**。
+#   删掉的那两份是**脚本不是测试**（`check-comment-refs` 那一道的孤儿被测对象），
+#   所以文件数一格不动。
+#
+#   ⚠️ **少的那 1 格不是「合流之后又有人删了一格」，是上面那笔账里两处口径没对齐。**
+#   合流后拿 `vitest list` 把 `d19c6eb`（5342 / 170 份）与今天这棵树逐份对了一遍，
+#   差集恰好 14 份、合计 **−99 格 / −4 文件**，逐份如下（这是**实测**，不是推算）：
+#   · 上面那笔账认领的 11 份，实测与它逐份相符，**只有一处口径要更正**：
+#     `dev-vars-guard` 那份写的是 **−3**，那是它**整份**的用例数；而它在 node 那份配置下
+#     **只被收集到 1 格**（那句限定就写在上面那一行里）⇒ 进 `EXPECT_NODE_TESTS` 的只有
+#     **−1**。**四份删掉的文件在 node 这一侧合计 −27，不是 −29**；
+#     格内那 −22 实测逐份完全吻合 ⇒ **本面那一笔的 node 侧真实合计是 −49，不是 −51。**
+#   · 那笔账之外的三份，合计 **−50**（不是当时按 98−51 倒推出来的 −47）：
+#     · `tests/unit/docs-parity.test.ts` **−47**（文档那一面）；
+#     · `tests/unit/docs-deviations.test.ts` **−2**：刻意偏离名册的第 5 条
+#       （`.github/workflows/` 比参照仓多一个 —— 多出来的那份随形态一起删了）
+#       与第 23 条（六份 README 里那颗一键部署按钮）两条结清，名册少两条 ⇒ 少两格；
+#     · `tests/unit/env-example-parity.test.ts` **−1**：
+#       「`WORKER_BINDINGS` 里的每个名字都在 `wrangler.toml` 里声明成 binding」那一格，
+#       被测的两样东西都不在了。
+#   ⇒ −49 + −50 = **−99**；5342 − 99 = **5243**，与合流后整跑实测的那一行逐字相同。
+#
+#   ⚠️ **重取当天整跑并非全绿（2 格红），而这两个数记的是「收集到多少格」不是「过了多少格」。**
+#   红的那 2 格都在 `tests/unit/check-comment-refs.test.ts`，而它们的**真因不在那份文件里**：
+#   `tests/unit/docs-parity.test.ts` 有三处注释指向已经删掉的对象（那道门禁因此 exit 1，
+#   那两格读的就是它的退出码）。那份文件不归本面，登记在这里等它那一面改。
+#   ⚠️ **这一格（⑥）要的是 `Tests  5243 passed (5243)` 那一行**，所以在那 2 格被修好之前
+#   ⑥ 仍然会红 —— 那时红的原因是**那 2 格**，不是这个基线数写错了。
+EXPECT_NODE_TESTS=5243
 
 # ── 逐格框架 ────────────────────────────────────────────────────────────────
 # 每一格返回：0 = 过；其余非 0 = 红。**只有这两档**。
@@ -2680,18 +2743,20 @@ cell_authorship() {
 # ⚠️ **不用 `| tail` 取结论**（本仓吃过退出码的亏），用锚到行首行尾的 `grep -c`，
 #   并且要求**恰好一行**：日志里出现两行「Tests …」本身就是异常。
 # ⚠️ 两份日志在脚本开头被删过一次，所以「日志不在」只有一个意思：③ 那两步根本没跑到 tee。
+# ⚠️ **这一格原来核两份日志**（`pnpm test` 与 `pnpm test:workers`），v0.4.0 之后只剩一份：
+#   第二个测试入口随 Cloudflare Worker 形态一起删了。**逐配置核对这条纪律没变**，
+#   只是今天只有一份配置——`tests/unit/scripts-guard.test.ts` 那一格反过来钉着
+#   「package.json 里不许再长出第二个测试入口」，悄悄加回来的话这里的账会对不上。
 cell_counts() {
   local bad=0
   if ! assert_ci_still_uses "pnpm test 2>&1" "$NODE_LOG"; then bad=1; fi
-  if ! assert_ci_still_uses "pnpm test:workers 2>&1" "$WORKERS_LOG"; then bad=1; fi
   if (( bad != 0 )); then
     echo "❌ ⑥ 抄在本脚本里的日志路径/横幅与 ci.yml 对不上了 —— 先去核对，别读一份没人写的日志" >&2
     return 1
   fi
-  if ! check_log "$NODE_LOG" "Node 运行时" "$EXPECT_NODE_FILES" "$EXPECT_NODE_TESTS"; then bad=1; fi
-  if ! check_log "$WORKERS_LOG" "workerd 运行时" "$EXPECT_WORKERS_FILES" "$EXPECT_WORKERS_TESTS"; then bad=1; fi
+  if ! check_log "$NODE_LOG" "全量测试" "$EXPECT_NODE_FILES" "$EXPECT_NODE_TESTS"; then bad=1; fi
   if (( bad != 0 )); then return 1; fi
-  echo "✅ 两个运行时的文件数、用例数与收集门禁横幅都对得上"
+  echo "✅ 文件数、用例数与收集门禁横幅都对得上"
   return 0
 }
 
@@ -2744,7 +2809,7 @@ check_log() { # $1 = 日志 $2 = 人话标签 $3 = 期望文件数 $4 = 期望�
     echo "   日志里实际那两行是：" >&2
     grep -aE '^ +(Test Files|Tests) ' "$log" >&2 || true
     echo "   ⚠️ 数字对不上不等于「把脚本里那个数改成新的」就完事：先弄清楚多/少的是哪几格。" >&2
-    echo "   确认是有意增删之后，再回来改 scripts/prepush.sh 里 EXPECT_* 那四行。" >&2
+    echo "   确认是有意增删之后，再回来改 scripts/prepush.sh 里 EXPECT_* 那两行。" >&2
   fi
   if (( no_banner != 0 )); then
     echo "   ⚠️ 横幅缺失与本脚本里那四行基线数无关，改它们一个字都不会让横幅回来：" >&2
@@ -2757,11 +2822,13 @@ check_log() { # $1 = 日志 $2 = 人话标签 $3 = 期望文件数 $4 = 期望�
   return 0
 }
 
-# ── ⑦ 双形态真机冒烟 ───────────────────────────────────────────────────────
+# ── ⑦ 真机冒烟 ─────────────────────────────────────────────────────────────
 # ①～⑥ 全是「仓库文本 / 门禁 / 测试数」这一档，**没有一格构建镜像或跑容器**
-# ——而本仓有一批注释逐字把自己的了结条件写成「在双形态真机验收之前」。
-# 这一格就是那批注释唯一的了结方式，全文在 `scripts/smoke-dual-runtime.sh`。
-# ⚠️ 它比其余几格慢一个数量级（要构建镜像、起容器、起真 workerd），
+# ——而本仓有一批注释逐字把自己的了结条件写成「在真机验收之前」。
+# 这一格就是那批注释唯一的了结方式，全文在 `scripts/smoke-dual-runtime.sh`
+#（那个文件名里的 `dual-runtime` 是历史残留，v0.4.0 之后只剩 Docker 一种形态，
+# 没改名的理由写在那个文件的头上）。
+# ⚠️ 它比其余几格慢一个数量级（要构建镜像、起容器），
 #   所以给了一个 `--skip-smoke` 开关；**跳过必须留痕**，见上面那段。
 cell_smoke() {
   bash scripts/smoke-dual-runtime.sh
@@ -3076,7 +3143,7 @@ cell_commit_msgs() {
 
 # ── 跑 ──────────────────────────────────────────────────────────────────────
 if ! load_gates "$CI_FILE"; then exit 2; fi
-rm -f "$NODE_LOG" "$WORKERS_LOG"
+rm -f "$NODE_LOG"
 
 run_cell "①" "工作树干净"                     cell_worktree
 run_cell "②" "分支只有 main"                  cell_branch
@@ -3085,9 +3152,9 @@ run_cell "④" "凭据扫描（工作树 / 历史各一档）" cell_secrets
 run_cell "⑤" "无署名尾注、作者身份唯一"        cell_authorship
 run_cell "⑥" "测试数与横幅同时校验"           cell_counts
 if (( SKIP_SMOKE == 1 )); then
-  skip_cell "⑦" "双形态真机冒烟" "命令行给了 --skip-smoke。它没被验到，不是过了。"
+  skip_cell "⑦" "真机冒烟（Docker）" "命令行给了 --skip-smoke。它没被验到，不是过了。"
 else
-  run_cell "⑦" "双形态真机冒烟"               cell_smoke
+  run_cell "⑦" "真机冒烟（Docker）"             cell_smoke
 fi
 run_cell "⑧" "未推送提交信息零内部标识符"      cell_commit_msgs
 

@@ -65,13 +65,13 @@ function afterParam(raw: string | undefined): number | null {
  * **`cursorAhead`（评审发现）**：`after` 所在的时间窗比 `now` 所在的时间窗还晚时，
  * `candidateKeys()` 的扫描区间是空的（`fromWindow > nowWindow`，循环一次都不进），
  * 于是 `items` 恒为空、`cursor` 恒为 `null`——**这与"确实没有新事件"在响应体里
- * 完全无法区分**，而触发条件不止运维手动改错时钟：任何一个 isolate 的时钟只要
- * 比当前处理请求的这个 isolate 快，写出的 `ts` 就是"未来值"，一旦被面板当成
+ * 完全无法区分**，而触发条件不止运维手动改错时钟：任何一个实例 的时钟只要
+ * 比当前处理请求的这个实例 快，写出的 `ts` 就是"未来值"，一旦被面板当成
  * `cursor` 存起来，后续所有请求都会撞上这堵墙，面板永久空白直到墙钟追上。
  * 如实报出来，前端据此把冻结的游标丢掉重新冷读（见 `pure/events.mjs` 的
  * `bufferStatus`/`sec-events.js` 的 `poll()`）。
  *
- * ⚠️ **评审二审订正：上一段"任何一个 isolate 的时钟只要快"这句话本身写得
+ * ⚠️ **评审二审订正：上一段"任何一个实例 的时钟只要快"这句话本身写得
  * 过宽**——判据是 `windowIndex(after) > windowIndex(now)`，**必须跨过一个完整的
  * 时间窗边界（`EVENT_WINDOW_MS`，1 小时）才会触发**，单纯"快了几分钟但还在
  * 同一个窗口内"不会。
@@ -138,9 +138,9 @@ export function eventsHandler(deps: { storeLogger: StoreLogger; now: () => numbe
       // 前端据此判断「保留上一次的 after」还是「推进到新值」（见 pure/events.mjs 的
       // cursorOutcome —— 它把"没有新事件"与"后端契约被破坏了"分成两支）。
       cursor,
-      // **本 isolate** 的自述状态与标识（评审发现：多 isolate 下相邻两次轮询可能落到
-      // 不同 isolate，`buffered`/`dropped`/`budgetExhausted` 因此可能来回跳——
-      // 带上 `shardId` 面板才能把"这句话说的是哪一个 isolate"钉清楚）。
+      // **本实例** 的自述状态与标识（评审发现：多副本 下相邻两次轮询可能落到
+      // 不同副本，`buffered`/`dropped`/`budgetExhausted` 因此可能来回跳——
+      // 带上 `shardId` 面板才能把"这句话说的是哪一个实例"钉清楚）。
       shardId: status.shardId,
       buffered: status.buffered,
       dropped: status.dropped,

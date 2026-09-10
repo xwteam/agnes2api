@@ -521,7 +521,8 @@ export function changedSecrets(body) {
  * 「别的副本多久能看见」。
  *
  * **必须显示，不许写「立即生效」**（设计 §5.2）：本进程确实立刻生效，
- * 别的 isolate 要等 `configTtlMs` + KV 边缘缓存。读不到就 `null` ⇒ 那一行不渲染，
+ * 别的副本要等一个 `configTtlMs`（中间不再有任何一层缓存，v0.4.0 把 KV 边缘缓存
+ * 那一项整层删了）。读不到就 `null` ⇒ 那一行不渲染，
  * **不伪造一个 0**（「0 秒生效」正好是被禁的那句话）。
  *
  * ⚠️ **「本进程确实立刻生效」这半句有一族例外，别再照上一版读**：
@@ -535,7 +536,6 @@ export function propagationView(body) {
   const p = b === null ? null : obj(b.propagation);
   return {
     configTtlMs: p === null ? null : finite(p.configTtlMs),
-    kvEdgeCacheMs: p === null ? null : finite(p.kvEdgeCacheMs),
     visibilityUpperBoundMs: p === null ? null : finite(p.visibilityUpperBoundMs),
   };
 }

@@ -113,16 +113,24 @@ export type ConfigErrorCode = (typeof CONFIG_ERROR_CODES)[number];
 /**
  * 「网关拒绝服务」这一档的专用异常。**它与「配置有问题」不是一回事。**
  *
- * 逃出 `buildApp` 的**非** `ConfigRefusal` 异常按定义就是代码 bug，两个入口据此分流：
- * · `src/entry/worker.ts` 的 catch：`ConfigRefusal` ⇒ `503 reason:"not_configured"`，
- *   其余 ⇒ 维持不透明的 `500`；
- * · `src/entry/node.ts` 不分流（`main().catch` 打 `err.message` + `process.exit(1)`），
- *   那是 Node 形态正确的 fail-fast，一个字都不改。
+ * 逃出 `buildApp` 的**非** `ConfigRefusal` 异常按定义就是代码 bug。
+ *
+ * ⚠️ **这里原来写着「两个入口据此分流」，v0.4.0 之后只剩一个入口，而且它不分流**：
+ * `src/entry/node.ts` 的 `main().catch` 打 `err.message` + `process.exit(1)`，
+ * 两类异常同样让进程起不来——那是 Docker 形态正确的 fail-fast，一个字都不该改
+ *（容器起不来是运维立刻看得见的信号，而 `docker logs` 里就是这句 message）。
+ * 从前分流的是 Worker 入口 `fetch()` 里那个 catch：`ConfigRefusal` ⇒
+ * `503 reason:"not_configured"`、其余 ⇒ 不透明 `500`，那条路随 Worker 形态一起删了。
+ *
+ * ⇒ **这个类今天还剩什么用**：`src/http/admin/handlers/registrar.ts` 那几条端点仍然
+ * 靠它把「运维配错」与「代码 bug」分开报（`registrar_blocked` / `probe_setup_failed`），
+ * 而 `loadConfigWithProvenance` 的字段级降级也靠它区分「拒绝服务」与「降级继续跑」。
+ * **它不是一个只为已删入口存在的类。**
  *
  * `message` 由抛点给，**逐字保留原文**：`src/entry/node.ts` 打的就是 `err.message`，
  * 五语言 DEPLOY.md 的故障排查条目引的也是那句原文（「缺少 GATEWAY_TOKEN，网关无法启动」）。
  *
- * ⚠️ **它不进任何未鉴权响应体。** Worker 那一支回的 `reason` 是**固定枚举串**，
+ * ⚠️ **它不进任何未鉴权响应体。** 未鉴权路径上回的 `reason` 一律是**固定枚举串**，
  * 永不由 `err.message` 派生——配置细节一个字节都不到未鉴权调用方。
  */
 export class ConfigRefusal extends Error {}

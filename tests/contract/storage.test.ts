@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import type { Storage } from "../../src/ports/storage.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
-import { IS_WORKERD } from "../helpers/is-workerd.js";
 import { watchStorage, createStorageHealth } from "../../src/core/storage-health.js";
 
 export function runStorageContract(name: string, make: () => Storage) {
@@ -47,8 +46,10 @@ export function runStorageContract(name: string, make: () => Storage) {
     // 15 轮评审的原因。dispatch 在返回成功响应前就要写回 key 状态，
     // 所以「两个并发请求」在生产里是常态而非边角场景。
 
-    // 用独立前缀（而不是 key:）：workerd 下跑的是真 KV，命名空间在同一个测试文件
-    // 的用例之间是持久的，共用 key: 前缀会与上面那条 list 用例互相污染。
+    // 用独立前缀（而不是 key:）：⚠️ 原来的理由是「workerd 下跑的是真 KV，命名空间在同一个
+    // 测试文件的用例之间是持久的，共用 key: 前缀会与上面那条 list 用例互相污染」。
+    // 那一侧没了，**独立前缀照旧留着**：`FileStorage` 那一份夹具同样是整份文件持久的，
+    // 共用前缀照样会与上面那条 list 用例互相污染。
     it("并发写入不同键时每个键都留存", async () => {
       const n = 20;
       const keys = Array.from({ length: n }, (_, i) => `conc:a${i}`);
@@ -117,7 +118,7 @@ export function runStorageContract(name: string, make: () => Storage) {
      * **评审发现**：`src/ports/storage.ts` 的端口文档明写"过期之后 `get`/`list`
      * 都不再能看到它"——`list()` 那一半此前没有任何用例守护（删掉
      * `FileStorage.list()`/`MemoryStorage.list()` 里的过期过滤，`pnpm test` +
-     * `pnpm test:workers` 全绿存活，已实测）。这里补上，与 `KvStorage` 分支同一条
+     * 当时 `pnpm test:workers` 全绿存活，已实测）。这里补上，与当时那条 `KvStorage` 分支同一条
      * "60 秒下限测不了真实过期"的理由（见上面那段说明），只验证"未过期的键在
      * `list()` 结果里"，不额外重复"过期之后消失"这条已经由 `get()` 系列用例
      * 覆盖过的行为；非 KV 分支两条都验。
@@ -191,16 +192,13 @@ runStorageContract(
   () => watchStorage(new MemoryStorage(), createStorageHealth(), () => Date.now()),
 );
 
-// 仅在 workerd 下运行：真实 KV。判据见 tests/helpers/is-workerd.ts（唯一实现，
-// 反向防线在 tests/workers-setup.ts）。
-if (IS_WORKERD) {
-  const { env } = await import("cloudflare:test");
-  const { KvStorage } = await import("../../src/adapters/storage-kv.js");
-  runStorageContract("KvStorage", () => new KvStorage((env as { POOL: KVNamespace }).POOL));
-} else {
-  const { mkdtempSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
-  const { FileStorage } = await import("../../src/adapters/storage-file.js");
-  runStorageContract("FileStorage", () => new FileStorage(mkdtempSync(join(tmpdir(), "a2a-"))));
-}
+// ⚠️ **这里原来是一个 `if (IS_WORKERD)` 分流**：workerd 那一侧跑真 KV
+//（`KvStorage` + miniflare 的 `cloudflare:test`），node 那一侧跑 `FileStorage`。
+// v0.4.0 摘掉 Worker 形态之后 `KvStorage` 这个实现整个删掉了，分流的另一侧不存在。
+// **`FileStorage` 那一半原样留下**：它钉的是「本仓唯一一个真的会落盘的 Storage
+// 实现满足这份契约」，与有没有第二个实现无关。
+const { mkdtempSync } = await import("node:fs");
+const { tmpdir } = await import("node:os");
+const { join } = await import("node:path");
+const { FileStorage } = await import("../../src/adapters/storage-file.js");
+runStorageContract("FileStorage", () => new FileStorage(mkdtempSync(join(tmpdir(), "a2a-"))));

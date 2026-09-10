@@ -4,16 +4,15 @@
 
 <h1>agnes2api</h1>
 <h3>멀티 프로토콜 AI 릴레이 · Agnes 백엔드</h3>
-<p>하나의 코드베이스로 OpenAI / Anthropic / OpenAI-Responses / Gemini 네 가지 주요 AI SDK 방언을 모두 소화하고, Agnes AI를 백엔드로 삼아 대화와 이미지·동영상 생성을 함께 제공합니다. Cloudflare Worker와 Node 두 런타임이 같은 전달 커널을 공유하며, Docker라면 명령 한 줄로 배포할 수 있습니다.</p>
+<p>하나의 코드베이스로 OpenAI / Anthropic / OpenAI-Responses / Gemini 네 가지 주요 AI SDK 방언을 모두 소화하고, Agnes AI를 백엔드로 삼아 대화와 이미지·동영상 생성을 함께 제공합니다. Docker라면 명령 한 줄로 배포할 수 있습니다.</p>
 
 <p>
   <img src="https://img.shields.io/badge/TypeScript-7.0-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/Hono-4.13-E36002?style=flat-square&logo=hono&logoColor=white" alt="Hono">
-  <img src="https://img.shields.io/badge/Cloudflare%20Workers-edge-F38020?style=flat-square&logo=cloudflareworkers&logoColor=white" alt="Cloudflare Workers">
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.3.1-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.4.0-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -61,11 +60,11 @@
 
 | 날짜 | 변경 내용 |
 |------|----------|
+| 2026-09-10 | v0.4.0 - ✂️ **Cloudflare Worker 형태 제거**(파괴적 변경): Docker만 남습니다. Worker에서는 레지스트라가 key를 발급하지 못했고(업스트림 제한이 IP 단위), `waitUntil`이 긴 라운드를 조용히 취소합니다 |
 | 2026-09-10 | v0.3.1 - 🔍 **감사 마무리**: 36건 중 적대적 검증으로 20건을 확인해 이번 버전에서 모두 수정. critical 2건 — SECURITY.md가 v0.3.0에서 사라진 보장을 그대로 적어 두었고, `/v1/responses` 스트리밍이 공식 SDK 내부에서 크래시 |
 | 2026-09-10 | v0.3.0 - 🚀 **사용자 대상 대규모 개편**(파괴적 변경 포함): 모델 목록 4 → 12, 패널에 브레이크포인트 추가, 자격 증명 평문 표시·복사, 모델별 연결성 테스트. 그 밖에 실측 결함 일괄 수정 |
 | 2026-09-09 | v0.2.2 - 🐛 **'지금 보충' 수정**(파괴적 변경 포함): 202를 돌려준 뒤 라운드 전체가 Cloudflare에 조용히 취소되고, 잠금이 15분간 새어 정시 라운드까지 막았습니다. 이제는 완료를 기다려 200과 실제 결과를 돌려줍니다 |
 | 2026-09-09 | v0.2.1 - 🧾 **릴리스 후 마무리**: v0.2.0 감사 결과를 태그 이후에 고쳐서 아무도 받을 수 없었습니다. 이번 판에서 실제로 내보냅니다 — LICENSE를 순수 MIT로 되돌리고, README의 섹션 수를 정정하고, 구현보다 더 많이 주장하던 문구들을 일괄 손봤습니다 |
-| 2026-09-09 | v0.2.0 - 🔧 **레지스트라 대수술**(파괴적 변경 포함): 두 메일함 채널이 "주 채널 + 자동 대체"에서 **둘 중 하나를 고르는** 방식으로(`registrar.channel`이 `primary`/`fallback`을 대체, 기존 설정도 읽음). 업스트림 속도 제한에 걸리면 즉시 중단하고 지수 백오프하며 차단된 도메인을 기억합니다. "연결 테스트"는 실제로 자격 증명을 검증합니다 |
 
 > 전체 변경 이력은 [CHANGELOG.md](../../CHANGELOG.md)에 있습니다.
 
@@ -97,11 +96,11 @@
 - **자동 보충은 기본적으로 꺼져 있습니다**. `REGISTRAR_ENABLED`를 켜면 쓸 수 있는 키가 `TARGET_KEYS` 아래로 내려갔을 때 Agnes 계정을 등록해 풀을 다시 채웁니다
 - 레지스트라의 임시 메일함 경로 두 개(`yyds` / `moemail`)는 **엄격하게 대등**합니다. 둘 중 하나만 고르는 방식이며 어느 쪽을 쓸지는 이용자가 정하고, 권장값을 미리 박아두지 않았습니다
 
-### 🔀 두 런타임, 하나의 전달 커널
+### 🔀 저장소와 트래픽의 분리
 
-- 같은 TypeScript 코드가 **Cloudflare Worker**(key 풀은 KV)에서도 **Node / Docker**(key 풀은 단일 JSON 파일)에서도 돌고, 요청 처리 로직은 글자 하나까지 같습니다
-- 저장소 접근은 트래픽과 떼어놓았습니다. key 풀은 isolate/프로세스 단위로 캐시되고 텔레메트리 필드만 바뀌는 갱신은 통째로 버려지므로, 정상 상태에서는 저장소 읽기도 쓰기도 요청량을 따라 늘지 않습니다
-- Worker에서는 보충 일정을 Cron 트리거가, Node에서는 프로세스 안의 타이머가 돌립니다. 보충의 의미는 양쪽이 같습니다
+- 상태는 전부 단일 파일 JSON(`store.json`)에 떨어집니다: key 풀, 패널 설정, 외부용 키 표, 이벤트 링이 모두 같은 마운트 볼륨 위에 있습니다
+- 저장소 접근은 트래픽과 떼어놓았습니다. key 풀은 프로세스 단위로 캐시되고 텔레메트리 필드만 바뀌는 갱신은 통째로 버려지므로, 정상 상태에서는 저장소 읽기도 쓰기도 요청량을 따라 늘지 않습니다
+- 보충과 `pool:index` 대조는 같은 프로세스 안 타이머(`TEND_INTERVAL_MS`)로 돕니다. 레지스트라가 꺼져 있어도 대조는 계속 돕니다
 
 ### 🖥 웹 관리 패널
 
@@ -114,9 +113,9 @@
 
 ### ⚡ 고성능 아키텍처
 
-- **TypeScript + Hono** 위에서 Worker 진입점과 Node 진입점이 같은 라우팅 트리를 공유합니다
+- **TypeScript + Hono** 위에서 라우팅 트리 하나가 네 프로토콜, 미디어 전달, `/admin` 서브트리를 모두 담습니다
 - 업스트림 응답은 기본적으로 스트림 그대로 전달합니다. 비스트리밍 요청은 `stream:false` 그대로 업스트림에 보내고, 게이트웨이가 업스트림의 JSON을 파싱해 호출한 프로토콜의 모양으로 옮깁니다
-- 포트 계층과 어댑터 계층이 분리되어 있고(저장소, 페치, 로그, 메일함 모두 갈아 끼울 수 있는 포트입니다), 계약 테스트는 두 런타임에서 각각 한 번씩 돕니다
+- 포트 계층과 어댑터 계층이 분리되어 있고(저장소, 페치, 로그, 메일함 모두 갈아 끼울 수 있는 포트입니다), 계약 테스트는 실제로 조립한 라우팅 트리를 직접 두드립니다
 - 멀티 스테이지 Docker 빌드, 비 root 실행, 멀티 아키텍처 이미지(amd64 / arm64), 헬스 체크
 
 ---
@@ -128,10 +127,10 @@
 | Node.js | 22.13+ | 소스에서 빌드하거나 Node로 직접 돌릴 때만 필요합니다. Docker 배포라면 로컬 설치가 필요 없습니다 |
 | Docker | 20.10+ | 권장하는 배포 방식이며 공식 이미지는 멀티 아키텍처입니다 |
 | Agnes 계정 | — | 유효한 Agnes API key가 최소 한 개 필요합니다(레지스트라에게 보충을 맡길 수도 있습니다) |
-| Cloudflare 계정 | wrangler 4+ | Cloudflare Worker 형태에서만 필요합니다. KV 네임스페이스 하나를 만들고 한 번 배포하면 됩니다 |
+| 마운트 볼륨 | — | 컨테이너가 `./data`를 `/app/data`에 마운트합니다. 상태는 전부 거기에 떨어지므로 업그레이드 전에 백업하세요 |
 
 > [!TIP]
-> Docker로 배포하면 로컬에 Node.js를 설치할 필요가 없고 Docker와 유효한 Agnes API key만 있으면 충분합니다. Cloudflare Worker에 배포한다면 서버조차 필요 없고 Cloudflare 계정과 wrangler 명령줄만 있으면 됩니다.
+> Docker로 배포하면 로컬에 Node.js를 설치할 필요가 없고 Docker와 유효한 Agnes API key만 있으면 충분합니다.
 
 ---
 
@@ -139,35 +138,13 @@
 
 > 📖 자세한 배포 안내: [DEPLOY.md](DEPLOY.md)
 
-> **사전 조건**: 유효한 Agnes API key가 최소 한 개, 그리고 Cloudflare 계정(Worker 형태)이나 Docker를 돌릴 수 있는 머신 중 하나가 필요합니다.
+> **사전 조건**: 유효한 Agnes API key가 최소 한 개, 그리고 Docker를 돌릴 수 있는 머신이 필요합니다.
 
 ### 1. 업스트림 key 준비하기
 
 Agnes AI 플랫폼에서 API key를 하나 만들어 두세요. 손으로 준비하기 싫다면 게이트웨이를 먼저 띄운 뒤 레지스트라를 켜서 풀을 채우게 해도 됩니다 —— 두 갈래 모두 배포 안내에 전부 적혀 있습니다.
 
 ### 2. 배포하기
-
-#### Cloudflare Worker
-
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xwteam/agnes2api)
-
-원클릭 배포는 로컬 클론 단계를 생략해 주지만 대신해 주지 못하는 것이 두 가지 있습니다: `wrangler.toml`의 KV 네임스페이스 id(저장소에 있는 값은 항상 자리표시자입니다)와 `GATEWAY_TOKEN` secret——둘 중 하나라도 빠지면 게이트웨이가 기동되지 않습니다. 전 과정을 직접 진행하거나 배포 후에 이 두 가지를 채우려면 아래 명령을 사용하세요:
-
-```bash
-git clone https://github.com/xwteam/agnes2api.git
-cd agnes2api
-pnpm install
-
-# KV 네임스페이스를 만들고 돌려받은 id를 wrangler.toml에 적는다
-npx wrangler kv namespace create POOL
-
-# 게이트웨이 토큰은 필수 비밀값이다. secret으로 주입하고 저장소에는 넣지 않는다
-npx wrangler secret put GATEWAY_TOKEN
-
-npx wrangler deploy
-```
-
-#### Docker
 
 ```bash
 # 저장소를 복제한다
@@ -207,9 +184,9 @@ docker compose logs -f
 ### 3. 확인하기
 
 ```bash
-# 헬스 체크(인증 없음). Worker에서는 자신의 https://<name>.<sub>.workers.dev로 바꾼다
+# 헬스 체크(인증 없음). 앞에 도메인을 뒀다면 자기 주소로 바꾼다
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.3.1"}
+# {"status":"ok","version": "0.4.0"}
 
 # 쓸 수 있는 모델을 확인한다
 curl http://localhost:8080/v1/models \
@@ -235,7 +212,7 @@ AI가 보낸 문장이 돌아오면 배포가 성공한 것입니다. 401이 돌
 > - `x-goog-api-key: <token>`(Google GenAI SDK가 기본으로 보내는 방식)
 > - 쿼리 파라미터 `?key=<token>`(수동 호출과 브라우저 환경)
 >
-> 아래의 `http://localhost:8080`은 실제로 배포한 주소(Worker의 `*.workers.dev` 도메인, 사용자 도메인, 또는 Docker 배포의 로컬 주소)로, `your-gateway-token`은 진짜 게이트웨이 토큰으로 바꿔 주세요.
+> 아래의 `http://localhost:8080`은 실제로 배포한 주소(로컬 주소, 또는 앞에 둔 도메인)로, `your-gateway-token`은 진짜 게이트웨이 토큰으로 바꿔 주세요.
 
 <details>
 <summary><b>OpenAI SDK(Python)</b></summary>
@@ -405,7 +382,7 @@ curl http://localhost:8080/v1/videos/task-1 \
 |------|----------|------|
 | GET | `/health` | 생존 확인(인증 없음. 버전과 저장소 건강 상태를 돌려줍니다) |
 
-> URL 안의 `localhost:8080`은 예시일 뿐입니다. Node에서는 포트를 `PORT`가 정하고, Worker에서는 자신의 `*.workers.dev`나 사용자 도메인이 됩니다. 배포한 곳으로 바꿔 주세요.
+> URL 안의 `localhost:8080`은 예시일 뿐입니다. 포트는 `PORT`가 정하고, 앞에 리버스 프록시나 도메인을 두면 호스트는 그쪽이 됩니다. 배포한 곳으로 바꿔 주세요.
 >
 > 인증 게이트는 네 가지 자격 증명 경로를 받아들입니다: `Authorization: Bearer`, `x-api-key`, `x-goog-api-key`, 쿼리 파라미터 `?key=`. 각 벤더 고유의 헤더와 파라미터도 **똑같이 받아들이므로** 공식 SDK는 베이스 URL만 바꾸면 그대로 붙습니다. 바꿔야 하는 것은 **값**입니다 —— 어느 경로로 실려 오든 진짜 벤더 키가 아니라 **이 게이트웨이**의 토큰이어야 합니다.
 
@@ -420,21 +397,21 @@ curl http://localhost:8080/v1/videos/task-1 \
 | `GATEWAY_TOKEN` | ✅ | — | 게이트웨이 토큰. 클라이언트는 이것으로 이 게이트웨이를 호출합니다. 값이 없으면 게이트웨이는 기동을 거부합니다 |
 | `ADMIN_TOKEN` | ❌ | — | 관리 패널 토큰. 설정하지 않으면 `/admin` 트리가 등록되지 않고, 설정한다면 게이트웨이 토큰과 다른 값에 24자 이상이어야 합니다 |
 | `AGNES_BASE_URL` | ❌ | `https://apihub.agnes-ai.com/v1` | Agnes 업스트림 베이스 URL |
-| `PORT` | ❌ | `8080` | Node에서의 수신 포트(Worker에서는 쓰지 않습니다) |
-| `DATA_DIR` | ❌ | `/app/data` | 파일 저장소가 기록하는 디렉터리(Worker에서는 쓰지 않습니다) |
+| `PORT` | ❌ | `8080` | 컨테이너 안의 수신 포트. compose가 같은 번호를 호스트에도 공개합니다 |
+| `DATA_DIR` | ❌ | `/app/data` | 파일 저장소가 기록하는 디렉터리. compose 볼륨 마운트와 묶여 있습니다 |
 | `UPSTREAM_TIMEOUT_MS` | ❌ | `8000` | 스트리밍 응답과 동영상 폴링에서 업스트림 첫 바이트 예산(밀리초) |
 | `UPSTREAM_SYNC_TIMEOUT_MS` | ❌ | `120000` | 동기 엔드포인트 전체의 타임아웃 예산(밀리초) |
 | `MAX_STRIKES` | ❌ | `3` | 일시적 실패의 상한. 닿으면 그 키는 긴 쿨다운에 들어갑니다 |
-| `POOL_CACHE_TTL_MS` | ❌ | `60000` | key 풀 스냅샷이 isolate/프로세스 하나 안에서 살아 있는 시간(밀리초) |
+| `POOL_CACHE_TTL_MS` | ❌ | `60000` | key 풀 스냅샷이 프로세스 하나 안에서 살아 있는 시간(밀리초) |
 | `REGISTRAR_ENABLED` | ❌ | `false` | 레지스트라 마스터 스위치. 켜면 쓸 수 있는 키가 목표 아래로 내려갈 때 자동으로 보충합니다 |
-| `TRUST_PROXY` | ❌ | — | 1로 두면 전달 헤더를 신뢰합니다. Cloudflare 뒤에서 돌린다면 설정해 두세요 |
+| `TRUST_PROXY` | ❌ | — | 1로 두면 전달 헤더를 신뢰합니다. 프록시나 CDN 뒤에 정말로 있을 때만 설정하세요 |
 | `USAGE_STATS_ENABLED` | ❌ | `false` | 패널 「사용량」 섹션을 위한 시계열. 기본값은 꺼짐이며 꺼져 있는 동안에는 비용이 들지 않습니다 |
 
-**Cloudflare Worker 쪽 설정은 `.env`를 지나지 않습니다**. 민감하지 않은 항목은 `wrangler.toml`의 `[vars]` 블록에 적고 민감한 값은 secret으로 주입합니다. KV 네임스페이스와 보충 Cron도 같은 파일에서 선언합니다.
+**`.env`를 고친 뒤에는 `docker compose restart`가 아니라 `docker compose up -d`를 실행하세요**. 컨테이너의 환경은 생성 시점에 고정되므로 같은 컨테이너를 재시작해도 아무것도 다시 읽지 않습니다.
 
 ```bash
-npx wrangler secret put GATEWAY_TOKEN
-npx wrangler secret put ADMIN_TOKEN
+docker compose up -d      # 컨테이너를 다시 만들어 새 설정을 적용
+docker compose logs -f    # 기동 로그로 반영을 확인
 ```
 
 ---
@@ -447,7 +424,7 @@ npx wrangler secret put ADMIN_TOKEN
 
 3. **key 풀 자가 회복**: 업스트림의 `429`/`402`는 키를 쿨다운시키고, 일시적 실패가 연달아 `MAX_STRIKES`에 닿으면 긴 쿨다운(`COOLDOWN_STRIKE_MS`, 기본 30분)에 들어가 만료되면 자동으로 돌아옵니다. **영구 제거는 업스트림 `401`/`403`에서만 일어납니다.** 쓸 수 있는 키가 하나도 남지 않으면 구분 가능한 이유를 붙여 `503`을 돌려줍니다. 동기 경로에서는 예산을 다 쓰도록 한 개도 응답하지 않은 경우에 `504`를 돌려줍니다.
 
-4. **Cloudflare 무료 등급의 KV 할당량**: 하루 읽기 횟수는 갱신 주기와 살아 있는 isolate 수에만 좌우되고 요청량과는 무관합니다. 다만 권장 설정 그대로도 기본값은 이미 그 선에 가깝습니다. 공개하기 전에 배포 안내의 「할당량 계산」을 한 번 짚어 보고, 필요하면 `POOL_CACHE_TTL_MS`를 키우세요.
+4. **데이터 디렉터리가 상태의 전부입니다**: key 풀, 패널 설정, 발급된 외부용 키가 모두 `./data/store.json`에 있고, 사본은 하나뿐이며 두 번째는 없고, 게다가 **평문**입니다. 업그레이드 전에 `cp -a ./data ./data.bak`을 돌리고, 그 디렉터리는 자격 증명으로 취급하세요.
 
 5. **네트워크 환경**: 배포 쪽에서 Agnes 업스트림(`AGNES_BASE_URL`)에 닿을 수 있어야 합니다. 레지스트라를 켠다면 고른 임시 메일함 서비스와 Agnes 플랫폼 백엔드에도 닿을 수 있어야 합니다.
 
@@ -460,12 +437,12 @@ npx wrangler secret put ADMIN_TOKEN
 - [x] 스트리밍(SSE)과 비스트리밍이 네 프로토콜에서 같은 모습으로 동작
 - [x] 이미지 생성 전달과 2단계 동영상 생성 전달
 - [x] key 풀: 꺼내기, 단계별 쿨다운, 영구 제거, 구분 가능한 고갈 이유
-- [x] 두 런타임: Cloudflare Worker(KV)와 Node / Docker(파일 저장소)를 같은 코드로
+- [x] 단일 파일 JSON 저장소: key 풀, 설정, 외부용 키 표, 이벤트 링이 마운트 볼륨 하나를 공유
 - [x] 레지스트라: 임시 메일함 경로 두 개가 대등하고, 코드 수신부터 풀 투입까지 전자동
 - [x] 아홉 개 섹션의 웹 관리 패널(빌드 불필요, 기본값은 꺼짐)
 - [x] 관리 API 인증: fail-closed, 토큰은 요청 헤더로만
 - [x] 5개 언어 문서와 5개 언어 패널
-- [x] CI 13개 게이트와 두 런타임에서의 계약 테스트
+- [x] CI 13개 게이트와 계약 테스트
 - [ ] 실제 업스트림 샘플로 프로토콜 목록 대조하기(오늘의 업스트림 사실 표는 모든 줄에 assumed라고 적혀 있습니다)
 - [ ] 첫 공개 컨테이너 이미지 배포하기
 
@@ -492,7 +469,7 @@ agnes2api는 사실상 한 사람이 관리하고 있습니다. 코드, 문서, 
 
 ## 🙏 감사의 말
 
-시간을 내어 시험해 주시는 모든 분께 감사드립니다. 버그 재현 절차, 로그, 호환성 보고, 기능 제안은 [Issues](https://github.com/xwteam/agnes2api/issues)로 보내 주세요 —— 이번이 첫 릴리스이고 key 풀, 레지스트라, 두 런타임, 멀티 프로토콜 호환, 웹 패널 모두 현실의 상황에 다듬어지기를 아직 기다리고 있습니다.
+시간을 내어 시험해 주시는 모든 분께 감사드립니다. 버그 재현 절차, 로그, 호환성 보고, 기능 제안은 [Issues](https://github.com/xwteam/agnes2api/issues)로 보내 주세요 —— 이번이 첫 릴리스이고 key 풀, 레지스트라, 멀티 프로토콜 호환, 웹 패널 모두 현실의 상황에 다듬어지기를 아직 기다리고 있습니다.
 
 ---
 
@@ -508,5 +485,5 @@ agnes2api는 사실상 한 사람이 관리하고 있습니다. 코드, 문서, 
 ---
 
 <div align="center">
-  <sub>Built with TypeScript + Hono + Cloudflare Workers | Powered by Agnes AI</sub>
+  <sub>Built with TypeScript + Hono + Docker | Powered by Agnes AI</sub>
 </div>

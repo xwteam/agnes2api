@@ -735,7 +735,7 @@ const PROSE_LINENO_RE =
  *
  * ⚠️ **`.github/workflows/ci.yml` 里那些 `name: N/M` 是真源，不受影响**：`SCAN_DIRS` 不含
  * `.github/`，而 `tests/unit/scripts-guard.test.ts` 的
- * 「CI 恰好十三道门，编号 1/13 到 13/13 各出现一次」判的是 `N/M` 那种形态、不带
+ * 「CI 恰好十一道门，编号 1/11 到 11/11 各出现一次」判的是 `N/M` 那种形态、不带
  * 「第 … 道」，一格都碰不到。**方向是把注释里的序号换成脚本名，既不是改 CI 去对齐
  * 注释，也不是把序号改成写对的那个数。**
  *

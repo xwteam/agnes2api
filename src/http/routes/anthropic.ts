@@ -63,7 +63,7 @@ export function anthropicRoutes(deps: DispatchDeps & UsageRecording): Hono {
 
     if (internal.stream && res.body) {
       // 流式没有 token：响应体是一条流，网关不聚合它（聚合就等于把整段回答缓存在
-      // 内存里，Worker 上直接顶到内存上限）。`streamingRequests` 单列一栏正是为此。
+      // 内存里）。`streamingRequests` 单列一栏正是为此。
       record(0, 0);
       return new Response(toAnthropicStream(res.body, req.model), {
         headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" },

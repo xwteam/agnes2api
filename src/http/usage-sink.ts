@@ -156,43 +156,27 @@ export const USAGE_ERROR_REPORT: Readonly<Record<UsagePhase, { event: string; ms
 };
 
 /**
- * 落盘间隔的生效值 + 每天写预算，由 `USAGE_FLUSH_INTERVAL_MS` 与**存储有没有写配额**共同决定。
+ * 落盘间隔的生效值。由 `USAGE_FLUSH_INTERVAL_MS` 一个人决定。
  *
- * ── 为什么判据是「存储能力」而不是「在哪个运行时上跑」 ──────────────────────
- * ⚠️ **这不是运行时嗅探。** 入参 `hasWriteQuota` 的唯一来源是
- * `RuntimeInfo.quotaModel`（`src/ports/runtime.ts` 明写「KV 有四个每天的配额桶；
- * 文件存储没有配额」）。`RuntimeInfo` 是本仓**双运行时差异的唯一注入点**，
- * `quotaModel` 是它里面的一格——**不是说这个接口里只有这一格**（同一个接口里还有
- * `name` 与 `storageBackend`；上一版把「唯一注入点」写到了 `quotaModel` 头上，
- * 而下半句又拿 `runtime.name` 当被否掉的替代方案点名，两句话互相矛盾，定向复评发现）。
- * 面板那一侧读的同样是 `GET /admin/api/capabilities` 的 `quota.model`，**不是 `runtime.name`**。
+ * ── ⚠️ 它原来还有第二个入参 `hasWriteQuota`，v0.4.0 删掉了 ─────────────────────
+ * 那个参数由 `src/http/wire.ts` 接成 `runtime.quotaModel === "kv"`，也就是
+ * **只有 Cloudflare KV 那种「每天有固定次数写配额」的存储后端才为真**。
+ * Worker 形态整体摘除之后存储只剩 `FileStorage`，它恒为假 ⇒ 那个参数没有第二个
+ * 合法取值，连同它带起来的两样东西一起删：
+ * · `budgetPerDay`（返回值里那一格）——文件存储那一侧本来就恒为 `null`；
+ * · 「间隔 × (预算 − 1) >= 一天，否则 fail-closed 直接抛」那道下限——它的整个立论
+ *   是「每个实例每天只有 13 次写配额」，没有配额就没有这道闸可守。
+ * 五语言 DEPLOY.md 其实早就写着「文件存储（Docker）没有写配额……不再有每天的写预算」，
+ * 删掉的是那句话的另一半，不是那句话本身。
  *
- * ⚠️ **与 `POOL_CACHE_TTL_MS` 只在一点上同构，别读成「完全同构」**（定向复评）：
- * 同构的那一点是「这个值只在 KV 形态下要紧，而它不按运行时分叉」。
- * **在配置面上两者完全不同**：那个值走 `num()`、进 `DEFAULTS`、进 `ENV_LOCK_MAP`、
- * 进 `config-validate`，因此出现在 `GET /admin/api/config` 的四元组里；
- * 而 `USAGE_FLUSH_INTERVAL_MS` **一个都没进**，全仓只在 `src/http/wire.ts` 裸读一次。
- * 那个取舍与它的代价记在下面「为什么它不走 config-provenance」那一段。
+ * ⚠️ **`UsageSink` 里那套预算机制本身还在，但它今天没有生产调用方**：
+ * `wire.ts` 显式传 `budgetPerDay: null`。留着它是范围取舍（拆掉会连带动
+ * `status().budgetExhausted` 这个公开响应字段与面板上那两处渲染），
+ * **这件事登记在这里，不是没看见**。
  *
- * ⚠️ **「默认值相同」说的就只是默认值，不是「两边行为一个字节都不差」**
- *（定向复评，上一版那句是假的，而且**被同一个提交里自己写的用例正面证伪**——
- * 「budgetPerDay 真的接到了 sink 上」那一格断言的正是 20 vs 13）：
- * 没设这个环境变量时，两种形态的**落盘间隔**逐字相同（`USAGE_FLUSH_MIN_INTERVAL_MS`），
- * 但**预算那道闸本来就只有「有写配额」的一侧才有** —— 同样 20 个待落盘的日、
- * 同样一次 flush，文件存储写 20 个键、KV 写 13 个。
- * **那不是分叉，那就是这个设计本身**：闸是为写配额存在的，没有配额的一侧没有它可守。
- * 分叉的判据是**存储能力**（`quotaModel`），不是运行时；而「不做运行时嗅探」这条
- * 由此被遵守——`.env.example` 里那句只说「默认值相同」，照它的口径来。
- *
- * ── 两侧各自的规则 ───────────────────────────────────────────────────────
- * · **没有写配额**（FileStorage / Docker）：任意正整数放行，**并且不设每天的写预算**
- *   （`budgetPerDay: null`）。留着那道闸的话，把间隔调到 300 秒的结果是
- *   「头 65 分钟写满 13 次、之后整天不写」——比默认值更糟，那正是
- *   `USAGE_FLUSH_MIN_INTERVAL_MS` 上方已经论证过的形态。此时的上界是间隔本身。
- * · **有写配额**（KV / Worker）：预算恒为 `USAGE_WRITES_PER_DAY`，而间隔必须满足
- *   `间隔 × (预算 − 1) >= 一天`，否则 **fail-closed 直接抛**，并把最小可用值写进错误消息。
- *   不许默默接受一个会让半天没有数据的值：**写量合格而数据从中午起就是假的，
- *   比起不来更难发现。**
+ * ── 今天的规则（只剩一条）───────────────────────────────────────────────
+ * 任意正整数放行，**不设每天的写预算**。此时「未落盘的尾巴最长多久」的上界
+ * 就是间隔本身。
  *
  * ⚠️ **非法值一律抛，不降级**：这是部署时错误，运维必须立刻看得见，
  * 而且它不可能是面板写坏的（面板永远碰不到环境变量）——与 `num()` 对
@@ -219,9 +203,7 @@ export const USAGE_ERROR_REPORT: Readonly<Record<UsagePhase, { event: string; ms
  */
 export function resolveUsageFlushInterval(
   raw: string | undefined,
-  hasWriteQuota: boolean,
-): { flushIntervalMs: number; budgetPerDay: number | null } {
-  const budgetPerDay = hasWriteQuota ? USAGE_WRITES_PER_DAY : null;
+): { flushIntervalMs: number } {
   // ⚠️ **空串与「没设」同等对待**（定向复评）。理由**不是**「迁就一个坏值」，
   // 而是与 `.env.example` 其余 9 个留空项的既有约定一致：那份文件是给
   // `cp .env.example .env` + `env_file:` 直接用的，一个留空的键会以**空字符串**
@@ -229,34 +211,18 @@ export function resolveUsageFlushInterval(
   // 少了这一行，`USAGE_FLUSH_INTERVAL_MS=` 会走进下面的 `Number("") = 0` 而抛，
   // **全新的 Docker 部署直接起不来**——那是本仓唯一一个被喂给严格整数校验器的空值项。
   if (raw === undefined || raw === "") {
-    return { flushIntervalMs: USAGE_FLUSH_MIN_INTERVAL_MS, budgetPerDay };
+    return { flushIntervalMs: USAGE_FLUSH_MIN_INTERVAL_MS };
   }
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) {
     // **`ConfigRefusal` 而不是裸 `Error`**：这是**运维配错**，不是代码 bug。
-    // `src/entry/worker.ts` 的 catch 靠类分流两档——留成裸 `Error` 的话，一次
-    // `wrangler.toml [vars]` 里的笔误会得到一个「网关内部错误」的 500，
-    // 把运维支去查代码，而该改的是那一行配置。
+    // `src/entry/node.ts` 末尾那个 `main().catch` 打的是 `err.message` 再
+    // `process.exit(1)`，运维在 `docker logs` 里看到的就是这句话本身；
+    // 留成裸 `Error` 的话它照样退出，但类型上就再也分不出「配错」与「代码 bug」，
+    // 而本仓别处（面板、`/admin` 的 503 分档）是靠这个类分流的。
     throw new ConfigRefusal(`环境变量 USAGE_FLUSH_INTERVAL_MS 必须是不小于 1 的整数: ${raw}`);
   }
-  if (hasWriteQuota && n * (USAGE_WRITES_PER_DAY - 1) < USAGE_DAY_MS) {
-    const min = Math.ceil(USAGE_DAY_MS / (USAGE_WRITES_PER_DAY - 1));
-    // **同上一支：`ConfigRefusal` 而不是裸 `Error`**（评审回填）。这一支比上一支更
-    // 该分对档：它**只在 Worker 上够得着**（`hasWriteQuota` 由 `runtime.quotaModel === "kv"`
-    // 接线，Node 恒为 `"file"`），而 Worker 正是「装配抛错 ⇒ 每个请求不透明 500、
-    // 原因只在 `wrangler tail`」那个失败形态的发生地。留成裸 `Error` 的话，
-    // `wrangler.toml [vars]` 里一句 `USAGE_FLUSH_INTERVAL_MS=300000`——一个纯粹的
-    // 运维笔误、不是代码 bug——照样落进 500 那一档，把运维支去查代码。
-    // **message 一个字都没改**：`tests/contract/usage-tier2.test.ts` 断的是消息里的
-    // 最小可用值，换类不换话。
-    throw new ConfigRefusal(
-      `环境变量 USAGE_FLUSH_INTERVAL_MS=${raw} 在这种存储形态下会让一天中的大部分时间没有用量数据：`
-      + `每个实例每天只有 ${USAGE_WRITES_PER_DAY} 次写配额，间隔 × (${USAGE_WRITES_PER_DAY} − 1) 必须 >= 一天。`
-      + `最小可用值是 ${min}。`
-      + `（文件存储没有写配额，那种部署可以随意调小。）`,
-    );
-  }
-  return { flushIntervalMs: n, budgetPerDay };
+  return { flushIntervalMs: n };
 }
 
 /**
@@ -276,14 +242,15 @@ export function recordUsage(deps: UsageRecording, u: UsageOutcome): void {
 /**
  * Tier-2 的内存累加器 + 落盘。
  *
- * ⚠️ **落盘由中间件在请求收尾 `await`，不是 `ctx.waitUntil`、不是定时器**（订正）。
- * 设计 §7.1 写的是 `ctx.waitUntil(maybeFlush())`，而仓里既定的做法是
- * `src/http/log-flush.ts` 的 `await flush()`，那个文件头逐字写着：
- * 「fire-and-forget 在 Worker 上会被响应返回后的 isolate 停摆截断」。
- * 两种运行时同一条代码路径，这是硬约束 1。
+ * ⚠️ **落盘由中间件在请求收尾 `await`，不是 fire-and-forget、不是定时器**（订正）。
+ * 设计 §7.1 写的是 `ctx.waitUntil(maybeFlush())`，那是 Worker 形态的写法，
+ * 随那个形态在 v0.4.0 一起没了；仓里既定的做法是 `src/http/log-flush.ts` 的
+ * `await flush()`。**`await` 这一条今天仍然要守**，理由换成不依赖运行时的那一条：
+ * 不 `await` 的话，落盘失败发生在响应之后，`onError` 那条诊断与引发它的那次请求
+ * 再也对不上号，而且进程收到停止信号时最后一批计数会随手丢掉。
  *
  * ⚠️ **累加器按 UTC 日分桶（`Map<day, DayAcc>`），不是一份全局累计。**
- * 一份全局累计 + 按天分的键 = **重复计数**：第 N 天的键里装着从 isolate 启动到现在的
+ * 一份全局累计 + 按天分的键 = **重复计数**：第 N 天的键里装着从进程启动到现在的
  * 全部量，跨天读回来求和就多算了。**而重复计数在面板上长得完全正常**——
  * 没有任何断言会因为数字偏大而红，除非专门写一条（`tests/contract/usage-tier2.test.ts`
  * 的「跨两个 UTC 日各落一次盘，合并读回来不许重复计数……」那一格就是那一条）。
@@ -310,7 +277,7 @@ export function recordUsage(deps: UsageRecording, u: UsageOutcome): void {
  *   而在「已用 13 格」上两者都说耗尽 ⇒ 只测 13 是测不出来的（第 5 种假阳性）。
  *
  * ⚠️ **构造时 `lastFlushAt = now()` 而不是 null**，照抄 `StoreLogger` 那条评审结论：
- * 判到 `null` 就跳过间隔检查 ⇒ 每次 isolate 冷启动送一次零门槛写。
+ * 判到 `null` 就跳过间隔检查 ⇒ 每次进程冷启动送一次零门槛写。
  * 代价（未落盘的尾巴最长一个间隔）已经算进配额账，
  * **那是一条代价，不是「默认关」的理由**。
  */
@@ -319,8 +286,8 @@ export class UsageSink {
    * UTC 日序号 → 那一天的**累计**值。
    *
    * ⚠️ **落盘成功之后这里不清零**（同一天的下一次落盘要把整份再覆写一遍），
-   * 跨天之后旧日的累加器也仍然留着。**上界是这个 isolate 的存活天数**：
-   * Worker 上是分钟级、至多一两个键；Node 上跑满一年也就 365 个小对象。
+   * 跨天之后旧日的累加器也仍然留着。**上界是这个进程的存活天数**：
+   * 跑满一年也就 365 个小对象。
    * 为它加一条清理路径要在热路径上多一次判断，换不回任何可观测的东西
    * ——**明写在这里，免得下一个人以为它「只保留有未落盘增量的那些日」**。
    */
@@ -332,7 +299,7 @@ export class UsageSink {
    * 有没有新的增量进来」**（定向复评），不参与任何计数。
    *
    * ⚠️ **为什么非有它不可**：`maybeFlush()` 在 `await put` 上挂起期间，`record()`
-   * 照样在跑（同一个 isolate 里的另一个并发请求）。挂起之前那道间隔闸只挡得住
+   * 照样在跑（同一个进程里的另一个并发请求）。挂起之前那道间隔闸只挡得住
    * **flush 与 flush** 的重叠，**挡不住 record 与 flush 的重叠** —— 而后者会让
    * `await` 之后那句 `dirty.delete(day)` 把**这期间新到的增量**的脏标记一起清掉：
    * 那条计数从此既不在已落盘的分片里、也不会被下一轮补上，**永久消失**，
@@ -341,8 +308,8 @@ export class UsageSink {
    * 「落盘挂起期间到达的那一条计数不许丢……」钉着。
    *
    * ⚠️ **上界与 `days` 完全相同，一并写在这里免得两种待遇**（收口复评）：
-   * 它与 `days` 同一个键空间、同样从不清理 ⇒ **上界是这个 isolate 的存活天数**
-   *（Worker 上分钟级、至多一两个键；Node 上跑满一年 365 个数）。
+   * 它与 `days` 同一个键空间、同样从不清理 ⇒ **上界是这个进程的存活天数**
+   *（跑满一年 365 个数）。
    * 每格只是一个数字，比 `days` 那边的一份累加器还便宜得多。
    */
   private readonly version = new Map<number, number>();
@@ -350,7 +317,7 @@ export class UsageSink {
   private lastFlushAt: number;
   private budget: WriteBudget = FRESH_BUDGET;
   /**
-   * 这个 isolate 稳定落在哪个槽位。**构造时算一次、终生不变。**
+   * 这个实例稳定落在哪个槽位。**构造时算一次、终生不变。**
    *
    * 这不是省一次取模的微优化，是一条会被观测到的性质：`usageSlotOf` 是纯函数，
    * 每次现算给出的结果**也**一样——真正的区别在于 `shardId` 是构造参数，
@@ -363,18 +330,21 @@ export class UsageSink {
    */
   private readonly slot: number;
   /**
-   * 两次落盘之间至少隔多久。**默认 `USAGE_FLUSH_MIN_INTERVAL_MS`（2 小时），
-   * 两种运行时的默认值逐字相同**——运维可经 `USAGE_FLUSH_INTERVAL_MS` 覆盖，
+   * 两次落盘之间至少隔多久。**默认 `USAGE_FLUSH_MIN_INTERVAL_MS`（2 小时）**
+   *（⚠️ 这里原来还有半句「两种运行时的默认值逐字相同」，只剩一种运行时之后删）
+   * ——运维可经 `USAGE_FLUSH_INTERVAL_MS` 覆盖，
    * 合法性由 `resolveUsageFlushInterval()` 在装配时判，不在这里。
    */
   private readonly intervalMs: number;
   /**
    * 每个 UTC 日最多写几个键。**`null` = 没有这道闸**。
    *
-   * ⚠️ **`null` 只给「存储本身没有写配额」的形态**（FileStorage / Docker），
-   * 判据是**存储能力**而不是 `runtime.name`——见 `resolveUsageFlushInterval()`
-   * 上方那段。KV 那一侧恒是 `USAGE_WRITES_PER_DAY`，那道闸是配额账里
-   * **唯一一项真正被代码保证的数**，不许被参数化掉。
+   * 🔴 **v0.4.0 起生产装配一律传 `null`**（`src/http/wire.ts` 那一行写着理由）：
+   * 这道闸是为 Cloudflare KV 的每日写配额存在的，而那种存储后端随 Worker 形态
+   * 一起摘掉了，文件存储从来没有过写配额。**它今天没有生产调用方**，
+   * 还能被走到的只有直接 `new UsageSink({...})` 的用例。
+   * 留着而不是拆掉是范围取舍：拆它要连带动 `status().budgetExhausted` 这个
+   * 公开响应字段与面板上那两处渲染。**登记在这里，不是没看见。**
    */
   private readonly budgetPerDay: number | null;
 
@@ -412,7 +382,8 @@ export class UsageSink {
     onError: (err: unknown, phase: UsagePhase) => void;
     /** 见 `intervalMs`。缺省 = 后端常量。 */
     flushIntervalMs?: number;
-    /** 见 `budgetPerDay`。**缺省 = `USAGE_WRITES_PER_DAY`，即「有写配额」那一侧的行为**。 */
+    /** 见 `budgetPerDay`。**缺省 = `USAGE_WRITES_PER_DAY`，即「有写配额」那一侧的行为**。
+     * ⚠️ 生产装配从不走这个缺省，它显式传 `null`。 */
     budgetPerDay?: number | null;
   }) {
     this.slot = usageSlotOf(o.shardId);
@@ -543,7 +514,10 @@ export class UsageSink {
    *（见 `USAGE_FLUSH_MIN_INTERVAL_MS`）⇒ **任何一次重复写都直接击穿当天的覆盖**：
    * 13 个并发请求撞上同一个 2 小时边界（繁忙网关的常态）⇒ 预算在第一次落盘就耗尽，
    * 此后到下一个 UTC 日一个字不写 ⇒ 五语言 DEPLOY.md 那句「最多旧 2 小时」
-   * 变成最多旧 24 小时，而 Worker 上 isolate 活不到第二天，那些计数直接消失。
+   * 变成最多旧 24 小时，而那期间容器一重启，内存里那些计数直接消失。
+   * ⚠️ **这一整段今天只在「有人显式给 `budgetPerDay` 传了非 null」时才够得着**
+   *（生产装配传的是 `null`，见那一格）。它描述的重入形态本身与预算无关，
+   * `lastFlushAt` 那一半照旧成立，所以整段留着。
    *
    * `src/adapters/logger-store.ts` 的 `writeBatch()` 做的**恰好相反且写明了理由**
    *（「窗口与预算**在发起写之前**就推进：写失败时不重试同一批」），本方法照抄那个形态。
@@ -578,7 +552,6 @@ export class UsageSink {
       // 四个 record 都要浅拷：`record()` 往它们里面**赋新键**（`acc.hours[h] = …`），
       // 而 `acc.total` 是整体重新赋值的。不拷的话，`await` 期间到达的那一条会
       // **只蹭进 `hours`/`byModel`/`byProtocol` 而不进 `total`**
-      //（KV 那边 `JSON.stringify` 在 await 前同步求值，则是干脆整条丢掉）
       // ⇒ 落下去的分片**自己和自己对不上**：`total.requests = 1` 而
       // `byProtocol.openai.requests = 2`。
       // **浅拷就够**：桶对象本身从不被原地改（`addToBucket` 是纯函数，每次返回新对象），

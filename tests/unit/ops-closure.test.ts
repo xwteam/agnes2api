@@ -37,9 +37,11 @@ import { REGISTRAR_BACKOFF_KEY } from "../../src/core/registrar/backoff.js";
  * ③ **「升级压根没发生」**。升级后的三条确认在旧版本上一字不差地全绿，而 `/health`
  *    早就带着 `version`。见 E 组。
  *
- * ④ **Worker 的备份清单**。此前只列 `pool:index` 与 `key:<id>` 两族，照它恢复会静默
+ * ④ **备份清单**。此前只列 `pool:index` 与 `key:<id>` 两族，照它恢复会静默
  *    吊销全部已签发的对外 API 密钥、丢掉面板配置与注册机状态。见 F 组——那几个键名
  *    **一律从真源常量 import**，不在本文件手抄字符串。
+ *    ⚠️ 这一条原来点的是「**Worker 的**备份清单」，v0.4.0 之后那条部署路没了；
+ *    F 组因此从四格收成两格，逐格交代写在那一组头上。
  *
  * ── 它验不了什么（明写）──────────────────────────────────────────────────
  * · 「`docker compose restart` 不重读 `.env`」这句话**本身**是 compose 的行为，本仓的
@@ -109,16 +111,26 @@ const h3Section = (text: string, h2: number, h3: number): string[] => {
   return rows.slice(from, starts[h3 + 1] ?? rows.length).map((r) => r.line);
 };
 
-/** 本组用到的那几个下标。名字是给读的人用的，判据只认下标。 */
+/**
+ * 本组用到的那几个下标。名字是给读的人用的，判据只认下标。
+ *
+ * ⚠️ **v0.4.0 摘掉 Cloudflare Worker 形态之后这张表整体前移过一次**：五份 DEPLOY.md
+ * 少了两个 `##`（「选哪种形态」与 Worker 部署那一节），`backupWorker` 那一行连同
+ * 它那一格用例一起删（下面 F 组有交代）。下标是**当场从 `docs/zh-CN/DEPLOY.md` 数出来
+ * 再逐份核过五语言的**，不是推算的；下面那格「小节切片自守」就是它的绊线。
+ */
 const AT = {
-  dockerConfig: [4, 1],
-  dockerVerify: [4, 3],
-  dockerUpdate: [4, 4],
-  faqDegraded: [8, 6],
-  upgradeAfter: [11, 1],
-  backupWorker: [12, 1],
+  dockerConfig: [2, 1],
+  dockerVerify: [2, 3],
+  dockerUpdate: [2, 4],
+  faq: 6,
+  faqDegraded: [6, 6],
+  upgradeBefore: [9, 0],
+  upgradeAfter: [9, 1],
 } as const;
-const backupDocker: readonly [number, number] = [12, 0];
+const backupDocker: readonly [number, number] = [10, 0];
+/** 「里面有什么」那一节：备份清单逐族点名住在这里。 */
+const backupContents: readonly [number, number] = [10, 1];
 
 /** 「这些语言的那一节里没有这个锚」——五种语言一起报，缺一份就点名一份。 */
 const langsMissing = (needle: string, pick: (lang: Lang) => string): Lang[] =>
@@ -138,8 +150,9 @@ describe("小节切片自守：下标指到的还是那几节", () => {
       dockerUpdate: title(h3Section(t, ...AT.dockerUpdate)),
       faqDegraded: title(h3Section(t, ...AT.faqDegraded)),
       upgradeAfter: title(h3Section(t, ...AT.upgradeAfter)),
+      upgradeBefore: title(h3Section(t, ...AT.upgradeBefore)),
       backupDocker: title(h3Section(t, ...backupDocker)),
-      backupWorker: title(h3Section(t, ...AT.backupWorker)),
+      backupContents: title(h3Section(t, ...backupContents)),
     }, "DEPLOY.md 被重排了，本组的下标切片已经指到别的小节上 —— 先在这里把下标改对，"
       + "再去看下面那些格的报文；否则它们会报出一堆看不懂的「这一节里没这句话」").toEqual({
       dockerConfig: "### 配置",
@@ -147,14 +160,15 @@ describe("小节切片自守：下标指到的还是那几节", () => {
       dockerUpdate: "### 更新",
       faqDegraded: "### Docker 容器起来了，但 `/health` 是 degraded",
       upgradeAfter: "### 升级之后确认什么",
-      backupDocker: "### Docker",
-      backupWorker: "### Cloudflare Worker",
+      upgradeBefore: "### 升级前",
+      backupDocker: "### 怎么备份",
+      backupContents: "### 里面有什么，以及为什么挑着抄是个坑",
     });
   });
 
   it("认不出要吵：下标越界时当场抛，不静默返回空正文（空正文会让下面每一格都平凡地绿）", () => {
     expect(() => h2Section(deploy("zh-CN"), 99)).toThrow(/切片坏了/);
-    expect(() => h3Section(deploy("zh-CN"), 4, 99)).toThrow(/切片坏了/);
+    expect(() => h3Section(deploy("zh-CN"), 2, 99)).toThrow(/切片坏了/);
   });
 });
 
@@ -353,7 +367,11 @@ describe("C 五份 DEPLOY.md 都写着「`docker compose restart` 不重读 .env
     // 那一段原文只写「Docker 重建容器」。轮换时踩这个坑的后果不是「白忙一场」，
     // 是**你以为旧口令失效了而它还在生效**——按已泄漏处置的安全流程会因此静默失败。
     const src = read(ENV_EXAMPLE);
-    const at = src.indexOf("wrangler secret put ADMIN_TOKEN");
+    // 🔴 **v0.4.0 换了落点**：上一版锚的是那一段里的 `wrangler secret put ADMIN_TOKEN`
+    // （Worker 那一半的轮换命令），摘掉形态之后那半句删了。锚改成这一段自己的开头，
+    // **这一格守的两件事一个字没变**：给出 `docker compose up -d`，并写出
+    // `docker compose restart` 不重读 `.env` 这条反例。
+    const at = src.indexOf("面板不能自助轮换自己的钥匙");
     expect(at, `${ENV_EXAMPLE} 里找不到讲口令轮换的那一段 —— 判据落点变了`).toBeGreaterThan(-1);
     const para = src.slice(at, at + 400);
     expect(para, "轮换那一段只说「重建容器」而没给命令").toContain("docker compose up -d");
@@ -363,7 +381,7 @@ describe("C 五份 DEPLOY.md 都写着「`docker compose restart` 不重读 .env
 
   it("面板 404 那条 FAQ 先问「容器真的重建过吗」，再谈口令合不合规（顺序反了等于没写）", () => {
     const faq = (l: Lang): string[] => {
-      const rows = h2Section(deploy(l), 8);
+      const rows = h2Section(deploy(l), AT.faq);
       const at = rows.findIndex((x) => x.includes("`/admin`"));
       return rows.slice(at, at + 20);
     };
@@ -411,7 +429,7 @@ describe("E 升级后的确认清单里有 `version`，不再是三条与版本�
 
   it("「升级前」记基线那一条也在（没有基线，E1 那半句无从比对）", () => {
     expect(
-      LANGS.filter((l) => !h3Section(deploy(l), 11, 0).join("\n").includes("version")),
+      LANGS.filter((l) => !h3Section(deploy(l), ...AT.upgradeBefore).join("\n").includes("version")),
       "这些语言的「升级前」没让人记下当前 version",
     ).toEqual([]);
   });
@@ -423,7 +441,7 @@ describe("E 升级后的确认清单里有 `version`，不再是三条与版本�
     const { nodeRuntime } = await import("../../src/adapters/runtime-node.js");
     const { MemoryStorage } = await import("../helpers/fake-storage.js");
     const { VERSION } = await import("../../src/version.js");
-    const { app } = await buildApp({ GATEWAY_TOKEN: "ops-closure-token" }, new MemoryStorage(), nodeRuntime());
+    const { app } = await buildApp({ GATEWAY_TOKEN: "ops-closure-token" }, new MemoryStorage());
     const body = await (await app.request("/health")).json() as { version?: string };
     expect(
       body.version,
@@ -454,32 +472,30 @@ describe("F 备份清单不再只有两族键", () => {
     expect(BACKUP_KEYS.length, "表被清空了").toBeGreaterThan(5);
   });
 
-  it("Worker 备份那一节里，每一族键都被点名（五语言逐份）", () => {
-    const wrong = LANGS.flatMap((l) => {
-      const sec = h3Section(deploy(l), ...AT.backupWorker).join("\n");
-      return BACKUP_KEYS.filter(([k]) => !sec.includes(k)).map(([k, why]) => `${l}:${k}（${why}）`);
-    });
+  /*
+   * ⚠️⚠️ **这一组原来是四格，v0.4.0 删掉两格，逐格交代：**
+   * · 「Worker 备份那一节里，每一族键都被点名（五语言逐份）」——**整格的被测对象是
+   *   五份 DEPLOY.md 里的 `### Cloudflare Worker` 备份小节**，那一节随 Worker 形态一起
+   *   从文档里删了。**它守的那条不变量没有消失**，由下面那一格接着守：备份清单漏掉
+   *   `apikeys` 的后果（照它恢复之后每个下游用户的子密钥全部 401、而运维在恢复现场
+   *   完全看不到）与走哪条部署路无关。
+   * · 「`kv key list` 那句收口在」——它钉的是「Worker 侧那段 `wrangler kv key list`
+   *   的措辞不许退回『逐个 key:<id> 取出来即可』」。**那一段整段没了。**
+   *   同一条纪律（备份就是备份存储本身，不许挑着抄）今天由 Docker 侧的
+   *   `cp -a ./data` 与下面那一格一起承担。
+   *
+   * 🟡 **如实登记一处判别力下降**：删掉的第一格是**逐族点名**（`BACKUP_KEYS` 每一族
+   * 都要在那一节里出现），而留下的这一格只点名 `apikeys` 一族。要补的话是把
+   * `BACKUP_KEYS` 整张表挂到「里面有什么」那一节上；这次没做，因为口径是
+   * 「摘形态、不新增覆盖」。
+   */
+
+  it("备份「里面有什么」那一节点名 `apikeys` —— 漏了它，照清单恢复会静默吊销全部已签发的子密钥", () => {
     expect(
-      wrong,
-      `Worker 的备份步骤没点名这些键：\n${wrong.join("\n")}\n`
-      + "⇒ 照那份清单恢复：上游 key 池回来了、/health 回 ok、自己拿 GATEWAY_TOKEN 一测也通，"
+      LANGS.filter((l) => !h3Section(deploy(l), ...backupContents).join("\n").includes(APIKEY_KEY)),
+      "这些语言在备份那一节仍然断言「就是全部」却漏了对外 API 密钥表 ⇒ "
+      + "照它恢复：上游 key 池回来了、/health 回 ok、自己拿 GATEWAY_TOKEN 一测也通，"
       + "而每一个下游用户手上的子密钥全部 401 —— 运维在恢复现场完全看不到这件事发生",
-    ).toEqual([]);
-  });
-
-  it("Docker 那一节的「store.json 里就是全部」清单同样点名 `apikeys`", () => {
-    expect(
-      LANGS.filter((l) => !h3Section(deploy(l), ...backupDocker).join("\n").includes(APIKEY_KEY)),
-      "这些语言在 Docker 备份那一段仍然断言「就是全部」却漏了对外 API 密钥表",
-    ).toEqual([]);
-  });
-
-  it("「list 出来的每一把都要 get 下来」这句收口在，而不是「逐个 key:<id> 取出来即可」", () => {
-    // 原文那个「即可」是断言性收口，不是举例——它与同一段自己立的原则
-    //（「备份就是备份存储本身」）正面冲突，Docker 侧的 `cp -a ./data` 遵守了，Worker 侧没有。
-    expect(
-      langsMissing("kv key list", deploy),
-      "这些语言的备份步骤里连 `kv key list` 都没有了 —— 那连「清单从哪来」都答不出",
     ).toEqual([]);
   });
 });
@@ -516,7 +532,11 @@ describe("H DATA_DIR 与卷挂载绑死这件事，文档里写着", () => {
     const spec = mountSpec();
     const wrong = LANGS.filter((l) => {
       const sec = h3Section(deploy(l), ...AT.dockerConfig).join("\n");
-      const alert = sec.includes("> [!WARNING]");
+      // ⚠️ **判据是「住在 alert 块里」，不是「用的是哪个 alert 关键字」**：
+      // GitHub 的 alert 有 NOTE/TIP/IMPORTANT/WARNING/CAUTION 五种，这一条用
+      // WARNING 还是 CAUTION 是文档那一面的编辑取舍（v0.4.0 那一轮从 WARNING 改成了
+      // CAUTION），而这一格要守的是「它没有退回一段普通散文」。
+      const alert = sec.includes("> [!WARNING]") || sec.includes("> [!CAUTION]");
       return !alert || !sec.includes(spec) || !sec.includes("DATA_DIR");
     });
     expect(

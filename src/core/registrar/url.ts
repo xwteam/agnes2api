@@ -11,7 +11,7 @@
  * 真正的理由有两条：
  * · `GET /admin/api/events/download`（`src/http/admin/router.ts`）的设计用途就是
  *   **被导出**——粘进 issue、贴进聊天窗口。导出的那一刻它就离开了鉴权边界。
- * · 事件同时进 `ConsoleLogger` ⇒ 容器 stdout / `wrangler tail`，那是另一个信任域。
+ * · 事件同时进 `ConsoleLogger` ⇒ 容器 stdout，那是另一个信任域。
  *
  * ── 射程（**盲区在这里登记，文档里不许说成「已脱敏」**）──────────────────────
  *

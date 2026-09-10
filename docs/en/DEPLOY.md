@@ -1,29 +1,24 @@
 # Deployment Guide
 
-agnes2api ships as two deployment targets built from the same codebase and request-handling logic — pick whichever fits your infrastructure.
+agnes2api ships as one deployment target: a Docker image built from this codebase, run with `docker compose`.
 
 > [!NOTE]
-> They differ only in storage backend: the Worker uses a Cloudflare KV namespace, Docker uses
-> a JSON file on a mounted volume.
+> All state lives in one place — a JSON file on a mounted volume (`store.json`). Back that
+> directory up and you have backed up everything.
 
 ## System Requirements
 
-The two forms have different prerequisites. Read the column for the path you picked;
-you do not need both.
+One column, because there is one path.
 
-| Item | Cloudflare Worker | Docker |
-|------|-------------------|--------|
-| Local runtime | Node.js 20+ (only to run `wrangler` and the build) | Not needed |
-| Command line | `npx wrangler` (installed by `pnpm install`) | Docker Engine 24+ and `docker compose` |
-| Platform | A Cloudflare account; the free tier is enough | A machine that can run containers |
-| Upstream | At least one Agnes API key, see the next section | At least one Agnes API key, see the next section |
+| Item | Requirement |
+|------|-------------|
+| Command line | Docker Engine 24+ and `docker compose` |
+| Platform | Any machine that can run containers |
+| Upstream | At least one Agnes API key, see the next section |
 
 > [!TIP]
-> The Docker path needs nothing but a machine with Docker: `cp .env.example .env`, then a single
-> `docker compose up -d` brings it up.
-> The Worker path needs no server at all, but you must create a KV namespace in your own
-> Cloudflare account first — there is no substitute for that step.
-
+> Nothing else is needed — no local Node.js, no build toolchain: `cp .env.example .env`, then a
+> single `docker compose up -d` brings it up.
 ## Getting Agnes Credentials
 
 The gateway does not mint keys. All it does is spread requests across the one or more Agnes
@@ -40,154 +35,21 @@ running and confirming all four protocols work.
 
 The repository ships an optional registrar that refills the pool up to `TARGET_KEYS` on its own.
 It is **off by default** (leave `REGISTRAR_ENABLED` unset and it stays off). How it works, how to
-choose between the two mailbox channels, and the Cloudflare Cron wall-clock ceiling are all
-documented in [REGISTRAR.md](REGISTRAR.md).
+choose between the two mailbox channels, and how often a round runs are all documented in
+[REGISTRAR.md](REGISTRAR.md).
 
 > [!IMPORTANT]
-> Either way the key lands **in plain text** in KV / `store.json`. Treat the data directory and
-> the KV namespace as credentials.
-
-## Choosing a Deployment Form
-
-Both forms are built from the same codebase: all four protocols, the admin panel and the
-registrar exist on both sides. These are the only differences:
-
-| Dimension | Cloudflare Worker | Docker |
-|-----------|-------------------|--------|
-| Where it runs | Your own Cloudflare account, at the edge | Your own server or laptop |
-| Storage backend | A KV namespace (the `POOL` binding) | `store.json` on a mounted volume |
-| Server required | No | Yes |
-| Quota limits | Free-tier KV: 100,000 reads and 1,000 writes per day | Only your own machine |
-| Scheduled refill | The Cron in `wrangler.toml` | `TEND_INTERVAL_MS` |
-| Very long non-streaming requests | No platform wall-clock guarantee to lean on, see below | Only the budget you configure |
-
-**Neither path is the primary one**: take Docker if you already have a server, take the Worker if
-you would rather not run one. Running both is fine too, but **do not let them share one set of
-keys while each keeps its own state** — cooldowns and evictions are written into storage, the two
-stores know nothing about each other, and the same key ends up judged twice.
-
-## Cloudflare Worker Deployment
-
-### Prerequisites
-
-> [!NOTE]
-> The `## ⚡ Quick Deployment` section of the [README](README.md) in this directory
-> carries a one-click Cloudflare deploy button; clicking it skips the clone and install
-> below. **Two things it cannot do for you**, though: the KV namespace id in
-> `wrangler.toml` is always a placeholder (a public repo carries no real deployment
-> details; `scripts/check-wrangler-placeholder.mjs` enforces that in CI), and
-> `GATEWAY_TOKEN` is a mandatory sensitive value that can only be injected as a secret —
-> miss either one and it will not start (`src/core/config.ts` throws the moment it
-> cannot read it). So if you take the one-click route, come back to Configuration below
-> and fill those two in; tag-triggered automatic deployment is covered further down.
-
-Clone the repository and install dependencies:
-
-```bash
-git clone https://github.com/xwteam/agnes2api.git
-cd agnes2api
-pnpm install
-```
-
-### Configuration
-
-1. Create a KV namespace for the key pool and write it back into `wrangler.toml`:
-
-   ```bash
-   node scripts/setup-worker.mjs
-   ```
-
-   The `id` in the repo's `wrangler.toml` is always a placeholder (the public repo
-   ships no real deployment details), so this step is mandatory. The script does the
-   same thing as manually running `npx wrangler kv namespace create POOL` and then
-   pasting the returned `id` into the `[[kv_namespaces]]` block in place of
-   `REPLACE_WITH_YOUR_KV_NAMESPACE_ID`. **Do not commit this change to
-   `wrangler.toml`** afterward — the `check-wrangler-placeholder.mjs` CI gate blocks
-   an accidentally committed real id.
-
-2. Set the gateway token as a Worker secret (never commit it to `wrangler.toml`):
-
-   ```bash
-   npx wrangler secret put GATEWAY_TOKEN
-   ```
-
-#### Local development
-
-```bash
-pnpm dev:worker   # Worker shape: build the panel assets first, then wrangler dev
-pnpm dev:node     # Node shape: build the panel assets, pnpm build, then run dist/entry/node.js
-```
-
-> [!IMPORTANT]
-> **Both start with `node scripts/build-ui.mjs`, and that is not incidental**: the panel assets
-> are a build product (`src/ui/assets.generated.ts`). A bare `npx wrangler dev` still starts, but the
-> panel stays on whatever was generated last — if you changed `admin-ui/` and see nothing, this is
-> usually why.
-
-Put `GATEWAY_TOKEN` into a local `.dev.vars` file next to `wrangler.toml` (already
-git-ignored) — do not put secrets directly in `wrangler.toml`.
-
-> [!TIP]
-> This file is read unconditionally into workerd's `env` by `pnpm test:workers`
-> (`@cloudflare/vitest-pool-workers` does not pass `envFiles` when it calls wrangler),
-> and CI has no such file ⇒ run `mv .dev.vars .dev.vars.off` before the tests. The
-> repository has one assertion that turns red on the spot once the file brings **an extra
-> binding name** into `env` — it compares the set of key names, so an empty file, or one
-> that only sets `POOL` (the same name as the KV binding), stays green.
-
-Put `GATEWAY_TOKEN` in that file, in the same format as `.env`:
-
-```env
-# Required: the token clients must present to call this gateway.
-# Anything works for local development, but do not paste the production one in here.
-GATEWAY_TOKEN=local-dev-token-change-me
-
-# Optional: the admin panel token. Leave it out and the panel stays off locally too.
-# Must differ from GATEWAY_TOKEN, at least 24 characters, printable ASCII only.
-ADMIN_TOKEN=local-dev-admin-token-change-me
-```
-
-### Deploy
-
-With both steps above done, run:
-
-```bash
-npx wrangler deploy
-```
-
-#### Automatic deploy on tag push
-
-`.github/workflows/deploy-worker.yml` deploys the Worker automatically whenever a `v*` tag is
-pushed, provided the repository secret `CLOUDFLARE_API_TOKEN` is configured under
-**Settings → Secrets and variables → Actions**. If it isn't set, the workflow logs a warning
-and skips the deploy step without failing the run.
-
-### Verify
-
-When the deploy finishes wrangler prints `https://{name}.{sub}.workers.dev`. Use that as the base
-URL for one health check:
-
-```bash
-curl -s https://your-worker.your-subdomain.workers.dev/health
-```
-
-A `200` with `status` set to `ok` means it is up. The full three-command check is further down.
-
-### Update
-
-```bash
-git pull
-pnpm install
-npx wrangler deploy
-```
-
-The key pool and the config in KV are **untouched**: a deploy replaces the code, the binding still
-points at the same namespace. `wrangler.toml` is locally modified (the namespace id was written by
-`setup-worker.mjs`), so when `git pull` reports a conflict there, keep your local id.
+> Either way the key lands **in plain text** in `store.json`. Treat the data directory as
+> credential material.
 
 ## Docker Deployment
 
 ### Prerequisites
+
+> [!NOTE]
+> The `## ⚡ Quick Deployment` section of the [README](README.md) in this directory gives the
+> same three commands in short form. This section is the long form: it spells out what each one
+> leaves you to decide, starting with the token you must set before the first start.
 
 Clone the repository and prepare the environment file:
 
@@ -196,6 +58,11 @@ git clone https://github.com/xwteam/agnes2api.git
 cd agnes2api
 cp .env.example .env
 ```
+
+**Running it from source instead of the image**: `pnpm dev:node` starts with
+`node scripts/build-ui.mjs`, then builds and runs `dist/entry/node.js`. A bare
+`node dist/entry/node.js` starts too, but the panel stays on whatever was generated last — if
+you changed `admin-ui/` and see nothing, that is usually why.
 
 ### Configuration
 
@@ -208,12 +75,12 @@ The smallest usable `.env` is two lines; everything else has a default and can b
 # Required: the token clients must present to call this gateway. This is what you hand downstream.
 GATEWAY_TOKEN=replace-with-your-own-long-random-string
 
-# Optional: the listen port of the Node runtime; the Worker ignores this variable.
+# Optional: the listen port inside the container.
 # docker-compose.yml also uses it as the port published on the host.
 PORT=8080
 ```
 
-> [!WARNING]
+> [!CAUTION]
 > **`DATA_DIR` is welded to the volume mount in docker-compose.yml — under Docker, never
 > change it on its own.** That line, `./data:/app/data`, is hard-coded and the `DATA_DIR`
 > in `.env` takes no part in it. Point `DATA_DIR` elsewhere without editing that line and
@@ -333,12 +200,12 @@ there is no second one.
 | `COOLDOWN_RATE_LIMIT_MS` | no | `60000` | Cooldown duration applied to a key after an upstream `429`. |
 | `COOLDOWN_PAYMENT_MS` | no | `3600000` | Cooldown duration applied to a key after an upstream `402`. |
 | `COOLDOWN_STRIKE_MS` | no | `1800000` | Cooldown duration applied once a key reaches `MAX_STRIKES`. The key recovers automatically when it expires. |
-| `POOL_CACHE_TTL_MS` | no | `60000` | How long each isolate/process keeps its in-memory key-pool snapshot; `0` disables it. Formula and cost below. **Read once at instance build** (`src/http/wire.ts`): a container restart or an isolate recycle is required — **editing it in the admin panel does not take effect immediately**. |
-| `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted; `0` = every successful request. Cost below. **Read once at instance build** (`src/http/wire.ts`): a container restart or an isolate recycle is required — **editing it in the admin panel does not take effect immediately**. |
+| `POOL_CACHE_TTL_MS` | no | `60000` | How long each process keeps its in-memory key-pool snapshot; `0` disables it. What it costs is below. **Read once at instance build** (`src/http/wire.ts`): a container restart is required — **editing it in the admin panel does not take effect immediately**. |
+| `POOL_TOUCH_INTERVAL_MS` | no | `21600000` | How often a key's "last used" timestamp is at most persisted; `0` = every successful request. Cost below. **Read once at instance build** (`src/http/wire.ts`): a container restart is required — **editing it in the admin panel does not take effect immediately**. |
 | `USAGE_STATS_ENABLED` | no | `false` | Tier-2 time series in the panel's "Usage" section (by day / hour / model / protocol). **The check is a literal `true`**; `1` / `yes` count as off. **Off by default, and "off" is zero-cost**. What it costs, and how short-lived instances **lose** counts, is below. Read once when the app is built. |
-| `PORT` | no (Node/Docker only) | `8080` | Listen port for the Node runtime. Not used by the Worker. |
-| `DATA_DIR` | no (Node/Docker only) | `/app/data` | Directory the file-backed storage writes `store.json` into. Not used by the Worker. **Welded to the compose mount — never change it alone.** |
-| `APIKEY_CACHE_TTL_MS` | no | `300000` | How long each instance caches the outbound API key table; `0` disables it. It also sets how long a disabled key lives on elsewhere. See the quota budget. |
+| `PORT` | no | `8080` | Listen port inside the container; `docker-compose.yml` publishes the same number on the host. |
+| `DATA_DIR` | no | `/app/data` | Directory the file-backed storage writes `store.json` into. **Welded to the compose mount — never change it alone.** |
+| `APIKEY_CACHE_TTL_MS` | no | `300000` | How long each instance caches the outbound API key table; `0` disables it. It also sets how long a disabled key lives on in another container sharing the same volume. See below. |
 
 ### Accepted ranges, and the two "read once at construction" exceptions
 
@@ -350,8 +217,8 @@ trade-offs. Every numeric variable above must be an integer; all of them must be
 "disabled"). The gateway refuses to start otherwise.
 
 `POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS` are read **once, when the app is built**.
-Changing them requires restarting the container or waiting for isolates to be recycled — unlike
-every other setting, they do not take effect per request.
+Changing them requires recreating the container — unlike every other setting, they do not take
+effect per request.
 
 ### `RESET_CONFIG`: when to reach for this escape hatch
 
@@ -369,23 +236,27 @@ every other setting, they do not take effect per request.
 
 ### What `POOL_CACHE_TTL_MS` costs
 
-**KV reads are independent of request count** — they depend only on the refresh rate; see the
-quota section below for the formula.
+**Storage reads are independent of request count** — while the snapshot is warm the forwarding
+path reads nothing at all, so what this knob buys is fewer `store.json` reads per process, and
+what it costs is how stale that snapshot is allowed to get.
 
-> Cooldowns/evictions decided by another isolate take up to **this value + about 60 seconds** to
-> become visible here (the extra 60s is KV's default edge-cache `cacheTtl`) — with the default
-> 60000 that ceiling is about **120 seconds**.
+> **This only matters when more than one process shares the volume** — several containers behind
+> a load balancer, or a rolling restart with the old and new container both up. Cooldowns and
+> evictions decided by another process take up to this value to become visible here — with the
+> default 60000 that ceiling is **60** seconds. A single-container deployment has no such window:
+> the process that decided the cooldown is the one holding the snapshot.
 
 And it isn't just "seen late": any scheduling write made against a stale snapshot overwrites the
-whole record, **erasing** whatever `evicted` / `cooldownUntil` another isolate had just written
+whole record, **erasing** whatever `evicted` / `cooldownUntil` another process had just written
 within that window — that decision has to happen all over again.
 
 ### What `POOL_TOUCH_INTERVAL_MS` costs, and how to clear the counters
 
 It is a display-only field that no scheduling logic reads.
-Writing it per request would burn the free tier's 1,000 writes/day and leave no budget for
-cooldowns and evictions. Cost: "last used" is only accurate to within this interval. The same
-interval also governs the panel's usage counters (request count / success rate).
+Persisting it on every successful request would rewrite `store.json` once per request — the
+whole file, for a timestamp nothing schedules on. Cost of not doing that: "last used" is only
+accurate to within this interval. The same interval also governs the panel's usage counters
+(request count / success rate).
 
 > [!WARNING]
 > **After you shrink `stats` by hand in storage (zeroing it, say), the panel may briefly show the
@@ -398,582 +269,177 @@ interval also governs the panel's usage counters (request count / success rate).
 not-yet-persisted delta held by **the instance that served this request**, so **requests that
 start after this reset** will not push the old value back. But a request that was **already in
 flight when the reset happened** holds a record taken from before the reset and rebuilds the
-baseline from that old value when it finishes; other instances running at the same time (another
-isolate, or another container on the same volume) each keep their own baseline too. Either way
-they may push an old value back once.
+baseline from that old value when it finishes; another container running against the same volume
+keeps its own baseline too. Either way they may push an old value back once.
 **Today it is API only — the panel has no button for it.**
 
 ### What `USAGE_STATS_ENABLED` costs once you turn it on
 
 "Off" is zero-cost: no in-memory accumulator is created and not a single storage write happens.
-Once on, each instance writes at most 13 puts per day (about 10.4% of the write quota; 104 per
-day across 8 isolates); once exhausted nothing more is written that day and it recovers on the
-next UTC day. The unflushed tail is at most 2 hours. See the Tier-2 part of "Quota accounting"
-below. Changing it takes effect after a container restart / isolate recycle.
+Once on, each instance rewrites one shard of `store.json` per flush interval — **at most 13 per
+day at the default two-hour interval**, and nothing at all during an interval with no traffic.
+The unflushed tail is at most 2 hours. Changing the switch takes effect once the container is
+recreated.
 
 > [!WARNING]
 > **A "tail" is not the same as "late"**: counts accumulate in the instance's memory, and an
 > instance that does not live through one flush interval takes them along —
 > **losing them outright rather than posting them late**.
-> **Low-traffic deployments are where this happens**: an idle Worker isolate is recycled, so a
-> gateway serving a few dozen requests a day may never flush at all, and that stretch looks on
-> the panel exactly like "nobody used it". For dependable usage data a long-lived process
-> (Docker / Node) fits far better than a Worker.
+> **Restarts are where this bites**: recreate the container to change one environment variable
+> and up to two hours of counts go with the old process, which on the panel looks exactly like
+> "nobody used it". Shorten `USAGE_FLUSH_INTERVAL_MS` if that matters to you; the section below
+> says what that costs.
 
-### `USAGE_FLUSH_INTERVAL_MS`: on KV you cannot shrink it, and getting it wrong says nothing
+### `USAGE_FLUSH_INTERVAL_MS`: what you can buy back, and what stays
 
-Seeing "the tail is at most 2 hours", the first instinct is to shrink the flush interval.
-**On KV that road is closed**: each instance has only 13 writes of budget per day and
-interval × 12 must be at least a day, so the smallest usable value is 7200000 (2 hours);
-below that it throws while the app is wired up (`src/http/usage-sink.ts`).
+Seeing "the tail is at most 2 hours", the first instinct is to shrink the flush interval, and
+here you can: `USAGE_FLUSH_INTERVAL_MS` accepts **any positive integer**, so 300000 (5 minutes)
+is a perfectly reasonable setting. What you pay is one shard rewrite per interval per instance;
+what you buy is a shorter window of counts that a dying process would take with it.
 
 > [!WARNING]
-> **On Workers that throw never shows up in the deploy output.**
-> **It turns into a 500 that gives no reason at all**: `wrangler deploy` succeeds, but from
-> then on **every single request** returns `{"error":{"type":"internal_error",…}}` and the real
-> reason lands only in `console.error` (`wrangler tail` to see it). One mistyped number reads
-> exactly like "the gateway is down".
-> **The check runs whether or not `USAGE_STATS_ENABLED` is on** (`src/http/wire.ts` resolves it
-> unconditionally), so turning statistics off **does not clear the 500**: put the value back to
-> >= 7200000, or delete the line.
-> File storage (Docker / Node — one runtime) has **no such floor at all**: 300000 (5 minutes)
-> is fine there and this throw never happens. What throws there is another value (not an
-> integer, or below 1); Node prints it and exits.
-
-### Quota budget: how many requests a Worker on the free KV tier can serve
-
-The free KV tier allows 100,000 reads and 1,000 writes per day. Neither the gateway's reads nor
-its writes grow with request count, so the budget is "so many per day", not "so many per request":
-
-- **With the defaults, KV is no longer the bottleneck** — the ceiling becomes the Cloudflare
-  Workers free tier itself, at **100,000 requests/day**. This conclusion is **conditional, not
-  unconditional**: the KV read quota now constrains the *number of concurrently active isolates*
-  instead, and that varies with how your traffic is distributed geographically — it is not
-  something you set. Each active isolate consumes
-
-      (86400 ÷ POOL_CACHE_TTL_MS in seconds) × (1 + pool size)  +  2880
-
-  reads per day. That trailing 2880 is the config holder refreshing every 30 seconds, drawing on
-  the same bucket. With the defaults and 20 keys that is **33,120 reads per isolate**; adding the
-  48–96 daily index reconciliations, **3 active isolates already consume ~99.4%**. In other words
-  the default is already marginal at the recommended settings — if you expect more isolates, raise
-  `POOL_CACHE_TTL_MS` (20 keys across 5 isolates needs roughly `120000`).
-- **With the cache disabled** (`POOL_CACHE_TTL_MS=0`, the escape hatch) reads grow linearly with
-  requests, giving a floor of about `100,000 ÷ (1 + pool size)` ⇒ roughly **4,700 requests/day**
-  with 20 keys.
-- **Writes**: in steady state about `pool size × 4` per day (`lastUsedAt` is touched every 6
-  hours) — 80 with 20 keys, 8% of the write quota, leaving the rest for cooldown and eviction
-  bookkeeping. Each key also costs one one-off write the first time it is used.
-- **Events board writes**: each isolate persists at most `EVENT_WRITES_PER_DAY`
-  (**12**) times per day; past that, `budgetExhausted` is reported honestly, with no silent
-  drop and no retry. **This gate only holds within a single isolate** — whether it's globally
-  safe depends on whether "concurrent isolate count × this value" still fits the budget, since
-  one isolate has no way to know how much budget the others have used (no CAS, no
-  cross-isolate coordination). Estimating with **8 concurrent isolates** (more conservative
-  than the 3 used elsewhere in this section — even a lightly-trafficked personal gateway can
-  land on many different Cloudflare edge locations, and you don't fully control how many
-  concurrent isolates that produces): `12 × 8 = 96` writes/day, **9.6%** of the write quota.
-  Added to the key-pool write side above (80/day, 8%), the total is about 176/day
-  (**17.6%**), leaving roughly 82% headroom.
-
-  **This accounting exists because review caught a real problem**: an earlier version budgeted per hour with each isolate counting
-  independently up to 12/hour, so 4 isolates alone could blow through the write quota
-  (`4 × 12 × 24 = 1,152`, over 1,000). The fix was to switch the budget window from
-  "per hour" to "per day" and write this account down here; the same round also closed a gap
-  where a cold-started isolate's first flush bypassed throttling entirely — every isolate
-  cold start used to send one zero-gate write, and now the first flush after cold start goes
-  through the same minimum-interval gate as every other flush.
-- **Registrar write side — this entire section only exists when
-  `registrar.enabled` is true.** On a default deployment (the registrar is off), the writes
-  added by this section are **0/day**, not "a few less". When it is on, every tend round pays
-  five items, **all hanging off one axis: the tend frequency** (on Worker that is the Cron in
-  `wrangler.toml`, `*/30 * * * *` by default = 48 rounds/day; on Node it is `TEND_INTERVAL_MS`):
-  - **Tend lock**: one put + one delete per round. This item already existed before this
-    change; it had simply never been written into this account.
-  - **Tend event persistence**: at most one put per round. **What decides whether a write
-    happens is whether this round's event buffer is empty** — not what the events are
-    named. A round that is healthy *and* whose configuration is healthy emits no events at
-    all, so it costs 0.
-
-    > [!IMPORTANT]
-    > **"0 when healthy" has a precondition that must be stated**:
-    > `loadConfig` emits one configuration warning **on every single round** when
-    > `TEND_INTERVAL_MS` is below
-    > `MINT_BATCH × CODE_TIMEOUT_MS + (MINT_BATCH − 1) × MINT_DELAY_MAX_MS`
-    > (by default `5 × 120000 + 4 × 90000 = 960000`, i.e. 16 minutes). Under that setting **every
-    > round writes once**, even a round that mints nothing.
-
-  - **Tend history (`tend:history`)**: one get + one put per round, **unconditionally**.
-    Single key, no fan-out.
-  - **Domain ledger (`registrar:domains`)**: **at most** one get + one put per round.
-    **It is only written when the round actually learned something new** — in steady state
-    (no verdict changes) it costs **0**. The rows below use the upper bound of 48/day; do not
-    read it as "paid every round". Single key, no fan-out.
-  - **Backoff key (`registrar:backoff`)**: one get + **at most** one put per round. The round
-    that hits an upstream rate limit writes it once (recording the backoff window); a round that
-    hit no limit at all writes it once more only to clear a stale key left in storage.
-    **With no limit hit and no stale key it costs 0.** Of the three rows below, **only "every
-    round produces failure events" uses the upper bound of 48/day**: a round that hits a limit
-    necessarily produces failure events, whereas in the "every round healthy" row it is 0 —
-    once cleared, the key is empty and is never written a second time. Single key, no fan-out.
-
-  > [!IMPORTANT]
-  > **Do not read these five through `EVENT_WRITES_PER_DAY` (12 per isolate per day).**
-  > That gate is built for the `fetch` path, where the premise is "one isolate serves many
-  > requests, so the budget is consumed repeatedly on a long-lived instance". On the tend path
-  > each round is very likely a **brand-new isolate** (Worker's `scheduled()`) that flushes once
-  > in its life and carries a fresh budget every time ⇒ **on this axis that gate neither stops
-  > anything nor constitutes any upper bound**. The real bound is the tend frequency itself:
-  > **tightening the Cron or lowering `TEND_INTERVAL_MS` scales all five items proportionally.**
-
-#### What each panel write operation costs — "only when a human clicks"
-
-- **Write side of the panel's write operations — these only happen when a human
-  clicks, so they are not part of the steady-state accounts above.** There is no frequency
-  bound to speak of (the bound is the operator's hand), so what follows is the **unit price of
-  each operation**; every number below is a measured reading, **counted cell by cell**:
-  the key write operations in `tests/contract/admin-keys-write.test.ts`, "tend now" in
-  `tests/contract/manual-tend.test.ts`, and the two settings-page endpoints in
-  `tests/contract/admin-config.test.ts`.
-  (This sentence used to name only the first file, while the "tend now" row has nothing to do
-  with it and no cell counted it at all back then. The fix is to add
-  that missing cell, not to soften this sentence.)
-  - **Importing M new keys**: `M + 1` puts (M records + 1 index), `M + 1` gets, **0 lists**.
-    At most 200 per import (over that it is a 400, **never a silent truncation**) ⇒ the upper
-    bound for a single click is **201 puts**, i.e. 20% of the daily write quota. Splitting the
-    import into several batches is not cheaper (each batch still pays for the index write).
-  - **Re-importing** (pasting the same key again without ticking "reset the state of existing
-    keys"): **0 puts**. Duplicates are skipped, never overwritten, so re-pasting your whole
-    list is cheap and safe.
-  - With "reset the state of existing keys" ticked: 1 put for each key **already in the pool**.
-  - **Changing one key** (disable / enable / note / clear cooldown / clear strikes / un-evict /
-    reset usage counters): 1 get + 1 put. **Every action above costs the same**: they go through the
-    same handler and the same single persist, and resetting the counters reads or writes nothing
-    extra (what it clears is the in-memory persist baseline).
-
-    > [!IMPORTANT]
-    > **The last item in those parentheses is the one thing in this section you cannot click**:
-    > resetting the usage counters is **API only today — the panel has no button
-    > for it** (same as the `POOL_TOUCH_INTERVAL_MS` row above). That list enumerates every action
-    > the handler understands, not the buttons on the panel; it is written up here because the
-    > unit price is identical to all the others, so that nobody assumes the other route costs more.
-
-  - **Deleting one key**: 2 gets + 1 put (index) + 1 delete.
-  - **Bulk disable / bulk clear-cooldown of N keys**: N gets + N puts.
-  - **Bulk delete of N keys**: `N + 1` gets + **1** put (the index is written once) + N deletes.
-  - **One click on "tend now"**: the non-minting write side is a fixed **3 puts** (guard key +
-    lock acquisition + tend history) **plus at most one conditional write each for the domain
-    ledger and the backoff key ⇒ an upper bound of 5 puts**, plus 1 delete (releasing the lock,
-    which lives in a different bucket), plus **2 more puts per key actually minted**
-    (record + index). Those last two are conditional: the ledger is written only when the round
-    really learned something, the backoff key only when a rate limit was hit (or a stale one has
-    to be cleared), so a click costs **as little as 3**; the numbers below use the upper bound.
-    It is the **only panel action with a daily cap**: at most **24** per day (the fourth
-    guardrail, see
-    [REGISTRAR.md](REGISTRAR.md)) ⇒ a sustainable `24 × 5 = 120` puts/day, which on top of
-    the 416 in the third row below gives **536/day (53.6%)**; minting the default
-    `MINT_BATCH = 5` every single time gives an upper bound of `24 × 15 = 360` ⇒
-    **776/day (77.6%)**, and that row is not sustainable — your temporary-mailbox quota and
-    `TARGET_KEYS` hit their limits first. **The reason for this gate is not only "there is no
-    headroom", it is that the budget really would blow**: with only the 10-minute cooldown the
-    bound is `24 × 6 = 144` rounds/day = 720 puts, which on top of 416 is 1,136/day (113.6%) —
-    and 96 of that 416 equals `12 × concurrent isolate count`, a number **you cannot tune
-    yourself**.
-  - **Saving the settings once** (`PUT /admin/api/config`): **1 put** + 3–4 gets (one
-    `readAll` plus one raw read before the write, then one `readAll` to read back; when you
-    save again right afterwards the previous `invalidate()` makes the config-refresh
-    middleware read once more, and the diagnostic branch likewise costs one extra).
-    **A save that fails validation is 0 puts + 2–3 gets** — not a single byte is written
-    (right after a successful save it likewise costs one extra read, same reason as above).
-  - **Clearing one credential** (`POST /admin/api/config/secrets/clear`): **1 put** + 2 gets;
-    clearing `gatewayToken` (after which the config no longer loads) costs 3 gets.
-  - **Dry-run validation** (`POST /admin/api/config/validate`): **0 puts** + 1 get.
-  - **Resetting the configuration** (`/admin/api/config/reset`, the first danger-zone button
-    on the settings page): **1 put** + 2 gets (one read-back before the write, one after).
-    It wipes the single stored configuration entry, and **it spends the put bucket, not the
-    delete bucket** — writing an empty value instead of deleting the key avoids the KV
-    delete-tombstone family of problems.
-  - **Purging the key pool** (`/admin/api/keys/purge`, the second danger-zone button):
-    **N deletes (N = pool size) + 1 put** (the index is written exactly once, the same rule as
-    bulk delete).
-
-    > [!WARNING]
-    > **The free tier's delete bucket is 1,000 per day** (independent of read, write and
-    > list) ⇒ **with N approaching 1,000 this one button blows the day's delete quota on its
-    > own**, and the bigger the pool the more it costs. On the read side it is one pool snapshot
-    > (0 gets when the isolate cache is warm) plus one read-back; clicking again on an empty
-    > pool is 0 deletes and 0 puts.
-
-  > [!CAUTION]
-  > **"Saving the settings" and "clearing one credential" have no daily cap. That is
-  > deliberate, not an oversight.** Both require the admin token and both only happen when a human
-  > clicks; no automatic path can trigger them. Putting a storage guardrail on them would itself
-  > add a read-modify-write (the guard key) — paying an extra write in order to save one.
-  > **The cost is spelled out here rather than left to silence, so nobody assumes some budget is
-  > minding them**: a single tuning session running to a few dozen saves is entirely normal
-  > operations, a few dozen puts is a few percent of the daily write quota, and the 24-per-day
-  > gate on "tend now" **does not cover these two**. Plan your headroom accordingly.
-
-  > [!IMPORTANT]
-  > These do **not** add up with the three columns below: those say "how many times a day with
-  > nobody touching anything", this section says "what each click costs you". The only shape worth
-  > watching is **importing several hundred keys at once** — it is the most expensive single click
-  > in the panel.
-
-#### Write-side totals, keyed on `registrar.enabled`
-
-- **Write-side totals, in three columns keyed on `registrar.enabled`** (20 keys, 8 concurrent
-  isolates):
-
-  | Scenario | puts/day | share of the write quota |
-  |--------|--------|------------------------|
-  | **Registrar off (default)**, nobody operating | **176** | **17.6%** |
-  | Registrar on, **every round healthy**, nobody operating | **320** | **32.0%** |
-  | Registrar on, **every round producing failure events**, nobody operating | **416** | **41.6%** |
-
-  > [!WARNING]
-  > **None of these three is an upper bound; each is a current value.** The 96/day item equals
-  > `12 × concurrent isolate count`, and that count varies with the geographic distribution of
-  > your traffic — **you cannot set it yourself**. Plan headroom accordingly; do not treat 320 or
-  > 416 as a ceiling. Both rows use the upper bound where the domain ledger is written **every
-  > round**; in steady state it is never written, so the real figure is 48 lower.
-  > The **`delete` bucket** is counted separately: the tend lock releases 48 times a day, and
-  > that bucket is nearly idle today.
-
-  > [!IMPORTANT]
-  > **All three items are billed per round, and "rounds per day" has two independent axes.
-  > Do not conflate them:**
-
-  - **Frequency axis**: tightening the tend frequency scales all three **proportionally**
-    (that is the sentence above). **On Worker the knob is the Cron in `wrangler.toml`**;
-    on Node it is `TEND_INTERVAL_MS`. `TEND_INTERVAL_MS` is **consumed only by the Node
-    scheduler** — changing it on Worker adds **not a single round**. Conversely the
-    `registrar_tend_lock` put/delete pair **exists in both runtimes** (the
-    Node side takes the same lock — an in-process boolean is worthless when several
-    containers share one volume).
-  - **Threshold axis**: when `TEND_INTERVAL_MS` drops below
-    `MINT_BATCH × CODE_TIMEOUT_MS + (MINT_BATCH − 1) × MINT_DELAY_MAX_MS`, the event item **jumps from "0 on a
-    healthy round" to "1 every round"** — that jump is independent of frequency and is
-    caused by the per-round configuration warning described above.
-  **The worst case is both axes at once.** This section is about Worker + the free KV tier,
-  so here is an example that is **perfectly legal in that shape**: change the Cron to
-  `*/5 * * * *` ⇒ 288 rounds/day, each producing events ⇒
-  `80 + 96 + 288 + 288 + 288 + 288 + 288 = 1,616` writes/day — **already past the write quota**.
-  The three rows above all assume the default Cron (one round every 30 minutes); **do not
-  read them as constants independent of the frequency**.
-
-#### Write side of Tier-2 usage statistics (off by default)
-
-- **Write side of Tier-2 usage statistics (`USAGE_STATS_ENABLED`, **off by default**)
-  — it is the only new writer this phase.**
-
-  **While it is off, this line contributes exactly zero writes**: no in-memory accumulator is
-  created and not a single `storage.put` happens. That is not a minor saving: it competes with
-  the 80/day of the key pool above for the **same** bucket of 1,000 writes per day, and letting
-  statistics eat the write quota also kills the key pool's cooldown and eviction bookkeeping.
-
-  Once on: **at most 13 puts per day per instance**, which at 8 concurrent isolates is
-  `13 × 8` = **104** per day, roughly 10.4% of the write quota. Totals for four scenarios:
-
-  > [!NOTE]
-  > **The by-API-key dimension (`byApiKey`) never moved this number.** It lives **inside the
-  > value of the same per-day key** (alongside by-hour / by-model / by-protocol), so one flush
-  > is still exactly 1 put, and the flush that crosses UTC midnight is still 2 — **an extra
-  > dimension only makes that JSON value bigger, it does not add keys**. The value stays
-  > bounded too: at most 201 named slots plus one overflow slot, eight integers each — tens of
-  > kilobytes, far below the 25 MiB KV value limit.
-
-  | Scenario | puts/day | share of the write quota |
-  |--------|--------|------------------------|
-  | **Tier-2 off (default)**, registrar off | **176** | 17.6% |
-  | Tier-2 on, registrar off | **280** | 28.0% |
-  | Tier-2 on, registrar on and every round producing failure events | **520** | 52.0% |
-  | Previous row + "Tend now" clicked until the 24-per-day gate is spent | **640** | 64.0% |
-
-  > [!WARNING]
-  > **Like the three columns above, this table is not an upper bound.** Read it this way:
-  > **two items in this table carry a hard gate** — the 104 from Tier-2 (13 puts per instance
-  > per day, point ③ below) and the 120 from "Tend now" (24 per day × an upper bound of 5 per
-  > click, see the "clicking Tend now once" bullet above). None of the others has a gate, and
-  > what they cost depends on whoever is operating the panel. The last row assumes **no new keys
-  > are minted** (3 fixed puts per click plus at most one conditional write each for the domain
-  > ledger and the backoff key); minting on every click costs more, but that column hits the
-  > temporary-mailbox quota first and is not sustainable — the arithmetic is in that same
-  > bullet.
+> **A wrong value here is refused while the app is wired up, not at the first request**
+> (`src/http/usage-sink.ts`): a non-integer, or anything below 1, makes the process print the
+> reason and exit. **The check runs whether or not `USAGE_STATS_ENABLED` is on**
+> (`src/http/wire.ts` resolves it unconditionally), so turning statistics off **does not clear
+> it** — fix the value or delete the line. A container that will not stay up is the intended
+> symptom: it is far easier to notice than statistics that quietly go wrong.
 
 <details>
-<summary><b>Click to expand: where those 13 come from (all six points matter)</b></summary>
+<summary><b>Click to expand: what "the tail is at most 2 hours" does and does not promise (four points)</b></summary>
 
-Those 13 come from the following, and all six points matter:
+① **The tail is not the same as "late", and it has two faces that are one fact**: the "today"
+   figures on the panel can be up to one flush interval stale, and **any instance that stops
+   before its next flush loses the counts it accumulated**. The clock starts when the instance
+   starts, so a container that ran ten minutes and was then recreated stores nothing at all.
+   This is one of the reasons usage figures carry an "≈" throughout; it is not a defect.
 
-① **12 flushes + 1.** The minimum flush interval is **2 hours**, so a full day holds at most
-   12 of them; the `+1` is not slack, it is the fact that **the flush that crosses UTC
-   midnight writes two keys** (one for the previous day, one for the current day). With 12,
-   exactly one write per 24 hours would be refused by the budget — no data is lost (that day
-   stays marked as pending and is picked up on the next round), but the "at most 2 hours"
-   promise in point ② would become 4 hours.
+② **There is no daily write budget on this deployment form.** The gate exists in the code
+   (`budgetPerDay`), but file storage has no write quota to protect, so the gateway leaves it
+   empty: nothing is ever exhausted, and there is no "recovery" or "catch-up" to speak of.
+   **Do not read this as "you cannot lose counts"** — what you lose is the tail in ①.
 
-② **The unflushed tail is at most 2 hours, and its two symptoms are one fact, not two**: the
-   "today" figures on the panel can be up to 2 hours stale, and **any instance that lives
-   less than 2 hours** (a short-lived Worker isolate, a fast Docker restart) **loses the
-   counts it accumulated along with itself**. The clock starts when the instance starts, so
-   an isolate that lived 10 minutes stores nothing at all. This is one of the reasons usage
-   figures carry an "≈" throughout; it is not a defect.
+③ **At most 2 instances' data survives for a given day; anything beyond that overwrites.**
+   Usage shards are stored as `usage:<UTC day>:<slot>` and **there are only 2 slots**; each
+   instance hashes into one stably by its shard id. So running three or more containers against
+   one volume is last-write-wins within a slot. **This is the other reason usage figures carry
+   an "≈"**; it affects how complete the numbers are, never whether the gateway forwards.
 
-③ **The 13 puts per day per instance is a hard gate**: once exhausted, nothing more is
-   written that day, it **recovers automatically on the next UTC day**, and the days it owed
-   are written out after recovery (the in-memory accumulator is never cleared) —
-   **provided the instance is still alive**.
-
-   > [!IMPORTANT]
-   > **That half-sentence is structurally out of reach on Workers**: those accumulators live
-   > only in memory, and a Worker isolate usually does not survive into the next UTC day (see
-   > point ② above: an isolate that lived 10 minutes stores nothing at all). So on Workers
-   > "written out after recovery" requires **the same isolate to have crossed UTC midnight**,
-   > which is the exception, not the rule; when it does not, those days' counts **vanish with
-   > the instance — they are not merely posted late**.
-
-   > [!CAUTION]
-   > **On Docker this gate does not exist at all**, so the promise simply does not apply
-   > on that side: whether there is a daily write budget depends only on **whether your storage
-   > has a write quota** (the criterion is in point ④ below), and file storage does not ⇒ the
-   > budget is empty (`budgetPerDay = null`), nothing is ever exhausted, and there is no
-   > "recovery" or "catch-up" to speak of. **Do not read it as "on Docker you hit the 13-put
-   > gate and lose nothing" — on Docker there is no such gate**; what you do lose there is the
-   > tail from point ② above (up to 2 hours not yet flushed when the process stops).
-
-   > [!IMPORTANT]
-   > This gate **only applies inside a single instance** — 8 isolates means 8 independent
-   > allowances of 13, exactly like the events gate above, with no cross-instance coordination.
-
-④ **Both runtimes behave identically; no runtime sniffing is done.** The **default** flush
-   interval is the same on both sides, along the same code path (the request tail **waits for
-   the write to finish**, it is not a background task — a background task on Workers gets
-   silently truncated when the isolate stops after the response returns).
-   `USAGE_FLUSH_INTERVAL_MS` can override it, and **the criterion is "does your storage have a
-   write quota", not "which runtime are you on"**:
-   · **File storage (Docker) has no write quota** ⇒ any positive integer is accepted, **and
-     there is no longer a per-day write budget**; the interval itself is the bound. Turning it
-     back down to 300000 (5 minutes) is entirely reasonable.
-   · **KV (Workers) has a write quota** ⇒ the budget stays at 13 per instance per day, and the
-     interval must satisfy `interval × (13 − 1) >= one day`. Violating it throws while the app
-     is wired up and tells you the smallest usable value (7200000) — but **on Workers you never
-     see that message**: `wrangler deploy` still succeeds and from then on
-     **every request gets a 500 with no reason**, see the `USAGE_FLUSH_INTERVAL_MS` section
-     above. Refusing silently is deliberate: with such a value the write volume still looks
-     fine **while the data goes wrong from midday onward**, which is harder to notice than a
-     visible failure.
-
-⑤ **At most 2 instances' data survives for a given day; anything beyond that overwrites.**
-   Usage shards are stored as `usage:<UTC day>:<slot>` and **there are only 2 slots**;
-   each instance hashes into one stably by its shard id. ⇒ the 104/day computed above for 8
-   isolates is a **write volume**, not "all 8 sets of data were kept" — within a slot it is
-   last-write-wins. **This is one of the reasons usage figures carry an "≈"** (the other is
-   the tail in point ②). It does not affect the write quota, only how complete the numbers
-   are; that is exactly what the "≈" means.
-
-⑥ **The three media endpoints (image generation, video creation, video polling) are not
-   counted.** They burn the **same** pool of upstream keys as the four chat protocols but
-   record nothing ⇒ the panel's "total requests" is systematically lower than the real
-   forwarded volume. This is a known boundary of this phase, not a defect; judge key
-   consumption from the key-pool side instead.
+④ **The three media endpoints (image generation, video creation, video polling) are not
+   counted.** They burn the **same** pool of upstream keys as the four chat protocols but record
+   nothing ⇒ the panel's "total requests" is systematically lower than the real forwarded
+   volume. This is a known boundary, not a defect; judge key consumption from the key-pool side
+   instead.
 
 </details>
 
-#### Three read-side accounts of their own
+### What each stored key costs to keep in sync
 
-- **Tier-2 usage reads — what they burn is not the daily read quota but "how many subrequests
-  one invocation may issue".** The `30d` range of `/admin/api/usage` issues
-  `USAGE_DAY_RETAIN × USAGE_SLOTS` = `30 × 2` = 60 KV gets **in a single request**
-  (`src/core/admin/usage-stats.ts`). Against 100,000 reads per day those 60 are negligible;
-  **what has no platform guarantee is the subrequest count of a single invocation**:
-  Cloudflare's Workers limits page splits it into two rows — "Subrequests per invocation",
-  **50** on the free plan, and "Subrequests to internal services", **1,000** on the free plan —
-  yet that page never defines what "internal services" means, nor which row a KV binding call
-  falls under; KV's own limits page separately states "Operations/Worker invocation" **1,000**
-  (identical on free and paid). **The two pages disagree, and we have not settled it on real
-  hardware** ⇒ read against the KV page, 60 is 6%; read against the 50 row, **60 is over**.
+File storage has no read, write, `list` or delete quota — the cost of a rewrite is one file
+write on your own disk. What is still worth knowing is **how long a change takes to be seen by
+someone else**, because that is a security property for two of these keys and a debugging trap
+for the rest.
 
-  So the `30d` range may behave differently on Workers than on Node, and the gateway only
-  guarantees that it **fails honestly**: when the read fan-out fails part way through, **the
-  whole `days` series comes back as `null`** (the panel shows `—`) with `note` set to
-  `read_failed`; it never returns 500 and never passes off the shards it did read as the full
-  picture.
+#### The key pool and its index
 
-  > [!WARNING]
-  > **Do not cite the events board's 48 cold gets below as evidence** — 48 is within limits
-  > under both readings, so it says nothing at all about whether 60 is fine. To rely on this
-  > range on the free plan, measure it on real hardware first.
+The gateway keeps a `pool:index` key listing the pool's ids, so the forwarding path never has to
+scan the whole store. **Two self-healing paths depend on a `list` instead**, and both share the
+same built-in **10-minute** backoff (a fixed constant, not an environment variable):
 
-- **The usage line on every card in the API keys board goes through the same
-  `/admin/api/usage` (the `24h` range).** **While Tier-2 is off it costs `0` storage reads** —
-  with statistics off, that endpoint's read path **does not exist structurally** (it is not an
-  `if` guarding it), so **a default deployment pays nothing for this line**. With Tier-2 on,
-  the `24h` range spans at most 2 UTC days × 2 slots = **at most 4 gets**, and it happens
-  **once, when a human opens that board** (this board does not poll). When that read fails,
-  the “Refresh” on the amber banner above the cards asks for it once more — **that is another
-  human click, not an automatic retry**; **writes (issue / rename / disable / delete) end
-  without re-reading it on purpose**, since none of them change requests that already happened.
+- the **empty-pool rescan** — the index parses fine yet not a single live record can be read, so
+  the gateway scans once to find a record that was written by hand and never indexed;
+- the **missing-index fallback** — `pool:index` itself cannot be read or fails to parse, so the
+  gateway scans once and tries to rebuild the index.
 
-  > [!NOTE]
-  > **It does not change the “critical configuration crosses to 100.3%” ledger above**:
-  > that one counts the steady-state refreshes each active isolate performs on
-  > `APIKEY_CACHE_TTL_MS`, which is not the same quantity as a one-off read on a human click.
+When the pool is empty **and** that scan also fails, the gateway returns `500` with the real
+reason in the log; it does **not** disguise the failure as `503 pool_empty`, because both
+self-healing paths described in this document are gone at that point and saying "the pool is
+empty" would send you looking in the wrong place.
 
-- **Playground video runs: at most `1 + 60` upstream requests per task** (1 create + at most
-  60 polls, `VIDEO_POLL_MAX_ATTEMPTS`).
+#### Outbound API keys: revocation is not instant
 
-  > [!IMPORTANT]
-  > **That 61× multiplies the upstream quota and the
-  > keys' use counts only; it does not multiply the KV daily write quota**: `lastUsedAt` and the
-  > usage counters are gated by `POOL_TOUCH_INTERVAL_MS` (6 hours by default), and one polling
-  > run cannot fill a single flush interval; cooldown and eviction are still counted per failure.
-  > **Do not read the two as one** — what gets exhausted first is the upstream side, not KV.
+Verifying a key issued from the panel's "API keys" section reads one table, and each instance
+caches it for `APIKEY_CACHE_TTL_MS` (default 5 minutes).
 
-- **Events board reads (figures from after the candidate-key bound was fixed, more conservative than the earlier draft)**:
-  polling no longer depends on an index, so the number of candidate keys is **hard-bounded** —
-  no matter how stale `after` is or how many days the deployment has been running, a single
-  request scans at most 24 time windows × 2 slots = **48** gets (before that fix, a stale or
-  hostile `after` could push a single request to nearly 1 million gets; see the regression
-  cases in `tests/contract/quota-panel.test.ts`). When `after` falls within a recent time
-  window it's a "warm read", usually needing only 2 gets (4 at the moment a poll crosses a
-  time-window boundary).
-  **"Bounded" does not mean "independent of activity level"** — and there is a
-  counter-intuitive result here:
-  - **An "active" deployment with a steady stream of new events**: new events keep pushing
-    the poll interval back down to the 15-second minimum, and most polls hit a warm read.
-    Assuming the worst case of 4 gets/poll throughout: `(86400 ÷ 15) × 4 = 23,040` gets/day
-    (about 23% of the read quota; in practice far lower since only a small fraction of polls
-    happen to cross a window boundary).
-  - **A "quiet" deployment with no new events for a long stretch** (including a
-    freshly-deployed instance that hasn't triggered any diagnostic event yet): the `after`
-    cursor never advances, and once the frozen cursor falls out of the 24-hour retention
-    window, **every subsequent poll costs the full 48 gets**; at the same time, with no new
-    content, exponential backoff pushes the poll interval up to the 60-second cap. The
-    steady state is `(86400 ÷ 60) × (48 + 1) = 70,560` gets/day (about **71%** of the read
-    quota).
-
-    > [!WARNING]
-    > **That figure is a steady-state *idle* envelope, not an upper bound.** It assumes the
-    > board is simply left open with nobody touching it. Interactive paths are not in it: every
-    > click on a level filter is a full cold read, and returning to this board or making the tab
-    > visible again also triggers a round immediately — **none of these are throttled today**.
-
-    The `+1` is **the configuration read each poll round triggers on its own**: the
-    config-refresh middleware runs ahead of every route and the config cache TTL is 30
-    seconds, shorter than the 60-second poll interval, so every round costs exactly one
-    extra read. It draws on **the same bucket** as the `86400 ÷ config TTL seconds` term in
-    the key-pool account below (that term states the 2,880/day upper bound; an isolate
-    driven only by the panel actually spends 1,440), so **do not count it twice** when you
-    add the two accounts together. **A deployment healthy enough to produce almost no
-    diagnostic events ends up costing more read quota from a single open panel tab than an
-    "active" one does**. Plan your read-quota headroom around this larger number, not the
-    smaller "active" one, especially when adding it to the key-pool read side above (see
-    the "3 active isolates already use about 99.4%" scenario above).
-  - **The download endpoint** (`GET /admin/api/events/download`) costs a flat 48 gets per
-    click (`readEvents(null)` always does a cold read, no cursor) — this only happens on a
-    manual click and is negligible at that scale; noted here purely for completeness.
-  Both scenarios' ceilings stay **flat regardless of how many days the deployment has been
-  running** — that part of the original claim still holds after that fix.
-#### Read side of outbound API keys (**0 per day on a default deployment**)
-
-Verifying a key issued from the panel's "API keys" section requires reading one table.
-The account has three tiers:
-
-- **Deployments where every client uses `GATEWAY_TOKEN` (that is, every deployment from
-  before this version): `0` per day.** That zero is **structural**, not a switch: the master
-  token is compared in the first stage of authentication, and that path simply has no call
-  site that reads the table. **Requests carrying no credential at all are also 0** — a
-  scanner cannot lever it.
-#### How many reads a deployment that actually uses sub-keys pays
-
-- **Once clients start using sub-keys**, each active isolate per day:
-
-      86400 ÷ (`APIKEY_CACHE_TTL_MS` in seconds) × 1
-
-  With the default `300000` (5 minutes) that is **288 per isolate per day**. In the two
-  scenarios this document uses throughout: 3 active isolates = **864 per day (0.86% of the
-  read quota)**; 8 = **2,304 per day (2.30%)**. It is **independent of request volume** —
-  one refresh is always one `get`, because the whole table is a single KV value rather than
-  one record per key plus an index.
-- **`APIKEY_CACHE_TTL_MS=0` (cache off)**: reads grow linearly with the number of requests
-  carrying a sub-key — the same family of warning as `POOL_CACHE_TTL_MS=0`. Use it only
-  while diagnosing something.
-
-#### The borderline configuration this version pushes over the line
-
-> [!WARNING]
-> **This version pushes the borderline configuration above over the line.** In the scenario
-> described earlier ("20 keys + 3 active isolates already spend about 99.4%"), if clients
-> are **also** using sub-keys, add another 864 reads ⇒ roughly **100.3%**, which is **over**.
-> The prescription is the same as before: raise `POOL_CACHE_TTL_MS` (it is what produces
-> most of that 99.4%) rather than lowering `APIKEY_CACHE_TTL_MS` — lowering the latter only
-> makes revocation faster and reads more frequent.
-
-#### Write side of outbound API keys, and how long revocation takes
-
-**Nothing changes on the write side**: issuing, renaming, disabling, deleting and purging
-each cost exactly **1 put, 0 deletes and 0 lists** (the whole table is rewritten, regardless
-of how many keys it holds), and only when a human clicks.
+- **Deployments where every client uses `GATEWAY_TOKEN` never read it at all.** That zero is
+  **structural**, not a switch: the master token is compared in the first stage of
+  authentication, and that path has no call site that reads the table. Requests carrying no
+  credential at all read nothing either — a scanner cannot lever it.
+- **Issuing, renaming, disabling, deleting and purging each rewrite the whole table once**, and
+  only when a human clicks. How many keys the table holds makes no difference.
 
 > [!IMPORTANT]
-> **Disabling and deleting are not instantaneous. This one is security-relevant; do not read
-> it as "takes effect shortly".** The instance that handled the request applies it at once;
-> other instances may take up to `APIKEY_CACHE_TTL_MS` plus roughly 60 seconds of KV edge
-> cache ⇒ about **6 minutes** by default. The only way to make it faster is to lower
-> `APIKEY_CACHE_TTL_MS`, and the cost is exactly the read account above, scaled up.
+> **Disabling and deleting are not instantaneous. This one is security-relevant; do not read it
+> as "takes effect shortly".** The instance that handled the request applies it at once; any
+> other container sharing the volume keeps serving the key for up to `APIKEY_CACHE_TTL_MS`
+> ⇒ about **5 minutes** by default. The only way to make it faster is to lower that value, and
+> the only cost is one more table read per instance per interval.
 
-#### The `list` and `delete` buckets
+#### What a click in the panel writes
 
-- **`list` and `delete` are two further buckets, 1,000/day each**, separate from the read and
-  write buckets. Steady-state forwarding never issues a `list` — that is exactly why the
-  `pool:index` key exists. **Four** things consume it: the 48–96 daily index reconciliations
-  (one at the start of every tending round); **the panel's "tend now" button** (when
-  a round actually mints a key, the wrap-up reconciles once more ⇒ at most 24 more per day, the
-  bound being that guardrail itself — this consumer used to be missing from the list, and the
-  sentence used to describe reconciliation as "a separate, independently scheduled job", which
-  now also has an **operator-triggered** consumer); the
-  **empty-pool rescan** (when the index parses
-  fine yet not a single live record can be read, the gateway issues one `list` to check whether
-  a hand-imported record is missing from the index); and the **missing-index fallback** (when
-  `pool:index` itself cannot be read or fails to parse, the gateway likewise issues one `list`
-  and tries to rebuild the index — usually because the write bucket got exhausted and the index
-  could never be built).
+None of this is metered, but two shapes are worth knowing before you click:
 
-  The latter two **share the same** built-in **10-minute** backoff (a
-  fixed constant, not an environment variable) — they draw on the same `list` bucket, so opening
-  a separate window for each would be pointless — so an empty or broken-index pool costs at most
-  144 `list` calls per isolate per day, with headroom left over the 48–96 from reconciliation
-  plus the at most 24 from the panel.
-- **Exhausting the `list` bucket disables the gateway rather than degrading it.** When the pool
-  is empty and `list` fails, the gateway returns `500` with the real reason in the log; it does
-  **not** disguise the failure as `503 pool_empty`, because reconciliation draws on the same
-  bucket and is failing too — both self-healing paths described in this document are gone until
-  the quota resets at UTC midnight.
+- **Importing M new keys** writes M records plus the index, at most **200 per call** — over that
+  it is a `400`, **never a silent truncation**. Splitting a big import into batches is not
+  cheaper, since each batch still rewrites the index.
+- **Re-importing the same keys** (without ticking "reset the state of existing keys") writes
+  **nothing**: duplicates are skipped, never overwritten, so re-pasting your whole list is safe.
+- **Bulk delete of N keys** rewrites the index **once**, not N times; **purging the pool** is the
+  same rule.
+- **Changing one key** (disable / enable / note / clear cooldown / clear strikes / un-evict /
+  reset usage counters) is **one read plus one write, whichever action it is**: they all go
+  through the same handler and the same single persist, and resetting the counters reads or
+  writes nothing extra (what it clears is the in-memory persist baseline).
 
-**The read formula above assumes "an isolate outlives the TTL."** At low traffic, or once
-traffic is spread across enough Cloudflare edge locations, isolates are often recycled before a
-single TTL elapses; each isolate then loads the pool at least once in its lifetime, so the read
-count is driven by **cold-start count**, not the TTL, with a ceiling around
-`100000 ÷ (keys in the pool + 2)` cold starts/day (the `+2` accounts for one read each for the
-index and the config). **Raising `POOL_CACHE_TTL_MS` saves zero reads in this regime** — it only
-saves repeated loads within the same isolate.
+  > [!IMPORTANT]
+  > **The last item in those parentheses is the one thing here you cannot click**: resetting the
+  > usage counters is **API only today — the panel has no button for it** (same as the
+  > `POOL_TOUCH_INTERVAL_MS` row above). That list enumerates every action the handler
+  > understands, not the buttons on the panel; it is written up here so that nobody assumes the
+  > other route costs more.
+- **"Tend now"** is the one panel action with a daily cap — at most **24** per day (the fourth
+  guardrail, see [REGISTRAR.md](REGISTRAR.md)). That cap exists to protect your temporary-mailbox
+  quota and the upstream platform, not a storage budget.
+- **Saving the settings** rewrites the single `config` entry, and **a save that fails validation
+  writes nothing at all** — not a single byte.
+- **The two danger-zone buttons**: resetting the configuration (`/admin/api/config/reset`)
+  rewrites that same single entry; purging the key pool (`/admin/api/keys/purge`) deletes every
+  record and rewrites the index **once**.
 
-By the same logic, the `list` backoff for the empty-pool and missing-index states is also
-**per instance**: every cold isolate pays its own cost, and the total scales linearly with the
-number of isolates.
+Two read fan-outs are worth knowing about for the same reason:
+
+- **The `30d` range of the panel's "Usage" board** reads `30 × 2` shards
+  (`USAGE_DAY_RETAIN × USAGE_SLOTS`) in a single request. **This repository has never measured
+  that fan-out on real hardware**, so the only thing promised here is that it **fails honestly**:
+  when it fails part way, the whole `days` series comes back as `null` with `note` set to
+  `read_failed` — it never passes off the shards it did read as the full picture.
+- **A Playground video run costs at most `1 + 60` upstream requests per task** (1 create plus at
+  most `VIDEO_POLL_MAX_ATTEMPTS` polls). That multiplies the **upstream** quota and the keys' use
+  counts, not anything on your own disk.
 
 ### Admin panel variables (disabled by default)
 
 | Variable | Required | Default | Notes |
 |--------|--------|-------|-----|
 | `ADMIN_TOKEN` | no | none (panel disabled) | Token for the admin endpoints. **Must differ from `GATEWAY_TOKEN`**, at least 24 characters, **no leading/trailing whitespace**, **printable ASCII (0x20–0x7E)** only. The reasoning for these rules, and what each kind of non-compliance costs you, are below. |
-| `TRUST_PROXY` | no | unset (**no** forwarded header is trusted) | Set to `1` **only** if the gateway really sits behind a proxy — that includes the Cloudflare Worker form, where you should set it. It decides where the client IP in login-failure events comes from; see below. |
+| `TRUST_PROXY` | no | unset (**no** forwarded header is trusted) | Set to `1` **only** if the gateway really sits behind a proxy (a CDN, or an nginx / Caddy / Traefik in front of the container). It decides where the client IP in login-failure events comes from; see below. |
 
 **Not set ⇒ the panel is simply unavailable, and the gateway keeps forwarding.** Requests to
 `/admin/...` then get **`404`, not `401`**: the tree is never registered, so nothing leaks the
 fact that there is a panel here. This mirrors the registrar being disabled by default — a missing
 or bad `ADMIN_TOKEN` must never stop the gateway from forwarding.
+
+Both lines go into the same `.env` as everything else:
+
+```env
+# Optional: the admin panel token. Unset means the whole /admin tree is never registered.
+# Must differ from GATEWAY_TOKEN, at least 24 characters, printable ASCII only.
+ADMIN_TOKEN=replace-with-another-long-random-string
+
+# Optional: set to 1 only when the container really sits behind a proxy that
+# rewrites the client address. Leave it out on a directly exposed deployment.
+TRUST_PROXY=1
+```
 
 #### The three hard rules on `ADMIN_TOKEN`
 
@@ -1006,8 +472,7 @@ parts with different natures:
    leading/trailing whitespace, except that rule is physical and this one is a trade-off).
    `0x80–0xFF` is an encoding question instead: environment variables are decoded as UTF-8 while
    header values are decoded as Latin-1, and nothing in the specs guarantees those two agree in
-   that range (we have only verified this on Node; the Cloudflare Workers side is unverified),
-   while RFC 9110 already marks that range as deprecated.
+   that range, while RFC 9110 already marks that range as deprecated.
 
 Please use an ASCII-only token. **Interior spaces are allowed**: a passphrase like
 `correct horse battery staple` is perfectly sendable and, under a 24-character minimum, is often
@@ -1016,11 +481,12 @@ above.
 
 ##### Why the 24-character minimum
 
-**Why the 24-character minimum.** The Worker form has no distributed login rate limiting.
-Building one would mean using KV as the counting window, which hands an attacker a lever to burn
-your write quota — widening the attack from "guess the password" to "kill the key pool's state
-writes". Token entropy is therefore the only defense here, and the minimum is not a suggestion.
-Below it the panel is not enabled and an `admin.token_rejected` line goes to the container log.
+**Why the 24-character minimum.** The gateway has **no login rate limiting of any kind** — not
+per IP, not per token, not per instance. Building one would mean a counting window in storage,
+which hands an unauthenticated caller a lever to make the gateway write on demand: the attack
+widens from "guess the password" to "make it rewrite `store.json` in a loop". Token entropy is
+therefore the only defense here, and the minimum is not a suggestion. Below it the panel is not
+enabled and an `admin.token_rejected` line goes to the container log.
 
 ##### Why it must differ from `GATEWAY_TOKEN`
 
@@ -1032,15 +498,15 @@ server — harvesting the mailbox, password and verification code of every accou
 ##### How a conflict surfaces, and how to deal with it
 
 This rule is **re-checked on every admin request, and deliberately not enforced at startup**. If
-the two are equal — for example because `gatewayToken` was written into storage by hand with
-`wrangler kv key put`, or by editing `store.json` — the admin endpoints return **`503`**, and an
+the two are equal — for example because `gatewayToken` was written into storage by hand by
+editing `store.json` — the admin endpoints return **`503`**, and an
 `admin.token_conflict` line is logged at error level (if the conflict is already present at boot,
 the same line appears in the startup log so you see the reason immediately). **Gateway forwarding
 is unaffected.**
 
 **Once the conflict has happened, treat `ADMIN_TOKEN` as leaked — there is exactly one way to
-recover: rotate it to a brand-new value.** On Workers run `npx wrangler secret put ADMIN_TOKEN`
-and redeploy; on Docker edit `.env` and recreate the container. **Do not just change the stored
+recover: rotate it to a brand-new value.** Edit `.env` and run `docker compose up -d` so the
+container is recreated with the new value. **Do not just change the stored
 `gatewayToken` back.** That does bring the admin endpoints back immediately (it takes effect once
 the configuration cache next refreshes, with **no restart needed**), but it restores availability,
 not security: while the conflict lasted, the admin token and the gateway token were the same
@@ -1053,10 +519,10 @@ afterwards; the incident is only handled once both steps are done.
 
 **Why this one rule is not enforced at startup.** `gatewayToken` can change while the gateway
 runs, and a startup decision never gets a second evaluation: if the whole `/admin` tree were
-withheld there, every isolate that cold-starts during the conflict — and every Docker container
-started during it — would be **permanently `404`**, unrecoverable by fixing the configuration and
-only curable by a restart, while isolates built before the conflict merely return `503` and
-recover as soon as you change the value back. Same configuration, same instant, two different
+withheld there, every container started during the conflict would be **permanently `404`**,
+unrecoverable by fixing the configuration and only curable by another restart, while a container
+started before the conflict merely returns `503` and recovers as soon as you change the value
+back. Same configuration, same instant, two different
 answers — and the "no restart needed" sentence above would be half a lie. The two rules that
 concern `ADMIN_TOKEN` alone (leading/trailing whitespace, unsendable characters, minimum
 length) do not have this
@@ -1066,12 +532,12 @@ still enforced at startup and their failure mode remains `404`.
 ##### How to rotate it, and what to do if it leaks
 
 `ADMIN_TOKEN` is read **from environment variables only, never from storage**: the panel cannot
-rotate its own key. To rotate it, run `npx wrangler secret put ADMIN_TOKEN` and redeploy on the
-Worker, or edit `.env` and recreate the container on Docker.
+rotate its own key. To rotate it, edit `.env` and run `docker compose up -d` — `docker compose
+restart` will not do, because a container's environment is frozen at creation time.
 
 **Leaking the admin token means leaking `ADMIN_TOKEN` itself.** The panel stores it verbatim in
 the browser's localStorage. There is no derived token and no in-product revocation path. The only
-way to revoke it is to change the secret and redeploy (Worker) or recreate the container (Docker).
+way to revoke it is to change the value in `.env` and recreate the container.
 The panel asks for the token again after 12 hours, but that only shortens how long that
 localStorage value stays usable — it is **not** revocation. Put the panel behind TLS and open it
 only on machines you trust.
@@ -1096,9 +562,9 @@ anyone pin brute-force traces on an arbitrary IP.
 
 **With it off, no forwarded header is trusted and the field is recorded as `null` — including
 `CF-Connecting-IP`.** That header is often described as unforgeable, but the property only holds
-*while the request really goes through Cloudflare*. On a directly exposed Node/Docker deployment
-nothing overwrites it, so a client can simply send `CF-Connecting-IP: 1.2.3.4` and be believed —
-and direct exposure is the default Docker shape.
+*while the request really goes through Cloudflare*. On a directly exposed container nothing
+overwrites it, so a client can simply send `CF-Connecting-IP: 1.2.3.4` and be believed — and
+direct exposure is the default shape of `docker compose up -d`.
 
 **With it on, `CF-Connecting-IP` wins and `X-Forwarded-For` is only the fallback.** The two are
 not equally forgeable:
@@ -1110,10 +576,12 @@ not equally forgeable:
 
 ##### How to configure it in each of the two topologies
 
-**On the Worker, set `TRUST_PROXY=1`.** Cloudflare is by definition in front there, which makes
-`CF-Connecting-IP` the authoritative value; preferring `X-Forwarded-For` in that shape would be
-wrong, because the chain may carry whatever the client stuffed into it. Without the switch the
-field is simply recorded as `null`.
+**With Cloudflare in front of your origin, set `TRUST_PROXY=1`.** Cloudflare rewrites
+`CF-Connecting-IP` on every request, which makes it the authoritative value; preferring
+`X-Forwarded-For` in that shape would be wrong, because the chain may carry whatever the client
+stuffed into it. Without the switch the field is simply recorded as `null`. **Only turn it on
+once the origin can no longer be reached directly** — otherwise a client that bypasses the CDN
+supplies the header itself.
 
 **Behind a generic reverse proxy (nginx / Caddy / Traefik), strip `CF-Connecting-IP` at the proxy
 when you turn `TRUST_PROXY=1` on.** In that topology nothing overwrites the header, yet the gateway
@@ -1181,13 +649,13 @@ those if the secret is shorter than 5 — showing them would be showing all of i
 ##### How credentials written from the panel are persisted
 
 > [!WARNING]
-> **Credentials written from the panel are stored in plaintext** in KV / `store.json`, at the same
+> **Credentials written from the panel are stored in plaintext** in `store.json`, at the same
 > level as the "keys are stored in plaintext" caveat. Do not assume what you type here is an encrypted
-> secret. Treat the data directory / KV namespace as credential material.
+> secret. Treat the data directory as credential material.
 
 > [!WARNING]
 > **If you clear the gateway token while `GATEWAY_TOKEN` is not in the environment either**, the
-> current process keeps running, but **the next restart or isolate recycle will fail to start**. The
+> current process keeps running, but **the next restart will fail to start**. The
 > panel says so in a red notice at that moment; recover by setting a new gateway token on the same page
 > right away. **Clearing is safe when the environment does supply the value**: only the stored copy goes away and the effective value falls back to the environment variable, unchanged. The panel says two different things in these two states rather than leaving you to guess.
 
@@ -1203,17 +671,16 @@ those if the secret is shorter than 5 — showing them would be showing all of i
 #### The save receipt and how long propagation takes
 
 **After saving, the panel does not claim "saved and in effect".** It **reads the effective values
-back**, highlights the fields that actually changed, and states **how long other replicas/isolates
-may take to see the change**: the config holder's TTL is 30 seconds and the KV edge cache defaults to
-60 seconds, so the upper bound is about **90 seconds**. This instance is immediate (saving
-invalidates its local cache); other instances are not. **Panel copy must never say "takes effect
-immediately".**
+back**, highlights the fields that actually changed, and states **how long other replicas may take
+to see the change**: the config holder refreshes at most every **30** seconds, so that is the
+upper bound. This instance is immediate (saving invalidates its local cache); another container
+sharing the same volume is not. **Panel copy must never say "takes effect immediately".**
 
 ### Registrar variables (optional, disabled by default)
 
 The registrar is an optional auto-refill component, disabled by default, and does not affect
 the gateway's core forwarding behavior. This is a quick-reference table only — for how it works,
-how to choose between the two mailbox channels, the Cloudflare Cron wall-clock limit, and more,
+how to choose between the two mailbox channels, how long one round may take, and more,
 see [REGISTRAR.md](REGISTRAR.md).
 
 | Variable | Required | Default | Notes |
@@ -1222,7 +689,7 @@ see [REGISTRAR.md](REGISTRAR.md).
 | `REGISTRAR_CHANNEL` | required once enabled | none | Which channel the registrar uses, `yyds` or `moemail`; pick one of the two, no default. |
 | `TARGET_KEYS` | no | `20` | Target number of usable keys. |
 | `MINT_BATCH` | no | `5` | Maximum keys minted per round. |
-| `TEND_INTERVAL_MS` | no (Node/Docker only) | `1800000` | Node-side refill interval; on the Worker this is governed by the Cron in `wrangler.toml` instead. |
+| `TEND_INTERVAL_MS` | no | `1800000` | How often a refill round runs. The same timer also reconciles `pool:index`, so it keeps ticking even with the registrar off. |
 | `CODE_TIMEOUT_MS` | no | `120000` | Timeout waiting for the verification code. |
 | `MINT_DELAY_MIN_MS` / `MINT_DELAY_MAX_MS` | no | `60000` / `90000` | Random delay between mint attempts. The lower bound is measured; the upper is jitter headroom. |
 | `MAX_DOMAIN_ATTEMPTS` | no | `1` | Maximum domains tried per mint attempt. Domain verdicts are remembered and reused, so one suffices; **raising it burns more rate-limit allowance**. |
@@ -1290,36 +757,32 @@ this recovers by itself, and a `Retry-After` header tells you when), `all_evicte
 was permanently evicted for invalid credentials — this does **not** recover; import new keys),
 or `upstream_error` (keys are fine, the upstream failed on every attempt).
 
-### Can a very long non-streaming request be severed mid-flight? (the two deployments may differ)
+### Can a very long non-streaming request be severed mid-flight? (whatever sits in front decides)
 
-**Bottom line: there is no platform promise we can rely on for the Worker side, so this
-document makes no promise, and neither does the admin panel.**
+**Bottom line: the gateway itself imposes no wall clock beyond `UPSTREAM_SYNC_TIMEOUT_MS`, so
+the only thing that can cut a healthy long request short is something in front of it.**
 
-Two statements from the official Cloudflare Workers limits page have been verified:
-HTTP-triggered Workers have **no** wall-clock duration limit ("There is no hard limit on
-duration for HTTP-triggered Workers"), and individual outbound subrequests have **no**
-time limit either ("There is no set time limit on individual subrequests"). Both are
-conditioned on the client staying connected.
+The Node process running in the container has **no platform duration limit at all**: a
+non-streaming request is bounded by the budget you configure and by nothing else. That is the
+whole promise this document makes, and the admin panel makes no larger one either.
 
-**Those two do not cover everything.** Spelled out:
+**What is in front of you is yours to check.** Spelled out:
 
-- The documented **125-second Proxy Read Timeout (error 524)** appears only in the context
-  of zone traffic reverse-proxied through Cloudflare. The docs **never state whether it
-  applies to a Worker's own outbound subrequest** — when it cannot be found, treat it as
-  "no platform promise" rather than guessing.
-- The same page notes the runtime is updated a few times per week, and in-flight requests
-  get a **30-second** grace period before being terminated. Low probability, but it exists.
-- The **15 minutes (900 s)** figure in `wrangler.toml` is the wall-clock limit for
-  **Cron Triggers (`scheduled()`)**, **not for `fetch()`**. Do not carry it over.
+- A reverse proxy has its own read timeout, and the defaults are short: nginx's
+  `proxy_read_timeout` is 60 s, Caddy's is unlimited but its upstream may not be. Raise it on
+  the same axis as `UPSTREAM_SYNC_TIMEOUT_MS` or the proxy will cut first.
+- A CDN in front of the origin adds one more: Cloudflare's documented **Proxy Read Timeout is
+  100 seconds (error 524)** for zone traffic, which no gateway setting can extend.
+- A load balancer's idle timeout counts the same way, and its symptom is identical from the
+  client's side: the connection simply ends, with no `error.reason` to look at.
 
 ⇒ **Two practical consequences:**
-1. A non-streaming request in the `UPSTREAM_SYNC_TIMEOUT_MS` range (120000 by default)
-   **may behave differently** on Worker versus Docker. The Node/Docker side has no platform
-   wall clock and is bounded only by the budget you configure.
-2. **The admin panel (Playground) never claims the two deployments behave the same**, and
-   gives no "guaranteed to survive N seconds" number. If you need long requests, set
-   `UPSTREAM_SYNC_TIMEOUT_MS` to a value you have measured, or switch to a streaming
-   endpoint (the first-byte budget).
+1. Set `UPSTREAM_SYNC_TIMEOUT_MS` (120000 by default) **below** the tightest timeout in the
+   chain in front of you, or a request that the gateway would have completed gets severed by
+   somebody else and the reason never reaches the log.
+2. **If you need genuinely long requests, use a streaming endpoint.** The first-byte budget
+   bounds only the first byte; whatever the generation costs afterwards is not counted, and a
+   stream that keeps producing bytes does not look idle to anything in the chain.
 
 ## Multi-Account Configuration
 
@@ -1363,59 +826,34 @@ docker compose start
 If `./data/store.json` doesn't exist yet, create it containing a single JSON object whose
 keys are the `key:<id>` strings.
 
-### Importing into Cloudflare Worker
-
-Write the record straight into the `POOL` KV namespace with wrangler:
-
-```bash
-npx wrangler kv key put --binding=POOL "key:1a2b3c4d5e6f7a8b" \
-  '{"id":"1a2b3c4d5e6f7a8b","key":"your-real-agnes-api-key","addedAt":1735689600000,"lastUsedAt":null,"cooldownUntil":0,"strikes":0,"evicted":false,"evictedReason":null}' \
-  --remote
-```
-
-Omit `--remote` to write into the local namespace used by `wrangler dev` instead of
-production.
-
 ### The index and how long changes take to show up
 
-The gateway keeps a `pool:index` key listing the pool's ids so that forwarding never spends a
-KV `list` operation (the free-tier `list` quota is only 1,000/day and is a separate bucket from
-reads and writes). **Writing a record by hand does not touch that index**, so how soon the new
-key gets used depends on the state of the pool at that moment:
+The gateway keeps a `pool:index` key listing the pool's ids so that forwarding never has to scan
+the whole store. **Writing a record by hand does not touch that index**, so how soon the new key
+gets used depends on the state of the pool at that moment:
 
 - **When the pool is empty**: the index says the pool is empty and indeed not a single record can
-  be read, so the gateway falls back to one `list` scan that discovers the hand-imported record
-  and back-fills it into the index. That scan has a built-in 10-minute backoff (see the quota
-  budget above), so the visibility bound is **≤10 minutes + one `POOL_CACHE_TTL_MS`**.
+  be read, so the gateway falls back to one scan that discovers the hand-imported record and
+  back-fills it into the index. That scan has a built-in 10-minute backoff (see "The key pool and
+  its index" above), so the visibility bound is **≤10 minutes + one `POOL_CACHE_TTL_MS`**.
 - **When the pool is not empty**: the forwarding path only fetches records the index knows about,
   so a record the index has never heard of is **completely invisible** — with no error anywhere.
-  It has to wait for the next cron reconciliation to repair the index (30 minutes by default, and
-  **the trigger timing carries no official guarantee**, see below), then for up to one more
-  `POOL_CACHE_TTL_MS`.
+  It has to wait for the next reconciliation to repair the index (`TEND_INTERVAL_MS`, 30 minutes
+  by default), then for up to one more `POOL_CACHE_TTL_MS`.
 
-**To make a hand import take effect immediately, add the id to `pool:index` at the same time:**
+**To make a hand import take effect immediately, add the id to `pool:index` in the same edit:**
 
-```bash
-npx wrangler kv key get --binding=POOL "pool:index" --remote
-# append the new id to the ids array and write the whole value back (v is always 1)
-npx wrangler kv key put --binding=POOL "pool:index" \
-  '{"v":1,"ids":["existing-id","1a2b3c4d5e6f7a8b"]}' --remote
+```json
+{"v":1,"ids":["existing-id","1a2b3c4d5e6f7a8b"]}
 ```
 
-Once the index is written, every isolate picks the key up after at most one `POOL_CACHE_TTL_MS`.
+Once the index is written, the pool picks the key up after at most one `POOL_CACHE_TTL_MS`.
 
-Do not delete the `[triggers]` block in `wrangler.toml`, even if you never enable the
-registrar: that cron is the only path that reconciles `pool:index` against the actual
-`key:` records, and it runs regardless of `REGISTRAR_ENABLED`.
-
-**This cron's trigger timing is not officially guaranteed.** Cloudflare does not
-document any reliability commitment for Cron Triggers firing on the `crons`
-schedule (no guarantee against skipped runs, no documented delay bound). This is
-safe for the quota accounting — fewer reconciliation runs only ever reduce actual
-KV read/write usage, never increase it — but it means **there is no guarantee on
-how long an orphaned record or ghost index entry takes to be reclaimed**; in the
-worst case it can take longer than the expected "up to 30 minutes". During that
-wait the affected key is simply unusable, not lost or corrupted.
+**Reconciliation runs whether or not the registrar is enabled**, on the same `TEND_INTERVAL_MS`
+timer: it is the only path that repairs `pool:index` against the actual `key:` records, so an
+orphaned record or a ghost index entry is reclaimed within one interval. Set that interval to
+something absurd and you extend that wait by exactly as much; during the wait the affected key
+is simply unusable, not lost or corrupted.
 
 ### Revoking a key
 
@@ -1423,31 +861,27 @@ wait the affected key is simply unusable, not lost or corrupted.
 record is not an error (unreadable records are simply filtered out), but the id stays in the
 index, costing one wasted read on every refresh until the next reconciliation prunes it.
 
-```bash
-npx wrangler kv key delete --binding=POOL "key:1a2b3c4d5e6f7a8b" --remote
-# drop that id from the ids array and write the whole value back
-npx wrangler kv key put --binding=POOL "pool:index" '{"v":1,"ids":["remaining-id"]}' --remote
+Delete the `"key:<id>"` entry from `./data/store.json` and fix the `ids` array under
+`"pool:index"`; stop the container first (`docker compose stop`) so the running process cannot
+overwrite your edit:
+
+```json
+{"v":1,"ids":["remaining-id"]}
 ```
 
-On Docker this means deleting the `"key:<id>"` entry from `./data/store.json` and fixing the
-`ids` array under `"pool:index"`; stopping the container first (`docker compose stop`) is
-recommended.
-
-Isolates and processes that already loaded an older snapshot stop selecting the key after at most
-one `POOL_CACHE_TTL_MS`; on the Worker, add one KV propagation window (about 60 seconds) on top,
-since that is how long a delete takes to become visible in every colo.
+A process that already loaded an older snapshot stops selecting the key after at most one
+`POOL_CACHE_TTL_MS`.
 
 **It will not be written back during that window either**: before persisting any state change the
 gateway first confirms the record still exists, and drops the write — refreshing its own snapshot
-immediately — when it does not. The one exception is that same propagation window: if the
-confirming read is served by KV's edge cache, this colo still believes the record is there.
-Docker (file storage) has no such cache, so there the guarantee is exact.
+immediately — when it does not. File storage serves that confirming read from the file itself,
+with no cache in between, so this guarantee is exact.
 
 ## Verification
 
-Three commands, cheapest first. Replace `$BASE` with your own address (the Worker's is
-`https://{name}.{sub}.workers.dev`, Docker's is `http://localhost:8080`) and `$TOKEN` with the
-`GATEWAY_TOKEN` you set.
+Three commands, cheapest first. Replace `$BASE` with your own address (`http://localhost:8080`
+unless you changed `PORT` or put a domain in front) and `$TOKEN` with the `GATEWAY_TOKEN` you
+set.
 
 ### Health check
 
@@ -1487,20 +921,16 @@ numbered steps are meant to be worked through in order.
 
 ### The gateway will not start and the log has one line about a missing token
 
-**Symptom**: it differs by runtime, and the two look nothing alike.
-
-- **Docker / Node**: the container **exits right after startup** and the log contains nothing but
-  `缺少 GATEWAY_TOKEN，网关无法启动`.
-- **Cloudflare Worker**: **the deploy reports success**, but **every request returns `503`** with the body
-  `{"error":{"type":"service_unavailable","message":"网关尚未完成配置"},"reason":"not_configured"}`,
-  and `/health` behaves the same. A Worker has no "startup": assembly happens lazily in each isolate,
-  so there is no "exited" signal here. **The only clue is in `npx wrangler tail`**, on a line starting with
-  `[agnes2api] 装配失败`.
+**Symptom**: the container **exits right after startup**, `docker compose ps` shows it restarting
+or exited, and the log contains nothing but `缺少 GATEWAY_TOKEN，网关无法启动`. **There is no
+half-working state here**: the gateway refuses to assemble rather than answering `503` to every
+request, so the failure is visible in `docker compose ps` without anyone calling an endpoint.
 
 **Fix**:
 
-1. Docker: check that `.env` has a `GATEWAY_TOKEN=` line and that **there is something after the equals sign**.
-2. Worker: run `npx wrangler secret put GATEWAY_TOKEN` once, then `npx wrangler deploy`.
+1. Check that `.env` has a `GATEWAY_TOKEN=` line and that **there is something after the equals sign**.
+2. Run `docker compose up -d` afterwards, **not `docker compose restart`** — a container's
+   environment is frozen at creation time, so a restart re-reads nothing.
 
 > [!WARNING]
 > **Do not reach for `RESET_CONFIG=1` here.** It means "**ignore the stored `config` key entirely**" — and if
@@ -1514,7 +944,7 @@ numbered steps are meant to be worked through in order.
 **Fix**:
 
 1. Import at least one key from the key-pool page of the admin panel, or call `POST /admin/api/keys` (see [API.md](API.md)); with no `ADMIN_TOKEN` set, follow the "Multi-Account Configuration" section and write into the storage backend directly.
-2. Already imported and still empty: a hand-written record **does not touch `pool:index`**, so either wait for one reconciliation (30 minutes by default) or add the id to the index by hand.
+2. Already imported and still empty: a hand-written record **does not touch `pool:index`**, so either wait for one reconciliation (`TEND_INTERVAL_MS`, 30 minutes by default) or add the id to the index by hand.
 3. The registrar is on but the pool never grows: check the panel's events board, or follow [REGISTRAR.md](REGISTRAR.md) to debug the two mailbox channels.
 
 ### The registrar is on but mints nothing (the panel says enabled, the pool never grows)
@@ -1549,13 +979,13 @@ channel is missing its API key, or no channel has been selected at all.
 
 ### A setting saved in the panel takes ages to reach the other replicas
 
-**Symptom**: You saved a setting in the panel, this instance changed immediately, and another replica or isolate still serves the old value.
+**Symptom**: You saved a setting in the panel, this instance changed immediately, and another container sharing the same volume still serves the old value.
 
 **Fix**:
 
-1. That is **normal**: the config holder's TTL is 30 seconds and KV's edge cache defaults to 60, so the ceiling is about **90 seconds**. Wait and look again.
+1. That is **normal**: the config holder refreshes at most every **30** seconds, so that is the ceiling. Wait and look again.
 2. Still unchanged after two minutes: check that the field is not locked by an environment variable — locked fields are greyed out in the panel and the endpoint answers `400 locked_by_env`.
-3. You changed `POOL_CACHE_TTL_MS` or `POOL_TOUCH_INTERVAL_MS`: those two are **read once when the instance is built**, so only a container restart or an isolate recycle will do it.
+3. You changed `POOL_CACHE_TTL_MS` or `POOL_TOUCH_INTERVAL_MS`: those two are **read once when the instance is built**, so only recreating the container will do it.
 
 ### Non-streaming requests time out in bulk and the key pool goes red
 
@@ -1576,21 +1006,22 @@ channel is missing its API key, or no channel has been selected at all.
 1. Nine times out of ten the data directory is not writable. Read the entrypoint lines in the container log and check whether `./data` is owned by `100:101`.
 2. If you pinned a non-root user with `--user` or compose's `user:`, the entrypoint **does not** chown anything and you have to prepare ownership and writability yourself.
 3. When `DATA_DIR` points at `/` or a top-level system directory the entrypoint refuses to chown recursively and only prints a warning — point it somewhere sane.
-4. **Ownership checks out three times over and it is still degraded**: most likely `store.json` cannot be parsed. The first three items are permissions; this one is not — when the storage layer cannot read valid JSON every read and write throws, so the startup probe records "writable" as false and `/health` answers the same `503` degraded. Stop the container and run `python3 -m json.tool ./data/store.json`: the hand-editing taught above is the most common way to break it (one comma too many is enough). Restore from a backup; the real reason is on the first line of the container log.
+4. **Ownership checks out three times over and it is still degraded**: most likely `store.json` cannot be parsed. The first three items are permissions; this one is not — when the storage layer cannot read valid JSON every read and write throws, so the startup probe records "writable" as false and `/health` answers the same `503` degraded. Stop the container and run `python3 -m json.tool
+   ./data/store.json`: the hand-editing taught above is the most common way to break it (one comma too many is enough). Restore from a backup; the real reason is on the first line of the container log.
 
 ## Performance Tips
 
 First, get one thing straight: **the gateway itself costs almost no time**. The cost sits in two
-places — upstream response time, and the read/write quota of your storage. So only three knobs in
-this section are worth touching.
+places — upstream response time, and how often the process rewrites `store.json`. So only three
+knobs in this section are worth touching.
 
 ```env
-# Optional: how long each isolate/process keeps its key-pool snapshot, in ms; 0 disables the cache.
-# Raising it saves KV reads; the cost is that cooldowns/evictions decided elsewhere show up later.
+# Optional: how long each process keeps its key-pool snapshot, in ms; 0 disables the cache.
+# Raising it saves file reads; the cost is that state written by another container shows up later.
 POOL_CACHE_TTL_MS=120000
 
 # Optional: how often "last used" is persisted, in ms; 0 persists on every successful request.
-# It is a display-only field — lowering it only multiplies KV writes and buys no scheduling gain.
+# It is a display-only field — lowering it only multiplies file writes and buys no scheduling gain.
 POOL_TOUCH_INTERVAL_MS=21600000
 
 # Optional: total timeout budget for synchronous endpoints (images, video jobs, all non-streaming
@@ -1600,30 +1031,31 @@ UPSTREAM_SYNC_TIMEOUT_MS=180000
 
 Three rules of thumb, most valuable first:
 
-1. **On Worker + free-tier KV with more than 20 keys in the pool, raise `POOL_CACHE_TTL_MS` first.**
-   At the default, "20 keys and 3 active isolates" already burns about 99.4% of the read quota;
-   the arithmetic is in the quota section above.
+1. **Leave `POOL_CACHE_TTL_MS` alone unless several containers share one volume.** With a single
+   container the snapshot is authoritative, so raising it buys nothing and only delays how fast a
+   hand edit to `store.json` is noticed. Raise it when you actually run replicas and see the same
+   key being judged twice.
 2. **Do not lower `POOL_TOUCH_INTERVAL_MS` just to make the panel's "last used" more precise.**
-   That is a display-only field, the write quota is only 1,000 per day, and cooldown/eviction
-   bookkeeping competes for the same bucket.
+   That is a display-only field, `0` means "rewrite the whole store on every successful request",
+   and nothing schedules on the value you would be buying.
 3. **Move long requests to the streaming endpoints.** The first-byte budget only bounds the first
    byte; however long generation takes afterwards is not counted. The non-streaming budget has to
-   cover the upstream computing the whole answer, and the two forms may not even behave the same
-   way at the platform level.
+   cover the upstream computing the whole answer, and a proxy in front of you may cut it before
+   your budget does.
 
 ## Monitoring and Maintenance
 
 ### The health endpoint
 
-`/health` is the only endpoint that needs no token, and both forms have it:
+`/health` is the only endpoint that needs no token:
 
 ```bash
 curl -s "$BASE/health"
 ```
 
 `status` of `ok` means storage is readable and writable; `degraded` means something is wrong there
-(on Docker it is usually a data directory that cannot be written). On Docker the image's built-in
-`HEALTHCHECK` calls exactly this, and healthy/unhealthy in `docker compose ps` comes from it.
+— usually a data directory that cannot be written. The image's built-in `HEALTHCHECK` calls
+exactly this, and healthy/unhealthy in `docker compose ps` comes from it.
 
 ### The panel's events board
 
@@ -1639,22 +1071,20 @@ zero-cost — no accumulator is built and not one storage write happens. To turn
 
 ```env
 # Optional: the Tier-2 time series behind the panel's "Usage" section. The check is a literal
-# true; 1 or yes count as off. Once on, each instance writes at most 13 puts per day (~10.4% of
-# the write quota); the tail is at most 2 hours, and an instance that dies inside that window takes those counts with it — loss, not late posting.
+# true; 1 or yes count as off. Once on, each instance rewrites one shard per flush interval;
+# the tail is at most 2 hours, and a process that stops inside that window takes those counts with it — loss, not late posting.
 USAGE_STATS_ENABLED=true
 ```
 
-Read the Tier-2 part of the quota section above before switching it on: it competes for the same
-write bucket as the key pool's cooldown and eviction bookkeeping.
-**Read the two alerts above as well**: on a low-traffic Worker these counts may never reach
-storage at all, so for dependable usage data use a long-lived process (Docker / Node); and on KV
-`USAGE_FLUSH_INTERVAL_MS` cannot be shrunk — forcing it down makes every request return 500.
+**Read the two alerts above before switching it on.** The counts you lose are the ones the
+process was still holding when it stopped, and recreating the container to change one variable
+is enough to trigger that. `USAGE_FLUSH_INTERVAL_MS` shortens that window as far as you like on
+this deployment form — that trade is yours to make, not a limit imposed from outside.
 
 ## Upgrading the Service
 
-The upgrade command for each form lives in the "Update" part of its own section
-([Cloudflare Worker](#cloudflare-worker-deployment) / [Docker](#docker-deployment)). This section
-is about everything around those two commands that is the same on both sides.
+The two upgrade commands live in the "Update" part of [Docker Deployment](#docker-deployment).
+This section is about everything around them.
 
 ### Before you upgrade
 
@@ -1682,15 +1112,14 @@ is about everything around those two commands that is the same on both sides.
 Rolling back: on Docker, set `IMAGE_TAG` in `.env` back to the previous version and run
 `docker compose up -d` (image name and tag list: "Update" under Docker Deployment above).
 **Confirm that tag exists in the registry first**: if it cannot be pulled compose does not fail,
-it builds one from your **current working tree**, so the rollback "succeeds" and the fault stays. On the Worker, roll back from Deployments in the Cloudflare
-dashboard, or `git checkout` the previous tag and `npx wrangler deploy` again.
+it builds one from your **current working tree**, so the rollback "succeeds" and the fault stays.
 
 ## Backup and Restore
 
 There is one copy of the key pool and the config, and no second one.
 **Backing up means backing up the storage itself.**
 
-### Docker
+### Taking one
 
 ```bash
 docker compose stop
@@ -1698,37 +1127,27 @@ cp -a ./data ./data.bak
 docker compose start
 ```
 
-Stopping first avoids a write race. `./data/store.json` holds everything — not just the key
-records and `pool:index`, but also `apikeys` (the table of issued outbound API keys), `config`
-(the configuration saved from the panel), `registrar:domains` and `registrar:backoff` (the
-registrar's domain-availability and backoff ledgers), `tend:history` (the refill history) and the
-event ring. Restoring is copying the directory back and running `docker compose up -d`.
+Stopping first avoids a write race. Restoring is copying the directory back and running
+`docker compose up -d`.
 
-### Cloudflare Worker
+### What is inside, and why a hand-picked copy is a trap
 
-```bash
-# List the key names first. **That listing is the backup manifest: every key it names must be
-# pulled down, not just key:<id> and pool:index**
-npx wrangler kv key list --binding=POOL --remote > kv-keys.json
+`./data/store.json` holds everything — not just the key records and `pool:index`, but also
+`apikeys` (the table of issued outbound API keys), `config` (the configuration saved from the
+panel), `registrar:domains` and `registrar:backoff` (the registrar's domain-availability and
+backoff ledgers), `tend:history` (the refill history) and the event ring.
 
-# Then pull them one by one. key:<id> / registrar:* / tend:history follow the same three lines
-npx wrangler kv key get --binding=POOL "pool:index" --remote > kv-pool-index.json
-npx wrangler kv key get --binding=POOL "apikeys"    --remote > kv-apikeys.json
-npx wrangler kv key get --binding=POOL "config"     --remote > kv-config.json
-```
-
-Restoring goes through `npx wrangler kv key put`, exactly like importing a key above.
-
-> [!WARNING]
-> **Backing up only `key:<id>` and `pool:index` misses four families of keys, and missing them
-> is invisible at restore time.** Restore from a manifest like that and the upstream key pool is
-> back, `/health` answers `ok`, your own smoke test with `GATEWAY_TOKEN` passes — while every
-> sub-key in your downstream users' hands answers `401`. The four families: `apikeys` (the table
-> of issued outbound API keys; not restoring it revokes every sub-key at once, and the plaintext
-> was shown exactly once at issue time, so it cannot be recovered — every key has to be reissued),
-> `config` (the configuration saved from the panel, including the gateway token and both mailbox
-> channels' credentials), `registrar:domains` and `registrar:backoff` (lose them and the registrar
+> [!CAUTION]
+> **Copying only the `key:<id>` entries and `pool:index` out of that file misses four families,
+> and missing them is invisible at restore time.** Restore a hand-picked file like that and the
+> upstream key pool is back, `/health` answers `ok`, your own smoke test with `GATEWAY_TOKEN`
+> passes — while every sub-key in your downstream users' hands answers `401`. The four families:
+> `apikeys` (not restoring it revokes every sub-key at once, and the plaintext was shown exactly
+> once at issue time, so it cannot be recovered — every key has to be reissued),
+> `config` (including the gateway token and both mailbox channels' credentials),
+> `registrar:domains` and `registrar:backoff` (lose them and the registrar
 > turns into "enabled - did not start this time"), and `tend:history` (the refill history).
+> **`cp -a ./data` above has none of this problem** — that is the reason it is the recipe.
 
 > [!WARNING]
 > A backup file contains **keys and credentials in plain text** (the gateway token and both
@@ -1746,9 +1165,9 @@ Restoring goes through `npx wrangler kv key put`, exactly like importing a key a
 - **Only turn `TRUST_PROXY` on when the gateway really sits behind a proxy.** Behind a generic
   reverse proxy, strip `CF-Connecting-IP` there as well, or an attacker who supplies one outranks
   the `X-Forwarded-For` your proxy just wrote.
-- **Treat the data directory, the KV namespace and every backup as credentials.** Keys and the
-  credentials written through the panel are all stored in plain text, at the same level as the
-  keys themselves.
+- **Treat the data directory and every backup as credentials.** Keys and the credentials
+  written through the panel are all stored in plain text, at the same level as the keys
+  themselves.
 ### Outbound API keys are the opposite of the upstream key pool
 
 - **The plaintext of an outbound API key appears exactly once.** It is in the response to the
@@ -1770,8 +1189,8 @@ GATEWAY_TOKEN=replace-with-your-own-long-random-string
 # printable ASCII only.
 ADMIN_TOKEN=replace-with-another-long-random-string
 
-# Optional: set to 1 only when the gateway really sits behind a proxy. The Worker form is one of
-# those cases and should have it set.
+# Optional: set to 1 only when the container really sits behind a proxy or a CDN that
+# rewrites the client address. Leave it out on a directly exposed deployment.
 TRUST_PROXY=1
 ```
 

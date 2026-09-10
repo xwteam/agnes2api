@@ -11,7 +11,7 @@
 
 | 东西 | 从哪儿来 |
 |------|----------|
-| 网关地址 | Worker 的 `*.workers.dev` 域名、你的自定义域名，或 Docker 部署时的 `http://localhost:8080` |
+| 网关地址 | `http://localhost:8080`，或者你在容器前面挂的域名 |
 | 网关口令 | 部署时设置的 `GATEWAY_TOKEN`，见 [部署指南](DEPLOY.md#环境变量) |
 | 一把可用的上游 key | 由管理面板导入池子，见 [管理面板](ADMIN.md) |
 

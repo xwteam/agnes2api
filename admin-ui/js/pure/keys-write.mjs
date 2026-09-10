@@ -188,18 +188,20 @@ export function bulkBarVisible(selectedCount) {
 }
 
 /**
- * 三个旋钮（`ttl` / `touch` / `edge`）是不是已经拿到过一次生效值——`loadKnobs()`
+ * 两个旋钮（`ttl` / `touch`）是不是已经拿到过一次生效值——`loadKnobs()`
  * 用它决定要不要再打一次 `/overview`。
  *
  * ⚠️ **评审第二轮点名的例外之一**：这条判据原来是 `sec-keys.js` 里一个内联的
- * 三元 `||` 判断。**只要有一个非 null 就算"已经拿到过"**，不要求三个都非
- * null——三个旋钮来自同一次响应的同一个块（`overview.freshness`），只要那次
- * 响应成功过，三个字段要么一起有值、要么一起是 null（同一次 `poolKnobs()`
- * 投影），检查任意一个就够，写成"三个都要非 null"反而会在响应体只給出
+ * `||` 判断。**只要有一个非 null 就算"已经拿到过"**，不要求两个都非
+ * null——两个旋钮来自同一次响应的同一个块（`overview.freshness`），只要那次
+ * 响应成功过，两个字段要么一起有值、要么一起是 null（同一次 `poolKnobs()`
+ * 投影），检查任意一个就够，写成"两个都要非 null"反而会在响应体只給出
  * 部分字段的畸形情形下误判成"还没拿到"、重复发请求。
+ *
+ * ⚠️ 上一版这里还有第三个旋钮 `edge`（KV 边缘缓存那个量），v0.4.0 整层删掉了。
  */
 export function knobsLoaded(knobs) {
-  return !!(knobs && (knobs.ttl !== null || knobs.touch !== null || knobs.edge !== null));
+  return !!(knobs && (knobs.ttl !== null || knobs.touch !== null));
 }
 
 /**

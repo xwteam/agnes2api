@@ -126,8 +126,13 @@ const REGISTRY: readonly Deviation[] = [
   {
     id: 3,
     what: "快速部署第 2 步叫 `### 2. 部署`，不是模板的 `### 2. Docker 部署`",
-    why: "本仓是双形态（Docker + Cloudflare Worker），把标题写死成 Docker 会漏掉一半读者",
-    until: "哪天只剩一种部署形态 —— 那时标题该跟着收窄，这条登记要删",
+    // 🔴 **v0.4.0：理由换了，标题没换。** 旧理由是「本仓是双形态，写死成 Docker 会漏掉
+    // 一半读者」——那个前提没了。今天留着 `### 2. 部署` 的理由是另一条：这一步之下
+    // 除了 `docker compose` 三条命令，还有「从源码跑」那一段，写死成 Docker 反而窄了。
+    // ⚠️ **`until` 也跟着改**：旧的「哪天只剩一种部署形态」今天已经到了，照旧写着等于
+    // 让一条已经到期的登记继续挂着。
+    why: "这一步之下不止 `docker compose` 那三条命令（还有「不用镜像、直接从源码跑」那一段），写死成 Docker 反而窄了",
+    until: "哪天这一步真的只剩 `docker compose` 一条路 —— 那时标题该跟着收窄，这条登记要删",
     assert: () => SIX_READMES.flatMap((p) => {
       const t = read(p);
       const bad: string[] = [];
@@ -146,19 +151,11 @@ const REGISTRY: readonly Deviation[] = [
       return n === 7 ? [] : [`docs/${l} 有 ${n} 份文档，登记的是 7 份`];
     }),
   },
-  {
-    id: 5,
-    what: "`.github/workflows/` 是 3 个而不是模板的 2 个 —— 多出 `deploy-worker.yml`",
-    why: "Worker 形态需要一条自己的部署流水线，模板只有 Docker 一条路",
-    until: "哪天不再发 Worker 形态",
-    assert: () => {
-      const yml = readdirSync(join(".github", "workflows")).filter((f) => f.endsWith(".yml")).sort();
-      const bad: string[] = [];
-      if (yml.length !== 3) bad.push(`workflows 有 ${yml.length} 个：${yml.join(" / ")}，登记的是 3 个`);
-      if (!yml.includes("deploy-worker.yml")) bad.push("`deploy-worker.yml` 不见了 —— 这条登记的由来就是它");
-      return bad;
-    },
-  },
+  // 🔴 **第 5 条（`.github/workflows/` 多出 `deploy-worker.yml`）v0.4.0 删掉了 ——
+  // 照它自己的 `until` 办：「哪天不再发 Worker 形态」。** 那一天到了，那条流水线随形态
+  // 一起删，`.github/workflows/` 退回模板的 2 个（`ci.yml` / `docker-publish.yml`）
+  // ⇒ **这里不再有偏离可登记**。留一条空壳登记去断言「今天是 2 个」是把名册当常规判据用，
+  // 不是它的职责（工作流本身有没有变，由发版流程与 CI 自己盯）。
   {
     id: 6,
     what: "根目录多出 CONTRIBUTING / SECURITY 与 `.github` 三份模板，参照仓没有",
@@ -203,9 +200,14 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 10,
-    what: "非 README 文档里唯一的 `<details>`：五份 DEPLOY.md 的 `### 配额账` 各 1 处（射程铁律的具名例外）",
-    why: "那一节 283 行全是账目推导，不折叠会把整份 DEPLOY 压垮；除它之外非 README 一概不折叠",
-    until: "哪天配额账拆成独立文档，或者决定非 README 全面允许折叠 —— 后者要先推翻那条射程铁律",
+    what: "非 README 文档里唯一的 `<details>`：五份 DEPLOY.md 各 1 处（射程铁律的具名例外）",
+    // 🔴 **v0.4.0：落点从 `### 配额账` 换到 `### USAGE_FLUSH_INTERVAL_MS …`，偏离本身没变。**
+    // 旧理由是「那一节 283 行全是账目推导」——那一节随免费档 KV 配额一起删了。
+    // 今天那处折叠块装的是「尾巴最长 2 小时到底承诺了什么」那四点：它们是**只在出事时才
+    // 需要读**的细则，摊开会把「这个旋钮怎么调」那句正题埋掉。**折叠的理由变了，
+    // 「非 README 只此一处」这条裁定没变。**
+    why: "折叠块里那四点是「只在出事时才需要读」的细则，摊开会把正题埋掉；除它之外非 README 一概不折叠",
+    until: "哪天那四点拆成独立文档，或者决定非 README 全面允许折叠 —— 后者要先推翻那条射程铁律",
     // 🔴 这就是当时记下的那笔登记债：7B 用测试内的 `DETAILS_ALLOWLIST` 暂代名册，
     //    **名册落地那天必须把它搬进正式名册，别删掉了事**。这一条就是搬过来的正本。
     //    `tests/unit/docs-parity.test.ts` 里那份仍然在跑（它多守一层「summary 的形态」），
@@ -322,14 +324,17 @@ const REGISTRY: readonly Deviation[] = [
   },
   {
     id: 20,
-    what: "五份 DEPLOY.md 是 **15** 个 `##`，模板骨架是 12 个",
-    why: "`## Docker 部署` 拆成「选哪种形态 + 两条部署路」是 +3；裁定又保留了 `## 环境变量` 是 +1，12−1+3+1 = 15",
-    until: "哪天只剩一条部署形态 —— 那时要退回 12 节，这条登记跟着删",
+    what: "五份 DEPLOY.md 是 **13** 个 `##`，模板骨架是 12 个",
+    why: "12 − 1（第 3 槽）+ 1（唯一那条部署路）+ 1（裁定保留下来的 `## 环境变量`）= 13",
+    until: "哪天 `## 环境变量` 并回别处 —— 那时要退回 12 节，这条登记跟着删",
     // ⚠️ 最初那张名册表第 20 行写的是「恰 14」，**那个数已经过期**：
-    //    它是在裁定把 `## 环境变量` 加回来之前写的。以译名表那份 `DOC_SECTIONS` 为准（DEPLOY = 15）。
+    //    它是在裁定把 `## 环境变量` 加回来之前写的。以译名表那份 `DOC_SECTIONS` 为准。
+    // ⚠️ **15 → 13 是 v0.4.0 摘掉 Worker 形态**：旧值里那个 +3 是「选哪种形态 + 两条部署路」
+    //    三节，今天只剩 `## Docker 部署` 一节 ⇒ +3 变 +1。旧 `until` 写的「哪天只剩一条
+    //    部署形态」正是这一天，照它办：数字改小，登记不删（`## 环境变量` 那个 +1 还在）。
     assert: () => FIVE_DEPLOY.flatMap((p) => {
       const n = bodyLines(read(p)).filter((l) => l.startsWith("## ")).length;
-      return n === 15 ? [] : [`${p} 有 ${n} 个 \`##\`，登记的是 15 个`];
+      return n === 13 ? [] : [`${p} 有 ${n} 个 \`##\`，登记的是 13 个`];
     }),
   },
   {
@@ -354,18 +359,10 @@ const REGISTRY: readonly Deviation[] = [
       return hasTick ? [`${p} 的变量表用上了 \`✅\`/\`❌\` —— 那这条登记该删了`] : [];
     }),
   },
-  {
-    id: 23,
-    what: "【后期新增】六份 README 的 `#### Cloudflare Worker` 之下各有一颗 Cloudflare 一键部署按钮，两个参照仓一颗都没有",
-    why: "kiro2api / gemini2api 是**纯 Docker 形态、根本没有 Worker 这条部署路**，所以「它们没有按钮」不是取舍而是没有这个东西可放；agnes 有 Worker 形态，这颗按钮对不想克隆仓库的读者是真实可用的入口（实测按钮图回 200 且 `image/svg+xml`，部署入口回 307）⇒ 这是本仓独有的合理增项，不是模板对齐项，照「模板没有所以删掉」办反而是错的",
-    until: "哪天 Worker 形态被砍掉（那按钮就没有落点了），或 Cloudflare 停掉 `deploy.workers.cloudflare.com` 这个入口 —— 那时六份的按钮与这条登记一起删，`docs-parity.test.ts` 里按钮形态锚整组跟着删",
-    // 形态细节（六份逐字节相同、位置在 clone 围栏之前、slug 取自 package.json）由按钮形态锚那一组管；
-    // 这里只钉「这个偏离今天确实存在」这一件事 —— 名册的职责是记住裁定，不是重复判据。
-    assert: () => {
-      const bad = SIX_READMES.filter((p) => !read(p).includes("deploy.workers.cloudflare.com"));
-      return bad.length === 0 ? [] : [`这几份 README 里没有那颗一键部署按钮：${bad.join("、")} —— 要么按钮被误删了，要么这个偏离结束了（那这条登记该删）`];
-    },
-  },
+  // 🔴 **第 23 条（六份 README 的 Cloudflare 一键部署按钮）v0.4.0 删掉了 ——
+  // 照它自己的 `until` 办。** 那条原文逐字写着：「哪天 Worker 形态被砍掉（那按钮就没有
+  // 落点了）…… 那时六份的按钮与这条登记一起删，`docs-parity.test.ts` 里按钮形态锚整组
+  // 跟着删」。三件事这一版一起做完了。
 ];
 
 describe("刻意偏离名册：每条今天都真成立（方向 ①）", () => {

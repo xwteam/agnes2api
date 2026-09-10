@@ -28,7 +28,7 @@
  * 「面不许增长：src/http/admin/ 下带中文 message 的落点恰好这么多」那一格上方。
  *
  * **网关业务口**（`src/http/middleware/auth.ts`、`src/http/routes/gemini.ts`、
- * `src/http/routes/media.ts`、`src/core/dispatcher.ts`、`src/entry/worker.ts`）
+ * `src/http/routes/media.ts`、`src/core/dispatcher.ts`）
  * 对 API 客户端**仍然只说中文**，
  * ⚠️ **条数刻意不写在这里**：当初的需求书点的是「四条」，而按
  * `tests/unit/admin/admin-errors.test.ts` 的 `messageSites()` 换根目录现扫是**六处**

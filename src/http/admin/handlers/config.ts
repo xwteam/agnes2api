@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import type { Logger } from "../../../ports/logger.js";
 import type { Storage } from "../../../ports/storage.js";
 import type { ConfigHolder } from "../../config-holder.js";
-import { CONFIG_TTL_MS, KV_EDGE_CACHE_MS } from "../../config-holder.js";
+import { CONFIG_TTL_MS } from "../../config-holder.js";
 import {
   CONFIG_KEY,
   loadConfigWithProvenance, type ConfigProvenance, type Env, type FieldSource,
@@ -78,7 +78,7 @@ export interface ConfigWiring {
   /** 存 `config` 键的那一个存储。**与 key 池、与补池历史同一个实例**，不新增依赖。 */
   storage: Storage;
   /**
-   * 本进程 / isolate 的环境变量。
+   * 本进程的环境变量。
    * **它是数据不是能力**：`src/core/` 那边的零 IO 约束因此不受影响
    * （取值发生在入口层，`config-provenance.ts` 只是收下一个 `Record`）。
    */
@@ -166,7 +166,7 @@ export interface ConfigSnapshot {
    *   本次没启动（转发、`/health`、面板全都正常）。横幅走 `set.loadBlocked.registrar`。
    * · `fields === null` + 本格非空 ⇒ 整份配置真的装不起来，面板已降级成诊断视图。
    *   改完之后落进这一档的只剩「两边都没有 gatewayToken」与 `num()` 的 env 侧
-   *   ——横幅走 `set.loadBlocked.fatal`（那句「下一次重启 / isolate 回收会失败」
+   *   ——横幅走 `set.loadBlocked.fatal`（那句「下一次重启会失败」
    *   只对这一档成立）。
    */
   loadBlocked: readonly ConfigError[];
@@ -238,7 +238,7 @@ async function readAll(wiring: ConfigWiring, logger: Logger): Promise<ConfigSnap
      * 注册机那 16 个 env 变量的非法值现在回落默认值，不再抛。
      * ⇒ boot 侧仍然会抛的只剩两条：**两边都没有 `gatewayToken`**，
      * 与 `num()` 的 env 侧（转发旋钮，它们没有安全的降能模式）。
-     * 两条都是 `ConfigRefusal`，两条都会让**进程/isolate 根本装不起来**
+     * 两条都是 `ConfigRefusal`，两条都会让**进程 根本装不起来**
      * ⇒ **「进程已启动」这个承重前提第一次是逐字精确的**，三分因此第一次完备。
      * 剩下能走到这段 catch 的，只有存储那一侧。
      *
@@ -321,11 +321,16 @@ function changedEffective(before: ConfigSnapshot, after: ConfigSnapshot): string
   }).sort();
 }
 
-/** 传播时间。两个数都从 `config-holder.ts` 取，**这里没有任何字面量**（见那里的说明）。 */
+/**
+ * 传播时间。这个数从 `config-holder.ts` 取，**这里没有任何字面量**（见那里的说明）。
+ *
+ * ⚠️ **上界就等于 `CONFIG_TTL_MS`，中间不许再加任何一项。** 上一版这里还加了一个
+ * 「KV 边缘缓存」的量（30s + 60s = 90s），而 KV 这一层随 Worker 形态一起没了
+ * ⇒ 保存回执里那个数会比事实多报 60 秒。整层删掉之后别再把它加回来。
+ */
 const PROPAGATION = {
   configTtlMs: CONFIG_TTL_MS,
-  kvEdgeCacheMs: KV_EDGE_CACHE_MS,
-  visibilityUpperBoundMs: CONFIG_TTL_MS + KV_EDGE_CACHE_MS,
+  visibilityUpperBoundMs: CONFIG_TTL_MS,
 } as const;
 
 /**
@@ -487,9 +492,9 @@ export function configPutHandler(deps: ConfigDeps) {
        */
       appliedAt: deps.now(),
       /**
-       * 别的副本 / 别的 isolate 多久能看见这次改动。
+       * 别的副本 / 别的副本 多久能看见这次改动。
        * **必须显示，不许写「立即生效」**（设计 §5.2）：本进程确实立刻生效
-       *（上面那次 `invalidate()`），别的 isolate 要等 `CONFIG_TTL_MS` + KV 边缘缓存。
+       *（上面那次 `invalidate()`），别的副本 要等 `CONFIG_TTL_MS` + KV 边缘缓存。
        */
       propagation: PROPAGATION,
     });
@@ -663,7 +668,7 @@ export function configClearSecretHandler(deps: ConfigDeps) {
 /**
  * `POST /admin/api/config/reset` 的注册路径。**这个字符串是真源**：
  * `src/http/admin/router.ts` 从这里取，`tests/unit/docs-parity.test.ts` 的
- * 「危险区那两条端点的路径在五份 DEPLOY.md 的配额账里逐份写着 —— 路径从真源常量现算」
+ * 「危险区那两条端点的路径在五份 DEPLOY.md 里逐份写着 —— 路径从真源常量现算」
  * 也从这里取 ⇒ 改了它而五份文档没跟着改，那一格当场红。
  */
 export const CONFIG_RESET_PATH = "/admin/api/config/reset";
@@ -808,7 +813,7 @@ export function configResetHandler(deps: ConfigDeps) {
        * 面板不许拿它渲染「已重置并生效」。
        */
       appliedAt: deps.now(),
-      /** 别的副本 / 别的 isolate 多久能看见这次重置。**必须显示，不许写「立即生效」**（设计 §5.2）。 */
+      /** 别的副本 / 别的副本 多久能看见这次重置。**必须显示，不许写「立即生效」**（设计 §5.2）。 */
       propagation: PROPAGATION,
     });
   };

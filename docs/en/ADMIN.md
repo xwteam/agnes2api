@@ -54,8 +54,8 @@ redirects to `/admin`, so either of the two ways people type it by hand works.
 The top bar spans the panel: brand, status badge, repo link, language, theme, sign
 out. The sidebar keeps only the eight nav items.
 
-- **There is no "restart" button up there**: the Worker form has no process to restart, and
-  the Node / Docker form exposes no self-restart endpoint.
+- **There is no "restart" button up there**: the gateway exposes no self-restart endpoint, on
+  purpose — recreating the container is the operator's call, not a button in an admin panel.
 - **The theme toggle also exists on the login gate**: the dark theme already applies while
   you type the token, so that is where it has to be switchable.
 - **The mark in the top left corner is the image from the top of the README**, and so is the
@@ -111,20 +111,19 @@ are left in the pool.**
   shows `—` and never fabricates a `0`** — those two things must not look alike on screen.
 - **Runtime and storage self-report**: runtime name, version, server time, storage backend,
   whether it is writable, plus the memory / uptime / PID that only the Node shape has. All of
-  it comes from what the API returned; the panel never sniffs which runtime it is running on.
-  The Worker shape has no long-lived process, so those three cells read "no long-lived
-  process" — not `0`, and not blank.
+  it comes from what the API returned; the panel never computes any of it on its own.
+  When a value is genuinely unavailable the cell says so in words — not `0`, and not blank.
 
 ### Two freshness lines and first-tier usage
 
 - **Two freshness lines**: the pool snapshot and the configuration each have their own "read
   N seconds ago". They are not the same timeline, so they are displayed separately. The lag
-  on the pool line is governed by `POOL_CACHE_TTL_MS` plus another layer of edge caching; the
-  upper bound and its cost are written out in that cell of [DEPLOY.md](DEPLOY.md).
+  on the pool line is governed by `POOL_CACHE_TTL_MS`; the upper bound and its cost are written
+  out in that cell of [DEPLOY.md](DEPLOY.md).
 - **First-tier cumulative usage**: requests / succeeded / failed / client errors / success
   rate. It is a pool-wide aggregate over every key, which is why it is marked `≈`: per-key
-  counters undercount under concurrency (KV has no CAS), and they are persisted up to one
-  `POOL_TOUCH_INTERVAL_MS` late.
+  counters undercount under concurrency (the store has no compare-and-swap), and they are
+  persisted up to one `POOL_TOUCH_INTERVAL_MS` late.
 
 ### Configuration summary
 
@@ -263,7 +262,7 @@ channel, which credentials you have to bring, and how to troubleshoot live in
 
 | Warning bar | What it is saying | What to do about it |
 |-----------|-----------------|-------------------|
-| Dropped | This replica's event buffer pushed out its oldest entries before they were persisted | Events are produced faster than they persist; look for that stretch in container logs / Workers Logs |
+| Dropped | This replica's event buffer pushed out its oldest entries before they were persisted | Events are produced faster than they persist; look for that stretch in the container logs |
 | Budget | This replica's event-write budget for today is used up | Same as above: what was not persisted is still in the logs |
 | Truncated | This page is not showing every matching event | Narrow the filter, or shorten the time range you are looking at |
 | Cursor ahead | The fetch position is ahead of the server clock: a clock rollback, or skew between replicas | The panel already re-fetched from a fresh position; this one heals itself |
@@ -307,9 +306,9 @@ go by it and never parse `msg`:
 
 - **Four time ranges**: `24h`, `3d`, `7d`, `30d`.
 - **At most 30 days are retained**; anything older has expired. The longest range reads every
-  shard in the whole interval in one go, and whether that always completes on a Cloudflare
-  Worker has never been measured on real infrastructure by this repo — on failure this page
-  says so plainly instead of handing you numbers that look complete.
+  shard in the whole interval in one go, and this repo has never measured that read
+  fan-out on real infrastructure — on failure this page says so plainly instead of handing you
+  numbers that look complete.
 
 ### Why these numbers are approximate
 
@@ -526,12 +525,11 @@ ourselves, and revoking a leaked key should be as fast as possible.
 
 > [!IMPORTANT]
 > **Disabling and deleting are not instantaneous.** The instance that handled your click
-> applies it at once; other instances may take up to one `APIKEY_CACHE_TTL_MS` (5 minutes by
-> default) plus the KV edge cache window; the sum of the two is the upper bound (the exact
-> arithmetic is in the quota budget in DEPLOY.md). The panel
+> applies it at once; any other container sharing the volume may take up to one
+> `APIKEY_CACHE_TTL_MS` (5 minutes by default), and that is the upper bound. The panel
 > shows that concrete duration in the toast after you press. To shorten it, lower
-> `APIKEY_CACHE_TTL_MS`; the cost is proportionally more read quota (see the quota budget in
-> DEPLOY.md).
+> `APIKEY_CACHE_TTL_MS`; the cost is one more table read per instance per interval (see
+> "Outbound API keys: revocation is not instant" in DEPLOY.md).
 
 "Purge unusable" deletes every key that is currently disabled or expired and leaves every
 usable key untouched; the number it deletes equals the sum of those two stat cards.
@@ -584,9 +582,9 @@ The settings page has four cards today:
 - **After saving, the panel answers with more than a bare "saved"**: it reads the effective
   values back, highlights the fields that really changed, and then splits on what kind of field
   you touched. For ordinary fields the sentence on screen **opens, word for word, with "this
-  instance already picked it up"**, and only then states how long other replicas / isolates may
+  instance already picked it up"**, and only then states how long other replicas may
   take to see the change — it says this instance is already using the new value, not that
-  nothing is live yet. That bound is the sum of the configuration cache and the KV edge cache.
+  nothing is live yet. That bound is the configuration cache window.
 
   > [!IMPORTANT]
   > **Neither number is in the environment-variable table**: both are hard-coded constants in
@@ -599,7 +597,7 @@ The settings page has four cards today:
 > **Two fields are the exception**: the pool snapshot cache and the write-coalescing interval
 > (`POOL_CACHE_TTL_MS` and `POOL_TOUCH_INTERVAL_MS`) are **read once when the instance is
 > built** ⇒ after saving, **not even this instance has picked them up**; the container has to
-> restart or the isolate has to be recycled. When a save touches **only** those two, the
+> be recreated. When a save touches **only** those two, the
 > "already picked it up + upper bound" sentence **is not shown at all** and is replaced by
 > "persisted, but this instance has not picked it up either"; when a save touches both kinds,
 > both sentences appear.
@@ -637,10 +635,10 @@ The fourth card on the settings page. Neither button here can be undone, and the
 
 ### Finishing on screen is not every replica
 
-- **Finishing on screen does not mean every replica has caught up.** After a reset, other
-  replicas or isolates only see it once the config cache and the edge cache have expired; after
-  a purge, the forwarding path can keep selecting those keys for up to one pool-snapshot TTL
-  plus the edge cache. The knob behind the pool-snapshot bound (`POOL_CACHE_TTL_MS`) is in the
+- **Finishing on screen does not mean every replica has caught up.** After a reset, another
+  container sharing the volume only sees it once its config cache has expired; after
+  a purge, its forwarding path can keep selecting those keys for up to one pool-snapshot TTL.
+  The knob behind the pool-snapshot bound (`POOL_CACHE_TTL_MS`) is in the
   environment table of [DEPLOY.md](DEPLOY.md);
 
   > [!IMPORTANT]
@@ -674,7 +672,7 @@ The backend answers only "configured or not" plus the last 4 characters, so no "
 token" button can exist — that would need a plaintext read-back hole in the backend, and the
 moment such a hole is open the whole write-only rule is gone.
 
-### It is not a replacement for wrangler secret or .env
+### It is not a replacement for .env
 
 This page edits the copy of the configuration in storage, while environment variables take
 priority. When the two disagree the screen carries a lock marker, but changing the environment
@@ -705,8 +703,8 @@ by hand, or a write that got truncated). Right now **every sub-key fails verific
 the master token is unaffected** — clients using `GATEWAY_TOKEN` carry on as before.
 
 **Fix**: the original content **has not been modified**, and writes from the panel are refused
-precisely so that nothing overwrites it. First take a copy of the current value (Worker:
-`wrangler kv key get apikeys`; Docker: the `apikeys` entry in `data/store.json`) and see what
+precisely so that nothing overwrites it. First take a copy of the current value (the `apikeys`
+entry in `data/store.json`) and see what
 is left in it; then put it back into the shape `{"version": <a number>, "keys": []}`, or
 delete the entry entirely — deleting revokes every key you have issued, so you will have to
 issue new ones.
@@ -752,14 +750,13 @@ browser**, so the server does not even have a failed login to show.
 
 ### The screen is showing stale values
 
-**Cause**: the configuration and the pool snapshot each have their own cache window, with a
-layer of KV edge caching on top. The pool-snapshot bound and its cost are in the
-environment-variable table of [DEPLOY.md](DEPLOY.md); the config bound is a pair of hard-coded
-constants and is **not in that table** — its value is written out in the prose of the same
-document. Neither is copied here.
+**Cause**: the configuration and the pool snapshot each have their own cache window. The
+pool-snapshot bound and its cost are in the environment-variable table of
+[DEPLOY.md](DEPLOY.md); the config bound is a hard-coded constant and is **not in that table** —
+its value is written out in the prose of the same document. Neither is copied here.
 
-**Fix**: wait for both cache layers to expire, or restart the container / let the isolate be
-recycled; the two "read N seconds ago" lines on Overview are there for exactly this.
+**Fix**: wait for the cache windows to expire, or recreate the container; the two "read N
+seconds ago" lines on Overview are there for exactly this.
 
 ### The error text is the backend's own words, not your language
 

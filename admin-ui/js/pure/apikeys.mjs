@@ -233,16 +233,17 @@ export function akExpiresAt(days, custom, now) {
 /**
  * 「停用之后最多还要多久才在别处失效」这句话里的那个数（毫秒）。
  *
- * = 这个部署生效的 `APIKEY_CACHE_TTL_MS` + KV 边缘缓存。
- * ⚠️ **两个数都从后端来**（`capabilities` 与 `overview`），**一个都不许在前端写死**：
+ * = 这个部署生效的 `APIKEY_CACHE_TTL_MS`，**中间不再有任何一层缓存**。
+ * ⚠️ **这个数从后端来**（`capabilities` 那条），**不许在前端写死**：
  * 写死就会在运维调过 TTL 的那天变成一句假话，而这句话是安全相关的。
- * 任何一个读不出来就返回 `null` ⇒ 渲染成 `—`，不编一个数出来。
+ * 读不出来就返回 `null` ⇒ 渲染成 `—`，不编一个数出来。
+ *
+ * ⚠️ **上一版这里还加了第二个入参（KV 边缘缓存那个量，默认 60 秒），v0.4.0 整层
+ * 删掉了**：KV 随 Worker 形态一起没了 ⇒ 上界从「约 6 分钟」退回本 TTL 的 5 分钟，
+ * 见 `src/http/apikey-holder.ts` 的 `APIKEY_CACHE_TTL_MS`。
  */
-export function akRevokeDelayMs(cacheTtlMs, edgeCacheMs) {
-  const a = typeof cacheTtlMs === "number" && Number.isFinite(cacheTtlMs) ? cacheTtlMs : null;
-  const b = typeof edgeCacheMs === "number" && Number.isFinite(edgeCacheMs) ? edgeCacheMs : null;
-  if (a === null || b === null) return null;
-  return a + b;
+export function akRevokeDelayMs(cacheTtlMs) {
+  return typeof cacheTtlMs === "number" && Number.isFinite(cacheTtlMs) ? cacheTtlMs : null;
 }
 
 /**

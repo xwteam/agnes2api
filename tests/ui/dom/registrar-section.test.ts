@@ -1094,7 +1094,7 @@ describe("面板上说不出主 / 备（两条通道二选一）", () => {
           },
           credentials: {}, configDegraded: false, loadBlocked: [], loadNotices: [],
           editable: ["registrar.channel"], secrets: [], resetBlocked: [],
-          propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
+          propagation: { configTtlMs: 30000, visibilityUpperBoundMs: 30000 },
         })
         : ok(statusBody())),
     });
@@ -1161,7 +1161,7 @@ describe("面板上说不出主 / 备（两条通道二选一）", () => {
           },
           credentials: {}, configDegraded: false, loadBlocked: [], loadNotices: [],
           editable: ["registrar.channel"], secrets: [], resetBlocked: [],
-          propagation: { configTtlMs: 30000, kvEdgeCacheMs: 60000, visibilityUpperBoundMs: 90000 },
+          propagation: { configTtlMs: 30000, visibilityUpperBoundMs: 30000 },
         })
         : ok(statusBody())),
     });

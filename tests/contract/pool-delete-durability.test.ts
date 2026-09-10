@@ -4,7 +4,6 @@ import { KEY_PREFIX } from "../../src/core/pool-index.js";
 import { NULL_LOGGER } from "../../src/ports/logger.js";
 import { MemoryStorage } from "../helpers/fake-storage.js";
 import type { Storage } from "../../src/ports/storage.js";
-import { IS_WORKERD } from "../helpers/is-workerd.js";
 
 /**
  * **删除不许被陈旧快照的写回撤销。**
@@ -99,14 +98,12 @@ function runDeleteDurabilityContract({ name, make }: Case) {
 
 runDeleteDurabilityContract({ name: "MemoryStorage", make: () => new MemoryStorage() });
 
-// workerd 下再跑一遍真 KV（与 pool-index-corrupt.test.ts 同款的运行时分流）。
-// 真 KV 上这条契约多验一件事：`storage.get` 走的是适配器里那次真实的 KV 读，
-// 而不是 Map 查表。
-if (IS_WORKERD) {
-  const { env } = await import("cloudflare:test");
-  const { KvStorage } = await import("../../src/adapters/storage-kv.js");
-  runDeleteDurabilityContract({
-    name: "KvStorage（miniflare 真 KV）",
-    make: () => new KvStorage((env as { POOL: KVNamespace }).POOL),
-  });
-}
+// ⚠️ **这里原来还有一遍真 KV**（`if (IS_WORKERD)` + miniflare 的 `cloudflare:test`），
+// 用来多验一件 `MemoryStorage` 验不到的事：`storage.get` 走的是适配器里那次真实的
+// KV 读，而不是 Map 查表。v0.4.0 摘掉 Worker 形态之后 `KvStorage` 不存在了，整块删。
+//
+// ⚠️ **删掉之后这份契约只剩 `MemoryStorage` 一个被测对象，这是一处判别力损失，
+// 明写在这里**：今天没有任何一格拿**真的会落盘的** `FileStorage` 跑这条删除持久性
+// 契约。补的话是往上面那张表里加一行 `FileStorage`（`mkdtempSync` 建临时目录，
+// 与 `tests/contract/storage.test.ts` 那一行同款），成本很低；没在这次做，
+// 是因为这次的口径是「摘形态、不新增覆盖」。

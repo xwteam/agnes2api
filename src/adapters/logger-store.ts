@@ -34,7 +34,7 @@ export interface ReadEventsResult {
  * 超过保留期）或生产 Workers 下随机 `shardId` 各写各的槽位时，前提不成立，清理率
  * 能跌到 0（详见 `src/core/admin/event-ring.ts` 文件头与 `shardKey()` 的说明）。
  * 现在改用 `Storage.put()` 的 `expiresAt` 参数（`eventExpiresAt()` 算出来的绝对
- * 过期时刻）：有界性变成存储自己的性质，与这里的落盘节奏、槽位选择、isolate 是否
+ * 过期时刻）：有界性变成存储自己的性质，与这里的落盘节奏、槽位选择、进程是否
  * 被回收全部无关——KV 侧零操作开销（原生 `expiration`，不占任何配额桶），
  * FileStorage 侧**读时跳过、写时顺手清掉**（评审订正：这里原来写的"读/写时
  * 惰性清理"不准确——`get`/`list` 只是逻辑上把过期键当不存在，从不物理删除；
@@ -42,9 +42,9 @@ export interface ReadEventsResult {
  * 端口文档对齐，见该适配器）。
  *
  * `log()` 是同步的（端口如此），所以这里**只缓冲，不落盘**。
- * 落盘由 `src/http/log-flush.ts` 的中间件在**请求收尾时 await**——
- * 两种运行时同一条代码路径，且写一定在响应返回前完成。
- * 用 fire-and-forget 的话 Worker 上响应返回后 isolate 可能立刻停摆，写会被截断。
+ * 落盘由 `src/http/log-flush.ts` 的中间件在**请求收尾时 await**，
+ * 写一定在响应返回前完成。**为什么非 `await` 不可**（理由在 v0.4.0 换过一次）
+ * 写在那个中间件的文件头上，别在这里复述。
  */
 export class StoreLogger implements Logger {
   private buffer: LogEntry[] = [];
@@ -54,7 +54,7 @@ export class StoreLogger implements Logger {
   private bufferDropped = 0;
   /** 落盘时分片环形截断丢的条数（`maybeFlush()` 那一侧，见 `status()`）。 */
   private persistedDropped = 0;
-  /** 这个 isolate 稳定落在哪个槽位，构造时算一次，终生不变（见 `slotOf` 的说明）。 */
+  /** 这个实例 稳定落在哪个槽位，构造时算一次，终生不变（见 `slotOf` 的说明）。 */
   private readonly slot: number;
 
   constructor(private readonly o: {
@@ -67,7 +67,7 @@ export class StoreLogger implements Logger {
     this.slot = slotOf(o.shardId);
     // **评审那条「写预算全局失守」的另一半：冷启动首刷必须受最小间隔节流。**
     // 原来这里是 `null`，`maybeFlush()` 判到 `lastFlushAt === null` 就跳过间隔检查，
-    // 等于每次 isolate 冷启动送一次零门槛写（评审实测「每次冷启动 = 2 次 KV 写」）。
+    // 等于每次 实例冷启动送一次零门槛写（评审实测「每次冷启动 = 2 次 KV 写」）。
     // 初值给 `now()`：冷启动那一刻的时间戳，之后的第一次 `maybeFlush()` 与它做差，
     // 和任何一次后续的 flush 走同一套间隔判断，不再有特殊豁免。
     this.lastFlushAt = o.now();
@@ -93,7 +93,7 @@ export class StoreLogger implements Logger {
 
   /**
    * 到点就落盘。**由中间件在请求收尾 await**（`src/http/log-flush.ts`），不是定时器——
-   * 定时器是 IO 能力，Worker 上也没有常驻进程可挂。
+   * 定时器是 IO 能力，`src/core/` 与这一层都不该自己起。
    *
    * **`fetch` 路径只许走这一条，不许改成下面的 `flush()`**：这条最小间隔闸是
    * §8.5 点名的那根杠杆的唯一约束——白名单里的 `admin.login_failed` 是**任何
@@ -120,22 +120,23 @@ export class StoreLogger implements Logger {
    * 上界只有一个：**调用方自己的频率**（见下）。预算那行判断留着是因为
    * 它对未来可能出现的长寿调用方仍然有意义，不是因为它现在拦得住什么。
    *
-   * ⚠️ **只给「调用频率本身已经有上界」的调用方用**，今天只有一处：两个入口的
-   * 补池收尾（`src/entry/worker.ts` / `src/entry/node.ts`）。
+   * ⚠️ **只给「调用频率本身已经有上界」的调用方用**，今天是补池收尾那两处：
+   * `src/entry/node.ts` 的定时轮（`TEND_INTERVAL_MS` 定着频率）与
+   * `src/http/wire.ts` 的 `runManualTendRound`（10 分钟冷却 + 每日预算闸定着频率）。
    *
-   * **为什么非有它不可**（本任务实测，Step 6b 的量测顺带打出来的）：Cron 触发的
-   * `scheduled()` 每次**很可能是一个全新 isolate**，它构造 `StoreLogger` 的那一刻
+   * **为什么非有它不可**（当时实测出来的）：补池那条路**每一轮都新建一个
+   * `StoreLogger`**（两个调用方都是，见它们各自的代码），它构造的那一刻
    * `lastFlushAt = now()`，紧接着这一轮补池如果跑得快（`need <= 0` 的健康稳态、
    * `provider_missing` 接线错误、`registrar.round_budget_impossible` 这三种都是
    * **毫秒级返回**），收尾 `maybeFlush()` 时 `since` 远小于
    * `EVENT_FLUSH_MIN_INTERVAL_MS` ⇒ **一条都写不出去，而且 `errs=0`、`dropped=0`、
-   * 不抛不报**。实测：24 个模拟窗口 × 48 次 Cron，`registrar.*` 写入 432 条、
+   * 不抛不报**。实测：24 个模拟窗口 × 48 轮补池，`registrar.*` 写入 432 条、
    * 可见 **0** 条，丢失率 **100%**；把落盘时刻推到构造时刻之后 60 秒，丢失率降到 0%。
    * 换句话说，不给这条路径一个绕过闸门的出口，「`registrar.*` 事件落库」这件事
    * 在最常见的形态下等于什么都没做。
    *
-   * **它的上界不在这里，在调用方**：补池频率（Worker 的 Cron / Node 的
-   * `TEND_INTERVAL_MS`）。**不许说「与事件 sink 同一套预算所以同样安全」**——
+   * **它的上界不在这里，在调用方**：补池频率（`TEND_INTERVAL_MS` 与手动那条的
+   * 10 分钟冷却）。**不许说「与事件 sink 同一套预算所以同样安全」**——
    * `EVENT_WRITES_PER_DAY` 是每实例的，而这条路径上每一轮都可能是一个新实例，
    * 那套预算在这根轴上既拦不住什么也不构成上界（订正）。
    */
@@ -166,7 +167,7 @@ export class StoreLogger implements Logger {
       //    `this.buffer = []` 已经先执行过 —— **缓冲区先清空、异常才发生 ⇒ 这一批
       //    永久丢失**；更糟的是下面那行 `truncatedCount(cur.length, …)` 在抛错之前
       //    跑，`cur.length` 是 `undefined` ⇒ `persistedDropped` 变成 **`NaN` 并对
-      //    这个 isolate 终生粘住** ⇒ `NaN > 0` 是 `false` ⇒ 面板黄条永远不亮，
+      //    这个实例 终生粘住** ⇒ `NaN > 0` 是 `false` ⇒ 面板黄条永远不亮，
       //    `c.json` 又把 `NaN` 序列化成 `null` ⇒ 面板读到"没有数据"。
       // **精度**：`undefined` / `null` **不在抛错集合里**（原来的 `?? []` 把两者
       // 都接住了，实测 `errs=0`）；事件缺口限定在**当前时间窗内**（键每小时换一把，

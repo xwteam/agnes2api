@@ -215,12 +215,12 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   // 都没有，所以这一行里没有它）。写的是多数派 `repository`，**分歧一条都没多**——
   // 打架的仍然是 ADMIN/DEPLOY 里那几处 `repo`。初稿曾写成 `the one in the repo`，
   // 被这条判官当场逮住（那会真的多出一份用少数派译法的文档），已改。
-  "en｜仓库｜ADMIN=repo｜API=repository｜DEPLOY=repo+repository｜README=repository｜REGISTRAR=repository｜SPONSORS=repository",
-  "en｜免费档｜DEPLOY=free plan+free tier",
+  // ⚠️ **v0.4.0：`README=repository` 那一格没了。** 它唯一的落点是一键部署按钮下方
+  // 那句「它替不了你两件事」，按钮随 Worker 形态一起删 ⇒ en 的 README 里这个源词又
+  // 一次都不出现了。**分歧一条都没少**：打架的仍然是 ADMIN/DEPLOY 里那几处 `repo`。
+  "en｜仓库｜ADMIN=repo｜API=repository｜DEPLOY=repo+repository｜REGISTRAR=repository｜SPONSORS=repository",
   "en｜补池｜ADMIN=refill+tend｜API=refill+tend｜DEPLOY=refill+tend｜README=refill｜REGISTRAR=refill+tend+top-up｜USAGE=refill",
-  "ja｜免费档｜DEPLOY=無料プラン+無料枠｜README=無料枠",
   "ja｜凭据｜ADMIN=資格情報｜API=認証情報｜DEPLOY=認証情報+資格情報｜README=認証情報｜REGISTRAR=認証情報+資格情報｜USAGE=認証情報",
-  "ja｜并发｜ADMIN=並行｜API=並行｜DEPLOY=並行+同時実行｜REGISTRAR=並行",
   // ⚠️ DEPLOY 那一批新增 `DEPLOY=トラブルシューティング` 那一格：DEPLOY.md 的 15 节骨架
   // 由 `DOC_SECTIONS` 钉死，ja 第 9 槽的译名就是 `## トラブルシューティング`（译名表从两仓实测
   // 出来的 K∩G 值）。⇒ 这一格**不是新的漏翻，是骨架落地的必然结果**，而且它让这一条欠账
@@ -232,11 +232,13 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   // 正文里本来就一直写 `文書`（实测 8 处）。⇒ 这是**一份文档内部两种说法并存**那一类的
   // 收敛，与 5B-3 给 `ja｜默认` 做的是同一件事。**不是销账**：分歧照旧在 ADMIN 与
   // API/README/SPONSORS 之间，只是 ADMIN 这一侧不再自相矛盾。
-  "ja｜文档｜ADMIN=文書｜API=ドキュメント｜DEPLOY=ドキュメント+文書｜README=ドキュメント｜SPONSORS=ドキュメント",
+  // ⚠️ **v0.4.0 多出 `REGISTRAR=ドキュメント` 那一格**：补池锁那一节新写的
+  // 「これはこの 5 つのドキュメントが逐語で運用者に渡す grep 用の文字列」是 ja 的
+  // REGISTRAR.md 里**第一次**出现这个源词，写的是多数派 `ドキュメント`。
+  // **分歧一条都没多**：打架的仍然是 ADMIN 那一份的 `文書`。
+  "ja｜文档｜ADMIN=文書｜API=ドキュメント｜DEPLOY=ドキュメント+文書｜README=ドキュメント｜REGISTRAR=ドキュメント｜SPONSORS=ドキュメント",
   "ja｜注册机｜ADMIN=レジストラ+レジストラー｜API=レジストラー｜DEPLOY=レジストラ+レジストラー｜README=レジストラー｜REGISTRAR=レジストラー｜SPONSORS=レジストラ｜USAGE=レジストラー",
   "ja｜默认｜ADMIN=既定｜API=既定｜DEPLOY=デフォルト+既定｜README=既定｜REGISTRAR=デフォルト+既定｜USAGE=既定",
-  "ko｜上游｜ADMIN=업스트림｜API=업스트림｜DEPLOY=상류+업스트림｜README=업스트림｜REGISTRAR=업스트림｜USAGE=업스트림",
-  "ko｜免费档｜DEPLOY=무료 등급+무료 요금제｜README=무료 등급",
   "ko｜邮箱｜ADMIN=메일박스｜API=메일함｜DEPLOY=메일박스+메일함｜README=메일함｜REGISTRAR=메일박스+메일함",
   // 🟢 **`zh-TW｜余量` 这一行销账了**（`DEPLOY=餘量｜REGISTRAR=餘裕+餘量`）：
   // `docs/zh-TW/REGISTRAR.md` 里唯一那处 `餘裕` 住在「距 900 秒的牆鐘上限還有約
@@ -244,14 +246,18 @@ const PENDING_TERM_CONFLICTS: readonly string[] = [
   // 就不成立了（整轮最差 960 秒 > 900 秒），整句被改写掉，那一处 `餘裕` 随之消失。
   // ⇒ 这一份内部只剩 `餘量`，与 DEPLOY 一致。**是真的统一了，不是把登记删掉了事。**
   "zh-TW｜仓库｜DEPLOY=倉庫｜README=儲存庫｜REGISTRAR=儲存庫｜SPONSORS=倉庫",
-  "zh-TW｜免费档｜DEPLOY=免費方案+免費檔｜README=免費方案",
   "zh-TW｜凭据｜ADMIN=憑證｜API=憑證｜DEPLOY=憑據+憑證｜README=憑證｜REGISTRAR=憑證｜USAGE=憑證",
   "zh-TW｜判据｜API=判據｜DEPLOY=判據+判準｜REGISTRAR=判據+判準",
   "zh-TW｜协议｜ADMIN=協定｜API=協議｜DEPLOY=協定｜README=協議｜SPONSORS=協議｜USAGE=協議",
   "zh-TW｜客户端｜ADMIN=客戶端｜API=用戶端｜DEPLOY=客戶端+用戶端｜README=用戶端｜USAGE=用戶端",
+  // ⚠️ **v0.4.0：zh-TW 的密钥那一条回来了，而且换了形状。** 旧行是
+  // `README=金鑰`（README 用少数派、其余用 `密鑰`）；README 那一批改写之后
+  // 「對外金鑰表」写的是 `金鑰`，分歧仍在 README/REGISTRAR 与其余三份之间。
   "zh-TW｜密钥｜ADMIN=密鑰｜API=密鑰｜DEPLOY=密鑰｜README=金鑰｜REGISTRAR=金鑰",
-  "zh-TW｜并发｜ADMIN=並行｜API=並行｜DEPLOY=並發+並行｜REGISTRAR=並行",
-  "zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解｜USAGE=疑難排解",
+  // ⚠️ **v0.4.0 多出 `DEPLOY=疑難排解` 那一格**：新写的「存储里每一把键的同步代价」
+  // 那一段用了台标 `疑難排解`（与 REGISTRAR/USAGE 一致）。⇒ 这一条从「ADMIN 与
+  // REGISTRAR/USAGE 打架」变成「ADMIN 一份孤立」，修的时候动 ADMIN 那一份即可。
+  "zh-TW｜排障｜ADMIN=排障｜DEPLOY=疑難排解｜REGISTRAR=疑難排解｜USAGE=疑難排解",
   "zh-TW｜网关｜ADMIN=閘道｜API=閘道｜DEPLOY=網關+閘道｜README=閘道｜REGISTRAR=閘道｜USAGE=閘道",
   "zh-TW｜调试台｜ADMIN=除錯台｜API=除錯台｜DEPLOY=偵錯台｜README=除錯台",
   "zh-TW｜邮箱｜ADMIN=郵箱｜API=信箱｜DEPLOY=信箱+郵箱｜README=信箱｜REGISTRAR=信箱",
@@ -306,12 +312,12 @@ describe("术语表判官的反向控制（换掉读文件那一步，注入夹�
     expect(after).not.toEqual([...PENDING_TERM_CONFLICTS]);
     // 少掉的正是那一行，而那一行自己就写着源词与那几份文档。
     const gone = PENDING_TERM_CONFLICTS.filter((c) => !after.includes(c));
-    expect(gone).toEqual(["zh-TW｜排障｜ADMIN=排障｜REGISTRAR=疑難排解｜USAGE=疑難排解"]);
+    expect(gone).toEqual(["zh-TW｜排障｜ADMIN=排障｜DEPLOY=疑難排解｜REGISTRAR=疑難排解｜USAGE=疑難排解"]);
     expect(gone[0]).toContain("排障");
     expect(gone[0]).toContain("ADMIN");
     expect(gone[0]).toContain("REGISTRAR");
     // 换形状不是销账：新形状必须还在，否则上面那句解释就成了假话。
-    expect(after).toContain("zh-TW｜排障｜ADMIN=排障｜REGISTRAR=排障｜USAGE=疑難排解");
+    expect(after).toContain("zh-TW｜排障｜ADMIN=排障｜DEPLOY=疑難排解｜REGISTRAR=排障｜USAGE=疑難排解");
   });
 
   it("② 反过来：把 zh-TW/ADMIN.md 的「排障」也改成「疑難排解」⇒ 同样红，因为三份就此一致了", () => {

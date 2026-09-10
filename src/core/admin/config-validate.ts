@@ -69,10 +69,11 @@ export const MAX_TEXT_LENGTH = 200;
 /**
  * 网关口令的长度下限。**与 `ADMIN_TOKEN_MIN_LENGTH` 是同一个数，理由逐字相同。**
  *
- * `src/http/admin/auth.ts` 那段写着：「Worker 形态**没有分布式限速**（做它要拿 KV 当
- * 窗口，等于给攻击者一根消耗写配额的杠杆），因此口令熵就是唯一的防线，下限不是建议值」
- * ——**那段理由对 `gatewayToken` 逐字成立**：`/v1/*` 同样没有分布式限速，而
- * `gatewayToken` 是它唯一的凭据。
+ * `src/http/admin/auth.ts` 那段写着：「**本网关没有任何登录限速**，因此口令熵就是
+ * 唯一的防线，下限不是建议值」——**那段理由对 `gatewayToken` 逐字成立**：
+ * `/v1/*` 同样没有限速，而 `gatewayToken` 是它唯一的凭据。
+ * ⚠️ 那段理由在 v0.4.0 换过一次说法（旧版说的是「Worker 形态没有分布式限速」），
+ * **换完之后这条引用照旧成立**，全文去那边读。
  *
  * ⚠️ **只对 `gatewayToken` 生效，不对两条通道的 `apiKey`**：那两把是**上游签发**的，
  * 长度不由本网关决定，套一个下限只会把一把合法的 key 拒掉。
@@ -668,7 +669,7 @@ const FIELD_ENV: Readonly<Record<string, readonly string[]>> = {
  *
  * ⚠️⚠️ **清掉 `gatewayToken` 而环境变量里也没有时，下一次冷启动会 fail-closed**
  *（`loadConfigWithProvenance` 抛「缺少 GATEWAY_TOKEN」⇒ Node 侧 `process.exit(1)`、
- * Worker 侧冷 isolate 500）。热实例因为 `Refreshable` 保留上一份合法快照**不会
+ * 冷启动的实例直接起不来）。已经在跑的实例因为 `Refreshable` 保留上一份合法快照**不会
  * 当场停摆**，所以这件事在面板上是**看不见**的，直到下一次重启/回收。
  *
  * **本模块不拦它**：这是一条显式动作（专门的端点 + 面板上的二次确认 + 红色警告），

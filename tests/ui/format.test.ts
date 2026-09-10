@@ -62,7 +62,7 @@ describe("fmtBytesMb：概览页 RSS 展示，0 与没有值必须分得开", ()
 
 describe("fmtInstant", () => {
   it("null 是 —；有值时用注入的时区偏移，不读运行环境的本地时区", () => {
-    // 时区从参数进：面板要标注时区，而「运行环境的本地时区」在 Worker 上是 UTC、
+    // 时区从参数进：面板要标注时区，而「运行环境的本地时区」跟着容器 `TZ` 走、
     // 在用户浏览器里是本地时区，同一份数据两种显示 —— 那就是面板在撒谎。
     expect(fmtInstant(null, 0)).toBe("—");
     expect(fmtInstant(0, 0)).toBe("1970-01-01 00:00:00 UTC+0");

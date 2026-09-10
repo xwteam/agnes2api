@@ -85,7 +85,7 @@ function fixture(edit: (yml: string) => string): string {
  *
  * 下面几族用例跑的**不是这里另抄的一份等价物，是 `scripts/prepush.sh` 里那几行本身**：
  * 按名字把一个函数（或末尾那段逐格表）从脚本里原样抠出来，配上它需要的那点前置，
- * 做成一个能单跑的脚本。理由是这几格在整份脚本里跑一次要十几分钟（十二道全跑），
+ * 做成一个能单跑的脚本。理由是这几格在整份脚本里跑一次要十几分钟（十一道全跑），
  * 而它们各自要验的东西是纯逻辑。
  *
  * ⚠️ **抠不到要当场抛，不许静默跳过**：抠成空串的话，下面每一条断言都会退化成同义反复
@@ -171,8 +171,15 @@ describe("prepush.sh 跑的门禁是从 ci.yml 当场抽的", () => {
 
   /**
    * 多行 `run: |` 块必须**整块**抽出来。只抽第一行的话，凭据扫描那一步会只剩工作树
-   * 那一条命令，两个测试入口会只剩 `pnpm test`、丢掉 tee 落盘与横幅校验——
-   * 三处都是「少跑了还照样打绿」。
+   * 那一条命令，测试入口那一步会只剩 `pnpm test`、丢掉 tee 落盘与横幅校验——
+   * 两处都是「少跑了还照样打绿」。
+   *
+   * ⚠️ **下面那个锚数组原来是两条**（`pnpm test 2>&1` 与 `pnpm test:workers 2>&1`）。
+   * v0.4.0 摘掉 Cloudflare Worker 形态之后 `pnpm test:workers` 这个入口连同
+   * `vitest.workers.config.ts` 一起没了 ⇒ **删掉的是一个不存在的被测对象，
+   * 不是放宽判据**：留着它，`bodyOf` 那句「恰好一步」会先在 0 步上红，
+   * 报文指向一件不存在的事。它守的「多行块必须整块抽」这条不变量今天由数组里
+   * 剩下的那一条（`pnpm test 2>&1`）与上面凭据扫描那一步继续守着，一条都没少。
    */
   it("多行 run 块整块抽出来，不是只抽第一行", () => {
     const gates = parseGates(printGates().stdout);
@@ -185,7 +192,7 @@ describe("prepush.sh 跑的门禁是从 ci.yml 当场抽的", () => {
     expect(secrets).toContain("bash scripts/scan-secrets.sh --history");
     expect(secrets).toContain("::error::");
     expect(secrets).toContain("exit $rc");
-    for (const anchor of ["pnpm test 2>&1", "pnpm test:workers 2>&1"]) {
+    for (const anchor of ["pnpm test 2>&1"]) {
       const body = bodyOf(anchor);
       expect(body).toContain("| tee /tmp/test-");
       expect(body).toContain("grep -qF '[collection-guard] ✅'");
@@ -212,9 +219,14 @@ describe("prepush.sh 跑的门禁是从 ci.yml 当场抽的", () => {
 });
 
 describe("prepush.sh 的抽取器：认不出要吵，不许静静放行", () => {
+  // ⚠️ **夹具挑的那一步必须是「单行 `run:`」的形态**，因为下面这条正则只吃两行。
+  // 原来挑的是 `8/13`（当时的 check-comment-refs 那一步）；v0.4.0 之后总步数从
+  // 十三缩到十一，同一道门禁今天的编号是 `8/11`，形态照旧是单行 `run:` ⇒ 只换分母。
+  // **改这里时别只改数字**：挑到一个多行 `run: |` 的步（今天是 3/11 与 10/11），
+  // 正则匹配不上、夹具与真 ci.yml 一模一样，这一格会退化成同义反复。
   it("反向控制：ci.yml 少一步 ⇒ 干跑非 0 并点名少了几道", () => {
     const p = fixture((yml) =>
-      yml.replace(/^ {6}- name: 8\/13 .*\n {8}run: .*\n/m, ""),
+      yml.replace(/^ {6}- name: 8\/11 .*\n {8}run: .*\n/m, ""),
     );
     const r = printGates(p);
     expect(r.code, "少了一步却照样 exit 0 —— 那正是这份复跑最坏的死法").not.toBe(0);
@@ -232,8 +244,10 @@ describe("prepush.sh 的抽取器：认不出要吵，不许静静放行", () =>
   it("反向控制：删掉一处 shell: bash ⇒ 那一道的 flag 跟着变，不是恒回同一套", () => {
     const before = parseGates(printGates().stdout).find((g) => g.body.includes("pnpm test 2>&1"));
     expect(before?.flags).toBe("-eo pipefail");
+    // ⚠️ 挑的必须是**真的跑 `pnpm test 2>&1` 那一步**（下面两条断言读的就是它）。
+    // 原来是 `11/13`；v0.4.0 摘掉 workerd 那一步之后总步数缩到十一，同一步今天是 `10/11`。
     const p = fixture((yml) =>
-      yml.replace(/^( {6}- name: 11\/13 .*\n) {8}shell: bash\n/m, "$1"),
+      yml.replace(/^( {6}- name: 10\/11 .*\n) {8}shell: bash\n/m, "$1"),
     );
     const after = parseGates(printGates(p).stdout).find((g) => g.body.includes("pnpm test 2>&1"));
     expect(after?.flags, "flag 不是从 ci.yml 读的，是写死的").toBe("-e");
@@ -323,7 +337,12 @@ describe("prepush.sh 自己的形态：逐格跑完再汇总，红不许被吃�
   it("测试基线数是等号形态：比数那个函数里不许出现大小于比较", () => {
     const s = src();
     const consts = [...s.matchAll(/^EXPECT_[A-Z_]+=(\d+)$/gm)];
-    expect(consts.length).toBe(4);
+    // ⚠️ **这个数原来是 4**（Node 与 workerd 各两行）。v0.4.0 摘掉 Cloudflare Worker
+    // 形态之后 `pnpm test:workers` 这个测试入口没了，`EXPECT_WORKERS_FILES` /
+    // `EXPECT_WORKERS_TESTS` 两行一起删掉 ⇒ 只剩 2。
+    // **它必须是一个确定的数、不许写成 `>= 1`**：那两行是「悄悄少掉一格用例」
+    // 唯一的绊线，少一行就是少一半射程，而少一行本身不会有任何别的信号。
+    expect(consts.length).toBe(2);
     // 判据锚到**比数的那个函数体**，不是整份脚本：脚本别处有正当的大小于
     // （抽取器那段 awk 的 `for (i = 1; i <= cnt; i++)`），扩到全文只会逼出一张豁免名册。
     const body = /\ncheck_log\(\) \{ #[^\n]*\n([\s\S]*?)\n\}\n/.exec(s)?.[1];
@@ -383,7 +402,7 @@ describe("prepush.sh 自己的形态：逐格跑完再汇总，红不许被吃�
 
 /* ────────────────────────────────────────────────────────────────────────────
  * 下面这一族**逐字抠出脚本里的那几行真跑**（见文件中部 `fragment()` 那段说明）：
- * 整份脚本跑一次是十几分钟（十二道全跑），而这几格各自要验的是纯逻辑。
+ * 整份脚本跑一次是十几分钟（十一道全跑），而这几格各自要验的是纯逻辑。
  * ────────────────────────────────────────────────────────────────────────── */
 
 describe("prepush.sh 的逐格表：红不许被吃掉，列位不许错开", () => {
@@ -474,7 +493,7 @@ describe("prepush.sh 的 ⑦ 真机冒烟格：接上了，而且跳过它不是
    * ⚠️ 这里连**被跑的那个脚本真的存在**一起断言：跑一个不存在的脚本时 bash 回 127，
    *   逐格表上会是一格 `FAIL(exit 127)`——那当然会被看见，但报文说的不是真因。
    */
-  it("⑦ 接的是双形态真机冒烟脚本，而那个脚本真的在仓里", () => {
+  it("⑦ 接的是真机冒烟脚本，而那个脚本真的在仓里", () => {
     const s = src();
     expect(s, "⑦ 那一格没接上").toContain(`run_cell "⑦"`);
     const body = /\ncell_smoke\(\) \{\n([\s\S]*?)\n\}\n/.exec(s)?.[1];
@@ -510,7 +529,7 @@ describe("prepush.sh 的 ⑦ 真机冒烟格：接上了，而且跳过它不是
     const rows = [
       ["①", "工作树干净", "PASS"],
       ["⑥", "测试数与横幅同时校验", "PASS"],
-      ["⑦", "双形态真机冒烟", "SKIPPED"],
+      ["⑦", "真机冒烟（Docker）", "SKIPPED"],
     ] as const;
     const allPass = rows.map(([id, t]) => [id, t, "PASS"] as const);
 
@@ -593,9 +612,12 @@ describe("prepush.sh 的报文：方向要说对，别把人指到与这次失�
    * 复评发现：上一版「多抽到一道」和「少抽到一道」共用同一句「少的那几道不会被跑到」。
    * 抽到的是**多**了一道时，真正要改的是步名里的分母；照那句话去找「少掉的那几道」是死路。
    */
+  // ⚠️ 两个夹具的编号都跟着 ci.yml 的**当前总步数**走（v0.4.0 之后是十一道，原来十三道）：
+  // 追加的那一道要比总数**多一个**（`12/11`，原 `14/13`），删掉的那一道要是**最后一道**
+  // 且形态是单行 `run:`（`11/11 构建`，原 `13/13`）。
   it("抽到的道数与步名说的对不上时，报文得说对方向（多了 / 少了）", () => {
     const more = printGates(
-      fixture((yml) => `${yml.replace(/\n?$/, "\n")}      - name: 14/13 变异追加的一道\n        run: true\n`),
+      fixture((yml) => `${yml.replace(/\n?$/, "\n")}      - name: 12/11 变异追加的一道\n        run: true\n`),
     );
     expect(more.code, "多出一道却照样 exit 0").not.toBe(0);
     expect(more.stderr).toContain("步名说共");
@@ -603,7 +625,7 @@ describe("prepush.sh 的报文：方向要说对，别把人指到与这次失�
       .toContain("多出来的那几道");
     expect(more.stderr).not.toContain("少的那几道");
 
-    const fewer = printGates(fixture((yml) => yml.replace(/^ {6}- name: 13\/13 .*\n {8}run: .*\n?/m, "")));
+    const fewer = printGates(fixture((yml) => yml.replace(/^ {6}- name: 11\/11 .*\n {8}run: .*\n?/m, "")));
     expect(fewer.code, "少了一道却照样 exit 0").not.toBe(0);
     expect(fewer.stderr).toContain("步名说共");
     expect(fewer.stderr).toContain("少的那几道");

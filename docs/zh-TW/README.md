@@ -4,16 +4,15 @@
 
 <h1>agnes2api</h1>
 <h3>多協議 AI 中轉 · Agnes 後端</h3>
-<p>一套程式碼同時相容 OpenAI / Anthropic / OpenAI-Responses / Gemini 四大 AI SDK，由 Agnes AI 後端統一供給對話與圖片、影片生成，Cloudflare Worker 與 Node 雙執行時共用同一份轉發核心，Docker 快速部署。</p>
+<p>一套程式碼同時相容 OpenAI / Anthropic / OpenAI-Responses / Gemini 四大 AI SDK，由 Agnes AI 後端統一供給對話與圖片、影片生成，Docker 一條指令快速部署。</p>
 
 <p>
   <img src="https://img.shields.io/badge/TypeScript-7.0-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/Hono-4.13-E36002?style=flat-square&logo=hono&logoColor=white" alt="Hono">
-  <img src="https://img.shields.io/badge/Cloudflare%20Workers-edge-F38020?style=flat-square&logo=cloudflareworkers&logoColor=white" alt="Cloudflare Workers">
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/arch-amd64%20%7C%20arm64-4285F4?style=flat-square&logo=linux&logoColor=white" alt="Arch">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v0.3.1-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v0.4.0-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -61,11 +60,11 @@
 
 | 日期 | 更新內容 |
 |------|----------|
+| 2026-09-10 | v0.4.0 - ✂️ **砍掉 Cloudflare Worker 形態**（破壞性變更）：只剩 Docker 一種。Worker 上註冊機鑄不出 key（上游限流按 IP），`waitUntil` 還會靜默取消整輪背景活。另修：面板把子金鑰吊銷上界多報了 1 分鐘（6 → 5 分鐘） |
 | 2026-09-10 | v0.3.1 - 🔍 **稽核收口**：v0.3.0 之後跑了一輪六軸稽核，36 條發現經對抗式覆核確認 20 條，本版全修。含兩條 critical —— 安全文件把「沒有 reveal 端點」當成保證寫著，以及 `/v1/responses` 串流讓官方 SDK 崩在自己內部 |
 | 2026-09-10 | v0.3.0 - 🚀 **面向使用者的大修**（含破壞性變更）：模型目錄 4 → 12（從前漏掉唯一能對話的那個）、面板補上響應式（從前一個斷點都沒有）、Key 池與 API 金鑰可在面板顯示明文並複製、新增逐模型連通性測試。另修一批實測缺陷：畸形請求被轉發上游白燒共用限流額度、結構錯回 500 而非 400、500 不留任何線索 |
 | 2026-09-09 | v0.2.2 - 🐛 **修好「立即補池」**（含破壞性變更）：這顆按鈕以前回 202「已開始」之後整輪被 Cloudflare 靜默取消，池子不動、歷史不加行，還會把補池鎖洩漏一刻鐘、連定時輪一起擋掉。現在改成跑完再回傳 200 並帶上真實結果；手動輪有了自己那一族上限（單輪 1 把 / 等碼 60 秒 / 鎖 3 分鐘） |
 | 2026-09-09 | v0.2.1 - 🧾 **發版後收口**：v0.2.0 的稽核發現當時修在了 tag 之後，等於沒發出去。這一版把它們真正發出去 —— LICENSE 恢復成純 MIT（那段重複的 Required Notice 讓 GitHub 與 GHCR 映像都判成 NOASSERTION）、README 的「八個板塊」改成實際的九個、五語言文件與面板裡一批「話說得比事實滿」的訂正，以及 26 處差了兩個版本的 /health 範例（並補測試從 VERSION 現算釘住） |
-| 2026-09-09 | v0.2.0 - 🔧 **註冊機大修**（含破壞性變更）：兩條信箱通道改成**二選一**；補池撞上上游限流當場中止整輪、按檔指數退避，並記住被遮蔽的網域；「測試連線」現在真的驗一次憑證 |
 
 > 完整更新日誌請查看 [CHANGELOG.md](../../CHANGELOG.md)。
 
@@ -97,11 +96,11 @@
 - **自動補池預設關閉**：打開 `REGISTRAR_ENABLED` 之後，可用 key 低於 `TARGET_KEYS` 時會自動註冊 Agnes 帳號補齊
 - 註冊機的兩條臨時信箱通道（`yyds` / `moemail`）**嚴格平級**，二選一，選哪條由你自己定，不預設推薦值
 
-### 🔀 雙執行時，同一份轉發核心
+### 🔀 儲存與流量解耦
 
-- 同一份 TypeScript 程式碼同時跑 **Cloudflare Worker**（key 池落 KV）與 **Node / Docker**（key 池落單檔案 JSON），請求處理邏輯逐字相同
-- 儲存存取與流量解耦：key 池按 isolate／行程快取，只改遙測欄位的更新會被整個丟棄，穩態下儲存的讀與寫都**不隨請求量成長**
-- Worker 形態的補池排程走 Cron 觸發器，Node 形態走行程內計時器，兩邊的補池語義一致
+- 全部狀態落在一份單檔案 JSON（`store.json`）裡：key 池、面板設定、對外金鑰表、事件環都在同一個掛載卷上
+- key 池按行程快取，只改遙測欄位的更新會被整個丟棄，穩態下儲存的讀與寫都**不隨請求量成長**
+- 補池與 `pool:index` 對帳走同一個行程內計時器（`TEND_INTERVAL_MS`），註冊機關著時對帳照跑
 
 ### 🖥 Web 管理面板
 
@@ -114,9 +113,9 @@
 
 ### ⚡ 高效能架構
 
-- 基於 **TypeScript + Hono**，Worker 與 Node 兩個入口共用同一棵路由樹
+- 基於 **TypeScript + Hono**，一棵路由樹裝配四條協議、媒體轉發與 `/admin` 子樹
 - 上游回應以串流轉發為主；非串流請求原樣以 `stream:false` 發給上游，閘道解析上游那份 JSON 再翻譯成你用的協議形狀
-- port 層與 adapter 層分離（儲存、抓取、日誌、信箱都是可替換的 port），契約測試在兩種執行時上各跑一遍
+- port 層與 adapter 層分離（儲存、抓取、日誌、信箱都是可替換的 port），契約測試直接打真裝配出來的那棵路由樹
 - 多階段 Docker 建置、非 root 執行、多架構映像檔（amd64 / arm64）、健康檢查
 
 ---
@@ -128,10 +127,10 @@
 | Node.js | 22.13+ | 僅從原始碼建置或直接用 Node 跑時需要；Docker 部署無需本機安裝 |
 | Docker | 20.10+ | 推薦用 Docker 部署，官方映像檔多架構 |
 | Agnes 帳號 | — | 需要至少一把有效的 Agnes API key（也可交給註冊機自動補池） |
-| Cloudflare 帳號 | wrangler 4+ | 僅 Cloudflare Worker 形態需要：一個 KV 命名空間加一次部署 |
+| 掛載卷 | — | 容器把 `./data` 掛進 `/app/data`，全部狀態都落在那裡，升級前先備份 |
 
 > [!TIP]
-> 使用 Docker 部署無需本機安裝 Node.js 環境，只需 Docker 和有效的 Agnes API key 即可。部署到 Cloudflare Worker 則連伺服器都不需要，只要一個 Cloudflare 帳號和 wrangler 命令列。
+> 使用 Docker 部署無需本機安裝 Node.js 環境，只需 Docker 和有效的 Agnes API key 即可。
 
 ---
 
@@ -139,35 +138,13 @@
 
 > 📖 詳細部署文件：[DEPLOY.md](DEPLOY.md)
 
-> **前置條件**：你需要至少一把有效的 Agnes API key，以及一個 Cloudflare 帳號（Worker 形態）或一台能跑 Docker 的機器。
+> **前置條件**：你需要至少一把有效的 Agnes API key，以及一台能跑 Docker 的機器。
 
 ### 1. 取得上游 key
 
 在 Agnes AI 平台建立一把 API key 備用。不想手工準備也可以先把閘道跑起來，再打開註冊機讓它自動補池——兩條路都在部署文件裡寫全了。
 
 ### 2. 部署
-
-#### Cloudflare Worker
-
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xwteam/agnes2api)
-
-一鍵部署省掉本機複製這一步，但有兩件事它替不了你：`wrangler.toml` 裡的 KV 命名空間 id（儲存庫裡那個恆為佔位符）與 `GATEWAY_TOKEN` secret——缺任何一項閘道都起不來。想全程自己走，或者部署完回來補這兩項，用下面這幾條指令：
-
-```bash
-git clone https://github.com/xwteam/agnes2api.git
-cd agnes2api
-pnpm install
-
-# 建一個 KV 命名空間，把回傳的 id 填進 wrangler.toml
-npx wrangler kv namespace create POOL
-
-# 閘道口令是必填的敏感值，用 secret 注入，不要寫進儲存庫
-npx wrangler secret put GATEWAY_TOKEN
-
-npx wrangler deploy
-```
-
-#### Docker
 
 ```bash
 # 克隆儲存庫
@@ -206,9 +183,9 @@ docker compose logs -f
 ### 3. 驗證
 
 ```bash
-# 健康檢查（不鑑權）。Worker 形態換成你的 https://<name>.<sub>.workers.dev
+# 健康檢查（不鑑權）。前面掛了網域就換成你自己的位址
 curl http://localhost:8080/health
-# {"status":"ok","version": "0.3.1"}
+# {"status":"ok","version": "0.4.0"}
 
 # 查看可用模型
 curl http://localhost:8080/v1/models \
@@ -234,7 +211,7 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 > - `x-goog-api-key: <token>`（Google GenAI SDK 預設發這一種）
 > - 查詢參數 `?key=<token>`（手動呼叫與瀏覽器場景）
 >
-> 下文的 `http://localhost:8080` 請換成你實際部署的位址（Worker 的 `*.workers.dev` 網域、自訂網域，或 Docker 部署的本機位址），`your-gateway-token` 換成你真實的閘道口令。
+> 下文的 `http://localhost:8080` 請換成你實際部署的位址（本機位址，或你在前面掛的網域），`your-gateway-token` 換成你真實的閘道口令。
 
 <details>
 <summary><b>OpenAI SDK（Python）</b></summary>
@@ -404,7 +381,7 @@ curl http://localhost:8080/v1/videos/task-1 \
 |------|------|------|
 | GET | `/health` | 探活（不鑑權，回傳版本與儲存健康） |
 
-> URL 裡的 `localhost:8080` 只是範例：Node 形態的埠由 `PORT` 決定，Worker 形態是你自己的 `*.workers.dev` 或自訂網域，按你的部署替換。
+> URL 裡的 `localhost:8080` 只是範例：埠由 `PORT` 決定，前面掛了反向代理或網域就換成你自己的位址。
 >
 > 鑑權閘接受四種憑證通道：`Authorization: Bearer`、`x-api-key`、`x-goog-api-key`、查詢參數 `?key=`。廠商原生的標頭與參數**同樣被接受**，官方 SDK 只換基底位址即可直連；要換掉的是**值**——任何通道裡傳的都必須是**本閘道**的口令，而不是真正的廠商金鑰。
 
@@ -419,21 +396,21 @@ curl http://localhost:8080/v1/videos/task-1 \
 | `GATEWAY_TOKEN` | ✅ | — | 閘道口令，用戶端用它呼叫本閘道；缺少時閘道拒絕啟動 |
 | `ADMIN_TOKEN` | ❌ | — | 管理面板口令；未設時整棵 `/admin` 樹不註冊，設了必須與閘道口令不同且至少 24 位 |
 | `AGNES_BASE_URL` | ❌ | `https://apihub.agnes-ai.com/v1` | Agnes 上游基底位址 |
-| `PORT` | ❌ | `8080` | Node 形態的監聽埠（Worker 不用） |
-| `DATA_DIR` | ❌ | `/app/data` | 檔案儲存的落盤目錄（Worker 不用） |
+| `PORT` | ❌ | `8080` | 容器內的監聽埠，compose 會把同一個數發布到主機 |
+| `DATA_DIR` | ❌ | `/app/data` | 檔案儲存的落盤目錄，與 compose 的卷掛載綁死 |
 | `UPSTREAM_TIMEOUT_MS` | ❌ | `8000` | 串流回應與影片輪詢的上游首位元組逾時（毫秒） |
 | `UPSTREAM_SYNC_TIMEOUT_MS` | ❌ | `120000` | 同步端點的整體逾時預算（毫秒） |
 | `MAX_STRIKES` | ❌ | `3` | 瞬時故障累積上限，達到則進入長冷卻 |
-| `POOL_CACHE_TTL_MS` | ❌ | `60000` | key 池快照在單個 isolate／行程裡的存活時長（毫秒） |
+| `POOL_CACHE_TTL_MS` | ❌ | `60000` | key 池快照在單個行程裡的存活時長（毫秒） |
 | `REGISTRAR_ENABLED` | ❌ | `false` | 註冊機總開關；打開後可用 key 低於目標值會自動補池 |
-| `TRUST_PROXY` | ❌ | — | 置 1 才信任轉發標頭；放在 Cloudflare 後面時應當設上 |
+| `TRUST_PROXY` | ❌ | — | 置 1 才信任轉發標頭；只有真的掛在反向代理或 CDN 後面才設 |
 | `USAGE_STATS_ENABLED` | ❌ | `false` | 面板「用量」板塊的時間序列；預設關，關閉時零成本 |
 
-**Cloudflare Worker 側的設定不走 `.env`**：非敏感項寫在 `wrangler.toml` 的 `[vars]` 段裡，敏感值用 secret 注入，KV 命名空間與補池 Cron 也在同一份檔案裡宣告。
+**改完 `.env` 要跑 `docker compose up -d`，不是 `docker compose restart`**：容器的環境在建立那一刻就凍住了，restart 只重啟同一個容器，什麼都不會重讀。
 
 ```bash
-npx wrangler secret put GATEWAY_TOKEN
-npx wrangler secret put ADMIN_TOKEN
+docker compose up -d      # 重建容器，新設定生效
+docker compose logs -f    # 看啟動日誌確認改對了
 ```
 
 ---
@@ -446,7 +423,7 @@ npx wrangler secret put ADMIN_TOKEN
 
 3. **key 池自癒**：上游 `429`/`402` 讓對應 key 冷卻，連續瞬時故障累積到 `MAX_STRIKES` 後進入長冷卻（`COOLDOWN_STRIKE_MS`，預設 30 分鐘）、到期自動恢復；**永久剔除只發生在上游 `401`/`403`**。一把可用 key 都沒有時回傳 `503` 並給出可分辨的原因；同步檔把總預算耗光、一把 key 都沒應答的那一種回傳 `504`。
 
-4. **Cloudflare 免費方案的 KV 配額**：每天的讀次數只與重新整理頻率和活躍 isolate 數有關，與請求量無關，但預設值在推薦設定處已經臨界。上線前請按部署文件裡的「配額帳」算一遍，必要時調大 `POOL_CACHE_TTL_MS`。
+4. **資料目錄就是全部狀態**：key 池、面板設定、已簽發的對外金鑰都在 `./data/store.json` 裡，只有一份、沒有第二副本，而且是**明文**。升級前先 `cp -a ./data ./data.bak`，並把它按憑證處置。
 
 5. **網路環境**：部署側需要能存取 Agnes 上游（`AGNES_BASE_URL`）。啟用註冊機時還要能存取所選的臨時信箱服務與 Agnes 平台後端。
 
@@ -459,12 +436,12 @@ npx wrangler secret put ADMIN_TOKEN
 - [x] 串流（SSE）與非串流在四條協議上一致
 - [x] 圖片生成轉發 + 影片生成兩段式轉發
 - [x] key 池：取號、分級冷卻、永久剔除、可分辨的耗盡原因
-- [x] 雙執行時：Cloudflare Worker（KV）與 Node / Docker（檔案儲存）同一份程式碼
+- [x] 單檔案 JSON 儲存：key 池、設定、對外金鑰表、事件環共用一個掛載卷
 - [x] 註冊機：兩條臨時信箱通道平級，從收碼到入池全自動
 - [x] Web 管理面板九個板塊（零建置，預設關閉）
 - [x] 管理介面鑑權：fail-closed，口令只走請求標頭
 - [x] 五語言文件與五語言面板
-- [x] CI 十三道門禁 + 雙執行時契約測試
+- [x] CI 十三道門禁 + 契約測試
 - [ ] 用真實上游樣本核對協議目錄（今天上游事實表裡每一條都標著 assumed）
 - [ ] 發布首個公開容器映像檔
 
@@ -491,7 +468,7 @@ agnes2api 主要由個人維護，歡迎透過程式碼、文件、修復或 PR 
 
 ## 🙏 致謝
 
-感謝每一位願意花時間試用它的人。bug 重現、日誌、相容性回饋和功能建議都歡迎提到 [Issues](https://github.com/xwteam/agnes2api/issues) —— 這是首個版本，key 池、註冊機、雙執行時、多協議相容、Web 面板都還在等真實場景來打磨。
+感謝每一位願意花時間試用它的人。bug 重現、日誌、相容性回饋和功能建議都歡迎提到 [Issues](https://github.com/xwteam/agnes2api/issues) —— 這是首個版本，key 池、註冊機、多協議相容、Web 面板都還在等真實場景來打磨。
 
 ---
 
@@ -507,5 +484,5 @@ agnes2api 主要由個人維護，歡迎透過程式碼、文件、修復或 PR 
 ---
 
 <div align="center">
-  <sub>Built with TypeScript + Hono + Cloudflare Workers | Powered by Agnes AI</sub>
+  <sub>Built with TypeScript + Hono + Docker | Powered by Agnes AI</sub>
 </div>

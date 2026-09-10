@@ -8,7 +8,8 @@ import { httpError, readJson } from "../errors.js";
 
 // 图片：同步转发。视频：建任务 + 轮询的两段式。
 // 成片不在网关落地——上游返回什么（URL 或字节流）就原样转发，
-// 让 Worker 与 Docker 两种部署形态行为一致，也不引入对象存储依赖。
+// ⚠️ 这里原来的理由是「让 Worker 与 Docker 两种部署形态行为一致」，那两种形态
+// 今天只剩一种。**结论没变，理由只剩后半句**：不引入对象存储依赖。
 //
 // ⚠️ **这三条路径（对外那半与上游那半）都不再写在本文件里**：
 // 它们住在 `src/core/admin/protocol-catalog.ts` 的 `MEDIA_ENDPOINTS` 里，本文件是

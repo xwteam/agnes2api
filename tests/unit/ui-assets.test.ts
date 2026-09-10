@@ -12,7 +12,7 @@ import { UI_ASSETS, UI_BUILD_HASH } from "../../src/ui/assets.generated.js";
 import { stripComments, stripCssComments } from "../helpers/strip-comments.js";
 
 /**
- * **只放 node 侧**（vitest.workers.config.ts 的 include 只有 tests/contract）：
+ * **只放 `tests/unit/`**（当时的理由是 workers 专用配置的 include 只有 tests/contract；那份配置 v0.4.0 已删）：
  * 这一组要用 `node:fs` 读 admin-ui/ 源文件、还要 spawn 一次生成器，workerd 里两样都没有。
  *
  * 路径一律从 `import.meta.url` 解析，不用相对 cwd。cwd 依赖会让「换个目录跑测试」

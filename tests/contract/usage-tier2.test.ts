@@ -5,7 +5,6 @@ import { MemoryStorage } from "../helpers/fake-storage.js";
 import { makeApp, TEST_ADMIN_TOKEN } from "../helpers/make-app.js";
 import { UsageSink } from "../../src/http/usage-sink.js";
 import { resolveUsageFlushInterval } from "../../src/http/usage-sink.js";
-import { workerRuntime } from "../../src/adapters/runtime-worker.js";
 import {
   USAGE_FLUSH_MIN_INTERVAL_MS, USAGE_WRITES_PER_DAY, mergeDayShards, type UsageDayShard,
   USAGE_MASTER_BUCKET, USAGE_APIKEY_MAX_KEYS, USAGE_OTHER_BUCKET, USAGE_UNATTRIBUTED_BUCKET,
@@ -15,10 +14,10 @@ import type { Storage } from "../../src/ports/storage.js";
 /**
  * Tier-2 用量统计的接线契约。
  *
- * **contract ⇒ node 与 workerd 各跑一遍**（`tests/global-setup.ts` 的 `POLICY` 强制）。
- * 这正是本组该在的地方：Tier-2 的落盘时机是计划点名的三个「双运行时上不是照抄
- * 一份就行」的地方之一，而本任务给出的答案是**两种运行时同一条代码路径**
- *（请求收尾 `await`，不是 `ctx.waitUntil`、不是定时器）⇒ **同一份断言必须在两边都成立**。
+ * ⚠️ 这份文件头原来写着「contract ⇒ node 与 workerd 各跑一遍」，并把 Tier-2 的落盘时机
+ * 列为「双运行时上不是照抄一份就行」的三处之一。v0.4.0 之后只剩一份配置、一种运行时。
+ * **当时给出的答案（请求收尾 `await`，不是 `ctx.waitUntil`、不是定时器）没有改**，
+ * 它今天的理由写在 `src/http/log-flush.ts` 的文件头上。
  *
  * ── 两组，切分点是「谁决定 sink 建不建」 ──────────────────────────────────
  * ① **接线组**走 `buildApp`（真装配）：`USAGE_STATS_ENABLED` → 建不建 sink → 写不写盘。
@@ -149,7 +148,7 @@ async function gateway(o: { enabled: boolean; now: () => number }) {
   const storage = new UsagePutCounter(new MemoryStorage(1, o.now));
   const env: Record<string, string | undefined> = { GATEWAY_TOKEN: "t" };
   if (o.enabled) env.USAGE_STATS_ENABLED = "true";
-  const { app } = await buildApp(env, storage, nodeRuntime(), {
+  const { app } = await buildApp(env, storage, {
     now: o.now, newShardId: () => SHARD,
   });
   const hit = () => app.request("/v1/chat/completions", {
@@ -283,7 +282,7 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
   /**
    * **落盘必须在响应返回之前完成**（`await`，不是 `ctx.waitUntil`、不是 fire-and-forget）。
    *
-   * 这条是「两种运行时同一条代码路径」那个承诺的**全部内容**：Worker 上响应返回后
+   * 这条是「两种运行时同一条代码路径」那个承诺的**全部内容**：当年 Worker 上响应返回后
    * isolate 随时可能停摆，fire-and-forget 的写会被**截断**，而截断是静默的
    *——面板上只会显示「这一段时间没有用量」。`src/http/log-flush.ts` 的文件头
    * 为事件那一侧逐字写过同一句。
@@ -295,7 +294,7 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
    * 零延迟替身在这里什么都证明不了：两条路径的 Promise 链会在同一个微任务 tick 里
    * 双双「追上」调用方（第 8 种假阳性，`tests/helpers/fake-storage.ts` 文件头原话）。
    */
-  it("落盘在响应返回之前就完成：把那次写卡在闸门上，响应就出不来 —— fire-and-forget 在 Worker 上会被响应返回后的 isolate 停摆静默截断", async () => {
+  it("落盘在响应返回之前就完成：把那次写卡在闸门上，响应就出不来 —— fire-and-forget 会让落盘失败落在响应之后、且进程收到停止信号时整批丢掉", async () => {
     let t = DAY0_MS;
     const g = await gateway({ enabled: true, now: () => t });
     await g.hit();
@@ -343,7 +342,7 @@ describe("Tier-2 接线（USAGE_STATS_ENABLED → wire.ts）", () => {
 
     expect(
       responded,
-      "那次落盘还卡在闸门上，响应却已经回来了 —— 中间件没有 await，Worker 上这次写会被响应返回后的 isolate 停摆截断",
+      "那次落盘还卡在闸门上，响应却已经回来了 —— 中间件没有 await，这次写的失败会落在响应之后，进程一停就整批丢掉",
     ).toBe(false);
     expect(g.storage.usagePutsDone, "闸门还没放开，不可能有写完的").toBe(0);
 
@@ -452,7 +451,7 @@ async function gatewayWithAdmin(o: { enabled: boolean; now: () => number }) {
     GATEWAY_TOKEN: "t", ADMIN_TOKEN: TEST_ADMIN_TOKEN,
   };
   if (o.enabled) env.USAGE_STATS_ENABLED = "true";
-  const { app } = await buildApp(env, storage, nodeRuntime(), {
+  const { app } = await buildApp(env, storage, {
     now: o.now, newShardId: () => SHARD,
   });
   const hit = () => app.request("/v1/chat/completions", {
@@ -733,7 +732,7 @@ describe("UsageSink 的落盘契约", () => {
    *（见 `USAGE_FLUSH_MIN_INTERVAL_MS`）⇒ **任何一次重复写都直接击穿当天的覆盖**。
    * 13 个并发请求撞上同一个 2 小时边界（繁忙网关的常态）⇒ 当天预算在第一次落盘
    * 就耗尽，此后到下一个 UTC 日一个字不写 ⇒ 五语言 DEPLOY.md 那句「最多旧 2 小时」
-   * 变成最多旧 24 小时；Worker 上 isolate 活不到第二天，那些计数直接消失。
+   * 变成最多旧 24 小时；期间容器一重启，内存里那些计数直接消失。
    *
    * 对照组在 `src/adapters/logger-store.ts`：它把窗口与预算推到 `await` 之前，
    * 所以从来没有这个洞。本格把同一条性质钉在用量这一侧。
@@ -1092,60 +1091,45 @@ describe("UsageSink 的落盘契约", () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// ③ USAGE_FLUSH_INTERVAL_MS：判据是「存储有没有写配额」，不是「在哪个运行时上跑」
+// ③ USAGE_FLUSH_INTERVAL_MS
+//
+// ⚠️ **这一组原来叫「判据是『存储有没有写配额』，不是『在哪个运行时上跑』」，是 9 格；
+// v0.4.0 摘掉 Worker/KV 形态之后剩 6 格。** 逐格交代删了哪几格、为什么：
+//
+// · 「没设这个环境变量时：两种存储形态拿到逐字相同的间隔（2 小时），差别只在
+//   『有没有写配额』那道闸」——**整格的意义就是两种存储形态的对等**，只剩一种之后
+//   它退化成「默认值等于那个常量」，而那一条被下面第 1 格原样接住了。**删。**
+// · 「有写配额的存储上把间隔调到 300 秒：启动就抛，且消息里给出最小可用值 7200000」
+//   ——那道 fail-closed 下限连同 `hasWriteQuota` 一起从 `resolveUsageFlushInterval()`
+//   删掉了（它的整个立论是 KV 的每日 13 次写配额）。**删。**
+// · 「同一个 300000，在有写配额的存储形态上 buildApp 直接抛 —— 判据是存储能力，
+//   不是 runtime.name」——同上，被判的那个形态不存在了。**删。**
+//
+// **没删的那几条判别力去哪了**：
+// · 「300 秒放行、且不设每天的写预算」——**留下**，改成无条件断言（下面第 1 格）；
+// · 「budgetPerDay 真的接到了 sink 上」——**留下**（下面第 4 格），它钉的是
+//   `UsageSink` 那个参数真的在起作用，与谁来传它无关；
+// · 「走 buildApp 的接线证据」——**留下**（下面第 6 格），env → 落盘节奏 + capabilities。
 // ───────────────────────────────────────────────────────────────────────────
 
-describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 runtime.name）", () => {
+describe("USAGE_FLUSH_INTERVAL_MS 的接线", () => {
   /**
-   * **默认值两种存储形态逐字相同** —— 这是「双运行时对等」在这个旋钮上的落点。
+   * **默认值 = 后端常量；调小随便，而且没有每天的写预算。**
    *
-   * 分叉只发生在**运维显式设了它**的时候，那是一次知情选择；没设的部署两边
-   * 一个字节都不差。**这一格必须先立住**，否则下面那两格的差异读起来会像
-   * 「两种运行时天生不一样」，而那正是设计明令禁止的东西。
-   */
-  it("没设这个环境变量时：两种存储形态拿到逐字相同的间隔（2 小时），差别只在「有没有写配额」那道闸", () => {
-    // 手写字面量：常量本身 + 两侧各自的预算。
-    expect(resolveUsageFlushInterval(undefined, true))
-      .toEqual({ flushIntervalMs: 7_200_000, budgetPerDay: 13 });
-    expect(resolveUsageFlushInterval(undefined, false))
-      .toEqual({ flushIntervalMs: 7_200_000, budgetPerDay: null });
-    // 反向自检：上面那两个字面量就是后端常量本身，不是碰巧相等。
-    expect(USAGE_FLUSH_MIN_INTERVAL_MS).toBe(7_200_000);
-    expect(USAGE_WRITES_PER_DAY).toBe(13);
-  });
-
-  /**
-   * **有写配额的那一侧：调小到会让半天没数据的值 ⇒ fail-closed 直接抛。**
-   *
-   * 不许默默接受：`间隔 × (预算 − 1) >= 一天` 破了之后，写量仍然合格
-   * （预算封着顶），**而数据从中午起就是假的** —— 那比起不来更难发现。
-   * 错误消息里必须给出最小可用值，否则运维只知道被拒、不知道该填多少。
-   */
-  it("有写配额的存储上把间隔调到 300 秒：启动就抛，且消息里给出最小可用值 7200000 —— 写量合格而数据从中午起就是假的，比起不来更难发现", () => {
-    expect(() => resolveUsageFlushInterval("300000", true)).toThrow(/7200000/);
-    // 边界两侧各一格（手写字面量）：恰好等于最小值放行，少 1 毫秒就抛。
-    expect(resolveUsageFlushInterval("7200000", true))
-      .toEqual({ flushIntervalMs: 7_200_000, budgetPerDay: 13 });
-    expect(() => resolveUsageFlushInterval("7199999", true)).toThrow(/USAGE_FLUSH_INTERVAL_MS/);
-    // 调大随便。
-    expect(resolveUsageFlushInterval("14400000", true))
-      .toEqual({ flushIntervalMs: 14_400_000, budgetPerDay: 13 });
-  });
-
-  /**
-   * **没有写配额的那一侧：同一个 300 秒放行，而且没有每天的写预算。**
-   *
-   * 留着那道 13 次/天的闸的话，调到 300 秒的结果是「头 65 分钟写满 13 次、
+   * 留一道 13 次/天的闸的话，调到 300 秒的结果是「头 65 分钟写满 13 次、
    * 之后整天不写」——**比默认值更糟**，那正是 `USAGE_FLUSH_MIN_INTERVAL_MS`
-   * 上方已经论证过的形态。⇒ 没有写配额时上界就是间隔本身。
+   * 上方已经论证过的形态。⇒ 今天的上界就是间隔本身。
    */
-  it("没有写配额的存储上：同一个 300 秒放行，且不再设每天的写预算 —— 留着 13 次/天的闸会让「头 65 分钟写满、之后整天不写」，比默认值更糟", () => {
-    expect(resolveUsageFlushInterval("300000", false))
-      .toEqual({ flushIntervalMs: 300_000, budgetPerDay: null });
+  it("没设它 = 后端常量 2 小时；调到 300 秒照样放行（文件存储没有写配额，没有那道闸）", () => {
+    // 手写字面量 + 反向自检：这个字面量就是后端常量本身，不是碰巧相等。
+    expect(resolveUsageFlushInterval(undefined)).toEqual({ flushIntervalMs: 7_200_000 });
+    expect(USAGE_FLUSH_MIN_INTERVAL_MS).toBe(7_200_000);
+    expect(resolveUsageFlushInterval("300000")).toEqual({ flushIntervalMs: 300_000 });
+    expect(resolveUsageFlushInterval("14400000")).toEqual({ flushIntervalMs: 14_400_000 });
   });
 
   /**
-   * **空串与「没设」同等对待**（定向复评，本轮引入的缺陷）。
+   * **空串与「没设」同等对待**（定向复评，当时引入的缺陷）。
    *
    * `.env.example` 是给 `cp .env.example .env` + `docker-compose` 的 `env_file:` 直接用的，
    * 一个留空的键会以**空字符串**（不是 unset）进到环境里。`Number("") = 0` 过不了
@@ -1153,30 +1137,30 @@ describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 run
    * 本仓那份文件里另外 9 个留空项全部容忍空串，这一个不该是例外。
    */
   it("USAGE_FLUSH_INTERVAL_MS= （空串）与没设它完全一样 —— .env.example 里留空的键是以空字符串进环境的，抛的话全新 Docker 部署直接起不来", () => {
-    // 手写字面量，两种存储形态各一次；与「没设」逐字相同。
-    expect(resolveUsageFlushInterval("", true))
-      .toEqual({ flushIntervalMs: 7_200_000, budgetPerDay: 13 });
-    expect(resolveUsageFlushInterval("", false))
-      .toEqual({ flushIntervalMs: 7_200_000, budgetPerDay: null });
-    // 走真装配再验一遍：空串不许让 buildApp 抛。
-    expect(resolveUsageFlushInterval("", true)).toEqual(resolveUsageFlushInterval(undefined, true));
+    expect(resolveUsageFlushInterval("")).toEqual({ flushIntervalMs: 7_200_000 });
+    expect(resolveUsageFlushInterval("")).toEqual(resolveUsageFlushInterval(undefined));
   });
 
   /** 环境变量的非法值继续 fail-fast：部署时错误，运维必须立刻看得见。 */
   it("非法值一律抛，不降级：abc / 0 / -1 / 1.5 四种写法都要被拒", () => {
     for (const bad of ["abc", "0", "-1", "1.5"]) {
-      expect(() => resolveUsageFlushInterval(bad, true), `「${bad}」被放行了`)
+      expect(() => resolveUsageFlushInterval(bad), `「${bad}」被放行了`)
         .toThrow(/USAGE_FLUSH_INTERVAL_MS/);
     }
   });
 
   /**
-   * **预算那一格真的接到了 sink 上**（不是算出来就丢掉）。
+   * **`budgetPerDay` 那个参数真的接到了 sink 上**（不是收下就丢掉）。
    *
    * 两个方向在同一格里跑（第 1 种假阳性：夹具 A/B 同值）：同样 20 个待落盘的日、
-   * 同样一次 flush，有预算的那一侧被卡在 13，没预算的那一侧 20 个全写出去。
+   * 同样一次 flush，给了预算的那一侧被卡在 13，传 `null` 的那一侧 20 个全写出去。
+   *
+   * ⚠️ **这一格今天钉的是 `UsageSink` 的参数，不再是「两种存储形态」**：
+   * `resolveUsageFlushInterval()` 已经不产 `budgetPerDay` 了，生产装配
+   *（`src/http/wire.ts`）显式传 `null`。**留着它是因为那个参数还在**，
+   * 而 `null` 那一侧正是生产走的那条路——删掉它，「生产上到底有没有那道闸」就没人钉了。
    */
-  it("budgetPerDay 真的接到了 sink 上：同样 20 个待落盘的日，有写配额的一侧卡在 13 个键，没写配额的一侧 20 个全写", async () => {
+  it("budgetPerDay 真的接到了 sink 上：同样 20 个待落盘的日，给了预算的一侧卡在 13 个键，传 null 的一侧（生产装配走的那条）20 个全写", async () => {
     const run = async (budgetPerDay: number | null) => {
       let t = DAY0_MS;
       const storage = new UsagePutCounter(new MemoryStorage(undefined, () => t));
@@ -1192,8 +1176,9 @@ describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 run
       return storage.usagePuts.length;
     };
     // 手写字面量，两个方向。
-    expect(await run(13), "有写配额的一侧没被预算卡住").toBe(13);
-    expect(await run(null), "没写配额的一侧仍然被一道不该存在的闸卡着").toBe(20);
+    expect(await run(USAGE_WRITES_PER_DAY), "给了预算却没被卡住").toBe(13);
+    expect(await run(null), "生产那一侧仍然被一道不该存在的闸卡着").toBe(20);
+    expect(USAGE_WRITES_PER_DAY, "上面那个 13 就是这个常量本身").toBe(13);
   });
 
   /**
@@ -1203,14 +1188,11 @@ describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 run
    * ⚠️ **两样都要**：只验 capabilities 的话，「读了但没接到 sink 上」照样绿
    *（那个数就成了 handler 自报）；只验节奏的话，面板可能还在报后端常量，
    * 而运维据它算出来的「尾巴最长多久」是错的。
-   *
-   * 这里用 `nodeRuntime()`（`quotaModel: "file"` ⇒ 没有写配额）才调得动 300 秒，
-   * **而这正是那条判据的意思**：能不能调小取决于存储有没有写配额。
    */
   it("空串走 buildApp 也不许抛：模拟 `cp .env.example .env` 之后那份配置", async () => {
     const { app } = await buildApp(
       { GATEWAY_TOKEN: "t", USAGE_FLUSH_INTERVAL_MS: "" },
-      new UsagePutCounter(new MemoryStorage()), workerRuntime(), { newShardId: () => SHARD },
+      new UsagePutCounter(new MemoryStorage()), { newShardId: () => SHARD },
     );
     expect((await app.request("/health")).status, "全新部署起不来了").toBe(200);
   });
@@ -1220,7 +1202,7 @@ describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 run
     const storage = new UsagePutCounter(new MemoryStorage(1, () => t));
     const { app } = await buildApp(
       { GATEWAY_TOKEN: "t", ADMIN_TOKEN: TEST_ADMIN_TOKEN, USAGE_STATS_ENABLED: "true", USAGE_FLUSH_INTERVAL_MS: "300000" },
-      storage, nodeRuntime(), { now: () => t, newShardId: () => SHARD },
+      storage, { now: () => t, newShardId: () => SHARD },
     );
     const hit = () => app.request("/v1/chat/completions", {
       method: "POST",
@@ -1243,17 +1225,6 @@ describe("USAGE_FLUSH_INTERVAL_MS 的接线（判据是存储能力，不是 run
     // 手写字面量；顺带反向自检它确实不等于常量。
     expect(body.stats.flushIntervalMs, "capabilities 报的是后端常量而不是生效值").toBe(300_000);
     expect(body.stats.flushIntervalMs).not.toBe(USAGE_FLUSH_MIN_INTERVAL_MS);
-  });
-
-  /**
-   * **有写配额的那一侧，同一个值会让装配直接失败** —— 与上一格是同一个环境变量、
-   * 同一个值，只有存储能力这一维不同。两格合起来才说明「判据是存储能力」。
-   */
-  it("同一个 300000，在有写配额的存储形态上 buildApp 直接抛 —— 判据是存储能力（quotaModel），不是 runtime.name", async () => {
-    await expect(buildApp(
-      { GATEWAY_TOKEN: "t", USAGE_STATS_ENABLED: "true", USAGE_FLUSH_INTERVAL_MS: "300000" },
-      new UsagePutCounter(new MemoryStorage()), workerRuntime(), { newShardId: () => SHARD },
-    )).rejects.toThrow(/7200000/);
   });
 });
 

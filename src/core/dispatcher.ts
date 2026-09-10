@@ -26,7 +26,7 @@
  *    会在 8 秒时被拦腰 abort。**这是热路径上一次真实的行为退化，不划算。**
  *
  * 2. 模块级 `let cursor`
- *    Worker 上每个 isolate 各一份，轮询起点因此不全局一致。已另行登记；
+ *    每个副本各一份，轮询起点因此不全局一致（多容器共卷时）。已另行登记；
  *    在修掉之前，**面板不许展示「下一把 key / 轮换顺序」**——展示了就是给一个
  *    与实际不符的值。
  *
@@ -390,7 +390,7 @@ export async function dispatch(args: {
   const commit = async (at: number, updated: KeyRecord) => {
     try {
       // 传上一份：save() 据此判断「这次改动是不是只动了 lastUsedAt」，只动了就不落盘。
-      // 不传的话每次成功转发都要写一次 KV，而免费档写配额是 1,000/天。
+      // 不传的话每次成功转发都要写一次存储，而每一次写都是整份 `store.json` 重写。
       await repo.save(updated, records[at]);
     } catch (err) {
       // **必须吞掉。** 这里是成功分支上的最后一步，异常会一路冒到 app.onError，

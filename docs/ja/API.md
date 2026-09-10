@@ -6,7 +6,7 @@
 
 `/v1/*` と `/v1beta/*` 配下のすべてのルートは認証情報を必要とし、`/health` は必要としません。以下の四つの渡し方はどれか一つを選べば十分です——それぞれが各プロトコルの公式 SDK が既定で送る形式に対応しているので、通常は追加設定が要りません。
 
-以下の例はすべて `http://localhost:8080`（Docker/Node が待ち受けるアドレス）を使います。Cloudflare Worker にデプロイした場合はあなたの `*.workers.dev` ドメイン（またはカスタムドメイン）に置き換えてください。`your-gateway-token` は設定した `GATEWAY_TOKEN` のプレースホルダーです。
+以下の例はすべて `http://localhost:8080`（コンテナが待ち受けるアドレス）を使います。前段にドメインやリバースプロキシを置いた場合はそのホスト名に置き換えてください。`your-gateway-token` は設定した `GATEWAY_TOKEN` のプレースホルダーです。
 
 ### 方式 1：Authorization Bearer ヘッダー
 
@@ -68,7 +68,7 @@ GATEWAY_TOKEN=長いランダム文字列に置き換える
 - `GATEWAY_TOKEN` は常に有効で、**その判定はストレージ読み取りを一切発生させません**——この性質こそが脱出口そのものです。キー表が壊れていても、ストレージが読めなくても、マスタートークンを使うクライアントは 1 バイトの影響も受けません；
 - 対外 API キーは 1 本ずつ名前と有効期限を持ち、いつでも停止・失効させられます。マスタートークンを渡さずに、下流ごとに別々の 1 本を配れます；
 - ゲートウェイは認証用の SHA-256 ダイジェストに加えて、**2026-09-10 から平文も保存します**：平文は発行時のレスポンスで全部渡され、以後も `GET /admin/api/apikeys/{id}/reveal` で取り出せます（それ以前に発行したものは取り出せません）。この取捨の代価はそのエンドポイントの項にあります；
-- 停止や削除は**即時ではありません**：ほかのインスタンスが気づくまで最大で約 6 分かかります。下の `PATCH /admin/api/apikeys/{id}` を参照してください。
+- 停止や削除は**即時ではありません**：ほかのインスタンスが気づくまで最大で約 5 分かかります。下の `PATCH /admin/api/apikeys/{id}` を参照してください。
 
 `401` のボディは「そのキーが存在しない」「停止済み」「期限切れ」の 3 つに対して**まったく同じ文言**を返します——区別することはスキャナーに列挙用の窓口を渡すのと同じだからです。本当の理由はイベントログ（`apikey.rejected`、`id` と区分付き）にだけ記録され、そこは運用者しか見られません。
 
@@ -555,7 +555,7 @@ curl http://localhost:8080/admin/api/session \
 **レスポンス**：
 
 ```json
-{ "ok": true, "version": "0.3.1" }
+{ "ok": true, "version": "0.4.0" }
 ```
 
 ### GET /admin/api/capabilities
@@ -573,7 +573,7 @@ curl http://localhost:8080/admin/api/capabilities \
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "runtime": { "name": "node", "colo": null },
   "storage": { "backend": "file", "writable": true },
   "quota": { "model": "file" },
@@ -605,7 +605,7 @@ curl http://localhost:8080/admin/api/overview \
 
 ```json
 {
-  "version": "0.3.1",
+  "version": "0.4.0",
   "serverTime": 1735689600000,
   "runtime": { "name": "node" },
   "process": { "pid": 1, "rssBytes": 52428800, "uptimeMs": 3600000 },
@@ -614,11 +614,10 @@ curl http://localhost:8080/admin/api/overview \
   "poolStats": { "requests": 42, "success": 40, "failed": 2, "clientErrors": 0, "approximate": true },
   "freshness": {
     "poolCacheTtlMs": 60000,
-    "poolVisibilityUpperBoundMs": 120000,
+    "poolVisibilityUpperBoundMs": 60000,
     "poolTouchIntervalMs": 21600000,
     "configTtlMs": 30000,
-    "configVisibilityUpperBoundMs": 90000,
-    "kvEdgeCacheMs": 60000
+    "configVisibilityUpperBoundMs": 30000
   },
   "config": {
     "registrarEnabled": true,
@@ -926,7 +925,7 @@ curl http://localhost:8080/admin/api/keys/9f2c/usage \
 **上流 Agnes key 一本の平文**を取り出します。平文を上の一覧に入れないのは意図的です：一覧は**高頻度で、無意識に**呼ばれるので、入れてしまえばパネルのポーリング一回ごと、記録されたレスポンスボディ一つごと、中間層のキャッシュ一つごとにプール全体の認証情報が乗ります。このエンドポイントは**明示的な操作**なので、監査できます。
 
 > [!NOTE]
-> この一族は**もともと平文で保存されています**（五つの DEPLOY.md が初日から、上流 key は「KV / `store.json` に平文で載るので認証情報として扱うこと」と書いています）⇒ このエンドポイントは**新しい保管上のリスクを持ち込んではおらず**、すでにそこにあるものをパネルで明示的に見せるだけです。
+> この一族は**もともと平文で保存されています**（五つの DEPLOY.md が初日から、上流 key は「`store.json` に平文で載るので認証情報として扱うこと」と書いています）⇒ このエンドポイントは**新しい保管上のリスクを持ち込んではおらず**、すでにそこにあるものをパネルで明示的に見せるだけです。
 
 **リクエスト**：
 
@@ -1074,7 +1073,7 @@ curl http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08/reveal \
 ```
 
 > [!WARNING]
-> このエンドポイントには**保管の意味づけを壊す変更**が伴います：以前このリポジトリは平文の SHA-256 ダイジェストと末尾 4 文字だけを保存し、平文は発行時の `201` にしか現れませんでした。2026-09-10 からキーのレコードは**平文も一緒に保存します**。安全性と引き換えに利便性を取った取捨であり、代価は次のとおりです：パネルが一度破られれば**すべてのクライアント側キーの平文が一度に漏れます**（以前漏れるのは逆算できないダイジェストだけでした）；保管媒体（KV / `store.json`）も「そのまま使えるクライアント認証情報を含まない」から「含む」に変わるので、バックアップとスナップショットの取り扱い区分もそれに合わせて上げてください。
+> このエンドポイントには**保管の意味づけを壊す変更**が伴います：以前このリポジトリは平文の SHA-256 ダイジェストと末尾 4 文字だけを保存し、平文は発行時の `201` にしか現れませんでした。2026-09-10 からキーのレコードは**平文も一緒に保存します**。安全性と引き換えに利便性を取った取捨であり、代価は次のとおりです：パネルが一度破られれば**すべてのクライアント側キーの平文が一度に漏れます**（以前漏れるのは逆算できないダイジェストだけでした）；保管媒体（`store.json`）も「そのまま使えるクライアント認証情報を含まない」から「含む」に変わるので、バックアップとスナップショットの取り扱い区分もそれに合わせて上げてください。
 
 > [!NOTE]
 > これに伴い `GET /admin/api/capabilities` の `apiKeys.plaintextRetrievable` は恒 `false` から `true` に変わりました。パネルはこれを見て「平文を表示 / コピー」の 2 つのボタンを出すかどうかを決めます。意味は「**この配備が平文を取り出せるかどうか**」であって「どのキーも取り出せる」ではありません——アップグレード前に発行されたものは、やはり取り出せません。
@@ -1122,7 +1121,7 @@ curl -X PATCH http://localhost:8080/admin/api/apikeys/9f2c1a4b7e08 \
 ```
 
 > [!WARNING]
-> **停止は即時ではありません。** このリクエストを処理したインスタンスでは直ちに反映されますが、ほかのインスタンスでは最大で `APIKEY_CACHE_TTL_MS`（既定 5 分）＋ KV エッジキャッシュの約 60 秒、合計**約 6 分**かかります。速くしたい場合は `APIKEY_CACHE_TTL_MS` を小さくしますが、その分だけ読み取りクォータが増えます（DEPLOY.md のクォータ計算を参照）。
+> **停止は即時ではありません。** このリクエストを処理したインスタンスでは直ちに反映されますが、同じボリュームを共有するほかのコンテナでは最大で `APIKEY_CACHE_TTL_MS`（既定で**約 5 分**）かかります。速くしたい場合は `APIKEY_CACHE_TTL_MS` を小さくしますが、代償はインスタンスごと 1 間隔につき表を 1 回多く読むことだけです（DEPLOY.md の「対外 API キー: 失効は即座ではありません」を参照）。
 
 古いバージョン番号で書き込んだ場合：
 
@@ -1257,7 +1256,7 @@ curl http://localhost:8080/admin/api/config \
   "editable": ["upstreamTimeoutMs"],
   "secrets": ["gatewayToken"],
   "resetBlocked": [],
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1292,7 +1291,7 @@ curl -X PUT http://localhost:8080/admin/api/config \
   "changed": ["upstreamTimeoutMs"],
   "credentialsChanged": [],
   "appliedAt": 1735689600000,
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1351,7 +1350,7 @@ curl -X POST http://localhost:8080/admin/api/config/secrets/clear \
   "credentials": { "gatewayToken": { "configured": true, "hint": "3f7a", "lockedBy": "env:GATEWAY_TOKEN" } },
   "configDegraded": false,
   "resetBlocked": [],
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
@@ -1386,12 +1385,12 @@ curl -X POST http://localhost:8080/admin/api/config/reset \
   "credentialsChanged": [],
   "resetBlocked": [],
   "appliedAt": 1735689600000,
-  "propagation": { "configTtlMs": 30000, "kvEdgeCacheMs": 60000, "visibilityUpperBoundMs": 90000 }
+  "propagation": { "configTtlMs": 30000, "visibilityUpperBoundMs": 30000 }
 }
 ```
 
 > [!IMPORTANT]
-> `appliedAt` は**「もう有効になった」という約束ではなく**、サーバーが永続化したその瞬間です。他のレプリカや他の isolate がいつ見えるようになるかは `propagation` の三つの数値が語ります——パネルはこれを「リセット済みで有効」と描いてはいけません。
+> `appliedAt` は**「もう有効になった」という約束ではなく**、サーバーが永続化したその瞬間です。同じボリュームを共有する他のコンテナがいつ見えるようになるかは `propagation` の三つの数値が語ります——パネルはこれを「リセット済みで有効」と描いてはいけません。
 
 ### POST /admin/api/registrar/tend
 
@@ -1598,7 +1597,7 @@ curl http://localhost:8080/health
 **レスポンス**：
 
 ```json
-{ "status": "ok", "version": "0.3.1", "storage": { "writable": true } }
+{ "status": "ok", "version": "0.4.0", "storage": { "writable": true } }
 ```
 
 `storage.writable` は「key プールが載っているストレージに本当に書き込めるか」を報告します。起動時の一度のプローブと実行中のすべての実書き込みで維持され、ヘルスチェック自身は書き込みません。書き込めないときは **HTTP `503`** を返し、`status` が `degraded` になって `detail` の一文が付きます（Docker ではバインドマウントしたホストディレクトリの所有者とコンテナ内の実行ユーザーが食い違っている場合が多く、詳細はコンテナログにあります）。
